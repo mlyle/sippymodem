@@ -24,7 +24,10 @@ present.
 
 The recording file-set owner pre-creates a fixed set of eight evidence files
 with private permissions and refuses to overwrite an existing capture. Tests
-create only empty temporary file sets and remove them.
+write only tiny temporary captures and remove them. RTP payload evidence is
+preserved as exact octets, while native PCM is normalized to canonical
+little-endian samples; a metadata or write error latches instead of silently
+creating gaps or mixing formats.
 
 Run the native tests with `make test`. The suite exercises asynchronous and
 HDLC framing, validated SIP/media configuration, safe SIP URI construction,
