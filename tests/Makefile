@@ -161,6 +161,16 @@ LOOP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_loop.o \
 MAIN_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_main
 MAIN_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_main.o \
 	$(BUILD_DIR)/sippymodem_main_testable.o
+DC_FILTER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_dc_filter
+DC_FILTER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_dc_filter.o \
+	$(BUILD_DIR)/sippymodem_dc_filter.o
+NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_native_core
+NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
+	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
+NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
+	$(addprefix $(BUILD_DIR)/native_, \
+		$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
+	$(BUILD_DIR)/sippymodem_dc_filter.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
@@ -172,7 +182,8 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SLMODEM_ADAPTER_TEST_BINARY) $(SLMODEM_CALLS_TEST_BINARY) \
 	$(SLMODEM_DRIVER_TEST_BINARY) $(SLMODEM_TERMINAL_TEST_BINARY) \
 	$(RUNTIME_TEST_BINARY) \
-	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY) $(MAIN_TEST_BINARY)
+	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY) $(MAIN_TEST_BINARY) \
+	$(DC_FILTER_TEST_BINARY) $(NATIVE_CORE_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
 endif
@@ -194,7 +205,8 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(SLMODEM_DRIVER_TEST_OBJECTS:.o=.d) \
 	$(SLMODEM_TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d) \
-	$(LOOP_TEST_OBJECTS:.o=.d) $(MAIN_TEST_OBJECTS:.o=.d)
+	$(LOOP_TEST_OBJECTS:.o=.d) $(MAIN_TEST_OBJECTS:.o=.d) \
+	$(DC_FILTER_TEST_OBJECTS:.o=.d) $(NATIVE_CORE_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
 endif
@@ -231,6 +243,8 @@ test: $(TEST_BINARIES)
 	./$(TERMINAL_TEST_BINARY)
 	./$(LOOP_TEST_BINARY)
 	./$(MAIN_TEST_BINARY)
+	./$(DC_FILTER_TEST_BINARY)
+	./$(NATIVE_CORE_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 	./$(PJSIP_TEST_BINARY)
 else
@@ -319,6 +333,12 @@ $(LOOP_TEST_BINARY): $(LOOP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(MAIN_TEST_BINARY): $(MAIN_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(DC_FILTER_TEST_BINARY): $(DC_FILTER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(NATIVE_CORE_TEST_BINARY): $(NATIVE_CORE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
@@ -433,6 +453,14 @@ $(BUILD_DIR)/sippymodem_loop.o: ../src/sippymodem_loop.c | $(BUILD_DIR)
 $(BUILD_DIR)/sippymodem_main_testable.o: \
 	../src/sippymodem_main.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DSIPPYMODEM_NO_PROCESS_ENTRY $(CFLAGS) \
+		-MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_dc_filter.o: \
+	../src/sippymodem_dc_filter.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/native_%.o: ../src/%.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(filter-out -Werror,$(CFLAGS)) \
 		-MMD -MP -c -o $@ $<
 
 $(BUILD_DIR):

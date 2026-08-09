@@ -1311,18 +1311,17 @@ static int alloc_frames(struct lapm_state *l)
 {
 #define arrsize(a) (sizeof(a)/sizeof((a)[0]))
 	frame_t *f;
-	int i;
+	size_t i;
 	EC_DBG("alloc_frames: lapm size %d (info %d, ctrl %d).\n",
 	       sizeof(*l), sizeof(l->info_buf), sizeof(l->ctrl_buf));
 	/* init info list */
 	l->info_list = &l->info_buf[0].frame;
 	for (i=0;i<arrsize(l->info_buf);i++) {
 		f = &l->info_buf[i].frame;
-		f->next = &l->info_buf[i+1].frame;
+		f->next = &l->info_buf[(i + 1) % arrsize(l->info_buf)].frame;
 		f->buf  = l->info_buf[i].ctrl;
 		f->size = sizeof(l->info_buf[0]) - sizeof(frame_t);
 	}
-	f->next = l->info_list;
 	l->info_count= arrsize(l->info_buf); // debug
 	l->tx_info   = l->info_list;
 	l->sent_info = l->info_list;
@@ -1330,11 +1329,10 @@ static int alloc_frames(struct lapm_state *l)
 	l->ctrl_list = &l->ctrl_buf[0].frame;
 	for (i=0;i<arrsize(l->ctrl_buf);i++) {
 		f = &l->ctrl_buf[i].frame;
-		f->next = &l->ctrl_buf[i+1].frame;
+		f->next = &l->ctrl_buf[(i + 1) % arrsize(l->ctrl_buf)].frame;
 		f->buf  = l->ctrl_buf[i].ctrl;
 		f->size = sizeof(l->ctrl_buf[0]) - sizeof(frame_t);
 	}
-	f->next = l->ctrl_list;
 	l->ctrl_count= arrsize(l->ctrl_buf); // debug
 	l->tx_ctrl   = l->ctrl_list;
 	return 0;
@@ -1422,4 +1420,3 @@ void modem_ec_exit(struct modem *m)
 	struct lapm_state *l = &m->ec.lapm;
 	lapm_exit(l);
 }
-

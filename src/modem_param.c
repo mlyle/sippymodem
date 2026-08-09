@@ -75,8 +75,6 @@ long modem_get_param(struct modem *m, unsigned param_name)
 		return (long)m->dial_string;
 	case MDMPRM_AUTOMODE:
 		return 0 /* MODEM_AUTOMODE(m)*/;
-	case MDMPRM_DPRUNTIME:
-		return (long)(m->dp_runtime);
 	case MDMPRM_DSPINFO:
 		return (long)(&m->dsp_info);
 #ifdef MODEM_CONFIG_VOICE

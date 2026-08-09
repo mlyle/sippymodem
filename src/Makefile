@@ -24,12 +24,8 @@ PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
 PJSIP_LDLIBS := $(shell \
 	pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
-# Remove this temporary constraint with the proprietary DSP object.
-MODEM_ABI_FLAGS ?= -m32
-
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I.
-CFLAGS += $(MODEM_ABI_FLAGS) -std=gnu11 -Wall -Wextra
-LDFLAGS += $(MODEM_ABI_FLAGS)
+CFLAGS += -std=gnu11 -Wall -Wextra
 LDLIBS += $(PJSIP_LDLIBS) -lm
 
 MODEM_CORE_SOURCES := \
@@ -47,6 +43,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_audio_path.c \
 	sippymodem_audio_scheduler.c \
 	sippymodem_config.c \
+	sippymodem_dc_filter.c \
 	sippymodem_frame_clock.c \
 	sippymodem_g711.c \
 	sippymodem_host.c \
@@ -73,7 +70,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_terminal.c \
 	sippymodem_terminal.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES)
-OBJECTS := $(SOURCES:.c=.o) dsplibs.o
+OBJECTS := $(SOURCES:.c=.o)
 DEPENDENCIES := $(SOURCES:.c=.d)
 
 .PHONY: all clean

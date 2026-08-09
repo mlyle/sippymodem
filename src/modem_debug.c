@@ -55,11 +55,11 @@
 #include <limits.h>
 
 #include <modem.h>
+#define CONFIG_DEBUG_MODEM 1
 #include <modem_debug.h>
 
 unsigned int modem_debug_level;
 unsigned int modem_debug_logging;
-unsigned int dsplibs_debug_level;
 
 static const char *modem_debug_logfile = "slmodem.log";
 
@@ -113,16 +113,6 @@ static int debug_vprintf(unsigned level, const char *fmt, va_list args)
 }
 
 
-int dsplibs_debug_printf(const char *fmt, ...)
-{
-        va_list args;
-        int len;
-	va_start(args, fmt);
-	len = debug_vprintf(dsplibs_debug_level, fmt, args);
-        va_end(args);
-        return len;
-}
-
 int modem_debug_printf(const char *fmt, ...)
 {
         va_list args;
@@ -136,7 +126,6 @@ int modem_debug_printf(const char *fmt, ...)
 
 int modem_debug_init(const char *suffix)
 {
-	dsplibs_debug_level = modem_debug_level;
 	if(modem_debug_logging) {
 		char path_name[PATH_MAX];
 		const char *name;
@@ -147,14 +136,12 @@ int modem_debug_init(const char *suffix)
 		}
 		else
 			name = modem_debug_logfile;
-		modem_log_fd = creat(name,S_IREAD|S_IWRITE);
+		modem_log_fd = creat(name, S_IRUSR | S_IWUSR);
 		if(modem_log_fd < 0) {
 			fprintf(stderr,"cannot create `%s': %s\n",
 				name,strerror(errno));
 			return -1;
 		}
-		if(dsplibs_debug_level < 3)
-			dsplibs_debug_level = 3;
 	}
 	return 0;
 }
@@ -166,4 +153,3 @@ void modem_debug_exit()
 		modem_log_fd = 0;
 	}
 }
-

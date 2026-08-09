@@ -50,6 +50,7 @@
 #include <modem_homolog.h>
 #include <modem_dp.h>
 #include <modem_timer.h>
+#include <sippymodem_dc_filter.h>
 
 
 /* modem modes */
@@ -90,13 +91,6 @@ enum MODEM_MODE {
 #define MODEM_MAX_RATE 56000
 
 #define MODEM_DEFAULT_COUNTRY_CODE 0xb5 /* USA */
-
-#define MODEM_CONFIG_CID   1
-#define MODEM_CONFIG_VOICE 1
-#define MODEM_CONFIG_FAX   1
-#define MODEM_CONFIG_FAX_CLASS1 1
-
-#define MODEM_CONFIG_RING_DETECTOR 1
 
 /*
  *    type definitions
@@ -396,11 +390,8 @@ struct modem {
         unsigned long sample_timer;
 	void (*sample_timer_func)(struct modem *);
         /* data pump */
-        struct dp_operations **dp_ops;
         struct dp *dp;
-	void *dp_runtime;
-	/* dc evaluator and cleaner */
-	void *dcr;
+	struct sippymodem_dc_filter dc_filter;
 	/* dsp info data */
 	struct dsp_info dsp_info;
 	/* voice info */

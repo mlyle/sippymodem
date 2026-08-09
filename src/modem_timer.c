@@ -71,7 +71,12 @@ unsigned long get_time()
 {
 	struct timeval tv_now,tv;
 	gettimeofday(&tv_now,NULL);
-	timersub(&tv_now,&tv_init,&tv);
+	tv.tv_sec = tv_now.tv_sec - tv_init.tv_sec;
+	tv.tv_usec = tv_now.tv_usec - tv_init.tv_usec;
+	if (tv.tv_usec < 0) {
+		tv.tv_sec--;
+		tv.tv_usec += 1000000;
+	}
 	return tv.tv_sec*MODEM_HZ + tv.tv_usec/(1000000/MODEM_HZ);
 }
 
@@ -201,5 +206,4 @@ void modem_timer_exit()
 {
 	sigaction(SIGALRM,&timer_list.old_act,NULL);
 }
-
 

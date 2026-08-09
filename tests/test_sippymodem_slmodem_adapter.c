@@ -54,8 +54,6 @@ static bool test_forwards_exact_host_frames(void)
 	struct modem modem = configured_modem();
 	struct sippymodem_slmodem_adapter adapter;
 	const struct sippymodem_modem_core *core;
-	int dcr_storage;
-	int runtime_storage;
 	int16_t transmit[ARRAY_LENGTH(receive)] = { 0 };
 
 	memset(&capture, 0, sizeof(capture));
@@ -71,18 +69,6 @@ static bool test_forwards_exact_host_frames(void)
 		      capture.calls == 0,
 	      "inactive modem reached legacy sample processing");
 	modem.started = 1;
-	CHECK(core->process(core->context, receive, transmit,
-			    ARRAY_LENGTH(receive)) ==
-		      SIPPYMODEM_MODEM_CORE_ERROR &&
-		      capture.calls == 0,
-	      "modem ran without its required runtime cleaner");
-	modem.dcr = &dcr_storage;
-	CHECK(core->process(core->context, receive, transmit,
-			    ARRAY_LENGTH(receive)) ==
-		      SIPPYMODEM_MODEM_CORE_ERROR &&
-		      capture.calls == 0,
-	      "modem ran without its required data-pump runtime");
-	modem.dp_runtime = &runtime_storage;
 	CHECK(core->process(core->context, receive, transmit,
 			    ARRAY_LENGTH(receive)) ==
 		      SIPPYMODEM_MODEM_CORE_OK &&
@@ -133,8 +119,6 @@ static bool test_validation_is_transactional(void)
 	      "valid adapter fixture failed");
 	core = sippymodem_slmodem_adapter_core(&adapter);
 	modem.started = 1;
-	modem.dcr = &sample;
-	modem.dp_runtime = &sample;
 	CHECK(core->process(core->context, NULL, &sample, 1) ==
 		      SIPPYMODEM_MODEM_CORE_ERROR &&
 		      core->process(core->context, &sample, NULL, 1) ==

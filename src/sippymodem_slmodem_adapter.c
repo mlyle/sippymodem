@@ -23,8 +23,6 @@ static enum sippymodem_modem_core_result process_modem(
 	modem = adapter->modem;
 	if (!modem->started)
 		return SIPPYMODEM_MODEM_CORE_STOPPED;
-	if (modem->dcr == NULL || modem->dp_runtime == NULL)
-		return SIPPYMODEM_MODEM_CORE_ERROR;
 
 	modem_process(modem, receive_samples, transmit_samples, (int)count);
 	return modem->started ? SIPPYMODEM_MODEM_CORE_OK :

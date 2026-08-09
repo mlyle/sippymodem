@@ -72,11 +72,6 @@
 
 /* external symbols */
 extern int process_at_command(struct modem *m, char *buf);
-extern void *dp_runtime_create(struct modem *m);
-extern void  dp_runtime_delete(void *runtime);
-extern void *dcr_create();
-extern void  dcr_delete(void *dcr);
-extern void  dcr_process(void *dcr, void *buf, int len);
 #ifdef MODEM_CONFIG_RING_DETECTOR
 extern void *RD_create(struct modem *m, unsigned rate);
 extern void RD_delete(void *obj);
@@ -683,7 +678,7 @@ static void modem_dp_process(struct modem *m,void *in,void *out,int count)
 void modem_process(struct modem *m,void *in,void *out,int count)
 {
 	/* clean DC */
-	dcr_process(m->dcr,in,count);
+	(void)sippymodem_dc_filter_process(&m->dc_filter, in, (size_t)count);
 	modem_debug_log_data(m,MODEM_DBG_RX_SAMPLES,in,count<<MFMT_SHIFT(m->format));
 	if(m->process)
 		m->process(m,in,out,count);
@@ -1054,11 +1049,13 @@ static void do_modem_change_dp (struct modem *m)
 
 	old = m->dp;
 
+#ifdef MODEM_CONFIG_FAX
 	if (m->mode == MODEM_MODE_FAX) {
 		modem_fax_start(m);
 		m->dp = NULL;
 	}
 	else {
+#endif
 		struct dp *dp = NULL;
 		int dp_id,id;
 		dp_id = m->dp_requested;
@@ -1085,7 +1082,9 @@ static void do_modem_change_dp (struct modem *m)
 
 		m->dp = dp;
 		m->process = modem_dp_process;
+#ifdef MODEM_CONFIG_FAX
 	}
+#endif
 
         if ( old ) {
                 old->op->delete(old);
@@ -1158,11 +1157,7 @@ static int modem_start (struct modem *m)
 	m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 	m->command = 0;
 
-	if( !(m->dcr= dcr_create()) ||
-	    !(m->dp_runtime = dp_runtime_create(m))) {
-		ret = -1;
-		goto error;
-	}
+	sippymodem_dc_filter_init(&m->dc_filter);
 
 	if ( m->cfg.ec && m->cfg.comp &&
 	     (ret = modem_comp_init(m)) )
@@ -1219,14 +1214,6 @@ static int modem_stop (struct modem *m)
                 m->dp = 0;
                 if(dp) dp->op->delete(dp);
         }
-	if (m->dp_runtime) {
-		dp_runtime_delete(m->dp_runtime);
-		m->dp_runtime = NULL;
-	}
-	if (m->dcr) {
-		dcr_delete(m->dcr);
-		m->dcr = NULL;
-	}
 #ifdef MODEM_CONFIG_RING_DETECTOR
 	if(m->rd_obj) {
 		RD_delete(m->rd_obj);

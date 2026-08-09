@@ -57,7 +57,6 @@ enum MODEM_PARAMETER_NAMES {
 	MDMPRM_DIALSTR,
 	MDMPRM_AUTOMODE,
 	MDMPRM_DP_REQUESTED,
-	MDMPRM_DPRUNTIME,
 	MDMPRM_DSPINFO,
 	MDMPRM_VOICEINFO,
 	MDMPRM_UPDATE_DELAY,
@@ -199,4 +198,3 @@ extern long modem_set_param(struct modem *m, unsigned name, int val);
 extern long modem_get_sreg_param(struct modem *m, unsigned sreg_param);
 
 #endif /* __MODEM_PARAM_H__ */
-
