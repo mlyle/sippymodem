@@ -51,9 +51,10 @@ and exact sample-derived scheduler. Its nonblocking step records every network,
 line, and modem boundary, performs bounded catch-up, and reports rejected media
 updates without interrupting an established stream. Timing, modem-core,
 playout, or transmit failure suspends audio and requests hangup until a new
-media lifecycle begins. The daemon does not use that host yet, and no native
-V.21 core is attached, so this transitional tree does not yet place a V.21
-modem call.
+media lifecycle begins. A guarded adapter presents the transitional Smart Link
+sample processor to that host at the exact 8 kHz SIP media clock. The daemon
+does not use the host yet, and no native V.21 core is attached, so this
+transitional tree does not yet place a V.21 modem call.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test

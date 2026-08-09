@@ -66,7 +66,7 @@ struct core_capture {
 };
 
 static enum sippymodem_modem_core_result process_core(
-	void *context, const int16_t *receive_samples,
+	void *context, int16_t *receive_samples,
 	int16_t *transmit_samples, size_t count)
 {
 	struct core_capture *capture = context;

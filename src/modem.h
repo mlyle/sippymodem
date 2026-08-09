@@ -82,7 +82,7 @@ enum MODEM_MODE {
  */
 
 #define MODEM_FORMAT MFMT_S16_LE
-#define MODEM_RATE   9600 /* 8000 */
+#define MODEM_RATE   8000
 #define MODEM_FRAG   (MODEM_RATE/200)
 
 
@@ -457,4 +457,3 @@ extern void modem_update_config(struct modem *m, struct modem_config *cfg);
 #define MODEM_AUTOMODE(m) ((m)->sregs[SREG_AUTOMODE])
 
 #endif /* __MODEM_H__ */
-

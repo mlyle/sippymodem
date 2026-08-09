@@ -17,9 +17,10 @@ enum sippymodem_modem_core_result {
 
 struct sippymodem_modem_core {
 	void *context;
+	/* Both sample buffers are writable scratch storage owned by the caller. */
 	enum sippymodem_modem_core_result (*process)(
 		void *context,
-		const int16_t *receive_samples,
+		int16_t *receive_samples,
 		int16_t *transmit_samples,
 		size_t count);
 };
