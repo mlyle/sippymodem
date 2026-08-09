@@ -13,12 +13,11 @@ Existing Smart Link copyright notices are preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
 current daemon is entirely source-built and uses the host's native ABI. Its
-minimal modem core registers a source-built SIP call-progress pump, allowing an
-outgoing dial to wait for signaling's explicit connected event. It does not yet
-register V.21 signal processing, so calls cannot carry modem data. A tested V.21
-channel primitive now provides exact rational transmit timing and generated
-tone-pair detection for both channel frequency pairs; modem training and data-
-pump ownership are the next integration boundary.
+modem core owns source-built SIP call-progress and V.21 data pumps. SIP call
+state selects the originating or answering V.21 channel pair; a bounded mark
+exchange then reports `CONNECT 300` and hands asynchronous terminal bits to the
+native signal path. The V.21 primitive uses exact rational transmit timing and
+generated tone-pair detectors rather than checked-in coefficient tables.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
@@ -38,7 +37,10 @@ HDLC framing, validated SIP/media configuration, safe SIP URI construction,
 deterministic modem audio SDP policy, table-free G.711 conversion, strict RTP
 packets, bounded receive playout, transmit timeline continuity, UDP peer
 handling, negotiated SIP-to-RTP binding, and lifecycle-ordered recording hooks
-without linking the legacy DSP object or requiring external vectors.
+without linking the legacy DSP object or requiring external vectors. A compact
+integration check trains two real modem cores through the PCMU and PCMA media
+and recording boundaries, then verifies exact binary terminal data in both
+directions and bounded carrier-loss handling.
 
 The SIP adapter owns one validated incoming or outgoing call, supports ringing,
 answer, and hangup, and reports bounded call-progress events. Offers and answers
@@ -58,9 +60,9 @@ playout, or transmit failure suspends audio and requests hangup until a new
 media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
-standard output, and shuts down cleanly on SIGINT or SIGTERM. No native V.21
-core is attached yet, so this transitional tree does not place a V.21 modem
-call.
+standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21 is currently
+the only registered modulation; faster modes remain deliberately unavailable
+until their source-built implementations arrive as reviewable slices.
 
 Build with `make`, configure the daemon through the validated `SIP_*`
 environment variables, and run `./src/slmodemd` without a hardware-device

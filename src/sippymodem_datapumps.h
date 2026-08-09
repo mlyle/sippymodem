@@ -16,6 +16,7 @@ enum sippymodem_datapumps_result {
 
 struct sippymodem_datapumps {
 	bool call_progress_registered;
+	bool v21_registered;
 };
 
 /* Registrations are process-global; exactly one live owner is supported. */

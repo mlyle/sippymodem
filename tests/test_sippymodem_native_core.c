@@ -61,7 +61,7 @@ static bool test_core_has_no_external_dsp_owner(void)
 	return true;
 }
 
-static bool test_owns_sip_call_progress_registration(void)
+static bool test_owns_source_built_datapump_registrations(void)
 {
 	struct sippymodem_datapumps datapumps = { 0 };
 	struct sippymodem_datapumps rival = { 0 };
@@ -73,20 +73,27 @@ static bool test_owns_sip_call_progress_registration(void)
 	};
 	struct modem *modem;
 	struct dp_operations *operations;
+	struct dp_operations *v21_operations;
 	struct dp *call_progress;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
 
 	CHECK(modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
+		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      sippymodem_datapumps_start(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_OK &&
 		      sippymodem_datapumps_are_started(&datapumps),
 	      "SIP call-progress registration did not start cleanly");
 	operations = modem_dp_get_registered_ops(DP_CALLPROG);
+	v21_operations = modem_dp_get_registered_ops(DP_V21);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
-		      operations->hangup == NULL && operations->use_count == 0,
-	      "SIP call-progress operations were incomplete");
+		      operations->hangup == NULL && operations->use_count == 0 &&
+		      v21_operations != NULL && v21_operations->create != NULL &&
+		      v21_operations->delete != NULL &&
+		      v21_operations->process != NULL &&
+		      v21_operations->use_count == 0,
+	      "source-built modem operations were incomplete");
 	CHECK(sippymodem_datapumps_start(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_ALREADY_STARTED &&
 		      sippymodem_datapumps_start(&rival) ==
@@ -119,6 +126,7 @@ static bool test_owns_sip_call_progress_registration(void)
 	CHECK(sippymodem_datapumps_stop(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_OK &&
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
+		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      !sippymodem_datapumps_are_started(&datapumps) &&
 		      sippymodem_datapumps_stop(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_NOT_STARTED &&
@@ -137,8 +145,8 @@ int main(void)
 	} tests[] = {
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
-		{ "SIP call-progress ownership",
-		  test_owns_sip_call_progress_registration },
+		{ "source-built data-pump ownership",
+		  test_owns_source_built_datapump_registrations },
 	};
 	unsigned int failures = 0;
 

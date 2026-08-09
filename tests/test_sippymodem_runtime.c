@@ -117,6 +117,7 @@ enum sippymodem_datapumps_result sippymodem_datapumps_start(
 	if (capture.fail_datapumps)
 		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
 	datapumps->call_progress_registered = true;
+	datapumps->v21_registered = true;
 	return SIPPYMODEM_DATAPUMPS_OK;
 }
 
@@ -124,16 +125,19 @@ enum sippymodem_datapumps_result sippymodem_datapumps_stop(
 	struct sippymodem_datapumps *datapumps)
 {
 	capture.datapump_stops++;
-	if (datapumps == NULL || !datapumps->call_progress_registered)
+	if (datapumps == NULL || !datapumps->call_progress_registered ||
+	    !datapumps->v21_registered)
 		return SIPPYMODEM_DATAPUMPS_NOT_STARTED;
 	datapumps->call_progress_registered = false;
+	datapumps->v21_registered = false;
 	return SIPPYMODEM_DATAPUMPS_OK;
 }
 
 bool sippymodem_datapumps_are_started(
 	const struct sippymodem_datapumps *datapumps)
 {
-	return datapumps != NULL && datapumps->call_progress_registered;
+	return datapumps != NULL && datapumps->call_progress_registered &&
+	       datapumps->v21_registered;
 }
 
 bool sippymodem_slmodem_driver_init(

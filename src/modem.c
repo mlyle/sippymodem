@@ -1791,8 +1791,8 @@ static int sregs_init(unsigned char sregs[])
 
         sregs[SREG_SPEAKER_CONTROL] =  1; /* yes */
         sregs[SREG_SPEAKER_VOLUME]  =  3; /* max */
-        sregs[SREG_AUTOMODE]        =  1; /* yes */
-        sregs[SREG_DP]              =  DP_V92;
+        sregs[SREG_AUTOMODE]        =  0;
+        sregs[SREG_DP]              =  DP_V21;
 
         sregs[SREG_ANS_DELAY]       =  2; /* seconds */
 

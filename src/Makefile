@@ -70,7 +70,8 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_driver.c \
 	sippymodem_slmodem_terminal.c \
 	sippymodem_terminal.c \
-	sippymodem_v21.c
+	sippymodem_v21.c \
+	sippymodem_v21_datapump.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDENCIES := $(SOURCES:.c=.d)
