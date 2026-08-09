@@ -6,8 +6,8 @@
 
 static bool recording_stream_is_valid(enum sippymodem_recording_stream stream)
 {
-	return stream >= SIPPYMODEM_RECORD_RX_RTP_PAYLOAD &&
-	       stream <= SIPPYMODEM_RECORD_TX_RTP_PAYLOAD;
+	return stream >= SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT &&
+	       stream <= SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED;
 }
 
 static bool recording_format_is_valid(enum sippymodem_recording_format format)
@@ -46,8 +46,8 @@ const char *sippymodem_recording_stream_name(
 	enum sippymodem_recording_stream stream)
 {
 	switch (stream) {
-	case SIPPYMODEM_RECORD_RX_RTP_PAYLOAD:
-		return "rx.rtp_payload";
+	case SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT:
+		return "rx.rtp_payload.playout";
 	case SIPPYMODEM_RECORD_RX_LINE_PCM:
 		return "rx.line_pcm";
 	case SIPPYMODEM_RECORD_RX_MODEM_PCM:
@@ -56,8 +56,8 @@ const char *sippymodem_recording_stream_name(
 		return "tx.modem_pcm";
 	case SIPPYMODEM_RECORD_TX_LINE_PCM:
 		return "tx.line_pcm";
-	case SIPPYMODEM_RECORD_TX_RTP_PAYLOAD:
-		return "tx.rtp_payload";
+	case SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED:
+		return "tx.rtp_payload.prepared";
 	}
 	return NULL;
 }
@@ -91,10 +91,10 @@ enum sippymodem_media_result sippymodem_media_decode(
 			samples[index] =
 				sippymodem_g711_decode_pcmu(payload[index]);
 	}
-	sippymodem_recording_emit(recorder, SIPPYMODEM_RECORD_RX_RTP_PAYLOAD,
-				   SIPPYMODEM_RECORD_OCTETS,
-				   SIPPYMODEM_MEDIA_SAMPLE_RATE, payload,
-				   payload_count);
+	sippymodem_recording_emit(
+		recorder, SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT,
+		SIPPYMODEM_RECORD_OCTETS, SIPPYMODEM_MEDIA_SAMPLE_RATE, payload,
+		payload_count);
 	sippymodem_recording_emit(recorder, SIPPYMODEM_RECORD_RX_LINE_PCM,
 				   SIPPYMODEM_RECORD_S16_NATIVE,
 				   SIPPYMODEM_MEDIA_SAMPLE_RATE, samples,
@@ -130,10 +130,10 @@ enum sippymodem_media_result sippymodem_media_encode(
 			payload[index] =
 				sippymodem_g711_encode_pcmu(samples[index]);
 	}
-	sippymodem_recording_emit(recorder, SIPPYMODEM_RECORD_TX_RTP_PAYLOAD,
-				   SIPPYMODEM_RECORD_OCTETS,
-				   SIPPYMODEM_MEDIA_SAMPLE_RATE, payload,
-				   sample_count);
+	sippymodem_recording_emit(
+		recorder, SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED,
+		SIPPYMODEM_RECORD_OCTETS, SIPPYMODEM_MEDIA_SAMPLE_RATE, payload,
+		sample_count);
 	return SIPPYMODEM_MEDIA_OK;
 }
 

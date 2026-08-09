@@ -103,7 +103,8 @@ static bool test_receive_playout_and_recording(void)
 		      report.received_samples == 2,
 	      "stream playout samples are wrong");
 	CHECK(capture.calls == 2 &&
-		      capture.streams[0] == SIPPYMODEM_RECORD_RX_RTP_PAYLOAD &&
+		      capture.streams[0] ==
+			      SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT &&
 		      capture.streams[1] == SIPPYMODEM_RECORD_RX_LINE_PCM &&
 		      capture.counts[0] == ARRAY_LENGTH(payload) &&
 		      memcmp(capture.data[0],
@@ -143,7 +144,8 @@ static bool test_transmit_timeline_and_recording(void)
 	      "transmitted RTP contents are wrong");
 	CHECK(capture.calls == 2 &&
 		      capture.streams[0] == SIPPYMODEM_RECORD_TX_LINE_PCM &&
-		      capture.streams[1] == SIPPYMODEM_RECORD_TX_RTP_PAYLOAD &&
+		      capture.streams[1] ==
+			      SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED &&
 		      memcmp(capture.data[1], expected, sizeof(expected)) == 0,
 	      "transmit recording stages are wrong");
 

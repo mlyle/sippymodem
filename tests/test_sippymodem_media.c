@@ -92,8 +92,8 @@ static bool test_codec_metadata(void)
 			      (enum sippymodem_media_codec)99) == -1,
 	      "accepted an unknown codec");
 	CHECK(strcmp(sippymodem_recording_stream_name(
-			     SIPPYMODEM_RECORD_RX_RTP_PAYLOAD),
-		     "rx.rtp_payload") == 0 &&
+			     SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT),
+		     "rx.rtp_payload.playout") == 0 &&
 		      strcmp(sippymodem_recording_stream_name(
 			     SIPPYMODEM_RECORD_TX_MODEM_PCM),
 			     "tx.modem_pcm") == 0 &&
@@ -123,7 +123,7 @@ static bool test_decode_with_recording(void)
 	      "PCMU samples are wrong");
 	CHECK(capture.count == 2, "decode emitted the wrong block count");
 	return check_recording(&capture.blocks[0],
-			       SIPPYMODEM_RECORD_RX_RTP_PAYLOAD,
+			       SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT,
 			       SIPPYMODEM_RECORD_OCTETS, pcmu,
 			       ARRAY_LENGTH(pcmu)) &&
 	       check_recording(&capture.blocks[1],
@@ -156,7 +156,7 @@ static bool test_encode_with_recording(void)
 			       SIPPYMODEM_RECORD_S16_NATIVE, samples,
 			       ARRAY_LENGTH(samples)) &&
 	       check_recording(&capture.blocks[1],
-			       SIPPYMODEM_RECORD_TX_RTP_PAYLOAD,
+			       SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED,
 			       SIPPYMODEM_RECORD_OCTETS, expected,
 			       ARRAY_LENGTH(expected));
 }
