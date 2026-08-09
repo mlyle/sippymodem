@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 enum {
+	TEST_CALL_EVENTS = 8,
 	TEST_REGISTRATION_EVENTS = 8,
 	TEST_SIP_MESSAGE_MAX = 2048,
 };
@@ -22,10 +23,17 @@ struct callback_capture {
 	unsigned int error_count;
 	unsigned int trace_count;
 	unsigned int adapter_trace_count;
+	unsigned int call_count;
 	unsigned int registration_count;
 	int last_error_status;
 	bool close_on_ready;
 	char last_error_operation[64];
+	enum sippymodem_sip_call_direction
+		call_directions[TEST_CALL_EVENTS];
+	enum sippymodem_sip_call_state call_states[TEST_CALL_EVENTS];
+	unsigned int call_status_codes[TEST_CALL_EVENTS];
+	char call_reasons[TEST_CALL_EVENTS][32];
+	char call_remote_identities[TEST_CALL_EVENTS][128];
 	enum sippymodem_sip_registration_state
 		registration_states[TEST_REGISTRATION_EVENTS];
 	unsigned int registration_status_codes[TEST_REGISTRATION_EVENTS];
@@ -83,6 +91,25 @@ static void capture_registration(
 		       event->reason != NULL ? event->reason : "");
 }
 
+static void capture_call(
+	void *context, const struct sippymodem_sip_call_event *event)
+{
+	struct callback_capture *capture = context;
+	unsigned int index = capture->call_count++;
+
+	if (index >= TEST_CALL_EVENTS)
+		return;
+	capture->call_directions[index] = event->direction;
+	capture->call_states[index] = event->state;
+	capture->call_status_codes[index] = event->status_code;
+	(void)snprintf(capture->call_reasons[index],
+		       sizeof(capture->call_reasons[index]), "%s",
+		       event->reason != NULL ? event->reason : "");
+	(void)snprintf(capture->call_remote_identities[index],
+		       sizeof(capture->call_remote_identities[index]), "%s",
+		       event->remote_identity != NULL ? event->remote_identity : "");
+}
+
 static struct sippymodem_sip_signaling *create_signaling(
 	const struct sippymodem_config *config,
 	struct callback_capture *capture)
@@ -93,6 +120,7 @@ static struct sippymodem_sip_signaling *create_signaling(
 		.error = capture_error,
 		.trace = capture_trace,
 		.registration_changed = capture_registration,
+		.call_changed = capture_call,
 	};
 
 	capture->signaling =
@@ -122,6 +150,8 @@ static bool test_local_transport_lifecycle(void)
 	CHECK(signaling != NULL, "could not allocate signaling context");
 	CHECK(!sippymodem_sip_signaling_is_open(signaling) &&
 		      sippymodem_sip_signaling_local_port(signaling) == 0 &&
+		      sippymodem_sip_signaling_call_state(signaling) ==
+			      SIPPYMODEM_SIP_CALL_IDLE &&
 		      sippymodem_sip_signaling_registration_state(signaling) ==
 			      SIPPYMODEM_SIP_REGISTRATION_DISABLED,
 	      "new signaling context is already open");
@@ -304,26 +334,46 @@ static bool append_response_header(char *response, size_t capacity,
 	       append_bytes(response, capacity, response_size, "\r\n", 2);
 }
 
+static bool build_response_head(
+	char *response, size_t capacity, size_t *response_size,
+	const char *request, unsigned int status_code, const char *reason)
+{
+	const char *to_header = find_header(request, "To:");
+	const char *to_end =
+		to_header != NULL ? strstr(to_header, "\r\n") : NULL;
+	const char *to_tag =
+		to_header != NULL ? strstr(to_header, ";tag=") : NULL;
+	const char *to_suffix =
+		to_tag != NULL && to_end != NULL && to_tag < to_end
+			? ""
+			: ";tag=loopback";
+	int status_line_size;
+
+	status_line_size = snprintf(response, capacity, "SIP/2.0 %u %s\r\n",
+				    status_code, reason);
+	if (status_line_size < 0 || (size_t)status_line_size >= capacity)
+		return false;
+	*response_size = (size_t)status_line_size;
+	return append_response_header(response, capacity, response_size, request,
+				      "Via:", "") &&
+	       append_response_header(response, capacity, response_size, request,
+				      "From:", "") &&
+	       append_response_header(response, capacity, response_size, request,
+				      "To:", to_suffix) &&
+	       append_response_header(response, capacity, response_size, request,
+				      "Call-ID:", "") &&
+	       append_response_header(response, capacity, response_size, request,
+				      "CSeq:", "");
+}
+
 static bool build_registration_response(
 	char *response, size_t capacity, size_t *response_size,
 	const char *request, bool unregistration)
 {
 	int tail_size;
 
-	*response_size = 0;
-	if (!append_bytes(response, capacity, response_size,
-			  "SIP/2.0 200 OK\r\n",
-			  sizeof("SIP/2.0 200 OK\r\n") - 1) ||
-	    !append_response_header(response, capacity, response_size, request,
-				    "Via:", "") ||
-	    !append_response_header(response, capacity, response_size, request,
-				    "From:", "") ||
-	    !append_response_header(response, capacity, response_size, request,
-				    "To:", ";tag=loopback") ||
-	    !append_response_header(response, capacity, response_size, request,
-				    "Call-ID:", "") ||
-	    !append_response_header(response, capacity, response_size, request,
-				    "CSeq:", ""))
+	if (!build_response_head(response, capacity, response_size, request,
+				 200, "OK"))
 		return false;
 	if (!unregistration &&
 	    !append_response_header(response, capacity, response_size, request,
@@ -337,6 +387,17 @@ static bool build_registration_response(
 		return false;
 	*response_size += (size_t)tail_size;
 	return true;
+}
+
+static bool build_empty_response(
+	char *response, size_t capacity, size_t *response_size,
+	const char *request, unsigned int status_code, const char *reason)
+{
+	return build_response_head(response, capacity, response_size, request,
+				   status_code, reason) &&
+	       append_bytes(response, capacity, response_size,
+			    "Content-Length: 0\r\n\r\n",
+			    sizeof("Content-Length: 0\r\n\r\n") - 1);
 }
 
 static void *serve_loopback_registrar(void *context)
@@ -413,6 +474,110 @@ static bool finish_loopback_registrar(struct loopback_registrar *registrar)
 
 	(void)close(registrar->socket_fd);
 	registrar->socket_fd = -1;
+	return succeeded;
+}
+
+struct loopback_call_peer {
+	pthread_t worker;
+	int socket_fd;
+	unsigned int port;
+	bool invite_received;
+	bool target_received;
+	bool cancel_received;
+	bool failed;
+};
+
+static bool receive_request(int socket_fd, char *request, size_t capacity,
+			    struct sockaddr_in *remote,
+			    socklen_t *remote_size)
+{
+	struct pollfd descriptor = {
+		.fd = socket_fd,
+		.events = POLLIN,
+	};
+	ssize_t request_size;
+
+	if (capacity == 0 || poll(&descriptor, 1, 3000) != 1 ||
+	    (descriptor.revents & POLLIN) == 0)
+		return false;
+	request_size = recvfrom(socket_fd, request, capacity - 1, 0,
+				(struct sockaddr *)remote, remote_size);
+	if (request_size <= 0)
+		return false;
+	request[request_size] = '\0';
+	return true;
+}
+
+static bool send_empty_response(
+	int socket_fd, const struct sockaddr_in *remote, socklen_t remote_size,
+	const char *request, unsigned int status_code, const char *reason)
+{
+	char response[TEST_SIP_MESSAGE_MAX];
+	size_t response_size;
+
+	return build_empty_response(response, sizeof(response), &response_size,
+				    request, status_code, reason) &&
+	       sendto(socket_fd, response, response_size, 0,
+		      (const struct sockaddr *)remote, remote_size) ==
+		       (ssize_t)response_size;
+}
+
+static void *serve_loopback_call(void *context)
+{
+	struct loopback_call_peer *peer = context;
+	struct sockaddr_in invite_remote;
+	struct sockaddr_in cancel_remote;
+	socklen_t invite_remote_size = sizeof(invite_remote);
+	socklen_t cancel_remote_size = sizeof(cancel_remote);
+	char invite[TEST_SIP_MESSAGE_MAX];
+	char cancel[TEST_SIP_MESSAGE_MAX];
+
+	if (!receive_request(peer->socket_fd, invite, sizeof(invite),
+			     &invite_remote, &invite_remote_size) ||
+	    strncmp(invite, "INVITE ", sizeof("INVITE ") - 1) != 0 ||
+	    !send_empty_response(peer->socket_fd, &invite_remote,
+				 invite_remote_size, invite, 180, "Ringing")) {
+		peer->failed = true;
+		return NULL;
+	}
+	peer->invite_received = true;
+	peer->target_received =
+		strstr(invite, "INVITE sip:bob@127.0.0.1:") == invite;
+	if (!receive_request(peer->socket_fd, cancel, sizeof(cancel),
+			     &cancel_remote, &cancel_remote_size) ||
+	    strncmp(cancel, "CANCEL ", sizeof("CANCEL ") - 1) != 0 ||
+	    !send_empty_response(peer->socket_fd, &cancel_remote,
+				 cancel_remote_size, cancel, 200, "OK") ||
+	    !send_empty_response(peer->socket_fd, &invite_remote,
+				 invite_remote_size, invite, 487,
+				 "Request Terminated")) {
+		peer->failed = true;
+		return NULL;
+	}
+	peer->cancel_received = true;
+	return NULL;
+}
+
+static bool start_loopback_call(struct loopback_call_peer *peer)
+{
+	memset(peer, 0, sizeof(*peer));
+	peer->socket_fd = open_loopback_listener(&peer->port);
+	if (peer->socket_fd < 0)
+		return false;
+	if (pthread_create(&peer->worker, NULL, serve_loopback_call, peer) != 0) {
+		(void)close(peer->socket_fd);
+		peer->socket_fd = -1;
+		return false;
+	}
+	return true;
+}
+
+static bool finish_loopback_call(struct loopback_call_peer *peer)
+{
+	bool succeeded = pthread_join(peer->worker, NULL) == 0 && !peer->failed;
+
+	(void)close(peer->socket_fd);
+	peer->socket_fd = -1;
 	return succeeded;
 }
 
@@ -520,6 +685,121 @@ static bool test_loopback_registration_lifecycle(void)
 	return true;
 }
 
+static bool test_outgoing_call_lifecycle(void)
+{
+	struct callback_capture capture = { 0 };
+	struct loopback_call_peer peer;
+	struct sippymodem_config config;
+	struct sippymodem_sip_signaling *signaling = NULL;
+	enum sippymodem_sip_signaling_result open_result =
+		SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+	enum sippymodem_sip_signaling_result invalid_dial_result =
+		SIPPYMODEM_SIP_SIGNALING_OK;
+	enum sippymodem_sip_signaling_result no_call_result =
+		SIPPYMODEM_SIP_SIGNALING_OK;
+	enum sippymodem_sip_signaling_result dial_result =
+		SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+	enum sippymodem_sip_signaling_result duplicate_dial_result =
+		SIPPYMODEM_SIP_SIGNALING_OK;
+	enum sippymodem_sip_signaling_result hangup_result =
+		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	enum sippymodem_sip_signaling_result close_result =
+		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	bool peer_succeeded;
+	bool final_state_idle = false;
+
+	CHECK(start_loopback_call(&peer),
+	      "could not start loopback SIP call peer");
+	sippymodem_config_init(&config);
+	config.sip.listen_port = 0;
+	config.sip.log_level = 3;
+	config.sip.registration_enabled = false;
+	(void)snprintf(config.sip.domain, sizeof(config.sip.domain),
+		       "127.0.0.1:%u", peer.port);
+	(void)snprintf(config.sip.target, sizeof(config.sip.target), "bob");
+	signaling = create_signaling(&config, &capture);
+	if (signaling != NULL) {
+		open_result = sippymodem_sip_signaling_open(signaling);
+		if (open_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+			no_call_result =
+				sippymodem_sip_signaling_hangup(signaling);
+			invalid_dial_result = sippymodem_sip_signaling_dial(
+				signaling, "bad\r\ntarget");
+			dial_result =
+				sippymodem_sip_signaling_dial(signaling, NULL);
+			if (dial_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+				duplicate_dial_result =
+					sippymodem_sip_signaling_dial(
+						signaling, "ignored");
+				for (unsigned int attempt = 0;
+				     attempt < 50 &&
+				     sippymodem_sip_signaling_call_state(
+					     signaling) !=
+					     SIPPYMODEM_SIP_CALL_EARLY;
+				     ++attempt)
+					(void)sippymodem_sip_signaling_step(
+						signaling, 20);
+				hangup_result =
+					sippymodem_sip_signaling_hangup(signaling);
+			}
+		}
+	}
+	peer_succeeded = finish_loopback_call(&peer);
+	if (signaling != NULL) {
+		if (sippymodem_sip_signaling_is_open(signaling)) {
+			(void)sippymodem_sip_signaling_step(signaling, 0);
+			final_state_idle =
+				sippymodem_sip_signaling_call_state(signaling) ==
+				SIPPYMODEM_SIP_CALL_IDLE;
+			close_result =
+				sippymodem_sip_signaling_close(signaling);
+		}
+		sippymodem_sip_signaling_destroy(signaling);
+	}
+
+	CHECK(signaling != NULL, "could not allocate outgoing call context");
+	CHECK(open_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	      "outgoing call context did not open: %s",
+	      sippymodem_sip_signaling_result_name(open_result));
+	CHECK(invalid_dial_result == SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT,
+	      "unsafe call target was accepted");
+	CHECK(no_call_result == SIPPYMODEM_SIP_SIGNALING_NO_CALL,
+	      "idle signaling context accepted hangup");
+	CHECK(dial_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	      "configured call target was not dialed: %s",
+	      sippymodem_sip_signaling_result_name(dial_result));
+	CHECK(duplicate_dial_result == SIPPYMODEM_SIP_SIGNALING_CALL_ACTIVE,
+	      "a second simultaneous call was accepted");
+	CHECK(hangup_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	      "outgoing call did not hang up");
+	CHECK(peer_succeeded && peer.invite_received && peer.target_received &&
+		      peer.cancel_received,
+	      "loopback peer did not complete INVITE and CANCEL");
+	CHECK(capture.call_count == 3 &&
+		      capture.call_states[0] == SIPPYMODEM_SIP_CALL_DIALING &&
+		      capture.call_states[1] == SIPPYMODEM_SIP_CALL_EARLY &&
+		      capture.call_states[2] == SIPPYMODEM_SIP_CALL_IDLE,
+	      "outgoing call lifecycle event order was wrong");
+	CHECK(capture.call_directions[0] ==
+		      SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING &&
+		      capture.call_directions[1] ==
+			      SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING &&
+		      capture.call_directions[2] ==
+			      SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING &&
+		      capture.call_status_codes[1] == 180 &&
+		      strcmp(capture.call_reasons[1], "Ringing") == 0 &&
+		      strstr(capture.call_remote_identities[1],
+			     "sip:bob@127.0.0.1:") != NULL,
+	      "outgoing call event details were wrong");
+	CHECK(final_state_idle && close_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	      "outgoing call context did not return to idle and close");
+	CHECK(strcmp(sippymodem_sip_call_state_name(
+			     SIPPYMODEM_SIP_CALL_DIALING),
+		     "dialing") == 0,
+	      "call state name was wrong");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -533,6 +813,7 @@ int main(void)
 		  test_singleton_and_account_boundary },
 		{ "loopback registration lifecycle",
 		  test_loopback_registration_lifecycle },
+		{ "outgoing call lifecycle", test_outgoing_call_lifecycle },
 	};
 	unsigned int failures = 0;
 

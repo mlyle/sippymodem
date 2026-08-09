@@ -13,6 +13,8 @@
 
 enum {
 	SIPPYMODEM_SIP_ACCOUNT_URI_MAX = SIPPYMODEM_CONFIG_TEXT_MAX * 2 + 16,
+	SIPPYMODEM_SIP_CALL_IDENTITY_MAX = 256,
+	SIPPYMODEM_SIP_CALL_REASON_MAX = 128,
 	SIPPYMODEM_SIP_REGISTRATION_REASON_MAX = 128,
 	SIPPYMODEM_SIP_UNREGISTER_TIMEOUT_MS = 1000,
 };
@@ -22,6 +24,7 @@ struct sippymodem_sip_signaling {
 	struct sippymodem_sip_signaling_callbacks callbacks;
 	pjsua_transport_id transport_id;
 	pjsua_acc_id account_id;
+	pjsua_call_id call_id;
 	int last_library_status;
 	unsigned int local_port;
 	unsigned int callback_depth;
@@ -30,10 +33,17 @@ struct sippymodem_sip_signaling {
 	char registrar_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
 	char proxy_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
 	char contact_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
+	char target_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
+	char call_remote_identity[SIPPYMODEM_SIP_CALL_IDENTITY_MAX];
+	char call_reason[SIPPYMODEM_SIP_CALL_REASON_MAX];
 	char registration_reason[SIPPYMODEM_SIP_REGISTRATION_REASON_MAX];
 	const char *account_user;
 	const char *account_password;
+	const char *account_domain;
+	enum sippymodem_sip_call_direction call_direction;
+	enum sippymodem_sip_call_state call_state;
 	enum sippymodem_sip_registration_state registration_state;
+	bool call_starting;
 	bool registration_may_exist;
 	bool account_configured;
 	bool library_created;
@@ -99,6 +109,83 @@ static void pjsip_trace(int level, const char *data, int length)
 			   data, (size_t)length);
 }
 
+static void copy_pj_text(char *output, size_t capacity,
+			 const pj_str_t *text)
+{
+	size_t size = 0;
+
+	if (text != NULL && text->ptr != NULL && text->slen > 0) {
+		size = (size_t)text->slen;
+		if (size >= capacity)
+			size = capacity - 1;
+		memcpy(output, text->ptr, size);
+	}
+	output[size] = '\0';
+}
+
+static void emit_call_event(struct sippymodem_sip_signaling *signaling,
+			    enum sippymodem_sip_call_state state,
+			    const pjsua_call_info *info)
+{
+	struct sippymodem_sip_call_event event;
+
+	if (signaling == NULL)
+		return;
+	copy_pj_text(signaling->call_remote_identity,
+		     sizeof(signaling->call_remote_identity),
+		     info != NULL ? &info->remote_info : NULL);
+	copy_pj_text(signaling->call_reason, sizeof(signaling->call_reason),
+		     info != NULL ? &info->last_status_text : NULL);
+	signaling->call_state = state;
+	if (signaling->callbacks.call_changed == NULL)
+		return;
+	event.direction = signaling->call_direction;
+	event.state = state;
+	event.status_code =
+		info != NULL && info->last_status > 0
+			? (unsigned int)info->last_status
+			: 0;
+	event.reason = signaling->call_reason;
+	event.remote_identity = signaling->call_remote_identity;
+	callback_enter(signaling);
+	signaling->callbacks.call_changed(signaling->callbacks.context, &event);
+	callback_leave(signaling);
+}
+
+static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
+{
+	struct sippymodem_sip_signaling *signaling = active_signaling;
+	pjsua_call_info info;
+
+	(void)event;
+	if (signaling == NULL ||
+	    (call_id != signaling->call_id && !signaling->call_starting) ||
+	    pjsua_call_get_info(call_id, &info) != PJ_SUCCESS)
+		return;
+	if (signaling->call_starting)
+		signaling->call_id = call_id;
+	switch (info.state) {
+	case PJSIP_INV_STATE_CALLING:
+		emit_call_event(signaling, SIPPYMODEM_SIP_CALL_DIALING, &info);
+		break;
+	case PJSIP_INV_STATE_EARLY:
+		emit_call_event(signaling, SIPPYMODEM_SIP_CALL_EARLY, &info);
+		break;
+	case PJSIP_INV_STATE_CONFIRMED:
+		emit_call_event(signaling, SIPPYMODEM_SIP_CALL_CONNECTED, &info);
+		break;
+	case PJSIP_INV_STATE_DISCONNECTED:
+		signaling->call_id = PJSUA_INVALID_ID;
+		signaling->call_starting = false;
+		emit_call_event(signaling, SIPPYMODEM_SIP_CALL_IDLE, &info);
+		break;
+	case PJSIP_INV_STATE_NULL:
+	case PJSIP_INV_STATE_INCOMING:
+	case PJSIP_INV_STATE_CONNECTING:
+		break;
+	}
+}
+
 static void emit_registration_event(
 	struct sippymodem_sip_signaling *signaling,
 	enum sippymodem_sip_registration_state state,
@@ -106,17 +193,10 @@ static void emit_registration_event(
 	unsigned int expires_seconds, const pj_str_t *reason)
 {
 	struct sippymodem_sip_registration_event event;
-	size_t reason_size = 0;
-
 	if (signaling == NULL)
 		return;
-	if (reason != NULL && reason->ptr != NULL && reason->slen > 0) {
-		reason_size = (size_t)reason->slen;
-		if (reason_size >= sizeof(signaling->registration_reason))
-			reason_size = sizeof(signaling->registration_reason) - 1;
-		memcpy(signaling->registration_reason, reason->ptr, reason_size);
-	}
-	signaling->registration_reason[reason_size] = '\0';
+	copy_pj_text(signaling->registration_reason,
+		     sizeof(signaling->registration_reason), reason);
 	signaling->registration_state = state;
 	if (state == SIPPYMODEM_SIP_REGISTRATION_REGISTERED)
 		signaling->registration_may_exist = true;
@@ -196,7 +276,8 @@ static bool account_text_is_terminated(const struct sippymodem_sip_config *sip)
 	       text_is_terminated(sip->registrar_uri,
 				  sizeof(sip->registrar_uri)) &&
 	       text_is_terminated(sip->proxy_uri, sizeof(sip->proxy_uri)) &&
-	       text_is_terminated(sip->realm, sizeof(sip->realm));
+	       text_is_terminated(sip->realm, sizeof(sip->realm)) &&
+	       text_is_terminated(sip->target, sizeof(sip->target));
 }
 
 static enum sippymodem_sip_signaling_result validate_config(
@@ -232,7 +313,7 @@ static enum sippymodem_sip_signaling_result resolve_account(
 	const char *user = sip->user;
 	const char *password = sip->password;
 	const char *domain = sip->domain[0] != '\0' ? sip->domain : sip->server;
-	bool any_credentials;
+	bool any_authentication;
 	bool all_credentials;
 	int length;
 
@@ -241,8 +322,10 @@ static enum sippymodem_sip_signaling_result resolve_account(
 	signaling->registrar_uri[0] = '\0';
 	signaling->proxy_uri[0] = '\0';
 	signaling->contact_uri[0] = '\0';
+	signaling->target_uri[0] = '\0';
 	signaling->account_user = NULL;
 	signaling->account_password = NULL;
+	signaling->account_domain = NULL;
 	if (sip->login[0] != '\0') {
 		char *password_separator;
 		char *domain_separator;
@@ -262,13 +345,14 @@ static enum sippymodem_sip_signaling_result resolve_account(
 		domain = domain_separator;
 	}
 
-	any_credentials = user[0] != '\0' || password[0] != '\0' ||
-			  domain[0] != '\0';
+	any_authentication = user[0] != '\0' || password[0] != '\0';
 	all_credentials = user[0] != '\0' && password[0] != '\0' &&
 			  domain[0] != '\0';
 	if (!all_credentials) {
-		if (any_credentials || sip->registration_enabled)
+		if (any_authentication || sip->registration_enabled)
 			return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+		signaling->account_domain =
+			domain[0] != '\0' ? domain : NULL;
 		return SIPPYMODEM_SIP_SIGNALING_OK;
 	}
 	if (strchr(user, '@') != NULL || strchr(user, ':') != NULL ||
@@ -302,6 +386,7 @@ static enum sippymodem_sip_signaling_result resolve_account(
 
 	signaling->account_user = user;
 	signaling->account_password = password;
+	signaling->account_domain = domain;
 	signaling->account_configured = true;
 	return SIPPYMODEM_SIP_SIGNALING_OK;
 }
@@ -345,6 +430,7 @@ static enum sippymodem_sip_signaling_result initialize_library(
 	user_agent.thread_cnt = 0;
 	user_agent.max_calls = 1;
 	user_agent.user_agent = pj_str((char *)"sippymodem");
+	user_agent.cb.on_call_state = &pjsip_call_changed;
 	user_agent.cb.on_reg_started = &pjsip_registration_started;
 	user_agent.cb.on_reg_state2 = &pjsip_registration_changed;
 	pjsua_logging_config_default(&logging);
@@ -473,6 +559,9 @@ static enum sippymodem_sip_signaling_result close_now(
 		destroy_flags = signaling->registration_may_exist
 				? 0
 				: PJSUA_DESTROY_NO_RX_MSG;
+	if (signaling->call_id != PJSUA_INVALID_ID &&
+	    destroy_flags == PJSUA_DESTROY_NO_NETWORK)
+		destroy_flags = PJSUA_DESTROY_NO_RX_MSG;
 	if (signaling->library_created)
 		status = pjsua_destroy2(destroy_flags);
 	signaling->library_created = false;
@@ -481,6 +570,9 @@ static enum sippymodem_sip_signaling_result close_now(
 	signaling->close_requested = false;
 	signaling->transport_id = PJSUA_INVALID_ID;
 	signaling->account_id = PJSUA_INVALID_ID;
+	signaling->call_id = PJSUA_INVALID_ID;
+	signaling->call_state = SIPPYMODEM_SIP_CALL_IDLE;
+	signaling->call_starting = false;
 	signaling->local_port = 0;
 	if (active_signaling == signaling)
 		active_signaling = NULL;
@@ -507,6 +599,8 @@ struct sippymodem_sip_signaling *sippymodem_sip_signaling_create(
 		signaling->callbacks = *callbacks;
 	signaling->transport_id = PJSUA_INVALID_ID;
 	signaling->account_id = PJSUA_INVALID_ID;
+	signaling->call_id = PJSUA_INVALID_ID;
+	signaling->call_state = SIPPYMODEM_SIP_CALL_IDLE;
 	signaling->registration_state = config->sip.registration_enabled
 						? SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED
 						: SIPPYMODEM_SIP_REGISTRATION_DISABLED;
@@ -628,6 +722,88 @@ enum sippymodem_sip_signaling_result sippymodem_sip_signaling_step(
 	return SIPPYMODEM_SIP_SIGNALING_OK;
 }
 
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_dial(
+	struct sippymodem_sip_signaling *signaling, const char *target)
+{
+	enum sippymodem_sip_uri_result uri_result;
+	pjsua_call_info info;
+	pjsua_call_id call_id = PJSUA_INVALID_ID;
+	pj_str_t target_uri;
+	pj_status_t status;
+
+	if (signaling == NULL)
+		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+	if (!signaling->opened)
+		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	if (signaling->call_id != PJSUA_INVALID_ID || signaling->call_starting)
+		return SIPPYMODEM_SIP_SIGNALING_CALL_ACTIVE;
+	uri_result = sippymodem_sip_uri_format_target(
+		signaling->target_uri, sizeof(signaling->target_uri), target,
+		signaling->config.sip.target, signaling->account_domain);
+	if (uri_result != SIPPYMODEM_SIP_URI_OK)
+		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+
+	target_uri = pj_str(signaling->target_uri);
+	signaling->call_direction = SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING;
+	signaling->call_starting = true;
+	status = pjsua_call_make_call(signaling->account_id, &target_uri, NULL,
+				      NULL, NULL, &call_id);
+	if (status != PJ_SUCCESS) {
+		signaling->call_starting = false;
+		signaling->call_id = PJSUA_INVALID_ID;
+		if (signaling->call_state != SIPPYMODEM_SIP_CALL_IDLE)
+			emit_call_event(signaling, SIPPYMODEM_SIP_CALL_IDLE,
+					NULL);
+		emit_library_error(signaling, "place SIP call", status);
+		if (signaling->close_requested)
+			(void)close_now(signaling);
+		return SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR;
+	}
+	if (signaling->call_starting) {
+		signaling->call_starting = false;
+		if (signaling->call_id == PJSUA_INVALID_ID)
+			signaling->call_id = call_id;
+		if (signaling->call_state == SIPPYMODEM_SIP_CALL_IDLE) {
+			if (pjsua_call_get_info(call_id, &info) == PJ_SUCCESS)
+				emit_call_event(signaling,
+						SIPPYMODEM_SIP_CALL_DIALING,
+						&info);
+			else
+				emit_call_event(signaling,
+						SIPPYMODEM_SIP_CALL_DIALING,
+						NULL);
+		}
+	}
+	if (signaling->close_requested)
+		return close_now(signaling);
+	return SIPPYMODEM_SIP_SIGNALING_OK;
+}
+
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_hangup(
+	struct sippymodem_sip_signaling *signaling)
+{
+	pjsua_call_id call_id;
+	pj_status_t status;
+
+	if (signaling == NULL)
+		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+	if (!signaling->opened)
+		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	call_id = signaling->call_id;
+	if (call_id == PJSUA_INVALID_ID)
+		return SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	status = pjsua_call_hangup(call_id, 0, NULL, NULL);
+	if (status != PJ_SUCCESS) {
+		emit_library_error(signaling, "hang up SIP call", status);
+		if (signaling->close_requested)
+			(void)close_now(signaling);
+		return SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR;
+	}
+	if (signaling->close_requested)
+		return close_now(signaling);
+	return SIPPYMODEM_SIP_SIGNALING_OK;
+}
+
 bool sippymodem_sip_signaling_is_open(
 	const struct sippymodem_sip_signaling *signaling)
 {
@@ -656,6 +832,13 @@ sippymodem_sip_signaling_registration_state(
 				 : SIPPYMODEM_SIP_REGISTRATION_DISABLED;
 }
 
+enum sippymodem_sip_call_state sippymodem_sip_signaling_call_state(
+	const struct sippymodem_sip_signaling *signaling)
+{
+	return signaling != NULL ? signaling->call_state
+				 : SIPPYMODEM_SIP_CALL_IDLE;
+}
+
 int sippymodem_sip_signaling_last_library_status(
 	const struct sippymodem_sip_signaling *signaling)
 {
@@ -674,6 +857,10 @@ const char *sippymodem_sip_signaling_result_name(
 		return "signaling is not open";
 	case SIPPYMODEM_SIP_SIGNALING_BUSY:
 		return "another signaling instance is open";
+	case SIPPYMODEM_SIP_SIGNALING_CALL_ACTIVE:
+		return "a SIP call is already active";
+	case SIPPYMODEM_SIP_SIGNALING_NO_CALL:
+		return "no SIP call is active";
 	case SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR:
 		return "signaling library error";
 	}
@@ -700,4 +887,22 @@ const char *sippymodem_sip_registration_state_name(
 		return "unregistration failed";
 	}
 	return "unknown registration state";
+}
+
+const char *sippymodem_sip_call_state_name(
+	enum sippymodem_sip_call_state state)
+{
+	switch (state) {
+	case SIPPYMODEM_SIP_CALL_IDLE:
+		return "idle";
+	case SIPPYMODEM_SIP_CALL_DIALING:
+		return "dialing";
+	case SIPPYMODEM_SIP_CALL_INCOMING_PENDING:
+		return "incoming";
+	case SIPPYMODEM_SIP_CALL_EARLY:
+		return "early";
+	case SIPPYMODEM_SIP_CALL_CONNECTED:
+		return "connected";
+	}
+	return "unknown call state";
 }

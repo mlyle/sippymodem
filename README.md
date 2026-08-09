@@ -29,10 +29,10 @@ packets, bounded receive playout, transmit timeline continuity, UDP peer
 handling, and lifecycle-ordered recording hooks without linking the legacy DSP
 object or requiring external vectors.
 
-The current RTP work is a tested, allocation-free media stream connected to a
-bounded, nonblocking UDP endpoint. It is not yet connected to SIP call control
-or a native V.21 core, so this transitional tree does not yet place a V.21
-call.
+The SIP adapter can place and cancel one validated outbound call while
+reporting bounded call-progress events. The tested, allocation-free RTP stream
+is not yet attached to that call or to a native V.21 core, so this transitional
+tree does not yet place a V.21 modem call.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test

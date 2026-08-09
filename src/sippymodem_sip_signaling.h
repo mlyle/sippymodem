@@ -13,6 +13,8 @@ enum sippymodem_sip_signaling_result {
 	SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT,
 	SIPPYMODEM_SIP_SIGNALING_NOT_OPEN,
 	SIPPYMODEM_SIP_SIGNALING_BUSY,
+	SIPPYMODEM_SIP_SIGNALING_CALL_ACTIVE,
+	SIPPYMODEM_SIP_SIGNALING_NO_CALL,
 	SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR,
 };
 
@@ -25,6 +27,27 @@ struct sippymodem_sip_signaling_error {
 enum sippymodem_sip_trace_origin {
 	SIPPYMODEM_SIP_TRACE_ADAPTER,
 	SIPPYMODEM_SIP_TRACE_LIBRARY,
+};
+
+enum sippymodem_sip_call_direction {
+	SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING,
+	SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING,
+};
+
+enum sippymodem_sip_call_state {
+	SIPPYMODEM_SIP_CALL_IDLE,
+	SIPPYMODEM_SIP_CALL_DIALING,
+	SIPPYMODEM_SIP_CALL_INCOMING_PENDING,
+	SIPPYMODEM_SIP_CALL_EARLY,
+	SIPPYMODEM_SIP_CALL_CONNECTED,
+};
+
+struct sippymodem_sip_call_event {
+	enum sippymodem_sip_call_direction direction;
+	enum sippymodem_sip_call_state state;
+	unsigned int status_code;
+	const char *reason;
+	const char *remote_identity;
 };
 
 enum sippymodem_sip_registration_state {
@@ -66,6 +89,8 @@ struct sippymodem_sip_signaling_callbacks {
 	void (*registration_changed)(
 		void *context,
 		const struct sippymodem_sip_registration_event *event);
+	void (*call_changed)(void *context,
+			     const struct sippymodem_sip_call_event *event);
 };
 
 struct sippymodem_sip_signaling;
@@ -88,6 +113,10 @@ enum sippymodem_sip_signaling_result sippymodem_sip_signaling_close(
 /* Poll signaling without worker threads; timeout_ms may be zero. */
 enum sippymodem_sip_signaling_result sippymodem_sip_signaling_step(
 	struct sippymodem_sip_signaling *signaling, unsigned int timeout_ms);
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_dial(
+	struct sippymodem_sip_signaling *signaling, const char *target);
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_hangup(
+	struct sippymodem_sip_signaling *signaling);
 
 bool sippymodem_sip_signaling_is_open(
 	const struct sippymodem_sip_signaling *signaling);
@@ -99,6 +128,8 @@ const char *sippymodem_sip_signaling_identity_uri(
 enum sippymodem_sip_registration_state
 sippymodem_sip_signaling_registration_state(
 	const struct sippymodem_sip_signaling *signaling);
+enum sippymodem_sip_call_state sippymodem_sip_signaling_call_state(
+	const struct sippymodem_sip_signaling *signaling);
 int sippymodem_sip_signaling_last_library_status(
 	const struct sippymodem_sip_signaling *signaling);
 
@@ -106,5 +137,7 @@ const char *sippymodem_sip_signaling_result_name(
 	enum sippymodem_sip_signaling_result result);
 const char *sippymodem_sip_registration_state_name(
 	enum sippymodem_sip_registration_state state);
+const char *sippymodem_sip_call_state_name(
+	enum sippymodem_sip_call_state state);
 
 #endif
