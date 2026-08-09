@@ -178,6 +178,12 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o
+V23_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v23
+V23_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v23.o \
+	$(NATIVE_CORE_OBJECTS) \
+	$(BUILD_DIR)/sippymodem_dc_filter.o \
+	$(BUILD_DIR)/sippymodem_fsk.o \
+	$(BUILD_DIR)/sippymodem_v23_datapump.o
 FSK_INTEGRATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_fsk_integration
 FSK_INTEGRATION_TEST_OBJECTS := \
@@ -202,7 +208,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(RUNTIME_TEST_BINARY) \
 	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY) $(MAIN_TEST_BINARY) \
 	$(DC_FILTER_TEST_BINARY) $(NATIVE_CORE_TEST_BINARY) \
-	$(FSK_TEST_BINARY) $(FSK_INTEGRATION_TEST_BINARY)
+	$(FSK_TEST_BINARY) $(V23_TEST_BINARY) $(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
 endif
@@ -226,7 +232,8 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(LOOP_TEST_OBJECTS:.o=.d) $(MAIN_TEST_OBJECTS:.o=.d) \
 	$(DC_FILTER_TEST_OBJECTS:.o=.d) $(NATIVE_CORE_TEST_OBJECTS:.o=.d) \
-	$(FSK_TEST_OBJECTS:.o=.d) $(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
+	$(FSK_TEST_OBJECTS:.o=.d) $(V23_TEST_OBJECTS:.o=.d) \
+	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
 endif
@@ -266,6 +273,7 @@ test: $(TEST_BINARIES)
 	./$(DC_FILTER_TEST_BINARY)
 	./$(NATIVE_CORE_TEST_BINARY)
 	./$(FSK_TEST_BINARY)
+	./$(V23_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 	./$(PJSIP_TEST_BINARY)
@@ -364,6 +372,9 @@ $(NATIVE_CORE_TEST_BINARY): $(NATIVE_CORE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(FSK_TEST_BINARY): $(FSK_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V23_TEST_BINARY): $(V23_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(FSK_INTEGRATION_TEST_BINARY): $(FSK_INTEGRATION_TEST_OBJECTS)
@@ -496,6 +507,10 @@ $(BUILD_DIR)/sippymodem_fsk.o: ../src/sippymodem_fsk.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/sippymodem_fsk300_datapump.o: \
 	../src/sippymodem_fsk300_datapump.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v23_datapump.o: \
+	../src/sippymodem_v23_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/native_%.o: ../src/%.c | $(BUILD_DIR)

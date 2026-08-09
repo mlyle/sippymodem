@@ -46,6 +46,15 @@ static const struct sippymodem_fsk_channel channel_1200_baud = {
 	.metric_smoothing_shift = 1,
 };
 
+static const struct sippymodem_fsk_channel channel_75_baud = {
+	.sample_rate = TEST_SAMPLE_RATE,
+	.baud = 75,
+	.mark_frequency_hz = 390,
+	.space_frequency_hz = 450,
+	.detector_window = 128,
+	.metric_smoothing_shift = 1,
+};
+
 struct loopback_result {
 	uint8_t decoded[DECODED_CAPACITY];
 	size_t decoded_count;
@@ -257,7 +266,8 @@ static bool test_v21_channel_pairs(void)
 
 static bool test_configurable_rate_and_tone_pair(void)
 {
-	return check_payload(&channel_1200_baud, false);
+	return check_payload(&channel_1200_baud, false) &&
+	       check_payload(&channel_75_baud, false);
 }
 
 int main(void)
