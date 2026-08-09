@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v21_datapump.h"
+#include "sippymodem_fsk300_datapump.h"
 
 #include "modem.h"
 #include "modem_param.h"
@@ -12,54 +12,54 @@
 #include <string.h>
 
 enum {
-	V21_MARK_ACQUIRE_SAMPLES = 480,
-	V21_ANSWER_GUARD_SAMPLES = 1280,
-	V21_ORIGINATE_MARK_SAMPLES = 6400,
-	V21_CARRIER_LOSS_SAMPLES = 1600,
-	V21_MIN_LINE_POWER = 10000000,
-	V21_MIN_DOMINANCE_Q8 = 180,
+	FSK300_MARK_ACQUIRE_SAMPLES = 480,
+	FSK300_ANSWER_GUARD_SAMPLES = 1280,
+	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
+	FSK300_CARRIER_LOSS_SAMPLES = 1600,
+	FSK300_MIN_LINE_POWER = 10000000,
+	FSK300_MIN_DOMINANCE_Q8 = 180,
 	V21_CHANNEL_1_MARK_HZ = 980,
 	V21_CHANNEL_1_SPACE_HZ = 1180,
 	V21_CHANNEL_2_MARK_HZ = 1650,
 	V21_CHANNEL_2_SPACE_HZ = 1850,
-	V21_TRANSMIT_AMPLITUDE = 8192,
-	V21_METRIC_SMOOTHING_SHIFT = 2,
-	V21_DETECTOR_WINDOW =
-		(MODEM_RATE + SIPPYMODEM_V21_BIT_RATE / 2) /
-		SIPPYMODEM_V21_BIT_RATE,
+	FSK300_TRANSMIT_AMPLITUDE = 8192,
+	FSK300_METRIC_SMOOTHING_SHIFT = 2,
+	FSK300_DETECTOR_WINDOW =
+		(MODEM_RATE + SIPPYMODEM_FSK300_BIT_RATE / 2) /
+		SIPPYMODEM_FSK300_BIT_RATE,
 };
 
 /* ITU-T V.21 assigns channel 1 to the originator and channel 2 to the
  * answerer. Mark is binary one for both channels. */
 static const struct sippymodem_fsk_channel v21_channel_1 = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_V21_BIT_RATE,
+	.baud = SIPPYMODEM_FSK300_BIT_RATE,
 	.mark_frequency_hz = V21_CHANNEL_1_MARK_HZ,
 	.space_frequency_hz = V21_CHANNEL_1_SPACE_HZ,
-	.detector_window = V21_DETECTOR_WINDOW,
-	.metric_smoothing_shift = V21_METRIC_SMOOTHING_SHIFT,
+	.detector_window = FSK300_DETECTOR_WINDOW,
+	.metric_smoothing_shift = FSK300_METRIC_SMOOTHING_SHIFT,
 };
 
 static const struct sippymodem_fsk_channel v21_channel_2 = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_V21_BIT_RATE,
+	.baud = SIPPYMODEM_FSK300_BIT_RATE,
 	.mark_frequency_hz = V21_CHANNEL_2_MARK_HZ,
 	.space_frequency_hz = V21_CHANNEL_2_SPACE_HZ,
-	.detector_window = V21_DETECTOR_WINDOW,
-	.metric_smoothing_shift = V21_METRIC_SMOOTHING_SHIFT,
+	.detector_window = FSK300_DETECTOR_WINDOW,
+	.metric_smoothing_shift = FSK300_METRIC_SMOOTHING_SHIFT,
 };
 
-enum sippymodem_v21_training_state {
-	V21_TRAINING_WAIT_MARK,
-	V21_TRAINING_SEND_MARK,
-	V21_TRAINING_ONLINE,
+enum sippymodem_fsk300_training_state {
+	FSK300_TRAINING_WAIT_MARK,
+	FSK300_TRAINING_SEND_MARK,
+	FSK300_TRAINING_ONLINE,
 };
 
-struct sippymodem_v21_datapump {
+struct sippymodem_fsk300_datapump {
 	struct dp dp;
 	struct sippymodem_fsk_transmitter transmitter;
 	struct sippymodem_fsk_receiver receiver;
-	enum sippymodem_v21_training_state training_state;
+	enum sippymodem_fsk300_training_state training_state;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint64_t sent_mark_samples;
@@ -70,24 +70,25 @@ struct sippymodem_v21_datapump {
 	bool originator;
 };
 
-static struct dp *create_v21(
+static struct dp *create_fsk300(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations);
-static int delete_v21(struct dp *dp);
-static int process_v21(struct dp *dp, void *receive, void *transmit, int count);
+static int delete_fsk300(struct dp *dp);
+static int process_fsk300(
+	struct dp *dp, void *receive, void *transmit, int count);
 
-static struct dp_operations v21_operations = {
+static struct dp_operations fsk300_operations = {
 	.name = "sippymodem V.21",
-	.create = create_v21,
-	.delete = delete_v21,
-	.process = process_v21,
+	.create = create_fsk300,
+	.delete = delete_fsk300,
+	.process = process_fsk300,
 };
 
-static struct sippymodem_v21_datapump *v21_from_dp(struct dp *dp)
+static struct sippymodem_fsk300_datapump *fsk300_from_dp(struct dp *dp)
 {
-	struct sippymodem_v21_datapump *datapump;
+	struct sippymodem_fsk300_datapump *datapump;
 
-	if (dp == NULL || dp->id != DP_V21 || dp->op != &v21_operations ||
+	if (dp == NULL || dp->id != DP_V21 || dp->op != &fsk300_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
@@ -103,17 +104,17 @@ static uint64_t training_timeout(struct modem *modem)
 	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
 }
 
-static struct dp *create_v21(
+static struct dp *create_fsk300(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
 {
-	struct sippymodem_v21_datapump *datapump;
+	struct sippymodem_fsk300_datapump *datapump;
 	const struct sippymodem_fsk_channel *transmit_channel;
 	const struct sippymodem_fsk_channel *receive_channel;
 
 	if (modem == NULL || id != DP_V21 ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
-	    max_fragment != MODEM_FRAG || operations != &v21_operations ||
+	    max_fragment != MODEM_FRAG || operations != &fsk300_operations ||
 	    operations->use_count == INT_MAX)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
@@ -126,7 +127,7 @@ static struct dp *create_v21(
 						&v21_channel_1;
 	if (sippymodem_fsk_transmitter_init(
 		    &datapump->transmitter, transmit_channel,
-		    V21_TRANSMIT_AMPLITUDE) !=
+		    FSK300_TRANSMIT_AMPLITUDE) !=
 		    SIPPYMODEM_FSK_OK ||
 	    sippymodem_fsk_receiver_init(&datapump->receiver, receive_channel) !=
 		    SIPPYMODEM_FSK_OK) {
@@ -140,19 +141,19 @@ static struct dp *create_v21(
 		.op = operations,
 		.dp_data = datapump,
 	};
-	datapump->training_state = V21_TRAINING_WAIT_MARK;
+	datapump->training_state = FSK300_TRAINING_WAIT_MARK;
 	datapump->training_timeout_samples = training_timeout(modem);
 	operations->use_count++;
 	return &datapump->dp;
 }
 
-static int delete_v21(struct dp *dp)
+static int delete_fsk300(struct dp *dp)
 {
-	struct sippymodem_v21_datapump *datapump = v21_from_dp(dp);
+	struct sippymodem_fsk300_datapump *datapump = fsk300_from_dp(dp);
 
-	if (datapump == NULL || v21_operations.use_count <= 0)
+	if (datapump == NULL || fsk300_operations.use_count <= 0)
 		return -1;
-	v21_operations.use_count--;
+	fsk300_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -162,8 +163,8 @@ static bool mark_is_present(
 	const struct sippymodem_fsk_measurement *measurement)
 {
 	return measurement->ready &&
-	       measurement->line_power >= V21_MIN_LINE_POWER &&
-	       measurement->dominance_q8 >= V21_MIN_DOMINANCE_Q8 &&
+	       measurement->line_power >= FSK300_MIN_LINE_POWER &&
+	       measurement->dominance_q8 >= FSK300_MIN_DOMINANCE_Q8 &&
 	       measurement->mark_power > measurement->space_power;
 }
 
@@ -171,12 +172,12 @@ static bool carrier_is_present(
 	const struct sippymodem_fsk_measurement *measurement)
 {
 	return measurement->ready &&
-	       measurement->line_power >= V21_MIN_LINE_POWER &&
-	       measurement->dominance_q8 >= V21_MIN_DOMINANCE_Q8;
+	       measurement->line_power >= FSK300_MIN_LINE_POWER &&
+	       measurement->dominance_q8 >= FSK300_MIN_DOMINANCE_Q8;
 }
 
 static void generate_mark(
-	struct sippymodem_v21_datapump *datapump,
+	struct sippymodem_fsk300_datapump *datapump,
 	int16_t *transmit,
 	int count)
 {
@@ -189,7 +190,7 @@ static void generate_mark(
 }
 
 static void generate_data(
-	struct sippymodem_v21_datapump *datapump,
+	struct sippymodem_fsk300_datapump *datapump,
 	int16_t *transmit,
 	int count)
 {
@@ -218,7 +219,7 @@ static void generate_data(
 }
 
 static void receive_samples(
-	struct sippymodem_v21_datapump *datapump,
+	struct sippymodem_fsk300_datapump *datapump,
 	const int16_t *receive,
 	int count,
 	bool deliver_bits)
@@ -235,7 +236,7 @@ static void receive_samples(
 }
 
 static int advance_training(
-	struct sippymodem_v21_datapump *datapump,
+	struct sippymodem_fsk300_datapump *datapump,
 	const struct sippymodem_fsk_measurement *measurement,
 	unsigned int count)
 {
@@ -244,33 +245,33 @@ static int advance_training(
 		return DPSTAT_ERROR;
 	datapump->training_samples += count;
 
-	if (datapump->training_state == V21_TRAINING_WAIT_MARK) {
+	if (datapump->training_state == FSK300_TRAINING_WAIT_MARK) {
 		if (mark_is_present(measurement)) {
 			datapump->remote_mark_samples += count;
 		} else {
 			datapump->remote_mark_samples = 0;
 		}
-		if (datapump->remote_mark_samples < V21_MARK_ACQUIRE_SAMPLES)
+		if (datapump->remote_mark_samples < FSK300_MARK_ACQUIRE_SAMPLES)
 			return DPSTAT_OK;
-		datapump->training_state = V21_TRAINING_SEND_MARK;
+		datapump->training_state = FSK300_TRAINING_SEND_MARK;
 		datapump->sent_mark_samples = 0;
 		return DPSTAT_OK;
 	}
-	if (datapump->training_state == V21_TRAINING_SEND_MARK) {
+	if (datapump->training_state == FSK300_TRAINING_SEND_MARK) {
 		uint64_t required = datapump->originator ?
-			V21_ORIGINATE_MARK_SAMPLES : V21_ANSWER_GUARD_SAMPLES;
+			FSK300_ORIGINATE_MARK_SAMPLES : FSK300_ANSWER_GUARD_SAMPLES;
 
 		datapump->sent_mark_samples += count;
 		if (datapump->sent_mark_samples < required)
 			return DPSTAT_OK;
 		if (modem_set_param(
 			    datapump->dp.modem, MDMPRM_TX_RATE,
-			    SIPPYMODEM_V21_BIT_RATE) != 0 ||
+			    SIPPYMODEM_FSK300_BIT_RATE) != 0 ||
 		    modem_set_param(
 			    datapump->dp.modem, MDMPRM_RX_RATE,
-			    SIPPYMODEM_V21_BIT_RATE) != 0)
+			    SIPPYMODEM_FSK300_BIT_RATE) != 0)
 			return DPSTAT_ERROR;
-		datapump->training_state = V21_TRAINING_ONLINE;
+		datapump->training_state = FSK300_TRAINING_ONLINE;
 		datapump->missing_carrier_samples = 0;
 		datapump->dp.status = DPSTAT_CONNECT;
 		return DPSTAT_CONNECT;
@@ -278,10 +279,10 @@ static int advance_training(
 	return DPSTAT_OK;
 }
 
-static int process_v21(struct dp *dp, void *receive_buffer,
+static int process_fsk300(struct dp *dp, void *receive_buffer,
 		       void *transmit_buffer, int count)
 {
-	struct sippymodem_v21_datapump *datapump = v21_from_dp(dp);
+	struct sippymodem_fsk300_datapump *datapump = fsk300_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	struct sippymodem_fsk_measurement measurement;
@@ -292,42 +293,42 @@ static int process_v21(struct dp *dp, void *receive_buffer,
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	if (datapump->training_state == V21_TRAINING_WAIT_MARK &&
+	if (datapump->training_state == FSK300_TRAINING_WAIT_MARK &&
 	    datapump->originator) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
-	} else if (datapump->training_state == V21_TRAINING_ONLINE) {
+	} else if (datapump->training_state == FSK300_TRAINING_ONLINE) {
 		generate_data(datapump, transmit, count);
 	} else {
 		generate_mark(datapump, transmit, count);
 	}
 	receive_samples(
 		datapump, receive, count,
-		datapump->training_state == V21_TRAINING_ONLINE);
+		datapump->training_state == FSK300_TRAINING_ONLINE);
 	measurement = sippymodem_fsk_receiver_measure(&datapump->receiver);
 
-	if (datapump->training_state != V21_TRAINING_ONLINE)
+	if (datapump->training_state != FSK300_TRAINING_ONLINE)
 		return advance_training(datapump, &measurement, (unsigned int)count);
 	if (carrier_is_present(&measurement)) {
 		datapump->missing_carrier_samples = 0;
 	} else if (datapump->missing_carrier_samples <
-		   V21_CARRIER_LOSS_SAMPLES) {
+		   FSK300_CARRIER_LOSS_SAMPLES) {
 		datapump->missing_carrier_samples += (unsigned int)count;
 	}
-	return datapump->missing_carrier_samples >= V21_CARRIER_LOSS_SAMPLES ?
+	return datapump->missing_carrier_samples >= FSK300_CARRIER_LOSS_SAMPLES ?
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
-int sippymodem_v21_datapump_register(void)
+int sippymodem_fsk300_datapump_register(void)
 {
-	return modem_dp_register(DP_V21, &v21_operations);
+	return modem_dp_register(DP_V21, &fsk300_operations);
 }
 
-int sippymodem_v21_datapump_unregister(void)
+int sippymodem_fsk300_datapump_unregister(void)
 {
-	return modem_dp_deregister(DP_V21, &v21_operations);
+	return modem_dp_deregister(DP_V21, &fsk300_operations);
 }
 
-bool sippymodem_v21_datapump_is_busy(void)
+bool sippymodem_fsk300_datapump_is_busy(void)
 {
-	return v21_operations.use_count != 0;
+	return fsk300_operations.use_count != 0;
 }
