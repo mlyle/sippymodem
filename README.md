@@ -26,6 +26,10 @@ Run the native tests with `make test`. The initial suite exercises the modem's
 asynchronous character packing and HDLC framing without linking the legacy DSP
 object.
 
+Run `make install-hooks` once per checkout to enable the repository's pre-commit
+gate. It rejects staged whitespace errors and commits that fail the native test
+suite.
+
 Historical Smart Link and distribution documentation is retained under
 `docs/legacy/`. It describes the original package and is not current build or
 installation guidance. The original license is preserved at `src/COPYING`.

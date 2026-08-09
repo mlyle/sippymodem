@@ -1,4 +1,4 @@
-.PHONY: all clean slmodemd modem_test test
+.PHONY: all clean install-hooks slmodemd modem_test test
 
 all:
 	$(MAKE) -C src all
@@ -12,3 +12,6 @@ clean:
 
 test:
 	$(MAKE) -C tests test
+
+install-hooks:
+	git config core.hooksPath .githooks
