@@ -96,6 +96,7 @@ enum sippymodem_datapumps_result sippymodem_datapumps_start(
 	if (datapumps->call_progress_registered || datapumps->fsk300_registered ||
 	    modem_dp_get_registered_ops(DP_CALLPROG) != NULL ||
 	    modem_dp_get_registered_ops(DP_V21) != NULL ||
+	    modem_dp_get_registered_ops(DP_B103) != NULL ||
 	    modem_dp_register(DP_CALLPROG, &call_progress_operations) != 0)
 		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
 	if (sippymodem_fsk300_datapump_register() != 0) {

@@ -29,6 +29,35 @@ static int unused_control(
 	return 0;
 }
 
+static struct dp *unused_dp_create(
+	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
+	int max_fragment, struct dp_operations *operations)
+{
+	(void)modem;
+	(void)id;
+	(void)caller;
+	(void)sample_rate;
+	(void)max_fragment;
+	(void)operations;
+	return NULL;
+}
+
+static int unused_dp_delete(struct dp *dp)
+{
+	(void)dp;
+	return 0;
+}
+
+static int unused_dp_process(
+	struct dp *dp, void *receive, void *transmit, int count)
+{
+	(void)dp;
+	(void)receive;
+	(void)transmit;
+	(void)count;
+	return DPSTAT_ERROR;
+}
+
 static bool test_core_has_no_external_dsp_owner(void)
 {
 	struct modem_driver driver = {
@@ -71,28 +100,46 @@ static bool test_owns_source_built_datapump_registrations(void)
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
+	struct dp_operations conflict_operations = {
+		.name = "registration conflict",
+		.create = unused_dp_create,
+		.delete = unused_dp_delete,
+		.process = unused_dp_process,
+	};
 	struct modem *modem;
 	struct dp_operations *operations;
 	struct dp_operations *v21_operations;
+	struct dp_operations *bell103_operations;
 	struct dp *call_progress;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
 
 	CHECK(modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
+		      modem_dp_get_registered_ops(DP_B103) == NULL &&
+		      modem_dp_register(DP_B103, &conflict_operations) == 0 &&
+		      sippymodem_datapumps_start(&datapumps) ==
+			      SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT &&
+		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
+		      modem_dp_get_registered_ops(DP_V21) == NULL &&
+		      modem_dp_get_registered_ops(DP_B103) ==
+			      &conflict_operations &&
+		      modem_dp_deregister(DP_B103, &conflict_operations) == 0 &&
 		      sippymodem_datapumps_start(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_OK &&
 		      sippymodem_datapumps_are_started(&datapumps),
-	      "SIP call-progress registration did not start cleanly");
+	      "source-built data-pump registration did not start cleanly");
 	operations = modem_dp_get_registered_ops(DP_CALLPROG);
 	v21_operations = modem_dp_get_registered_ops(DP_V21);
+	bell103_operations = modem_dp_get_registered_ops(DP_B103);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
 		      operations->hangup == NULL && operations->use_count == 0 &&
 		      v21_operations != NULL && v21_operations->create != NULL &&
 		      v21_operations->delete != NULL &&
 		      v21_operations->process != NULL &&
-		      v21_operations->use_count == 0,
+		      v21_operations->use_count == 0 &&
+		      bell103_operations == v21_operations,
 	      "source-built modem operations were incomplete");
 	CHECK(sippymodem_datapumps_start(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_ALREADY_STARTED &&
@@ -127,6 +174,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      SIPPYMODEM_DATAPUMPS_OK &&
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
+		      modem_dp_get_registered_ops(DP_B103) == NULL &&
 		      !sippymodem_datapumps_are_started(&datapumps) &&
 		      sippymodem_datapumps_stop(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_NOT_STARTED &&

@@ -37,6 +37,12 @@ struct recording_capture {
 	bool invalid;
 };
 
+struct fsk300_test_case {
+	enum DP_ID id;
+	const char *name;
+	const char *selection_command;
+};
+
 static int start_modem(struct modem *modem)
 {
 	(void)modem;
@@ -59,7 +65,7 @@ static int control_modem(
 }
 
 static struct modem_driver integration_driver = {
-	.name = "V.21 SIP media test",
+	.name = "300-bit/s FSK SIP media test",
 	.start = start_modem,
 	.stop = stop_modem,
 	.ioctl = control_modem,
@@ -194,14 +200,16 @@ static bool process_sip_frame(
 		       codec, answerer->transmit, caller->receive, recorder);
 }
 
-static bool modem_is_online(const struct modem *modem)
+static bool modem_is_online(const struct modem *modem, enum DP_ID id)
 {
 	return modem != NULL && modem->started && modem->dp != NULL &&
-	       modem->dp->id == DP_V21 && modem->dp->status == DPSTAT_CONNECT &&
+	       modem->dp->id == id && modem->dp->status == DPSTAT_CONNECT &&
 	       modem->get_bits != NULL && modem->put_bits != NULL;
 }
 
-static bool run_media_call(enum sippymodem_media_codec codec)
+static bool run_media_call(
+	const struct fsk300_test_case *test_case,
+	enum sippymodem_media_codec codec)
 {
 	static const uint8_t caller_payload[] = {
 		0x00, 0x01, 0x55, 0xaa, 0x7f, 0x80, 0xfe, 0xff,
@@ -222,37 +230,54 @@ static bool run_media_call(enum sippymodem_media_codec codec)
 	};
 	bool online = false;
 	bool transferred = false;
+	int selection_length = (int)strlen(test_case->selection_command);
 
 	CHECK(sippymodem_datapumps_start(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_OK,
-	      "V.21 integration registrations did not start");
-	CHECK(endpoint_init(&caller, "V.21 caller") &&
-		      endpoint_init(&answerer, "V.21 answerer"),
-	      "V.21 integration endpoints did not initialize");
+	      "%s integration registrations did not start", test_case->name);
+	CHECK(endpoint_init(&caller, "FSK caller") &&
+		      endpoint_init(&answerer, "FSK answerer"),
+	      "%s integration endpoints did not initialize", test_case->name);
 	CHECK(MODEM_DP(caller.modem) == DP_V21 &&
 		      MODEM_DP(answerer.modem) == DP_V21 &&
 		      MODEM_AUTOMODE(caller.modem) == 0 &&
 		      MODEM_AUTOMODE(answerer.modem) == 0,
 	      "source-built modem did not default to its available capability");
+	CHECK(modem_write(
+		      caller.modem, test_case->selection_command,
+		      selection_length) == selection_length &&
+		      modem_write(
+			      answerer.modem, test_case->selection_command,
+			      selection_length) == selection_length &&
+		      MODEM_DP(caller.modem) == test_case->id &&
+		      MODEM_DP(answerer.modem) == test_case->id &&
+		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
+		      output_contains(&caller, "OK") &&
+		      output_contains(&answerer, "OK"),
+	      "%s was not selectable through AT+MS", test_case->name);
+	caller.output_count = 0;
+	answerer.output_count = 0;
 	CHECK(modem_set_sreg(answerer.modem, SREG_ANS_DELAY, 0) == 0 &&
 		      modem_write(caller.modem, dial_command,
 			  (int)(sizeof(dial_command) - 1)) ==
 			      (int)(sizeof(dial_command) - 1) &&
 		      caller.modem->dp != NULL &&
 		      caller.modem->dp->id == DP_CALLPROG,
-	      "outgoing SIP call did not enter call progress");
+	      "%s outgoing SIP call did not enter call progress",
+	      test_case->name);
 	CHECK(modem_report_outgoing_call_connected(caller.modem) == 0 &&
 		      caller.modem->dp != NULL &&
-		      caller.modem->dp->id == DP_V21 &&
+		      caller.modem->dp->id == test_case->id &&
 		      modem_answer(answerer.modem) == 0,
-	      "connected SIP call did not select V.21 roles");
+	      "connected SIP call did not select %s roles", test_case->name);
 
 	for (unsigned int frame = 0; frame < TRAINING_FRAME_LIMIT; ++frame) {
 		CHECK(process_sip_frame(
 		      &caller, &answerer, codec, &recorder),
-		      "V.21 training failed at the SIP media boundary");
-		if (modem_is_online(caller.modem) &&
-		    modem_is_online(answerer.modem)) {
+		      "%s training failed at the SIP media boundary",
+		      test_case->name);
+		if (modem_is_online(caller.modem, test_case->id) &&
+		    modem_is_online(answerer.modem, test_case->id)) {
 			online = true;
 			break;
 		}
@@ -261,11 +286,13 @@ static bool run_media_call(enum sippymodem_media_codec codec)
 		      caller.modem->rx_rate == SIPPYMODEM_FSK300_BIT_RATE &&
 		      answerer.modem->tx_rate == SIPPYMODEM_FSK300_BIT_RATE &&
 		      answerer.modem->rx_rate == SIPPYMODEM_FSK300_BIT_RATE,
-	      "V.21 peers did not acquire carrier and report 300 bit/s");
+	      "%s peers did not acquire carrier and report 300 bit/s",
+	      test_case->name);
 	CHECK(endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      output_contains(&caller, "CONNECT 300") &&
 		      output_contains(&answerer, "CONNECT 300"),
-	      "V.21 connection did not reach both terminal interfaces");
+	      "%s connection did not reach both terminal interfaces",
+	      test_case->name);
 	caller.output_count = 0;
 	answerer.output_count = 0;
 
@@ -275,12 +302,14 @@ static bool run_media_call(enum sippymodem_media_codec codec)
 		      modem_write(answerer.modem, (const char *)answer_payload,
 			  (int)sizeof(answer_payload)) ==
 		      (int)sizeof(answer_payload),
-	      "V.21 terminals did not accept full-duplex payloads");
+	      "%s terminals did not accept full-duplex payloads",
+	      test_case->name);
 	for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
 		CHECK(process_sip_frame(
 		      &caller, &answerer, codec, &recorder) &&
 			      endpoint_drain(&caller) && endpoint_drain(&answerer),
-		      "V.21 data failed at the SIP media boundary");
+		      "%s data failed at the SIP media boundary",
+		      test_case->name);
 		if (caller.output_count >= sizeof(answer_payload) &&
 		    answerer.output_count >= sizeof(caller_payload)) {
 			transferred = true;
@@ -293,7 +322,8 @@ static bool run_media_call(enum sippymodem_media_codec codec)
 			     sizeof(answer_payload)) == 0 &&
 		      memcmp(answerer.output, caller_payload,
 			     sizeof(caller_payload)) == 0,
-	      "V.21 full-duplex terminal payload changed in transit");
+	      "%s full-duplex terminal payload changed in transit",
+	      test_case->name);
 	CHECK(!capture.invalid &&
 		      capture.blocks[SIPPYMODEM_RECORD_TX_LINE_PCM] != 0 &&
 		      capture.blocks[
@@ -301,39 +331,62 @@ static bool run_media_call(enum sippymodem_media_codec codec)
 		      capture.blocks[
 			      SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
 		      capture.blocks[SIPPYMODEM_RECORD_RX_LINE_PCM] != 0,
-	      "V.21 SIP call did not retain recording boundaries");
+	      "%s SIP call did not retain recording boundaries",
+	      test_case->name);
 	CHECK(sippymodem_datapumps_stop(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_BUSY,
-	      "live V.21 calls did not protect their process-global registration");
+	      "live %s calls did not protect their process-global registration",
+	      test_case->name);
 	memset(caller.receive, 0, sizeof(caller.receive));
 	for (unsigned int frame = 0;
 	     frame * SIP_FRAME_SAMPLES < 1600; ++frame)
 		modem_process(caller.modem, caller.receive, caller.transmit,
 			      SIP_FRAME_SAMPLES);
 	CHECK(caller.modem->process == NULL,
-	      "V.21 carrier loss did not stop the modem data path");
+	      "%s carrier loss did not stop the modem data path",
+	      test_case->name);
 
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
 	CHECK(sippymodem_datapumps_stop(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_OK,
-	      "V.21 integration registrations remained busy");
+	      "%s integration registrations remained busy", test_case->name);
 	return true;
 }
 
-static bool test_full_duplex_sip_media(void)
+static const char *codec_name(enum sippymodem_media_codec codec)
 {
-	return run_media_call(SIPPYMODEM_CODEC_PCMU) &&
-	       run_media_call(SIPPYMODEM_CODEC_PCMA);
+	return codec == SIPPYMODEM_CODEC_PCMU ? "PCMU" : "PCMA";
 }
 
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] full-duplex V.21 SIP media\n");
-	if (!test_full_duplex_sip_media()) {
-		fprintf(stderr, "[  FAILED  ] full-duplex V.21 SIP media\n");
-		return 1;
+	static const struct fsk300_test_case test_cases[] = {
+		{ DP_V21, "V.21", "AT+MS=21,0,300,300\r" },
+		{ DP_B103, "Bell 103", "AT+MS=103,0,300,300\r" },
+	};
+	static const enum sippymodem_media_codec codecs[] = {
+		SIPPYMODEM_CODEC_PCMU,
+		SIPPYMODEM_CODEC_PCMA,
+	};
+
+	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
+	     ++standard) {
+		for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+			fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
+				test_cases[standard].name,
+				codec_name(codecs[codec]));
+			if (!run_media_call(
+				    &test_cases[standard], codecs[codec])) {
+				fprintf(stderr, "[  FAILED  ] %s over %s SIP media\n",
+					test_cases[standard].name,
+					codec_name(codecs[codec]));
+				return 1;
+			}
+			fprintf(stderr, "[       OK ] %s over %s SIP media\n",
+				test_cases[standard].name,
+				codec_name(codecs[codec]));
+		}
 	}
-	fprintf(stderr, "[       OK ] full-duplex V.21 SIP media\n");
 	return 0;
 }

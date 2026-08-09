@@ -13,12 +13,12 @@ Existing Smart Link copyright notices are preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
 current daemon is entirely source-built and uses the host's native ABI. Its
-modem core owns source-built SIP call-progress and V.21 data pumps. SIP call
-state selects the originating or answering V.21 channel pair; a bounded mark
+modem core owns source-built SIP call-progress and 300-bit/s FSK data pumps. SIP
+call state selects the originating or answering tone pair; a bounded mark
 exchange then reports `CONNECT 300` and hands asynchronous terminal bits to the
-native signal path. V.21 runs on a reusable binary-FSK channel with exact
-rational symbol timing and generated tone-pair detectors rather than checked-in
-coefficient tables.
+native signal path. V.21 and Bell 103 share a reusable binary-FSK channel with
+exact rational symbol timing and generated tone-pair detectors rather than
+checked-in coefficient tables. Bell 103 is selectable with `AT+MS=103`.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
@@ -61,9 +61,9 @@ playout, or transmit failure suspends audio and requests hangup until a new
 media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
-standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21 is currently
-the only registered modulation; faster modes remain deliberately unavailable
-until their source-built implementations arrive as reviewable slices.
+standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21 and Bell 103
+are currently registered; faster modes remain deliberately unavailable until
+their source-built implementations arrive as reviewable slices.
 
 Build with `make`, configure the daemon through the validated `SIP_*`
 environment variables, and run `./src/slmodemd` without a hardware-device
