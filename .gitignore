@@ -1,0 +1,6 @@
+/AGENTS.md
+/src/.build_profile
+/src/.depend
+/src/*.o
+/src/modem_test
+/src/slmodemd

@@ -1,3 +1,0 @@
-modem/slmodemd usr/sbin/
-debian/15sl-modem-daemon usr/lib/pm-utils/sleep.d/
-debian/source_sl-modem.py usr/share/apport/package-hooks/
