@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <poll.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -487,24 +488,24 @@ struct loopback_call_peer {
 	bool failed;
 };
 
-static bool receive_request(int socket_fd, char *request, size_t capacity,
-			    struct sockaddr_in *remote,
-			    socklen_t *remote_size)
+static bool receive_datagram(int socket_fd, char *message, size_t capacity,
+			     struct sockaddr_in *remote,
+			     socklen_t *remote_size)
 {
 	struct pollfd descriptor = {
 		.fd = socket_fd,
 		.events = POLLIN,
 	};
-	ssize_t request_size;
+	ssize_t message_size;
 
 	if (capacity == 0 || poll(&descriptor, 1, 3000) != 1 ||
 	    (descriptor.revents & POLLIN) == 0)
 		return false;
-	request_size = recvfrom(socket_fd, request, capacity - 1, 0,
+	message_size = recvfrom(socket_fd, message, capacity - 1, 0,
 				(struct sockaddr *)remote, remote_size);
-	if (request_size <= 0)
+	if (message_size <= 0)
 		return false;
-	request[request_size] = '\0';
+	message[message_size] = '\0';
 	return true;
 }
 
@@ -532,7 +533,7 @@ static void *serve_loopback_call(void *context)
 	char invite[TEST_SIP_MESSAGE_MAX];
 	char cancel[TEST_SIP_MESSAGE_MAX];
 
-	if (!receive_request(peer->socket_fd, invite, sizeof(invite),
+	if (!receive_datagram(peer->socket_fd, invite, sizeof(invite),
 			     &invite_remote, &invite_remote_size) ||
 	    strncmp(invite, "INVITE ", sizeof("INVITE ") - 1) != 0 ||
 	    !send_empty_response(peer->socket_fd, &invite_remote,
@@ -543,7 +544,7 @@ static void *serve_loopback_call(void *context)
 	peer->invite_received = true;
 	peer->target_received =
 		strstr(invite, "INVITE sip:bob@127.0.0.1:") == invite;
-	if (!receive_request(peer->socket_fd, cancel, sizeof(cancel),
+	if (!receive_datagram(peer->socket_fd, cancel, sizeof(cancel),
 			     &cancel_remote, &cancel_remote_size) ||
 	    strncmp(cancel, "CANCEL ", sizeof("CANCEL ") - 1) != 0 ||
 	    !send_empty_response(peer->socket_fd, &cancel_remote,
@@ -573,6 +574,159 @@ static bool start_loopback_call(struct loopback_call_peer *peer)
 }
 
 static bool finish_loopback_call(struct loopback_call_peer *peer)
+{
+	bool succeeded = pthread_join(peer->worker, NULL) == 0 && !peer->failed;
+
+	(void)close(peer->socket_fd);
+	peer->socket_fd = -1;
+	return succeeded;
+}
+
+struct loopback_incoming_peer {
+	pthread_t worker;
+	int socket_fd;
+	unsigned int port;
+	unsigned int destination_port;
+	bool invite_sent;
+	bool ringing_received;
+	bool answer_received;
+	bool ack_sent;
+	bool failed;
+};
+
+static bool copy_header_line(char *output, size_t capacity,
+			     const char *message, const char *name)
+{
+	const char *line = find_header(message, name);
+	const char *line_end = line != NULL ? strstr(line, "\r\n") : NULL;
+	size_t size;
+
+	if (line_end == NULL)
+		return false;
+	size = (size_t)(line_end - line);
+	if (size >= capacity)
+		return false;
+	memcpy(output, line, size);
+	output[size] = '\0';
+	return true;
+}
+
+static void *serve_incoming_call(void *context)
+{
+	static const char offer[] =
+		"v=0\r\n"
+		"o=- 1 1 IN IP4 127.0.0.1\r\n"
+		"s=-\r\n"
+		"c=IN IP4 127.0.0.1\r\n"
+		"t=0 0\r\n"
+		"m=audio 40000 RTP/AVP 0\r\n"
+		"a=rtpmap:0 PCMU/8000\r\n";
+	struct loopback_incoming_peer *peer = context;
+	struct sockaddr_in destination = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+	};
+	struct sockaddr_in response_remote;
+	char invite[TEST_SIP_MESSAGE_MAX];
+	char response[TEST_SIP_MESSAGE_MAX];
+	char to_header[256];
+	char ack[1024];
+	int invite_size;
+	int ack_size;
+
+	destination.sin_port = htons((uint16_t)peer->destination_port);
+	invite_size = snprintf(
+		invite, sizeof(invite),
+		"INVITE sip:sippymodem@127.0.0.1:%u SIP/2.0\r\n"
+		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-inbound\r\n"
+		"Max-Forwards: 70\r\n"
+		"From: <sip:caller@127.0.0.1>;tag=caller\r\n"
+		"To: <sip:sippymodem@127.0.0.1:%u>\r\n"
+		"Call-ID: incoming-loopback\r\n"
+		"CSeq: 1 INVITE\r\n"
+		"Contact: <sip:caller@127.0.0.1:%u>\r\n"
+		"Content-Type: application/sdp\r\n"
+		"Content-Length: %zu\r\n\r\n%s",
+		peer->destination_port, peer->port, peer->destination_port,
+		peer->port, sizeof(offer) - 1, offer);
+	if (invite_size < 0 || (size_t)invite_size >= sizeof(invite) ||
+	    sendto(peer->socket_fd, invite, (size_t)invite_size, 0,
+		   (const struct sockaddr *)&destination, sizeof(destination)) !=
+		    invite_size) {
+		peer->failed = true;
+		return NULL;
+	}
+	peer->invite_sent = true;
+	for (unsigned int attempt = 0; attempt < 4 && !peer->answer_received;
+	     ++attempt) {
+		socklen_t response_remote_size = sizeof(response_remote);
+
+		if (!receive_datagram(peer->socket_fd, response, sizeof(response),
+				      &response_remote,
+				      &response_remote_size)) {
+			peer->failed = true;
+			return NULL;
+		}
+		if (strncmp(response, "SIP/2.0 100 ",
+			    sizeof("SIP/2.0 100 ") - 1) == 0)
+			continue;
+		if (strncmp(response, "SIP/2.0 180 ",
+			    sizeof("SIP/2.0 180 ") - 1) == 0) {
+			peer->ringing_received = true;
+			continue;
+		}
+		if (strncmp(response, "SIP/2.0 200 ",
+			    sizeof("SIP/2.0 200 ") - 1) != 0 ||
+		    !copy_header_line(to_header, sizeof(to_header), response,
+				      "To:")) {
+			peer->failed = true;
+			return NULL;
+		}
+		peer->answer_received = true;
+	}
+	if (!peer->answer_received) {
+		peer->failed = true;
+		return NULL;
+	}
+	ack_size = snprintf(
+		ack, sizeof(ack),
+		"ACK sip:sippymodem@127.0.0.1:%u SIP/2.0\r\n"
+		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-ack\r\n"
+		"Max-Forwards: 70\r\n"
+		"From: <sip:caller@127.0.0.1>;tag=caller\r\n"
+		"%s\r\n"
+		"Call-ID: incoming-loopback\r\n"
+		"CSeq: 1 ACK\r\n"
+		"Content-Length: 0\r\n\r\n",
+		peer->destination_port, peer->port, to_header);
+	if (ack_size < 0 || (size_t)ack_size >= sizeof(ack) ||
+	    sendto(peer->socket_fd, ack, (size_t)ack_size, 0,
+		   (const struct sockaddr *)&destination, sizeof(destination)) !=
+		    ack_size) {
+		peer->failed = true;
+		return NULL;
+	}
+	peer->ack_sent = true;
+	return NULL;
+}
+
+static bool start_incoming_call(struct loopback_incoming_peer *peer,
+				unsigned int destination_port)
+{
+	memset(peer, 0, sizeof(*peer));
+	peer->destination_port = destination_port;
+	peer->socket_fd = open_loopback_listener(&peer->port);
+	if (peer->socket_fd < 0)
+		return false;
+	if (pthread_create(&peer->worker, NULL, serve_incoming_call, peer) != 0) {
+		(void)close(peer->socket_fd);
+		peer->socket_fd = -1;
+		return false;
+	}
+	return true;
+}
+
+static bool finish_incoming_call(struct loopback_incoming_peer *peer)
 {
 	bool succeeded = pthread_join(peer->worker, NULL) == 0 && !peer->failed;
 
@@ -800,6 +954,105 @@ static bool test_outgoing_call_lifecycle(void)
 	return true;
 }
 
+static bool test_incoming_call_lifecycle(void)
+{
+	struct callback_capture capture = { 0 };
+	struct loopback_incoming_peer peer;
+	struct sippymodem_config config;
+	struct sippymodem_sip_signaling *signaling;
+	enum sippymodem_sip_signaling_result open_result;
+	enum sippymodem_sip_signaling_result answer_result =
+		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	enum sippymodem_sip_signaling_result second_answer_result =
+		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	enum sippymodem_sip_signaling_result hangup_result =
+		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	enum sippymodem_sip_signaling_result close_result =
+		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	bool peer_started = false;
+	bool peer_succeeded = false;
+	bool connected = false;
+	bool final_state_idle = false;
+
+	sippymodem_config_init(&config);
+	config.sip.listen_port = 0;
+	config.sip.log_level = 3;
+	config.sip.registration_enabled = false;
+	signaling = create_signaling(&config, &capture);
+	CHECK(signaling != NULL, "could not allocate incoming call context");
+	open_result = sippymodem_sip_signaling_open(signaling);
+	if (open_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+		peer_started = start_incoming_call(
+			&peer, sippymodem_sip_signaling_local_port(signaling));
+		if (peer_started) {
+			for (unsigned int attempt = 0;
+			     attempt < 50 &&
+			     sippymodem_sip_signaling_call_state(signaling) !=
+				     SIPPYMODEM_SIP_CALL_EARLY;
+			     ++attempt)
+				(void)sippymodem_sip_signaling_step(signaling, 20);
+			answer_result =
+				sippymodem_sip_signaling_answer(signaling);
+			if (answer_result == SIPPYMODEM_SIP_SIGNALING_OK)
+				second_answer_result =
+					sippymodem_sip_signaling_answer(signaling);
+			for (unsigned int attempt = 0;
+			     attempt < 50 &&
+			     sippymodem_sip_signaling_call_state(signaling) !=
+				     SIPPYMODEM_SIP_CALL_CONNECTED;
+			     ++attempt)
+				(void)sippymodem_sip_signaling_step(signaling, 20);
+			connected =
+				sippymodem_sip_signaling_call_state(signaling) ==
+				SIPPYMODEM_SIP_CALL_CONNECTED;
+			peer_succeeded = finish_incoming_call(&peer);
+			if (sippymodem_sip_signaling_call_state(signaling) !=
+			    SIPPYMODEM_SIP_CALL_IDLE)
+				hangup_result =
+					sippymodem_sip_signaling_hangup(signaling);
+			final_state_idle =
+				sippymodem_sip_signaling_call_state(signaling) ==
+				SIPPYMODEM_SIP_CALL_IDLE;
+		}
+		close_result = sippymodem_sip_signaling_close(signaling);
+	}
+	sippymodem_sip_signaling_destroy(signaling);
+
+	CHECK(open_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	      "incoming call context did not open: %s",
+	      sippymodem_sip_signaling_result_name(open_result));
+	CHECK(peer_started && peer_succeeded && peer.invite_sent &&
+		      peer.ringing_received && peer.answer_received && peer.ack_sent,
+	      "loopback peer did not complete the incoming dialog");
+	CHECK(answer_result == SIPPYMODEM_SIP_SIGNALING_OK &&
+		      second_answer_result == SIPPYMODEM_SIP_SIGNALING_OK &&
+		      connected,
+	      "incoming call did not connect after answer");
+	CHECK(hangup_result == SIPPYMODEM_SIP_SIGNALING_OK && final_state_idle,
+	      "incoming call did not return to idle after hangup");
+	CHECK(capture.call_count == 4 &&
+		      capture.call_states[0] ==
+			      SIPPYMODEM_SIP_CALL_INCOMING_PENDING &&
+		      capture.call_states[1] == SIPPYMODEM_SIP_CALL_EARLY &&
+		      capture.call_states[2] == SIPPYMODEM_SIP_CALL_CONNECTED &&
+		      capture.call_states[3] == SIPPYMODEM_SIP_CALL_IDLE,
+	      "incoming call lifecycle event order was wrong");
+	CHECK(capture.call_directions[0] ==
+		      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+		      capture.call_directions[1] ==
+			      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+		      capture.call_directions[2] ==
+			      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+		      capture.call_directions[3] ==
+			      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+		      strstr(capture.call_remote_identities[0],
+			     "sip:caller@127.0.0.1") != NULL,
+	      "incoming call event details were wrong");
+	CHECK(close_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	      "incoming call context did not close");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -814,6 +1067,7 @@ int main(void)
 		{ "loopback registration lifecycle",
 		  test_loopback_registration_lifecycle },
 		{ "outgoing call lifecycle", test_outgoing_call_lifecycle },
+		{ "incoming call lifecycle", test_incoming_call_lifecycle },
 	};
 	unsigned int failures = 0;
 

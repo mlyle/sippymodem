@@ -43,6 +43,7 @@ struct sippymodem_sip_signaling {
 	enum sippymodem_sip_call_direction call_direction;
 	enum sippymodem_sip_call_state call_state;
 	enum sippymodem_sip_registration_state registration_state;
+	unsigned int incoming_response_code;
 	bool call_starting;
 	bool registration_may_exist;
 	bool account_configured;
@@ -177,12 +178,57 @@ static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 	case PJSIP_INV_STATE_DISCONNECTED:
 		signaling->call_id = PJSUA_INVALID_ID;
 		signaling->call_starting = false;
+		signaling->incoming_response_code = 0;
 		emit_call_event(signaling, SIPPYMODEM_SIP_CALL_IDLE, &info);
 		break;
 	case PJSIP_INV_STATE_NULL:
 	case PJSIP_INV_STATE_INCOMING:
 	case PJSIP_INV_STATE_CONNECTING:
 		break;
+	}
+}
+
+static void pjsip_incoming_call(pjsua_acc_id account_id,
+				pjsua_call_id call_id,
+				pjsip_rx_data *request)
+{
+	struct sippymodem_sip_signaling *signaling = active_signaling;
+	pjsua_call_info info;
+	pj_status_t status;
+	unsigned int response_code;
+
+	(void)account_id;
+	(void)request;
+	if (signaling == NULL)
+		return;
+	if (signaling->closing || signaling->close_requested ||
+	    signaling->call_id != PJSUA_INVALID_ID || signaling->call_starting) {
+		status = pjsua_call_answer(call_id, 486, NULL, NULL);
+		if (status != PJ_SUCCESS)
+			emit_library_error(signaling,
+					   "reject competing SIP call", status);
+		return;
+	}
+	status = pjsua_call_get_info(call_id, &info);
+	if (status != PJ_SUCCESS) {
+		emit_library_error(signaling, "inspect incoming SIP call", status);
+		(void)pjsua_call_answer(call_id, 500, NULL, NULL);
+		return;
+	}
+
+	signaling->call_id = call_id;
+	signaling->call_direction = SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING;
+	signaling->incoming_response_code = 0;
+	emit_call_event(signaling, SIPPYMODEM_SIP_CALL_INCOMING_PENDING, &info);
+	if (signaling->close_requested || signaling->call_id != call_id ||
+	    signaling->incoming_response_code >= 200)
+		return;
+	response_code = signaling->config.sip.automatic_answer ? 200 : 180;
+	signaling->incoming_response_code = response_code;
+	status = pjsua_call_answer(call_id, response_code, NULL, NULL);
+	if (status != PJ_SUCCESS) {
+		emit_library_error(signaling, "answer incoming SIP call", status);
+		(void)pjsua_call_hangup(call_id, 500, NULL, NULL);
 	}
 }
 
@@ -431,6 +477,7 @@ static enum sippymodem_sip_signaling_result initialize_library(
 	user_agent.max_calls = 1;
 	user_agent.user_agent = pj_str((char *)"sippymodem");
 	user_agent.cb.on_call_state = &pjsip_call_changed;
+	user_agent.cb.on_incoming_call = &pjsip_incoming_call;
 	user_agent.cb.on_reg_started = &pjsip_registration_started;
 	user_agent.cb.on_reg_state2 = &pjsip_registration_changed;
 	pjsua_logging_config_default(&logging);
@@ -573,6 +620,7 @@ static enum sippymodem_sip_signaling_result close_now(
 	signaling->call_id = PJSUA_INVALID_ID;
 	signaling->call_state = SIPPYMODEM_SIP_CALL_IDLE;
 	signaling->call_starting = false;
+	signaling->incoming_response_code = 0;
 	signaling->local_port = 0;
 	if (active_signaling == signaling)
 		active_signaling = NULL;
@@ -779,6 +827,41 @@ enum sippymodem_sip_signaling_result sippymodem_sip_signaling_dial(
 	return SIPPYMODEM_SIP_SIGNALING_OK;
 }
 
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_answer(
+	struct sippymodem_sip_signaling *signaling)
+{
+	pjsua_call_id call_id;
+	pj_status_t status;
+	unsigned int previous_response_code;
+
+	if (signaling == NULL)
+		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+	if (!signaling->opened)
+		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	call_id = signaling->call_id;
+	if (call_id == PJSUA_INVALID_ID ||
+	    signaling->call_direction != SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING)
+		return SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	if (signaling->call_state == SIPPYMODEM_SIP_CALL_CONNECTED ||
+	    signaling->incoming_response_code == 200)
+		return SIPPYMODEM_SIP_SIGNALING_OK;
+	if (signaling->incoming_response_code >= 300)
+		return SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	previous_response_code = signaling->incoming_response_code;
+	signaling->incoming_response_code = 200;
+	status = pjsua_call_answer(call_id, 200, NULL, NULL);
+	if (status != PJ_SUCCESS) {
+		signaling->incoming_response_code = previous_response_code;
+		emit_library_error(signaling, "answer incoming SIP call", status);
+		if (signaling->close_requested)
+			(void)close_now(signaling);
+		return SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR;
+	}
+	if (signaling->close_requested)
+		return close_now(signaling);
+	return SIPPYMODEM_SIP_SIGNALING_OK;
+}
+
 enum sippymodem_sip_signaling_result sippymodem_sip_signaling_hangup(
 	struct sippymodem_sip_signaling *signaling)
 {
@@ -792,6 +875,10 @@ enum sippymodem_sip_signaling_result sippymodem_sip_signaling_hangup(
 	call_id = signaling->call_id;
 	if (call_id == PJSUA_INVALID_ID)
 		return SIPPYMODEM_SIP_SIGNALING_NO_CALL;
+	if (signaling->call_direction ==
+	    SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+	    signaling->call_state != SIPPYMODEM_SIP_CALL_CONNECTED)
+		signaling->incoming_response_code = 603;
 	status = pjsua_call_hangup(call_id, 0, NULL, NULL);
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "hang up SIP call", status);

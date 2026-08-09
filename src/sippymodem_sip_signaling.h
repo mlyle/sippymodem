@@ -115,6 +115,8 @@ enum sippymodem_sip_signaling_result sippymodem_sip_signaling_step(
 	struct sippymodem_sip_signaling *signaling, unsigned int timeout_ms);
 enum sippymodem_sip_signaling_result sippymodem_sip_signaling_dial(
 	struct sippymodem_sip_signaling *signaling, const char *target);
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_answer(
+	struct sippymodem_sip_signaling *signaling);
 enum sippymodem_sip_signaling_result sippymodem_sip_signaling_hangup(
 	struct sippymodem_sip_signaling *signaling);
 
