@@ -163,6 +163,19 @@ int sippymodem_codec_default_payload_type(enum sippymodem_media_codec codec)
 	return -1;
 }
 
+int sippymodem_codec_silence_octet(enum sippymodem_media_codec codec)
+{
+	switch (codec) {
+	case SIPPYMODEM_CODEC_PCMU:
+		return sippymodem_g711_encode_pcmu(0);
+	case SIPPYMODEM_CODEC_PCMA:
+		return sippymodem_g711_encode_pcma(0);
+	case SIPPYMODEM_CODEC_CLEARMODE:
+		return -1;
+	}
+	return -1;
+}
+
 const char *sippymodem_media_result_name(enum sippymodem_media_result result)
 {
 	switch (result) {

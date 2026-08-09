@@ -81,6 +81,12 @@ static bool test_codec_metadata(void)
 		      sippymodem_codec_default_payload_type(
 			      SIPPYMODEM_CODEC_CLEARMODE) == 96,
 	      "wrong default RTP payload type");
+	CHECK(sippymodem_codec_silence_octet(SIPPYMODEM_CODEC_PCMU) == 0xff &&
+		      sippymodem_codec_silence_octet(
+			      SIPPYMODEM_CODEC_PCMA) == 0xd5 &&
+		      sippymodem_codec_silence_octet(
+			      SIPPYMODEM_CODEC_CLEARMODE) == -1,
+	      "wrong codec silence octet");
 	CHECK(sippymodem_codec_name((enum sippymodem_media_codec)99) == NULL &&
 		      sippymodem_codec_default_payload_type(
 			      (enum sippymodem_media_codec)99) == -1,

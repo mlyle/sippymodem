@@ -27,12 +27,18 @@ MEDIA_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_media.o \
 RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp_receiver
 RECEIVER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_receiver.o \
 	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o
+STREAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp_stream
+STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_stream.o \
+	$(BUILD_DIR)/sippymodem_rtp_stream.o \
+	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
+	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) $(G711_TEST_BINARY) \
-	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY)
+	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
+	$(STREAM_TEST_BINARY)
 DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(CONFIG_TEST_OBJECTS:.o=.d) $(G711_TEST_OBJECTS:.o=.d) \
 	$(RTP_TEST_OBJECTS:.o=.d) $(MEDIA_TEST_OBJECTS:.o=.d) \
-	$(RECEIVER_TEST_OBJECTS:.o=.d)
+	$(RECEIVER_TEST_OBJECTS:.o=.d) $(STREAM_TEST_OBJECTS:.o=.d)
 
 .PHONY: all clean test
 
@@ -45,6 +51,7 @@ test: $(TEST_BINARIES)
 	./$(RTP_TEST_BINARY)
 	./$(MEDIA_TEST_BINARY)
 	./$(RECEIVER_TEST_BINARY)
+	./$(STREAM_TEST_BINARY)
 
 $(PACK_TEST_BINARY): $(PACK_TEST_OBJECTS) $(MODEM_OBJECT)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -62,6 +69,9 @@ $(MEDIA_TEST_BINARY): $(MEDIA_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(RECEIVER_TEST_BINARY): $(RECEIVER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(STREAM_TEST_BINARY): $(STREAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
@@ -84,6 +94,10 @@ $(BUILD_DIR)/sippymodem_media.o: ../src/sippymodem_media.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/sippymodem_rtp_receiver.o: \
 	../src/sippymodem_rtp_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_rtp_stream.o: \
+	../src/sippymodem_rtp_stream.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR):

@@ -82,6 +82,7 @@ enum sippymodem_media_result sippymodem_media_encode(
 const char *sippymodem_codec_name(enum sippymodem_media_codec codec);
 int sippymodem_codec_default_payload_type(
 	enum sippymodem_media_codec codec);
+int sippymodem_codec_silence_octet(enum sippymodem_media_codec codec);
 const char *sippymodem_media_result_name(
 	enum sippymodem_media_result result);
 
