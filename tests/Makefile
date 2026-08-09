@@ -170,6 +170,7 @@ NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(addprefix $(BUILD_DIR)/native_, \
 		$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
+	$(BUILD_DIR)/sippymodem_datapumps.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
@@ -457,6 +458,10 @@ $(BUILD_DIR)/sippymodem_main_testable.o: \
 
 $(BUILD_DIR)/sippymodem_dc_filter.o: \
 	../src/sippymodem_dc_filter.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_datapumps.o: \
+	../src/sippymodem_datapumps.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/native_%.o: ../src/%.c | $(BUILD_DIR)

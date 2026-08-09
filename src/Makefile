@@ -43,6 +43,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_audio_path.c \
 	sippymodem_audio_scheduler.c \
 	sippymodem_config.c \
+	sippymodem_datapumps.c \
 	sippymodem_dc_filter.c \
 	sippymodem_frame_clock.c \
 	sippymodem_g711.c \

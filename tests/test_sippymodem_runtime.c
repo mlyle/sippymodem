@@ -3,6 +3,7 @@
 #include <sippymodem_runtime.h>
 
 #include <modem.h>
+#include <sippymodem_datapumps.h>
 #include <sippymodem_host.h>
 #include <sippymodem_slmodem_adapter.h>
 #include <sippymodem_slmodem_calls.h>
@@ -30,6 +31,8 @@ struct sippymodem_recording_files {
 struct runtime_capture {
 	unsigned int modem_creates;
 	unsigned int modem_deletes;
+	unsigned int datapump_starts;
+	unsigned int datapump_stops;
 	unsigned int host_creates;
 	unsigned int host_destroys;
 	unsigned int recording_creates;
@@ -48,6 +51,7 @@ struct runtime_capture {
 	char teardown_order[8];
 	size_t teardown_count;
 	bool fail_modem;
+	bool fail_datapumps;
 	bool fail_adapter;
 	bool fail_calls;
 	bool fail_recording;
@@ -102,6 +106,34 @@ static int unused_driver_control(
 	(void)command;
 	(void)argument;
 	return 0;
+}
+
+enum sippymodem_datapumps_result sippymodem_datapumps_start(
+	struct sippymodem_datapumps *datapumps)
+{
+	capture.datapump_starts++;
+	if (datapumps == NULL)
+		return SIPPYMODEM_DATAPUMPS_INVALID_ARGUMENT;
+	if (capture.fail_datapumps)
+		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
+	datapumps->call_progress_registered = true;
+	return SIPPYMODEM_DATAPUMPS_OK;
+}
+
+enum sippymodem_datapumps_result sippymodem_datapumps_stop(
+	struct sippymodem_datapumps *datapumps)
+{
+	capture.datapump_stops++;
+	if (datapumps == NULL || !datapumps->call_progress_registered)
+		return SIPPYMODEM_DATAPUMPS_NOT_STARTED;
+	datapumps->call_progress_registered = false;
+	return SIPPYMODEM_DATAPUMPS_OK;
+}
+
+bool sippymodem_datapumps_are_started(
+	const struct sippymodem_datapumps *datapumps)
+{
+	return datapumps != NULL && datapumps->call_progress_registered;
 }
 
 bool sippymodem_slmodem_driver_init(
@@ -445,7 +477,8 @@ static bool test_owns_closed_runtime(void)
 	name[0] = 'x';
 	CHECK(runtime != NULL && modem != NULL &&
 		      strcmp(modem->name, "sippymodem-test") == 0 &&
-		      modem->dev_data != NULL && capture.modem_creates == 1 &&
+		      modem->dev_data != NULL && capture.datapump_starts == 1 &&
+		      capture.modem_creates == 1 &&
 		      capture.host_creates == 1 &&
 		      capture.recording_creates == 1 &&
 		      capture.host_received_recorder &&
@@ -456,6 +489,7 @@ static bool test_owns_closed_runtime(void)
 	      "runtime did not own its complete closed graph");
 	sippymodem_runtime_destroy(runtime);
 	CHECK(strcmp(capture.teardown_order, "HRM") == 0 &&
+		      capture.datapump_stops == 1 &&
 		      capture.driver_detaches == 1 && capture.host_destroys == 1 &&
 		      capture.recording_destroys == 1 &&
 		      capture.modem_deletes == 1 &&
@@ -480,9 +514,17 @@ static bool test_creation_rolls_back(void)
 	      "runtime accepted invalid construction arguments");
 
 	memset(&capture, 0, sizeof(capture));
+	capture.fail_datapumps = true;
+	CHECK(sippymodem_runtime_create(&config, "busy-datapumps") == NULL &&
+		      errno == EBUSY && capture.datapump_starts == 1 &&
+		      capture.datapump_stops == 0 && capture.modem_creates == 0,
+	      "runtime hid a data-pump registration conflict");
+
+	memset(&capture, 0, sizeof(capture));
 	capture.fail_adapter = true;
 	CHECK(sippymodem_runtime_create(&config, "bad-adapter") == NULL &&
-		      capture.modem_deletes == 1 && capture.host_creates == 0,
+		      capture.modem_deletes == 1 && capture.datapump_stops == 1 &&
+		      capture.host_creates == 0,
 	      "runtime retained an incompatible modem adapter");
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_recording = true;

@@ -13,8 +13,9 @@ Existing Smart Link copyright notices are preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
 current daemon is entirely source-built and uses the host's native ABI. Its
-minimal modem core does not yet register a data pump, so calls cannot carry
-V.21 data until that first native capability is restored.
+minimal modem core registers a source-built SIP call-progress pump, allowing an
+outgoing dial to wait for signaling's explicit connected event. It does not yet
+register V.21 signal processing, so calls cannot carry modem data.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,

@@ -206,22 +206,41 @@ static struct dp_operations *get_dp_operations(enum DP_ID id)
 int modem_dp_register(enum DP_ID id, struct dp_operations *op)
 {
 	struct dp_driver *p;
-	int ret = -1;
+
+	if (!op || op->use_count != 0 || !op->create || !op->delete ||
+	    !op->process)
+		return -1;
 	for(p = modem_dp_drivers ; p->id > 0 ; p++) {
 		if (p->id == id && !p->op) {
 			p->op = op;
-			ret = 0;
-			break;
+			return 0;
 		}
 	}
-	return ret;
+	return -1;
 }
 
-void modem_dp_deregister(enum DP_ID id, struct dp_operations *op)
+int modem_dp_deregister(enum DP_ID id, struct dp_operations *op)
 {
 	struct dp_driver *p;
+
+	if (!op || op->use_count != 0)
+		return -1;
 	for(p = modem_dp_drivers ; p->id > 0 ; p++)
-		if (p->id == id) p->op = NULL;
+		if (p->id == id && p->op == op) {
+			p->op = NULL;
+			return 0;
+		}
+	return -1;
+}
+
+struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
+{
+	struct dp_driver *p;
+
+	for (p = modem_dp_drivers; p->id > 0; p++)
+		if (p->id == id)
+			return p->op;
+	return NULL;
 }
 
 
@@ -1998,7 +2017,7 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 void modem_delete(struct modem *m)
 {
 	MODEM_DBG("modem_delete...\n");
-	if(m->started) {
+	if(m->started || m->dp) {
 		MODEM_DBG("shutdown modem...\n");
 		if(m->state != STATE_MODEM_IDLE)
 			m->result_code = RESULT_NOCARRIER;

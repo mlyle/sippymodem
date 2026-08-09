@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
+#include <sippymodem_datapumps.h>
 
 #include "test.h"
 
@@ -60,13 +61,95 @@ static bool test_core_has_no_external_dsp_owner(void)
 	return true;
 }
 
+static bool test_owns_sip_call_progress_registration(void)
+{
+	struct sippymodem_datapumps datapumps = { 0 };
+	struct sippymodem_datapumps rival = { 0 };
+	struct modem_driver driver = {
+		.name = "call progress test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem;
+	struct dp_operations *operations;
+	struct dp *call_progress;
+	int16_t receive[MODEM_FRAG];
+	int16_t transmit[MODEM_FRAG];
+
+	CHECK(modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
+		      sippymodem_datapumps_start(&datapumps) ==
+			      SIPPYMODEM_DATAPUMPS_OK &&
+		      sippymodem_datapumps_are_started(&datapumps),
+	      "SIP call-progress registration did not start cleanly");
+	operations = modem_dp_get_registered_ops(DP_CALLPROG);
+	CHECK(operations != NULL && operations->create != NULL &&
+		      operations->delete != NULL && operations->process != NULL &&
+		      operations->hangup == NULL && operations->use_count == 0,
+	      "SIP call-progress operations were incomplete");
+	CHECK(sippymodem_datapumps_start(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_ALREADY_STARTED &&
+		      sippymodem_datapumps_start(&rival) ==
+			      SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT,
+	      "process-global call-progress ownership was ambiguous");
+	modem = modem_create(&driver, "call progress test");
+	CHECK(modem != NULL, "call-progress modem could not be created");
+	call_progress = operations->create(
+		modem, DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(call_progress != NULL && call_progress->modem == modem &&
+		      call_progress->status == DPSTAT_OK &&
+		      operations->use_count == 1,
+	      "SIP call-progress instance was not owned by its modem");
+	for (size_t index = 0; index < ARRAY_LENGTH(receive); ++index) {
+		receive[index] = (int16_t)(index + 1);
+		transmit[index] = INT16_MAX;
+	}
+	CHECK(operations->process(
+		      call_progress, receive, transmit, MODEM_FRAG) == DPSTAT_OK,
+	      "SIP call-progress frame failed");
+	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
+		CHECK(transmit[index] == 0,
+		      "SIP call progress leaked audio while awaiting signaling");
+	CHECK(sippymodem_datapumps_stop(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_BUSY &&
+		      operations->delete(call_progress) == 0 &&
+		      operations->use_count == 0,
+	      "live call progress did not protect its registration");
+	modem_delete(modem);
+	CHECK(sippymodem_datapumps_stop(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_OK &&
+		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
+		      !sippymodem_datapumps_are_started(&datapumps) &&
+		      sippymodem_datapumps_stop(&datapumps) ==
+			      SIPPYMODEM_DATAPUMPS_NOT_STARTED &&
+		      strcmp(sippymodem_datapumps_result_name(
+			     SIPPYMODEM_DATAPUMPS_BUSY),
+			     "data pump is active") == 0,
+	      "SIP call-progress registration did not stop cleanly");
+	return true;
+}
+
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] source-built core lifecycle\n");
-	if (!test_core_has_no_external_dsp_owner()) {
-		fprintf(stderr, "[  FAILED  ] source-built core lifecycle\n");
-		return 1;
+	static const struct {
+		const char *name;
+		bool (*run)(void);
+	} tests[] = {
+		{ "source-built core lifecycle",
+		  test_core_has_no_external_dsp_owner },
+		{ "SIP call-progress ownership",
+		  test_owns_sip_call_progress_registration },
+	};
+	unsigned int failures = 0;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
+		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
+		if (!tests[index].run()) {
+			fprintf(stderr, "[  FAILED  ] %s\n", tests[index].name);
+			failures++;
+		} else {
+			fprintf(stderr, "[       OK ] %s\n", tests[index].name);
+		}
 	}
-	fprintf(stderr, "[       OK ] source-built core lifecycle\n");
-	return 0;
+	return failures == 0 ? 0 : 1;
 }
