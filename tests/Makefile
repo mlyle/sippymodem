@@ -26,7 +26,7 @@ MEDIA_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
 RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp_receiver
 RECEIVER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_receiver.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o
+	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY)
 DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \

@@ -23,8 +23,33 @@ static void start_stream(struct sippymodem_rtp_receiver *receiver,
 	clear_slots(receiver);
 	receiver->stream_active = true;
 	receiver->ssrc = packet->header.ssrc;
+	receiver->sequence_valid = false;
+	receiver->highest_sequence = 0;
 	receiver->play_timestamp = packet->header.timestamp;
 	receiver->prefill_remaining = receiver->config.prefill_samples;
+}
+
+static void note_sequence(struct sippymodem_rtp_receiver *receiver,
+			  uint16_t sequence)
+{
+	uint16_t distance;
+
+	if (!receiver->sequence_valid) {
+		receiver->sequence_valid = true;
+		receiver->highest_sequence = sequence;
+		return;
+	}
+
+	distance = (uint16_t)(sequence - receiver->highest_sequence);
+	if (distance == 0) {
+		receiver->stats.sequence_duplicates++;
+	} else if (distance < 0x8000) {
+		if (distance > 1)
+			receiver->stats.sequence_gaps += distance - 1;
+		receiver->highest_sequence = sequence;
+	} else {
+		receiver->stats.sequence_out_of_order++;
+	}
 }
 
 bool sippymodem_rtp_receiver_init(
@@ -58,6 +83,8 @@ void sippymodem_rtp_receiver_reset(
 	memset(&receiver->stats, 0, sizeof(receiver->stats));
 	receiver->stream_active = false;
 	receiver->ssrc = 0;
+	receiver->sequence_valid = false;
+	receiver->highest_sequence = 0;
 	receiver->play_timestamp = 0;
 	receiver->prefill_remaining = 0;
 }
@@ -87,6 +114,7 @@ enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_push(
 		receiver->stats.ssrc_restarts++;
 		start_stream(receiver, packet);
 	}
+	note_sequence(receiver, packet->header.sequence);
 
 	for (size_t index = 0; index < packet->payload_size; ++index) {
 		uint32_t timestamp = packet->header.timestamp + (uint32_t)index;
@@ -127,6 +155,32 @@ enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_push(
 	if (early)
 		return SIPPYMODEM_RTP_RECEIVE_TOO_EARLY;
 	return SIPPYMODEM_RTP_RECEIVE_ACCEPTED;
+}
+
+enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_receive(
+	struct sippymodem_rtp_receiver *receiver,
+	const uint8_t *packet,
+	size_t packet_size,
+	enum sippymodem_rtp_result *packet_result)
+{
+	struct sippymodem_rtp_packet_view view;
+	enum sippymodem_rtp_result result;
+
+	if (receiver == NULL || receiver->slots == NULL || packet == NULL) {
+		if (packet_result != NULL)
+			*packet_result = SIPPYMODEM_RTP_INVALID_ARGUMENT;
+		return SIPPYMODEM_RTP_RECEIVE_INVALID_ARGUMENT;
+	}
+
+	result = sippymodem_rtp_packet_parse(packet, packet_size, &view);
+	if (packet_result != NULL)
+		*packet_result = result;
+	if (result != SIPPYMODEM_RTP_OK) {
+		receiver->stats.packets_seen++;
+		receiver->stats.malformed_packets++;
+		return SIPPYMODEM_RTP_RECEIVE_MALFORMED_PACKET;
+	}
+	return sippymodem_rtp_receiver_push(receiver, &view);
 }
 
 bool sippymodem_rtp_receiver_play(
@@ -193,6 +247,8 @@ const char *sippymodem_rtp_receive_result_name(
 		return "accepted";
 	case SIPPYMODEM_RTP_RECEIVE_INVALID_ARGUMENT:
 		return "invalid argument";
+	case SIPPYMODEM_RTP_RECEIVE_MALFORMED_PACKET:
+		return "malformed RTP packet";
 	case SIPPYMODEM_RTP_RECEIVE_UNEXPECTED_PAYLOAD:
 		return "unexpected payload type";
 	case SIPPYMODEM_RTP_RECEIVE_LATE:

@@ -24,8 +24,12 @@ struct sippymodem_rtp_receiver_config {
 struct sippymodem_rtp_receiver_stats {
 	uint64_t packets_seen;
 	uint64_t packets_accepted;
+	uint64_t malformed_packets;
 	uint64_t unexpected_payloads;
 	uint64_t ssrc_restarts;
+	uint64_t sequence_gaps;
+	uint64_t sequence_duplicates;
+	uint64_t sequence_out_of_order;
 	uint64_t samples_buffered;
 	uint64_t duplicate_samples;
 	uint64_t late_samples;
@@ -43,6 +47,8 @@ struct sippymodem_rtp_receiver {
 	struct sippymodem_rtp_receiver_stats stats;
 	bool stream_active;
 	uint32_t ssrc;
+	bool sequence_valid;
+	uint16_t highest_sequence;
 	uint32_t play_timestamp;
 	size_t prefill_remaining;
 };
@@ -50,6 +56,7 @@ struct sippymodem_rtp_receiver {
 enum sippymodem_rtp_receive_result {
 	SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
 	SIPPYMODEM_RTP_RECEIVE_INVALID_ARGUMENT,
+	SIPPYMODEM_RTP_RECEIVE_MALFORMED_PACKET,
 	SIPPYMODEM_RTP_RECEIVE_UNEXPECTED_PAYLOAD,
 	SIPPYMODEM_RTP_RECEIVE_LATE,
 	SIPPYMODEM_RTP_RECEIVE_TOO_EARLY,
@@ -76,6 +83,13 @@ void sippymodem_rtp_receiver_reset(
 enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_push(
 	struct sippymodem_rtp_receiver *receiver,
 	const struct sippymodem_rtp_packet_view *packet);
+/* Parse and push one wire packet.  packet_result optionally retains the more
+ * specific packet-parser result when receive reports malformed input. */
+enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_receive(
+	struct sippymodem_rtp_receiver *receiver,
+	const uint8_t *packet,
+	size_t packet_size,
+	enum sippymodem_rtp_result *packet_result);
 
 /* Playout always fills count octets on success.  Missing media and time before
  * the first stream are represented by the configured silence octet. */

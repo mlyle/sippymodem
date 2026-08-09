@@ -14,11 +14,13 @@ enum {
 };
 
 static struct sippymodem_rtp_packet_view packet_view(
-	uint32_t ssrc, uint32_t timestamp, const uint8_t *payload, size_t count)
+	uint32_t ssrc, uint16_t sequence, uint32_t timestamp,
+	const uint8_t *payload, size_t count)
 {
 	struct sippymodem_rtp_packet_view packet = {
 		.header = {
 			.payload_type = TEST_PAYLOAD_TYPE,
+			.sequence = sequence,
 			.timestamp = timestamp,
 			.ssrc = ssrc,
 		},
@@ -49,7 +51,8 @@ static bool test_prefill_and_concealment(void)
 	struct sippymodem_rtp_jitter_slot slots[TEST_SLOT_COUNT];
 	struct sippymodem_rtp_receiver receiver;
 	struct sippymodem_rtp_packet_view packet =
-		packet_view(0x11223344, 100, payload, ARRAY_LENGTH(payload));
+		packet_view(0x11223344, 1, 100, payload,
+			    ARRAY_LENGTH(payload));
 	struct sippymodem_rtp_playout_report report;
 	uint8_t output[4];
 
@@ -92,33 +95,38 @@ static bool test_reordering_and_window_bounds(void)
 	uint8_t output[6];
 
 	CHECK(init_receiver(&receiver, slots, 0), "receiver init failed");
-	packet = packet_view(1, 100, first, ARRAY_LENGTH(first));
+	packet = packet_view(1, 10, 100, first, ARRAY_LENGTH(first));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
 	      "first packet failed");
-	packet = packet_view(1, 104, last, ARRAY_LENGTH(last));
+	packet = packet_view(1, 12, 104, last, ARRAY_LENGTH(last));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
 	      "future packet failed");
-	packet = packet_view(1, 102, middle, ARRAY_LENGTH(middle));
+	packet = packet_view(1, 11, 102, middle, ARRAY_LENGTH(middle));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
 	      "reordered packet failed");
+	packet = packet_view(1, 12, 104, last, ARRAY_LENGTH(last));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED &&
 		      receiver.stats.duplicate_samples == 2,
 	      "duplicate samples were not retained safely");
+	CHECK(receiver.stats.sequence_gaps == 1 &&
+		      receiver.stats.sequence_out_of_order == 1 &&
+		      receiver.stats.sequence_duplicates == 1,
+	      "sequence continuity statistics are wrong");
 	CHECK(sippymodem_rtp_receiver_play(&receiver, output, sizeof(output),
 				    NULL) &&
 		      memcmp(output, (uint8_t[]){ 1, 2, 3, 4, 5, 6 },
 			     sizeof(output)) == 0,
 	      "timestamp ordering failed");
 
-	packet = packet_view(1, 104, first, ARRAY_LENGTH(first));
+	packet = packet_view(1, 9, 104, first, ARRAY_LENGTH(first));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_LATE,
 	      "late packet was accepted");
-	packet = packet_view(1, 114, first, ARRAY_LENGTH(first));
+	packet = packet_view(1, 13, 114, first, ARRAY_LENGTH(first));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_TOO_EARLY,
 	      "packet beyond the bounded window was accepted");
@@ -136,15 +144,19 @@ static bool test_ssrc_restart_and_wrap(void)
 	uint8_t output[4];
 
 	CHECK(init_receiver(&receiver, slots, 0), "receiver init failed");
-	packet = packet_view(1, 100, old_payload, ARRAY_LENGTH(old_payload));
+	packet = packet_view(1, 1, 100, old_payload, ARRAY_LENGTH(old_payload));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
 	      "old stream failed");
-	packet = packet_view(2, UINT32_MAX - 1, new_payload,
+	packet = packet_view(2, UINT16_MAX, UINT32_MAX - 1, new_payload,
 			     ARRAY_LENGTH(new_payload));
 	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
 		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
 	      "replacement stream failed");
+	packet = packet_view(2, 0, 2, NULL, 0);
+	CHECK(sippymodem_rtp_receiver_push(&receiver, &packet) ==
+		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
+	      "wrapped sequence number failed");
 	CHECK(sippymodem_rtp_receiver_play(&receiver, output, sizeof(output),
 				    &report) &&
 		      memcmp(output, new_payload, sizeof(output)) == 0 &&
@@ -163,7 +175,13 @@ static bool test_validation_and_idle(void)
 		.payload_type = 128,
 	};
 	struct sippymodem_rtp_playout_report report;
+	struct sippymodem_rtp_header header = {
+		.payload_type = TEST_PAYLOAD_TYPE,
+	};
+	uint8_t packet[16];
 	uint8_t output[2] = { 0, 0 };
+	size_t packet_size;
+	enum sippymodem_rtp_result packet_result;
 
 	CHECK(!sippymodem_rtp_receiver_init(&receiver, &config, slots,
 					     TEST_SLOT_COUNT),
@@ -176,6 +194,28 @@ static bool test_validation_and_idle(void)
 		      output[1] == TEST_SILENCE &&
 		      receiver.stats.samples_idle == 2,
 	      "idle playout was not identified");
+	CHECK(sippymodem_rtp_packet_write(packet, sizeof(packet), &header,
+					   output, sizeof(output),
+					   &packet_size) == SIPPYMODEM_RTP_OK,
+	      "failed to build receiver input");
+	CHECK(sippymodem_rtp_receiver_receive(&receiver, packet, packet_size,
+				       &packet_result) ==
+		      SIPPYMODEM_RTP_RECEIVE_ACCEPTED &&
+		      packet_result == SIPPYMODEM_RTP_OK,
+	      "receiver did not accept a serialized packet");
+	packet[1] = 8;
+	CHECK(sippymodem_rtp_receiver_receive(&receiver, packet, packet_size,
+				       &packet_result) ==
+		      SIPPYMODEM_RTP_RECEIVE_UNEXPECTED_PAYLOAD &&
+		      packet_result == SIPPYMODEM_RTP_OK &&
+		      receiver.stats.unexpected_payloads == 1,
+	      "receiver did not filter an unexpected payload type");
+	CHECK(sippymodem_rtp_receiver_receive(&receiver, packet, 4,
+				       &packet_result) ==
+		      SIPPYMODEM_RTP_RECEIVE_MALFORMED_PACKET &&
+		      packet_result == SIPPYMODEM_RTP_PACKET_TOO_SHORT &&
+		      receiver.stats.malformed_packets == 1,
+	      "receiver did not report malformed wire input");
 	CHECK(!sippymodem_rtp_receiver_play(&receiver, NULL, 2, &report),
 	      "playout accepted a null output");
 	sippymodem_rtp_receiver_reset(&receiver);
