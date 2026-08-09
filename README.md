@@ -33,10 +33,12 @@ The SIP adapter owns one validated incoming or outgoing call, supports ringing,
 answer, and hangup, and reports bounded call-progress events. Offers and answers
 advertise one configured modem-safe audio format and RTP port, and negotiated
 remote RTP endpoints have an explicit configured/inactive lifecycle. The
-tested, allocation-free RTP endpoint can consume that lifecycle through a
-validated, transactional binding. No runtime owner yet drives its media frames
-or attaches a native V.21 core, so this transitional tree does not yet place a
-V.21 modem call.
+tested RTP runtime owns bounded jitter, playout, and packet storage, enforces a
+single configured frame size, and carries the recording hook through every RTP
+stage. Its endpoint can consume negotiated media through a validated,
+transactional binding. SIP and RTP lifetimes are not yet composed under the
+daemon, and no native V.21 core is attached, so this transitional tree does not
+yet place a V.21 modem call.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
