@@ -15,7 +15,10 @@ This branch is reconstructing that suite in small, reviewable steps. The
 current daemon is entirely source-built and uses the host's native ABI. Its
 minimal modem core registers a source-built SIP call-progress pump, allowing an
 outgoing dial to wait for signaling's explicit connected event. It does not yet
-register V.21 signal processing, so calls cannot carry modem data.
+register V.21 signal processing, so calls cannot carry modem data. A tested V.21
+channel primitive now provides exact rational transmit timing and generated
+tone-pair detection for both channel frequency pairs; modem training and data-
+pump ownership are the next integration boundary.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
