@@ -41,7 +41,9 @@ the actual bound port, advances signaling and media together, and releases both
 transports safely. It exposes typed call control and one exact-frame playout and
 transmit boundary. The daemon does not use that owner yet, and no native V.21
 core is attached, so this transitional tree does not yet place a V.21 modem
-call.
+call. A bounded audio path now applies saturating directional gain, records the
+PCM immediately around a typed modem-core callback, and preserves failures at
+each playout, modem, and transmit boundary.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
