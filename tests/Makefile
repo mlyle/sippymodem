@@ -106,13 +106,31 @@ AUDIO_SCHEDULER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_audio_scheduler.o \
 	$(BUILD_DIR)/sippymodem_audio_scheduler.o \
 	$(BUILD_DIR)/sippymodem_frame_clock.o
+HOST_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_host
+HOST_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_host.o \
+	$(BUILD_DIR)/sippymodem_host.o \
+	$(BUILD_DIR)/sippymodem_session.o \
+	$(BUILD_DIR)/sippymodem_sip_media_bridge.o \
+	$(BUILD_DIR)/sippymodem_sip_rtp.o \
+	$(BUILD_DIR)/sippymodem_rtp_runtime.o \
+	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
+	$(BUILD_DIR)/sippymodem_rtp_stream.o \
+	$(BUILD_DIR)/sippymodem_rtp_receiver.o \
+	$(BUILD_DIR)/sippymodem_rtp.o \
+	$(BUILD_DIR)/sippymodem_audio_path.o \
+	$(BUILD_DIR)/sippymodem_audio_scheduler.o \
+	$(BUILD_DIR)/sippymodem_frame_clock.o \
+	$(BUILD_DIR)/sippymodem_config.o \
+	$(BUILD_DIR)/sippymodem_media.o \
+	$(BUILD_DIR)/sippymodem_g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
 	$(STREAM_TEST_BINARY) $(ENDPOINT_TEST_BINARY) $(SIP_RTP_TEST_BINARY) \
 	$(RTP_RUNTIME_TEST_BINARY) $(SIP_MEDIA_BRIDGE_TEST_BINARY) \
 	$(SESSION_TEST_BINARY) $(AUDIO_PATH_TEST_BINARY) \
-	$(FRAME_CLOCK_TEST_BINARY) $(AUDIO_SCHEDULER_TEST_BINARY)
+	$(FRAME_CLOCK_TEST_BINARY) $(AUDIO_SCHEDULER_TEST_BINARY) \
+	$(HOST_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
 endif
@@ -126,7 +144,8 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(SIP_MEDIA_BRIDGE_TEST_OBJECTS:.o=.d) \
 	$(SESSION_TEST_OBJECTS:.o=.d) $(AUDIO_PATH_TEST_OBJECTS:.o=.d) \
 	$(FRAME_CLOCK_TEST_OBJECTS:.o=.d) \
-	$(AUDIO_SCHEDULER_TEST_OBJECTS:.o=.d)
+	$(AUDIO_SCHEDULER_TEST_OBJECTS:.o=.d) \
+	$(HOST_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
 endif
@@ -153,6 +172,7 @@ test: $(TEST_BINARIES)
 	./$(AUDIO_PATH_TEST_BINARY)
 	./$(FRAME_CLOCK_TEST_BINARY)
 	./$(AUDIO_SCHEDULER_TEST_BINARY)
+	./$(HOST_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 	./$(PJSIP_TEST_BINARY)
 else
@@ -211,6 +231,9 @@ $(FRAME_CLOCK_TEST_BINARY): $(FRAME_CLOCK_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(AUDIO_SCHEDULER_TEST_BINARY): $(AUDIO_SCHEDULER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(HOST_TEST_BINARY): $(HOST_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
@@ -286,6 +309,10 @@ $(BUILD_DIR)/sippymodem_frame_clock.o: \
 
 $(BUILD_DIR)/sippymodem_audio_scheduler.o: \
 	../src/sippymodem_audio_scheduler.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_host.o: \
+	../src/sippymodem_host.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR):
