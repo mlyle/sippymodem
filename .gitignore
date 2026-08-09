@@ -3,6 +3,5 @@
 /src/.depend
 /src/*.o
 /src/*.d
-/src/modem_test
 /src/slmodemd
 /tests/build/
