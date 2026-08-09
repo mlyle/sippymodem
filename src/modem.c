@@ -46,6 +46,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 
@@ -418,6 +419,15 @@ static void run_modem_stop(struct modem *m)
 /* FIXME */
 #define schedule_modem_stop(m) { m->sample_timer_func = run_modem_stop; \
 		                 m->sample_timer = m->count + 48; }
+
+static int run_pending_modem_stop(struct modem *m)
+{
+	if (m->sample_timer_func != run_modem_stop)
+		return 0;
+	m->sample_timer = 0;
+	m->sample_timer_func = NULL;
+	return modem_stop(m);
+}
 
 
 static void modem_hup(struct modem *m, unsigned local)
@@ -801,6 +811,23 @@ void modem_ring(struct modem *m)
 		}
 	}
 	m->ring_last = now;
+}
+
+int modem_report_incoming_call(struct modem *m)
+{
+	if (m == NULL || m->state != STATE_MODEM_IDLE)
+		return -1;
+	if (TOTAL_RINGS_COUNT(m) < UCHAR_MAX)
+		TOTAL_RINGS_COUNT(m)++;
+	if (TOTAL_RINGS_COUNT(m) == 1)
+		modem_put_chars(m, CRLF_CHARS(m), 2);
+	modem_report_result(m, RESULT_RING);
+	if (ANSWER_AFTER_RINGS(m) && !m->started &&
+	    TOTAL_RINGS_COUNT(m) >= ANSWER_AFTER_RINGS(m)) {
+		TOTAL_RINGS_COUNT(m) = 0;
+		return modem_answer(m);
+	}
+	return 0;
 }
 
 
@@ -1619,6 +1646,18 @@ int modem_dial(struct modem *m)
 	return modem_start(m);
 }
 
+int modem_report_outgoing_call_connected(struct modem *m)
+{
+	if (m == NULL)
+		return -1;
+	MODEM_DBG("outgoing call connected...\n");
+	if (!m->started || !m->caller || !m->dp ||
+	    m->dp->id != DP_CALLPROG)
+		return 0;
+	do_modem_change_dp(m);
+	return 0;
+}
+
 
 int modem_hook(struct modem *m, unsigned hook_state)
 {
@@ -1771,6 +1810,16 @@ static int sregs_init(unsigned char sregs[])
 void modem_hangup(struct modem *m)
 {
 	modem_hup(m,1);
+}
+
+int modem_report_remote_call_end(struct modem *m)
+{
+	if (m == NULL)
+		return -1;
+	TOTAL_RINGS_COUNT(m) = 0;
+	m->ring_count = 0;
+	modem_hup(m, 0);
+	return run_pending_modem_stop(m);
 }
 
 
@@ -1963,7 +2012,6 @@ void modem_delete(struct modem *m)
 	timer_del(&m->event_timer);
 	free(m);
 }
-
 
 
 
