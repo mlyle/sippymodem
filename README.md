@@ -36,9 +36,11 @@ remote RTP endpoints have an explicit configured/inactive lifecycle. The
 tested RTP runtime owns bounded jitter, playout, and packet storage, enforces a
 single configured frame size, and carries the recording hook through every RTP
 stage. Its endpoint can consume negotiated media through a validated,
-transactional binding. SIP and RTP lifetimes are not yet composed under the
-daemon, and no native V.21 core is attached, so this transitional tree does not
-yet place a V.21 modem call.
+transactional binding. A session owner opens RTP first so signaling advertises
+the actual bound port, advances signaling and media together, and releases both
+transports safely. The daemon does not use that owner yet, and no native V.21
+core is attached, so this transitional tree does not yet place a V.21 modem
+call.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
