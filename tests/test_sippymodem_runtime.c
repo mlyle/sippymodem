@@ -531,9 +531,14 @@ static bool test_opens_and_closes_in_dependency_order(void)
 	CHECK(device_path != NULL && sippymodem_runtime_terminal_fd(runtime) >= 0 &&
 		      modem->pty == sippymodem_runtime_terminal_fd(runtime) &&
 		      modem->pty_name == device_path &&
+		      sippymodem_runtime_terminal_poll_fd(runtime) == modem->pty &&
 		      capture.termios_updates == 1 &&
 		      cfgetispeed(&modem->termios) == B115200,
 	      "runtime did not bind its terminal to the modem");
+	modem->xmit.count = (int)modem->xmit.size;
+	CHECK(sippymodem_runtime_terminal_poll_fd(runtime) == -1,
+	      "runtime polled terminal input without modem capacity");
+	modem->xmit.count = 0;
 	modem->started = 1;
 	CHECK(sippymodem_runtime_close(runtime) == SIPPYMODEM_RUNTIME_OK &&
 		      capture.remote_ends == 1 && !modem->started &&
@@ -626,6 +631,7 @@ static bool test_reports_lifecycle_failures(void)
 			      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
 		      !sippymodem_runtime_is_open(NULL) &&
 		      sippymodem_runtime_terminal_fd(NULL) == -1 &&
+		      sippymodem_runtime_terminal_poll_fd(NULL) == -1 &&
 		      sippymodem_runtime_device_path(NULL) == NULL &&
 		      sippymodem_runtime_last_terminal_result(NULL) ==
 			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT,
@@ -735,7 +741,8 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	close(device_fd);
 	CHECK(sippymodem_runtime_step(runtime, 108, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_OK &&
-		      capture.hangups == 1,
+		      capture.hangups == 1 &&
+		      sippymodem_runtime_terminal_poll_fd(runtime) == -1,
 	      "runtime did not apply terminal HUPCL on disconnect");
 
 	terminal_bytes = 99;

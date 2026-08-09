@@ -389,6 +389,22 @@ int sippymodem_runtime_terminal_fd(
 		       -1;
 }
 
+int sippymodem_runtime_terminal_poll_fd(
+	const struct sippymodem_runtime *runtime)
+{
+	size_t capacity;
+
+	if (runtime == NULL ||
+	    runtime->last_terminal_result ==
+		    SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED ||
+	    sippymodem_slmodem_terminal_input_capacity(
+		    &runtime->modem_terminal, &capacity) !=
+		    SIPPYMODEM_SLMODEM_TERMINAL_OK ||
+	    capacity == 0)
+		return -1;
+	return sippymodem_terminal_master_fd(runtime->terminal);
+}
+
 const char *sippymodem_runtime_device_path(
 	const struct sippymodem_runtime *runtime)
 {

@@ -155,6 +155,9 @@ RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_runtime.o \
 TERMINAL_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_terminal
 TERMINAL_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_terminal.o \
 	$(BUILD_DIR)/sippymodem_terminal.o
+LOOP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_loop
+LOOP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_loop.o \
+	$(BUILD_DIR)/sippymodem_loop.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
@@ -166,7 +169,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SLMODEM_ADAPTER_TEST_BINARY) $(SLMODEM_CALLS_TEST_BINARY) \
 	$(SLMODEM_DRIVER_TEST_BINARY) $(SLMODEM_TERMINAL_TEST_BINARY) \
 	$(RUNTIME_TEST_BINARY) \
-	$(TERMINAL_TEST_BINARY)
+	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
 endif
@@ -187,7 +190,8 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(SLMODEM_CALLS_TEST_OBJECTS:.o=.d) \
 	$(SLMODEM_DRIVER_TEST_OBJECTS:.o=.d) \
 	$(SLMODEM_TERMINAL_TEST_OBJECTS:.o=.d) \
-	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d)
+	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d) \
+	$(LOOP_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
 endif
@@ -222,6 +226,7 @@ test: $(TEST_BINARIES)
 	./$(SLMODEM_TERMINAL_TEST_BINARY)
 	./$(RUNTIME_TEST_BINARY)
 	./$(TERMINAL_TEST_BINARY)
+	./$(LOOP_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 	./$(PJSIP_TEST_BINARY)
 else
@@ -304,6 +309,9 @@ $(RUNTIME_TEST_BINARY): $(RUNTIME_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(TERMINAL_TEST_BINARY): $(TERMINAL_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(LOOP_TEST_BINARY): $(LOOP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
@@ -410,6 +418,9 @@ $(BUILD_DIR)/sippymodem_runtime.o: ../src/sippymodem_runtime.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/sippymodem_terminal.o: \
 	../src/sippymodem_terminal.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_loop.o: ../src/sippymodem_loop.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR):

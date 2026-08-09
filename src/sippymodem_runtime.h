@@ -61,6 +61,9 @@ uint64_t sippymodem_runtime_wait_ns(
 bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime);
 int sippymodem_runtime_terminal_fd(
 	const struct sippymodem_runtime *runtime);
+/* Return the terminal descriptor only when polling it can make progress. */
+int sippymodem_runtime_terminal_poll_fd(
+	const struct sippymodem_runtime *runtime);
 const char *sippymodem_runtime_device_path(
 	const struct sippymodem_runtime *runtime);
 enum sippymodem_host_result sippymodem_runtime_last_host_result(
