@@ -8,6 +8,7 @@
 #include "sippymodem_recording_files.h"
 #include "sippymodem_session.h"
 #include "sippymodem_slmodem_calls.h"
+#include "sippymodem_terminal.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,6 +24,7 @@ enum sippymodem_runtime_result {
 	SIPPYMODEM_RUNTIME_IDLE,
 	SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR,
 	SIPPYMODEM_RUNTIME_INVALID_ARGUMENT,
+	SIPPYMODEM_RUNTIME_TERMINAL_ERROR,
 	SIPPYMODEM_RUNTIME_SESSION_ERROR,
 	SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR,
 	SIPPYMODEM_RUNTIME_HOST_ERROR,
@@ -54,9 +56,15 @@ enum sippymodem_runtime_result sippymodem_runtime_step(
 uint64_t sippymodem_runtime_wait_ns(
 	const struct sippymodem_runtime *runtime, uint64_t now_ns);
 bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime);
+int sippymodem_runtime_terminal_fd(
+	const struct sippymodem_runtime *runtime);
+const char *sippymodem_runtime_device_path(
+	const struct sippymodem_runtime *runtime);
 enum sippymodem_host_result sippymodem_runtime_last_host_result(
 	const struct sippymodem_runtime *runtime);
 enum sippymodem_session_result sippymodem_runtime_last_session_result(
+	const struct sippymodem_runtime *runtime);
+enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(
 	const struct sippymodem_runtime *runtime);
 enum sippymodem_slmodem_calls_result sippymodem_runtime_last_calls_result(
 	const struct sippymodem_runtime *runtime);

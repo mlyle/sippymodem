@@ -40,6 +40,7 @@ struct runtime_capture {
 	unsigned int forced_stops;
 	unsigned int host_steps;
 	unsigned int calls_drained;
+	unsigned int termios_updates;
 	char teardown_order[8];
 	size_t teardown_count;
 	bool fail_modem;
@@ -181,6 +182,12 @@ int modem_stop_now(struct modem *modem)
 	capture.forced_stops++;
 	modem->started = 0;
 	return capture.forced_stop_result;
+}
+
+void modem_update_termios(struct modem *modem, struct termios *attributes)
+{
+	capture.termios_updates++;
+	modem->termios = *attributes;
 }
 
 static enum sippymodem_modem_core_result discard_frame(
@@ -411,7 +418,10 @@ static bool test_owns_closed_runtime(void)
 		      capture.host_creates == 1 &&
 		      capture.recording_creates == 1 &&
 		      capture.host_received_recorder &&
-		      sippymodem_runtime_recording_files(runtime) != NULL,
+		      sippymodem_runtime_recording_files(runtime) != NULL &&
+		      modem->pty == -1 &&
+		      sippymodem_runtime_terminal_fd(runtime) == -1 &&
+		      sippymodem_runtime_device_path(runtime) == NULL,
 	      "runtime did not own its complete closed graph");
 	sippymodem_runtime_destroy(runtime);
 	CHECK(strcmp(capture.teardown_order, "HRM") == 0 &&
@@ -476,6 +486,7 @@ static bool test_opens_and_closes_in_dependency_order(void)
 	struct sippymodem_config config = runtime_config(false);
 	struct sippymodem_runtime *runtime;
 	struct modem *modem;
+	const char *device_path;
 
 	memset(&capture, 0, sizeof(capture));
 	runtime = sippymodem_runtime_create(&config, "lifecycle-test");
@@ -485,10 +496,20 @@ static bool test_opens_and_closes_in_dependency_order(void)
 		      capture.host_opens == 1 && sippymodem_runtime_is_open(runtime),
 	      "runtime open was not idempotent");
 	modem = sippymodem_runtime_modem(runtime);
+	device_path = sippymodem_runtime_device_path(runtime);
+	CHECK(device_path != NULL && sippymodem_runtime_terminal_fd(runtime) >= 0 &&
+		      modem->pty == sippymodem_runtime_terminal_fd(runtime) &&
+		      modem->pty_name == device_path &&
+		      capture.termios_updates == 1 &&
+		      cfgetispeed(&modem->termios) == B115200,
+	      "runtime did not bind its terminal to the modem");
 	modem->started = 1;
 	CHECK(sippymodem_runtime_close(runtime) == SIPPYMODEM_RUNTIME_OK &&
 		      capture.remote_ends == 1 && !modem->started &&
-		      capture.host_closes == 1 && !sippymodem_runtime_is_open(runtime),
+		      capture.host_closes == 1 && !sippymodem_runtime_is_open(runtime) &&
+		      modem->pty == -1 && modem->pty_name == NULL &&
+		      sippymodem_runtime_terminal_fd(runtime) == -1 &&
+		      sippymodem_runtime_device_path(runtime) == NULL,
 	      "runtime did not stop the modem before closing its host");
 	sippymodem_runtime_destroy(runtime);
 	CHECK(strcmp(capture.teardown_order, "CHM") == 0 &&
@@ -511,7 +532,9 @@ static bool test_reports_lifecycle_failures(void)
 		      sippymodem_runtime_open(runtime) ==
 			      SIPPYMODEM_RUNTIME_SESSION_ERROR &&
 		      sippymodem_runtime_last_session_result(runtime) ==
-			      SIPPYMODEM_SESSION_SIGNALING_ERROR,
+			      SIPPYMODEM_SESSION_SIGNALING_ERROR &&
+		      sippymodem_runtime_terminal_fd(runtime) == -1 &&
+		      sippymodem_runtime_modem(runtime)->pty == -1,
 	      "runtime hid a session open failure");
 	sippymodem_runtime_destroy(runtime);
 
@@ -570,7 +593,11 @@ static bool test_reports_lifecycle_failures(void)
 		      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
 		      sippymodem_runtime_close(NULL) ==
 			      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
-		      !sippymodem_runtime_is_open(NULL),
+		      !sippymodem_runtime_is_open(NULL) &&
+		      sippymodem_runtime_terminal_fd(NULL) == -1 &&
+		      sippymodem_runtime_device_path(NULL) == NULL &&
+		      sippymodem_runtime_last_terminal_result(NULL) ==
+			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT,
 	      "runtime lifecycle accepted a missing owner");
 	return true;
 }

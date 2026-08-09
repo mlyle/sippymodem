@@ -18,11 +18,13 @@ struct sippymodem_runtime {
 	struct modem *modem;
 	struct sippymodem_slmodem_adapter adapter;
 	struct sippymodem_slmodem_calls calls;
+	struct sippymodem_terminal *terminal;
 	struct sippymodem_recording_files *recording_files;
 	struct sippymodem_host *host;
 	enum sippymodem_host_result last_host_result;
 	enum sippymodem_session_result last_session_result;
 	enum sippymodem_slmodem_calls_result last_calls_result;
+	enum sippymodem_terminal_result last_terminal_result;
 };
 
 static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
@@ -33,6 +35,7 @@ static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
 	sippymodem_recording_files_destroy(runtime->recording_files);
 	if (runtime->modem != NULL)
 		modem_delete(runtime->modem);
+	sippymodem_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
 
@@ -70,6 +73,10 @@ struct sippymodem_runtime *sippymodem_runtime_create(
 		    &runtime->adapter, runtime->modem) ||
 	    !sippymodem_slmodem_calls_init(&runtime->calls, runtime->modem))
 		goto fail;
+	runtime->modem->pty = -1;
+	runtime->terminal = sippymodem_terminal_create();
+	if (runtime->terminal == NULL)
+		goto fail;
 	if (config->recording.prefix[0] != '\0') {
 		runtime->recording_files = sippymodem_recording_files_create(
 			config->recording.prefix);
@@ -100,14 +107,38 @@ fail:
 enum sippymodem_runtime_result sippymodem_runtime_open(
 	struct sippymodem_runtime *runtime)
 {
+	struct termios attributes;
+
 	if (runtime == NULL)
 		return SIPPYMODEM_RUNTIME_INVALID_ARGUMENT;
 	if (sippymodem_host_is_open(runtime->host))
-		return SIPPYMODEM_RUNTIME_OK;
+		return sippymodem_terminal_is_open(runtime->terminal) ?
+			       SIPPYMODEM_RUNTIME_OK :
+			       SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
+	runtime->last_terminal_result =
+		sippymodem_terminal_open(runtime->terminal);
+	if (runtime->last_terminal_result != SIPPYMODEM_TERMINAL_OK &&
+	    runtime->last_terminal_result != SIPPYMODEM_TERMINAL_ALREADY_OPEN)
+		return SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
+	runtime->last_terminal_result = sippymodem_terminal_get_attributes(
+		runtime->terminal, &attributes);
+	if (runtime->last_terminal_result != SIPPYMODEM_TERMINAL_OK) {
+		(void)sippymodem_terminal_close(runtime->terminal);
+		return SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
+	}
+	runtime->modem->pty =
+		sippymodem_terminal_master_fd(runtime->terminal);
+	runtime->modem->pty_name =
+		sippymodem_terminal_device_path(runtime->terminal);
+	modem_update_termios(runtime->modem, &attributes);
 	runtime->last_session_result = sippymodem_host_open(runtime->host);
-	return runtime->last_session_result == SIPPYMODEM_SESSION_OK ?
-		       SIPPYMODEM_RUNTIME_OK :
-		       SIPPYMODEM_RUNTIME_SESSION_ERROR;
+	if (runtime->last_session_result == SIPPYMODEM_SESSION_OK)
+		return SIPPYMODEM_RUNTIME_OK;
+	runtime->modem->pty = -1;
+	runtime->modem->pty_name = NULL;
+	runtime->last_terminal_result =
+		sippymodem_terminal_close(runtime->terminal);
+	return SIPPYMODEM_RUNTIME_SESSION_ERROR;
 }
 
 enum sippymodem_runtime_result sippymodem_runtime_close(
@@ -125,12 +156,18 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 			sippymodem_host_close(runtime->host);
 	else
 		runtime->last_session_result = SIPPYMODEM_SESSION_NOT_OPEN;
+	runtime->modem->pty = -1;
+	runtime->modem->pty_name = NULL;
+	runtime->last_terminal_result =
+		sippymodem_terminal_close(runtime->terminal);
 	if (stop_result != 0)
 		return SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR;
-	return runtime->last_session_result == SIPPYMODEM_SESSION_OK ||
-		       runtime->last_session_result == SIPPYMODEM_SESSION_NOT_OPEN ?
+	if (runtime->last_session_result != SIPPYMODEM_SESSION_OK &&
+	    runtime->last_session_result != SIPPYMODEM_SESSION_NOT_OPEN)
+		return SIPPYMODEM_RUNTIME_SESSION_ERROR;
+	return runtime->last_terminal_result == SIPPYMODEM_TERMINAL_OK ?
 		       SIPPYMODEM_RUNTIME_OK :
-		       SIPPYMODEM_RUNTIME_SESSION_ERROR;
+		       SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
 }
 
 static enum sippymodem_runtime_result drain_call_transitions(
@@ -200,7 +237,10 @@ void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime)
 	(void)sippymodem_slmodem_driver_detach(&runtime->driver);
 	sippymodem_host_destroy(runtime->host);
 	sippymodem_recording_files_destroy(runtime->recording_files);
+	runtime->modem->pty = -1;
+	runtime->modem->pty_name = NULL;
 	modem_delete(runtime->modem);
+	sippymodem_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
 
@@ -217,7 +257,24 @@ const struct sippymodem_recording_files *sippymodem_runtime_recording_files(
 
 bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime)
 {
-	return runtime != NULL && sippymodem_host_is_open(runtime->host);
+	return runtime != NULL && sippymodem_host_is_open(runtime->host) &&
+	       sippymodem_terminal_is_open(runtime->terminal);
+}
+
+int sippymodem_runtime_terminal_fd(
+	const struct sippymodem_runtime *runtime)
+{
+	return runtime != NULL ?
+		       sippymodem_terminal_master_fd(runtime->terminal) :
+		       -1;
+}
+
+const char *sippymodem_runtime_device_path(
+	const struct sippymodem_runtime *runtime)
+{
+	return runtime != NULL ?
+		       sippymodem_terminal_device_path(runtime->terminal) :
+		       NULL;
 }
 
 enum sippymodem_host_result sippymodem_runtime_last_host_result(
@@ -232,6 +289,13 @@ enum sippymodem_session_result sippymodem_runtime_last_session_result(
 {
 	return runtime != NULL ? runtime->last_session_result :
 			       SIPPYMODEM_SESSION_INVALID_ARGUMENT;
+}
+
+enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(
+	const struct sippymodem_runtime *runtime)
+{
+	return runtime != NULL ? runtime->last_terminal_result :
+			       SIPPYMODEM_TERMINAL_INVALID_ARGUMENT;
 }
 
 enum sippymodem_slmodem_calls_result sippymodem_runtime_last_calls_result(
@@ -253,6 +317,8 @@ const char *sippymodem_runtime_result_name(
 		return "negotiated media could not be bound";
 	case SIPPYMODEM_RUNTIME_INVALID_ARGUMENT:
 		return "invalid argument";
+	case SIPPYMODEM_RUNTIME_TERMINAL_ERROR:
+		return "modem terminal failed";
 	case SIPPYMODEM_RUNTIME_SESSION_ERROR:
 		return "SIP/RTP session failed";
 	case SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR:

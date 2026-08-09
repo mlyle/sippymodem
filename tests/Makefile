@@ -144,7 +144,7 @@ SLMODEM_DRIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_slmodem_driver.o
 RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_runtime
 RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_runtime.o \
-	$(BUILD_DIR)/sippymodem_runtime.o
+	$(BUILD_DIR)/sippymodem_runtime.o $(BUILD_DIR)/sippymodem_terminal.o
 TERMINAL_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_terminal
 TERMINAL_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_terminal.o \
 	$(BUILD_DIR)/sippymodem_terminal.o
