@@ -39,15 +39,14 @@ stage. Its endpoint can consume negotiated media through a validated,
 transactional binding. A session owner opens RTP first so signaling advertises
 the actual bound port, advances signaling and media together, and releases both
 transports safely. It exposes typed call control and one exact-frame playout and
-transmit boundary. The daemon does not use that owner yet, and no native V.21
-core is attached, so this transitional tree does not yet place a V.21 modem
-call. A bounded audio path now applies saturating directional gain, records the
-PCM immediately around a typed modem-core callback, and preserves failures at
-each playout, modem, and transmit boundary. Exact sample-derived frame pacing
-supports bounded catch-up and treats an event-loop overrun as an explicit
-failure instead of silently shifting the media clock. A scheduler arms that
-clock only while negotiated media is active and deactivates the audio path on
-any timing, modem-core, playout, or transmit failure.
+transmit boundary. A host owner composes that session with a bounded audio path
+and exact sample-derived scheduler. Its nonblocking step records every network,
+line, and modem boundary, performs bounded catch-up, and reports rejected media
+updates without interrupting an established stream. Timing, modem-core,
+playout, or transmit failure suspends audio and requests hangup until a new
+media lifecycle begins. The daemon does not use that host yet, and no native
+V.21 core is attached, so this transitional tree does not yet place a V.21
+modem call.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test

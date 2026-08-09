@@ -9,9 +9,21 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 enum {
 	SIPPYMODEM_HOST_MAXIMUM_CATCHUP_FRAMES = 4,
+	SIPPYMODEM_HOST_SIGNALING_POLL_NS = 20000000,
+};
+
+enum sippymodem_host_result {
+	SIPPYMODEM_HOST_OK,
+	SIPPYMODEM_HOST_IDLE,
+	SIPPYMODEM_HOST_INVALID_ARGUMENT,
+	SIPPYMODEM_HOST_SESSION_ERROR,
+	SIPPYMODEM_HOST_MEDIA_BINDING_ERROR,
+	SIPPYMODEM_HOST_AUDIO_ERROR,
+	SIPPYMODEM_HOST_MODEM_STOPPED,
 };
 
 struct sippymodem_host;
@@ -36,10 +48,29 @@ enum sippymodem_sip_signaling_result sippymodem_host_answer(
 enum sippymodem_sip_signaling_result sippymodem_host_hangup(
 	struct sippymodem_host *host);
 
+/* now_ns uses one monotonic nanosecond clock. This step never blocks in
+ * signaling, and both counters are optional outputs. */
+enum sippymodem_host_result sippymodem_host_step(
+	struct sippymodem_host *host,
+	uint64_t now_ns,
+	size_t *datagrams_received,
+	size_t *frames_processed);
+/* UINT64_MAX means that a closed host has no pending work. */
+uint64_t sippymodem_host_wait_ns(
+	const struct sippymodem_host *host, uint64_t now_ns);
+
 size_t sippymodem_host_frame_samples(const struct sippymodem_host *host);
 bool sippymodem_host_is_open(const struct sippymodem_host *host);
 bool sippymodem_host_media_is_configured(
 	const struct sippymodem_host *host);
 bool sippymodem_host_audio_is_active(const struct sippymodem_host *host);
+enum sippymodem_session_result sippymodem_host_last_session_result(
+	const struct sippymodem_host *host);
+enum sippymodem_audio_scheduler_result
+sippymodem_host_last_audio_scheduler_result(
+	const struct sippymodem_host *host);
+enum sippymodem_audio_path_result sippymodem_host_last_audio_path_result(
+	const struct sippymodem_host *host);
+const char *sippymodem_host_result_name(enum sippymodem_host_result result);
 
 #endif
