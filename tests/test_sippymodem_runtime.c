@@ -17,10 +17,12 @@
 struct sippymodem_host {
 	unsigned int marker;
 	bool opened;
+	struct sippymodem_sip_signaling_callbacks callbacks;
 };
 
 struct sippymodem_recording_files {
 	struct sippymodem_recorder recorder;
+	enum sippymodem_recording_files_result result;
 };
 
 struct runtime_capture {
@@ -36,6 +38,8 @@ struct runtime_capture {
 	unsigned int host_closes;
 	unsigned int remote_ends;
 	unsigned int forced_stops;
+	unsigned int host_steps;
+	unsigned int calls_drained;
 	char teardown_order[8];
 	size_t teardown_count;
 	bool fail_modem;
@@ -46,10 +50,19 @@ struct runtime_capture {
 	bool fail_host;
 	bool fail_attach;
 	bool host_received_recorder;
+	bool emit_call;
+	bool call_pending;
+	bool drain_never_idle;
+	struct sippymodem_sip_call_event call;
+	enum sippymodem_host_result host_step_result;
+	enum sippymodem_slmodem_calls_result call_result;
 	enum sippymodem_session_result host_open_result;
 	enum sippymodem_session_result host_close_result;
 	int remote_end_result;
 	int forced_stop_result;
+	uint64_t wait_ns;
+	size_t datagrams;
+	size_t frames;
 };
 
 static struct runtime_capture capture;
@@ -197,6 +210,16 @@ const struct sippymodem_modem_core *sippymodem_slmodem_adapter_core(
 	return adapter != NULL ? &adapter->core : NULL;
 }
 
+static void queue_call(
+	void *context, const struct sippymodem_sip_call_event *event)
+{
+	(void)context;
+	if (event != NULL) {
+		capture.call = *event;
+		capture.call_pending = true;
+	}
+}
+
 bool sippymodem_slmodem_calls_init(
 	struct sippymodem_slmodem_calls *calls, struct modem *modem)
 {
@@ -205,6 +228,7 @@ bool sippymodem_slmodem_calls_init(
 	memset(calls, 0, sizeof(*calls));
 	calls->modem = modem;
 	calls->callbacks.context = calls;
+	calls->callbacks.call_changed = queue_call;
 	return true;
 }
 
@@ -213,6 +237,22 @@ sippymodem_slmodem_calls_callbacks(
 	const struct sippymodem_slmodem_calls *calls)
 {
 	return calls != NULL ? &calls->callbacks : NULL;
+}
+
+enum sippymodem_slmodem_calls_result sippymodem_slmodem_calls_drain(
+	struct sippymodem_slmodem_calls *calls)
+{
+	(void)calls;
+	capture.calls_drained++;
+	if (capture.drain_never_idle)
+		return SIPPYMODEM_SLMODEM_CALLS_OK;
+	if (!capture.call_pending)
+		return SIPPYMODEM_SLMODEM_CALLS_IDLE;
+	capture.call_pending = false;
+	if (capture.call.direction != SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+	    capture.call.direction != SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING)
+		return SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT;
+	return capture.call_result;
 }
 
 static void discard_recording(
@@ -234,8 +274,10 @@ struct sippymodem_recording_files *sippymodem_recording_files_create(
 		return NULL;
 	}
 	files = calloc(1, sizeof(*files));
-	if (files != NULL)
+	if (files != NULL) {
 		files->recorder.write = discard_recording;
+		files->result = SIPPYMODEM_RECORDING_FILES_OK;
+	}
 	return files;
 }
 
@@ -255,6 +297,13 @@ const struct sippymodem_recorder *sippymodem_recording_files_recorder(
 	return files != NULL && !capture.fail_recorder ? &files->recorder : NULL;
 }
 
+enum sippymodem_recording_files_result sippymodem_recording_files_last_result(
+	const struct sippymodem_recording_files *files)
+{
+	return files != NULL ? files->result :
+			       SIPPYMODEM_RECORDING_FILES_INVALID_BLOCK;
+}
+
 struct sippymodem_host *sippymodem_host_create(
 	const struct sippymodem_config *config,
 	const struct sippymodem_recorder *recorder,
@@ -270,6 +319,7 @@ struct sippymodem_host *sippymodem_host_create(
 	host = calloc(1, sizeof(*host));
 	if (host != NULL) {
 		host->marker = 1;
+		host->callbacks = *callbacks;
 		capture.host_received_recorder = recorder != NULL;
 	}
 	return host;
@@ -305,6 +355,32 @@ enum sippymodem_session_result sippymodem_host_close(
 bool sippymodem_host_is_open(const struct sippymodem_host *host)
 {
 	return host != NULL && host->opened;
+}
+
+enum sippymodem_host_result sippymodem_host_step(
+	struct sippymodem_host *host, uint64_t now_ns,
+	size_t *datagrams_received, size_t *frames_processed)
+{
+	(void)now_ns;
+	capture.host_steps++;
+	if (datagrams_received != NULL)
+		*datagrams_received = capture.datagrams;
+	if (frames_processed != NULL)
+		*frames_processed = capture.frames;
+	if (capture.emit_call) {
+		capture.emit_call = false;
+		host->callbacks.call_changed(
+			host->callbacks.context, &capture.call);
+	}
+	return capture.host_step_result;
+}
+
+uint64_t sippymodem_host_wait_ns(
+	const struct sippymodem_host *host, uint64_t now_ns)
+{
+	(void)host;
+	(void)now_ns;
+	return capture.wait_ns;
 }
 
 static struct sippymodem_config runtime_config(bool recording)
@@ -499,6 +575,92 @@ static bool test_reports_lifecycle_failures(void)
 	return true;
 }
 
+static bool test_steps_bounded_host_and_evidence_work(void)
+{
+	struct sippymodem_config config = runtime_config(true);
+	struct sippymodem_runtime *runtime;
+	struct sippymodem_recording_files *recording;
+	size_t datagrams = 99;
+	size_t frames = 99;
+
+	memset(&capture, 0, sizeof(capture));
+	capture.wait_ns = 7654321;
+	runtime = sippymodem_runtime_create(&config, "step-test");
+	CHECK(runtime != NULL &&
+		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+	      "runtime step fixture did not open");
+	recording = (struct sippymodem_recording_files *)
+		sippymodem_runtime_recording_files(runtime);
+	capture.host_step_result = SIPPYMODEM_HOST_OK;
+	capture.datagrams = 3;
+	capture.frames = 2;
+	capture.emit_call = true;
+	capture.call.direction = SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING;
+	capture.call.state = SIPPYMODEM_SIP_CALL_CONNECTED;
+	CHECK(sippymodem_runtime_step(runtime, 100, &datagrams, &frames) ==
+		      SIPPYMODEM_RUNTIME_OK &&
+		      datagrams == 3 && frames == 2 && capture.host_steps == 1 &&
+		      capture.calls_drained == 2 &&
+		      sippymodem_runtime_last_host_result(runtime) ==
+			      SIPPYMODEM_HOST_OK &&
+		      sippymodem_runtime_last_calls_result(runtime) ==
+			      SIPPYMODEM_SLMODEM_CALLS_IDLE &&
+		      sippymodem_runtime_wait_ns(runtime, 100) == capture.wait_ns,
+	      "runtime did not advance and drain bounded host work");
+
+	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
+	CHECK(sippymodem_runtime_step(runtime, 101, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_IDLE,
+	      "idle host work was not distinguished");
+	capture.host_step_result = SIPPYMODEM_HOST_MEDIA_BINDING_ERROR;
+	CHECK(sippymodem_runtime_step(runtime, 102, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR,
+	      "runtime hid rejected negotiated media");
+	capture.host_step_result = SIPPYMODEM_HOST_AUDIO_ERROR;
+	CHECK(sippymodem_runtime_step(runtime, 103, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_HOST_ERROR,
+	      "runtime hid a host audio failure");
+
+	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
+	capture.emit_call = true;
+	capture.call.direction = (enum sippymodem_sip_call_direction)99;
+	CHECK(sippymodem_runtime_step(runtime, 104, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
+		      sippymodem_runtime_last_calls_result(runtime) ==
+			      SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT,
+	      "runtime hid an invalid call transition");
+	recording->result = SIPPYMODEM_RECORDING_FILES_WRITE_ERROR;
+	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_RECORDING_ERROR,
+	      "runtime continued after recording evidence failed");
+	recording->result = SIPPYMODEM_RECORDING_FILES_OK;
+	capture.calls_drained = 0;
+	capture.drain_never_idle = true;
+	CHECK(sippymodem_runtime_step(runtime, 106, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
+		      capture.calls_drained ==
+			      SIPPYMODEM_RUNTIME_MAX_CALL_TRANSITIONS,
+	      "runtime call draining was not bounded");
+	capture.drain_never_idle = false;
+
+	datagrams = 99;
+	frames = 99;
+	CHECK(sippymodem_runtime_step(NULL, 0, &datagrams, &frames) ==
+		      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
+		      datagrams == 0 && frames == 0 &&
+		      sippymodem_runtime_wait_ns(NULL, 0) == UINT64_MAX &&
+		      sippymodem_runtime_last_host_result(NULL) ==
+			      SIPPYMODEM_HOST_INVALID_ARGUMENT &&
+		      sippymodem_runtime_last_calls_result(NULL) ==
+			      SIPPYMODEM_SLMODEM_CALLS_INVALID_ARGUMENT &&
+		      strcmp(sippymodem_runtime_result_name(
+			     SIPPYMODEM_RUNTIME_RECORDING_ERROR),
+			     "recording evidence failed") == 0,
+	      "runtime step diagnostics were incomplete");
+	sippymodem_runtime_destroy(runtime);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -509,6 +671,7 @@ int main(void)
 		{ "creation rollback", test_creation_rolls_back },
 		{ "open and close", test_opens_and_closes_in_dependency_order },
 		{ "lifecycle failures", test_reports_lifecycle_failures },
+		{ "bounded host step", test_steps_bounded_host_and_evidence_work },
 	};
 	unsigned int failures = 0;
 

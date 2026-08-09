@@ -20,7 +20,9 @@ struct sippymodem_runtime {
 	struct sippymodem_slmodem_calls calls;
 	struct sippymodem_recording_files *recording_files;
 	struct sippymodem_host *host;
+	enum sippymodem_host_result last_host_result;
 	enum sippymodem_session_result last_session_result;
+	enum sippymodem_slmodem_calls_result last_calls_result;
 };
 
 static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
@@ -131,6 +133,63 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 		       SIPPYMODEM_RUNTIME_SESSION_ERROR;
 }
 
+static enum sippymodem_runtime_result drain_call_transitions(
+	struct sippymodem_runtime *runtime)
+{
+	for (unsigned int count = 0;
+	     count < SIPPYMODEM_RUNTIME_MAX_CALL_TRANSITIONS; ++count) {
+		runtime->last_calls_result =
+			sippymodem_slmodem_calls_drain(&runtime->calls);
+		if (runtime->last_calls_result ==
+		    SIPPYMODEM_SLMODEM_CALLS_IDLE)
+			return SIPPYMODEM_RUNTIME_OK;
+		if (runtime->last_calls_result !=
+		    SIPPYMODEM_SLMODEM_CALLS_OK)
+			return SIPPYMODEM_RUNTIME_CALL_ERROR;
+	}
+	return SIPPYMODEM_RUNTIME_CALL_ERROR;
+}
+
+enum sippymodem_runtime_result sippymodem_runtime_step(
+	struct sippymodem_runtime *runtime, uint64_t now_ns,
+	size_t *datagrams_received, size_t *frames_processed)
+{
+	enum sippymodem_runtime_result calls_result;
+
+	if (datagrams_received != NULL)
+		*datagrams_received = 0;
+	if (frames_processed != NULL)
+		*frames_processed = 0;
+	if (runtime == NULL)
+		return SIPPYMODEM_RUNTIME_INVALID_ARGUMENT;
+	runtime->last_host_result = sippymodem_host_step(
+		runtime->host, now_ns, datagrams_received, frames_processed);
+	calls_result = drain_call_transitions(runtime);
+	if (runtime->recording_files != NULL &&
+	    sippymodem_recording_files_last_result(runtime->recording_files) !=
+		    SIPPYMODEM_RECORDING_FILES_OK)
+		return SIPPYMODEM_RUNTIME_RECORDING_ERROR;
+	if (calls_result != SIPPYMODEM_RUNTIME_OK)
+		return calls_result;
+	if (runtime->last_host_result ==
+	    SIPPYMODEM_HOST_MEDIA_BINDING_ERROR)
+		return SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR;
+	if (runtime->last_host_result != SIPPYMODEM_HOST_OK &&
+	    runtime->last_host_result != SIPPYMODEM_HOST_IDLE)
+		return SIPPYMODEM_RUNTIME_HOST_ERROR;
+	return runtime->last_host_result == SIPPYMODEM_HOST_OK ?
+		       SIPPYMODEM_RUNTIME_OK :
+		       SIPPYMODEM_RUNTIME_IDLE;
+}
+
+uint64_t sippymodem_runtime_wait_ns(
+	const struct sippymodem_runtime *runtime, uint64_t now_ns)
+{
+	return runtime != NULL ?
+		       sippymodem_host_wait_ns(runtime->host, now_ns) :
+		       UINT64_MAX;
+}
+
 void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime)
 {
 	if (runtime == NULL)
@@ -161,11 +220,25 @@ bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime)
 	return runtime != NULL && sippymodem_host_is_open(runtime->host);
 }
 
+enum sippymodem_host_result sippymodem_runtime_last_host_result(
+	const struct sippymodem_runtime *runtime)
+{
+	return runtime != NULL ? runtime->last_host_result :
+			       SIPPYMODEM_HOST_INVALID_ARGUMENT;
+}
+
 enum sippymodem_session_result sippymodem_runtime_last_session_result(
 	const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL ? runtime->last_session_result :
 			       SIPPYMODEM_SESSION_INVALID_ARGUMENT;
+}
+
+enum sippymodem_slmodem_calls_result sippymodem_runtime_last_calls_result(
+	const struct sippymodem_runtime *runtime)
+{
+	return runtime != NULL ? runtime->last_calls_result :
+			       SIPPYMODEM_SLMODEM_CALLS_INVALID_ARGUMENT;
 }
 
 const char *sippymodem_runtime_result_name(
@@ -174,12 +247,22 @@ const char *sippymodem_runtime_result_name(
 	switch (result) {
 	case SIPPYMODEM_RUNTIME_OK:
 		return "ok";
+	case SIPPYMODEM_RUNTIME_IDLE:
+		return "idle";
+	case SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR:
+		return "negotiated media could not be bound";
 	case SIPPYMODEM_RUNTIME_INVALID_ARGUMENT:
 		return "invalid argument";
 	case SIPPYMODEM_RUNTIME_SESSION_ERROR:
 		return "SIP/RTP session failed";
 	case SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR:
 		return "modem stop failed";
+	case SIPPYMODEM_RUNTIME_HOST_ERROR:
+		return "SIP modem host failed";
+	case SIPPYMODEM_RUNTIME_CALL_ERROR:
+		return "modem call transition failed";
+	case SIPPYMODEM_RUNTIME_RECORDING_ERROR:
+		return "recording evidence failed";
 	}
 	return "unknown runtime result";
 }
