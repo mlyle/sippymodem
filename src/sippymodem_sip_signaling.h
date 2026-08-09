@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#ifndef SIPPYMODEM_SIP_SIGNALING_H
+#define SIPPYMODEM_SIP_SIGNALING_H
+
+#include "sippymodem_config.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+enum sippymodem_sip_signaling_result {
+	SIPPYMODEM_SIP_SIGNALING_OK = 0,
+	SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT,
+	SIPPYMODEM_SIP_SIGNALING_NOT_OPEN,
+	SIPPYMODEM_SIP_SIGNALING_BUSY,
+	SIPPYMODEM_SIP_SIGNALING_UNSUPPORTED_CONFIGURATION,
+	SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR,
+};
+
+struct sippymodem_sip_signaling_error {
+	const char *operation;
+	int library_status;
+	const char *message;
+};
+
+enum sippymodem_sip_trace_origin {
+	SIPPYMODEM_SIP_TRACE_ADAPTER,
+	SIPPYMODEM_SIP_TRACE_LIBRARY,
+};
+
+struct sippymodem_sip_trace_record {
+	enum sippymodem_sip_trace_origin origin;
+	int level;
+	const char *data;
+	size_t size;
+};
+
+/*
+ * Use one owner thread for all API calls. Callback records and their pointed-
+ * to data are borrowed synchronously on that thread.
+ */
+struct sippymodem_sip_signaling_callbacks {
+	void *context;
+	void (*ready)(void *context);
+	void (*error)(void *context,
+		      const struct sippymodem_sip_signaling_error *error);
+	void (*trace)(void *context,
+		      const struct sippymodem_sip_trace_record *record);
+};
+
+struct sippymodem_sip_signaling;
+
+struct sippymodem_sip_signaling *sippymodem_sip_signaling_create(
+	const struct sippymodem_config *config,
+	const struct sippymodem_sip_signaling_callbacks *callbacks);
+
+/* close() is callback-safe. Call destroy() again outside a callback to free. */
+void sippymodem_sip_signaling_destroy(
+	struct sippymodem_sip_signaling *signaling);
+/* This first lifecycle boundary accepts only registration_enabled == false. */
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_open(
+	struct sippymodem_sip_signaling *signaling);
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_close(
+	struct sippymodem_sip_signaling *signaling);
+
+/* Poll signaling without worker threads; timeout_ms may be zero. */
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_step(
+	struct sippymodem_sip_signaling *signaling, unsigned int timeout_ms);
+
+bool sippymodem_sip_signaling_is_open(
+	const struct sippymodem_sip_signaling *signaling);
+unsigned int sippymodem_sip_signaling_local_port(
+	const struct sippymodem_sip_signaling *signaling);
+int sippymodem_sip_signaling_last_library_status(
+	const struct sippymodem_sip_signaling *signaling);
+
+const char *sippymodem_sip_signaling_result_name(
+	enum sippymodem_sip_signaling_result result);
+
+#endif

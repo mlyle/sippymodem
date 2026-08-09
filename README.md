@@ -38,6 +38,10 @@ Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
 suite.
 
+When `libpjproject` is available through `pkg-config`, the native suite also
+opens, polls, and closes a real local SIP UDP transport. The test reports a
+clear skip when that optional development dependency is unavailable.
+
 Historical Smart Link and distribution documentation is retained under
 `docs/legacy/`. It describes the original package and is not current build or
 installation guidance. The original license is preserved at `src/COPYING`.

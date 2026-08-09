@@ -3,6 +3,12 @@ CPPFLAGS ?=
 CFLAGS ?= -O2 -g
 LDFLAGS ?=
 
+PJSIP_PACKAGE ?= libpjproject
+PJSIP_AVAILABLE := $(shell \
+	pkg-config --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
+PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
+PJSIP_LDLIBS := $(shell pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
+
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src
 CFLAGS += -std=c11 -Wall -Wextra -Werror
 
@@ -21,6 +27,11 @@ SIP_URI_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_uri.o \
 SDP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sdp
 SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sdp.o \
 	$(BUILD_DIR)/sippymodem_sdp.o $(BUILD_DIR)/sippymodem_media.o \
+	$(BUILD_DIR)/sippymodem_g711.o
+PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sip_signaling
+PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_signaling.o \
+	$(BUILD_DIR)/sippymodem_sip_signaling_pjsip.o \
+	$(BUILD_DIR)/sippymodem_config.o $(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
 G711_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_g711
 G711_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_g711.o \
@@ -49,12 +60,18 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
 	$(STREAM_TEST_BINARY) $(ENDPOINT_TEST_BINARY)
+ifeq ($(PJSIP_AVAILABLE),yes)
+TEST_BINARIES += $(PJSIP_TEST_BINARY)
+endif
 DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(CONFIG_TEST_OBJECTS:.o=.d) $(SIP_URI_TEST_OBJECTS:.o=.d) \
 	$(SDP_TEST_OBJECTS:.o=.d) $(G711_TEST_OBJECTS:.o=.d) \
 	$(RTP_TEST_OBJECTS:.o=.d) $(MEDIA_TEST_OBJECTS:.o=.d) \
 	$(RECEIVER_TEST_OBJECTS:.o=.d) $(STREAM_TEST_OBJECTS:.o=.d) \
 	$(ENDPOINT_TEST_OBJECTS:.o=.d)
+ifeq ($(PJSIP_AVAILABLE),yes)
+DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
+endif
 
 .PHONY: all clean test
 
@@ -71,6 +88,11 @@ test: $(TEST_BINARIES)
 	./$(RECEIVER_TEST_BINARY)
 	./$(STREAM_TEST_BINARY)
 	./$(ENDPOINT_TEST_BINARY)
+ifeq ($(PJSIP_AVAILABLE),yes)
+	./$(PJSIP_TEST_BINARY)
+else
+	@echo "[  SKIPPED ] SIP signaling lifecycle (libpjproject unavailable)"
+endif
 
 $(PACK_TEST_BINARY): $(PACK_TEST_OBJECTS) $(MODEM_OBJECT)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -83,6 +105,9 @@ $(SIP_URI_TEST_BINARY): $(SIP_URI_TEST_OBJECTS)
 
 $(SDP_TEST_BINARY): $(SDP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(PJSIP_TEST_BINARY): $(PJSIP_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(PJSIP_LDLIBS)
 
 $(G711_TEST_BINARY): $(G711_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -117,6 +142,11 @@ $(BUILD_DIR)/sippymodem_sip_uri.o: \
 
 $(BUILD_DIR)/sippymodem_sdp.o: ../src/sippymodem_sdp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_sip_signaling_pjsip.o: \
+	../src/sippymodem_sip_signaling_pjsip.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -D_DEFAULT_SOURCE $(CFLAGS) $(PJSIP_CFLAGS) \
+		-MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_g711.o: ../src/sippymodem_g711.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
