@@ -22,6 +22,10 @@ which may be attached as an optional submodule. Tests and harnesses for that
 corpus may remain here, but they will skip cleanly when their vectors are not
 present.
 
+The recording file-set owner pre-creates a fixed set of eight evidence files
+with private permissions and refuses to overwrite an existing capture. Tests
+create only empty temporary file sets and remove them.
+
 Run the native tests with `make test`. The suite exercises asynchronous and
 HDLC framing, validated SIP/media configuration, safe SIP URI construction,
 deterministic modem audio SDP policy, table-free G.711 conversion, strict RTP
