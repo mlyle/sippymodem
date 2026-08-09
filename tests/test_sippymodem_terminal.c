@@ -31,6 +31,7 @@ static bool test_opens_raw_terminal_and_moves_bytes(void)
 	int flags;
 	int descriptor_flags;
 	ssize_t count;
+	size_t bytes_read = 99;
 
 	terminal = sippymodem_terminal_create();
 	CHECK(terminal != NULL && !sippymodem_terminal_is_open(terminal) &&
@@ -58,13 +59,20 @@ static bool test_opens_raw_terminal_and_moves_bytes(void)
 
 	device_fd = open(device_path, O_RDWR | O_NOCTTY);
 	CHECK(device_fd >= 0, "terminal device did not open: %s", strerror(errno));
+	CHECK(sippymodem_terminal_read(
+		      terminal, buffer, sizeof(buffer), &bytes_read) ==
+		      SIPPYMODEM_TERMINAL_IDLE &&
+		      bytes_read == 0,
+	      "empty terminal input did not report idle");
 	count = write(device_fd, from_client, sizeof(from_client) - 1);
 	CHECK(count == (ssize_t)sizeof(from_client) - 1 &&
 		      wait_readable(master_fd),
 	      "client bytes did not reach the modem endpoint");
-	count = read(master_fd, buffer, sizeof(buffer));
-	CHECK(count == (ssize_t)sizeof(from_client) - 1 &&
-		      memcmp(buffer, from_client, (size_t)count) == 0,
+	CHECK(sippymodem_terminal_read(
+		      terminal, buffer, sizeof(buffer), &bytes_read) ==
+		      SIPPYMODEM_TERMINAL_OK &&
+		      bytes_read == sizeof(from_client) - 1 &&
+		      memcmp(buffer, from_client, bytes_read) == 0,
 	      "client bytes changed in transit");
 	count = write(master_fd, from_modem, sizeof(from_modem) - 1);
 	CHECK(count == (ssize_t)sizeof(from_modem) - 1 &&
@@ -76,7 +84,11 @@ static bool test_opens_raw_terminal_and_moves_bytes(void)
 	      "modem bytes changed in transit");
 
 	close(device_fd);
-	CHECK(sippymodem_terminal_open(terminal) ==
+	CHECK(sippymodem_terminal_read(
+		      terminal, buffer, sizeof(buffer), &bytes_read) ==
+			      SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED &&
+		      bytes_read == 0 &&
+		      sippymodem_terminal_open(terminal) ==
 			      SIPPYMODEM_TERMINAL_ALREADY_OPEN &&
 		      sippymodem_terminal_close(terminal) ==
 			      SIPPYMODEM_TERMINAL_OK &&
@@ -103,6 +115,10 @@ static bool test_rejects_invalid_operations(void)
 		      sippymodem_terminal_get_attributes(terminal, NULL) ==
 			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT &&
 		      sippymodem_terminal_get_attributes(terminal, &attributes) ==
+			      SIPPYMODEM_TERMINAL_NOT_OPEN &&
+		      sippymodem_terminal_read(terminal, NULL, 1, NULL) ==
+			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT &&
+		      sippymodem_terminal_read(terminal, NULL, 0, NULL) ==
 			      SIPPYMODEM_TERMINAL_NOT_OPEN &&
 		      sippymodem_terminal_system_error(NULL) == EINVAL &&
 		      strcmp(sippymodem_terminal_result_name(

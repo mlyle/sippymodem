@@ -4,10 +4,13 @@
 #define SIPPYMODEM_TERMINAL_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <termios.h>
 
 enum sippymodem_terminal_result {
 	SIPPYMODEM_TERMINAL_OK,
+	SIPPYMODEM_TERMINAL_IDLE,
+	SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED,
 	SIPPYMODEM_TERMINAL_INVALID_ARGUMENT,
 	SIPPYMODEM_TERMINAL_ALREADY_OPEN,
 	SIPPYMODEM_TERMINAL_NOT_OPEN,
@@ -15,6 +18,7 @@ enum sippymodem_terminal_result {
 	SIPPYMODEM_TERMINAL_NAME_ERROR,
 	SIPPYMODEM_TERMINAL_CONFIGURATION_ERROR,
 	SIPPYMODEM_TERMINAL_ATTRIBUTE_ERROR,
+	SIPPYMODEM_TERMINAL_READ_ERROR,
 	SIPPYMODEM_TERMINAL_CLOSE_ERROR,
 };
 
@@ -37,6 +41,9 @@ const char *sippymodem_terminal_device_path(
 	const struct sippymodem_terminal *terminal);
 enum sippymodem_terminal_result sippymodem_terminal_get_attributes(
 	struct sippymodem_terminal *terminal, struct termios *attributes);
+enum sippymodem_terminal_result sippymodem_terminal_read(
+	struct sippymodem_terminal *terminal, void *buffer, size_t capacity,
+	size_t *bytes_read);
 int sippymodem_terminal_system_error(
 	const struct sippymodem_terminal *terminal);
 const char *sippymodem_terminal_result_name(

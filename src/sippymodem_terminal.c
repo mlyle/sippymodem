@@ -34,6 +34,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -197,6 +198,40 @@ enum sippymodem_terminal_result sippymodem_terminal_get_attributes(
 	return SIPPYMODEM_TERMINAL_OK;
 }
 
+enum sippymodem_terminal_result sippymodem_terminal_read(
+	struct sippymodem_terminal *terminal, void *buffer, size_t capacity,
+	size_t *bytes_read)
+{
+	ssize_t count;
+
+	if (bytes_read != NULL)
+		*bytes_read = 0;
+	if (terminal == NULL || (buffer == NULL && capacity != 0) ||
+	    capacity > (size_t)SSIZE_MAX)
+		return SIPPYMODEM_TERMINAL_INVALID_ARGUMENT;
+	if (terminal->master_fd < 0)
+		return SIPPYMODEM_TERMINAL_NOT_OPEN;
+	if (capacity == 0)
+		return SIPPYMODEM_TERMINAL_IDLE;
+	count = read(terminal->master_fd, buffer, capacity);
+	if (count > 0) {
+		if (bytes_read != NULL)
+			*bytes_read = (size_t)count;
+		terminal->system_error = 0;
+		return SIPPYMODEM_TERMINAL_OK;
+	}
+	if (count == 0 || errno == EIO) {
+		terminal->system_error = 0;
+		return SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED;
+	}
+	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+		terminal->system_error = 0;
+		return SIPPYMODEM_TERMINAL_IDLE;
+	}
+	terminal->system_error = errno;
+	return SIPPYMODEM_TERMINAL_READ_ERROR;
+}
+
 int sippymodem_terminal_system_error(
 	const struct sippymodem_terminal *terminal)
 {
@@ -209,6 +244,10 @@ const char *sippymodem_terminal_result_name(
 	switch (result) {
 	case SIPPYMODEM_TERMINAL_OK:
 		return "ok";
+	case SIPPYMODEM_TERMINAL_IDLE:
+		return "idle";
+	case SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED:
+		return "terminal client disconnected";
 	case SIPPYMODEM_TERMINAL_INVALID_ARGUMENT:
 		return "invalid argument";
 	case SIPPYMODEM_TERMINAL_ALREADY_OPEN:
@@ -223,6 +262,8 @@ const char *sippymodem_terminal_result_name(
 		return "could not configure terminal";
 	case SIPPYMODEM_TERMINAL_ATTRIBUTE_ERROR:
 		return "could not read terminal attributes";
+	case SIPPYMODEM_TERMINAL_READ_ERROR:
+		return "could not read terminal input";
 	case SIPPYMODEM_TERMINAL_CLOSE_ERROR:
 		return "could not close terminal";
 	}
