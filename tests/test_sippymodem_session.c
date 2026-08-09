@@ -212,7 +212,8 @@ static bool test_owns_transport_lifetimes(void)
 	CHECK(sippymodem_session_step(session, 0, &drained) ==
 		      SIPPYMODEM_SESSION_OK &&
 		      drained == 0 && capture.media_calls == 1 &&
-		      capture.binding == SIPPYMODEM_SIP_RTP_OK,
+		      capture.binding == SIPPYMODEM_SIP_RTP_OK &&
+		      sippymodem_session_media_is_configured(session),
 	      "session did not bind negotiated media");
 	CHECK(sippymodem_session_dial(session, "sip:peer@127.0.0.1") ==
 		      SIPPYMODEM_SIP_SIGNALING_OK &&
@@ -240,6 +241,7 @@ static bool test_owns_transport_lifetimes(void)
 		      SIPPYMODEM_SESSION_OK &&
 		      capture.close_result == SIPPYMODEM_SESSION_OK &&
 		      !sippymodem_session_is_open(session) &&
+		      !sippymodem_session_media_is_configured(session) &&
 		      sippymodem_session_rtp_local_port(session) == 0 &&
 		      fake.destroys == 1,
 	      "session close was not safe from a forwarded callback");
@@ -280,6 +282,34 @@ static bool test_open_failure_is_transactional(void)
 	return true;
 }
 
+static bool test_close_clears_media_without_inactive_event(void)
+{
+	struct callback_capture capture = { 0 };
+	struct sippymodem_session *session;
+
+	memset(&fake, 0, sizeof(fake));
+	session = create_session(&capture);
+	CHECK(session != NULL, "media reset session creation failed");
+	capture.session = session;
+	CHECK(sippymodem_session_open(session) == SIPPYMODEM_SESSION_OK,
+	      "media reset session did not open");
+	fake.emit_media = true;
+	CHECK(sippymodem_session_step(session, 0, NULL) ==
+		      SIPPYMODEM_SESSION_OK &&
+		      sippymodem_session_media_is_configured(session),
+	      "media reset session did not configure media");
+	CHECK(sippymodem_session_close(session) == SIPPYMODEM_SESSION_OK &&
+		      !sippymodem_session_media_is_configured(session),
+	      "session close retained negotiated media state");
+	CHECK(sippymodem_session_open(session) == SIPPYMODEM_SESSION_OK &&
+		      !sippymodem_session_media_is_configured(session),
+	      "session reopen inherited negotiated media state");
+	CHECK(sippymodem_session_close(session) == SIPPYMODEM_SESSION_OK,
+	      "reopened media reset session did not close");
+	sippymodem_session_destroy(session);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -290,6 +320,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "transport lifetimes", test_owns_transport_lifetimes },
 		{ "transactional open failure", test_open_failure_is_transactional },
+		{ "close clears media", test_close_clears_media_without_inactive_event },
 	};
 	unsigned int failures = 0;
 

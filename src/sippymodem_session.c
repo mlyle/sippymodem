@@ -119,6 +119,7 @@ signaling_error:
 		session->signaling_destroy_deferred = true;
 		finish_deferred_signaling(session);
 	}
+	sippymodem_sip_media_bridge_clear_media(&session->bridge);
 	sippymodem_rtp_runtime_close(session->rtp);
 	return SIPPYMODEM_SESSION_SIGNALING_ERROR;
 }
@@ -136,6 +137,7 @@ enum sippymodem_session_result sippymodem_session_close(
 	session->last_signaling_result =
 		sippymodem_sip_signaling_close(session->signaling);
 	session->signaling_destroy_deferred = true;
+	sippymodem_sip_media_bridge_clear_media(&session->bridge);
 	sippymodem_rtp_runtime_close(session->rtp);
 	finish_deferred_signaling(session);
 	return session->last_signaling_result == SIPPYMODEM_SIP_SIGNALING_OK ?
@@ -236,6 +238,13 @@ uint16_t sippymodem_session_rtp_local_port(
 bool sippymodem_session_is_open(const struct sippymodem_session *session)
 {
 	return session != NULL && session->opened;
+}
+
+bool sippymodem_session_media_is_configured(
+	const struct sippymodem_session *session)
+{
+	return session != NULL && session->opened &&
+	       sippymodem_sip_media_bridge_is_configured(&session->bridge);
 }
 
 enum sippymodem_media_result sippymodem_session_play(

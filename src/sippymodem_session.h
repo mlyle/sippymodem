@@ -51,6 +51,8 @@ size_t sippymodem_session_frame_samples(
 uint16_t sippymodem_session_rtp_local_port(
 	const struct sippymodem_session *session);
 bool sippymodem_session_is_open(const struct sippymodem_session *session);
+bool sippymodem_session_media_is_configured(
+	const struct sippymodem_session *session);
 
 enum sippymodem_media_result sippymodem_session_play(
 	struct sippymodem_session *session,

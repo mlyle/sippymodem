@@ -164,6 +164,8 @@ static bool test_forwards_and_binds_before_media_callback(void)
 	      "bridge did not forward every signaling callback");
 	CHECK(capture.observed_binding == SIPPYMODEM_SIP_RTP_OK &&
 		      remote_is(&fixture, 42000) &&
+		      sippymodem_sip_media_bridge_is_configured(
+			      &fixture.bridge) &&
 		      sippymodem_sip_media_bridge_binding_failures(
 			      &fixture.bridge) == 0,
 	      "bridge did not bind RTP before forwarding media");
@@ -174,14 +176,29 @@ static bool test_forwards_and_binds_before_media_callback(void)
 	CHECK(capture.observed_binding ==
 		      SIPPYMODEM_SIP_RTP_INCOMPATIBLE_MEDIA &&
 		      remote_is(&fixture, 42000) &&
+		      sippymodem_sip_media_bridge_is_configured(
+			      &fixture.bridge) &&
 		      sippymodem_sip_media_bridge_binding_failures(
 			      &fixture.bridge) == 1,
 	      "failed media update changed the established peer");
+	sippymodem_sip_media_bridge_clear_media(&fixture.bridge);
+	CHECK(!remote_is(&fixture, 42000) &&
+		      !sippymodem_sip_media_bridge_is_configured(
+			      &fixture.bridge),
+	      "explicit media reset retained negotiated state");
+	media.payload_type = 0;
+	media.remote_port = 42000;
+	source->media_changed(source->context, &media);
+	CHECK(remote_is(&fixture, 42000) &&
+		      sippymodem_sip_media_bridge_is_configured(&fixture.bridge),
+	      "bridge did not rebind after an explicit reset");
 	media.state = SIPPYMODEM_SIP_MEDIA_INACTIVE;
 	source->media_changed(source->context, &media);
 	CHECK(sippymodem_sip_media_bridge_last_binding(&fixture.bridge) ==
 		      SIPPYMODEM_SIP_RTP_OK &&
-		      !remote_is(&fixture, 42000),
+		      !remote_is(&fixture, 42000) &&
+		      !sippymodem_sip_media_bridge_is_configured(
+			      &fixture.bridge),
 	      "inactive media did not clear the established peer");
 	sippymodem_rtp_endpoint_close(&fixture.endpoint);
 	return true;

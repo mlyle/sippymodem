@@ -45,9 +45,12 @@ static void forward_media(
 
 	bridge->last_binding =
 		sippymodem_sip_rtp_apply(bridge->endpoint, event);
-	if (bridge->last_binding != SIPPYMODEM_SIP_RTP_OK &&
-	    bridge->binding_failures != UINT64_MAX)
+	if (bridge->last_binding == SIPPYMODEM_SIP_RTP_OK) {
+		bridge->media_configured =
+			event->state == SIPPYMODEM_SIP_MEDIA_CONFIGURED;
+	} else if (bridge->binding_failures != UINT64_MAX) {
 		bridge->binding_failures++;
+	}
 	if (bridge->destination.media_changed == NULL)
 		return;
 	bridge->callback_depth++;
@@ -86,6 +89,15 @@ sippymodem_sip_media_bridge_callbacks(
 	return bridge != NULL ? &bridge->source : NULL;
 }
 
+void sippymodem_sip_media_bridge_clear_media(
+	struct sippymodem_sip_media_bridge *bridge)
+{
+	if (bridge == NULL)
+		return;
+	sippymodem_rtp_endpoint_clear_remote(bridge->endpoint);
+	bridge->media_configured = false;
+}
+
 enum sippymodem_sip_rtp_result sippymodem_sip_media_bridge_last_binding(
 	const struct sippymodem_sip_media_bridge *bridge)
 {
@@ -103,4 +115,10 @@ bool sippymodem_sip_media_bridge_is_in_callback(
 	const struct sippymodem_sip_media_bridge *bridge)
 {
 	return bridge != NULL && bridge->callback_depth != 0;
+}
+
+bool sippymodem_sip_media_bridge_is_configured(
+	const struct sippymodem_sip_media_bridge *bridge)
+{
+	return bridge != NULL && bridge->media_configured;
 }
