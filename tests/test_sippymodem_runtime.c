@@ -184,7 +184,8 @@ int modem_stop_now(struct modem *modem)
 	return capture.forced_stop_result;
 }
 
-void modem_update_termios(struct modem *modem, struct termios *attributes)
+void modem_update_termios(
+	struct modem *modem, const struct termios *attributes)
 {
 	capture.termios_updates++;
 	modem->termios = *attributes;

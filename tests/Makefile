@@ -142,6 +142,11 @@ SLMODEM_DRIVER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_slmodem_driver
 SLMODEM_DRIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_slmodem_driver.o \
 	$(BUILD_DIR)/sippymodem_slmodem_driver.o
+SLMODEM_TERMINAL_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_slmodem_terminal
+SLMODEM_TERMINAL_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_slmodem_terminal.o \
+	$(BUILD_DIR)/sippymodem_slmodem_terminal.o
 RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_runtime
 RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_runtime.o \
 	$(BUILD_DIR)/sippymodem_runtime.o $(BUILD_DIR)/sippymodem_terminal.o
@@ -157,7 +162,8 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(FRAME_CLOCK_TEST_BINARY) $(AUDIO_SCHEDULER_TEST_BINARY) \
 	$(HOST_TEST_BINARY) $(RECORDING_FILES_TEST_BINARY) \
 	$(SLMODEM_ADAPTER_TEST_BINARY) $(SLMODEM_CALLS_TEST_BINARY) \
-	$(SLMODEM_DRIVER_TEST_BINARY) $(RUNTIME_TEST_BINARY) \
+	$(SLMODEM_DRIVER_TEST_BINARY) $(SLMODEM_TERMINAL_TEST_BINARY) \
+	$(RUNTIME_TEST_BINARY) \
 	$(TERMINAL_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
@@ -178,6 +184,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(SLMODEM_ADAPTER_TEST_OBJECTS:.o=.d) \
 	$(SLMODEM_CALLS_TEST_OBJECTS:.o=.d) \
 	$(SLMODEM_DRIVER_TEST_OBJECTS:.o=.d) \
+	$(SLMODEM_TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
@@ -210,6 +217,7 @@ test: $(TEST_BINARIES)
 	./$(SLMODEM_ADAPTER_TEST_BINARY)
 	./$(SLMODEM_CALLS_TEST_BINARY)
 	./$(SLMODEM_DRIVER_TEST_BINARY)
+	./$(SLMODEM_TERMINAL_TEST_BINARY)
 	./$(RUNTIME_TEST_BINARY)
 	./$(TERMINAL_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -285,6 +293,9 @@ $(SLMODEM_CALLS_TEST_BINARY): $(SLMODEM_CALLS_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(SLMODEM_DRIVER_TEST_BINARY): $(SLMODEM_DRIVER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(SLMODEM_TERMINAL_TEST_BINARY): $(SLMODEM_TERMINAL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(RUNTIME_TEST_BINARY): $(RUNTIME_TEST_OBJECTS)
@@ -386,6 +397,10 @@ $(BUILD_DIR)/sippymodem_slmodem_calls.o: \
 
 $(BUILD_DIR)/sippymodem_slmodem_driver.o: \
 	../src/sippymodem_slmodem_driver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_slmodem_terminal.o: \
+	../src/sippymodem_slmodem_terminal.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_runtime.o: ../src/sippymodem_runtime.c | $(BUILD_DIR)

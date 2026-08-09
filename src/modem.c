@@ -1836,7 +1836,7 @@ int modem_report_remote_call_end(struct modem *m)
 }
 
 
-void modem_update_termios(struct modem *m, struct termios *tios)
+void modem_update_termios(struct modem *m, const struct termios *tios)
 {
         MODEM_DBG("update termios...\n");
         if( cfgetispeed(tios) == B0 ||

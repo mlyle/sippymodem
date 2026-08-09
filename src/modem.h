@@ -430,7 +430,8 @@ extern int modem_answer(struct modem *m);
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);
-extern void modem_update_termios(struct modem *m, struct termios *tios);
+extern void modem_update_termios(
+	struct modem *m, const struct termios *tios);
 extern void modem_error  (struct modem *m);
 extern void modem_ring   (struct modem *m);
 extern void modem_event  (struct modem *m);
