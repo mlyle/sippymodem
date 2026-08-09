@@ -31,9 +31,11 @@ object or requiring external vectors.
 
 The SIP adapter owns one validated incoming or outgoing call, supports ringing,
 answer, and hangup, and reports bounded call-progress events. Offers and answers
-advertise one configured modem-safe audio format and RTP port. The tested,
-allocation-free RTP stream is not yet attached to that call or to a native V.21
-core, so this transitional tree does not yet place a V.21 modem call.
+advertise one configured modem-safe audio format and RTP port, and negotiated
+remote RTP endpoints have an explicit configured/inactive lifecycle. The
+tested, allocation-free RTP stream is not yet attached to that call or to a
+native V.21 core, so this transitional tree does not yet place a V.21 modem
+call.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test

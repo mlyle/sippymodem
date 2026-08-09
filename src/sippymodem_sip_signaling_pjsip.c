@@ -16,6 +16,7 @@ enum {
 	SIPPYMODEM_SIP_ACCOUNT_URI_MAX = SIPPYMODEM_CONFIG_TEXT_MAX * 2 + 16,
 	SIPPYMODEM_SIP_CALL_IDENTITY_MAX = 256,
 	SIPPYMODEM_SIP_CALL_REASON_MAX = 128,
+	SIPPYMODEM_SIP_MEDIA_ADDRESS_MAX = 64,
 	SIPPYMODEM_SIP_REGISTRATION_REASON_MAX = 128,
 	SIPPYMODEM_SIP_UNREGISTER_TIMEOUT_MS = 1000,
 };
@@ -37,14 +38,18 @@ struct sippymodem_sip_signaling {
 	char target_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
 	char call_remote_identity[SIPPYMODEM_SIP_CALL_IDENTITY_MAX];
 	char call_reason[SIPPYMODEM_SIP_CALL_REASON_MAX];
+	char media_remote_address[SIPPYMODEM_SIP_MEDIA_ADDRESS_MAX];
 	char registration_reason[SIPPYMODEM_SIP_REGISTRATION_REASON_MAX];
 	const char *account_user;
 	const char *account_password;
 	const char *account_domain;
 	enum sippymodem_sip_call_direction call_direction;
 	enum sippymodem_sip_call_state call_state;
+	enum sippymodem_sip_media_state media_state;
+	enum sippymodem_sip_media_address_family media_remote_family;
 	enum sippymodem_sip_registration_state registration_state;
 	unsigned int incoming_response_code;
+	unsigned int media_remote_port;
 	bool call_starting;
 	bool registration_may_exist;
 	bool account_configured;
@@ -154,6 +159,61 @@ static void emit_call_event(struct sippymodem_sip_signaling *signaling,
 	callback_leave(signaling);
 }
 
+static void emit_media_event(
+	struct sippymodem_sip_signaling *signaling,
+	enum sippymodem_sip_media_state state,
+	enum sippymodem_sip_media_address_family family,
+	const char *remote_address, unsigned int remote_port)
+{
+	struct sippymodem_sip_media_event event;
+	int payload_type;
+
+	if (signaling == NULL)
+		return;
+	if (state == SIPPYMODEM_SIP_MEDIA_INACTIVE) {
+		family = SIPPYMODEM_SIP_MEDIA_ADDRESS_UNSPECIFIED;
+		remote_address = "";
+		remote_port = 0;
+	}
+	if (remote_address == NULL)
+		return;
+	if (signaling->media_state == state &&
+	    signaling->media_remote_family == family &&
+	    signaling->media_remote_port == remote_port &&
+	    strcmp(signaling->media_remote_address, remote_address) == 0)
+		return;
+	(void)snprintf(signaling->media_remote_address,
+		       sizeof(signaling->media_remote_address), "%s",
+		       remote_address);
+	signaling->media_state = state;
+	signaling->media_remote_family = family;
+	signaling->media_remote_port = remote_port;
+	if (signaling->callbacks.media_changed == NULL)
+		return;
+	payload_type = sippymodem_codec_default_payload_type(
+		signaling->config.media.codec);
+	event.state = state;
+	event.remote_address_family = family;
+	event.codec = signaling->config.media.codec;
+	event.payload_type = payload_type >= 0 ? (unsigned int)payload_type : 0;
+	event.sample_rate = SIPPYMODEM_MEDIA_SAMPLE_RATE;
+	event.channels = 1;
+	event.local_port = signaling->config.media.rtp_listen_port;
+	event.remote_address = signaling->media_remote_address;
+	event.remote_port = remote_port;
+	callback_enter(signaling);
+	signaling->callbacks.media_changed(signaling->callbacks.context, &event);
+	callback_leave(signaling);
+}
+
+static void emit_media_inactive(struct sippymodem_sip_signaling *signaling)
+{
+	if (signaling != NULL &&
+	    signaling->media_state != SIPPYMODEM_SIP_MEDIA_INACTIVE)
+		emit_media_event(signaling, SIPPYMODEM_SIP_MEDIA_INACTIVE,
+				 SIPPYMODEM_SIP_MEDIA_ADDRESS_UNSPECIFIED, "", 0);
+}
+
 static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 {
 	struct sippymodem_sip_signaling *signaling = active_signaling;
@@ -177,6 +237,7 @@ static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 		emit_call_event(signaling, SIPPYMODEM_SIP_CALL_CONNECTED, &info);
 		break;
 	case PJSIP_INV_STATE_DISCONNECTED:
+		emit_media_inactive(signaling);
 		signaling->call_id = PJSUA_INVALID_ID;
 		signaling->call_starting = false;
 		signaling->incoming_response_code = 0;
@@ -187,6 +248,44 @@ static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 	case PJSIP_INV_STATE_CONNECTING:
 		break;
 	}
+}
+
+static void pjsip_stream_precreate(
+	pjsua_call_id call_id, pjsua_on_stream_precreate_param *parameters)
+{
+	struct sippymodem_sip_signaling *signaling = active_signaling;
+	const pj_sockaddr *remote;
+	enum sippymodem_sip_media_address_family family;
+	char address[SIPPYMODEM_SIP_MEDIA_ADDRESS_MAX];
+	unsigned int port;
+
+	if (signaling == NULL || parameters == NULL ||
+	    signaling->config.media.rtp_listen_port == 0 ||
+	    parameters->stream_info.type != PJMEDIA_TYPE_AUDIO ||
+	    (call_id != signaling->call_id && !signaling->call_starting))
+		return;
+	remote = &parameters->stream_info.info.aud.rem_addr;
+	port = pj_sockaddr_get_port(remote);
+	if (port == 0 || !pj_sockaddr_has_addr(remote)) {
+		emit_media_inactive(signaling);
+		return;
+	}
+	if (remote->addr.sa_family == pj_AF_INET())
+		family = SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV4;
+	else if (remote->addr.sa_family == pj_AF_INET6())
+		family = SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV6;
+	else {
+		emit_library_error(signaling, "read negotiated RTP address",
+				   PJ_EAFNOTSUP);
+		return;
+	}
+	if (pj_sockaddr_print(remote, address, sizeof(address), 0) == NULL) {
+		emit_library_error(signaling, "format negotiated RTP address",
+				   PJ_EINVAL);
+		return;
+	}
+	emit_media_event(signaling, SIPPYMODEM_SIP_MEDIA_CONFIGURED, family,
+			 address, port);
 }
 
 static void pjsip_sdp_created(pjsua_call_id call_id,
@@ -561,6 +660,7 @@ static enum sippymodem_sip_signaling_result initialize_library(
 	user_agent.user_agent = pj_str((char *)"sippymodem");
 	user_agent.cb.on_call_state = &pjsip_call_changed;
 	user_agent.cb.on_call_sdp_created = &pjsip_sdp_created;
+	user_agent.cb.on_stream_precreate = &pjsip_stream_precreate;
 	user_agent.cb.on_incoming_call = &pjsip_incoming_call;
 	user_agent.cb.on_reg_started = &pjsip_registration_started;
 	user_agent.cb.on_reg_state2 = &pjsip_registration_changed;
@@ -698,6 +798,7 @@ static enum sippymodem_sip_signaling_result close_now(
 	if (signaling->call_id != PJSUA_INVALID_ID &&
 	    destroy_flags == PJSUA_DESTROY_NO_NETWORK)
 		destroy_flags = PJSUA_DESTROY_NO_RX_MSG;
+	emit_media_inactive(signaling);
 	if (signaling->library_created)
 		status = pjsua_destroy2(destroy_flags);
 	signaling->library_created = false;
@@ -708,6 +809,11 @@ static enum sippymodem_sip_signaling_result close_now(
 	signaling->account_id = PJSUA_INVALID_ID;
 	signaling->call_id = PJSUA_INVALID_ID;
 	signaling->call_state = SIPPYMODEM_SIP_CALL_IDLE;
+	signaling->media_state = SIPPYMODEM_SIP_MEDIA_INACTIVE;
+	signaling->media_remote_family =
+		SIPPYMODEM_SIP_MEDIA_ADDRESS_UNSPECIFIED;
+	signaling->media_remote_address[0] = '\0';
+	signaling->media_remote_port = 0;
 	signaling->call_starting = false;
 	signaling->incoming_response_code = 0;
 	signaling->local_port = 0;
@@ -1015,6 +1121,13 @@ enum sippymodem_sip_call_state sippymodem_sip_signaling_call_state(
 				 : SIPPYMODEM_SIP_CALL_IDLE;
 }
 
+enum sippymodem_sip_media_state sippymodem_sip_signaling_media_state(
+	const struct sippymodem_sip_signaling *signaling)
+{
+	return signaling != NULL ? signaling->media_state :
+				  SIPPYMODEM_SIP_MEDIA_INACTIVE;
+}
+
 int sippymodem_sip_signaling_last_library_status(
 	const struct sippymodem_sip_signaling *signaling)
 {
@@ -1081,4 +1194,16 @@ const char *sippymodem_sip_call_state_name(
 		return "connected";
 	}
 	return "unknown call state";
+}
+
+const char *sippymodem_sip_media_state_name(
+	enum sippymodem_sip_media_state state)
+{
+	switch (state) {
+	case SIPPYMODEM_SIP_MEDIA_INACTIVE:
+		return "inactive";
+	case SIPPYMODEM_SIP_MEDIA_CONFIGURED:
+		return "configured";
+	}
+	return "unknown media state";
 }

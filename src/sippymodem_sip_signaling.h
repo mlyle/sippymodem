@@ -42,6 +42,30 @@ enum sippymodem_sip_call_state {
 	SIPPYMODEM_SIP_CALL_CONNECTED,
 };
 
+enum sippymodem_sip_media_state {
+	SIPPYMODEM_SIP_MEDIA_INACTIVE,
+	SIPPYMODEM_SIP_MEDIA_CONFIGURED,
+};
+
+enum sippymodem_sip_media_address_family {
+	SIPPYMODEM_SIP_MEDIA_ADDRESS_UNSPECIFIED,
+	SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV4,
+	SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV6,
+};
+
+/* CONFIGURED supplies the RTP peer; INACTIVE clears it before call idle. */
+struct sippymodem_sip_media_event {
+	enum sippymodem_sip_media_state state;
+	enum sippymodem_sip_media_address_family remote_address_family;
+	enum sippymodem_media_codec codec;
+	unsigned int payload_type;
+	unsigned int sample_rate;
+	unsigned int channels;
+	unsigned int local_port;
+	const char *remote_address;
+	unsigned int remote_port;
+};
+
 struct sippymodem_sip_call_event {
 	enum sippymodem_sip_call_direction direction;
 	enum sippymodem_sip_call_state state;
@@ -91,6 +115,8 @@ struct sippymodem_sip_signaling_callbacks {
 		const struct sippymodem_sip_registration_event *event);
 	void (*call_changed)(void *context,
 			     const struct sippymodem_sip_call_event *event);
+	void (*media_changed)(void *context,
+			      const struct sippymodem_sip_media_event *event);
 };
 
 struct sippymodem_sip_signaling;
@@ -132,6 +158,8 @@ sippymodem_sip_signaling_registration_state(
 	const struct sippymodem_sip_signaling *signaling);
 enum sippymodem_sip_call_state sippymodem_sip_signaling_call_state(
 	const struct sippymodem_sip_signaling *signaling);
+enum sippymodem_sip_media_state sippymodem_sip_signaling_media_state(
+	const struct sippymodem_sip_signaling *signaling);
 int sippymodem_sip_signaling_last_library_status(
 	const struct sippymodem_sip_signaling *signaling);
 
@@ -141,5 +169,7 @@ const char *sippymodem_sip_registration_state_name(
 	enum sippymodem_sip_registration_state state);
 const char *sippymodem_sip_call_state_name(
 	enum sippymodem_sip_call_state state);
+const char *sippymodem_sip_media_state_name(
+	enum sippymodem_sip_media_state state);
 
 #endif

@@ -14,9 +14,11 @@
 
 enum {
 	TEST_CALL_EVENTS = 8,
+	TEST_MEDIA_EVENTS = 4,
 	TEST_REGISTRATION_EVENTS = 8,
 	TEST_SIP_MESSAGE_MAX = 2048,
 	TEST_MODEM_RTP_PORT = 41000,
+	TEST_REMOTE_RTP_PORT = 40000,
 };
 
 struct callback_capture {
@@ -26,6 +28,7 @@ struct callback_capture {
 	unsigned int trace_count;
 	unsigned int adapter_trace_count;
 	unsigned int call_count;
+	unsigned int media_count;
 	unsigned int registration_count;
 	int last_error_status;
 	bool close_on_ready;
@@ -36,6 +39,16 @@ struct callback_capture {
 	unsigned int call_status_codes[TEST_CALL_EVENTS];
 	char call_reasons[TEST_CALL_EVENTS][32];
 	char call_remote_identities[TEST_CALL_EVENTS][128];
+	enum sippymodem_sip_media_state media_states[TEST_MEDIA_EVENTS];
+	enum sippymodem_sip_media_address_family
+		media_families[TEST_MEDIA_EVENTS];
+	enum sippymodem_media_codec media_codecs[TEST_MEDIA_EVENTS];
+	unsigned int media_payload_types[TEST_MEDIA_EVENTS];
+	unsigned int media_sample_rates[TEST_MEDIA_EVENTS];
+	unsigned int media_channels[TEST_MEDIA_EVENTS];
+	unsigned int media_local_ports[TEST_MEDIA_EVENTS];
+	unsigned int media_remote_ports[TEST_MEDIA_EVENTS];
+	char media_remote_addresses[TEST_MEDIA_EVENTS][64];
 	enum sippymodem_sip_registration_state
 		registration_states[TEST_REGISTRATION_EVENTS];
 	unsigned int registration_status_codes[TEST_REGISTRATION_EVENTS];
@@ -112,6 +125,27 @@ static void capture_call(
 		       event->remote_identity != NULL ? event->remote_identity : "");
 }
 
+static void capture_media(
+	void *context, const struct sippymodem_sip_media_event *event)
+{
+	struct callback_capture *capture = context;
+	unsigned int index = capture->media_count++;
+
+	if (index >= TEST_MEDIA_EVENTS)
+		return;
+	capture->media_states[index] = event->state;
+	capture->media_families[index] = event->remote_address_family;
+	capture->media_codecs[index] = event->codec;
+	capture->media_payload_types[index] = event->payload_type;
+	capture->media_sample_rates[index] = event->sample_rate;
+	capture->media_channels[index] = event->channels;
+	capture->media_local_ports[index] = event->local_port;
+	capture->media_remote_ports[index] = event->remote_port;
+	(void)snprintf(capture->media_remote_addresses[index],
+		       sizeof(capture->media_remote_addresses[index]), "%s",
+		       event->remote_address != NULL ? event->remote_address : "");
+}
+
 static struct sippymodem_sip_signaling *create_signaling(
 	const struct sippymodem_config *config,
 	struct callback_capture *capture)
@@ -123,6 +157,7 @@ static struct sippymodem_sip_signaling *create_signaling(
 		.trace = capture_trace,
 		.registration_changed = capture_registration,
 		.call_changed = capture_call,
+		.media_changed = capture_media,
 	};
 
 	capture->signaling =
@@ -154,6 +189,8 @@ static bool test_local_transport_lifecycle(void)
 		      sippymodem_sip_signaling_local_port(signaling) == 0 &&
 		      sippymodem_sip_signaling_call_state(signaling) ==
 			      SIPPYMODEM_SIP_CALL_IDLE &&
+		      sippymodem_sip_signaling_media_state(signaling) ==
+			      SIPPYMODEM_SIP_MEDIA_INACTIVE &&
 		      sippymodem_sip_signaling_registration_state(signaling) ==
 			      SIPPYMODEM_SIP_REGISTRATION_DISABLED,
 	      "new signaling context is already open");
@@ -971,6 +1008,8 @@ static bool test_outgoing_call_lifecycle(void)
 	CHECK(peer_succeeded && peer.invite_received && peer.target_received &&
 		      peer.modem_sdp_received && peer.cancel_received,
 	      "loopback peer did not complete INVITE and CANCEL");
+	CHECK(capture.media_count == 0,
+	      "provisional outgoing call configured media prematurely");
 	CHECK(capture.call_count == 3 &&
 		      capture.call_states[0] == SIPPYMODEM_SIP_CALL_DIALING &&
 		      capture.call_states[1] == SIPPYMODEM_SIP_CALL_EARLY &&
@@ -1015,6 +1054,7 @@ static bool test_incoming_call_lifecycle(void)
 	bool peer_succeeded = false;
 	bool connected = false;
 	bool final_state_idle = false;
+	bool final_media_inactive = false;
 
 	sippymodem_config_init(&config);
 	config.sip.listen_port = 0;
@@ -1058,6 +1098,9 @@ static bool test_incoming_call_lifecycle(void)
 			final_state_idle =
 				sippymodem_sip_signaling_call_state(signaling) ==
 				SIPPYMODEM_SIP_CALL_IDLE;
+			final_media_inactive =
+				sippymodem_sip_signaling_media_state(signaling) ==
+				SIPPYMODEM_SIP_MEDIA_INACTIVE;
 		}
 		close_result = sippymodem_sip_signaling_close(signaling);
 	}
@@ -1076,6 +1119,27 @@ static bool test_incoming_call_lifecycle(void)
 	      "incoming call did not connect after answer");
 	CHECK(hangup_result == SIPPYMODEM_SIP_SIGNALING_OK && final_state_idle,
 	      "incoming call did not return to idle after hangup");
+	CHECK(capture.media_count == 2 &&
+		      capture.media_states[0] ==
+			      SIPPYMODEM_SIP_MEDIA_CONFIGURED &&
+		      capture.media_states[1] == SIPPYMODEM_SIP_MEDIA_INACTIVE &&
+		      capture.media_families[0] ==
+			      SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV4 &&
+		      capture.media_families[1] ==
+			      SIPPYMODEM_SIP_MEDIA_ADDRESS_UNSPECIFIED &&
+		      capture.media_codecs[0] == SIPPYMODEM_CODEC_PCMU &&
+		      capture.media_payload_types[0] == 0 &&
+		      capture.media_sample_rates[0] ==
+			      SIPPYMODEM_MEDIA_SAMPLE_RATE &&
+		      capture.media_channels[0] == 1 &&
+		      capture.media_local_ports[0] == TEST_MODEM_RTP_PORT &&
+		      capture.media_remote_ports[0] == TEST_REMOTE_RTP_PORT &&
+		      strcmp(capture.media_remote_addresses[0], "127.0.0.1") ==
+			      0 &&
+		      capture.media_remote_ports[1] == 0 &&
+		      capture.media_remote_addresses[1][0] == '\0' &&
+		      final_media_inactive,
+	      "incoming media endpoint lifecycle was wrong");
 	CHECK(capture.call_count == 4 &&
 		      capture.call_states[0] ==
 			      SIPPYMODEM_SIP_CALL_INCOMING_PENDING &&
@@ -1096,6 +1160,10 @@ static bool test_incoming_call_lifecycle(void)
 	      "incoming call event details were wrong");
 	CHECK(close_result == SIPPYMODEM_SIP_SIGNALING_OK,
 	      "incoming call context did not close");
+	CHECK(strcmp(sippymodem_sip_media_state_name(
+			     SIPPYMODEM_SIP_MEDIA_CONFIGURED),
+		     "configured") == 0,
+	      "media state name was wrong");
 	return true;
 }
 
