@@ -232,16 +232,3 @@ int sippymodem_config_apply_environment(
 	*config = updated;
 	return 0;
 }
-
-const char *sippymodem_codec_name(enum sippymodem_media_codec codec)
-{
-	switch (codec) {
-	case SIPPYMODEM_CODEC_PCMU:
-		return "PCMU/8000/1";
-	case SIPPYMODEM_CODEC_PCMA:
-		return "PCMA/8000/1";
-	case SIPPYMODEM_CODEC_CLEARMODE:
-		return "CLEARMODE/8000/1";
-	}
-	return NULL;
-}

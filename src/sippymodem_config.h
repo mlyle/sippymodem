@@ -3,16 +3,12 @@
 #ifndef SIPPYMODEM_CONFIG_H
 #define SIPPYMODEM_CONFIG_H
 
+#include "sippymodem_media.h"
+
 #include <stdbool.h>
 
 #define SIPPYMODEM_CONFIG_TEXT_MAX 256
 #define SIPPYMODEM_CONFIG_ERROR_MAX 128
-
-enum sippymodem_media_codec {
-	SIPPYMODEM_CODEC_PCMU,
-	SIPPYMODEM_CODEC_PCMA,
-	SIPPYMODEM_CODEC_CLEARMODE,
-};
 
 struct sippymodem_sip_config {
 	char login[SIPPYMODEM_CONFIG_TEXT_MAX];
@@ -62,6 +58,5 @@ void sippymodem_config_init(struct sippymodem_config *config);
 int sippymodem_config_apply_environment(
 	struct sippymodem_config *config,
 	struct sippymodem_config_error *error);
-const char *sippymodem_codec_name(enum sippymodem_media_codec codec);
 
 #endif
