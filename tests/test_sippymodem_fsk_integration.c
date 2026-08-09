@@ -37,7 +37,7 @@ struct recording_capture {
 	bool invalid;
 };
 
-struct fsk300_test_case {
+struct fsk_test_case {
 	enum DP_ID id;
 	const char *name;
 	const char *selection_command;
@@ -208,7 +208,7 @@ static bool modem_is_online(const struct modem *modem, enum DP_ID id)
 }
 
 static bool run_media_call(
-	const struct fsk300_test_case *test_case,
+	const struct fsk_test_case *test_case,
 	enum sippymodem_media_codec codec)
 {
 	static const uint8_t caller_payload[] = {
@@ -361,7 +361,7 @@ static const char *codec_name(enum sippymodem_media_codec codec)
 
 int main(void)
 {
-	static const struct fsk300_test_case test_cases[] = {
+	static const struct fsk_test_case test_cases[] = {
 		{ DP_V21, "V.21", "AT+MS=21,0,300,300\r" },
 		{ DP_B103, "Bell 103", "AT+MS=103,0,300,300\r" },
 	};
