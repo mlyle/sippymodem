@@ -45,7 +45,9 @@ call. A bounded audio path now applies saturating directional gain, records the
 PCM immediately around a typed modem-core callback, and preserves failures at
 each playout, modem, and transmit boundary. Exact sample-derived frame pacing
 supports bounded catch-up and treats an event-loop overrun as an explicit
-failure instead of silently shifting the media clock.
+failure instead of silently shifting the media clock. A scheduler arms that
+clock only while negotiated media is active and deactivates the audio path on
+any timing, modem-core, playout, or transmit failure.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
