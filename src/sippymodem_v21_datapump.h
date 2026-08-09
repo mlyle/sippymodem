@@ -5,6 +5,10 @@
 
 #include <stdbool.h>
 
+enum {
+	SIPPYMODEM_V21_BIT_RATE = 300,
+};
+
 int sippymodem_v21_datapump_register(void);
 int sippymodem_v21_datapump_unregister(void);
 bool sippymodem_v21_datapump_is_busy(void);

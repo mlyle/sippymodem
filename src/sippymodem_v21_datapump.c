@@ -4,7 +4,7 @@
 
 #include "modem.h"
 #include "modem_param.h"
-#include "sippymodem_v21.h"
+#include "sippymodem_fsk.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -18,6 +18,35 @@ enum {
 	V21_CARRIER_LOSS_SAMPLES = 1600,
 	V21_MIN_LINE_POWER = 10000000,
 	V21_MIN_DOMINANCE_Q8 = 180,
+	V21_CHANNEL_1_MARK_HZ = 980,
+	V21_CHANNEL_1_SPACE_HZ = 1180,
+	V21_CHANNEL_2_MARK_HZ = 1650,
+	V21_CHANNEL_2_SPACE_HZ = 1850,
+	V21_TRANSMIT_AMPLITUDE = 8192,
+	V21_METRIC_SMOOTHING_SHIFT = 2,
+	V21_DETECTOR_WINDOW =
+		(MODEM_RATE + SIPPYMODEM_V21_BIT_RATE / 2) /
+		SIPPYMODEM_V21_BIT_RATE,
+};
+
+/* ITU-T V.21 assigns channel 1 to the originator and channel 2 to the
+ * answerer. Mark is binary one for both channels. */
+static const struct sippymodem_fsk_channel v21_channel_1 = {
+	.sample_rate = MODEM_RATE,
+	.baud = SIPPYMODEM_V21_BIT_RATE,
+	.mark_frequency_hz = V21_CHANNEL_1_MARK_HZ,
+	.space_frequency_hz = V21_CHANNEL_1_SPACE_HZ,
+	.detector_window = V21_DETECTOR_WINDOW,
+	.metric_smoothing_shift = V21_METRIC_SMOOTHING_SHIFT,
+};
+
+static const struct sippymodem_fsk_channel v21_channel_2 = {
+	.sample_rate = MODEM_RATE,
+	.baud = SIPPYMODEM_V21_BIT_RATE,
+	.mark_frequency_hz = V21_CHANNEL_2_MARK_HZ,
+	.space_frequency_hz = V21_CHANNEL_2_SPACE_HZ,
+	.detector_window = V21_DETECTOR_WINDOW,
+	.metric_smoothing_shift = V21_METRIC_SMOOTHING_SHIFT,
 };
 
 enum sippymodem_v21_training_state {
@@ -28,8 +57,8 @@ enum sippymodem_v21_training_state {
 
 struct sippymodem_v21_datapump {
 	struct dp dp;
-	struct sippymodem_v21_transmitter transmitter;
-	struct sippymodem_v21_receiver receiver;
+	struct sippymodem_fsk_transmitter transmitter;
+	struct sippymodem_fsk_receiver receiver;
 	enum sippymodem_v21_training_state training_state;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
@@ -71,7 +100,7 @@ static uint64_t training_timeout(struct modem *modem)
 
 	if (seconds <= 0)
 		seconds = 60;
-	return (uint64_t)(unsigned int)seconds * SIPPYMODEM_V21_SAMPLE_RATE;
+	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
 }
 
 static struct dp *create_v21(
@@ -79,8 +108,8 @@ static struct dp *create_v21(
 	int max_fragment, struct dp_operations *operations)
 {
 	struct sippymodem_v21_datapump *datapump;
-	enum sippymodem_v21_channel transmit_channel;
-	enum sippymodem_v21_channel receive_channel;
+	const struct sippymodem_fsk_channel *transmit_channel;
+	const struct sippymodem_fsk_channel *receive_channel;
 
 	if (modem == NULL || id != DP_V21 ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
@@ -91,15 +120,16 @@ static struct dp *create_v21(
 	if (datapump == NULL)
 		return NULL;
 	datapump->originator = caller != 0;
-	transmit_channel = datapump->originator ? SIPPYMODEM_V21_CHANNEL_1 :
-						 SIPPYMODEM_V21_CHANNEL_2;
-	receive_channel = datapump->originator ? SIPPYMODEM_V21_CHANNEL_2 :
-						SIPPYMODEM_V21_CHANNEL_1;
-	if (sippymodem_v21_transmitter_init(
-		    &datapump->transmitter, transmit_channel) !=
-		    SIPPYMODEM_V21_OK ||
-	    sippymodem_v21_receiver_init(&datapump->receiver, receive_channel) !=
-		    SIPPYMODEM_V21_OK) {
+	transmit_channel = datapump->originator ? &v21_channel_1 :
+						 &v21_channel_2;
+	receive_channel = datapump->originator ? &v21_channel_2 :
+						&v21_channel_1;
+	if (sippymodem_fsk_transmitter_init(
+		    &datapump->transmitter, transmit_channel,
+		    V21_TRANSMIT_AMPLITUDE) !=
+		    SIPPYMODEM_FSK_OK ||
+	    sippymodem_fsk_receiver_init(&datapump->receiver, receive_channel) !=
+		    SIPPYMODEM_FSK_OK) {
 		free(datapump);
 		return NULL;
 	}
@@ -129,7 +159,7 @@ static int delete_v21(struct dp *dp)
 }
 
 static bool mark_is_present(
-	const struct sippymodem_v21_measurement *measurement)
+	const struct sippymodem_fsk_measurement *measurement)
 {
 	return measurement->ready &&
 	       measurement->line_power >= V21_MIN_LINE_POWER &&
@@ -138,7 +168,7 @@ static bool mark_is_present(
 }
 
 static bool carrier_is_present(
-	const struct sippymodem_v21_measurement *measurement)
+	const struct sippymodem_fsk_measurement *measurement)
 {
 	return measurement->ready &&
 	       measurement->line_power >= V21_MIN_LINE_POWER &&
@@ -153,7 +183,7 @@ static void generate_mark(
 	for (int index = 0; index < count; ++index) {
 		bool consumed;
 
-		(void)sippymodem_v21_transmitter_sample(
+		(void)sippymodem_fsk_transmitter_sample(
 			&datapump->transmitter, 1, &transmit[index], &consumed);
 	}
 }
@@ -167,7 +197,8 @@ static void generate_data(
 		bool consumed;
 
 		if (!datapump->transmit_bit_pending &&
-		    !datapump->transmitter.holding_bit) {
+		    sippymodem_fsk_transmitter_can_accept_bit(
+			    &datapump->transmitter)) {
 			datapump->transmit_bit = 1;
 			if (modem_get_bits(
 				    datapump->dp.modem, 1,
@@ -176,7 +207,7 @@ static void generate_data(
 			datapump->transmit_bit &= 1u;
 			datapump->transmit_bit_pending = true;
 		}
-		(void)sippymodem_v21_transmitter_sample(
+		(void)sippymodem_fsk_transmitter_sample(
 			&datapump->transmitter,
 			datapump->transmit_bit_pending ?
 				datapump->transmit_bit : 1,
@@ -196,7 +227,7 @@ static void receive_samples(
 		uint8_t bit;
 		bool ready;
 
-		(void)sippymodem_v21_receiver_sample(
+		(void)sippymodem_fsk_receiver_sample(
 			&datapump->receiver, receive[index], &bit, &ready);
 		if (deliver_bits && ready)
 			(void)modem_put_bits(datapump->dp.modem, 1, &bit, 1);
@@ -205,7 +236,7 @@ static void receive_samples(
 
 static int advance_training(
 	struct sippymodem_v21_datapump *datapump,
-	const struct sippymodem_v21_measurement *measurement,
+	const struct sippymodem_fsk_measurement *measurement,
 	unsigned int count)
 {
 	if (datapump->training_samples + count >
@@ -234,10 +265,10 @@ static int advance_training(
 			return DPSTAT_OK;
 		if (modem_set_param(
 			    datapump->dp.modem, MDMPRM_TX_RATE,
-			    SIPPYMODEM_V21_BAUD) != 0 ||
+			    SIPPYMODEM_V21_BIT_RATE) != 0 ||
 		    modem_set_param(
 			    datapump->dp.modem, MDMPRM_RX_RATE,
-			    SIPPYMODEM_V21_BAUD) != 0)
+			    SIPPYMODEM_V21_BIT_RATE) != 0)
 			return DPSTAT_ERROR;
 		datapump->training_state = V21_TRAINING_ONLINE;
 		datapump->missing_carrier_samples = 0;
@@ -253,7 +284,7 @@ static int process_v21(struct dp *dp, void *receive_buffer,
 	struct sippymodem_v21_datapump *datapump = v21_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
-	struct sippymodem_v21_measurement measurement;
+	struct sippymodem_fsk_measurement measurement;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL || count <= 0 ||
 	    count > MODEM_FRAG) {
@@ -272,7 +303,7 @@ static int process_v21(struct dp *dp, void *receive_buffer,
 	receive_samples(
 		datapump, receive, count,
 		datapump->training_state == V21_TRAINING_ONLINE);
-	measurement = sippymodem_v21_receiver_measure(&datapump->receiver);
+	measurement = sippymodem_fsk_receiver_measure(&datapump->receiver);
 
 	if (datapump->training_state != V21_TRAINING_ONLINE)
 		return advance_training(datapump, &measurement, (unsigned int)count);

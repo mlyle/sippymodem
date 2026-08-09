@@ -3,7 +3,7 @@
 #include <modem.h>
 #include <sippymodem_datapumps.h>
 #include <sippymodem_media.h>
-#include <sippymodem_v21.h>
+#include <sippymodem_v21_datapump.h>
 
 #include "test.h"
 
@@ -257,10 +257,10 @@ static bool run_media_call(enum sippymodem_media_codec codec)
 			break;
 		}
 	}
-	CHECK(online && caller.modem->tx_rate == SIPPYMODEM_V21_BAUD &&
-		      caller.modem->rx_rate == SIPPYMODEM_V21_BAUD &&
-		      answerer.modem->tx_rate == SIPPYMODEM_V21_BAUD &&
-		      answerer.modem->rx_rate == SIPPYMODEM_V21_BAUD,
+	CHECK(online && caller.modem->tx_rate == SIPPYMODEM_V21_BIT_RATE &&
+		      caller.modem->rx_rate == SIPPYMODEM_V21_BIT_RATE &&
+		      answerer.modem->tx_rate == SIPPYMODEM_V21_BIT_RATE &&
+		      answerer.modem->rx_rate == SIPPYMODEM_V21_BIT_RATE,
 	      "V.21 peers did not acquire carrier and report 300 bit/s");
 	CHECK(endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      output_contains(&caller, "CONNECT 300") &&

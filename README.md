@@ -16,8 +16,9 @@ current daemon is entirely source-built and uses the host's native ABI. Its
 modem core owns source-built SIP call-progress and V.21 data pumps. SIP call
 state selects the originating or answering V.21 channel pair; a bounded mark
 exchange then reports `CONNECT 300` and hands asynchronous terminal bits to the
-native signal path. The V.21 primitive uses exact rational transmit timing and
-generated tone-pair detectors rather than checked-in coefficient tables.
+native signal path. V.21 runs on a reusable binary-FSK channel with exact
+rational symbol timing and generated tone-pair detectors rather than checked-in
+coefficient tables.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
