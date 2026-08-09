@@ -177,6 +177,46 @@ enum sippymodem_session_result sippymodem_session_step(
 		       SIPPYMODEM_SESSION_OK;
 }
 
+static enum sippymodem_sip_signaling_result not_open_result(
+	const struct sippymodem_session *session)
+{
+	return session == NULL ? SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT :
+			       SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+}
+
+enum sippymodem_sip_signaling_result sippymodem_session_dial(
+	struct sippymodem_session *session, const char *target)
+{
+	if (session == NULL || !session->opened)
+		return not_open_result(session);
+	session->last_signaling_result =
+		sippymodem_sip_signaling_dial(session->signaling, target);
+	finish_deferred_signaling(session);
+	return session->last_signaling_result;
+}
+
+enum sippymodem_sip_signaling_result sippymodem_session_answer(
+	struct sippymodem_session *session)
+{
+	if (session == NULL || !session->opened)
+		return not_open_result(session);
+	session->last_signaling_result =
+		sippymodem_sip_signaling_answer(session->signaling);
+	finish_deferred_signaling(session);
+	return session->last_signaling_result;
+}
+
+enum sippymodem_sip_signaling_result sippymodem_session_hangup(
+	struct sippymodem_session *session)
+{
+	if (session == NULL || !session->opened)
+		return not_open_result(session);
+	session->last_signaling_result =
+		sippymodem_sip_signaling_hangup(session->signaling);
+	finish_deferred_signaling(session);
+	return session->last_signaling_result;
+}
+
 size_t sippymodem_session_frame_samples(
 	const struct sippymodem_session *session)
 {
@@ -196,6 +236,24 @@ uint16_t sippymodem_session_rtp_local_port(
 bool sippymodem_session_is_open(const struct sippymodem_session *session)
 {
 	return session != NULL && session->opened;
+}
+
+enum sippymodem_media_result sippymodem_session_play(
+	struct sippymodem_session *session, int16_t *samples, size_t count,
+	struct sippymodem_rtp_playout_report *report)
+{
+	return session != NULL ?
+		       sippymodem_rtp_runtime_play(session->rtp, samples, count,
+						    report) :
+		       SIPPYMODEM_MEDIA_INVALID_ARGUMENT;
+}
+
+enum sippymodem_rtp_endpoint_result sippymodem_session_send(
+	struct sippymodem_session *session, const int16_t *samples, size_t count)
+{
+	return session != NULL ?
+		       sippymodem_rtp_runtime_send(session->rtp, samples, count) :
+		       SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
 }
 
 enum sippymodem_sip_rtp_result sippymodem_session_last_media_binding(

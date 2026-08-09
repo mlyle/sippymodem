@@ -38,7 +38,8 @@ single configured frame size, and carries the recording hook through every RTP
 stage. Its endpoint can consume negotiated media through a validated,
 transactional binding. A session owner opens RTP first so signaling advertises
 the actual bound port, advances signaling and media together, and releases both
-transports safely. The daemon does not use that owner yet, and no native V.21
+transports safely. It exposes typed call control and one exact-frame playout and
+transmit boundary. The daemon does not use that owner yet, and no native V.21
 core is attached, so this transitional tree does not yet place a V.21 modem
 call.
 

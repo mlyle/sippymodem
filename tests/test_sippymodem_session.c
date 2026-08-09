@@ -12,6 +12,9 @@ struct fake_signaling_control {
 	unsigned int advertised_rtp_port;
 	unsigned int creates;
 	unsigned int destroys;
+	unsigned int dials;
+	unsigned int answers;
+	unsigned int hangups;
 	bool fail_open;
 	bool emit_media;
 	bool emit_inactive;
@@ -103,6 +106,35 @@ enum sippymodem_sip_signaling_result sippymodem_sip_signaling_step(
 	return SIPPYMODEM_SIP_SIGNALING_OK;
 }
 
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_dial(
+	struct sippymodem_sip_signaling *signaling, const char *target)
+{
+	if (signaling == NULL || target == NULL)
+		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+	if (!signaling->opened)
+		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	fake.dials++;
+	return SIPPYMODEM_SIP_SIGNALING_OK;
+}
+
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_answer(
+	struct sippymodem_sip_signaling *signaling)
+{
+	if (signaling == NULL || !signaling->opened)
+		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	fake.answers++;
+	return SIPPYMODEM_SIP_SIGNALING_OK;
+}
+
+enum sippymodem_sip_signaling_result sippymodem_sip_signaling_hangup(
+	struct sippymodem_sip_signaling *signaling)
+{
+	if (signaling == NULL || !signaling->opened)
+		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	fake.hangups++;
+	return SIPPYMODEM_SIP_SIGNALING_OK;
+}
+
 struct callback_capture {
 	struct sippymodem_session *session;
 	enum sippymodem_session_result close_result;
@@ -154,12 +186,17 @@ static bool test_owns_transport_lifetimes(void)
 {
 	struct callback_capture capture = { 0 };
 	struct sippymodem_session *session;
+	struct sippymodem_rtp_playout_report report;
+	int16_t samples[8];
 	size_t drained = 99;
 
 	memset(&fake, 0, sizeof(fake));
 	session = create_session(&capture);
 	CHECK(session != NULL, "session creation failed");
 	capture.session = session;
+	CHECK(sippymodem_session_dial(session, "sip:peer@127.0.0.1") ==
+		      SIPPYMODEM_SIP_SIGNALING_NOT_OPEN,
+	      "closed session accepted call control");
 	CHECK(sippymodem_session_frame_samples(session) == 8 &&
 		      sippymodem_session_open(session) == SIPPYMODEM_SESSION_OK &&
 		      capture.ready_calls == 1 && fake.creates == 1 &&
@@ -177,6 +214,25 @@ static bool test_owns_transport_lifetimes(void)
 		      drained == 0 && capture.media_calls == 1 &&
 		      capture.binding == SIPPYMODEM_SIP_RTP_OK,
 	      "session did not bind negotiated media");
+	CHECK(sippymodem_session_dial(session, "sip:peer@127.0.0.1") ==
+		      SIPPYMODEM_SIP_SIGNALING_OK &&
+		      sippymodem_session_answer(session) ==
+			      SIPPYMODEM_SIP_SIGNALING_OK &&
+		      sippymodem_session_hangup(session) ==
+			      SIPPYMODEM_SIP_SIGNALING_OK &&
+		      fake.dials == 1 && fake.answers == 1 && fake.hangups == 1 &&
+		      sippymodem_session_last_signaling_result(session) ==
+			      SIPPYMODEM_SIP_SIGNALING_OK,
+	      "session did not preserve typed call control");
+	memset(samples, 1, sizeof(samples));
+	CHECK(sippymodem_session_play(session, samples, ARRAY_LENGTH(samples),
+				      &report) == SIPPYMODEM_MEDIA_OK &&
+		      !report.stream_active &&
+		      memcmp(samples, (int16_t[8]){ 0 }, sizeof(samples)) == 0 &&
+		      sippymodem_session_send(session, samples,
+					       ARRAY_LENGTH(samples)) ==
+			      SIPPYMODEM_RTP_ENDPOINT_OK,
+	      "session did not expose exact-frame RTP media");
 	fake.emit_media = true;
 	fake.emit_inactive = true;
 	capture.close_on_media = true;
@@ -190,7 +246,10 @@ static bool test_owns_transport_lifetimes(void)
 	CHECK(sippymodem_session_step(session, 0, NULL) ==
 		      SIPPYMODEM_SESSION_NOT_OPEN &&
 		      sippymodem_session_close(session) ==
-			      SIPPYMODEM_SESSION_NOT_OPEN,
+			      SIPPYMODEM_SESSION_NOT_OPEN &&
+		      sippymodem_session_send(session, samples,
+					       ARRAY_LENGTH(samples)) ==
+			      SIPPYMODEM_RTP_ENDPOINT_NOT_OPEN,
 	      "closed session lifecycle is inconsistent");
 	sippymodem_session_destroy(session);
 	return true;
