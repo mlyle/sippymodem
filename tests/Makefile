@@ -73,11 +73,21 @@ RTP_RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_runtime.o \
 	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
 	$(BUILD_DIR)/sippymodem_config.o \
 	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
+SIP_MEDIA_BRIDGE_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_sip_media_bridge
+SIP_MEDIA_BRIDGE_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_sip_media_bridge.o \
+	$(BUILD_DIR)/sippymodem_sip_media_bridge.o \
+	$(BUILD_DIR)/sippymodem_sip_rtp.o \
+	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
+	$(BUILD_DIR)/sippymodem_rtp_stream.o \
+	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
+	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
 	$(STREAM_TEST_BINARY) $(ENDPOINT_TEST_BINARY) $(SIP_RTP_TEST_BINARY) \
-	$(RTP_RUNTIME_TEST_BINARY)
+	$(RTP_RUNTIME_TEST_BINARY) $(SIP_MEDIA_BRIDGE_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
 endif
@@ -87,7 +97,8 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(RTP_TEST_OBJECTS:.o=.d) $(MEDIA_TEST_OBJECTS:.o=.d) \
 	$(RECEIVER_TEST_OBJECTS:.o=.d) $(STREAM_TEST_OBJECTS:.o=.d) \
 	$(ENDPOINT_TEST_OBJECTS:.o=.d) $(SIP_RTP_TEST_OBJECTS:.o=.d) \
-	$(RTP_RUNTIME_TEST_OBJECTS:.o=.d)
+	$(RTP_RUNTIME_TEST_OBJECTS:.o=.d) \
+	$(SIP_MEDIA_BRIDGE_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
 endif
@@ -109,6 +120,7 @@ test: $(TEST_BINARIES)
 	./$(ENDPOINT_TEST_BINARY)
 	./$(SIP_RTP_TEST_BINARY)
 	./$(RTP_RUNTIME_TEST_BINARY)
+	./$(SIP_MEDIA_BRIDGE_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 	./$(PJSIP_TEST_BINARY)
 else
@@ -152,6 +164,9 @@ $(SIP_RTP_TEST_BINARY): $(SIP_RTP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(RTP_RUNTIME_TEST_BINARY): $(RTP_RUNTIME_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(SIP_MEDIA_BRIDGE_TEST_BINARY): $(SIP_MEDIA_BRIDGE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
@@ -207,6 +222,10 @@ $(BUILD_DIR)/sippymodem_sip_rtp.o: \
 
 $(BUILD_DIR)/sippymodem_rtp_runtime.o: \
 	../src/sippymodem_rtp_runtime.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_sip_media_bridge.o: \
+	../src/sippymodem_sip_media_bridge.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR):
