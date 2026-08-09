@@ -24,10 +24,10 @@ present.
 
 Run the native tests with `make test`. The suite exercises asynchronous and
 HDLC framing, validated SIP/media configuration, safe SIP URI construction,
-table-free G.711 conversion, strict RTP packets, bounded receive playout,
-transmit timeline continuity, UDP peer handling, and lifecycle-ordered
-recording hooks without linking the legacy DSP object or requiring external
-vectors.
+deterministic modem audio SDP policy, table-free G.711 conversion, strict RTP
+packets, bounded receive playout, transmit timeline continuity, UDP peer
+handling, and lifecycle-ordered recording hooks without linking the legacy DSP
+object or requiring external vectors.
 
 The current RTP work is a tested, allocation-free media stream connected to a
 bounded, nonblocking UDP endpoint. It is not yet connected to SIP call control

@@ -18,6 +18,10 @@ CONFIG_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_config.o \
 SIP_URI_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sip_uri
 SIP_URI_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_uri.o \
 	$(BUILD_DIR)/sippymodem_sip_uri.o
+SDP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sdp
+SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sdp.o \
+	$(BUILD_DIR)/sippymodem_sdp.o $(BUILD_DIR)/sippymodem_media.o \
+	$(BUILD_DIR)/sippymodem_g711.o
 G711_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_g711
 G711_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_g711.o
@@ -42,12 +46,12 @@ ENDPOINT_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_endpoint.o \
 	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
 	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
-	$(SIP_URI_TEST_BINARY) $(G711_TEST_BINARY) $(RTP_TEST_BINARY) \
-	$(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) $(STREAM_TEST_BINARY) \
-	$(ENDPOINT_TEST_BINARY)
+	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
+	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
+	$(STREAM_TEST_BINARY) $(ENDPOINT_TEST_BINARY)
 DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(CONFIG_TEST_OBJECTS:.o=.d) $(SIP_URI_TEST_OBJECTS:.o=.d) \
-	$(G711_TEST_OBJECTS:.o=.d) \
+	$(SDP_TEST_OBJECTS:.o=.d) $(G711_TEST_OBJECTS:.o=.d) \
 	$(RTP_TEST_OBJECTS:.o=.d) $(MEDIA_TEST_OBJECTS:.o=.d) \
 	$(RECEIVER_TEST_OBJECTS:.o=.d) $(STREAM_TEST_OBJECTS:.o=.d) \
 	$(ENDPOINT_TEST_OBJECTS:.o=.d)
@@ -60,6 +64,7 @@ test: $(TEST_BINARIES)
 	./$(PACK_TEST_BINARY)
 	./$(CONFIG_TEST_BINARY)
 	./$(SIP_URI_TEST_BINARY)
+	./$(SDP_TEST_BINARY)
 	./$(G711_TEST_BINARY)
 	./$(RTP_TEST_BINARY)
 	./$(MEDIA_TEST_BINARY)
@@ -74,6 +79,9 @@ $(CONFIG_TEST_BINARY): $(CONFIG_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(SIP_URI_TEST_BINARY): $(SIP_URI_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(SDP_TEST_BINARY): $(SDP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(G711_TEST_BINARY): $(G711_TEST_OBJECTS)
@@ -105,6 +113,9 @@ $(BUILD_DIR)/sippymodem_config.o: ../src/sippymodem_config.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/sippymodem_sip_uri.o: \
 	../src/sippymodem_sip_uri.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_sdp.o: ../src/sippymodem_sdp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_g711.o: ../src/sippymodem_g711.c | $(BUILD_DIR)
