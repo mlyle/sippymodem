@@ -110,6 +110,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *operations;
 	struct dp_operations *v21_operations;
 	struct dp_operations *bell103_operations;
+	struct dp_operations *v23_operations;
 	struct dp *call_progress;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
@@ -117,11 +118,13 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) == NULL &&
+		      modem_dp_get_registered_ops(DP_V23) == NULL &&
 		      modem_dp_register(DP_B103, &conflict_operations) == 0 &&
 		      sippymodem_datapumps_start(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT &&
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
+		      modem_dp_get_registered_ops(DP_V23) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) ==
 			      &conflict_operations &&
 		      modem_dp_deregister(DP_B103, &conflict_operations) == 0 &&
@@ -132,6 +135,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	operations = modem_dp_get_registered_ops(DP_CALLPROG);
 	v21_operations = modem_dp_get_registered_ops(DP_V21);
 	bell103_operations = modem_dp_get_registered_ops(DP_B103);
+	v23_operations = modem_dp_get_registered_ops(DP_V23);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
 		      operations->hangup == NULL && operations->use_count == 0 &&
@@ -139,7 +143,13 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v21_operations->delete != NULL &&
 		      v21_operations->process != NULL &&
 		      v21_operations->use_count == 0 &&
-		      bell103_operations == v21_operations,
+		      bell103_operations == v21_operations &&
+		      v23_operations != NULL &&
+		      v23_operations != v21_operations &&
+		      v23_operations->create != NULL &&
+		      v23_operations->delete != NULL &&
+		      v23_operations->process != NULL &&
+		      v23_operations->use_count == 0,
 	      "source-built modem operations were incomplete");
 	CHECK(sippymodem_datapumps_start(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_ALREADY_STARTED &&
@@ -175,6 +185,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) == NULL &&
+		      modem_dp_get_registered_ops(DP_V23) == NULL &&
 		      !sippymodem_datapumps_are_started(&datapumps) &&
 		      sippymodem_datapumps_stop(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_NOT_STARTED &&

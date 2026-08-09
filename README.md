@@ -13,12 +13,14 @@ Existing Smart Link copyright notices are preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
 current daemon is entirely source-built and uses the host's native ABI. Its
-modem core owns source-built SIP call-progress and 300-bit/s FSK data pumps. SIP
-call state selects the originating or answering tone pair; a bounded mark
-exchange then reports `CONNECT 300` and hands asynchronous terminal bits to the
-native signal path. V.21 and Bell 103 share a reusable binary-FSK channel with
-exact rational symbol timing and generated tone-pair detectors rather than
-checked-in coefficient tables. Bell 103 is selectable with `AT+MS=103`.
+modem core owns source-built SIP call-progress and low-speed FSK data pumps. SIP
+call state selects the originating or answering tone pair, completes a bounded
+training exchange, and hands asynchronous terminal bits to the native signal
+path. V.21 and Bell 103 share a reusable 300-bit/s binary-FSK channel. V.23 adds
+an asymmetric 1200-bit/s forward channel and 75-bit/s backward channel. All
+three use exact rational symbol timing and generated tone-pair detectors rather
+than checked-in coefficient tables. Bell 103 is selectable with `AT+MS=103` and
+V.23 with `AT+MS=23`.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
@@ -61,9 +63,10 @@ playout, or transmit failure suspends audio and requests hangup until a new
 media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
-standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21 and Bell 103
-are currently registered; faster modes remain deliberately unavailable until
-their source-built implementations arrive as reviewable slices.
+standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, Bell 103,
+and V.23 are currently registered; higher-speed modes remain deliberately
+unavailable until their source-built implementations arrive as reviewable
+slices.
 
 Build with `make`, configure the daemon through the validated `SIP_*`
 environment variables, and run `./src/slmodemd` without a hardware-device

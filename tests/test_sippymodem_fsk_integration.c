@@ -2,8 +2,9 @@
 
 #include <modem.h>
 #include <sippymodem_datapumps.h>
-#include <sippymodem_media.h>
 #include <sippymodem_fsk300_datapump.h>
+#include <sippymodem_media.h>
+#include <sippymodem_v23_datapump.h>
 
 #include "test.h"
 
@@ -18,6 +19,7 @@ enum {
 	SIP_FRAME_SAMPLES = 160,
 	ENDPOINT_OUTPUT_CAPACITY = 1024,
 	TRAINING_FRAME_LIMIT = 250,
+	LINK_DRAIN_FRAME_LIMIT = 50,
 	DATA_FRAME_LIMIT = 400,
 };
 
@@ -41,6 +43,12 @@ struct fsk_test_case {
 	enum DP_ID id;
 	const char *name;
 	const char *selection_command;
+	unsigned int caller_tx_rate;
+	unsigned int caller_rx_rate;
+	unsigned int answerer_tx_rate;
+	unsigned int answerer_rx_rate;
+	unsigned int carrier_loss_samples;
+	bool test_prelink;
 };
 
 static int start_modem(struct modem *modem)
@@ -65,7 +73,7 @@ static int control_modem(
 }
 
 static struct modem_driver integration_driver = {
-	.name = "300-bit/s FSK SIP media test",
+	.name = "FSK SIP media test",
 	.start = start_modem,
 	.stop = stop_modem,
 	.ioctl = control_modem,
@@ -150,6 +158,16 @@ static bool output_contains(
 	return false;
 }
 
+static bool output_contains_connect(
+	const struct integration_endpoint *endpoint, unsigned int bit_rate)
+{
+	char text[32];
+	int count = snprintf(text, sizeof(text), "CONNECT %u", bit_rate);
+
+	return count > 0 && (size_t)count < sizeof(text) &&
+	       output_contains(endpoint, text);
+}
+
 static void capture_recording(
 	void *context, const struct sippymodem_recording_block *block)
 {
@@ -211,6 +229,7 @@ static bool run_media_call(
 	const struct fsk_test_case *test_case,
 	enum sippymodem_media_codec codec)
 {
+	static const char prelink_payload[] = "early-v23";
 	static const uint8_t caller_payload[] = {
 		0x00, 0x01, 0x55, 0xaa, 0x7f, 0x80, 0xfe, 0xff,
 		'V', '2', '1', 'A',
@@ -229,6 +248,8 @@ static bool run_media_call(
 		.write = capture_recording,
 	};
 	bool online = false;
+	bool prelink_queued = false;
+	bool prelink_delivered = false;
 	bool transferred = false;
 	int selection_length = (int)strlen(test_case->selection_command);
 
@@ -276,21 +297,50 @@ static bool run_media_call(
 		      &caller, &answerer, codec, &recorder),
 		      "%s training failed at the SIP media boundary",
 		      test_case->name);
+		if (test_case->test_prelink && !prelink_queued &&
+		    modem_is_online(answerer.modem, test_case->id) &&
+		    !modem_is_online(caller.modem, test_case->id)) {
+			CHECK(modem_write(
+				      answerer.modem, prelink_payload,
+				      (int)(sizeof(prelink_payload) - 1)) ==
+				      (int)(sizeof(prelink_payload) - 1),
+			      "%s answerer did not accept pre-link data",
+			      test_case->name);
+			prelink_queued = true;
+		}
 		if (modem_is_online(caller.modem, test_case->id) &&
 		    modem_is_online(answerer.modem, test_case->id)) {
 			online = true;
 			break;
 		}
 	}
-	CHECK(online && caller.modem->tx_rate == SIPPYMODEM_FSK300_BIT_RATE &&
-		      caller.modem->rx_rate == SIPPYMODEM_FSK300_BIT_RATE &&
-		      answerer.modem->tx_rate == SIPPYMODEM_FSK300_BIT_RATE &&
-		      answerer.modem->rx_rate == SIPPYMODEM_FSK300_BIT_RATE,
-	      "%s peers did not acquire carrier and report 300 bit/s",
+	CHECK(online && caller.modem->tx_rate == test_case->caller_tx_rate &&
+		      caller.modem->rx_rate == test_case->caller_rx_rate &&
+		      answerer.modem->tx_rate == test_case->answerer_tx_rate &&
+		      answerer.modem->rx_rate == test_case->answerer_rx_rate,
+	      "%s peers did not acquire carrier and report their rates",
 	      test_case->name);
-	CHECK(endpoint_drain(&caller) && endpoint_drain(&answerer) &&
-		      output_contains(&caller, "CONNECT 300") &&
-		      output_contains(&answerer, "CONNECT 300"),
+	CHECK(!test_case->test_prelink || prelink_queued,
+	      "%s did not expose its asymmetric pre-link interval",
+	      test_case->name);
+	for (unsigned int frame = 0; frame < LINK_DRAIN_FRAME_LIMIT; ++frame) {
+		CHECK(endpoint_drain(&caller) && endpoint_drain(&answerer),
+		      "%s connection output could not be read", test_case->name);
+		if (!test_case->test_prelink ||
+		    output_contains(&caller, prelink_payload)) {
+			prelink_delivered = true;
+			break;
+		}
+		CHECK(process_sip_frame(
+			      &caller, &answerer, codec, &recorder),
+		      "%s pre-link delivery failed at the SIP media boundary",
+		      test_case->name);
+	}
+	CHECK(prelink_delivered &&
+		      output_contains_connect(
+			      &caller, test_case->caller_rx_rate) &&
+		      output_contains_connect(
+			      &answerer, test_case->answerer_rx_rate),
 	      "%s connection did not reach both terminal interfaces",
 	      test_case->name);
 	caller.output_count = 0;
@@ -339,7 +389,8 @@ static bool run_media_call(
 	      test_case->name);
 	memset(caller.receive, 0, sizeof(caller.receive));
 	for (unsigned int frame = 0;
-	     frame * SIP_FRAME_SAMPLES < 1600; ++frame)
+	     frame * SIP_FRAME_SAMPLES <= test_case->carrier_loss_samples;
+	     ++frame)
 		modem_process(caller.modem, caller.receive, caller.transmit,
 			      SIP_FRAME_SAMPLES);
 	CHECK(caller.modem->process == NULL,
@@ -362,8 +413,37 @@ static const char *codec_name(enum sippymodem_media_codec codec)
 int main(void)
 {
 	static const struct fsk_test_case test_cases[] = {
-		{ DP_V21, "V.21", "AT+MS=21,0,300,300\r" },
-		{ DP_B103, "Bell 103", "AT+MS=103,0,300,300\r" },
+		{
+			.id = DP_V21,
+			.name = "V.21",
+			.selection_command = "AT+MS=21,0,300,300\r",
+			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
+			.id = DP_B103,
+			.name = "Bell 103",
+			.selection_command = "AT+MS=103,0,300,300\r",
+			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
+			.id = DP_V23,
+			.name = "V.23",
+			.selection_command = "AT+MS=23,0,300,1200\r",
+			.caller_tx_rate = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V23_FORWARD_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V23_FORWARD_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.test_prelink = true,
+		},
 	};
 	static const enum sippymodem_media_codec codecs[] = {
 		SIPPYMODEM_CODEC_PCMU,

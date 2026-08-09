@@ -4,6 +4,7 @@
 
 #include "modem.h"
 #include "sippymodem_fsk300_datapump.h"
+#include "sippymodem_v23_datapump.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -91,12 +92,15 @@ enum sippymodem_datapumps_result sippymodem_datapumps_start(
 {
 	if (datapumps == NULL)
 		return SIPPYMODEM_DATAPUMPS_INVALID_ARGUMENT;
-	if (datapumps->call_progress_registered && datapumps->fsk300_registered)
+	if (datapumps->call_progress_registered && datapumps->fsk300_registered &&
+	    datapumps->v23_registered)
 		return SIPPYMODEM_DATAPUMPS_ALREADY_STARTED;
 	if (datapumps->call_progress_registered || datapumps->fsk300_registered ||
+	    datapumps->v23_registered ||
 	    modem_dp_get_registered_ops(DP_CALLPROG) != NULL ||
 	    modem_dp_get_registered_ops(DP_V21) != NULL ||
 	    modem_dp_get_registered_ops(DP_B103) != NULL ||
+	    modem_dp_get_registered_ops(DP_V23) != NULL ||
 	    modem_dp_register(DP_CALLPROG, &call_progress_operations) != 0)
 		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
 	if (sippymodem_fsk300_datapump_register() != 0) {
@@ -104,8 +108,15 @@ enum sippymodem_datapumps_result sippymodem_datapumps_start(
 			DP_CALLPROG, &call_progress_operations);
 		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
 	}
+	if (sippymodem_v23_datapump_register() != 0) {
+		(void)sippymodem_fsk300_datapump_unregister();
+		(void)modem_dp_deregister(
+			DP_CALLPROG, &call_progress_operations);
+		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
+	}
 	datapumps->call_progress_registered = true;
 	datapumps->fsk300_registered = true;
+	datapumps->v23_registered = true;
 	return SIPPYMODEM_DATAPUMPS_OK;
 }
 
@@ -114,22 +125,31 @@ enum sippymodem_datapumps_result sippymodem_datapumps_stop(
 {
 	if (datapumps == NULL)
 		return SIPPYMODEM_DATAPUMPS_INVALID_ARGUMENT;
-	if (!datapumps->call_progress_registered && !datapumps->fsk300_registered)
+	if (!datapumps->call_progress_registered && !datapumps->fsk300_registered &&
+	    !datapumps->v23_registered)
 		return SIPPYMODEM_DATAPUMPS_NOT_STARTED;
-	if (!datapumps->call_progress_registered || !datapumps->fsk300_registered)
+	if (!datapumps->call_progress_registered || !datapumps->fsk300_registered ||
+	    !datapumps->v23_registered)
 		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
 	if (call_progress_operations.use_count != 0 ||
-	    sippymodem_fsk300_datapump_is_busy())
+	    sippymodem_fsk300_datapump_is_busy() ||
+	    sippymodem_v23_datapump_is_busy())
 		return SIPPYMODEM_DATAPUMPS_BUSY;
-	if (sippymodem_fsk300_datapump_unregister() != 0)
+	if (sippymodem_v23_datapump_unregister() != 0)
 		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
+	if (sippymodem_fsk300_datapump_unregister() != 0) {
+		(void)sippymodem_v23_datapump_register();
+		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
+	}
 	if (modem_dp_deregister(
 		    DP_CALLPROG, &call_progress_operations) != 0) {
 		(void)sippymodem_fsk300_datapump_register();
+		(void)sippymodem_v23_datapump_register();
 		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
 	}
 	datapumps->call_progress_registered = false;
 	datapumps->fsk300_registered = false;
+	datapumps->v23_registered = false;
 	return SIPPYMODEM_DATAPUMPS_OK;
 }
 
@@ -137,7 +157,7 @@ bool sippymodem_datapumps_are_started(
 	const struct sippymodem_datapumps *datapumps)
 {
 	return datapumps != NULL && datapumps->call_progress_registered &&
-	       datapumps->fsk300_registered;
+	       datapumps->fsk300_registered && datapumps->v23_registered;
 }
 
 const char *sippymodem_datapumps_result_name(

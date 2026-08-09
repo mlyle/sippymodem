@@ -174,7 +174,8 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_datapumps.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_fsk300_datapump.o
+	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
+	$(BUILD_DIR)/sippymodem_v23_datapump.o
 FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o
@@ -193,6 +194,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
+	$(BUILD_DIR)/sippymodem_v23_datapump.o \
 	$(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
