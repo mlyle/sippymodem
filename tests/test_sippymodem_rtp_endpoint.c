@@ -53,7 +53,8 @@ static void capture_recording(
 	capture->calls++;
 }
 
-static bool open_fixture(struct endpoint_fixture *fixture, uint32_t seed)
+static bool open_fixture(struct endpoint_fixture *fixture, uint32_t seed,
+			 bool learn_remote, bool symmetric_rtp)
 {
 	const struct sippymodem_rtp_stream_config stream_config = {
 		.codec = SIPPYMODEM_CODEC_PCMU,
@@ -71,6 +72,10 @@ static bool open_fixture(struct endpoint_fixture *fixture, uint32_t seed)
 		.sin_port = 0,
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
 	};
+	const struct sippymodem_rtp_endpoint_config endpoint_config = {
+		.learn_remote = learn_remote,
+		.symmetric_rtp = symmetric_rtp,
+	};
 	enum sippymodem_rtp_endpoint_result open_result;
 
 	memset(fixture, 0, sizeof(*fixture));
@@ -82,7 +87,8 @@ static bool open_fixture(struct endpoint_fixture *fixture, uint32_t seed)
 		return false;
 	}
 	if (!sippymodem_rtp_endpoint_init(&fixture->endpoint,
-					   &fixture->stream)) {
+					   &fixture->stream,
+					   &endpoint_config)) {
 		fprintf(stderr, "fixture endpoint init failed\n");
 		return false;
 	}
@@ -143,8 +149,10 @@ static bool test_loopback_media_and_recording(void)
 	int16_t played[ARRAY_LENGTH(transmit)];
 	size_t drained = 0;
 
-	CHECK(open_fixture(&sender, 1), "failed to open sender endpoint");
-	CHECK(open_fixture(&receiver, 2), "failed to open receiver endpoint");
+	CHECK(open_fixture(&sender, 1, false, false),
+	      "failed to open sender endpoint");
+	CHECK(open_fixture(&receiver, 2, false, false),
+	      "failed to open receiver endpoint");
 	sender_address = fixture_address(&sender);
 	receiver_address = fixture_address(&receiver);
 	CHECK(sippymodem_rtp_endpoint_send(
@@ -227,9 +235,10 @@ static bool test_source_filter_and_malformed_input(void)
 	size_t drained;
 	int rogue_socket;
 
-	CHECK(open_fixture(&expected_source, 3),
+	CHECK(open_fixture(&expected_source, 3, false, false),
 	      "failed to open expected source");
-	CHECK(open_fixture(&receiver, 4), "failed to open receiver");
+	CHECK(open_fixture(&receiver, 4, false, false),
+	      "failed to open receiver");
 	expected_address = fixture_address(&expected_source);
 	receiver_address = fixture_address(&receiver);
 	CHECK(sippymodem_rtp_endpoint_set_remote(
@@ -274,14 +283,126 @@ static bool test_source_filter_and_malformed_input(void)
 	return true;
 }
 
+static bool test_symmetric_remote_learning(void)
+{
+	static const int16_t samples[] = { 0, 1000 };
+	static const int16_t expected[] = { 0, 988 };
+	struct endpoint_fixture sender;
+	struct endpoint_fixture receiver;
+	struct sockaddr_in sender_address;
+	struct sockaddr_in receiver_address;
+	struct sockaddr_in advertised_address;
+	struct sockaddr_in transmit_address;
+	struct sippymodem_rtp_header rogue_header = {
+		.payload_type = 0,
+		.sequence = 90,
+		.timestamp = 900,
+		.ssrc = 90,
+	};
+	uint8_t packet[TEST_PACKET_SIZE];
+	int16_t played[ARRAY_LENGTH(samples)];
+	size_t packet_size;
+	size_t drained;
+	bool learned = false;
+	int rogue_socket;
+	uint16_t advertised_port;
+
+	CHECK(open_fixture(&sender, 6, false, false),
+	      "failed to open symmetric sender");
+	CHECK(open_fixture(&receiver, 7, true, true),
+	      "failed to open symmetric receiver");
+	sender_address = fixture_address(&sender);
+	receiver_address = fixture_address(&receiver);
+	advertised_address = sender_address;
+	advertised_port = ntohs(advertised_address.sin_port);
+	advertised_address.sin_port = htons(advertised_port == UINT16_MAX ?
+						 advertised_port - 1 :
+						 advertised_port + 1);
+	CHECK(sippymodem_rtp_endpoint_set_remote(&sender.endpoint,
+						 &receiver_address) ==
+		      SIPPYMODEM_RTP_ENDPOINT_OK &&
+		      sippymodem_rtp_endpoint_set_remote(&receiver.endpoint,
+						 &advertised_address) ==
+			      SIPPYMODEM_RTP_ENDPOINT_OK,
+	      "failed to set symmetric test routes");
+	rogue_socket = socket(AF_INET, SOCK_DGRAM, 0);
+	CHECK(rogue_socket >= 0 &&
+		      sippymodem_rtp_packet_write(packet, sizeof(packet),
+					     &rogue_header, NULL, 0,
+					     &packet_size) == SIPPYMODEM_RTP_OK &&
+		      send_raw(rogue_socket, &receiver_address, packet,
+			       packet_size) &&
+		      wait_for_datagram(&receiver.endpoint) &&
+		      sippymodem_rtp_endpoint_drain(&receiver.endpoint, &drained) ==
+			      SIPPYMODEM_RTP_ENDPOINT_OK &&
+		      receiver.endpoint.stats.receive_filtered == 1 &&
+		      receiver.endpoint.stats.remote_learns == 0,
+	      "empty RTP packet established a learned route");
+	CHECK(sippymodem_rtp_endpoint_send(&sender.endpoint, samples,
+				    ARRAY_LENGTH(samples), packet,
+				    sizeof(packet)) ==
+		      SIPPYMODEM_RTP_ENDPOINT_OK &&
+		      wait_for_datagram(&receiver.endpoint) &&
+		      sippymodem_rtp_endpoint_drain(&receiver.endpoint, &drained) ==
+			      SIPPYMODEM_RTP_ENDPOINT_OK,
+	      "receiver did not accept the NAT source");
+	CHECK(receiver.endpoint.stats.remote_learns == 1 &&
+		      sippymodem_rtp_endpoint_transmit_remote(
+			      &receiver.endpoint, &transmit_address, &learned) &&
+		      learned && transmit_address.sin_port ==
+				 sender_address.sin_port &&
+		      transmit_address.sin_addr.s_addr ==
+				 sender_address.sin_addr.s_addr,
+	      "receiver did not select the learned symmetric route");
+	CHECK(sippymodem_rtp_stream_play(&receiver.stream, played,
+				  ARRAY_LENGTH(played), NULL) ==
+		      SIPPYMODEM_MEDIA_OK &&
+		      memcmp(played, expected, sizeof(expected)) == 0,
+	      "receiver did not play learned-source media");
+	CHECK(sippymodem_rtp_endpoint_send(&receiver.endpoint, samples,
+				    ARRAY_LENGTH(samples), packet,
+				    sizeof(packet)) ==
+		      SIPPYMODEM_RTP_ENDPOINT_OK &&
+		      wait_for_datagram(&sender.endpoint) &&
+		      sippymodem_rtp_endpoint_drain(&sender.endpoint, &drained) ==
+			      SIPPYMODEM_RTP_ENDPOINT_OK &&
+		      sippymodem_rtp_stream_play(&sender.stream, played,
+					    ARRAY_LENGTH(played), NULL) ==
+			      SIPPYMODEM_MEDIA_OK &&
+		      memcmp(played, expected, sizeof(expected)) == 0,
+	      "symmetric reply did not reach the learned source");
+
+	CHECK(sippymodem_rtp_packet_write(packet, sizeof(packet), &rogue_header,
+					   (const uint8_t[]){ 0xff, 0xff }, 2,
+					   &packet_size) == SIPPYMODEM_RTP_OK,
+	      "failed to build post-learning packet");
+	CHECK(send_raw(rogue_socket, &receiver_address, packet,
+			       packet_size) &&
+		      wait_for_datagram(&receiver.endpoint) &&
+		      sippymodem_rtp_endpoint_drain(&receiver.endpoint, &drained) ==
+			      SIPPYMODEM_RTP_ENDPOINT_OK &&
+		      receiver.endpoint.stats.receive_filtered == 2 &&
+		      receiver.endpoint.stats.remote_learns == 1,
+	      "active media allowed an unknown source to relearn the route");
+	close(rogue_socket);
+	sippymodem_rtp_endpoint_close(&receiver.endpoint);
+	sippymodem_rtp_endpoint_close(&sender.endpoint);
+	return true;
+}
+
 static bool test_lifecycle_validation(void)
 {
 	struct endpoint_fixture fixture;
+	struct sippymodem_rtp_endpoint_config defaults;
 	struct sockaddr_in address;
 	int status_flags;
 	int descriptor_flags;
 
-	CHECK(open_fixture(&fixture, 5), "failed to open endpoint");
+	sippymodem_rtp_endpoint_config_init(&defaults);
+	CHECK(defaults.learn_remote && defaults.symmetric_rtp,
+	      "endpoint defaults are not NAT-friendly");
+	CHECK(open_fixture(&fixture, 5, false, false),
+	      "failed to open endpoint");
 	address = fixture_address(&fixture);
 	status_flags = fcntl(sippymodem_rtp_endpoint_fd(&fixture.endpoint),
 			     F_GETFL, 0);
@@ -319,6 +440,7 @@ int main(void)
 		  test_loopback_media_and_recording },
 		{ "source filter and malformed input",
 		  test_source_filter_and_malformed_input },
+		{ "symmetric remote learning", test_symmetric_remote_learning },
 		{ "lifecycle validation", test_lifecycle_validation },
 	};
 	unsigned int failures = 0;

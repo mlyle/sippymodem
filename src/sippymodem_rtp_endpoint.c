@@ -74,15 +74,27 @@ static void discard_queued_datagrams(struct sippymodem_rtp_endpoint *endpoint)
 
 bool sippymodem_rtp_endpoint_init(
 	struct sippymodem_rtp_endpoint *endpoint,
-	struct sippymodem_rtp_stream *stream)
+	struct sippymodem_rtp_stream *stream,
+	const struct sippymodem_rtp_endpoint_config *config)
 {
-	if (endpoint == NULL || stream == NULL ||
+	if (endpoint == NULL || stream == NULL || config == NULL ||
 	    stream->receiver.slots == NULL)
 		return false;
 	memset(endpoint, 0, sizeof(*endpoint));
 	endpoint->socket_fd = -1;
 	endpoint->stream = stream;
+	endpoint->config = *config;
 	return true;
+}
+
+void sippymodem_rtp_endpoint_config_init(
+	struct sippymodem_rtp_endpoint_config *config)
+{
+	if (config == NULL)
+		return;
+	memset(config, 0, sizeof(*config));
+	config->learn_remote = true;
+	config->symmetric_rtp = true;
 }
 
 enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_open(
@@ -134,7 +146,9 @@ void sippymodem_rtp_endpoint_close(
 	endpoint->socket_fd = -1;
 	memset(&endpoint->local_address, 0, sizeof(endpoint->local_address));
 	endpoint->remote_configured = false;
+	endpoint->remote_learned = false;
 	memset(&endpoint->remote_address, 0, sizeof(endpoint->remote_address));
+	memset(&endpoint->learned_address, 0, sizeof(endpoint->learned_address));
 	if (endpoint->stream != NULL)
 		sippymodem_rtp_receiver_restart(&endpoint->stream->receiver);
 }
@@ -170,6 +184,8 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_set_remote(
 
 	discard_queued_datagrams(endpoint);
 	sippymodem_rtp_receiver_restart(&endpoint->stream->receiver);
+	endpoint->remote_learned = false;
+	memset(&endpoint->learned_address, 0, sizeof(endpoint->learned_address));
 	endpoint->remote_address = canonical;
 	endpoint->remote_configured = true;
 	return SIPPYMODEM_RTP_ENDPOINT_OK;
@@ -183,9 +199,66 @@ void sippymodem_rtp_endpoint_clear_remote(
 	if (endpoint->socket_fd >= 0)
 		discard_queued_datagrams(endpoint);
 	endpoint->remote_configured = false;
+	endpoint->remote_learned = false;
 	memset(&endpoint->remote_address, 0, sizeof(endpoint->remote_address));
+	memset(&endpoint->learned_address, 0, sizeof(endpoint->learned_address));
 	if (endpoint->stream != NULL)
 		sippymodem_rtp_receiver_restart(&endpoint->stream->receiver);
+}
+
+bool sippymodem_rtp_endpoint_transmit_remote(
+	const struct sippymodem_rtp_endpoint *endpoint,
+	struct sockaddr_in *remote_address,
+	bool *learned)
+{
+	bool use_learned;
+
+	if (endpoint == NULL || remote_address == NULL)
+		return false;
+	use_learned = endpoint->remote_learned &&
+		      (endpoint->config.symmetric_rtp ||
+		       !endpoint->remote_configured);
+	if (!use_learned && !endpoint->remote_configured)
+		return false;
+	*remote_address = use_learned ? endpoint->learned_address :
+				       endpoint->remote_address;
+	if (learned != NULL)
+		*learned = use_learned;
+	return true;
+}
+
+static bool packet_can_establish_remote(
+	const struct sippymodem_rtp_endpoint *endpoint,
+	const uint8_t *packet,
+	size_t packet_size)
+{
+	struct sippymodem_rtp_packet_view view;
+
+	return !endpoint->stream->receiver.stream_active &&
+	       sippymodem_rtp_packet_parse(packet, packet_size, &view) ==
+		       SIPPYMODEM_RTP_OK &&
+	       view.payload_size != 0 &&
+	       view.header.payload_type ==
+		       endpoint->stream->receiver.config.payload_type;
+}
+
+static bool source_is_allowed(struct sippymodem_rtp_endpoint *endpoint,
+			      const struct sockaddr_in *source,
+			      const uint8_t *packet, size_t packet_size)
+{
+	if ((endpoint->remote_configured &&
+	     addresses_are_equal(source, &endpoint->remote_address)) ||
+	    (endpoint->remote_learned &&
+	     addresses_are_equal(source, &endpoint->learned_address)))
+		return true;
+	if (!endpoint->config.learn_remote || endpoint->remote_learned ||
+	    !packet_can_establish_remote(endpoint, packet, packet_size))
+		return false;
+
+	endpoint->learned_address = canonical_address(source);
+	endpoint->remote_learned = true;
+	endpoint->stats.remote_learns++;
+	return true;
 }
 
 static void record_arriving_payload(
@@ -264,8 +337,8 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_drain(
 			endpoint->stats.receive_oversized++;
 			continue;
 		}
-		if (!endpoint->remote_configured ||
-		    !addresses_are_equal(&source, &endpoint->remote_address)) {
+		if (!source_is_allowed(endpoint, &source, packet,
+				       (size_t)received)) {
 			endpoint->stats.receive_filtered++;
 			continue;
 		}
@@ -284,6 +357,7 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_send(
 	uint8_t *packet_workspace,
 	size_t packet_capacity)
 {
+	struct sockaddr_in remote_address;
 	size_t packet_size = 0;
 	ssize_t sent;
 
@@ -292,7 +366,8 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_send(
 		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
 	if (endpoint->socket_fd < 0)
 		return SIPPYMODEM_RTP_ENDPOINT_NOT_OPEN;
-	if (!endpoint->remote_configured) {
+	if (!sippymodem_rtp_endpoint_transmit_remote(
+		    endpoint, &remote_address, NULL)) {
 		endpoint->stats.transmit_no_remote++;
 		return SIPPYMODEM_RTP_ENDPOINT_NO_REMOTE;
 	}
@@ -306,8 +381,8 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_send(
 
 	do {
 		sent = sendto(endpoint->socket_fd, packet_workspace, packet_size, 0,
-			      (const struct sockaddr *)&endpoint->remote_address,
-			      sizeof(endpoint->remote_address));
+			      (const struct sockaddr *)&remote_address,
+			      sizeof(remote_address));
 	} while (sent < 0 && errno == EINTR);
 	if (sent != (ssize_t)packet_size) {
 		endpoint->last_system_error = sent < 0 ? errno : EIO;
