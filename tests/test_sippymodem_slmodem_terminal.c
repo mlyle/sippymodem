@@ -59,6 +59,20 @@ static bool test_applies_control_state(void)
 	memset(&attributes, 0, sizeof(attributes));
 	CHECK(sippymodem_slmodem_terminal_init(&terminal, &modem),
 	      "terminal adapter did not initialize");
+	CHECK(sippymodem_slmodem_terminal_bind(
+		      &terminal, 17, "/dev/pts/test") ==
+			      SIPPYMODEM_SLMODEM_TERMINAL_OK &&
+		      modem.pty == 17 &&
+		      strcmp(modem.pty_name, "/dev/pts/test") == 0 &&
+		      sippymodem_slmodem_terminal_bind(
+			      &terminal, 18, "/dev/pts/other") ==
+			      SIPPYMODEM_SLMODEM_TERMINAL_INVALID_STATE &&
+		      sippymodem_slmodem_terminal_unbind(&terminal) ==
+			      SIPPYMODEM_SLMODEM_TERMINAL_OK &&
+		      modem.pty == -1 && modem.pty_name == NULL &&
+		      sippymodem_slmodem_terminal_unbind(&terminal) ==
+			      SIPPYMODEM_SLMODEM_TERMINAL_IDLE,
+	      "terminal endpoint binding was not guarded");
 	CHECK(sippymodem_slmodem_terminal_apply_attributes(
 		      &terminal, &attributes) ==
 		      SIPPYMODEM_SLMODEM_TERMINAL_IDLE,

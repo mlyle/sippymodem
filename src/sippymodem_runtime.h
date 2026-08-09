@@ -8,6 +8,7 @@
 #include "sippymodem_recording_files.h"
 #include "sippymodem_session.h"
 #include "sippymodem_slmodem_calls.h"
+#include "sippymodem_slmodem_terminal.h"
 #include "sippymodem_terminal.h"
 
 #include <stdbool.h>
@@ -30,6 +31,7 @@ enum sippymodem_runtime_result {
 	SIPPYMODEM_RUNTIME_HOST_ERROR,
 	SIPPYMODEM_RUNTIME_CALL_ERROR,
 	SIPPYMODEM_RUNTIME_RECORDING_ERROR,
+	SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR,
 };
 
 struct modem;
@@ -45,11 +47,12 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 	struct sippymodem_runtime *runtime);
 enum sippymodem_runtime_result sippymodem_runtime_close(
 	struct sippymodem_runtime *runtime);
-/* Advance one nonblocking host step, then apply a bounded number of queued
- * modem call transitions outside signaling callbacks. */
+/* Advance bounded terminal, host, and queued call-transition work without
+ * blocking. All counters are optional outputs. */
 enum sippymodem_runtime_result sippymodem_runtime_step(
 	struct sippymodem_runtime *runtime,
 	uint64_t now_ns,
+	size_t *terminal_bytes_received,
 	size_t *datagrams_received,
 	size_t *frames_processed);
 /* Return the next host deadline relative to now_ns; UINT64_MAX means none. */
@@ -67,6 +70,9 @@ enum sippymodem_session_result sippymodem_runtime_last_session_result(
 enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(
 	const struct sippymodem_runtime *runtime);
 enum sippymodem_slmodem_calls_result sippymodem_runtime_last_calls_result(
+	const struct sippymodem_runtime *runtime);
+enum sippymodem_slmodem_terminal_result
+sippymodem_runtime_last_modem_terminal_result(
 	const struct sippymodem_runtime *runtime);
 const char *sippymodem_runtime_result_name(
 	enum sippymodem_runtime_result result);

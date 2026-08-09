@@ -21,9 +21,18 @@ struct sippymodem_slmodem_terminal {
 	struct modem *modem;
 };
 
-/* modem is borrowed and must outlive this adapter. */
+/* modem is borrowed, must outlive this adapter, and begins unbound. */
 bool sippymodem_slmodem_terminal_init(
 	struct sippymodem_slmodem_terminal *terminal, struct modem *modem);
+enum sippymodem_slmodem_terminal_result
+sippymodem_slmodem_terminal_bind(
+	struct sippymodem_slmodem_terminal *terminal,
+	int file_descriptor,
+	const char *device_path);
+/* The descriptor and path are borrowed until unbind. */
+enum sippymodem_slmodem_terminal_result
+sippymodem_slmodem_terminal_unbind(
+	struct sippymodem_slmodem_terminal *terminal);
 enum sippymodem_slmodem_terminal_result
 sippymodem_slmodem_terminal_apply_attributes(
 	struct sippymodem_slmodem_terminal *terminal,

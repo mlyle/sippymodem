@@ -11,8 +11,10 @@
 #include "test.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 struct sippymodem_host {
 	unsigned int marker;
@@ -41,6 +43,8 @@ struct runtime_capture {
 	unsigned int host_steps;
 	unsigned int calls_drained;
 	unsigned int termios_updates;
+	unsigned int modem_events;
+	unsigned int hangups;
 	char teardown_order[8];
 	size_t teardown_count;
 	bool fail_modem;
@@ -64,6 +68,9 @@ struct runtime_capture {
 	uint64_t wait_ns;
 	size_t datagrams;
 	size_t frames;
+	char terminal_input[64];
+	size_t terminal_input_count;
+	bool short_modem_write;
 };
 
 static struct runtime_capture capture;
@@ -157,6 +164,7 @@ struct modem *modem_create(struct modem_driver *driver, const char *name)
 	modem->srate = MODEM_RATE;
 	modem->format = MODEM_FORMAT;
 	modem->frag = MODEM_FRAG;
+	modem->xmit.size = sizeof(capture.terminal_input);
 	return modem;
 }
 
@@ -189,6 +197,28 @@ void modem_update_termios(
 {
 	capture.termios_updates++;
 	modem->termios = *attributes;
+}
+
+void modem_event(struct modem *modem)
+{
+	capture.modem_events++;
+	modem->event = 0;
+}
+
+void modem_hangup(struct modem *modem)
+{
+	(void)modem;
+	capture.hangups++;
+}
+
+int modem_write(struct modem *modem, const char *buffer, int count)
+{
+	(void)modem;
+	if (count < 0 || (size_t)count > sizeof(capture.terminal_input))
+		return -1;
+	memcpy(capture.terminal_input, buffer, (size_t)count);
+	capture.terminal_input_count = (size_t)count;
+	return capture.short_modem_write && count > 0 ? count - 1 : count;
 }
 
 static enum sippymodem_modem_core_result discard_frame(
@@ -608,8 +638,13 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	struct sippymodem_config config = runtime_config(true);
 	struct sippymodem_runtime *runtime;
 	struct sippymodem_recording_files *recording;
+	struct modem *modem;
+	struct termios attributes;
+	static const char command[] = "AT\r";
+	size_t terminal_bytes = 99;
 	size_t datagrams = 99;
 	size_t frames = 99;
+	int device_fd;
 
 	memset(&capture, 0, sizeof(capture));
 	capture.wait_ns = 7654321;
@@ -617,6 +652,16 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	CHECK(runtime != NULL &&
 		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
 	      "runtime step fixture did not open");
+	modem = sippymodem_runtime_modem(runtime);
+	device_fd = open(sippymodem_runtime_device_path(runtime),
+			 O_RDWR | O_NOCTTY);
+	CHECK(device_fd >= 0 && tcgetattr(device_fd, &attributes) == 0,
+	      "runtime terminal client did not open");
+	attributes.c_cflag |= HUPCL;
+	CHECK(tcsetattr(device_fd, TCSANOW, &attributes) == 0 &&
+		      write(device_fd, command, sizeof(command) - 1) ==
+			      (ssize_t)sizeof(command) - 1,
+	      "runtime terminal command fixture was not ready");
 	recording = (struct sippymodem_recording_files *)
 		sippymodem_runtime_recording_files(runtime);
 	capture.host_step_result = SIPPYMODEM_HOST_OK;
@@ -625,9 +670,16 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	capture.emit_call = true;
 	capture.call.direction = SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING;
 	capture.call.state = SIPPYMODEM_SIP_CALL_CONNECTED;
-	CHECK(sippymodem_runtime_step(runtime, 100, &datagrams, &frames) ==
+	modem->event = 1;
+	CHECK(sippymodem_runtime_step(
+		      runtime, 100, &terminal_bytes, &datagrams, &frames) ==
 		      SIPPYMODEM_RUNTIME_OK &&
-		      datagrams == 3 && frames == 2 && capture.host_steps == 1 &&
+		      terminal_bytes == sizeof(command) - 1 && datagrams == 3 &&
+		      frames == 2 && capture.host_steps == 1 &&
+		      capture.modem_events == 1 &&
+		      capture.terminal_input_count == sizeof(command) - 1 &&
+		      memcmp(capture.terminal_input, command,
+			     sizeof(command) - 1) == 0 &&
 		      capture.calls_drained == 2 &&
 		      sippymodem_runtime_last_host_result(runtime) ==
 			      SIPPYMODEM_HOST_OK &&
@@ -637,50 +689,69 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	      "runtime did not advance and drain bounded host work");
 
 	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
-	CHECK(sippymodem_runtime_step(runtime, 101, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 101, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_IDLE,
 	      "idle host work was not distinguished");
 	capture.host_step_result = SIPPYMODEM_HOST_MEDIA_BINDING_ERROR;
-	CHECK(sippymodem_runtime_step(runtime, 102, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 102, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR,
 	      "runtime hid rejected negotiated media");
 	capture.host_step_result = SIPPYMODEM_HOST_AUDIO_ERROR;
-	CHECK(sippymodem_runtime_step(runtime, 103, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 103, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_HOST_ERROR,
 	      "runtime hid a host audio failure");
 
 	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
 	capture.emit_call = true;
 	capture.call.direction = (enum sippymodem_sip_call_direction)99;
-	CHECK(sippymodem_runtime_step(runtime, 104, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 104, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
 		      sippymodem_runtime_last_calls_result(runtime) ==
 			      SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT,
 	      "runtime hid an invalid call transition");
 	recording->result = SIPPYMODEM_RECORDING_FILES_WRITE_ERROR;
-	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_RECORDING_ERROR,
 	      "runtime continued after recording evidence failed");
 	recording->result = SIPPYMODEM_RECORDING_FILES_OK;
 	capture.calls_drained = 0;
 	capture.drain_never_idle = true;
-	CHECK(sippymodem_runtime_step(runtime, 106, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 106, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
 		      capture.calls_drained ==
 			      SIPPYMODEM_RUNTIME_MAX_CALL_TRANSITIONS,
 	      "runtime call draining was not bounded");
 	capture.drain_never_idle = false;
 
+	capture.short_modem_write = true;
+	CHECK(write(device_fd, command, sizeof(command) - 1) ==
+		      (ssize_t)sizeof(command) - 1 &&
+		      sippymodem_runtime_step(runtime, 107, NULL, NULL, NULL) ==
+			      SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR &&
+		      sippymodem_runtime_last_modem_terminal_result(runtime) ==
+			      SIPPYMODEM_SLMODEM_TERMINAL_INPUT_ERROR,
+	      "runtime hid partially accepted terminal input");
+	capture.short_modem_write = false;
+	close(device_fd);
+	CHECK(sippymodem_runtime_step(runtime, 108, NULL, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_OK &&
+		      capture.hangups == 1,
+	      "runtime did not apply terminal HUPCL on disconnect");
+
+	terminal_bytes = 99;
 	datagrams = 99;
 	frames = 99;
-	CHECK(sippymodem_runtime_step(NULL, 0, &datagrams, &frames) ==
+	CHECK(sippymodem_runtime_step(
+		      NULL, 0, &terminal_bytes, &datagrams, &frames) ==
 		      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
-		      datagrams == 0 && frames == 0 &&
+		      terminal_bytes == 0 && datagrams == 0 && frames == 0 &&
 		      sippymodem_runtime_wait_ns(NULL, 0) == UINT64_MAX &&
 		      sippymodem_runtime_last_host_result(NULL) ==
 			      SIPPYMODEM_HOST_INVALID_ARGUMENT &&
 		      sippymodem_runtime_last_calls_result(NULL) ==
 			      SIPPYMODEM_SLMODEM_CALLS_INVALID_ARGUMENT &&
+		      sippymodem_runtime_last_modem_terminal_result(NULL) ==
+			      SIPPYMODEM_SLMODEM_TERMINAL_INVALID_ARGUMENT &&
 		      strcmp(sippymodem_runtime_result_name(
 			     SIPPYMODEM_RUNTIME_RECORDING_ERROR),
 			     "recording evidence failed") == 0,

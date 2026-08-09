@@ -28,7 +28,37 @@ bool sippymodem_slmodem_terminal_init(
 	if (modem == NULL)
 		return false;
 	terminal->modem = modem;
+	modem->pty = -1;
+	modem->pty_name = NULL;
 	return true;
+}
+
+enum sippymodem_slmodem_terminal_result
+sippymodem_slmodem_terminal_bind(
+	struct sippymodem_slmodem_terminal *terminal, int file_descriptor,
+	const char *device_path)
+{
+	if (terminal == NULL || terminal->modem == NULL || file_descriptor < 0 ||
+	    device_path == NULL || device_path[0] == '\0')
+		return SIPPYMODEM_SLMODEM_TERMINAL_INVALID_ARGUMENT;
+	if (terminal->modem->pty >= 0 || terminal->modem->pty_name != NULL)
+		return SIPPYMODEM_SLMODEM_TERMINAL_INVALID_STATE;
+	terminal->modem->pty = file_descriptor;
+	terminal->modem->pty_name = device_path;
+	return SIPPYMODEM_SLMODEM_TERMINAL_OK;
+}
+
+enum sippymodem_slmodem_terminal_result
+sippymodem_slmodem_terminal_unbind(
+	struct sippymodem_slmodem_terminal *terminal)
+{
+	if (terminal == NULL || terminal->modem == NULL)
+		return SIPPYMODEM_SLMODEM_TERMINAL_INVALID_ARGUMENT;
+	if (terminal->modem->pty < 0 && terminal->modem->pty_name == NULL)
+		return SIPPYMODEM_SLMODEM_TERMINAL_IDLE;
+	terminal->modem->pty = -1;
+	terminal->modem->pty_name = NULL;
+	return SIPPYMODEM_SLMODEM_TERMINAL_OK;
 }
 
 enum sippymodem_slmodem_terminal_result
