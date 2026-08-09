@@ -13,6 +13,8 @@
 
 enum {
 	SIPPYMODEM_SIP_ACCOUNT_URI_MAX = SIPPYMODEM_CONFIG_TEXT_MAX * 2 + 16,
+	SIPPYMODEM_SIP_REGISTRATION_REASON_MAX = 128,
+	SIPPYMODEM_SIP_UNREGISTER_TIMEOUT_MS = 1000,
 };
 
 struct sippymodem_sip_signaling {
@@ -28,8 +30,11 @@ struct sippymodem_sip_signaling {
 	char registrar_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
 	char proxy_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
 	char contact_uri[SIPPYMODEM_SIP_ACCOUNT_URI_MAX];
+	char registration_reason[SIPPYMODEM_SIP_REGISTRATION_REASON_MAX];
 	const char *account_user;
 	const char *account_password;
+	enum sippymodem_sip_registration_state registration_state;
+	bool registration_may_exist;
 	bool account_configured;
 	bool library_created;
 	bool opened;
@@ -92,6 +97,87 @@ static void pjsip_trace(int level, const char *data, int length)
 	if (length > 0)
 		emit_trace(active_signaling, SIPPYMODEM_SIP_TRACE_LIBRARY, level,
 			   data, (size_t)length);
+}
+
+static void emit_registration_event(
+	struct sippymodem_sip_signaling *signaling,
+	enum sippymodem_sip_registration_state state,
+	unsigned int status_code, pj_status_t library_status,
+	unsigned int expires_seconds, const pj_str_t *reason)
+{
+	struct sippymodem_sip_registration_event event;
+	size_t reason_size = 0;
+
+	if (signaling == NULL)
+		return;
+	if (reason != NULL && reason->ptr != NULL && reason->slen > 0) {
+		reason_size = (size_t)reason->slen;
+		if (reason_size >= sizeof(signaling->registration_reason))
+			reason_size = sizeof(signaling->registration_reason) - 1;
+		memcpy(signaling->registration_reason, reason->ptr, reason_size);
+	}
+	signaling->registration_reason[reason_size] = '\0';
+	signaling->registration_state = state;
+	if (state == SIPPYMODEM_SIP_REGISTRATION_REGISTERED)
+		signaling->registration_may_exist = true;
+	else if (state == SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED)
+		signaling->registration_may_exist = false;
+	if (signaling->callbacks.registration_changed == NULL)
+		return;
+	event.state = state;
+	event.status_code = status_code;
+	event.library_status = (int)library_status;
+	event.expires_seconds = expires_seconds;
+	event.reason = signaling->registration_reason;
+	callback_enter(signaling);
+	signaling->callbacks.registration_changed(
+		signaling->callbacks.context, &event);
+	callback_leave(signaling);
+}
+
+static void pjsip_registration_started(pjsua_acc_id account_id,
+				       pj_bool_t renew)
+{
+	(void)account_id;
+	emit_registration_event(
+		active_signaling,
+		renew ? SIPPYMODEM_SIP_REGISTRATION_REGISTERING
+		      : SIPPYMODEM_SIP_REGISTRATION_UNREGISTERING,
+		0, PJ_SUCCESS, 0, NULL);
+}
+
+static void pjsip_registration_changed(pjsua_acc_id account_id,
+				       pjsua_reg_info *info)
+{
+	const struct pjsip_regc_cbparam *result;
+	enum sippymodem_sip_registration_state state;
+	unsigned int status_code;
+	unsigned int expires_seconds;
+	bool unregistering;
+	bool succeeded;
+
+	(void)account_id;
+	if (active_signaling == NULL || info == NULL || info->cbparam == NULL)
+		return;
+	result = info->cbparam;
+	unregistering = !info->renew || result->is_unreg;
+	succeeded = result->status == PJ_SUCCESS && result->code >= 200 &&
+		    result->code < 300;
+	if (succeeded)
+		state = unregistering
+				? SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED
+				: SIPPYMODEM_SIP_REGISTRATION_REGISTERED;
+	else
+		state = unregistering
+				? SIPPYMODEM_SIP_REGISTRATION_UNREGISTER_FAILED
+				: SIPPYMODEM_SIP_REGISTRATION_FAILED;
+	status_code = result->code > 0 ? (unsigned int)result->code : 0;
+	expires_seconds =
+		result->expiration == PJSIP_REGC_EXPIRATION_NOT_SPECIFIED
+			? 0
+			: result->expiration;
+	emit_registration_event(active_signaling, state, status_code,
+				result->status, expires_seconds, &result->reason);
 }
 
 static bool text_is_terminated(const char *text, size_t capacity)
@@ -259,6 +345,8 @@ static enum sippymodem_sip_signaling_result initialize_library(
 	user_agent.thread_cnt = 0;
 	user_agent.max_calls = 1;
 	user_agent.user_agent = pj_str((char *)"sippymodem");
+	user_agent.cb.on_reg_started = &pjsip_registration_started;
+	user_agent.cb.on_reg_state2 = &pjsip_registration_changed;
 	pjsua_logging_config_default(&logging);
 	logging.level = signaling->config.sip.log_level > PJ_LOG_MAX_LEVEL
 			? PJ_LOG_MAX_LEVEL
@@ -329,6 +417,7 @@ static enum sippymodem_sip_signaling_result add_account(
 		account.transport_id = signaling->transport_id;
 		account.register_on_acc_add =
 			signaling->config.sip.registration_enabled;
+		account.unreg_timeout = SIPPYMODEM_SIP_UNREGISTER_TIMEOUT_MS;
 		account.cred_count = 1;
 		account.cred_info[0].realm = pj_str(
 			signaling->config.sip.realm[0] != '\0'
@@ -370,6 +459,7 @@ static enum sippymodem_sip_signaling_result close_now(
 	struct sippymodem_sip_signaling *signaling)
 {
 	pj_status_t status = PJ_SUCCESS;
+	unsigned int destroy_flags = PJSUA_DESTROY_NO_NETWORK;
 
 	if (signaling->closing)
 		return SIPPYMODEM_SIP_SIGNALING_OK;
@@ -378,9 +468,13 @@ static enum sippymodem_sip_signaling_result close_now(
 		emit_trace(signaling, SIPPYMODEM_SIP_TRACE_ADAPTER, 3,
 			   "SIP signaling closing\n",
 			   sizeof("SIP signaling closing\n") - 1);
-	/* Graceful registration shutdown is a separate lifecycle boundary. */
+	if (signaling->opened && signaling->account_configured &&
+	    signaling->config.sip.registration_enabled)
+		destroy_flags = signaling->registration_may_exist
+				? 0
+				: PJSUA_DESTROY_NO_RX_MSG;
 	if (signaling->library_created)
-		status = pjsua_destroy2(PJSUA_DESTROY_NO_NETWORK);
+		status = pjsua_destroy2(destroy_flags);
 	signaling->library_created = false;
 	signaling->opened = false;
 	signaling->closing = false;
@@ -413,6 +507,9 @@ struct sippymodem_sip_signaling *sippymodem_sip_signaling_create(
 		signaling->callbacks = *callbacks;
 	signaling->transport_id = PJSUA_INVALID_ID;
 	signaling->account_id = PJSUA_INVALID_ID;
+	signaling->registration_state = config->sip.registration_enabled
+						? SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED
+						: SIPPYMODEM_SIP_REGISTRATION_DISABLED;
 	return signaling;
 }
 
@@ -551,6 +648,14 @@ const char *sippymodem_sip_signaling_identity_uri(
 		       : NULL;
 }
 
+enum sippymodem_sip_registration_state
+sippymodem_sip_signaling_registration_state(
+	const struct sippymodem_sip_signaling *signaling)
+{
+	return signaling != NULL ? signaling->registration_state
+				 : SIPPYMODEM_SIP_REGISTRATION_DISABLED;
+}
+
 int sippymodem_sip_signaling_last_library_status(
 	const struct sippymodem_sip_signaling *signaling)
 {
@@ -573,4 +678,26 @@ const char *sippymodem_sip_signaling_result_name(
 		return "signaling library error";
 	}
 	return "unknown signaling result";
+}
+
+const char *sippymodem_sip_registration_state_name(
+	enum sippymodem_sip_registration_state state)
+{
+	switch (state) {
+	case SIPPYMODEM_SIP_REGISTRATION_DISABLED:
+		return "disabled";
+	case SIPPYMODEM_SIP_REGISTRATION_REGISTERING:
+		return "registering";
+	case SIPPYMODEM_SIP_REGISTRATION_REGISTERED:
+		return "registered";
+	case SIPPYMODEM_SIP_REGISTRATION_UNREGISTERING:
+		return "unregistering";
+	case SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED:
+		return "unregistered";
+	case SIPPYMODEM_SIP_REGISTRATION_FAILED:
+		return "registration failed";
+	case SIPPYMODEM_SIP_REGISTRATION_UNREGISTER_FAILED:
+		return "unregistration failed";
+	}
+	return "unknown registration state";
 }

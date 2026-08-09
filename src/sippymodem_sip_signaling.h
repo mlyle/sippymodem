@@ -27,6 +27,24 @@ enum sippymodem_sip_trace_origin {
 	SIPPYMODEM_SIP_TRACE_LIBRARY,
 };
 
+enum sippymodem_sip_registration_state {
+	SIPPYMODEM_SIP_REGISTRATION_DISABLED,
+	SIPPYMODEM_SIP_REGISTRATION_REGISTERING,
+	SIPPYMODEM_SIP_REGISTRATION_REGISTERED,
+	SIPPYMODEM_SIP_REGISTRATION_UNREGISTERING,
+	SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED,
+	SIPPYMODEM_SIP_REGISTRATION_FAILED,
+	SIPPYMODEM_SIP_REGISTRATION_UNREGISTER_FAILED,
+};
+
+struct sippymodem_sip_registration_event {
+	enum sippymodem_sip_registration_state state;
+	unsigned int status_code;
+	int library_status;
+	unsigned int expires_seconds;
+	const char *reason;
+};
+
 struct sippymodem_sip_trace_record {
 	enum sippymodem_sip_trace_origin origin;
 	int level;
@@ -45,6 +63,9 @@ struct sippymodem_sip_signaling_callbacks {
 		      const struct sippymodem_sip_signaling_error *error);
 	void (*trace)(void *context,
 		      const struct sippymodem_sip_trace_record *record);
+	void (*registration_changed)(
+		void *context,
+		const struct sippymodem_sip_registration_event *event);
 };
 
 struct sippymodem_sip_signaling;
@@ -53,7 +74,10 @@ struct sippymodem_sip_signaling *sippymodem_sip_signaling_create(
 	const struct sippymodem_config *config,
 	const struct sippymodem_sip_signaling_callbacks *callbacks);
 
-/* close() is callback-safe. Call destroy() again outside a callback to free. */
+/*
+ * close() is callback-safe and gives confirmed registrations a bounded
+ * graceful unregister. Call destroy() again outside a callback to free.
+ */
 void sippymodem_sip_signaling_destroy(
 	struct sippymodem_sip_signaling *signaling);
 enum sippymodem_sip_signaling_result sippymodem_sip_signaling_open(
@@ -72,10 +96,15 @@ unsigned int sippymodem_sip_signaling_local_port(
 /* Borrowed normalized identity, or NULL for a transport-local account. */
 const char *sippymodem_sip_signaling_identity_uri(
 	const struct sippymodem_sip_signaling *signaling);
+enum sippymodem_sip_registration_state
+sippymodem_sip_signaling_registration_state(
+	const struct sippymodem_sip_signaling *signaling);
 int sippymodem_sip_signaling_last_library_status(
 	const struct sippymodem_sip_signaling *signaling);
 
 const char *sippymodem_sip_signaling_result_name(
 	enum sippymodem_sip_signaling_result result);
+const char *sippymodem_sip_registration_state_name(
+	enum sippymodem_sip_registration_state state);
 
 #endif

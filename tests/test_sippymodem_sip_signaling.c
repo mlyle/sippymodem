@@ -6,9 +6,15 @@
 
 #include <arpa/inet.h>
 #include <poll.h>
+#include <pthread.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+enum {
+	TEST_REGISTRATION_EVENTS = 8,
+	TEST_SIP_MESSAGE_MAX = 2048,
+};
 
 struct callback_capture {
 	struct sippymodem_sip_signaling *signaling;
@@ -16,9 +22,16 @@ struct callback_capture {
 	unsigned int error_count;
 	unsigned int trace_count;
 	unsigned int adapter_trace_count;
+	unsigned int registration_count;
 	int last_error_status;
 	bool close_on_ready;
 	char last_error_operation[64];
+	enum sippymodem_sip_registration_state
+		registration_states[TEST_REGISTRATION_EVENTS];
+	unsigned int registration_status_codes[TEST_REGISTRATION_EVENTS];
+	int registration_library_statuses[TEST_REGISTRATION_EVENTS];
+	unsigned int registration_expirations[TEST_REGISTRATION_EVENTS];
+	char registration_reasons[TEST_REGISTRATION_EVENTS][32];
 };
 
 static void capture_ready(void *context)
@@ -52,6 +65,24 @@ static void capture_trace(
 		capture->adapter_trace_count++;
 }
 
+static void capture_registration(
+	void *context,
+	const struct sippymodem_sip_registration_event *event)
+{
+	struct callback_capture *capture = context;
+	unsigned int index = capture->registration_count++;
+
+	if (index >= TEST_REGISTRATION_EVENTS)
+		return;
+	capture->registration_states[index] = event->state;
+	capture->registration_status_codes[index] = event->status_code;
+	capture->registration_library_statuses[index] = event->library_status;
+	capture->registration_expirations[index] = event->expires_seconds;
+	(void)snprintf(capture->registration_reasons[index],
+		       sizeof(capture->registration_reasons[index]), "%s",
+		       event->reason != NULL ? event->reason : "");
+}
+
 static struct sippymodem_sip_signaling *create_signaling(
 	const struct sippymodem_config *config,
 	struct callback_capture *capture)
@@ -61,6 +92,7 @@ static struct sippymodem_sip_signaling *create_signaling(
 		.ready = capture_ready,
 		.error = capture_error,
 		.trace = capture_trace,
+		.registration_changed = capture_registration,
 	};
 
 	capture->signaling =
@@ -89,7 +121,9 @@ static bool test_local_transport_lifecycle(void)
 
 	CHECK(signaling != NULL, "could not allocate signaling context");
 	CHECK(!sippymodem_sip_signaling_is_open(signaling) &&
-		      sippymodem_sip_signaling_local_port(signaling) == 0,
+		      sippymodem_sip_signaling_local_port(signaling) == 0 &&
+		      sippymodem_sip_signaling_registration_state(signaling) ==
+			      SIPPYMODEM_SIP_REGISTRATION_DISABLED,
 	      "new signaling context is already open");
 	result = sippymodem_sip_signaling_open(signaling);
 	CHECK(result == SIPPYMODEM_SIP_SIGNALING_OK, "open failed: %s",
@@ -216,26 +250,190 @@ static int open_loopback_listener(unsigned int *port)
 	return socket_fd;
 }
 
-static bool test_loopback_registration_request(void)
+struct loopback_registrar {
+	pthread_t worker;
+	int socket_fd;
+	unsigned int port;
+	unsigned int request_count;
+	bool registration_received;
+	bool unregistration_received;
+	bool failed;
+};
+
+static const char *find_header(const char *request, const char *name)
+{
+	const char *line = request;
+	size_t name_size = strlen(name);
+
+	while (line[0] != '\0') {
+		const char *line_end = strstr(line, "\r\n");
+
+		if (line_end == NULL)
+			return NULL;
+		if ((size_t)(line_end - line) >= name_size &&
+		    memcmp(line, name, name_size) == 0)
+			return line;
+		line = line_end + 2;
+	}
+	return NULL;
+}
+
+static bool append_bytes(char *output, size_t capacity, size_t *size,
+			 const char *data, size_t data_size)
+{
+	if (*size > capacity || data_size > capacity - *size)
+		return false;
+	memcpy(output + *size, data, data_size);
+	*size += data_size;
+	return true;
+}
+
+static bool append_response_header(char *response, size_t capacity,
+				   size_t *response_size,
+				   const char *request, const char *name,
+				   const char *suffix)
+{
+	const char *line = find_header(request, name);
+	const char *line_end = line != NULL ? strstr(line, "\r\n") : NULL;
+
+	return line_end != NULL &&
+	       append_bytes(response, capacity, response_size, line,
+			    (size_t)(line_end - line)) &&
+	       append_bytes(response, capacity, response_size, suffix,
+			    strlen(suffix)) &&
+	       append_bytes(response, capacity, response_size, "\r\n", 2);
+}
+
+static bool build_registration_response(
+	char *response, size_t capacity, size_t *response_size,
+	const char *request, bool unregistration)
+{
+	int tail_size;
+
+	*response_size = 0;
+	if (!append_bytes(response, capacity, response_size,
+			  "SIP/2.0 200 OK\r\n",
+			  sizeof("SIP/2.0 200 OK\r\n") - 1) ||
+	    !append_response_header(response, capacity, response_size, request,
+				    "Via:", "") ||
+	    !append_response_header(response, capacity, response_size, request,
+				    "From:", "") ||
+	    !append_response_header(response, capacity, response_size, request,
+				    "To:", ";tag=loopback") ||
+	    !append_response_header(response, capacity, response_size, request,
+				    "Call-ID:", "") ||
+	    !append_response_header(response, capacity, response_size, request,
+				    "CSeq:", ""))
+		return false;
+	if (!unregistration &&
+	    !append_response_header(response, capacity, response_size, request,
+				    "Contact:", ""))
+		return false;
+	tail_size = snprintf(response + *response_size,
+			     capacity - *response_size,
+			     "Expires: %u\r\nContent-Length: 0\r\n\r\n",
+			     unregistration ? 0u : 60u);
+	if (tail_size < 0 || (size_t)tail_size >= capacity - *response_size)
+		return false;
+	*response_size += (size_t)tail_size;
+	return true;
+}
+
+static void *serve_loopback_registrar(void *context)
+{
+	struct loopback_registrar *registrar = context;
+
+	while (registrar->request_count < 2) {
+		struct sockaddr_in remote;
+		struct pollfd descriptor = {
+			.fd = registrar->socket_fd,
+			.events = POLLIN,
+		};
+		char request[TEST_SIP_MESSAGE_MAX];
+		char response[TEST_SIP_MESSAGE_MAX];
+		socklen_t remote_size = sizeof(remote);
+		size_t response_size;
+		ssize_t request_size;
+		bool unregistration;
+
+		if (poll(&descriptor, 1, 3000) != 1 ||
+		    (descriptor.revents & POLLIN) == 0) {
+			registrar->failed = true;
+			break;
+		}
+		request_size = recvfrom(
+			registrar->socket_fd, request, sizeof(request) - 1, 0,
+			(struct sockaddr *)&remote, &remote_size);
+		if (request_size <= 0) {
+			registrar->failed = true;
+			break;
+		}
+		request[request_size] = '\0';
+		unregistration =
+			strstr(request, "\r\nExpires: 0\r\n") != NULL ||
+			strstr(request, ";expires=0") != NULL;
+		if (strncmp(request, "REGISTER ", sizeof("REGISTER ") - 1) != 0 ||
+		    !build_registration_response(response, sizeof(response),
+						 &response_size, request,
+						 unregistration) ||
+		    sendto(registrar->socket_fd, response, response_size, 0,
+			   (const struct sockaddr *)&remote, remote_size) !=
+			    (ssize_t)response_size) {
+			registrar->failed = true;
+			break;
+		}
+		registrar->request_count++;
+		if (unregistration)
+			registrar->unregistration_received = true;
+		else
+			registrar->registration_received = true;
+	}
+	return NULL;
+}
+
+static bool start_loopback_registrar(struct loopback_registrar *registrar)
+{
+	memset(registrar, 0, sizeof(*registrar));
+	registrar->socket_fd = open_loopback_listener(&registrar->port);
+	if (registrar->socket_fd < 0)
+		return false;
+	if (pthread_create(&registrar->worker, NULL, serve_loopback_registrar,
+			   registrar) != 0) {
+		(void)close(registrar->socket_fd);
+		registrar->socket_fd = -1;
+		return false;
+	}
+	return true;
+}
+
+static bool finish_loopback_registrar(struct loopback_registrar *registrar)
+{
+	bool succeeded = pthread_join(registrar->worker, NULL) == 0 &&
+			 !registrar->failed;
+
+	(void)close(registrar->socket_fd);
+	registrar->socket_fd = -1;
+	return succeeded;
+}
+
+static bool test_loopback_registration_lifecycle(void)
 {
 	struct callback_capture capture = { 0 };
+	struct loopback_registrar registrar;
 	struct sippymodem_config config;
 	struct sippymodem_sip_signaling *signaling = NULL;
-	struct pollfd descriptor;
 	enum sippymodem_sip_signaling_result open_result =
 		SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
 	enum sippymodem_sip_signaling_result step_result =
 		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
 	enum sippymodem_sip_signaling_result close_result =
 		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
-	char packet[2048] = { 0 };
-	unsigned int registrar_port = 0;
-	ssize_t packet_size = -1;
 	bool identity_normalized = false;
-	int listener = open_loopback_listener(&registrar_port);
-	int poll_result = -1;
+	bool final_state_unregistered = false;
+	bool registrar_succeeded;
 
-	CHECK(listener >= 0, "could not open loopback SIP registrar");
+	CHECK(start_loopback_registrar(&registrar),
+	      "could not start loopback SIP registrar");
 	sippymodem_config_init(&config);
 	config.sip.listen_port = 0;
 	config.sip.log_level = 3;
@@ -248,7 +446,7 @@ static bool test_loopback_registration_request(void)
 		       sizeof(config.sip.public_address), "127.0.0.1");
 	(void)snprintf(config.sip.registrar_uri,
 		       sizeof(config.sip.registrar_uri), "sip:127.0.0.1:%u",
-		       registrar_port);
+		       registrar.port);
 	signaling = create_signaling(&config, &capture);
 	if (signaling != NULL) {
 		open_result = sippymodem_sip_signaling_open(signaling);
@@ -258,20 +456,27 @@ static bool test_loopback_registration_request(void)
 
 			identity_normalized = identity != NULL &&
 				strcmp(identity, "sip:alice@127.0.0.1") == 0;
-			step_result = sippymodem_sip_signaling_step(signaling, 0);
-			descriptor.fd = listener;
-			descriptor.events = POLLIN;
-			descriptor.revents = 0;
-			poll_result = poll(&descriptor, 1, 1000);
-			if (poll_result == 1 && (descriptor.revents & POLLIN) != 0)
-				packet_size = recv(listener, packet,
-						   sizeof(packet) - 1, 0);
+			step_result = SIPPYMODEM_SIP_SIGNALING_OK;
+			for (unsigned int attempt = 0;
+			     attempt < 50 &&
+			     sippymodem_sip_signaling_registration_state(signaling) !=
+				     SIPPYMODEM_SIP_REGISTRATION_REGISTERED;
+			     ++attempt) {
+				step_result =
+					sippymodem_sip_signaling_step(signaling, 20);
+				if (step_result != SIPPYMODEM_SIP_SIGNALING_OK)
+					break;
+			}
 			close_result =
 				sippymodem_sip_signaling_close(signaling);
+			final_state_unregistered =
+				sippymodem_sip_signaling_registration_state(
+					signaling) ==
+				SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED;
 		}
 		sippymodem_sip_signaling_destroy(signaling);
 	}
-	(void)close(listener);
+	registrar_succeeded = finish_loopback_registrar(&registrar);
 
 	CHECK(signaling != NULL, "could not allocate registered account");
 	CHECK(open_result == SIPPYMODEM_SIP_SIGNALING_OK,
@@ -280,12 +485,38 @@ static bool test_loopback_registration_request(void)
 	CHECK(identity_normalized, "registered identity was not normalized");
 	CHECK(step_result == SIPPYMODEM_SIP_SIGNALING_OK,
 	      "registration event polling failed");
-	CHECK(packet_size > 0, "registrar did not receive a SIP request");
-	CHECK(strstr(packet, "REGISTER sip:127.0.0.1:") != NULL &&
-		      strstr(packet, ";ob") != NULL,
-	      "registration request or forced contact was wrong");
+	CHECK(registrar_succeeded && registrar.request_count == 2 &&
+		      registrar.registration_received &&
+		      registrar.unregistration_received,
+	      "registrar did not complete registration and unregistration");
+	CHECK(capture.registration_count == 4,
+	      "registration lifecycle emitted %u events",
+	      capture.registration_count);
+	CHECK(capture.registration_states[0] ==
+		      SIPPYMODEM_SIP_REGISTRATION_REGISTERING &&
+		      capture.registration_states[1] ==
+			      SIPPYMODEM_SIP_REGISTRATION_REGISTERED &&
+		      capture.registration_states[2] ==
+			      SIPPYMODEM_SIP_REGISTRATION_UNREGISTERING &&
+		      capture.registration_states[3] ==
+			      SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED,
+	      "registration lifecycle event order was wrong");
+	CHECK(capture.registration_status_codes[1] == 200 &&
+		      capture.registration_status_codes[3] == 200 &&
+		      capture.registration_library_statuses[1] == 0 &&
+		      capture.registration_library_statuses[3] == 0 &&
+		      capture.registration_expirations[1] == 60 &&
+		      capture.registration_expirations[3] == 0 &&
+		      strcmp(capture.registration_reasons[1], "OK") == 0,
+	      "registration result details were wrong");
 	CHECK(close_result == SIPPYMODEM_SIP_SIGNALING_OK,
 	      "registered account did not close");
+	CHECK(final_state_unregistered,
+	      "graceful close did not retain the unregistered state");
+	CHECK(strcmp(sippymodem_sip_registration_state_name(
+			     SIPPYMODEM_SIP_REGISTRATION_REGISTERED),
+		     "registered") == 0,
+	      "registration state name was wrong");
 	return true;
 }
 
@@ -300,8 +531,8 @@ int main(void)
 		{ "local transport lifecycle", test_local_transport_lifecycle },
 		{ "singleton and account boundary",
 		  test_singleton_and_account_boundary },
-		{ "loopback registration request",
-		  test_loopback_registration_request },
+		{ "loopback registration lifecycle",
+		  test_loopback_registration_lifecycle },
 	};
 	unsigned int failures = 0;
 
