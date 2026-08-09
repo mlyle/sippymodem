@@ -43,7 +43,9 @@ transmit boundary. The daemon does not use that owner yet, and no native V.21
 core is attached, so this transitional tree does not yet place a V.21 modem
 call. A bounded audio path now applies saturating directional gain, records the
 PCM immediately around a typed modem-core callback, and preserves failures at
-each playout, modem, and transmit boundary.
+each playout, modem, and transmit boundary. Exact sample-derived frame pacing
+supports bounded catch-up and treats an event-loop overrun as an explicit
+failure instead of silently shifting the media clock.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
