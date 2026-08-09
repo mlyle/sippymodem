@@ -79,6 +79,8 @@ bool sippymodem_rtp_receiver_init(
 	size_t slot_count);
 void sippymodem_rtp_receiver_reset(
 	struct sippymodem_rtp_receiver *receiver);
+void sippymodem_rtp_receiver_restart(
+	struct sippymodem_rtp_receiver *receiver);
 
 enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_push(
 	struct sippymodem_rtp_receiver *receiver,

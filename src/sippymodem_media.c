@@ -6,8 +6,8 @@
 
 static bool recording_stream_is_valid(enum sippymodem_recording_stream stream)
 {
-	return stream >= SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT &&
-	       stream <= SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED;
+	return stream >= SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_ARRIVAL &&
+	       stream <= SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT;
 }
 
 static bool recording_format_is_valid(enum sippymodem_recording_format format)
@@ -46,6 +46,8 @@ const char *sippymodem_recording_stream_name(
 	enum sippymodem_recording_stream stream)
 {
 	switch (stream) {
+	case SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_ARRIVAL:
+		return "rx.rtp_payload.arrival";
 	case SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT:
 		return "rx.rtp_payload.playout";
 	case SIPPYMODEM_RECORD_RX_LINE_PCM:
@@ -58,6 +60,8 @@ const char *sippymodem_recording_stream_name(
 		return "tx.line_pcm";
 	case SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED:
 		return "tx.rtp_payload.prepared";
+	case SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT:
+		return "tx.rtp_payload.sent";
 	}
 	return NULL;
 }

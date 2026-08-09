@@ -92,11 +92,17 @@ static bool test_codec_metadata(void)
 			      (enum sippymodem_media_codec)99) == -1,
 	      "accepted an unknown codec");
 	CHECK(strcmp(sippymodem_recording_stream_name(
+			     SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_ARRIVAL),
+		     "rx.rtp_payload.arrival") == 0 &&
+		      strcmp(sippymodem_recording_stream_name(
 			     SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT),
 		     "rx.rtp_payload.playout") == 0 &&
 		      strcmp(sippymodem_recording_stream_name(
 			     SIPPYMODEM_RECORD_TX_MODEM_PCM),
 			     "tx.modem_pcm") == 0 &&
+		      strcmp(sippymodem_recording_stream_name(
+			     SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT),
+			     "tx.rtp_payload.sent") == 0 &&
 		      sippymodem_recording_stream_name(
 			      (enum sippymodem_recording_stream)99) == NULL,
 	      "recording stream names are not stable");

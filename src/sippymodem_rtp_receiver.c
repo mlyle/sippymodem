@@ -72,7 +72,7 @@ bool sippymodem_rtp_receiver_init(
 	return true;
 }
 
-void sippymodem_rtp_receiver_reset(
+void sippymodem_rtp_receiver_restart(
 	struct sippymodem_rtp_receiver *receiver)
 {
 	if (receiver == NULL || receiver->slots == NULL ||
@@ -80,13 +80,21 @@ void sippymodem_rtp_receiver_reset(
 		return;
 
 	clear_slots(receiver);
-	memset(&receiver->stats, 0, sizeof(receiver->stats));
 	receiver->stream_active = false;
 	receiver->ssrc = 0;
 	receiver->sequence_valid = false;
 	receiver->highest_sequence = 0;
 	receiver->play_timestamp = 0;
 	receiver->prefill_remaining = 0;
+}
+
+void sippymodem_rtp_receiver_reset(
+	struct sippymodem_rtp_receiver *receiver)
+{
+	if (receiver == NULL)
+		return;
+	sippymodem_rtp_receiver_restart(receiver);
+	memset(&receiver->stats, 0, sizeof(receiver->stats));
 }
 
 enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_push(
