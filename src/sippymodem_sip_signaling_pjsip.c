@@ -3,6 +3,7 @@
 #include "sippymodem_sip_signaling.h"
 #include "sippymodem_sip_uri.h"
 #include "sippymodem_sdp.h"
+#include "sippymodem_sdp_pjsip.h"
 
 #include <pjsua-lib/pjsua.h>
 
@@ -188,6 +189,33 @@ static void pjsip_call_changed(pjsua_call_id call_id, pjsip_event *event)
 	}
 }
 
+static void pjsip_sdp_created(pjsua_call_id call_id,
+			      pjmedia_sdp_session *local_sdp,
+			      pj_pool_t *pool,
+			      const pjmedia_sdp_session *remote_sdp)
+{
+	struct sippymodem_sip_signaling *signaling = active_signaling;
+	struct sippymodem_sdp_audio_description description;
+	pj_status_t status;
+
+	(void)call_id;
+	if (signaling == NULL || signaling->config.media.rtp_listen_port == 0)
+		return;
+	if (sippymodem_sdp_audio_description_init(
+		    &description, signaling->config.media.codec,
+		    (uint16_t)signaling->config.media.rtp_listen_port,
+		    signaling->config.media.frame_duration_ms, true) !=
+	    SIPPYMODEM_SDP_OK) {
+		emit_library_error(signaling, "describe modem audio", PJ_EINVAL);
+		return;
+	}
+	status = sippymodem_sdp_pjsip_apply(
+		local_sdp, pool, remote_sdp != NULL, &description,
+		signaling->config.sip.public_address);
+	if (status != PJ_SUCCESS)
+		emit_library_error(signaling, "apply modem audio SDP", status);
+}
+
 static void pjsip_incoming_call(pjsua_acc_id account_id,
 				pjsua_call_id call_id,
 				pjsip_rx_data *request)
@@ -330,6 +358,7 @@ static enum sippymodem_sip_signaling_result validate_config(
 	const struct sippymodem_config *config)
 {
 	if (config->sip.listen_port > 65535 ||
+	    config->media.rtp_listen_port > UINT16_MAX ||
 	    config->media.frame_duration_ms == 0 ||
 	    config->media.frame_duration_ms >
 		    SIPPYMODEM_SDP_MAX_PACKET_DURATION_MS ||
@@ -457,6 +486,60 @@ static void configure_media(const struct sippymodem_config *config,
 	media->jb_discard_algo = PJMEDIA_JB_DISCARD_NONE;
 }
 
+static const char *pjsip_seed_codec(enum sippymodem_media_codec codec)
+{
+	switch (codec) {
+	case SIPPYMODEM_CODEC_PCMA:
+		return "PCMA/8000/1";
+	case SIPPYMODEM_CODEC_CLEARMODE:
+		/* The SDP callback replaces this library-internal seed mapping. */
+		return "PCMU/8000/1";
+	case SIPPYMODEM_CODEC_PCMU:
+		return "PCMU/8000/1";
+	}
+	return NULL;
+}
+
+static pj_status_t configure_codecs(
+	const struct sippymodem_sip_signaling *signaling)
+{
+	pjsua_codec_info codecs[PJMEDIA_CODEC_MGR_MAX_CODECS];
+	const char *preferred = pjsip_seed_codec(signaling->config.media.codec);
+	pjmedia_codec_param parameters;
+	pj_str_t codec_id;
+	unsigned int count = PJ_ARRAY_SIZE(codecs);
+	bool preferred_found = false;
+	pj_status_t status;
+
+	if (preferred == NULL)
+		return PJ_EINVAL;
+	status = pjsua_enum_codecs(codecs, &count);
+	if (status != PJ_SUCCESS)
+		return status;
+	for (unsigned int index = 0; index < count; ++index) {
+		bool selected = pj_strcmp2(&codecs[index].codec_id, preferred) == 0;
+
+		status = pjsua_codec_set_priority(
+			&codecs[index].codec_id,
+			selected ? PJMEDIA_CODEC_PRIO_NORMAL :
+				   PJMEDIA_CODEC_PRIO_DISABLED);
+		if (status != PJ_SUCCESS)
+			return status;
+		if (selected)
+			preferred_found = true;
+	}
+	if (!preferred_found)
+		return PJ_ENOTFOUND;
+	codec_id = pj_str((char *)preferred);
+	status = pjsua_codec_get_param(&codec_id, &parameters);
+	if (status != PJ_SUCCESS)
+		return status;
+	parameters.setting.vad = 0;
+	parameters.setting.cng = 0;
+	parameters.setting.plc = 0;
+	return pjsua_codec_set_param(&codec_id, &parameters);
+}
+
 static enum sippymodem_sip_signaling_result initialize_library(
 	struct sippymodem_sip_signaling *signaling)
 {
@@ -477,6 +560,7 @@ static enum sippymodem_sip_signaling_result initialize_library(
 	user_agent.max_calls = 1;
 	user_agent.user_agent = pj_str((char *)"sippymodem");
 	user_agent.cb.on_call_state = &pjsip_call_changed;
+	user_agent.cb.on_call_sdp_created = &pjsip_sdp_created;
 	user_agent.cb.on_incoming_call = &pjsip_incoming_call;
 	user_agent.cb.on_reg_started = &pjsip_registration_started;
 	user_agent.cb.on_reg_state2 = &pjsip_registration_changed;
@@ -495,6 +579,11 @@ static enum sippymodem_sip_signaling_result initialize_library(
 		return SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR;
 	}
 	(void)pjsua_set_no_snd_dev();
+	status = configure_codecs(signaling);
+	if (status != PJ_SUCCESS) {
+		emit_library_error(signaling, "configure modem audio codecs", status);
+		return SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR;
+	}
 	return SIPPYMODEM_SIP_SIGNALING_OK;
 }
 

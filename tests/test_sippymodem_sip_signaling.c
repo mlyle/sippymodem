@@ -16,6 +16,7 @@ enum {
 	TEST_CALL_EVENTS = 8,
 	TEST_REGISTRATION_EVENTS = 8,
 	TEST_SIP_MESSAGE_MAX = 2048,
+	TEST_MODEM_RTP_PORT = 41000,
 };
 
 struct callback_capture {
@@ -484,6 +485,7 @@ struct loopback_call_peer {
 	unsigned int port;
 	bool invite_received;
 	bool target_received;
+	bool modem_sdp_received;
 	bool cancel_received;
 	bool failed;
 };
@@ -523,6 +525,37 @@ static bool send_empty_response(
 		       (ssize_t)response_size;
 }
 
+static bool sdp_has_unsigned_line(const char *sdp, const char *prefix,
+				  unsigned int value, const char *suffix)
+{
+	char line[96];
+	int size = snprintf(line, sizeof(line), "%s%u%s\r\n", prefix, value,
+			    suffix);
+
+	return size > 0 && (size_t)size < sizeof(line) &&
+	       strstr(sdp, line) != NULL;
+}
+
+static bool has_modem_audio_sdp(const char *message, unsigned int rtp_port,
+				unsigned int frame_duration_ms)
+{
+	const char *sdp = strstr(message, "\r\n\r\n");
+
+	if (sdp == NULL)
+		return false;
+	sdp += 4;
+	return strstr(sdp, "c=IN IP4 127.0.0.1\r\n") != NULL &&
+	       sdp_has_unsigned_line(sdp, "m=audio ", rtp_port,
+				     " RTP/AVP 0") &&
+	       strstr(sdp, "a=rtpmap:0 PCMU/8000\r\n") != NULL &&
+	       sdp_has_unsigned_line(sdp, "a=ptime:", frame_duration_ms, "") &&
+	       sdp_has_unsigned_line(sdp, "a=maxptime:", frame_duration_ms,
+				     "") &&
+	       sdp_has_unsigned_line(sdp, "a=rtcp:", rtp_port, "") &&
+	       strstr(sdp, "a=silenceSupp:off - - - -\r\n") != NULL &&
+	       strstr(sdp, "a=gpmd:0 vbd=yes\r\n") != NULL;
+}
+
 static void *serve_loopback_call(void *context)
 {
 	struct loopback_call_peer *peer = context;
@@ -544,6 +577,8 @@ static void *serve_loopback_call(void *context)
 	peer->invite_received = true;
 	peer->target_received =
 		strstr(invite, "INVITE sip:bob@127.0.0.1:") == invite;
+	peer->modem_sdp_received = has_modem_audio_sdp(
+		invite, TEST_MODEM_RTP_PORT, 20);
 	if (!receive_datagram(peer->socket_fd, cancel, sizeof(cancel),
 			     &cancel_remote, &cancel_remote_size) ||
 	    strncmp(cancel, "CANCEL ", sizeof("CANCEL ") - 1) != 0 ||
@@ -590,6 +625,7 @@ struct loopback_incoming_peer {
 	bool invite_sent;
 	bool ringing_received;
 	bool answer_received;
+	bool modem_sdp_received;
 	bool ack_sent;
 	bool failed;
 };
@@ -683,6 +719,8 @@ static void *serve_incoming_call(void *context)
 			return NULL;
 		}
 		peer->answer_received = true;
+		peer->modem_sdp_received = has_modem_audio_sdp(
+			response, TEST_MODEM_RTP_PORT, 10);
 	}
 	if (!peer->answer_received) {
 		peer->failed = true;
@@ -868,9 +906,13 @@ static bool test_outgoing_call_lifecycle(void)
 	config.sip.listen_port = 0;
 	config.sip.log_level = 3;
 	config.sip.registration_enabled = false;
+	(void)snprintf(config.sip.public_address,
+		       sizeof(config.sip.public_address), "127.0.0.1");
 	(void)snprintf(config.sip.domain, sizeof(config.sip.domain),
 		       "127.0.0.1:%u", peer.port);
 	(void)snprintf(config.sip.target, sizeof(config.sip.target), "bob");
+	config.media.rtp_listen_port = TEST_MODEM_RTP_PORT;
+	config.media.frame_duration_ms = 20;
 	signaling = create_signaling(&config, &capture);
 	if (signaling != NULL) {
 		open_result = sippymodem_sip_signaling_open(signaling);
@@ -927,7 +969,7 @@ static bool test_outgoing_call_lifecycle(void)
 	CHECK(hangup_result == SIPPYMODEM_SIP_SIGNALING_OK,
 	      "outgoing call did not hang up");
 	CHECK(peer_succeeded && peer.invite_received && peer.target_received &&
-		      peer.cancel_received,
+		      peer.modem_sdp_received && peer.cancel_received,
 	      "loopback peer did not complete INVITE and CANCEL");
 	CHECK(capture.call_count == 3 &&
 		      capture.call_states[0] == SIPPYMODEM_SIP_CALL_DIALING &&
@@ -978,6 +1020,9 @@ static bool test_incoming_call_lifecycle(void)
 	config.sip.listen_port = 0;
 	config.sip.log_level = 3;
 	config.sip.registration_enabled = false;
+	(void)snprintf(config.sip.public_address,
+		       sizeof(config.sip.public_address), "127.0.0.1");
+	config.media.rtp_listen_port = TEST_MODEM_RTP_PORT;
 	signaling = create_signaling(&config, &capture);
 	CHECK(signaling != NULL, "could not allocate incoming call context");
 	open_result = sippymodem_sip_signaling_open(signaling);
@@ -1022,7 +1067,8 @@ static bool test_incoming_call_lifecycle(void)
 	      "incoming call context did not open: %s",
 	      sippymodem_sip_signaling_result_name(open_result));
 	CHECK(peer_started && peer_succeeded && peer.invite_sent &&
-		      peer.ringing_received && peer.answer_received && peer.ack_sent,
+		      peer.ringing_received && peer.answer_received &&
+		      peer.modem_sdp_received && peer.ack_sent,
 	      "loopback peer did not complete the incoming dialog");
 	CHECK(answer_result == SIPPYMODEM_SIP_SIGNALING_OK &&
 		      second_answer_result == SIPPYMODEM_SIP_SIGNALING_OK &&

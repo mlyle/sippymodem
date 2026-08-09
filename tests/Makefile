@@ -31,6 +31,7 @@ SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sdp.o \
 PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sip_signaling
 PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_signaling.o \
 	$(BUILD_DIR)/sippymodem_sip_signaling_pjsip.o \
+	$(BUILD_DIR)/sippymodem_sdp_pjsip.o $(BUILD_DIR)/sippymodem_sdp.o \
 	$(BUILD_DIR)/sippymodem_sip_uri.o \
 	$(BUILD_DIR)/sippymodem_config.o $(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
@@ -146,6 +147,11 @@ $(BUILD_DIR)/sippymodem_sdp.o: ../src/sippymodem_sdp.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/sippymodem_sip_signaling_pjsip.o: \
 	../src/sippymodem_sip_signaling_pjsip.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -D_DEFAULT_SOURCE $(CFLAGS) $(PJSIP_CFLAGS) \
+		-MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_sdp_pjsip.o: \
+	../src/sippymodem_sdp_pjsip.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -D_DEFAULT_SOURCE $(CFLAGS) $(PJSIP_CFLAGS) \
 		-MMD -MP -c -o $@ $<
 
