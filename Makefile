@@ -1,9 +1,9 @@
-.PHONY: all clean install-hooks slmodemd modem_test test
+.PHONY: all clean install-hooks slmodemd test
 
 all:
 	$(MAKE) -C src all
 
-slmodemd modem_test:
+slmodemd:
 	$(MAKE) -C src $@
 
 clean:

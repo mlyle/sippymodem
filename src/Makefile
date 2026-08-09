@@ -4,89 +4,103 @@
 #       Makefile  --  modem application Makefile.
 #
 #       Copyright(c) 2003, Smart Link Ltd. (www.smlink.com)
-#	All rights reserved.
+#       All rights reserved.
 #
 #       Author: Sasha K (sashak@smlink.com)
 #
 #
 ###########################################################################
-#
-###########################################################################
 
-ARCH64:=$(shell uname -m | sed -e '/amd64/s//x86_64/' | grep -c x86_64)
+CC ?= cc
+CPPFLAGS ?=
+CFLAGS ?= -O2 -g
+LDFLAGS ?=
+LDLIBS ?=
 
-ifeq ($(ARCH64), 0)
-CC:= gcc
+PJSIP_PACKAGE ?= libpjproject
+PJSIP_AVAILABLE := $(shell \
+	pkg-config --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
+PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
+PJSIP_LDLIBS := $(shell \
+	pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
+
+# Remove this temporary constraint with the proprietary DSP object.
+MODEM_ABI_FLAGS ?= -m32
+
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I.
+CFLAGS += $(MODEM_ABI_FLAGS) -std=gnu11 -Wall -Wextra
+LDFLAGS += $(MODEM_ABI_FLAGS)
+LDLIBS += $(PJSIP_LDLIBS) -lm
+
+MODEM_CORE_SOURCES := \
+	homolog_data.c \
+	modem.c \
+	modem_at.c \
+	modem_comp.c \
+	modem_debug.c \
+	modem_ec.c \
+	modem_pack.c \
+	modem_param.c \
+	modem_timer.c \
+	sysdep_common.c
+SIPPYMODEM_SOURCES := \
+	sippymodem_audio_path.c \
+	sippymodem_audio_scheduler.c \
+	sippymodem_config.c \
+	sippymodem_frame_clock.c \
+	sippymodem_g711.c \
+	sippymodem_host.c \
+	sippymodem_loop.c \
+	sippymodem_main.c \
+	sippymodem_media.c \
+	sippymodem_recording_files.c \
+	sippymodem_rtp.c \
+	sippymodem_rtp_endpoint.c \
+	sippymodem_rtp_receiver.c \
+	sippymodem_rtp_runtime.c \
+	sippymodem_rtp_stream.c \
+	sippymodem_runtime.c \
+	sippymodem_sdp.c \
+	sippymodem_sdp_pjsip.c \
+	sippymodem_session.c \
+	sippymodem_sip_media_bridge.c \
+	sippymodem_sip_rtp.c \
+	sippymodem_sip_signaling_pjsip.c \
+	sippymodem_sip_uri.c \
+	sippymodem_slmodem_adapter.c \
+	sippymodem_slmodem_calls.c \
+	sippymodem_slmodem_driver.c \
+	sippymodem_slmodem_terminal.c \
+	sippymodem_terminal.c
+SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES)
+OBJECTS := $(SOURCES:.c=.o) dsplibs.o
+DEPENDENCIES := $(SOURCES:.c=.d)
+
+.PHONY: all clean
+
+ifeq ($(PJSIP_AVAILABLE),yes)
+all: slmodemd
+
+slmodemd: $(OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 else
-# SUPPORT_ALSA:=1
-CC:= gcc -m32
+.PHONY: slmodemd
+
+all slmodemd:
+	@echo "error: $(PJSIP_PACKAGE) development files are required to build slmodemd" >&2
+	@false
 endif
 
-RM:= rm -f
+sippymodem_sdp_pjsip.o sippymodem_sip_signaling_pjsip.o: \
+	CPPFLAGS += -D_DEFAULT_SOURCE $(PJSIP_CFLAGS)
 
-CFLAGS+= -Wall -g -O -I. -DCONFIG_DEBUG_MODEM
-
-modem-objs:= \
-	modem.o modem_datafile.o modem_at.o modem_timer.o \
-	modem_pack.o modem_ec.o modem_comp.o \
-	modem_param.o modem_debug.o homolog_data.o
-dp-objs:= dp_sinus.o dp_dummy.o
-sysdep-objs:= sysdep_common.o
-all-objs:= modem_cmdline.o $(modem-objs) $(dp-objs) dsplibs.o $(sysdep-objs) 
-
-all: slmodemd modem_test
-
-slmodemd: modem_main.o $(all-objs)
-modem_test: modem_test.o $(all-objs)
-
-ifdef SUPPORT_ALSA
-CFLAGS+= -DSUPPORT_ALSA=1
-ifeq ($(ARCH64), 0)
-LFLAGS+= /usr/lib/libasound.so
-else
-# LFLAGS+= /usr/lib32/libasound.so , replaced by -l commands search for asound
-LFLAGS+= -lasound
-endif
-endif
-
-slmodemd:
-	$(CC) -o slmodemd modem_main.o $(all-objs) $(LFLAGS)
-
-modem_test:
-	$(CC) -o modem_test modem_test.o $(all-objs) $(LFLAGS)
+%.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 clean:
-	$(RM) slmodemd modem_test modem_main.o modem_cmdline.o modem_test.o $(modem-objs) $(dp-objs) $(sysdep-objs)
-	$(RM) *~ *.orig *.rej
+	rm -f slmodemd $(SOURCES:.c=.o) $(DEPENDENCIES)
+	rm -f modem_test modem_main.o modem_cmdline.o modem_test.o
+	rm -f modem_datafile.o dp_dummy.o dp_sinus.o
+	rm -f .build_profile .depend
 
-.PHONY: all dep generic-dep clean clean-build-profile
-
-
-#
-# rules
-#
-
-%.o: %.c .build_profile
-	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) $(CFLAGS_$@) -o $@ -c $<
-
-dep: generic-dep
-generic-dep:
-	$(RM) .depend
-	$(foreach src,$(wildcard *.c),$(CC) -M $(CFLAGS) $(EXTRA_CFLAGS) $(CFLAGS_$(src:.c=.o)) -c $(src) >> .depend ;)
-
--include .depend
-
-# build_profile
--include .build_profile
-
-.build_profile::
-ifneq ($(CFLAGS),$(PROFILE_CFLAGS))
-	@if [ "$(CFLAGS) $(EXTRA_CFLAGS)" != "$(PROFILE_CFLAGS)" ] ; then \
-	  echo "rebuild profile..." ; \
-	  echo "PROFILE_CFLAGS=$(CFLAGS) $(EXTRA_CFLAGS)" > $(@) ; fi
-endif
-
-clean: clean-build-profile
-clean-build-profile:
-	@$(RM) -f .build_profile
-
+-include $(DEPENDENCIES)

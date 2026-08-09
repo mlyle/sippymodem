@@ -12,9 +12,10 @@ that implementation and no longer builds or installs Linux kernel drivers.
 Existing Smart Link copyright notices are preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
-current transitional baseline still requires a 32-bit C toolchain and links the
-legacy `src/dsplibs.o`; an early step will replace that object with a minimal
-native skeleton before capabilities are restored incrementally.
+current transitional daemon still requires matching 32-bit compiler and SIP
+development libraries because it links the legacy `src/dsplibs.o`; an early
+step will replace that object with a minimal native skeleton before capabilities
+are restored incrementally.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
@@ -52,9 +53,19 @@ line, and modem boundary, performs bounded catch-up, and reports rejected media
 updates without interrupting an established stream. Timing, modem-core,
 playout, or transmit failure suspends audio and requests hangup until a new
 media lifecycle begins. A guarded adapter presents the transitional Smart Link
-sample processor to that host at the exact 8 kHz SIP media clock. The daemon
-does not use the host yet, and no native V.21 core is attached, so this
-transitional tree does not yet place a V.21 modem call.
+sample processor to that host at the exact 8 kHz SIP media clock. The foreground
+daemon now owns that runtime directly, publishes its pseudoterminal path on
+standard output, and shuts down cleanly on SIGINT or SIGTERM. No native V.21
+core is attached yet, so this transitional tree does not place a V.21 modem
+call.
+
+Build with `make`, configure the daemon through the validated `SIP_*`
+environment variables, and run `./src/slmodemd` without a hardware-device
+argument or helper process. Set `SIP_RECORD_PREFIX` to enable the bounded
+recording interface; the prefix must identify files that do not already exist.
+If the SIP development package is unavailable, the daemon build reports that
+dependency explicitly while `make test` continues to run the dependency-free
+native suite.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
