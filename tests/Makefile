@@ -3,30 +3,42 @@ CPPFLAGS ?=
 CFLAGS ?= -O2 -g
 LDFLAGS ?=
 
-CPPFLAGS += -I../src
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src
 CFLAGS += -std=c11 -Wall -Wextra -Werror
 
 BUILD_DIR := build
-TEST_BINARY := $(BUILD_DIR)/test_modem_pack
-TEST_SOURCES := test_modem_pack.c modem_stubs.c
-TEST_OBJECTS := $(TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
+PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
+PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
+PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
 MODEM_OBJECT := $(BUILD_DIR)/modem_pack.o
-DEPENDENCIES := $(TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d)
+CONFIG_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_config
+CONFIG_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_config.o \
+	$(BUILD_DIR)/sippymodem_config.o
+TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY)
+DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
+	$(CONFIG_TEST_OBJECTS:.o=.d)
 
 .PHONY: all clean test
 
-all: $(TEST_BINARY)
+all: $(TEST_BINARIES)
 
-test: $(TEST_BINARY)
-	./$(TEST_BINARY)
+test: $(TEST_BINARIES)
+	./$(PACK_TEST_BINARY)
+	./$(CONFIG_TEST_BINARY)
 
-$(TEST_BINARY): $(TEST_OBJECTS) $(MODEM_OBJECT)
+$(PACK_TEST_BINARY): $(PACK_TEST_OBJECTS) $(MODEM_OBJECT)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(CONFIG_TEST_BINARY): $(CONFIG_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(MODEM_OBJECT): ../src/modem_pack.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_config.o: ../src/sippymodem_config.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR):

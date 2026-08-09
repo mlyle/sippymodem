@@ -2,22 +2,10 @@
 
 #include <modem.h>
 
-#include <stdbool.h>
+#include "test.h"
+
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
-
-#define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
-
-#define CHECK(condition, ...)                                                \
-	do {                                                                   \
-		if (!(condition)) {                                              \
-			fprintf(stderr, "%s:%d: ", __FILE__, __LINE__);          \
-			fprintf(stderr, __VA_ARGS__);                              \
-			fputc('\n', stderr);                                      \
-			return false;                                              \
-		}                                                              \
-	} while (0)
 
 struct byte_stream {
 	const uint8_t *input;
