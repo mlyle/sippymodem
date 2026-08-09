@@ -13,7 +13,6 @@ enum sippymodem_sip_signaling_result {
 	SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT,
 	SIPPYMODEM_SIP_SIGNALING_NOT_OPEN,
 	SIPPYMODEM_SIP_SIGNALING_BUSY,
-	SIPPYMODEM_SIP_SIGNALING_UNSUPPORTED_CONFIGURATION,
 	SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR,
 };
 
@@ -57,7 +56,6 @@ struct sippymodem_sip_signaling *sippymodem_sip_signaling_create(
 /* close() is callback-safe. Call destroy() again outside a callback to free. */
 void sippymodem_sip_signaling_destroy(
 	struct sippymodem_sip_signaling *signaling);
-/* This first lifecycle boundary accepts only registration_enabled == false. */
 enum sippymodem_sip_signaling_result sippymodem_sip_signaling_open(
 	struct sippymodem_sip_signaling *signaling);
 enum sippymodem_sip_signaling_result sippymodem_sip_signaling_close(
@@ -70,6 +68,9 @@ enum sippymodem_sip_signaling_result sippymodem_sip_signaling_step(
 bool sippymodem_sip_signaling_is_open(
 	const struct sippymodem_sip_signaling *signaling);
 unsigned int sippymodem_sip_signaling_local_port(
+	const struct sippymodem_sip_signaling *signaling);
+/* Borrowed normalized identity, or NULL for a transport-local account. */
+const char *sippymodem_sip_signaling_identity_uri(
 	const struct sippymodem_sip_signaling *signaling);
 int sippymodem_sip_signaling_last_library_status(
 	const struct sippymodem_sip_signaling *signaling);

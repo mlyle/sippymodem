@@ -39,8 +39,11 @@ gate. It rejects staged whitespace errors and commits that fail the native test
 suite.
 
 When `libpjproject` is available through `pkg-config`, the native suite also
-opens, polls, and closes a real local SIP UDP transport. The test reports a
-clear skip when that optional development dependency is unavailable.
+opens, polls, and closes a real local SIP UDP transport, normalizes account
+credentials, and verifies a real loopback registration request. Registration
+status reporting and graceful unregistration remain separate upcoming
+lifecycle boundaries. The test reports a clear skip when that optional
+development dependency is unavailable.
 
 Historical Smart Link and distribution documentation is retained under
 `docs/legacy/`. It describes the original package and is not current build or

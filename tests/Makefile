@@ -31,6 +31,7 @@ SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sdp.o \
 PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sip_signaling
 PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_signaling.o \
 	$(BUILD_DIR)/sippymodem_sip_signaling_pjsip.o \
+	$(BUILD_DIR)/sippymodem_sip_uri.o \
 	$(BUILD_DIR)/sippymodem_config.o $(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
 G711_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_g711
