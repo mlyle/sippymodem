@@ -1,4 +1,4 @@
-.PHONY: all clean slmodemd modem_test
+.PHONY: all clean slmodemd modem_test test
 
 all:
 	$(MAKE) -C src all
@@ -8,3 +8,7 @@ slmodemd modem_test:
 
 clean:
 	$(MAKE) -C src clean
+	$(MAKE) -C tests clean
+
+test:
+	$(MAKE) -C tests test

@@ -4,3 +4,4 @@
 /src/*.o
 /src/modem_test
 /src/slmodemd
+/tests/build/

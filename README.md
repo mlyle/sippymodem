@@ -22,6 +22,10 @@ which may be attached as an optional submodule. Tests and harnesses for that
 corpus may remain here, but they will skip cleanly when their vectors are not
 present.
 
+Run the native tests with `make test`. The initial suite exercises the modem's
+asynchronous character packing and HDLC framing without linking the legacy DSP
+object.
+
 Historical Smart Link and distribution documentation is retained under
 `docs/legacy/`. It describes the original package and is not current build or
 installation guidance. The original license is preserved at `src/COPYING`.
