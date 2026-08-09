@@ -425,6 +425,7 @@ extern struct modem *modem_create(struct modem_driver *drv, const char *dev_name
 extern void modem_delete(struct modem *m);
 extern int modem_write(struct modem *m, const char *buf, int n);
 extern void modem_hangup(struct modem *m);
+extern int modem_stop_now(struct modem *m);
 extern int modem_answer(struct modem *m);
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);

@@ -1812,6 +1812,19 @@ void modem_hangup(struct modem *m)
 	modem_hup(m,1);
 }
 
+int modem_stop_now(struct modem *m)
+{
+	int result;
+
+	if (m == NULL)
+		return -1;
+	result = modem_stop(m);
+	/* modem_stop has already released every runtime object even when its
+	 * driver reports an error. Do not leave freed state marked runnable. */
+	m->started = 0;
+	return result;
+}
+
 int modem_report_remote_call_end(struct modem *m)
 {
 	if (m == NULL)
@@ -2012,6 +2025,3 @@ void modem_delete(struct modem *m)
 	timer_del(&m->event_timer);
 	free(m);
 }
-
-
-

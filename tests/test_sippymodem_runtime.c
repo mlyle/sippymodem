@@ -16,6 +16,7 @@
 
 struct sippymodem_host {
 	unsigned int marker;
+	bool opened;
 };
 
 struct sippymodem_recording_files {
@@ -31,6 +32,10 @@ struct runtime_capture {
 	unsigned int recording_destroys;
 	unsigned int driver_attaches;
 	unsigned int driver_detaches;
+	unsigned int host_opens;
+	unsigned int host_closes;
+	unsigned int remote_ends;
+	unsigned int forced_stops;
 	char teardown_order[8];
 	size_t teardown_count;
 	bool fail_modem;
@@ -41,6 +46,10 @@ struct runtime_capture {
 	bool fail_host;
 	bool fail_attach;
 	bool host_received_recorder;
+	enum sippymodem_session_result host_open_result;
+	enum sippymodem_session_result host_close_result;
+	int remote_end_result;
+	int forced_stop_result;
 };
 
 static struct runtime_capture capture;
@@ -144,6 +153,21 @@ void modem_delete(struct modem *modem)
 	capture.modem_deletes++;
 	note_teardown('M');
 	free(modem);
+}
+
+int modem_report_remote_call_end(struct modem *modem)
+{
+	capture.remote_ends++;
+	if (capture.remote_end_result == 0)
+		modem->started = 0;
+	return capture.remote_end_result;
+}
+
+int modem_stop_now(struct modem *modem)
+{
+	capture.forced_stops++;
+	modem->started = 0;
+	return capture.forced_stop_result;
 }
 
 static enum sippymodem_modem_core_result discard_frame(
@@ -260,6 +284,29 @@ void sippymodem_host_destroy(struct sippymodem_host *host)
 	free(host);
 }
 
+enum sippymodem_session_result sippymodem_host_open(
+	struct sippymodem_host *host)
+{
+	capture.host_opens++;
+	if (capture.host_open_result == SIPPYMODEM_SESSION_OK)
+		host->opened = true;
+	return capture.host_open_result;
+}
+
+enum sippymodem_session_result sippymodem_host_close(
+	struct sippymodem_host *host)
+{
+	capture.host_closes++;
+	host->opened = false;
+	note_teardown('C');
+	return capture.host_close_result;
+}
+
+bool sippymodem_host_is_open(const struct sippymodem_host *host)
+{
+	return host != NULL && host->opened;
+}
+
 static struct sippymodem_config runtime_config(bool recording)
 {
 	struct sippymodem_config config;
@@ -348,6 +395,110 @@ static bool test_creation_rolls_back(void)
 	return true;
 }
 
+static bool test_opens_and_closes_in_dependency_order(void)
+{
+	struct sippymodem_config config = runtime_config(false);
+	struct sippymodem_runtime *runtime;
+	struct modem *modem;
+
+	memset(&capture, 0, sizeof(capture));
+	runtime = sippymodem_runtime_create(&config, "lifecycle-test");
+	CHECK(runtime != NULL &&
+		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK &&
+		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK &&
+		      capture.host_opens == 1 && sippymodem_runtime_is_open(runtime),
+	      "runtime open was not idempotent");
+	modem = sippymodem_runtime_modem(runtime);
+	modem->started = 1;
+	CHECK(sippymodem_runtime_close(runtime) == SIPPYMODEM_RUNTIME_OK &&
+		      capture.remote_ends == 1 && !modem->started &&
+		      capture.host_closes == 1 && !sippymodem_runtime_is_open(runtime),
+	      "runtime did not stop the modem before closing its host");
+	sippymodem_runtime_destroy(runtime);
+	CHECK(strcmp(capture.teardown_order, "CHM") == 0 &&
+		      capture.host_closes == 1 && capture.host_destroys == 1 &&
+		      capture.modem_deletes == 1,
+	      "closed runtime repeated teardown work");
+	return true;
+}
+
+static bool test_reports_lifecycle_failures(void)
+{
+	struct sippymodem_config config = runtime_config(false);
+	struct sippymodem_runtime *runtime;
+	struct modem *modem;
+
+	memset(&capture, 0, sizeof(capture));
+	capture.host_open_result = SIPPYMODEM_SESSION_SIGNALING_ERROR;
+	runtime = sippymodem_runtime_create(&config, "failed-open");
+	CHECK(runtime != NULL &&
+		      sippymodem_runtime_open(runtime) ==
+			      SIPPYMODEM_RUNTIME_SESSION_ERROR &&
+		      sippymodem_runtime_last_session_result(runtime) ==
+			      SIPPYMODEM_SESSION_SIGNALING_ERROR,
+	      "runtime hid a session open failure");
+	sippymodem_runtime_destroy(runtime);
+
+	memset(&capture, 0, sizeof(capture));
+	capture.host_close_result = SIPPYMODEM_SESSION_SIGNALING_ERROR;
+	runtime = sippymodem_runtime_create(&config, "failed-host-close");
+	CHECK(runtime != NULL &&
+		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK &&
+		      sippymodem_runtime_close(runtime) ==
+			      SIPPYMODEM_RUNTIME_SESSION_ERROR &&
+		      sippymodem_runtime_last_session_result(runtime) ==
+			      SIPPYMODEM_SESSION_SIGNALING_ERROR,
+	      "runtime hid a session close failure");
+	sippymodem_runtime_destroy(runtime);
+
+	memset(&capture, 0, sizeof(capture));
+	runtime = sippymodem_runtime_create(&config, "failed-stop");
+	CHECK(runtime != NULL &&
+		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+	      "failed-stop fixture did not open");
+	capture.remote_end_result = -1;
+	CHECK(sippymodem_runtime_close(runtime) ==
+		      SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR &&
+		      capture.host_closes == 1,
+	      "runtime hid a modem stop failure or skipped host close");
+	sippymodem_runtime_destroy(runtime);
+
+	memset(&capture, 0, sizeof(capture));
+	runtime = sippymodem_runtime_create(&config, "forced-stop");
+	CHECK(runtime != NULL &&
+		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+	      "forced-stop fixture did not open");
+	modem = sippymodem_runtime_modem(runtime);
+	modem->started = 1;
+	capture.remote_end_result = -1;
+	CHECK(sippymodem_runtime_close(runtime) == SIPPYMODEM_RUNTIME_OK &&
+		      capture.forced_stops == 1 && !modem->started,
+	      "runtime did not recover a deferred modem stop");
+	sippymodem_runtime_destroy(runtime);
+
+	memset(&capture, 0, sizeof(capture));
+	runtime = sippymodem_runtime_create(&config, "failed-forced-stop");
+	CHECK(runtime != NULL &&
+		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+	      "failed forced-stop fixture did not open");
+	modem = sippymodem_runtime_modem(runtime);
+	modem->started = 1;
+	capture.remote_end_result = -1;
+	capture.forced_stop_result = -1;
+	CHECK(sippymodem_runtime_close(runtime) ==
+		      SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR &&
+		      !modem->started,
+	      "forced-stop error left released modem state runnable");
+	sippymodem_runtime_destroy(runtime);
+	CHECK(sippymodem_runtime_open(NULL) ==
+		      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
+		      sippymodem_runtime_close(NULL) ==
+			      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
+		      !sippymodem_runtime_is_open(NULL),
+	      "runtime lifecycle accepted a missing owner");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -356,6 +507,8 @@ int main(void)
 	} tests[] = {
 		{ "closed ownership", test_owns_closed_runtime },
 		{ "creation rollback", test_creation_rolls_back },
+		{ "open and close", test_opens_and_closes_in_dependency_order },
+		{ "lifecycle failures", test_reports_lifecycle_failures },
 	};
 	unsigned int failures = 0;
 

@@ -20,6 +20,7 @@ struct sippymodem_runtime {
 	struct sippymodem_slmodem_calls calls;
 	struct sippymodem_recording_files *recording_files;
 	struct sippymodem_host *host;
+	enum sippymodem_session_result last_session_result;
 };
 
 static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
@@ -94,10 +95,49 @@ fail:
 	return NULL;
 }
 
+enum sippymodem_runtime_result sippymodem_runtime_open(
+	struct sippymodem_runtime *runtime)
+{
+	if (runtime == NULL)
+		return SIPPYMODEM_RUNTIME_INVALID_ARGUMENT;
+	if (sippymodem_host_is_open(runtime->host))
+		return SIPPYMODEM_RUNTIME_OK;
+	runtime->last_session_result = sippymodem_host_open(runtime->host);
+	return runtime->last_session_result == SIPPYMODEM_SESSION_OK ?
+		       SIPPYMODEM_RUNTIME_OK :
+		       SIPPYMODEM_RUNTIME_SESSION_ERROR;
+}
+
+enum sippymodem_runtime_result sippymodem_runtime_close(
+	struct sippymodem_runtime *runtime)
+{
+	int stop_result;
+
+	if (runtime == NULL)
+		return SIPPYMODEM_RUNTIME_INVALID_ARGUMENT;
+	stop_result = modem_report_remote_call_end(runtime->modem);
+	if (runtime->modem->started)
+		stop_result = modem_stop_now(runtime->modem);
+	if (sippymodem_host_is_open(runtime->host))
+		runtime->last_session_result =
+			sippymodem_host_close(runtime->host);
+	else
+		runtime->last_session_result = SIPPYMODEM_SESSION_NOT_OPEN;
+	if (stop_result != 0)
+		return SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR;
+	return runtime->last_session_result == SIPPYMODEM_SESSION_OK ||
+		       runtime->last_session_result == SIPPYMODEM_SESSION_NOT_OPEN ?
+		       SIPPYMODEM_RUNTIME_OK :
+		       SIPPYMODEM_RUNTIME_SESSION_ERROR;
+}
+
 void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime)
 {
 	if (runtime == NULL)
 		return;
+	(void)sippymodem_runtime_close(runtime);
+	if (runtime->modem->started)
+		(void)modem_stop_now(runtime->modem);
 	(void)sippymodem_slmodem_driver_detach(&runtime->driver);
 	sippymodem_host_destroy(runtime->host);
 	sippymodem_recording_files_destroy(runtime->recording_files);
@@ -114,4 +154,32 @@ const struct sippymodem_recording_files *sippymodem_runtime_recording_files(
 	const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL ? runtime->recording_files : NULL;
+}
+
+bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime)
+{
+	return runtime != NULL && sippymodem_host_is_open(runtime->host);
+}
+
+enum sippymodem_session_result sippymodem_runtime_last_session_result(
+	const struct sippymodem_runtime *runtime)
+{
+	return runtime != NULL ? runtime->last_session_result :
+			       SIPPYMODEM_SESSION_INVALID_ARGUMENT;
+}
+
+const char *sippymodem_runtime_result_name(
+	enum sippymodem_runtime_result result)
+{
+	switch (result) {
+	case SIPPYMODEM_RUNTIME_OK:
+		return "ok";
+	case SIPPYMODEM_RUNTIME_INVALID_ARGUMENT:
+		return "invalid argument";
+	case SIPPYMODEM_RUNTIME_SESSION_ERROR:
+		return "SIP/RTP session failed";
+	case SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR:
+		return "modem stop failed";
+	}
+	return "unknown runtime result";
 }

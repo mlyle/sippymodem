@@ -5,8 +5,18 @@
 
 #include "sippymodem_config.h"
 #include "sippymodem_recording_files.h"
+#include "sippymodem_session.h"
+
+#include <stdbool.h>
 
 enum { SIPPYMODEM_RUNTIME_NAME_MAX = 64 };
+
+enum sippymodem_runtime_result {
+	SIPPYMODEM_RUNTIME_OK,
+	SIPPYMODEM_RUNTIME_INVALID_ARGUMENT,
+	SIPPYMODEM_RUNTIME_SESSION_ERROR,
+	SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR,
+};
 
 struct modem;
 struct sippymodem_runtime;
@@ -16,6 +26,16 @@ struct sippymodem_runtime;
 struct sippymodem_runtime *sippymodem_runtime_create(
 	const struct sippymodem_config *config, const char *modem_name);
 void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime);
+
+enum sippymodem_runtime_result sippymodem_runtime_open(
+	struct sippymodem_runtime *runtime);
+enum sippymodem_runtime_result sippymodem_runtime_close(
+	struct sippymodem_runtime *runtime);
+bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime);
+enum sippymodem_session_result sippymodem_runtime_last_session_result(
+	const struct sippymodem_runtime *runtime);
+const char *sippymodem_runtime_result_name(
+	enum sippymodem_runtime_result result);
 
 struct modem *sippymodem_runtime_modem(struct sippymodem_runtime *runtime);
 const struct sippymodem_recording_files *sippymodem_runtime_recording_files(
