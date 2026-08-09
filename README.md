@@ -22,9 +22,15 @@ which may be attached as an optional submodule. Tests and harnesses for that
 corpus may remain here, but they will skip cleanly when their vectors are not
 present.
 
-Run the native tests with `make test`. The initial suite exercises the modem's
-asynchronous character packing and HDLC framing without linking the legacy DSP
-object.
+Run the native tests with `make test`. The suite exercises asynchronous and
+HDLC framing, validated SIP/media configuration, table-free G.711 conversion,
+strict RTP packets, bounded receive playout, transmit timeline continuity, and
+playout-ordered recording hooks without linking the legacy DSP object or
+requiring external vectors.
+
+The current RTP work is a tested, allocation-free library boundary. It is not
+yet connected to UDP sockets, SIP call control, or a native V.21 core, so this
+transitional tree does not yet place a V.21 call.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
