@@ -29,6 +29,18 @@ static bool observe_word(
 	return true;
 }
 
+static enum sippymodem_v32_startup_output expected_output(
+	enum sippymodem_v32_startup_phase phase)
+{
+	if (phase == SIPPYMODEM_V32_DATA)
+		return SIPPYMODEM_V32_STARTUP_DATA;
+	if (phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER ||
+	    phase == SIPPYMODEM_V32_ANSWERER_TRAIN ||
+	    phase == SIPPYMODEM_V32_ANSWERER_RETRAIN)
+		return SIPPYMODEM_V32_STARTUP_TRN_DIBIT;
+	return SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT;
+}
+
 static bool test_role_exchange(void)
 {
 	struct sippymodem_v32_startup caller;
@@ -49,6 +61,8 @@ static bool test_role_exchange(void)
 	for (size_t index = 0; index < TEST_MAX_STARTUP_DIBITS; ++index) {
 		enum sippymodem_v32_startup_output caller_output;
 		enum sippymodem_v32_startup_output answerer_output;
+		enum sippymodem_v32_startup_phase caller_phase = caller.phase;
+		enum sippymodem_v32_startup_phase answerer_phase = answerer.phase;
 		uint8_t caller_dibit = 3;
 		uint8_t answerer_dibit = 3;
 
@@ -62,6 +76,10 @@ static bool test_role_exchange(void)
 				      &answerer_dibit) ==
 				      SIPPYMODEM_V32_STARTUP_OK,
 		      "V.32 startup could not transmit at dibit %zu", index);
+		CHECK(caller_output == expected_output(caller_phase) &&
+			      answerer_output == expected_output(answerer_phase),
+		      "V.32 startup selected the wrong framing at dibit %zu",
+		      index);
 		CHECK(sippymodem_v32_startup_observe(
 			      &caller, answerer_dibit, &caller_connected) ==
 			      SIPPYMODEM_V32_STARTUP_OK &&
@@ -74,12 +92,6 @@ static bool test_role_exchange(void)
 			completed_at = index;
 			break;
 		}
-		CHECK(caller_output == SIPPYMODEM_V32_STARTUP_DIBIT ||
-			      sippymodem_v32_startup_is_complete(&caller),
-		      "V.32 caller requested data before startup completed");
-		CHECK(answerer_output == SIPPYMODEM_V32_STARTUP_DIBIT ||
-			      sippymodem_v32_startup_is_complete(&answerer),
-		      "V.32 answerer requested data before startup completed");
 	}
 	caller_phases |= UINT32_C(1) << caller.phase;
 	answerer_phases |= UINT32_C(1) << answerer.phase;
@@ -134,7 +146,8 @@ static bool test_training_boundary(void)
 		CHECK(sippymodem_v32_startup_next_transmit(
 			      &answerer, &output, &dibit) ==
 			      SIPPYMODEM_V32_STARTUP_OK &&
-			      output == SIPPYMODEM_V32_STARTUP_DIBIT && dibit == 3,
+			      output == SIPPYMODEM_V32_STARTUP_TRN_DIBIT &&
+			      dibit == 3,
 		      "V.32 answerer changed training dibit %zu", index);
 	}
 	CHECK(answerer.phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER,
@@ -164,7 +177,8 @@ static bool test_end_waits_for_rate_boundary(void)
 			      sippymodem_v32_rate_signal_dibit(
 				      caller.rate_word, index, &expected) ==
 				      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-			      output == SIPPYMODEM_V32_STARTUP_DIBIT &&
+			      output ==
+				      SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT &&
 			      dibit == expected,
 		      "V.32 boundary fixture changed R2 dibit %u", index);
 	}
@@ -194,7 +208,8 @@ static bool test_end_waits_for_rate_boundary(void)
 			      sippymodem_v32_rate_signal_dibit(
 				      caller.rate_word, index, &expected) ==
 				      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-			      output == SIPPYMODEM_V32_STARTUP_DIBIT &&
+			      output ==
+				      SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT &&
 			      dibit == expected,
 		      "V.32 startup truncated R2 at dibit %u", index);
 	}

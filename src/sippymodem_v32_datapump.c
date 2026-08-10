@@ -5,6 +5,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "sippymodem_qam.h"
+#include "sippymodem_v32_constellation.h"
 #include "sippymodem_v32_framing.h"
 #include "sippymodem_v32_startup.h"
 
@@ -142,20 +143,6 @@ static bool rate_is_selected(const struct modem *modem)
 	       modem->max_rate >= SIPPYMODEM_V32_BIT_RATE;
 }
 
-static struct sippymodem_qam_point quadrant_point(uint8_t quadrant)
-{
-	switch (quadrant & 3u) {
-	case 0:
-		return (struct sippymodem_qam_point){ 1.0, 0.0 };
-	case 1:
-		return (struct sippymodem_qam_point){ 0.0, 1.0 };
-	case 2:
-		return (struct sippymodem_qam_point){ -1.0, 0.0 };
-	default:
-		return (struct sippymodem_qam_point){ 0.0, -1.0 };
-	}
-}
-
 static struct dp *create_v32(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
@@ -184,12 +171,14 @@ static struct dp *create_v32(
 		    SIPPYMODEM_V32_FRAMING_OK ||
 	    sippymodem_v32_startup_init(
 		    &datapump->startup, endpoint_role(is_caller)) !=
-		    SIPPYMODEM_V32_STARTUP_OK) {
+		    SIPPYMODEM_V32_STARTUP_OK ||
+	    sippymodem_v32_4800_constellation_point(
+		    0, &datapump->transmit_point) !=
+		    SIPPYMODEM_V32_CONSTELLATION_OK) {
 		free(datapump);
 		return NULL;
 	}
 	datapump->caller = is_caller;
-	datapump->transmit_point = quadrant_point(0);
 	datapump->training_timeout_samples = training_timeout(modem);
 	datapump->dp = (struct dp){
 		.id = id,
@@ -214,6 +203,20 @@ static int delete_v32(struct dp *dp)
 	return 0;
 }
 
+static enum sippymodem_v32_framing_result encode_transmit_quadrant(
+	struct sippymodem_v32_symbol_encoder *encoder,
+	enum sippymodem_v32_startup_output output, uint8_t input,
+	uint8_t *quadrant)
+{
+	if (output == SIPPYMODEM_V32_STARTUP_TRN_DIBIT)
+		return sippymodem_v32_trn_symbol_encode(
+			encoder, input, quadrant);
+	if (output == SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT ||
+	    output == SIPPYMODEM_V32_STARTUP_DATA)
+		return sippymodem_v32_symbol_encode(encoder, input, quadrant);
+	return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+}
+
 static int next_transmit_point(
 	struct sippymodem_v32_datapump *datapump, bool *linked)
 {
@@ -221,6 +224,7 @@ static int next_transmit_point(
 	uint8_t input = 3;
 	uint8_t quadrant;
 	enum sippymodem_v32_startup_output output;
+	enum sippymodem_v32_framing_result framing_result;
 
 	if (sippymodem_v32_startup_next_transmit(
 		    &datapump->startup, &output, &input) !=
@@ -238,11 +242,13 @@ static int next_transmit_point(
 		bits[1] &= 1u;
 		input = (uint8_t)((bits[0] << 1) | bits[1]);
 	}
-	if (sippymodem_v32_symbol_encode(
-		    &datapump->encoder, input, &quadrant) !=
-	    SIPPYMODEM_V32_FRAMING_OK)
+	framing_result = encode_transmit_quadrant(
+		&datapump->encoder, output, input, &quadrant);
+	if (framing_result != SIPPYMODEM_V32_FRAMING_OK ||
+	    sippymodem_v32_4800_constellation_point(
+		    quadrant, &datapump->transmit_point) !=
+		    SIPPYMODEM_V32_CONSTELLATION_OK)
 		return -1;
-	datapump->transmit_point = quadrant_point(quadrant);
 	if (!datapump->linked &&
 	    sippymodem_v32_startup_is_complete(&datapump->startup)) {
 		if (enter_link(datapump) != 0)

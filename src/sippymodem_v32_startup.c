@@ -156,6 +156,13 @@ static bool phase_transmits_bounded_training(
 	       phase == SIPPYMODEM_V32_ANSWERER_RETRAIN;
 }
 
+static bool phase_uses_trn_framing(
+	enum sippymodem_v32_startup_phase phase)
+{
+	return phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER ||
+	       phase_transmits_bounded_training(phase);
+}
+
 static void finish_training_phase(struct sippymodem_v32_startup *startup)
 {
 	enter_phase(startup,
@@ -169,6 +176,7 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 	enum sippymodem_v32_startup_output *output, uint8_t *dibit)
 {
 	struct sippymodem_v32_startup next;
+	enum sippymodem_v32_startup_output next_output;
 	uint8_t next_dibit = 3;
 
 	if (!sippymodem_v32_startup_is_valid(startup) || output == NULL ||
@@ -178,6 +186,9 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 		*output = SIPPYMODEM_V32_STARTUP_DATA;
 		return SIPPYMODEM_V32_STARTUP_OK;
 	}
+	next_output = phase_uses_trn_framing(startup->phase) ?
+			      SIPPYMODEM_V32_STARTUP_TRN_DIBIT :
+			      SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT;
 	next = *startup;
 	if (phase_transmits_rate(next.phase) || phase_transmits_end(next.phase)) {
 		uint16_t word = phase_transmits_rate(next.phase) ?
@@ -213,7 +224,7 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 		maybe_enter_data(&next);
 	}
 	*startup = next;
-	*output = SIPPYMODEM_V32_STARTUP_DIBIT;
+	*output = next_output;
 	*dibit = next_dibit;
 	return SIPPYMODEM_V32_STARTUP_OK;
 }

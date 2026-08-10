@@ -189,6 +189,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
 	$(BUILD_DIR)/sippymodem_v32_datapump.o \
+	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(BUILD_DIR)/sippymodem_v32_framing.o \
 	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
 	$(BUILD_DIR)/sippymodem_v32_startup.o \
@@ -245,6 +246,7 @@ V32_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(BUILD_DIR)/sippymodem_v32_framing.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
@@ -267,6 +269,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
 	$(BUILD_DIR)/sippymodem_v32_datapump.o \
+	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(BUILD_DIR)/sippymodem_v32_framing.o \
 	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
 	$(BUILD_DIR)/sippymodem_v32_startup.o \

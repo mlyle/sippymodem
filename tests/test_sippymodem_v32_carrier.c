@@ -2,6 +2,7 @@
 
 #include <sippymodem_g711.h>
 #include <sippymodem_qam.h>
+#include <sippymodem_v32_constellation.h>
 #include <sippymodem_v32_framing.h>
 
 #include "test.h"
@@ -16,12 +17,18 @@ enum {
 	TEST_AMPLITUDE = 12000,
 	TEST_TRAINING_DIBITS = 224,
 	TEST_SYNC_DIBITS = 32,
+	TEST_SYNC_TAIL_DIBITS = 16,
 	TEST_PAYLOAD_DIBITS = 192,
 	TEST_TRAILING_DIBITS = 64,
 	TEST_SOURCE_DIBITS = TEST_TRAINING_DIBITS + TEST_SYNC_DIBITS +
 			      TEST_PAYLOAD_DIBITS + TEST_TRAILING_DIBITS,
 	TEST_DECODED_CAPACITY = TEST_SOURCE_DIBITS + 128,
 };
+
+_Static_assert(
+	(TEST_SYNC_DIBITS - TEST_SYNC_TAIL_DIBITS) * 2 >=
+		SIPPYMODEM_V32_SCRAMBLER_BITS,
+	"sync prefix must replace the descrambler history");
 
 enum test_codec {
 	TEST_LINEAR_PCM,
@@ -39,20 +46,6 @@ static struct sippymodem_qam_channel v32_channel(uint32_t carrier_hz)
 		.rolloff = 0.25,
 		.pulse_span_symbols = 6,
 	};
-}
-
-static struct sippymodem_qam_point quadrant_point(uint8_t quadrant)
-{
-	switch (quadrant & 3u) {
-	case 0:
-		return (struct sippymodem_qam_point){ 1.0, 0.0 };
-	case 1:
-		return (struct sippymodem_qam_point){ 0.0, 1.0 };
-	case 2:
-		return (struct sippymodem_qam_point){ -1.0, 0.0 };
-	default:
-		return (struct sippymodem_qam_point){ 0.0, -1.0 };
-	}
 }
 
 static uint32_t fixture_random(uint32_t *state)
@@ -130,7 +123,7 @@ static bool check_carrier(
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_v32_symbol_decoder decoder;
 	struct sippymodem_qam_measurement measurement;
-	struct sippymodem_qam_point transmit_point = quadrant_point(0);
+	struct sippymodem_qam_point transmit_point;
 	struct sippymodem_qam_point previous_receive_point = { 0 };
 	uint8_t source[TEST_SOURCE_DIBITS];
 	uint8_t decoded[TEST_DECODED_CAPACITY];
@@ -157,7 +150,10 @@ static bool check_carrier(
 			      SIPPYMODEM_V32_FRAMING_OK &&
 		      sippymodem_v32_symbol_decoder_init(
 			      &decoder, transmitter_role, 0) ==
-			      SIPPYMODEM_V32_FRAMING_OK,
+			      SIPPYMODEM_V32_FRAMING_OK &&
+		      sippymodem_v32_4800_constellation_point(
+			      0, &transmit_point) ==
+			      SIPPYMODEM_V32_CONSTELLATION_OK,
 	      "V.32 carrier endpoints did not initialize");
 	for (size_t sample_index = 0; sample_index < sample_count;
 	     ++sample_index) {
@@ -175,13 +171,21 @@ static bool check_carrier(
 				uint8_t input = transmitted < TEST_SOURCE_DIBITS ?
 							source[transmitted] : 3u;
 				uint8_t quadrant;
+				enum sippymodem_v32_framing_result framing_result;
 
-				CHECK(sippymodem_v32_symbol_encode(
-					      &encoder, input, &quadrant) ==
-					      SIPPYMODEM_V32_FRAMING_OK,
+				if (transmitted < TEST_TRAINING_DIBITS)
+					framing_result =
+						sippymodem_v32_trn_symbol_encode(
+							&encoder, input, &quadrant);
+				else
+					framing_result = sippymodem_v32_symbol_encode(
+						&encoder, input, &quadrant);
+				CHECK(framing_result == SIPPYMODEM_V32_FRAMING_OK &&
+					      sippymodem_v32_4800_constellation_point(
+						      quadrant, &transmit_point) ==
+						      SIPPYMODEM_V32_CONSTELLATION_OK,
 				      "V.32 carrier could not encode symbol %zu",
 				      transmitted);
-				transmit_point = quadrant_point(quadrant);
 			}
 			CHECK(sippymodem_qam_modulator_sample(
 				      &modulator, &transmit_point, &sample,
@@ -226,16 +230,19 @@ static bool check_carrier(
 	}
 	CHECK(transmitted >= TEST_SOURCE_DIBITS,
 	      "V.32 carrier did not consume its source");
-	CHECK(longest_mark_run(decoded, decoded_count) >= 128,
+	CHECK(longest_mark_run(decoded, decoded_count) >= TEST_TRAILING_DIBITS,
 	      "V.32 carrier recovered only %zu consecutive mark dibits",
 	      longest_mark_run(decoded, decoded_count));
 	sync_offset = find_pattern(
-		decoded, decoded_count, source + TEST_TRAINING_DIBITS,
-		TEST_SYNC_DIBITS);
+		decoded, decoded_count,
+		source + TEST_TRAINING_DIBITS + TEST_SYNC_DIBITS -
+			TEST_SYNC_TAIL_DIBITS,
+		TEST_SYNC_TAIL_DIBITS);
 	CHECK(sync_offset != SIZE_MAX &&
-		      sync_offset + TEST_SYNC_DIBITS + TEST_PAYLOAD_DIBITS <=
+		      sync_offset + TEST_SYNC_TAIL_DIBITS +
+			      TEST_PAYLOAD_DIBITS <=
 			      decoded_count &&
-		      memcmp(decoded + sync_offset + TEST_SYNC_DIBITS,
+		      memcmp(decoded + sync_offset + TEST_SYNC_TAIL_DIBITS,
 			     source + TEST_TRAINING_DIBITS + TEST_SYNC_DIBITS,
 			     TEST_PAYLOAD_DIBITS) == 0,
 	      "V.32 carrier changed its recovered payload");

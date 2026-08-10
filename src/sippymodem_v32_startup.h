@@ -33,8 +33,10 @@ enum sippymodem_v32_startup_phase {
 	SIPPYMODEM_V32_DATA,
 };
 
+/* Identifies the framing required for the returned dibit. */
 enum sippymodem_v32_startup_output {
-	SIPPYMODEM_V32_STARTUP_DIBIT,
+	SIPPYMODEM_V32_STARTUP_TRN_DIBIT,
+	SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT,
 	SIPPYMODEM_V32_STARTUP_DATA,
 };
 
