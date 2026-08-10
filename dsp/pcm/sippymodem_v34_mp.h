@@ -3,6 +3,7 @@
 #ifndef SIPPYMODEM_V34_MP_H
 #define SIPPYMODEM_V34_MP_H
 
+#include "sippymodem_v34_precoder.h"
 #include "sippymodem_v34_trellis.h"
 
 #include <stdbool.h>
@@ -16,6 +17,10 @@ enum {
 	SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS = 88,
 	SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES =
 		SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS / 8,
+	SIPPYMODEM_V34_MP_TYPE1_INFORMATION_BITS = 144,
+	SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS = 188,
+	SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES =
+		(SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS + 7) / 8,
 	SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS = 14,
 	SIPPYMODEM_V34_MP_RATE_CAPABILITY_MASK =
 		(1u << SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS) - 1u,
@@ -49,6 +54,17 @@ struct sippymodem_v34_mp_parameters {
 bool sippymodem_v34_mp_parameters_are_valid(
 	const struct sippymodem_v34_mp_parameters *parameters);
 
+/* Type 1 extends the common modulation parameters with the three complex
+ * Q14 precoder taps h(1) through h(3), in transmission order. */
+struct sippymodem_v34_mp_type1_parameters {
+	struct sippymodem_v34_mp_parameters common;
+	struct sippymodem_v34_q14_coefficient
+		precoder_coefficients[SIPPYMODEM_V34_PRECODER_TAP_COUNT];
+};
+
+bool sippymodem_v34_mp_type1_parameters_are_valid(
+	const struct sippymodem_v34_mp_type1_parameters *parameters);
+
 /* Frames are packed in transmission order, most-significant bit first within
  * each octet. Reserved information bits are transmitted as zero and ignored
  * when decoding, but remain covered by the CRC. */
@@ -58,6 +74,12 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_encode(
 enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_decode(
 	const uint8_t *frame, size_t frame_capacity,
 	struct sippymodem_v34_mp_parameters *parameters);
+enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_encode(
+	const struct sippymodem_v34_mp_type1_parameters *parameters,
+	uint8_t *frame, size_t frame_capacity);
+enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	struct sippymodem_v34_mp_type1_parameters *parameters);
 
 const char *sippymodem_v34_mp_result_name(
 	enum sippymodem_v34_mp_result result);

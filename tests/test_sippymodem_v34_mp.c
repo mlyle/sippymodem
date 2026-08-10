@@ -9,12 +9,32 @@
 enum {
 	REFERENCE_CRC_POLYNOMIAL = 0x1021,
 	REFERENCE_CRC_INITIAL = 0xffff,
+	MP_START0_BIT = 17,
 	MP_TYPE_BIT = 18,
-	MP_START1_BIT = 34,
-	MP_START2_BIT = 51,
-	MP_START3_BIT = 68,
-	MP_CRC_FIRST_BIT = 69,
+	MP_FIELD_STRIDE_BITS = 17,
+	MP_TYPE1_FIRST_COEFFICIENT_BIT = 52,
+	MP_COEFFICIENT_COMPONENT_BITS = 16,
+	MP_TYPE0_CRC_FIRST_BIT = 69,
+	MP_TYPE1_RESERVED_FIRST_BIT = 154,
+	MP_TYPE1_RESERVED_BITS = 16,
+	MP_TYPE1_CRC_FIRST_BIT = 171,
+	MP_TYPE1_FILL_BIT = 187,
 };
+
+_Static_assert(SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS == 17,
+	       "Type 0 sync length changed");
+_Static_assert(SIPPYMODEM_V34_MP_TYPE0_INFORMATION_BITS == 48,
+	       "Type 0 information length changed");
+_Static_assert(SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS == 88,
+	       "Type 0 frame length changed");
+_Static_assert(SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES == 11,
+	       "Type 0 packed length changed");
+_Static_assert(SIPPYMODEM_V34_MP_TYPE1_INFORMATION_BITS == 144,
+	       "Type 1 information length changed");
+_Static_assert(SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS == 188,
+	       "Type 1 frame length changed");
+_Static_assert(SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES == 24,
+	       "Type 1 packed length changed");
 
 static struct sippymodem_v34_mp_parameters base_parameters(bool acknowledged)
 {
@@ -25,6 +45,29 @@ static struct sippymodem_v34_mp_parameters base_parameters(bool acknowledged)
 			SIPPYMODEM_V34_TRELLIS_32_STATE,
 		.acknowledges_peer_mp = acknowledged,
 		.data_rate_capability_mask = 0x0fff,
+	};
+}
+
+static struct sippymodem_v34_mp_type1_parameters type1_parameters(void)
+{
+	return (struct sippymodem_v34_mp_type1_parameters){
+		.common = {
+			.maximum_call_to_answer_rate_2400_bps_units = 1,
+			.maximum_answer_to_call_rate_2400_bps_units = 14,
+			.auxiliary_channel_enabled = true,
+			.remote_transmitter_trellis =
+				SIPPYMODEM_V34_TRELLIS_64_STATE,
+			.remote_transmitter_nonlinear_encoding = true,
+			.remote_transmitter_expanded_shaping = true,
+			.acknowledges_peer_mp = true,
+			.data_rate_capability_mask = 0x2555,
+			.asymmetric_rates_enabled = true,
+		},
+		.precoder_coefficients = {
+			{ .real = 0x1234, .imaginary = -1 },
+			{ .real = -32767, .imaginary = INT16_MAX },
+			{ .real = 0, .imaginary = 16384 },
+		},
 	};
 }
 
@@ -51,6 +94,23 @@ static bool parameters_are_equal(
 		       right->asymmetric_rates_enabled;
 }
 
+static bool type1_parameters_are_equal(
+	const struct sippymodem_v34_mp_type1_parameters *left,
+	const struct sippymodem_v34_mp_type1_parameters *right)
+{
+	if (!parameters_are_equal(&left->common, &right->common))
+		return false;
+	for (size_t index = 0; index < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++index) {
+		if (left->precoder_coefficients[index].real !=
+			    right->precoder_coefficients[index].real ||
+		    left->precoder_coefficients[index].imaginary !=
+			    right->precoder_coefficients[index].imaginary)
+			return false;
+	}
+	return true;
+}
+
 static uint8_t reference_frame_bit(
 	const uint8_t *frame, size_t bit_index)
 {
@@ -70,15 +130,24 @@ static void replace_frame_bit(
 		frame[bit_index / 8u] &= (uint8_t)~mask;
 }
 
-static uint16_t reference_type0_crc(const uint8_t *frame)
+static void replace_lsb_first_field(
+	uint8_t *frame, size_t first_bit, size_t bit_count, uint16_t value)
+{
+	for (size_t index = 0; index < bit_count; ++index)
+		replace_frame_bit(
+			frame, first_bit + index,
+			(uint8_t)(value >> index) & 1u);
+}
+
+static uint16_t reference_crc(
+	const uint8_t *frame, size_t crc_first_bit)
 {
 	uint16_t remainder = REFERENCE_CRC_INITIAL;
 
-	for (size_t index = MP_TYPE_BIT; index < MP_CRC_FIRST_BIT; ++index) {
+	for (size_t index = MP_TYPE_BIT; index < crc_first_bit; ++index) {
 		uint16_t next;
 
-		if (index == MP_START1_BIT || index == MP_START2_BIT ||
-		    index == MP_START3_BIT)
+		if ((index - MP_START0_BIT) % MP_FIELD_STRIDE_BITS == 0)
 			continue;
 		next = (uint16_t)(remainder << 1);
 		if ((((remainder >> 15) ^ reference_frame_bit(frame, index)) &
@@ -89,25 +158,26 @@ static uint16_t reference_type0_crc(const uint8_t *frame)
 	return remainder;
 }
 
-static void replace_type0_crc(uint8_t *frame)
+static void replace_crc(uint8_t *frame, size_t crc_first_bit)
 {
-	uint16_t remainder = reference_type0_crc(frame);
+	uint16_t remainder = reference_crc(frame, crc_first_bit);
 
 	for (size_t index = 0; index < SIPPYMODEM_V34_MP_CRC_BITS; ++index)
 		replace_frame_bit(
-			frame, MP_CRC_FIRST_BIT + index,
+			frame, crc_first_bit + index,
 			(uint8_t)(remainder >>
 				  (SIPPYMODEM_V34_MP_CRC_BITS - index - 1u)) &
 				1u);
 }
 
-static uint16_t chronological_crc_word(const uint8_t *frame)
+static uint16_t chronological_crc_word(
+	const uint8_t *frame, size_t crc_first_bit)
 {
 	uint16_t word = 0;
 
 	for (size_t index = 0; index < SIPPYMODEM_V34_MP_CRC_BITS; ++index)
 		word |= (uint16_t)reference_frame_bit(
-				frame, MP_CRC_FIRST_BIT + index) <<
+				frame, crc_first_bit + index) <<
 			index;
 	return word;
 }
@@ -128,16 +198,13 @@ static bool test_known_wire_images(void)
 	uint8_t frame[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES + 2u];
 
 	memset(frame, 0xa5, sizeof(frame));
-	CHECK(SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS == 17 &&
-	      SIPPYMODEM_V34_MP_TYPE0_INFORMATION_BITS == 48 &&
-	      SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS == 88 &&
-	      SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES == 11 &&
-	      sippymodem_v34_mp_type0_encode(
+	CHECK(sippymodem_v34_mp_type0_encode(
 		      &parameters, frame, sizeof(frame)) ==
 		      SIPPYMODEM_V34_MP_OK &&
 	      memcmp(frame, expected_mp, sizeof(expected_mp)) == 0 &&
 	      frame[11] == 0xa5 && frame[12] == 0xa5 &&
-	      chronological_crc_word(frame) == UINT16_C(0x6a57) &&
+	      chronological_crc_word(frame, MP_TYPE0_CRC_FIRST_BIT) ==
+		      UINT16_C(0x6a57) &&
 	      sippymodem_v34_mp_type0_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      SIPPYMODEM_V34_MP_OK &&
@@ -149,12 +216,45 @@ static bool test_known_wire_images(void)
 		      &parameters, frame, sizeof(frame)) ==
 		      SIPPYMODEM_V34_MP_OK &&
 	      memcmp(frame, expected_mp_prime, sizeof(expected_mp_prime)) == 0 &&
-	      chronological_crc_word(frame) == UINT16_C(0xe002) &&
+	      chronological_crc_word(frame, MP_TYPE0_CRC_FIRST_BIT) ==
+		      UINT16_C(0xe002) &&
 	      sippymodem_v34_mp_type0_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      SIPPYMODEM_V34_MP_OK &&
 	      parameters_are_equal(&decoded, &parameters),
 	      "known Type 0 MP-prime wire image changed");
+	return true;
+}
+
+static bool test_type1_known_wire_image(void)
+{
+	static const uint8_t expected[] = {
+		0xff, 0xff, 0xa8, 0x7b, 0xd5, 0x54, 0xa2, 0xc4,
+		0x87, 0xff, 0xfa, 0x00, 0x05, 0xff, 0xfc, 0x00,
+		0x00, 0x00, 0x01, 0x00, 0x00, 0x16, 0x6e, 0x20,
+	};
+	struct sippymodem_v34_mp_type1_parameters parameters =
+		type1_parameters();
+	struct sippymodem_v34_mp_type1_parameters decoded = { 0 };
+	uint8_t frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES + 2u];
+
+	memset(frame, 0xa5, sizeof(frame));
+	CHECK(sippymodem_v34_mp_type1_parameters_are_valid(&parameters) &&
+	      sippymodem_v34_mp_type1_encode(
+		      &parameters, frame, sizeof(frame)) ==
+		      SIPPYMODEM_V34_MP_OK &&
+	      memcmp(frame, expected, sizeof(expected)) == 0 &&
+	      frame[24] == 0xa5 && frame[25] == 0xa5 &&
+	      (frame[23] & 0x1fu) == 0 &&
+	      reference_crc(frame, MP_TYPE1_CRC_FIRST_BIT) ==
+		      UINT16_C(0xb371) &&
+	      chronological_crc_word(frame, MP_TYPE1_CRC_FIRST_BIT) ==
+		      UINT16_C(0x8ecd) &&
+	      sippymodem_v34_mp_type1_decode(
+		      frame, sizeof(frame), &decoded) ==
+		      SIPPYMODEM_V34_MP_OK &&
+	      type1_parameters_are_equal(&decoded, &parameters),
+	      "known Type 1 MP wire image changed");
 	return true;
 }
 
@@ -201,7 +301,7 @@ static bool test_reserved_bits_are_ignored(void)
 	      "reserved-bit fixture did not encode");
 	for (size_t index = 0; index < ARRAY_LENGTH(reserved_bits); ++index)
 		replace_frame_bit(frame, reserved_bits[index], 1);
-	replace_type0_crc(frame);
+	replace_crc(frame, MP_TYPE0_CRC_FIRST_BIT);
 	CHECK(sippymodem_v34_mp_type0_decode(
 		      frame, sizeof(frame), &decoded) ==
 		      SIPPYMODEM_V34_MP_OK &&
@@ -258,8 +358,9 @@ static bool test_frame_rejection(void)
 		      parameters_are_equal(&decoded, &sentinel),
 		      "Type 0 MP accepted a corrupt information bit");
 		memcpy(corrupt, valid, sizeof(corrupt));
-		replace_frame_bit(corrupt, MP_CRC_FIRST_BIT,
-				  reference_frame_bit(corrupt, MP_CRC_FIRST_BIT) ^ 1u);
+		replace_frame_bit(
+			corrupt, MP_TYPE0_CRC_FIRST_BIT,
+			reference_frame_bit(corrupt, MP_TYPE0_CRC_FIRST_BIT) ^ 1u);
 		CHECK(sippymodem_v34_mp_type0_decode(
 			      corrupt, sizeof(corrupt), &decoded) ==
 			      SIPPYMODEM_V34_MP_CRC_MISMATCH &&
@@ -275,7 +376,7 @@ static bool test_frame_rejection(void)
 		for (size_t index = 0; index < ARRAY_LENGTH(invalid_field_bits);
 		     ++index)
 			replace_frame_bit(malformed, invalid_field_bits[index], 1);
-		replace_type0_crc(malformed);
+		replace_crc(malformed, MP_TYPE0_CRC_FIRST_BIT);
 		CHECK(sippymodem_v34_mp_type0_decode(
 			      malformed, sizeof(malformed), &decoded) ==
 			      SIPPYMODEM_V34_MP_INVALID_FRAME &&
@@ -285,13 +386,188 @@ static bool test_frame_rejection(void)
 		memcpy(malformed, valid, sizeof(malformed));
 		for (size_t index = 20; index < 24; ++index)
 			replace_frame_bit(malformed, index, 0);
-		replace_type0_crc(malformed);
+		replace_crc(malformed, MP_TYPE0_CRC_FIRST_BIT);
 		decoded = sentinel;
 		CHECK(sippymodem_v34_mp_type0_decode(
 			      malformed, sizeof(malformed), &decoded) ==
 			      SIPPYMODEM_V34_MP_INVALID_FRAME &&
 		      parameters_are_equal(&decoded, &sentinel),
 		      "Type 0 MP accepted a zero maximum rate");
+	}
+	return true;
+}
+
+static bool test_type1_reserved_bits_and_frame_rejection(void)
+{
+	struct sippymodem_v34_mp_type1_parameters parameters =
+		type1_parameters();
+	struct sippymodem_v34_mp_type1_parameters sentinel = {
+		.precoder_coefficients = {
+			{ .real = 1, .imaginary = 2 },
+			{ .real = 3, .imaginary = 4 },
+			{ .real = 5, .imaginary = 6 },
+		},
+	};
+	uint8_t valid[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES];
+	size_t framing_bits[13];
+	size_t framing_bit_count = 0;
+
+	sentinel.common = base_parameters(false);
+	CHECK(sippymodem_v34_mp_type1_encode(
+		      &parameters, valid, sizeof(valid)) ==
+		      SIPPYMODEM_V34_MP_OK,
+	      "Type 1 frame-rejection fixture did not encode");
+	{
+		struct sippymodem_v34_mp_type1_parameters decoded = sentinel;
+		uint8_t with_reserved_bits[sizeof(valid)];
+
+		memcpy(with_reserved_bits, valid, sizeof(with_reserved_bits));
+		for (size_t index = MP_TYPE1_RESERVED_FIRST_BIT;
+		     index < MP_TYPE1_RESERVED_FIRST_BIT +
+				     MP_TYPE1_RESERVED_BITS;
+		     ++index)
+			replace_frame_bit(with_reserved_bits, index, 1);
+		replace_crc(with_reserved_bits, MP_TYPE1_CRC_FIRST_BIT);
+		CHECK(sippymodem_v34_mp_type1_decode(
+			      with_reserved_bits, sizeof(with_reserved_bits),
+			      &decoded) == SIPPYMODEM_V34_MP_OK &&
+		      type1_parameters_are_equal(&decoded, &parameters),
+		      "Type 1 MP decoder interpreted reserved bits");
+	}
+
+	framing_bits[framing_bit_count++] = 0;
+	framing_bits[framing_bit_count++] = MP_TYPE_BIT;
+	for (size_t index = MP_START0_BIT;
+	     index < MP_TYPE1_CRC_FIRST_BIT; index += MP_FIELD_STRIDE_BITS)
+		framing_bits[framing_bit_count++] = index;
+	framing_bits[framing_bit_count++] = MP_TYPE1_FILL_BIT;
+	CHECK(framing_bit_count == ARRAY_LENGTH(framing_bits),
+	      "Type 1 framing-bit generator changed");
+	for (size_t index = 0; index < framing_bit_count; ++index) {
+		struct sippymodem_v34_mp_type1_parameters decoded = sentinel;
+		uint8_t malformed[sizeof(valid)];
+		size_t bit = framing_bits[index];
+
+		memcpy(malformed, valid, sizeof(malformed));
+		replace_frame_bit(
+			malformed, bit,
+			reference_frame_bit(malformed, bit) ^ 1u);
+		CHECK(sippymodem_v34_mp_type1_decode(
+			      malformed, sizeof(malformed), &decoded) ==
+			      SIPPYMODEM_V34_MP_INVALID_FRAME &&
+		      type1_parameters_are_equal(&decoded, &sentinel),
+		      "Type 1 MP accepted malformed framing bit %zu", bit);
+	}
+	{
+		static const size_t corrupt_bits[] = {
+			MP_TYPE1_FIRST_COEFFICIENT_BIT,
+			MP_TYPE1_CRC_FIRST_BIT,
+		};
+
+		for (size_t index = 0; index < ARRAY_LENGTH(corrupt_bits);
+		     ++index) {
+			struct sippymodem_v34_mp_type1_parameters decoded =
+				sentinel;
+			uint8_t corrupt[sizeof(valid)];
+			size_t bit = corrupt_bits[index];
+
+			memcpy(corrupt, valid, sizeof(corrupt));
+			replace_frame_bit(
+				corrupt, bit,
+				reference_frame_bit(corrupt, bit) ^ 1u);
+			CHECK(sippymodem_v34_mp_type1_decode(
+				      corrupt, sizeof(corrupt), &decoded) ==
+				      SIPPYMODEM_V34_MP_CRC_MISMATCH &&
+			      type1_parameters_are_equal(&decoded, &sentinel),
+			      "Type 1 MP accepted corrupt bit %zu", bit);
+		}
+	}
+	return true;
+}
+
+static bool test_type1_validation(void)
+{
+	struct sippymodem_v34_mp_type1_parameters valid =
+		type1_parameters();
+	struct sippymodem_v34_mp_type1_parameters sentinel = {
+		.precoder_coefficients = {
+			{ .real = 7, .imaginary = 8 },
+			{ .real = 9, .imaginary = 10 },
+			{ .real = 11, .imaginary = 12 },
+		},
+	};
+	uint8_t frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES + 1u];
+	uint8_t saved_frame[sizeof(frame)];
+
+	sentinel.common = base_parameters(false);
+	memset(frame, 0xa5, sizeof(frame));
+	memcpy(saved_frame, frame, sizeof(frame));
+	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++tap) {
+		for (size_t component = 0; component < 2; ++component) {
+			struct sippymodem_v34_mp_type1_parameters invalid = valid;
+
+			if (component == 0)
+				invalid.precoder_coefficients[tap].real = INT16_MIN;
+			else
+				invalid.precoder_coefficients[tap].imaginary =
+					INT16_MIN;
+			CHECK(!sippymodem_v34_mp_type1_parameters_are_valid(
+				      &invalid) &&
+			      sippymodem_v34_mp_type1_encode(
+				      &invalid, frame, sizeof(frame)) ==
+				      SIPPYMODEM_V34_MP_INVALID_PARAMETERS &&
+			      memcmp(frame, saved_frame, sizeof(frame)) == 0,
+			      "Type 1 MP accepted Q14 endpoint for tap %zu "
+			      "component %zu",
+			      tap, component);
+		}
+	}
+	CHECK(!sippymodem_v34_mp_type1_parameters_are_valid(NULL) &&
+	      sippymodem_v34_mp_type1_encode(
+		      NULL, frame, sizeof(frame)) ==
+		      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_mp_type1_encode(
+		      &valid, NULL, sizeof(frame)) ==
+		      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_mp_type1_encode(
+		      &valid, frame,
+		      SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES - 1u) ==
+		      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+	      memcmp(frame, saved_frame, sizeof(frame)) == 0,
+	      "invalid Type 1 MP encoding mutated output");
+
+	CHECK(sippymodem_v34_mp_type1_encode(
+		      &valid, frame, sizeof(frame)) == SIPPYMODEM_V34_MP_OK,
+	      "invalid Type 1 MP decoding fixture did not encode");
+	{
+		struct sippymodem_v34_mp_type1_parameters decoded = sentinel;
+
+		CHECK(sippymodem_v34_mp_type1_decode(
+			      NULL, sizeof(frame), &decoded) ==
+			      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+		      sippymodem_v34_mp_type1_decode(
+			      frame, sizeof(frame), NULL) ==
+			      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+		      sippymodem_v34_mp_type1_decode(
+			      frame,
+			      SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES - 1u,
+			      &decoded) == SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+		      type1_parameters_are_equal(&decoded, &sentinel),
+		      "invalid Type 1 MP decoding mutated output");
+	}
+	{
+		struct sippymodem_v34_mp_type1_parameters decoded = sentinel;
+
+		replace_lsb_first_field(
+			frame, MP_TYPE1_FIRST_COEFFICIENT_BIT,
+			MP_COEFFICIENT_COMPONENT_BITS, UINT16_C(0x8000));
+		replace_crc(frame, MP_TYPE1_CRC_FIRST_BIT);
+		CHECK(sippymodem_v34_mp_type1_decode(
+			      frame, sizeof(frame), &decoded) ==
+			      SIPPYMODEM_V34_MP_INVALID_FRAME &&
+		      type1_parameters_are_equal(&decoded, &sentinel),
+		      "Type 1 MP decoded the excluded Q14 endpoint");
 	}
 	return true;
 }
@@ -372,9 +648,13 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "known wire images", test_known_wire_images },
+		{ "Type 1 known wire image", test_type1_known_wire_image },
 		{ "selected fields round trip", test_selected_fields_round_trip },
 		{ "reserved bits ignored", test_reserved_bits_are_ignored },
 		{ "frame rejection", test_frame_rejection },
+		{ "Type 1 reserved bits and frame rejection",
+		  test_type1_reserved_bits_and_frame_rejection },
+		{ "Type 1 validation", test_type1_validation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

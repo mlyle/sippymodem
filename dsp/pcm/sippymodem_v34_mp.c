@@ -19,14 +19,17 @@ enum {
 	V34_MP_NONLINEAR_ENCODING_BIT = 31,
 	V34_MP_EXPANDED_SHAPING_BIT = 32,
 	V34_MP_ACKNOWLEDGMENT_BIT = 33,
-	V34_MP_START1_BIT = 34,
 	V34_MP_RATE_CAPABILITY_FIRST_BIT = 35,
 	V34_MP_ASYMMETRIC_RATES_BIT = 50,
-	V34_MP_START2_BIT = 51,
-	V34_MP_START3_BIT = 68,
+	V34_MP_TYPE1_FIRST_COEFFICIENT_BIT = 52,
+	V34_MP_COEFFICIENT_COMPONENT_BITS = 16,
+	V34_MP_FIELD_STRIDE_BITS = 17,
 	V34_MP_TYPE0_CRC_FIRST_BIT = 69,
 	V34_MP_TYPE0_FILL_FIRST_BIT = 85,
 	V34_MP_TYPE0_FILL_BITS = 3,
+	V34_MP_TYPE1_CRC_FIRST_BIT = 171,
+	V34_MP_TYPE1_FILL_FIRST_BIT = 187,
+	V34_MP_TYPE1_FILL_BITS = 1,
 };
 
 static bool trellis_is_valid(
@@ -56,6 +59,22 @@ bool sippymodem_v34_mp_parameters_are_valid(
 	       trellis_is_valid(parameters->remote_transmitter_trellis) &&
 	       (parameters->data_rate_capability_mask &
 		~SIPPYMODEM_V34_MP_RATE_CAPABILITY_MASK) == 0;
+}
+
+bool sippymodem_v34_mp_type1_parameters_are_valid(
+	const struct sippymodem_v34_mp_type1_parameters *parameters)
+{
+	if (parameters == NULL ||
+	    !sippymodem_v34_mp_parameters_are_valid(&parameters->common))
+		return false;
+	for (size_t index = 0; index < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++index) {
+		if (parameters->precoder_coefficients[index].real == INT16_MIN ||
+		    parameters->precoder_coefficients[index].imaginary ==
+			    INT16_MIN)
+			return false;
+	}
+	return true;
 }
 
 static uint8_t frame_bit(const uint8_t *frame, size_t bit_index)
@@ -114,24 +133,93 @@ static void encode_msb_first_field(
 
 static bool is_start_bit(size_t bit_index)
 {
-	return bit_index == V34_MP_START0_BIT ||
-	       bit_index == V34_MP_START1_BIT ||
-	       bit_index == V34_MP_START2_BIT ||
-	       bit_index == V34_MP_START3_BIT;
+	return bit_index >= V34_MP_START0_BIT &&
+	       bit_index < V34_MP_TYPE1_CRC_FIRST_BIT &&
+	       (bit_index - V34_MP_START0_BIT) % V34_MP_FIELD_STRIDE_BITS == 0;
 }
 
-static uint16_t type0_crc(const uint8_t *frame)
+static uint16_t frame_crc(const uint8_t *frame, size_t crc_first_bit)
 {
 	uint16_t remainder =
 		SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER;
 
-	for (size_t index = V34_MP_TYPE_BIT;
-	     index < V34_MP_TYPE0_CRC_FIRST_BIT; ++index) {
+	for (size_t index = V34_MP_TYPE_BIT; index < crc_first_bit; ++index) {
 		if (!is_start_bit(index))
 			remainder = sippymodem_crc16_ccitt_false_step(
 				remainder, frame_bit(frame, index) != 0);
 	}
 	return remainder;
+}
+
+static void encode_common_parameters(
+	uint8_t *frame, const struct sippymodem_v34_mp_parameters *parameters,
+	bool type1)
+{
+	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
+	     index < SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
+		set_frame_bit(frame, index, true);
+	set_frame_bit(frame, V34_MP_TYPE_BIT, type1);
+	encode_lsb_first_field(
+		frame, V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
+		V34_MP_RATE_FIELD_BITS,
+		parameters->maximum_call_to_answer_rate_2400_bps_units);
+	encode_lsb_first_field(
+		frame, V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
+		V34_MP_RATE_FIELD_BITS,
+		parameters->maximum_answer_to_call_rate_2400_bps_units);
+	set_frame_bit(
+		frame, V34_MP_AUXILIARY_CHANNEL_BIT,
+		parameters->auxiliary_channel_enabled);
+	encode_lsb_first_field(
+		frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS,
+		(uint16_t)parameters->remote_transmitter_trellis);
+	set_frame_bit(
+		frame, V34_MP_NONLINEAR_ENCODING_BIT,
+		parameters->remote_transmitter_nonlinear_encoding);
+	set_frame_bit(
+		frame, V34_MP_EXPANDED_SHAPING_BIT,
+		parameters->remote_transmitter_expanded_shaping);
+	set_frame_bit(
+		frame, V34_MP_ACKNOWLEDGMENT_BIT,
+		parameters->acknowledges_peer_mp);
+	encode_lsb_first_field(
+		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
+		SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS,
+		parameters->data_rate_capability_mask);
+	set_frame_bit(
+		frame, V34_MP_ASYMMETRIC_RATES_BIT,
+		parameters->asymmetric_rates_enabled);
+}
+
+static void decode_common_parameters(
+	const uint8_t *frame, struct sippymodem_v34_mp_parameters *parameters)
+{
+	parameters->maximum_call_to_answer_rate_2400_bps_units =
+		(uint8_t)decode_lsb_first_field(
+			frame,
+			V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
+			V34_MP_RATE_FIELD_BITS);
+	parameters->maximum_answer_to_call_rate_2400_bps_units =
+		(uint8_t)decode_lsb_first_field(
+			frame,
+			V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
+			V34_MP_RATE_FIELD_BITS);
+	parameters->auxiliary_channel_enabled =
+		frame_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
+	parameters->remote_transmitter_trellis =
+		(enum sippymodem_v34_trellis_selection)decode_lsb_first_field(
+			frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS);
+	parameters->remote_transmitter_nonlinear_encoding =
+		frame_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
+	parameters->remote_transmitter_expanded_shaping =
+		frame_bit(frame, V34_MP_EXPANDED_SHAPING_BIT) != 0;
+	parameters->acknowledges_peer_mp =
+		frame_bit(frame, V34_MP_ACKNOWLEDGMENT_BIT) != 0;
+	parameters->data_rate_capability_mask = decode_lsb_first_field(
+		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
+		SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS);
+	parameters->asymmetric_rates_enabled =
+		frame_bit(frame, V34_MP_ASYMMETRIC_RATES_BIT) != 0;
 }
 
 enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_encode(
@@ -147,41 +235,9 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_encode(
 	if (!sippymodem_v34_mp_parameters_are_valid(parameters))
 		return SIPPYMODEM_V34_MP_INVALID_PARAMETERS;
 
-	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
-	     index < SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
-		set_frame_bit(encoded, index, true);
-	encode_lsb_first_field(
-		encoded, V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
-		V34_MP_RATE_FIELD_BITS,
-		parameters->maximum_call_to_answer_rate_2400_bps_units);
-	encode_lsb_first_field(
-		encoded, V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
-		V34_MP_RATE_FIELD_BITS,
-		parameters->maximum_answer_to_call_rate_2400_bps_units);
-	set_frame_bit(
-		encoded, V34_MP_AUXILIARY_CHANNEL_BIT,
-		parameters->auxiliary_channel_enabled);
-	encode_lsb_first_field(
-		encoded, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS,
-		(uint16_t)parameters->remote_transmitter_trellis);
-	set_frame_bit(
-		encoded, V34_MP_NONLINEAR_ENCODING_BIT,
-		parameters->remote_transmitter_nonlinear_encoding);
-	set_frame_bit(
-		encoded, V34_MP_EXPANDED_SHAPING_BIT,
-		parameters->remote_transmitter_expanded_shaping);
-	set_frame_bit(
-		encoded, V34_MP_ACKNOWLEDGMENT_BIT,
-		parameters->acknowledges_peer_mp);
-	encode_lsb_first_field(
-		encoded, V34_MP_RATE_CAPABILITY_FIRST_BIT,
-		SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS,
-		parameters->data_rate_capability_mask);
-	set_frame_bit(
-		encoded, V34_MP_ASYMMETRIC_RATES_BIT,
-		parameters->asymmetric_rates_enabled);
+	encode_common_parameters(encoded, parameters, false);
 
-	crc = type0_crc(encoded);
+	crc = frame_crc(encoded, V34_MP_TYPE0_CRC_FIRST_BIT);
 	/* The CCITT-FALSE numeric representation holds the first V.34 CRC
 	 * output in its most-significant bit. */
 	encode_msb_first_field(
@@ -201,18 +257,20 @@ static bool frame_sync_is_valid(const uint8_t *frame)
 	return true;
 }
 
-static bool framing_bits_are_valid(const uint8_t *frame)
+static bool framing_bits_are_valid(
+	const uint8_t *frame, bool type1, size_t crc_first_bit,
+	size_t fill_first_bit, size_t fill_bit_count)
 {
 	if (!frame_sync_is_valid(frame) ||
-	    frame_bit(frame, V34_MP_START0_BIT) != 0 ||
-	    frame_bit(frame, V34_MP_START1_BIT) != 0 ||
-	    frame_bit(frame, V34_MP_START2_BIT) != 0 ||
-	    frame_bit(frame, V34_MP_START3_BIT) != 0 ||
-	    frame_bit(frame, V34_MP_TYPE_BIT) != 0)
+	    frame_bit(frame, V34_MP_TYPE_BIT) != (uint8_t)type1)
 		return false;
-	for (size_t index = V34_MP_TYPE0_FILL_FIRST_BIT;
-	     index < V34_MP_TYPE0_FILL_FIRST_BIT + V34_MP_TYPE0_FILL_BITS;
-	     ++index) {
+	for (size_t index = V34_MP_START0_BIT; index < crc_first_bit;
+	     index += V34_MP_FIELD_STRIDE_BITS) {
+		if (frame_bit(frame, index) != 0)
+			return false;
+	}
+	for (size_t index = fill_first_bit;
+	     index < fill_first_bit + fill_bit_count; ++index) {
 		if (frame_bit(frame, index) != 0)
 			return false;
 	}
@@ -229,41 +287,106 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_decode(
 	if (frame == NULL || parameters == NULL ||
 	    frame_capacity < SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES)
 		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
-	if (!framing_bits_are_valid(frame))
+	if (!framing_bits_are_valid(
+		    frame, false, V34_MP_TYPE0_CRC_FIRST_BIT,
+		    V34_MP_TYPE0_FILL_FIRST_BIT, V34_MP_TYPE0_FILL_BITS))
 		return SIPPYMODEM_V34_MP_INVALID_FRAME;
 	received_crc = decode_msb_first_field(
 		frame, V34_MP_TYPE0_CRC_FIRST_BIT,
 		SIPPYMODEM_V34_MP_CRC_BITS);
-	if (received_crc != type0_crc(frame))
+	if (received_crc != frame_crc(frame, V34_MP_TYPE0_CRC_FIRST_BIT))
 		return SIPPYMODEM_V34_MP_CRC_MISMATCH;
 
-	decoded.maximum_call_to_answer_rate_2400_bps_units =
-		(uint8_t)decode_lsb_first_field(
-			frame,
-			V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
-			V34_MP_RATE_FIELD_BITS);
-	decoded.maximum_answer_to_call_rate_2400_bps_units =
-		(uint8_t)decode_lsb_first_field(
-			frame,
-			V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
-			V34_MP_RATE_FIELD_BITS);
-	decoded.auxiliary_channel_enabled =
-		frame_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
-	decoded.remote_transmitter_trellis =
-		(enum sippymodem_v34_trellis_selection)decode_lsb_first_field(
-			frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS);
-	decoded.remote_transmitter_nonlinear_encoding =
-		frame_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
-	decoded.remote_transmitter_expanded_shaping =
-		frame_bit(frame, V34_MP_EXPANDED_SHAPING_BIT) != 0;
-	decoded.acknowledges_peer_mp =
-		frame_bit(frame, V34_MP_ACKNOWLEDGMENT_BIT) != 0;
-	decoded.data_rate_capability_mask = decode_lsb_first_field(
-		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
-		SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS);
-	decoded.asymmetric_rates_enabled =
-		frame_bit(frame, V34_MP_ASYMMETRIC_RATES_BIT) != 0;
+	decode_common_parameters(frame, &decoded);
 	if (!sippymodem_v34_mp_parameters_are_valid(&decoded))
+		return SIPPYMODEM_V34_MP_INVALID_FRAME;
+	*parameters = decoded;
+	return SIPPYMODEM_V34_MP_OK;
+}
+
+static size_t coefficient_component_first_bit(
+	size_t tap_index, bool imaginary)
+{
+	return V34_MP_TYPE1_FIRST_COEFFICIENT_BIT +
+	       (tap_index * 2u + (imaginary ? 1u : 0u)) *
+		       V34_MP_FIELD_STRIDE_BITS;
+}
+
+static int16_t decode_twos_complement(uint16_t value)
+{
+	if (value <= INT16_MAX)
+		return (int16_t)value;
+	return (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
+}
+
+enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_encode(
+	const struct sippymodem_v34_mp_type1_parameters *parameters,
+	uint8_t *frame, size_t frame_capacity)
+{
+	uint8_t encoded[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES] = { 0 };
+	uint16_t crc;
+
+	if (parameters == NULL || frame == NULL ||
+	    frame_capacity < SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES)
+		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
+	if (!sippymodem_v34_mp_type1_parameters_are_valid(parameters))
+		return SIPPYMODEM_V34_MP_INVALID_PARAMETERS;
+
+	encode_common_parameters(encoded, &parameters->common, true);
+	for (size_t index = 0; index < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++index) {
+		encode_lsb_first_field(
+			encoded, coefficient_component_first_bit(index, false),
+			V34_MP_COEFFICIENT_COMPONENT_BITS,
+			(uint16_t)parameters->precoder_coefficients[index].real);
+		encode_lsb_first_field(
+			encoded, coefficient_component_first_bit(index, true),
+			V34_MP_COEFFICIENT_COMPONENT_BITS,
+			(uint16_t)parameters->precoder_coefficients[index].imaginary);
+	}
+	crc = frame_crc(encoded, V34_MP_TYPE1_CRC_FIRST_BIT);
+	encode_msb_first_field(
+		encoded, V34_MP_TYPE1_CRC_FIRST_BIT,
+		SIPPYMODEM_V34_MP_CRC_BITS, crc);
+	memcpy(frame, encoded, sizeof(encoded));
+	return SIPPYMODEM_V34_MP_OK;
+}
+
+enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	struct sippymodem_v34_mp_type1_parameters *parameters)
+{
+	struct sippymodem_v34_mp_type1_parameters decoded = { 0 };
+	uint16_t received_crc;
+
+	if (frame == NULL || parameters == NULL ||
+	    frame_capacity < SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES)
+		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
+	if (!framing_bits_are_valid(
+		    frame, true, V34_MP_TYPE1_CRC_FIRST_BIT,
+		    V34_MP_TYPE1_FILL_FIRST_BIT, V34_MP_TYPE1_FILL_BITS))
+		return SIPPYMODEM_V34_MP_INVALID_FRAME;
+	received_crc = decode_msb_first_field(
+		frame, V34_MP_TYPE1_CRC_FIRST_BIT,
+		SIPPYMODEM_V34_MP_CRC_BITS);
+	if (received_crc != frame_crc(frame, V34_MP_TYPE1_CRC_FIRST_BIT))
+		return SIPPYMODEM_V34_MP_CRC_MISMATCH;
+
+	decode_common_parameters(frame, &decoded.common);
+	for (size_t index = 0; index < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++index) {
+		decoded.precoder_coefficients[index].real =
+			decode_twos_complement(decode_lsb_first_field(
+				frame,
+				coefficient_component_first_bit(index, false),
+				V34_MP_COEFFICIENT_COMPONENT_BITS));
+		decoded.precoder_coefficients[index].imaginary =
+			decode_twos_complement(decode_lsb_first_field(
+				frame,
+				coefficient_component_first_bit(index, true),
+				V34_MP_COEFFICIENT_COMPONENT_BITS));
+	}
+	if (!sippymodem_v34_mp_type1_parameters_are_valid(&decoded))
 		return SIPPYMODEM_V34_MP_INVALID_FRAME;
 	*parameters = decoded;
 	return SIPPYMODEM_V34_MP_OK;
