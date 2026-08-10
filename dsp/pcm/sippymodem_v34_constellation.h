@@ -6,6 +6,17 @@
 #include "sippymodem_qam.h"
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+enum {
+	SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT = 416,
+};
+
+struct sippymodem_v34_grid_point {
+	int16_t in_phase;
+	int16_t quadrature;
+};
 
 enum sippymodem_v34_constellation_size {
 	SIPPYMODEM_V34_CONSTELLATION_4_POINT = 4,
@@ -19,6 +30,13 @@ enum sippymodem_v34_constellation_result {
 
 bool sippymodem_v34_constellation_size_is_valid(
 	enum sippymodem_v34_constellation_size constellation);
+
+/* Generate labels zero through point_count - 1 from the V.34 quarter-
+ * superconstellation. Coordinates are exact, unscaled odd grid integers.
+ * The destination is unchanged when an argument is rejected. */
+enum sippymodem_v34_constellation_result
+sippymodem_v34_quarter_superconstellation_generate(
+	struct sippymodem_v34_grid_point *points, size_t point_count);
 
 /* Return point zero of the V.34 quarter-superconstellation after the given
  * number of 90-degree turns. Positive turns are counterclockwise; negative
