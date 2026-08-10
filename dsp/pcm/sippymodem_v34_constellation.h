@@ -59,6 +59,15 @@ sippymodem_v34_training_constellation_point(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
 	struct sippymodem_qam_point *point);
 
+/* Select the nearest generated Phase 3/4 training point. Equal-distance ties
+ * choose the first label in rotation-major order. Rejected calls leave both
+ * outputs unchanged. */
+enum sippymodem_v34_constellation_result
+sippymodem_v34_training_constellation_slice(
+	enum sippymodem_v34_constellation_size constellation,
+	const struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	uint8_t *clockwise_quarter_turns);
+
 const char *sippymodem_v34_constellation_result_name(
 	enum sippymodem_v34_constellation_result result);
 

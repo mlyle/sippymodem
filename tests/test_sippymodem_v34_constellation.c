@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -301,6 +302,77 @@ static bool test_sixteen_point_constellation(void)
 	return true;
 }
 
+static bool test_training_constellation_slicing(void)
+{
+	static const enum sippymodem_v34_constellation_size constellations[] = {
+		SIPPYMODEM_V34_CONSTELLATION_4_POINT,
+		SIPPYMODEM_V34_CONSTELLATION_16_POINT,
+	};
+	static const struct sippymodem_qam_point perturbations[] = {
+		{ 0.0, 0.0 },
+		{ 0.12, -0.09 },
+		{ -0.11, 0.13 },
+	};
+
+	for (size_t fixture = 0; fixture < ARRAY_LENGTH(constellations);
+	     ++fixture) {
+		enum sippymodem_v34_constellation_size constellation =
+			constellations[fixture];
+		uint8_t quarter_count =
+			constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT ?
+				4u :
+				1u;
+
+		for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
+			for (uint8_t quarter = 0; quarter < quarter_count;
+			     ++quarter) {
+				struct sippymodem_qam_point exact;
+
+				CHECK(sippymodem_v34_training_constellation_point(
+					      constellation, quarter, rotation,
+					      &exact) ==
+					      SIPPYMODEM_V34_CONSTELLATION_OK,
+				      "slicer fixture %zu/%u/%u failed",
+				      fixture, quarter, rotation);
+				for (size_t noise = 0;
+				     noise < ARRAY_LENGTH(perturbations);
+				     ++noise) {
+					struct sippymodem_qam_point observed = {
+						.in_phase = exact.in_phase +
+							perturbations[noise].in_phase,
+						.quadrature = exact.quadrature +
+							perturbations[noise].quadrature,
+					};
+					uint8_t sliced_quarter = UINT8_MAX;
+					uint8_t sliced_rotation = UINT8_MAX;
+
+					CHECK(sippymodem_v34_training_constellation_slice(
+						      constellation, &observed,
+						      &sliced_quarter,
+						      &sliced_rotation) ==
+						      SIPPYMODEM_V34_CONSTELLATION_OK &&
+					      sliced_quarter == quarter &&
+					      sliced_rotation == rotation,
+					      "slicer changed %zu/%u/%u at noise %zu",
+					      fixture, quarter, rotation, noise);
+				}
+			}
+		}
+		{
+			struct sippymodem_qam_point tie = { 0 };
+			uint8_t quarter = UINT8_MAX;
+			uint8_t rotation = UINT8_MAX;
+
+			CHECK(sippymodem_v34_training_constellation_slice(
+				      constellation, &tie, &quarter, &rotation) ==
+				      SIPPYMODEM_V34_CONSTELLATION_OK &&
+			      quarter == 0u && rotation == 0u,
+			      "slicer tie order changed for fixture %zu", fixture);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_qam_point point = { 7.0, -9.0 };
@@ -309,6 +381,10 @@ static bool test_validation(void)
 	struct sippymodem_v34_grid_point saved[4];
 	struct sippymodem_v34_grid_point indexed = { 23, -29 };
 	struct sippymodem_v34_grid_point saved_indexed = indexed;
+	struct sippymodem_qam_point not_finite = { NAN, 0.0 };
+	struct sippymodem_qam_point too_large = { DBL_MAX, DBL_MAX };
+	uint8_t quarter = 0xa5;
+	uint8_t rotation = 0x5a;
 
 	memset(generated, 0x5a, sizeof(generated));
 	memcpy(saved, generated, sizeof(saved));
@@ -356,6 +432,29 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      memcmp(&indexed, &saved_indexed, sizeof(indexed)) == 0,
 	      "invalid indexed lookup changed its output");
+	CHECK(sippymodem_v34_training_constellation_slice(
+		      (enum sippymodem_v34_constellation_size)8, &point,
+		      &quarter, &rotation) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_training_constellation_slice(
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, NULL, &quarter,
+		      &rotation) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_training_constellation_slice(
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &not_finite,
+		      &quarter, &rotation) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_training_constellation_slice(
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &too_large,
+		      &quarter, &rotation) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_training_constellation_slice(
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &point, NULL,
+		      &rotation) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_training_constellation_slice(
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &point, &quarter,
+		      &quarter) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      quarter == 0xa5 && rotation == 0x5a,
+	      "invalid training-constellation slice changed outputs");
 	CHECK(strcmp(sippymodem_v34_constellation_result_name(
 			     SIPPYMODEM_V34_CONSTELLATION_OK),
 		     "ok") == 0 &&
@@ -380,6 +479,8 @@ int main(void)
 		{ "point-zero rotations", test_point_zero_rotations },
 		{ "four-point training set", test_four_point_constellation },
 		{ "sixteen-point training set", test_sixteen_point_constellation },
+		{ "training-constellation slicing",
+		  test_training_constellation_slicing },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

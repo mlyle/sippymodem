@@ -2,6 +2,8 @@
 
 #include "sippymodem_v34_constellation.h"
 
+#include <float.h>
+#include <math.h>
 #include <stddef.h>
 
 enum {
@@ -227,6 +229,58 @@ sippymodem_v34_training_constellation_point(
 	};
 	next = rotate_point(next, -(int)clockwise_quarter_turns);
 	*point = next;
+	return SIPPYMODEM_V34_CONSTELLATION_OK;
+}
+
+enum sippymodem_v34_constellation_result
+sippymodem_v34_training_constellation_slice(
+	enum sippymodem_v34_constellation_size constellation,
+	const struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	uint8_t *clockwise_quarter_turns)
+{
+	double best_distance = DBL_MAX;
+	uint8_t best_quarter = 0;
+	uint8_t best_rotation = 0;
+	uint8_t quarter_count;
+	bool found = false;
+
+	if (!sippymodem_v34_constellation_size_is_valid(constellation) ||
+	    point == NULL || !isfinite(point->in_phase) ||
+	    !isfinite(point->quadrature) || quarter_point == NULL ||
+	    clockwise_quarter_turns == NULL ||
+	    quarter_point == clockwise_quarter_turns)
+		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	quarter_count = constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT ?
+				4u :
+				1u;
+	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
+		for (uint8_t quarter = 0; quarter < quarter_count; ++quarter) {
+			struct sippymodem_qam_point candidate;
+			double in_phase_error;
+			double quadrature_error;
+			double distance;
+
+			if (sippymodem_v34_training_constellation_point(
+				    constellation, quarter, rotation,
+				    &candidate) != SIPPYMODEM_V34_CONSTELLATION_OK)
+				return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+			in_phase_error = point->in_phase - candidate.in_phase;
+			quadrature_error =
+				point->quadrature - candidate.quadrature;
+			distance = in_phase_error * in_phase_error +
+				   quadrature_error * quadrature_error;
+			if (!isfinite(distance) || distance >= best_distance)
+				continue;
+			best_distance = distance;
+			best_quarter = quarter;
+			best_rotation = rotation;
+			found = true;
+		}
+	}
+	if (!found)
+		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	*quarter_point = best_quarter;
+	*clockwise_quarter_turns = best_rotation;
 	return SIPPYMODEM_V34_CONSTELLATION_OK;
 }
 
