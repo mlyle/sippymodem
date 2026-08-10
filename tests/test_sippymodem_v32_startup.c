@@ -51,7 +51,8 @@ static bool check_role_exchange(
 	struct sippymodem_v32_rate_offer selected = {
 		.rates = expected_rate,
 		.trellis_at_highest_rate =
-			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200,
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200 ||
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_12000,
 	};
 	uint32_t caller_phases = 0;
 	uint32_t answerer_phases = 0;
@@ -173,8 +174,16 @@ static bool test_rate_selection(void)
 	uint8_t v32bis = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
 			 SIPPYMODEM_V32_RATE_CAPABILITY_7200;
 	uint8_t all = v32bis | SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	uint8_t through_12000 = all | SIPPYMODEM_V32_RATE_CAPABILITY_12000;
 
-	return check_role_exchange(both, both,
+	return check_role_exchange(
+		       through_12000, through_12000,
+		       SIPPYMODEM_V32_RATE_CAPABILITY_12000) &&
+	       check_role_exchange(through_12000, all,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
+	       check_role_exchange(all, through_12000,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
+	       check_role_exchange(both, both,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
 	       check_role_exchange(v32bis, v32bis,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
@@ -243,7 +252,7 @@ static bool test_higher_rate_offer_fallback(void)
 	      observe_word(&caller, word) && observe_word(&caller, word) &&
 	      caller.selected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_9600 &&
 	      caller.rate_word == 0x0b11 && caller.end_word == 0xfb11,
-	      "V.32 startup did not select its highest implemented fallback");
+	      "V.32 startup did not select its highest supported fallback");
 	return true;
 }
 

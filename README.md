@@ -27,10 +27,10 @@ selectable with `AT+MS=22`; its first source-built slice intentionally uses raw
 asynchronous transport while LAPM negotiation is rebuilt separately. The same
 wire-compatible 1200-bit/s implementation provides Bell 212A through
 `AT+MS=212`. V.22bis adds its generated 16-point constellation at 2400 bit/s.
-V.32 and V.32bis provide negotiated 4800- and 9600-bit/s uncoded paths plus a
-7200-bit/s trellis-coded path whose compact encoder, generated signal geometry,
-and bounded path decoder replace large lookup tables. Bell 103 is selectable
-with `AT+MS=103` and V.23 with `AT+MS=23`.
+V.32 and V.32bis provide negotiated 4800- and 9600-bit/s uncoded paths plus
+7200- and 12000-bit/s trellis-coded paths whose compact encoder, generated
+signal geometry, and bounded path decoder replace large lookup tables. Bell
+103 is selectable with `AT+MS=103` and V.23 with `AT+MS=23`.
 Baudot TTY/TDD is selectable with `AT+MS=45`; a 50-only rate range selects 50
 baud instead of the North American 45.45-baud mode. Its bounded text path uses
 explicit half-duplex turns and preserves the complete mark-hold interval before
@@ -57,7 +57,7 @@ handling, negotiated SIP-to-RTP binding, and lifecycle-ordered recording hooks
 without linking the legacy DSP object or requiring external vectors. A compact
 integration check trains two real modem cores through the PCMU and PCMA media
 and recording boundaries, then verifies exact binary terminal data in both
-directions through V.32bis at 7200 bit/s, including bounded carrier-loss
+directions through V.32bis at 12000 bit/s, including bounded carrier-loss
 handling. The same boundary check exchanges Baudot text in both directions
 without overlapping the half-duplex turns.
 

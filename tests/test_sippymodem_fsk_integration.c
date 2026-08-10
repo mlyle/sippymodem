@@ -354,6 +354,11 @@ static bool run_media_call(
 	      test_case->name);
 	caller.output_count = 0;
 	answerer.output_count = 0;
+	CHECK(process_sip_frame(&caller, &answerer, codec, &recorder) &&
+		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
+		      caller.output_count == 0 && answerer.output_count == 0,
+	      "%s idle link emitted terminal data (caller=%zu answerer=%zu)",
+	      test_case->name, caller.output_count, answerer.output_count);
 
 	CHECK(modem_write(caller.modem, (const char *)caller_payload,
 			  (int)sizeof(caller_payload)) ==
@@ -640,6 +645,16 @@ int main(void)
 			.caller_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
+			.id = DP_V32,
+			.name = "V.32bis 12000",
+			.selection_command = "AT+MS=32,0,12000,12000\r",
+			.caller_tx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 		},
 		{
