@@ -433,6 +433,24 @@ V34_NONLINEAR_ENCODER_TEST_BINARY := \
 V34_NONLINEAR_ENCODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_nonlinear_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o
+V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_transmitter
+V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_transmitter.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/sippymodem_v34_framing.o \
+	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
+	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
+	$(BUILD_DIR)/sippymodem_v34_parser.o \
+	$(BUILD_DIR)/sippymodem_v34_shell_mapper.o \
+	$(BUILD_DIR)/sippymodem_v34_constellation.o \
+	$(BUILD_DIR)/sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/sippymodem_v34_precoder.o \
+	$(BUILD_DIR)/sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
+	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
+	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
+	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o
 V34_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_constellation
 V34_CONSTELLATION_TEST_OBJECTS := \
@@ -762,6 +780,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_4D_ENCODER_TEST_BINARY) \
 	$(V34_MAPPING_FRAME_ENCODER_TEST_BINARY) \
 	$(V34_NONLINEAR_ENCODER_TEST_BINARY) \
+	$(V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY) \
 	$(V34_CONSTELLATION_TEST_BINARY) \
 	$(V34_INFO1_TEST_BINARY) \
 	$(V34_PREEMPHASIS_TEST_BINARY) \
@@ -848,6 +867,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_4D_ENCODER_TEST_OBJECTS:.o=.d) \
 	$(V34_MAPPING_FRAME_ENCODER_TEST_OBJECTS:.o=.d) \
 	$(V34_NONLINEAR_ENCODER_TEST_OBJECTS:.o=.d) \
+	$(V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS:.o=.d) \
 	$(V34_CONSTELLATION_TEST_OBJECTS:.o=.d) \
 	$(V34_INFO1_TEST_OBJECTS:.o=.d) \
 	$(V34_PREEMPHASIS_TEST_OBJECTS:.o=.d) \
@@ -950,6 +970,7 @@ test: $(TEST_BINARIES)
 	./$(V34_4D_ENCODER_TEST_BINARY)
 	./$(V34_MAPPING_FRAME_ENCODER_TEST_BINARY)
 	./$(V34_NONLINEAR_ENCODER_TEST_BINARY)
+	./$(V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY)
 	./$(V34_CONSTELLATION_TEST_BINARY)
 	./$(V34_INFO1_TEST_BINARY)
 	./$(V34_PREEMPHASIS_TEST_BINARY)
@@ -1178,6 +1199,10 @@ $(V34_MAPPING_FRAME_ENCODER_TEST_BINARY): \
 
 $(V34_NONLINEAR_ENCODER_TEST_BINARY): \
 	$(V34_NONLINEAR_ENCODER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY): \
+	$(V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_CONSTELLATION_TEST_BINARY): $(V34_CONSTELLATION_TEST_OBJECTS)
@@ -1536,6 +1561,11 @@ $(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o: \
 
 $(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_nonlinear_encoder.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapping_frame_transmitter.c | \
+	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_constellation.o: \

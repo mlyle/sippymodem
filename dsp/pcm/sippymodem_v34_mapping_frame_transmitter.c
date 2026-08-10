@@ -21,10 +21,10 @@ project_mapping_frame(
 	struct sippymodem_qam_point
 		projected[SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME])
 {
-	for (uint8_t interval = 0;
+	for (size_t interval = 0;
 	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
-		for (uint8_t symbol = 0;
+		for (size_t symbol = 0;
 		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol) {
 			size_t index =
