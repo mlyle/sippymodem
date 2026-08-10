@@ -31,6 +31,28 @@ struct sippymodem_v34_data_stream {
 	bool b1_active;
 };
 
+/* The negotiated settings needed to enter the data phase. The Phase 3
+ * profile owns the exact carrier and symbol rates; the remaining fields are
+ * the selected Phase 4 transmit settings and local line interface. */
+struct sippymodem_v34_data_stream_configuration {
+	struct sippymodem_v34_phase3_profile profile;
+	struct sippymodem_v34_q14_coefficient
+		precoder_coefficients[SIPPYMODEM_V34_PRECODER_TAP_COUNT];
+	uint32_t sample_rate;
+	int16_t nominal_peak_amplitude;
+	enum sippymodem_v34_trellis_selection trellis_selection;
+	enum sippymodem_v34_nonlinear_parameter nonlinear_parameter;
+	uint8_t primary_data_rate_2400_bps_units;
+	bool auxiliary_channel_enabled;
+	bool expanded_shaping;
+};
+
+/* Derive and calibrate a complete transmitter at the first B1 mapping frame.
+ * The destination and configuration remain unchanged on every failure. */
+enum sippymodem_v34_data_stream_result sippymodem_v34_data_stream_init(
+	struct sippymodem_v34_data_stream *stream,
+	const struct sippymodem_v34_data_stream_configuration *configuration);
+
 /* Take ownership of a transmitter positioned at the first mapping frame of
  * B1. The one-frame B1 payload is generated internally as binary ones; the
  * external source is not consulted until the following data frame. */

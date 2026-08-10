@@ -8,27 +8,41 @@
 #include <stdint.h>
 #include <string.h>
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
-	{ 4096, 2048 },
-	{ -2048, 1024 },
-	{ 1024, -2048 },
-};
-
-static bool initialize_transmitter(
-	struct sippymodem_v34_data_transmitter *transmitter)
+static struct sippymodem_v34_data_stream_configuration
+configuration_fixture(void)
 {
-	struct sippymodem_v34_phase3_profile profile = {
-		.symbol_rate_numerator = 3000,
-		.symbol_rate_denominator = 1,
-		.carrier_frequency_numerator = 2000,
-		.carrier_frequency_denominator = 1,
-		.symbol_rate = SIPPYMODEM_V34_SYMBOL_RATE_3000,
-		.local_role = SIPPYMODEM_V34_CALLING_STATION,
-		.transmit_power_reduction_db = 2,
-		.preemphasis_filter_index = 3,
-		.projected_data_rate_2400_bps_units = 8,
-		.high_carrier = true,
+	return (struct sippymodem_v34_data_stream_configuration){
+		.profile = {
+			.symbol_rate_numerator = 3000,
+			.symbol_rate_denominator = 1,
+			.carrier_frequency_numerator = 2000,
+			.carrier_frequency_denominator = 1,
+			.symbol_rate = SIPPYMODEM_V34_SYMBOL_RATE_3000,
+			.local_role = SIPPYMODEM_V34_CALLING_STATION,
+			.transmit_power_reduction_db = 2,
+			.preemphasis_filter_index = 3,
+			.projected_data_rate_2400_bps_units = 8,
+			.high_carrier = true,
+		},
+		.precoder_coefficients = {
+			{ 4096, 2048 },
+			{ -2048, 1024 },
+			{ 1024, -2048 },
+		},
+		.sample_rate = 8000,
+		.nominal_peak_amplitude = 5000,
+		.trellis_selection = SIPPYMODEM_V34_TRELLIS_32_STATE,
+		.nonlinear_parameter =
+			SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		.primary_data_rate_2400_bps_units = 8,
+		.auxiliary_channel_enabled = true,
 	};
+}
+
+static bool compose_transmitter(
+	struct sippymodem_v34_data_transmitter *transmitter,
+	const struct sippymodem_v34_data_stream_configuration *configuration)
+{
 	struct sippymodem_v34_frame_geometry geometry;
 	struct sippymodem_v34_mapping_parameters parameters;
 	struct sippymodem_v34_frame_schedule schedule;
@@ -36,30 +50,47 @@ static bool initialize_transmitter(
 	struct sippymodem_v34_4d_encoder encoder;
 	struct sippymodem_v34_power_normalizer normalizer;
 
-	return sippymodem_v34_phase3_profile_is_valid(&profile) &&
+	return configuration != NULL &&
+	       sippymodem_v34_phase3_profile_is_valid(
+		       &configuration->profile) &&
 	       sippymodem_v34_frame_geometry_init(
-		       &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true) ==
+		       &geometry, configuration->profile.symbol_rate,
+		       configuration->primary_data_rate_2400_bps_units,
+		       configuration->auxiliary_channel_enabled) ==
 		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
 	       sippymodem_v34_mapping_parameters_init(
-		       &parameters, &geometry, false) ==
+		       &parameters, &geometry,
+		       configuration->expanded_shaping) ==
 		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
 	       sippymodem_v34_b1_frame_schedule_init(&schedule, &geometry) ==
 		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
 	       sippymodem_v34_transmit_scrambler_init(
-		       &scrambler, SIPPYMODEM_V34_CALLING_STATION) ==
+		       &scrambler, configuration->profile.local_role) ==
 		       SIPPYMODEM_V34_FRAMING_OK &&
 	       sippymodem_v34_4d_encoder_init(
-		       &encoder, &parameters, COEFFICIENTS,
-		       SIPPYMODEM_V34_TRELLIS_32_STATE) ==
+		       &encoder, &parameters,
+		       configuration->precoder_coefficients,
+		       configuration->trellis_selection) ==
 		       SIPPYMODEM_V34_4D_ENCODER_OK &&
 	       sippymodem_v34_calibrate_mapping_power(
 		       &schedule, &scrambler, &encoder,
-		       SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		       configuration->nonlinear_parameter,
 		       &normalizer) == SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
 	       sippymodem_v34_data_transmitter_init(
 		       transmitter, &schedule, &scrambler, &encoder,
-		       &normalizer, &profile, 8000, 5000) ==
+		       &normalizer, &configuration->profile,
+		       configuration->sample_rate,
+		       configuration->nominal_peak_amplitude) ==
 		       SIPPYMODEM_V34_DATA_TRANSMITTER_OK;
+}
+
+static bool initialize_transmitter(
+	struct sippymodem_v34_data_transmitter *transmitter)
+{
+	struct sippymodem_v34_data_stream_configuration configuration =
+		configuration_fixture();
+
+	return compose_transmitter(transmitter, &configuration);
 }
 
 static void fill_generated_frame(
@@ -214,6 +245,128 @@ static bool bytes_are_filled(
 	return true;
 }
 
+static bool streams_match_through_b1(
+	struct sippymodem_v34_data_stream *left,
+	struct sippymodem_v34_data_stream *right)
+{
+	for (size_t sample_index = 0; sample_index < 1024u; ++sample_index) {
+		int16_t left_sample;
+		int16_t right_sample;
+		bool left_accepted;
+		bool right_accepted;
+
+		if (sippymodem_v34_data_stream_sample(
+			    left, NULL, NULL, &left_sample, &left_accepted) !=
+			    SIPPYMODEM_V34_DATA_STREAM_OK ||
+		    sippymodem_v34_data_stream_sample(
+			    right, NULL, NULL, &right_sample, &right_accepted) !=
+			    SIPPYMODEM_V34_DATA_STREAM_OK ||
+		    left_sample != right_sample ||
+		    left_accepted != right_accepted ||
+		    left->b1_active != right->b1_active)
+			return false;
+		if (!left->b1_active)
+			return true;
+	}
+	return false;
+}
+
+static bool initialization_is_rejected(
+	const struct sippymodem_v34_data_stream_configuration *configuration,
+	enum sippymodem_v34_data_stream_result expected)
+{
+	struct sippymodem_v34_data_stream stream;
+
+	memset(&stream, 0xa5, sizeof(stream));
+	return sippymodem_v34_data_stream_init(&stream, configuration) ==
+		       expected &&
+	       bytes_are_filled(&stream, sizeof(stream), 0xa5);
+}
+
+static bool test_selected_initialization(void)
+{
+	for (unsigned int role = SIPPYMODEM_V34_CALLING_STATION;
+	     role <= SIPPYMODEM_V34_ANSWERING_STATION; ++role) {
+		struct sippymodem_v34_data_stream_configuration configuration =
+			configuration_fixture();
+		struct sippymodem_v34_data_transmitter transmitter;
+		struct sippymodem_v34_data_stream expected;
+		struct sippymodem_v34_data_stream actual;
+
+		configuration.profile.local_role =
+			(enum sippymodem_v34_station_role)role;
+		CHECK(compose_transmitter(&transmitter, &configuration) &&
+		      sippymodem_v34_data_stream_init_b1(
+			      &expected, &transmitter) ==
+			      SIPPYMODEM_V34_DATA_STREAM_OK &&
+		      sippymodem_v34_data_stream_init(
+			      &actual, &configuration) ==
+			      SIPPYMODEM_V34_DATA_STREAM_OK &&
+		      sippymodem_v34_data_stream_is_transmitting_b1(&actual) &&
+		      streams_match_through_b1(&actual, &expected),
+		      "selected stream mismatch for role %u", role);
+	}
+	return true;
+}
+
+static bool test_initialization_failures(void)
+{
+	struct sippymodem_v34_data_stream_configuration configuration =
+		configuration_fixture();
+	struct sippymodem_v34_data_stream rejected;
+
+	memset(&rejected, 0xa5, sizeof(rejected));
+	CHECK(sippymodem_v34_data_stream_init(NULL, &configuration) ==
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_stream_init(&rejected, NULL) ==
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "null initialization input changed the stream");
+	configuration.primary_data_rate_2400_bps_units = 9;
+	CHECK(initialization_is_rejected(
+		      &configuration,
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT),
+	      "rate above the Phase 3 projection was accepted");
+	configuration = configuration_fixture();
+	configuration.primary_data_rate_2400_bps_units = 1;
+	CHECK(initialization_is_rejected(
+		      &configuration, SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE),
+	      "unsupported symbol-rate geometry was accepted");
+	configuration = configuration_fixture();
+	configuration.trellis_selection =
+		(enum sippymodem_v34_trellis_selection)99;
+	CHECK(initialization_is_rejected(
+		      &configuration,
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT),
+	      "invalid trellis selection was accepted");
+	configuration = configuration_fixture();
+	configuration.nonlinear_parameter =
+		(enum sippymodem_v34_nonlinear_parameter)99;
+	CHECK(initialization_is_rejected(
+		      &configuration,
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT),
+	      "invalid nonlinear selection was accepted");
+	configuration = configuration_fixture();
+	configuration.precoder_coefficients[0].real = INT16_MIN;
+	CHECK(initialization_is_rejected(
+		      &configuration,
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT),
+	      "out-of-domain precoder coefficient was accepted");
+	configuration = configuration_fixture();
+	configuration.sample_rate = 0;
+	CHECK(initialization_is_rejected(
+		      &configuration,
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT),
+	      "zero sample rate was accepted");
+	configuration = configuration_fixture();
+	configuration.nominal_peak_amplitude = 0;
+	CHECK(initialization_is_rejected(
+		      &configuration,
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT),
+	      "zero line amplitude was accepted");
+	return true;
+}
+
 static bool test_transactional_boundaries(void)
 {
 	struct sippymodem_v34_data_transmitter transmitter;
@@ -308,6 +461,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "selected initialization", test_selected_initialization },
+		{ "initialization failures", test_initialization_failures },
 		{ "B1 and host handoff", test_b1_and_host_handoff },
 		{ "transactional boundaries", test_transactional_boundaries },
 	};

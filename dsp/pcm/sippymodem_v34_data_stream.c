@@ -28,6 +28,104 @@ static enum sippymodem_v34_data_stream_result transmitter_result(
 	return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
+static enum sippymodem_v34_data_stream_result geometry_result(
+	enum sippymodem_v34_frame_schedule_result result)
+{
+	switch (result) {
+	case SIPPYMODEM_V34_FRAME_SCHEDULE_OK:
+		return SIPPYMODEM_V34_DATA_STREAM_OK;
+	case SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT:
+		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
+	case SIPPYMODEM_V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION:
+		return SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE;
+	case SIPPYMODEM_V34_FRAME_SCHEDULE_FRAME_COMPLETE:
+		break;
+	}
+	return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+}
+
+static enum sippymodem_v34_data_stream_result calibration_result(
+	enum sippymodem_v34_power_calibration_result result)
+{
+	switch (result) {
+	case SIPPYMODEM_V34_POWER_CALIBRATION_OK:
+		return SIPPYMODEM_V34_DATA_STREAM_OK;
+	case SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT:
+		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
+	case SIPPYMODEM_V34_POWER_CALIBRATION_OUT_OF_RANGE:
+		return SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE;
+	case SIPPYMODEM_V34_POWER_CALIBRATION_NUMERIC_FAILURE:
+		return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	}
+	return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+}
+
+enum sippymodem_v34_data_stream_result sippymodem_v34_data_stream_init(
+	struct sippymodem_v34_data_stream *stream,
+	const struct sippymodem_v34_data_stream_configuration *configuration)
+{
+	struct sippymodem_v34_frame_geometry geometry;
+	struct sippymodem_v34_mapping_parameters parameters;
+	struct sippymodem_v34_frame_schedule schedule;
+	struct sippymodem_v34_scrambler scrambler;
+	struct sippymodem_v34_4d_encoder encoder;
+	struct sippymodem_v34_power_normalizer normalizer;
+	struct sippymodem_v34_data_transmitter transmitter;
+	struct sippymodem_v34_data_stream initialized;
+	enum sippymodem_v34_data_stream_result result;
+
+	if (stream == NULL || configuration == NULL ||
+	    !sippymodem_v34_phase3_profile_is_valid(&configuration->profile) ||
+	    configuration->primary_data_rate_2400_bps_units >
+		    configuration->profile
+			    .projected_data_rate_2400_bps_units ||
+	    configuration->sample_rate == 0 ||
+	    configuration->nominal_peak_amplitude <= 0 ||
+	    !sippymodem_v34_trellis_selection_is_valid(
+		    configuration->trellis_selection) ||
+	    !sippymodem_v34_nonlinear_parameter_is_valid(
+		    configuration->nonlinear_parameter))
+		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = geometry_result(sippymodem_v34_frame_geometry_init(
+		&geometry, configuration->profile.symbol_rate,
+		configuration->primary_data_rate_2400_bps_units,
+		configuration->auxiliary_channel_enabled));
+	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+		return result;
+	if (sippymodem_v34_mapping_parameters_init(
+		    &parameters, &geometry, configuration->expanded_shaping) !=
+	    SIPPYMODEM_V34_MAPPING_PARAMETERS_OK ||
+	    sippymodem_v34_b1_frame_schedule_init(&schedule, &geometry) !=
+		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
+	    sippymodem_v34_transmit_scrambler_init(
+		    &scrambler, configuration->profile.local_role) !=
+		    SIPPYMODEM_V34_FRAMING_OK)
+		return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	if (sippymodem_v34_4d_encoder_init(
+		    &encoder, &parameters,
+		    configuration->precoder_coefficients,
+		    configuration->trellis_selection) !=
+	    SIPPYMODEM_V34_4D_ENCODER_OK)
+		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = calibration_result(sippymodem_v34_calibrate_mapping_power(
+		&schedule, &scrambler, &encoder,
+		configuration->nonlinear_parameter, &normalizer));
+	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+		return result;
+	result = transmitter_result(sippymodem_v34_data_transmitter_init(
+		&transmitter, &schedule, &scrambler, &encoder, &normalizer,
+		&configuration->profile, configuration->sample_rate,
+		configuration->nominal_peak_amplitude));
+	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+		return result;
+	result = sippymodem_v34_data_stream_init_b1(
+		&initialized, &transmitter);
+	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+		return result;
+	*stream = initialized;
+	return SIPPYMODEM_V34_DATA_STREAM_OK;
+}
+
 static bool schedule_is_at_b1_start(
 	const struct sippymodem_v34_frame_schedule *schedule)
 {
