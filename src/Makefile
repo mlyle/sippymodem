@@ -99,6 +99,7 @@ SIPPYMODEM_DSP_SOURCES := \
 	dsp/sippymodem_v34_phase2_info_audio.c \
 	dsp/sippymodem_v34_phase2_info.c \
 	dsp/sippymodem_v34_phase2_probe.c \
+	dsp/sippymodem_v34_phase2_probe_receiver.c \
 	dsp/sippymodem_v34_phase2_probe_spectrum.c \
 	dsp/sippymodem_v34_phase2_probe_sequence.c \
 	dsp/sippymodem_v34_phase2_ranging.c \

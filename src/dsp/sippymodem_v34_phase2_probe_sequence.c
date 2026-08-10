@@ -7,7 +7,8 @@
 static uint32_t l2_limit_samples(
 	const struct sippymodem_v34_phase2_probe_sequence *sequence)
 {
-	return (uint32_t)SIPPYMODEM_V34_PHASE2_PROBE_L2_BASE_LIMIT_SAMPLES +
+	return (uint32_t)
+		       SIPPYMODEM_V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
 	       sequence->round_trip_delay_samples;
 }
 

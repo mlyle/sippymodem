@@ -135,7 +135,8 @@ static bool check_l2_limit(uint16_t round_trip_delay_samples)
 	struct sippymodem_v34_phase2_probe_sequence sequence;
 	struct sippymodem_v34_phase2_probe_sequence before;
 	uint32_t expected_limit =
-		(uint32_t)SIPPYMODEM_V34_PHASE2_PROBE_L2_BASE_LIMIT_SAMPLES +
+		(uint32_t)
+			SIPPYMODEM_V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
 		round_trip_delay_samples;
 	struct sippymodem_v34_phase2_probe_sequence_event event;
 	int16_t sample;
