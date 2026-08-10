@@ -118,7 +118,7 @@ static bool feed_frame(
 static bool test_base_info0_frame(void)
 {
 	static const uint8_t expected[] = {
-		0xff, 0x72, 0xff, 0x84, 0x47, 0xec, 0xf8,
+		0xf7, 0x2f, 0xf8, 0x44, 0x7e, 0xcf, 0x80,
 	};
 	struct sippymodem_v34_info0 info0 = base_info0(false);
 	struct sippymodem_v34_phase2_info_generator generator;
@@ -129,10 +129,13 @@ static bool test_base_info0_frame(void)
 			SIPPYMODEM_V34_INFO0_PAYLOAD_BITS);
 
 	CHECK(SIPPYMODEM_V34_INFO0_PAYLOAD_BITS == 17 &&
+	      SIPPYMODEM_V34_PHASE2_INFO_LEADING_FILL_BITS == 4 &&
+	      SIPPYMODEM_V34_PHASE2_INFO_SYNC_BITS == 8 &&
+	      SIPPYMODEM_V34_PHASE2_INFO_PREFIX_BITS == 12 &&
 	      sippymodem_v34_info0_encode(
 		      &info0, payload, sizeof(payload)) ==
 		      SIPPYMODEM_V34_INFO0_OK &&
-	      frame_bit_count == 53 &&
+	      frame_bit_count == 49 &&
 	      sippymodem_v34_phase2_info_generator_init(
 		      &generator, payload,
 		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS) ==
@@ -429,10 +432,10 @@ static bool test_receive_reacquisition(void)
 		      SIPPYMODEM_V34_PHASE2_INFO_OK &&
 	      feed_frame(
 		      &receiver, payload, 17,
-		      SIPPYMODEM_V34_PHASE2_INFO_SYNC_BITS + 3u, &capture) &&
+		      SIPPYMODEM_V34_PHASE2_INFO_PREFIX_BITS + 3u, &capture) &&
 	      capture.received == 0 && capture.rejected == 1 &&
 	      capture.rejected_bit ==
-		      SIPPYMODEM_V34_PHASE2_INFO_SYNC_BITS + 17u +
+		      SIPPYMODEM_V34_PHASE2_INFO_PREFIX_BITS + 17u +
 			      SIPPYMODEM_V34_PHASE2_INFO_CRC_BITS - 1u &&
 	      feed_frame(&receiver, payload, 17, SIZE_MAX, &capture) &&
 	      capture.received == 1 && capture.rejected == 1 &&
@@ -499,6 +502,10 @@ static bool test_receiver_validation(void)
 	receiver.crc ^= 1;
 	CHECK(!sippymodem_v34_phase2_info_receiver_is_valid(&receiver),
 	      "receiver accepted a corrupt CRC state");
+	receiver = saved;
+	receiver.sync_window = UINT16_C(0x1000);
+	CHECK(!sippymodem_v34_phase2_info_receiver_is_valid(&receiver),
+	      "receiver accepted an oversized sync window");
 	receiver = saved;
 	CHECK(sippymodem_v34_phase2_info_receive_bit(
 		      &receiver, 1, &event) ==
