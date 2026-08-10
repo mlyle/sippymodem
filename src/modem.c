@@ -178,7 +178,7 @@ struct dp_driver modem_dp_drivers[] = {
         {DP_V34,"V34","34"},
         {DP_BAUDOT,"Baudot TTY/TDD","45"},
         {DP_B103,"Bell103","103"},
-        {DP_B212,"Bell212","212"},
+        {DP_B212,"Bell212A","212"},
         {DP_FAX,"VFax"},
         {DP_K56,"K56Flex","56"},
         {DP_V8BIS,"V8bis"},
@@ -497,7 +497,8 @@ static void modem_hup(struct modem *m, unsigned local)
 
 /* FIXME: find better place */
 #define NONEC_DP(id) \
-	((id) == DP_V23 || (id) == DP_V22 || (id) == DP_B103 || \
+	((id) == DP_V23 || (id) == DP_V22 || (id) == DP_B212 || \
+	 (id) == DP_B103 || \
 	 (id) == DP_V21 || \
 	 (id) == DP_BAUDOT)
 

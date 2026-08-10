@@ -112,10 +112,12 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *bell103_operations;
 	struct dp_operations *v23_operations;
 	struct dp_operations *v22_operations;
+	struct dp_operations *bell212_operations;
 	struct dp_operations *baudot_operations;
 	struct dp *call_progress;
 	struct dp *baudot;
 	struct dp *v22;
+	struct dp *bell212;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
 
@@ -124,6 +126,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_B103) == NULL &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL &&
 		      modem_dp_get_registered_ops(DP_V22) == NULL &&
+		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_register(DP_B103, &conflict_operations) == 0 &&
 		      sippymodem_datapumps_start(&datapumps) ==
@@ -132,6 +135,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL &&
 		      modem_dp_get_registered_ops(DP_V22) == NULL &&
+		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) ==
 			      &conflict_operations &&
@@ -145,6 +149,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	bell103_operations = modem_dp_get_registered_ops(DP_B103);
 	v23_operations = modem_dp_get_registered_ops(DP_V23);
 	v22_operations = modem_dp_get_registered_ops(DP_V22);
+	bell212_operations = modem_dp_get_registered_ops(DP_B212);
 	baudot_operations = modem_dp_get_registered_ops(DP_BAUDOT);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
@@ -167,6 +172,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v22_operations->delete != NULL &&
 		      v22_operations->process != NULL &&
 		      v22_operations->use_count == 0 &&
+		      bell212_operations == v22_operations &&
 		      baudot_operations != NULL &&
 		      baudot_operations != v21_operations &&
 		      baudot_operations != v23_operations &&
@@ -205,6 +211,14 @@ static bool test_owns_source_built_datapump_registrations(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
 		      "originating V.22 data pump leaked pre-answer audio");
+	bell212 = bell212_operations->create(
+		modem, DP_B212, 1, MODEM_RATE, MODEM_FRAG,
+		bell212_operations);
+	CHECK(bell212 != NULL && bell212->id == DP_B212 &&
+		      bell212_operations->use_count == 1 &&
+		      bell212_operations->delete(bell212) == 0 &&
+		      bell212_operations->use_count == 0,
+	      "Bell 212A did not preserve its registered modem identity");
 	modem->min_rate = 46;
 	modem->max_rate = 49;
 	CHECK(baudot_operations->create(
@@ -261,6 +275,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_B103) == NULL &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL &&
 		      modem_dp_get_registered_ops(DP_V22) == NULL &&
+		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      !sippymodem_datapumps_are_started(&datapumps) &&
 		      sippymodem_datapumps_stop(&datapumps) ==

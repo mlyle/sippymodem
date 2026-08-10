@@ -89,17 +89,23 @@ static int process_v22(
 	struct dp *dp, void *receive, void *transmit, int count);
 
 static struct dp_operations v22_operations = {
-	.name = "sippymodem V.22",
+	.name = "sippymodem V.22/Bell 212A",
 	.create = create_v22,
 	.delete = delete_v22,
 	.process = process_v22,
 };
 
+static bool id_uses_v22_carrier(enum DP_ID id)
+{
+	return id == DP_V22 || id == DP_B212;
+}
+
 static struct sippymodem_v22_datapump *v22_from_dp(struct dp *dp)
 {
 	struct sippymodem_v22_datapump *datapump;
 
-	if (dp == NULL || dp->id != DP_V22 || dp->op != &v22_operations ||
+	if (dp == NULL || !id_uses_v22_carrier(dp->id) ||
+	    dp->op != &v22_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
@@ -141,7 +147,8 @@ static struct dp *create_v22(
 	const struct sippymodem_qpsk_channel *transmit_channel;
 	const struct sippymodem_qpsk_channel *receive_channel;
 
-	if (modem == NULL || id != DP_V22 || (caller != 0 && caller != 1) ||
+	if (modem == NULL || !id_uses_v22_carrier(id) ||
+	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v22_operations || operations->use_count == INT_MAX ||
 	    !rate_is_selected(modem))
@@ -459,12 +466,24 @@ static int process_v22(
 
 int sippymodem_v22_datapump_register(void)
 {
-	return modem_dp_register(DP_V22, &v22_operations);
+	if (modem_dp_register(DP_V22, &v22_operations) != 0)
+		return -1;
+	if (modem_dp_register(DP_B212, &v22_operations) != 0) {
+		(void)modem_dp_deregister(DP_V22, &v22_operations);
+		return -1;
+	}
+	return 0;
 }
 
 int sippymodem_v22_datapump_unregister(void)
 {
-	return modem_dp_deregister(DP_V22, &v22_operations);
+	if (modem_dp_deregister(DP_B212, &v22_operations) != 0)
+		return -1;
+	if (modem_dp_deregister(DP_V22, &v22_operations) != 0) {
+		(void)modem_dp_register(DP_B212, &v22_operations);
+		return -1;
+	}
+	return 0;
 }
 
 bool sippymodem_v22_datapump_is_busy(void)
