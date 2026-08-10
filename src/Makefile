@@ -107,6 +107,7 @@ SIPPYMODEM_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_spectrum.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_synchronizer.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_tone.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_ansam.c \
