@@ -215,6 +215,11 @@ V22BIS_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o
+V32_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_framing
+V32_FRAMING_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v32_framing.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/sippymodem_v32_framing.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam.o
@@ -254,7 +259,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(NATIVE_CORE_TEST_BINARY) \
 	$(FSK_TEST_BINARY) $(BAUDOT_TEST_BINARY) $(V23_TEST_BINARY) \
 	$(V22_FRAMING_TEST_BINARY) $(V22BIS_RECEIVER_TEST_BINARY) \
-	$(QAM_TEST_BINARY) \
+	$(V32_FRAMING_TEST_BINARY) $(QAM_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
@@ -285,6 +290,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V23_TEST_OBJECTS:.o=.d) \
 	$(V22_FRAMING_TEST_OBJECTS:.o=.d) \
 	$(V22BIS_RECEIVER_TEST_OBJECTS:.o=.d) \
+	$(V32_FRAMING_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -331,6 +337,7 @@ test: $(TEST_BINARIES)
 	./$(V23_TEST_BINARY)
 	./$(V22_FRAMING_TEST_BINARY)
 	./$(V22BIS_RECEIVER_TEST_BINARY)
+	./$(V32_FRAMING_TEST_BINARY)
 	./$(QAM_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -445,6 +452,9 @@ $(V22_FRAMING_TEST_BINARY): $(V22_FRAMING_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V22BIS_RECEIVER_TEST_BINARY): $(V22BIS_RECEIVER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V32_FRAMING_TEST_BINARY): $(V32_FRAMING_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(QAM_TEST_BINARY): $(QAM_TEST_OBJECTS)
@@ -608,6 +618,10 @@ $(BUILD_DIR)/sippymodem_v22bis_symbols.o: \
 
 $(BUILD_DIR)/sippymodem_v22bis_receiver.o: \
 	../src/sippymodem_v22bis_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v32_framing.o: \
+	../src/sippymodem_v32_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22_datapump.o: \
