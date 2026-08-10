@@ -13,6 +13,7 @@ enum {
 	SIPPYMODEM_BAUDOT_SAMPLE_RATE = 8000,
 	SIPPYMODEM_BAUDOT_BLOCK_SAMPLES = 160,
 	SIPPYMODEM_BAUDOT_TX_CODE_CAPACITY = 256,
+	SIPPYMODEM_BAUDOT_RX_CHARACTER_CAPACITY = 128,
 };
 
 /* The 45 selector denotes the North American 500/11-symbol/s mode. */
@@ -57,6 +58,28 @@ struct sippymodem_baudot_transmitter {
 	uint8_t characters_since_shift;
 };
 
+struct sippymodem_baudot_receiver {
+	struct sippymodem_fsk_receiver detector;
+	enum sippymodem_baudot_rate rate;
+	enum sippymodem_baudot_shift shift;
+	uint64_t received_characters;
+	uint64_t framing_errors;
+	uint64_t receive_overruns;
+	uint16_t bit_samples;
+	uint16_t quiet_samples;
+	uint16_t stable_samples;
+	uint16_t decision_countdown;
+	uint16_t character_head;
+	uint16_t character_count;
+	uint8_t characters[SIPPYMODEM_BAUDOT_RX_CHARACTER_CAPACITY];
+	uint8_t detector_bit;
+	uint8_t stable_bit;
+	uint8_t data_index;
+	uint8_t code;
+	bool carrier;
+	bool framing;
+};
+
 enum sippymodem_baudot_result sippymodem_baudot_transmitter_init(
 	struct sippymodem_baudot_transmitter *transmitter,
 	enum sippymodem_baudot_rate rate);
@@ -78,6 +101,24 @@ enum sippymodem_baudot_result sippymodem_baudot_generate(
 	struct sippymodem_baudot_transmitter *transmitter,
 	int16_t *output,
 	size_t count);
+
+enum sippymodem_baudot_result sippymodem_baudot_receiver_init(
+	struct sippymodem_baudot_receiver *receiver,
+	enum sippymodem_baudot_rate rate);
+/* Clears carrier and partial-frame state without discarding decoded text,
+ * statistics, or the active letters/figures column. */
+void sippymodem_baudot_receiver_reset(
+	struct sippymodem_baudot_receiver *receiver);
+enum sippymodem_baudot_result sippymodem_baudot_receive(
+	struct sippymodem_baudot_receiver *receiver,
+	const int16_t *input,
+	size_t count);
+size_t sippymodem_baudot_drain_text(
+	struct sippymodem_baudot_receiver *receiver,
+	uint8_t *text,
+	size_t capacity);
+size_t sippymodem_baudot_pending_text(
+	const struct sippymodem_baudot_receiver *receiver);
 
 const char *sippymodem_baudot_result_name(
 	enum sippymodem_baudot_result result);

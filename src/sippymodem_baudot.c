@@ -12,6 +12,10 @@ enum {
 	BAUDOT_PREAMBLE_SAMPLES = 1200,
 	BAUDOT_MARK_HOLD_SAMPLES = 2400,
 	BAUDOT_SHIFT_REFRESH_CHARACTERS = 72,
+	BAUDOT_RX_MIN_DOMINANCE_Q8 = 176,
+	/* Detector line power is the sum over its 64-sample window. */
+	BAUDOT_RX_MIN_LINE_POWER = BAUDOT_DETECTOR_WINDOW * 256,
+	BAUDOT_RX_STABLE_SAMPLES = 3,
 	BAUDOT_CODE_FIGURES = 0x1b,
 	BAUDOT_CODE_LETTERS = 0x1f,
 };
@@ -66,6 +70,18 @@ static bool rate_is_valid(enum sippymodem_baudot_rate rate)
 	       rate == SIPPYMODEM_BAUDOT_RATE_50;
 }
 
+static const struct sippymodem_fsk_channel *channel_for_rate(
+	enum sippymodem_baudot_rate rate)
+{
+	return rate == SIPPYMODEM_BAUDOT_RATE_50 ?
+		       &baudot_50_channel : &baudot_45_channel;
+}
+
+static uint16_t samples_per_bit(enum sippymodem_baudot_rate rate)
+{
+	return rate == SIPPYMODEM_BAUDOT_RATE_50 ? 160u : 176u;
+}
+
 static bool transmitter_is_valid(
 	const struct sippymodem_baudot_transmitter *transmitter)
 {
@@ -82,8 +98,7 @@ static bool transmitter_is_valid(
 	    transmitter->characters_since_shift >
 		    BAUDOT_SHIFT_REFRESH_CHARACTERS)
 		return false;
-	expected_bit_samples =
-		transmitter->rate == SIPPYMODEM_BAUDOT_RATE_50 ? 160u : 176u;
+	expected_bit_samples = samples_per_bit(transmitter->rate);
 	return transmitter->bit_samples == expected_bit_samples &&
 	       transmitter->stop_samples ==
 		       expected_bit_samples + expected_bit_samples / 2u;
@@ -99,12 +114,11 @@ enum sippymodem_baudot_result sippymodem_baudot_transmitter_init(
 
 	if (transmitter == NULL || !rate_is_valid(rate))
 		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
-	channel = rate == SIPPYMODEM_BAUDOT_RATE_50 ?
-			  &baudot_50_channel : &baudot_45_channel;
+	channel = channel_for_rate(rate);
 	if (sippymodem_fsk_tone_generator_init(
 		    &tones, channel, BAUDOT_AMPLITUDE) != SIPPYMODEM_FSK_OK)
 		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
-	bit_samples = rate == SIPPYMODEM_BAUDOT_RATE_50 ? 160u : 176u;
+	bit_samples = samples_per_bit(rate);
 	memset(transmitter, 0, sizeof(*transmitter));
 	transmitter->tones = tones;
 	transmitter->rate = rate;
@@ -356,6 +370,282 @@ enum sippymodem_baudot_result sippymodem_baudot_generate(
 			advance_transmitter(transmitter);
 	}
 	return SIPPYMODEM_BAUDOT_OK;
+}
+
+static bool receiver_is_valid(
+	const struct sippymodem_baudot_receiver *receiver)
+{
+	const struct sippymodem_fsk_channel *expected;
+
+	if (receiver == NULL || !rate_is_valid(receiver->rate))
+		return false;
+	expected = channel_for_rate(receiver->rate);
+	return receiver->shift >= SIPPYMODEM_BAUDOT_LETTERS &&
+	       receiver->shift <= SIPPYMODEM_BAUDOT_FIGURES &&
+	       receiver->bit_samples == samples_per_bit(receiver->rate) &&
+	       receiver->decision_countdown <=
+		       receiver->bit_samples + receiver->bit_samples / 2u &&
+	       receiver->character_head <
+		       SIPPYMODEM_BAUDOT_RX_CHARACTER_CAPACITY &&
+	       receiver->character_count <=
+		       SIPPYMODEM_BAUDOT_RX_CHARACTER_CAPACITY &&
+	       receiver->detector_bit <= 1 && receiver->stable_bit <= 1 &&
+	       receiver->data_index <= 5 && receiver->code < 32 &&
+	       receiver->detector.channel.sample_rate == expected->sample_rate &&
+	       receiver->detector.channel.symbol_rate_numerator ==
+		       expected->symbol_rate_numerator &&
+	       receiver->detector.channel.symbol_rate_denominator ==
+		       expected->symbol_rate_denominator &&
+	       receiver->detector.channel.mark_frequency_hz ==
+		       expected->mark_frequency_hz &&
+	       receiver->detector.channel.space_frequency_hz ==
+		       expected->space_frequency_hz &&
+	       receiver->detector.channel.detector_window ==
+		       expected->detector_window &&
+	       receiver->detector.channel.metric_smoothing_shift ==
+		       expected->metric_smoothing_shift;
+}
+
+static void reset_receive_signal(
+	struct sippymodem_baudot_receiver *receiver)
+{
+	sippymodem_fsk_receiver_reset(&receiver->detector);
+	receiver->quiet_samples = 0;
+	receiver->stable_samples = 0;
+	receiver->decision_countdown = 0;
+	receiver->detector_bit = 1;
+	receiver->stable_bit = 1;
+	receiver->data_index = 0;
+	receiver->code = 0;
+	receiver->carrier = false;
+	receiver->framing = false;
+}
+
+enum sippymodem_baudot_result sippymodem_baudot_receiver_init(
+	struct sippymodem_baudot_receiver *receiver,
+	enum sippymodem_baudot_rate rate)
+{
+	struct sippymodem_fsk_receiver detector;
+
+	if (receiver == NULL || !rate_is_valid(rate) ||
+	    sippymodem_fsk_receiver_init(
+		    &detector, channel_for_rate(rate)) != SIPPYMODEM_FSK_OK)
+		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
+	memset(receiver, 0, sizeof(*receiver));
+	receiver->detector = detector;
+	receiver->rate = rate;
+	receiver->shift = SIPPYMODEM_BAUDOT_LETTERS;
+	receiver->bit_samples = samples_per_bit(rate);
+	reset_receive_signal(receiver);
+	return SIPPYMODEM_BAUDOT_OK;
+}
+
+void sippymodem_baudot_receiver_reset(
+	struct sippymodem_baudot_receiver *receiver)
+{
+	if (receiver_is_valid(receiver))
+		reset_receive_signal(receiver);
+}
+
+static void increment_counter(uint64_t *counter)
+{
+	if (*counter != UINT64_MAX)
+		(*counter)++;
+}
+
+static size_t received_character_index(uint16_t head, size_t offset)
+{
+	return ((size_t)head + offset) %
+	       SIPPYMODEM_BAUDOT_RX_CHARACTER_CAPACITY;
+}
+
+static void queue_received_character(
+	struct sippymodem_baudot_receiver *receiver, uint8_t character)
+{
+	if (receiver->character_count >=
+	    SIPPYMODEM_BAUDOT_RX_CHARACTER_CAPACITY) {
+		increment_counter(&receiver->receive_overruns);
+		return;
+	}
+	receiver->characters[received_character_index(
+		receiver->character_head, receiver->character_count)] = character;
+	receiver->character_count++;
+	increment_counter(&receiver->received_characters);
+}
+
+static void decode_code(
+	struct sippymodem_baudot_receiver *receiver, uint8_t code)
+{
+	uint8_t character;
+
+	code &= 0x1fu;
+	if (code == BAUDOT_CODE_LETTERS) {
+		receiver->shift = SIPPYMODEM_BAUDOT_LETTERS;
+		return;
+	}
+	if (code == BAUDOT_CODE_FIGURES) {
+		receiver->shift = SIPPYMODEM_BAUDOT_FIGURES;
+		return;
+	}
+	character = receiver->shift == SIPPYMODEM_BAUDOT_FIGURES ?
+			    baudot_alphabet[code].figures :
+			    baudot_alphabet[code].letters;
+	if (character != 0)
+		queue_received_character(receiver, character);
+	if (code == 4)
+		receiver->shift = SIPPYMODEM_BAUDOT_LETTERS;
+}
+
+static void begin_receive_frame(
+	struct sippymodem_baudot_receiver *receiver,
+	bool carrier_began_with_space)
+{
+	uint32_t delay = carrier_began_with_space ?
+				 (uint32_t)receiver->bit_samples * 5u / 4u :
+				 (uint32_t)receiver->bit_samples * 3u / 2u;
+
+	receiver->framing = true;
+	receiver->data_index = 0;
+	receiver->code = 0;
+	receiver->decision_countdown = (uint16_t)delay;
+}
+
+static bool signal_is_present(
+	const struct sippymodem_baudot_receiver *receiver,
+	bool decision_ready)
+{
+	struct sippymodem_fsk_measurement measurement =
+		sippymodem_fsk_receiver_measure(&receiver->detector);
+
+	return decision_ready && measurement.ready &&
+	       measurement.line_power >= BAUDOT_RX_MIN_LINE_POWER &&
+	       measurement.dominance_q8 >= BAUDOT_RX_MIN_DOMINANCE_Q8;
+}
+
+static void lose_receive_carrier(
+	struct sippymodem_baudot_receiver *receiver)
+{
+	if (receiver->framing)
+		increment_counter(&receiver->framing_errors);
+	receiver->carrier = false;
+	receiver->framing = false;
+	receiver->stable_samples = 0;
+	receiver->decision_countdown = 0;
+	receiver->detector_bit = 1;
+	receiver->stable_bit = 1;
+}
+
+static void sample_receive_frame(
+	struct sippymodem_baudot_receiver *receiver)
+{
+	if (receiver->data_index < 5) {
+		if (receiver->stable_bit != 0)
+			receiver->code |=
+				(uint8_t)(1u << receiver->data_index);
+		receiver->data_index++;
+		receiver->decision_countdown =
+			(uint16_t)(receiver->bit_samples - 1u);
+		return;
+	}
+	if (receiver->stable_bit != 0)
+		decode_code(receiver, receiver->code);
+	else
+		increment_counter(&receiver->framing_errors);
+	receiver->framing = false;
+	receiver->data_index = 0;
+	receiver->decision_countdown = 0;
+	receiver->code = 0;
+}
+
+static enum sippymodem_baudot_result receive_sample(
+	struct sippymodem_baudot_receiver *receiver, int16_t sample)
+{
+	uint8_t detected_bit;
+	uint8_t previous_stable = receiver->stable_bit;
+	bool decision_ready;
+
+	if (sippymodem_fsk_receiver_detect(
+		    &receiver->detector, sample, &detected_bit,
+		    &decision_ready) != SIPPYMODEM_FSK_OK)
+		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
+	if (!signal_is_present(receiver, decision_ready)) {
+		if (receiver->quiet_samples != UINT16_MAX)
+			receiver->quiet_samples++;
+		if (receiver->quiet_samples >= receiver->bit_samples / 2u)
+			lose_receive_carrier(receiver);
+		return SIPPYMODEM_BAUDOT_OK;
+	}
+
+	receiver->quiet_samples = 0;
+	detected_bit &= 1u;
+	if (!receiver->carrier) {
+		receiver->carrier = true;
+		receiver->detector_bit = detected_bit;
+		receiver->stable_bit = detected_bit;
+		receiver->stable_samples = 1;
+		if (detected_bit == 0)
+			begin_receive_frame(receiver, true);
+	} else {
+		if (detected_bit == receiver->detector_bit) {
+			if (receiver->stable_samples != UINT16_MAX)
+				receiver->stable_samples++;
+		} else {
+			receiver->detector_bit = detected_bit;
+			receiver->stable_samples = 1;
+		}
+		if (receiver->stable_samples >= BAUDOT_RX_STABLE_SAMPLES)
+			receiver->stable_bit = receiver->detector_bit;
+		if (!receiver->framing && previous_stable != 0 &&
+		    receiver->stable_bit == 0)
+			begin_receive_frame(receiver, false);
+	}
+
+	if (receiver->framing) {
+		if (receiver->decision_countdown == 0)
+			sample_receive_frame(receiver);
+		else
+			receiver->decision_countdown--;
+	}
+	return SIPPYMODEM_BAUDOT_OK;
+}
+
+enum sippymodem_baudot_result sippymodem_baudot_receive(
+	struct sippymodem_baudot_receiver *receiver,
+	const int16_t *input,
+	size_t count)
+{
+	if (!receiver_is_valid(receiver) || (input == NULL && count != 0))
+		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
+	for (size_t index = 0; index < count; ++index)
+		if (receive_sample(receiver, input[index]) !=
+		    SIPPYMODEM_BAUDOT_OK)
+			return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
+	return SIPPYMODEM_BAUDOT_OK;
+}
+
+size_t sippymodem_baudot_drain_text(
+	struct sippymodem_baudot_receiver *receiver,
+	uint8_t *text,
+	size_t capacity)
+{
+	size_t count = 0;
+
+	if (!receiver_is_valid(receiver) ||
+	    (text == NULL && capacity != 0))
+		return 0;
+	while (count < capacity && receiver->character_count != 0) {
+		text[count++] = receiver->characters[receiver->character_head];
+		receiver->character_head = (uint16_t)received_character_index(
+			receiver->character_head, 1);
+		receiver->character_count--;
+	}
+	return count;
+}
+
+size_t sippymodem_baudot_pending_text(
+	const struct sippymodem_baudot_receiver *receiver)
+{
+	return receiver_is_valid(receiver) ? receiver->character_count : 0;
 }
 
 const char *sippymodem_baudot_result_name(
