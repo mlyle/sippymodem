@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <sippymodem_v34_info0.h>
 #include <sippymodem_v34_phase2_info.h>
 
 #include "test.h"
@@ -9,6 +10,59 @@
 static void store_packed_bit(uint8_t *packed, size_t index, uint8_t bit)
 {
 	packed[index / 8u] |= (uint8_t)(bit << (7u - index % 8u));
+}
+
+static struct sippymodem_v34_info0 base_info0(bool acknowledged)
+{
+	return (struct sippymodem_v34_info0){
+		.symbol_rate_2743_supported = true,
+		.symbol_rate_2800_supported = true,
+		.symbol_rate_3429_supported = true,
+		.low_carrier_3000_supported = true,
+		.high_carrier_3000_supported = true,
+		.low_carrier_3200_supported = true,
+		.high_carrier_3200_supported = true,
+		.symbol_rate_3429_transmit_permitted = true,
+		.transmit_power_reduction_supported = true,
+		.maximum_symbol_rate_difference_steps = 0,
+		.cme_modem = false,
+		.constellation_1664_supported = true,
+		.transmit_clock_source =
+			SIPPYMODEM_V34_INFO0_CLOCK_INTERNAL,
+		.acknowledges_peer_info0 = acknowledged,
+	};
+}
+
+static bool info0_equal(
+	const struct sippymodem_v34_info0 *left,
+	const struct sippymodem_v34_info0 *right)
+{
+	return left->symbol_rate_2743_supported ==
+		       right->symbol_rate_2743_supported &&
+	       left->symbol_rate_2800_supported ==
+		       right->symbol_rate_2800_supported &&
+	       left->symbol_rate_3429_supported ==
+		       right->symbol_rate_3429_supported &&
+	       left->low_carrier_3000_supported ==
+		       right->low_carrier_3000_supported &&
+	       left->high_carrier_3000_supported ==
+		       right->high_carrier_3000_supported &&
+	       left->low_carrier_3200_supported ==
+		       right->low_carrier_3200_supported &&
+	       left->high_carrier_3200_supported ==
+		       right->high_carrier_3200_supported &&
+	       left->symbol_rate_3429_transmit_permitted ==
+		       right->symbol_rate_3429_transmit_permitted &&
+	       left->transmit_power_reduction_supported ==
+		       right->transmit_power_reduction_supported &&
+	       left->maximum_symbol_rate_difference_steps ==
+		       right->maximum_symbol_rate_difference_steps &&
+	       left->cme_modem == right->cme_modem &&
+	       left->constellation_1664_supported ==
+		       right->constellation_1664_supported &&
+	       left->transmit_clock_source == right->transmit_clock_source &&
+	       left->acknowledges_peer_info0 ==
+		       right->acknowledges_peer_info0;
 }
 
 struct receive_capture {
@@ -63,18 +117,25 @@ static bool feed_frame(
 
 static bool test_base_info0_frame(void)
 {
-	static const uint8_t payload[] = { 0xff, 0x84, 0x00 };
 	static const uint8_t expected[] = {
 		0xff, 0x72, 0xff, 0x84, 0x47, 0xec, 0xf8,
 	};
+	struct sippymodem_v34_info0 info0 = base_info0(false);
 	struct sippymodem_v34_phase2_info_generator generator;
+	uint8_t payload[SIPPYMODEM_V34_INFO0_PAYLOAD_BYTES];
 	uint8_t encoded[ARRAY_LENGTH(expected)] = { 0 };
 	size_t frame_bit_count =
-		sippymodem_v34_phase2_info_frame_bit_count(17);
+		sippymodem_v34_phase2_info_frame_bit_count(
+			SIPPYMODEM_V34_INFO0_PAYLOAD_BITS);
 
-	CHECK(frame_bit_count == 53 &&
+	CHECK(SIPPYMODEM_V34_INFO0_PAYLOAD_BITS == 17 &&
+	      sippymodem_v34_info0_encode(
+		      &info0, payload, sizeof(payload)) ==
+		      SIPPYMODEM_V34_INFO0_OK &&
+	      frame_bit_count == 53 &&
 	      sippymodem_v34_phase2_info_generator_init(
-		      &generator, payload, 17) ==
+		      &generator, payload,
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS) ==
 		      SIPPYMODEM_V34_PHASE2_INFO_OK &&
 	      sippymodem_v34_phase2_info_generator_is_valid(&generator) &&
 	      generator.crc == UINT16_C(0x8fd9),
@@ -106,6 +167,142 @@ static bool test_base_info0_frame(void)
 		      bit == UINT8_MAX && !complete,
 		      "completed INFO0 frame emitted an extra bit");
 	}
+	return true;
+}
+
+static bool test_info0_codec(void)
+{
+	static const uint8_t expected[] = { 0x8d, 0x59, 0x80 };
+	struct sippymodem_v34_info0 selected = {
+		.symbol_rate_2743_supported = true,
+		.high_carrier_3000_supported = true,
+		.low_carrier_3200_supported = true,
+		.symbol_rate_3429_transmit_permitted = true,
+		.maximum_symbol_rate_difference_steps = 5,
+		.cme_modem = true,
+		.transmit_clock_source =
+			SIPPYMODEM_V34_INFO0_CLOCK_EXTERNAL,
+		.acknowledges_peer_info0 = true,
+	};
+	struct sippymodem_v34_info0 decoded;
+	uint8_t payload[4] = { 0xa5, 0xa5, 0xa5, 0xa5 };
+
+	CHECK(sippymodem_v34_info0_is_valid(&selected) &&
+	      sippymodem_v34_info0_encode(
+		      &selected, payload, sizeof(payload)) ==
+		      SIPPYMODEM_V34_INFO0_OK &&
+	      memcmp(payload, expected, sizeof(expected)) == 0 &&
+	      payload[3] == 0xa5,
+	      "INFO0 fields changed transmission order");
+	CHECK(sippymodem_v34_info0_decode(
+		      payload, sizeof(payload),
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_OK &&
+	      info0_equal(&decoded, &selected),
+	      "INFO0 fields did not round trip");
+
+	selected = base_info0(true);
+	CHECK(sippymodem_v34_info0_encode(
+		      &selected, payload, sizeof(payload)) ==
+		      SIPPYMODEM_V34_INFO0_OK &&
+	      payload[0] == 0xff && payload[1] == 0x84 &&
+	      payload[2] == 0x80 &&
+	      sippymodem_v34_info0_decode(
+		      payload, SIPPYMODEM_V34_INFO0_PAYLOAD_BYTES,
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_OK &&
+	      info0_equal(&decoded, &selected),
+	      "base INFO0 acknowledgment did not round trip");
+	return true;
+}
+
+static bool test_info0_validation(void)
+{
+	struct sippymodem_v34_info0 valid = base_info0(false);
+	struct sippymodem_v34_info0 invalid = valid;
+	struct sippymodem_v34_info0 decoded = base_info0(true);
+	struct sippymodem_v34_info0 saved_decoded = decoded;
+	uint8_t payload[] = { 0xff, 0x84, 0x00, 0xa5 };
+	uint8_t saved_payload[ARRAY_LENGTH(payload)];
+
+	memcpy(saved_payload, payload, sizeof(payload));
+	invalid.maximum_symbol_rate_difference_steps =
+		SIPPYMODEM_V34_INFO0_MAX_SYMBOL_RATE_DIFFERENCE_STEPS + 1u;
+	CHECK(!sippymodem_v34_info0_is_valid(&invalid) &&
+	      sippymodem_v34_info0_encode(
+		      &invalid, payload, sizeof(payload)) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_CAPABILITIES &&
+	      memcmp(payload, saved_payload, sizeof(payload)) == 0,
+	      "INFO0 accepted an invalid symbol-rate difference");
+	invalid = valid;
+	invalid.transmit_clock_source =
+		(enum sippymodem_v34_info0_clock_source)3;
+	CHECK(!sippymodem_v34_info0_is_valid(&invalid) &&
+	      sippymodem_v34_info0_encode(
+		      &invalid, payload, sizeof(payload)) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_CAPABILITIES &&
+	      sippymodem_v34_info0_encode(
+		      NULL, payload, sizeof(payload)) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_ARGUMENT &&
+	      sippymodem_v34_info0_encode(
+		      &valid, NULL, sizeof(payload)) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_ARGUMENT &&
+	      sippymodem_v34_info0_encode(
+		      &valid, payload,
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BYTES - 1u) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_ARGUMENT &&
+	      memcmp(payload, saved_payload, sizeof(payload)) == 0,
+	      "INFO0 encoding mutated output after invalid input");
+
+	CHECK(sippymodem_v34_info0_decode(
+		      NULL, sizeof(payload),
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_ARGUMENT &&
+	      sippymodem_v34_info0_decode(
+		      payload, sizeof(payload),
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, NULL) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_ARGUMENT &&
+	      sippymodem_v34_info0_decode(
+		      payload, SIPPYMODEM_V34_INFO0_PAYLOAD_BYTES - 1u,
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_ARGUMENT &&
+	      sippymodem_v34_info0_decode(
+		      payload, sizeof(payload),
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS - 1u, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_PAYLOAD &&
+	      info0_equal(&decoded, &saved_decoded),
+	      "INFO0 decoding mutated output after invalid input");
+
+	payload[2] = 1;
+	CHECK(sippymodem_v34_info0_decode(
+		      payload, sizeof(payload),
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_PAYLOAD,
+	      "INFO0 accepted noncanonical payload padding");
+	payload[2] = 0;
+	payload[1] = 0xb4;
+	CHECK(sippymodem_v34_info0_decode(
+		      payload, sizeof(payload),
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_PAYLOAD,
+	      "INFO0 accepted reserved symbol-rate difference");
+	payload[1] = 0x87;
+	CHECK(sippymodem_v34_info0_decode(
+		      payload, sizeof(payload),
+		      SIPPYMODEM_V34_INFO0_PAYLOAD_BITS, &decoded) ==
+		      SIPPYMODEM_V34_INFO0_INVALID_PAYLOAD &&
+	      info0_equal(&decoded, &saved_decoded) &&
+	      !sippymodem_v34_info0_is_valid(NULL) &&
+	      strcmp(sippymodem_v34_info0_result_name(
+		     SIPPYMODEM_V34_INFO0_INVALID_CAPABILITIES),
+		     "invalid capabilities") == 0 &&
+	      strcmp(sippymodem_v34_info0_result_name(
+		     SIPPYMODEM_V34_INFO0_INVALID_PAYLOAD),
+		     "invalid payload") == 0 &&
+	      strcmp(sippymodem_v34_info0_result_name(
+		     (enum sippymodem_v34_info0_result)4),
+		     "unknown") == 0,
+	      "INFO0 accepted a reserved clock source or result");
 	return true;
 }
 
@@ -393,6 +590,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "base INFO0 frame", test_base_info0_frame },
+		{ "INFO0 codec", test_info0_codec },
+		{ "INFO0 validation", test_info0_validation },
 		{ "CRC and bounds", test_crc_and_bounds },
 		{ "receive round trip", test_receive_round_trip },
 		{ "receive reacquisition", test_receive_reacquisition },

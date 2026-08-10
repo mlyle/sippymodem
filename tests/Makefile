@@ -338,6 +338,7 @@ V34_PHASE2_INFO_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_info
 V34_PHASE2_INFO_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_info.o \
+	$(BUILD_DIR)/sippymodem_v34_info0.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
@@ -898,6 +899,10 @@ $(BUILD_DIR)/sippymodem_v32_datapump.o: \
 
 $(BUILD_DIR)/sippymodem_v34_framing.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_framing.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_info0.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_info0.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_info.o: \
