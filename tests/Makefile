@@ -398,6 +398,7 @@ V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_probe_turnaround.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_ranging.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
 V34_PHASE2_PROBE_TEST_BINARY := \
@@ -1141,6 +1142,10 @@ $(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o: \
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase2_probe_turnaround.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_ranging.o: \

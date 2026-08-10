@@ -2,6 +2,7 @@
 
 #include <sippymodem_g711.h>
 #include <sippymodem_v34_phase2_initial_probe.h>
+#include <sippymodem_v34_phase2_probe_turnaround.h>
 
 #include "test.h"
 
@@ -24,6 +25,7 @@ enum test_codec {
 enum test_endpoint_stage {
 	TEST_ENDPOINT_RANGING,
 	TEST_ENDPOINT_INITIAL_PROBE,
+	TEST_ENDPOINT_PROBE_TURNAROUND,
 };
 
 struct test_delay_line {
@@ -35,13 +37,17 @@ struct test_delay_line {
 struct test_endpoint {
 	struct sippymodem_v34_phase2_ranging ranging;
 	struct sippymodem_v34_phase2_initial_probe initial_probe;
+	struct sippymodem_v34_phase2_probe_turnaround turnaround;
 	enum test_endpoint_stage stage;
+	bool continue_to_turnaround;
 };
 
 struct test_endpoint_event {
 	struct sippymodem_v34_phase2_ranging_event ranging;
 	struct sippymodem_v34_phase2_initial_probe_event initial_probe;
+	struct sippymodem_v34_phase2_probe_turnaround_event turnaround;
 	bool entered_initial_probe;
+	bool entered_turnaround;
 };
 
 struct test_pair {
@@ -74,6 +80,24 @@ struct turn_observation {
 	uint64_t answerer_tone_energy;
 	bool caller_acquired;
 	bool caller_l2_started;
+};
+
+struct turnaround_observation {
+	size_t caller_entered;
+	size_t answerer_entered;
+	size_t answerer_first_a;
+	size_t answerer_first_reversed_a;
+	size_t caller_a_reversal_event;
+	size_t caller_estimated_a_reversal;
+	size_t caller_first_reversed_b;
+	size_t caller_ready;
+	size_t answerer_b_reversal_event;
+	size_t answerer_estimated_b_reversal;
+	size_t answerer_ready;
+	uint16_t answerer_b_reversal_delay;
+	uint16_t answerer_initial_a_samples;
+	uint16_t answerer_reversed_a_samples;
+	uint16_t caller_reversed_b_samples;
 };
 
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
@@ -171,10 +195,32 @@ static bool endpoint_sample(
 			endpoint->stage = TEST_ENDPOINT_INITIAL_PROBE;
 			emitted.entered_initial_probe = true;
 		}
-	} else if (sippymodem_v34_phase2_initial_probe_sample(
-			   &endpoint->initial_probe, received_sample,
-			   transmit_sample, &emitted.initial_probe) !=
-		   SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK) {
+	} else if (endpoint->stage == TEST_ENDPOINT_INITIAL_PROBE) {
+		enum sippymodem_v34_phase2_initial_probe_event_kind expected_ready =
+			endpoint->initial_probe.ranging.info0_exchange.local_role ==
+					SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+				SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE :
+				SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
+
+		if (sippymodem_v34_phase2_initial_probe_sample(
+			    &endpoint->initial_probe, received_sample, transmit_sample,
+			    &emitted.initial_probe) !=
+		    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK)
+			return false;
+		if (endpoint->continue_to_turnaround &&
+		    emitted.initial_probe.kind == expected_ready) {
+			if (sippymodem_v34_phase2_probe_turnaround_init(
+				    &endpoint->turnaround,
+				    &endpoint->initial_probe) !=
+			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK)
+				return false;
+			endpoint->stage = TEST_ENDPOINT_PROBE_TURNAROUND;
+			emitted.entered_turnaround = true;
+		}
+	} else if (sippymodem_v34_phase2_probe_turnaround_sample(
+			   &endpoint->turnaround, received_sample, transmit_sample,
+			   &emitted.turnaround) !=
+		   SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK) {
 		return false;
 	}
 	*event = emitted;
@@ -417,6 +463,219 @@ static bool test_bidirectional_turn(void)
 	return true;
 }
 
+static void initialize_turnaround_observation(
+	struct turnaround_observation *observation)
+{
+	*observation = (struct turnaround_observation){
+		.caller_entered = SIZE_MAX,
+		.answerer_entered = SIZE_MAX,
+		.answerer_first_a = SIZE_MAX,
+		.answerer_first_reversed_a = SIZE_MAX,
+		.caller_a_reversal_event = SIZE_MAX,
+		.caller_estimated_a_reversal = SIZE_MAX,
+		.caller_first_reversed_b = SIZE_MAX,
+		.caller_ready = SIZE_MAX,
+		.answerer_b_reversal_event = SIZE_MAX,
+		.answerer_estimated_b_reversal = SIZE_MAX,
+		.answerer_ready = SIZE_MAX,
+	};
+}
+
+static bool samples_are_close(size_t first, size_t second, size_t tolerance)
+{
+	return first >= second ? first - second <= tolerance :
+				 second - first <= tolerance;
+}
+
+static bool check_probe_turnaround(
+	enum test_codec codec, size_t delay_samples)
+{
+	struct sippymodem_v34_phase2_probe_turnaround caller_terminal;
+	struct sippymodem_v34_phase2_probe_turnaround answerer_terminal;
+	struct turnaround_observation observation;
+	struct test_pair pair;
+
+	CHECK(pair_init(&pair, codec, delay_samples),
+	      "turnaround endpoints did not initialize");
+	pair.caller.continue_to_turnaround = true;
+	pair.answerer.continue_to_turnaround = true;
+	initialize_turnaround_observation(&observation);
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct test_pair_event event;
+		bool caller_turning =
+			pair.caller.stage == TEST_ENDPOINT_PROBE_TURNAROUND;
+		bool answerer_turning =
+			pair.answerer.stage == TEST_ENDPOINT_PROBE_TURNAROUND;
+		enum sippymodem_v34_phase2_probe_turnaround_phase caller_phase =
+			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_WAIT_A_REVERSAL;
+		enum sippymodem_v34_phase2_probe_turnaround_phase answerer_phase =
+			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
+		uint16_t caller_remaining = 0;
+
+		if (caller_turning) {
+			caller_phase = pair.caller.turnaround.phase;
+			caller_remaining =
+				pair.caller.turnaround.phase_samples_remaining;
+		}
+		if (answerer_turning)
+			answerer_phase = pair.answerer.turnaround.phase;
+		CHECK(pair_sample(&pair, &event),
+		      "turnaround failed for codec %d delay %zu at sample %zu",
+		      codec, delay_samples, index);
+
+		if (event.caller.entered_turnaround)
+			observation.caller_entered = index;
+		if (event.answerer.entered_turnaround)
+			observation.answerer_entered = index;
+		if (answerer_turning &&
+		    answerer_phase ==
+			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A) {
+			if (observation.answerer_first_a == SIZE_MAX)
+				observation.answerer_first_a = index;
+			observation.answerer_initial_a_samples++;
+		} else if (answerer_turning &&
+			   answerer_phase ==
+				   SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_REVERSAL_TAIL) {
+			if (observation.answerer_first_reversed_a == SIZE_MAX)
+				observation.answerer_first_reversed_a = index;
+			observation.answerer_reversed_a_samples++;
+		}
+		if (caller_turning &&
+		    (caller_phase ==
+			     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_REVERSAL_TAIL ||
+		     (caller_phase ==
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_RESPONSE_DELAY &&
+		      caller_remaining == 1))) {
+			if (observation.caller_first_reversed_b == SIZE_MAX)
+				observation.caller_first_reversed_b = index;
+			observation.caller_reversed_b_samples++;
+		}
+		if (event.caller.turnaround.tone_event.kind ==
+		    SIPPYMODEM_V34_PHASE2_TONE_PHASE_REVERSED) {
+			uint16_t detector_delay =
+				event.caller.turnaround.tone_event
+					.reversal_delay_samples;
+
+			CHECK(index >= detector_delay,
+			      "caller reversal estimate preceded the test epoch");
+			observation.caller_a_reversal_event = index;
+			observation.caller_estimated_a_reversal =
+				index - detector_delay;
+		}
+		if (event.answerer.turnaround.tone_event.kind ==
+		    SIPPYMODEM_V34_PHASE2_TONE_PHASE_REVERSED) {
+			uint16_t detector_delay =
+				event.answerer.turnaround.tone_event
+					.reversal_delay_samples;
+
+			CHECK(index >= detector_delay,
+			      "answerer reversal estimate preceded the test epoch");
+			observation.answerer_b_reversal_event = index;
+			observation.answerer_b_reversal_delay = detector_delay;
+			observation.answerer_estimated_b_reversal =
+				index - detector_delay;
+		}
+		if (event.caller.turnaround.kind ==
+		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY)
+			observation.caller_ready = index;
+		if (event.answerer.turnaround.kind ==
+		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY)
+			observation.answerer_ready = index;
+		if (pair.caller.stage == TEST_ENDPOINT_PROBE_TURNAROUND &&
+		    pair.answerer.stage == TEST_ENDPOINT_PROBE_TURNAROUND &&
+		    pair.caller.turnaround.phase ==
+			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_PROBE_READY &&
+		    pair.answerer.turnaround.phase ==
+			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_PROBE_READY)
+			break;
+	}
+
+	CHECK(observation.caller_entered != SIZE_MAX &&
+	      observation.answerer_entered != SIZE_MAX &&
+	      observation.answerer_first_a == observation.answerer_entered + 1u &&
+	      observation.answerer_initial_a_samples ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
+	      observation.answerer_first_reversed_a ==
+		      observation.answerer_first_a +
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
+	      observation.answerer_reversed_a_samples ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
+	      "answerer changed the exact Tone A intervals");
+	CHECK(observation.caller_a_reversal_event != SIZE_MAX &&
+	      samples_are_close(
+		      observation.caller_estimated_a_reversal,
+		      observation.answerer_first_reversed_a + delay_samples, 4) &&
+	      observation.caller_first_reversed_b ==
+		      observation.caller_estimated_a_reversal +
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES,
+	      "caller did not compensate the Tone A reversal deadline");
+	CHECK(observation.caller_reversed_b_samples ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES &&
+	      observation.caller_ready ==
+		      observation.caller_first_reversed_b +
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+			      1u,
+	      "caller changed the exact reversed Tone B tail");
+	CHECK(observation.answerer_b_reversal_event != SIZE_MAX &&
+	      samples_are_close(
+		      observation.answerer_estimated_b_reversal,
+		      observation.caller_first_reversed_b + delay_samples, 4),
+	      "answerer did not estimate the returning Tone B reversal");
+	{
+		size_t expected_ready =
+			observation.answerer_b_reversal_delay >=
+					SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES ?
+				observation.answerer_b_reversal_event :
+				observation.answerer_estimated_b_reversal +
+					SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+					1u;
+
+		CHECK(observation.answerer_ready == expected_ready,
+		      "answerer did not hand off the first reciprocal-probe sample");
+	}
+	CHECK(sippymodem_v34_phase2_probe_turnaround_is_valid(
+		      &pair.caller.turnaround) &&
+	      sippymodem_v34_phase2_probe_turnaround_is_valid(
+		      &pair.answerer.turnaround),
+	      "completed turnaround state is invalid");
+	caller_terminal = pair.caller.turnaround;
+	answerer_terminal = pair.answerer.turnaround;
+	for (size_t index = 0; index < 8; ++index) {
+		struct test_pair_event event;
+
+		CHECK(pair_sample(&pair, &event) && event.caller_transmit == 0 &&
+		      event.answerer_transmit == 0 &&
+		      event.caller.turnaround.kind ==
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+		      event.answerer.turnaround.kind ==
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+		      memcmp(&pair.caller.turnaround, &caller_terminal,
+			     sizeof(caller_terminal)) == 0 &&
+		      memcmp(&pair.answerer.turnaround, &answerer_terminal,
+			     sizeof(answerer_terminal)) == 0,
+		      "ready turnaround was not silent and stable");
+	}
+	return true;
+}
+
+static bool test_probe_turnaround(void)
+{
+	static const struct {
+		enum test_codec codec;
+		size_t delay_samples;
+	} cases[] = {
+		{ TEST_CODEC_LINEAR, 1 },
+		{ TEST_CODEC_PCMU, 13 },
+		{ TEST_CODEC_PCMA, 47 },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
+		CHECK(check_probe_turnaround(
+			      cases[index].codec, cases[index].delay_samples),
+		      "probe turnaround failed for case %zu", index);
+	return true;
+}
+
 static bool completed_ranging_pair(
 	struct sippymodem_v34_phase2_ranging *caller,
 	struct sippymodem_v34_phase2_ranging *answerer)
@@ -436,6 +695,39 @@ static bool completed_ranging_pair(
 			*answerer = pair.answerer.ranging;
 			return true;
 		}
+	}
+	return false;
+}
+
+static bool completed_initial_probe_states(
+	struct sippymodem_v34_phase2_initial_probe *caller,
+	struct sippymodem_v34_phase2_initial_probe *answerer)
+{
+	struct test_pair pair;
+	bool caller_ready = false;
+	bool answerer_ready = false;
+
+	if (!pair_init(&pair, TEST_CODEC_LINEAR, 1))
+		return false;
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct test_pair_event event;
+
+		if (!pair_sample(&pair, &event))
+			return false;
+		if (!answerer_ready &&
+		    event.answerer.initial_probe.kind ==
+			    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
+			*answerer = pair.answerer.initial_probe;
+			answerer_ready = true;
+		}
+		if (!caller_ready &&
+		    event.caller.initial_probe.kind ==
+			    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) {
+			*caller = pair.caller.initial_probe;
+			caller_ready = true;
+		}
+		if (caller_ready && answerer_ready)
+			return true;
 	}
 	return false;
 }
@@ -608,16 +900,146 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_turnaround_failures_and_validation(void)
+{
+	struct sippymodem_v34_phase2_initial_probe caller_probe;
+	struct sippymodem_v34_phase2_initial_probe answerer_probe;
+	struct sippymodem_v34_phase2_initial_probe unready_probe;
+	struct sippymodem_v34_phase2_ranging caller_ranging;
+	struct sippymodem_v34_phase2_ranging answerer_ranging;
+	struct sippymodem_v34_phase2_probe_turnaround caller;
+	struct sippymodem_v34_phase2_probe_turnaround answerer;
+	struct sippymodem_v34_phase2_probe_turnaround before;
+	struct sippymodem_v34_phase2_probe_turnaround invalid;
+	struct sippymodem_v34_phase2_probe_turnaround_event event;
+	struct sippymodem_v34_phase2_probe_turnaround_event event_before;
+	int16_t transmit;
+	size_t samples;
+
+	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe) &&
+	      sippymodem_v34_phase2_probe_turnaround_init(
+		      &caller, &caller_probe) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK &&
+	      sippymodem_v34_phase2_probe_turnaround_init(
+		      &answerer, &answerer_probe) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+	      "turnaround failure fixtures did not initialize");
+	for (samples = 0;
+	     samples < SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	     caller.phase != SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
+	     ++samples)
+		CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+			      &caller, 0, &transmit, &event) ==
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+		      "caller reversal timeout failed at sample %zu", samples);
+	CHECK(samples ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	      caller.phase == SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
+	      caller.failure ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
+	      event.kind ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+	      "caller did not report its exact bounded reversal timeout");
+	before = caller;
+	transmit = 1234;
+	CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+		      &caller, INT16_MIN, &transmit, &event) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK &&
+	      transmit == 0 &&
+	      event.kind == SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+	      memcmp(&caller, &before, sizeof(caller)) == 0,
+	      "timed-out caller was not silent and stable");
+
+	for (samples = 0;
+	     samples <
+		     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+			     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	     answerer.phase != SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
+	     ++samples)
+		CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+			      &answerer, 0, &transmit, &event) ==
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+		      "answerer reversal timeout failed at sample %zu", samples);
+	CHECK(samples ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	      answerer.phase ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
+	      answerer.failure ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
+	      event.kind ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+	      "answerer did not report its exact bounded reversal timeout");
+
+	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
+	      sippymodem_v34_phase2_initial_probe_init(
+		      &unready_probe, &caller_ranging) ==
+		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+	      "turnaround validation fixtures did not initialize");
+	memset(&invalid, 0xa5, sizeof(invalid));
+	before = invalid;
+	CHECK(sippymodem_v34_phase2_probe_turnaround_init(
+		      &invalid, &unready_probe) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+	      memcmp(&invalid, &before, sizeof(invalid)) == 0 &&
+	      sippymodem_v34_phase2_probe_turnaround_init(NULL, &caller_probe) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT,
+	      "invalid turnaround initialization changed caller-owned state");
+	CHECK(sippymodem_v34_phase2_probe_turnaround_init(
+		      &caller, &caller_probe) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+	      "turnaround validation controller did not initialize");
+	before = caller;
+	event = (struct sippymodem_v34_phase2_probe_turnaround_event){
+		.kind = SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		.failure =
+			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT,
+	};
+	event_before = event;
+	transmit = 1234;
+	CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+		      &caller, 0, NULL, &event) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase2_probe_turnaround_sample(
+		      &caller, 0, &transmit, NULL) ==
+		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+	      memcmp(&caller, &before, sizeof(caller)) == 0 &&
+	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
+	      transmit == 1234,
+	      "invalid turnaround sample output was not transactional");
+	invalid = caller;
+	invalid.phase =
+		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
+	invalid.phase_samples_remaining =
+		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
+	CHECK(!sippymodem_v34_phase2_probe_turnaround_is_valid(&invalid) &&
+	      strcmp(
+		      sippymodem_v34_phase2_probe_turnaround_result_name(
+			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK),
+		      "ok") == 0 &&
+	      strcmp(
+		      sippymodem_v34_phase2_probe_turnaround_result_name(
+			      (enum sippymodem_v34_phase2_probe_turnaround_result)99),
+		      "unknown") == 0,
+	      "turnaround validation or result-name contract changed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
-	} tests[] = {
-		{ "bidirectional initial probe", test_bidirectional_turn },
-		{ "bounded failures", test_bounded_failures },
-		{ "validation", test_validation },
-	};
+		} tests[] = {
+			{ "bidirectional initial probe", test_bidirectional_turn },
+			{ "bidirectional probe turnaround", test_probe_turnaround },
+			{ "bounded failures", test_bounded_failures },
+			{ "validation", test_validation },
+			{ "turnaround failures and validation",
+			  test_turnaround_failures_and_validation },
+		};
 	unsigned int failures = 0;
 
 	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
