@@ -83,6 +83,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_v32_datapump.c \
 	sippymodem_v32_framing.c \
 	sippymodem_v32_rate_signal.c \
+	sippymodem_v32_startup.c \
 	sippymodem_v23_datapump.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)
