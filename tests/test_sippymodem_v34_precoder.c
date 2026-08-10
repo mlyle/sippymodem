@@ -60,6 +60,16 @@ static bool symbols_are_equal(
 		       &left->precoded_symbol, &right->precoded_symbol);
 }
 
+static bool prediction_matches_symbol(
+	const struct sippymodem_v34_precoder_prediction *prediction,
+	const struct sippymodem_v34_precoder_symbol *symbol)
+{
+	return q7_points_are_equal(
+		       &prediction->filter_output, &symbol->filter_output) &&
+	       grid_points_are_equal(
+		       &prediction->lattice_offset, &symbol->lattice_offset);
+}
+
 static bool precoders_are_equal(
 	const struct sippymodem_v34_precoder *left,
 	const struct sippymodem_v34_precoder *right)
@@ -223,10 +233,19 @@ static bool test_complex_sequences(void)
 		model = actual;
 		for (size_t index = 0; index < ARRAY_LENGTH(mapper_outputs);
 		     ++index) {
+			struct sippymodem_v34_precoder before_prediction = actual;
 			struct sippymodem_v34_precoder_symbol expected;
 			struct sippymodem_v34_precoder_symbol generated;
+			struct sippymodem_v34_precoder_prediction prediction;
 
 			model_step(&model, &mapper_outputs[index], &expected);
+			CHECK(sippymodem_v34_precoder_predict(
+				      &actual, &prediction) ==
+				      SIPPYMODEM_V34_PRECODER_OK &&
+			      prediction_matches_symbol(&prediction, &expected) &&
+			      precoders_are_equal(&actual, &before_prediction),
+			      "complex mode %zu prediction %zu differed from model",
+			      mode, index);
 			CHECK(sippymodem_v34_precoder_step(
 				      &actual, &mapper_outputs[index], &generated) ==
 				      SIPPYMODEM_V34_PRECODER_OK,
@@ -374,6 +393,20 @@ static bool test_range_failures(void)
 		},
 		.grid_step = SIPPYMODEM_V34_PRECODER_GRID_STEP_2,
 	};
+	struct sippymodem_v34_precoder_prediction prediction;
+	struct sippymodem_v34_precoder_prediction saved_prediction;
+
+	memset(&prediction, 0xa5, sizeof(prediction));
+	saved_prediction = prediction;
+	CHECK(sippymodem_v34_precoder_predict(
+		      &offset_overflow, &prediction) ==
+		      SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE &&
+	      memcmp(&prediction, &saved_prediction, sizeof(prediction)) == 0 &&
+	      sippymodem_v34_precoder_predict(
+		      &filter_overflow, &prediction) ==
+		      SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE &&
+	      memcmp(&prediction, &saved_prediction, sizeof(prediction)) == 0,
+	      "failed prediction changed its destination");
 
 	CHECK(rejected_step_is_transactional(
 		      &channel_overflow, &mapper_output,
@@ -401,6 +434,8 @@ static bool test_validation(void)
 	struct sippymodem_v34_grid_point mapper_output = { 1, 1 };
 	struct sippymodem_v34_precoder_symbol symbol;
 	struct sippymodem_v34_precoder_symbol saved_symbol;
+	struct sippymodem_v34_precoder_prediction prediction;
+	struct sippymodem_v34_precoder_prediction saved_prediction;
 
 	CHECK(sippymodem_v34_frame_geometry_init(
 		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false) ==
@@ -441,6 +476,14 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
 	      precoders_are_equal(&precoder, &saved),
 	      "invalid imaginary coefficient changed the precoder");
+	memset(&prediction, 0xa5, sizeof(prediction));
+	saved_prediction = prediction;
+	CHECK(sippymodem_v34_precoder_predict(NULL, &prediction) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_precoder_predict(&precoder, NULL) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      memcmp(&prediction, &saved_prediction, sizeof(prediction)) == 0,
+	      "invalid prediction changed its destination");
 
 	memset(&symbol, 0x5a, sizeof(symbol));
 	saved_symbol = symbol;
@@ -468,6 +511,9 @@ static bool test_validation(void)
 	precoder.grid_step = (enum sippymodem_v34_precoder_grid_step)3;
 	CHECK(!sippymodem_v34_precoder_is_valid(NULL) &&
 	      !sippymodem_v34_precoder_is_valid(&precoder) &&
+	      sippymodem_v34_precoder_predict(&precoder, &prediction) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      memcmp(&prediction, &saved_prediction, sizeof(prediction)) == 0 &&
 	      sippymodem_v34_precoder_step(
 		      &precoder, &mapper_output, &symbol) ==
 		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT,
