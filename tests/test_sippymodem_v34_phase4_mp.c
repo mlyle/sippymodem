@@ -13,6 +13,15 @@ enum {
 	V34_COMMON_TAP_DELAY = 23,
 };
 
+_Static_assert(SIPPYMODEM_V34_PHASE4_MP_TYPE0_4_POINT_SYMBOLS == 44,
+	       "Type 0 four-point symbol count changed");
+_Static_assert(SIPPYMODEM_V34_PHASE4_MP_TYPE0_16_POINT_SYMBOLS == 22,
+	       "Type 0 sixteen-point symbol count changed");
+_Static_assert(SIPPYMODEM_V34_PHASE4_MP_TYPE1_4_POINT_SYMBOLS == 94,
+	       "Type 1 four-point symbol count changed");
+_Static_assert(SIPPYMODEM_V34_PHASE4_MP_TYPE1_16_POINT_SYMBOLS == 47,
+	       "Type 1 sixteen-point symbol count changed");
+
 static const double TEST_TOLERANCE = 1e-14;
 
 struct reference_mapper {
@@ -36,6 +45,19 @@ static struct sippymodem_v34_mp_parameters parameters(bool acknowledged)
 	};
 }
 
+static struct sippymodem_v34_mp_type1_parameters
+type1_parameters(bool acknowledged)
+{
+	return (struct sippymodem_v34_mp_type1_parameters){
+		.common = parameters(acknowledged),
+		.precoder_coefficients = {
+			{ .real = 0x1234, .imaginary = -1 },
+			{ .real = -32767, .imaginary = INT16_MAX },
+			{ .real = 0, .imaginary = 16384 },
+		},
+	};
+}
+
 static bool transmitters_are_equal(
 	const struct sippymodem_v34_phase4_mp *left,
 	const struct sippymodem_v34_phase4_mp *right)
@@ -45,6 +67,7 @@ static bool transmitters_are_equal(
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
 	       left->role == right->role &&
 	       left->constellation == right->constellation &&
+	       left->frame_bit_count == right->frame_bit_count &&
 	       left->bit_index == right->bit_index &&
 	       left->previous_clockwise_quarter_turns ==
 		       right->previous_clockwise_quarter_turns;
@@ -154,25 +177,22 @@ static bool generate_trn_prefix(
 	return true;
 }
 
-static bool verify_record(
+static bool verify_encoded_record(
 	struct sippymodem_v34_phase4_mp *transmitter,
 	struct reference_mapper *reference,
-	const struct sippymodem_v34_mp_parameters *selected)
+	const uint8_t expected_frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES],
+	size_t frame_bit_count)
 {
-	uint8_t expected_frame[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES];
 	size_t symbol_bits =
 		transmitter->constellation ==
 				SIPPYMODEM_V34_CONSTELLATION_16_POINT ?
 			4u :
 			2u;
-	size_t symbol_count = SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS /
-		symbol_bits;
+	size_t symbol_count = frame_bit_count / symbol_bits;
 
-	CHECK(sippymodem_v34_mp_type0_encode(
-		      selected, expected_frame, sizeof(expected_frame)) ==
-		      SIPPYMODEM_V34_MP_OK &&
+	CHECK(transmitter->frame_bit_count == frame_bit_count &&
 	      memcmp(transmitter->frame, expected_frame,
-		     sizeof(expected_frame)) == 0,
+		     SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES) == 0,
 	      "MP transmitter did not own the selected wire record");
 	for (size_t symbol = 0; symbol < symbol_count; ++symbol) {
 		size_t first_bit = symbol * symbol_bits;
@@ -235,6 +255,36 @@ static bool verify_record(
 	return true;
 }
 
+static bool verify_type0_record(
+	struct sippymodem_v34_phase4_mp *transmitter,
+	struct reference_mapper *reference,
+	const struct sippymodem_v34_mp_parameters *selected)
+{
+	uint8_t frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES] = { 0 };
+
+	CHECK(sippymodem_v34_mp_type0_encode(
+		      selected, frame, sizeof(frame)) == SIPPYMODEM_V34_MP_OK,
+	      "Type 0 verification record did not encode");
+	return verify_encoded_record(
+		transmitter, reference, frame,
+		SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS);
+}
+
+static bool verify_type1_record(
+	struct sippymodem_v34_phase4_mp *transmitter,
+	struct reference_mapper *reference,
+	const struct sippymodem_v34_mp_type1_parameters *selected)
+{
+	uint8_t frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES] = { 0 };
+
+	CHECK(sippymodem_v34_mp_type1_encode(
+		      selected, frame, sizeof(frame)) == SIPPYMODEM_V34_MP_OK,
+	      "Type 1 verification record did not encode");
+	return verify_encoded_record(
+		transmitter, reference, frame,
+		SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS);
+}
+
 static bool test_role_and_constellation_records(void)
 {
 	static const enum sippymodem_v34_station_role roles[] = {
@@ -246,9 +296,6 @@ static bool test_role_and_constellation_records(void)
 		SIPPYMODEM_V34_CONSTELLATION_16_POINT,
 	};
 
-	CHECK(SIPPYMODEM_V34_PHASE4_MP_4_POINT_SYMBOLS == 44 &&
-	      SIPPYMODEM_V34_PHASE4_MP_16_POINT_SYMBOLS == 22,
-	      "MP Type 0 symbol counts changed");
 	for (size_t role_index = 0; role_index < ARRAY_LENGTH(roles);
 	     ++role_index) {
 		for (size_t constellation_index = 0;
@@ -258,8 +305,8 @@ static bool test_role_and_constellation_records(void)
 			struct sippymodem_v34_phase4_mp transmitter;
 			struct sippymodem_v34_mp_parameters mp =
 				parameters(false);
-			struct sippymodem_v34_mp_parameters mp_prime =
-				parameters(true);
+			struct sippymodem_v34_mp_type1_parameters mp_prime =
+				type1_parameters(true);
 			struct reference_mapper reference;
 
 			CHECK(generate_trn_prefix(
@@ -267,7 +314,7 @@ static bool test_role_and_constellation_records(void)
 				      constellations[constellation_index]),
 			      "TRN prefix %zu/%zu failed", role_index,
 			      constellation_index);
-			CHECK(sippymodem_v34_phase4_mp_init_from_trn(
+			CHECK(sippymodem_v34_phase4_mp_init_type0_from_trn(
 				      &transmitter, &trn, &mp) ==
 				      SIPPYMODEM_V34_PHASE4_MP_OK &&
 			      sippymodem_v34_phase4_mp_is_valid(&transmitter) &&
@@ -279,13 +326,15 @@ static bool test_role_and_constellation_records(void)
 				      trn.scrambler.polynomial &&
 			      transmitter.previous_clockwise_quarter_turns ==
 				      trn.last_clockwise_quarter_turns &&
+			      transmitter.frame_bit_count ==
+				      SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS &&
 			      transmitter.bit_index == 0,
 			      "MP transition %zu/%zu did not inherit TRN state",
 			      role_index, constellation_index);
 			{
 				struct sippymodem_v34_phase4_mp saved = transmitter;
 
-				CHECK(sippymodem_v34_phase4_mp_start_next_record(
+				CHECK(sippymodem_v34_phase4_mp_start_next_type1_record(
 					      &transmitter, &mp_prime) ==
 					      SIPPYMODEM_V34_PHASE4_MP_RECORD_IN_PROGRESS &&
 				      transmitters_are_equal(&transmitter, &saved),
@@ -293,7 +342,7 @@ static bool test_role_and_constellation_records(void)
 				      role_index, constellation_index);
 			}
 			reference_mapper_init(&reference, &trn);
-			CHECK(verify_record(&transmitter, &reference, &mp),
+			CHECK(verify_type0_record(&transmitter, &reference, &mp),
 			      "MP record %zu/%zu failed", role_index,
 			      constellation_index);
 			{
@@ -301,20 +350,29 @@ static bool test_role_and_constellation_records(void)
 				uint8_t rotation =
 					transmitter.previous_clockwise_quarter_turns;
 
-				CHECK(sippymodem_v34_phase4_mp_start_next_record(
+				CHECK(sippymodem_v34_phase4_mp_start_next_type1_record(
 					      &transmitter, &mp_prime) ==
 					      SIPPYMODEM_V34_PHASE4_MP_OK &&
 				      transmitter.bit_index == 0 &&
+				      transmitter.frame_bit_count ==
+					      SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS &&
 				      transmitter.scrambler.history == history &&
 				      transmitter.previous_clockwise_quarter_turns ==
 					      rotation,
 				      "MP-prime transition %zu/%zu reset mapper state",
 				      role_index, constellation_index);
 			}
-			CHECK(verify_record(
+			CHECK(verify_type1_record(
 				      &transmitter, &reference, &mp_prime),
 			      "MP-prime record %zu/%zu failed", role_index,
 			      constellation_index);
+			CHECK(sippymodem_v34_phase4_mp_start_next_type0_record(
+				      &transmitter, &mp) ==
+				      SIPPYMODEM_V34_PHASE4_MP_OK &&
+			      verify_type0_record(
+				      &transmitter, &reference, &mp),
+			      "Type 1-to-Type 0 transition %zu/%zu failed",
+			      role_index, constellation_index);
 		}
 	}
 	return true;
@@ -325,12 +383,13 @@ static bool test_copy_behavior(void)
 	struct sippymodem_v34_phase4_trn trn;
 	struct sippymodem_v34_phase4_mp original;
 	struct sippymodem_v34_phase4_mp copy;
-	struct sippymodem_v34_mp_parameters selected = parameters(false);
+	struct sippymodem_v34_mp_type1_parameters selected =
+		type1_parameters(false);
 
 	CHECK(generate_trn_prefix(
 		      &trn, SIPPYMODEM_V34_CALLING_STATION,
 		      SIPPYMODEM_V34_CONSTELLATION_16_POINT) &&
-	      sippymodem_v34_phase4_mp_init_from_trn(
+	      sippymodem_v34_phase4_mp_init_type1_from_trn(
 		      &original, &trn, &selected) ==
 		      SIPPYMODEM_V34_PHASE4_MP_OK,
 	      "MP copy fixture did not initialize");
@@ -382,6 +441,9 @@ static bool test_validation(void)
 	struct sippymodem_v34_phase4_mp saved;
 	struct sippymodem_v34_mp_parameters valid = parameters(false);
 	struct sippymodem_v34_mp_parameters invalid = valid;
+	struct sippymodem_v34_mp_type1_parameters valid_type1 =
+		type1_parameters(false);
+	struct sippymodem_v34_mp_type1_parameters invalid_type1 = valid_type1;
 	struct sippymodem_qam_point point = { 7.0, -9.0 };
 	uint8_t quarter = UINT8_MAX;
 	uint8_t rotation = UINT8_MAX;
@@ -393,14 +455,17 @@ static bool test_validation(void)
 		      &trn, SIPPYMODEM_V34_ANSWERING_STATION,
 		      SIPPYMODEM_V34_CONSTELLATION_4_POINT) ==
 		      SIPPYMODEM_V34_PHASE4_TRN_OK &&
-	      sippymodem_v34_phase4_mp_init_from_trn(
+	      sippymodem_v34_phase4_mp_init_type0_from_trn(
 		      NULL, &trn, &valid) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_mp_init_from_trn(
+	      sippymodem_v34_phase4_mp_init_type0_from_trn(
 		      &transmitter, NULL, &valid) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_mp_init_from_trn(
+	      sippymodem_v34_phase4_mp_init_type0_from_trn(
 		      &transmitter, &trn, &valid) ==
+		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_init_type1_from_trn(
+		      &transmitter, &trn, &valid_type1) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
 	      transmitters_are_equal(&transmitter, &saved),
 	      "MP initialization accepted TRN without a final symbol");
@@ -415,15 +480,29 @@ static bool test_validation(void)
 		      "MP validation TRN did not emit a symbol");
 	}
 	invalid.maximum_call_to_answer_rate_2400_bps_units = 0;
-	CHECK(sippymodem_v34_phase4_mp_init_from_trn(
+	invalid_type1.precoder_coefficients[0].real = INT16_MIN;
+	CHECK(sippymodem_v34_phase4_mp_init_type0_from_trn(
 		      &transmitter, &trn, NULL) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_mp_init_from_trn(
+	      sippymodem_v34_phase4_mp_init_type0_from_trn(
 		      &transmitter, &trn, &invalid) ==
+		      SIPPYMODEM_V34_PHASE4_MP_INVALID_PARAMETERS &&
+	      sippymodem_v34_phase4_mp_init_type1_from_trn(
+		      &transmitter, &trn, NULL) ==
+		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_init_type1_from_trn(
+		      &transmitter, &trn, &invalid_type1) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_PARAMETERS &&
 	      transmitters_are_equal(&transmitter, &saved),
 	      "MP initialization accepted invalid parameters");
-	CHECK(sippymodem_v34_phase4_mp_init_from_trn(
+	CHECK(sippymodem_v34_phase4_mp_init_type1_from_trn(
+		      &transmitter, &trn, &valid_type1) ==
+		      SIPPYMODEM_V34_PHASE4_MP_OK,
+	      "Type 1 MP validation fixture did not initialize");
+	transmitter.frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES - 1u] |= 1u;
+	CHECK(!sippymodem_v34_phase4_mp_is_valid(&transmitter),
+	      "MP accepted nonzero storage after its Type 1 record");
+	CHECK(sippymodem_v34_phase4_mp_init_type0_from_trn(
 		      &transmitter, &trn, &valid) ==
 		      SIPPYMODEM_V34_PHASE4_MP_OK,
 	      "MP validation fixture did not initialize");
@@ -449,18 +528,24 @@ static bool test_validation(void)
 	      "invalid MP emission mutated state or outputs");
 
 	transmitter = saved;
-	transmitter.bit_index = SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS;
+	transmitter.bit_index = transmitter.frame_bit_count;
 	CHECK(sippymodem_v34_phase4_mp_is_valid(&transmitter),
 	      "MP validation fixture did not reach a record boundary");
 	saved = transmitter;
-	CHECK(sippymodem_v34_phase4_mp_start_next_record(
+	CHECK(sippymodem_v34_phase4_mp_start_next_type0_record(
 		      NULL, &valid) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_mp_start_next_record(
+	      sippymodem_v34_phase4_mp_start_next_type0_record(
 		      &transmitter, NULL) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_mp_start_next_record(
+	      sippymodem_v34_phase4_mp_start_next_type0_record(
 		      &transmitter, &invalid) ==
+		      SIPPYMODEM_V34_PHASE4_MP_INVALID_PARAMETERS &&
+	      sippymodem_v34_phase4_mp_start_next_type1_record(
+		      &transmitter, NULL) ==
+		      SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_start_next_type1_record(
+		      &transmitter, &invalid_type1) ==
 		      SIPPYMODEM_V34_PHASE4_MP_INVALID_PARAMETERS &&
 	      transmitters_are_equal(&transmitter, &saved),
 	      "invalid MP replacement changed a completed record");
@@ -473,6 +558,14 @@ static bool test_validation(void)
 	transmitter.frame[4] ^= 1u;
 	CHECK(!sippymodem_v34_phase4_mp_is_valid(&transmitter),
 	      "MP accepted a corrupt owned record");
+	transmitter = saved;
+	transmitter.frame[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES] = 1;
+	CHECK(!sippymodem_v34_phase4_mp_is_valid(&transmitter),
+	      "MP accepted nonzero storage after its Type 0 record");
+	transmitter = saved;
+	transmitter.frame_bit_count = SIZE_MAX;
+	CHECK(!sippymodem_v34_phase4_mp_is_valid(&transmitter),
+	      "MP accepted an unknown record length");
 	transmitter = saved;
 	transmitter.previous_clockwise_quarter_turns = 4;
 	CHECK(!sippymodem_v34_phase4_mp_is_valid(&transmitter),

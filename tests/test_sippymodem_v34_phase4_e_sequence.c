@@ -124,7 +124,8 @@ static bool generate_completed_mp(
 			      SIPPYMODEM_V34_PHASE4_TRN_OK,
 		      "E fixture TRN stopped at symbol %zu", symbol);
 	}
-	CHECK(sippymodem_v34_phase4_mp_init_from_trn(mp, &trn, &selected) ==
+	CHECK(sippymodem_v34_phase4_mp_init_type0_from_trn(
+		      mp, &trn, &selected) ==
 		      SIPPYMODEM_V34_PHASE4_MP_OK,
 	      "E fixture MP did not initialize");
 	while (!sippymodem_v34_phase4_mp_record_is_complete(mp)) {
