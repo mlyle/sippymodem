@@ -72,6 +72,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_driver.c \
 	sippymodem_slmodem_terminal.c \
 	sippymodem_terminal.c \
+	sippymodem_qpsk.c \
 	sippymodem_fsk.c \
 	sippymodem_fsk300_datapump.c \
 	sippymodem_v23_datapump.c \
