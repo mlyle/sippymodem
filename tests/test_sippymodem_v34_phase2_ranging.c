@@ -34,6 +34,7 @@ struct ranging_observation {
 	size_t caller_reversal_sample;
 	size_t second_answer_reversal_sample;
 	size_t answer_probe_ready_sample;
+	size_t caller_probe_ready_sample;
 	uint16_t answer_round_trip_delay_samples;
 	uint16_t caller_round_trip_delay_samples;
 	bool answer_delay_measured;
@@ -97,6 +98,7 @@ static void initialize_observation(struct ranging_observation *observation)
 		.caller_reversal_sample = SIZE_MAX,
 		.second_answer_reversal_sample = SIZE_MAX,
 		.answer_probe_ready_sample = SIZE_MAX,
+		.caller_probe_ready_sample = SIZE_MAX,
 	};
 }
 
@@ -114,6 +116,7 @@ static void observe_ranging_events(
 	}
 	if (caller_event->kind == SIPPYMODEM_V34_PHASE2_PROBE_RECEIVE_READY) {
 		observation->caller_probe_ready = true;
+		observation->caller_probe_ready_sample = sample_index;
 		observation->caller_round_trip_delay_samples =
 			caller_event->round_trip_delay_samples;
 	}
@@ -269,6 +272,13 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 		      observation.second_answer_reversal_sample +
 			      SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES - 1u,
 	      "answerer did not preserve the 10 ms post-reversal tone");
+	CHECK(absolute_difference(
+		      observation.caller_probe_ready_sample,
+		      observation.answer_probe_ready_sample +
+			      line_delay_samples) <=
+		      TEST_EDGE_TOLERANCE_SAMPLES,
+	      "caller probe boundary did not follow the remote tone tail for codec %d delay %zu",
+	      codec, line_delay_samples);
 	CHECK(absolute_difference(
 		      observation.answer_round_trip_delay_samples,
 		      expected_round_trip) <= TEST_EDGE_TOLERANCE_SAMPLES &&
