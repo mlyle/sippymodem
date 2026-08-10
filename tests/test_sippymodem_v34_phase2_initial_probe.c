@@ -403,12 +403,15 @@ static bool check_probe_turnaround(
 		      observation.caller_first_reversed_b + delay_samples, 4),
 	      "answerer did not estimate the returning Tone B reversal");
 	{
+		const size_t handoff_delay =
+			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES;
 		size_t expected_ready =
 			observation.answerer_b_reversal_delay >=
-					SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES ?
+					handoff_delay ?
 				observation.answerer_b_reversal_event :
 				observation.answerer_estimated_b_reversal +
-					SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+					handoff_delay -
 					1u;
 
 		CHECK(observation.answerer_ready == expected_ready,

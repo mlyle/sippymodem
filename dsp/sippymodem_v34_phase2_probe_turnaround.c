@@ -8,6 +8,11 @@ _Static_assert(
 	SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES <=
 		UINT16_MAX,
 	"Probe-turnaround deadline must fit its sample counter");
+_Static_assert(
+	SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES > 0 &&
+	(int)SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES <
+		(int)SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
+	"Probe reception must begin within the reversed-tone tail");
 
 static enum sippymodem_v34_phase2_station_role local_role(
 	const struct sippymodem_v34_phase2_probe_turnaround *turnaround)
@@ -282,17 +287,19 @@ static void schedule_answerer_probe(
 	uint16_t detector_delay_samples,
 	struct sippymodem_v34_phase2_probe_turnaround_event *event)
 {
+	uint16_t handoff_delay =
+		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES;
+
 	turnaround->wait_samples = 0;
-	if (detector_delay_samples >=
-	    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES) {
+	if (detector_delay_samples >= handoff_delay) {
 		enter_ready(turnaround, event);
 		return;
 	}
 	turnaround->phase =
 		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_WAIT_PROBE_START;
-	turnaround->phase_samples_remaining =
-		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
-		detector_delay_samples;
+	turnaround->phase_samples_remaining = handoff_delay -
+					      detector_delay_samples;
 }
 
 static void handle_remote_reversal(
@@ -317,7 +324,7 @@ static void advance_answerer_probe_start(
 	    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_WAIT_PROBE_START)
 		return;
 	/* This call already consumed one sample after the estimated reversal.
-	 * Signal readiness on the final expected tail sample. */
+	 * Leave the synchronizer's bounded search interval before L1. */
 	if (--turnaround->phase_samples_remaining == 0)
 		enter_ready(turnaround, event);
 }

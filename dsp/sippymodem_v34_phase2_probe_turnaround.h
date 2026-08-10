@@ -15,6 +15,10 @@ enum {
 		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE * 50 / 1000,
 	SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES =
 		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE * 10 / 1000,
+	/* Center the expected L1 edge within the synchronizer's search prefix so
+	 * small positive or negative edge-estimation errors remain observable. */
+	SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES =
+		SIPPYMODEM_V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES / 2,
 	SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES =
 		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE * 2,
 };
@@ -75,9 +79,10 @@ bool sippymodem_v34_phase2_probe_turnaround_is_valid(
 
 /* One call consumes and produces one sample at the 8 kHz line terminal. The
  * caller's reversal deadline compensates the tone detector's reported edge
- * latency. A readiness event is emitted on the final tone-tail sample, so the
- * following sample belongs to the reciprocal probe transmitter or receiver.
- * This owner deliberately stops before generating or measuring L1/L2. */
+ * latency. The transmit-ready event is emitted on the caller's final tone-tail
+ * sample. Receive-ready leaves the synchronizer's bounded search prefix before
+ * the expected L1 edge. The following sample belongs to the reciprocal probe
+ * transmitter or receiver; this owner never generates or measures L1/L2. */
 enum sippymodem_v34_phase2_probe_turnaround_result
 sippymodem_v34_phase2_probe_turnaround_sample(
 	struct sippymodem_v34_phase2_probe_turnaround *turnaround,
