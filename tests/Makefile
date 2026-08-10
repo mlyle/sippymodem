@@ -382,6 +382,14 @@ V34_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_trellis
 V34_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_trellis.o
+V34_PRECODER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_precoder
+V34_PRECODER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_precoder.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/sippymodem_v34_framing.o \
+	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
+	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
+	$(BUILD_DIR)/sippymodem_v34_precoder.o
 V34_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_constellation
 V34_CONSTELLATION_TEST_OBJECTS := \
@@ -706,6 +714,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PARSER_TEST_BINARY) \
 	$(V34_SHELL_MAPPER_TEST_BINARY) \
 	$(V34_TRELLIS_TEST_BINARY) \
+	$(V34_PRECODER_TEST_BINARY) \
 	$(V34_CONSTELLATION_TEST_BINARY) \
 	$(V34_INFO1_TEST_BINARY) \
 	$(V34_PREEMPHASIS_TEST_BINARY) \
@@ -787,6 +796,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PARSER_TEST_OBJECTS:.o=.d) \
 	$(V34_SHELL_MAPPER_TEST_OBJECTS:.o=.d) \
 	$(V34_TRELLIS_TEST_OBJECTS:.o=.d) \
+	$(V34_PRECODER_TEST_OBJECTS:.o=.d) \
 	$(V34_CONSTELLATION_TEST_OBJECTS:.o=.d) \
 	$(V34_INFO1_TEST_OBJECTS:.o=.d) \
 	$(V34_PREEMPHASIS_TEST_OBJECTS:.o=.d) \
@@ -884,6 +894,7 @@ test: $(TEST_BINARIES)
 	./$(V34_PARSER_TEST_BINARY)
 	./$(V34_SHELL_MAPPER_TEST_BINARY)
 	./$(V34_TRELLIS_TEST_BINARY)
+	./$(V34_PRECODER_TEST_BINARY)
 	./$(V34_CONSTELLATION_TEST_BINARY)
 	./$(V34_INFO1_TEST_BINARY)
 	./$(V34_PREEMPHASIS_TEST_BINARY)
@@ -1095,6 +1106,9 @@ $(V34_SHELL_MAPPER_TEST_BINARY): $(V34_SHELL_MAPPER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V34_TRELLIS_TEST_BINARY): $(V34_TRELLIS_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V34_PRECODER_TEST_BINARY): $(V34_PRECODER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V34_CONSTELLATION_TEST_BINARY): $(V34_CONSTELLATION_TEST_OBJECTS)
@@ -1433,6 +1447,10 @@ $(BUILD_DIR)/sippymodem_v34_shell_mapper.o: \
 
 $(BUILD_DIR)/sippymodem_v34_trellis.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_trellis.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_precoder.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_precoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_constellation.o: \
