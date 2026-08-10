@@ -5,6 +5,7 @@
 #include "test.h"
 #include "v34_encoder_test_helpers.h"
 
+#include <float.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -257,6 +258,59 @@ static bool rejected_transmission_is_transactional(
 	       scramblers_are_equal(scrambler, &saved_scrambler) &&
 	       v34_test_encoders_are_equal(encoder, &saved_encoder) &&
 	       bytes_are_filled(&transmitted, sizeof(transmitted), 0xa5);
+}
+
+static bool prepare_out_of_range_fixture(
+	struct transmitter_fixture *fixture)
+{
+	struct sippymodem_v34_q14_coefficient coefficients
+		[SIPPYMODEM_V34_PRECODER_TAP_COUNT] = { 0 };
+
+	if (!initialize_transmitter_fixture(fixture, false))
+		return false;
+	coefficients[2].real = SIPPYMODEM_V34_Q14_SCALE;
+	if (sippymodem_v34_4d_encoder_init(
+		    &fixture->encoder, &fixture->parameters, coefficients,
+		    SIPPYMODEM_V34_TRELLIS_16_STATE) !=
+	    SIPPYMODEM_V34_4D_ENCODER_OK)
+		return false;
+	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++tap) {
+		fixture->encoder.precoder.previous_symbols[tap] =
+			(struct sippymodem_v34_q7_point){
+				254 * SIPPYMODEM_V34_Q7_SCALE,
+				254 * SIPPYMODEM_V34_Q7_SCALE,
+			};
+	}
+	if (!sippymodem_v34_4d_encoder_is_valid(&fixture->encoder))
+		return false;
+	for (uint32_t seed = 1; seed < 4096u; ++seed) {
+		struct sippymodem_v34_scrambler scrambler = fixture->scrambler;
+		struct sippymodem_v34_4d_encoder encoder = fixture->encoder;
+		struct sippymodem_v34_encoded_mapping_frame encoded;
+		uint8_t scrambled[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+		enum sippymodem_v34_mapping_frame_encoder_result result;
+
+		generate_primary_bits(
+			fixture->primary_bits, fixture->mapping_frame.primary_bits,
+			seed);
+		for (size_t index = 0;
+		     index < fixture->mapping_frame.primary_bits; ++index) {
+			if (sippymodem_v34_scramble_group(
+				    &scrambler, fixture->primary_bits[index], 1,
+				    &scrambled[index]) !=
+			    SIPPYMODEM_V34_FRAMING_OK)
+				return false;
+		}
+		result = sippymodem_v34_encode_mapping_frame(
+			&encoder, &fixture->mapping_frame, scrambled,
+			fixture->mapping_frame.primary_bits, NULL, &encoded);
+		if (result == SIPPYMODEM_V34_MAPPING_FRAME_ENCODER_OUT_OF_RANGE)
+			return true;
+		if (result != SIPPYMODEM_V34_MAPPING_FRAME_ENCODER_OK)
+			return false;
+	}
+	return false;
 }
 
 static bool test_composition(void)
@@ -651,6 +705,31 @@ static bool test_transactional_validation(void)
 	return true;
 }
 
+static bool test_late_failure_rollback(void)
+{
+	struct transmitter_fixture numeric_fixture;
+	struct transmitter_fixture range_fixture;
+
+	CHECK(initialize_transmitter_fixture(&numeric_fixture, false),
+	      "numeric rollback fixture did not initialize");
+	CHECK(rejected_transmission_is_transactional(
+		      &numeric_fixture.schedule, &numeric_fixture.scrambler,
+		      &numeric_fixture.encoder, numeric_fixture.primary_bits,
+		      numeric_fixture.mapping_frame.primary_bits, NULL,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, DBL_MIN,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_NUMERIC_FAILURE),
+	      "nonlinear failure did not roll back the complete pipeline");
+	CHECK(prepare_out_of_range_fixture(&range_fixture) &&
+	      rejected_transmission_is_transactional(
+		      &range_fixture.schedule, &range_fixture.scrambler,
+		      &range_fixture.encoder, range_fixture.primary_bits,
+		      range_fixture.mapping_frame.primary_bits, NULL,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 512.0,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OUT_OF_RANGE),
+	      "mapping failure did not roll back schedule and scrambler state");
+	return true;
+}
+
 static bool test_completion_and_result_names(void)
 {
 	struct transmitter_fixture fixture;
@@ -701,6 +780,7 @@ int main(void)
 	} tests[] = {
 		{ "composed transmission", test_composition },
 		{ "transactional validation", test_transactional_validation },
+		{ "late failure rollback", test_late_failure_rollback },
 		{ "completion and result names",
 		  test_completion_and_result_names },
 	};
