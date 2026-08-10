@@ -3,6 +3,7 @@
 #ifndef SIPPYMODEM_V22BIS_RECEIVER_H
 #define SIPPYMODEM_V22BIS_RECEIVER_H
 
+#include "sippymodem_qam_gain.h"
 #include "sippymodem_v22bis_symbols.h"
 
 #include <stdbool.h>
@@ -15,7 +16,7 @@ enum sippymodem_v22bis_receiver_result {
 
 struct sippymodem_v22bis_receiver {
 	struct sippymodem_v22bis_symbol_decoder decoder;
-	struct sippymodem_qam_point channel_gain;
+	struct sippymodem_qam_gain gain;
 	bool v22bis_started;
 };
 

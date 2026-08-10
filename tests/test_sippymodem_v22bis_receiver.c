@@ -216,7 +216,7 @@ static bool test_validation(void)
 		      bits[0] == UINT8_MAX && bits[1] == UINT8_MAX &&
 		      bits[2] == UINT8_MAX && bits[3] == UINT8_MAX,
 	      "V.22bis receiver invalid input was not transactional");
-	receiver.channel_gain.in_phase = INFINITY;
+	receiver.gain.channel_gain.in_phase = INFINITY;
 	CHECK(sippymodem_v22bis_receiver_decode(
 		      &receiver, &reference, bits) ==
 		      SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT &&
