@@ -129,7 +129,8 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_reciprocal_probe.c \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_tone.c
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_tone.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_profile.c
 SIPPYMODEM_DSP_SOURCES := $(SIPPYMODEM_SHARED_DSP_SOURCES) \
 	$(SIPPYMODEM_V21_202_SOURCES) $(SIPPYMODEM_V22_SOURCES) \
 	$(SIPPYMODEM_V32_SOURCES) $(SIPPYMODEM_PCM_SOURCES)
