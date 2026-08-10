@@ -51,6 +51,54 @@ static bool test_polynomial_starts(void)
 	return true;
 }
 
+static bool test_station_role_polynomials(void)
+{
+	static const struct {
+		enum sippymodem_v34_station_role role;
+		enum sippymodem_v34_scrambler_polynomial polynomial;
+	} cases[] = {
+		{ SIPPYMODEM_V34_CALLING_STATION,
+		  SIPPYMODEM_V34_POLYNOMIAL_GPC },
+		{ SIPPYMODEM_V34_ANSWERING_STATION,
+		  SIPPYMODEM_V34_POLYNOMIAL_GPA },
+	};
+	struct sippymodem_v34_scrambler scrambler;
+	struct sippymodem_v34_scrambler before;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		enum sippymodem_v34_station_role other =
+			cases[index].role == SIPPYMODEM_V34_CALLING_STATION ?
+				SIPPYMODEM_V34_ANSWERING_STATION :
+				SIPPYMODEM_V34_CALLING_STATION;
+
+		CHECK(sippymodem_v34_transmit_scrambler_init(
+			      &scrambler, cases[index].role) ==
+			      SIPPYMODEM_V34_FRAMING_OK &&
+		      scrambler.history == 0 &&
+		      scrambler.polynomial == cases[index].polynomial &&
+		      sippymodem_v34_transmit_scrambler_is_valid(
+			      &scrambler, cases[index].role) &&
+		      !sippymodem_v34_transmit_scrambler_is_valid(
+			      &scrambler, other),
+		      "V.34 station role %zu selected the wrong polynomial",
+		      index);
+	}
+	before = scrambler;
+	CHECK(sippymodem_v34_transmit_scrambler_init(
+		      NULL, SIPPYMODEM_V34_CALLING_STATION) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_transmit_scrambler_init(
+		      &scrambler, (enum sippymodem_v34_station_role)99) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      memcmp(&scrambler, &before, sizeof(scrambler)) == 0 &&
+	      !sippymodem_v34_transmit_scrambler_is_valid(
+		      NULL, SIPPYMODEM_V34_CALLING_STATION) &&
+	      !sippymodem_v34_transmit_scrambler_is_valid(
+		      &scrambler, (enum sippymodem_v34_station_role)99),
+	      "V.34 station scrambler accepted invalid input");
+	return true;
+}
+
 static bool test_group_round_trip(void)
 {
 	uint32_t random = UINT32_C(0x34f2b917);
@@ -208,6 +256,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "polynomial starts", test_polynomial_starts },
+		{ "station role polynomials", test_station_role_polynomials },
 		{ "group round trip", test_group_round_trip },
 		{ "superframe inversion patterns",
 		  test_superframe_inversion_patterns },

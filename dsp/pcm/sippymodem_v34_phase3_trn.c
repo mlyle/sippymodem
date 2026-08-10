@@ -6,36 +6,15 @@
 
 #include <stddef.h>
 
-static bool role_is_valid(enum sippymodem_v34_station_role role)
-{
-	return role == SIPPYMODEM_V34_CALLING_STATION ||
-	       role == SIPPYMODEM_V34_ANSWERING_STATION;
-}
-
-static struct sippymodem_self_sync_scrambler_config scrambler_config(
-	enum sippymodem_v34_station_role role)
-{
-	return (struct sippymodem_self_sync_scrambler_config){
-		.history_bits = 23,
-		.tap_a_delay =
-			role == SIPPYMODEM_V34_CALLING_STATION ? 18u : 5u,
-		.tap_b_delay = 23,
-	};
-}
-
 bool sippymodem_v34_phase3_trn_is_valid(
 	const struct sippymodem_v34_phase3_trn *trn)
 {
-	struct sippymodem_self_sync_scrambler_config config;
-
-	if (trn == NULL || !role_is_valid(trn->role) ||
-	    trn->last_clockwise_quarter_turns > 3u ||
+	if (trn == NULL || trn->last_clockwise_quarter_turns > 3u ||
 	    (!trn->has_last_symbol &&
 	     trn->last_clockwise_quarter_turns != 0u))
 		return false;
-	config = scrambler_config(trn->role);
-	return sippymodem_self_sync_scrambler_is_valid(
-		&trn->scrambler, &config);
+	return sippymodem_v34_transmit_scrambler_is_valid(
+		&trn->scrambler, trn->role);
 }
 
 enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_init(
@@ -43,14 +22,12 @@ enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_init(
 	enum sippymodem_v34_station_role role)
 {
 	struct sippymodem_v34_phase3_trn initialized = { .role = role };
-	struct sippymodem_self_sync_scrambler_config config;
 
-	if (trn == NULL || !role_is_valid(role))
+	if (trn == NULL)
 		return SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT;
-	config = scrambler_config(role);
-	if (sippymodem_self_sync_scrambler_init(
-		    &initialized.scrambler, &config) !=
-	    SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK)
+	if (sippymodem_v34_transmit_scrambler_init(
+		    &initialized.scrambler, role) !=
+	    SIPPYMODEM_V34_FRAMING_OK)
 		return SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT;
 	*trn = initialized;
 	return SIPPYMODEM_V34_PHASE3_TRN_OK;
@@ -72,7 +49,6 @@ enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_next(
 	uint8_t *clockwise_quarter_turns)
 {
 	struct sippymodem_v34_phase3_trn next;
-	struct sippymodem_self_sync_scrambler_config config;
 	struct sippymodem_qam_point next_point;
 	uint8_t scrambled_bits;
 	uint8_t rotation;
@@ -81,10 +57,9 @@ enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_next(
 	    clockwise_quarter_turns == NULL)
 		return SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT;
 	next = *trn;
-	config = scrambler_config(next.role);
-	if (sippymodem_self_sync_scramble_group(
-		    &next.scrambler, &config, 3u, 2u, &scrambled_bits) !=
-	    SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK)
+	if (sippymodem_v34_scramble_group(
+		    &next.scrambler, 3u, 2u, &scrambled_bits) !=
+	    SIPPYMODEM_V34_FRAMING_OK)
 		return SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT;
 	rotation = clockwise_rotation(scrambled_bits);
 	next_point = sippymodem_v34_rotated_point_zero(-(int)rotation);

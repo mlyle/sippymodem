@@ -4,7 +4,7 @@
 #define SIPPYMODEM_V34_PHASE3_TRN_H
 
 #include "sippymodem_qam.h"
-#include "sippymodem_self_sync_scrambler.h"
+#include "sippymodem_v34_framing.h"
 #include "sippymodem_v34_station.h"
 
 #include <stdbool.h>
@@ -22,7 +22,7 @@ enum sippymodem_v34_phase3_trn_result {
 /* Phase 3 TRN has no intrinsic end marker. The owning startup controller
  * decides when at least 512 symbols have trained the remote receiver. */
 struct sippymodem_v34_phase3_trn {
-	struct sippymodem_self_sync_scrambler scrambler;
+	struct sippymodem_v34_scrambler scrambler;
 	enum sippymodem_v34_station_role role;
 	uint8_t last_clockwise_quarter_turns;
 	bool has_last_symbol;

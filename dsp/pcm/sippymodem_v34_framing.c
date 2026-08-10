@@ -41,6 +41,23 @@ scrambler_config(enum sippymodem_v34_scrambler_polynomial polynomial)
 	return &v34_scrambler_configs[(unsigned int)polynomial];
 }
 
+static bool transmit_polynomial(
+	enum sippymodem_v34_station_role role,
+	enum sippymodem_v34_scrambler_polynomial *polynomial)
+{
+	if (polynomial == NULL)
+		return false;
+	switch (role) {
+	case SIPPYMODEM_V34_CALLING_STATION:
+		*polynomial = SIPPYMODEM_V34_POLYNOMIAL_GPC;
+		return true;
+	case SIPPYMODEM_V34_ANSWERING_STATION:
+		*polynomial = SIPPYMODEM_V34_POLYNOMIAL_GPA;
+		return true;
+	}
+	return false;
+}
+
 bool sippymodem_v34_scrambler_is_valid(
 	const struct sippymodem_v34_scrambler *scrambler)
 {
@@ -69,6 +86,29 @@ enum sippymodem_v34_framing_result sippymodem_v34_scrambler_init(
 	next.polynomial = polynomial;
 	*scrambler = next;
 	return SIPPYMODEM_V34_FRAMING_OK;
+}
+
+enum sippymodem_v34_framing_result
+sippymodem_v34_transmit_scrambler_init(
+	struct sippymodem_v34_scrambler *scrambler,
+	enum sippymodem_v34_station_role role)
+{
+	enum sippymodem_v34_scrambler_polynomial polynomial;
+
+	if (!transmit_polynomial(role, &polynomial))
+		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
+	return sippymodem_v34_scrambler_init(scrambler, polynomial);
+}
+
+bool sippymodem_v34_transmit_scrambler_is_valid(
+	const struct sippymodem_v34_scrambler *scrambler,
+	enum sippymodem_v34_station_role role)
+{
+	enum sippymodem_v34_scrambler_polynomial polynomial;
+
+	return transmit_polynomial(role, &polynomial) &&
+	       sippymodem_v34_scrambler_is_valid(scrambler) &&
+	       scrambler->polynomial == polynomial;
 }
 
 static enum sippymodem_v34_framing_result transform_group(

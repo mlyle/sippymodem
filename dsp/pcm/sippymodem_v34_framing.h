@@ -3,6 +3,8 @@
 #ifndef SIPPYMODEM_V34_FRAMING_H
 #define SIPPYMODEM_V34_FRAMING_H
 
+#include "sippymodem_v34_station.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -38,6 +40,15 @@ enum sippymodem_v34_framing_result sippymodem_v34_scrambler_init(
 	enum sippymodem_v34_scrambler_polynomial polynomial);
 bool sippymodem_v34_scrambler_is_valid(
 	const struct sippymodem_v34_scrambler *scrambler);
+
+/* Select clause 7's generating polynomial for the transmitting station. */
+enum sippymodem_v34_framing_result
+sippymodem_v34_transmit_scrambler_init(
+	struct sippymodem_v34_scrambler *scrambler,
+	enum sippymodem_v34_station_role role);
+bool sippymodem_v34_transmit_scrambler_is_valid(
+	const struct sippymodem_v34_scrambler *scrambler,
+	enum sippymodem_v34_station_role role);
 
 /* Process between one and eight bits, most-significant bit first. */
 enum sippymodem_v34_framing_result sippymodem_v34_scramble_group(

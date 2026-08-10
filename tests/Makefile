@@ -384,6 +384,7 @@ V34_PHASE3_TRN_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase3_trn.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
+	$(BUILD_DIR)/sippymodem_v34_framing.o \
 	$(BUILD_DIR)/sippymodem_v34_phase3_trn.o
 V34_PHASE2_INFO_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_info
