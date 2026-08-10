@@ -103,6 +103,140 @@ static bool test_transmission_order(void)
 	return true;
 }
 
+static bool observe_word(
+	struct sippymodem_v32_rate_signal_detector *detector, uint16_t word,
+	enum sippymodem_v32_rate_signal_event *event,
+	struct sippymodem_v32_rate_offer *offer)
+{
+	for (unsigned int index = 0;
+	     index < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS; ++index) {
+		uint8_t dibit;
+
+		CHECK(sippymodem_v32_rate_signal_dibit(word, index, &dibit) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+			      sippymodem_v32_rate_signal_detector_observe(
+				      detector, dibit, event, offer) ==
+				      SIPPYMODEM_V32_RATE_SIGNAL_OK,
+		      "V.32 detector could not consume word 0x%04x", word);
+		CHECK(index + 1 == SIPPYMODEM_V32_RATE_SIGNAL_DIBITS ||
+			      *event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT,
+		      "V.32 detector reported word 0x%04x before its boundary",
+		      word);
+	}
+	return true;
+}
+
+static bool test_repeated_rate_detection(void)
+{
+	struct sippymodem_v32_rate_signal_detector detector;
+	struct sippymodem_v32_rate_offer offer = { 0 };
+	enum sippymodem_v32_rate_signal_event event =
+		SIPPYMODEM_V32_END_SIGNAL_DETECTED;
+
+	CHECK(sippymodem_v32_rate_signal_detector_init(&detector) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      sippymodem_v32_rate_signal_detector_observe(
+			      &detector, 2, &event, &offer) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT,
+	      "V.32 detector did not accept an unaligned preamble");
+	CHECK(observe_word(&detector, 0x0511, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT,
+	      "V.32 detector accepted only one rate word");
+	CHECK(observe_word(&detector, 0x0511, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED &&
+		      offer.rates == SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
+		      !offer.trellis_at_highest_rate && detector.aligned,
+	      "V.32 detector did not align to repeated rate words");
+	return true;
+}
+
+static bool test_aligned_end_detection(void)
+{
+	struct sippymodem_v32_rate_signal_detector detector;
+	struct sippymodem_v32_rate_offer offer = { 0 };
+	enum sippymodem_v32_rate_signal_event event =
+		SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT;
+
+	CHECK(sippymodem_v32_rate_signal_detector_init(&detector) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      observe_word(&detector, 0x0d11, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT &&
+		      observe_word(&detector, 0x0d11, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED,
+	      "V.32 detector did not acquire the peer rate sequence");
+	CHECK(observe_word(&detector, 0x0d11, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED,
+	      "V.32 detector lost an aligned repeated word");
+	CHECK(observe_word(&detector, 0xfd11, &event, &offer) &&
+		      event == SIPPYMODEM_V32_END_SIGNAL_DETECTED &&
+		      (offer.rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0 &&
+		      sippymodem_v32_rate_signal_detector_is_valid(&detector) &&
+		      !detector.aligned,
+	      "V.32 detector did not recognize the aligned end word");
+	return true;
+}
+
+static bool test_detector_reacquisition(void)
+{
+	struct sippymodem_v32_rate_signal_detector detector;
+	struct sippymodem_v32_rate_offer offer = { 0 };
+	enum sippymodem_v32_rate_signal_event event =
+		SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT;
+
+	CHECK(sippymodem_v32_rate_signal_detector_init(&detector) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      observe_word(&detector, 0x0511, &event, &offer) &&
+		      observe_word(&detector, 0x0511, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED,
+	      "V.32 reacquisition fixture did not lock");
+	CHECK(observe_word(&detector, 0x0551, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT &&
+		      !detector.aligned &&
+		      observe_word(&detector, 0x0311, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT &&
+		      observe_word(&detector, 0x0311, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED &&
+		      offer.rates == SIPPYMODEM_V32_RATE_CAPABILITY_9600,
+	      "V.32 detector did not reacquire after a malformed word");
+	return true;
+}
+
+static bool test_detector_validation(void)
+{
+	struct sippymodem_v32_rate_signal_detector detector;
+	struct sippymodem_v32_rate_signal_detector saved;
+	struct sippymodem_v32_rate_offer offer = {
+		.rates = UINT8_MAX,
+		.trellis_at_highest_rate = true,
+	};
+	struct sippymodem_v32_rate_offer saved_offer = offer;
+	enum sippymodem_v32_rate_signal_event event =
+		SIPPYMODEM_V32_END_SIGNAL_DETECTED;
+
+	CHECK(sippymodem_v32_rate_signal_detector_init(&detector) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK,
+	      "V.32 validation detector did not initialize");
+	saved = detector;
+	CHECK(sippymodem_v32_rate_signal_detector_observe(
+		      &detector, 4, &event, &offer) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT &&
+		      memcmp(&detector, &saved, sizeof(detector)) == 0 &&
+		      event == SIPPYMODEM_V32_END_SIGNAL_DETECTED &&
+		      offers_are_equal(&offer, &saved_offer) &&
+		      sippymodem_v32_rate_signal_detector_init(NULL) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT,
+	      "V.32 detector accepted invalid input or changed outputs");
+	detector.dibits_since_boundary =
+		SIPPYMODEM_V32_RATE_SIGNAL_DIBITS;
+	CHECK(!sippymodem_v32_rate_signal_detector_is_valid(&detector) &&
+		      sippymodem_v32_rate_signal_detector_observe(
+			      &detector, 0, &event, &offer) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT,
+	      "V.32 detector accepted corrupt alignment state");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_v32_rate_offer no_rates = { 0 };
@@ -162,6 +296,10 @@ int main(void)
 		{ "normative words", test_normative_words },
 		{ "capability round trip", test_capability_round_trip },
 		{ "transmission order", test_transmission_order },
+		{ "repeated rate detection", test_repeated_rate_detection },
+		{ "aligned end detection", test_aligned_end_detection },
+		{ "detector reacquisition", test_detector_reacquisition },
+		{ "detector validation", test_detector_validation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

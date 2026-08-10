@@ -17,6 +17,7 @@ enum {
 	V32_RATE_CAPABILITY_MASK = SIPPYMODEM_V32_RATE_CAPABILITY_2400 |
 				   SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600,
+	V32_DETECTOR_WINDOW_DIBITS = 2 * SIPPYMODEM_V32_RATE_SIGNAL_DIBITS,
 };
 
 static bool signal_type_is_valid(enum sippymodem_v32_rate_signal_type type)
@@ -118,6 +119,128 @@ enum sippymodem_v32_rate_signal_result sippymodem_v32_rate_signal_dibit(
 	if (index >= SIPPYMODEM_V32_RATE_SIGNAL_DIBITS || dibit == NULL)
 		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT;
 	*dibit = (uint8_t)((word >> (14u - index * 2u)) & 3u);
+	return SIPPYMODEM_V32_RATE_SIGNAL_OK;
+}
+
+enum sippymodem_v32_rate_signal_result
+sippymodem_v32_rate_signal_detector_init(
+	struct sippymodem_v32_rate_signal_detector *detector)
+{
+	if (detector == NULL)
+		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT;
+	*detector = (struct sippymodem_v32_rate_signal_detector){ 0 };
+	return SIPPYMODEM_V32_RATE_SIGNAL_OK;
+}
+
+static bool word_is_rate_signal(uint16_t word)
+{
+	struct sippymodem_v32_rate_offer offer;
+	enum sippymodem_v32_rate_signal_type type;
+
+	return sippymodem_v32_rate_signal_decode(word, &type, &offer) ==
+		       SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+	       type == SIPPYMODEM_V32_RATE_SIGNAL;
+}
+
+bool sippymodem_v32_rate_signal_detector_is_valid(
+	const struct sippymodem_v32_rate_signal_detector *detector)
+{
+	if (detector == NULL ||
+	    detector->dibits_seen > V32_DETECTOR_WINDOW_DIBITS ||
+	    detector->dibits_since_boundary >=
+		    SIPPYMODEM_V32_RATE_SIGNAL_DIBITS)
+		return false;
+	if (!detector->aligned)
+		return detector->locked_rate_word == 0 &&
+		       detector->dibits_since_boundary == 0;
+	return detector->dibits_seen == V32_DETECTOR_WINDOW_DIBITS &&
+	       word_is_rate_signal(detector->locked_rate_word);
+}
+
+static void lose_alignment(
+	struct sippymodem_v32_rate_signal_detector *detector)
+{
+	detector->locked_rate_word = 0;
+	detector->dibits_since_boundary = 0;
+	detector->aligned = false;
+}
+
+static bool acquire_alignment(
+	struct sippymodem_v32_rate_signal_detector *detector,
+	struct sippymodem_v32_rate_offer *offer)
+{
+	uint16_t first = (uint16_t)(detector->window >> 16);
+	uint16_t second = (uint16_t)detector->window;
+	enum sippymodem_v32_rate_signal_type type;
+
+	if (first != second ||
+	    sippymodem_v32_rate_signal_decode(second, &type, offer) !=
+		    SIPPYMODEM_V32_RATE_SIGNAL_OK ||
+	    type != SIPPYMODEM_V32_RATE_SIGNAL)
+		return false;
+	detector->locked_rate_word = second;
+	detector->dibits_since_boundary = 0;
+	detector->aligned = true;
+	return true;
+}
+
+static enum sippymodem_v32_rate_signal_event observe_aligned_word(
+	struct sippymodem_v32_rate_signal_detector *detector,
+	struct sippymodem_v32_rate_offer *offer)
+{
+	uint16_t word = (uint16_t)detector->window;
+	enum sippymodem_v32_rate_signal_type type;
+
+	if (sippymodem_v32_rate_signal_decode(word, &type, offer) !=
+	    SIPPYMODEM_V32_RATE_SIGNAL_OK) {
+		lose_alignment(detector);
+		return SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT;
+	}
+	if (type == SIPPYMODEM_V32_END_SIGNAL) {
+		(void)sippymodem_v32_rate_signal_detector_init(detector);
+		return SIPPYMODEM_V32_END_SIGNAL_DETECTED;
+	}
+	if (word != detector->locked_rate_word) {
+		lose_alignment(detector);
+		return SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT;
+	}
+	return SIPPYMODEM_V32_RATE_SIGNAL_DETECTED;
+}
+
+enum sippymodem_v32_rate_signal_result
+sippymodem_v32_rate_signal_detector_observe(
+	struct sippymodem_v32_rate_signal_detector *detector, uint8_t dibit,
+	enum sippymodem_v32_rate_signal_event *event,
+	struct sippymodem_v32_rate_offer *offer)
+{
+	struct sippymodem_v32_rate_signal_detector next;
+	struct sippymodem_v32_rate_offer decoded;
+	enum sippymodem_v32_rate_signal_event observed =
+		SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT;
+
+	if (!sippymodem_v32_rate_signal_detector_is_valid(detector) ||
+	    dibit >= 4 || event == NULL || offer == NULL)
+		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT;
+	next = *detector;
+	next.window = (next.window << 2) | dibit;
+	if (next.dibits_seen < V32_DETECTOR_WINDOW_DIBITS)
+		next.dibits_seen++;
+	if (!next.aligned) {
+		if (next.dibits_seen == V32_DETECTOR_WINDOW_DIBITS &&
+		    acquire_alignment(&next, &decoded))
+			observed = SIPPYMODEM_V32_RATE_SIGNAL_DETECTED;
+	} else {
+		next.dibits_since_boundary++;
+		if (next.dibits_since_boundary ==
+		    SIPPYMODEM_V32_RATE_SIGNAL_DIBITS) {
+			next.dibits_since_boundary = 0;
+			observed = observe_aligned_word(&next, &decoded);
+		}
+	}
+	*detector = next;
+	*event = observed;
+	if (observed != SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT)
+		*offer = decoded;
 	return SIPPYMODEM_V32_RATE_SIGNAL_OK;
 }
 
