@@ -14,6 +14,21 @@ enum {
 	NORMALIZATION_SYMBOLS = 256,
 };
 
+struct symbol_rate_range {
+	enum sippymodem_v34_symbol_rate symbol_rate;
+	uint8_t minimum_rate;
+	uint8_t maximum_rate;
+};
+
+static const struct symbol_rate_range SYMBOL_RATE_RANGES[] = {
+	{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, 9 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, 11 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 2, 11 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 2, 12 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 2, 13 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 2, 14 },
+};
+
 static bool nearly_equal(double actual, long double expected)
 {
 	long double scale = fmaxl(1.0L, fabsl(expected));
@@ -207,6 +222,156 @@ static bool bytes_are_filled(
 		if (bytes[index] != value)
 			return false;
 	}
+	return true;
+}
+
+static long double independently_project_power(
+	enum sippymodem_v34_nonlinear_parameter parameter,
+	long double mean_power, long double point_power)
+{
+	long double factor = 1.0L;
+
+	if (parameter == SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16) {
+		long double zeta = (5.0L / 16.0L) * point_power / mean_power;
+
+		factor += zeta / 6.0L + zeta * zeta / 120.0L;
+	}
+	return point_power * factor * factor;
+}
+
+static long double independently_bound_precoded_power(
+	const struct sippymodem_v34_grid_point *quarter_constellation,
+	size_t point_count, int half_grid_step)
+{
+	long double maximum = 0.0L;
+
+	for (size_t label = 0; label < point_count; ++label) {
+		long double in_phase =
+			fabsl((long double)quarter_constellation[label].in_phase) +
+			half_grid_step;
+		long double quadrature =
+			fabsl((long double)quarter_constellation[label].quadrature) +
+			half_grid_step;
+		long double power = in_phase * in_phase +
+			quadrature * quadrature;
+
+		if (power > maximum)
+			maximum = power;
+	}
+	return maximum;
+}
+
+static bool test_all_power_envelopes(void)
+{
+	struct sippymodem_v34_grid_point quarter_constellation[
+		SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	bool saw_grid_step_2 = false;
+	bool saw_grid_step_4 = false;
+	size_t configuration_count = 0;
+
+	CHECK(sippymodem_v34_quarter_superconstellation_generate(
+		      quarter_constellation,
+		      ARRAY_LENGTH(quarter_constellation)) ==
+		      SIPPYMODEM_V34_CONSTELLATION_OK,
+	      "power-envelope constellation did not generate");
+	for (size_t range_index = 0;
+	     range_index < ARRAY_LENGTH(SYMBOL_RATE_RANGES); ++range_index) {
+		const struct symbol_rate_range *range =
+			&SYMBOL_RATE_RANGES[range_index];
+
+		for (uint8_t rate = range->minimum_rate;
+		     rate <= range->maximum_rate; ++rate) {
+			for (unsigned int auxiliary = 0; auxiliary < 2;
+			     ++auxiliary) {
+				struct sippymodem_v34_frame_geometry geometry;
+
+				CHECK(sippymodem_v34_frame_geometry_init(
+					      &geometry, range->symbol_rate, rate,
+					      auxiliary != 0) ==
+					      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+				      "power geometry %zu/%u/%u failed",
+				      range_index, rate, auxiliary);
+				for (unsigned int expanded = 0; expanded < 2;
+				     ++expanded) {
+					struct sippymodem_v34_mapping_parameters
+						parameters;
+
+					CHECK(sippymodem_v34_mapping_parameters_init(
+						      &parameters, &geometry,
+						      expanded != 0) ==
+						      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK,
+					      "power mapping %zu/%u/%u/%u failed",
+					      range_index, rate, auxiliary, expanded);
+					for (unsigned int nonlinear = 0;
+					     nonlinear < 2; ++nonlinear) {
+						enum sippymodem_v34_nonlinear_parameter
+							parameter = nonlinear != 0 ?
+							SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16 :
+							SIPPYMODEM_V34_NONLINEAR_THETA_ZERO;
+						struct sippymodem_v34_symbol_power_measurement
+							precoded = { 1.0, 1 };
+						struct sippymodem_v34_symbol_power_measurement
+							projected = {
+								(double)independently_project_power(
+									parameter, 1.0L, 1.0L),
+								1,
+							};
+						struct sippymodem_v34_power_normalizer
+							normalizer;
+						int half_grid_step =
+							parameters.mapping_frame_bits < 56u ?
+								1 : 2;
+						long double maximum_precoded =
+							independently_bound_precoded_power(
+								quarter_constellation,
+								parameters.constellation_points / 4u,
+								half_grid_step);
+						long double maximum_projected =
+							independently_project_power(
+								parameter, 1.0L,
+								maximum_precoded);
+						long double expected_gain =
+							1.0L / sqrtl(
+								projected.mean_squared_magnitude);
+
+						CHECK(sippymodem_v34_power_normalizer_init(
+							      &normalizer, &parameters,
+							      parameter, &precoded,
+							      &projected) ==
+							      SIPPYMODEM_V34_SYMBOL_POWER_OK &&
+						      sippymodem_v34_power_normalizer_is_valid(
+							      &normalizer) &&
+						      nearly_equal(
+							      normalizer
+								      .maximum_precoded_point_power,
+							      maximum_precoded) &&
+						      nearly_equal(
+							      normalizer
+								      .maximum_projected_point_power,
+							      maximum_projected) &&
+						      nearly_equal(
+							      normalizer.normalization_gain,
+							      expected_gain) &&
+						      nearly_equal(
+							      normalizer
+								      .maximum_normalized_point_power,
+							      maximum_projected /
+								      projected
+									      .mean_squared_magnitude),
+						      "power envelope %zu/%u/%u/%u/%u changed",
+						      range_index, rate, auxiliary, expanded,
+						      nonlinear);
+						saw_grid_step_2 |= half_grid_step == 1;
+						saw_grid_step_4 |= half_grid_step == 2;
+						configuration_count++;
+					}
+				}
+			}
+		}
+	}
+	CHECK(configuration_count == 520u && saw_grid_step_2 && saw_grid_step_4,
+	      "power sweep covered %zu configurations and grid steps %u/%u",
+	      configuration_count, saw_grid_step_2, saw_grid_step_4);
 	return true;
 }
 
@@ -405,6 +570,7 @@ int main(void)
 		{ "generated mean", test_generated_mean },
 		{ "zero power", test_zero_power },
 		{ "normalized mean", test_normalized_mean },
+		{ "all power envelopes", test_all_power_envelopes },
 		{ "normalizer validation", test_normalizer_validation },
 		{ "validation", test_validation },
 	};
