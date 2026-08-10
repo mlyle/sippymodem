@@ -1,68 +1,17 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <sippymodem_g711.h>
 #include <sippymodem_v34_phase2_initial_probe.h>
 #include <sippymodem_v34_phase2_probe_turnaround.h>
 
+#include "sippymodem_v34_phase2_test_pair.h"
 #include "test.h"
 
 #include <stdint.h>
 #include <string.h>
 
 enum {
-	TEST_AMPLITUDE = 7000,
-	TEST_MAXIMUM_LINE_DELAY = 48,
 	TEST_SAMPLE_LIMIT = 12000,
 	TEST_STABLE_TONE_SAMPLES = 160,
-};
-
-enum test_codec {
-	TEST_CODEC_LINEAR,
-	TEST_CODEC_PCMU,
-	TEST_CODEC_PCMA,
-};
-
-enum test_endpoint_stage {
-	TEST_ENDPOINT_RANGING,
-	TEST_ENDPOINT_INITIAL_PROBE,
-	TEST_ENDPOINT_PROBE_TURNAROUND,
-};
-
-struct test_delay_line {
-	int16_t samples[TEST_MAXIMUM_LINE_DELAY];
-	size_t delay_samples;
-	size_t cursor;
-};
-
-struct test_endpoint {
-	struct sippymodem_v34_phase2_ranging ranging;
-	struct sippymodem_v34_phase2_initial_probe initial_probe;
-	struct sippymodem_v34_phase2_probe_turnaround turnaround;
-	enum test_endpoint_stage stage;
-	bool continue_to_turnaround;
-};
-
-struct test_endpoint_event {
-	struct sippymodem_v34_phase2_ranging_event ranging;
-	struct sippymodem_v34_phase2_initial_probe_event initial_probe;
-	struct sippymodem_v34_phase2_probe_turnaround_event turnaround;
-	bool entered_initial_probe;
-	bool entered_turnaround;
-};
-
-struct test_pair {
-	struct test_endpoint caller;
-	struct test_endpoint answerer;
-	struct test_delay_line caller_to_answerer;
-	struct test_delay_line answerer_to_caller;
-	enum test_codec codec;
-};
-
-struct test_pair_event {
-	struct test_endpoint_event caller;
-	struct test_endpoint_event answerer;
-	int16_t caller_transmit;
-	int16_t answerer_transmit;
 };
 
 struct turn_observation {
@@ -100,177 +49,9 @@ struct turnaround_observation {
 	uint16_t caller_reversed_b_samples;
 };
 
-static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
-{
-	switch (codec) {
-	case TEST_CODEC_LINEAR:
-		return sample;
-	case TEST_CODEC_PCMU:
-		return sippymodem_g711_decode_pcmu(
-			sippymodem_g711_encode_pcmu(sample));
-	case TEST_CODEC_PCMA:
-		return sippymodem_g711_decode_pcma(
-			sippymodem_g711_encode_pcma(sample));
-	}
-	return 0;
-}
-
 static int64_t sample_magnitude(int16_t sample)
 {
 	return sample < 0 ? -(int64_t)sample : sample;
-}
-
-static int16_t delay_line_receive(const struct test_delay_line *line)
-{
-	return line->samples[line->cursor];
-}
-
-static void delay_line_transmit(
-	struct test_delay_line *line, int16_t sample)
-{
-	line->samples[line->cursor] = sample;
-	line->cursor = (line->cursor + 1u) % line->delay_samples;
-}
-
-static struct sippymodem_v34_info0 capabilities(
-	enum sippymodem_v34_phase2_station_role role)
-{
-	if (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION)
-		return (struct sippymodem_v34_info0){
-			.symbol_rate_2800_supported = true,
-			.low_carrier_3000_supported = true,
-			.maximum_symbol_rate_difference_steps = 2,
-			.transmit_clock_source =
-				SIPPYMODEM_V34_INFO0_CLOCK_INTERNAL,
-		};
-	return (struct sippymodem_v34_info0){
-		.symbol_rate_3429_supported = true,
-		.high_carrier_3200_supported = true,
-		.constellation_1664_supported = true,
-		.maximum_symbol_rate_difference_steps = 4,
-		.transmit_clock_source =
-			SIPPYMODEM_V34_INFO0_CLOCK_RECEIVE_TIMING,
-	};
-}
-
-static bool endpoint_init(
-	struct test_endpoint *endpoint,
-	enum sippymodem_v34_phase2_station_role role)
-{
-	struct sippymodem_v34_info0 local_capabilities = capabilities(role);
-	struct test_endpoint initialized = {
-		.stage = TEST_ENDPOINT_RANGING,
-	};
-
-	if (sippymodem_v34_phase2_ranging_init(
-		    &initialized.ranging, role, TEST_AMPLITUDE,
-		    &local_capabilities) != SIPPYMODEM_V34_PHASE2_RANGING_OK)
-		return false;
-	*endpoint = initialized;
-	return true;
-}
-
-static bool endpoint_sample(
-	struct test_endpoint *endpoint, int16_t received_sample,
-	int16_t *transmit_sample, struct test_endpoint_event *event)
-{
-	struct test_endpoint_event emitted = { 0 };
-
-	if (endpoint->stage == TEST_ENDPOINT_RANGING) {
-		enum sippymodem_v34_phase2_ranging_event_kind expected_ready =
-			endpoint->ranging.info0_exchange.local_role ==
-					SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
-				SIPPYMODEM_V34_PHASE2_PROBE_RECEIVE_READY :
-				SIPPYMODEM_V34_PHASE2_PROBE_TRANSMIT_READY;
-
-		if (sippymodem_v34_phase2_ranging_sample(
-			    &endpoint->ranging, received_sample, transmit_sample,
-			    &emitted.ranging) != SIPPYMODEM_V34_PHASE2_RANGING_OK)
-			return false;
-		if (emitted.ranging.kind == expected_ready) {
-			if (sippymodem_v34_phase2_initial_probe_init(
-				    &endpoint->initial_probe, &endpoint->ranging) !=
-			    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK)
-				return false;
-			endpoint->stage = TEST_ENDPOINT_INITIAL_PROBE;
-			emitted.entered_initial_probe = true;
-		}
-	} else if (endpoint->stage == TEST_ENDPOINT_INITIAL_PROBE) {
-		enum sippymodem_v34_phase2_initial_probe_event_kind expected_ready =
-			endpoint->initial_probe.ranging.info0_exchange.local_role ==
-					SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
-				SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE :
-				SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
-
-		if (sippymodem_v34_phase2_initial_probe_sample(
-			    &endpoint->initial_probe, received_sample, transmit_sample,
-			    &emitted.initial_probe) !=
-		    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK)
-			return false;
-		if (endpoint->continue_to_turnaround &&
-		    emitted.initial_probe.kind == expected_ready) {
-			if (sippymodem_v34_phase2_probe_turnaround_init(
-				    &endpoint->turnaround,
-				    &endpoint->initial_probe) !=
-			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK)
-				return false;
-			endpoint->stage = TEST_ENDPOINT_PROBE_TURNAROUND;
-			emitted.entered_turnaround = true;
-		}
-	} else if (sippymodem_v34_phase2_probe_turnaround_sample(
-			   &endpoint->turnaround, received_sample, transmit_sample,
-			   &emitted.turnaround) !=
-		   SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK) {
-		return false;
-	}
-	*event = emitted;
-	return true;
-}
-
-static bool pair_init(
-	struct test_pair *pair, enum test_codec codec, size_t delay_samples)
-{
-	struct test_pair initialized = {
-		.caller_to_answerer.delay_samples = delay_samples,
-		.answerer_to_caller.delay_samples = delay_samples,
-		.codec = codec,
-	};
-
-	if (pair == NULL || delay_samples == 0 ||
-	    delay_samples > TEST_MAXIMUM_LINE_DELAY ||
-	    !endpoint_init(
-		    &initialized.caller,
-		    SIPPYMODEM_V34_PHASE2_CALLING_STATION) ||
-	    !endpoint_init(
-		    &initialized.answerer,
-		    SIPPYMODEM_V34_PHASE2_ANSWERING_STATION))
-		return false;
-	*pair = initialized;
-	return true;
-}
-
-static bool pair_sample(
-	struct test_pair *pair, struct test_pair_event *event)
-{
-	struct test_pair_event emitted = { 0 };
-
-	if (!endpoint_sample(
-		    &pair->caller,
-		    delay_line_receive(&pair->answerer_to_caller),
-		    &emitted.caller_transmit, &emitted.caller) ||
-	    !endpoint_sample(
-		    &pair->answerer,
-		    delay_line_receive(&pair->caller_to_answerer),
-		    &emitted.answerer_transmit, &emitted.answerer))
-		return false;
-	delay_line_transmit(
-		&pair->caller_to_answerer,
-		codec_round_trip(emitted.caller_transmit, pair->codec));
-	delay_line_transmit(
-		&pair->answerer_to_caller,
-		codec_round_trip(emitted.answerer_transmit, pair->codec));
-	*event = emitted;
-	return true;
 }
 
 static void initialize_observation(struct turn_observation *observation)
@@ -358,7 +139,7 @@ static bool check_initial_probe_turn(
 	struct turn_observation observation;
 	size_t stable_samples = 0;
 
-	CHECK(pair_init(&pair, codec, delay_samples),
+	CHECK(test_v34_phase2_pair_init(&pair, codec, delay_samples),
 	      "probe-turn endpoints did not initialize");
 	initialize_observation(&observation);
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
@@ -368,7 +149,7 @@ static bool check_initial_probe_turn(
 		bool answerer_was_probing =
 			pair.answerer.stage == TEST_ENDPOINT_INITIAL_PROBE;
 
-		CHECK(pair_sample(&pair, &event),
+		CHECK(test_v34_phase2_pair_sample(&pair, &event),
 		      "probe turn failed for codec %d delay %zu at sample %zu",
 		      codec, delay_samples, index);
 		observe_turn(
@@ -495,7 +276,7 @@ static bool check_probe_turnaround(
 	struct turnaround_observation observation;
 	struct test_pair pair;
 
-	CHECK(pair_init(&pair, codec, delay_samples),
+	CHECK(test_v34_phase2_pair_init(&pair, codec, delay_samples),
 	      "turnaround endpoints did not initialize");
 	pair.caller.continue_to_turnaround = true;
 	pair.answerer.continue_to_turnaround = true;
@@ -519,7 +300,7 @@ static bool check_probe_turnaround(
 		}
 		if (answerer_turning)
 			answerer_phase = pair.answerer.turnaround.phase;
-		CHECK(pair_sample(&pair, &event),
+		CHECK(test_v34_phase2_pair_sample(&pair, &event),
 		      "turnaround failed for codec %d delay %zu at sample %zu",
 		      codec, delay_samples, index);
 
@@ -643,7 +424,8 @@ static bool check_probe_turnaround(
 	for (size_t index = 0; index < 8; ++index) {
 		struct test_pair_event event;
 
-		CHECK(pair_sample(&pair, &event) && event.caller_transmit == 0 &&
+		CHECK(test_v34_phase2_pair_sample(&pair, &event) &&
+		      event.caller_transmit == 0 &&
 		      event.answerer_transmit == 0 &&
 		      event.caller.turnaround.kind ==
 			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
@@ -682,12 +464,12 @@ static bool completed_ranging_pair(
 {
 	struct test_pair pair;
 
-	if (!pair_init(&pair, TEST_CODEC_LINEAR, 1))
+	if (!test_v34_phase2_pair_init(&pair, TEST_CODEC_LINEAR, 1))
 		return false;
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct test_pair_event event;
 
-		if (!pair_sample(&pair, &event))
+		if (!test_v34_phase2_pair_sample(&pair, &event))
 			return false;
 		if (pair.caller.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 		    pair.answerer.stage == TEST_ENDPOINT_INITIAL_PROBE) {
@@ -707,12 +489,12 @@ static bool completed_initial_probe_states(
 	bool caller_ready = false;
 	bool answerer_ready = false;
 
-	if (!pair_init(&pair, TEST_CODEC_LINEAR, 1))
+	if (!test_v34_phase2_pair_init(&pair, TEST_CODEC_LINEAR, 1))
 		return false;
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct test_pair_event event;
 
-		if (!pair_sample(&pair, &event))
+		if (!test_v34_phase2_pair_sample(&pair, &event))
 			return false;
 		if (!answerer_ready &&
 		    event.answerer.initial_probe.kind ==
@@ -840,7 +622,8 @@ static bool test_bounded_failures(void)
 static bool test_validation(void)
 {
 	struct sippymodem_v34_info0 local_capabilities =
-		capabilities(SIPPYMODEM_V34_PHASE2_CALLING_STATION);
+		test_v34_phase2_capabilities(
+			SIPPYMODEM_V34_PHASE2_CALLING_STATION);
 	struct sippymodem_v34_phase2_ranging unready;
 	struct sippymodem_v34_phase2_ranging caller_ranging;
 	struct sippymodem_v34_phase2_ranging answerer_ranging;

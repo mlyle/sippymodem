@@ -384,6 +384,7 @@ V34_PHASE2_INITIAL_PROBE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe
 V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_test_pair.o \
 	$(BUILD_DIR)/sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v34_info0.o \
