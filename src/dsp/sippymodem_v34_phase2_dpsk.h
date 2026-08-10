@@ -14,6 +14,29 @@ enum {
 	SIPPYMODEM_V34_PHASE2_CALLING_CARRIER_HZ = 1200,
 	SIPPYMODEM_V34_PHASE2_ANSWERING_GUARD_HZ = 1800,
 	SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ = 2400,
+	SIPPYMODEM_V34_PHASE2_DPSK_INTERPOLATION = 3,
+	SIPPYMODEM_V34_PHASE2_DPSK_DIFFERENTIAL_DELAY =
+		SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE *
+		SIPPYMODEM_V34_PHASE2_DPSK_INTERPOLATION /
+		SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE,
+	SIPPYMODEM_V34_PHASE2_DPSK_DETECTOR_DECIMATION = 4,
+	SIPPYMODEM_V34_PHASE2_DPSK_TIMING_OBSERVATIONS =
+		SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE *
+		SIPPYMODEM_V34_PHASE2_DPSK_INTERPOLATION /
+		(SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE *
+		 SIPPYMODEM_V34_PHASE2_DPSK_DETECTOR_DECIMATION),
+};
+
+struct sippymodem_v34_phase2_dpsk_filter {
+	double input_1;
+	double input_2;
+	double output_1;
+	double output_2;
+	double b0;
+	double b1;
+	double b2;
+	double a1;
+	double a2;
 };
 
 enum sippymodem_v34_phase2_station_role {
@@ -37,10 +60,27 @@ struct sippymodem_v34_phase2_dpsk_transmitter {
 };
 
 struct sippymodem_v34_phase2_dpsk_receiver {
-	struct sippymodem_qam_demodulator carrier;
-	struct sippymodem_qam_point previous_point;
+	double delay_history[
+		SIPPYMODEM_V34_PHASE2_DPSK_DIFFERENTIAL_DELAY];
+	struct sippymodem_v34_phase2_dpsk_filter guard_filter;
+	struct sippymodem_v34_phase2_dpsk_filter detector_filter;
+	double detector_output;
+	double line_power;
+	double symbol_power;
+	size_t delay_index;
+	size_t delay_count;
+	uint8_t decimation_phase;
+	uint8_t observations_until_bit;
+	double previous_sample;
 	enum sippymodem_v34_phase2_station_role local_role;
-	bool has_previous_point;
+	bool has_previous_sample;
+	bool timing_locked;
+};
+
+struct sippymodem_v34_phase2_dpsk_measurement {
+	double line_power;
+	double symbol_power;
+	bool timing_locked;
 };
 
 /* nominal_amplitude is the unadjusted Phase 2 peak level. The answering
@@ -68,6 +108,8 @@ enum sippymodem_v34_phase2_dpsk_result
 sippymodem_v34_phase2_dpsk_receiver_init(
 	struct sippymodem_v34_phase2_dpsk_receiver *receiver,
 	enum sippymodem_v34_phase2_station_role local_role);
+bool sippymodem_v34_phase2_dpsk_receiver_is_valid(
+	const struct sippymodem_v34_phase2_dpsk_receiver *receiver);
 enum sippymodem_v34_phase2_dpsk_result
 sippymodem_v34_phase2_dpsk_receiver_reset(
 	struct sippymodem_v34_phase2_dpsk_receiver *receiver);
@@ -75,7 +117,7 @@ enum sippymodem_v34_phase2_dpsk_result
 sippymodem_v34_phase2_dpsk_receiver_sample(
 	struct sippymodem_v34_phase2_dpsk_receiver *receiver,
 	int16_t sample, uint8_t *bit, bool *bit_ready);
-struct sippymodem_qam_measurement
+struct sippymodem_v34_phase2_dpsk_measurement
 sippymodem_v34_phase2_dpsk_receiver_measure(
 	const struct sippymodem_v34_phase2_dpsk_receiver *receiver);
 
