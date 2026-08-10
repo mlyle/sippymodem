@@ -39,6 +39,8 @@ enum sippymodem_v8_menu_result {
 	SIPPYMODEM_V8_MENU_OK,
 	SIPPYMODEM_V8_MENU_INVALID_ARGUMENT,
 	SIPPYMODEM_V8_MENU_BUFFER_TOO_SMALL,
+	SIPPYMODEM_V8_MENU_MALFORMED,
+	SIPPYMODEM_V8_MENU_UNSUPPORTED_CALL_FUNCTION,
 };
 
 struct sippymodem_v8_menu {
@@ -53,6 +55,9 @@ enum sippymodem_v8_menu_result sippymodem_v8_call_menu_init(
 enum sippymodem_v8_menu_result sippymodem_v8_menu_encode(
 	const struct sippymodem_v8_menu *menu, uint8_t *information,
 	size_t capacity, size_t *information_count);
+enum sippymodem_v8_menu_result sippymodem_v8_menu_decode(
+	const uint8_t *information, size_t information_count,
+	struct sippymodem_v8_menu *menu);
 
 const char *sippymodem_v8_menu_result_name(
 	enum sippymodem_v8_menu_result result);

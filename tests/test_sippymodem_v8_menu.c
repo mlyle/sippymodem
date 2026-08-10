@@ -95,6 +95,145 @@ static bool test_extended_zero_capabilities(void)
 	return true;
 }
 
+static bool test_decode_round_trip(void)
+{
+	static const uint16_t capabilities[] = {
+		SIPPYMODEM_V8_MODULATION_V34_DUPLEX,
+		SIPPYMODEM_V8_MODULATION_V32,
+		SIPPYMODEM_V8_MODULATION_V21,
+		SIPPYMODEM_V8_MODULATION_ALL,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(capabilities); ++index) {
+		struct sippymodem_v8_menu encoded;
+		struct sippymodem_v8_menu decoded;
+		uint8_t information[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+		size_t information_count;
+		bool lapm = (index & 1u) != 0;
+
+		CHECK(sippymodem_v8_call_menu_init(
+			      &encoded, capabilities[index], lapm) ==
+			      SIPPYMODEM_V8_MENU_OK &&
+		      sippymodem_v8_menu_encode(
+			      &encoded, information, sizeof(information),
+			      &information_count) == SIPPYMODEM_V8_MENU_OK &&
+		      sippymodem_v8_menu_decode(
+			      information, information_count, &decoded) ==
+			      SIPPYMODEM_V8_MENU_OK &&
+		      decoded.call_function == encoded.call_function &&
+		      decoded.modulations == encoded.modulations &&
+		      decoded.modulation_octets == encoded.modulation_octets &&
+		      decoded.lapm == encoded.lapm,
+		      "V.8 menu round trip changed case %zu", index);
+	}
+	return true;
+}
+
+static bool test_future_categories(void)
+{
+	static const uint8_t information[] = {
+		UINT8_C(0xc1),
+		UINT8_C(0x03), UINT8_C(0x97),
+		UINT8_C(0x05), UINT8_C(0x10), UINT8_C(0x90), UINT8_C(0x17),
+		UINT8_C(0x2a),
+	};
+	static const uint8_t normalized[] = {
+		UINT8_C(0xc1), UINT8_C(0x05), UINT8_C(0x10),
+		UINT8_C(0x90), UINT8_C(0x10), UINT8_C(0x2a),
+	};
+	struct sippymodem_v8_menu menu;
+	uint8_t encoded[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	size_t encoded_count;
+
+	CHECK(sippymodem_v8_menu_decode(
+		      information, ARRAY_LENGTH(information), &menu) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      menu.modulations == SIPPYMODEM_V8_MODULATION_V21 &&
+	      menu.modulation_octets == 4 && menu.lapm &&
+	      sippymodem_v8_menu_encode(
+		      &menu, encoded, sizeof(encoded), &encoded_count) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      encoded_count == ARRAY_LENGTH(normalized) &&
+	      memcmp(encoded, normalized, sizeof(normalized)) == 0,
+	      "V.8 decoder did not preserve future extension width");
+	return true;
+}
+
+static bool decode_has_result(
+	const uint8_t *information, size_t information_count,
+	enum sippymodem_v8_menu_result expected)
+{
+	struct sippymodem_v8_menu menu = {
+		.call_function = SIPPYMODEM_V8_CALL_DATA,
+		.modulations = UINT16_MAX,
+		.modulation_octets = UINT8_MAX,
+		.lapm = true,
+	};
+	struct sippymodem_v8_menu saved = menu;
+
+	return sippymodem_v8_menu_decode(
+		       information, information_count, &menu) == expected &&
+	       memcmp(&menu, &saved, sizeof(menu)) == 0;
+}
+
+static bool test_decode_rejection(void)
+{
+	static const uint8_t wrong_first[] = { UINT8_C(0x05) };
+	static const uint8_t unsupported_call[] = { UINT8_C(0x21) };
+	static const uint8_t missing_modulation[] = {
+		UINT8_C(0xc1), UINT8_C(0x2a),
+	};
+	static const uint8_t orphan_extension[] = {
+		UINT8_C(0xc1), UINT8_C(0x10), UINT8_C(0x05),
+	};
+	static const uint8_t malformed_extension[] = {
+		UINT8_C(0xc1), UINT8_C(0x03), UINT8_C(0x30), UINT8_C(0x05),
+	};
+	static const uint8_t duplicate_modulation[] = {
+		UINT8_C(0xc1), UINT8_C(0x05), UINT8_C(0x05),
+	};
+	static const uint8_t duplicate_protocol[] = {
+		UINT8_C(0xc1), UINT8_C(0x05), UINT8_C(0x2a), UINT8_C(0x2a),
+	};
+	static const uint8_t unexpected_protocol_extension[] = {
+		UINT8_C(0xc1), UINT8_C(0x05), UINT8_C(0x2a), UINT8_C(0x10),
+	};
+	uint8_t too_long[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS + 1] = { 0 };
+
+	CHECK(decode_has_result(NULL, 1, SIPPYMODEM_V8_MENU_INVALID_ARGUMENT) &&
+	      decode_has_result(wrong_first, 0, SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      wrong_first, ARRAY_LENGTH(wrong_first),
+		      SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      unsupported_call, ARRAY_LENGTH(unsupported_call),
+		      SIPPYMODEM_V8_MENU_UNSUPPORTED_CALL_FUNCTION) &&
+	      decode_has_result(
+		      missing_modulation, ARRAY_LENGTH(missing_modulation),
+		      SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      orphan_extension, ARRAY_LENGTH(orphan_extension),
+		      SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      malformed_extension, ARRAY_LENGTH(malformed_extension),
+		      SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      duplicate_modulation, ARRAY_LENGTH(duplicate_modulation),
+		      SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      duplicate_protocol, ARRAY_LENGTH(duplicate_protocol),
+		      SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      unexpected_protocol_extension,
+		      ARRAY_LENGTH(unexpected_protocol_extension),
+		      SIPPYMODEM_V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      too_long, ARRAY_LENGTH(too_long),
+		      SIPPYMODEM_V8_MENU_MALFORMED),
+	      "V.8 decoder accepted malformed information");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_v8_menu menu;
@@ -153,6 +292,9 @@ int main(void)
 		{ "modulation mapping", test_modulation_mapping },
 		{ "minimal modulation width", test_minimal_modulation_width },
 		{ "extended zero capabilities", test_extended_zero_capabilities },
+		{ "decode round trip", test_decode_round_trip },
+		{ "future categories", test_future_categories },
+		{ "decode rejection", test_decode_rejection },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
