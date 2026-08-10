@@ -6,11 +6,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+struct sippymodem_qam_point;
+
 enum {
 	SIPPYMODEM_V32_TRELLIS_MIN_DATA_BITS = 3,
 	SIPPYMODEM_V32_TRELLIS_MAX_DATA_BITS = 6,
 	SIPPYMODEM_V32_TRELLIS_STATE_COUNT = 8,
 	SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT = 4,
+	SIPPYMODEM_V32_7200_DATA_BITS = 3,
+	SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS = 24,
 };
 
 enum sippymodem_v32_trellis_result {
@@ -23,6 +27,21 @@ struct sippymodem_v32_trellis_encoder {
 	uint8_t differential_quadrant;
 	uint8_t carrier_phase_quadrant;
 	uint8_t data_bits_per_symbol;
+};
+
+struct sippymodem_v32_trellis_path_step {
+	uint8_t predecessor[SIPPYMODEM_V32_TRELLIS_STATE_COUNT];
+	uint8_t differential_symbol[SIPPYMODEM_V32_TRELLIS_STATE_COUNT];
+};
+
+struct sippymodem_v32_7200_decoder {
+	double path_metric[SIPPYMODEM_V32_TRELLIS_STATE_COUNT];
+	struct sippymodem_v32_trellis_path_step
+		path[SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS];
+	uint8_t path_index;
+	uint8_t path_symbols;
+	uint8_t previous_differential_quadrant;
+	uint8_t carrier_phase_quadrant;
 };
 
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encoder_init(
@@ -38,6 +57,21 @@ bool sippymodem_v32_trellis_encoder_is_valid(
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encode(
 	struct sippymodem_v32_trellis_encoder *encoder, uint8_t data,
 	uint8_t *signal_symbol);
+
+enum sippymodem_v32_trellis_result sippymodem_v32_7200_decoder_init(
+	struct sippymodem_v32_7200_decoder *decoder,
+	uint8_t initial_carrier_phase_quadrant);
+bool sippymodem_v32_7200_decoder_is_valid(
+	const struct sippymodem_v32_7200_decoder *decoder);
+/*
+ * Decode one normalized baseband point.  Once ready is true, scrambled_data
+ * contains the next three-bit group in transmission order.  Traceback adds a
+ * fixed delay while retaining every input group.
+ */
+enum sippymodem_v32_trellis_result sippymodem_v32_7200_decode(
+	struct sippymodem_v32_7200_decoder *decoder,
+	const struct sippymodem_qam_point *point, uint8_t *scrambled_data,
+	bool *ready);
 
 const char *sippymodem_v32_trellis_result_name(
 	enum sippymodem_v32_trellis_result result);

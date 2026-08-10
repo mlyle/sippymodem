@@ -253,6 +253,13 @@ V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_trellis
 V32_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_trellis.o \
 	$(BUILD_DIR)/sippymodem_v32_trellis.o
+V32_TRELLIS_DECODER_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v32_trellis_decoder
+V32_TRELLIS_DECODER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v32_trellis_decoder.o \
+	$(BUILD_DIR)/sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/sippymodem_v32_trellis.o \
+	$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o
 V32_CARRIER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_carrier
 V32_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_carrier.o \
@@ -311,6 +318,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V32_RATE_SIGNAL_TEST_BINARY) \
 	$(V32_STARTUP_TEST_BINARY) \
 	$(V32_TRELLIS_TEST_BINARY) \
+	$(V32_TRELLIS_DECODER_TEST_BINARY) \
 	$(V32_CARRIER_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
@@ -349,6 +357,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V32_RATE_SIGNAL_TEST_OBJECTS:.o=.d) \
 	$(V32_STARTUP_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_TEST_OBJECTS:.o=.d) \
+	$(V32_TRELLIS_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V32_CARRIER_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
@@ -402,6 +411,7 @@ test: $(TEST_BINARIES)
 	./$(V32_RATE_SIGNAL_TEST_BINARY)
 	./$(V32_STARTUP_TEST_BINARY)
 	./$(V32_TRELLIS_TEST_BINARY)
+	./$(V32_TRELLIS_DECODER_TEST_BINARY)
 	./$(V32_CARRIER_TEST_BINARY)
 	./$(QAM_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
@@ -536,6 +546,10 @@ $(V32_STARTUP_TEST_BINARY): $(V32_STARTUP_TEST_OBJECTS)
 
 $(V32_TRELLIS_TEST_BINARY): $(V32_TRELLIS_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V32_TRELLIS_DECODER_TEST_BINARY): \
+	$(V32_TRELLIS_DECODER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_CARRIER_TEST_BINARY): $(V32_CARRIER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -725,6 +739,10 @@ $(BUILD_DIR)/sippymodem_v32_startup.o: \
 
 $(BUILD_DIR)/sippymodem_v32_trellis.o: \
 	../src/sippymodem_v32_trellis.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o: \
+	../src/sippymodem_v32_trellis_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_datapump.o: \
