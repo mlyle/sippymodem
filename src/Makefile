@@ -92,6 +92,7 @@ SIPPYMODEM_DSP_SOURCES := \
 	dsp/sippymodem_v32_trellis.c \
 	dsp/sippymodem_v32_trellis_decoder.c \
 	dsp/sippymodem_v8_ansam.c \
+	dsp/sippymodem_v8_fsk.c \
 	dsp/sippymodem_v8_framing.c \
 	dsp/sippymodem_v8_menu.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES) \
