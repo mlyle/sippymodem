@@ -334,6 +334,11 @@ V34_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_framing.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_framing.o
+V34_PHASE2_INFO_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_info
+V34_PHASE2_INFO_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_info.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_info.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam.o
@@ -404,6 +409,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V32_TRELLIS_DECODER_TEST_BINARY) \
 	$(V32_CARRIER_TEST_BINARY) \
 	$(V34_FRAMING_TEST_BINARY) \
+	$(V34_PHASE2_INFO_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -450,6 +456,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V32_TRELLIS_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V32_CARRIER_TEST_OBJECTS:.o=.d) \
 	$(V34_FRAMING_TEST_OBJECTS:.o=.d) \
+	$(V34_PHASE2_INFO_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -512,6 +519,7 @@ test: $(TEST_BINARIES)
 	./$(V32_TRELLIS_DECODER_TEST_BINARY)
 	./$(V32_CARRIER_TEST_BINARY)
 	./$(V34_FRAMING_TEST_BINARY)
+	./$(V34_PHASE2_INFO_TEST_BINARY)
 	./$(QAM_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -675,6 +683,9 @@ $(V32_CARRIER_TEST_BINARY): $(V32_CARRIER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_FRAMING_TEST_BINARY): $(V34_FRAMING_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V34_PHASE2_INFO_TEST_BINARY): $(V34_PHASE2_INFO_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(QAM_TEST_BINARY): $(QAM_TEST_OBJECTS)
@@ -887,6 +898,10 @@ $(BUILD_DIR)/sippymodem_v32_datapump.o: \
 
 $(BUILD_DIR)/sippymodem_v34_framing.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_framing.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase2_info.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22_datapump.o: \
