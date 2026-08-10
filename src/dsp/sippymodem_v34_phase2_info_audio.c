@@ -82,6 +82,93 @@ sippymodem_v34_phase2_info_audio_transmitter_sample(
 	return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK;
 }
 
+bool sippymodem_v34_phase2_info_audio_receiver_is_valid(
+	const struct sippymodem_v34_phase2_info_audio_receiver *receiver)
+{
+	return receiver != NULL &&
+	       sippymodem_v34_phase2_dpsk_receiver_is_valid(
+		       &receiver->modulation) &&
+	       sippymodem_v34_phase2_info_receiver_is_valid(&receiver->frame);
+}
+
+enum sippymodem_v34_phase2_info_audio_result
+sippymodem_v34_phase2_info_audio_receiver_init(
+	struct sippymodem_v34_phase2_info_audio_receiver *receiver,
+	enum sippymodem_v34_phase2_station_role local_role,
+	size_t expected_payload_bit_count)
+{
+	struct sippymodem_v34_phase2_info_audio_receiver initialized = { 0 };
+
+	if (receiver == NULL ||
+	    sippymodem_v34_phase2_dpsk_receiver_init(
+		    &initialized.modulation, local_role) !=
+		    SIPPYMODEM_V34_PHASE2_DPSK_OK ||
+	    sippymodem_v34_phase2_info_receiver_init(
+		    &initialized.frame, expected_payload_bit_count) !=
+		    SIPPYMODEM_V34_PHASE2_INFO_OK ||
+	    !sippymodem_v34_phase2_info_audio_receiver_is_valid(&initialized))
+		return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK;
+}
+
+enum sippymodem_v34_phase2_info_audio_result
+sippymodem_v34_phase2_info_audio_receiver_reset(
+	struct sippymodem_v34_phase2_info_audio_receiver *receiver)
+{
+	struct sippymodem_v34_phase2_info_audio_receiver reset;
+
+	if (!sippymodem_v34_phase2_info_audio_receiver_is_valid(receiver))
+		return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
+	reset = *receiver;
+	if (sippymodem_v34_phase2_dpsk_receiver_reset(&reset.modulation) !=
+		    SIPPYMODEM_V34_PHASE2_DPSK_OK ||
+	    sippymodem_v34_phase2_info_receiver_reset(&reset.frame) !=
+		    SIPPYMODEM_V34_PHASE2_INFO_OK ||
+	    !sippymodem_v34_phase2_info_audio_receiver_is_valid(&reset))
+		return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
+	*receiver = reset;
+	return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK;
+}
+
+enum sippymodem_v34_phase2_info_audio_result
+sippymodem_v34_phase2_info_audio_receiver_sample(
+	struct sippymodem_v34_phase2_info_audio_receiver *receiver,
+	int16_t sample, struct sippymodem_v34_phase2_info_event *event)
+{
+	struct sippymodem_v34_phase2_info_audio_receiver next;
+	struct sippymodem_v34_phase2_info_event emitted = { 0 };
+	uint8_t bit;
+	bool bit_ready;
+
+	if (!sippymodem_v34_phase2_info_audio_receiver_is_valid(receiver) ||
+	    event == NULL)
+		return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
+	next = *receiver;
+	if (sippymodem_v34_phase2_dpsk_receiver_sample(
+		    &next.modulation, sample, &bit, &bit_ready) !=
+		    SIPPYMODEM_V34_PHASE2_DPSK_OK ||
+	    (bit_ready &&
+	     sippymodem_v34_phase2_info_receive_bit(
+		     &next.frame, bit, &emitted) !=
+		     SIPPYMODEM_V34_PHASE2_INFO_OK) ||
+	    !sippymodem_v34_phase2_info_audio_receiver_is_valid(&next))
+		return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
+	*receiver = next;
+	*event = emitted;
+	return SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK;
+}
+
+struct sippymodem_v34_phase2_dpsk_measurement
+sippymodem_v34_phase2_info_audio_receiver_measure(
+	const struct sippymodem_v34_phase2_info_audio_receiver *receiver)
+{
+	if (!sippymodem_v34_phase2_info_audio_receiver_is_valid(receiver))
+		return (struct sippymodem_v34_phase2_dpsk_measurement){ 0 };
+	return sippymodem_v34_phase2_dpsk_receiver_measure(
+		&receiver->modulation);
+}
+
 const char *sippymodem_v34_phase2_info_audio_result_name(
 	enum sippymodem_v34_phase2_info_audio_result result)
 {

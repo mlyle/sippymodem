@@ -21,6 +21,11 @@ struct sippymodem_v34_phase2_info_audio_transmitter {
 	bool frame_complete;
 };
 
+struct sippymodem_v34_phase2_info_audio_receiver {
+	struct sippymodem_v34_phase2_dpsk_receiver modulation;
+	struct sippymodem_v34_phase2_info_receiver frame;
+};
+
 /* One transmitter emits one INFO sequence, including its arbitrary reference
  * point. A Phase 2 controller owns any following tone or repeated group. */
 enum sippymodem_v34_phase2_info_audio_result
@@ -38,6 +43,27 @@ enum sippymodem_v34_phase2_info_audio_result
 sippymodem_v34_phase2_info_audio_transmitter_sample(
 	struct sippymodem_v34_phase2_info_audio_transmitter *transmitter,
 	int16_t *sample, bool *frame_complete);
+
+enum sippymodem_v34_phase2_info_audio_result
+sippymodem_v34_phase2_info_audio_receiver_init(
+	struct sippymodem_v34_phase2_info_audio_receiver *receiver,
+	enum sippymodem_v34_phase2_station_role local_role,
+	size_t expected_payload_bit_count);
+bool sippymodem_v34_phase2_info_audio_receiver_is_valid(
+	const struct sippymodem_v34_phase2_info_audio_receiver *receiver);
+enum sippymodem_v34_phase2_info_audio_result
+sippymodem_v34_phase2_info_audio_receiver_reset(
+	struct sippymodem_v34_phase2_info_audio_receiver *receiver);
+
+/* Each successful call emits either NO_EVENT or the typed frame event from
+ * the first recovered bit boundary in this sample. */
+enum sippymodem_v34_phase2_info_audio_result
+sippymodem_v34_phase2_info_audio_receiver_sample(
+	struct sippymodem_v34_phase2_info_audio_receiver *receiver,
+	int16_t sample, struct sippymodem_v34_phase2_info_event *event);
+struct sippymodem_v34_phase2_dpsk_measurement
+sippymodem_v34_phase2_info_audio_receiver_measure(
+	const struct sippymodem_v34_phase2_info_audio_receiver *receiver);
 
 const char *sippymodem_v34_phase2_info_audio_result_name(
 	enum sippymodem_v34_phase2_info_audio_result result);

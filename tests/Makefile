@@ -350,6 +350,7 @@ V34_PHASE2_INFO_AUDIO_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_info_audio
 V34_PHASE2_INFO_AUDIO_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_info_audio.o \
+	$(BUILD_DIR)/sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \

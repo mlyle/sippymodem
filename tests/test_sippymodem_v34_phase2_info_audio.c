@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_v34_phase2_info_audio.h>
+#include <sippymodem_g711.h>
 
 #include "test.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -11,6 +13,11 @@ enum {
 	TEST_AMPLITUDE = 12000,
 	TEST_PAYLOAD_BITS = 17,
 	TEST_SAMPLE_LIMIT = 1000,
+};
+
+enum test_codec {
+	TEST_CODEC_PCMU,
+	TEST_CODEC_PCMA,
 };
 
 static bool build_expected_bits(
@@ -133,11 +140,121 @@ static bool test_bidirectional_transmission(void)
 	       check_station(SIPPYMODEM_V34_PHASE2_ANSWERING_STATION);
 }
 
+static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
+{
+	if (codec == TEST_CODEC_PCMU)
+		return sippymodem_g711_decode_pcmu(
+			sippymodem_g711_encode_pcmu(sample));
+	return sippymodem_g711_decode_pcma(
+		sippymodem_g711_encode_pcma(sample));
+}
+
+static bool check_frame_recovery(
+	enum sippymodem_v34_phase2_station_role transmit_role,
+	enum test_codec codec)
+{
+	static const uint8_t payload[] = { 0xa5, 0x5a, 0x80 };
+	enum sippymodem_v34_phase2_station_role receive_role =
+		transmit_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+			SIPPYMODEM_V34_PHASE2_ANSWERING_STATION :
+			SIPPYMODEM_V34_PHASE2_CALLING_STATION;
+	struct sippymodem_v34_phase2_info_audio_transmitter transmitter;
+	struct sippymodem_v34_phase2_info_audio_receiver receiver;
+	struct sippymodem_v34_phase2_info_event event = { 0 };
+	struct sippymodem_v34_phase2_dpsk_measurement measurement;
+	bool transmit_complete = false;
+	bool frame_received = false;
+
+	CHECK(sippymodem_v34_phase2_info_audio_transmitter_init(
+		      &transmitter, transmit_role, TEST_AMPLITUDE, payload,
+		      TEST_PAYLOAD_BITS) ==
+		      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK &&
+		      sippymodem_v34_phase2_info_audio_receiver_init(
+			      &receiver, receive_role, TEST_PAYLOAD_BITS) ==
+			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
+	      "Phase 2 INFO G.711 endpoints did not initialize");
+	for (size_t index = 0; index < 7; ++index) {
+		int16_t silence = codec_round_trip(0, codec);
+
+		CHECK(sippymodem_v34_phase2_info_audio_receiver_sample(
+			      &receiver, silence, &event) ==
+			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK &&
+			      event.type == SIPPYMODEM_V34_PHASE2_INFO_NO_EVENT,
+		      "Phase 2 INFO receiver emitted an event during silence");
+	}
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t sample;
+
+		if (!transmit_complete) {
+			CHECK(sippymodem_v34_phase2_info_audio_transmitter_sample(
+				      &transmitter, &sample,
+				      &transmit_complete) ==
+				      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
+			      "Phase 2 INFO G.711 transmitter failed at %zu",
+			      index);
+		} else {
+			bool bit_accepted;
+
+			/* Preserve the carrier while the receive filter delivers its
+			 * final delayed decisions. The Phase 2 controller will own the
+			 * corresponding transition to the following carrier tone. */
+			CHECK(sippymodem_v34_phase2_dpsk_transmitter_sample(
+				      &transmitter.modulation, 0, &sample,
+				      &bit_accepted) ==
+				      SIPPYMODEM_V34_PHASE2_DPSK_OK,
+			      "Phase 2 post-INFO carrier failed at %zu", index);
+		}
+		sample = codec_round_trip(sample, codec);
+		CHECK(sippymodem_v34_phase2_info_audio_receiver_sample(
+			      &receiver, sample, &event) ==
+			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
+		      "Phase 2 INFO G.711 receiver failed at %zu", index);
+		CHECK(event.type != SIPPYMODEM_V34_PHASE2_INFO_FRAME_REJECTED,
+		      "Phase 2 INFO receiver rejected role %d codec %d at %zu",
+		      (int)transmit_role, (int)codec, index);
+		if (event.type == SIPPYMODEM_V34_PHASE2_INFO_FRAME_RECEIVED) {
+			frame_received = true;
+			break;
+		}
+	}
+	CHECK(transmit_complete && frame_received &&
+		      event.payload_bit_count == TEST_PAYLOAD_BITS &&
+		      memcmp(event.payload, payload, sizeof(payload)) == 0,
+	      "Phase 2 INFO payload changed across G.711 audio");
+	measurement =
+		sippymodem_v34_phase2_info_audio_receiver_measure(&receiver);
+	CHECK(measurement.timing_locked && measurement.line_power > 1.0 &&
+		      measurement.symbol_power > 1.0,
+	      "Phase 2 INFO audio receiver omitted its signal measurement");
+	return true;
+}
+
+static bool test_g711_frame_recovery(void)
+{
+	return check_frame_recovery(
+		       SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		       TEST_CODEC_PCMU) &&
+	       check_frame_recovery(
+		       SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		       TEST_CODEC_PCMU) &&
+	       check_frame_recovery(
+		       SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		       TEST_CODEC_PCMA) &&
+	       check_frame_recovery(
+		       SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		       TEST_CODEC_PCMA);
+}
+
 static bool test_validation(void)
 {
 	static const uint8_t payload[] = { 0xa5, 0x5a, 0x80 };
 	struct sippymodem_v34_phase2_info_audio_transmitter transmitter;
+	struct sippymodem_v34_phase2_info_audio_receiver receiver;
 	unsigned char snapshot[sizeof(transmitter)];
+	unsigned char receiver_snapshot[sizeof(receiver)];
+	struct sippymodem_v34_phase2_info_event event = {
+		.type = SIPPYMODEM_V34_PHASE2_INFO_FRAME_REJECTED,
+	};
 	int16_t sample = 321;
 	bool complete = true;
 
@@ -173,6 +290,39 @@ static bool test_validation(void)
 			     SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT),
 		     "invalid argument") == 0,
 	      "Phase 2 INFO audio returned an unstable result name");
+	CHECK(sippymodem_v34_phase2_info_audio_receiver_init(
+		      NULL, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      TEST_PAYLOAD_BITS) ==
+		      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
+		      sippymodem_v34_phase2_info_audio_receiver_init(
+			      &receiver,
+			      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+			      SIPPYMODEM_V34_PHASE2_INFO_MAX_PAYLOAD_BITS + 1u) ==
+			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
+		      sippymodem_v34_phase2_info_audio_receiver_init(
+			      &receiver,
+			      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+			      TEST_PAYLOAD_BITS) ==
+			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
+	      "Phase 2 INFO audio receiver validation fixture failed");
+	memcpy(receiver_snapshot, &receiver, sizeof(receiver_snapshot));
+	CHECK(sippymodem_v34_phase2_info_audio_receiver_sample(
+		      &receiver, 0, NULL) ==
+		      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
+		      memcmp(receiver_snapshot, &receiver, sizeof(receiver_snapshot)) ==
+			      0 &&
+		      sippymodem_v34_phase2_info_audio_receiver_reset(&receiver) ==
+			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
+	      "Phase 2 INFO audio receiver validation or reset failed");
+	receiver.modulation.detector_output = NAN;
+	memcpy(receiver_snapshot, &receiver, sizeof(receiver_snapshot));
+	CHECK(sippymodem_v34_phase2_info_audio_receiver_sample(
+		      &receiver, 0, &event) ==
+		      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
+		      memcmp(receiver_snapshot, &receiver, sizeof(receiver_snapshot)) ==
+			      0 &&
+		      event.type == SIPPYMODEM_V34_PHASE2_INFO_FRAME_REJECTED,
+	      "corrupt Phase 2 INFO receiver mutated state or outputs");
 	return true;
 }
 
@@ -183,6 +333,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bidirectional transmission", test_bidirectional_transmission },
+		{ "G.711 frame recovery", test_g711_frame_recovery },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
