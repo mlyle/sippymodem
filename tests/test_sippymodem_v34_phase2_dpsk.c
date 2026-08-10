@@ -26,7 +26,7 @@ static double tone_projection(
 	for (size_t index = 0; index < count; ++index) {
 		double angle = 2.0 * TEST_PI * (double)frequency_hz *
 			       (double)index /
-			       SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE;
+			       SIPPYMODEM_V34_PHASE2_SAMPLE_RATE;
 
 		in_phase += samples[index] * cos(angle);
 		quadrature += samples[index] * sin(angle);
@@ -36,7 +36,7 @@ static double tone_projection(
 
 static bool render_station(
 	enum sippymodem_v34_phase2_station_role role,
-	int16_t samples[SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE],
+	int16_t samples[SIPPYMODEM_V34_PHASE2_SAMPLE_RATE],
 	unsigned int *accepted_count)
 {
 	struct sippymodem_v34_phase2_dpsk_transmitter transmitter;
@@ -47,7 +47,7 @@ static bool render_station(
 	      "Phase 2 transmitter did not initialize");
 	*accepted_count = 0;
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE; ++index) {
+	     index < SIPPYMODEM_V34_PHASE2_SAMPLE_RATE; ++index) {
 		bool accepted;
 
 		CHECK(sippymodem_v34_phase2_dpsk_transmitter_sample(
@@ -75,9 +75,9 @@ static bool render_station(
 
 static bool test_carriers_and_cadence(void)
 {
-	int16_t calling[SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE];
-	int16_t answering[SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE];
-	const size_t skip = SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE / 4;
+	int16_t calling[SIPPYMODEM_V34_PHASE2_SAMPLE_RATE];
+	int16_t answering[SIPPYMODEM_V34_PHASE2_SAMPLE_RATE];
+	const size_t skip = SIPPYMODEM_V34_PHASE2_SAMPLE_RATE / 4;
 	const size_t count = ARRAY_LENGTH(calling) - skip;
 	unsigned int calling_accepted;
 	unsigned int answering_accepted;
@@ -170,7 +170,7 @@ static bool check_loopback(
 	uint32_t noise = UINT32_C(0xd7a41c29);
 	const size_t sample_limit =
 		(TEST_BIT_COUNT + 24u) *
-		SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE /
+		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE /
 		SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE;
 
 	build_bits(bits);

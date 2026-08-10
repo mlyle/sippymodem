@@ -40,7 +40,7 @@ static uint32_t local_carrier_hz(
 static struct sippymodem_qam_channel phase2_channel(uint32_t carrier_hz)
 {
 	return (struct sippymodem_qam_channel){
-		.sample_rate = SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE,
+		.sample_rate = SIPPYMODEM_V34_PHASE2_SAMPLE_RATE,
 		.symbol_rate_numerator =
 			SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE,
 		.symbol_rate_denominator = 1,
@@ -56,16 +56,15 @@ static uint32_t phase_step(uint32_t frequency_hz)
 		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
 
 	return (uint32_t)(
-		(scaled + SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE / 2u) /
-		SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE);
+		(scaled + SIPPYMODEM_V34_PHASE2_SAMPLE_RATE / 2u) /
+		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE);
 }
 
 static bool channel_matches(
 	const struct sippymodem_qam_channel *channel, uint32_t carrier_hz)
 {
 	return channel != NULL &&
-	       channel->sample_rate ==
-		       SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE &&
+	       channel->sample_rate == SIPPYMODEM_V34_PHASE2_SAMPLE_RATE &&
 	       channel->symbol_rate_numerator ==
 		       SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE &&
 	       channel->symbol_rate_denominator == 1 &&
@@ -212,7 +211,7 @@ static void configure_guard_filter(
 {
 	double radians = V34_PHASE2_DPSK_TWO_PI *
 			 SIPPYMODEM_V34_PHASE2_ANSWERING_GUARD_HZ /
-			 SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE;
+			 SIPPYMODEM_V34_PHASE2_SAMPLE_RATE;
 	double cosine = cos(radians);
 	double radius = V34_PHASE2_DPSK_GUARD_NOTCH_RADIUS;
 	double numerator_at_dc = 2.0 - 2.0 * cosine;
@@ -231,7 +230,7 @@ static void configure_lowpass_filter(
 	struct sippymodem_v34_phase2_dpsk_filter *filter)
 {
 	double sample_rate =
-		SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE *
+		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE *
 		SIPPYMODEM_V34_PHASE2_DPSK_INTERPOLATION;
 	double radians = V34_PHASE2_DPSK_TWO_PI *
 			 V34_PHASE2_DPSK_DETECTOR_CUTOFF_HZ / sample_rate;
