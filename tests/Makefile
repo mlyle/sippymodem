@@ -385,6 +385,17 @@ V34_PHASE2_PROBE_TEST_BINARY := \
 V34_PHASE2_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o
+V34_PHASE2_PROBE_ACQUISITION_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_acquisition
+V34_PHASE2_PROBE_ACQUISITION_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/sippymodem_g711.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
 V34_PHASE2_PROBE_SPECTRUM_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_spectrum
 V34_PHASE2_PROBE_SPECTRUM_TEST_OBJECTS := \
@@ -496,6 +507,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE2_INFO_AUDIO_TEST_BINARY) \
 	$(V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY) \
 	$(V34_PHASE2_PROBE_TEST_BINARY) \
+	$(V34_PHASE2_PROBE_ACQUISITION_TEST_BINARY) \
 	$(V34_PHASE2_PROBE_SPECTRUM_TEST_BINARY) \
 	$(V34_PHASE2_PROBE_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE2_PROBE_SYNCHRONIZER_TEST_BINARY) \
@@ -553,6 +565,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE2_INFO_AUDIO_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_PROBE_TEST_OBJECTS:.o=.d) \
+	$(V34_PHASE2_PROBE_ACQUISITION_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_PROBE_SPECTRUM_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_PROBE_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_PROBE_SYNCHRONIZER_TEST_OBJECTS:.o=.d) \
@@ -626,6 +639,7 @@ test: $(TEST_BINARIES)
 	./$(V34_PHASE2_INFO_AUDIO_TEST_BINARY)
 	./$(V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY)
 	./$(V34_PHASE2_PROBE_TEST_BINARY)
+	./$(V34_PHASE2_PROBE_ACQUISITION_TEST_BINARY)
 	./$(V34_PHASE2_PROBE_SPECTRUM_TEST_BINARY)
 	./$(V34_PHASE2_PROBE_RECEIVER_TEST_BINARY)
 	./$(V34_PHASE2_PROBE_SYNCHRONIZER_TEST_BINARY)
@@ -812,6 +826,10 @@ $(V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY): \
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE2_PROBE_TEST_BINARY): $(V34_PHASE2_PROBE_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_PHASE2_PROBE_ACQUISITION_TEST_BINARY): \
+	$(V34_PHASE2_PROBE_ACQUISITION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE2_PROBE_SPECTRUM_TEST_BINARY): \
@@ -1070,6 +1088,11 @@ $(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o: \
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase2_probe_acquisition.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_acquisition.c | \
+	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o: \
