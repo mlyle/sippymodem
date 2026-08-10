@@ -20,7 +20,10 @@ path. V.21 and Bell 103 share a reusable 300-bit/s binary-FSK channel. V.23 adds
 an asymmetric 1200-bit/s forward channel and 75-bit/s backward channel. All
 three use exact rational symbol timing and generated tone-pair detectors rather
 than checked-in coefficient tables. Bell 103 is selectable with `AT+MS=103` and
-V.23 with `AT+MS=23`.
+V.23 with `AT+MS=23`. Baudot TTY/TDD is selectable with `AT+MS=45`; a 50-only
+rate range selects 50 baud instead of the North American 45.45-baud mode. Its
+bounded text path uses explicit half-duplex turns and preserves the complete
+mark-hold interval before listening again.
 
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
@@ -43,7 +46,8 @@ handling, negotiated SIP-to-RTP binding, and lifecycle-ordered recording hooks
 without linking the legacy DSP object or requiring external vectors. A compact
 integration check trains two real modem cores through the PCMU and PCMA media
 and recording boundaries, then verifies exact binary terminal data in both
-directions and bounded carrier-loss handling.
+directions and bounded carrier-loss handling. The same boundary check exchanges
+Baudot text in both directions without overlapping the half-duplex turns.
 
 The SIP adapter owns one validated incoming or outgoing call, supports ringing,
 answer, and hangup, and reports bounded call-progress events. Offers and answers
@@ -64,9 +68,9 @@ media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, Bell 103,
-and V.23 are currently registered; higher-speed modes remain deliberately
-unavailable until their source-built implementations arrive as reviewable
-slices.
+V.23, and Baudot TTY/TDD are currently registered; higher-speed modes remain
+deliberately unavailable until their source-built implementations arrive as
+reviewable slices.
 
 Build with `make`, configure the daemon through the validated `SIP_*`
 environment variables, and run `./src/slmodemd` without a hardware-device

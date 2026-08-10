@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
+#include <sippymodem_baudot.h>
 #include <sippymodem_datapumps.h>
 #include <sippymodem_fsk300_datapump.h>
 #include <sippymodem_media.h>
@@ -10,6 +11,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -405,6 +407,152 @@ static bool run_media_call(
 	return true;
 }
 
+static bool frame_has_signal(const int16_t samples[SIP_FRAME_SAMPLES])
+{
+	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index)
+		if (samples[index] != 0)
+			return true;
+	return false;
+}
+
+static bool run_baudot_media_call(
+	enum sippymodem_baudot_rate rate,
+	enum sippymodem_media_codec codec)
+{
+	static const char request[] = "hello 123? ga";
+	static const char expected_request[] = "HELLO 123? GA";
+	static const char reply[] = "ok ga";
+	static const char expected_reply[] = "OK GA";
+	static const char dial_command[] = "ATDpeer\r";
+	const char *selection_command =
+		rate == SIPPYMODEM_BAUDOT_RATE_50 ?
+			"AT+MS=45,0,50,50\r" : "AT+MS=45,0,45,45\r";
+	struct sippymodem_datapumps datapumps = { 0 };
+	struct integration_endpoint caller;
+	struct integration_endpoint answerer;
+	struct recording_capture capture = { 0 };
+	const struct sippymodem_recorder recorder = {
+		.context = &capture,
+		.write = capture_recording,
+	};
+	bool online = false;
+	bool request_started = false;
+	bool request_received = false;
+	bool reply_queued = false;
+	bool reply_received = false;
+	unsigned int silent_request_frames = 0;
+	int reported_rate = rate == SIPPYMODEM_BAUDOT_RATE_50 ? 50 : 45;
+	int selection_length = (int)strlen(selection_command);
+
+	CHECK(sippymodem_datapumps_start(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_OK &&
+		      endpoint_init(&caller, "Baudot caller") &&
+		      endpoint_init(&answerer, "Baudot answerer"),
+	      "Baudot SIP integration did not initialize");
+	CHECK(modem_write(
+		      caller.modem, selection_command, selection_length) ==
+		      selection_length &&
+		      modem_write(
+			      answerer.modem, selection_command,
+			      selection_length) == selection_length &&
+		      MODEM_DP(caller.modem) == DP_BAUDOT &&
+		      MODEM_DP(answerer.modem) == DP_BAUDOT &&
+		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
+		      output_contains(&caller, "OK") &&
+		      output_contains(&answerer, "OK"),
+	      "Baudot was not selectable through AT+MS");
+	caller.output_count = 0;
+	answerer.output_count = 0;
+	CHECK(modem_set_sreg(answerer.modem, SREG_ANS_DELAY, 0) == 0 &&
+		      modem_write(caller.modem, dial_command,
+			  (int)(sizeof(dial_command) - 1u)) ==
+			      (int)(sizeof(dial_command) - 1u) &&
+		      modem_report_outgoing_call_connected(caller.modem) == 0 &&
+		      modem_answer(answerer.modem) == 0,
+	      "Baudot SIP call did not establish its media roles");
+	for (unsigned int frame = 0; frame < TRAINING_FRAME_LIMIT; ++frame) {
+		CHECK(process_sip_frame(
+		      &caller, &answerer, codec, &recorder),
+		      "Baudot link failed at the SIP media boundary");
+		if (modem_is_online(caller.modem, DP_BAUDOT) &&
+		    modem_is_online(answerer.modem, DP_BAUDOT)) {
+			online = true;
+			break;
+		}
+	}
+	CHECK(online && caller.modem->tx_rate == (unsigned int)reported_rate &&
+		      caller.modem->rx_rate == (unsigned int)reported_rate &&
+		      answerer.modem->tx_rate == (unsigned int)reported_rate &&
+		      answerer.modem->rx_rate == (unsigned int)reported_rate &&
+		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
+		      output_contains_connect(&caller, (unsigned int)reported_rate) &&
+		      output_contains_connect(&answerer, (unsigned int)reported_rate),
+	      "Baudot peers did not report their selected rate");
+	caller.output_count = 0;
+	answerer.output_count = 0;
+	CHECK(modem_write(
+		      caller.modem, request, (int)(sizeof(request) - 1u)) ==
+		      (int)(sizeof(request) - 1u),
+	      "Baudot caller did not accept terminal text");
+
+	for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
+		bool caller_active;
+		bool answerer_active;
+
+		CHECK(process_sip_frame(
+		      &caller, &answerer, codec, &recorder) &&
+			      endpoint_drain(&caller) && endpoint_drain(&answerer),
+		      "Baudot text failed at the SIP media boundary");
+		caller_active = frame_has_signal(caller.transmit);
+		answerer_active = frame_has_signal(answerer.transmit);
+		CHECK(!(caller_active && answerer_active),
+		      "Baudot peers transmitted over one another");
+		if (caller_active) {
+			request_started = true;
+			silent_request_frames = 0;
+		} else if (request_started && silent_request_frames != UINT_MAX) {
+			silent_request_frames++;
+		}
+		request_received =
+			answerer.output_count == sizeof(expected_request) - 1u &&
+			memcmp(answerer.output, expected_request,
+			       sizeof(expected_request) - 1u) == 0;
+		if (request_received && silent_request_frames >= 2 &&
+		    !reply_queued) {
+			CHECK(modem_write(
+			      answerer.modem, reply,
+			      (int)(sizeof(reply) - 1u)) ==
+				      (int)(sizeof(reply) - 1u),
+			      "Baudot answerer did not accept its reply");
+			reply_queued = true;
+		}
+		if (reply_queued &&
+		    caller.output_count == sizeof(expected_reply) - 1u &&
+		    memcmp(caller.output, expected_reply,
+			   sizeof(expected_reply) - 1u) == 0) {
+			reply_received = true;
+			break;
+		}
+	}
+	CHECK(request_received && reply_received && !capture.invalid &&
+		      capture.blocks[SIPPYMODEM_RECORD_TX_LINE_PCM] != 0 &&
+		      capture.blocks[
+			      SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED] != 0 &&
+		      capture.blocks[
+			      SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
+		      capture.blocks[SIPPYMODEM_RECORD_RX_LINE_PCM] != 0,
+	      "Baudot SIP turn-taking or recording evidence was incomplete");
+	CHECK(sippymodem_datapumps_stop(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_BUSY,
+	      "live Baudot calls did not protect their registration");
+	endpoint_destroy(&answerer);
+	endpoint_destroy(&caller);
+	CHECK(sippymodem_datapumps_stop(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_OK,
+	      "Baudot SIP registration did not stop cleanly");
+	return true;
+}
+
 static const char *codec_name(enum sippymodem_media_codec codec)
 {
 	return codec == SIPPYMODEM_CODEC_PCMU ? "PCMU" : "PCMA";
@@ -449,6 +597,10 @@ int main(void)
 		SIPPYMODEM_CODEC_PCMU,
 		SIPPYMODEM_CODEC_PCMA,
 	};
+	static const enum sippymodem_baudot_rate baudot_rates[] = {
+		SIPPYMODEM_BAUDOT_RATE_45,
+		SIPPYMODEM_BAUDOT_RATE_50,
+	};
 
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
 	     ++standard) {
@@ -466,6 +618,28 @@ int main(void)
 			fprintf(stderr, "[       OK ] %s over %s SIP media\n",
 				test_cases[standard].name,
 				codec_name(codecs[codec]));
+		}
+	}
+	for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+		for (size_t rate = 0; rate < ARRAY_LENGTH(baudot_rates);
+		     ++rate) {
+			const char *rate_name =
+				baudot_rates[rate] == SIPPYMODEM_BAUDOT_RATE_50 ?
+					"50" : "45.45";
+
+			fprintf(stderr,
+				"[ RUN      ] Baudot %s over %s SIP media\n",
+				rate_name, codec_name(codecs[codec]));
+			if (!run_baudot_media_call(
+				    baudot_rates[rate], codecs[codec])) {
+				fprintf(stderr,
+					"[  FAILED  ] Baudot %s over %s SIP media\n",
+					rate_name, codec_name(codecs[codec]));
+				return 1;
+			}
+			fprintf(stderr,
+				"[       OK ] Baudot %s over %s SIP media\n",
+				rate_name, codec_name(codecs[codec]));
 		}
 	}
 	return 0;

@@ -338,6 +338,7 @@ enum DP_ID {
         DP_V32BIS = 132,
         DP_V34 = 34,
         DP_V34BIS = 134,
+        DP_BAUDOT = 45,
         DP_B103 = 103,
         DP_B212 = 212,
         DP_FAX = 100,
@@ -440,4 +441,3 @@ extern int modem_set_sreg(struct modem *m, unsigned int num, int val);
 
 
 #endif /* __MODEM_DEFS_H__ */
-

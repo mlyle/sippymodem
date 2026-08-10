@@ -172,6 +172,8 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/sippymodem_datapumps.o \
+	$(BUILD_DIR)/sippymodem_baudot.o \
+	$(BUILD_DIR)/sippymodem_baudot_datapump.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
@@ -194,6 +196,8 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_fsk_integration.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/sippymodem_datapumps.o \
+	$(BUILD_DIR)/sippymodem_baudot.o \
+	$(BUILD_DIR)/sippymodem_baudot_datapump.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
@@ -518,6 +522,10 @@ $(BUILD_DIR)/sippymodem_fsk.o: ../src/sippymodem_fsk.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/sippymodem_baudot.o: \
 	../src/sippymodem_baudot.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_baudot_datapump.o: \
+	../src/sippymodem_baudot_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_fsk300_datapump.o: \

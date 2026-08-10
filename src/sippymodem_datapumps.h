@@ -18,6 +18,7 @@ struct sippymodem_datapumps {
 	bool call_progress_registered;
 	bool fsk300_registered;
 	bool v23_registered;
+	bool baudot_registered;
 };
 
 /* Registrations are process-global; exactly one live owner is supported. */

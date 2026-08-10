@@ -111,7 +111,9 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *v21_operations;
 	struct dp_operations *bell103_operations;
 	struct dp_operations *v23_operations;
+	struct dp_operations *baudot_operations;
 	struct dp *call_progress;
+	struct dp *baudot;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
 
@@ -119,12 +121,14 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) == NULL &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL &&
+		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_register(DP_B103, &conflict_operations) == 0 &&
 		      sippymodem_datapumps_start(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT &&
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL &&
+		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) ==
 			      &conflict_operations &&
 		      modem_dp_deregister(DP_B103, &conflict_operations) == 0 &&
@@ -136,6 +140,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	v21_operations = modem_dp_get_registered_ops(DP_V21);
 	bell103_operations = modem_dp_get_registered_ops(DP_B103);
 	v23_operations = modem_dp_get_registered_ops(DP_V23);
+	baudot_operations = modem_dp_get_registered_ops(DP_BAUDOT);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
 		      operations->hangup == NULL && operations->use_count == 0 &&
@@ -149,7 +154,14 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v23_operations->create != NULL &&
 		      v23_operations->delete != NULL &&
 		      v23_operations->process != NULL &&
-		      v23_operations->use_count == 0,
+		      v23_operations->use_count == 0 &&
+		      baudot_operations != NULL &&
+		      baudot_operations != v21_operations &&
+		      baudot_operations != v23_operations &&
+		      baudot_operations->create != NULL &&
+		      baudot_operations->delete != NULL &&
+		      baudot_operations->process != NULL &&
+		      baudot_operations->use_count == 0,
 	      "source-built modem operations were incomplete");
 	CHECK(sippymodem_datapumps_start(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_ALREADY_STARTED &&
@@ -158,6 +170,33 @@ static bool test_owns_source_built_datapump_registrations(void)
 	      "process-global call-progress ownership was ambiguous");
 	modem = modem_create(&driver, "call progress test");
 	CHECK(modem != NULL, "call-progress modem could not be created");
+	modem->min_rate = 46;
+	modem->max_rate = 49;
+	CHECK(baudot_operations->create(
+		      modem, DP_BAUDOT, 1, MODEM_RATE, MODEM_FRAG,
+		      baudot_operations) == NULL &&
+		      baudot_operations->use_count == 0,
+	      "Baudot accepted a range containing neither supported rate");
+	modem->min_rate = modem->max_rate = 45;
+	baudot = baudot_operations->create(
+		modem, DP_BAUDOT, 1, MODEM_RATE, MODEM_FRAG,
+		baudot_operations);
+	memset(receive, 0, sizeof(receive));
+	memset(transmit, 1, sizeof(transmit));
+	CHECK(baudot != NULL &&
+		      baudot_operations->process(
+			      baudot, receive, transmit, MODEM_FRAG) ==
+			      DPSTAT_CONNECT &&
+		      baudot->status == DPSTAT_CONNECT && modem->tx_rate == 45 &&
+		      modem->rx_rate == 45 &&
+		      sippymodem_datapumps_stop(&datapumps) ==
+			      SIPPYMODEM_DATAPUMPS_BUSY &&
+		      baudot_operations->delete(baudot) == 0 &&
+		      baudot_operations->use_count == 0,
+	      "Baudot data pump did not link and release cleanly");
+	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
+		CHECK(transmit[index] == 0,
+		      "idle Baudot data pump did not mute its output");
 	call_progress = operations->create(
 		modem, DP_CALLPROG, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(call_progress != NULL && call_progress->modem == modem &&
@@ -186,6 +225,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) == NULL &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL &&
+		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      !sippymodem_datapumps_are_started(&datapumps) &&
 		      sippymodem_datapumps_stop(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_NOT_STARTED &&
