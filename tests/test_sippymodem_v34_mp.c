@@ -182,6 +182,155 @@ static uint16_t chronological_crc_word(
 	return word;
 }
 
+static bool receive_packed_frame(
+	struct sippymodem_v34_mp_receiver *receiver, const uint8_t *frame,
+	size_t frame_bit_count, struct sippymodem_v34_mp_receive_event *event)
+{
+	struct sippymodem_v34_mp_receive_event emitted = { 0 };
+
+	for (size_t index = 0; index < frame_bit_count; ++index) {
+		CHECK(sippymodem_v34_mp_receive_bit(
+			      receiver, reference_frame_bit(frame, index),
+			      &emitted) == SIPPYMODEM_V34_MP_OK,
+		      "MP stream receiver stopped at bit %zu/%zu", index,
+		      frame_bit_count);
+		if (index + 1u < frame_bit_count)
+			CHECK(emitted.type == SIPPYMODEM_V34_MP_RECEIVE_NO_EVENT,
+			      "MP stream receiver emitted early at bit %zu/%zu",
+			      index, frame_bit_count);
+	}
+	CHECK(emitted.type != SIPPYMODEM_V34_MP_RECEIVE_NO_EVENT,
+	      "MP stream receiver did not emit a completed frame");
+	*event = emitted;
+	return true;
+}
+
+static bool test_stream_receiver(void)
+{
+	struct sippymodem_v34_mp_parameters type0 = base_parameters(false);
+	struct sippymodem_v34_mp_type1_parameters type1 = type1_parameters();
+	struct sippymodem_v34_mp_receiver receiver;
+	struct sippymodem_v34_mp_receive_event event;
+	uint8_t type0_frame[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES];
+	uint8_t type1_frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES];
+
+	CHECK(sippymodem_v34_mp_type0_encode(
+		      &type0, type0_frame, sizeof(type0_frame)) ==
+		      SIPPYMODEM_V34_MP_OK &&
+	      sippymodem_v34_mp_type1_encode(
+		      &type1, type1_frame, sizeof(type1_frame)) ==
+		      SIPPYMODEM_V34_MP_OK &&
+	      sippymodem_v34_mp_receiver_init(&receiver) ==
+		      SIPPYMODEM_V34_MP_OK,
+	      "MP stream fixture did not initialize");
+	/* Model trailing TRN ones and prove a shorter run ending in zero does
+	 * not disturb the saturated 17-one MP prefix search. */
+	for (size_t index = 0; index < 10; ++index) {
+		uint8_t bit = index == 2u ? 0u : 1u;
+
+		CHECK(sippymodem_v34_mp_receive_bit(
+			      &receiver, bit, &event) == SIPPYMODEM_V34_MP_OK &&
+		      event.type == SIPPYMODEM_V34_MP_RECEIVE_NO_EVENT,
+		      "MP stream preamble produced an event at bit %zu", index);
+	}
+	CHECK(receive_packed_frame(
+		      &receiver, type0_frame,
+		      SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS, &event) &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE0 &&
+	      event.frame_result == SIPPYMODEM_V34_MP_OK &&
+	      parameters_are_equal(&event.parameters.type0, &type0) &&
+	      sippymodem_v34_mp_receiver_is_valid(&receiver) &&
+	      receiver.stage == SIPPYMODEM_V34_MP_SEARCH_SYNC,
+	      "MP stream receiver changed a Type 0 record");
+	CHECK(receive_packed_frame(
+		      &receiver, type1_frame,
+		      SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS, &event) &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE1 &&
+	      event.frame_result == SIPPYMODEM_V34_MP_OK &&
+	      type1_parameters_are_equal(&event.parameters.type1, &type1) &&
+	      sippymodem_v34_mp_receiver_is_valid(&receiver) &&
+	      receiver.stage == SIPPYMODEM_V34_MP_SEARCH_SYNC,
+	      "MP stream receiver changed a Type 1 record");
+	return true;
+}
+
+static bool test_stream_rejection_and_reacquisition(void)
+{
+	struct sippymodem_v34_mp_parameters parameters =
+		base_parameters(false);
+	struct sippymodem_v34_mp_receiver receiver;
+	struct sippymodem_v34_mp_receive_event event;
+	uint8_t valid[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES];
+	uint8_t corrupt[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES];
+
+	CHECK(sippymodem_v34_mp_type0_encode(
+		      &parameters, valid, sizeof(valid)) ==
+		      SIPPYMODEM_V34_MP_OK &&
+	      sippymodem_v34_mp_receiver_init(&receiver) ==
+		      SIPPYMODEM_V34_MP_OK,
+	      "MP rejection stream did not initialize");
+	memcpy(corrupt, valid, sizeof(corrupt));
+	replace_frame_bit(
+		corrupt, 20u, reference_frame_bit(corrupt, 20u) ^ 1u);
+	CHECK(receive_packed_frame(
+		      &receiver, corrupt, SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS,
+		      &event) &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_REJECTED &&
+	      event.frame_result == SIPPYMODEM_V34_MP_CRC_MISMATCH &&
+	      receive_packed_frame(
+		      &receiver, valid, SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS,
+		      &event) &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE0 &&
+	      parameters_are_equal(&event.parameters.type0, &parameters),
+	      "MP stream receiver did not reject and reacquire");
+	return true;
+}
+
+static bool test_stream_validation(void)
+{
+	struct sippymodem_v34_mp_receiver receiver;
+	struct sippymodem_v34_mp_receiver saved;
+	struct sippymodem_v34_mp_receive_event event;
+	struct sippymodem_v34_mp_receive_event saved_event;
+
+	CHECK(sippymodem_v34_mp_receiver_init(NULL) ==
+		      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_mp_receiver_init(&receiver) ==
+		      SIPPYMODEM_V34_MP_OK &&
+	      sippymodem_v34_mp_receiver_is_valid(&receiver) &&
+	      !sippymodem_v34_mp_receiver_is_valid(NULL),
+	      "MP stream validation fixture did not initialize");
+	saved = receiver;
+	memset(&event, 0xa5, sizeof(event));
+	saved_event = event;
+	CHECK(sippymodem_v34_mp_receive_bit(NULL, 0, &event) ==
+		      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_mp_receive_bit(&receiver, 2, &event) ==
+		      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+	      sippymodem_v34_mp_receive_bit(&receiver, 0, NULL) ==
+		      SIPPYMODEM_V34_MP_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "invalid MP stream input mutated state or event");
+	receiver.sync_one_count =
+		SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS + 1u;
+	CHECK(!sippymodem_v34_mp_receiver_is_valid(&receiver),
+	      "MP stream receiver accepted an excessive sync run");
+	receiver = saved;
+	receiver.stage = (enum sippymodem_v34_mp_receive_stage)3;
+	CHECK(!sippymodem_v34_mp_receiver_is_valid(&receiver),
+	      "MP stream receiver accepted an unknown stage");
+	receiver = saved;
+	receiver.bit_index = 1;
+	CHECK(!sippymodem_v34_mp_receiver_is_valid(&receiver),
+	      "MP stream receiver accepted a search cursor");
+	receiver = saved;
+	receiver.frame[0] = 1;
+	CHECK(!sippymodem_v34_mp_receiver_is_valid(&receiver),
+	      "MP stream receiver accepted stale frame storage");
+	return true;
+}
+
 static bool test_known_wire_images(void)
 {
 	static const uint8_t expected_mp[] = {
@@ -647,6 +796,10 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "stream receiver", test_stream_receiver },
+		{ "stream rejection and reacquisition",
+		  test_stream_rejection_and_reacquisition },
+		{ "stream validation", test_stream_validation },
 		{ "known wire images", test_known_wire_images },
 		{ "Type 1 known wire image", test_type1_known_wire_image },
 		{ "selected fields round trip", test_selected_fields_round_trip },

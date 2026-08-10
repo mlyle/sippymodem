@@ -65,6 +65,39 @@ struct sippymodem_v34_mp_type1_parameters {
 bool sippymodem_v34_mp_type1_parameters_are_valid(
 	const struct sippymodem_v34_mp_type1_parameters *parameters);
 
+enum sippymodem_v34_mp_receive_event_type {
+	SIPPYMODEM_V34_MP_RECEIVE_NO_EVENT,
+	SIPPYMODEM_V34_MP_RECEIVE_TYPE0,
+	SIPPYMODEM_V34_MP_RECEIVE_TYPE1,
+	SIPPYMODEM_V34_MP_RECEIVE_REJECTED,
+};
+
+union sippymodem_v34_mp_received_parameters {
+	struct sippymodem_v34_mp_parameters type0;
+	struct sippymodem_v34_mp_type1_parameters type1;
+};
+
+struct sippymodem_v34_mp_receive_event {
+	enum sippymodem_v34_mp_receive_event_type type;
+	/* Meaningful for a rejected frame; accepted frames report OK. */
+	enum sippymodem_v34_mp_result frame_result;
+	union sippymodem_v34_mp_received_parameters parameters;
+};
+
+enum sippymodem_v34_mp_receive_stage {
+	SIPPYMODEM_V34_MP_SEARCH_SYNC,
+	SIPPYMODEM_V34_MP_RECEIVE_TYPE,
+	SIPPYMODEM_V34_MP_RECEIVE_FRAME,
+};
+
+struct sippymodem_v34_mp_receiver {
+	uint8_t frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES];
+	size_t frame_bit_count;
+	size_t bit_index;
+	uint8_t sync_one_count;
+	enum sippymodem_v34_mp_receive_stage stage;
+};
+
 /* Frames are packed in transmission order, most-significant bit first within
  * each octet. Reserved information bits are transmitted as zero and ignored
  * when decoding, but remain covered by the CRC. */
@@ -80,6 +113,17 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_encode(
 enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_decode(
 	const uint8_t *frame, size_t frame_capacity,
 	struct sippymodem_v34_mp_type1_parameters *parameters);
+
+/* Search a continuous descrambled bit stream for the 17-one MP prefix, infer
+ * the record length from its type bit, and emit only CRC-validated typed
+ * parameters. A rejected call leaves state and event unchanged. */
+enum sippymodem_v34_mp_result sippymodem_v34_mp_receiver_init(
+	struct sippymodem_v34_mp_receiver *receiver);
+bool sippymodem_v34_mp_receiver_is_valid(
+	const struct sippymodem_v34_mp_receiver *receiver);
+enum sippymodem_v34_mp_result sippymodem_v34_mp_receive_bit(
+	struct sippymodem_v34_mp_receiver *receiver, uint8_t bit,
+	struct sippymodem_v34_mp_receive_event *event);
 
 const char *sippymodem_v34_mp_result_name(
 	enum sippymodem_v34_mp_result result);
