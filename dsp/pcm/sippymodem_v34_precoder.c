@@ -139,22 +139,46 @@ static bool quantize_filter_output(
 	return true;
 }
 
+static bool generate_prediction(
+	const struct sippymodem_v34_precoder *precoder,
+	struct sippymodem_v34_precoder_prediction *prediction)
+{
+	return filter_output(precoder, &prediction->filter_output) &&
+	       quantize_filter_output(
+		       &prediction->filter_output, precoder->grid_step,
+		       &prediction->lattice_offset);
+}
+
+enum sippymodem_v34_precoder_result sippymodem_v34_precoder_predict(
+	const struct sippymodem_v34_precoder *precoder,
+	struct sippymodem_v34_precoder_prediction *prediction)
+{
+	struct sippymodem_v34_precoder_prediction generated;
+
+	if (!sippymodem_v34_precoder_is_valid(precoder) || prediction == NULL)
+		return SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT;
+	if (!generate_prediction(precoder, &generated))
+		return SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE;
+	*prediction = generated;
+	return SIPPYMODEM_V34_PRECODER_OK;
+}
+
 static bool generate_symbol(
 	const struct sippymodem_v34_precoder *precoder,
 	const struct sippymodem_v34_grid_point *mapper_output,
 	struct sippymodem_v34_precoder_symbol *symbol)
 {
 	struct sippymodem_v34_precoder_symbol generated;
+	struct sippymodem_v34_precoder_prediction prediction;
 	int64_t channel_in_phase;
 	int64_t channel_quadrature;
 	int64_t precoded_in_phase;
 	int64_t precoded_quadrature;
 
-	if (!filter_output(precoder, &generated.filter_output) ||
-	    !quantize_filter_output(
-		    &generated.filter_output, precoder->grid_step,
-		    &generated.lattice_offset))
+	if (!generate_prediction(precoder, &prediction))
 		return false;
+	generated.filter_output = prediction.filter_output;
+	generated.lattice_offset = prediction.lattice_offset;
 	channel_in_phase = (int64_t)mapper_output->in_phase +
 		generated.lattice_offset.in_phase;
 	channel_quadrature = (int64_t)mapper_output->quadrature +

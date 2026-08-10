@@ -49,6 +49,13 @@ struct sippymodem_v34_precoder {
 	enum sippymodem_v34_precoder_grid_step grid_step;
 };
 
+struct sippymodem_v34_precoder_prediction {
+	/* p(n), after exact Q7 rounding of the complex filter output. */
+	struct sippymodem_v34_q7_point filter_output;
+	/* c(n), represented in exact integer grid units. */
+	struct sippymodem_v34_grid_point lattice_offset;
+};
+
 struct sippymodem_v34_precoder_symbol {
 	/* p(n), after exact Q7 rounding of the complex filter output. */
 	struct sippymodem_v34_q7_point filter_output;
@@ -70,6 +77,12 @@ enum sippymodem_v34_precoder_result sippymodem_v34_precoder_init(
 
 bool sippymodem_v34_precoder_is_valid(
 	const struct sippymodem_v34_precoder *precoder);
+
+/* Derive p(n) and c(n) from the current history without advancing it. This is
+ * needed before mapping the second symbol of a four-dimensional interval. */
+enum sippymodem_v34_precoder_result sippymodem_v34_precoder_predict(
+	const struct sippymodem_v34_precoder *precoder,
+	struct sippymodem_v34_precoder_prediction *prediction);
 
 /* Process one odd-integer mapper point. Rounding and quantization break exact
  * half-way ties toward the value with smaller magnitude. State and output are
