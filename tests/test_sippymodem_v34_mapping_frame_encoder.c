@@ -3,6 +3,7 @@
 #include <sippymodem_v34_mapping_frame_encoder.h>
 
 #include "test.h"
+#include "v34_encoder_test_helpers.h"
 
 #include <string.h>
 
@@ -30,127 +31,6 @@ static const struct symbol_rate_fixture SYMBOL_RATES[] = {
 	{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 2, 13 },
 	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 2, 14 },
 };
-
-static bool grid_points_are_equal(
-	const struct sippymodem_v34_grid_point *left,
-	const struct sippymodem_v34_grid_point *right)
-{
-	return left->in_phase == right->in_phase &&
-	       left->quadrature == right->quadrature;
-}
-
-static bool q7_points_are_equal(
-	const struct sippymodem_v34_q7_point *left,
-	const struct sippymodem_v34_q7_point *right)
-{
-	return left->in_phase == right->in_phase &&
-	       left->quadrature == right->quadrature;
-}
-
-static bool interval_outputs_are_equal(
-	const struct sippymodem_v34_4d_encoder_output *left,
-	const struct sippymodem_v34_4d_encoder_output *right)
-{
-	if (left->differential_output != right->differential_output ||
-	    left->modulo_output != right->modulo_output ||
-	    left->convolutional_output != right->convolutional_output ||
-	    left->trellis_output != right->trellis_output ||
-	    memcmp(
-		    &left->convolutional_input, &right->convolutional_input,
-		    sizeof(left->convolutional_input)) != 0)
-		return false;
-	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		const struct sippymodem_v34_precoder_symbol *left_precoded =
-			&left->precoded[symbol];
-		const struct sippymodem_v34_precoder_symbol *right_precoded =
-			&right->precoded[symbol];
-
-		if (left->subset_label[symbol] != right->subset_label[symbol] ||
-		    left->mapped[symbol].constellation_label !=
-			    right->mapped[symbol].constellation_label ||
-		    !grid_points_are_equal(
-			    &left->mapped[symbol].mapper_output,
-			    &right->mapped[symbol].mapper_output) ||
-		    !q7_points_are_equal(
-			    &left_precoded->filter_output,
-			    &right_precoded->filter_output) ||
-		    !grid_points_are_equal(
-			    &left_precoded->lattice_offset,
-			    &right_precoded->lattice_offset) ||
-		    !grid_points_are_equal(
-			    &left_precoded->channel_output,
-			    &right_precoded->channel_output) ||
-		    !q7_points_are_equal(
-			    &left_precoded->precoded_symbol,
-			    &right_precoded->precoded_symbol))
-			return false;
-	}
-	return true;
-}
-
-static bool encoded_frames_are_equal(
-	const struct sippymodem_v34_encoded_mapping_frame *left,
-	const struct sippymodem_v34_encoded_mapping_frame *right)
-{
-	if (left->parsed.shell_label != right->parsed.shell_label)
-		return false;
-	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
-	     ++interval) {
-		const struct sippymodem_v34_4d_mapping_input *left_mapping =
-			&left->parsed.interval[interval];
-		const struct sippymodem_v34_4d_mapping_input *right_mapping =
-			&right->parsed.interval[interval];
-
-		if (left_mapping->rotation_bit != right_mapping->rotation_bit ||
-		    left_mapping->differential_input !=
-			    right_mapping->differential_input ||
-		    !interval_outputs_are_equal(
-			    &left->interval[interval],
-			    &right->interval[interval]))
-			return false;
-		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
-		     ++symbol) {
-			if (left_mapping->point_index[symbol] !=
-				    right_mapping->point_index[symbol] ||
-			    left->ring_indices.index[interval][symbol] !=
-				    right->ring_indices.index[interval][symbol])
-				return false;
-		}
-	}
-	return true;
-}
-
-static bool encoders_are_equal(
-	const struct sippymodem_v34_4d_encoder *left,
-	const struct sippymodem_v34_4d_encoder *right)
-{
-	if (memcmp(
-		    &left->parameters, &right->parameters,
-		    sizeof(left->parameters)) != 0 ||
-	    left->precoder.grid_step != right->precoder.grid_step ||
-	    left->convolutional_encoder.state !=
-		    right->convolutional_encoder.state ||
-	    left->convolutional_encoder.selection !=
-		    right->convolutional_encoder.selection ||
-	    left->previous_differential_output !=
-		    right->previous_differential_output)
-		return false;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
-	     ++tap) {
-		if (left->precoder.coefficients[tap].real !=
-			    right->precoder.coefficients[tap].real ||
-		    left->precoder.coefficients[tap].imaginary !=
-			    right->precoder.coefficients[tap].imaginary ||
-		    !q7_points_are_equal(
-			    &left->precoder.previous_symbols[tap],
-			    &right->precoder.previous_symbols[tap]))
-			return false;
-	}
-	return true;
-}
 
 static bool bytes_are_filled(
 	const void *object, size_t size, unsigned char value)
@@ -257,7 +137,7 @@ static bool rejected_frame_is_transactional(
 	return sippymodem_v34_encode_mapping_frame(
 		       encoder, frame, primary_bits, primary_bit_count,
 		       auxiliary_bit, &encoded) == expected_result &&
-	       encoders_are_equal(encoder, &saved) &&
+	       v34_test_encoders_are_equal(encoder, &saved) &&
 	       bytes_are_filled(&encoded, sizeof(encoded), 0xa5);
 }
 
@@ -435,9 +315,9 @@ static bool test_all_supported_mapping_frames(void)
 								      frame.primary_bits, auxiliary_pointer,
 								      &generated) ==
 								      SIPPYMODEM_V34_MAPPING_FRAME_ENCODER_OK &&
-							      encoded_frames_are_equal(
+							      v34_test_encoded_frames_are_equal(
 								      &generated, &expected) &&
-							      encoders_are_equal(&actual, &model),
+							      v34_test_encoders_are_equal(&actual, &model),
 							      "mapping frame %zu/%u/%u/%u/%u/%u "
 							      "changed",
 							      symbol_index, rate, auxiliary, expanded,
@@ -495,7 +375,7 @@ static bool test_transactional_failures(void)
 		      &encoder, &frame, primary_bits, frame.primary_bits, NULL,
 		      NULL) ==
 		      SIPPYMODEM_V34_MAPPING_FRAME_ENCODER_INVALID_ARGUMENT &&
-	      encoders_are_equal(&encoder, &saved),
+	      v34_test_encoders_are_equal(&encoder, &saved),
 	      "null destination changed state");
 	CHECK(rejected_frame_is_transactional(
 		      &encoder, &frame, NULL, frame.primary_bits, NULL,
@@ -644,7 +524,7 @@ static bool test_mid_frame_rollback(void)
 		      "interval %u did not reach the intended boundary",
 		      interval);
 	}
-	CHECK(!encoders_are_equal(&probe, &encoder),
+	CHECK(!v34_test_encoders_are_equal(&probe, &encoder),
 	      "successful first interval did not advance probe state");
 	CHECK(rejected_frame_is_transactional(
 		      &encoder, &frame, primary_bits, primary_bit_count, NULL,
