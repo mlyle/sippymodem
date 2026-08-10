@@ -18,13 +18,14 @@ static bool nonzero_point_power(
 {
 	double value;
 
-	if (!point_is_finite(point) || power == NULL)
+	if (!point_is_finite(point))
 		return false;
 	value = point->in_phase * point->in_phase +
 		point->quadrature * point->quadrature;
 	if (!isfinite(value) || value <= QAM_GAIN_MINIMUM_POWER)
 		return false;
-	*power = value;
+	if (power != NULL)
+		*power = value;
 	return true;
 }
 
@@ -80,10 +81,8 @@ static bool divide_points(
 bool sippymodem_qam_gain_is_valid(
 	const struct sippymodem_qam_gain *tracker)
 {
-	double power;
-
 	return tracker != NULL &&
-	       nonzero_point_power(&tracker->channel_gain, &power) &&
+	       nonzero_point_power(&tracker->channel_gain, NULL) &&
 	       isfinite(tracker->adaptation) && tracker->adaptation >= 0.0 &&
 	       tracker->adaptation <= 1.0;
 }
@@ -156,6 +155,7 @@ enum sippymodem_qam_gain_result sippymodem_qam_gain_track(
 	struct sippymodem_qam_point observed_gain;
 
 	if (!sippymodem_qam_gain_is_valid(tracker) ||
+	    !nonzero_point_power(received, NULL) ||
 	    !divide_points(received, transmitted, &observed_gain))
 		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
 	next = *tracker;

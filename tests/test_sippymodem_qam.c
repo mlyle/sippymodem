@@ -211,6 +211,8 @@ static bool test_flat_gain_validation(void)
 		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
 	      sippymodem_qam_gain_track(NULL, &gain, &gain) ==
 		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_track(&tracker, &zero, &gain) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
 	      sippymodem_qam_gain_track(&tracker, &invalid, &gain) ==
 		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
 	      sippymodem_qam_gain_track(&tracker, &gain, &zero) ==

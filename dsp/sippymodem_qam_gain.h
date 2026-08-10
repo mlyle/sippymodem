@@ -40,8 +40,8 @@ enum sippymodem_qam_gain_result sippymodem_qam_gain_equalize(
 	const struct sippymodem_qam_point *received,
 	struct sippymodem_qam_point *equalized);
 
-/* Update from a known nonzero transmitted point. Rejected calls leave the
- * estimate unchanged. */
+/* Update from a nonzero received observation of a known nonzero transmitted
+ * point. Rejected calls leave the estimate unchanged. */
 enum sippymodem_qam_gain_result sippymodem_qam_gain_track(
 	struct sippymodem_qam_gain *tracker,
 	const struct sippymodem_qam_point *received,
