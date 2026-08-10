@@ -83,14 +83,6 @@ static uint8_t input_dibit(
 	return (uint8_t)((pattern >> shift) & 3u);
 }
 
-static uint8_t differential_increment(uint8_t transmitted_dibit)
-{
-	uint8_t i1 = (uint8_t)((transmitted_dibit >> 1) & 1u);
-	uint8_t i2 = (uint8_t)(transmitted_dibit & 1u);
-
-	return (uint8_t)((i2 << 1) | i1);
-}
-
 enum sippymodem_v34_phase3_j_sequence_result
 sippymodem_v34_phase3_j_sequence_next(
 	struct sippymodem_v34_phase3_j_sequence *sequence,
@@ -99,21 +91,17 @@ sippymodem_v34_phase3_j_sequence_next(
 {
 	struct sippymodem_v34_phase3_j_sequence next;
 	struct sippymodem_qam_point next_point;
-	uint8_t scrambled_dibit;
 	uint8_t rotation;
 
 	if (!sippymodem_v34_phase3_j_sequence_is_valid(sequence) ||
 	    point == NULL || clockwise_quarter_turns == NULL)
 		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	next = *sequence;
-	if (sippymodem_v34_scramble_group(
-		    &next.scrambler, input_dibit(&next), 2u,
-		    &scrambled_dibit) != SIPPYMODEM_V34_FRAMING_OK)
+	if (sippymodem_v34_scramble_differential_dibit(
+		    &next.scrambler, input_dibit(&next),
+		    next.previous_clockwise_quarter_turns, &rotation) !=
+	    SIPPYMODEM_V34_FRAMING_OK)
 		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
-	rotation = (uint8_t)(
-		(next.previous_clockwise_quarter_turns +
-		 differential_increment(scrambled_dibit)) &
-		3u);
 	next.previous_clockwise_quarter_turns = rotation;
 	next.symbol_in_pattern++;
 	if (next.symbol_in_pattern ==

@@ -139,6 +139,40 @@ static bool test_group_round_trip(void)
 	return true;
 }
 
+static bool test_differential_dibits(void)
+{
+	static const enum sippymodem_v34_station_role roles[] = {
+		SIPPYMODEM_V34_CALLING_STATION,
+		SIPPYMODEM_V34_ANSWERING_STATION,
+	};
+	static const uint8_t increments[] = { 0, 2, 1, 3 };
+
+	for (size_t role = 0; role < ARRAY_LENGTH(roles); ++role) {
+		for (uint8_t input = 0; input < ARRAY_LENGTH(increments); ++input) {
+			for (uint8_t previous = 0; previous < 4u; ++previous) {
+				struct sippymodem_v34_scrambler scrambler;
+				uint8_t rotation = UINT8_MAX;
+
+				CHECK(sippymodem_v34_transmit_scrambler_init(
+					      &scrambler, roles[role]) ==
+					      SIPPYMODEM_V34_FRAMING_OK &&
+				      sippymodem_v34_scramble_differential_dibit(
+					      &scrambler, input, previous,
+					      &rotation) ==
+					      SIPPYMODEM_V34_FRAMING_OK &&
+				      rotation ==
+					      (uint8_t)((previous +
+							 increments[input]) &
+							3u) &&
+				      scrambler.history == input,
+				      "V.34 differential dibit changed at %zu/%u/%u",
+				      role, input, previous);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_superframe_inversion_patterns(void)
 {
 	static const uint8_t expected_j7[] = {
@@ -201,6 +235,7 @@ static bool test_validation(void)
 	struct sippymodem_v34_scrambler scrambler;
 	struct sippymodem_v34_scrambler saved;
 	uint8_t output = UINT8_MAX;
+	uint8_t rotation = UINT8_MAX;
 
 	CHECK(sippymodem_v34_scrambler_init(
 		      &scrambler, SIPPYMODEM_V34_POLYNOMIAL_GPC) ==
@@ -229,8 +264,20 @@ static bool test_validation(void)
 	      sippymodem_v34_descramble_group(
 		      &scrambler, 0, 1, NULL) ==
 		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_scramble_differential_dibit(
+		      NULL, 0, 0, &rotation) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_scramble_differential_dibit(
+		      &scrambler, 4, 0, &rotation) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_scramble_differential_dibit(
+		      &scrambler, 0, 4, &rotation) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_scramble_differential_dibit(
+		      &scrambler, 0, 0, NULL) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
 	      memcmp(&scrambler, &saved, sizeof(scrambler)) == 0 &&
-	      output == UINT8_MAX,
+	      output == UINT8_MAX && rotation == UINT8_MAX,
 	      "V.34 framing accepted invalid input or mutated state");
 	scrambler.history = UINT32_C(1) << SIPPYMODEM_V34_SCRAMBLER_BITS;
 	CHECK(!sippymodem_v34_scrambler_is_valid(&scrambler),
@@ -258,6 +305,7 @@ int main(void)
 		{ "polynomial starts", test_polynomial_starts },
 		{ "station role polynomials", test_station_role_polynomials },
 		{ "group round trip", test_group_round_trip },
+		{ "differential dibits", test_differential_dibits },
 		{ "superframe inversion patterns",
 		  test_superframe_inversion_patterns },
 		{ "validation", test_validation },
