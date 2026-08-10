@@ -38,6 +38,8 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		    SIPPYMODEM_V34_PHASE2_RANGING_TURNAROUND_SAMPLES ||
 	    ranging->post_reversal_samples >
 		    SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES ||
+	    ranging->probe_start_delay_samples >=
+		    SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES ||
 	    ranging->measurement_elapsed_samples >
 		    SIPPYMODEM_V34_PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES ||
 	    (!ranging->round_trip_delay_valid &&
@@ -56,6 +58,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 	case SIPPYMODEM_V34_PHASE2_RANGING_INFO0_EXCHANGE:
 		return ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples == 0 &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       !ranging->round_trip_delay_valid &&
 		       (role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION ||
@@ -64,6 +67,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		return role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION &&
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples == 0 &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       !ranging->round_trip_delay_valid;
 	case SIPPYMODEM_V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL:
@@ -71,6 +75,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 			       completed_initial_tone_samples(role) &&
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples == 0 &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
 				ranging->measurement_elapsed_samples == 0 :
 				ranging->measurement_elapsed_samples != 0) &&
@@ -80,6 +85,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 			       completed_initial_tone_samples(role) &&
 		       ranging->response_delay_samples != 0 &&
 		       ranging->post_reversal_samples == 0 &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       ranging->round_trip_delay_valid ==
 			       (role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION);
@@ -90,6 +96,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		       ranging->post_reversal_samples != 0 &&
 		       ranging->post_reversal_samples <
 			       SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples ==
 			       (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
 					ranging->post_reversal_samples :
@@ -102,20 +109,32 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples ==
 			       SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples >=
 			       SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 		       !ranging->round_trip_delay_valid;
+	case SIPPYMODEM_V34_PHASE2_CALLER_WAIT_PROBE_START:
+		return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION &&
+		       ranging->local_tone_samples == 0 &&
+		       ranging->response_delay_samples == 0 &&
+		       ranging->post_reversal_samples ==
+			       SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES &&
+		       ranging->probe_start_delay_samples != 0 &&
+		       ranging->measurement_elapsed_samples == 0 &&
+		       ranging->round_trip_delay_valid;
 	case SIPPYMODEM_V34_PHASE2_PROBE_READY:
 		return ranging->local_tone_samples ==
 			       completed_initial_tone_samples(role) &&
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples ==
 			       SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       ranging->round_trip_delay_valid;
 	case SIPPYMODEM_V34_PHASE2_RANGING_TIMED_OUT:
 		return ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples == 0 &&
+		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       !ranging->round_trip_delay_valid &&
 		       (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
@@ -229,6 +248,32 @@ static bool measure_round_trip_delay(
 	return true;
 }
 
+static void enter_probe_ready(
+	struct sippymodem_v34_phase2_ranging *ranging,
+	struct sippymodem_v34_phase2_ranging_event *event)
+{
+	ranging->phase = SIPPYMODEM_V34_PHASE2_PROBE_READY;
+	ranging->probe_start_delay_samples = 0;
+	event->kind = SIPPYMODEM_V34_PHASE2_PROBE_RECEIVE_READY;
+	event->round_trip_delay_samples = ranging->round_trip_delay_samples;
+}
+
+static void schedule_probe_start(
+	struct sippymodem_v34_phase2_ranging *ranging,
+	uint16_t detector_delay_samples,
+	struct sippymodem_v34_phase2_ranging_event *event)
+{
+	if (detector_delay_samples >=
+	    SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES) {
+		enter_probe_ready(ranging, event);
+		return;
+	}
+	ranging->probe_start_delay_samples =
+		SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES -
+		detector_delay_samples;
+	ranging->phase = SIPPYMODEM_V34_PHASE2_CALLER_WAIT_PROBE_START;
+}
+
 static void handle_reversal(
 	struct sippymodem_v34_phase2_ranging *ranging,
 	uint16_t detector_delay_samples,
@@ -250,15 +295,27 @@ static void handle_reversal(
 		break;
 	case SIPPYMODEM_V34_PHASE2_CALLER_WAIT_SECOND_REMOTE_REVERSAL:
 		if (measure_round_trip_delay(ranging, detector_delay_samples)) {
-			ranging->phase = SIPPYMODEM_V34_PHASE2_PROBE_READY;
-			event->kind = SIPPYMODEM_V34_PHASE2_PROBE_RECEIVE_READY;
-			event->round_trip_delay_samples =
-				ranging->round_trip_delay_samples;
+			schedule_probe_start(
+				ranging, detector_delay_samples, event);
 		}
 		break;
 	default:
 		break;
 	}
+}
+
+static void advance_probe_start(
+	struct sippymodem_v34_phase2_ranging *ranging,
+	struct sippymodem_v34_phase2_ranging_event *event)
+{
+	if (ranging->phase !=
+	    SIPPYMODEM_V34_PHASE2_CALLER_WAIT_PROBE_START)
+		return;
+	/* This call already consumed one sample after the estimated reversal
+	 * edge. Emit on the final expected tail sample so the next sample can be
+	 * passed directly to the probe receiver. */
+	if (--ranging->probe_start_delay_samples == 0)
+		enter_probe_ready(ranging, event);
 }
 
 static void finish_tone_tail(
@@ -361,6 +418,7 @@ sippymodem_v34_phase2_ranging_sample(
 			&emitted);
 	finish_tone_tail(&next, &emitted);
 	advance_measurement(&next, &emitted);
+	advance_probe_start(&next, &emitted);
 	if (!sippymodem_v34_phase2_ranging_is_valid(&next))
 		return SIPPYMODEM_V34_PHASE2_RANGING_INVALID_ARGUMENT;
 	*ranging = next;
