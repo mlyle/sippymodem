@@ -38,6 +38,12 @@ enum sippymodem_v34_constellation_result
 sippymodem_v34_quarter_superconstellation_generate(
 	struct sippymodem_v34_grid_point *points, size_t point_count);
 
+/* Generate one Figure 5 point by label without retaining the constellation as
+ * a lookup table. The destination is unchanged for an invalid label. */
+enum sippymodem_v34_constellation_result
+sippymodem_v34_quarter_superconstellation_point(
+	size_t label, struct sippymodem_v34_grid_point *point);
+
 /* Return point zero of the V.34 quarter-superconstellation after the given
  * number of 90-degree turns. Positive turns are counterclockwise; negative
  * turns are clockwise. */

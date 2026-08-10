@@ -15,6 +15,11 @@ enum {
 	V34_QUARTER_SQUARED_MAGNITUDE_STEP = 8,
 	V34_QUARTER_GRID_MAX_SQUARED_MAGNITUDE =
 		2 * V34_QUARTER_GRID_MAX * V34_QUARTER_GRID_MAX,
+	V34_QUARTER_MAGNITUDE_BUCKET_COUNT =
+		(V34_QUARTER_GRID_MAX_SQUARED_MAGNITUDE -
+		 V34_QUARTER_FIRST_SQUARED_MAGNITUDE) /
+			V34_QUARTER_SQUARED_MAGNITUDE_STEP +
+		1,
 };
 
 static const double V34_POINT_ZERO_COORDINATE =
@@ -80,6 +85,72 @@ sippymodem_v34_quarter_superconstellation_generate(
 	for (size_t index = 0; index < point_count; ++index)
 		points[index] = generated[index];
 	return SIPPYMODEM_V34_CONSTELLATION_OK;
+}
+
+static size_t magnitude_bucket(int in_phase, int quadrature)
+{
+	return (size_t)(
+		(squared_magnitude(in_phase, quadrature) -
+		 V34_QUARTER_FIRST_SQUARED_MAGNITUDE) /
+		V34_QUARTER_SQUARED_MAGNITUDE_STEP);
+}
+
+enum sippymodem_v34_constellation_result
+sippymodem_v34_quarter_superconstellation_point(
+	size_t label, struct sippymodem_v34_grid_point *point)
+{
+	uint16_t magnitude_counts[V34_QUARTER_MAGNITUDE_BUCKET_COUNT] = { 0 };
+	size_t rank = label;
+	size_t selected_bucket = V34_QUARTER_MAGNITUDE_BUCKET_COUNT;
+	int selected_magnitude;
+
+	if (point == NULL ||
+	    label >= SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	/* A generated histogram finds the label's magnitude in one lattice
+	 * pass, avoiding both a retained table and the bulk generator's scan
+	 * across every empty squared magnitude. */
+	for (int quadrature = V34_QUARTER_GRID_MAX;
+	     quadrature >= V34_QUARTER_GRID_MIN;
+	     quadrature -= V34_QUARTER_GRID_STEP) {
+		for (int in_phase = V34_QUARTER_GRID_MIN;
+		     in_phase <= V34_QUARTER_GRID_MAX;
+		     in_phase += V34_QUARTER_GRID_STEP)
+			magnitude_counts[magnitude_bucket(in_phase, quadrature)]++;
+	}
+	for (size_t bucket = 0;
+	     bucket < V34_QUARTER_MAGNITUDE_BUCKET_COUNT; ++bucket) {
+		if (rank < magnitude_counts[bucket]) {
+			selected_bucket = bucket;
+			break;
+		}
+		rank -= magnitude_counts[bucket];
+	}
+	if (selected_bucket == V34_QUARTER_MAGNITUDE_BUCKET_COUNT)
+		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	selected_magnitude = V34_QUARTER_FIRST_SQUARED_MAGNITUDE +
+		(int)selected_bucket * V34_QUARTER_SQUARED_MAGNITUDE_STEP;
+	for (int quadrature = V34_QUARTER_GRID_MAX;
+	     quadrature >= V34_QUARTER_GRID_MIN;
+	     quadrature -= V34_QUARTER_GRID_STEP) {
+		for (int in_phase = V34_QUARTER_GRID_MIN;
+		     in_phase <= V34_QUARTER_GRID_MAX;
+		     in_phase += V34_QUARTER_GRID_STEP) {
+			if (squared_magnitude(in_phase, quadrature) !=
+			    selected_magnitude)
+				continue;
+			if (rank != 0) {
+				--rank;
+				continue;
+			}
+			*point = (struct sippymodem_v34_grid_point){
+				.in_phase = (int16_t)in_phase,
+				.quadrature = (int16_t)quadrature,
+			};
+			return SIPPYMODEM_V34_CONSTELLATION_OK;
+		}
+	}
+	return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
 }
 
 static struct sippymodem_qam_point rotate_point(
