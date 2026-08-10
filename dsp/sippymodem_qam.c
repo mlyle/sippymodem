@@ -311,16 +311,15 @@ static void advance_time(struct sippymodem_qam_modulator *modulator)
 	modulator->carrier_phase += modulator->carrier_phase_step;
 }
 
-enum sippymodem_qam_result sippymodem_qam_modulator_sample(
+enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
 	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_point *point, int16_t *sample,
+	const struct sippymodem_qam_point *point, double *sample,
 	bool *symbol_accepted)
 {
 	double carrier_phase;
 	double in_phase;
 	double quadrature;
 	double waveform;
-	long rounded;
 
 	if (!sippymodem_qam_modulator_is_valid(modulator) ||
 	    !transmit_point_is_valid(point) ||
@@ -337,13 +336,34 @@ enum sippymodem_qam_result sippymodem_qam_modulator_sample(
 	waveform = (in_phase * cos(carrier_phase) -
 		    quadrature * sin(carrier_phase)) /
 		   modulator->pulse_normalization;
+	*sample = waveform;
+	advance_time(modulator);
+	return SIPPYMODEM_QAM_OK;
+}
+
+enum sippymodem_qam_result sippymodem_qam_modulator_sample(
+	struct sippymodem_qam_modulator *modulator,
+	const struct sippymodem_qam_point *point, int16_t *sample,
+	bool *symbol_accepted)
+{
+	double waveform;
+	bool accepted;
+	long rounded;
+	enum sippymodem_qam_result result;
+
+	if (sample == NULL || symbol_accepted == NULL)
+		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+	result = sippymodem_qam_modulator_sample_f64(
+		modulator, point, &waveform, &accepted);
+	if (result != SIPPYMODEM_QAM_OK)
+		return result;
 	rounded = lround(waveform * modulator->amplitude);
 	if (rounded > modulator->amplitude)
 		rounded = modulator->amplitude;
 	if (rounded < -modulator->amplitude)
 		rounded = -modulator->amplitude;
 	*sample = (int16_t)rounded;
-	advance_time(modulator);
+	*symbol_accepted = accepted;
 	return SIPPYMODEM_QAM_OK;
 }
 

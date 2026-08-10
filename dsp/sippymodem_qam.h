@@ -112,6 +112,12 @@ bool sippymodem_qam_modulator_is_valid(
 bool sippymodem_qam_modulator_can_accept_symbol(
 	const struct sippymodem_qam_modulator *modulator);
 /* Transmit points are finite with squared magnitude no greater than 3/2. */
+enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
+	struct sippymodem_qam_modulator *modulator,
+	const struct sippymodem_qam_point *point, double *sample,
+	bool *symbol_accepted);
+/* The integer interface scales the same unit-amplitude waveform by the
+ * configured amplitude, rounds it, and clamps it to that symmetric bound. */
 enum sippymodem_qam_result sippymodem_qam_modulator_sample(
 	struct sippymodem_qam_modulator *modulator,
 	const struct sippymodem_qam_point *point, int16_t *sample,

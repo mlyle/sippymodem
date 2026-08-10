@@ -210,6 +210,56 @@ static bool test_channel_carriers(void)
 	return check_carrier(1200, 2400) && check_carrier(2400, 1200);
 }
 
+static bool test_floating_transmit_path(void)
+{
+	struct sippymodem_qam_channel channel = v22_channel(1200);
+	struct sippymodem_qam_modulator floating;
+	struct sippymodem_qam_modulator integer;
+	unsigned int accepted_count = 0;
+
+	CHECK(sippymodem_qam_modulator_init(
+		      &floating, &channel, TEST_AMPLITUDE) ==
+		      SIPPYMODEM_QAM_OK &&
+	      sippymodem_qam_modulator_init(
+		      &integer, &channel, TEST_AMPLITUDE) ==
+		      SIPPYMODEM_QAM_OK,
+	      "QAM floating transmit fixtures did not initialize");
+	for (unsigned int index = 0; index < 1000; ++index) {
+		struct sippymodem_qam_point point = quadrant_point(
+			(uint8_t)(accepted_count & 3u),
+			(double)(accepted_count % 4u + 1u) / 4.0);
+		double floating_sample;
+		int16_t integer_sample;
+		long expected;
+		bool floating_accepted;
+		bool integer_accepted;
+
+		CHECK(sippymodem_qam_modulator_sample_f64(
+			      &floating, &point, &floating_sample,
+			      &floating_accepted) == SIPPYMODEM_QAM_OK &&
+		      sippymodem_qam_modulator_sample(
+			      &integer, &point, &integer_sample,
+			      &integer_accepted) == SIPPYMODEM_QAM_OK &&
+		      isfinite(floating_sample) &&
+		      floating_accepted == integer_accepted &&
+		      memcmp(&floating, &integer, sizeof(floating)) == 0,
+		      "QAM floating transmit path diverged at sample %u", index);
+		expected = lround(floating_sample * TEST_AMPLITUDE);
+		if (expected > TEST_AMPLITUDE)
+			expected = TEST_AMPLITUDE;
+		if (expected < -TEST_AMPLITUDE)
+			expected = -TEST_AMPLITUDE;
+		CHECK(integer_sample == expected,
+		      "QAM integer scaling changed at sample %u", index);
+		if (floating_accepted)
+			accepted_count++;
+	}
+	CHECK(accepted_count == 75,
+	      "QAM floating path accepted %u symbols instead of 75",
+	      accepted_count);
+	return true;
+}
+
 static uint32_t fixture_random(uint32_t *state)
 {
 	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
@@ -397,6 +447,8 @@ static bool test_validation(void)
 	uint32_t carrier_phase_step;
 	int16_t sample = 0;
 	bool accepted = false;
+	bool floating_accepted = false;
+	double floating_sample = -99.0;
 	double pulse = 0.0;
 
 	CHECK(sippymodem_root_raised_cosine(0.0, 0.0, &pulse) ==
@@ -444,10 +496,27 @@ static bool test_validation(void)
 	CHECK(sippymodem_qam_modulator_sample(
 		      &modulator, &invalid_point, &sample, &accepted) ==
 		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      sippymodem_qam_modulator_sample(
+	      sippymodem_qam_modulator_sample(
 			      &modulator, NULL, &sample, &accepted) ==
 			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
 	      "QAM accepted an unbounded constellation point");
+	{
+		struct sippymodem_qam_modulator before = modulator;
+
+		CHECK(sippymodem_qam_modulator_sample_f64(
+			      &modulator, &invalid_point, &floating_sample,
+			      &floating_accepted) ==
+			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      sippymodem_qam_modulator_sample_f64(
+			      &modulator, &point, NULL, &floating_accepted) ==
+			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      sippymodem_qam_modulator_sample_f64(
+			      &modulator, &point, &floating_sample, NULL) ==
+			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      memcmp(&modulator, &before, sizeof(modulator)) == 0 &&
+		      floating_sample == -99.0 && !floating_accepted,
+		      "invalid QAM floating sample mutated state");
+	}
 	modulator.active_count = SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS + 1;
 	CHECK(!sippymodem_qam_modulator_can_accept_symbol(&modulator) &&
 		      sippymodem_qam_modulator_sample(
@@ -483,6 +552,7 @@ int main(void)
 		{ "exact symbol clock", test_exact_symbol_clock },
 		{ "exact carrier clock", test_exact_carrier_clock },
 		{ "channel carriers", test_channel_carriers },
+		{ "floating transmit path", test_floating_transmit_path },
 		{ "receive loopback", test_receive_loopback },
 		{ "receive tolerance", test_receive_tolerance },
 		{ "silence does not lock", test_silence_does_not_lock },
