@@ -778,7 +778,8 @@ V34_PHASE2_TONE_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_qam.o
+	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_qam_gain.o
 FSK_INTEGRATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_fsk_integration
 FSK_INTEGRATION_TEST_OBJECTS := \
@@ -1841,6 +1842,10 @@ $(BUILD_DIR)/sippymodem_v22_datapump.o: \
 
 $(BUILD_DIR)/sippymodem_qam.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_qam.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_qam_gain.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_qam_gain.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v8_ansam.o: \

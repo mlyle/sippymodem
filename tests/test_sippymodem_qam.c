@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_qam.h>
+#include <sippymodem_qam_gain.h>
 
 #include "test.h"
 
@@ -46,6 +47,192 @@ static struct sippymodem_qam_point quadrant_point(
 	default:
 		return (struct sippymodem_qam_point){ 0.0, -magnitude };
 	}
+}
+
+static struct sippymodem_qam_point complex_product(
+	const struct sippymodem_qam_point *left,
+	const struct sippymodem_qam_point *right)
+{
+	return (struct sippymodem_qam_point){
+		.in_phase = left->in_phase * right->in_phase -
+			    left->quadrature * right->quadrature,
+		.quadrature = left->in_phase * right->quadrature +
+			      left->quadrature * right->in_phase,
+	};
+}
+
+static bool points_are_close(
+	const struct sippymodem_qam_point *left,
+	const struct sippymodem_qam_point *right)
+{
+	return fabs(left->in_phase - right->in_phase) < 1e-12 &&
+	       fabs(left->quadrature - right->quadrature) < 1e-12;
+}
+
+static bool test_flat_gain_round_trip(void)
+{
+	static const struct sippymodem_qam_point gains[] = {
+		{ 1.0, 0.0 },
+		{ 0.7, -0.3 },
+		{ -1.2, 0.4 },
+	};
+	static const struct sippymodem_qam_point transmitted[] = {
+		{ 0.4, 0.2 },
+		{ -0.7, 0.1 },
+		{ 0.25, -0.8 },
+		{ -0.5, -0.5 },
+	};
+
+	for (size_t fixture = 0; fixture < ARRAY_LENGTH(gains); ++fixture) {
+		struct sippymodem_qam_gain tracker;
+		struct sippymodem_qam_point reference = complex_product(
+			&gains[fixture], &transmitted[0]);
+
+		CHECK(sippymodem_qam_gain_init_from_reference(
+			      &tracker, &reference, &transmitted[0], 0.125) ==
+			      SIPPYMODEM_QAM_GAIN_OK &&
+		      sippymodem_qam_gain_is_valid(&tracker) &&
+		      points_are_close(&tracker.channel_gain, &gains[fixture]),
+		      "QAM gain fixture %zu did not initialize", fixture);
+		for (size_t point = 0; point < ARRAY_LENGTH(transmitted);
+		     ++point) {
+			struct sippymodem_qam_point expected = complex_product(
+				&gains[fixture], &transmitted[point]);
+			struct sippymodem_qam_point predicted;
+			struct sippymodem_qam_point equalized;
+
+			CHECK(sippymodem_qam_gain_predict(
+				      &tracker, &transmitted[point], &predicted) ==
+				      SIPPYMODEM_QAM_GAIN_OK &&
+			      points_are_close(&predicted, &expected) &&
+			      sippymodem_qam_gain_equalize(
+				      &tracker, &predicted, &equalized) ==
+				      SIPPYMODEM_QAM_GAIN_OK &&
+			      points_are_close(
+				      &equalized, &transmitted[point]),
+			      "QAM gain fixture %zu changed point %zu", fixture,
+			      point);
+		}
+	}
+	return true;
+}
+
+static bool test_flat_gain_adaptation(void)
+{
+	static const struct sippymodem_qam_point transmitted[] = {
+		{ 0.5, 0.25 },
+		{ -0.75, 0.5 },
+		{ 0.4, -0.9 },
+	};
+	const struct sippymodem_qam_point initial = { 1.0, 0.0 };
+	const struct sippymodem_qam_point actual = { 0.65, -0.35 };
+	struct sippymodem_qam_point expected = initial;
+	struct sippymodem_qam_gain tracker;
+
+	CHECK(sippymodem_qam_gain_init(&tracker, &initial, 0.25) ==
+		      SIPPYMODEM_QAM_GAIN_OK,
+	      "QAM gain adaptation did not initialize");
+	for (size_t update = 0; update < 24; ++update) {
+		const struct sippymodem_qam_point *sent =
+			&transmitted[update % ARRAY_LENGTH(transmitted)];
+		struct sippymodem_qam_point received =
+			complex_product(&actual, sent);
+
+		expected.in_phase +=
+			(actual.in_phase - expected.in_phase) * 0.25;
+		expected.quadrature +=
+			(actual.quadrature - expected.quadrature) * 0.25;
+		CHECK(sippymodem_qam_gain_track(
+			      &tracker, &received, sent) ==
+			      SIPPYMODEM_QAM_GAIN_OK &&
+		      points_are_close(&tracker.channel_gain, &expected),
+		      "QAM gain adaptation changed update %zu", update);
+	}
+	{
+		struct sippymodem_qam_gain frozen;
+		struct sippymodem_qam_point received =
+			complex_product(&actual, &transmitted[0]);
+
+		CHECK(sippymodem_qam_gain_init(&frozen, &initial, 0.0) ==
+			      SIPPYMODEM_QAM_GAIN_OK &&
+		      sippymodem_qam_gain_track(
+			      &frozen, &received, &transmitted[0]) ==
+			      SIPPYMODEM_QAM_GAIN_OK &&
+		      points_are_close(&frozen.channel_gain, &initial),
+		      "zero QAM gain adaptation changed its estimate");
+	}
+	return true;
+}
+
+static bool test_flat_gain_validation(void)
+{
+	struct sippymodem_qam_gain tracker;
+	struct sippymodem_qam_gain saved;
+	struct sippymodem_qam_point gain = { 0.8, -0.2 };
+	struct sippymodem_qam_point zero = { 0 };
+	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct sippymodem_qam_point output = { 7.0, -9.0 };
+	struct sippymodem_qam_point saved_output = output;
+
+	memset(&tracker, 0xa5, sizeof(tracker));
+	saved = tracker;
+	CHECK(sippymodem_qam_gain_init(NULL, &gain, 0.5) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_init(&tracker, NULL, 0.5) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_init(&tracker, &zero, 0.5) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_init(&tracker, &invalid, 0.5) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_init(&tracker, &gain, -0.1) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_init(&tracker, &gain, 1.1) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_init_from_reference(
+		      &tracker, &gain, &zero, 0.5) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      memcmp(&tracker, &saved, sizeof(tracker)) == 0,
+	      "invalid QAM gain initialization changed state");
+	CHECK(sippymodem_qam_gain_init(&tracker, &gain, 0.5) ==
+		      SIPPYMODEM_QAM_GAIN_OK &&
+	      sippymodem_qam_gain_is_valid(&tracker) &&
+	      !sippymodem_qam_gain_is_valid(NULL),
+	      "QAM gain validation fixture did not initialize");
+	saved = tracker;
+	CHECK(sippymodem_qam_gain_predict(NULL, &gain, &output) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_predict(&tracker, &invalid, &output) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_predict(&tracker, &gain, NULL) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_equalize(&tracker, &invalid, &output) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_equalize(&tracker, &gain, NULL) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_track(NULL, &gain, &gain) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_track(&tracker, &invalid, &gain) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      sippymodem_qam_gain_track(&tracker, &gain, &zero) ==
+		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	      memcmp(&tracker, &saved, sizeof(tracker)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "invalid QAM gain operation changed state or output");
+	tracker = saved;
+	tracker.channel_gain = zero;
+	CHECK(!sippymodem_qam_gain_is_valid(&tracker),
+	      "QAM gain accepted a zero estimate");
+	tracker = saved;
+	tracker.adaptation = NAN;
+	CHECK(!sippymodem_qam_gain_is_valid(&tracker) &&
+	      strcmp(sippymodem_qam_gain_result_name(
+		     SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(sippymodem_qam_gain_result_name(
+		     (enum sippymodem_qam_gain_result)2),
+		     "unknown") == 0,
+	      "QAM gain accepted corrupt state or changed result names");
+	return true;
 }
 
 static bool test_generated_pulse(void)
@@ -607,6 +794,9 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "flat gain round trip", test_flat_gain_round_trip },
+		{ "flat gain adaptation", test_flat_gain_adaptation },
+		{ "flat gain validation", test_flat_gain_validation },
 		{ "generated pulse", test_generated_pulse },
 		{ "exact symbol clock", test_exact_symbol_clock },
 		{ "exact carrier clock", test_exact_carrier_clock },
