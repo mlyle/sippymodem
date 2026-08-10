@@ -19,11 +19,14 @@ struct probe_observation {
 	size_t caller_first_probe_sample;
 	size_t answerer_first_probe_sample;
 	size_t caller_l2_started;
+	size_t answerer_b_reversal;
 	size_t answerer_acquired;
 	size_t answerer_l2_started;
 	size_t answerer_measurement_ready;
 	size_t answerer_probe_measured;
 	size_t caller_probe_acknowledged;
+	uint32_t answerer_info1c_elapsed_at_entry;
+	uint32_t answerer_info1c_elapsed_at_measurement;
 	uint32_t caller_l2_samples;
 	uint32_t answerer_l2_samples;
 	uint64_t answerer_tone_magnitude;
@@ -42,6 +45,7 @@ static void initialize_observation(struct probe_observation *observation)
 		.caller_first_probe_sample = SIZE_MAX,
 		.answerer_first_probe_sample = SIZE_MAX,
 		.caller_l2_started = SIZE_MAX,
+		.answerer_b_reversal = SIZE_MAX,
 		.answerer_acquired = SIZE_MAX,
 		.answerer_l2_started = SIZE_MAX,
 		.answerer_measurement_ready = SIZE_MAX,
@@ -55,10 +59,23 @@ static void observe_probe(
 	bool caller_was_probing, bool answerer_was_probing, size_t sample_index,
 	struct probe_observation *observation)
 {
+	if (event->answerer.turnaround.tone_event.kind ==
+	    SIPPYMODEM_V34_PHASE2_TONE_PHASE_REVERSED) {
+		uint16_t detector_delay = event->answerer.turnaround.tone_event
+					      .reversal_delay_samples;
+
+		if (sample_index >= detector_delay)
+			observation->answerer_b_reversal =
+				sample_index - detector_delay;
+	}
 	if (event->caller.entered_reciprocal_probe)
 		observation->caller_entered = sample_index;
-	if (event->answerer.entered_reciprocal_probe)
+	if (event->answerer.entered_reciprocal_probe) {
 		observation->answerer_entered = sample_index;
+		observation->answerer_info1c_elapsed_at_entry =
+			pair->answerer.reciprocal_probe
+				.answerer_info1c_elapsed_samples;
+	}
 	if (caller_was_probing &&
 	    observation->caller_first_probe_sample == SIZE_MAX)
 		observation->caller_first_probe_sample = sample_index;
@@ -89,6 +106,9 @@ static void observe_probe(
 		observation->answerer_probe_measured = sample_index;
 		observation->answerer_l2_samples =
 			event->answerer.reciprocal_probe.receive_event.l2_samples;
+		observation->answerer_info1c_elapsed_at_measurement =
+			pair->answerer.reciprocal_probe
+				.answerer_info1c_elapsed_samples;
 	}
 	if (event->caller.reciprocal_probe.kind ==
 	    SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
@@ -158,6 +178,7 @@ static bool check_reciprocal_probe(
 
 	CHECK(observation.caller_entered != SIZE_MAX &&
 	      observation.answerer_entered != SIZE_MAX &&
+	      observation.answerer_b_reversal != SIZE_MAX &&
 	      observation.caller_first_probe_sample ==
 		      observation.caller_entered + 1u &&
 	      observation.answerer_first_probe_sample ==
@@ -166,6 +187,18 @@ static bool check_reciprocal_probe(
 	      observation.caller_entered,
 	      observation.caller_first_probe_sample, observation.answerer_entered,
 	      observation.answerer_first_probe_sample);
+	CHECK(observation.answerer_info1c_elapsed_at_entry ==
+		      observation.answerer_entered -
+			      observation.answerer_b_reversal &&
+	      observation.answerer_info1c_elapsed_at_measurement ==
+		      observation.answerer_probe_measured -
+			      observation.answerer_b_reversal,
+	      "answerer INFO1c epoch changed across probing: edge=%zu "
+	      "entry=%zu/%u measured=%zu/%u",
+	      observation.answerer_b_reversal, observation.answerer_entered,
+	      observation.answerer_info1c_elapsed_at_entry,
+	      observation.answerer_probe_measured,
+	      observation.answerer_info1c_elapsed_at_measurement);
 	CHECK(stable_samples == TEST_STABLE_TONE_SAMPLES,
 	      "reciprocal probe did not settle: caller=%d/%d answerer=%d/%d "
 	      "edges=%zu/%zu sync=%u/%.6f",

@@ -65,6 +65,9 @@ struct sippymodem_v34_phase2_probe_turnaround {
 	enum sippymodem_v34_phase2_probe_turnaround_failure failure;
 	uint16_t phase_samples_remaining;
 	uint16_t wait_samples;
+	/* Elapsed samples from the estimated Tone B reversal in 11.2.1.2.6.
+	 * The following probe and INFO1 owners preserve this recovery epoch. */
+	uint32_t answerer_info1c_elapsed_samples;
 };
 
 /* Continue from a role-appropriate completed initial probe. The answerer is

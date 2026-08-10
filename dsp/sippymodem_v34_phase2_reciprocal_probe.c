@@ -101,9 +101,12 @@ bool sippymodem_v34_phase2_reciprocal_probe_is_valid(
 	    (unsigned int)probe->failure >
 		    SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT)
 		return false;
-	return local_role(probe) == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
-		       caller_path_is_valid(probe) :
-		       answerer_path_is_valid(probe);
+	if (local_role(probe) == SIPPYMODEM_V34_PHASE2_CALLING_STATION)
+		return probe->answerer_info1c_elapsed_samples == 0 &&
+		       caller_path_is_valid(probe);
+	return probe->answerer_info1c_elapsed_samples >=
+		       probe->turnaround.answerer_info1c_elapsed_samples &&
+	       answerer_path_is_valid(probe);
 }
 
 static int16_t nominal_amplitude(
@@ -147,6 +150,8 @@ sippymodem_v34_phase2_reciprocal_probe_init(
 			    SIPPYMODEM_V34_PHASE2_PROBE_SEQUENCE_OK)
 			return SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	} else {
+		initialized.answerer_info1c_elapsed_samples =
+			completed_turnaround->answerer_info1c_elapsed_samples;
 		initialized.phase =
 			SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_RECEIVING;
 		if (sippymodem_v34_phase2_probe_acquisition_init(
@@ -311,6 +316,10 @@ sippymodem_v34_phase2_reciprocal_probe_sample(
 	case SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_FAILED:
 		break;
 	}
+	if (local_role(&next) == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION &&
+	    probe->phase != SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_FAILED &&
+	    next.answerer_info1c_elapsed_samples != UINT32_MAX)
+		next.answerer_info1c_elapsed_samples++;
 	if (!accepted ||
 	    !sippymodem_v34_phase2_reciprocal_probe_is_valid(&next))
 		return SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;

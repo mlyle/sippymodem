@@ -71,29 +71,33 @@ static bool caller_phase_is_valid(
 static bool answerer_phase_is_valid(
 	const struct sippymodem_v34_phase2_probe_turnaround *turnaround)
 {
+	bool info1c_epoch_started =
+		turnaround->answerer_info1c_elapsed_samples != 0;
+
 	switch (turnaround->phase) {
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A:
 		return turnaround->phase_samples_remaining > 0 &&
 		       turnaround->phase_samples_remaining <=
 			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
-		       turnaround->wait_samples == 0;
+		       turnaround->wait_samples == 0 && !info1c_epoch_started;
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_REVERSAL_TAIL:
 		return turnaround->phase_samples_remaining > 0 &&
 		       turnaround->phase_samples_remaining <=
 			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES &&
-		       turnaround->wait_samples == 0;
+		       turnaround->wait_samples == 0 && !info1c_epoch_started;
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_WAIT_B_REVERSAL:
 		return turnaround->phase_samples_remaining == 0 &&
 		       turnaround->wait_samples <
-			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES;
+			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+		       !info1c_epoch_started;
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_WAIT_PROBE_START:
 		return turnaround->phase_samples_remaining > 0 &&
 		       turnaround->phase_samples_remaining <
 			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES &&
-		       turnaround->wait_samples == 0;
+		       turnaround->wait_samples == 0 && info1c_epoch_started;
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_PROBE_READY:
 		return turnaround->phase_samples_remaining == 0 &&
-		       turnaround->wait_samples == 0;
+		       turnaround->wait_samples == 0 && info1c_epoch_started;
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_WAIT_A_REVERSAL:
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_RESPONSE_DELAY:
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_REVERSAL_TAIL:
@@ -102,7 +106,8 @@ static bool answerer_phase_is_valid(
 	case SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT:
 		return turnaround->phase_samples_remaining == 0 &&
 		       turnaround->wait_samples ==
-			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES;
+			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+		       !info1c_epoch_started;
 	}
 	return false;
 }
@@ -120,6 +125,10 @@ bool sippymodem_v34_phase2_probe_turnaround_is_valid(
 		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT ||
 	    (unsigned int)turnaround->failure >
 		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT)
+		return false;
+	if (local_role(turnaround) ==
+		    SIPPYMODEM_V34_PHASE2_CALLING_STATION &&
+	    turnaround->answerer_info1c_elapsed_samples != 0)
 		return false;
 	timed_out = turnaround->phase ==
 		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
@@ -292,6 +301,7 @@ static void schedule_answerer_probe(
 		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES;
 
 	turnaround->wait_samples = 0;
+	turnaround->answerer_info1c_elapsed_samples = detector_delay_samples;
 	if (detector_delay_samples >= handoff_delay) {
 		enter_ready(turnaround, event);
 		return;
@@ -364,11 +374,16 @@ sippymodem_v34_phase2_probe_turnaround_sample(
 	struct sippymodem_v34_phase2_probe_turnaround next;
 	struct sippymodem_v34_phase2_probe_turnaround_event emitted = { 0 };
 	int16_t generated = 0;
+	bool advance_info1c_epoch;
 
 	if (!sippymodem_v34_phase2_probe_turnaround_is_valid(turnaround) ||
 	    transmit_sample == NULL || event == NULL)
 		return SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	next = *turnaround;
+	advance_info1c_epoch =
+		next.answerer_info1c_elapsed_samples != 0 &&
+		next.phase !=
+			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_PROBE_READY;
 	if (!prepare_caller_response(&next))
 		return SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	if (next.phase !=
@@ -389,6 +404,8 @@ sippymodem_v34_phase2_probe_turnaround_sample(
 	if (!finish_fixed_interval(&next, &emitted))
 		return SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	advance_answerer_probe_start(&next, &emitted);
+	if (advance_info1c_epoch)
+		next.answerer_info1c_elapsed_samples++;
 	if (!sippymodem_v34_phase2_probe_turnaround_is_valid(&next))
 		return SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	*turnaround = next;

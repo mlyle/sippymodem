@@ -54,6 +54,7 @@ struct sippymodem_v34_phase2_reciprocal_probe {
 	union sippymodem_v34_phase2_reciprocal_probe_path path;
 	enum sippymodem_v34_phase2_reciprocal_probe_phase phase;
 	enum sippymodem_v34_phase2_reciprocal_probe_failure failure;
+	uint32_t answerer_info1c_elapsed_samples;
 };
 
 /* Continue from a role-appropriate probe-turnaround readiness event. The
