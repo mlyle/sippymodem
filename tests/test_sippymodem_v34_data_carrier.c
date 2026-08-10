@@ -315,6 +315,233 @@ static bool test_line_output(void)
 	return true;
 }
 
+static bool test_line_power_reduction(void)
+{
+	struct carrier_fixture fixture;
+	struct sippymodem_v34_phase3_profile reduced_profile;
+	struct sippymodem_v34_data_line_transmitter full;
+	struct sippymodem_v34_data_line_transmitter reduced;
+	long double full_sum_squares = 0.0L;
+	long double reduced_sum_squares = 0.0L;
+	double expected_ratio = pow(10.0, -6.0 / 20.0);
+	size_t samples = 0;
+
+	CHECK(initialize_fixture(&fixture),
+	      "line-power fixture did not initialize");
+	reduced_profile = fixture.profile;
+	reduced_profile.transmit_power_reduction_db = 6;
+	CHECK(sippymodem_v34_data_line_transmitter_init(
+		      &full, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &reduced, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &reduced_profile,
+		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+	      memcmp(&full.calibration, &reduced.calibration,
+		     sizeof(full.calibration)) == 0 &&
+	      fabs(reduced.target_rms / full.target_rms - expected_ratio) <
+		      1e-12 &&
+	      fabs(reduced.output_gain / full.output_gain - expected_ratio) <
+		      1e-12,
+	      "negotiated reduction changed calibration or gain");
+	CHECK(sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      &full, &fixture.frame) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      &reduced, &fixture.frame) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+	      "line-power comparison frame did not load");
+	while (!sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+		&full)) {
+		int16_t full_sample;
+		int16_t reduced_sample;
+		bool full_accepted;
+		bool reduced_accepted;
+
+		CHECK(samples < 64u &&
+		      !sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+			      &reduced) &&
+		      sippymodem_v34_data_line_transmitter_sample(
+			      &full, &full_sample, &full_accepted) ==
+			      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+		      sippymodem_v34_data_line_transmitter_sample(
+			      &reduced, &reduced_sample, &reduced_accepted) ==
+			      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+		      full_accepted == reduced_accepted,
+		      "reduced line output diverged at sample %zu", samples);
+		full_sum_squares += (long double)full_sample * full_sample;
+		reduced_sum_squares +=
+			(long double)reduced_sample * reduced_sample;
+		samples++;
+	}
+	CHECK(samples != 0 &&
+	      sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+		      &reduced) &&
+	      fabsl(sqrtl(reduced_sum_squares / samples) /
+			    sqrtl(full_sum_squares / samples) -
+		    expected_ratio) < 0.001L,
+	      "rendered data did not honor the negotiated reduction");
+	return true;
+}
+
+static bool test_line_transactional_validation(void)
+{
+	struct carrier_fixture fixture;
+	struct sippymodem_v34_data_line_transmitter transmitter;
+	struct sippymodem_v34_data_line_transmitter before;
+	struct sippymodem_v34_data_line_transmitter corrupt;
+	struct sippymodem_v34_phase3_profile invalid_profile;
+	int16_t sample = 1234;
+	bool accepted = true;
+
+	CHECK(initialize_fixture(&fixture),
+	      "data-line validation fixture did not initialize");
+	memset(&transmitter, 0xa5, sizeof(transmitter));
+	before = transmitter;
+	invalid_profile = fixture.profile;
+	invalid_profile.transmit_power_reduction_db = UINT8_MAX;
+	CHECK(sippymodem_v34_data_line_transmitter_init(
+		      NULL, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, NULL, &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer, &fixture.profile, 8000, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, NULL, &fixture.encoder,
+		      &fixture.normalizer, &fixture.profile, 8000, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler, NULL,
+		      &fixture.normalizer, &fixture.profile, 8000, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, NULL, &fixture.profile, 8000, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, NULL, 8000, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &invalid_profile,
+		      8000, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      0, 4000) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 0) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
+	      "rejected line initialization changed its destination");
+	CHECK(sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, INT16_MAX) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK &&
+	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
+	      "clipping-risk initialization changed its destination");
+	CHECK(sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+	      "valid data-line state did not initialize");
+	before = transmitter;
+	CHECK(!sippymodem_v34_data_line_transmitter_is_valid(NULL) &&
+	      !sippymodem_v34_data_line_transmitter_needs_mapping_frame(NULL) &&
+	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      NULL, &fixture.frame) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      &transmitter, NULL) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_sample(
+		      NULL, &sample, &accepted) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_sample(
+		      &transmitter, NULL, &accepted) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_line_transmitter_sample(
+		      &transmitter, &sample, NULL) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
+	      sample == 1234 && accepted,
+	      "invalid data-line operation changed state or output");
+	CHECK(sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      &transmitter, &fixture.frame) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+	      "validation frame did not load");
+	before = transmitter;
+	CHECK(sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      &transmitter, &fixture.frame) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING &&
+	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
+	      "data line replaced a pending mapping frame");
+
+	corrupt = before;
+	corrupt.generated_samples = 1;
+	CHECK(!sippymodem_v34_data_line_transmitter_is_valid(&corrupt) &&
+	      sippymodem_v34_data_line_transmitter_sample(
+		      &corrupt, &sample, &accepted) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      sample == 1234 && accepted,
+	      "data line accepted inconsistent clock state");
+	corrupt = before;
+	corrupt.generated_samples = UINT64_MAX;
+	corrupt.preemphasis.next_history =
+		UINT64_MAX % SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+	corrupt.carrier.modulator.carrier_phase =
+		(uint32_t)UINT64_MAX *
+		corrupt.carrier.modulator.carrier_phase_step;
+	corrupt.carrier.modulator.symbol_phase_units =
+		(UINT64_MAX % corrupt.carrier.modulator.symbol_period_units) *
+		corrupt.carrier.profile.symbol_rate_numerator %
+		corrupt.carrier.modulator.symbol_period_units;
+	before = corrupt;
+	CHECK(sippymodem_v34_data_line_transmitter_is_valid(&corrupt) &&
+	      sippymodem_v34_data_line_transmitter_sample(
+		      &corrupt, &sample, &accepted) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE &&
+	      memcmp(&corrupt, &before, sizeof(corrupt)) == 0 &&
+	      sample == 1234 && accepted,
+	      "exhausted sample count changed state or output");
+	CHECK(strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK),
+		     "ok") == 0 &&
+	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED),
+		     "mapping frame required") == 0 &&
+	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING),
+		     "mapping frame pending") == 0 &&
+	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE),
+		     "out of range") == 0 &&
+	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK),
+		     "clipping risk") == 0 &&
+	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE),
+		     "numeric failure") == 0 &&
+	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
+		     (enum sippymodem_v34_data_line_transmitter_result)99),
+		     "unknown") == 0,
+	      "data-line result names changed");
+	return true;
+}
+
 static bool test_all_line_profiles(void)
 {
 	static const uint8_t PRIMARY_RATES[] = { 1, 2, 2, 2, 2, 2 };
@@ -563,6 +790,9 @@ int main(void)
 	} tests[] = {
 		{ "streaming handoff", test_streaming_handoff },
 		{ "line output", test_line_output },
+		{ "line power reduction", test_line_power_reduction },
+		{ "line transactional validation",
+		  test_line_transactional_validation },
 		{ "all line profiles", test_all_line_profiles },
 		{ "transactional validation", test_transactional_validation },
 	};
