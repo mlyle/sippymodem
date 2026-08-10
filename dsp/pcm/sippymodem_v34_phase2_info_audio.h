@@ -10,6 +10,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum {
+	/* Retain unchanged DPSK points through the causal half of the pulse
+	 * shaper before handing the line to the following waveform owner. */
+	SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS =
+		SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS / 2,
+};
+
 enum sippymodem_v34_phase2_info_audio_result {
 	SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
 	SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT,

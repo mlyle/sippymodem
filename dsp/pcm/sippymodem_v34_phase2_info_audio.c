@@ -2,6 +2,10 @@
 
 #include "sippymodem_v34_phase2_info_audio.h"
 
+_Static_assert(
+	SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS % 2 == 0,
+	"Phase 2 pulse span must split into equal causal halves");
+
 bool sippymodem_v34_phase2_info_audio_transmitter_is_valid(
 	const struct sippymodem_v34_phase2_info_audio_transmitter *transmitter)
 {

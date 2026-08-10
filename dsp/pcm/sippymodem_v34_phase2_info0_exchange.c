@@ -4,10 +4,6 @@
 
 #include <string.h>
 
-_Static_assert(
-	SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS % 2 == 0,
-	"Phase 2 pulse span must split into equal causal halves");
-
 static bool role_is_valid(enum sippymodem_v34_phase2_station_role role)
 {
 	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ||
@@ -31,7 +27,7 @@ bool sippymodem_v34_phase2_info0_exchange_is_valid(
 	    exchange->post_v8_silence_samples >
 		    SIPPYMODEM_V34_PHASE2_POST_V8_SILENCE_SAMPLES ||
 	    exchange->filter_tail_symbols >
-		    SIPPYMODEM_V34_PHASE2_INFO0_FILTER_TAIL_SYMBOLS ||
+		    SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS ||
 	    !sippymodem_v34_phase2_info_audio_transmitter_is_valid(
 		    &exchange->info_transmitter) ||
 	    !sippymodem_v34_phase2_info_audio_receiver_is_valid(
@@ -59,13 +55,13 @@ bool sippymodem_v34_phase2_info0_exchange_is_valid(
 		return exchange->post_v8_silence_samples ==
 			       SIPPYMODEM_V34_PHASE2_POST_V8_SILENCE_SAMPLES &&
 		       exchange->filter_tail_symbols <
-			       SIPPYMODEM_V34_PHASE2_INFO0_FILTER_TAIL_SYMBOLS &&
+			       SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       exchange->info_transmitter.frame_complete;
 	case SIPPYMODEM_V34_PHASE2_INFO0_TONE:
 		return exchange->post_v8_silence_samples ==
 			       SIPPYMODEM_V34_PHASE2_POST_V8_SILENCE_SAMPLES &&
 		       exchange->filter_tail_symbols ==
-			       SIPPYMODEM_V34_PHASE2_INFO0_FILTER_TAIL_SYMBOLS &&
+			       SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       exchange->info_transmitter.frame_complete;
 	}
 	return false;
@@ -213,7 +209,7 @@ static bool generate_transmit_sample(
 		if (bit_accepted) {
 			exchange->filter_tail_symbols++;
 			if (exchange->filter_tail_symbols ==
-			    SIPPYMODEM_V34_PHASE2_INFO0_FILTER_TAIL_SYMBOLS) {
+			    SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS) {
 				align_tone_with_info_carrier(exchange);
 				exchange->transmit_phase =
 					SIPPYMODEM_V34_PHASE2_INFO0_TONE;

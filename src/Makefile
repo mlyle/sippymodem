@@ -117,6 +117,7 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info1_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe.c \

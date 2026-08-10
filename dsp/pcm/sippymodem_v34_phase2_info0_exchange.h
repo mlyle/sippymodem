@@ -13,10 +13,6 @@
 enum {
 	SIPPYMODEM_V34_PHASE2_POST_V8_SILENCE_SAMPLES =
 		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE * 75 / 1000,
-	/* Retain unchanged DPSK points through the causal half of the pulse
-	 * shaper before handing its phase to the following pure carrier. */
-	SIPPYMODEM_V34_PHASE2_INFO0_FILTER_TAIL_SYMBOLS =
-		SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS / 2,
 };
 
 enum sippymodem_v34_phase2_info0_exchange_result {
