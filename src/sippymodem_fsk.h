@@ -14,7 +14,8 @@ enum {
 
 struct sippymodem_fsk_channel {
 	uint32_t sample_rate;
-	uint32_t baud;
+	uint32_t symbol_rate_numerator;
+	uint32_t symbol_rate_denominator;
 	uint32_t mark_frequency_hz;
 	uint32_t space_frequency_hz;
 	size_t detector_window;
@@ -31,7 +32,7 @@ struct sippymodem_fsk_transmitter {
 	uint32_t mark_phase_step;
 	uint32_t space_phase_step;
 	uint32_t carrier_phase;
-	uint64_t baud_accumulator;
+	uint64_t symbol_accumulator;
 	int16_t amplitude;
 	uint8_t held_bit;
 	bool holding_bit;
@@ -53,7 +54,7 @@ struct sippymodem_fsk_receiver {
 	int64_t space_power;
 	uint64_t line_power;
 	int64_t smoothed_metric;
-	uint32_t samples_per_bit_q16;
+	uint32_t samples_per_symbol_q16;
 	uint32_t sample_countdown_q16;
 	uint64_t emitted_bits;
 	uint8_t last_bit;

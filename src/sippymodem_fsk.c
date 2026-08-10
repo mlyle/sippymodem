@@ -15,12 +15,32 @@ enum {
 static const double FSK_TWO_PI = 6.283185307179586476925286766559;
 static const double FSK_PHASE_SCALE = 4294967296.0;
 
+static uint64_t symbol_period_units(
+	const struct sippymodem_fsk_channel *channel)
+{
+	return (uint64_t)channel->sample_rate *
+	       channel->symbol_rate_denominator;
+}
+
+static bool symbol_rate_is_valid(
+	const struct sippymodem_fsk_channel *channel)
+{
+	uint64_t period_units;
+
+	if (channel == NULL || channel->sample_rate == 0 ||
+	    channel->symbol_rate_numerator == 0 ||
+	    channel->symbol_rate_denominator == 0)
+		return false;
+	period_units = symbol_period_units(channel);
+	return channel->symbol_rate_numerator <= period_units;
+}
+
 static bool channel_is_valid(const struct sippymodem_fsk_channel *channel)
 {
-	uint64_t samples_per_bit_q16;
+	uint64_t period_units;
+	uint64_t samples_per_symbol_q16;
 
-	if (channel == NULL || channel->sample_rate == 0 || channel->baud == 0 ||
-	    channel->baud > channel->sample_rate ||
+	if (!symbol_rate_is_valid(channel) ||
 	    channel->mark_frequency_hz == 0 ||
 	    channel->space_frequency_hz == 0 ||
 	    channel->mark_frequency_hz == channel->space_frequency_hz ||
@@ -30,9 +50,13 @@ static bool channel_is_valid(const struct sippymodem_fsk_channel *channel)
 	    channel->detector_window > SIPPYMODEM_FSK_MAX_DETECTOR_WINDOW ||
 	    channel->metric_smoothing_shift > FSK_MAX_SMOOTHING_SHIFT)
 		return false;
-	samples_per_bit_q16 =
-		((uint64_t)channel->sample_rate << 16) / channel->baud;
-	return samples_per_bit_q16 != 0 && samples_per_bit_q16 <= UINT32_MAX;
+	period_units = symbol_period_units(channel);
+	if (period_units > (UINT64_MAX >> 16))
+		return false;
+	samples_per_symbol_q16 =
+		(period_units << 16) / channel->symbol_rate_numerator;
+	return samples_per_symbol_q16 != 0 &&
+	       samples_per_symbol_q16 <= UINT32_MAX;
 }
 
 static uint32_t phase_step(uint32_t sample_rate, uint32_t frequency_hz)
@@ -71,9 +95,11 @@ enum sippymodem_fsk_result sippymodem_fsk_transmitter_init(
 bool sippymodem_fsk_transmitter_can_accept_bit(
 	const struct sippymodem_fsk_transmitter *transmitter)
 {
-	return transmitter != NULL && transmitter->channel.sample_rate != 0 &&
-	       transmitter->channel.baud != 0 && transmitter->amplitude > 0 &&
-	       transmitter->channel.baud <= transmitter->channel.sample_rate &&
+	return transmitter != NULL &&
+	       symbol_rate_is_valid(&transmitter->channel) &&
+	       transmitter->symbol_accumulator <
+		       symbol_period_units(&transmitter->channel) &&
+	       transmitter->amplitude > 0 &&
 	       transmitter->mark_phase_step != 0 &&
 	       transmitter->space_phase_step != 0 && !transmitter->holding_bit;
 }
@@ -83,15 +109,18 @@ enum sippymodem_fsk_result sippymodem_fsk_transmitter_sample(
 	int16_t *sample, bool *bit_consumed)
 {
 	uint32_t step;
+	uint64_t period_units;
+	uint64_t units_remaining;
 	double radians;
 
 	if (transmitter == NULL || sample == NULL || bit_consumed == NULL ||
-	    transmitter->channel.sample_rate == 0 ||
-	    transmitter->channel.baud == 0 ||
-	    transmitter->channel.baud > transmitter->channel.sample_rate ||
+	    !symbol_rate_is_valid(&transmitter->channel) ||
 	    transmitter->amplitude <= 0 ||
 	    transmitter->mark_phase_step == 0 ||
 	    transmitter->space_phase_step == 0)
+		return SIPPYMODEM_FSK_INVALID_ARGUMENT;
+	period_units = symbol_period_units(&transmitter->channel);
+	if (transmitter->symbol_accumulator >= period_units)
 		return SIPPYMODEM_FSK_INVALID_ARGUMENT;
 	if (!transmitter->holding_bit) {
 		transmitter->held_bit = bit & 1u;
@@ -105,14 +134,17 @@ enum sippymodem_fsk_result sippymodem_fsk_transmitter_sample(
 		sin(radians) * (double)transmitter->amplitude);
 	transmitter->carrier_phase += step;
 
-	transmitter->baud_accumulator += transmitter->channel.baud;
+	units_remaining = period_units - transmitter->symbol_accumulator;
 	*bit_consumed = false;
-	if (transmitter->baud_accumulator >=
-	    transmitter->channel.sample_rate) {
-		transmitter->baud_accumulator -=
-			transmitter->channel.sample_rate;
+	if (transmitter->channel.symbol_rate_numerator >= units_remaining) {
+		transmitter->symbol_accumulator =
+			transmitter->channel.symbol_rate_numerator -
+			units_remaining;
 		transmitter->holding_bit = false;
 		*bit_consumed = true;
+	} else {
+		transmitter->symbol_accumulator +=
+			transmitter->channel.symbol_rate_numerator;
 	}
 	return SIPPYMODEM_FSK_OK;
 }
@@ -156,16 +188,19 @@ enum sippymodem_fsk_result sippymodem_fsk_receiver_init(
 	const struct sippymodem_fsk_channel *channel)
 {
 	struct sippymodem_fsk_channel selected;
-	uint64_t samples_per_bit_q16;
+	uint64_t period_units;
+	uint64_t samples_per_symbol_q16;
 
 	if (receiver == NULL || !channel_is_valid(channel))
 		return SIPPYMODEM_FSK_INVALID_ARGUMENT;
 	selected = *channel;
-	samples_per_bit_q16 =
-		((uint64_t)selected.sample_rate << 16) / selected.baud;
+	period_units = symbol_period_units(&selected);
+	samples_per_symbol_q16 =
+		(period_units << 16) / selected.symbol_rate_numerator;
 	memset(receiver, 0, sizeof(*receiver));
 	receiver->channel = selected;
-	receiver->samples_per_bit_q16 = (uint32_t)samples_per_bit_q16;
+	receiver->samples_per_symbol_q16 =
+		(uint32_t)samples_per_symbol_q16;
 	build_projection(
 		&receiver->mark, &selected, selected.mark_frequency_hz);
 	build_projection(
@@ -177,7 +212,7 @@ enum sippymodem_fsk_result sippymodem_fsk_receiver_init(
 void sippymodem_fsk_receiver_reset(
 	struct sippymodem_fsk_receiver *receiver)
 {
-	if (receiver == NULL || receiver->samples_per_bit_q16 == 0 ||
+	if (receiver == NULL || receiver->samples_per_symbol_q16 == 0 ||
 	    receiver->channel.detector_window == 0)
 		return;
 	reset_stream_state(receiver);
@@ -241,7 +276,7 @@ enum sippymodem_fsk_result sippymodem_fsk_receiver_sample(
 	uint8_t previous;
 
 	if (receiver == NULL || bit == NULL || bit_ready == NULL ||
-	    receiver->samples_per_bit_q16 == 0 ||
+	    receiver->samples_per_symbol_q16 == 0 ||
 	    receiver->channel.detector_window == 0 ||
 	    receiver->channel.detector_window >
 		    SIPPYMODEM_FSK_MAX_DETECTOR_WINDOW ||
@@ -259,12 +294,12 @@ enum sippymodem_fsk_result sippymodem_fsk_receiver_sample(
 	if (!receiver->timing_locked) {
 		receiver->timing_locked = true;
 		receiver->sample_countdown_q16 =
-			receiver->samples_per_bit_q16 / 2;
+			receiver->samples_per_symbol_q16 / 2;
 		return SIPPYMODEM_FSK_OK;
 	}
 	if (decoded != previous) {
 		receiver->sample_countdown_q16 =
-			receiver->samples_per_bit_q16 / 2;
+			receiver->samples_per_symbol_q16 / 2;
 		return SIPPYMODEM_FSK_OK;
 	}
 	if (receiver->sample_countdown_q16 > (UINT32_C(1) << 16)) {
@@ -272,7 +307,7 @@ enum sippymodem_fsk_result sippymodem_fsk_receiver_sample(
 		return SIPPYMODEM_FSK_OK;
 	}
 	receiver->sample_countdown_q16 +=
-		receiver->samples_per_bit_q16 - (UINT32_C(1) << 16);
+		receiver->samples_per_symbol_q16 - (UINT32_C(1) << 16);
 	receiver->emitted_bits++;
 	*bit = decoded;
 	*bit_ready = true;

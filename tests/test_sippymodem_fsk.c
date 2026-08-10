@@ -21,7 +21,8 @@ enum {
 
 static const struct sippymodem_fsk_channel v21_channel_1 = {
 	.sample_rate = TEST_SAMPLE_RATE,
-	.baud = 300,
+	.symbol_rate_numerator = 300,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = 980,
 	.space_frequency_hz = 1180,
 	.detector_window = 27,
@@ -30,7 +31,8 @@ static const struct sippymodem_fsk_channel v21_channel_1 = {
 
 static const struct sippymodem_fsk_channel v21_channel_2 = {
 	.sample_rate = TEST_SAMPLE_RATE,
-	.baud = 300,
+	.symbol_rate_numerator = 300,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = 1650,
 	.space_frequency_hz = 1850,
 	.detector_window = 27,
@@ -39,7 +41,8 @@ static const struct sippymodem_fsk_channel v21_channel_2 = {
 
 static const struct sippymodem_fsk_channel channel_1200_baud = {
 	.sample_rate = TEST_SAMPLE_RATE,
-	.baud = 1200,
+	.symbol_rate_numerator = 1200,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = 1300,
 	.space_frequency_hz = 2100,
 	.detector_window = 11,
@@ -48,10 +51,21 @@ static const struct sippymodem_fsk_channel channel_1200_baud = {
 
 static const struct sippymodem_fsk_channel channel_75_baud = {
 	.sample_rate = TEST_SAMPLE_RATE,
-	.baud = 75,
+	.symbol_rate_numerator = 75,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = 390,
 	.space_frequency_hz = 450,
 	.detector_window = 128,
+	.metric_smoothing_shift = 1,
+};
+
+static const struct sippymodem_fsk_channel channel_500_over_11_baud = {
+	.sample_rate = TEST_SAMPLE_RATE,
+	.symbol_rate_numerator = 500,
+	.symbol_rate_denominator = 11,
+	.mark_frequency_hz = 1400,
+	.space_frequency_hz = 1800,
+	.detector_window = 64,
 	.metric_smoothing_shift = 1,
 };
 
@@ -106,7 +120,9 @@ static bool run_loopback(
 	uint32_t random = UINT32_C(0x6d2b79f5);
 	size_t transmitted = 0;
 	size_t sample_limit =
-		(SEQUENCE_BITS + 2) * channel->sample_rate / channel->baud;
+		(SEQUENCE_BITS + 2) * channel->sample_rate *
+		channel->symbol_rate_denominator /
+		channel->symbol_rate_numerator;
 
 	memset(result, 0, sizeof(*result));
 	CHECK(sippymodem_fsk_transmitter_init(
@@ -214,11 +230,19 @@ static bool test_exact_symbol_clock_and_validation(void)
 		if (consumed)
 			consumed_bits++;
 	}
-	CHECK(consumed_bits == v21_channel_1.baud &&
-		      transmitter.baud_accumulator == 0 &&
+	CHECK(consumed_bits == v21_channel_1.symbol_rate_numerator &&
+		      transmitter.symbol_accumulator == 0 &&
 		      sippymodem_fsk_transmitter_can_accept_bit(&transmitter),
 	      "FSK symbol clock drifted over one exact second");
-	transmitter.channel.baud = transmitter.channel.sample_rate + 1;
+	transmitter.symbol_accumulator = transmitter.channel.sample_rate;
+	CHECK(!sippymodem_fsk_transmitter_can_accept_bit(&transmitter) &&
+		      sippymodem_fsk_transmitter_sample(
+			      &transmitter, 1, &sample, &consumed) ==
+			      SIPPYMODEM_FSK_INVALID_ARGUMENT,
+	      "FSK transmitter accepted a corrupted fractional phase");
+	transmitter.symbol_accumulator = 0;
+	transmitter.channel.symbol_rate_numerator =
+		transmitter.channel.sample_rate + 1;
 	CHECK(!sippymodem_fsk_transmitter_can_accept_bit(&transmitter) &&
 		      sippymodem_fsk_transmitter_sample(
 			      &transmitter, 1, &sample, &consumed) ==
@@ -256,6 +280,36 @@ static bool test_exact_symbol_clock_and_validation(void)
 	return true;
 }
 
+static bool test_fractional_symbol_clock(void)
+{
+	struct sippymodem_fsk_transmitter transmitter;
+	uint64_t exact_interval =
+		(uint64_t)channel_500_over_11_baud.sample_rate *
+		channel_500_over_11_baud.symbol_rate_denominator;
+	unsigned int consumed_bits = 0;
+
+	CHECK(sippymodem_fsk_transmitter_init(
+		      &transmitter, &channel_500_over_11_baud,
+		      TEST_AMPLITUDE) == SIPPYMODEM_FSK_OK,
+	      "fractional FSK clock did not initialize");
+	for (uint64_t index = 0; index < exact_interval; ++index) {
+		int16_t sample;
+		bool consumed;
+
+		CHECK(sippymodem_fsk_transmitter_sample(
+		      &transmitter, (uint8_t)(consumed_bits & 1u),
+		      &sample, &consumed) == SIPPYMODEM_FSK_OK,
+		      "fractional FSK clock rejected a valid symbol");
+		if (consumed)
+			consumed_bits++;
+	}
+	CHECK(consumed_bits ==
+		      channel_500_over_11_baud.symbol_rate_numerator &&
+		      transmitter.symbol_accumulator == 0,
+	      "500/11-baud clock drifted over its exact 11-second period");
+	return check_payload(&channel_500_over_11_baud, false);
+}
+
 static bool test_v21_channel_pairs(void)
 {
 	return check_payload(&v21_channel_1, false) &&
@@ -278,6 +332,7 @@ int main(void)
 	} tests[] = {
 		{ "exact symbol clock and validation",
 		  test_exact_symbol_clock_and_validation },
+		{ "fractional symbol clock", test_fractional_symbol_clock },
 		{ "V.21 channel pairs", test_v21_channel_pairs },
 		{ "configurable rate and tone pair",
 		  test_configurable_rate_and_tone_pair },

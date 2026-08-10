@@ -41,7 +41,8 @@ _Static_assert(
 
 static const struct sippymodem_fsk_channel v23_forward_channel = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_V23_FORWARD_BIT_RATE,
+	.symbol_rate_numerator = SIPPYMODEM_V23_FORWARD_BIT_RATE,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = V23_FORWARD_MARK_HZ,
 	.space_frequency_hz = V23_FORWARD_SPACE_HZ,
 	.detector_window = V23_FORWARD_DETECTOR_WINDOW,
@@ -50,7 +51,8 @@ static const struct sippymodem_fsk_channel v23_forward_channel = {
 
 static const struct sippymodem_fsk_channel v23_backward_channel = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
+	.symbol_rate_numerator = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = V23_BACKWARD_MARK_HZ,
 	.space_frequency_hz = V23_BACKWARD_SPACE_HZ,
 	.detector_window = V23_BACKWARD_DETECTOR_WINDOW,

@@ -38,7 +38,8 @@ enum {
  * answerer. Mark is binary one for both channels. */
 static const struct sippymodem_fsk_channel v21_channel_1 = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = V21_CHANNEL_1_MARK_HZ,
 	.space_frequency_hz = V21_CHANNEL_1_SPACE_HZ,
 	.detector_window = FSK300_DETECTOR_WINDOW,
@@ -47,7 +48,8 @@ static const struct sippymodem_fsk_channel v21_channel_1 = {
 
 static const struct sippymodem_fsk_channel v21_channel_2 = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = V21_CHANNEL_2_MARK_HZ,
 	.space_frequency_hz = V21_CHANNEL_2_SPACE_HZ,
 	.detector_window = FSK300_DETECTOR_WINDOW,
@@ -58,7 +60,8 @@ static const struct sippymodem_fsk_channel v21_channel_2 = {
  * the high-frequency pair to the answering station. */
 static const struct sippymodem_fsk_channel bell103_originator_channel = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = BELL103_ORIGINATOR_MARK_HZ,
 	.space_frequency_hz = BELL103_ORIGINATOR_SPACE_HZ,
 	.detector_window = FSK300_DETECTOR_WINDOW,
@@ -67,7 +70,8 @@ static const struct sippymodem_fsk_channel bell103_originator_channel = {
 
 static const struct sippymodem_fsk_channel bell103_answerer_channel = {
 	.sample_rate = MODEM_RATE,
-	.baud = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = BELL103_ANSWERER_MARK_HZ,
 	.space_frequency_hz = BELL103_ANSWERER_SPACE_HZ,
 	.detector_window = FSK300_DETECTOR_WINDOW,
