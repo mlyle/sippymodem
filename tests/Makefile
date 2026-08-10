@@ -210,7 +210,8 @@ V8_FRAMING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_framing.o \
 	$(BUILD_DIR)/sippymodem_v8_framing.o
 V8_MENU_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_menu
 V8_MENU_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_v8_menu.o
+	$(BUILD_DIR)/sippymodem_v8_menu.o \
+	$(BUILD_DIR)/sippymodem_v8_framing.o
 BAUDOT_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_baudot
 BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_baudot.o \
 	$(BUILD_DIR)/sippymodem_baudot.o $(BUILD_DIR)/sippymodem_fsk.o

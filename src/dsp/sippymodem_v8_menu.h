@@ -51,6 +51,19 @@ struct sippymodem_v8_menu {
 	bool lapm;
 };
 
+struct sippymodem_v8_menu_detector {
+	struct sippymodem_v8_control_receiver framing;
+	uint8_t current[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	uint8_t previous[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	struct sippymodem_v8_menu confirmed_menu;
+	uint8_t current_count;
+	uint8_t previous_count;
+	bool sequence_open;
+	bool current_overflow;
+	bool have_previous;
+	bool confirmed;
+};
+
 enum sippymodem_v8_menu_result sippymodem_v8_call_menu_init(
 	struct sippymodem_v8_menu *menu, uint16_t modulations, bool lapm);
 enum sippymodem_v8_menu_result sippymodem_v8_menu_encode(
@@ -66,6 +79,14 @@ enum sippymodem_v8_menu_result sippymodem_v8_joint_menu_select(
 enum sippymodem_v8_menu_result sippymodem_v8_menu_selected_modulation(
 	const struct sippymodem_v8_menu *menu,
 	enum sippymodem_v8_modulation *modulation);
+
+enum sippymodem_v8_menu_result sippymodem_v8_menu_detector_init(
+	struct sippymodem_v8_menu_detector *detector);
+void sippymodem_v8_menu_detector_reset(
+	struct sippymodem_v8_menu_detector *detector);
+enum sippymodem_v8_menu_result sippymodem_v8_menu_detect_bit(
+	struct sippymodem_v8_menu_detector *detector, uint8_t bit,
+	struct sippymodem_v8_menu *menu, bool *confirmed);
 
 const char *sippymodem_v8_menu_result_name(
 	enum sippymodem_v8_menu_result result);

@@ -340,6 +340,195 @@ static bool test_joint_validation(void)
 	return true;
 }
 
+static bool feed_control_bits(
+	struct sippymodem_v8_menu_detector *detector,
+	const uint8_t *information, size_t information_count, size_t bit_count,
+	struct sippymodem_v8_menu *menu, bool *confirmed)
+{
+	struct sippymodem_v8_control_generator generator;
+
+	if (sippymodem_v8_control_generator_init(
+		    &generator, information, information_count) !=
+	    SIPPYMODEM_V8_FRAMING_OK)
+		return false;
+	for (size_t index = 0; index < bit_count; ++index) {
+		bool complete;
+		uint8_t bit;
+
+		if (sippymodem_v8_control_next_bit(
+			    &generator, &bit, &complete) !=
+			    SIPPYMODEM_V8_FRAMING_OK ||
+		    sippymodem_v8_menu_detect_bit(
+			    detector, bit, menu, confirmed) !=
+			    SIPPYMODEM_V8_MENU_OK)
+			return false;
+	}
+	return true;
+}
+
+static bool test_repeated_menu_confirmation(void)
+{
+	struct sippymodem_v8_menu offered;
+	struct sippymodem_v8_menu detected = {
+		.modulations = UINT16_MAX,
+	};
+	struct sippymodem_v8_menu saved = detected;
+	struct sippymodem_v8_menu_detector detector;
+	uint8_t information[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	size_t information_count;
+	size_t sequence_bits;
+	bool confirmed = true;
+
+	CHECK(sippymodem_v8_call_menu_init(
+		      &offered, SIPPYMODEM_V8_MODULATION_V21, true) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_menu_encode(
+		      &offered, information, sizeof(information),
+		      &information_count) == SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_menu_detector_init(&detector) ==
+		      SIPPYMODEM_V8_MENU_OK,
+	      "V.8 repeated-menu endpoints did not initialize");
+	sequence_bits = SIPPYMODEM_V8_PREAMBLE_BITS +
+			information_count * SIPPYMODEM_V8_FRAMED_OCTET_BITS;
+	confirmed = false;
+	CHECK(feed_control_bits(
+		      &detector, information, information_count,
+		      2u * sequence_bits, &detected, &confirmed) &&
+	      !confirmed && memcmp(&detected, &saved, sizeof(detected)) == 0 &&
+	      feed_control_bits(
+		      &detector, information, information_count,
+		      SIPPYMODEM_V8_PREAMBLE_BITS, &detected, &confirmed) &&
+	      confirmed && detected.modulations == offered.modulations &&
+	      detected.modulation_octets == offered.modulation_octets &&
+	      detected.lapm,
+	      "V.8 detector did not require two complete identical menus");
+	return true;
+}
+
+static bool test_mismatched_menu_restart(void)
+{
+	struct sippymodem_v8_menu first;
+	struct sippymodem_v8_menu second;
+	struct sippymodem_v8_menu detected = { 0 };
+	struct sippymodem_v8_menu_detector detector;
+	uint8_t first_information[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	uint8_t second_information[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	size_t first_count;
+	size_t second_count;
+	size_t first_bits;
+	size_t second_bits;
+	bool confirmed = false;
+
+	CHECK(sippymodem_v8_call_menu_init(
+		      &first, SIPPYMODEM_V8_MODULATION_V32, false) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_call_menu_init(
+		      &second, SIPPYMODEM_V8_MODULATION_V21, false) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_menu_encode(
+		      &first, first_information, sizeof(first_information),
+		      &first_count) == SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_menu_encode(
+		      &second, second_information, sizeof(second_information),
+		      &second_count) == SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_menu_detector_init(&detector) ==
+		      SIPPYMODEM_V8_MENU_OK,
+	      "V.8 mismatch endpoints did not initialize");
+	first_bits = SIPPYMODEM_V8_PREAMBLE_BITS +
+		     first_count * SIPPYMODEM_V8_FRAMED_OCTET_BITS;
+	second_bits = SIPPYMODEM_V8_PREAMBLE_BITS +
+		      second_count * SIPPYMODEM_V8_FRAMED_OCTET_BITS;
+	CHECK(feed_control_bits(
+		      &detector, first_information, first_count, first_bits,
+		      &detected, &confirmed) &&
+	      feed_control_bits(
+		      &detector, second_information, second_count,
+		      2u * second_bits, &detected, &confirmed) &&
+	      !confirmed &&
+	      feed_control_bits(
+		      &detector, second_information, second_count,
+		      SIPPYMODEM_V8_PREAMBLE_BITS, &detected, &confirmed) &&
+	      confirmed &&
+	      detected.modulations == SIPPYMODEM_V8_MODULATION_V21,
+	      "V.8 mismatch did not restart consecutive confirmation");
+	return true;
+}
+
+static bool test_malformed_menu_recovery(void)
+{
+	static const uint8_t malformed[] = {
+		UINT8_C(0xc1), UINT8_C(0x2a),
+	};
+	struct sippymodem_v8_menu valid;
+	struct sippymodem_v8_menu detected = { 0 };
+	struct sippymodem_v8_menu_detector detector;
+	uint8_t information[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	size_t information_count;
+	size_t malformed_bits =
+		SIPPYMODEM_V8_PREAMBLE_BITS +
+		ARRAY_LENGTH(malformed) * SIPPYMODEM_V8_FRAMED_OCTET_BITS;
+	size_t valid_bits;
+	bool confirmed = false;
+
+	CHECK(sippymodem_v8_call_menu_init(
+		      &valid, SIPPYMODEM_V8_MODULATION_V21, false) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_menu_encode(
+		      &valid, information, sizeof(information),
+		      &information_count) == SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_menu_detector_init(&detector) ==
+		      SIPPYMODEM_V8_MENU_OK,
+	      "V.8 malformed recovery endpoints did not initialize");
+	valid_bits = SIPPYMODEM_V8_PREAMBLE_BITS +
+		     information_count * SIPPYMODEM_V8_FRAMED_OCTET_BITS;
+	CHECK(feed_control_bits(
+		      &detector, malformed, ARRAY_LENGTH(malformed),
+		      2u * malformed_bits + SIPPYMODEM_V8_PREAMBLE_BITS,
+		      &detected, &confirmed) &&
+	      !confirmed &&
+	      feed_control_bits(
+		      &detector, information, information_count,
+		      2u * valid_bits + SIPPYMODEM_V8_PREAMBLE_BITS,
+		      &detected, &confirmed) &&
+	      confirmed && detected.modulations == valid.modulations,
+	      "V.8 detector did not recover after malformed repeats");
+	return true;
+}
+
+static bool test_menu_detector_validation(void)
+{
+	struct sippymodem_v8_menu_detector detector;
+	struct sippymodem_v8_menu_detector saved;
+	struct sippymodem_v8_menu menu = {
+		.modulations = UINT16_MAX,
+	};
+	struct sippymodem_v8_menu saved_menu = menu;
+	bool confirmed = true;
+
+	CHECK(sippymodem_v8_menu_detector_init(&detector) ==
+		      SIPPYMODEM_V8_MENU_OK,
+	      "V.8 menu detector validation did not initialize");
+	detector.current_count = SIPPYMODEM_V8_MAX_INFORMATION_OCTETS + 1u;
+	saved = detector;
+	CHECK(sippymodem_v8_menu_detector_init(NULL) ==
+		      SIPPYMODEM_V8_MENU_INVALID_ARGUMENT &&
+	      sippymodem_v8_menu_detect_bit(
+		      &detector, 0, &menu, &confirmed) ==
+		      SIPPYMODEM_V8_MENU_INVALID_ARGUMENT &&
+	      memcmp(&detector, &saved, sizeof(detector)) == 0 &&
+	      memcmp(&menu, &saved_menu, sizeof(menu)) == 0 && confirmed &&
+	      sippymodem_v8_menu_detect_bit(NULL, 0, &menu, &confirmed) ==
+		      SIPPYMODEM_V8_MENU_INVALID_ARGUMENT &&
+	      sippymodem_v8_menu_detect_bit(&saved, 2, &menu, &confirmed) ==
+		      SIPPYMODEM_V8_MENU_INVALID_ARGUMENT,
+	      "V.8 menu detector accepted invalid state");
+	sippymodem_v8_menu_detector_reset(&detector);
+	CHECK(!detector.sequence_open && detector.current_count == 0 &&
+		      !detector.confirmed,
+	      "V.8 menu detector reset retained state");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_v8_menu menu;
@@ -404,6 +593,10 @@ int main(void)
 		{ "joint menu selection", test_joint_menu_selection },
 		{ "no common modulation", test_no_common_modulation },
 		{ "joint validation", test_joint_validation },
+		{ "repeated menu confirmation", test_repeated_menu_confirmation },
+		{ "mismatched menu restart", test_mismatched_menu_restart },
+		{ "malformed menu recovery", test_malformed_menu_recovery },
+		{ "menu detector validation", test_menu_detector_validation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

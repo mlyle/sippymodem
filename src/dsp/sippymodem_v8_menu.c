@@ -289,6 +289,145 @@ enum sippymodem_v8_menu_result sippymodem_v8_menu_selected_modulation(
 	return SIPPYMODEM_V8_MENU_OK;
 }
 
+static bool menu_detector_is_valid(
+	const struct sippymodem_v8_menu_detector *detector)
+{
+	struct sippymodem_v8_menu previous;
+
+	if (detector == NULL ||
+	    detector->current_count > SIPPYMODEM_V8_MAX_INFORMATION_OCTETS ||
+	    detector->previous_count > SIPPYMODEM_V8_MAX_INFORMATION_OCTETS ||
+	    (!detector->sequence_open &&
+	     (detector->current_count != 0 || detector->current_overflow)) ||
+	    (detector->current_overflow &&
+	     detector->current_count != SIPPYMODEM_V8_MAX_INFORMATION_OCTETS) ||
+	    detector->have_previous != (detector->previous_count != 0) ||
+	    (detector->have_previous && !detector->sequence_open))
+		return false;
+	if (detector->have_previous &&
+	    sippymodem_v8_menu_decode(
+		    detector->previous, detector->previous_count, &previous) !=
+		    SIPPYMODEM_V8_MENU_OK)
+		return false;
+	if (detector->confirmed)
+		return detector->have_previous && detector->current_count == 0 &&
+		       !detector->current_overflow &&
+		       detector->confirmed_menu.call_function ==
+			       previous.call_function &&
+		       detector->confirmed_menu.modulations ==
+			       previous.modulations &&
+		       detector->confirmed_menu.modulation_octets ==
+			       previous.modulation_octets &&
+		       detector->confirmed_menu.lapm == previous.lapm;
+	return detector->confirmed_menu.call_function == 0 &&
+	       detector->confirmed_menu.modulations == 0 &&
+	       detector->confirmed_menu.modulation_octets == 0 &&
+	       !detector->confirmed_menu.lapm;
+}
+
+enum sippymodem_v8_menu_result sippymodem_v8_menu_detector_init(
+	struct sippymodem_v8_menu_detector *detector)
+{
+	struct sippymodem_v8_menu_detector initialized = { 0 };
+
+	if (detector == NULL ||
+	    sippymodem_v8_control_receiver_init(&initialized.framing) !=
+		    SIPPYMODEM_V8_FRAMING_OK ||
+	    !menu_detector_is_valid(&initialized))
+		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	*detector = initialized;
+	return SIPPYMODEM_V8_MENU_OK;
+}
+
+void sippymodem_v8_menu_detector_reset(
+	struct sippymodem_v8_menu_detector *detector)
+{
+	if (detector != NULL)
+		(void)sippymodem_v8_menu_detector_init(detector);
+}
+
+static void reject_current_sequence(
+	struct sippymodem_v8_menu_detector *detector)
+{
+	detector->previous_count = 0;
+	detector->have_previous = false;
+}
+
+static void finish_current_sequence(
+	struct sippymodem_v8_menu_detector *detector)
+{
+	struct sippymodem_v8_menu decoded;
+
+	if (detector->current_overflow || detector->current_count == 0 ||
+	    sippymodem_v8_menu_decode(
+		    detector->current, detector->current_count, &decoded) !=
+		    SIPPYMODEM_V8_MENU_OK) {
+		reject_current_sequence(detector);
+		return;
+	}
+	if (detector->have_previous &&
+	    detector->previous_count == detector->current_count &&
+	    memcmp(detector->previous, detector->current,
+		   detector->current_count) == 0) {
+		detector->confirmed_menu = decoded;
+		detector->confirmed = true;
+		return;
+	}
+	memcpy(detector->previous, detector->current, detector->current_count);
+	detector->previous_count = detector->current_count;
+	detector->have_previous = true;
+}
+
+static void observe_control_event(
+	struct sippymodem_v8_menu_detector *detector,
+	const struct sippymodem_v8_control_event *event)
+{
+	if (event->type == SIPPYMODEM_V8_CONTROL_SEQUENCE_START) {
+		if (detector->sequence_open)
+			finish_current_sequence(detector);
+		detector->current_count = 0;
+		detector->current_overflow = false;
+		detector->sequence_open = true;
+	} else if (event->type == SIPPYMODEM_V8_CONTROL_INFORMATION_OCTET &&
+		   detector->sequence_open) {
+		if (detector->current_count <
+		    SIPPYMODEM_V8_MAX_INFORMATION_OCTETS) {
+			detector->current[detector->current_count++] = event->octet;
+		} else {
+			detector->current_overflow = true;
+		}
+	}
+}
+
+enum sippymodem_v8_menu_result sippymodem_v8_menu_detect_bit(
+	struct sippymodem_v8_menu_detector *detector, uint8_t bit,
+	struct sippymodem_v8_menu *menu, bool *confirmed)
+{
+	struct sippymodem_v8_menu_detector next;
+	struct sippymodem_v8_control_event event;
+
+	if (!menu_detector_is_valid(detector) || bit > 1 || menu == NULL ||
+	    confirmed == NULL)
+		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	if (detector->confirmed) {
+		*menu = detector->confirmed_menu;
+		*confirmed = true;
+		return SIPPYMODEM_V8_MENU_OK;
+	}
+	next = *detector;
+	if (sippymodem_v8_control_receive_bit(
+		    &next.framing, bit, &event) != SIPPYMODEM_V8_FRAMING_OK)
+		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	observe_control_event(&next, &event);
+	if (!menu_detector_is_valid(&next))
+		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	*detector = next;
+	*confirmed = next.confirmed;
+	if (next.confirmed)
+		*menu = next.confirmed_menu;
+	return SIPPYMODEM_V8_MENU_OK;
+}
+
 const char *sippymodem_v8_menu_result_name(
 	enum sippymodem_v8_menu_result result)
 {
