@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_v22_framing.h>
+#include <sippymodem_v22bis_symbols.h>
 
 #include "test.h"
 
@@ -134,6 +135,165 @@ static bool test_symbol_round_trip(void)
 	return true;
 }
 
+static void bits_from_nibble(uint8_t nibble, uint8_t bits[4])
+{
+	for (size_t index = 0; index < 4; ++index)
+		bits[index] = (uint8_t)((nibble >> (3u - index)) & 1u);
+}
+
+static bool test_v22bis_symbol_mapping(void)
+{
+	for (uint8_t previous = 0; previous < 4; ++previous) {
+		for (uint8_t nibble = 0; nibble < 16; ++nibble) {
+			struct sippymodem_v22bis_symbol_encoder encoder;
+			struct sippymodem_v22bis_symbol_decoder decoder;
+			uint8_t decoded[4] = { UINT8_MAX, UINT8_MAX,
+					       UINT8_MAX, UINT8_MAX };
+			uint8_t bits[4];
+			uint8_t expected_quadrant;
+			uint8_t symbol = UINT8_MAX;
+
+			bits_from_nibble(nibble, bits);
+			CHECK(sippymodem_v22bis_symbol_encoder_init(
+				      &encoder, previous) ==
+				      SIPPYMODEM_V22_FRAMING_OK &&
+				      sippymodem_v22bis_symbol_decoder_init(
+					      &decoder, previous) ==
+					      SIPPYMODEM_V22_FRAMING_OK &&
+				      sippymodem_v22_differential_encode(
+					      previous, (uint8_t)(nibble >> 2),
+					      &expected_quadrant) ==
+					      SIPPYMODEM_V22_FRAMING_OK,
+			      "V.22bis mapping fixture failed at %u/%u",
+			      previous, nibble);
+			CHECK(sippymodem_v22bis_symbol_encode(
+				      &encoder, bits, &symbol) ==
+				      SIPPYMODEM_V22_FRAMING_OK &&
+				      symbol == (uint8_t)((expected_quadrant << 2) |
+							 (nibble & 3u)) &&
+				      sippymodem_v22bis_symbol_decode(
+					      &decoder, symbol, decoded) ==
+					      SIPPYMODEM_V22_FRAMING_OK &&
+				      memcmp(bits, decoded, sizeof(bits)) == 0,
+			      "V.22bis symbol mapping changed at %u/%u",
+			      previous, nibble);
+		}
+	}
+	return true;
+}
+
+static bool test_v22bis_constellation(void)
+{
+	static const double scale = 0.23570226039551584146694812070162;
+
+	for (uint8_t low_bits = 0; low_bits < 4; ++low_bits) {
+		double base_in_phase = (low_bits & 1u) != 0 ? 3.0 : 1.0;
+		double base_quadrature = (low_bits & 2u) != 0 ? 3.0 : 1.0;
+		struct sippymodem_qam_point points[4];
+
+		for (uint8_t quadrant = 0; quadrant < 4; ++quadrant)
+			CHECK(sippymodem_v22bis_constellation_point(
+				      (uint8_t)((quadrant << 2) | low_bits),
+				      &points[quadrant]) ==
+				      SIPPYMODEM_V22_FRAMING_OK,
+			      "V.22bis constellation rejected symbol %u",
+			      (unsigned int)((quadrant << 2) | low_bits));
+		CHECK(points[0].in_phase == base_in_phase * scale &&
+			      points[0].quadrature == base_quadrature * scale &&
+			      points[1].in_phase == -points[0].quadrature &&
+			      points[1].quadrature == points[0].in_phase &&
+			      points[2].in_phase == -points[0].in_phase &&
+			      points[2].quadrature == -points[0].quadrature &&
+			      points[3].in_phase == points[0].quadrature &&
+			      points[3].quadrature == -points[0].in_phase,
+		      "V.22bis generated constellation changed at low bits %u",
+		      low_bits);
+		for (uint8_t quadrant = 0; quadrant < 4; ++quadrant) {
+			double power =
+				points[quadrant].in_phase *
+					points[quadrant].in_phase +
+				points[quadrant].quadrature *
+					points[quadrant].quadrature;
+
+			CHECK(power <= 1.0 + 1e-12,
+			      "V.22bis constellation exceeded unit magnitude");
+		}
+	}
+	return true;
+}
+
+static bool test_v22bis_symbol_round_trip(void)
+{
+	struct sippymodem_v22bis_symbol_encoder encoder;
+	struct sippymodem_v22bis_symbol_decoder decoder;
+	uint32_t random = UINT32_C(0x1222400b);
+
+	CHECK(sippymodem_v22bis_symbol_encoder_init(&encoder, 2) ==
+		      SIPPYMODEM_V22_FRAMING_OK &&
+		      sippymodem_v22bis_symbol_decoder_init(&decoder, 2) ==
+			      SIPPYMODEM_V22_FRAMING_OK,
+	      "V.22bis symbol endpoints did not initialize");
+	for (size_t index = 0; index < TEST_STREAM_BITS; index += 4) {
+		uint8_t bits[4];
+		uint8_t decoded[4];
+		uint8_t symbol;
+
+		for (size_t bit = 0; bit < ARRAY_LENGTH(bits); ++bit)
+			bits[bit] = (uint8_t)(fixture_random(&random) >> 31);
+		CHECK(sippymodem_v22bis_symbol_encode(
+			      &encoder, bits, &symbol) ==
+			      SIPPYMODEM_V22_FRAMING_OK &&
+			      sippymodem_v22bis_symbol_decode(
+				      &decoder, symbol, decoded) ==
+				      SIPPYMODEM_V22_FRAMING_OK &&
+			      memcmp(bits, decoded, sizeof(bits)) == 0,
+		      "V.22bis symbol round trip changed bits at %zu", index);
+	}
+	CHECK(encoder.phase_quadrant == decoder.phase_quadrant &&
+		      memcmp(&encoder.scrambler, &decoder.descrambler,
+			     sizeof(encoder.scrambler)) == 0,
+	      "V.22bis framing endpoints diverged");
+	return true;
+}
+
+static bool test_v22bis_validation(void)
+{
+	struct sippymodem_v22bis_symbol_encoder encoder;
+	struct sippymodem_v22bis_symbol_decoder decoder;
+	struct sippymodem_v22bis_symbol_encoder saved_encoder;
+	struct sippymodem_qam_point point = { 7.0, 9.0 };
+	uint8_t invalid_bits[4] = { 0, 1, 2, 0 };
+	uint8_t decoded[4];
+	uint8_t symbol = UINT8_MAX;
+
+	CHECK(sippymodem_v22bis_symbol_encoder_init(&encoder, 1) ==
+		      SIPPYMODEM_V22_FRAMING_OK &&
+		      sippymodem_v22bis_symbol_decoder_init(&decoder, 1) ==
+			      SIPPYMODEM_V22_FRAMING_OK,
+	      "V.22bis validation endpoints did not initialize");
+	saved_encoder = encoder;
+	CHECK(sippymodem_v22bis_symbol_encoder_init(NULL, 0) ==
+		      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT &&
+		      sippymodem_v22bis_symbol_decoder_init(&decoder, 4) ==
+			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT &&
+		      sippymodem_v22bis_symbol_encode(
+			      &encoder, invalid_bits, &symbol) ==
+			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      symbol == UINT8_MAX &&
+		      sippymodem_v22bis_symbol_decode(
+			      &decoder, 16, decoded) ==
+			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT,
+	      "V.22bis framing accepted invalid input or mutated state");
+	CHECK(sippymodem_v22bis_constellation_point(16, &point) ==
+		      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT &&
+		      point.in_phase == 7.0 && point.quadrature == 9.0 &&
+		      sippymodem_v22bis_constellation_point(0, NULL) ==
+			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT,
+	      "V.22bis constellation accepted invalid input");
+	return true;
+}
+
 static bool test_descrambler_resynchronization(void)
 {
 	struct sippymodem_v22_scrambler encoder;
@@ -215,6 +375,10 @@ int main(void)
 		{ "scrambler polynomial", test_scrambler_polynomial },
 		{ "scrambler lockup escape", test_scrambler_lockup_escape },
 		{ "symbol round trip", test_symbol_round_trip },
+		{ "V.22bis symbol mapping", test_v22bis_symbol_mapping },
+		{ "V.22bis generated constellation", test_v22bis_constellation },
+		{ "V.22bis symbol round trip", test_v22bis_symbol_round_trip },
+		{ "V.22bis validation", test_v22bis_validation },
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
 		{ "validation", test_validation },

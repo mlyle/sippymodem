@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "sippymodem_v22bis_symbols.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
+
+static const double V22BIS_COORDINATE_SCALE =
+	0.23570226039551584146694812070162; /* 1 / sqrt(18) */
+
+static bool bits_are_valid(
+	const uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL])
+{
+	if (bits == NULL)
+		return false;
+	for (size_t index = 0; index < SIPPYMODEM_V22BIS_BITS_PER_SYMBOL;
+	     ++index)
+		if (bits[index] > 1)
+			return false;
+	return true;
+}
+
+static bool encoder_is_valid(
+	const struct sippymodem_v22bis_symbol_encoder *encoder)
+{
+	return encoder != NULL &&
+	       encoder->phase_quadrant < SIPPYMODEM_V22_PHASE_QUADRANTS &&
+	       sippymodem_v22_scrambler_is_valid(&encoder->scrambler);
+}
+
+static bool decoder_is_valid(
+	const struct sippymodem_v22bis_symbol_decoder *decoder)
+{
+	return decoder != NULL &&
+	       decoder->phase_quadrant < SIPPYMODEM_V22_PHASE_QUADRANTS &&
+	       sippymodem_v22_scrambler_is_valid(&decoder->descrambler);
+}
+
+enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_encoder_init(
+	struct sippymodem_v22bis_symbol_encoder *encoder,
+	uint8_t initial_quadrant)
+{
+	if (encoder == NULL ||
+	    initial_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS)
+		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	memset(encoder, 0, sizeof(*encoder));
+	encoder->phase_quadrant = initial_quadrant;
+	return SIPPYMODEM_V22_FRAMING_OK;
+}
+
+enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_encode(
+	struct sippymodem_v22bis_symbol_encoder *encoder,
+	const uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL],
+	uint8_t *symbol)
+{
+	struct sippymodem_v22bis_symbol_encoder next;
+	uint8_t scrambled[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
+	uint8_t quadrant;
+
+	if (!encoder_is_valid(encoder) || !bits_are_valid(bits) ||
+	    symbol == NULL)
+		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	next = *encoder;
+	for (size_t index = 0; index < SIPPYMODEM_V22BIS_BITS_PER_SYMBOL;
+	     ++index)
+		if (sippymodem_v22_scramble_bit(
+			    &next.scrambler, bits[index], &scrambled[index]) !=
+		    SIPPYMODEM_V22_FRAMING_OK)
+			return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	if (sippymodem_v22_differential_encode(
+		    next.phase_quadrant,
+		    (uint8_t)((scrambled[0] << 1) | scrambled[1]),
+		    &quadrant) != SIPPYMODEM_V22_FRAMING_OK)
+		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	next.phase_quadrant = quadrant;
+	*encoder = next;
+	*symbol = (uint8_t)((quadrant << 2) | (scrambled[2] << 1) |
+			    scrambled[3]);
+	return SIPPYMODEM_V22_FRAMING_OK;
+}
+
+enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_decoder_init(
+	struct sippymodem_v22bis_symbol_decoder *decoder,
+	uint8_t initial_quadrant)
+{
+	if (decoder == NULL ||
+	    initial_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS)
+		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	memset(decoder, 0, sizeof(*decoder));
+	decoder->phase_quadrant = initial_quadrant;
+	return SIPPYMODEM_V22_FRAMING_OK;
+}
+
+enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_decode(
+	struct sippymodem_v22bis_symbol_decoder *decoder, uint8_t symbol,
+	uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL])
+{
+	struct sippymodem_v22bis_symbol_decoder next;
+	uint8_t decoded[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
+	uint8_t scrambled[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
+	uint8_t quadrant = (uint8_t)(symbol >> 2);
+	uint8_t dibit;
+
+	if (!decoder_is_valid(decoder) ||
+	    symbol >= SIPPYMODEM_V22BIS_SYMBOL_COUNT || bits == NULL)
+		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	next = *decoder;
+	if (sippymodem_v22_differential_decode(
+		    next.phase_quadrant, quadrant, &dibit) !=
+	    SIPPYMODEM_V22_FRAMING_OK)
+		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	scrambled[0] = (uint8_t)(dibit >> 1);
+	scrambled[1] = (uint8_t)(dibit & 1u);
+	scrambled[2] = (uint8_t)((symbol >> 1) & 1u);
+	scrambled[3] = (uint8_t)(symbol & 1u);
+	for (size_t index = 0; index < SIPPYMODEM_V22BIS_BITS_PER_SYMBOL;
+	     ++index)
+		if (sippymodem_v22_descramble_bit(
+			    &next.descrambler, scrambled[index],
+			    &decoded[index]) != SIPPYMODEM_V22_FRAMING_OK)
+			return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	next.phase_quadrant = quadrant;
+	*decoder = next;
+	memcpy(bits, decoded, sizeof(decoded));
+	return SIPPYMODEM_V22_FRAMING_OK;
+}
+
+enum sippymodem_v22_framing_result sippymodem_v22bis_constellation_point(
+	uint8_t symbol, struct sippymodem_qam_point *point)
+{
+	double in_phase;
+	double quadrature;
+	double base_in_phase;
+	double base_quadrature;
+
+	if (symbol >= SIPPYMODEM_V22BIS_SYMBOL_COUNT || point == NULL)
+		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
+	base_in_phase = (symbol & 1u) != 0 ? 3.0 : 1.0;
+	base_quadrature = (symbol & 2u) != 0 ? 3.0 : 1.0;
+	switch (symbol >> 2) {
+	case 0:
+		in_phase = base_in_phase;
+		quadrature = base_quadrature;
+		break;
+	case 1:
+		in_phase = -base_quadrature;
+		quadrature = base_in_phase;
+		break;
+	case 2:
+		in_phase = -base_in_phase;
+		quadrature = -base_quadrature;
+		break;
+	default:
+		in_phase = base_quadrature;
+		quadrature = -base_in_phase;
+		break;
+	}
+	*point = (struct sippymodem_qam_point){
+		.in_phase = in_phase * V22BIS_COORDINATE_SCALE,
+		.quadrature = quadrature * V22BIS_COORDINATE_SCALE,
+	};
+	return SIPPYMODEM_V22_FRAMING_OK;
+}

@@ -3,11 +3,13 @@
 #ifndef SIPPYMODEM_V22_FRAMING_H
 #define SIPPYMODEM_V22_FRAMING_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 enum {
 	SIPPYMODEM_V22_SCRAMBLER_BITS = 17,
 	SIPPYMODEM_V22_SCRAMBLER_ONES_LIMIT = 64,
+	SIPPYMODEM_V22_PHASE_QUADRANTS = 4,
 };
 
 enum sippymodem_v22_framing_result {
@@ -32,6 +34,8 @@ struct sippymodem_v22_symbol_decoder {
 
 void sippymodem_v22_scrambler_reset(
 	struct sippymodem_v22_scrambler *scrambler);
+bool sippymodem_v22_scrambler_is_valid(
+	const struct sippymodem_v22_scrambler *scrambler);
 enum sippymodem_v22_framing_result sippymodem_v22_scramble_bit(
 	struct sippymodem_v22_scrambler *scrambler, uint8_t input,
 	uint8_t *output);

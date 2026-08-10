@@ -196,7 +196,8 @@ V23_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v23.o \
 V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v22_framing.o \
-	$(BUILD_DIR)/sippymodem_v22_framing.o
+	$(BUILD_DIR)/sippymodem_v22_framing.o \
+	$(BUILD_DIR)/sippymodem_v22bis_symbols.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam.o
@@ -562,6 +563,10 @@ $(BUILD_DIR)/sippymodem_v23_datapump.o: \
 
 $(BUILD_DIR)/sippymodem_v22_framing.o: \
 	../src/sippymodem_v22_framing.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v22bis_symbols.o: \
+	../src/sippymodem_v22bis_symbols.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22_datapump.o: \

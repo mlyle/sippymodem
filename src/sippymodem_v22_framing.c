@@ -11,10 +11,9 @@ enum {
 	V22_SCRAMBLER_TAP_17 = 16,
 	V22_SCRAMBLER_HISTORY_MASK =
 		(UINT32_C(1) << SIPPYMODEM_V22_SCRAMBLER_BITS) - 1,
-	V22_QUADRANT_COUNT = 4,
 };
 
-static bool scrambler_is_valid(
+bool sippymodem_v22_scrambler_is_valid(
 	const struct sippymodem_v22_scrambler *scrambler)
 {
 	return scrambler != NULL &&
@@ -57,7 +56,8 @@ enum sippymodem_v22_framing_result sippymodem_v22_scramble_bit(
 {
 	uint8_t encoded;
 
-	if (!scrambler_is_valid(scrambler) || input > 1 || output == NULL)
+	if (!sippymodem_v22_scrambler_is_valid(scrambler) || input > 1 ||
+	    output == NULL)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	if (scrambler->consecutive_ones ==
 	    SIPPYMODEM_V22_SCRAMBLER_ONES_LIMIT) {
@@ -78,7 +78,8 @@ enum sippymodem_v22_framing_result sippymodem_v22_descramble_bit(
 	bool repair;
 	uint8_t decoded;
 
-	if (!scrambler_is_valid(descrambler) || input > 1 || output == NULL)
+	if (!sippymodem_v22_scrambler_is_valid(descrambler) || input > 1 ||
+	    output == NULL)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	repair = descrambler->consecutive_ones ==
 		 SIPPYMODEM_V22_SCRAMBLER_ONES_LIMIT;
@@ -96,12 +97,12 @@ enum sippymodem_v22_framing_result sippymodem_v22_differential_encode(
 	uint8_t previous_quadrant, uint8_t dibit, uint8_t *quadrant)
 {
 	/* 00, 01, 10, 11 advance by 90, 0, 180, 270 degrees. */
-	static const uint8_t quarter_turns[V22_QUADRANT_COUNT] = {
+	static const uint8_t quarter_turns[SIPPYMODEM_V22_PHASE_QUADRANTS] = {
 		1, 0, 2, 3,
 	};
 
-	if (previous_quadrant >= V22_QUADRANT_COUNT ||
-	    dibit >= V22_QUADRANT_COUNT || quadrant == NULL)
+	if (previous_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS ||
+	    dibit >= SIPPYMODEM_V22_PHASE_QUADRANTS || quadrant == NULL)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	*quadrant = (uint8_t)((previous_quadrant + quarter_turns[dibit]) & 3u);
 	return SIPPYMODEM_V22_FRAMING_OK;
@@ -111,13 +112,13 @@ enum sippymodem_v22_framing_result sippymodem_v22_differential_decode(
 	uint8_t previous_quadrant, uint8_t quadrant, uint8_t *dibit)
 {
 	/* The mandated dibit-to-quarter-turn permutation is self-inverse. */
-	static const uint8_t dibits[V22_QUADRANT_COUNT] = {
+	static const uint8_t dibits[SIPPYMODEM_V22_PHASE_QUADRANTS] = {
 		1, 0, 2, 3,
 	};
 	uint8_t quarter_turns;
 
-	if (previous_quadrant >= V22_QUADRANT_COUNT ||
-	    quadrant >= V22_QUADRANT_COUNT || dibit == NULL)
+	if (previous_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS ||
+	    quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS || dibit == NULL)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	quarter_turns = (uint8_t)((quadrant - previous_quadrant) & 3u);
 	*dibit = dibits[quarter_turns];
@@ -128,7 +129,8 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_encoder_init(
 	struct sippymodem_v22_symbol_encoder *encoder,
 	uint8_t initial_quadrant)
 {
-	if (encoder == NULL || initial_quadrant >= V22_QUADRANT_COUNT)
+	if (encoder == NULL ||
+	    initial_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	memset(encoder, 0, sizeof(*encoder));
 	encoder->phase_quadrant = initial_quadrant;
@@ -144,8 +146,9 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_encode(
 	uint8_t next_quadrant;
 
 	if (encoder == NULL || first_bit > 1 || second_bit > 1 ||
-	    quadrant == NULL || encoder->phase_quadrant >= V22_QUADRANT_COUNT ||
-	    !scrambler_is_valid(&encoder->scrambler))
+	    quadrant == NULL ||
+	    encoder->phase_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS ||
+	    !sippymodem_v22_scrambler_is_valid(&encoder->scrambler))
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	if (sippymodem_v22_scramble_bit(
 		    &encoder->scrambler, first_bit, &first_scrambled) !=
@@ -167,7 +170,8 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_decoder_init(
 	struct sippymodem_v22_symbol_decoder *decoder,
 	uint8_t initial_quadrant)
 {
-	if (decoder == NULL || initial_quadrant >= V22_QUADRANT_COUNT)
+	if (decoder == NULL ||
+	    initial_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	memset(decoder, 0, sizeof(*decoder));
 	decoder->phase_quadrant = initial_quadrant;
@@ -182,10 +186,11 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_decode(
 	uint8_t first_decoded;
 	uint8_t second_decoded;
 
-	if (decoder == NULL || quadrant >= V22_QUADRANT_COUNT ||
+	if (decoder == NULL ||
+	    quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS ||
 	    first_bit == NULL || second_bit == NULL ||
-	    decoder->phase_quadrant >= V22_QUADRANT_COUNT ||
-	    !scrambler_is_valid(&decoder->descrambler))
+	    decoder->phase_quadrant >= SIPPYMODEM_V22_PHASE_QUADRANTS ||
+	    !sippymodem_v22_scrambler_is_valid(&decoder->descrambler))
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	if (sippymodem_v22_differential_decode(
 		    decoder->phase_quadrant, quadrant, &dibit) !=
