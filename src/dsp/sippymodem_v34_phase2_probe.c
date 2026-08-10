@@ -73,7 +73,9 @@ static double normalized_probe_sample(uint16_t period_index)
 
 	/* cos(n*x) = 2*cos(x)*cos((n-1)*x) - cos((n-2)*x). This produces
 	 * all 25 candidate harmonics from one cosine evaluation. */
-	for (unsigned int harmonic = 1; harmonic <= 25; ++harmonic) {
+	for (unsigned int harmonic = 1;
+	     harmonic <= SIPPYMODEM_V34_PHASE2_PROBE_HIGHEST_HARMONIC;
+	     ++harmonic) {
 		double next_cosine =
 			2.0 * fundamental_cosine * harmonic_cosine -
 			previous_cosine;
