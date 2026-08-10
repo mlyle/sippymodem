@@ -14,6 +14,9 @@ enum {
 	SIPPYMODEM_V32_TRELLIS_STATE_COUNT = 8,
 	SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT = 4,
 	SIPPYMODEM_V32_7200_DATA_BITS = 3,
+	SIPPYMODEM_V32_9600_TRELLIS_DATA_BITS = 4,
+	SIPPYMODEM_V32_12000_DATA_BITS = 5,
+	SIPPYMODEM_V32_14400_DATA_BITS = 6,
 	SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS = 24,
 };
 
@@ -34,7 +37,7 @@ struct sippymodem_v32_trellis_path_step {
 	uint8_t differential_symbol[SIPPYMODEM_V32_TRELLIS_STATE_COUNT];
 };
 
-struct sippymodem_v32_7200_decoder {
+struct sippymodem_v32_trellis_decoder {
 	double path_metric[SIPPYMODEM_V32_TRELLIS_STATE_COUNT];
 	struct sippymodem_v32_trellis_path_step
 		path[SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS];
@@ -42,6 +45,7 @@ struct sippymodem_v32_7200_decoder {
 	uint8_t path_symbols;
 	uint8_t previous_differential_quadrant;
 	uint8_t carrier_phase_quadrant;
+	uint8_t data_bits_per_symbol;
 };
 
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encoder_init(
@@ -58,18 +62,18 @@ enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encode(
 	struct sippymodem_v32_trellis_encoder *encoder, uint8_t data,
 	uint8_t *signal_symbol);
 
-enum sippymodem_v32_trellis_result sippymodem_v32_7200_decoder_init(
-	struct sippymodem_v32_7200_decoder *decoder,
-	uint8_t initial_carrier_phase_quadrant);
-bool sippymodem_v32_7200_decoder_is_valid(
-	const struct sippymodem_v32_7200_decoder *decoder);
+enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decoder_init(
+	struct sippymodem_v32_trellis_decoder *decoder,
+	uint8_t data_bits_per_symbol, uint8_t initial_carrier_phase_quadrant);
+bool sippymodem_v32_trellis_decoder_is_valid(
+	const struct sippymodem_v32_trellis_decoder *decoder);
 /*
  * Decode one normalized baseband point.  Once ready is true, scrambled_data
- * contains the next three-bit group in transmission order.  Traceback adds a
- * fixed delay while retaining every input group.
+ * contains the next configured-width group in transmission order.  Traceback
+ * adds a fixed delay while retaining every input group.
  */
-enum sippymodem_v32_trellis_result sippymodem_v32_7200_decode(
-	struct sippymodem_v32_7200_decoder *decoder,
+enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decode(
+	struct sippymodem_v32_trellis_decoder *decoder,
 	const struct sippymodem_qam_point *point, uint8_t *scrambled_data,
 	bool *ready);
 
