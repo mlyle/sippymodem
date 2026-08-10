@@ -133,6 +133,26 @@ sippymodem_v34_phase4_mp_receive_decision(
 	return SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK;
 }
 
+enum sippymodem_v34_phase4_mp_receiver_result
+sippymodem_v34_phase4_mp_receive_point(
+	struct sippymodem_v34_phase4_mp_receiver *receiver,
+	const struct sippymodem_qam_point *point,
+	struct sippymodem_v34_mp_receive_event *event)
+{
+	uint8_t quarter_point;
+	uint8_t clockwise_quarter_turns;
+
+	if (!sippymodem_v34_phase4_mp_receiver_is_valid(receiver) ||
+	    event == NULL ||
+	    sippymodem_v34_training_constellation_slice(
+		    receiver->constellation, point, &quarter_point,
+		    &clockwise_quarter_turns) !=
+		    SIPPYMODEM_V34_CONSTELLATION_OK)
+		return SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
+	return sippymodem_v34_phase4_mp_receive_decision(
+		receiver, quarter_point, clockwise_quarter_turns, event);
+}
+
 const char *sippymodem_v34_phase4_mp_receiver_result_name(
 	enum sippymodem_v34_phase4_mp_receiver_result result)
 {

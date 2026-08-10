@@ -44,6 +44,14 @@ sippymodem_v34_phase4_mp_receive_decision(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
 	struct sippymodem_v34_mp_receive_event *event);
 
+/* Slice one finite point that has already been equalized to the normalized
+ * training constellation, then receive its labels transactionally. */
+enum sippymodem_v34_phase4_mp_receiver_result
+sippymodem_v34_phase4_mp_receive_point(
+	struct sippymodem_v34_phase4_mp_receiver *receiver,
+	const struct sippymodem_qam_point *point,
+	struct sippymodem_v34_mp_receive_event *event);
+
 const char *sippymodem_v34_phase4_mp_receiver_result_name(
 	enum sippymodem_v34_phase4_mp_receiver_result result);
 
