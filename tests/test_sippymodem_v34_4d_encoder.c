@@ -360,6 +360,194 @@ static bool test_all_supported_sequences(void)
 	return true;
 }
 
+static bool rejected_step_is_transactional(
+	struct sippymodem_v34_4d_encoder *encoder,
+	const struct sippymodem_v34_4d_encoder_input *input,
+	enum sippymodem_v34_4d_encoder_result expected_result)
+{
+	struct sippymodem_v34_4d_encoder saved = *encoder;
+	struct sippymodem_v34_4d_encoder_output output;
+	struct sippymodem_v34_4d_encoder_output saved_output;
+
+	memset(&output, 0xa5, sizeof(output));
+	saved_output = output;
+	return sippymodem_v34_4d_encoder_step(encoder, input, &output) ==
+		       expected_result &&
+	       encoders_are_equal(encoder, &saved) &&
+	       memcmp(&output, &saved_output, sizeof(output)) == 0;
+}
+
+static bool test_transactional_failures(void)
+{
+	struct sippymodem_v34_mapping_parameters parameters;
+	struct sippymodem_v34_4d_encoder encoder;
+	struct sippymodem_v34_4d_encoder invalid;
+	struct sippymodem_v34_4d_encoder_input input = { 0 };
+	uint8_t point_limit;
+
+	CHECK(initialize_parameters(
+		      SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false, false,
+		      &parameters) &&
+	      sippymodem_v34_4d_encoder_init(
+		      &encoder, &parameters, COEFFICIENTS,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_OK,
+	      "transactional fixture did not initialize");
+	point_limit = (uint8_t)(
+		1u << parameters.point_index_bits_per_2d_symbol);
+	input.mapping.rotation_bit = 2;
+	CHECK(rejected_step_is_transactional(
+		      &encoder, &input,
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+	      "invalid rotation changed state or output");
+	input.mapping.rotation_bit = 0;
+	input.mapping.differential_input = 4;
+	CHECK(rejected_step_is_transactional(
+		      &encoder, &input,
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+	      "invalid differential input changed state or output");
+	input.mapping.differential_input = 0;
+	input.inversion_bit = 2;
+	CHECK(rejected_step_is_transactional(
+		      &encoder, &input,
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+	      "invalid inversion changed state or output");
+	input.inversion_bit = 0;
+	input.ring_index[0] = parameters.ring_count;
+	CHECK(rejected_step_is_transactional(
+		      &encoder, &input,
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+	      "invalid ring changed state or output");
+	input.ring_index[0] = 0;
+	input.mapping.point_index[1] = point_limit;
+	CHECK(rejected_step_is_transactional(
+		      &encoder, &input,
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+	      "invalid point index changed state or output");
+	input.mapping.point_index[1] = 0;
+
+	invalid = encoder;
+	invalid.precoder.coefficients[0].real = INT16_MAX;
+	invalid.precoder.coefficients[1].real = INT16_MAX;
+	invalid.precoder.coefficients[2].real = INT16_MAX;
+	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++tap) {
+		invalid.precoder.previous_symbols[tap].in_phase = INT32_MAX;
+		invalid.precoder.previous_symbols[tap].quadrature = INT32_MAX;
+	}
+	CHECK(sippymodem_v34_4d_encoder_is_valid(&invalid) &&
+	      rejected_step_is_transactional(
+		      &invalid, &input, SIPPYMODEM_V34_4D_ENCODER_OUT_OF_RANGE),
+	      "precoder overflow changed interval state or output");
+
+	invalid = encoder;
+	memset(invalid.precoder.coefficients, 0,
+	       sizeof(invalid.precoder.coefficients));
+	invalid.precoder.coefficients[1].real = SIPPYMODEM_V34_Q14_SCALE;
+	invalid.precoder.previous_symbols[0] =
+		(struct sippymodem_v34_q7_point){
+			254 * SIPPYMODEM_V34_Q7_SCALE,
+			254 * SIPPYMODEM_V34_Q7_SCALE,
+		};
+	invalid.precoder.previous_symbols[1] =
+		invalid.precoder.previous_symbols[0];
+	input.mapping.differential_input = 2;
+	input.mapping.rotation_bit = 1;
+	input.ring_index[1] = 1;
+	CHECK(parameters.ring_count > 1u &&
+	      sippymodem_v34_4d_encoder_is_valid(&invalid) &&
+	      rejected_step_is_transactional(
+		      &invalid, &input, SIPPYMODEM_V34_4D_ENCODER_OUT_OF_RANGE),
+	      "second-symbol overflow did not roll back the interval");
+	return true;
+}
+
+static bool test_validation(void)
+{
+	struct sippymodem_v34_mapping_parameters parameters;
+	struct sippymodem_v34_mapping_parameters invalid_parameters;
+	struct sippymodem_v34_4d_encoder encoder;
+	struct sippymodem_v34_4d_encoder saved;
+	struct sippymodem_v34_q14_coefficient invalid_coefficients
+		[SIPPYMODEM_V34_PRECODER_TAP_COUNT] = { 0 };
+	struct sippymodem_v34_4d_encoder_input input = { 0 };
+	struct sippymodem_v34_4d_encoder_output output;
+
+	CHECK(initialize_parameters(
+		      SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false, false,
+		      &parameters) &&
+	      sippymodem_v34_4d_encoder_init(
+		      &encoder, &parameters, COEFFICIENTS,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_OK,
+	      "validation fixture did not initialize");
+	saved = encoder;
+	invalid_parameters = parameters;
+	invalid_parameters.ring_count++;
+	invalid_coefficients[0].real = INT16_MIN;
+	CHECK(sippymodem_v34_4d_encoder_init(
+		      NULL, &parameters, COEFFICIENTS,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_4d_encoder_init(
+		      &encoder, NULL, COEFFICIENTS,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_4d_encoder_init(
+		      &encoder, &invalid_parameters, COEFFICIENTS,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_4d_encoder_init(
+		      &encoder, &parameters, NULL,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_4d_encoder_init(
+		      &encoder, &parameters, invalid_coefficients,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_4d_encoder_init(
+		      &encoder, &parameters, COEFFICIENTS,
+		      (enum sippymodem_v34_trellis_selection)3) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      encoders_are_equal(&encoder, &saved),
+	      "invalid initialization changed its destination");
+	CHECK(!sippymodem_v34_4d_encoder_is_valid(NULL) &&
+	      !sippymodem_v34_4d_encoder_input_is_valid(NULL, &parameters) &&
+	      !sippymodem_v34_4d_encoder_input_is_valid(
+		      &input, &invalid_parameters) &&
+	      sippymodem_v34_4d_encoder_step(NULL, &input, &output) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_4d_encoder_step(&encoder, NULL, &output) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_4d_encoder_step(&encoder, &input, NULL) ==
+		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT,
+	      "null or inconsistent input was accepted");
+	encoder.previous_differential_output = 4;
+	CHECK(!sippymodem_v34_4d_encoder_is_valid(&encoder),
+	      "invalid differential state was accepted");
+	encoder = saved;
+	encoder.precoder.grid_step =
+		encoder.precoder.grid_step == SIPPYMODEM_V34_PRECODER_GRID_STEP_2 ?
+			SIPPYMODEM_V34_PRECODER_GRID_STEP_4 :
+			SIPPYMODEM_V34_PRECODER_GRID_STEP_2;
+	CHECK(!sippymodem_v34_4d_encoder_is_valid(&encoder),
+	      "inconsistent precoder grid was accepted");
+	CHECK(strcmp(sippymodem_v34_4d_encoder_result_name(
+		     SIPPYMODEM_V34_4D_ENCODER_OK),
+		     "ok") == 0 &&
+	      strcmp(sippymodem_v34_4d_encoder_result_name(
+		     SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(sippymodem_v34_4d_encoder_result_name(
+		     SIPPYMODEM_V34_4D_ENCODER_OUT_OF_RANGE),
+		     "out of range") == 0 &&
+	      strcmp(sippymodem_v34_4d_encoder_result_name(
+		     (enum sippymodem_v34_4d_encoder_result)3),
+		     "unknown") == 0,
+	      "result names changed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -368,6 +556,8 @@ int main(void)
 	} tests[] = {
 		{ "initialization", test_initialization },
 		{ "all supported sequences", test_all_supported_sequences },
+		{ "transactional failures", test_transactional_failures },
+		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
 
