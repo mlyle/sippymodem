@@ -1065,7 +1065,9 @@ static int modem_comp_put_chars(struct modem *m, const char *buf, int n)
  *
  */
 
-#define IS_FAST_DP(id) (id == DP_V34 || id == DP_V90 || id == DP_V92)
+#define NEEDS_V8_NEGOTIATION(id) \
+	((id) == DP_V21 || (id) == DP_V34 || (id) == DP_V90 || \
+	 (id) == DP_V92)
 
 static void do_modem_change_dp (struct modem *m)
 {
@@ -1089,7 +1091,7 @@ static void do_modem_change_dp (struct modem *m)
 		id = dp_id;
 		if(dp_id == 0) {
 			dp_id = MODEM_DP(m);
-			id = IS_FAST_DP(dp_id) ? DP_V8 : dp_id;
+			id = NEEDS_V8_NEGOTIATION(dp_id) ? DP_V8 : dp_id;
 		}
 
 		MODEM_DBG("%ld: change dp: --> %d...\n", m->count, id);

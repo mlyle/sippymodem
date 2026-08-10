@@ -17,6 +17,7 @@ enum sippymodem_datapumps_result {
 struct sippymodem_datapumps {
 	bool call_progress_registered;
 	bool fsk300_registered;
+	bool v8_registered;
 	bool v23_registered;
 	bool v22_registered;
 	bool v32_registered;

@@ -94,6 +94,7 @@ SIPPYMODEM_DSP_SOURCES := \
 	dsp/sippymodem_v8_ansam.c \
 	dsp/sippymodem_v8_answering.c \
 	dsp/sippymodem_v8_calling.c \
+	dsp/sippymodem_v8_datapump.c \
 	dsp/sippymodem_v8_fsk.c \
 	dsp/sippymodem_v8_framing.c \
 	dsp/sippymodem_v8_menu.c

@@ -252,9 +252,12 @@ static bool run_media_call(
 		.write = capture_recording,
 	};
 	bool online = false;
+	bool answerer_used_v8 = test_case->id != DP_V21;
 	bool prelink_queued = false;
 	bool prelink_delivered = false;
 	bool transferred = false;
+	enum DP_ID initial_datapump =
+		test_case->id == DP_V21 ? DP_V8 : test_case->id;
 	int selection_length = (int)strlen(test_case->selection_command);
 
 	CHECK(sippymodem_datapumps_start(&datapumps) ==
@@ -292,7 +295,7 @@ static bool run_media_call(
 	      test_case->name);
 	CHECK(modem_report_outgoing_call_connected(caller.modem) == 0 &&
 		      caller.modem->dp != NULL &&
-		      caller.modem->dp->id == test_case->id &&
+		      caller.modem->dp->id == initial_datapump &&
 		      modem_answer(answerer.modem) == 0,
 	      "connected SIP call did not select %s roles", test_case->name);
 
@@ -301,6 +304,9 @@ static bool run_media_call(
 		      &caller, &answerer, codec, &recorder),
 		      "%s training failed at the SIP media boundary",
 		      test_case->name);
+		if (answerer.modem->dp != NULL &&
+		    answerer.modem->dp->id == DP_V8)
+			answerer_used_v8 = true;
 		if (test_case->test_prelink && !prelink_queued &&
 		    modem_is_online(answerer.modem, test_case->id) &&
 		    !modem_is_online(caller.modem, test_case->id)) {
@@ -318,7 +324,8 @@ static bool run_media_call(
 			break;
 		}
 	}
-	CHECK(online && caller.modem->tx_rate == test_case->caller_tx_rate &&
+	CHECK(online && answerer_used_v8 &&
+		      caller.modem->tx_rate == test_case->caller_tx_rate &&
 		      caller.modem->rx_rate == test_case->caller_rx_rate &&
 		      answerer.modem->tx_rate == test_case->answerer_tx_rate &&
 		      answerer.modem->rx_rate == test_case->answerer_rx_rate,
