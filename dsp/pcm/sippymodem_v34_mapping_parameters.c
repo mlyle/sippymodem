@@ -9,7 +9,6 @@ enum {
 	V34_2D_SYMBOLS_PER_MAPPING_FRAME = 8,
 	V34_CONSTELLATION_QUADRANTS = 4,
 	V34_MIN_MAPPING_FRAME_BITS = 8,
-	V34_MAX_MAPPING_FRAME_BITS = 79,
 };
 
 static uint64_t eighth_power(uint32_t value)
@@ -60,7 +59,7 @@ static bool derive_parameters(
 	uint8_t ring_count;
 
 	if (mapping_frame_bits < V34_MIN_MAPPING_FRAME_BITS ||
-	    mapping_frame_bits > V34_MAX_MAPPING_FRAME_BITS)
+	    mapping_frame_bits > SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS)
 		return false;
 	if (mapping_frame_bits > V34_FIXED_MAPPING_BITS)
 		shell_mapper_bits =

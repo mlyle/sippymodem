@@ -170,7 +170,15 @@ static bool test_validation(void)
 	      sippymodem_v34_nonlinear_parameter_is_valid(
 		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16) &&
 	      !sippymodem_v34_nonlinear_parameter_is_valid(
-		      (enum sippymodem_v34_nonlinear_parameter)2),
+		      (enum sippymodem_v34_nonlinear_parameter)2) &&
+	      sippymodem_v34_nonlinear_configuration_is_valid(
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0) &&
+	      sippymodem_v34_nonlinear_configuration_is_valid(
+		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, DBL_MAX) &&
+	      !sippymodem_v34_nonlinear_configuration_is_valid(
+		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 0.0) &&
+	      !sippymodem_v34_nonlinear_configuration_is_valid(
+		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, NAN),
 	      "non-linear parameter validation changed");
 	CHECK(sippymodem_v34_nonlinear_encode(
 		      (enum sippymodem_v34_nonlinear_parameter)2, 1.0,

@@ -14,6 +14,14 @@ bool sippymodem_v34_nonlinear_parameter_is_valid(
 	       parameter == SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16;
 }
 
+bool sippymodem_v34_nonlinear_configuration_is_valid(
+	enum sippymodem_v34_nonlinear_parameter parameter,
+	double mean_squared_magnitude)
+{
+	return sippymodem_v34_nonlinear_parameter_is_valid(parameter) &&
+	       isfinite(mean_squared_magnitude) && mean_squared_magnitude > 0.0;
+}
+
 enum sippymodem_v34_nonlinear_encoder_result
 sippymodem_v34_nonlinear_encode(
 	enum sippymodem_v34_nonlinear_parameter parameter,
@@ -26,9 +34,9 @@ sippymodem_v34_nonlinear_encode(
 	double quadrature;
 	double projection = 1.0;
 
-	if (!sippymodem_v34_nonlinear_parameter_is_valid(parameter) ||
-	    !isfinite(mean_squared_magnitude) ||
-	    mean_squared_magnitude <= 0.0 || precoded_symbol == NULL ||
+	if (!sippymodem_v34_nonlinear_configuration_is_valid(
+		    parameter, mean_squared_magnitude) ||
+	    precoded_symbol == NULL ||
 	    projected_symbol == NULL)
 		return SIPPYMODEM_V34_NONLINEAR_ENCODER_INVALID_ARGUMENT;
 	in_phase = (double)precoded_symbol->in_phase /

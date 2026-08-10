@@ -7,7 +7,7 @@
 #include <string.h>
 
 enum {
-	MAX_PRIMARY_BITS = 79,
+	MAX_PRIMARY_BITS = SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS,
 };
 
 static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {

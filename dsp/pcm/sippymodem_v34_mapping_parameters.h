@@ -14,6 +14,7 @@ enum sippymodem_v34_mapping_parameters_result {
 };
 
 enum {
+	SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS = 79,
 	SIPPYMODEM_V34_MAX_SHELL_MAPPER_BITS = 31,
 	SIPPYMODEM_V34_MAX_RING_COUNT = 18,
 };

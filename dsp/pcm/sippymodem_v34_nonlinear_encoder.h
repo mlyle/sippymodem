@@ -20,6 +20,9 @@ enum sippymodem_v34_nonlinear_encoder_result {
 
 bool sippymodem_v34_nonlinear_parameter_is_valid(
 	enum sippymodem_v34_nonlinear_parameter parameter);
+bool sippymodem_v34_nonlinear_configuration_is_valid(
+	enum sippymodem_v34_nonlinear_parameter parameter,
+	double mean_squared_magnitude);
 
 /* Apply the clause 9.7 radial projection to one exact Q7 precoder output.
  * mean_squared_magnitude is E[|x|^2] in unscaled constellation-grid units;
