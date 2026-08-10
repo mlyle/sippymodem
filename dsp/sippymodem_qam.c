@@ -30,16 +30,18 @@ static bool point_is_finite(const struct sippymodem_qam_point *point)
 }
 
 static bool transmit_point_is_valid(
-	const struct sippymodem_qam_point *point)
+	const struct sippymodem_qam_point *point, double maximum_point_power)
 {
 	double power;
 
-	if (!point_is_finite(point))
+	if (!point_is_finite(point) || !isfinite(maximum_point_power) ||
+	    maximum_point_power <= 0.0)
 		return false;
 	power = point->in_phase * point->in_phase +
 		point->quadrature * point->quadrature;
 	return isfinite(power) &&
-	       power <= QAM_MAX_POINT_POWER + QAM_POINT_EPSILON;
+	       (power <= maximum_point_power ||
+		power / maximum_point_power <= 1.0 + QAM_POINT_EPSILON);
 }
 
 static uint32_t phase_step(
@@ -202,6 +204,8 @@ bool sippymodem_qam_modulator_is_valid(
 	    modulator->amplitude <= 0 ||
 	    !isfinite(modulator->pulse_normalization) ||
 	    modulator->pulse_normalization <= 0.0 ||
+	    !isfinite(modulator->maximum_point_power) ||
+	    modulator->maximum_point_power <= 0.0 ||
 	    modulator->active_count > SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS)
 		return false;
 	support = period * modulator->channel.pulse_span_symbols;
@@ -209,7 +213,9 @@ bool sippymodem_qam_modulator_is_valid(
 		return false;
 	for (size_t index = 0; index < modulator->active_count; ++index)
 		if (modulator->active[index].age_units > support ||
-		    !transmit_point_is_valid(&modulator->active[index].point))
+		    !transmit_point_is_valid(
+			    &modulator->active[index].point,
+			    modulator->maximum_point_power))
 			return false;
 	return true;
 }
@@ -218,10 +224,21 @@ enum sippymodem_qam_result sippymodem_qam_modulator_init(
 	struct sippymodem_qam_modulator *modulator,
 	const struct sippymodem_qam_channel *channel, int16_t amplitude)
 {
+	return sippymodem_qam_modulator_init_with_point_power_limit(
+		modulator, channel, amplitude, QAM_MAX_POINT_POWER);
+}
+
+enum sippymodem_qam_result
+sippymodem_qam_modulator_init_with_point_power_limit(
+	struct sippymodem_qam_modulator *modulator,
+	const struct sippymodem_qam_channel *channel, int16_t amplitude,
+	double maximum_point_power)
+{
 	uint64_t period = 0;
 	double normalization;
 
 	if (modulator == NULL || amplitude <= 0 ||
+	    !isfinite(maximum_point_power) || maximum_point_power <= 0.0 ||
 	    !channel_is_valid(channel, &period))
 		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
 	normalization = pulse_normalization(channel);
@@ -234,6 +251,7 @@ enum sippymodem_qam_result sippymodem_qam_modulator_init(
 		channel->sample_rate, channel->carrier_frequency_numerator,
 		channel->carrier_frequency_denominator);
 	modulator->pulse_normalization = normalization;
+	modulator->maximum_point_power = maximum_point_power;
 	modulator->amplitude = amplitude;
 	modulator->needs_symbol = true;
 	return SIPPYMODEM_QAM_OK;
@@ -323,7 +341,7 @@ enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
 	double waveform;
 
 	if (!sippymodem_qam_modulator_is_valid(modulator) ||
-	    !transmit_point_is_valid(point) ||
+	    !transmit_point_is_valid(point, modulator->maximum_point_power) ||
 	    sample == NULL || symbol_accepted == NULL ||
 	    (modulator->needs_symbol &&
 	     modulator->active_count == SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS))

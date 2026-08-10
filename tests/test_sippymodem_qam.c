@@ -435,6 +435,65 @@ static bool test_silence_does_not_lock(void)
 	return true;
 }
 
+static bool test_configurable_point_power(void)
+{
+	struct sippymodem_qam_channel channel = v22_channel(1200);
+	struct sippymodem_qam_modulator bounded;
+	struct sippymodem_qam_modulator wider;
+	struct sippymodem_qam_modulator before;
+	const struct sippymodem_qam_point wider_point = { 1.0, 1.0 };
+	const struct sippymodem_qam_point excessive_point = { 1.0, 1.1 };
+	double sample = -99.0;
+	bool accepted = false;
+
+	CHECK(sippymodem_qam_modulator_init(
+		      &bounded, &channel, TEST_AMPLITUDE) ==
+		      SIPPYMODEM_QAM_OK &&
+		      bounded.maximum_point_power == 9.0 / 5.0 &&
+	      sippymodem_qam_modulator_init_with_point_power_limit(
+		      &wider, &channel, TEST_AMPLITUDE, 2.0) ==
+		      SIPPYMODEM_QAM_OK &&
+		      wider.maximum_point_power == 2.0,
+	      "QAM did not retain its selected point-power bound");
+	before = bounded;
+	CHECK(sippymodem_qam_modulator_sample_f64(
+		      &bounded, &wider_point, &sample, &accepted) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      memcmp(&bounded, &before, sizeof(bounded)) == 0 &&
+		      sample == -99.0 && !accepted,
+	      "default QAM bound accepted a wider constellation point");
+	CHECK(sippymodem_qam_modulator_sample_f64(
+		      &wider, &wider_point, &sample, &accepted) ==
+		      SIPPYMODEM_QAM_OK &&
+		      accepted && isfinite(sample),
+	      "explicit QAM bound rejected its boundary point");
+	before = wider;
+	sample = -99.0;
+	accepted = false;
+	CHECK(sippymodem_qam_modulator_sample_f64(
+		      &wider, &excessive_point, &sample, &accepted) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      memcmp(&wider, &before, sizeof(wider)) == 0 &&
+		      sample == -99.0 && !accepted,
+	      "explicit QAM bound accepted an excessive point");
+	before = wider;
+	CHECK(sippymodem_qam_modulator_init_with_point_power_limit(
+		      &wider, &channel, TEST_AMPLITUDE, 0.0) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+	      sippymodem_qam_modulator_init_with_point_power_limit(
+		      &wider, &channel, TEST_AMPLITUDE, NAN) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+	      sippymodem_qam_modulator_init_with_point_power_limit(
+		      &wider, &channel, TEST_AMPLITUDE, INFINITY) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      memcmp(&wider, &before, sizeof(wider)) == 0,
+	      "invalid QAM point-power limit mutated state");
+	wider.maximum_point_power = NAN;
+	CHECK(!sippymodem_qam_modulator_is_valid(&wider),
+	      "QAM accepted a corrupt point-power limit");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_qam_channel channel = v22_channel(1200);
@@ -556,6 +615,7 @@ int main(void)
 		{ "receive loopback", test_receive_loopback },
 		{ "receive tolerance", test_receive_tolerance },
 		{ "silence does not lock", test_silence_does_not_lock },
+		{ "configurable point power", test_configurable_point_power },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

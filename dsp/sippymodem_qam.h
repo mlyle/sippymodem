@@ -50,6 +50,7 @@ struct sippymodem_qam_modulator {
 	uint32_t carrier_phase;
 	uint32_t carrier_phase_step;
 	double pulse_normalization;
+	double maximum_point_power;
 	size_t active_count;
 	int16_t amplitude;
 	bool needs_symbol;
@@ -107,11 +108,18 @@ enum sippymodem_qam_result sippymodem_root_raised_cosine(
 enum sippymodem_qam_result sippymodem_qam_modulator_init(
 	struct sippymodem_qam_modulator *modulator,
 	const struct sippymodem_qam_channel *channel, int16_t amplitude);
+/* Select an explicit squared-magnitude bound for a mode-specific
+ * constellation. The ordinary initializer retains the 9/5 training bound. */
+enum sippymodem_qam_result
+sippymodem_qam_modulator_init_with_point_power_limit(
+	struct sippymodem_qam_modulator *modulator,
+	const struct sippymodem_qam_channel *channel, int16_t amplitude,
+	double maximum_point_power);
 bool sippymodem_qam_modulator_is_valid(
 	const struct sippymodem_qam_modulator *modulator);
 bool sippymodem_qam_modulator_can_accept_symbol(
 	const struct sippymodem_qam_modulator *modulator);
-/* Transmit points are finite with squared magnitude no greater than 3/2. */
+/* Transmit points must fit the modulator's squared-magnitude bound. */
 enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
 	struct sippymodem_qam_modulator *modulator,
 	const struct sippymodem_qam_point *point, double *sample,
