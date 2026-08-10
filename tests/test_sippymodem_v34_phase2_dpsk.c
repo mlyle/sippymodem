@@ -10,6 +10,10 @@
 
 enum {
 	TEST_AMPLITUDE = 12000,
+	TEST_BIT_COUNT = 720,
+	TEST_DECODED_CAPACITY = 512,
+	TEST_SYNC_BITS = 32,
+	TEST_PAYLOAD_BITS = 96,
 };
 
 static const double TEST_PI = 3.1415926535897932384626433832795;
@@ -117,11 +121,119 @@ static bool test_carriers_and_cadence(void)
 	return true;
 }
 
+static uint32_t fixture_random(uint32_t *state)
+{
+	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
+	return *state;
+}
+
+static void build_bits(uint8_t bits[TEST_BIT_COUNT])
+{
+	uint32_t random = UINT32_C(0x63c97a51);
+
+	for (size_t index = 0; index < TEST_BIT_COUNT; ++index)
+		bits[index] = (uint8_t)(fixture_random(&random) >> 31);
+}
+
+static size_t find_pattern(
+	const uint8_t *haystack, size_t haystack_count,
+	const uint8_t *needle, size_t needle_count)
+{
+	if (needle_count > haystack_count)
+		return SIZE_MAX;
+	for (size_t offset = 0; offset <= haystack_count - needle_count;
+	     ++offset)
+		if (memcmp(haystack + offset, needle, needle_count) == 0)
+			return offset;
+	return SIZE_MAX;
+}
+
+static bool check_loopback(
+	enum sippymodem_v34_phase2_station_role transmit_role)
+{
+	enum sippymodem_v34_phase2_station_role receive_role =
+		transmit_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+			SIPPYMODEM_V34_PHASE2_ANSWERING_STATION :
+			SIPPYMODEM_V34_PHASE2_CALLING_STATION;
+	struct sippymodem_v34_phase2_dpsk_transmitter transmitter;
+	struct sippymodem_v34_phase2_dpsk_receiver receiver;
+	struct sippymodem_qam_measurement measurement;
+	uint8_t bits[TEST_BIT_COUNT];
+	uint8_t decoded[TEST_DECODED_CAPACITY];
+	size_t accepted_count = 0;
+	size_t decoded_count = 0;
+	size_t sync_offset;
+	const size_t sample_limit =
+		(TEST_BIT_COUNT + 24u) *
+		SIPPYMODEM_V34_PHASE2_DPSK_SAMPLE_RATE /
+		SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE;
+
+	build_bits(bits);
+	CHECK(sippymodem_v34_phase2_dpsk_transmitter_init(
+		      &transmitter, transmit_role, TEST_AMPLITUDE) ==
+		      SIPPYMODEM_V34_PHASE2_DPSK_OK &&
+		      sippymodem_v34_phase2_dpsk_receiver_init(
+			      &receiver, receive_role) ==
+			      SIPPYMODEM_V34_PHASE2_DPSK_OK,
+	      "Phase 2 loopback endpoints did not initialize");
+	for (size_t index = 0; index < sample_limit; ++index) {
+		uint8_t transmit_bit = accepted_count < TEST_BIT_COUNT ?
+					       bits[accepted_count] :
+					       0;
+		uint8_t received_bit;
+		int16_t sample;
+		bool accepted;
+		bool ready;
+
+		CHECK(sippymodem_v34_phase2_dpsk_transmitter_sample(
+			      &transmitter, transmit_bit, &sample, &accepted) ==
+			      SIPPYMODEM_V34_PHASE2_DPSK_OK &&
+			      sippymodem_v34_phase2_dpsk_receiver_sample(
+				      &receiver, sample, &received_bit, &ready) ==
+				      SIPPYMODEM_V34_PHASE2_DPSK_OK,
+		      "Phase 2 loopback failed at sample %zu", index);
+		if (accepted && accepted_count < TEST_BIT_COUNT)
+			accepted_count++;
+		if (ready) {
+			CHECK(decoded_count < ARRAY_LENGTH(decoded),
+			      "Phase 2 receiver produced unbounded bits");
+			decoded[decoded_count++] = received_bit;
+		}
+	}
+	CHECK(accepted_count == TEST_BIT_COUNT,
+	      "Phase 2 transmitter did not consume its bit fixture");
+	sync_offset = find_pattern(
+		decoded, decoded_count,
+		bits + TEST_BIT_COUNT - TEST_SYNC_BITS - TEST_PAYLOAD_BITS,
+		TEST_SYNC_BITS);
+	CHECK(sync_offset != SIZE_MAX &&
+		      sync_offset + TEST_SYNC_BITS + TEST_PAYLOAD_BITS <=
+			      decoded_count &&
+		      memcmp(decoded + sync_offset + TEST_SYNC_BITS,
+			     bits + TEST_BIT_COUNT - TEST_PAYLOAD_BITS,
+			     TEST_PAYLOAD_BITS) == 0,
+	      "Phase 2 receiver changed its post-acquisition payload");
+	measurement = sippymodem_v34_phase2_dpsk_receiver_measure(&receiver);
+	CHECK(measurement.timing_locked && measurement.line_power > 1.0 &&
+		      measurement.symbol_power > 1.0,
+	      "Phase 2 receiver did not retain carrier measurements");
+	return true;
+}
+
+static bool test_bidirectional_loopback(void)
+{
+	return check_loopback(SIPPYMODEM_V34_PHASE2_CALLING_STATION) &&
+	       check_loopback(SIPPYMODEM_V34_PHASE2_ANSWERING_STATION);
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_v34_phase2_dpsk_transmitter transmitter;
+	struct sippymodem_v34_phase2_dpsk_receiver receiver;
 	unsigned char snapshot[sizeof(transmitter)];
+	struct sippymodem_qam_measurement measurement;
 	int16_t sample = 123;
+	uint8_t bit = 7;
 	bool ready = true;
 
 	CHECK(sippymodem_v34_phase2_dpsk_transmitter_init(
@@ -150,6 +262,30 @@ static bool test_validation(void)
 		      memcmp(snapshot, &transmitter, sizeof(snapshot)) == 0 &&
 		      sample == 123 && ready,
 	      "Phase 2 transmitter mutated state after invalid input");
+	CHECK(sippymodem_v34_phase2_dpsk_receiver_init(
+		      NULL, SIPPYMODEM_V34_PHASE2_CALLING_STATION) ==
+		      SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT &&
+		      sippymodem_v34_phase2_dpsk_receiver_init(
+			      &receiver,
+			      SIPPYMODEM_V34_PHASE2_CALLING_STATION) ==
+			      SIPPYMODEM_V34_PHASE2_DPSK_OK &&
+		      sippymodem_v34_phase2_dpsk_receiver_sample(
+			      &receiver, 0, NULL, &ready) ==
+			      SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT &&
+		      sippymodem_v34_phase2_dpsk_receiver_reset(&receiver) ==
+			      SIPPYMODEM_V34_PHASE2_DPSK_OK,
+	      "Phase 2 receiver validation or reset failed");
+	measurement = sippymodem_v34_phase2_dpsk_receiver_measure(&receiver);
+	CHECK(!measurement.timing_locked && measurement.line_power == 0.0 &&
+		      measurement.symbol_power == 0.0,
+	      "Phase 2 receiver reset retained measurements");
+	receiver.previous_point.in_phase = NAN;
+	measurement = sippymodem_v34_phase2_dpsk_receiver_measure(&receiver);
+	CHECK(sippymodem_v34_phase2_dpsk_receiver_sample(
+		      &receiver, 0, &bit, &ready) ==
+		      SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT &&
+		      !measurement.timing_locked && measurement.line_power == 0.0,
+	      "Phase 2 receiver accepted corrupt state");
 	CHECK(strcmp(sippymodem_v34_phase2_dpsk_result_name(
 			     SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT),
 			     "invalid argument") == 0,
@@ -164,6 +300,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "carriers and cadence", test_carriers_and_cadence },
+		{ "bidirectional loopback", test_bidirectional_loopback },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

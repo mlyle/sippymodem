@@ -33,6 +33,14 @@ static uint32_t local_carrier_hz(
 		       SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ;
 }
 
+static uint32_t remote_carrier_hz(
+	enum sippymodem_v34_phase2_station_role role)
+{
+	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		       SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ :
+		       SIPPYMODEM_V34_PHASE2_CALLING_CARRIER_HZ;
+}
+
 static struct sippymodem_qam_channel phase2_channel(uint32_t carrier_hz)
 {
 	return (struct sippymodem_qam_channel){
@@ -184,6 +192,117 @@ sippymodem_v34_phase2_dpsk_transmitter_sample(
 	*sample = (int16_t)mixed;
 	*bit_accepted = consumed;
 	return SIPPYMODEM_V34_PHASE2_DPSK_OK;
+}
+
+static bool point_has_direction(const struct sippymodem_qam_point *point)
+{
+	return point != NULL && isfinite(point->in_phase) &&
+	       isfinite(point->quadrature) &&
+	       isfinite(hypot(point->in_phase, point->quadrature)) &&
+	       (point->in_phase != 0.0 || point->quadrature != 0.0);
+}
+
+static bool receiver_metadata_is_valid(
+	const struct sippymodem_v34_phase2_dpsk_receiver *receiver)
+{
+	if (receiver == NULL || !role_is_valid(receiver->local_role) ||
+	    !channel_matches(
+		    &receiver->carrier.channel,
+		    remote_carrier_hz(receiver->local_role)))
+		return false;
+	if (receiver->has_previous_point)
+		return point_has_direction(&receiver->previous_point);
+	return receiver->previous_point.in_phase == 0.0 &&
+	       receiver->previous_point.quadrature == 0.0;
+}
+
+enum sippymodem_v34_phase2_dpsk_result
+sippymodem_v34_phase2_dpsk_receiver_init(
+	struct sippymodem_v34_phase2_dpsk_receiver *receiver,
+	enum sippymodem_v34_phase2_station_role local_role)
+{
+	struct sippymodem_v34_phase2_dpsk_receiver initialized = {
+		.local_role = local_role,
+	};
+	struct sippymodem_qam_channel channel;
+
+	if (receiver == NULL || !role_is_valid(local_role))
+		return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
+	channel = phase2_channel(remote_carrier_hz(local_role));
+	if (sippymodem_qam_demodulator_init(
+		    &initialized.carrier, &channel) != SIPPYMODEM_QAM_OK ||
+	    !receiver_metadata_is_valid(&initialized))
+		return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return SIPPYMODEM_V34_PHASE2_DPSK_OK;
+}
+
+enum sippymodem_v34_phase2_dpsk_result
+sippymodem_v34_phase2_dpsk_receiver_reset(
+	struct sippymodem_v34_phase2_dpsk_receiver *receiver)
+{
+	if (!receiver_metadata_is_valid(receiver) ||
+	    sippymodem_qam_demodulator_reset(&receiver->carrier) !=
+		    SIPPYMODEM_QAM_OK)
+		return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
+	receiver->previous_point = (struct sippymodem_qam_point){ 0 };
+	receiver->has_previous_point = false;
+	return SIPPYMODEM_V34_PHASE2_DPSK_OK;
+}
+
+enum sippymodem_v34_phase2_dpsk_result
+sippymodem_v34_phase2_dpsk_receiver_sample(
+	struct sippymodem_v34_phase2_dpsk_receiver *receiver,
+	int16_t sample, uint8_t *bit, bool *bit_ready)
+{
+	struct sippymodem_qam_point point;
+	bool symbol_ready;
+	bool decoded = false;
+	uint8_t received = 0;
+
+	if (!receiver_metadata_is_valid(receiver) || bit == NULL ||
+	    bit_ready == NULL)
+		return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
+	if (sippymodem_qam_demodulator_sample(
+		    &receiver->carrier, sample, &point, &symbol_ready) !=
+	    SIPPYMODEM_QAM_OK)
+		return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
+	if (symbol_ready) {
+		double magnitude;
+
+		if (!point_has_direction(&point))
+			return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
+		magnitude = hypot(point.in_phase, point.quadrature);
+		if (receiver->has_previous_point) {
+			double previous_magnitude = hypot(
+				receiver->previous_point.in_phase,
+				receiver->previous_point.quadrature);
+			double dot =
+				receiver->previous_point.in_phase /
+					previous_magnitude *
+					(point.in_phase / magnitude) +
+				receiver->previous_point.quadrature /
+					previous_magnitude *
+					(point.quadrature / magnitude);
+
+			received = dot < 0.0;
+			decoded = true;
+		}
+		receiver->previous_point = point;
+		receiver->has_previous_point = true;
+	}
+	*bit = received;
+	*bit_ready = decoded;
+	return SIPPYMODEM_V34_PHASE2_DPSK_OK;
+}
+
+struct sippymodem_qam_measurement
+sippymodem_v34_phase2_dpsk_receiver_measure(
+	const struct sippymodem_v34_phase2_dpsk_receiver *receiver)
+{
+	if (!receiver_metadata_is_valid(receiver))
+		return (struct sippymodem_qam_measurement){ 0 };
+	return sippymodem_qam_demodulator_measure(&receiver->carrier);
 }
 
 const char *sippymodem_v34_phase2_dpsk_result_name(

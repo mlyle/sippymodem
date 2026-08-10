@@ -36,6 +36,13 @@ struct sippymodem_v34_phase2_dpsk_transmitter {
 	bool initial_point_pending;
 };
 
+struct sippymodem_v34_phase2_dpsk_receiver {
+	struct sippymodem_qam_demodulator carrier;
+	struct sippymodem_qam_point previous_point;
+	enum sippymodem_v34_phase2_station_role local_role;
+	bool has_previous_point;
+};
+
 /* nominal_amplitude is the unadjusted Phase 2 peak level. The answering
  * carrier is reduced by 1 dB and its guard tone by 7 dB from this level. */
 enum sippymodem_v34_phase2_dpsk_result
@@ -50,6 +57,23 @@ enum sippymodem_v34_phase2_dpsk_result
 sippymodem_v34_phase2_dpsk_transmitter_sample(
 	struct sippymodem_v34_phase2_dpsk_transmitter *transmitter,
 	uint8_t bit, int16_t *sample, bool *bit_accepted);
+
+/* local_role selects the opposite station's carrier. The first recovered
+ * point establishes the differential reference and does not produce a bit. */
+enum sippymodem_v34_phase2_dpsk_result
+sippymodem_v34_phase2_dpsk_receiver_init(
+	struct sippymodem_v34_phase2_dpsk_receiver *receiver,
+	enum sippymodem_v34_phase2_station_role local_role);
+enum sippymodem_v34_phase2_dpsk_result
+sippymodem_v34_phase2_dpsk_receiver_reset(
+	struct sippymodem_v34_phase2_dpsk_receiver *receiver);
+enum sippymodem_v34_phase2_dpsk_result
+sippymodem_v34_phase2_dpsk_receiver_sample(
+	struct sippymodem_v34_phase2_dpsk_receiver *receiver,
+	int16_t sample, uint8_t *bit, bool *bit_ready);
+struct sippymodem_qam_measurement
+sippymodem_v34_phase2_dpsk_receiver_measure(
+	const struct sippymodem_v34_phase2_dpsk_receiver *receiver);
 
 const char *sippymodem_v34_phase2_dpsk_result_name(
 	enum sippymodem_v34_phase2_dpsk_result result);
