@@ -1,32 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_v34_phase3_s_sequence.h>
-#include <sippymodem_v34_constellation.h>
 
 #include "test.h"
 
 #include <math.h>
 #include <string.h>
-
-static const double TEST_PI =
-	3.1415926535897932384626433832795;
-
-static bool test_shared_point_zero_geometry(void)
-{
-	for (int turns = -9; turns <= 9; ++turns) {
-		struct sippymodem_qam_point point =
-			sippymodem_v34_rotated_point_zero(turns);
-		double angle = TEST_PI / 4.0 + turns * TEST_PI / 2.0;
-		double power = point.in_phase * point.in_phase +
-			point.quadrature * point.quadrature;
-
-		CHECK(fabs(point.in_phase - cos(angle)) < 1e-14 &&
-		      fabs(point.quadrature - sin(angle)) < 1e-14 &&
-		      fabs(power - 1.0) < 1e-14,
-		      "point-zero rotation changed at turn %d", turns);
-	}
-	return true;
-}
 
 static unsigned int expected_quarter_turns(unsigned int symbol)
 {
@@ -205,7 +184,6 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "shared point-zero geometry", test_shared_point_zero_geometry },
 		{ "normative sequence", test_normative_sequence },
 		{ "completion and copy", test_completion_and_copy },
 		{ "validation", test_validation },

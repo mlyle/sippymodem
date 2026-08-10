@@ -441,7 +441,7 @@ static bool test_validation(void)
 	struct sippymodem_qam_modulator modulator;
 	struct sippymodem_qam_demodulator demodulator;
 	struct sippymodem_qam_point point = { 1.0, 0.0 };
-	struct sippymodem_qam_point bounded_point = { sqrt(3.0 / 2.0), 0.0 };
+	struct sippymodem_qam_point bounded_point = { sqrt(9.0 / 5.0), 0.0 };
 	struct sippymodem_qam_point invalid_point = { 1.0, 1.0 };
 	struct sippymodem_qam_point received_point;
 	uint32_t carrier_phase_step;
