@@ -8,6 +8,7 @@
 #include <sippymodem_v22_datapump.h>
 #include <sippymodem_v23_datapump.h>
 #include <sippymodem_v32_datapump.h>
+#include <sippymodem_v8_datapump.h>
 
 #include "test.h"
 
@@ -23,6 +24,7 @@ enum {
 	SIP_FRAME_SAMPLES = 160,
 	ENDPOINT_OUTPUT_CAPACITY = 1024,
 	TRAINING_FRAME_LIMIT = 250,
+	NEGOTIATED_TRAINING_FRAME_LIMIT = 500,
 	LINK_DRAIN_FRAME_LIMIT = 50,
 	DATA_FRAME_LIMIT = 400,
 };
@@ -251,13 +253,17 @@ static bool run_media_call(
 		.context = &capture,
 		.write = capture_recording,
 	};
+	bool uses_v8 =
+		sippymodem_v8_datapump_modulation(test_case->id) !=
+		SIPPYMODEM_V8_MODULATION_NONE;
 	bool online = false;
-	bool answerer_used_v8 = test_case->id != DP_V21;
+	bool answerer_used_v8 = !uses_v8;
 	bool prelink_queued = false;
 	bool prelink_delivered = false;
 	bool transferred = false;
-	enum DP_ID initial_datapump =
-		test_case->id == DP_V21 ? DP_V8 : test_case->id;
+	enum DP_ID initial_datapump = uses_v8 ? DP_V8 : test_case->id;
+	unsigned int training_frame_limit =
+		uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT : TRAINING_FRAME_LIMIT;
 	int selection_length = (int)strlen(test_case->selection_command);
 
 	CHECK(sippymodem_datapumps_start(&datapumps) ==
@@ -299,7 +305,7 @@ static bool run_media_call(
 		      modem_answer(answerer.modem) == 0,
 	      "connected SIP call did not select %s roles", test_case->name);
 
-	for (unsigned int frame = 0; frame < TRAINING_FRAME_LIMIT; ++frame) {
+	for (unsigned int frame = 0; frame < training_frame_limit; ++frame) {
 		CHECK(process_sip_frame(
 		      &caller, &answerer, codec, &recorder),
 		      "%s training failed at the SIP media boundary",

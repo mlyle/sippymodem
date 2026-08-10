@@ -14,6 +14,7 @@ enum sippymodem_v8_call_function {
 };
 
 enum sippymodem_v8_modulation {
+	SIPPYMODEM_V8_MODULATION_NONE = 0,
 	SIPPYMODEM_V8_MODULATION_V34_DUPLEX = 1u << 0,
 	SIPPYMODEM_V8_MODULATION_V34_HALF_DUPLEX = 1u << 1,
 	SIPPYMODEM_V8_MODULATION_V32 = 1u << 2,

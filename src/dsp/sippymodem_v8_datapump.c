@@ -18,7 +18,8 @@ struct sippymodem_v8_datapump {
 		struct sippymodem_v8_calling calling;
 		struct sippymodem_v8_answering answering;
 	} handshake;
-	enum DP_ID requested_modulation;
+	enum DP_ID requested_datapump;
+	enum sippymodem_v8_modulation negotiated_modulation;
 	bool caller;
 	bool handoff_requested;
 };
@@ -40,13 +41,17 @@ static struct dp_operations v8_operations = {
 static struct sippymodem_v8_datapump *v8_from_dp(struct dp *dp)
 {
 	struct sippymodem_v8_datapump *datapump;
+	enum sippymodem_v8_modulation modulation;
 
 	if (dp == NULL || dp->id != DP_V8 || dp->op != &v8_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
+	modulation = sippymodem_v8_datapump_modulation(
+		datapump->requested_datapump);
 	if (&datapump->dp != dp ||
-	    datapump->requested_modulation != DP_V21)
+	    modulation == SIPPYMODEM_V8_MODULATION_NONE ||
+	    modulation != datapump->negotiated_modulation)
 		return NULL;
 	return datapump;
 }
@@ -57,16 +62,19 @@ static struct dp *create_v8(
 {
 	struct sippymodem_v8_datapump *datapump;
 	struct sippymodem_v8_menu local_menu;
+	enum sippymodem_v8_modulation modulation =
+		sippymodem_v8_datapump_modulation(id);
 
 	/*
-	 * The current V.21 handoff exposes raw asynchronous bits, so do not
-	 * negotiate LAPM until the downstream path implements it.
+	 * The current source-built handoffs expose raw asynchronous bits, so do
+	 * not negotiate LAPM until their downstream paths implement it.
 	 */
-	if (modem == NULL || id != DP_V21 || (caller != 0 && caller != 1) ||
+	if (modem == NULL || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v8_operations || operations->use_count == INT_MAX ||
+	    modulation == SIPPYMODEM_V8_MODULATION_NONE ||
 	    sippymodem_v8_call_menu_init(
-		    &local_menu, SIPPYMODEM_V8_MODULATION_V21, false) !=
+		    &local_menu, modulation, false) !=
 		    SIPPYMODEM_V8_MENU_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
@@ -84,7 +92,8 @@ static struct dp *create_v8(
 		free(datapump);
 		return NULL;
 	}
-	datapump->requested_modulation = id;
+	datapump->requested_datapump = id;
+	datapump->negotiated_modulation = modulation;
 	datapump->dp = (struct dp){
 		.id = DP_V8,
 		.modem = modem,
@@ -123,11 +132,11 @@ static int request_handoff(struct sippymodem_v8_datapump *datapump)
 			&datapump->handshake.answering, &menu, &modulation) ==
 			SIPPYMODEM_V8_ANSWERING_OK;
 	}
-	if (!selected || modulation != SIPPYMODEM_V8_MODULATION_V21 ||
-	    menu.modulations != SIPPYMODEM_V8_MODULATION_V21 || menu.lapm ||
+	if (!selected || modulation != datapump->negotiated_modulation ||
+	    menu.modulations != datapump->negotiated_modulation || menu.lapm ||
 	    modem_set_param(
 		    datapump->dp.modem, MDMPRM_DP_REQUESTED,
-		    datapump->requested_modulation) != 0)
+		    datapump->requested_datapump) != 0)
 		return DPSTAT_ERROR;
 	datapump->dp.modem->cfg.ec = menu.lapm;
 	datapump->dp.modem->dsp_info.qc_lapm = menu.lapm;

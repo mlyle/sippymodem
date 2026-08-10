@@ -52,6 +52,7 @@
 
 #include <modem.h>
 #include <modem_debug.h>
+#include <sippymodem_v8_datapump.h>
 
 
 #define XMIT_SIZE 4096
@@ -1065,10 +1066,6 @@ static int modem_comp_put_chars(struct modem *m, const char *buf, int n)
  *
  */
 
-#define NEEDS_V8_NEGOTIATION(id) \
-	((id) == DP_V21 || (id) == DP_V34 || (id) == DP_V90 || \
-	 (id) == DP_V92)
-
 static void do_modem_change_dp (struct modem *m)
 {
 	struct dp_operations *op;
@@ -1090,8 +1087,12 @@ static void do_modem_change_dp (struct modem *m)
 
 		id = dp_id;
 		if(dp_id == 0) {
+			enum sippymodem_v8_modulation modulation;
+
 			dp_id = MODEM_DP(m);
-			id = NEEDS_V8_NEGOTIATION(dp_id) ? DP_V8 : dp_id;
+			modulation = sippymodem_v8_datapump_modulation(dp_id);
+			id = modulation == SIPPYMODEM_V8_MODULATION_NONE ?
+				dp_id : DP_V8;
 		}
 
 		MODEM_DBG("%ld: change dp: --> %d...\n", m->count, id);

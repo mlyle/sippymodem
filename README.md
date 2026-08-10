@@ -17,7 +17,10 @@ current daemon is entirely source-built and uses the host's native ABI. Its
 modem core owns source-built SIP call-progress and low-speed FSK data pumps. SIP
 call state selects the originating or answering tone pair, completes a bounded
 training exchange, and hands asynchronous terminal bits to the native signal
-path. V.21 and Bell 103 share a reusable 300-bit/s binary-FSK channel. V.23 adds
+path. V.8 now negotiates V.21, V.22/V.22bis, V.23, and V.32/V.32bis before an
+exact handoff to the requested datapump; Bell and Baudot modes retain their
+direct startup paths. V.21 and Bell 103 share a reusable 300-bit/s binary-FSK
+channel. V.23 adds
 an asymmetric 1200-bit/s forward channel and 75-bit/s backward channel. These
 FSK modes use exact rational symbol timing and generated tone-pair detectors
 rather than checked-in coefficient tables. V.22 adds 1200-bit/s differential

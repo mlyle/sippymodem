@@ -3,6 +3,7 @@
 #include <modem.h>
 #include <sippymodem_datapumps.h>
 #include <sippymodem_v32_datapump.h>
+#include <sippymodem_v8_datapump.h>
 
 #include "test.h"
 
@@ -57,6 +58,36 @@ static int unused_dp_process(
 	(void)transmit;
 	(void)count;
 	return DPSTAT_ERROR;
+}
+
+static bool test_v8_datapump_mapping(void)
+{
+	CHECK(sippymodem_v8_datapump_modulation(DP_V21) ==
+		      SIPPYMODEM_V8_MODULATION_V21 &&
+		      sippymodem_v8_datapump_modulation(DP_V22) ==
+		      SIPPYMODEM_V8_MODULATION_V22 &&
+		      sippymodem_v8_datapump_modulation(DP_V22BIS) ==
+		      SIPPYMODEM_V8_MODULATION_V22 &&
+		      sippymodem_v8_datapump_modulation(DP_V23) ==
+		      SIPPYMODEM_V8_MODULATION_V23_DUPLEX &&
+		      sippymodem_v8_datapump_modulation(DP_V32) ==
+		      SIPPYMODEM_V8_MODULATION_V32 &&
+		      sippymodem_v8_datapump_modulation(DP_B103) ==
+			      SIPPYMODEM_V8_MODULATION_NONE &&
+		      sippymodem_v8_datapump_modulation(DP_B212) ==
+			      SIPPYMODEM_V8_MODULATION_NONE &&
+		      sippymodem_v8_datapump_modulation(DP_BAUDOT) ==
+			      SIPPYMODEM_V8_MODULATION_NONE &&
+		      sippymodem_v8_datapump_modulation(DP_V32BIS) ==
+			      SIPPYMODEM_V8_MODULATION_NONE &&
+		      sippymodem_v8_datapump_modulation(DP_V34) ==
+			      SIPPYMODEM_V8_MODULATION_NONE &&
+		      sippymodem_v8_datapump_modulation(DP_V90) ==
+			      SIPPYMODEM_V8_MODULATION_NONE &&
+		      sippymodem_v8_datapump_modulation(DP_V92) ==
+			      SIPPYMODEM_V8_MODULATION_NONE,
+	      "V.8 datapump modulation mapping changed");
+	return true;
 }
 
 static bool test_core_has_no_external_dsp_owner(void)
@@ -371,6 +402,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
 		{ "source-built data-pump ownership",
