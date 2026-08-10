@@ -24,7 +24,9 @@ PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
 PJSIP_LDLIBS := $(shell \
 	pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
-CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -Idsp
+DSP_SOURCE_DIR := ../dsp
+
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR)
 CFLAGS += -std=gnu11 -Wall -Wextra
 LDLIBS += $(PJSIP_LDLIBS) -lm
 
@@ -69,50 +71,50 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_terminal.c \
 	sippymodem_terminal.c
 SIPPYMODEM_DSP_SOURCES := \
-	dsp/sippymodem_datapumps.c \
-	dsp/sippymodem_baudot.c \
-	dsp/sippymodem_baudot_datapump.c \
-	dsp/sippymodem_dc_filter.c \
-	dsp/sippymodem_differential_qpsk.c \
-	dsp/sippymodem_fsk.c \
-	dsp/sippymodem_fsk300_datapump.c \
-	dsp/sippymodem_qam.c \
-	dsp/sippymodem_self_sync_scrambler.c \
-	dsp/sippymodem_v21.c \
-	dsp/sippymodem_v22_datapump.c \
-	dsp/sippymodem_v22_framing.c \
-	dsp/sippymodem_v22bis_receiver.c \
-	dsp/sippymodem_v22bis_symbols.c \
-	dsp/sippymodem_v23_datapump.c \
-	dsp/sippymodem_v32_datapump.c \
-	dsp/sippymodem_v32_9600_receiver.c \
-	dsp/sippymodem_v32_constellation.c \
-	dsp/sippymodem_v32_framing.c \
-	dsp/sippymodem_v32_rate_signal.c \
-	dsp/sippymodem_v32_startup.c \
-	dsp/sippymodem_v32_trellis.c \
-	dsp/sippymodem_v32_trellis_decoder.c \
-	dsp/sippymodem_v34_framing.c \
-	dsp/sippymodem_v34_info0.c \
-	dsp/sippymodem_v34_phase2_dpsk.c \
-	dsp/sippymodem_v34_phase2_info0_exchange.c \
-	dsp/sippymodem_v34_phase2_info_audio.c \
-	dsp/sippymodem_v34_phase2_info.c \
-	dsp/sippymodem_v34_phase2_probe.c \
-	dsp/sippymodem_v34_phase2_probe_acquisition.c \
-	dsp/sippymodem_v34_phase2_probe_receiver.c \
-	dsp/sippymodem_v34_phase2_probe_spectrum.c \
-	dsp/sippymodem_v34_phase2_probe_synchronizer.c \
-	dsp/sippymodem_v34_phase2_probe_sequence.c \
-	dsp/sippymodem_v34_phase2_ranging.c \
-	dsp/sippymodem_v34_phase2_tone.c \
-	dsp/sippymodem_v8_ansam.c \
-	dsp/sippymodem_v8_answering.c \
-	dsp/sippymodem_v8_calling.c \
-	dsp/sippymodem_v8_datapump.c \
-	dsp/sippymodem_v8_fsk.c \
-	dsp/sippymodem_v8_framing.c \
-	dsp/sippymodem_v8_menu.c
+	$(DSP_SOURCE_DIR)/sippymodem_datapumps.c \
+	$(DSP_SOURCE_DIR)/sippymodem_baudot.c \
+	$(DSP_SOURCE_DIR)/sippymodem_baudot_datapump.c \
+	$(DSP_SOURCE_DIR)/sippymodem_dc_filter.c \
+	$(DSP_SOURCE_DIR)/sippymodem_differential_qpsk.c \
+	$(DSP_SOURCE_DIR)/sippymodem_fsk.c \
+	$(DSP_SOURCE_DIR)/sippymodem_fsk300_datapump.c \
+	$(DSP_SOURCE_DIR)/sippymodem_qam.c \
+	$(DSP_SOURCE_DIR)/sippymodem_self_sync_scrambler.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v21.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v22_datapump.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v22_framing.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v22bis_receiver.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v22bis_symbols.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v23_datapump.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_datapump.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_9600_receiver.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_constellation.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_framing.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_rate_signal.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_startup.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_trellis.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_framing.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_info0.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_acquisition.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_receiver.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_spectrum.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_synchronizer.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_tone.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_ansam.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_answering.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_calling.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_datapump.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_fsk.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_framing.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_menu.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES) \
 	$(SIPPYMODEM_DSP_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)

@@ -7,10 +7,10 @@ blobs, and its scope exceeds the original modem with features including
 V.90/V.92 digital head-end operation, V.44 compression, V.92 PCM upstream,
 Baudot RTTY, and raw ISDN data over voice bearer service (DOVBS).
 
-The active implementation lives under `src/`, with modem signal processing and
-datapumps grouped under `src/dsp/`. The top-level `make` builds only that
-implementation and no longer builds or installs Linux kernel drivers. Existing
-Smart Link copyright notices are preserved in the source.
+The active implementation is split between the application under `src/` and
+the modem signal processing and datapumps under `dsp/`. The top-level `make`
+builds only that implementation and no longer builds or installs Linux kernel
+drivers. Existing Smart Link copyright notices are preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
 current daemon is entirely source-built and uses the host's native ABI. Its

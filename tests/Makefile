@@ -9,11 +9,11 @@ PJSIP_AVAILABLE := $(shell \
 PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
 PJSIP_LDLIBS := $(shell pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
-CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../src/dsp
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp
 CFLAGS += -std=c11 -Wall -Wextra -Werror
 
 BUILD_DIR := build
-DSP_SOURCE_DIR := ../src/dsp
+DSP_SOURCE_DIR := ../dsp
 PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
 PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
 PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
