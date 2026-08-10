@@ -6,6 +6,25 @@
 
 #include <string.h>
 
+enum {
+	MAX_MAPPING_FRAME_BITS = 79,
+};
+
+struct symbol_rate_fixture {
+	enum sippymodem_v34_symbol_rate symbol_rate;
+	uint8_t minimum_rate;
+	uint8_t maximum_rate;
+};
+
+static const struct symbol_rate_fixture SYMBOL_RATES[] = {
+	{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, 9 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, 11 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 2, 11 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 2, 12 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 2, 13 },
+	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 2, 14 },
+};
+
 static bool parsed_frames_are_equal(
 	const struct sippymodem_v34_parsed_mapping_frame *left,
 	const struct sippymodem_v34_parsed_mapping_frame *right)
@@ -219,6 +238,215 @@ static bool test_short_parser_layouts(void)
 	return true;
 }
 
+static bool append_bit(
+	uint8_t *bits, size_t capacity, size_t *count, uint8_t bit)
+{
+	if (*count >= capacity || bit > 1u)
+		return false;
+	bits[(*count)++] = bit;
+	return true;
+}
+
+static bool append_value(
+	uint8_t *bits, size_t capacity, size_t *count, uint32_t value,
+	uint8_t bit_count)
+{
+	for (uint8_t index = 0; index < bit_count; ++index) {
+		if (!append_bit(
+			    bits, capacity, count,
+			    (uint8_t)((value >> index) & 1u)))
+			return false;
+	}
+	return true;
+}
+
+static uint8_t short_i3_count(uint8_t data_bits)
+{
+	switch (data_bits) {
+	case 8:
+		return 0;
+	case 9:
+		return 1;
+	case 11:
+		return 3;
+	case 12:
+		return 4;
+	}
+	return UINT8_MAX;
+}
+
+static bool reconstruct_primary_bits(
+	const struct sippymodem_v34_parsed_mapping_frame *parsed,
+	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct sippymodem_v34_mapping_frame *mapping_frame,
+	const uint8_t *auxiliary_bit, uint8_t *reconstructed,
+	size_t *reconstructed_count)
+{
+	size_t count = 0;
+	uint8_t i3_count = parameters->mapping_frame_bits <= 12u ?
+		short_i3_count(mapping_frame->data_bits) :
+		SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	uint8_t shell_bits = parameters->mapping_frame_bits > 12u ?
+		(uint8_t)(parameters->shell_mapper_bits -
+			  !mapping_frame->high_frame) :
+		0u;
+
+	if (i3_count == UINT8_MAX ||
+	    !append_value(
+		    reconstructed, MAX_MAPPING_FRAME_BITS, &count,
+		    parsed->shell_label, shell_bits))
+		return false;
+	for (uint8_t interval = 0;
+	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     ++interval) {
+		const struct sippymodem_v34_4d_mapping_input *input =
+			&parsed->interval[interval];
+
+		if (interval == 0 && mapping_frame->carries_auxiliary_bit) {
+			if (auxiliary_bit == NULL ||
+			    input->rotation_bit != *auxiliary_bit)
+				return false;
+		} else if (!append_bit(
+				   reconstructed, MAX_MAPPING_FRAME_BITS, &count,
+				   input->rotation_bit)) {
+			return false;
+		}
+		if (!append_bit(
+			    reconstructed, MAX_MAPPING_FRAME_BITS, &count,
+			    input->differential_input & 1u) ||
+		    (interval < i3_count &&
+		     !append_bit(
+			     reconstructed, MAX_MAPPING_FRAME_BITS, &count,
+			     (input->differential_input >> 1) & 1u)))
+			return false;
+		for (uint8_t symbol = 0;
+		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     ++symbol) {
+			if (!append_value(
+				    reconstructed, MAX_MAPPING_FRAME_BITS, &count,
+				    input->point_index[symbol],
+				    parameters
+					    ->point_index_bits_per_2d_symbol))
+				return false;
+		}
+	}
+	*reconstructed_count = count;
+	return true;
+}
+
+static void generate_primary_bits(
+	uint8_t *bits, size_t count, uint32_t seed)
+{
+	for (size_t index = 0; index < count; ++index) {
+		seed = seed * UINT32_C(1664525) + UINT32_C(1013904223);
+		bits[index] = (uint8_t)(seed >> 31);
+	}
+}
+
+static bool test_all_supported_schedules(void)
+{
+	unsigned int coverage = 0;
+
+	for (size_t symbol_index = 0;
+	     symbol_index < ARRAY_LENGTH(SYMBOL_RATES); ++symbol_index) {
+		const struct symbol_rate_fixture *fixture =
+			&SYMBOL_RATES[symbol_index];
+
+		for (uint8_t rate = fixture->minimum_rate;
+		     rate <= fixture->maximum_rate; ++rate) {
+			for (unsigned int auxiliary = 0; auxiliary < 2;
+			     ++auxiliary) {
+				struct sippymodem_v34_frame_geometry geometry;
+
+				CHECK(sippymodem_v34_frame_geometry_init(
+					      &geometry, fixture->symbol_rate, rate,
+					      auxiliary != 0) ==
+					      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+				      "parser geometry %zu/%u/%u was rejected",
+				      symbol_index, rate, auxiliary);
+				for (unsigned int expanded = 0; expanded < 2;
+				     ++expanded) {
+					struct sippymodem_v34_mapping_parameters
+						parameters;
+					struct sippymodem_v34_frame_schedule schedule;
+
+					CHECK(sippymodem_v34_mapping_parameters_init(
+						      &parameters, &geometry,
+						      expanded != 0) ==
+						      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
+					      sippymodem_v34_frame_schedule_init(
+						      &schedule, &geometry, 0) ==
+						      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+					      "parser case %zu/%u/%u/%u did not start",
+					      symbol_index, rate, auxiliary, expanded);
+					while (!sippymodem_v34_frame_schedule_is_complete(
+						&schedule)) {
+						struct sippymodem_v34_mapping_frame frame;
+						struct sippymodem_v34_parsed_mapping_frame parsed;
+						uint8_t primary[MAX_MAPPING_FRAME_BITS];
+						uint8_t reconstructed[MAX_MAPPING_FRAME_BITS];
+						uint8_t auxiliary_bit;
+						const uint8_t *auxiliary_pointer;
+						size_t reconstructed_count;
+
+						CHECK(sippymodem_v34_frame_schedule_next(
+							      &schedule, &frame) ==
+							      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+						      "parser frame %zu/%u/%u/%u stopped",
+						      symbol_index, rate, auxiliary, expanded);
+						generate_primary_bits(
+							primary, frame.primary_bits,
+							(uint32_t)(symbol_index * 1000u +
+								   rate * 31u +
+								   auxiliary * 7u +
+								   expanded * 3u +
+								   frame.index));
+						auxiliary_bit = (uint8_t)(
+							(symbol_index + rate + frame.index) & 1u);
+						auxiliary_pointer =
+							frame.carries_auxiliary_bit ?
+								&auxiliary_bit : NULL;
+						CHECK(sippymodem_v34_parse_mapping_frame(
+							      &parameters, &frame, primary,
+							      frame.primary_bits,
+							      auxiliary_pointer, &parsed) ==
+							      SIPPYMODEM_V34_PARSER_OK &&
+						      sippymodem_v34_parsed_mapping_frame_is_valid(
+							      &parsed, &parameters, &frame) &&
+						      reconstruct_primary_bits(
+							      &parsed, &parameters, &frame,
+							      auxiliary_pointer, reconstructed,
+							      &reconstructed_count) &&
+						      reconstructed_count == frame.primary_bits &&
+						      memcmp(
+							      reconstructed, primary,
+							      frame.primary_bits) == 0,
+						      "parser round trip %zu/%u/%u/%u/%u failed",
+						      symbol_index, rate, auxiliary, expanded,
+						      frame.index);
+						coverage |= frame.high_frame ? 1u : 2u;
+						coverage |= frame.carries_auxiliary_bit ? 4u : 8u;
+						if (frame.data_bits == 8u)
+							coverage |= 16u;
+						if (frame.data_bits == 9u)
+							coverage |= 32u;
+						if (frame.data_bits == 11u)
+							coverage |= 64u;
+						if (frame.data_bits == 12u)
+							coverage |= 128u;
+						if (parameters
+							    .point_index_bits_per_2d_symbol > 0u)
+							coverage |= 256u;
+					}
+				}
+			}
+		}
+	}
+	CHECK(coverage == 0x1ffu,
+	      "exhaustive parser cases missed coverage mask 0x%x", coverage);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	uint8_t primary_bits[14] = { 0 };
@@ -351,6 +579,7 @@ int main(void)
 	} tests[] = {
 		{ "regular parser layout", test_regular_parser_layout },
 		{ "short parser layouts", test_short_parser_layouts },
+		{ "all supported schedules", test_all_supported_schedules },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
