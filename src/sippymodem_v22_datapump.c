@@ -8,6 +8,7 @@
 #include "sippymodem_v22_framing.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -78,8 +79,12 @@ struct sippymodem_v22_datapump {
 	uint32_t scrambled_mark_bits;
 	uint32_t missing_carrier_samples;
 	uint8_t transmit_quadrant;
+	struct sippymodem_qam_point previous_receive_point;
+	bool has_previous_receive_point;
 	bool originator;
 };
+
+static const double V22_PI = 3.1415926535897932384626433832795;
 
 static struct dp *create_v22(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
@@ -119,7 +124,10 @@ static struct sippymodem_v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->answer_mark_symbols > V22_ANSWER_MARK_CONFIRM_SYMBOLS ||
 	    datapump->scrambled_mark_bits >
 		    V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS ||
-	    datapump->missing_carrier_samples > V22_CARRIER_LOSS_SAMPLES)
+	    datapump->missing_carrier_samples > V22_CARRIER_LOSS_SAMPLES ||
+	    (datapump->has_previous_receive_point &&
+	     (!isfinite(datapump->previous_receive_point.in_phase) ||
+	      !isfinite(datapump->previous_receive_point.quadrature))))
 		return NULL;
 	return datapump;
 }
@@ -243,6 +251,12 @@ static int next_transmit_quadrant(
 static int generate_sample(
 	struct sippymodem_v22_datapump *datapump, int16_t *sample)
 {
+	static const struct sippymodem_qam_point quadrants[] = {
+		{ 1.0, 0.0 },
+		{ 0.0, 1.0 },
+		{ -1.0, 0.0 },
+		{ 0.0, -1.0 },
+	};
 	bool accepted;
 	bool can_accept;
 
@@ -255,8 +269,9 @@ static int generate_sample(
 	if (can_accept && next_transmit_quadrant(datapump) != 0)
 		return -1;
 	if (sippymodem_qam_modulator_sample(
-		    &datapump->modulator, datapump->transmit_quadrant, sample,
-		    &accepted) != SIPPYMODEM_QAM_OK ||
+		    &datapump->modulator,
+		    &quadrants[datapump->transmit_quadrant], sample, &accepted) !=
+		    SIPPYMODEM_QAM_OK ||
 	    accepted != can_accept)
 		return -1;
 	return 0;
@@ -343,15 +358,33 @@ static int observe_phase_change(
 static int receive_sample(
 	struct sippymodem_v22_datapump *datapump, int16_t sample)
 {
-	uint8_t quarter_turns;
+	struct sippymodem_qam_point point;
 	bool ready;
 
 	if (sippymodem_qam_demodulator_sample(
-		    &datapump->demodulator, sample, &quarter_turns, &ready) !=
+		    &datapump->demodulator, sample, &point, &ready) !=
 	    SIPPYMODEM_QAM_OK)
 		return -1;
-	if (ready && observe_phase_change(datapump, quarter_turns) != 0)
-		return -1;
+	if (ready) {
+		if (datapump->has_previous_receive_point) {
+			double dot = datapump->previous_receive_point.in_phase *
+					     point.in_phase +
+				     datapump->previous_receive_point.quadrature *
+					     point.quadrature;
+			double cross = datapump->previous_receive_point.in_phase *
+					       point.quadrature -
+				       datapump->previous_receive_point.quadrature *
+					       point.in_phase;
+			long turns = lround(atan2(cross, dot) / (V22_PI / 2.0));
+
+			if (observe_phase_change(
+				    datapump,
+				    (uint8_t)((unsigned long)turns & 3u)) != 0)
+				return -1;
+		}
+		datapump->previous_receive_point = point;
+		datapump->has_previous_receive_point = true;
+	}
 	return 0;
 }
 

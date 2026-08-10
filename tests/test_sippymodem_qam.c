@@ -32,6 +32,34 @@ static struct sippymodem_qam_channel v22_channel(uint32_t carrier_hz)
 	};
 }
 
+static struct sippymodem_qam_point quadrant_point(
+	uint8_t quadrant, double magnitude)
+{
+	switch (quadrant & 3u) {
+	case 0:
+		return (struct sippymodem_qam_point){ magnitude, 0.0 };
+	case 1:
+		return (struct sippymodem_qam_point){ 0.0, magnitude };
+	case 2:
+		return (struct sippymodem_qam_point){ -magnitude, 0.0 };
+	default:
+		return (struct sippymodem_qam_point){ 0.0, -magnitude };
+	}
+}
+
+static uint8_t point_phase_change(
+	const struct sippymodem_qam_point *previous,
+	const struct sippymodem_qam_point *current)
+{
+	double dot = previous->in_phase * current->in_phase +
+		     previous->quadrature * current->quadrature;
+	double cross = previous->in_phase * current->quadrature -
+		       previous->quadrature * current->in_phase;
+	long turns = lround(atan2(cross, dot) / (TEST_PI / 2.0));
+
+	return (uint8_t)((unsigned long)turns & 3u);
+}
+
 static bool test_generated_pulse(void)
 {
 	double at_zero = 0.0;
@@ -71,11 +99,14 @@ static bool test_exact_symbol_clock(void)
 		      sippymodem_qam_modulator_can_accept_symbol(&modulator),
 	      "QAM symbol-clock fixture did not initialize");
 	for (unsigned int index = 0; index < TEST_SAMPLE_RATE; ++index) {
+		struct sippymodem_qam_point point = quadrant_point(
+			(uint8_t)(accepted_count & 3u),
+			(double)(accepted_count % 4u + 1u) / 4.0);
 		int16_t sample;
 		bool accepted;
 
 		CHECK(sippymodem_qam_modulator_sample(
-			      &modulator, (uint8_t)(accepted_count & 3u),
+			      &modulator, &point,
 			      &sample, &accepted) == SIPPYMODEM_QAM_OK &&
 			      sample >= -TEST_AMPLITUDE &&
 			      sample <= TEST_AMPLITUDE,
@@ -113,6 +144,7 @@ static bool check_carrier(uint32_t carrier_hz, uint32_t reject_hz)
 {
 	struct sippymodem_qam_channel channel = v22_channel(carrier_hz);
 	struct sippymodem_qam_modulator modulator;
+	const struct sippymodem_qam_point point = { 1.0, 0.0 };
 	int16_t samples[TEST_SAMPLE_RATE];
 
 	CHECK(sippymodem_qam_modulator_init(
@@ -123,7 +155,7 @@ static bool check_carrier(uint32_t carrier_hz, uint32_t reject_hz)
 		bool accepted;
 
 		CHECK(sippymodem_qam_modulator_sample(
-			      &modulator, 0, &samples[index], &accepted) ==
+			      &modulator, &point, &samples[index], &accepted) ==
 			      SIPPYMODEM_QAM_OK,
 		      "QAM carrier fixture failed at sample %zu", index);
 	}
@@ -196,10 +228,12 @@ static bool check_receive_loopback(
 	uint8_t changes[TEST_SYMBOL_COUNT];
 	uint8_t decoded[TEST_DECODED_CAPACITY];
 	uint32_t random = UINT32_C(0x912ca775);
+	struct sippymodem_qam_point previous_point = { 0 };
 	uint8_t quadrant = 0;
 	size_t accepted = 0;
 	size_t decoded_count = 0;
 	size_t sync_offset;
+	bool has_previous_point = false;
 	size_t sample_limit = leading_silence +
 		(TEST_SYMBOL_COUNT + 16u) * TEST_SAMPLE_RATE / TEST_SYMBOL_RATE;
 
@@ -213,15 +247,18 @@ static bool check_receive_loopback(
 	      "QAM receive-loopback endpoints did not initialize");
 	for (size_t sample_index = 0; sample_index < sample_limit;
 	     ++sample_index) {
+		struct sippymodem_qam_point received_point;
 		int16_t sample = 0;
-		uint8_t phase_change = 0;
 		bool ready;
 
 		if (sample_index >= leading_silence) {
+			struct sippymodem_qam_point transmit_point = quadrant_point(
+				quadrant,
+				0.55 + 0.15 * (double)(accepted % 4u));
 			bool symbol_accepted;
 
 			CHECK(sippymodem_qam_modulator_sample(
-				      &modulator, quadrant, &sample,
+				      &modulator, &transmit_point, &sample,
 				      &symbol_accepted) == SIPPYMODEM_QAM_OK,
 			      "QAM loopback modulator failed");
 			if (symbol_accepted && accepted < TEST_SYMBOL_COUNT) {
@@ -232,13 +269,21 @@ static bool check_receive_loopback(
 		}
 		sample = impair_sample(sample, impaired, &random);
 		CHECK(sippymodem_qam_demodulator_sample(
-			      &demodulator, sample, &phase_change, &ready) ==
+			      &demodulator, sample, &received_point, &ready) ==
 			      SIPPYMODEM_QAM_OK,
 		      "QAM loopback demodulator failed");
 		if (ready) {
-			CHECK(decoded_count < ARRAY_LENGTH(decoded),
-			      "QAM loopback produced unbounded symbols");
-			decoded[decoded_count++] = phase_change;
+			CHECK(isfinite(received_point.in_phase) &&
+				      isfinite(received_point.quadrature),
+			      "QAM loopback produced a non-finite point");
+			if (has_previous_point) {
+				CHECK(decoded_count < ARRAY_LENGTH(decoded),
+				      "QAM loopback produced unbounded symbols");
+				decoded[decoded_count++] = point_phase_change(
+					&previous_point, &received_point);
+			}
+			previous_point = received_point;
+			has_previous_point = true;
 		}
 	}
 	CHECK(accepted == TEST_SYMBOL_COUNT,
@@ -283,11 +328,11 @@ static bool test_silence_does_not_lock(void)
 		      SIPPYMODEM_QAM_OK,
 	      "QAM silence fixture did not initialize");
 	for (unsigned int index = 0; index < TEST_SAMPLE_RATE / 2; ++index) {
-		uint8_t phase_change;
+		struct sippymodem_qam_point point;
 		bool ready;
 
 		CHECK(sippymodem_qam_demodulator_sample(
-			      &demodulator, 0, &phase_change, &ready) ==
+			      &demodulator, 0, &point, &ready) ==
 			      SIPPYMODEM_QAM_OK &&
 			      !ready,
 		      "QAM silence produced a symbol at sample %u", index);
@@ -302,8 +347,10 @@ static bool test_validation(void)
 	struct sippymodem_qam_channel channel = v22_channel(1200);
 	struct sippymodem_qam_modulator modulator;
 	struct sippymodem_qam_demodulator demodulator;
+	struct sippymodem_qam_point point = { 1.0, 0.0 };
+	struct sippymodem_qam_point invalid_point = { 1.0, 1.0 };
+	struct sippymodem_qam_point received_point;
 	int16_t sample = 0;
-	uint8_t value = 0;
 	bool accepted = false;
 	double pulse = 0.0;
 
@@ -328,11 +375,18 @@ static bool test_validation(void)
 		      &demodulator, &channel) == SIPPYMODEM_QAM_OK &&
 		      sippymodem_qam_demodulator_reset(&demodulator) ==
 			      SIPPYMODEM_QAM_OK,
-	      "QAM demodulator reset rejected valid state");
+		      "QAM demodulator reset rejected valid state");
+	CHECK(sippymodem_qam_modulator_sample(
+		      &modulator, &invalid_point, &sample, &accepted) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      sippymodem_qam_modulator_sample(
+			      &modulator, NULL, &sample, &accepted) ==
+			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+	      "QAM accepted an unbounded constellation point");
 	modulator.active_count = SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS + 1;
 	CHECK(!sippymodem_qam_modulator_can_accept_symbol(&modulator) &&
 		      sippymodem_qam_modulator_sample(
-			      &modulator, 0, &sample, &accepted) ==
+			      &modulator, &point, &sample, &accepted) ==
 			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
 		      strcmp(sippymodem_qam_result_name(
 			     SIPPYMODEM_QAM_INVALID_ARGUMENT),
@@ -340,7 +394,7 @@ static bool test_validation(void)
 	      "QAM accepted corrupt active-symbol state");
 	demodulator.history_index = demodulator.matched_filter_count;
 	CHECK(sippymodem_qam_demodulator_sample(
-		      &demodulator, 0, &value, &accepted) ==
+		      &demodulator, 0, &received_point, &accepted) ==
 		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
 		      !sippymodem_qam_demodulator_measure(&demodulator)
 			       .timing_locked,

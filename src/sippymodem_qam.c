@@ -8,7 +8,6 @@
 
 enum {
 	QAM_NORMALIZATION_PHASES = 512,
-	QAM_QUADRANT_COUNT = 4,
 	QAM_ACQUISITION_SYMBOLS = 64,
 	QAM_MIN_ACQUISITION_SYMBOLS = 48,
 };
@@ -17,6 +16,20 @@ static const double QAM_PI = 3.1415926535897932384626433832795;
 static const double QAM_TWO_PI = 6.283185307179586476925286766559;
 static const double QAM_PHASE_SCALE = 4294967296.0;
 static const double QAM_SINGULARITY_EPSILON = 1e-10;
+static const double QAM_POINT_EPSILON = 1e-12;
+
+static bool transmit_point_is_valid(
+	const struct sippymodem_qam_point *point)
+{
+	double power;
+
+	if (point == NULL || !isfinite(point->in_phase) ||
+	    !isfinite(point->quadrature))
+		return false;
+	power = point->in_phase * point->in_phase +
+		point->quadrature * point->quadrature;
+	return isfinite(power) && power <= 1.0 + QAM_POINT_EPSILON;
+}
 
 static bool channel_is_valid(
 	const struct sippymodem_qam_channel *channel,
@@ -137,11 +150,7 @@ static bool modulator_is_valid(
 		return false;
 	for (size_t index = 0; index < modulator->active_count; ++index)
 		if (modulator->active[index].age_units > support ||
-		    modulator->active[index].in_phase *
-				    modulator->active[index].in_phase +
-			    modulator->active[index].quadrature *
-				    modulator->active[index].quadrature !=
-			    1)
+		    !transmit_point_is_valid(&modulator->active[index].point))
 			return false;
 	return true;
 }
@@ -178,17 +187,15 @@ bool sippymodem_qam_modulator_can_accept_symbol(
 }
 
 static void append_symbol(
-	struct sippymodem_qam_modulator *modulator, uint8_t quadrant)
+	struct sippymodem_qam_modulator *modulator,
+	const struct sippymodem_qam_point *point)
 {
-	static const int8_t in_phase[QAM_QUADRANT_COUNT] = { 1, 0, -1, 0 };
-	static const int8_t quadrature[QAM_QUADRANT_COUNT] = { 0, 1, 0, -1 };
 	struct sippymodem_qam_active_symbol *symbol =
 		&modulator->active[modulator->active_count++];
 
 	*symbol = (struct sippymodem_qam_active_symbol){
 		.age_units = modulator->symbol_phase_units,
-		.in_phase = in_phase[quadrant],
-		.quadrature = quadrature[quadrant],
+		.point = *point,
 	};
 	modulator->needs_symbol = false;
 }
@@ -210,8 +217,8 @@ static void baseband_sample(
 
 		(void)sippymodem_root_raised_cosine(
 			age - delay, modulator->channel.rolloff, &pulse);
-		*in_phase += pulse * symbol->in_phase;
-		*quadrature += pulse * symbol->quadrature;
+		*in_phase += pulse * symbol->point.in_phase;
+		*quadrature += pulse * symbol->point.quadrature;
 	}
 }
 
@@ -245,8 +252,9 @@ static void advance_time(struct sippymodem_qam_modulator *modulator)
 }
 
 enum sippymodem_qam_result sippymodem_qam_modulator_sample(
-	struct sippymodem_qam_modulator *modulator, uint8_t quadrant,
-	int16_t *sample, bool *symbol_accepted)
+	struct sippymodem_qam_modulator *modulator,
+	const struct sippymodem_qam_point *point, int16_t *sample,
+	bool *symbol_accepted)
 {
 	double carrier_phase;
 	double in_phase;
@@ -254,14 +262,14 @@ enum sippymodem_qam_result sippymodem_qam_modulator_sample(
 	double waveform;
 	long rounded;
 
-	if (!modulator_is_valid(modulator) || quadrant >= QAM_QUADRANT_COUNT ||
+	if (!modulator_is_valid(modulator) || !transmit_point_is_valid(point) ||
 	    sample == NULL || symbol_accepted == NULL ||
 	    (modulator->needs_symbol &&
 	     modulator->active_count == SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS))
 		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
 	*symbol_accepted = modulator->needs_symbol;
 	if (modulator->needs_symbol)
-		append_symbol(modulator, quadrant);
+		append_symbol(modulator, point);
 	baseband_sample(modulator, &in_phase, &quadrature);
 	carrier_phase = (double)modulator->carrier_phase *
 			(QAM_TWO_PI / QAM_PHASE_SCALE);
@@ -373,8 +381,7 @@ static bool demodulator_is_valid(
 	    !isfinite(demodulator->symbol_power) ||
 	    demodulator->symbol_power < 0.0 ||
 	    (demodulator->timing_locked &&
-	     (demodulator->locked_phase_units >= period ||
-	      !demodulator->has_previous)))
+	     demodulator->locked_phase_units >= period))
 		return false;
 	for (size_t index = 0; index < candidate_count; ++index) {
 		const struct sippymodem_qam_timing_candidate *candidate =
@@ -483,12 +490,9 @@ static void observe_timing_candidate(
 	struct sippymodem_qam_timing_candidate *candidate,
 	double in_phase, double quadrature)
 {
-	candidate->previous_in_phase = in_phase;
-	candidate->previous_quadrature = quadrature;
 	candidate->symbol_power_sum +=
 		in_phase * in_phase + quadrature * quadrature;
 	candidate->symbol_count++;
-	candidate->has_previous = true;
 }
 
 static void reset_timing_scores(
@@ -501,7 +505,6 @@ static void reset_timing_scores(
 
 		candidate->symbol_power_sum = 0.0;
 		candidate->symbol_count = 0;
-		candidate->has_previous = false;
 	}
 	demodulator->acquisition_sample_count = 0;
 }
@@ -531,10 +534,7 @@ static void select_timing_candidate(
 		return;
 	}
 	demodulator->locked_phase_units = best->phase_units;
-	demodulator->previous_in_phase = best->previous_in_phase;
-	demodulator->previous_quadrature = best->previous_quadrature;
 	demodulator->symbol_power = best_power;
-	demodulator->has_previous = best->has_previous;
 	demodulator->timing_locked = true;
 	demodulator->acquisition_sample_count = 0;
 }
@@ -560,33 +560,19 @@ static void acquire_symbol_timing(
 		select_timing_candidate(demodulator);
 }
 
-static uint8_t slice_phase_change(
-	double previous_in_phase, double previous_quadrature,
-	double in_phase, double quadrature)
-{
-	double dot = previous_in_phase * in_phase +
-		     previous_quadrature * quadrature;
-	double cross = previous_in_phase * quadrature -
-		       previous_quadrature * in_phase;
-	long turns = lround(atan2(cross, dot) / (QAM_PI / 2.0));
-
-	return (uint8_t)((unsigned long)turns & 3u);
-}
-
 static bool recover_symbol(
 	struct sippymodem_qam_demodulator *demodulator,
-	double in_phase, double quadrature, uint8_t *quarter_turns)
+	double in_phase, double quadrature, struct sippymodem_qam_point *point)
 {
 	if (!advance_symbol_phase(
 		    &demodulator->locked_phase_units,
 		    demodulator->symbol_period_units,
 		    demodulator->channel.symbol_rate_numerator))
 		return false;
-	*quarter_turns = slice_phase_change(
-		demodulator->previous_in_phase,
-		demodulator->previous_quadrature, in_phase, quadrature);
-	demodulator->previous_in_phase = in_phase;
-	demodulator->previous_quadrature = quadrature;
+	*point = (struct sippymodem_qam_point){
+		.in_phase = in_phase,
+		.quadrature = quadrature,
+	};
 	demodulator->symbol_power +=
 		(in_phase * in_phase + quadrature * quadrature -
 		 demodulator->symbol_power) /
@@ -596,15 +582,15 @@ static bool recover_symbol(
 
 enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
 	struct sippymodem_qam_demodulator *demodulator, int16_t sample,
-	uint8_t *quarter_turns, bool *symbol_ready)
+	struct sippymodem_qam_point *point, bool *symbol_ready)
 {
 	double in_phase;
 	double quadrature;
 
-	if (!demodulator_is_valid(demodulator) || quarter_turns == NULL ||
+	if (!demodulator_is_valid(demodulator) || point == NULL ||
 	    symbol_ready == NULL)
 		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
-	*quarter_turns = 0;
+	*point = (struct sippymodem_qam_point){ 0 };
 	*symbol_ready = false;
 	mix_sample(demodulator, sample);
 	if (demodulator->history_count < demodulator->matched_filter_count)
@@ -615,7 +601,7 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
 		return SIPPYMODEM_QAM_OK;
 	}
 	*symbol_ready = recover_symbol(
-		demodulator, in_phase, quadrature, quarter_turns);
+		demodulator, in_phase, quadrature, point);
 	return SIPPYMODEM_QAM_OK;
 }
 

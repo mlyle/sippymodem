@@ -29,10 +29,14 @@ enum sippymodem_qam_result {
 	SIPPYMODEM_QAM_INVALID_ARGUMENT,
 };
 
+struct sippymodem_qam_point {
+	double in_phase;
+	double quadrature;
+};
+
 struct sippymodem_qam_active_symbol {
 	uint64_t age_units;
-	int8_t in_phase;
-	int8_t quadrature;
+	struct sippymodem_qam_point point;
 };
 
 struct sippymodem_qam_modulator {
@@ -51,11 +55,8 @@ struct sippymodem_qam_modulator {
 
 struct sippymodem_qam_timing_candidate {
 	uint64_t phase_units;
-	double previous_in_phase;
-	double previous_quadrature;
 	double symbol_power_sum;
 	uint32_t symbol_count;
-	bool has_previous;
 };
 
 struct sippymodem_qam_demodulator {
@@ -79,11 +80,8 @@ struct sippymodem_qam_demodulator {
 	size_t history_index;
 	size_t history_count;
 	size_t timing_candidate_count;
-	double previous_in_phase;
-	double previous_quadrature;
 	double line_power;
 	double symbol_power;
-	bool has_previous;
 	bool timing_locked;
 };
 
@@ -101,19 +99,21 @@ enum sippymodem_qam_result sippymodem_qam_modulator_init(
 	const struct sippymodem_qam_channel *channel, int16_t amplitude);
 bool sippymodem_qam_modulator_can_accept_symbol(
 	const struct sippymodem_qam_modulator *modulator);
-/* quadrant is an absolute counter-clockwise phase in quarter turns. */
+/* Transmit points are finite and normalized to a maximum magnitude of one. */
 enum sippymodem_qam_result sippymodem_qam_modulator_sample(
-	struct sippymodem_qam_modulator *modulator, uint8_t quadrant,
-	int16_t *sample, bool *symbol_accepted);
+	struct sippymodem_qam_modulator *modulator,
+	const struct sippymodem_qam_point *point, int16_t *sample,
+	bool *symbol_accepted);
 
 enum sippymodem_qam_result sippymodem_qam_demodulator_init(
 	struct sippymodem_qam_demodulator *demodulator,
 	const struct sippymodem_qam_channel *channel);
 enum sippymodem_qam_result sippymodem_qam_demodulator_reset(
 	struct sippymodem_qam_demodulator *demodulator);
+/* Ready points are unnormalized matched-filter coordinates. */
 enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
 	struct sippymodem_qam_demodulator *demodulator, int16_t sample,
-	uint8_t *quarter_turns, bool *symbol_ready);
+	struct sippymodem_qam_point *point, bool *symbol_ready);
 struct sippymodem_qam_measurement sippymodem_qam_demodulator_measure(
 	const struct sippymodem_qam_demodulator *demodulator);
 
