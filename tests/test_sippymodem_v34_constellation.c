@@ -102,6 +102,33 @@ static bool test_quarter_superconstellation(void)
 	return true;
 }
 
+static bool test_indexed_quarter_superconstellation(void)
+{
+	struct sippymodem_v34_grid_point
+		points[SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+
+	CHECK(sippymodem_v34_quarter_superconstellation_generate(
+		      points, ARRAY_LENGTH(points)) ==
+		      SIPPYMODEM_V34_CONSTELLATION_OK,
+	      "indexed fixture generation failed");
+	/* 37 is coprime to 416, so this visits every label in a deliberately
+	 * non-sequential order. */
+	for (size_t visit = 0; visit < ARRAY_LENGTH(points); ++visit) {
+		size_t label = visit * 37u % ARRAY_LENGTH(points);
+		struct sippymodem_v34_grid_point selected = { 0 };
+
+		CHECK(sippymodem_v34_quarter_superconstellation_point(
+			      label, &selected) ==
+			      SIPPYMODEM_V34_CONSTELLATION_OK,
+		      "indexed label %zu was rejected", label);
+		CHECK(selected.in_phase == points[label].in_phase &&
+		      selected.quadrature == points[label].quadrature &&
+		      independent_quarter_grid_rank(&selected) == label,
+		      "indexed label %zu selected the wrong point", label);
+	}
+	return true;
+}
+
 static bool test_quarter_superconstellation_prefixes(void)
 {
 	struct sippymodem_v34_grid_point
@@ -280,6 +307,8 @@ static bool test_validation(void)
 	struct sippymodem_qam_point before = point;
 	struct sippymodem_v34_grid_point generated[4];
 	struct sippymodem_v34_grid_point saved[4];
+	struct sippymodem_v34_grid_point indexed = { 23, -29 };
+	struct sippymodem_v34_grid_point saved_indexed = indexed;
 
 	memset(generated, 0x5a, sizeof(generated));
 	memcpy(saved, generated, sizeof(saved));
@@ -319,6 +348,14 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      memcmp(generated, saved, sizeof(generated)) == 0,
 	      "invalid quarter-superconstellation generation changed output");
+	CHECK(sippymodem_v34_quarter_superconstellation_point(
+		      SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT,
+		      &indexed) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_quarter_superconstellation_point(0, NULL) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      memcmp(&indexed, &saved_indexed, sizeof(indexed)) == 0,
+	      "invalid indexed lookup changed its output");
 	CHECK(strcmp(sippymodem_v34_constellation_result_name(
 			     SIPPYMODEM_V34_CONSTELLATION_OK),
 		     "ok") == 0 &&
@@ -336,6 +373,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "quarter superconstellation", test_quarter_superconstellation },
+		{ "indexed quarter superconstellation",
+		  test_indexed_quarter_superconstellation },
 		{ "quarter-superconstellation prefixes",
 		  test_quarter_superconstellation_prefixes },
 		{ "point-zero rotations", test_point_zero_rotations },
