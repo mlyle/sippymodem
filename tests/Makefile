@@ -177,6 +177,9 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
+	$(BUILD_DIR)/sippymodem_qpsk.o \
+	$(BUILD_DIR)/sippymodem_v22_datapump.o \
+	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v23_datapump.o
 FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
@@ -208,6 +211,9 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
+	$(BUILD_DIR)/sippymodem_qpsk.o \
+	$(BUILD_DIR)/sippymodem_v22_datapump.o \
+	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v23_datapump.o \
 	$(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
@@ -556,6 +562,10 @@ $(BUILD_DIR)/sippymodem_v23_datapump.o: \
 
 $(BUILD_DIR)/sippymodem_v22_framing.o: \
 	../src/sippymodem_v22_framing.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v22_datapump.o: \
+	../src/sippymodem_v22_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_qpsk.o: ../src/sippymodem_qpsk.c | $(BUILD_DIR)

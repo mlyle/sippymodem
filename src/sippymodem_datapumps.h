@@ -18,6 +18,7 @@ struct sippymodem_datapumps {
 	bool call_progress_registered;
 	bool fsk300_registered;
 	bool v23_registered;
+	bool v22_registered;
 	bool baudot_registered;
 };
 

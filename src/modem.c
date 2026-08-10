@@ -497,7 +497,8 @@ static void modem_hup(struct modem *m, unsigned local)
 
 /* FIXME: find better place */
 #define NONEC_DP(id) \
-	((id) == DP_V23 || (id) == DP_B103 || (id) == DP_V21 || \
+	((id) == DP_V23 || (id) == DP_V22 || (id) == DP_B103 || \
+	 (id) == DP_V21 || \
 	 (id) == DP_BAUDOT)
 
 void modem_update_status(struct modem *m, unsigned status)

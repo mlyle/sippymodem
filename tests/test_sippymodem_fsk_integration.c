@@ -5,6 +5,7 @@
 #include <sippymodem_datapumps.h>
 #include <sippymodem_fsk300_datapump.h>
 #include <sippymodem_media.h>
+#include <sippymodem_v22_datapump.h>
 #include <sippymodem_v23_datapump.h>
 
 #include "test.h"
@@ -41,7 +42,7 @@ struct recording_capture {
 	bool invalid;
 };
 
-struct fsk_test_case {
+struct modem_test_case {
 	enum DP_ID id;
 	const char *name;
 	const char *selection_command;
@@ -75,7 +76,7 @@ static int control_modem(
 }
 
 static struct modem_driver integration_driver = {
-	.name = "FSK SIP media test",
+	.name = "SIP modem media test",
 	.start = start_modem,
 	.stop = stop_modem,
 	.ioctl = control_modem,
@@ -228,7 +229,7 @@ static bool modem_is_online(const struct modem *modem, enum DP_ID id)
 }
 
 static bool run_media_call(
-	const struct fsk_test_case *test_case,
+	const struct modem_test_case *test_case,
 	enum sippymodem_media_codec codec)
 {
 	static const char prelink_payload[] = "early-v23";
@@ -560,7 +561,7 @@ static const char *codec_name(enum sippymodem_media_codec codec)
 
 int main(void)
 {
-	static const struct fsk_test_case test_cases[] = {
+	static const struct modem_test_case test_cases[] = {
 		{
 			.id = DP_V21,
 			.name = "V.21",
@@ -579,6 +580,16 @@ int main(void)
 			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
+			.id = DP_V22,
+			.name = "V.22",
+			.selection_command = "AT+MS=22,0,1200,1200\r",
+			.caller_tx_rate = SIPPYMODEM_V22_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V22_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V22_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 		},
 		{

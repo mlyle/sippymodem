@@ -75,8 +75,9 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_qpsk.c \
 	sippymodem_fsk.c \
 	sippymodem_fsk300_datapump.c \
-	sippymodem_v23_datapump.c \
-	sippymodem_v22_framing.c
+	sippymodem_v22_datapump.c \
+	sippymodem_v22_framing.c \
+	sippymodem_v23_datapump.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDENCIES := $(SOURCES:.c=.d)
