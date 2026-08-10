@@ -6,10 +6,6 @@
 #include <math.h>
 #include <stddef.h>
 
-enum {
-	V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS = 6,
-};
-
 static const double V34_PHASE2_DPSK_ROLLOFF = 0.75;
 static const double V34_PHASE2_DPSK_TWO_PI =
 	6.283185307179586476925286766559;
@@ -46,7 +42,8 @@ static struct sippymodem_qam_channel phase2_channel(uint32_t carrier_hz)
 		.symbol_rate_denominator = 1,
 		.carrier_frequency_hz = carrier_hz,
 		.rolloff = V34_PHASE2_DPSK_ROLLOFF,
-		.pulse_span_symbols = V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS,
+		.pulse_span_symbols =
+			SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS,
 	};
 }
 
@@ -71,7 +68,7 @@ static bool channel_matches(
 	       channel->carrier_frequency_hz == carrier_hz &&
 	       channel->rolloff == V34_PHASE2_DPSK_ROLLOFF &&
 	       channel->pulse_span_symbols ==
-		       V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS;
+		       SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS;
 }
 
 static bool transmitter_metadata_is_valid(

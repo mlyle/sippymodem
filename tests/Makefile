@@ -355,6 +355,18 @@ V34_PHASE2_INFO_AUDIO_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o
+V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_info0_exchange
+V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/sippymodem_g711.o \
+	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_v34_info0.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
 V34_PHASE2_TONE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_tone
 V34_PHASE2_TONE_TEST_OBJECTS := \
@@ -434,6 +446,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE2_INFO_TEST_BINARY) \
 	$(V34_PHASE2_DPSK_TEST_BINARY) \
 	$(V34_PHASE2_INFO_AUDIO_TEST_BINARY) \
+	$(V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY) \
 	$(V34_PHASE2_TONE_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
@@ -484,6 +497,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE2_INFO_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_DPSK_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_INFO_AUDIO_TEST_OBJECTS:.o=.d) \
+	$(V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_TONE_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
@@ -550,6 +564,7 @@ test: $(TEST_BINARIES)
 	./$(V34_PHASE2_INFO_TEST_BINARY)
 	./$(V34_PHASE2_DPSK_TEST_BINARY)
 	./$(V34_PHASE2_INFO_AUDIO_TEST_BINARY)
+	./$(V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY)
 	./$(V34_PHASE2_TONE_TEST_BINARY)
 	./$(QAM_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
@@ -724,6 +739,10 @@ $(V34_PHASE2_DPSK_TEST_BINARY): $(V34_PHASE2_DPSK_TEST_OBJECTS)
 
 $(V34_PHASE2_INFO_AUDIO_TEST_BINARY): \
 	$(V34_PHASE2_INFO_AUDIO_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY): \
+	$(V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE2_TONE_TEST_BINARY): $(V34_PHASE2_TONE_TEST_OBJECTS)
@@ -955,6 +974,10 @@ $(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o: \
 
 $(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_tone.o: \
