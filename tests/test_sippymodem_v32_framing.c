@@ -7,9 +7,10 @@
 #include <string.h>
 
 enum {
-	TEST_STREAM_DIBITS = 2048,
+	TEST_STREAM_SYMBOLS = 2048,
 	TEST_RESYNC_DIBITS = 96,
 	TEST_TRN_DIBITS = 257,
+	TEST_RATE_SEQUENCE_DIBITS = 64,
 };
 
 static uint32_t fixture_random(uint32_t *state)
@@ -67,10 +68,15 @@ static bool test_normative_scrambler_starts(void)
 		{ 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 1, 3, 3, 3 },
 		{ 3, 3, 2, 0, 0, 3, 3, 2, 0, 0, 3, 2, 1, 3, 3 },
 	};
+	static const uint8_t expected_9600[][7] = {
+		{ 15, 11, 7, 3, 12, 1, 15 },
+		{ 15, 4, 11, 6, 8, 6, 7 },
+	};
 
 	for (size_t role = 0; role < ARRAY_LENGTH(expected); ++role) {
 		struct sippymodem_v32_symbol_encoder encoder;
 		struct sippymodem_v32_symbol_encoder trn_encoder;
+		struct sippymodem_v32_symbol_encoder encoder_9600;
 		uint8_t previous = 0;
 
 		CHECK(sippymodem_v32_symbol_encoder_init(
@@ -81,6 +87,10 @@ static bool test_normative_scrambler_starts(void)
 			      &trn_encoder,
 			      (enum sippymodem_v32_transmitter_role)role,
 			      (uint8_t)(role + 1)) ==
+			      SIPPYMODEM_V32_FRAMING_OK &&
+		      sippymodem_v32_symbol_encoder_init(
+			      &encoder_9600,
+			      (enum sippymodem_v32_transmitter_role)role, 0) ==
 			      SIPPYMODEM_V32_FRAMING_OK,
 		      "V.32 normative encoder did not initialize");
 		for (size_t index = 0; index < ARRAY_LENGTH(expected[role]);
@@ -91,7 +101,7 @@ static bool test_normative_scrambler_starts(void)
 			uint8_t expected_trn_quadrant =
 				trn_quadrant_by_dibit[expected[role][index]];
 
-			CHECK(sippymodem_v32_symbol_encode(
+			CHECK(sippymodem_v32_4800_symbol_encode(
 				      &encoder, 3, &quadrant) ==
 				      SIPPYMODEM_V32_FRAMING_OK &&
 			      sippymodem_v32_trn_symbol_encode(
@@ -105,6 +115,17 @@ static bool test_normative_scrambler_starts(void)
 			      "V.32 normative start changed at %zu/%zu", role,
 			      index);
 			previous = quadrant;
+		}
+		for (size_t index = 0;
+		     index < ARRAY_LENGTH(expected_9600[role]); ++index) {
+			uint8_t symbol;
+
+			CHECK(sippymodem_v32_9600_symbol_encode(
+				      &encoder_9600, 15, &symbol) ==
+				      SIPPYMODEM_V32_FRAMING_OK &&
+				      symbol == expected_9600[role][index],
+			      "V.32 9600 normative start changed at %zu/%zu",
+			      role, index);
 		}
 	}
 	return true;
@@ -129,17 +150,17 @@ static bool test_symbol_round_trip(void)
 					      (enum sippymodem_v32_transmitter_role)role,
 					      initial) == SIPPYMODEM_V32_FRAMING_OK,
 			      "V.32 symbol endpoints did not initialize");
-			for (size_t index = 0; index < TEST_STREAM_DIBITS;
+			for (size_t index = 0; index < TEST_STREAM_SYMBOLS;
 			     ++index) {
 				uint8_t input =
 					(uint8_t)(fixture_random(&random) & 3u);
 				uint8_t output;
 				uint8_t quadrant;
 
-				CHECK(sippymodem_v32_symbol_encode(
+				CHECK(sippymodem_v32_4800_symbol_encode(
 					      &encoder, input, &quadrant) ==
 					      SIPPYMODEM_V32_FRAMING_OK &&
-				      sippymodem_v32_symbol_decode(
+				      sippymodem_v32_4800_symbol_decode(
 					      &decoder, quadrant, &output) ==
 					      SIPPYMODEM_V32_FRAMING_OK &&
 				      output == input,
@@ -190,17 +211,17 @@ static bool test_trn_round_trip_and_transition(void)
 				      "V.32 TRN round trip changed at %u/%u/%zu",
 				      role, initial, index);
 			}
-			for (size_t index = 0; index < TEST_STREAM_DIBITS;
+			for (size_t index = 0; index < TEST_STREAM_SYMBOLS;
 			     ++index) {
 				uint8_t input =
 					(uint8_t)(fixture_random(&random) & 3u);
 				uint8_t output;
 				uint8_t quadrant;
 
-				CHECK(sippymodem_v32_symbol_encode(
+				CHECK(sippymodem_v32_4800_symbol_encode(
 					      &encoder, input, &quadrant) ==
 					      SIPPYMODEM_V32_FRAMING_OK &&
-				      sippymodem_v32_symbol_decode(
+				      sippymodem_v32_4800_symbol_decode(
 					      &decoder, quadrant, &output) ==
 					      SIPPYMODEM_V32_FRAMING_OK &&
 				      output == input,
@@ -211,6 +232,68 @@ static bool test_trn_round_trip_and_transition(void)
 				      encoder.scrambler.history ==
 					      decoder.descrambler.history,
 			      "V.32 TRN endpoints diverged");
+		}
+	}
+	return true;
+}
+
+static bool test_9600_round_trip_and_transition(void)
+{
+	uint32_t random = UINT32_C(0xc9600321);
+
+	for (unsigned int role = 0; role < 2; ++role) {
+		for (uint8_t initial = 0;
+		     initial < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++initial) {
+			struct sippymodem_v32_symbol_encoder encoder;
+			struct sippymodem_v32_symbol_decoder decoder;
+
+			CHECK(sippymodem_v32_symbol_encoder_init(
+				      &encoder,
+				      (enum sippymodem_v32_transmitter_role)role,
+				      initial) == SIPPYMODEM_V32_FRAMING_OK &&
+			      sippymodem_v32_symbol_decoder_init(
+				      &decoder,
+				      (enum sippymodem_v32_transmitter_role)role,
+				      initial) == SIPPYMODEM_V32_FRAMING_OK,
+			      "V.32 9600 endpoints did not initialize");
+			for (size_t index = 0; index < TEST_RATE_SEQUENCE_DIBITS;
+			     ++index) {
+				uint8_t input =
+					(uint8_t)(fixture_random(&random) & 3u);
+				uint8_t output;
+				uint8_t quadrant;
+
+				CHECK(sippymodem_v32_4800_symbol_encode(
+					      &encoder, input, &quadrant) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      sippymodem_v32_4800_symbol_decode(
+					      &decoder, quadrant, &output) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      output == input,
+				      "V.32 9600 rate transition changed at %u/%u/%zu",
+				      role, initial, index);
+			}
+			for (size_t index = 0; index < TEST_STREAM_SYMBOLS; ++index) {
+				uint8_t input =
+					(uint8_t)(fixture_random(&random) & 15u);
+				uint8_t output;
+				uint8_t symbol;
+
+				CHECK(sippymodem_v32_9600_symbol_encode(
+					      &encoder, input, &symbol) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      symbol < SIPPYMODEM_V32_9600_SYMBOL_COUNT &&
+				      sippymodem_v32_9600_symbol_decode(
+					      &decoder, symbol, &output) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      output == input,
+				      "V.32 9600 round trip changed at %u/%u/%zu",
+				      role, initial, index);
+			}
+			CHECK(encoder.phase_quadrant == decoder.phase_quadrant &&
+				      encoder.scrambler.history ==
+					      decoder.descrambler.history,
+			      "V.32 9600 endpoints diverged");
 		}
 	}
 	return true;
@@ -291,7 +374,13 @@ static bool test_validation(void)
 		      sippymodem_v32_trn_symbol_encode(&encoder, 0, NULL) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
 		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
-		      sippymodem_v32_symbol_encode(&encoder, 4, &output) ==
+		      sippymodem_v32_4800_symbol_encode(&encoder, 4, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      sippymodem_v32_9600_symbol_encode(&encoder, 16, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      sippymodem_v32_9600_symbol_encode(&encoder, 0, NULL) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
 		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
 		      sippymodem_v32_trn_symbol_decode(&decoder, 4, &output) ==
@@ -300,8 +389,14 @@ static bool test_validation(void)
 		      sippymodem_v32_trn_symbol_decode(&decoder, 0, NULL) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
 		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+		      sippymodem_v32_9600_symbol_decode(&decoder, 16, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+		      sippymodem_v32_9600_symbol_decode(&decoder, 0, NULL) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
 		      output == UINT8_MAX &&
-		      sippymodem_v32_symbol_decode(NULL, 0, &output) ==
+		      sippymodem_v32_4800_symbol_decode(NULL, 0, &output) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
 		      strcmp(sippymodem_v32_framing_result_name(
 			     SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT),
@@ -324,6 +419,8 @@ int main(void)
 		{ "symbol round trip", test_symbol_round_trip },
 		{ "TRN round trip and transition",
 		  test_trn_round_trip_and_transition },
+		{ "9600 round trip and transition",
+		  test_9600_round_trip_and_transition },
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
 		{ "validation", test_validation },

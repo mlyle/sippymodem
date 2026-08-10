@@ -81,27 +81,30 @@ static uint8_t descramble_bit(
 	return output;
 }
 
-static enum sippymodem_v32_framing_result transform_dibit(
+static enum sippymodem_v32_framing_result transform_group(
 	struct sippymodem_v32_scrambler *state, uint8_t input,
-	uint8_t *output, bool descramble)
+	unsigned int bit_count, uint8_t *output, bool descramble)
 {
 	struct sippymodem_v32_scrambler next;
-	uint8_t first;
-	uint8_t second;
+	uint8_t transformed = 0;
 
-	if (!sippymodem_v32_scrambler_is_valid(state) || input >= 4 ||
-	    output == NULL)
+	if (!sippymodem_v32_scrambler_is_valid(state) || bit_count == 0 ||
+	    bit_count > 8 || input >= (1u << bit_count) || output == NULL)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *state;
-	if (descramble) {
-		first = descramble_bit(&next, (uint8_t)(input >> 1));
-		second = descramble_bit(&next, (uint8_t)(input & 1u));
-	} else {
-		first = scramble_bit(&next, (uint8_t)(input >> 1));
-		second = scramble_bit(&next, (uint8_t)(input & 1u));
+	for (unsigned int bit = bit_count; bit > 0; --bit) {
+		uint8_t input_bit = (uint8_t)((input >> (bit - 1u)) & 1u);
+		uint8_t output_bit;
+
+		if (descramble)
+			output_bit = descramble_bit(&next, input_bit);
+		else
+			output_bit = scramble_bit(&next, input_bit);
+
+		transformed = (uint8_t)((transformed << 1) | output_bit);
 	}
 	*state = next;
-	*output = (uint8_t)((first << 1) | second);
+	*output = transformed;
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
@@ -109,14 +112,34 @@ enum sippymodem_v32_framing_result sippymodem_v32_scramble_dibit(
 	struct sippymodem_v32_scrambler *scrambler, uint8_t input,
 	uint8_t *output)
 {
-	return transform_dibit(scrambler, input, output, false);
+	return transform_group(
+		scrambler, input, SIPPYMODEM_V32_4800_BITS_PER_SYMBOL,
+		output, false);
 }
 
 enum sippymodem_v32_framing_result sippymodem_v32_descramble_dibit(
 	struct sippymodem_v32_scrambler *descrambler, uint8_t input,
 	uint8_t *output)
 {
-	return transform_dibit(descrambler, input, output, true);
+	return transform_group(
+		descrambler, input, SIPPYMODEM_V32_4800_BITS_PER_SYMBOL,
+		output, true);
+}
+
+static bool symbol_encoder_is_valid(
+	const struct sippymodem_v32_symbol_encoder *encoder)
+{
+	return encoder != NULL &&
+	       encoder->phase_quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT &&
+	       sippymodem_v32_scrambler_is_valid(&encoder->scrambler);
+}
+
+static bool symbol_decoder_is_valid(
+	const struct sippymodem_v32_symbol_decoder *decoder)
+{
+	return decoder != NULL &&
+	       decoder->phase_quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT &&
+	       sippymodem_v32_scrambler_is_valid(&decoder->descrambler);
 }
 
 enum sippymodem_v32_framing_result sippymodem_v32_symbol_encoder_init(
@@ -151,9 +174,7 @@ enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_encode(
 	uint8_t scrambled;
 	uint8_t next_quadrant;
 
-	if (encoder == NULL || quadrant == NULL ||
-	    encoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
-	    !sippymodem_v32_scrambler_is_valid(&encoder->scrambler))
+	if (!symbol_encoder_is_valid(encoder) || quadrant == NULL)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *encoder;
 	if (sippymodem_v32_scramble_dibit(
@@ -167,7 +188,7 @@ enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_encode(
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
-enum sippymodem_v32_framing_result sippymodem_v32_symbol_encode(
+enum sippymodem_v32_framing_result sippymodem_v32_4800_symbol_encode(
 	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant)
 {
@@ -175,9 +196,7 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_encode(
 	uint8_t scrambled;
 	uint8_t next_quadrant;
 
-	if (encoder == NULL || quadrant == NULL ||
-	    encoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
-	    !sippymodem_v32_scrambler_is_valid(&encoder->scrambler))
+	if (!symbol_encoder_is_valid(encoder) || quadrant == NULL)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *encoder;
 	if (sippymodem_v32_scramble_dibit(
@@ -190,6 +209,31 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_encode(
 	next.phase_quadrant = next_quadrant;
 	*encoder = next;
 	*quadrant = next_quadrant;
+	return SIPPYMODEM_V32_FRAMING_OK;
+}
+
+enum sippymodem_v32_framing_result sippymodem_v32_9600_symbol_encode(
+	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
+	uint8_t *symbol)
+{
+	struct sippymodem_v32_symbol_encoder next;
+	uint8_t next_quadrant;
+	uint8_t scrambled;
+
+	if (!symbol_encoder_is_valid(encoder) || symbol == NULL)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next = *encoder;
+	if (transform_group(
+		    &next.scrambler, input,
+		    SIPPYMODEM_V32_9600_BITS_PER_SYMBOL, &scrambled, false) !=
+		    SIPPYMODEM_V32_FRAMING_OK ||
+	    sippymodem_differential_qpsk_encode(
+		    next.phase_quadrant, (uint8_t)(scrambled >> 2),
+		    &next_quadrant) != SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next.phase_quadrant = next_quadrant;
+	*encoder = next;
+	*symbol = (uint8_t)((next_quadrant << 2) | (scrambled & 3u));
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
@@ -218,10 +262,8 @@ enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_decode(
 	uint8_t decoded;
 	uint8_t scrambled;
 
-	if (decoder == NULL || output == NULL ||
-	    quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
-	    decoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
-	    !sippymodem_v32_scrambler_is_valid(&decoder->descrambler))
+	if (!symbol_decoder_is_valid(decoder) || output == NULL ||
+	    quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *decoder;
 	scrambled = trn_quadrant_from_dibit(quadrant);
@@ -235,7 +277,7 @@ enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_decode(
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
-enum sippymodem_v32_framing_result sippymodem_v32_symbol_decode(
+enum sippymodem_v32_framing_result sippymodem_v32_4800_symbol_decode(
 	struct sippymodem_v32_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *output)
 {
@@ -243,10 +285,8 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_decode(
 	uint8_t decoded;
 	uint8_t scrambled;
 
-	if (decoder == NULL || output == NULL ||
-	    quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
-	    decoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
-	    !sippymodem_v32_scrambler_is_valid(&decoder->descrambler))
+	if (!symbol_decoder_is_valid(decoder) || output == NULL ||
+	    quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *decoder;
 	if (sippymodem_differential_qpsk_decode(
@@ -255,6 +295,37 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_decode(
 	    sippymodem_v32_descramble_dibit(
 		    &next.descrambler, scrambled, &decoded) !=
 		    SIPPYMODEM_V32_FRAMING_OK)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next.phase_quadrant = quadrant;
+	*decoder = next;
+	*output = decoded;
+	return SIPPYMODEM_V32_FRAMING_OK;
+}
+
+enum sippymodem_v32_framing_result sippymodem_v32_9600_symbol_decode(
+	struct sippymodem_v32_symbol_decoder *decoder, uint8_t symbol,
+	uint8_t *output)
+{
+	struct sippymodem_v32_symbol_decoder next;
+	uint8_t decoded;
+	uint8_t high_dibit;
+	uint8_t quadrant;
+	uint8_t scrambled;
+
+	if (!symbol_decoder_is_valid(decoder) || output == NULL ||
+	    symbol >= SIPPYMODEM_V32_9600_SYMBOL_COUNT)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next = *decoder;
+	quadrant = (uint8_t)(symbol >> 2);
+	if (sippymodem_differential_qpsk_decode(
+		    next.phase_quadrant, quadrant, &high_dibit) !=
+		    SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	scrambled = (uint8_t)((high_dibit << 2) | (symbol & 3u));
+	if (transform_group(
+		    &next.descrambler, scrambled,
+		    SIPPYMODEM_V32_9600_BITS_PER_SYMBOL, &decoded, true) !=
+	    SIPPYMODEM_V32_FRAMING_OK)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next.phase_quadrant = quadrant;
 	*decoder = next;

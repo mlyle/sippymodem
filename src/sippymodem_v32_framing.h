@@ -10,6 +10,9 @@
 
 enum {
 	SIPPYMODEM_V32_SCRAMBLER_BITS = 23,
+	SIPPYMODEM_V32_4800_BITS_PER_SYMBOL = 2,
+	SIPPYMODEM_V32_9600_BITS_PER_SYMBOL = 4,
+	SIPPYMODEM_V32_9600_SYMBOL_COUNT = 16,
 };
 
 /* The role identifies the transmitter whose polynomial is in use. */
@@ -63,9 +66,16 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_encoder_init(
 enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_encode(
 	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant);
-enum sippymodem_v32_framing_result sippymodem_v32_symbol_encode(
+/*
+ * Data symbols are supplied in transmission order, most-significant bit
+ * first.
+ */
+enum sippymodem_v32_framing_result sippymodem_v32_4800_symbol_encode(
 	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant);
+enum sippymodem_v32_framing_result sippymodem_v32_9600_symbol_encode(
+	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
+	uint8_t *symbol);
 enum sippymodem_v32_framing_result sippymodem_v32_symbol_decoder_init(
 	struct sippymodem_v32_symbol_decoder *decoder,
 	enum sippymodem_v32_transmitter_role source_role,
@@ -73,8 +83,11 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_decoder_init(
 enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_decode(
 	struct sippymodem_v32_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *output);
-enum sippymodem_v32_framing_result sippymodem_v32_symbol_decode(
+enum sippymodem_v32_framing_result sippymodem_v32_4800_symbol_decode(
 	struct sippymodem_v32_symbol_decoder *decoder, uint8_t quadrant,
+	uint8_t *output);
+enum sippymodem_v32_framing_result sippymodem_v32_9600_symbol_decode(
+	struct sippymodem_v32_symbol_decoder *decoder, uint8_t symbol,
 	uint8_t *output);
 
 const char *sippymodem_v32_framing_result_name(

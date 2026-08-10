@@ -178,7 +178,8 @@ static bool check_carrier(
 						sippymodem_v32_trn_symbol_encode(
 							&encoder, input, &quadrant);
 				else
-					framing_result = sippymodem_v32_symbol_encode(
+					framing_result =
+						sippymodem_v32_4800_symbol_encode(
 						&encoder, input, &quadrant);
 				CHECK(framing_result == SIPPYMODEM_V32_FRAMING_OK &&
 					      sippymodem_v32_4800_constellation_point(
@@ -212,9 +213,9 @@ static bool check_carrier(
 			relative_quadrant =
 				(uint8_t)((relative_quadrant + quarter_turns) & 3u);
 			CHECK(decoded_count < ARRAY_LENGTH(decoded) &&
-				      sippymodem_v32_symbol_decode(
-					      &decoder, relative_quadrant, &output) ==
-					      SIPPYMODEM_V32_FRAMING_OK,
+			      sippymodem_v32_4800_symbol_decode(
+				      &decoder, relative_quadrant, &output) ==
+				      SIPPYMODEM_V32_FRAMING_OK,
 			      "V.32 carrier produced an invalid symbol "
 			      "(codec %d, carrier %u, silence %zu+%zu, role %d, "
 			      "decoded %zu)",

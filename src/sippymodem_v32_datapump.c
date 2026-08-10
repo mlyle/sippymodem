@@ -213,7 +213,8 @@ static enum sippymodem_v32_framing_result encode_transmit_quadrant(
 			encoder, input, quadrant);
 	if (output == SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT ||
 	    output == SIPPYMODEM_V32_STARTUP_DATA)
-		return sippymodem_v32_symbol_encode(encoder, input, quadrant);
+		return sippymodem_v32_4800_symbol_encode(
+			encoder, input, quadrant);
 	return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 }
 
@@ -343,7 +344,7 @@ static int receive_sample(
 		quadrant = (uint8_t)((datapump->decoder.phase_quadrant +
 				      quarter_turns) &
 				     3u);
-		if (sippymodem_v32_symbol_decode(
+		if (sippymodem_v32_4800_symbol_decode(
 			    &datapump->decoder, quadrant, &dibit) !=
 			    SIPPYMODEM_V32_FRAMING_OK ||
 		    observe_dibit(datapump, dibit, linked) != 0)
