@@ -89,7 +89,8 @@ SIPPYMODEM_DSP_SOURCES := \
 	dsp/sippymodem_v32_rate_signal.c \
 	dsp/sippymodem_v32_startup.c \
 	dsp/sippymodem_v32_trellis.c \
-	dsp/sippymodem_v32_trellis_decoder.c
+	dsp/sippymodem_v32_trellis_decoder.c \
+	dsp/sippymodem_v8_ansam.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES) \
 	$(SIPPYMODEM_DSP_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)
