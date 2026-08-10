@@ -31,6 +31,11 @@ enum sippymodem_v32_9600_receiver_result
 sippymodem_v32_9600_receiver_decode(
 	struct sippymodem_v32_9600_receiver *receiver,
 	const struct sippymodem_qam_point *point, uint8_t *output);
+/* Advance framing and channel state from a known post-E training symbol. */
+enum sippymodem_v32_9600_receiver_result
+sippymodem_v32_9600_receiver_track_known(
+	struct sippymodem_v32_9600_receiver *receiver,
+	const struct sippymodem_qam_point *point, uint8_t input);
 
 const char *sippymodem_v32_9600_receiver_result_name(
 	enum sippymodem_v32_9600_receiver_result result);

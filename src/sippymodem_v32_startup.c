@@ -240,9 +240,12 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 		*output = SIPPYMODEM_V32_STARTUP_DATA;
 		return SIPPYMODEM_V32_STARTUP_OK;
 	}
-	next_output = phase_uses_trn_framing(startup->phase) ?
-			      SIPPYMODEM_V32_STARTUP_TRN_DIBIT :
-			      SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT;
+	if (startup->phase == SIPPYMODEM_V32_CONFIRM)
+		next_output = SIPPYMODEM_V32_STARTUP_SELECTED_RATE_MARK;
+	else
+		next_output = phase_uses_trn_framing(startup->phase) ?
+				      SIPPYMODEM_V32_STARTUP_TRN_DIBIT :
+				      SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT;
 	next = *startup;
 	if (phase_transmits_rate(next.phase) || phase_transmits_end(next.phase)) {
 		uint16_t word = phase_transmits_rate(next.phase) ?
@@ -421,9 +424,7 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_observe(
 		result = observe_rate_event(&next, &offer);
 	else if (event == SIPPYMODEM_V32_END_SIGNAL_DETECTED)
 		result = observe_end_event(&next, &offer);
-	else if (next.phase == SIPPYMODEM_V32_CALLER_SEND_END ||
-		 next.phase == SIPPYMODEM_V32_ANSWERER_SEND_END ||
-		 next.phase == SIPPYMODEM_V32_CONFIRM)
+	else if (next.end_received)
 		observe_confirmation_dibit(&next, dibit);
 	if (result != SIPPYMODEM_V32_STARTUP_OK)
 		return result;

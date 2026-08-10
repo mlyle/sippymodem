@@ -34,6 +34,8 @@ static enum sippymodem_v32_startup_output expected_output(
 {
 	if (phase == SIPPYMODEM_V32_DATA)
 		return SIPPYMODEM_V32_STARTUP_DATA;
+	if (phase == SIPPYMODEM_V32_CONFIRM)
+		return SIPPYMODEM_V32_STARTUP_SELECTED_RATE_MARK;
 	if (phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER ||
 	    phase == SIPPYMODEM_V32_ANSWERER_TRAIN ||
 	    phase == SIPPYMODEM_V32_ANSWERER_RETRAIN)
@@ -55,6 +57,7 @@ static bool check_role_exchange(
 	uint16_t expected_end_word;
 	bool caller_connected = false;
 	bool answerer_connected = false;
+	bool answerer_counted_early_marks = false;
 	size_t completed_at = SIZE_MAX;
 
 	CHECK(sippymodem_v32_startup_init(
@@ -96,6 +99,10 @@ static bool check_role_exchange(
 				      &answerer_connected) ==
 				      SIPPYMODEM_V32_STARTUP_OK,
 		      "V.32 startup could not receive at dibit %zu", index);
+		if (answerer.end_received &&
+		    answerer.phase == SIPPYMODEM_V32_ANSWERER_SEND_SELECTION &&
+		    answerer.receive_mark_dibits != 0)
+			answerer_counted_early_marks = true;
 		if (caller_connected && answerer_connected) {
 			completed_at = index;
 			break;
@@ -152,6 +159,8 @@ static bool check_role_exchange(
 		       (UINT32_C(1) << SIPPYMODEM_V32_CONFIRM) |
 		       (UINT32_C(1) << SIPPYMODEM_V32_DATA)),
 	      "V.32 answerer skipped a startup phase");
+	CHECK(answerer_counted_early_marks,
+	      "V.32 answerer discarded post-E marks during selection");
 	return true;
 }
 

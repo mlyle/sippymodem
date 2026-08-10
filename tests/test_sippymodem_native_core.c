@@ -258,7 +258,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG,
 		      v32_operations) == NULL,
 	      "V.32 accepted a range that excludes 4800 bit/s");
-	modem->min_rate = modem->max_rate = SIPPYMODEM_V32_BIT_RATE;
+	modem->min_rate = modem->max_rate = SIPPYMODEM_V32_4800_BIT_RATE;
 	v32 = v32_operations->create(
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, v32_operations);
 	CHECK(v32 != NULL && v32->id == DP_V32 &&

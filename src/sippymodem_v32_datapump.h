@@ -6,7 +6,8 @@
 #include <stdbool.h>
 
 enum {
-	SIPPYMODEM_V32_BIT_RATE = 4800,
+	SIPPYMODEM_V32_4800_BIT_RATE = 4800,
+	SIPPYMODEM_V32_9600_BIT_RATE = 9600,
 };
 
 int sippymodem_v32_datapump_register(void);

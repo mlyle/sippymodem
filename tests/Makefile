@@ -189,6 +189,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
 	$(BUILD_DIR)/sippymodem_v32_datapump.o \
+	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
 	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(BUILD_DIR)/sippymodem_v32_framing.o \
 	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
@@ -277,6 +278,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
 	$(BUILD_DIR)/sippymodem_v32_datapump.o \
+	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
 	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(BUILD_DIR)/sippymodem_v32_framing.o \
 	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \

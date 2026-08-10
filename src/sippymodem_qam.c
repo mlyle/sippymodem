@@ -408,8 +408,11 @@ static bool demodulator_is_valid(
 	    demodulator->line_power < 0.0 ||
 	    !isfinite(demodulator->symbol_power) ||
 	    demodulator->symbol_power < 0.0 ||
+	    !isfinite(demodulator->previous_in_phase) ||
+	    !isfinite(demodulator->previous_quadrature) ||
 	    (demodulator->timing_locked &&
-	     demodulator->locked_phase_units >= period))
+	     (demodulator->locked_phase_units >= period ||
+	      !demodulator->has_previous_matched_sample)))
 		return false;
 	for (size_t index = 0; index < candidate_count; ++index) {
 		const struct sippymodem_qam_timing_candidate *candidate =
@@ -503,15 +506,26 @@ static void matched_filter_sample(
 	}
 }
 
-static bool advance_symbol_phase(uint64_t *phase, uint64_t period,
-				 uint64_t step)
+static bool advance_symbol_phase(
+	uint64_t *phase, uint64_t period, uint64_t step,
+	double *crossing_fraction)
 {
-	if (step < period - *phase) {
+	uint64_t remaining = period - *phase;
+
+	if (step < remaining) {
 		*phase += step;
 		return false;
 	}
-	*phase = step - (period - *phase);
+	*phase = step - remaining;
+	if (crossing_fraction != NULL)
+		*crossing_fraction = (double)remaining / (double)step;
 	return true;
+}
+
+static double interpolate(
+	double previous, double current, double fraction)
+{
+	return previous + (current - previous) * fraction;
 }
 
 static void observe_timing_candidate(
@@ -577,12 +591,22 @@ static void acquire_symbol_timing(
 	     ++index) {
 		struct sippymodem_qam_timing_candidate *candidate =
 			&demodulator->timing[index];
+		double fraction = 0.0;
 
 		if (advance_symbol_phase(
 			    &candidate->phase_units,
 			    demodulator->symbol_period_units,
-			    demodulator->channel.symbol_rate_numerator))
-			observe_timing_candidate(candidate, in_phase, quadrature);
+			    demodulator->channel.symbol_rate_numerator,
+			    &fraction) &&
+		    demodulator->has_previous_matched_sample)
+			observe_timing_candidate(
+				candidate,
+				interpolate(
+					demodulator->previous_in_phase, in_phase,
+					fraction),
+				interpolate(
+					demodulator->previous_quadrature,
+					quadrature, fraction));
 	}
 	demodulator->acquisition_sample_count++;
 	if (demodulator->acquisition_sample_count ==
@@ -594,20 +618,34 @@ static bool recover_symbol(
 	struct sippymodem_qam_demodulator *demodulator,
 	double in_phase, double quadrature, struct sippymodem_qam_point *point)
 {
+	double fraction = 0.0;
+
 	if (!advance_symbol_phase(
 		    &demodulator->locked_phase_units,
 		    demodulator->symbol_period_units,
-		    demodulator->channel.symbol_rate_numerator))
+		    demodulator->channel.symbol_rate_numerator, &fraction))
 		return false;
 	*point = (struct sippymodem_qam_point){
-		.in_phase = in_phase,
-		.quadrature = quadrature,
+		.in_phase = interpolate(
+			demodulator->previous_in_phase, in_phase, fraction),
+		.quadrature = interpolate(
+			demodulator->previous_quadrature, quadrature, fraction),
 	};
 	demodulator->symbol_power +=
-		(in_phase * in_phase + quadrature * quadrature -
+		(point->in_phase * point->in_phase +
+		 point->quadrature * point->quadrature -
 		 demodulator->symbol_power) /
 		64.0;
 	return true;
+}
+
+static void remember_matched_sample(
+	struct sippymodem_qam_demodulator *demodulator,
+	double in_phase, double quadrature)
+{
+	demodulator->previous_in_phase = in_phase;
+	demodulator->previous_quadrature = quadrature;
+	demodulator->has_previous_matched_sample = true;
 }
 
 enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
@@ -628,10 +666,12 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
 	matched_filter_sample(demodulator, &in_phase, &quadrature);
 	if (!demodulator->timing_locked) {
 		acquire_symbol_timing(demodulator, in_phase, quadrature);
+		remember_matched_sample(demodulator, in_phase, quadrature);
 		return SIPPYMODEM_QAM_OK;
 	}
 	*symbol_ready = recover_symbol(
 		demodulator, in_phase, quadrature, point);
+	remember_matched_sample(demodulator, in_phase, quadrature);
 	return SIPPYMODEM_QAM_OK;
 }
 

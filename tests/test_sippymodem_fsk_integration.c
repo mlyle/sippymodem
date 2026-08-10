@@ -381,8 +381,12 @@ static bool run_media_call(
 			     sizeof(answer_payload)) == 0 &&
 		      memcmp(answerer.output, caller_payload,
 			     sizeof(caller_payload)) == 0,
-	      "%s full-duplex terminal payload changed in transit",
-	      test_case->name);
+	      "%s full-duplex terminal payload changed in transit "
+	      "(caller=%zu:%02x answerer=%zu:%02x)",
+	      test_case->name, caller.output_count,
+	      caller.output_count != 0 ? caller.output[0] : 0,
+	      answerer.output_count,
+	      answerer.output_count != 0 ? answerer.output[0] : 0);
 	CHECK(!capture.invalid &&
 		      capture.blocks[SIPPYMODEM_RECORD_TX_LINE_PCM] != 0 &&
 		      capture.blocks[
@@ -612,10 +616,20 @@ int main(void)
 			.id = DP_V32,
 			.name = "V.32 4800",
 			.selection_command = "AT+MS=32,0,4800,4800\r",
-			.caller_tx_rate = SIPPYMODEM_V32_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V32_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V32_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V32_BIT_RATE,
+			.caller_tx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
+			.id = DP_V32,
+			.name = "V.32 9600",
+			.selection_command = "AT+MS=32,0,9600,9600\r",
+			.caller_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 		},
 		{

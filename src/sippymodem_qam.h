@@ -82,7 +82,10 @@ struct sippymodem_qam_demodulator {
 	size_t timing_candidate_count;
 	double line_power;
 	double symbol_power;
+	double previous_in_phase;
+	double previous_quadrature;
 	bool timing_locked;
+	bool has_previous_matched_sample;
 };
 
 struct sippymodem_qam_measurement {
@@ -115,7 +118,8 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_init(
 	const struct sippymodem_qam_channel *channel);
 enum sippymodem_qam_result sippymodem_qam_demodulator_reset(
 	struct sippymodem_qam_demodulator *demodulator);
-/* Ready points are unnormalized matched-filter coordinates. */
+/* Ready points are unnormalized matched-filter coordinates interpolated at
+ * the exact rational symbol-clock crossing. */
 enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
 	struct sippymodem_qam_demodulator *demodulator, int16_t sample,
 	struct sippymodem_qam_point *point, bool *symbol_ready);

@@ -9,6 +9,7 @@
 
 enum {
 	TEST_4800_SYMBOLS = 96,
+	TEST_KNOWN_9600_SYMBOLS = 128,
 	TEST_9600_SYMBOLS = 1024,
 };
 
@@ -102,6 +103,28 @@ static bool check_transition(
 		      SIPPYMODEM_V32_9600_RECEIVER_OK,
 	      "V.32 9600 receiver %u/%u did not initialize", role,
 	      initial_transmit_quadrant);
+	for (size_t index = 0; index < TEST_KNOWN_9600_SYMBOLS; ++index) {
+		struct sippymodem_qam_point received;
+		uint8_t symbol;
+
+		CHECK(sippymodem_v32_9600_symbol_encode(
+			      &encoder, 15, &symbol) ==
+			      SIPPYMODEM_V32_FRAMING_OK &&
+			      sippymodem_v32_constellation_point(
+				      symbol, &transmitted) ==
+				      SIPPYMODEM_V32_CONSTELLATION_OK,
+		      "V.32 9600 known fixture %u/%u failed at %zu", role,
+		      initial_transmit_quadrant, index);
+		channel = complex_multiply(&channel, &drift);
+		received = complex_multiply(&channel, &transmitted);
+		received.in_phase += fixture_noise(&random);
+		received.quadrature += fixture_noise(&random);
+		CHECK(sippymodem_v32_9600_receiver_track_known(
+			      &receiver, &received, 15) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_OK,
+		      "V.32 9600 known tracking %u/%u failed at %zu", role,
+		      initial_transmit_quadrant, index);
+	}
 	for (size_t index = 0; index < TEST_9600_SYMBOLS; ++index) {
 		struct sippymodem_qam_point received;
 		uint8_t input = (uint8_t)(fixture_random(&random) & 15u);
@@ -197,7 +220,23 @@ static bool test_validation(void)
 		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v32_9600_receiver_decode(
 			      &receiver, &reference, NULL) ==
-		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
+			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
+		      sippymodem_v32_9600_receiver_track_known(
+			      NULL, &reference, 15) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
+		      sippymodem_v32_9600_receiver_track_known(
+			      &receiver, NULL, 15) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
+		      sippymodem_v32_9600_receiver_track_known(
+			      &receiver, &zero, 15) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
+		      sippymodem_v32_9600_receiver_track_known(
+			      &receiver, &invalid, 15) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
+		      sippymodem_v32_9600_receiver_track_known(
+			      &receiver, &reference,
+			      SIPPYMODEM_V32_9600_SYMBOL_COUNT) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 		      output == UINT8_MAX,
 	      "V.32 9600 invalid input was not transactional");

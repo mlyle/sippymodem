@@ -390,7 +390,13 @@ static bool test_validation(void)
 		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
 		      !sippymodem_qam_demodulator_measure(&demodulator)
 			       .timing_locked,
-	      "QAM accepted corrupt matched-filter state");
+		      "QAM accepted corrupt matched-filter state");
+	demodulator.history_index = 0;
+	demodulator.previous_in_phase = NAN;
+	CHECK(sippymodem_qam_demodulator_sample(
+		      &demodulator, 0, &received_point, &accepted) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+	      "QAM accepted corrupt interpolation state");
 	return true;
 }
 
