@@ -8,8 +8,10 @@
 
 enum {
 	QAM_NORMALIZATION_PHASES = 512,
-	QAM_ACQUISITION_SYMBOLS = 64,
-	QAM_MIN_ACQUISITION_SYMBOLS = 48,
+	/* Structured training can bias a short energy comparison toward a
+	 * neighboring symbol phase; average across the modem training interval. */
+	QAM_ACQUISITION_SYMBOLS = 256,
+	QAM_MIN_ACQUISITION_SYMBOLS = 192,
 };
 
 static const double QAM_PI = 3.1415926535897932384626433832795;
@@ -17,6 +19,7 @@ static const double QAM_TWO_PI = 6.283185307179586476925286766559;
 static const double QAM_PHASE_SCALE = 4294967296.0;
 static const double QAM_SINGULARITY_EPSILON = 1e-10;
 static const double QAM_POINT_EPSILON = 1e-12;
+static const double QAM_MAX_POINT_POWER = 3.0 / 2.0;
 static const double QAM_MIN_ACQUISITION_POWER = 64.0;
 
 static bool point_is_finite(const struct sippymodem_qam_point *point)
@@ -34,7 +37,8 @@ static bool transmit_point_is_valid(
 		return false;
 	power = point->in_phase * point->in_phase +
 		point->quadrature * point->quadrature;
-	return isfinite(power) && power <= 1.0 + QAM_POINT_EPSILON;
+	return isfinite(power) &&
+	       power <= QAM_MAX_POINT_POWER + QAM_POINT_EPSILON;
 }
 
 enum sippymodem_qam_result sippymodem_qam_nearest_quarter_turn(

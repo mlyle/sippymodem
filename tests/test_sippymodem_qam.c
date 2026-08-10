@@ -12,7 +12,7 @@ enum {
 	TEST_SAMPLE_RATE = 8000,
 	TEST_SYMBOL_RATE = 600,
 	TEST_AMPLITUDE = 12000,
-	TEST_SYMBOL_COUNT = 384,
+	TEST_SYMBOL_COUNT = 640,
 	TEST_DECODED_CAPACITY = 512,
 	TEST_SYNC_SYMBOLS = 32,
 	TEST_PAYLOAD_SYMBOLS = 128,
@@ -340,6 +340,7 @@ static bool test_validation(void)
 	struct sippymodem_qam_modulator modulator;
 	struct sippymodem_qam_demodulator demodulator;
 	struct sippymodem_qam_point point = { 1.0, 0.0 };
+	struct sippymodem_qam_point bounded_point = { sqrt(3.0 / 2.0), 0.0 };
 	struct sippymodem_qam_point invalid_point = { 1.0, 1.0 };
 	struct sippymodem_qam_point received_point;
 	int16_t sample = 0;
@@ -368,6 +369,12 @@ static bool test_validation(void)
 		      sippymodem_qam_demodulator_reset(&demodulator) ==
 			      SIPPYMODEM_QAM_OK,
 		      "QAM demodulator reset rejected valid state");
+	CHECK(sippymodem_qam_modulator_sample(
+		      &modulator, &bounded_point, &sample, &accepted) ==
+		      SIPPYMODEM_QAM_OK &&
+		      accepted && sample >= -TEST_AMPLITUDE &&
+		      sample <= TEST_AMPLITUDE,
+	      "QAM rejected a bounded super-unit constellation point");
 	CHECK(sippymodem_qam_modulator_sample(
 		      &modulator, &invalid_point, &sample, &accepted) ==
 		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
