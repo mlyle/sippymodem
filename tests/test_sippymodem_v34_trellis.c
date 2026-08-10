@@ -1,0 +1,396 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <sippymodem_v34_trellis.h>
+
+#include "test.h"
+
+#include <string.h>
+
+/* Compact normative oracle; the production converter stores no such table. */
+static const uint8_t TABLE13[SIPPYMODEM_V34_SUBSET_LABEL_COUNT]
+			    [SIPPYMODEM_V34_SUBSET_LABEL_COUNT] = {
+	{ 0x0, 0x0, 0x1, 0x1, 0x8, 0x8, 0x9, 0x9 },
+	{ 0x3, 0x2, 0x2, 0x3, 0xb, 0xa, 0xa, 0xb },
+	{ 0x5, 0x5, 0x4, 0x4, 0xd, 0xd, 0xc, 0xc },
+	{ 0x6, 0x7, 0x7, 0x6, 0xe, 0xf, 0xf, 0xe },
+	{ 0x8, 0x8, 0x9, 0x9, 0x0, 0x0, 0x1, 0x1 },
+	{ 0xb, 0xa, 0xa, 0xb, 0x3, 0x2, 0x2, 0x3 },
+	{ 0xd, 0xd, 0xc, 0xc, 0x5, 0x5, 0x4, 0x4 },
+	{ 0xe, 0xf, 0xf, 0xe, 0x6, 0x7, 0x7, 0x6 },
+};
+
+static uint8_t packed_input(
+	const struct sippymodem_v34_convolutional_input *input)
+{
+	return (uint8_t)(input->y1 | (input->y2 << 1) |
+			 (input->y3 << 2) | (input->y4 << 3));
+}
+
+static struct sippymodem_v34_convolutional_input unpacked_input(
+	uint8_t packed)
+{
+	return (struct sippymodem_v34_convolutional_input){
+		.y1 = packed & 1u,
+		.y2 = (packed >> 1) & 1u,
+		.y3 = (packed >> 2) & 1u,
+		.y4 = (packed >> 3) & 1u,
+	};
+}
+
+static uint8_t bit(uint8_t value, uint8_t index)
+{
+	return (uint8_t)((value >> index) & 1u);
+}
+
+static uint8_t placed_bit(uint8_t value, uint8_t index)
+{
+	return (uint8_t)((value & 1u) << index);
+}
+
+static uint8_t model_16_state(
+	uint8_t state, const struct sippymodem_v34_convolutional_input *input)
+{
+	const uint8_t delay[4] = {
+		bit(state, 3), bit(state, 2), bit(state, 1), bit(state, 0),
+	};
+	const uint8_t next[4] = {
+		delay[3],
+		delay[0] ^ input->y2 ^ delay[3],
+		delay[1] ^ input->y2,
+		delay[2] ^ input->y1,
+	};
+
+	return (uint8_t)(placed_bit(next[0], 3) |
+			 placed_bit(next[1], 2) |
+			 placed_bit(next[2], 1) |
+			 placed_bit(next[3], 0));
+}
+
+static uint8_t model_32_state(
+	uint8_t state, const struct sippymodem_v34_convolutional_input *input)
+{
+	const uint8_t delay[5] = {
+		bit(state, 4), bit(state, 3), bit(state, 2),
+		bit(state, 1), bit(state, 0),
+	};
+	const uint8_t next[5] = {
+		delay[4],
+		delay[0] ^ input->y2,
+		delay[1] ^ input->y1,
+		delay[2] ^ input->y4,
+		delay[3] ^ input->y2,
+	};
+
+	return (uint8_t)(placed_bit(next[0], 4) |
+			 placed_bit(next[1], 3) |
+			 placed_bit(next[2], 2) |
+			 placed_bit(next[3], 1) |
+			 placed_bit(next[4], 0));
+}
+
+static uint8_t model_64_state(
+	uint8_t state, const struct sippymodem_v34_convolutional_input *input)
+{
+	uint8_t q0 = bit(state, 0);
+	uint8_t q1 = bit(state, 1);
+	uint8_t q2 = bit(state, 2);
+	uint8_t q3 = bit(state, 3);
+	uint8_t q4 = bit(state, 4);
+	uint8_t q5 = bit(state, 5);
+	uint8_t feedback = input->y1 ^ q4;
+	uint8_t tail = q4 ^ q5;
+
+	return (uint8_t)(
+		placed_bit(input->y2 ^ q1 ^ q3, 0) |
+		placed_bit(q0, 1) |
+		placed_bit(q3, 2) |
+		placed_bit(feedback ^ q3, 3) |
+		placed_bit(tail ^ q2 ^ input->y3 ^ (input->y2 & q3), 4) |
+		placed_bit(input->y4 ^ tail ^ (feedback & q3), 5));
+}
+
+static uint8_t model_next_state(
+	enum sippymodem_v34_trellis_selection selection, uint8_t state,
+	const struct sippymodem_v34_convolutional_input *input)
+{
+	switch (selection) {
+	case SIPPYMODEM_V34_TRELLIS_16_STATE:
+		return model_16_state(state, input);
+	case SIPPYMODEM_V34_TRELLIS_32_STATE:
+		return model_32_state(state, input);
+	case SIPPYMODEM_V34_TRELLIS_64_STATE:
+		return model_64_state(state, input);
+	}
+	return UINT8_MAX;
+}
+
+static uint8_t state_count(
+	enum sippymodem_v34_trellis_selection selection)
+{
+	switch (selection) {
+	case SIPPYMODEM_V34_TRELLIS_16_STATE:
+		return 16;
+	case SIPPYMODEM_V34_TRELLIS_32_STATE:
+		return 32;
+	case SIPPYMODEM_V34_TRELLIS_64_STATE:
+		return 64;
+	}
+	return 0;
+}
+
+static bool test_symbol_to_bit_converter(void)
+{
+	for (uint8_t first = 0;
+	     first < SIPPYMODEM_V34_SUBSET_LABEL_COUNT; ++first) {
+		for (uint8_t second = 0;
+		     second < SIPPYMODEM_V34_SUBSET_LABEL_COUNT; ++second) {
+			struct sippymodem_v34_convolutional_input input;
+
+			CHECK(sippymodem_v34_convolutional_input_from_subset_labels(
+				      first, second, &input) ==
+				      SIPPYMODEM_V34_TRELLIS_OK &&
+			      sippymodem_v34_convolutional_input_is_valid(&input),
+			      "Table 13 labels %u/%u were rejected", first,
+			      second);
+			CHECK(packed_input(&input) == TABLE13[first][second],
+			      "Table 13 labels %u/%u produced %#x instead of %#x",
+			      first, second, packed_input(&input),
+			      TABLE13[first][second]);
+		}
+	}
+	return true;
+}
+
+static bool test_all_state_transitions(void)
+{
+	static const enum sippymodem_v34_trellis_selection selections[] = {
+		SIPPYMODEM_V34_TRELLIS_16_STATE,
+		SIPPYMODEM_V34_TRELLIS_32_STATE,
+		SIPPYMODEM_V34_TRELLIS_64_STATE,
+	};
+	unsigned int transitions = 0;
+
+	for (size_t mode = 0; mode < ARRAY_LENGTH(selections); ++mode) {
+		uint8_t count = state_count(selections[mode]);
+
+		for (uint8_t state = 0; state < count; ++state) {
+			for (uint8_t packed = 0; packed < 16u; ++packed) {
+				struct sippymodem_v34_convolutional_input input =
+					unpacked_input(packed);
+				struct sippymodem_v34_convolutional_encoder encoder = {
+					.state = state,
+					.selection = selections[mode],
+				};
+				uint8_t expected = model_next_state(
+					selections[mode], state, &input);
+				uint8_t y0 = UINT8_MAX;
+
+				CHECK(sippymodem_v34_convolutional_encoder_is_valid(
+					      &encoder) &&
+				      sippymodem_v34_convolutional_encoder_output(
+					      &encoder, &y0) ==
+					      SIPPYMODEM_V34_TRELLIS_OK &&
+				      y0 == (state & 1u),
+				      "mode %zu state %u exposed the wrong delayed Y0",
+				      mode, state);
+				CHECK(sippymodem_v34_convolutional_encoder_advance(
+					      &encoder, &input) ==
+					      SIPPYMODEM_V34_TRELLIS_OK &&
+				      encoder.state == expected,
+				      "mode %zu state %u input %#x advanced to %#x, expected %#x",
+				      mode, state, packed, encoder.state, expected);
+				transitions++;
+			}
+		}
+	}
+	CHECK(transitions == (16u + 32u + 64u) * 16u,
+	      "transition coverage changed to %u", transitions);
+	return true;
+}
+
+static bool test_known_sequences(void)
+{
+	static const uint8_t subset_pairs[] = {
+		0, 2, 8, 15, 31, 47, 63, 5, 22, 41,
+		60, 9, 35, 51, 27, 58, 7, 44, 18, 55,
+	};
+	static const uint8_t expected_16_state[] = {
+		0x0, 0x1, 0xb, 0xe, 0x1, 0xb, 0xf, 0xb, 0x9, 0xe,
+		0x1, 0xa, 0x4, 0x2, 0x7, 0x8, 0x5, 0x9, 0x8, 0x4,
+	};
+	static const uint8_t expected_32_state[] = {
+		0x0, 0x4, 0xf, 0x18, 0x7, 0x1e, 0x6, 0x1, 0x12, 0x2,
+		0x8, 0xd, 0x10, 0xa, 0xc, 0x9, 0x12, 0x4, 0x2, 0x1,
+	};
+	static const uint8_t expected_64_y0[] = {
+		0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
+		0, 1, 0, 1, 0, 0, 1, 0, 0, 0,
+	};
+	static const enum sippymodem_v34_trellis_selection selections[] = {
+		SIPPYMODEM_V34_TRELLIS_16_STATE,
+		SIPPYMODEM_V34_TRELLIS_32_STATE,
+		SIPPYMODEM_V34_TRELLIS_64_STATE,
+	};
+
+	for (size_t mode = 0; mode < ARRAY_LENGTH(selections); ++mode) {
+		struct sippymodem_v34_convolutional_encoder encoder;
+
+		CHECK(sippymodem_v34_convolutional_encoder_init(
+			      &encoder, selections[mode]) ==
+			      SIPPYMODEM_V34_TRELLIS_OK,
+		      "known sequence mode %zu did not initialize", mode);
+		for (size_t index = 0; index < ARRAY_LENGTH(subset_pairs);
+		     ++index) {
+			struct sippymodem_v34_convolutional_input input;
+			uint8_t pair = subset_pairs[index];
+			uint8_t y0 = UINT8_MAX;
+
+			CHECK(sippymodem_v34_convolutional_input_from_subset_labels(
+				      pair / SIPPYMODEM_V34_SUBSET_LABEL_COUNT,
+				      pair % SIPPYMODEM_V34_SUBSET_LABEL_COUNT,
+				      &input) ==
+				      SIPPYMODEM_V34_TRELLIS_OK &&
+			      sippymodem_v34_convolutional_encoder_advance(
+				      &encoder, &input) ==
+				      SIPPYMODEM_V34_TRELLIS_OK &&
+			      sippymodem_v34_convolutional_encoder_output(
+				      &encoder, &y0) ==
+				      SIPPYMODEM_V34_TRELLIS_OK,
+			      "known sequence mode %zu step %zu failed", mode,
+			      index);
+			if (mode == 0)
+				CHECK(encoder.state == expected_16_state[index],
+				      "16-state sequence step %zu changed", index);
+			else if (mode == 1)
+				CHECK(encoder.state == expected_32_state[index],
+				      "32-state sequence step %zu changed", index);
+			else
+				CHECK(y0 == expected_64_y0[index],
+				      "64-state sequence step %zu changed", index);
+		}
+	}
+	return true;
+}
+
+static bool test_validation(void)
+{
+	struct sippymodem_v34_convolutional_input input = { 0 };
+	struct sippymodem_v34_convolutional_input saved_input;
+	struct sippymodem_v34_convolutional_encoder encoder = {
+		.state = 7,
+		.selection = SIPPYMODEM_V34_TRELLIS_16_STATE,
+	};
+	struct sippymodem_v34_convolutional_encoder saved_encoder;
+	uint8_t y0 = UINT8_MAX;
+
+	CHECK(sippymodem_v34_trellis_selection_is_valid(
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) &&
+	      sippymodem_v34_trellis_selection_is_valid(
+		      SIPPYMODEM_V34_TRELLIS_32_STATE) &&
+	      sippymodem_v34_trellis_selection_is_valid(
+		      SIPPYMODEM_V34_TRELLIS_64_STATE) &&
+	      !sippymodem_v34_trellis_selection_is_valid(
+		      (enum sippymodem_v34_trellis_selection)3),
+	      "trellis selection validation changed");
+
+	memset(&input, 0x5a, sizeof(input));
+	saved_input = input;
+	CHECK(sippymodem_v34_convolutional_input_from_subset_labels(
+		      8, 0, &input) == SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_convolutional_input_from_subset_labels(
+		      0, 8, &input) == SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_convolutional_input_from_subset_labels(
+		      0, 0, NULL) == SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      memcmp(&input, &saved_input, sizeof(input)) == 0,
+	      "invalid subset conversion changed its destination");
+	CHECK(!sippymodem_v34_convolutional_input_is_valid(NULL),
+	      "missing convolutional input was accepted");
+	for (uint8_t field = 0; field < 4u; ++field) {
+		input = (struct sippymodem_v34_convolutional_input){ 0 };
+		switch (field) {
+		case 0:
+			input.y1 = 2;
+			break;
+		case 1:
+			input.y2 = 2;
+			break;
+		case 2:
+			input.y3 = 2;
+			break;
+		case 3:
+			input.y4 = 2;
+			break;
+		}
+		CHECK(!sippymodem_v34_convolutional_input_is_valid(&input),
+		      "convolutional input field %u accepted a non-bit", field);
+	}
+
+	saved_encoder = encoder;
+	CHECK(sippymodem_v34_convolutional_encoder_init(NULL,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_convolutional_encoder_init(
+		      &encoder, (enum sippymodem_v34_trellis_selection)3) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
+	      "invalid encoder initialization changed its destination");
+	input = (struct sippymodem_v34_convolutional_input){ 0 };
+	CHECK(sippymodem_v34_convolutional_encoder_output(NULL, &y0) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_convolutional_encoder_output(&encoder, NULL) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_convolutional_encoder_advance(NULL, &input) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_convolutional_encoder_advance(&encoder, NULL) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      y0 == UINT8_MAX &&
+	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
+	      "invalid encoder operation changed state or output");
+	encoder.state = 16;
+	CHECK(!sippymodem_v34_convolutional_encoder_is_valid(&encoder) &&
+	      sippymodem_v34_convolutional_encoder_advance(&encoder, &input) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT,
+	      "out-of-range encoder state was accepted");
+	encoder = saved_encoder;
+	input.y4 = 2;
+	CHECK(sippymodem_v34_convolutional_encoder_advance(&encoder, &input) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
+	      "invalid convolutional input changed encoder state");
+	CHECK(strcmp(sippymodem_v34_trellis_result_name(
+		     SIPPYMODEM_V34_TRELLIS_OK),
+		     "ok") == 0 &&
+	      strcmp(sippymodem_v34_trellis_result_name(
+		     SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(sippymodem_v34_trellis_result_name(
+		     (enum sippymodem_v34_trellis_result)2),
+		     "unknown") == 0,
+	      "trellis result names changed");
+	return true;
+}
+
+int main(void)
+{
+	static const struct {
+		const char *name;
+		bool (*run)(void);
+	} tests[] = {
+		{ "symbol-to-bit converter", test_symbol_to_bit_converter },
+		{ "all state transitions", test_all_state_transitions },
+		{ "known sequences", test_known_sequences },
+		{ "validation", test_validation },
+	};
+	unsigned int failures = 0;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
+		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
+		if (!tests[index].run()) {
+			fprintf(stderr, "[  FAILED  ] %s\n", tests[index].name);
+			failures++;
+		} else {
+			fprintf(stderr, "[       OK ] %s\n", tests[index].name);
+		}
+	}
+	return failures == 0 ? 0 : 1;
+}
