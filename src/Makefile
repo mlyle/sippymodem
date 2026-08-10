@@ -112,6 +112,7 @@ SIPPYMODEM_V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis.c \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c
 SIPPYMODEM_PCM_SOURCES := \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_constellation.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_frame_schedule.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_framing.c \
