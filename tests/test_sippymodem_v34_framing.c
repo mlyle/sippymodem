@@ -173,6 +173,34 @@ static bool test_differential_dibits(void)
 	return true;
 }
 
+static bool test_mapped_dibits(void)
+{
+	static const enum sippymodem_v34_station_role roles[] = {
+		SIPPYMODEM_V34_CALLING_STATION,
+		SIPPYMODEM_V34_ANSWERING_STATION,
+	};
+	static const uint8_t expected[] = { 0, 2, 1, 3 };
+
+	for (size_t role = 0; role < ARRAY_LENGTH(roles); ++role) {
+		for (uint8_t input = 0; input < ARRAY_LENGTH(expected); ++input) {
+			struct sippymodem_v34_scrambler scrambler;
+			uint8_t mapped = UINT8_MAX;
+
+			CHECK(sippymodem_v34_transmit_scrambler_init(
+				      &scrambler, roles[role]) ==
+				      SIPPYMODEM_V34_FRAMING_OK &&
+			      sippymodem_v34_scramble_mapped_dibit(
+				      &scrambler, input, &mapped) ==
+				      SIPPYMODEM_V34_FRAMING_OK &&
+			      mapped == expected[input] &&
+			      scrambler.history == input,
+			      "V.34 mapped dibit changed at %zu/%u", role,
+			      input);
+		}
+	}
+	return true;
+}
+
 static bool test_superframe_inversion_patterns(void)
 {
 	static const uint8_t expected_j7[] = {
@@ -264,6 +292,15 @@ static bool test_validation(void)
 	      sippymodem_v34_descramble_group(
 		      &scrambler, 0, 1, NULL) ==
 		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_scramble_mapped_dibit(
+		      NULL, 0, &output) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_scramble_mapped_dibit(
+		      &scrambler, 4, &output) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_scramble_mapped_dibit(
+		      &scrambler, 0, NULL) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
 	      sippymodem_v34_scramble_differential_dibit(
 		      NULL, 0, 0, &rotation) ==
 		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
@@ -305,6 +342,7 @@ int main(void)
 		{ "polynomial starts", test_polynomial_starts },
 		{ "station role polynomials", test_station_role_polynomials },
 		{ "group round trip", test_group_round_trip },
+		{ "mapped dibits", test_mapped_dibits },
 		{ "differential dibits", test_differential_dibits },
 		{ "superframe inversion patterns",
 		  test_superframe_inversion_patterns },
