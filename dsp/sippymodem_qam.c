@@ -19,7 +19,8 @@ static const double QAM_TWO_PI = 6.283185307179586476925286766559;
 static const double QAM_PHASE_SCALE = 4294967296.0;
 static const double QAM_SINGULARITY_EPSILON = 1e-10;
 static const double QAM_POINT_EPSILON = 1e-12;
-static const double QAM_MAX_POINT_POWER = 3.0 / 2.0;
+/* Unit-average-power square training constellations reach 9/5 at a corner. */
+static const double QAM_MAX_POINT_POWER = 9.0 / 5.0;
 static const double QAM_MIN_ACQUISITION_POWER = 64.0;
 
 static bool point_is_finite(const struct sippymodem_qam_point *point)
