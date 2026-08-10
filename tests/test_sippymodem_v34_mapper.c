@@ -107,6 +107,8 @@ static bool test_all_supported_mappings(void)
 									};
 								struct sippymodem_v34_2d_mapping_output
 									output;
+								struct sippymodem_v34_2d_mapping_input
+									recovered;
 								struct sippymodem_v34_grid_point expected =
 									rotate_clockwise(
 										quarter[label], rotation);
@@ -123,7 +125,16 @@ static bool test_all_supported_mappings(void)
 								      output.mapper_output.in_phase ==
 									      expected.in_phase &&
 								      output.mapper_output.quadrature ==
-									      expected.quadrature,
+									      expected.quadrature &&
+								      sippymodem_v34_unmap_2d_symbol(
+									      &parameters,
+									      &output.mapper_output,
+									      rotation, &recovered) ==
+									      SIPPYMODEM_V34_MAPPER_OK &&
+								      recovered.ring_index == ring &&
+								      recovered.point_index == point &&
+								      recovered.clockwise_quarter_turns ==
+									      rotation,
 								      "mapping label %u rotation %u changed",
 								      label, rotation);
 								mappings++;
@@ -151,10 +162,16 @@ static bool test_all_supported_mappings(void)
 static bool test_validation(void)
 {
 	struct sippymodem_v34_frame_geometry geometry;
+	struct sippymodem_v34_frame_geometry low_geometry;
 	struct sippymodem_v34_mapping_parameters parameters;
+	struct sippymodem_v34_mapping_parameters low_parameters;
 	struct sippymodem_v34_2d_mapping_input input = { 0 };
 	struct sippymodem_v34_2d_mapping_output output;
 	struct sippymodem_v34_2d_mapping_output saved;
+	struct sippymodem_v34_2d_mapping_input recovered;
+	struct sippymodem_v34_2d_mapping_input recovered_saved;
+	struct sippymodem_v34_grid_point invalid_point = { 3, 1 };
+	struct sippymodem_v34_grid_point outside_point;
 
 	CHECK(sippymodem_v34_frame_geometry_init(
 		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3429, 14, false) ==
@@ -163,8 +180,20 @@ static bool test_validation(void)
 		      &parameters, &geometry, true) ==
 		      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK,
 	      "validation parameters did not initialize");
+	CHECK(sippymodem_v34_frame_geometry_init(
+		      &low_geometry, SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, false) ==
+		      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+	      sippymodem_v34_mapping_parameters_init(
+		      &low_parameters, &low_geometry, false) ==
+		      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
+	      low_parameters.constellation_points == 4u &&
+	      sippymodem_v34_quarter_superconstellation_point(
+		      1, &outside_point) == SIPPYMODEM_V34_CONSTELLATION_OK,
+	      "low-constellation validation fixture did not initialize");
 	memset(&output, 0x5a, sizeof(output));
 	saved = output;
+	memset(&recovered, 0xa5, sizeof(recovered));
+	recovered_saved = recovered;
 	input.ring_index = parameters.ring_count;
 	CHECK(!sippymodem_v34_2d_mapping_input_is_valid(&input, &parameters) &&
 	      sippymodem_v34_map_2d_symbol(&parameters, &input, &output) ==
@@ -210,6 +239,26 @@ static bool test_validation(void)
 		     (enum sippymodem_v34_mapper_result)2),
 		     "unknown") == 0,
 	      "mapper result names changed");
+	CHECK(sippymodem_v34_unmap_2d_symbol(
+		      &low_parameters, &invalid_point, 0, &recovered) ==
+		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_unmap_2d_symbol(
+		      &low_parameters, &outside_point, 0, &recovered) ==
+		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_unmap_2d_symbol(
+		      &low_parameters, &invalid_point, 4, &recovered) ==
+		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_unmap_2d_symbol(
+		      NULL, &invalid_point, 0, &recovered) ==
+		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_unmap_2d_symbol(
+		      &low_parameters, NULL, 0, &recovered) ==
+		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_unmap_2d_symbol(
+		      &low_parameters, &invalid_point, 0, NULL) ==
+		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
+	      memcmp(&recovered, &recovered_saved, sizeof(recovered)) == 0,
+	      "invalid inverse mapper changed its output");
 	return true;
 }
 

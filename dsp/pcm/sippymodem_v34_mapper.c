@@ -2,6 +2,7 @@
 
 #include "sippymodem_v34_mapper.h"
 
+#include <limits.h>
 #include <stddef.h>
 
 bool sippymodem_v34_2d_mapping_input_is_valid(
@@ -20,29 +21,29 @@ bool sippymodem_v34_2d_mapping_input_is_valid(
 	       input->clockwise_quarter_turns < 4u;
 }
 
-static struct sippymodem_v34_grid_point rotate_clockwise(
-	struct sippymodem_v34_grid_point point, uint8_t quarter_turns)
+static bool rotate_clockwise(
+	const struct sippymodem_v34_grid_point *point, uint8_t quarter_turns,
+	struct sippymodem_v34_grid_point *rotated)
 {
-	switch (quarter_turns) {
-	case 0:
-		return point;
-	case 1:
-		return (struct sippymodem_v34_grid_point){
-			.in_phase = point.quadrature,
-			.quadrature = (int16_t)-point.in_phase,
-		};
-	case 2:
-		return (struct sippymodem_v34_grid_point){
-			.in_phase = (int16_t)-point.in_phase,
-			.quadrature = (int16_t)-point.quadrature,
-		};
-	case 3:
-		return (struct sippymodem_v34_grid_point){
-			.in_phase = (int16_t)-point.quadrature,
-			.quadrature = point.in_phase,
-		};
+	int in_phase = point->in_phase;
+	int quadrature = point->quadrature;
+
+	if (quarter_turns >= 4u)
+		return false;
+	for (uint8_t turn = 0; turn < quarter_turns; ++turn) {
+		int saved_in_phase = in_phase;
+
+		in_phase = quadrature;
+		quadrature = -saved_in_phase;
 	}
-	return (struct sippymodem_v34_grid_point){ 0 };
+	if (in_phase < INT16_MIN || in_phase > INT16_MAX ||
+	    quadrature < INT16_MIN || quadrature > INT16_MAX)
+		return false;
+	*rotated = (struct sippymodem_v34_grid_point){
+		.in_phase = (int16_t)in_phase,
+		.quadrature = (int16_t)quadrature,
+	};
+	return true;
 }
 
 enum sippymodem_v34_mapper_result sippymodem_v34_map_2d_symbol(
@@ -66,12 +67,48 @@ enum sippymodem_v34_mapper_result sippymodem_v34_map_2d_symbol(
 		    label, &quarter_point) !=
 		    SIPPYMODEM_V34_CONSTELLATION_OK)
 		return SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT;
-	generated = (struct sippymodem_v34_2d_mapping_output){
-		.constellation_label = label,
-		.mapper_output = rotate_clockwise(
-			quarter_point, input->clockwise_quarter_turns),
-	};
+	generated.constellation_label = label;
+	if (!rotate_clockwise(
+		    &quarter_point, input->clockwise_quarter_turns,
+		    &generated.mapper_output))
+		return SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT;
 	*output = generated;
+	return SIPPYMODEM_V34_MAPPER_OK;
+}
+
+enum sippymodem_v34_mapper_result sippymodem_v34_unmap_2d_symbol(
+	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct sippymodem_v34_grid_point *mapper_output,
+	uint8_t clockwise_quarter_turns,
+	struct sippymodem_v34_2d_mapping_input *input)
+{
+	struct sippymodem_v34_2d_mapping_input recovered;
+	struct sippymodem_v34_grid_point quarter_point;
+	size_t label;
+	uint16_t point_mask;
+
+	if (!sippymodem_v34_mapping_parameters_is_valid(parameters) ||
+	    mapper_output == NULL || input == NULL ||
+	    clockwise_quarter_turns >= 4u ||
+	    !rotate_clockwise(
+		    mapper_output,
+		    (uint8_t)((4u - clockwise_quarter_turns) & 3u),
+		    &quarter_point) ||
+	    sippymodem_v34_quarter_superconstellation_label(
+		    &quarter_point, &label) != SIPPYMODEM_V34_CONSTELLATION_OK ||
+	    label >= parameters->constellation_points / 4u)
+		return SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT;
+	point_mask = (uint16_t)(
+		(1u << parameters->point_index_bits_per_2d_symbol) - 1u);
+	recovered = (struct sippymodem_v34_2d_mapping_input){
+		.ring_index = (uint8_t)(label >>
+			parameters->point_index_bits_per_2d_symbol),
+		.point_index = (uint8_t)(label & point_mask),
+		.clockwise_quarter_turns = clockwise_quarter_turns,
+	};
+	if (!sippymodem_v34_2d_mapping_input_is_valid(&recovered, parameters))
+		return SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT;
+	*input = recovered;
 	return SIPPYMODEM_V34_MAPPER_OK;
 }
 

@@ -44,6 +44,13 @@ enum sippymodem_v34_constellation_result
 sippymodem_v34_quarter_superconstellation_point(
 	size_t label, struct sippymodem_v34_grid_point *point);
 
+/* Recover the exact Figure 5 label for an unrotated quarter-
+ * superconstellation point. No inverse lookup table is retained, and the
+ * destination is unchanged when the point is outside the defined prefix. */
+enum sippymodem_v34_constellation_result
+sippymodem_v34_quarter_superconstellation_label(
+	const struct sippymodem_v34_grid_point *point, size_t *label);
+
 /* Return point zero of the V.34 quarter-superconstellation after the given
  * number of 90-degree turns. Positive turns are counterclockwise; negative
  * turns are clockwise. */

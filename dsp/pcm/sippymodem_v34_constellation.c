@@ -155,6 +155,52 @@ sippymodem_v34_quarter_superconstellation_point(
 	return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
 }
 
+static bool quarter_grid_coordinate_is_valid(int16_t coordinate)
+{
+	return coordinate >= V34_QUARTER_GRID_MIN &&
+	       coordinate <= V34_QUARTER_GRID_MAX &&
+	       ((uint16_t)coordinate & 3u) == 1u;
+}
+
+enum sippymodem_v34_constellation_result
+sippymodem_v34_quarter_superconstellation_label(
+	const struct sippymodem_v34_grid_point *point, size_t *label)
+{
+	size_t rank = 0;
+	int selected_magnitude;
+
+	if (point == NULL || label == NULL ||
+	    !quarter_grid_coordinate_is_valid(point->in_phase) ||
+	    !quarter_grid_coordinate_is_valid(point->quadrature))
+		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	selected_magnitude = squared_magnitude(
+		point->in_phase, point->quadrature);
+	/* Labels are ordered first by magnitude, then by descending
+	 * quadrature and ascending in-phase coordinate. Counting preceding
+	 * lattice points reconstructs that order without the 416-word table
+	 * traditionally used by a demapper. */
+	for (int quadrature = V34_QUARTER_GRID_MAX;
+	     quadrature >= V34_QUARTER_GRID_MIN;
+	     quadrature -= V34_QUARTER_GRID_STEP) {
+		for (int in_phase = V34_QUARTER_GRID_MIN;
+		     in_phase <= V34_QUARTER_GRID_MAX;
+		     in_phase += V34_QUARTER_GRID_STEP) {
+			int magnitude = squared_magnitude(in_phase, quadrature);
+
+			if (magnitude < selected_magnitude ||
+			    (magnitude == selected_magnitude &&
+			     (quadrature > point->quadrature ||
+			      (quadrature == point->quadrature &&
+			       in_phase < point->in_phase))))
+				rank++;
+		}
+	}
+	if (rank >= SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	*label = rank;
+	return SIPPYMODEM_V34_CONSTELLATION_OK;
+}
+
 static struct sippymodem_qam_point rotate_point(
 	struct sippymodem_qam_point point, int counterclockwise_quarter_turns)
 {

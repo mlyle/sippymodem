@@ -116,6 +116,7 @@ static bool test_indexed_quarter_superconstellation(void)
 	 * non-sequential order. */
 	for (size_t visit = 0; visit < ARRAY_LENGTH(points); ++visit) {
 		size_t label = visit * 37u % ARRAY_LENGTH(points);
+		size_t recovered_label = SIZE_MAX;
 		struct sippymodem_v34_grid_point selected = { 0 };
 
 		CHECK(sippymodem_v34_quarter_superconstellation_point(
@@ -124,7 +125,11 @@ static bool test_indexed_quarter_superconstellation(void)
 		      "indexed label %zu was rejected", label);
 		CHECK(selected.in_phase == points[label].in_phase &&
 		      selected.quadrature == points[label].quadrature &&
-		      independent_quarter_grid_rank(&selected) == label,
+		      independent_quarter_grid_rank(&selected) == label &&
+		      sippymodem_v34_quarter_superconstellation_label(
+			      &selected, &recovered_label) ==
+			      SIPPYMODEM_V34_CONSTELLATION_OK &&
+		      recovered_label == label,
 		      "indexed label %zu selected the wrong point", label);
 	}
 	return true;
@@ -381,8 +386,14 @@ static bool test_validation(void)
 	struct sippymodem_v34_grid_point saved[4];
 	struct sippymodem_v34_grid_point indexed = { 23, -29 };
 	struct sippymodem_v34_grid_point saved_indexed = indexed;
+	static const struct sippymodem_v34_grid_point invalid_labels[] = {
+		{ 3, 1 },
+		{ 49, 1 },
+		{ 45, 45 },
+	};
 	struct sippymodem_qam_point not_finite = { NAN, 0.0 };
 	struct sippymodem_qam_point too_large = { DBL_MAX, DBL_MAX };
+	size_t label = 0xa5a5u;
 	uint8_t quarter = 0xa5;
 	uint8_t rotation = 0x5a;
 
@@ -432,6 +443,20 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      memcmp(&indexed, &saved_indexed, sizeof(indexed)) == 0,
 	      "invalid indexed lookup changed its output");
+	for (size_t invalid = 0; invalid < ARRAY_LENGTH(invalid_labels);
+	     ++invalid) {
+		CHECK(sippymodem_v34_quarter_superconstellation_label(
+			      &invalid_labels[invalid], &label) ==
+			      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+		      label == 0xa5a5u,
+		      "invalid inverse label %zu changed its output", invalid);
+	}
+	CHECK(sippymodem_v34_quarter_superconstellation_label(NULL, &label) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_quarter_superconstellation_label(&indexed, NULL) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      label == 0xa5a5u,
+	      "invalid inverse-label pointer changed its output");
 	CHECK(sippymodem_v34_training_constellation_slice(
 		      (enum sippymodem_v34_constellation_size)8, &point,
 		      &quarter, &rotation) ==
