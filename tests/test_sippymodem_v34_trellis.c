@@ -19,6 +19,74 @@ static const uint8_t TABLE13[SIPPYMODEM_V34_SUBSET_LABEL_COUNT]
 	{ 0xe, 0xf, 0xf, 0xe, 0x6, 0x7, 0x7, 0x6 },
 };
 
+/* Figure 9 in printed row/column order; production derives these labels. */
+static const uint8_t FIGURE9_LABELS[4][4] = {
+	{ 1, 6, 5, 2 },
+	{ 4, 3, 0, 7 },
+	{ 5, 2, 1, 6 },
+	{ 0, 7, 4, 3 },
+};
+
+static bool test_grid_subset_labels(void)
+{
+	static const int16_t in_phase_coordinates[] = { -3, -1, 1, 3 };
+	static const int16_t quadrature_coordinates[] = { 3, 1, -1, -3 };
+	static const struct {
+		struct sippymodem_v34_grid_point point;
+		uint8_t expected;
+	} extreme_cases[] = {
+		{ { INT16_MIN + 1, INT16_MAX }, 1 },
+		{ { INT16_MAX, INT16_MIN + 1 }, 3 },
+	};
+	unsigned int points_checked = 0;
+
+	for (int quadrature_tile = -4; quadrature_tile <= 4;
+	     ++quadrature_tile) {
+		for (int in_phase_tile = -4; in_phase_tile <= 4;
+		     ++in_phase_tile) {
+			for (size_t row = 0;
+			     row < ARRAY_LENGTH(quadrature_coordinates); ++row) {
+				for (size_t column = 0;
+				     column < ARRAY_LENGTH(in_phase_coordinates);
+				     ++column) {
+					const struct sippymodem_v34_grid_point point = {
+						.in_phase = (int16_t)(
+							in_phase_coordinates[column] +
+							8 * in_phase_tile),
+						.quadrature = (int16_t)(
+							quadrature_coordinates[row] +
+							8 * quadrature_tile),
+					};
+					uint8_t label = UINT8_MAX;
+
+					CHECK(sippymodem_v34_grid_subset_label(
+						      &point, &label) ==
+						      SIPPYMODEM_V34_TRELLIS_OK &&
+					      label == FIGURE9_LABELS[row][column],
+					      "grid tile %d/%d point %zu/%zu produced %u",
+					      in_phase_tile, quadrature_tile, column,
+					      row, label);
+					points_checked++;
+				}
+			}
+		}
+	}
+	for (size_t index = 0; index < ARRAY_LENGTH(extreme_cases); ++index) {
+		uint8_t label = UINT8_MAX;
+
+		CHECK(sippymodem_v34_grid_subset_label(
+			      &extreme_cases[index].point, &label) ==
+			      SIPPYMODEM_V34_TRELLIS_OK &&
+		      label == extreme_cases[index].expected,
+		      "extreme grid point %zu produced %u", index, label);
+		points_checked++;
+	}
+	CHECK(points_checked == 9u * 9u * 16u +
+				       ARRAY_LENGTH(extreme_cases),
+	      "grid-label coverage changed to %u points", points_checked);
+	return true;
+}
+
 static uint8_t packed_input(
 	const struct sippymodem_v34_convolutional_input *input)
 {
@@ -281,6 +349,8 @@ static bool test_validation(void)
 		.selection = SIPPYMODEM_V34_TRELLIS_16_STATE,
 	};
 	struct sippymodem_v34_convolutional_encoder saved_encoder;
+	struct sippymodem_v34_grid_point grid_point = { 1, 1 };
+	uint8_t subset_label = UINT8_MAX;
 	uint8_t y0 = UINT8_MAX;
 
 	CHECK(sippymodem_v34_trellis_selection_is_valid(
@@ -305,6 +375,22 @@ static bool test_validation(void)
 	      "invalid subset conversion changed its destination");
 	CHECK(!sippymodem_v34_convolutional_input_is_valid(NULL),
 	      "missing convolutional input was accepted");
+	grid_point.in_phase = 0;
+	CHECK(sippymodem_v34_grid_subset_label(
+		      &grid_point, &subset_label) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      subset_label == UINT8_MAX,
+	      "even in-phase coordinate changed its label");
+	grid_point = (struct sippymodem_v34_grid_point){ 1, 0 };
+	CHECK(sippymodem_v34_grid_subset_label(
+		      &grid_point, &subset_label) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_grid_subset_label(NULL, &subset_label) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_grid_subset_label(&grid_point, NULL) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      subset_label == UINT8_MAX,
+	      "invalid grid labeling changed its destination");
 	for (uint8_t field = 0; field < 4u; ++field) {
 		input = (struct sippymodem_v34_convolutional_input){ 0 };
 		switch (field) {
@@ -376,6 +462,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "channel grid labels", test_grid_subset_labels },
 		{ "symbol-to-bit converter", test_symbol_to_bit_converter },
 		{ "all state transitions", test_all_state_transitions },
 		{ "known sequences", test_known_sequences },
