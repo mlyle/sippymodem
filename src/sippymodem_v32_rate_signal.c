@@ -11,14 +11,19 @@ enum {
 	V32_B4_DATA_MODE = 0x0800,
 	V32_B5_4800 = 0x0400,
 	V32_B6_9600 = 0x0200,
-	V32_B7_7200 = 0x0040,
 	V32_B8_TRELLIS = 0x0080,
+	V32_B9_7200 = 0x0040,
+	V32_B10_12000 = 0x0020,
+	V32_B12_14400 = 0x0008,
 	V32_RATE_FIELD_MASK = V32_B4_DATA_MODE | V32_B5_4800 |
-			       V32_B6_9600 | V32_B7_7200,
+			       V32_B6_9600 | V32_B9_7200 |
+			       V32_B10_12000 | V32_B12_14400,
 	V32_PAYLOAD_MASK = V32_RATE_FIELD_MASK | V32_B8_TRELLIS,
 	V32_RATE_CAPABILITY_MASK = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
 				   SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
-				   SIPPYMODEM_V32_RATE_CAPABILITY_9600,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_9600 |
+				   SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+				   SIPPYMODEM_V32_RATE_CAPABILITY_14400,
 	V32_DETECTOR_WINDOW_DIBITS = 2 * SIPPYMODEM_V32_RATE_SIGNAL_DIBITS,
 };
 
@@ -35,6 +40,10 @@ static bool has_one_rate(uint8_t rates)
 
 static uint8_t highest_rate(uint8_t rates)
 {
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_14400) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_14400;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_12000) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_12000;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) != 0)
 		return SIPPYMODEM_V32_RATE_CAPABILITY_9600;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_7200) != 0)
@@ -44,20 +53,29 @@ static uint8_t highest_rate(uint8_t rates)
 	return 0;
 }
 
+static bool rate_requires_trellis(uint8_t rate)
+{
+	return rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200 ||
+	       rate == SIPPYMODEM_V32_RATE_CAPABILITY_12000 ||
+	       rate == SIPPYMODEM_V32_RATE_CAPABILITY_14400;
+}
+
 static bool offer_is_valid(
 	const struct sippymodem_v32_rate_offer *offer,
 	enum sippymodem_v32_rate_signal_type type)
 {
+	uint8_t highest;
+
 	if (offer == NULL ||
 	    (offer->rates & (uint8_t)~V32_RATE_CAPABILITY_MASK) != 0 ||
 	    offer->rates == 0)
 		return false;
-	if (highest_rate(offer->rates) == SIPPYMODEM_V32_RATE_CAPABILITY_7200)
-		return offer->trellis_at_highest_rate;
-	if (highest_rate(offer->rates) == SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
-	    offer->trellis_at_highest_rate)
+	if (type == SIPPYMODEM_V32_END_SIGNAL && !has_one_rate(offer->rates))
 		return false;
-	return type != SIPPYMODEM_V32_END_SIGNAL || has_one_rate(offer->rates);
+	highest = highest_rate(offer->rates);
+	if (highest == SIPPYMODEM_V32_RATE_CAPABILITY_9600)
+		return true;
+	return offer->trellis_at_highest_rate == rate_requires_trellis(highest);
 }
 
 static uint16_t encode_rates(uint8_t rates)
@@ -67,9 +85,13 @@ static uint16_t encode_rates(uint8_t rates)
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0)
 		word |= V32_B5_4800;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_7200) != 0)
-		word |= V32_B7_7200;
+		word |= V32_B9_7200;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) != 0)
 		word |= V32_B6_9600;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_12000) != 0)
+		word |= V32_B10_12000;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_14400) != 0)
+		word |= V32_B12_14400;
 	return word;
 }
 
@@ -98,10 +120,14 @@ static uint8_t decode_rates(uint16_t word)
 
 	if ((word & V32_B5_4800) != 0)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_4800;
-	if ((word & V32_B7_7200) != 0)
+	if ((word & V32_B9_7200) != 0)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_7200;
 	if ((word & V32_B6_9600) != 0)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	if ((word & V32_B10_12000) != 0)
+		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_12000;
+	if ((word & V32_B12_14400) != 0)
+		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_14400;
 	return rates;
 }
 

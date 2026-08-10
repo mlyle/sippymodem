@@ -15,13 +15,19 @@ enum {
 
 static uint8_t highest_rate(uint8_t rates);
 
+static bool rate_requires_trellis(uint8_t rate)
+{
+	return rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200 ||
+	       rate == SIPPYMODEM_V32_RATE_CAPABILITY_12000 ||
+	       rate == SIPPYMODEM_V32_RATE_CAPABILITY_14400;
+}
+
 static struct sippymodem_v32_rate_offer rate_offer(uint8_t rates)
 {
 	return (struct sippymodem_v32_rate_offer){
 		.rates = rates,
-		.trellis_at_highest_rate =
-			highest_rate(rates) ==
-			SIPPYMODEM_V32_RATE_CAPABILITY_7200,
+		.trellis_at_highest_rate = rate_requires_trellis(
+			highest_rate(rates)),
 	};
 }
 
@@ -296,6 +302,10 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 
 static uint8_t highest_rate(uint8_t rates)
 {
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_14400) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_14400;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_12000) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_12000;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) != 0)
 		return SIPPYMODEM_V32_RATE_CAPABILITY_9600;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_7200) != 0)
@@ -321,7 +331,7 @@ static bool offer_selects_rate(
 	const struct sippymodem_v32_rate_offer *offer, uint8_t selected_rate)
 {
 	return offer->trellis_at_highest_rate ==
-		       (selected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
+		       rate_requires_trellis(selected_rate) &&
 	       highest_rate(offer->rates) == selected_rate;
 }
 

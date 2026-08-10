@@ -218,6 +218,35 @@ static bool test_uncoded_fallback(void)
 	return true;
 }
 
+static bool test_higher_rate_offer_fallback(void)
+{
+	struct sippymodem_v32_rate_offer offer = {
+		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_9600 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_14400,
+		.trellis_at_highest_rate = true,
+	};
+	struct sippymodem_v32_startup caller;
+	uint16_t word;
+
+	CHECK(sippymodem_v32_startup_init(
+		      &caller, SIPPYMODEM_V32_CALLER,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			      SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+			      SIPPYMODEM_V32_RATE_CAPABILITY_9600) ==
+		      SIPPYMODEM_V32_STARTUP_OK &&
+	      sippymodem_v32_rate_signal_encode(
+		      SIPPYMODEM_V32_RATE_SIGNAL, &offer, &word) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+	      observe_word(&caller, word) && observe_word(&caller, word) &&
+	      caller.selected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_9600 &&
+	      caller.rate_word == 0x0b11 && caller.end_word == 0xfb11,
+	      "V.32 startup did not select its highest implemented fallback");
+	return true;
+}
+
 static bool test_training_boundary(void)
 {
 	struct sippymodem_v32_startup answerer;
@@ -410,6 +439,7 @@ int main(void)
 	} tests[] = {
 		{ "highest common rate", test_rate_selection },
 		{ "uncoded fallback", test_uncoded_fallback },
+		{ "higher-rate offer fallback", test_higher_rate_offer_fallback },
 		{ "training boundary", test_training_boundary },
 		{ "end waits for rate boundary",
 		  test_end_waits_for_rate_boundary },

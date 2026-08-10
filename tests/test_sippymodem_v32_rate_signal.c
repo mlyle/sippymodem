@@ -29,6 +29,10 @@ static bool test_normative_words(void)
 		  0xfb11 },
 		{ { SIPPYMODEM_V32_RATE_CAPABILITY_9600, true }, 0x0b91,
 		  0xfb91 },
+		{ { SIPPYMODEM_V32_RATE_CAPABILITY_12000, true }, 0x09b1,
+		  0xf9b1 },
+		{ { SIPPYMODEM_V32_RATE_CAPABILITY_14400, true }, 0x0999,
+		  0xf999 },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(fixtures); ++index) {
@@ -55,8 +59,10 @@ static bool test_capability_round_trip(void)
 	struct sippymodem_v32_rate_offer source = {
 		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
 			 SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
-			 SIPPYMODEM_V32_RATE_CAPABILITY_9600,
-		.trellis_at_highest_rate = false,
+			 SIPPYMODEM_V32_RATE_CAPABILITY_9600 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_14400,
+		.trellis_at_highest_rate = true,
 	};
 	struct sippymodem_v32_rate_offer decoded = { 0 };
 	enum sippymodem_v32_rate_signal_type type = SIPPYMODEM_V32_END_SIGNAL;
@@ -65,7 +71,7 @@ static bool test_capability_round_trip(void)
 	CHECK(sippymodem_v32_rate_signal_encode(
 		      SIPPYMODEM_V32_RATE_SIGNAL, &source, &word) ==
 		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-		      word == 0x0f51 &&
+		      word == 0x0ff9 &&
 		      sippymodem_v32_rate_signal_decode(word, &type, &decoded) ==
 			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 		      type == SIPPYMODEM_V32_RATE_SIGNAL &&
@@ -243,6 +249,14 @@ static bool test_validation(void)
 		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
 			 SIPPYMODEM_V32_RATE_CAPABILITY_9600,
 	};
+	struct sippymodem_v32_rate_offer multiple_trellis_rates = {
+		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_12000,
+		.trellis_at_highest_rate = true,
+	};
+	struct sippymodem_v32_rate_offer uncoded_12000 = {
+		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_12000,
+	};
 	struct sippymodem_v32_rate_offer decoded = {
 		.rates = UINT8_MAX,
 		.trellis_at_highest_rate = true,
@@ -257,6 +271,14 @@ static bool test_validation(void)
 		      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_OFFER &&
 		      sippymodem_v32_rate_signal_encode(
 			      SIPPYMODEM_V32_END_SIGNAL, &multiple_rates,
+			      &word) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_OFFER &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_END_SIGNAL,
+			      &multiple_trellis_rates, &word) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_OFFER &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_RATE_SIGNAL, &uncoded_12000,
 			      &word) ==
 			      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_OFFER &&
 		      sippymodem_v32_rate_signal_encode(
