@@ -203,7 +203,8 @@ FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o
 V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_ansam
 V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_ansam.o \
-	$(BUILD_DIR)/sippymodem_v8_ansam.o
+	$(BUILD_DIR)/sippymodem_v8_ansam.o \
+	$(BUILD_DIR)/sippymodem_g711.o
 BAUDOT_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_baudot
 BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_baudot.o \
 	$(BUILD_DIR)/sippymodem_baudot.o $(BUILD_DIR)/sippymodem_fsk.o
