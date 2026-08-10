@@ -205,6 +205,9 @@ V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_ansam
 V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_ansam.o \
 	$(BUILD_DIR)/sippymodem_v8_ansam.o \
 	$(BUILD_DIR)/sippymodem_g711.o
+V8_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_framing
+V8_FRAMING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_framing.o \
+	$(BUILD_DIR)/sippymodem_v8_framing.o
 BAUDOT_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_baudot
 BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_baudot.o \
 	$(BUILD_DIR)/sippymodem_baudot.o $(BUILD_DIR)/sippymodem_fsk.o
@@ -321,6 +324,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(DC_FILTER_TEST_BINARY) $(DIFFERENTIAL_QPSK_TEST_BINARY) \
 	$(NATIVE_CORE_TEST_BINARY) \
 	$(FSK_TEST_BINARY) $(V8_ANSAM_TEST_BINARY) \
+	$(V8_FRAMING_TEST_BINARY) \
 	$(BAUDOT_TEST_BINARY) $(V23_TEST_BINARY) \
 	$(V22_FRAMING_TEST_BINARY) $(V22BIS_RECEIVER_TEST_BINARY) \
 	$(V32_FRAMING_TEST_BINARY) $(V32_CONSTELLATION_TEST_BINARY) \
@@ -358,6 +362,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(DIFFERENTIAL_QPSK_TEST_OBJECTS:.o=.d) \
 	$(NATIVE_CORE_TEST_OBJECTS:.o=.d) \
 	$(FSK_TEST_OBJECTS:.o=.d) $(V8_ANSAM_TEST_OBJECTS:.o=.d) \
+	$(V8_FRAMING_TEST_OBJECTS:.o=.d) \
 	$(BAUDOT_TEST_OBJECTS:.o=.d) \
 	$(V23_TEST_OBJECTS:.o=.d) \
 	$(V22_FRAMING_TEST_OBJECTS:.o=.d) \
@@ -413,6 +418,7 @@ test: $(TEST_BINARIES)
 	./$(NATIVE_CORE_TEST_BINARY)
 	./$(FSK_TEST_BINARY)
 	./$(V8_ANSAM_TEST_BINARY)
+	./$(V8_FRAMING_TEST_BINARY)
 	./$(BAUDOT_TEST_BINARY)
 	./$(V23_TEST_BINARY)
 	./$(V22_FRAMING_TEST_BINARY)
@@ -531,6 +537,9 @@ $(FSK_TEST_BINARY): $(FSK_TEST_OBJECTS)
 
 $(V8_ANSAM_TEST_BINARY): $(V8_ANSAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V8_FRAMING_TEST_BINARY): $(V8_FRAMING_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BAUDOT_TEST_BINARY): $(BAUDOT_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -775,6 +784,10 @@ $(BUILD_DIR)/sippymodem_qam.o: \
 
 $(BUILD_DIR)/sippymodem_v8_ansam.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_ansam.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v8_framing.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v8_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/native_%.o: ../src/%.c | $(BUILD_DIR)
