@@ -7,6 +7,7 @@
 #include <sippymodem_media.h>
 #include <sippymodem_v22_datapump.h>
 #include <sippymodem_v23_datapump.h>
+#include <sippymodem_v32_datapump.h>
 
 #include "test.h"
 
@@ -321,8 +322,13 @@ static bool run_media_call(
 		      caller.modem->rx_rate == test_case->caller_rx_rate &&
 		      answerer.modem->tx_rate == test_case->answerer_tx_rate &&
 		      answerer.modem->rx_rate == test_case->answerer_rx_rate,
-	      "%s peers did not acquire carrier and report their rates",
-	      test_case->name);
+	      "%s peers did not acquire carrier and report their rates "
+	      "(caller=%d/%u/%u answerer=%d/%u/%u)",
+	      test_case->name,
+	      modem_is_online(caller.modem, test_case->id),
+	      caller.modem->tx_rate, caller.modem->rx_rate,
+	      modem_is_online(answerer.modem, test_case->id),
+	      answerer.modem->tx_rate, answerer.modem->rx_rate);
 	CHECK(!test_case->test_prelink || prelink_queued,
 	      "%s did not expose its asymmetric pre-link interval",
 	      test_case->name);
@@ -600,6 +606,16 @@ int main(void)
 			.caller_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
+			.id = DP_V32,
+			.name = "V.32 4800",
+			.selection_command = "AT+MS=32,0,4800,4800\r",
+			.caller_tx_rate = SIPPYMODEM_V32_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V32_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V32_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V32_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 		},
 		{

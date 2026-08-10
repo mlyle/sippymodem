@@ -14,13 +14,13 @@ enum {
 	TEST_SYMBOL_RATE = 2400,
 	TEST_CARRIER_HZ = 1800,
 	TEST_AMPLITUDE = 12000,
-	TEST_TRAINING_DIBITS = 160,
+	TEST_TRAINING_DIBITS = 224,
 	TEST_SYNC_DIBITS = 32,
 	TEST_PAYLOAD_DIBITS = 192,
 	TEST_TRAILING_DIBITS = 64,
 	TEST_SOURCE_DIBITS = TEST_TRAINING_DIBITS + TEST_SYNC_DIBITS +
 			      TEST_PAYLOAD_DIBITS + TEST_TRAILING_DIBITS,
-	TEST_DECODED_CAPACITY = 512,
+	TEST_DECODED_CAPACITY = TEST_SOURCE_DIBITS + 128,
 };
 
 enum test_codec {
@@ -88,6 +88,19 @@ static size_t find_pattern(
 	return SIZE_MAX;
 }
 
+static size_t longest_mark_run(const uint8_t *dibits, size_t count)
+{
+	size_t longest = 0;
+	size_t current = 0;
+
+	for (size_t index = 0; index < count; ++index) {
+		current = dibits[index] == 3 ? current + 1u : 0;
+		if (current > longest)
+			longest = current;
+	}
+	return longest;
+}
+
 static int16_t transcode_sample(int16_t sample, enum test_codec codec)
 {
 	switch (codec) {
@@ -105,7 +118,8 @@ static int16_t transcode_sample(int16_t sample, enum test_codec codec)
 
 static bool check_carrier(
 	enum test_codec codec, uint32_t transmit_carrier_hz,
-	size_t leading_silence)
+	size_t raw_silence, size_t media_silence,
+	enum sippymodem_v32_transmitter_role transmitter_role)
 {
 	struct sippymodem_qam_channel transmit_channel =
 		v32_channel(transmit_carrier_hz);
@@ -124,6 +138,7 @@ static bool check_carrier(
 	size_t transmitted = 0;
 	size_t decoded_count = 0;
 	size_t sync_offset;
+	size_t leading_silence = raw_silence + media_silence;
 	bool has_previous_receive_point = false;
 	size_t sample_count = leading_silence +
 		((TEST_SOURCE_DIBITS + 48u) * TEST_SAMPLE_RATE +
@@ -138,10 +153,10 @@ static bool check_carrier(
 			      &demodulator, &receive_channel) ==
 			      SIPPYMODEM_QAM_OK &&
 		      sippymodem_v32_symbol_encoder_init(
-			      &encoder, SIPPYMODEM_V32_CALLING_TRANSMITTER, 0) ==
+			      &encoder, transmitter_role, 0) ==
 			      SIPPYMODEM_V32_FRAMING_OK &&
 		      sippymodem_v32_symbol_decoder_init(
-			      &decoder, SIPPYMODEM_V32_CALLING_TRANSMITTER, 0) ==
+			      &decoder, transmitter_role, 0) ==
 			      SIPPYMODEM_V32_FRAMING_OK,
 	      "V.32 carrier endpoints did not initialize");
 	for (size_t sample_index = 0; sample_index < sample_count;
@@ -176,7 +191,8 @@ static bool check_carrier(
 			if (accepted)
 				transmitted++;
 		}
-		sample = transcode_sample(sample, codec);
+		if (sample_index >= raw_silence)
+			sample = transcode_sample(sample, codec);
 		CHECK(sippymodem_qam_demodulator_sample(
 			      &demodulator, sample, &receive_point, &ready) ==
 			      SIPPYMODEM_QAM_OK,
@@ -195,7 +211,12 @@ static bool check_carrier(
 				      sippymodem_v32_symbol_decode(
 					      &decoder, relative_quadrant, &output) ==
 					      SIPPYMODEM_V32_FRAMING_OK,
-			      "V.32 carrier produced an invalid symbol");
+			      "V.32 carrier produced an invalid symbol "
+			      "(codec %d, carrier %u, silence %zu+%zu, role %d, "
+			      "decoded %zu)",
+			      codec, transmit_carrier_hz, raw_silence,
+			      media_silence,
+			      transmitter_role, decoded_count);
 			decoded[decoded_count++] = output;
 		}
 		if (ready) {
@@ -205,6 +226,9 @@ static bool check_carrier(
 	}
 	CHECK(transmitted >= TEST_SOURCE_DIBITS,
 	      "V.32 carrier did not consume its source");
+	CHECK(longest_mark_run(decoded, decoded_count) >= 128,
+	      "V.32 carrier recovered only %zu consecutive mark dibits",
+	      longest_mark_run(decoded, decoded_count));
 	sync_offset = find_pattern(
 		decoded, decoded_count, source + TEST_TRAINING_DIBITS,
 		TEST_SYNC_DIBITS);
@@ -253,17 +277,29 @@ static bool test_phase_quantizer_validation(void)
 
 static bool test_linear_carrier(void)
 {
-	return check_carrier(TEST_LINEAR_PCM, TEST_CARRIER_HZ, 0);
+	return check_carrier(
+		TEST_LINEAR_PCM, TEST_CARRIER_HZ, 0, 0,
+		SIPPYMODEM_V32_CALLING_TRANSMITTER);
 }
 
 static bool test_pcmu_carrier(void)
 {
-	return check_carrier(TEST_PCMU, TEST_CARRIER_HZ + 7u, 13);
+	return check_carrier(
+		TEST_PCMU, TEST_CARRIER_HZ + 7u, 0, 13,
+		SIPPYMODEM_V32_CALLING_TRANSMITTER);
 }
 
 static bool test_pcma_carrier(void)
 {
-	return check_carrier(TEST_PCMA, TEST_CARRIER_HZ - 7u, 26);
+	return check_carrier(
+		TEST_PCMA, TEST_CARRIER_HZ - 7u, 0, 26,
+		SIPPYMODEM_V32_ANSWERING_TRANSMITTER) &&
+	       check_carrier(
+		       TEST_PCMA, TEST_CARRIER_HZ, 160, 160,
+		       SIPPYMODEM_V32_ANSWERING_TRANSMITTER) &&
+	       check_carrier(
+		       TEST_PCMA, TEST_CARRIER_HZ, 0, 0,
+		       SIPPYMODEM_V32_CALLING_TRANSMITTER);
 }
 
 int main(void)

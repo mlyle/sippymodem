@@ -2,6 +2,7 @@
 
 #include <modem.h>
 #include <sippymodem_datapumps.h>
+#include <sippymodem_v32_datapump.h>
 
 #include "test.h"
 
@@ -114,12 +115,14 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *v22_operations;
 	struct dp_operations *v22bis_operations;
 	struct dp_operations *bell212_operations;
+	struct dp_operations *v32_operations;
 	struct dp_operations *baudot_operations;
 	struct dp *call_progress;
 	struct dp *baudot;
 	struct dp *v22;
 	struct dp *v22bis;
 	struct dp *bell212;
+	struct dp *v32;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
 
@@ -130,6 +133,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22) == NULL &&
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
+		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_register(DP_B103, &conflict_operations) == 0 &&
 		      sippymodem_datapumps_start(&datapumps) ==
@@ -140,6 +144,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22) == NULL &&
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
+		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) ==
 			      &conflict_operations &&
@@ -155,6 +160,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	v22_operations = modem_dp_get_registered_ops(DP_V22);
 	v22bis_operations = modem_dp_get_registered_ops(DP_V22BIS);
 	bell212_operations = modem_dp_get_registered_ops(DP_B212);
+	v32_operations = modem_dp_get_registered_ops(DP_V32);
 	baudot_operations = modem_dp_get_registered_ops(DP_BAUDOT);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
@@ -179,6 +185,14 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v22_operations->use_count == 0 &&
 		      v22bis_operations == v22_operations &&
 		      bell212_operations == v22_operations &&
+		      v32_operations != NULL &&
+		      v32_operations != v21_operations &&
+		      v32_operations != v23_operations &&
+		      v32_operations != v22_operations &&
+		      v32_operations->create != NULL &&
+		      v32_operations->delete != NULL &&
+		      v32_operations->process != NULL &&
+		      v32_operations->use_count == 0 &&
 		      baudot_operations != NULL &&
 		      baudot_operations != v21_operations &&
 		      baudot_operations != v23_operations &&
@@ -239,6 +253,21 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v22bis_operations->delete(v22bis) == 0 &&
 		      v22bis_operations->use_count == 0,
 	      "V.22bis did not preserve its registered modem identity");
+	modem->min_rate = modem->max_rate = 2400;
+	CHECK(v32_operations->create(
+		      modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG,
+		      v32_operations) == NULL,
+	      "V.32 accepted a range that excludes 4800 bit/s");
+	modem->min_rate = modem->max_rate = SIPPYMODEM_V32_BIT_RATE;
+	v32 = v32_operations->create(
+		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, v32_operations);
+	CHECK(v32 != NULL && v32->id == DP_V32 &&
+		      v32_operations->use_count == 1 &&
+		      sippymodem_datapumps_stop(&datapumps) ==
+			      SIPPYMODEM_DATAPUMPS_BUSY &&
+		      v32_operations->delete(v32) == 0 &&
+		      v32_operations->use_count == 0,
+	      "V.32 data pump did not retain and release its registration");
 	modem->min_rate = 46;
 	modem->max_rate = 49;
 	CHECK(baudot_operations->create(
@@ -297,6 +326,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22) == NULL &&
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
+		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      !sippymodem_datapumps_are_started(&datapumps) &&
 		      sippymodem_datapumps_stop(&datapumps) ==

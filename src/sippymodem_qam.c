@@ -17,6 +17,7 @@ static const double QAM_TWO_PI = 6.283185307179586476925286766559;
 static const double QAM_PHASE_SCALE = 4294967296.0;
 static const double QAM_SINGULARITY_EPSILON = 1e-10;
 static const double QAM_POINT_EPSILON = 1e-12;
+static const double QAM_MIN_ACQUISITION_POWER = 64.0;
 
 static bool point_is_finite(const struct sippymodem_qam_point *point)
 {
@@ -556,7 +557,9 @@ static void select_timing_candidate(
 			best_power = average;
 		}
 	}
-	if (best == NULL || best_power <= 1.0) {
+	/* Companded media can decode an idle octet to a small nonzero sample.
+	 * Do not mistake that codec baseline for a carrier. */
+	if (best == NULL || best_power <= QAM_MIN_ACQUISITION_POWER) {
 		reset_timing_scores(demodulator);
 		return;
 	}
