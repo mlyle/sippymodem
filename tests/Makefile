@@ -511,7 +511,8 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_info1.o \
 	$(BUILD_DIR)/sippymodem_v34_preemphasis.o \
 	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o \
-	$(BUILD_DIR)/sippymodem_v34_data_carrier.o
+	$(BUILD_DIR)/sippymodem_v34_data_carrier.o \
+	$(BUILD_DIR)/sippymodem_v34_data_line_transmitter.o
 V34_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_constellation
 V34_CONSTELLATION_TEST_OBJECTS := \
@@ -1658,6 +1659,11 @@ $(BUILD_DIR)/sippymodem_v34_power_calibration.o: \
 
 $(BUILD_DIR)/sippymodem_v34_data_carrier.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_carrier.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_data_line_transmitter.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_line_transmitter.c | \
+	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_constellation.o: \

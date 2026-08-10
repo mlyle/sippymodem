@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_v34_data_carrier.h>
+#include <sippymodem_v34_data_line_transmitter.h>
 #include <sippymodem_v34_power_calibration.h>
 
 #include "test.h"
@@ -241,6 +242,76 @@ static bool test_streaming_handoff(void)
 		      &carrier, &fixture.frame) ==
 		      SIPPYMODEM_V34_DATA_CARRIER_OK,
 	      "data carrier did not consume and reload the mapping frame");
+	return true;
+}
+
+static bool test_line_output(void)
+{
+	struct carrier_fixture fixture;
+	struct sippymodem_v34_data_line_transmitter transmitter;
+	struct sippymodem_v34_data_line_transmitter waiting;
+	struct sippymodem_v34_data_carrier model_carrier;
+	struct sippymodem_v34_preemphasis model_filter;
+	size_t samples = 0;
+	bool nonzero_seen = false;
+	int16_t waiting_sample = 1234;
+	bool waiting_accepted = true;
+
+	CHECK(initialize_fixture(&fixture) &&
+	      sippymodem_v34_data_line_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+	      sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+		      &transmitter),
+	      "data line transmitter did not initialize");
+	waiting = transmitter;
+	CHECK(sippymodem_v34_data_line_transmitter_sample(
+		      &transmitter, &waiting_sample, &waiting_accepted) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED &&
+	      memcmp(&transmitter, &waiting, sizeof(transmitter)) == 0 &&
+	      waiting_sample == 1234 && waiting_accepted &&
+	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      &transmitter, &fixture.frame) ==
+		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+	      "data line transmitter changed while waiting for a frame");
+	model_carrier = transmitter.carrier;
+	model_filter = transmitter.preemphasis;
+	while (!sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+		&transmitter)) {
+		double carrier_sample;
+		double filtered_sample;
+		long expected_sample;
+		int16_t actual_sample;
+		bool expected_accepted;
+		bool actual_accepted;
+
+		CHECK(samples < 64u &&
+		      sippymodem_v34_data_carrier_sample(
+			      &model_carrier, &carrier_sample,
+			      &expected_accepted) ==
+			      SIPPYMODEM_V34_DATA_CARRIER_OK &&
+		      sippymodem_v34_preemphasis_sample(
+			      &model_filter, carrier_sample, &filtered_sample) ==
+			      SIPPYMODEM_V34_PREEMPHASIS_OK,
+		      "data line model failed at sample %zu", samples);
+		expected_sample = lround(filtered_sample * transmitter.output_gain);
+		CHECK(sippymodem_v34_data_line_transmitter_sample(
+			      &transmitter, &actual_sample, &actual_accepted) ==
+			      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+		      actual_sample == expected_sample &&
+		      actual_accepted == expected_accepted,
+		      "data line output diverged at sample %zu", samples);
+		nonzero_seen |= actual_sample != 0;
+		samples++;
+	}
+	CHECK(samples > SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME &&
+	      transmitter.generated_samples == samples && nonzero_seen &&
+	      memcmp(&transmitter.carrier, &model_carrier,
+		     sizeof(model_carrier)) == 0 &&
+	      memcmp(&transmitter.preemphasis, &model_filter,
+		     sizeof(model_filter)) == 0,
+	      "data line transmitter did not consume a mapping frame");
 	return true;
 }
 
@@ -491,6 +562,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "streaming handoff", test_streaming_handoff },
+		{ "line output", test_line_output },
 		{ "all line profiles", test_all_line_profiles },
 		{ "transactional validation", test_transactional_validation },
 	};
