@@ -481,7 +481,12 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_symbol_power.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
-	$(BUILD_DIR)/sippymodem_v34_power_calibration.o
+	$(BUILD_DIR)/sippymodem_v34_power_calibration.o \
+	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_v34_info1.o \
+	$(BUILD_DIR)/sippymodem_v34_preemphasis.o \
+	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o \
+	$(BUILD_DIR)/sippymodem_v34_data_carrier.o
 V34_DATA_CARRIER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_data_carrier
 V34_DATA_CARRIER_TEST_OBJECTS := \
@@ -504,6 +509,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
 	$(BUILD_DIR)/sippymodem_v34_power_calibration.o \
 	$(BUILD_DIR)/sippymodem_v34_info1.o \
+	$(BUILD_DIR)/sippymodem_v34_preemphasis.o \
 	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o \
 	$(BUILD_DIR)/sippymodem_v34_data_carrier.o
 V34_CONSTELLATION_TEST_BINARY := \

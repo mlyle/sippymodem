@@ -180,6 +180,73 @@ static bool test_generated_calibration(void)
 	return true;
 }
 
+static bool test_generated_line_power(void)
+{
+	struct calibration_fixture fixture;
+	struct sippymodem_v34_power_normalizer normalizer;
+	struct sippymodem_v34_line_power_measurement unfiltered;
+	struct sippymodem_v34_line_power_measurement repeated;
+	struct sippymodem_v34_line_power_measurement emphasized;
+	struct sippymodem_v34_frame_schedule saved_schedule;
+	struct sippymodem_v34_scrambler saved_scrambler;
+	struct sippymodem_v34_4d_encoder saved_encoder;
+	struct sippymodem_v34_phase3_profile profile = {
+		.symbol_rate_numerator = 3000,
+		.symbol_rate_denominator = 1,
+		.carrier_frequency_numerator = 2000,
+		.carrier_frequency_denominator = 1,
+		.symbol_rate = SIPPYMODEM_V34_SYMBOL_RATE_3000,
+		.local_role = SIPPYMODEM_V34_CALLING_STATION,
+		.projected_data_rate_2400_bps_units = 8,
+		.high_carrier = true,
+	};
+	uint32_t expected_samples =
+		(SIPPYMODEM_V34_POWER_CALIBRATION_SUPERFRAMES -
+		 SIPPYMODEM_V34_LINE_POWER_WARMUP_SUPERFRAMES) *
+		8000u * 280u / 1000u;
+
+	CHECK(initialize_fixture(
+		      &fixture, SIPPYMODEM_V34_CALLING_STATION,
+		      SIPPYMODEM_V34_TRELLIS_32_STATE, 3, 7) &&
+	      sippymodem_v34_calibrate_mapping_power(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		      &normalizer) == SIPPYMODEM_V34_POWER_CALIBRATION_OK,
+	      "line-power fixture did not initialize");
+	saved_schedule = fixture.schedule;
+	saved_scrambler = fixture.scrambler;
+	saved_encoder = fixture.encoder;
+	CHECK(sippymodem_v34_calibrate_line_power(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      &normalizer, &profile, 8000, &unfiltered) ==
+		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
+	      sippymodem_v34_calibrate_line_power(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      &normalizer, &profile, 8000, &repeated) ==
+		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
+	      sippymodem_v34_line_power_measurement_is_valid(&unfiltered) &&
+	      unfiltered.mean_squared_amplitude ==
+		      repeated.mean_squared_amplitude &&
+	      unfiltered.peak_amplitude == repeated.peak_amplitude &&
+	      unfiltered.sample_count == expected_samples &&
+	      repeated.sample_count == expected_samples &&
+	      schedules_are_equal(&fixture.schedule, &saved_schedule) &&
+	      scramblers_are_equal(&fixture.scrambler, &saved_scrambler) &&
+	      v34_test_encoders_are_equal(&fixture.encoder, &saved_encoder),
+	      "generated line-power calibration changed");
+	profile.preemphasis_filter_index = 5;
+	CHECK(sippymodem_v34_calibrate_line_power(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      &normalizer, &profile, 8000, &emphasized) ==
+		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
+	      sippymodem_v34_line_power_measurement_is_valid(&emphasized) &&
+	      emphasized.sample_count == expected_samples &&
+	      emphasized.mean_squared_amplitude !=
+		      unfiltered.mean_squared_amplitude,
+	      "line-power calibration ignored pre-emphasis");
+	return true;
+}
+
 static bool test_configuration_sweep(void)
 {
 	static const enum sippymodem_v34_station_role ROLES[] = {
@@ -392,6 +459,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated calibration", test_generated_calibration },
+		{ "generated line power", test_generated_line_power },
 		{ "configuration sweep", test_configuration_sweep },
 		{ "transactional validation", test_transactional_validation },
 	};
