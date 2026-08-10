@@ -437,6 +437,12 @@ V34_SYMBOL_POWER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_symbol_power
 V34_SYMBOL_POWER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_symbol_power.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/sippymodem_v34_framing.o \
+	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
+	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
+	$(BUILD_DIR)/sippymodem_v34_constellation.o \
+	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_symbol_power.o
 V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_transmitter
