@@ -5,5 +5,7 @@
 /src/*.d
 /dsp/*.o
 /dsp/*.d
+/dsp/**/*.o
+/dsp/**/*.d
 /src/slmodemd
 /tests/build/

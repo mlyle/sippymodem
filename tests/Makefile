@@ -9,11 +9,16 @@ PJSIP_AVAILABLE := $(shell \
 PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
 PJSIP_LDLIBS := $(shell pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
-CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp \
+	-I../dsp/v21_202 -I../dsp/v22 -I../dsp/v32 -I../dsp/pcm
 CFLAGS += -std=c11 -Wall -Wextra -Werror
 
 BUILD_DIR := build
 DSP_SOURCE_DIR := ../dsp
+DSP_V21_202_SOURCE_DIR := $(DSP_SOURCE_DIR)/v21_202
+DSP_V22_SOURCE_DIR := $(DSP_SOURCE_DIR)/v22
+DSP_V32_SOURCE_DIR := $(DSP_SOURCE_DIR)/v32
+DSP_PCM_SOURCE_DIR := $(DSP_SOURCE_DIR)/pcm
 PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
 PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
 PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
@@ -1050,19 +1055,19 @@ $(BUILD_DIR)/sippymodem_fsk.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v21.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v21.c | $(BUILD_DIR)
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v21.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_baudot.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_baudot.c | $(BUILD_DIR)
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_baudot_datapump.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_baudot_datapump.c | $(BUILD_DIR)
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_fsk300_datapump.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_fsk300_datapump.c | $(BUILD_DIR)
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_fsk300_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v8_datapump.o: \
@@ -1070,129 +1075,129 @@ $(BUILD_DIR)/sippymodem_v8_datapump.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v23_datapump.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v23_datapump.c | $(BUILD_DIR)
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v23_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22_framing.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v22_framing.c | $(BUILD_DIR)
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22bis_symbols.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v22bis_symbols.c | $(BUILD_DIR)
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_symbols.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22bis_receiver.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v22bis_receiver.c | $(BUILD_DIR)
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_framing.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_framing.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_constellation.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_constellation.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_constellation.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_9600_receiver.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_9600_receiver.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_9600_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_rate_signal.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_rate_signal.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_rate_signal.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_startup.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_startup.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_startup.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_trellis.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_trellis.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_trellis_decoder.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_datapump.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_datapump.c | $(BUILD_DIR)
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_framing.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_framing.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_info0.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_info0.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info0.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_info1.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_info1.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info1.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_info.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_initial_probe.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_acquisition.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_acquisition.c | \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_acquisition.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_receiver.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_spectrum.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_spectrum.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_synchronizer.c | \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_synchronizer.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_turnaround.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_reciprocal_probe.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_reciprocal_probe.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_reciprocal_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_ranging.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_tone.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_tone.c | $(BUILD_DIR)
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_tone.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22_datapump.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v22_datapump.c | $(BUILD_DIR)
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_qam.o: \

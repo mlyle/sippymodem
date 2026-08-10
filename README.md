@@ -10,7 +10,12 @@ Baudot RTTY, and raw ISDN data over voice bearer service (DOVBS).
 The active implementation is split between the application under `src/` and
 the modem signal processing and datapumps under `dsp/`. The top-level `make`
 builds only that implementation and no longer builds or installs Linux kernel
-drivers. Existing Smart Link copyright notices are preserved in the source.
+drivers. Reusable filters, modulation primitives, framing support, datapump
+registration, and multi-mode V.8 negotiation live directly under `dsp/`.
+Mode-family implementations are grouped under `dsp/v21_202/`, `dsp/v22/`,
+`dsp/v32/`, and `dsp/pcm/`; the PCM family contains V.34 now and is the home
+for V.90/V.92 work as it arrives. Existing Smart Link copyright notices are
+preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
 current daemon is entirely source-built and uses the host's native ABI. Its

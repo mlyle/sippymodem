@@ -25,8 +25,14 @@ PJSIP_LDLIBS := $(shell \
 	pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
 DSP_SOURCE_DIR := ../dsp
+DSP_V21_202_SOURCE_DIR := $(DSP_SOURCE_DIR)/v21_202
+DSP_V22_SOURCE_DIR := $(DSP_SOURCE_DIR)/v22
+DSP_V32_SOURCE_DIR := $(DSP_SOURCE_DIR)/v32
+DSP_PCM_SOURCE_DIR := $(DSP_SOURCE_DIR)/pcm
 
-CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR)
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -I$(DSP_SOURCE_DIR) \
+	-I$(DSP_V21_202_SOURCE_DIR) -I$(DSP_V22_SOURCE_DIR) \
+	-I$(DSP_V32_SOURCE_DIR) -I$(DSP_PCM_SOURCE_DIR)
 CFLAGS += -std=gnu11 -Wall -Wextra
 LDLIBS += $(PJSIP_LDLIBS) -lm
 
@@ -70,48 +76,13 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_driver.c \
 	sippymodem_slmodem_terminal.c \
 	sippymodem_terminal.c
-SIPPYMODEM_DSP_SOURCES := \
+SIPPYMODEM_SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_datapumps.c \
-	$(DSP_SOURCE_DIR)/sippymodem_baudot.c \
-	$(DSP_SOURCE_DIR)/sippymodem_baudot_datapump.c \
 	$(DSP_SOURCE_DIR)/sippymodem_dc_filter.c \
 	$(DSP_SOURCE_DIR)/sippymodem_differential_qpsk.c \
 	$(DSP_SOURCE_DIR)/sippymodem_fsk.c \
-	$(DSP_SOURCE_DIR)/sippymodem_fsk300_datapump.c \
 	$(DSP_SOURCE_DIR)/sippymodem_qam.c \
 	$(DSP_SOURCE_DIR)/sippymodem_self_sync_scrambler.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v21.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v22_datapump.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v22_framing.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v22bis_receiver.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v22bis_symbols.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v23_datapump.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_datapump.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_9600_receiver.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_constellation.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_framing.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_rate_signal.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_startup.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_trellis.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_framing.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_info0.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_info1.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_acquisition.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_receiver.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_spectrum.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_synchronizer.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_reciprocal_probe.c \
-	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_tone.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_ansam.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_answering.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_calling.c \
@@ -119,6 +90,48 @@ SIPPYMODEM_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_fsk.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_framing.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_menu.c
+SIPPYMODEM_V21_202_SOURCES := \
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot.c \
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot_datapump.c \
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_fsk300_datapump.c \
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v21.c \
+	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v23_datapump.c
+SIPPYMODEM_V22_SOURCES := \
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_datapump.c \
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_framing.c \
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_receiver.c \
+	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_symbols.c
+SIPPYMODEM_V32_SOURCES := \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_datapump.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_9600_receiver.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_constellation.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_framing.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_rate_signal.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_startup.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c
+SIPPYMODEM_PCM_SOURCES := \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_framing.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info0.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info1.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_acquisition.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_spectrum.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_synchronizer.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_reciprocal_probe.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_tone.c
+SIPPYMODEM_DSP_SOURCES := $(SIPPYMODEM_SHARED_DSP_SOURCES) \
+	$(SIPPYMODEM_V21_202_SOURCES) $(SIPPYMODEM_V22_SOURCES) \
+	$(SIPPYMODEM_V32_SOURCES) $(SIPPYMODEM_PCM_SOURCES)
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES) \
 	$(SIPPYMODEM_DSP_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)
