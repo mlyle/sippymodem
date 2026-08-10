@@ -27,13 +27,18 @@ enum sippymodem_fsk_result {
 	SIPPYMODEM_FSK_INVALID_ARGUMENT,
 };
 
-struct sippymodem_fsk_transmitter {
-	struct sippymodem_fsk_channel channel;
+struct sippymodem_fsk_tone_generator {
+	uint32_t sample_rate;
 	uint32_t mark_phase_step;
 	uint32_t space_phase_step;
 	uint32_t carrier_phase;
-	uint64_t symbol_accumulator;
 	int16_t amplitude;
+};
+
+struct sippymodem_fsk_transmitter {
+	struct sippymodem_fsk_channel channel;
+	struct sippymodem_fsk_tone_generator tones;
+	uint64_t symbol_accumulator;
 	uint8_t held_bit;
 	bool holding_bit;
 };
@@ -69,6 +74,15 @@ struct sippymodem_fsk_measurement {
 	bool ready;
 };
 
+enum sippymodem_fsk_result sippymodem_fsk_tone_generator_init(
+	struct sippymodem_fsk_tone_generator *generator,
+	const struct sippymodem_fsk_channel *channel,
+	int16_t amplitude);
+enum sippymodem_fsk_result sippymodem_fsk_tone_generator_sample(
+	struct sippymodem_fsk_tone_generator *generator,
+	uint8_t bit,
+	int16_t *sample);
+
 enum sippymodem_fsk_result sippymodem_fsk_transmitter_init(
 	struct sippymodem_fsk_transmitter *transmitter,
 	const struct sippymodem_fsk_channel *channel,
@@ -88,6 +102,14 @@ enum sippymodem_fsk_result sippymodem_fsk_receiver_init(
 	const struct sippymodem_fsk_channel *channel);
 void sippymodem_fsk_receiver_reset(
 	struct sippymodem_fsk_receiver *receiver);
+/* Advances only the generated tone-pair detector. Use this when an external
+ * asynchronous framer owns sampling instants; use receiver_sample when the
+ * FSK receiver should also recover the synchronous symbol clock. */
+enum sippymodem_fsk_result sippymodem_fsk_receiver_detect(
+	struct sippymodem_fsk_receiver *receiver,
+	int16_t sample,
+	uint8_t *bit,
+	bool *decision_ready);
 enum sippymodem_fsk_result sippymodem_fsk_receiver_sample(
 	struct sippymodem_fsk_receiver *receiver,
 	int16_t sample,

@@ -257,7 +257,7 @@ static bool test_exact_symbol_clock_and_validation(void)
 		      !sippymodem_fsk_receiver_measure(&receiver).ready,
 	      "FSK receiver reset discarded its configuration");
 	invalid.space_frequency_hz = invalid.sample_rate / 2;
-	transmitter.mark_phase_step = 0;
+	transmitter.tones.mark_phase_step = 0;
 	CHECK(sippymodem_fsk_transmitter_init(
 		      NULL, &v21_channel_1, TEST_AMPLITUDE) ==
 		      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
@@ -310,6 +310,69 @@ static bool test_fractional_symbol_clock(void)
 	return check_payload(&channel_500_over_11_baud, false);
 }
 
+static bool test_continuous_tone_detection(void)
+{
+	struct sippymodem_fsk_tone_generator generator;
+	struct sippymodem_fsk_receiver receiver;
+	struct sippymodem_fsk_measurement measurement;
+	int16_t sample = 0;
+	uint8_t decision = 0;
+	bool ready = false;
+
+	CHECK(sippymodem_fsk_tone_generator_init(
+		      &generator, &channel_500_over_11_baud,
+		      TEST_AMPLITUDE) == SIPPYMODEM_FSK_OK &&
+		      sippymodem_fsk_receiver_init(
+			      &receiver, &channel_500_over_11_baud) ==
+			      SIPPYMODEM_FSK_OK,
+	      "continuous FSK tone endpoints did not initialize");
+	for (size_t index = 0;
+	     index < channel_500_over_11_baud.detector_window * 3;
+	     ++index) {
+		CHECK(sippymodem_fsk_tone_generator_sample(
+			      &generator, 1, &sample) == SIPPYMODEM_FSK_OK &&
+			      sample >= -TEST_AMPLITUDE &&
+			      sample <= TEST_AMPLITUDE &&
+			      sippymodem_fsk_receiver_detect(
+				      &receiver, sample, &decision, &ready) ==
+				      SIPPYMODEM_FSK_OK,
+		      "continuous mark tone was rejected");
+	}
+	measurement = sippymodem_fsk_receiver_measure(&receiver);
+	CHECK(ready && decision == 1 && measurement.ready &&
+		      measurement.mark_power > measurement.space_power &&
+		      measurement.dominance_q8 >= 180,
+	      "continuous mark tone was not distinguished");
+	for (size_t index = 0;
+	     index < channel_500_over_11_baud.detector_window * 3;
+	     ++index) {
+		CHECK(sippymodem_fsk_tone_generator_sample(
+			      &generator, 0, &sample) == SIPPYMODEM_FSK_OK &&
+			      sippymodem_fsk_receiver_detect(
+				      &receiver, sample, &decision, &ready) ==
+				      SIPPYMODEM_FSK_OK,
+		      "continuous space tone was rejected");
+	}
+	measurement = sippymodem_fsk_receiver_measure(&receiver);
+	CHECK(ready && decision == 0 &&
+		      measurement.space_power > measurement.mark_power &&
+		      measurement.dominance_q8 >= 180,
+	      "continuous space tone was not distinguished");
+	generator.mark_phase_step = 0;
+	CHECK(sippymodem_fsk_tone_generator_sample(
+		      &generator, 1, &sample) ==
+		      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
+		      sippymodem_fsk_tone_generator_init(
+			      NULL, &channel_500_over_11_baud,
+			      TEST_AMPLITUDE) ==
+			      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
+		      sippymodem_fsk_receiver_detect(
+			      NULL, sample, &decision, &ready) ==
+			      SIPPYMODEM_FSK_INVALID_ARGUMENT,
+	      "continuous FSK tone API accepted invalid state");
+	return true;
+}
+
 static bool test_v21_channel_pairs(void)
 {
 	return check_payload(&v21_channel_1, false) &&
@@ -333,6 +396,7 @@ int main(void)
 		{ "exact symbol clock and validation",
 		  test_exact_symbol_clock_and_validation },
 		{ "fractional symbol clock", test_fractional_symbol_clock },
+		{ "continuous tone detection", test_continuous_tone_detection },
 		{ "V.21 channel pairs", test_v21_channel_pairs },
 		{ "configurable rate and tone pair",
 		  test_configurable_rate_and_tone_pair },
