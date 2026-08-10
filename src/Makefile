@@ -118,6 +118,7 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapping_parameters.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapper.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_parser.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_precoder.c \
