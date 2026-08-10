@@ -2,32 +2,13 @@
 
 #include "sippymodem_v34_phase3_s_sequence.h"
 
-#include <stddef.h>
+#include "sippymodem_v34_constellation.h"
 
-static const double V34_POINT_ZERO_COORDINATE =
-	0.70710678118654752440084436210485;
+#include <stddef.h>
 
 _Static_assert(
 	SIPPYMODEM_V34_PHASE3_S_SEQUENCE_SYMBOLS <= UINT16_MAX,
 	"V.34 S/S-bar sequence counter must hold the complete sequence");
-
-static struct sippymodem_qam_point rotated_point_zero(
-	unsigned int counterclockwise_quarter_turns)
-{
-	double coordinate = V34_POINT_ZERO_COORDINATE;
-
-	switch (counterclockwise_quarter_turns & 3u) {
-	case 0:
-		return (struct sippymodem_qam_point){ coordinate, coordinate };
-	case 1:
-		return (struct sippymodem_qam_point){ -coordinate, coordinate };
-	case 2:
-		return (struct sippymodem_qam_point){ -coordinate, -coordinate };
-	case 3:
-		return (struct sippymodem_qam_point){ coordinate, -coordinate };
-	}
-	return (struct sippymodem_qam_point){ 0 };
-}
 
 bool sippymodem_v34_phase3_s_sequence_is_valid(
 	const struct sippymodem_v34_phase3_s_sequence *sequence)
@@ -80,7 +61,7 @@ sippymodem_v34_phase3_s_sequence_next(
 		quarter_turns = 2u +
 			((symbol - SIPPYMODEM_V34_PHASE3_S_SYMBOLS) & 1u);
 	}
-	next_point = rotated_point_zero(quarter_turns);
+	next_point = sippymodem_v34_rotated_point_zero((int)quarter_turns);
 	sequence->emitted_symbols++;
 	*point = next_point;
 	*section = next_section;

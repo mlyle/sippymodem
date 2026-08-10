@@ -365,12 +365,14 @@ V34_PHASE3_S_SEQUENCE_TEST_BINARY := \
 V34_PHASE3_S_SEQUENCE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_phase3_s_sequence.o
 V34_PHASE3_S_TRANSMITTER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase3_s_transmitter
 V34_PHASE3_S_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase3_s_transmitter.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_info1.o \
 	$(BUILD_DIR)/sippymodem_v34_preemphasis.o \
 	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o \
@@ -1202,6 +1204,10 @@ $(BUILD_DIR)/sippymodem_v32_datapump.o: \
 
 $(BUILD_DIR)/sippymodem_v34_framing.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_framing.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_constellation.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_constellation.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_info0.o: \
