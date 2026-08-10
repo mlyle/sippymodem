@@ -2,6 +2,8 @@
 
 #include "sippymodem_v34_phase2_info.h"
 
+#include <string.h>
+
 enum {
 	V34_PHASE2_INFO_SYNC_WORD = 0xff72,
 	V34_PHASE2_INFO_CRC_INITIAL = 0xffff,
@@ -69,21 +71,20 @@ enum sippymodem_v34_phase2_info_result sippymodem_v34_phase2_info_crc(
 	return SIPPYMODEM_V34_PHASE2_INFO_OK;
 }
 
-static bool payload_padding_is_zero(
-	const struct sippymodem_v34_phase2_info_generator *generator)
+static bool packed_tail_is_zero(
+	const uint8_t *packed, size_t used_bit_count, size_t capacity)
 {
-	size_t used_bytes = (generator->payload_bit_count + 7u) / 8u;
+	size_t used_bytes = (used_bit_count + 7u) / 8u;
 
-	if (generator->payload_bit_count % 8u != 0) {
+	if (used_bit_count % 8u != 0) {
 		uint8_t padding_mask = (uint8_t)(
-			(1u << (8u - generator->payload_bit_count % 8u)) - 1u);
+			(1u << (8u - used_bit_count % 8u)) - 1u);
 
-		if ((generator->payload[used_bytes - 1u] & padding_mask) != 0)
+		if ((packed[used_bytes - 1u] & padding_mask) != 0)
 			return false;
 	}
-	for (size_t index = used_bytes;
-	     index < SIPPYMODEM_V34_PHASE2_INFO_MAX_PAYLOAD_BYTES; ++index) {
-		if (generator->payload[index] != 0)
+	for (size_t index = used_bytes; index < capacity; ++index) {
+		if (packed[index] != 0)
 			return false;
 	}
 	return true;
@@ -101,7 +102,9 @@ bool sippymodem_v34_phase2_info_generator_is_valid(
 	frame_bit_count = sippymodem_v34_phase2_info_frame_bit_count(
 		generator->payload_bit_count);
 	return generator->bit_index <= frame_bit_count &&
-	       payload_padding_is_zero(generator) &&
+	       packed_tail_is_zero(
+		       generator->payload, generator->payload_bit_count,
+		       sizeof(generator->payload)) &&
 	       generator->crc == payload_crc(
 				 generator->payload,
 				 generator->payload_bit_count);
@@ -187,6 +190,213 @@ sippymodem_v34_phase2_info_next_bit(
 	*generator = next;
 	*bit = generated;
 	*frame_complete = complete;
+	return SIPPYMODEM_V34_PHASE2_INFO_OK;
+}
+
+static bool receive_stage_is_valid(
+	enum sippymodem_v34_phase2_info_receive_stage stage)
+{
+	return stage == SIPPYMODEM_V34_PHASE2_INFO_SEARCH_SYNC ||
+	       stage == SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_PAYLOAD ||
+	       stage == SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_CRC ||
+	       stage == SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_END;
+}
+
+bool sippymodem_v34_phase2_info_receiver_is_valid(
+	const struct sippymodem_v34_phase2_info_receiver *receiver)
+{
+	if (receiver == NULL ||
+	    receiver->expected_payload_bit_count >
+		    SIPPYMODEM_V34_PHASE2_INFO_MAX_PAYLOAD_BITS ||
+	    !receive_stage_is_valid(receiver->stage) ||
+	    receiver->payload_bit_index >
+		    receiver->expected_payload_bit_count ||
+	    receiver->crc_bit_count > SIPPYMODEM_V34_PHASE2_INFO_CRC_BITS ||
+	    receiver->end_bit_count >= SIPPYMODEM_V34_PHASE2_INFO_END_BITS ||
+	    !packed_tail_is_zero(
+		    receiver->payload, receiver->payload_bit_index,
+		    sizeof(receiver->payload)))
+		return false;
+
+	switch (receiver->stage) {
+	case SIPPYMODEM_V34_PHASE2_INFO_SEARCH_SYNC:
+		return receiver->payload_bit_index == 0 &&
+		       receiver->crc == V34_PHASE2_INFO_CRC_INITIAL &&
+		       receiver->received_crc == 0 &&
+		       receiver->crc_bit_count == 0 &&
+		       receiver->end_bit_count == 0;
+	case SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_PAYLOAD:
+		return receiver->expected_payload_bit_count != 0 &&
+		       receiver->payload_bit_index <
+			       receiver->expected_payload_bit_count &&
+		       receiver->crc == payload_crc(
+				       receiver->payload,
+				       receiver->payload_bit_index) &&
+		       receiver->received_crc == 0 &&
+		       receiver->crc_bit_count == 0 &&
+		       receiver->end_bit_count == 0;
+	case SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_CRC:
+		return receiver->payload_bit_index ==
+			       receiver->expected_payload_bit_count &&
+		       receiver->crc == payload_crc(
+				       receiver->payload,
+				       receiver->payload_bit_index) &&
+		       receiver->crc_bit_count <
+			       SIPPYMODEM_V34_PHASE2_INFO_CRC_BITS &&
+		       (uint32_t)receiver->received_crc <
+			       (UINT32_C(1) << receiver->crc_bit_count) &&
+		       receiver->end_bit_count == 0;
+	case SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_END:
+		return receiver->payload_bit_index ==
+			       receiver->expected_payload_bit_count &&
+		       receiver->crc == payload_crc(
+				       receiver->payload,
+				       receiver->payload_bit_index) &&
+		       receiver->received_crc == receiver->crc &&
+		       receiver->crc_bit_count ==
+			       SIPPYMODEM_V34_PHASE2_INFO_CRC_BITS;
+	}
+	return false;
+}
+
+static void clear_receive_frame(
+	struct sippymodem_v34_phase2_info_receiver *receiver)
+{
+	memset(receiver->payload, 0, sizeof(receiver->payload));
+	receiver->payload_bit_index = 0;
+	receiver->crc = V34_PHASE2_INFO_CRC_INITIAL;
+	receiver->received_crc = 0;
+	receiver->crc_bit_count = 0;
+	receiver->end_bit_count = 0;
+}
+
+static void search_for_sync(
+	struct sippymodem_v34_phase2_info_receiver *receiver)
+{
+	clear_receive_frame(receiver);
+	receiver->stage = SIPPYMODEM_V34_PHASE2_INFO_SEARCH_SYNC;
+}
+
+static void begin_receive_frame(
+	struct sippymodem_v34_phase2_info_receiver *receiver)
+{
+	clear_receive_frame(receiver);
+	receiver->stage = receiver->expected_payload_bit_count == 0 ?
+				  SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_CRC :
+				  SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_PAYLOAD;
+}
+
+enum sippymodem_v34_phase2_info_result
+sippymodem_v34_phase2_info_receiver_init(
+	struct sippymodem_v34_phase2_info_receiver *receiver,
+	size_t expected_payload_bit_count)
+{
+	struct sippymodem_v34_phase2_info_receiver initialized = {
+		.expected_payload_bit_count = expected_payload_bit_count,
+	};
+
+	if (receiver == NULL ||
+	    expected_payload_bit_count >
+		    SIPPYMODEM_V34_PHASE2_INFO_MAX_PAYLOAD_BITS)
+		return SIPPYMODEM_V34_PHASE2_INFO_INVALID_ARGUMENT;
+	search_for_sync(&initialized);
+	if (!sippymodem_v34_phase2_info_receiver_is_valid(&initialized))
+		return SIPPYMODEM_V34_PHASE2_INFO_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return SIPPYMODEM_V34_PHASE2_INFO_OK;
+}
+
+enum sippymodem_v34_phase2_info_result
+sippymodem_v34_phase2_info_receiver_reset(
+	struct sippymodem_v34_phase2_info_receiver *receiver)
+{
+	struct sippymodem_v34_phase2_info_receiver reset;
+
+	if (!sippymodem_v34_phase2_info_receiver_is_valid(receiver))
+		return SIPPYMODEM_V34_PHASE2_INFO_INVALID_ARGUMENT;
+	reset = (struct sippymodem_v34_phase2_info_receiver){
+		.expected_payload_bit_count =
+			receiver->expected_payload_bit_count,
+	};
+	search_for_sync(&reset);
+	*receiver = reset;
+	return SIPPYMODEM_V34_PHASE2_INFO_OK;
+}
+
+static void reject_receive_frame(
+	struct sippymodem_v34_phase2_info_receiver *receiver,
+	struct sippymodem_v34_phase2_info_event *event)
+{
+	event->type = SIPPYMODEM_V34_PHASE2_INFO_FRAME_REJECTED;
+	if (receiver->sync_window == V34_PHASE2_INFO_SYNC_WORD)
+		begin_receive_frame(receiver);
+	else
+		search_for_sync(receiver);
+}
+
+static void accept_receive_frame(
+	struct sippymodem_v34_phase2_info_receiver *receiver,
+	struct sippymodem_v34_phase2_info_event *event)
+{
+	event->type = SIPPYMODEM_V34_PHASE2_INFO_FRAME_RECEIVED;
+	event->payload_bit_count = receiver->expected_payload_bit_count;
+	memcpy(event->payload, receiver->payload, sizeof(event->payload));
+	search_for_sync(receiver);
+}
+
+enum sippymodem_v34_phase2_info_result
+sippymodem_v34_phase2_info_receive_bit(
+	struct sippymodem_v34_phase2_info_receiver *receiver, uint8_t bit,
+	struct sippymodem_v34_phase2_info_event *event)
+{
+	struct sippymodem_v34_phase2_info_receiver next;
+	struct sippymodem_v34_phase2_info_event emitted = { 0 };
+
+	if (!sippymodem_v34_phase2_info_receiver_is_valid(receiver) ||
+	    bit > 1 || event == NULL)
+		return SIPPYMODEM_V34_PHASE2_INFO_INVALID_ARGUMENT;
+	next = *receiver;
+	next.sync_window = (uint16_t)((next.sync_window << 1) | bit);
+
+	switch (next.stage) {
+	case SIPPYMODEM_V34_PHASE2_INFO_SEARCH_SYNC:
+		if (next.sync_window == V34_PHASE2_INFO_SYNC_WORD)
+			begin_receive_frame(&next);
+		break;
+	case SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_PAYLOAD:
+		set_packed_bit(next.payload, next.payload_bit_index, bit);
+		next.payload_bit_index++;
+		next.crc = crc_step(next.crc, bit);
+		if (next.payload_bit_index ==
+		    next.expected_payload_bit_count)
+			next.stage = SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_CRC;
+		break;
+	case SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_CRC:
+		next.received_crc =
+			(uint16_t)((next.received_crc << 1) | bit);
+		next.crc_bit_count++;
+		if (next.crc_bit_count ==
+		    SIPPYMODEM_V34_PHASE2_INFO_CRC_BITS) {
+			if (next.received_crc == next.crc)
+				next.stage =
+					SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_END;
+			else
+				reject_receive_frame(&next, &emitted);
+		}
+		break;
+	case SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_END:
+		if (bit == 0) {
+			reject_receive_frame(&next, &emitted);
+		} else if (++next.end_bit_count ==
+			   SIPPYMODEM_V34_PHASE2_INFO_END_BITS) {
+			accept_receive_frame(&next, &emitted);
+		}
+		break;
+	}
+	if (!sippymodem_v34_phase2_info_receiver_is_valid(&next))
+		return SIPPYMODEM_V34_PHASE2_INFO_INVALID_ARGUMENT;
+	*receiver = next;
+	*event = emitted;
 	return SIPPYMODEM_V34_PHASE2_INFO_OK;
 }
 
