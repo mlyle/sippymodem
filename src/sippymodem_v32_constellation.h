@@ -10,6 +10,7 @@
 enum {
 	SIPPYMODEM_V32_CONSTELLATION_SYMBOLS = 16,
 	SIPPYMODEM_V32_4800_SIGNAL_POINTS = 4,
+	SIPPYMODEM_V32_7200_SIGNAL_POINTS = 16,
 };
 
 enum sippymodem_v32_constellation_result {
@@ -26,6 +27,11 @@ sippymodem_v32_constellation_point(
 enum sippymodem_v32_constellation_result
 sippymodem_v32_4800_constellation_point(
 	uint8_t quadrant, struct sippymodem_qam_point *point);
+
+/* Generate the set-partitioned 16-point labeling used at 7200 bit/s. */
+enum sippymodem_v32_constellation_result
+sippymodem_v32_7200_constellation_point(
+	uint8_t signal_symbol, struct sippymodem_qam_point *point);
 
 const char *sippymodem_v32_constellation_result_name(
 	enum sippymodem_v32_constellation_result result);

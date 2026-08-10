@@ -121,6 +121,40 @@ static bool test_4800_signal_set(void)
 	return true;
 }
 
+static bool test_7200_signal_set(void)
+{
+	static const int expected[16][2] = {
+		{ 3, -3 }, { -1, 1 }, { -3, 3 }, { 1, -1 },
+		{ 3, 1 },  { -1, -3 }, { -3, -1 }, { 1, 3 },
+		{ -1, 3 }, { 3, -1 }, { 1, -3 }, { -3, 1 },
+		{ -3, -3 }, { 1, 1 }, { 3, 3 }, { -1, -1 },
+	};
+	struct sippymodem_qam_point points[
+		SIPPYMODEM_V32_7200_SIGNAL_POINTS];
+	double normalization = sqrt(18.0);
+
+	for (uint8_t symbol = 0;
+	     symbol < SIPPYMODEM_V32_7200_SIGNAL_POINTS; ++symbol) {
+		CHECK(sippymodem_v32_7200_constellation_point(
+			      symbol, &points[symbol]) ==
+			      SIPPYMODEM_V32_CONSTELLATION_OK &&
+			      close_to(points[symbol].in_phase * normalization,
+				       expected[symbol][0]) &&
+			      close_to(points[symbol].quadrature * normalization,
+				       expected[symbol][1]),
+		      "V.32bis 7200 point %u changed", symbol);
+		for (uint8_t previous = 0; previous < symbol; ++previous) {
+			CHECK(!close_to(points[symbol].in_phase,
+					points[previous].in_phase) ||
+				      !close_to(points[symbol].quadrature,
+					points[previous].quadrature),
+			      "V.32bis 7200 points %u and %u coincide", symbol,
+			      previous);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_qam_point point = { 7.0, -9.0 };
@@ -134,6 +168,10 @@ static bool test_validation(void)
 			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
 		      sippymodem_v32_4800_constellation_point(
 			      SIPPYMODEM_V32_4800_SIGNAL_POINTS, &point) ==
+			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      memcmp(&point, &saved, sizeof(point)) == 0 &&
+		      sippymodem_v32_7200_constellation_point(
+			      SIPPYMODEM_V32_7200_SIGNAL_POINTS, &point) ==
 			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
 		      memcmp(&point, &saved, sizeof(point)) == 0 &&
 		      strcmp(sippymodem_v32_constellation_result_name(
@@ -151,6 +189,7 @@ int main(void)
 	} tests[] = {
 		{ "generated geometry", test_generated_geometry },
 		{ "4800 signal set", test_4800_signal_set },
+		{ "7200 signal set", test_7200_signal_set },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
