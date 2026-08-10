@@ -529,7 +529,13 @@ V34_DATA_STREAM_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_data_stream.o \
 	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_data_transmitter.o, \
 		$(V34_DATA_TRANSMITTER_TEST_OBJECTS)) \
-	$(BUILD_DIR)/sippymodem_v34_data_stream.o
+	$(BUILD_DIR)/sippymodem_v34_data_stream.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
+	$(BUILD_DIR)/sippymodem_v34_mp.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_e_sequence.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_b1_handoff.o
 V34_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_constellation
 V34_CONSTELLATION_TEST_OBJECTS := \
@@ -1797,6 +1803,10 @@ $(BUILD_DIR)/sippymodem_v34_phase3_j_sequence.o: \
 $(BUILD_DIR)/sippymodem_v34_phase4_j_prime_sequence.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_j_prime_sequence.c | \
 	$(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase4_b1_handoff.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_b1_handoff.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase4_trn.o: \

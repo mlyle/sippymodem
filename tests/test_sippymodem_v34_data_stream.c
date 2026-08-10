@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_v34_data_stream.h>
+#include <sippymodem_v34_phase4_b1_handoff.h>
 
 #include "test.h"
 
@@ -37,6 +38,60 @@ configuration_fixture(void)
 		.primary_data_rate_2400_bps_units = 8,
 		.auxiliary_channel_enabled = true,
 	};
+}
+
+static struct sippymodem_v34_mp_parameters mp_parameters_fixture(void)
+{
+	return (struct sippymodem_v34_mp_parameters){
+		.maximum_call_to_answer_rate_2400_bps_units = 10,
+		.maximum_answer_to_call_rate_2400_bps_units = 9,
+		.remote_transmitter_trellis = SIPPYMODEM_V34_TRELLIS_32_STATE,
+		.data_rate_capability_mask = 0x1555,
+		.asymmetric_rates_enabled = true,
+	};
+}
+
+static bool completed_e_fixture(
+	struct sippymodem_v34_phase4_e_sequence *sequence,
+	enum sippymodem_v34_station_role role,
+	enum sippymodem_v34_constellation_size constellation)
+{
+	struct sippymodem_v34_mp_parameters parameters =
+		mp_parameters_fixture();
+	struct sippymodem_v34_phase4_trn trn;
+	struct sippymodem_v34_phase4_mp mp;
+	struct sippymodem_qam_point point;
+	uint8_t quarter_point;
+	uint8_t clockwise_quarter_turns;
+	bool record_complete;
+
+	if (sequence == NULL ||
+	    sippymodem_v34_phase4_trn_init(&trn, role, constellation) !=
+		    SIPPYMODEM_V34_PHASE4_TRN_OK ||
+	    sippymodem_v34_phase4_trn_next(
+		    &trn, &point, &quarter_point,
+		    &clockwise_quarter_turns) != SIPPYMODEM_V34_PHASE4_TRN_OK ||
+	    sippymodem_v34_phase4_mp_init_type0_from_trn(
+		    &mp, &trn, &parameters) != SIPPYMODEM_V34_PHASE4_MP_OK)
+		return false;
+	while (!sippymodem_v34_phase4_mp_record_is_complete(&mp)) {
+		if (sippymodem_v34_phase4_mp_next(
+			    &mp, &point, &quarter_point,
+			    &clockwise_quarter_turns, &record_complete) !=
+		    SIPPYMODEM_V34_PHASE4_MP_OK)
+			return false;
+	}
+	if (sippymodem_v34_phase4_e_sequence_init_from_mp(sequence, &mp) !=
+	    SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK)
+		return false;
+	while (!sippymodem_v34_phase4_e_sequence_is_complete(sequence)) {
+		if (sippymodem_v34_phase4_e_sequence_next(
+			    sequence, &point, &quarter_point,
+			    &clockwise_quarter_turns) !=
+		    SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK)
+			return false;
+	}
+	return true;
 }
 
 static bool compose_transmitter(
@@ -271,6 +326,93 @@ static bool streams_match_through_b1(
 	return false;
 }
 
+static bool test_phase4_b1_handoff(void)
+{
+	static const enum sippymodem_v34_constellation_size constellations[] = {
+		SIPPYMODEM_V34_CONSTELLATION_4_POINT,
+		SIPPYMODEM_V34_CONSTELLATION_16_POINT,
+	};
+
+	for (unsigned int role = SIPPYMODEM_V34_CALLING_STATION;
+	     role <= SIPPYMODEM_V34_ANSWERING_STATION; ++role) {
+		for (size_t constellation = 0;
+		     constellation < ARRAY_LENGTH(constellations);
+		     ++constellation) {
+			struct sippymodem_v34_data_stream_configuration configuration =
+				configuration_fixture();
+			struct sippymodem_v34_phase4_e_sequence transmitted_e;
+			struct sippymodem_v34_data_stream expected;
+			struct sippymodem_v34_data_stream actual;
+
+			configuration.profile.local_role =
+				(enum sippymodem_v34_station_role)role;
+			CHECK(completed_e_fixture(
+				      &transmitted_e, configuration.profile.local_role,
+				      constellations[constellation]) &&
+			      sippymodem_v34_data_stream_init(
+				      &expected, &configuration) ==
+				      SIPPYMODEM_V34_DATA_STREAM_OK &&
+			      sippymodem_v34_phase4_b1_transmit_stream_init(
+				      &actual, &transmitted_e, &configuration) ==
+				      SIPPYMODEM_V34_DATA_STREAM_OK &&
+			      sippymodem_v34_data_stream_is_transmitting_b1(
+				      &actual) &&
+			      streams_match_through_b1(&actual, &expected),
+			      "Phase 4 B1 handoff changed role %u constellation %zu",
+			      role, constellation);
+		}
+	}
+	return true;
+}
+
+static bool test_phase4_b1_handoff_validation(void)
+{
+	struct sippymodem_v34_data_stream_configuration configuration =
+		configuration_fixture();
+	struct sippymodem_v34_phase4_e_sequence complete;
+	struct sippymodem_v34_phase4_e_sequence incomplete;
+	struct sippymodem_v34_data_stream rejected;
+
+	CHECK(completed_e_fixture(
+		      &complete, configuration.profile.local_role,
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT),
+	      "Phase 4 B1 validation E did not complete");
+	incomplete = complete;
+	incomplete.emitted_bits -= 2u;
+	CHECK(sippymodem_v34_phase4_e_sequence_is_valid(&incomplete) &&
+	      !sippymodem_v34_phase4_e_sequence_is_complete(&incomplete),
+	      "Phase 4 B1 validation did not form an incomplete E");
+	memset(&rejected, 0xa5, sizeof(rejected));
+	CHECK(sippymodem_v34_phase4_b1_transmit_stream_init(
+		      NULL, &complete, &configuration) ==
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_b1_transmit_stream_init(
+		      &rejected, NULL, &configuration) ==
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_b1_transmit_stream_init(
+		      &rejected, &complete, NULL) ==
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_b1_transmit_stream_init(
+		      &rejected, &incomplete, &configuration) ==
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "invalid Phase 4 B1 handoff changed the stream");
+	configuration.profile.local_role = SIPPYMODEM_V34_ANSWERING_STATION;
+	CHECK(sippymodem_v34_phase4_b1_transmit_stream_init(
+		      &rejected, &complete, &configuration) ==
+		      SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "Phase 4 B1 handoff accepted a local-role mismatch");
+	configuration = configuration_fixture();
+	configuration.primary_data_rate_2400_bps_units = 1;
+	CHECK(sippymodem_v34_phase4_b1_transmit_stream_init(
+		      &rejected, &complete, &configuration) ==
+		      SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "Phase 4 B1 handoff hid a data-stream failure");
+	return true;
+}
+
 static bool initialization_is_rejected(
 	const struct sippymodem_v34_data_stream_configuration *configuration,
 	enum sippymodem_v34_data_stream_result expected)
@@ -464,6 +606,9 @@ int main(void)
 		{ "selected initialization", test_selected_initialization },
 		{ "initialization failures", test_initialization_failures },
 		{ "B1 and host handoff", test_b1_and_host_handoff },
+		{ "Phase 4 B1 handoff", test_phase4_b1_handoff },
+		{ "Phase 4 B1 handoff validation",
+		  test_phase4_b1_handoff_validation },
 		{ "transactional boundaries", test_transactional_boundaries },
 	};
 	unsigned int failures = 0;
