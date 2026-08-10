@@ -77,6 +77,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_fsk300_datapump.c \
 	sippymodem_v22_datapump.c \
 	sippymodem_v22_framing.c \
+	sippymodem_v22bis_receiver.c \
 	sippymodem_v22bis_symbols.c \
 	sippymodem_v23_datapump.c
 SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES)
