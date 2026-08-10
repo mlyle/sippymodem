@@ -25,7 +25,11 @@ root-raised-cosine pulse, and the constant-carrier call/answer exchange. It is
 selectable with `AT+MS=22`; its first source-built slice intentionally uses raw
 asynchronous transport while LAPM negotiation is rebuilt separately. The same
 wire-compatible 1200-bit/s implementation provides Bell 212A through
-`AT+MS=212`. Bell 103 is selectable with `AT+MS=103` and V.23 with `AT+MS=23`.
+`AT+MS=212`. V.22bis adds its generated 16-point constellation at 2400 bit/s.
+V.32 and V.32bis provide negotiated 4800- and 9600-bit/s uncoded paths plus a
+7200-bit/s trellis-coded path whose compact encoder, generated signal geometry,
+and bounded path decoder replace large lookup tables. Bell 103 is selectable
+with `AT+MS=103` and V.23 with `AT+MS=23`.
 Baudot TTY/TDD is selectable with `AT+MS=45`; a 50-only rate range selects 50
 baud instead of the North American 45.45-baud mode. Its bounded text path uses
 explicit half-duplex turns and preserves the complete mark-hold interval before
@@ -52,9 +56,9 @@ handling, negotiated SIP-to-RTP binding, and lifecycle-ordered recording hooks
 without linking the legacy DSP object or requiring external vectors. A compact
 integration check trains two real modem cores through the PCMU and PCMA media
 and recording boundaries, then verifies exact binary terminal data in both
-directions for the FSK and V.22 modes, including bounded carrier-loss handling.
-The same boundary check exchanges Baudot text in both directions without
-overlapping the half-duplex turns.
+directions through V.32bis at 7200 bit/s, including bounded carrier-loss
+handling. The same boundary check exchanges Baudot text in both directions
+without overlapping the half-duplex turns.
 
 The SIP adapter owns one validated incoming or outgoing call, supports ringing,
 answer, and hangup, and reports bounded call-progress events. Offers and answers
@@ -75,9 +79,9 @@ media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
-103, Bell 212A, V.23, and Baudot TTY/TDD are currently registered; V.22bis and
-higher-speed modes remain deliberately unavailable until their source-built
-implementations arrive as reviewable slices.
+103, Bell 212A, V.23, V.22bis, V.32/V.32bis, and Baudot TTY/TDD are currently
+registered. Higher-speed modes remain deliberately unavailable until their
+source-built implementations arrive as reviewable slices.
 
 Build with `make`, configure the daemon through the validated `SIP_*`
 environment variables, and run `./src/slmodemd` without a hardware-device

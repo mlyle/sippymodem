@@ -332,6 +332,45 @@ static bool test_descrambler_resynchronization(void)
 	return true;
 }
 
+static bool test_three_bit_group_round_trip(void)
+{
+	uint32_t random = UINT32_C(0x72003211);
+
+	for (unsigned int role = 0; role < 2; ++role) {
+		struct sippymodem_v32_scrambler encoder;
+		struct sippymodem_v32_scrambler decoder;
+
+		CHECK(sippymodem_v32_scrambler_init(
+			      &encoder,
+			      (enum sippymodem_v32_transmitter_role)role) ==
+			      SIPPYMODEM_V32_FRAMING_OK &&
+		      sippymodem_v32_scrambler_init(
+			      &decoder,
+			      (enum sippymodem_v32_transmitter_role)role) ==
+			      SIPPYMODEM_V32_FRAMING_OK,
+		      "V.32 three-bit framing endpoints did not initialize");
+		for (size_t index = 0; index < TEST_STREAM_SYMBOLS; ++index) {
+			uint8_t input =
+				(uint8_t)(fixture_random(&random) & 7u);
+			uint8_t encoded;
+			uint8_t output;
+
+			CHECK(sippymodem_v32_scramble_group(
+				      &encoder, input, 3, &encoded) ==
+				      SIPPYMODEM_V32_FRAMING_OK &&
+			      sippymodem_v32_descramble_group(
+				      &decoder, encoded, 3, &output) ==
+				      SIPPYMODEM_V32_FRAMING_OK &&
+			      output == input,
+			      "V.32 three-bit framing changed at %u/%zu", role,
+			      index);
+		}
+		CHECK(encoder.history == decoder.history,
+		      "V.32 three-bit framing histories diverged");
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_v32_scrambler scrambler;
@@ -365,6 +404,20 @@ static bool test_validation(void)
 		      memcmp(&scrambler, &saved_scrambler,
 			     sizeof(scrambler)) == 0 &&
 		      sippymodem_v32_scramble_dibit(&scrambler, 4, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&scrambler, &saved_scrambler,
+			     sizeof(scrambler)) == 0 &&
+		      sippymodem_v32_scramble_group(
+			      &scrambler, 0, 0, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      sippymodem_v32_scramble_group(
+			      &scrambler, 0, 9, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      sippymodem_v32_scramble_group(
+			      &scrambler, 8, 3, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      sippymodem_v32_descramble_group(
+			      &scrambler, 0, 3, NULL) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
 		      memcmp(&scrambler, &saved_scrambler,
 			     sizeof(scrambler)) == 0 &&
@@ -423,6 +476,8 @@ int main(void)
 		  test_9600_round_trip_and_transition },
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
+		{ "three-bit group round trip",
+		  test_three_bit_group_round_trip },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -9,6 +9,7 @@
 #include "sippymodem_v32_constellation.h"
 #include "sippymodem_v32_framing.h"
 #include "sippymodem_v32_startup.h"
+#include "sippymodem_v32_trellis.h"
 
 #include <limits.h>
 #include <math.h>
@@ -38,20 +39,30 @@ static const struct sippymodem_qam_channel v32_channel = {
 	.pulse_span_symbols = V32_PULSE_SPAN_SYMBOLS,
 };
 
+static const double V32_7200_MIN_POINT_POWER = 1e-12;
+static const double V32_7200_CHANNEL_ADAPTATION = 1.0 / 32.0;
+
 struct sippymodem_v32_datapump {
 	struct dp dp;
 	struct sippymodem_qam_modulator modulator;
 	struct sippymodem_qam_demodulator demodulator;
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_v32_symbol_decoder decoder;
+	struct sippymodem_v32_trellis_encoder encoder_7200;
+	struct sippymodem_v32_trellis_encoder known_encoder_7200;
+	struct sippymodem_v32_7200_decoder decoder_7200;
 	struct sippymodem_v32_9600_receiver receiver_9600;
 	struct sippymodem_v32_startup startup;
 	struct sippymodem_qam_point transmit_point;
 	struct sippymodem_qam_point previous_receive_point;
+	struct sippymodem_qam_point channel_gain_7200;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint32_t missing_carrier_samples;
+	uint8_t receive_7200_link_symbols;
 	bool has_previous_receive_point;
+	bool encoder_7200_initialized;
+	bool receiver_7200_initialized;
 	bool receiver_9600_initialized;
 	bool linked;
 	bool caller;
@@ -95,6 +106,21 @@ static bool point_is_finite(const struct sippymodem_qam_point *point)
 	       isfinite(point->quadrature);
 }
 
+static bool point_power(
+	const struct sippymodem_qam_point *point, double *power)
+{
+	double value;
+
+	if (!point_is_finite(point) || power == NULL)
+		return false;
+	value = point->in_phase * point->in_phase +
+		point->quadrature * point->quadrature;
+	if (!isfinite(value) || value <= V32_7200_MIN_POINT_POWER)
+		return false;
+	*power = value;
+	return true;
+}
+
 static uint8_t rate_capabilities(const struct modem *modem)
 {
 	uint8_t rates = 0;
@@ -104,16 +130,40 @@ static uint8_t rate_capabilities(const struct modem *modem)
 	if (modem->min_rate <= SIPPYMODEM_V32_4800_BIT_RATE &&
 	    modem->max_rate >= SIPPYMODEM_V32_4800_BIT_RATE)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_4800;
+	if (modem->min_rate <= SIPPYMODEM_V32_7200_BIT_RATE &&
+	    modem->max_rate >= SIPPYMODEM_V32_7200_BIT_RATE)
+		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_7200;
 	if (modem->min_rate <= SIPPYMODEM_V32_9600_BIT_RATE &&
 	    modem->max_rate >= SIPPYMODEM_V32_9600_BIT_RATE)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_9600;
 	return rates;
 }
 
+static bool uses_7200(const struct sippymodem_v32_datapump *datapump)
+{
+	return datapump->startup.selected_rate ==
+	       SIPPYMODEM_V32_RATE_CAPABILITY_7200;
+}
+
 static bool uses_9600(const struct sippymodem_v32_datapump *datapump)
 {
 	return datapump->startup.selected_rate ==
 	       SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+}
+
+static bool receiver_7200_is_valid(
+	const struct sippymodem_v32_datapump *datapump)
+{
+	double gain_power;
+
+	return sippymodem_v32_7200_decoder_is_valid(&datapump->decoder_7200) &&
+	       sippymodem_v32_trellis_encoder_is_valid(
+		       &datapump->known_encoder_7200) &&
+	       datapump->known_encoder_7200.data_bits_per_symbol ==
+		       SIPPYMODEM_V32_7200_DATA_BITS &&
+	       point_power(&datapump->channel_gain_7200, &gain_power) &&
+	       datapump->receive_7200_link_symbols <=
+		       SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS;
 }
 
 static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
@@ -133,6 +183,16 @@ static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
 	    datapump->startup.supported_rates != rate_capabilities(dp->modem) ||
 	    datapump->linked !=
 		    sippymodem_v32_startup_is_complete(&datapump->startup) ||
+	    datapump->receiver_7200_initialized !=
+		    (uses_7200(datapump) && datapump->startup.end_received) ||
+	    (datapump->receiver_7200_initialized &&
+	     !receiver_7200_is_valid(datapump)) ||
+	    (datapump->encoder_7200_initialized &&
+	     (!uses_7200(datapump) ||
+	      !sippymodem_v32_trellis_encoder_is_valid(
+		      &datapump->encoder_7200) ||
+	      datapump->encoder_7200.data_bits_per_symbol !=
+		      SIPPYMODEM_V32_7200_DATA_BITS)) ||
 	    datapump->receiver_9600_initialized !=
 		    (uses_9600(datapump) && datapump->startup.end_received) ||
 	    (datapump->receiver_9600_initialized &&
@@ -153,6 +213,8 @@ static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
 	    (datapump->has_previous_receive_point &&
 	     !point_is_finite(&datapump->previous_receive_point)) ||
 	    (datapump->linked && dp->status != DPSTAT_CONNECT) ||
+	    (datapump->linked && uses_7200(datapump) &&
+	     !datapump->encoder_7200_initialized) ||
 	    (!datapump->linked && dp->status == DPSTAT_CONNECT))
 		return NULL;
 	return datapump;
@@ -254,6 +316,40 @@ static uint8_t pack_bits(const uint8_t *bits, size_t bit_count)
 	return packed;
 }
 
+static int encode_7200_transmit_point(
+	struct sippymodem_v32_datapump *datapump, uint8_t input)
+{
+	struct sippymodem_v32_trellis_encoder next_encoder;
+	struct sippymodem_v32_scrambler next_scrambler =
+		datapump->encoder.scrambler;
+	struct sippymodem_qam_point next_point;
+	uint8_t scrambled;
+	uint8_t signal_symbol;
+
+	if (datapump->encoder_7200_initialized) {
+		next_encoder = datapump->encoder_7200;
+	} else if (sippymodem_v32_trellis_encoder_init(
+			   &next_encoder, SIPPYMODEM_V32_7200_DATA_BITS, 0) !=
+		   SIPPYMODEM_V32_TRELLIS_OK) {
+		return -1;
+	}
+	if (sippymodem_v32_scramble_group(
+		    &next_scrambler, input, SIPPYMODEM_V32_7200_DATA_BITS,
+		    &scrambled) != SIPPYMODEM_V32_FRAMING_OK ||
+	    sippymodem_v32_trellis_encode(
+		    &next_encoder, scrambled, &signal_symbol) !=
+		    SIPPYMODEM_V32_TRELLIS_OK ||
+	    sippymodem_v32_7200_constellation_point(
+		    signal_symbol, &next_point) !=
+		    SIPPYMODEM_V32_CONSTELLATION_OK)
+		return -1;
+	datapump->encoder.scrambler = next_scrambler;
+	datapump->encoder_7200 = next_encoder;
+	datapump->transmit_point = next_point;
+	datapump->encoder_7200_initialized = true;
+	return 0;
+}
+
 static int next_transmit_point(
 	struct sippymodem_v32_datapump *datapump, bool *linked)
 {
@@ -276,6 +372,8 @@ static int next_transmit_point(
 		}
 		if (uses_9600(datapump))
 			bit_count = SIPPYMODEM_V32_9600_BITS_PER_SYMBOL;
+		else if (uses_7200(datapump))
+			bit_count = SIPPYMODEM_V32_7200_DATA_BITS;
 		if (modem_get_bits(
 			    datapump->dp.modem, 1, bits, (int)bit_count) !=
 		    (int)bit_count)
@@ -286,7 +384,15 @@ static int next_transmit_point(
 	if (output == SIPPYMODEM_V32_STARTUP_SELECTED_RATE_MARK &&
 	    uses_9600(datapump))
 		input = 15;
-	if (uses_9600(datapump) &&
+	if (output == SIPPYMODEM_V32_STARTUP_SELECTED_RATE_MARK &&
+	    uses_7200(datapump))
+		input = 7;
+	if (uses_7200(datapump) &&
+	    (output == SIPPYMODEM_V32_STARTUP_SELECTED_RATE_MARK ||
+	     output == SIPPYMODEM_V32_STARTUP_DATA)) {
+		if (encode_7200_transmit_point(datapump, input) != 0)
+			return -1;
+	} else if (uses_9600(datapump) &&
 	    (output == SIPPYMODEM_V32_STARTUP_SELECTED_RATE_MARK ||
 	     output == SIPPYMODEM_V32_STARTUP_DATA)) {
 		framing_result = sippymodem_v32_9600_symbol_encode(
@@ -336,6 +442,8 @@ static unsigned int selected_bit_rate(
 {
 	if (uses_9600(datapump))
 		return SIPPYMODEM_V32_9600_BIT_RATE;
+	if (uses_7200(datapump))
+		return SIPPYMODEM_V32_7200_BIT_RATE;
 	if (datapump->startup.selected_rate ==
 	    SIPPYMODEM_V32_RATE_CAPABILITY_4800)
 		return SIPPYMODEM_V32_4800_BIT_RATE;
@@ -347,6 +455,9 @@ static int enter_link(struct sippymodem_v32_datapump *datapump)
 	unsigned int bit_rate = selected_bit_rate(datapump);
 
 	if (bit_rate == 0 ||
+	    (uses_7200(datapump) &&
+	     (!datapump->receiver_7200_initialized ||
+	      !datapump->encoder_7200_initialized)) ||
 	    (uses_9600(datapump) && !datapump->receiver_9600_initialized))
 		return -1;
 	if (modem_set_param(
@@ -373,6 +484,176 @@ static void deliver_bits(
 			datapump->dp.modem, 1, bits, (int)bit_count);
 }
 
+static struct sippymodem_qam_point divide_by_complex(
+	const struct sippymodem_qam_point *numerator,
+	const struct sippymodem_qam_point *denominator,
+	double denominator_power)
+{
+	return (struct sippymodem_qam_point){
+		.in_phase =
+			(numerator->in_phase * denominator->in_phase +
+			 numerator->quadrature * denominator->quadrature) /
+			denominator_power,
+		.quadrature =
+			(numerator->quadrature * denominator->in_phase -
+			 numerator->in_phase * denominator->quadrature) /
+			denominator_power,
+	};
+}
+
+static bool update_7200_channel_gain(
+	struct sippymodem_qam_point *gain,
+	const struct sippymodem_qam_point *received,
+	const struct sippymodem_qam_point *transmitted)
+{
+	struct sippymodem_qam_point observed;
+	double gain_power;
+	double received_power;
+	double transmitted_power;
+
+	if (!point_power(gain, &gain_power) ||
+	    !point_power(received, &received_power) ||
+	    !point_power(transmitted, &transmitted_power))
+		return false;
+	observed = divide_by_complex(
+		received, transmitted, transmitted_power);
+	gain->in_phase += (observed.in_phase - gain->in_phase) *
+			  V32_7200_CHANNEL_ADAPTATION;
+	gain->quadrature += (observed.quadrature - gain->quadrature) *
+			    V32_7200_CHANNEL_ADAPTATION;
+	return point_power(gain, &gain_power);
+}
+
+static bool equalize_7200_point(
+	const struct sippymodem_qam_point *gain,
+	const struct sippymodem_qam_point *received,
+	struct sippymodem_qam_point *equalized)
+{
+	double gain_power;
+
+	if (!point_power(gain, &gain_power) || !point_is_finite(received) ||
+	    equalized == NULL)
+		return false;
+	*equalized = divide_by_complex(received, gain, gain_power);
+	return point_is_finite(equalized);
+}
+
+static int initialize_7200_receiver(
+	struct sippymodem_v32_datapump *datapump,
+	const struct sippymodem_qam_point *reference_point)
+{
+	struct sippymodem_v32_trellis_encoder known_encoder;
+	struct sippymodem_v32_7200_decoder decoder;
+	struct sippymodem_qam_point ideal;
+	struct sippymodem_qam_point gain;
+	double ideal_power;
+	double reference_power;
+
+	if (!point_power(reference_point, &reference_power) ||
+	    sippymodem_v32_4800_constellation_point(
+		    datapump->decoder.phase_quadrant, &ideal) !=
+		    SIPPYMODEM_V32_CONSTELLATION_OK ||
+	    !point_power(&ideal, &ideal_power) ||
+	    sippymodem_v32_trellis_encoder_init(
+		    &known_encoder, SIPPYMODEM_V32_7200_DATA_BITS, 0) !=
+		    SIPPYMODEM_V32_TRELLIS_OK ||
+	    sippymodem_v32_7200_decoder_init(&decoder, 0) !=
+		    SIPPYMODEM_V32_TRELLIS_OK)
+		return -1;
+	gain = divide_by_complex(reference_point, &ideal, ideal_power);
+	if (!point_power(&gain, &ideal_power))
+		return -1;
+	datapump->known_encoder_7200 = known_encoder;
+	datapump->decoder_7200 = decoder;
+	datapump->channel_gain_7200 = gain;
+	datapump->receive_7200_link_symbols = 0;
+	datapump->receiver_7200_initialized = true;
+	return 0;
+}
+
+static int track_known_7200_point(
+	struct sippymodem_v32_datapump *datapump,
+	const struct sippymodem_qam_point *point, uint8_t input)
+{
+	struct sippymodem_v32_scrambler descrambler =
+		datapump->decoder.descrambler;
+	struct sippymodem_v32_trellis_encoder known_encoder =
+		datapump->known_encoder_7200;
+	struct sippymodem_v32_7200_decoder decoder =
+		datapump->decoder_7200;
+	struct sippymodem_qam_point gain = datapump->channel_gain_7200;
+	struct sippymodem_qam_point equalized;
+	struct sippymodem_qam_point transmitted;
+	uint8_t decoded = 0;
+	uint8_t scrambled;
+	uint8_t signal_symbol;
+	bool ready;
+
+	if (!datapump->receiver_7200_initialized ||
+	    sippymodem_v32_scramble_group(
+		    &descrambler, input, SIPPYMODEM_V32_7200_DATA_BITS,
+		    &scrambled) != SIPPYMODEM_V32_FRAMING_OK ||
+	    sippymodem_v32_trellis_encode(
+		    &known_encoder, scrambled, &signal_symbol) !=
+		    SIPPYMODEM_V32_TRELLIS_OK ||
+	    sippymodem_v32_7200_constellation_point(
+		    signal_symbol, &transmitted) !=
+		    SIPPYMODEM_V32_CONSTELLATION_OK ||
+	    !update_7200_channel_gain(&gain, point, &transmitted) ||
+	    !equalize_7200_point(&gain, point, &equalized) ||
+	    sippymodem_v32_7200_decode(
+		    &decoder, &equalized, &decoded, &ready) !=
+		    SIPPYMODEM_V32_TRELLIS_OK)
+		return -1;
+	datapump->decoder.descrambler = descrambler;
+	datapump->known_encoder_7200 = known_encoder;
+	datapump->decoder_7200 = decoder;
+	datapump->channel_gain_7200 = gain;
+	return 0;
+}
+
+static int decode_7200_point(
+	struct sippymodem_v32_datapump *datapump,
+	const struct sippymodem_qam_point *point, uint8_t *output, bool *ready)
+{
+	struct sippymodem_v32_scrambler descrambler =
+		datapump->decoder.descrambler;
+	struct sippymodem_v32_7200_decoder decoder =
+		datapump->decoder_7200;
+	struct sippymodem_qam_point equalized;
+	uint8_t link_symbols = datapump->receive_7200_link_symbols;
+	uint8_t decoded = 0;
+	uint8_t scrambled = 0;
+	bool trellis_ready;
+	bool payload_ready;
+
+	if (!datapump->receiver_7200_initialized || output == NULL ||
+	    ready == NULL ||
+	    !equalize_7200_point(
+		    &datapump->channel_gain_7200, point, &equalized) ||
+	    sippymodem_v32_7200_decode(
+		    &decoder, &equalized, &scrambled, &trellis_ready) !=
+		    SIPPYMODEM_V32_TRELLIS_OK)
+		return -1;
+	if (link_symbols < SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS)
+		link_symbols++;
+	payload_ready =
+		trellis_ready &&
+		link_symbols == SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS;
+	if (payload_ready &&
+	    sippymodem_v32_descramble_group(
+		    &descrambler, scrambled, SIPPYMODEM_V32_7200_DATA_BITS,
+		    &decoded) != SIPPYMODEM_V32_FRAMING_OK)
+		return -1;
+	datapump->decoder.descrambler = descrambler;
+	datapump->decoder_7200 = decoder;
+	datapump->receive_7200_link_symbols = link_symbols;
+	*ready = payload_ready;
+	if (payload_ready)
+		*output = decoded;
+	return 0;
+}
+
 static int observe_dibit(
 	struct sippymodem_v32_datapump *datapump, uint8_t dibit,
 	const struct sippymodem_qam_point *point, bool *linked)
@@ -392,8 +673,12 @@ static int observe_dibit(
 			    &datapump->startup, dibit, &connected) !=
 			    SIPPYMODEM_V32_STARTUP_OK)
 			return -1;
-		if (uses_9600(datapump) && !end_was_received &&
+		if (uses_7200(datapump) && !end_was_received &&
 		    datapump->startup.end_received) {
+			if (initialize_7200_receiver(datapump, point) != 0)
+				return -1;
+		} else if (uses_9600(datapump) && !end_was_received &&
+			   datapump->startup.end_received) {
 			if (sippymodem_v32_9600_receiver_init(
 				    &datapump->receiver_9600, &datapump->decoder,
 				    point) != SIPPYMODEM_V32_9600_RECEIVER_OK)
@@ -405,6 +690,38 @@ static int observe_dibit(
 		if (enter_link(datapump) != 0)
 			return -1;
 		*linked = true;
+	}
+	return 0;
+}
+
+static int observe_7200_point(
+	struct sippymodem_v32_datapump *datapump,
+	const struct sippymodem_qam_point *point, bool *linked)
+{
+	if (!datapump->receiver_7200_initialized)
+		return -1;
+	if (datapump->linked) {
+		uint8_t bits;
+		bool ready;
+
+		if (decode_7200_point(datapump, point, &bits, &ready) != 0)
+			return -1;
+		if (ready)
+			deliver_bits(
+				datapump, bits, SIPPYMODEM_V32_7200_DATA_BITS);
+	} else {
+		bool connected;
+
+		if (track_known_7200_point(datapump, point, 7) != 0 ||
+		    sippymodem_v32_startup_observe(
+			    &datapump->startup, 3,
+			    &connected) != SIPPYMODEM_V32_STARTUP_OK)
+			return -1;
+		if (connected) {
+			if (enter_link(datapump) != 0)
+				return -1;
+			*linked = true;
+		}
 	}
 	return 0;
 }
@@ -456,6 +773,13 @@ static int receive_sample(
 		return -1;
 	if (!ready)
 		return 0;
+	if (datapump->receiver_7200_initialized) {
+		if (observe_7200_point(datapump, &point, linked) != 0)
+			return -1;
+		datapump->previous_receive_point = point;
+		datapump->has_previous_receive_point = true;
+		return 0;
+	}
 	if (datapump->receiver_9600_initialized) {
 		if (observe_9600_point(datapump, &point, linked) != 0)
 			return -1;

@@ -112,18 +112,32 @@ enum sippymodem_v32_framing_result sippymodem_v32_scramble_dibit(
 	struct sippymodem_v32_scrambler *scrambler, uint8_t input,
 	uint8_t *output)
 {
-	return transform_group(
+	return sippymodem_v32_scramble_group(
 		scrambler, input, SIPPYMODEM_V32_4800_BITS_PER_SYMBOL,
-		output, false);
+		output);
 }
 
 enum sippymodem_v32_framing_result sippymodem_v32_descramble_dibit(
 	struct sippymodem_v32_scrambler *descrambler, uint8_t input,
 	uint8_t *output)
 {
-	return transform_group(
+	return sippymodem_v32_descramble_group(
 		descrambler, input, SIPPYMODEM_V32_4800_BITS_PER_SYMBOL,
-		output, true);
+		output);
+}
+
+enum sippymodem_v32_framing_result sippymodem_v32_scramble_group(
+	struct sippymodem_v32_scrambler *scrambler, uint8_t input,
+	unsigned int bit_count, uint8_t *output)
+{
+	return transform_group(scrambler, input, bit_count, output, false);
+}
+
+enum sippymodem_v32_framing_result sippymodem_v32_descramble_group(
+	struct sippymodem_v32_scrambler *descrambler, uint8_t input,
+	unsigned int bit_count, uint8_t *output)
+{
+	return transform_group(descrambler, input, bit_count, output, true);
 }
 
 static bool symbol_encoder_is_valid(
@@ -223,9 +237,9 @@ enum sippymodem_v32_framing_result sippymodem_v32_9600_symbol_encode(
 	if (!symbol_encoder_is_valid(encoder) || symbol == NULL)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *encoder;
-	if (transform_group(
+	if (sippymodem_v32_scramble_group(
 		    &next.scrambler, input,
-		    SIPPYMODEM_V32_9600_BITS_PER_SYMBOL, &scrambled, false) !=
+		    SIPPYMODEM_V32_9600_BITS_PER_SYMBOL, &scrambled) !=
 		    SIPPYMODEM_V32_FRAMING_OK ||
 	    sippymodem_differential_qpsk_encode(
 		    next.phase_quadrant, (uint8_t)(scrambled >> 2),
@@ -322,9 +336,9 @@ enum sippymodem_v32_framing_result sippymodem_v32_9600_symbol_decode(
 		    SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	scrambled = (uint8_t)((high_dibit << 2) | (symbol & 3u));
-	if (transform_group(
+	if (sippymodem_v32_descramble_group(
 		    &next.descrambler, scrambled,
-		    SIPPYMODEM_V32_9600_BITS_PER_SYMBOL, &decoded, true) !=
+		    SIPPYMODEM_V32_9600_BITS_PER_SYMBOL, &decoded) !=
 	    SIPPYMODEM_V32_FRAMING_OK)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next.phase_quadrant = quadrant;

@@ -9,8 +9,21 @@
 
 enum {
 	V32_IMPLEMENTED_RATES = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+				SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
 				SIPPYMODEM_V32_RATE_CAPABILITY_9600,
 };
+
+static uint8_t highest_rate(uint8_t rates);
+
+static struct sippymodem_v32_rate_offer rate_offer(uint8_t rates)
+{
+	return (struct sippymodem_v32_rate_offer){
+		.rates = rates,
+		.trellis_at_highest_rate =
+			highest_rate(rates) ==
+			SIPPYMODEM_V32_RATE_CAPABILITY_7200,
+	};
+}
 
 static bool role_is_valid(enum sippymodem_v32_endpoint_role role)
 {
@@ -33,10 +46,9 @@ static bool phase_is_valid_for_role(
 
 static bool words_are_valid(const struct sippymodem_v32_startup *startup)
 {
-	struct sippymodem_v32_rate_offer offer = {
-		.rates = startup->selected_rate != 0 ? startup->selected_rate :
-						      startup->supported_rates,
-	};
+	struct sippymodem_v32_rate_offer offer = rate_offer(
+		startup->selected_rate != 0 ? startup->selected_rate :
+					       startup->supported_rates);
 	uint16_t rate_word;
 	uint16_t end_word = 0;
 
@@ -77,9 +89,7 @@ static bool rates_are_valid(const struct sippymodem_v32_startup *startup)
 static bool configure_selected_rate(
 	struct sippymodem_v32_startup *startup, uint8_t selected_rate)
 {
-	struct sippymodem_v32_rate_offer selected = {
-		.rates = selected_rate,
-	};
+	struct sippymodem_v32_rate_offer selected = rate_offer(selected_rate);
 	uint16_t rate_word;
 	uint16_t end_word;
 
@@ -132,9 +142,7 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_init(
 	struct sippymodem_v32_startup *startup,
 	enum sippymodem_v32_endpoint_role role, uint8_t supported_rates)
 {
-	struct sippymodem_v32_rate_offer offer = {
-		.rates = supported_rates,
-	};
+	struct sippymodem_v32_rate_offer offer = rate_offer(supported_rates);
 	struct sippymodem_v32_startup next = { 0 };
 
 	if (startup == NULL || !role_is_valid(role) || supported_rates == 0 ||
@@ -290,10 +298,10 @@ static uint8_t highest_rate(uint8_t rates)
 {
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) != 0)
 		return SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_7200) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_7200;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0)
 		return SIPPYMODEM_V32_RATE_CAPABILITY_4800;
-	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_2400) != 0)
-		return SIPPYMODEM_V32_RATE_CAPABILITY_2400;
 	return 0;
 }
 
@@ -303,7 +311,8 @@ static uint8_t select_highest_common_rate(
 {
 	uint8_t common = startup->supported_rates & offer->rates;
 
-	if (offer->trellis_at_highest_rate)
+	if (offer->trellis_at_highest_rate &&
+	    highest_rate(offer->rates) == SIPPYMODEM_V32_RATE_CAPABILITY_9600)
 		common &= (uint8_t)~highest_rate(offer->rates);
 	return highest_rate(common);
 }
@@ -311,7 +320,8 @@ static uint8_t select_highest_common_rate(
 static bool offer_selects_rate(
 	const struct sippymodem_v32_rate_offer *offer, uint8_t selected_rate)
 {
-	return !offer->trellis_at_highest_rate &&
+	return offer->trellis_at_highest_rate ==
+		       (selected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
 	       highest_rate(offer->rates) == selected_rate;
 }
 

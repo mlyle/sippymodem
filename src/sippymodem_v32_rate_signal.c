@@ -8,14 +8,16 @@ enum {
 	/* ITU-T V.32 Tables 6 and 7, with B0 stored in bit 15. */
 	V32_RATE_FIXED_BITS = 0x0111,
 	V32_END_FIXED_BITS = 0xf111,
-	V32_B4_2400 = 0x0800,
+	V32_B4_DATA_MODE = 0x0800,
 	V32_B5_4800 = 0x0400,
 	V32_B6_9600 = 0x0200,
+	V32_B7_7200 = 0x0040,
 	V32_B8_TRELLIS = 0x0080,
-	V32_RATE_FIELD_MASK = V32_B4_2400 | V32_B5_4800 | V32_B6_9600,
+	V32_RATE_FIELD_MASK = V32_B4_DATA_MODE | V32_B5_4800 |
+			       V32_B6_9600 | V32_B7_7200,
 	V32_PAYLOAD_MASK = V32_RATE_FIELD_MASK | V32_B8_TRELLIS,
-	V32_RATE_CAPABILITY_MASK = SIPPYMODEM_V32_RATE_CAPABILITY_2400 |
-				   SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+	V32_RATE_CAPABILITY_MASK = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+				   SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600,
 	V32_DETECTOR_WINDOW_DIBITS = 2 * SIPPYMODEM_V32_RATE_SIGNAL_DIBITS,
 };
@@ -31,6 +33,17 @@ static bool has_one_rate(uint8_t rates)
 	return rates != 0 && (rates & (uint8_t)(rates - 1u)) == 0;
 }
 
+static uint8_t highest_rate(uint8_t rates)
+{
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_7200) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_7200;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_4800;
+	return 0;
+}
+
 static bool offer_is_valid(
 	const struct sippymodem_v32_rate_offer *offer,
 	enum sippymodem_v32_rate_signal_type type)
@@ -39,17 +52,22 @@ static bool offer_is_valid(
 	    (offer->rates & (uint8_t)~V32_RATE_CAPABILITY_MASK) != 0 ||
 	    offer->rates == 0)
 		return false;
+	if (highest_rate(offer->rates) == SIPPYMODEM_V32_RATE_CAPABILITY_7200)
+		return offer->trellis_at_highest_rate;
+	if (highest_rate(offer->rates) == SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
+	    offer->trellis_at_highest_rate)
+		return false;
 	return type != SIPPYMODEM_V32_END_SIGNAL || has_one_rate(offer->rates);
 }
 
 static uint16_t encode_rates(uint8_t rates)
 {
-	uint16_t word = 0;
+	uint16_t word = V32_B4_DATA_MODE;
 
-	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_2400) != 0)
-		word |= V32_B4_2400;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0)
 		word |= V32_B5_4800;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_7200) != 0)
+		word |= V32_B7_7200;
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) != 0)
 		word |= V32_B6_9600;
 	return word;
@@ -78,10 +96,10 @@ static uint8_t decode_rates(uint16_t word)
 {
 	uint8_t rates = 0;
 
-	if ((word & V32_B4_2400) != 0)
-		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_2400;
 	if ((word & V32_B5_4800) != 0)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_4800;
+	if ((word & V32_B7_7200) != 0)
+		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_7200;
 	if ((word & V32_B6_9600) != 0)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_9600;
 	return rates;
@@ -104,9 +122,11 @@ enum sippymodem_v32_rate_signal_result sippymodem_v32_rate_signal_decode(
 	} else {
 		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
 	}
+	if ((word & V32_B4_DATA_MODE) == 0)
+		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
 	decoded.rates = decode_rates(word);
 	decoded.trellis_at_highest_rate = (word & V32_B8_TRELLIS) != 0;
-	if (decoded.rates == 0)
+	if (!offer_is_valid(&decoded, decoded_type))
 		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
 	*type = decoded_type;
 	*offer = decoded;

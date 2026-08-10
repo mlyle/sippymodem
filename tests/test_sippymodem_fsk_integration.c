@@ -624,6 +624,16 @@ int main(void)
 		},
 		{
 			.id = DP_V32,
+			.name = "V.32bis 7200",
+			.selection_command = "AT+MS=32,0,7200,7200\r",
+			.caller_tx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
+			.id = DP_V32,
 			.name = "V.32 9600",
 			.selection_command = "AT+MS=32,0,9600,9600\r",
 			.caller_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,

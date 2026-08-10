@@ -21,12 +21,14 @@ static bool test_normative_words(void)
 		uint16_t rate_word;
 		uint16_t end_word;
 	} fixtures[] = {
-		{ { SIPPYMODEM_V32_RATE_CAPABILITY_2400, false }, 0x0911,
-		  0xf911 },
-		{ { SIPPYMODEM_V32_RATE_CAPABILITY_4800, false }, 0x0511,
-		  0xf511 },
-		{ { SIPPYMODEM_V32_RATE_CAPABILITY_9600, true }, 0x0391,
-		  0xf391 },
+		{ { SIPPYMODEM_V32_RATE_CAPABILITY_4800, false }, 0x0d11,
+		  0xfd11 },
+		{ { SIPPYMODEM_V32_RATE_CAPABILITY_7200, true }, 0x09d1,
+		  0xf9d1 },
+		{ { SIPPYMODEM_V32_RATE_CAPABILITY_9600, false }, 0x0b11,
+		  0xfb11 },
+		{ { SIPPYMODEM_V32_RATE_CAPABILITY_9600, true }, 0x0b91,
+		  0xfb91 },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(fixtures); ++index) {
@@ -51,10 +53,10 @@ static bool test_normative_words(void)
 static bool test_capability_round_trip(void)
 {
 	struct sippymodem_v32_rate_offer source = {
-		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_2400 |
-			 SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
 			 SIPPYMODEM_V32_RATE_CAPABILITY_9600,
-		.trellis_at_highest_rate = true,
+		.trellis_at_highest_rate = false,
 	};
 	struct sippymodem_v32_rate_offer decoded = { 0 };
 	enum sippymodem_v32_rate_signal_type type = SIPPYMODEM_V32_END_SIGNAL;
@@ -63,19 +65,16 @@ static bool test_capability_round_trip(void)
 	CHECK(sippymodem_v32_rate_signal_encode(
 		      SIPPYMODEM_V32_RATE_SIGNAL, &source, &word) ==
 		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-		      word == 0x0f91 &&
+		      word == 0x0f51 &&
 		      sippymodem_v32_rate_signal_decode(word, &type, &decoded) ==
 			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 		      type == SIPPYMODEM_V32_RATE_SIGNAL &&
 		      offers_are_equal(&source, &decoded),
 	      "V.32 capabilities did not survive a rate-word round trip");
-	/* Accept a peer that retains its 2400 fallback in a 4800 end word. */
 	CHECK(sippymodem_v32_rate_signal_decode(0xfd11, &type, &decoded) ==
 		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 		      type == SIPPYMODEM_V32_END_SIGNAL &&
-		      decoded.rates ==
-			      (SIPPYMODEM_V32_RATE_CAPABILITY_2400 |
-			       SIPPYMODEM_V32_RATE_CAPABILITY_4800) &&
+		      decoded.rates == SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
 		      !decoded.trellis_at_highest_rate,
 	      "V.32 decoder rejected a compatible 4800 end word");
 	return true;
@@ -83,19 +82,19 @@ static bool test_capability_round_trip(void)
 
 static bool test_transmission_order(void)
 {
-	static const uint8_t rate_dibits[] = { 0, 0, 1, 1, 0, 1, 0, 1 };
-	static const uint8_t end_dibits[] = { 3, 3, 1, 1, 0, 1, 0, 1 };
+	static const uint8_t rate_dibits[] = { 0, 0, 3, 1, 0, 1, 0, 1 };
+	static const uint8_t end_dibits[] = { 3, 3, 3, 1, 0, 1, 0, 1 };
 
 	for (size_t index = 0; index < ARRAY_LENGTH(rate_dibits); ++index) {
 		uint8_t dibit = UINT8_MAX;
 
 		CHECK(sippymodem_v32_rate_signal_dibit(
-			      0x0511, (unsigned int)index, &dibit) ==
+			      0x0d11, (unsigned int)index, &dibit) ==
 			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 			      dibit == rate_dibits[index],
 		      "V.32 rate word changed dibit %zu", index);
 		CHECK(sippymodem_v32_rate_signal_dibit(
-			      0xf511, (unsigned int)index, &dibit) ==
+			      0xfd11, (unsigned int)index, &dibit) ==
 			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 			      dibit == end_dibits[index],
 		      "V.32 end word changed dibit %zu", index);
@@ -140,10 +139,10 @@ static bool test_repeated_rate_detection(void)
 			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT,
 	      "V.32 detector did not accept an unaligned preamble");
-	CHECK(observe_word(&detector, 0x0511, &event, &offer) &&
+	CHECK(observe_word(&detector, 0x0d11, &event, &offer) &&
 		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT,
 	      "V.32 detector accepted only one rate word");
-	CHECK(observe_word(&detector, 0x0511, &event, &offer) &&
+	CHECK(observe_word(&detector, 0x0d11, &event, &offer) &&
 		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED &&
 		      offer.rates == SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
 		      !offer.trellis_at_highest_rate && detector.aligned,
@@ -186,16 +185,16 @@ static bool test_detector_reacquisition(void)
 
 	CHECK(sippymodem_v32_rate_signal_detector_init(&detector) ==
 		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-		      observe_word(&detector, 0x0511, &event, &offer) &&
-		      observe_word(&detector, 0x0511, &event, &offer) &&
+		      observe_word(&detector, 0x0d11, &event, &offer) &&
+		      observe_word(&detector, 0x0d11, &event, &offer) &&
 		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED,
 	      "V.32 reacquisition fixture did not lock");
 	CHECK(observe_word(&detector, 0x0551, &event, &offer) &&
 		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT &&
 		      !detector.aligned &&
-		      observe_word(&detector, 0x0311, &event, &offer) &&
+		      observe_word(&detector, 0x0b11, &event, &offer) &&
 		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT &&
-		      observe_word(&detector, 0x0311, &event, &offer) &&
+		      observe_word(&detector, 0x0b11, &event, &offer) &&
 		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED &&
 		      offer.rates == SIPPYMODEM_V32_RATE_CAPABILITY_9600,
 	      "V.32 detector did not reacquire after a malformed word");
@@ -277,7 +276,7 @@ static bool test_validation(void)
 		      offers_are_equal(&decoded, &saved),
 	      "V.32 decoder accepted reserved bits or an empty offer");
 	CHECK(sippymodem_v32_rate_signal_dibit(
-		      0x0511, SIPPYMODEM_V32_RATE_SIGNAL_DIBITS, &dibit) ==
+		      0x0d11, SIPPYMODEM_V32_RATE_SIGNAL_DIBITS, &dibit) ==
 		      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT &&
 		      dibit == UINT8_MAX &&
 		      strcmp(sippymodem_v32_rate_signal_result_name(

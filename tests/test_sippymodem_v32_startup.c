@@ -50,6 +50,8 @@ static bool check_role_exchange(
 	struct sippymodem_v32_startup answerer;
 	struct sippymodem_v32_rate_offer selected = {
 		.rates = expected_rate,
+		.trellis_at_highest_rate =
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200,
 	};
 	uint32_t caller_phases = 0;
 	uint32_t answerer_phases = 0;
@@ -168,9 +170,18 @@ static bool test_rate_selection(void)
 {
 	uint8_t both = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
 		       SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	uint8_t v32bis = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_7200;
+	uint8_t all = v32bis | SIPPYMODEM_V32_RATE_CAPABILITY_9600;
 
 	return check_role_exchange(both, both,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
+	       check_role_exchange(v32bis, v32bis,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
+	       check_role_exchange(all, v32bis,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
+	       check_role_exchange(v32bis, all,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
 	       check_role_exchange(both, SIPPYMODEM_V32_RATE_CAPABILITY_4800,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_4800) &&
 	       check_role_exchange(SIPPYMODEM_V32_RATE_CAPABILITY_4800, both,
@@ -202,7 +213,7 @@ static bool test_uncoded_fallback(void)
 		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
 		      caller.selected_rate ==
 			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
-		      caller.rate_word == 0x0511 && caller.end_word == 0xf511,
+		      caller.rate_word == 0x0d11 && caller.end_word == 0xfd11,
 	      "V.32 startup did not fall back from trellis-only 9600");
 	return true;
 }
@@ -241,8 +252,8 @@ static bool test_end_waits_for_rate_boundary(void)
 		      &caller, SIPPYMODEM_V32_CALLER,
 		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
 		      SIPPYMODEM_V32_STARTUP_OK &&
-		      observe_word(&caller, 0x0511) &&
-		      observe_word(&caller, 0x0511) &&
+		      observe_word(&caller, 0x0d11) &&
+		      observe_word(&caller, 0x0d11) &&
 		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE,
 	      "V.32 boundary fixture did not acquire R1");
 	for (unsigned int index = 0; index < 3; ++index) {
@@ -270,8 +281,8 @@ static bool test_end_waits_for_rate_boundary(void)
 			      !connected,
 		      "V.32 boundary fixture could not observe its rate gap");
 	}
-	CHECK(observe_word(&caller, 0x0511) &&
-		      observe_word(&caller, 0x0511) && caller.end_pending &&
+	CHECK(observe_word(&caller, 0x0d11) &&
+		      observe_word(&caller, 0x0d11) && caller.end_pending &&
 		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
 		      caller.word_dibit == 3,
 	      "V.32 startup did not defer E at a partial R2 word");
@@ -315,7 +326,7 @@ static bool test_no_common_rate(void)
 			uint8_t dibit;
 
 			CHECK(sippymodem_v32_rate_signal_dibit(
-				      0x0311, index, &dibit) ==
+				      0x0b11, index, &dibit) ==
 				      SIPPYMODEM_V32_RATE_SIGNAL_OK,
 			      "V.32 incompatible rate word did not decode");
 			if (repeat == 1 &&
@@ -369,8 +380,7 @@ static bool test_validation(void)
 			      &startup, SIPPYMODEM_V32_CALLER, 0) ==
 			      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
 		      sippymodem_v32_startup_init(
-			      &startup, SIPPYMODEM_V32_CALLER,
-			      SIPPYMODEM_V32_RATE_CAPABILITY_2400) ==
+			      &startup, SIPPYMODEM_V32_CALLER, UINT8_C(0x80)) ==
 			      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
 		      memcmp(&startup, &saved, sizeof(startup)) == 0,
 	      "V.32 startup initialization changed state on failure");

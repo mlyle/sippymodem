@@ -47,6 +47,14 @@ enum sippymodem_v32_framing_result sippymodem_v32_scrambler_init(
 bool sippymodem_v32_scrambler_is_valid(
 	const struct sippymodem_v32_scrambler *scrambler);
 
+/* Process between one and eight bits, most-significant bit first. */
+enum sippymodem_v32_framing_result sippymodem_v32_scramble_group(
+	struct sippymodem_v32_scrambler *scrambler, uint8_t input,
+	unsigned int bit_count, uint8_t *output);
+enum sippymodem_v32_framing_result sippymodem_v32_descramble_group(
+	struct sippymodem_v32_scrambler *descrambler, uint8_t input,
+	unsigned int bit_count, uint8_t *output);
+
 /* Bit 1 of each dibit is transmitted first. */
 enum sippymodem_v32_framing_result sippymodem_v32_scramble_dibit(
 	struct sippymodem_v32_scrambler *scrambler, uint8_t input,
