@@ -635,7 +635,11 @@ V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
 	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
 	$(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp_channel_receiver.o
+	$(BUILD_DIR)/sippymodem_v34_training_channel.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_mp_channel_receiver.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_e_sequence.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_e_receiver.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_e_channel_receiver.o
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase4_e_sequence
 V34_PHASE4_E_SEQUENCE_TEST_OBJECTS := \
@@ -1810,6 +1814,15 @@ $(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o: \
 
 $(BUILD_DIR)/sippymodem_v34_phase4_mp_channel_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp_channel_receiver.c | \
+	$(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_training_channel.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_training_channel.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase4_e_channel_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_e_channel_receiver.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 

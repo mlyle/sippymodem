@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "sippymodem_v34_phase4_mp_channel_receiver.h"
+#include "sippymodem_v34_training_channel.h"
 
 #include <stddef.h>
 
@@ -47,8 +48,6 @@ sippymodem_v34_phase4_mp_channel_receive_point(
 {
 	struct sippymodem_v34_phase4_mp_channel_receiver next;
 	struct sippymodem_v34_mp_receive_event emitted;
-	struct sippymodem_qam_point normalized;
-	struct sippymodem_qam_point decision;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
 
@@ -56,18 +55,10 @@ sippymodem_v34_phase4_mp_channel_receive_point(
 	    event == NULL)
 		return SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
-	if (sippymodem_qam_gain_equalize(
-		    &next.gain, received, &normalized) != SIPPYMODEM_QAM_GAIN_OK ||
-	    sippymodem_v34_training_constellation_slice(
-		    next.symbol_receiver.constellation, &normalized,
+	if (sippymodem_v34_training_channel_decide(
+		    &next.gain, next.symbol_receiver.constellation, received,
 		    &quarter_point, &clockwise_quarter_turns) !=
-		    SIPPYMODEM_V34_CONSTELLATION_OK ||
-	    sippymodem_v34_training_constellation_point(
-		    next.symbol_receiver.constellation, quarter_point,
-		    clockwise_quarter_turns, &decision) !=
-		    SIPPYMODEM_V34_CONSTELLATION_OK ||
-	    sippymodem_qam_gain_track(&next.gain, received, &decision) !=
-		    SIPPYMODEM_QAM_GAIN_OK ||
+		    SIPPYMODEM_V34_TRAINING_CHANNEL_OK ||
 	    sippymodem_v34_phase4_mp_receive_decision(
 		    &next.symbol_receiver, quarter_point,
 		    clockwise_quarter_turns, &emitted) !=

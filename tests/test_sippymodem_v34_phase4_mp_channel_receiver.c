@@ -2,6 +2,9 @@
 
 #include <sippymodem_v34_phase4_mp.h>
 #include <sippymodem_v34_phase4_mp_channel_receiver.h>
+#include <sippymodem_v34_phase4_e_channel_receiver.h>
+#include <sippymodem_v34_phase4_e_sequence.h>
+#include <sippymodem_v34_training_channel.h>
 
 #include "test.h"
 
@@ -148,6 +151,102 @@ static bool receive_record(
 	return true;
 }
 
+static bool e_receivers_are_equal(
+	const struct sippymodem_v34_phase4_e_receiver *left,
+	const struct sippymodem_v34_phase4_e_receiver *right)
+{
+	return left->descrambler.history == right->descrambler.history &&
+	       left->descrambler.polynomial == right->descrambler.polynomial &&
+	       left->transmitting_role == right->transmitting_role &&
+	       left->constellation == right->constellation &&
+	       left->previous_clockwise_quarter_turns ==
+		       right->previous_clockwise_quarter_turns &&
+	       left->received_bits == right->received_bits;
+}
+
+static bool e_channel_receivers_are_equal(
+	const struct sippymodem_v34_phase4_e_channel_receiver *left,
+	const struct sippymodem_v34_phase4_e_channel_receiver *right)
+{
+	return e_receivers_are_equal(
+		       &left->symbol_receiver, &right->symbol_receiver) &&
+	       left->gain.channel_gain.in_phase ==
+		       right->gain.channel_gain.in_phase &&
+	       left->gain.channel_gain.quadrature ==
+		       right->gain.channel_gain.quadrature &&
+	       left->gain.adaptation == right->gain.adaptation;
+}
+
+static bool receive_e_sequence(
+	const struct sippymodem_v34_phase4_mp *mp,
+	const struct sippymodem_v34_phase4_mp_receiver *control,
+	const struct sippymodem_v34_phase4_mp_channel_receiver *mp_receiver,
+	struct sippymodem_qam_point *channel,
+	const struct sippymodem_qam_point *drift, uint32_t *random)
+{
+	struct sippymodem_v34_phase4_e_sequence transmitter;
+	struct sippymodem_v34_phase4_e_receiver normalized_receiver;
+	struct sippymodem_v34_phase4_e_channel_receiver channel_receiver;
+
+	CHECK(sippymodem_v34_phase4_e_sequence_init_from_mp(
+		      &transmitter, mp) == SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK &&
+	      sippymodem_v34_phase4_e_receiver_init_from_mp(
+		      &normalized_receiver, control) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_OK &&
+	      sippymodem_v34_phase4_e_channel_receiver_init_from_mp(
+		      &channel_receiver, mp_receiver) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_OK,
+	      "flat-channel E transition did not initialize");
+	while (!sippymodem_v34_phase4_e_sequence_is_complete(&transmitter)) {
+		struct sippymodem_qam_point transmitted;
+		struct sippymodem_qam_point received;
+		enum sippymodem_v34_phase4_e_receiver_result expected;
+		uint8_t quarter_point;
+		uint8_t clockwise_quarter_turns;
+
+		CHECK(sippymodem_v34_phase4_e_sequence_next(
+			      &transmitter, &transmitted, &quarter_point,
+			      &clockwise_quarter_turns) ==
+			      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK,
+		      "flat-channel E transmitter stopped early");
+		received = pass_channel(channel, drift, &transmitted, random);
+		expected = sippymodem_v34_phase4_e_sequence_is_complete(
+				   &transmitter) ?
+				   SIPPYMODEM_V34_PHASE4_E_RECEIVER_COMPLETE :
+				   SIPPYMODEM_V34_PHASE4_E_RECEIVER_OK;
+		CHECK(sippymodem_v34_phase4_e_receive_decision(
+			      &normalized_receiver, quarter_point,
+			      clockwise_quarter_turns) == expected &&
+		      sippymodem_v34_phase4_e_channel_receive_point(
+			      &channel_receiver, &received) == expected &&
+		      e_receivers_are_equal(
+			      &normalized_receiver,
+			      &channel_receiver.symbol_receiver),
+		      "flat-channel E receiver changed a symbol decision");
+	}
+	CHECK(sippymodem_v34_phase4_e_channel_receiver_is_valid(
+		      &channel_receiver) &&
+	      sippymodem_v34_phase4_e_receiver_is_complete(
+		      &channel_receiver.symbol_receiver) &&
+	      fabs(channel_receiver.gain.channel_gain.in_phase -
+		   channel->in_phase) < 0.01 &&
+	      fabs(channel_receiver.gain.channel_gain.quadrature -
+		   channel->quadrature) < 0.01,
+	      "flat-channel E receiver lost channel continuity");
+	{
+		struct sippymodem_v34_phase4_e_channel_receiver saved =
+			channel_receiver;
+		struct sippymodem_qam_point ignored = { 0 };
+
+		CHECK(sippymodem_v34_phase4_e_channel_receive_point(
+			      &channel_receiver, &ignored) ==
+			      SIPPYMODEM_V34_PHASE4_E_RECEIVER_COMPLETE &&
+		      e_channel_receivers_are_equal(&channel_receiver, &saved),
+		      "completed flat-channel E receiver consumed a point");
+	}
+	return true;
+}
+
 static bool check_channel_fixture(
 	enum sippymodem_v34_station_role role,
 	enum sippymodem_v34_constellation_size constellation)
@@ -209,8 +308,11 @@ static bool check_channel_fixture(
 		      &transmitter, &parameters) == SIPPYMODEM_V34_PHASE4_MP_OK &&
 	      receive_record(
 		      &transmitter, &control, &receiver, &channel, &drift,
-		      &random, &event),
-	      "flat-channel MP stream did not complete");
+		      &random, &event) &&
+	      receive_e_sequence(
+		      &transmitter, &control, &receiver, &channel, &drift,
+		      &random),
+	      "flat-channel Phase 4 stream did not complete");
 	CHECK(event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE0 &&
 	      event.frame_result == SIPPYMODEM_V34_MP_OK &&
 	      events_are_equal(
@@ -220,12 +322,8 @@ static bool check_channel_fixture(
 			      .frame_result = SIPPYMODEM_V34_MP_OK,
 			      .parameters.type0 = parameters,
 		      }) &&
-	      fabs(receiver.gain.channel_gain.in_phase - channel.in_phase) <
-		      0.01 &&
-	      fabs(receiver.gain.channel_gain.quadrature -
-		   channel.quadrature) < 0.01 &&
 	      sippymodem_v34_phase4_mp_channel_receiver_is_valid(&receiver),
-	      "flat-channel fixture changed its record or gain estimate");
+	      "flat-channel fixture changed its MP record");
 	return true;
 }
 
@@ -329,6 +427,81 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_e_channel_validation(void)
+{
+	struct sippymodem_v34_phase4_mp_channel_receiver mp_receiver;
+	struct sippymodem_v34_phase4_e_channel_receiver receiver;
+	struct sippymodem_v34_phase4_e_channel_receiver saved;
+	struct sippymodem_v34_mp_receive_event event;
+	struct sippymodem_qam_point transmitted;
+	struct sippymodem_qam_point gain = { 0.8, -0.2 };
+	struct sippymodem_qam_point received;
+	struct sippymodem_qam_point zero = { 0 };
+	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+
+	CHECK(sippymodem_v34_training_constellation_point(
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, 0, 0,
+		      &transmitted) == SIPPYMODEM_V34_CONSTELLATION_OK,
+	      "E channel validation reference was not generated");
+	received = complex_product(&gain, &transmitted);
+	CHECK(sippymodem_v34_phase4_mp_channel_receiver_init(
+		      &mp_receiver, SIPPYMODEM_V34_CALLING_STATION,
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &received,
+		      &transmitted) == SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK,
+	      "E channel validation MP receiver did not initialize");
+	memset(&receiver, 0xa5, sizeof(receiver));
+	saved = receiver;
+	CHECK(sippymodem_v34_phase4_e_channel_receiver_init_from_mp(
+		      NULL, &mp_receiver) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_e_channel_receiver_init_from_mp(
+		      &receiver, NULL) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_e_channel_receiver_init_from_mp(
+		      &receiver, &mp_receiver) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "E channel accepted a transition without a prior point");
+	CHECK(sippymodem_v34_phase4_mp_channel_receive_point(
+		      &mp_receiver, &received, &event) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK &&
+	      sippymodem_v34_phase4_e_channel_receiver_init_from_mp(
+		      &receiver, &mp_receiver) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_OK &&
+	      sippymodem_v34_phase4_e_channel_receiver_is_valid(&receiver) &&
+	      !sippymodem_v34_phase4_e_channel_receiver_is_valid(NULL),
+	      "E channel validation receiver did not initialize");
+	saved = receiver;
+	CHECK(sippymodem_v34_phase4_e_channel_receive_point(NULL, &received) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_e_channel_receive_point(
+		      &receiver, NULL) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_e_channel_receive_point(
+		      &receiver, &zero) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_e_channel_receive_point(
+		      &receiver, &invalid) ==
+		      SIPPYMODEM_V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      e_channel_receivers_are_equal(&receiver, &saved),
+	      "invalid E channel point changed receiver state");
+	receiver = saved;
+	receiver.gain.channel_gain = zero;
+	CHECK(!sippymodem_v34_phase4_e_channel_receiver_is_valid(&receiver),
+	      "E channel receiver accepted a collapsed gain");
+	CHECK(strcmp(sippymodem_v34_training_channel_result_name(
+		     SIPPYMODEM_V34_TRAINING_CHANNEL_OK),
+		     "ok") == 0 &&
+	      strcmp(sippymodem_v34_training_channel_result_name(
+		     SIPPYMODEM_V34_TRAINING_CHANNEL_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(sippymodem_v34_training_channel_result_name(
+		     (enum sippymodem_v34_training_channel_result)99),
+		     "unknown") == 0,
+	      "training-channel result names changed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -337,6 +510,7 @@ int main(void)
 	} tests[] = {
 		{ "drifting flat channel", test_drifting_channel },
 		{ "validation", test_validation },
+		{ "E channel validation", test_e_channel_validation },
 	};
 	unsigned int failures = 0;
 
