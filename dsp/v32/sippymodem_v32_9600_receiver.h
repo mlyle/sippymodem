@@ -3,6 +3,7 @@
 #ifndef SIPPYMODEM_V32_9600_RECEIVER_H
 #define SIPPYMODEM_V32_9600_RECEIVER_H
 
+#include "sippymodem_qam_gain.h"
 #include "sippymodem_v32_constellation.h"
 #include "sippymodem_v32_framing.h"
 
@@ -16,7 +17,7 @@ enum sippymodem_v32_9600_receiver_result {
 
 struct sippymodem_v32_9600_receiver {
 	struct sippymodem_v32_symbol_decoder decoder;
-	struct sippymodem_qam_point channel_gain;
+	struct sippymodem_qam_gain gain;
 };
 
 /* Seed from the last received 4800-bit/s point before switching rates. */

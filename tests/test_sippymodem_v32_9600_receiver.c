@@ -240,7 +240,7 @@ static bool test_validation(void)
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 		      output == UINT8_MAX,
 	      "V.32 9600 invalid input was not transactional");
-	receiver.channel_gain.in_phase = INFINITY;
+	receiver.gain.channel_gain.in_phase = INFINITY;
 	CHECK(!sippymodem_v32_9600_receiver_is_valid(&receiver) &&
 		      sippymodem_v32_9600_receiver_decode(
 			      &receiver, &reference, &output) ==

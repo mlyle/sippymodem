@@ -309,6 +309,7 @@ V32_9600_RECEIVER_TEST_BINARY := \
 V32_9600_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_9600_receiver.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/sippymodem_qam_gain.o \
 	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
 	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
