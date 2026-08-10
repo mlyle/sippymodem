@@ -359,6 +359,7 @@ V34_PHASE2_TONE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_tone
 V34_PHASE2_TONE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_tone.o \
+	$(BUILD_DIR)/sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
