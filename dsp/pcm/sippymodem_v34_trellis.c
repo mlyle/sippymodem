@@ -57,6 +57,33 @@ enum sippymodem_v34_trellis_result sippymodem_v34_grid_subset_label(
 	return SIPPYMODEM_V34_TRELLIS_OK;
 }
 
+static bool grid_point_coordinates_are_even(
+	const struct sippymodem_v34_grid_point *point)
+{
+	return point != NULL && ((uint16_t)point->in_phase & 1u) == 0u &&
+	       ((uint16_t)point->quadrature & 1u) == 0u;
+}
+
+static uint8_t half_coordinate_sum_parity(
+	const struct sippymodem_v34_grid_point *point)
+{
+	int sum = point->in_phase / 2 + point->quadrature / 2;
+
+	return (uint8_t)((unsigned int)sum & 1u);
+}
+
+enum sippymodem_v34_trellis_result sippymodem_v34_modulo_encoder_output(
+	const struct sippymodem_v34_grid_point *first_offset,
+	const struct sippymodem_v34_grid_point *second_offset, uint8_t *c0)
+{
+	if (!grid_point_coordinates_are_even(first_offset) ||
+	    !grid_point_coordinates_are_even(second_offset) || c0 == NULL)
+		return SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT;
+	*c0 = half_coordinate_sum_parity(first_offset) ^
+	      half_coordinate_sum_parity(second_offset);
+	return SIPPYMODEM_V34_TRELLIS_OK;
+}
+
 bool sippymodem_v34_convolutional_input_is_valid(
 	const struct sippymodem_v34_convolutional_input *input)
 {
