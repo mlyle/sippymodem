@@ -24,7 +24,7 @@ PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
 PJSIP_LDLIBS := $(shell \
 	pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
-CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I.
+CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I. -Idsp
 CFLAGS += -std=gnu11 -Wall -Wextra
 LDLIBS += $(PJSIP_LDLIBS) -lm
 
@@ -42,12 +42,7 @@ MODEM_CORE_SOURCES := \
 SIPPYMODEM_SOURCES := \
 	sippymodem_audio_path.c \
 	sippymodem_audio_scheduler.c \
-	sippymodem_baudot.c \
-	sippymodem_baudot_datapump.c \
 	sippymodem_config.c \
-	sippymodem_datapumps.c \
-	sippymodem_dc_filter.c \
-	sippymodem_differential_qpsk.c \
 	sippymodem_frame_clock.c \
 	sippymodem_g711.c \
 	sippymodem_host.c \
@@ -72,24 +67,31 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_calls.c \
 	sippymodem_slmodem_driver.c \
 	sippymodem_slmodem_terminal.c \
-	sippymodem_terminal.c \
-	sippymodem_qam.c \
-	sippymodem_fsk.c \
-	sippymodem_fsk300_datapump.c \
-	sippymodem_v22_datapump.c \
-	sippymodem_v22_framing.c \
-	sippymodem_v22bis_receiver.c \
-	sippymodem_v22bis_symbols.c \
-	sippymodem_v32_datapump.c \
-	sippymodem_v32_9600_receiver.c \
-	sippymodem_v32_constellation.c \
-	sippymodem_v32_framing.c \
-	sippymodem_v32_rate_signal.c \
-	sippymodem_v32_startup.c \
-	sippymodem_v32_trellis.c \
-	sippymodem_v32_trellis_decoder.c \
-	sippymodem_v23_datapump.c
-SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES)
+	sippymodem_terminal.c
+SIPPYMODEM_DSP_SOURCES := \
+	dsp/sippymodem_datapumps.c \
+	dsp/sippymodem_baudot.c \
+	dsp/sippymodem_baudot_datapump.c \
+	dsp/sippymodem_dc_filter.c \
+	dsp/sippymodem_differential_qpsk.c \
+	dsp/sippymodem_fsk.c \
+	dsp/sippymodem_fsk300_datapump.c \
+	dsp/sippymodem_qam.c \
+	dsp/sippymodem_v22_datapump.c \
+	dsp/sippymodem_v22_framing.c \
+	dsp/sippymodem_v22bis_receiver.c \
+	dsp/sippymodem_v22bis_symbols.c \
+	dsp/sippymodem_v23_datapump.c \
+	dsp/sippymodem_v32_datapump.c \
+	dsp/sippymodem_v32_9600_receiver.c \
+	dsp/sippymodem_v32_constellation.c \
+	dsp/sippymodem_v32_framing.c \
+	dsp/sippymodem_v32_rate_signal.c \
+	dsp/sippymodem_v32_startup.c \
+	dsp/sippymodem_v32_trellis.c \
+	dsp/sippymodem_v32_trellis_decoder.c
+SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES) \
+	$(SIPPYMODEM_DSP_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDENCIES := $(SOURCES:.c=.d)
 
