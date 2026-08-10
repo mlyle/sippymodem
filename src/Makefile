@@ -76,8 +76,9 @@ SIPPYMODEM_DSP_SOURCES := \
 	dsp/sippymodem_differential_qpsk.c \
 	dsp/sippymodem_fsk.c \
 	dsp/sippymodem_fsk300_datapump.c \
-	dsp/sippymodem_v21.c \
 	dsp/sippymodem_qam.c \
+	dsp/sippymodem_self_sync_scrambler.c \
+	dsp/sippymodem_v21.c \
 	dsp/sippymodem_v22_datapump.c \
 	dsp/sippymodem_v22_framing.c \
 	dsp/sippymodem_v22bis_receiver.c \

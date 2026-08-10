@@ -2,15 +2,29 @@
 
 #include "sippymodem_v32_framing.h"
 
+#include "sippymodem_self_sync_scrambler.h"
+
 #include <stddef.h>
 
 enum {
 	V32_CALLING_TAP_DELAY = 18,
 	V32_ANSWERING_TAP_DELAY = 5,
 	V32_COMMON_TAP_DELAY = 23,
-	V32_SCRAMBLER_HISTORY_MASK =
-		(UINT32_C(1) << SIPPYMODEM_V32_SCRAMBLER_BITS) - 1,
 };
+
+static const struct sippymodem_self_sync_scrambler_config
+	v32_scrambler_configs[] = {
+		[SIPPYMODEM_V32_CALLING_TRANSMITTER] = {
+			.history_bits = SIPPYMODEM_V32_SCRAMBLER_BITS,
+			.tap_a_delay = V32_CALLING_TAP_DELAY,
+			.tap_b_delay = V32_COMMON_TAP_DELAY,
+		},
+		[SIPPYMODEM_V32_ANSWERING_TRANSMITTER] = {
+			.history_bits = SIPPYMODEM_V32_SCRAMBLER_BITS,
+			.tap_a_delay = V32_ANSWERING_TAP_DELAY,
+			.tap_b_delay = V32_COMMON_TAP_DELAY,
+		},
+	};
 
 static bool transmitter_role_is_valid(
 	enum sippymodem_v32_transmitter_role role)
@@ -19,13 +33,24 @@ static bool transmitter_role_is_valid(
 	       role == SIPPYMODEM_V32_ANSWERING_TRANSMITTER;
 }
 
+static const struct sippymodem_self_sync_scrambler_config *
+scrambler_config(enum sippymodem_v32_transmitter_role role)
+{
+	if (!transmitter_role_is_valid(role))
+		return NULL;
+	return &v32_scrambler_configs[(unsigned int)role];
+}
+
 bool sippymodem_v32_scrambler_is_valid(
 	const struct sippymodem_v32_scrambler *scrambler)
 {
-	return scrambler != NULL &&
-	       transmitter_role_is_valid(scrambler->transmitter_role) &&
-	       (scrambler->history &
-		~(uint32_t)V32_SCRAMBLER_HISTORY_MASK) == 0;
+	struct sippymodem_self_sync_scrambler shared;
+
+	if (scrambler == NULL)
+		return false;
+	shared.history = scrambler->history;
+	return sippymodem_self_sync_scrambler_is_valid(
+		&shared, scrambler_config(scrambler->transmitter_role));
 }
 
 enum sippymodem_v32_framing_result sippymodem_v32_scrambler_init(
@@ -39,70 +64,30 @@ enum sippymodem_v32_framing_result sippymodem_v32_scrambler_init(
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
-static unsigned int role_tap_delay(
-	enum sippymodem_v32_transmitter_role role)
-{
-	return role == SIPPYMODEM_V32_CALLING_TRANSMITTER ?
-		       V32_CALLING_TAP_DELAY :
-		       V32_ANSWERING_TAP_DELAY;
-}
-
-static uint8_t feedback_bit(const struct sippymodem_v32_scrambler *state)
-{
-	unsigned int role_delay = role_tap_delay(state->transmitter_role);
-
-	return (uint8_t)(((state->history >> (role_delay - 1u)) ^
-			  (state->history >> (V32_COMMON_TAP_DELAY - 1u))) &
-			  1u);
-}
-
-static void remember_scrambled_bit(
-	struct sippymodem_v32_scrambler *state, uint8_t bit)
-{
-	state->history = ((state->history << 1) | bit) &
-			 V32_SCRAMBLER_HISTORY_MASK;
-}
-
-static uint8_t scramble_bit(
-	struct sippymodem_v32_scrambler *state, uint8_t input)
-{
-	uint8_t output = input ^ feedback_bit(state);
-
-	remember_scrambled_bit(state, output);
-	return output;
-}
-
-static uint8_t descramble_bit(
-	struct sippymodem_v32_scrambler *state, uint8_t input)
-{
-	uint8_t output = input ^ feedback_bit(state);
-
-	remember_scrambled_bit(state, input);
-	return output;
-}
-
 static enum sippymodem_v32_framing_result transform_group(
 	struct sippymodem_v32_scrambler *state, uint8_t input,
 	unsigned int bit_count, uint8_t *output, bool descramble)
 {
 	struct sippymodem_v32_scrambler next;
-	uint8_t transformed = 0;
+	struct sippymodem_self_sync_scrambler shared;
+	const struct sippymodem_self_sync_scrambler_config *config;
+	enum sippymodem_self_sync_scrambler_result result;
+	uint8_t transformed;
 
-	if (!sippymodem_v32_scrambler_is_valid(state) || bit_count == 0 ||
-	    bit_count > 8 || input >= (1u << bit_count) || output == NULL)
+	if (!sippymodem_v32_scrambler_is_valid(state) || output == NULL)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *state;
-	for (unsigned int bit = bit_count; bit > 0; --bit) {
-		uint8_t input_bit = (uint8_t)((input >> (bit - 1u)) & 1u);
-		uint8_t output_bit;
-
-		if (descramble)
-			output_bit = descramble_bit(&next, input_bit);
-		else
-			output_bit = scramble_bit(&next, input_bit);
-
-		transformed = (uint8_t)((transformed << 1) | output_bit);
-	}
+	shared.history = next.history;
+	config = scrambler_config(next.transmitter_role);
+	if (descramble)
+		result = sippymodem_self_sync_descramble_group(
+			&shared, config, input, bit_count, &transformed);
+	else
+		result = sippymodem_self_sync_scramble_group(
+			&shared, config, input, bit_count, &transformed);
+	if (result != SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next.history = shared.history;
 	*state = next;
 	*output = transformed;
 	return SIPPYMODEM_V32_FRAMING_OK;
