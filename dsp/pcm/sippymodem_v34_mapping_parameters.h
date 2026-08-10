@@ -13,6 +13,11 @@ enum sippymodem_v34_mapping_parameters_result {
 	SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT,
 };
 
+enum {
+	SIPPYMODEM_V34_MAX_SHELL_MAPPER_BITS = 31,
+	SIPPYMODEM_V34_MAX_RING_COUNT = 18,
+};
+
 /* Clause 9.2 dimensions for one high mapping frame. */
 struct sippymodem_v34_mapping_parameters {
 	uint16_t constellation_points;

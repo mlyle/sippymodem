@@ -6,12 +6,10 @@
 
 enum {
 	V34_FIXED_MAPPING_BITS = 12,
-	V34_MAX_SHELL_MAPPER_BITS = 31,
 	V34_2D_SYMBOLS_PER_MAPPING_FRAME = 8,
 	V34_CONSTELLATION_QUADRANTS = 4,
 	V34_MIN_MAPPING_FRAME_BITS = 8,
 	V34_MAX_MAPPING_FRAME_BITS = 79,
-	V34_MAX_RING_COUNT = 18,
 };
 
 static uint64_t eighth_power(uint32_t value)
@@ -26,7 +24,8 @@ static uint8_t minimum_ring_count(uint8_t shell_mapper_bits)
 {
 	uint64_t required_sequences = UINT64_C(1) << shell_mapper_bits;
 
-	for (uint8_t rings = 1; rings <= V34_MAX_RING_COUNT; ++rings) {
+	for (uint8_t rings = 1;
+	     rings <= SIPPYMODEM_V34_MAX_RING_COUNT; ++rings) {
 		if (eighth_power(rings) >= required_sequences)
 			return rings;
 	}
@@ -43,7 +42,7 @@ static uint8_t expanded_ring_count(
 	uint64_t target = UINT64_C(390625) << shell_mapper_bits;
 
 	for (uint8_t rings = minimum_rings;
-	     rings <= V34_MAX_RING_COUNT; ++rings) {
+	     rings <= SIPPYMODEM_V34_MAX_RING_COUNT; ++rings) {
 		uint64_t midpoint = eighth_power((uint32_t)rings * 2u + 1u) << 8;
 
 		if (target < midpoint)
@@ -66,7 +65,7 @@ static bool derive_parameters(
 	if (mapping_frame_bits > V34_FIXED_MAPPING_BITS)
 		shell_mapper_bits =
 			(uint8_t)(mapping_frame_bits - V34_FIXED_MAPPING_BITS);
-	while (shell_mapper_bits > V34_MAX_SHELL_MAPPER_BITS) {
+	while (shell_mapper_bits > SIPPYMODEM_V34_MAX_SHELL_MAPPER_BITS) {
 		shell_mapper_bits -= V34_2D_SYMBOLS_PER_MAPPING_FRAME;
 		++point_index_bits;
 	}
