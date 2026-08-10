@@ -87,6 +87,85 @@ static bool test_grid_subset_labels(void)
 	return true;
 }
 
+static uint8_t model_modulo_encoder_output(
+	const struct sippymodem_v34_grid_point *first,
+	const struct sippymodem_v34_grid_point *second)
+{
+	int half_coordinate_sum = first->in_phase / 2 + first->quadrature / 2 +
+		second->in_phase / 2 + second->quadrature / 2;
+	int modulo_two = half_coordinate_sum % 2;
+
+	return (uint8_t)(modulo_two < 0 ? modulo_two + 2 : modulo_two);
+}
+
+static bool test_modulo_encoder(void)
+{
+	static const int16_t coordinates[] = {
+		-8, -6, -4, -2, 0, 2, 4, 6, 8,
+	};
+	static const struct {
+		struct sippymodem_v34_grid_point first;
+		struct sippymodem_v34_grid_point second;
+	} extreme_cases[] = {
+		{ { INT16_MIN, INT16_MIN }, { INT16_MIN, INT16_MIN } },
+		{ { INT16_MIN, INT16_MAX - 1 },
+		  { INT16_MAX - 1, INT16_MIN } },
+		{ { INT16_MAX - 1, INT16_MAX - 1 },
+		  { INT16_MAX - 1, INT16_MAX - 1 } },
+	};
+	unsigned int cases_checked = 0;
+
+	for (size_t first_i = 0; first_i < ARRAY_LENGTH(coordinates);
+	     ++first_i) {
+		for (size_t first_q = 0; first_q < ARRAY_LENGTH(coordinates);
+		     ++first_q) {
+			for (size_t second_i = 0;
+			     second_i < ARRAY_LENGTH(coordinates); ++second_i) {
+				for (size_t second_q = 0;
+				     second_q < ARRAY_LENGTH(coordinates);
+				     ++second_q) {
+					const struct sippymodem_v34_grid_point first = {
+						coordinates[first_i],
+						coordinates[first_q],
+					};
+					const struct sippymodem_v34_grid_point second = {
+						coordinates[second_i],
+						coordinates[second_q],
+					};
+					uint8_t c0 = UINT8_MAX;
+
+					CHECK(sippymodem_v34_modulo_encoder_output(
+						      &first, &second, &c0) ==
+						      SIPPYMODEM_V34_TRELLIS_OK &&
+					      c0 == model_modulo_encoder_output(
+							    &first, &second),
+					      "modulo case %zu/%zu/%zu/%zu produced %u",
+					      first_i, first_q, second_i, second_q,
+					      c0);
+					cases_checked++;
+				}
+			}
+		}
+	}
+	for (size_t index = 0; index < ARRAY_LENGTH(extreme_cases); ++index) {
+		uint8_t c0 = UINT8_MAX;
+
+		CHECK(sippymodem_v34_modulo_encoder_output(
+			      &extreme_cases[index].first,
+			      &extreme_cases[index].second, &c0) ==
+			      SIPPYMODEM_V34_TRELLIS_OK &&
+		      c0 == model_modulo_encoder_output(
+				    &extreme_cases[index].first,
+				    &extreme_cases[index].second),
+		      "extreme modulo case %zu produced %u", index, c0);
+		cases_checked++;
+	}
+	CHECK(cases_checked == 9u * 9u * 9u * 9u +
+				       ARRAY_LENGTH(extreme_cases),
+	      "modulo coverage changed to %u cases", cases_checked);
+	return true;
+}
+
 static uint8_t packed_input(
 	const struct sippymodem_v34_convolutional_input *input)
 {
@@ -350,7 +429,10 @@ static bool test_validation(void)
 	};
 	struct sippymodem_v34_convolutional_encoder saved_encoder;
 	struct sippymodem_v34_grid_point grid_point = { 1, 1 };
+	struct sippymodem_v34_grid_point first_offset = { 2, 4 };
+	struct sippymodem_v34_grid_point second_offset = { -6, 8 };
 	uint8_t subset_label = UINT8_MAX;
+	uint8_t c0 = UINT8_MAX;
 	uint8_t y0 = UINT8_MAX;
 
 	CHECK(sippymodem_v34_trellis_selection_is_valid(
@@ -391,6 +473,28 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
 	      subset_label == UINT8_MAX,
 	      "invalid grid labeling changed its destination");
+	first_offset.in_phase = 1;
+	CHECK(sippymodem_v34_modulo_encoder_output(
+		      &first_offset, &second_offset, &c0) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      c0 == UINT8_MAX,
+	      "odd first modulo offset changed its destination");
+	first_offset = (struct sippymodem_v34_grid_point){ 2, 4 };
+	second_offset.quadrature = 7;
+	CHECK(sippymodem_v34_modulo_encoder_output(
+		      &first_offset, &second_offset, &c0) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_modulo_encoder_output(
+		      NULL, &second_offset, &c0) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_modulo_encoder_output(
+		      &first_offset, NULL, &c0) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      sippymodem_v34_modulo_encoder_output(
+		      &first_offset, &second_offset, NULL) ==
+		      SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT &&
+	      c0 == UINT8_MAX,
+	      "invalid modulo input changed its destination");
 	for (uint8_t field = 0; field < 4u; ++field) {
 		input = (struct sippymodem_v34_convolutional_input){ 0 };
 		switch (field) {
@@ -463,6 +567,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "channel grid labels", test_grid_subset_labels },
+		{ "modulo encoder", test_modulo_encoder },
 		{ "symbol-to-bit converter", test_symbol_to_bit_converter },
 		{ "all state transitions", test_all_state_transitions },
 		{ "known sequences", test_known_sequences },
