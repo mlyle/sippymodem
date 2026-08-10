@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_v34_phase4_mp.h>
+#include <sippymodem_v34_phase4_mp_receiver.h>
 
 #include "test.h"
 
@@ -56,6 +57,38 @@ type1_parameters(bool acknowledged)
 			{ .real = 0, .imaginary = 16384 },
 		},
 	};
+}
+
+static bool parameters_are_equal(
+	const struct sippymodem_v34_mp_parameters *left,
+	const struct sippymodem_v34_mp_parameters *right)
+{
+	uint8_t left_frame[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES];
+	uint8_t right_frame[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES];
+
+	return sippymodem_v34_mp_type0_encode(
+		       left, left_frame, sizeof(left_frame)) ==
+		       SIPPYMODEM_V34_MP_OK &&
+	       sippymodem_v34_mp_type0_encode(
+		       right, right_frame, sizeof(right_frame)) ==
+		       SIPPYMODEM_V34_MP_OK &&
+	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
+}
+
+static bool type1_parameters_are_equal(
+	const struct sippymodem_v34_mp_type1_parameters *left,
+	const struct sippymodem_v34_mp_type1_parameters *right)
+{
+	uint8_t left_frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES];
+	uint8_t right_frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES];
+
+	return sippymodem_v34_mp_type1_encode(
+		       left, left_frame, sizeof(left_frame)) ==
+		       SIPPYMODEM_V34_MP_OK &&
+	       sippymodem_v34_mp_type1_encode(
+		       right, right_frame, sizeof(right_frame)) ==
+		       SIPPYMODEM_V34_MP_OK &&
+	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
 }
 
 static bool transmitters_are_equal(
@@ -159,21 +192,268 @@ static bool points_are_close(
 static bool generate_trn_prefix(
 	struct sippymodem_v34_phase4_trn *trn,
 	enum sippymodem_v34_station_role role,
-	enum sippymodem_v34_constellation_size constellation)
+	enum sippymodem_v34_constellation_size constellation,
+	struct sippymodem_v34_phase4_mp_receiver *receiver)
 {
 	CHECK(sippymodem_v34_phase4_trn_init(trn, role, constellation) ==
-		      SIPPYMODEM_V34_PHASE4_TRN_OK,
+		      SIPPYMODEM_V34_PHASE4_TRN_OK &&
+	      (receiver == NULL ||
+	       sippymodem_v34_phase4_mp_receiver_init(
+		       receiver, role, constellation) ==
+		       SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK),
 	      "TRN prefix did not initialize");
 	for (size_t symbol = 0; symbol < TRN_PREFIX_SYMBOLS; ++symbol) {
 		struct sippymodem_qam_point point;
+		struct sippymodem_v34_mp_receive_event event;
 		uint8_t quarter;
 		uint8_t rotation;
 
 		CHECK(sippymodem_v34_phase4_trn_next(
 			      trn, &point, &quarter, &rotation) ==
-			      SIPPYMODEM_V34_PHASE4_TRN_OK,
+			      SIPPYMODEM_V34_PHASE4_TRN_OK &&
+		      (receiver == NULL ||
+		       sippymodem_v34_phase4_mp_receive_decision(
+			       receiver, quarter, rotation, &event) ==
+			       SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK),
 		      "TRN prefix stopped at symbol %zu", symbol);
 	}
+	return true;
+}
+
+struct phase4_receive_link {
+	struct sippymodem_v34_phase4_trn trn;
+	struct sippymodem_v34_phase4_mp transmitter;
+	struct sippymodem_v34_phase4_mp_receiver receiver;
+};
+
+static bool initialize_receive_link(
+	struct phase4_receive_link *link,
+	enum sippymodem_v34_station_role transmitting_role,
+	enum sippymodem_v34_constellation_size constellation,
+	const struct sippymodem_v34_mp_parameters *parameters)
+{
+	CHECK(generate_trn_prefix(
+		      &link->trn, transmitting_role, constellation,
+		      &link->receiver) &&
+	      sippymodem_v34_phase4_mp_init_type0_from_trn(
+		      &link->transmitter, &link->trn, parameters) ==
+		      SIPPYMODEM_V34_PHASE4_MP_OK,
+	      "Phase 4 receive link did not enter MP");
+	return true;
+}
+
+static bool receive_current_record(
+	struct sippymodem_v34_phase4_mp *transmitter,
+	struct sippymodem_v34_phase4_mp_receiver *receiver,
+	size_t corrupt_quarter_symbol,
+	struct sippymodem_v34_mp_receive_event *event)
+{
+	struct sippymodem_v34_mp_receive_event captured = { 0 };
+	bool complete = false;
+
+	for (size_t symbol = 0;
+	     symbol < SIPPYMODEM_V34_PHASE4_MP_TYPE1_4_POINT_SYMBOLS &&
+	     !complete;
+	     ++symbol) {
+		struct sippymodem_qam_point point;
+		struct sippymodem_v34_mp_receive_event emitted;
+		uint8_t quarter;
+		uint8_t rotation;
+
+		CHECK(sippymodem_v34_phase4_mp_next(
+			      transmitter, &point, &quarter, &rotation,
+			      &complete) == SIPPYMODEM_V34_PHASE4_MP_OK,
+		      "Phase 4 MP record stopped at symbol %zu", symbol);
+		if (symbol == corrupt_quarter_symbol)
+			quarter ^= 1u;
+		CHECK(sippymodem_v34_phase4_mp_receive_decision(
+			      receiver, quarter, rotation, &emitted) ==
+			      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK,
+		      "Phase 4 MP receiver stopped at symbol %zu", symbol);
+		if (emitted.type != SIPPYMODEM_V34_MP_RECEIVE_NO_EVENT) {
+			CHECK(captured.type ==
+				      SIPPYMODEM_V34_MP_RECEIVE_NO_EVENT,
+			      "Phase 4 MP record emitted multiple events");
+			captured = emitted;
+		}
+	}
+	CHECK(complete, "Phase 4 MP record exceeded its symbol bound");
+	*event = captured;
+	return true;
+}
+
+static bool test_decided_symbol_receiver(void)
+{
+	static const enum sippymodem_v34_station_role roles[] = {
+		SIPPYMODEM_V34_CALLING_STATION,
+		SIPPYMODEM_V34_ANSWERING_STATION,
+	};
+	static const enum sippymodem_v34_constellation_size constellations[] = {
+		SIPPYMODEM_V34_CONSTELLATION_4_POINT,
+		SIPPYMODEM_V34_CONSTELLATION_16_POINT,
+	};
+	struct sippymodem_v34_mp_parameters type0 = parameters(false);
+	struct sippymodem_v34_mp_type1_parameters type1 =
+		type1_parameters(true);
+
+	for (size_t role = 0; role < ARRAY_LENGTH(roles); ++role) {
+		for (size_t constellation = 0;
+		     constellation < ARRAY_LENGTH(constellations);
+		     ++constellation) {
+			struct phase4_receive_link link;
+			struct sippymodem_v34_mp_receive_event event;
+
+			CHECK(initialize_receive_link(
+				      &link, roles[role],
+				      constellations[constellation], &type0) &&
+			      receive_current_record(
+				      &link.transmitter, &link.receiver,
+				      SIZE_MAX, &event),
+			      "Phase 4 receiver preamble %zu/%zu failed", role,
+			      constellation);
+			CHECK(sippymodem_v34_phase4_mp_start_next_type0_record(
+				      &link.transmitter, &type0) ==
+				      SIPPYMODEM_V34_PHASE4_MP_OK &&
+			      receive_current_record(
+				      &link.transmitter, &link.receiver,
+				      SIZE_MAX, &event) &&
+			      event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE0 &&
+			      event.frame_result == SIPPYMODEM_V34_MP_OK &&
+			      parameters_are_equal(
+				      &event.parameters.type0, &type0),
+			      "Phase 4 receiver changed Type 0 record %zu/%zu",
+			      role, constellation);
+			CHECK(sippymodem_v34_phase4_mp_start_next_type1_record(
+				      &link.transmitter, &type1) ==
+				      SIPPYMODEM_V34_PHASE4_MP_OK &&
+			      receive_current_record(
+				      &link.transmitter, &link.receiver,
+				      SIZE_MAX, &event) &&
+			      event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE1 &&
+			      event.frame_result == SIPPYMODEM_V34_MP_OK &&
+			      type1_parameters_are_equal(
+				      &event.parameters.type1, &type1),
+			      "Phase 4 receiver changed Type 1 record %zu/%zu",
+			      role, constellation);
+		}
+	}
+	return true;
+}
+
+static bool test_decision_rejection_and_reacquisition(void)
+{
+	struct sippymodem_v34_mp_parameters selected = parameters(false);
+	struct phase4_receive_link link;
+	struct sippymodem_v34_mp_receive_event event;
+
+	CHECK(initialize_receive_link(
+		      &link, SIPPYMODEM_V34_CALLING_STATION,
+		      SIPPYMODEM_V34_CONSTELLATION_16_POINT, &selected) &&
+	      receive_current_record(
+		      &link.transmitter, &link.receiver, SIZE_MAX, &event) &&
+	      sippymodem_v34_phase4_mp_start_next_type0_record(
+		      &link.transmitter, &selected) ==
+		      SIPPYMODEM_V34_PHASE4_MP_OK &&
+	      receive_current_record(
+		      &link.transmitter, &link.receiver, SIZE_MAX, &event) &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE0,
+	      "Phase 4 rejection fixture did not synchronize");
+	CHECK(sippymodem_v34_phase4_mp_start_next_type0_record(
+		      &link.transmitter, &selected) ==
+		      SIPPYMODEM_V34_PHASE4_MP_OK &&
+	      receive_current_record(
+		      &link.transmitter, &link.receiver, 9u, &event) &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_REJECTED &&
+	      event.frame_result == SIPPYMODEM_V34_MP_CRC_MISMATCH &&
+	      sippymodem_v34_phase4_mp_start_next_type0_record(
+		      &link.transmitter, &selected) ==
+		      SIPPYMODEM_V34_PHASE4_MP_OK &&
+	      receive_current_record(
+		      &link.transmitter, &link.receiver, SIZE_MAX, &event) &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_TYPE0 &&
+	      parameters_are_equal(&event.parameters.type0, &selected),
+	      "Phase 4 receiver did not reject and reacquire");
+	return true;
+}
+
+static bool test_receiver_validation(void)
+{
+	struct sippymodem_v34_phase4_mp_receiver receiver;
+	struct sippymodem_v34_phase4_mp_receiver saved;
+	struct sippymodem_v34_mp_receive_event event;
+	struct sippymodem_v34_mp_receive_event saved_event;
+
+	memset(&receiver, 0xa5, sizeof(receiver));
+	saved = receiver;
+	CHECK(sippymodem_v34_phase4_mp_receiver_init(
+		      NULL, SIPPYMODEM_V34_CALLING_STATION,
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_receiver_init(
+		      &receiver, (enum sippymodem_v34_station_role)2,
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_receiver_init(
+		      &receiver, SIPPYMODEM_V34_CALLING_STATION,
+		      (enum sippymodem_v34_constellation_size)8) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "invalid Phase 4 receiver initialization changed state");
+	CHECK(sippymodem_v34_phase4_mp_receiver_init(
+		      &receiver, SIPPYMODEM_V34_CALLING_STATION,
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK &&
+	      sippymodem_v34_phase4_mp_receiver_is_valid(&receiver) &&
+	      !sippymodem_v34_phase4_mp_receiver_is_valid(NULL),
+	      "Phase 4 receiver validation fixture did not initialize");
+	saved = receiver;
+	memset(&event, 0xa5, sizeof(event));
+	saved_event = event;
+	CHECK(sippymodem_v34_phase4_mp_receive_decision(
+		      NULL, 0, 0, &event) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_receive_decision(
+		      &receiver, 1, 0, &event) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_receive_decision(
+		      &receiver, 0, 4, &event) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v34_phase4_mp_receive_decision(
+		      &receiver, 0, 0, NULL) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "invalid Phase 4 decision changed state or event");
+	CHECK(sippymodem_v34_phase4_mp_receive_decision(
+		      &receiver, 0, 2, &event) ==
+		      SIPPYMODEM_V34_PHASE4_MP_RECEIVER_OK &&
+	      event.type == SIPPYMODEM_V34_MP_RECEIVE_NO_EVENT &&
+	      receiver.has_previous_symbol &&
+	      receiver.previous_clockwise_quarter_turns == 2u,
+	      "first Phase 4 decision did not seed differential phase");
+	saved = receiver;
+	receiver.previous_clockwise_quarter_turns = 4;
+	CHECK(!sippymodem_v34_phase4_mp_receiver_is_valid(&receiver),
+	      "Phase 4 receiver accepted an invalid phase");
+	receiver = saved;
+	receiver.has_previous_symbol = false;
+	CHECK(!sippymodem_v34_phase4_mp_receiver_is_valid(&receiver),
+	      "Phase 4 receiver accepted stale phase without a symbol");
+	receiver = saved;
+	receiver.transmitting_role = SIPPYMODEM_V34_ANSWERING_STATION;
+	CHECK(!sippymodem_v34_phase4_mp_receiver_is_valid(&receiver),
+	      "Phase 4 receiver accepted a role/polynomial mismatch");
+	receiver = saved;
+	receiver.records.bit_index = 1;
+	CHECK(!sippymodem_v34_phase4_mp_receiver_is_valid(&receiver),
+	      "Phase 4 receiver accepted a corrupt record parser");
+	CHECK(strcmp(sippymodem_v34_phase4_mp_receiver_result_name(
+		     SIPPYMODEM_V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(sippymodem_v34_phase4_mp_receiver_result_name(
+		     (enum sippymodem_v34_phase4_mp_receiver_result)2),
+		     "unknown") == 0,
+	      "Phase 4 receiver result names changed");
 	return true;
 }
 
@@ -311,7 +591,7 @@ static bool test_role_and_constellation_records(void)
 
 			CHECK(generate_trn_prefix(
 				      &trn, roles[role_index],
-				      constellations[constellation_index]),
+				      constellations[constellation_index], NULL),
 			      "TRN prefix %zu/%zu failed", role_index,
 			      constellation_index);
 			CHECK(sippymodem_v34_phase4_mp_init_type0_from_trn(
@@ -388,7 +668,7 @@ static bool test_copy_behavior(void)
 
 	CHECK(generate_trn_prefix(
 		      &trn, SIPPYMODEM_V34_CALLING_STATION,
-		      SIPPYMODEM_V34_CONSTELLATION_16_POINT) &&
+		      SIPPYMODEM_V34_CONSTELLATION_16_POINT, NULL) &&
 	      sippymodem_v34_phase4_mp_init_type1_from_trn(
 		      &original, &trn, &selected) ==
 		      SIPPYMODEM_V34_PHASE4_MP_OK,
@@ -601,6 +881,10 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "decided-symbol receiver", test_decided_symbol_receiver },
+		{ "decision rejection and reacquisition",
+		  test_decision_rejection_and_reacquisition },
+		{ "receiver validation", test_receiver_validation },
 		{ "role and constellation records",
 		  test_role_and_constellation_records },
 		{ "copy behavior", test_copy_behavior },
