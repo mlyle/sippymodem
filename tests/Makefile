@@ -211,8 +211,11 @@ V8_CALLING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_calling
 V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_calling.o \
 	$(BUILD_DIR)/sippymodem_v8_calling.o \
 	$(BUILD_DIR)/sippymodem_v8_ansam.o \
+	$(BUILD_DIR)/sippymodem_v8_fsk.o \
 	$(BUILD_DIR)/sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o
+	$(BUILD_DIR)/sippymodem_v8_framing.o \
+	$(BUILD_DIR)/sippymodem_v21.o \
+	$(BUILD_DIR)/sippymodem_fsk.o
 V8_FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_fsk
 V8_FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_fsk.o \
 	$(BUILD_DIR)/sippymodem_v8_fsk.o \
