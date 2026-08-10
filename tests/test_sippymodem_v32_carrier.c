@@ -42,7 +42,8 @@ static struct sippymodem_qam_channel v32_channel(uint32_t carrier_hz)
 		.sample_rate = TEST_SAMPLE_RATE,
 		.symbol_rate_numerator = TEST_SYMBOL_RATE,
 		.symbol_rate_denominator = 1,
-		.carrier_frequency_hz = carrier_hz,
+		.carrier_frequency_numerator = carrier_hz,
+		.carrier_frequency_denominator = 1,
 		.rolloff = 0.25,
 		.pulse_span_symbols = 6,
 	};

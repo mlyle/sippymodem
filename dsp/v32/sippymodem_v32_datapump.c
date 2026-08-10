@@ -34,7 +34,8 @@ static const struct sippymodem_qam_channel v32_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V32_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
-	.carrier_frequency_hz = V32_CARRIER_HZ,
+	.carrier_frequency_numerator = V32_CARRIER_HZ,
+	.carrier_frequency_denominator = 1,
 	.rolloff = 0.25,
 	.pulse_span_symbols = V32_PULSE_SPAN_SYMBOLS,
 };

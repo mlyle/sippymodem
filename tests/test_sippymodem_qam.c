@@ -26,7 +26,8 @@ static struct sippymodem_qam_channel v22_channel(uint32_t carrier_hz)
 		.sample_rate = TEST_SAMPLE_RATE,
 		.symbol_rate_numerator = TEST_SYMBOL_RATE,
 		.symbol_rate_denominator = 1,
-		.carrier_frequency_hz = carrier_hz,
+		.carrier_frequency_numerator = carrier_hz,
+		.carrier_frequency_denominator = 1,
 		.rolloff = 0.75,
 		.pulse_span_symbols = 6,
 	};
@@ -108,6 +109,56 @@ static bool test_exact_symbol_clock(void)
 		      sippymodem_qam_modulator_can_accept_symbol(&modulator) &&
 		      peak > TEST_AMPLITUDE / 8,
 	      "QAM rational symbol clock drifted over one second");
+	return true;
+}
+
+static bool test_exact_carrier_clock(void)
+{
+	struct sippymodem_qam_channel channel = v22_channel(1);
+	struct sippymodem_qam_modulator modulator;
+	struct sippymodem_qam_demodulator demodulator;
+	const struct sippymodem_qam_point point = { 1.0, 0.0 };
+	const uint32_t carrier_numerator = 96000;
+	const uint32_t carrier_denominator = 49;
+	uint64_t phase_numerator = (uint64_t)carrier_numerator << 32;
+	uint64_t phase_denominator =
+		(uint64_t)TEST_SAMPLE_RATE * carrier_denominator;
+	uint64_t represented;
+	uint64_t error;
+
+	channel.carrier_frequency_numerator = carrier_numerator;
+	channel.carrier_frequency_denominator = carrier_denominator;
+	CHECK(sippymodem_qam_modulator_init(
+		      &modulator, &channel, TEST_AMPLITUDE) ==
+		      SIPPYMODEM_QAM_OK &&
+		      sippymodem_qam_demodulator_init(&demodulator, &channel) ==
+			      SIPPYMODEM_QAM_OK &&
+		      modulator.carrier_phase_step ==
+			      demodulator.carrier_phase_step,
+	      "QAM fractional-carrier endpoints did not initialize");
+	represented =
+		(uint64_t)modulator.carrier_phase_step * phase_denominator;
+	error = represented > phase_numerator ? represented - phase_numerator :
+						phase_numerator - represented;
+	CHECK(error * 2u <= phase_denominator,
+	      "QAM fractional carrier was not rounded to the nearest phase step");
+	for (unsigned int index = 0; index < carrier_denominator; ++index) {
+		struct sippymodem_qam_point received;
+		int16_t sample;
+		bool accepted;
+		bool ready;
+
+		CHECK(sippymodem_qam_modulator_sample(
+			      &modulator, &point, &sample, &accepted) ==
+			      SIPPYMODEM_QAM_OK &&
+		      sippymodem_qam_demodulator_sample(
+			      &demodulator, sample, &received, &ready) ==
+			      SIPPYMODEM_QAM_OK,
+		      "QAM fractional carrier failed at sample %u", index);
+	}
+	CHECK(modulator.carrier_phase == demodulator.carrier_phase &&
+		      llabs((long long)(int32_t)modulator.carrier_phase) <= 25,
+	      "QAM fractional carrier drifted across its 49-sample cycle");
 	return true;
 }
 
@@ -343,6 +394,7 @@ static bool test_validation(void)
 	struct sippymodem_qam_point bounded_point = { sqrt(3.0 / 2.0), 0.0 };
 	struct sippymodem_qam_point invalid_point = { 1.0, 1.0 };
 	struct sippymodem_qam_point received_point;
+	uint32_t carrier_phase_step;
 	int16_t sample = 0;
 	bool accepted = false;
 	double pulse = 0.0;
@@ -354,16 +406,30 @@ static bool test_validation(void)
 		      sippymodem_qam_modulator_init(NULL, &channel, 1) ==
 			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
 	      "QAM accepted an invalid initialization argument");
-	channel.carrier_frequency_hz = TEST_SAMPLE_RATE / 2;
+	channel.carrier_frequency_numerator = TEST_SAMPLE_RATE / 2;
 	CHECK(sippymodem_qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
 		      SIPPYMODEM_QAM_INVALID_ARGUMENT,
 	      "QAM accepted a carrier at Nyquist");
 	channel = v22_channel(1200);
+	channel.carrier_frequency_denominator = 0;
+	CHECK(sippymodem_qam_modulator_init(
+		      &modulator, &channel, TEST_AMPLITUDE) ==
+		      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+	      "QAM accepted a carrier with no denominator");
+	channel = v22_channel(1200);
 	CHECK(sippymodem_qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
 		      SIPPYMODEM_QAM_OK,
 	      "QAM corruption fixture did not initialize");
+	carrier_phase_step = modulator.carrier_phase_step;
+	modulator.carrier_phase_step++;
+	CHECK(!sippymodem_qam_modulator_is_valid(&modulator) &&
+		      sippymodem_qam_modulator_sample(
+			      &modulator, &point, &sample, &accepted) ==
+			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+	      "QAM accepted a carrier phase step inconsistent with its channel");
+	modulator.carrier_phase_step = carrier_phase_step;
 	CHECK(sippymodem_qam_demodulator_init(
 		      &demodulator, &channel) == SIPPYMODEM_QAM_OK &&
 		      sippymodem_qam_demodulator_reset(&demodulator) ==
@@ -415,6 +481,7 @@ int main(void)
 	} tests[] = {
 		{ "generated pulse", test_generated_pulse },
 		{ "exact symbol clock", test_exact_symbol_clock },
+		{ "exact carrier clock", test_exact_carrier_clock },
 		{ "channel carriers", test_channel_carriers },
 		{ "receive loopback", test_receive_loopback },
 		{ "receive tolerance", test_receive_tolerance },

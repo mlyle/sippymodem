@@ -40,7 +40,8 @@ static struct sippymodem_qam_channel phase2_channel(uint32_t carrier_hz)
 		.symbol_rate_numerator =
 			SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE,
 		.symbol_rate_denominator = 1,
-		.carrier_frequency_hz = carrier_hz,
+		.carrier_frequency_numerator = carrier_hz,
+		.carrier_frequency_denominator = 1,
 		.rolloff = V34_PHASE2_DPSK_ROLLOFF,
 		.pulse_span_symbols =
 			SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS,
@@ -65,7 +66,8 @@ static bool channel_matches(
 	       channel->symbol_rate_numerator ==
 		       SIPPYMODEM_V34_PHASE2_DPSK_BIT_RATE &&
 	       channel->symbol_rate_denominator == 1 &&
-	       channel->carrier_frequency_hz == carrier_hz &&
+	       channel->carrier_frequency_numerator == carrier_hz &&
+	       channel->carrier_frequency_denominator == 1 &&
 	       channel->rolloff == V34_PHASE2_DPSK_ROLLOFF &&
 	       channel->pulse_span_symbols ==
 		       SIPPYMODEM_V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS;

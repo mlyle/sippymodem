@@ -19,7 +19,9 @@ struct sippymodem_qam_channel {
 	uint32_t sample_rate;
 	uint32_t symbol_rate_numerator;
 	uint32_t symbol_rate_denominator;
-	uint32_t carrier_frequency_hz;
+	/* Carrier frequency is the exact numerator/denominator ratio in hertz. */
+	uint32_t carrier_frequency_numerator;
+	uint32_t carrier_frequency_denominator;
 	double rolloff;
 	unsigned int pulse_span_symbols;
 };

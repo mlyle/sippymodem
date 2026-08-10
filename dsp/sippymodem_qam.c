@@ -41,6 +41,27 @@ static bool transmit_point_is_valid(
 	       power <= QAM_MAX_POINT_POWER + QAM_POINT_EPSILON;
 }
 
+static uint32_t phase_step(
+	uint32_t sample_rate, uint32_t frequency_numerator,
+	uint32_t frequency_denominator)
+{
+	uint64_t numerator;
+	uint64_t denominator;
+	uint64_t quotient;
+	uint64_t remainder;
+
+	if (sample_rate == 0 || frequency_numerator == 0 ||
+	    frequency_denominator == 0)
+		return 0;
+	numerator = (uint64_t)frequency_numerator << 32;
+	denominator = (uint64_t)sample_rate * frequency_denominator;
+	quotient = numerator / denominator;
+	remainder = numerator % denominator;
+	if (remainder >= (denominator + 1u) / 2u)
+		quotient++;
+	return (uint32_t)quotient;
+}
+
 enum sippymodem_qam_result sippymodem_qam_nearest_quarter_turn(
 	const struct sippymodem_qam_point *previous,
 	const struct sippymodem_qam_point *current, uint8_t *quarter_turns)
@@ -67,19 +88,28 @@ static bool channel_is_valid(
 	const struct sippymodem_qam_channel *channel,
 	uint64_t *symbol_period_units)
 {
+	uint64_t carrier_denominator;
 	uint64_t period;
 
 	if (channel == NULL || channel->sample_rate == 0 ||
 	    channel->symbol_rate_numerator == 0 ||
 	    channel->symbol_rate_denominator == 0 ||
-	    channel->carrier_frequency_hz == 0 ||
-	    (uint64_t)channel->carrier_frequency_hz * 2 >=
-		    channel->sample_rate ||
+	    channel->carrier_frequency_numerator == 0 ||
+	    channel->carrier_frequency_denominator == 0 ||
 	    !isfinite(channel->rolloff) || channel->rolloff <= 0.0 ||
 	    channel->rolloff > 1.0 || channel->pulse_span_symbols < 2 ||
 	    channel->pulse_span_symbols >
 		    SIPPYMODEM_QAM_MAX_PULSE_SPAN_SYMBOLS ||
 	    (channel->pulse_span_symbols & 1u) != 0)
+		return false;
+	carrier_denominator =
+		(uint64_t)channel->sample_rate *
+		channel->carrier_frequency_denominator;
+	if ((uint64_t)channel->carrier_frequency_numerator * 2u >=
+			carrier_denominator ||
+	    phase_step(channel->sample_rate,
+		       channel->carrier_frequency_numerator,
+		       channel->carrier_frequency_denominator) == 0)
 		return false;
 	period = (uint64_t)channel->sample_rate *
 		 channel->symbol_rate_denominator;
@@ -154,14 +184,6 @@ static double pulse_normalization(
 	return maximum * 1.001;
 }
 
-static uint32_t phase_step(uint32_t sample_rate, uint32_t frequency_hz)
-{
-	uint64_t numerator =
-		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
-
-	return (uint32_t)((numerator + sample_rate / 2) / sample_rate);
-}
-
 bool sippymodem_qam_modulator_is_valid(
 	const struct sippymodem_qam_modulator *modulator)
 {
@@ -172,7 +194,11 @@ bool sippymodem_qam_modulator_is_valid(
 	    !channel_is_valid(&modulator->channel, &period) ||
 	    modulator->symbol_period_units != period ||
 	    modulator->symbol_phase_units >= period ||
-	    modulator->carrier_phase_step == 0 || modulator->amplitude <= 0 ||
+	    modulator->carrier_phase_step !=
+		    phase_step(modulator->channel.sample_rate,
+			       modulator->channel.carrier_frequency_numerator,
+			       modulator->channel.carrier_frequency_denominator) ||
+	    modulator->amplitude <= 0 ||
 	    !isfinite(modulator->pulse_normalization) ||
 	    modulator->pulse_normalization <= 0.0 ||
 	    modulator->active_count > SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS)
@@ -204,7 +230,8 @@ enum sippymodem_qam_result sippymodem_qam_modulator_init(
 	modulator->channel = *channel;
 	modulator->symbol_period_units = period;
 	modulator->carrier_phase_step = phase_step(
-		channel->sample_rate, channel->carrier_frequency_hz);
+		channel->sample_rate, channel->carrier_frequency_numerator,
+		channel->carrier_frequency_denominator);
 	modulator->pulse_normalization = normalization;
 	modulator->amplitude = amplitude;
 	modulator->needs_symbol = true;
@@ -409,7 +436,10 @@ static bool demodulator_is_valid(
 	    demodulator->acquisition_sample_count >= acquisition_samples ||
 	    demodulator->history_index >= filter_count ||
 	    demodulator->history_count > filter_count ||
-	    demodulator->carrier_phase_step == 0 ||
+	    demodulator->carrier_phase_step !=
+		    phase_step(demodulator->channel.sample_rate,
+			       demodulator->channel.carrier_frequency_numerator,
+			       demodulator->channel.carrier_frequency_denominator) ||
 	    !isfinite(demodulator->line_power) ||
 	    demodulator->line_power < 0.0 ||
 	    !isfinite(demodulator->symbol_power) ||
@@ -452,7 +482,8 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_init(
 	demodulator->symbol_period_units = period;
 	demodulator->timing_step_units = timing_step;
 	demodulator->carrier_phase_step = phase_step(
-		channel->sample_rate, channel->carrier_frequency_hz);
+		channel->sample_rate, channel->carrier_frequency_numerator,
+		channel->carrier_frequency_denominator);
 	demodulator->matched_filter_count = filter_count;
 	demodulator->timing_candidate_count = candidate_count;
 	demodulator->acquisition_sample_target = acquisition_samples;

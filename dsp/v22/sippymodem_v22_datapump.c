@@ -39,7 +39,8 @@ static const struct sippymodem_qam_channel v22_low_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V22_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
-	.carrier_frequency_hz = V22_LOW_CHANNEL_HZ,
+	.carrier_frequency_numerator = V22_LOW_CHANNEL_HZ,
+	.carrier_frequency_denominator = 1,
 	.rolloff = 0.75,
 	.pulse_span_symbols = V22_PULSE_SPAN_SYMBOLS,
 };
@@ -48,7 +49,8 @@ static const struct sippymodem_qam_channel v22_high_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V22_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
-	.carrier_frequency_hz = V22_HIGH_CHANNEL_HZ,
+	.carrier_frequency_numerator = V22_HIGH_CHANNEL_HZ,
+	.carrier_frequency_denominator = 1,
 	.rolloff = 0.75,
 	.pulse_span_symbols = V22_PULSE_SPAN_SYMBOLS,
 };
