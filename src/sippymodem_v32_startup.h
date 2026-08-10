@@ -55,14 +55,19 @@ struct sippymodem_v32_startup {
 	uint16_t rate_gap_dibits;
 	enum sippymodem_v32_endpoint_role role;
 	enum sippymodem_v32_startup_phase phase;
+	/* Capability bit set retained independently from the chosen rate. */
+	uint8_t supported_rates;
+	/* One capability bit, or zero until the peer offer is resolved. */
+	uint8_t selected_rate;
 	uint8_t word_dibit;
 	bool end_received;
 	bool end_pending;
 };
 
+/* Supported rates may contain the uncoded 4800 and 9600 capability bits. */
 enum sippymodem_v32_startup_result sippymodem_v32_startup_init(
 	struct sippymodem_v32_startup *startup,
-	enum sippymodem_v32_endpoint_role role);
+	enum sippymodem_v32_endpoint_role role, uint8_t supported_rates);
 bool sippymodem_v32_startup_is_valid(
 	const struct sippymodem_v32_startup *startup);
 bool sippymodem_v32_startup_is_complete(

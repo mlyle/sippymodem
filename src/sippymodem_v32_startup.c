@@ -7,6 +7,11 @@
 /* This controller starts at TRN. The preceding two-wire tone, turnaround and
  * echo-canceller training phases remain outside this source-built media path. */
 
+enum {
+	V32_IMPLEMENTED_RATES = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+				SIPPYMODEM_V32_RATE_CAPABILITY_9600,
+};
+
 static bool role_is_valid(enum sippymodem_v32_endpoint_role role)
 {
 	return role == SIPPYMODEM_V32_CALLER ||
@@ -28,19 +33,69 @@ static bool phase_is_valid_for_role(
 
 static bool words_are_valid(const struct sippymodem_v32_startup *startup)
 {
+	struct sippymodem_v32_rate_offer offer = {
+		.rates = startup->selected_rate != 0 ? startup->selected_rate :
+						      startup->supported_rates,
+	};
+	uint16_t rate_word;
+	uint16_t end_word = 0;
+
+	if (sippymodem_v32_rate_signal_encode(
+		    SIPPYMODEM_V32_RATE_SIGNAL, &offer, &rate_word) !=
+	    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+		return false;
+	if (startup->selected_rate != 0 &&
+	    sippymodem_v32_rate_signal_encode(
+		    SIPPYMODEM_V32_END_SIGNAL, &offer, &end_word) !=
+		    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+		return false;
+	return startup->rate_word == rate_word && startup->end_word == end_word;
+}
+
+static bool rates_are_valid(const struct sippymodem_v32_startup *startup)
+{
+	bool selection_required;
+
+	if (startup->supported_rates == 0 ||
+	    (startup->supported_rates & (uint8_t)~V32_IMPLEMENTED_RATES) != 0 ||
+	    (startup->selected_rate & (uint8_t)~startup->supported_rates) != 0 ||
+	    (startup->selected_rate != 0 &&
+	     (startup->selected_rate &
+	      (uint8_t)(startup->selected_rate - 1u)) != 0))
+		return false;
+	selection_required =
+		startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
+		startup->phase == SIPPYMODEM_V32_CALLER_SEND_END ||
+		startup->phase == SIPPYMODEM_V32_ANSWERER_RETRAIN ||
+		startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_SELECTION ||
+		startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_END ||
+		startup->phase == SIPPYMODEM_V32_CONFIRM ||
+		startup->phase == SIPPYMODEM_V32_DATA;
+	return selection_required == (startup->selected_rate != 0);
+}
+
+static bool configure_selected_rate(
+	struct sippymodem_v32_startup *startup, uint8_t selected_rate)
+{
 	struct sippymodem_v32_rate_offer selected = {
-		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800,
+		.rates = selected_rate,
 	};
 	uint16_t rate_word;
 	uint16_t end_word;
 
-	return sippymodem_v32_rate_signal_encode(
-		       SIPPYMODEM_V32_RATE_SIGNAL, &selected, &rate_word) ==
-		       SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-	       sippymodem_v32_rate_signal_encode(
-		       SIPPYMODEM_V32_END_SIGNAL, &selected, &end_word) ==
-		       SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-	       startup->rate_word == rate_word && startup->end_word == end_word;
+	if ((selected_rate & startup->supported_rates) == 0 ||
+	    (selected_rate & (uint8_t)(selected_rate - 1u)) != 0 ||
+	    sippymodem_v32_rate_signal_encode(
+		    SIPPYMODEM_V32_RATE_SIGNAL, &selected, &rate_word) !=
+		    SIPPYMODEM_V32_RATE_SIGNAL_OK ||
+	    sippymodem_v32_rate_signal_encode(
+		    SIPPYMODEM_V32_END_SIGNAL, &selected, &end_word) !=
+		    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+		return false;
+	startup->selected_rate = selected_rate;
+	startup->rate_word = rate_word;
+	startup->end_word = end_word;
+	return true;
 }
 
 static uint16_t phase_dibit_limit(
@@ -61,7 +116,7 @@ bool sippymodem_v32_startup_is_valid(
 	       phase_is_valid_for_role(startup->phase, startup->role) &&
 	       sippymodem_v32_rate_signal_detector_is_valid(
 		       &startup->detector) &&
-	       words_are_valid(startup) &&
+	       rates_are_valid(startup) && words_are_valid(startup) &&
 	       startup->phase_dibits <= phase_dibit_limit(startup->phase) &&
 	       startup->receive_mark_dibits <=
 		       SIPPYMODEM_V32_STARTUP_CONFIRMATION_DIBITS &&
@@ -75,26 +130,25 @@ bool sippymodem_v32_startup_is_valid(
 
 enum sippymodem_v32_startup_result sippymodem_v32_startup_init(
 	struct sippymodem_v32_startup *startup,
-	enum sippymodem_v32_endpoint_role role)
+	enum sippymodem_v32_endpoint_role role, uint8_t supported_rates)
 {
-	struct sippymodem_v32_rate_offer selected = {
-		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800,
+	struct sippymodem_v32_rate_offer offer = {
+		.rates = supported_rates,
 	};
 	struct sippymodem_v32_startup next = { 0 };
 
-	if (startup == NULL || !role_is_valid(role))
+	if (startup == NULL || !role_is_valid(role) || supported_rates == 0 ||
+	    (supported_rates & (uint8_t)~V32_IMPLEMENTED_RATES) != 0)
 		return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 	next.role = role;
+	next.supported_rates = supported_rates;
 	next.phase = role == SIPPYMODEM_V32_CALLER ?
 			     SIPPYMODEM_V32_CALLER_WAIT_OFFER :
 			     SIPPYMODEM_V32_ANSWERER_TRAIN;
 	if (sippymodem_v32_rate_signal_detector_init(&next.detector) !=
 		    SIPPYMODEM_V32_RATE_SIGNAL_OK ||
 	    sippymodem_v32_rate_signal_encode(
-		    SIPPYMODEM_V32_RATE_SIGNAL, &selected, &next.rate_word) !=
-		    SIPPYMODEM_V32_RATE_SIGNAL_OK ||
-	    sippymodem_v32_rate_signal_encode(
-		    SIPPYMODEM_V32_END_SIGNAL, &selected, &next.end_word) !=
+		    SIPPYMODEM_V32_RATE_SIGNAL, &offer, &next.rate_word) !=
 		    SIPPYMODEM_V32_RATE_SIGNAL_OK)
 		return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 	*startup = next;
@@ -229,18 +283,33 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 	return SIPPYMODEM_V32_STARTUP_OK;
 }
 
-static bool offer_supports_4800(
-	const struct sippymodem_v32_rate_offer *offer)
+static uint8_t highest_rate(uint8_t rates)
 {
-	return (offer->rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_4800;
+	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_2400) != 0)
+		return SIPPYMODEM_V32_RATE_CAPABILITY_2400;
+	return 0;
 }
 
-static bool offer_selects_4800(
+static uint8_t select_highest_common_rate(
+	const struct sippymodem_v32_startup *startup,
 	const struct sippymodem_v32_rate_offer *offer)
 {
-	return offer_supports_4800(offer) &&
-	       (offer->rates & SIPPYMODEM_V32_RATE_CAPABILITY_9600) == 0 &&
-	       !offer->trellis_at_highest_rate;
+	uint8_t common = startup->supported_rates & offer->rates;
+
+	if (offer->trellis_at_highest_rate)
+		common &= (uint8_t)~highest_rate(offer->rates);
+	return highest_rate(common);
+}
+
+static bool offer_selects_rate(
+	const struct sippymodem_v32_rate_offer *offer, uint8_t selected_rate)
+{
+	return !offer->trellis_at_highest_rate &&
+	       highest_rate(offer->rates) == selected_rate;
 }
 
 static enum sippymodem_v32_startup_result observe_rate_event(
@@ -248,22 +317,30 @@ static enum sippymodem_v32_startup_result observe_rate_event(
 	const struct sippymodem_v32_rate_offer *offer)
 {
 	if (startup->phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER) {
-		if (!offer_supports_4800(offer))
+		uint8_t selected = select_highest_common_rate(startup, offer);
+
+		if (selected == 0)
 			return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
+		if (!configure_selected_rate(startup, selected))
+			return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, SIPPYMODEM_V32_CALLER_SEND_RESPONSE);
 	} else if (startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE) {
 		if (startup->rate_gap_dibits <
 		    SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS) {
 			startup->rate_gap_dibits = 0;
 		} else {
-			if (!offer_selects_4800(offer))
+			if (!offer_selects_rate(offer, startup->selected_rate))
 				return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
 			startup->rate_gap_dibits = 0;
 			startup->end_pending = true;
 		}
 	} else if (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER) {
-		if (!offer_supports_4800(offer))
+		uint8_t selected = select_highest_common_rate(startup, offer);
+
+		if (selected == 0)
 			return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
+		if (!configure_selected_rate(startup, selected))
+			return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, SIPPYMODEM_V32_ANSWERER_RETRAIN);
 	}
 	return SIPPYMODEM_V32_STARTUP_OK;
@@ -273,7 +350,7 @@ static enum sippymodem_v32_startup_result observe_end_event(
 	struct sippymodem_v32_startup *startup,
 	const struct sippymodem_v32_rate_offer *offer)
 {
-	if (!offer_selects_4800(offer))
+	if (!offer_selects_rate(offer, startup->selected_rate))
 		return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
 	if (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_SELECTION)
 		startup->end_pending = true;

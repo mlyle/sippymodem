@@ -170,7 +170,8 @@ static struct dp *create_v32(
 		    &datapump->decoder, remote_role(is_caller), 0) !=
 		    SIPPYMODEM_V32_FRAMING_OK ||
 	    sippymodem_v32_startup_init(
-		    &datapump->startup, endpoint_role(is_caller)) !=
+		    &datapump->startup, endpoint_role(is_caller),
+		    SIPPYMODEM_V32_RATE_CAPABILITY_4800) !=
 		    SIPPYMODEM_V32_STARTUP_OK ||
 	    sippymodem_v32_4800_constellation_point(
 		    0, &datapump->transmit_point) !=

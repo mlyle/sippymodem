@@ -41,23 +41,31 @@ static enum sippymodem_v32_startup_output expected_output(
 	return SIPPYMODEM_V32_STARTUP_DIFFERENTIAL_DIBIT;
 }
 
-static bool test_role_exchange(void)
+static bool check_role_exchange(
+	uint8_t caller_rates, uint8_t answerer_rates, uint8_t expected_rate)
 {
 	struct sippymodem_v32_startup caller;
 	struct sippymodem_v32_startup answerer;
+	struct sippymodem_v32_rate_offer selected = {
+		.rates = expected_rate,
+	};
 	uint32_t caller_phases = 0;
 	uint32_t answerer_phases = 0;
+	uint16_t expected_rate_word;
+	uint16_t expected_end_word;
 	bool caller_connected = false;
 	bool answerer_connected = false;
 	size_t completed_at = SIZE_MAX;
 
 	CHECK(sippymodem_v32_startup_init(
-		      &caller, SIPPYMODEM_V32_CALLER) ==
+		      &caller, SIPPYMODEM_V32_CALLER, caller_rates) ==
 		      SIPPYMODEM_V32_STARTUP_OK &&
 		      sippymodem_v32_startup_init(
-			      &answerer, SIPPYMODEM_V32_ANSWERER) ==
-			      SIPPYMODEM_V32_STARTUP_OK,
-	      "V.32 startup peers did not initialize");
+			      &answerer, SIPPYMODEM_V32_ANSWERER,
+			      answerer_rates) ==
+		      SIPPYMODEM_V32_STARTUP_OK,
+	      "V.32 startup peers 0x%x/0x%x did not initialize", caller_rates,
+	      answerer_rates);
 	for (size_t index = 0; index < TEST_MAX_STARTUP_DIBITS; ++index) {
 		enum sippymodem_v32_startup_output caller_output;
 		enum sippymodem_v32_startup_output answerer_output;
@@ -97,8 +105,25 @@ static bool test_role_exchange(void)
 	answerer_phases |= UINT32_C(1) << answerer.phase;
 	CHECK(completed_at != SIZE_MAX &&
 		      sippymodem_v32_startup_is_complete(&caller) &&
-		      sippymodem_v32_startup_is_complete(&answerer),
-	      "V.32 peers did not complete startup");
+		      sippymodem_v32_startup_is_complete(&answerer) &&
+		      caller.supported_rates == caller_rates &&
+		      answerer.supported_rates == answerer_rates &&
+		      caller.selected_rate == expected_rate &&
+		      answerer.selected_rate == expected_rate &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_RATE_SIGNAL, &selected,
+			      &expected_rate_word) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_END_SIGNAL, &selected,
+			      &expected_end_word) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      caller.rate_word == expected_rate_word &&
+		      answerer.rate_word == expected_rate_word &&
+		      caller.end_word == expected_end_word &&
+		      answerer.end_word == expected_end_word,
+	      "V.32 peers 0x%x/0x%x did not select 0x%x", caller_rates,
+	      answerer_rates, expected_rate);
 	CHECK((caller_phases &
 	       ((UINT32_C(1) << SIPPYMODEM_V32_CALLER_WAIT_OFFER) |
 		(UINT32_C(1) << SIPPYMODEM_V32_CALLER_SEND_RESPONSE) |
@@ -130,12 +155,56 @@ static bool test_role_exchange(void)
 	return true;
 }
 
+static bool test_rate_selection(void)
+{
+	uint8_t both = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+		       SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+
+	return check_role_exchange(both, both,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
+	       check_role_exchange(both, SIPPYMODEM_V32_RATE_CAPABILITY_4800,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_4800) &&
+	       check_role_exchange(SIPPYMODEM_V32_RATE_CAPABILITY_4800, both,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_4800) &&
+	       check_role_exchange(SIPPYMODEM_V32_RATE_CAPABILITY_9600,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_9600,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_9600);
+}
+
+static bool test_uncoded_fallback(void)
+{
+	struct sippymodem_v32_rate_offer trellis_offer = {
+		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_9600,
+		.trellis_at_highest_rate = true,
+	};
+	struct sippymodem_v32_startup caller;
+	uint16_t word;
+
+	CHECK(sippymodem_v32_startup_init(
+		      &caller, SIPPYMODEM_V32_CALLER,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			      SIPPYMODEM_V32_RATE_CAPABILITY_9600) ==
+		      SIPPYMODEM_V32_STARTUP_OK &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_RATE_SIGNAL, &trellis_offer,
+			      &word) == SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      observe_word(&caller, word) && observe_word(&caller, word) &&
+		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
+		      caller.selected_rate ==
+			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
+		      caller.rate_word == 0x0511 && caller.end_word == 0xf511,
+	      "V.32 startup did not fall back from trellis-only 9600");
+	return true;
+}
+
 static bool test_training_boundary(void)
 {
 	struct sippymodem_v32_startup answerer;
 
 	CHECK(sippymodem_v32_startup_init(
-		      &answerer, SIPPYMODEM_V32_ANSWERER) ==
+		      &answerer, SIPPYMODEM_V32_ANSWERER,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
 		      SIPPYMODEM_V32_STARTUP_OK,
 	      "V.32 training fixture did not initialize");
 	for (size_t index = 0;
@@ -160,7 +229,8 @@ static bool test_end_waits_for_rate_boundary(void)
 	struct sippymodem_v32_startup caller;
 
 	CHECK(sippymodem_v32_startup_init(
-		      &caller, SIPPYMODEM_V32_CALLER) ==
+		      &caller, SIPPYMODEM_V32_CALLER,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
 		      SIPPYMODEM_V32_STARTUP_OK &&
 		      observe_word(&caller, 0x0511) &&
 		      observe_word(&caller, 0x0511) &&
@@ -226,7 +296,8 @@ static bool test_no_common_rate(void)
 	bool connected = true;
 
 	CHECK(sippymodem_v32_startup_init(
-		      &caller, SIPPYMODEM_V32_CALLER) ==
+		      &caller, SIPPYMODEM_V32_CALLER,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
 		      SIPPYMODEM_V32_STARTUP_OK,
 	      "V.32 incompatible-rate fixture did not initialize");
 	for (unsigned int repeat = 0; repeat < 2; ++repeat) {
@@ -270,17 +341,29 @@ static bool test_validation(void)
 	uint8_t dibit = UINT8_MAX;
 
 	CHECK(sippymodem_v32_startup_init(
-		      &startup, SIPPYMODEM_V32_CALLER) ==
+		      &startup, SIPPYMODEM_V32_CALLER,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
 		      SIPPYMODEM_V32_STARTUP_OK &&
 		      sippymodem_v32_startup_is_valid(&startup),
 	      "V.32 validation startup did not initialize");
 	saved = startup;
 	CHECK(sippymodem_v32_startup_init(
-		      &startup, (enum sippymodem_v32_endpoint_role)2) ==
+		      &startup, (enum sippymodem_v32_endpoint_role)2,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
 		      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
 		      memcmp(&startup, &saved, sizeof(startup)) == 0 &&
-		      sippymodem_v32_startup_init(NULL, SIPPYMODEM_V32_CALLER) ==
-			      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT,
+		      sippymodem_v32_startup_init(
+			      NULL, SIPPYMODEM_V32_CALLER,
+			      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
+			      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
+		      sippymodem_v32_startup_init(
+			      &startup, SIPPYMODEM_V32_CALLER, 0) ==
+			      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
+		      sippymodem_v32_startup_init(
+			      &startup, SIPPYMODEM_V32_CALLER,
+			      SIPPYMODEM_V32_RATE_CAPABILITY_2400) ==
+			      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
+		      memcmp(&startup, &saved, sizeof(startup)) == 0,
 	      "V.32 startup initialization changed state on failure");
 	startup.phase_dibits =
 		SIPPYMODEM_V32_STARTUP_CONFIRMATION_DIBITS + 1;
@@ -306,7 +389,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "role exchange", test_role_exchange },
+		{ "highest common rate", test_rate_selection },
+		{ "uncoded fallback", test_uncoded_fallback },
 		{ "training boundary", test_training_boundary },
 		{ "end waits for rate boundary",
 		  test_end_waits_for_rate_boundary },
