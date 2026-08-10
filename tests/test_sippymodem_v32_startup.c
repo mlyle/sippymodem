@@ -52,7 +52,8 @@ static bool check_role_exchange(
 		.rates = expected_rate,
 		.trellis_at_highest_rate =
 			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200 ||
-			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_12000,
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_12000 ||
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_14400,
 	};
 	uint32_t caller_phases = 0;
 	uint32_t answerer_phases = 0;
@@ -169,31 +170,44 @@ static bool check_role_exchange(
 
 static bool test_rate_selection(void)
 {
-	uint8_t both = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
-		       SIPPYMODEM_V32_RATE_CAPABILITY_9600;
-	uint8_t v32bis = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
-			 SIPPYMODEM_V32_RATE_CAPABILITY_7200;
-	uint8_t all = v32bis | SIPPYMODEM_V32_RATE_CAPABILITY_9600;
-	uint8_t through_12000 = all | SIPPYMODEM_V32_RATE_CAPABILITY_12000;
+	uint8_t v32_rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			   SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	uint8_t through_7200 = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			       SIPPYMODEM_V32_RATE_CAPABILITY_7200;
+	uint8_t through_9600 =
+		through_7200 | SIPPYMODEM_V32_RATE_CAPABILITY_9600;
+	uint8_t through_12000 =
+		through_9600 | SIPPYMODEM_V32_RATE_CAPABILITY_12000;
+	uint8_t through_14400 =
+		through_12000 | SIPPYMODEM_V32_RATE_CAPABILITY_14400;
 
 	return check_role_exchange(
+		       through_14400, through_14400,
+		       SIPPYMODEM_V32_RATE_CAPABILITY_14400) &&
+	       check_role_exchange(through_14400, through_12000,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_12000) &&
+	       check_role_exchange(through_12000, through_14400,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_12000) &&
+	       check_role_exchange(
 		       through_12000, through_12000,
 		       SIPPYMODEM_V32_RATE_CAPABILITY_12000) &&
-	       check_role_exchange(through_12000, all,
+	       check_role_exchange(through_12000, through_9600,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
-	       check_role_exchange(all, through_12000,
+	       check_role_exchange(through_9600, through_12000,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
-	       check_role_exchange(both, both,
+	       check_role_exchange(v32_rates, v32_rates,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
-	       check_role_exchange(v32bis, v32bis,
+	       check_role_exchange(through_7200, through_7200,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
-	       check_role_exchange(all, v32bis,
+	       check_role_exchange(through_9600, through_7200,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
-	       check_role_exchange(v32bis, all,
+	       check_role_exchange(through_7200, through_9600,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_7200) &&
-	       check_role_exchange(both, SIPPYMODEM_V32_RATE_CAPABILITY_4800,
+	       check_role_exchange(v32_rates,
+				   SIPPYMODEM_V32_RATE_CAPABILITY_4800,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_4800) &&
-	       check_role_exchange(SIPPYMODEM_V32_RATE_CAPABILITY_4800, both,
+	       check_role_exchange(SIPPYMODEM_V32_RATE_CAPABILITY_4800,
+				   v32_rates,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_4800) &&
 	       check_role_exchange(SIPPYMODEM_V32_RATE_CAPABILITY_9600,
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600,

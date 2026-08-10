@@ -140,6 +140,9 @@ static uint8_t rate_capabilities(const struct modem *modem)
 	if (modem->min_rate <= SIPPYMODEM_V32_12000_BIT_RATE &&
 	    modem->max_rate >= SIPPYMODEM_V32_12000_BIT_RATE)
 		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_12000;
+	if (modem->min_rate <= SIPPYMODEM_V32_14400_BIT_RATE &&
+	    modem->max_rate >= SIPPYMODEM_V32_14400_BIT_RATE)
+		rates |= SIPPYMODEM_V32_RATE_CAPABILITY_14400;
 	return rates;
 }
 
@@ -151,6 +154,8 @@ static uint8_t selected_trellis_data_bits(
 		return SIPPYMODEM_V32_7200_DATA_BITS;
 	case SIPPYMODEM_V32_RATE_CAPABILITY_12000:
 		return SIPPYMODEM_V32_12000_DATA_BITS;
+	case SIPPYMODEM_V32_RATE_CAPABILITY_14400:
+		return SIPPYMODEM_V32_14400_DATA_BITS;
 	default:
 		return 0;
 	}
@@ -479,6 +484,8 @@ static unsigned int selected_bit_rate(
 		return SIPPYMODEM_V32_9600_BIT_RATE;
 	case SIPPYMODEM_V32_RATE_CAPABILITY_12000:
 		return SIPPYMODEM_V32_12000_BIT_RATE;
+	case SIPPYMODEM_V32_RATE_CAPABILITY_14400:
+		return SIPPYMODEM_V32_14400_BIT_RATE;
 	default:
 		return 0;
 	}
