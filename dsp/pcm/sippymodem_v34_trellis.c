@@ -24,6 +24,39 @@ bool sippymodem_v34_trellis_selection_is_valid(
 	return selection_state_bits(selection) != 0;
 }
 
+static uint8_t grid_residue_index(int16_t coordinate)
+{
+	return (uint8_t)((((uint16_t)coordinate - 1u) & 7u) >> 1);
+}
+
+enum sippymodem_v34_trellis_result sippymodem_v34_grid_subset_label(
+	const struct sippymodem_v34_grid_point *point, uint8_t *subset_label)
+{
+	uint8_t in_phase;
+	uint8_t quadrature;
+	uint8_t in_phase_low;
+	uint8_t quadrature_low;
+	uint8_t high;
+	uint8_t generated;
+
+	if (point == NULL || subset_label == NULL ||
+	    ((uint16_t)point->in_phase & 1u) == 0u ||
+	    ((uint16_t)point->quadrature & 1u) == 0u)
+		return SIPPYMODEM_V34_TRELLIS_INVALID_ARGUMENT;
+	in_phase = grid_residue_index(point->in_phase);
+	quadrature = grid_residue_index(point->quadrature);
+	in_phase_low = in_phase & 1u;
+	quadrature_low = quadrature & 1u;
+	/* Boolean reduction of Figure 9's repeating four-by-four labels. */
+	high = (uint8_t)(
+		(in_phase >> 1) ^ in_phase_low ^ (quadrature >> 1) ^
+		quadrature_low);
+	generated = (uint8_t)((high << 2) | (in_phase_low << 1) |
+			      (in_phase_low ^ quadrature_low));
+	*subset_label = generated;
+	return SIPPYMODEM_V34_TRELLIS_OK;
+}
+
 bool sippymodem_v34_convolutional_input_is_valid(
 	const struct sippymodem_v34_convolutional_input *input)
 {

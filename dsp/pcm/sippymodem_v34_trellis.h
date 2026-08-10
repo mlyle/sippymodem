@@ -3,6 +3,8 @@
 #ifndef SIPPYMODEM_V34_TRELLIS_H
 #define SIPPYMODEM_V34_TRELLIS_H
 
+#include "sippymodem_v34_constellation.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -37,6 +39,11 @@ struct sippymodem_v34_convolutional_encoder {
 
 bool sippymodem_v34_trellis_selection_is_valid(
 	enum sippymodem_v34_trellis_selection selection);
+
+/* Return the repeated three-bit Figure 9 label for an odd-integer channel
+ * output point. The destination is unchanged when the point is off-grid. */
+enum sippymodem_v34_trellis_result sippymodem_v34_grid_subset_label(
+	const struct sippymodem_v34_grid_point *point, uint8_t *subset_label);
 
 /* Convert the subset labels s(2m), s(2m + 1) into Y1 through Y4 without
  * retaining Table 13 as a 64-entry lookup table. */
