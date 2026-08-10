@@ -69,7 +69,7 @@ struct sippymodem_v34_phase2_ranging {
 enum sippymodem_v34_phase2_ranging_result
 sippymodem_v34_phase2_ranging_init(
 	struct sippymodem_v34_phase2_ranging *ranging,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	int16_t nominal_amplitude,
 	const struct sippymodem_v34_info0 *local_info0);
 bool sippymodem_v34_phase2_ranging_is_valid(

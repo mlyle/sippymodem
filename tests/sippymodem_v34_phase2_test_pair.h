@@ -69,7 +69,7 @@ struct test_pair_event {
 };
 
 struct sippymodem_v34_info0 test_v34_phase2_capabilities(
-	enum sippymodem_v34_phase2_station_role role);
+	enum sippymodem_v34_station_role role);
 bool test_v34_phase2_pair_init(
 	struct test_pair *pair, enum test_codec codec, size_t delay_samples);
 bool test_v34_phase2_pair_sample(

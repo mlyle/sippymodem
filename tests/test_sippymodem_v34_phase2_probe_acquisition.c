@@ -65,7 +65,7 @@ static bool stream_init(
 		      TEST_NOMINAL_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_PROBE_OK &&
 	      sippymodem_v34_phase2_tone_transmitter_init(
 		      &initialized.tone_transmitter,
-		      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_NOMINAL_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_TONE_OK,
 	      "probe acquisition stream did not initialize");
 	*stream = initialized;

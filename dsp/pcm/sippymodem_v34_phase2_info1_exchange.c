@@ -4,13 +4,13 @@
 
 #include <stddef.h>
 
-static bool role_is_valid(enum sippymodem_v34_phase2_station_role role)
+static bool role_is_valid(enum sippymodem_v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ||
-	       role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION;
+	return role == SIPPYMODEM_V34_CALLING_STATION ||
+	       role == SIPPYMODEM_V34_ANSWERING_STATION;
 }
 
-static enum sippymodem_v34_phase2_station_role probe_role(
+static enum sippymodem_v34_station_role probe_role(
 	const struct sippymodem_v34_phase2_reciprocal_probe *probe)
 {
 	return probe->turnaround.initial_probe.ranging.info0_exchange.local_role;
@@ -19,7 +19,7 @@ static enum sippymodem_v34_phase2_station_role probe_role(
 static bool completed_probe_matches_role(
 	const struct sippymodem_v34_phase2_reciprocal_probe *probe)
 {
-	return probe_role(probe) == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return probe_role(probe) == SIPPYMODEM_V34_CALLING_STATION ?
 		       probe->phase ==
 			       SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE :
 		       probe->phase ==
@@ -33,7 +33,7 @@ static int16_t probe_nominal_amplitude(
 		&probe->turnaround.initial_probe.ranging.info0_exchange
 			 .tone_transmitter;
 
-	return probe_role(probe) == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return probe_role(probe) == SIPPYMODEM_V34_CALLING_STATION ?
 		       tone->carrier_amplitude :
 		       tone->guard_amplitude;
 }
@@ -41,7 +41,7 @@ static int16_t probe_nominal_amplitude(
 static uint32_t peer_deadline_samples(
 	const struct sippymodem_v34_phase2_info1_exchange *exchange)
 {
-	return exchange->local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return exchange->local_role == SIPPYMODEM_V34_CALLING_STATION ?
 		       (uint32_t)
 			       SIPPYMODEM_V34_PHASE2_CALLER_INFO1A_WAIT_BASE_SAMPLES +
 			       exchange->round_trip_delay_samples :
@@ -53,7 +53,7 @@ static uint32_t peer_deadline_samples(
 static bool phase_has_peer_parameters(
 	const struct sippymodem_v34_phase2_info1_exchange *exchange)
 {
-	if (exchange->local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION)
+	if (exchange->local_role == SIPPYMODEM_V34_CALLING_STATION)
 		return exchange->phase == SIPPYMODEM_V34_PHASE2_INFO1_COMPLETE;
 	return exchange->phase ==
 		       SIPPYMODEM_V34_PHASE2_INFO1_ANSWERER_REPLY_NEEDED ||
@@ -71,7 +71,7 @@ static bool peer_parameters_are_valid(
 		return false;
 	if (!expected)
 		return true;
-	return exchange->local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return exchange->local_role == SIPPYMODEM_V34_CALLING_STATION ?
 		       sippymodem_v34_info1a_is_valid(
 			       &exchange->peer_parameters.info1a) :
 		       sippymodem_v34_info1c_is_valid(
@@ -85,7 +85,7 @@ static bool transmitter_matches_exchange(
 	const struct sippymodem_v34_phase2_info_audio_transmitter *transmitter =
 		&exchange->transmitter;
 	size_t payload_bits =
-		exchange->local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		exchange->local_role == SIPPYMODEM_V34_CALLING_STATION ?
 			SIPPYMODEM_V34_INFO1C_PAYLOAD_BITS :
 			SIPPYMODEM_V34_INFO1A_PAYLOAD_BITS;
 
@@ -182,7 +182,7 @@ bool sippymodem_v34_phase2_info1_exchange_is_valid(
 	    exchange->receiver.modulation.local_role != exchange->local_role ||
 	    exchange->receiver.frame.expected_payload_bit_count !=
 		    (exchange->local_role ==
-			     SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+			     SIPPYMODEM_V34_CALLING_STATION ?
 			     SIPPYMODEM_V34_INFO1A_PAYLOAD_BITS :
 			     SIPPYMODEM_V34_INFO1C_PAYLOAD_BITS) ||
 	    !peer_parameters_are_valid(exchange))
@@ -195,12 +195,12 @@ bool sippymodem_v34_phase2_info1_exchange_is_valid(
 	    (exchange->failure == SIPPYMODEM_V34_PHASE2_INFO1_PEER_TIMEOUT))
 		return false;
 	if (exchange->local_role ==
-	    SIPPYMODEM_V34_PHASE2_CALLING_STATION)
+	    SIPPYMODEM_V34_CALLING_STATION)
 		return caller_state_is_valid(exchange, deadline);
 	return sippymodem_v34_phase2_tone_transmitter_is_valid(
 		       &exchange->answerer_tone_a) &&
 	       exchange->answerer_tone_a.local_role ==
-		       SIPPYMODEM_V34_PHASE2_ANSWERING_STATION &&
+		       SIPPYMODEM_V34_ANSWERING_STATION &&
 	       exchange->answerer_tone_a.guard_amplitude ==
 		       exchange->nominal_amplitude &&
 	       answerer_state_is_valid(exchange, deadline);
@@ -231,7 +231,7 @@ sippymodem_v34_phase2_info1_exchange_caller_init(
 	    !sippymodem_v34_phase2_reciprocal_probe_is_valid(completed_probe) ||
 	    !completed_probe_matches_role(completed_probe) ||
 	    probe_role(completed_probe) !=
-		    SIPPYMODEM_V34_PHASE2_CALLING_STATION ||
+		    SIPPYMODEM_V34_CALLING_STATION ||
 	    sippymodem_v34_info1c_encode(
 		    local_info1c, payload, sizeof(payload)) !=
 		    SIPPYMODEM_V34_INFO1_OK)
@@ -265,7 +265,7 @@ sippymodem_v34_phase2_info1_exchange_answerer_init(
 	    !sippymodem_v34_phase2_reciprocal_probe_is_valid(completed_probe) ||
 	    !completed_probe_matches_role(completed_probe) ||
 	    probe_role(completed_probe) !=
-		    SIPPYMODEM_V34_PHASE2_ANSWERING_STATION)
+		    SIPPYMODEM_V34_ANSWERING_STATION)
 		return SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT;
 	initialize_handoff_context(&initialized, completed_probe);
 	initialized.answerer_tone_a = completed_probe->turnaround.initial_probe
@@ -352,7 +352,7 @@ static bool receive_peer_parameters(
 	}
 	if (frame_event.type != SIPPYMODEM_V34_PHASE2_INFO_FRAME_RECEIVED)
 		return true;
-	if (exchange->local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	if (exchange->local_role == SIPPYMODEM_V34_CALLING_STATION) {
 		if (sippymodem_v34_info1a_decode(
 			    frame_event.payload, sizeof(frame_event.payload),
 			    frame_event.payload_bit_count, &decoded.info1a) !=
@@ -419,7 +419,7 @@ static bool generate_carrier_tail(
 	if (++exchange->carrier_tail_symbols <
 	    SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS)
 		return true;
-	if (exchange->local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	if (exchange->local_role == SIPPYMODEM_V34_CALLING_STATION) {
 		exchange->phase = SIPPYMODEM_V34_PHASE2_INFO1_WAITING_FOR_PEER;
 		event->kind =
 			SIPPYMODEM_V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT;
@@ -443,7 +443,7 @@ static bool generate_transmit_sample(
 	case SIPPYMODEM_V34_PHASE2_INFO1_WAITING_FOR_PEER:
 	case SIPPYMODEM_V34_PHASE2_INFO1_ANSWERER_REPLY_NEEDED:
 		if (exchange->local_role ==
-		    SIPPYMODEM_V34_PHASE2_ANSWERING_STATION)
+		    SIPPYMODEM_V34_ANSWERING_STATION)
 			return generate_answerer_tone(exchange, sample);
 		*sample = 0;
 		return true;

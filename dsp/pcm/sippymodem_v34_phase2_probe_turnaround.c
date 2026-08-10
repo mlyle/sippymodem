@@ -14,7 +14,7 @@ _Static_assert(
 		(int)SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
 	"Probe reception must begin within the reversed-tone tail");
 
-static enum sippymodem_v34_phase2_station_role local_role(
+static enum sippymodem_v34_station_role local_role(
 	const struct sippymodem_v34_phase2_probe_turnaround *turnaround)
 {
 	return turnaround->initial_probe.ranging.info0_exchange.local_role;
@@ -23,10 +23,10 @@ static enum sippymodem_v34_phase2_station_role local_role(
 static bool completed_probe_matches_role(
 	const struct sippymodem_v34_phase2_initial_probe *probe)
 {
-	enum sippymodem_v34_phase2_station_role role =
+	enum sippymodem_v34_station_role role =
 		probe->ranging.info0_exchange.local_role;
 
-	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return role == SIPPYMODEM_V34_CALLING_STATION ?
 		       probe->phase ==
 			       SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_CALLER_TONE_PAIR_ACTIVE :
 		       probe->phase ==
@@ -127,7 +127,7 @@ bool sippymodem_v34_phase2_probe_turnaround_is_valid(
 		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT)
 		return false;
 	if (local_role(turnaround) ==
-		    SIPPYMODEM_V34_PHASE2_CALLING_STATION &&
+		    SIPPYMODEM_V34_CALLING_STATION &&
 	    turnaround->answerer_info1c_elapsed_samples != 0)
 		return false;
 	timed_out = turnaround->phase ==
@@ -137,7 +137,7 @@ bool sippymodem_v34_phase2_probe_turnaround_is_valid(
 	     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT))
 		return false;
 	return local_role(turnaround) ==
-		       SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		       SIPPYMODEM_V34_CALLING_STATION ?
 		       caller_phase_is_valid(turnaround) :
 		       answerer_phase_is_valid(turnaround);
 }
@@ -155,7 +155,7 @@ sippymodem_v34_phase2_probe_turnaround_init(
 		return SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	initialized.initial_probe = *completed_probe;
 	if (completed_probe->ranging.info0_exchange.local_role ==
-	    SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	    SIPPYMODEM_V34_CALLING_STATION) {
 		initialized.phase =
 			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_WAIT_A_REVERSAL;
 	} else {
@@ -231,7 +231,7 @@ static void enter_ready(
 {
 	turnaround->phase_samples_remaining = 0;
 	turnaround->wait_samples = 0;
-	if (local_role(turnaround) == SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	if (local_role(turnaround) == SIPPYMODEM_V34_CALLING_STATION) {
 		turnaround->phase =
 			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_PROBE_READY;
 		event->kind =

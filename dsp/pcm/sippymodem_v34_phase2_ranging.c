@@ -13,9 +13,9 @@ static bool has_ranging_context(
 }
 
 static uint16_t completed_initial_tone_samples(
-	enum sippymodem_v34_phase2_station_role role)
+	enum sippymodem_v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return role == SIPPYMODEM_V34_CALLING_STATION ?
 		       0 :
 		       SIPPYMODEM_V34_PHASE2_RANGING_INITIAL_TONE_SAMPLES;
 }
@@ -23,7 +23,7 @@ static uint16_t completed_initial_tone_samples(
 bool sippymodem_v34_phase2_ranging_is_valid(
 	const struct sippymodem_v34_phase2_ranging *ranging)
 {
-	enum sippymodem_v34_phase2_station_role role;
+	enum sippymodem_v34_station_role role;
 
 	if (ranging == NULL ||
 	    !sippymodem_v34_phase2_info0_exchange_is_valid(
@@ -61,10 +61,10 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       !ranging->round_trip_delay_valid &&
-		       (role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION ||
+		       (role == SIPPYMODEM_V34_ANSWERING_STATION ||
 			ranging->local_tone_samples == 0);
 	case SIPPYMODEM_V34_PHASE2_ANSWERER_WAIT_INITIAL_TONE:
-		return role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION &&
+		return role == SIPPYMODEM_V34_ANSWERING_STATION &&
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples == 0 &&
 		       ranging->probe_start_delay_samples == 0 &&
@@ -76,7 +76,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples == 0 &&
 		       ranging->probe_start_delay_samples == 0 &&
-		       (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		       (role == SIPPYMODEM_V34_CALLING_STATION ?
 				ranging->measurement_elapsed_samples == 0 :
 				ranging->measurement_elapsed_samples != 0) &&
 		       !ranging->round_trip_delay_valid;
@@ -88,7 +88,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       ranging->round_trip_delay_valid ==
-			       (role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION);
+			       (role == SIPPYMODEM_V34_ANSWERING_STATION);
 	case SIPPYMODEM_V34_PHASE2_RESPONSE_TONE_TAIL:
 		return ranging->local_tone_samples ==
 			       completed_initial_tone_samples(role) &&
@@ -98,13 +98,13 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 			       SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples ==
-			       (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+			       (role == SIPPYMODEM_V34_CALLING_STATION ?
 					ranging->post_reversal_samples :
 					0) &&
 		       ranging->round_trip_delay_valid ==
-			       (role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION);
+			       (role == SIPPYMODEM_V34_ANSWERING_STATION);
 	case SIPPYMODEM_V34_PHASE2_CALLER_WAIT_SECOND_REMOTE_REVERSAL:
-		return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION &&
+		return role == SIPPYMODEM_V34_CALLING_STATION &&
 		       ranging->local_tone_samples == 0 &&
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples ==
@@ -114,7 +114,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 			       SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 		       !ranging->round_trip_delay_valid;
 	case SIPPYMODEM_V34_PHASE2_CALLER_WAIT_PROBE_START:
-		return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION &&
+		return role == SIPPYMODEM_V34_CALLING_STATION &&
 		       ranging->local_tone_samples == 0 &&
 		       ranging->response_delay_samples == 0 &&
 		       ranging->post_reversal_samples ==
@@ -137,7 +137,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 		       ranging->probe_start_delay_samples == 0 &&
 		       ranging->measurement_elapsed_samples == 0 &&
 		       !ranging->round_trip_delay_valid &&
-		       (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		       (role == SIPPYMODEM_V34_CALLING_STATION ?
 				ranging->local_tone_samples == 0 :
 				ranging->local_tone_samples ==
 					SIPPYMODEM_V34_PHASE2_RANGING_INITIAL_TONE_SAMPLES);
@@ -148,7 +148,7 @@ bool sippymodem_v34_phase2_ranging_is_valid(
 enum sippymodem_v34_phase2_ranging_result
 sippymodem_v34_phase2_ranging_init(
 	struct sippymodem_v34_phase2_ranging *ranging,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	int16_t nominal_amplitude,
 	const struct sippymodem_v34_info0 *local_info0)
 {
@@ -210,7 +210,7 @@ static void enter_active_ranging(
 	    !ranging->info0_exchange.tone_detector.tone_present)
 		return;
 	ranging->phase = ranging->info0_exchange.local_role ==
-				 SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+				 SIPPYMODEM_V34_CALLING_STATION ?
 			 SIPPYMODEM_V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL :
 			 SIPPYMODEM_V34_PHASE2_ANSWERER_WAIT_INITIAL_TONE;
 }
@@ -282,7 +282,7 @@ static void handle_reversal(
 	switch (ranging->phase) {
 	case SIPPYMODEM_V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL:
 		if (ranging->info0_exchange.local_role ==
-		    SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+		    SIPPYMODEM_V34_CALLING_STATION) {
 			(void)schedule_response(ranging, detector_delay_samples);
 		} else if (measure_round_trip_delay(
 				   ranging, detector_delay_samples) &&
@@ -328,7 +328,7 @@ static void finish_tone_tail(
 	    SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES)
 		return;
 	if (ranging->info0_exchange.local_role ==
-	    SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	    SIPPYMODEM_V34_CALLING_STATION) {
 		ranging->phase =
 			SIPPYMODEM_V34_PHASE2_CALLER_WAIT_SECOND_REMOTE_REVERSAL;
 	} else {
@@ -345,13 +345,13 @@ static bool measurement_active(
 	return (ranging->phase ==
 			SIPPYMODEM_V34_PHASE2_RESPONSE_TONE_TAIL &&
 		ranging->info0_exchange.local_role ==
-			SIPPYMODEM_V34_PHASE2_CALLING_STATION) ||
+			SIPPYMODEM_V34_CALLING_STATION) ||
 	       ranging->phase ==
 		       SIPPYMODEM_V34_PHASE2_CALLER_WAIT_SECOND_REMOTE_REVERSAL ||
 	       (ranging->phase ==
 			SIPPYMODEM_V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
 		ranging->info0_exchange.local_role ==
-			SIPPYMODEM_V34_PHASE2_ANSWERING_STATION);
+			SIPPYMODEM_V34_ANSWERING_STATION);
 }
 
 static void advance_measurement(
@@ -404,7 +404,7 @@ sippymodem_v34_phase2_ranging_sample(
 	    !phase_transmits_tone(next.phase))
 		generated = 0;
 	if (next.info0_exchange.local_role ==
-		    SIPPYMODEM_V34_PHASE2_ANSWERING_STATION &&
+		    SIPPYMODEM_V34_ANSWERING_STATION &&
 	    next.local_tone_samples <
 		    SIPPYMODEM_V34_PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
 	    pure_tone_sample)

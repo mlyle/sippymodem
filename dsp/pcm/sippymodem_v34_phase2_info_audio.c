@@ -26,7 +26,7 @@ bool sippymodem_v34_phase2_info_audio_transmitter_is_valid(
 enum sippymodem_v34_phase2_info_audio_result
 sippymodem_v34_phase2_info_audio_transmitter_init(
 	struct sippymodem_v34_phase2_info_audio_transmitter *transmitter,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	int16_t nominal_amplitude, const uint8_t *payload,
 	size_t payload_bit_count)
 {
@@ -98,7 +98,7 @@ bool sippymodem_v34_phase2_info_audio_receiver_is_valid(
 enum sippymodem_v34_phase2_info_audio_result
 sippymodem_v34_phase2_info_audio_receiver_init(
 	struct sippymodem_v34_phase2_info_audio_receiver *receiver,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	size_t expected_payload_bit_count)
 {
 	struct sippymodem_v34_phase2_info_audio_receiver initialized = { 0 };

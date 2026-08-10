@@ -68,7 +68,7 @@ struct sippymodem_v34_phase2_info1_exchange {
 	uint16_t round_trip_delay_samples;
 	int16_t nominal_amplitude;
 	uint8_t carrier_tail_symbols;
-	enum sippymodem_v34_phase2_station_role local_role;
+	enum sippymodem_v34_station_role local_role;
 	enum sippymodem_v34_phase2_info1_exchange_phase phase;
 	enum sippymodem_v34_phase2_info1_exchange_failure failure;
 	bool peer_parameters_received;

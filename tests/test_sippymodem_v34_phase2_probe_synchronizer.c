@@ -50,7 +50,7 @@ static bool acquire_probe(
 	CHECK(leading_samples <=
 		      SIPPYMODEM_V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES &&
 	      sippymodem_v34_phase2_tone_transmitter_init(
-		      &tone_transmitter, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &tone_transmitter, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_NOMINAL_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_TONE_OK &&
 	      sippymodem_v34_phase2_probe_transmitter_init(
 		      probe_transmitter, TEST_NOMINAL_AMPLITUDE) ==
@@ -219,7 +219,7 @@ static bool check_rejected_signal(bool silence)
 	CHECK(sippymodem_v34_phase2_probe_synchronizer_init(&synchronizer) ==
 		      SIPPYMODEM_V34_PHASE2_PROBE_SYNCHRONIZER_OK &&
 	      sippymodem_v34_phase2_tone_transmitter_init(
-		      &tone_transmitter, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &tone_transmitter, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_NOMINAL_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_TONE_OK,
 	      "rejected-signal fixture did not initialize");
 	for (uint16_t index = 0;

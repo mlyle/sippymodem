@@ -178,11 +178,11 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 		      line_delay_samples <= TEST_MAXIMUM_LINE_DELAY,
 	      "invalid ranging-test line delay");
 	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &caller, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &caller, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &calling) ==
 		      SIPPYMODEM_V34_PHASE2_RANGING_OK &&
 	      sippymodem_v34_phase2_ranging_init(
-		      &answerer, SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		      &answerer, SIPPYMODEM_V34_ANSWERING_STATION,
 		      TEST_AMPLITUDE, &answering) ==
 		      SIPPYMODEM_V34_PHASE2_RANGING_OK,
 	      "ranging endpoints did not initialize");
@@ -321,11 +321,11 @@ static bool test_missing_second_reversal_times_out(void)
 	size_t timeout_count = 0;
 
 	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &caller, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &caller, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &calling) ==
 		      SIPPYMODEM_V34_PHASE2_RANGING_OK &&
 	      sippymodem_v34_phase2_ranging_init(
-		      &answerer, SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		      &answerer, SIPPYMODEM_V34_ANSWERING_STATION,
 		      TEST_AMPLITUDE, &answering) ==
 		      SIPPYMODEM_V34_PHASE2_RANGING_OK,
 	      "timeout fixture did not initialize");
@@ -380,7 +380,7 @@ static bool test_validation(void)
 	int16_t sample = 1234;
 
 	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &ranging, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &ranging, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &capabilities) ==
 		      SIPPYMODEM_V34_PHASE2_RANGING_OK,
 	      "validation fixture did not initialize");

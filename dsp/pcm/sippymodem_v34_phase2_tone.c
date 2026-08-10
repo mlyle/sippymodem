@@ -29,10 +29,10 @@ static const double V34_PHASE2_TONE_MAX_WINDOW_ENERGY =
 	V34_PHASE2_TONE_MAX_SAMPLE_POWER *
 	SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES;
 
-static bool role_is_valid(enum sippymodem_v34_phase2_station_role role)
+static bool role_is_valid(enum sippymodem_v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ||
-	       role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION;
+	return role == SIPPYMODEM_V34_CALLING_STATION ||
+	       role == SIPPYMODEM_V34_ANSWERING_STATION;
 }
 
 static uint32_t phase_step(uint32_t frequency_hz)
@@ -52,17 +52,17 @@ static double phase_radians(uint32_t phase)
 }
 
 static uint32_t local_carrier_hz(
-	enum sippymodem_v34_phase2_station_role role)
+	enum sippymodem_v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return role == SIPPYMODEM_V34_CALLING_STATION ?
 		       SIPPYMODEM_V34_PHASE2_CALLING_CARRIER_HZ :
 		       SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ;
 }
 
 static uint32_t remote_carrier_hz(
-	enum sippymodem_v34_phase2_station_role local_role)
+	enum sippymodem_v34_station_role local_role)
 {
-	return local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return local_role == SIPPYMODEM_V34_CALLING_STATION ?
 		       SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ :
 		       SIPPYMODEM_V34_PHASE2_CALLING_CARRIER_HZ;
 }
@@ -76,7 +76,7 @@ bool sippymodem_v34_phase2_tone_transmitter_is_valid(
 		    phase_step(local_carrier_hz(transmitter->local_role)))
 		return false;
 	if (transmitter->local_role ==
-	    SIPPYMODEM_V34_PHASE2_CALLING_STATION)
+	    SIPPYMODEM_V34_CALLING_STATION)
 		return transmitter->guard_amplitude == 0 &&
 		       transmitter->guard_phase_step == 0;
 	return transmitter->guard_amplitude > 0 &&
@@ -89,7 +89,7 @@ bool sippymodem_v34_phase2_tone_transmitter_is_valid(
 enum sippymodem_v34_phase2_tone_result
 sippymodem_v34_phase2_tone_transmitter_init(
 	struct sippymodem_v34_phase2_tone_transmitter *transmitter,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	int16_t nominal_amplitude)
 {
 	struct sippymodem_v34_phase2_tone_transmitter initialized = {
@@ -101,7 +101,7 @@ sippymodem_v34_phase2_tone_transmitter_init(
 	if (transmitter == NULL || !role_is_valid(local_role) ||
 	    nominal_amplitude <= 0)
 		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
-	if (local_role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION) {
+	if (local_role == SIPPYMODEM_V34_ANSWERING_STATION) {
 		carrier_amplitude = lround(
 			(double)nominal_amplitude *
 			V34_PHASE2_TONE_ANSWERING_CARRIER_GAIN);
@@ -244,7 +244,7 @@ bool sippymodem_v34_phase2_tone_detector_is_valid(
 enum sippymodem_v34_phase2_tone_result
 sippymodem_v34_phase2_tone_detector_init(
 	struct sippymodem_v34_phase2_tone_detector *detector,
-	enum sippymodem_v34_phase2_station_role local_role)
+	enum sippymodem_v34_station_role local_role)
 {
 	struct sippymodem_v34_phase2_tone_detector initialized = {
 		.carrier_phase_step = phase_step(remote_carrier_hz(local_role)),
@@ -262,7 +262,7 @@ enum sippymodem_v34_phase2_tone_result
 sippymodem_v34_phase2_tone_detector_reset(
 	struct sippymodem_v34_phase2_tone_detector *detector)
 {
-	enum sippymodem_v34_phase2_station_role local_role;
+	enum sippymodem_v34_station_role local_role;
 
 	if (!sippymodem_v34_phase2_tone_detector_is_valid(detector))
 		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
@@ -311,7 +311,7 @@ static bool measurement_qualifies(
 		detector->in_phase * detector->in_phase +
 		detector->quadrature * detector->quadrature;
 	double minimum_share =
-		detector->local_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		detector->local_role == SIPPYMODEM_V34_CALLING_STATION ?
 			V34_PHASE2_TONE_MIN_ANSWERING_CARRIER_SHARE :
 			V34_PHASE2_TONE_MIN_CALLING_CARRIER_SHARE;
 

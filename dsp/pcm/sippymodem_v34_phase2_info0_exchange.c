@@ -4,10 +4,10 @@
 
 #include <string.h>
 
-static bool role_is_valid(enum sippymodem_v34_phase2_station_role role)
+static bool role_is_valid(enum sippymodem_v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ||
-	       role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION;
+	return role == SIPPYMODEM_V34_CALLING_STATION ||
+	       role == SIPPYMODEM_V34_ANSWERING_STATION;
 }
 
 static bool transmit_phase_is_valid(
@@ -70,7 +70,7 @@ bool sippymodem_v34_phase2_info0_exchange_is_valid(
 enum sippymodem_v34_phase2_info0_exchange_result
 sippymodem_v34_phase2_info0_exchange_init(
 	struct sippymodem_v34_phase2_info0_exchange *exchange,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	int16_t nominal_amplitude,
 	const struct sippymodem_v34_info0 *local_info0)
 {

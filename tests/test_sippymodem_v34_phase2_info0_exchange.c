@@ -144,12 +144,12 @@ static bool check_exchange(enum test_codec codec)
 	expected_calling.acknowledges_peer_info0 = false;
 	expected_answering.acknowledges_peer_info0 = false;
 	CHECK(sippymodem_v34_phase2_info0_exchange_init(
-		      &caller, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &caller, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &calling) ==
 		      SIPPYMODEM_V34_PHASE2_INFO0_EXCHANGE_OK &&
 		      sippymodem_v34_phase2_info0_exchange_init(
 			      &answerer,
-			      SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+			      SIPPYMODEM_V34_ANSWERING_STATION,
 			      TEST_AMPLITUDE, &answering) ==
 			      SIPPYMODEM_V34_PHASE2_INFO0_EXCHANGE_OK,
 	      "INFO0 exchange endpoints did not initialize");
@@ -267,13 +267,13 @@ static bool test_validation(void)
 
 	capabilities.maximum_symbol_rate_difference_steps = 6;
 	CHECK(sippymodem_v34_phase2_info0_exchange_init(
-		      &exchange, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &exchange, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &capabilities) ==
 		      SIPPYMODEM_V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT,
 	      "INFO0 exchange accepted invalid capabilities");
 	capabilities = calling_capabilities();
 	CHECK(sippymodem_v34_phase2_info0_exchange_init(
-		      &exchange, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &exchange, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &capabilities) ==
 		      SIPPYMODEM_V34_PHASE2_INFO0_EXCHANGE_OK,
 	      "INFO0 validation fixture did not initialize");

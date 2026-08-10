@@ -40,7 +40,7 @@ static double tone_projection(
 }
 
 static bool render(
-	enum sippymodem_v34_phase2_station_role role,
+	enum sippymodem_v34_station_role role,
 	int16_t samples[TEST_SAMPLES],
 	struct sippymodem_v34_phase2_tone_transmitter *transmitter)
 {
@@ -66,10 +66,10 @@ static bool test_tone_levels(void)
 	double answering_guard;
 
 	CHECK(render(
-		      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      SIPPYMODEM_V34_CALLING_STATION,
 		      calling_samples, &calling) &&
 		      render(
-			      SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+			      SIPPYMODEM_V34_ANSWERING_STATION,
 			      answering_samples, &answering),
 	      "Phase 2 tone fixture failed");
 	CHECK(calling.carrier_amplitude == TEST_AMPLITUDE &&
@@ -109,7 +109,7 @@ static bool test_phase_reversal(void)
 	int16_t difference[TEST_SAMPLES];
 
 	CHECK(sippymodem_v34_phase2_tone_transmitter_init(
-		      &baseline, SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		      &baseline, SIPPYMODEM_V34_ANSWERING_STATION,
 		      TEST_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_TONE_OK,
 	      "Tone A reversal fixture did not initialize");
 	for (size_t index = 0; index < 37; ++index) {
@@ -210,13 +210,13 @@ static bool feed_sample(
 }
 
 static bool check_detector(
-	enum sippymodem_v34_phase2_station_role transmit_role,
+	enum sippymodem_v34_station_role transmit_role,
 	enum test_codec codec)
 {
-	enum sippymodem_v34_phase2_station_role local_role =
-		transmit_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
-			SIPPYMODEM_V34_PHASE2_ANSWERING_STATION :
-			SIPPYMODEM_V34_PHASE2_CALLING_STATION;
+	enum sippymodem_v34_station_role local_role =
+		transmit_role == SIPPYMODEM_V34_CALLING_STATION ?
+			SIPPYMODEM_V34_ANSWERING_STATION :
+			SIPPYMODEM_V34_CALLING_STATION;
 	struct sippymodem_v34_phase2_tone_transmitter transmitter;
 	struct sippymodem_v34_phase2_tone_detector detector;
 	struct sippymodem_v34_phase2_tone_measurement measurement;
@@ -258,7 +258,7 @@ static bool check_detector(
 		      measurement.ready && measurement.tone_present &&
 		      measurement.line_power > 1000000.0,
 	      "detector did not acquire one steady remote tone");
-	if (transmit_role == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION)
+	if (transmit_role == SIPPYMODEM_V34_ANSWERING_STATION)
 		CHECK(measurement.carrier_share > 0.35 &&
 			      measurement.carrier_share < 0.55,
 		      "Tone A carrier/guard measurement changed");
@@ -311,9 +311,9 @@ static bool test_detection_and_reversal(void)
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
 	     codec <= TEST_CODEC_PCMA; ++codec)
 		CHECK(check_detector(
-			      SIPPYMODEM_V34_PHASE2_CALLING_STATION, codec) &&
+			      SIPPYMODEM_V34_CALLING_STATION, codec) &&
 		      check_detector(
-			      SIPPYMODEM_V34_PHASE2_ANSWERING_STATION, codec),
+			      SIPPYMODEM_V34_ANSWERING_STATION, codec),
 		      "bidirectional tone detection failed for codec %d",
 		      codec);
 	return true;
@@ -326,11 +326,11 @@ static bool test_wrong_tone_rejection(void)
 	struct sippymodem_v34_phase2_tone_event event;
 
 	CHECK(sippymodem_v34_phase2_tone_transmitter_init(
-		      &transmitter, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &transmitter, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_TONE_OK &&
 		      sippymodem_v34_phase2_tone_detector_init(
 			      &detector,
-			      SIPPYMODEM_V34_PHASE2_CALLING_STATION) ==
+			      SIPPYMODEM_V34_CALLING_STATION) ==
 			      SIPPYMODEM_V34_PHASE2_TONE_OK,
 	      "wrong-tone fixture did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLES; ++index) {
@@ -353,13 +353,13 @@ static bool test_wrong_tone_rejection(void)
 }
 
 static bool check_frequency_offset(
-	enum sippymodem_v34_phase2_station_role transmit_role,
+	enum sippymodem_v34_station_role transmit_role,
 	double frequency_scale)
 {
-	enum sippymodem_v34_phase2_station_role local_role =
-		transmit_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
-			SIPPYMODEM_V34_PHASE2_ANSWERING_STATION :
-			SIPPYMODEM_V34_PHASE2_CALLING_STATION;
+	enum sippymodem_v34_station_role local_role =
+		transmit_role == SIPPYMODEM_V34_CALLING_STATION ?
+			SIPPYMODEM_V34_ANSWERING_STATION :
+			SIPPYMODEM_V34_CALLING_STATION;
 	struct sippymodem_v34_phase2_tone_transmitter levels;
 	struct sippymodem_v34_phase2_tone_detector detector;
 	const size_t edge_sample = 4803;
@@ -380,7 +380,7 @@ static bool check_frequency_offset(
 			      SIPPYMODEM_V34_PHASE2_TONE_OK,
 	      "frequency-offset fixture did not initialize");
 	carrier_step = 2.0 * TEST_PI * frequency_scale *
-			(transmit_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+			(transmit_role == SIPPYMODEM_V34_CALLING_STATION ?
 				 SIPPYMODEM_V34_PHASE2_CALLING_CARRIER_HZ :
 				 SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ) /
 			SIPPYMODEM_V34_PHASE2_SAMPLE_RATE;
@@ -430,10 +430,10 @@ static bool test_frequency_tolerance(void)
 
 	for (size_t index = 0; index < ARRAY_LENGTH(scales); ++index)
 		CHECK(check_frequency_offset(
-			      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+			      SIPPYMODEM_V34_CALLING_STATION,
 			      scales[index]) &&
 		      check_frequency_offset(
-			      SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+			      SIPPYMODEM_V34_ANSWERING_STATION,
 			      scales[index]),
 		      "Phase 2 tone offset failed at scale %.4f",
 		      scales[index]);
@@ -455,12 +455,12 @@ static bool test_validation(void)
 	memset(&transmitter, 0xa5, sizeof(transmitter));
 	before = transmitter;
 	CHECK(sippymodem_v34_phase2_tone_transmitter_init(
-		      &transmitter, SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		      &transmitter, SIPPYMODEM_V34_ANSWERING_STATION,
 		      20000) == SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "invalid Tone A level changed caller-owned state");
 	CHECK(sippymodem_v34_phase2_tone_transmitter_init(
-		      &transmitter, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &transmitter, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_TONE_OK,
 	      "validation fixture did not initialize");
 	transmitter.carrier_phase_step++;
@@ -472,7 +472,7 @@ static bool test_validation(void)
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "corrupt tone state was not rejected transactionally");
 	CHECK(sippymodem_v34_phase2_tone_detector_init(
-		      &detector, SIPPYMODEM_V34_PHASE2_CALLING_STATION) ==
+		      &detector, SIPPYMODEM_V34_CALLING_STATION) ==
 		      SIPPYMODEM_V34_PHASE2_TONE_OK,
 	      "tone detector validation fixture did not initialize");
 	detector.line_power = NAN;
@@ -485,7 +485,7 @@ static bool test_validation(void)
 		      event.reversal_delay_samples == 99,
 	      "corrupt detector state was not rejected transactionally");
 	CHECK(sippymodem_v34_phase2_tone_detector_init(
-		      &detector, SIPPYMODEM_V34_PHASE2_CALLING_STATION) ==
+		      &detector, SIPPYMODEM_V34_CALLING_STATION) ==
 		      SIPPYMODEM_V34_PHASE2_TONE_OK &&
 		      sippymodem_v34_phase2_tone_detector_sample(
 			      &detector, INT16_MIN, &event) ==

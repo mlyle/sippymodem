@@ -35,7 +35,7 @@ static double tone_projection(
 }
 
 static bool render_station(
-	enum sippymodem_v34_phase2_station_role role,
+	enum sippymodem_v34_station_role role,
 	int16_t samples[SIPPYMODEM_V34_PHASE2_SAMPLE_RATE],
 	unsigned int *accepted_count)
 {
@@ -59,7 +59,7 @@ static bool render_station(
 	}
 	CHECK(!transmitter.initial_point_pending,
 	      "Phase 2 transmitter omitted its reference point");
-	if (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	if (role == SIPPYMODEM_V34_CALLING_STATION) {
 		CHECK(transmitter.carrier.amplitude == TEST_AMPLITUDE &&
 			      transmitter.guard_amplitude == 0,
 		      "calling transmitter changed its nominal level");
@@ -83,10 +83,10 @@ static bool test_carriers_and_cadence(void)
 	unsigned int answering_accepted;
 
 	CHECK(render_station(
-		      SIPPYMODEM_V34_PHASE2_CALLING_STATION, calling,
+		      SIPPYMODEM_V34_CALLING_STATION, calling,
 		      &calling_accepted) &&
 		      render_station(
-			      SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+			      SIPPYMODEM_V34_ANSWERING_STATION,
 			      answering, &answering_accepted),
 	      "Phase 2 waveform fixture failed");
 	CHECK(calling_accepted ==
@@ -152,13 +152,13 @@ static size_t find_pattern(
 }
 
 static bool check_loopback(
-	enum sippymodem_v34_phase2_station_role transmit_role,
+	enum sippymodem_v34_station_role transmit_role,
 	size_t leading_silence, unsigned int noise_peak)
 {
-	enum sippymodem_v34_phase2_station_role receive_role =
-		transmit_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
-			SIPPYMODEM_V34_PHASE2_ANSWERING_STATION :
-			SIPPYMODEM_V34_PHASE2_CALLING_STATION;
+	enum sippymodem_v34_station_role receive_role =
+		transmit_role == SIPPYMODEM_V34_CALLING_STATION ?
+			SIPPYMODEM_V34_ANSWERING_STATION :
+			SIPPYMODEM_V34_CALLING_STATION;
 	struct sippymodem_v34_phase2_dpsk_transmitter transmitter;
 	struct sippymodem_v34_phase2_dpsk_receiver receiver;
 	struct sippymodem_v34_phase2_dpsk_measurement measurement;
@@ -241,17 +241,17 @@ static bool check_loopback(
 static bool test_bidirectional_loopback(void)
 {
 	return check_loopback(
-		       SIPPYMODEM_V34_PHASE2_CALLING_STATION, 0, 0) &&
+		       SIPPYMODEM_V34_CALLING_STATION, 0, 0) &&
 	       check_loopback(
-		       SIPPYMODEM_V34_PHASE2_ANSWERING_STATION, 0, 0);
+		       SIPPYMODEM_V34_ANSWERING_STATION, 0, 0);
 }
 
 static bool test_receive_tolerance(void)
 {
 	return check_loopback(
-		       SIPPYMODEM_V34_PHASE2_CALLING_STATION, 7, 350) &&
+		       SIPPYMODEM_V34_CALLING_STATION, 7, 350) &&
 	       check_loopback(
-		       SIPPYMODEM_V34_PHASE2_ANSWERING_STATION, 11, 350);
+		       SIPPYMODEM_V34_ANSWERING_STATION, 11, 350);
 }
 
 static bool test_validation(void)
@@ -265,22 +265,22 @@ static bool test_validation(void)
 	bool ready = true;
 
 	CHECK(sippymodem_v34_phase2_dpsk_transmitter_init(
-		      NULL, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      NULL, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE) ==
 		      SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT &&
 		      sippymodem_v34_phase2_dpsk_transmitter_init(
 			      &transmitter,
-			      (enum sippymodem_v34_phase2_station_role)99,
+			      (enum sippymodem_v34_station_role)99,
 			      TEST_AMPLITUDE) ==
 			      SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT &&
 		      sippymodem_v34_phase2_dpsk_transmitter_init(
 			      &transmitter,
-			      SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+			      SIPPYMODEM_V34_ANSWERING_STATION,
 			      30000) ==
 			      SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT,
 	      "Phase 2 transmitter accepted an invalid configuration");
 	CHECK(sippymodem_v34_phase2_dpsk_transmitter_init(
-		      &transmitter, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &transmitter, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE) == SIPPYMODEM_V34_PHASE2_DPSK_OK,
 	      "Phase 2 validation fixture did not initialize");
 	memcpy(snapshot, &transmitter, sizeof(snapshot));
@@ -291,11 +291,11 @@ static bool test_validation(void)
 		      sample == 123 && ready,
 	      "Phase 2 transmitter mutated state after invalid input");
 	CHECK(sippymodem_v34_phase2_dpsk_receiver_init(
-		      NULL, SIPPYMODEM_V34_PHASE2_CALLING_STATION) ==
+		      NULL, SIPPYMODEM_V34_CALLING_STATION) ==
 		      SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT &&
 		      sippymodem_v34_phase2_dpsk_receiver_init(
 			      &receiver,
-			      SIPPYMODEM_V34_PHASE2_CALLING_STATION) ==
+			      SIPPYMODEM_V34_CALLING_STATION) ==
 			      SIPPYMODEM_V34_PHASE2_DPSK_OK &&
 		      sippymodem_v34_phase2_dpsk_receiver_sample(
 			      &receiver, 0, NULL, &ready) ==

@@ -4,7 +4,7 @@
 
 #include <stddef.h>
 
-static enum sippymodem_v34_phase2_station_role local_role(
+static enum sippymodem_v34_station_role local_role(
 	const struct sippymodem_v34_phase2_reciprocal_probe *probe)
 {
 	return probe->turnaround.initial_probe.ranging.info0_exchange.local_role;
@@ -13,10 +13,10 @@ static enum sippymodem_v34_phase2_station_role local_role(
 static bool completed_turnaround_matches_role(
 	const struct sippymodem_v34_phase2_probe_turnaround *turnaround)
 {
-	enum sippymodem_v34_phase2_station_role role =
+	enum sippymodem_v34_station_role role =
 		turnaround->initial_probe.ranging.info0_exchange.local_role;
 
-	return role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return role == SIPPYMODEM_V34_CALLING_STATION ?
 		       turnaround->phase ==
 			       SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_PROBE_READY :
 		       turnaround->phase ==
@@ -101,7 +101,7 @@ bool sippymodem_v34_phase2_reciprocal_probe_is_valid(
 	    (unsigned int)probe->failure >
 		    SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT)
 		return false;
-	if (local_role(probe) == SIPPYMODEM_V34_PHASE2_CALLING_STATION)
+	if (local_role(probe) == SIPPYMODEM_V34_CALLING_STATION)
 		return probe->answerer_info1c_elapsed_samples == 0 &&
 		       caller_path_is_valid(probe);
 	return probe->answerer_info1c_elapsed_samples >=
@@ -116,7 +116,7 @@ static int16_t nominal_amplitude(
 		&turnaround->initial_probe.ranging.info0_exchange.tone_transmitter;
 
 	return turnaround->initial_probe.ranging.info0_exchange.local_role ==
-		       SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		       SIPPYMODEM_V34_CALLING_STATION ?
 		       tone->carrier_amplitude : tone->guard_amplitude;
 }
 
@@ -127,7 +127,7 @@ sippymodem_v34_phase2_reciprocal_probe_init(
 		*completed_turnaround)
 {
 	struct sippymodem_v34_phase2_reciprocal_probe initialized = { 0 };
-	enum sippymodem_v34_phase2_station_role role;
+	enum sippymodem_v34_station_role role;
 
 	if (probe == NULL ||
 	    !sippymodem_v34_phase2_probe_turnaround_is_valid(
@@ -136,7 +136,7 @@ sippymodem_v34_phase2_reciprocal_probe_init(
 		return SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	initialized.turnaround = *completed_turnaround;
 	role = completed_turnaround->initial_probe.ranging.info0_exchange.local_role;
-	if (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	if (role == SIPPYMODEM_V34_CALLING_STATION) {
 		initialized.phase =
 			SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_CALLER_TRANSMITTING;
 		if (sippymodem_v34_phase2_tone_detector_reset(
@@ -316,7 +316,7 @@ sippymodem_v34_phase2_reciprocal_probe_sample(
 	case SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_FAILED:
 		break;
 	}
-	if (local_role(&next) == SIPPYMODEM_V34_PHASE2_ANSWERING_STATION &&
+	if (local_role(&next) == SIPPYMODEM_V34_ANSWERING_STATION &&
 	    probe->phase != SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_FAILED &&
 	    next.answerer_info1c_elapsed_samples != UINT32_MAX)
 		next.answerer_info1c_elapsed_samples++;
@@ -335,7 +335,7 @@ sippymodem_v34_phase2_reciprocal_probe_measure(
 	struct sippymodem_v34_phase2_probe_receiver_measurement *measurement)
 {
 	if (!sippymodem_v34_phase2_reciprocal_probe_is_valid(probe) ||
-	    local_role(probe) != SIPPYMODEM_V34_PHASE2_ANSWERING_STATION ||
+	    local_role(probe) != SIPPYMODEM_V34_ANSWERING_STATION ||
 	    probe->phase !=
 		    SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A ||
 	    measurement == NULL ||

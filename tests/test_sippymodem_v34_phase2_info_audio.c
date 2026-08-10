@@ -45,7 +45,7 @@ static bool build_expected_bits(
 }
 
 static bool check_station(
-	enum sippymodem_v34_phase2_station_role role)
+	enum sippymodem_v34_station_role role)
 {
 	static const uint8_t payload[] = { 0xa5, 0x5a, 0x80 };
 	struct sippymodem_v34_phase2_info_audio_transmitter transmitter;
@@ -136,8 +136,8 @@ static bool check_station(
 
 static bool test_bidirectional_transmission(void)
 {
-	return check_station(SIPPYMODEM_V34_PHASE2_CALLING_STATION) &&
-	       check_station(SIPPYMODEM_V34_PHASE2_ANSWERING_STATION);
+	return check_station(SIPPYMODEM_V34_CALLING_STATION) &&
+	       check_station(SIPPYMODEM_V34_ANSWERING_STATION);
 }
 
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
@@ -150,14 +150,14 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 }
 
 static bool check_frame_recovery(
-	enum sippymodem_v34_phase2_station_role transmit_role,
+	enum sippymodem_v34_station_role transmit_role,
 	enum test_codec codec)
 {
 	static const uint8_t payload[] = { 0xa5, 0x5a, 0x80 };
-	enum sippymodem_v34_phase2_station_role receive_role =
-		transmit_role == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
-			SIPPYMODEM_V34_PHASE2_ANSWERING_STATION :
-			SIPPYMODEM_V34_PHASE2_CALLING_STATION;
+	enum sippymodem_v34_station_role receive_role =
+		transmit_role == SIPPYMODEM_V34_CALLING_STATION ?
+			SIPPYMODEM_V34_ANSWERING_STATION :
+			SIPPYMODEM_V34_CALLING_STATION;
 	struct sippymodem_v34_phase2_info_audio_transmitter transmitter;
 	struct sippymodem_v34_phase2_info_audio_receiver receiver;
 	struct sippymodem_v34_phase2_info_event event = { 0 };
@@ -232,16 +232,16 @@ static bool check_frame_recovery(
 static bool test_g711_frame_recovery(void)
 {
 	return check_frame_recovery(
-		       SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		       SIPPYMODEM_V34_CALLING_STATION,
 		       TEST_CODEC_PCMU) &&
 	       check_frame_recovery(
-		       SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		       SIPPYMODEM_V34_ANSWERING_STATION,
 		       TEST_CODEC_PCMU) &&
 	       check_frame_recovery(
-		       SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		       SIPPYMODEM_V34_CALLING_STATION,
 		       TEST_CODEC_PCMA) &&
 	       check_frame_recovery(
-		       SIPPYMODEM_V34_PHASE2_ANSWERING_STATION,
+		       SIPPYMODEM_V34_ANSWERING_STATION,
 		       TEST_CODEC_PCMA);
 }
 
@@ -259,18 +259,18 @@ static bool test_validation(void)
 	bool complete = true;
 
 	CHECK(sippymodem_v34_phase2_info_audio_transmitter_init(
-		      NULL, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      NULL, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, payload, TEST_PAYLOAD_BITS) ==
 		      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
 		      sippymodem_v34_phase2_info_audio_transmitter_init(
 			      &transmitter,
-			      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+			      SIPPYMODEM_V34_CALLING_STATION,
 			      TEST_AMPLITUDE, payload,
 			      SIPPYMODEM_V34_PHASE2_INFO_MAX_PAYLOAD_BITS + 1u) ==
 			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT,
 	      "Phase 2 INFO audio accepted an invalid configuration");
 	CHECK(sippymodem_v34_phase2_info_audio_transmitter_init(
-		      &transmitter, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &transmitter, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, payload, TEST_PAYLOAD_BITS) ==
 		      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
 	      "Phase 2 INFO audio validation fixture did not initialize");
@@ -291,17 +291,17 @@ static bool test_validation(void)
 		     "invalid argument") == 0,
 	      "Phase 2 INFO audio returned an unstable result name");
 	CHECK(sippymodem_v34_phase2_info_audio_receiver_init(
-		      NULL, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      NULL, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_PAYLOAD_BITS) ==
 		      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
 		      sippymodem_v34_phase2_info_audio_receiver_init(
 			      &receiver,
-			      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+			      SIPPYMODEM_V34_CALLING_STATION,
 			      SIPPYMODEM_V34_PHASE2_INFO_MAX_PAYLOAD_BITS + 1u) ==
 			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
 		      sippymodem_v34_phase2_info_audio_receiver_init(
 			      &receiver,
-			      SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+			      SIPPYMODEM_V34_CALLING_STATION,
 			      TEST_PAYLOAD_BITS) ==
 			      SIPPYMODEM_V34_PHASE2_INFO_AUDIO_OK,
 	      "Phase 2 INFO audio receiver validation fixture failed");

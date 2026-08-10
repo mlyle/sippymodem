@@ -8,7 +8,7 @@ _Static_assert(
 	SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES <= UINT16_MAX,
 	"Initial-probe tone deadline must fit its sample counter");
 
-static enum sippymodem_v34_phase2_station_role local_role(
+static enum sippymodem_v34_station_role local_role(
 	const struct sippymodem_v34_phase2_initial_probe *probe)
 {
 	return probe->ranging.info0_exchange.local_role;
@@ -21,7 +21,7 @@ static int16_t nominal_amplitude(
 		&ranging->info0_exchange.tone_transmitter;
 
 	return ranging->info0_exchange.local_role ==
-		       SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+		       SIPPYMODEM_V34_CALLING_STATION ?
 		       tone->carrier_amplitude :
 		       tone->guard_amplitude;
 }
@@ -128,7 +128,7 @@ bool sippymodem_v34_phase2_initial_probe_is_valid(
 	    (unsigned int)probe->failure >
 		    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT)
 		return false;
-	return local_role(probe) == SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+	return local_role(probe) == SIPPYMODEM_V34_CALLING_STATION ?
 		       caller_path_is_valid(probe) :
 		       answerer_path_is_valid(probe);
 }
@@ -139,7 +139,7 @@ sippymodem_v34_phase2_initial_probe_init(
 	const struct sippymodem_v34_phase2_ranging *completed_ranging)
 {
 	struct sippymodem_v34_phase2_initial_probe initialized = { 0 };
-	enum sippymodem_v34_phase2_station_role role;
+	enum sippymodem_v34_station_role role;
 
 	if (probe == NULL ||
 	    !sippymodem_v34_phase2_ranging_is_valid(completed_ranging) ||
@@ -147,7 +147,7 @@ sippymodem_v34_phase2_initial_probe_init(
 		return SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	initialized.ranging = *completed_ranging;
 	role = completed_ranging->info0_exchange.local_role;
-	if (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION) {
+	if (role == SIPPYMODEM_V34_CALLING_STATION) {
 		initialized.phase =
 			SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING;
 		if (sippymodem_v34_phase2_probe_acquisition_init(
@@ -375,7 +375,7 @@ sippymodem_v34_phase2_initial_probe_measure(
 	struct sippymodem_v34_phase2_probe_receiver_measurement *measurement)
 {
 	if (!sippymodem_v34_phase2_initial_probe_is_valid(probe) ||
-	    local_role(probe) != SIPPYMODEM_V34_PHASE2_CALLING_STATION ||
+	    local_role(probe) != SIPPYMODEM_V34_CALLING_STATION ||
 	    measurement == NULL ||
 	    sippymodem_v34_phase2_probe_acquisition_measure(
 		    &probe->path.receive, measurement) !=

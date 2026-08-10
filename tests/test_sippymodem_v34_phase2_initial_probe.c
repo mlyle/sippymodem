@@ -626,7 +626,7 @@ static bool test_validation(void)
 {
 	struct sippymodem_v34_info0 local_capabilities =
 		test_v34_phase2_capabilities(
-			SIPPYMODEM_V34_PHASE2_CALLING_STATION);
+			SIPPYMODEM_V34_CALLING_STATION);
 	struct sippymodem_v34_phase2_ranging unready;
 	struct sippymodem_v34_phase2_ranging caller_ranging;
 	struct sippymodem_v34_phase2_ranging answerer_ranging;
@@ -640,7 +640,7 @@ static bool test_validation(void)
 	int16_t transmit = 1234;
 
 	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &unready, SIPPYMODEM_V34_PHASE2_CALLING_STATION,
+		      &unready, SIPPYMODEM_V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &local_capabilities) ==
 		      SIPPYMODEM_V34_PHASE2_RANGING_OK &&
 	      completed_ranging_pair(&caller_ranging, &answerer_ranging),

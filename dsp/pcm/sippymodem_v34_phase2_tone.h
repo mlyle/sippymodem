@@ -32,7 +32,7 @@ struct sippymodem_v34_phase2_tone_transmitter {
 	uint32_t guard_phase_step;
 	int16_t carrier_amplitude;
 	int16_t guard_amplitude;
-	enum sippymodem_v34_phase2_station_role local_role;
+	enum sippymodem_v34_station_role local_role;
 };
 
 struct sippymodem_v34_phase2_tone_observation {
@@ -74,7 +74,7 @@ struct sippymodem_v34_phase2_tone_detector {
 	uint16_t qualifying_samples;
 	uint16_t missing_samples;
 	uint16_t reversal_delay_samples;
-	enum sippymodem_v34_phase2_station_role local_role;
+	enum sippymodem_v34_station_role local_role;
 	bool measurement_ready;
 	bool tone_present;
 	bool reversal_pending;
@@ -94,7 +94,7 @@ struct sippymodem_v34_phase2_tone_measurement {
 enum sippymodem_v34_phase2_tone_result
 sippymodem_v34_phase2_tone_transmitter_init(
 	struct sippymodem_v34_phase2_tone_transmitter *transmitter,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	int16_t nominal_amplitude);
 bool sippymodem_v34_phase2_tone_transmitter_is_valid(
 	const struct sippymodem_v34_phase2_tone_transmitter *transmitter);
@@ -113,7 +113,7 @@ sippymodem_v34_phase2_tone_transmitter_sample(
 enum sippymodem_v34_phase2_tone_result
 sippymodem_v34_phase2_tone_detector_init(
 	struct sippymodem_v34_phase2_tone_detector *detector,
-	enum sippymodem_v34_phase2_station_role local_role);
+	enum sippymodem_v34_station_role local_role);
 bool sippymodem_v34_phase2_tone_detector_is_valid(
 	const struct sippymodem_v34_phase2_tone_detector *detector);
 enum sippymodem_v34_phase2_tone_result

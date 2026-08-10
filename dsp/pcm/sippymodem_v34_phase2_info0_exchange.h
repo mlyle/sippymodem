@@ -48,7 +48,7 @@ struct sippymodem_v34_phase2_info0_exchange {
 	uint16_t post_v8_silence_samples;
 	uint8_t filter_tail_symbols;
 	enum sippymodem_v34_phase2_info0_transmit_phase transmit_phase;
-	enum sippymodem_v34_phase2_station_role local_role;
+	enum sippymodem_v34_station_role local_role;
 	bool peer_info0_received;
 };
 
@@ -57,7 +57,7 @@ struct sippymodem_v34_phase2_info0_exchange {
 enum sippymodem_v34_phase2_info0_exchange_result
 sippymodem_v34_phase2_info0_exchange_init(
 	struct sippymodem_v34_phase2_info0_exchange *exchange,
-	enum sippymodem_v34_phase2_station_role local_role,
+	enum sippymodem_v34_station_role local_role,
 	int16_t nominal_amplitude,
 	const struct sippymodem_v34_info0 *local_info0);
 bool sippymodem_v34_phase2_info0_exchange_is_valid(

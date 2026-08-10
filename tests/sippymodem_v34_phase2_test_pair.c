@@ -32,9 +32,9 @@ static void delay_line_transmit(
 }
 
 struct sippymodem_v34_info0 test_v34_phase2_capabilities(
-	enum sippymodem_v34_phase2_station_role role)
+	enum sippymodem_v34_station_role role)
 {
-	if (role == SIPPYMODEM_V34_PHASE2_CALLING_STATION)
+	if (role == SIPPYMODEM_V34_CALLING_STATION)
 		return (struct sippymodem_v34_info0){
 			.symbol_rate_2800_supported = true,
 			.low_carrier_3000_supported = true,
@@ -54,7 +54,7 @@ struct sippymodem_v34_info0 test_v34_phase2_capabilities(
 
 static bool endpoint_init(
 	struct test_endpoint *endpoint,
-	enum sippymodem_v34_phase2_station_role role)
+	enum sippymodem_v34_station_role role)
 {
 	struct sippymodem_v34_info0 local_capabilities =
 		test_v34_phase2_capabilities(role);
@@ -79,7 +79,7 @@ static bool endpoint_sample(
 	if (endpoint->stage == TEST_ENDPOINT_RANGING) {
 		enum sippymodem_v34_phase2_ranging_event_kind expected_ready =
 			endpoint->ranging.info0_exchange.local_role ==
-					SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+					SIPPYMODEM_V34_CALLING_STATION ?
 				SIPPYMODEM_V34_PHASE2_PROBE_RECEIVE_READY :
 				SIPPYMODEM_V34_PHASE2_PROBE_TRANSMIT_READY;
 
@@ -98,7 +98,7 @@ static bool endpoint_sample(
 	} else if (endpoint->stage == TEST_ENDPOINT_INITIAL_PROBE) {
 		enum sippymodem_v34_phase2_initial_probe_event_kind expected_ready =
 			endpoint->initial_probe.ranging.info0_exchange.local_role ==
-					SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+					SIPPYMODEM_V34_CALLING_STATION ?
 				SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE :
 				SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
 
@@ -121,7 +121,7 @@ static bool endpoint_sample(
 		enum sippymodem_v34_phase2_probe_turnaround_event_kind expected_ready =
 			endpoint->turnaround.initial_probe.ranging.info0_exchange
 					.local_role ==
-					SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+					SIPPYMODEM_V34_CALLING_STATION ?
 				SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY :
 				SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY;
 
@@ -164,10 +164,10 @@ bool test_v34_phase2_pair_init(
 	    delay_samples > TEST_MAXIMUM_LINE_DELAY ||
 	    !endpoint_init(
 		    &initialized.caller,
-		    SIPPYMODEM_V34_PHASE2_CALLING_STATION) ||
+		    SIPPYMODEM_V34_CALLING_STATION) ||
 	    !endpoint_init(
 		    &initialized.answerer,
-		    SIPPYMODEM_V34_PHASE2_ANSWERING_STATION))
+		    SIPPYMODEM_V34_ANSWERING_STATION))
 		return false;
 	*pair = initialized;
 	return true;
