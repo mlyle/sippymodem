@@ -5,8 +5,10 @@
 #include "test.h"
 #include "v34_encoder_test_helpers.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
@@ -157,6 +159,104 @@ static void generate_primary_bits(
 		state = state * UINT32_C(1664525) + UINT32_C(1013904223);
 		bits[index] = (uint8_t)(state >> 31);
 	}
+}
+
+struct transmitter_fixture {
+	struct sippymodem_v34_frame_geometry geometry;
+	struct sippymodem_v34_mapping_parameters parameters;
+	struct sippymodem_v34_frame_schedule schedule;
+	struct sippymodem_v34_scrambler scrambler;
+	struct sippymodem_v34_4d_encoder encoder;
+	struct sippymodem_v34_mapping_frame mapping_frame;
+	uint8_t primary_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	uint8_t auxiliary_bit;
+};
+
+static bool bytes_are_filled(
+	const void *object, size_t size, unsigned char value)
+{
+	const unsigned char *bytes = object;
+
+	for (size_t index = 0; index < size; ++index) {
+		if (bytes[index] != value)
+			return false;
+	}
+	return true;
+}
+
+static bool initialize_transmitter_fixture(
+	struct transmitter_fixture *fixture, bool carries_auxiliary_bit)
+{
+	struct transmitter_fixture generated = { 0 };
+	struct sippymodem_v34_frame_schedule search;
+	bool found = false;
+
+	if (sippymodem_v34_frame_geometry_init(
+		    &generated.geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8,
+		    true) != SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
+	    sippymodem_v34_mapping_parameters_init(
+		    &generated.parameters, &generated.geometry, false) !=
+		    SIPPYMODEM_V34_MAPPING_PARAMETERS_OK ||
+	    sippymodem_v34_frame_schedule_init(
+		    &generated.schedule, &generated.geometry, 3) !=
+		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
+	    sippymodem_v34_transmit_scrambler_init(
+		    &generated.scrambler, SIPPYMODEM_V34_CALLING_STATION) !=
+		    SIPPYMODEM_V34_FRAMING_OK ||
+	    sippymodem_v34_4d_encoder_init(
+		    &generated.encoder, &generated.parameters, COEFFICIENTS,
+		    SIPPYMODEM_V34_TRELLIS_16_STATE) !=
+		    SIPPYMODEM_V34_4D_ENCODER_OK)
+		return false;
+	search = generated.schedule;
+	while (!sippymodem_v34_frame_schedule_is_complete(&search)) {
+		struct sippymodem_v34_frame_schedule candidate = search;
+
+		if (sippymodem_v34_frame_schedule_next(
+			    &search, &generated.mapping_frame) !=
+		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+			return false;
+		if (generated.mapping_frame.carries_auxiliary_bit ==
+		    carries_auxiliary_bit) {
+			generated.schedule = candidate;
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return false;
+	generate_primary_bits(
+		generated.primary_bits, generated.mapping_frame.primary_bits,
+		UINT32_C(0xf2a04e61));
+	generated.auxiliary_bit = 1;
+	*fixture = generated;
+	return true;
+}
+
+static bool rejected_transmission_is_transactional(
+	struct sippymodem_v34_frame_schedule *schedule,
+	struct sippymodem_v34_scrambler *scrambler,
+	struct sippymodem_v34_4d_encoder *encoder,
+	const uint8_t *primary_bits, size_t primary_bit_count,
+	const uint8_t *auxiliary_bit,
+	enum sippymodem_v34_nonlinear_parameter nonlinear_parameter,
+	double mean_squared_magnitude,
+	enum sippymodem_v34_mapping_frame_transmitter_result expected_result)
+{
+	struct sippymodem_v34_frame_schedule saved_schedule = *schedule;
+	struct sippymodem_v34_scrambler saved_scrambler = *scrambler;
+	struct sippymodem_v34_4d_encoder saved_encoder = *encoder;
+	struct sippymodem_v34_transmitted_mapping_frame transmitted;
+
+	memset(&transmitted, 0xa5, sizeof(transmitted));
+	return sippymodem_v34_transmit_mapping_frame(
+		       schedule, scrambler, encoder, primary_bits,
+		       primary_bit_count, auxiliary_bit, nonlinear_parameter,
+		       mean_squared_magnitude, &transmitted) == expected_result &&
+	       schedules_are_equal(schedule, &saved_schedule) &&
+	       scramblers_are_equal(scrambler, &saved_scrambler) &&
+	       v34_test_encoders_are_equal(encoder, &saved_encoder) &&
+	       bytes_are_filled(&transmitted, sizeof(transmitted), 0xa5);
 }
 
 static bool test_composition(void)
@@ -351,6 +451,248 @@ static bool test_composition(void)
 	return true;
 }
 
+static bool test_transactional_validation(void)
+{
+	static const double MEAN_SQUARED_MAGNITUDE = 512.0;
+	struct transmitter_fixture fixture;
+	struct transmitter_fixture auxiliary_fixture;
+	struct sippymodem_v34_frame_schedule saved_schedule;
+	struct sippymodem_v34_frame_schedule invalid_schedule;
+	struct sippymodem_v34_scrambler saved_scrambler;
+	struct sippymodem_v34_scrambler invalid_scrambler;
+	struct sippymodem_v34_4d_encoder saved_encoder;
+	struct sippymodem_v34_4d_encoder invalid_encoder;
+	struct sippymodem_v34_4d_encoder mismatched_encoder;
+	struct sippymodem_v34_frame_geometry mismatched_geometry;
+	struct sippymodem_v34_mapping_parameters mismatched_parameters;
+	struct sippymodem_v34_transmitted_mapping_frame transmitted;
+	uint8_t malformed_primary[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	uint8_t invalid_auxiliary = 2;
+
+	CHECK(initialize_transmitter_fixture(&fixture, false) &&
+	      initialize_transmitter_fixture(&auxiliary_fixture, true),
+	      "transactional fixtures did not initialize");
+
+	saved_scrambler = fixture.scrambler;
+	saved_encoder = fixture.encoder;
+	memset(&transmitted, 0xa5, sizeof(transmitted));
+	CHECK(sippymodem_v34_transmit_mapping_frame(
+		      NULL, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE, &transmitted) ==
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT &&
+	      scramblers_are_equal(&fixture.scrambler, &saved_scrambler) &&
+	      v34_test_encoders_are_equal(&fixture.encoder, &saved_encoder) &&
+	      bytes_are_filled(&transmitted, sizeof(transmitted), 0xa5),
+	      "null schedule changed state or output");
+
+	saved_schedule = fixture.schedule;
+	saved_encoder = fixture.encoder;
+	memset(&transmitted, 0xa5, sizeof(transmitted));
+	CHECK(sippymodem_v34_transmit_mapping_frame(
+		      &fixture.schedule, NULL, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE, &transmitted) ==
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT &&
+	      schedules_are_equal(&fixture.schedule, &saved_schedule) &&
+	      v34_test_encoders_are_equal(&fixture.encoder, &saved_encoder) &&
+	      bytes_are_filled(&transmitted, sizeof(transmitted), 0xa5),
+	      "null scrambler changed state or output");
+
+	saved_schedule = fixture.schedule;
+	saved_scrambler = fixture.scrambler;
+	memset(&transmitted, 0xa5, sizeof(transmitted));
+	CHECK(sippymodem_v34_transmit_mapping_frame(
+		      &fixture.schedule, &fixture.scrambler, NULL,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE, &transmitted) ==
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT &&
+	      schedules_are_equal(&fixture.schedule, &saved_schedule) &&
+	      scramblers_are_equal(&fixture.scrambler, &saved_scrambler) &&
+	      bytes_are_filled(&transmitted, sizeof(transmitted), 0xa5),
+	      "null encoder changed state or output");
+
+	saved_schedule = fixture.schedule;
+	saved_scrambler = fixture.scrambler;
+	saved_encoder = fixture.encoder;
+	CHECK(sippymodem_v34_transmit_mapping_frame(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE, NULL) ==
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT &&
+	      schedules_are_equal(&fixture.schedule, &saved_schedule) &&
+	      scramblers_are_equal(&fixture.scrambler, &saved_scrambler) &&
+	      v34_test_encoders_are_equal(&fixture.encoder, &saved_encoder),
+	      "null destination changed state");
+
+	invalid_schedule = fixture.schedule;
+	invalid_schedule.next_mapping_frame = (uint8_t)(
+		invalid_schedule.geometry.mapping_frames_per_data_frame + 1u);
+	CHECK(rejected_transmission_is_transactional(
+		      &invalid_schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "invalid schedule changed state or output");
+	invalid_scrambler = fixture.scrambler;
+	invalid_scrambler.polynomial =
+		(enum sippymodem_v34_scrambler_polynomial)2;
+	CHECK(rejected_transmission_is_transactional(
+		      &fixture.schedule, &invalid_scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "invalid scrambler changed state or output");
+	invalid_encoder = fixture.encoder;
+	invalid_encoder.previous_differential_output = 4;
+	CHECK(rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &invalid_encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "invalid encoder changed state or output");
+	CHECK(sippymodem_v34_frame_geometry_init(
+		      &mismatched_geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 7,
+		      true) == SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+	      sippymodem_v34_mapping_parameters_init(
+		      &mismatched_parameters, &mismatched_geometry, false) ==
+		      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
+	      sippymodem_v34_4d_encoder_init(
+		      &mismatched_encoder, &mismatched_parameters, COEFFICIENTS,
+		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_OK &&
+	      rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler,
+		      &mismatched_encoder, fixture.primary_bits,
+		      fixture.mapping_frame.primary_bits, NULL,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "mismatched frame geometry changed state or output");
+
+	CHECK(rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      NULL, fixture.mapping_frame.primary_bits, NULL,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT) &&
+	      rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits,
+		      (size_t)fixture.mapping_frame.primary_bits - 1u, NULL,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "invalid primary buffer changed state or output");
+	memcpy(
+		malformed_primary, fixture.primary_bits,
+		fixture.mapping_frame.primary_bits);
+	malformed_primary[fixture.mapping_frame.primary_bits / 2u] = 2;
+	CHECK(rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      malformed_primary, fixture.mapping_frame.primary_bits, NULL,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "partly scrambled invalid input changed state or output");
+	CHECK(rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      &fixture.auxiliary_bit,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "unexpected auxiliary bit changed state or output");
+	CHECK(rejected_transmission_is_transactional(
+		      &auxiliary_fixture.schedule, &auxiliary_fixture.scrambler,
+		      &auxiliary_fixture.encoder, auxiliary_fixture.primary_bits,
+		      auxiliary_fixture.mapping_frame.primary_bits, NULL,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT) &&
+	      rejected_transmission_is_transactional(
+		      &auxiliary_fixture.schedule, &auxiliary_fixture.scrambler,
+		      &auxiliary_fixture.encoder, auxiliary_fixture.primary_bits,
+		      auxiliary_fixture.mapping_frame.primary_bits,
+		      &invalid_auxiliary,
+		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "invalid auxiliary input changed state or output");
+	CHECK(rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, (enum sippymodem_v34_nonlinear_parameter)2,
+		      MEAN_SQUARED_MAGNITUDE,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT) &&
+	      rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 0.0,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT) &&
+	      rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, NAN,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT) &&
+	      rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      fixture.primary_bits, fixture.mapping_frame.primary_bits,
+		      NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, INFINITY,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+	      "invalid nonlinear configuration changed state or output");
+	return true;
+}
+
+static bool test_completion_and_result_names(void)
+{
+	struct transmitter_fixture fixture;
+
+	CHECK(initialize_transmitter_fixture(&fixture, false),
+	      "completion fixture did not initialize");
+	fixture.schedule.next_mapping_frame =
+		fixture.schedule.geometry.mapping_frames_per_data_frame;
+	CHECK(sippymodem_v34_frame_schedule_is_complete(&fixture.schedule) &&
+	      rejected_transmission_is_transactional(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      NULL, 0, NULL, SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0,
+		      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_FRAME_COMPLETE),
+	      "completed transmission changed state or output");
+	CHECK(strcmp(
+		      sippymodem_v34_mapping_frame_transmitter_result_name(
+			      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OK),
+		      "ok") == 0 &&
+	      strcmp(
+		      sippymodem_v34_mapping_frame_transmitter_result_name(
+			      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_FRAME_COMPLETE),
+		      "frame complete") == 0 &&
+	      strcmp(
+		      sippymodem_v34_mapping_frame_transmitter_result_name(
+			      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
+		      "invalid argument") == 0 &&
+	      strcmp(
+		      sippymodem_v34_mapping_frame_transmitter_result_name(
+			      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OUT_OF_RANGE),
+		      "out of range") == 0 &&
+	      strcmp(
+		      sippymodem_v34_mapping_frame_transmitter_result_name(
+			      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_NUMERIC_FAILURE),
+		      "numeric failure") == 0 &&
+	      strcmp(
+		      sippymodem_v34_mapping_frame_transmitter_result_name(
+			      (enum sippymodem_v34_mapping_frame_transmitter_result)5),
+		      "unknown") == 0,
+	      "mapping-frame transmitter result names changed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -358,6 +700,9 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "composed transmission", test_composition },
+		{ "transactional validation", test_transactional_validation },
+		{ "completion and result names",
+		  test_completion_and_result_names },
 	};
 	unsigned int failures = 0;
 
