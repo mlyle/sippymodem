@@ -117,10 +117,33 @@ static bool endpoint_sample(
 			endpoint->stage = TEST_ENDPOINT_PROBE_TURNAROUND;
 			emitted.entered_turnaround = true;
 		}
-	} else if (sippymodem_v34_phase2_probe_turnaround_sample(
-			   &endpoint->turnaround, received_sample, transmit_sample,
-			   &emitted.turnaround) !=
-		   SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK) {
+	} else if (endpoint->stage == TEST_ENDPOINT_PROBE_TURNAROUND) {
+		enum sippymodem_v34_phase2_probe_turnaround_event_kind expected_ready =
+			endpoint->turnaround.initial_probe.ranging.info0_exchange
+					.local_role ==
+					SIPPYMODEM_V34_PHASE2_CALLING_STATION ?
+				SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY :
+				SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY;
+
+		if (sippymodem_v34_phase2_probe_turnaround_sample(
+			    &endpoint->turnaround, received_sample, transmit_sample,
+			    &emitted.turnaround) !=
+		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK)
+			return false;
+		if (endpoint->continue_to_reciprocal_probe &&
+		    emitted.turnaround.kind == expected_ready) {
+			if (sippymodem_v34_phase2_reciprocal_probe_init(
+				    &endpoint->reciprocal_probe,
+				    &endpoint->turnaround) !=
+			    SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_OK)
+				return false;
+			endpoint->stage = TEST_ENDPOINT_RECIPROCAL_PROBE;
+			emitted.entered_reciprocal_probe = true;
+		}
+	} else if (sippymodem_v34_phase2_reciprocal_probe_sample(
+			   &endpoint->reciprocal_probe, received_sample, transmit_sample,
+			   &emitted.reciprocal_probe) !=
+		   SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_OK) {
 		return false;
 	}
 	*event = emitted;

@@ -380,10 +380,7 @@ V34_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_ranging.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
-V34_PHASE2_INITIAL_PROBE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe
-V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe.o \
+V34_PHASE2_PROBE_FLOW_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase2_test_pair.o \
 	$(BUILD_DIR)/sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
@@ -401,7 +398,18 @@ V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_probe_turnaround.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_ranging.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_reciprocal_probe.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
+V34_PHASE2_INITIAL_PROBE_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe
+V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe.o \
+	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
+V34_PHASE2_RECIPROCAL_PROBE_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_reciprocal_probe
+V34_PHASE2_RECIPROCAL_PROBE_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_reciprocal_probe.o \
+	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
 V34_PHASE2_PROBE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe
 V34_PHASE2_PROBE_TEST_OBJECTS := \
@@ -536,6 +544,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE2_PROBE_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE2_RANGING_TEST_BINARY) \
 	$(V34_PHASE2_INITIAL_PROBE_TEST_BINARY) \
+	$(V34_PHASE2_RECIPROCAL_PROBE_TEST_BINARY) \
 	$(V34_PHASE2_TONE_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
@@ -595,6 +604,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE2_PROBE_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_RANGING_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS:.o=.d) \
+	$(V34_PHASE2_RECIPROCAL_PROBE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_TONE_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
@@ -670,6 +680,7 @@ test: $(TEST_BINARIES)
 	./$(V34_PHASE2_PROBE_SEQUENCE_TEST_BINARY)
 	./$(V34_PHASE2_RANGING_TEST_BINARY)
 	./$(V34_PHASE2_INITIAL_PROBE_TEST_BINARY)
+	./$(V34_PHASE2_RECIPROCAL_PROBE_TEST_BINARY)
 	./$(V34_PHASE2_TONE_TEST_BINARY)
 	./$(QAM_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
@@ -878,6 +889,10 @@ $(V34_PHASE2_RANGING_TEST_BINARY): $(V34_PHASE2_RANGING_TEST_OBJECTS)
 
 $(V34_PHASE2_INITIAL_PROBE_TEST_BINARY): \
 	$(V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_PHASE2_RECIPROCAL_PROBE_TEST_BINARY): \
+	$(V34_PHASE2_RECIPROCAL_PROBE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE2_TONE_TEST_BINARY): $(V34_PHASE2_TONE_TEST_OBJECTS)
@@ -1147,6 +1162,10 @@ $(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o: \
 
 $(BUILD_DIR)/sippymodem_v34_phase2_probe_turnaround.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase2_reciprocal_probe.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_reciprocal_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_phase2_ranging.o: \

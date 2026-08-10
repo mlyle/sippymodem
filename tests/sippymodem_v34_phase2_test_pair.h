@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_PHASE2_TEST_PAIR_H
 #define SIPPYMODEM_V34_PHASE2_TEST_PAIR_H
 
-#include <sippymodem_v34_phase2_probe_turnaround.h>
+#include <sippymodem_v34_phase2_reciprocal_probe.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,6 +24,7 @@ enum test_endpoint_stage {
 	TEST_ENDPOINT_RANGING,
 	TEST_ENDPOINT_INITIAL_PROBE,
 	TEST_ENDPOINT_PROBE_TURNAROUND,
+	TEST_ENDPOINT_RECIPROCAL_PROBE,
 };
 
 struct test_delay_line {
@@ -36,16 +37,20 @@ struct test_endpoint {
 	struct sippymodem_v34_phase2_ranging ranging;
 	struct sippymodem_v34_phase2_initial_probe initial_probe;
 	struct sippymodem_v34_phase2_probe_turnaround turnaround;
+	struct sippymodem_v34_phase2_reciprocal_probe reciprocal_probe;
 	enum test_endpoint_stage stage;
 	bool continue_to_turnaround;
+	bool continue_to_reciprocal_probe;
 };
 
 struct test_endpoint_event {
 	struct sippymodem_v34_phase2_ranging_event ranging;
 	struct sippymodem_v34_phase2_initial_probe_event initial_probe;
 	struct sippymodem_v34_phase2_probe_turnaround_event turnaround;
+	struct sippymodem_v34_phase2_reciprocal_probe_event reciprocal_probe;
 	bool entered_initial_probe;
 	bool entered_turnaround;
+	bool entered_reciprocal_probe;
 };
 
 struct test_pair {
