@@ -56,6 +56,13 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_encoder_init(
 	struct sippymodem_v32_symbol_encoder *encoder,
 	enum sippymodem_v32_transmitter_role transmitter_role,
 	uint8_t initial_quadrant);
+/*
+ * TRN carries scrambled dibits as absolute phases.  The resulting phase is
+ * retained so that a following differentially encoded symbol is continuous.
+ */
+enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_encode(
+	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
+	uint8_t *quadrant);
 enum sippymodem_v32_framing_result sippymodem_v32_symbol_encode(
 	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant);
@@ -63,6 +70,9 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_decoder_init(
 	struct sippymodem_v32_symbol_decoder *decoder,
 	enum sippymodem_v32_transmitter_role source_role,
 	uint8_t initial_quadrant);
+enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_decode(
+	struct sippymodem_v32_symbol_decoder *decoder, uint8_t quadrant,
+	uint8_t *output);
 enum sippymodem_v32_framing_result sippymodem_v32_symbol_decode(
 	struct sippymodem_v32_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *output);

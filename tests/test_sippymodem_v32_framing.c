@@ -9,6 +9,7 @@
 enum {
 	TEST_STREAM_DIBITS = 2048,
 	TEST_RESYNC_DIBITS = 96,
+	TEST_TRN_DIBITS = 257,
 };
 
 static uint32_t fixture_random(uint32_t *state)
@@ -61,6 +62,7 @@ static bool test_descrambler_polynomials(void)
 
 static bool test_normative_scrambler_starts(void)
 {
+	static const uint8_t trn_quadrant_by_dibit[] = { 0, 1, 3, 2 };
 	static const uint8_t expected[][15] = {
 		{ 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 1, 3, 3, 3 },
 		{ 3, 3, 2, 0, 0, 3, 3, 2, 0, 0, 3, 2, 1, 3, 3 },
@@ -68,25 +70,38 @@ static bool test_normative_scrambler_starts(void)
 
 	for (size_t role = 0; role < ARRAY_LENGTH(expected); ++role) {
 		struct sippymodem_v32_symbol_encoder encoder;
+		struct sippymodem_v32_symbol_encoder trn_encoder;
 		uint8_t previous = 0;
 
 		CHECK(sippymodem_v32_symbol_encoder_init(
 			      &encoder,
 			      (enum sippymodem_v32_transmitter_role)role, 0) ==
+			      SIPPYMODEM_V32_FRAMING_OK &&
+		      sippymodem_v32_symbol_encoder_init(
+			      &trn_encoder,
+			      (enum sippymodem_v32_transmitter_role)role,
+			      (uint8_t)(role + 1)) ==
 			      SIPPYMODEM_V32_FRAMING_OK,
 		      "V.32 normative encoder did not initialize");
 		for (size_t index = 0; index < ARRAY_LENGTH(expected[role]);
 		     ++index) {
 			uint8_t quadrant;
 			uint8_t scrambled;
+			uint8_t trn_quadrant;
+			uint8_t expected_trn_quadrant =
+				trn_quadrant_by_dibit[expected[role][index]];
 
 			CHECK(sippymodem_v32_symbol_encode(
 				      &encoder, 3, &quadrant) ==
 				      SIPPYMODEM_V32_FRAMING_OK &&
+			      sippymodem_v32_trn_symbol_encode(
+				      &trn_encoder, 3, &trn_quadrant) ==
+				      SIPPYMODEM_V32_FRAMING_OK &&
 				      sippymodem_differential_qpsk_decode(
 					      previous, quadrant, &scrambled) ==
 					      SIPPYMODEM_DIFFERENTIAL_QPSK_OK &&
-				      scrambled == expected[role][index],
+				      scrambled == expected[role][index] &&
+				      trn_quadrant == expected_trn_quadrant,
 			      "V.32 normative start changed at %zu/%zu", role,
 			      index);
 			previous = quadrant;
@@ -140,6 +155,67 @@ static bool test_symbol_round_trip(void)
 	return true;
 }
 
+static bool test_trn_round_trip_and_transition(void)
+{
+	uint32_t random = UINT32_C(0x6d8eb713);
+
+	for (unsigned int role = 0; role < 2; ++role) {
+		for (uint8_t initial = 0;
+		     initial < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++initial) {
+			struct sippymodem_v32_symbol_encoder encoder;
+			struct sippymodem_v32_symbol_decoder decoder;
+
+			CHECK(sippymodem_v32_symbol_encoder_init(
+				      &encoder,
+				      (enum sippymodem_v32_transmitter_role)role,
+				      initial) == SIPPYMODEM_V32_FRAMING_OK &&
+			      sippymodem_v32_symbol_decoder_init(
+				      &decoder,
+				      (enum sippymodem_v32_transmitter_role)role,
+				      initial) == SIPPYMODEM_V32_FRAMING_OK,
+			      "V.32 TRN endpoints did not initialize");
+			for (size_t index = 0; index < TEST_TRN_DIBITS; ++index) {
+				uint8_t input =
+					(uint8_t)(fixture_random(&random) & 3u);
+				uint8_t output;
+				uint8_t quadrant;
+
+				CHECK(sippymodem_v32_trn_symbol_encode(
+					      &encoder, input, &quadrant) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      sippymodem_v32_trn_symbol_decode(
+					      &decoder, quadrant, &output) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      output == input,
+				      "V.32 TRN round trip changed at %u/%u/%zu",
+				      role, initial, index);
+			}
+			for (size_t index = 0; index < TEST_STREAM_DIBITS;
+			     ++index) {
+				uint8_t input =
+					(uint8_t)(fixture_random(&random) & 3u);
+				uint8_t output;
+				uint8_t quadrant;
+
+				CHECK(sippymodem_v32_symbol_encode(
+					      &encoder, input, &quadrant) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      sippymodem_v32_symbol_decode(
+					      &decoder, quadrant, &output) ==
+					      SIPPYMODEM_V32_FRAMING_OK &&
+				      output == input,
+				      "V.32 TRN transition changed at %u/%u/%zu",
+				      role, initial, index);
+			}
+			CHECK(encoder.phase_quadrant == decoder.phase_quadrant &&
+				      encoder.scrambler.history ==
+					      decoder.descrambler.history,
+			      "V.32 TRN endpoints diverged");
+		}
+	}
+	return true;
+}
+
 static bool test_descrambler_resynchronization(void)
 {
 	struct sippymodem_v32_scrambler encoder;
@@ -178,7 +254,9 @@ static bool test_validation(void)
 	struct sippymodem_v32_scrambler scrambler;
 	struct sippymodem_v32_scrambler saved_scrambler;
 	struct sippymodem_v32_symbol_encoder encoder;
-	struct sippymodem_v32_symbol_encoder saved;
+	struct sippymodem_v32_symbol_encoder saved_encoder;
+	struct sippymodem_v32_symbol_decoder decoder;
+	struct sippymodem_v32_symbol_decoder saved_decoder;
 	uint8_t output = UINT8_MAX;
 
 	CHECK(sippymodem_v32_scrambler_init(
@@ -186,10 +264,14 @@ static bool test_validation(void)
 		      SIPPYMODEM_V32_FRAMING_OK &&
 		      sippymodem_v32_symbol_encoder_init(
 			      &encoder, SIPPYMODEM_V32_CALLING_TRANSMITTER, 2) ==
+			      SIPPYMODEM_V32_FRAMING_OK &&
+		      sippymodem_v32_symbol_decoder_init(
+			      &decoder, SIPPYMODEM_V32_CALLING_TRANSMITTER, 2) ==
 			      SIPPYMODEM_V32_FRAMING_OK,
 	      "V.32 validation fixtures did not initialize");
 	saved_scrambler = scrambler;
-	saved = encoder;
+	saved_encoder = encoder;
+	saved_decoder = decoder;
 	CHECK(sippymodem_v32_scrambler_init(
 		      NULL, SIPPYMODEM_V32_CALLING_TRANSMITTER) ==
 		      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
@@ -203,9 +285,21 @@ static bool test_validation(void)
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
 		      memcmp(&scrambler, &saved_scrambler,
 			     sizeof(scrambler)) == 0 &&
+		      sippymodem_v32_trn_symbol_encode(&encoder, 4, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      sippymodem_v32_trn_symbol_encode(&encoder, 0, NULL) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
 		      sippymodem_v32_symbol_encode(&encoder, 4, &output) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&encoder, &saved, sizeof(encoder)) == 0 &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      sippymodem_v32_trn_symbol_decode(&decoder, 4, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+		      sippymodem_v32_trn_symbol_decode(&decoder, 0, NULL) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
 		      output == UINT8_MAX &&
 		      sippymodem_v32_symbol_decode(NULL, 0, &output) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
@@ -228,6 +322,8 @@ int main(void)
 		{ "descrambler polynomials", test_descrambler_polynomials },
 		{ "normative scrambler starts", test_normative_scrambler_starts },
 		{ "symbol round trip", test_symbol_round_trip },
+		{ "TRN round trip and transition",
+		  test_trn_round_trip_and_transition },
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
 		{ "validation", test_validation },

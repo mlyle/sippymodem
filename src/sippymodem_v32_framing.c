@@ -137,6 +137,36 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_encoder_init(
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
+static uint8_t trn_quadrant_from_dibit(uint8_t dibit)
+{
+	/* The two-bit Gray transform exchanges 2 and 3 and is self-inverse. */
+	return (uint8_t)(dibit ^ (dibit >> 1));
+}
+
+enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_encode(
+	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
+	uint8_t *quadrant)
+{
+	struct sippymodem_v32_symbol_encoder next;
+	uint8_t scrambled;
+	uint8_t next_quadrant;
+
+	if (encoder == NULL || quadrant == NULL ||
+	    encoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    !sippymodem_v32_scrambler_is_valid(&encoder->scrambler))
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next = *encoder;
+	if (sippymodem_v32_scramble_dibit(
+		    &next.scrambler, input, &scrambled) !=
+	    SIPPYMODEM_V32_FRAMING_OK)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next_quadrant = trn_quadrant_from_dibit(scrambled);
+	next.phase_quadrant = next_quadrant;
+	*encoder = next;
+	*quadrant = next_quadrant;
+	return SIPPYMODEM_V32_FRAMING_OK;
+}
+
 enum sippymodem_v32_framing_result sippymodem_v32_symbol_encode(
 	struct sippymodem_v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant)
@@ -177,6 +207,31 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_decoder_init(
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next.phase_quadrant = initial_quadrant;
 	*decoder = next;
+	return SIPPYMODEM_V32_FRAMING_OK;
+}
+
+enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_decode(
+	struct sippymodem_v32_symbol_decoder *decoder, uint8_t quadrant,
+	uint8_t *output)
+{
+	struct sippymodem_v32_symbol_decoder next;
+	uint8_t decoded;
+	uint8_t scrambled;
+
+	if (decoder == NULL || output == NULL ||
+	    quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    decoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    !sippymodem_v32_scrambler_is_valid(&decoder->descrambler))
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next = *decoder;
+	scrambled = trn_quadrant_from_dibit(quadrant);
+	if (sippymodem_v32_descramble_dibit(
+		    &next.descrambler, scrambled, &decoded) !=
+	    SIPPYMODEM_V32_FRAMING_OK)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	next.phase_quadrant = quadrant;
+	*decoder = next;
+	*output = decoded;
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
