@@ -14,6 +14,131 @@ static bool close_to(double left, double right)
 	return fabs(left - right) < TEST_TOLERANCE;
 }
 
+static int grid_squared_magnitude(
+	const struct sippymodem_v34_grid_point *point)
+{
+	return point->in_phase * point->in_phase +
+	       point->quadrature * point->quadrature;
+}
+
+static size_t independent_quarter_grid_rank(
+	const struct sippymodem_v34_grid_point *point)
+{
+	size_t rank = 0;
+	int selected_magnitude = grid_squared_magnitude(point);
+
+	/* Include the first lattice coordinates outside Figure 5 so this also
+	 * detects an insufficient production search boundary. */
+	for (int quadrature = -47; quadrature <= 49; quadrature += 4) {
+		for (int in_phase = -47; in_phase <= 49; in_phase += 4) {
+			int magnitude = in_phase * in_phase +
+				quadrature * quadrature;
+
+			if (magnitude < selected_magnitude ||
+			    (magnitude == selected_magnitude &&
+			     quadrature > point->quadrature))
+				rank++;
+		}
+	}
+	return rank;
+}
+
+static uint64_t quarter_constellation_digest(
+	const struct sippymodem_v34_grid_point *points, size_t point_count)
+{
+	uint64_t digest = UINT64_C(14695981039346656037);
+
+	for (size_t index = 0; index < point_count; ++index) {
+		const uint8_t coordinates[] = {
+			(uint8_t)points[index].in_phase,
+			(uint8_t)points[index].quadrature,
+		};
+
+		for (size_t coordinate = 0;
+		     coordinate < ARRAY_LENGTH(coordinates); ++coordinate) {
+			digest ^= coordinates[coordinate];
+			digest *= UINT64_C(1099511628211);
+		}
+	}
+	return digest;
+}
+
+static bool test_quarter_superconstellation(void)
+{
+	struct sippymodem_v34_grid_point
+		points[SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+
+	CHECK(sippymodem_v34_quarter_superconstellation_generate(
+		      points, ARRAY_LENGTH(points)) ==
+		      SIPPYMODEM_V34_CONSTELLATION_OK,
+	      "quarter-superconstellation generation failed");
+	for (size_t index = 0; index < ARRAY_LENGTH(points); ++index) {
+		int magnitude = grid_squared_magnitude(&points[index]);
+
+		CHECK(((uint16_t)points[index].in_phase & 3u) == 1u &&
+		      ((uint16_t)points[index].quadrature & 3u) == 1u,
+		      "label %zu left the quarter-grid lattice", index);
+		CHECK(independent_quarter_grid_rank(&points[index]) == index,
+		      "label %zu has the wrong magnitude/tie rank", index);
+		if (index != 0) {
+			int previous_magnitude =
+				grid_squared_magnitude(&points[index - 1u]);
+
+			CHECK(previous_magnitude < magnitude ||
+			      (previous_magnitude == magnitude &&
+			       points[index - 1u].quadrature >
+				       points[index].quadrature),
+			      "labels %zu and %zu are not strictly ordered",
+			      index - 1u, index);
+		}
+	}
+	CHECK(points[0].in_phase == 1 && points[0].quadrature == 1 &&
+	      points[ARRAY_LENGTH(points) - 1u].in_phase == 45 &&
+	      points[ARRAY_LENGTH(points) - 1u].quadrature == 9,
+	      "quarter-superconstellation endpoints changed");
+	CHECK(quarter_constellation_digest(points, ARRAY_LENGTH(points)) ==
+		      UINT64_C(0x79ad213cde9d9435),
+	      "quarter-superconstellation coordinate digest changed");
+	return true;
+}
+
+static bool test_quarter_superconstellation_prefixes(void)
+{
+	struct sippymodem_v34_grid_point
+		full[SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	struct sippymodem_v34_grid_point prefix[32];
+	struct sippymodem_v34_grid_point sentinel[32];
+	static const size_t prefix_lengths[] = { 1, 4, 16, 32 };
+
+	CHECK(sippymodem_v34_quarter_superconstellation_generate(
+		      full, ARRAY_LENGTH(full)) ==
+		      SIPPYMODEM_V34_CONSTELLATION_OK,
+	      "full prefix fixture generation failed");
+	memset(sentinel, 0x5a, sizeof(sentinel));
+	for (size_t fixture = 0; fixture < ARRAY_LENGTH(prefix_lengths);
+	     ++fixture) {
+		size_t prefix_length = prefix_lengths[fixture];
+
+		memcpy(prefix, sentinel, sizeof(prefix));
+		CHECK(sippymodem_v34_quarter_superconstellation_generate(
+			      prefix, prefix_length) ==
+			      SIPPYMODEM_V34_CONSTELLATION_OK,
+		      "prefix length %zu was rejected", prefix_length);
+		for (size_t index = 0; index < prefix_length; ++index) {
+			CHECK(prefix[index].in_phase == full[index].in_phase &&
+			      prefix[index].quadrature == full[index].quadrature,
+			      "prefix length %zu changed label %zu",
+			      prefix_length, index);
+		}
+		CHECK(memcmp(
+			      &prefix[prefix_length], &sentinel[prefix_length],
+			      (ARRAY_LENGTH(prefix) - prefix_length) *
+				      sizeof(prefix[0])) == 0,
+		      "prefix length %zu overwrote its suffix", prefix_length);
+	}
+	return true;
+}
+
 static struct sippymodem_qam_point expected_rotated_grid_point(
 	int in_phase, int quadrature, double grid_unit,
 	uint8_t clockwise_quarter_turns)
@@ -153,6 +278,11 @@ static bool test_validation(void)
 {
 	struct sippymodem_qam_point point = { 7.0, -9.0 };
 	struct sippymodem_qam_point before = point;
+	struct sippymodem_v34_grid_point generated[4];
+	struct sippymodem_v34_grid_point saved[4];
+
+	memset(generated, 0x5a, sizeof(generated));
+	memcpy(saved, generated, sizeof(saved));
 
 	CHECK(sippymodem_v34_constellation_size_is_valid(
 		      SIPPYMODEM_V34_CONSTELLATION_4_POINT) &&
@@ -177,6 +307,18 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      memcmp(&point, &before, sizeof(point)) == 0,
 	      "constellation validation changed its output");
+	CHECK(sippymodem_v34_quarter_superconstellation_generate(NULL, 1) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_quarter_superconstellation_generate(
+		      generated, 0) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      sippymodem_v34_quarter_superconstellation_generate(
+		      generated,
+		      SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT +
+			      1u) ==
+		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      memcmp(generated, saved, sizeof(generated)) == 0,
+	      "invalid quarter-superconstellation generation changed output");
 	CHECK(strcmp(sippymodem_v34_constellation_result_name(
 			     SIPPYMODEM_V34_CONSTELLATION_OK),
 		     "ok") == 0 &&
@@ -193,6 +335,9 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "quarter superconstellation", test_quarter_superconstellation },
+		{ "quarter-superconstellation prefixes",
+		  test_quarter_superconstellation_prefixes },
 		{ "point-zero rotations", test_point_zero_rotations },
 		{ "four-point training set", test_four_point_constellation },
 		{ "sixteen-point training set", test_sixteen_point_constellation },
