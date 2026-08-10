@@ -3,6 +3,8 @@
 #ifndef SIPPYMODEM_V34_MP_H
 #define SIPPYMODEM_V34_MP_H
 
+#include "sippymodem_v34_trellis.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -21,12 +23,6 @@ enum {
 	SIPPYMODEM_V34_MP_MAXIMUM_RATE_2400_BPS_UNITS = 14,
 };
 
-enum sippymodem_v34_mp_trellis {
-	SIPPYMODEM_V34_MP_TRELLIS_16_STATE,
-	SIPPYMODEM_V34_MP_TRELLIS_32_STATE,
-	SIPPYMODEM_V34_MP_TRELLIS_64_STATE,
-};
-
 enum sippymodem_v34_mp_result {
 	SIPPYMODEM_V34_MP_OK,
 	SIPPYMODEM_V34_MP_INVALID_ARGUMENT,
@@ -41,7 +37,7 @@ struct sippymodem_v34_mp_parameters {
 	uint8_t maximum_call_to_answer_rate_2400_bps_units;
 	uint8_t maximum_answer_to_call_rate_2400_bps_units;
 	bool auxiliary_channel_enabled;
-	enum sippymodem_v34_mp_trellis remote_transmitter_trellis;
+	enum sippymodem_v34_trellis_selection remote_transmitter_trellis;
 	bool remote_transmitter_nonlinear_encoding;
 	bool remote_transmitter_expanded_shaping;
 	bool acknowledges_peer_mp;

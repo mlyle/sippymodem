@@ -22,7 +22,7 @@ static struct sippymodem_v34_mp_parameters base_parameters(bool acknowledged)
 		.maximum_call_to_answer_rate_2400_bps_units = 10,
 		.maximum_answer_to_call_rate_2400_bps_units = 10,
 		.remote_transmitter_trellis =
-			SIPPYMODEM_V34_MP_TRELLIS_32_STATE,
+			SIPPYMODEM_V34_TRELLIS_32_STATE,
 		.acknowledges_peer_mp = acknowledged,
 		.data_rate_capability_mask = 0x0fff,
 	};
@@ -165,7 +165,7 @@ static bool test_selected_fields_round_trip(void)
 		.maximum_answer_to_call_rate_2400_bps_units = 14,
 		.auxiliary_channel_enabled = true,
 		.remote_transmitter_trellis =
-			SIPPYMODEM_V34_MP_TRELLIS_64_STATE,
+			SIPPYMODEM_V34_TRELLIS_64_STATE,
 		.remote_transmitter_nonlinear_encoding = true,
 		.remote_transmitter_expanded_shaping = true,
 		.acknowledges_peer_mp = true,
@@ -220,7 +220,7 @@ static bool test_frame_rejection(void)
 		.maximum_answer_to_call_rate_2400_bps_units = 4,
 		.auxiliary_channel_enabled = true,
 		.remote_transmitter_trellis =
-			SIPPYMODEM_V34_MP_TRELLIS_16_STATE,
+			SIPPYMODEM_V34_TRELLIS_16_STATE,
 		.remote_transmitter_nonlinear_encoding = true,
 		.data_rate_capability_mask = 0x0005,
 		.asymmetric_rates_enabled = true,
@@ -320,7 +320,7 @@ static bool test_validation(void)
 	      "Type 0 MP accepted an out-of-range maximum rate");
 	invalid = valid;
 	invalid.remote_transmitter_trellis =
-		(enum sippymodem_v34_mp_trellis)3;
+		(enum sippymodem_v34_trellis_selection)3;
 	CHECK(!sippymodem_v34_mp_parameters_are_valid(&invalid),
 	      "Type 0 MP accepted a reserved trellis selection");
 	invalid = valid;

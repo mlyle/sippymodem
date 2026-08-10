@@ -27,7 +27,7 @@ static struct sippymodem_v34_mp_parameters parameters(bool acknowledged)
 		.maximum_call_to_answer_rate_2400_bps_units = 10,
 		.maximum_answer_to_call_rate_2400_bps_units = 9,
 		.remote_transmitter_trellis =
-			SIPPYMODEM_V34_MP_TRELLIS_32_STATE,
+			SIPPYMODEM_V34_TRELLIS_32_STATE,
 		.acknowledges_peer_mp = acknowledged,
 		.data_rate_capability_mask = 0x1555,
 		.asymmetric_rates_enabled = true,

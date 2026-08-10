@@ -29,11 +29,12 @@ enum {
 	V34_MP_TYPE0_FILL_BITS = 3,
 };
 
-static bool trellis_is_valid(enum sippymodem_v34_mp_trellis trellis)
+static bool trellis_is_valid(
+	enum sippymodem_v34_trellis_selection trellis)
 {
-	return trellis == SIPPYMODEM_V34_MP_TRELLIS_16_STATE ||
-	       trellis == SIPPYMODEM_V34_MP_TRELLIS_32_STATE ||
-	       trellis == SIPPYMODEM_V34_MP_TRELLIS_64_STATE;
+	return trellis == SIPPYMODEM_V34_TRELLIS_16_STATE ||
+	       trellis == SIPPYMODEM_V34_TRELLIS_32_STATE ||
+	       trellis == SIPPYMODEM_V34_TRELLIS_64_STATE;
 }
 
 static bool rate_is_valid(uint8_t rate_2400_bps_units)
@@ -249,7 +250,7 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_decode(
 	decoded.auxiliary_channel_enabled =
 		frame_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
 	decoded.remote_transmitter_trellis =
-		(enum sippymodem_v34_mp_trellis)decode_lsb_first_field(
+		(enum sippymodem_v34_trellis_selection)decode_lsb_first_field(
 			frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS);
 	decoded.remote_transmitter_nonlinear_encoding =
 		frame_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
