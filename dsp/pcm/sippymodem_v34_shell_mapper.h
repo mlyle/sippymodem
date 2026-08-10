@@ -28,6 +28,14 @@ enum sippymodem_v34_shell_mapper_result sippymodem_v34_shell_map(
 	const struct sippymodem_v34_mapping_parameters *parameters,
 	uint32_t shell_label, struct sippymodem_v34_ring_indices *indices);
 
+/* Recover R0 from eight exact decided ring indices. The same generated
+ * coefficients define both directions; unused expanded-shaping sequences
+ * are rejected and the destination is unchanged on failure. */
+enum sippymodem_v34_shell_mapper_result sippymodem_v34_shell_unmap(
+	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct sippymodem_v34_ring_indices *indices,
+	uint32_t *shell_label);
+
 bool sippymodem_v34_ring_indices_are_valid(
 	const struct sippymodem_v34_ring_indices *indices,
 	const struct sippymodem_v34_mapping_parameters *parameters);

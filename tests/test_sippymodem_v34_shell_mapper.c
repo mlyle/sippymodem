@@ -157,6 +157,7 @@ static bool verify_label(
 {
 	struct sippymodem_v34_ring_indices indices;
 	uint64_t recovered = 0;
+	uint32_t production_recovered = UINT32_MAX;
 
 	CHECK(sippymodem_v34_shell_map(
 		      parameters, shell_label, &indices) ==
@@ -170,7 +171,11 @@ static bool verify_label(
 	      shell_label);
 	CHECK(recover_shell_label(
 		      &indices, parameters->ring_count, counts, &recovered) &&
-	      recovered == shell_label,
+	      recovered == shell_label &&
+	      sippymodem_v34_shell_unmap(
+		      parameters, &indices, &production_recovered) ==
+		      SIPPYMODEM_V34_SHELL_MAPPER_OK &&
+	      production_recovered == shell_label,
 	      "K=%u M=%u mapped %u to independently ranked %llu",
 	      parameters->shell_mapper_bits, parameters->ring_count,
 	      shell_label, (unsigned long long)recovered);
@@ -374,6 +379,15 @@ static bool test_validation(void)
 	};
 	struct sippymodem_v34_ring_indices indices;
 	struct sippymodem_v34_ring_indices saved;
+	const struct sippymodem_v34_mapping_parameters expanded = {
+		.constellation_points = 12,
+		.mapping_frame_bits = 20,
+		.shell_mapper_bits = 8,
+		.point_index_bits_per_2d_symbol = 0,
+		.ring_count = 3,
+		.expanded_shaping = true,
+	};
+	uint32_t shell_label = UINT32_C(0xa5a5a5a5);
 
 	memset(&indices, 0x5a, sizeof(indices));
 	saved = indices;
@@ -400,6 +414,26 @@ static bool test_validation(void)
 	      !sippymodem_v34_ring_indices_are_valid(NULL, &parameters) &&
 	      !sippymodem_v34_ring_indices_are_valid(&indices, NULL),
 	      "invalid ring indices were accepted");
+	CHECK(sippymodem_v34_shell_unmap(NULL, &indices, &shell_label) ==
+		      SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_shell_unmap(&parameters, NULL, &shell_label) ==
+		      SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_shell_unmap(&parameters, &indices, NULL) ==
+		      SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT &&
+	      sippymodem_v34_shell_unmap(
+		      &parameters, &indices, &shell_label) ==
+		      SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT &&
+	      shell_label == UINT32_C(0xa5a5a5a5),
+	      "invalid shell inverse changed its destination");
+	CHECK(sippymodem_v34_mapping_parameters_is_valid(&expanded),
+	      "expanded inverse fixture has invalid dimensions");
+	memset(&indices, expanded.ring_count - 1u, sizeof(indices));
+	CHECK(sippymodem_v34_ring_indices_are_valid(&indices, &expanded) &&
+	      sippymodem_v34_shell_unmap(
+		      &expanded, &indices, &shell_label) ==
+		      SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT &&
+	      shell_label == UINT32_C(0xa5a5a5a5),
+	      "unused expanded shell sequence was accepted");
 	CHECK(strcmp(sippymodem_v34_shell_mapper_result_name(
 		     SIPPYMODEM_V34_SHELL_MAPPER_OK),
 		     "ok") == 0 &&
