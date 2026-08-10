@@ -184,6 +184,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
+	$(BUILD_DIR)/sippymodem_v21.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v22_datapump.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
@@ -200,7 +201,8 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_v23_datapump.o
 FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_fsk.o
+	$(BUILD_DIR)/sippymodem_fsk.o \
+	$(BUILD_DIR)/sippymodem_v21.o
 V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_ansam
 V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_ansam.o \
 	$(BUILD_DIR)/sippymodem_v8_ansam.o \
@@ -297,6 +299,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
+	$(BUILD_DIR)/sippymodem_v21.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v22_datapump.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
@@ -720,6 +723,10 @@ $(BUILD_DIR)/sippymodem_datapumps.o: \
 
 $(BUILD_DIR)/sippymodem_fsk.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_fsk.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v21.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v21.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_baudot.o: \

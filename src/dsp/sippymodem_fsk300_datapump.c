@@ -5,6 +5,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "sippymodem_fsk.h"
+#include "sippymodem_v21.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -19,10 +20,6 @@ enum {
 	FSK300_CARRIER_LOSS_SAMPLES = 1600,
 	FSK300_MIN_LINE_POWER = 10000000,
 	FSK300_MIN_DOMINANCE_Q8 = 180,
-	V21_CHANNEL_1_MARK_HZ = 980,
-	V21_CHANNEL_1_SPACE_HZ = 1180,
-	V21_CHANNEL_2_MARK_HZ = 1650,
-	V21_CHANNEL_2_SPACE_HZ = 1850,
 	BELL103_ORIGINATOR_MARK_HZ = 1270,
 	BELL103_ORIGINATOR_SPACE_HZ = 1070,
 	BELL103_ANSWERER_MARK_HZ = 2225,
@@ -32,28 +29,6 @@ enum {
 	FSK300_DETECTOR_WINDOW =
 		(MODEM_RATE + SIPPYMODEM_FSK300_BIT_RATE / 2) /
 		SIPPYMODEM_FSK300_BIT_RATE,
-};
-
-/* ITU-T V.21 assigns channel 1 to the originator and channel 2 to the
- * answerer. Mark is binary one for both channels. */
-static const struct sippymodem_fsk_channel v21_channel_1 = {
-	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
-	.symbol_rate_denominator = 1,
-	.mark_frequency_hz = V21_CHANNEL_1_MARK_HZ,
-	.space_frequency_hz = V21_CHANNEL_1_SPACE_HZ,
-	.detector_window = FSK300_DETECTOR_WINDOW,
-	.metric_smoothing_shift = FSK300_METRIC_SMOOTHING_SHIFT,
-};
-
-static const struct sippymodem_fsk_channel v21_channel_2 = {
-	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
-	.symbol_rate_denominator = 1,
-	.mark_frequency_hz = V21_CHANNEL_2_MARK_HZ,
-	.space_frequency_hz = V21_CHANNEL_2_SPACE_HZ,
-	.detector_window = FSK300_DETECTOR_WINDOW,
-	.metric_smoothing_shift = FSK300_METRIC_SMOOTHING_SHIFT,
 };
 
 /* Bell 103 assigns the low-frequency pair to the originating station and
@@ -87,8 +62,8 @@ struct sippymodem_fsk300_profile {
 static const struct sippymodem_fsk300_profile fsk300_profiles[] = {
 	{
 		.id = DP_V21,
-		.originator_channel = &v21_channel_1,
-		.answerer_channel = &v21_channel_2,
+		.originator_channel = &sippymodem_v21_channel_1,
+		.answerer_channel = &sippymodem_v21_channel_2,
 	},
 	{
 		.id = DP_B103,
@@ -96,6 +71,12 @@ static const struct sippymodem_fsk300_profile fsk300_profiles[] = {
 		.answerer_channel = &bell103_answerer_channel,
 	},
 };
+
+_Static_assert(MODEM_RATE == SIPPYMODEM_V21_SAMPLE_RATE,
+	       "the V.21 datapump requires 8 kHz audio");
+_Static_assert((int)SIPPYMODEM_FSK300_BIT_RATE ==
+		       (int)SIPPYMODEM_V21_BIT_RATE,
+	       "the V.21 datapump requires 300 bit/s profiles");
 
 enum sippymodem_fsk300_training_state {
 	FSK300_TRAINING_WAIT_MARK,
