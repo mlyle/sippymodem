@@ -91,6 +91,11 @@ struct sippymodem_qam_measurement {
 	bool timing_locked;
 };
 
+/* Quantize the rotation between two finite baseband points. */
+enum sippymodem_qam_result sippymodem_qam_nearest_quarter_turn(
+	const struct sippymodem_qam_point *previous,
+	const struct sippymodem_qam_point *current, uint8_t *quarter_turns);
+
 enum sippymodem_qam_result sippymodem_root_raised_cosine(
 	double symbol_time, double rolloff, double *value);
 

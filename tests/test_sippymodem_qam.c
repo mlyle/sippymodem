@@ -47,19 +47,6 @@ static struct sippymodem_qam_point quadrant_point(
 	}
 }
 
-static uint8_t point_phase_change(
-	const struct sippymodem_qam_point *previous,
-	const struct sippymodem_qam_point *current)
-{
-	double dot = previous->in_phase * current->in_phase +
-		     previous->quadrature * current->quadrature;
-	double cross = previous->in_phase * current->quadrature -
-		       previous->quadrature * current->in_phase;
-	long turns = lround(atan2(cross, dot) / (TEST_PI / 2.0));
-
-	return (uint8_t)((unsigned long)turns & 3u);
-}
-
 static bool test_generated_pulse(void)
 {
 	double at_zero = 0.0;
@@ -273,14 +260,19 @@ static bool check_receive_loopback(
 			      SIPPYMODEM_QAM_OK,
 		      "QAM loopback demodulator failed");
 		if (ready) {
+			uint8_t quarter_turns;
+
 			CHECK(isfinite(received_point.in_phase) &&
 				      isfinite(received_point.quadrature),
 			      "QAM loopback produced a non-finite point");
 			if (has_previous_point) {
 				CHECK(decoded_count < ARRAY_LENGTH(decoded),
 				      "QAM loopback produced unbounded symbols");
-				decoded[decoded_count++] = point_phase_change(
-					&previous_point, &received_point);
+				CHECK(sippymodem_qam_nearest_quarter_turn(
+					      &previous_point, &received_point,
+					      &quarter_turns) == SIPPYMODEM_QAM_OK,
+				      "QAM loopback phase decision failed");
+				decoded[decoded_count++] = quarter_turns;
 			}
 			previous_point = received_point;
 			has_previous_point = true;

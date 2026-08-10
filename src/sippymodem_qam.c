@@ -18,17 +18,44 @@ static const double QAM_PHASE_SCALE = 4294967296.0;
 static const double QAM_SINGULARITY_EPSILON = 1e-10;
 static const double QAM_POINT_EPSILON = 1e-12;
 
+static bool point_is_finite(const struct sippymodem_qam_point *point)
+{
+	return point != NULL && isfinite(point->in_phase) &&
+	       isfinite(point->quadrature);
+}
+
 static bool transmit_point_is_valid(
 	const struct sippymodem_qam_point *point)
 {
 	double power;
 
-	if (point == NULL || !isfinite(point->in_phase) ||
-	    !isfinite(point->quadrature))
+	if (!point_is_finite(point))
 		return false;
 	power = point->in_phase * point->in_phase +
 		point->quadrature * point->quadrature;
 	return isfinite(power) && power <= 1.0 + QAM_POINT_EPSILON;
+}
+
+enum sippymodem_qam_result sippymodem_qam_nearest_quarter_turn(
+	const struct sippymodem_qam_point *previous,
+	const struct sippymodem_qam_point *current, uint8_t *quarter_turns)
+{
+	double cross;
+	double dot;
+	int turns;
+
+	if (!point_is_finite(previous) || !point_is_finite(current) ||
+	    quarter_turns == NULL)
+		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+	dot = previous->in_phase * current->in_phase +
+	      previous->quadrature * current->quadrature;
+	cross = previous->in_phase * current->quadrature -
+		previous->quadrature * current->in_phase;
+	if (!isfinite(dot) || !isfinite(cross))
+		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+	turns = (int)lround(atan2(cross, dot) / (QAM_PI / 2.0));
+	*quarter_turns = (uint8_t)((unsigned int)turns & 3u);
+	return SIPPYMODEM_QAM_OK;
 }
 
 static bool channel_is_valid(

@@ -96,8 +96,6 @@ struct sippymodem_v22_datapump {
 	bool originator;
 };
 
-static const double V22_PI = 3.1415926535897932384626433832795;
-
 static struct dp *create_v22(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations);
@@ -460,19 +458,6 @@ static int observe_phase_change(
 	return 0;
 }
 
-static uint8_t point_phase_change(
-	const struct sippymodem_qam_point *previous,
-	const struct sippymodem_qam_point *current)
-{
-	double dot = previous->in_phase * current->in_phase +
-		     previous->quadrature * current->quadrature;
-	double cross = previous->in_phase * current->quadrature -
-		       previous->quadrature * current->in_phase;
-	long turns = lround(atan2(cross, dot) / (V22_PI / 2.0));
-
-	return (uint8_t)((unsigned long)turns & 3u);
-}
-
 static bool v22bis_is_ready_to_link(
 	const struct sippymodem_v22_datapump *datapump)
 {
@@ -523,9 +508,10 @@ static int receive_v22bis_point(
 		    SIPPYMODEM_V22BIS_RECEIVER_OK)
 			return -1;
 		if (matches_v22) {
-			quarter_turns = point_phase_change(
-				&datapump->previous_receive_point, point);
-			if (observe_phase_change(datapump, quarter_turns) != 0 ||
+			if (sippymodem_qam_nearest_quarter_turn(
+				    &datapump->previous_receive_point, point,
+				    &quarter_turns) != SIPPYMODEM_QAM_OK ||
+			    observe_phase_change(datapump, quarter_turns) != 0 ||
 			    sippymodem_v22bis_receiver_track_v22(
 				    &datapump->v22bis_receiver, quarter_turns,
 				    point) != SIPPYMODEM_V22BIS_RECEIVER_OK)
@@ -545,6 +531,7 @@ static int receive_sample(
 	struct sippymodem_v22_datapump *datapump, int16_t sample, bool *linked)
 {
 	struct sippymodem_qam_point point;
+	uint8_t quarter_turns;
 	bool ready;
 
 	if (sippymodem_qam_demodulator_sample(
@@ -559,10 +546,10 @@ static int receive_sample(
 		if (receive_v22bis_point(datapump, &point, linked) != 0)
 			return -1;
 	} else if (datapump->has_previous_receive_point &&
-		   observe_phase_change(
-			   datapump,
-			   point_phase_change(
-				   &datapump->previous_receive_point, &point)) != 0) {
+		   (sippymodem_qam_nearest_quarter_turn(
+			    &datapump->previous_receive_point, &point,
+			    &quarter_turns) != SIPPYMODEM_QAM_OK ||
+		    observe_phase_change(datapump, quarter_turns) != 0)) {
 		return -1;
 	}
 	if (datapump_uses_v22bis(datapump) &&
