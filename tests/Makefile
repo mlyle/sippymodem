@@ -177,6 +177,8 @@ DIFFERENTIAL_QPSK_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o
 SELF_SYNC_SCRAMBLER_OBJECT := \
 	$(BUILD_DIR)/sippymodem_self_sync_scrambler.o
+CRC16_CCITT_FALSE_OBJECT := \
+	$(BUILD_DIR)/sippymodem_crc16_ccitt_false.o
 SELF_SYNC_SCRAMBLER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_self_sync_scrambler
 SELF_SYNC_SCRAMBLER_TEST_OBJECTS := \
@@ -348,6 +350,7 @@ V34_INFO1_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_info1
 V34_INFO1_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_info1.o \
 	$(BUILD_DIR)/sippymodem_v34_info1.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o
 V34_PREEMPHASIS_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_preemphasis
@@ -423,6 +426,7 @@ V34_PHASE2_INFO_TEST_BINARY := \
 V34_PHASE2_INFO_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_info.o \
 	$(BUILD_DIR)/sippymodem_v34_info0.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o
 V34_PHASE2_DPSK_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_dpsk
@@ -437,6 +441,7 @@ V34_PHASE2_INFO_AUDIO_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o
 V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
@@ -447,6 +452,7 @@ V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v34_info0.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
@@ -459,6 +465,7 @@ V34_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v34_info0.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
@@ -470,6 +477,7 @@ V34_PHASE2_PROBE_FLOW_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v34_info0.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
@@ -1196,6 +1204,10 @@ $(BUILD_DIR)/sippymodem_differential_qpsk.o: \
 
 $(SELF_SYNC_SCRAMBLER_OBJECT): \
 	$(DSP_SOURCE_DIR)/sippymodem_self_sync_scrambler.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(CRC16_CCITT_FALSE_OBJECT): \
+	$(DSP_SOURCE_DIR)/sippymodem_crc16_ccitt_false.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_datapumps.o: \

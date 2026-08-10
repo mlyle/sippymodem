@@ -2,13 +2,13 @@
 
 #include "sippymodem_v34_phase2_info.h"
 
+#include "sippymodem_crc16_ccitt_false.h"
+
 #include <string.h>
 
 enum {
 	V34_PHASE2_INFO_PREFIX = 0x0f72,
 	V34_PHASE2_INFO_PREFIX_MASK = 0x0fff,
-	V34_PHASE2_INFO_CRC_INITIAL = 0xffff,
-	V34_PHASE2_INFO_CRC_POLYNOMIAL = 0x1021,
 };
 
 static bool payload_arguments_are_valid(
@@ -32,22 +32,15 @@ static void set_packed_bit(uint8_t *packed, size_t bit_index, uint8_t bit)
 		(uint8_t)(bit << (7u - bit_index % 8u));
 }
 
-static uint16_t crc_step(uint16_t crc, uint8_t bit)
-{
-	uint16_t next = (uint16_t)(crc << 1);
-
-	if ((((crc >> 15) ^ bit) & 1u) != 0)
-		next ^= V34_PHASE2_INFO_CRC_POLYNOMIAL;
-	return next;
-}
-
 static uint16_t payload_crc(
 	const uint8_t *payload, size_t payload_bit_count)
 {
-	uint16_t crc = V34_PHASE2_INFO_CRC_INITIAL;
+	uint16_t crc =
+		SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER;
 
 	for (size_t index = 0; index < payload_bit_count; ++index)
-		crc = crc_step(crc, packed_bit(payload, index));
+		crc = sippymodem_crc16_ccitt_false_step(
+			crc, packed_bit(payload, index) != 0);
 	return crc;
 }
 
@@ -224,7 +217,8 @@ bool sippymodem_v34_phase2_info_receiver_is_valid(
 	switch (receiver->stage) {
 	case SIPPYMODEM_V34_PHASE2_INFO_SEARCH_SYNC:
 		return receiver->payload_bit_index == 0 &&
-		       receiver->crc == V34_PHASE2_INFO_CRC_INITIAL &&
+		       receiver->crc ==
+			       SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER &&
 		       receiver->received_crc == 0 &&
 		       receiver->crc_bit_count == 0 &&
 		       receiver->trailing_fill_bit_count == 0;
@@ -267,7 +261,8 @@ static void clear_receive_frame(
 {
 	memset(receiver->payload, 0, sizeof(receiver->payload));
 	receiver->payload_bit_index = 0;
-	receiver->crc = V34_PHASE2_INFO_CRC_INITIAL;
+	receiver->crc =
+		SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER;
 	receiver->received_crc = 0;
 	receiver->crc_bit_count = 0;
 	receiver->trailing_fill_bit_count = 0;
@@ -371,7 +366,8 @@ sippymodem_v34_phase2_info_receive_bit(
 	case SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_PAYLOAD:
 		set_packed_bit(next.payload, next.payload_bit_index, bit);
 		next.payload_bit_index++;
-		next.crc = crc_step(next.crc, bit);
+		next.crc = sippymodem_crc16_ccitt_false_step(
+			next.crc, bit != 0);
 		if (next.payload_bit_index ==
 		    next.expected_payload_bit_count)
 			next.stage = SIPPYMODEM_V34_PHASE2_INFO_RECEIVE_CRC;
