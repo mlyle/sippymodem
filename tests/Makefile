@@ -177,7 +177,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
-	$(BUILD_DIR)/sippymodem_qpsk.o \
+	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v22_datapump.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v23_datapump.o
@@ -197,9 +197,9 @@ V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o
-QPSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qpsk
-QPSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qpsk.o \
-	$(BUILD_DIR)/sippymodem_qpsk.o
+QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
+QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_qam.o
 FSK_INTEGRATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_fsk_integration
 FSK_INTEGRATION_TEST_OBJECTS := \
@@ -211,7 +211,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
-	$(BUILD_DIR)/sippymodem_qpsk.o \
+	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v22_datapump.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v23_datapump.o \
@@ -231,7 +231,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY) $(MAIN_TEST_BINARY) \
 	$(DC_FILTER_TEST_BINARY) $(NATIVE_CORE_TEST_BINARY) \
 	$(FSK_TEST_BINARY) $(BAUDOT_TEST_BINARY) $(V23_TEST_BINARY) \
-	$(V22_FRAMING_TEST_BINARY) $(QPSK_TEST_BINARY) \
+	$(V22_FRAMING_TEST_BINARY) $(QAM_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
@@ -259,7 +259,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(FSK_TEST_OBJECTS:.o=.d) $(BAUDOT_TEST_OBJECTS:.o=.d) \
 	$(V23_TEST_OBJECTS:.o=.d) \
 	$(V22_FRAMING_TEST_OBJECTS:.o=.d) \
-	$(QPSK_TEST_OBJECTS:.o=.d) \
+	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
@@ -303,7 +303,7 @@ test: $(TEST_BINARIES)
 	./$(BAUDOT_TEST_BINARY)
 	./$(V23_TEST_BINARY)
 	./$(V22_FRAMING_TEST_BINARY)
-	./$(QPSK_TEST_BINARY)
+	./$(QAM_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 	./$(PJSIP_TEST_BINARY)
@@ -413,7 +413,7 @@ $(V23_TEST_BINARY): $(V23_TEST_OBJECTS)
 $(V22_FRAMING_TEST_BINARY): $(V22_FRAMING_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
-$(QPSK_TEST_BINARY): $(QPSK_TEST_OBJECTS)
+$(QAM_TEST_BINARY): $(QAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(FSK_INTEGRATION_TEST_BINARY): $(FSK_INTEGRATION_TEST_OBJECTS)
@@ -568,7 +568,7 @@ $(BUILD_DIR)/sippymodem_v22_datapump.o: \
 	../src/sippymodem_v22_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_qpsk.o: ../src/sippymodem_qpsk.c | $(BUILD_DIR)
+$(BUILD_DIR)/sippymodem_qam.o: ../src/sippymodem_qam.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/native_%.o: ../src/%.c | $(BUILD_DIR)

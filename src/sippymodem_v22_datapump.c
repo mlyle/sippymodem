@@ -4,7 +4,7 @@
 
 #include "modem.h"
 #include "modem_param.h"
-#include "sippymodem_qpsk.h"
+#include "sippymodem_qam.h"
 #include "sippymodem_v22_framing.h"
 
 #include <limits.h>
@@ -30,7 +30,7 @@ enum {
 	V22_MIN_LINE_POWER = 1000000,
 };
 
-static const struct sippymodem_qpsk_channel v22_low_channel = {
+static const struct sippymodem_qam_channel v22_low_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V22_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
@@ -39,7 +39,7 @@ static const struct sippymodem_qpsk_channel v22_low_channel = {
 	.pulse_span_symbols = V22_PULSE_SPAN_SYMBOLS,
 };
 
-static const struct sippymodem_qpsk_channel v22_high_channel = {
+static const struct sippymodem_qam_channel v22_high_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V22_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
@@ -65,8 +65,8 @@ enum sippymodem_v22_transmit_mode {
 
 struct sippymodem_v22_datapump {
 	struct dp dp;
-	struct sippymodem_qpsk_modulator modulator;
-	struct sippymodem_qpsk_demodulator demodulator;
+	struct sippymodem_qam_modulator modulator;
+	struct sippymodem_qam_demodulator demodulator;
 	struct sippymodem_v22_symbol_encoder encoder;
 	struct sippymodem_v22_scrambler descrambler;
 	enum sippymodem_v22_training_state training_state;
@@ -144,8 +144,8 @@ static struct dp *create_v22(
 	int max_fragment, struct dp_operations *operations)
 {
 	struct sippymodem_v22_datapump *datapump;
-	const struct sippymodem_qpsk_channel *transmit_channel;
-	const struct sippymodem_qpsk_channel *receive_channel;
+	const struct sippymodem_qam_channel *transmit_channel;
+	const struct sippymodem_qam_channel *receive_channel;
 
 	if (modem == NULL || !id_uses_v22_carrier(id) ||
 	    (caller != 0 && caller != 1) ||
@@ -161,12 +161,12 @@ static struct dp *create_v22(
 						   &v22_high_channel;
 	receive_channel = datapump->originator ? &v22_high_channel :
 						  &v22_low_channel;
-	if (sippymodem_qpsk_modulator_init(
+	if (sippymodem_qam_modulator_init(
 		    &datapump->modulator, transmit_channel,
-		    V22_TRANSMIT_AMPLITUDE) != SIPPYMODEM_QPSK_OK ||
-	    sippymodem_qpsk_demodulator_init(
+		    V22_TRANSMIT_AMPLITUDE) != SIPPYMODEM_QAM_OK ||
+	    sippymodem_qam_demodulator_init(
 		    &datapump->demodulator, receive_channel) !=
-		    SIPPYMODEM_QPSK_OK ||
+		    SIPPYMODEM_QAM_OK ||
 	    sippymodem_v22_symbol_encoder_init(&datapump->encoder, 0) !=
 		    SIPPYMODEM_V22_FRAMING_OK) {
 		free(datapump);
@@ -250,13 +250,13 @@ static int generate_sample(
 		*sample = 0;
 		return 0;
 	}
-	can_accept = sippymodem_qpsk_modulator_can_accept_symbol(
+	can_accept = sippymodem_qam_modulator_can_accept_symbol(
 		&datapump->modulator);
 	if (can_accept && next_transmit_quadrant(datapump) != 0)
 		return -1;
-	if (sippymodem_qpsk_modulator_sample(
+	if (sippymodem_qam_modulator_sample(
 		    &datapump->modulator, datapump->transmit_quadrant, sample,
-		    &accepted) != SIPPYMODEM_QPSK_OK ||
+		    &accepted) != SIPPYMODEM_QAM_OK ||
 	    accepted != can_accept)
 		return -1;
 	return 0;
@@ -346,9 +346,9 @@ static int receive_sample(
 	uint8_t quarter_turns;
 	bool ready;
 
-	if (sippymodem_qpsk_demodulator_sample(
+	if (sippymodem_qam_demodulator_sample(
 		    &datapump->demodulator, sample, &quarter_turns, &ready) !=
-	    SIPPYMODEM_QPSK_OK)
+	    SIPPYMODEM_QAM_OK)
 		return -1;
 	if (ready && observe_phase_change(datapump, quarter_turns) != 0)
 		return -1;
@@ -396,7 +396,7 @@ static int advance_training_timer(
 }
 
 static bool carrier_is_present(
-	const struct sippymodem_qpsk_measurement *measurement,
+	const struct sippymodem_qam_measurement *measurement,
 	const int16_t *samples, int count)
 {
 	uint64_t power = 0;
@@ -423,7 +423,7 @@ static int process_v22(
 	struct sippymodem_v22_datapump *datapump = v22_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
-	struct sippymodem_qpsk_measurement measurement;
+	struct sippymodem_qam_measurement measurement;
 	bool linked = false;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
@@ -450,7 +450,7 @@ static int process_v22(
 		return DPSTAT_CONNECT;
 	if (datapump->training_state != V22_TRAINING_ONLINE)
 		return DPSTAT_OK;
-	measurement = sippymodem_qpsk_demodulator_measure(
+	measurement = sippymodem_qam_demodulator_measure(
 		&datapump->demodulator);
 	if (carrier_is_present(&measurement, receive, count)) {
 		datapump->missing_carrier_samples = 0;
