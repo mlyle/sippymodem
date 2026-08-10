@@ -154,7 +154,13 @@ static bool test_validation(void)
 	struct sippymodem_qam_point point = { 7.0, -9.0 };
 	struct sippymodem_qam_point before = point;
 
-	CHECK(sippymodem_v34_training_constellation_point(
+	CHECK(sippymodem_v34_constellation_size_is_valid(
+		      SIPPYMODEM_V34_CONSTELLATION_4_POINT) &&
+	      sippymodem_v34_constellation_size_is_valid(
+		      SIPPYMODEM_V34_CONSTELLATION_16_POINT) &&
+	      !sippymodem_v34_constellation_size_is_valid(
+		      (enum sippymodem_v34_constellation_size)8) &&
+	      sippymodem_v34_training_constellation_point(
 		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, 1, 0,
 		      &point) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      sippymodem_v34_training_constellation_point(

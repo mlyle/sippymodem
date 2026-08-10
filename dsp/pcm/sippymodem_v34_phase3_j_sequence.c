@@ -16,18 +16,12 @@ _Static_assert(
 		SIPPYMODEM_V34_PHASE3_J_PATTERN_BITS,
 	"V.34 J must carry two bits in every 2D symbol");
 
-static bool constellation_is_valid(
-	enum sippymodem_v34_constellation_size constellation)
-{
-	return constellation == SIPPYMODEM_V34_CONSTELLATION_4_POINT ||
-	       constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT;
-}
-
 bool sippymodem_v34_phase3_j_sequence_is_valid(
 	const struct sippymodem_v34_phase3_j_sequence *sequence)
 {
 	return sequence != NULL &&
-	       constellation_is_valid(sequence->remote_constellation) &&
+	       sippymodem_v34_constellation_size_is_valid(
+		       sequence->remote_constellation) &&
 	       sequence->previous_clockwise_quarter_turns < 4u &&
 	       sequence->symbol_in_pattern <
 		       SIPPYMODEM_V34_PHASE3_J_PATTERN_SYMBOLS &&
@@ -45,7 +39,8 @@ sippymodem_v34_phase3_j_sequence_init_from_trn(
 
 	if (sequence == NULL || !sippymodem_v34_phase3_trn_is_valid(trn) ||
 	    !trn->has_last_symbol ||
-	    !constellation_is_valid(remote_constellation))
+	    !sippymodem_v34_constellation_size_is_valid(
+		    remote_constellation))
 		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	initialized = (struct sippymodem_v34_phase3_j_sequence){
 		.scrambler = trn->scrambler,

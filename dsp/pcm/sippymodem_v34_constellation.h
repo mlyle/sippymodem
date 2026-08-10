@@ -5,6 +5,8 @@
 
 #include "sippymodem_qam.h"
 
+#include <stdbool.h>
+
 enum sippymodem_v34_constellation_size {
 	SIPPYMODEM_V34_CONSTELLATION_4_POINT = 4,
 	SIPPYMODEM_V34_CONSTELLATION_16_POINT = 16,
@@ -14,6 +16,9 @@ enum sippymodem_v34_constellation_result {
 	SIPPYMODEM_V34_CONSTELLATION_OK,
 	SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT,
 };
+
+bool sippymodem_v34_constellation_size_is_valid(
+	enum sippymodem_v34_constellation_size constellation);
 
 /* Return point zero of the V.34 quarter-superconstellation after the given
  * number of 90-degree turns. Positive turns are counterclockwise; negative

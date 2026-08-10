@@ -4,17 +4,11 @@
 
 #include <stddef.h>
 
-static bool constellation_is_valid(
-	enum sippymodem_v34_constellation_size constellation)
-{
-	return constellation == SIPPYMODEM_V34_CONSTELLATION_4_POINT ||
-	       constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT;
-}
-
 bool sippymodem_v34_phase4_trn_is_valid(
 	const struct sippymodem_v34_phase4_trn *trn)
 {
-	if (trn == NULL || !constellation_is_valid(trn->constellation) ||
+	if (trn == NULL ||
+	    !sippymodem_v34_constellation_size_is_valid(trn->constellation) ||
 	    trn->last_clockwise_quarter_turns > 3u ||
 	    (!trn->has_last_symbol &&
 	     trn->last_clockwise_quarter_turns != 0u))
@@ -33,7 +27,8 @@ enum sippymodem_v34_phase4_trn_result sippymodem_v34_phase4_trn_init(
 		.constellation = constellation,
 	};
 
-	if (trn == NULL || !constellation_is_valid(constellation))
+	if (trn == NULL ||
+	    !sippymodem_v34_constellation_size_is_valid(constellation))
 		return SIPPYMODEM_V34_PHASE4_TRN_INVALID_ARGUMENT;
 	if (sippymodem_v34_transmit_scrambler_init(
 		    &initialized.scrambler, role) !=

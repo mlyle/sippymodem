@@ -9,6 +9,13 @@ static const double V34_POINT_ZERO_COORDINATE =
 static const double V34_SIXTEEN_POINT_GRID_UNIT =
 	0.31622776601683793319988935444327;
 
+bool sippymodem_v34_constellation_size_is_valid(
+	enum sippymodem_v34_constellation_size constellation)
+{
+	return constellation == SIPPYMODEM_V34_CONSTELLATION_4_POINT ||
+	       constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT;
+}
+
 static struct sippymodem_qam_point rotate_point(
 	struct sippymodem_qam_point point, int counterclockwise_quarter_turns)
 {
@@ -58,7 +65,8 @@ sippymodem_v34_training_constellation_point(
 	struct sippymodem_qam_point next;
 	double grid_unit;
 
-	if (point == NULL || clockwise_quarter_turns > 3u)
+	if (point == NULL || clockwise_quarter_turns > 3u ||
+	    !sippymodem_v34_constellation_size_is_valid(constellation))
 		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
 	switch (constellation) {
 	case SIPPYMODEM_V34_CONSTELLATION_4_POINT:
