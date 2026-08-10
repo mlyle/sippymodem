@@ -154,6 +154,11 @@ enum sippymodem_v34_framing_result sippymodem_v34_descramble_group(
 	return transform_group(descrambler, input, bit_count, output, true);
 }
 
+static uint8_t swap_dibit_bits(uint8_t dibit)
+{
+	return (uint8_t)(((dibit & 1u) << 1) | ((dibit >> 1) & 1u));
+}
+
 enum sippymodem_v34_framing_result
 sippymodem_v34_scramble_mapped_dibit(
 	struct sippymodem_v34_scrambler *scrambler, uint8_t input_dibit,
@@ -161,8 +166,6 @@ sippymodem_v34_scramble_mapped_dibit(
 {
 	struct sippymodem_v34_scrambler next;
 	uint8_t scrambled_dibit;
-	uint8_t first;
-	uint8_t second;
 
 	if (!sippymodem_v34_scrambler_is_valid(scrambler) ||
 	    input_dibit > 3u || mapped_dibit == NULL)
@@ -172,10 +175,29 @@ sippymodem_v34_scramble_mapped_dibit(
 		    &next, input_dibit, 2u, &scrambled_dibit) !=
 	    SIPPYMODEM_V34_FRAMING_OK)
 		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
-	first = (uint8_t)((scrambled_dibit >> 1) & 1u);
-	second = (uint8_t)(scrambled_dibit & 1u);
 	*scrambler = next;
-	*mapped_dibit = (uint8_t)((second << 1) | first);
+	*mapped_dibit = swap_dibit_bits(scrambled_dibit);
+	return SIPPYMODEM_V34_FRAMING_OK;
+}
+
+enum sippymodem_v34_framing_result
+sippymodem_v34_descramble_mapped_dibit(
+	struct sippymodem_v34_scrambler *descrambler, uint8_t mapped_dibit,
+	uint8_t *output_dibit)
+{
+	struct sippymodem_v34_scrambler next;
+	uint8_t output;
+
+	if (!sippymodem_v34_scrambler_is_valid(descrambler) ||
+	    mapped_dibit > 3u || output_dibit == NULL)
+		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
+	next = *descrambler;
+	if (sippymodem_v34_descramble_group(
+		    &next, swap_dibit_bits(mapped_dibit), 2u, &output) !=
+	    SIPPYMODEM_V34_FRAMING_OK)
+		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
+	*descrambler = next;
+	*output_dibit = output;
 	return SIPPYMODEM_V34_FRAMING_OK;
 }
 
@@ -203,6 +225,25 @@ sippymodem_v34_scramble_differential_dibit(
 	*scrambler = next;
 	*clockwise_quarter_turns = rotation;
 	return SIPPYMODEM_V34_FRAMING_OK;
+}
+
+enum sippymodem_v34_framing_result
+sippymodem_v34_descramble_differential_dibit(
+	struct sippymodem_v34_scrambler *descrambler,
+	uint8_t previous_clockwise_quarter_turns,
+	uint8_t current_clockwise_quarter_turns, uint8_t *output_dibit)
+{
+	uint8_t increment;
+
+	if (!sippymodem_v34_scrambler_is_valid(descrambler) ||
+	    previous_clockwise_quarter_turns > 3u ||
+	    current_clockwise_quarter_turns > 3u || output_dibit == NULL)
+		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
+	increment = (uint8_t)((current_clockwise_quarter_turns + 4u -
+			       previous_clockwise_quarter_turns) &
+			      3u);
+	return sippymodem_v34_descramble_mapped_dibit(
+		descrambler, increment, output_dibit);
 }
 
 enum sippymodem_v34_framing_result

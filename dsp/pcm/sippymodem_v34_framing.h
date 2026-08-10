@@ -65,6 +65,13 @@ sippymodem_v34_scramble_mapped_dibit(
 	struct sippymodem_v34_scrambler *scrambler, uint8_t input_dibit,
 	uint8_t *mapped_dibit);
 
+/* Undo the mapped bit order and descramble the first-then-second pair.
+ * Rejected calls leave state and output unchanged. */
+enum sippymodem_v34_framing_result
+sippymodem_v34_descramble_mapped_dibit(
+	struct sippymodem_v34_scrambler *descrambler, uint8_t mapped_dibit,
+	uint8_t *output_dibit);
+
 /* Scramble I1 followed by I2, form In = 2*I2 + I1, and add In modulo
  * four to the previous clockwise rotation. Rejected calls leave state and
  * output unchanged. */
@@ -73,6 +80,15 @@ sippymodem_v34_scramble_differential_dibit(
 	struct sippymodem_v34_scrambler *scrambler, uint8_t input_dibit,
 	uint8_t previous_clockwise_quarter_turns,
 	uint8_t *clockwise_quarter_turns);
+
+/* Recover the modulo-four increment between consecutive clockwise rotations,
+ * then undo its mapped bit order and descramble it. Rejected calls leave state
+ * and output unchanged. */
+enum sippymodem_v34_framing_result
+sippymodem_v34_descramble_differential_dibit(
+	struct sippymodem_v34_scrambler *descrambler,
+	uint8_t previous_clockwise_quarter_turns,
+	uint8_t current_clockwise_quarter_turns, uint8_t *output_dibit);
 
 enum sippymodem_v34_framing_result
 sippymodem_v34_superframe_inversion_bit(

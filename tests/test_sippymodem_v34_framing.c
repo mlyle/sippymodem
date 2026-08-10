@@ -173,6 +173,52 @@ static bool test_differential_dibits(void)
 	return true;
 }
 
+static bool test_differential_dibit_round_trip(void)
+{
+	static const enum sippymodem_v34_station_role roles[] = {
+		SIPPYMODEM_V34_CALLING_STATION,
+		SIPPYMODEM_V34_ANSWERING_STATION,
+	};
+	uint32_t random = UINT32_C(0x42b9e1d7);
+
+	for (size_t role = 0; role < ARRAY_LENGTH(roles); ++role) {
+		for (uint8_t start = 0; start < 4u; ++start) {
+			struct sippymodem_v34_scrambler scrambler;
+			struct sippymodem_v34_scrambler descrambler;
+			uint8_t previous = start;
+
+			CHECK(sippymodem_v34_transmit_scrambler_init(
+				      &scrambler, roles[role]) ==
+				      SIPPYMODEM_V34_FRAMING_OK &&
+			      sippymodem_v34_transmit_scrambler_init(
+				      &descrambler, roles[role]) ==
+				      SIPPYMODEM_V34_FRAMING_OK,
+			      "V.34 differential round trip did not initialize");
+			for (size_t index = 0; index < 1024; ++index) {
+				uint8_t input =
+					(uint8_t)(fixture_random(&random) & 3u);
+				uint8_t current;
+				uint8_t output;
+
+				CHECK(sippymodem_v34_scramble_differential_dibit(
+					      &scrambler, input, previous,
+					      &current) ==
+						      SIPPYMODEM_V34_FRAMING_OK &&
+				      sippymodem_v34_descramble_differential_dibit(
+					      &descrambler, previous, current,
+					      &output) ==
+						      SIPPYMODEM_V34_FRAMING_OK &&
+				      output == input &&
+				      descrambler.history == scrambler.history,
+				      "V.34 differential round trip changed at %zu/%u/%zu",
+				      role, start, index);
+				previous = current;
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_mapped_dibits(void)
 {
 	static const enum sippymodem_v34_station_role roles[] = {
@@ -196,6 +242,45 @@ static bool test_mapped_dibits(void)
 			      scrambler.history == input,
 			      "V.34 mapped dibit changed at %zu/%u", role,
 			      input);
+		}
+	}
+	return true;
+}
+
+static bool test_mapped_dibit_round_trip(void)
+{
+	static const enum sippymodem_v34_station_role roles[] = {
+		SIPPYMODEM_V34_CALLING_STATION,
+		SIPPYMODEM_V34_ANSWERING_STATION,
+	};
+	uint32_t random = UINT32_C(0x9127c43b);
+
+	for (size_t role = 0; role < ARRAY_LENGTH(roles); ++role) {
+		struct sippymodem_v34_scrambler scrambler;
+		struct sippymodem_v34_scrambler descrambler;
+
+		CHECK(sippymodem_v34_transmit_scrambler_init(
+			      &scrambler, roles[role]) ==
+			      SIPPYMODEM_V34_FRAMING_OK &&
+		      sippymodem_v34_transmit_scrambler_init(
+			      &descrambler, roles[role]) ==
+			      SIPPYMODEM_V34_FRAMING_OK,
+		      "V.34 mapped round trip did not initialize");
+		for (size_t index = 0; index < 4096; ++index) {
+			uint8_t input = (uint8_t)(fixture_random(&random) & 3u);
+			uint8_t mapped;
+			uint8_t output;
+
+			CHECK(sippymodem_v34_scramble_mapped_dibit(
+				      &scrambler, input, &mapped) ==
+					      SIPPYMODEM_V34_FRAMING_OK &&
+			      sippymodem_v34_descramble_mapped_dibit(
+				      &descrambler, mapped, &output) ==
+					      SIPPYMODEM_V34_FRAMING_OK &&
+			      output == input &&
+			      descrambler.history == scrambler.history,
+			      "V.34 mapped round trip changed at %zu/%zu", role,
+			      index);
 		}
 	}
 	return true;
@@ -301,6 +386,15 @@ static bool test_validation(void)
 	      sippymodem_v34_scramble_mapped_dibit(
 		      &scrambler, 0, NULL) ==
 		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_descramble_mapped_dibit(
+		      NULL, 0, &output) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_descramble_mapped_dibit(
+		      &scrambler, 4, &output) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_descramble_mapped_dibit(
+		      &scrambler, 0, NULL) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
 	      sippymodem_v34_scramble_differential_dibit(
 		      NULL, 0, 0, &rotation) ==
 		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
@@ -311,6 +405,18 @@ static bool test_validation(void)
 		      &scrambler, 0, 4, &rotation) ==
 		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
 	      sippymodem_v34_scramble_differential_dibit(
+		      &scrambler, 0, 0, NULL) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_descramble_differential_dibit(
+		      NULL, 0, 0, &output) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_descramble_differential_dibit(
+		      &scrambler, 4, 0, &output) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_descramble_differential_dibit(
+		      &scrambler, 0, 4, &output) ==
+		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
+	      sippymodem_v34_descramble_differential_dibit(
 		      &scrambler, 0, 0, NULL) ==
 		      SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT &&
 	      memcmp(&scrambler, &saved, sizeof(scrambler)) == 0 &&
@@ -343,7 +449,10 @@ int main(void)
 		{ "station role polynomials", test_station_role_polynomials },
 		{ "group round trip", test_group_round_trip },
 		{ "mapped dibits", test_mapped_dibits },
+		{ "mapped dibit round trip", test_mapped_dibit_round_trip },
 		{ "differential dibits", test_differential_dibits },
+		{ "differential dibit round trip",
+		  test_differential_dibit_round_trip },
 		{ "superframe inversion patterns",
 		  test_superframe_inversion_patterns },
 		{ "validation", test_validation },
