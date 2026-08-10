@@ -250,6 +250,45 @@ enum sippymodem_v8_menu_result sippymodem_v8_menu_decode(
 	return SIPPYMODEM_V8_MENU_OK;
 }
 
+enum sippymodem_v8_menu_result sippymodem_v8_joint_menu_select(
+	const struct sippymodem_v8_menu *call_menu,
+	const struct sippymodem_v8_menu *local_menu,
+	struct sippymodem_v8_menu *joint_menu)
+{
+	struct sippymodem_v8_menu selected;
+
+	if (!menu_is_valid(call_menu) || !menu_is_valid(local_menu) ||
+	    call_menu->modulations == 0 || local_menu->modulations == 0 ||
+	    joint_menu == NULL)
+		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	selected = (struct sippymodem_v8_menu){
+		.call_function = call_menu->call_function,
+		.modulations = call_menu->modulations & local_menu->modulations,
+		.modulation_octets = call_menu->modulation_octets,
+		.lapm = call_menu->lapm && local_menu->lapm,
+	};
+	if (!menu_is_valid(&selected))
+		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	*joint_menu = selected;
+	return SIPPYMODEM_V8_MENU_OK;
+}
+
+enum sippymodem_v8_menu_result sippymodem_v8_menu_selected_modulation(
+	const struct sippymodem_v8_menu *menu,
+	enum sippymodem_v8_modulation *modulation)
+{
+	uint16_t selected = SIPPYMODEM_V8_MODULATION_V34_DUPLEX;
+
+	if (!menu_is_valid(menu) || modulation == NULL)
+		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	if (menu->modulations == 0)
+		return SIPPYMODEM_V8_MENU_NO_COMMON_MODULATION;
+	while ((menu->modulations & selected) == 0)
+		selected <<= 1;
+	*modulation = (enum sippymodem_v8_modulation)selected;
+	return SIPPYMODEM_V8_MENU_OK;
+}
+
 const char *sippymodem_v8_menu_result_name(
 	enum sippymodem_v8_menu_result result)
 {
@@ -264,6 +303,8 @@ const char *sippymodem_v8_menu_result_name(
 		return "malformed menu";
 	case SIPPYMODEM_V8_MENU_UNSUPPORTED_CALL_FUNCTION:
 		return "unsupported call function";
+	case SIPPYMODEM_V8_MENU_NO_COMMON_MODULATION:
+		return "no common modulation";
 	}
 	return "unknown";
 }

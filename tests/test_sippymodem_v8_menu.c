@@ -234,6 +234,112 @@ static bool test_decode_rejection(void)
 	return true;
 }
 
+static bool test_joint_menu_selection(void)
+{
+	struct sippymodem_v8_menu call_menu;
+	struct sippymodem_v8_menu local_menu;
+	struct sippymodem_v8_menu joint_menu;
+	enum sippymodem_v8_modulation selected;
+	uint16_t local_modulations =
+		SIPPYMODEM_V8_MODULATION_V34_HALF_DUPLEX |
+		SIPPYMODEM_V8_MODULATION_V32 |
+		SIPPYMODEM_V8_MODULATION_V21;
+
+	CHECK(sippymodem_v8_call_menu_init(
+		      &call_menu, SIPPYMODEM_V8_MODULATION_ALL, true) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_call_menu_init(
+		      &local_menu, local_modulations, true) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_joint_menu_select(
+		      &call_menu, &local_menu, &joint_menu) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      joint_menu.call_function == SIPPYMODEM_V8_CALL_DATA &&
+	      joint_menu.modulations == local_modulations &&
+	      joint_menu.modulation_octets == call_menu.modulation_octets &&
+	      joint_menu.lapm &&
+	      sippymodem_v8_menu_selected_modulation(
+		      &joint_menu, &selected) == SIPPYMODEM_V8_MENU_OK &&
+	      selected == SIPPYMODEM_V8_MODULATION_V34_HALF_DUPLEX,
+	      "V.8 joint menu did not select the first common mode");
+	return true;
+}
+
+static bool test_no_common_modulation(void)
+{
+	static const uint8_t expected[] = {
+		UINT8_C(0xc1), UINT8_C(0x05), UINT8_C(0x10),
+		UINT8_C(0x10), UINT8_C(0x2a),
+	};
+	struct sippymodem_v8_menu call_menu;
+	struct sippymodem_v8_menu local_menu;
+	struct sippymodem_v8_menu joint_menu;
+	enum sippymodem_v8_modulation selected =
+		SIPPYMODEM_V8_MODULATION_V21;
+	uint8_t information[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS];
+	size_t information_count;
+
+	CHECK(sippymodem_v8_call_menu_init(
+		      &call_menu, SIPPYMODEM_V8_MODULATION_V21, true) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_call_menu_init(
+		      &local_menu, SIPPYMODEM_V8_MODULATION_V34_DUPLEX, true) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_joint_menu_select(
+		      &call_menu, &local_menu, &joint_menu) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      joint_menu.modulations == 0 &&
+	      joint_menu.modulation_octets == 3 && joint_menu.lapm &&
+	      sippymodem_v8_menu_encode(
+		      &joint_menu, information, sizeof(information),
+		      &information_count) == SIPPYMODEM_V8_MENU_OK &&
+	      information_count == ARRAY_LENGTH(expected) &&
+	      memcmp(information, expected, sizeof(expected)) == 0 &&
+	      sippymodem_v8_menu_selected_modulation(
+		      &joint_menu, &selected) ==
+		      SIPPYMODEM_V8_MENU_NO_COMMON_MODULATION &&
+	      selected == SIPPYMODEM_V8_MODULATION_V21,
+	      "V.8 no-common-mode joint menu changed");
+	return true;
+}
+
+static bool test_joint_validation(void)
+{
+	struct sippymodem_v8_menu call_menu;
+	struct sippymodem_v8_menu local_menu;
+	struct sippymodem_v8_menu joint_menu = {
+		.modulations = UINT16_MAX,
+	};
+	struct sippymodem_v8_menu saved = joint_menu;
+	enum sippymodem_v8_modulation selected =
+		SIPPYMODEM_V8_MODULATION_V21;
+
+	CHECK(sippymodem_v8_call_menu_init(
+		      &call_menu, SIPPYMODEM_V8_MODULATION_V21, false) ==
+		      SIPPYMODEM_V8_MENU_OK &&
+	      sippymodem_v8_call_menu_init(
+		      &local_menu, SIPPYMODEM_V8_MODULATION_V21, false) ==
+		      SIPPYMODEM_V8_MENU_OK,
+	      "V.8 joint validation fixtures did not initialize");
+	call_menu.modulations = 0;
+	CHECK(sippymodem_v8_joint_menu_select(
+		      &call_menu, &local_menu, &joint_menu) ==
+		      SIPPYMODEM_V8_MENU_INVALID_ARGUMENT &&
+	      memcmp(&joint_menu, &saved, sizeof(joint_menu)) == 0 &&
+	      sippymodem_v8_joint_menu_select(
+		      NULL, &local_menu, &joint_menu) ==
+		      SIPPYMODEM_V8_MENU_INVALID_ARGUMENT &&
+	      sippymodem_v8_menu_selected_modulation(
+		      NULL, &selected) == SIPPYMODEM_V8_MENU_INVALID_ARGUMENT &&
+	      sippymodem_v8_menu_selected_modulation(
+		      &local_menu, NULL) == SIPPYMODEM_V8_MENU_INVALID_ARGUMENT &&
+	      strcmp(sippymodem_v8_menu_result_name(
+			     SIPPYMODEM_V8_MENU_NO_COMMON_MODULATION),
+		     "no common modulation") == 0,
+	      "V.8 joint menu accepted invalid state");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_v8_menu menu;
@@ -295,6 +401,9 @@ int main(void)
 		{ "decode round trip", test_decode_round_trip },
 		{ "future categories", test_future_categories },
 		{ "decode rejection", test_decode_rejection },
+		{ "joint menu selection", test_joint_menu_selection },
+		{ "no common modulation", test_no_common_modulation },
+		{ "joint validation", test_joint_validation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
