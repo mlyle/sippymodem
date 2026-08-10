@@ -520,6 +520,13 @@ V34_DATA_TRANSMITTER_TEST_OBJECTS := \
 	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_data_carrier.o, \
 		$(V34_DATA_CARRIER_TEST_OBJECTS)) \
 	$(BUILD_DIR)/sippymodem_v34_data_transmitter.o
+V34_DATA_STREAM_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_data_stream
+V34_DATA_STREAM_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_data_stream.o \
+	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_data_transmitter.o, \
+		$(V34_DATA_TRANSMITTER_TEST_OBJECTS)) \
+	$(BUILD_DIR)/sippymodem_v34_data_stream.o
 V34_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_constellation
 V34_CONSTELLATION_TEST_OBJECTS := \
@@ -854,6 +861,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_POWER_CALIBRATION_TEST_BINARY) \
 	$(V34_DATA_CARRIER_TEST_BINARY) \
 	$(V34_DATA_TRANSMITTER_TEST_BINARY) \
+	$(V34_DATA_STREAM_TEST_BINARY) \
 	$(V34_CONSTELLATION_TEST_BINARY) \
 	$(V34_INFO1_TEST_BINARY) \
 	$(V34_PREEMPHASIS_TEST_BINARY) \
@@ -1051,6 +1059,7 @@ test: $(TEST_BINARIES)
 	./$(V34_POWER_CALIBRATION_TEST_BINARY)
 	./$(V34_DATA_CARRIER_TEST_BINARY)
 	./$(V34_DATA_TRANSMITTER_TEST_BINARY)
+	./$(V34_DATA_STREAM_TEST_BINARY)
 	./$(V34_CONSTELLATION_TEST_BINARY)
 	./$(V34_INFO1_TEST_BINARY)
 	./$(V34_PREEMPHASIS_TEST_BINARY)
@@ -1296,6 +1305,9 @@ $(V34_DATA_CARRIER_TEST_BINARY): $(V34_DATA_CARRIER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_DATA_TRANSMITTER_TEST_BINARY): $(V34_DATA_TRANSMITTER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_DATA_STREAM_TEST_BINARY): $(V34_DATA_STREAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_CONSTELLATION_TEST_BINARY): $(V34_CONSTELLATION_TEST_OBJECTS)
@@ -1681,6 +1693,10 @@ $(BUILD_DIR)/sippymodem_v34_data_line_transmitter.o: \
 $(BUILD_DIR)/sippymodem_v34_data_transmitter.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_transmitter.c | \
 	$(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_data_stream.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_stream.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_constellation.o: \

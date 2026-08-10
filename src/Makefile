@@ -114,6 +114,10 @@ SIPPYMODEM_V32_SOURCES := \
 SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_constellation.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_carrier.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_line_transmitter.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_stream.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_frame_schedule.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_framing.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info0.c \
@@ -125,8 +129,10 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_nonlinear_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_parser.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_power_calibration.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_precoder.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_shell_mapper.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_symbol_power.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_trellis.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c \
