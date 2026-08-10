@@ -166,7 +166,7 @@ static struct sippymodem_v22_datapump *v22_from_dp(struct dp *dp)
 		      &datapump->v22bis_receiver))) ||
 	    (transmit_uses_v22bis_symbols(datapump) &&
 	     (datapump->v22bis_encoder.phase_quadrant >=
-		      SIPPYMODEM_V22_PHASE_QUADRANTS ||
+		      SIPPYMODEM_QPSK_QUADRANT_COUNT ||
 	      !sippymodem_v22_scrambler_is_valid(
 		      &datapump->v22bis_encoder.scrambler))) ||
 	    (datapump->receiving_v22bis &&
@@ -374,9 +374,9 @@ static int decode_phase_change(
 	uint8_t first_scrambled;
 	uint8_t second_scrambled;
 
-	if (sippymodem_v22_differential_decode(
+	if (sippymodem_differential_qpsk_decode(
 		    0, quarter_turns, &dibit) !=
-		    SIPPYMODEM_V22_FRAMING_OK)
+		    SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
 		return -1;
 	first_scrambled = (uint8_t)(dibit >> 1);
 	second_scrambled = (uint8_t)(dibit & 1u);

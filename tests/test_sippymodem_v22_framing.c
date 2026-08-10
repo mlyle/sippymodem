@@ -18,33 +18,6 @@ static uint32_t fixture_random(uint32_t *state)
 	return *state;
 }
 
-static bool test_differential_mapping(void)
-{
-	static const uint8_t expected_turns[] = { 1, 0, 2, 3 };
-
-	for (uint8_t previous = 0; previous < 4; ++previous) {
-		for (uint8_t dibit = 0; dibit < 4; ++dibit) {
-			uint8_t decoded = UINT8_MAX;
-			uint8_t quadrant = UINT8_MAX;
-
-			CHECK(sippymodem_v22_differential_encode(
-				      previous, dibit, &quadrant) ==
-				      SIPPYMODEM_V22_FRAMING_OK &&
-				      quadrant ==
-					      (uint8_t)((previous +
-							 expected_turns[dibit]) &
-							3u) &&
-				      sippymodem_v22_differential_decode(
-					      previous, quadrant, &decoded) ==
-					      SIPPYMODEM_V22_FRAMING_OK &&
-				      decoded == dibit,
-			      "V.22 differential mapping changed at %u/%u",
-			      previous, dibit);
-		}
-	}
-	return true;
-}
-
 static bool test_scrambler_polynomial(void)
 {
 	struct sippymodem_v22_scrambler scrambler;
@@ -160,10 +133,10 @@ static bool test_v22bis_symbol_mapping(void)
 				      sippymodem_v22bis_symbol_decoder_init(
 					      &decoder, previous) ==
 					      SIPPYMODEM_V22_FRAMING_OK &&
-				      sippymodem_v22_differential_encode(
+				      sippymodem_differential_qpsk_encode(
 					      previous, (uint8_t)(nibble >> 2),
 					      &expected_quadrant) ==
-					      SIPPYMODEM_V22_FRAMING_OK,
+					      SIPPYMODEM_DIFFERENTIAL_QPSK_OK,
 			      "V.22bis mapping fixture failed at %u/%u",
 			      previous, nibble);
 			CHECK(sippymodem_v22bis_symbol_encode(
@@ -338,10 +311,6 @@ static bool test_validation(void)
 		      sippymodem_v22_scramble_bit(&scrambler, 2, &value) ==
 			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT &&
 		      sippymodem_v22_descramble_bit(&scrambler, 0, NULL) ==
-			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT &&
-		      sippymodem_v22_differential_encode(4, 0, &value) ==
-			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT &&
-		      sippymodem_v22_differential_decode(0, 4, &value) ==
 			      SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT,
 	      "V.22 framing accepted an invalid scalar argument");
 	CHECK(sippymodem_v22_symbol_encoder_init(&encoder, 0) ==
@@ -371,7 +340,6 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "differential mapping", test_differential_mapping },
 		{ "scrambler polynomial", test_scrambler_polynomial },
 		{ "scrambler lockup escape", test_scrambler_lockup_escape },
 		{ "symbol round trip", test_symbol_round_trip },

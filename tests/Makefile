@@ -164,6 +164,11 @@ MAIN_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_main.o \
 DC_FILTER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_dc_filter
 DC_FILTER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o
+DIFFERENTIAL_QPSK_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_differential_qpsk
+DIFFERENTIAL_QPSK_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o
 NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_native_core
 NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
@@ -175,6 +180,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_baudot.o \
 	$(BUILD_DIR)/sippymodem_baudot_datapump.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
@@ -198,12 +204,14 @@ V23_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v23.o \
 V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v22_framing.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o
 V22BIS_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v22bis_receiver
 V22BIS_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v22bis_receiver.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o
@@ -219,6 +227,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_baudot.o \
 	$(BUILD_DIR)/sippymodem_baudot_datapump.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
@@ -241,7 +250,8 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SLMODEM_DRIVER_TEST_BINARY) $(SLMODEM_TERMINAL_TEST_BINARY) \
 	$(RUNTIME_TEST_BINARY) \
 	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY) $(MAIN_TEST_BINARY) \
-	$(DC_FILTER_TEST_BINARY) $(NATIVE_CORE_TEST_BINARY) \
+	$(DC_FILTER_TEST_BINARY) $(DIFFERENTIAL_QPSK_TEST_BINARY) \
+	$(NATIVE_CORE_TEST_BINARY) \
 	$(FSK_TEST_BINARY) $(BAUDOT_TEST_BINARY) $(V23_TEST_BINARY) \
 	$(V22_FRAMING_TEST_BINARY) $(V22BIS_RECEIVER_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
@@ -268,7 +278,9 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(SLMODEM_TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(LOOP_TEST_OBJECTS:.o=.d) $(MAIN_TEST_OBJECTS:.o=.d) \
-	$(DC_FILTER_TEST_OBJECTS:.o=.d) $(NATIVE_CORE_TEST_OBJECTS:.o=.d) \
+	$(DC_FILTER_TEST_OBJECTS:.o=.d) \
+	$(DIFFERENTIAL_QPSK_TEST_OBJECTS:.o=.d) \
+	$(NATIVE_CORE_TEST_OBJECTS:.o=.d) \
 	$(FSK_TEST_OBJECTS:.o=.d) $(BAUDOT_TEST_OBJECTS:.o=.d) \
 	$(V23_TEST_OBJECTS:.o=.d) \
 	$(V22_FRAMING_TEST_OBJECTS:.o=.d) \
@@ -312,6 +324,7 @@ test: $(TEST_BINARIES)
 	./$(LOOP_TEST_BINARY)
 	./$(MAIN_TEST_BINARY)
 	./$(DC_FILTER_TEST_BINARY)
+	./$(DIFFERENTIAL_QPSK_TEST_BINARY)
 	./$(NATIVE_CORE_TEST_BINARY)
 	./$(FSK_TEST_BINARY)
 	./$(BAUDOT_TEST_BINARY)
@@ -411,6 +424,9 @@ $(MAIN_TEST_BINARY): $(MAIN_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(DC_FILTER_TEST_BINARY): $(DC_FILTER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(DIFFERENTIAL_QPSK_TEST_BINARY): $(DIFFERENTIAL_QPSK_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(NATIVE_CORE_TEST_BINARY): $(NATIVE_CORE_TEST_OBJECTS)
@@ -553,6 +569,10 @@ $(BUILD_DIR)/sippymodem_main_testable.o: \
 
 $(BUILD_DIR)/sippymodem_dc_filter.o: \
 	../src/sippymodem_dc_filter.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_differential_qpsk.o: \
+	../src/sippymodem_differential_qpsk.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_datapumps.o: \

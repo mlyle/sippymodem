@@ -34,7 +34,7 @@ bool sippymodem_v22bis_receiver_is_valid(
 
 	return receiver != NULL &&
 	       receiver->decoder.phase_quadrant <
-		       SIPPYMODEM_V22_PHASE_QUADRANTS &&
+		       SIPPYMODEM_QPSK_QUADRANT_COUNT &&
 	       sippymodem_v22_scrambler_is_valid(
 		       &receiver->decoder.descrambler) &&
 	       point_power(&receiver->channel_gain, &power);
@@ -124,7 +124,7 @@ sippymodem_v22bis_receiver_matches_v22(
 	    !point_power(&receiver->channel_gain, &gain_power))
 		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
 	for (uint8_t quadrant = 0;
-	     quadrant < SIPPYMODEM_V22_PHASE_QUADRANTS; ++quadrant) {
+	     quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++quadrant) {
 		struct sippymodem_qam_point ideal = quadrant_point(quadrant);
 		struct sippymodem_qam_point predicted =
 			complex_multiply(&receiver->channel_gain, &ideal);
@@ -149,7 +149,7 @@ sippymodem_v22bis_receiver_track_v22(
 
 	if (!sippymodem_v22bis_receiver_is_valid(receiver) ||
 	    receiver->v22bis_started ||
-	    quarter_turns >= SIPPYMODEM_V22_PHASE_QUADRANTS ||
+	    quarter_turns >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
 	    !point_power(point, &received_power))
 		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;

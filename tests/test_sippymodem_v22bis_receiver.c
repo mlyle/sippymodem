@@ -205,7 +205,7 @@ static bool test_validation(void)
 			      &receiver, &reference, NULL) ==
 			      SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v22bis_receiver_track_v22(
-			      &receiver, SIPPYMODEM_V22_PHASE_QUADRANTS,
+			      &receiver, SIPPYMODEM_QPSK_QUADRANT_COUNT,
 			      &reference) ==
 			      SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&

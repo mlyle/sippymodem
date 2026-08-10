@@ -3,13 +3,14 @@
 #ifndef SIPPYMODEM_V22_FRAMING_H
 #define SIPPYMODEM_V22_FRAMING_H
 
+#include "sippymodem_differential_qpsk.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
 enum {
 	SIPPYMODEM_V22_SCRAMBLER_BITS = 17,
 	SIPPYMODEM_V22_SCRAMBLER_ONES_LIMIT = 64,
-	SIPPYMODEM_V22_PHASE_QUADRANTS = 4,
 };
 
 enum sippymodem_v22_framing_result {
@@ -42,11 +43,6 @@ enum sippymodem_v22_framing_result sippymodem_v22_scramble_bit(
 enum sippymodem_v22_framing_result sippymodem_v22_descramble_bit(
 	struct sippymodem_v22_scrambler *descrambler, uint8_t input,
 	uint8_t *output);
-
-enum sippymodem_v22_framing_result sippymodem_v22_differential_encode(
-	uint8_t previous_quadrant, uint8_t dibit, uint8_t *quadrant);
-enum sippymodem_v22_framing_result sippymodem_v22_differential_decode(
-	uint8_t previous_quadrant, uint8_t quadrant, uint8_t *dibit);
 
 enum sippymodem_v22_framing_result sippymodem_v22_symbol_encoder_init(
 	struct sippymodem_v22_symbol_encoder *encoder,
