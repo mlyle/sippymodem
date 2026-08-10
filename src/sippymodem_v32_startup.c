@@ -67,7 +67,10 @@ bool sippymodem_v32_startup_is_valid(
 		       SIPPYMODEM_V32_STARTUP_CONFIRMATION_DIBITS &&
 	       startup->rate_gap_dibits <=
 		       SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS &&
-	       startup->word_dibit < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS;
+	       startup->word_dibit < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
+	       (!startup->end_pending ||
+		(startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
+		 startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_SELECTION));
 }
 
 enum sippymodem_v32_startup_result sippymodem_v32_startup_init(
@@ -113,6 +116,7 @@ static void enter_phase(
 	startup->phase_dibits = 0;
 	startup->rate_gap_dibits = 0;
 	startup->word_dibit = 0;
+	startup->end_pending = false;
 }
 
 static void add_bounded(uint16_t *value, uint16_t limit)
@@ -186,8 +190,15 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 		next.word_dibit++;
 		if (next.word_dibit == SIPPYMODEM_V32_RATE_SIGNAL_DIBITS) {
 			next.word_dibit = 0;
-			if (phase_transmits_end(next.phase))
+			if (next.end_pending) {
+				enter_phase(
+					&next,
+					next.role == SIPPYMODEM_V32_CALLER ?
+						SIPPYMODEM_V32_CALLER_SEND_END :
+						SIPPYMODEM_V32_ANSWERER_SEND_END);
+			} else if (phase_transmits_end(next.phase)) {
 				enter_phase(&next, SIPPYMODEM_V32_CONFIRM);
+			}
 		}
 	} else if (phase_transmits_bounded_training(next.phase)) {
 		add_bounded(
@@ -236,7 +247,8 @@ static enum sippymodem_v32_startup_result observe_rate_event(
 		} else {
 			if (!offer_selects_4800(offer))
 				return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
-			enter_phase(startup, SIPPYMODEM_V32_CALLER_SEND_END);
+			startup->rate_gap_dibits = 0;
+			startup->end_pending = true;
 		}
 	} else if (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER) {
 		if (!offer_supports_4800(offer))
@@ -253,10 +265,12 @@ static enum sippymodem_v32_startup_result observe_end_event(
 	if (!offer_selects_4800(offer))
 		return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
 	if (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_SELECTION)
-		enter_phase(startup, SIPPYMODEM_V32_ANSWERER_SEND_END);
+		startup->end_pending = true;
 	if (startup->phase == SIPPYMODEM_V32_CALLER_SEND_END ||
 	    startup->phase == SIPPYMODEM_V32_CONFIRM ||
-	    startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_END) {
+	    startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_END ||
+	    (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_SELECTION &&
+	     startup->end_pending)) {
 		startup->end_received = true;
 		startup->receive_mark_dibits = 0;
 	}

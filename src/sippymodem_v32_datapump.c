@@ -6,6 +6,7 @@
 #include "modem_param.h"
 #include "sippymodem_qam.h"
 #include "sippymodem_v32_framing.h"
+#include "sippymodem_v32_startup.h"
 
 #include <limits.h>
 #include <math.h>
@@ -14,16 +15,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* This first four-wire media path begins directly with role-specific TRN.
- * S1/S2 negotiation and two-wire echo cancellation remain follow-up work. */
+/* This four-wire media path begins directly with role-specific TRN and rate
+ * exchange. Initial tones, S sequences and two-wire echo cancellation remain
+ * follow-up work. */
 enum {
 	V32_SYMBOL_RATE = 2400,
 	V32_CARRIER_HZ = 1800,
 	V32_PULSE_SPAN_SYMBOLS = 6,
 	V32_TRANSMIT_AMPLITUDE = 12000,
-	V32_TRAINING_MARK_BITS = 256,
-	/* Keep TRN flowing while the peer confirms its receive path. */
-	V32_POST_LINK_MARK_SYMBOLS = 128,
 	V32_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
 	V32_MIN_LINE_POWER = 1000000,
 };
@@ -43,12 +42,11 @@ struct sippymodem_v32_datapump {
 	struct sippymodem_qam_demodulator demodulator;
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_v32_symbol_decoder decoder;
+	struct sippymodem_v32_startup startup;
 	struct sippymodem_qam_point transmit_point;
 	struct sippymodem_qam_point previous_receive_point;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
-	uint32_t training_mark_bits;
-	uint32_t post_link_mark_symbols;
 	uint32_t missing_carrier_samples;
 	bool has_previous_receive_point;
 	bool linked;
@@ -61,6 +59,7 @@ static struct dp *create_v32(
 static int delete_v32(struct dp *dp);
 static int process_v32(
 	struct dp *dp, void *receive, void *transmit, int count);
+static int enter_link(struct sippymodem_v32_datapump *datapump);
 
 static struct dp_operations v32_operations = {
 	.name = "sippymodem V.32 4800",
@@ -81,6 +80,11 @@ static enum sippymodem_v32_transmitter_role remote_role(bool caller)
 			SIPPYMODEM_V32_CALLING_TRANSMITTER;
 }
 
+static enum sippymodem_v32_endpoint_role endpoint_role(bool caller)
+{
+	return caller ? SIPPYMODEM_V32_CALLER : SIPPYMODEM_V32_ANSWERER;
+}
+
 static bool point_is_finite(const struct sippymodem_qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
@@ -98,9 +102,11 @@ static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
 	if (&datapump->dp != dp ||
 	    datapump->training_timeout_samples == 0 ||
 	    datapump->training_samples > datapump->training_timeout_samples ||
-	    datapump->training_mark_bits > V32_TRAINING_MARK_BITS ||
-	    datapump->post_link_mark_symbols > V32_POST_LINK_MARK_SYMBOLS ||
 	    datapump->missing_carrier_samples > V32_CARRIER_LOSS_SAMPLES ||
+	    !sippymodem_v32_startup_is_valid(&datapump->startup) ||
+	    datapump->startup.role != endpoint_role(datapump->caller) ||
+	    datapump->linked !=
+		    sippymodem_v32_startup_is_complete(&datapump->startup) ||
 	    datapump->encoder.phase_quadrant >=
 		    SIPPYMODEM_QPSK_QUADRANT_COUNT ||
 	    datapump->decoder.phase_quadrant >=
@@ -115,7 +121,8 @@ static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
 	    !point_is_finite(&datapump->transmit_point) ||
 	    (datapump->has_previous_receive_point &&
 	     !point_is_finite(&datapump->previous_receive_point)) ||
-	    (datapump->linked && dp->status != DPSTAT_CONNECT))
+	    (datapump->linked && dp->status != DPSTAT_CONNECT) ||
+	    (!datapump->linked && dp->status == DPSTAT_CONNECT))
 		return NULL;
 	return datapump;
 }
@@ -174,7 +181,10 @@ static struct dp *create_v32(
 		    SIPPYMODEM_V32_FRAMING_OK ||
 	    sippymodem_v32_symbol_decoder_init(
 		    &datapump->decoder, remote_role(is_caller), 0) !=
-		    SIPPYMODEM_V32_FRAMING_OK) {
+		    SIPPYMODEM_V32_FRAMING_OK ||
+	    sippymodem_v32_startup_init(
+		    &datapump->startup, endpoint_role(is_caller)) !=
+		    SIPPYMODEM_V32_STARTUP_OK) {
 		free(datapump);
 		return NULL;
 	}
@@ -204,38 +214,53 @@ static int delete_v32(struct dp *dp)
 	return 0;
 }
 
-static int next_transmit_point(struct sippymodem_v32_datapump *datapump)
+static int next_transmit_point(
+	struct sippymodem_v32_datapump *datapump, bool *linked)
 {
 	uint8_t bits[2] = { 1, 1 };
-	uint8_t input;
+	uint8_t input = 3;
 	uint8_t quadrant;
+	enum sippymodem_v32_startup_output output;
 
-	if (datapump->linked &&
-	    datapump->post_link_mark_symbols == V32_POST_LINK_MARK_SYMBOLS &&
-	    modem_get_bits(datapump->dp.modem, 1, bits, 2) != 2)
-		bits[0] = bits[1] = 1;
-	if (datapump->linked &&
-	    datapump->post_link_mark_symbols < V32_POST_LINK_MARK_SYMBOLS)
-		datapump->post_link_mark_symbols++;
-	bits[0] &= 1u;
-	bits[1] &= 1u;
-	input = (uint8_t)((bits[0] << 1) | bits[1]);
+	if (sippymodem_v32_startup_next_transmit(
+		    &datapump->startup, &output, &input) !=
+	    SIPPYMODEM_V32_STARTUP_OK)
+		return -1;
+	if (output == SIPPYMODEM_V32_STARTUP_DATA) {
+		if (!datapump->linked) {
+			if (enter_link(datapump) != 0)
+				return -1;
+			*linked = true;
+		}
+		if (modem_get_bits(datapump->dp.modem, 1, bits, 2) != 2)
+			bits[0] = bits[1] = 1;
+		bits[0] &= 1u;
+		bits[1] &= 1u;
+		input = (uint8_t)((bits[0] << 1) | bits[1]);
+	}
 	if (sippymodem_v32_symbol_encode(
 		    &datapump->encoder, input, &quadrant) !=
 	    SIPPYMODEM_V32_FRAMING_OK)
 		return -1;
 	datapump->transmit_point = quadrant_point(quadrant);
+	if (!datapump->linked &&
+	    sippymodem_v32_startup_is_complete(&datapump->startup)) {
+		if (enter_link(datapump) != 0)
+			return -1;
+		*linked = true;
+	}
 	return 0;
 }
 
 static int generate_sample(
-	struct sippymodem_v32_datapump *datapump, int16_t *sample)
+	struct sippymodem_v32_datapump *datapump, int16_t *sample,
+	bool *linked)
 {
 	bool can_accept = sippymodem_qam_modulator_can_accept_symbol(
 		&datapump->modulator);
 	bool accepted;
 
-	if ((can_accept && next_transmit_point(datapump) != 0) ||
+	if ((can_accept && next_transmit_point(datapump, linked) != 0) ||
 	    sippymodem_qam_modulator_sample(
 		    &datapump->modulator, &datapump->transmit_point, sample,
 		    &accepted) != SIPPYMODEM_QAM_OK ||
@@ -271,15 +296,15 @@ static int observe_dibit(
 			(void)modem_put_bits(datapump->dp.modem, 1, bits, 2);
 		return 0;
 	}
-	for (size_t index = 0; index < sizeof(bits); ++index) {
-		if (bits[index] == 0) {
-			datapump->training_mark_bits = 0;
-		} else if (datapump->training_mark_bits <
-			   V32_TRAINING_MARK_BITS) {
-			datapump->training_mark_bits++;
-		}
-	}
-	if (datapump->training_mark_bits == V32_TRAINING_MARK_BITS) {
+	{
+		bool connected;
+
+		if (sippymodem_v32_startup_observe(
+			    &datapump->startup, dibit, &connected) !=
+		    SIPPYMODEM_V32_STARTUP_OK)
+			return -1;
+		if (!connected)
+			return 0;
 		if (enter_link(datapump) != 0)
 			return -1;
 		*linked = true;
@@ -368,7 +393,7 @@ static int process_v32(
 		datapump->training_samples += (unsigned int)count;
 	}
 	for (int index = 0; index < count; ++index) {
-		if (generate_sample(datapump, &transmit[index]) != 0 ||
+		if (generate_sample(datapump, &transmit[index], &linked) != 0 ||
 		    receive_sample(datapump, receive[index], &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;

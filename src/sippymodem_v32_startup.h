@@ -55,6 +55,7 @@ struct sippymodem_v32_startup {
 	enum sippymodem_v32_startup_phase phase;
 	uint8_t word_dibit;
 	bool end_received;
+	bool end_pending;
 };
 
 enum sippymodem_v32_startup_result sippymodem_v32_startup_init(

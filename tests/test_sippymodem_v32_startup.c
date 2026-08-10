@@ -10,6 +10,25 @@ enum {
 	TEST_MAX_STARTUP_DIBITS = 4096,
 };
 
+static bool observe_word(
+	struct sippymodem_v32_startup *startup, uint16_t word)
+{
+	for (unsigned int index = 0;
+	     index < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS; ++index) {
+		uint8_t dibit;
+		bool connected;
+
+		CHECK(sippymodem_v32_rate_signal_dibit(word, index, &dibit) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+			      sippymodem_v32_startup_observe(
+				      startup, dibit, &connected) ==
+				      SIPPYMODEM_V32_STARTUP_OK &&
+			      !connected,
+		      "V.32 startup could not observe word 0x%04x", word);
+	}
+	return true;
+}
+
 static bool test_role_exchange(void)
 {
 	struct sippymodem_v32_startup caller;
@@ -123,6 +142,68 @@ static bool test_training_boundary(void)
 	return true;
 }
 
+static bool test_end_waits_for_rate_boundary(void)
+{
+	struct sippymodem_v32_startup caller;
+
+	CHECK(sippymodem_v32_startup_init(
+		      &caller, SIPPYMODEM_V32_CALLER) ==
+		      SIPPYMODEM_V32_STARTUP_OK &&
+		      observe_word(&caller, 0x0511) &&
+		      observe_word(&caller, 0x0511) &&
+		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE,
+	      "V.32 boundary fixture did not acquire R1");
+	for (unsigned int index = 0; index < 3; ++index) {
+		enum sippymodem_v32_startup_output output;
+		uint8_t dibit;
+		uint8_t expected;
+
+		CHECK(sippymodem_v32_startup_next_transmit(
+			      &caller, &output, &dibit) ==
+			      SIPPYMODEM_V32_STARTUP_OK &&
+			      sippymodem_v32_rate_signal_dibit(
+				      caller.rate_word, index, &expected) ==
+				      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+			      output == SIPPYMODEM_V32_STARTUP_DIBIT &&
+			      dibit == expected,
+		      "V.32 boundary fixture changed R2 dibit %u", index);
+	}
+	for (unsigned int index = 0; index < 40; ++index) {
+		bool connected;
+
+		CHECK(sippymodem_v32_startup_observe(
+			      &caller, 3, &connected) ==
+			      SIPPYMODEM_V32_STARTUP_OK &&
+			      !connected,
+		      "V.32 boundary fixture could not observe its rate gap");
+	}
+	CHECK(observe_word(&caller, 0x0511) &&
+		      observe_word(&caller, 0x0511) && caller.end_pending &&
+		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
+		      caller.word_dibit == 3,
+	      "V.32 startup did not defer E at a partial R2 word");
+	for (unsigned int index = 3;
+	     index < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS; ++index) {
+		enum sippymodem_v32_startup_output output;
+		uint8_t dibit;
+		uint8_t expected;
+
+		CHECK(sippymodem_v32_startup_next_transmit(
+			      &caller, &output, &dibit) ==
+			      SIPPYMODEM_V32_STARTUP_OK &&
+			      sippymodem_v32_rate_signal_dibit(
+				      caller.rate_word, index, &expected) ==
+				      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+			      output == SIPPYMODEM_V32_STARTUP_DIBIT &&
+			      dibit == expected,
+		      "V.32 startup truncated R2 at dibit %u", index);
+	}
+	CHECK(caller.phase == SIPPYMODEM_V32_CALLER_SEND_END &&
+		      !caller.end_pending,
+	      "V.32 startup did not enter E on the R2 boundary");
+	return true;
+}
+
 static bool test_no_common_rate(void)
 {
 	struct sippymodem_v32_startup caller;
@@ -212,6 +293,8 @@ int main(void)
 	} tests[] = {
 		{ "role exchange", test_role_exchange },
 		{ "training boundary", test_training_boundary },
+		{ "end waits for rate boundary",
+		  test_end_waits_for_rate_boundary },
 		{ "no common rate", test_no_common_rate },
 		{ "validation", test_validation },
 	};
