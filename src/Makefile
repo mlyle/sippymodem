@@ -96,6 +96,7 @@ SIPPYMODEM_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_framing.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_info0.c \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_info1.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c \
