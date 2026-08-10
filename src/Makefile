@@ -81,6 +81,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_v22bis_receiver.c \
 	sippymodem_v22bis_symbols.c \
 	sippymodem_v32_datapump.c \
+	sippymodem_v32_constellation.c \
 	sippymodem_v32_framing.c \
 	sippymodem_v32_rate_signal.c \
 	sippymodem_v32_startup.c \
