@@ -33,16 +33,6 @@ enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_init(
 	return SIPPYMODEM_V34_PHASE3_TRN_OK;
 }
 
-static uint8_t clockwise_rotation(uint8_t scrambled_bits)
-{
-	/* The group API returns I1 as bit 1 and I2 as bit 0 because I1 is
-	 * processed first. V.34 maps In = 2*I2 + I1. */
-	uint8_t i1 = (uint8_t)((scrambled_bits >> 1) & 1u);
-	uint8_t i2 = (uint8_t)(scrambled_bits & 1u);
-
-	return (uint8_t)((i2 << 1) | i1);
-}
-
 enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_next(
 	struct sippymodem_v34_phase3_trn *trn,
 	struct sippymodem_qam_point *point,
@@ -50,19 +40,20 @@ enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_next(
 {
 	struct sippymodem_v34_phase3_trn next;
 	struct sippymodem_qam_point next_point;
-	uint8_t scrambled_bits;
 	uint8_t rotation;
 
 	if (!sippymodem_v34_phase3_trn_is_valid(trn) || point == NULL ||
 	    clockwise_quarter_turns == NULL)
 		return SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT;
 	next = *trn;
-	if (sippymodem_v34_scramble_group(
-		    &next.scrambler, 3u, 2u, &scrambled_bits) !=
+	if (sippymodem_v34_scramble_mapped_dibit(
+		    &next.scrambler, 3u, &rotation) !=
 	    SIPPYMODEM_V34_FRAMING_OK)
 		return SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT;
-	rotation = clockwise_rotation(scrambled_bits);
-	next_point = sippymodem_v34_rotated_point_zero(-(int)rotation);
+	if (sippymodem_v34_training_constellation_point(
+		    SIPPYMODEM_V34_CONSTELLATION_4_POINT, 0, rotation,
+		    &next_point) != SIPPYMODEM_V34_CONSTELLATION_OK)
+		return SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT;
 	next.last_clockwise_quarter_turns = rotation;
 	next.has_last_symbol = true;
 	if (!sippymodem_v34_phase3_trn_is_valid(&next))

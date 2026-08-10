@@ -155,15 +155,38 @@ enum sippymodem_v34_framing_result sippymodem_v34_descramble_group(
 }
 
 enum sippymodem_v34_framing_result
+sippymodem_v34_scramble_mapped_dibit(
+	struct sippymodem_v34_scrambler *scrambler, uint8_t input_dibit,
+	uint8_t *mapped_dibit)
+{
+	struct sippymodem_v34_scrambler next;
+	uint8_t scrambled_dibit;
+	uint8_t first;
+	uint8_t second;
+
+	if (!sippymodem_v34_scrambler_is_valid(scrambler) ||
+	    input_dibit > 3u || mapped_dibit == NULL)
+		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
+	next = *scrambler;
+	if (sippymodem_v34_scramble_group(
+		    &next, input_dibit, 2u, &scrambled_dibit) !=
+	    SIPPYMODEM_V34_FRAMING_OK)
+		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
+	first = (uint8_t)((scrambled_dibit >> 1) & 1u);
+	second = (uint8_t)(scrambled_dibit & 1u);
+	*scrambler = next;
+	*mapped_dibit = (uint8_t)((second << 1) | first);
+	return SIPPYMODEM_V34_FRAMING_OK;
+}
+
+enum sippymodem_v34_framing_result
 sippymodem_v34_scramble_differential_dibit(
 	struct sippymodem_v34_scrambler *scrambler, uint8_t input_dibit,
 	uint8_t previous_clockwise_quarter_turns,
 	uint8_t *clockwise_quarter_turns)
 {
 	struct sippymodem_v34_scrambler next;
-	uint8_t scrambled_dibit;
-	uint8_t i1;
-	uint8_t i2;
+	uint8_t increment;
 	uint8_t rotation;
 
 	if (!sippymodem_v34_scrambler_is_valid(scrambler) ||
@@ -171,14 +194,12 @@ sippymodem_v34_scramble_differential_dibit(
 	    clockwise_quarter_turns == NULL)
 		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
 	next = *scrambler;
-	if (sippymodem_v34_scramble_group(
-		    &next, input_dibit, 2u, &scrambled_dibit) !=
+	if (sippymodem_v34_scramble_mapped_dibit(
+		    &next, input_dibit, &increment) !=
 	    SIPPYMODEM_V34_FRAMING_OK)
 		return SIPPYMODEM_V34_FRAMING_INVALID_ARGUMENT;
-	i1 = (uint8_t)((scrambled_dibit >> 1) & 1u);
-	i2 = (uint8_t)(scrambled_dibit & 1u);
 	rotation = (uint8_t)(
-		(previous_clockwise_quarter_turns + (i2 << 1) + i1) & 3u);
+		(previous_clockwise_quarter_turns + increment) & 3u);
 	*scrambler = next;
 	*clockwise_quarter_turns = rotation;
 	return SIPPYMODEM_V34_FRAMING_OK;

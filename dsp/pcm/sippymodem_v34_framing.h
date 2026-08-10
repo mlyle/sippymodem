@@ -58,6 +58,13 @@ enum sippymodem_v34_framing_result sippymodem_v34_descramble_group(
 	struct sippymodem_v34_scrambler *descrambler, uint8_t input,
 	unsigned int bit_count, uint8_t *output);
 
+/* Scramble a first-then-second pair and return 2*second + first. Rejected
+ * calls leave state and output unchanged. */
+enum sippymodem_v34_framing_result
+sippymodem_v34_scramble_mapped_dibit(
+	struct sippymodem_v34_scrambler *scrambler, uint8_t input_dibit,
+	uint8_t *mapped_dibit);
+
 /* Scramble I1 followed by I2, form In = 2*I2 + I1, and add In modulo
  * four to the previous clockwise rotation. Rejected calls leave state and
  * output unchanged. */
