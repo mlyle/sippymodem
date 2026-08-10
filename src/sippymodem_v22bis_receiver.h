@@ -5,6 +5,7 @@
 
 #include "sippymodem_v22bis_symbols.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
 enum sippymodem_v22bis_receiver_result {
@@ -15,12 +16,23 @@ enum sippymodem_v22bis_receiver_result {
 struct sippymodem_v22bis_receiver {
 	struct sippymodem_v22bis_symbol_decoder decoder;
 	struct sippymodem_qam_point channel_gain;
+	bool v22bis_started;
 };
 
 /* Seed from the last received V.22 point before switching to 16-QAM. */
 enum sippymodem_v22bis_receiver_result sippymodem_v22bis_receiver_init(
 	struct sippymodem_v22bis_receiver *receiver,
 	const struct sippymodem_qam_point *reference_point);
+bool sippymodem_v22bis_receiver_is_valid(
+	const struct sippymodem_v22bis_receiver *receiver);
+enum sippymodem_v22bis_receiver_result
+sippymodem_v22bis_receiver_matches_v22(
+	const struct sippymodem_v22bis_receiver *receiver,
+	const struct sippymodem_qam_point *point, bool *matches);
+enum sippymodem_v22bis_receiver_result
+sippymodem_v22bis_receiver_track_v22(
+	struct sippymodem_v22bis_receiver *receiver, uint8_t quarter_turns,
+	const struct sippymodem_qam_point *point);
 enum sippymodem_v22bis_receiver_result sippymodem_v22bis_receiver_decode(
 	struct sippymodem_v22bis_receiver *receiver,
 	const struct sippymodem_qam_point *point,

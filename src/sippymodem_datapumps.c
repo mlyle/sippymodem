@@ -106,6 +106,7 @@ enum sippymodem_datapumps_result sippymodem_datapumps_start(
 	    modem_dp_get_registered_ops(DP_B103) != NULL ||
 	    modem_dp_get_registered_ops(DP_V23) != NULL ||
 	    modem_dp_get_registered_ops(DP_V22) != NULL ||
+	    modem_dp_get_registered_ops(DP_V22BIS) != NULL ||
 	    modem_dp_get_registered_ops(DP_B212) != NULL ||
 	    modem_dp_get_registered_ops(DP_BAUDOT) != NULL ||
 	    modem_dp_register(DP_CALLPROG, &call_progress_operations) != 0)

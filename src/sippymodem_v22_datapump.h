@@ -7,6 +7,7 @@
 
 enum {
 	SIPPYMODEM_V22_BIT_RATE = 1200,
+	SIPPYMODEM_V22BIS_BIT_RATE = 2400,
 };
 
 int sippymodem_v22_datapump_register(void);

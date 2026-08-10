@@ -593,6 +593,16 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 		},
 		{
+			.id = DP_V22BIS,
+			.name = "V.22bis",
+			.selection_command = "AT+MS=122,0,2400,2400\r",
+			.caller_tx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+		},
+		{
 			.id = DP_B212,
 			.name = "Bell 212A",
 			.selection_command = "AT+MS=212,0,1200,1200\r",
