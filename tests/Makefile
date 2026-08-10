@@ -346,6 +346,14 @@ V34_PHASE2_DPSK_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase2_dpsk.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o
+V34_PHASE2_INFO_AUDIO_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_info_audio
+V34_PHASE2_INFO_AUDIO_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase2_info_audio.o \
+	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
+	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o
 QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
 QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam.o
@@ -418,6 +426,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_FRAMING_TEST_BINARY) \
 	$(V34_PHASE2_INFO_TEST_BINARY) \
 	$(V34_PHASE2_DPSK_TEST_BINARY) \
+	$(V34_PHASE2_INFO_AUDIO_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -466,6 +475,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_FRAMING_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_INFO_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_DPSK_TEST_OBJECTS:.o=.d) \
+	$(V34_PHASE2_INFO_AUDIO_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -530,6 +540,7 @@ test: $(TEST_BINARIES)
 	./$(V34_FRAMING_TEST_BINARY)
 	./$(V34_PHASE2_INFO_TEST_BINARY)
 	./$(V34_PHASE2_DPSK_TEST_BINARY)
+	./$(V34_PHASE2_INFO_AUDIO_TEST_BINARY)
 	./$(QAM_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
@@ -699,6 +710,10 @@ $(V34_PHASE2_INFO_TEST_BINARY): $(V34_PHASE2_INFO_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V34_PHASE2_DPSK_TEST_BINARY): $(V34_PHASE2_DPSK_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_PHASE2_INFO_AUDIO_TEST_BINARY): \
+	$(V34_PHASE2_INFO_AUDIO_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(QAM_TEST_BINARY): $(QAM_TEST_OBJECTS)
@@ -923,6 +938,10 @@ $(BUILD_DIR)/sippymodem_v34_phase2_info.o: \
 
 $(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o: \
+	$(DSP_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22_datapump.o: \

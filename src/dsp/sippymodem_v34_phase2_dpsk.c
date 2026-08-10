@@ -98,6 +98,22 @@ static bool transmitter_metadata_is_valid(
 		       INT16_MAX - transmitter->guard_amplitude;
 }
 
+bool sippymodem_v34_phase2_dpsk_transmitter_is_valid(
+	const struct sippymodem_v34_phase2_dpsk_transmitter *transmitter)
+{
+	return transmitter_metadata_is_valid(transmitter) &&
+	       sippymodem_qam_modulator_is_valid(&transmitter->carrier);
+}
+
+bool sippymodem_v34_phase2_dpsk_transmitter_can_accept_bit(
+	const struct sippymodem_v34_phase2_dpsk_transmitter *transmitter)
+{
+	return sippymodem_v34_phase2_dpsk_transmitter_is_valid(transmitter) &&
+	       !transmitter->initial_point_pending &&
+	       sippymodem_qam_modulator_can_accept_symbol(
+		       &transmitter->carrier);
+}
+
 enum sippymodem_v34_phase2_dpsk_result
 sippymodem_v34_phase2_dpsk_transmitter_init(
 	struct sippymodem_v34_phase2_dpsk_transmitter *transmitter,
@@ -134,7 +150,7 @@ sippymodem_v34_phase2_dpsk_transmitter_init(
 	if (sippymodem_qam_modulator_init(
 		    &initialized.carrier, &channel,
 		    (int16_t)carrier_amplitude) != SIPPYMODEM_QAM_OK ||
-	    !transmitter_metadata_is_valid(&initialized))
+	    !sippymodem_v34_phase2_dpsk_transmitter_is_valid(&initialized))
 		return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	*transmitter = initialized;
 	return SIPPYMODEM_V34_PHASE2_DPSK_OK;
@@ -159,7 +175,8 @@ sippymodem_v34_phase2_dpsk_transmitter_sample(
 	int16_t carrier_sample;
 	long mixed;
 
-	if (!transmitter_metadata_is_valid(transmitter) || bit > 1 ||
+	if (!sippymodem_v34_phase2_dpsk_transmitter_is_valid(transmitter) ||
+	    bit > 1 ||
 	    sample == NULL || bit_accepted == NULL)
 		return SIPPYMODEM_V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	can_accept = sippymodem_qam_modulator_can_accept_symbol(

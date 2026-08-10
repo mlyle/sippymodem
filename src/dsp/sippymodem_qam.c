@@ -162,7 +162,7 @@ static uint32_t phase_step(uint32_t sample_rate, uint32_t frequency_hz)
 	return (uint32_t)((numerator + sample_rate / 2) / sample_rate);
 }
 
-static bool modulator_is_valid(
+bool sippymodem_qam_modulator_is_valid(
 	const struct sippymodem_qam_modulator *modulator)
 {
 	uint64_t period = 0;
@@ -214,7 +214,8 @@ enum sippymodem_qam_result sippymodem_qam_modulator_init(
 bool sippymodem_qam_modulator_can_accept_symbol(
 	const struct sippymodem_qam_modulator *modulator)
 {
-	return modulator_is_valid(modulator) && modulator->needs_symbol &&
+	return sippymodem_qam_modulator_is_valid(modulator) &&
+	       modulator->needs_symbol &&
 	       modulator->active_count < SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS;
 }
 
@@ -294,7 +295,8 @@ enum sippymodem_qam_result sippymodem_qam_modulator_sample(
 	double waveform;
 	long rounded;
 
-	if (!modulator_is_valid(modulator) || !transmit_point_is_valid(point) ||
+	if (!sippymodem_qam_modulator_is_valid(modulator) ||
+	    !transmit_point_is_valid(point) ||
 	    sample == NULL || symbol_accepted == NULL ||
 	    (modulator->needs_symbol &&
 	     modulator->active_count == SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS))

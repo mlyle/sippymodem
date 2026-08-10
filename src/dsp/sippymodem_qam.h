@@ -105,6 +105,8 @@ enum sippymodem_qam_result sippymodem_root_raised_cosine(
 enum sippymodem_qam_result sippymodem_qam_modulator_init(
 	struct sippymodem_qam_modulator *modulator,
 	const struct sippymodem_qam_channel *channel, int16_t amplitude);
+bool sippymodem_qam_modulator_is_valid(
+	const struct sippymodem_qam_modulator *modulator);
 bool sippymodem_qam_modulator_can_accept_symbol(
 	const struct sippymodem_qam_modulator *modulator);
 /* Transmit points are finite with squared magnitude no greater than 3/2. */

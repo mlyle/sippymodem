@@ -50,6 +50,10 @@ sippymodem_v34_phase2_dpsk_transmitter_init(
 	struct sippymodem_v34_phase2_dpsk_transmitter *transmitter,
 	enum sippymodem_v34_phase2_station_role local_role,
 	int16_t nominal_amplitude);
+bool sippymodem_v34_phase2_dpsk_transmitter_is_valid(
+	const struct sippymodem_v34_phase2_dpsk_transmitter *transmitter);
+bool sippymodem_v34_phase2_dpsk_transmitter_can_accept_bit(
+	const struct sippymodem_v34_phase2_dpsk_transmitter *transmitter);
 
 /* Keep presenting a bit until bit_accepted becomes true. The first accepted
  * symbol is the arbitrary reference point and does not consume a bit. */

@@ -95,6 +95,7 @@ SIPPYMODEM_DSP_SOURCES := \
 	dsp/sippymodem_v34_framing.c \
 	dsp/sippymodem_v34_info0.c \
 	dsp/sippymodem_v34_phase2_dpsk.c \
+	dsp/sippymodem_v34_phase2_info_audio.c \
 	dsp/sippymodem_v34_phase2_info.c \
 	dsp/sippymodem_v8_ansam.c \
 	dsp/sippymodem_v8_answering.c \
