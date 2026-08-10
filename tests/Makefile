@@ -622,6 +622,20 @@ V34_PHASE4_MP_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
 	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
 	$(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o
+V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase4_mp_channel_receiver
+V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_phase4_mp_channel_receiver.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/sippymodem_qam_gain.o \
+	$(BUILD_DIR)/sippymodem_v34_constellation.o \
+	$(BUILD_DIR)/sippymodem_v34_framing.o \
+	$(BUILD_DIR)/sippymodem_v34_mp.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o \
+	$(BUILD_DIR)/sippymodem_v34_phase4_mp_channel_receiver.o
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_phase4_e_sequence
 V34_PHASE4_E_SEQUENCE_TEST_OBJECTS := \
@@ -880,6 +894,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE4_TRN_TEST_BINARY) \
 	$(V34_PHASE4_MP_TEST_BINARY) \
+	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE4_E_SEQUENCE_TEST_BINARY) \
 	$(V34_MP_TEST_BINARY) \
 	$(V34_PHASE2_INFO_TEST_BINARY) \
@@ -970,6 +985,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_TRN_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_MP_TEST_OBJECTS:.o=.d) \
+	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_E_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_MP_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_INFO_TEST_OBJECTS:.o=.d) \
@@ -1078,6 +1094,7 @@ test: $(TEST_BINARIES)
 	./$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY)
 	./$(V34_PHASE4_TRN_TEST_BINARY)
 	./$(V34_PHASE4_MP_TEST_BINARY)
+	./$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY)
 	./$(V34_PHASE4_E_SEQUENCE_TEST_BINARY)
 	./$(V34_MP_TEST_BINARY)
 	./$(V34_PHASE2_INFO_TEST_BINARY)
@@ -1354,6 +1371,10 @@ $(V34_PHASE4_TRN_TEST_BINARY): $(V34_PHASE4_TRN_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE4_MP_TEST_BINARY): $(V34_PHASE4_MP_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY): \
+	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE4_E_SEQUENCE_TEST_BINARY): \
@@ -1763,6 +1784,11 @@ $(BUILD_DIR)/sippymodem_v34_phase4_mp.o: \
 
 $(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp_receiver.c | \
+	$(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v34_phase4_mp_channel_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp_channel_receiver.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 

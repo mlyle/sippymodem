@@ -161,6 +161,8 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_e_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_j_prime_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp_channel_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_trn.c
 SIPPYMODEM_DSP_SOURCES := $(SIPPYMODEM_SHARED_DSP_SOURCES) \
 	$(SIPPYMODEM_V21_202_SOURCES) $(SIPPYMODEM_V22_SOURCES) \
