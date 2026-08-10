@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool v34_test_grid_points_are_equal(
+static inline bool v34_test_grid_points_are_equal(
 	const struct sippymodem_v34_grid_point *left,
 	const struct sippymodem_v34_grid_point *right)
 {
@@ -17,7 +17,7 @@ static bool v34_test_grid_points_are_equal(
 	       left->quadrature == right->quadrature;
 }
 
-static bool v34_test_q7_points_are_equal(
+static inline bool v34_test_q7_points_are_equal(
 	const struct sippymodem_v34_q7_point *left,
 	const struct sippymodem_v34_q7_point *right)
 {
@@ -25,7 +25,7 @@ static bool v34_test_q7_points_are_equal(
 	       left->quadrature == right->quadrature;
 }
 
-static bool v34_test_mapping_parameters_are_equal(
+static inline bool v34_test_mapping_parameters_are_equal(
 	const struct sippymodem_v34_mapping_parameters *left,
 	const struct sippymodem_v34_mapping_parameters *right)
 {
@@ -38,7 +38,7 @@ static bool v34_test_mapping_parameters_are_equal(
 	       left->expanded_shaping == right->expanded_shaping;
 }
 
-static bool v34_test_interval_outputs_are_equal(
+static inline bool v34_test_interval_outputs_are_equal(
 	const struct sippymodem_v34_4d_encoder_output *left,
 	const struct sippymodem_v34_4d_encoder_output *right)
 {
@@ -81,7 +81,7 @@ static bool v34_test_interval_outputs_are_equal(
 	return true;
 }
 
-static bool v34_test_encoded_frames_are_equal(
+static inline bool v34_test_encoded_frames_are_equal(
 	const struct sippymodem_v34_encoded_mapping_frame *left,
 	const struct sippymodem_v34_encoded_mapping_frame *right)
 {
@@ -115,7 +115,7 @@ static bool v34_test_encoded_frames_are_equal(
 	return true;
 }
 
-static bool v34_test_encoders_are_equal(
+static inline bool v34_test_encoders_are_equal(
 	const struct sippymodem_v34_4d_encoder *left,
 	const struct sippymodem_v34_4d_encoder *right)
 {
