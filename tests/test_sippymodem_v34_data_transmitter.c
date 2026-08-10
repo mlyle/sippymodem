@@ -249,6 +249,209 @@ static bool test_streaming_composition(void)
 	return true;
 }
 
+static bool bytes_are_filled(
+	const void *object, size_t size, unsigned char value)
+{
+	const unsigned char *bytes = object;
+
+	for (size_t index = 0; index < size; ++index) {
+		if (bytes[index] != value)
+			return false;
+	}
+	return true;
+}
+
+static bool rejected_queue_is_transactional(
+	struct sippymodem_v34_data_transmitter *transmitter,
+	const uint8_t *primary_bits, size_t primary_bit_count,
+	const uint8_t *auxiliary_bit)
+{
+	struct sippymodem_v34_data_transmitter before = *transmitter;
+
+	return sippymodem_v34_data_transmitter_queue_mapping_frame(
+		       transmitter, primary_bits, primary_bit_count,
+		       auxiliary_bit) ==
+		       SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	       memcmp(transmitter, &before, sizeof(before)) == 0;
+}
+
+static bool test_transactional_validation(void)
+{
+	struct transmitter_fixture fixture;
+	struct sippymodem_v34_data_transmitter transmitter;
+	struct sippymodem_v34_data_transmitter before;
+	struct sippymodem_v34_data_transmitter corrupt;
+	struct sippymodem_v34_frame_geometry other_geometry;
+	struct sippymodem_v34_frame_schedule other_schedule;
+	struct sippymodem_v34_mapping_parameters expanded_parameters;
+	struct sippymodem_v34_4d_encoder expanded_encoder;
+	struct sippymodem_v34_scrambler other_scrambler;
+	struct sippymodem_v34_mapping_frame request = { 0 };
+	struct sippymodem_v34_mapping_frame saved_request;
+	uint8_t primary_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	uint8_t malformed_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	uint8_t auxiliary_bit = 1;
+	uint8_t invalid_auxiliary = 2;
+	const uint8_t *auxiliary_pointer;
+	const uint8_t *wrong_auxiliary_pointer;
+	int16_t sample = 1234;
+	bool accepted = true;
+
+	CHECK(initialize_fixture(&fixture),
+	      "validation fixture did not initialize");
+	memset(&transmitter, 0xa5, sizeof(transmitter));
+	CHECK(sippymodem_v34_data_transmitter_init(
+		      NULL, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 5000) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_init(
+		      &transmitter, NULL, &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer, &fixture.profile, 8000, 5000) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 0) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, INT16_MAX) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_CLIPPING_RISK &&
+	      bytes_are_filled(&transmitter, sizeof(transmitter), 0xa5),
+	      "rejected streaming initialization changed its destination");
+	CHECK(sippymodem_v34_data_transmitter_init(
+		      &transmitter, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 5000) == SIPPYMODEM_V34_DATA_TRANSMITTER_OK,
+	      "valid streaming state did not initialize");
+	before = transmitter;
+	saved_request = request;
+	CHECK(!sippymodem_v34_data_transmitter_is_valid(NULL) &&
+	      !sippymodem_v34_data_transmitter_needs_mapping_frame(NULL) &&
+	      sippymodem_v34_data_transmitter_preview_mapping_frame(
+		      NULL, &request) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_preview_mapping_frame(
+		      &transmitter, NULL) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_queue_mapping_frame(
+		      NULL, NULL, 0, NULL) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_sample(
+		      NULL, &sample, &accepted) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_sample(
+		      &transmitter, NULL, &accepted) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      sippymodem_v34_data_transmitter_sample(
+		      &transmitter, &sample, NULL) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
+	      mapping_frames_are_equal(&request, &saved_request) &&
+	      sample == 1234 && accepted,
+	      "invalid streaming operation changed state or output");
+
+	transmitter.schedule.next_mapping_frame =
+		transmitter.schedule.geometry.mapping_frames_per_data_frame;
+	CHECK(sippymodem_v34_data_transmitter_is_valid(&transmitter),
+	      "completed schedule was not a valid streaming boundary");
+	before = transmitter;
+	CHECK(sippymodem_v34_data_transmitter_preview_mapping_frame(
+		      &transmitter, &request) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_OK &&
+	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
+	      request.index == 0,
+	      "completed-schedule preview changed state");
+	generate_primary_bits(
+		primary_bits, request.primary_bits, UINT32_C(0x483e0765));
+	memcpy(malformed_bits, primary_bits, request.primary_bits);
+	malformed_bits[request.primary_bits / 2u] = 2;
+	auxiliary_pointer = request.carries_auxiliary_bit ?
+		&auxiliary_bit : NULL;
+	wrong_auxiliary_pointer = request.carries_auxiliary_bit ?
+		&invalid_auxiliary : &auxiliary_bit;
+	CHECK(rejected_queue_is_transactional(
+		      &transmitter, primary_bits,
+		      (size_t)request.primary_bits - 1u, auxiliary_pointer) &&
+	      rejected_queue_is_transactional(
+		      &transmitter, malformed_bits, request.primary_bits,
+		      auxiliary_pointer) &&
+	      rejected_queue_is_transactional(
+		      &transmitter, primary_bits, request.primary_bits,
+		      wrong_auxiliary_pointer),
+	      "invalid frame input consumed schedule rollover");
+	CHECK(sippymodem_v34_data_transmitter_queue_mapping_frame(
+		      &transmitter, primary_bits, request.primary_bits,
+		      auxiliary_pointer) == SIPPYMODEM_V34_DATA_TRANSMITTER_OK &&
+	      transmitter.schedule.data_frame_in_superframe == 0 &&
+	      transmitter.schedule.next_mapping_frame == 1,
+	      "valid frame did not commit superframe rollover");
+
+	CHECK(sippymodem_v34_frame_geometry_init(
+		      &other_geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 7,
+		      true) == SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+	      sippymodem_v34_frame_schedule_init(
+		      &other_schedule, &other_geometry, 0) ==
+		      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+	      sippymodem_v34_mapping_parameters_init(
+		      &expanded_parameters, &fixture.geometry, true) ==
+		      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
+	      sippymodem_v34_4d_encoder_init(
+		      &expanded_encoder, &expanded_parameters, COEFFICIENTS,
+		      SIPPYMODEM_V34_TRELLIS_32_STATE) ==
+		      SIPPYMODEM_V34_4D_ENCODER_OK &&
+	      sippymodem_v34_transmit_scrambler_init(
+		      &other_scrambler, SIPPYMODEM_V34_ANSWERING_STATION) ==
+		      SIPPYMODEM_V34_FRAMING_OK,
+	      "mismatched valid owners did not initialize");
+	corrupt = transmitter;
+	corrupt.schedule = other_schedule;
+	CHECK(!sippymodem_v34_data_transmitter_is_valid(&corrupt),
+	      "stream accepted a different frame geometry");
+	corrupt = transmitter;
+	corrupt.mapping_encoder = expanded_encoder;
+	CHECK(!sippymodem_v34_data_transmitter_is_valid(&corrupt),
+	      "stream accepted different mapping parameters");
+	corrupt = transmitter;
+	corrupt.scrambler = other_scrambler;
+	before = corrupt;
+	CHECK(!sippymodem_v34_data_transmitter_is_valid(&corrupt) &&
+	      sippymodem_v34_data_transmitter_sample(
+		      &corrupt, &sample, &accepted) ==
+		      SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&corrupt, &before, sizeof(corrupt)) == 0 &&
+	      sample == 1234 && accepted,
+	      "stream accepted the other role's scrambler");
+	CHECK(strcmp(sippymodem_v34_data_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_TRANSMITTER_OK),
+		     "ok") == 0 &&
+	      strcmp(sippymodem_v34_data_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_TRANSMITTER_MAPPING_FRAME_REQUIRED),
+		     "mapping frame required") == 0 &&
+	      strcmp(sippymodem_v34_data_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_TRANSMITTER_MAPPING_FRAME_PENDING),
+		     "mapping frame pending") == 0 &&
+	      strcmp(sippymodem_v34_data_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(sippymodem_v34_data_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_TRANSMITTER_OUT_OF_RANGE),
+		     "out of range") == 0 &&
+	      strcmp(sippymodem_v34_data_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_TRANSMITTER_CLIPPING_RISK),
+		     "clipping risk") == 0 &&
+	      strcmp(sippymodem_v34_data_transmitter_result_name(
+		     SIPPYMODEM_V34_DATA_TRANSMITTER_NUMERIC_FAILURE),
+		     "numeric failure") == 0 &&
+	      strcmp(sippymodem_v34_data_transmitter_result_name(
+		     (enum sippymodem_v34_data_transmitter_result)99),
+		     "unknown") == 0,
+	      "streaming result names changed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -256,6 +459,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "streaming composition", test_streaming_composition },
+		{ "transactional validation", test_transactional_validation },
 	};
 	unsigned int failures = 0;
 
