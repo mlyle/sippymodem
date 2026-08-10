@@ -140,6 +140,7 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_s_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_trn.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_j_sequence.c \
+	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_e_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_j_prime_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_trn.c
