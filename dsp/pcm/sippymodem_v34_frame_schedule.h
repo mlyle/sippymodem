@@ -77,6 +77,12 @@ bool sippymodem_v34_frame_schedule_is_valid(
 bool sippymodem_v34_frame_schedule_is_complete(
 	const struct sippymodem_v34_frame_schedule *schedule);
 
+/* Continue a completed schedule at the next data frame, wrapping at the
+ * superframe boundary. Incomplete and invalid schedules are unchanged. */
+enum sippymodem_v34_frame_schedule_result
+sippymodem_v34_frame_schedule_advance_data_frame(
+	struct sippymodem_v34_frame_schedule *schedule);
+
 /* Emit one mapping-frame description. Rejected and completed calls leave the
  * schedule and output unchanged. */
 enum sippymodem_v34_frame_schedule_result

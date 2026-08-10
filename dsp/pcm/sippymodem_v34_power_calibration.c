@@ -68,21 +68,6 @@ static enum sippymodem_v34_power_calibration_result symbol_power_result(
 	return SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 }
 
-static bool begin_next_data_frame(
-	struct sippymodem_v34_frame_schedule *schedule)
-{
-	uint8_t next_data_frame;
-
-	if (!sippymodem_v34_frame_schedule_is_complete(schedule))
-		return true;
-	next_data_frame = (uint8_t)(schedule->data_frame_in_superframe + 1u);
-	if (next_data_frame == schedule->geometry.data_frames_per_superframe)
-		next_data_frame = 0;
-	return sippymodem_v34_frame_schedule_init(
-		       schedule, &schedule->geometry, next_data_frame) ==
-	       SIPPYMODEM_V34_FRAME_SCHEDULE_OK;
-}
-
 static enum sippymodem_v34_power_calibration_result generate_mapping_frame(
 	struct sippymodem_v34_frame_schedule *schedule,
 	struct sippymodem_v34_scrambler *scrambler,
@@ -98,7 +83,9 @@ static enum sippymodem_v34_power_calibration_result generate_mapping_frame(
 	const uint8_t *auxiliary_pointer = NULL;
 	enum sippymodem_v34_mapping_frame_transmitter_result result;
 
-	if (!begin_next_data_frame(schedule))
+	if (sippymodem_v34_frame_schedule_is_complete(schedule) &&
+	    sippymodem_v34_frame_schedule_advance_data_frame(schedule) !=
+		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
 		return SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	preview = *schedule;
 	if (sippymodem_v34_frame_schedule_next(&preview, &mapping_frame) !=

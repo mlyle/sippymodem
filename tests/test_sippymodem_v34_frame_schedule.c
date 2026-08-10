@@ -363,6 +363,55 @@ static bool test_inversion_and_b1(void)
 	return true;
 }
 
+static bool test_data_frame_rollover(void)
+{
+	for (size_t rate_index = 0;
+	     rate_index < ARRAY_LENGTH(SYMBOL_RATES); ++rate_index) {
+		const struct symbol_rate_fixture *fixture =
+			&SYMBOL_RATES[rate_index];
+		struct sippymodem_v34_frame_geometry geometry;
+
+		CHECK(sippymodem_v34_frame_geometry_init(
+			      &geometry, fixture->symbol_rate,
+			      fixture->minimum_rate, true) ==
+			      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+		      "rollover geometry %zu did not initialize", rate_index);
+		for (uint8_t data_frame = 0;
+		     data_frame < geometry.data_frames_per_superframe;
+		     ++data_frame) {
+			struct sippymodem_v34_frame_schedule schedule;
+			struct sippymodem_v34_frame_schedule advanced;
+			struct collected_frame ignored;
+			uint8_t expected = (uint8_t)(data_frame + 1u);
+
+			if (expected == geometry.data_frames_per_superframe)
+				expected = 0;
+			CHECK(sippymodem_v34_frame_schedule_init(
+				      &schedule, &geometry, data_frame) ==
+				      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+			      collect_schedule(&schedule, &ignored) &&
+			      sippymodem_v34_frame_schedule_advance_data_frame(
+				      &schedule) ==
+				      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+			      sippymodem_v34_frame_schedule_is_valid(&schedule) &&
+			      !sippymodem_v34_frame_schedule_is_complete(
+				      &schedule) &&
+			      schedule.data_frame_in_superframe == expected &&
+			      schedule.next_mapping_frame == 0,
+			      "data frame %zu/%u did not roll over", rate_index,
+			      data_frame);
+			advanced = schedule;
+			CHECK(sippymodem_v34_frame_schedule_advance_data_frame(
+				      &schedule) ==
+				      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+			      schedules_are_equal(&schedule, &advanced),
+			      "incomplete schedule %zu/%u advanced", rate_index,
+			      data_frame);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct sippymodem_v34_frame_geometry geometry;
@@ -440,6 +489,8 @@ static bool test_validation(void)
 	CHECK(sippymodem_v34_frame_schedule_next(
 		      NULL, &mapping_frame) ==
 		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      sippymodem_v34_frame_schedule_advance_data_frame(NULL) ==
+		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
 	      sippymodem_v34_frame_schedule_next(&schedule, NULL) ==
 		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
 	      schedules_are_equal(&schedule, &saved_schedule) &&
@@ -481,6 +532,7 @@ int main(void)
 		{ "normative patterns", test_normative_patterns },
 		{ "all supported schedules", test_all_supported_schedules },
 		{ "inversion and B1", test_inversion_and_b1 },
+		{ "data frame rollover", test_data_frame_rollover },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -208,6 +208,21 @@ bool sippymodem_v34_frame_schedule_is_complete(
 		       schedule->geometry.mapping_frames_per_data_frame;
 }
 
+enum sippymodem_v34_frame_schedule_result
+sippymodem_v34_frame_schedule_advance_data_frame(
+	struct sippymodem_v34_frame_schedule *schedule)
+{
+	uint8_t next_data_frame;
+
+	if (!sippymodem_v34_frame_schedule_is_complete(schedule))
+		return SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT;
+	next_data_frame = (uint8_t)(schedule->data_frame_in_superframe + 1u);
+	if (next_data_frame == schedule->geometry.data_frames_per_superframe)
+		next_data_frame = 0;
+	return sippymodem_v34_frame_schedule_init(
+		schedule, &schedule->geometry, next_data_frame);
+}
+
 static bool period_crosses(
 	uint8_t index, uint8_t events, uint8_t period)
 {
