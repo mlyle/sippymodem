@@ -209,7 +209,8 @@ enum sippymodem_v44_stream_result sippymodem_v44_bit_reader_get(
 		reader->bit_count += 8;
 	}
 	if (reader->bit_count < bit_count) {
-		reader->pending_field_bits = bit_count;
+		if (reader->bit_count != 0)
+			reader->pending_field_bits = bit_count;
 		return SIPPYMODEM_V44_STREAM_NEED_INPUT;
 	}
 

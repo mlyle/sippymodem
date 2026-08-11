@@ -174,9 +174,9 @@ static bool test_chunked_reader_preserves_partial_field(void)
 		      reader, &input, &input_length, 12, &value) ==
 		      SIPPYMODEM_V44_STREAM_NEED_INPUT &&
 		      input == NULL && input_length == 0 && value == 0xdeadbeef,
-	      "empty V.44 input changed a partial field");
-	CHECK(!sippymodem_v44_bit_reader_at_boundary(reader),
-	      "partial V.44 field reported a clean boundary");
+	      "empty V.44 input changed the reader");
+	CHECK(sippymodem_v44_bit_reader_at_boundary(reader),
+	      "fresh empty V.44 input started a partial field");
 	input = first;
 	input_length = sizeof(first);
 	CHECK(sippymodem_v44_bit_reader_get(
@@ -184,6 +184,8 @@ static bool test_chunked_reader_preserves_partial_field(void)
 		      SIPPYMODEM_V44_STREAM_NEED_INPUT &&
 		      input_length == 0 && value == 0xdeadbeef,
 	      "partial V.44 field was not preserved");
+	CHECK(!sippymodem_v44_bit_reader_at_boundary(reader),
+	      "partial V.44 field reported a clean boundary");
 	CHECK(sippymodem_v44_bit_reader_get(
 		      reader, &input, &input_length, 7, &value) ==
 		      SIPPYMODEM_V44_STREAM_INVALID_ARGUMENT &&

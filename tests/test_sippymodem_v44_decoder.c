@@ -221,6 +221,43 @@ static bool test_api_contract(void)
 	return true;
 }
 
+static bool test_buffered_final_control(void)
+{
+	/* STEPUP, ordinal ff, ordinal B, and FLUSH packed across octets. */
+	static const uint8_t wire[] = { 0x05, 0xff, 0x84, 0x06 };
+	struct sippymodem_v44_decoder *decoder =
+		sippymodem_v44_decoder_create(
+			&parameters, parameters.max_string_length);
+	const uint8_t *input = wire;
+	size_t input_length = sizeof(wire);
+	size_t produced = 0;
+	uint8_t output[2];
+
+	CHECK(decoder != NULL, "could not create buffered V.44 decoder");
+	CHECK(sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, output, sizeof(output),
+		      &produced) == SIPPYMODEM_V44_DECODE_OK &&
+	      produced == 0 &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, output, sizeof(output),
+		      &produced) == SIPPYMODEM_V44_DECODE_OK &&
+	      produced == 1 && output[0] == 0xff &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, output + 1, 1,
+		      &produced) == SIPPYMODEM_V44_DECODE_OK &&
+	      produced == 1 && output[1] == 'B' && input_length == 0,
+	      "V.44 decoder did not retain the final buffered control");
+	CHECK(sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, NULL, 0, &produced) ==
+		      SIPPYMODEM_V44_DECODE_FLUSHED &&
+	      produced == 0 &&
+	      sippymodem_v44_decoder_finish(decoder) ==
+		      SIPPYMODEM_V44_DECODE_OK,
+	      "V.44 decoder ignored a complete buffered FLUSH");
+	sippymodem_v44_decoder_destroy(decoder);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -231,6 +268,7 @@ int main(void)
 		{ "parameter handoff and failure",
 		  test_parameter_handoff_and_failure },
 		{ "API contract", test_api_contract },
+		{ "buffered final control", test_buffered_final_control },
 	};
 	unsigned int failures = 0;
 

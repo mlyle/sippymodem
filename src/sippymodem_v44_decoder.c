@@ -181,8 +181,6 @@ enum sippymodem_v44_decode_result sippymodem_v44_decoder_process(
 	if (sippymodem_v44_compressed_decoder_pending(decoder->compressed) != 0)
 		return drain_compressed(
 			decoder, output, output_capacity, output_length);
-	if (*input_length == 0)
-		return SIPPYMODEM_V44_DECODE_NEED_INPUT;
 	if (decoder->mode == V44_DECODE_COMPRESSED)
 		return process_compressed(
 			decoder, input, input_length, output, output_capacity,
