@@ -3,6 +3,7 @@
 #include "v34_precoder.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 
 static bool grid_step_is_valid(enum sippymodem_v34_precoder_grid_step step)
@@ -209,6 +210,17 @@ static bool generate_symbol(
 	return true;
 }
 
+static void push_previous_symbol(
+	struct sippymodem_v34_precoder *precoder,
+	const struct sippymodem_v34_q7_point *symbol)
+{
+	for (size_t tap = SIPPYMODEM_V34_PRECODER_TAP_COUNT - 1; tap > 0;
+	     --tap)
+		precoder->previous_symbols[tap] =
+			precoder->previous_symbols[tap - 1];
+	precoder->previous_symbols[0] = *symbol;
+}
+
 enum sippymodem_v34_precoder_result sippymodem_v34_precoder_step(
 	struct sippymodem_v34_precoder *precoder,
 	const struct sippymodem_v34_grid_point *mapper_output,
@@ -223,12 +235,112 @@ enum sippymodem_v34_precoder_result sippymodem_v34_precoder_step(
 	if (!generate_symbol(precoder, mapper_output, &generated))
 		return SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE;
 	next = *precoder;
-	for (size_t tap = SIPPYMODEM_V34_PRECODER_TAP_COUNT - 1; tap > 0;
-	     --tap)
-		next.previous_symbols[tap] = next.previous_symbols[tap - 1];
-	next.previous_symbols[0] = generated.precoded_symbol;
+	push_previous_symbol(&next, &generated.precoded_symbol);
 	*precoder = next;
 	*symbol = generated;
+	return SIPPYMODEM_V34_PRECODER_OK;
+}
+
+static bool quantize_received_axis(double coordinate, int32_t *quantized)
+{
+	double integral;
+	double fraction;
+	double scaled;
+
+	if (!isfinite(coordinate) || quantized == NULL)
+		return false;
+	scaled = coordinate * SIPPYMODEM_V34_Q7_SCALE;
+	if (!isfinite(scaled) ||
+	    scaled < (double)INT32_MIN - 0.5 ||
+	    scaled > (double)INT32_MAX + 0.5)
+		return false;
+	fraction = modf(scaled, &integral);
+	if (fraction > 0.5)
+		integral += 1.0;
+	else if (fraction < -0.5)
+		integral -= 1.0;
+	if (integral < INT32_MIN || integral > INT32_MAX)
+		return false;
+	*quantized = (int32_t)integral;
+	return true;
+}
+
+static enum sippymodem_v34_precoder_result reconstruct_channel_point(
+	struct sippymodem_v34_precoder *receive_history,
+	const struct sippymodem_qam_point *precoded_estimate,
+	struct sippymodem_qam_point *channel_estimate)
+{
+	struct sippymodem_v34_precoder_prediction prediction;
+	struct sippymodem_v34_precoder_prediction next_prediction;
+	struct sippymodem_v34_q7_point received;
+	struct sippymodem_qam_point generated;
+	enum sippymodem_v34_precoder_result result;
+
+	result = sippymodem_v34_precoder_predict(
+		receive_history, &prediction);
+	if (result != SIPPYMODEM_V34_PRECODER_OK)
+		return result;
+	if (!quantize_received_axis(
+		    precoded_estimate->in_phase, &received.in_phase) ||
+	    !quantize_received_axis(
+		    precoded_estimate->quadrature, &received.quadrature))
+		return SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE;
+	generated = (struct sippymodem_qam_point){
+		.in_phase = precoded_estimate->in_phase +
+			(double)prediction.filter_output.in_phase /
+				SIPPYMODEM_V34_Q7_SCALE,
+		.quadrature = precoded_estimate->quadrature +
+			(double)prediction.filter_output.quadrature /
+				SIPPYMODEM_V34_Q7_SCALE,
+	};
+	if (!isfinite(generated.in_phase) ||
+	    !isfinite(generated.quadrature))
+		return SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE;
+	push_previous_symbol(receive_history, &received);
+	result = sippymodem_v34_precoder_predict(
+		receive_history, &next_prediction);
+	if (result != SIPPYMODEM_V34_PRECODER_OK)
+		return result;
+	*channel_estimate = generated;
+	return SIPPYMODEM_V34_PRECODER_OK;
+}
+
+enum sippymodem_v34_precoder_result
+sippymodem_v34_precoder_reconstruct_interval(
+	struct sippymodem_v34_precoder *receive_history,
+	const struct sippymodem_qam_point
+		precoded_estimates[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	struct sippymodem_qam_point
+		channel_estimates[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL])
+{
+	struct sippymodem_v34_precoder next;
+	struct sippymodem_qam_point generated[
+		SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
+
+	if (!sippymodem_v34_precoder_is_valid(receive_history) ||
+	    precoded_estimates == NULL || channel_estimates == NULL)
+		return SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT;
+	for (size_t symbol = 0;
+	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		if (!isfinite(precoded_estimates[symbol].in_phase) ||
+		    !isfinite(precoded_estimates[symbol].quadrature))
+			return SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT;
+	}
+	next = *receive_history;
+	for (size_t symbol = 0;
+	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		enum sippymodem_v34_precoder_result result =
+			reconstruct_channel_point(
+				&next, &precoded_estimates[symbol],
+				&generated[symbol]);
+
+		if (result != SIPPYMODEM_V34_PRECODER_OK)
+			return result;
+	}
+	*receive_history = next;
+	for (size_t symbol = 0;
+	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
+		channel_estimates[symbol] = generated[symbol];
 	return SIPPYMODEM_V34_PRECODER_OK;
 }
 

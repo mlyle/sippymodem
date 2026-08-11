@@ -91,6 +91,22 @@ enum sippymodem_v34_precoder_result sippymodem_v34_precoder_step(
 	const struct sippymodem_v34_grid_point *mapper_output,
 	struct sippymodem_v34_precoder_symbol *symbol);
 
+/* Recover one complete 4-D interval of soft y(n) channel estimates from
+ * equalized, nonlinear-decoded x(n) estimates. This receive history must be a
+ * separately initialized precoder starting at B1; it is distinct from the
+ * delayed exact history used by precoder_inverse_step(). Prior received x(n)
+ * estimates are quantized to Q7 with half-way ties toward zero so the next
+ * prediction follows the transmitter's feedback arithmetic, while the
+ * current soft residual is preserved in each returned estimate. Input and
+ * output may alias. State and both outputs are unchanged on failure. */
+enum sippymodem_v34_precoder_result
+sippymodem_v34_precoder_reconstruct_interval(
+	struct sippymodem_v34_precoder *receive_history,
+	const struct sippymodem_qam_point
+		precoded_estimates[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	struct sippymodem_qam_point
+		channel_estimates[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL]);
+
 /* Invert one exact, survivor-selected odd-grid channel point y(n). This is a
  * post-trellis operation, not a noisy-sample slicer. It recovers u(n), reports
  * the same prediction and x(n) representation as the transmit step, and then

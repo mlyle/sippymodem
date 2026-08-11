@@ -4,7 +4,10 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <limits.h>
+#include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 static const struct sippymodem_v34_q14_coefficient ZERO_COEFFICIENTS
@@ -256,6 +259,197 @@ static bool test_complex_sequences(void)
 			      mode, index);
 		}
 	}
+	return true;
+}
+
+static uint32_t next_generated_word(uint32_t *state)
+{
+	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
+	return *state;
+}
+
+static int16_t generated_odd_coordinate(uint32_t *state)
+{
+	return (int16_t)(2 * (int)(next_generated_word(state) & 31u) - 31);
+}
+
+static bool test_receive_reconstruction(void)
+{
+	static const struct sippymodem_v34_q14_coefficient coefficients[] = {
+		{ 8192, -4096 },
+		{ -2048, 6144 },
+		{ 1024, 3072 },
+	};
+	static const struct {
+		enum sippymodem_v34_symbol_rate symbol_rate;
+		uint8_t primary_rate;
+	} modes[] = {
+		{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8 },
+		{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 8 },
+	};
+
+	for (size_t mode = 0; mode < ARRAY_LENGTH(modes); ++mode) {
+		struct sippymodem_v34_precoder transmitter;
+		struct sippymodem_v34_precoder receiver;
+		uint32_t random = UINT32_C(0x34c0de17) ^ (uint32_t)mode;
+
+		CHECK(initialize_precoder(
+			      &transmitter, modes[mode].symbol_rate,
+			      modes[mode].primary_rate, coefficients) &&
+		      initialize_precoder(
+			      &receiver, modes[mode].symbol_rate,
+			      modes[mode].primary_rate, coefficients),
+		      "receive mode %zu did not initialize", mode);
+		for (size_t interval = 0; interval < 256; ++interval) {
+			struct sippymodem_qam_point precoded[2];
+			struct sippymodem_qam_point reconstructed[2];
+			struct sippymodem_v34_grid_point expected[2];
+
+			for (size_t symbol = 0; symbol < ARRAY_LENGTH(precoded);
+			     ++symbol) {
+				struct sippymodem_v34_grid_point mapper = {
+					.in_phase = generated_odd_coordinate(&random),
+					.quadrature = generated_odd_coordinate(&random),
+				};
+				struct sippymodem_v34_precoder_symbol encoded;
+
+				CHECK(sippymodem_v34_precoder_step(
+					      &transmitter, &mapper, &encoded) ==
+					      SIPPYMODEM_V34_PRECODER_OK,
+				      "receive mode %zu interval %zu symbol %zu did not encode",
+				      mode, interval, symbol);
+				precoded[symbol] = (struct sippymodem_qam_point){
+					.in_phase =
+						(double)encoded.precoded_symbol.in_phase /
+						SIPPYMODEM_V34_Q7_SCALE,
+					.quadrature =
+						(double)encoded.precoded_symbol.quadrature /
+						SIPPYMODEM_V34_Q7_SCALE,
+				};
+				expected[symbol] = encoded.channel_output;
+			}
+			if ((interval & 1u) != 0u) {
+				reconstructed[0] = precoded[0];
+				reconstructed[1] = precoded[1];
+				CHECK(sippymodem_v34_precoder_reconstruct_interval(
+					      &receiver, reconstructed,
+					      reconstructed) ==
+					      SIPPYMODEM_V34_PRECODER_OK,
+				      "receive mode %zu in-place interval %zu failed",
+				      mode, interval);
+			} else {
+				CHECK(sippymodem_v34_precoder_reconstruct_interval(
+					      &receiver, precoded, reconstructed) ==
+					      SIPPYMODEM_V34_PRECODER_OK,
+				      "receive mode %zu interval %zu failed", mode,
+				      interval);
+			}
+			for (size_t symbol = 0; symbol < ARRAY_LENGTH(reconstructed);
+			     ++symbol) {
+				CHECK(reconstructed[symbol].in_phase ==
+					      expected[symbol].in_phase &&
+				      reconstructed[symbol].quadrature ==
+					      expected[symbol].quadrature,
+				      "receive mode %zu interval %zu symbol %zu reconstructed %.17g/%.17g instead of %d/%d",
+				      mode, interval, symbol,
+				      reconstructed[symbol].in_phase,
+				      reconstructed[symbol].quadrature,
+				      expected[symbol].in_phase,
+				      expected[symbol].quadrature);
+			}
+			CHECK(precoders_are_equal(&receiver, &transmitter),
+			      "receive mode %zu interval %zu history diverged",
+			      mode, interval);
+		}
+	}
+	return true;
+}
+
+static bool test_receive_reconstruction_boundaries(void)
+{
+	const struct sippymodem_qam_point tie_inputs[2] = {
+		{ 1.5 / SIPPYMODEM_V34_Q7_SCALE,
+		  -1.5 / SIPPYMODEM_V34_Q7_SCALE },
+		{ 2.5 / SIPPYMODEM_V34_Q7_SCALE,
+		  -2.5 / SIPPYMODEM_V34_Q7_SCALE },
+	};
+	struct sippymodem_v34_precoder receiver;
+	struct sippymodem_v34_precoder saved;
+	struct sippymodem_v34_precoder invalid;
+	struct sippymodem_v34_precoder overflow = {
+		.coefficients = {
+			{ INT16_MAX, 0 }, { INT16_MAX, 0 }, { INT16_MAX, 0 },
+		},
+		.previous_symbols = {
+			{ INT32_MAX, 0 }, { INT32_MAX, 0 }, { INT32_MAX, 0 },
+		},
+		.grid_step = SIPPYMODEM_V34_PRECODER_GRID_STEP_2,
+	};
+	struct sippymodem_qam_point rejected[2];
+	struct sippymodem_qam_point saved_rejected[2];
+	struct sippymodem_qam_point bad[2];
+
+	CHECK(initialize_precoder(
+		      &receiver, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8,
+		      ZERO_COEFFICIENTS),
+	      "receive boundary fixture did not initialize");
+	CHECK(sippymodem_v34_precoder_reconstruct_interval(
+		      &receiver, tie_inputs, rejected) ==
+		      SIPPYMODEM_V34_PRECODER_OK &&
+	      memcmp(rejected, tie_inputs, sizeof(rejected)) == 0 &&
+	      receiver.previous_symbols[0].in_phase == 2 &&
+	      receiver.previous_symbols[0].quadrature == -2 &&
+	      receiver.previous_symbols[1].in_phase == 1 &&
+	      receiver.previous_symbols[1].quadrature == -1,
+	      "receive Q7 half-way rounding changed");
+	saved = receiver;
+	memset(rejected, 0xa5, sizeof(rejected));
+	memcpy(saved_rejected, rejected, sizeof(rejected));
+	bad[0] = tie_inputs[0];
+	bad[1] = tie_inputs[1];
+	bad[1].quadrature = NAN;
+	CHECK(sippymodem_v34_precoder_reconstruct_interval(
+		      &receiver, bad, rejected) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      precoders_are_equal(&receiver, &saved) &&
+	      memcmp(rejected, saved_rejected, sizeof(rejected)) == 0,
+	      "invalid second receive symbol was not atomic");
+	bad[1] = tie_inputs[1];
+	bad[1].in_phase = DBL_MAX;
+	CHECK(sippymodem_v34_precoder_reconstruct_interval(
+		      &receiver, bad, rejected) ==
+		      SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE &&
+	      precoders_are_equal(&receiver, &saved) &&
+	      memcmp(rejected, saved_rejected, sizeof(rejected)) == 0,
+	      "out-of-range second receive symbol was not atomic");
+	CHECK(sippymodem_v34_precoder_reconstruct_interval(
+		      NULL, tie_inputs, rejected) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_precoder_reconstruct_interval(
+		      &receiver, NULL, rejected) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_precoder_reconstruct_interval(
+		      &receiver, tie_inputs, NULL) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      precoders_are_equal(&receiver, &saved) &&
+	      memcmp(rejected, saved_rejected, sizeof(rejected)) == 0,
+	      "invalid receive pointers changed state or output");
+	invalid = receiver;
+	invalid.grid_step = (enum sippymodem_v34_precoder_grid_step)3;
+	CHECK(sippymodem_v34_precoder_reconstruct_interval(
+		      &invalid, tie_inputs, rejected) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      memcmp(rejected, saved_rejected, sizeof(rejected)) == 0,
+	      "invalid receive history was accepted");
+	CHECK(sippymodem_v34_precoder_is_valid(&overflow),
+	      "receive overflow fixture is invalid");
+	saved = overflow;
+	CHECK(sippymodem_v34_precoder_reconstruct_interval(
+		      &overflow, tie_inputs, rejected) ==
+		      SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE &&
+	      precoders_are_equal(&overflow, &saved) &&
+	      memcmp(rejected, saved_rejected, sizeof(rejected)) == 0,
+	      "receive predictor overflow changed state or output");
 	return true;
 }
 
@@ -546,6 +740,9 @@ int main(void)
 	} tests[] = {
 		{ "initialization", test_initialization },
 		{ "complex sequences", test_complex_sequences },
+		{ "receive reconstruction", test_receive_reconstruction },
+		{ "receive reconstruction boundaries",
+		  test_receive_reconstruction_boundaries },
 		{ "rounding boundaries", test_rounding_boundaries },
 		{ "channel boundaries", test_channel_boundaries },
 		{ "range failures", test_range_failures },
