@@ -49,14 +49,24 @@ ROOT_KEYS = frozenset(
         "at_commands",
         "startup_timeout_seconds",
         "call_timeout_seconds",
+        "online_timeout_seconds",
         "hold_seconds",
         "plans",
     }
 )
 PLAN_KEYS = frozenset(
-    {"name", "dial", "configured_target", "enabled", "at_commands"}
+    {
+        "name",
+        "dial",
+        "configured_target",
+        "enabled",
+        "at_commands",
+        "online_send_hex",
+        "online_expect_hex",
+    }
 )
 PLAN_NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9_.-]{0,62}[a-z0-9])?\Z")
+ONLINE_PATTERN_MAX = 512
 
 
 class LiveCallConfigError(ValueError):
@@ -70,6 +80,8 @@ class DialPlan:
     configured_target: str
     enabled: bool
     at_commands: tuple[str, ...]
+    online_send: bytes = b""
+    online_expect: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -80,6 +92,7 @@ class LiveCallConfig:
     at_commands: tuple[str, ...]
     startup_timeout_seconds: float
     call_timeout_seconds: float
+    online_timeout_seconds: float
     hold_seconds: float
     plans: tuple[DialPlan, ...]
 
@@ -118,6 +131,18 @@ def _commands(value: Any, field: str) -> tuple[str, ...]:
     if any(not command.upper().startswith("AT") for command in commands):
         raise LiveCallConfigError(f"{field} entries must begin with AT")
     return commands
+
+
+def _hex_bytes(value: Any, field: str) -> bytes:
+    if not isinstance(value, str):
+        raise LiveCallConfigError(f"{field} must be text")
+    if (
+        len(value) > ONLINE_PATTERN_MAX * 2
+        or len(value) % 2 != 0
+        or re.fullmatch(r"[0-9a-fA-F]*", value) is None
+    ):
+        raise LiveCallConfigError(f"{field} must be bounded hexadecimal bytes")
+    return bytes.fromhex(value)
 
 
 def _bounded_number(
@@ -170,12 +195,24 @@ def _plan(value: Any, index: int) -> DialPlan:
     enabled = value.get("enabled", True)
     if not isinstance(enabled, bool):
         raise LiveCallConfigError(f"{field}.enabled must be boolean")
+    online_send = _hex_bytes(
+        value.get("online_send_hex", ""), f"{field}.online_send_hex"
+    )
+    online_expect = _hex_bytes(
+        value.get("online_expect_hex", ""), f"{field}.online_expect_hex"
+    )
+    if online_send and not online_expect:
+        raise LiveCallConfigError(
+            f"{field}.online_send_hex requires an expected response"
+        )
     return DialPlan(
         name=name,
         dial=dial,
         configured_target=target,
         enabled=enabled,
         at_commands=_commands(value.get("at_commands", []), f"{field}.at_commands"),
+        online_send=online_send,
+        online_expect=online_expect,
     )
 
 
@@ -247,6 +284,12 @@ def load_live_call_config(path: str | Path) -> LiveCallConfig:
             1,
             600,
         ),
+        online_timeout_seconds=_bounded_number(
+            document.get("online_timeout_seconds", 15),
+            "online_timeout_seconds",
+            0.1,
+            120,
+        ),
         hold_seconds=_bounded_number(
             document.get("hold_seconds", 3), "hold_seconds", 0, 60
         ),
@@ -277,6 +320,7 @@ def public_manifest(config: LiveCallConfig) -> dict[str, Any]:
                 "enabled": plan.enabled,
                 "form": dial_form(plan),
                 "at_command_count": len(plan.at_commands),
+                "terminal_data": bool(plan.online_expect),
             }
             for plan in config.plans
         ],

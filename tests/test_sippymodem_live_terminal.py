@@ -34,14 +34,23 @@ class LiveTerminalTests(unittest.TestCase):
         decoder = ResponseDecoder()
         decoder.feed(b"ATDpeer\r\nModulation: V.21\r\nCON")
         self.assertIsNone(decoder.pop())
-        decoder.feed(b"NECT 300\r\n")
+        decoder.feed(b"NECT 300\r")
         self.assertEqual(decoder.pop(), "connect")
+        decoder.feed(b"\nSIPPY")
+        self.assertEqual(decoder.take_online_data(), b"SIPPY")
+        decoder.feed(b"-LIVE\r\n")
+        self.assertEqual(decoder.take_online_data(), b"-LIVE\r\n")
+        decoder.begin_command_response()
         decoder.feed(b"7\r\nNO CARRIER\r\n")
         self.assertEqual(decoder.pop(), "busy")
         self.assertEqual(decoder.pop(), "no-carrier")
         decoder.feed(b"x" * 600 + b"OK\r\nERROR\r\n")
         self.assertEqual(decoder.pop(), "error")
         self.assertIsNone(decoder.pop())
+
+        decoder.feed(b"CONNECT 300\r\nSAME-READ")
+        self.assertEqual(decoder.pop(), "connect")
+        self.assertEqual(decoder.take_online_data(), b"SAME-READ")
 
     def test_published_device_requires_a_bounded_pts_path(self) -> None:
         for published, expected in (

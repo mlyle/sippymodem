@@ -17,6 +17,8 @@ from typing import IO
 
 DEVICE_PATH_RE = re.compile(r"/dev/pts/[0-9]+\Z")
 RESPONSE_LINE_MAX = 512
+ONLINE_PATTERN_MAX = 512
+ONLINE_CAPTURE_MAX = 8192
 PUBLISHED_LINE_MAX = 512
 PUBLISHED_OUTPUT_MAX = 4096
 RESULT_BY_LINE = {
@@ -45,16 +47,31 @@ class ResponseDecoder:
 
     def __init__(self) -> None:
         self._line = bytearray()
+        self._online_data = bytearray()
         self._results: deque[str] = deque()
         self._discarding_line = False
+        self._online = False
+        self._skip_line_feed = False
 
     def feed(self, data: bytes) -> None:
         for byte in data:
+            if self._online:
+                if self._skip_line_feed:
+                    self._skip_line_feed = False
+                    if byte == 0x0A:
+                        continue
+                if len(self._online_data) >= ONLINE_CAPTURE_MAX:
+                    raise LiveTerminalError("online terminal data is too long")
+                self._online_data.append(byte)
+                continue
             if byte in (0x0A, 0x0D):
                 if not self._discarding_line and self._line:
                     result = _classify_response(bytes(self._line))
                     if result is not None:
                         self._results.append(result)
+                        if result == "connect":
+                            self._online = True
+                            self._skip_line_feed = byte == 0x0D
                 self._line.clear()
                 self._discarding_line = False
             elif not self._discarding_line:
@@ -66,6 +83,23 @@ class ResponseDecoder:
 
     def pop(self) -> str | None:
         return self._results.popleft() if self._results else None
+
+    @property
+    def online(self) -> bool:
+        return self._online
+
+    def take_online_data(self) -> bytes:
+        data = bytes(self._online_data)
+        self._online_data.clear()
+        return data
+
+    def begin_command_response(self) -> None:
+        self._line.clear()
+        self._online_data.clear()
+        self._results.clear()
+        self._discarding_line = False
+        self._online = False
+        self._skip_line_feed = False
 
 
 def _classify_response(line: bytes) -> str | None:
@@ -119,11 +153,51 @@ class ModemTerminal:
         time.sleep(1.1)
         deadline = time.monotonic() + 3.0
         try:
+            self._decoder.begin_command_response()
             self._write(b"+++", deadline)
             if self._read_result(deadline) == "ok":
                 self.command("ATH", 3.0)
         except (LiveTerminalError, OSError, TimeoutError):
             pass
+
+    def exchange_online(
+        self, send: bytes, expected: bytes, timeout_seconds: float
+    ) -> tuple[bool, bytes]:
+        if (
+            not isinstance(send, bytes)
+            or not isinstance(expected, bytes)
+            or not expected
+            or len(send) > ONLINE_PATTERN_MAX
+            or len(expected) > ONLINE_PATTERN_MAX
+            or timeout_seconds <= 0
+            or not self._decoder.online
+        ):
+            raise LiveTerminalError("invalid online terminal exchange")
+        deadline = time.monotonic() + timeout_seconds
+        if send:
+            self._write(send, deadline)
+        received = bytearray(self._decoder.take_online_data())
+        while expected not in received:
+            if len(received) >= ONLINE_CAPTURE_MAX:
+                raise LiveTerminalError("online terminal data is too long")
+            try:
+                _wait_for_descriptor(
+                    self._descriptor, selectors.EVENT_READ, deadline
+                )
+            except TimeoutError:
+                return False, bytes(received)
+            try:
+                data = os.read(
+                    self._descriptor,
+                    min(4096, ONLINE_CAPTURE_MAX - len(received)),
+                )
+            except (BlockingIOError, InterruptedError):
+                continue
+            if not data:
+                raise OSError("modem terminal closed")
+            self._decoder.feed(data)
+            received.extend(self._decoder.take_online_data())
+        return True, bytes(received)
 
     def _write(self, data: bytes, deadline: float) -> None:
         view = memoryview(data)

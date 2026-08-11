@@ -43,6 +43,7 @@ class LiveCallRunnerTests(unittest.TestCase):
             at_commands=("ATZ",),
             startup_timeout_seconds=1,
             call_timeout_seconds=1,
+            online_timeout_seconds=0.25,
             hold_seconds=0,
             plans=plans,
         )
@@ -108,7 +109,14 @@ class LiveCallRunnerTests(unittest.TestCase):
 
         self.assertEqual(
             set(result.public_dict()),
-            {"plan", "form", "outcome", "duration_seconds"},
+            {
+                "plan",
+                "form",
+                "outcome",
+                "duration_seconds",
+                "terminal_expected_bytes",
+                "terminal_verified_bytes",
+            },
         )
         self.assertNotIn("target", rendered)
         self.assertNotIn("environment", rendered)
@@ -157,6 +165,58 @@ while True:
             self.assertEqual(recorded["outcome"], "busy")
             self.assertNotIn("peer", json.dumps(recorded))
             self.assertNotIn("private.example", json.dumps(recorded))
+
+    def test_fake_modem_preserves_and_verifies_online_data(self) -> None:
+        script_text = """#!/usr/bin/env python3
+import os
+import pty
+import tty
+
+master, slave = pty.openpty()
+tty.setraw(slave)
+print(os.ttyname(slave), flush=True)
+pending = b""
+while True:
+    pending += os.read(master, 4096)
+    if b"+++" in pending:
+        _before, pending = pending.split(b"+++", 1)
+        os.write(master, b"\\r\\nOK\\r\\n")
+    while b"\\r" in pending:
+        command, pending = pending.split(b"\\r", 1)
+        if command.startswith(b"ATD"):
+            os.write(master, b"\\r\\nCONNECT 300\\r\\nSIPPY-LIVE-OK\\r\\n")
+        else:
+            os.write(master, b"\\r\\nOK\\r\\n")
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "fake-slmodemd"
+            executable.write_text(script_text, encoding="utf-8")
+            executable.chmod(0o700)
+            plans = (
+                DialPlan(
+                    "data-case",
+                    "peer",
+                    "",
+                    True,
+                    (),
+                    b"",
+                    b"SIPPY-LIVE-OK\r\n",
+                ),
+            )
+            config = self.config(directory, plans)
+
+            result = LiveCallAttempt(config, plans[0]).run()
+
+            self.assertEqual(result.outcome, "connected")
+            self.assertEqual(result.terminal_expected_bytes, 15)
+            self.assertEqual(result.terminal_verified_bytes, 15)
+            attempt = next(config.artifact_directory.iterdir())
+            received = attempt / "terminal-rx.bin"
+            transmitted = attempt / "terminal-tx.bin"
+            self.assertEqual(received.read_bytes(), b"SIPPY-LIVE-OK\r\n")
+            self.assertEqual(transmitted.read_bytes(), b"")
+            self.assertEqual(stat.S_IMODE(received.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(transmitted.stat().st_mode), 0o600)
 
     def test_list_mode_is_redacted_and_does_not_start_modem(self) -> None:
         document = {

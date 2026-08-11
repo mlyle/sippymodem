@@ -67,6 +67,8 @@ class CallResult:
     form: str
     outcome: str
     duration_seconds: float
+    terminal_expected_bytes: int = 0
+    terminal_verified_bytes: int = 0
 
     def public_dict(self) -> dict[str, object]:
         return {
@@ -74,6 +76,8 @@ class CallResult:
             "form": self.form,
             "outcome": self.outcome,
             "duration_seconds": self.duration_seconds,
+            "terminal_expected_bytes": self.terminal_expected_bytes,
+            "terminal_verified_bytes": self.terminal_verified_bytes,
         }
 
 
@@ -83,6 +87,8 @@ class AttemptArtifacts:
     daemon_log: Path
     result_file: Path
     recording_prefix: Path
+    terminal_rx: Path
+    terminal_tx: Path
 
     @classmethod
     def create(cls, root: Path, plan_name: str) -> AttemptArtifacts:
@@ -99,12 +105,20 @@ class AttemptArtifacts:
             daemon_log=directory / "daemon.log",
             result_file=directory / "result.json",
             recording_prefix=directory / "media",
+            terminal_rx=directory / "terminal-rx.bin",
+            terminal_tx=directory / "terminal-tx.bin",
         )
 
     def write_result(self, result: CallResult) -> None:
         payload = json.dumps(result.public_dict(), sort_keys=True) + "\n"
         with _open_private_text(self.result_file) as stream:
             stream.write(payload)
+
+    def write_terminal_exchange(self, transmitted: bytes, received: bytes) -> None:
+        with _open_private_binary(self.terminal_tx) as stream:
+            stream.write(transmitted)
+        with _open_private_binary(self.terminal_rx) as stream:
+            stream.write(received)
 
 
 def _require_private_directory(path: Path) -> None:
@@ -126,6 +140,13 @@ def _open_private_text(path: Path) -> IO[str]:
     flags |= getattr(os, "O_CLOEXEC", 0)
     descriptor = os.open(path, flags, 0o600)
     return os.fdopen(descriptor, "w", encoding="utf-8")
+
+
+def _open_private_binary(path: Path) -> IO[bytes]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(path, flags, 0o600)
+    return os.fdopen(descriptor, "wb")
 
 
 def build_child_environment(
@@ -175,6 +196,8 @@ class LiveCallAttempt:
     def run(self) -> CallResult:
         started = time.monotonic()
         outcome = "infrastructure-error"
+        expected_bytes = len(self._plan.online_expect)
+        verified_bytes = 0
         stage = "startup"
         try:
             self._start()
@@ -197,7 +220,21 @@ class LiveCallAttempt:
                     self._config.call_timeout_seconds,
                 )
                 if response == "connect":
-                    outcome = "connected"
+                    if self._plan.online_expect:
+                        stage = "data"
+                        verified, received = self._terminal.exchange_online(
+                            self._plan.online_send,
+                            self._plan.online_expect,
+                            self._config.online_timeout_seconds,
+                        )
+                        self._artifacts.write_terminal_exchange(
+                            self._plan.online_send, received
+                        )
+                        if verified:
+                            verified_bytes = expected_bytes
+                    else:
+                        verified = True
+                    outcome = "connected" if verified else "data-missing"
                     time.sleep(self._config.hold_seconds)
                     self._terminal.escape_and_hang_up()
                 elif response == "ok":
@@ -220,6 +257,8 @@ class LiveCallAttempt:
             form=dial_form(self._plan),
             outcome=outcome,
             duration_seconds=round(time.monotonic() - started, 3),
+            terminal_expected_bytes=expected_bytes,
+            terminal_verified_bytes=verified_bytes,
         )
         self._artifacts.write_result(result)
         return result
@@ -338,6 +377,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     form=dial_form(plan),
                     outcome="artifact-failed",
                     duration_seconds=0.0,
+                    terminal_expected_bytes=len(plan.online_expect),
                 )
             results.append(result)
             print(json.dumps(result.public_dict(), sort_keys=True))

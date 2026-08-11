@@ -110,6 +110,13 @@ only a redacted manifest. The inert example covers an empty dial using the
 configured direct SIP target and selects V.21 at exactly 300 bit/s for the
 first physical-modem interoperability milestone. Add separately named plans
 when comparing modem profiles or AT setups against that same direct target.
+The example also includes a short placeholder online-data marker in
+`online_expect_hex`. Replace it with the bytes emitted by the private peer.
+An optional `online_send_hex` can drive an echo or request/response check;
+outbound data is rejected unless an expected response is also configured.
+Both patterns are limited to 512 bytes, and `online_timeout_seconds` bounds the
+wait. When an expectation is present, a plan reports `connected` only after
+the terminal receives that exact byte sequence.
 
 The runner clears inherited SIP settings before applying the private file,
 uses ephemeral local ports unless the file explicitly selects ports, and never
@@ -117,7 +124,9 @@ prints endpoints, credentials, terminal paths, or artifact paths. Each attempt
 gets a private ignored directory under `live-call-artifacts/` containing its
 redacted result, daemon diagnostics, and bounded media recordings. Enabled
 plans and credentials require the private configuration file to have no group
-or other permissions.
+or other permissions. Data-verifying plans also retain bounded
+`terminal-tx.bin` and `terminal-rx.bin` evidence there with owner-only access;
+the public result reports only expected and verified byte counts.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test

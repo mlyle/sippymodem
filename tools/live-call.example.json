@@ -12,12 +12,14 @@
   ],
   "startup_timeout_seconds": 15,
   "call_timeout_seconds": 90,
+  "online_timeout_seconds": 15,
   "hold_seconds": 3,
   "plans": [
     {
       "name": "v21-direct",
       "dial": "",
       "configured_target": "sip:ata.example.invalid",
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
       "enabled": false
     }
   ]
