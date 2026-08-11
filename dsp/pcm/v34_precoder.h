@@ -92,6 +92,18 @@ enum sippymodem_v34_precoder_result sippymodem_v34_precoder_step(
 	const struct sippymodem_v34_grid_point *mapper_output,
 	struct sippymodem_v34_precoder_symbol *symbol);
 
+/* Invert one exact, survivor-selected odd-grid channel point y(n). This is a
+ * post-trellis operation, not a noisy-sample slicer. It recovers u(n), reports
+ * the same prediction and x(n) representation as the transmit step, and then
+ * advances the shared precoder history. channel_output and mapper_output may
+ * refer to the same object. State and both destinations are unchanged on
+ * failure. */
+enum sippymodem_v34_precoder_result sippymodem_v34_precoder_inverse_step(
+	struct sippymodem_v34_precoder *precoder,
+	const struct sippymodem_v34_grid_point *channel_output,
+	struct sippymodem_v34_grid_point *mapper_output,
+	struct sippymodem_v34_precoder_symbol *symbol);
+
 const char *sippymodem_v34_precoder_result_name(
 	enum sippymodem_v34_precoder_result result);
 

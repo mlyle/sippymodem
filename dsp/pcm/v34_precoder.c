@@ -232,6 +232,69 @@ enum sippymodem_v34_precoder_result sippymodem_v34_precoder_step(
 	return SIPPYMODEM_V34_PRECODER_OK;
 }
 
+static bool channel_output_is_valid(
+	const struct sippymodem_v34_grid_point *channel_output)
+{
+	return channel_output != NULL &&
+	       channel_output->in_phase >=
+		       -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT &&
+	       channel_output->in_phase <=
+		       SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT &&
+	       channel_output->quadrature >=
+		       -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT &&
+	       channel_output->quadrature <=
+		       SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT &&
+	       ((uint16_t)channel_output->in_phase & 1u) != 0u &&
+	       ((uint16_t)channel_output->quadrature & 1u) != 0u;
+}
+
+enum sippymodem_v34_precoder_result sippymodem_v34_precoder_inverse_step(
+	struct sippymodem_v34_precoder *precoder,
+	const struct sippymodem_v34_grid_point *channel_output,
+	struct sippymodem_v34_grid_point *mapper_output,
+	struct sippymodem_v34_precoder_symbol *symbol)
+{
+	struct sippymodem_v34_precoder next;
+	struct sippymodem_v34_precoder_prediction prediction;
+	struct sippymodem_v34_precoder_symbol generated;
+	struct sippymodem_v34_grid_point channel;
+	struct sippymodem_v34_grid_point recovered;
+	int64_t recovered_in_phase;
+	int64_t recovered_quadrature;
+	enum sippymodem_v34_precoder_result result;
+
+	if (!sippymodem_v34_precoder_is_valid(precoder) ||
+	    !channel_output_is_valid(channel_output) || mapper_output == NULL ||
+	    symbol == NULL)
+		return SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT;
+	next = *precoder;
+	channel = *channel_output;
+	result = sippymodem_v34_precoder_predict(&next, &prediction);
+	if (result != SIPPYMODEM_V34_PRECODER_OK)
+		return result;
+	recovered_in_phase =
+		(int64_t)channel.in_phase - prediction.lattice_offset.in_phase;
+	recovered_quadrature =
+		(int64_t)channel.quadrature - prediction.lattice_offset.quadrature;
+	if (!int64_fits_int16(recovered_in_phase) ||
+	    !int64_fits_int16(recovered_quadrature))
+		return SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE;
+	recovered = (struct sippymodem_v34_grid_point){
+		.in_phase = (int16_t)recovered_in_phase,
+		.quadrature = (int16_t)recovered_quadrature,
+	};
+	result = sippymodem_v34_precoder_step(&next, &recovered, &generated);
+	if (result != SIPPYMODEM_V34_PRECODER_OK)
+		return result;
+	if (generated.channel_output.in_phase != channel.in_phase ||
+	    generated.channel_output.quadrature != channel.quadrature)
+		return SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT;
+	*precoder = next;
+	*mapper_output = recovered;
+	*symbol = generated;
+	return SIPPYMODEM_V34_PRECODER_OK;
+}
+
 const char *sippymodem_v34_precoder_result_name(
 	enum sippymodem_v34_precoder_result result)
 {

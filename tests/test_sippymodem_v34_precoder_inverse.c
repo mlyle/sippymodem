@@ -1,0 +1,307 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <v34_precoder.h>
+
+#include "test.h"
+
+#include <limits.h>
+#include <string.h>
+
+static bool initialize_precoder(
+	struct sippymodem_v34_precoder *precoder,
+	enum sippymodem_v34_symbol_rate symbol_rate, uint8_t primary_rate,
+	const struct sippymodem_v34_q14_coefficient
+		coefficients[SIPPYMODEM_V34_PRECODER_TAP_COUNT])
+{
+	struct sippymodem_v34_frame_geometry geometry;
+	struct sippymodem_v34_mapping_parameters parameters;
+
+	return sippymodem_v34_frame_geometry_init(
+		       &geometry, symbol_rate, primary_rate, false) ==
+		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+	       sippymodem_v34_mapping_parameters_init(
+		       &parameters, &geometry, false) ==
+		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
+	       sippymodem_v34_precoder_init(
+		       precoder, &parameters, coefficients) ==
+		       SIPPYMODEM_V34_PRECODER_OK;
+}
+
+static bool q7_points_are_equal(
+	const struct sippymodem_v34_q7_point *left,
+	const struct sippymodem_v34_q7_point *right)
+{
+	return left->in_phase == right->in_phase &&
+	       left->quadrature == right->quadrature;
+}
+
+static bool grid_points_are_equal(
+	const struct sippymodem_v34_grid_point *left,
+	const struct sippymodem_v34_grid_point *right)
+{
+	return left->in_phase == right->in_phase &&
+	       left->quadrature == right->quadrature;
+}
+
+static bool symbols_are_equal(
+	const struct sippymodem_v34_precoder_symbol *left,
+	const struct sippymodem_v34_precoder_symbol *right)
+{
+	return q7_points_are_equal(
+		       &left->filter_output, &right->filter_output) &&
+	       grid_points_are_equal(
+		       &left->lattice_offset, &right->lattice_offset) &&
+	       grid_points_are_equal(
+		       &left->channel_output, &right->channel_output) &&
+	       q7_points_are_equal(
+		       &left->precoded_symbol, &right->precoded_symbol);
+}
+
+static bool precoders_are_equal(
+	const struct sippymodem_v34_precoder *left,
+	const struct sippymodem_v34_precoder *right)
+{
+	if (left->grid_step != right->grid_step)
+		return false;
+	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	     ++tap) {
+		if (left->coefficients[tap].real !=
+			    right->coefficients[tap].real ||
+		    left->coefficients[tap].imaginary !=
+			    right->coefficients[tap].imaginary ||
+		    !q7_points_are_equal(
+			    &left->previous_symbols[tap],
+			    &right->previous_symbols[tap]))
+			return false;
+	}
+	return true;
+}
+
+static bool test_known_inverse(void)
+{
+	struct sippymodem_v34_precoder precoder = {
+		.coefficients = { { 8192, 0 } },
+		.previous_symbols = { { 512, -256 } },
+		.grid_step = SIPPYMODEM_V34_PRECODER_GRID_STEP_2,
+	};
+	struct sippymodem_v34_grid_point channel_and_mapper = { 5, -3 };
+	struct sippymodem_v34_precoder_symbol symbol;
+	const struct sippymodem_v34_grid_point expected_mapper = { 3, -3 };
+	const struct sippymodem_v34_precoder_symbol expected_symbol = {
+		.filter_output = { 256, -128 },
+		.lattice_offset = { 2, 0 },
+		.channel_output = { 5, -3 },
+		.precoded_symbol = { 384, -256 },
+	};
+	const struct sippymodem_v34_q7_point expected_history[] = {
+		{ 384, -256 }, { 512, -256 }, { 0, 0 },
+	};
+
+	CHECK(sippymodem_v34_precoder_inverse_step(
+		      &precoder, &channel_and_mapper, &channel_and_mapper,
+		      &symbol) == SIPPYMODEM_V34_PRECODER_OK &&
+	      grid_points_are_equal(&channel_and_mapper, &expected_mapper) &&
+	      symbols_are_equal(&symbol, &expected_symbol),
+	      "known inverse step did not recover its mapper point");
+	for (size_t tap = 0; tap < ARRAY_LENGTH(expected_history); ++tap)
+		CHECK(q7_points_are_equal(
+			      &precoder.previous_symbols[tap],
+			      &expected_history[tap]),
+		      "known inverse history tap %zu changed", tap);
+	return true;
+}
+
+static int16_t generated_odd_coordinate(uint32_t *state)
+{
+	uint32_t coordinate;
+
+	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
+	coordinate = (*state >> 24) & 31u;
+	return (int16_t)((int)coordinate * 2 - 31);
+}
+
+static bool test_generated_round_trip(void)
+{
+	static const struct sippymodem_v34_q14_coefficient coefficients[] = {
+		{ 2048, -1024 }, { -1024, 512 }, { 512, 1024 },
+	};
+	static const struct {
+		enum sippymodem_v34_symbol_rate symbol_rate;
+		uint8_t primary_rate;
+		enum sippymodem_v34_precoder_grid_step grid_step;
+	} modes[] = {
+		{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8,
+		  SIPPYMODEM_V34_PRECODER_GRID_STEP_2 },
+		{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 8,
+		  SIPPYMODEM_V34_PRECODER_GRID_STEP_4 },
+	};
+	uint32_t state = UINT32_C(0x6d2b79f5);
+	unsigned int nonzero_offsets = 0;
+
+	for (size_t mode = 0; mode < ARRAY_LENGTH(modes); ++mode) {
+		struct sippymodem_v34_precoder transmitter;
+		struct sippymodem_v34_precoder receiver;
+
+		CHECK(initialize_precoder(
+			      &transmitter, modes[mode].symbol_rate,
+			      modes[mode].primary_rate, coefficients) &&
+		      initialize_precoder(
+			      &receiver, modes[mode].symbol_rate,
+			      modes[mode].primary_rate, coefficients) &&
+		      transmitter.grid_step == modes[mode].grid_step &&
+		      receiver.grid_step == modes[mode].grid_step,
+		      "generated mode %zu did not initialize", mode);
+		for (size_t index = 0; index < 1024u; ++index) {
+			const struct sippymodem_v34_grid_point mapper = {
+				generated_odd_coordinate(&state),
+				generated_odd_coordinate(&state),
+			};
+			struct sippymodem_v34_grid_point recovered;
+			struct sippymodem_v34_precoder_symbol transmitted;
+			struct sippymodem_v34_precoder_symbol received;
+
+			CHECK(sippymodem_v34_precoder_step(
+				      &transmitter, &mapper, &transmitted) ==
+				      SIPPYMODEM_V34_PRECODER_OK,
+			      "generated transmit %zu/%zu failed", mode, index);
+			if (transmitted.lattice_offset.in_phase != 0 ||
+			    transmitted.lattice_offset.quadrature != 0)
+				nonzero_offsets++;
+			CHECK(sippymodem_v34_precoder_inverse_step(
+				      &receiver, &transmitted.channel_output,
+				      &recovered, &received) ==
+				      SIPPYMODEM_V34_PRECODER_OK &&
+			      grid_points_are_equal(&recovered, &mapper) &&
+			      symbols_are_equal(&received, &transmitted) &&
+			      precoders_are_equal(&receiver, &transmitter),
+			      "generated inverse %zu/%zu diverged", mode, index);
+		}
+	}
+	CHECK(nonzero_offsets != 0,
+	      "generated inverse never exercised a precoder offset");
+	return true;
+}
+
+static bool rejected_inverse_is_transactional(
+	struct sippymodem_v34_precoder *precoder,
+	const struct sippymodem_v34_grid_point *channel,
+	enum sippymodem_v34_precoder_result expected)
+{
+	struct sippymodem_v34_precoder saved = *precoder;
+	struct sippymodem_v34_grid_point mapper;
+	struct sippymodem_v34_grid_point saved_mapper;
+	struct sippymodem_v34_precoder_symbol symbol;
+	struct sippymodem_v34_precoder_symbol saved_symbol;
+
+	memset(&mapper, 0x5a, sizeof(mapper));
+	memset(&symbol, 0xa5, sizeof(symbol));
+	saved_mapper = mapper;
+	saved_symbol = symbol;
+	return sippymodem_v34_precoder_inverse_step(
+		       precoder, channel, &mapper, &symbol) == expected &&
+	       precoders_are_equal(precoder, &saved) &&
+	       memcmp(&mapper, &saved_mapper, sizeof(mapper)) == 0 &&
+	       memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0;
+}
+
+static bool test_rejection(void)
+{
+	static const struct sippymodem_v34_grid_point invalid_channels[] = {
+		{ 0, 1 }, { 1, 0 }, { 257, 1 }, { -257, 1 },
+		{ 1, 257 }, { 1, -257 },
+	};
+	static const struct sippymodem_v34_q14_coefficient zero_coefficients
+		[SIPPYMODEM_V34_PRECODER_TAP_COUNT] = { 0 };
+	const struct sippymodem_v34_grid_point channel = { 1, 1 };
+	struct sippymodem_v34_precoder precoder;
+	struct sippymodem_v34_precoder saved;
+	struct sippymodem_v34_grid_point mapper = { 7, 9 };
+	struct sippymodem_v34_grid_point saved_mapper = mapper;
+	struct sippymodem_v34_precoder_symbol symbol;
+	struct sippymodem_v34_precoder_symbol saved_symbol;
+
+	CHECK(initialize_precoder(
+		      &precoder, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8,
+		      zero_coefficients),
+	      "rejection fixture did not initialize");
+	saved = precoder;
+	memset(&symbol, 0xa5, sizeof(symbol));
+	saved_symbol = symbol;
+	CHECK(sippymodem_v34_precoder_inverse_step(
+		      NULL, &channel, &mapper, &symbol) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_precoder_inverse_step(
+		      &precoder, NULL, &mapper, &symbol) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_precoder_inverse_step(
+		      &precoder, &channel, NULL, &symbol) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      sippymodem_v34_precoder_inverse_step(
+		      &precoder, &channel, &mapper, NULL) ==
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT &&
+	      precoders_are_equal(&precoder, &saved) &&
+	      memcmp(&mapper, &saved_mapper, sizeof(mapper)) == 0 &&
+	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+	      "invalid inverse arguments changed state or output");
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid_channels); ++index)
+		CHECK(rejected_inverse_is_transactional(
+			      &precoder, &invalid_channels[index],
+			      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT),
+		      "invalid channel point %zu changed state or output", index);
+	precoder.grid_step = (enum sippymodem_v34_precoder_grid_step)3;
+	CHECK(rejected_inverse_is_transactional(
+		      &precoder, &channel,
+		      SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT),
+	      "invalid precoder state was accepted");
+
+	precoder = (struct sippymodem_v34_precoder){
+		.coefficients = { { SIPPYMODEM_V34_Q14_SCALE, 0 } },
+		.previous_symbols = {
+			{ -32768 * SIPPYMODEM_V34_Q7_SCALE, 0 },
+		},
+		.grid_step = SIPPYMODEM_V34_PRECODER_GRID_STEP_2,
+	};
+	CHECK(rejected_inverse_is_transactional(
+		      &precoder,
+		      &(const struct sippymodem_v34_grid_point){ 255, 1 },
+		      SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE),
+	      "recovered mapper overflow changed state or output");
+	precoder = (struct sippymodem_v34_precoder){
+		.coefficients = {
+			{ INT16_MAX, 0 }, { INT16_MAX, 0 }, { INT16_MAX, 0 },
+		},
+		.previous_symbols = {
+			{ INT32_MAX, 0 }, { INT32_MAX, 0 }, { INT32_MAX, 0 },
+		},
+		.grid_step = SIPPYMODEM_V34_PRECODER_GRID_STEP_2,
+	};
+	CHECK(rejected_inverse_is_transactional(
+		      &precoder, &channel,
+		      SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE),
+	      "inverse prediction overflow changed state or output");
+	return true;
+}
+
+int main(void)
+{
+	static const struct {
+		const char *name;
+		bool (*run)(void);
+	} tests[] = {
+		{ "known inverse", test_known_inverse },
+		{ "generated round trip", test_generated_round_trip },
+		{ "transactional rejection", test_rejection },
+	};
+	unsigned int failures = 0;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
+		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
+		if (!tests[index].run()) {
+			fprintf(stderr, "[  FAILED  ] %s\n", tests[index].name);
+			failures++;
+		} else {
+			fprintf(stderr, "[       OK ] %s\n", tests[index].name);
+		}
+	}
+	return failures == 0 ? 0 : 1;
+}
