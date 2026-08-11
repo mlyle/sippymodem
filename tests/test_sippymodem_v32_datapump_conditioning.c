@@ -2,8 +2,10 @@
 
 #include <modem.h>
 #include <sippymodem_qam.h>
+#include <sippymodem_qam_gain.h>
 #include <sippymodem_single_tone.h>
 #include <sippymodem_v32_conditioning.h>
+#include <sippymodem_v32_conditioning_receiver.h>
 #include <sippymodem_v32_constellation.h>
 #include <sippymodem_v32_datapump.h>
 #include <sippymodem_v32_framing.h>
@@ -25,7 +27,7 @@ enum {
 	TEST_REVERSAL_SAMPLES = 800,
 	TEST_SILENCE_RUN = 24,
 	TEST_RATE_WORDS_BEFORE_RESPONSE = 2,
-	TEST_QAM_SAMPLE_LIMIT = 8000,
+	TEST_QAM_SAMPLE_LIMIT = 14000,
 };
 
 static const struct sippymodem_qam_channel test_v32_channel = {
@@ -52,6 +54,17 @@ struct test_peer_qam {
 	unsigned int rate_dibit;
 	unsigned int rate_symbols;
 	bool rate_started;
+};
+
+struct test_caller_qam_receiver {
+	struct sippymodem_qam_demodulator demodulator;
+	struct sippymodem_v32_conditioning_receiver conditioning;
+	struct sippymodem_v32_symbol_decoder decoder;
+	struct sippymodem_v32_rate_signal_detector rate_detector;
+	struct sippymodem_qam_gain gain;
+	struct sippymodem_qam_point previous_point;
+	bool conditioning_complete;
+	bool rate_detected;
 };
 
 static int unused_start(struct modem *modem)
@@ -263,7 +276,84 @@ static bool peer_qam_sample(struct test_peer_qam *peer, int16_t *sample)
 	       accepted == can_accept;
 }
 
-static bool test_line_conditioning_rate_handoff(void)
+static bool caller_qam_receiver_init(
+	struct test_caller_qam_receiver *receiver)
+{
+	*receiver = (struct test_caller_qam_receiver){ 0 };
+	return sippymodem_qam_demodulator_init(
+		       &receiver->demodulator, &test_v32_channel) ==
+		       SIPPYMODEM_QAM_OK &&
+	       sippymodem_v32_conditioning_receiver_init(
+		       &receiver->conditioning,
+		       SIPPYMODEM_V32_CALLING_TRANSMITTER) ==
+		       SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK &&
+	       sippymodem_v32_rate_signal_detector_init(
+		       &receiver->rate_detector) ==
+		       SIPPYMODEM_V32_RATE_SIGNAL_OK;
+}
+
+static bool caller_qam_receiver_observe(
+	struct test_caller_qam_receiver *receiver, int16_t sample)
+{
+	struct sippymodem_qam_point point;
+	bool ready;
+
+	if (sippymodem_qam_demodulator_sample(
+		    &receiver->demodulator, sample, &point, &ready) !=
+	    SIPPYMODEM_QAM_OK)
+		return false;
+	if (!ready || receiver->rate_detected)
+		return true;
+	if (!receiver->conditioning_complete) {
+		if (sippymodem_v32_conditioning_receiver_observe(
+			    &receiver->conditioning, &point, &ready) !=
+		    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK)
+			return false;
+		if (!ready)
+			return true;
+		if (sippymodem_v32_conditioning_receiver_framing_state(
+			    &receiver->conditioning, &receiver->decoder,
+			    &receiver->gain) !=
+		    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK)
+			return false;
+		receiver->previous_point = point;
+		receiver->conditioning_complete = true;
+		return true;
+	}
+	{
+		struct sippymodem_v32_rate_offer offer;
+		enum sippymodem_v32_rate_signal_event event;
+		uint8_t quarter_turns;
+		uint8_t quadrant;
+		uint8_t dibit;
+
+		if (sippymodem_qam_nearest_quarter_turn(
+			    &receiver->previous_point, &point,
+			    &quarter_turns) != SIPPYMODEM_QAM_OK)
+			return false;
+		quadrant = (uint8_t)((receiver->decoder.phase_quadrant +
+				      quarter_turns) &
+				     3u);
+		if (sippymodem_v32_4800_symbol_decode(
+			    &receiver->decoder, quadrant, &dibit) !=
+			    SIPPYMODEM_V32_FRAMING_OK ||
+		    sippymodem_v32_rate_signal_detector_observe(
+			    &receiver->rate_detector, dibit, &event, &offer) !=
+			    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+			return false;
+		if (event != SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT) {
+			if (event != SIPPYMODEM_V32_RATE_SIGNAL_DETECTED ||
+			    offer.rates != SIPPYMODEM_V32_RATE_CAPABILITY_4800 ||
+			    offer.trellis_at_highest_rate)
+				return false;
+			receiver->rate_detected = true;
+		}
+	}
+	receiver->previous_point = point;
+	return true;
+}
+
+static bool test_bidirectional_conditioning_rate_handoff(void)
 {
 	struct modem_driver driver = {
 		.name = "V.32 conditioning handoff test",
@@ -272,6 +362,7 @@ static bool test_line_conditioning_rate_handoff(void)
 		.ioctl = unused_control,
 	};
 	struct test_peer_qam peer;
+	struct test_caller_qam_receiver caller_receiver;
 	struct dp_operations *operations;
 	struct modem *modem;
 	struct dp *datapump;
@@ -287,18 +378,21 @@ static bool test_line_conditioning_rate_handoff(void)
 	datapump = operations->create(
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(datapump != NULL && drive_line_startup(operations, datapump) &&
-		      peer_qam_init(&peer),
+		      peer_qam_init(&peer) &&
+		      caller_qam_receiver_init(&caller_receiver),
 	      "V.32 caller did not reach receiver conditioning");
 	for (unsigned int count = 0;
 	     count < TEST_QAM_SAMPLE_LIMIT &&
-	     response_power < UINT64_C(1000000000);
+	     !caller_receiver.rate_detected;
 	     ++count) {
 		int16_t receive;
 		int16_t transmit;
 
 		CHECK(peer_qam_sample(&peer, &receive) &&
 			      process_sample(
-				      operations, datapump, receive, &transmit),
+				      operations, datapump, receive, &transmit) &&
+			      caller_qam_receiver_observe(
+				      &caller_receiver, transmit),
 		      "V.32 conditioning-to-rate processing stopped");
 		if (peer.rate_symbols <
 		    TEST_RATE_WORDS_BEFORE_RESPONSE *
@@ -310,8 +404,10 @@ static bool test_line_conditioning_rate_handoff(void)
 	CHECK(peer.rate_symbols >=
 		      TEST_RATE_WORDS_BEFORE_RESPONSE *
 			      SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
-		      response_power >= UINT64_C(1000000000),
-	      "V.32 caller did not answer peer conditioning and rate offer");
+		      response_power >= UINT64_C(1000000000) &&
+		      caller_receiver.conditioning_complete &&
+		      caller_receiver.rate_detected,
+	      "V.32 caller did not return conditioning and a rate response");
 	CHECK(operations->delete(datapump) == 0,
 	      "V.32 datapump cleanup failed");
 	modem_delete(modem);
@@ -322,11 +418,13 @@ static bool test_line_conditioning_rate_handoff(void)
 
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] line, conditioning, and rate handoff\n");
-	if (!test_line_conditioning_rate_handoff()) {
-		fprintf(stderr, "[  FAILED  ] line, conditioning, and rate handoff\n");
+	fprintf(stderr, "[ RUN      ] bidirectional conditioning and rate handoff\n");
+	if (!test_bidirectional_conditioning_rate_handoff()) {
+		fprintf(stderr,
+			"[  FAILED  ] bidirectional conditioning and rate handoff\n");
 		return 1;
 	}
-	fprintf(stderr, "[       OK ] line, conditioning, and rate handoff\n");
+	fprintf(stderr,
+		"[       OK ] bidirectional conditioning and rate handoff\n");
 	return 0;
 }
