@@ -4,7 +4,7 @@
 
 #include "modem.h"
 #include "modem_param.h"
-#include "sippymodem_fsk.h"
+#include "fsk.h"
 #include "v21.h"
 
 #include <limits.h>

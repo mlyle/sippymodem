@@ -110,7 +110,7 @@ Live interoperability calls are deliberately opt-in. Copy
 owner-readable only, replace the reserved example values locally, and enable
 only the plans that are safe to dial. `make live-call` runs every enabled plan
 in a fresh daemon process. Use repeated `--plan NAME` options with
-`python3 tools/sippymodem_live_calls.py` to select a subset. `--list` emits
+`python3 tools/live_calls.py` to select a subset. `--list` emits
 only a redacted manifest. The inert example covers an empty dial using the
 configured direct SIP target and selects V.21 at exactly 300 bit/s for the
 first physical-modem interoperability milestone. Add separately named plans

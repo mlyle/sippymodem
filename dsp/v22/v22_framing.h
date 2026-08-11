@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V22_FRAMING_H
 #define SIPPYMODEM_V22_FRAMING_H
 
-#include "sippymodem_differential_qpsk.h"
+#include "differential_qpsk.h"
 
 #include <stdbool.h>
 #include <stdint.h>

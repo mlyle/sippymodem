@@ -4,7 +4,7 @@
 
 #include "modem.h"
 #include "modem_param.h"
-#include "sippymodem_qam.h"
+#include "qam.h"
 #include "v22_framing.h"
 #include "v22bis_receiver.h"
 #include "v22bis_symbols.h"

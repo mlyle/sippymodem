@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V21_H
 #define SIPPYMODEM_V21_H
 
-#include "sippymodem_fsk.h"
+#include "fsk.h"
 
 enum {
 	SIPPYMODEM_V21_SAMPLE_RATE = 8000,

@@ -50,8 +50,8 @@
 #include <modem_homolog.h>
 #include <modem_dp.h>
 #include <modem_timer.h>
-#include <sippymodem_dc_filter.h>
-#include <sippymodem_lapm_v44_session.h>
+#include <dc_filter.h>
+#include <lapm_v44_session.h>
 
 struct sippymodem_v44_character_path;
 

@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V32_CONSTELLATION_H
 #define SIPPYMODEM_V32_CONSTELLATION_H
 
-#include "sippymodem_qam.h"
+#include "qam.h"
 
 #include <stdint.h>
 

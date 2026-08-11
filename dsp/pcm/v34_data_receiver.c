@@ -2,7 +2,7 @@
 
 #include "v34_data_receiver.h"
 
-#include "sippymodem_v34_mapping_parameters.h"
+#include "v34_mapping_parameters.h"
 
 #include <stddef.h>
 

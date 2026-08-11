@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_TRELLIS_H
 #define SIPPYMODEM_V34_TRELLIS_H
 
-#include "sippymodem_v34_constellation.h"
+#include "v34_constellation.h"
 
 #include <stdbool.h>
 #include <stdint.h>

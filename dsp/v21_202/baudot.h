@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_BAUDOT_H
 #define SIPPYMODEM_BAUDOT_H
 
-#include "sippymodem_fsk.h"
+#include "fsk.h"
 
 #include <stdbool.h>
 #include <stddef.h>

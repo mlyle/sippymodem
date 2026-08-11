@@ -2,7 +2,7 @@
 
 #include "v34_channel_frame_decoder.h"
 
-#include "sippymodem_v34_mapping_parameters.h"
+#include "v34_mapping_parameters.h"
 
 #include <stddef.h>
 #include <string.h>

@@ -4,8 +4,8 @@
 
 #include "modem.h"
 #include "modem_param.h"
-#include "sippymodem_qam.h"
-#include "sippymodem_qam_gain.h"
+#include "qam.h"
+#include "qam_gain.h"
 #include "uncoded_receiver.h"
 #include "conditioning.h"
 #include "conditioning_receiver.h"

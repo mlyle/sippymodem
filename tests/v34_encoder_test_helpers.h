@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_ENCODER_TEST_HELPERS_H
 #define SIPPYMODEM_V34_ENCODER_TEST_HELPERS_H
 
-#include <sippymodem_v34_mapping_frame_encoder.h>
+#include <v34_mapping_frame_encoder.h>
 
 #include <stdbool.h>
 #include <stddef.h>

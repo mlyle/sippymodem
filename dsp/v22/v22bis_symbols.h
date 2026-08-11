@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V22BIS_SYMBOLS_H
 #define SIPPYMODEM_V22BIS_SYMBOLS_H
 
-#include "sippymodem_qam.h"
+#include "qam.h"
 #include "v22_framing.h"
 
 #include <stdint.h>

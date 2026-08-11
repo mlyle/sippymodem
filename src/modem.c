@@ -52,7 +52,7 @@
 
 #include <modem.h>
 #include <modem_debug.h>
-#include <sippymodem_v8_datapump.h>
+#include <v8_datapump.h>
 
 
 #define XMIT_SIZE 4096

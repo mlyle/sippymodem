@@ -2,8 +2,8 @@
 
 #include "v34_mapping_frame_decoder.h"
 
-#include "sippymodem_v34_parser.h"
-#include "sippymodem_v34_shell_mapper.h"
+#include "v34_parser.h"
+#include "v34_shell_mapper.h"
 
 #include <stddef.h>
 

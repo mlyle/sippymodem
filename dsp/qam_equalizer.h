@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_QAM_EQUALIZER_H
 #define SIPPYMODEM_QAM_EQUALIZER_H
 
-#include "sippymodem_qam.h"
+#include "qam.h"
 
 #include <stdbool.h>
 

@@ -43,8 +43,8 @@
 
 #include <modem.h>
 #include <modem_debug.h>
-#include <sippymodem_v42_xid.h>
-#include <sippymodem_v44_character_path.h>
+#include <v42_xid.h>
+#include <v44_character_path.h>
 
 #include <limits.h>
 #include <stdbool.h>

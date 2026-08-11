@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_PATH_DECODER_H
 #define SIPPYMODEM_V34_PATH_DECODER_H
 
-#include "sippymodem_v34_4d_decoder.h"
+#include "v34_4d_decoder.h"
 #include "v34_precoder.h"
 #include "v34_survivor.h"
 

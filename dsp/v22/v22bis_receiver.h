@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V22BIS_RECEIVER_H
 #define SIPPYMODEM_V22BIS_RECEIVER_H
 
-#include "sippymodem_qam_gain.h"
+#include "qam_gain.h"
 #include "v22bis_symbols.h"
 
 #include <stdbool.h>

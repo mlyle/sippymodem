@@ -2,7 +2,7 @@
 
 #include "framing.h"
 
-#include "sippymodem_self_sync_scrambler.h"
+#include "self_sync_scrambler.h"
 
 #include <stddef.h>
 

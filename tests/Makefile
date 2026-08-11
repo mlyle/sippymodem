@@ -24,352 +24,352 @@ PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
 PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
 PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
 MODEM_OBJECT := $(BUILD_DIR)/modem_pack.o
-CONFIG_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_config
-CONFIG_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_config.o \
-	$(BUILD_DIR)/sippymodem_config.o $(BUILD_DIR)/sippymodem_media.o \
-	$(BUILD_DIR)/sippymodem_g711.o
-SIP_URI_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sip_uri
-SIP_URI_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_uri.o \
-	$(BUILD_DIR)/sippymodem_sip_uri.o
-SDP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sdp
-SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sdp.o \
-	$(BUILD_DIR)/sippymodem_sdp.o $(BUILD_DIR)/sippymodem_media.o \
-	$(BUILD_DIR)/sippymodem_g711.o
-PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sip_signaling
-PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_signaling.o \
-	$(BUILD_DIR)/sippymodem_sip_signaling_pjsip.o \
-	$(BUILD_DIR)/sippymodem_sdp_pjsip.o $(BUILD_DIR)/sippymodem_sdp.o \
-	$(BUILD_DIR)/sippymodem_sip_uri.o \
-	$(BUILD_DIR)/sippymodem_config.o $(BUILD_DIR)/sippymodem_media.o \
-	$(BUILD_DIR)/sippymodem_g711.o
-G711_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_g711
-G711_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_g711.o
-V42_XID_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v42_xid
-V42_XID_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v42_xid.o \
-	$(BUILD_DIR)/sippymodem_v42_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+CONFIG_TEST_BINARY := $(BUILD_DIR)/test_config
+CONFIG_TEST_OBJECTS := $(BUILD_DIR)/test_config.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/g711.o
+SIP_URI_TEST_BINARY := $(BUILD_DIR)/test_sip_uri
+SIP_URI_TEST_OBJECTS := $(BUILD_DIR)/test_sip_uri.o \
+	$(BUILD_DIR)/sip_uri.o
+SDP_TEST_BINARY := $(BUILD_DIR)/test_sdp
+SDP_TEST_OBJECTS := $(BUILD_DIR)/test_sdp.o \
+	$(BUILD_DIR)/sdp.o $(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/g711.o
+PJSIP_TEST_BINARY := $(BUILD_DIR)/test_sip_signaling
+PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_signaling.o \
+	$(BUILD_DIR)/sip_signaling_pjsip.o \
+	$(BUILD_DIR)/sdp_pjsip.o $(BUILD_DIR)/sdp.o \
+	$(BUILD_DIR)/sip_uri.o \
+	$(BUILD_DIR)/config.o $(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/g711.o
+G711_TEST_BINARY := $(BUILD_DIR)/test_g711
+G711_TEST_OBJECTS := $(BUILD_DIR)/test_g711.o \
+	$(BUILD_DIR)/g711.o
+V42_XID_TEST_BINARY := $(BUILD_DIR)/test_v42_xid
+V42_XID_TEST_OBJECTS := $(BUILD_DIR)/test_v42_xid.o \
+	$(BUILD_DIR)/v42_xid.o \
+	$(BUILD_DIR)/v44_xid.o \
+	$(BUILD_DIR)/v44_stream.o
 LAPM_V44_SESSION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_lapm_v44_session
+	$(BUILD_DIR)/test_lapm_v44_session
 LAPM_V44_SESSION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_lapm_v44_session.o \
-	$(BUILD_DIR)/sippymodem_lapm_v44_session.o \
-	$(BUILD_DIR)/sippymodem_v42_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
-V44_STREAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v44_stream
-V44_STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_stream.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
-V44_XID_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v44_xid
-V44_XID_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
-V44_DECODER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v44_decoder
-V44_DECODER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_lapm_v44_session.o \
+	$(BUILD_DIR)/lapm_v44_session.o \
+	$(BUILD_DIR)/v42_xid.o \
+	$(BUILD_DIR)/v44_xid.o \
+	$(BUILD_DIR)/v44_stream.o
+V44_STREAM_TEST_BINARY := $(BUILD_DIR)/test_v44_stream
+V44_STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_v44_stream.o \
+	$(BUILD_DIR)/v44_stream.o
+V44_XID_TEST_BINARY := $(BUILD_DIR)/test_v44_xid
+V44_XID_TEST_OBJECTS := $(BUILD_DIR)/test_v44_xid.o \
+	$(BUILD_DIR)/v44_xid.o \
+	$(BUILD_DIR)/v44_stream.o
+V44_DECODER_TEST_BINARY := $(BUILD_DIR)/test_v44_decoder
+V44_DECODER_TEST_OBJECTS := $(BUILD_DIR)/test_v44_decoder.o \
+	$(BUILD_DIR)/v44_decoder.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_transparent_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_CHARACTER_PATH_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_character_path
+	$(BUILD_DIR)/test_v44_character_path
 V44_CHARACTER_PATH_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_character_path.o \
-	$(BUILD_DIR)/sippymodem_v44_character_path.o \
-	$(BUILD_DIR)/sippymodem_v44_duplex.o \
-	$(BUILD_DIR)/sippymodem_v44_tx_monitor.o \
-	$(BUILD_DIR)/sippymodem_v44_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
-V44_DUPLEX_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v44_duplex
-V44_DUPLEX_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_duplex.o \
-	$(BUILD_DIR)/sippymodem_v44_duplex.o \
-	$(BUILD_DIR)/sippymodem_v44_tx_monitor.o \
-	$(BUILD_DIR)/sippymodem_v44_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
-V44_ENCODER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v44_encoder
-V44_ENCODER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_test_wire.o \
-	$(BUILD_DIR)/sippymodem_v44_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_character_path.o \
+	$(BUILD_DIR)/v44_character_path.o \
+	$(BUILD_DIR)/v44_duplex.o \
+	$(BUILD_DIR)/v44_tx_monitor.o \
+	$(BUILD_DIR)/v44_encoder.o \
+	$(BUILD_DIR)/v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_decoder.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_transparent_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
+V44_DUPLEX_TEST_BINARY := $(BUILD_DIR)/test_v44_duplex
+V44_DUPLEX_TEST_OBJECTS := $(BUILD_DIR)/test_v44_duplex.o \
+	$(BUILD_DIR)/v44_duplex.o \
+	$(BUILD_DIR)/v44_tx_monitor.o \
+	$(BUILD_DIR)/v44_encoder.o \
+	$(BUILD_DIR)/v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_decoder.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_transparent_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
+V44_ENCODER_TEST_BINARY := $(BUILD_DIR)/test_v44_encoder
+V44_ENCODER_TEST_OBJECTS := $(BUILD_DIR)/test_v44_encoder.o \
+	$(BUILD_DIR)/v44_test_wire.o \
+	$(BUILD_DIR)/v44_encoder.o \
+	$(BUILD_DIR)/v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_decoder.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_transparent_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_ENCODER_MODES_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_encoder_modes
+	$(BUILD_DIR)/test_v44_encoder_modes
 V44_ENCODER_MODES_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_encoder_modes.o \
-	$(BUILD_DIR)/sippymodem_v44_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_encoder_modes.o \
+	$(BUILD_DIR)/v44_encoder.o \
+	$(BUILD_DIR)/v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_decoder.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_transparent_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_TX_MONITOR_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_tx_monitor
+	$(BUILD_DIR)/test_v44_tx_monitor
 V44_TX_MONITOR_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_tx_monitor.o \
-	$(BUILD_DIR)/sippymodem_v44_tx_monitor.o \
-	$(BUILD_DIR)/sippymodem_v44_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_tx_monitor.o \
+	$(BUILD_DIR)/v44_tx_monitor.o \
+	$(BUILD_DIR)/v44_encoder.o \
+	$(BUILD_DIR)/v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_DICTIONARY_ENCODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_dictionary_encoder
+	$(BUILD_DIR)/test_v44_dictionary_encoder
 V44_DICTIONARY_ENCODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_TRANSPARENT_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_transparent_decoder
+	$(BUILD_DIR)/test_v44_transparent_decoder
 V44_TRANSPARENT_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_transparent_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o
+	$(BUILD_DIR)/test_v44_transparent_decoder.o \
+	$(BUILD_DIR)/v44_transparent_decoder.o
 V44_DICTIONARY_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_dictionary_decoder
+	$(BUILD_DIR)/test_v44_dictionary_decoder
 V44_DICTIONARY_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_COMPRESSED_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_decoder
+	$(BUILD_DIR)/test_v44_compressed_decoder
 V44_COMPRESSED_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_COMPRESSED_CONTROL_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_controls
+	$(BUILD_DIR)/test_v44_compressed_controls
 V44_COMPRESSED_CONTROL_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_controls.o \
-	$(BUILD_DIR)/sippymodem_v44_test_wire.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_compressed_controls.o \
+	$(BUILD_DIR)/v44_test_wire.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_COMPRESSED_EXTENSION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_extensions
+	$(BUILD_DIR)/test_v44_compressed_extensions
 V44_COMPRESSED_EXTENSION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_extensions.o \
-	$(BUILD_DIR)/sippymodem_v44_test_wire.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_compressed_extensions.o \
+	$(BUILD_DIR)/v44_test_wire.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_COMPRESSED_INCREMENTAL_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_incremental
+	$(BUILD_DIR)/test_v44_compressed_incremental
 V44_COMPRESSED_INCREMENTAL_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_incremental.o \
-	$(BUILD_DIR)/sippymodem_v44_test_wire.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
+	$(BUILD_DIR)/test_v44_compressed_incremental.o \
+	$(BUILD_DIR)/v44_test_wire.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
 V44_COMPRESSED_VALIDATION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_validation
+	$(BUILD_DIR)/test_v44_compressed_validation
 V44_COMPRESSED_VALIDATION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v44_compressed_validation.o \
-	$(BUILD_DIR)/sippymodem_v44_test_wire.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
-RTP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp
-RTP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_rtp.o
-MEDIA_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_media
-MEDIA_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_media.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
-RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp_receiver
-RECEIVER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_receiver.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o
-STREAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp_stream
-STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
-ENDPOINT_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp_endpoint
-ENDPOINT_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_endpoint.o \
-	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
-	$(BUILD_DIR)/sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
-SIP_RTP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_sip_rtp
-SIP_RTP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_sip_rtp.o \
-	$(BUILD_DIR)/sippymodem_sip_rtp.o \
-	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
-	$(BUILD_DIR)/sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
-RTP_RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp_runtime
-RTP_RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp_runtime.o \
-	$(BUILD_DIR)/sippymodem_rtp_runtime.o \
-	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
-	$(BUILD_DIR)/sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_config.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
+	$(BUILD_DIR)/test_v44_compressed_validation.o \
+	$(BUILD_DIR)/v44_test_wire.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_stream.o
+RTP_TEST_BINARY := $(BUILD_DIR)/test_rtp
+RTP_TEST_OBJECTS := $(BUILD_DIR)/test_rtp.o \
+	$(BUILD_DIR)/rtp.o
+MEDIA_TEST_BINARY := $(BUILD_DIR)/test_media
+MEDIA_TEST_OBJECTS := $(BUILD_DIR)/test_media.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
+RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_rtp_receiver
+RECEIVER_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_receiver.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o
+STREAM_TEST_BINARY := $(BUILD_DIR)/test_rtp_stream
+STREAM_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_stream.o \
+	$(BUILD_DIR)/rtp_stream.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
+ENDPOINT_TEST_BINARY := $(BUILD_DIR)/test_rtp_endpoint
+ENDPOINT_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_stream.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
+SIP_RTP_TEST_BINARY := $(BUILD_DIR)/test_sip_rtp
+SIP_RTP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_rtp.o \
+	$(BUILD_DIR)/sip_rtp.o \
+	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_stream.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
+RTP_RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_rtp_runtime
+RTP_RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_rtp_runtime.o \
+	$(BUILD_DIR)/rtp_runtime.o \
+	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_stream.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
+	$(BUILD_DIR)/config.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 SIP_MEDIA_BRIDGE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_sip_media_bridge
+	$(BUILD_DIR)/test_sip_media_bridge
 SIP_MEDIA_BRIDGE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_sip_media_bridge.o \
-	$(BUILD_DIR)/sippymodem_sip_media_bridge.o \
-	$(BUILD_DIR)/sippymodem_sip_rtp.o \
-	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
-	$(BUILD_DIR)/sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
-SESSION_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_session
-SESSION_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_session.o \
-	$(BUILD_DIR)/sippymodem_session.o \
-	$(BUILD_DIR)/sippymodem_sip_media_bridge.o \
-	$(BUILD_DIR)/sippymodem_sip_rtp.o \
-	$(BUILD_DIR)/sippymodem_rtp_runtime.o \
-	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
-	$(BUILD_DIR)/sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o $(BUILD_DIR)/sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_config.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
-AUDIO_PATH_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_audio_path
-AUDIO_PATH_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_audio_path.o \
-	$(BUILD_DIR)/sippymodem_audio_path.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
-FRAME_CLOCK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_frame_clock
-FRAME_CLOCK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_frame_clock.o \
-	$(BUILD_DIR)/sippymodem_frame_clock.o
-AUDIO_SCHEDULER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_audio_scheduler
+	$(BUILD_DIR)/test_sip_media_bridge.o \
+	$(BUILD_DIR)/sip_media_bridge.o \
+	$(BUILD_DIR)/sip_rtp.o \
+	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_stream.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
+SESSION_TEST_BINARY := $(BUILD_DIR)/test_session
+SESSION_TEST_OBJECTS := $(BUILD_DIR)/test_session.o \
+	$(BUILD_DIR)/session.o \
+	$(BUILD_DIR)/sip_media_bridge.o \
+	$(BUILD_DIR)/sip_rtp.o \
+	$(BUILD_DIR)/rtp_runtime.o \
+	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_stream.o \
+	$(BUILD_DIR)/rtp_receiver.o $(BUILD_DIR)/rtp.o \
+	$(BUILD_DIR)/config.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
+AUDIO_PATH_TEST_BINARY := $(BUILD_DIR)/test_audio_path
+AUDIO_PATH_TEST_OBJECTS := $(BUILD_DIR)/test_audio_path.o \
+	$(BUILD_DIR)/audio_path.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
+FRAME_CLOCK_TEST_BINARY := $(BUILD_DIR)/test_frame_clock
+FRAME_CLOCK_TEST_OBJECTS := $(BUILD_DIR)/test_frame_clock.o \
+	$(BUILD_DIR)/frame_clock.o
+AUDIO_SCHEDULER_TEST_BINARY := $(BUILD_DIR)/test_audio_scheduler
 AUDIO_SCHEDULER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_audio_scheduler.o \
-	$(BUILD_DIR)/sippymodem_audio_scheduler.o \
-	$(BUILD_DIR)/sippymodem_frame_clock.o
-HOST_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_host
-HOST_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_host.o \
-	$(BUILD_DIR)/sippymodem_host.o \
-	$(BUILD_DIR)/sippymodem_session.o \
-	$(BUILD_DIR)/sippymodem_sip_media_bridge.o \
-	$(BUILD_DIR)/sippymodem_sip_rtp.o \
-	$(BUILD_DIR)/sippymodem_rtp_runtime.o \
-	$(BUILD_DIR)/sippymodem_rtp_endpoint.o \
-	$(BUILD_DIR)/sippymodem_rtp_stream.o \
-	$(BUILD_DIR)/sippymodem_rtp_receiver.o \
-	$(BUILD_DIR)/sippymodem_rtp.o \
-	$(BUILD_DIR)/sippymodem_audio_path.o \
-	$(BUILD_DIR)/sippymodem_audio_scheduler.o \
-	$(BUILD_DIR)/sippymodem_frame_clock.o \
-	$(BUILD_DIR)/sippymodem_config.o \
-	$(BUILD_DIR)/sippymodem_media.o \
-	$(BUILD_DIR)/sippymodem_g711.o
+	$(BUILD_DIR)/test_audio_scheduler.o \
+	$(BUILD_DIR)/audio_scheduler.o \
+	$(BUILD_DIR)/frame_clock.o
+HOST_TEST_BINARY := $(BUILD_DIR)/test_host
+HOST_TEST_OBJECTS := $(BUILD_DIR)/test_host.o \
+	$(BUILD_DIR)/host.o \
+	$(BUILD_DIR)/session.o \
+	$(BUILD_DIR)/sip_media_bridge.o \
+	$(BUILD_DIR)/sip_rtp.o \
+	$(BUILD_DIR)/rtp_runtime.o \
+	$(BUILD_DIR)/rtp_endpoint.o \
+	$(BUILD_DIR)/rtp_stream.o \
+	$(BUILD_DIR)/rtp_receiver.o \
+	$(BUILD_DIR)/rtp.o \
+	$(BUILD_DIR)/audio_path.o \
+	$(BUILD_DIR)/audio_scheduler.o \
+	$(BUILD_DIR)/frame_clock.o \
+	$(BUILD_DIR)/config.o \
+	$(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/g711.o
 RECORDING_FILES_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_recording_files
+	$(BUILD_DIR)/test_recording_files
 RECORDING_FILES_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_recording_files.o \
-	$(BUILD_DIR)/sippymodem_recording_files.o \
-	$(BUILD_DIR)/sippymodem_media.o $(BUILD_DIR)/sippymodem_g711.o
+	$(BUILD_DIR)/test_recording_files.o \
+	$(BUILD_DIR)/recording_files.o \
+	$(BUILD_DIR)/media.o $(BUILD_DIR)/g711.o
 SLMODEM_ADAPTER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_slmodem_adapter
+	$(BUILD_DIR)/test_slmodem_adapter
 SLMODEM_ADAPTER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_slmodem_adapter.o \
-	$(BUILD_DIR)/sippymodem_slmodem_adapter.o
-SLMODEM_CALLS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_slmodem_calls
+	$(BUILD_DIR)/test_slmodem_adapter.o \
+	$(BUILD_DIR)/slmodem_adapter.o
+SLMODEM_CALLS_TEST_BINARY := $(BUILD_DIR)/test_slmodem_calls
 SLMODEM_CALLS_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_slmodem_calls.o \
-	$(BUILD_DIR)/sippymodem_slmodem_calls.o
-SLMODEM_DRIVER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_slmodem_driver
+	$(BUILD_DIR)/test_slmodem_calls.o \
+	$(BUILD_DIR)/slmodem_calls.o
+SLMODEM_DRIVER_TEST_BINARY := $(BUILD_DIR)/test_slmodem_driver
 SLMODEM_DRIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_slmodem_driver.o \
-	$(BUILD_DIR)/sippymodem_slmodem_driver.o
+	$(BUILD_DIR)/test_slmodem_driver.o \
+	$(BUILD_DIR)/slmodem_driver.o
 SLMODEM_TERMINAL_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_slmodem_terminal
+	$(BUILD_DIR)/test_slmodem_terminal
 SLMODEM_TERMINAL_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_slmodem_terminal.o \
-	$(BUILD_DIR)/sippymodem_slmodem_terminal.o
-RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_runtime
-RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_runtime.o \
-	$(BUILD_DIR)/sippymodem_runtime.o \
-	$(BUILD_DIR)/sippymodem_slmodem_terminal.o \
-	$(BUILD_DIR)/sippymodem_terminal.o
-TERMINAL_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_terminal
-TERMINAL_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_terminal.o \
-	$(BUILD_DIR)/sippymodem_terminal.o
-LOOP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_loop
-LOOP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_loop.o \
-	$(BUILD_DIR)/sippymodem_loop.o
-MAIN_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_main
-MAIN_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_main.o \
-	$(BUILD_DIR)/sippymodem_main_testable.o
-DC_FILTER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_dc_filter
-DC_FILTER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_dc_filter.o \
-	$(BUILD_DIR)/sippymodem_dc_filter.o
-SINGLE_TONE_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_single_tone
-SINGLE_TONE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_single_tone.o \
-	$(BUILD_DIR)/sippymodem_single_tone.o \
-	$(BUILD_DIR)/sippymodem_g711.o
+	$(BUILD_DIR)/test_slmodem_terminal.o \
+	$(BUILD_DIR)/slmodem_terminal.o
+RUNTIME_TEST_BINARY := $(BUILD_DIR)/test_runtime
+RUNTIME_TEST_OBJECTS := $(BUILD_DIR)/test_runtime.o \
+	$(BUILD_DIR)/runtime.o \
+	$(BUILD_DIR)/slmodem_terminal.o \
+	$(BUILD_DIR)/terminal.o
+TERMINAL_TEST_BINARY := $(BUILD_DIR)/test_terminal
+TERMINAL_TEST_OBJECTS := $(BUILD_DIR)/test_terminal.o \
+	$(BUILD_DIR)/terminal.o
+LOOP_TEST_BINARY := $(BUILD_DIR)/test_loop
+LOOP_TEST_OBJECTS := $(BUILD_DIR)/test_loop.o \
+	$(BUILD_DIR)/loop.o
+MAIN_TEST_BINARY := $(BUILD_DIR)/test_main
+MAIN_TEST_OBJECTS := $(BUILD_DIR)/test_main.o \
+	$(BUILD_DIR)/main_testable.o
+DC_FILTER_TEST_BINARY := $(BUILD_DIR)/test_dc_filter
+DC_FILTER_TEST_OBJECTS := $(BUILD_DIR)/test_dc_filter.o \
+	$(BUILD_DIR)/dc_filter.o
+SINGLE_TONE_TEST_BINARY := $(BUILD_DIR)/test_single_tone
+SINGLE_TONE_TEST_OBJECTS := $(BUILD_DIR)/test_single_tone.o \
+	$(BUILD_DIR)/single_tone.o \
+	$(BUILD_DIR)/g711.o
 DIFFERENTIAL_QPSK_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_differential_qpsk
+	$(BUILD_DIR)/test_differential_qpsk
 DIFFERENTIAL_QPSK_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o
+	$(BUILD_DIR)/test_differential_qpsk.o \
+	$(BUILD_DIR)/differential_qpsk.o
 SELF_SYNC_SCRAMBLER_OBJECT := \
-	$(BUILD_DIR)/sippymodem_self_sync_scrambler.o
+	$(BUILD_DIR)/self_sync_scrambler.o
 CRC16_CCITT_FALSE_OBJECT := \
-	$(BUILD_DIR)/sippymodem_crc16_ccitt_false.o
+	$(BUILD_DIR)/crc16_ccitt_false.o
 CRC16_CCITT_FALSE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_crc16_ccitt_false
+	$(BUILD_DIR)/test_crc16_ccitt_false
 CRC16_CCITT_FALSE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_crc16_ccitt_false.o \
+	$(BUILD_DIR)/test_crc16_ccitt_false.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 SELF_SYNC_SCRAMBLER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_self_sync_scrambler
+	$(BUILD_DIR)/test_self_sync_scrambler
 SELF_SYNC_SCRAMBLER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_self_sync_scrambler.o \
+	$(BUILD_DIR)/test_self_sync_scrambler.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT)
-NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_native_core
+NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_native_core
 NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
 NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
-	$(BUILD_DIR)/sippymodem_lapm_v44_session.o \
-	$(BUILD_DIR)/sippymodem_v42_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_character_path.o \
-	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_duplex.o \
-	$(BUILD_DIR)/sippymodem_v44_encoder.o \
-	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
-	$(BUILD_DIR)/sippymodem_v44_tx_monitor.o \
-	$(BUILD_DIR)/sippymodem_v44_xid.o \
-	$(BUILD_DIR)/sippymodem_v44_stream.o
-NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
+	$(BUILD_DIR)/lapm_v44_session.o \
+	$(BUILD_DIR)/v42_xid.o \
+	$(BUILD_DIR)/v44_character_path.o \
+	$(BUILD_DIR)/v44_compressed_decoder.o \
+	$(BUILD_DIR)/v44_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_decoder.o \
+	$(BUILD_DIR)/v44_dictionary_encoder.o \
+	$(BUILD_DIR)/v44_duplex.o \
+	$(BUILD_DIR)/v44_encoder.o \
+	$(BUILD_DIR)/v44_transparent_decoder.o \
+	$(BUILD_DIR)/v44_tx_monitor.o \
+	$(BUILD_DIR)/v44_xid.o \
+	$(BUILD_DIR)/v44_stream.o
+NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/sippymodem_datapumps.o \
+	$(BUILD_DIR)/datapumps.o \
 	$(BUILD_DIR)/baudot.o \
 	$(BUILD_DIR)/baudot_datapump.o \
-	$(BUILD_DIR)/sippymodem_dc_filter.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_fsk.o \
+	$(BUILD_DIR)/dc_filter.o \
+	$(BUILD_DIR)/differential_qpsk.o \
+	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/fsk300_datapump.o \
 	$(BUILD_DIR)/v21.o \
-	$(BUILD_DIR)/sippymodem_v8_ansam.o \
-	$(BUILD_DIR)/sippymodem_v8_answering.o \
-	$(BUILD_DIR)/sippymodem_v8_calling.o \
-	$(BUILD_DIR)/sippymodem_v8_datapump.o \
-	$(BUILD_DIR)/sippymodem_v8_fsk.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o \
-	$(BUILD_DIR)/sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_qam_gain.o \
-	$(BUILD_DIR)/sippymodem_single_tone.o \
+	$(BUILD_DIR)/v8_ansam.o \
+	$(BUILD_DIR)/v8_answering.o \
+	$(BUILD_DIR)/v8_calling.o \
+	$(BUILD_DIR)/v8_datapump.o \
+	$(BUILD_DIR)/v8_fsk.o \
+	$(BUILD_DIR)/v8_framing.o \
+	$(BUILD_DIR)/v8_menu.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/qam_gain.o \
+	$(BUILD_DIR)/single_tone.o \
 	$(BUILD_DIR)/v22_datapump.o \
 	$(BUILD_DIR)/v22_framing.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
@@ -389,141 +389,141 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/trellis_acquirer.o \
 	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/v23_datapump.o
-FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
-FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_fsk.o \
+FSK_TEST_BINARY := $(BUILD_DIR)/test_fsk
+FSK_TEST_OBJECTS := $(BUILD_DIR)/test_fsk.o \
+	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/v21.o
-V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_ansam
-V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_ansam.o \
-	$(BUILD_DIR)/sippymodem_v8_ansam.o \
-	$(BUILD_DIR)/sippymodem_g711.o
-V8_ANSWERING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_answering
-V8_ANSWERING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_answering.o \
-	$(BUILD_DIR)/sippymodem_v8_answering.o \
-	$(BUILD_DIR)/sippymodem_v8_calling.o \
-	$(BUILD_DIR)/sippymodem_v8_ansam.o \
-	$(BUILD_DIR)/sippymodem_v8_fsk.o \
-	$(BUILD_DIR)/sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o \
+V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_v8_ansam
+V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_v8_ansam.o \
+	$(BUILD_DIR)/v8_ansam.o \
+	$(BUILD_DIR)/g711.o
+V8_ANSWERING_TEST_BINARY := $(BUILD_DIR)/test_v8_answering
+V8_ANSWERING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_answering.o \
+	$(BUILD_DIR)/v8_answering.o \
+	$(BUILD_DIR)/v8_calling.o \
+	$(BUILD_DIR)/v8_ansam.o \
+	$(BUILD_DIR)/v8_fsk.o \
+	$(BUILD_DIR)/v8_menu.o \
+	$(BUILD_DIR)/v8_framing.o \
 	$(BUILD_DIR)/v21.o \
-	$(BUILD_DIR)/sippymodem_fsk.o
-V8_CALLING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_calling
-V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_calling.o \
-	$(BUILD_DIR)/sippymodem_v8_calling.o \
-	$(BUILD_DIR)/sippymodem_v8_ansam.o \
-	$(BUILD_DIR)/sippymodem_v8_fsk.o \
-	$(BUILD_DIR)/sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o \
+	$(BUILD_DIR)/fsk.o
+V8_CALLING_TEST_BINARY := $(BUILD_DIR)/test_v8_calling
+V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_calling.o \
+	$(BUILD_DIR)/v8_calling.o \
+	$(BUILD_DIR)/v8_ansam.o \
+	$(BUILD_DIR)/v8_fsk.o \
+	$(BUILD_DIR)/v8_menu.o \
+	$(BUILD_DIR)/v8_framing.o \
 	$(BUILD_DIR)/v21.o \
-	$(BUILD_DIR)/sippymodem_fsk.o
-V8_FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_fsk
-V8_FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_fsk.o \
-	$(BUILD_DIR)/sippymodem_v8_fsk.o \
-	$(BUILD_DIR)/sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o \
+	$(BUILD_DIR)/fsk.o
+V8_FSK_TEST_BINARY := $(BUILD_DIR)/test_v8_fsk
+V8_FSK_TEST_OBJECTS := $(BUILD_DIR)/test_v8_fsk.o \
+	$(BUILD_DIR)/v8_fsk.o \
+	$(BUILD_DIR)/v8_menu.o \
+	$(BUILD_DIR)/v8_framing.o \
 	$(BUILD_DIR)/v21.o \
-	$(BUILD_DIR)/sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_g711.o
-V8_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_framing
-V8_FRAMING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_framing.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o
-V8_MENU_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_menu
-V8_MENU_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o
-BAUDOT_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_baudot
-BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_baudot.o \
-	$(BUILD_DIR)/baudot.o $(BUILD_DIR)/sippymodem_fsk.o
-V23_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v23
-V23_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v23.o \
+	$(BUILD_DIR)/fsk.o \
+	$(BUILD_DIR)/g711.o
+V8_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v8_framing
+V8_FRAMING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_framing.o \
+	$(BUILD_DIR)/v8_framing.o
+V8_MENU_TEST_BINARY := $(BUILD_DIR)/test_v8_menu
+V8_MENU_TEST_OBJECTS := $(BUILD_DIR)/test_v8_menu.o \
+	$(BUILD_DIR)/v8_menu.o \
+	$(BUILD_DIR)/v8_framing.o
+BAUDOT_TEST_BINARY := $(BUILD_DIR)/test_baudot
+BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_baudot.o \
+	$(BUILD_DIR)/baudot.o $(BUILD_DIR)/fsk.o
+V23_TEST_BINARY := $(BUILD_DIR)/test_v23
+V23_TEST_OBJECTS := $(BUILD_DIR)/test_v23.o \
 	$(NATIVE_CORE_OBJECTS) \
-	$(BUILD_DIR)/sippymodem_dc_filter.o \
-	$(BUILD_DIR)/sippymodem_fsk.o \
+	$(BUILD_DIR)/dc_filter.o \
+	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/v23_datapump.o
-V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v22_framing
+V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v22_framing.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/test_v22_framing.o \
+	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/v22_framing.o \
 	$(BUILD_DIR)/v22bis_symbols.o
 V22BIS_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v22bis_receiver
+	$(BUILD_DIR)/test_v22bis_receiver
 V22BIS_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v22bis_receiver.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_qam_gain.o \
+	$(BUILD_DIR)/test_v22bis_receiver.o \
+	$(BUILD_DIR)/differential_qpsk.o \
+	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
 	$(BUILD_DIR)/v22bis_symbols.o \
 	$(BUILD_DIR)/v22_framing.o
-V32_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_framing
+V32_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v32_framing
 V32_FRAMING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_framing.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/test_v32_framing.o \
+	$(BUILD_DIR)/differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o
 V32_CONDITIONING_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_conditioning
+	$(BUILD_DIR)/test_v32_conditioning
 V32_CONDITIONING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_conditioning.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/test_v32_conditioning.o \
+	$(BUILD_DIR)/differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/framing.o
 V32_CONDITIONING_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_conditioning_receiver
+	$(BUILD_DIR)/test_v32_conditioning_receiver
 V32_CONDITIONING_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_conditioning_receiver.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_qam_gain.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/test_v32_conditioning_receiver.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/qam_gain.o \
+	$(BUILD_DIR)/differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/framing.o
 V32_CONSTELLATION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_constellation
+	$(BUILD_DIR)/test_v32_constellation
 V32_CONSTELLATION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/test_v32_constellation.o \
 	$(BUILD_DIR)/constellation.o
 V32_9600_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_9600_receiver
+	$(BUILD_DIR)/test_v32_9600_receiver
 V32_9600_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_9600_receiver.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/test_v32_9600_receiver.o \
+	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o
 V32_RATE_SIGNAL_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_rate_signal
+	$(BUILD_DIR)/test_v32_rate_signal
 V32_RATE_SIGNAL_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_rate_signal.o \
+	$(BUILD_DIR)/test_v32_rate_signal.o \
 	$(BUILD_DIR)/rate_signal.o
-V32_STARTUP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_startup
+V32_STARTUP_TEST_BINARY := $(BUILD_DIR)/test_v32_startup
 V32_STARTUP_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_startup.o \
+	$(BUILD_DIR)/test_v32_startup.o \
 	$(BUILD_DIR)/rate_signal.o \
 	$(BUILD_DIR)/startup.o
 V32_LINE_STARTUP_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_line_startup
+	$(BUILD_DIR)/test_v32_line_startup
 V32_LINE_STARTUP_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_line_startup.o \
+	$(BUILD_DIR)/test_v32_line_startup.o \
 	$(BUILD_DIR)/line_startup.o \
-	$(BUILD_DIR)/sippymodem_single_tone.o \
-	$(BUILD_DIR)/sippymodem_g711.o
+	$(BUILD_DIR)/single_tone.o \
+	$(BUILD_DIR)/g711.o
 V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_datapump_conditioning
+	$(BUILD_DIR)/test_v32_datapump_conditioning
 V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_datapump_conditioning.o \
+	$(BUILD_DIR)/test_v32_datapump_conditioning.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/sippymodem_dc_filter.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_qam_gain.o \
-	$(BUILD_DIR)/sippymodem_single_tone.o \
+	$(BUILD_DIR)/dc_filter.o \
+	$(BUILD_DIR)/differential_qpsk.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/qam_gain.o \
+	$(BUILD_DIR)/single_tone.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
@@ -538,22 +538,22 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/trellis_decoder.o \
 	$(BUILD_DIR)/trellis_acquirer.o \
 	$(BUILD_DIR)/trellis_receiver.o
-V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_trellis
+V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_v32_trellis
 V32_TRELLIS_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_trellis.o \
+	$(BUILD_DIR)/test_v32_trellis.o \
 	$(BUILD_DIR)/trellis.o
 V32_TRELLIS_DECODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_trellis_decoder
+	$(BUILD_DIR)/test_v32_trellis_decoder
 V32_TRELLIS_DECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_trellis_decoder.o \
+	$(BUILD_DIR)/test_v32_trellis_decoder.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/trellis.o \
 	$(BUILD_DIR)/trellis_decoder.o
 V32_TRELLIS_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_trellis_receiver
+	$(BUILD_DIR)/test_v32_trellis_receiver
 V32_TRELLIS_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_trellis_receiver.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/test_v32_trellis_receiver.o \
+	$(BUILD_DIR)/differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/constellation.o \
@@ -562,10 +562,10 @@ V32_TRELLIS_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/trellis_decoder.o \
 	$(BUILD_DIR)/trellis_receiver.o
 V32_TRELLIS_ACQUIRER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v32_trellis_acquirer
+	$(BUILD_DIR)/test_v32_trellis_acquirer
 V32_TRELLIS_ACQUIRER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_trellis_acquirer.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(BUILD_DIR)/test_v32_trellis_acquirer.o \
+	$(BUILD_DIR)/differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/constellation.o \
@@ -574,636 +574,636 @@ V32_TRELLIS_ACQUIRER_TEST_OBJECTS := \
 	$(BUILD_DIR)/trellis_decoder.o \
 	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/trellis_acquirer.o
-V32_CARRIER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_carrier
+V32_CARRIER_TEST_BINARY := $(BUILD_DIR)/test_v32_carrier
 V32_CARRIER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v32_carrier.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/test_v32_carrier.o \
+	$(BUILD_DIR)/differential_qpsk.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o
-V34_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_framing
+V34_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v34_framing
 V34_FRAMING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_framing.o \
+	$(BUILD_DIR)/test_v34_framing.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o
+	$(BUILD_DIR)/v34_framing.o
 V34_FRAME_SCHEDULE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_frame_schedule
+	$(BUILD_DIR)/test_v34_frame_schedule
 V34_FRAME_SCHEDULE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_frame_schedule.o \
+	$(BUILD_DIR)/test_v34_frame_schedule.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o
 V34_MAPPING_PARAMETERS_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_parameters
+	$(BUILD_DIR)/test_v34_mapping_parameters
 V34_MAPPING_PARAMETERS_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_parameters.o \
+	$(BUILD_DIR)/test_v34_mapping_parameters.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o
-V34_PARSER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_parser
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o
+V34_PARSER_TEST_BINARY := $(BUILD_DIR)/test_v34_parser
 V34_PARSER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_parser.o \
+	$(BUILD_DIR)/test_v34_parser.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_parser.o
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_parser.o
 V34_SHELL_MAPPER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_shell_mapper
+	$(BUILD_DIR)/test_v34_shell_mapper
 V34_SHELL_MAPPER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_shell_mapper.o \
+	$(BUILD_DIR)/test_v34_shell_mapper.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_shell_mapper.o
-V34_MAPPER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_mapper
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_shell_mapper.o
+V34_MAPPER_TEST_BINARY := $(BUILD_DIR)/test_v34_mapper
 V34_MAPPER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/test_v34_mapper.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o
-V34_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_trellis
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o
+V34_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_v34_trellis
 V34_TRELLIS_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/test_v34_trellis.o \
 	$(BUILD_DIR)/v34_trellis.o
-V34_LATTICE_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_lattice
+V34_LATTICE_TEST_BINARY := $(BUILD_DIR)/test_v34_lattice
 V34_LATTICE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_lattice.o \
+	$(BUILD_DIR)/test_v34_lattice.o \
 	$(BUILD_DIR)/v34_lattice.o \
 	$(BUILD_DIR)/v34_trellis.o
-V34_PRECODER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_precoder
+V34_PRECODER_TEST_BINARY := $(BUILD_DIR)/test_v34_precoder
 V34_PRECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_precoder.o \
+	$(BUILD_DIR)/test_v34_precoder.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
 	$(BUILD_DIR)/v34_precoder.o
 V34_PRECODER_INVERSE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_precoder_inverse
+	$(BUILD_DIR)/test_v34_precoder_inverse
 V34_PRECODER_INVERSE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_precoder_inverse.o \
-	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_precoder.o, \
+	$(BUILD_DIR)/test_v34_precoder_inverse.o \
+	$(filter-out $(BUILD_DIR)/test_v34_precoder.o, \
 		$(V34_PRECODER_TEST_OBJECTS))
 V34_4D_ENCODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_4d_encoder
+	$(BUILD_DIR)/test_v34_4d_encoder
 V34_4D_ENCODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_4d_encoder.o \
+	$(BUILD_DIR)/test_v34_4d_encoder.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
 	$(BUILD_DIR)/v34_trellis.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o
-V34_BRANCHES_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_branches
+	$(BUILD_DIR)/v34_4d_encoder.o
+V34_BRANCHES_TEST_BINARY := $(BUILD_DIR)/test_v34_branches
 V34_BRANCHES_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_branches.o \
+	$(BUILD_DIR)/test_v34_branches.o \
 	$(BUILD_DIR)/v34_branches.o \
 	$(BUILD_DIR)/v34_lattice.o \
-	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_4d_encoder.o, \
+	$(filter-out $(BUILD_DIR)/test_v34_4d_encoder.o, \
 		$(V34_4D_ENCODER_TEST_OBJECTS))
-V34_SURVIVOR_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_survivor
+V34_SURVIVOR_TEST_BINARY := $(BUILD_DIR)/test_v34_survivor
 V34_SURVIVOR_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_survivor.o \
+	$(BUILD_DIR)/test_v34_survivor.o \
 	$(BUILD_DIR)/v34_survivor.o \
-	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_branches.o, \
+	$(filter-out $(BUILD_DIR)/test_v34_branches.o, \
 		$(V34_BRANCHES_TEST_OBJECTS))
 V34_PATH_DECODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_path_decoder
+	$(BUILD_DIR)/test_v34_path_decoder
 V34_PATH_DECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_path_decoder.o \
+	$(BUILD_DIR)/test_v34_path_decoder.o \
 	$(BUILD_DIR)/v34_path_decoder.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_decoder.o \
-	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_survivor.o, \
+	$(BUILD_DIR)/v34_4d_decoder.o \
+	$(filter-out $(BUILD_DIR)/test_v34_survivor.o, \
 		$(V34_SURVIVOR_TEST_OBJECTS))
 V34_CHANNEL_DECODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_decoder
+	$(BUILD_DIR)/test_v34_channel_decoder
 V34_CHANNEL_DECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_decoder.o \
+	$(BUILD_DIR)/test_v34_channel_decoder.o \
 	$(BUILD_DIR)/v34_channel_decoder.o \
-	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_path_decoder.o, \
+	$(filter-out $(BUILD_DIR)/test_v34_path_decoder.o, \
 		$(V34_PATH_DECODER_TEST_OBJECTS))
 V34_4D_DECODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_4d_decoder
+	$(BUILD_DIR)/test_v34_4d_decoder
 V34_4D_DECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_4d_decoder.o \
+	$(BUILD_DIR)/test_v34_4d_decoder.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_decoder.o
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o \
+	$(BUILD_DIR)/v34_4d_decoder.o
 V34_MAPPING_FRAME_ENCODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_encoder
+	$(BUILD_DIR)/test_v34_mapping_frame_encoder
 V34_MAPPING_FRAME_ENCODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_encoder.o \
+	$(BUILD_DIR)/test_v34_mapping_frame_encoder.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_parser.o \
-	$(BUILD_DIR)/sippymodem_v34_shell_mapper.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_parser.o \
+	$(BUILD_DIR)/v34_shell_mapper.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
 	$(BUILD_DIR)/v34_trellis.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o
+	$(BUILD_DIR)/v34_4d_encoder.o \
+	$(BUILD_DIR)/v34_mapping_frame_encoder.o
 V34_MAPPING_FRAME_DECODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_decoder
+	$(BUILD_DIR)/test_v34_mapping_frame_decoder
 V34_MAPPING_FRAME_DECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_decoder.o \
+	$(BUILD_DIR)/test_v34_mapping_frame_decoder.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_parser.o \
-	$(BUILD_DIR)/sippymodem_v34_shell_mapper.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_parser.o \
+	$(BUILD_DIR)/v34_shell_mapper.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
 	$(BUILD_DIR)/v34_trellis.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_decoder.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
+	$(BUILD_DIR)/v34_4d_encoder.o \
+	$(BUILD_DIR)/v34_4d_decoder.o \
+	$(BUILD_DIR)/v34_mapping_frame_encoder.o \
 	$(BUILD_DIR)/v34_mapping_frame_decoder.o
 V34_MAPPING_FRAME_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_receiver
+	$(BUILD_DIR)/test_v34_mapping_frame_receiver
 V34_MAPPING_FRAME_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_receiver.o \
+	$(BUILD_DIR)/test_v34_mapping_frame_receiver.o \
 	$(filter-out \
-		$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_decoder.o, \
+		$(BUILD_DIR)/test_v34_mapping_frame_decoder.o, \
 		$(V34_MAPPING_FRAME_DECODER_TEST_OBJECTS)) \
 	$(BUILD_DIR)/v34_nonlinear.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
+	$(BUILD_DIR)/v34_mapping_frame_transmitter.o \
 	$(BUILD_DIR)/v34_mapping_frame_receiver.o
 V34_DATA_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_receiver
+	$(BUILD_DIR)/test_v34_data_receiver
 V34_DATA_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_receiver.o \
+	$(BUILD_DIR)/test_v34_data_receiver.o \
 	$(filter-out \
-		$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_receiver.o, \
+		$(BUILD_DIR)/test_v34_mapping_frame_receiver.o, \
 		$(V34_MAPPING_FRAME_RECEIVER_TEST_OBJECTS)) \
 	$(BUILD_DIR)/v34_data_receiver.o
 V34_CHANNEL_FRAME_DECODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_frame_decoder
+	$(BUILD_DIR)/test_v34_channel_frame_decoder
 V34_CHANNEL_FRAME_DECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_frame_decoder.o \
+	$(BUILD_DIR)/test_v34_channel_frame_decoder.o \
 	$(BUILD_DIR)/v34_channel_frame_decoder.o \
 	$(sort $(filter-out \
-		$(BUILD_DIR)/test_sippymodem_v34_channel_decoder.o \
-		$(BUILD_DIR)/test_sippymodem_v34_data_receiver.o, \
+		$(BUILD_DIR)/test_v34_channel_decoder.o \
+		$(BUILD_DIR)/test_v34_data_receiver.o, \
 		$(V34_CHANNEL_DECODER_TEST_OBJECTS) \
 		$(V34_DATA_RECEIVER_TEST_OBJECTS)))
 V34_NONLINEAR_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_nonlinear
+	$(BUILD_DIR)/test_v34_nonlinear
 V34_NONLINEAR_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_nonlinear.o \
+	$(BUILD_DIR)/test_v34_nonlinear.o \
 	$(BUILD_DIR)/v34_nonlinear.o
 V34_SYMBOL_POWER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_symbol_power
+	$(BUILD_DIR)/test_v34_symbol_power
 V34_SYMBOL_POWER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_symbol_power.o \
+	$(BUILD_DIR)/test_v34_symbol_power.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_nonlinear.o \
-	$(BUILD_DIR)/sippymodem_v34_symbol_power.o
+	$(BUILD_DIR)/v34_symbol_power.o
 V34_CHANNEL_CONDITIONER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_conditioner
+	$(BUILD_DIR)/test_v34_channel_conditioner
 V34_CHANNEL_CONDITIONER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_conditioner.o \
+	$(BUILD_DIR)/test_v34_channel_conditioner.o \
 	$(BUILD_DIR)/v34_channel_conditioner.o \
 	$(filter-out \
-		$(BUILD_DIR)/test_sippymodem_v34_symbol_power.o, \
+		$(BUILD_DIR)/test_v34_symbol_power.o, \
 		$(V34_SYMBOL_POWER_TEST_OBJECTS))
 V34_CHANNEL_FRAME_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_frame_receiver
+	$(BUILD_DIR)/test_v34_channel_frame_receiver
 V34_CHANNEL_FRAME_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_channel_frame_receiver.o \
+	$(BUILD_DIR)/test_v34_channel_frame_receiver.o \
 	$(BUILD_DIR)/v34_channel_frame_receiver.o \
 	$(BUILD_DIR)/v34_data_channel_receiver.o \
 	$(BUILD_DIR)/v34_data_equalizer_receiver.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(sort $(filter-out \
-		$(BUILD_DIR)/test_sippymodem_v34_channel_frame_decoder.o \
-		$(BUILD_DIR)/test_sippymodem_v34_channel_conditioner.o, \
+		$(BUILD_DIR)/test_v34_channel_frame_decoder.o \
+		$(BUILD_DIR)/test_v34_channel_conditioner.o, \
 		$(V34_CHANNEL_FRAME_DECODER_TEST_OBJECTS) \
 		$(V34_CHANNEL_CONDITIONER_TEST_OBJECTS)))
 V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_transmitter
+	$(BUILD_DIR)/test_v34_mapping_frame_transmitter
 V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_transmitter.o \
+	$(BUILD_DIR)/test_v34_mapping_frame_transmitter.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_parser.o \
-	$(BUILD_DIR)/sippymodem_v34_shell_mapper.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_parser.o \
+	$(BUILD_DIR)/v34_shell_mapper.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
 	$(BUILD_DIR)/v34_trellis.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
+	$(BUILD_DIR)/v34_4d_encoder.o \
+	$(BUILD_DIR)/v34_mapping_frame_encoder.o \
 	$(BUILD_DIR)/v34_nonlinear.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o
+	$(BUILD_DIR)/v34_mapping_frame_transmitter.o
 V34_POWER_CALIBRATION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_power_calibration
+	$(BUILD_DIR)/test_v34_power_calibration
 V34_POWER_CALIBRATION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_power_calibration.o \
+	$(BUILD_DIR)/test_v34_power_calibration.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_parser.o \
-	$(BUILD_DIR)/sippymodem_v34_shell_mapper.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_parser.o \
+	$(BUILD_DIR)/v34_shell_mapper.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
 	$(BUILD_DIR)/v34_trellis.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
+	$(BUILD_DIR)/v34_4d_encoder.o \
+	$(BUILD_DIR)/v34_mapping_frame_encoder.o \
 	$(BUILD_DIR)/v34_nonlinear.o \
-	$(BUILD_DIR)/sippymodem_v34_symbol_power.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
-	$(BUILD_DIR)/sippymodem_v34_power_calibration.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_info1.o \
-	$(BUILD_DIR)/sippymodem_v34_preemphasis.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o \
-	$(BUILD_DIR)/sippymodem_v34_data_carrier.o
+	$(BUILD_DIR)/v34_symbol_power.o \
+	$(BUILD_DIR)/v34_mapping_frame_transmitter.o \
+	$(BUILD_DIR)/v34_power_calibration.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_phase3_profile.o \
+	$(BUILD_DIR)/v34_data_carrier.o
 V34_DATA_CARRIER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_carrier
+	$(BUILD_DIR)/test_v34_data_carrier
 V34_DATA_CARRIER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_carrier.o \
+	$(BUILD_DIR)/test_v34_data_carrier.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
-	$(BUILD_DIR)/sippymodem_v34_parser.o \
-	$(BUILD_DIR)/sippymodem_v34_shell_mapper.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_mapper.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_parser.o \
+	$(BUILD_DIR)/v34_shell_mapper.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
 	$(BUILD_DIR)/v34_trellis.o \
-	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
+	$(BUILD_DIR)/v34_4d_encoder.o \
+	$(BUILD_DIR)/v34_mapping_frame_encoder.o \
 	$(BUILD_DIR)/v34_nonlinear.o \
-	$(BUILD_DIR)/sippymodem_v34_symbol_power.o \
-	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
-	$(BUILD_DIR)/sippymodem_v34_power_calibration.o \
-	$(BUILD_DIR)/sippymodem_v34_info1.o \
-	$(BUILD_DIR)/sippymodem_v34_preemphasis.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o \
-	$(BUILD_DIR)/sippymodem_v34_data_carrier.o \
-	$(BUILD_DIR)/sippymodem_v34_data_line_transmitter.o
+	$(BUILD_DIR)/v34_symbol_power.o \
+	$(BUILD_DIR)/v34_mapping_frame_transmitter.o \
+	$(BUILD_DIR)/v34_power_calibration.o \
+	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_phase3_profile.o \
+	$(BUILD_DIR)/v34_data_carrier.o \
+	$(BUILD_DIR)/v34_data_line_transmitter.o
 V34_DATA_TRANSMITTER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_transmitter
+	$(BUILD_DIR)/test_v34_data_transmitter
 V34_DATA_TRANSMITTER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_transmitter.o \
-	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_data_carrier.o, \
+	$(BUILD_DIR)/test_v34_data_transmitter.o \
+	$(filter-out $(BUILD_DIR)/test_v34_data_carrier.o, \
 		$(V34_DATA_CARRIER_TEST_OBJECTS)) \
-	$(BUILD_DIR)/sippymodem_v34_data_transmitter.o
+	$(BUILD_DIR)/v34_data_transmitter.o
 V34_DATA_STREAM_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_stream
+	$(BUILD_DIR)/test_v34_data_stream
 V34_DATA_STREAM_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_data_stream.o \
-	$(filter-out $(BUILD_DIR)/test_sippymodem_v34_data_transmitter.o, \
+	$(BUILD_DIR)/test_v34_data_stream.o \
+	$(filter-out $(BUILD_DIR)/test_v34_data_transmitter.o, \
 		$(V34_DATA_TRANSMITTER_TEST_OBJECTS)) \
-	$(BUILD_DIR)/sippymodem_v34_data_stream.o \
+	$(BUILD_DIR)/v34_data_stream.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_e_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_b1_handoff.o
+	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_phase4_mp.o \
+	$(BUILD_DIR)/v34_phase4_e_sequence.o \
+	$(BUILD_DIR)/v34_phase4_b1_handoff.o
 V34_CONSTELLATION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_constellation
+	$(BUILD_DIR)/test_v34_constellation
 V34_CONSTELLATION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o
-V34_INFO1_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_info1
+	$(BUILD_DIR)/test_v34_constellation.o \
+	$(BUILD_DIR)/v34_constellation.o
+V34_INFO1_TEST_BINARY := $(BUILD_DIR)/test_v34_info1
 V34_INFO1_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_info1.o \
-	$(BUILD_DIR)/sippymodem_v34_info1.o \
+	$(BUILD_DIR)/test_v34_info1.o \
+	$(BUILD_DIR)/v34_info1.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info.o
+	$(BUILD_DIR)/v34_phase2_info.o
 V34_PREEMPHASIS_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_preemphasis
+	$(BUILD_DIR)/test_v34_preemphasis
 V34_PREEMPHASIS_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_preemphasis.o \
-	$(BUILD_DIR)/sippymodem_v34_preemphasis.o
+	$(BUILD_DIR)/test_v34_preemphasis.o \
+	$(BUILD_DIR)/v34_preemphasis.o
 V34_PHASE3_PROFILE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_profile
+	$(BUILD_DIR)/test_v34_phase3_profile
 V34_PHASE3_PROFILE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_profile.o \
-	$(BUILD_DIR)/sippymodem_v34_info1.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o
+	$(BUILD_DIR)/test_v34_phase3_profile.o \
+	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/v34_phase3_profile.o
 V34_PHASE3_PP_SEQUENCE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_pp_sequence
+	$(BUILD_DIR)/test_v34_phase3_pp_sequence
 V34_PHASE3_PP_SEQUENCE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_pp_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_pp_sequence.o
+	$(BUILD_DIR)/test_v34_phase3_pp_sequence.o \
+	$(BUILD_DIR)/v34_phase3_pp_sequence.o
 V34_PHASE3_S_SEQUENCE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_s_sequence
+	$(BUILD_DIR)/test_v34_phase3_s_sequence
 V34_PHASE3_S_SEQUENCE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_s_sequence.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_s_sequence.o
+	$(BUILD_DIR)/test_v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_phase3_s_sequence.o
 V34_PHASE3_S_TRANSMITTER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_s_transmitter
+	$(BUILD_DIR)/test_v34_phase3_s_transmitter
 V34_PHASE3_S_TRANSMITTER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_s_transmitter.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_info1.o \
-	$(BUILD_DIR)/sippymodem_v34_preemphasis.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_profile.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_s_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_s_transmitter.o
+	$(BUILD_DIR)/test_v34_phase3_s_transmitter.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_phase3_profile.o \
+	$(BUILD_DIR)/v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/v34_phase3_s_transmitter.o
 V34_PHASE3_TRN_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_trn
+	$(BUILD_DIR)/test_v34_phase3_trn
 V34_PHASE3_TRN_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_trn.o \
+	$(BUILD_DIR)/test_v34_phase3_trn.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_trn.o
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_phase3_trn.o
 V34_PHASE3_J_SEQUENCE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_j_sequence
+	$(BUILD_DIR)/test_v34_phase3_j_sequence
 V34_PHASE3_J_SEQUENCE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase3_j_sequence.o \
+	$(BUILD_DIR)/test_v34_phase3_j_sequence.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_trn.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_j_sequence.o
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_phase3_j_sequence.o
 V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_j_prime_sequence
+	$(BUILD_DIR)/test_v34_phase4_j_prime_sequence
 V34_PHASE4_J_PRIME_SEQUENCE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_j_prime_sequence.o \
+	$(BUILD_DIR)/test_v34_phase4_j_prime_sequence.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_trn.o \
-	$(BUILD_DIR)/sippymodem_v34_phase3_j_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_j_prime_sequence.o
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_phase3_j_sequence.o \
+	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o
 V34_PHASE4_TRN_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_trn
+	$(BUILD_DIR)/test_v34_phase4_trn
 V34_PHASE4_TRN_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_trn.o \
+	$(BUILD_DIR)/test_v34_phase4_trn.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_phase4_trn.o
 V34_PHASE4_MP_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_mp
+	$(BUILD_DIR)/test_v34_phase4_mp
 V34_PHASE4_MP_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_mp.o \
+	$(BUILD_DIR)/test_v34_phase4_mp.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_phase4_mp.o \
+	$(BUILD_DIR)/v34_phase4_mp_receiver.o
 V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_mp_channel_receiver
+	$(BUILD_DIR)/test_v34_phase4_mp_channel_receiver
 V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_mp_channel_receiver.o \
+	$(BUILD_DIR)/test_v34_phase4_mp_channel_receiver.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_qam_gain.o \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_training_channel.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp_channel_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_e_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_e_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_e_channel_receiver.o
+	$(BUILD_DIR)/qam_gain.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_phase4_mp.o \
+	$(BUILD_DIR)/v34_phase4_mp_receiver.o \
+	$(BUILD_DIR)/v34_training_channel.o \
+	$(BUILD_DIR)/v34_phase4_mp_channel_receiver.o \
+	$(BUILD_DIR)/v34_phase4_e_sequence.o \
+	$(BUILD_DIR)/v34_phase4_e_receiver.o \
+	$(BUILD_DIR)/v34_phase4_e_channel_receiver.o
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_e_sequence
+	$(BUILD_DIR)/test_v34_phase4_e_sequence
 V34_PHASE4_E_SEQUENCE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_e_sequence.o \
+	$(BUILD_DIR)/test_v34_phase4_e_sequence.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_e_sequence.o
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_phase4_mp.o \
+	$(BUILD_DIR)/v34_phase4_e_sequence.o
 V34_PHASE4_E_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_e_receiver
+	$(BUILD_DIR)/test_v34_phase4_e_receiver
 V34_PHASE4_E_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase4_e_receiver.o \
+	$(BUILD_DIR)/test_v34_phase4_e_receiver.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_framing.o \
-	$(BUILD_DIR)/sippymodem_v34_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_trn.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_e_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase4_e_receiver.o
-V34_MP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_mp
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_phase4_mp.o \
+	$(BUILD_DIR)/v34_phase4_mp_receiver.o \
+	$(BUILD_DIR)/v34_phase4_e_sequence.o \
+	$(BUILD_DIR)/v34_phase4_e_receiver.o
+V34_MP_TEST_BINARY := $(BUILD_DIR)/test_v34_mp
 V34_MP_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_mp.o \
+	$(BUILD_DIR)/test_v34_mp.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_mp.o
+	$(BUILD_DIR)/v34_mp.o
 V34_PHASE2_INFO_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info
+	$(BUILD_DIR)/test_v34_phase2_info
 V34_PHASE2_INFO_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info.o \
-	$(BUILD_DIR)/sippymodem_v34_info0.o \
+	$(BUILD_DIR)/test_v34_phase2_info.o \
+	$(BUILD_DIR)/v34_info0.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info.o
+	$(BUILD_DIR)/v34_phase2_info.o
 V34_PHASE2_DPSK_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_dpsk
+	$(BUILD_DIR)/test_v34_phase2_dpsk
 V34_PHASE2_DPSK_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_dpsk.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o
+	$(BUILD_DIR)/test_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_phase2_dpsk.o
 V34_PHASE2_INFO_AUDIO_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info_audio
+	$(BUILD_DIR)/test_v34_phase2_info_audio
 V34_PHASE2_INFO_AUDIO_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info_audio.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/test_v34_phase2_info_audio.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o
+	$(BUILD_DIR)/v34_phase2_info.o \
+	$(BUILD_DIR)/v34_phase2_info_audio.o
 V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info0_exchange
+	$(BUILD_DIR)/test_v34_phase2_info0_exchange
 V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info0_exchange.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_info0.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/test_v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_info0.o \
+	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
+	$(BUILD_DIR)/v34_phase2_info.o \
+	$(BUILD_DIR)/v34_phase2_info_audio.o \
+	$(BUILD_DIR)/v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/v34_phase2_tone.o
 V34_PHASE2_RANGING_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_ranging
+	$(BUILD_DIR)/test_v34_phase2_ranging
 V34_PHASE2_RANGING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_ranging.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_info0.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/test_v34_phase2_ranging.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_info0.o \
+	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_ranging.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
+	$(BUILD_DIR)/v34_phase2_info.o \
+	$(BUILD_DIR)/v34_phase2_info_audio.o \
+	$(BUILD_DIR)/v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/v34_phase2_ranging.o \
+	$(BUILD_DIR)/v34_phase2_tone.o
 V34_PHASE2_PROBE_FLOW_OBJECTS := \
-	$(BUILD_DIR)/sippymodem_v34_phase2_test_pair.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v34_info0.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/v34_phase2_test_pair.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_info0.o \
+	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_initial_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_acquisition.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_turnaround.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_ranging.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_reciprocal_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
+	$(BUILD_DIR)/v34_phase2_info.o \
+	$(BUILD_DIR)/v34_phase2_info_audio.o \
+	$(BUILD_DIR)/v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/v34_phase2_initial_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
+	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
+	$(BUILD_DIR)/v34_phase2_probe_synchronizer.o \
+	$(BUILD_DIR)/v34_phase2_probe_sequence.o \
+	$(BUILD_DIR)/v34_phase2_probe_turnaround.o \
+	$(BUILD_DIR)/v34_phase2_ranging.o \
+	$(BUILD_DIR)/v34_phase2_reciprocal_probe.o \
+	$(BUILD_DIR)/v34_phase2_tone.o
 V34_PHASE2_INITIAL_PROBE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe
+	$(BUILD_DIR)/test_v34_phase2_initial_probe
 V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_initial_probe.o \
+	$(BUILD_DIR)/test_v34_phase2_initial_probe.o \
 	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
 V34_PHASE2_RECIPROCAL_PROBE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_reciprocal_probe
+	$(BUILD_DIR)/test_v34_phase2_reciprocal_probe
 V34_PHASE2_RECIPROCAL_PROBE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_reciprocal_probe.o \
+	$(BUILD_DIR)/test_v34_phase2_reciprocal_probe.o \
 	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
 V34_PHASE2_INFO1_EXCHANGE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info1_exchange
+	$(BUILD_DIR)/test_v34_phase2_info1_exchange
 V34_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_info1_exchange.o \
-	$(BUILD_DIR)/sippymodem_v34_info1.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_info1_exchange.o \
+	$(BUILD_DIR)/test_v34_phase2_info1_exchange.o \
+	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/v34_phase2_info1_exchange.o \
 	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
 V34_PHASE2_PROBE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe
+	$(BUILD_DIR)/test_v34_phase2_probe
 V34_PHASE2_PROBE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o
+	$(BUILD_DIR)/test_v34_phase2_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe.o
 V34_PHASE2_PROBE_ACQUISITION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_acquisition
+	$(BUILD_DIR)/test_v34_phase2_probe_acquisition
 V34_PHASE2_PROBE_ACQUISITION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_acquisition.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_acquisition.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
+	$(BUILD_DIR)/test_v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/v34_phase2_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
+	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
+	$(BUILD_DIR)/v34_phase2_probe_synchronizer.o \
+	$(BUILD_DIR)/v34_phase2_tone.o
 V34_PHASE2_PROBE_SPECTRUM_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_spectrum
+	$(BUILD_DIR)/test_v34_phase2_probe_spectrum
 V34_PHASE2_PROBE_SPECTRUM_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_spectrum.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o
+	$(BUILD_DIR)/test_v34_phase2_probe_spectrum.o \
+	$(BUILD_DIR)/v34_phase2_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe_spectrum.o
 V34_PHASE2_PROBE_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_receiver
+	$(BUILD_DIR)/test_v34_phase2_probe_receiver
 V34_PHASE2_PROBE_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_receiver.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o
+	$(BUILD_DIR)/test_v34_phase2_probe_receiver.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/v34_phase2_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
+	$(BUILD_DIR)/v34_phase2_probe_spectrum.o
 V34_PHASE2_PROBE_SYNCHRONIZER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_synchronizer
+	$(BUILD_DIR)/test_v34_phase2_probe_synchronizer
 V34_PHASE2_PROBE_SYNCHRONIZER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_synchronizer.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
+	$(BUILD_DIR)/test_v34_phase2_probe_synchronizer.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/v34_phase2_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
+	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
+	$(BUILD_DIR)/v34_phase2_probe_synchronizer.o \
+	$(BUILD_DIR)/v34_phase2_tone.o
 V34_PHASE2_PROBE_SEQUENCE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_sequence
+	$(BUILD_DIR)/test_v34_phase2_probe_sequence
 V34_PHASE2_PROBE_SEQUENCE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_probe_sequence.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o
+	$(BUILD_DIR)/test_v34_phase2_probe_sequence.o \
+	$(BUILD_DIR)/v34_phase2_probe.o \
+	$(BUILD_DIR)/v34_phase2_probe_sequence.o
 V34_PHASE2_TONE_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_tone
+	$(BUILD_DIR)/test_v34_phase2_tone
 V34_PHASE2_TONE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_phase2_tone.o \
-	$(BUILD_DIR)/sippymodem_g711.o \
-	$(BUILD_DIR)/sippymodem_v34_phase2_tone.o
-QAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_qam
-QAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_qam_gain.o
+	$(BUILD_DIR)/test_v34_phase2_tone.o \
+	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/v34_phase2_tone.o
+QAM_TEST_BINARY := $(BUILD_DIR)/test_qam
+QAM_TEST_OBJECTS := $(BUILD_DIR)/test_qam.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/qam_gain.o
 QAM_EQUALIZER_TEST_BINARY := $(BUILD_DIR)/test_qam_equalizer
 QAM_EQUALIZER_TEST_OBJECTS := $(BUILD_DIR)/test_qam_equalizer.o \
 	$(BUILD_DIR)/qam_equalizer.o
 FSK_INTEGRATION_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_fsk_integration
+	$(BUILD_DIR)/test_fsk_integration
 FSK_INTEGRATION_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_fsk_integration.o \
+	$(BUILD_DIR)/test_fsk_integration.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/sippymodem_datapumps.o \
+	$(BUILD_DIR)/datapumps.o \
 	$(BUILD_DIR)/baudot.o \
 	$(BUILD_DIR)/baudot_datapump.o \
-	$(BUILD_DIR)/sippymodem_dc_filter.o \
-	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_fsk.o \
+	$(BUILD_DIR)/dc_filter.o \
+	$(BUILD_DIR)/differential_qpsk.o \
+	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/fsk300_datapump.o \
 	$(BUILD_DIR)/v21.o \
-	$(BUILD_DIR)/sippymodem_v8_ansam.o \
-	$(BUILD_DIR)/sippymodem_v8_answering.o \
-	$(BUILD_DIR)/sippymodem_v8_calling.o \
-	$(BUILD_DIR)/sippymodem_v8_datapump.o \
-	$(BUILD_DIR)/sippymodem_v8_fsk.o \
-	$(BUILD_DIR)/sippymodem_v8_framing.o \
-	$(BUILD_DIR)/sippymodem_v8_menu.o \
-	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_qam_gain.o \
-	$(BUILD_DIR)/sippymodem_single_tone.o \
+	$(BUILD_DIR)/v8_ansam.o \
+	$(BUILD_DIR)/v8_answering.o \
+	$(BUILD_DIR)/v8_calling.o \
+	$(BUILD_DIR)/v8_datapump.o \
+	$(BUILD_DIR)/v8_fsk.o \
+	$(BUILD_DIR)/v8_framing.o \
+	$(BUILD_DIR)/v8_menu.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/qam_gain.o \
+	$(BUILD_DIR)/single_tone.o \
 	$(BUILD_DIR)/v22_datapump.o \
 	$(BUILD_DIR)/v22_framing.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
@@ -1223,8 +1223,8 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/trellis_acquirer.o \
 	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/v23_datapump.o \
-	$(BUILD_DIR)/sippymodem_media.o \
-	$(BUILD_DIR)/sippymodem_g711.o
+	$(BUILD_DIR)/media.o \
+	$(BUILD_DIR)/g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(V42_XID_TEST_BINARY) $(LAPM_V44_SESSION_TEST_BINARY) \
@@ -1480,9 +1480,9 @@ endif
 all: $(TEST_BINARIES)
 
 test: $(TEST_BINARIES)
-	$(PYTHON) test_sippymodem_live_config.py
-	$(PYTHON) test_sippymodem_live_terminal.py
-	$(PYTHON) test_sippymodem_live_calls.py
+	$(PYTHON) test_live_config.py
+	$(PYTHON) test_live_terminal.py
+	$(PYTHON) test_live_calls.py
 	./$(PACK_TEST_BINARY)
 	./$(CONFIG_TEST_BINARY)
 	./$(SIP_URI_TEST_BINARY)
@@ -2094,192 +2094,192 @@ $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 $(MODEM_OBJECT): ../src/modem_pack.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_config.o: ../src/sippymodem_config.c | $(BUILD_DIR)
+$(BUILD_DIR)/config.o: ../src/config.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_sip_uri.o: \
-	../src/sippymodem_sip_uri.c | $(BUILD_DIR)
+$(BUILD_DIR)/sip_uri.o: \
+	../src/sip_uri.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_sdp.o: ../src/sippymodem_sdp.c | $(BUILD_DIR)
+$(BUILD_DIR)/sdp.o: ../src/sdp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_sip_signaling_pjsip.o: \
-	../src/sippymodem_sip_signaling_pjsip.c | $(BUILD_DIR)
+$(BUILD_DIR)/sip_signaling_pjsip.o: \
+	../src/sip_signaling_pjsip.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -D_DEFAULT_SOURCE $(CFLAGS) $(PJSIP_CFLAGS) \
 		-MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_sdp_pjsip.o: \
-	../src/sippymodem_sdp_pjsip.c | $(BUILD_DIR)
+$(BUILD_DIR)/sdp_pjsip.o: \
+	../src/sdp_pjsip.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -D_DEFAULT_SOURCE $(CFLAGS) $(PJSIP_CFLAGS) \
 		-MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_g711.o: ../src/sippymodem_g711.c | $(BUILD_DIR)
+$(BUILD_DIR)/g711.o: ../src/g711.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v42_xid.o: \
-	../src/sippymodem_v42_xid.c | $(BUILD_DIR)
+$(BUILD_DIR)/v42_xid.o: \
+	../src/v42_xid.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_lapm_v44_session.o: \
-	../src/sippymodem_lapm_v44_session.c | $(BUILD_DIR)
+$(BUILD_DIR)/lapm_v44_session.o: \
+	../src/lapm_v44_session.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_stream.o: \
-	../src/sippymodem_v44_stream.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_stream.o: \
+	../src/v44_stream.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_xid.o: \
-	../src/sippymodem_v44_xid.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_xid.o: \
+	../src/v44_xid.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_decoder.o: \
-	../src/sippymodem_v44_decoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_decoder.o: \
+	../src/v44_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_character_path.o: \
-	../src/sippymodem_v44_character_path.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_character_path.o: \
+	../src/v44_character_path.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_duplex.o: \
-	../src/sippymodem_v44_duplex.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_duplex.o: \
+	../src/v44_duplex.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_encoder.o: \
-	../src/sippymodem_v44_encoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_encoder.o: \
+	../src/v44_encoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_tx_monitor.o: \
-	../src/sippymodem_v44_tx_monitor.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_tx_monitor.o: \
+	../src/v44_tx_monitor.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o: \
-	../src/sippymodem_v44_dictionary_encoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_dictionary_encoder.o: \
+	../src/v44_dictionary_encoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o: \
-	../src/sippymodem_v44_transparent_decoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_transparent_decoder.o: \
+	../src/v44_transparent_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o: \
-	../src/sippymodem_v44_dictionary_decoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_dictionary_decoder.o: \
+	../src/v44_dictionary_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o: \
-	../src/sippymodem_v44_compressed_decoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v44_compressed_decoder.o: \
+	../src/v44_compressed_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_rtp.o: ../src/sippymodem_rtp.c | $(BUILD_DIR)
+$(BUILD_DIR)/rtp.o: ../src/rtp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_media.o: ../src/sippymodem_media.c | $(BUILD_DIR)
+$(BUILD_DIR)/media.o: ../src/media.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_rtp_receiver.o: \
-	../src/sippymodem_rtp_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/rtp_receiver.o: \
+	../src/rtp_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_rtp_stream.o: \
-	../src/sippymodem_rtp_stream.c | $(BUILD_DIR)
+$(BUILD_DIR)/rtp_stream.o: \
+	../src/rtp_stream.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_rtp_endpoint.o: \
-	../src/sippymodem_rtp_endpoint.c | $(BUILD_DIR)
+$(BUILD_DIR)/rtp_endpoint.o: \
+	../src/rtp_endpoint.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_sip_rtp.o: \
-	../src/sippymodem_sip_rtp.c | $(BUILD_DIR)
+$(BUILD_DIR)/sip_rtp.o: \
+	../src/sip_rtp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_rtp_runtime.o: \
-	../src/sippymodem_rtp_runtime.c | $(BUILD_DIR)
+$(BUILD_DIR)/rtp_runtime.o: \
+	../src/rtp_runtime.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_sip_media_bridge.o: \
-	../src/sippymodem_sip_media_bridge.c | $(BUILD_DIR)
+$(BUILD_DIR)/sip_media_bridge.o: \
+	../src/sip_media_bridge.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_session.o: \
-	../src/sippymodem_session.c | $(BUILD_DIR)
+$(BUILD_DIR)/session.o: \
+	../src/session.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_audio_path.o: \
-	../src/sippymodem_audio_path.c | $(BUILD_DIR)
+$(BUILD_DIR)/audio_path.o: \
+	../src/audio_path.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_frame_clock.o: \
-	../src/sippymodem_frame_clock.c | $(BUILD_DIR)
+$(BUILD_DIR)/frame_clock.o: \
+	../src/frame_clock.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_audio_scheduler.o: \
-	../src/sippymodem_audio_scheduler.c | $(BUILD_DIR)
+$(BUILD_DIR)/audio_scheduler.o: \
+	../src/audio_scheduler.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_host.o: \
-	../src/sippymodem_host.c | $(BUILD_DIR)
+$(BUILD_DIR)/host.o: \
+	../src/host.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_recording_files.o: \
-	../src/sippymodem_recording_files.c | $(BUILD_DIR)
+$(BUILD_DIR)/recording_files.o: \
+	../src/recording_files.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_slmodem_adapter.o: \
-	../src/sippymodem_slmodem_adapter.c | $(BUILD_DIR)
+$(BUILD_DIR)/slmodem_adapter.o: \
+	../src/slmodem_adapter.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_slmodem_calls.o: \
-	../src/sippymodem_slmodem_calls.c | $(BUILD_DIR)
+$(BUILD_DIR)/slmodem_calls.o: \
+	../src/slmodem_calls.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_slmodem_driver.o: \
-	../src/sippymodem_slmodem_driver.c | $(BUILD_DIR)
+$(BUILD_DIR)/slmodem_driver.o: \
+	../src/slmodem_driver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_slmodem_terminal.o: \
-	../src/sippymodem_slmodem_terminal.c | $(BUILD_DIR)
+$(BUILD_DIR)/slmodem_terminal.o: \
+	../src/slmodem_terminal.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_runtime.o: ../src/sippymodem_runtime.c | $(BUILD_DIR)
+$(BUILD_DIR)/runtime.o: ../src/runtime.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_terminal.o: \
-	../src/sippymodem_terminal.c | $(BUILD_DIR)
+$(BUILD_DIR)/terminal.o: \
+	../src/terminal.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_loop.o: ../src/sippymodem_loop.c | $(BUILD_DIR)
+$(BUILD_DIR)/loop.o: ../src/loop.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_main_testable.o: \
-	../src/sippymodem_main.c | $(BUILD_DIR)
+$(BUILD_DIR)/main_testable.o: \
+	../src/main.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DSIPPYMODEM_NO_PROCESS_ENTRY $(CFLAGS) \
 		-MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_dc_filter.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_dc_filter.c | $(BUILD_DIR)
+$(BUILD_DIR)/dc_filter.o: \
+	$(DSP_SOURCE_DIR)/dc_filter.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_single_tone.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_single_tone.c | $(BUILD_DIR)
+$(BUILD_DIR)/single_tone.o: \
+	$(DSP_SOURCE_DIR)/single_tone.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_differential_qpsk.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_differential_qpsk.c | $(BUILD_DIR)
+$(BUILD_DIR)/differential_qpsk.o: \
+	$(DSP_SOURCE_DIR)/differential_qpsk.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(SELF_SYNC_SCRAMBLER_OBJECT): \
-	$(DSP_SOURCE_DIR)/sippymodem_self_sync_scrambler.c | $(BUILD_DIR)
+	$(DSP_SOURCE_DIR)/self_sync_scrambler.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(CRC16_CCITT_FALSE_OBJECT): \
-	$(DSP_SOURCE_DIR)/sippymodem_crc16_ccitt_false.c | $(BUILD_DIR)
+	$(DSP_SOURCE_DIR)/crc16_ccitt_false.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_datapumps.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_datapumps.c | $(BUILD_DIR)
+$(BUILD_DIR)/datapumps.o: \
+	$(DSP_SOURCE_DIR)/datapumps.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_fsk.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_fsk.c | $(BUILD_DIR)
+$(BUILD_DIR)/fsk.o: \
+	$(DSP_SOURCE_DIR)/fsk.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v21.o: \
@@ -2298,8 +2298,8 @@ $(BUILD_DIR)/fsk300_datapump.o: \
 	$(DSP_V21_202_SOURCE_DIR)/fsk300_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v8_datapump.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v8_datapump.c | $(BUILD_DIR)
+$(BUILD_DIR)/v8_datapump.o: \
+	$(DSP_SOURCE_DIR)/v8_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v23_datapump.o: \
@@ -2371,28 +2371,28 @@ $(BUILD_DIR)/datapump.o: \
 	$(DSP_V32_SOURCE_DIR)/datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_framing.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_framing.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_framing.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_frame_schedule.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_frame_schedule.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_frame_schedule.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_frame_schedule.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapping_parameters.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_mapping_parameters.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_mapping_parameters.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_parser.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_parser.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_parser.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_parser.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_shell_mapper.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_shell_mapper.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_shell_mapper.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_shell_mapper.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_mapper.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapper.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_mapper.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_mapper.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_lattice.o: \
@@ -2443,16 +2443,16 @@ $(BUILD_DIR)/v34_precoder.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_precoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_4d_encoder.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_encoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_4d_encoder.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_4d_encoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_4d_decoder.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_decoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_4d_decoder.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_4d_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapping_frame_encoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_mapping_frame_encoder.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_encoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_mapping_frame_decoder.o: \
@@ -2471,232 +2471,232 @@ $(BUILD_DIR)/v34_nonlinear.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_nonlinear.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_symbol_power.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_symbol_power.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_symbol_power.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_symbol_power.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapping_frame_transmitter.c | \
+$(BUILD_DIR)/v34_mapping_frame_transmitter.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_transmitter.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_power_calibration.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_power_calibration.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_power_calibration.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_power_calibration.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_data_carrier.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_carrier.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_data_carrier.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_carrier.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_data_line_transmitter.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_line_transmitter.c | \
+$(BUILD_DIR)/v34_data_line_transmitter.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_line_transmitter.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_data_transmitter.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_transmitter.c | \
+$(BUILD_DIR)/v34_data_transmitter.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_transmitter.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_data_stream.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_data_stream.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_data_stream.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_stream.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_constellation.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_constellation.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_constellation.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_constellation.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_info0.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info0.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_info0.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_info0.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_info1.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_info1.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_info1.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_info1.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_preemphasis.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_preemphasis.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_preemphasis.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_preemphasis.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase3_profile.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_profile.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase3_profile.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_profile.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase3_pp_sequence.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_pp_sequence.c | \
+$(BUILD_DIR)/v34_phase3_pp_sequence.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_pp_sequence.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase3_s_sequence.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_s_sequence.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase3_s_sequence.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_s_sequence.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase3_s_transmitter.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_s_transmitter.c | \
+$(BUILD_DIR)/v34_phase3_s_transmitter.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_s_transmitter.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase3_trn.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_trn.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase3_trn.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_trn.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase3_j_sequence.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase3_j_sequence.c | \
+$(BUILD_DIR)/v34_phase3_j_sequence.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_j_sequence.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_j_prime_sequence.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_j_prime_sequence.c | \
+$(BUILD_DIR)/v34_phase4_j_prime_sequence.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_j_prime_sequence.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_b1_handoff.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_b1_handoff.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase4_b1_handoff.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_b1_handoff.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_trn.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_trn.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase4_trn.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_trn.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_mp.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase4_mp.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_mp_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp_receiver.c | \
+$(BUILD_DIR)/v34_phase4_mp_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_receiver.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_mp_channel_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_mp_channel_receiver.c | \
+$(BUILD_DIR)/v34_phase4_mp_channel_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_channel_receiver.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_training_channel.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_training_channel.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_training_channel.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_training_channel.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_e_channel_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_e_channel_receiver.c | \
+$(BUILD_DIR)/v34_phase4_e_channel_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_channel_receiver.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_e_sequence.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_e_sequence.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase4_e_sequence.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_sequence.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase4_e_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase4_e_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase4_e_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_mp.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mp.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_mp.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_mp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_info.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_info.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_dpsk.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_dpsk.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_dpsk.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_dpsk.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_info_audio.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info_audio.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_info_audio.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info_audio.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_info0_exchange.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info0_exchange.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_info0_exchange.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info0_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_info1_exchange.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_info1_exchange.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_info1_exchange.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info1_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_initial_probe.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_initial_probe.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_initial_probe.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_initial_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_probe.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_probe.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_probe_acquisition.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_acquisition.c | \
+$(BUILD_DIR)/v34_phase2_probe_acquisition.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_acquisition.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_probe_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_probe_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_probe_spectrum.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_spectrum.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_probe_spectrum.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_spectrum.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_probe_synchronizer.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_synchronizer.c | \
+$(BUILD_DIR)/v34_phase2_probe_synchronizer.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_synchronizer.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_probe_sequence.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_sequence.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_probe_sequence.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_sequence.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_probe_turnaround.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_probe_turnaround.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_probe_turnaround.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_turnaround.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_reciprocal_probe.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_reciprocal_probe.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_reciprocal_probe.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_reciprocal_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_ranging.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_ranging.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_ranging.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_ranging.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_phase2_tone.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_tone.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_phase2_tone.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_tone.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v22_datapump.o: \
 	$(DSP_V22_SOURCE_DIR)/v22_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_qam.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_qam.c | $(BUILD_DIR)
+$(BUILD_DIR)/qam.o: \
+	$(DSP_SOURCE_DIR)/qam.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_qam_gain.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_qam_gain.c | $(BUILD_DIR)
+$(BUILD_DIR)/qam_gain.o: \
+	$(DSP_SOURCE_DIR)/qam_gain.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/qam_equalizer.o: \
 	$(DSP_SOURCE_DIR)/qam_equalizer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v8_ansam.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v8_ansam.c | $(BUILD_DIR)
+$(BUILD_DIR)/v8_ansam.o: \
+	$(DSP_SOURCE_DIR)/v8_ansam.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v8_answering.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v8_answering.c | $(BUILD_DIR)
+$(BUILD_DIR)/v8_answering.o: \
+	$(DSP_SOURCE_DIR)/v8_answering.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v8_calling.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v8_calling.c | $(BUILD_DIR)
+$(BUILD_DIR)/v8_calling.o: \
+	$(DSP_SOURCE_DIR)/v8_calling.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v8_fsk.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v8_fsk.c | $(BUILD_DIR)
+$(BUILD_DIR)/v8_fsk.o: \
+	$(DSP_SOURCE_DIR)/v8_fsk.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v8_framing.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v8_framing.c | $(BUILD_DIR)
+$(BUILD_DIR)/v8_framing.o: \
+	$(DSP_SOURCE_DIR)/v8_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v8_menu.o: \
-	$(DSP_SOURCE_DIR)/sippymodem_v8_menu.c | $(BUILD_DIR)
+$(BUILD_DIR)/v8_menu.o: \
+	$(DSP_SOURCE_DIR)/v8_menu.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/native_%.o: ../src/%.c | $(BUILD_DIR)

@@ -14,7 +14,7 @@ test:
 	$(MAKE) -C tests test
 
 live-call:
-	python3 tools/sippymodem_live_calls.py
+	python3 tools/live_calls.py
 
 install-hooks:
 	git config core.hooksPath .githooks

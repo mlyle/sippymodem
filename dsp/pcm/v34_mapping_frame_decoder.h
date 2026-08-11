@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_MAPPING_FRAME_DECODER_H
 #define SIPPYMODEM_V34_MAPPING_FRAME_DECODER_H
 
-#include "sippymodem_v34_4d_decoder.h"
+#include "v34_4d_decoder.h"
 
 #include <stdint.h>
 

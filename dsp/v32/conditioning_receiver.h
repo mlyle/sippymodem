@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V32_CONDITIONING_RECEIVER_H
 #define SIPPYMODEM_V32_CONDITIONING_RECEIVER_H
 
-#include "sippymodem_qam_gain.h"
+#include "qam_gain.h"
 #include "conditioning.h"
 
 #include <stdbool.h>

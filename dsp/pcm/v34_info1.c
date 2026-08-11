@@ -1,0 +1,351 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "v34_info1.h"
+
+#include <string.h>
+
+enum {
+	V34_INFO1_POWER_REDUCTION_FIRST_BIT = 0,
+	V34_INFO1_POWER_REDUCTION_BITS = 3,
+	V34_INFO1_ADDITIONAL_REDUCTION_FIRST_BIT = 3,
+	V34_INFO1_ADDITIONAL_REDUCTION_BITS = 3,
+	V34_INFO1_MD_LENGTH_FIRST_BIT = 6,
+	V34_INFO1_MD_LENGTH_BITS = 7,
+	V34_INFO1_PROBE_RESULT_FIRST_BIT = 13,
+	V34_INFO1_PROBE_RESULT_BITS = 9,
+	V34_INFO1_HIGH_CARRIER_BIT = 0,
+	V34_INFO1_PREEMPHASIS_FIRST_BIT = 1,
+	V34_INFO1_PREEMPHASIS_BITS = 4,
+	V34_INFO1_DATA_RATE_FIRST_BIT = 5,
+	V34_INFO1_DATA_RATE_BITS = 4,
+	V34_INFO1C_FREQUENCY_OFFSET_FIRST_BIT = 67,
+	V34_INFO1A_ANSWER_SYMBOL_RATE_FIRST_BIT = 22,
+	V34_INFO1A_CALL_SYMBOL_RATE_FIRST_BIT = 25,
+	V34_INFO1_SYMBOL_RATE_BITS = 3,
+	V34_INFO1A_FREQUENCY_OFFSET_FIRST_BIT = 28,
+	V34_INFO1_FREQUENCY_OFFSET_BITS = 10,
+	V34_INFO1_FREQUENCY_OFFSET_MODULUS = 1024,
+};
+
+static bool common_is_valid(
+	const struct sippymodem_v34_info1_common *common)
+{
+	return common->minimum_peer_power_reduction_db <=
+			SIPPYMODEM_V34_INFO1_MAX_POWER_REDUCTION_DB &&
+	       common->additional_peer_power_reduction_db <=
+			SIPPYMODEM_V34_INFO1_MAX_POWER_REDUCTION_DB &&
+	       common->local_md_length_35_ms_units <=
+			SIPPYMODEM_V34_INFO1_MAX_MD_LENGTH_35_MS_UNITS &&
+	       common->frequency_offset_1_50_hz_units >=
+			SIPPYMODEM_V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE &&
+	       common->frequency_offset_1_50_hz_units <=
+			SIPPYMODEM_V34_INFO1_MAX_FREQUENCY_OFFSET_1_50_HZ_UNITS;
+}
+
+static bool probe_result_is_valid(
+	const struct sippymodem_v34_info1_probe_result *result)
+{
+	return result->preemphasis_filter_index <=
+			SIPPYMODEM_V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX &&
+	       result->projected_data_rate_2400_bps_units <=
+			SIPPYMODEM_V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS;
+}
+
+bool sippymodem_v34_info1c_is_valid(
+	const struct sippymodem_v34_info1c *info1c)
+{
+	if (info1c == NULL || !common_is_valid(&info1c->common))
+		return false;
+	for (size_t index = 0; index < SIPPYMODEM_V34_SYMBOL_RATE_COUNT;
+	     ++index)
+		if (!probe_result_is_valid(&info1c->answer_transmit[index]))
+			return false;
+	return true;
+}
+
+static bool symbol_rate_is_valid(enum sippymodem_v34_symbol_rate rate)
+{
+	return (unsigned int)rate < SIPPYMODEM_V34_SYMBOL_RATE_COUNT;
+}
+
+bool sippymodem_v34_info1a_is_valid(
+	const struct sippymodem_v34_info1a *info1a)
+{
+	return info1a != NULL && common_is_valid(&info1a->common) &&
+	       probe_result_is_valid(&info1a->call_transmit) &&
+	       symbol_rate_is_valid(info1a->answer_to_call_symbol_rate) &&
+	       symbol_rate_is_valid(info1a->call_to_answer_symbol_rate);
+}
+
+static uint8_t payload_bit(const uint8_t *payload, size_t bit_index)
+{
+	return (uint8_t)((payload[bit_index / 8u] >>
+			  (7u - bit_index % 8u)) &
+			 1u);
+}
+
+static void set_payload_bit(uint8_t *payload, size_t bit_index, bool value)
+{
+	if (value)
+		payload[bit_index / 8u] |=
+			(uint8_t)(1u << (7u - bit_index % 8u));
+}
+
+static uint16_t decode_lsb_first_field(
+	const uint8_t *payload, size_t first_bit, size_t bit_count)
+{
+	uint16_t value = 0;
+
+	for (size_t index = 0; index < bit_count; ++index)
+		value |= (uint16_t)(payload_bit(payload, first_bit + index)
+				    << index);
+	return value;
+}
+
+static void encode_lsb_first_field(
+	uint8_t *payload, size_t first_bit, size_t bit_count, uint16_t value)
+{
+	for (size_t index = 0; index < bit_count; ++index)
+		set_payload_bit(
+			payload, first_bit + index,
+			(value & (uint16_t)(1u << index)) != 0);
+}
+
+static void encode_common_prefix(
+	uint8_t *payload, const struct sippymodem_v34_info1_common *common)
+{
+	encode_lsb_first_field(
+		payload, V34_INFO1_POWER_REDUCTION_FIRST_BIT,
+		V34_INFO1_POWER_REDUCTION_BITS,
+		common->minimum_peer_power_reduction_db);
+	encode_lsb_first_field(
+		payload, V34_INFO1_ADDITIONAL_REDUCTION_FIRST_BIT,
+		V34_INFO1_ADDITIONAL_REDUCTION_BITS,
+		common->additional_peer_power_reduction_db);
+	encode_lsb_first_field(
+		payload, V34_INFO1_MD_LENGTH_FIRST_BIT,
+		V34_INFO1_MD_LENGTH_BITS, common->local_md_length_35_ms_units);
+}
+
+static void encode_frequency_offset(
+	uint8_t *payload, size_t first_bit,
+	const struct sippymodem_v34_info1_common *common)
+{
+	uint16_t frequency_offset =
+		(uint16_t)(common->frequency_offset_1_50_hz_units < 0 ?
+				   common->frequency_offset_1_50_hz_units +
+					   V34_INFO1_FREQUENCY_OFFSET_MODULUS :
+				   common->frequency_offset_1_50_hz_units);
+
+	encode_lsb_first_field(
+		payload, first_bit,
+		V34_INFO1_FREQUENCY_OFFSET_BITS, frequency_offset);
+}
+
+static void encode_probe_result(
+	uint8_t *payload, size_t first_bit,
+	const struct sippymodem_v34_info1_probe_result *result)
+{
+	set_payload_bit(
+		payload, first_bit + V34_INFO1_HIGH_CARRIER_BIT,
+		result->high_carrier);
+	encode_lsb_first_field(
+		payload, first_bit + V34_INFO1_PREEMPHASIS_FIRST_BIT,
+		V34_INFO1_PREEMPHASIS_BITS, result->preemphasis_filter_index);
+	encode_lsb_first_field(
+		payload, first_bit + V34_INFO1_DATA_RATE_FIRST_BIT,
+		V34_INFO1_DATA_RATE_BITS,
+		result->projected_data_rate_2400_bps_units);
+}
+
+enum sippymodem_v34_info1_result sippymodem_v34_info1c_encode(
+	const struct sippymodem_v34_info1c *info1c, uint8_t *payload,
+	size_t payload_capacity)
+{
+	uint8_t encoded[SIPPYMODEM_V34_INFO1C_PAYLOAD_BYTES] = { 0 };
+
+	if (info1c == NULL || payload == NULL ||
+	    payload_capacity < SIPPYMODEM_V34_INFO1C_PAYLOAD_BYTES)
+		return SIPPYMODEM_V34_INFO1_INVALID_ARGUMENT;
+	if (!sippymodem_v34_info1c_is_valid(info1c))
+		return SIPPYMODEM_V34_INFO1_INVALID_PARAMETERS;
+	encode_common_prefix(encoded, &info1c->common);
+	for (size_t index = 0; index < SIPPYMODEM_V34_SYMBOL_RATE_COUNT;
+	     ++index)
+		encode_probe_result(
+			encoded,
+			V34_INFO1_PROBE_RESULT_FIRST_BIT +
+				index * V34_INFO1_PROBE_RESULT_BITS,
+			&info1c->answer_transmit[index]);
+	encode_frequency_offset(
+		encoded, V34_INFO1C_FREQUENCY_OFFSET_FIRST_BIT,
+		&info1c->common);
+	memcpy(payload, encoded, sizeof(encoded));
+	return SIPPYMODEM_V34_INFO1_OK;
+}
+
+static bool payload_padding_is_zero(
+	const uint8_t *payload, size_t payload_bit_count)
+{
+	uint8_t used_bits = (uint8_t)(payload_bit_count % 8u);
+	uint8_t unused_bits;
+	uint8_t padding_mask;
+
+	if (used_bits == 0)
+		return true;
+	unused_bits = (uint8_t)(8u - used_bits);
+	padding_mask = (uint8_t)((1u << unused_bits) - 1u);
+	return (payload[(payload_bit_count + 7u) / 8u - 1u] &
+		padding_mask) == 0;
+}
+
+static int16_t decode_frequency_offset(
+	const uint8_t *payload, size_t first_bit)
+{
+	uint16_t encoded = decode_lsb_first_field(
+		payload, first_bit, V34_INFO1_FREQUENCY_OFFSET_BITS);
+
+	return encoded >= V34_INFO1_FREQUENCY_OFFSET_MODULUS / 2 ?
+		       (int16_t)((int)encoded -
+				 V34_INFO1_FREQUENCY_OFFSET_MODULUS) :
+		       (int16_t)encoded;
+}
+
+static struct sippymodem_v34_info1_common decode_common(
+	const uint8_t *payload, size_t frequency_offset_first_bit)
+{
+	return (struct sippymodem_v34_info1_common){
+		.minimum_peer_power_reduction_db = (uint8_t)
+			decode_lsb_first_field(
+				payload, V34_INFO1_POWER_REDUCTION_FIRST_BIT,
+				V34_INFO1_POWER_REDUCTION_BITS),
+		.additional_peer_power_reduction_db = (uint8_t)
+			decode_lsb_first_field(
+				payload,
+				V34_INFO1_ADDITIONAL_REDUCTION_FIRST_BIT,
+				V34_INFO1_ADDITIONAL_REDUCTION_BITS),
+		.local_md_length_35_ms_units = (uint8_t)
+			decode_lsb_first_field(
+				payload, V34_INFO1_MD_LENGTH_FIRST_BIT,
+				V34_INFO1_MD_LENGTH_BITS),
+		.frequency_offset_1_50_hz_units = decode_frequency_offset(
+			payload, frequency_offset_first_bit),
+	};
+}
+
+static struct sippymodem_v34_info1_probe_result decode_probe_result(
+	const uint8_t *payload, size_t first_bit)
+{
+	return (struct sippymodem_v34_info1_probe_result){
+		.high_carrier = payload_bit(
+			payload, first_bit + V34_INFO1_HIGH_CARRIER_BIT) != 0,
+		.preemphasis_filter_index = (uint8_t)decode_lsb_first_field(
+			payload, first_bit + V34_INFO1_PREEMPHASIS_FIRST_BIT,
+			V34_INFO1_PREEMPHASIS_BITS),
+		.projected_data_rate_2400_bps_units =
+			(uint8_t)decode_lsb_first_field(
+				payload, first_bit + V34_INFO1_DATA_RATE_FIRST_BIT,
+				V34_INFO1_DATA_RATE_BITS),
+	};
+}
+
+enum sippymodem_v34_info1_result sippymodem_v34_info1c_decode(
+	const uint8_t *payload, size_t payload_capacity,
+	size_t payload_bit_count, struct sippymodem_v34_info1c *info1c)
+{
+	struct sippymodem_v34_info1c decoded = { 0 };
+
+	if (payload == NULL || info1c == NULL ||
+	    payload_capacity < SIPPYMODEM_V34_INFO1C_PAYLOAD_BYTES)
+		return SIPPYMODEM_V34_INFO1_INVALID_ARGUMENT;
+	if (payload_bit_count != SIPPYMODEM_V34_INFO1C_PAYLOAD_BITS ||
+	    !payload_padding_is_zero(payload, payload_bit_count))
+		return SIPPYMODEM_V34_INFO1_INVALID_PAYLOAD;
+	decoded.common = decode_common(
+		payload, V34_INFO1C_FREQUENCY_OFFSET_FIRST_BIT);
+	for (size_t index = 0; index < SIPPYMODEM_V34_SYMBOL_RATE_COUNT;
+	     ++index)
+		decoded.answer_transmit[index] = decode_probe_result(
+			payload,
+			V34_INFO1_PROBE_RESULT_FIRST_BIT +
+				index * V34_INFO1_PROBE_RESULT_BITS);
+	if (!sippymodem_v34_info1c_is_valid(&decoded))
+		return SIPPYMODEM_V34_INFO1_INVALID_PAYLOAD;
+	*info1c = decoded;
+	return SIPPYMODEM_V34_INFO1_OK;
+}
+
+enum sippymodem_v34_info1_result sippymodem_v34_info1a_encode(
+	const struct sippymodem_v34_info1a *info1a, uint8_t *payload,
+	size_t payload_capacity)
+{
+	uint8_t encoded[SIPPYMODEM_V34_INFO1A_PAYLOAD_BYTES] = { 0 };
+	if (info1a == NULL || payload == NULL ||
+	    payload_capacity < SIPPYMODEM_V34_INFO1A_PAYLOAD_BYTES)
+		return SIPPYMODEM_V34_INFO1_INVALID_ARGUMENT;
+	if (!sippymodem_v34_info1a_is_valid(info1a))
+		return SIPPYMODEM_V34_INFO1_INVALID_PARAMETERS;
+	encode_common_prefix(encoded, &info1a->common);
+	encode_probe_result(
+		encoded, V34_INFO1_PROBE_RESULT_FIRST_BIT,
+		&info1a->call_transmit);
+	encode_lsb_first_field(
+		encoded, V34_INFO1A_ANSWER_SYMBOL_RATE_FIRST_BIT,
+		V34_INFO1_SYMBOL_RATE_BITS,
+		(uint16_t)info1a->answer_to_call_symbol_rate);
+	encode_lsb_first_field(
+		encoded, V34_INFO1A_CALL_SYMBOL_RATE_FIRST_BIT,
+		V34_INFO1_SYMBOL_RATE_BITS,
+		(uint16_t)info1a->call_to_answer_symbol_rate);
+	encode_frequency_offset(
+		encoded, V34_INFO1A_FREQUENCY_OFFSET_FIRST_BIT,
+		&info1a->common);
+	memcpy(payload, encoded, sizeof(encoded));
+	return SIPPYMODEM_V34_INFO1_OK;
+}
+
+enum sippymodem_v34_info1_result sippymodem_v34_info1a_decode(
+	const uint8_t *payload, size_t payload_capacity,
+	size_t payload_bit_count, struct sippymodem_v34_info1a *info1a)
+{
+	struct sippymodem_v34_info1a decoded = { 0 };
+
+	if (payload == NULL || info1a == NULL ||
+	    payload_capacity < SIPPYMODEM_V34_INFO1A_PAYLOAD_BYTES)
+		return SIPPYMODEM_V34_INFO1_INVALID_ARGUMENT;
+	if (payload_bit_count != SIPPYMODEM_V34_INFO1A_PAYLOAD_BITS ||
+	    !payload_padding_is_zero(payload, payload_bit_count))
+		return SIPPYMODEM_V34_INFO1_INVALID_PAYLOAD;
+	decoded.common = decode_common(
+		payload, V34_INFO1A_FREQUENCY_OFFSET_FIRST_BIT);
+	decoded.call_transmit = decode_probe_result(
+		payload, V34_INFO1_PROBE_RESULT_FIRST_BIT);
+	decoded.answer_to_call_symbol_rate =
+		(enum sippymodem_v34_symbol_rate)decode_lsb_first_field(
+			payload, V34_INFO1A_ANSWER_SYMBOL_RATE_FIRST_BIT,
+			V34_INFO1_SYMBOL_RATE_BITS);
+	decoded.call_to_answer_symbol_rate =
+		(enum sippymodem_v34_symbol_rate)decode_lsb_first_field(
+			payload, V34_INFO1A_CALL_SYMBOL_RATE_FIRST_BIT,
+			V34_INFO1_SYMBOL_RATE_BITS);
+	if (!sippymodem_v34_info1a_is_valid(&decoded))
+		return SIPPYMODEM_V34_INFO1_INVALID_PAYLOAD;
+	*info1a = decoded;
+	return SIPPYMODEM_V34_INFO1_OK;
+}
+
+const char *sippymodem_v34_info1_result_name(
+	enum sippymodem_v34_info1_result result)
+{
+	switch (result) {
+	case SIPPYMODEM_V34_INFO1_OK:
+		return "ok";
+	case SIPPYMODEM_V34_INFO1_INVALID_ARGUMENT:
+		return "invalid argument";
+	case SIPPYMODEM_V34_INFO1_INVALID_PARAMETERS:
+		return "invalid parameters";
+	case SIPPYMODEM_V34_INFO1_INVALID_PAYLOAD:
+		return "invalid payload";
+	}
+	return "unknown";
+}

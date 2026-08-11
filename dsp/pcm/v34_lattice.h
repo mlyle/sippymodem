@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_LATTICE_H
 #define SIPPYMODEM_V34_LATTICE_H
 
-#include "sippymodem_qam.h"
+#include "qam.h"
 #include "v34_trellis.h"
 
 #include <stdint.h>

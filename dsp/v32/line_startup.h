@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V32_LINE_STARTUP_H
 #define SIPPYMODEM_V32_LINE_STARTUP_H
 
-#include "sippymodem_single_tone.h"
+#include "single_tone.h"
 
 #include <stdbool.h>
 #include <stdint.h>

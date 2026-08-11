@@ -3,8 +3,8 @@
 #ifndef SIPPYMODEM_V34_CHANNEL_CONDITIONER_H
 #define SIPPYMODEM_V34_CHANNEL_CONDITIONER_H
 
-#include "sippymodem_v34_framing.h"
-#include "sippymodem_v34_symbol_power.h"
+#include "v34_framing.h"
+#include "v34_symbol_power.h"
 
 #include <stdbool.h>
 

@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_H
 #define SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_H
 
-#include "sippymodem_v34_framing.h"
+#include "v34_framing.h"
 #include "v34_mapping_frame_decoder.h"
 
 #include <stdint.h>

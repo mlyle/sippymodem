@@ -3,8 +3,8 @@
 #ifndef SIPPYMODEM_V34_PRECODER_H
 #define SIPPYMODEM_V34_PRECODER_H
 
-#include "sippymodem_v34_constellation.h"
-#include "sippymodem_v34_mapping_parameters.h"
+#include "v34_constellation.h"
+#include "v34_mapping_parameters.h"
 
 #include <stdbool.h>
 #include <stdint.h>
