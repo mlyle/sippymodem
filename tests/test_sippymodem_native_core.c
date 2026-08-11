@@ -38,6 +38,31 @@ static int unused_control(
 	return 0;
 }
 
+static struct {
+	int result;
+	unsigned int calls;
+	size_t length;
+	uint8_t data[16];
+} lapm_sink;
+
+static int scripted_lapm_sink(
+	struct modem *modem, const char *data, int length)
+{
+	int consumed = lapm_sink.result;
+
+	(void)modem;
+	lapm_sink.calls++;
+	if (consumed < 0)
+		return consumed;
+	if (consumed > length)
+		return consumed;
+	if ((size_t)consumed > sizeof(lapm_sink.data) - lapm_sink.length)
+		return -1;
+	memcpy(lapm_sink.data + lapm_sink.length, data, (size_t)consumed);
+	lapm_sink.length += (size_t)consumed;
+	return consumed;
+}
+
 static struct dp *unused_dp_create(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
@@ -339,6 +364,62 @@ static bool test_lapm_xid_envelopes(void)
 	modem_ec_exit(answerer);
 	modem_delete(caller);
 	modem_delete(answerer);
+	return true;
+}
+
+static bool test_lapm_receive_backpressure(void)
+{
+	enum { LAPM_DATA_STATE = 2 };
+	struct modem_driver driver = {
+		.name = "LAPM receive test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "LAPM receive test");
+	uint8_t wire[] = { 0, 0, 0, 'a', 'b', 'c' };
+	frame_t incoming = {
+		.buf = wire,
+		.count = sizeof(wire),
+	};
+
+	CHECK(modem != NULL && modem_ec_init(modem) == 0,
+	      "LAPM receive fixture could not initialize");
+	modem_ec_start(modem);
+	modem->ec.lapm.state = LAPM_DATA_STATE;
+	modem->put_chars = scripted_lapm_sink;
+	wire[0] = modem->ec.lapm.rsp_addr;
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	lapm_sink.result = 1;
+	modem->packer.hdlc.rx_complete(
+		modem->packer.hdlc.framer, &incoming);
+	CHECK(lapm_sink.calls == 1 && lapm_sink.length == 1 &&
+		      lapm_sink.data[0] == 'a' && modem->ec.lapm.busy &&
+		      modem->ec.lapm.rx_count == 2 &&
+		      modem->packer_process != NULL,
+	      "LAPM did not retain partially consumed receive data");
+	modem->ec.lapm.state = 0;
+	lapm_sink.result = 2;
+	modem->packer_process(modem, 0);
+	CHECK(lapm_sink.calls == 1 && modem->ec.lapm.rx_count == 2,
+	      "deferred LAPM output ran outside the data state");
+	modem->ec.lapm.state = LAPM_DATA_STATE;
+	modem->packer_process(modem, 0);
+	CHECK(lapm_sink.calls == 2 && lapm_sink.length == 3 &&
+		      memcmp(lapm_sink.data, "abc", 3) == 0 &&
+		      !modem->ec.lapm.busy && modem->ec.lapm.rx_count == 0 &&
+		      modem->packer_process == NULL,
+	      "LAPM did not drain retained receive data exactly once");
+	wire[1] = 2;
+	lapm_sink.result = -1;
+	modem->packer.hdlc.rx_complete(
+		modem->packer.hdlc.framer, &incoming);
+	CHECK(lapm_sink.calls == 3 && modem->ec.lapm.vr == 1 &&
+		      modem->ec.lapm.rx_count == 0 &&
+		      modem->packer_process == NULL,
+	      "failed LAPM sink advanced sequence or buffered invalid data");
+	modem_ec_exit(modem);
+	modem_delete(modem);
 	return true;
 }
 
@@ -784,6 +865,7 @@ int main(void)
 		{ "AT V.42bis compression profile",
 		  test_at_v42bis_compression_profile },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
+		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",
