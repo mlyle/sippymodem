@@ -39,47 +39,47 @@ static void write_u32be(uint8_t *bytes, uint32_t value)
 	bytes[3] = (uint8_t)value;
 }
 
-enum sippymodem_rtp_result sippymodem_rtp_packet_parse(
+enum rtp_result rtp_packet_parse(
 	const uint8_t *packet,
 	size_t packet_size,
-	struct sippymodem_rtp_packet_view *view)
+	struct rtp_packet_view *view)
 {
-	struct sippymodem_rtp_packet_view parsed;
+	struct rtp_packet_view parsed;
 	size_t header_size;
 	size_t padding_size = 0;
 
 	if (packet == NULL || view == NULL)
-		return SIPPYMODEM_RTP_INVALID_ARGUMENT;
-	if (packet_size < SIPPYMODEM_RTP_HEADER_SIZE)
-		return SIPPYMODEM_RTP_PACKET_TOO_SHORT;
+		return RTP_INVALID_ARGUMENT;
+	if (packet_size < RTP_HEADER_SIZE)
+		return RTP_PACKET_TOO_SHORT;
 	if (packet[0] >> RTP_VERSION_SHIFT != RTP_VERSION)
-		return SIPPYMODEM_RTP_UNSUPPORTED_VERSION;
+		return RTP_UNSUPPORTED_VERSION;
 
-	header_size = SIPPYMODEM_RTP_HEADER_SIZE +
+	header_size = RTP_HEADER_SIZE +
 		      (size_t)(packet[0] & RTP_CSRC_COUNT_MASK) * 4;
 	if (packet_size < header_size)
-		return SIPPYMODEM_RTP_TRUNCATED_CSRC_LIST;
+		return RTP_TRUNCATED_CSRC_LIST;
 
 	if ((packet[0] & RTP_EXTENSION_FLAG) != 0) {
 		size_t extension_size;
 
 		if (packet_size - header_size < RTP_EXTENSION_HEADER_SIZE)
-			return SIPPYMODEM_RTP_TRUNCATED_EXTENSION;
+			return RTP_TRUNCATED_EXTENSION;
 		extension_size = RTP_EXTENSION_HEADER_SIZE +
 				 (size_t)read_u16be(packet + header_size + 2) * 4;
 		if (packet_size - header_size < extension_size)
-			return SIPPYMODEM_RTP_TRUNCATED_EXTENSION;
+			return RTP_TRUNCATED_EXTENSION;
 		header_size += extension_size;
 	}
 
 	if ((packet[0] & RTP_PADDING_FLAG) != 0) {
 		padding_size = packet[packet_size - 1];
 		if (padding_size == 0 || padding_size > packet_size - header_size)
-			return SIPPYMODEM_RTP_INVALID_PADDING;
+			return RTP_INVALID_PADDING;
 	}
 
 	parsed.header.payload_type =
-		(uint8_t)(packet[1] & SIPPYMODEM_RTP_MAX_PAYLOAD_TYPE);
+		(uint8_t)(packet[1] & RTP_MAX_PAYLOAD_TYPE);
 	parsed.header.marker = (packet[1] & RTP_MARKER_FLAG) != 0;
 	parsed.header.sequence = read_u16be(packet + 2);
 	parsed.header.timestamp = read_u32be(packet + 4);
@@ -89,27 +89,27 @@ enum sippymodem_rtp_result sippymodem_rtp_packet_parse(
 	parsed.header_size = header_size;
 	parsed.padding_size = padding_size;
 	*view = parsed;
-	return SIPPYMODEM_RTP_OK;
+	return RTP_OK;
 }
 
-enum sippymodem_rtp_result sippymodem_rtp_packet_write(
+enum rtp_result rtp_packet_write(
 	uint8_t *packet,
 	size_t capacity,
-	const struct sippymodem_rtp_header *header,
+	const struct rtp_header *header,
 	const uint8_t *payload,
 	size_t payload_size,
 	size_t *packet_size)
 {
 	if (packet == NULL || header == NULL || packet_size == NULL ||
 	    (payload == NULL && payload_size != 0) ||
-	    header->payload_type > SIPPYMODEM_RTP_MAX_PAYLOAD_TYPE)
-		return SIPPYMODEM_RTP_INVALID_ARGUMENT;
-	if (capacity < SIPPYMODEM_RTP_HEADER_SIZE ||
-	    payload_size > capacity - SIPPYMODEM_RTP_HEADER_SIZE)
-		return SIPPYMODEM_RTP_BUFFER_TOO_SMALL;
+	    header->payload_type > RTP_MAX_PAYLOAD_TYPE)
+		return RTP_INVALID_ARGUMENT;
+	if (capacity < RTP_HEADER_SIZE ||
+	    payload_size > capacity - RTP_HEADER_SIZE)
+		return RTP_BUFFER_TOO_SMALL;
 
 	if (payload_size != 0)
-		memmove(packet + SIPPYMODEM_RTP_HEADER_SIZE, payload,
+		memmove(packet + RTP_HEADER_SIZE, payload,
 			payload_size);
 	packet[0] = RTP_VERSION << RTP_VERSION_SHIFT;
 	packet[1] = header->payload_type |
@@ -117,28 +117,28 @@ enum sippymodem_rtp_result sippymodem_rtp_packet_write(
 	write_u16be(packet + 2, header->sequence);
 	write_u32be(packet + 4, header->timestamp);
 	write_u32be(packet + 8, header->ssrc);
-	*packet_size = SIPPYMODEM_RTP_HEADER_SIZE + payload_size;
-	return SIPPYMODEM_RTP_OK;
+	*packet_size = RTP_HEADER_SIZE + payload_size;
+	return RTP_OK;
 }
 
-const char *sippymodem_rtp_result_name(enum sippymodem_rtp_result result)
+const char *rtp_result_name(enum rtp_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_RTP_OK:
+	case RTP_OK:
 		return "ok";
-	case SIPPYMODEM_RTP_INVALID_ARGUMENT:
+	case RTP_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_RTP_PACKET_TOO_SHORT:
+	case RTP_PACKET_TOO_SHORT:
 		return "packet too short";
-	case SIPPYMODEM_RTP_UNSUPPORTED_VERSION:
+	case RTP_UNSUPPORTED_VERSION:
 		return "unsupported RTP version";
-	case SIPPYMODEM_RTP_TRUNCATED_CSRC_LIST:
+	case RTP_TRUNCATED_CSRC_LIST:
 		return "truncated CSRC list";
-	case SIPPYMODEM_RTP_TRUNCATED_EXTENSION:
+	case RTP_TRUNCATED_EXTENSION:
 		return "truncated RTP extension";
-	case SIPPYMODEM_RTP_INVALID_PADDING:
+	case RTP_INVALID_PADDING:
 		return "invalid RTP padding";
-	case SIPPYMODEM_RTP_BUFFER_TOO_SMALL:
+	case RTP_BUFFER_TOO_SMALL:
 		return "output buffer too small";
 	}
 	return "unknown RTP result";

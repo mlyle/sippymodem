@@ -40,8 +40,8 @@ struct integration_endpoint {
 };
 
 struct recording_capture {
-	size_t blocks[SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT + 1];
-	size_t units[SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT + 1];
+	size_t blocks[RECORD_TX_RTP_PAYLOAD_SENT + 1];
+	size_t units[RECORD_TX_RTP_PAYLOAD_SENT + 1];
 	bool invalid;
 };
 
@@ -176,14 +176,14 @@ static bool output_contains_connect(
 }
 
 static void capture_recording(
-	void *context, const struct sippymodem_recording_block *block)
+	void *context, const struct recording_block *block)
 {
 	struct recording_capture *capture = context;
 
 	if (capture == NULL || block == NULL || block->data == NULL ||
 	    block->count == 0 ||
-	    block->stream < SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_ARRIVAL ||
-	    block->stream > SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT) {
+	    block->stream < RECORD_RX_RTP_PAYLOAD_ARRIVAL ||
+	    block->stream > RECORD_TX_RTP_PAYLOAD_SENT) {
 		if (capture != NULL)
 			capture->invalid = true;
 		return;
@@ -193,27 +193,27 @@ static void capture_recording(
 }
 
 static bool transcode(
-	enum sippymodem_media_codec codec,
+	enum media_codec codec,
 	const int16_t transmit[SIP_FRAME_SAMPLES],
 	int16_t receive[SIP_FRAME_SAMPLES],
-	const struct sippymodem_recorder *recorder)
+	const struct media_recorder *recorder)
 {
 	uint8_t payload[SIP_FRAME_SAMPLES];
 
-	return sippymodem_media_encode(
+	return media_encode(
 		       codec, transmit, SIP_FRAME_SAMPLES,
 		       payload, ARRAY_LENGTH(payload), recorder) ==
-		       SIPPYMODEM_MEDIA_OK &&
-	       sippymodem_media_decode(
+		       MEDIA_OK &&
+	       media_decode(
 		       codec, payload, ARRAY_LENGTH(payload), receive,
-		       SIP_FRAME_SAMPLES, recorder) == SIPPYMODEM_MEDIA_OK;
+		       SIP_FRAME_SAMPLES, recorder) == MEDIA_OK;
 }
 
 static bool process_sip_frame(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
-	enum sippymodem_media_codec codec,
-	const struct sippymodem_recorder *recorder)
+	enum media_codec codec,
+	const struct media_recorder *recorder)
 {
 	modem_process(caller->modem, caller->receive, caller->transmit,
 		      SIP_FRAME_SAMPLES);
@@ -234,7 +234,7 @@ static bool modem_is_online(const struct modem *modem, enum DP_ID id)
 
 static bool run_media_call(
 	const struct modem_test_case *test_case,
-	enum sippymodem_media_codec codec)
+	enum media_codec codec)
 {
 	static const char prelink_payload[] = "early-v23";
 	static const uint8_t caller_payload[] = {
@@ -250,7 +250,7 @@ static bool run_media_call(
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
 	struct recording_capture capture = { 0 };
-	const struct sippymodem_recorder recorder = {
+	const struct media_recorder recorder = {
 		.context = &capture,
 		.write = capture_recording,
 	};
@@ -409,12 +409,12 @@ static bool run_media_call(
 	      answerer.output_count,
 	      answerer.output_count != 0 ? answerer.output[0] : 0);
 	CHECK(!capture.invalid &&
-		      capture.blocks[SIPPYMODEM_RECORD_TX_LINE_PCM] != 0 &&
+		      capture.blocks[RECORD_TX_LINE_PCM] != 0 &&
 		      capture.blocks[
-			      SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED] != 0 &&
+			      RECORD_TX_RTP_PAYLOAD_PREPARED] != 0 &&
 		      capture.blocks[
-			      SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
-		      capture.blocks[SIPPYMODEM_RECORD_RX_LINE_PCM] != 0,
+			      RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
+		      capture.blocks[RECORD_RX_LINE_PCM] != 0,
 	      "%s SIP call did not retain recording boundaries",
 	      test_case->name);
 	CHECK(datapumps_stop(&datapumps) ==
@@ -449,7 +449,7 @@ static bool frame_has_signal(const int16_t samples[SIP_FRAME_SAMPLES])
 
 static bool run_baudot_media_call(
 	enum baudot_rate rate,
-	enum sippymodem_media_codec codec)
+	enum media_codec codec)
 {
 	static const char request[] = "hello 123? ga";
 	static const char expected_request[] = "HELLO 123? GA";
@@ -463,7 +463,7 @@ static bool run_baudot_media_call(
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
 	struct recording_capture capture = { 0 };
-	const struct sippymodem_recorder recorder = {
+	const struct media_recorder recorder = {
 		.context = &capture,
 		.write = capture_recording,
 	};
@@ -567,12 +567,12 @@ static bool run_baudot_media_call(
 		}
 	}
 	CHECK(request_received && reply_received && !capture.invalid &&
-		      capture.blocks[SIPPYMODEM_RECORD_TX_LINE_PCM] != 0 &&
+		      capture.blocks[RECORD_TX_LINE_PCM] != 0 &&
 		      capture.blocks[
-			      SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED] != 0 &&
+			      RECORD_TX_RTP_PAYLOAD_PREPARED] != 0 &&
 		      capture.blocks[
-			      SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
-		      capture.blocks[SIPPYMODEM_RECORD_RX_LINE_PCM] != 0,
+			      RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
+		      capture.blocks[RECORD_RX_LINE_PCM] != 0,
 	      "Baudot SIP turn-taking or recording evidence was incomplete");
 	CHECK(datapumps_stop(&datapumps) ==
 		      DATAPUMPS_BUSY,
@@ -585,9 +585,9 @@ static bool run_baudot_media_call(
 	return true;
 }
 
-static const char *codec_name(enum sippymodem_media_codec codec)
+static const char *codec_name(enum media_codec codec)
 {
-	return codec == SIPPYMODEM_CODEC_PCMU ? "PCMU" : "PCMA";
+	return codec == MEDIA_CODEC_PCMU ? "PCMU" : "PCMA";
 }
 
 int main(void)
@@ -726,9 +726,9 @@ int main(void)
 			.test_prelink = true,
 		},
 	};
-	static const enum sippymodem_media_codec codecs[] = {
-		SIPPYMODEM_CODEC_PCMU,
-		SIPPYMODEM_CODEC_PCMA,
+	static const enum media_codec codecs[] = {
+		MEDIA_CODEC_PCMU,
+		MEDIA_CODEC_PCMA,
 	};
 	static const enum baudot_rate baudot_rates[] = {
 		BAUDOT_RATE_45,

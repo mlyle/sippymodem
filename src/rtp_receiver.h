@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_RTP_RECEIVER_H
-#define SIPPYMODEM_RTP_RECEIVER_H
+#ifndef RTP_RECEIVER_H
+#define RTP_RECEIVER_H
 
 #include "rtp.h"
 
@@ -9,19 +9,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct sippymodem_rtp_jitter_slot {
+struct rtp_jitter_slot {
 	uint32_t timestamp;
 	uint8_t octet;
 	bool occupied;
 };
 
-struct sippymodem_rtp_receiver_config {
+struct rtp_receiver_config {
 	uint8_t payload_type;
 	uint8_t silence_octet;
 	size_t prefill_samples;
 };
 
-struct sippymodem_rtp_receiver_stats {
+struct rtp_receiver_stats {
 	uint64_t packets_seen;
 	uint64_t packets_accepted;
 	uint64_t malformed_packets;
@@ -40,11 +40,11 @@ struct sippymodem_rtp_receiver_stats {
 	uint64_t samples_idle;
 };
 
-struct sippymodem_rtp_receiver {
-	struct sippymodem_rtp_jitter_slot *slots;
+struct rtp_receiver {
+	struct rtp_jitter_slot *slots;
 	size_t slot_count;
-	struct sippymodem_rtp_receiver_config config;
-	struct sippymodem_rtp_receiver_stats stats;
+	struct rtp_receiver_config config;
+	struct rtp_receiver_stats stats;
 	bool stream_active;
 	uint32_t ssrc;
 	bool sequence_valid;
@@ -53,16 +53,16 @@ struct sippymodem_rtp_receiver {
 	size_t prefill_remaining;
 };
 
-enum sippymodem_rtp_receive_result {
-	SIPPYMODEM_RTP_RECEIVE_ACCEPTED,
-	SIPPYMODEM_RTP_RECEIVE_INVALID_ARGUMENT,
-	SIPPYMODEM_RTP_RECEIVE_MALFORMED_PACKET,
-	SIPPYMODEM_RTP_RECEIVE_UNEXPECTED_PAYLOAD,
-	SIPPYMODEM_RTP_RECEIVE_LATE,
-	SIPPYMODEM_RTP_RECEIVE_TOO_EARLY,
+enum rtp_receive_result {
+	RTP_RECEIVE_ACCEPTED,
+	RTP_RECEIVE_INVALID_ARGUMENT,
+	RTP_RECEIVE_MALFORMED_PACKET,
+	RTP_RECEIVE_UNEXPECTED_PAYLOAD,
+	RTP_RECEIVE_LATE,
+	RTP_RECEIVE_TOO_EARLY,
 };
 
-struct sippymodem_rtp_playout_report {
+struct rtp_playout_report {
 	bool stream_active;
 	uint32_t first_timestamp;
 	size_t prefill_samples;
@@ -72,36 +72,36 @@ struct sippymodem_rtp_playout_report {
 
 /* Storage is supplied and owned by the caller.  One slot holds one RTP clock
  * tick, so slot_count is also the maximum accepted lead in samples. */
-bool sippymodem_rtp_receiver_init(
-	struct sippymodem_rtp_receiver *receiver,
-	const struct sippymodem_rtp_receiver_config *config,
-	struct sippymodem_rtp_jitter_slot *slots,
+bool rtp_receiver_init(
+	struct rtp_receiver *receiver,
+	const struct rtp_receiver_config *config,
+	struct rtp_jitter_slot *slots,
 	size_t slot_count);
-void sippymodem_rtp_receiver_reset(
-	struct sippymodem_rtp_receiver *receiver);
-void sippymodem_rtp_receiver_restart(
-	struct sippymodem_rtp_receiver *receiver);
+void rtp_receiver_reset(
+	struct rtp_receiver *receiver);
+void rtp_receiver_restart(
+	struct rtp_receiver *receiver);
 
-enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_push(
-	struct sippymodem_rtp_receiver *receiver,
-	const struct sippymodem_rtp_packet_view *packet);
+enum rtp_receive_result rtp_receiver_push(
+	struct rtp_receiver *receiver,
+	const struct rtp_packet_view *packet);
 /* Parse and push one wire packet.  packet_result optionally retains the more
  * specific packet-parser result when receive reports malformed input. */
-enum sippymodem_rtp_receive_result sippymodem_rtp_receiver_receive(
-	struct sippymodem_rtp_receiver *receiver,
+enum rtp_receive_result rtp_receiver_receive(
+	struct rtp_receiver *receiver,
 	const uint8_t *packet,
 	size_t packet_size,
-	enum sippymodem_rtp_result *packet_result);
+	enum rtp_result *packet_result);
 
 /* Playout always fills count octets on success.  Missing media and time before
  * the first stream are represented by the configured silence octet. */
-bool sippymodem_rtp_receiver_play(
-	struct sippymodem_rtp_receiver *receiver,
+bool rtp_receiver_play(
+	struct rtp_receiver *receiver,
 	uint8_t *octets,
 	size_t count,
-	struct sippymodem_rtp_playout_report *report);
+	struct rtp_playout_report *report);
 
-const char *sippymodem_rtp_receive_result_name(
-	enum sippymodem_rtp_receive_result result);
+const char *rtp_receive_result_name(
+	enum rtp_receive_result result);
 
 #endif

@@ -25,7 +25,7 @@ static struct {
 	bool create_fails;
 	enum sippymodem_runtime_result open_result;
 	enum sippymodem_runtime_result close_result;
-	enum sippymodem_loop_result loop_result;
+	enum modem_loop_result loop_result;
 	enum sippymodem_runtime_result loop_runtime_result;
 	int signal_number;
 	bool saw_running;
@@ -147,17 +147,17 @@ const char *sippymodem_runtime_device_path(
 	return "/dev/pts/test";
 }
 
-enum sippymodem_loop_result sippymodem_loop_run(
+enum modem_loop_result modem_loop_run(
 	struct sippymodem_runtime *owned_runtime,
 	volatile sig_atomic_t *running,
-	struct sippymodem_loop_error *error)
+	struct modem_loop_error *error)
 {
 	if (owned_runtime != &runtime)
 		fixture.wrong_runtime = true;
 	record_call('l');
 	fixture.saw_running = *running != 0;
 	error->runtime_result = fixture.loop_runtime_result;
-	error->system_error = fixture.loop_result == SIPPYMODEM_LOOP_WAIT_ERROR ?
+	error->system_error = fixture.loop_result == MODEM_LOOP_WAIT_ERROR ?
 				      EIO :
 				      0;
 	if (fixture.signal_number != 0)
@@ -175,7 +175,7 @@ const char *sippymodem_runtime_result_name(
 	return "runtime test error";
 }
 
-const char *sippymodem_loop_result_name(enum sippymodem_loop_result result)
+const char *modem_loop_result_name(enum modem_loop_result result)
 {
 	(void)result;
 	return "loop test error";
@@ -237,7 +237,7 @@ static bool test_reports_loop_and_close_failures(void)
 	char *arguments[] = { "slmodemd", NULL };
 
 	reset_fixture();
-	fixture.loop_result = SIPPYMODEM_LOOP_RUNTIME_ERROR;
+	fixture.loop_result = MODEM_LOOP_RUNTIME_ERROR;
 	fixture.loop_runtime_result = SIPPYMODEM_RUNTIME_RECORDING_ERROR;
 	CHECK(run_program(1, arguments) == 1 &&
 		      strcmp(fixture.calls, "iacoplxd") == 0,

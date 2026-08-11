@@ -12,11 +12,11 @@
 
 struct sippymodem_session {
 	struct sippymodem_config config;
-	struct sippymodem_rtp_runtime *rtp;
-	struct sippymodem_sip_signaling *signaling;
-	struct sippymodem_sip_media_bridge bridge;
-	enum sippymodem_sip_signaling_result last_signaling_result;
-	enum sippymodem_rtp_endpoint_result last_rtp_result;
+	struct rtp_runtime *rtp;
+	struct sip_signaling *signaling;
+	struct sip_media_bridge bridge;
+	enum sip_signaling_result last_signaling_result;
+	enum rtp_endpoint_result last_rtp_result;
 	bool signaling_destroy_deferred;
 	bool opened;
 };
@@ -24,18 +24,18 @@ struct sippymodem_session {
 static void finish_deferred_signaling(struct sippymodem_session *session)
 {
 	if (session->signaling == NULL ||
-	    sippymodem_sip_media_bridge_is_in_callback(&session->bridge) ||
+	    sip_media_bridge_is_in_callback(&session->bridge) ||
 	    !session->signaling_destroy_deferred)
 		return;
-	sippymodem_sip_signaling_destroy(session->signaling);
+	sip_signaling_destroy(session->signaling);
 	session->signaling = NULL;
 	session->signaling_destroy_deferred = false;
 }
 
 struct sippymodem_session *sippymodem_session_create(
 	const struct sippymodem_config *config,
-	const struct sippymodem_recorder *recorder,
-	const struct sippymodem_sip_signaling_callbacks *callbacks)
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks)
 {
 	struct sippymodem_session *session;
 
@@ -45,12 +45,12 @@ struct sippymodem_session *sippymodem_session_create(
 	if (session == NULL)
 		return NULL;
 	session->config = *config;
-	session->rtp = sippymodem_rtp_runtime_create(&config->media, recorder);
+	session->rtp = rtp_runtime_create(&config->media, recorder);
 	if (session->rtp == NULL ||
-	    !sippymodem_sip_media_bridge_init(
+	    !sip_media_bridge_init(
 		    &session->bridge,
-		    sippymodem_rtp_runtime_endpoint(session->rtp), callbacks)) {
-		sippymodem_rtp_runtime_destroy(session->rtp);
+		    rtp_runtime_endpoint(session->rtp), callbacks)) {
+		rtp_runtime_destroy(session->rtp);
 		free(session);
 		return NULL;
 	}
@@ -60,12 +60,12 @@ struct sippymodem_session *sippymodem_session_create(
 void sippymodem_session_destroy(struct sippymodem_session *session)
 {
 	if (session == NULL ||
-	    sippymodem_sip_media_bridge_is_in_callback(&session->bridge))
+	    sip_media_bridge_is_in_callback(&session->bridge))
 		return;
 	if (session->opened)
 		sippymodem_session_close(session);
 	finish_deferred_signaling(session);
-	sippymodem_rtp_runtime_destroy(session->rtp);
+	rtp_runtime_destroy(session->rtp);
 	free(session);
 }
 
@@ -86,28 +86,28 @@ enum sippymodem_session_result sippymodem_session_open(
 	finish_deferred_signaling(session);
 	local.sin_port = htons((uint16_t)session->config.media.rtp_listen_port);
 	session->last_rtp_result =
-		sippymodem_rtp_runtime_open(session->rtp, &local);
-	if (session->last_rtp_result != SIPPYMODEM_RTP_ENDPOINT_OK)
+		rtp_runtime_open(session->rtp, &local);
+	if (session->last_rtp_result != RTP_ENDPOINT_OK)
 		return SIPPYMODEM_SESSION_RTP_ERROR;
 
 	signaling_config = session->config;
 	signaling_config.media.rtp_listen_port =
-		sippymodem_rtp_runtime_local_port(session->rtp);
-	session->signaling = sippymodem_sip_signaling_create(
+		rtp_runtime_local_port(session->rtp);
+	session->signaling = sip_signaling_create(
 		&signaling_config,
-		sippymodem_sip_media_bridge_callbacks(&session->bridge));
+		sip_media_bridge_callbacks(&session->bridge));
 	if (session->signaling == NULL)
 		goto signaling_error;
-	binding_failures = sippymodem_sip_media_bridge_binding_failures(
+	binding_failures = sip_media_bridge_binding_failures(
 		&session->bridge);
 	session->opened = true;
 	session->last_signaling_result =
-		sippymodem_sip_signaling_open(session->signaling);
-	if (session->last_signaling_result != SIPPYMODEM_SIP_SIGNALING_OK ||
+		sip_signaling_open(session->signaling);
+	if (session->last_signaling_result != SIP_SIGNALING_OK ||
 	    !session->opened)
 		goto signaling_error;
 	finish_deferred_signaling(session);
-	return sippymodem_sip_media_bridge_binding_failures(&session->bridge) !=
+	return sip_media_bridge_binding_failures(&session->bridge) !=
 			       binding_failures ?
 		       SIPPYMODEM_SESSION_MEDIA_BINDING_ERROR :
 		       SIPPYMODEM_SESSION_OK;
@@ -115,12 +115,12 @@ enum sippymodem_session_result sippymodem_session_open(
 signaling_error:
 	session->opened = false;
 	if (session->signaling != NULL) {
-		sippymodem_sip_signaling_close(session->signaling);
+		sip_signaling_close(session->signaling);
 		session->signaling_destroy_deferred = true;
 		finish_deferred_signaling(session);
 	}
-	sippymodem_sip_media_bridge_clear_media(&session->bridge);
-	sippymodem_rtp_runtime_close(session->rtp);
+	sip_media_bridge_clear_media(&session->bridge);
+	rtp_runtime_close(session->rtp);
 	return SIPPYMODEM_SESSION_SIGNALING_ERROR;
 }
 
@@ -135,12 +135,12 @@ enum sippymodem_session_result sippymodem_session_close(
 	}
 	session->opened = false;
 	session->last_signaling_result =
-		sippymodem_sip_signaling_close(session->signaling);
+		sip_signaling_close(session->signaling);
 	session->signaling_destroy_deferred = true;
-	sippymodem_sip_media_bridge_clear_media(&session->bridge);
-	sippymodem_rtp_runtime_close(session->rtp);
+	sip_media_bridge_clear_media(&session->bridge);
+	rtp_runtime_close(session->rtp);
 	finish_deferred_signaling(session);
-	return session->last_signaling_result == SIPPYMODEM_SIP_SIGNALING_OK ?
+	return session->last_signaling_result == SIP_SIGNALING_OK ?
 		       SIPPYMODEM_SESSION_OK :
 		       SIPPYMODEM_SESSION_SIGNALING_ERROR;
 }
@@ -157,64 +157,64 @@ enum sippymodem_session_result sippymodem_session_step(
 		return SIPPYMODEM_SESSION_NOT_OPEN;
 	if (datagrams_received != NULL)
 		*datagrams_received = 0;
-	binding_failures = sippymodem_sip_media_bridge_binding_failures(
+	binding_failures = sip_media_bridge_binding_failures(
 		&session->bridge);
-	session->last_signaling_result = sippymodem_sip_signaling_step(
+	session->last_signaling_result = sip_signaling_step(
 		session->signaling, signaling_timeout_ms);
 	finish_deferred_signaling(session);
-	if (session->last_signaling_result != SIPPYMODEM_SIP_SIGNALING_OK)
+	if (session->last_signaling_result != SIP_SIGNALING_OK)
 		return SIPPYMODEM_SESSION_SIGNALING_ERROR;
 	if (!session->opened)
-		return sippymodem_sip_media_bridge_binding_failures(
+		return sip_media_bridge_binding_failures(
 			       &session->bridge) != binding_failures ?
 			       SIPPYMODEM_SESSION_MEDIA_BINDING_ERROR :
 			       SIPPYMODEM_SESSION_OK;
 	session->last_rtp_result =
-		sippymodem_rtp_runtime_drain(session->rtp, datagrams_received);
-	if (session->last_rtp_result != SIPPYMODEM_RTP_ENDPOINT_OK)
+		rtp_runtime_drain(session->rtp, datagrams_received);
+	if (session->last_rtp_result != RTP_ENDPOINT_OK)
 		return SIPPYMODEM_SESSION_RTP_ERROR;
-	return sippymodem_sip_media_bridge_binding_failures(&session->bridge) !=
+	return sip_media_bridge_binding_failures(&session->bridge) !=
 			       binding_failures ?
 		       SIPPYMODEM_SESSION_MEDIA_BINDING_ERROR :
 		       SIPPYMODEM_SESSION_OK;
 }
 
-static enum sippymodem_sip_signaling_result not_open_result(
+static enum sip_signaling_result not_open_result(
 	const struct sippymodem_session *session)
 {
-	return session == NULL ? SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT :
-			       SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	return session == NULL ? SIP_SIGNALING_INVALID_ARGUMENT :
+			       SIP_SIGNALING_NOT_OPEN;
 }
 
-enum sippymodem_sip_signaling_result sippymodem_session_dial(
+enum sip_signaling_result sippymodem_session_dial(
 	struct sippymodem_session *session, const char *target)
 {
 	if (session == NULL || !session->opened)
 		return not_open_result(session);
 	session->last_signaling_result =
-		sippymodem_sip_signaling_dial(session->signaling, target);
+		sip_signaling_dial(session->signaling, target);
 	finish_deferred_signaling(session);
 	return session->last_signaling_result;
 }
 
-enum sippymodem_sip_signaling_result sippymodem_session_answer(
+enum sip_signaling_result sippymodem_session_answer(
 	struct sippymodem_session *session)
 {
 	if (session == NULL || !session->opened)
 		return not_open_result(session);
 	session->last_signaling_result =
-		sippymodem_sip_signaling_answer(session->signaling);
+		sip_signaling_answer(session->signaling);
 	finish_deferred_signaling(session);
 	return session->last_signaling_result;
 }
 
-enum sippymodem_sip_signaling_result sippymodem_session_hangup(
+enum sip_signaling_result sippymodem_session_hangup(
 	struct sippymodem_session *session)
 {
 	if (session == NULL || !session->opened)
 		return not_open_result(session);
 	session->last_signaling_result =
-		sippymodem_sip_signaling_hangup(session->signaling);
+		sip_signaling_hangup(session->signaling);
 	finish_deferred_signaling(session);
 	return session->last_signaling_result;
 }
@@ -223,7 +223,7 @@ size_t sippymodem_session_frame_samples(
 	const struct sippymodem_session *session)
 {
 	return session != NULL ?
-		       sippymodem_rtp_runtime_frame_samples(session->rtp) :
+		       rtp_runtime_frame_samples(session->rtp) :
 		       0;
 }
 
@@ -231,7 +231,7 @@ uint16_t sippymodem_session_rtp_local_port(
 	const struct sippymodem_session *session)
 {
 	return session != NULL ?
-		       sippymodem_rtp_runtime_local_port(session->rtp) :
+		       rtp_runtime_local_port(session->rtp) :
 		       0;
 }
 
@@ -244,47 +244,47 @@ bool sippymodem_session_media_is_configured(
 	const struct sippymodem_session *session)
 {
 	return session != NULL && session->opened &&
-	       sippymodem_sip_media_bridge_is_configured(&session->bridge);
+	       sip_media_bridge_is_configured(&session->bridge);
 }
 
-enum sippymodem_media_result sippymodem_session_play(
+enum media_result sippymodem_session_play(
 	struct sippymodem_session *session, int16_t *samples, size_t count,
-	struct sippymodem_rtp_playout_report *report)
+	struct rtp_playout_report *report)
 {
 	return session != NULL ?
-		       sippymodem_rtp_runtime_play(session->rtp, samples, count,
+		       rtp_runtime_play(session->rtp, samples, count,
 						    report) :
-		       SIPPYMODEM_MEDIA_INVALID_ARGUMENT;
+		       MEDIA_INVALID_ARGUMENT;
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_session_send(
+enum rtp_endpoint_result sippymodem_session_send(
 	struct sippymodem_session *session, const int16_t *samples, size_t count)
 {
 	return session != NULL ?
-		       sippymodem_rtp_runtime_send(session->rtp, samples, count) :
-		       SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
+		       rtp_runtime_send(session->rtp, samples, count) :
+		       RTP_ENDPOINT_INVALID_ARGUMENT;
 }
 
-enum sippymodem_sip_rtp_result sippymodem_session_last_media_binding(
+enum sip_rtp_result sippymodem_session_last_media_binding(
 	const struct sippymodem_session *session)
 {
 	return session != NULL ?
-		       sippymodem_sip_media_bridge_last_binding(&session->bridge) :
-		       SIPPYMODEM_SIP_RTP_INVALID_ARGUMENT;
+		       sip_media_bridge_last_binding(&session->bridge) :
+		       SIP_RTP_INVALID_ARGUMENT;
 }
 
-enum sippymodem_sip_signaling_result sippymodem_session_last_signaling_result(
+enum sip_signaling_result sippymodem_session_last_signaling_result(
 	const struct sippymodem_session *session)
 {
 	return session != NULL ? session->last_signaling_result :
-			       SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+			       SIP_SIGNALING_INVALID_ARGUMENT;
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_session_last_rtp_result(
+enum rtp_endpoint_result sippymodem_session_last_rtp_result(
 	const struct sippymodem_session *session)
 {
 	return session != NULL ? session->last_rtp_result :
-			       SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
+			       RTP_ENDPOINT_INVALID_ARGUMENT;
 }
 
 const char *sippymodem_session_result_name(

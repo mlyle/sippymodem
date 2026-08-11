@@ -9,30 +9,30 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static enum sippymodem_modem_core_result process_modem(
+static enum modem_core_result process_modem(
 	void *context, int16_t *receive_samples,
 	int16_t *transmit_samples, size_t count)
 {
-	struct sippymodem_slmodem_adapter *adapter = context;
+	struct slmodem_adapter *adapter = context;
 	struct modem *modem;
 
 	if (adapter == NULL || adapter->modem == NULL ||
 	    receive_samples == NULL || transmit_samples == NULL || count == 0 ||
 	    count > INT_MAX)
-		return SIPPYMODEM_MODEM_CORE_ERROR;
+		return MODEM_CORE_ERROR;
 	modem = adapter->modem;
 	if (!modem->started)
-		return SIPPYMODEM_MODEM_CORE_STOPPED;
+		return MODEM_CORE_STOPPED;
 
 	modem_process(modem, receive_samples, transmit_samples, (int)count);
-	return modem->started ? SIPPYMODEM_MODEM_CORE_OK :
-			      SIPPYMODEM_MODEM_CORE_STOPPED;
+	return modem->started ? MODEM_CORE_OK :
+			      MODEM_CORE_STOPPED;
 }
 
-bool sippymodem_slmodem_adapter_init(
-	struct sippymodem_slmodem_adapter *adapter, struct modem *modem)
+bool slmodem_adapter_init(
+	struct slmodem_adapter *adapter, struct modem *modem)
 {
-	struct sippymodem_slmodem_adapter initialized = {
+	struct slmodem_adapter initialized = {
 		.modem = modem,
 		.core = {
 			.context = adapter,
@@ -41,15 +41,15 @@ bool sippymodem_slmodem_adapter_init(
 	};
 
 	if (adapter == NULL || modem == NULL ||
-	    modem->srate != SIPPYMODEM_MEDIA_SAMPLE_RATE ||
+	    modem->srate != MEDIA_SAMPLE_RATE ||
 	    modem->format != MODEM_FORMAT || modem->frag != MODEM_FRAG)
 		return false;
 	*adapter = initialized;
 	return true;
 }
 
-const struct sippymodem_modem_core *sippymodem_slmodem_adapter_core(
-	const struct sippymodem_slmodem_adapter *adapter)
+const struct modem_core *slmodem_adapter_core(
+	const struct slmodem_adapter *adapter)
 {
 	return adapter != NULL && adapter->core.process != NULL ?
 		       &adapter->core :

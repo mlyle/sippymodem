@@ -72,16 +72,16 @@ enum sippymodem_session_result sippymodem_runtime_last_session_result(
 	const struct sippymodem_runtime *runtime);
 enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(
 	const struct sippymodem_runtime *runtime);
-enum sippymodem_slmodem_calls_result sippymodem_runtime_last_calls_result(
+enum slmodem_calls_result sippymodem_runtime_last_calls_result(
 	const struct sippymodem_runtime *runtime);
-enum sippymodem_slmodem_terminal_result
+enum slmodem_terminal_result
 sippymodem_runtime_last_modem_terminal_result(
 	const struct sippymodem_runtime *runtime);
 const char *sippymodem_runtime_result_name(
 	enum sippymodem_runtime_result result);
 
 struct modem *sippymodem_runtime_modem(struct sippymodem_runtime *runtime);
-const struct sippymodem_recording_files *sippymodem_runtime_recording_files(
+const struct recording_files *sippymodem_runtime_recording_files(
 	const struct sippymodem_runtime *runtime);
 
 #endif

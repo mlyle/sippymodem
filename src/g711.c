@@ -26,7 +26,7 @@ static unsigned int g711_segment(uint32_t magnitude,
 	return segment;
 }
 
-uint8_t sippymodem_g711_encode_pcmu(int16_t sample)
+uint8_t g711_encode_pcmu(int16_t sample)
 {
 	uint32_t magnitude;
 	uint8_t mask;
@@ -48,7 +48,7 @@ uint8_t sippymodem_g711_encode_pcmu(int16_t sample)
 	return (uint8_t)(code ^ mask);
 }
 
-int16_t sippymodem_g711_decode_pcmu(uint8_t octet)
+int16_t g711_decode_pcmu(uint8_t octet)
 {
 	uint8_t code = (uint8_t)~octet;
 	int32_t magnitude = ((int32_t)(code & 0x0f) << 3) + G711_PCMU_BIAS;
@@ -59,7 +59,7 @@ int16_t sippymodem_g711_decode_pcmu(uint8_t octet)
 	return (int16_t)(magnitude - G711_PCMU_BIAS);
 }
 
-uint8_t sippymodem_g711_encode_pcma(int16_t sample)
+uint8_t g711_encode_pcma(int16_t sample)
 {
 	uint32_t magnitude;
 	uint8_t mask;
@@ -87,7 +87,7 @@ uint8_t sippymodem_g711_encode_pcma(int16_t sample)
 	return (uint8_t)(code ^ mask);
 }
 
-int16_t sippymodem_g711_decode_pcma(uint8_t octet)
+int16_t g711_decode_pcma(uint8_t octet)
 {
 	uint8_t code = (uint8_t)(octet ^ G711_PCMA_NEGATIVE_MASK);
 	int32_t magnitude = (int32_t)(code & 0x0f) << 4;

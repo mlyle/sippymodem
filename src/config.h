@@ -10,7 +10,7 @@
 #define SIPPYMODEM_CONFIG_TEXT_MAX 256
 #define SIPPYMODEM_CONFIG_ERROR_MAX 128
 
-struct sippymodem_sip_config {
+struct sip_config {
 	char login[SIPPYMODEM_CONFIG_TEXT_MAX];
 	char user[SIPPYMODEM_CONFIG_TEXT_MAX];
 	char password[SIPPYMODEM_CONFIG_TEXT_MAX];
@@ -29,8 +29,8 @@ struct sippymodem_sip_config {
 	bool automatic_answer;
 };
 
-struct sippymodem_media_config {
-	enum sippymodem_media_codec codec;
+struct media_config {
+	enum media_codec codec;
 	unsigned int rtp_listen_port;
 	unsigned int jitter_buffer_ms;
 	unsigned int frame_duration_ms;
@@ -39,14 +39,14 @@ struct sippymodem_media_config {
 	double receive_gain;
 };
 
-struct sippymodem_recording_config {
+struct recording_config {
 	char prefix[SIPPYMODEM_CONFIG_TEXT_MAX];
 };
 
 struct sippymodem_config {
-	struct sippymodem_sip_config sip;
-	struct sippymodem_media_config media;
-	struct sippymodem_recording_config recording;
+	struct sip_config sip;
+	struct media_config media;
+	struct recording_config recording;
 };
 
 struct sippymodem_config_error {

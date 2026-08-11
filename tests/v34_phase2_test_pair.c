@@ -10,11 +10,11 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 	case TEST_CODEC_LINEAR:
 		return sample;
 	case TEST_CODEC_PCMU:
-		return sippymodem_g711_decode_pcmu(
-			sippymodem_g711_encode_pcmu(sample));
+		return g711_decode_pcmu(
+			g711_encode_pcmu(sample));
 	case TEST_CODEC_PCMA:
-		return sippymodem_g711_decode_pcma(
-			sippymodem_g711_encode_pcma(sample));
+		return g711_decode_pcma(
+			g711_encode_pcma(sample));
 	}
 	return 0;
 }

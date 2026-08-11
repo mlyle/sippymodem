@@ -10,12 +10,12 @@ static bool expect_target(const char *expected, const char *dial_string,
 			  const char *configured_target, const char *domain)
 {
 	char output[128];
-	enum sippymodem_sip_uri_result result;
+	enum sip_uri_result result;
 
-	result = sippymodem_sip_uri_format_target(
+	result = sip_uri_format_target(
 		output, sizeof(output), dial_string, configured_target, domain);
-	CHECK(result == SIPPYMODEM_SIP_URI_OK, "target failed: %s",
-	      sippymodem_sip_uri_result_name(result));
+	CHECK(result == SIP_URI_OK, "target failed: %s",
+	      sip_uri_result_name(result));
 	CHECK(strcmp(output, expected) == 0, "got '%s', expected '%s'", output,
 	      expected);
 	return true;
@@ -33,19 +33,19 @@ static bool test_target_forms_and_precedence(void)
 			     "example.org");
 }
 
-static bool expect_target_error(enum sippymodem_sip_uri_result expected,
+static bool expect_target_error(enum sip_uri_result expected,
 				const char *dial_string,
 				const char *configured_target,
 				const char *domain)
 {
 	char output[16] = "stale";
-	enum sippymodem_sip_uri_result result;
+	enum sip_uri_result result;
 
-	result = sippymodem_sip_uri_format_target(
+	result = sip_uri_format_target(
 		output, sizeof(output), dial_string, configured_target, domain);
 	CHECK(result == expected, "got %s, expected %s",
-	      sippymodem_sip_uri_result_name(result),
-	      sippymodem_sip_uri_result_name(expected));
+	      sip_uri_result_name(result),
+	      sip_uri_result_name(expected));
 	CHECK(output[0] == '\0', "failed target left stale output");
 	return true;
 }
@@ -54,24 +54,24 @@ static bool test_target_validation(void)
 {
 	char one_byte[1] = { 'x' };
 
-	CHECK(expect_target_error(SIPPYMODEM_SIP_URI_NOT_CONFIGURED, NULL, NULL,
+	CHECK(expect_target_error(SIP_URI_NOT_CONFIGURED, NULL, NULL,
 				  "example.net"),
 	      "empty target result was wrong");
-	CHECK(expect_target_error(SIPPYMODEM_SIP_URI_MISSING_DOMAIN, "alice",
+	CHECK(expect_target_error(SIP_URI_MISSING_DOMAIN, "alice",
 				  NULL, NULL),
 	      "missing domain result was wrong");
-	CHECK(expect_target_error(SIPPYMODEM_SIP_URI_INVALID_TEXT,
+	CHECK(expect_target_error(SIP_URI_INVALID_TEXT,
 				  "alice\r\n@example.net", NULL, NULL),
 	      "header injection was accepted");
-	CHECK(expect_target_error(SIPPYMODEM_SIP_URI_INVALID_TEXT, "@host",
+	CHECK(expect_target_error(SIP_URI_INVALID_TEXT, "@host",
 				  NULL, NULL),
 	      "empty user was accepted");
-	CHECK(expect_target_error(SIPPYMODEM_SIP_URI_TOO_LONG,
+	CHECK(expect_target_error(SIP_URI_TOO_LONG,
 				  "alice@example.net", NULL, NULL),
 	      "small buffer was accepted");
-	CHECK(sippymodem_sip_uri_format_target(one_byte, sizeof(one_byte), "x@y",
+	CHECK(sip_uri_format_target(one_byte, sizeof(one_byte), "x@y",
 					       NULL, NULL) ==
-		      SIPPYMODEM_SIP_URI_TOO_LONG &&
+		      SIP_URI_TOO_LONG &&
 		      one_byte[0] == '\0',
 	      "one-byte output did not fail safely");
 	return true;
@@ -80,12 +80,12 @@ static bool test_target_validation(void)
 static bool expect_contact(const char *expected, const char *address)
 {
 	char output[128];
-	enum sippymodem_sip_uri_result result;
+	enum sip_uri_result result;
 
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice", address, 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_OK, "contact failed: %s",
-	      sippymodem_sip_uri_result_name(result));
+	CHECK(result == SIP_URI_OK, "contact failed: %s",
+	      sip_uri_result_name(result));
 	CHECK(strcmp(output, expected) == 0, "got '%s', expected '%s'", output,
 	      expected);
 	return true;
@@ -104,39 +104,39 @@ static bool test_contact_address_forms(void)
 static bool test_contact_validation(void)
 {
 	char output[12] = "stale";
-	enum sippymodem_sip_uri_result result;
+	enum sip_uri_result result;
 
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), NULL, "198.51.100.4", 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_NOT_CONFIGURED && output[0] == '\0',
+	CHECK(result == SIP_URI_NOT_CONFIGURED && output[0] == '\0',
 	      "optional contact was not reported cleanly");
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice", "host\r\n.invalid", 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_INVALID_TEXT && output[0] == '\0',
+	CHECK(result == SIP_URI_INVALID_TEXT && output[0] == '\0',
 	      "unsafe public address was accepted");
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice", "[2001:db8::4", 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_INVALID_TEXT && output[0] == '\0',
+	CHECK(result == SIP_URI_INVALID_TEXT && output[0] == '\0',
 	      "unbalanced IPv6 brackets were accepted");
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice:password", "198.51.100.4", 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_INVALID_TEXT && output[0] == '\0',
+	CHECK(result == SIP_URI_INVALID_TEXT && output[0] == '\0',
 	      "contact user changed URI structure");
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice%", "198.51.100.4", 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_INVALID_TEXT && output[0] == '\0',
+	CHECK(result == SIP_URI_INVALID_TEXT && output[0] == '\0',
 	      "incomplete user escape was accepted");
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice", "example.net>sip:intruder", 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_INVALID_TEXT && output[0] == '\0',
+	CHECK(result == SIP_URI_INVALID_TEXT && output[0] == '\0',
 	      "invalid contact host was accepted");
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice", "198.51.100.4", 0);
-	CHECK(result == SIPPYMODEM_SIP_URI_INVALID_ARGUMENT && output[0] == '\0',
+	CHECK(result == SIP_URI_INVALID_ARGUMENT && output[0] == '\0',
 	      "zero contact port was accepted");
-	result = sippymodem_sip_uri_format_contact(
+	result = sip_uri_format_contact(
 		output, sizeof(output), "alice", "198.51.100.4", 5060);
-	CHECK(result == SIPPYMODEM_SIP_URI_TOO_LONG && output[0] == '\0',
+	CHECK(result == SIP_URI_TOO_LONG && output[0] == '\0',
 	      "small contact buffer did not fail safely");
 	return true;
 }

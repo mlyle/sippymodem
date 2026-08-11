@@ -54,9 +54,9 @@ static int make_socket_nonblocking(int socket_fd)
 	return 0;
 }
 
-static void discard_queued_datagrams(struct sippymodem_rtp_endpoint *endpoint)
+static void discard_queued_datagrams(struct rtp_endpoint *endpoint)
 {
-	uint8_t packet[SIPPYMODEM_RTP_ENDPOINT_MAX_DATAGRAM];
+	uint8_t packet[RTP_ENDPOINT_MAX_DATAGRAM];
 
 	if (endpoint->socket_fd < 0)
 		return;
@@ -72,10 +72,10 @@ static void discard_queued_datagrams(struct sippymodem_rtp_endpoint *endpoint)
 	}
 }
 
-bool sippymodem_rtp_endpoint_init(
-	struct sippymodem_rtp_endpoint *endpoint,
-	struct sippymodem_rtp_stream *stream,
-	const struct sippymodem_rtp_endpoint_config *config)
+bool rtp_endpoint_init(
+	struct rtp_endpoint *endpoint,
+	struct rtp_stream *stream,
+	const struct rtp_endpoint_config *config)
 {
 	if (endpoint == NULL || stream == NULL || config == NULL ||
 	    stream->receiver.slots == NULL)
@@ -87,8 +87,8 @@ bool sippymodem_rtp_endpoint_init(
 	return true;
 }
 
-void sippymodem_rtp_endpoint_config_init(
-	struct sippymodem_rtp_endpoint_config *config)
+void rtp_endpoint_config_init(
+	struct rtp_endpoint_config *config)
 {
 	if (config == NULL)
 		return;
@@ -97,8 +97,8 @@ void sippymodem_rtp_endpoint_config_init(
 	config->symmetric_rtp = true;
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_open(
-	struct sippymodem_rtp_endpoint *endpoint,
+enum rtp_endpoint_result rtp_endpoint_open(
+	struct rtp_endpoint *endpoint,
 	const struct sockaddr_in *local_address)
 {
 	struct sockaddr_in bound_address;
@@ -107,9 +107,9 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_open(
 
 	if (endpoint == NULL || endpoint->stream == NULL ||
 	    !address_is_valid(local_address, true))
-		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
 	if (endpoint->socket_fd >= 0)
-		return SIPPYMODEM_RTP_ENDPOINT_ALREADY_OPEN;
+		return RTP_ENDPOINT_ALREADY_OPEN;
 
 	socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
 	if (socket_fd < 0)
@@ -129,15 +129,15 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_open(
 	endpoint->socket_fd = socket_fd;
 	endpoint->local_address = canonical_address(&bound_address);
 	endpoint->last_system_error = 0;
-	return SIPPYMODEM_RTP_ENDPOINT_OK;
+	return RTP_ENDPOINT_OK;
 
 system_error:
 	endpoint->last_system_error = errno;
-	return SIPPYMODEM_RTP_ENDPOINT_SYSTEM_ERROR;
+	return RTP_ENDPOINT_SYSTEM_ERROR;
 }
 
-void sippymodem_rtp_endpoint_close(
-	struct sippymodem_rtp_endpoint *endpoint)
+void rtp_endpoint_close(
+	struct rtp_endpoint *endpoint)
 {
 	if (endpoint == NULL)
 		return;
@@ -150,49 +150,49 @@ void sippymodem_rtp_endpoint_close(
 	memset(&endpoint->remote_address, 0, sizeof(endpoint->remote_address));
 	memset(&endpoint->learned_address, 0, sizeof(endpoint->learned_address));
 	if (endpoint->stream != NULL)
-		sippymodem_rtp_receiver_restart(&endpoint->stream->receiver);
+		rtp_receiver_restart(&endpoint->stream->receiver);
 }
 
-int sippymodem_rtp_endpoint_fd(
-	const struct sippymodem_rtp_endpoint *endpoint)
+int rtp_endpoint_fd(
+	const struct rtp_endpoint *endpoint)
 {
 	return endpoint != NULL ? endpoint->socket_fd : -1;
 }
 
-uint16_t sippymodem_rtp_endpoint_local_port(
-	const struct sippymodem_rtp_endpoint *endpoint)
+uint16_t rtp_endpoint_local_port(
+	const struct rtp_endpoint *endpoint)
 {
 	if (endpoint == NULL || endpoint->socket_fd < 0)
 		return 0;
 	return ntohs(endpoint->local_address.sin_port);
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_set_remote(
-	struct sippymodem_rtp_endpoint *endpoint,
+enum rtp_endpoint_result rtp_endpoint_set_remote(
+	struct rtp_endpoint *endpoint,
 	const struct sockaddr_in *remote_address)
 {
 	struct sockaddr_in canonical;
 
 	if (endpoint == NULL || !address_is_valid(remote_address, false))
-		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
 	if (endpoint->socket_fd < 0)
-		return SIPPYMODEM_RTP_ENDPOINT_NOT_OPEN;
+		return RTP_ENDPOINT_NOT_OPEN;
 	canonical = canonical_address(remote_address);
 	if (endpoint->remote_configured &&
 	    addresses_are_equal(&endpoint->remote_address, &canonical))
-		return SIPPYMODEM_RTP_ENDPOINT_OK;
+		return RTP_ENDPOINT_OK;
 
 	discard_queued_datagrams(endpoint);
-	sippymodem_rtp_receiver_restart(&endpoint->stream->receiver);
+	rtp_receiver_restart(&endpoint->stream->receiver);
 	endpoint->remote_learned = false;
 	memset(&endpoint->learned_address, 0, sizeof(endpoint->learned_address));
 	endpoint->remote_address = canonical;
 	endpoint->remote_configured = true;
-	return SIPPYMODEM_RTP_ENDPOINT_OK;
+	return RTP_ENDPOINT_OK;
 }
 
-void sippymodem_rtp_endpoint_clear_remote(
-	struct sippymodem_rtp_endpoint *endpoint)
+void rtp_endpoint_clear_remote(
+	struct rtp_endpoint *endpoint)
 {
 	if (endpoint == NULL)
 		return;
@@ -203,11 +203,11 @@ void sippymodem_rtp_endpoint_clear_remote(
 	memset(&endpoint->remote_address, 0, sizeof(endpoint->remote_address));
 	memset(&endpoint->learned_address, 0, sizeof(endpoint->learned_address));
 	if (endpoint->stream != NULL)
-		sippymodem_rtp_receiver_restart(&endpoint->stream->receiver);
+		rtp_receiver_restart(&endpoint->stream->receiver);
 }
 
-bool sippymodem_rtp_endpoint_transmit_remote(
-	const struct sippymodem_rtp_endpoint *endpoint,
+bool rtp_endpoint_transmit_remote(
+	const struct rtp_endpoint *endpoint,
 	struct sockaddr_in *remote_address,
 	bool *learned)
 {
@@ -228,21 +228,21 @@ bool sippymodem_rtp_endpoint_transmit_remote(
 }
 
 static bool packet_can_establish_remote(
-	const struct sippymodem_rtp_endpoint *endpoint,
+	const struct rtp_endpoint *endpoint,
 	const uint8_t *packet,
 	size_t packet_size)
 {
-	struct sippymodem_rtp_packet_view view;
+	struct rtp_packet_view view;
 
 	return !endpoint->stream->receiver.stream_active &&
-	       sippymodem_rtp_packet_parse(packet, packet_size, &view) ==
-		       SIPPYMODEM_RTP_OK &&
+	       rtp_packet_parse(packet, packet_size, &view) ==
+		       RTP_OK &&
 	       view.payload_size != 0 &&
 	       view.header.payload_type ==
 		       endpoint->stream->receiver.config.payload_type;
 }
 
-static bool source_is_allowed(struct sippymodem_rtp_endpoint *endpoint,
+static bool source_is_allowed(struct rtp_endpoint *endpoint,
 			      const struct sockaddr_in *source,
 			      const uint8_t *packet, size_t packet_size)
 {
@@ -262,48 +262,48 @@ static bool source_is_allowed(struct sippymodem_rtp_endpoint *endpoint,
 }
 
 static void record_arriving_payload(
-	struct sippymodem_rtp_endpoint *endpoint,
+	struct rtp_endpoint *endpoint,
 	const uint8_t *packet,
 	size_t packet_size)
 {
-	struct sippymodem_rtp_packet_view view;
+	struct rtp_packet_view view;
 
-	if (sippymodem_rtp_packet_parse(packet, packet_size, &view) !=
-	    SIPPYMODEM_RTP_OK)
+	if (rtp_packet_parse(packet, packet_size, &view) !=
+	    RTP_OK)
 		return;
-	sippymodem_recording_emit(
+	recording_emit(
 		&endpoint->stream->recorder,
-		SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_ARRIVAL,
-		SIPPYMODEM_RECORD_OCTETS, SIPPYMODEM_MEDIA_SAMPLE_RATE,
+		RECORD_RX_RTP_PAYLOAD_ARRIVAL,
+		RECORD_OCTETS, MEDIA_SAMPLE_RATE,
 		view.payload, view.payload_size);
 }
 
-static void route_datagram(struct sippymodem_rtp_endpoint *endpoint,
+static void route_datagram(struct rtp_endpoint *endpoint,
 			   const uint8_t *packet, size_t packet_size)
 {
-	enum sippymodem_rtp_result packet_result;
-	enum sippymodem_rtp_receive_result receive_result =
-		sippymodem_rtp_stream_receive(endpoint->stream, packet,
+	enum rtp_result packet_result;
+	enum rtp_receive_result receive_result =
+		rtp_stream_receive(endpoint->stream, packet,
 					       packet_size, &packet_result);
 
 	endpoint->stats.receive_routed++;
-	if (receive_result == SIPPYMODEM_RTP_RECEIVE_ACCEPTED ||
-	    receive_result == SIPPYMODEM_RTP_RECEIVE_LATE ||
-	    receive_result == SIPPYMODEM_RTP_RECEIVE_TOO_EARLY)
+	if (receive_result == RTP_RECEIVE_ACCEPTED ||
+	    receive_result == RTP_RECEIVE_LATE ||
+	    receive_result == RTP_RECEIVE_TOO_EARLY)
 		record_arriving_payload(endpoint, packet, packet_size);
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_drain(
-	struct sippymodem_rtp_endpoint *endpoint,
+enum rtp_endpoint_result rtp_endpoint_drain(
+	struct rtp_endpoint *endpoint,
 	size_t *datagrams_received)
 {
-	uint8_t packet[SIPPYMODEM_RTP_ENDPOINT_MAX_DATAGRAM];
+	uint8_t packet[RTP_ENDPOINT_MAX_DATAGRAM];
 	size_t drained = 0;
 
 	if (endpoint == NULL || endpoint->stream == NULL)
-		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
 	if (endpoint->socket_fd < 0)
-		return SIPPYMODEM_RTP_ENDPOINT_NOT_OPEN;
+		return RTP_ENDPOINT_NOT_OPEN;
 
 	for (;;) {
 		struct sockaddr_in source = { 0 };
@@ -327,7 +327,7 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_drain(
 				break;
 			endpoint->last_system_error = errno;
 			endpoint->stats.receive_errors++;
-			return SIPPYMODEM_RTP_ENDPOINT_SYSTEM_ERROR;
+			return RTP_ENDPOINT_SYSTEM_ERROR;
 		}
 
 		drained++;
@@ -347,11 +347,11 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_drain(
 
 	if (datagrams_received != NULL)
 		*datagrams_received = drained;
-	return SIPPYMODEM_RTP_ENDPOINT_OK;
+	return RTP_ENDPOINT_OK;
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_send(
-	struct sippymodem_rtp_endpoint *endpoint,
+enum rtp_endpoint_result rtp_endpoint_send(
+	struct rtp_endpoint *endpoint,
 	const int16_t *samples,
 	size_t count,
 	uint8_t *packet_workspace,
@@ -363,20 +363,20 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_send(
 
 	if (endpoint == NULL || endpoint->stream == NULL || samples == NULL ||
 	    count == 0 || packet_workspace == NULL)
-		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
 	if (endpoint->socket_fd < 0)
-		return SIPPYMODEM_RTP_ENDPOINT_NOT_OPEN;
-	if (!sippymodem_rtp_endpoint_transmit_remote(
+		return RTP_ENDPOINT_NOT_OPEN;
+	if (!rtp_endpoint_transmit_remote(
 		    endpoint, &remote_address, NULL)) {
 		endpoint->stats.transmit_no_remote++;
-		return SIPPYMODEM_RTP_ENDPOINT_NO_REMOTE;
+		return RTP_ENDPOINT_NO_REMOTE;
 	}
 
-	endpoint->last_media_error = sippymodem_rtp_stream_write(
+	endpoint->last_media_error = rtp_stream_write(
 		endpoint->stream, samples, count, packet_workspace,
 		packet_capacity, &packet_size);
-	if (endpoint->last_media_error != SIPPYMODEM_MEDIA_OK)
-		return SIPPYMODEM_RTP_ENDPOINT_MEDIA_ERROR;
+	if (endpoint->last_media_error != MEDIA_OK)
+		return RTP_ENDPOINT_MEDIA_ERROR;
 	endpoint->stats.transmit_attempts++;
 
 	do {
@@ -387,35 +387,35 @@ enum sippymodem_rtp_endpoint_result sippymodem_rtp_endpoint_send(
 	if (sent != (ssize_t)packet_size) {
 		endpoint->last_system_error = sent < 0 ? errno : EIO;
 		endpoint->stats.transmit_errors++;
-		return SIPPYMODEM_RTP_ENDPOINT_SYSTEM_ERROR;
+		return RTP_ENDPOINT_SYSTEM_ERROR;
 	}
 
 	endpoint->stats.transmit_sent++;
-	sippymodem_recording_emit(
+	recording_emit(
 		&endpoint->stream->recorder,
-		SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT,
-		SIPPYMODEM_RECORD_OCTETS, SIPPYMODEM_MEDIA_SAMPLE_RATE,
-		packet_workspace + SIPPYMODEM_RTP_HEADER_SIZE, count);
-	return SIPPYMODEM_RTP_ENDPOINT_OK;
+		RECORD_TX_RTP_PAYLOAD_SENT,
+		RECORD_OCTETS, MEDIA_SAMPLE_RATE,
+		packet_workspace + RTP_HEADER_SIZE, count);
+	return RTP_ENDPOINT_OK;
 }
 
-const char *sippymodem_rtp_endpoint_result_name(
-	enum sippymodem_rtp_endpoint_result result)
+const char *rtp_endpoint_result_name(
+	enum rtp_endpoint_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_RTP_ENDPOINT_OK:
+	case RTP_ENDPOINT_OK:
 		return "ok";
-	case SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT:
+	case RTP_ENDPOINT_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_RTP_ENDPOINT_NOT_OPEN:
+	case RTP_ENDPOINT_NOT_OPEN:
 		return "RTP endpoint is not open";
-	case SIPPYMODEM_RTP_ENDPOINT_ALREADY_OPEN:
+	case RTP_ENDPOINT_ALREADY_OPEN:
 		return "RTP endpoint is already open";
-	case SIPPYMODEM_RTP_ENDPOINT_NO_REMOTE:
+	case RTP_ENDPOINT_NO_REMOTE:
 		return "RTP remote is not configured";
-	case SIPPYMODEM_RTP_ENDPOINT_MEDIA_ERROR:
+	case RTP_ENDPOINT_MEDIA_ERROR:
 		return "RTP media conversion failed";
-	case SIPPYMODEM_RTP_ENDPOINT_SYSTEM_ERROR:
+	case RTP_ENDPOINT_SYSTEM_ERROR:
 		return "RTP socket operation failed";
 	}
 	return "unknown RTP endpoint result";

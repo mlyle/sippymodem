@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_TEST_H
-#define SIPPYMODEM_TEST_H
+#ifndef MODEM_TEST_H
+#define MODEM_TEST_H
 
 #include <stdbool.h>
 #include <stdio.h>

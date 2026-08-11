@@ -113,7 +113,7 @@ static int apply_gain(double *destination, const char *name,
 	return 0;
 }
 
-static int apply_codec(enum sippymodem_media_codec *destination,
+static int apply_codec(enum media_codec *destination,
 		       const char *name,
 		       struct sippymodem_config_error *error)
 {
@@ -123,13 +123,13 @@ static int apply_codec(enum sippymodem_media_codec *destination,
 		return 0;
 	if (strcasecmp(value, "PCMU") == 0 ||
 	    strcasecmp(value, "PCMU/8000/1") == 0)
-		*destination = SIPPYMODEM_CODEC_PCMU;
+		*destination = MEDIA_CODEC_PCMU;
 	else if (strcasecmp(value, "PCMA") == 0 ||
 		 strcasecmp(value, "PCMA/8000/1") == 0)
-		*destination = SIPPYMODEM_CODEC_PCMA;
+		*destination = MEDIA_CODEC_PCMA;
 	else if (strcasecmp(value, "CLEARMODE") == 0 ||
 		 strcasecmp(value, "CLEARMODE/8000/1") == 0)
-		*destination = SIPPYMODEM_CODEC_CLEARMODE;
+		*destination = MEDIA_CODEC_CLEARMODE;
 	else
 		return set_error(error, name, "unsupported media codec");
 	return 0;
@@ -144,7 +144,7 @@ void sippymodem_config_init(struct sippymodem_config *config)
 	config->sip.log_level = 4;
 	config->sip.registration_enabled = true;
 	config->sip.automatic_answer = false;
-	config->media.codec = SIPPYMODEM_CODEC_PCMU;
+	config->media.codec = MEDIA_CODEC_PCMU;
 	config->media.rtp_listen_port = 0;
 	config->media.jitter_buffer_ms = 60;
 	config->media.frame_duration_ms = 10;

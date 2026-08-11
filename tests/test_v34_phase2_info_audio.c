@@ -143,10 +143,10 @@ static bool test_bidirectional_transmission(void)
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 {
 	if (codec == TEST_CODEC_PCMU)
-		return sippymodem_g711_decode_pcmu(
-			sippymodem_g711_encode_pcmu(sample));
-	return sippymodem_g711_decode_pcma(
-		sippymodem_g711_encode_pcma(sample));
+		return g711_decode_pcmu(
+			g711_encode_pcmu(sample));
+	return g711_decode_pcma(
+		g711_encode_pcma(sample));
 }
 
 static bool check_frame_recovery(

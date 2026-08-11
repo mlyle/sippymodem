@@ -9,8 +9,8 @@
 #include <string.h>
 
 enum {
-	SIPPYMODEM_SDP_PJSIP_ATTRIBUTE_VALUE_MAX = 64,
-	SIPPYMODEM_SDP_PJSIP_NAME_MAX = 32,
+	SDP_PJSIP_ATTRIBUTE_VALUE_MAX = 64,
+	SDP_PJSIP_NAME_MAX = 32,
 };
 
 static bool pj_text_equals(const pj_str_t *text, const char *expected)
@@ -26,7 +26,7 @@ static bool pj_text_equals(const pj_str_t *text, const char *expected)
 
 static bool attribute_is_media_owned(const pjmedia_sdp_attr *attribute)
 {
-	char name[SIPPYMODEM_SDP_PJSIP_NAME_MAX];
+	char name[SDP_PJSIP_NAME_MAX];
 	size_t size;
 
 	if (attribute == NULL || attribute->name.ptr == NULL ||
@@ -37,7 +37,7 @@ static bool attribute_is_media_owned(const pjmedia_sdp_attr *attribute)
 		return false;
 	memcpy(name, attribute->name.ptr, size);
 	name[size] = '\0';
-	return sippymodem_sdp_attribute_is_media_owned(name);
+	return sdp_attribute_is_media_owned(name);
 }
 
 static void remove_media_owned_attributes(pjmedia_sdp_media *media)
@@ -53,9 +53,9 @@ static void remove_media_owned_attributes(pjmedia_sdp_media *media)
 
 static pj_status_t preflight_attributes(
 	const pjmedia_sdp_media *media,
-	const struct sippymodem_sdp_audio_description *description)
+	const struct sdp_audio_description *description)
 {
-	char value[SIPPYMODEM_SDP_PJSIP_ATTRIBUTE_VALUE_MAX];
+	char value[SDP_PJSIP_ATTRIBUTE_VALUE_MAX];
 	unsigned int retained = 0;
 	unsigned int added = 0;
 
@@ -65,16 +65,16 @@ static pj_status_t preflight_attributes(
 		if (!attribute_is_media_owned(media->attr[index]))
 			retained++;
 	}
-	for (enum sippymodem_sdp_audio_attribute kind =
-		     SIPPYMODEM_SDP_AUDIO_RTPMAP;
-	     kind < SIPPYMODEM_SDP_AUDIO_ATTRIBUTE_COUNT; ++kind) {
-		enum sippymodem_sdp_result result =
-			sippymodem_sdp_audio_format_attribute(
+	for (enum sdp_audio_attribute kind =
+		     SDP_AUDIO_RTPMAP;
+	     kind < SDP_AUDIO_ATTRIBUTE_COUNT; ++kind) {
+		enum sdp_result result =
+			sdp_audio_format_attribute(
 				description, kind, value, sizeof(value));
 
-		if (result == SIPPYMODEM_SDP_OK)
+		if (result == SDP_OK)
 			added++;
-		else if (result != SIPPYMODEM_SDP_NOT_PRESENT)
+		else if (result != SDP_NOT_PRESENT)
 			return PJ_EINVAL;
 	}
 	return retained <= PJMEDIA_MAX_SDP_ATTR - added ? PJ_SUCCESS :
@@ -83,23 +83,23 @@ static pj_status_t preflight_attributes(
 
 static pj_status_t add_attribute(
 	pj_pool_t *pool, pjmedia_sdp_media *media,
-	const struct sippymodem_sdp_audio_description *description,
-	enum sippymodem_sdp_audio_attribute kind)
+	const struct sdp_audio_description *description,
+	enum sdp_audio_attribute kind)
 {
-	char value[SIPPYMODEM_SDP_PJSIP_ATTRIBUTE_VALUE_MAX];
-	enum sippymodem_sdp_result result;
+	char value[SDP_PJSIP_ATTRIBUTE_VALUE_MAX];
+	enum sdp_result result;
 	pjmedia_sdp_attr *attribute;
 	pj_str_t text;
 
-	result = sippymodem_sdp_audio_format_attribute(
+	result = sdp_audio_format_attribute(
 		description, kind, value, sizeof(value));
-	if (result == SIPPYMODEM_SDP_NOT_PRESENT)
+	if (result == SDP_NOT_PRESENT)
 		return PJ_SUCCESS;
-	if (result != SIPPYMODEM_SDP_OK)
+	if (result != SDP_OK)
 		return PJ_EINVAL;
 	text = pj_str(value);
 	attribute = pjmedia_sdp_attr_create(
-		pool, sippymodem_sdp_audio_attribute_name(kind), &text);
+		pool, sdp_audio_attribute_name(kind), &text);
 	if (attribute == NULL)
 		return PJ_ENOMEM;
 	return pjmedia_sdp_media_add_attr(media, attribute);
@@ -165,7 +165,7 @@ static pj_status_t retain_one_audio(pjmedia_sdp_session *session,
 
 static pj_status_t apply_audio_description(
 	pjmedia_sdp_media *media, pj_pool_t *pool,
-	const struct sippymodem_sdp_audio_description *description,
+	const struct sdp_audio_description *description,
 	const char *public_address)
 {
 	char payload[4];
@@ -185,9 +185,9 @@ static pj_status_t apply_audio_description(
 	if (status != PJ_SUCCESS)
 		return status;
 	remove_media_owned_attributes(media);
-	for (enum sippymodem_sdp_audio_attribute kind =
-		     SIPPYMODEM_SDP_AUDIO_RTPMAP;
-	     kind < SIPPYMODEM_SDP_AUDIO_ATTRIBUTE_COUNT; ++kind) {
+	for (enum sdp_audio_attribute kind =
+		     SDP_AUDIO_RTPMAP;
+	     kind < SDP_AUDIO_ATTRIBUTE_COUNT; ++kind) {
 		status = add_attribute(pool, media, description, kind);
 		if (status != PJ_SUCCESS)
 			return status;
@@ -195,9 +195,9 @@ static pj_status_t apply_audio_description(
 	return PJ_SUCCESS;
 }
 
-pj_status_t sippymodem_sdp_pjsip_apply(
+pj_status_t sdp_pjsip_apply(
 	pjmedia_sdp_session *local_sdp, pj_pool_t *pool, bool is_answer,
-	const struct sippymodem_sdp_audio_description *description,
+	const struct sdp_audio_description *description,
 	const char *public_address)
 {
 	pjmedia_sdp_media *audio;
@@ -205,7 +205,7 @@ pj_status_t sippymodem_sdp_pjsip_apply(
 
 	if (local_sdp == NULL || pool == NULL || description == NULL ||
 	    local_sdp->media_count > PJMEDIA_MAX_SDP_MEDIA ||
-	    sippymodem_sdp_audio_encoding_name(description) == NULL)
+	    sdp_audio_encoding_name(description) == NULL)
 		return PJ_EINVAL;
 	audio = select_audio(local_sdp);
 	if (audio == NULL)

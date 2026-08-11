@@ -105,19 +105,19 @@ static void print_usage(FILE *stream, const char *program)
 }
 
 static void report_loop_error(
-	enum sippymodem_loop_result result,
-	const struct sippymodem_loop_error *error)
+	enum modem_loop_result result,
+	const struct modem_loop_error *error)
 {
-	if (result == SIPPYMODEM_LOOP_RUNTIME_ERROR) {
+	if (result == MODEM_LOOP_RUNTIME_ERROR) {
 		fprintf(stderr, "sippymodem: %s\n",
 			sippymodem_runtime_result_name(error->runtime_result));
 	} else if (error->system_error != 0) {
 		fprintf(stderr, "sippymodem: %s: %s\n",
-			sippymodem_loop_result_name(result),
+			modem_loop_result_name(result),
 			strerror(error->system_error));
 	} else {
 		fprintf(stderr, "sippymodem: %s\n",
-			sippymodem_loop_result_name(result));
+			modem_loop_result_name(result));
 	}
 }
 
@@ -125,12 +125,12 @@ int sippymodem_program_main(int argc, char *argv[])
 {
 	struct sippymodem_config config;
 	struct sippymodem_config_error config_error;
-	struct sippymodem_loop_error loop_error;
+	struct modem_loop_error loop_error;
 	struct signal_handlers handlers;
 	struct sippymodem_runtime *runtime;
 	enum sippymodem_runtime_result open_result;
 	enum sippymodem_runtime_result close_result;
-	enum sippymodem_loop_result loop_result;
+	enum modem_loop_result loop_result;
 	const char *program = argv != NULL && argc > 0 ? argv[0] : NULL;
 	const char *device_path;
 	int failure;
@@ -184,8 +184,8 @@ int sippymodem_program_main(int argc, char *argv[])
 		exit_code = SIPPYMODEM_EXIT_FAILURE;
 		goto close;
 	}
-	loop_result = sippymodem_loop_run(runtime, &running, &loop_error);
-	if (loop_result != SIPPYMODEM_LOOP_OK) {
+	loop_result = modem_loop_run(runtime, &running, &loop_error);
+	if (loop_result != MODEM_LOOP_OK) {
 		report_loop_error(loop_result, &loop_error);
 		exit_code = SIPPYMODEM_EXIT_FAILURE;
 	}

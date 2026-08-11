@@ -30,9 +30,9 @@ struct sippymodem_host;
 
 struct sippymodem_host *sippymodem_host_create(
 	const struct sippymodem_config *config,
-	const struct sippymodem_recorder *recorder,
-	const struct sippymodem_sip_signaling_callbacks *callbacks,
-	const struct sippymodem_modem_core *modem_core);
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks,
+	const struct modem_core *modem_core);
 /* Call destroy outside signaling and modem-core callbacks. */
 void sippymodem_host_destroy(struct sippymodem_host *host);
 
@@ -41,11 +41,11 @@ enum sippymodem_session_result sippymodem_host_open(
 enum sippymodem_session_result sippymodem_host_close(
 	struct sippymodem_host *host);
 
-enum sippymodem_sip_signaling_result sippymodem_host_dial(
+enum sip_signaling_result sippymodem_host_dial(
 	struct sippymodem_host *host, const char *target);
-enum sippymodem_sip_signaling_result sippymodem_host_answer(
+enum sip_signaling_result sippymodem_host_answer(
 	struct sippymodem_host *host);
-enum sippymodem_sip_signaling_result sippymodem_host_hangup(
+enum sip_signaling_result sippymodem_host_hangup(
 	struct sippymodem_host *host);
 
 /* now_ns uses one monotonic nanosecond clock. This step never blocks in
@@ -66,10 +66,10 @@ bool sippymodem_host_media_is_configured(
 bool sippymodem_host_audio_is_active(const struct sippymodem_host *host);
 enum sippymodem_session_result sippymodem_host_last_session_result(
 	const struct sippymodem_host *host);
-enum sippymodem_audio_scheduler_result
+enum audio_scheduler_result
 sippymodem_host_last_audio_scheduler_result(
 	const struct sippymodem_host *host);
-enum sippymodem_audio_path_result sippymodem_host_last_audio_path_result(
+enum audio_path_result sippymodem_host_last_audio_path_result(
 	const struct sippymodem_host *host);
 const char *sippymodem_host_result_name(enum sippymodem_host_result result);
 

@@ -1,41 +1,41 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_MEDIA_H
-#define SIPPYMODEM_MEDIA_H
+#ifndef MEDIA_H
+#define MEDIA_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_MEDIA_SAMPLE_RATE = 8000,
+	MEDIA_SAMPLE_RATE = 8000,
 };
 
-enum sippymodem_media_codec {
-	SIPPYMODEM_CODEC_PCMU,
-	SIPPYMODEM_CODEC_PCMA,
-	SIPPYMODEM_CODEC_CLEARMODE,
+enum media_codec {
+	MEDIA_CODEC_PCMU,
+	MEDIA_CODEC_PCMA,
+	MEDIA_CODEC_CLEARMODE,
 };
 
-enum sippymodem_recording_stream {
-	SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_ARRIVAL,
-	SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT,
-	SIPPYMODEM_RECORD_RX_LINE_PCM,
-	SIPPYMODEM_RECORD_RX_MODEM_PCM,
-	SIPPYMODEM_RECORD_TX_MODEM_PCM,
-	SIPPYMODEM_RECORD_TX_LINE_PCM,
-	SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED,
-	SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT,
+enum recording_stream {
+	RECORD_RX_RTP_PAYLOAD_ARRIVAL,
+	RECORD_RX_RTP_PAYLOAD_PLAYOUT,
+	RECORD_RX_LINE_PCM,
+	RECORD_RX_MODEM_PCM,
+	RECORD_TX_MODEM_PCM,
+	RECORD_TX_LINE_PCM,
+	RECORD_TX_RTP_PAYLOAD_PREPARED,
+	RECORD_TX_RTP_PAYLOAD_SENT,
 };
 
-enum sippymodem_recording_format {
-	SIPPYMODEM_RECORD_OCTETS,
-	SIPPYMODEM_RECORD_S16_NATIVE,
+enum recording_format {
+	RECORD_OCTETS,
+	RECORD_S16_NATIVE,
 };
 
-struct sippymodem_recording_block {
-	enum sippymodem_recording_stream stream;
-	enum sippymodem_recording_format format;
+struct recording_block {
+	enum recording_stream stream;
+	enum recording_format format;
 	unsigned int sample_rate;
 	const void *data;
 	size_t count;
@@ -43,49 +43,49 @@ struct sippymodem_recording_block {
 
 /* The callback is synchronous.  Both the block and its data are borrowed for
  * the duration of the call; a recorder that needs them later must copy them. */
-struct sippymodem_recorder {
+struct media_recorder {
 	void *context;
 	void (*write)(void *context,
-		      const struct sippymodem_recording_block *block);
+		      const struct recording_block *block);
 };
 
-bool sippymodem_recording_emit(
-	const struct sippymodem_recorder *recorder,
-	enum sippymodem_recording_stream stream,
-	enum sippymodem_recording_format format,
+bool recording_emit(
+	const struct media_recorder *recorder,
+	enum recording_stream stream,
+	enum recording_format format,
 	unsigned int sample_rate,
 	const void *data,
 	size_t count);
-const char *sippymodem_recording_stream_name(
-	enum sippymodem_recording_stream stream);
+const char *recording_stream_name(
+	enum recording_stream stream);
 
-enum sippymodem_media_result {
-	SIPPYMODEM_MEDIA_OK,
-	SIPPYMODEM_MEDIA_INVALID_ARGUMENT,
-	SIPPYMODEM_MEDIA_OUTPUT_TOO_SMALL,
-	SIPPYMODEM_MEDIA_NO_LINEAR_MAPPING,
+enum media_result {
+	MEDIA_OK,
+	MEDIA_INVALID_ARGUMENT,
+	MEDIA_OUTPUT_TOO_SMALL,
+	MEDIA_NO_LINEAR_MAPPING,
 };
 
-enum sippymodem_media_result sippymodem_media_decode(
-	enum sippymodem_media_codec codec,
+enum media_result media_decode(
+	enum media_codec codec,
 	const uint8_t *payload,
 	size_t payload_count,
 	int16_t *samples,
 	size_t sample_capacity,
-	const struct sippymodem_recorder *recorder);
-enum sippymodem_media_result sippymodem_media_encode(
-	enum sippymodem_media_codec codec,
+	const struct media_recorder *recorder);
+enum media_result media_encode(
+	enum media_codec codec,
 	const int16_t *samples,
 	size_t sample_count,
 	uint8_t *payload,
 	size_t payload_capacity,
-	const struct sippymodem_recorder *recorder);
+	const struct media_recorder *recorder);
 
-const char *sippymodem_codec_name(enum sippymodem_media_codec codec);
-int sippymodem_codec_default_payload_type(
-	enum sippymodem_media_codec codec);
-int sippymodem_codec_silence_octet(enum sippymodem_media_codec codec);
-const char *sippymodem_media_result_name(
-	enum sippymodem_media_result result);
+const char *media_codec_name(enum media_codec codec);
+int media_codec_default_payload_type(
+	enum media_codec codec);
+int media_codec_silence_octet(enum media_codec codec);
+const char *media_result_name(
+	enum media_result result);
 
 #endif

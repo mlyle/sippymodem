@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_SLMODEM_TERMINAL_H
-#define SIPPYMODEM_SLMODEM_TERMINAL_H
+#ifndef SLMODEM_TERMINAL_H
+#define SLMODEM_TERMINAL_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -9,49 +9,49 @@
 
 struct modem;
 
-enum sippymodem_slmodem_terminal_result {
-	SIPPYMODEM_SLMODEM_TERMINAL_OK,
-	SIPPYMODEM_SLMODEM_TERMINAL_IDLE,
-	SIPPYMODEM_SLMODEM_TERMINAL_INVALID_ARGUMENT,
-	SIPPYMODEM_SLMODEM_TERMINAL_INVALID_STATE,
-	SIPPYMODEM_SLMODEM_TERMINAL_INPUT_ERROR,
+enum slmodem_terminal_result {
+	SLMODEM_TERMINAL_OK,
+	SLMODEM_TERMINAL_IDLE,
+	SLMODEM_TERMINAL_INVALID_ARGUMENT,
+	SLMODEM_TERMINAL_INVALID_STATE,
+	SLMODEM_TERMINAL_INPUT_ERROR,
 };
 
-struct sippymodem_slmodem_terminal {
+struct slmodem_terminal {
 	struct modem *modem;
 };
 
 /* modem is borrowed, must outlive this adapter, and begins unbound. */
-bool sippymodem_slmodem_terminal_init(
-	struct sippymodem_slmodem_terminal *terminal, struct modem *modem);
-enum sippymodem_slmodem_terminal_result
-sippymodem_slmodem_terminal_bind(
-	struct sippymodem_slmodem_terminal *terminal,
+bool slmodem_terminal_init(
+	struct slmodem_terminal *terminal, struct modem *modem);
+enum slmodem_terminal_result
+slmodem_terminal_bind(
+	struct slmodem_terminal *terminal,
 	int file_descriptor,
 	const char *device_path);
 /* The descriptor and path are borrowed until unbind. */
-enum sippymodem_slmodem_terminal_result
-sippymodem_slmodem_terminal_unbind(
-	struct sippymodem_slmodem_terminal *terminal);
-enum sippymodem_slmodem_terminal_result
-sippymodem_slmodem_terminal_apply_attributes(
-	struct sippymodem_slmodem_terminal *terminal,
+enum slmodem_terminal_result
+slmodem_terminal_unbind(
+	struct slmodem_terminal *terminal);
+enum slmodem_terminal_result
+slmodem_terminal_apply_attributes(
+	struct slmodem_terminal *terminal,
 	const struct termios *attributes);
-enum sippymodem_slmodem_terminal_result
-sippymodem_slmodem_terminal_service_event(
-	struct sippymodem_slmodem_terminal *terminal);
-enum sippymodem_slmodem_terminal_result
-sippymodem_slmodem_terminal_input_capacity(
-	const struct sippymodem_slmodem_terminal *terminal, size_t *capacity);
-enum sippymodem_slmodem_terminal_result
-sippymodem_slmodem_terminal_receive(
-	struct sippymodem_slmodem_terminal *terminal,
+enum slmodem_terminal_result
+slmodem_terminal_service_event(
+	struct slmodem_terminal *terminal);
+enum slmodem_terminal_result
+slmodem_terminal_input_capacity(
+	const struct slmodem_terminal *terminal, size_t *capacity);
+enum slmodem_terminal_result
+slmodem_terminal_receive(
+	struct slmodem_terminal *terminal,
 	const void *bytes,
 	size_t count);
-enum sippymodem_slmodem_terminal_result
-sippymodem_slmodem_terminal_disconnect(
-	struct sippymodem_slmodem_terminal *terminal);
-const char *sippymodem_slmodem_terminal_result_name(
-	enum sippymodem_slmodem_terminal_result result);
+enum slmodem_terminal_result
+slmodem_terminal_disconnect(
+	struct slmodem_terminal *terminal);
+const char *slmodem_terminal_result_name(
+	enum slmodem_terminal_result result);
 
 #endif

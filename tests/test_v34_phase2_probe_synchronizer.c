@@ -28,11 +28,11 @@ static int16_t transmit_sample(int16_t sample, enum test_codec codec,
 	case TEST_CODEC_LINEAR:
 		return transmitted;
 	case TEST_CODEC_PCMU:
-		return sippymodem_g711_decode_pcmu(
-			sippymodem_g711_encode_pcmu(transmitted));
+		return g711_decode_pcmu(
+			g711_encode_pcmu(transmitted));
 	case TEST_CODEC_PCMA:
-		return sippymodem_g711_decode_pcma(
-			sippymodem_g711_encode_pcma(transmitted));
+		return g711_decode_pcma(
+			g711_encode_pcma(transmitted));
 	}
 	return 0;
 }

@@ -15,35 +15,35 @@
 
 enum {
 	RECORDING_STREAM_COUNT =
-		SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT + 1,
+		RECORD_TX_RTP_PAYLOAD_SENT + 1,
 	PCM_CHUNK_SAMPLES = 256,
 };
 
-struct sippymodem_recording_files {
-	char prefix[SIPPYMODEM_RECORDING_PREFIX_MAX];
+struct recording_files {
+	char prefix[RECORDING_PREFIX_MAX];
 	int descriptors[RECORDING_STREAM_COUNT];
-	struct sippymodem_recorder recorder;
-	enum sippymodem_recording_files_result last_result;
+	struct media_recorder recorder;
+	enum recording_files_result last_result;
 	int system_error;
-	struct sippymodem_recording_files_stats stats;
+	struct recording_files_stats stats;
 };
 
-static bool stream_is_valid(enum sippymodem_recording_stream stream)
+static bool stream_is_valid(enum recording_stream stream)
 {
-	return stream >= SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_ARRIVAL &&
-	       stream <= SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT;
+	return stream >= RECORD_RX_RTP_PAYLOAD_ARRIVAL &&
+	       stream <= RECORD_TX_RTP_PAYLOAD_SENT;
 }
 
-static bool stream_contains_pcm(enum sippymodem_recording_stream stream)
+static bool stream_contains_pcm(enum recording_stream stream)
 {
-	return stream == SIPPYMODEM_RECORD_RX_LINE_PCM ||
-	       stream == SIPPYMODEM_RECORD_RX_MODEM_PCM ||
-	       stream == SIPPYMODEM_RECORD_TX_MODEM_PCM ||
-	       stream == SIPPYMODEM_RECORD_TX_LINE_PCM;
+	return stream == RECORD_RX_LINE_PCM ||
+	       stream == RECORD_RX_MODEM_PCM ||
+	       stream == RECORD_TX_MODEM_PCM ||
+	       stream == RECORD_TX_LINE_PCM;
 }
 
 static bool build_path(
-	const char *prefix, enum sippymodem_recording_stream stream,
+	const char *prefix, enum recording_stream stream,
 	char *path, size_t capacity)
 {
 	const char *name;
@@ -53,7 +53,7 @@ static bool build_path(
 	if (prefix == NULL || prefix[0] == '\0' ||
 	    !stream_is_valid(stream) || path == NULL || capacity == 0)
 		return false;
-	name = sippymodem_recording_stream_name(stream);
+	name = recording_stream_name(stream);
 	if (name == NULL)
 		return false;
 	extension = stream_contains_pcm(stream) ? "8000hz.s16le" :
@@ -117,24 +117,24 @@ static bool write_little_endian_pcm(
 }
 
 static void record_block(
-	void *context, const struct sippymodem_recording_block *block)
+	void *context, const struct recording_block *block)
 {
-	struct sippymodem_recording_files *files = context;
+	struct recording_files *files = context;
 	bool pcm;
 	size_t bytes;
 	bool written;
 
-	if (files->last_result != SIPPYMODEM_RECORDING_FILES_OK)
+	if (files->last_result != RECORDING_FILES_OK)
 		return;
 	pcm = block != NULL && stream_is_valid(block->stream) &&
 	      stream_contains_pcm(block->stream);
 	if (block == NULL || !stream_is_valid(block->stream) ||
-	    block->format != (pcm ? SIPPYMODEM_RECORD_S16_NATIVE :
-				   SIPPYMODEM_RECORD_OCTETS) ||
-	    block->sample_rate != SIPPYMODEM_MEDIA_SAMPLE_RATE ||
+	    block->format != (pcm ? RECORD_S16_NATIVE :
+				   RECORD_OCTETS) ||
+	    block->sample_rate != MEDIA_SAMPLE_RATE ||
 	    (block->data == NULL && block->count != 0) ||
 	    (pcm && block->count > SIZE_MAX / sizeof(int16_t))) {
-		files->last_result = SIPPYMODEM_RECORDING_FILES_INVALID_BLOCK;
+		files->last_result = RECORDING_FILES_INVALID_BLOCK;
 		return;
 	}
 	if (block->count == 0)
@@ -148,7 +148,7 @@ static void record_block(
 			  write_all(files->descriptors[block->stream],
 				    block->data, block->count);
 	if (!written) {
-		files->last_result = SIPPYMODEM_RECORDING_FILES_WRITE_ERROR;
+		files->last_result = RECORDING_FILES_WRITE_ERROR;
 		files->system_error = errno;
 		return;
 	}
@@ -156,7 +156,7 @@ static void record_block(
 	add_saturated(&files->stats.bytes_written, bytes);
 }
 
-static void close_descriptors(struct sippymodem_recording_files *files)
+static void close_descriptors(struct recording_files *files)
 {
 	for (size_t index = 0; index < RECORDING_STREAM_COUNT; ++index) {
 		if (files->descriptors[index] >= 0) {
@@ -167,22 +167,22 @@ static void close_descriptors(struct sippymodem_recording_files *files)
 }
 
 static void remove_paths(
-	const struct sippymodem_recording_files *files, size_t count)
+	const struct recording_files *files, size_t count)
 {
 	char path[PATH_MAX];
 
 	for (size_t index = 0; index < count; ++index) {
 		if (build_path(files->prefix,
-			       (enum sippymodem_recording_stream)index,
+			       (enum recording_stream)index,
 			       path, sizeof(path)))
 			unlink(path);
 	}
 }
 
-struct sippymodem_recording_files *sippymodem_recording_files_create(
+struct recording_files *recording_files_create(
 	const char *prefix)
 {
-	struct sippymodem_recording_files *files;
+	struct recording_files *files;
 	char path[PATH_MAX];
 	size_t prefix_length;
 	size_t created = 0;
@@ -193,7 +193,7 @@ struct sippymodem_recording_files *sippymodem_recording_files_create(
 		return NULL;
 	}
 	prefix_length = strlen(prefix);
-	if (prefix_length >= SIPPYMODEM_RECORDING_PREFIX_MAX) {
+	if (prefix_length >= RECORDING_PREFIX_MAX) {
 		errno = ENAMETOOLONG;
 		return NULL;
 	}
@@ -209,7 +209,7 @@ struct sippymodem_recording_files *sippymodem_recording_files_create(
 	while (created < RECORDING_STREAM_COUNT) {
 		if (!build_path(
 			    files->prefix,
-			    (enum sippymodem_recording_stream)created,
+			    (enum recording_stream)created,
 			    path, sizeof(path))) {
 			errno = ENAMETOOLONG;
 			goto fail;
@@ -235,8 +235,8 @@ fail:
 	return NULL;
 }
 
-void sippymodem_recording_files_destroy(
-	struct sippymodem_recording_files *files)
+void recording_files_destroy(
+	struct recording_files *files)
 {
 	if (files == NULL)
 		return;
@@ -244,36 +244,36 @@ void sippymodem_recording_files_destroy(
 	free(files);
 }
 
-const struct sippymodem_recorder *sippymodem_recording_files_recorder(
-	const struct sippymodem_recording_files *files)
+const struct media_recorder *recording_files_recorder(
+	const struct recording_files *files)
 {
 	return files != NULL ? &files->recorder : NULL;
 }
 
-bool sippymodem_recording_files_path(
-	const struct sippymodem_recording_files *files,
-	enum sippymodem_recording_stream stream, char *path, size_t capacity)
+bool recording_files_path(
+	const struct recording_files *files,
+	enum recording_stream stream, char *path, size_t capacity)
 {
 	return files != NULL &&
 	       build_path(files->prefix, stream, path, capacity);
 }
 
-enum sippymodem_recording_files_result sippymodem_recording_files_last_result(
-	const struct sippymodem_recording_files *files)
+enum recording_files_result recording_files_last_result(
+	const struct recording_files *files)
 {
 	return files != NULL ? files->last_result :
-			       SIPPYMODEM_RECORDING_FILES_INVALID_BLOCK;
+			       RECORDING_FILES_INVALID_BLOCK;
 }
 
-int sippymodem_recording_files_system_error(
-	const struct sippymodem_recording_files *files)
+int recording_files_system_error(
+	const struct recording_files *files)
 {
 	return files != NULL ? files->system_error : EINVAL;
 }
 
-void sippymodem_recording_files_get_stats(
-	const struct sippymodem_recording_files *files,
-	struct sippymodem_recording_files_stats *stats)
+void recording_files_get_stats(
+	const struct recording_files *files,
+	struct recording_files_stats *stats)
 {
 	if (stats == NULL)
 		return;
@@ -283,15 +283,15 @@ void sippymodem_recording_files_get_stats(
 		memset(stats, 0, sizeof(*stats));
 }
 
-const char *sippymodem_recording_files_result_name(
-	enum sippymodem_recording_files_result result)
+const char *recording_files_result_name(
+	enum recording_files_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_RECORDING_FILES_OK:
+	case RECORDING_FILES_OK:
 		return "ok";
-	case SIPPYMODEM_RECORDING_FILES_INVALID_BLOCK:
+	case RECORDING_FILES_INVALID_BLOCK:
 		return "recording block does not match its evidence stream";
-	case SIPPYMODEM_RECORDING_FILES_WRITE_ERROR:
+	case RECORDING_FILES_WRITE_ERROR:
 		return "recording write failed";
 	}
 	return "unknown recording result";

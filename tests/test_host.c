@@ -17,7 +17,7 @@ struct fake_signaling_control {
 	unsigned int dials;
 	unsigned int answers;
 	unsigned int hangups;
-	enum sippymodem_sip_signaling_result step_result;
+	enum sip_signaling_result step_result;
 	bool emit_invalid_media_on_step;
 	bool emit_inactive_on_step;
 	bool defer_hangup_media;
@@ -25,17 +25,17 @@ struct fake_signaling_control {
 
 static struct fake_signaling_control fake;
 
-struct sippymodem_sip_signaling {
+struct sip_signaling {
 	struct sippymodem_config config;
-	struct sippymodem_sip_signaling_callbacks callbacks;
+	struct sip_signaling_callbacks callbacks;
 	bool opened;
 };
 
-struct sippymodem_sip_signaling *sippymodem_sip_signaling_create(
+struct sip_signaling *sip_signaling_create(
 	const struct sippymodem_config *config,
-	const struct sippymodem_sip_signaling_callbacks *callbacks)
+	const struct sip_signaling_callbacks *callbacks)
 {
-	struct sippymodem_sip_signaling *signaling;
+	struct sip_signaling *signaling;
 
 	if (config == NULL || callbacks == NULL)
 		return NULL;
@@ -48,8 +48,8 @@ struct sippymodem_sip_signaling *sippymodem_sip_signaling_create(
 	return signaling;
 }
 
-void sippymodem_sip_signaling_destroy(
-	struct sippymodem_sip_signaling *signaling)
+void sip_signaling_destroy(
+	struct sip_signaling *signaling)
 {
 	if (signaling == NULL)
 		return;
@@ -57,64 +57,64 @@ void sippymodem_sip_signaling_destroy(
 	free(signaling);
 }
 
-enum sippymodem_sip_signaling_result sippymodem_sip_signaling_open(
-	struct sippymodem_sip_signaling *signaling)
+enum sip_signaling_result sip_signaling_open(
+	struct sip_signaling *signaling)
 {
 	if (signaling == NULL)
-		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+		return SIP_SIGNALING_INVALID_ARGUMENT;
 	if (signaling->opened)
-		return SIPPYMODEM_SIP_SIGNALING_BUSY;
+		return SIP_SIGNALING_BUSY;
 	signaling->opened = true;
 	fake.opens++;
-	return SIPPYMODEM_SIP_SIGNALING_OK;
+	return SIP_SIGNALING_OK;
 }
 
-enum sippymodem_sip_signaling_result sippymodem_sip_signaling_close(
-	struct sippymodem_sip_signaling *signaling)
+enum sip_signaling_result sip_signaling_close(
+	struct sip_signaling *signaling)
 {
 	if (signaling == NULL)
-		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+		return SIP_SIGNALING_INVALID_ARGUMENT;
 	if (!signaling->opened)
-		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+		return SIP_SIGNALING_NOT_OPEN;
 	signaling->opened = false;
 	fake.closes++;
-	return SIPPYMODEM_SIP_SIGNALING_OK;
+	return SIP_SIGNALING_OK;
 }
 
 static void emit_media(
-	struct sippymodem_sip_signaling *signaling,
-	enum sippymodem_sip_media_state state, bool compatible);
+	struct sip_signaling *signaling,
+	enum sip_media_state state, bool compatible);
 
-enum sippymodem_sip_signaling_result sippymodem_sip_signaling_step(
-	struct sippymodem_sip_signaling *signaling, unsigned int timeout_ms)
+enum sip_signaling_result sip_signaling_step(
+	struct sip_signaling *signaling, unsigned int timeout_ms)
 {
 	(void)timeout_ms;
 	if (signaling == NULL || !signaling->opened)
-		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+		return SIP_SIGNALING_NOT_OPEN;
 	if (fake.emit_invalid_media_on_step) {
 		fake.emit_invalid_media_on_step = false;
-		emit_media(signaling, SIPPYMODEM_SIP_MEDIA_CONFIGURED, false);
+		emit_media(signaling, SIP_MEDIA_CONFIGURED, false);
 	}
 	if (fake.emit_inactive_on_step) {
 		fake.emit_inactive_on_step = false;
-		emit_media(signaling, SIPPYMODEM_SIP_MEDIA_INACTIVE, true);
+		emit_media(signaling, SIP_MEDIA_INACTIVE, true);
 	}
 	return fake.step_result;
 }
 
 static void emit_media(
-	struct sippymodem_sip_signaling *signaling,
-	enum sippymodem_sip_media_state state, bool compatible)
+	struct sip_signaling *signaling,
+	enum sip_media_state state, bool compatible)
 {
 	unsigned int payload_type = (unsigned int)
-		sippymodem_codec_default_payload_type(
+		media_codec_default_payload_type(
 			signaling->config.media.codec);
-	const struct sippymodem_sip_media_event event = {
+	const struct sip_media_event event = {
 		.state = state,
-		.remote_address_family = SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV4,
+		.remote_address_family = SIP_MEDIA_ADDRESS_IPV4,
 		.codec = signaling->config.media.codec,
 		.payload_type = compatible ? payload_type : payload_type + 1,
-		.sample_rate = SIPPYMODEM_MEDIA_SAMPLE_RATE,
+		.sample_rate = MEDIA_SAMPLE_RATE,
 		.channels = 1,
 		.local_port = signaling->config.media.rtp_listen_port,
 		.remote_address = "127.0.0.1",
@@ -126,40 +126,40 @@ static void emit_media(
 			signaling->callbacks.context, &event);
 }
 
-enum sippymodem_sip_signaling_result sippymodem_sip_signaling_dial(
-	struct sippymodem_sip_signaling *signaling, const char *target)
+enum sip_signaling_result sip_signaling_dial(
+	struct sip_signaling *signaling, const char *target)
 {
 	if (signaling == NULL || target == NULL)
-		return SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+		return SIP_SIGNALING_INVALID_ARGUMENT;
 	if (!signaling->opened)
-		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+		return SIP_SIGNALING_NOT_OPEN;
 	fake.dials++;
-	emit_media(signaling, SIPPYMODEM_SIP_MEDIA_CONFIGURED, true);
-	return SIPPYMODEM_SIP_SIGNALING_OK;
+	emit_media(signaling, SIP_MEDIA_CONFIGURED, true);
+	return SIP_SIGNALING_OK;
 }
 
-enum sippymodem_sip_signaling_result sippymodem_sip_signaling_answer(
-	struct sippymodem_sip_signaling *signaling)
+enum sip_signaling_result sip_signaling_answer(
+	struct sip_signaling *signaling)
 {
 	if (signaling == NULL || !signaling->opened)
-		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+		return SIP_SIGNALING_NOT_OPEN;
 	fake.answers++;
-	return SIPPYMODEM_SIP_SIGNALING_OK;
+	return SIP_SIGNALING_OK;
 }
 
-enum sippymodem_sip_signaling_result sippymodem_sip_signaling_hangup(
-	struct sippymodem_sip_signaling *signaling)
+enum sip_signaling_result sip_signaling_hangup(
+	struct sip_signaling *signaling)
 {
 	if (signaling == NULL || !signaling->opened)
-		return SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+		return SIP_SIGNALING_NOT_OPEN;
 	fake.hangups++;
 	if (!fake.defer_hangup_media)
-		emit_media(signaling, SIPPYMODEM_SIP_MEDIA_INACTIVE, true);
-	return SIPPYMODEM_SIP_SIGNALING_OK;
+		emit_media(signaling, SIP_MEDIA_INACTIVE, true);
+	return SIP_SIGNALING_OK;
 }
 
 struct core_capture {
-	enum sippymodem_modem_core_result result;
+	enum modem_core_result result;
 	unsigned int calls;
 	bool received_silence;
 };
@@ -169,15 +169,15 @@ enum {
 };
 
 struct recording_capture {
-	enum sippymodem_recording_stream streams[TEST_RECORDING_CAPACITY];
-	enum sippymodem_recording_format formats[TEST_RECORDING_CAPACITY];
+	enum recording_stream streams[TEST_RECORDING_CAPACITY];
+	enum recording_format formats[TEST_RECORDING_CAPACITY];
 	unsigned int sample_rates[TEST_RECORDING_CAPACITY];
 	size_t counts[TEST_RECORDING_CAPACITY];
 	size_t calls;
 };
 
 static void capture_recording(
-	void *context, const struct sippymodem_recording_block *block)
+	void *context, const struct recording_block *block)
 {
 	struct recording_capture *capture = context;
 
@@ -190,7 +190,7 @@ static void capture_recording(
 	capture->calls++;
 }
 
-static enum sippymodem_modem_core_result process_core(
+static enum modem_core_result process_core(
 	void *context, int16_t *receive_samples,
 	int16_t *transmit_samples, size_t count)
 {
@@ -204,15 +204,15 @@ static enum sippymodem_modem_core_result process_core(
 		capture->received_silence = silence;
 	}
 	memset(transmit_samples, 0, count * sizeof(transmit_samples[0]));
-	return capture != NULL ? capture->result : SIPPYMODEM_MODEM_CORE_OK;
+	return capture != NULL ? capture->result : MODEM_CORE_OK;
 }
 
 static struct sippymodem_host *create_host(
-	const struct sippymodem_recorder *recorder,
+	const struct media_recorder *recorder,
 	struct core_capture *core_capture)
 {
 	struct sippymodem_config config;
-	const struct sippymodem_modem_core core = {
+	const struct modem_core core = {
 		.context = core_capture,
 		.process = process_core,
 	};
@@ -241,20 +241,20 @@ static bool test_owns_lifecycle_and_call_control(void)
 		      datagrams == 0 && frames == 0,
 	      "closed host exposed pending event-loop work");
 	CHECK(sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
-		      SIPPYMODEM_SIP_SIGNALING_NOT_OPEN,
+		      SIP_SIGNALING_NOT_OPEN,
 	      "closed host accepted a call");
 	CHECK(sippymodem_host_open(host) == SIPPYMODEM_SESSION_OK &&
 		      sippymodem_host_is_open(host) && fake.opens == 1 &&
 		      !sippymodem_host_media_is_configured(host),
 	      "host did not open its signaling and RTP session");
 	CHECK(sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
-		      SIPPYMODEM_SIP_SIGNALING_OK &&
+		      SIP_SIGNALING_OK &&
 		      sippymodem_host_media_is_configured(host) &&
 		      sippymodem_host_audio_is_active(host),
 	      "negotiated media did not activate the host audio path");
-	CHECK(sippymodem_host_answer(host) == SIPPYMODEM_SIP_SIGNALING_OK &&
+	CHECK(sippymodem_host_answer(host) == SIP_SIGNALING_OK &&
 		      sippymodem_host_hangup(host) ==
-			      SIPPYMODEM_SIP_SIGNALING_OK &&
+			      SIP_SIGNALING_OK &&
 		      !sippymodem_host_media_is_configured(host) &&
 		      !sippymodem_host_audio_is_active(host) && fake.dials == 1 &&
 		      fake.answers == 1 && fake.hangups == 1,
@@ -270,7 +270,7 @@ static bool test_owns_lifecycle_and_call_control(void)
 static bool test_creation_validation_is_transactional(void)
 {
 	struct sippymodem_config config;
-	struct sippymodem_modem_core core = { .process = process_core };
+	struct modem_core core = { .process = process_core };
 
 	sippymodem_config_init(&config);
 	CHECK(sippymodem_host_create(NULL, NULL, NULL, &core) == NULL &&
@@ -288,27 +288,27 @@ static bool test_creation_validation_is_transactional(void)
 
 static bool test_steps_recorded_media_on_the_frame_clock(void)
 {
-	static const enum sippymodem_recording_stream expected_streams[] = {
-		SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT,
-		SIPPYMODEM_RECORD_RX_LINE_PCM,
-		SIPPYMODEM_RECORD_RX_MODEM_PCM,
-		SIPPYMODEM_RECORD_TX_MODEM_PCM,
-		SIPPYMODEM_RECORD_TX_LINE_PCM,
-		SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_PREPARED,
-		SIPPYMODEM_RECORD_TX_RTP_PAYLOAD_SENT,
+	static const enum recording_stream expected_streams[] = {
+		RECORD_RX_RTP_PAYLOAD_PLAYOUT,
+		RECORD_RX_LINE_PCM,
+		RECORD_RX_MODEM_PCM,
+		RECORD_TX_MODEM_PCM,
+		RECORD_TX_LINE_PCM,
+		RECORD_TX_RTP_PAYLOAD_PREPARED,
+		RECORD_TX_RTP_PAYLOAD_SENT,
 	};
-	static const enum sippymodem_recording_format expected_formats[] = {
-		SIPPYMODEM_RECORD_OCTETS,
-		SIPPYMODEM_RECORD_S16_NATIVE,
-		SIPPYMODEM_RECORD_S16_NATIVE,
-		SIPPYMODEM_RECORD_S16_NATIVE,
-		SIPPYMODEM_RECORD_S16_NATIVE,
-		SIPPYMODEM_RECORD_OCTETS,
-		SIPPYMODEM_RECORD_OCTETS,
+	static const enum recording_format expected_formats[] = {
+		RECORD_OCTETS,
+		RECORD_S16_NATIVE,
+		RECORD_S16_NATIVE,
+		RECORD_S16_NATIVE,
+		RECORD_S16_NATIVE,
+		RECORD_OCTETS,
+		RECORD_OCTETS,
 	};
 	struct core_capture core = { 0 };
 	struct recording_capture recordings = { 0 };
-	const struct sippymodem_recorder recorder = {
+	const struct media_recorder recorder = {
 		.context = &recordings,
 		.write = capture_recording,
 	};
@@ -321,7 +321,7 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 	CHECK(host != NULL &&
 		      sippymodem_host_open(host) == SIPPYMODEM_SESSION_OK &&
 		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
-			      SIPPYMODEM_SIP_SIGNALING_OK &&
+			      SIP_SIGNALING_OK &&
 		      sippymodem_host_wait_ns(host, 1000000000) == 0,
 	      "recorded host call did not become immediately runnable");
 	CHECK(sippymodem_host_step(host, 1000000000, &datagrams, &frames) ==
@@ -337,7 +337,7 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 	      "host did not process and record one complete modem frame");
 	for (size_t index = 0; index < recordings.calls; ++index) {
 		CHECK(recordings.sample_rates[index] ==
-			      SIPPYMODEM_MEDIA_SAMPLE_RATE &&
+			      MEDIA_SAMPLE_RATE &&
 			      recordings.counts[index] == 8,
 		      "recorded host block lost its media dimensions");
 	}
@@ -355,11 +355,11 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 		      sippymodem_host_last_session_result(host) ==
 			      SIPPYMODEM_SESSION_MEDIA_BINDING_ERROR &&
 		      sippymodem_host_last_audio_scheduler_result(host) ==
-			      SIPPYMODEM_AUDIO_SCHEDULER_OK &&
+			      AUDIO_SCHEDULER_OK &&
 		      sippymodem_host_last_audio_path_result(host) ==
-			      SIPPYMODEM_AUDIO_PATH_OK,
+			      AUDIO_PATH_OK,
 		      "rejected renegotiation interrupted established audio");
-	fake.step_result = SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR;
+	fake.step_result = SIP_SIGNALING_LIBRARY_ERROR;
 	CHECK(sippymodem_host_step(host, 1001500000, NULL, &frames) ==
 		      SIPPYMODEM_HOST_SESSION_ERROR &&
 		      frames == 0 &&
@@ -375,7 +375,7 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 {
 	struct core_capture core = {
-		.result = SIPPYMODEM_MODEM_CORE_STOPPED,
+		.result = MODEM_CORE_STOPPED,
 	};
 	struct sippymodem_host *host;
 	size_t frames = 99;
@@ -386,7 +386,7 @@ static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 	CHECK(host != NULL &&
 		      sippymodem_host_open(host) == SIPPYMODEM_SESSION_OK &&
 		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
-			      SIPPYMODEM_SIP_SIGNALING_OK,
+			      SIP_SIGNALING_OK,
 	      "failed-audio host call did not start");
 	CHECK(sippymodem_host_step(host, 0, NULL, &frames) ==
 		      SIPPYMODEM_HOST_MODEM_STOPPED &&
@@ -396,7 +396,7 @@ static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 		      sippymodem_host_wait_ns(host, 0) ==
 			      SIPPYMODEM_HOST_SIGNALING_POLL_NS,
 	      "stopped modem did not suspend audio and request hangup");
-	core.result = SIPPYMODEM_MODEM_CORE_OK;
+	core.result = MODEM_CORE_OK;
 	CHECK(sippymodem_host_step(host, 1000000, NULL, &frames) ==
 		      SIPPYMODEM_HOST_IDLE &&
 		      frames == 0 && core.calls == 1,
@@ -406,16 +406,16 @@ static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 		      SIPPYMODEM_HOST_IDLE &&
 		      !sippymodem_host_media_is_configured(host) &&
 		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
-			      SIPPYMODEM_SIP_SIGNALING_OK &&
+			      SIP_SIGNALING_OK &&
 		      sippymodem_host_step(host, 3000000, NULL, &frames) ==
 			      SIPPYMODEM_HOST_OK &&
 		      frames == 1 && core.calls == 2,
 	      "new media lifecycle did not rearm suspended audio");
-	core.result = SIPPYMODEM_MODEM_CORE_ERROR;
+	core.result = MODEM_CORE_ERROR;
 	CHECK(sippymodem_host_step(host, 4000000, NULL, &frames) ==
 		      SIPPYMODEM_HOST_AUDIO_ERROR &&
 		      sippymodem_host_last_audio_path_result(host) ==
-			      SIPPYMODEM_AUDIO_PATH_MODEM_ERROR &&
+			      AUDIO_PATH_MODEM_ERROR &&
 		      fake.hangups == 2,
 	      "modem failure did not retain its typed audio cause");
 	CHECK(sippymodem_host_close(host) == SIPPYMODEM_SESSION_OK,
@@ -447,7 +447,7 @@ static bool test_destroy_closes_an_open_host(void)
 		      sippymodem_host_close(NULL) ==
 			      SIPPYMODEM_SESSION_INVALID_ARGUMENT &&
 		      sippymodem_host_dial(NULL, "sip:peer@127.0.0.1") ==
-			      SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT &&
+			      SIP_SIGNALING_INVALID_ARGUMENT &&
 		      sippymodem_host_step(NULL, 0, &datagrams, &frames) ==
 			      SIPPYMODEM_HOST_INVALID_ARGUMENT &&
 		      datagrams == 0 && frames == 0 &&

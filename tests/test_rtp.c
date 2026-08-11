@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static const struct sippymodem_rtp_header example_header = {
+static const struct rtp_header example_header = {
 	.payload_type = 0,
 	.marker = true,
 	.sequence = 0x1234,
@@ -23,19 +23,19 @@ static bool test_write_and_parse(void)
 		0xde, 0xf0, 0x12, 0x34, 0xff, 0x7e, 0x80, 0x00,
 	};
 	uint8_t packet[sizeof(expected)];
-	struct sippymodem_rtp_packet_view view;
+	struct rtp_packet_view view;
 	size_t packet_size = 0;
 
-	CHECK(sippymodem_rtp_packet_write(packet, sizeof(packet),
+	CHECK(rtp_packet_write(packet, sizeof(packet),
 					   &example_header, payload,
 					   sizeof(payload), &packet_size) ==
-		      SIPPYMODEM_RTP_OK,
+		      RTP_OK,
 	      "failed to write RTP packet");
 	CHECK(packet_size == sizeof(expected), "wrong RTP packet size");
 	CHECK(memcmp(packet, expected, sizeof(expected)) == 0,
 	      "RTP packet bytes are wrong");
-	CHECK(sippymodem_rtp_packet_parse(packet, packet_size, &view) ==
-		      SIPPYMODEM_RTP_OK,
+	CHECK(rtp_packet_parse(packet, packet_size, &view) ==
+		      RTP_OK,
 	      "failed to parse written RTP packet");
 	CHECK(view.header.payload_type == example_header.payload_type &&
 		      view.header.marker == example_header.marker &&
@@ -43,7 +43,7 @@ static bool test_write_and_parse(void)
 		      view.header.timestamp == example_header.timestamp &&
 		      view.header.ssrc == example_header.ssrc,
 	      "parsed RTP header is wrong");
-	CHECK(view.header_size == SIPPYMODEM_RTP_HEADER_SIZE &&
+	CHECK(view.header_size == RTP_HEADER_SIZE &&
 		      view.padding_size == 0,
 	      "parsed RTP layout is wrong");
 	CHECK(view.payload_size == sizeof(payload) &&
@@ -63,10 +63,10 @@ static bool test_optional_headers_and_padding(void)
 		0xde, 0xad, 0xbe, 0xef,
 		0x00, 0x00, 0x00, 0x04,
 	};
-	struct sippymodem_rtp_packet_view view;
+	struct rtp_packet_view view;
 
-	CHECK(sippymodem_rtp_packet_parse(packet, sizeof(packet), &view) ==
-		      SIPPYMODEM_RTP_OK,
+	CHECK(rtp_packet_parse(packet, sizeof(packet), &view) ==
+		      RTP_OK,
 	      "failed to parse RTP options");
 	CHECK(view.header.payload_type == 8 && !view.header.marker,
 	      "RTP flags were parsed incorrectly");
@@ -83,22 +83,22 @@ static bool test_optional_headers_and_padding(void)
 }
 
 static bool expect_parse_error(uint8_t *packet, size_t size,
-			       enum sippymodem_rtp_result expected)
+			       enum rtp_result expected)
 {
-	struct sippymodem_rtp_packet_view view;
-	struct sippymodem_rtp_packet_view original;
+	struct rtp_packet_view view;
+	struct rtp_packet_view original;
 
 	memset(&view, 0x5a, sizeof(view));
 	view.header.sequence = 0x55aa;
 	view.payload = packet;
 	view.payload_size = 123;
 	memcpy(&original, &view, sizeof(original));
-	enum sippymodem_rtp_result result =
-		sippymodem_rtp_packet_parse(packet, size, &view);
+	enum rtp_result result =
+		rtp_packet_parse(packet, size, &view);
 
 	CHECK(result == expected, "parse returned %s, expected %s",
-	      sippymodem_rtp_result_name(result),
-	      sippymodem_rtp_result_name(expected));
+	      rtp_result_name(result),
+	      rtp_result_name(expected));
 	CHECK(memcmp(&view, &original, sizeof(view)) == 0,
 	      "failed parse partially changed its output");
 	return true;
@@ -107,44 +107,44 @@ static bool expect_parse_error(uint8_t *packet, size_t size,
 static bool test_malformed_packets(void)
 {
 	uint8_t packet[24] = { 0x80 };
-	struct sippymodem_rtp_packet_view view;
+	struct rtp_packet_view view;
 
-	CHECK(sippymodem_rtp_packet_parse(NULL, sizeof(packet), &view) ==
-		      SIPPYMODEM_RTP_INVALID_ARGUMENT,
+	CHECK(rtp_packet_parse(NULL, sizeof(packet), &view) ==
+		      RTP_INVALID_ARGUMENT,
 	      "accepted a null packet");
-	CHECK(sippymodem_rtp_packet_parse(packet, sizeof(packet), NULL) ==
-		      SIPPYMODEM_RTP_INVALID_ARGUMENT,
+	CHECK(rtp_packet_parse(packet, sizeof(packet), NULL) ==
+		      RTP_INVALID_ARGUMENT,
 	      "accepted a null view");
 	CHECK(expect_parse_error(packet, 11,
-				 SIPPYMODEM_RTP_PACKET_TOO_SHORT),
+				 RTP_PACKET_TOO_SHORT),
 	      "short packet case failed");
 
 	packet[0] = 0x40;
 	CHECK(expect_parse_error(packet, 12,
-				 SIPPYMODEM_RTP_UNSUPPORTED_VERSION),
+				 RTP_UNSUPPORTED_VERSION),
 	      "wrong version case failed");
 	packet[0] = 0x83;
 	CHECK(expect_parse_error(packet, 20,
-				 SIPPYMODEM_RTP_TRUNCATED_CSRC_LIST),
+				 RTP_TRUNCATED_CSRC_LIST),
 	      "truncated CSRC case failed");
 	packet[0] = 0x90;
 	CHECK(expect_parse_error(packet, 15,
-				 SIPPYMODEM_RTP_TRUNCATED_EXTENSION),
+				 RTP_TRUNCATED_EXTENSION),
 	      "missing extension header case failed");
 	packet[14] = 0;
 	packet[15] = 2;
 	CHECK(expect_parse_error(packet, 20,
-				 SIPPYMODEM_RTP_TRUNCATED_EXTENSION),
+				 RTP_TRUNCATED_EXTENSION),
 	      "truncated extension data case failed");
 
 	memset(packet, 0, sizeof(packet));
 	packet[0] = 0xa0;
 	CHECK(expect_parse_error(packet, 13,
-				 SIPPYMODEM_RTP_INVALID_PADDING),
+				 RTP_INVALID_PADDING),
 	      "zero padding count case failed");
 	packet[12] = 2;
 	CHECK(expect_parse_error(packet, 13,
-				 SIPPYMODEM_RTP_INVALID_PADDING),
+				 RTP_INVALID_PADDING),
 	      "oversized padding case failed");
 	return true;
 }
@@ -152,33 +152,33 @@ static bool test_malformed_packets(void)
 static bool test_writer_validation_and_overlap(void)
 {
 	static const uint8_t payload[] = { 1, 2, 3, 4 };
-	struct sippymodem_rtp_header header = example_header;
+	struct rtp_header header = example_header;
 	uint8_t packet[16] = { 1, 2, 3, 4 };
 	size_t packet_size = 999;
 
-	CHECK(sippymodem_rtp_packet_write(packet, sizeof(packet), &header,
+	CHECK(rtp_packet_write(packet, sizeof(packet), &header,
 					   packet, 4, &packet_size) ==
-		      SIPPYMODEM_RTP_OK,
+		      RTP_OK,
 	      "writer did not support overlapping payload");
 	CHECK(packet_size == sizeof(packet) && packet[12] == 1 &&
 		      packet[15] == 4,
 	      "writer corrupted overlapping payload");
 
 	packet_size = 999;
-	CHECK(sippymodem_rtp_packet_write(packet, 15, &header, payload,
+	CHECK(rtp_packet_write(packet, 15, &header, payload,
 					   sizeof(payload), &packet_size) ==
-		      SIPPYMODEM_RTP_BUFFER_TOO_SMALL,
+		      RTP_BUFFER_TOO_SMALL,
 	      "writer accepted a short buffer");
 	CHECK(packet_size == 999, "failed write changed the output size");
 	header.payload_type = 128;
-	CHECK(sippymodem_rtp_packet_write(packet, sizeof(packet), &header,
+	CHECK(rtp_packet_write(packet, sizeof(packet), &header,
 					   payload, sizeof(payload),
 					   &packet_size) ==
-		      SIPPYMODEM_RTP_INVALID_ARGUMENT,
+		      RTP_INVALID_ARGUMENT,
 	      "writer accepted an invalid payload type");
-	CHECK(sippymodem_rtp_packet_write(packet, sizeof(packet), &example_header,
+	CHECK(rtp_packet_write(packet, sizeof(packet), &example_header,
 					   NULL, 1, &packet_size) ==
-		      SIPPYMODEM_RTP_INVALID_ARGUMENT,
+		      RTP_INVALID_ARGUMENT,
 	      "writer accepted a null payload");
 	return true;
 }

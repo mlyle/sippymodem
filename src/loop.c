@@ -12,17 +12,17 @@
 
 enum {
 	NANOSECONDS_PER_SECOND = 1000000000,
-	SIPPYMODEM_LOOP_MAXIMUM_WAIT_NS = 20000000,
+	MODEM_LOOP_MAXIMUM_WAIT_NS = 20000000,
 };
 
-static void clear_error(struct sippymodem_loop_error *error)
+static void clear_error(struct modem_loop_error *error)
 {
 	if (error != NULL)
 		memset(error, 0, sizeof(*error));
 }
 
-static enum sippymodem_loop_result monotonic_now(
-	uint64_t *now_ns, struct sippymodem_loop_error *error)
+static enum modem_loop_result monotonic_now(
+	uint64_t *now_ns, struct modem_loop_error *error)
 {
 	struct timespec now;
 	uint64_t seconds;
@@ -30,28 +30,28 @@ static enum sippymodem_loop_result monotonic_now(
 	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
 		if (error != NULL)
 			error->system_error = errno;
-		return SIPPYMODEM_LOOP_CLOCK_ERROR;
+		return MODEM_LOOP_CLOCK_ERROR;
 	}
 	if (now.tv_sec < 0 || now.tv_nsec < 0 ||
 	    now.tv_nsec >= NANOSECONDS_PER_SECOND) {
 		if (error != NULL)
 			error->system_error = EOVERFLOW;
-		return SIPPYMODEM_LOOP_CLOCK_ERROR;
+		return MODEM_LOOP_CLOCK_ERROR;
 	}
 	seconds = (uint64_t)now.tv_sec;
 	if (seconds > (UINT64_MAX - (uint64_t)now.tv_nsec) /
 			      NANOSECONDS_PER_SECOND) {
 		if (error != NULL)
 			error->system_error = EOVERFLOW;
-		return SIPPYMODEM_LOOP_CLOCK_ERROR;
+		return MODEM_LOOP_CLOCK_ERROR;
 	}
 	*now_ns = seconds * NANOSECONDS_PER_SECOND + (uint64_t)now.tv_nsec;
-	return SIPPYMODEM_LOOP_OK;
+	return MODEM_LOOP_OK;
 }
 
-static enum sippymodem_loop_result wait_for_work(
+static enum modem_loop_result wait_for_work(
 	struct sippymodem_runtime *runtime, uint64_t wait_ns,
-	struct sippymodem_loop_error *error)
+	struct modem_loop_error *error)
 {
 	struct pollfd terminal = {
 		.fd = sippymodem_runtime_terminal_poll_fd(runtime),
@@ -61,41 +61,41 @@ static enum sippymodem_loop_result wait_for_work(
 	nfds_t descriptor_count = terminal.fd >= 0 ? 1 : 0;
 	int result;
 
-	if (wait_ns > SIPPYMODEM_LOOP_MAXIMUM_WAIT_NS)
-		wait_ns = SIPPYMODEM_LOOP_MAXIMUM_WAIT_NS;
+	if (wait_ns > MODEM_LOOP_MAXIMUM_WAIT_NS)
+		wait_ns = MODEM_LOOP_MAXIMUM_WAIT_NS;
 	timeout.tv_sec = 0;
 	timeout.tv_nsec = (long)wait_ns;
 	result = ppoll(descriptor_count != 0 ? &terminal : NULL,
 		       descriptor_count, &timeout, NULL);
 	if (result < 0) {
 		if (errno == EINTR)
-			return SIPPYMODEM_LOOP_OK;
+			return MODEM_LOOP_OK;
 		if (error != NULL)
 			error->system_error = errno;
-		return SIPPYMODEM_LOOP_WAIT_ERROR;
+		return MODEM_LOOP_WAIT_ERROR;
 	}
 	if (descriptor_count != 0 && (terminal.revents & POLLNVAL) != 0) {
 		if (error != NULL)
 			error->system_error = EBADF;
-		return SIPPYMODEM_LOOP_WAIT_ERROR;
+		return MODEM_LOOP_WAIT_ERROR;
 	}
-	return SIPPYMODEM_LOOP_OK;
+	return MODEM_LOOP_OK;
 }
 
-enum sippymodem_loop_result sippymodem_loop_run(
+enum modem_loop_result modem_loop_run(
 	struct sippymodem_runtime *runtime, volatile sig_atomic_t *running,
-	struct sippymodem_loop_error *error)
+	struct modem_loop_error *error)
 {
-	enum sippymodem_loop_result result;
+	enum modem_loop_result result;
 	enum sippymodem_runtime_result runtime_result;
 	uint64_t now_ns;
 
 	clear_error(error);
 	if (runtime == NULL || running == NULL)
-		return SIPPYMODEM_LOOP_INVALID_ARGUMENT;
+		return MODEM_LOOP_INVALID_ARGUMENT;
 	while (*running != 0) {
 		result = monotonic_now(&now_ns, error);
-		if (result != SIPPYMODEM_LOOP_OK)
+		if (result != MODEM_LOOP_OK)
 			return result;
 		runtime_result = sippymodem_runtime_step(
 			runtime, now_ns, NULL, NULL, NULL);
@@ -103,33 +103,33 @@ enum sippymodem_loop_result sippymodem_loop_run(
 		    runtime_result != SIPPYMODEM_RUNTIME_IDLE) {
 			if (error != NULL)
 				error->runtime_result = runtime_result;
-			return SIPPYMODEM_LOOP_RUNTIME_ERROR;
+			return MODEM_LOOP_RUNTIME_ERROR;
 		}
 		if (*running == 0)
 			break;
 		result = monotonic_now(&now_ns, error);
-		if (result != SIPPYMODEM_LOOP_OK)
+		if (result != MODEM_LOOP_OK)
 			return result;
 		result = wait_for_work(
 			runtime, sippymodem_runtime_wait_ns(runtime, now_ns), error);
-		if (result != SIPPYMODEM_LOOP_OK)
+		if (result != MODEM_LOOP_OK)
 			return result;
 	}
-	return SIPPYMODEM_LOOP_OK;
+	return MODEM_LOOP_OK;
 }
 
-const char *sippymodem_loop_result_name(enum sippymodem_loop_result result)
+const char *modem_loop_result_name(enum modem_loop_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_LOOP_OK:
+	case MODEM_LOOP_OK:
 		return "ok";
-	case SIPPYMODEM_LOOP_INVALID_ARGUMENT:
+	case MODEM_LOOP_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_LOOP_CLOCK_ERROR:
+	case MODEM_LOOP_CLOCK_ERROR:
 		return "monotonic clock failed";
-	case SIPPYMODEM_LOOP_WAIT_ERROR:
+	case MODEM_LOOP_WAIT_ERROR:
 		return "runtime wait failed";
-	case SIPPYMODEM_LOOP_RUNTIME_ERROR:
+	case MODEM_LOOP_RUNTIME_ERROR:
 		return "modem runtime failed";
 	}
 	return "unknown loop result";

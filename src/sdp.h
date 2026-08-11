@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_SDP_H
-#define SIPPYMODEM_SDP_H
+#ifndef SDP_H
+#define SDP_H
 
 #include "media.h"
 
@@ -10,28 +10,28 @@
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_SDP_MAX_PACKET_DURATION_MS = 1000,
+	SDP_MAX_PACKET_DURATION_MS = 1000,
 };
 
-enum sippymodem_sdp_result {
-	SIPPYMODEM_SDP_OK = 0,
-	SIPPYMODEM_SDP_NOT_PRESENT,
-	SIPPYMODEM_SDP_INVALID_ARGUMENT,
-	SIPPYMODEM_SDP_OUTPUT_TOO_SMALL,
+enum sdp_result {
+	SDP_OK = 0,
+	SDP_NOT_PRESENT,
+	SDP_INVALID_ARGUMENT,
+	SDP_OUTPUT_TOO_SMALL,
 };
 
-enum sippymodem_sdp_audio_attribute {
-	SIPPYMODEM_SDP_AUDIO_RTPMAP = 0,
-	SIPPYMODEM_SDP_AUDIO_PTIME,
-	SIPPYMODEM_SDP_AUDIO_MAXPTIME,
-	SIPPYMODEM_SDP_AUDIO_RTCP,
-	SIPPYMODEM_SDP_AUDIO_SILENCE_SUPPRESSION,
-	SIPPYMODEM_SDP_AUDIO_GPMD,
-	SIPPYMODEM_SDP_AUDIO_ATTRIBUTE_COUNT,
+enum sdp_audio_attribute {
+	SDP_AUDIO_RTPMAP = 0,
+	SDP_AUDIO_PTIME,
+	SDP_AUDIO_MAXPTIME,
+	SDP_AUDIO_RTCP,
+	SDP_AUDIO_SILENCE_SUPPRESSION,
+	SDP_AUDIO_GPMD,
+	SDP_AUDIO_ATTRIBUTE_COUNT,
 };
 
-struct sippymodem_sdp_audio_description {
-	enum sippymodem_media_codec codec;
+struct sdp_audio_description {
+	enum media_codec codec;
 	uint8_t payload_type;
 	uint16_t rtp_port;
 	uint16_t rtcp_port;
@@ -42,36 +42,36 @@ struct sippymodem_sdp_audio_description {
 };
 
 /* Missing rtpmap is represented by a null name and zero rate/channels. */
-struct sippymodem_sdp_audio_format {
+struct sdp_audio_format {
 	uint8_t payload_type;
 	const char *encoding_name;
 	unsigned int sample_rate;
 	unsigned int channels;
 };
 
-enum sippymodem_sdp_result sippymodem_sdp_audio_description_init(
-	struct sippymodem_sdp_audio_description *description,
-	enum sippymodem_media_codec codec, uint16_t rtp_port,
+enum sdp_result sdp_audio_description_init(
+	struct sdp_audio_description *description,
+	enum media_codec codec, uint16_t rtp_port,
 	unsigned int packet_duration_ms, bool include_vbd_attributes);
 
-const char *sippymodem_sdp_audio_encoding_name(
-	const struct sippymodem_sdp_audio_description *description);
-const char *sippymodem_sdp_audio_attribute_name(
-	enum sippymodem_sdp_audio_attribute attribute);
+const char *sdp_audio_encoding_name(
+	const struct sdp_audio_description *description);
+const char *sdp_audio_attribute_name(
+	enum sdp_audio_attribute attribute);
 
 /* Format only an attribute value; the signaling backend owns SDP syntax. */
-enum sippymodem_sdp_result sippymodem_sdp_audio_format_attribute(
-	const struct sippymodem_sdp_audio_description *description,
-	enum sippymodem_sdp_audio_attribute attribute,
+enum sdp_result sdp_audio_format_attribute(
+	const struct sdp_audio_description *description,
+	enum sdp_audio_attribute attribute,
 	char *output, size_t capacity);
 
-bool sippymodem_sdp_audio_accepts_format(
-	const struct sippymodem_sdp_audio_description *description,
-	const struct sippymodem_sdp_audio_format *format);
+bool sdp_audio_accepts_format(
+	const struct sdp_audio_description *description,
+	const struct sdp_audio_format *format);
 
 /* Attributes replaced when a signaling backend installs modem media policy. */
-bool sippymodem_sdp_attribute_is_media_owned(const char *name);
+bool sdp_attribute_is_media_owned(const char *name);
 
-const char *sippymodem_sdp_result_name(enum sippymodem_sdp_result result);
+const char *sdp_result_name(enum sdp_result result);
 
 #endif

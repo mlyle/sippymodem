@@ -15,7 +15,7 @@
 #include <unistd.h>
 
 enum {
-	SAMPLES_PER_MILLISECOND = SIPPYMODEM_MEDIA_SAMPLE_RATE / 1000,
+	SAMPLES_PER_MILLISECOND = MEDIA_SAMPLE_RATE / 1000,
 };
 
 struct rtp_identity {
@@ -24,14 +24,14 @@ struct rtp_identity {
 	uint32_t ssrc;
 };
 
-struct sippymodem_rtp_runtime {
-	struct sippymodem_rtp_jitter_slot *slots;
+struct rtp_runtime {
+	struct rtp_jitter_slot *slots;
 	uint8_t *receive_workspace;
 	uint8_t *packet_workspace;
 	size_t frame_samples;
 	size_t packet_capacity;
-	struct sippymodem_rtp_stream stream;
-	struct sippymodem_rtp_endpoint endpoint;
+	struct rtp_stream stream;
+	struct rtp_endpoint endpoint;
 };
 
 static bool fill_random(void *data, size_t size)
@@ -58,7 +58,7 @@ static bool fill_random(void *data, size_t size)
 	return true;
 }
 
-static bool calculate_storage(const struct sippymodem_media_config *config,
+static bool calculate_storage(const struct media_config *config,
 			      size_t *frame_samples, size_t *slot_count)
 {
 	size_t frame;
@@ -72,8 +72,8 @@ static bool calculate_storage(const struct sippymodem_media_config *config,
 		return false;
 	frame = config->frame_duration_ms * SAMPLES_PER_MILLISECOND;
 	prefill = config->jitter_buffer_ms * SAMPLES_PER_MILLISECOND;
-	if (frame > SIPPYMODEM_RTP_ENDPOINT_MAX_DATAGRAM -
-			    SIPPYMODEM_RTP_HEADER_SIZE ||
+	if (frame > RTP_ENDPOINT_MAX_DATAGRAM -
+			    RTP_HEADER_SIZE ||
 	    prefill > (size_t)INT32_MAX - frame)
 		return false;
 	*frame_samples = frame;
@@ -81,13 +81,13 @@ static bool calculate_storage(const struct sippymodem_media_config *config,
 	return true;
 }
 
-struct sippymodem_rtp_runtime *sippymodem_rtp_runtime_create(
-	const struct sippymodem_media_config *config,
-	const struct sippymodem_recorder *recorder)
+struct rtp_runtime *rtp_runtime_create(
+	const struct media_config *config,
+	const struct media_recorder *recorder)
 {
-	struct sippymodem_rtp_runtime *runtime;
-	struct sippymodem_rtp_stream_config stream_config = { 0 };
-	struct sippymodem_rtp_endpoint_config endpoint_config;
+	struct rtp_runtime *runtime;
+	struct rtp_stream_config stream_config = { 0 };
+	struct rtp_endpoint_config endpoint_config;
 	struct rtp_identity identity;
 	size_t frame_samples;
 	size_t slot_count;
@@ -95,7 +95,7 @@ struct sippymodem_rtp_runtime *sippymodem_rtp_runtime_create(
 
 	if (!calculate_storage(config, &frame_samples, &slot_count))
 		return NULL;
-	payload_type = sippymodem_codec_default_payload_type(config->codec);
+	payload_type = media_codec_default_payload_type(config->codec);
 	if (payload_type < 0 || !fill_random(&identity, sizeof(identity)))
 		return NULL;
 	if (identity.ssrc == 0)
@@ -109,7 +109,7 @@ struct sippymodem_rtp_runtime *sippymodem_rtp_runtime_create(
 	stream_config.prefill_samples =
 		config->jitter_buffer_ms * SAMPLES_PER_MILLISECOND;
 	runtime->packet_capacity =
-		SIPPYMODEM_RTP_HEADER_SIZE + runtime->frame_samples;
+		RTP_HEADER_SIZE + runtime->frame_samples;
 	runtime->slots = calloc(slot_count, sizeof(runtime->slots[0]));
 	runtime->receive_workspace = malloc(runtime->frame_samples);
 	runtime->packet_workspace = malloc(runtime->packet_capacity);
@@ -124,94 +124,94 @@ struct sippymodem_rtp_runtime *sippymodem_rtp_runtime_create(
 	stream_config.transmit_ssrc = identity.ssrc;
 	if (recorder != NULL)
 		stream_config.recorder = *recorder;
-	if (!sippymodem_rtp_stream_init(
+	if (!rtp_stream_init(
 		    &runtime->stream, &stream_config, runtime->slots, slot_count,
 		    runtime->receive_workspace, runtime->frame_samples))
 		goto fail;
-	sippymodem_rtp_endpoint_config_init(&endpoint_config);
-	if (!sippymodem_rtp_endpoint_init(
+	rtp_endpoint_config_init(&endpoint_config);
+	if (!rtp_endpoint_init(
 		    &runtime->endpoint, &runtime->stream, &endpoint_config))
 		goto fail;
 	return runtime;
 
 fail:
-	sippymodem_rtp_runtime_destroy(runtime);
+	rtp_runtime_destroy(runtime);
 	return NULL;
 }
 
-void sippymodem_rtp_runtime_destroy(
-	struct sippymodem_rtp_runtime *runtime)
+void rtp_runtime_destroy(
+	struct rtp_runtime *runtime)
 {
 	if (runtime == NULL)
 		return;
-	sippymodem_rtp_endpoint_close(&runtime->endpoint);
+	rtp_endpoint_close(&runtime->endpoint);
 	free(runtime->packet_workspace);
 	free(runtime->receive_workspace);
 	free(runtime->slots);
 	free(runtime);
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_rtp_runtime_open(
-	struct sippymodem_rtp_runtime *runtime,
+enum rtp_endpoint_result rtp_runtime_open(
+	struct rtp_runtime *runtime,
 	const struct sockaddr_in *local_address)
 {
 	if (runtime == NULL)
-		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
-	return sippymodem_rtp_endpoint_open(&runtime->endpoint, local_address);
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	return rtp_endpoint_open(&runtime->endpoint, local_address);
 }
 
-void sippymodem_rtp_runtime_close(struct sippymodem_rtp_runtime *runtime)
+void rtp_runtime_close(struct rtp_runtime *runtime)
 {
 	if (runtime != NULL)
-		sippymodem_rtp_endpoint_close(&runtime->endpoint);
+		rtp_endpoint_close(&runtime->endpoint);
 }
 
-size_t sippymodem_rtp_runtime_frame_samples(
-	const struct sippymodem_rtp_runtime *runtime)
+size_t rtp_runtime_frame_samples(
+	const struct rtp_runtime *runtime)
 {
 	return runtime != NULL ? runtime->frame_samples : 0;
 }
 
-uint16_t sippymodem_rtp_runtime_local_port(
-	const struct sippymodem_rtp_runtime *runtime)
+uint16_t rtp_runtime_local_port(
+	const struct rtp_runtime *runtime)
 {
 	return runtime != NULL ?
-		       sippymodem_rtp_endpoint_local_port(&runtime->endpoint) :
+		       rtp_endpoint_local_port(&runtime->endpoint) :
 		       0;
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_rtp_runtime_drain(
-	struct sippymodem_rtp_runtime *runtime, size_t *datagrams_received)
+enum rtp_endpoint_result rtp_runtime_drain(
+	struct rtp_runtime *runtime, size_t *datagrams_received)
 {
 	if (runtime == NULL)
-		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
-	return sippymodem_rtp_endpoint_drain(&runtime->endpoint,
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	return rtp_endpoint_drain(&runtime->endpoint,
 					     datagrams_received);
 }
 
-enum sippymodem_media_result sippymodem_rtp_runtime_play(
-	struct sippymodem_rtp_runtime *runtime, int16_t *samples, size_t count,
-	struct sippymodem_rtp_playout_report *report)
+enum media_result rtp_runtime_play(
+	struct rtp_runtime *runtime, int16_t *samples, size_t count,
+	struct rtp_playout_report *report)
 {
 	if (runtime == NULL || count != runtime->frame_samples)
-		return SIPPYMODEM_MEDIA_INVALID_ARGUMENT;
-	return sippymodem_rtp_stream_play(&runtime->stream, samples, count,
+		return MEDIA_INVALID_ARGUMENT;
+	return rtp_stream_play(&runtime->stream, samples, count,
 					  report);
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_rtp_runtime_send(
-	struct sippymodem_rtp_runtime *runtime, const int16_t *samples,
+enum rtp_endpoint_result rtp_runtime_send(
+	struct rtp_runtime *runtime, const int16_t *samples,
 	size_t count)
 {
 	if (runtime == NULL || count != runtime->frame_samples)
-		return SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
-	return sippymodem_rtp_endpoint_send(
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	return rtp_endpoint_send(
 		&runtime->endpoint, samples, count, runtime->packet_workspace,
 		runtime->packet_capacity);
 }
 
-struct sippymodem_rtp_endpoint *sippymodem_rtp_runtime_endpoint(
-	struct sippymodem_rtp_runtime *runtime)
+struct rtp_endpoint *rtp_runtime_endpoint(
+	struct rtp_runtime *runtime)
 {
 	return runtime != NULL ? &runtime->endpoint : NULL;
 }

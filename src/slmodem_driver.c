@@ -12,10 +12,10 @@ static int stop_modem(struct modem *modem);
 static int control_modem(
 	struct modem *modem, unsigned int command, unsigned long argument);
 
-static struct sippymodem_slmodem_driver *owner_from_modem(
+static struct slmodem_driver *owner_from_modem(
 	struct modem *modem)
 {
-	struct sippymodem_slmodem_driver *driver;
+	struct slmodem_driver *driver;
 
 	if (modem == NULL || modem->dev_data == NULL)
 		return NULL;
@@ -28,21 +28,21 @@ static struct sippymodem_slmodem_driver *owner_from_modem(
 	return driver;
 }
 
-static int signaling_error(enum sippymodem_sip_signaling_result result)
+static int signaling_error(enum sip_signaling_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_SIP_SIGNALING_OK:
+	case SIP_SIGNALING_OK:
 		return 0;
-	case SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT:
+	case SIP_SIGNALING_INVALID_ARGUMENT:
 		return -EINVAL;
-	case SIPPYMODEM_SIP_SIGNALING_NOT_OPEN:
+	case SIP_SIGNALING_NOT_OPEN:
 		return -ENOTCONN;
-	case SIPPYMODEM_SIP_SIGNALING_BUSY:
-	case SIPPYMODEM_SIP_SIGNALING_CALL_ACTIVE:
+	case SIP_SIGNALING_BUSY:
+	case SIP_SIGNALING_CALL_ACTIVE:
 		return -EBUSY;
-	case SIPPYMODEM_SIP_SIGNALING_NO_CALL:
+	case SIP_SIGNALING_NO_CALL:
 		return -ENXIO;
-	case SIPPYMODEM_SIP_SIGNALING_LIBRARY_ERROR:
+	case SIP_SIGNALING_LIBRARY_ERROR:
 		return -EIO;
 	}
 	return -EIO;
@@ -51,13 +51,13 @@ static int signaling_error(enum sippymodem_sip_signaling_result result)
 static bool modem_media_is_compatible(const struct modem *modem)
 {
 	return modem != NULL &&
-	       modem->srate == SIPPYMODEM_MEDIA_SAMPLE_RATE &&
+	       modem->srate == MEDIA_SAMPLE_RATE &&
 	       modem->format == MODEM_FORMAT && modem->frag == MODEM_FRAG;
 }
 
 static int start_modem(struct modem *modem)
 {
-	struct sippymodem_slmodem_driver *driver = owner_from_modem(modem);
+	struct slmodem_driver *driver = owner_from_modem(modem);
 
 	if (driver == NULL || !modem_media_is_compatible(modem))
 		return -EINVAL;
@@ -76,7 +76,7 @@ static int start_modem(struct modem *modem)
 
 static int stop_modem(struct modem *modem)
 {
-	struct sippymodem_slmodem_driver *driver = owner_from_modem(modem);
+	struct slmodem_driver *driver = owner_from_modem(modem);
 
 	if (driver == NULL)
 		return -EINVAL;
@@ -94,7 +94,7 @@ static int control_modem(
 		return -EINVAL;
 	switch (command) {
 	case MDMCTL_SPEED:
-		return argument == SIPPYMODEM_MEDIA_SAMPLE_RATE ? 0 : -EINVAL;
+		return argument == MEDIA_SAMPLE_RATE ? 0 : -EINVAL;
 	case MDMCTL_SETFMT:
 		return argument == MODEM_FORMAT ? 0 : -EINVAL;
 	case MDMCTL_SETFRAG:
@@ -117,10 +117,10 @@ static int control_modem(
 	}
 }
 
-bool sippymodem_slmodem_driver_init(
-	struct sippymodem_slmodem_driver *driver)
+bool slmodem_driver_init(
+	struct slmodem_driver *driver)
 {
-	const struct sippymodem_slmodem_driver initialized = {
+	const struct slmodem_driver initialized = {
 		.interface = {
 			.name = "sippymodem SIP media",
 			.start = start_modem,
@@ -135,8 +135,8 @@ bool sippymodem_slmodem_driver_init(
 	return true;
 }
 
-struct modem_driver *sippymodem_slmodem_driver_interface(
-	struct sippymodem_slmodem_driver *driver)
+struct modem_driver *slmodem_driver_interface(
+	struct slmodem_driver *driver)
 {
 	return driver != NULL && driver->interface.start == start_modem &&
 		       driver->interface.stop == stop_modem &&
@@ -145,12 +145,12 @@ struct modem_driver *sippymodem_slmodem_driver_interface(
 		       NULL;
 }
 
-bool sippymodem_slmodem_driver_attach(
-	struct sippymodem_slmodem_driver *driver,
+bool slmodem_driver_attach(
+	struct slmodem_driver *driver,
 	struct modem *modem,
 	struct sippymodem_host *host)
 {
-	if (sippymodem_slmodem_driver_interface(driver) == NULL ||
+	if (slmodem_driver_interface(driver) == NULL ||
 	    modem == NULL || host == NULL || driver->modem != NULL ||
 	    driver->host != NULL || modem->dev_data != NULL ||
 	    !modem_media_is_compatible(modem) ||
@@ -164,8 +164,8 @@ bool sippymodem_slmodem_driver_attach(
 	return true;
 }
 
-bool sippymodem_slmodem_driver_detach(
-	struct sippymodem_slmodem_driver *driver)
+bool slmodem_driver_detach(
+	struct slmodem_driver *driver)
 {
 	if (driver == NULL || driver->modem == NULL || driver->host == NULL ||
 	    driver->modem->dev_data != driver || driver->modem->started)
@@ -176,10 +176,10 @@ bool sippymodem_slmodem_driver_detach(
 	return true;
 }
 
-enum sippymodem_sip_signaling_result
-sippymodem_slmodem_driver_last_signaling_result(
-	const struct sippymodem_slmodem_driver *driver)
+enum sip_signaling_result
+slmodem_driver_last_signaling_result(
+	const struct slmodem_driver *driver)
 {
 	return driver != NULL ? driver->last_signaling_result :
-			      SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
+			      SIP_SIGNALING_INVALID_ARGUMENT;
 }

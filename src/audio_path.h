@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_AUDIO_PATH_H
-#define SIPPYMODEM_AUDIO_PATH_H
+#ifndef AUDIO_PATH_H
+#define AUDIO_PATH_H
 
 #include "config.h"
 #include "session.h"
@@ -9,50 +9,50 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum sippymodem_modem_core_result {
-	SIPPYMODEM_MODEM_CORE_OK,
-	SIPPYMODEM_MODEM_CORE_STOPPED,
-	SIPPYMODEM_MODEM_CORE_ERROR,
+enum modem_core_result {
+	MODEM_CORE_OK,
+	MODEM_CORE_STOPPED,
+	MODEM_CORE_ERROR,
 };
 
-struct sippymodem_modem_core {
+struct modem_core {
 	void *context;
 	/* Both sample buffers are writable scratch storage owned by the caller. */
-	enum sippymodem_modem_core_result (*process)(
+	enum modem_core_result (*process)(
 		void *context,
 		int16_t *receive_samples,
 		int16_t *transmit_samples,
 		size_t count);
 };
 
-enum sippymodem_audio_path_result {
-	SIPPYMODEM_AUDIO_PATH_OK,
-	SIPPYMODEM_AUDIO_PATH_MODEM_STOPPED,
-	SIPPYMODEM_AUDIO_PATH_INVALID_ARGUMENT,
-	SIPPYMODEM_AUDIO_PATH_PLAYOUT_ERROR,
-	SIPPYMODEM_AUDIO_PATH_MODEM_ERROR,
-	SIPPYMODEM_AUDIO_PATH_TRANSMIT_ERROR,
+enum audio_path_result {
+	AUDIO_PATH_OK,
+	AUDIO_PATH_MODEM_STOPPED,
+	AUDIO_PATH_INVALID_ARGUMENT,
+	AUDIO_PATH_PLAYOUT_ERROR,
+	AUDIO_PATH_MODEM_ERROR,
+	AUDIO_PATH_TRANSMIT_ERROR,
 };
 
-struct sippymodem_audio_path;
+struct audio_path;
 
-struct sippymodem_audio_path *sippymodem_audio_path_create(
+struct audio_path *audio_path_create(
 	struct sippymodem_session *session,
-	const struct sippymodem_media_config *config,
-	const struct sippymodem_recorder *recorder,
-	const struct sippymodem_modem_core *modem_core);
-void sippymodem_audio_path_destroy(struct sippymodem_audio_path *path);
+	const struct media_config *config,
+	const struct media_recorder *recorder,
+	const struct modem_core *modem_core);
+void audio_path_destroy(struct audio_path *path);
 
-size_t sippymodem_audio_path_frame_samples(
-	const struct sippymodem_audio_path *path);
-enum sippymodem_audio_path_result sippymodem_audio_path_process_frame(
-	struct sippymodem_audio_path *path);
+size_t audio_path_frame_samples(
+	const struct audio_path *path);
+enum audio_path_result audio_path_process_frame(
+	struct audio_path *path);
 
-enum sippymodem_media_result sippymodem_audio_path_last_media_result(
-	const struct sippymodem_audio_path *path);
-enum sippymodem_rtp_endpoint_result sippymodem_audio_path_last_rtp_result(
-	const struct sippymodem_audio_path *path);
-const char *sippymodem_audio_path_result_name(
-	enum sippymodem_audio_path_result result);
+enum media_result audio_path_last_media_result(
+	const struct audio_path *path);
+enum rtp_endpoint_result audio_path_last_rtp_result(
+	const struct audio_path *path);
+const char *audio_path_result_name(
+	enum audio_path_result result);
 
 #endif

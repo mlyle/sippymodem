@@ -12,15 +12,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct sippymodem_audio_path {
+struct audio_path {
 	struct sippymodem_session *session;
-	struct sippymodem_recorder recorder;
-	struct sippymodem_modem_core modem_core;
+	struct media_recorder recorder;
+	struct modem_core modem_core;
 	double receive_gain;
 	double transmit_gain;
 	size_t frame_samples;
-	enum sippymodem_media_result last_media_result;
-	enum sippymodem_rtp_endpoint_result last_rtp_result;
+	enum media_result last_media_result;
+	enum rtp_endpoint_result last_rtp_result;
 	int16_t samples[];
 };
 
@@ -48,13 +48,13 @@ static void apply_gain(int16_t *samples, size_t count, double gain)
 		samples[index] = apply_gain_to_sample(samples[index], gain);
 }
 
-struct sippymodem_audio_path *sippymodem_audio_path_create(
+struct audio_path *audio_path_create(
 	struct sippymodem_session *session,
-	const struct sippymodem_media_config *config,
-	const struct sippymodem_recorder *recorder,
-	const struct sippymodem_modem_core *modem_core)
+	const struct media_config *config,
+	const struct media_recorder *recorder,
+	const struct modem_core *modem_core)
 {
-	struct sippymodem_audio_path *path;
+	struct audio_path *path;
 	size_t frame_samples;
 	size_t allocation_size;
 
@@ -84,89 +84,89 @@ struct sippymodem_audio_path *sippymodem_audio_path_create(
 	return path;
 }
 
-void sippymodem_audio_path_destroy(struct sippymodem_audio_path *path)
+void audio_path_destroy(struct audio_path *path)
 {
 	free(path);
 }
 
-size_t sippymodem_audio_path_frame_samples(
-	const struct sippymodem_audio_path *path)
+size_t audio_path_frame_samples(
+	const struct audio_path *path)
 {
 	return path != NULL ? path->frame_samples : 0;
 }
 
-enum sippymodem_audio_path_result sippymodem_audio_path_process_frame(
-	struct sippymodem_audio_path *path)
+enum audio_path_result audio_path_process_frame(
+	struct audio_path *path)
 {
 	int16_t *receive_samples;
 	int16_t *transmit_samples;
-	enum sippymodem_modem_core_result core_result;
+	enum modem_core_result core_result;
 
 	if (path == NULL)
-		return SIPPYMODEM_AUDIO_PATH_INVALID_ARGUMENT;
+		return AUDIO_PATH_INVALID_ARGUMENT;
 	receive_samples = path->samples;
 	transmit_samples = path->samples + path->frame_samples;
 	path->last_media_result = sippymodem_session_play(
 		path->session, receive_samples, path->frame_samples, NULL);
-	if (path->last_media_result != SIPPYMODEM_MEDIA_OK)
-		return SIPPYMODEM_AUDIO_PATH_PLAYOUT_ERROR;
+	if (path->last_media_result != MEDIA_OK)
+		return AUDIO_PATH_PLAYOUT_ERROR;
 
 	apply_gain(receive_samples, path->frame_samples, path->receive_gain);
-	sippymodem_recording_emit(
-		&path->recorder, SIPPYMODEM_RECORD_RX_MODEM_PCM,
-		SIPPYMODEM_RECORD_S16_NATIVE, SIPPYMODEM_MEDIA_SAMPLE_RATE,
+	recording_emit(
+		&path->recorder, RECORD_RX_MODEM_PCM,
+		RECORD_S16_NATIVE, MEDIA_SAMPLE_RATE,
 		receive_samples, path->frame_samples);
 	memset(transmit_samples, 0,
 	       path->frame_samples * sizeof(transmit_samples[0]));
 	core_result = path->modem_core.process(
 		path->modem_core.context, receive_samples, transmit_samples,
 		path->frame_samples);
-	if (core_result == SIPPYMODEM_MODEM_CORE_STOPPED)
-		return SIPPYMODEM_AUDIO_PATH_MODEM_STOPPED;
-	if (core_result != SIPPYMODEM_MODEM_CORE_OK)
-		return SIPPYMODEM_AUDIO_PATH_MODEM_ERROR;
+	if (core_result == MODEM_CORE_STOPPED)
+		return AUDIO_PATH_MODEM_STOPPED;
+	if (core_result != MODEM_CORE_OK)
+		return AUDIO_PATH_MODEM_ERROR;
 
-	sippymodem_recording_emit(
-		&path->recorder, SIPPYMODEM_RECORD_TX_MODEM_PCM,
-		SIPPYMODEM_RECORD_S16_NATIVE, SIPPYMODEM_MEDIA_SAMPLE_RATE,
+	recording_emit(
+		&path->recorder, RECORD_TX_MODEM_PCM,
+		RECORD_S16_NATIVE, MEDIA_SAMPLE_RATE,
 		transmit_samples, path->frame_samples);
 	apply_gain(transmit_samples, path->frame_samples, path->transmit_gain);
 	path->last_rtp_result = sippymodem_session_send(
 		path->session, transmit_samples, path->frame_samples);
-	return path->last_rtp_result == SIPPYMODEM_RTP_ENDPOINT_OK ?
-		       SIPPYMODEM_AUDIO_PATH_OK :
-		       SIPPYMODEM_AUDIO_PATH_TRANSMIT_ERROR;
+	return path->last_rtp_result == RTP_ENDPOINT_OK ?
+		       AUDIO_PATH_OK :
+		       AUDIO_PATH_TRANSMIT_ERROR;
 }
 
-enum sippymodem_media_result sippymodem_audio_path_last_media_result(
-	const struct sippymodem_audio_path *path)
+enum media_result audio_path_last_media_result(
+	const struct audio_path *path)
 {
 	return path != NULL ? path->last_media_result :
-			      SIPPYMODEM_MEDIA_INVALID_ARGUMENT;
+			      MEDIA_INVALID_ARGUMENT;
 }
 
-enum sippymodem_rtp_endpoint_result sippymodem_audio_path_last_rtp_result(
-	const struct sippymodem_audio_path *path)
+enum rtp_endpoint_result audio_path_last_rtp_result(
+	const struct audio_path *path)
 {
 	return path != NULL ? path->last_rtp_result :
-			      SIPPYMODEM_RTP_ENDPOINT_INVALID_ARGUMENT;
+			      RTP_ENDPOINT_INVALID_ARGUMENT;
 }
 
-const char *sippymodem_audio_path_result_name(
-	enum sippymodem_audio_path_result result)
+const char *audio_path_result_name(
+	enum audio_path_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_AUDIO_PATH_OK:
+	case AUDIO_PATH_OK:
 		return "ok";
-	case SIPPYMODEM_AUDIO_PATH_MODEM_STOPPED:
+	case AUDIO_PATH_MODEM_STOPPED:
 		return "modem core stopped";
-	case SIPPYMODEM_AUDIO_PATH_INVALID_ARGUMENT:
+	case AUDIO_PATH_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_AUDIO_PATH_PLAYOUT_ERROR:
+	case AUDIO_PATH_PLAYOUT_ERROR:
 		return "RTP playout failed";
-	case SIPPYMODEM_AUDIO_PATH_MODEM_ERROR:
+	case AUDIO_PATH_MODEM_ERROR:
 		return "modem core failed";
-	case SIPPYMODEM_AUDIO_PATH_TRANSMIT_ERROR:
+	case AUDIO_PATH_TRANSMIT_ERROR:
 		return "RTP transmit failed";
 	}
 	return "unknown audio path result";

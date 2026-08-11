@@ -14,15 +14,15 @@ enum {
 };
 
 struct bridge_fixture {
-	struct sippymodem_rtp_jitter_slot slots[TEST_SLOTS];
-	struct sippymodem_rtp_stream stream;
-	struct sippymodem_rtp_endpoint endpoint;
-	struct sippymodem_sip_media_bridge bridge;
+	struct rtp_jitter_slot slots[TEST_SLOTS];
+	struct rtp_stream stream;
+	struct rtp_endpoint endpoint;
+	struct sip_media_bridge bridge;
 	uint8_t workspace[TEST_WORKSPACE];
 };
 
 struct callback_capture {
-	struct sippymodem_sip_media_bridge *bridge;
+	struct sip_media_bridge *bridge;
 	unsigned int ready;
 	unsigned int error;
 	unsigned int trace;
@@ -30,7 +30,7 @@ struct callback_capture {
 	unsigned int call;
 	unsigned int media;
 	bool observed_callback_depth;
-	enum sippymodem_sip_rtp_result observed_binding;
+	enum sip_rtp_result observed_binding;
 };
 
 static void capture_ready(void *context)
@@ -39,7 +39,7 @@ static void capture_ready(void *context)
 
 	capture->ready++;
 	capture->observed_callback_depth |=
-		sippymodem_sip_media_bridge_is_in_callback(capture->bridge);
+		sip_media_bridge_is_in_callback(capture->bridge);
 }
 
 #define DEFINE_CAPTURE(function_name, member, record_type)                   \
@@ -50,41 +50,41 @@ static void capture_ready(void *context)
 		(void)record;                                                   \
 		capture->member++;                                              \
 		capture->observed_callback_depth |=                              \
-			sippymodem_sip_media_bridge_is_in_callback(               \
+			sip_media_bridge_is_in_callback(               \
 				capture->bridge);                                  \
 	}
 
 DEFINE_CAPTURE(capture_error, error,
-	       struct sippymodem_sip_signaling_error)
+	       struct sip_signaling_error)
 DEFINE_CAPTURE(capture_trace, trace,
-	       struct sippymodem_sip_trace_record)
+	       struct sip_trace_record)
 DEFINE_CAPTURE(capture_registration, registration,
-	       struct sippymodem_sip_registration_event)
-DEFINE_CAPTURE(capture_call, call, struct sippymodem_sip_call_event)
+	       struct sip_registration_event)
+DEFINE_CAPTURE(capture_call, call, struct sip_call_event)
 
 #undef DEFINE_CAPTURE
 
 static void capture_media(
-	void *context, const struct sippymodem_sip_media_event *event)
+	void *context, const struct sip_media_event *event)
 {
 	struct callback_capture *capture = context;
 
 	(void)event;
 	capture->media++;
 	capture->observed_binding =
-		sippymodem_sip_media_bridge_last_binding(capture->bridge);
+		sip_media_bridge_last_binding(capture->bridge);
 	capture->observed_callback_depth |=
-		sippymodem_sip_media_bridge_is_in_callback(capture->bridge);
+		sip_media_bridge_is_in_callback(capture->bridge);
 }
 
 static bool open_fixture(struct bridge_fixture *fixture,
 			 struct callback_capture *capture)
 {
-	const struct sippymodem_rtp_stream_config stream_config = {
-		.codec = SIPPYMODEM_CODEC_PCMU,
+	const struct rtp_stream_config stream_config = {
+		.codec = MEDIA_CODEC_PCMU,
 		.payload_type = 0,
 	};
-	const struct sippymodem_rtp_endpoint_config endpoint_config = {
+	const struct rtp_endpoint_config endpoint_config = {
 		.learn_remote = true,
 		.symmetric_rtp = true,
 	};
@@ -92,7 +92,7 @@ static bool open_fixture(struct bridge_fixture *fixture,
 		.sin_family = AF_INET,
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
 	};
-	const struct sippymodem_sip_signaling_callbacks destination = {
+	const struct sip_signaling_callbacks destination = {
 		.context = capture,
 		.ready = capture_ready,
 		.error = capture_error,
@@ -103,15 +103,15 @@ static bool open_fixture(struct bridge_fixture *fixture,
 	};
 
 	memset(fixture, 0, sizeof(*fixture));
-	return sippymodem_rtp_stream_init(
+	return rtp_stream_init(
 		       &fixture->stream, &stream_config, fixture->slots,
 		       ARRAY_LENGTH(fixture->slots), fixture->workspace,
 		       sizeof(fixture->workspace)) &&
-	       sippymodem_rtp_endpoint_init(
+	       rtp_endpoint_init(
 		       &fixture->endpoint, &fixture->stream, &endpoint_config) &&
-	       sippymodem_rtp_endpoint_open(&fixture->endpoint, &local) ==
-		       SIPPYMODEM_RTP_ENDPOINT_OK &&
-	       sippymodem_sip_media_bridge_init(
+	       rtp_endpoint_open(&fixture->endpoint, &local) ==
+		       RTP_ENDPOINT_OK &&
+	       sip_media_bridge_init(
 		       &fixture->bridge, &fixture->endpoint, &destination);
 }
 
@@ -121,7 +121,7 @@ static bool remote_is(const struct bridge_fixture *fixture,
 	struct sockaddr_in remote;
 	bool learned = true;
 
-	return sippymodem_rtp_endpoint_transmit_remote(
+	return rtp_endpoint_transmit_remote(
 		       &fixture->endpoint, &remote, &learned) &&
 	       !learned && remote.sin_addr.s_addr == htonl(INADDR_LOOPBACK) &&
 	       remote.sin_port == htons((uint16_t)port);
@@ -131,17 +131,17 @@ static bool test_forwards_and_binds_before_media_callback(void)
 {
 	struct bridge_fixture fixture;
 	struct callback_capture capture = { 0 };
-	const struct sippymodem_sip_signaling_callbacks *source;
-	const struct sippymodem_sip_signaling_error error = { 0 };
-	const struct sippymodem_sip_trace_record trace = { 0 };
-	const struct sippymodem_sip_registration_event registration = { 0 };
-	const struct sippymodem_sip_call_event call = { 0 };
-	struct sippymodem_sip_media_event media = {
-		.state = SIPPYMODEM_SIP_MEDIA_CONFIGURED,
-		.remote_address_family = SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV4,
-		.codec = SIPPYMODEM_CODEC_PCMU,
+	const struct sip_signaling_callbacks *source;
+	const struct sip_signaling_error error = { 0 };
+	const struct sip_trace_record trace = { 0 };
+	const struct sip_registration_event registration = { 0 };
+	const struct sip_call_event call = { 0 };
+	struct sip_media_event media = {
+		.state = SIP_MEDIA_CONFIGURED,
+		.remote_address_family = SIP_MEDIA_ADDRESS_IPV4,
+		.codec = MEDIA_CODEC_PCMU,
 		.payload_type = 0,
-		.sample_rate = SIPPYMODEM_MEDIA_SAMPLE_RATE,
+		.sample_rate = MEDIA_SAMPLE_RATE,
 		.channels = 1,
 		.remote_address = "127.0.0.1",
 		.remote_port = 42000,
@@ -150,8 +150,8 @@ static bool test_forwards_and_binds_before_media_callback(void)
 	CHECK(open_fixture(&fixture, &capture), "could not open bridge fixture");
 	capture.bridge = &fixture.bridge;
 	media.local_port =
-		sippymodem_rtp_endpoint_local_port(&fixture.endpoint);
-	source = sippymodem_sip_media_bridge_callbacks(&fixture.bridge);
+		rtp_endpoint_local_port(&fixture.endpoint);
+	source = sip_media_bridge_callbacks(&fixture.bridge);
 	source->ready(source->context);
 	source->error(source->context, &error);
 	source->trace(source->context, &trace);
@@ -162,11 +162,11 @@ static bool test_forwards_and_binds_before_media_callback(void)
 		      capture.registration == 1 && capture.call == 1 &&
 		      capture.media == 1 && capture.observed_callback_depth,
 	      "bridge did not forward every signaling callback");
-	CHECK(capture.observed_binding == SIPPYMODEM_SIP_RTP_OK &&
+	CHECK(capture.observed_binding == SIP_RTP_OK &&
 		      remote_is(&fixture, 42000) &&
-		      sippymodem_sip_media_bridge_is_configured(
+		      sip_media_bridge_is_configured(
 			      &fixture.bridge) &&
-		      sippymodem_sip_media_bridge_binding_failures(
+		      sip_media_bridge_binding_failures(
 			      &fixture.bridge) == 0,
 	      "bridge did not bind RTP before forwarding media");
 
@@ -174,49 +174,49 @@ static bool test_forwards_and_binds_before_media_callback(void)
 	media.remote_port = 43000;
 	source->media_changed(source->context, &media);
 	CHECK(capture.observed_binding ==
-		      SIPPYMODEM_SIP_RTP_INCOMPATIBLE_MEDIA &&
+		      SIP_RTP_INCOMPATIBLE_MEDIA &&
 		      remote_is(&fixture, 42000) &&
-		      sippymodem_sip_media_bridge_is_configured(
+		      sip_media_bridge_is_configured(
 			      &fixture.bridge) &&
-		      sippymodem_sip_media_bridge_binding_failures(
+		      sip_media_bridge_binding_failures(
 			      &fixture.bridge) == 1,
 	      "failed media update changed the established peer");
-	sippymodem_sip_media_bridge_clear_media(&fixture.bridge);
+	sip_media_bridge_clear_media(&fixture.bridge);
 	CHECK(!remote_is(&fixture, 42000) &&
-		      !sippymodem_sip_media_bridge_is_configured(
+		      !sip_media_bridge_is_configured(
 			      &fixture.bridge),
 	      "explicit media reset retained negotiated state");
 	media.payload_type = 0;
 	media.remote_port = 42000;
 	source->media_changed(source->context, &media);
 	CHECK(remote_is(&fixture, 42000) &&
-		      sippymodem_sip_media_bridge_is_configured(&fixture.bridge),
+		      sip_media_bridge_is_configured(&fixture.bridge),
 	      "bridge did not rebind after an explicit reset");
-	media.state = SIPPYMODEM_SIP_MEDIA_INACTIVE;
+	media.state = SIP_MEDIA_INACTIVE;
 	source->media_changed(source->context, &media);
-	CHECK(sippymodem_sip_media_bridge_last_binding(&fixture.bridge) ==
-		      SIPPYMODEM_SIP_RTP_OK &&
+	CHECK(sip_media_bridge_last_binding(&fixture.bridge) ==
+		      SIP_RTP_OK &&
 		      !remote_is(&fixture, 42000) &&
-		      !sippymodem_sip_media_bridge_is_configured(
+		      !sip_media_bridge_is_configured(
 			      &fixture.bridge),
 	      "inactive media did not clear the established peer");
-	sippymodem_rtp_endpoint_close(&fixture.endpoint);
+	rtp_endpoint_close(&fixture.endpoint);
 	return true;
 }
 
 static bool test_validates_initialization(void)
 {
-	struct sippymodem_sip_media_bridge bridge;
-	struct sippymodem_rtp_endpoint endpoint = { 0 };
+	struct sip_media_bridge bridge;
+	struct rtp_endpoint endpoint = { 0 };
 
-	CHECK(!sippymodem_sip_media_bridge_init(NULL, &endpoint, NULL) &&
-		      !sippymodem_sip_media_bridge_init(&bridge, NULL, NULL) &&
-		      !sippymodem_sip_media_bridge_init(&bridge, &endpoint, NULL),
+	CHECK(!sip_media_bridge_init(NULL, &endpoint, NULL) &&
+		      !sip_media_bridge_init(&bridge, NULL, NULL) &&
+		      !sip_media_bridge_init(&bridge, &endpoint, NULL),
 	      "bridge accepted incomplete ownership");
-	CHECK(sippymodem_sip_media_bridge_callbacks(NULL) == NULL &&
-		      sippymodem_sip_media_bridge_last_binding(NULL) ==
-			      SIPPYMODEM_SIP_RTP_INVALID_ARGUMENT &&
-		      !sippymodem_sip_media_bridge_is_in_callback(NULL),
+	CHECK(sip_media_bridge_callbacks(NULL) == NULL &&
+		      sip_media_bridge_last_binding(NULL) ==
+			      SIP_RTP_INVALID_ARGUMENT &&
+		      !sip_media_bridge_is_in_callback(NULL),
 	      "bridge null accessors are inconsistent");
 	return true;
 }

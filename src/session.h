@@ -25,8 +25,8 @@ struct sippymodem_session;
 
 struct sippymodem_session *sippymodem_session_create(
 	const struct sippymodem_config *config,
-	const struct sippymodem_recorder *recorder,
-	const struct sippymodem_sip_signaling_callbacks *callbacks);
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks);
 /* Call destroy outside callbacks. close is callback-safe. */
 void sippymodem_session_destroy(struct sippymodem_session *session);
 
@@ -39,11 +39,11 @@ enum sippymodem_session_result sippymodem_session_step(
 	unsigned int signaling_timeout_ms,
 	size_t *datagrams_received);
 
-enum sippymodem_sip_signaling_result sippymodem_session_dial(
+enum sip_signaling_result sippymodem_session_dial(
 	struct sippymodem_session *session, const char *target);
-enum sippymodem_sip_signaling_result sippymodem_session_answer(
+enum sip_signaling_result sippymodem_session_answer(
 	struct sippymodem_session *session);
-enum sippymodem_sip_signaling_result sippymodem_session_hangup(
+enum sip_signaling_result sippymodem_session_hangup(
 	struct sippymodem_session *session);
 
 size_t sippymodem_session_frame_samples(
@@ -54,21 +54,21 @@ bool sippymodem_session_is_open(const struct sippymodem_session *session);
 bool sippymodem_session_media_is_configured(
 	const struct sippymodem_session *session);
 
-enum sippymodem_media_result sippymodem_session_play(
+enum media_result sippymodem_session_play(
 	struct sippymodem_session *session,
 	int16_t *samples,
 	size_t count,
-	struct sippymodem_rtp_playout_report *report);
-enum sippymodem_rtp_endpoint_result sippymodem_session_send(
+	struct rtp_playout_report *report);
+enum rtp_endpoint_result sippymodem_session_send(
 	struct sippymodem_session *session,
 	const int16_t *samples,
 	size_t count);
 
-enum sippymodem_sip_rtp_result sippymodem_session_last_media_binding(
+enum sip_rtp_result sippymodem_session_last_media_binding(
 	const struct sippymodem_session *session);
-enum sippymodem_sip_signaling_result sippymodem_session_last_signaling_result(
+enum sip_signaling_result sippymodem_session_last_signaling_result(
 	const struct sippymodem_session *session);
-enum sippymodem_rtp_endpoint_result sippymodem_session_last_rtp_result(
+enum rtp_endpoint_result sippymodem_session_last_rtp_result(
 	const struct sippymodem_session *session);
 const char *sippymodem_session_result_name(
 	enum sippymodem_session_result result);

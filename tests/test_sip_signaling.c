@@ -22,7 +22,7 @@ enum {
 };
 
 struct callback_capture {
-	struct sippymodem_sip_signaling *signaling;
+	struct sip_signaling *signaling;
 	unsigned int ready_count;
 	unsigned int error_count;
 	unsigned int trace_count;
@@ -33,23 +33,23 @@ struct callback_capture {
 	int last_error_status;
 	bool close_on_ready;
 	char last_error_operation[64];
-	enum sippymodem_sip_call_direction
+	enum sip_call_direction
 		call_directions[TEST_CALL_EVENTS];
-	enum sippymodem_sip_call_state call_states[TEST_CALL_EVENTS];
+	enum sip_call_state call_states[TEST_CALL_EVENTS];
 	unsigned int call_status_codes[TEST_CALL_EVENTS];
 	char call_reasons[TEST_CALL_EVENTS][32];
 	char call_remote_identities[TEST_CALL_EVENTS][128];
-	enum sippymodem_sip_media_state media_states[TEST_MEDIA_EVENTS];
-	enum sippymodem_sip_media_address_family
+	enum sip_media_state media_states[TEST_MEDIA_EVENTS];
+	enum sip_media_address_family
 		media_families[TEST_MEDIA_EVENTS];
-	enum sippymodem_media_codec media_codecs[TEST_MEDIA_EVENTS];
+	enum media_codec media_codecs[TEST_MEDIA_EVENTS];
 	unsigned int media_payload_types[TEST_MEDIA_EVENTS];
 	unsigned int media_sample_rates[TEST_MEDIA_EVENTS];
 	unsigned int media_channels[TEST_MEDIA_EVENTS];
 	unsigned int media_local_ports[TEST_MEDIA_EVENTS];
 	unsigned int media_remote_ports[TEST_MEDIA_EVENTS];
 	char media_remote_addresses[TEST_MEDIA_EVENTS][64];
-	enum sippymodem_sip_registration_state
+	enum sip_registration_state
 		registration_states[TEST_REGISTRATION_EVENTS];
 	unsigned int registration_status_codes[TEST_REGISTRATION_EVENTS];
 	int registration_library_statuses[TEST_REGISTRATION_EVENTS];
@@ -63,11 +63,11 @@ static void capture_ready(void *context)
 
 	capture->ready_count++;
 	if (capture->close_on_ready)
-		(void)sippymodem_sip_signaling_close(capture->signaling);
+		(void)sip_signaling_close(capture->signaling);
 }
 
 static void capture_error(
-	void *context, const struct sippymodem_sip_signaling_error *error)
+	void *context, const struct sip_signaling_error *error)
 {
 	struct callback_capture *capture = context;
 
@@ -78,19 +78,19 @@ static void capture_error(
 }
 
 static void capture_trace(
-	void *context, const struct sippymodem_sip_trace_record *record)
+	void *context, const struct sip_trace_record *record)
 {
 	struct callback_capture *capture = context;
 
 	if (record->data != NULL && record->size != 0)
 		capture->trace_count++;
-	if (record->origin == SIPPYMODEM_SIP_TRACE_ADAPTER)
+	if (record->origin == SIP_TRACE_ADAPTER)
 		capture->adapter_trace_count++;
 }
 
 static void capture_registration(
 	void *context,
-	const struct sippymodem_sip_registration_event *event)
+	const struct sip_registration_event *event)
 {
 	struct callback_capture *capture = context;
 	unsigned int index = capture->registration_count++;
@@ -107,7 +107,7 @@ static void capture_registration(
 }
 
 static void capture_call(
-	void *context, const struct sippymodem_sip_call_event *event)
+	void *context, const struct sip_call_event *event)
 {
 	struct callback_capture *capture = context;
 	unsigned int index = capture->call_count++;
@@ -126,7 +126,7 @@ static void capture_call(
 }
 
 static void capture_media(
-	void *context, const struct sippymodem_sip_media_event *event)
+	void *context, const struct sip_media_event *event)
 {
 	struct callback_capture *capture = context;
 	unsigned int index = capture->media_count++;
@@ -146,11 +146,11 @@ static void capture_media(
 		       event->remote_address != NULL ? event->remote_address : "");
 }
 
-static struct sippymodem_sip_signaling *create_signaling(
+static struct sip_signaling *create_signaling(
 	const struct sippymodem_config *config,
 	struct callback_capture *capture)
 {
-	struct sippymodem_sip_signaling_callbacks callbacks = {
+	struct sip_signaling_callbacks callbacks = {
 		.context = capture,
 		.ready = capture_ready,
 		.error = capture_error,
@@ -161,11 +161,11 @@ static struct sippymodem_sip_signaling *create_signaling(
 	};
 
 	capture->signaling =
-		sippymodem_sip_signaling_create(config, &callbacks);
+		sip_signaling_create(config, &callbacks);
 	return capture->signaling;
 }
 
-static struct sippymodem_sip_signaling *create_local_signaling(
+static struct sip_signaling *create_local_signaling(
 	struct callback_capture *capture)
 {
 	struct sippymodem_config config;
@@ -180,44 +180,44 @@ static struct sippymodem_sip_signaling *create_local_signaling(
 static bool test_local_transport_lifecycle(void)
 {
 	struct callback_capture capture = { 0 };
-	struct sippymodem_sip_signaling *signaling =
+	struct sip_signaling *signaling =
 		create_local_signaling(&capture);
-	enum sippymodem_sip_signaling_result result;
+	enum sip_signaling_result result;
 
 	CHECK(signaling != NULL, "could not allocate signaling context");
-	CHECK(!sippymodem_sip_signaling_is_open(signaling) &&
-		      sippymodem_sip_signaling_local_port(signaling) == 0 &&
-		      sippymodem_sip_signaling_call_state(signaling) ==
-			      SIPPYMODEM_SIP_CALL_IDLE &&
-		      sippymodem_sip_signaling_media_state(signaling) ==
-			      SIPPYMODEM_SIP_MEDIA_INACTIVE &&
-		      sippymodem_sip_signaling_registration_state(signaling) ==
-			      SIPPYMODEM_SIP_REGISTRATION_DISABLED,
+	CHECK(!sip_signaling_is_open(signaling) &&
+		      sip_signaling_local_port(signaling) == 0 &&
+		      sip_signaling_call_state(signaling) ==
+			      SIP_CALL_IDLE &&
+		      sip_signaling_media_state(signaling) ==
+			      SIP_MEDIA_INACTIVE &&
+		      sip_signaling_registration_state(signaling) ==
+			      SIP_REGISTRATION_DISABLED,
 	      "new signaling context is already open");
-	result = sippymodem_sip_signaling_open(signaling);
-	CHECK(result == SIPPYMODEM_SIP_SIGNALING_OK, "open failed: %s",
-	      sippymodem_sip_signaling_result_name(result));
-	CHECK(sippymodem_sip_signaling_is_open(signaling) &&
-		      sippymodem_sip_signaling_local_port(signaling) != 0,
+	result = sip_signaling_open(signaling);
+	CHECK(result == SIP_SIGNALING_OK, "open failed: %s",
+	      sip_signaling_result_name(result));
+	CHECK(sip_signaling_is_open(signaling) &&
+		      sip_signaling_local_port(signaling) != 0,
 	      "signaling transport did not bind a local port");
 	CHECK(capture.ready_count == 1 && capture.error_count == 0 &&
 		      capture.trace_count != 0 && capture.adapter_trace_count != 0,
 	      "open callbacks were wrong");
-	CHECK(sippymodem_sip_signaling_open(signaling) ==
-		      SIPPYMODEM_SIP_SIGNALING_OK &&
+	CHECK(sip_signaling_open(signaling) ==
+		      SIP_SIGNALING_OK &&
 		      capture.ready_count == 1,
 	      "idempotent open emitted another ready event");
-	CHECK(sippymodem_sip_signaling_step(signaling, 0) ==
-		      SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(sip_signaling_step(signaling, 0) ==
+		      SIP_SIGNALING_OK,
 	      "nonblocking signaling poll failed");
-	CHECK(sippymodem_sip_signaling_close(signaling) ==
-		      SIPPYMODEM_SIP_SIGNALING_OK &&
-		      !sippymodem_sip_signaling_is_open(signaling),
+	CHECK(sip_signaling_close(signaling) ==
+		      SIP_SIGNALING_OK &&
+		      !sip_signaling_is_open(signaling),
 	      "signaling close failed");
-	CHECK(sippymodem_sip_signaling_step(signaling, 0) ==
-		      SIPPYMODEM_SIP_SIGNALING_NOT_OPEN,
+	CHECK(sip_signaling_step(signaling, 0) ==
+		      SIP_SIGNALING_NOT_OPEN,
 	      "closed signaling context accepted polling");
-	sippymodem_sip_signaling_destroy(signaling);
+	sip_signaling_destroy(signaling);
 	return true;
 }
 
@@ -226,44 +226,44 @@ static bool test_singleton_and_account_boundary(void)
 	struct callback_capture first_capture = { 0 };
 	struct callback_capture second_capture = { 0 };
 	struct callback_capture account_capture = { 0 };
-	struct sippymodem_sip_signaling *first =
+	struct sip_signaling *first =
 		create_local_signaling(&first_capture);
-	struct sippymodem_sip_signaling *second =
+	struct sip_signaling *second =
 		create_local_signaling(&second_capture);
 	struct sippymodem_config account_config;
-	struct sippymodem_sip_signaling *account;
-	enum sippymodem_sip_signaling_result account_close_result =
-		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
-	enum sippymodem_sip_signaling_result account_open_result;
-	enum sippymodem_sip_signaling_result result;
+	struct sip_signaling *account;
+	enum sip_signaling_result account_close_result =
+		SIP_SIGNALING_NOT_OPEN;
+	enum sip_signaling_result account_open_result;
+	enum sip_signaling_result result;
 	bool identity_normalized = false;
 
 	CHECK(first != NULL && second != NULL, "could not allocate contexts");
-	CHECK(sippymodem_sip_signaling_open(first) ==
-		      SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(sip_signaling_open(first) ==
+		      SIP_SIGNALING_OK,
 	      "first signaling context did not open");
-	result = sippymodem_sip_signaling_open(second);
-	CHECK(result == SIPPYMODEM_SIP_SIGNALING_BUSY &&
+	result = sip_signaling_open(second);
+	CHECK(result == SIP_SIGNALING_BUSY &&
 		      second_capture.error_count == 1 &&
 		      second_capture.last_error_status != 0 &&
 		      strstr(second_capture.last_error_operation, "concurrent") != NULL,
 	      "concurrent signaling instance was not rejected cleanly");
 	second_capture.close_on_ready = true;
-	CHECK(sippymodem_sip_signaling_close(first) ==
-		      SIPPYMODEM_SIP_SIGNALING_OK &&
-		      sippymodem_sip_signaling_open(second) ==
-			      SIPPYMODEM_SIP_SIGNALING_OK &&
-		      !sippymodem_sip_signaling_is_open(second),
+	CHECK(sip_signaling_close(first) ==
+		      SIP_SIGNALING_OK &&
+		      sip_signaling_open(second) ==
+			      SIP_SIGNALING_OK &&
+		      !sip_signaling_is_open(second),
 	      "singleton ownership was not released");
-	sippymodem_sip_signaling_destroy(first);
-	sippymodem_sip_signaling_destroy(second);
+	sip_signaling_destroy(first);
+	sip_signaling_destroy(second);
 
 	sippymodem_config_init(&account_config);
 	account = create_signaling(&account_config, &account_capture);
 	CHECK(account != NULL, "could not allocate account boundary test");
-	account_open_result = sippymodem_sip_signaling_open(account);
-	sippymodem_sip_signaling_destroy(account);
-	CHECK(account_open_result == SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT,
+	account_open_result = sip_signaling_open(account);
+	sip_signaling_destroy(account);
+	CHECK(account_open_result == SIP_SIGNALING_INVALID_ARGUMENT,
 	      "registration without credentials was accepted");
 
 	memset(&account_capture, 0, sizeof(account_capture));
@@ -275,23 +275,23 @@ static bool test_singleton_and_account_boundary(void)
 		       "bob:p@ss:word@example.net");
 	account = create_signaling(&account_config, &account_capture);
 	CHECK(account != NULL, "could not allocate combined-login account");
-	account_open_result = sippymodem_sip_signaling_open(account);
-	if (account_open_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+	account_open_result = sip_signaling_open(account);
+	if (account_open_result == SIP_SIGNALING_OK) {
 		const char *identity =
-			sippymodem_sip_signaling_identity_uri(account);
+			sip_signaling_identity_uri(account);
 
 		identity_normalized = identity != NULL &&
 			strcmp(identity, "sip:bob@example.net") == 0;
 		account_close_result =
-			sippymodem_sip_signaling_close(account);
+			sip_signaling_close(account);
 	}
-	sippymodem_sip_signaling_destroy(account);
-	CHECK(account_open_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	sip_signaling_destroy(account);
+	CHECK(account_open_result == SIP_SIGNALING_OK,
 	      "combined-login account did not open: %s",
-	      sippymodem_sip_signaling_result_name(account_open_result));
+	      sip_signaling_result_name(account_open_result));
 	CHECK(identity_normalized,
 	      "combined login did not produce the normalized identity");
-	CHECK(account_close_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(account_close_result == SIP_SIGNALING_OK,
 	      "combined-login account did not close");
 	return true;
 }
@@ -815,13 +815,13 @@ static bool test_loopback_registration_lifecycle(void)
 	struct callback_capture capture = { 0 };
 	struct loopback_registrar registrar;
 	struct sippymodem_config config;
-	struct sippymodem_sip_signaling *signaling = NULL;
-	enum sippymodem_sip_signaling_result open_result =
-		SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
-	enum sippymodem_sip_signaling_result step_result =
-		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
-	enum sippymodem_sip_signaling_result close_result =
-		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	struct sip_signaling *signaling = NULL;
+	enum sip_signaling_result open_result =
+		SIP_SIGNALING_INVALID_ARGUMENT;
+	enum sip_signaling_result step_result =
+		SIP_SIGNALING_NOT_OPEN;
+	enum sip_signaling_result close_result =
+		SIP_SIGNALING_NOT_OPEN;
 	bool identity_normalized = false;
 	bool final_state_unregistered = false;
 	bool registrar_succeeded;
@@ -843,41 +843,41 @@ static bool test_loopback_registration_lifecycle(void)
 		       registrar.port);
 	signaling = create_signaling(&config, &capture);
 	if (signaling != NULL) {
-		open_result = sippymodem_sip_signaling_open(signaling);
-		if (open_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+		open_result = sip_signaling_open(signaling);
+		if (open_result == SIP_SIGNALING_OK) {
 			const char *identity =
-				sippymodem_sip_signaling_identity_uri(signaling);
+				sip_signaling_identity_uri(signaling);
 
 			identity_normalized = identity != NULL &&
 				strcmp(identity, "sip:alice@127.0.0.1") == 0;
-			step_result = SIPPYMODEM_SIP_SIGNALING_OK;
+			step_result = SIP_SIGNALING_OK;
 			for (unsigned int attempt = 0;
 			     attempt < 50 &&
-			     sippymodem_sip_signaling_registration_state(signaling) !=
-				     SIPPYMODEM_SIP_REGISTRATION_REGISTERED;
+			     sip_signaling_registration_state(signaling) !=
+				     SIP_REGISTRATION_REGISTERED;
 			     ++attempt) {
 				step_result =
-					sippymodem_sip_signaling_step(signaling, 20);
-				if (step_result != SIPPYMODEM_SIP_SIGNALING_OK)
+					sip_signaling_step(signaling, 20);
+				if (step_result != SIP_SIGNALING_OK)
 					break;
 			}
 			close_result =
-				sippymodem_sip_signaling_close(signaling);
+				sip_signaling_close(signaling);
 			final_state_unregistered =
-				sippymodem_sip_signaling_registration_state(
+				sip_signaling_registration_state(
 					signaling) ==
-				SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED;
+				SIP_REGISTRATION_UNREGISTERED;
 		}
-		sippymodem_sip_signaling_destroy(signaling);
+		sip_signaling_destroy(signaling);
 	}
 	registrar_succeeded = finish_loopback_registrar(&registrar);
 
 	CHECK(signaling != NULL, "could not allocate registered account");
-	CHECK(open_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(open_result == SIP_SIGNALING_OK,
 	      "registered account did not open: %s",
-	      sippymodem_sip_signaling_result_name(open_result));
+	      sip_signaling_result_name(open_result));
 	CHECK(identity_normalized, "registered identity was not normalized");
-	CHECK(step_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(step_result == SIP_SIGNALING_OK,
 	      "registration event polling failed");
 	CHECK(registrar_succeeded && registrar.request_count == 2 &&
 		      registrar.registration_received &&
@@ -887,13 +887,13 @@ static bool test_loopback_registration_lifecycle(void)
 	      "registration lifecycle emitted %u events",
 	      capture.registration_count);
 	CHECK(capture.registration_states[0] ==
-		      SIPPYMODEM_SIP_REGISTRATION_REGISTERING &&
+		      SIP_REGISTRATION_REGISTERING &&
 		      capture.registration_states[1] ==
-			      SIPPYMODEM_SIP_REGISTRATION_REGISTERED &&
+			      SIP_REGISTRATION_REGISTERED &&
 		      capture.registration_states[2] ==
-			      SIPPYMODEM_SIP_REGISTRATION_UNREGISTERING &&
+			      SIP_REGISTRATION_UNREGISTERING &&
 		      capture.registration_states[3] ==
-			      SIPPYMODEM_SIP_REGISTRATION_UNREGISTERED,
+			      SIP_REGISTRATION_UNREGISTERED,
 	      "registration lifecycle event order was wrong");
 	CHECK(capture.registration_status_codes[1] == 200 &&
 		      capture.registration_status_codes[3] == 200 &&
@@ -903,12 +903,12 @@ static bool test_loopback_registration_lifecycle(void)
 		      capture.registration_expirations[3] == 0 &&
 		      strcmp(capture.registration_reasons[1], "OK") == 0,
 	      "registration result details were wrong");
-	CHECK(close_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(close_result == SIP_SIGNALING_OK,
 	      "registered account did not close");
 	CHECK(final_state_unregistered,
 	      "graceful close did not retain the unregistered state");
-	CHECK(strcmp(sippymodem_sip_registration_state_name(
-			     SIPPYMODEM_SIP_REGISTRATION_REGISTERED),
+	CHECK(strcmp(sip_registration_state_name(
+			     SIP_REGISTRATION_REGISTERED),
 		     "registered") == 0,
 	      "registration state name was wrong");
 	return true;
@@ -919,21 +919,21 @@ static bool test_outgoing_call_lifecycle(void)
 	struct callback_capture capture = { 0 };
 	struct loopback_call_peer peer;
 	struct sippymodem_config config;
-	struct sippymodem_sip_signaling *signaling = NULL;
-	enum sippymodem_sip_signaling_result open_result =
-		SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
-	enum sippymodem_sip_signaling_result invalid_dial_result =
-		SIPPYMODEM_SIP_SIGNALING_OK;
-	enum sippymodem_sip_signaling_result no_call_result =
-		SIPPYMODEM_SIP_SIGNALING_OK;
-	enum sippymodem_sip_signaling_result dial_result =
-		SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT;
-	enum sippymodem_sip_signaling_result duplicate_dial_result =
-		SIPPYMODEM_SIP_SIGNALING_OK;
-	enum sippymodem_sip_signaling_result hangup_result =
-		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
-	enum sippymodem_sip_signaling_result close_result =
-		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	struct sip_signaling *signaling = NULL;
+	enum sip_signaling_result open_result =
+		SIP_SIGNALING_INVALID_ARGUMENT;
+	enum sip_signaling_result invalid_dial_result =
+		SIP_SIGNALING_OK;
+	enum sip_signaling_result no_call_result =
+		SIP_SIGNALING_OK;
+	enum sip_signaling_result dial_result =
+		SIP_SIGNALING_INVALID_ARGUMENT;
+	enum sip_signaling_result duplicate_dial_result =
+		SIP_SIGNALING_OK;
+	enum sip_signaling_result hangup_result =
+		SIP_SIGNALING_NO_CALL;
+	enum sip_signaling_result close_result =
+		SIP_SIGNALING_NOT_OPEN;
 	bool peer_succeeded;
 	bool final_state_idle = false;
 
@@ -952,58 +952,58 @@ static bool test_outgoing_call_lifecycle(void)
 	config.media.frame_duration_ms = 20;
 	signaling = create_signaling(&config, &capture);
 	if (signaling != NULL) {
-		open_result = sippymodem_sip_signaling_open(signaling);
-		if (open_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+		open_result = sip_signaling_open(signaling);
+		if (open_result == SIP_SIGNALING_OK) {
 			no_call_result =
-				sippymodem_sip_signaling_hangup(signaling);
-			invalid_dial_result = sippymodem_sip_signaling_dial(
+				sip_signaling_hangup(signaling);
+			invalid_dial_result = sip_signaling_dial(
 				signaling, "bad\r\ntarget");
 			dial_result =
-				sippymodem_sip_signaling_dial(signaling, NULL);
-			if (dial_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+				sip_signaling_dial(signaling, NULL);
+			if (dial_result == SIP_SIGNALING_OK) {
 				duplicate_dial_result =
-					sippymodem_sip_signaling_dial(
+					sip_signaling_dial(
 						signaling, "ignored");
 				for (unsigned int attempt = 0;
 				     attempt < 50 &&
-				     sippymodem_sip_signaling_call_state(
+				     sip_signaling_call_state(
 					     signaling) !=
-					     SIPPYMODEM_SIP_CALL_EARLY;
+					     SIP_CALL_EARLY;
 				     ++attempt)
-					(void)sippymodem_sip_signaling_step(
+					(void)sip_signaling_step(
 						signaling, 20);
 				hangup_result =
-					sippymodem_sip_signaling_hangup(signaling);
+					sip_signaling_hangup(signaling);
 			}
 		}
 	}
 	peer_succeeded = finish_loopback_call(&peer);
 	if (signaling != NULL) {
-		if (sippymodem_sip_signaling_is_open(signaling)) {
-			(void)sippymodem_sip_signaling_step(signaling, 0);
+		if (sip_signaling_is_open(signaling)) {
+			(void)sip_signaling_step(signaling, 0);
 			final_state_idle =
-				sippymodem_sip_signaling_call_state(signaling) ==
-				SIPPYMODEM_SIP_CALL_IDLE;
+				sip_signaling_call_state(signaling) ==
+				SIP_CALL_IDLE;
 			close_result =
-				sippymodem_sip_signaling_close(signaling);
+				sip_signaling_close(signaling);
 		}
-		sippymodem_sip_signaling_destroy(signaling);
+		sip_signaling_destroy(signaling);
 	}
 
 	CHECK(signaling != NULL, "could not allocate outgoing call context");
-	CHECK(open_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(open_result == SIP_SIGNALING_OK,
 	      "outgoing call context did not open: %s",
-	      sippymodem_sip_signaling_result_name(open_result));
-	CHECK(invalid_dial_result == SIPPYMODEM_SIP_SIGNALING_INVALID_ARGUMENT,
+	      sip_signaling_result_name(open_result));
+	CHECK(invalid_dial_result == SIP_SIGNALING_INVALID_ARGUMENT,
 	      "unsafe call target was accepted");
-	CHECK(no_call_result == SIPPYMODEM_SIP_SIGNALING_NO_CALL,
+	CHECK(no_call_result == SIP_SIGNALING_NO_CALL,
 	      "idle signaling context accepted hangup");
-	CHECK(dial_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(dial_result == SIP_SIGNALING_OK,
 	      "configured call target was not dialed: %s",
-	      sippymodem_sip_signaling_result_name(dial_result));
-	CHECK(duplicate_dial_result == SIPPYMODEM_SIP_SIGNALING_CALL_ACTIVE,
+	      sip_signaling_result_name(dial_result));
+	CHECK(duplicate_dial_result == SIP_SIGNALING_CALL_ACTIVE,
 	      "a second simultaneous call was accepted");
-	CHECK(hangup_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(hangup_result == SIP_SIGNALING_OK,
 	      "outgoing call did not hang up");
 	CHECK(peer_succeeded && peer.invite_received && peer.target_received &&
 		      peer.modem_sdp_received && peer.cancel_received,
@@ -1011,25 +1011,25 @@ static bool test_outgoing_call_lifecycle(void)
 	CHECK(capture.media_count == 0,
 	      "provisional outgoing call configured media prematurely");
 	CHECK(capture.call_count == 3 &&
-		      capture.call_states[0] == SIPPYMODEM_SIP_CALL_DIALING &&
-		      capture.call_states[1] == SIPPYMODEM_SIP_CALL_EARLY &&
-		      capture.call_states[2] == SIPPYMODEM_SIP_CALL_IDLE,
+		      capture.call_states[0] == SIP_CALL_DIALING &&
+		      capture.call_states[1] == SIP_CALL_EARLY &&
+		      capture.call_states[2] == SIP_CALL_IDLE,
 	      "outgoing call lifecycle event order was wrong");
 	CHECK(capture.call_directions[0] ==
-		      SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING &&
+		      SIP_CALL_DIRECTION_OUTGOING &&
 		      capture.call_directions[1] ==
-			      SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING &&
+			      SIP_CALL_DIRECTION_OUTGOING &&
 		      capture.call_directions[2] ==
-			      SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING &&
+			      SIP_CALL_DIRECTION_OUTGOING &&
 		      capture.call_status_codes[1] == 180 &&
 		      strcmp(capture.call_reasons[1], "Ringing") == 0 &&
 		      strstr(capture.call_remote_identities[1],
 			     "sip:bob@127.0.0.1:") != NULL,
 	      "outgoing call event details were wrong");
-	CHECK(final_state_idle && close_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(final_state_idle && close_result == SIP_SIGNALING_OK,
 	      "outgoing call context did not return to idle and close");
-	CHECK(strcmp(sippymodem_sip_call_state_name(
-			     SIPPYMODEM_SIP_CALL_DIALING),
+	CHECK(strcmp(sip_call_state_name(
+			     SIP_CALL_DIALING),
 		     "dialing") == 0,
 	      "call state name was wrong");
 	return true;
@@ -1040,16 +1040,16 @@ static bool test_incoming_call_lifecycle(void)
 	struct callback_capture capture = { 0 };
 	struct loopback_incoming_peer peer;
 	struct sippymodem_config config;
-	struct sippymodem_sip_signaling *signaling;
-	enum sippymodem_sip_signaling_result open_result;
-	enum sippymodem_sip_signaling_result answer_result =
-		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
-	enum sippymodem_sip_signaling_result second_answer_result =
-		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
-	enum sippymodem_sip_signaling_result hangup_result =
-		SIPPYMODEM_SIP_SIGNALING_NO_CALL;
-	enum sippymodem_sip_signaling_result close_result =
-		SIPPYMODEM_SIP_SIGNALING_NOT_OPEN;
+	struct sip_signaling *signaling;
+	enum sip_signaling_result open_result;
+	enum sip_signaling_result answer_result =
+		SIP_SIGNALING_NO_CALL;
+	enum sip_signaling_result second_answer_result =
+		SIP_SIGNALING_NO_CALL;
+	enum sip_signaling_result hangup_result =
+		SIP_SIGNALING_NO_CALL;
+	enum sip_signaling_result close_result =
+		SIP_SIGNALING_NOT_OPEN;
 	bool peer_started = false;
 	bool peer_succeeded = false;
 	bool connected = false;
@@ -1065,72 +1065,72 @@ static bool test_incoming_call_lifecycle(void)
 	config.media.rtp_listen_port = TEST_MODEM_RTP_PORT;
 	signaling = create_signaling(&config, &capture);
 	CHECK(signaling != NULL, "could not allocate incoming call context");
-	open_result = sippymodem_sip_signaling_open(signaling);
-	if (open_result == SIPPYMODEM_SIP_SIGNALING_OK) {
+	open_result = sip_signaling_open(signaling);
+	if (open_result == SIP_SIGNALING_OK) {
 		peer_started = start_incoming_call(
-			&peer, sippymodem_sip_signaling_local_port(signaling));
+			&peer, sip_signaling_local_port(signaling));
 		if (peer_started) {
 			for (unsigned int attempt = 0;
 			     attempt < 50 &&
-			     sippymodem_sip_signaling_call_state(signaling) !=
-				     SIPPYMODEM_SIP_CALL_EARLY;
+			     sip_signaling_call_state(signaling) !=
+				     SIP_CALL_EARLY;
 			     ++attempt)
-				(void)sippymodem_sip_signaling_step(signaling, 20);
+				(void)sip_signaling_step(signaling, 20);
 			answer_result =
-				sippymodem_sip_signaling_answer(signaling);
-			if (answer_result == SIPPYMODEM_SIP_SIGNALING_OK)
+				sip_signaling_answer(signaling);
+			if (answer_result == SIP_SIGNALING_OK)
 				second_answer_result =
-					sippymodem_sip_signaling_answer(signaling);
+					sip_signaling_answer(signaling);
 			for (unsigned int attempt = 0;
 			     attempt < 50 &&
-			     sippymodem_sip_signaling_call_state(signaling) !=
-				     SIPPYMODEM_SIP_CALL_CONNECTED;
+			     sip_signaling_call_state(signaling) !=
+				     SIP_CALL_CONNECTED;
 			     ++attempt)
-				(void)sippymodem_sip_signaling_step(signaling, 20);
+				(void)sip_signaling_step(signaling, 20);
 			connected =
-				sippymodem_sip_signaling_call_state(signaling) ==
-				SIPPYMODEM_SIP_CALL_CONNECTED;
+				sip_signaling_call_state(signaling) ==
+				SIP_CALL_CONNECTED;
 			peer_succeeded = finish_incoming_call(&peer);
-			if (sippymodem_sip_signaling_call_state(signaling) !=
-			    SIPPYMODEM_SIP_CALL_IDLE)
+			if (sip_signaling_call_state(signaling) !=
+			    SIP_CALL_IDLE)
 				hangup_result =
-					sippymodem_sip_signaling_hangup(signaling);
+					sip_signaling_hangup(signaling);
 			final_state_idle =
-				sippymodem_sip_signaling_call_state(signaling) ==
-				SIPPYMODEM_SIP_CALL_IDLE;
+				sip_signaling_call_state(signaling) ==
+				SIP_CALL_IDLE;
 			final_media_inactive =
-				sippymodem_sip_signaling_media_state(signaling) ==
-				SIPPYMODEM_SIP_MEDIA_INACTIVE;
+				sip_signaling_media_state(signaling) ==
+				SIP_MEDIA_INACTIVE;
 		}
-		close_result = sippymodem_sip_signaling_close(signaling);
+		close_result = sip_signaling_close(signaling);
 	}
-	sippymodem_sip_signaling_destroy(signaling);
+	sip_signaling_destroy(signaling);
 
-	CHECK(open_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(open_result == SIP_SIGNALING_OK,
 	      "incoming call context did not open: %s",
-	      sippymodem_sip_signaling_result_name(open_result));
+	      sip_signaling_result_name(open_result));
 	CHECK(peer_started && peer_succeeded && peer.invite_sent &&
 		      peer.ringing_received && peer.answer_received &&
 		      peer.modem_sdp_received && peer.ack_sent,
 	      "loopback peer did not complete the incoming dialog");
-	CHECK(answer_result == SIPPYMODEM_SIP_SIGNALING_OK &&
-		      second_answer_result == SIPPYMODEM_SIP_SIGNALING_OK &&
+	CHECK(answer_result == SIP_SIGNALING_OK &&
+		      second_answer_result == SIP_SIGNALING_OK &&
 		      connected,
 	      "incoming call did not connect after answer");
-	CHECK(hangup_result == SIPPYMODEM_SIP_SIGNALING_OK && final_state_idle,
+	CHECK(hangup_result == SIP_SIGNALING_OK && final_state_idle,
 	      "incoming call did not return to idle after hangup");
 	CHECK(capture.media_count == 2 &&
 		      capture.media_states[0] ==
-			      SIPPYMODEM_SIP_MEDIA_CONFIGURED &&
-		      capture.media_states[1] == SIPPYMODEM_SIP_MEDIA_INACTIVE &&
+			      SIP_MEDIA_CONFIGURED &&
+		      capture.media_states[1] == SIP_MEDIA_INACTIVE &&
 		      capture.media_families[0] ==
-			      SIPPYMODEM_SIP_MEDIA_ADDRESS_IPV4 &&
+			      SIP_MEDIA_ADDRESS_IPV4 &&
 		      capture.media_families[1] ==
-			      SIPPYMODEM_SIP_MEDIA_ADDRESS_UNSPECIFIED &&
-		      capture.media_codecs[0] == SIPPYMODEM_CODEC_PCMU &&
+			      SIP_MEDIA_ADDRESS_UNSPECIFIED &&
+		      capture.media_codecs[0] == MEDIA_CODEC_PCMU &&
 		      capture.media_payload_types[0] == 0 &&
 		      capture.media_sample_rates[0] ==
-			      SIPPYMODEM_MEDIA_SAMPLE_RATE &&
+			      MEDIA_SAMPLE_RATE &&
 		      capture.media_channels[0] == 1 &&
 		      capture.media_local_ports[0] == TEST_MODEM_RTP_PORT &&
 		      capture.media_remote_ports[0] == TEST_REMOTE_RTP_PORT &&
@@ -1142,26 +1142,26 @@ static bool test_incoming_call_lifecycle(void)
 	      "incoming media endpoint lifecycle was wrong");
 	CHECK(capture.call_count == 4 &&
 		      capture.call_states[0] ==
-			      SIPPYMODEM_SIP_CALL_INCOMING_PENDING &&
-		      capture.call_states[1] == SIPPYMODEM_SIP_CALL_EARLY &&
-		      capture.call_states[2] == SIPPYMODEM_SIP_CALL_CONNECTED &&
-		      capture.call_states[3] == SIPPYMODEM_SIP_CALL_IDLE,
+			      SIP_CALL_INCOMING_PENDING &&
+		      capture.call_states[1] == SIP_CALL_EARLY &&
+		      capture.call_states[2] == SIP_CALL_CONNECTED &&
+		      capture.call_states[3] == SIP_CALL_IDLE,
 	      "incoming call lifecycle event order was wrong");
 	CHECK(capture.call_directions[0] ==
-		      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+		      SIP_CALL_DIRECTION_INCOMING &&
 		      capture.call_directions[1] ==
-			      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+			      SIP_CALL_DIRECTION_INCOMING &&
 		      capture.call_directions[2] ==
-			      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+			      SIP_CALL_DIRECTION_INCOMING &&
 		      capture.call_directions[3] ==
-			      SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
+			      SIP_CALL_DIRECTION_INCOMING &&
 		      strstr(capture.call_remote_identities[0],
 			     "sip:caller@127.0.0.1") != NULL,
 	      "incoming call event details were wrong");
-	CHECK(close_result == SIPPYMODEM_SIP_SIGNALING_OK,
+	CHECK(close_result == SIP_SIGNALING_OK,
 	      "incoming call context did not close");
-	CHECK(strcmp(sippymodem_sip_media_state_name(
-			     SIPPYMODEM_SIP_MEDIA_CONFIGURED),
+	CHECK(strcmp(sip_media_state_name(
+			     SIP_MEDIA_CONFIGURED),
 		     "configured") == 0,
 	      "media state name was wrong");
 	return true;

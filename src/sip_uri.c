@@ -72,7 +72,7 @@ static bool contact_user_is_valid(const char *user)
 	return true;
 }
 
-static enum sippymodem_sip_uri_result copy_parts(
+static enum sip_uri_result copy_parts(
 	char *output, size_t capacity, const char *const *parts,
 	size_t part_count)
 {
@@ -83,7 +83,7 @@ static enum sippymodem_sip_uri_result copy_parts(
 
 		if (total >= capacity || length >= capacity - total) {
 			output[0] = '\0';
-			return SIPPYMODEM_SIP_URI_TOO_LONG;
+			return SIP_URI_TOO_LONG;
 		}
 		total += length;
 	}
@@ -96,10 +96,10 @@ static enum sippymodem_sip_uri_result copy_parts(
 		total += length;
 	}
 	output[total] = '\0';
-	return SIPPYMODEM_SIP_URI_OK;
+	return SIP_URI_OK;
 }
 
-enum sippymodem_sip_uri_result sippymodem_sip_uri_format_target(
+enum sip_uri_result sip_uri_format_target(
 	char *output, size_t capacity, const char *dial_string,
 	const char *configured_target, const char *domain)
 {
@@ -109,35 +109,35 @@ enum sippymodem_sip_uri_result sippymodem_sip_uri_format_target(
 	size_t part_count;
 
 	if (output == NULL || capacity == 0)
-		return SIPPYMODEM_SIP_URI_INVALID_ARGUMENT;
+		return SIP_URI_INVALID_ARGUMENT;
 	output[0] = '\0';
 	target = configured_target;
 	if (dial_string != NULL && dial_string[0] != '\0')
 		target = dial_string;
 	if (target == NULL || target[0] == '\0')
-		return SIPPYMODEM_SIP_URI_NOT_CONFIGURED;
+		return SIP_URI_NOT_CONFIGURED;
 	if (!text_is_header_safe(target))
-		return SIPPYMODEM_SIP_URI_INVALID_TEXT;
+		return SIP_URI_INVALID_TEXT;
 
 	if (starts_with_ignoring_case(target, "sip:") ||
 	    starts_with_ignoring_case(target, "sips:")) {
 		const char *colon = strchr(target, ':');
 
 		if (colon[1] == '\0')
-			return SIPPYMODEM_SIP_URI_INVALID_TEXT;
+			return SIP_URI_INVALID_TEXT;
 		parts[0] = target;
 		part_count = 1;
 	} else if ((at = strchr(target, '@')) != NULL) {
 		if (at == target || at[1] == '\0' || strchr(at + 1, '@') != NULL)
-			return SIPPYMODEM_SIP_URI_INVALID_TEXT;
+			return SIP_URI_INVALID_TEXT;
 		parts[0] = "sip:";
 		parts[1] = target;
 		part_count = 2;
 	} else {
 		if (domain == NULL || domain[0] == '\0')
-			return SIPPYMODEM_SIP_URI_MISSING_DOMAIN;
+			return SIP_URI_MISSING_DOMAIN;
 		if (!text_is_header_safe(domain))
-			return SIPPYMODEM_SIP_URI_INVALID_TEXT;
+			return SIP_URI_INVALID_TEXT;
 		parts[0] = "sip:";
 		parts[1] = target;
 		parts[2] = "@";
@@ -182,7 +182,7 @@ static bool contact_host_is_valid(const char *host, bool *is_bracketed)
 	return !*is_bracketed && hostname_is_valid(address);
 }
 
-enum sippymodem_sip_uri_result sippymodem_sip_uri_format_contact(
+enum sip_uri_result sip_uri_format_contact(
 	char *output, size_t capacity, const char *user,
 	const char *public_address, uint16_t port)
 {
@@ -192,17 +192,17 @@ enum sippymodem_sip_uri_result sippymodem_sip_uri_format_contact(
 	size_t part_count = 0;
 
 	if (output == NULL || capacity == 0)
-		return SIPPYMODEM_SIP_URI_INVALID_ARGUMENT;
+		return SIP_URI_INVALID_ARGUMENT;
 	output[0] = '\0';
 	if (user == NULL || user[0] == '\0' || public_address == NULL ||
 	    public_address[0] == '\0')
-		return SIPPYMODEM_SIP_URI_NOT_CONFIGURED;
+		return SIP_URI_NOT_CONFIGURED;
 	if (port == 0)
-		return SIPPYMODEM_SIP_URI_INVALID_ARGUMENT;
+		return SIP_URI_INVALID_ARGUMENT;
 	if (!text_is_header_safe(user) || !text_is_header_safe(public_address) ||
 	    !contact_user_is_valid(user) ||
 	    !contact_host_is_valid(public_address, &bracketed))
-		return SIPPYMODEM_SIP_URI_INVALID_TEXT;
+		return SIP_URI_INVALID_TEXT;
 
 	(void)snprintf(port_text, sizeof(port_text), "%u", (unsigned int)port);
 	parts[part_count++] = "sip:";
@@ -219,21 +219,21 @@ enum sippymodem_sip_uri_result sippymodem_sip_uri_format_contact(
 	return copy_parts(output, capacity, parts, part_count);
 }
 
-const char *sippymodem_sip_uri_result_name(
-	enum sippymodem_sip_uri_result result)
+const char *sip_uri_result_name(
+	enum sip_uri_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_SIP_URI_OK:
+	case SIP_URI_OK:
 		return "ok";
-	case SIPPYMODEM_SIP_URI_NOT_CONFIGURED:
+	case SIP_URI_NOT_CONFIGURED:
 		return "not configured";
-	case SIPPYMODEM_SIP_URI_INVALID_ARGUMENT:
+	case SIP_URI_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_SIP_URI_INVALID_TEXT:
+	case SIP_URI_INVALID_TEXT:
 		return "invalid URI text";
-	case SIPPYMODEM_SIP_URI_MISSING_DOMAIN:
+	case SIP_URI_MISSING_DOMAIN:
 		return "missing SIP domain";
-	case SIPPYMODEM_SIP_URI_TOO_LONG:
+	case SIP_URI_TOO_LONG:
 		return "URI is too long";
 	}
 	return "unknown URI result";

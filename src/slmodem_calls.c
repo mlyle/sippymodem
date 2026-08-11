@@ -7,32 +7,32 @@
 #include <string.h>
 
 static void capture_call(
-	void *context, const struct sippymodem_sip_call_event *event)
+	void *context, const struct sip_call_event *event)
 {
-	struct sippymodem_slmodem_calls *calls = context;
+	struct slmodem_calls *calls = context;
 	unsigned int tail;
 
 	if (calls == NULL || event == NULL)
 		return;
-	if (calls->pending_count == SIPPYMODEM_SLMODEM_CALL_EVENT_CAPACITY) {
+	if (calls->pending_count == SLMODEM_CALL_EVENT_CAPACITY) {
 		calls->overflowed = true;
 		calls->pending_head = 0;
 		calls->pending_count = 0;
 		/* Never let overflow hide the terminal state. */
-		if (event->state != SIPPYMODEM_SIP_CALL_IDLE)
+		if (event->state != SIP_CALL_IDLE)
 			return;
 	}
 	tail = (calls->pending_head + calls->pending_count) %
-	       SIPPYMODEM_SLMODEM_CALL_EVENT_CAPACITY;
+	       SLMODEM_CALL_EVENT_CAPACITY;
 	calls->pending[tail].direction = event->direction;
 	calls->pending[tail].state = event->state;
 	calls->pending_count++;
 }
 
-bool sippymodem_slmodem_calls_init(
-	struct sippymodem_slmodem_calls *calls, struct modem *modem)
+bool slmodem_calls_init(
+	struct slmodem_calls *calls, struct modem *modem)
 {
-	struct sippymodem_slmodem_calls initialized;
+	struct slmodem_calls initialized;
 
 	if (calls == NULL || modem == NULL)
 		return false;
@@ -44,79 +44,79 @@ bool sippymodem_slmodem_calls_init(
 	return true;
 }
 
-const struct sippymodem_sip_signaling_callbacks *
-sippymodem_slmodem_calls_callbacks(
-	const struct sippymodem_slmodem_calls *calls)
+const struct sip_signaling_callbacks *
+slmodem_calls_callbacks(
+	const struct slmodem_calls *calls)
 {
 	return calls != NULL && calls->callbacks.call_changed == capture_call ?
 		       &calls->callbacks :
 		       NULL;
 }
 
-enum sippymodem_slmodem_calls_result sippymodem_slmodem_calls_drain(
-	struct sippymodem_slmodem_calls *calls)
+enum slmodem_calls_result slmodem_calls_drain(
+	struct slmodem_calls *calls)
 {
-	struct sippymodem_slmodem_call_transition transition;
+	struct slmodem_call_transition transition;
 	int result = 0;
 
 	if (calls == NULL || calls->modem == NULL)
-		return SIPPYMODEM_SLMODEM_CALLS_INVALID_ARGUMENT;
+		return SLMODEM_CALLS_INVALID_ARGUMENT;
 	if (calls->overflowed) {
 		calls->overflowed = false;
-		return SIPPYMODEM_SLMODEM_CALLS_EVENT_OVERFLOW;
+		return SLMODEM_CALLS_EVENT_OVERFLOW;
 	}
 	if (calls->pending_count == 0)
-		return SIPPYMODEM_SLMODEM_CALLS_IDLE;
+		return SLMODEM_CALLS_IDLE;
 	transition = calls->pending[calls->pending_head];
 	calls->pending_head = (calls->pending_head + 1) %
-			      SIPPYMODEM_SLMODEM_CALL_EVENT_CAPACITY;
+			      SLMODEM_CALL_EVENT_CAPACITY;
 	calls->pending_count--;
 
-	if (transition.direction != SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
-	    transition.direction != SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING)
-		return SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT;
+	if (transition.direction != SIP_CALL_DIRECTION_INCOMING &&
+	    transition.direction != SIP_CALL_DIRECTION_OUTGOING)
+		return SLMODEM_CALLS_INVALID_EVENT;
 	switch (transition.state) {
-	case SIPPYMODEM_SIP_CALL_IDLE:
+	case SIP_CALL_IDLE:
 		result = modem_report_remote_call_end(calls->modem);
 		break;
-	case SIPPYMODEM_SIP_CALL_INCOMING_PENDING:
+	case SIP_CALL_INCOMING_PENDING:
 		if (transition.direction !=
-		    SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING)
-			return SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT;
+		    SIP_CALL_DIRECTION_INCOMING)
+			return SLMODEM_CALLS_INVALID_EVENT;
 		result = modem_report_incoming_call(calls->modem);
 		break;
-	case SIPPYMODEM_SIP_CALL_CONNECTED:
+	case SIP_CALL_CONNECTED:
 		if (transition.direction ==
-		    SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING)
+		    SIP_CALL_DIRECTION_OUTGOING)
 			result = modem_report_outgoing_call_connected(calls->modem);
 		else if (!calls->modem->started)
 			result = modem_answer(calls->modem);
 		break;
-	case SIPPYMODEM_SIP_CALL_DIALING:
-	case SIPPYMODEM_SIP_CALL_EARLY:
+	case SIP_CALL_DIALING:
+	case SIP_CALL_EARLY:
 		break;
 	default:
-		return SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT;
+		return SLMODEM_CALLS_INVALID_EVENT;
 	}
-	return result == 0 ? SIPPYMODEM_SLMODEM_CALLS_OK :
-			     SIPPYMODEM_SLMODEM_CALLS_MODEM_ERROR;
+	return result == 0 ? SLMODEM_CALLS_OK :
+			     SLMODEM_CALLS_MODEM_ERROR;
 }
 
-const char *sippymodem_slmodem_calls_result_name(
-	enum sippymodem_slmodem_calls_result result)
+const char *slmodem_calls_result_name(
+	enum slmodem_calls_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_SLMODEM_CALLS_OK:
+	case SLMODEM_CALLS_OK:
 		return "ok";
-	case SIPPYMODEM_SLMODEM_CALLS_IDLE:
+	case SLMODEM_CALLS_IDLE:
 		return "idle";
-	case SIPPYMODEM_SLMODEM_CALLS_INVALID_ARGUMENT:
+	case SLMODEM_CALLS_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT:
+	case SLMODEM_CALLS_INVALID_EVENT:
 		return "invalid signaling event";
-	case SIPPYMODEM_SLMODEM_CALLS_EVENT_OVERFLOW:
+	case SLMODEM_CALLS_EVENT_OVERFLOW:
 		return "signaling event queue overflow";
-	case SIPPYMODEM_SLMODEM_CALLS_MODEM_ERROR:
+	case SLMODEM_CALLS_MODEM_ERROR:
 		return "modem call transition failed";
 	}
 	return "unknown modem call result";

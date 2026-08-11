@@ -20,12 +20,12 @@
 struct sippymodem_host {
 	unsigned int marker;
 	bool opened;
-	struct sippymodem_sip_signaling_callbacks callbacks;
+	struct sip_signaling_callbacks callbacks;
 };
 
-struct sippymodem_recording_files {
-	struct sippymodem_recorder recorder;
-	enum sippymodem_recording_files_result result;
+struct recording_files {
+	struct media_recorder recorder;
+	enum recording_files_result result;
 };
 
 struct runtime_capture {
@@ -62,9 +62,9 @@ struct runtime_capture {
 	bool emit_call;
 	bool call_pending;
 	bool drain_never_idle;
-	struct sippymodem_sip_call_event call;
+	struct sip_call_event call;
 	enum sippymodem_host_result host_step_result;
-	enum sippymodem_slmodem_calls_result call_result;
+	enum slmodem_calls_result call_result;
 	enum sippymodem_session_result host_open_result;
 	enum sippymodem_session_result host_close_result;
 	int remote_end_result;
@@ -142,8 +142,8 @@ bool datapumps_are_started(
 	       datapumps->fsk300_registered && datapumps->v23_registered;
 }
 
-bool sippymodem_slmodem_driver_init(
-	struct sippymodem_slmodem_driver *driver)
+bool slmodem_driver_init(
+	struct slmodem_driver *driver)
 {
 	if (driver == NULL)
 		return false;
@@ -155,14 +155,14 @@ bool sippymodem_slmodem_driver_init(
 	return true;
 }
 
-struct modem_driver *sippymodem_slmodem_driver_interface(
-	struct sippymodem_slmodem_driver *driver)
+struct modem_driver *slmodem_driver_interface(
+	struct slmodem_driver *driver)
 {
 	return driver != NULL ? &driver->interface : NULL;
 }
 
-bool sippymodem_slmodem_driver_attach(
-	struct sippymodem_slmodem_driver *driver,
+bool slmodem_driver_attach(
+	struct slmodem_driver *driver,
 	struct modem *modem,
 	struct sippymodem_host *host)
 {
@@ -175,8 +175,8 @@ bool sippymodem_slmodem_driver_attach(
 	return true;
 }
 
-bool sippymodem_slmodem_driver_detach(
-	struct sippymodem_slmodem_driver *driver)
+bool slmodem_driver_detach(
+	struct slmodem_driver *driver)
 {
 	if (driver == NULL || driver->modem == NULL)
 		return false;
@@ -259,17 +259,17 @@ int modem_write(struct modem *modem, const char *buffer, int count)
 	return capture.short_modem_write && count > 0 ? count - 1 : count;
 }
 
-static enum sippymodem_modem_core_result discard_frame(
+static enum modem_core_result discard_frame(
 	void *context, int16_t *receive, int16_t *transmit, size_t count)
 {
 	(void)context;
 	(void)receive;
 	memset(transmit, 0, count * sizeof(transmit[0]));
-	return SIPPYMODEM_MODEM_CORE_OK;
+	return MODEM_CORE_OK;
 }
 
-bool sippymodem_slmodem_adapter_init(
-	struct sippymodem_slmodem_adapter *adapter, struct modem *modem)
+bool slmodem_adapter_init(
+	struct slmodem_adapter *adapter, struct modem *modem)
 {
 	if (adapter == NULL || modem == NULL || capture.fail_adapter)
 		return false;
@@ -280,14 +280,14 @@ bool sippymodem_slmodem_adapter_init(
 	return true;
 }
 
-const struct sippymodem_modem_core *sippymodem_slmodem_adapter_core(
-	const struct sippymodem_slmodem_adapter *adapter)
+const struct modem_core *slmodem_adapter_core(
+	const struct slmodem_adapter *adapter)
 {
 	return adapter != NULL ? &adapter->core : NULL;
 }
 
 static void queue_call(
-	void *context, const struct sippymodem_sip_call_event *event)
+	void *context, const struct sip_call_event *event)
 {
 	(void)context;
 	if (event != NULL) {
@@ -296,8 +296,8 @@ static void queue_call(
 	}
 }
 
-bool sippymodem_slmodem_calls_init(
-	struct sippymodem_slmodem_calls *calls, struct modem *modem)
+bool slmodem_calls_init(
+	struct slmodem_calls *calls, struct modem *modem)
 {
 	if (calls == NULL || modem == NULL || capture.fail_calls)
 		return false;
@@ -308,40 +308,40 @@ bool sippymodem_slmodem_calls_init(
 	return true;
 }
 
-const struct sippymodem_sip_signaling_callbacks *
-sippymodem_slmodem_calls_callbacks(
-	const struct sippymodem_slmodem_calls *calls)
+const struct sip_signaling_callbacks *
+slmodem_calls_callbacks(
+	const struct slmodem_calls *calls)
 {
 	return calls != NULL ? &calls->callbacks : NULL;
 }
 
-enum sippymodem_slmodem_calls_result sippymodem_slmodem_calls_drain(
-	struct sippymodem_slmodem_calls *calls)
+enum slmodem_calls_result slmodem_calls_drain(
+	struct slmodem_calls *calls)
 {
 	(void)calls;
 	capture.calls_drained++;
 	if (capture.drain_never_idle)
-		return SIPPYMODEM_SLMODEM_CALLS_OK;
+		return SLMODEM_CALLS_OK;
 	if (!capture.call_pending)
-		return SIPPYMODEM_SLMODEM_CALLS_IDLE;
+		return SLMODEM_CALLS_IDLE;
 	capture.call_pending = false;
-	if (capture.call.direction != SIPPYMODEM_SIP_CALL_DIRECTION_INCOMING &&
-	    capture.call.direction != SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING)
-		return SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT;
+	if (capture.call.direction != SIP_CALL_DIRECTION_INCOMING &&
+	    capture.call.direction != SIP_CALL_DIRECTION_OUTGOING)
+		return SLMODEM_CALLS_INVALID_EVENT;
 	return capture.call_result;
 }
 
 static void discard_recording(
-	void *context, const struct sippymodem_recording_block *block)
+	void *context, const struct recording_block *block)
 {
 	(void)context;
 	(void)block;
 }
 
-struct sippymodem_recording_files *sippymodem_recording_files_create(
+struct recording_files *recording_files_create(
 	const char *prefix)
 {
-	struct sippymodem_recording_files *files;
+	struct recording_files *files;
 
 	(void)prefix;
 	capture.recording_creates++;
@@ -352,13 +352,13 @@ struct sippymodem_recording_files *sippymodem_recording_files_create(
 	files = calloc(1, sizeof(*files));
 	if (files != NULL) {
 		files->recorder.write = discard_recording;
-		files->result = SIPPYMODEM_RECORDING_FILES_OK;
+		files->result = RECORDING_FILES_OK;
 	}
 	return files;
 }
 
-void sippymodem_recording_files_destroy(
-	struct sippymodem_recording_files *files)
+void recording_files_destroy(
+	struct recording_files *files)
 {
 	if (files == NULL)
 		return;
@@ -367,24 +367,24 @@ void sippymodem_recording_files_destroy(
 	free(files);
 }
 
-const struct sippymodem_recorder *sippymodem_recording_files_recorder(
-	const struct sippymodem_recording_files *files)
+const struct media_recorder *recording_files_recorder(
+	const struct recording_files *files)
 {
 	return files != NULL && !capture.fail_recorder ? &files->recorder : NULL;
 }
 
-enum sippymodem_recording_files_result sippymodem_recording_files_last_result(
-	const struct sippymodem_recording_files *files)
+enum recording_files_result recording_files_last_result(
+	const struct recording_files *files)
 {
 	return files != NULL ? files->result :
-			       SIPPYMODEM_RECORDING_FILES_INVALID_BLOCK;
+			       RECORDING_FILES_INVALID_BLOCK;
 }
 
 struct sippymodem_host *sippymodem_host_create(
 	const struct sippymodem_config *config,
-	const struct sippymodem_recorder *recorder,
-	const struct sippymodem_sip_signaling_callbacks *callbacks,
-	const struct sippymodem_modem_core *core)
+	const struct media_recorder *recorder,
+	const struct sip_signaling_callbacks *callbacks,
+	const struct modem_core *core)
 {
 	struct sippymodem_host *host;
 
@@ -691,7 +691,7 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 {
 	struct sippymodem_config config = runtime_config(true);
 	struct sippymodem_runtime *runtime;
-	struct sippymodem_recording_files *recording;
+	struct recording_files *recording;
 	struct modem *modem;
 	struct termios attributes;
 	static const char command[] = "AT\r";
@@ -716,14 +716,14 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 		      write(device_fd, command, sizeof(command) - 1) ==
 			      (ssize_t)sizeof(command) - 1,
 	      "runtime terminal command fixture was not ready");
-	recording = (struct sippymodem_recording_files *)
+	recording = (struct recording_files *)
 		sippymodem_runtime_recording_files(runtime);
 	capture.host_step_result = SIPPYMODEM_HOST_OK;
 	capture.datagrams = 3;
 	capture.frames = 2;
 	capture.emit_call = true;
-	capture.call.direction = SIPPYMODEM_SIP_CALL_DIRECTION_OUTGOING;
-	capture.call.state = SIPPYMODEM_SIP_CALL_CONNECTED;
+	capture.call.direction = SIP_CALL_DIRECTION_OUTGOING;
+	capture.call.state = SIP_CALL_CONNECTED;
 	modem->event = 1;
 	CHECK(sippymodem_runtime_step(
 		      runtime, 100, &terminal_bytes, &datagrams, &frames) ==
@@ -738,7 +738,7 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 		      sippymodem_runtime_last_host_result(runtime) ==
 			      SIPPYMODEM_HOST_OK &&
 		      sippymodem_runtime_last_calls_result(runtime) ==
-			      SIPPYMODEM_SLMODEM_CALLS_IDLE &&
+			      SLMODEM_CALLS_IDLE &&
 		      sippymodem_runtime_wait_ns(runtime, 100) == capture.wait_ns,
 	      "runtime did not advance and drain bounded host work");
 
@@ -763,17 +763,17 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 
 	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
 	capture.emit_call = true;
-	capture.call.direction = (enum sippymodem_sip_call_direction)99;
+	capture.call.direction = (enum sip_call_direction)99;
 	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
 		      sippymodem_runtime_last_calls_result(runtime) ==
-			      SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT,
+			      SLMODEM_CALLS_INVALID_EVENT,
 	      "runtime hid an invalid call transition");
-	recording->result = SIPPYMODEM_RECORDING_FILES_WRITE_ERROR;
+	recording->result = RECORDING_FILES_WRITE_ERROR;
 	CHECK(sippymodem_runtime_step(runtime, 106, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_RECORDING_ERROR,
 	      "runtime continued after recording evidence failed");
-	recording->result = SIPPYMODEM_RECORDING_FILES_OK;
+	recording->result = RECORDING_FILES_OK;
 	capture.calls_drained = 0;
 	capture.drain_never_idle = true;
 	CHECK(sippymodem_runtime_step(runtime, 107, NULL, NULL, NULL) ==
@@ -789,7 +789,7 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 		      sippymodem_runtime_step(runtime, 108, NULL, NULL, NULL) ==
 			      SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR &&
 		      sippymodem_runtime_last_modem_terminal_result(runtime) ==
-			      SIPPYMODEM_SLMODEM_TERMINAL_INPUT_ERROR,
+			      SLMODEM_TERMINAL_INPUT_ERROR,
 	      "runtime hid partially accepted terminal input");
 	capture.short_modem_write = false;
 	close(device_fd);
@@ -810,9 +810,9 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 		      sippymodem_runtime_last_host_result(NULL) ==
 			      SIPPYMODEM_HOST_INVALID_ARGUMENT &&
 		      sippymodem_runtime_last_calls_result(NULL) ==
-			      SIPPYMODEM_SLMODEM_CALLS_INVALID_ARGUMENT &&
+			      SLMODEM_CALLS_INVALID_ARGUMENT &&
 		      sippymodem_runtime_last_modem_terminal_result(NULL) ==
-			      SIPPYMODEM_SLMODEM_TERMINAL_INVALID_ARGUMENT &&
+			      SLMODEM_TERMINAL_INVALID_ARGUMENT &&
 		      strcmp(sippymodem_runtime_result_name(
 			     SIPPYMODEM_RUNTIME_RECORDING_ERROR),
 			     "recording evidence failed") == 0,

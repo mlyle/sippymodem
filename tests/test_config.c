@@ -36,9 +36,9 @@ static bool test_defaults(void)
 	      "SIP registration should be enabled by default");
 	CHECK(!config.sip.automatic_answer,
 	      "automatic answer should be disabled by default");
-	CHECK(config.media.codec == SIPPYMODEM_CODEC_PCMU,
+	CHECK(config.media.codec == MEDIA_CODEC_PCMU,
 	      "wrong default media codec");
-	CHECK(strcmp(sippymodem_codec_name(config.media.codec),
+	CHECK(strcmp(media_codec_name(config.media.codec),
 		     "PCMU/8000/1") == 0,
 	      "wrong canonical codec name");
 	CHECK(config.media.rtp_listen_port == 0,
@@ -118,7 +118,7 @@ static bool test_environment_overrides(void)
 	      "SIP integer settings were not applied");
 	CHECK(config.sip.registration_enabled && config.sip.automatic_answer,
 	      "SIP boolean settings were not applied");
-	CHECK(config.media.codec == SIPPYMODEM_CODEC_CLEARMODE,
+	CHECK(config.media.codec == MEDIA_CODEC_CLEARMODE,
 	      "media codec was not applied");
 	CHECK(config.media.rtp_listen_port == 4000 &&
 		      config.media.jitter_buffer_ms == 30 &&
