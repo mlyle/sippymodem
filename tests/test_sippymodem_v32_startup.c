@@ -361,6 +361,48 @@ static bool test_end_waits_for_rate_boundary(void)
 	return true;
 }
 
+static bool test_repeated_initial_offer(void)
+{
+	const struct sippymodem_v32_rate_offer broad_offer = {
+		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_9600 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+			 SIPPYMODEM_V32_RATE_CAPABILITY_14400,
+		.trellis_at_highest_rate = true,
+	};
+	struct sippymodem_v32_startup caller;
+	uint16_t broad_word;
+
+	CHECK(sippymodem_v32_startup_init(
+		      &caller, SIPPYMODEM_V32_CALLER,
+		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
+		      SIPPYMODEM_V32_STARTUP_OK &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_RATE_SIGNAL, &broad_offer,
+			      &broad_word) == SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      observe_word(&caller, broad_word) &&
+		      observe_word(&caller, broad_word),
+	      "V.32 repeated-offer fixture did not acquire R1");
+	for (unsigned int index = 0; index < 40; ++index) {
+		bool connected;
+
+		CHECK(sippymodem_v32_startup_observe(
+			      &caller, 3, &connected) ==
+			      SIPPYMODEM_V32_STARTUP_OK &&
+			      !connected,
+		      "V.32 repeated-offer fixture could not observe its gap");
+	}
+	CHECK(observe_word(&caller, broad_word) &&
+		      observe_word(&caller, broad_word) &&
+		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
+		      caller.selected_rate ==
+			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
+		      !caller.end_pending,
+	      "V.32 caller mistook repeated R1 for the final selection");
+	return true;
+}
+
 static bool test_no_common_rate(void)
 {
 	struct sippymodem_v32_startup caller;
@@ -466,6 +508,7 @@ int main(void)
 		{ "training boundary", test_training_boundary },
 		{ "end waits for rate boundary",
 		  test_end_waits_for_rate_boundary },
+		{ "repeated initial offer", test_repeated_initial_offer },
 		{ "no common rate", test_no_common_rate },
 		{ "validation", test_validation },
 	};

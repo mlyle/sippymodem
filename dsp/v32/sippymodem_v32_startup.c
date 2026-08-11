@@ -354,10 +354,11 @@ static enum sippymodem_v32_startup_result observe_rate_event(
 		    SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS) {
 			startup->rate_gap_dibits = 0;
 		} else {
-			if (!offer_selects_rate(offer, startup->selected_rate))
+			if ((offer->rates & startup->selected_rate) == 0)
 				return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
 			startup->rate_gap_dibits = 0;
-			startup->end_pending = true;
+			if (offer_selects_rate(offer, startup->selected_rate))
+				startup->end_pending = true;
 		}
 	} else if (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER) {
 		uint8_t selected = select_highest_common_rate(startup, offer);
