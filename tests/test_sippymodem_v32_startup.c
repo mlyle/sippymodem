@@ -55,9 +55,17 @@ static bool check_role_exchange(
 			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_12000 ||
 			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_14400,
 	};
+	struct sippymodem_v32_rate_offer caller_response = {
+		.rates = caller_rates & answerer_rates,
+		.trellis_at_highest_rate =
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_7200 ||
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_12000 ||
+			expected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_14400,
+	};
 	uint32_t caller_phases = 0;
 	uint32_t answerer_phases = 0;
 	uint16_t expected_rate_word;
+	uint16_t expected_response_word;
 	uint16_t expected_end_word;
 	bool caller_connected = false;
 	bool answerer_connected = false;
@@ -119,8 +127,14 @@ static bool check_role_exchange(
 		      sippymodem_v32_startup_is_complete(&answerer) &&
 		      caller.supported_rates == caller_rates &&
 		      answerer.supported_rates == answerer_rates &&
+		      caller.transmitted_rates == caller_response.rates &&
+		      answerer.transmitted_rates == expected_rate &&
 		      caller.selected_rate == expected_rate &&
 		      answerer.selected_rate == expected_rate &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_RATE_SIGNAL, &caller_response,
+			      &expected_response_word) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 		      sippymodem_v32_rate_signal_encode(
 			      SIPPYMODEM_V32_RATE_SIGNAL, &selected,
 			      &expected_rate_word) ==
@@ -129,7 +143,7 @@ static bool check_role_exchange(
 			      SIPPYMODEM_V32_END_SIGNAL, &selected,
 			      &expected_end_word) ==
 			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-		      caller.rate_word == expected_rate_word &&
+		      caller.rate_word == expected_response_word &&
 		      answerer.rate_word == expected_rate_word &&
 		      caller.end_word == expected_end_word &&
 		      answerer.end_word == expected_end_word,
@@ -234,9 +248,10 @@ static bool test_uncoded_fallback(void)
 			      &word) == SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 		      observe_word(&caller, word) && observe_word(&caller, word) &&
 		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
-		      caller.selected_rate ==
+		      caller.transmitted_rates ==
 			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
-		      caller.rate_word == 0x0511 && caller.end_word == 0xf511,
+		      caller.selected_rate == 0 && caller.rate_word == 0x0511 &&
+		      caller.end_word == 0,
 	      "V.32 startup did not fall back from trellis-only 9600");
 	return true;
 }
@@ -264,8 +279,12 @@ static bool test_higher_rate_offer_fallback(void)
 		      SIPPYMODEM_V32_RATE_SIGNAL, &offer, &word) ==
 		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 	      observe_word(&caller, word) && observe_word(&caller, word) &&
-	      caller.selected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_9600 &&
-	      caller.rate_word == 0x0311 && caller.end_word == 0xf311,
+	      caller.transmitted_rates ==
+		      (SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+		       SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+		       SIPPYMODEM_V32_RATE_CAPABILITY_9600) &&
+	      caller.selected_rate == 0 && caller.rate_word == 0x0f51 &&
+	      caller.end_word == 0,
 	      "V.32 startup did not select its highest supported fallback");
 	return true;
 }
@@ -335,6 +354,8 @@ static bool test_end_waits_for_rate_boundary(void)
 	}
 	CHECK(observe_word(&caller, 0x0d11) &&
 		      observe_word(&caller, 0x0d11) && caller.end_pending &&
+		      caller.selected_rate ==
+			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
 		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
 		      caller.word_dibit == 3,
 	      "V.32 startup did not defer E at a partial R2 word");
@@ -396,10 +417,66 @@ static bool test_repeated_initial_offer(void)
 	CHECK(observe_word(&caller, broad_word) &&
 		      observe_word(&caller, broad_word) &&
 		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
-		      caller.selected_rate ==
-			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
+		      caller.selected_rate == 0 &&
 		      !caller.end_pending,
 	      "V.32 caller mistook repeated R1 for the final selection");
+	return true;
+}
+
+static bool test_answerer_selects_lower_rate(void)
+{
+	const uint8_t rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+			      SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+			      SIPPYMODEM_V32_RATE_CAPABILITY_9600 |
+			      SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+			      SIPPYMODEM_V32_RATE_CAPABILITY_14400;
+	const struct sippymodem_v32_rate_offer offer = {
+		.rates = rates,
+		.trellis_at_highest_rate = true,
+	};
+	const struct sippymodem_v32_rate_offer selection = {
+		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_7200,
+		.trellis_at_highest_rate = true,
+	};
+	struct sippymodem_v32_startup caller;
+	uint16_t offer_word;
+	uint16_t selection_word;
+	uint16_t end_word;
+
+	CHECK(sippymodem_v32_startup_init(
+		      &caller, SIPPYMODEM_V32_CALLER, rates) ==
+		      SIPPYMODEM_V32_STARTUP_OK &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_RATE_SIGNAL, &offer, &offer_word) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_RATE_SIGNAL, &selection,
+			      &selection_word) == SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      sippymodem_v32_rate_signal_encode(
+			      SIPPYMODEM_V32_END_SIGNAL, &selection,
+			      &end_word) == SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      observe_word(&caller, offer_word) &&
+		      observe_word(&caller, offer_word) &&
+		      caller.transmitted_rates == rates &&
+		      caller.selected_rate == 0 && caller.end_word == 0,
+	      "V.32 caller did not retain its R2 rate intersection");
+	for (unsigned int index = 0; index < 40; ++index) {
+		bool connected;
+
+		CHECK(sippymodem_v32_startup_observe(
+			      &caller, 3, &connected) ==
+			      SIPPYMODEM_V32_STARTUP_OK &&
+			      !connected,
+		      "V.32 lower-selection fixture could not observe the gap");
+	}
+	CHECK(observe_word(&caller, selection_word) &&
+		      observe_word(&caller, selection_word) &&
+		      caller.transmitted_rates == rates &&
+		      caller.rate_word == offer_word &&
+		      caller.selected_rate ==
+			      SIPPYMODEM_V32_RATE_CAPABILITY_7200 &&
+		      caller.end_word == end_word && caller.end_pending,
+	      "V.32 caller rejected the answerer's lower R3 selection");
 	return true;
 }
 
@@ -509,6 +586,7 @@ int main(void)
 		{ "end waits for rate boundary",
 		  test_end_waits_for_rate_boundary },
 		{ "repeated initial offer", test_repeated_initial_offer },
+		{ "answerer selects lower rate", test_answerer_selects_lower_rate },
 		{ "no common rate", test_no_common_rate },
 		{ "validation", test_validation },
 	};

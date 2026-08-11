@@ -58,7 +58,9 @@ struct sippymodem_v32_startup {
 	enum sippymodem_v32_startup_phase phase;
 	/* Capability bit set retained independently from the chosen rate. */
 	uint8_t supported_rates;
-	/* One capability bit, or zero until the peer offer is resolved. */
+	/* Capability bits represented by rate_word. */
+	uint8_t transmitted_rates;
+	/* One capability bit, or zero until a rate is selected. */
 	uint8_t selected_rate;
 	uint8_t word_dibit;
 	bool end_received;

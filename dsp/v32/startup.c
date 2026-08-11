@@ -54,9 +54,8 @@ static bool phase_is_valid_for_role(
 
 static bool words_are_valid(const struct sippymodem_v32_startup *startup)
 {
-	struct sippymodem_v32_rate_offer offer = rate_offer(
-		startup->selected_rate != 0 ? startup->selected_rate :
-					       startup->supported_rates);
+	struct sippymodem_v32_rate_offer offer =
+		rate_offer(startup->transmitted_rates);
 	uint16_t rate_word;
 	uint16_t end_word = 0;
 
@@ -64,53 +63,90 @@ static bool words_are_valid(const struct sippymodem_v32_startup *startup)
 		    SIPPYMODEM_V32_RATE_SIGNAL, &offer, &rate_word) !=
 	    SIPPYMODEM_V32_RATE_SIGNAL_OK)
 		return false;
-	if (startup->selected_rate != 0 &&
-	    sippymodem_v32_rate_signal_encode(
-		    SIPPYMODEM_V32_END_SIGNAL, &offer, &end_word) !=
+	if (startup->selected_rate != 0) {
+		offer = rate_offer(startup->selected_rate);
+		if (sippymodem_v32_rate_signal_encode(
+			    SIPPYMODEM_V32_END_SIGNAL, &offer, &end_word) !=
 		    SIPPYMODEM_V32_RATE_SIGNAL_OK)
-		return false;
+			return false;
+	}
 	return startup->rate_word == rate_word && startup->end_word == end_word;
 }
 
 static bool rates_are_valid(const struct sippymodem_v32_startup *startup)
 {
-	bool selection_required;
-
 	if (startup->supported_rates == 0 ||
 	    (startup->supported_rates & (uint8_t)~V32_IMPLEMENTED_RATES) != 0 ||
+	    startup->transmitted_rates == 0 ||
+	    (startup->transmitted_rates &
+	     (uint8_t)~startup->supported_rates) != 0 ||
 	    (startup->selected_rate & (uint8_t)~startup->supported_rates) != 0 ||
 	    (startup->selected_rate != 0 &&
 	     (startup->selected_rate &
 	      (uint8_t)(startup->selected_rate - 1u)) != 0))
 		return false;
-	selection_required =
-		startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
-		startup->phase == SIPPYMODEM_V32_CALLER_SEND_END ||
-		startup->phase == SIPPYMODEM_V32_ANSWERER_RETRAIN ||
-		startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_SELECTION ||
-		startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_END ||
-		startup->phase == SIPPYMODEM_V32_CONFIRM ||
-		startup->phase == SIPPYMODEM_V32_DATA;
-	return selection_required == (startup->selected_rate != 0);
+	if (startup->role == SIPPYMODEM_V32_CALLER) {
+		if (startup->phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER)
+			return startup->transmitted_rates ==
+				       startup->supported_rates &&
+			       startup->selected_rate == 0;
+		if (startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE)
+			return (startup->selected_rate != 0) ==
+				       startup->end_pending &&
+			       (startup->selected_rate == 0 ||
+				(startup->selected_rate &
+				 startup->transmitted_rates) != 0);
+		return startup->selected_rate != 0 &&
+		       (startup->selected_rate & startup->transmitted_rates) != 0;
+	}
+	if (startup->phase == SIPPYMODEM_V32_ANSWERER_TRAIN ||
+	    startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER)
+		return startup->transmitted_rates == startup->supported_rates &&
+		       startup->selected_rate == 0;
+	return startup->selected_rate != 0 &&
+	       startup->transmitted_rates == startup->selected_rate;
+}
+
+static bool configure_caller_response(
+	struct sippymodem_v32_startup *startup, uint8_t available_rates)
+{
+	struct sippymodem_v32_rate_offer available = rate_offer(available_rates);
+	uint16_t rate_word;
+
+	if (available_rates == 0 ||
+	    (available_rates & (uint8_t)~startup->supported_rates) != 0 ||
+	    sippymodem_v32_rate_signal_encode(
+		    SIPPYMODEM_V32_RATE_SIGNAL, &available, &rate_word) !=
+		    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+		return false;
+	startup->transmitted_rates = available_rates;
+	startup->rate_word = rate_word;
+	return true;
 }
 
 static bool configure_selected_rate(
-	struct sippymodem_v32_startup *startup, uint8_t selected_rate)
+	struct sippymodem_v32_startup *startup, uint8_t selected_rate,
+	uint8_t transmitted_rates)
 {
+	struct sippymodem_v32_rate_offer transmitted =
+		rate_offer(transmitted_rates);
 	struct sippymodem_v32_rate_offer selected = rate_offer(selected_rate);
 	uint16_t rate_word;
 	uint16_t end_word;
 
-	if ((selected_rate & startup->supported_rates) == 0 ||
+	if (transmitted_rates == 0 ||
+	    (transmitted_rates & (uint8_t)~startup->supported_rates) != 0 ||
+	    (selected_rate & transmitted_rates) == 0 ||
 	    (selected_rate & (uint8_t)(selected_rate - 1u)) != 0 ||
 	    sippymodem_v32_rate_signal_encode(
-		    SIPPYMODEM_V32_RATE_SIGNAL, &selected, &rate_word) !=
+		    SIPPYMODEM_V32_RATE_SIGNAL, &transmitted, &rate_word) !=
 		    SIPPYMODEM_V32_RATE_SIGNAL_OK ||
 	    sippymodem_v32_rate_signal_encode(
 		    SIPPYMODEM_V32_END_SIGNAL, &selected, &end_word) !=
 		    SIPPYMODEM_V32_RATE_SIGNAL_OK)
 		return false;
 	startup->selected_rate = selected_rate;
+	startup->transmitted_rates = transmitted_rates;
 	startup->rate_word = rate_word;
 	startup->end_word = end_word;
 	return true;
@@ -158,6 +194,7 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_init(
 		return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 	next.role = role;
 	next.supported_rates = supported_rates;
+	next.transmitted_rates = supported_rates;
 	next.phase = role == SIPPYMODEM_V32_CALLER ?
 			     SIPPYMODEM_V32_CALLER_WAIT_OFFER :
 			     SIPPYMODEM_V32_ANSWERER_TRAIN;
@@ -317,7 +354,7 @@ static uint8_t highest_rate(uint8_t rates)
 	return 0;
 }
 
-static uint8_t select_highest_common_rate(
+static uint8_t compatible_rates(
 	const struct sippymodem_v32_startup *startup,
 	const struct sippymodem_v32_rate_offer *offer)
 {
@@ -326,15 +363,16 @@ static uint8_t select_highest_common_rate(
 	if (offer->trellis_at_highest_rate &&
 	    highest_rate(offer->rates) == SIPPYMODEM_V32_RATE_CAPABILITY_9600)
 		common &= (uint8_t)~highest_rate(offer->rates);
-	return highest_rate(common);
+	return common;
 }
 
 static bool offer_selects_rate(
 	const struct sippymodem_v32_rate_offer *offer, uint8_t selected_rate)
 {
-	return offer->trellis_at_highest_rate ==
+	return offer->rates == selected_rate &&
+	       offer->trellis_at_highest_rate ==
 		       rate_requires_trellis(selected_rate) &&
-	       highest_rate(offer->rates) == selected_rate;
+	       selected_rate != 0;
 }
 
 static enum sippymodem_v32_startup_result observe_rate_event(
@@ -342,30 +380,38 @@ static enum sippymodem_v32_startup_result observe_rate_event(
 	const struct sippymodem_v32_rate_offer *offer)
 {
 	if (startup->phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER) {
-		uint8_t selected = select_highest_common_rate(startup, offer);
+		uint8_t available = compatible_rates(startup, offer);
 
-		if (selected == 0)
+		if (available == 0)
 			return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
-		if (!configure_selected_rate(startup, selected))
+		if (!configure_caller_response(startup, available))
 			return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, SIPPYMODEM_V32_CALLER_SEND_RESPONSE);
 	} else if (startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE) {
 		if (startup->rate_gap_dibits <
 		    SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS) {
 			startup->rate_gap_dibits = 0;
-		} else {
-			if ((offer->rates & startup->selected_rate) == 0)
+		} else if ((offer->rates &
+			    (uint8_t)(offer->rates - 1u)) == 0) {
+			uint8_t selected = offer->rates;
+
+			if (!offer_selects_rate(offer, selected) ||
+			    (selected & startup->transmitted_rates) == 0)
 				return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
+			if (!configure_selected_rate(
+				    startup, selected, startup->transmitted_rates))
+				return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 			startup->rate_gap_dibits = 0;
-			if (offer_selects_rate(offer, startup->selected_rate))
-				startup->end_pending = true;
+			startup->end_pending = true;
+		} else {
+			startup->rate_gap_dibits = 0;
 		}
 	} else if (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER) {
-		uint8_t selected = select_highest_common_rate(startup, offer);
+		uint8_t selected = highest_rate(compatible_rates(startup, offer));
 
 		if (selected == 0)
 			return SIPPYMODEM_V32_STARTUP_NO_COMMON_RATE;
-		if (!configure_selected_rate(startup, selected))
+		if (!configure_selected_rate(startup, selected, selected))
 			return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, SIPPYMODEM_V32_ANSWERER_RETRAIN);
 	}
