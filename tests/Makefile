@@ -796,6 +796,8 @@ V34_CHANNEL_FRAME_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_channel_frame_receiver.o \
 	$(BUILD_DIR)/v34_channel_frame_receiver.o \
 	$(BUILD_DIR)/v34_data_channel_receiver.o \
+	$(BUILD_DIR)/v34_data_equalizer_receiver.o \
+	$(BUILD_DIR)/qam_equalizer.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_sippymodem_v34_channel_frame_decoder.o \
 		$(BUILD_DIR)/test_sippymodem_v34_channel_conditioner.o, \
@@ -2427,6 +2429,10 @@ $(BUILD_DIR)/v34_channel_frame_receiver.o: \
 
 $(BUILD_DIR)/v34_data_channel_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_channel_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_data_equalizer_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_equalizer_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_trellis.o: \
