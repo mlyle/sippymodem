@@ -215,6 +215,24 @@ static uint8_t best_path_state(
 	return best;
 }
 
+static bool best_current_signal_symbol(
+	const struct sippymodem_v32_trellis_decoder *decoder,
+	uint8_t newest_path_index, uint8_t *signal_symbol)
+{
+	uint8_t state = best_path_state(decoder);
+	const struct sippymodem_v32_trellis_path_step *step =
+		&decoder->path[newest_path_index];
+	struct sippymodem_v32_trellis_encoder branch = {
+		.trellis_state = step->predecessor[state],
+		.data_bits_per_symbol = decoder->data_bits_per_symbol,
+	};
+
+	return sippymodem_v32_trellis_encode(
+		       &branch, step->differential_symbol[state], signal_symbol) ==
+		       SIPPYMODEM_V32_TRELLIS_OK &&
+	       branch.trellis_state == state;
+}
+
 static uint8_t traceback_symbol(
 	const struct sippymodem_v32_trellis_decoder *decoder,
 	uint8_t newest_path_index)
@@ -236,23 +254,27 @@ static uint8_t traceback_symbol(
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decode(
 	struct sippymodem_v32_trellis_decoder *decoder,
 	const struct sippymodem_qam_point *point, uint8_t *scrambled_data,
-	bool *ready)
+	bool *ready, uint8_t *decided_signal_symbol)
 {
 	struct sippymodem_v32_trellis_decoder next;
 	double branch_error[SIPPYMODEM_V32_14400_SIGNAL_POINTS];
 	uint8_t newest_path_index;
+	uint8_t current_signal = 0;
 	uint8_t differential_symbol = 0;
 	bool symbol_ready;
 
 	if (!sippymodem_v32_trellis_decoder_is_valid(decoder) ||
 	    !point_is_finite(point) || scrambled_data == NULL || ready == NULL ||
+	    decided_signal_symbol == NULL ||
 	    !measure_branches(
 		    point, decoder->data_bits_per_symbol, branch_error))
 		return SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT;
 	next = *decoder;
 	newest_path_index = next.path_index;
 	if (!select_paths(
-		    &next, branch_error, &next.path[newest_path_index]))
+		    &next, branch_error, &next.path[newest_path_index]) ||
+	    !best_current_signal_symbol(
+		    &next, newest_path_index, &current_signal))
 		return SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT;
 	next.path_index =
 		(uint8_t)((next.path_index + 1u) %
@@ -283,6 +305,7 @@ enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decode(
 		return SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT;
 	*decoder = next;
 	*ready = symbol_ready;
+	*decided_signal_symbol = current_signal;
 	if (symbol_ready)
 		*scrambled_data = differential_symbol;
 	return SIPPYMODEM_V32_TRELLIS_OK;

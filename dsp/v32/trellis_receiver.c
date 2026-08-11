@@ -9,6 +9,8 @@
 
 /* The post-E confirmation contributes only 128 known symbols. */
 static const double V32_TRELLIS_TRAINING_ADAPTATION = 0.5;
+/* Follow residual carrier rotation without chasing individual noisy points. */
+static const double V32_TRELLIS_DECISION_ADAPTATION = 0.05;
 static const double V32_TRELLIS_MINIMUM_POINT_POWER = 1e-12;
 
 static bool point_is_finite(const struct sippymodem_qam_point *point)
@@ -173,6 +175,7 @@ sippymodem_v32_trellis_receiver_track_known(
 	uint8_t plain = 0;
 	uint8_t scrambled;
 	uint8_t decoded = 0;
+	uint8_t decided_signal = 0;
 	uint8_t signal_symbol;
 	bool equalizer_ready;
 	bool delayed_target_known;
@@ -202,7 +205,8 @@ sippymodem_v32_trellis_receiver_track_known(
 		    &equalizer_ready, &delayed_target_known) ||
 	    (equalizer_ready &&
 	     sippymodem_v32_trellis_decode(
-		     &next.decoder, &equalized, &decoded, &trellis_ready) !=
+		     &next.decoder, &equalized, &decoded, &trellis_ready,
+		     &decided_signal) !=
 		     SIPPYMODEM_V32_TRELLIS_OK) ||
 	    (trellis_ready &&
 	     sippymodem_v32_descramble_group(
@@ -228,6 +232,7 @@ sippymodem_v32_trellis_receiver_decode(
 	struct sippymodem_qam_point equalized = { 0 };
 	uint8_t plain = 0;
 	uint8_t scrambled = 0;
+	uint8_t decided_signal = 0;
 	bool equalizer_ready;
 	bool delayed_target_known;
 	bool trellis_ready = false;
@@ -243,9 +248,24 @@ sippymodem_v32_trellis_receiver_decode(
 		    &delayed_target_known) ||
 	    (equalizer_ready &&
 	     sippymodem_v32_trellis_decode(
-		     &next.decoder, &equalized, &scrambled, &trellis_ready) !=
+		     &next.decoder, &equalized, &scrambled, &trellis_ready,
+		     &decided_signal) !=
 		     SIPPYMODEM_V32_TRELLIS_OK))
 		return SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+	if (equalizer_ready && !delayed_target_known) {
+		struct sippymodem_qam_point decided_point;
+
+		/* The best current survivor belongs to this equalizer output;
+		 * traceback data belongs to an older point. */
+		if (sippymodem_v32_trellis_constellation_point(
+			    next.decoder.data_bits_per_symbol, decided_signal,
+			    &decided_point) != SIPPYMODEM_V32_CONSTELLATION_OK ||
+		    sippymodem_qam_equalizer_adapt(
+			    &next.equalizer, &decided_point,
+			    V32_TRELLIS_DECISION_ADAPTATION) !=
+			    SIPPYMODEM_QAM_EQUALIZER_OK)
+			return SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+	}
 	if (equalizer_ready && !delayed_target_known &&
 	    next.payload_symbols < SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS)
 		next.payload_symbols++;

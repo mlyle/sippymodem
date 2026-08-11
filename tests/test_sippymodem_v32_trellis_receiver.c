@@ -11,7 +11,7 @@
 enum {
 	TEST_4800_SYMBOLS = 64,
 	TEST_KNOWN_SYMBOLS = 128,
-	TEST_PAYLOAD_SYMBOLS = 512,
+	TEST_PAYLOAD_SYMBOLS = 4096,
 	TEST_CHANNEL_TAPS = 4,
 };
 
@@ -90,8 +90,9 @@ static bool check_transition(
 	enum sippymodem_v32_transmitter_role role, uint8_t initial_quadrant,
 	uint8_t data_bits)
 {
+	/* A residual 0.19 Hz carrier error at 2400 baud. */
 	static const struct sippymodem_qam_point channel_drift = {
-		1.000001, 0.00001
+		0.999999875, 0.0005
 	};
 	struct sippymodem_v32_symbol_encoder framing_encoder;
 	struct sippymodem_v32_symbol_decoder framing_decoder;

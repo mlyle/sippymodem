@@ -82,6 +82,7 @@ static bool check_round_trip(
 	for (size_t index = 0; index < ARRAY_LENGTH(input); ++index) {
 		struct sippymodem_qam_point point;
 		uint8_t decoded = UINT8_MAX;
+		uint8_t decided_signal = UINT8_MAX;
 		uint8_t signal_symbol;
 		bool ready = true;
 
@@ -109,8 +110,13 @@ static bool check_round_trip(
 				hard_decision_errors++;
 		}
 		CHECK(sippymodem_v32_trellis_decode(
-			      &decoder, &point, &decoded, &ready) ==
+			      &decoder, &point, &decoded, &ready,
+			      &decided_signal) ==
 			      SIPPYMODEM_V32_TRELLIS_OK &&
+			      decided_signal <
+				      (UINT8_C(1) <<
+				       (data_bits_per_symbol + 1u)) &&
+			      (add_noise || decided_signal == signal_symbol) &&
 			      ready ==
 				      (index + 1 >=
 				       SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS),
@@ -174,6 +180,7 @@ static bool test_validation_is_transactional(void)
 	struct sippymodem_qam_point point = { 0.25, -0.5 };
 	struct sippymodem_qam_point invalid = { NAN, 0.0 };
 	uint8_t output = 0xa5;
+	uint8_t decision = 0x5a;
 	bool ready = true;
 
 	CHECK(sippymodem_v32_trellis_decoder_init(
@@ -193,22 +200,25 @@ static bool test_validation_is_transactional(void)
 			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
 		      memcmp(&decoder, &saved, sizeof(decoder)) == 0 &&
 		      sippymodem_v32_trellis_decode(
-			      NULL, &point, &output, &ready) ==
+			      NULL, &point, &output, &ready, &decision) ==
 			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
 		      sippymodem_v32_trellis_decode(
-			      &decoder, NULL, &output, &ready) ==
+			      &decoder, NULL, &output, &ready, &decision) ==
 			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
 		      sippymodem_v32_trellis_decode(
-			      &decoder, &invalid, &output, &ready) ==
+			      &decoder, &invalid, &output, &ready, &decision) ==
 			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
 		      sippymodem_v32_trellis_decode(
-			      &decoder, &point, NULL, &ready) ==
+			      &decoder, &point, NULL, &ready, &decision) ==
 			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
 		      sippymodem_v32_trellis_decode(
-			      &decoder, &point, &output, NULL) ==
+			      &decoder, &point, &output, NULL, &decision) ==
+			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
+		      sippymodem_v32_trellis_decode(
+			      &decoder, &point, &output, &ready, NULL) ==
 			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
 		      memcmp(&decoder, &saved, sizeof(decoder)) == 0 &&
-		      output == 0xa5 && ready,
+		      output == 0xa5 && decision == 0x5a && ready,
 	      "V.32bis invalid input changed decoder state");
 
 	decoder = saved;

@@ -68,12 +68,14 @@ bool sippymodem_v32_trellis_decoder_is_valid(
 /*
  * Decode one normalized baseband point.  Once ready is true, scrambled_data
  * contains the next configured-width group in transmission order.  Traceback
- * adds a fixed delay while retaining every input group.
+ * adds a fixed delay while retaining every input group.  decided_signal_symbol
+ * always identifies the best survivor's constellation point for the current
+ * input, so a channel tracker need not wait for traceback.
  */
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decode(
 	struct sippymodem_v32_trellis_decoder *decoder,
 	const struct sippymodem_qam_point *point, uint8_t *scrambled_data,
-	bool *ready);
+	bool *ready, uint8_t *decided_signal_symbol);
 
 const char *sippymodem_v32_trellis_result_name(
 	enum sippymodem_v32_trellis_result result);
