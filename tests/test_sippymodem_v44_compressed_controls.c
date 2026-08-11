@@ -221,6 +221,82 @@ static bool test_codeword_widths_and_reinitialization(void)
 	return true;
 }
 
+static bool test_ecm_reentry(void)
+{
+	static const uint8_t expected[] = { 'A', 'B', 0xff, 'C', 'D', 'C', 'D' };
+	/* Initial-width ordinals C/D, codeword 4, then FLUSH; LSB first. */
+	static const uint8_t after_ecm[] = { 0x86, 0x88, 0x89, 0x01 };
+	const struct sippymodem_v44_parameters parameters = {
+		.codeword_limit = SIPPYMODEM_V44_MIN_CODEWORDS,
+		.max_string_length = SIPPYMODEM_V44_MIN_STRING_LENGTH,
+		.history_size = SIPPYMODEM_V44_MIN_HISTORY_SIZE,
+	};
+	struct sippymodem_v44_test_wire *before_etm =
+		sippymodem_v44_test_wire_create(
+			parameters.max_string_length, WIRE_CAPACITY);
+	struct sippymodem_v44_compressed_decoder *decoder;
+	uint8_t first_wire[WIRE_CAPACITY];
+	uint8_t actual[ARRAY_LENGTH(expected)];
+	const uint8_t *input;
+	size_t first_length = 0;
+	size_t input_length;
+
+	CHECK(before_etm != NULL &&
+	      sippymodem_v44_test_wire_ordinal(before_etm, 'A') &&
+	      sippymodem_v44_test_wire_ordinal(before_etm, 'B') &&
+	      sippymodem_v44_test_wire_stepup_ordinal(before_etm) &&
+	      sippymodem_v44_test_wire_ordinal(before_etm, 0xff) &&
+	      sippymodem_v44_test_wire_control(
+		      before_etm, SIPPYMODEM_V44_TEST_ETM) &&
+	      sippymodem_v44_test_wire_finish(
+		      before_etm, first_wire, sizeof(first_wire), &first_length),
+	      "could not build V.44 ECM re-entry wire");
+	sippymodem_v44_test_wire_destroy(before_etm);
+	decoder = sippymodem_v44_compressed_decoder_create(
+		&parameters, parameters.max_string_length);
+	CHECK(decoder != NULL, "could not create V.44 ECM decoder");
+	input = first_wire;
+	input_length = first_length;
+	for (size_t item = 0; item < 5; ++item) {
+		enum sippymodem_v44_compressed_result expected_result =
+			item == 4 ?
+				SIPPYMODEM_V44_COMPRESSED_ENTER_TRANSPARENT :
+				SIPPYMODEM_V44_COMPRESSED_OK;
+
+		CHECK(sippymodem_v44_compressed_decoder_process(
+			      decoder, &input, &input_length) == expected_result,
+		      "V.44 pre-ECM item %zu failed", item);
+	}
+	CHECK(input_length == 0 &&
+	      sippymodem_v44_compressed_decoder_pending(decoder) == 3 &&
+	      sippymodem_v44_compressed_decoder_enter(decoder) ==
+		      SIPPYMODEM_V44_COMPRESSED_OK,
+	      "V.44 ECM did not preserve output and resume compression");
+	input = after_ecm;
+	input_length = sizeof(after_ecm);
+	for (size_t item = 0; item < 4; ++item) {
+		enum sippymodem_v44_compressed_result expected_result =
+			item == 3 ? SIPPYMODEM_V44_COMPRESSED_FLUSHED :
+				    SIPPYMODEM_V44_COMPRESSED_OK;
+
+		CHECK(sippymodem_v44_compressed_decoder_process(
+			      decoder, &input, &input_length) == expected_result,
+		      "V.44 post-ECM item %zu failed", item);
+	}
+	CHECK(input_length == 0 &&
+	      sippymodem_v44_compressed_decoder_read(
+		      decoder, actual, sizeof(actual)) == sizeof(actual) &&
+	      memcmp(actual, expected, sizeof(expected)) == 0,
+	      "V.44 ECM did not reset widths and dictionary state");
+	CHECK(sippymodem_v44_compressed_decoder_enter(decoder) ==
+		      SIPPYMODEM_V44_COMPRESSED_INVALID_ARGUMENT &&
+	      sippymodem_v44_compressed_decoder_enter(NULL) ==
+		      SIPPYMODEM_V44_COMPRESSED_INVALID_ARGUMENT,
+	      "V.44 compressed re-entry accepted an invalid lifecycle");
+	sippymodem_v44_compressed_decoder_destroy(decoder);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -231,6 +307,7 @@ int main(void)
 		  test_control_boundaries_and_backpressure },
 		{ "codeword widths and reinitialization",
 		  test_codeword_widths_and_reinitialization },
+		{ "ECM re-entry", test_ecm_reentry },
 	};
 	unsigned int failures = 0;
 

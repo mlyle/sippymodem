@@ -33,6 +33,15 @@ void sippymodem_v44_compressed_decoder_destroy(
 	struct sippymodem_v44_compressed_decoder *decoder);
 
 /*
+ * Enter compressed mode after an ECM command. This is valid only after ETM
+ * has latched ENTER_TRANSPARENT. It restores the initial dictionary and field
+ * widths without discarding decoded output that is still queued.
+ */
+enum sippymodem_v44_compressed_result
+sippymodem_v44_compressed_decoder_enter(
+	struct sippymodem_v44_compressed_decoder *decoder);
+
+/*
  * Process at most one complete compressed-mode code. NEED_INPUT can consume
  * an incomplete field and retains it for the next call. NEED_OUTPUT means a
  * complete wire code is pending; drain output and retry without rewinding the

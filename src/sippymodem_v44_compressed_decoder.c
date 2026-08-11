@@ -126,6 +126,37 @@ static enum sippymodem_v44_compressed_result fail_decoder(
 	return SIPPYMODEM_V44_COMPRESSED_PROCEDURAL_ERROR;
 }
 
+static enum sippymodem_v44_compressed_result reinitialize_decoder(
+	struct sippymodem_v44_compressed_decoder *decoder)
+{
+	if (sippymodem_v44_dictionary_decoder_reinitialize(
+		    decoder->dictionary) != SIPPYMODEM_V44_DICTIONARY_OK)
+		return fail_decoder(decoder);
+	decoder->state = V44_PARSE_PREFIX;
+	decoder->pending_type = V44_PENDING_NONE;
+	decoder->pending_value = 0;
+	decoder->codeword_bits = V44_INITIAL_CODEWORD_BITS;
+	decoder->ordinal_bits = V44_INITIAL_ORDINAL_BITS;
+	decoder->last_code_was_codeword = false;
+	decoder->stepup_pending = false;
+	decoder->transparent = false;
+	return SIPPYMODEM_V44_COMPRESSED_OK;
+}
+
+enum sippymodem_v44_compressed_result
+sippymodem_v44_compressed_decoder_enter(
+	struct sippymodem_v44_compressed_decoder *decoder)
+{
+	if (!decoder_is_valid(decoder))
+		return SIPPYMODEM_V44_COMPRESSED_INVALID_ARGUMENT;
+	if (decoder->failed)
+		return SIPPYMODEM_V44_COMPRESSED_PROCEDURAL_ERROR;
+	if (!decoder->transparent ||
+	    !sippymodem_v44_bit_reader_at_boundary(decoder->reader))
+		return SIPPYMODEM_V44_COMPRESSED_INVALID_ARGUMENT;
+	return reinitialize_decoder(decoder);
+}
+
 static enum sippymodem_v44_compressed_result read_bits(
 	struct sippymodem_v44_compressed_decoder *decoder,
 	const uint8_t **input,
@@ -225,8 +256,6 @@ static enum sippymodem_v44_compressed_result process_control(
 	struct sippymodem_v44_compressed_decoder *decoder,
 	uint32_t control)
 {
-	enum sippymodem_v44_dictionary_result dictionary_result;
-
 	decoder->state = V44_PARSE_PREFIX;
 	decoder->last_code_was_codeword = false;
 	switch (control) {
@@ -243,15 +272,7 @@ static enum sippymodem_v44_compressed_result process_control(
 		decoder->stepup_pending = true;
 		return SIPPYMODEM_V44_COMPRESSED_OK;
 	case V44_CONTROL_REINIT:
-		dictionary_result =
-			sippymodem_v44_dictionary_decoder_reinitialize(
-				decoder->dictionary);
-		if (dictionary_result != SIPPYMODEM_V44_DICTIONARY_OK)
-			return fail_decoder(decoder);
-		decoder->codeword_bits = V44_INITIAL_CODEWORD_BITS;
-		decoder->ordinal_bits = V44_INITIAL_ORDINAL_BITS;
-		decoder->stepup_pending = false;
-		return SIPPYMODEM_V44_COMPRESSED_OK;
+		return reinitialize_decoder(decoder);
 	default:
 		return fail_decoder(decoder);
 	}
