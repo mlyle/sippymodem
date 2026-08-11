@@ -189,6 +189,7 @@ static bool test_v21_originator_answers_brief_mark(void)
 {
 	enum {
 		BRIEF_MARK_SAMPLES = MODEM_RATE * 15 / 1000,
+		ORIGINATOR_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 		TEST_FSK_AMPLITUDE = 8192,
 	};
 	struct sippymodem_datapumps datapumps = { 0 };
@@ -238,7 +239,19 @@ static bool test_v21_originator_answers_brief_mark(void)
 		      "V.21 originator transmitted before acquiring answer mark");
 		presented += count;
 	}
-	memset(receive, 0, sizeof(receive));
+	for (size_t guarded = 0; guarded < ORIGINATOR_GUARD_SAMPLES;) {
+		size_t remaining = ORIGINATOR_GUARD_SAMPLES - guarded;
+		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
+
+		memset(receive, 0, sizeof(receive));
+		memset(transmit, 1, sizeof(transmit));
+		CHECK(operations->process(
+			      datapump, receive, transmit, (int)count) ==
+			      DPSTAT_OK &&
+			      samples_are_silent(transmit, count),
+		      "V.21 originator transmitted during its 160 ms guard");
+		guarded += count;
+	}
 	memset(transmit, 0, sizeof(transmit));
 	CHECK(operations->process(
 		      datapump, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&

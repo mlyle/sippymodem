@@ -18,7 +18,7 @@ enum {
 	 * More than four detector windows are enough to answer the short mark
 	 * presented by interoperating V.21 modems without reacting to a transient. */
 	FSK300_MARK_ACQUIRE_SAMPLES = MODEM_RATE * 15 / 1000,
-	FSK300_ANSWER_GUARD_SAMPLES = 1280,
+	FSK300_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
 	FSK300_CARRIER_LOSS_SAMPLES = 1600,
 	FSK300_MIN_LINE_POWER = 10000000,
@@ -83,6 +83,7 @@ _Static_assert((int)SIPPYMODEM_FSK300_BIT_RATE ==
 
 enum sippymodem_fsk300_training_state {
 	FSK300_TRAINING_WAIT_MARK,
+	FSK300_TRAINING_GUARD,
 	FSK300_TRAINING_SEND_MARK,
 	FSK300_TRAINING_ONLINE,
 };
@@ -95,7 +96,7 @@ struct sippymodem_fsk300_datapump {
 	enum sippymodem_fsk300_training_state training_state;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
-	uint64_t sent_mark_samples;
+	uint64_t training_state_samples;
 	uint32_t remote_mark_samples;
 	uint32_t missing_carrier_samples;
 	uint8_t transmit_bit;
@@ -301,16 +302,25 @@ static int advance_training(
 		}
 		if (datapump->remote_mark_samples < FSK300_MARK_ACQUIRE_SAMPLES)
 			return DPSTAT_OK;
+		datapump->training_state = datapump->originator ?
+			FSK300_TRAINING_GUARD : FSK300_TRAINING_SEND_MARK;
+		datapump->training_state_samples = 0;
+		return DPSTAT_OK;
+	}
+	if (datapump->training_state == FSK300_TRAINING_GUARD) {
+		datapump->training_state_samples += count;
+		if (datapump->training_state_samples < FSK300_GUARD_SAMPLES)
+			return DPSTAT_OK;
 		datapump->training_state = FSK300_TRAINING_SEND_MARK;
-		datapump->sent_mark_samples = 0;
+		datapump->training_state_samples = 0;
 		return DPSTAT_OK;
 	}
 	if (datapump->training_state == FSK300_TRAINING_SEND_MARK) {
 		uint64_t required = datapump->originator ?
-			FSK300_ORIGINATE_MARK_SAMPLES : FSK300_ANSWER_GUARD_SAMPLES;
+			FSK300_ORIGINATE_MARK_SAMPLES : FSK300_GUARD_SAMPLES;
 
-		datapump->sent_mark_samples += count;
-		if (datapump->sent_mark_samples < required)
+		datapump->training_state_samples += count;
+		if (datapump->training_state_samples < required)
 			return DPSTAT_OK;
 		if (modem_set_param(
 			    datapump->dp.modem, MDMPRM_TX_RATE,
@@ -341,7 +351,8 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	if (datapump->training_state == FSK300_TRAINING_WAIT_MARK &&
+	if ((datapump->training_state == FSK300_TRAINING_WAIT_MARK ||
+	     datapump->training_state == FSK300_TRAINING_GUARD) &&
 	    datapump->originator) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 	} else if (datapump->training_state == FSK300_TRAINING_ONLINE) {
