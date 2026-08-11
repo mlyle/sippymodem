@@ -139,7 +139,7 @@ static bool model_transmit_mapping_frame(
 					     .precoded[symbol]
 					     .precoded_symbol,
 				    &generated.projected_symbol[index]) !=
-			    SIPPYMODEM_V34_NONLINEAR_ENCODER_OK)
+			    SIPPYMODEM_V34_NONLINEAR_OK)
 				return false;
 		}
 	}

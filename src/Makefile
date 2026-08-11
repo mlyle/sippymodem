@@ -152,7 +152,7 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapping_parameters.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapper.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mp.c \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_nonlinear_encoder.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_nonlinear.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_parser.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_power_calibration.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_branches.c \

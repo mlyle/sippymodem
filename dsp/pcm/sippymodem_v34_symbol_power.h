@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_SYMBOL_POWER_H
 #define SIPPYMODEM_V34_SYMBOL_POWER_H
 
-#include "sippymodem_v34_nonlinear_encoder.h"
+#include "v34_nonlinear.h"
 
 #include <stdbool.h>
 #include <stdint.h>

@@ -165,7 +165,7 @@ static enum sippymodem_v34_symbol_power_result derive_normalizer(
 		*projected_measurement)
 {
 	struct sippymodem_v34_power_normalizer generated = { 0 };
-	enum sippymodem_v34_nonlinear_encoder_result nonlinear_result;
+	enum sippymodem_v34_nonlinear_result nonlinear_result;
 
 	if (normalizer == NULL ||
 	    !sippymodem_v34_mapping_parameters_is_valid(parameters) ||
@@ -192,9 +192,9 @@ static enum sippymodem_v34_symbol_power_result derive_normalizer(
 		generated.maximum_precoded_point_power,
 		&generated.maximum_projected_point_power);
 	if (nonlinear_result ==
-	    SIPPYMODEM_V34_NONLINEAR_ENCODER_NUMERIC_FAILURE)
+	    SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE)
 		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
-	if (nonlinear_result != SIPPYMODEM_V34_NONLINEAR_ENCODER_OK)
+	if (nonlinear_result != SIPPYMODEM_V34_NONLINEAR_OK)
 		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	if (!power_does_not_exceed(
 		    projected_measurement->mean_squared_magnitude,
@@ -278,7 +278,7 @@ bool sippymodem_v34_power_normalizer_is_valid(
 		    normalizer->precoded_mean_squared_magnitude,
 		    normalizer->maximum_precoded_point_power,
 		    &expected_maximum_projected) !=
-		    SIPPYMODEM_V34_NONLINEAR_ENCODER_OK)
+		    SIPPYMODEM_V34_NONLINEAR_OK)
 		return false;
 	expected_gain =
 		1.0 / sqrt(normalizer->projected_mean_squared_magnitude);

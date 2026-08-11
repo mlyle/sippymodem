@@ -151,7 +151,7 @@ static bool test_normalized_mean(void)
 			      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
 			      precoded.mean_squared_magnitude, &input[index],
 			      &encoded[index]) ==
-			      SIPPYMODEM_V34_NONLINEAR_ENCODER_OK &&
+			      SIPPYMODEM_V34_NONLINEAR_OK &&
 		      sippymodem_v34_symbol_power_observe_point(
 			      &projected, &encoded[index]) ==
 			      SIPPYMODEM_V34_SYMBOL_POWER_OK,

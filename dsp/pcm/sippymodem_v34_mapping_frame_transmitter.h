@@ -5,7 +5,7 @@
 
 #include "sippymodem_v34_framing.h"
 #include "sippymodem_v34_mapping_frame_encoder.h"
-#include "sippymodem_v34_nonlinear_encoder.h"
+#include "v34_nonlinear.h"
 
 #include <stddef.h>
 #include <stdint.h>

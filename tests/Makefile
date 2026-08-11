@@ -745,7 +745,7 @@ V34_MAPPING_FRAME_RECEIVER_TEST_OBJECTS := \
 	$(filter-out \
 		$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_decoder.o, \
 		$(V34_MAPPING_FRAME_DECODER_TEST_OBJECTS)) \
-	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
+	$(BUILD_DIR)/v34_nonlinear.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
 	$(BUILD_DIR)/v34_mapping_frame_receiver.o
 V34_DATA_RECEIVER_TEST_BINARY := \
@@ -766,11 +766,11 @@ V34_CHANNEL_FRAME_DECODER_TEST_OBJECTS := \
 		$(BUILD_DIR)/test_sippymodem_v34_data_receiver.o, \
 		$(V34_CHANNEL_DECODER_TEST_OBJECTS) \
 		$(V34_DATA_RECEIVER_TEST_OBJECTS)))
-V34_NONLINEAR_ENCODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_sippymodem_v34_nonlinear_encoder
-V34_NONLINEAR_ENCODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_sippymodem_v34_nonlinear_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o
+V34_NONLINEAR_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v34_nonlinear
+V34_NONLINEAR_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v34_nonlinear.o \
+	$(BUILD_DIR)/v34_nonlinear.o
 V34_SYMBOL_POWER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_symbol_power
 V34_SYMBOL_POWER_TEST_OBJECTS := \
@@ -780,7 +780,7 @@ V34_SYMBOL_POWER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_frame_schedule.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_parameters.o \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
-	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
+	$(BUILD_DIR)/v34_nonlinear.o \
 	$(BUILD_DIR)/sippymodem_v34_symbol_power.o
 V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_mapping_frame_transmitter
@@ -798,7 +798,7 @@ V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
+	$(BUILD_DIR)/v34_nonlinear.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o
 V34_POWER_CALIBRATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_power_calibration
@@ -816,7 +816,7 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
+	$(BUILD_DIR)/v34_nonlinear.o \
 	$(BUILD_DIR)/sippymodem_v34_symbol_power.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
 	$(BUILD_DIR)/sippymodem_v34_power_calibration.o \
@@ -842,7 +842,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
-	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
+	$(BUILD_DIR)/v34_nonlinear.o \
 	$(BUILD_DIR)/sippymodem_v34_symbol_power.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_transmitter.o \
 	$(BUILD_DIR)/sippymodem_v34_power_calibration.o \
@@ -1276,7 +1276,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_MAPPING_FRAME_DECODER_TEST_BINARY) \
 	$(V34_MAPPING_FRAME_RECEIVER_TEST_BINARY) \
 	$(V34_DATA_RECEIVER_TEST_BINARY) \
-	$(V34_NONLINEAR_ENCODER_TEST_BINARY) \
+	$(V34_NONLINEAR_TEST_BINARY) \
 	$(V34_SYMBOL_POWER_TEST_BINARY) \
 	$(V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY) \
 	$(V34_POWER_CALIBRATION_TEST_BINARY) \
@@ -1407,7 +1407,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_MAPPING_FRAME_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V34_MAPPING_FRAME_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_DATA_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V34_NONLINEAR_ENCODER_TEST_OBJECTS:.o=.d) \
+	$(V34_NONLINEAR_TEST_OBJECTS:.o=.d) \
 	$(V34_SYMBOL_POWER_TEST_OBJECTS:.o=.d) \
 	$(V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS:.o=.d) \
 	$(V34_POWER_CALIBRATION_TEST_OBJECTS:.o=.d) \
@@ -1555,7 +1555,7 @@ test: $(TEST_BINARIES)
 	./$(V34_MAPPING_FRAME_DECODER_TEST_BINARY)
 	./$(V34_MAPPING_FRAME_RECEIVER_TEST_BINARY)
 	./$(V34_DATA_RECEIVER_TEST_BINARY)
-	./$(V34_NONLINEAR_ENCODER_TEST_BINARY)
+	./$(V34_NONLINEAR_TEST_BINARY)
 	./$(V34_SYMBOL_POWER_TEST_BINARY)
 	./$(V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY)
 	./$(V34_POWER_CALIBRATION_TEST_BINARY)
@@ -1911,8 +1911,7 @@ $(V34_MAPPING_FRAME_RECEIVER_TEST_BINARY): \
 $(V34_DATA_RECEIVER_TEST_BINARY): $(V34_DATA_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V34_NONLINEAR_ENCODER_TEST_BINARY): \
-	$(V34_NONLINEAR_ENCODER_TEST_OBJECTS)
+$(V34_NONLINEAR_TEST_BINARY): $(V34_NONLINEAR_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_SYMBOL_POWER_TEST_BINARY): $(V34_SYMBOL_POWER_TEST_OBJECTS)
@@ -2417,8 +2416,8 @@ $(BUILD_DIR)/v34_data_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_nonlinear_encoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_nonlinear.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_nonlinear.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_symbol_power.o: \

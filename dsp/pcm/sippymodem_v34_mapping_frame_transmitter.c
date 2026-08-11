@@ -31,7 +31,7 @@ project_mapping_frame(
 				(size_t)interval *
 					SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL +
 				symbol;
-			enum sippymodem_v34_nonlinear_encoder_result result =
+			enum sippymodem_v34_nonlinear_result result =
 				sippymodem_v34_nonlinear_encode(
 					nonlinear_parameter,
 					mean_squared_magnitude,
@@ -41,9 +41,9 @@ project_mapping_frame(
 					&projected[index]);
 
 			if (result ==
-			    SIPPYMODEM_V34_NONLINEAR_ENCODER_NUMERIC_FAILURE)
+			    SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE)
 				return SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_NUMERIC_FAILURE;
-			if (result != SIPPYMODEM_V34_NONLINEAR_ENCODER_OK)
+			if (result != SIPPYMODEM_V34_NONLINEAR_OK)
 				return SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT;
 		}
 	}
