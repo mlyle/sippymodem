@@ -9,3 +9,6 @@
 /dsp/**/*.d
 /src/slmodemd
 /tests/build/
+__pycache__/
+/.live-call.json
+/live-call-artifacts/

@@ -1,0 +1,24 @@
+{
+  "slmodemd": "../src/slmodemd",
+  "artifact_directory": "../live-call-artifacts",
+  "environment": {
+    "SIP_CODEC": "PCMU",
+    "SIP_REGISTER": "0"
+  },
+  "at_commands": [
+    "ATZ",
+    "ATX3",
+    "AT+MS=21,0,300,300"
+  ],
+  "startup_timeout_seconds": 15,
+  "call_timeout_seconds": 90,
+  "hold_seconds": 3,
+  "plans": [
+    {
+      "name": "v21-direct",
+      "dial": "",
+      "configured_target": "sip:ata.example.invalid",
+      "enabled": false
+    }
+  ]
+}
