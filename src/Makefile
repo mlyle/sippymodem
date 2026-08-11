@@ -85,6 +85,7 @@ SIPPYMODEM_SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_qam.c \
 	$(DSP_SOURCE_DIR)/sippymodem_qam_gain.c \
 	$(DSP_SOURCE_DIR)/sippymodem_self_sync_scrambler.c \
+	$(DSP_SOURCE_DIR)/sippymodem_single_tone.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_ansam.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_answering.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_calling.c \
