@@ -160,6 +160,7 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_frame_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_frame_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_channel_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_lattice.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_path_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_precoder.c \
