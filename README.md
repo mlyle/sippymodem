@@ -118,6 +118,12 @@ Both patterns are limited to 512 bytes, and `online_timeout_seconds` bounds the
 wait. When an expectation is present, a plan reports `connected` only after
 the terminal receives that exact byte sequence.
 
+The current physical interoperability baseline has transferred an exact,
+bounded 54-byte pattern over direct SIP at V.21 300 bit/s and at every
+implemented V.32/V.32bis rate from 4800 through 14400 bit/s. These milestone
+observations establish functional interoperation, not a repeatability or
+impaired-line qualification matrix; their recordings remain private and ignored.
+
 The runner clears inherited SIP settings before applying the private file,
 uses ephemeral local ports unless the file explicitly selects ports, and never
 prints endpoints, credentials, terminal paths, or artifact paths. Each attempt
