@@ -1152,7 +1152,8 @@ static void modem_setup_config(struct modem *m)
 	m->cfg.comp_max_string = COMP_MAX_STRING;
 
 	/* setup dsp data */
-	m->dsp_info.qc_lapm = m->cfg.ec && m->cfg.ec_detector ;
+	/* Only an exchanged V.8 menu can establish quick-connect LAPM. */
+	m->dsp_info.qc_lapm = 0;
 }
 
 

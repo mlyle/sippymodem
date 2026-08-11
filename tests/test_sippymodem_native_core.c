@@ -86,7 +86,6 @@ static bool test_v32_preserves_error_control_detection(void)
 	modem->caller = 1;
 	modem->cfg.ec = 1;
 	modem->cfg.ec_detector = 1;
-	modem->dsp_info.qc_lapm = 0;
 
 	modem_update_status(modem, STATUS_DP_LINK);
 	CHECK(modem->cfg.ec == 1 && modem->get_bits == modem_detector_get_bits &&
