@@ -13,7 +13,6 @@ enum {
 	SIPPYMODEM_V34_PRECODER_TAP_COUNT = 3,
 	SIPPYMODEM_V34_Q7_SCALE = 128,
 	SIPPYMODEM_V34_Q14_SCALE = 16384,
-	SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT = 255,
 };
 
 /* Complex protocol values with seven fractional bits. The wider components
