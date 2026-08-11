@@ -44,6 +44,18 @@ enum sippymodem_v34_parser_result sippymodem_v34_parse_mapping_frame(
 	size_t scrambled_primary_bit_count, const uint8_t *auxiliary_bit,
 	struct sippymodem_v34_parsed_mapping_frame *parsed);
 
+/* Recover the scrambled primary bits and raw auxiliary bit from exact parsed
+ * fields. The primary count must match the scheduled frame, and auxiliary_bit
+ * must be non-NULL exactly when the schedule carries one. Rejection leaves
+ * both destinations unchanged. */
+enum sippymodem_v34_parser_result
+sippymodem_v34_recover_mapping_frame_bits(
+	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct sippymodem_v34_mapping_frame *mapping_frame,
+	const struct sippymodem_v34_parsed_mapping_frame *parsed,
+	uint8_t *scrambled_primary_bits, size_t scrambled_primary_bit_count,
+	uint8_t *auxiliary_bit);
+
 bool sippymodem_v34_parsed_mapping_frame_is_valid(
 	const struct sippymodem_v34_parsed_mapping_frame *parsed,
 	const struct sippymodem_v34_mapping_parameters *parameters,

@@ -238,102 +238,6 @@ static bool test_short_parser_layouts(void)
 	return true;
 }
 
-static bool append_bit(
-	uint8_t *bits, size_t capacity, size_t *count, uint8_t bit)
-{
-	if (*count >= capacity || bit > 1u)
-		return false;
-	bits[(*count)++] = bit;
-	return true;
-}
-
-static bool append_value(
-	uint8_t *bits, size_t capacity, size_t *count, uint32_t value,
-	uint8_t bit_count)
-{
-	for (uint8_t index = 0; index < bit_count; ++index) {
-		if (!append_bit(
-			    bits, capacity, count,
-			    (uint8_t)((value >> index) & 1u)))
-			return false;
-	}
-	return true;
-}
-
-static uint8_t short_i3_count(uint8_t data_bits)
-{
-	switch (data_bits) {
-	case 8:
-		return 0;
-	case 9:
-		return 1;
-	case 11:
-		return 3;
-	case 12:
-		return 4;
-	}
-	return UINT8_MAX;
-}
-
-static bool reconstruct_primary_bits(
-	const struct sippymodem_v34_parsed_mapping_frame *parsed,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
-	const uint8_t *auxiliary_bit, uint8_t *reconstructed,
-	size_t *reconstructed_count)
-{
-	size_t count = 0;
-	uint8_t i3_count = parameters->mapping_frame_bits <= 12u ?
-		short_i3_count(mapping_frame->data_bits) :
-		SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
-	uint8_t shell_bits = parameters->mapping_frame_bits > 12u ?
-		(uint8_t)(parameters->shell_mapper_bits -
-			  !mapping_frame->high_frame) :
-		0u;
-
-	if (i3_count == UINT8_MAX ||
-	    !append_value(
-		    reconstructed, MAX_MAPPING_FRAME_BITS, &count,
-		    parsed->shell_label, shell_bits))
-		return false;
-	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
-	     ++interval) {
-		const struct sippymodem_v34_4d_mapping_input *input =
-			&parsed->interval[interval];
-
-		if (interval == 0 && mapping_frame->carries_auxiliary_bit) {
-			if (auxiliary_bit == NULL ||
-			    input->rotation_bit != *auxiliary_bit)
-				return false;
-		} else if (!append_bit(
-				   reconstructed, MAX_MAPPING_FRAME_BITS, &count,
-				   input->rotation_bit)) {
-			return false;
-		}
-		if (!append_bit(
-			    reconstructed, MAX_MAPPING_FRAME_BITS, &count,
-			    input->differential_input & 1u) ||
-		    (interval < i3_count &&
-		     !append_bit(
-			     reconstructed, MAX_MAPPING_FRAME_BITS, &count,
-			     (input->differential_input >> 1) & 1u)))
-			return false;
-		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
-		     ++symbol) {
-			if (!append_value(
-				    reconstructed, MAX_MAPPING_FRAME_BITS, &count,
-				    input->point_index[symbol],
-				    parameters
-					    ->point_index_bits_per_2d_symbol))
-				return false;
-		}
-	}
-	*reconstructed_count = count;
-	return true;
-}
-
 static void generate_primary_bits(
 	uint8_t *bits, size_t count, uint32_t seed)
 {
@@ -386,8 +290,9 @@ static bool test_all_supported_schedules(void)
 						uint8_t primary[MAX_MAPPING_FRAME_BITS];
 						uint8_t reconstructed[MAX_MAPPING_FRAME_BITS];
 						uint8_t auxiliary_bit;
+						uint8_t recovered_auxiliary = 2;
 						const uint8_t *auxiliary_pointer;
-						size_t reconstructed_count;
+						uint8_t *recovered_auxiliary_pointer;
 
 						CHECK(sippymodem_v34_frame_schedule_next(
 							      &schedule, &frame) ==
@@ -404,23 +309,26 @@ static bool test_all_supported_schedules(void)
 						auxiliary_bit = (uint8_t)(
 							(symbol_index + rate + frame.index) & 1u);
 						auxiliary_pointer =
+							frame.carries_auxiliary_bit ? &auxiliary_bit : NULL;
+						recovered_auxiliary_pointer =
 							frame.carries_auxiliary_bit ?
-								&auxiliary_bit : NULL;
+								&recovered_auxiliary : NULL;
 						CHECK(sippymodem_v34_parse_mapping_frame(
 							      &parameters, &frame, primary,
 							      frame.primary_bits,
 							      auxiliary_pointer, &parsed) ==
 							      SIPPYMODEM_V34_PARSER_OK &&
-						      sippymodem_v34_parsed_mapping_frame_is_valid(
-							      &parsed, &parameters, &frame) &&
-						      reconstruct_primary_bits(
-							      &parsed, &parameters, &frame,
-							      auxiliary_pointer, reconstructed,
-							      &reconstructed_count) &&
-						      reconstructed_count == frame.primary_bits &&
-						      memcmp(
-							      reconstructed, primary,
-							      frame.primary_bits) == 0,
+							      sippymodem_v34_parsed_mapping_frame_is_valid(
+								      &parsed, &parameters, &frame) &&
+							      sippymodem_v34_recover_mapping_frame_bits(
+								      &parameters, &frame, &parsed,
+								      reconstructed, frame.primary_bits,
+								      recovered_auxiliary_pointer) ==
+								      SIPPYMODEM_V34_PARSER_OK &&
+							      memcmp(reconstructed, primary,
+								     frame.primary_bits) == 0 &&
+							      (!frame.carries_auxiliary_bit ||
+							       recovered_auxiliary == auxiliary_bit),
 						      "parser round trip %zu/%u/%u/%u/%u failed",
 						      symbol_index, rate, auxiliary, expanded,
 						      frame.index);
@@ -450,7 +358,10 @@ static bool test_all_supported_schedules(void)
 static bool test_validation(void)
 {
 	uint8_t primary_bits[14] = { 0 };
+	uint8_t recovered[MAX_MAPPING_FRAME_BITS];
+	uint8_t recovered_saved[MAX_MAPPING_FRAME_BITS];
 	uint8_t auxiliary_bit = 1;
+	uint8_t recovered_auxiliary = 0xa5;
 	struct sippymodem_v34_mapping_parameters parameters;
 	struct sippymodem_v34_mapping_parameters corrupt_parameters;
 	struct sippymodem_v34_mapping_frame mapping_frame = {
@@ -460,6 +371,7 @@ static bool test_validation(void)
 		.carries_auxiliary_bit = true,
 	};
 	struct sippymodem_v34_mapping_frame corrupt_frame;
+	struct sippymodem_v34_mapping_frame no_auxiliary_frame;
 	struct sippymodem_v34_parsed_mapping_frame parsed;
 	struct sippymodem_v34_parsed_mapping_frame saved;
 
@@ -472,6 +384,50 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_PARSER_OK,
 	      "parser validation fixture did not initialize");
 	saved = parsed;
+	CHECK(sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &mapping_frame, &saved, recovered,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_OK &&
+	      memcmp(recovered, primary_bits, sizeof(primary_bits)) == 0 &&
+	      recovered_auxiliary == auxiliary_bit,
+	      "mapping-frame recovery fixture changed bits");
+	memset(recovered, 0x5a, sizeof(recovered));
+	memcpy(recovered_saved, recovered, sizeof(recovered));
+	recovered_auxiliary = 0xa5;
+	no_auxiliary_frame = mapping_frame;
+	no_auxiliary_frame.primary_bits = no_auxiliary_frame.data_bits;
+	no_auxiliary_frame.carries_auxiliary_bit = false;
+	CHECK(sippymodem_v34_recover_mapping_frame_bits(
+		      NULL, &mapping_frame, &saved, recovered,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, NULL, &saved, recovered,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &mapping_frame, NULL, recovered,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &mapping_frame, &saved, NULL,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &mapping_frame, &saved, recovered,
+		      mapping_frame.primary_bits - 1u, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &mapping_frame, &saved, recovered,
+		      mapping_frame.primary_bits, NULL) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &no_auxiliary_frame, &saved, recovered,
+		      no_auxiliary_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      memcmp(recovered, recovered_saved, sizeof(recovered)) == 0 &&
+	      recovered_auxiliary == 0xa5,
+	      "invalid mapping-frame recovery changed an output");
 	CHECK(sippymodem_v34_parse_mapping_frame(
 		      NULL, &mapping_frame, primary_bits,
 		      ARRAY_LENGTH(primary_bits), &auxiliary_bit, &parsed) ==
@@ -530,6 +486,17 @@ static bool test_validation(void)
 		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
 	      parsed_frames_are_equal(&parsed, &saved),
 	      "parser accepted corrupt parameters or schedule");
+	CHECK(sippymodem_v34_recover_mapping_frame_bits(
+		      &corrupt_parameters, &mapping_frame, &saved, recovered,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &corrupt_frame, &saved, recovered,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      memcmp(recovered, recovered_saved, sizeof(recovered)) == 0 &&
+	      recovered_auxiliary == 0xa5,
+	      "corrupt recovery dimensions changed an output");
 
 	parsed = saved;
 	parsed.shell_label = 1u << parameters.shell_mapper_bits;
@@ -557,6 +524,13 @@ static bool test_validation(void)
 	      !sippymodem_v34_parsed_mapping_frame_is_valid(
 		      &saved, &parameters, NULL),
 	      "parsed frame accepted invalid point or arguments");
+	CHECK(sippymodem_v34_recover_mapping_frame_bits(
+		      &parameters, &mapping_frame, &parsed, recovered,
+		      mapping_frame.primary_bits, &recovered_auxiliary) ==
+		      SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT &&
+	      memcmp(recovered, recovered_saved, sizeof(recovered)) == 0 &&
+	      recovered_auxiliary == 0xa5,
+	      "invalid parsed recovery changed an output");
 
 	CHECK(strcmp(sippymodem_v34_parser_result_name(
 		     SIPPYMODEM_V34_PARSER_OK),

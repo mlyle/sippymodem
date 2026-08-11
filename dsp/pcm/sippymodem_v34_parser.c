@@ -3,11 +3,18 @@
 #include "sippymodem_v34_parser.h"
 
 #include <stddef.h>
+#include <string.h>
 
 struct primary_bit_cursor {
 	const uint8_t *bits;
 	size_t count;
 	size_t next;
+};
+
+struct primary_bit_builder {
+	uint8_t bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	size_t count;
+	size_t limit;
 };
 
 static bool mapping_frame_matches_parameters(
@@ -61,6 +68,27 @@ static bool take_primary_value(
 		collected |= (uint32_t)bit << index;
 	}
 	*value = collected;
+	return true;
+}
+
+static bool put_primary_bit(
+	struct primary_bit_builder *builder, uint8_t bit)
+{
+	if (builder->count >= builder->limit || bit > 1u)
+		return false;
+	builder->bits[builder->count++] = bit;
+	return true;
+}
+
+static bool put_primary_value(
+	struct primary_bit_builder *builder, uint32_t value,
+	uint8_t bit_count)
+{
+	for (uint8_t index = 0; index < bit_count; ++index) {
+		if (!put_primary_bit(
+			    builder, (uint8_t)((value >> index) & 1u)))
+			return false;
+	}
 	return true;
 }
 
@@ -254,6 +282,87 @@ enum sippymodem_v34_parser_result sippymodem_v34_parse_mapping_frame(
 		    &generated, parameters, mapping_frame))
 		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
 	*parsed = generated;
+	return SIPPYMODEM_V34_PARSER_OK;
+}
+
+static bool recover_parsed_bits(
+	struct primary_bit_builder *builder,
+	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct sippymodem_v34_mapping_frame *mapping_frame,
+	const struct sippymodem_v34_parsed_mapping_frame *parsed,
+	uint8_t *auxiliary_bit)
+{
+	uint8_t i3_intervals =
+		SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	uint8_t shell_bits = 0;
+
+	if (parameters->mapping_frame_bits > 12u) {
+		shell_bits = (uint8_t)(
+			parameters->shell_mapper_bits - !mapping_frame->high_frame);
+	} else if (!special_i3_interval_count(
+			   mapping_frame->data_bits, &i3_intervals)) {
+		return false;
+	}
+	if (!put_primary_value(builder, parsed->shell_label, shell_bits))
+		return false;
+	for (uint8_t interval = 0;
+	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     ++interval) {
+		const struct sippymodem_v34_4d_mapping_input *input =
+			&parsed->interval[interval];
+
+		if (interval == 0 && mapping_frame->carries_auxiliary_bit)
+			*auxiliary_bit = input->rotation_bit;
+		else if (!put_primary_bit(builder, input->rotation_bit))
+			return false;
+		if (!put_primary_bit(
+			    builder, input->differential_input & 1u) ||
+		    (interval < i3_intervals &&
+		     !put_primary_bit(
+			     builder,
+			     (input->differential_input >> 1) & 1u)))
+			return false;
+		for (uint8_t symbol = 0;
+		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     ++symbol) {
+			if (!put_primary_value(
+				    builder, input->point_index[symbol],
+				    parameters
+					    ->point_index_bits_per_2d_symbol))
+				return false;
+		}
+	}
+	return builder->count == builder->limit;
+}
+
+enum sippymodem_v34_parser_result
+sippymodem_v34_recover_mapping_frame_bits(
+	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct sippymodem_v34_mapping_frame *mapping_frame,
+	const struct sippymodem_v34_parsed_mapping_frame *parsed,
+	uint8_t *scrambled_primary_bits, size_t scrambled_primary_bit_count,
+	uint8_t *auxiliary_bit)
+{
+	struct primary_bit_builder builder = {
+		.limit = scrambled_primary_bit_count,
+	};
+	uint8_t recovered_auxiliary = 0;
+	bool auxiliary_expected;
+
+	if (!sippymodem_v34_parsed_mapping_frame_is_valid(
+		    parsed, parameters, mapping_frame) ||
+	    scrambled_primary_bits == NULL ||
+	    scrambled_primary_bit_count != mapping_frame->primary_bits)
+		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
+	auxiliary_expected = mapping_frame->carries_auxiliary_bit;
+	if ((auxiliary_bit != NULL) != auxiliary_expected ||
+	    !recover_parsed_bits(
+		    &builder, parameters, mapping_frame, parsed,
+		    &recovered_auxiliary))
+		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
+	memcpy(scrambled_primary_bits, builder.bits, builder.count);
+	if (auxiliary_bit != NULL)
+		*auxiliary_bit = recovered_auxiliary;
 	return SIPPYMODEM_V34_PARSER_OK;
 }
 
