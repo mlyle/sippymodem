@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v34_trellis.h"
+#include "v34_trellis.h"
 
 #include <stddef.h>
 

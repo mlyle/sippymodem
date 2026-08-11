@@ -632,7 +632,7 @@ V34_MAPPER_TEST_OBJECTS := \
 V34_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_trellis
 V34_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_trellis.o \
-	$(BUILD_DIR)/sippymodem_v34_trellis.o
+	$(BUILD_DIR)/v34_trellis.o
 V34_PRECODER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_precoder
 V34_PRECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_precoder.o \
@@ -658,7 +658,7 @@ V34_4D_ENCODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
-	$(BUILD_DIR)/sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o
 V34_4D_DECODER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v34_4d_decoder
@@ -684,7 +684,7 @@ V34_MAPPING_FRAME_ENCODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
-	$(BUILD_DIR)/sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o
 V34_MAPPING_FRAME_DECODER_TEST_BINARY := \
@@ -700,7 +700,7 @@ V34_MAPPING_FRAME_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
-	$(BUILD_DIR)/sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_decoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
@@ -752,7 +752,7 @@ V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
-	$(BUILD_DIR)/sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
@@ -770,7 +770,7 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
-	$(BUILD_DIR)/sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
@@ -796,7 +796,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v34_constellation.o \
 	$(BUILD_DIR)/sippymodem_v34_mapper.o \
 	$(BUILD_DIR)/v34_precoder.o \
-	$(BUILD_DIR)/sippymodem_v34_trellis.o \
+	$(BUILD_DIR)/v34_trellis.o \
 	$(BUILD_DIR)/sippymodem_v34_4d_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_mapping_frame_encoder.o \
 	$(BUILD_DIR)/sippymodem_v34_nonlinear_encoder.o \
@@ -2281,8 +2281,8 @@ $(BUILD_DIR)/sippymodem_v34_mapper.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_mapper.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v34_trellis.o: \
-	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_trellis.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_trellis.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_trellis.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_precoder.o: \

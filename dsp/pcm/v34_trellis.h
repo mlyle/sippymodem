@@ -81,4 +81,4 @@ sippymodem_v34_convolutional_encoder_advance(
 const char *sippymodem_v34_trellis_result_name(
 	enum sippymodem_v34_trellis_result result);
 
-#endif
+#endif /* SIPPYMODEM_V34_TRELLIS_H */
