@@ -10,6 +10,8 @@
 
 enum {
 	TEST_AMPLITUDE = 12000,
+	TEST_TURNAROUND_PRIMARY_AMPLITUDE = 9000,
+	TEST_TURNAROUND_SECONDARY_AMPLITUDE = 6000,
 	TEST_TRANSITION_LIMIT = 800,
 };
 
@@ -17,6 +19,11 @@ enum test_codec {
 	TEST_CODEC_LINEAR,
 	TEST_CODEC_PCMU,
 	TEST_CODEC_PCMA,
+};
+
+struct test_turnaround_signal {
+	struct sippymodem_single_tone_transmitter primary;
+	struct sippymodem_single_tone_transmitter secondary;
 };
 
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
@@ -44,6 +51,52 @@ static bool process_tone(
 		       complete) == SIPPYMODEM_V32_LINE_STARTUP_OK;
 }
 
+static bool turnaround_signal_init(
+	struct test_turnaround_signal *signal, unsigned int primary_hz)
+{
+	unsigned int secondary_hz =
+		primary_hz == SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ ?
+			SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ :
+			SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ;
+
+	return sippymodem_single_tone_transmitter_init(
+		       &signal->primary, primary_hz,
+		       TEST_TURNAROUND_PRIMARY_AMPLITUDE) ==
+		       SIPPYMODEM_SINGLE_TONE_OK &&
+	       sippymodem_single_tone_transmitter_init(
+		       &signal->secondary, secondary_hz,
+		       TEST_TURNAROUND_SECONDARY_AMPLITUDE) ==
+		       SIPPYMODEM_SINGLE_TONE_OK;
+}
+
+static bool process_turnaround(
+	struct sippymodem_v32_line_startup *startup,
+	struct test_turnaround_signal *signal, enum test_codec codec,
+	int16_t *transmit, bool *complete)
+{
+	int16_t primary;
+	int16_t secondary;
+
+	return sippymodem_single_tone_transmitter_sample(
+		       &signal->primary, &primary) == SIPPYMODEM_SINGLE_TONE_OK &&
+	       sippymodem_single_tone_transmitter_sample(
+		       &signal->secondary, &secondary) ==
+		       SIPPYMODEM_SINGLE_TONE_OK &&
+	       sippymodem_v32_line_startup_process(
+		       startup,
+		       codec_round_trip(
+			       (int16_t)((int32_t)primary + secondary), codec),
+		       transmit, complete) == SIPPYMODEM_V32_LINE_STARTUP_OK;
+}
+
+static bool reverse_turnaround(struct test_turnaround_signal *signal)
+{
+	return sippymodem_single_tone_transmitter_reverse(&signal->primary) ==
+		       SIPPYMODEM_SINGLE_TONE_OK &&
+	       sippymodem_single_tone_transmitter_reverse(&signal->secondary) ==
+		       SIPPYMODEM_SINGLE_TONE_OK;
+}
+
 static bool advance_to_state(
 	struct sippymodem_v32_line_startup *startup,
 	struct sippymodem_single_tone_transmitter *answerer,
@@ -63,12 +116,14 @@ static bool advance_to_state(
 	return false;
 }
 
-static bool run_exchange(enum test_codec codec)
+static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 {
 	struct sippymodem_v32_line_startup startup;
 	struct sippymodem_single_tone_transmitter answerer;
+	struct test_turnaround_signal turnaround;
 	uint64_t calling_power = 0;
 	size_t guard_samples = 0;
+	size_t reversal_response_samples = 0;
 	bool complete = false;
 
 	CHECK(sippymodem_v32_line_startup_init(
@@ -76,7 +131,8 @@ static bool run_exchange(enum test_codec codec)
 		      SIPPYMODEM_V32_LINE_STARTUP_OK &&
 		      sippymodem_single_tone_transmitter_init(
 			      &answerer, SIPPYMODEM_V32_ANSWER_TONE_HZ,
-			      TEST_AMPLITUDE) == SIPPYMODEM_SINGLE_TONE_OK,
+			      TEST_AMPLITUDE) == SIPPYMODEM_SINGLE_TONE_OK &&
+		      turnaround_signal_init(&turnaround, turnaround_hz),
 	      "V.32 line-startup fixture did not initialize");
 	for (size_t count = 0; count < 400; ++count) {
 		int16_t transmit = 1;
@@ -105,55 +161,110 @@ static bool run_exchange(enum test_codec codec)
 		      startup.state ==
 			      SIPPYMODEM_V32_LINE_SEND_CALLING_CARRIER,
 	      "caller did not observe the exact one-second answer guard");
-	for (size_t count = 0; count < 320; ++count) {
+	for (size_t count = 0; count < 240; ++count) {
 		int16_t transmit;
 
-		CHECK(process_tone(
-			      &startup, &answerer, codec, &transmit, &complete),
+		CHECK(sippymodem_v32_line_startup_process(
+			      &startup, 0, &transmit, &complete) ==
+			      SIPPYMODEM_V32_LINE_STARTUP_OK &&
+		      startup.state ==
+			      SIPPYMODEM_V32_LINE_SEND_CALLING_CARRIER,
+		      "caller rejected the answer-to-turnaround gap");
+		calling_power += (uint64_t)((int32_t)transmit * transmit);
+	}
+	for (size_t count = 0; count < 400; ++count) {
+		int16_t transmit;
+
+		CHECK(process_turnaround(
+			      &startup, &turnaround, codec, &transmit, &complete) &&
+		      startup.state ==
+			      SIPPYMODEM_V32_LINE_SEND_CALLING_CARRIER,
 		      "calling carrier generation failed");
 		calling_power += (uint64_t)((int32_t)transmit * transmit);
 	}
 	CHECK(calling_power > UINT64_C(1000000000),
 	      "caller omitted its 1800 Hz response carrier");
-	CHECK(sippymodem_single_tone_transmitter_reverse(&answerer) ==
-		      SIPPYMODEM_SINGLE_TONE_OK &&
-		      advance_to_state(
-			      &startup, &answerer, codec,
-			      SIPPYMODEM_V32_LINE_SEND_REVERSED_CALLING_CARRIER),
-	      "caller did not answer the first phase reversal");
+	CHECK(reverse_turnaround(&turnaround),
+	      "turnaround tone did not reverse");
+	while (startup.state !=
+		       SIPPYMODEM_V32_LINE_SEND_REVERSED_CALLING_CARRIER &&
+	       reversal_response_samples < TEST_TRANSITION_LIMIT) {
+		int16_t transmit;
+
+		CHECK(process_turnaround(
+			      &startup, &turnaround, codec, &transmit, &complete) &&
+		      !complete,
+		      "caller did not schedule its carrier reversal");
+		reversal_response_samples++;
+	}
+	CHECK(startup.state ==
+		      SIPPYMODEM_V32_LINE_SEND_REVERSED_CALLING_CARRIER &&
+		      startup.selected_turnaround_tone_hz == turnaround_hz &&
+		      reversal_response_samples >=
+			      SIPPYMODEM_V32_REVERSAL_RESPONSE_SAMPLES -
+				      SIPPYMODEM_V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
+		      reversal_response_samples <=
+			      SIPPYMODEM_V32_REVERSAL_RESPONSE_SAMPLES +
+				      SIPPYMODEM_V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES,
+	      "caller did not answer the first reversal after 64 symbols (%zu)",
+	      reversal_response_samples);
+	{
+		struct sippymodem_v32_line_startup lost = startup;
+		enum sippymodem_v32_line_startup_result result =
+			SIPPYMODEM_V32_LINE_STARTUP_OK;
+		int16_t transmit = 1;
+		bool lost_complete = false;
+
+		for (size_t count = 0;
+		     count < TEST_TRANSITION_LIMIT &&
+		     result == SIPPYMODEM_V32_LINE_STARTUP_OK;
+		     ++count)
+			result = sippymodem_v32_line_startup_process(
+				&lost, 0, &transmit, &lost_complete);
+		CHECK(result == SIPPYMODEM_V32_LINE_STARTUP_PROTOCOL_ERROR &&
+			      lost.state == SIPPYMODEM_V32_LINE_STARTUP_FAILED &&
+			      transmit == 0 && !lost_complete,
+		      "caller did not fail closed on turnaround-carrier loss");
+	}
 	for (size_t count = 0; count < 400; ++count) {
 		int16_t transmit;
 
-		CHECK(process_tone(
-			      &startup, &answerer, codec, &transmit, &complete),
+		CHECK(process_turnaround(
+			      &startup, &turnaround, codec, &transmit, &complete) &&
+		      !complete &&
+		      startup.state ==
+			      SIPPYMODEM_V32_LINE_SEND_REVERSED_CALLING_CARRIER,
 		      "reversed calling carrier failed");
 	}
-	CHECK(sippymodem_single_tone_transmitter_reverse(&answerer) ==
-		      SIPPYMODEM_SINGLE_TONE_OK &&
-		      advance_to_state(
-			      &startup, &answerer, codec,
-			      SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE_END),
-	      "caller did not stop after the second phase reversal");
+	CHECK(reverse_turnaround(&turnaround),
+	      "turnaround tone did not reverse a second time");
 	for (size_t count = 0; count < TEST_TRANSITION_LIMIT && !complete;
 	     ++count) {
 		int16_t transmit = 1;
 
-		CHECK(sippymodem_v32_line_startup_process(
-			      &startup, 0, &transmit, &complete) ==
-			      SIPPYMODEM_V32_LINE_STARTUP_OK &&
-		      transmit == 0,
-		      "caller did not remain silent during peer turnaround");
+		CHECK(process_turnaround(
+			      &startup, &turnaround, codec, &transmit, &complete),
+		      "caller rejected the second phase reversal");
+		if (complete)
+			CHECK(transmit == 0,
+			      "caller continued after the second reversal");
 	}
 	CHECK(complete && sippymodem_v32_line_startup_is_complete(&startup),
-	      "caller did not finish the line startup after peer turnaround");
+	      "caller did not finish the line startup at peer turnaround");
 	return true;
 }
 
 static bool test_generated_exchange(void)
 {
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
-	     codec <= TEST_CODEC_PCMA; ++codec)
-		CHECK(run_exchange(codec), "V.32 line startup failed codec %d", codec);
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		CHECK(run_exchange(
+			      codec, SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ),
+		      "V.32 low-tone startup failed codec %d", codec);
+		CHECK(run_exchange(
+			      codec, SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ),
+		      "V.32 high-tone startup failed codec %d", codec);
+	}
 	return true;
 }
 

@@ -11,18 +11,29 @@
 enum {
 	SIPPYMODEM_V32_ANSWER_TONE_HZ = 2100,
 	SIPPYMODEM_V32_CALLING_CARRIER_HZ = 1800,
+	SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ = 600,
+	SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ = 3000,
+	SIPPYMODEM_V32_STARTUP_SYMBOL_RATE = 2400,
 	SIPPYMODEM_V32_ANSWER_GUARD_SAMPLES =
 		SIPPYMODEM_SINGLE_TONE_SAMPLE_RATE,
-	SIPPYMODEM_V32_MIN_REVERSAL_SPACING_SAMPLES =
-		SIPPYMODEM_SINGLE_TONE_SAMPLE_RATE * 30 / 1000,
+	/* The caller changes carrier state 64 +/- 2 symbols after the first
+	 * received turnaround-tone phase reversal. */
+	SIPPYMODEM_V32_REVERSAL_RESPONSE_SAMPLES =
+		(SIPPYMODEM_SINGLE_TONE_SAMPLE_RATE * 64 +
+		 SIPPYMODEM_V32_STARTUP_SYMBOL_RATE / 2) /
+		SIPPYMODEM_V32_STARTUP_SYMBOL_RATE,
+	SIPPYMODEM_V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES =
+		(SIPPYMODEM_SINGLE_TONE_SAMPLE_RATE * 2 +
+		 SIPPYMODEM_V32_STARTUP_SYMBOL_RATE - 1) /
+		SIPPYMODEM_V32_STARTUP_SYMBOL_RATE,
 };
 
 enum sippymodem_v32_line_startup_state {
 	SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE,
 	SIPPYMODEM_V32_LINE_ANSWER_GUARD,
 	SIPPYMODEM_V32_LINE_SEND_CALLING_CARRIER,
+	SIPPYMODEM_V32_LINE_DELAY_CALLING_CARRIER_REVERSAL,
 	SIPPYMODEM_V32_LINE_SEND_REVERSED_CALLING_CARRIER,
-	SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE_END,
 	SIPPYMODEM_V32_LINE_STARTUP_COMPLETE,
 	SIPPYMODEM_V32_LINE_STARTUP_FAILED,
 };
@@ -35,8 +46,11 @@ enum sippymodem_v32_line_startup_result {
 
 struct sippymodem_v32_line_startup {
 	struct sippymodem_single_tone_detector answer_tone;
+	struct sippymodem_single_tone_detector low_turnaround_tone;
+	struct sippymodem_single_tone_detector high_turnaround_tone;
 	struct sippymodem_single_tone_transmitter calling_carrier;
 	uint32_t state_samples;
+	uint16_t selected_turnaround_tone_hz;
 	enum sippymodem_v32_line_startup_state state;
 };
 
