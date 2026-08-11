@@ -78,7 +78,8 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_terminal.c \
 	sippymodem_v44_compressed_decoder.c \
 	sippymodem_v44_dictionary_decoder.c \
-	sippymodem_v44_stream.c
+	sippymodem_v44_stream.c \
+	sippymodem_v44_transparent_decoder.c
 SIPPYMODEM_SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_crc16_ccitt_false.c \
 	$(DSP_SOURCE_DIR)/sippymodem_datapumps.c \
