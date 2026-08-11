@@ -70,7 +70,7 @@ enum modem_host_result sippymodem_runtime_last_host_result(
 	const struct sippymodem_runtime *runtime);
 enum sip_session_result sippymodem_runtime_last_session_result(
 	const struct sippymodem_runtime *runtime);
-enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(
+enum pty_terminal_result sippymodem_runtime_last_terminal_result(
 	const struct sippymodem_runtime *runtime);
 enum slmodem_calls_result sippymodem_runtime_last_calls_result(
 	const struct sippymodem_runtime *runtime);

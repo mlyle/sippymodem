@@ -39,12 +39,12 @@
 #include <string.h>
 #include <unistd.h>
 
-enum { SIPPYMODEM_TERMINAL_PATH_MAX = 128 };
+enum { PTY_TERMINAL_PATH_MAX = 128 };
 
-struct sippymodem_terminal {
+struct pty_terminal {
 	int master_fd;
 	int system_error;
-	char device_path[SIPPYMODEM_TERMINAL_PATH_MAX];
+	char device_path[PTY_TERMINAL_PATH_MAX];
 };
 
 static int set_close_on_exec(int fd)
@@ -70,9 +70,9 @@ static int make_raw_115200(struct termios *attributes)
 		       -1;
 }
 
-static enum sippymodem_terminal_result fail_open(
-	struct sippymodem_terminal *terminal, int master_fd, int device_fd,
-	enum sippymodem_terminal_result result, int system_error)
+static enum pty_terminal_result fail_open(
+	struct pty_terminal *terminal, int master_fd, int device_fd,
+	enum pty_terminal_result result, int system_error)
 {
 	if (device_fd >= 0)
 		(void)close(device_fd);
@@ -84,17 +84,17 @@ static enum sippymodem_terminal_result fail_open(
 	return result;
 }
 
-struct sippymodem_terminal *sippymodem_terminal_create(void)
+struct pty_terminal *pty_terminal_create(void)
 {
-	struct sippymodem_terminal *terminal = calloc(1, sizeof(*terminal));
+	struct pty_terminal *terminal = calloc(1, sizeof(*terminal));
 
 	if (terminal != NULL)
 		terminal->master_fd = -1;
 	return terminal;
 }
 
-enum sippymodem_terminal_result sippymodem_terminal_open(
-	struct sippymodem_terminal *terminal)
+enum pty_terminal_result pty_terminal_open(
+	struct pty_terminal *terminal)
 {
 	struct termios attributes;
 	int master_fd;
@@ -102,104 +102,104 @@ enum sippymodem_terminal_result sippymodem_terminal_open(
 	int name_error;
 
 	if (terminal == NULL)
-		return SIPPYMODEM_TERMINAL_INVALID_ARGUMENT;
+		return PTY_TERMINAL_INVALID_ARGUMENT;
 	if (terminal->master_fd >= 0)
-		return SIPPYMODEM_TERMINAL_ALREADY_OPEN;
+		return PTY_TERMINAL_ALREADY_OPEN;
 	terminal->system_error = 0;
 	master_fd = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
 	if (master_fd < 0)
 		return fail_open(terminal, -1, -1,
-			SIPPYMODEM_TERMINAL_OPEN_ERROR, errno);
+			PTY_TERMINAL_OPEN_ERROR, errno);
 	if (set_close_on_exec(master_fd) != 0 || grantpt(master_fd) != 0 ||
 	    unlockpt(master_fd) != 0)
 		return fail_open(terminal, master_fd, -1,
-			SIPPYMODEM_TERMINAL_OPEN_ERROR, errno);
+			PTY_TERMINAL_OPEN_ERROR, errno);
 	name_error = ptsname_r(master_fd, terminal->device_path,
 			       sizeof(terminal->device_path));
 	if (name_error != 0)
 		return fail_open(terminal, master_fd, -1,
-			SIPPYMODEM_TERMINAL_NAME_ERROR, name_error);
+			PTY_TERMINAL_NAME_ERROR, name_error);
 	device_fd = open(terminal->device_path, O_RDWR | O_NOCTTY);
 	if (device_fd < 0 || set_close_on_exec(device_fd) != 0 ||
 	    tcgetattr(device_fd, &attributes) != 0)
 		return fail_open(terminal, master_fd, device_fd,
-			SIPPYMODEM_TERMINAL_CONFIGURATION_ERROR, errno);
+			PTY_TERMINAL_CONFIGURATION_ERROR, errno);
 	if (make_raw_115200(&attributes) != 0 ||
 	    tcsetattr(device_fd, TCSANOW, &attributes) != 0)
 		return fail_open(terminal, master_fd, device_fd,
-			SIPPYMODEM_TERMINAL_CONFIGURATION_ERROR, errno);
+			PTY_TERMINAL_CONFIGURATION_ERROR, errno);
 	if (close(device_fd) != 0)
 		return fail_open(terminal, master_fd, -1,
-			SIPPYMODEM_TERMINAL_CONFIGURATION_ERROR, errno);
+			PTY_TERMINAL_CONFIGURATION_ERROR, errno);
 	terminal->master_fd = master_fd;
-	return SIPPYMODEM_TERMINAL_OK;
+	return PTY_TERMINAL_OK;
 }
 
-enum sippymodem_terminal_result sippymodem_terminal_close(
-	struct sippymodem_terminal *terminal)
+enum pty_terminal_result pty_terminal_close(
+	struct pty_terminal *terminal)
 {
 	int master_fd;
 
 	if (terminal == NULL)
-		return SIPPYMODEM_TERMINAL_INVALID_ARGUMENT;
+		return PTY_TERMINAL_INVALID_ARGUMENT;
 	if (terminal->master_fd < 0)
-		return SIPPYMODEM_TERMINAL_OK;
+		return PTY_TERMINAL_OK;
 	master_fd = terminal->master_fd;
 	terminal->master_fd = -1;
 	terminal->device_path[0] = '\0';
 	if (close(master_fd) != 0) {
 		terminal->system_error = errno;
-		return SIPPYMODEM_TERMINAL_CLOSE_ERROR;
+		return PTY_TERMINAL_CLOSE_ERROR;
 	}
 	terminal->system_error = 0;
-	return SIPPYMODEM_TERMINAL_OK;
+	return PTY_TERMINAL_OK;
 }
 
-void sippymodem_terminal_destroy(struct sippymodem_terminal *terminal)
+void pty_terminal_destroy(struct pty_terminal *terminal)
 {
 	if (terminal == NULL)
 		return;
-	(void)sippymodem_terminal_close(terminal);
+	(void)pty_terminal_close(terminal);
 	free(terminal);
 }
 
-bool sippymodem_terminal_is_open(
-	const struct sippymodem_terminal *terminal)
+bool pty_terminal_is_open(
+	const struct pty_terminal *terminal)
 {
 	return terminal != NULL && terminal->master_fd >= 0;
 }
 
-int sippymodem_terminal_master_fd(
-	const struct sippymodem_terminal *terminal)
+int pty_terminal_master_fd(
+	const struct pty_terminal *terminal)
 {
 	return terminal != NULL ? terminal->master_fd : -1;
 }
 
-const char *sippymodem_terminal_device_path(
-	const struct sippymodem_terminal *terminal)
+const char *pty_terminal_device_path(
+	const struct pty_terminal *terminal)
 {
 	return terminal != NULL && terminal->master_fd >= 0 ?
 		       terminal->device_path :
 		       NULL;
 }
 
-enum sippymodem_terminal_result sippymodem_terminal_get_attributes(
-	struct sippymodem_terminal *terminal, struct termios *attributes)
+enum pty_terminal_result pty_terminal_get_attributes(
+	struct pty_terminal *terminal, struct termios *attributes)
 {
 	if (terminal == NULL || attributes == NULL)
-		return SIPPYMODEM_TERMINAL_INVALID_ARGUMENT;
+		return PTY_TERMINAL_INVALID_ARGUMENT;
 	if (terminal->master_fd < 0)
-		return SIPPYMODEM_TERMINAL_NOT_OPEN;
+		return PTY_TERMINAL_NOT_OPEN;
 	if (tcgetattr(terminal->master_fd, attributes) != 0) {
 		terminal->system_error = errno;
-		return SIPPYMODEM_TERMINAL_ATTRIBUTE_ERROR;
+		return PTY_TERMINAL_ATTRIBUTE_ERROR;
 	}
 	terminal->system_error = 0;
-	return SIPPYMODEM_TERMINAL_OK;
+	return PTY_TERMINAL_OK;
 }
 
-enum sippymodem_terminal_result sippymodem_terminal_read(
-	struct sippymodem_terminal *terminal, void *buffer, size_t capacity,
+enum pty_terminal_result pty_terminal_read(
+	struct pty_terminal *terminal, void *buffer, size_t capacity,
 	size_t *bytes_read)
 {
 	ssize_t count;
@@ -208,63 +208,63 @@ enum sippymodem_terminal_result sippymodem_terminal_read(
 		*bytes_read = 0;
 	if (terminal == NULL || (buffer == NULL && capacity != 0) ||
 	    capacity > (size_t)SSIZE_MAX)
-		return SIPPYMODEM_TERMINAL_INVALID_ARGUMENT;
+		return PTY_TERMINAL_INVALID_ARGUMENT;
 	if (terminal->master_fd < 0)
-		return SIPPYMODEM_TERMINAL_NOT_OPEN;
+		return PTY_TERMINAL_NOT_OPEN;
 	if (capacity == 0)
-		return SIPPYMODEM_TERMINAL_IDLE;
+		return PTY_TERMINAL_IDLE;
 	count = read(terminal->master_fd, buffer, capacity);
 	if (count > 0) {
 		if (bytes_read != NULL)
 			*bytes_read = (size_t)count;
 		terminal->system_error = 0;
-		return SIPPYMODEM_TERMINAL_OK;
+		return PTY_TERMINAL_OK;
 	}
 	if (count == 0 || errno == EIO) {
 		terminal->system_error = 0;
-		return SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED;
+		return PTY_TERMINAL_CLIENT_DISCONNECTED;
 	}
 	if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
 		terminal->system_error = 0;
-		return SIPPYMODEM_TERMINAL_IDLE;
+		return PTY_TERMINAL_IDLE;
 	}
 	terminal->system_error = errno;
-	return SIPPYMODEM_TERMINAL_READ_ERROR;
+	return PTY_TERMINAL_READ_ERROR;
 }
 
-int sippymodem_terminal_system_error(
-	const struct sippymodem_terminal *terminal)
+int pty_terminal_system_error(
+	const struct pty_terminal *terminal)
 {
 	return terminal != NULL ? terminal->system_error : EINVAL;
 }
 
-const char *sippymodem_terminal_result_name(
-	enum sippymodem_terminal_result result)
+const char *pty_terminal_result_name(
+	enum pty_terminal_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_TERMINAL_OK:
+	case PTY_TERMINAL_OK:
 		return "ok";
-	case SIPPYMODEM_TERMINAL_IDLE:
+	case PTY_TERMINAL_IDLE:
 		return "idle";
-	case SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED:
+	case PTY_TERMINAL_CLIENT_DISCONNECTED:
 		return "terminal client disconnected";
-	case SIPPYMODEM_TERMINAL_INVALID_ARGUMENT:
+	case PTY_TERMINAL_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_TERMINAL_ALREADY_OPEN:
+	case PTY_TERMINAL_ALREADY_OPEN:
 		return "terminal is already open";
-	case SIPPYMODEM_TERMINAL_NOT_OPEN:
+	case PTY_TERMINAL_NOT_OPEN:
 		return "terminal is not open";
-	case SIPPYMODEM_TERMINAL_OPEN_ERROR:
+	case PTY_TERMINAL_OPEN_ERROR:
 		return "could not open pseudoterminal";
-	case SIPPYMODEM_TERMINAL_NAME_ERROR:
+	case PTY_TERMINAL_NAME_ERROR:
 		return "could not resolve terminal device path";
-	case SIPPYMODEM_TERMINAL_CONFIGURATION_ERROR:
+	case PTY_TERMINAL_CONFIGURATION_ERROR:
 		return "could not configure terminal";
-	case SIPPYMODEM_TERMINAL_ATTRIBUTE_ERROR:
+	case PTY_TERMINAL_ATTRIBUTE_ERROR:
 		return "could not read terminal attributes";
-	case SIPPYMODEM_TERMINAL_READ_ERROR:
+	case PTY_TERMINAL_READ_ERROR:
 		return "could not read terminal input";
-	case SIPPYMODEM_TERMINAL_CLOSE_ERROR:
+	case PTY_TERMINAL_CLOSE_ERROR:
 		return "could not close terminal";
 	}
 	return "unknown terminal result";

@@ -24,14 +24,14 @@ struct sippymodem_runtime {
 	struct slmodem_adapter adapter;
 	struct slmodem_calls calls;
 	struct slmodem_terminal modem_terminal;
-	struct sippymodem_terminal *terminal;
+	struct pty_terminal *terminal;
 	struct recording_files *recording_files;
 	struct modem_host *host;
 	enum modem_host_result last_host_result;
 	enum sip_session_result last_session_result;
 	enum slmodem_calls_result last_calls_result;
 	enum slmodem_terminal_result last_modem_terminal_result;
-	enum sippymodem_terminal_result last_terminal_result;
+	enum pty_terminal_result last_terminal_result;
 	bool terminal_client_connected;
 };
 
@@ -45,7 +45,7 @@ static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
 		modem_delete(runtime->modem);
 	if (datapumps_are_started(&runtime->datapumps))
 		(void)datapumps_stop(&runtime->datapumps);
-	sippymodem_terminal_destroy(runtime->terminal);
+	pty_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
 
@@ -90,7 +90,7 @@ struct sippymodem_runtime *sippymodem_runtime_create(
 	    !slmodem_terminal_init(
 		    &runtime->modem_terminal, runtime->modem))
 		goto fail;
-	runtime->terminal = sippymodem_terminal_create();
+	runtime->terminal = pty_terminal_create();
 	if (runtime->terminal == NULL)
 		goto fail;
 	if (config->recording.prefix[0] != '\0') {
@@ -128,30 +128,30 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 	if (runtime == NULL)
 		return SIPPYMODEM_RUNTIME_INVALID_ARGUMENT;
 	if (modem_host_is_open(runtime->host))
-		return sippymodem_terminal_is_open(runtime->terminal) ?
+		return pty_terminal_is_open(runtime->terminal) ?
 			       SIPPYMODEM_RUNTIME_OK :
 			       SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
 	runtime->last_terminal_result =
-		sippymodem_terminal_open(runtime->terminal);
-	if (runtime->last_terminal_result != SIPPYMODEM_TERMINAL_OK &&
-	    runtime->last_terminal_result != SIPPYMODEM_TERMINAL_ALREADY_OPEN)
+		pty_terminal_open(runtime->terminal);
+	if (runtime->last_terminal_result != PTY_TERMINAL_OK &&
+	    runtime->last_terminal_result != PTY_TERMINAL_ALREADY_OPEN)
 		return SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
-	runtime->last_terminal_result = sippymodem_terminal_get_attributes(
+	runtime->last_terminal_result = pty_terminal_get_attributes(
 		runtime->terminal, &attributes);
-	if (runtime->last_terminal_result != SIPPYMODEM_TERMINAL_OK) {
-		(void)sippymodem_terminal_close(runtime->terminal);
+	if (runtime->last_terminal_result != PTY_TERMINAL_OK) {
+		(void)pty_terminal_close(runtime->terminal);
 		return SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
 	}
 	runtime->last_modem_terminal_result =
 		slmodem_terminal_bind(
 			&runtime->modem_terminal,
-			sippymodem_terminal_master_fd(runtime->terminal),
-			sippymodem_terminal_device_path(runtime->terminal));
+			pty_terminal_master_fd(runtime->terminal),
+			pty_terminal_device_path(runtime->terminal));
 	if (runtime->last_modem_terminal_result !=
 	    SLMODEM_TERMINAL_OK) {
 		(void)slmodem_terminal_unbind(
 			&runtime->modem_terminal);
-		(void)sippymodem_terminal_close(runtime->terminal);
+		(void)pty_terminal_close(runtime->terminal);
 		return SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR;
 	}
 	runtime->last_modem_terminal_result =
@@ -163,7 +163,7 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 		    SLMODEM_TERMINAL_IDLE) {
 		(void)slmodem_terminal_unbind(
 			&runtime->modem_terminal);
-		(void)sippymodem_terminal_close(runtime->terminal);
+		(void)pty_terminal_close(runtime->terminal);
 		return SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR;
 	}
 	runtime->terminal_client_connected = false;
@@ -174,7 +174,7 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 		slmodem_terminal_unbind(&runtime->modem_terminal);
 	runtime->terminal_client_connected = false;
 	runtime->last_terminal_result =
-		sippymodem_terminal_close(runtime->terminal);
+		pty_terminal_close(runtime->terminal);
 	return SIPPYMODEM_RUNTIME_SESSION_ERROR;
 }
 
@@ -197,7 +197,7 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 		slmodem_terminal_unbind(&runtime->modem_terminal);
 	runtime->terminal_client_connected = false;
 	runtime->last_terminal_result =
-		sippymodem_terminal_close(runtime->terminal);
+		pty_terminal_close(runtime->terminal);
 	if (stop_result != 0)
 		return SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR;
 	if (runtime->last_session_result != SIP_SESSION_OK &&
@@ -208,7 +208,7 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 	    runtime->last_modem_terminal_result !=
 		    SLMODEM_TERMINAL_IDLE)
 		return SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR;
-	return runtime->last_terminal_result == SIPPYMODEM_TERMINAL_OK ?
+	return runtime->last_terminal_result == PTY_TERMINAL_OK ?
 		       SIPPYMODEM_RUNTIME_OK :
 		       SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
 }
@@ -239,11 +239,11 @@ static enum sippymodem_runtime_result advance_terminal(
 	size_t count = 0;
 	bool worked = false;
 
-	if (!sippymodem_terminal_is_open(runtime->terminal))
+	if (!pty_terminal_is_open(runtime->terminal))
 		return SIPPYMODEM_RUNTIME_IDLE;
-	runtime->last_terminal_result = sippymodem_terminal_get_attributes(
+	runtime->last_terminal_result = pty_terminal_get_attributes(
 		runtime->terminal, &attributes);
-	if (runtime->last_terminal_result != SIPPYMODEM_TERMINAL_OK)
+	if (runtime->last_terminal_result != PTY_TERMINAL_OK)
 		return SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
 	runtime->last_modem_terminal_result =
 		slmodem_terminal_apply_attributes(
@@ -273,13 +273,13 @@ static enum sippymodem_runtime_result advance_terminal(
 		available = sizeof(buffer);
 	if (available == 0)
 		return worked ? SIPPYMODEM_RUNTIME_OK : SIPPYMODEM_RUNTIME_IDLE;
-	runtime->last_terminal_result = sippymodem_terminal_read(
+	runtime->last_terminal_result = pty_terminal_read(
 		runtime->terminal, buffer, available, &count);
-	if (runtime->last_terminal_result == SIPPYMODEM_TERMINAL_IDLE) {
+	if (runtime->last_terminal_result == PTY_TERMINAL_IDLE) {
 		return worked ? SIPPYMODEM_RUNTIME_OK : SIPPYMODEM_RUNTIME_IDLE;
 	}
 	if (runtime->last_terminal_result ==
-	    SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED) {
+	    PTY_TERMINAL_CLIENT_DISCONNECTED) {
 		if (runtime->terminal_client_connected) {
 			runtime->terminal_client_connected = false;
 			runtime->last_modem_terminal_result =
@@ -294,7 +294,7 @@ static enum sippymodem_runtime_result advance_terminal(
 		}
 		return worked ? SIPPYMODEM_RUNTIME_OK : SIPPYMODEM_RUNTIME_IDLE;
 	}
-	if (runtime->last_terminal_result != SIPPYMODEM_TERMINAL_OK)
+	if (runtime->last_terminal_result != PTY_TERMINAL_OK)
 		return SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
 	runtime->terminal_client_connected = true;
 	if (bytes_received != NULL)
@@ -374,7 +374,7 @@ void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime)
 	(void)slmodem_terminal_unbind(&runtime->modem_terminal);
 	modem_delete(runtime->modem);
 	(void)datapumps_stop(&runtime->datapumps);
-	sippymodem_terminal_destroy(runtime->terminal);
+	pty_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
 
@@ -392,14 +392,14 @@ const struct recording_files *sippymodem_runtime_recording_files(
 bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL && modem_host_is_open(runtime->host) &&
-	       sippymodem_terminal_is_open(runtime->terminal);
+	       pty_terminal_is_open(runtime->terminal);
 }
 
 int sippymodem_runtime_terminal_fd(
 	const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL ?
-		       sippymodem_terminal_master_fd(runtime->terminal) :
+		       pty_terminal_master_fd(runtime->terminal) :
 		       -1;
 }
 
@@ -410,20 +410,20 @@ int sippymodem_runtime_terminal_poll_fd(
 
 	if (runtime == NULL ||
 	    runtime->last_terminal_result ==
-		    SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED ||
+		    PTY_TERMINAL_CLIENT_DISCONNECTED ||
 	    slmodem_terminal_input_capacity(
 		    &runtime->modem_terminal, &capacity) !=
 		    SLMODEM_TERMINAL_OK ||
 	    capacity == 0)
 		return -1;
-	return sippymodem_terminal_master_fd(runtime->terminal);
+	return pty_terminal_master_fd(runtime->terminal);
 }
 
 const char *sippymodem_runtime_device_path(
 	const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL ?
-		       sippymodem_terminal_device_path(runtime->terminal) :
+		       pty_terminal_device_path(runtime->terminal) :
 		       NULL;
 }
 
@@ -441,11 +441,11 @@ enum sip_session_result sippymodem_runtime_last_session_result(
 			       SIP_SESSION_INVALID_ARGUMENT;
 }
 
-enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(
+enum pty_terminal_result sippymodem_runtime_last_terminal_result(
 	const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL ? runtime->last_terminal_result :
-			       SIPPYMODEM_TERMINAL_INVALID_ARGUMENT;
+			       PTY_TERMINAL_INVALID_ARGUMENT;
 }
 
 enum slmodem_calls_result sippymodem_runtime_last_calls_result(

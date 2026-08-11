@@ -22,7 +22,7 @@ static bool test_opens_raw_terminal_and_moves_bytes(void)
 {
 	static const char from_client[] = "AT\r";
 	static const char from_modem[] = "OK\r\n";
-	struct sippymodem_terminal *terminal;
+	struct pty_terminal *terminal;
 	struct termios attributes;
 	char buffer[16];
 	const char *device_path;
@@ -33,25 +33,25 @@ static bool test_opens_raw_terminal_and_moves_bytes(void)
 	ssize_t count;
 	size_t bytes_read = 99;
 
-	terminal = sippymodem_terminal_create();
-	CHECK(terminal != NULL && !sippymodem_terminal_is_open(terminal) &&
-		      sippymodem_terminal_master_fd(terminal) == -1 &&
-		      sippymodem_terminal_device_path(terminal) == NULL,
+	terminal = pty_terminal_create();
+	CHECK(terminal != NULL && !pty_terminal_is_open(terminal) &&
+		      pty_terminal_master_fd(terminal) == -1 &&
+		      pty_terminal_device_path(terminal) == NULL,
 	      "new terminal was not closed");
-	CHECK(sippymodem_terminal_open(terminal) == SIPPYMODEM_TERMINAL_OK &&
-		      sippymodem_terminal_is_open(terminal),
+	CHECK(pty_terminal_open(terminal) == PTY_TERMINAL_OK &&
+		      pty_terminal_is_open(terminal),
 	      "terminal did not open: %s",
-	      strerror(sippymodem_terminal_system_error(terminal)));
-	master_fd = sippymodem_terminal_master_fd(terminal);
-	device_path = sippymodem_terminal_device_path(terminal);
+	      strerror(pty_terminal_system_error(terminal)));
+	master_fd = pty_terminal_master_fd(terminal);
+	device_path = pty_terminal_device_path(terminal);
 	flags = fcntl(master_fd, F_GETFL);
 	descriptor_flags = fcntl(master_fd, F_GETFD);
 	CHECK(master_fd >= 0 && device_path != NULL && device_path[0] == '/' &&
 		      flags >= 0 && (flags & O_NONBLOCK) != 0 &&
 		      descriptor_flags >= 0 &&
 		      (descriptor_flags & FD_CLOEXEC) != 0 &&
-		      sippymodem_terminal_get_attributes(terminal, &attributes) ==
-			      SIPPYMODEM_TERMINAL_OK &&
+		      pty_terminal_get_attributes(terminal, &attributes) ==
+			      PTY_TERMINAL_OK &&
 		      cfgetispeed(&attributes) == B115200 &&
 		      cfgetospeed(&attributes) == B115200 &&
 		      (attributes.c_lflag & (ECHO | ICANON | ISIG)) == 0,
@@ -59,18 +59,18 @@ static bool test_opens_raw_terminal_and_moves_bytes(void)
 
 	device_fd = open(device_path, O_RDWR | O_NOCTTY);
 	CHECK(device_fd >= 0, "terminal device did not open: %s", strerror(errno));
-	CHECK(sippymodem_terminal_read(
+	CHECK(pty_terminal_read(
 		      terminal, buffer, sizeof(buffer), &bytes_read) ==
-		      SIPPYMODEM_TERMINAL_IDLE &&
+		      PTY_TERMINAL_IDLE &&
 		      bytes_read == 0,
 	      "empty terminal input did not report idle");
 	count = write(device_fd, from_client, sizeof(from_client) - 1);
 	CHECK(count == (ssize_t)sizeof(from_client) - 1 &&
 		      wait_readable(master_fd),
 	      "client bytes did not reach the modem endpoint");
-	CHECK(sippymodem_terminal_read(
+	CHECK(pty_terminal_read(
 		      terminal, buffer, sizeof(buffer), &bytes_read) ==
-		      SIPPYMODEM_TERMINAL_OK &&
+		      PTY_TERMINAL_OK &&
 		      bytes_read == sizeof(from_client) - 1 &&
 		      memcmp(buffer, from_client, bytes_read) == 0,
 	      "client bytes changed in transit");
@@ -84,48 +84,48 @@ static bool test_opens_raw_terminal_and_moves_bytes(void)
 	      "modem bytes changed in transit");
 
 	close(device_fd);
-	CHECK(sippymodem_terminal_read(
+	CHECK(pty_terminal_read(
 		      terminal, buffer, sizeof(buffer), &bytes_read) ==
-			      SIPPYMODEM_TERMINAL_CLIENT_DISCONNECTED &&
+			      PTY_TERMINAL_CLIENT_DISCONNECTED &&
 		      bytes_read == 0 &&
-		      sippymodem_terminal_open(terminal) ==
-			      SIPPYMODEM_TERMINAL_ALREADY_OPEN &&
-		      sippymodem_terminal_close(terminal) ==
-			      SIPPYMODEM_TERMINAL_OK &&
-		      sippymodem_terminal_close(terminal) ==
-			      SIPPYMODEM_TERMINAL_OK &&
-		      !sippymodem_terminal_is_open(terminal),
+		      pty_terminal_open(terminal) ==
+			      PTY_TERMINAL_ALREADY_OPEN &&
+		      pty_terminal_close(terminal) ==
+			      PTY_TERMINAL_OK &&
+		      pty_terminal_close(terminal) ==
+			      PTY_TERMINAL_OK &&
+		      !pty_terminal_is_open(terminal),
 	      "terminal open and close were not idempotent");
-	sippymodem_terminal_destroy(terminal);
+	pty_terminal_destroy(terminal);
 	return true;
 }
 
 static bool test_rejects_invalid_operations(void)
 {
-	struct sippymodem_terminal *terminal = sippymodem_terminal_create();
+	struct pty_terminal *terminal = pty_terminal_create();
 	struct termios attributes;
 
 	CHECK(terminal != NULL &&
-		      sippymodem_terminal_open(NULL) ==
-			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT &&
-		      sippymodem_terminal_close(NULL) ==
-			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT &&
-		      sippymodem_terminal_get_attributes(NULL, &attributes) ==
-			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT &&
-		      sippymodem_terminal_get_attributes(terminal, NULL) ==
-			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT &&
-		      sippymodem_terminal_get_attributes(terminal, &attributes) ==
-			      SIPPYMODEM_TERMINAL_NOT_OPEN &&
-		      sippymodem_terminal_read(terminal, NULL, 1, NULL) ==
-			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT &&
-		      sippymodem_terminal_read(terminal, NULL, 0, NULL) ==
-			      SIPPYMODEM_TERMINAL_NOT_OPEN &&
-		      sippymodem_terminal_system_error(NULL) == EINVAL &&
-		      strcmp(sippymodem_terminal_result_name(
-			     SIPPYMODEM_TERMINAL_CONFIGURATION_ERROR),
+		      pty_terminal_open(NULL) ==
+			      PTY_TERMINAL_INVALID_ARGUMENT &&
+		      pty_terminal_close(NULL) ==
+			      PTY_TERMINAL_INVALID_ARGUMENT &&
+		      pty_terminal_get_attributes(NULL, &attributes) ==
+			      PTY_TERMINAL_INVALID_ARGUMENT &&
+		      pty_terminal_get_attributes(terminal, NULL) ==
+			      PTY_TERMINAL_INVALID_ARGUMENT &&
+		      pty_terminal_get_attributes(terminal, &attributes) ==
+			      PTY_TERMINAL_NOT_OPEN &&
+		      pty_terminal_read(terminal, NULL, 1, NULL) ==
+			      PTY_TERMINAL_INVALID_ARGUMENT &&
+		      pty_terminal_read(terminal, NULL, 0, NULL) ==
+			      PTY_TERMINAL_NOT_OPEN &&
+		      pty_terminal_system_error(NULL) == EINVAL &&
+		      strcmp(pty_terminal_result_name(
+			     PTY_TERMINAL_CONFIGURATION_ERROR),
 			     "could not configure terminal") == 0,
 	      "terminal invalid-operation diagnostics were incomplete");
-	sippymodem_terminal_destroy(terminal);
+	pty_terminal_destroy(terminal);
 	return true;
 }
 

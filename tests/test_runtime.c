@@ -682,7 +682,7 @@ static bool test_reports_lifecycle_failures(void)
 		      sippymodem_runtime_terminal_poll_fd(NULL) == -1 &&
 		      sippymodem_runtime_device_path(NULL) == NULL &&
 		      sippymodem_runtime_last_terminal_result(NULL) ==
-			      SIPPYMODEM_TERMINAL_INVALID_ARGUMENT,
+			      PTY_TERMINAL_INVALID_ARGUMENT,
 	      "runtime lifecycle accepted a missing owner");
 	return true;
 }
