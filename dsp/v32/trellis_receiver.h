@@ -45,7 +45,7 @@ sippymodem_v32_trellis_receiver_init(
 	struct sippymodem_v32_trellis_receiver *receiver,
 	const struct sippymodem_v32_symbol_decoder *framing,
 	const struct sippymodem_qam_point *reference_point,
-	uint8_t data_bits_per_symbol);
+	uint8_t reference_phase_quadrant, uint8_t data_bits_per_symbol);
 bool sippymodem_v32_trellis_receiver_is_valid(
 	const struct sippymodem_v32_trellis_receiver *receiver);
 

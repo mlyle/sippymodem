@@ -78,23 +78,29 @@ sippymodem_v32_trellis_receiver_init(
 	struct sippymodem_v32_trellis_receiver *receiver,
 	const struct sippymodem_v32_symbol_decoder *framing,
 	const struct sippymodem_qam_point *reference_point,
-	uint8_t data_bits_per_symbol)
+	uint8_t reference_phase_quadrant, uint8_t data_bits_per_symbol)
 {
 	struct sippymodem_v32_trellis_receiver initialized = { 0 };
 	struct sippymodem_qam_point ideal;
+	uint8_t previous_differential_output;
 
 	if (receiver == NULL || !framing_is_valid(framing) ||
 	    sippymodem_v32_4800_constellation_point(
-		    framing->phase_quadrant, &ideal) !=
+		    reference_phase_quadrant, &ideal) !=
 		    SIPPYMODEM_V32_CONSTELLATION_OK ||
+	    sippymodem_v32_phase_to_differential_output(
+		    reference_phase_quadrant,
+		    &previous_differential_output) != SIPPYMODEM_V32_FRAMING_OK ||
 	    sippymodem_qam_equalizer_init(
 		    &initialized.equalizer, reference_point, &ideal) !=
 		    SIPPYMODEM_QAM_EQUALIZER_OK ||
 	    sippymodem_v32_trellis_encoder_init(
-		    &initialized.known_encoder, data_bits_per_symbol, 0) !=
+		    &initialized.known_encoder, data_bits_per_symbol,
+		    previous_differential_output) !=
 		    SIPPYMODEM_V32_TRELLIS_OK ||
 	    sippymodem_v32_trellis_decoder_init(
-		    &initialized.decoder, data_bits_per_symbol, 0) !=
+		    &initialized.decoder, data_bits_per_symbol,
+		    previous_differential_output) !=
 		    SIPPYMODEM_V32_TRELLIS_OK)
 		return SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	initialized.known_scrambler = framing->descrambler;

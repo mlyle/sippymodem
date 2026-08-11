@@ -107,6 +107,7 @@ static bool check_transition(
 			  (uint32_t)role * 97u + initial_quadrant * 11u +
 			  data_bits;
 	uint8_t previous_quadrant = initial_quadrant;
+	uint8_t previous_differential_output;
 	uint8_t mask = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
 	unsigned int confirmed_symbols = 0;
 	unsigned int delivered = 0;
@@ -146,12 +147,18 @@ static bool check_transition(
 			apply_channel(channel_history, transmitted, channel);
 		previous_quadrant = quadrant;
 	}
-	CHECK(sippymodem_v32_trellis_encoder_init(
-		      &trellis_encoder, data_bits, 0) ==
+	CHECK(sippymodem_v32_phase_to_differential_output(
+		      framing_encoder.phase_quadrant,
+		      &previous_differential_output) ==
+		      SIPPYMODEM_V32_FRAMING_OK &&
+	      sippymodem_v32_trellis_encoder_init(
+		      &trellis_encoder, data_bits,
+		      previous_differential_output) ==
 		      SIPPYMODEM_V32_TRELLIS_OK &&
 	      sippymodem_v32_trellis_receiver_init(
 		      &receiver, &framing_decoder, &received_reference,
-		      data_bits) == SIPPYMODEM_V32_TRELLIS_RECEIVER_OK,
+		      framing_encoder.phase_quadrant, data_bits) ==
+		      SIPPYMODEM_V32_TRELLIS_RECEIVER_OK,
 	      "V.32bis %u-bit receiver %u/%u did not initialize", data_bits,
 	      role, initial_quadrant);
 	for (size_t index = 0; index < TEST_KNOWN_SYMBOLS; ++index) {
@@ -267,7 +274,7 @@ static bool test_validation(void)
 		      &framing, SIPPYMODEM_V32_CALLING_TRANSMITTER, 0) ==
 		      SIPPYMODEM_V32_FRAMING_OK &&
 	      sippymodem_v32_trellis_receiver_init(
-		      &receiver, &framing, &point,
+		      &receiver, &framing, &point, 0,
 		      SIPPYMODEM_V32_7200_DATA_BITS) ==
 		      SIPPYMODEM_V32_TRELLIS_RECEIVER_OK,
 	      "V.32bis receiver validation fixture did not initialize");
@@ -275,26 +282,30 @@ static bool test_validation(void)
 	CHECK(sippymodem_v32_trellis_receiver_is_valid(&receiver) &&
 	      !sippymodem_v32_trellis_receiver_is_valid(NULL) &&
 	      sippymodem_v32_trellis_receiver_init(
-		      NULL, &framing, &point,
+		      NULL, &framing, &point, 0,
 		      SIPPYMODEM_V32_7200_DATA_BITS) ==
 		      SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      sippymodem_v32_trellis_receiver_init(
-		      &receiver, NULL, &point,
+		      &receiver, NULL, &point, 0,
 		      SIPPYMODEM_V32_7200_DATA_BITS) ==
 		      SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      sippymodem_v32_trellis_receiver_init(
-		      &receiver, &framing, &zero,
+		      &receiver, &framing, &zero, 0,
 		      SIPPYMODEM_V32_7200_DATA_BITS) ==
 		      SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      sippymodem_v32_trellis_receiver_init(
-		      &receiver, &framing, &invalid,
+		      &receiver, &framing, &invalid, 0,
 		      SIPPYMODEM_V32_7200_DATA_BITS) ==
 		      SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      sippymodem_v32_trellis_receiver_init(
-		      &receiver, &framing, &point, 2) ==
+		      &receiver, &framing, &point, 4,
+		      SIPPYMODEM_V32_7200_DATA_BITS) ==
 		      SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      sippymodem_v32_trellis_receiver_init(
-		      &receiver, &framing, &point, 7) ==
+		      &receiver, &framing, &point, 0, 2) ==
+		      SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
+	      sippymodem_v32_trellis_receiver_init(
+		      &receiver, &framing, &point, 0, 7) ==
 		      SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "V.32bis receiver initialization was not transactional");

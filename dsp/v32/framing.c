@@ -159,10 +159,21 @@ enum sippymodem_v32_framing_result sippymodem_v32_symbol_encoder_init(
 	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
-static uint8_t trn_quadrant_from_dibit(uint8_t dibit)
+static uint8_t gray_dibit(uint8_t dibit)
 {
 	/* The two-bit Gray transform exchanges 2 and 3 and is self-inverse. */
 	return (uint8_t)(dibit ^ (dibit >> 1));
+}
+
+enum sippymodem_v32_framing_result
+sippymodem_v32_phase_to_differential_output(
+	uint8_t phase_quadrant, uint8_t *differential_output)
+{
+	if (phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    differential_output == NULL)
+		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
+	*differential_output = gray_dibit(phase_quadrant);
+	return SIPPYMODEM_V32_FRAMING_OK;
 }
 
 enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_encode(
@@ -180,7 +191,7 @@ enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_encode(
 		    &next.scrambler, input, &scrambled) !=
 	    SIPPYMODEM_V32_FRAMING_OK)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
-	next_quadrant = trn_quadrant_from_dibit(scrambled);
+	next_quadrant = gray_dibit(scrambled);
 	next.phase_quadrant = next_quadrant;
 	*encoder = next;
 	*quadrant = next_quadrant;
@@ -265,7 +276,7 @@ enum sippymodem_v32_framing_result sippymodem_v32_trn_symbol_decode(
 	    quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
 		return SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT;
 	next = *decoder;
-	scrambled = trn_quadrant_from_dibit(quadrant);
+	scrambled = gray_dibit(quadrant);
 	if (sippymodem_v32_descramble_dibit(
 		    &next.descrambler, scrambled, &decoded) !=
 	    SIPPYMODEM_V32_FRAMING_OK)

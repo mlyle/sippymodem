@@ -131,6 +131,33 @@ static bool test_normative_scrambler_starts(void)
 	return true;
 }
 
+static bool test_phase_to_differential_output(void)
+{
+	static const uint8_t expected[] = { 0, 1, 3, 2 };
+
+	for (uint8_t phase = 0; phase < ARRAY_LENGTH(expected); ++phase) {
+		uint8_t output = UINT8_MAX;
+
+		CHECK(sippymodem_v32_phase_to_differential_output(
+			      phase, &output) == SIPPYMODEM_V32_FRAMING_OK &&
+			      output == expected[phase],
+		      "V.32 phase %u mapped to differential output %u",
+		      phase, output);
+	}
+	{
+		uint8_t output = UINT8_MAX;
+
+		CHECK(sippymodem_v32_phase_to_differential_output(
+			      SIPPYMODEM_QPSK_QUADRANT_COUNT, &output) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
+		      output == UINT8_MAX &&
+		      sippymodem_v32_phase_to_differential_output(0, NULL) ==
+			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT,
+		      "V.32 phase mapping accepted invalid input");
+	}
+	return true;
+}
+
 static bool test_symbol_round_trip(void)
 {
 	uint32_t random = UINT32_C(0x32c411a7);
@@ -469,6 +496,8 @@ int main(void)
 	} tests[] = {
 		{ "descrambler polynomials", test_descrambler_polynomials },
 		{ "normative scrambler starts", test_normative_scrambler_starts },
+		{ "phase to differential output",
+		  test_phase_to_differential_output },
 		{ "symbol round trip", test_symbol_round_trip },
 		{ "TRN round trip and transition",
 		  test_trn_round_trip_and_transition },
