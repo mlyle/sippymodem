@@ -175,6 +175,74 @@ sippymodem_v44_dictionary_encoder_add_child_segment(
 		history_start, length, codeword);
 }
 
+static void match_siblings(
+	const struct sippymodem_v44_dictionary_encoder *encoder,
+	uint32_t sibling,
+	uint32_t input_start,
+	uint32_t available,
+	uint32_t depth,
+	struct sippymodem_v44_dictionary_match *match)
+{
+	while (sibling != 0) {
+		const struct v44_encoder_node *node = &encoder->nodes[sibling];
+		uint32_t remaining = available - depth;
+		uint32_t compared = remaining < node->segment_length ?
+			remaining : node->segment_length;
+		uint32_t index = 0;
+
+		while (index < compared &&
+		       encoder->history[input_start + depth + index] ==
+			       encoder->history[node->history_start + index])
+			index++;
+		if (index == compared) {
+			if (compared < node->segment_length) {
+				match->needs_more_input = true;
+			} else {
+				if (node->string_length > match->length) {
+					match->codeword = sibling;
+					match->length = node->string_length;
+				}
+				if (available == node->string_length) {
+					if (node->first_child != 0)
+						match->needs_more_input = true;
+				} else if (node->first_child != 0) {
+					match_siblings(
+						encoder, node->first_child,
+						input_start, available,
+						node->string_length, match);
+				}
+			}
+		}
+		sibling = node->next_sibling;
+	}
+}
+
+enum sippymodem_v44_dictionary_encoder_result
+sippymodem_v44_dictionary_encoder_find_longest(
+	const struct sippymodem_v44_dictionary_encoder *encoder,
+	uint32_t history_start,
+	uint32_t available,
+	struct sippymodem_v44_dictionary_match *match)
+{
+	struct sippymodem_v44_dictionary_match found = { 0 };
+	uint32_t root;
+
+	if (!dictionary_is_valid(encoder) || match == NULL || available == 0 ||
+	    history_start >= encoder->history_length ||
+	    available > encoder->history_length - history_start)
+		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+	root = encoder->roots[encoder->history[history_start]];
+	if (root != 0) {
+		if (available == 1)
+			found.needs_more_input = true;
+		else
+			match_siblings(
+				encoder, root, history_start, available, 1, &found);
+	}
+	*match = found;
+	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
+}
+
 size_t sippymodem_v44_dictionary_encoder_history_length(
 	const struct sippymodem_v44_dictionary_encoder *encoder)
 {

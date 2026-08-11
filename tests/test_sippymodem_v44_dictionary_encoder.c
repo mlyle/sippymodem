@@ -135,6 +135,119 @@ static bool test_bounded_exhaustion_and_reset(void)
 	return true;
 }
 
+static bool expect_match(
+	const struct sippymodem_v44_dictionary_encoder *encoder,
+	uint32_t history_start,
+	uint32_t available,
+	uint32_t expected_codeword,
+	uint32_t expected_length,
+	bool expected_more)
+{
+	struct sippymodem_v44_dictionary_match match = {
+		.codeword = UINT32_MAX,
+		.length = UINT32_MAX,
+		.needs_more_input = !expected_more,
+	};
+
+	CHECK(sippymodem_v44_dictionary_encoder_find_longest(
+		      encoder, history_start, available, &match) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      match.codeword == expected_codeword &&
+	      match.length == expected_length &&
+	      match.needs_more_input == expected_more,
+	      "unexpected V.44 match at history %u length %u: %u/%u/%u",
+	      history_start, available, match.codeword, match.length,
+	      match.needs_more_input ? 1U : 0U);
+	return true;
+}
+
+static bool test_longest_match_lookup(void)
+{
+	static const uint8_t history[] = {
+		'B', 'C', 'X', 'Y', 'Z', 'C', 'D', 'E',
+		'A',
+		'A', 'B',
+		'A', 'B', 'C',
+		'A', 'B', 'Q',
+		'A', 'B', 'D',
+		'Q',
+		'B', 'C',
+		'A', 'X',
+		'A', 'X', 'Y',
+		'A', 'X', 'Y', 'Z',
+		'A', 'B', 'C', 'Q',
+	};
+	struct sippymodem_v44_dictionary_encoder *encoder =
+		sippymodem_v44_dictionary_encoder_create(&parameters);
+	struct sippymodem_v44_dictionary_match unchanged = {
+		.codeword = UINT32_MAX,
+		.length = UINT32_MAX,
+		.needs_more_input = true,
+	};
+	uint32_t codeword = UINT32_MAX;
+
+	CHECK(encoder != NULL && append_octets(encoder, history, sizeof(history)),
+	      "could not initialize V.44 match history");
+	CHECK(sippymodem_v44_dictionary_encoder_add_root_segment(
+		      encoder, 'A', 0, 1, &codeword) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      codeword == 4 &&
+	      sippymodem_v44_dictionary_encoder_add_child_segment(
+		      encoder, 4, 1, 1, &codeword) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      codeword == 5 &&
+	      sippymodem_v44_dictionary_encoder_add_root_segment(
+		      encoder, 'A', 2, 3, &codeword) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      codeword == 6 &&
+	      sippymodem_v44_dictionary_encoder_add_child_segment(
+		      encoder, 4, 6, 2, &codeword) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      codeword == 7 &&
+	      sippymodem_v44_dictionary_encoder_add_root_segment(
+		      encoder, 'B', 5, 1, &codeword) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      codeword == 8,
+	      "could not build V.44 match tree");
+	CHECK(expect_match(encoder, 8, 1, 0, 0, true) &&
+	      expect_match(encoder, 9, 2, 4, 2, true) &&
+	      expect_match(encoder, 11, 3, 5, 3, false) &&
+	      expect_match(encoder, 14, 3, 4, 2, false) &&
+	      expect_match(encoder, 17, 3, 4, 2, true) &&
+	      expect_match(encoder, 20, 1, 0, 0, false) &&
+	      expect_match(encoder, 21, 2, 8, 2, false) &&
+	      expect_match(encoder, 23, 2, 0, 0, true) &&
+	      expect_match(encoder, 25, 3, 0, 0, true) &&
+	      expect_match(encoder, 28, 4, 6, 4, false) &&
+	      expect_match(encoder, 32, 4, 5, 3, false),
+	      "V.44 longest-match traversal failed");
+	CHECK(sippymodem_v44_dictionary_encoder_find_longest(
+		      NULL, 0, 1, &unchanged) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_longest(
+		      encoder, 0, 0, &unchanged) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_longest(
+		      encoder, sizeof(history), 1, &unchanged) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_longest(
+		      encoder, sizeof(history) - 1U, 2, &unchanged) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_longest(
+		      encoder, 8, 1, NULL) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      unchanged.codeword == UINT32_MAX &&
+	      unchanged.length == UINT32_MAX && unchanged.needs_more_input,
+	      "invalid V.44 match lookup changed output");
+	CHECK(sippymodem_v44_dictionary_encoder_reinitialize(encoder) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      append_octets(encoder, (const uint8_t *)"AB", 2) &&
+	      expect_match(encoder, 0, 2, 0, 0, false),
+	      "V.44 reset left an old match reachable");
+	sippymodem_v44_dictionary_encoder_destroy(encoder);
+	return true;
+}
+
 static bool test_creation_and_result_names(void)
 {
 	struct sippymodem_v44_parameters invalid = parameters;
@@ -183,6 +296,7 @@ int main(void)
 		{ "history and node insertion", test_history_and_node_insertion },
 		{ "bounded exhaustion and reset",
 		  test_bounded_exhaustion_and_reset },
+		{ "longest match lookup", test_longest_match_lookup },
 		{ "creation and result names", test_creation_and_result_names },
 	};
 	unsigned int failures = 0;

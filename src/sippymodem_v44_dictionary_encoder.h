@@ -5,6 +5,7 @@
 
 #include "sippymodem_v44_stream.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -15,6 +16,12 @@ enum sippymodem_v44_dictionary_encoder_result {
 };
 
 struct sippymodem_v44_dictionary_encoder;
+
+struct sippymodem_v44_dictionary_match {
+	uint32_t codeword;
+	uint32_t length;
+	bool needs_more_input;
+};
 
 struct sippymodem_v44_dictionary_encoder *
 sippymodem_v44_dictionary_encoder_create(
@@ -52,6 +59,19 @@ sippymodem_v44_dictionary_encoder_add_child_segment(
 	uint32_t history_start,
 	uint32_t length,
 	uint32_t *codeword);
+
+/*
+ * Find the longest codeword whose string prefixes the indicated history.
+ * A zero-length match means that no complete codeword matched.  In either
+ * case, needs_more_input reports whether appending source octets could extend
+ * a viable dictionary path.
+ */
+enum sippymodem_v44_dictionary_encoder_result
+sippymodem_v44_dictionary_encoder_find_longest(
+	const struct sippymodem_v44_dictionary_encoder *encoder,
+	uint32_t history_start,
+	uint32_t available,
+	struct sippymodem_v44_dictionary_match *match);
 
 size_t sippymodem_v44_dictionary_encoder_history_length(
 	const struct sippymodem_v44_dictionary_encoder *encoder);
