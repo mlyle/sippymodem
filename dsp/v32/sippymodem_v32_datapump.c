@@ -9,6 +9,7 @@
 #include "sippymodem_v32_9600_receiver.h"
 #include "sippymodem_v32_constellation.h"
 #include "sippymodem_v32_framing.h"
+#include "sippymodem_v32_line_startup.h"
 #include "sippymodem_v32_startup.h"
 #include "sippymodem_v32_trellis.h"
 
@@ -19,9 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* This four-wire media path begins directly with role-specific TRN and rate
- * exchange. Initial tones, S sequences and two-wire echo cancellation remain
- * follow-up work. */
+/* The caller now performs the line tone and reversal exchange before entering
+ * QAM startup. S sequences and two-wire echo cancellation remain follow-up
+ * work. */
 enum {
 	V32_SYMBOL_RATE = 2400,
 	V32_CARRIER_HZ = 1800,
@@ -43,6 +44,12 @@ static const struct sippymodem_qam_channel v32_channel = {
 
 static const double V32_TRELLIS_CHANNEL_ADAPTATION = 1.0 / 32.0;
 
+enum v32_line_entry {
+	V32_LINE_ENTRY_CALLER_STARTUP,
+	V32_LINE_ENTRY_COMPLETE,
+	V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY,
+};
+
 struct sippymodem_v32_datapump {
 	struct dp dp;
 	struct sippymodem_qam_modulator modulator;
@@ -54,6 +61,7 @@ struct sippymodem_v32_datapump {
 	struct sippymodem_v32_scrambler known_trellis_scrambler;
 	struct sippymodem_v32_trellis_decoder trellis_decoder;
 	struct sippymodem_v32_9600_receiver receiver_9600;
+	struct sippymodem_v32_line_startup line_startup;
 	struct sippymodem_v32_startup startup;
 	struct sippymodem_qam_point transmit_point;
 	struct sippymodem_qam_point previous_receive_point;
@@ -62,6 +70,7 @@ struct sippymodem_v32_datapump {
 	uint64_t training_timeout_samples;
 	uint32_t missing_carrier_samples;
 	uint8_t receive_trellis_link_symbols;
+	enum v32_line_entry line_entry;
 	bool has_previous_receive_point;
 	bool trellis_encoder_initialized;
 	bool trellis_receiver_initialized;
@@ -106,6 +115,28 @@ static bool point_is_finite(const struct sippymodem_qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
+}
+
+static bool line_entry_is_valid(
+	const struct sippymodem_v32_datapump *datapump)
+{
+	if (datapump->line_entry < V32_LINE_ENTRY_CALLER_STARTUP ||
+	    datapump->line_entry > V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
+	    !sippymodem_v32_line_startup_is_valid(&datapump->line_startup))
+		return false;
+	if (!datapump->caller)
+		return datapump->line_entry ==
+		       V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY;
+	if (datapump->line_entry == V32_LINE_ENTRY_CALLER_STARTUP)
+		return !sippymodem_v32_line_startup_is_complete(
+			&datapump->line_startup) &&
+		       datapump->line_startup.state !=
+			       SIPPYMODEM_V32_LINE_STARTUP_FAILED;
+	if (datapump->line_entry == V32_LINE_ENTRY_COMPLETE)
+		return sippymodem_v32_line_startup_is_complete(
+			&datapump->line_startup);
+	return datapump->line_startup.state ==
+	       SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE;
 }
 
 static uint8_t rate_capabilities(const struct modem *modem)
@@ -192,6 +223,7 @@ static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
 	    datapump->training_timeout_samples == 0 ||
 	    datapump->training_samples > datapump->training_timeout_samples ||
 	    datapump->missing_carrier_samples > V32_CARRIER_LOSS_SAMPLES ||
+	    !line_entry_is_valid(datapump) ||
 	    !sippymodem_v32_startup_is_valid(&datapump->startup) ||
 	    datapump->startup.role != endpoint_role(datapump->caller) ||
 	    datapump->startup.supported_rates != rate_capabilities(dp->modem) ||
@@ -274,6 +306,9 @@ static struct dp *create_v32(
 		    &datapump->startup, endpoint_role(is_caller),
 		    rates) !=
 		    SIPPYMODEM_V32_STARTUP_OK ||
+	    sippymodem_v32_line_startup_init(
+		    &datapump->line_startup, V32_TRANSMIT_AMPLITUDE) !=
+		    SIPPYMODEM_V32_LINE_STARTUP_OK ||
 	    sippymodem_v32_4800_constellation_point(
 		    0, &datapump->transmit_point) !=
 		    SIPPYMODEM_V32_CONSTELLATION_OK) {
@@ -281,6 +316,9 @@ static struct dp *create_v32(
 		return NULL;
 	}
 	datapump->caller = is_caller;
+	datapump->line_entry = is_caller ?
+				 V32_LINE_ENTRY_CALLER_STARTUP :
+				 V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY;
 	datapump->training_timeout_samples = training_timeout(modem);
 	datapump->dp = (struct dp){
 		.id = id,
@@ -449,12 +487,57 @@ static int generate_sample(
 		&datapump->modulator);
 	bool accepted;
 
+	if (datapump->caller &&
+	    datapump->line_entry == V32_LINE_ENTRY_COMPLETE &&
+	    datapump->startup.phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER) {
+		*sample = 0;
+		return 0;
+	}
+
 	if ((can_accept && next_transmit_point(datapump, linked) != 0) ||
 	    sippymodem_qam_modulator_sample(
 		    &datapump->modulator, &datapump->transmit_point, sample,
 		    &accepted) != SIPPYMODEM_QAM_OK ||
 	    accepted != can_accept)
 		return -1;
+	return 0;
+}
+
+static int process_caller_line_startup(
+	struct sippymodem_v32_datapump *datapump, int16_t receive_sample,
+	int16_t *transmit_sample)
+{
+	struct sippymodem_qam_point ignored_point;
+	struct sippymodem_qam_measurement measurement;
+	enum sippymodem_v32_line_startup_result result;
+	bool ignored_ready;
+	bool complete;
+
+	result = sippymodem_v32_line_startup_process(
+		&datapump->line_startup, receive_sample, transmit_sample,
+		&complete);
+	if (result != SIPPYMODEM_V32_LINE_STARTUP_OK)
+		return -1;
+	if (complete) {
+		if (sippymodem_qam_demodulator_reset(&datapump->demodulator) !=
+		    SIPPYMODEM_QAM_OK)
+			return -1;
+		datapump->has_previous_receive_point = false;
+		datapump->line_entry = V32_LINE_ENTRY_COMPLETE;
+		return 0;
+	}
+	if (datapump->line_startup.state !=
+	    SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE)
+		return 0;
+	if (sippymodem_qam_demodulator_sample(
+		    &datapump->demodulator, receive_sample, &ignored_point,
+		    &ignored_ready) != SIPPYMODEM_QAM_OK)
+		return -1;
+	measurement = sippymodem_qam_demodulator_measure(
+		&datapump->demodulator);
+	if (measurement.timing_locked &&
+	    measurement.line_power >= V32_MIN_LINE_POWER)
+		datapump->line_entry = V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY;
 	return 0;
 }
 
@@ -849,6 +932,15 @@ static int process_v32(
 		datapump->training_samples += (unsigned int)count;
 	}
 	for (int index = 0; index < count; ++index) {
+		if (datapump->line_entry == V32_LINE_ENTRY_CALLER_STARTUP) {
+			if (process_caller_line_startup(
+				    datapump, receive[index], &transmit[index]) != 0) {
+				memset(transmit, 0,
+				       (size_t)count * sizeof(*transmit));
+				return DPSTAT_ERROR;
+			}
+			continue;
+		}
 		if (generate_sample(datapump, &transmit[index], &linked) != 0 ||
 		    receive_sample(datapump, receive[index], &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));

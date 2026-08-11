@@ -3,8 +3,10 @@
 #include <modem.h>
 #include <sippymodem_datapumps.h>
 #include <sippymodem_fsk.h>
+#include <sippymodem_single_tone.h>
 #include <sippymodem_v21.h>
 #include <sippymodem_v32_datapump.h>
+#include <sippymodem_v32_line_startup.h>
 #include <sippymodem_v8_datapump.h>
 
 #include "test.h"
@@ -329,8 +331,10 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp *v22bis;
 	struct dp *bell212;
 	struct dp *v32;
+	struct sippymodem_single_tone_transmitter v32_answer_tone;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
+	uint64_t v32_calling_power = 0;
 
 	CHECK(modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V8) == NULL &&
@@ -492,12 +496,53 @@ static bool test_owns_source_built_datapump_registrations(void)
 	v32 = v32_operations->create(
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, v32_operations);
 	CHECK(v32 != NULL && v32->id == DP_V32 &&
+		      sippymodem_single_tone_transmitter_init(
+			      &v32_answer_tone,
+			      SIPPYMODEM_V32_ANSWER_TONE_HZ, 12000) ==
+			      SIPPYMODEM_SINGLE_TONE_OK &&
 		      v32_operations->use_count == 1 &&
 		      sippymodem_datapumps_stop(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_BUSY &&
-		      v32_operations->delete(v32) == 0 &&
+			      SIPPYMODEM_DATAPUMPS_BUSY,
+	      "V.32 data pump did not retain its registration");
+	for (size_t presented = 0; presented < MODEM_RATE;) {
+		size_t remaining = MODEM_RATE - presented;
+		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
+
+		for (size_t index = 0; index < count; ++index)
+			CHECK(sippymodem_single_tone_transmitter_sample(
+				      &v32_answer_tone, &receive[index]) ==
+				      SIPPYMODEM_SINGLE_TONE_OK,
+			      "V.32 answer tone generation failed");
+		memset(transmit, 1, sizeof(transmit));
+		CHECK(v32_operations->process(
+			      v32, receive, transmit, (int)count) == DPSTAT_OK &&
+			      samples_are_silent(transmit, count),
+		      "V.32 caller transmitted before its answer-tone guard");
+		presented += count;
+	}
+	for (size_t presented = 0; presented < MODEM_RATE / 20u;) {
+		size_t remaining = MODEM_RATE / 20u - presented;
+		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
+
+		for (size_t index = 0; index < count; ++index)
+			CHECK(sippymodem_single_tone_transmitter_sample(
+				      &v32_answer_tone, &receive[index]) ==
+				      SIPPYMODEM_SINGLE_TONE_OK,
+			      "V.32 guarded answer tone generation failed");
+		CHECK(v32_operations->process(
+			      v32, receive, transmit, (int)count) == DPSTAT_OK,
+		      "V.32 calling-carrier frame failed");
+		for (size_t index = 0; index < count; ++index)
+			v32_calling_power +=
+				(uint64_t)((int32_t)transmit[index] * transmit[index]);
+		presented += count;
+	}
+	CHECK(v32_calling_power > UINT64_C(1000000000),
+	      "V.32 caller omitted its guarded carrier (%llu)",
+	      (unsigned long long)v32_calling_power);
+	CHECK(v32_operations->delete(v32) == 0 &&
 		      v32_operations->use_count == 0,
-	      "V.32 data pump did not retain and release its registration");
+	      "V.32 data pump did not release after line startup");
 	modem->min_rate = 46;
 	modem->max_rate = 49;
 	CHECK(baudot_operations->create(

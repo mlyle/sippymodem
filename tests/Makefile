@@ -218,6 +218,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_v8_menu.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam_gain.o \
+	$(BUILD_DIR)/sippymodem_single_tone.o \
 	$(BUILD_DIR)/sippymodem_v22_datapump.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
@@ -227,6 +228,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v32_framing.o \
+	$(BUILD_DIR)/sippymodem_v32_line_startup.o \
 	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
 	$(BUILD_DIR)/sippymodem_v32_startup.o \
 	$(BUILD_DIR)/sippymodem_v32_trellis.o \
@@ -866,6 +868,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v8_menu.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam_gain.o \
+	$(BUILD_DIR)/sippymodem_single_tone.o \
 	$(BUILD_DIR)/sippymodem_v22_datapump.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
@@ -875,6 +878,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v32_framing.o \
+	$(BUILD_DIR)/sippymodem_v32_line_startup.o \
 	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
 	$(BUILD_DIR)/sippymodem_v32_startup.o \
 	$(BUILD_DIR)/sippymodem_v32_trellis.o \
