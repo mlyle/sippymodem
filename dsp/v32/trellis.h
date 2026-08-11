@@ -27,8 +27,7 @@ enum sippymodem_v32_trellis_result {
 
 struct sippymodem_v32_trellis_encoder {
 	uint8_t trellis_state;
-	uint8_t differential_quadrant;
-	uint8_t carrier_phase_quadrant;
+	uint8_t differential_output;
 	uint8_t data_bits_per_symbol;
 };
 
@@ -43,14 +42,13 @@ struct sippymodem_v32_trellis_decoder {
 		path[SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS];
 	uint8_t path_index;
 	uint8_t path_symbols;
-	uint8_t previous_differential_quadrant;
-	uint8_t carrier_phase_quadrant;
+	uint8_t previous_differential_output;
 	uint8_t data_bits_per_symbol;
 };
 
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encoder_init(
 	struct sippymodem_v32_trellis_encoder *encoder,
-	uint8_t data_bits_per_symbol, uint8_t initial_carrier_phase_quadrant);
+	uint8_t data_bits_per_symbol, uint8_t previous_differential_output);
 bool sippymodem_v32_trellis_encoder_is_valid(
 	const struct sippymodem_v32_trellis_encoder *encoder);
 
@@ -64,7 +62,7 @@ enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encode(
 
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decoder_init(
 	struct sippymodem_v32_trellis_decoder *decoder,
-	uint8_t data_bits_per_symbol, uint8_t initial_carrier_phase_quadrant);
+	uint8_t data_bits_per_symbol, uint8_t previous_differential_output);
 bool sippymodem_v32_trellis_decoder_is_valid(
 	const struct sippymodem_v32_trellis_decoder *decoder);
 /*

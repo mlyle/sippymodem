@@ -54,9 +54,7 @@ bool sippymodem_v32_trellis_decoder_is_valid(
 	    decoder->path_symbols > SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS ||
 	    (decoder->path_symbols < SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS &&
 	     decoder->path_index != decoder->path_symbols) ||
-	    decoder->previous_differential_quadrant >=
-		    SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT ||
-	    decoder->carrier_phase_quadrant >=
+	    decoder->previous_differential_output >=
 		    SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT)
 		return false;
 	for (size_t state = 0; state < SIPPYMODEM_V32_TRELLIS_STATE_COUNT;
@@ -80,19 +78,19 @@ bool sippymodem_v32_trellis_decoder_is_valid(
 
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decoder_init(
 	struct sippymodem_v32_trellis_decoder *decoder,
-	uint8_t data_bits_per_symbol, uint8_t initial_carrier_phase_quadrant)
+	uint8_t data_bits_per_symbol, uint8_t previous_differential_output)
 {
 	struct sippymodem_v32_trellis_decoder initialized;
 
 	if (decoder == NULL || !data_bits_are_valid(data_bits_per_symbol) ||
-	    initial_carrier_phase_quadrant >=
+	    previous_differential_output >=
 			       SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT)
 		return SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
 	for (size_t state = 1; state < SIPPYMODEM_V32_TRELLIS_STATE_COUNT;
 	     ++state)
 		initialized.path_metric[state] = DBL_MAX;
-	initialized.carrier_phase_quadrant = initial_carrier_phase_quadrant;
+	initialized.previous_differential_output = previous_differential_output;
 	initialized.data_bits_per_symbol = data_bits_per_symbol;
 	*decoder = initialized;
 	return SIPPYMODEM_V32_TRELLIS_OK;
@@ -159,8 +157,6 @@ static bool select_paths(
 				 * selects the candidate next quadrant directly. */
 				struct sippymodem_v32_trellis_encoder branch = {
 					.trellis_state = predecessor,
-					.carrier_phase_quadrant =
-						decoder->carrier_phase_quadrant,
 					.data_bits_per_symbol =
 						decoder->data_bits_per_symbol,
 				};
@@ -203,8 +199,6 @@ static bool select_paths(
 						      DBL_MAX :
 						      next_metric[state] - minimum;
 	}
-	decoder->carrier_phase_quadrant =
-		(uint8_t)((decoder->carrier_phase_quadrant + 3u) & 3u);
 	return true;
 }
 
@@ -279,8 +273,8 @@ enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decode(
 		next_quadrant =
 			(uint8_t)(differential_symbol >> low_bit_count);
 		high_dibit = decoded_high_dibit
-			[next.previous_differential_quadrant][next_quadrant];
-		next.previous_differential_quadrant = next_quadrant;
+			[next.previous_differential_output][next_quadrant];
+		next.previous_differential_output = next_quadrant;
 		differential_symbol =
 			(uint8_t)((high_dibit << low_bit_count) |
 				  (differential_symbol & low_mask));

@@ -20,16 +20,16 @@ static bool test_normative_sequences(void)
 		{
 			3,
 			{ 3, 0, 2, 5, 6, 7, 4, 1, 0, 3, 1, 2, 4, 5, 7, 6 },
-			{ 15, 8, 14, 13, 12, 5, 14, 1,
-			  12, 1, 5, 0, 2, 1, 1, 8 },
+			{ 3, 10, 0, 13, 0, 7, 0, 1,
+			  0, 3, 11, 0, 12, 3, 13, 8 },
 			5,
 			0,
 		},
 		{
 			4,
 			{ 4, 9, 3, 14, 7, 8, 13, 2, 9, 4, 2, 3, 13, 14, 8, 7 },
-			{ 28, 25, 7, 6, 11, 12, 29, 2,
-			  21, 8, 22, 31, 29, 14, 24, 3 },
+			{ 4, 29, 31, 6, 19, 8, 1, 2,
+			  9, 12, 14, 31, 5, 10, 4, 3 },
 			4,
 			0,
 		},
@@ -37,8 +37,8 @@ static bool test_normative_sequences(void)
 			5,
 			{ 5, 10, 20, 15, 8, 25, 30, 3,
 			  10, 5, 3, 20, 30, 15, 25, 8 },
-			{ 53, 2, 12, 55, 0, 1, 6, 51,
-			  34, 21, 43, 36, 38, 63, 57, 8 },
+			{ 5, 10, 60, 55, 56, 9, 54, 51,
+			  26, 29, 27, 36, 30, 55, 1, 8 },
 			2,
 			1,
 		},
@@ -46,8 +46,8 @@ static bool test_normative_sequences(void)
 			6,
 			{ 6, 11, 21, 16, 41, 26, 31, 36,
 			  11, 6, 36, 21, 31, 16, 26, 41 },
-			{ 102, 27, 101, 64, 25, 42, 79, 84,
-			  123, 6, 20, 101, 15, 48, 90, 73 },
+			{ 6, 11, 21, 64, 105, 58, 47, 84,
+			  27, 22, 116, 101, 127, 32, 58, 73 },
 			1,
 			0,
 		},
@@ -78,18 +78,17 @@ static bool test_normative_sequences(void)
 			      fixture, index);
 		}
 		CHECK(encoder.trellis_state == expected->final_state &&
-			      encoder.differential_quadrant ==
-				      expected->final_quadrant &&
-			      encoder.carrier_phase_quadrant == 0,
+			      encoder.differential_output ==
+				      expected->final_quadrant,
 		      "V.32 trellis fixture %zu ended in the wrong state",
 		      fixture);
 	}
 	return true;
 }
 
-static bool test_initial_carrier_phase(void)
+static bool test_initial_differential_output(void)
 {
-	static const uint8_t expected[] = { 12, 0, 14, 2 };
+	static const uint8_t expected[] = { 0, 2, 4, 6 };
 
 	for (uint8_t initial = 0; initial < ARRAY_LENGTH(expected); ++initial) {
 		struct sippymodem_v32_trellis_encoder encoder;
@@ -101,7 +100,7 @@ static bool test_initial_carrier_phase(void)
 				      &encoder, 0, &signal_symbol) ==
 				      SIPPYMODEM_V32_TRELLIS_OK &&
 			      signal_symbol == expected[initial],
-		      "V.32 initial carrier phase %u changed", initial);
+		      "V.32 initial differential output %u changed", initial);
 	}
 	return true;
 }
@@ -110,8 +109,7 @@ static bool test_validation_is_transactional(void)
 {
 	struct sippymodem_v32_trellis_encoder encoder = {
 		.trellis_state = 2,
-		.differential_quadrant = 1,
-		.carrier_phase_quadrant = 3,
+		.differential_output = 1,
 		.data_bits_per_symbol = 4,
 	};
 	struct sippymodem_v32_trellis_encoder saved = encoder;
@@ -145,15 +143,10 @@ static bool test_validation_is_transactional(void)
 	CHECK(!sippymodem_v32_trellis_encoder_is_valid(&encoder),
 	      "V.32 trellis accepted an invalid convolutional state");
 	encoder = saved;
-	encoder.differential_quadrant =
+	encoder.differential_output =
 		SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT;
 	CHECK(!sippymodem_v32_trellis_encoder_is_valid(&encoder),
-	      "V.32 trellis accepted an invalid differential quadrant");
-	encoder = saved;
-	encoder.carrier_phase_quadrant =
-		SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT;
-	CHECK(!sippymodem_v32_trellis_encoder_is_valid(&encoder),
-	      "V.32 trellis accepted an invalid carrier phase");
+	      "V.32 trellis accepted an invalid differential output");
 	encoder = saved;
 	encoder.data_bits_per_symbol = 0;
 	CHECK(!sippymodem_v32_trellis_encoder_is_valid(&encoder) &&
@@ -174,7 +167,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "normative sequences", test_normative_sequences },
-		{ "initial carrier phase", test_initial_carrier_phase },
+		{ "initial differential output",
+		  test_initial_differential_output },
 		{ "transactional validation", test_validation_is_transactional },
 	};
 	unsigned int failures = 0;

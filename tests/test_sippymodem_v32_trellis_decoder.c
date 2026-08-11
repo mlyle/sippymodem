@@ -132,9 +132,7 @@ static bool check_round_trip(
 	}
 	CHECK(sippymodem_v32_trellis_encoder_is_valid(&encoder) &&
 		      sippymodem_v32_trellis_decoder_is_valid(&decoder) &&
-		      decoder.data_bits_per_symbol == data_bits_per_symbol &&
-		      encoder.carrier_phase_quadrant ==
-			      decoder.carrier_phase_quadrant,
+		      decoder.data_bits_per_symbol == data_bits_per_symbol,
 	      "V.32bis %u-bit endpoints ended with inconsistent state",
 	      data_bits_per_symbol);
 	CHECK(!add_noise || hard_decision_errors > 0,
@@ -236,6 +234,11 @@ static bool test_validation_is_transactional(void)
 	decoder.path_index = 1;
 	CHECK(!sippymodem_v32_trellis_decoder_is_valid(&decoder),
 	      "V.32bis accepted inconsistent traceback indexes");
+	decoder = saved;
+	decoder.previous_differential_output =
+		SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT;
+	CHECK(!sippymodem_v32_trellis_decoder_is_valid(&decoder),
+	      "V.32bis accepted an invalid previous differential output");
 	decoder = saved;
 	decoder.data_bits_per_symbol = 2;
 	CHECK(!sippymodem_v32_trellis_decoder_is_valid(&decoder),
