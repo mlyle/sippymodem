@@ -291,7 +291,14 @@ static bool test_at_v42bis_compression_profile(void)
 
 static bool test_lapm_xid_envelopes(void)
 {
-	enum { XID_CONTROL = 0xaf, LAPM_DATA_STATE = 2 };
+	enum {
+		XID_CONTROL = 0xaf,
+		SABME_CONTROL = 0x7f,
+		UA_CONTROL = 0x73,
+		UNNUMBERED_CONTROL_MASK = 0xef,
+		LAPM_ESTABLISHING_STATE = 1,
+		LAPM_DATA_STATE = 2,
+	};
 	struct modem_driver driver = {
 		.name = "LAPM XID test",
 		.start = unused_start,
@@ -305,6 +312,8 @@ static bool test_lapm_xid_envelopes(void)
 	uint8_t command[LAPM_MAX_INFO_SIZE + 4];
 	uint8_t received[LAPM_MAX_INFO_SIZE + 4];
 	uint8_t payload[96];
+	uint8_t discarded[80];
+	uint8_t recovery[112];
 	frame_t incoming = { .buf = received };
 	frame_t *outgoing;
 	int command_size;
@@ -498,6 +507,87 @@ static bool test_lapm_xid_envelopes(void)
 		      !answerer->ec.lapm.busy && answerer->ec.lapm.rx_count == 0 &&
 		      answerer->packer_process == NULL,
 	      "V.44 did not resume and deliver the information field exactly once");
+
+	/*
+	 * Advance only the encoder, then establish a fresh LAPM sequence. Both
+	 * peers must perform C-INIT before subsequent compressed data can agree.
+	 */
+	for (size_t index = 0; index < sizeof(discarded); ++index)
+		discarded[index] = (uint8_t)(index * 29U + 17U);
+	lapm_source.data = discarded;
+	lapm_source.length = sizeof(discarded);
+	lapm_source.offset = 0;
+	outgoing = caller->packer.hdlc.get_tx_frame(
+		caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && (outgoing->buf[1] & 1U) == 0 &&
+		      lapm_source.offset == sizeof(discarded),
+	      "LAPM reset fixture did not create an unacknowledged V.44 frame");
+	caller->packer.hdlc.tx_complete(
+		caller->packer.hdlc.framer, outgoing);
+
+	received[0] = answerer->ec.lapm.rsp_addr;
+	received[1] = SABME_CONTROL;
+	incoming.count = 2;
+	answerer->packer.hdlc.rx_complete(
+		answerer->packer.hdlc.framer, &incoming);
+	CHECK(answerer->ec.lapm.state == LAPM_DATA_STATE &&
+		      answerer->ec.lapm.v44_path != NULL &&
+		      answerer->ec.lapm.rx_count == 0,
+	      "received SABME did not reinitialize the V.44 receive path");
+
+	caller->ec.lapm.state = LAPM_ESTABLISHING_STATE;
+	outgoing = NULL;
+	for (size_t index = 0; index < LAPM_CTRL_FRAMES; ++index) {
+		frame_t *candidate = answerer->packer.hdlc.get_tx_frame(
+			answerer->packer.hdlc.framer);
+
+		CHECK(candidate != NULL,
+		      "LAPM answerer did not queue establishment acknowledgement");
+		if ((candidate->buf[1] & UNNUMBERED_CONTROL_MASK) ==
+		    (UA_CONTROL & UNNUMBERED_CONTROL_MASK)) {
+			outgoing = candidate;
+			break;
+		}
+		answerer->packer.hdlc.tx_complete(
+			answerer->packer.hdlc.framer, candidate);
+	}
+	CHECK(outgoing != NULL,
+	      "LAPM answerer control queue did not contain UA");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	answerer->packer.hdlc.tx_complete(
+		answerer->packer.hdlc.framer, outgoing);
+	caller->packer.hdlc.rx_complete(
+		caller->packer.hdlc.framer, &incoming);
+	CHECK(caller->ec.lapm.state == LAPM_DATA_STATE &&
+		      caller->ec.lapm.v44_path != NULL &&
+		      caller->ec.lapm.sent_count == 0 &&
+		      caller->ec.lapm.tx_count == 0 &&
+		      caller->ec.lapm.rx_count == 0 &&
+		      caller->packer_process == NULL,
+	      "received UA retained discarded frames or V.44 stream state");
+
+	for (size_t index = 0; index < sizeof(recovery); ++index)
+		recovery[index] = (uint8_t)('a' + (index / 11U) % 5U);
+	lapm_source.data = recovery;
+	lapm_source.length = sizeof(recovery);
+	lapm_source.offset = 0;
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	lapm_sink.result = 1;
+	outgoing = caller->packer.hdlc.get_tx_frame(
+		caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->size > 3 &&
+		      lapm_source.offset == sizeof(recovery),
+	      "re-established LAPM path did not produce compressed data");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	caller->packer.hdlc.tx_complete(
+		caller->packer.hdlc.framer, outgoing);
+	answerer->packer.hdlc.rx_complete(
+		answerer->packer.hdlc.framer, &incoming);
+	CHECK(lapm_sink.length == sizeof(recovery) &&
+		      memcmp(lapm_sink.data, recovery, sizeof(recovery)) == 0,
+	      "V.44 transfer did not recover after LAPM re-establishment");
 	memset(&lapm_source, 0, sizeof(lapm_source));
 	modem_ec_exit(caller);
 	modem_ec_exit(answerer);

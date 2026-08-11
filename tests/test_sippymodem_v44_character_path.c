@@ -363,6 +363,69 @@ static bool test_literal_path(void)
 	return true;
 }
 
+static bool test_reinitialize_discards_stream_state(void)
+{
+	uint8_t shared[192];
+	uint8_t discarded[160];
+	uint8_t recovery[224];
+	uint8_t decoded[sizeof(recovery)];
+	uint8_t wire[WIRE_CAPACITY];
+	struct character_io sender_io = { 0 };
+	struct character_io receiver_io = {
+		.sink = decoded,
+		.sink_capacity = sizeof(decoded),
+	};
+	struct sippymodem_v44_character_path *sender =
+		create_path(&sender_io, true, false, 8);
+	struct sippymodem_v44_character_path *receiver =
+		create_path(&receiver_io, false, true, 8);
+	size_t wire_length = 0;
+
+	generate_payload(shared, sizeof(shared));
+	generate_payload(discarded, sizeof(discarded));
+	generate_payload(recovery, sizeof(recovery));
+	CHECK(sender != NULL && receiver != NULL,
+	      "could not create V.44 reinitialization paths");
+	sender_io.source = shared;
+	sender_io.source_length = sizeof(shared);
+	CHECK(transmit_until_idle(sender, wire, sizeof(wire), &wire_length) &&
+	      receive_wire(receiver, wire, wire_length, &receiver_io,
+			   sizeof(shared)),
+	      "V.44 reinitialization fixture did not establish shared state");
+
+	/* Advance only the encoder, then discard that unreceived wire image. */
+	sender_io.source = discarded;
+	sender_io.source_length = sizeof(discarded);
+	sender_io.source_offset = 0;
+	wire_length = 0;
+	CHECK(transmit_until_idle(sender, wire, sizeof(wire), &wire_length) &&
+	      wire_length != 0,
+	      "V.44 reinitialization fixture did not diverge its dictionaries");
+	CHECK(sippymodem_v44_character_path_reinitialize(sender) ==
+		      SIPPYMODEM_V44_CHARACTER_PATH_OK &&
+	      sippymodem_v44_character_path_reinitialize(receiver) ==
+		      SIPPYMODEM_V44_CHARACTER_PATH_OK,
+	      "V.44 character paths did not accept C-INIT reinitialization");
+
+	sender_io.source = recovery;
+	sender_io.source_length = sizeof(recovery);
+	sender_io.source_offset = 0;
+	receiver_io.sink_length = 0;
+	wire_length = 0;
+	CHECK(transmit_until_idle(sender, wire, sizeof(wire), &wire_length) &&
+	      receive_wire(receiver, wire, wire_length, &receiver_io,
+			   sizeof(recovery)) &&
+	      receiver_io.sink_length == sizeof(recovery) &&
+	      memcmp(decoded, recovery, sizeof(recovery)) == 0,
+	      "C-INIT did not restore synchronized V.44 character transfer");
+	CHECK(sippymodem_v44_character_path_reinitialize(NULL) ==
+		      SIPPYMODEM_V44_CHARACTER_PATH_INVALID_ARGUMENT,
+	      "V.44 character reinitialization accepted a null path");
+	sippymodem_v44_character_path_destroy(receiver);
+	sippymodem_v44_character_path_destroy(sender);
+	return true;
+}
+
 static bool test_validation_and_callback_failures(void)
 {
 	uint8_t octet = 0x5a;
@@ -462,6 +525,8 @@ int main(void)
 		{ "generated round trip", test_generated_round_trip },
 		{ "exact flush boundary", test_exact_flush_boundary },
 		{ "literal path", test_literal_path },
+		{ "C-INIT reinitialization",
+		  test_reinitialize_discards_stream_state },
 		{ "validation and callback failures",
 		  test_validation_and_callback_failures },
 	};

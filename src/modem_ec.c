@@ -151,7 +151,7 @@ enum LAPM_STATES { LAPM_IDLE, LAPM_ESTAB, LAPM_DATA, LAPM_DISC };
 /* prototypes */
 static int lapm_connect(struct lapm_state *l);
 static int lapm_disconnect(struct lapm_state *l);
-static void reset(struct lapm_state *l);
+static void reset_lapm_sequence(struct lapm_state *l);
 
 /*
  * service functions
@@ -217,6 +217,18 @@ static struct sippymodem_v44_character_path *create_v44_path(
 		.write = v44_write_characters,
 	};
 	return sippymodem_v44_character_path_create(&config);
+}
+
+static int reinitialize_for_link_establishment(struct lapm_state *l)
+{
+	if (l->v44_path != NULL &&
+	    sippymodem_v44_character_path_reinitialize(l->v44_path) !=
+		    SIPPYMODEM_V44_CHARACTER_PATH_OK)
+		return -1;
+	l->rx_head = l->rx_count = 0;
+	l->modem->packer_process = NULL;
+	reset_lapm_sequence(l);
+	return 0;
 }
 
 /* le/be value parsing */
@@ -1259,12 +1271,18 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		EC_DBG("sabme received.\n");
 		/* discard unacked I frames,
 		   reset vs,vr,va, clear exceptions */
-		reset(l);
+		if (reinitialize_for_link_establishment(l) != 0) {
+			TX_DM(l,FRAME_U_PF(f));
+			modem_update_status(l->modem, STATUS_EC_ERROR);
+			return -1;
+		}
+		if (TX_UA(l,FRAME_U_PF(f)) != 0) {
+			l->state = LAPM_IDLE;
+			modem_update_status(l->modem, STATUS_EC_ERROR);
+			return -1;
+		}
 		/* going to connected state */
 		l->state = LAPM_DATA;
-		/* respond UA (or DM on error) */
-		// fixme: why may be error and TX_DM ??
-		TX_UA(l,FRAME_U_PF(f));
 		TIMER_STOP(l);
 		modem_update_status(l->modem,STATUS_EC_LINK);
 		break;
@@ -1280,7 +1298,7 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		else { /* going to disconnected state,
 			  discard unacked I frames, reset all  */
 			l->state = LAPM_IDLE;
-			reset(l);
+			reset_lapm_sequence(l);
 			TX_UA(l,FRAME_U_PF(f));
 			T401_STOP(l);
 			// TBD notify CF
@@ -1314,7 +1332,7 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		case LAPM_DISC:
 			if (FRAME_U_PF(f)) {
 				l->state = LAPM_IDLE;
-				reset(l);
+				reset_lapm_sequence(l);
 				T401_STOP(l);
 				// TBD notify CF
 				modem_update_status(l->modem,STATUS_EC_RELEASE);
@@ -1323,7 +1341,7 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		case LAPM_DATA:
 			if (l->rtx_count || !FRAME_U_PF(f)) {
 				l->state = LAPM_IDLE;
-				reset(l);
+				reset_lapm_sequence(l);
 				// TBD: notify CF
 				modem_update_status(l->modem,STATUS_EC_RELEASE);
 			}
@@ -1348,15 +1366,20 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		/* notify us about mode change, responds SABME,DISC */
 		switch(l->state) {
 		case LAPM_ESTAB:
+			if (reinitialize_for_link_establishment(l) != 0) {
+				l->state = LAPM_IDLE;
+				T401_STOP(l);
+				modem_update_status(l->modem, STATUS_EC_ERROR);
+				break;
+			}
 			l->state = LAPM_DATA;
-			reset(l);
 			TIMER_STOP(l);
 			modem_update_status(l->modem,STATUS_EC_LINK);
 			break;
 		case LAPM_DISC:
 			// TBD
 			l->state = LAPM_IDLE;
-			reset(l);
+			reset_lapm_sequence(l);
 			T401_STOP(l);
 			modem_update_status(l->modem,STATUS_EC_RELEASE);
 			break;
@@ -1462,15 +1485,22 @@ static int valid_data_state(struct lapm_state *l)
 {
 	switch (l->state) {
 	case LAPM_ESTAB:
-		reset(l);
+		if (reinitialize_for_link_establishment(l) != 0) {
+			l->state = LAPM_IDLE;
+			T401_STOP(l);
+			modem_update_status(l->modem, STATUS_EC_ERROR);
+			return 0;
+		}
 		l->state = LAPM_DATA;
 		modem_update_status(l->modem,STATUS_EC_LINK);
+		return 1;
 	case LAPM_DATA:
 		return 1;
 	case LAPM_DISC:
-		reset(l);
+		reset_lapm_sequence(l);
 		l->state = LAPM_IDLE;
 		modem_update_status(l->modem,STATUS_EC_RELEASE);
+		return 0;
 	case LAPM_IDLE:
 		return 0;
 	default:
@@ -1516,17 +1546,17 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 
 static int lapm_connect(struct lapm_state *l)
 {
-	if (!l->state == LAPM_IDLE)
+	if (l->state != LAPM_IDLE)
+		return -1;
+	if (reinitialize_for_link_establishment(l) != 0)
 		return -1;
 
-	/* negotiate params */
-	//tx_xid(l,l->cmd_addr);
-
-	/* clear all */
-	reset(l);
 	/* connect */
 	l->state = LAPM_ESTAB;
-	TX_SABME(l);
+	if (TX_SABME(l) != 0) {
+		l->state = LAPM_IDLE;
+		return -1;
+	}
 	/* start t401 (and not t403) */
 	T401_START(l);
 	return 0;
@@ -1556,13 +1586,15 @@ static int lapm_disconnect(struct lapm_state *l)
 }
 
 
-static void reset(struct lapm_state *l)
+static void reset_lapm_sequence(struct lapm_state *l)
 {
 	l->busy = 0;
 	l->peer_busy = 0;
+	l->reject = 0;
 	l->vs = 0;
 	l->va = 0;
 	l->vr = 0;
+	l->rtx_count = 0;
 	/* discard pended data */
 	// l->rx_head = l->rx_count = 0;
 	/* discard info frames */
@@ -1639,7 +1671,7 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 		return -1;
 
 	alloc_frames(l);
-	reset(l);
+	reset_lapm_sequence(l);
 	return 0;
 }
 
@@ -1650,7 +1682,7 @@ static int lapm_exit(struct lapm_state *l)
 	l->rx_head = l->rx_count = 0;
 	sippymodem_v44_character_path_destroy(l->v44_path);
 	l->v44_path = NULL;
-	reset(l);
+	reset_lapm_sequence(l);
 	l->info_list = 0;
 	l->ctrl_list = 0;
 	return 0;

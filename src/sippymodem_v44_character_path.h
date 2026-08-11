@@ -50,6 +50,16 @@ void sippymodem_v44_character_path_destroy(
 	struct sippymodem_v44_character_path *path);
 
 /*
+ * Reinitialize both codec directions to their negotiated C-INIT state and
+ * discard all buffered character and wire data. The operation is
+ * transactional: if replacement codec allocation fails, the existing stream
+ * remains unchanged. Serialize reinitialization with both data directions.
+ */
+enum sippymodem_v44_character_path_result
+sippymodem_v44_character_path_reinitialize(
+	struct sippymodem_v44_character_path *path);
+
+/*
  * Pull uncompressed characters through the configured reader and produce a
  * bounded V.44 wire span. The path requests at most one character at a time,
  * so a byte is retained until the codec accepts it. Once the reader is empty,

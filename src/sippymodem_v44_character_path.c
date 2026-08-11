@@ -14,6 +14,7 @@ enum character_path_direction_state {
 
 struct sippymodem_v44_character_path {
 	struct sippymodem_v44_duplex *codec;
+	struct sippymodem_v44_duplex_config codec_config;
 	void *context;
 	sippymodem_v44_character_read read;
 	sippymodem_v44_character_write write;
@@ -55,6 +56,7 @@ struct sippymodem_v44_character_path *sippymodem_v44_character_path_create(
 		free(path);
 		return NULL;
 	}
+	path->codec_config = config->codec;
 	path->context = config->context;
 	path->read = config->read;
 	path->write = config->write;
@@ -69,6 +71,31 @@ void sippymodem_v44_character_path_destroy(
 		return;
 	sippymodem_v44_duplex_destroy(path->codec);
 	free(path);
+}
+
+enum sippymodem_v44_character_path_result
+sippymodem_v44_character_path_reinitialize(
+	struct sippymodem_v44_character_path *path)
+{
+	struct sippymodem_v44_duplex *replacement;
+
+	if (path == NULL)
+		return SIPPYMODEM_V44_CHARACTER_PATH_INVALID_ARGUMENT;
+	replacement = sippymodem_v44_duplex_create(&path->codec_config);
+	if (replacement == NULL)
+		return SIPPYMODEM_V44_CHARACTER_PATH_CODEC_ERROR;
+	sippymodem_v44_duplex_destroy(path->codec);
+	path->codec = replacement;
+	path->transmit_state = CHARACTER_PATH_READY;
+	path->receive_state = CHARACTER_PATH_READY;
+	path->transmit_has_octet = false;
+	path->transmit_dirty = false;
+	path->transmit_flushing = false;
+	path->receive_finished = false;
+	path->transmit_octet = 0;
+	path->receive_offset = 0;
+	path->receive_length = 0;
+	return SIPPYMODEM_V44_CHARACTER_PATH_OK;
 }
 
 static enum sippymodem_v44_character_path_result fail_transmit(
