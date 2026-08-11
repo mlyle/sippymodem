@@ -201,8 +201,8 @@ v34_quarter_superconstellation_label(
 	return V34_CONSTELLATION_OK;
 }
 
-static struct sippymodem_qam_point rotate_point(
-	struct sippymodem_qam_point point, int counterclockwise_quarter_turns)
+static struct qam_point rotate_point(
+	struct qam_point point, int counterclockwise_quarter_turns)
 {
 	int turns = counterclockwise_quarter_turns % 4;
 
@@ -212,28 +212,28 @@ static struct sippymodem_qam_point rotate_point(
 	case 0:
 		return point;
 	case 1:
-		return (struct sippymodem_qam_point){
+		return (struct qam_point){
 			-point.quadrature,
 			point.in_phase,
 		};
 	case 2:
-		return (struct sippymodem_qam_point){
+		return (struct qam_point){
 			-point.in_phase,
 			-point.quadrature,
 		};
 	case 3:
-		return (struct sippymodem_qam_point){
+		return (struct qam_point){
 			point.quadrature,
 			-point.in_phase,
 		};
 	}
-	return (struct sippymodem_qam_point){ 0 };
+	return (struct qam_point){ 0 };
 }
 
-struct sippymodem_qam_point v34_rotated_point_zero(
+struct qam_point v34_rotated_point_zero(
 	int counterclockwise_quarter_turns)
 {
-	struct sippymodem_qam_point point = {
+	struct qam_point point = {
 		V34_POINT_ZERO_COORDINATE,
 		V34_POINT_ZERO_COORDINATE,
 	};
@@ -245,9 +245,9 @@ enum v34_constellation_result
 v34_training_constellation_point(
 	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
-	struct sippymodem_qam_point *point)
+	struct qam_point *point)
 {
-	struct sippymodem_qam_point next;
+	struct qam_point next;
 	double grid_unit;
 
 	if (point == NULL || clockwise_quarter_turns > 3u ||
@@ -267,7 +267,7 @@ v34_training_constellation_point(
 	default:
 		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	}
-	next = (struct sippymodem_qam_point){
+	next = (struct qam_point){
 		.in_phase = (quarter_point & 1u) != 0u ? -3.0 * grid_unit :
 							       grid_unit,
 		.quadrature = (quarter_point & 2u) != 0u ? -3.0 * grid_unit :
@@ -281,7 +281,7 @@ v34_training_constellation_point(
 enum v34_constellation_result
 v34_training_constellation_slice(
 	enum v34_constellation_size constellation,
-	const struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	const struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
 	double best_distance = DBL_MAX;
@@ -301,7 +301,7 @@ v34_training_constellation_slice(
 				1u;
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
 		for (uint8_t quarter = 0; quarter < quarter_count; ++quarter) {
-			struct sippymodem_qam_point candidate;
+			struct qam_point candidate;
 			double in_phase_error;
 			double quadrature_error;
 			double distance;

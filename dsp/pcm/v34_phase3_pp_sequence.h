@@ -41,7 +41,7 @@ bool v34_phase3_pp_sequence_is_complete(
 enum v34_phase3_pp_sequence_result
 v34_phase3_pp_sequence_next(
 	struct v34_phase3_pp_sequence *sequence,
-	struct sippymodem_qam_point *point);
+	struct qam_point *point);
 
 const char *v34_phase3_pp_sequence_result_name(
 	enum v34_phase3_pp_sequence_result result);

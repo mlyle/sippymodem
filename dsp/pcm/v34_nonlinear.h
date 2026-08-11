@@ -43,7 +43,7 @@ v34_nonlinear_encode(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude,
 	const struct v34_q7_point *precoded_symbol,
-	struct sippymodem_qam_point *projected_symbol);
+	struct qam_point *projected_symbol);
 
 /* Invert the clause 9.7 radial projection for one finite equalized symbol.
  * Both points use unscaled constellation-grid units. The returned estimate
@@ -54,8 +54,8 @@ enum v34_nonlinear_result
 v34_nonlinear_unproject(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude,
-	const struct sippymodem_qam_point *projected_symbol,
-	struct sippymodem_qam_point *precoded_estimate);
+	const struct qam_point *projected_symbol,
+	struct qam_point *precoded_estimate);
 
 const char *v34_nonlinear_result_name(
 	enum v34_nonlinear_result result);

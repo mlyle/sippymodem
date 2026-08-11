@@ -246,7 +246,7 @@ static bool run_media_call(
 		'S', 'I', 'P', 'B',
 	};
 	static const char dial_command[] = "ATDpeer\r";
-	struct sippymodem_datapumps datapumps = { 0 };
+	struct datapumps datapumps = { 0 };
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
 	struct recording_capture capture = { 0 };
@@ -267,8 +267,8 @@ static bool run_media_call(
 		uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT : TRAINING_FRAME_LIMIT;
 	int selection_length = (int)strlen(test_case->selection_command);
 
-	CHECK(sippymodem_datapumps_start(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK,
+	CHECK(datapumps_start(&datapumps) ==
+		      DATAPUMPS_OK,
 	      "%s integration registrations did not start", test_case->name);
 	CHECK(endpoint_init(&caller, "FSK caller") &&
 		      endpoint_init(&answerer, "FSK answerer"),
@@ -417,8 +417,8 @@ static bool run_media_call(
 		      capture.blocks[SIPPYMODEM_RECORD_RX_LINE_PCM] != 0,
 	      "%s SIP call did not retain recording boundaries",
 	      test_case->name);
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_BUSY,
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_BUSY,
 	      "live %s calls did not protect their process-global registration",
 	      test_case->name);
 	memset(caller.receive, 0, sizeof(caller.receive));
@@ -433,8 +433,8 @@ static bool run_media_call(
 
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK,
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_OK,
 	      "%s integration registrations remained busy", test_case->name);
 	return true;
 }
@@ -459,7 +459,7 @@ static bool run_baudot_media_call(
 	const char *selection_command =
 		rate == SIPPYMODEM_BAUDOT_RATE_50 ?
 			"AT+MS=45,0,50,50\r" : "AT+MS=45,0,45,45\r";
-	struct sippymodem_datapumps datapumps = { 0 };
+	struct datapumps datapumps = { 0 };
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
 	struct recording_capture capture = { 0 };
@@ -476,8 +476,8 @@ static bool run_baudot_media_call(
 	int reported_rate = rate == SIPPYMODEM_BAUDOT_RATE_50 ? 50 : 45;
 	int selection_length = (int)strlen(selection_command);
 
-	CHECK(sippymodem_datapumps_start(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK &&
+	CHECK(datapumps_start(&datapumps) ==
+		      DATAPUMPS_OK &&
 		      endpoint_init(&caller, "Baudot caller") &&
 		      endpoint_init(&answerer, "Baudot answerer"),
 	      "Baudot SIP integration did not initialize");
@@ -574,13 +574,13 @@ static bool run_baudot_media_call(
 			      SIPPYMODEM_RECORD_RX_RTP_PAYLOAD_PLAYOUT] != 0 &&
 		      capture.blocks[SIPPYMODEM_RECORD_RX_LINE_PCM] != 0,
 	      "Baudot SIP turn-taking or recording evidence was incomplete");
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_BUSY,
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_BUSY,
 	      "live Baudot calls did not protect their registration");
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK,
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_OK,
 	      "Baudot SIP registration did not stop cleanly");
 	return true;
 }
@@ -597,20 +597,20 @@ int main(void)
 			.id = DP_V21,
 			.name = "forced V.21",
 			.selection_command = "AT+MS=21,0,300,300\r",
-			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.caller_tx_rate = FSK300_BIT_RATE,
+			.caller_rx_rate = FSK300_BIT_RATE,
+			.answerer_tx_rate = FSK300_BIT_RATE,
+			.answerer_rx_rate = FSK300_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 		},
 		{
 			.id = DP_V21,
 			.name = "V.21 automode",
 			.selection_command = "AT+MS=21,1,300,300\r",
-			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.caller_tx_rate = FSK300_BIT_RATE,
+			.caller_rx_rate = FSK300_BIT_RATE,
+			.answerer_tx_rate = FSK300_BIT_RATE,
+			.answerer_rx_rate = FSK300_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -618,10 +618,10 @@ int main(void)
 			.id = DP_B103,
 			.name = "Bell 103",
 			.selection_command = "AT+MS=103,1,300,300\r",
-			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.caller_tx_rate = FSK300_BIT_RATE,
+			.caller_rx_rate = FSK300_BIT_RATE,
+			.answerer_tx_rate = FSK300_BIT_RATE,
+			.answerer_rx_rate = FSK300_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},

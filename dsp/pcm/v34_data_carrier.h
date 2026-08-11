@@ -27,8 +27,8 @@ struct v34_data_carrier {
 	struct v34_phase3_profile profile;
 	struct v34_frame_geometry geometry;
 	struct v34_power_normalizer normalizer;
-	struct sippymodem_qam_modulator modulator;
-	struct sippymodem_qam_point
+	struct qam_modulator modulator;
+	struct qam_point
 		normalized_symbol[V34_SYMBOLS_PER_MAPPING_FRAME];
 	uint8_t next_symbol;
 };

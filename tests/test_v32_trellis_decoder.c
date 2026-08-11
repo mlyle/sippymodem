@@ -29,14 +29,14 @@ static double fixture_noise(uint32_t *random, double span)
 
 static bool nearest_signal_symbol(
 	uint8_t data_bits_per_symbol,
-	const struct sippymodem_qam_point *point, uint8_t *nearest)
+	const struct qam_point *point, uint8_t *nearest)
 {
 	double best_error = DBL_MAX;
 	uint8_t signal_points =
 		(uint8_t)(UINT8_C(1) << (data_bits_per_symbol + 1u));
 
 	for (uint8_t symbol = 0; symbol < signal_points; ++symbol) {
-		struct sippymodem_qam_point candidate;
+		struct qam_point candidate;
 		double in_phase;
 		double quadrature;
 		double error;
@@ -80,7 +80,7 @@ static bool check_round_trip(
 	      "V.32bis %u-bit endpoints did not initialize",
 	      data_bits_per_symbol);
 	for (size_t index = 0; index < ARRAY_LENGTH(input); ++index) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		uint8_t decoded = UINT8_MAX;
 		uint8_t decided_signal = UINT8_MAX;
 		uint8_t signal_symbol;
@@ -177,8 +177,8 @@ static bool test_validation_is_transactional(void)
 {
 	struct sippymodem_v32_trellis_decoder decoder;
 	struct sippymodem_v32_trellis_decoder saved;
-	struct sippymodem_qam_point point = { 0.25, -0.5 };
-	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct qam_point point = { 0.25, -0.5 };
+	struct qam_point invalid = { NAN, 0.0 };
 	uint8_t output = 0xa5;
 	uint8_t decision = 0x5a;
 	bool ready = true;

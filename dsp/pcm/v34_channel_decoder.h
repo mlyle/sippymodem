@@ -44,7 +44,7 @@ bool v34_channel_decoder_is_valid(
 enum v34_channel_decoder_result
 v34_channel_decoder_advance(
 	struct v34_channel_decoder *decoder,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	uint8_t inversion_bit,
 	struct v34_survivor_decision *current,

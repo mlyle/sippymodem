@@ -5,7 +5,7 @@
 #include <math.h>
 #include <stddef.h>
 
-static bool point_is_finite(const struct sippymodem_qam_point *point)
+static bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
@@ -17,14 +17,14 @@ bool v34_data_equalizer_receiver_is_valid(
 	bool observation_pending;
 
 	if (receiver == NULL ||
-	    !sippymodem_qam_equalizer_is_valid(&receiver->equalizer) ||
+	    !qam_equalizer_is_valid(&receiver->equalizer) ||
 	    !v34_data_channel_receiver_is_valid(
 		    &receiver->data_receiver) ||
 	    !point_is_finite(&receiver->first_symbol) ||
 	    !isfinite(receiver->adaptation) || receiver->adaptation < 0.0 ||
 	    receiver->adaptation > 1.0 ||
 	    receiver->training_outputs_remaining >
-		    SIPPYMODEM_QAM_EQUALIZER_DELAY ||
+		    QAM_EQUALIZER_DELAY ||
 	    (receiver->training_outputs_remaining != 0 &&
 	     receiver->has_first_symbol))
 		return false;
@@ -33,7 +33,7 @@ bool v34_data_equalizer_receiver_is_valid(
 	if (!receiver->has_first_symbol)
 		return true;
 	observation_pending =
-		sippymodem_qam_equalizer_observation_is_pending(
+		qam_equalizer_observation_is_pending(
 			&receiver->first_observation);
 	return observation_pending &&
 	       receiver->first_symbol.in_phase ==
@@ -45,7 +45,7 @@ bool v34_data_equalizer_receiver_is_valid(
 enum v34_data_equalizer_receiver_result
 v34_data_equalizer_receiver_init(
 	struct v34_data_equalizer_receiver *receiver,
-	const struct sippymodem_qam_equalizer *equalizer,
+	const struct qam_equalizer *equalizer,
 	const struct v34_power_normalizer *normalizer,
 	const struct v34_frame_geometry *geometry,
 	bool expanded_shaping,
@@ -58,7 +58,7 @@ v34_data_equalizer_receiver_init(
 	struct v34_data_equalizer_receiver initialized = { 0 };
 
 	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
-	    adaptation > 1.0 || !sippymodem_qam_equalizer_is_valid(equalizer) ||
+	    adaptation > 1.0 || !qam_equalizer_is_valid(equalizer) ||
 	    v34_data_channel_receiver_init(
 		    &initialized.data_receiver, normalizer, geometry,
 		    expanded_shaping, coefficients, selection,
@@ -70,9 +70,9 @@ v34_data_equalizer_receiver_init(
 	initialized.equalizer.can_adapt = false;
 	initialized.adaptation = adaptation;
 	initialized.training_outputs_remaining =
-		equalizer->fill < SIPPYMODEM_QAM_EQUALIZER_DELAY ?
+		equalizer->fill < QAM_EQUALIZER_DELAY ?
 			(uint8_t)equalizer->fill :
-			SIPPYMODEM_QAM_EQUALIZER_DELAY;
+			QAM_EQUALIZER_DELAY;
 	if (!v34_data_equalizer_receiver_is_valid(&initialized))
 		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
@@ -122,15 +122,15 @@ static bool emits_mapping_frame(
 static enum v34_data_equalizer_receiver_result
 receive_interval(
 	struct v34_data_equalizer_receiver *receiver,
-	const struct sippymodem_qam_equalizer *equalizer,
-	struct sippymodem_qam_equalizer_observation *second_observation,
+	const struct qam_equalizer *equalizer,
+	struct qam_equalizer_observation *second_observation,
 	struct v34_survivor_decision *current,
 	struct v34_received_mapping_frame *received)
 {
 	struct v34_data_equalizer_receiver next;
-	struct sippymodem_qam_point normalized[
+	struct qam_point normalized[
 		V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct sippymodem_qam_point decision_targets[
+	struct qam_point decision_targets[
 		V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_survivor_decision generated_current;
 	struct v34_received_mapping_frame generated_received;
@@ -149,17 +149,17 @@ receive_interval(
 	    emitted == V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE ||
 	    emitted == V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE)
 		return emitted;
-	if (sippymodem_qam_equalizer_adapt_observation(
+	if (qam_equalizer_adapt_observation(
 		    &next.equalizer, &next.first_observation,
 		    &decision_targets[0], next.adaptation) !=
-		    SIPPYMODEM_QAM_EQUALIZER_OK ||
-	    sippymodem_qam_equalizer_adapt_observation(
+		    QAM_EQUALIZER_OK ||
+	    qam_equalizer_adapt_observation(
 		    &next.equalizer, second_observation, &decision_targets[1],
-		    next.adaptation) != SIPPYMODEM_QAM_EQUALIZER_OK)
+		    next.adaptation) != QAM_EQUALIZER_OK)
 		return V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
 	next.first_observation =
-		(struct sippymodem_qam_equalizer_observation){ 0 };
-	next.first_symbol = (struct sippymodem_qam_point){ 0 };
+		(struct qam_equalizer_observation){ 0 };
+	next.first_symbol = (struct qam_point){ 0 };
 	next.has_first_symbol = false;
 	if (!v34_data_equalizer_receiver_is_valid(&next))
 		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
@@ -173,12 +173,12 @@ receive_interval(
 enum v34_data_equalizer_receiver_result
 v34_data_equalizer_receive_point(
 	struct v34_data_equalizer_receiver *receiver,
-	const struct sippymodem_qam_point *received_point,
+	const struct qam_point *received_point,
 	struct v34_survivor_decision *current,
 	struct v34_received_mapping_frame *received)
 {
-	struct sippymodem_qam_equalizer next_equalizer;
-	struct sippymodem_qam_equalizer_observation observation = { 0 };
+	struct qam_equalizer next_equalizer;
+	struct qam_equalizer_observation observation = { 0 };
 	bool equalized_ready;
 
 	if (!v34_data_equalizer_receiver_is_valid(receiver) ||
@@ -186,9 +186,9 @@ v34_data_equalizer_receive_point(
 	    received == NULL)
 		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
 	next_equalizer = receiver->equalizer;
-	if (sippymodem_qam_equalizer_observe(
+	if (qam_equalizer_observe(
 		    &next_equalizer, received_point, &observation,
-		    &equalized_ready) != SIPPYMODEM_QAM_EQUALIZER_OK)
+		    &equalized_ready) != QAM_EQUALIZER_OK)
 		return V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
 	if (!equalized_ready) {
 		if (receiver->has_first_symbol)

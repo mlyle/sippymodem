@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_FSK_H
-#define SIPPYMODEM_FSK_H
+#ifndef FSK_H
+#define FSK_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -9,10 +9,10 @@
 
 enum {
 	/* One bounded receiver can cover a 75-baud symbol at 8 kHz. */
-	SIPPYMODEM_FSK_MAX_DETECTOR_WINDOW = 128,
+	FSK_MAX_DETECTOR_WINDOW = 128,
 };
 
-struct sippymodem_fsk_channel {
+struct fsk_channel {
 	uint32_t sample_rate;
 	uint32_t symbol_rate_numerator;
 	uint32_t symbol_rate_denominator;
@@ -22,12 +22,12 @@ struct sippymodem_fsk_channel {
 	unsigned int metric_smoothing_shift;
 };
 
-enum sippymodem_fsk_result {
-	SIPPYMODEM_FSK_OK,
-	SIPPYMODEM_FSK_INVALID_ARGUMENT,
+enum fsk_result {
+	FSK_OK,
+	FSK_INVALID_ARGUMENT,
 };
 
-struct sippymodem_fsk_tone_generator {
+struct fsk_tone_generator {
 	uint32_t sample_rate;
 	uint32_t mark_phase_step;
 	uint32_t space_phase_step;
@@ -35,24 +35,24 @@ struct sippymodem_fsk_tone_generator {
 	int16_t amplitude;
 };
 
-struct sippymodem_fsk_transmitter {
-	struct sippymodem_fsk_channel channel;
-	struct sippymodem_fsk_tone_generator tones;
+struct fsk_transmitter {
+	struct fsk_channel channel;
+	struct fsk_tone_generator tones;
 	uint64_t symbol_accumulator;
 	uint8_t held_bit;
 	bool holding_bit;
 };
 
-struct sippymodem_fsk_tone_projection {
-	int16_t in_phase[SIPPYMODEM_FSK_MAX_DETECTOR_WINDOW];
-	int16_t quadrature[SIPPYMODEM_FSK_MAX_DETECTOR_WINDOW];
+struct fsk_tone_projection {
+	int16_t in_phase[FSK_MAX_DETECTOR_WINDOW];
+	int16_t quadrature[FSK_MAX_DETECTOR_WINDOW];
 };
 
-struct sippymodem_fsk_receiver {
-	struct sippymodem_fsk_channel channel;
-	struct sippymodem_fsk_tone_projection mark;
-	struct sippymodem_fsk_tone_projection space;
-	int16_t history[SIPPYMODEM_FSK_MAX_DETECTOR_WINDOW];
+struct fsk_receiver {
+	struct fsk_channel channel;
+	struct fsk_tone_projection mark;
+	struct fsk_tone_projection space;
+	int16_t history[FSK_MAX_DETECTOR_WINDOW];
 	size_t history_index;
 	size_t history_count;
 	int64_t mark_power;
@@ -66,7 +66,7 @@ struct sippymodem_fsk_receiver {
 	bool timing_locked;
 };
 
-struct sippymodem_fsk_measurement {
+struct fsk_measurement {
 	uint64_t mark_power;
 	uint64_t space_power;
 	uint64_t line_power;
@@ -74,51 +74,51 @@ struct sippymodem_fsk_measurement {
 	bool ready;
 };
 
-enum sippymodem_fsk_result sippymodem_fsk_tone_generator_init(
-	struct sippymodem_fsk_tone_generator *generator,
-	const struct sippymodem_fsk_channel *channel,
+enum fsk_result fsk_tone_generator_init(
+	struct fsk_tone_generator *generator,
+	const struct fsk_channel *channel,
 	int16_t amplitude);
-enum sippymodem_fsk_result sippymodem_fsk_tone_generator_sample(
-	struct sippymodem_fsk_tone_generator *generator,
+enum fsk_result fsk_tone_generator_sample(
+	struct fsk_tone_generator *generator,
 	uint8_t bit,
 	int16_t *sample);
 
-enum sippymodem_fsk_result sippymodem_fsk_transmitter_init(
-	struct sippymodem_fsk_transmitter *transmitter,
-	const struct sippymodem_fsk_channel *channel,
+enum fsk_result fsk_transmitter_init(
+	struct fsk_transmitter *transmitter,
+	const struct fsk_channel *channel,
 	int16_t amplitude);
-bool sippymodem_fsk_transmitter_can_accept_bit(
-	const struct sippymodem_fsk_transmitter *transmitter);
+bool fsk_transmitter_can_accept_bit(
+	const struct fsk_transmitter *transmitter);
 /* The input bit is latched at a symbol boundary. bit_consumed becomes true on
  * the final generated sample for the currently latched bit. */
-enum sippymodem_fsk_result sippymodem_fsk_transmitter_sample(
-	struct sippymodem_fsk_transmitter *transmitter,
+enum fsk_result fsk_transmitter_sample(
+	struct fsk_transmitter *transmitter,
 	uint8_t bit,
 	int16_t *sample,
 	bool *bit_consumed);
 
-enum sippymodem_fsk_result sippymodem_fsk_receiver_init(
-	struct sippymodem_fsk_receiver *receiver,
-	const struct sippymodem_fsk_channel *channel);
-void sippymodem_fsk_receiver_reset(
-	struct sippymodem_fsk_receiver *receiver);
+enum fsk_result fsk_receiver_init(
+	struct fsk_receiver *receiver,
+	const struct fsk_channel *channel);
+void fsk_receiver_reset(
+	struct fsk_receiver *receiver);
 /* Advances only the generated tone-pair detector. Use this when an external
  * asynchronous framer owns sampling instants; use receiver_sample when the
  * FSK receiver should also recover the synchronous symbol clock. */
-enum sippymodem_fsk_result sippymodem_fsk_receiver_detect(
-	struct sippymodem_fsk_receiver *receiver,
+enum fsk_result fsk_receiver_detect(
+	struct fsk_receiver *receiver,
 	int16_t sample,
 	uint8_t *bit,
 	bool *decision_ready);
-enum sippymodem_fsk_result sippymodem_fsk_receiver_sample(
-	struct sippymodem_fsk_receiver *receiver,
+enum fsk_result fsk_receiver_sample(
+	struct fsk_receiver *receiver,
 	int16_t sample,
 	uint8_t *bit,
 	bool *bit_ready);
-struct sippymodem_fsk_measurement sippymodem_fsk_receiver_measure(
-	const struct sippymodem_fsk_receiver *receiver);
+struct fsk_measurement fsk_receiver_measure(
+	const struct fsk_receiver *receiver);
 
-const char *sippymodem_fsk_result_name(
-	enum sippymodem_fsk_result result);
+const char *fsk_result_name(
+	enum fsk_result result);
 
 #endif

@@ -166,7 +166,7 @@ static bool test_streaming_handoff(void)
 	struct carrier_fixture fixture;
 	struct v34_data_carrier carrier;
 	struct v34_data_carrier waiting;
-	struct sippymodem_qam_modulator model;
+	struct qam_modulator model;
 	size_t model_symbol = 0;
 	size_t sample_count = 0;
 	bool nonzero_sample_seen = false;
@@ -199,7 +199,7 @@ static bool test_streaming_handoff(void)
 	      "data carrier did not load a mapping frame");
 	for (size_t symbol = 0;
 	     symbol < V34_SYMBOLS_PER_MAPPING_FRAME; ++symbol) {
-		struct sippymodem_qam_point expected;
+		struct qam_point expected;
 
 		CHECK(v34_normalize_power(
 			      &fixture.normalizer,
@@ -212,7 +212,7 @@ static bool test_streaming_handoff(void)
 		      "data carrier changed normalized symbol %zu", symbol);
 	}
 	while (!v34_data_carrier_needs_mapping_frame(&carrier)) {
-		const struct sippymodem_qam_point *point =
+		const struct qam_point *point =
 			&carrier.normalized_symbol[model_symbol];
 		double expected_sample;
 		double actual_sample;
@@ -220,9 +220,9 @@ static bool test_streaming_handoff(void)
 		bool actual_accepted;
 
 		CHECK(sample_count < 64u &&
-		      sippymodem_qam_modulator_sample_f64(
+		      qam_modulator_sample_f64(
 			      &model, point, &expected_sample,
-			      &expected_accepted) == SIPPYMODEM_QAM_OK &&
+			      &expected_accepted) == QAM_OK &&
 		      v34_data_carrier_sample(
 			      &carrier, &actual_sample, &actual_accepted) ==
 			      V34_DATA_CARRIER_OK &&
@@ -662,7 +662,7 @@ static bool test_transactional_validation(void)
 		      V34_DATA_CARRIER_NUMERIC_FAILURE),
 	      "data carrier accepted an overflowing late symbol");
 	invalid_frame = fixture.frame;
-	invalid_frame.projected_symbol[7] = (struct sippymodem_qam_point){
+	invalid_frame.projected_symbol[7] = (struct qam_point){
 		.in_phase =
 			sqrt(fixture.normalizer.maximum_projected_point_power) *
 			1.001,

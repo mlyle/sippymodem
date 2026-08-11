@@ -68,11 +68,11 @@ v34_phase4_e_sequence_init_from_mp(
 enum v34_phase4_e_sequence_result
 v34_phase4_e_sequence_next(
 	struct v34_phase4_e_sequence *sequence,
-	struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
 	struct v34_phase4_e_sequence next;
-	struct sippymodem_qam_point next_point;
+	struct qam_point next_point;
 	uint8_t next_quarter_point = 0;
 	uint8_t next_rotation;
 

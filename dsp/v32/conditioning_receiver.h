@@ -29,8 +29,8 @@ enum sippymodem_v32_conditioning_receiver_result {
 
 struct sippymodem_v32_conditioning_receiver {
 	struct sippymodem_v32_conditioning_transmitter reference;
-	struct sippymodem_qam_gain gain;
-	struct sippymodem_qam_point previous_point;
+	struct qam_gain gain;
+	struct qam_point previous_point;
 	uint8_t prefix_turns[
 		SIPPYMODEM_V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS];
 	uint8_t prefix_fallback[
@@ -67,14 +67,14 @@ bool sippymodem_v32_conditioning_receiver_is_complete(
 enum sippymodem_v32_conditioning_receiver_result
 sippymodem_v32_conditioning_receiver_observe(
 	struct sippymodem_v32_conditioning_receiver *receiver,
-	const struct sippymodem_qam_point *point, bool *ready);
+	const struct qam_point *point, bool *ready);
 
 /* Seed rate-signal decoding from the final accepted TRN symbol. */
 enum sippymodem_v32_conditioning_receiver_result
 sippymodem_v32_conditioning_receiver_framing_state(
 	const struct sippymodem_v32_conditioning_receiver *receiver,
 	struct sippymodem_v32_symbol_decoder *decoder,
-	struct sippymodem_qam_gain *gain);
+	struct qam_gain *gain);
 
 const char *sippymodem_v32_conditioning_receiver_result_name(
 	enum sippymodem_v32_conditioning_receiver_result result);

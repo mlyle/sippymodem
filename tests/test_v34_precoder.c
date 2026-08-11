@@ -301,8 +301,8 @@ static bool test_receive_reconstruction(void)
 			      modes[mode].primary_rate, coefficients),
 		      "receive mode %zu did not initialize", mode);
 		for (size_t interval = 0; interval < 256; ++interval) {
-			struct sippymodem_qam_point precoded[2];
-			struct sippymodem_qam_point reconstructed[2];
+			struct qam_point precoded[2];
+			struct qam_point reconstructed[2];
 			struct v34_grid_point expected[2];
 
 			for (size_t symbol = 0; symbol < ARRAY_LENGTH(precoded);
@@ -318,7 +318,7 @@ static bool test_receive_reconstruction(void)
 					      V34_PRECODER_OK,
 				      "receive mode %zu interval %zu symbol %zu did not encode",
 				      mode, interval, symbol);
-				precoded[symbol] = (struct sippymodem_qam_point){
+				precoded[symbol] = (struct qam_point){
 					.in_phase =
 						(double)encoded.precoded_symbol.in_phase /
 						V34_Q7_SCALE,
@@ -367,7 +367,7 @@ static bool test_receive_reconstruction(void)
 
 static bool test_receive_reconstruction_boundaries(void)
 {
-	const struct sippymodem_qam_point tie_inputs[2] = {
+	const struct qam_point tie_inputs[2] = {
 		{ 1.5 / V34_Q7_SCALE,
 		  -1.5 / V34_Q7_SCALE },
 		{ 2.5 / V34_Q7_SCALE,
@@ -385,9 +385,9 @@ static bool test_receive_reconstruction_boundaries(void)
 		},
 		.grid_step = V34_PRECODER_GRID_STEP_2,
 	};
-	struct sippymodem_qam_point rejected[2];
-	struct sippymodem_qam_point saved_rejected[2];
-	struct sippymodem_qam_point bad[2];
+	struct qam_point rejected[2];
+	struct qam_point saved_rejected[2];
+	struct qam_point bad[2];
 
 	CHECK(initialize_precoder(
 		      &receiver, V34_SYMBOL_RATE_3000, 8,

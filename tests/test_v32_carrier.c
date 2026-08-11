@@ -36,9 +36,9 @@ enum test_codec {
 	TEST_PCMA,
 };
 
-static struct sippymodem_qam_channel v32_channel(uint32_t carrier_hz)
+static struct qam_channel v32_channel(uint32_t carrier_hz)
 {
-	return (struct sippymodem_qam_channel){
+	return (struct qam_channel){
 		.sample_rate = TEST_SAMPLE_RATE,
 		.symbol_rate_numerator = TEST_SYMBOL_RATE,
 		.symbol_rate_denominator = 1,
@@ -115,17 +115,17 @@ static bool check_carrier(
 	size_t raw_silence, size_t media_silence,
 	enum sippymodem_v32_transmitter_role transmitter_role)
 {
-	struct sippymodem_qam_channel transmit_channel =
+	struct qam_channel transmit_channel =
 		v32_channel(transmit_carrier_hz);
-	struct sippymodem_qam_channel receive_channel =
+	struct qam_channel receive_channel =
 		v32_channel(TEST_CARRIER_HZ);
-	struct sippymodem_qam_modulator modulator;
-	struct sippymodem_qam_demodulator demodulator;
+	struct qam_modulator modulator;
+	struct qam_demodulator demodulator;
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_v32_symbol_decoder decoder;
-	struct sippymodem_qam_measurement measurement;
-	struct sippymodem_qam_point transmit_point;
-	struct sippymodem_qam_point previous_receive_point = { 0 };
+	struct qam_measurement measurement;
+	struct qam_point transmit_point;
+	struct qam_point previous_receive_point = { 0 };
 	uint8_t source[TEST_SOURCE_DIBITS];
 	uint8_t decoded[TEST_DECODED_CAPACITY];
 	uint8_t relative_quadrant = 0;
@@ -140,12 +140,12 @@ static bool check_carrier(
 			TEST_SYMBOL_RATE;
 
 	build_source(source);
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &transmit_channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK &&
-		      sippymodem_qam_demodulator_init(
+		      QAM_OK &&
+		      qam_demodulator_init(
 			      &demodulator, &receive_channel) ==
-			      SIPPYMODEM_QAM_OK &&
+			      QAM_OK &&
 		      sippymodem_v32_symbol_encoder_init(
 			      &encoder, transmitter_role, 0) ==
 			      SIPPYMODEM_V32_FRAMING_OK &&
@@ -158,13 +158,13 @@ static bool check_carrier(
 	      "V.32 carrier endpoints did not initialize");
 	for (size_t sample_index = 0; sample_index < sample_count;
 	     ++sample_index) {
-		struct sippymodem_qam_point receive_point;
+		struct qam_point receive_point;
 		int16_t sample = 0;
 		bool ready;
 
 		if (sample_index >= leading_silence) {
 			bool can_accept =
-				sippymodem_qam_modulator_can_accept_symbol(
+				qam_modulator_can_accept_symbol(
 					&modulator);
 			bool accepted;
 
@@ -189,9 +189,9 @@ static bool check_carrier(
 				      "V.32 carrier could not encode symbol %zu",
 				      transmitted);
 			}
-			CHECK(sippymodem_qam_modulator_sample(
+			CHECK(qam_modulator_sample(
 				      &modulator, &transmit_point, &sample,
-				      &accepted) == SIPPYMODEM_QAM_OK &&
+				      &accepted) == QAM_OK &&
 				      accepted == can_accept,
 			      "V.32 carrier failed at sample %zu", sample_index);
 			if (accepted)
@@ -199,17 +199,17 @@ static bool check_carrier(
 		}
 		if (sample_index >= raw_silence)
 			sample = transcode_sample(sample, codec);
-		CHECK(sippymodem_qam_demodulator_sample(
+		CHECK(qam_demodulator_sample(
 			      &demodulator, sample, &receive_point, &ready) ==
-			      SIPPYMODEM_QAM_OK,
+			      QAM_OK,
 		      "V.32 recovery failed at sample %zu", sample_index);
 		if (ready && has_previous_receive_point) {
 			uint8_t output;
 			uint8_t quarter_turns;
 
-			CHECK(sippymodem_qam_nearest_quarter_turn(
+			CHECK(qam_nearest_quarter_turn(
 				      &previous_receive_point, &receive_point,
-				      &quarter_turns) == SIPPYMODEM_QAM_OK,
+				      &quarter_turns) == QAM_OK,
 			      "V.32 carrier phase decision failed");
 			relative_quadrant =
 				(uint8_t)((relative_quadrant + quarter_turns) & 3u);
@@ -248,7 +248,7 @@ static bool check_carrier(
 			     source + TEST_TRAINING_DIBITS + TEST_SYNC_DIBITS,
 			     TEST_PAYLOAD_DIBITS) == 0,
 	      "V.32 carrier changed its recovered payload");
-	measurement = sippymodem_qam_demodulator_measure(&demodulator);
+	measurement = qam_demodulator_measure(&demodulator);
 	CHECK(measurement.timing_locked && measurement.line_power > 1.0 &&
 		      measurement.symbol_power > 1.0,
 	      "V.32 carrier did not retain timing and power measurements");
@@ -257,28 +257,28 @@ static bool check_carrier(
 
 static bool test_phase_quantizer_validation(void)
 {
-	struct sippymodem_qam_point axes[] = {
+	struct qam_point axes[] = {
 		{ 1.0, 0.0 },
 		{ 0.0, 1.0 },
 		{ -1.0, 0.0 },
 		{ 0.0, -1.0 },
 	};
-	struct sippymodem_qam_point huge = { DBL_MAX, DBL_MAX };
+	struct qam_point huge = { DBL_MAX, DBL_MAX };
 	uint8_t quarter_turns = UINT8_MAX;
 
 	for (uint8_t expected = 0; expected < ARRAY_LENGTH(axes); ++expected)
-		CHECK(sippymodem_qam_nearest_quarter_turn(
+		CHECK(qam_nearest_quarter_turn(
 			      &axes[0], &axes[expected], &quarter_turns) ==
-			      SIPPYMODEM_QAM_OK &&
+			      QAM_OK &&
 			      quarter_turns == expected,
 		      "QAM phase quantizer changed turn %u", expected);
 	quarter_turns = UINT8_MAX;
-	CHECK(sippymodem_qam_nearest_quarter_turn(
+	CHECK(qam_nearest_quarter_turn(
 		      NULL, &axes[0], &quarter_turns) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      sippymodem_qam_nearest_quarter_turn(
+		      QAM_INVALID_ARGUMENT &&
+		      qam_nearest_quarter_turn(
 			      &huge, &huge, &quarter_turns) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+			      QAM_INVALID_ARGUMENT &&
 		      quarter_turns == UINT8_MAX,
 	      "QAM phase quantizer accepted invalid points or changed output");
 	return true;

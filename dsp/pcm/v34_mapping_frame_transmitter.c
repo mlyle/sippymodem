@@ -18,7 +18,7 @@ project_mapping_frame(
 	const struct v34_encoded_mapping_frame *encoded,
 	enum v34_nonlinear_parameter nonlinear_parameter,
 	double mean_squared_magnitude,
-	struct sippymodem_qam_point
+	struct qam_point
 		projected[V34_SYMBOLS_PER_MAPPING_FRAME])
 {
 	for (size_t interval = 0;

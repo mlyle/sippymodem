@@ -63,7 +63,7 @@ static bool initialize_fixture(
 		      V34_PHASE4_MP_RECEIVER_OK,
 	      "E receiver fixture did not initialize");
 	for (size_t symbol = 0; symbol < TEST_TRN_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		uint8_t quarter_point;
 		uint8_t clockwise_quarter_turns;
 
@@ -89,7 +89,7 @@ static bool initialize_fixture(
 		event = (struct v34_mp_receive_event){ 0 };
 		while (!v34_phase4_mp_record_is_complete(&mp)) {
 			struct v34_mp_receive_event emitted;
-			struct sippymodem_qam_point point;
+			struct qam_point point;
 			uint8_t quarter_point;
 			uint8_t clockwise_quarter_turns;
 			bool record_complete;
@@ -133,7 +133,7 @@ static bool check_sequence(
 	      "E receiver fixture failed");
 	while (!v34_phase4_e_sequence_is_complete(
 		       &fixture.transmitter)) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		enum v34_phase4_e_receiver_result expected;
 		uint8_t quarter_point;
 		uint8_t clockwise_quarter_turns;
@@ -210,7 +210,7 @@ static bool test_mismatch_is_transactional(void)
 {
 	struct e_fixture fixture;
 	struct v34_phase4_e_receiver saved;
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
 
@@ -259,7 +259,7 @@ static bool test_validation(void)
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver receiver;
 	struct v34_phase4_e_receiver saved;
-	struct sippymodem_qam_point invalid_point = { NAN, 0.0 };
+	struct qam_point invalid_point = { NAN, 0.0 };
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;

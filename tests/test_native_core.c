@@ -222,7 +222,7 @@ static bool test_core_has_no_external_dsp_owner(void)
 	CHECK(modem != NULL, "source-built modem core could not be created");
 	CHECK(modem->srate == MODEM_RATE && modem->format == MODEM_FORMAT &&
 		      modem->frag == MODEM_FRAG && modem->dp == NULL &&
-		      modem->dc_filter.phase == SIPPYMODEM_DC_FILTER_WARMUP,
+		      modem->dc_filter.phase == DC_FILTER_WARMUP,
 	      "source-built modem core did not expose its native initial state");
 	for (size_t index = 0; index < ARRAY_LENGTH(receive); ++index) {
 		receive[index] = (int16_t)(index + 1);
@@ -250,7 +250,7 @@ static bool test_at_dial_destinations_are_bounded(void)
 		{ "ATDuser@example.invalid", "user@example.invalid" },
 		{ "ATDsip:peer@example.invalid", "sip:peer@example.invalid" },
 	};
-	struct sippymodem_datapumps datapumps = { 0 };
+	struct datapumps datapumps = { 0 };
 	struct modem_driver driver = {
 		.name = "AT dial test",
 		.start = unused_start,
@@ -258,8 +258,8 @@ static bool test_at_dial_destinations_are_bounded(void)
 		.ioctl = unused_control,
 	};
 
-	CHECK(sippymodem_datapumps_start(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK,
+	CHECK(datapumps_start(&datapumps) ==
+		      DATAPUMPS_OK,
 	      "AT dial test registrations did not start");
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 		struct modem *modem = modem_create(&driver, "AT dial test");
@@ -284,8 +284,8 @@ static bool test_at_dial_destinations_are_bounded(void)
 		      "oversized AT destination was truncated or started a call");
 		modem_delete(modem);
 	}
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK,
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_OK,
 	      "AT dial test registrations did not stop");
 	return true;
 }
@@ -708,29 +708,29 @@ static bool test_v21_originator_answers_brief_mark(void)
 		ORIGINATOR_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 		TEST_FSK_AMPLITUDE = 8192,
 	};
-	struct sippymodem_datapumps datapumps = { 0 };
+	struct datapumps datapumps = { 0 };
 	struct modem_driver driver = {
 		.name = "V.21 mark acquisition test",
 		.start = unused_start,
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct sippymodem_fsk_transmitter answerer;
+	struct fsk_transmitter answerer;
 	struct dp_operations *operations;
 	struct modem *modem;
 	struct dp *datapump;
 	int16_t receive[MODEM_FRAG] = { 0 };
 	int16_t transmit[MODEM_FRAG];
 
-	CHECK(sippymodem_datapumps_start(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK,
+	CHECK(datapumps_start(&datapumps) ==
+		      DATAPUMPS_OK,
 	      "V.21 mark acquisition registrations did not start");
 	operations = modem_dp_get_registered_ops(DP_V21);
 	modem = modem_create(&driver, "V.21 mark acquisition test");
 	CHECK(operations != NULL && modem != NULL &&
-		      sippymodem_fsk_transmitter_init(
+		      fsk_transmitter_init(
 			      &answerer, &sippymodem_v21_channel_2,
-			      TEST_FSK_AMPLITUDE) == SIPPYMODEM_FSK_OK,
+			      TEST_FSK_AMPLITUDE) == FSK_OK,
 	      "V.21 mark acquisition fixture did not initialize");
 	datapump = operations->create(
 		modem, DP_V21, 1, MODEM_RATE, MODEM_FRAG, operations);
@@ -742,9 +742,9 @@ static bool test_v21_originator_answers_brief_mark(void)
 		for (size_t index = 0; index < count; ++index) {
 			bool consumed;
 
-			CHECK(sippymodem_fsk_transmitter_sample(
+			CHECK(fsk_transmitter_sample(
 				      &answerer, 1, &receive[index], &consumed) ==
-				      SIPPYMODEM_FSK_OK,
+				      FSK_OK,
 			      "V.21 answer mark generation failed");
 		}
 		memset(transmit, 1, sizeof(transmit));
@@ -776,16 +776,16 @@ static bool test_v21_originator_answers_brief_mark(void)
 	CHECK(operations->delete(datapump) == 0,
 	      "V.21 originator did not release its data pump");
 	modem_delete(modem);
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK,
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_OK,
 	      "V.21 mark acquisition registrations did not stop");
 	return true;
 }
 
 static bool test_owns_source_built_datapump_registrations(void)
 {
-	struct sippymodem_datapumps datapumps = { 0 };
-	struct sippymodem_datapumps rival = { 0 };
+	struct datapumps datapumps = { 0 };
+	struct datapumps rival = { 0 };
 	struct modem_driver driver = {
 		.name = "call progress test",
 		.start = unused_start,
@@ -816,8 +816,8 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp *v22bis;
 	struct dp *bell212;
 	struct dp *v32;
-	struct sippymodem_single_tone_transmitter v32_line_artifact;
-	struct sippymodem_single_tone_transmitter v32_answer_tone;
+	struct single_tone_transmitter v32_line_artifact;
+	struct single_tone_transmitter v32_answer_tone;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
 	uint64_t v32_calling_power = 0;
@@ -833,8 +833,8 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_register(DP_V8, &conflict_operations) == 0 &&
-		      sippymodem_datapumps_start(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT &&
+		      datapumps_start(&datapumps) ==
+			      DATAPUMPS_REGISTRATION_CONFLICT &&
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V8) ==
 			      &conflict_operations &&
@@ -847,9 +847,9 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_deregister(DP_V8, &conflict_operations) == 0 &&
-		      sippymodem_datapumps_start(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_OK &&
-		      sippymodem_datapumps_are_started(&datapumps),
+		      datapumps_start(&datapumps) ==
+			      DATAPUMPS_OK &&
+		      datapumps_are_started(&datapumps),
 	      "source-built data-pump registration did not start cleanly");
 	operations = modem_dp_get_registered_ops(DP_CALLPROG);
 	v8_operations = modem_dp_get_registered_ops(DP_V8);
@@ -907,10 +907,10 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      baudot_operations->process != NULL &&
 		      baudot_operations->use_count == 0,
 	      "source-built modem operations were incomplete");
-	CHECK(sippymodem_datapumps_start(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_ALREADY_STARTED &&
-		      sippymodem_datapumps_start(&rival) ==
-			      SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT,
+	CHECK(datapumps_start(&datapumps) ==
+		      DATAPUMPS_ALREADY_STARTED &&
+		      datapumps_start(&rival) ==
+			      DATAPUMPS_REGISTRATION_CONFLICT,
 	      "process-global call-progress ownership was ambiguous");
 	modem = modem_create(&driver, "call progress test");
 	CHECK(modem != NULL, "call-progress modem could not be created");
@@ -921,8 +921,8 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v8 != NULL && v8->id == DP_V8 &&
 		      v8_operations->process(
 			      v8, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      sippymodem_datapumps_stop(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_BUSY &&
+		      datapumps_stop(&datapumps) ==
+			      DATAPUMPS_BUSY &&
 		      v8_operations->delete(v8) == 0 &&
 		      v8_operations->use_count == 0,
 	      "V.8 did not own and release its calling handshake");
@@ -943,8 +943,8 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v22 != NULL &&
 		      v22_operations->process(
 			      v22, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
-		      sippymodem_datapumps_stop(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_BUSY &&
+		      datapumps_stop(&datapumps) ==
+			      DATAPUMPS_BUSY &&
 		      v22_operations->delete(v22) == 0 &&
 		      v22_operations->use_count == 0,
 	      "V.22 data pump did not wait silently and release cleanly");
@@ -982,25 +982,25 @@ static bool test_owns_source_built_datapump_registrations(void)
 	v32 = v32_operations->create(
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, v32_operations);
 	CHECK(v32 != NULL && v32->id == DP_V32 &&
-		      sippymodem_single_tone_transmitter_init(
+		      single_tone_transmitter_init(
 			      &v32_line_artifact, 50, 512) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_transmitter_init(
+			      SINGLE_TONE_OK &&
+		      single_tone_transmitter_init(
 			      &v32_answer_tone,
 			      SIPPYMODEM_V32_ANSWER_TONE_HZ, 12000) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
+			      SINGLE_TONE_OK &&
 		      v32_operations->use_count == 1 &&
-		      sippymodem_datapumps_stop(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_BUSY,
+		      datapumps_stop(&datapumps) ==
+			      DATAPUMPS_BUSY,
 		      "V.32 data pump did not retain its registration");
 	for (size_t presented = 0; presented < MODEM_RATE * 3u / 20u;) {
 		size_t remaining = MODEM_RATE * 3u / 20u - presented;
 		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
 
 		for (size_t index = 0; index < count; ++index)
-			CHECK(sippymodem_single_tone_transmitter_sample(
+			CHECK(single_tone_transmitter_sample(
 				      &v32_line_artifact, &receive[index]) ==
-				      SIPPYMODEM_SINGLE_TONE_OK,
+				      SINGLE_TONE_OK,
 			      "V.32 line-artifact generation failed");
 		memset(transmit, 1, sizeof(transmit));
 		CHECK(v32_operations->process(
@@ -1014,9 +1014,9 @@ static bool test_owns_source_built_datapump_registrations(void)
 		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
 
 		for (size_t index = 0; index < count; ++index)
-			CHECK(sippymodem_single_tone_transmitter_sample(
+			CHECK(single_tone_transmitter_sample(
 				      &v32_answer_tone, &receive[index]) ==
-				      SIPPYMODEM_SINGLE_TONE_OK,
+				      SINGLE_TONE_OK,
 			      "V.32 answer tone generation failed");
 		memset(transmit, 1, sizeof(transmit));
 		CHECK(v32_operations->process(
@@ -1030,9 +1030,9 @@ static bool test_owns_source_built_datapump_registrations(void)
 		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
 
 		for (size_t index = 0; index < count; ++index)
-			CHECK(sippymodem_single_tone_transmitter_sample(
+			CHECK(single_tone_transmitter_sample(
 				      &v32_answer_tone, &receive[index]) ==
-				      SIPPYMODEM_SINGLE_TONE_OK,
+				      SINGLE_TONE_OK,
 			      "V.32 guarded answer tone generation failed");
 		CHECK(v32_operations->process(
 			      v32, receive, transmit, (int)count) == DPSTAT_OK,
@@ -1067,8 +1067,8 @@ static bool test_owns_source_built_datapump_registrations(void)
 			      DPSTAT_CONNECT &&
 		      baudot->status == DPSTAT_CONNECT && modem->tx_rate == 45 &&
 		      modem->rx_rate == 45 &&
-		      sippymodem_datapumps_stop(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_BUSY &&
+		      datapumps_stop(&datapumps) ==
+			      DATAPUMPS_BUSY &&
 		      baudot_operations->delete(baudot) == 0 &&
 		      baudot_operations->use_count == 0,
 	      "Baudot data pump did not link and release cleanly");
@@ -1091,14 +1091,14 @@ static bool test_owns_source_built_datapump_registrations(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
 		      "SIP call progress leaked audio while awaiting signaling");
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_BUSY &&
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_BUSY &&
 		      operations->delete(call_progress) == 0 &&
 		      operations->use_count == 0,
 	      "live call progress did not protect its registration");
 	modem_delete(modem);
-	CHECK(sippymodem_datapumps_stop(&datapumps) ==
-		      SIPPYMODEM_DATAPUMPS_OK &&
+	CHECK(datapumps_stop(&datapumps) ==
+		      DATAPUMPS_OK &&
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
 		      modem_dp_get_registered_ops(DP_V8) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
@@ -1109,11 +1109,11 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
-		      !sippymodem_datapumps_are_started(&datapumps) &&
-		      sippymodem_datapumps_stop(&datapumps) ==
-			      SIPPYMODEM_DATAPUMPS_NOT_STARTED &&
-		      strcmp(sippymodem_datapumps_result_name(
-			     SIPPYMODEM_DATAPUMPS_BUSY),
+		      !datapumps_are_started(&datapumps) &&
+		      datapumps_stop(&datapumps) ==
+			      DATAPUMPS_NOT_STARTED &&
+		      strcmp(datapumps_result_name(
+			     DATAPUMPS_BUSY),
 			     "data pump is active") == 0,
 	      "SIP call-progress registration did not stop cleanly");
 	return true;

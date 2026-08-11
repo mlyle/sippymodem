@@ -36,7 +36,7 @@ bool sippymodem_v32_conditioning_transmitter_is_valid(
 		    SIPPYMODEM_V32_CONDITIONING_TRN_MAX_SYMBOLS ||
 	    transmitter->emitted_symbols > total_symbols(transmitter) ||
 	    transmitter->trn_encoder.phase_quadrant >=
-		    SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+		    QPSK_QUADRANT_COUNT ||
 	    !sippymodem_v32_scrambler_is_valid(
 		    &transmitter->trn_encoder.scrambler))
 		return false;

@@ -13,13 +13,13 @@ static const double V32_TRELLIS_TRAINING_ADAPTATION = 0.5;
 static const double V32_TRELLIS_DECISION_ADAPTATION = 0.05;
 static const double V32_TRELLIS_MINIMUM_POINT_POWER = 1e-12;
 
-static bool point_is_finite(const struct sippymodem_qam_point *point)
+static bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
 }
 
-static bool point_has_power(const struct sippymodem_qam_point *point)
+static bool point_has_power(const struct qam_point *point)
 {
 	double power;
 
@@ -34,7 +34,7 @@ static bool framing_is_valid(
 	const struct sippymodem_v32_symbol_decoder *framing)
 {
 	return framing != NULL &&
-	       framing->phase_quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT &&
+	       framing->phase_quadrant < QPSK_QUADRANT_COUNT &&
 	       sippymodem_v32_scrambler_is_valid(&framing->descrambler);
 }
 
@@ -45,7 +45,7 @@ bool sippymodem_v32_trellis_receiver_is_valid(
 	uint8_t input_limit;
 
 	if (receiver == NULL ||
-	    !sippymodem_qam_equalizer_is_valid(&receiver->equalizer) ||
+	    !qam_equalizer_is_valid(&receiver->equalizer) ||
 	    !sippymodem_v32_trellis_encoder_is_valid(
 		    &receiver->known_encoder) ||
 	    !sippymodem_v32_trellis_decoder_is_valid(&receiver->decoder) ||
@@ -68,7 +68,7 @@ bool sippymodem_v32_trellis_receiver_is_valid(
 			return false;
 	}
 	for (size_t index = 0;
-	     index < SIPPYMODEM_QAM_EQUALIZER_DELAY + 1u; ++index) {
+	     index < QAM_EQUALIZER_DELAY + 1u; ++index) {
 		if (!point_is_finite(&receiver->known_targets[index]))
 			return false;
 	}
@@ -79,11 +79,11 @@ enum sippymodem_v32_trellis_receiver_result
 sippymodem_v32_trellis_receiver_init(
 	struct sippymodem_v32_trellis_receiver *receiver,
 	const struct sippymodem_v32_symbol_decoder *framing,
-	const struct sippymodem_qam_point *reference_point,
+	const struct qam_point *reference_point,
 	uint8_t reference_phase_quadrant, uint8_t data_bits_per_symbol)
 {
 	struct sippymodem_v32_trellis_receiver initialized = { 0 };
-	struct sippymodem_qam_point ideal;
+	struct qam_point ideal;
 	uint8_t previous_differential_output;
 
 	if (receiver == NULL || !framing_is_valid(framing) ||
@@ -93,9 +93,9 @@ sippymodem_v32_trellis_receiver_init(
 	    sippymodem_v32_phase_to_differential_output(
 		    reference_phase_quadrant,
 		    &previous_differential_output) != SIPPYMODEM_V32_FRAMING_OK ||
-	    sippymodem_qam_equalizer_init(
+	    qam_equalizer_init(
 		    &initialized.equalizer, reference_point, &ideal) !=
-		    SIPPYMODEM_QAM_EQUALIZER_OK ||
+		    QAM_EQUALIZER_OK ||
 	    sippymodem_v32_trellis_encoder_init(
 		    &initialized.known_encoder, data_bits_per_symbol,
 		    previous_differential_output) !=
@@ -115,12 +115,12 @@ sippymodem_v32_trellis_receiver_init(
 
 static bool push_equalized(
 	struct sippymodem_v32_trellis_receiver *receiver,
-	const struct sippymodem_qam_point *received,
-	const struct sippymodem_qam_point *current_target,
-	bool current_target_known, struct sippymodem_qam_point *equalized,
+	const struct qam_point *received,
+	const struct qam_point *current_target,
+	bool current_target_known, struct qam_point *equalized,
 	bool *ready, bool *delayed_target_known)
 {
-	for (size_t index = SIPPYMODEM_QAM_EQUALIZER_DELAY; index != 0;
+	for (size_t index = QAM_EQUALIZER_DELAY; index != 0;
 	     --index) {
 		receiver->known_targets[index] =
 			receiver->known_targets[index - 1];
@@ -129,22 +129,22 @@ static bool push_equalized(
 	}
 	receiver->known_targets[0] =
 		current_target != NULL ? *current_target :
-					 (struct sippymodem_qam_point){ 0 };
+					 (struct qam_point){ 0 };
 	receiver->target_known[0] = current_target_known;
-	if (sippymodem_qam_equalizer_push(
+	if (qam_equalizer_push(
 		    &receiver->equalizer, received, equalized, ready) !=
-	    SIPPYMODEM_QAM_EQUALIZER_OK)
+	    QAM_EQUALIZER_OK)
 		return false;
 	*delayed_target_known =
 		*ready &&
-		receiver->target_known[SIPPYMODEM_QAM_EQUALIZER_DELAY];
+		receiver->target_known[QAM_EQUALIZER_DELAY];
 	if (*delayed_target_known &&
-	    sippymodem_qam_equalizer_adapt(
+	    qam_equalizer_adapt(
 		    &receiver->equalizer,
 		    &receiver
-			     ->known_targets[SIPPYMODEM_QAM_EQUALIZER_DELAY],
+			     ->known_targets[QAM_EQUALIZER_DELAY],
 		    V32_TRELLIS_TRAINING_ADAPTATION) !=
-		    SIPPYMODEM_QAM_EQUALIZER_OK)
+		    QAM_EQUALIZER_OK)
 		return false;
 	return true;
 }
@@ -165,12 +165,12 @@ static void remember_known_input(
 enum sippymodem_v32_trellis_receiver_result
 sippymodem_v32_trellis_receiver_track_known(
 	struct sippymodem_v32_trellis_receiver *receiver,
-	const struct sippymodem_qam_point *point, uint8_t input,
+	const struct qam_point *point, uint8_t input,
 	bool *confirmed)
 {
 	struct sippymodem_v32_trellis_receiver next;
-	struct sippymodem_qam_point equalized = { 0 };
-	struct sippymodem_qam_point transmitted;
+	struct qam_point equalized = { 0 };
+	struct qam_point transmitted;
 	uint8_t data_bits;
 	uint8_t plain = 0;
 	uint8_t scrambled;
@@ -226,10 +226,10 @@ sippymodem_v32_trellis_receiver_track_known(
 enum sippymodem_v32_trellis_receiver_result
 sippymodem_v32_trellis_receiver_decode(
 	struct sippymodem_v32_trellis_receiver *receiver,
-	const struct sippymodem_qam_point *point, uint8_t *output, bool *ready)
+	const struct qam_point *point, uint8_t *output, bool *ready)
 {
 	struct sippymodem_v32_trellis_receiver next;
-	struct sippymodem_qam_point equalized = { 0 };
+	struct qam_point equalized = { 0 };
 	uint8_t plain = 0;
 	uint8_t scrambled = 0;
 	uint8_t decided_signal = 0;
@@ -253,17 +253,17 @@ sippymodem_v32_trellis_receiver_decode(
 		     SIPPYMODEM_V32_TRELLIS_OK))
 		return SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	if (equalizer_ready && !delayed_target_known) {
-		struct sippymodem_qam_point decided_point;
+		struct qam_point decided_point;
 
 		/* The best current survivor belongs to this equalizer output;
 		 * traceback data belongs to an older point. */
 		if (sippymodem_v32_trellis_constellation_point(
 			    next.decoder.data_bits_per_symbol, decided_signal,
 			    &decided_point) != SIPPYMODEM_V32_CONSTELLATION_OK ||
-		    sippymodem_qam_equalizer_adapt(
+		    qam_equalizer_adapt(
 			    &next.equalizer, &decided_point,
 			    V32_TRELLIS_DECISION_ADAPTATION) !=
-			    SIPPYMODEM_QAM_EQUALIZER_OK)
+			    QAM_EQUALIZER_OK)
 			return SIPPYMODEM_V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	}
 	if (equalizer_ready && !delayed_target_known &&

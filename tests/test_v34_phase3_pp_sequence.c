@@ -23,17 +23,17 @@ static unsigned int expected_phase(unsigned int symbol)
 	return phase % 12u;
 }
 
-static struct sippymodem_qam_point expected_point(unsigned int symbol)
+static struct qam_point expected_point(unsigned int symbol)
 {
 	double angle = TEST_PI * expected_phase(symbol) / 6.0;
 
-	return (struct sippymodem_qam_point){ cos(angle), sin(angle) };
+	return (struct qam_point){ cos(angle), sin(angle) };
 }
 
 static bool test_normative_sequence(void)
 {
 	struct v34_phase3_pp_sequence sequence = { UINT16_MAX };
-	struct sippymodem_qam_point first_period[
+	struct qam_point first_period[
 		V34_PHASE3_PP_PERIOD_SYMBOLS];
 	unsigned int phase_mask = 0;
 
@@ -47,8 +47,8 @@ static bool test_normative_sequence(void)
 	      "PP sequence constants or initialization changed");
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_PP_SEQUENCE_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
-		struct sippymodem_qam_point expected = expected_point(symbol);
+		struct qam_point point = { 7.0, -9.0 };
+		struct qam_point expected = expected_point(symbol);
 		double power;
 
 		CHECK(v34_phase3_pp_sequence_next(
@@ -88,7 +88,7 @@ static bool test_copy_and_completion(void)
 {
 	struct v34_phase3_pp_sequence first;
 	struct v34_phase3_pp_sequence second;
-	struct sippymodem_qam_point ignored;
+	struct qam_point ignored;
 
 	CHECK(v34_phase3_pp_sequence_init(&first) ==
 		      V34_PHASE3_PP_SEQUENCE_OK,
@@ -100,8 +100,8 @@ static bool test_copy_and_completion(void)
 		      "PP prefix stopped at symbol %u", symbol);
 	second = first;
 	while (!v34_phase3_pp_sequence_is_complete(&first)) {
-		struct sippymodem_qam_point first_point;
-		struct sippymodem_qam_point second_point;
+		struct qam_point first_point;
+		struct qam_point second_point;
 
 		CHECK(v34_phase3_pp_sequence_next(
 			      &first, &first_point) ==
@@ -117,8 +117,8 @@ static bool test_copy_and_completion(void)
 	}
 	{
 		struct v34_phase3_pp_sequence before = first;
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
-		struct sippymodem_qam_point before_point = point;
+		struct qam_point point = { 7.0, -9.0 };
+		struct qam_point before_point = point;
 
 		CHECK(v34_phase3_pp_sequence_next(
 			      &first, &point) ==
@@ -139,8 +139,8 @@ static bool test_validation(void)
 	};
 	struct v34_phase3_pp_sequence before_valid = valid;
 	struct v34_phase3_pp_sequence before_invalid = invalid;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point before_point = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point before_point = point;
 
 	CHECK(!v34_phase3_pp_sequence_is_valid(NULL) &&
 	      !v34_phase3_pp_sequence_is_valid(&invalid) &&

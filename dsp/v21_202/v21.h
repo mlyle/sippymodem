@@ -12,7 +12,7 @@ enum {
 
 /* V.21 channel 1 is transmitted by the originating station; channel 2 is
  * transmitted by the answering station. Mark is binary one on both. */
-extern const struct sippymodem_fsk_channel sippymodem_v21_channel_1;
-extern const struct sippymodem_fsk_channel sippymodem_v21_channel_2;
+extern const struct fsk_channel sippymodem_v21_channel_1;
+extern const struct fsk_channel sippymodem_v21_channel_2;
 
 #endif /* SIPPYMODEM_V21_H */

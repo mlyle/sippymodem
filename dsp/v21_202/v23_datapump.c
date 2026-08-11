@@ -39,7 +39,7 @@ _Static_assert(
 		V23_PRELINK_BIT_CAPACITY,
 	"V.23 pre-link storage must cover the maximum presentation interval");
 
-static const struct sippymodem_fsk_channel v23_forward_channel = {
+static const struct fsk_channel v23_forward_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = SIPPYMODEM_V23_FORWARD_BIT_RATE,
 	.symbol_rate_denominator = 1,
@@ -49,7 +49,7 @@ static const struct sippymodem_fsk_channel v23_forward_channel = {
 	.metric_smoothing_shift = V23_METRIC_SMOOTHING_SHIFT,
 };
 
-static const struct sippymodem_fsk_channel v23_backward_channel = {
+static const struct fsk_channel v23_backward_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
 	.symbol_rate_denominator = 1,
@@ -69,8 +69,8 @@ enum sippymodem_v23_phase {
 
 struct sippymodem_v23_datapump {
 	struct dp dp;
-	struct sippymodem_fsk_transmitter transmitter;
-	struct sippymodem_fsk_receiver receiver;
+	struct fsk_transmitter transmitter;
+	struct fsk_receiver receiver;
 	enum sippymodem_v23_phase phase;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
@@ -141,8 +141,8 @@ static struct dp *create_v23(
 	int max_fragment, struct dp_operations *operations)
 {
 	struct sippymodem_v23_datapump *datapump;
-	const struct sippymodem_fsk_channel *transmit_channel;
-	const struct sippymodem_fsk_channel *receive_channel;
+	const struct fsk_channel *transmit_channel;
+	const struct fsk_channel *receive_channel;
 
 	if (modem == NULL || id != DP_V23 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
@@ -156,11 +156,11 @@ static struct dp *create_v23(
 						 &v23_backward_channel;
 	receive_channel = datapump->answerer ? &v23_backward_channel :
 						&v23_forward_channel;
-	if (sippymodem_fsk_transmitter_init(
+	if (fsk_transmitter_init(
 		    &datapump->transmitter, transmit_channel,
-		    V23_TRANSMIT_AMPLITUDE) != SIPPYMODEM_FSK_OK ||
-	    sippymodem_fsk_receiver_init(&datapump->receiver, receive_channel) !=
-		    SIPPYMODEM_FSK_OK) {
+		    V23_TRANSMIT_AMPLITUDE) != FSK_OK ||
+	    fsk_receiver_init(&datapump->receiver, receive_channel) !=
+		    FSK_OK) {
 		free(datapump);
 		return NULL;
 	}
@@ -197,23 +197,23 @@ static bool phase_receives(enum sippymodem_v23_phase phase)
 	       phase == V23_PHASE_PRESENTATION || phase == V23_PHASE_ONLINE;
 }
 
-static enum sippymodem_fsk_result generate_fsk_sample(
+static enum fsk_result generate_fsk_sample(
 	struct sippymodem_v23_datapump *datapump, uint8_t bit,
 	int16_t *sample)
 {
 	bool consumed;
 
-	return sippymodem_fsk_transmitter_sample(
+	return fsk_transmitter_sample(
 		&datapump->transmitter, bit, sample, &consumed);
 }
 
-static enum sippymodem_fsk_result generate_data_sample(
+static enum fsk_result generate_data_sample(
 	struct sippymodem_v23_datapump *datapump, int16_t *sample)
 {
 	bool consumed;
 
 	if (!datapump->transmit_bit_pending &&
-	    sippymodem_fsk_transmitter_can_accept_bit(
+	    fsk_transmitter_can_accept_bit(
 		    &datapump->transmitter)) {
 		datapump->transmit_bit = 1;
 		if (modem_get_bits(
@@ -222,46 +222,46 @@ static enum sippymodem_fsk_result generate_data_sample(
 		datapump->transmit_bit &= 1u;
 		datapump->transmit_bit_pending = true;
 	}
-	if (sippymodem_fsk_transmitter_sample(
+	if (fsk_transmitter_sample(
 		    &datapump->transmitter,
 		    datapump->transmit_bit_pending ? datapump->transmit_bit : 1,
-		    sample, &consumed) != SIPPYMODEM_FSK_OK)
-		return SIPPYMODEM_FSK_INVALID_ARGUMENT;
+		    sample, &consumed) != FSK_OK)
+		return FSK_INVALID_ARGUMENT;
 	if (consumed)
 		datapump->transmit_bit_pending = false;
-	return SIPPYMODEM_FSK_OK;
+	return FSK_OK;
 }
 
-static enum sippymodem_fsk_result generate_output_sample(
+static enum fsk_result generate_output_sample(
 	struct sippymodem_v23_datapump *datapump, int16_t *sample)
 {
 	switch (datapump->phase) {
 	case V23_PHASE_ANSWER_TONE:
 		if (generate_fsk_sample(datapump, 0, sample) !=
-		    SIPPYMODEM_FSK_OK)
-			return SIPPYMODEM_FSK_INVALID_ARGUMENT;
+		    FSK_OK)
+			return FSK_INVALID_ARGUMENT;
 		datapump->phase_samples++;
 		if (datapump->phase_samples == V23_ANSWER_TONE_SAMPLES) {
 			datapump->phase = V23_PHASE_ANSWER_SILENCE;
 			datapump->phase_samples = 0;
 		}
-		return SIPPYMODEM_FSK_OK;
+		return FSK_OK;
 	case V23_PHASE_ANSWER_SILENCE:
 		*sample = 0;
 		datapump->phase_samples++;
 		if (datapump->phase_samples == V23_ANSWER_SILENCE_SAMPLES) {
 			datapump->phase = V23_PHASE_WAIT_MARK;
 			datapump->phase_samples = 0;
-			sippymodem_fsk_receiver_reset(&datapump->receiver);
+			fsk_receiver_reset(&datapump->receiver);
 		}
-		return SIPPYMODEM_FSK_OK;
+		return FSK_OK;
 	case V23_PHASE_WAIT_MARK:
 	case V23_PHASE_PRESENTATION:
 		return generate_fsk_sample(datapump, 1, sample);
 	case V23_PHASE_ONLINE:
 		return generate_data_sample(datapump, sample);
 	}
-	return SIPPYMODEM_FSK_INVALID_ARGUMENT;
+	return FSK_INVALID_ARGUMENT;
 }
 
 static bool receive_input_sample(
@@ -273,9 +273,9 @@ static bool receive_input_sample(
 
 	if (!phase_receives(phase))
 		return true;
-	if (sippymodem_fsk_receiver_sample(
+	if (fsk_receiver_sample(
 		    &datapump->receiver, sample, &bit, &ready) !=
-	    SIPPYMODEM_FSK_OK)
+	    FSK_OK)
 		return false;
 	if (!ready || phase == V23_PHASE_WAIT_MARK)
 		return true;
@@ -289,7 +289,7 @@ static bool receive_input_sample(
 }
 
 static bool mark_is_present(
-	const struct sippymodem_fsk_measurement *measurement)
+	const struct fsk_measurement *measurement)
 {
 	return measurement->ready &&
 	       measurement->line_power >= V23_MIN_LINE_POWER &&
@@ -298,7 +298,7 @@ static bool mark_is_present(
 }
 
 static bool carrier_is_present(
-	const struct sippymodem_fsk_measurement *measurement)
+	const struct fsk_measurement *measurement)
 {
 	return measurement->ready &&
 	       measurement->line_power >= V23_MIN_LINE_POWER &&
@@ -334,7 +334,7 @@ static int enter_online(struct sippymodem_v23_datapump *datapump)
 
 static int advance_training(
 	struct sippymodem_v23_datapump *datapump,
-	const struct sippymodem_fsk_measurement *measurement,
+	const struct fsk_measurement *measurement,
 	uint32_t received_samples)
 {
 	uint32_t acquisition_limit = datapump->answerer ?
@@ -364,7 +364,7 @@ static int advance_training(
 			datapump->phase = V23_PHASE_WAIT_MARK;
 			datapump->presentation_samples = 0;
 			datapump->prelink_count = 0;
-			sippymodem_fsk_receiver_reset(&datapump->receiver);
+			fsk_receiver_reset(&datapump->receiver);
 			return DPSTAT_OK;
 		}
 		add_bounded(
@@ -383,7 +383,7 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 	struct sippymodem_v23_datapump *datapump = v23_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
-	struct sippymodem_fsk_measurement measurement;
+	struct fsk_measurement measurement;
 	uint32_t received_samples = 0;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL || count <= 0 ||
@@ -407,7 +407,7 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 		enum sippymodem_v23_phase receive_phase = datapump->phase;
 
 		if (generate_output_sample(datapump, &transmit[index]) !=
-			    SIPPYMODEM_FSK_OK ||
+			    FSK_OK ||
 		    !receive_input_sample(
 			    datapump, receive_phase, receive[index])) {
 			memset(
@@ -427,7 +427,7 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 			return DPSTAT_ERROR;
 		datapump->training_samples += (uint32_t)count;
 	}
-	measurement = sippymodem_fsk_receiver_measure(&datapump->receiver);
+	measurement = fsk_receiver_measure(&datapump->receiver);
 	if (datapump->phase != V23_PHASE_ONLINE)
 		return advance_training(datapump, &measurement, received_samples);
 	if (carrier_is_present(&measurement)) {

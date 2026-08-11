@@ -133,7 +133,7 @@ static bool build_branches(
 
 	for (uint8_t symbol = 0;
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		struct sippymodem_qam_point estimate = {
+		struct qam_point estimate = {
 			encoded->precoded[symbol].channel_output.in_phase,
 			encoded->precoded[symbol].channel_output.quadrature,
 		};

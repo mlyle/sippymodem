@@ -136,7 +136,7 @@ static bool test_maximum_trn_length(void)
 		CHECK(sippymodem_v32_conditioning_transmitter_next(
 			      &transmitter, &quadrant) ==
 			      SIPPYMODEM_V32_CONDITIONING_OK &&
-			      quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT,
+			      quadrant < QPSK_QUADRANT_COUNT,
 		      "maximum V.32 TRN stopped at symbol %u", symbol);
 	CHECK(sippymodem_v32_conditioning_transmitter_is_complete(
 		      &transmitter),

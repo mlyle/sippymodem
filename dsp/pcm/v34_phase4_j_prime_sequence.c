@@ -71,11 +71,11 @@ static uint8_t input_dibit(uint8_t symbol)
 enum v34_phase4_j_prime_sequence_result
 v34_phase4_j_prime_sequence_next(
 	struct v34_phase4_j_prime_sequence *sequence,
-	struct sippymodem_qam_point *point,
+	struct qam_point *point,
 	uint8_t *clockwise_quarter_turns)
 {
 	struct v34_phase4_j_prime_sequence next;
-	struct sippymodem_qam_point next_point;
+	struct qam_point next_point;
 	uint8_t rotation;
 
 	if (!v34_phase4_j_prime_sequence_is_valid(sequence) ||

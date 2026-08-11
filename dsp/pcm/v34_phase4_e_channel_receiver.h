@@ -11,7 +11,7 @@
 
 struct v34_phase4_e_channel_receiver {
 	struct v34_phase4_e_receiver symbol_receiver;
-	struct sippymodem_qam_gain gain;
+	struct qam_gain gain;
 };
 
 /* Continue the normalized receiver and flat-channel estimate immediately
@@ -29,6 +29,6 @@ bool v34_phase4_e_channel_receiver_is_valid(
 enum v34_phase4_e_receiver_result
 v34_phase4_e_channel_receive_point(
 	struct v34_phase4_e_channel_receiver *receiver,
-	const struct sippymodem_qam_point *received);
+	const struct qam_point *received);
 
 #endif

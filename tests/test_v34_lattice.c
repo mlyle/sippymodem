@@ -41,9 +41,9 @@ static bool test_known_slices(void)
 	static const struct v34_grid_point expected_boundary[] = {
 		{ 253, -255 }, { 253, -253 }, { 255, -253 }, { 255, -255 },
 	};
-	const struct sippymodem_qam_point estimate = { 1.2, 2.7 };
-	const struct sippymodem_qam_point tie = { -1.0, 1.0 };
-	const struct sippymodem_qam_point boundary = { 1000000.0, -1000000.0 };
+	const struct qam_point estimate = { 1.2, 2.7 };
+	const struct qam_point tie = { -1.0, 1.0 };
+	const struct qam_point boundary = { 1000000.0, -1000000.0 };
 	struct v34_lattice_slice slice;
 
 	CHECK(v34_slice_odd_lattice(&estimate, &slice) ==
@@ -169,7 +169,7 @@ static bool oracle_precedes(
 }
 
 static void exhaustive_subset_oracle(
-	const struct sippymodem_qam_point *estimate,
+	const struct qam_point *estimate,
 	struct v34_subset_slice *expected)
 {
 	bool found[V34_SUBSET_LABEL_COUNT] = { false };
@@ -229,8 +229,8 @@ static bool subset_slices_match(
 
 static bool test_all_grid_subsets(void)
 {
-	const struct sippymodem_qam_point magnitude_tie = { 3.0, 3.0 };
-	const struct sippymodem_qam_point coordinate_tie = { -1.0, -1.0 };
+	const struct qam_point magnitude_tie = { 3.0, 3.0 };
+	const struct qam_point coordinate_tie = { -1.0, -1.0 };
 	struct v34_subset_slice slice;
 	uint32_t random = UINT32_C(0x8a11c0de);
 
@@ -245,7 +245,7 @@ static bool test_all_grid_subsets(void)
 	      slice.subset[4].channel_output.quadrature == 1,
 	      "subset coordinate tie selected the wrong point");
 	for (size_t index = 0; index < 64u; ++index) {
-		const struct sippymodem_qam_point estimate = {
+		const struct qam_point estimate = {
 			generated_estimate(&random),
 			generated_estimate(&random),
 		};
@@ -267,7 +267,7 @@ static bool test_generated_sweep(void)
 	bool upper_bound_seen = false;
 
 	for (size_t index = 0; index < 2048u; ++index) {
-		const struct sippymodem_qam_point estimate = {
+		const struct qam_point estimate = {
 			generated_estimate(&random),
 			generated_estimate(&random),
 		};
@@ -329,11 +329,11 @@ static bool test_generated_sweep(void)
 
 static bool test_transactional_validation(void)
 {
-	const struct sippymodem_qam_point valid = { 1.0, 1.0 };
-	const struct sippymodem_qam_point not_finite[] = {
+	const struct qam_point valid = { 1.0, 1.0 };
+	const struct qam_point not_finite[] = {
 		{ NAN, 0.0 }, { 0.0, INFINITY },
 	};
-	const struct sippymodem_qam_point overflow = { DBL_MAX, 0.0 };
+	const struct qam_point overflow = { DBL_MAX, 0.0 };
 	struct v34_lattice_slice slice;
 	struct v34_lattice_slice saved;
 	struct v34_subset_slice subsets;

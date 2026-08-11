@@ -26,9 +26,9 @@ enum v34_data_equalizer_receiver_result {
  * equalized symbol and its delayed gradient remain explicit until the second
  * symbol permits one joint four-dimensional decision. */
 struct v34_data_equalizer_receiver {
-	struct sippymodem_qam_equalizer equalizer;
-	struct sippymodem_qam_equalizer_observation first_observation;
-	struct sippymodem_qam_point first_symbol;
+	struct qam_equalizer equalizer;
+	struct qam_equalizer_observation first_observation;
+	struct qam_point first_symbol;
 	struct v34_data_channel_receiver data_receiver;
 	double adaptation;
 	uint8_t training_outputs_remaining;
@@ -42,7 +42,7 @@ struct v34_data_equalizer_receiver {
 enum v34_data_equalizer_receiver_result
 v34_data_equalizer_receiver_init(
 	struct v34_data_equalizer_receiver *receiver,
-	const struct sippymodem_qam_equalizer *equalizer,
+	const struct qam_equalizer *equalizer,
 	const struct v34_power_normalizer *normalizer,
 	const struct v34_frame_geometry *geometry,
 	bool expanded_shaping,
@@ -63,7 +63,7 @@ bool v34_data_equalizer_receiver_is_receiving_b1(
 enum v34_data_equalizer_receiver_result
 v34_data_equalizer_receive_point(
 	struct v34_data_equalizer_receiver *receiver,
-	const struct sippymodem_qam_point *received_point,
+	const struct qam_point *received_point,
 	struct v34_survivor_decision *current,
 	struct v34_received_mapping_frame *received);
 

@@ -191,7 +191,7 @@ static bool test_generated_reduction(void)
 
 	for (size_t index = 0; index < 96u; ++index) {
 		for (size_t symbol = 0; symbol < ARRAY_LENGTH(slices); ++symbol) {
-			const struct sippymodem_qam_point estimate = {
+			const struct qam_point estimate = {
 				generated_estimate(&random),
 				generated_estimate(&random),
 			};
@@ -299,7 +299,7 @@ static bool test_encoder_agreement(void)
 			for (uint8_t symbol = 0;
 			     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 			     ++symbol) {
-				const struct sippymodem_qam_point estimate = {
+				const struct qam_point estimate = {
 					encoded.precoded[symbol]
 						.channel_output.in_phase,
 					encoded.precoded[symbol]
@@ -346,7 +346,7 @@ static bool rejection_is_transactional(
 
 static bool test_validation(void)
 {
-	const struct sippymodem_qam_point estimates[] = {
+	const struct qam_point estimates[] = {
 		{ 1.25, -3.5 }, { -7.75, 9.0 },
 	};
 	struct v34_subset_slice slices[2];

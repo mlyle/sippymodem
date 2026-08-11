@@ -29,11 +29,11 @@ static struct v34_mp_parameters test_parameters(void)
 	};
 }
 
-static struct sippymodem_qam_point complex_product(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+static struct qam_point complex_product(
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = left->in_phase * right->in_phase -
 			    left->quadrature * right->quadrature,
 		.quadrature = left->in_phase * right->quadrature +
@@ -55,12 +55,12 @@ static double fixture_noise(uint32_t *random)
 	return (unit - 0.5) * 0.001;
 }
 
-static struct sippymodem_qam_point pass_channel(
-	struct sippymodem_qam_point *channel,
-	const struct sippymodem_qam_point *drift,
-	const struct sippymodem_qam_point *transmitted, uint32_t *random)
+static struct qam_point pass_channel(
+	struct qam_point *channel,
+	const struct qam_point *drift,
+	const struct qam_point *transmitted, uint32_t *random)
 {
-	struct sippymodem_qam_point received;
+	struct qam_point received;
 
 	*channel = complex_product(channel, drift);
 	received = complex_product(channel, transmitted);
@@ -93,8 +93,8 @@ static bool events_are_equal(
 static bool receive_pair(
 	struct v34_phase4_mp_receiver *control,
 	struct v34_phase4_mp_channel_receiver *channel_receiver,
-	const struct sippymodem_qam_point *transmitted,
-	const struct sippymodem_qam_point *received,
+	const struct qam_point *transmitted,
+	const struct qam_point *received,
 	struct v34_mp_receive_event *event)
 {
 	struct v34_mp_receive_event control_event;
@@ -116,8 +116,8 @@ static bool receive_record(
 	struct v34_phase4_mp *transmitter,
 	struct v34_phase4_mp_receiver *control,
 	struct v34_phase4_mp_channel_receiver *channel_receiver,
-	struct sippymodem_qam_point *channel,
-	const struct sippymodem_qam_point *drift, uint32_t *random,
+	struct qam_point *channel,
+	const struct qam_point *drift, uint32_t *random,
 	struct v34_mp_receive_event *captured)
 {
 	bool complete = false;
@@ -125,8 +125,8 @@ static bool receive_record(
 	*captured = (struct v34_mp_receive_event){ 0 };
 	while (!complete) {
 		struct v34_mp_receive_event event;
-		struct sippymodem_qam_point transmitted;
-		struct sippymodem_qam_point received;
+		struct qam_point transmitted;
+		struct qam_point received;
 		uint8_t quarter_point;
 		uint8_t clockwise_quarter_turns;
 
@@ -181,8 +181,8 @@ static bool receive_e_sequence(
 	const struct v34_phase4_mp *mp,
 	const struct v34_phase4_mp_receiver *control,
 	const struct v34_phase4_mp_channel_receiver *mp_receiver,
-	struct sippymodem_qam_point *channel,
-	const struct sippymodem_qam_point *drift, uint32_t *random)
+	struct qam_point *channel,
+	const struct qam_point *drift, uint32_t *random)
 {
 	struct v34_phase4_e_sequence transmitter;
 	struct v34_phase4_e_receiver normalized_receiver;
@@ -198,8 +198,8 @@ static bool receive_e_sequence(
 		      V34_PHASE4_E_RECEIVER_OK,
 	      "flat-channel E transition did not initialize");
 	while (!v34_phase4_e_sequence_is_complete(&transmitter)) {
-		struct sippymodem_qam_point transmitted;
-		struct sippymodem_qam_point received;
+		struct qam_point transmitted;
+		struct qam_point received;
 		enum v34_phase4_e_receiver_result expected;
 		uint8_t quarter_point;
 		uint8_t clockwise_quarter_turns;
@@ -236,7 +236,7 @@ static bool receive_e_sequence(
 	{
 		struct v34_phase4_e_channel_receiver saved =
 			channel_receiver;
-		struct sippymodem_qam_point ignored = { 0 };
+		struct qam_point ignored = { 0 };
 
 		CHECK(v34_phase4_e_channel_receive_point(
 			      &channel_receiver, &ignored) ==
@@ -251,7 +251,7 @@ static bool check_channel_fixture(
 	enum v34_station_role role,
 	enum v34_constellation_size constellation)
 {
-	const struct sippymodem_qam_point drift = {
+	const struct qam_point drift = {
 		.in_phase = 1.000001,
 		.quadrature = role == V34_CALLING_STATION ?
 				      0.000018 : -0.000016,
@@ -262,9 +262,9 @@ static bool check_channel_fixture(
 	struct v34_phase4_mp_receiver control;
 	struct v34_phase4_mp_channel_receiver receiver;
 	struct v34_mp_receive_event event;
-	struct sippymodem_qam_point channel = { 0.78, -0.26 };
-	struct sippymodem_qam_point transmitted;
-	struct sippymodem_qam_point received;
+	struct qam_point channel = { 0.78, -0.26 };
+	struct qam_point transmitted;
+	struct qam_point received;
 	uint32_t random = UINT32_C(0x34040000) + (uint32_t)role +
 			  (uint32_t)constellation;
 	uint8_t quarter_point;
@@ -354,11 +354,11 @@ static bool test_validation(void)
 	struct v34_phase4_mp_channel_receiver saved;
 	struct v34_mp_receive_event event;
 	struct v34_mp_receive_event saved_event;
-	struct sippymodem_qam_point transmitted;
-	struct sippymodem_qam_point gain = { 0.8, -0.2 };
-	struct sippymodem_qam_point received;
-	struct sippymodem_qam_point zero = { 0 };
-	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct qam_point transmitted;
+	struct qam_point gain = { 0.8, -0.2 };
+	struct qam_point received;
+	struct qam_point zero = { 0 };
+	struct qam_point invalid = { NAN, 0.0 };
 
 	CHECK(v34_training_constellation_point(
 		      V34_CONSTELLATION_4_POINT, 0, 0,
@@ -433,11 +433,11 @@ static bool test_e_channel_validation(void)
 	struct v34_phase4_e_channel_receiver receiver;
 	struct v34_phase4_e_channel_receiver saved;
 	struct v34_mp_receive_event event;
-	struct sippymodem_qam_point transmitted;
-	struct sippymodem_qam_point gain = { 0.8, -0.2 };
-	struct sippymodem_qam_point received;
-	struct sippymodem_qam_point zero = { 0 };
-	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct qam_point transmitted;
+	struct qam_point gain = { 0.8, -0.2 };
+	struct qam_point received;
+	struct qam_point zero = { 0 };
+	struct qam_point invalid = { NAN, 0.0 };
 
 	CHECK(v34_training_constellation_point(
 		      V34_CONSTELLATION_4_POINT, 0, 0,

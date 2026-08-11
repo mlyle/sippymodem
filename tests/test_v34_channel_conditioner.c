@@ -77,9 +77,9 @@ static bool test_generated_round_trip(void)
 				.quadrature =
 					(int32_t)(next_random(&random) % 2049u) - 1024,
 			};
-			struct sippymodem_qam_point projected;
-			struct sippymodem_qam_point normalized;
-			struct sippymodem_qam_point actual;
+			struct qam_point projected;
+			struct qam_point normalized;
+			struct qam_point actual;
 			double expected_in_phase = (double)input.in_phase /
 				V34_Q7_SCALE;
 			double expected_quadrature = (double)input.quadrature /
@@ -109,9 +109,9 @@ static bool test_generated_round_trip(void)
 static bool prepare_normalized_point(
 	const struct v34_power_normalizer *normalizer,
 	const struct v34_q7_point *input,
-	struct sippymodem_qam_point *normalized)
+	struct qam_point *normalized)
 {
-	struct sippymodem_qam_point projected;
+	struct qam_point projected;
 
 	return v34_nonlinear_encode(
 		       normalizer->nonlinear_parameter,
@@ -132,17 +132,17 @@ static bool test_interval_and_noise(void)
 	};
 	struct v34_power_normalizer normalizer;
 	struct v34_channel_conditioner conditioner;
-	struct sippymodem_qam_point normalized[2];
-	struct sippymodem_qam_point actual[2];
-	struct sippymodem_qam_point in_place[2];
-	struct sippymodem_qam_point broken[2];
-	struct sippymodem_qam_point unchanged[2] = {
+	struct qam_point normalized[2];
+	struct qam_point actual[2];
+	struct qam_point in_place[2];
+	struct qam_point broken[2];
+	struct qam_point unchanged[2] = {
 		{ 123.0, -456.0 },
 		{ 789.0, -321.0 },
 	};
-	struct sippymodem_qam_point saved[2];
-	struct sippymodem_qam_point noisy;
-	struct sippymodem_qam_point noisy_estimate;
+	struct qam_point saved[2];
+	struct qam_point noisy;
+	struct qam_point noisy_estimate;
 	double maximum_axis;
 
 	CHECK(initialize_normalizer(
@@ -188,7 +188,7 @@ static bool test_interval_and_noise(void)
 	      "failed interval conditioning committed partial output");
 	maximum_axis =
 		4.0 * sqrt(normalizer.maximum_normalized_point_power);
-	noisy = (struct sippymodem_qam_point){
+	noisy = (struct qam_point){
 		.in_phase = maximum_axis,
 		.quadrature = -0.75 * maximum_axis,
 	};
@@ -210,13 +210,13 @@ static bool test_validation(void)
 	struct v34_power_normalizer damaged;
 	struct v34_channel_conditioner conditioner;
 	struct v34_channel_conditioner saved_conditioner;
-	struct sippymodem_qam_point input = { 1.0, -2.0 };
-	struct sippymodem_qam_point output = { 123.0, -456.0 };
-	struct sippymodem_qam_point interval[2] = {
+	struct qam_point input = { 1.0, -2.0 };
+	struct qam_point output = { 123.0, -456.0 };
+	struct qam_point interval[2] = {
 		{ 1.0, -2.0 },
 		{ 3.0, -4.0 },
 	};
-	const struct sippymodem_qam_point saved_output = output;
+	const struct qam_point saved_output = output;
 
 	CHECK(initialize_normalizer(
 		      V34_NONLINEAR_THETA_ZERO, &normalizer) &&
@@ -254,11 +254,11 @@ static bool test_validation(void)
 		      V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT &&
 	      v34_channel_condition_point(
 		      &conditioner,
-		      &(struct sippymodem_qam_point){ NAN, 0.0 }, &output) ==
+		      &(struct qam_point){ NAN, 0.0 }, &output) ==
 		      V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT &&
 	      v34_channel_condition_point(
 		      &conditioner,
-		      &(struct sippymodem_qam_point){ 0.0, INFINITY },
+		      &(struct qam_point){ 0.0, INFINITY },
 		      &output) ==
 		      V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT &&
 	      output.in_phase == saved_output.in_phase &&
@@ -266,7 +266,7 @@ static bool test_validation(void)
 	      "invalid point conditioning mutated its destination");
 	CHECK(v34_channel_condition_point(
 		      &conditioner,
-		      &(struct sippymodem_qam_point){ DBL_MAX, DBL_MAX },
+		      &(struct qam_point){ DBL_MAX, DBL_MAX },
 		      &output) ==
 		      V34_CHANNEL_CONDITIONER_NUMERIC_FAILURE &&
 	      output.in_phase == saved_output.in_phase &&

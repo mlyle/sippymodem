@@ -26,7 +26,7 @@ static bool test_normative_sequence(void)
 {
 	struct v34_phase3_s_sequence sequence = { UINT16_MAX };
 	const double coordinate = sqrt(0.5);
-	const struct sippymodem_qam_point point_zero = {
+	const struct qam_point point_zero = {
 		coordinate,
 		coordinate,
 	};
@@ -42,7 +42,7 @@ static bool test_normative_sequence(void)
 	      "S/S-bar sequence constants or initialization changed");
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
+		struct qam_point point = { 7.0, -9.0 };
 		enum v34_phase3_s_section section =
 			(enum v34_phase3_s_section)99;
 		uint8_t quarter_turns = UINT8_MAX;
@@ -51,9 +51,9 @@ static bool test_normative_sequence(void)
 		CHECK(v34_phase3_s_sequence_next(
 			      &sequence, &point, &section) ==
 			      V34_PHASE3_S_SEQUENCE_OK &&
-		      sippymodem_qam_nearest_quarter_turn(
+		      qam_nearest_quarter_turn(
 			      &point_zero, &point, &quarter_turns) ==
-			      SIPPYMODEM_QAM_OK,
+			      QAM_OK,
 		      "S/S-bar symbol %u was not generated", symbol);
 		power = point.in_phase * point.in_phase +
 			point.quadrature * point.quadrature;
@@ -79,7 +79,7 @@ static bool test_completion_and_copy(void)
 {
 	struct v34_phase3_s_sequence first;
 	struct v34_phase3_s_sequence second;
-	struct sippymodem_qam_point ignored_point;
+	struct qam_point ignored_point;
 	enum v34_phase3_s_section ignored_section;
 
 	CHECK(v34_phase3_s_sequence_init(&first) ==
@@ -92,8 +92,8 @@ static bool test_completion_and_copy(void)
 		      "S/S-bar prefix stopped at symbol %u", symbol);
 	second = first;
 	while (!v34_phase3_s_sequence_is_complete(&first)) {
-		struct sippymodem_qam_point first_point;
-		struct sippymodem_qam_point second_point;
+		struct qam_point first_point;
+		struct qam_point second_point;
 		enum v34_phase3_s_section first_section;
 		enum v34_phase3_s_section second_section;
 
@@ -111,8 +111,8 @@ static bool test_completion_and_copy(void)
 		      first.emitted_symbols);
 	}
 	{
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
-		struct sippymodem_qam_point before_point = point;
+		struct qam_point point = { 7.0, -9.0 };
+		struct qam_point before_point = point;
 		enum v34_phase3_s_section section =
 			(enum v34_phase3_s_section)99;
 		struct v34_phase3_s_sequence before = first;
@@ -136,8 +136,8 @@ static bool test_validation(void)
 	};
 	struct v34_phase3_s_sequence before_valid = valid;
 	struct v34_phase3_s_sequence before_invalid = invalid;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point before_point = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point before_point = point;
 	enum v34_phase3_s_section section =
 		(enum v34_phase3_s_section)99;
 

@@ -28,7 +28,7 @@ struct v34_transmitted_mapping_frame {
 	struct v34_mapping_frame mapping_frame;
 	struct v34_encoded_mapping_frame encoded;
 	/* Clause 9.7 outputs in interval-major, then symbol-major order. */
-	struct sippymodem_qam_point
+	struct qam_point
 		projected_symbol[V34_SYMBOLS_PER_MAPPING_FRAME];
 };
 

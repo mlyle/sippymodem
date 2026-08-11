@@ -17,11 +17,11 @@ static uint32_t fixture_random(uint32_t *state)
 	return *state;
 }
 
-static struct sippymodem_qam_point complex_multiply(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+static struct qam_point complex_multiply(
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = left->in_phase * right->in_phase -
 			    left->quadrature * right->quadrature,
 		.quadrature = left->in_phase * right->quadrature +
@@ -29,17 +29,17 @@ static struct sippymodem_qam_point complex_multiply(
 	};
 }
 
-static struct sippymodem_qam_point quadrant_point(uint8_t quadrant)
+static struct qam_point quadrant_point(uint8_t quadrant)
 {
 	switch (quadrant) {
 	case 0:
-		return (struct sippymodem_qam_point){ 1.0, 0.0 };
+		return (struct qam_point){ 1.0, 0.0 };
 	case 1:
-		return (struct sippymodem_qam_point){ 0.0, 1.0 };
+		return (struct qam_point){ 0.0, 1.0 };
 	case 2:
-		return (struct sippymodem_qam_point){ -1.0, 0.0 };
+		return (struct qam_point){ -1.0, 0.0 };
 	default:
-		return (struct sippymodem_qam_point){ 0.0, -1.0 };
+		return (struct qam_point){ 0.0, -1.0 };
 	}
 }
 
@@ -53,16 +53,16 @@ static double fixture_noise(uint32_t *random)
 
 static bool check_rotation(uint8_t initial_quadrant)
 {
-	static const struct sippymodem_qam_point drift = {
+	static const struct qam_point drift = {
 		.in_phase = 1.000002,
 		.quadrature = 0.00004,
 	};
 	struct sippymodem_v22bis_symbol_encoder encoder;
 	struct sippymodem_v22bis_receiver receiver;
-	struct sippymodem_qam_point channel = { 0.72, -0.31 };
-	struct sippymodem_qam_point reference =
+	struct qam_point channel = { 0.72, -0.31 };
+	struct qam_point reference =
 		quadrant_point(initial_quadrant);
-	struct sippymodem_qam_point received_reference =
+	struct qam_point received_reference =
 		complex_multiply(&channel, &reference);
 	uint32_t random = UINT32_C(0x2400a11f) + initial_quadrant;
 
@@ -75,8 +75,8 @@ static bool check_rotation(uint8_t initial_quadrant)
 	      "V.22bis receiver rotation %u did not initialize",
 	      initial_quadrant);
 	for (size_t index = 0; index < TEST_SYMBOLS_PER_ROTATION; ++index) {
-		struct sippymodem_qam_point transmitted;
-		struct sippymodem_qam_point received;
+		struct qam_point transmitted;
+		struct qam_point received;
 		uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
 		uint8_t decoded[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
 		uint8_t symbol;
@@ -122,10 +122,10 @@ static bool test_v22_transition_tracking(void)
 	static const uint8_t turns[] = { 1, 3, 0, 2, 3, 1, 1, 0 };
 	struct sippymodem_v22bis_symbol_encoder encoder;
 	struct sippymodem_v22bis_receiver receiver;
-	struct sippymodem_qam_point channel = { 0.61, 0.27 };
+	struct qam_point channel = { 0.61, 0.27 };
 	uint8_t quadrant = 2;
-	struct sippymodem_qam_point ideal = quadrant_point(quadrant);
-	struct sippymodem_qam_point received =
+	struct qam_point ideal = quadrant_point(quadrant);
+	struct qam_point received =
 		complex_multiply(&channel, &ideal);
 	bool matches = false;
 
@@ -181,9 +181,9 @@ static bool test_validation(void)
 {
 	struct sippymodem_v22bis_receiver receiver = { 0 };
 	struct sippymodem_v22bis_receiver saved;
-	struct sippymodem_qam_point reference = { 0.8, -0.2 };
-	struct sippymodem_qam_point zero = { 0.0, 0.0 };
-	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct qam_point reference = { 0.8, -0.2 };
+	struct qam_point zero = { 0.0, 0.0 };
+	struct qam_point invalid = { NAN, 0.0 };
 	uint8_t bits[4] = { UINT8_MAX, UINT8_MAX, UINT8_MAX, UINT8_MAX };
 	bool matches = true;
 
@@ -205,7 +205,7 @@ static bool test_validation(void)
 			      &receiver, &reference, NULL) ==
 			      SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v22bis_receiver_track_v22(
-			      &receiver, SIPPYMODEM_QPSK_QUADRANT_COUNT,
+			      &receiver, QPSK_QUADRANT_COUNT,
 			      &reference) ==
 			      SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&

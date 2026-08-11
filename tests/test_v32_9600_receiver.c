@@ -20,11 +20,11 @@ static uint32_t fixture_random(uint32_t *state)
 	return *state;
 }
 
-static struct sippymodem_qam_point complex_multiply(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+static struct qam_point complex_multiply(
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = left->in_phase * right->in_phase -
 			    left->quadrature * right->quadrature,
 		.quadrature = left->in_phase * right->quadrature +
@@ -40,24 +40,24 @@ static double fixture_noise(uint32_t *random)
 	return (unit - 0.5) * 0.004;
 }
 
-static struct sippymodem_qam_point apply_test_channel(
-	struct sippymodem_qam_point history[TEST_CHANNEL_TAPS],
-	const struct sippymodem_qam_point *transmitted,
-	const struct sippymodem_qam_point *gain)
+static struct qam_point apply_test_channel(
+	struct qam_point history[TEST_CHANNEL_TAPS],
+	const struct qam_point *transmitted,
+	const struct qam_point *gain)
 {
-	static const struct sippymodem_qam_point taps[TEST_CHANNEL_TAPS] = {
+	static const struct qam_point taps[TEST_CHANNEL_TAPS] = {
 		{ 1.0, 0.0 },
 		{ 0.28, -0.18 },
 		{ -0.12, 0.09 },
 		{ 0.05, 0.03 },
 	};
-	struct sippymodem_qam_point distorted = { 0 };
+	struct qam_point distorted = { 0 };
 
 	for (size_t index = TEST_CHANNEL_TAPS - 1; index != 0; --index)
 		history[index] = history[index - 1];
 	history[0] = *transmitted;
 	for (size_t index = 0; index < TEST_CHANNEL_TAPS; ++index) {
-		struct sippymodem_qam_point contribution = complex_multiply(
+		struct qam_point contribution = complex_multiply(
 			&taps[index], &history[index]);
 
 		distorted.in_phase += contribution.in_phase;
@@ -70,20 +70,20 @@ static bool check_transition(
 	enum sippymodem_v32_transmitter_role role,
 	uint8_t initial_transmit_quadrant)
 {
-	static const struct sippymodem_qam_point drift = {
+	static const struct qam_point drift = {
 		.in_phase = 1.000002,
 		.quadrature = 0.00004,
 	};
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_v32_symbol_decoder decoder;
 	struct sippymodem_v32_9600_receiver receiver;
-	struct sippymodem_qam_point channel = { 0.72, -0.31 };
-	struct sippymodem_qam_point channel_history[TEST_CHANNEL_TAPS] = { 0 };
+	struct qam_point channel = { 0.72, -0.31 };
+	struct qam_point channel_history[TEST_CHANNEL_TAPS] = { 0 };
 	struct sippymodem_v32_symbol_encoder encoder_history[
-		SIPPYMODEM_QAM_EQUALIZER_DELAY + 1] = { 0 };
-	uint8_t input_history[SIPPYMODEM_QAM_EQUALIZER_DELAY + 1] = { 0 };
-	struct sippymodem_qam_point transmitted;
-	struct sippymodem_qam_point received_reference;
+		QAM_EQUALIZER_DELAY + 1] = { 0 };
+	uint8_t input_history[QAM_EQUALIZER_DELAY + 1] = { 0 };
+	struct qam_point transmitted;
+	struct qam_point received_reference;
 	uint32_t random = UINT32_C(0x32009600) +
 			  (uint32_t)role * 4u + initial_transmit_quadrant;
 	uint8_t previous_transmit_quadrant = initial_transmit_quadrant;
@@ -136,7 +136,7 @@ static bool check_transition(
 	      "V.32 9600 receiver %u/%u did not initialize", role,
 	      initial_transmit_quadrant);
 	for (size_t index = 0; index < TEST_KNOWN_9600_SYMBOLS; ++index) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		uint8_t symbol;
 
 		CHECK(sippymodem_v32_9600_symbol_encode(
@@ -159,13 +159,13 @@ static bool check_transition(
 		      initial_transmit_quadrant, index);
 	}
 	for (size_t index = 0; index < TEST_9600_SYMBOLS; ++index) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		uint8_t input = (uint8_t)(fixture_random(&random) & 15u);
 		uint8_t output;
 		uint8_t symbol;
 		bool ready;
 
-		for (size_t delayed = SIPPYMODEM_QAM_EQUALIZER_DELAY;
+		for (size_t delayed = QAM_EQUALIZER_DELAY;
 		     delayed != 0; --delayed) {
 			input_history[delayed] = input_history[delayed - 1];
 			encoder_history[delayed] = encoder_history[delayed - 1];
@@ -191,20 +191,20 @@ static bool check_transition(
 			      SIPPYMODEM_V32_9600_RECEIVER_OK,
 		      "V.32 9600 receiver %u/%u changed symbol %zu", role,
 		      initial_transmit_quadrant, index);
-		if (index < SIPPYMODEM_QAM_EQUALIZER_DELAY) {
+		if (index < QAM_EQUALIZER_DELAY) {
 			CHECK(!ready,
 			      "V.32 9600 receiver %u/%u exposed delayed symbol %zu",
 			      role, initial_transmit_quadrant, index);
 			continue;
 		}
 		CHECK(ready &&
-		      output == input_history[SIPPYMODEM_QAM_EQUALIZER_DELAY] &&
+		      output == input_history[QAM_EQUALIZER_DELAY] &&
 		      receiver.decoder.descrambler.history ==
-			      encoder_history[SIPPYMODEM_QAM_EQUALIZER_DELAY]
+			      encoder_history[QAM_EQUALIZER_DELAY]
 				      .scrambler.history &&
 		      receiver.decoder.phase_quadrant ==
 			      (uint8_t)((encoder_history[
-						      SIPPYMODEM_QAM_EQUALIZER_DELAY]
+						      QAM_EQUALIZER_DELAY]
 					      .phase_quadrant -
 					      initial_transmit_quadrant) &
 				     3u),
@@ -212,7 +212,7 @@ static bool check_transition(
 		      role, initial_transmit_quadrant, index);
 		delivered++;
 	}
-	CHECK(delivered == TEST_9600_SYMBOLS - SIPPYMODEM_QAM_EQUALIZER_DELAY,
+	CHECK(delivered == TEST_9600_SYMBOLS - QAM_EQUALIZER_DELAY,
 	      "V.32 9600 receiver %u/%u delivered %u symbols", role,
 	      initial_transmit_quadrant, delivered);
 	return true;
@@ -224,7 +224,7 @@ static bool test_transition_tracking(void)
 		     SIPPYMODEM_V32_CALLING_TRANSMITTER;
 	     role <= SIPPYMODEM_V32_ANSWERING_TRANSMITTER; ++role) {
 		for (uint8_t quadrant = 0;
-		     quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++quadrant)
+		     quadrant < QPSK_QUADRANT_COUNT; ++quadrant)
 			if (!check_transition(role, quadrant))
 				return false;
 	}
@@ -236,9 +236,9 @@ static bool test_validation(void)
 	struct sippymodem_v32_symbol_decoder decoder;
 	struct sippymodem_v32_9600_receiver receiver = { 0 };
 	struct sippymodem_v32_9600_receiver saved;
-	struct sippymodem_qam_point reference = { 0.8, -0.2 };
-	struct sippymodem_qam_point zero = { 0.0, 0.0 };
-	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct qam_point reference = { 0.8, -0.2 };
+	struct qam_point zero = { 0.0, 0.0 };
+	struct qam_point invalid = { NAN, 0.0 };
 	uint8_t output = UINT8_MAX;
 	bool ready = true;
 	bool saved_ready = ready;

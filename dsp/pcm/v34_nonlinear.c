@@ -157,9 +157,9 @@ v34_nonlinear_encode(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude,
 	const struct v34_q7_point *precoded_symbol,
-	struct sippymodem_qam_point *projected_symbol)
+	struct qam_point *projected_symbol)
 {
-	struct sippymodem_qam_point generated;
+	struct qam_point generated;
 	double in_phase;
 	double quadrature;
 	double squared_magnitude;
@@ -179,7 +179,7 @@ v34_nonlinear_encode(
 		&projection);
 	if (result != V34_NONLINEAR_OK)
 		return result;
-	generated = (struct sippymodem_qam_point){
+	generated = (struct qam_point){
 		.in_phase = in_phase * projection,
 		.quadrature = quadrature * projection,
 	};
@@ -194,10 +194,10 @@ enum v34_nonlinear_result
 v34_nonlinear_unproject(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude,
-	const struct sippymodem_qam_point *projected_symbol,
-	struct sippymodem_qam_point *precoded_estimate)
+	const struct qam_point *projected_symbol,
+	struct qam_point *precoded_estimate)
 {
-	struct sippymodem_qam_point generated;
+	struct qam_point generated;
 	double maximum_axis;
 	double minimum_axis;
 	double axis_ratio;

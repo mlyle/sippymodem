@@ -13,7 +13,7 @@
  * points directly to symbol_receiver instead. */
 struct v34_phase4_mp_channel_receiver {
 	struct v34_phase4_mp_receiver symbol_receiver;
-	struct sippymodem_qam_gain gain;
+	struct qam_gain gain;
 };
 
 /* Seed the channel from the final known Phase 4 TRN point. Rejected calls
@@ -23,8 +23,8 @@ v34_phase4_mp_channel_receiver_init(
 	struct v34_phase4_mp_channel_receiver *receiver,
 	enum v34_station_role transmitting_role,
 	enum v34_constellation_size constellation,
-	const struct sippymodem_qam_point *received_reference,
-	const struct sippymodem_qam_point *transmitted_reference);
+	const struct qam_point *received_reference,
+	const struct qam_point *transmitted_reference);
 bool v34_phase4_mp_channel_receiver_is_valid(
 	const struct v34_phase4_mp_channel_receiver *receiver);
 
@@ -33,7 +33,7 @@ bool v34_phase4_mp_channel_receiver_is_valid(
 enum v34_phase4_mp_receiver_result
 v34_phase4_mp_channel_receive_point(
 	struct v34_phase4_mp_channel_receiver *receiver,
-	const struct sippymodem_qam_point *received,
+	const struct qam_point *received,
 	struct v34_mp_receive_event *event);
 
 #endif

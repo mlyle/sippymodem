@@ -43,7 +43,7 @@ bool v34_phase4_trn_is_valid(
  * Rejected calls leave state and outputs unchanged. */
 enum v34_phase4_trn_result v34_phase4_trn_next(
 	struct v34_phase4_trn *trn,
-	struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
 const char *v34_phase4_trn_result_name(

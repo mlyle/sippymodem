@@ -10,23 +10,23 @@ static bool test_dibit_mapping(void)
 {
 	static const uint8_t expected_turns[] = { 1, 0, 2, 3 };
 
-	for (uint8_t previous = 0; previous < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+	for (uint8_t previous = 0; previous < QPSK_QUADRANT_COUNT;
 	     ++previous) {
-		for (uint8_t dibit = 0; dibit < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+		for (uint8_t dibit = 0; dibit < QPSK_QUADRANT_COUNT;
 		     ++dibit) {
 			uint8_t decoded = UINT8_MAX;
 			uint8_t quadrant = UINT8_MAX;
 
-			CHECK(sippymodem_differential_qpsk_encode(
+			CHECK(differential_qpsk_encode(
 				      previous, dibit, &quadrant) ==
-				      SIPPYMODEM_DIFFERENTIAL_QPSK_OK &&
+				      DIFFERENTIAL_QPSK_OK &&
 				      quadrant ==
 					      (uint8_t)((previous +
 							 expected_turns[dibit]) &
 							3u) &&
-				      sippymodem_differential_qpsk_decode(
+				      differential_qpsk_decode(
 					      previous, quadrant, &decoded) ==
-					      SIPPYMODEM_DIFFERENTIAL_QPSK_OK &&
+					      DIFFERENTIAL_QPSK_OK &&
 				      decoded == dibit,
 			      "differential QPSK mapping changed at %u/%u",
 			      previous, dibit);
@@ -39,18 +39,18 @@ static bool test_validation(void)
 {
 	uint8_t value = UINT8_MAX;
 
-	CHECK(sippymodem_differential_qpsk_encode(
-		      SIPPYMODEM_QPSK_QUADRANT_COUNT, 0, &value) ==
-		      SIPPYMODEM_DIFFERENTIAL_QPSK_INVALID_ARGUMENT &&
+	CHECK(differential_qpsk_encode(
+		      QPSK_QUADRANT_COUNT, 0, &value) ==
+		      DIFFERENTIAL_QPSK_INVALID_ARGUMENT &&
 		      value == UINT8_MAX &&
-		      sippymodem_differential_qpsk_encode(0, 0, NULL) ==
-			      SIPPYMODEM_DIFFERENTIAL_QPSK_INVALID_ARGUMENT &&
-		      sippymodem_differential_qpsk_decode(
-			      0, SIPPYMODEM_QPSK_QUADRANT_COUNT, &value) ==
-			      SIPPYMODEM_DIFFERENTIAL_QPSK_INVALID_ARGUMENT &&
+		      differential_qpsk_encode(0, 0, NULL) ==
+			      DIFFERENTIAL_QPSK_INVALID_ARGUMENT &&
+		      differential_qpsk_decode(
+			      0, QPSK_QUADRANT_COUNT, &value) ==
+			      DIFFERENTIAL_QPSK_INVALID_ARGUMENT &&
 		      value == UINT8_MAX &&
-		      strcmp(sippymodem_differential_qpsk_result_name(
-			     SIPPYMODEM_DIFFERENTIAL_QPSK_INVALID_ARGUMENT),
+		      strcmp(differential_qpsk_result_name(
+			     DIFFERENTIAL_QPSK_INVALID_ARGUMENT),
 			     "invalid argument") == 0,
 	      "differential QPSK accepted invalid input");
 	return true;

@@ -14,17 +14,17 @@ enum {
 	TRACKING_SAMPLES = 19200,
 };
 
-static enum sippymodem_dc_filter_result feed_constant(
-	struct sippymodem_dc_filter *filter,
+static enum dc_filter_result feed_constant(
+	struct dc_filter *filter,
 	int16_t value,
 	size_t count,
 	size_t chunk_size)
 {
 	int16_t samples[160];
-	enum sippymodem_dc_filter_result result = SIPPYMODEM_DC_FILTER_OK;
+	enum dc_filter_result result = DC_FILTER_OK;
 
 	if (chunk_size == 0 || chunk_size > ARRAY_LENGTH(samples))
-		return SIPPYMODEM_DC_FILTER_INVALID_ARGUMENT;
+		return DC_FILTER_INVALID_ARGUMENT;
 	for (size_t offset = 0; offset < count; offset += chunk_size) {
 		size_t chunk = count - offset;
 
@@ -32,34 +32,34 @@ static enum sippymodem_dc_filter_result feed_constant(
 			chunk = chunk_size;
 		for (size_t index = 0; index < chunk; ++index)
 			samples[index] = value;
-		result = sippymodem_dc_filter_process(filter, samples, chunk);
+		result = dc_filter_process(filter, samples, chunk);
 	}
 	return result;
 }
 
 static bool test_calibrates_and_tracks_offset(void)
 {
-	struct sippymodem_dc_filter filter;
+	struct dc_filter filter;
 	int16_t sample = 1300;
 
-	sippymodem_dc_filter_init(&filter);
+	dc_filter_init(&filter);
 	CHECK(feed_constant(&filter, 1200, WARMUP_SAMPLES, 73) ==
-			      SIPPYMODEM_DC_FILTER_OK &&
-		      filter.phase == SIPPYMODEM_DC_FILTER_CALIBRATION &&
-		      sippymodem_dc_filter_offset(&filter) == 0,
+			      DC_FILTER_OK &&
+		      filter.phase == DC_FILTER_CALIBRATION &&
+		      dc_filter_offset(&filter) == 0,
 	      "DC filter did not finish its warmup exactly");
 	CHECK(feed_constant(&filter, 1200, CALIBRATION_SAMPLES, 127) ==
-			      SIPPYMODEM_DC_FILTER_OK &&
-		      filter.phase == SIPPYMODEM_DC_FILTER_TRACKING &&
-		      sippymodem_dc_filter_offset(&filter) == 1200,
+			      DC_FILTER_OK &&
+		      filter.phase == DC_FILTER_TRACKING &&
+		      dc_filter_offset(&filter) == 1200,
 	      "DC filter did not establish the initial offset");
-	CHECK(sippymodem_dc_filter_process(&filter, &sample, 1) ==
-			      SIPPYMODEM_DC_FILTER_OK &&
+	CHECK(dc_filter_process(&filter, &sample, 1) ==
+			      DC_FILTER_OK &&
 		      sample == 100,
 	      "DC filter did not subtract the calibrated offset");
 	CHECK(feed_constant(&filter, 2200, TRACKING_SAMPLES - 1, 160) ==
-			      SIPPYMODEM_DC_FILTER_OK &&
-		      sippymodem_dc_filter_offset(&filter) == 1300,
+			      DC_FILTER_OK &&
+		      dc_filter_offset(&filter) == 1300,
 	      "DC filter tracking update was not deterministic");
 	return true;
 }
@@ -67,8 +67,8 @@ static bool test_calibrates_and_tracks_offset(void)
 static bool test_is_chunk_invariant(void)
 {
 	enum { SAMPLE_COUNT = 40000 };
-	struct sippymodem_dc_filter whole;
-	struct sippymodem_dc_filter chunked;
+	struct dc_filter whole;
+	struct dc_filter chunked;
 	int16_t *input = malloc(SAMPLE_COUNT * sizeof(*input));
 	int16_t *output = malloc(SAMPLE_COUNT * sizeof(*output));
 
@@ -78,19 +78,19 @@ static bool test_is_chunk_invariant(void)
 		input[index] = (int16_t)(
 			(index < 16000 ? 18 : 42) + (int)(index % 23) - 11);
 	memcpy(output, input, SAMPLE_COUNT * sizeof(*output));
-	sippymodem_dc_filter_init(&whole);
-	sippymodem_dc_filter_init(&chunked);
-	CHECK(sippymodem_dc_filter_process(&whole, input, SAMPLE_COUNT) ==
-			      SIPPYMODEM_DC_FILTER_OK,
+	dc_filter_init(&whole);
+	dc_filter_init(&chunked);
+	CHECK(dc_filter_process(&whole, input, SAMPLE_COUNT) ==
+			      DC_FILTER_OK,
 	      "whole-buffer DC filtering failed");
 	for (size_t offset = 0; offset < SAMPLE_COUNT; offset += 137) {
 		size_t count = SAMPLE_COUNT - offset;
 
 		if (count > 137)
 			count = 137;
-		CHECK(sippymodem_dc_filter_process(
+		CHECK(dc_filter_process(
 			      &chunked, output + offset, count) ==
-			      SIPPYMODEM_DC_FILTER_OK,
+			      DC_FILTER_OK,
 		      "chunked DC filtering failed");
 	}
 	CHECK(memcmp(input, output, SAMPLE_COUNT * sizeof(*input)) == 0 &&
@@ -106,28 +106,28 @@ static bool test_is_chunk_invariant(void)
 
 static bool test_bounds_output_and_validates_arguments(void)
 {
-	struct sippymodem_dc_filter filter;
+	struct dc_filter filter;
 	int16_t sample = INT16_MIN;
 
-	sippymodem_dc_filter_init(&filter);
+	dc_filter_init(&filter);
 	CHECK(feed_constant(
 		      &filter, 4000, WARMUP_SAMPLES + CALIBRATION_SAMPLES, 160) ==
-			      SIPPYMODEM_DC_FILTER_OFFSET_LIMIT &&
-		      sippymodem_dc_filter_offset(&filter) == 4000,
+			      DC_FILTER_OFFSET_LIMIT &&
+		      dc_filter_offset(&filter) == 4000,
 	      "DC filter did not report an excessive offset");
-	CHECK(sippymodem_dc_filter_process(&filter, &sample, 1) ==
-			      SIPPYMODEM_DC_FILTER_OFFSET_LIMIT &&
+	CHECK(dc_filter_process(&filter, &sample, 1) ==
+			      DC_FILTER_OFFSET_LIMIT &&
 		      sample == INT16_MIN,
 	      "DC subtraction did not saturate at the sample boundary");
-	CHECK(sippymodem_dc_filter_process(NULL, &sample, 1) ==
-			      SIPPYMODEM_DC_FILTER_INVALID_ARGUMENT &&
-		      sippymodem_dc_filter_process(&filter, NULL, 1) ==
-			      SIPPYMODEM_DC_FILTER_INVALID_ARGUMENT &&
-		      sippymodem_dc_filter_process(&filter, NULL, 0) ==
-			      SIPPYMODEM_DC_FILTER_OFFSET_LIMIT &&
-		      sippymodem_dc_filter_offset(NULL) == 0 &&
-		      strcmp(sippymodem_dc_filter_result_name(
-			     SIPPYMODEM_DC_FILTER_OFFSET_LIMIT),
+	CHECK(dc_filter_process(NULL, &sample, 1) ==
+			      DC_FILTER_INVALID_ARGUMENT &&
+		      dc_filter_process(&filter, NULL, 1) ==
+			      DC_FILTER_INVALID_ARGUMENT &&
+		      dc_filter_process(&filter, NULL, 0) ==
+			      DC_FILTER_OFFSET_LIMIT &&
+		      dc_filter_offset(NULL) == 0 &&
+		      strcmp(dc_filter_result_name(
+			     DC_FILTER_OFFSET_LIMIT),
 			     "DC offset exceeds the supported limit") == 0,
 	      "DC filter argument or result diagnostics were incomplete");
 	return true;

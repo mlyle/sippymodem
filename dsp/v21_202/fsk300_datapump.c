@@ -30,15 +30,15 @@ enum {
 	FSK300_TRANSMIT_AMPLITUDE = 8192,
 	FSK300_METRIC_SMOOTHING_SHIFT = 2,
 	FSK300_DETECTOR_WINDOW =
-		(MODEM_RATE + SIPPYMODEM_FSK300_BIT_RATE / 2) /
-		SIPPYMODEM_FSK300_BIT_RATE,
+		(MODEM_RATE + FSK300_BIT_RATE / 2) /
+		FSK300_BIT_RATE,
 };
 
 /* Bell 103 assigns the low-frequency pair to the originating station and
  * the high-frequency pair to the answering station. */
-static const struct sippymodem_fsk_channel bell103_originator_channel = {
+static const struct fsk_channel bell103_originator_channel = {
 	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_numerator = FSK300_BIT_RATE,
 	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = BELL103_ORIGINATOR_MARK_HZ,
 	.space_frequency_hz = BELL103_ORIGINATOR_SPACE_HZ,
@@ -46,9 +46,9 @@ static const struct sippymodem_fsk_channel bell103_originator_channel = {
 	.metric_smoothing_shift = FSK300_METRIC_SMOOTHING_SHIFT,
 };
 
-static const struct sippymodem_fsk_channel bell103_answerer_channel = {
+static const struct fsk_channel bell103_answerer_channel = {
 	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = SIPPYMODEM_FSK300_BIT_RATE,
+	.symbol_rate_numerator = FSK300_BIT_RATE,
 	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = BELL103_ANSWERER_MARK_HZ,
 	.space_frequency_hz = BELL103_ANSWERER_SPACE_HZ,
@@ -56,13 +56,13 @@ static const struct sippymodem_fsk_channel bell103_answerer_channel = {
 	.metric_smoothing_shift = FSK300_METRIC_SMOOTHING_SHIFT,
 };
 
-struct sippymodem_fsk300_profile {
+struct fsk300_profile {
 	enum DP_ID id;
-	const struct sippymodem_fsk_channel *originator_channel;
-	const struct sippymodem_fsk_channel *answerer_channel;
+	const struct fsk_channel *originator_channel;
+	const struct fsk_channel *answerer_channel;
 };
 
-static const struct sippymodem_fsk300_profile fsk300_profiles[] = {
+static const struct fsk300_profile fsk300_profiles[] = {
 	{
 		.id = DP_V21,
 		.originator_channel = &sippymodem_v21_channel_1,
@@ -77,23 +77,23 @@ static const struct sippymodem_fsk300_profile fsk300_profiles[] = {
 
 _Static_assert(MODEM_RATE == SIPPYMODEM_V21_SAMPLE_RATE,
 	       "the V.21 datapump requires 8 kHz audio");
-_Static_assert((int)SIPPYMODEM_FSK300_BIT_RATE ==
+_Static_assert((int)FSK300_BIT_RATE ==
 		       (int)SIPPYMODEM_V21_BIT_RATE,
 	       "the V.21 datapump requires 300 bit/s profiles");
 
-enum sippymodem_fsk300_training_state {
+enum fsk300_training_state {
 	FSK300_TRAINING_WAIT_MARK,
 	FSK300_TRAINING_GUARD,
 	FSK300_TRAINING_SEND_MARK,
 	FSK300_TRAINING_ONLINE,
 };
 
-struct sippymodem_fsk300_datapump {
+struct fsk300_datapump {
 	struct dp dp;
-	const struct sippymodem_fsk300_profile *profile;
-	struct sippymodem_fsk_transmitter transmitter;
-	struct sippymodem_fsk_receiver receiver;
-	enum sippymodem_fsk300_training_state training_state;
+	const struct fsk300_profile *profile;
+	struct fsk_transmitter transmitter;
+	struct fsk_receiver receiver;
+	enum fsk300_training_state training_state;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint64_t training_state_samples;
@@ -118,7 +118,7 @@ static struct dp_operations fsk300_operations = {
 	.process = process_fsk300,
 };
 
-static const struct sippymodem_fsk300_profile *find_profile(enum DP_ID id)
+static const struct fsk300_profile *find_profile(enum DP_ID id)
 {
 	for (size_t index = 0;
 	     index < sizeof(fsk300_profiles) / sizeof(fsk300_profiles[0]);
@@ -128,9 +128,9 @@ static const struct sippymodem_fsk300_profile *find_profile(enum DP_ID id)
 	return NULL;
 }
 
-static struct sippymodem_fsk300_datapump *fsk300_from_dp(struct dp *dp)
+static struct fsk300_datapump *fsk300_from_dp(struct dp *dp)
 {
-	struct sippymodem_fsk300_datapump *datapump;
+	struct fsk300_datapump *datapump;
 
 	if (dp == NULL || dp->op != &fsk300_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
@@ -155,10 +155,10 @@ static struct dp *create_fsk300(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
 {
-	struct sippymodem_fsk300_datapump *datapump;
-	const struct sippymodem_fsk300_profile *profile = find_profile(id);
-	const struct sippymodem_fsk_channel *transmit_channel;
-	const struct sippymodem_fsk_channel *receive_channel;
+	struct fsk300_datapump *datapump;
+	const struct fsk300_profile *profile = find_profile(id);
+	const struct fsk_channel *transmit_channel;
+	const struct fsk_channel *receive_channel;
 
 	if (modem == NULL || profile == NULL ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
@@ -174,12 +174,12 @@ static struct dp *create_fsk300(
 						 profile->answerer_channel;
 	receive_channel = datapump->originator ? profile->answerer_channel :
 						profile->originator_channel;
-	if (sippymodem_fsk_transmitter_init(
+	if (fsk_transmitter_init(
 		    &datapump->transmitter, transmit_channel,
 		    FSK300_TRANSMIT_AMPLITUDE) !=
-		    SIPPYMODEM_FSK_OK ||
-	    sippymodem_fsk_receiver_init(&datapump->receiver, receive_channel) !=
-		    SIPPYMODEM_FSK_OK) {
+		    FSK_OK ||
+	    fsk_receiver_init(&datapump->receiver, receive_channel) !=
+		    FSK_OK) {
 		free(datapump);
 		return NULL;
 	}
@@ -198,7 +198,7 @@ static struct dp *create_fsk300(
 
 static int delete_fsk300(struct dp *dp)
 {
-	struct sippymodem_fsk300_datapump *datapump = fsk300_from_dp(dp);
+	struct fsk300_datapump *datapump = fsk300_from_dp(dp);
 
 	if (datapump == NULL || fsk300_operations.use_count <= 0)
 		return -1;
@@ -209,7 +209,7 @@ static int delete_fsk300(struct dp *dp)
 }
 
 static bool mark_is_present(
-	const struct sippymodem_fsk_measurement *measurement)
+	const struct fsk_measurement *measurement)
 {
 	return measurement->ready &&
 	       measurement->line_power >= FSK300_MIN_LINE_POWER &&
@@ -218,7 +218,7 @@ static bool mark_is_present(
 }
 
 static bool carrier_is_present(
-	const struct sippymodem_fsk_measurement *measurement)
+	const struct fsk_measurement *measurement)
 {
 	return measurement->ready &&
 	       measurement->line_power >= FSK300_MIN_LINE_POWER &&
@@ -226,20 +226,20 @@ static bool carrier_is_present(
 }
 
 static void generate_mark(
-	struct sippymodem_fsk300_datapump *datapump,
+	struct fsk300_datapump *datapump,
 	int16_t *transmit,
 	int count)
 {
 	for (int index = 0; index < count; ++index) {
 		bool consumed;
 
-		(void)sippymodem_fsk_transmitter_sample(
+		(void)fsk_transmitter_sample(
 			&datapump->transmitter, 1, &transmit[index], &consumed);
 	}
 }
 
 static void generate_data(
-	struct sippymodem_fsk300_datapump *datapump,
+	struct fsk300_datapump *datapump,
 	int16_t *transmit,
 	int count)
 {
@@ -247,7 +247,7 @@ static void generate_data(
 		bool consumed;
 
 		if (!datapump->transmit_bit_pending &&
-		    sippymodem_fsk_transmitter_can_accept_bit(
+		    fsk_transmitter_can_accept_bit(
 			    &datapump->transmitter)) {
 			datapump->transmit_bit = 1;
 			if (modem_get_bits(
@@ -257,7 +257,7 @@ static void generate_data(
 			datapump->transmit_bit &= 1u;
 			datapump->transmit_bit_pending = true;
 		}
-		(void)sippymodem_fsk_transmitter_sample(
+		(void)fsk_transmitter_sample(
 			&datapump->transmitter,
 			datapump->transmit_bit_pending ?
 				datapump->transmit_bit : 1,
@@ -268,7 +268,7 @@ static void generate_data(
 }
 
 static void receive_samples(
-	struct sippymodem_fsk300_datapump *datapump,
+	struct fsk300_datapump *datapump,
 	const int16_t *receive,
 	int count,
 	bool deliver_bits)
@@ -277,7 +277,7 @@ static void receive_samples(
 		uint8_t bit;
 		bool ready;
 
-		(void)sippymodem_fsk_receiver_sample(
+		(void)fsk_receiver_sample(
 			&datapump->receiver, receive[index], &bit, &ready);
 		if (deliver_bits && ready)
 			(void)modem_put_bits(datapump->dp.modem, 1, &bit, 1);
@@ -285,8 +285,8 @@ static void receive_samples(
 }
 
 static int advance_training(
-	struct sippymodem_fsk300_datapump *datapump,
-	const struct sippymodem_fsk_measurement *measurement,
+	struct fsk300_datapump *datapump,
+	const struct fsk_measurement *measurement,
 	unsigned int count)
 {
 	if (datapump->training_samples + count >
@@ -324,10 +324,10 @@ static int advance_training(
 			return DPSTAT_OK;
 		if (modem_set_param(
 			    datapump->dp.modem, MDMPRM_TX_RATE,
-			    SIPPYMODEM_FSK300_BIT_RATE) != 0 ||
+			    FSK300_BIT_RATE) != 0 ||
 		    modem_set_param(
 			    datapump->dp.modem, MDMPRM_RX_RATE,
-			    SIPPYMODEM_FSK300_BIT_RATE) != 0)
+			    FSK300_BIT_RATE) != 0)
 			return DPSTAT_ERROR;
 		datapump->training_state = FSK300_TRAINING_ONLINE;
 		datapump->missing_carrier_samples = 0;
@@ -340,10 +340,10 @@ static int advance_training(
 static int process_fsk300(struct dp *dp, void *receive_buffer,
 		       void *transmit_buffer, int count)
 {
-	struct sippymodem_fsk300_datapump *datapump = fsk300_from_dp(dp);
+	struct fsk300_datapump *datapump = fsk300_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
-	struct sippymodem_fsk_measurement measurement;
+	struct fsk_measurement measurement;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL || count <= 0 ||
 	    count > MODEM_FRAG) {
@@ -363,7 +363,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	receive_samples(
 		datapump, receive, count,
 		datapump->training_state == FSK300_TRAINING_ONLINE);
-	measurement = sippymodem_fsk_receiver_measure(&datapump->receiver);
+	measurement = fsk_receiver_measure(&datapump->receiver);
 
 	if (datapump->training_state != FSK300_TRAINING_ONLINE)
 		return advance_training(datapump, &measurement, (unsigned int)count);
@@ -377,7 +377,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
-int sippymodem_fsk300_datapump_register(void)
+int fsk300_datapump_register(void)
 {
 	if (modem_dp_register(DP_V21, &fsk300_operations) != 0)
 		return -1;
@@ -387,7 +387,7 @@ int sippymodem_fsk300_datapump_register(void)
 	return -1;
 }
 
-int sippymodem_fsk300_datapump_unregister(void)
+int fsk300_datapump_unregister(void)
 {
 	if (fsk300_operations.use_count != 0 ||
 	    modem_dp_get_registered_ops(DP_V21) != &fsk300_operations ||
@@ -400,7 +400,7 @@ int sippymodem_fsk300_datapump_unregister(void)
 	return -1;
 }
 
-bool sippymodem_fsk300_datapump_is_busy(void)
+bool fsk300_datapump_is_busy(void)
 {
 	return fsk300_operations.use_count != 0;
 }

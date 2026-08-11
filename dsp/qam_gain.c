@@ -7,14 +7,14 @@
 
 static const double QAM_GAIN_MINIMUM_POWER = 1e-12;
 
-static bool point_is_finite(const struct sippymodem_qam_point *point)
+static bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
 }
 
 static bool nonzero_point_power(
-	const struct sippymodem_qam_point *point, double *power)
+	const struct qam_point *point, double *power)
 {
 	double value;
 
@@ -30,16 +30,16 @@ static bool nonzero_point_power(
 }
 
 static bool multiply_points(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right,
-	struct sippymodem_qam_point *product)
+	const struct qam_point *left,
+	const struct qam_point *right,
+	struct qam_point *product)
 {
-	struct sippymodem_qam_point next;
+	struct qam_point next;
 
 	if (!point_is_finite(left) || !point_is_finite(right) ||
 	    product == NULL)
 		return false;
-	next = (struct sippymodem_qam_point){
+	next = (struct qam_point){
 		.in_phase = left->in_phase * right->in_phase -
 			    left->quadrature * right->quadrature,
 		.quadrature = left->in_phase * right->quadrature +
@@ -52,17 +52,17 @@ static bool multiply_points(
 }
 
 static bool divide_points(
-	const struct sippymodem_qam_point *numerator,
-	const struct sippymodem_qam_point *denominator,
-	struct sippymodem_qam_point *quotient)
+	const struct qam_point *numerator,
+	const struct qam_point *denominator,
+	struct qam_point *quotient)
 {
-	struct sippymodem_qam_point next;
+	struct qam_point next;
 	double power;
 
 	if (!point_is_finite(numerator) || quotient == NULL ||
 	    !nonzero_point_power(denominator, &power))
 		return false;
-	next = (struct sippymodem_qam_point){
+	next = (struct qam_point){
 		.in_phase =
 			(numerator->in_phase * denominator->in_phase +
 			 numerator->quadrature * denominator->quadrature) /
@@ -78,8 +78,8 @@ static bool divide_points(
 	return true;
 }
 
-bool sippymodem_qam_gain_is_valid(
-	const struct sippymodem_qam_gain *tracker)
+bool qam_gain_is_valid(
+	const struct qam_gain *tracker)
 {
 	return tracker != NULL &&
 	       nonzero_point_power(&tracker->channel_gain, NULL) &&
@@ -87,77 +87,77 @@ bool sippymodem_qam_gain_is_valid(
 	       tracker->adaptation <= 1.0;
 }
 
-enum sippymodem_qam_gain_result sippymodem_qam_gain_init(
-	struct sippymodem_qam_gain *tracker,
-	const struct sippymodem_qam_point *channel_gain, double adaptation)
+enum qam_gain_result qam_gain_init(
+	struct qam_gain *tracker,
+	const struct qam_point *channel_gain, double adaptation)
 {
-	struct sippymodem_qam_gain initialized;
+	struct qam_gain initialized;
 
 	if (tracker == NULL || channel_gain == NULL)
-		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
-	initialized = (struct sippymodem_qam_gain){
+		return QAM_GAIN_INVALID_ARGUMENT;
+	initialized = (struct qam_gain){
 		.channel_gain = *channel_gain,
 		.adaptation = adaptation,
 	};
-	if (!sippymodem_qam_gain_is_valid(&initialized))
-		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
+	if (!qam_gain_is_valid(&initialized))
+		return QAM_GAIN_INVALID_ARGUMENT;
 	*tracker = initialized;
-	return SIPPYMODEM_QAM_GAIN_OK;
+	return QAM_GAIN_OK;
 }
 
-enum sippymodem_qam_gain_result sippymodem_qam_gain_init_from_reference(
-	struct sippymodem_qam_gain *tracker,
-	const struct sippymodem_qam_point *received,
-	const struct sippymodem_qam_point *transmitted, double adaptation)
+enum qam_gain_result qam_gain_init_from_reference(
+	struct qam_gain *tracker,
+	const struct qam_point *received,
+	const struct qam_point *transmitted, double adaptation)
 {
-	struct sippymodem_qam_point observed_gain;
+	struct qam_point observed_gain;
 
 	if (tracker == NULL ||
 	    !divide_points(received, transmitted, &observed_gain))
-		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
-	return sippymodem_qam_gain_init(tracker, &observed_gain, adaptation);
+		return QAM_GAIN_INVALID_ARGUMENT;
+	return qam_gain_init(tracker, &observed_gain, adaptation);
 }
 
-enum sippymodem_qam_gain_result sippymodem_qam_gain_predict(
-	const struct sippymodem_qam_gain *tracker,
-	const struct sippymodem_qam_point *transmitted,
-	struct sippymodem_qam_point *received)
+enum qam_gain_result qam_gain_predict(
+	const struct qam_gain *tracker,
+	const struct qam_point *transmitted,
+	struct qam_point *received)
 {
-	struct sippymodem_qam_point predicted;
+	struct qam_point predicted;
 
-	if (!sippymodem_qam_gain_is_valid(tracker) || received == NULL ||
+	if (!qam_gain_is_valid(tracker) || received == NULL ||
 	    !multiply_points(&tracker->channel_gain, transmitted, &predicted))
-		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
+		return QAM_GAIN_INVALID_ARGUMENT;
 	*received = predicted;
-	return SIPPYMODEM_QAM_GAIN_OK;
+	return QAM_GAIN_OK;
 }
 
-enum sippymodem_qam_gain_result sippymodem_qam_gain_equalize(
-	const struct sippymodem_qam_gain *tracker,
-	const struct sippymodem_qam_point *received,
-	struct sippymodem_qam_point *equalized)
+enum qam_gain_result qam_gain_equalize(
+	const struct qam_gain *tracker,
+	const struct qam_point *received,
+	struct qam_point *equalized)
 {
-	struct sippymodem_qam_point next;
+	struct qam_point next;
 
-	if (!sippymodem_qam_gain_is_valid(tracker) || equalized == NULL ||
+	if (!qam_gain_is_valid(tracker) || equalized == NULL ||
 	    !divide_points(received, &tracker->channel_gain, &next))
-		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
+		return QAM_GAIN_INVALID_ARGUMENT;
 	*equalized = next;
-	return SIPPYMODEM_QAM_GAIN_OK;
+	return QAM_GAIN_OK;
 }
 
-enum sippymodem_qam_gain_result sippymodem_qam_gain_track(
-	struct sippymodem_qam_gain *tracker,
-	const struct sippymodem_qam_point *received,
-	const struct sippymodem_qam_point *transmitted)
+enum qam_gain_result qam_gain_track(
+	struct qam_gain *tracker,
+	const struct qam_point *received,
+	const struct qam_point *transmitted)
 {
-	struct sippymodem_qam_gain next;
-	struct sippymodem_qam_point observed_gain;
+	struct qam_gain next;
+	struct qam_point observed_gain;
 
-	if (!sippymodem_qam_gain_is_valid(tracker) ||
+	if (!qam_gain_is_valid(tracker) ||
 	    !nonzero_point_power(received, NULL) ||
 	    !divide_points(received, transmitted, &observed_gain))
-		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
+		return QAM_GAIN_INVALID_ARGUMENT;
 	next = *tracker;
 	next.channel_gain.in_phase +=
 		(observed_gain.in_phase - next.channel_gain.in_phase) *
@@ -165,19 +165,19 @@ enum sippymodem_qam_gain_result sippymodem_qam_gain_track(
 	next.channel_gain.quadrature +=
 		(observed_gain.quadrature - next.channel_gain.quadrature) *
 		next.adaptation;
-	if (!sippymodem_qam_gain_is_valid(&next))
-		return SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT;
+	if (!qam_gain_is_valid(&next))
+		return QAM_GAIN_INVALID_ARGUMENT;
 	*tracker = next;
-	return SIPPYMODEM_QAM_GAIN_OK;
+	return QAM_GAIN_OK;
 }
 
-const char *sippymodem_qam_gain_result_name(
-	enum sippymodem_qam_gain_result result)
+const char *qam_gain_result_name(
+	enum qam_gain_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_QAM_GAIN_OK:
+	case QAM_GAIN_OK:
 		return "ok";
-	case SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT:
+	case QAM_GAIN_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

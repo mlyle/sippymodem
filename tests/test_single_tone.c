@@ -43,35 +43,35 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 
 static bool test_generation_and_reversal(void)
 {
-	struct sippymodem_single_tone_transmitter baseline;
-	struct sippymodem_single_tone_transmitter reversed;
+	struct single_tone_transmitter baseline;
+	struct single_tone_transmitter reversed;
 
-	CHECK(sippymodem_single_tone_transmitter_init(
+	CHECK(single_tone_transmitter_init(
 		      &baseline, TEST_CARRIER_HZ, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_SINGLE_TONE_OK,
+		      SINGLE_TONE_OK,
 	      "single-tone transmitter did not initialize");
 	for (size_t index = 0; index < 37; ++index) {
 		int16_t discarded;
 
-		CHECK(sippymodem_single_tone_transmitter_sample(
+		CHECK(single_tone_transmitter_sample(
 			      &baseline, &discarded) ==
-			      SIPPYMODEM_SINGLE_TONE_OK,
+			      SINGLE_TONE_OK,
 		      "single-tone prelude failed");
 	}
 	reversed = baseline;
-	CHECK(sippymodem_single_tone_transmitter_reverse(&reversed) ==
-		      SIPPYMODEM_SINGLE_TONE_OK,
+	CHECK(single_tone_transmitter_reverse(&reversed) ==
+		      SINGLE_TONE_OK,
 	      "single-tone transmitter rejected a phase reversal");
 	for (size_t index = 0;
-	     index < SIPPYMODEM_SINGLE_TONE_WINDOW_SAMPLES; ++index) {
+	     index < SINGLE_TONE_WINDOW_SAMPLES; ++index) {
 		int16_t positive;
 		int16_t negative;
 
-		CHECK(sippymodem_single_tone_transmitter_sample(
-			      &baseline, &positive) == SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_transmitter_sample(
+		CHECK(single_tone_transmitter_sample(
+			      &baseline, &positive) == SINGLE_TONE_OK &&
+		      single_tone_transmitter_sample(
 			      &reversed, &negative) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
+			      SINGLE_TONE_OK &&
 		      positive + negative >= -1 &&
 		      positive + negative <= 1,
 		      "phase reversal did not invert sample %zu", index);
@@ -83,29 +83,29 @@ static bool test_generation_and_reversal(void)
 }
 
 static bool feed(
-	struct sippymodem_single_tone_detector *detector, int16_t sample,
+	struct single_tone_detector *detector, int16_t sample,
 	enum test_codec codec, size_t sample_index, size_t *started,
 	size_t *reversed, size_t *ended, size_t *reversal_sample,
-	struct sippymodem_single_tone_event *last_reversal)
+	struct single_tone_event *last_reversal)
 {
-	struct sippymodem_single_tone_event event;
+	struct single_tone_event event;
 
-	CHECK(sippymodem_single_tone_detector_sample(
+	CHECK(single_tone_detector_sample(
 		      detector, codec_round_trip(sample, codec), &event) ==
-		      SIPPYMODEM_SINGLE_TONE_OK,
+		      SINGLE_TONE_OK,
 	      "single-tone detector failed at sample %zu", sample_index);
 	switch (event.kind) {
-	case SIPPYMODEM_SINGLE_TONE_NO_EVENT:
+	case SINGLE_TONE_NO_EVENT:
 		break;
-	case SIPPYMODEM_SINGLE_TONE_STARTED:
+	case SINGLE_TONE_STARTED:
 		(*started)++;
 		break;
-	case SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED:
+	case SINGLE_TONE_PHASE_REVERSED:
 		(*reversed)++;
 		*reversal_sample = sample_index;
 		*last_reversal = event;
 		break;
-	case SIPPYMODEM_SINGLE_TONE_ENDED:
+	case SINGLE_TONE_ENDED:
 		(*ended)++;
 		break;
 	}
@@ -114,10 +114,10 @@ static bool feed(
 
 static bool check_detection(unsigned int frequency_hz, enum test_codec codec)
 {
-	struct sippymodem_single_tone_transmitter transmitter;
-	struct sippymodem_single_tone_detector detector;
-	struct sippymodem_single_tone_measurement measurement;
-	struct sippymodem_single_tone_event reversal = { 0 };
+	struct single_tone_transmitter transmitter;
+	struct single_tone_detector detector;
+	struct single_tone_measurement measurement;
+	struct single_tone_event reversal = { 0 };
 	size_t started = 0;
 	size_t reversed = 0;
 	size_t ended = 0;
@@ -125,12 +125,12 @@ static bool check_detection(unsigned int frequency_hz, enum test_codec codec)
 	size_t reversal_sample = 0;
 	size_t sample_index = 0;
 
-	CHECK(sippymodem_single_tone_transmitter_init(
+	CHECK(single_tone_transmitter_init(
 		      &transmitter, frequency_hz, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_detector_init(
+		      SINGLE_TONE_OK &&
+		      single_tone_detector_init(
 			      &detector, frequency_hz) ==
-			      SIPPYMODEM_SINGLE_TONE_OK,
+			      SINGLE_TONE_OK,
 	      "single-tone detection fixture did not initialize");
 	for (; sample_index < 23; ++sample_index)
 		CHECK(feed(
@@ -140,15 +140,15 @@ static bool check_detection(unsigned int frequency_hz, enum test_codec codec)
 	for (size_t count = 0; count < 400; ++count, ++sample_index) {
 		int16_t sample;
 
-		CHECK(sippymodem_single_tone_transmitter_sample(
+		CHECK(single_tone_transmitter_sample(
 			      &transmitter, &sample) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
+			      SINGLE_TONE_OK &&
 		      feed(
 			      &detector, sample, codec, sample_index, &started,
 			      &reversed, &ended, &reversal_sample, &reversal),
 		      "steady tone detection failed");
 	}
-	measurement = sippymodem_single_tone_detector_measure(&detector);
+	measurement = single_tone_detector_measure(&detector);
 	CHECK(started == 1 && reversed == 0 && ended == 0 &&
 		      measurement.ready && measurement.tone_present &&
 		      measurement.line_power > 1000000.0 &&
@@ -156,15 +156,15 @@ static bool check_detection(unsigned int frequency_hz, enum test_codec codec)
 		      measurement.carrier_share < 1.10,
 	      "detector did not acquire one qualified tone");
 	reversal_edge = sample_index;
-	CHECK(sippymodem_single_tone_transmitter_reverse(&transmitter) ==
-		      SIPPYMODEM_SINGLE_TONE_OK,
+	CHECK(single_tone_transmitter_reverse(&transmitter) ==
+		      SINGLE_TONE_OK,
 	      "detection fixture did not reverse");
 	for (size_t count = 0; count < 180; ++count, ++sample_index) {
 		int16_t sample;
 
-		CHECK(sippymodem_single_tone_transmitter_sample(
+		CHECK(single_tone_transmitter_sample(
 			      &transmitter, &sample) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
+			      SINGLE_TONE_OK &&
 		      feed(
 			      &detector, sample, codec, sample_index, &started,
 			      &reversed, &ended, &reversal_sample, &reversal),
@@ -183,7 +183,7 @@ static bool check_detection(unsigned int frequency_hz, enum test_codec codec)
 			      &reversed, &ended, &reversal_sample, &reversal),
 		      "trailing silence failed");
 	CHECK(started == 1 && reversed == 1 && ended == 1 &&
-		      !sippymodem_single_tone_detector_measure(&detector)
+		      !single_tone_detector_measure(&detector)
 			       .tone_present,
 	      "detector did not release one qualified tone");
 	return true;
@@ -204,29 +204,29 @@ static bool test_detection_and_rejection(void)
 			      "tone %u failed codec %d",
 			      frequencies[frequency], codec);
 	{
-		struct sippymodem_single_tone_transmitter transmitter;
-		struct sippymodem_single_tone_detector detector;
+		struct single_tone_transmitter transmitter;
+		struct single_tone_detector detector;
 		size_t events = 0;
 
-		CHECK(sippymodem_single_tone_transmitter_init(
+		CHECK(single_tone_transmitter_init(
 			      &transmitter, TEST_WRONG_HZ, TEST_AMPLITUDE) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_detector_init(
+			      SINGLE_TONE_OK &&
+		      single_tone_detector_init(
 			      &detector, TEST_ANSWER_HZ) ==
-			      SIPPYMODEM_SINGLE_TONE_OK,
+			      SINGLE_TONE_OK,
 		      "wrong-tone fixture did not initialize");
 		for (size_t index = 0; index < 800; ++index) {
-			struct sippymodem_single_tone_event event;
+			struct single_tone_event event;
 			int16_t sample;
 
-			CHECK(sippymodem_single_tone_transmitter_sample(
+			CHECK(single_tone_transmitter_sample(
 				      &transmitter, &sample) ==
-				      SIPPYMODEM_SINGLE_TONE_OK &&
-			      sippymodem_single_tone_detector_sample(
+				      SINGLE_TONE_OK &&
+			      single_tone_detector_sample(
 				      &detector, sample, &event) ==
-				      SIPPYMODEM_SINGLE_TONE_OK,
+				      SINGLE_TONE_OK,
 			      "wrong-tone rejection failed");
-			events += event.kind != SIPPYMODEM_SINGLE_TONE_NO_EVENT;
+			events += event.kind != SINGLE_TONE_NO_EVENT;
 		}
 		CHECK(events == 0 && !detector.tone_present,
 		      "detector acquired a neighboring carrier");
@@ -235,17 +235,17 @@ static bool test_detection_and_rejection(void)
 }
 
 static bool mixed_tone_sample(
-	struct sippymodem_single_tone_transmitter *low,
-	struct sippymodem_single_tone_transmitter *high,
+	struct single_tone_transmitter *low,
+	struct single_tone_transmitter *high,
 	enum test_codec codec, int16_t *sample)
 {
 	int16_t low_sample;
 	int16_t high_sample;
 
-	if (sippymodem_single_tone_transmitter_sample(low, &low_sample) !=
-		    SIPPYMODEM_SINGLE_TONE_OK ||
-	    sippymodem_single_tone_transmitter_sample(high, &high_sample) !=
-		    SIPPYMODEM_SINGLE_TONE_OK)
+	if (single_tone_transmitter_sample(low, &low_sample) !=
+		    SINGLE_TONE_OK ||
+	    single_tone_transmitter_sample(high, &high_sample) !=
+		    SINGLE_TONE_OK)
 		return false;
 	*sample = codec_round_trip(
 		(int16_t)((int32_t)low_sample + high_sample), codec);
@@ -256,78 +256,78 @@ static bool test_configurable_carrier_share(void)
 {
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
 	     codec <= TEST_CODEC_PCMA; ++codec) {
-		struct sippymodem_single_tone_transmitter low;
-		struct sippymodem_single_tone_transmitter high;
-		struct sippymodem_single_tone_detector strict;
-		struct sippymodem_single_tone_detector mixed;
-		struct sippymodem_single_tone_measurement measurement;
+		struct single_tone_transmitter low;
+		struct single_tone_transmitter high;
+		struct single_tone_detector strict;
+		struct single_tone_detector mixed;
+		struct single_tone_measurement measurement;
 		size_t strict_events = 0;
 		size_t mixed_started = 0;
 		size_t mixed_reversed = 0;
 
-		CHECK(sippymodem_single_tone_transmitter_init(
+		CHECK(single_tone_transmitter_init(
 			      &low, TEST_MIXED_LOW_HZ,
 			      TEST_MIXED_LOW_AMPLITUDE) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_transmitter_init(
+			      SINGLE_TONE_OK &&
+		      single_tone_transmitter_init(
 			      &high, TEST_MIXED_HIGH_HZ,
 			      TEST_MIXED_HIGH_AMPLITUDE) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_detector_init(
+			      SINGLE_TONE_OK &&
+		      single_tone_detector_init(
 			      &strict, TEST_MIXED_HIGH_HZ) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+			      SINGLE_TONE_OK &&
+		      single_tone_detector_init_with_minimum_carrier_share(
 			      &mixed, TEST_MIXED_HIGH_HZ, 0.60) ==
-			      SIPPYMODEM_SINGLE_TONE_OK,
+			      SINGLE_TONE_OK,
 		      "mixed-tone fixture did not initialize");
 		for (size_t sample_index = 0; sample_index < 480;
 		     ++sample_index) {
-			struct sippymodem_single_tone_event strict_event;
-			struct sippymodem_single_tone_event mixed_event;
+			struct single_tone_event strict_event;
+			struct single_tone_event mixed_event;
 			int16_t sample;
 
 			CHECK(mixed_tone_sample(&low, &high, codec, &sample),
 			      "mixed-tone generation failed");
-			CHECK(sippymodem_single_tone_detector_sample(
+			CHECK(single_tone_detector_sample(
 				      &strict, sample, &strict_event) ==
-				      SIPPYMODEM_SINGLE_TONE_OK &&
-			      sippymodem_single_tone_detector_sample(
+				      SINGLE_TONE_OK &&
+			      single_tone_detector_sample(
 				      &mixed, sample, &mixed_event) ==
-				      SIPPYMODEM_SINGLE_TONE_OK,
+				      SINGLE_TONE_OK,
 			      "mixed-tone detection failed");
 			strict_events += strict_event.kind !=
-					 SIPPYMODEM_SINGLE_TONE_NO_EVENT;
+					 SINGLE_TONE_NO_EVENT;
 			mixed_started += mixed_event.kind ==
-					 SIPPYMODEM_SINGLE_TONE_STARTED;
+					 SINGLE_TONE_STARTED;
 		}
-		measurement = sippymodem_single_tone_detector_measure(&mixed);
+		measurement = single_tone_detector_measure(&mixed);
 		CHECK(strict_events == 0 && !strict.tone_present &&
 			      mixed_started == 1 && measurement.tone_present &&
 			      measurement.carrier_share >= 0.60 &&
 			      measurement.carrier_share < 0.70,
 		      "configured detector did not distinguish a mixed carrier");
-		CHECK(sippymodem_single_tone_transmitter_reverse(&low) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
-		      sippymodem_single_tone_transmitter_reverse(&high) ==
-			      SIPPYMODEM_SINGLE_TONE_OK,
+		CHECK(single_tone_transmitter_reverse(&low) ==
+			      SINGLE_TONE_OK &&
+		      single_tone_transmitter_reverse(&high) ==
+			      SINGLE_TONE_OK,
 		      "mixed carrier did not reverse");
 		for (size_t sample_index = 0; sample_index < 180;
 		     ++sample_index) {
-			struct sippymodem_single_tone_event event;
+			struct single_tone_event event;
 			int16_t sample;
 
 			CHECK(mixed_tone_sample(&low, &high, codec, &sample),
 			      "reversed mixed-tone generation failed");
-			CHECK(sippymodem_single_tone_detector_sample(
+			CHECK(single_tone_detector_sample(
 				      &mixed, sample, &event) ==
-				      SIPPYMODEM_SINGLE_TONE_OK,
+				      SINGLE_TONE_OK,
 			      "reversed mixed-tone detection failed");
 			mixed_reversed += event.kind ==
-					  SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED;
+					  SINGLE_TONE_PHASE_REVERSED;
 		}
 		CHECK(mixed_reversed == 1 &&
-			      sippymodem_single_tone_detector_reset(&mixed) ==
-				      SIPPYMODEM_SINGLE_TONE_OK &&
+			      single_tone_detector_reset(&mixed) ==
+				      SINGLE_TONE_OK &&
 			      mixed.minimum_carrier_share == 0.60,
 		      "mixed-carrier profile did not detect or survive reset");
 	}
@@ -336,69 +336,69 @@ static bool test_configurable_carrier_share(void)
 
 static bool test_validation_is_transactional(void)
 {
-	struct sippymodem_single_tone_detector detector;
-	struct sippymodem_single_tone_detector before;
-	struct sippymodem_single_tone_event event = {
-		.kind = SIPPYMODEM_SINGLE_TONE_ENDED,
+	struct single_tone_detector detector;
+	struct single_tone_detector before;
+	struct single_tone_event event = {
+		.kind = SINGLE_TONE_ENDED,
 		.reversal_delay_samples = 17,
 	};
-	struct sippymodem_single_tone_transmitter transmitter;
-	struct sippymodem_single_tone_transmitter transmitter_before;
+	struct single_tone_transmitter transmitter;
+	struct single_tone_transmitter transmitter_before;
 	int16_t sample = 123;
 
-	CHECK(sippymodem_single_tone_transmitter_init(
+	CHECK(single_tone_transmitter_init(
 		      &transmitter, TEST_CARRIER_HZ, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_SINGLE_TONE_OK,
+		      SINGLE_TONE_OK,
 	      "single-tone transmitter validation fixture changed");
 	transmitter_before = transmitter;
-	CHECK(sippymodem_single_tone_transmitter_init(
+	CHECK(single_tone_transmitter_init(
 		      &transmitter, 0, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
-		      sippymodem_single_tone_transmitter_init(
+		      SINGLE_TONE_INVALID_ARGUMENT &&
+		      single_tone_transmitter_init(
 			      &transmitter,
-			      SIPPYMODEM_SINGLE_TONE_SAMPLE_RATE / 2,
+			      SINGLE_TONE_SAMPLE_RATE / 2,
 			      TEST_AMPLITUDE) ==
-			      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
-		      sippymodem_single_tone_transmitter_init(
+			      SINGLE_TONE_INVALID_ARGUMENT &&
+		      single_tone_transmitter_init(
 			      &transmitter, TEST_CARRIER_HZ, 0) ==
-			      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
+			      SINGLE_TONE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &transmitter_before,
 			     sizeof(transmitter)) == 0 &&
-		      sippymodem_single_tone_detector_init(
+		      single_tone_detector_init(
 			      &detector, TEST_CARRIER_HZ) ==
-			      SIPPYMODEM_SINGLE_TONE_OK,
+			      SINGLE_TONE_OK,
 	      "single-tone validation fixture changed");
 	before = detector;
-	CHECK(sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+	CHECK(single_tone_detector_init_with_minimum_carrier_share(
 		      &detector, TEST_CARRIER_HZ, 0.0) ==
-		      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
-		      sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+		      SINGLE_TONE_INVALID_ARGUMENT &&
+		      single_tone_detector_init_with_minimum_carrier_share(
 			      &detector, TEST_CARRIER_HZ, 1.21) ==
-			      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
-		      sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+			      SINGLE_TONE_INVALID_ARGUMENT &&
+		      single_tone_detector_init_with_minimum_carrier_share(
 			      &detector, TEST_CARRIER_HZ, NAN) ==
-			      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
+			      SINGLE_TONE_INVALID_ARGUMENT &&
 		      memcmp(&detector, &before, sizeof(detector)) == 0,
 	      "invalid carrier-share profiles changed the detector");
 	transmitter.phase_step++;
 	transmitter_before = transmitter;
-	CHECK(sippymodem_single_tone_transmitter_sample(
+	CHECK(single_tone_transmitter_sample(
 		      &transmitter, &sample) ==
-		      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
+		      SINGLE_TONE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &transmitter_before,
 			     sizeof(transmitter)) == 0 &&
 		      sample == 123,
 	      "invalid transmitter mutation was not transactional");
 	detector.phase_step++;
 	before = detector;
-	CHECK(sippymodem_single_tone_detector_sample(
+	CHECK(single_tone_detector_sample(
 		      &detector, 1, &event) ==
-		      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
+		      SINGLE_TONE_INVALID_ARGUMENT &&
 		      memcmp(&detector, &before, sizeof(detector)) == 0 &&
-		      event.kind == SIPPYMODEM_SINGLE_TONE_ENDED &&
+		      event.kind == SINGLE_TONE_ENDED &&
 		      event.reversal_delay_samples == 17 &&
-		      strcmp(sippymodem_single_tone_result_name(
-			     SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT),
+		      strcmp(single_tone_result_name(
+			     SINGLE_TONE_INVALID_ARGUMENT),
 			     "invalid argument") == 0,
 	      "invalid detector mutation was not transactional");
 	return true;

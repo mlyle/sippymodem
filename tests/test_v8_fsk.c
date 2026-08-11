@@ -27,8 +27,8 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 }
 
 static bool channel_matches(
-	const struct sippymodem_fsk_channel *actual,
-	const struct sippymodem_fsk_channel *expected)
+	const struct fsk_channel *actual,
+	const struct fsk_channel *expected)
 {
 	return actual->sample_rate == expected->sample_rate &&
 	       actual->symbol_rate_numerator ==

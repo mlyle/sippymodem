@@ -57,11 +57,11 @@ v34_symbol_power_observe_q7(
 	struct v34_symbol_power_measurement *measurement,
 	const struct v34_q7_point *point)
 {
-	struct sippymodem_qam_point converted;
+	struct qam_point converted;
 
 	if (point == NULL)
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
-	converted = (struct sippymodem_qam_point){
+	converted = (struct qam_point){
 		.in_phase =
 			(double)point->in_phase / V34_Q7_SCALE,
 		.quadrature =
@@ -74,7 +74,7 @@ v34_symbol_power_observe_q7(
 enum v34_symbol_power_result
 v34_symbol_power_observe_point(
 	struct v34_symbol_power_measurement *measurement,
-	const struct sippymodem_qam_point *point)
+	const struct qam_point *point)
 {
 	double squared_magnitude;
 
@@ -298,10 +298,10 @@ bool v34_power_normalizer_is_valid(
 
 enum v34_symbol_power_result v34_normalize_power(
 	const struct v34_power_normalizer *normalizer,
-	const struct sippymodem_qam_point *projected_point,
-	struct sippymodem_qam_point *normalized_point)
+	const struct qam_point *projected_point,
+	struct qam_point *normalized_point)
 {
-	struct sippymodem_qam_point generated;
+	struct qam_point generated;
 	double projected_power;
 	double normalized_power;
 
@@ -318,7 +318,7 @@ enum v34_symbol_power_result v34_normalize_power(
 	if (!power_does_not_exceed(
 		    projected_power, normalizer->maximum_projected_point_power))
 		return V34_SYMBOL_POWER_OUT_OF_RANGE;
-	generated = (struct sippymodem_qam_point){
+	generated = (struct qam_point){
 		.in_phase =
 			projected_point->in_phase * normalizer->normalization_gain,
 		.quadrature =

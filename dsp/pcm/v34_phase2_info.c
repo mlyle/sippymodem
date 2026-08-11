@@ -36,10 +36,10 @@ static uint16_t payload_crc(
 	const uint8_t *payload, size_t payload_bit_count)
 {
 	uint16_t crc =
-		SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER;
+		CRC16_CCITT_FALSE_INITIAL_REMAINDER;
 
 	for (size_t index = 0; index < payload_bit_count; ++index)
-		crc = sippymodem_crc16_ccitt_false_step(
+		crc = crc16_ccitt_false_step(
 			crc, packed_bit(payload, index) != 0);
 	return crc;
 }
@@ -218,7 +218,7 @@ bool v34_phase2_info_receiver_is_valid(
 	case V34_PHASE2_INFO_SEARCH_SYNC:
 		return receiver->payload_bit_index == 0 &&
 		       receiver->crc ==
-			       SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER &&
+			       CRC16_CCITT_FALSE_INITIAL_REMAINDER &&
 		       receiver->received_crc == 0 &&
 		       receiver->crc_bit_count == 0 &&
 		       receiver->trailing_fill_bit_count == 0;
@@ -262,7 +262,7 @@ static void clear_receive_frame(
 	memset(receiver->payload, 0, sizeof(receiver->payload));
 	receiver->payload_bit_index = 0;
 	receiver->crc =
-		SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER;
+		CRC16_CCITT_FALSE_INITIAL_REMAINDER;
 	receiver->received_crc = 0;
 	receiver->crc_bit_count = 0;
 	receiver->trailing_fill_bit_count = 0;
@@ -366,7 +366,7 @@ v34_phase2_info_receive_bit(
 	case V34_PHASE2_INFO_RECEIVE_PAYLOAD:
 		set_packed_bit(next.payload, next.payload_bit_index, bit);
 		next.payload_bit_index++;
-		next.crc = sippymodem_crc16_ccitt_false_step(
+		next.crc = crc16_ccitt_false_step(
 			next.crc, bit != 0);
 		if (next.payload_bit_index ==
 		    next.expected_payload_bit_count)

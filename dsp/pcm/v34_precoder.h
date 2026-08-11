@@ -102,9 +102,9 @@ enum v34_precoder_result v34_precoder_step(
 enum v34_precoder_result
 v34_precoder_reconstruct_interval(
 	struct v34_precoder *receive_history,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		precoded_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	struct sippymodem_qam_point
+	struct qam_point
 		channel_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL]);
 
 /* Invert one exact, survivor-selected odd-grid channel point y(n). This is a

@@ -60,7 +60,7 @@ static bool completed_e_fixture(
 		mp_parameters_fixture();
 	struct v34_phase4_trn trn;
 	struct v34_phase4_mp mp;
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
 	bool record_complete;

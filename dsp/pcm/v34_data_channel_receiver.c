@@ -128,16 +128,16 @@ static enum v34_data_channel_receiver_result data_result(
 enum v34_data_channel_receiver_result
 v34_data_channel_receiver_advance(
 	struct v34_data_channel_receiver *receiver,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_survivor_decision *current,
-	struct sippymodem_qam_point
+	struct qam_point
 		decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_received_mapping_frame *received)
 {
 	struct v34_data_channel_receiver next;
 	struct v34_survivor_decision generated_current;
-	struct sippymodem_qam_point generated_targets
+	struct qam_point generated_targets
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_decided_4d_interval decided
 		[V34_4D_INTERVALS_PER_MAPPING_FRAME];

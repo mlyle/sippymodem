@@ -16,7 +16,7 @@ static bool nearly_equal(double actual, long double expected)
 	return fabsl((long double)actual - expected) <= 2e-14L * scale;
 }
 
-static struct sippymodem_qam_point reference_projection(
+static struct qam_point reference_projection(
 	const struct v34_q7_point *input,
 	double mean_squared_magnitude)
 {
@@ -31,7 +31,7 @@ static struct sippymodem_qam_point reference_projection(
 	long double projection =
 		1.0L + zeta / 6.0L + zeta * zeta / 120.0L;
 
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = (double)(in_phase * projection),
 		.quadrature = (double)(quadrature * projection),
 	};
@@ -53,11 +53,11 @@ static bool test_normative_projection(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct sippymodem_qam_point expected = reference_projection(
+		struct qam_point expected = reference_projection(
 			&cases[index].input,
 			cases[index].mean_squared_magnitude);
-		struct sippymodem_qam_point actual;
-		struct sippymodem_qam_point unprojected;
+		struct qam_point actual;
+		struct qam_point unprojected;
 		double projected_power;
 		long double expected_power =
 			(long double)expected.in_phase * expected.in_phase +
@@ -104,8 +104,8 @@ static bool test_disabled_projection(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(inputs); ++index) {
-		struct sippymodem_qam_point output;
-		struct sippymodem_qam_point unprojected;
+		struct qam_point output;
+		struct qam_point unprojected;
 		double in_phase = (double)inputs[index].in_phase /
 			V34_Q7_SCALE;
 		double quadrature = (double)inputs[index].quadrature /
@@ -167,11 +167,11 @@ static bool test_generated_sweep(void)
 					(int32_t)(next_random(&random) % 65281u) -
 					32768,
 			};
-			struct sippymodem_qam_point expected =
+			struct qam_point expected =
 				reference_projection(
 					&input, MEAN_ENERGIES[energy_index]);
-			struct sippymodem_qam_point actual;
-			struct sippymodem_qam_point unprojected;
+			struct qam_point actual;
+			struct qam_point unprojected;
 			double in_phase = (double)input.in_phase /
 				V34_Q7_SCALE;
 			double quadrature = (double)input.quadrature /
@@ -226,7 +226,7 @@ static bool test_generated_sweep(void)
 	return true;
 }
 
-static double point_log_power(const struct sippymodem_qam_point *point)
+static double point_log_power(const struct qam_point *point)
 {
 	double maximum_axis = fmax(fabs(point->in_phase),
 				   fabs(point->quadrature));
@@ -252,7 +252,7 @@ static double reference_log_projection_factor(double zeta)
 static bool test_inverse_dynamic_range(void)
 {
 	static const struct {
-		struct sippymodem_qam_point projected;
+		struct qam_point projected;
 		double mean_squared_magnitude;
 	} cases[] = {
 		{ { DBL_MIN, -DBL_MIN }, DBL_MAX },
@@ -263,7 +263,7 @@ static bool test_inverse_dynamic_range(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct sippymodem_qam_point unprojected;
+		struct qam_point unprojected;
 		double projected_log_power =
 			point_log_power(&cases[index].projected);
 		double unprojected_log_power;
@@ -314,9 +314,9 @@ static bool test_inverse_dynamic_range(void)
 static bool test_validation(void)
 {
 	const struct v34_q7_point input = { INT32_MAX, INT32_MAX };
-	struct sippymodem_qam_point output = { 123.0, -456.0 };
-	const struct sippymodem_qam_point saved = output;
-	struct sippymodem_qam_point projected = { 1.0, -2.0 };
+	struct qam_point output = { 123.0, -456.0 };
+	const struct qam_point saved = output;
+	struct qam_point projected = { 1.0, -2.0 };
 	double projected_power = 789.0;
 
 	CHECK(v34_nonlinear_parameter_is_valid(
@@ -409,11 +409,11 @@ static bool test_validation(void)
 		      V34_NONLINEAR_INVALID_ARGUMENT &&
 	      v34_nonlinear_unproject(
 		      V34_NONLINEAR_THETA_5_OVER_16, 1.0,
-		      &(struct sippymodem_qam_point){ NAN, 0.0 }, &output) ==
+		      &(struct qam_point){ NAN, 0.0 }, &output) ==
 		      V34_NONLINEAR_INVALID_ARGUMENT &&
 	      v34_nonlinear_unproject(
 		      V34_NONLINEAR_THETA_5_OVER_16, 1.0,
-		      &(struct sippymodem_qam_point){ 0.0, INFINITY },
+		      &(struct qam_point){ 0.0, INFINITY },
 		      &output) == V34_NONLINEAR_INVALID_ARGUMENT &&
 	      v34_nonlinear_unproject(
 		      V34_NONLINEAR_THETA_ZERO, 1.0, NULL,

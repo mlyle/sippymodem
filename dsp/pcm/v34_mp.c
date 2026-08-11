@@ -141,11 +141,11 @@ static bool is_start_bit(size_t bit_index)
 static uint16_t frame_crc(const uint8_t *frame, size_t crc_first_bit)
 {
 	uint16_t remainder =
-		SIPPYMODEM_CRC16_CCITT_FALSE_INITIAL_REMAINDER;
+		CRC16_CCITT_FALSE_INITIAL_REMAINDER;
 
 	for (size_t index = V34_MP_TYPE_BIT; index < crc_first_bit; ++index) {
 		if (!is_start_bit(index))
-			remainder = sippymodem_crc16_ccitt_false_step(
+			remainder = crc16_ccitt_false_step(
 				remainder, frame_bit(frame, index) != 0);
 	}
 	return remainder;

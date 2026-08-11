@@ -71,7 +71,7 @@ static uint8_t reference_mapped_ones(struct reference_mapper *mapper)
 	return (uint8_t)((second << 1) | first);
 }
 
-static struct sippymodem_qam_point reference_point(
+static struct qam_point reference_point(
 	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
@@ -87,15 +87,15 @@ static struct sippymodem_qam_point reference_point(
 		in_phase = quadrature;
 		quadrature = -saved_in_phase;
 	}
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = in_phase * unit,
 		.quadrature = quadrature * unit,
 	};
 }
 
 static bool points_are_close(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
 	return fabs(left->in_phase - right->in_phase) < TEST_TOLERANCE &&
 	       fabs(left->quadrature - right->quadrature) < TEST_TOLERANCE;
@@ -115,7 +115,7 @@ static bool generate_completed_mp(
 		      V34_PHASE4_TRN_OK,
 	      "E fixture TRN did not initialize");
 	for (size_t symbol = 0; symbol < TRN_PREFIX_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 
@@ -129,7 +129,7 @@ static bool generate_completed_mp(
 		      V34_PHASE4_MP_OK,
 	      "E fixture MP did not initialize");
 	while (!v34_phase4_mp_record_is_complete(mp)) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 		bool complete;
@@ -172,8 +172,8 @@ static bool verify_sequence(
 			(reference->previous_clockwise_quarter_turns + increment) &
 			3u);
 		uint8_t quarter = 0;
-		struct sippymodem_qam_point expected;
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
+		struct qam_point expected;
+		struct qam_point point = { 7.0, -9.0 };
 		uint8_t emitted_quarter = UINT8_MAX;
 		uint8_t emitted_rotation = UINT8_MAX;
 
@@ -202,7 +202,7 @@ static bool verify_sequence(
 	}
 	{
 		struct v34_phase4_e_sequence saved = *sequence;
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
+		struct qam_point point = { 7.0, -9.0 };
 		uint8_t quarter = UINT8_MAX;
 		uint8_t rotation = UINT8_MAX;
 
@@ -285,7 +285,7 @@ static bool test_copy_behavior(void)
 		      V34_PHASE4_E_SEQUENCE_OK,
 	      "E copy fixture did not initialize");
 	{
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 
@@ -296,8 +296,8 @@ static bool test_copy_behavior(void)
 	}
 	copy = original;
 	while (!v34_phase4_e_sequence_is_complete(&original)) {
-		struct sippymodem_qam_point original_point;
-		struct sippymodem_qam_point copied_point;
+		struct qam_point original_point;
+		struct qam_point copied_point;
 		uint8_t original_quarter;
 		uint8_t copied_quarter;
 		uint8_t original_rotation;
@@ -335,7 +335,7 @@ static bool test_validation(void)
 		.emitted_bits = 4,
 	};
 	struct v34_phase4_e_sequence saved = sequence;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
+	struct qam_point point = { 7.0, -9.0 };
 	uint8_t quarter = UINT8_MAX;
 	uint8_t rotation = UINT8_MAX;
 

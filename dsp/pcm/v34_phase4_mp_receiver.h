@@ -49,7 +49,7 @@ v34_phase4_mp_receive_decision(
 enum v34_phase4_mp_receiver_result
 v34_phase4_mp_receive_point(
 	struct v34_phase4_mp_receiver *receiver,
-	const struct sippymodem_qam_point *point,
+	const struct qam_point *point,
 	struct v34_mp_receive_event *event);
 
 const char *v34_phase4_mp_receiver_result_name(

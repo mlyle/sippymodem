@@ -24,9 +24,9 @@ enum {
 
 static const double TEST_PI = 3.1415926535897932384626433832795;
 
-static struct sippymodem_qam_channel v22_channel(uint32_t carrier_hz)
+static struct qam_channel v22_channel(uint32_t carrier_hz)
 {
-	return (struct sippymodem_qam_channel){
+	return (struct qam_channel){
 		.sample_rate = TEST_SAMPLE_RATE,
 		.symbol_rate_numerator = TEST_SYMBOL_RATE,
 		.symbol_rate_denominator = 1,
@@ -37,26 +37,26 @@ static struct sippymodem_qam_channel v22_channel(uint32_t carrier_hz)
 	};
 }
 
-static struct sippymodem_qam_point quadrant_point(
+static struct qam_point quadrant_point(
 	uint8_t quadrant, double magnitude)
 {
 	switch (quadrant & 3u) {
 	case 0:
-		return (struct sippymodem_qam_point){ magnitude, 0.0 };
+		return (struct qam_point){ magnitude, 0.0 };
 	case 1:
-		return (struct sippymodem_qam_point){ 0.0, magnitude };
+		return (struct qam_point){ 0.0, magnitude };
 	case 2:
-		return (struct sippymodem_qam_point){ -magnitude, 0.0 };
+		return (struct qam_point){ -magnitude, 0.0 };
 	default:
-		return (struct sippymodem_qam_point){ 0.0, -magnitude };
+		return (struct qam_point){ 0.0, -magnitude };
 	}
 }
 
-static struct sippymodem_qam_point complex_product(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+static struct qam_point complex_product(
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = left->in_phase * right->in_phase -
 			    left->quadrature * right->quadrature,
 		.quadrature = left->in_phase * right->quadrature +
@@ -65,8 +65,8 @@ static struct sippymodem_qam_point complex_product(
 }
 
 static bool points_are_close(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
 	return fabs(left->in_phase - right->in_phase) < 1e-12 &&
 	       fabs(left->quadrature - right->quadrature) < 1e-12;
@@ -74,12 +74,12 @@ static bool points_are_close(
 
 static bool test_flat_gain_round_trip(void)
 {
-	static const struct sippymodem_qam_point gains[] = {
+	static const struct qam_point gains[] = {
 		{ 1.0, 0.0 },
 		{ 0.7, -0.3 },
 		{ -1.2, 0.4 },
 	};
-	static const struct sippymodem_qam_point transmitted[] = {
+	static const struct qam_point transmitted[] = {
 		{ 0.4, 0.2 },
 		{ -0.7, 0.1 },
 		{ 0.25, -0.8 },
@@ -87,30 +87,30 @@ static bool test_flat_gain_round_trip(void)
 	};
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(gains); ++fixture) {
-		struct sippymodem_qam_gain tracker;
-		struct sippymodem_qam_point reference = complex_product(
+		struct qam_gain tracker;
+		struct qam_point reference = complex_product(
 			&gains[fixture], &transmitted[0]);
 
-		CHECK(sippymodem_qam_gain_init_from_reference(
+		CHECK(qam_gain_init_from_reference(
 			      &tracker, &reference, &transmitted[0], 0.125) ==
-			      SIPPYMODEM_QAM_GAIN_OK &&
-		      sippymodem_qam_gain_is_valid(&tracker) &&
+			      QAM_GAIN_OK &&
+		      qam_gain_is_valid(&tracker) &&
 		      points_are_close(&tracker.channel_gain, &gains[fixture]),
 		      "QAM gain fixture %zu did not initialize", fixture);
 		for (size_t point = 0; point < ARRAY_LENGTH(transmitted);
 		     ++point) {
-			struct sippymodem_qam_point expected = complex_product(
+			struct qam_point expected = complex_product(
 				&gains[fixture], &transmitted[point]);
-			struct sippymodem_qam_point predicted;
-			struct sippymodem_qam_point equalized;
+			struct qam_point predicted;
+			struct qam_point equalized;
 
-			CHECK(sippymodem_qam_gain_predict(
+			CHECK(qam_gain_predict(
 				      &tracker, &transmitted[point], &predicted) ==
-				      SIPPYMODEM_QAM_GAIN_OK &&
+				      QAM_GAIN_OK &&
 			      points_are_close(&predicted, &expected) &&
-			      sippymodem_qam_gain_equalize(
+			      qam_gain_equalize(
 				      &tracker, &predicted, &equalized) ==
-				      SIPPYMODEM_QAM_GAIN_OK &&
+				      QAM_GAIN_OK &&
 			      points_are_close(
 				      &equalized, &transmitted[point]),
 			      "QAM gain fixture %zu changed point %zu", fixture,
@@ -122,45 +122,45 @@ static bool test_flat_gain_round_trip(void)
 
 static bool test_flat_gain_adaptation(void)
 {
-	static const struct sippymodem_qam_point transmitted[] = {
+	static const struct qam_point transmitted[] = {
 		{ 0.5, 0.25 },
 		{ -0.75, 0.5 },
 		{ 0.4, -0.9 },
 	};
-	const struct sippymodem_qam_point initial = { 1.0, 0.0 };
-	const struct sippymodem_qam_point actual = { 0.65, -0.35 };
-	struct sippymodem_qam_point expected = initial;
-	struct sippymodem_qam_gain tracker;
+	const struct qam_point initial = { 1.0, 0.0 };
+	const struct qam_point actual = { 0.65, -0.35 };
+	struct qam_point expected = initial;
+	struct qam_gain tracker;
 
-	CHECK(sippymodem_qam_gain_init(&tracker, &initial, 0.25) ==
-		      SIPPYMODEM_QAM_GAIN_OK,
+	CHECK(qam_gain_init(&tracker, &initial, 0.25) ==
+		      QAM_GAIN_OK,
 	      "QAM gain adaptation did not initialize");
 	for (size_t update = 0; update < 24; ++update) {
-		const struct sippymodem_qam_point *sent =
+		const struct qam_point *sent =
 			&transmitted[update % ARRAY_LENGTH(transmitted)];
-		struct sippymodem_qam_point received =
+		struct qam_point received =
 			complex_product(&actual, sent);
 
 		expected.in_phase +=
 			(actual.in_phase - expected.in_phase) * 0.25;
 		expected.quadrature +=
 			(actual.quadrature - expected.quadrature) * 0.25;
-		CHECK(sippymodem_qam_gain_track(
+		CHECK(qam_gain_track(
 			      &tracker, &received, sent) ==
-			      SIPPYMODEM_QAM_GAIN_OK &&
+			      QAM_GAIN_OK &&
 		      points_are_close(&tracker.channel_gain, &expected),
 		      "QAM gain adaptation changed update %zu", update);
 	}
 	{
-		struct sippymodem_qam_gain frozen;
-		struct sippymodem_qam_point received =
+		struct qam_gain frozen;
+		struct qam_point received =
 			complex_product(&actual, &transmitted[0]);
 
-		CHECK(sippymodem_qam_gain_init(&frozen, &initial, 0.0) ==
-			      SIPPYMODEM_QAM_GAIN_OK &&
-		      sippymodem_qam_gain_track(
+		CHECK(qam_gain_init(&frozen, &initial, 0.0) ==
+			      QAM_GAIN_OK &&
+		      qam_gain_track(
 			      &frozen, &received, &transmitted[0]) ==
-			      SIPPYMODEM_QAM_GAIN_OK &&
+			      QAM_GAIN_OK &&
 		      points_are_close(&frozen.channel_gain, &initial),
 		      "zero QAM gain adaptation changed its estimate");
 	}
@@ -169,72 +169,72 @@ static bool test_flat_gain_adaptation(void)
 
 static bool test_flat_gain_validation(void)
 {
-	struct sippymodem_qam_gain tracker;
-	struct sippymodem_qam_gain saved;
-	struct sippymodem_qam_point gain = { 0.8, -0.2 };
-	struct sippymodem_qam_point zero = { 0 };
-	struct sippymodem_qam_point invalid = { NAN, 0.0 };
-	struct sippymodem_qam_point output = { 7.0, -9.0 };
-	struct sippymodem_qam_point saved_output = output;
+	struct qam_gain tracker;
+	struct qam_gain saved;
+	struct qam_point gain = { 0.8, -0.2 };
+	struct qam_point zero = { 0 };
+	struct qam_point invalid = { NAN, 0.0 };
+	struct qam_point output = { 7.0, -9.0 };
+	struct qam_point saved_output = output;
 
 	memset(&tracker, 0xa5, sizeof(tracker));
 	saved = tracker;
-	CHECK(sippymodem_qam_gain_init(NULL, &gain, 0.5) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_init(&tracker, NULL, 0.5) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_init(&tracker, &zero, 0.5) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_init(&tracker, &invalid, 0.5) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_init(&tracker, &gain, -0.1) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_init(&tracker, &gain, 1.1) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_init_from_reference(
+	CHECK(qam_gain_init(NULL, &gain, 0.5) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_init(&tracker, NULL, 0.5) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_init(&tracker, &zero, 0.5) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_init(&tracker, &invalid, 0.5) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_init(&tracker, &gain, -0.1) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_init(&tracker, &gain, 1.1) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_init_from_reference(
 		      &tracker, &gain, &zero, 0.5) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+		      QAM_GAIN_INVALID_ARGUMENT &&
 	      memcmp(&tracker, &saved, sizeof(tracker)) == 0,
 	      "invalid QAM gain initialization changed state");
-	CHECK(sippymodem_qam_gain_init(&tracker, &gain, 0.5) ==
-		      SIPPYMODEM_QAM_GAIN_OK &&
-	      sippymodem_qam_gain_is_valid(&tracker) &&
-	      !sippymodem_qam_gain_is_valid(NULL),
+	CHECK(qam_gain_init(&tracker, &gain, 0.5) ==
+		      QAM_GAIN_OK &&
+	      qam_gain_is_valid(&tracker) &&
+	      !qam_gain_is_valid(NULL),
 	      "QAM gain validation fixture did not initialize");
 	saved = tracker;
-	CHECK(sippymodem_qam_gain_predict(NULL, &gain, &output) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_predict(&tracker, &invalid, &output) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_predict(&tracker, &gain, NULL) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_equalize(&tracker, &invalid, &output) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_equalize(&tracker, &gain, NULL) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_track(NULL, &gain, &gain) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_track(&tracker, &zero, &gain) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_track(&tracker, &invalid, &gain) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
-	      sippymodem_qam_gain_track(&tracker, &gain, &zero) ==
-		      SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT &&
+	CHECK(qam_gain_predict(NULL, &gain, &output) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_predict(&tracker, &invalid, &output) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_predict(&tracker, &gain, NULL) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_equalize(&tracker, &invalid, &output) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_equalize(&tracker, &gain, NULL) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_track(NULL, &gain, &gain) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_track(&tracker, &zero, &gain) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_track(&tracker, &invalid, &gain) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_track(&tracker, &gain, &zero) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
 	      memcmp(&tracker, &saved, sizeof(tracker)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "invalid QAM gain operation changed state or output");
 	tracker = saved;
 	tracker.channel_gain = zero;
-	CHECK(!sippymodem_qam_gain_is_valid(&tracker),
+	CHECK(!qam_gain_is_valid(&tracker),
 	      "QAM gain accepted a zero estimate");
 	tracker = saved;
 	tracker.adaptation = NAN;
-	CHECK(!sippymodem_qam_gain_is_valid(&tracker) &&
-	      strcmp(sippymodem_qam_gain_result_name(
-		     SIPPYMODEM_QAM_GAIN_INVALID_ARGUMENT),
+	CHECK(!qam_gain_is_valid(&tracker) &&
+	      strcmp(qam_gain_result_name(
+		     QAM_GAIN_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_qam_gain_result_name(
-		     (enum sippymodem_qam_gain_result)2),
+	      strcmp(qam_gain_result_name(
+		     (enum qam_gain_result)2),
 		     "unknown") == 0,
 	      "QAM gain accepted corrupt state or changed result names");
 	return true;
@@ -248,19 +248,19 @@ static bool test_generated_pulse(void)
 	double ordinary = 0.0;
 	double expected_zero = 1.0 + 0.75 * (4.0 / TEST_PI - 1.0);
 
-	CHECK(sippymodem_root_raised_cosine(0.0, 0.75, &at_zero) ==
-		      SIPPYMODEM_QAM_OK &&
+	CHECK(root_raised_cosine(0.0, 0.75, &at_zero) ==
+		      QAM_OK &&
 		      fabs(at_zero - expected_zero) < 1e-12,
 	      "QAM pulse changed its zero-time limit");
-	CHECK(sippymodem_root_raised_cosine(
+	CHECK(root_raised_cosine(
 		      1.0 / 3.0, 0.75, &at_singularity) ==
-		      SIPPYMODEM_QAM_OK &&
+		      QAM_OK &&
 		      isfinite(at_singularity),
 	      "QAM pulse did not handle its removable singularity");
-	CHECK(sippymodem_root_raised_cosine(0.625, 0.75, &ordinary) ==
-		      SIPPYMODEM_QAM_OK &&
-		      sippymodem_root_raised_cosine(-0.625, 0.75, &reflected) ==
-			      SIPPYMODEM_QAM_OK &&
+	CHECK(root_raised_cosine(0.625, 0.75, &ordinary) ==
+		      QAM_OK &&
+		      root_raised_cosine(-0.625, 0.75, &reflected) ==
+			      QAM_OK &&
 		      fabs(ordinary - reflected) < 1e-12,
 	      "QAM pulse lost even symmetry");
 	return true;
@@ -268,26 +268,26 @@ static bool test_generated_pulse(void)
 
 static bool test_exact_symbol_clock(void)
 {
-	struct sippymodem_qam_channel channel = v22_channel(1200);
-	struct sippymodem_qam_modulator modulator;
+	struct qam_channel channel = v22_channel(1200);
+	struct qam_modulator modulator;
 	unsigned int accepted_count = 0;
 	int16_t peak = 0;
 
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK &&
-		      sippymodem_qam_modulator_can_accept_symbol(&modulator),
+		      QAM_OK &&
+		      qam_modulator_can_accept_symbol(&modulator),
 	      "QAM symbol-clock fixture did not initialize");
 	for (unsigned int index = 0; index < TEST_SAMPLE_RATE; ++index) {
-		struct sippymodem_qam_point point = quadrant_point(
+		struct qam_point point = quadrant_point(
 			(uint8_t)(accepted_count & 3u),
 			(double)(accepted_count % 4u + 1u) / 4.0);
 		int16_t sample;
 		bool accepted;
 
-		CHECK(sippymodem_qam_modulator_sample(
+		CHECK(qam_modulator_sample(
 			      &modulator, &point,
-			      &sample, &accepted) == SIPPYMODEM_QAM_OK &&
+			      &sample, &accepted) == QAM_OK &&
 			      sample >= -TEST_AMPLITUDE &&
 			      sample <= TEST_AMPLITUDE,
 		      "QAM modulator exceeded its waveform bound");
@@ -298,7 +298,7 @@ static bool test_exact_symbol_clock(void)
 	}
 	CHECK(accepted_count == TEST_SYMBOL_RATE &&
 		      modulator.symbol_phase_units == 0 &&
-		      sippymodem_qam_modulator_can_accept_symbol(&modulator) &&
+		      qam_modulator_can_accept_symbol(&modulator) &&
 		      peak > TEST_AMPLITUDE / 8,
 	      "QAM rational symbol clock drifted over one second");
 	return true;
@@ -306,10 +306,10 @@ static bool test_exact_symbol_clock(void)
 
 static bool test_exact_carrier_clock(void)
 {
-	struct sippymodem_qam_channel channel = v22_channel(1);
-	struct sippymodem_qam_modulator modulator;
-	struct sippymodem_qam_demodulator demodulator;
-	const struct sippymodem_qam_point point = { 1.0, 0.0 };
+	struct qam_channel channel = v22_channel(1);
+	struct qam_modulator modulator;
+	struct qam_demodulator demodulator;
+	const struct qam_point point = { 1.0, 0.0 };
 	const uint32_t carrier_numerator = 96000;
 	const uint32_t carrier_denominator = 49;
 	uint64_t phase_numerator = (uint64_t)carrier_numerator << 32;
@@ -320,11 +320,11 @@ static bool test_exact_carrier_clock(void)
 
 	channel.carrier_frequency_numerator = carrier_numerator;
 	channel.carrier_frequency_denominator = carrier_denominator;
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK &&
-		      sippymodem_qam_demodulator_init(&demodulator, &channel) ==
-			      SIPPYMODEM_QAM_OK &&
+		      QAM_OK &&
+		      qam_demodulator_init(&demodulator, &channel) ==
+			      QAM_OK &&
 		      modulator.carrier_phase_step ==
 			      demodulator.carrier_phase_step,
 	      "QAM fractional-carrier endpoints did not initialize");
@@ -335,17 +335,17 @@ static bool test_exact_carrier_clock(void)
 	CHECK(error * 2u <= phase_denominator,
 	      "QAM fractional carrier was not rounded to the nearest phase step");
 	for (unsigned int index = 0; index < carrier_denominator; ++index) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		int16_t sample;
 		bool accepted;
 		bool ready;
 
-		CHECK(sippymodem_qam_modulator_sample(
+		CHECK(qam_modulator_sample(
 			      &modulator, &point, &sample, &accepted) ==
-			      SIPPYMODEM_QAM_OK &&
-		      sippymodem_qam_demodulator_sample(
+			      QAM_OK &&
+		      qam_demodulator_sample(
 			      &demodulator, sample, &received, &ready) ==
-			      SIPPYMODEM_QAM_OK,
+			      QAM_OK,
 		      "QAM fractional carrier failed at sample %u", index);
 	}
 	CHECK(modulator.carrier_phase == demodulator.carrier_phase &&
@@ -372,21 +372,21 @@ static double tone_projection(
 
 static bool check_carrier(uint32_t carrier_hz, uint32_t reject_hz)
 {
-	struct sippymodem_qam_channel channel = v22_channel(carrier_hz);
-	struct sippymodem_qam_modulator modulator;
-	const struct sippymodem_qam_point point = { 1.0, 0.0 };
+	struct qam_channel channel = v22_channel(carrier_hz);
+	struct qam_modulator modulator;
+	const struct qam_point point = { 1.0, 0.0 };
 	int16_t samples[TEST_SAMPLE_RATE];
 
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK,
+		      QAM_OK,
 	      "QAM carrier fixture did not initialize");
 	for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index) {
 		bool accepted;
 
-		CHECK(sippymodem_qam_modulator_sample(
+		CHECK(qam_modulator_sample(
 			      &modulator, &point, &samples[index], &accepted) ==
-			      SIPPYMODEM_QAM_OK,
+			      QAM_OK,
 		      "QAM carrier fixture failed at sample %zu", index);
 	}
 	CHECK(tone_projection(samples + TEST_SAMPLE_RATE / 4,
@@ -404,20 +404,20 @@ static bool test_channel_carriers(void)
 
 static bool test_floating_transmit_path(void)
 {
-	struct sippymodem_qam_channel channel = v22_channel(1200);
-	struct sippymodem_qam_modulator floating;
-	struct sippymodem_qam_modulator integer;
+	struct qam_channel channel = v22_channel(1200);
+	struct qam_modulator floating;
+	struct qam_modulator integer;
 	unsigned int accepted_count = 0;
 
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &floating, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK &&
-	      sippymodem_qam_modulator_init(
+		      QAM_OK &&
+	      qam_modulator_init(
 		      &integer, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK,
+		      QAM_OK,
 	      "QAM floating transmit fixtures did not initialize");
 	for (unsigned int index = 0; index < 1000; ++index) {
-		struct sippymodem_qam_point point = quadrant_point(
+		struct qam_point point = quadrant_point(
 			(uint8_t)(accepted_count & 3u),
 			(double)(accepted_count % 4u + 1u) / 4.0);
 		double floating_sample;
@@ -426,12 +426,12 @@ static bool test_floating_transmit_path(void)
 		bool floating_accepted;
 		bool integer_accepted;
 
-		CHECK(sippymodem_qam_modulator_sample_f64(
+		CHECK(qam_modulator_sample_f64(
 			      &floating, &point, &floating_sample,
-			      &floating_accepted) == SIPPYMODEM_QAM_OK &&
-		      sippymodem_qam_modulator_sample(
+			      &floating_accepted) == QAM_OK &&
+		      qam_modulator_sample(
 			      &integer, &point, &integer_sample,
-			      &integer_accepted) == SIPPYMODEM_QAM_OK &&
+			      &integer_accepted) == QAM_OK &&
 		      isfinite(floating_sample) &&
 		      floating_accepted == integer_accepted &&
 		      memcmp(&floating, &integer, sizeof(floating)) == 0,
@@ -500,17 +500,17 @@ static bool check_receive_loopback(
 	double rolloff, unsigned int leading_silence, bool impaired,
 	size_t symbol_count, size_t sync_symbols, size_t payload_symbols)
 {
-	struct sippymodem_qam_channel transmit_channel =
+	struct qam_channel transmit_channel =
 		v22_channel(transmit_carrier_hz);
-	struct sippymodem_qam_channel receive_channel =
+	struct qam_channel receive_channel =
 		v22_channel(receive_carrier_hz);
-	struct sippymodem_qam_modulator modulator;
-	struct sippymodem_qam_demodulator demodulator;
-	struct sippymodem_qam_measurement measurement;
+	struct qam_modulator modulator;
+	struct qam_demodulator demodulator;
+	struct qam_measurement measurement;
 	uint8_t changes[TRACKING_SYMBOL_COUNT];
 	uint8_t decoded[TRACKING_DECODED_CAPACITY];
 	uint32_t random = UINT32_C(0x912ca775);
-	struct sippymodem_qam_point previous_point = { 0 };
+	struct qam_point previous_point = { 0 };
 	uint8_t quadrant = 0;
 	size_t accepted = 0;
 	size_t decoded_count = 0;
@@ -531,28 +531,28 @@ static bool check_receive_loopback(
 	transmit_channel.rolloff = rolloff;
 	receive_channel.rolloff = rolloff;
 	build_phase_changes(changes, symbol_count);
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &transmit_channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK &&
-		      sippymodem_qam_demodulator_init(
+		      QAM_OK &&
+		      qam_demodulator_init(
 			      &demodulator, &receive_channel) ==
-			      SIPPYMODEM_QAM_OK,
+			      QAM_OK,
 	      "QAM receive-loopback endpoints did not initialize");
 	for (size_t sample_index = 0; sample_index < sample_limit;
 	     ++sample_index) {
-		struct sippymodem_qam_point received_point;
+		struct qam_point received_point;
 		int16_t sample = 0;
 		bool ready;
 
 		if (sample_index >= leading_silence) {
-			struct sippymodem_qam_point transmit_point = quadrant_point(
+			struct qam_point transmit_point = quadrant_point(
 				quadrant,
 				0.55 + 0.15 * (double)(accepted % 4u));
 			bool symbol_accepted;
 
-			CHECK(sippymodem_qam_modulator_sample(
+			CHECK(qam_modulator_sample(
 				      &modulator, &transmit_point, &sample,
-				      &symbol_accepted) == SIPPYMODEM_QAM_OK,
+				      &symbol_accepted) == QAM_OK,
 			      "QAM loopback modulator failed");
 			if (symbol_accepted && accepted < symbol_count) {
 				quadrant =
@@ -561,9 +561,9 @@ static bool check_receive_loopback(
 			}
 		}
 		sample = impair_sample(sample, impaired, &random);
-		CHECK(sippymodem_qam_demodulator_sample(
+		CHECK(qam_demodulator_sample(
 			      &demodulator, sample, &received_point, &ready) ==
-			      SIPPYMODEM_QAM_OK,
+			      QAM_OK,
 		      "QAM loopback demodulator failed");
 		if (ready) {
 			uint8_t quarter_turns;
@@ -574,9 +574,9 @@ static bool check_receive_loopback(
 			if (has_previous_point) {
 				CHECK(decoded_count < ARRAY_LENGTH(decoded),
 				      "QAM loopback produced unbounded symbols");
-				CHECK(sippymodem_qam_nearest_quarter_turn(
+				CHECK(qam_nearest_quarter_turn(
 					      &previous_point, &received_point,
-					      &quarter_turns) == SIPPYMODEM_QAM_OK,
+					      &quarter_turns) == QAM_OK,
 				      "QAM loopback phase decision failed");
 				decoded[decoded_count++] = quarter_turns;
 			}
@@ -608,7 +608,7 @@ static bool check_receive_loopback(
 	      "(%u/%u symbols, decoded=%zu, sync=%zu, errors=%zu)",
 	      transmit_symbol_rate, receive_symbol_rate, decoded_count,
 	      sync_offset, payload_errors);
-	measurement = sippymodem_qam_demodulator_measure(&demodulator);
+	measurement = qam_demodulator_measure(&demodulator);
 	CHECK(measurement.timing_locked && measurement.line_power > 1.0 &&
 		      measurement.symbol_power > 1.0,
 	      "QAM receiver did not retain carrier measurements");
@@ -657,95 +657,95 @@ static bool test_receive_clock_tracking(void)
 
 static bool test_silence_does_not_lock(void)
 {
-	struct sippymodem_qam_channel channel = v22_channel(1200);
-	struct sippymodem_qam_demodulator demodulator;
+	struct qam_channel channel = v22_channel(1200);
+	struct qam_demodulator demodulator;
 
-	CHECK(sippymodem_qam_demodulator_init(&demodulator, &channel) ==
-		      SIPPYMODEM_QAM_OK,
+	CHECK(qam_demodulator_init(&demodulator, &channel) ==
+		      QAM_OK,
 	      "QAM silence fixture did not initialize");
 	for (unsigned int index = 0; index < TEST_SAMPLE_RATE / 2; ++index) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		bool ready;
 
-		CHECK(sippymodem_qam_demodulator_sample(
+		CHECK(qam_demodulator_sample(
 			      &demodulator, 0, &point, &ready) ==
-			      SIPPYMODEM_QAM_OK &&
+			      QAM_OK &&
 			      !ready,
 		      "QAM silence produced a symbol at sample %u", index);
 	}
-	CHECK(!sippymodem_qam_demodulator_measure(&demodulator).timing_locked,
+	CHECK(!qam_demodulator_measure(&demodulator).timing_locked,
 	      "QAM silence produced a timing lock");
 	return true;
 }
 
 static bool test_configurable_point_power(void)
 {
-	struct sippymodem_qam_channel channel = v22_channel(1200);
-	struct sippymodem_qam_modulator bounded;
-	struct sippymodem_qam_modulator wider;
-	struct sippymodem_qam_modulator before;
-	const struct sippymodem_qam_point wider_point = { 1.0, 1.0 };
-	const struct sippymodem_qam_point excessive_point = { 1.0, 1.1 };
+	struct qam_channel channel = v22_channel(1200);
+	struct qam_modulator bounded;
+	struct qam_modulator wider;
+	struct qam_modulator before;
+	const struct qam_point wider_point = { 1.0, 1.0 };
+	const struct qam_point excessive_point = { 1.0, 1.1 };
 	double sample = -99.0;
 	bool accepted = false;
 
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &bounded, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK &&
+		      QAM_OK &&
 		      bounded.maximum_point_power == 9.0 / 5.0 &&
-	      sippymodem_qam_modulator_init_with_point_power_limit(
+	      qam_modulator_init_with_point_power_limit(
 		      &wider, &channel, TEST_AMPLITUDE, 2.0) ==
-		      SIPPYMODEM_QAM_OK &&
+		      QAM_OK &&
 		      wider.maximum_point_power == 2.0,
 	      "QAM did not retain its selected point-power bound");
 	before = bounded;
-	CHECK(sippymodem_qam_modulator_sample_f64(
+	CHECK(qam_modulator_sample_f64(
 		      &bounded, &wider_point, &sample, &accepted) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      QAM_INVALID_ARGUMENT &&
 		      memcmp(&bounded, &before, sizeof(bounded)) == 0 &&
 		      sample == -99.0 && !accepted,
 	      "default QAM bound accepted a wider constellation point");
-	CHECK(sippymodem_qam_modulator_sample_f64(
+	CHECK(qam_modulator_sample_f64(
 		      &wider, &wider_point, &sample, &accepted) ==
-		      SIPPYMODEM_QAM_OK &&
+		      QAM_OK &&
 		      accepted && isfinite(sample),
 	      "explicit QAM bound rejected its boundary point");
 	before = wider;
 	sample = -99.0;
 	accepted = false;
-	CHECK(sippymodem_qam_modulator_sample_f64(
+	CHECK(qam_modulator_sample_f64(
 		      &wider, &excessive_point, &sample, &accepted) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      QAM_INVALID_ARGUMENT &&
 		      memcmp(&wider, &before, sizeof(wider)) == 0 &&
 		      sample == -99.0 && !accepted,
 	      "explicit QAM bound accepted an excessive point");
 	before = wider;
-	CHECK(sippymodem_qam_modulator_init_with_point_power_limit(
+	CHECK(qam_modulator_init_with_point_power_limit(
 		      &wider, &channel, TEST_AMPLITUDE, 0.0) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-	      sippymodem_qam_modulator_init_with_point_power_limit(
+		      QAM_INVALID_ARGUMENT &&
+	      qam_modulator_init_with_point_power_limit(
 		      &wider, &channel, TEST_AMPLITUDE, NAN) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-	      sippymodem_qam_modulator_init_with_point_power_limit(
+		      QAM_INVALID_ARGUMENT &&
+	      qam_modulator_init_with_point_power_limit(
 		      &wider, &channel, TEST_AMPLITUDE, INFINITY) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+		      QAM_INVALID_ARGUMENT &&
 		      memcmp(&wider, &before, sizeof(wider)) == 0,
 	      "invalid QAM point-power limit mutated state");
 	wider.maximum_point_power = NAN;
-	CHECK(!sippymodem_qam_modulator_is_valid(&wider),
+	CHECK(!qam_modulator_is_valid(&wider),
 	      "QAM accepted a corrupt point-power limit");
 	return true;
 }
 
 static bool test_validation(void)
 {
-	struct sippymodem_qam_channel channel = v22_channel(1200);
-	struct sippymodem_qam_modulator modulator;
-	struct sippymodem_qam_demodulator demodulator;
-	struct sippymodem_qam_point point = { 1.0, 0.0 };
-	struct sippymodem_qam_point bounded_point = { sqrt(9.0 / 5.0), 0.0 };
-	struct sippymodem_qam_point invalid_point = { 1.0, 1.0 };
-	struct sippymodem_qam_point received_point;
+	struct qam_channel channel = v22_channel(1200);
+	struct qam_modulator modulator;
+	struct qam_demodulator demodulator;
+	struct qam_point point = { 1.0, 0.0 };
+	struct qam_point bounded_point = { sqrt(9.0 / 5.0), 0.0 };
+	struct qam_point invalid_point = { 1.0, 1.0 };
+	struct qam_point received_point;
 	uint32_t carrier_phase_step;
 	int16_t sample = 0;
 	bool accepted = false;
@@ -753,111 +753,111 @@ static bool test_validation(void)
 	double floating_sample = -99.0;
 	double pulse = 0.0;
 
-	CHECK(sippymodem_root_raised_cosine(0.0, 0.0, &pulse) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      sippymodem_root_raised_cosine(0.0, 0.75, NULL) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      sippymodem_qam_modulator_init(NULL, &channel, 1) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+	CHECK(root_raised_cosine(0.0, 0.0, &pulse) ==
+		      QAM_INVALID_ARGUMENT &&
+		      root_raised_cosine(0.0, 0.75, NULL) ==
+			      QAM_INVALID_ARGUMENT &&
+		      qam_modulator_init(NULL, &channel, 1) ==
+			      QAM_INVALID_ARGUMENT,
 	      "QAM accepted an invalid initialization argument");
 	channel.carrier_frequency_numerator = TEST_SAMPLE_RATE / 2;
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+		      QAM_INVALID_ARGUMENT,
 	      "QAM accepted a carrier at Nyquist");
 	channel = v22_channel(1200);
 	channel.carrier_frequency_denominator = 0;
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+		      QAM_INVALID_ARGUMENT,
 	      "QAM accepted a carrier with no denominator");
 	channel = v22_channel(1200);
-	CHECK(sippymodem_qam_modulator_init(
+	CHECK(qam_modulator_init(
 		      &modulator, &channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_QAM_OK,
+		      QAM_OK,
 	      "QAM corruption fixture did not initialize");
 	carrier_phase_step = modulator.carrier_phase_step;
 	modulator.carrier_phase_step++;
-	CHECK(!sippymodem_qam_modulator_is_valid(&modulator) &&
-		      sippymodem_qam_modulator_sample(
+	CHECK(!qam_modulator_is_valid(&modulator) &&
+		      qam_modulator_sample(
 			      &modulator, &point, &sample, &accepted) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+			      QAM_INVALID_ARGUMENT,
 	      "QAM accepted a carrier phase step inconsistent with its channel");
 	modulator.carrier_phase_step = carrier_phase_step;
-	CHECK(sippymodem_qam_demodulator_init(
-		      &demodulator, &channel) == SIPPYMODEM_QAM_OK &&
-		      sippymodem_qam_demodulator_reset(&demodulator) ==
-			      SIPPYMODEM_QAM_OK,
+	CHECK(qam_demodulator_init(
+		      &demodulator, &channel) == QAM_OK &&
+		      qam_demodulator_reset(&demodulator) ==
+			      QAM_OK,
 		      "QAM demodulator reset rejected valid state");
 	{
 		uint64_t recovery_step = demodulator.recovery_step_units;
 		size_t reference_index = demodulator.timing_reference_index;
 
 		demodulator.recovery_step_units = 0;
-		CHECK(sippymodem_qam_demodulator_sample(
+		CHECK(qam_demodulator_sample(
 			      &demodulator, 0, &received_point, &accepted) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+			      QAM_INVALID_ARGUMENT,
 		      "QAM accepted a corrupt recovery step");
 		demodulator.recovery_step_units = recovery_step;
 		demodulator.timing_reference_index =
 			demodulator.timing_candidate_count;
-		CHECK(sippymodem_qam_demodulator_sample(
+		CHECK(qam_demodulator_sample(
 			      &demodulator, 0, &received_point, &accepted) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+			      QAM_INVALID_ARGUMENT,
 		      "QAM accepted a corrupt timing reference");
 		demodulator.timing_reference_index = reference_index;
 	}
-	CHECK(sippymodem_qam_modulator_sample(
+	CHECK(qam_modulator_sample(
 		      &modulator, &bounded_point, &sample, &accepted) ==
-		      SIPPYMODEM_QAM_OK &&
+		      QAM_OK &&
 		      accepted && sample >= -TEST_AMPLITUDE &&
 		      sample <= TEST_AMPLITUDE,
 	      "QAM rejected a bounded super-unit constellation point");
-	CHECK(sippymodem_qam_modulator_sample(
+	CHECK(qam_modulator_sample(
 		      &modulator, &invalid_point, &sample, &accepted) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-	      sippymodem_qam_modulator_sample(
+		      QAM_INVALID_ARGUMENT &&
+	      qam_modulator_sample(
 			      &modulator, NULL, &sample, &accepted) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+			      QAM_INVALID_ARGUMENT,
 	      "QAM accepted an unbounded constellation point");
 	{
-		struct sippymodem_qam_modulator before = modulator;
+		struct qam_modulator before = modulator;
 
-		CHECK(sippymodem_qam_modulator_sample_f64(
+		CHECK(qam_modulator_sample_f64(
 			      &modulator, &invalid_point, &floating_sample,
 			      &floating_accepted) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      sippymodem_qam_modulator_sample_f64(
+			      QAM_INVALID_ARGUMENT &&
+		      qam_modulator_sample_f64(
 			      &modulator, &point, NULL, &floating_accepted) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      sippymodem_qam_modulator_sample_f64(
+			      QAM_INVALID_ARGUMENT &&
+		      qam_modulator_sample_f64(
 			      &modulator, &point, &floating_sample, NULL) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
+			      QAM_INVALID_ARGUMENT &&
 		      memcmp(&modulator, &before, sizeof(modulator)) == 0 &&
 		      floating_sample == -99.0 && !floating_accepted,
 		      "invalid QAM floating sample mutated state");
 	}
-	modulator.active_count = SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS + 1;
-	CHECK(!sippymodem_qam_modulator_can_accept_symbol(&modulator) &&
-		      sippymodem_qam_modulator_sample(
+	modulator.active_count = QAM_MAX_ACTIVE_SYMBOLS + 1;
+	CHECK(!qam_modulator_can_accept_symbol(&modulator) &&
+		      qam_modulator_sample(
 			      &modulator, &point, &sample, &accepted) ==
-			      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      strcmp(sippymodem_qam_result_name(
-			     SIPPYMODEM_QAM_INVALID_ARGUMENT),
+			      QAM_INVALID_ARGUMENT &&
+		      strcmp(qam_result_name(
+			     QAM_INVALID_ARGUMENT),
 			     "invalid argument") == 0,
 	      "QAM accepted corrupt active-symbol state");
 	demodulator.history_index = demodulator.matched_filter_count;
-	CHECK(sippymodem_qam_demodulator_sample(
+	CHECK(qam_demodulator_sample(
 		      &demodulator, 0, &received_point, &accepted) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT &&
-		      !sippymodem_qam_demodulator_measure(&demodulator)
+		      QAM_INVALID_ARGUMENT &&
+		      !qam_demodulator_measure(&demodulator)
 			       .timing_locked,
 		      "QAM accepted corrupt matched-filter state");
 	demodulator.history_index = 0;
 	demodulator.previous_in_phase = NAN;
-	CHECK(sippymodem_qam_demodulator_sample(
+	CHECK(qam_demodulator_sample(
 		      &demodulator, 0, &received_point, &accepted) ==
-		      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+		      QAM_INVALID_ARGUMENT,
 	      "QAM accepted corrupt interpolation state");
 	return true;
 }

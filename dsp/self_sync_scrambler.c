@@ -4,11 +4,11 @@
 
 #include <stddef.h>
 
-bool sippymodem_self_sync_scrambler_config_is_valid(
-	const struct sippymodem_self_sync_scrambler_config *config)
+bool self_sync_scrambler_config_is_valid(
+	const struct self_sync_scrambler_config *config)
 {
 	return config != NULL && config->history_bits > 0 &&
-	       config->history_bits <= SIPPYMODEM_SELF_SYNC_MAX_HISTORY_BITS &&
+	       config->history_bits <= SELF_SYNC_MAX_HISTORY_BITS &&
 	       config->tap_a_delay > 0 &&
 	       config->tap_a_delay <= config->history_bits &&
 	       config->tap_b_delay > 0 &&
@@ -17,49 +17,49 @@ bool sippymodem_self_sync_scrambler_config_is_valid(
 }
 
 static uint32_t history_mask(
-	const struct sippymodem_self_sync_scrambler_config *config)
+	const struct self_sync_scrambler_config *config)
 {
-	if (config->history_bits == SIPPYMODEM_SELF_SYNC_MAX_HISTORY_BITS)
+	if (config->history_bits == SELF_SYNC_MAX_HISTORY_BITS)
 		return UINT32_MAX;
 	return (UINT32_C(1) << config->history_bits) - 1u;
 }
 
-bool sippymodem_self_sync_scrambler_is_valid(
-	const struct sippymodem_self_sync_scrambler *scrambler,
-	const struct sippymodem_self_sync_scrambler_config *config)
+bool self_sync_scrambler_is_valid(
+	const struct self_sync_scrambler *scrambler,
+	const struct self_sync_scrambler_config *config)
 {
 	return scrambler != NULL &&
-	       sippymodem_self_sync_scrambler_config_is_valid(config) &&
+	       self_sync_scrambler_config_is_valid(config) &&
 	       (scrambler->history & ~history_mask(config)) == 0;
 }
 
-enum sippymodem_self_sync_scrambler_result
-sippymodem_self_sync_scrambler_init(
-	struct sippymodem_self_sync_scrambler *scrambler,
-	const struct sippymodem_self_sync_scrambler_config *config)
+enum self_sync_scrambler_result
+self_sync_scrambler_init(
+	struct self_sync_scrambler *scrambler,
+	const struct self_sync_scrambler_config *config)
 {
 	if (scrambler == NULL ||
-	    !sippymodem_self_sync_scrambler_config_is_valid(config))
-		return SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT;
+	    !self_sync_scrambler_config_is_valid(config))
+		return SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT;
 	scrambler->history = 0;
-	return SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK;
+	return SELF_SYNC_SCRAMBLER_OK;
 }
 
-static enum sippymodem_self_sync_scrambler_result transform_group(
-	struct sippymodem_self_sync_scrambler *state,
-	const struct sippymodem_self_sync_scrambler_config *config,
+static enum self_sync_scrambler_result transform_group(
+	struct self_sync_scrambler *state,
+	const struct self_sync_scrambler_config *config,
 	uint8_t input, unsigned int bit_count, uint8_t *output,
 	bool descramble)
 {
-	struct sippymodem_self_sync_scrambler next;
+	struct self_sync_scrambler next;
 	uint32_t mask;
 	uint8_t transformed = 0;
 
-	if (!sippymodem_self_sync_scrambler_is_valid(state, config) ||
+	if (!self_sync_scrambler_is_valid(state, config) ||
 	    bit_count == 0 ||
-	    bit_count > SIPPYMODEM_SELF_SYNC_MAX_GROUP_BITS ||
+	    bit_count > SELF_SYNC_MAX_GROUP_BITS ||
 	    ((unsigned int)input >> bit_count) != 0 || output == NULL)
-		return SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT;
+		return SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT;
 	next = *state;
 	mask = history_mask(config);
 	for (unsigned int bit = bit_count; bit > 0; --bit) {
@@ -76,36 +76,36 @@ static enum sippymodem_self_sync_scrambler_result transform_group(
 	}
 	*state = next;
 	*output = transformed;
-	return SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK;
+	return SELF_SYNC_SCRAMBLER_OK;
 }
 
-enum sippymodem_self_sync_scrambler_result
-sippymodem_self_sync_scramble_group(
-	struct sippymodem_self_sync_scrambler *scrambler,
-	const struct sippymodem_self_sync_scrambler_config *config,
+enum self_sync_scrambler_result
+self_sync_scramble_group(
+	struct self_sync_scrambler *scrambler,
+	const struct self_sync_scrambler_config *config,
 	uint8_t input, unsigned int bit_count, uint8_t *output)
 {
 	return transform_group(
 		scrambler, config, input, bit_count, output, false);
 }
 
-enum sippymodem_self_sync_scrambler_result
-sippymodem_self_sync_descramble_group(
-	struct sippymodem_self_sync_scrambler *descrambler,
-	const struct sippymodem_self_sync_scrambler_config *config,
+enum self_sync_scrambler_result
+self_sync_descramble_group(
+	struct self_sync_scrambler *descrambler,
+	const struct self_sync_scrambler_config *config,
 	uint8_t input, unsigned int bit_count, uint8_t *output)
 {
 	return transform_group(
 		descrambler, config, input, bit_count, output, true);
 }
 
-const char *sippymodem_self_sync_scrambler_result_name(
-	enum sippymodem_self_sync_scrambler_result result)
+const char *self_sync_scrambler_result_name(
+	enum self_sync_scrambler_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK:
+	case SELF_SYNC_SCRAMBLER_OK:
 		return "ok";
-	case SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT:
+	case SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

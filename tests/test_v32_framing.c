@@ -107,9 +107,9 @@ static bool test_normative_scrambler_starts(void)
 			      sippymodem_v32_trn_symbol_encode(
 				      &trn_encoder, 3, &trn_quadrant) ==
 				      SIPPYMODEM_V32_FRAMING_OK &&
-				      sippymodem_differential_qpsk_decode(
+				      differential_qpsk_decode(
 					      previous, quadrant, &scrambled) ==
-					      SIPPYMODEM_DIFFERENTIAL_QPSK_OK &&
+					      DIFFERENTIAL_QPSK_OK &&
 				      scrambled == expected[role][index] &&
 				      trn_quadrant == expected_trn_quadrant,
 			      "V.32 normative start changed at %zu/%zu", role,
@@ -148,7 +148,7 @@ static bool test_phase_to_differential_output(void)
 		uint8_t output = UINT8_MAX;
 
 		CHECK(sippymodem_v32_phase_to_differential_output(
-			      SIPPYMODEM_QPSK_QUADRANT_COUNT, &output) ==
+			      QPSK_QUADRANT_COUNT, &output) ==
 			      SIPPYMODEM_V32_FRAMING_INVALID_ARGUMENT &&
 		      output == UINT8_MAX &&
 		      sippymodem_v32_phase_to_differential_output(0, NULL) ==
@@ -164,7 +164,7 @@ static bool test_symbol_round_trip(void)
 
 	for (unsigned int role = 0; role < 2; ++role) {
 		for (uint8_t initial = 0;
-		     initial < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++initial) {
+		     initial < QPSK_QUADRANT_COUNT; ++initial) {
 			struct sippymodem_v32_symbol_encoder encoder;
 			struct sippymodem_v32_symbol_decoder decoder;
 
@@ -209,7 +209,7 @@ static bool test_trn_round_trip_and_transition(void)
 
 	for (unsigned int role = 0; role < 2; ++role) {
 		for (uint8_t initial = 0;
-		     initial < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++initial) {
+		     initial < QPSK_QUADRANT_COUNT; ++initial) {
 			struct sippymodem_v32_symbol_encoder encoder;
 			struct sippymodem_v32_symbol_decoder decoder;
 
@@ -270,7 +270,7 @@ static bool test_9600_round_trip_and_transition(void)
 
 	for (unsigned int role = 0; role < 2; ++role) {
 		for (uint8_t initial = 0;
-		     initial < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++initial) {
+		     initial < QPSK_QUADRANT_COUNT; ++initial) {
 			struct sippymodem_v32_symbol_encoder encoder;
 			struct sippymodem_v32_symbol_decoder decoder;
 

@@ -19,11 +19,11 @@ enum {
 				SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS,
 };
 
-static struct sippymodem_qam_point apply_channel(
-	const struct sippymodem_qam_point *point,
-	const struct sippymodem_qam_point *gain)
+static struct qam_point apply_channel(
+	const struct qam_point *point,
+	const struct qam_point *gain)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = point->in_phase * gain->in_phase -
 			    point->quadrature * gain->quadrature,
 		.quadrature = point->in_phase * gain->quadrature +
@@ -32,10 +32,10 @@ static struct sippymodem_qam_point apply_channel(
 }
 
 static bool generated_point(
-	uint8_t quadrant, const struct sippymodem_qam_point *gain,
-	struct sippymodem_qam_point *received)
+	uint8_t quadrant, const struct qam_point *gain,
+	struct qam_point *received)
 {
-	struct sippymodem_qam_point transmitted;
+	struct qam_point transmitted;
 
 	CHECK(sippymodem_v32_4800_constellation_point(
 		      quadrant, &transmitted) ==
@@ -48,7 +48,7 @@ static bool generated_point(
 static bool run_sequence(
 	struct sippymodem_v32_conditioning_receiver *receiver,
 	enum sippymodem_v32_transmitter_role role,
-	const struct sippymodem_qam_point *channel,
+	const struct qam_point *channel,
 	struct sippymodem_v32_conditioning_transmitter *finished_transmitter)
 {
 	struct sippymodem_v32_conditioning_transmitter transmitter;
@@ -60,7 +60,7 @@ static bool run_sequence(
 		      SIPPYMODEM_V32_CONDITIONING_OK,
 	      "V.32 conditioning fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		uint8_t quadrant;
 
 		CHECK(sippymodem_v32_conditioning_transmitter_next(
@@ -86,12 +86,12 @@ static bool run_sequence(
 
 static bool check_role(
 	enum sippymodem_v32_transmitter_role role,
-	const struct sippymodem_qam_point *channel)
+	const struct qam_point *channel)
 {
 	struct sippymodem_v32_conditioning_receiver receiver;
 	struct sippymodem_v32_conditioning_transmitter transmitter;
 	struct sippymodem_v32_symbol_decoder decoder;
-	struct sippymodem_qam_gain estimated;
+	struct qam_gain estimated;
 	double gain_error;
 	bool ready = true;
 
@@ -126,21 +126,21 @@ static bool check_role(
 
 static bool test_calling_source(void)
 {
-	const struct sippymodem_qam_point channel = { 1.25, -0.375 };
+	const struct qam_point channel = { 1.25, -0.375 };
 
 	return check_role(SIPPYMODEM_V32_CALLING_TRANSMITTER, &channel);
 }
 
 static bool test_answering_source(void)
 {
-	const struct sippymodem_qam_point channel = { -0.45, 1.6 };
+	const struct qam_point channel = { -0.45, 1.6 };
 
 	return check_role(SIPPYMODEM_V32_ANSWERING_TRANSMITTER, &channel);
 }
 
 static bool test_phase_slip_recovery(void)
 {
-	const struct sippymodem_qam_point channel = { 1.1, 0.25 };
+	const struct qam_point channel = { 1.1, 0.25 };
 	struct sippymodem_v32_conditioning_receiver receiver;
 	struct sippymodem_v32_conditioning_transmitter transmitter;
 	bool phase_shifted = false;
@@ -156,7 +156,7 @@ static bool test_phase_slip_recovery(void)
 			      SIPPYMODEM_V32_CONDITIONING_OK,
 	      "V.32 phase-slip fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		uint8_t quadrant;
 
 		CHECK(sippymodem_v32_conditioning_transmitter_next(
@@ -184,7 +184,7 @@ static bool test_phase_slip_recovery(void)
 
 static bool test_mapping_transition_rephase(void)
 {
-	const struct sippymodem_qam_point channel = { 0.85, -0.2 };
+	const struct qam_point channel = { 0.85, -0.2 };
 	struct sippymodem_v32_conditioning_receiver receiver;
 	struct sippymodem_v32_conditioning_transmitter transmitter;
 	const uint16_t phase_step_symbol =
@@ -203,7 +203,7 @@ static bool test_mapping_transition_rephase(void)
 			      SIPPYMODEM_V32_CONDITIONING_OK,
 	      "V.32 mapping-transition fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		uint8_t quadrant;
 
 		CHECK(sippymodem_v32_conditioning_transmitter_next(
@@ -231,7 +231,7 @@ static bool test_mapping_transition_rephase(void)
 
 static bool test_trn_prefix_acquisition(void)
 {
-	const struct sippymodem_qam_point channel = { 0.75, 0.15 };
+	const struct qam_point channel = { 0.75, 0.15 };
 	struct sippymodem_v32_conditioning_receiver receiver;
 	struct sippymodem_v32_conditioning_transmitter transmitter;
 	bool ready = false;
@@ -246,7 +246,7 @@ static bool test_trn_prefix_acquisition(void)
 			      SIPPYMODEM_V32_CONDITIONING_OK,
 	      "V.32 TRN-prefix fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		uint8_t quadrant;
 
 		CHECK(sippymodem_v32_conditioning_transmitter_next(
@@ -271,13 +271,13 @@ static bool test_trn_prefix_acquisition(void)
 
 static bool test_validation(void)
 {
-	const struct sippymodem_qam_point valid_point = { 1.0, 0.0 };
-	const struct sippymodem_qam_point zero_point = { 0.0, 0.0 };
-	const struct sippymodem_qam_point invalid_point = { NAN, 0.0 };
+	const struct qam_point valid_point = { 1.0, 0.0 };
+	const struct qam_point zero_point = { 0.0, 0.0 };
+	const struct qam_point invalid_point = { NAN, 0.0 };
 	struct sippymodem_v32_conditioning_receiver receiver;
 	struct sippymodem_v32_conditioning_receiver saved;
 	struct sippymodem_v32_symbol_decoder decoder = { 0 };
-	struct sippymodem_qam_gain gain = { 0 };
+	struct qam_gain gain = { 0 };
 	bool ready = true;
 
 	CHECK(sippymodem_v32_conditioning_receiver_init(

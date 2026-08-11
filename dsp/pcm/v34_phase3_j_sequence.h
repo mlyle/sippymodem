@@ -52,7 +52,7 @@ bool v34_phase3_j_sequence_at_pattern_boundary(
 enum v34_phase3_j_sequence_result
 v34_phase3_j_sequence_next(
 	struct v34_phase3_j_sequence *sequence,
-	struct sippymodem_qam_point *point,
+	struct qam_point *point,
 	uint8_t *clockwise_quarter_turns);
 
 const char *v34_phase3_j_sequence_result_name(

@@ -20,7 +20,7 @@ enum {
 	DECODED_CAPACITY = 384,
 };
 
-static const struct sippymodem_fsk_channel channel_1200_baud = {
+static const struct fsk_channel channel_1200_baud = {
 	.sample_rate = TEST_SAMPLE_RATE,
 	.symbol_rate_numerator = 1200,
 	.symbol_rate_denominator = 1,
@@ -30,7 +30,7 @@ static const struct sippymodem_fsk_channel channel_1200_baud = {
 	.metric_smoothing_shift = 1,
 };
 
-static const struct sippymodem_fsk_channel channel_75_baud = {
+static const struct fsk_channel channel_75_baud = {
 	.sample_rate = TEST_SAMPLE_RATE,
 	.symbol_rate_numerator = 75,
 	.symbol_rate_denominator = 1,
@@ -40,7 +40,7 @@ static const struct sippymodem_fsk_channel channel_75_baud = {
 	.metric_smoothing_shift = 1,
 };
 
-static const struct sippymodem_fsk_channel channel_500_over_11_baud = {
+static const struct fsk_channel channel_500_over_11_baud = {
 	.sample_rate = TEST_SAMPLE_RATE,
 	.symbol_rate_numerator = 500,
 	.symbol_rate_denominator = 11,
@@ -53,7 +53,7 @@ static const struct sippymodem_fsk_channel channel_500_over_11_baud = {
 struct loopback_result {
 	uint8_t decoded[DECODED_CAPACITY];
 	size_t decoded_count;
-	struct sippymodem_fsk_measurement measurement;
+	struct fsk_measurement measurement;
 };
 
 static uint32_t fixture_random(uint32_t *state)
@@ -91,13 +91,13 @@ static int16_t impair_sample(
 }
 
 static bool run_loopback(
-	const struct sippymodem_fsk_channel *channel,
+	const struct fsk_channel *channel,
 	bool impaired,
 	const uint8_t sequence[SEQUENCE_BITS],
 	struct loopback_result *result)
 {
-	struct sippymodem_fsk_transmitter transmitter;
-	struct sippymodem_fsk_receiver receiver;
+	struct fsk_transmitter transmitter;
+	struct fsk_receiver receiver;
 	uint32_t random = UINT32_C(0x6d2b79f5);
 	size_t transmitted = 0;
 	size_t sample_limit =
@@ -106,11 +106,11 @@ static bool run_loopback(
 		channel->symbol_rate_numerator;
 
 	memset(result, 0, sizeof(*result));
-	CHECK(sippymodem_fsk_transmitter_init(
+	CHECK(fsk_transmitter_init(
 		      &transmitter, channel, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_FSK_OK &&
-		      sippymodem_fsk_receiver_init(&receiver, channel) ==
-			      SIPPYMODEM_FSK_OK,
+		      FSK_OK &&
+		      fsk_receiver_init(&receiver, channel) ==
+			      FSK_OK,
 	      "FSK loopback endpoints did not initialize");
 	for (size_t sample_index = 0;
 	     sample_index < sample_limit && transmitted < SEQUENCE_BITS;
@@ -120,14 +120,14 @@ static bool run_loopback(
 		bool consumed;
 		bool ready;
 
-		CHECK(sippymodem_fsk_transmitter_sample(
+		CHECK(fsk_transmitter_sample(
 		      &transmitter, sequence[transmitted], &sample, &consumed) ==
-			      SIPPYMODEM_FSK_OK,
+			      FSK_OK,
 		      "FSK transmitter rejected a valid symbol");
 		sample = impair_sample(sample, impaired, &random);
-		CHECK(sippymodem_fsk_receiver_sample(
+		CHECK(fsk_receiver_sample(
 		      &receiver, sample, &decoded, &ready) ==
-			      SIPPYMODEM_FSK_OK,
+			      FSK_OK,
 		      "FSK receiver rejected a valid sample");
 		if (ready) {
 			CHECK(result->decoded_count < DECODED_CAPACITY,
@@ -137,7 +137,7 @@ static bool run_loopback(
 		if (consumed)
 			transmitted++;
 	}
-	result->measurement = sippymodem_fsk_receiver_measure(&receiver);
+	result->measurement = fsk_receiver_measure(&receiver);
 	CHECK(transmitted == SEQUENCE_BITS,
 	      "FSK rational symbol clock did not consume the fixture");
 	return true;
@@ -157,7 +157,7 @@ static size_t find_pattern(
 }
 
 static bool check_payload(
-	const struct sippymodem_fsk_channel *channel, bool impaired)
+	const struct fsk_channel *channel, bool impaired)
 {
 	uint8_t sequence[SEQUENCE_BITS];
 	struct loopback_result result;
@@ -186,26 +186,26 @@ static bool check_payload(
 
 static bool test_exact_symbol_clock_and_validation(void)
 {
-	struct sippymodem_fsk_transmitter transmitter;
-	struct sippymodem_fsk_receiver receiver;
-	struct sippymodem_fsk_channel invalid = sippymodem_v21_channel_1;
+	struct fsk_transmitter transmitter;
+	struct fsk_receiver receiver;
+	struct fsk_channel invalid = sippymodem_v21_channel_1;
 	unsigned int consumed_bits = 0;
 	int16_t sample = 0;
 	uint8_t bit = 0;
 	bool consumed = false;
 	bool ready = false;
 
-	CHECK(sippymodem_fsk_transmitter_init(
+	CHECK(fsk_transmitter_init(
 		      &transmitter, &sippymodem_v21_channel_1, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_FSK_OK &&
-		      sippymodem_fsk_transmitter_can_accept_bit(&transmitter),
+		      FSK_OK &&
+		      fsk_transmitter_can_accept_bit(&transmitter),
 	      "FSK transmitter clock fixture failed");
 	for (unsigned int index = 0;
 	     index < sippymodem_v21_channel_1.sample_rate;
 	     ++index) {
-		CHECK(sippymodem_fsk_transmitter_sample(
+		CHECK(fsk_transmitter_sample(
 		      &transmitter, (uint8_t)(consumed_bits & 1u),
-		      &sample, &consumed) == SIPPYMODEM_FSK_OK &&
+		      &sample, &consumed) == FSK_OK &&
 			      sample >= -TEST_AMPLITUDE &&
 			      sample <= TEST_AMPLITUDE,
 		      "FSK transmitter exceeded its bounded waveform");
@@ -215,50 +215,50 @@ static bool test_exact_symbol_clock_and_validation(void)
 	CHECK(consumed_bits ==
 		      sippymodem_v21_channel_1.symbol_rate_numerator &&
 		      transmitter.symbol_accumulator == 0 &&
-		      sippymodem_fsk_transmitter_can_accept_bit(&transmitter),
+		      fsk_transmitter_can_accept_bit(&transmitter),
 	      "FSK symbol clock drifted over one exact second");
 	transmitter.symbol_accumulator = transmitter.channel.sample_rate;
-	CHECK(!sippymodem_fsk_transmitter_can_accept_bit(&transmitter) &&
-		      sippymodem_fsk_transmitter_sample(
+	CHECK(!fsk_transmitter_can_accept_bit(&transmitter) &&
+		      fsk_transmitter_sample(
 			      &transmitter, 1, &sample, &consumed) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT,
+			      FSK_INVALID_ARGUMENT,
 	      "FSK transmitter accepted a corrupted fractional phase");
 	transmitter.symbol_accumulator = 0;
 	transmitter.channel.symbol_rate_numerator =
 		transmitter.channel.sample_rate + 1;
-	CHECK(!sippymodem_fsk_transmitter_can_accept_bit(&transmitter) &&
-		      sippymodem_fsk_transmitter_sample(
+	CHECK(!fsk_transmitter_can_accept_bit(&transmitter) &&
+		      fsk_transmitter_sample(
 			      &transmitter, 1, &sample, &consumed) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT,
+			      FSK_INVALID_ARGUMENT,
 	      "FSK transmitter accepted a corrupted symbol rate");
-	CHECK(sippymodem_fsk_receiver_init(
+	CHECK(fsk_receiver_init(
 		      &receiver, &sippymodem_v21_channel_2) ==
-		      SIPPYMODEM_FSK_OK,
+		      FSK_OK,
 	      "FSK receiver validation fixture failed");
-	sippymodem_fsk_receiver_reset(&receiver);
+	fsk_receiver_reset(&receiver);
 	CHECK(receiver.channel.mark_frequency_hz ==
 		      sippymodem_v21_channel_2.mark_frequency_hz &&
-		      !sippymodem_fsk_receiver_measure(&receiver).ready,
+		      !fsk_receiver_measure(&receiver).ready,
 	      "FSK receiver reset discarded its configuration");
 	invalid.space_frequency_hz = invalid.sample_rate / 2;
 	transmitter.tones.mark_phase_step = 0;
-	CHECK(sippymodem_fsk_transmitter_init(
+	CHECK(fsk_transmitter_init(
 		      NULL, &sippymodem_v21_channel_1, TEST_AMPLITUDE) ==
-		      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
-		      sippymodem_fsk_transmitter_init(
+		      FSK_INVALID_ARGUMENT &&
+		      fsk_transmitter_init(
 			      &transmitter, &sippymodem_v21_channel_1, 0) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
-		      sippymodem_fsk_receiver_init(&receiver, &invalid) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
-		      sippymodem_fsk_transmitter_sample(
+			      FSK_INVALID_ARGUMENT &&
+		      fsk_receiver_init(&receiver, &invalid) ==
+			      FSK_INVALID_ARGUMENT &&
+		      fsk_transmitter_sample(
 			      &transmitter, 1, &sample, &consumed) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
-		      sippymodem_fsk_receiver_sample(
+			      FSK_INVALID_ARGUMENT &&
+		      fsk_receiver_sample(
 			      NULL, sample, &bit, &ready) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
-		      !sippymodem_fsk_receiver_measure(NULL).ready &&
-		      strcmp(sippymodem_fsk_result_name(
-			     SIPPYMODEM_FSK_INVALID_ARGUMENT),
+			      FSK_INVALID_ARGUMENT &&
+		      !fsk_receiver_measure(NULL).ready &&
+		      strcmp(fsk_result_name(
+			     FSK_INVALID_ARGUMENT),
 			     "invalid argument") == 0,
 	      "FSK API accepted invalid state");
 	return true;
@@ -266,23 +266,23 @@ static bool test_exact_symbol_clock_and_validation(void)
 
 static bool test_fractional_symbol_clock(void)
 {
-	struct sippymodem_fsk_transmitter transmitter;
+	struct fsk_transmitter transmitter;
 	uint64_t exact_interval =
 		(uint64_t)channel_500_over_11_baud.sample_rate *
 		channel_500_over_11_baud.symbol_rate_denominator;
 	unsigned int consumed_bits = 0;
 
-	CHECK(sippymodem_fsk_transmitter_init(
+	CHECK(fsk_transmitter_init(
 		      &transmitter, &channel_500_over_11_baud,
-		      TEST_AMPLITUDE) == SIPPYMODEM_FSK_OK,
+		      TEST_AMPLITUDE) == FSK_OK,
 	      "fractional FSK clock did not initialize");
 	for (uint64_t index = 0; index < exact_interval; ++index) {
 		int16_t sample;
 		bool consumed;
 
-		CHECK(sippymodem_fsk_transmitter_sample(
+		CHECK(fsk_transmitter_sample(
 		      &transmitter, (uint8_t)(consumed_bits & 1u),
-		      &sample, &consumed) == SIPPYMODEM_FSK_OK,
+		      &sample, &consumed) == FSK_OK,
 		      "fractional FSK clock rejected a valid symbol");
 		if (consumed)
 			consumed_bits++;
@@ -296,33 +296,33 @@ static bool test_fractional_symbol_clock(void)
 
 static bool test_continuous_tone_detection(void)
 {
-	struct sippymodem_fsk_tone_generator generator;
-	struct sippymodem_fsk_receiver receiver;
-	struct sippymodem_fsk_measurement measurement;
+	struct fsk_tone_generator generator;
+	struct fsk_receiver receiver;
+	struct fsk_measurement measurement;
 	int16_t sample = 0;
 	uint8_t decision = 0;
 	bool ready = false;
 
-	CHECK(sippymodem_fsk_tone_generator_init(
+	CHECK(fsk_tone_generator_init(
 		      &generator, &channel_500_over_11_baud,
-		      TEST_AMPLITUDE) == SIPPYMODEM_FSK_OK &&
-		      sippymodem_fsk_receiver_init(
+		      TEST_AMPLITUDE) == FSK_OK &&
+		      fsk_receiver_init(
 			      &receiver, &channel_500_over_11_baud) ==
-			      SIPPYMODEM_FSK_OK,
+			      FSK_OK,
 	      "continuous FSK tone endpoints did not initialize");
 	for (size_t index = 0;
 	     index < channel_500_over_11_baud.detector_window * 3;
 	     ++index) {
-		CHECK(sippymodem_fsk_tone_generator_sample(
-			      &generator, 1, &sample) == SIPPYMODEM_FSK_OK &&
+		CHECK(fsk_tone_generator_sample(
+			      &generator, 1, &sample) == FSK_OK &&
 			      sample >= -TEST_AMPLITUDE &&
 			      sample <= TEST_AMPLITUDE &&
-			      sippymodem_fsk_receiver_detect(
+			      fsk_receiver_detect(
 				      &receiver, sample, &decision, &ready) ==
-				      SIPPYMODEM_FSK_OK,
+				      FSK_OK,
 		      "continuous mark tone was rejected");
 	}
-	measurement = sippymodem_fsk_receiver_measure(&receiver);
+	measurement = fsk_receiver_measure(&receiver);
 	CHECK(ready && decision == 1 && measurement.ready &&
 		      measurement.mark_power > measurement.space_power &&
 		      measurement.dominance_q8 >= 180,
@@ -330,29 +330,29 @@ static bool test_continuous_tone_detection(void)
 	for (size_t index = 0;
 	     index < channel_500_over_11_baud.detector_window * 3;
 	     ++index) {
-		CHECK(sippymodem_fsk_tone_generator_sample(
-			      &generator, 0, &sample) == SIPPYMODEM_FSK_OK &&
-			      sippymodem_fsk_receiver_detect(
+		CHECK(fsk_tone_generator_sample(
+			      &generator, 0, &sample) == FSK_OK &&
+			      fsk_receiver_detect(
 				      &receiver, sample, &decision, &ready) ==
-				      SIPPYMODEM_FSK_OK,
+				      FSK_OK,
 		      "continuous space tone was rejected");
 	}
-	measurement = sippymodem_fsk_receiver_measure(&receiver);
+	measurement = fsk_receiver_measure(&receiver);
 	CHECK(ready && decision == 0 &&
 		      measurement.space_power > measurement.mark_power &&
 		      measurement.dominance_q8 >= 180,
 	      "continuous space tone was not distinguished");
 	generator.mark_phase_step = 0;
-	CHECK(sippymodem_fsk_tone_generator_sample(
+	CHECK(fsk_tone_generator_sample(
 		      &generator, 1, &sample) ==
-		      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
-		      sippymodem_fsk_tone_generator_init(
+		      FSK_INVALID_ARGUMENT &&
+		      fsk_tone_generator_init(
 			      NULL, &channel_500_over_11_baud,
 			      TEST_AMPLITUDE) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT &&
-		      sippymodem_fsk_receiver_detect(
+			      FSK_INVALID_ARGUMENT &&
+		      fsk_receiver_detect(
 			      NULL, sample, &decision, &ready) ==
-			      SIPPYMODEM_FSK_INVALID_ARGUMENT,
+			      FSK_INVALID_ARGUMENT,
 	      "continuous FSK tone API accepted invalid state");
 	return true;
 }

@@ -267,13 +267,13 @@ static bool quantize_received_axis(double coordinate, int32_t *quantized)
 
 static enum v34_precoder_result reconstruct_channel_point(
 	struct v34_precoder *receive_history,
-	const struct sippymodem_qam_point *precoded_estimate,
-	struct sippymodem_qam_point *channel_estimate)
+	const struct qam_point *precoded_estimate,
+	struct qam_point *channel_estimate)
 {
 	struct v34_precoder_prediction prediction;
 	struct v34_precoder_prediction next_prediction;
 	struct v34_q7_point received;
-	struct sippymodem_qam_point generated;
+	struct qam_point generated;
 	enum v34_precoder_result result;
 
 	result = v34_precoder_predict(
@@ -285,7 +285,7 @@ static enum v34_precoder_result reconstruct_channel_point(
 	    !quantize_received_axis(
 		    precoded_estimate->quadrature, &received.quadrature))
 		return V34_PRECODER_OUT_OF_RANGE;
-	generated = (struct sippymodem_qam_point){
+	generated = (struct qam_point){
 		.in_phase = precoded_estimate->in_phase +
 			(double)prediction.filter_output.in_phase /
 				V34_Q7_SCALE,
@@ -308,13 +308,13 @@ static enum v34_precoder_result reconstruct_channel_point(
 enum v34_precoder_result
 v34_precoder_reconstruct_interval(
 	struct v34_precoder *receive_history,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		precoded_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	struct sippymodem_qam_point
+	struct qam_point
 		channel_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL])
 {
 	struct v34_precoder next;
-	struct sippymodem_qam_point generated[
+	struct qam_point generated[
 		V34_2D_SYMBOLS_PER_4D_INTERVAL];
 
 	if (!v34_precoder_is_valid(receive_history) ||

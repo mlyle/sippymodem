@@ -14,9 +14,9 @@ static double signed_coordinate(bool positive, bool outer)
 
 enum sippymodem_v32_constellation_result
 sippymodem_v32_constellation_point(
-	uint8_t symbol, struct sippymodem_qam_point *point)
+	uint8_t symbol, struct qam_point *point)
 {
-	struct sippymodem_qam_point next;
+	struct qam_point next;
 	uint8_t quadrant;
 	uint8_t position;
 	bool swap_magnitude_bits;
@@ -34,7 +34,7 @@ sippymodem_v32_constellation_point(
 	outer_quadrature =
 		swap_magnitude_bits ? (position & 1u) != 0 :
 				      (position & 2u) != 0;
-	next = (struct sippymodem_qam_point){
+	next = (struct qam_point){
 		.in_phase = signed_coordinate(
 			quadrant == 1 || quadrant == 2, outer_in_phase),
 		.quadrature = signed_coordinate(
@@ -46,7 +46,7 @@ sippymodem_v32_constellation_point(
 
 enum sippymodem_v32_constellation_result
 sippymodem_v32_4800_constellation_point(
-	uint8_t quadrant, struct sippymodem_qam_point *point)
+	uint8_t quadrant, struct qam_point *point)
 {
 	if (quadrant >= SIPPYMODEM_V32_4800_SIGNAL_POINTS)
 		return SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT;
@@ -179,10 +179,10 @@ static struct doubled_grid_point trellis_subset_transform(
 enum sippymodem_v32_constellation_result
 sippymodem_v32_trellis_constellation_point(
 	uint8_t data_bits_per_symbol, uint8_t signal_symbol,
-	struct sippymodem_qam_point *point)
+	struct qam_point *point)
 {
 	struct doubled_grid_point grid_point;
-	struct sippymodem_qam_point next;
+	struct qam_point next;
 	uint8_t low_bit_count;
 	uint8_t low_mask;
 	uint8_t subset;
@@ -202,7 +202,7 @@ sippymodem_v32_trellis_constellation_point(
 	grid_point = trellis_subset_transform(subset, grid_point);
 	/* Preserve one common line-amplitude scale at every rate. */
 	normalization = 2.0 * sqrt(18.0);
-	next = (struct sippymodem_qam_point){
+	next = (struct qam_point){
 		.in_phase = grid_point.in_phase / normalization,
 		.quadrature = grid_point.quadrature / normalization,
 	};
@@ -212,7 +212,7 @@ sippymodem_v32_trellis_constellation_point(
 
 enum sippymodem_v32_constellation_result
 sippymodem_v32_7200_constellation_point(
-	uint8_t signal_symbol, struct sippymodem_qam_point *point)
+	uint8_t signal_symbol, struct qam_point *point)
 {
 	return sippymodem_v32_trellis_constellation_point(
 		3, signal_symbol, point);

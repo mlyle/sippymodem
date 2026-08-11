@@ -40,11 +40,11 @@ enum v34_phase4_trn_result v34_phase4_trn_init(
 
 enum v34_phase4_trn_result v34_phase4_trn_next(
 	struct v34_phase4_trn *trn,
-	struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
 	struct v34_phase4_trn next;
-	struct sippymodem_qam_point next_point;
+	struct qam_point next_point;
 	uint8_t next_quarter_point = 0;
 	uint8_t rotation;
 

@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_QAM_H
-#define SIPPYMODEM_QAM_H
+#ifndef QAM_H
+#define QAM_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_QAM_MAX_PULSE_SPAN_SYMBOLS = 8,
-	SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS =
-		SIPPYMODEM_QAM_MAX_PULSE_SPAN_SYMBOLS + 1,
-	SIPPYMODEM_QAM_MAX_MATCHED_FILTER_SAMPLES = 256,
-	SIPPYMODEM_QAM_MAX_TIMING_CANDIDATES = 64,
+	QAM_MAX_PULSE_SPAN_SYMBOLS = 8,
+	QAM_MAX_ACTIVE_SYMBOLS =
+		QAM_MAX_PULSE_SPAN_SYMBOLS + 1,
+	QAM_MAX_MATCHED_FILTER_SAMPLES = 256,
+	QAM_MAX_TIMING_CANDIDATES = 64,
 };
 
-struct sippymodem_qam_channel {
+struct qam_channel {
 	uint32_t sample_rate;
 	uint32_t symbol_rate_numerator;
 	uint32_t symbol_rate_denominator;
@@ -26,25 +26,25 @@ struct sippymodem_qam_channel {
 	unsigned int pulse_span_symbols;
 };
 
-enum sippymodem_qam_result {
-	SIPPYMODEM_QAM_OK,
-	SIPPYMODEM_QAM_INVALID_ARGUMENT,
+enum qam_result {
+	QAM_OK,
+	QAM_INVALID_ARGUMENT,
 };
 
-struct sippymodem_qam_point {
+struct qam_point {
 	double in_phase;
 	double quadrature;
 };
 
-struct sippymodem_qam_active_symbol {
+struct qam_active_symbol {
 	uint64_t age_units;
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 };
 
-struct sippymodem_qam_modulator {
-	struct sippymodem_qam_channel channel;
-	struct sippymodem_qam_active_symbol
-		active[SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS];
+struct qam_modulator {
+	struct qam_channel channel;
+	struct qam_active_symbol
+		active[QAM_MAX_ACTIVE_SYMBOLS];
 	uint64_t symbol_period_units;
 	uint64_t symbol_phase_units;
 	uint32_t carrier_phase;
@@ -56,22 +56,22 @@ struct sippymodem_qam_modulator {
 	bool needs_symbol;
 };
 
-struct sippymodem_qam_timing_candidate {
+struct qam_timing_candidate {
 	uint64_t phase_units;
 	double symbol_power_sum;
 	uint32_t symbol_count;
 };
 
-struct sippymodem_qam_demodulator {
-	struct sippymodem_qam_channel channel;
+struct qam_demodulator {
+	struct qam_channel channel;
 	double matched_coefficients[
-		SIPPYMODEM_QAM_MAX_MATCHED_FILTER_SAMPLES];
+		QAM_MAX_MATCHED_FILTER_SAMPLES];
 	double in_phase_history[
-		SIPPYMODEM_QAM_MAX_MATCHED_FILTER_SAMPLES];
+		QAM_MAX_MATCHED_FILTER_SAMPLES];
 	double quadrature_history[
-		SIPPYMODEM_QAM_MAX_MATCHED_FILTER_SAMPLES];
-	struct sippymodem_qam_timing_candidate
-		timing[SIPPYMODEM_QAM_MAX_TIMING_CANDIDATES];
+		QAM_MAX_MATCHED_FILTER_SAMPLES];
+	struct qam_timing_candidate
+		timing[QAM_MAX_TIMING_CANDIDATES];
 	uint64_t symbol_period_units;
 	uint64_t timing_step_units;
 	/* Recovered symbol-phase advance for each input sample. */
@@ -95,60 +95,60 @@ struct sippymodem_qam_demodulator {
 	bool has_previous_matched_sample;
 };
 
-struct sippymodem_qam_measurement {
+struct qam_measurement {
 	double line_power;
 	double symbol_power;
 	bool timing_locked;
 };
 
 /* Quantize the rotation between two finite baseband points. */
-enum sippymodem_qam_result sippymodem_qam_nearest_quarter_turn(
-	const struct sippymodem_qam_point *previous,
-	const struct sippymodem_qam_point *current, uint8_t *quarter_turns);
+enum qam_result qam_nearest_quarter_turn(
+	const struct qam_point *previous,
+	const struct qam_point *current, uint8_t *quarter_turns);
 
-enum sippymodem_qam_result sippymodem_root_raised_cosine(
+enum qam_result root_raised_cosine(
 	double symbol_time, double rolloff, double *value);
 
-enum sippymodem_qam_result sippymodem_qam_modulator_init(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_channel *channel, int16_t amplitude);
+enum qam_result qam_modulator_init(
+	struct qam_modulator *modulator,
+	const struct qam_channel *channel, int16_t amplitude);
 /* Select an explicit squared-magnitude bound for a mode-specific
  * constellation. The ordinary initializer retains the 9/5 training bound. */
-enum sippymodem_qam_result
-sippymodem_qam_modulator_init_with_point_power_limit(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_channel *channel, int16_t amplitude,
+enum qam_result
+qam_modulator_init_with_point_power_limit(
+	struct qam_modulator *modulator,
+	const struct qam_channel *channel, int16_t amplitude,
 	double maximum_point_power);
-bool sippymodem_qam_modulator_is_valid(
-	const struct sippymodem_qam_modulator *modulator);
-bool sippymodem_qam_modulator_can_accept_symbol(
-	const struct sippymodem_qam_modulator *modulator);
+bool qam_modulator_is_valid(
+	const struct qam_modulator *modulator);
+bool qam_modulator_can_accept_symbol(
+	const struct qam_modulator *modulator);
 /* Transmit points must fit the modulator's squared-magnitude bound. */
-enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_point *point, double *sample,
+enum qam_result qam_modulator_sample_f64(
+	struct qam_modulator *modulator,
+	const struct qam_point *point, double *sample,
 	bool *symbol_accepted);
 /* The integer interface scales the same unit-amplitude waveform by the
  * configured amplitude, rounds it, and clamps it to that symmetric bound. */
-enum sippymodem_qam_result sippymodem_qam_modulator_sample(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_point *point, int16_t *sample,
+enum qam_result qam_modulator_sample(
+	struct qam_modulator *modulator,
+	const struct qam_point *point, int16_t *sample,
 	bool *symbol_accepted);
 
-enum sippymodem_qam_result sippymodem_qam_demodulator_init(
-	struct sippymodem_qam_demodulator *demodulator,
-	const struct sippymodem_qam_channel *channel);
-enum sippymodem_qam_result sippymodem_qam_demodulator_reset(
-	struct sippymodem_qam_demodulator *demodulator);
+enum qam_result qam_demodulator_init(
+	struct qam_demodulator *demodulator,
+	const struct qam_channel *channel);
+enum qam_result qam_demodulator_reset(
+	struct qam_demodulator *demodulator);
 /* Ready points are unnormalized matched-filter coordinates interpolated at
  * the exact rational symbol-clock crossing. */
-enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
-	struct sippymodem_qam_demodulator *demodulator, int16_t sample,
-	struct sippymodem_qam_point *point, bool *symbol_ready);
-struct sippymodem_qam_measurement sippymodem_qam_demodulator_measure(
-	const struct sippymodem_qam_demodulator *demodulator);
+enum qam_result qam_demodulator_sample(
+	struct qam_demodulator *demodulator, int16_t sample,
+	struct qam_point *point, bool *symbol_ready);
+struct qam_measurement qam_demodulator_measure(
+	const struct qam_demodulator *demodulator);
 
-const char *sippymodem_qam_result_name(
-	enum sippymodem_qam_result result);
+const char *qam_result_name(
+	enum qam_result result);
 
 #endif

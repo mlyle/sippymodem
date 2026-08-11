@@ -12,7 +12,7 @@ enum {
 	V34_COMMON_TAP_DELAY = 23,
 };
 
-static const struct sippymodem_self_sync_scrambler_config
+static const struct self_sync_scrambler_config
 	v34_scrambler_configs[] = {
 		[V34_POLYNOMIAL_GPC] = {
 			.history_bits = V34_SCRAMBLER_BITS,
@@ -33,7 +33,7 @@ static bool polynomial_is_valid(
 	       polynomial == V34_POLYNOMIAL_GPA;
 }
 
-static const struct sippymodem_self_sync_scrambler_config *
+static const struct self_sync_scrambler_config *
 scrambler_config(enum v34_scrambler_polynomial polynomial)
 {
 	if (!polynomial_is_valid(polynomial))
@@ -61,12 +61,12 @@ static bool transmit_polynomial(
 bool v34_scrambler_is_valid(
 	const struct v34_scrambler *scrambler)
 {
-	struct sippymodem_self_sync_scrambler shared;
+	struct self_sync_scrambler shared;
 
 	if (scrambler == NULL)
 		return false;
 	shared.history = scrambler->history;
-	return sippymodem_self_sync_scrambler_is_valid(
+	return self_sync_scrambler_is_valid(
 		&shared, scrambler_config(scrambler->polynomial));
 }
 
@@ -75,12 +75,12 @@ enum v34_framing_result v34_scrambler_init(
 	enum v34_scrambler_polynomial polynomial)
 {
 	struct v34_scrambler next = { 0 };
-	struct sippymodem_self_sync_scrambler shared;
+	struct self_sync_scrambler shared;
 
 	if (scrambler == NULL ||
-	    sippymodem_self_sync_scrambler_init(
+	    self_sync_scrambler_init(
 		    &shared, scrambler_config(polynomial)) !=
-		    SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK)
+		    SELF_SYNC_SCRAMBLER_OK)
 		return V34_FRAMING_INVALID_ARGUMENT;
 	next.history = shared.history;
 	next.polynomial = polynomial;
@@ -116,9 +116,9 @@ static enum v34_framing_result transform_group(
 	unsigned int bit_count, uint8_t *output, bool descramble)
 {
 	struct v34_scrambler next;
-	struct sippymodem_self_sync_scrambler shared;
-	const struct sippymodem_self_sync_scrambler_config *config;
-	enum sippymodem_self_sync_scrambler_result result;
+	struct self_sync_scrambler shared;
+	const struct self_sync_scrambler_config *config;
+	enum self_sync_scrambler_result result;
 	uint8_t transformed;
 
 	if (!v34_scrambler_is_valid(state) || output == NULL)
@@ -127,12 +127,12 @@ static enum v34_framing_result transform_group(
 	shared.history = next.history;
 	config = scrambler_config(next.polynomial);
 	if (descramble)
-		result = sippymodem_self_sync_descramble_group(
+		result = self_sync_descramble_group(
 			&shared, config, input, bit_count, &transformed);
 	else
-		result = sippymodem_self_sync_scramble_group(
+		result = self_sync_scramble_group(
 			&shared, config, input, bit_count, &transformed);
-	if (result != SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK)
+	if (result != SELF_SYNC_SCRAMBLER_OK)
 		return V34_FRAMING_INVALID_ARGUMENT;
 	next.history = shared.history;
 	*state = next;

@@ -15,7 +15,7 @@ enum {
 	DC_TRACKING_SCALE = 32768,
 };
 
-static void reset_accumulator(struct sippymodem_dc_filter *filter)
+static void reset_accumulator(struct dc_filter *filter)
 {
 	filter->sample_sum = 0;
 	filter->sample_count = 0;
@@ -38,25 +38,25 @@ static int32_t divide_floor(int64_t value, int32_t divisor)
 }
 
 static void advance_estimator(
-	struct sippymodem_dc_filter *filter, int16_t sample)
+	struct dc_filter *filter, int16_t sample)
 {
 	switch (filter->phase) {
-	case SIPPYMODEM_DC_FILTER_WARMUP:
+	case DC_FILTER_WARMUP:
 		if (++filter->sample_count == DC_WARMUP_SAMPLES) {
-			filter->phase = SIPPYMODEM_DC_FILTER_CALIBRATION;
+			filter->phase = DC_FILTER_CALIBRATION;
 			reset_accumulator(filter);
 		}
 		break;
-	case SIPPYMODEM_DC_FILTER_CALIBRATION:
+	case DC_FILTER_CALIBRATION:
 		filter->sample_sum += sample;
 		if (++filter->sample_count == DC_CALIBRATION_SAMPLES) {
 			filter->offset = (int16_t)(filter->sample_sum /
 						  (int64_t)filter->sample_count);
-			filter->phase = SIPPYMODEM_DC_FILTER_TRACKING;
+			filter->phase = DC_FILTER_TRACKING;
 			reset_accumulator(filter);
 		}
 		break;
-	case SIPPYMODEM_DC_FILTER_TRACKING:
+	case DC_FILTER_TRACKING:
 		filter->sample_sum += sample;
 		if (++filter->sample_count == DC_TRACKING_SAMPLES) {
 			int32_t average = (int32_t)(
@@ -76,20 +76,20 @@ static void advance_estimator(
 	}
 }
 
-void sippymodem_dc_filter_init(struct sippymodem_dc_filter *filter)
+void dc_filter_init(struct dc_filter *filter)
 {
 	if (filter == NULL)
 		return;
-	*filter = (struct sippymodem_dc_filter){
-		.phase = SIPPYMODEM_DC_FILTER_WARMUP,
+	*filter = (struct dc_filter){
+		.phase = DC_FILTER_WARMUP,
 	};
 }
 
-enum sippymodem_dc_filter_result sippymodem_dc_filter_process(
-	struct sippymodem_dc_filter *filter, int16_t *samples, size_t count)
+enum dc_filter_result dc_filter_process(
+	struct dc_filter *filter, int16_t *samples, size_t count)
 {
 	if (filter == NULL || (samples == NULL && count != 0))
-		return SIPPYMODEM_DC_FILTER_INVALID_ARGUMENT;
+		return DC_FILTER_INVALID_ARGUMENT;
 	for (size_t index = 0; index < count; ++index) {
 		int16_t sample = samples[index];
 		int16_t offset = filter->offset;
@@ -99,25 +99,25 @@ enum sippymodem_dc_filter_result sippymodem_dc_filter_process(
 	}
 	return filter->offset >= DC_OFFSET_LIMIT ||
 		       filter->offset <= -DC_OFFSET_LIMIT ?
-		       SIPPYMODEM_DC_FILTER_OFFSET_LIMIT :
-		       SIPPYMODEM_DC_FILTER_OK;
+		       DC_FILTER_OFFSET_LIMIT :
+		       DC_FILTER_OK;
 }
 
-int16_t sippymodem_dc_filter_offset(
-	const struct sippymodem_dc_filter *filter)
+int16_t dc_filter_offset(
+	const struct dc_filter *filter)
 {
 	return filter != NULL ? filter->offset : 0;
 }
 
-const char *sippymodem_dc_filter_result_name(
-	enum sippymodem_dc_filter_result result)
+const char *dc_filter_result_name(
+	enum dc_filter_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_DC_FILTER_OK:
+	case DC_FILTER_OK:
 		return "ok";
-	case SIPPYMODEM_DC_FILTER_OFFSET_LIMIT:
+	case DC_FILTER_OFFSET_LIMIT:
 		return "DC offset exceeds the supported limit";
-	case SIPPYMODEM_DC_FILTER_INVALID_ARGUMENT:
+	case DC_FILTER_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown DC filter result";

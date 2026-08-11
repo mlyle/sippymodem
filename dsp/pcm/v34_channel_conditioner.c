@@ -40,14 +40,14 @@ static enum v34_channel_conditioner_result nonlinear_result(
 
 static enum v34_channel_conditioner_result condition_finite_point(
 	const struct v34_channel_conditioner *conditioner,
-	const struct sippymodem_qam_point *normalized_point,
-	struct sippymodem_qam_point *grid_estimate)
+	const struct qam_point *normalized_point,
+	struct qam_point *grid_estimate)
 {
-	struct sippymodem_qam_point projected;
-	struct sippymodem_qam_point generated;
+	struct qam_point projected;
+	struct qam_point generated;
 	enum v34_nonlinear_result result;
 
-	projected = (struct sippymodem_qam_point){
+	projected = (struct qam_point){
 		.in_phase = normalized_point->in_phase /
 			conditioner->normalizer.normalization_gain,
 		.quadrature = normalized_point->quadrature /
@@ -69,8 +69,8 @@ static enum v34_channel_conditioner_result condition_finite_point(
 enum v34_channel_conditioner_result
 v34_channel_condition_point(
 	const struct v34_channel_conditioner *conditioner,
-	const struct sippymodem_qam_point *normalized_point,
-	struct sippymodem_qam_point *grid_estimate)
+	const struct qam_point *normalized_point,
+	struct qam_point *grid_estimate)
 {
 	if (!v34_channel_conditioner_is_valid(conditioner) ||
 	    normalized_point == NULL || grid_estimate == NULL ||
@@ -84,12 +84,12 @@ v34_channel_condition_point(
 enum v34_channel_conditioner_result
 v34_channel_condition_interval(
 	const struct v34_channel_conditioner *conditioner,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	struct sippymodem_qam_point
+	struct qam_point
 		grid_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL])
 {
-	struct sippymodem_qam_point
+	struct qam_point
 		generated[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 
 	if (!v34_channel_conditioner_is_valid(conditioner) ||

@@ -18,7 +18,7 @@ enum { SIPPYMODEM_RUNTIME_TERMINAL_READ_MAX = 4096 };
 
 struct sippymodem_runtime {
 	char modem_name[SIPPYMODEM_RUNTIME_NAME_MAX];
-	struct sippymodem_datapumps datapumps;
+	struct datapumps datapumps;
 	struct sippymodem_slmodem_driver driver;
 	struct modem *modem;
 	struct sippymodem_slmodem_adapter adapter;
@@ -43,8 +43,8 @@ static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
 	sippymodem_recording_files_destroy(runtime->recording_files);
 	if (runtime->modem != NULL)
 		modem_delete(runtime->modem);
-	if (sippymodem_datapumps_are_started(&runtime->datapumps))
-		(void)sippymodem_datapumps_stop(&runtime->datapumps);
+	if (datapumps_are_started(&runtime->datapumps))
+		(void)datapumps_stop(&runtime->datapumps);
 	sippymodem_terminal_destroy(runtime->terminal);
 	free(runtime);
 }
@@ -72,8 +72,8 @@ struct sippymodem_runtime *sippymodem_runtime_create(
 	if (runtime == NULL)
 		return NULL;
 	memcpy(runtime->modem_name, modem_name, name_length + 1);
-	if (sippymodem_datapumps_start(&runtime->datapumps) !=
-	    SIPPYMODEM_DATAPUMPS_OK) {
+	if (datapumps_start(&runtime->datapumps) !=
+	    DATAPUMPS_OK) {
 		errno = EBUSY;
 		goto fail;
 	}
@@ -373,7 +373,7 @@ void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime)
 	sippymodem_recording_files_destroy(runtime->recording_files);
 	(void)sippymodem_slmodem_terminal_unbind(&runtime->modem_terminal);
 	modem_delete(runtime->modem);
-	(void)sippymodem_datapumps_stop(&runtime->datapumps);
+	(void)datapumps_stop(&runtime->datapumps);
 	sippymodem_terminal_destroy(runtime->terminal);
 	free(runtime);
 }

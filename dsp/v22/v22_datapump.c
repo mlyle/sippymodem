@@ -35,7 +35,7 @@ enum {
 	V22BIS_CONFIRM_SAMPLES = MODEM_RATE / 10,
 };
 
-static const struct sippymodem_qam_channel v22_low_channel = {
+static const struct qam_channel v22_low_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V22_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
@@ -45,7 +45,7 @@ static const struct sippymodem_qam_channel v22_low_channel = {
 	.pulse_span_symbols = V22_PULSE_SPAN_SYMBOLS,
 };
 
-static const struct sippymodem_qam_channel v22_high_channel = {
+static const struct qam_channel v22_high_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V22_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
@@ -74,8 +74,8 @@ enum sippymodem_v22_transmit_mode {
 
 struct sippymodem_v22_datapump {
 	struct dp dp;
-	struct sippymodem_qam_modulator modulator;
-	struct sippymodem_qam_demodulator demodulator;
+	struct qam_modulator modulator;
+	struct qam_demodulator demodulator;
 	struct sippymodem_v22_symbol_encoder encoder;
 	struct sippymodem_v22_scrambler descrambler;
 	struct sippymodem_v22bis_symbol_encoder v22bis_encoder;
@@ -91,7 +91,7 @@ struct sippymodem_v22_datapump {
 	uint32_t missing_carrier_samples;
 	uint8_t transmit_quadrant;
 	uint8_t transmit_symbol;
-	struct sippymodem_qam_point previous_receive_point;
+	struct qam_point previous_receive_point;
 	bool has_previous_receive_point;
 	bool v22bis_receiver_initialized;
 	bool receiving_v22bis;
@@ -166,7 +166,7 @@ static struct sippymodem_v22_datapump *v22_from_dp(struct dp *dp)
 		      &datapump->v22bis_receiver))) ||
 	    (transmit_uses_v22bis_symbols(datapump) &&
 	     (datapump->v22bis_encoder.phase_quadrant >=
-		      SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+		      QPSK_QUADRANT_COUNT ||
 	      !sippymodem_v22_scrambler_is_valid(
 		      &datapump->v22bis_encoder.scrambler))) ||
 	    (datapump->receiving_v22bis &&
@@ -208,8 +208,8 @@ static struct dp *create_v22(
 	int max_fragment, struct dp_operations *operations)
 {
 	struct sippymodem_v22_datapump *datapump;
-	const struct sippymodem_qam_channel *transmit_channel;
-	const struct sippymodem_qam_channel *receive_channel;
+	const struct qam_channel *transmit_channel;
+	const struct qam_channel *receive_channel;
 
 	if (modem == NULL || !id_uses_v22_carrier(id) ||
 	    (caller != 0 && caller != 1) ||
@@ -225,12 +225,12 @@ static struct dp *create_v22(
 						   &v22_high_channel;
 	receive_channel = datapump->originator ? &v22_high_channel :
 						  &v22_low_channel;
-	if (sippymodem_qam_modulator_init(
+	if (qam_modulator_init(
 		    &datapump->modulator, transmit_channel,
-		    V22_TRANSMIT_AMPLITUDE) != SIPPYMODEM_QAM_OK ||
-	    sippymodem_qam_demodulator_init(
+		    V22_TRANSMIT_AMPLITUDE) != QAM_OK ||
+	    qam_demodulator_init(
 		    &datapump->demodulator, receive_channel) !=
-		    SIPPYMODEM_QAM_OK ||
+		    QAM_OK ||
 	    sippymodem_v22_symbol_encoder_init(&datapump->encoder, 0) !=
 		    SIPPYMODEM_V22_FRAMING_OK) {
 		free(datapump);
@@ -331,13 +331,13 @@ static int next_transmit_v22bis_symbol(
 static int generate_sample(
 	struct sippymodem_v22_datapump *datapump, int16_t *sample)
 {
-	static const struct sippymodem_qam_point quadrants[] = {
+	static const struct qam_point quadrants[] = {
 		{ 1.0, 0.0 },
 		{ 0.0, 1.0 },
 		{ -1.0, 0.0 },
 		{ 0.0, -1.0 },
 	};
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	bool accepted;
 	bool can_accept;
 
@@ -345,7 +345,7 @@ static int generate_sample(
 		*sample = 0;
 		return 0;
 	}
-	can_accept = sippymodem_qam_modulator_can_accept_symbol(
+	can_accept = qam_modulator_can_accept_symbol(
 		&datapump->modulator);
 	if (transmit_uses_v22bis_symbols(datapump)) {
 		if ((can_accept && next_transmit_v22bis_symbol(datapump) != 0) ||
@@ -358,9 +358,9 @@ static int generate_sample(
 			return -1;
 		point = quadrants[datapump->transmit_quadrant];
 	}
-	if (sippymodem_qam_modulator_sample(
+	if (qam_modulator_sample(
 		    &datapump->modulator, &point, sample, &accepted) !=
-		    SIPPYMODEM_QAM_OK ||
+		    QAM_OK ||
 	    accepted != can_accept)
 		return -1;
 	return 0;
@@ -374,9 +374,9 @@ static int decode_phase_change(
 	uint8_t first_scrambled;
 	uint8_t second_scrambled;
 
-	if (sippymodem_differential_qpsk_decode(
+	if (differential_qpsk_decode(
 		    0, quarter_turns, &dibit) !=
-		    SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
+		    DIFFERENTIAL_QPSK_OK)
 		return -1;
 	first_scrambled = (uint8_t)(dibit >> 1);
 	second_scrambled = (uint8_t)(dibit & 1u);
@@ -497,7 +497,7 @@ static int observe_v22bis_bits(
 
 static int receive_v22bis_point(
 	struct sippymodem_v22_datapump *datapump,
-	const struct sippymodem_qam_point *point, bool *linked)
+	const struct qam_point *point, bool *linked)
 {
 	uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
 
@@ -510,9 +510,9 @@ static int receive_v22bis_point(
 		    SIPPYMODEM_V22BIS_RECEIVER_OK)
 			return -1;
 		if (matches_v22) {
-			if (sippymodem_qam_nearest_quarter_turn(
+			if (qam_nearest_quarter_turn(
 				    &datapump->previous_receive_point, point,
-				    &quarter_turns) != SIPPYMODEM_QAM_OK ||
+				    &quarter_turns) != QAM_OK ||
 			    observe_phase_change(datapump, quarter_turns) != 0 ||
 			    sippymodem_v22bis_receiver_track_v22(
 				    &datapump->v22bis_receiver, quarter_turns,
@@ -532,13 +532,13 @@ static int receive_v22bis_point(
 static int receive_sample(
 	struct sippymodem_v22_datapump *datapump, int16_t sample, bool *linked)
 {
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	uint8_t quarter_turns;
 	bool ready;
 
-	if (sippymodem_qam_demodulator_sample(
+	if (qam_demodulator_sample(
 		    &datapump->demodulator, sample, &point, &ready) !=
-	    SIPPYMODEM_QAM_OK)
+	    QAM_OK)
 		return -1;
 	if (!ready)
 		return 0;
@@ -548,9 +548,9 @@ static int receive_sample(
 		if (receive_v22bis_point(datapump, &point, linked) != 0)
 			return -1;
 	} else if (datapump->has_previous_receive_point &&
-		   (sippymodem_qam_nearest_quarter_turn(
+		   (qam_nearest_quarter_turn(
 			    &datapump->previous_receive_point, &point,
-			    &quarter_turns) != SIPPYMODEM_QAM_OK ||
+			    &quarter_turns) != QAM_OK ||
 		    observe_phase_change(datapump, quarter_turns) != 0)) {
 		return -1;
 	}
@@ -623,7 +623,7 @@ static int advance_training_timer(
 }
 
 static bool carrier_is_present(
-	const struct sippymodem_qam_measurement *measurement,
+	const struct qam_measurement *measurement,
 	const int16_t *samples, int count)
 {
 	uint64_t power = 0;
@@ -650,7 +650,7 @@ static int process_v22(
 	struct sippymodem_v22_datapump *datapump = v22_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
-	struct sippymodem_qam_measurement measurement;
+	struct qam_measurement measurement;
 	bool linked = false;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
@@ -677,7 +677,7 @@ static int process_v22(
 		return DPSTAT_CONNECT;
 	if (datapump->training_state != V22_TRAINING_ONLINE)
 		return DPSTAT_OK;
-	measurement = sippymodem_qam_demodulator_measure(
+	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
 	if (carrier_is_present(&measurement, receive, count)) {
 		datapump->missing_carrier_samples = 0;

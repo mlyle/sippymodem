@@ -18,9 +18,9 @@ enum v34_training_channel_result {
  * calls leave the tracker and both labels unchanged. */
 enum v34_training_channel_result
 v34_training_channel_decide(
-	struct sippymodem_qam_gain *gain,
+	struct qam_gain *gain,
 	enum v34_constellation_size constellation,
-	const struct sippymodem_qam_point *received, uint8_t *quarter_point,
+	const struct qam_point *received, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
 const char *v34_training_channel_result_name(

@@ -31,7 +31,7 @@ enum {
 	TEST_QAM_SAMPLE_LIMIT = 14000,
 };
 
-static const struct sippymodem_qam_channel test_v32_channel = {
+static const struct qam_channel test_v32_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = SIPPYMODEM_V32_STARTUP_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
@@ -42,15 +42,15 @@ static const struct sippymodem_qam_channel test_v32_channel = {
 };
 
 struct test_turnaround_signal {
-	struct sippymodem_single_tone_transmitter primary;
-	struct sippymodem_single_tone_transmitter secondary;
+	struct single_tone_transmitter primary;
+	struct single_tone_transmitter secondary;
 };
 
 struct test_peer_qam {
-	struct sippymodem_qam_modulator modulator;
+	struct qam_modulator modulator;
 	struct sippymodem_v32_conditioning_transmitter conditioning;
 	struct sippymodem_v32_symbol_encoder encoder;
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	uint16_t rate_word;
 	uint16_t end_word;
 	unsigned int rate_dibit;
@@ -62,12 +62,12 @@ struct test_peer_qam {
 };
 
 struct test_caller_qam_receiver {
-	struct sippymodem_qam_demodulator demodulator;
+	struct qam_demodulator demodulator;
 	struct sippymodem_v32_conditioning_receiver conditioning;
 	struct sippymodem_v32_symbol_decoder decoder;
 	struct sippymodem_v32_rate_signal_detector rate_detector;
-	struct sippymodem_qam_gain gain;
-	struct sippymodem_qam_point previous_point;
+	struct qam_gain gain;
+	struct qam_point previous_point;
 	bool conditioning_complete;
 	bool rate_detected;
 	bool end_detected;
@@ -113,16 +113,16 @@ static bool process_sample_until_link(
 
 static bool turnaround_signal_init(struct test_turnaround_signal *signal)
 {
-	return sippymodem_single_tone_transmitter_init(
+	return single_tone_transmitter_init(
 		       &signal->primary,
 		       SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ,
 		       TEST_TURNAROUND_PRIMARY_AMPLITUDE) ==
-		       SIPPYMODEM_SINGLE_TONE_OK &&
-	       sippymodem_single_tone_transmitter_init(
+		       SINGLE_TONE_OK &&
+	       single_tone_transmitter_init(
 		       &signal->secondary,
 		       SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ,
 		       TEST_TURNAROUND_SECONDARY_AMPLITUDE) ==
-		       SIPPYMODEM_SINGLE_TONE_OK;
+		       SINGLE_TONE_OK;
 }
 
 static bool turnaround_signal_sample(
@@ -131,11 +131,11 @@ static bool turnaround_signal_sample(
 	int16_t primary;
 	int16_t secondary;
 
-	if (sippymodem_single_tone_transmitter_sample(
-		    &signal->primary, &primary) != SIPPYMODEM_SINGLE_TONE_OK ||
-	    sippymodem_single_tone_transmitter_sample(
+	if (single_tone_transmitter_sample(
+		    &signal->primary, &primary) != SINGLE_TONE_OK ||
+	    single_tone_transmitter_sample(
 		    &signal->secondary, &secondary) !=
-		    SIPPYMODEM_SINGLE_TONE_OK)
+		    SINGLE_TONE_OK)
 		return false;
 	*sample = (int16_t)((int32_t)primary + secondary);
 	return true;
@@ -143,24 +143,24 @@ static bool turnaround_signal_sample(
 
 static bool turnaround_signal_reverse(struct test_turnaround_signal *signal)
 {
-	return sippymodem_single_tone_transmitter_reverse(&signal->primary) ==
-		       SIPPYMODEM_SINGLE_TONE_OK &&
-	       sippymodem_single_tone_transmitter_reverse(&signal->secondary) ==
-		       SIPPYMODEM_SINGLE_TONE_OK;
+	return single_tone_transmitter_reverse(&signal->primary) ==
+		       SINGLE_TONE_OK &&
+	       single_tone_transmitter_reverse(&signal->secondary) ==
+		       SINGLE_TONE_OK;
 }
 
 static bool drive_line_startup(
 	struct dp_operations *operations, struct dp *datapump)
 {
-	struct sippymodem_single_tone_transmitter answer_tone;
+	struct single_tone_transmitter answer_tone;
 	struct test_turnaround_signal turnaround;
 	uint64_t calling_power = 0;
 	unsigned int silent_samples = 0;
 	int16_t transmit;
 
-	CHECK(sippymodem_single_tone_transmitter_init(
+	CHECK(single_tone_transmitter_init(
 		      &answer_tone, SIPPYMODEM_V32_ANSWER_TONE_HZ,
-		      TEST_TONE_AMPLITUDE) == SIPPYMODEM_SINGLE_TONE_OK &&
+		      TEST_TONE_AMPLITUDE) == SINGLE_TONE_OK &&
 		      turnaround_signal_init(&turnaround),
 	      "V.32 line fixture did not initialize");
 	for (unsigned int count = 0; count < TEST_INITIAL_SILENCE_SAMPLES;
@@ -171,9 +171,9 @@ static bool drive_line_startup(
 	for (unsigned int count = 0; count < TEST_ANSWER_TONE_SAMPLES; ++count) {
 		int16_t receive;
 
-		CHECK(sippymodem_single_tone_transmitter_sample(
+		CHECK(single_tone_transmitter_sample(
 			      &answer_tone, &receive) ==
-			      SIPPYMODEM_SINGLE_TONE_OK &&
+			      SINGLE_TONE_OK &&
 			      process_sample(
 				      operations, datapump, receive, &transmit),
 		      "V.32 caller rejected the answer tone");
@@ -228,9 +228,9 @@ static bool peer_qam_init(struct test_peer_qam *peer)
 	};
 
 	*peer = (struct test_peer_qam){ 0 };
-	return sippymodem_qam_modulator_init(
+	return qam_modulator_init(
 		       &peer->modulator, &test_v32_channel,
-		       TEST_TONE_AMPLITUDE) == SIPPYMODEM_QAM_OK &&
+		       TEST_TONE_AMPLITUDE) == QAM_OK &&
 	       sippymodem_v32_conditioning_transmitter_init(
 		       &peer->conditioning,
 		       SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
@@ -292,7 +292,7 @@ static bool peer_next_quadrant(
 static bool peer_qam_sample(struct test_peer_qam *peer, int16_t *sample)
 {
 	bool can_accept =
-		sippymodem_qam_modulator_can_accept_symbol(&peer->modulator);
+		qam_modulator_can_accept_symbol(&peer->modulator);
 	bool accepted;
 
 	if (can_accept) {
@@ -304,9 +304,9 @@ static bool peer_qam_sample(struct test_peer_qam *peer, int16_t *sample)
 			    SIPPYMODEM_V32_CONSTELLATION_OK)
 			return false;
 	}
-	return sippymodem_qam_modulator_sample(
+	return qam_modulator_sample(
 		       &peer->modulator, &peer->point, sample, &accepted) ==
-		       SIPPYMODEM_QAM_OK &&
+		       QAM_OK &&
 	       accepted == can_accept;
 }
 
@@ -314,9 +314,9 @@ static bool caller_qam_receiver_init(
 	struct test_caller_qam_receiver *receiver)
 {
 	*receiver = (struct test_caller_qam_receiver){ 0 };
-	return sippymodem_qam_demodulator_init(
+	return qam_demodulator_init(
 		       &receiver->demodulator, &test_v32_channel) ==
-		       SIPPYMODEM_QAM_OK &&
+		       QAM_OK &&
 	       sippymodem_v32_conditioning_receiver_init(
 		       &receiver->conditioning,
 		       SIPPYMODEM_V32_CALLING_TRANSMITTER) ==
@@ -329,12 +329,12 @@ static bool caller_qam_receiver_init(
 static bool caller_qam_receiver_observe(
 	struct test_caller_qam_receiver *receiver, int16_t sample)
 {
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	bool ready;
 
-	if (sippymodem_qam_demodulator_sample(
+	if (qam_demodulator_sample(
 		    &receiver->demodulator, sample, &point, &ready) !=
-	    SIPPYMODEM_QAM_OK)
+	    QAM_OK)
 		return false;
 	if (!ready || receiver->end_detected)
 		return true;
@@ -361,9 +361,9 @@ static bool caller_qam_receiver_observe(
 		uint8_t quadrant;
 		uint8_t dibit;
 
-		if (sippymodem_qam_nearest_quarter_turn(
+		if (qam_nearest_quarter_turn(
 			    &receiver->previous_point, &point,
-			    &quarter_turns) != SIPPYMODEM_QAM_OK)
+			    &quarter_turns) != QAM_OK)
 			return false;
 		quadrant = (uint8_t)((receiver->decoder.phase_quadrant +
 				      quarter_turns) &

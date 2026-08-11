@@ -66,7 +66,7 @@ static bool prepare_j(
 	unsigned int patterns)
 {
 	struct v34_phase3_trn trn;
-	struct sippymodem_qam_point ignored_point;
+	struct qam_point ignored_point;
 	uint8_t ignored_rotation;
 
 	if (v34_phase3_trn_init(&trn, role) !=
@@ -148,7 +148,7 @@ static bool test_normative_sequence(void)
 			uint8_t i2 = reference_scramble_bit(
 				&reference,
 				(uint8_t)(J_PRIME_PATTERN[bit + 1u] - '0'));
-			struct sippymodem_qam_point point = { 7.0, -9.0 };
+			struct qam_point point = { 7.0, -9.0 };
 			uint8_t rotation = UINT8_MAX;
 			double angle;
 			double power;
@@ -185,8 +185,8 @@ static bool test_normative_sequence(void)
 		      selection);
 		completed = sequence;
 		{
-			struct sippymodem_qam_point point = { 7.0, -9.0 };
-			struct sippymodem_qam_point saved_point = point;
+			struct qam_point point = { 7.0, -9.0 };
+			struct qam_point saved_point = point;
 			uint8_t rotation = UINT8_MAX;
 
 			CHECK(v34_phase4_j_prime_sequence_next(
@@ -208,7 +208,7 @@ static bool test_copy_and_restart(void)
 	struct v34_phase4_j_prime_sequence first;
 	struct v34_phase4_j_prime_sequence second;
 	struct v34_phase4_j_prime_sequence restarted;
-	struct sippymodem_qam_point ignored;
+	struct qam_point ignored;
 	uint8_t ignored_rotation;
 
 	CHECK(prepare_j(
@@ -226,8 +226,8 @@ static bool test_copy_and_restart(void)
 		      "J-prime copy prefix stopped at %u", symbol);
 	second = first;
 	while (!v34_phase4_j_prime_sequence_is_complete(&first)) {
-		struct sippymodem_qam_point first_point;
-		struct sippymodem_qam_point second_point;
+		struct qam_point first_point;
+		struct qam_point second_point;
 		uint8_t first_rotation;
 		uint8_t second_rotation;
 
@@ -261,8 +261,8 @@ static bool test_validation(void)
 	struct v34_phase4_j_prime_sequence sequence;
 	struct v34_phase4_j_prime_sequence before;
 	struct v34_phase4_j_prime_sequence corrupt;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point saved_point = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point saved_point = point;
 	uint8_t rotation = UINT8_MAX;
 
 	CHECK(prepare_j(

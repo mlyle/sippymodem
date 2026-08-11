@@ -15,7 +15,7 @@ _Static_assert((int)SIPPYMODEM_V32_9600_SYMBOL_COUNT ==
 	       "V.32 9600 framing and constellation sizes must agree");
 
 static bool point_has_nonzero_power(
-	const struct sippymodem_qam_point *point)
+	const struct qam_point *point)
 {
 	double value;
 
@@ -31,11 +31,11 @@ static bool decoder_is_valid(
 	const struct sippymodem_v32_symbol_decoder *decoder)
 {
 	return decoder != NULL &&
-	       decoder->phase_quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT &&
+	       decoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
 	       sippymodem_v32_scrambler_is_valid(&decoder->descrambler);
 }
 
-static bool point_is_finite(const struct sippymodem_qam_point *point)
+static bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
@@ -45,10 +45,10 @@ bool sippymodem_v32_9600_receiver_is_valid(
 	const struct sippymodem_v32_9600_receiver *receiver)
 {
 	if (receiver == NULL || !decoder_is_valid(&receiver->decoder) ||
-	    !sippymodem_qam_equalizer_is_valid(&receiver->equalizer))
+	    !qam_equalizer_is_valid(&receiver->equalizer))
 		return false;
 	for (size_t index = 0;
-	     index < SIPPYMODEM_QAM_EQUALIZER_DELAY + 1u; ++index) {
+	     index < QAM_EQUALIZER_DELAY + 1u; ++index) {
 		if (!point_is_finite(&receiver->known_targets[index]))
 			return false;
 	}
@@ -56,8 +56,8 @@ bool sippymodem_v32_9600_receiver_is_valid(
 }
 
 static double squared_error(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
 	double in_phase = left->in_phase - right->in_phase;
 	double quadrature = left->quadrature - right->quadrature;
@@ -69,18 +69,18 @@ enum sippymodem_v32_9600_receiver_result
 sippymodem_v32_9600_receiver_init(
 	struct sippymodem_v32_9600_receiver *receiver,
 	const struct sippymodem_v32_symbol_decoder *decoder,
-	const struct sippymodem_qam_point *reference_point)
+	const struct qam_point *reference_point)
 {
 	struct sippymodem_v32_9600_receiver next = { 0 };
-	struct sippymodem_qam_point ideal;
+	struct qam_point ideal;
 
 	if (receiver == NULL || !decoder_is_valid(decoder) ||
 	    sippymodem_v32_4800_constellation_point(
 		    decoder->phase_quadrant, &ideal) !=
 		    SIPPYMODEM_V32_CONSTELLATION_OK ||
-	    sippymodem_qam_equalizer_init(
+	    qam_equalizer_init(
 		    &next.equalizer, reference_point, &ideal) !=
-		    SIPPYMODEM_QAM_EQUALIZER_OK)
+		    QAM_EQUALIZER_OK)
 		return SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT;
 	next.decoder = *decoder;
 	if (!sippymodem_v32_9600_receiver_is_valid(&next))
@@ -91,14 +91,14 @@ sippymodem_v32_9600_receiver_init(
 
 static bool equalize_point(
 	struct sippymodem_v32_9600_receiver *receiver,
-	const struct sippymodem_qam_point *received,
-	const struct sippymodem_qam_point *current_target,
-	bool current_target_known, struct sippymodem_qam_point *equalized,
+	const struct qam_point *received,
+	const struct qam_point *current_target,
+	bool current_target_known, struct qam_point *equalized,
 	bool *payload_ready)
 {
 	bool filter_ready;
 
-	for (size_t index = SIPPYMODEM_QAM_EQUALIZER_DELAY; index != 0;
+	for (size_t index = QAM_EQUALIZER_DELAY; index != 0;
 	     --index) {
 		receiver->known_targets[index] =
 			receiver->known_targets[index - 1];
@@ -107,25 +107,25 @@ static bool equalize_point(
 	}
 	receiver->known_targets[0] =
 		current_target != NULL ? *current_target :
-					 (struct sippymodem_qam_point){ 0 };
+					 (struct qam_point){ 0 };
 	receiver->target_known[0] = current_target_known;
-	if (sippymodem_qam_equalizer_push(
+	if (qam_equalizer_push(
 		    &receiver->equalizer, received, equalized, &filter_ready) !=
-	    SIPPYMODEM_QAM_EQUALIZER_OK)
+	    QAM_EQUALIZER_OK)
 		return false;
 	if (!filter_ready) {
 		*payload_ready = false;
 		return true;
 	}
-	if (!receiver->target_known[SIPPYMODEM_QAM_EQUALIZER_DELAY]) {
+	if (!receiver->target_known[QAM_EQUALIZER_DELAY]) {
 		*payload_ready = true;
 		return true;
 	}
-	if (sippymodem_qam_equalizer_adapt(
+	if (qam_equalizer_adapt(
 		    &receiver->equalizer,
-		    &receiver->known_targets[SIPPYMODEM_QAM_EQUALIZER_DELAY],
+		    &receiver->known_targets[QAM_EQUALIZER_DELAY],
 		    V32_9600_TRAINING_ADAPTATION) !=
-	    SIPPYMODEM_QAM_EQUALIZER_OK)
+	    QAM_EQUALIZER_OK)
 		return false;
 	*payload_ready = false;
 	return true;
@@ -134,11 +134,11 @@ static bool equalize_point(
 enum sippymodem_v32_9600_receiver_result
 sippymodem_v32_9600_receiver_decode(
 	struct sippymodem_v32_9600_receiver *receiver,
-	const struct sippymodem_qam_point *point, uint8_t *output, bool *ready)
+	const struct qam_point *point, uint8_t *output, bool *ready)
 {
 	struct sippymodem_v32_9600_receiver next;
-	struct sippymodem_qam_point best_point = { 0 };
-	struct sippymodem_qam_point equalized = { 0 };
+	struct qam_point best_point = { 0 };
+	struct qam_point equalized = { 0 };
 	uint8_t best_symbol = 0;
 	uint8_t decoded;
 	double best_error = DBL_MAX;
@@ -158,7 +158,7 @@ sippymodem_v32_9600_receiver_decode(
 	}
 	for (uint8_t symbol = 0;
 	     symbol < SIPPYMODEM_V32_9600_SYMBOL_COUNT; ++symbol) {
-		struct sippymodem_qam_point candidate;
+		struct qam_point candidate;
 		double error;
 
 		if (sippymodem_v32_constellation_point(symbol, &candidate) !=
@@ -176,9 +176,9 @@ sippymodem_v32_9600_receiver_decode(
 		    &next.decoder, best_symbol, &decoded) !=
 		    SIPPYMODEM_V32_FRAMING_OK)
 		return SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT;
-	if (sippymodem_qam_equalizer_adapt(
+	if (qam_equalizer_adapt(
 		    &next.equalizer, &best_point, V32_9600_DECISION_ADAPTATION) !=
-	    SIPPYMODEM_QAM_EQUALIZER_OK)
+	    QAM_EQUALIZER_OK)
 		return SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
 	*output = decoded;
@@ -189,12 +189,12 @@ sippymodem_v32_9600_receiver_decode(
 enum sippymodem_v32_9600_receiver_result
 sippymodem_v32_9600_receiver_track_known(
 	struct sippymodem_v32_9600_receiver *receiver,
-	const struct sippymodem_qam_point *point, uint8_t input)
+	const struct qam_point *point, uint8_t input)
 {
 	struct sippymodem_v32_9600_receiver next;
 	struct sippymodem_v32_symbol_encoder encoder;
-	struct sippymodem_qam_point equalized;
-	struct sippymodem_qam_point transmitted;
+	struct qam_point equalized;
+	struct qam_point transmitted;
 	uint8_t symbol;
 	bool payload_ready;
 

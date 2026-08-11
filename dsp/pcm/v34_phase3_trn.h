@@ -38,7 +38,7 @@ bool v34_phase3_trn_is_valid(
  * four-point TRN symbol. Rejected calls leave state and outputs unchanged. */
 enum v34_phase3_trn_result v34_phase3_trn_next(
 	struct v34_phase3_trn *trn,
-	struct sippymodem_qam_point *point,
+	struct qam_point *point,
 	uint8_t *clockwise_quarter_turns);
 
 const char *v34_phase3_trn_result_name(

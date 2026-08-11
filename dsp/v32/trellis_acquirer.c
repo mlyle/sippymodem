@@ -17,11 +17,11 @@ bool sippymodem_v32_trellis_acquirer_is_valid(
 	enum sippymodem_v32_transmitter_role role;
 
 	if (acquirer == NULL ||
-	    acquirer->selected_phase >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
+	    acquirer->selected_phase >= QPSK_QUADRANT_COUNT)
 		return false;
 	data_bits = acquirer->candidates[0].decoder.data_bits_per_symbol;
 	role = acquirer->candidates[0].descrambler.transmitter_role;
-	for (uint8_t phase = 0; phase < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
 	     ++phase) {
 		const struct sippymodem_v32_trellis_receiver *candidate =
 			&acquirer->candidates[phase];
@@ -39,14 +39,14 @@ enum sippymodem_v32_trellis_acquirer_result
 sippymodem_v32_trellis_acquirer_init(
 	struct sippymodem_v32_trellis_acquirer *acquirer,
 	const struct sippymodem_v32_symbol_decoder *framing,
-	const struct sippymodem_qam_point *reference_point,
+	const struct qam_point *reference_point,
 	uint8_t data_bits_per_symbol)
 {
 	struct sippymodem_v32_trellis_acquirer initialized = { 0 };
 
 	if (acquirer == NULL)
 		return SIPPYMODEM_V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
-	for (uint8_t phase = 0; phase < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
 	     ++phase)
 		if (sippymodem_v32_trellis_receiver_init(
 			    &initialized.candidates[phase], framing,
@@ -62,7 +62,7 @@ sippymodem_v32_trellis_acquirer_init(
 enum sippymodem_v32_trellis_acquirer_result
 sippymodem_v32_trellis_acquirer_track_known(
 	struct sippymodem_v32_trellis_acquirer *acquirer,
-	const struct sippymodem_qam_point *point, uint8_t input)
+	const struct qam_point *point, uint8_t input)
 {
 	struct sippymodem_v32_trellis_acquirer next;
 
@@ -70,7 +70,7 @@ sippymodem_v32_trellis_acquirer_track_known(
 	    acquirer->selected || acquirer->observations == UINT16_MAX)
 		return SIPPYMODEM_V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
 	next = *acquirer;
-	for (uint8_t phase = 0; phase < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
 	     ++phase) {
 		bool confirmed;
 
@@ -101,13 +101,13 @@ sippymodem_v32_trellis_acquirer_select(
 		return SIPPYMODEM_V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
 	if (acquirer->selected)
 		return SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK;
-	for (uint8_t phase = 1; phase < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+	for (uint8_t phase = 1; phase < QPSK_QUADRANT_COUNT;
 	     ++phase)
 		if (acquirer->confirmations[phase] >
 		    acquirer->confirmations[selected])
 			selected = phase;
 	best = acquirer->confirmations[selected];
-	for (uint8_t phase = 0; phase < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
 	     ++phase)
 		if (phase != selected &&
 		    acquirer->confirmations[phase] > runner_up)
@@ -125,7 +125,7 @@ sippymodem_v32_trellis_acquirer_select(
 enum sippymodem_v32_trellis_acquirer_result
 sippymodem_v32_trellis_acquirer_decode(
 	struct sippymodem_v32_trellis_acquirer *acquirer,
-	const struct sippymodem_qam_point *point, uint8_t *output, bool *ready)
+	const struct qam_point *point, uint8_t *output, bool *ready)
 {
 	if (!sippymodem_v32_trellis_acquirer_is_valid(acquirer) ||
 	    output == NULL || ready == NULL)

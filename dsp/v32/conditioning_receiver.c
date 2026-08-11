@@ -31,7 +31,7 @@ static bool phase_is_valid(
 	       phase <= SIPPYMODEM_V32_CONDITIONING_READY;
 }
 
-static bool point_has_power(const struct sippymodem_qam_point *point)
+static bool point_has_power(const struct qam_point *point)
 {
 	double power;
 
@@ -50,7 +50,7 @@ static bool pattern_is_valid(
 	     index < SIPPYMODEM_V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS;
 	     ++index) {
 		if (receiver->prefix_turns[index] >=
-			    SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+			    QPSK_QUADRANT_COUNT ||
 		    receiver->prefix_fallback[index] > index)
 			return false;
 	}
@@ -64,13 +64,13 @@ bool sippymodem_v32_conditioning_receiver_is_valid(
 
 	if (receiver == NULL || !role_is_valid(receiver->source_role) ||
 	    !phase_is_valid(receiver->phase) || !pattern_is_valid(receiver) ||
-	    receiver->observed_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
-	    receiver->quadrant_offset >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    receiver->observed_quadrant >= QPSK_QUADRANT_COUNT ||
+	    receiver->quadrant_offset >= QPSK_QUADRANT_COUNT ||
 	    receiver->pending_quadrant_offset >=
-		    SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+		    QPSK_QUADRANT_COUNT ||
 	    receiver->alternating_transitions >
 		    SIPPYMODEM_V32_CONDITIONING_S_BAR_ACQUIRE_TRANSITIONS ||
-	    receiver->previous_turn >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    receiver->previous_turn >= QPSK_QUADRANT_COUNT ||
 	    receiver->prefix_match >=
 		    SIPPYMODEM_V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS ||
 	    receiver->consecutive_mismatches >=
@@ -88,7 +88,7 @@ bool sippymodem_v32_conditioning_receiver_is_valid(
 		       receiver->phase_corrections == 0;
 	if (!sippymodem_v32_conditioning_transmitter_is_valid(
 		    &receiver->reference) ||
-	    !sippymodem_qam_gain_is_valid(&receiver->gain) ||
+	    !qam_gain_is_valid(&receiver->gain) ||
 	    receiver->reference.trn_symbols !=
 		    SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS ||
 	    receiver->reference.emitted_symbols !=
@@ -185,7 +185,7 @@ sippymodem_v32_conditioning_receiver_init(
 
 static int reset_search(
 	struct sippymodem_v32_conditioning_receiver *receiver,
-	const struct sippymodem_qam_point *point)
+	const struct qam_point *point)
 {
 	struct sippymodem_v32_conditioning_receiver reset;
 
@@ -235,9 +235,9 @@ static bool observe_prefix_turn(
 
 static int begin_training(
 	struct sippymodem_v32_conditioning_receiver *receiver,
-	const struct sippymodem_qam_point *point)
+	const struct qam_point *point)
 {
-	struct sippymodem_qam_point expected_point;
+	struct qam_point expected_point;
 	uint8_t expected_quadrant;
 	uint16_t matched_symbols =
 		SIPPYMODEM_V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u;
@@ -253,9 +253,9 @@ static int begin_training(
 	    sippymodem_v32_4800_constellation_point(
 		    expected_quadrant, &expected_point) !=
 		    SIPPYMODEM_V32_CONSTELLATION_OK ||
-	    sippymodem_qam_gain_init_from_reference(
+	    qam_gain_init_from_reference(
 		    &receiver->gain, point, &expected_point,
-		    V32_CONDITIONING_GAIN_ADAPTATION) != SIPPYMODEM_QAM_GAIN_OK)
+		    V32_CONDITIONING_GAIN_ADAPTATION) != QAM_GAIN_OK)
 		return -1;
 	receiver->trn_symbols = matched_symbols;
 	receiver->quadrant_offset =
@@ -268,9 +268,9 @@ static int begin_training(
 
 static int train_symbol(
 	struct sippymodem_v32_conditioning_receiver *receiver,
-	const struct sippymodem_qam_point *point)
+	const struct qam_point *point)
 {
-	struct sippymodem_qam_point expected_point;
+	struct qam_point expected_point;
 	uint8_t expected_quadrant;
 	uint8_t observed_expected;
 	uint8_t candidate_offset;
@@ -287,9 +287,9 @@ static int train_symbol(
 	if (receiver->observed_quadrant == observed_expected) {
 		receiver->consecutive_mismatches = 0;
 		receiver->pending_quadrant_offset = receiver->quadrant_offset;
-		if (sippymodem_qam_gain_track(
+		if (qam_gain_track(
 			    &receiver->gain, point, &expected_point) !=
-		    SIPPYMODEM_QAM_GAIN_OK)
+		    QAM_GAIN_OK)
 			return -1;
 	} else {
 		candidate_offset = (uint8_t)(
@@ -310,9 +310,9 @@ static int train_symbol(
 				receiver->pending_quadrant_offset;
 			receiver->consecutive_mismatches = 0;
 			receiver->phase_corrections++;
-			if (sippymodem_qam_gain_track(
+			if (qam_gain_track(
 				    &receiver->gain, point, &expected_point) !=
-			    SIPPYMODEM_QAM_GAIN_OK)
+			    QAM_GAIN_OK)
 				return -1;
 		}
 	}
@@ -326,7 +326,7 @@ static int train_symbol(
 enum sippymodem_v32_conditioning_receiver_result
 sippymodem_v32_conditioning_receiver_observe(
 	struct sippymodem_v32_conditioning_receiver *receiver,
-	const struct sippymodem_qam_point *point, bool *ready)
+	const struct qam_point *point, bool *ready)
 {
 	struct sippymodem_v32_conditioning_receiver next;
 	uint8_t turn;
@@ -342,9 +342,9 @@ sippymodem_v32_conditioning_receiver_observe(
 		next.previous_point = *point;
 		next.has_previous_point = true;
 	} else {
-		if (sippymodem_qam_nearest_quarter_turn(
+		if (qam_nearest_quarter_turn(
 			    &next.previous_point, point, &turn) !=
-		    SIPPYMODEM_QAM_OK)
+		    QAM_OK)
 			return SIPPYMODEM_V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 		next.observed_quadrant =
 			(uint8_t)((next.observed_quadrant + turn) & 3u);
@@ -378,7 +378,7 @@ enum sippymodem_v32_conditioning_receiver_result
 sippymodem_v32_conditioning_receiver_framing_state(
 	const struct sippymodem_v32_conditioning_receiver *receiver,
 	struct sippymodem_v32_symbol_decoder *decoder,
-	struct sippymodem_qam_gain *gain)
+	struct qam_gain *gain)
 {
 	struct sippymodem_v32_symbol_decoder next_decoder;
 

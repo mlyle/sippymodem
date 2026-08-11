@@ -39,10 +39,10 @@ v34_phase3_s_sequence_init(
 enum v34_phase3_s_sequence_result
 v34_phase3_s_sequence_next(
 	struct v34_phase3_s_sequence *sequence,
-	struct sippymodem_qam_point *point,
+	struct qam_point *point,
 	enum v34_phase3_s_section *section)
 {
-	struct sippymodem_qam_point next_point;
+	struct qam_point next_point;
 	enum v34_phase3_s_section next_section;
 	unsigned int quarter_turns;
 	uint16_t symbol;

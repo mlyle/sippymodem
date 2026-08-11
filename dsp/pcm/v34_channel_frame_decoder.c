@@ -193,7 +193,7 @@ static bool advance_channel_cursor(
 enum v34_channel_frame_decoder_result
 v34_channel_frame_decoder_advance(
 	struct v34_channel_frame_decoder *decoder,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_survivor_decision *current,
 	struct v34_decided_4d_interval

@@ -70,7 +70,7 @@ static bool test_generated_mean(void)
 			.quadrature =
 				(int32_t)(next_random(&random) % 8193u) - 4096,
 		};
-		struct sippymodem_qam_point point = {
+		struct qam_point point = {
 			.in_phase =
 				(double)q7.in_phase / V34_Q7_SCALE,
 			.quadrature =
@@ -100,7 +100,7 @@ static bool test_zero_power(void)
 {
 	struct v34_symbol_power_measurement measurement = { 0 };
 	const struct v34_q7_point q7 = { 0, 0 };
-	const struct sippymodem_qam_point point = { 0.0, 0.0 };
+	const struct qam_point point = { 0.0, 0.0 };
 
 	CHECK(v34_symbol_power_measurement_is_valid(&measurement) &&
 	      v34_symbol_power_observe_q7(&measurement, &q7) ==
@@ -123,7 +123,7 @@ static bool test_normalized_mean(void)
 	struct v34_symbol_power_measurement projected = { 0 };
 	struct v34_symbol_power_measurement normalized = { 0 };
 	struct v34_q7_point input[NORMALIZATION_SYMBOLS];
-	struct sippymodem_qam_point encoded[NORMALIZATION_SYMBOLS];
+	struct qam_point encoded[NORMALIZATION_SYMBOLS];
 	struct v34_power_normalizer normalizer;
 	uint32_t random = UINT32_C(0x9126edb7);
 
@@ -163,7 +163,7 @@ static bool test_normalized_mean(void)
 		      &projected) == V34_SYMBOL_POWER_OK,
 	      "measured normalizer did not initialize");
 	for (size_t index = 0; index < ARRAY_LENGTH(encoded); ++index) {
-		struct sippymodem_qam_point output;
+		struct qam_point output;
 
 		CHECK(v34_normalize_power(
 			      &normalizer, &encoded[index], &output) ==
@@ -186,14 +186,14 @@ static bool test_normalized_mean(void)
 	      "normalized constellation mean is %.17g instead of one",
 	      normalized.mean_squared_magnitude);
 	{
-		const struct sippymodem_qam_point boundary = {
+		const struct qam_point boundary = {
 			.in_phase = sqrt(
 				normalizer.maximum_projected_point_power),
 		};
-		const struct sippymodem_qam_point excessive = {
+		const struct qam_point excessive = {
 			.in_phase = boundary.in_phase * 1.000001,
 		};
-		struct sippymodem_qam_point output = { 123.0, -456.0 };
+		struct qam_point output = { 123.0, -456.0 };
 
 		CHECK(v34_normalize_power(
 			      &normalizer, &boundary, &output) ==
@@ -203,7 +203,7 @@ static bool test_normalized_mean(void)
 				      output.quadrature * output.quadrature,
 			      normalizer.maximum_normalized_point_power),
 		      "normalizer rejected its generated hard boundary");
-		output = (struct sippymodem_qam_point){ 123.0, -456.0 };
+		output = (struct qam_point){ 123.0, -456.0 };
 		CHECK(v34_normalize_power(
 			      &normalizer, &excessive, &output) ==
 			      V34_SYMBOL_POWER_OUT_OF_RANGE &&
@@ -387,10 +387,10 @@ static bool test_normalizer_validation(void)
 	struct v34_symbol_power_measurement invalid;
 	struct v34_power_normalizer normalizer;
 	struct v34_power_normalizer corrupt;
-	struct sippymodem_qam_point output = { 123.0, -456.0 };
-	const struct sippymodem_qam_point point = { 1.0, 0.0 };
-	const struct sippymodem_qam_point nonfinite = { NAN, 0.0 };
-	const struct sippymodem_qam_point overflowing = { DBL_MAX, DBL_MAX };
+	struct qam_point output = { 123.0, -456.0 };
+	const struct qam_point point = { 1.0, 0.0 };
+	const struct qam_point nonfinite = { NAN, 0.0 };
+	const struct qam_point overflowing = { DBL_MAX, DBL_MAX };
 
 	CHECK(v34_frame_geometry_init(
 		      &geometry, V34_SYMBOL_RATE_3000, 8, false) ==
@@ -498,8 +498,8 @@ static bool test_validation(void)
 	};
 	struct v34_symbol_power_measurement saved = measurement;
 	const struct v34_q7_point q7 = { 1, -1 };
-	const struct sippymodem_qam_point nonfinite = { NAN, 0.0 };
-	const struct sippymodem_qam_point overflowing = { DBL_MAX, DBL_MAX };
+	const struct qam_point nonfinite = { NAN, 0.0 };
+	const struct qam_point overflowing = { DBL_MAX, DBL_MAX };
 
 	CHECK(!v34_symbol_power_measurement_is_valid(NULL) &&
 	      v34_symbol_power_measurement_reset(NULL) ==

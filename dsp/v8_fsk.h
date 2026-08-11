@@ -19,8 +19,8 @@ enum sippymodem_v8_fsk_result {
 };
 
 struct sippymodem_v8_fsk {
-	struct sippymodem_fsk_transmitter transmitter;
-	struct sippymodem_fsk_receiver receiver;
+	struct fsk_transmitter transmitter;
+	struct fsk_receiver receiver;
 	enum sippymodem_v8_station_role role;
 };
 

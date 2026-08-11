@@ -91,8 +91,8 @@ static bool check_transmit_cadence(
 	size_t expected_samples)
 {
 	struct sippymodem_baudot_transmitter transmitter;
-	struct sippymodem_fsk_receiver detector;
-	struct sippymodem_fsk_channel channel = {
+	struct fsk_receiver detector;
+	struct fsk_channel channel = {
 		.sample_rate = SIPPYMODEM_BAUDOT_SAMPLE_RATE,
 		.symbol_rate_numerator =
 			rate == SIPPYMODEM_BAUDOT_RATE_50 ? 50u : 500u,
@@ -122,8 +122,8 @@ static bool check_transmit_cadence(
 	CHECK(expected_samples <= ARRAY_LENGTH(samples) &&
 		      sippymodem_baudot_transmitter_init(&transmitter, rate) ==
 			      SIPPYMODEM_BAUDOT_OK &&
-		      sippymodem_fsk_receiver_init(&detector, &channel) ==
-			      SIPPYMODEM_FSK_OK,
+		      fsk_receiver_init(&detector, &channel) ==
+			      FSK_OK,
 	      "Baudot cadence fixture did not initialize");
 	CHECK(sippymodem_baudot_queue_text(
 		      &transmitter, (const uint8_t *)"A", 1) == 1 &&
@@ -146,10 +146,10 @@ static bool check_transmit_cadence(
 			CHECK(sample_offset < expected_samples &&
 				      samples[sample_offset] >= -TEST_AMPLITUDE &&
 				      samples[sample_offset] <= TEST_AMPLITUDE &&
-				      sippymodem_fsk_receiver_detect(
+				      fsk_receiver_detect(
 					      &detector, samples[sample_offset],
 					      &detected_bit, &ready) ==
-					      SIPPYMODEM_FSK_OK,
+					      FSK_OK,
 			      "Baudot waveform was invalid at sample %zu",
 			      sample_offset);
 			sample_offset++;

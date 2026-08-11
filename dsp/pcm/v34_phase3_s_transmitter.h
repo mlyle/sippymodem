@@ -36,7 +36,7 @@ enum v34_phase3_s_transmitter_result {
 
 struct v34_phase3_s_transmitter {
 	struct v34_phase3_profile profile;
-	struct sippymodem_qam_modulator carrier;
+	struct qam_modulator carrier;
 	struct v34_preemphasis preemphasis;
 	struct v34_phase3_s_sequence sequence;
 	double output_gain;

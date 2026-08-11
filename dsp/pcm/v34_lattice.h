@@ -42,7 +42,7 @@ struct v34_subset_slice {
  * coordinate with smaller magnitude. The destination is unchanged on
  * failure. Front-end scaling and nonlinear inversion precede this boundary. */
 enum v34_lattice_result v34_slice_odd_lattice(
-	const struct sippymodem_qam_point *channel_estimate,
+	const struct qam_point *channel_estimate,
 	struct v34_lattice_slice *slice);
 
 /* Find the nearest bounded odd-grid point in each of Figure 9's eight
@@ -50,7 +50,7 @@ enum v34_lattice_result v34_slice_odd_lattice(
  * the lexicographically smaller coordinates. The destination is unchanged on
  * failure. */
 enum v34_lattice_result v34_slice_grid_subsets(
-	const struct sippymodem_qam_point *channel_estimate,
+	const struct qam_point *channel_estimate,
 	struct v34_subset_slice *slice);
 
 const char *v34_lattice_result_name(

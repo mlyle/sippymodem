@@ -44,7 +44,7 @@ struct baudot_code_plan {
 	uint8_t resulting_characters_since_shift;
 };
 
-static const struct sippymodem_fsk_channel baudot_45_channel = {
+static const struct fsk_channel baudot_45_channel = {
 	.sample_rate = SIPPYMODEM_BAUDOT_SAMPLE_RATE,
 	.symbol_rate_numerator = 500,
 	.symbol_rate_denominator = 11,
@@ -54,7 +54,7 @@ static const struct sippymodem_fsk_channel baudot_45_channel = {
 	.metric_smoothing_shift = 1,
 };
 
-static const struct sippymodem_fsk_channel baudot_50_channel = {
+static const struct fsk_channel baudot_50_channel = {
 	.sample_rate = SIPPYMODEM_BAUDOT_SAMPLE_RATE,
 	.symbol_rate_numerator = 50,
 	.symbol_rate_denominator = 1,
@@ -70,7 +70,7 @@ static bool rate_is_valid(enum sippymodem_baudot_rate rate)
 	       rate == SIPPYMODEM_BAUDOT_RATE_50;
 }
 
-static const struct sippymodem_fsk_channel *channel_for_rate(
+static const struct fsk_channel *channel_for_rate(
 	enum sippymodem_baudot_rate rate)
 {
 	return rate == SIPPYMODEM_BAUDOT_RATE_50 ?
@@ -108,15 +108,15 @@ enum sippymodem_baudot_result sippymodem_baudot_transmitter_init(
 	struct sippymodem_baudot_transmitter *transmitter,
 	enum sippymodem_baudot_rate rate)
 {
-	const struct sippymodem_fsk_channel *channel;
-	struct sippymodem_fsk_tone_generator tones;
+	const struct fsk_channel *channel;
+	struct fsk_tone_generator tones;
 	uint16_t bit_samples;
 
 	if (transmitter == NULL || !rate_is_valid(rate))
 		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
 	channel = channel_for_rate(rate);
-	if (sippymodem_fsk_tone_generator_init(
-		    &tones, channel, BAUDOT_AMPLITUDE) != SIPPYMODEM_FSK_OK)
+	if (fsk_tone_generator_init(
+		    &tones, channel, BAUDOT_AMPLITUDE) != FSK_OK)
 		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
 	bit_samples = samples_per_bit(rate);
 	memset(transmitter, 0, sizeof(*transmitter));
@@ -360,9 +360,9 @@ enum sippymodem_baudot_result sippymodem_baudot_generate(
 			output[index] = 0;
 			continue;
 		}
-		if (sippymodem_fsk_tone_generator_sample(
+		if (fsk_tone_generator_sample(
 			    &transmitter->tones, transmitter->current_bit,
-			    &output[index]) != SIPPYMODEM_FSK_OK)
+			    &output[index]) != FSK_OK)
 			return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
 		transmitter->generated_tone_samples++;
 		transmitter->samples_remaining--;
@@ -375,7 +375,7 @@ enum sippymodem_baudot_result sippymodem_baudot_generate(
 static bool receiver_is_valid(
 	const struct sippymodem_baudot_receiver *receiver)
 {
-	const struct sippymodem_fsk_channel *expected;
+	const struct fsk_channel *expected;
 
 	if (receiver == NULL || !rate_is_valid(receiver->rate))
 		return false;
@@ -409,7 +409,7 @@ static bool receiver_is_valid(
 static void reset_receive_signal(
 	struct sippymodem_baudot_receiver *receiver)
 {
-	sippymodem_fsk_receiver_reset(&receiver->detector);
+	fsk_receiver_reset(&receiver->detector);
 	receiver->quiet_samples = 0;
 	receiver->stable_samples = 0;
 	receiver->decision_countdown = 0;
@@ -425,11 +425,11 @@ enum sippymodem_baudot_result sippymodem_baudot_receiver_init(
 	struct sippymodem_baudot_receiver *receiver,
 	enum sippymodem_baudot_rate rate)
 {
-	struct sippymodem_fsk_receiver detector;
+	struct fsk_receiver detector;
 
 	if (receiver == NULL || !rate_is_valid(rate) ||
-	    sippymodem_fsk_receiver_init(
-		    &detector, channel_for_rate(rate)) != SIPPYMODEM_FSK_OK)
+	    fsk_receiver_init(
+		    &detector, channel_for_rate(rate)) != FSK_OK)
 		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
 	memset(receiver, 0, sizeof(*receiver));
 	receiver->detector = detector;
@@ -514,8 +514,8 @@ static bool signal_is_present(
 	const struct sippymodem_baudot_receiver *receiver,
 	bool decision_ready)
 {
-	struct sippymodem_fsk_measurement measurement =
-		sippymodem_fsk_receiver_measure(&receiver->detector);
+	struct fsk_measurement measurement =
+		fsk_receiver_measure(&receiver->detector);
 
 	return decision_ready && measurement.ready &&
 	       measurement.line_power >= BAUDOT_RX_MIN_LINE_POWER &&
@@ -564,9 +564,9 @@ static enum sippymodem_baudot_result receive_sample(
 	uint8_t previous_stable = receiver->stable_bit;
 	bool decision_ready;
 
-	if (sippymodem_fsk_receiver_detect(
+	if (fsk_receiver_detect(
 		    &receiver->detector, sample, &detected_bit,
-		    &decision_ready) != SIPPYMODEM_FSK_OK)
+		    &decision_ready) != FSK_OK)
 		return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
 	if (!signal_is_present(receiver, decision_ready)) {
 		if (receiver->quiet_samples != UINT16_MAX)

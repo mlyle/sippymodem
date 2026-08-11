@@ -734,7 +734,7 @@ static void modem_dp_process(struct modem *m,void *in,void *out,int count)
 void modem_process(struct modem *m,void *in,void *out,int count)
 {
 	/* clean DC */
-	(void)sippymodem_dc_filter_process(&m->dc_filter, in, (size_t)count);
+	(void)dc_filter_process(&m->dc_filter, in, (size_t)count);
 	modem_debug_log_data(m,MODEM_DBG_RX_SAMPLES,in,count<<MFMT_SHIFT(m->format));
 	if(m->process)
 		m->process(m,in,out,count);
@@ -1219,7 +1219,7 @@ static int modem_start (struct modem *m)
 	m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 	m->command = 0;
 
-	sippymodem_dc_filter_init(&m->dc_filter);
+	dc_filter_init(&m->dc_filter);
 
 	if ( m->cfg.ec && m->cfg.comp &&
 	     (ret = modem_comp_init(m)) )

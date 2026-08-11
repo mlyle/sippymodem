@@ -22,8 +22,8 @@ enum test_codec {
 };
 
 struct test_turnaround_signal {
-	struct sippymodem_single_tone_transmitter primary;
-	struct sippymodem_single_tone_transmitter secondary;
+	struct single_tone_transmitter primary;
+	struct single_tone_transmitter secondary;
 };
 
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
@@ -39,13 +39,13 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 
 static bool process_tone(
 	struct sippymodem_v32_line_startup *startup,
-	struct sippymodem_single_tone_transmitter *answerer,
+	struct single_tone_transmitter *answerer,
 	enum test_codec codec, int16_t *transmit, bool *complete)
 {
 	int16_t answer_sample;
 
-	return sippymodem_single_tone_transmitter_sample(
-		       answerer, &answer_sample) == SIPPYMODEM_SINGLE_TONE_OK &&
+	return single_tone_transmitter_sample(
+		       answerer, &answer_sample) == SINGLE_TONE_OK &&
 	       sippymodem_v32_line_startup_process(
 		       startup, codec_round_trip(answer_sample, codec), transmit,
 		       complete) == SIPPYMODEM_V32_LINE_STARTUP_OK;
@@ -59,14 +59,14 @@ static bool turnaround_signal_init(
 			SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ :
 			SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ;
 
-	return sippymodem_single_tone_transmitter_init(
+	return single_tone_transmitter_init(
 		       &signal->primary, primary_hz,
 		       TEST_TURNAROUND_PRIMARY_AMPLITUDE) ==
-		       SIPPYMODEM_SINGLE_TONE_OK &&
-	       sippymodem_single_tone_transmitter_init(
+		       SINGLE_TONE_OK &&
+	       single_tone_transmitter_init(
 		       &signal->secondary, secondary_hz,
 		       TEST_TURNAROUND_SECONDARY_AMPLITUDE) ==
-		       SIPPYMODEM_SINGLE_TONE_OK;
+		       SINGLE_TONE_OK;
 }
 
 static bool process_turnaround(
@@ -77,11 +77,11 @@ static bool process_turnaround(
 	int16_t primary;
 	int16_t secondary;
 
-	return sippymodem_single_tone_transmitter_sample(
-		       &signal->primary, &primary) == SIPPYMODEM_SINGLE_TONE_OK &&
-	       sippymodem_single_tone_transmitter_sample(
+	return single_tone_transmitter_sample(
+		       &signal->primary, &primary) == SINGLE_TONE_OK &&
+	       single_tone_transmitter_sample(
 		       &signal->secondary, &secondary) ==
-		       SIPPYMODEM_SINGLE_TONE_OK &&
+		       SINGLE_TONE_OK &&
 	       sippymodem_v32_line_startup_process(
 		       startup,
 		       codec_round_trip(
@@ -91,15 +91,15 @@ static bool process_turnaround(
 
 static bool reverse_turnaround(struct test_turnaround_signal *signal)
 {
-	return sippymodem_single_tone_transmitter_reverse(&signal->primary) ==
-		       SIPPYMODEM_SINGLE_TONE_OK &&
-	       sippymodem_single_tone_transmitter_reverse(&signal->secondary) ==
-		       SIPPYMODEM_SINGLE_TONE_OK;
+	return single_tone_transmitter_reverse(&signal->primary) ==
+		       SINGLE_TONE_OK &&
+	       single_tone_transmitter_reverse(&signal->secondary) ==
+		       SINGLE_TONE_OK;
 }
 
 static bool advance_to_state(
 	struct sippymodem_v32_line_startup *startup,
-	struct sippymodem_single_tone_transmitter *answerer,
+	struct single_tone_transmitter *answerer,
 	enum test_codec codec,
 	enum sippymodem_v32_line_startup_state target)
 {
@@ -119,7 +119,7 @@ static bool advance_to_state(
 static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 {
 	struct sippymodem_v32_line_startup startup;
-	struct sippymodem_single_tone_transmitter answerer;
+	struct single_tone_transmitter answerer;
 	struct test_turnaround_signal turnaround;
 	uint64_t calling_power = 0;
 	size_t guard_samples = 0;
@@ -131,9 +131,9 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 		      SIPPYMODEM_V32_LINE_STARTUP_OK &&
 		      sippymodem_v32_line_startup_round_trip_samples(&startup) ==
 			      0 &&
-		      sippymodem_single_tone_transmitter_init(
+		      single_tone_transmitter_init(
 			      &answerer, SIPPYMODEM_V32_ANSWER_TONE_HZ,
-			      TEST_AMPLITUDE) == SIPPYMODEM_SINGLE_TONE_OK &&
+			      TEST_AMPLITUDE) == SINGLE_TONE_OK &&
 		      turnaround_signal_init(&turnaround, turnaround_hz),
 	      "V.32 line-startup fixture did not initialize");
 	for (size_t count = 0; count < 400; ++count) {
@@ -288,16 +288,16 @@ static bool test_generated_exchange(void)
 static bool test_early_answer_loss_fails(void)
 {
 	struct sippymodem_v32_line_startup startup;
-	struct sippymodem_single_tone_transmitter answerer;
+	struct single_tone_transmitter answerer;
 	int16_t transmit = 1;
 	bool complete = false;
 
 	CHECK(sippymodem_v32_line_startup_init(
 		      &startup, TEST_AMPLITUDE) ==
 		      SIPPYMODEM_V32_LINE_STARTUP_OK &&
-		      sippymodem_single_tone_transmitter_init(
+		      single_tone_transmitter_init(
 			      &answerer, SIPPYMODEM_V32_ANSWER_TONE_HZ,
-			      TEST_AMPLITUDE) == SIPPYMODEM_SINGLE_TONE_OK &&
+			      TEST_AMPLITUDE) == SINGLE_TONE_OK &&
 		      advance_to_state(
 			      &startup, &answerer, TEST_CODEC_LINEAR,
 			      SIPPYMODEM_V32_LINE_ANSWER_GUARD),

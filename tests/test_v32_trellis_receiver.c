@@ -21,11 +21,11 @@ static uint32_t fixture_random(uint32_t *state)
 	return *state;
 }
 
-static struct sippymodem_qam_point multiply(
-	struct sippymodem_qam_point left,
-	struct sippymodem_qam_point right)
+static struct qam_point multiply(
+	struct qam_point left,
+	struct qam_point right)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = left.in_phase * right.in_phase -
 			    left.quadrature * right.quadrature,
 		.quadrature = left.in_phase * right.quadrature +
@@ -33,24 +33,24 @@ static struct sippymodem_qam_point multiply(
 	};
 }
 
-static struct sippymodem_qam_point apply_channel(
-	struct sippymodem_qam_point history[TEST_CHANNEL_TAPS],
-	struct sippymodem_qam_point transmitted,
-	struct sippymodem_qam_point gain)
+static struct qam_point apply_channel(
+	struct qam_point history[TEST_CHANNEL_TAPS],
+	struct qam_point transmitted,
+	struct qam_point gain)
 {
-	static const struct sippymodem_qam_point taps[TEST_CHANNEL_TAPS] = {
+	static const struct qam_point taps[TEST_CHANNEL_TAPS] = {
 		{ 1.0, 0.0 },
 		{ 0.14, -0.09 },
 		{ -0.06, 0.045 },
 		{ 0.025, 0.015 },
 	};
-	struct sippymodem_qam_point distorted = { 0 };
+	struct qam_point distorted = { 0 };
 
 	for (size_t index = TEST_CHANNEL_TAPS - 1; index != 0; --index)
 		history[index] = history[index - 1];
 	history[0] = transmitted;
 	for (size_t index = 0; index < TEST_CHANNEL_TAPS; ++index) {
-		struct sippymodem_qam_point contribution =
+		struct qam_point contribution =
 			multiply(taps[index], history[index]);
 
 		distorted.in_phase += contribution.in_phase;
@@ -70,7 +70,7 @@ static double fixture_noise(uint32_t *random)
 static bool encode_trellis_point(
 	struct sippymodem_v32_scrambler *scrambler,
 	struct sippymodem_v32_trellis_encoder *encoder, uint8_t input,
-	struct sippymodem_qam_point *point)
+	struct qam_point *point)
 {
 	uint8_t scrambled;
 	uint8_t signal_symbol;
@@ -91,17 +91,17 @@ static bool check_transition(
 	uint8_t data_bits)
 {
 	/* A residual 0.19 Hz carrier error at 2400 baud. */
-	static const struct sippymodem_qam_point channel_drift = {
+	static const struct qam_point channel_drift = {
 		0.999999875, 0.0005
 	};
 	struct sippymodem_v32_symbol_encoder framing_encoder;
 	struct sippymodem_v32_symbol_decoder framing_decoder;
 	struct sippymodem_v32_trellis_encoder trellis_encoder;
 	struct sippymodem_v32_trellis_receiver receiver;
-	struct sippymodem_qam_point channel = { 0.76, -0.27 };
-	struct sippymodem_qam_point channel_history[TEST_CHANNEL_TAPS] = { 0 };
-	struct sippymodem_qam_point transmitted;
-	struct sippymodem_qam_point received_reference = { 0 };
+	struct qam_point channel = { 0.76, -0.27 };
+	struct qam_point channel_history[TEST_CHANNEL_TAPS] = { 0 };
+	struct qam_point transmitted;
+	struct qam_point received_reference = { 0 };
 	uint8_t payload[TEST_PAYLOAD_SYMBOLS];
 	uint32_t transmitter_history[TEST_PAYLOAD_SYMBOLS];
 	uint32_t random = UINT32_C(0x32b15e00) +
@@ -163,7 +163,7 @@ static bool check_transition(
 	      "V.32bis %u-bit receiver %u/%u did not initialize", data_bits,
 	      role, initial_quadrant);
 	for (size_t index = 0; index < TEST_KNOWN_SYMBOLS; ++index) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		bool confirmed;
 
 		CHECK(encode_trellis_point(
@@ -187,7 +187,7 @@ static bool check_transition(
 	      "V.32bis %u-bit receiver confirmed only %u late training symbols",
 	      data_bits, confirmed_symbols);
 	for (size_t index = 0; index < TEST_PAYLOAD_SYMBOLS; ++index) {
-		struct sippymodem_qam_point received;
+		struct qam_point received;
 		uint8_t output = UINT8_MAX;
 		bool ready = true;
 
@@ -248,7 +248,7 @@ static bool test_generated_isi_transition(void)
 		     SIPPYMODEM_V32_CALLING_TRANSMITTER;
 	     role <= SIPPYMODEM_V32_ANSWERING_TRANSMITTER; ++role) {
 		for (uint8_t quadrant = 0;
-		     quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT; ++quadrant) {
+		     quadrant < QPSK_QUADRANT_COUNT; ++quadrant) {
 			for (size_t width = 0; width < ARRAY_LENGTH(widths);
 			     ++width) {
 				if (!check_transition(role, quadrant, widths[width]))
@@ -264,9 +264,9 @@ static bool test_validation(void)
 	struct sippymodem_v32_symbol_decoder framing;
 	struct sippymodem_v32_trellis_receiver receiver = { 0 };
 	struct sippymodem_v32_trellis_receiver saved;
-	struct sippymodem_qam_point point = { 0.8, -0.2 };
-	struct sippymodem_qam_point zero = { 0 };
-	struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct qam_point point = { 0.8, -0.2 };
+	struct qam_point zero = { 0 };
+	struct qam_point invalid = { NAN, 0.0 };
 	uint8_t output = UINT8_MAX;
 	bool ready = true;
 	bool confirmed = true;

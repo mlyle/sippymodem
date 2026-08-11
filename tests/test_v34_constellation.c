@@ -172,7 +172,7 @@ static bool test_quarter_superconstellation_prefixes(void)
 	return true;
 }
 
-static struct sippymodem_qam_point expected_rotated_grid_point(
+static struct qam_point expected_rotated_grid_point(
 	int in_phase, int quadrature, double grid_unit,
 	uint8_t clockwise_quarter_turns)
 {
@@ -198,7 +198,7 @@ static struct sippymodem_qam_point expected_rotated_grid_point(
 		break;
 	}
 	}
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = in_phase * grid_unit,
 		.quadrature = quadrature * grid_unit,
 	};
@@ -207,9 +207,9 @@ static struct sippymodem_qam_point expected_rotated_grid_point(
 static bool test_point_zero_rotations(void)
 {
 	for (int turns = -9; turns <= 9; ++turns) {
-		struct sippymodem_qam_point point =
+		struct qam_point point =
 			v34_rotated_point_zero(turns);
-		struct sippymodem_qam_point expected =
+		struct qam_point expected =
 			expected_rotated_grid_point(
 				1, 1, sqrt(0.5),
 				(uint8_t)((-(turns % 4) + 4) % 4));
@@ -227,8 +227,8 @@ static bool test_point_zero_rotations(void)
 static bool test_four_point_constellation(void)
 {
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
-		struct sippymodem_qam_point point;
-		struct sippymodem_qam_point expected =
+		struct qam_point point;
+		struct qam_point expected =
 			expected_rotated_grid_point(1, 1, sqrt(0.5), rotation);
 		double power;
 
@@ -255,14 +255,14 @@ static bool test_sixteen_point_constellation(void)
 		{ 1, -3 },
 		{ -3, -3 },
 	};
-	struct sippymodem_qam_point points[16];
+	struct qam_point points[16];
 	double power_sum = 0.0;
 	double maximum_power = 0.0;
 	size_t count = 0;
 
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
 		for (uint8_t quarter = 0; quarter < 4u; ++quarter) {
-			struct sippymodem_qam_point expected =
+			struct qam_point expected =
 				expected_rotated_grid_point(
 					quarter_grid[quarter][0],
 					quarter_grid[quarter][1], sqrt(0.1),
@@ -313,7 +313,7 @@ static bool test_training_constellation_slicing(void)
 		V34_CONSTELLATION_4_POINT,
 		V34_CONSTELLATION_16_POINT,
 	};
-	static const struct sippymodem_qam_point perturbations[] = {
+	static const struct qam_point perturbations[] = {
 		{ 0.0, 0.0 },
 		{ 0.12, -0.09 },
 		{ -0.11, 0.13 },
@@ -331,7 +331,7 @@ static bool test_training_constellation_slicing(void)
 		for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
 			for (uint8_t quarter = 0; quarter < quarter_count;
 			     ++quarter) {
-				struct sippymodem_qam_point exact;
+				struct qam_point exact;
 
 				CHECK(v34_training_constellation_point(
 					      constellation, quarter, rotation,
@@ -342,7 +342,7 @@ static bool test_training_constellation_slicing(void)
 				for (size_t noise = 0;
 				     noise < ARRAY_LENGTH(perturbations);
 				     ++noise) {
-					struct sippymodem_qam_point observed = {
+					struct qam_point observed = {
 						.in_phase = exact.in_phase +
 							perturbations[noise].in_phase,
 						.quadrature = exact.quadrature +
@@ -364,7 +364,7 @@ static bool test_training_constellation_slicing(void)
 			}
 		}
 		{
-			struct sippymodem_qam_point tie = { 0 };
+			struct qam_point tie = { 0 };
 			uint8_t quarter = UINT8_MAX;
 			uint8_t rotation = UINT8_MAX;
 
@@ -380,8 +380,8 @@ static bool test_training_constellation_slicing(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point before = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point before = point;
 	struct v34_grid_point generated[4];
 	struct v34_grid_point saved[4];
 	struct v34_grid_point indexed = { 23, -29 };
@@ -391,8 +391,8 @@ static bool test_validation(void)
 		{ 49, 1 },
 		{ 45, 45 },
 	};
-	struct sippymodem_qam_point not_finite = { NAN, 0.0 };
-	struct sippymodem_qam_point too_large = { DBL_MAX, DBL_MAX };
+	struct qam_point not_finite = { NAN, 0.0 };
+	struct qam_point too_large = { DBL_MAX, DBL_MAX };
 	size_t label = 0xa5a5u;
 	uint8_t quarter = 0xa5;
 	uint8_t rotation = 0x5a;

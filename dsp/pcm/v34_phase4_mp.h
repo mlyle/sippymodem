@@ -75,7 +75,7 @@ v34_phase4_mp_start_next_type1_record(
  * calls leave state and every output unchanged. */
 enum v34_phase4_mp_result v34_phase4_mp_next(
 	struct v34_phase4_mp *transmitter,
-	struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete);
 
 const char *v34_phase4_mp_result_name(

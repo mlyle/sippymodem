@@ -98,7 +98,7 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_encoder_init(
 	uint8_t initial_quadrant)
 {
 	if (encoder == NULL ||
-	    initial_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
+	    initial_quadrant >= QPSK_QUADRANT_COUNT)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	memset(encoder, 0, sizeof(*encoder));
 	encoder->phase_quadrant = initial_quadrant;
@@ -115,7 +115,7 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_encode(
 
 	if (encoder == NULL || first_bit > 1 || second_bit > 1 ||
 	    quadrant == NULL ||
-	    encoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    encoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !sippymodem_v22_scrambler_is_valid(&encoder->scrambler))
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	if (sippymodem_v22_scramble_bit(
@@ -124,10 +124,10 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_encode(
 	    sippymodem_v22_scramble_bit(
 		    &encoder->scrambler, second_bit, &second_scrambled) !=
 		    SIPPYMODEM_V22_FRAMING_OK ||
-	    sippymodem_differential_qpsk_encode(
+	    differential_qpsk_encode(
 		    encoder->phase_quadrant,
 		    (uint8_t)((first_scrambled << 1) | second_scrambled),
-		    &next_quadrant) != SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
+		    &next_quadrant) != DIFFERENTIAL_QPSK_OK)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	encoder->phase_quadrant = next_quadrant;
 	*quadrant = next_quadrant;
@@ -139,7 +139,7 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_decoder_init(
 	uint8_t initial_quadrant)
 {
 	if (decoder == NULL ||
-	    initial_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
+	    initial_quadrant >= QPSK_QUADRANT_COUNT)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	memset(decoder, 0, sizeof(*decoder));
 	decoder->phase_quadrant = initial_quadrant;
@@ -155,14 +155,14 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_decode(
 	uint8_t second_decoded;
 
 	if (decoder == NULL ||
-	    quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    quadrant >= QPSK_QUADRANT_COUNT ||
 	    first_bit == NULL || second_bit == NULL ||
-	    decoder->phase_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    decoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !sippymodem_v22_scrambler_is_valid(&decoder->descrambler))
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
-	if (sippymodem_differential_qpsk_decode(
+	if (differential_qpsk_decode(
 		    decoder->phase_quadrant, quadrant, &dibit) !=
-		    SIPPYMODEM_DIFFERENTIAL_QPSK_OK ||
+		    DIFFERENTIAL_QPSK_OK ||
 	    sippymodem_v22_descramble_bit(
 		    &decoder->descrambler, (uint8_t)(dibit >> 1),
 		    &first_decoded) != SIPPYMODEM_V22_FRAMING_OK ||

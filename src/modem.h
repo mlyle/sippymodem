@@ -402,7 +402,7 @@ struct modem {
 	void (*sample_timer_func)(struct modem *);
         /* data pump */
         struct dp *dp;
-	struct sippymodem_dc_filter dc_filter;
+	struct dc_filter dc_filter;
 	/* dsp info data */
 	struct dsp_info dsp_info;
 	/* voice info */

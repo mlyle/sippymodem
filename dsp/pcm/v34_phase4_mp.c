@@ -277,11 +277,11 @@ static uint8_t frame_dibit(const uint8_t *frame, size_t first_bit)
 
 enum v34_phase4_mp_result v34_phase4_mp_next(
 	struct v34_phase4_mp *transmitter,
-	struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete)
 {
 	struct v34_phase4_mp next;
-	struct sippymodem_qam_point next_point;
+	struct qam_point next_point;
 	uint8_t next_quarter_point = 0;
 	uint8_t next_rotation;
 	bool complete;

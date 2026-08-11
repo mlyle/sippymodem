@@ -11,8 +11,8 @@ enum {
 
 static bool role_channels(
 	enum sippymodem_v8_station_role role,
-	const struct sippymodem_fsk_channel **transmit,
-	const struct sippymodem_fsk_channel **receive)
+	const struct fsk_channel **transmit,
+	const struct fsk_channel **receive)
 {
 	if (role == SIPPYMODEM_V8_CALLING_STATION) {
 		*transmit = &sippymodem_v21_channel_1;
@@ -28,8 +28,8 @@ static bool role_channels(
 }
 
 static bool channels_equal(
-	const struct sippymodem_fsk_channel *left,
-	const struct sippymodem_fsk_channel *right)
+	const struct fsk_channel *left,
+	const struct fsk_channel *right)
 {
 	return left->sample_rate == right->sample_rate &&
 	       left->symbol_rate_numerator == right->symbol_rate_numerator &&
@@ -42,8 +42,8 @@ static bool channels_equal(
 
 static bool fsk_is_configured(const struct sippymodem_v8_fsk *fsk)
 {
-	const struct sippymodem_fsk_channel *transmit;
-	const struct sippymodem_fsk_channel *receive;
+	const struct fsk_channel *transmit;
+	const struct fsk_channel *receive;
 
 	return fsk != NULL && role_channels(fsk->role, &transmit, &receive) &&
 	       channels_equal(&fsk->transmitter.channel, transmit) &&
@@ -55,17 +55,17 @@ enum sippymodem_v8_fsk_result sippymodem_v8_fsk_init(
 	struct sippymodem_v8_fsk *fsk,
 	enum sippymodem_v8_station_role role)
 {
-	const struct sippymodem_fsk_channel *transmit;
-	const struct sippymodem_fsk_channel *receive;
+	const struct fsk_channel *transmit;
+	const struct fsk_channel *receive;
 	struct sippymodem_v8_fsk initialized = { 0 };
 
 	if (fsk == NULL || !role_channels(role, &transmit, &receive))
 		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
-	if (sippymodem_fsk_transmitter_init(
+	if (fsk_transmitter_init(
 		    &initialized.transmitter, transmit,
-		    V8_FSK_TRANSMIT_AMPLITUDE) != SIPPYMODEM_FSK_OK ||
-	    sippymodem_fsk_receiver_init(&initialized.receiver, receive) !=
-		    SIPPYMODEM_FSK_OK)
+		    V8_FSK_TRANSMIT_AMPLITUDE) != FSK_OK ||
+	    fsk_receiver_init(&initialized.receiver, receive) !=
+		    FSK_OK)
 		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
 	initialized.role = role;
 	*fsk = initialized;
@@ -86,7 +86,7 @@ bool sippymodem_v8_fsk_can_accept_bit(
 	const struct sippymodem_v8_fsk *fsk)
 {
 	return fsk_is_configured(fsk) &&
-	       sippymodem_fsk_transmitter_can_accept_bit(&fsk->transmitter);
+	       fsk_transmitter_can_accept_bit(&fsk->transmitter);
 }
 
 enum sippymodem_v8_fsk_result sippymodem_v8_fsk_transmit_sample(
@@ -98,9 +98,9 @@ enum sippymodem_v8_fsk_result sippymodem_v8_fsk_transmit_sample(
 
 	if (!fsk_is_configured(fsk) || bit > 1 || sample == NULL ||
 	    bit_consumed == NULL ||
-	    sippymodem_fsk_transmitter_sample(
+	    fsk_transmitter_sample(
 		    &fsk->transmitter, bit, &generated, &consumed) !=
-		    SIPPYMODEM_FSK_OK)
+		    FSK_OK)
 		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
 	*sample = generated;
 	*bit_consumed = consumed;
@@ -115,9 +115,9 @@ enum sippymodem_v8_fsk_result sippymodem_v8_fsk_receive_sample(
 	bool ready;
 
 	if (!fsk_is_configured(fsk) || bit == NULL || bit_ready == NULL ||
-	    sippymodem_fsk_receiver_sample(
+	    fsk_receiver_sample(
 		    &fsk->receiver, sample, &received, &ready) !=
-		    SIPPYMODEM_FSK_OK)
+		    FSK_OK)
 		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
 	*bit = received;
 	*bit_ready = ready;

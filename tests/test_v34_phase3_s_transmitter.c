@@ -140,9 +140,9 @@ static bool test_all_line_profiles(void)
 					(uint8_t)filter_index);
 			struct v34_phase3_s_transmitter transmitter;
 			struct marker_statistics statistics;
-			struct sippymodem_qam_modulator drained_carrier;
+			struct qam_modulator drained_carrier;
 			struct v34_preemphasis drained_filter;
-			const struct sippymodem_qam_point zero = { 0 };
+			const struct qam_point zero = { 0 };
 			double carrier_sample;
 			double filtered_sample;
 			bool accepted;
@@ -193,9 +193,9 @@ static bool test_all_line_profiles(void)
 			      fabsl(measured_rms - transmitter.target_rms) < 1.0L,
 			      "profile %u/%u cadence or power changed",
 			      rate_index, high);
-			CHECK(sippymodem_qam_modulator_sample_f64(
+			CHECK(qam_modulator_sample_f64(
 				      &drained_carrier, &zero, &carrier_sample,
-				      &accepted) == SIPPYMODEM_QAM_OK &&
+				      &accepted) == QAM_OK &&
 			      v34_preemphasis_sample(
 				      &drained_filter, carrier_sample,
 				      &filtered_sample) ==

@@ -50,7 +50,7 @@ v34_symbol_power_observe_q7(
 enum v34_symbol_power_result
 v34_symbol_power_observe_point(
 	struct v34_symbol_power_measurement *measurement,
-	const struct sippymodem_qam_point *point);
+	const struct qam_point *point);
 
 /* Build a unit-average-power data constellation from paired measurements of
  * the same generated symbols before and after nonlinear encoding. The peak
@@ -73,8 +73,8 @@ bool v34_power_normalizer_is_valid(
  * point is invalid, exceeds the generated hard bound, or cannot be scaled. */
 enum v34_symbol_power_result v34_normalize_power(
 	const struct v34_power_normalizer *normalizer,
-	const struct sippymodem_qam_point *projected_point,
-	struct sippymodem_qam_point *normalized_point);
+	const struct qam_point *projected_point,
+	struct qam_point *normalized_point);
 
 const char *v34_symbol_power_result_name(
 	enum v34_symbol_power_result result);

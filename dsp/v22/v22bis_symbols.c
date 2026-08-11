@@ -25,7 +25,7 @@ static bool encoder_is_valid(
 	const struct sippymodem_v22bis_symbol_encoder *encoder)
 {
 	return encoder != NULL &&
-	       encoder->phase_quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT &&
+	       encoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
 	       sippymodem_v22_scrambler_is_valid(&encoder->scrambler);
 }
 
@@ -33,7 +33,7 @@ static bool decoder_is_valid(
 	const struct sippymodem_v22bis_symbol_decoder *decoder)
 {
 	return decoder != NULL &&
-	       decoder->phase_quadrant < SIPPYMODEM_QPSK_QUADRANT_COUNT &&
+	       decoder->phase_quadrant < QPSK_QUADRANT_COUNT &&
 	       sippymodem_v22_scrambler_is_valid(&decoder->descrambler);
 }
 
@@ -42,7 +42,7 @@ enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_encoder_init(
 	uint8_t initial_quadrant)
 {
 	if (encoder == NULL ||
-	    initial_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
+	    initial_quadrant >= QPSK_QUADRANT_COUNT)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	memset(encoder, 0, sizeof(*encoder));
 	encoder->phase_quadrant = initial_quadrant;
@@ -68,10 +68,10 @@ enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_encode(
 			    &next.scrambler, bits[index], &scrambled[index]) !=
 		    SIPPYMODEM_V22_FRAMING_OK)
 			return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
-	if (sippymodem_differential_qpsk_encode(
+	if (differential_qpsk_encode(
 		    next.phase_quadrant,
 		    (uint8_t)((scrambled[0] << 1) | scrambled[1]),
-		    &quadrant) != SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
+		    &quadrant) != DIFFERENTIAL_QPSK_OK)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	next.phase_quadrant = quadrant;
 	*encoder = next;
@@ -85,7 +85,7 @@ enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_decoder_init(
 	uint8_t initial_quadrant)
 {
 	if (decoder == NULL ||
-	    initial_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT)
+	    initial_quadrant >= QPSK_QUADRANT_COUNT)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	memset(decoder, 0, sizeof(*decoder));
 	decoder->phase_quadrant = initial_quadrant;
@@ -106,9 +106,9 @@ enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_decode(
 	    symbol >= SIPPYMODEM_V22BIS_SYMBOL_COUNT || bits == NULL)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	next = *decoder;
-	if (sippymodem_differential_qpsk_decode(
+	if (differential_qpsk_decode(
 		    next.phase_quadrant, quadrant, &dibit) !=
-	    SIPPYMODEM_DIFFERENTIAL_QPSK_OK)
+	    DIFFERENTIAL_QPSK_OK)
 		return SIPPYMODEM_V22_FRAMING_INVALID_ARGUMENT;
 	scrambled[0] = (uint8_t)(dibit >> 1);
 	scrambled[1] = (uint8_t)(dibit & 1u);
@@ -127,7 +127,7 @@ enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_decode(
 }
 
 enum sippymodem_v22_framing_result sippymodem_v22bis_constellation_point(
-	uint8_t symbol, struct sippymodem_qam_point *point)
+	uint8_t symbol, struct qam_point *point)
 {
 	double in_phase;
 	double quadrature;
@@ -156,7 +156,7 @@ enum sippymodem_v22_framing_result sippymodem_v22bis_constellation_point(
 		quadrature = -base_in_phase;
 		break;
 	}
-	*point = (struct sippymodem_qam_point){
+	*point = (struct qam_point){
 		.in_phase = in_phase * V22BIS_COORDINATE_SCALE,
 		.quadrature = quadrature * V22BIS_COORDINATE_SCALE,
 	};

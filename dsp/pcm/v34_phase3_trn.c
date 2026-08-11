@@ -35,11 +35,11 @@ enum v34_phase3_trn_result v34_phase3_trn_init(
 
 enum v34_phase3_trn_result v34_phase3_trn_next(
 	struct v34_phase3_trn *trn,
-	struct sippymodem_qam_point *point,
+	struct qam_point *point,
 	uint8_t *clockwise_quarter_turns)
 {
 	struct v34_phase3_trn next;
-	struct sippymodem_qam_point next_point;
+	struct qam_point next_point;
 	uint8_t rotation;
 
 	if (!v34_phase3_trn_is_valid(trn) || point == NULL ||

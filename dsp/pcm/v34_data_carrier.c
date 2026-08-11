@@ -9,11 +9,11 @@
 static const double V34_DATA_ROLLOFF = 0.1;
 static const double V34_DATA_POWER_EPSILON = 1e-12;
 
-static struct sippymodem_qam_channel data_channel(
+static struct qam_channel data_channel(
 	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate)
 {
-	return (struct sippymodem_qam_channel){
+	return (struct qam_channel){
 		.sample_rate = sample_rate,
 		.symbol_rate_numerator = profile->symbol_rate_numerator,
 		.symbol_rate_denominator = profile->symbol_rate_denominator,
@@ -42,11 +42,11 @@ static bool occupied_band_fits(
 }
 
 static bool channel_matches_configuration(
-	const struct sippymodem_qam_modulator *modulator,
+	const struct qam_modulator *modulator,
 	const struct v34_phase3_profile *profile,
 	const struct v34_power_normalizer *normalizer)
 {
-	const struct sippymodem_qam_channel *channel = &modulator->channel;
+	const struct qam_channel *channel = &modulator->channel;
 
 	return channel->symbol_rate_numerator ==
 		       profile->symbol_rate_numerator &&
@@ -65,7 +65,7 @@ static bool channel_matches_configuration(
 }
 
 static bool point_fits(
-	const struct sippymodem_qam_point *point, double maximum_power)
+	const struct qam_point *point, double maximum_power)
 {
 	double power;
 
@@ -85,7 +85,7 @@ bool v34_data_carrier_is_valid(
 	    !v34_phase3_profile_is_valid(&carrier->profile) ||
 	    !v34_frame_geometry_is_valid(&carrier->geometry) ||
 	    !v34_power_normalizer_is_valid(&carrier->normalizer) ||
-	    !sippymodem_qam_modulator_is_valid(&carrier->modulator) ||
+	    !qam_modulator_is_valid(&carrier->modulator) ||
 	    carrier->geometry.symbol_rate != carrier->profile.symbol_rate ||
 	    carrier->geometry.primary_data_rate_2400_bps_units >
 		    carrier->profile.projected_data_rate_2400_bps_units ||
@@ -123,7 +123,7 @@ enum v34_data_carrier_result v34_data_carrier_init(
 	uint32_t sample_rate)
 {
 	struct v34_data_carrier initialized = { 0 };
-	struct sippymodem_qam_channel channel;
+	struct qam_channel channel;
 
 	if (carrier == NULL ||
 	    !v34_phase3_profile_is_valid(profile) ||
@@ -141,10 +141,10 @@ enum v34_data_carrier_result v34_data_carrier_init(
 	initialized.normalizer = *normalizer;
 	initialized.next_symbol = V34_SYMBOLS_PER_MAPPING_FRAME;
 	channel = data_channel(profile, sample_rate);
-	if (sippymodem_qam_modulator_init_with_point_power_limit(
+	if (qam_modulator_init_with_point_power_limit(
 		    &initialized.modulator, &channel, INT16_MAX,
 		    normalizer->maximum_normalized_point_power) !=
-		    SIPPYMODEM_QAM_OK ||
+		    QAM_OK ||
 	    !v34_data_carrier_is_valid(&initialized))
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	*carrier = initialized;
@@ -172,7 +172,7 @@ v34_data_carrier_load_mapping_frame(
 	struct v34_data_carrier *carrier,
 	const struct v34_transmitted_mapping_frame *frame)
 {
-	struct sippymodem_qam_point
+	struct qam_point
 		normalized[V34_SYMBOLS_PER_MAPPING_FRAME];
 
 	if (!v34_data_carrier_is_valid(carrier) || frame == NULL)
@@ -200,25 +200,25 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 	struct v34_data_carrier *carrier, double *sample,
 	bool *symbol_accepted)
 {
-	static const struct sippymodem_qam_point ZERO = { 0 };
+	static const struct qam_point ZERO = { 0 };
 	struct v34_data_carrier next;
-	const struct sippymodem_qam_point *point;
+	const struct qam_point *point;
 	double generated;
 	bool accepted;
 
 	if (!v34_data_carrier_is_valid(carrier) || sample == NULL ||
 	    symbol_accepted == NULL)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
-	if (sippymodem_qam_modulator_can_accept_symbol(&carrier->modulator) &&
+	if (qam_modulator_can_accept_symbol(&carrier->modulator) &&
 	    v34_data_carrier_needs_mapping_frame(carrier))
 		return V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED;
 	next = *carrier;
 	point = next.next_symbol < V34_SYMBOLS_PER_MAPPING_FRAME ?
 		&next.normalized_symbol[next.next_symbol] :
 		&ZERO;
-	if (sippymodem_qam_modulator_sample_f64(
+	if (qam_modulator_sample_f64(
 		    &next.modulator, point, &generated, &accepted) !=
-	    SIPPYMODEM_QAM_OK)
+	    QAM_OK)
 		return V34_DATA_CARRIER_NUMERIC_FAILURE;
 	if (accepted) {
 		if (next.next_symbol >=

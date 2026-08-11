@@ -71,7 +71,7 @@ static struct v34_grid_point candidate_point(
 }
 
 static bool candidate_error(
-	const struct sippymodem_qam_point *estimate,
+	const struct qam_point *estimate,
 	const struct v34_grid_point *candidate, double *squared_error)
 {
 	double in_phase = estimate->in_phase - candidate->in_phase;
@@ -113,7 +113,7 @@ static bool candidate_precedes(
 }
 
 enum v34_lattice_result v34_slice_odd_lattice(
-	const struct sippymodem_qam_point *channel_estimate,
+	const struct qam_point *channel_estimate,
 	struct v34_lattice_slice *slice)
 {
 	struct v34_lattice_slice generated = { 0 };
@@ -157,7 +157,7 @@ enum v34_lattice_result v34_slice_odd_lattice(
 }
 
 enum v34_lattice_result v34_slice_grid_subsets(
-	const struct sippymodem_qam_point *channel_estimate,
+	const struct qam_point *channel_estimate,
 	struct v34_subset_slice *slice)
 {
 	struct v34_subset_slice generated = { 0 };

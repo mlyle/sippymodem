@@ -16,7 +16,7 @@ static const uint8_t decoded_high_dibit[4][4] = {
 	{ 2, 3, 1, 0 },
 };
 
-static bool point_is_finite(const struct sippymodem_qam_point *point)
+static bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
@@ -97,8 +97,8 @@ enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decoder_init(
 }
 
 static double squared_error(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
 	double in_phase = left->in_phase - right->in_phase;
 	double quadrature = left->quadrature - right->quadrature;
@@ -107,14 +107,14 @@ static double squared_error(
 }
 
 static bool measure_branches(
-	const struct sippymodem_qam_point *point, uint8_t data_bits_per_symbol,
+	const struct qam_point *point, uint8_t data_bits_per_symbol,
 	double error[SIPPYMODEM_V32_14400_SIGNAL_POINTS])
 {
 	uint8_t signal_points = (uint8_t)(
 		UINT8_C(1) << (data_bits_per_symbol + 1u));
 
 	for (uint8_t symbol = 0; symbol < signal_points; ++symbol) {
-		struct sippymodem_qam_point candidate;
+		struct qam_point candidate;
 
 		if (sippymodem_v32_trellis_constellation_point(
 			    data_bits_per_symbol, symbol, &candidate) !=
@@ -253,7 +253,7 @@ static uint8_t traceback_symbol(
 
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decode(
 	struct sippymodem_v32_trellis_decoder *decoder,
-	const struct sippymodem_qam_point *point, uint8_t *scrambled_data,
+	const struct qam_point *point, uint8_t *scrambled_data,
 	bool *ready, uint8_t *decided_signal_symbol)
 {
 	struct sippymodem_v32_trellis_decoder next;

@@ -11,11 +11,11 @@ static const double V34_PHASE3_S_EQUAL_POWER_RMS =
 	0.70710678118654752440084436210485;
 static const double V34_PHASE3_S_POWER_TOLERANCE = 1e-9;
 
-static struct sippymodem_qam_channel marker_channel(
+static struct qam_channel marker_channel(
 	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate)
 {
-	return (struct sippymodem_qam_channel){
+	return (struct qam_channel){
 		.sample_rate = sample_rate,
 		.symbol_rate_numerator = profile->symbol_rate_numerator,
 		.symbol_rate_denominator = profile->symbol_rate_denominator,
@@ -30,7 +30,7 @@ static struct sippymodem_qam_channel marker_channel(
 }
 
 static bool channel_matches_profile(
-	const struct sippymodem_qam_channel *channel,
+	const struct qam_channel *channel,
 	const struct v34_phase3_profile *profile)
 {
 	return channel != NULL && profile != NULL &&
@@ -150,7 +150,7 @@ bool v34_phase3_s_transmitter_is_valid(
 
 	if (transmitter == NULL ||
 	    !v34_phase3_profile_is_valid(&transmitter->profile) ||
-	    !sippymodem_qam_modulator_is_valid(&transmitter->carrier) ||
+	    !qam_modulator_is_valid(&transmitter->carrier) ||
 	    !channel_matches_profile(
 		    &transmitter->carrier.channel, &transmitter->profile) ||
 	    !occupied_band_fits(
@@ -191,11 +191,11 @@ static enum v34_phase3_s_transmitter_result raw_sample(
 	struct v34_phase3_s_transmitter *transmitter,
 	double *sample)
 {
-	const struct sippymodem_qam_point zero = { 0 };
-	struct sippymodem_qam_point point = zero;
+	const struct qam_point zero = { 0 };
+	struct qam_point point = zero;
 	enum v34_phase3_s_section section;
 	double carrier_sample;
-	bool accepting = sippymodem_qam_modulator_can_accept_symbol(
+	bool accepting = qam_modulator_can_accept_symbol(
 		&transmitter->carrier);
 	bool sequence_symbol = false;
 	bool symbol_accepted;
@@ -221,9 +221,9 @@ static enum v34_phase3_s_transmitter_result raw_sample(
 				V34_PHASE3_S_TRANSMIT_PULSE_TAIL;
 		}
 	}
-	if (sippymodem_qam_modulator_sample_f64(
+	if (qam_modulator_sample_f64(
 		    &transmitter->carrier, &point, &carrier_sample,
-		    &symbol_accepted) != SIPPYMODEM_QAM_OK ||
+		    &symbol_accepted) != QAM_OK ||
 	    (sequence_symbol && !symbol_accepted) ||
 	    v34_preemphasis_sample(
 		    &transmitter->preemphasis, carrier_sample, sample) !=
@@ -300,7 +300,7 @@ v34_phase3_s_transmitter_init(
 	uint32_t sample_rate, int16_t nominal_peak_amplitude)
 {
 	struct v34_phase3_s_transmitter initialized = { 0 };
-	struct sippymodem_qam_channel channel;
+	struct qam_channel channel;
 	double reduction_gain;
 	enum v34_phase3_s_transmitter_result result;
 
@@ -318,9 +318,9 @@ v34_phase3_s_transmitter_init(
 		V34_PHASE3_S_EQUAL_POWER_RMS * reduction_gain;
 	channel = marker_channel(profile, sample_rate);
 	if (!isfinite(initialized.target_rms) || initialized.target_rms <= 0.0 ||
-	    sippymodem_qam_modulator_init(
+	    qam_modulator_init(
 		    &initialized.carrier, &channel, INT16_MAX) !=
-		    SIPPYMODEM_QAM_OK ||
+		    QAM_OK ||
 	    v34_preemphasis_init(
 		    &initialized.preemphasis, sample_rate,
 		    profile->symbol_rate_numerator,

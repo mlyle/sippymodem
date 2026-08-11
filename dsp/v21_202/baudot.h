@@ -40,7 +40,7 @@ enum sippymodem_baudot_transmit_phase {
 };
 
 struct sippymodem_baudot_transmitter {
-	struct sippymodem_fsk_tone_generator tones;
+	struct fsk_tone_generator tones;
 	enum sippymodem_baudot_rate rate;
 	enum sippymodem_baudot_shift shift;
 	enum sippymodem_baudot_transmit_phase phase;
@@ -59,7 +59,7 @@ struct sippymodem_baudot_transmitter {
 };
 
 struct sippymodem_baudot_receiver {
-	struct sippymodem_fsk_receiver detector;
+	struct fsk_receiver detector;
 	enum sippymodem_baudot_rate rate;
 	enum sippymodem_baudot_shift shift;
 	uint64_t received_characters;

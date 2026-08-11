@@ -83,7 +83,7 @@ static bool test_role_sequences(void)
 		      "TRN role %zu did not initialize", role_index);
 		for (unsigned int symbol = 0; symbol < ROLE_TEST_SYMBOLS;
 		     ++symbol) {
-			struct sippymodem_qam_point point = { 7.0, -9.0 };
+			struct qam_point point = { 7.0, -9.0 };
 			uint8_t rotation = UINT8_MAX;
 			uint8_t expected = reference_rotation(&reference);
 			double angle = TEST_PI / 4.0 - expected * TEST_PI / 2.0;
@@ -132,7 +132,7 @@ static bool test_copy_and_restart(void)
 	struct v34_phase3_trn first;
 	struct v34_phase3_trn second;
 	struct v34_phase3_trn restarted;
-	struct sippymodem_qam_point ignored;
+	struct qam_point ignored;
 	uint8_t ignored_rotation;
 
 	CHECK(v34_phase3_trn_init(
@@ -146,8 +146,8 @@ static bool test_copy_and_restart(void)
 		      "TRN prefix stopped at symbol %u", symbol);
 	second = first;
 	for (unsigned int symbol = 0; symbol < 1024; ++symbol) {
-		struct sippymodem_qam_point first_point;
-		struct sippymodem_qam_point second_point;
+		struct qam_point first_point;
+		struct qam_point second_point;
 		uint8_t first_rotation;
 		uint8_t second_rotation;
 
@@ -178,8 +178,8 @@ static bool test_validation(void)
 {
 	struct v34_phase3_trn trn;
 	struct v34_phase3_trn before;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point before_point = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point before_point = point;
 	uint8_t rotation = UINT8_MAX;
 
 	memset(&trn, 0xa5, sizeof(trn));

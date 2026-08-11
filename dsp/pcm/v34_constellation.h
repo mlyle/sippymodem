@@ -56,7 +56,7 @@ v34_quarter_superconstellation_label(
 /* Return point zero of the V.34 quarter-superconstellation after the given
  * number of 90-degree turns. Positive turns are counterclockwise; negative
  * turns are clockwise. */
-struct sippymodem_qam_point v34_rotated_point_zero(
+struct qam_point v34_rotated_point_zero(
 	int counterclockwise_quarter_turns);
 
 /* Generate a unit-average-power Phase 3/4 training point. For the four-point
@@ -66,7 +66,7 @@ enum v34_constellation_result
 v34_training_constellation_point(
 	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
-	struct sippymodem_qam_point *point);
+	struct qam_point *point);
 
 /* Select the nearest generated Phase 3/4 training point. Equal-distance ties
  * choose the first label in rotation-major order. Rejected calls leave both
@@ -74,7 +74,7 @@ v34_training_constellation_point(
 enum v34_constellation_result
 v34_training_constellation_slice(
 	enum v34_constellation_size constellation,
-	const struct sippymodem_qam_point *point, uint8_t *quarter_point,
+	const struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
 const char *v34_constellation_result_name(

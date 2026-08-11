@@ -61,7 +61,7 @@ static uint32_t reference_history(
 	return history;
 }
 
-static struct sippymodem_qam_point reference_point(
+static struct qam_point reference_point(
 	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
@@ -77,15 +77,15 @@ static struct sippymodem_qam_point reference_point(
 		in_phase = quadrature;
 		quadrature = -saved_in_phase;
 	}
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = in_phase * grid_unit,
 		.quadrature = quadrature * grid_unit,
 	};
 }
 
 static bool points_are_close(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
 	return fabs(left->in_phase - right->in_phase) < TEST_TOLERANCE &&
 	       fabs(left->quadrature - right->quadrature) < TEST_TOLERANCE;
@@ -139,10 +139,10 @@ static bool test_role_and_constellation_sequences(void)
 					constellation ==
 							V34_CONSTELLATION_16_POINT ?
 						reference_mapped_dibit(&reference) : 0u;
-				struct sippymodem_qam_point expected = reference_point(
+				struct qam_point expected = reference_point(
 					constellation, expected_quarter,
 					expected_rotation);
-				struct sippymodem_qam_point point = { 7.0, -9.0 };
+				struct qam_point point = { 7.0, -9.0 };
 				uint8_t quarter = UINT8_MAX;
 				uint8_t rotation = UINT8_MAX;
 
@@ -213,7 +213,7 @@ static bool test_copy_and_restart(void)
 		struct v34_phase4_trn first;
 		struct v34_phase4_trn second;
 		struct v34_phase4_trn restarted;
-		struct sippymodem_qam_point ignored_point;
+		struct qam_point ignored_point;
 		uint8_t ignored_quarter;
 		uint8_t ignored_rotation;
 
@@ -231,8 +231,8 @@ static bool test_copy_and_restart(void)
 			      symbol);
 		second = first;
 		for (unsigned int symbol = 0; symbol < 1024; ++symbol) {
-			struct sippymodem_qam_point first_point;
-			struct sippymodem_qam_point second_point;
+			struct qam_point first_point;
+			struct qam_point second_point;
 			uint8_t first_quarter;
 			uint8_t second_quarter;
 			uint8_t first_rotation;
@@ -269,8 +269,8 @@ static bool test_validation(void)
 {
 	struct v34_phase4_trn trn;
 	struct v34_phase4_trn before;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point before_point = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point before_point = point;
 	uint8_t quarter = UINT8_MAX;
 	uint8_t rotation = UINT8_MAX;
 

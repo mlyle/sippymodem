@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-struct sippymodem_qam_point;
+struct qam_point;
 
 enum {
 	SIPPYMODEM_V32_TRELLIS_MIN_DATA_BITS = 3,
@@ -74,7 +74,7 @@ bool sippymodem_v32_trellis_decoder_is_valid(
  */
 enum sippymodem_v32_trellis_result sippymodem_v32_trellis_decode(
 	struct sippymodem_v32_trellis_decoder *decoder,
-	const struct sippymodem_qam_point *point, uint8_t *scrambled_data,
+	const struct qam_point *point, uint8_t *scrambled_data,
 	bool *ready, uint8_t *decided_signal_symbol);
 
 const char *sippymodem_v32_trellis_result_name(

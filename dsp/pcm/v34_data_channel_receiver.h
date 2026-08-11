@@ -53,10 +53,10 @@ bool v34_data_channel_receiver_is_receiving_b1(
 enum v34_data_channel_receiver_result
 v34_data_channel_receiver_advance(
 	struct v34_data_channel_receiver *receiver,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_survivor_decision *current,
-	struct sippymodem_qam_point
+	struct qam_point
 		decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_received_mapping_frame *received);
 

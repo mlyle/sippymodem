@@ -33,9 +33,9 @@ static uint32_t local_carrier_hz(
 		       V34_PHASE2_ANSWERING_CARRIER_HZ;
 }
 
-static struct sippymodem_qam_channel phase2_channel(uint32_t carrier_hz)
+static struct qam_channel phase2_channel(uint32_t carrier_hz)
 {
-	return (struct sippymodem_qam_channel){
+	return (struct qam_channel){
 		.sample_rate = V34_PHASE2_SAMPLE_RATE,
 		.symbol_rate_numerator =
 			V34_PHASE2_DPSK_BIT_RATE,
@@ -59,7 +59,7 @@ static uint32_t phase_step(uint32_t frequency_hz)
 }
 
 static bool channel_matches(
-	const struct sippymodem_qam_channel *channel, uint32_t carrier_hz)
+	const struct qam_channel *channel, uint32_t carrier_hz)
 {
 	return channel != NULL &&
 	       channel->sample_rate == V34_PHASE2_SAMPLE_RATE &&
@@ -96,7 +96,7 @@ bool v34_phase2_dpsk_transmitter_is_valid(
 	const struct v34_phase2_dpsk_transmitter *transmitter)
 {
 	return transmitter_metadata_is_valid(transmitter) &&
-	       sippymodem_qam_modulator_is_valid(&transmitter->carrier);
+	       qam_modulator_is_valid(&transmitter->carrier);
 }
 
 bool v34_phase2_dpsk_transmitter_can_accept_bit(
@@ -104,7 +104,7 @@ bool v34_phase2_dpsk_transmitter_can_accept_bit(
 {
 	return v34_phase2_dpsk_transmitter_is_valid(transmitter) &&
 	       !transmitter->initial_point_pending &&
-	       sippymodem_qam_modulator_can_accept_symbol(
+	       qam_modulator_can_accept_symbol(
 		       &transmitter->carrier);
 }
 
@@ -118,7 +118,7 @@ v34_phase2_dpsk_transmitter_init(
 		.local_role = local_role,
 		.initial_point_pending = true,
 	};
-	struct sippymodem_qam_channel channel;
+	struct qam_channel channel;
 	long carrier_amplitude;
 	long guard_amplitude = 0;
 
@@ -141,9 +141,9 @@ v34_phase2_dpsk_transmitter_init(
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	initialized.guard_amplitude = (int16_t)guard_amplitude;
 	channel = phase2_channel(local_carrier_hz(local_role));
-	if (sippymodem_qam_modulator_init(
+	if (qam_modulator_init(
 		    &initialized.carrier, &channel,
-		    (int16_t)carrier_amplitude) != SIPPYMODEM_QAM_OK ||
+		    (int16_t)carrier_amplitude) != QAM_OK ||
 	    !v34_phase2_dpsk_transmitter_is_valid(&initialized))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	*transmitter = initialized;
@@ -161,7 +161,7 @@ v34_phase2_dpsk_transmitter_sample(
 	struct v34_phase2_dpsk_transmitter *transmitter,
 	uint8_t bit, int16_t *sample, bool *bit_accepted)
 {
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	bool can_accept;
 	bool inverted;
 	bool symbol_accepted;
@@ -173,17 +173,17 @@ v34_phase2_dpsk_transmitter_sample(
 	    bit > 1 ||
 	    sample == NULL || bit_accepted == NULL)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
-	can_accept = sippymodem_qam_modulator_can_accept_symbol(
+	can_accept = qam_modulator_can_accept_symbol(
 		&transmitter->carrier);
 	inverted = transmitter->point_inverted;
 	if (can_accept && !transmitter->initial_point_pending && bit != 0)
 		inverted = !inverted;
-	point = (struct sippymodem_qam_point){
+	point = (struct qam_point){
 		.in_phase = inverted ? -1.0 : 1.0,
 	};
-	if (sippymodem_qam_modulator_sample(
+	if (qam_modulator_sample(
 		    &transmitter->carrier, &point, &carrier_sample,
-		    &symbol_accepted) != SIPPYMODEM_QAM_OK)
+		    &symbol_accepted) != QAM_OK)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	if (symbol_accepted) {
 		if (transmitter->initial_point_pending) {

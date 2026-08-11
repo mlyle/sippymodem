@@ -27,14 +27,14 @@ static const double QAM_MAX_POINT_POWER = 9.0 / 5.0;
 static const double QAM_MIN_ACQUISITION_POWER = 64.0;
 static const double QAM_TIMING_POWER_HYSTERESIS = 1.005;
 
-static bool point_is_finite(const struct sippymodem_qam_point *point)
+static bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
 }
 
 static bool transmit_point_is_valid(
-	const struct sippymodem_qam_point *point, double maximum_point_power)
+	const struct qam_point *point, double maximum_point_power)
 {
 	double power;
 
@@ -69,9 +69,9 @@ static uint32_t phase_step(
 	return (uint32_t)quotient;
 }
 
-enum sippymodem_qam_result sippymodem_qam_nearest_quarter_turn(
-	const struct sippymodem_qam_point *previous,
-	const struct sippymodem_qam_point *current, uint8_t *quarter_turns)
+enum qam_result qam_nearest_quarter_turn(
+	const struct qam_point *previous,
+	const struct qam_point *current, uint8_t *quarter_turns)
 {
 	double cross;
 	double dot;
@@ -79,20 +79,20 @@ enum sippymodem_qam_result sippymodem_qam_nearest_quarter_turn(
 
 	if (!point_is_finite(previous) || !point_is_finite(current) ||
 	    quarter_turns == NULL)
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+		return QAM_INVALID_ARGUMENT;
 	dot = previous->in_phase * current->in_phase +
 	      previous->quadrature * current->quadrature;
 	cross = previous->in_phase * current->quadrature -
 		previous->quadrature * current->in_phase;
 	if (!isfinite(dot) || !isfinite(cross))
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+		return QAM_INVALID_ARGUMENT;
 	turns = (int)lround(atan2(cross, dot) / (QAM_PI / 2.0));
 	*quarter_turns = (uint8_t)((unsigned int)turns & 3u);
-	return SIPPYMODEM_QAM_OK;
+	return QAM_OK;
 }
 
 static bool channel_is_valid(
-	const struct sippymodem_qam_channel *channel,
+	const struct qam_channel *channel,
 	uint64_t *symbol_period_units)
 {
 	uint64_t carrier_denominator;
@@ -106,7 +106,7 @@ static bool channel_is_valid(
 	    !isfinite(channel->rolloff) || channel->rolloff <= 0.0 ||
 	    channel->rolloff > 1.0 || channel->pulse_span_symbols < 2 ||
 	    channel->pulse_span_symbols >
-		    SIPPYMODEM_QAM_MAX_PULSE_SPAN_SYMBOLS ||
+		    QAM_MAX_PULSE_SPAN_SYMBOLS ||
 	    (channel->pulse_span_symbols & 1u) != 0)
 		return false;
 	carrier_denominator =
@@ -128,7 +128,7 @@ static bool channel_is_valid(
 	return true;
 }
 
-enum sippymodem_qam_result sippymodem_root_raised_cosine(
+enum qam_result root_raised_cosine(
 	double symbol_time, double rolloff, double *value)
 {
 	double four_rolloff_time;
@@ -137,10 +137,10 @@ enum sippymodem_qam_result sippymodem_root_raised_cosine(
 
 	if (!isfinite(symbol_time) || !isfinite(rolloff) || rolloff <= 0.0 ||
 	    rolloff > 1.0 || value == NULL)
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+		return QAM_INVALID_ARGUMENT;
 	if (fabs(symbol_time) < QAM_SINGULARITY_EPSILON) {
 		*value = 1.0 + rolloff * (4.0 / QAM_PI - 1.0);
-		return SIPPYMODEM_QAM_OK;
+		return QAM_OK;
 	}
 	four_rolloff_time = 4.0 * rolloff * symbol_time;
 	if (fabs(fabs(four_rolloff_time) - 1.0) <
@@ -150,7 +150,7 @@ enum sippymodem_qam_result sippymodem_root_raised_cosine(
 		*value = rolloff / sqrt(2.0) *
 			 ((1.0 + 2.0 / QAM_PI) * sin(angle) +
 			  (1.0 - 2.0 / QAM_PI) * cos(angle));
-		return SIPPYMODEM_QAM_OK;
+		return QAM_OK;
 	}
 	numerator = sin(QAM_PI * symbol_time * (1.0 - rolloff)) +
 		    four_rolloff_time *
@@ -158,12 +158,12 @@ enum sippymodem_qam_result sippymodem_root_raised_cosine(
 	denominator = QAM_PI * symbol_time *
 		      (1.0 - four_rolloff_time * four_rolloff_time);
 	*value = numerator / denominator;
-	return isfinite(*value) ? SIPPYMODEM_QAM_OK :
-				 SIPPYMODEM_QAM_INVALID_ARGUMENT;
+	return isfinite(*value) ? QAM_OK :
+				 QAM_INVALID_ARGUMENT;
 }
 
 static double pulse_normalization(
-	const struct sippymodem_qam_channel *channel)
+	const struct qam_channel *channel)
 {
 	double maximum = 0.0;
 	double delay = (double)channel->pulse_span_symbols / 2.0;
@@ -180,7 +180,7 @@ static double pulse_normalization(
 		     age <= channel->pulse_span_symbols; ++age) {
 			double pulse = 0.0;
 
-			(void)sippymodem_root_raised_cosine(
+			(void)root_raised_cosine(
 				(double)age + fractional - delay,
 				channel->rolloff, &pulse);
 			sum += fabs(pulse);
@@ -191,8 +191,8 @@ static double pulse_normalization(
 	return maximum * 1.001;
 }
 
-bool sippymodem_qam_modulator_is_valid(
-	const struct sippymodem_qam_modulator *modulator)
+bool qam_modulator_is_valid(
+	const struct qam_modulator *modulator)
 {
 	uint64_t period = 0;
 	uint64_t support;
@@ -210,7 +210,7 @@ bool sippymodem_qam_modulator_is_valid(
 	    modulator->pulse_normalization <= 0.0 ||
 	    !isfinite(modulator->maximum_point_power) ||
 	    modulator->maximum_point_power <= 0.0 ||
-	    modulator->active_count > SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS)
+	    modulator->active_count > QAM_MAX_ACTIVE_SYMBOLS)
 		return false;
 	support = period * modulator->channel.pulse_span_symbols;
 	if (modulator->active_count == 0 && !modulator->needs_symbol)
@@ -224,18 +224,18 @@ bool sippymodem_qam_modulator_is_valid(
 	return true;
 }
 
-enum sippymodem_qam_result sippymodem_qam_modulator_init(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_channel *channel, int16_t amplitude)
+enum qam_result qam_modulator_init(
+	struct qam_modulator *modulator,
+	const struct qam_channel *channel, int16_t amplitude)
 {
-	return sippymodem_qam_modulator_init_with_point_power_limit(
+	return qam_modulator_init_with_point_power_limit(
 		modulator, channel, amplitude, QAM_MAX_POINT_POWER);
 }
 
-enum sippymodem_qam_result
-sippymodem_qam_modulator_init_with_point_power_limit(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_channel *channel, int16_t amplitude,
+enum qam_result
+qam_modulator_init_with_point_power_limit(
+	struct qam_modulator *modulator,
+	const struct qam_channel *channel, int16_t amplitude,
 	double maximum_point_power)
 {
 	uint64_t period = 0;
@@ -244,10 +244,10 @@ sippymodem_qam_modulator_init_with_point_power_limit(
 	if (modulator == NULL || amplitude <= 0 ||
 	    !isfinite(maximum_point_power) || maximum_point_power <= 0.0 ||
 	    !channel_is_valid(channel, &period))
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+		return QAM_INVALID_ARGUMENT;
 	normalization = pulse_normalization(channel);
 	if (!isfinite(normalization) || normalization <= 0.0)
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+		return QAM_INVALID_ARGUMENT;
 	memset(modulator, 0, sizeof(*modulator));
 	modulator->channel = *channel;
 	modulator->symbol_period_units = period;
@@ -258,25 +258,25 @@ sippymodem_qam_modulator_init_with_point_power_limit(
 	modulator->maximum_point_power = maximum_point_power;
 	modulator->amplitude = amplitude;
 	modulator->needs_symbol = true;
-	return SIPPYMODEM_QAM_OK;
+	return QAM_OK;
 }
 
-bool sippymodem_qam_modulator_can_accept_symbol(
-	const struct sippymodem_qam_modulator *modulator)
+bool qam_modulator_can_accept_symbol(
+	const struct qam_modulator *modulator)
 {
-	return sippymodem_qam_modulator_is_valid(modulator) &&
+	return qam_modulator_is_valid(modulator) &&
 	       modulator->needs_symbol &&
-	       modulator->active_count < SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS;
+	       modulator->active_count < QAM_MAX_ACTIVE_SYMBOLS;
 }
 
 static void append_symbol(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_point *point)
+	struct qam_modulator *modulator,
+	const struct qam_point *point)
 {
-	struct sippymodem_qam_active_symbol *symbol =
+	struct qam_active_symbol *symbol =
 		&modulator->active[modulator->active_count++];
 
-	*symbol = (struct sippymodem_qam_active_symbol){
+	*symbol = (struct qam_active_symbol){
 		.age_units = modulator->symbol_phase_units,
 		.point = *point,
 	};
@@ -284,7 +284,7 @@ static void append_symbol(
 }
 
 static void baseband_sample(
-	const struct sippymodem_qam_modulator *modulator,
+	const struct qam_modulator *modulator,
 	double *in_phase, double *quadrature)
 {
 	double delay = (double)modulator->channel.pulse_span_symbols / 2.0;
@@ -292,20 +292,20 @@ static void baseband_sample(
 	*in_phase = 0.0;
 	*quadrature = 0.0;
 	for (size_t index = 0; index < modulator->active_count; ++index) {
-		const struct sippymodem_qam_active_symbol *symbol =
+		const struct qam_active_symbol *symbol =
 			&modulator->active[index];
 		double age = (double)symbol->age_units /
 			     (double)modulator->symbol_period_units;
 		double pulse = 0.0;
 
-		(void)sippymodem_root_raised_cosine(
+		(void)root_raised_cosine(
 			age - delay, modulator->channel.rolloff, &pulse);
 		*in_phase += pulse * symbol->point.in_phase;
 		*quadrature += pulse * symbol->point.quadrature;
 	}
 }
 
-static void advance_time(struct sippymodem_qam_modulator *modulator)
+static void advance_time(struct qam_modulator *modulator)
 {
 	uint64_t step = modulator->channel.symbol_rate_numerator;
 	uint64_t support = modulator->symbol_period_units *
@@ -313,7 +313,7 @@ static void advance_time(struct sippymodem_qam_modulator *modulator)
 	size_t retained = 0;
 
 	for (size_t index = 0; index < modulator->active_count; ++index) {
-		struct sippymodem_qam_active_symbol symbol =
+		struct qam_active_symbol symbol =
 			modulator->active[index];
 
 		if (symbol.age_units <= support - step) {
@@ -334,9 +334,9 @@ static void advance_time(struct sippymodem_qam_modulator *modulator)
 	modulator->carrier_phase += modulator->carrier_phase_step;
 }
 
-enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_point *point, double *sample,
+enum qam_result qam_modulator_sample_f64(
+	struct qam_modulator *modulator,
+	const struct qam_point *point, double *sample,
 	bool *symbol_accepted)
 {
 	double carrier_phase;
@@ -344,12 +344,12 @@ enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
 	double quadrature;
 	double waveform;
 
-	if (!sippymodem_qam_modulator_is_valid(modulator) ||
+	if (!qam_modulator_is_valid(modulator) ||
 	    !transmit_point_is_valid(point, modulator->maximum_point_power) ||
 	    sample == NULL || symbol_accepted == NULL ||
 	    (modulator->needs_symbol &&
-	     modulator->active_count == SIPPYMODEM_QAM_MAX_ACTIVE_SYMBOLS))
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+	     modulator->active_count == QAM_MAX_ACTIVE_SYMBOLS))
+		return QAM_INVALID_ARGUMENT;
 	*symbol_accepted = modulator->needs_symbol;
 	if (modulator->needs_symbol)
 		append_symbol(modulator, point);
@@ -361,24 +361,24 @@ enum sippymodem_qam_result sippymodem_qam_modulator_sample_f64(
 		   modulator->pulse_normalization;
 	*sample = waveform;
 	advance_time(modulator);
-	return SIPPYMODEM_QAM_OK;
+	return QAM_OK;
 }
 
-enum sippymodem_qam_result sippymodem_qam_modulator_sample(
-	struct sippymodem_qam_modulator *modulator,
-	const struct sippymodem_qam_point *point, int16_t *sample,
+enum qam_result qam_modulator_sample(
+	struct qam_modulator *modulator,
+	const struct qam_point *point, int16_t *sample,
 	bool *symbol_accepted)
 {
 	double waveform;
 	bool accepted;
 	long rounded;
-	enum sippymodem_qam_result result;
+	enum qam_result result;
 
 	if (sample == NULL || symbol_accepted == NULL)
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
-	result = sippymodem_qam_modulator_sample_f64(
+		return QAM_INVALID_ARGUMENT;
+	result = qam_modulator_sample_f64(
 		modulator, point, &waveform, &accepted);
-	if (result != SIPPYMODEM_QAM_OK)
+	if (result != QAM_OK)
 		return result;
 	rounded = lround(waveform * modulator->amplitude);
 	if (rounded > modulator->amplitude)
@@ -387,7 +387,7 @@ enum sippymodem_qam_result sippymodem_qam_modulator_sample(
 		rounded = -modulator->amplitude;
 	*sample = (int16_t)rounded;
 	*symbol_accepted = accepted;
-	return SIPPYMODEM_QAM_OK;
+	return QAM_OK;
 }
 
 static uint64_t greatest_common_divisor(uint64_t left, uint64_t right)
@@ -402,7 +402,7 @@ static uint64_t greatest_common_divisor(uint64_t left, uint64_t right)
 }
 
 static bool demodulator_shape_is_valid(
-	const struct sippymodem_qam_channel *channel, uint64_t period,
+	const struct qam_channel *channel, uint64_t period,
 	size_t *filter_count, size_t *candidate_count,
 	uint64_t *timing_step, uint32_t *acquisition_samples)
 {
@@ -418,9 +418,9 @@ static bool demodulator_shape_is_valid(
 			step +
 		candidates;
 
-	if (count < 2 || count > SIPPYMODEM_QAM_MAX_MATCHED_FILTER_SAMPLES ||
+	if (count < 2 || count > QAM_MAX_MATCHED_FILTER_SAMPLES ||
 	    candidates == 0 ||
-	    candidates > SIPPYMODEM_QAM_MAX_TIMING_CANDIDATES ||
+	    candidates > QAM_MAX_TIMING_CANDIDATES ||
 	    target > UINT32_MAX)
 		return false;
 	*filter_count = (size_t)count;
@@ -431,7 +431,7 @@ static bool demodulator_shape_is_valid(
 }
 
 static void build_matched_filter(
-	struct sippymodem_qam_demodulator *demodulator)
+	struct qam_demodulator *demodulator)
 {
 	double delay = (double)demodulator->channel.pulse_span_symbols / 2.0;
 
@@ -442,14 +442,14 @@ static void build_matched_filter(
 			((double)demodulator->channel.sample_rate *
 			 (double)demodulator->channel.symbol_rate_denominator);
 
-		(void)sippymodem_root_raised_cosine(
+		(void)root_raised_cosine(
 			symbol_time - delay, demodulator->channel.rolloff,
 			&demodulator->matched_coefficients[tap]);
 	}
 }
 
 static void initialize_timing_candidates(
-	struct sippymodem_qam_demodulator *demodulator)
+	struct qam_demodulator *demodulator)
 {
 	for (size_t index = 0; index < demodulator->timing_candidate_count;
 	     ++index)
@@ -458,7 +458,7 @@ static void initialize_timing_candidates(
 }
 
 static void recovery_step_bounds(
-	const struct sippymodem_qam_demodulator *demodulator,
+	const struct qam_demodulator *demodulator,
 	uint64_t *minimum, uint64_t *maximum)
 {
 	uint64_t nominal = demodulator->channel.symbol_rate_numerator;
@@ -473,7 +473,7 @@ static void recovery_step_bounds(
 }
 
 static bool recovery_step_is_valid(
-	const struct sippymodem_qam_demodulator *demodulator)
+	const struct qam_demodulator *demodulator)
 {
 	uint64_t minimum;
 	uint64_t maximum;
@@ -484,7 +484,7 @@ static bool recovery_step_is_valid(
 }
 
 static bool demodulator_is_valid(
-	const struct sippymodem_qam_demodulator *demodulator)
+	const struct qam_demodulator *demodulator)
 {
 	uint64_t period = 0;
 	size_t filter_count = 0;
@@ -522,7 +522,7 @@ static bool demodulator_is_valid(
 	      !demodulator->has_previous_matched_sample)))
 		return false;
 	for (size_t index = 0; index < candidate_count; ++index) {
-		const struct sippymodem_qam_timing_candidate *candidate =
+		const struct qam_timing_candidate *candidate =
 			&demodulator->timing[index];
 
 		if (candidate->phase_units >= period ||
@@ -533,9 +533,9 @@ static bool demodulator_is_valid(
 	return true;
 }
 
-enum sippymodem_qam_result sippymodem_qam_demodulator_init(
-	struct sippymodem_qam_demodulator *demodulator,
-	const struct sippymodem_qam_channel *channel)
+enum qam_result qam_demodulator_init(
+	struct qam_demodulator *demodulator,
+	const struct qam_channel *channel)
 {
 	uint64_t period = 0;
 	size_t filter_count = 0;
@@ -547,7 +547,7 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_init(
 	    !demodulator_shape_is_valid(
 		    channel, period, &filter_count, &candidate_count,
 		    &timing_step, &acquisition_samples))
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+		return QAM_INVALID_ARGUMENT;
 	memset(demodulator, 0, sizeof(*demodulator));
 	demodulator->channel = *channel;
 	demodulator->symbol_period_units = period;
@@ -561,22 +561,22 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_init(
 	demodulator->acquisition_sample_target = acquisition_samples;
 	build_matched_filter(demodulator);
 	initialize_timing_candidates(demodulator);
-	return SIPPYMODEM_QAM_OK;
+	return QAM_OK;
 }
 
-enum sippymodem_qam_result sippymodem_qam_demodulator_reset(
-	struct sippymodem_qam_demodulator *demodulator)
+enum qam_result qam_demodulator_reset(
+	struct qam_demodulator *demodulator)
 {
-	struct sippymodem_qam_channel channel;
+	struct qam_channel channel;
 
 	if (!demodulator_is_valid(demodulator))
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
+		return QAM_INVALID_ARGUMENT;
 	channel = demodulator->channel;
-	return sippymodem_qam_demodulator_init(demodulator, &channel);
+	return qam_demodulator_init(demodulator, &channel);
 }
 
 static void mix_sample(
-	struct sippymodem_qam_demodulator *demodulator, int16_t sample)
+	struct qam_demodulator *demodulator, int16_t sample)
 {
 	double radians = (double)demodulator->carrier_phase *
 			 (QAM_TWO_PI / QAM_PHASE_SCALE);
@@ -597,7 +597,7 @@ static void mix_sample(
 }
 
 static void matched_filter_sample(
-	const struct sippymodem_qam_demodulator *demodulator,
+	const struct qam_demodulator *demodulator,
 	double *in_phase, double *quadrature)
 {
 	*in_phase = 0.0;
@@ -638,7 +638,7 @@ static double interpolate(
 }
 
 static void observe_timing_candidate(
-	struct sippymodem_qam_timing_candidate *candidate,
+	struct qam_timing_candidate *candidate,
 	double in_phase, double quadrature)
 {
 	candidate->symbol_power_sum +=
@@ -647,11 +647,11 @@ static void observe_timing_candidate(
 }
 
 static void reset_timing_scores(
-	struct sippymodem_qam_demodulator *demodulator)
+	struct qam_demodulator *demodulator)
 {
 	for (size_t index = 0; index < demodulator->timing_candidate_count;
 	     ++index) {
-		struct sippymodem_qam_timing_candidate *candidate =
+		struct qam_timing_candidate *candidate =
 			&demodulator->timing[index];
 
 		candidate->symbol_power_sum = 0.0;
@@ -683,7 +683,7 @@ static int timing_phase_direction(
 }
 
 static void track_recovery_step(
-	struct sippymodem_qam_demodulator *demodulator,
+	struct qam_demodulator *demodulator,
 	uint64_t reference_phase, uint64_t target_phase)
 {
 	uint64_t minimum;
@@ -718,17 +718,17 @@ static void track_recovery_step(
 }
 
 static void select_timing_candidate(
-	struct sippymodem_qam_demodulator *demodulator)
+	struct qam_demodulator *demodulator)
 {
-	struct sippymodem_qam_timing_candidate *best = NULL;
-	struct sippymodem_qam_timing_candidate *reference = NULL;
+	struct qam_timing_candidate *best = NULL;
+	struct qam_timing_candidate *reference = NULL;
 	double best_power = 0.0;
 	double reference_power = 0.0;
 	size_t best_index = 0;
 
 	for (size_t index = 0; index < demodulator->timing_candidate_count;
 	     ++index) {
-		struct sippymodem_qam_timing_candidate *candidate =
+		struct qam_timing_candidate *candidate =
 			&demodulator->timing[index];
 		double average;
 
@@ -775,12 +775,12 @@ static void select_timing_candidate(
 }
 
 static void acquire_symbol_timing(
-	struct sippymodem_qam_demodulator *demodulator,
+	struct qam_demodulator *demodulator,
 	double in_phase, double quadrature)
 {
 	for (size_t index = 0; index < demodulator->timing_candidate_count;
 	     ++index) {
-		struct sippymodem_qam_timing_candidate *candidate =
+		struct qam_timing_candidate *candidate =
 			&demodulator->timing[index];
 		double fraction = 0.0;
 
@@ -806,8 +806,8 @@ static void acquire_symbol_timing(
 }
 
 static bool recover_symbol(
-	struct sippymodem_qam_demodulator *demodulator,
-	double in_phase, double quadrature, struct sippymodem_qam_point *point)
+	struct qam_demodulator *demodulator,
+	double in_phase, double quadrature, struct qam_point *point)
 {
 	double fraction = 0.0;
 
@@ -816,7 +816,7 @@ static bool recover_symbol(
 		    demodulator->symbol_period_units,
 		    demodulator->recovery_step_units, &fraction))
 		return false;
-	*point = (struct sippymodem_qam_point){
+	*point = (struct qam_point){
 		.in_phase = interpolate(
 			demodulator->previous_in_phase, in_phase, fraction),
 		.quadrature = interpolate(
@@ -831,7 +831,7 @@ static bool recover_symbol(
 }
 
 static void remember_matched_sample(
-	struct sippymodem_qam_demodulator *demodulator,
+	struct qam_demodulator *demodulator,
 	double in_phase, double quadrature)
 {
 	demodulator->previous_in_phase = in_phase;
@@ -839,53 +839,53 @@ static void remember_matched_sample(
 	demodulator->has_previous_matched_sample = true;
 }
 
-enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
-	struct sippymodem_qam_demodulator *demodulator, int16_t sample,
-	struct sippymodem_qam_point *point, bool *symbol_ready)
+enum qam_result qam_demodulator_sample(
+	struct qam_demodulator *demodulator, int16_t sample,
+	struct qam_point *point, bool *symbol_ready)
 {
 	double in_phase;
 	double quadrature;
 
 	if (!demodulator_is_valid(demodulator) || point == NULL ||
 	    symbol_ready == NULL)
-		return SIPPYMODEM_QAM_INVALID_ARGUMENT;
-	*point = (struct sippymodem_qam_point){ 0 };
+		return QAM_INVALID_ARGUMENT;
+	*point = (struct qam_point){ 0 };
 	*symbol_ready = false;
 	mix_sample(demodulator, sample);
 	if (demodulator->history_count < demodulator->matched_filter_count)
-		return SIPPYMODEM_QAM_OK;
+		return QAM_OK;
 	matched_filter_sample(demodulator, &in_phase, &quadrature);
 	if (!demodulator->timing_locked) {
 		acquire_symbol_timing(demodulator, in_phase, quadrature);
 		remember_matched_sample(demodulator, in_phase, quadrature);
-		return SIPPYMODEM_QAM_OK;
+		return QAM_OK;
 	}
 	*symbol_ready = recover_symbol(
 		demodulator, in_phase, quadrature, point);
 	acquire_symbol_timing(demodulator, in_phase, quadrature);
 	remember_matched_sample(demodulator, in_phase, quadrature);
-	return SIPPYMODEM_QAM_OK;
+	return QAM_OK;
 }
 
-struct sippymodem_qam_measurement sippymodem_qam_demodulator_measure(
-	const struct sippymodem_qam_demodulator *demodulator)
+struct qam_measurement qam_demodulator_measure(
+	const struct qam_demodulator *demodulator)
 {
 	if (!demodulator_is_valid(demodulator))
-		return (struct sippymodem_qam_measurement){ 0 };
-	return (struct sippymodem_qam_measurement){
+		return (struct qam_measurement){ 0 };
+	return (struct qam_measurement){
 		.line_power = demodulator->line_power,
 		.symbol_power = demodulator->symbol_power,
 		.timing_locked = demodulator->timing_locked,
 	};
 }
 
-const char *sippymodem_qam_result_name(
-	enum sippymodem_qam_result result)
+const char *qam_result_name(
+	enum qam_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_QAM_OK:
+	case QAM_OK:
 		return "ok";
-	case SIPPYMODEM_QAM_INVALID_ARGUMENT:
+	case QAM_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

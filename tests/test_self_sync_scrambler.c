@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-static const struct sippymodem_self_sync_scrambler_config test_configs[] = {
+static const struct self_sync_scrambler_config test_configs[] = {
 	{ .history_bits = 23, .tap_a_delay = 18, .tap_b_delay = 23 },
 	{ .history_bits = 23, .tap_a_delay = 5, .tap_b_delay = 23 },
 	{ .history_bits = 32, .tap_a_delay = 17, .tap_b_delay = 32 },
@@ -22,13 +22,13 @@ static bool test_impulse_responses(void)
 {
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(test_configs);
 	     ++fixture) {
-		const struct sippymodem_self_sync_scrambler_config *config =
+		const struct self_sync_scrambler_config *config =
 			&test_configs[fixture];
-		struct sippymodem_self_sync_scrambler descrambler;
+		struct self_sync_scrambler descrambler;
 
-		CHECK(sippymodem_self_sync_scrambler_init(
+		CHECK(self_sync_scrambler_init(
 			      &descrambler, config) ==
-			      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK,
+			      SELF_SYNC_SCRAMBLER_OK,
 		      "impulse fixture did not initialize");
 		for (unsigned int position = 0;
 		     position <= config->history_bits; ++position) {
@@ -38,9 +38,9 @@ static bool test_impulse_responses(void)
 				position == 0 || position == config->tap_a_delay ||
 				position == config->tap_b_delay;
 
-			CHECK(sippymodem_self_sync_descramble_group(
+			CHECK(self_sync_descramble_group(
 				      &descrambler, config, input, 1, &output) ==
-				      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK &&
+				      SELF_SYNC_SCRAMBLER_OK &&
 			      output == expected,
 			      "impulse response changed at %zu/%u", fixture,
 			      position);
@@ -57,20 +57,20 @@ static bool test_normative_group_starts(void)
 	};
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(expected); ++fixture) {
-		struct sippymodem_self_sync_scrambler scrambler;
+		struct self_sync_scrambler scrambler;
 
-		CHECK(sippymodem_self_sync_scrambler_init(
+		CHECK(self_sync_scrambler_init(
 			      &scrambler, &test_configs[fixture]) ==
-			      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK,
+			      SELF_SYNC_SCRAMBLER_OK,
 		      "normative fixture did not initialize");
 		for (size_t index = 0; index < ARRAY_LENGTH(expected[fixture]);
 		     ++index) {
 			uint8_t output;
 
-			CHECK(sippymodem_self_sync_scramble_group(
+			CHECK(self_sync_scramble_group(
 				      &scrambler, &test_configs[fixture], 3, 2,
 				      &output) ==
-				      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK &&
+				      SELF_SYNC_SCRAMBLER_OK &&
 			      output == expected[fixture][index],
 			      "normative group changed at %zu/%zu", fixture,
 			      index);
@@ -85,15 +85,15 @@ static bool test_group_round_trip(void)
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(test_configs);
 	     ++fixture) {
-		struct sippymodem_self_sync_scrambler scrambler;
-		struct sippymodem_self_sync_scrambler descrambler;
+		struct self_sync_scrambler scrambler;
+		struct self_sync_scrambler descrambler;
 
-		CHECK(sippymodem_self_sync_scrambler_init(
+		CHECK(self_sync_scrambler_init(
 			      &scrambler, &test_configs[fixture]) ==
-			      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK &&
-		      sippymodem_self_sync_scrambler_init(
+			      SELF_SYNC_SCRAMBLER_OK &&
+		      self_sync_scrambler_init(
 			      &descrambler, &test_configs[fixture]) ==
-			      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK,
+			      SELF_SYNC_SCRAMBLER_OK,
 		      "round-trip fixtures did not initialize");
 		for (size_t index = 0; index < 1024; ++index) {
 			unsigned int bit_count = (unsigned int)(index % 8u) + 1u;
@@ -102,14 +102,14 @@ static bool test_group_round_trip(void)
 			uint8_t encoded;
 			uint8_t output;
 
-			CHECK(sippymodem_self_sync_scramble_group(
+			CHECK(self_sync_scramble_group(
 				      &scrambler, &test_configs[fixture], input,
 				      bit_count, &encoded) ==
-				      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK &&
-			      sippymodem_self_sync_descramble_group(
+				      SELF_SYNC_SCRAMBLER_OK &&
+			      self_sync_descramble_group(
 				      &descrambler, &test_configs[fixture], encoded,
 				      bit_count, &output) ==
-				      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK &&
+				      SELF_SYNC_SCRAMBLER_OK &&
 			      output == input,
 			      "group round trip changed at %zu/%zu", fixture,
 			      index);
@@ -126,10 +126,10 @@ static bool test_descrambler_resynchronization(void)
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(test_configs);
 	     ++fixture) {
-		const struct sippymodem_self_sync_scrambler_config *config =
+		const struct self_sync_scrambler_config *config =
 			&test_configs[fixture];
-		struct sippymodem_self_sync_scrambler scrambler = { 0 };
-		struct sippymodem_self_sync_scrambler descrambler = {
+		struct self_sync_scrambler scrambler = { 0 };
+		struct self_sync_scrambler descrambler = {
 			.history = UINT32_MAX,
 		};
 
@@ -141,12 +141,12 @@ static bool test_descrambler_resynchronization(void)
 			uint8_t encoded;
 			uint8_t output;
 
-			CHECK(sippymodem_self_sync_scramble_group(
+			CHECK(self_sync_scramble_group(
 				      &scrambler, config, input, 1, &encoded) ==
-				      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK &&
-			      sippymodem_self_sync_descramble_group(
+				      SELF_SYNC_SCRAMBLER_OK &&
+			      self_sync_descramble_group(
 				      &descrambler, config, encoded, 1, &output) ==
-				      SIPPYMODEM_SELF_SYNC_SCRAMBLER_OK &&
+				      SELF_SYNC_SCRAMBLER_OK &&
 			      (position < config->history_bits || output == input),
 			      "descrambler did not synchronize at %zu/%u", fixture,
 			      position);
@@ -159,7 +159,7 @@ static bool test_descrambler_resynchronization(void)
 
 static bool test_validation(void)
 {
-	static const struct sippymodem_self_sync_scrambler_config invalid[] = {
+	static const struct self_sync_scrambler_config invalid[] = {
 		{ .history_bits = 0, .tap_a_delay = 1, .tap_b_delay = 2 },
 		{ .history_bits = 33, .tap_a_delay = 1, .tap_b_delay = 2 },
 		{ .history_bits = 8, .tap_a_delay = 0, .tap_b_delay = 8 },
@@ -168,64 +168,64 @@ static bool test_validation(void)
 		{ .history_bits = 8, .tap_a_delay = 3, .tap_b_delay = 9 },
 		{ .history_bits = 8, .tap_a_delay = 3, .tap_b_delay = 3 },
 	};
-	const struct sippymodem_self_sync_scrambler_config config = {
+	const struct self_sync_scrambler_config config = {
 		.history_bits = 8,
 		.tap_a_delay = 3,
 		.tap_b_delay = 8,
 	};
-	struct sippymodem_self_sync_scrambler state = { .history = 0x5au };
-	struct sippymodem_self_sync_scrambler saved = state;
+	struct self_sync_scrambler state = { .history = 0x5au };
+	struct self_sync_scrambler saved = state;
 	uint8_t output = UINT8_MAX;
 
-	CHECK(sippymodem_self_sync_scrambler_config_is_valid(&config) &&
-		      !sippymodem_self_sync_scrambler_config_is_valid(NULL) &&
-		      sippymodem_self_sync_scrambler_is_valid(&state, &config) &&
-		      !sippymodem_self_sync_scrambler_is_valid(NULL, &config),
+	CHECK(self_sync_scrambler_config_is_valid(&config) &&
+		      !self_sync_scrambler_config_is_valid(NULL) &&
+		      self_sync_scrambler_is_valid(&state, &config) &&
+		      !self_sync_scrambler_is_valid(NULL, &config),
 	      "valid configuration or state was rejected");
 	for (size_t index = 0; index < ARRAY_LENGTH(invalid); ++index) {
-		CHECK(!sippymodem_self_sync_scrambler_config_is_valid(
+		CHECK(!self_sync_scrambler_config_is_valid(
 			      &invalid[index]) &&
-		      sippymodem_self_sync_scrambler_init(
+		      self_sync_scrambler_init(
 			      &state, &invalid[index]) ==
-			      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+			      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
 		      memcmp(&state, &saved, sizeof(state)) == 0,
 		      "invalid configuration was accepted at %zu", index);
 	}
-	CHECK(sippymodem_self_sync_scrambler_init(NULL, &config) ==
-		      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
-	      sippymodem_self_sync_scramble_group(
+	CHECK(self_sync_scrambler_init(NULL, &config) ==
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+	      self_sync_scramble_group(
 		      NULL, &config, 0, 1, &output) ==
-		      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
-	      sippymodem_self_sync_scramble_group(
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+	      self_sync_scramble_group(
 		      &state, NULL, 0, 1, &output) ==
-		      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
-	      sippymodem_self_sync_scramble_group(
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+	      self_sync_scramble_group(
 		      &state, &config, 0, 0, &output) ==
-		      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
-	      sippymodem_self_sync_scramble_group(
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+	      self_sync_scramble_group(
 		      &state, &config, 0, 9, &output) ==
-		      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
-	      sippymodem_self_sync_scramble_group(
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+	      self_sync_scramble_group(
 		      &state, &config, 8, 3, &output) ==
-		      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
-	      sippymodem_self_sync_descramble_group(
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+	      self_sync_descramble_group(
 		      &state, &config, 0, 1, NULL) ==
-		      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+		      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
 	      memcmp(&state, &saved, sizeof(state)) == 0 &&
 	      output == UINT8_MAX,
 	      "invalid group operation mutated its outputs");
 	state.history = UINT32_C(0x100);
 	saved = state;
-	CHECK(!sippymodem_self_sync_scrambler_is_valid(&state, &config) &&
-		      sippymodem_self_sync_scramble_group(
+	CHECK(!self_sync_scrambler_is_valid(&state, &config) &&
+		      self_sync_scramble_group(
 			      &state, &config, 0, 1, &output) ==
-			      SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
+			      SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT &&
 		      memcmp(&state, &saved, sizeof(state)) == 0 &&
-		      strcmp(sippymodem_self_sync_scrambler_result_name(
-			     SIPPYMODEM_SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT),
+		      strcmp(self_sync_scrambler_result_name(
+			     SELF_SYNC_SCRAMBLER_INVALID_ARGUMENT),
 			     "invalid argument") == 0 &&
-		      strcmp(sippymodem_self_sync_scrambler_result_name(
-			     (enum sippymodem_self_sync_scrambler_result)2),
+		      strcmp(self_sync_scrambler_result_name(
+			     (enum self_sync_scrambler_result)2),
 			     "unknown") == 0,
 	      "invalid history or result was accepted");
 	return true;

@@ -133,10 +133,10 @@ static bool test_v22bis_symbol_mapping(void)
 				      sippymodem_v22bis_symbol_decoder_init(
 					      &decoder, previous) ==
 					      SIPPYMODEM_V22_FRAMING_OK &&
-				      sippymodem_differential_qpsk_encode(
+				      differential_qpsk_encode(
 					      previous, (uint8_t)(nibble >> 2),
 					      &expected_quadrant) ==
-					      SIPPYMODEM_DIFFERENTIAL_QPSK_OK,
+					      DIFFERENTIAL_QPSK_OK,
 			      "V.22bis mapping fixture failed at %u/%u",
 			      previous, nibble);
 			CHECK(sippymodem_v22bis_symbol_encode(
@@ -162,7 +162,7 @@ static bool test_v22bis_constellation(void)
 	for (uint8_t low_bits = 0; low_bits < 4; ++low_bits) {
 		double base_in_phase = (low_bits & 1u) != 0 ? 3.0 : 1.0;
 		double base_quadrature = (low_bits & 2u) != 0 ? 3.0 : 1.0;
-		struct sippymodem_qam_point points[4];
+		struct qam_point points[4];
 
 		for (uint8_t quadrant = 0; quadrant < 4; ++quadrant)
 			CHECK(sippymodem_v22bis_constellation_point(
@@ -234,7 +234,7 @@ static bool test_v22bis_validation(void)
 	struct sippymodem_v22bis_symbol_encoder encoder;
 	struct sippymodem_v22bis_symbol_decoder decoder;
 	struct sippymodem_v22bis_symbol_encoder saved_encoder;
-	struct sippymodem_qam_point point = { 7.0, 9.0 };
+	struct qam_point point = { 7.0, 9.0 };
 	uint8_t invalid_bits[4] = { 0, 1, 2, 0 };
 	uint8_t decoded[4];
 	uint8_t symbol = UINT8_MAX;

@@ -41,11 +41,11 @@ enum {
 		SIPPYMODEM_V32_STARTUP_TRAINING_DIBITS +
 		2 * SIPPYMODEM_V32_RATE_SIGNAL_DIBITS,
 	V32_DIRECT_QAM_QUALIFY_SAMPLES =
-		SIPPYMODEM_SINGLE_TONE_WINDOW_SAMPLES +
-		SIPPYMODEM_SINGLE_TONE_ACQUIRE_SAMPLES,
+		SINGLE_TONE_WINDOW_SAMPLES +
+		SINGLE_TONE_ACQUIRE_SAMPLES,
 };
 
-static const struct sippymodem_qam_channel v32_channel = {
+static const struct qam_channel v32_channel = {
 	.sample_rate = MODEM_RATE,
 	.symbol_rate_numerator = V32_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
@@ -67,8 +67,8 @@ enum v32_line_entry {
 
 struct sippymodem_v32_datapump {
 	struct dp dp;
-	struct sippymodem_qam_modulator modulator;
-	struct sippymodem_qam_demodulator demodulator;
+	struct qam_modulator modulator;
+	struct qam_demodulator demodulator;
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_v32_symbol_decoder decoder;
 	struct sippymodem_v32_trellis_encoder trellis_encoder;
@@ -79,9 +79,9 @@ struct sippymodem_v32_datapump {
 	struct sippymodem_v32_conditioning_receiver conditioning_receiver;
 	struct sippymodem_v32_line_startup line_startup;
 	struct sippymodem_v32_startup startup;
-	struct sippymodem_qam_point transmit_point;
-	struct sippymodem_qam_point previous_receive_point;
-	struct sippymodem_qam_gain conditioning_gain;
+	struct qam_point transmit_point;
+	struct qam_point previous_receive_point;
+	struct qam_gain conditioning_gain;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint32_t missing_carrier_samples;
@@ -156,7 +156,7 @@ static bool caller_turnaround_s_symbols(
 	return true;
 }
 
-static bool point_is_finite(const struct sippymodem_qam_point *point)
+static bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
@@ -240,7 +240,7 @@ static bool line_entry_is_valid(
 			       &datapump->line_startup) &&
 		       sippymodem_v32_conditioning_receiver_is_complete(
 			       &datapump->conditioning_receiver) &&
-		       sippymodem_qam_gain_is_valid(
+		       qam_gain_is_valid(
 			       &datapump->conditioning_gain) &&
 		       datapump->has_previous_receive_point &&
 		       datapump->conditioning_transmitter.emitted_symbols == 0 &&
@@ -255,7 +255,7 @@ static bool line_entry_is_valid(
 			       &datapump->line_startup) &&
 		       sippymodem_v32_conditioning_receiver_is_complete(
 			       &datapump->conditioning_receiver) &&
-		       sippymodem_qam_gain_is_valid(
+		       qam_gain_is_valid(
 			       &datapump->conditioning_gain) &&
 		       datapump->has_previous_receive_point &&
 		       !sippymodem_v32_conditioning_transmitter_is_complete(
@@ -269,7 +269,7 @@ static bool line_entry_is_valid(
 			       &datapump->line_startup) &&
 		       sippymodem_v32_conditioning_receiver_is_complete(
 			       &datapump->conditioning_receiver) &&
-		       sippymodem_qam_gain_is_valid(
+		       qam_gain_is_valid(
 			       &datapump->conditioning_gain) &&
 		       datapump->has_previous_receive_point &&
 		       sippymodem_v32_conditioning_transmitter_is_complete(
@@ -283,7 +283,7 @@ static bool line_entry_is_valid(
 			       &datapump->line_startup) &&
 		       !sippymodem_v32_conditioning_receiver_is_complete(
 			       &datapump->conditioning_receiver) &&
-		       sippymodem_qam_gain_is_valid(
+		       qam_gain_is_valid(
 			       &datapump->conditioning_gain) &&
 		       !datapump->has_previous_receive_point &&
 		       sippymodem_v32_conditioning_transmitter_is_complete(
@@ -406,9 +406,9 @@ static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
 	     !sippymodem_v32_9600_receiver_is_valid(
 		     &datapump->receiver_9600)) ||
 	    datapump->encoder.phase_quadrant >=
-		    SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+		    QPSK_QUADRANT_COUNT ||
 	    datapump->decoder.phase_quadrant >=
-		    SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+		    QPSK_QUADRANT_COUNT ||
 	    !sippymodem_v32_scrambler_is_valid(&datapump->encoder.scrambler) ||
 	    !sippymodem_v32_scrambler_is_valid(
 		    &datapump->decoder.descrambler) ||
@@ -452,11 +452,11 @@ static struct dp *create_v32(
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
-	if (sippymodem_qam_modulator_init(
+	if (qam_modulator_init(
 		    &datapump->modulator, &v32_channel,
-		    V32_TRANSMIT_AMPLITUDE) != SIPPYMODEM_QAM_OK ||
-	    sippymodem_qam_demodulator_init(
-		    &datapump->demodulator, &v32_channel) != SIPPYMODEM_QAM_OK ||
+		    V32_TRANSMIT_AMPLITUDE) != QAM_OK ||
+	    qam_demodulator_init(
+		    &datapump->demodulator, &v32_channel) != QAM_OK ||
 	    sippymodem_v32_symbol_encoder_init(
 		    &datapump->encoder, local_role(is_caller), 0) !=
 		    SIPPYMODEM_V32_FRAMING_OK ||
@@ -543,7 +543,7 @@ static int encode_trellis_transmit_point(
 	struct sippymodem_v32_trellis_encoder next_encoder;
 	struct sippymodem_v32_scrambler next_scrambler =
 		datapump->encoder.scrambler;
-	struct sippymodem_qam_point next_point;
+	struct qam_point next_point;
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 	uint8_t scrambled;
 	uint8_t signal_symbol;
@@ -657,7 +657,7 @@ static int next_transmit_point(
 static int generate_caller_conditioning_sample(
 	struct sippymodem_v32_datapump *datapump, int16_t *sample)
 {
-	bool can_accept = sippymodem_qam_modulator_can_accept_symbol(
+	bool can_accept = qam_modulator_can_accept_symbol(
 		&datapump->modulator);
 	bool accepted;
 
@@ -679,9 +679,9 @@ static int generate_caller_conditioning_sample(
 		    SIPPYMODEM_V32_CONSTELLATION_OK)
 			return -1;
 	}
-	if (sippymodem_qam_modulator_sample(
+	if (qam_modulator_sample(
 		    &datapump->modulator, &datapump->transmit_point, sample,
-		    &accepted) != SIPPYMODEM_QAM_OK ||
+		    &accepted) != QAM_OK ||
 	    accepted != can_accept)
 		return -1;
 	if (accepted &&
@@ -715,13 +715,13 @@ static int generate_sample(
 		*sample = 0;
 		return 0;
 	}
-	can_accept = sippymodem_qam_modulator_can_accept_symbol(
+	can_accept = qam_modulator_can_accept_symbol(
 		&datapump->modulator);
 
 	if ((can_accept && next_transmit_point(datapump, linked) != 0) ||
-	    sippymodem_qam_modulator_sample(
+	    qam_modulator_sample(
 		    &datapump->modulator, &datapump->transmit_point, sample,
-		    &accepted) != SIPPYMODEM_QAM_OK ||
+		    &accepted) != QAM_OK ||
 	    accepted != can_accept)
 		return -1;
 	return 0;
@@ -731,8 +731,8 @@ static int process_caller_line_startup(
 	struct sippymodem_v32_datapump *datapump, int16_t receive_sample,
 	int16_t *transmit_sample)
 {
-	struct sippymodem_qam_point ignored_point;
-	struct sippymodem_qam_measurement measurement;
+	struct qam_point ignored_point;
+	struct qam_measurement measurement;
 	enum sippymodem_v32_line_startup_result result;
 	bool ignored_ready;
 	bool complete;
@@ -747,8 +747,8 @@ static int process_caller_line_startup(
 			    &datapump->line_startup,
 			    &datapump->turnaround_s_symbols_remaining))
 			return -1;
-		if (sippymodem_qam_demodulator_reset(&datapump->demodulator) !=
-		    SIPPYMODEM_QAM_OK)
+		if (qam_demodulator_reset(&datapump->demodulator) !=
+		    QAM_OK)
 			return -1;
 		datapump->has_previous_receive_point = false;
 		datapump->line_entry =
@@ -760,11 +760,11 @@ static int process_caller_line_startup(
 		datapump->direct_qam_qualifying_samples = 0;
 		return 0;
 	}
-	if (sippymodem_qam_demodulator_sample(
+	if (qam_demodulator_sample(
 		    &datapump->demodulator, receive_sample, &ignored_point,
-		    &ignored_ready) != SIPPYMODEM_QAM_OK)
+		    &ignored_ready) != QAM_OK)
 		return -1;
-	measurement = sippymodem_qam_demodulator_measure(
+	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
 	if (measurement.timing_locked &&
 	    measurement.line_power >= V32_MIN_LINE_POWER) {
@@ -841,7 +841,7 @@ static void deliver_bits(
 
 static int initialize_trellis_receiver(
 	struct sippymodem_v32_datapump *datapump,
-	const struct sippymodem_qam_point *reference_point)
+	const struct qam_point *reference_point)
 {
 	struct sippymodem_v32_trellis_acquirer acquirer;
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
@@ -860,13 +860,13 @@ static int reset_second_conditioning_receiver(
 	struct sippymodem_v32_datapump *datapump, bool carrier_detected)
 {
 	struct sippymodem_v32_conditioning_receiver receiver;
-	struct sippymodem_qam_demodulator demodulator = datapump->demodulator;
+	struct qam_demodulator demodulator = datapump->demodulator;
 
 	if (sippymodem_v32_conditioning_receiver_init(
 		    &receiver, remote_role(datapump->caller)) !=
 		    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK ||
-	    sippymodem_qam_demodulator_reset(&demodulator) !=
-		    SIPPYMODEM_QAM_OK)
+	    qam_demodulator_reset(&demodulator) !=
+		    QAM_OK)
 		return -1;
 	datapump->conditioning_receiver = receiver;
 	datapump->demodulator = demodulator;
@@ -923,7 +923,7 @@ static int update_direct_selection_wait(
 
 static int observe_dibit(
 	struct sippymodem_v32_datapump *datapump, uint8_t dibit,
-	const struct sippymodem_qam_point *point, bool *linked)
+	const struct qam_point *point, bool *linked)
 {
 	if (datapump->linked) {
 		if (uses_9600(datapump) || uses_trellis(datapump))
@@ -980,7 +980,7 @@ static int observe_dibit(
 
 static int observe_trellis_point(
 	struct sippymodem_v32_datapump *datapump,
-	const struct sippymodem_qam_point *point, bool *linked)
+	const struct qam_point *point, bool *linked)
 {
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 	uint8_t mark = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
@@ -1020,7 +1020,7 @@ static int observe_trellis_point(
 
 static int observe_9600_point(
 	struct sippymodem_v32_datapump *datapump,
-	const struct sippymodem_qam_point *point, bool *linked)
+	const struct qam_point *point, bool *linked)
 {
 	if (!datapump->receiver_9600_initialized)
 		return -1;
@@ -1059,22 +1059,22 @@ static int receive_sample(
 	struct sippymodem_v32_datapump *datapump, int16_t sample,
 	bool *linked)
 {
-	struct sippymodem_qam_point point;
-	struct sippymodem_qam_measurement measurement;
+	struct qam_point point;
+	struct qam_measurement measurement;
 	bool ready;
 
-	if (sippymodem_qam_demodulator_sample(
+	if (qam_demodulator_sample(
 		    &datapump->demodulator, sample, &point, &ready) !=
-	    SIPPYMODEM_QAM_OK)
+	    QAM_OK)
 		return -1;
-	measurement = sippymodem_qam_demodulator_measure(
+	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
 	if (track_rate_signal_loss(datapump, measurement.line_power) != 0)
 		return -1;
 	if (datapump->line_entry ==
 		    V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING &&
 	    !datapump->second_conditioning_carrier_detected) {
-		measurement = sippymodem_qam_demodulator_measure(
+		measurement = qam_demodulator_measure(
 			&datapump->demodulator);
 		if (measurement.line_power < V32_MIN_LINE_POWER)
 			return 0;
@@ -1141,9 +1141,9 @@ static int receive_sample(
 		uint8_t quarter_turns;
 		uint8_t quadrant;
 
-		if (sippymodem_qam_nearest_quarter_turn(
+		if (qam_nearest_quarter_turn(
 			    &datapump->previous_receive_point, &point,
-			    &quarter_turns) != SIPPYMODEM_QAM_OK)
+			    &quarter_turns) != QAM_OK)
 			return -1;
 		quadrant = (uint8_t)((datapump->decoder.phase_quadrant +
 				      quarter_turns) &
@@ -1163,7 +1163,7 @@ static int receive_sample(
 }
 
 static bool carrier_is_present(
-	const struct sippymodem_qam_measurement *measurement,
+	const struct qam_measurement *measurement,
 	const int16_t *samples, int count)
 {
 	uint64_t power = 0;
@@ -1190,7 +1190,7 @@ static int process_v32(
 	struct sippymodem_v32_datapump *datapump = v32_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
-	struct sippymodem_qam_measurement measurement;
+	struct qam_measurement measurement;
 	bool linked = false;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
@@ -1226,7 +1226,7 @@ static int process_v32(
 		return DPSTAT_CONNECT;
 	if (!datapump->linked)
 		return DPSTAT_OK;
-	measurement = sippymodem_qam_demodulator_measure(
+	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
 	if (carrier_is_present(&measurement, receive, count)) {
 		datapump->missing_carrier_samples = 0;

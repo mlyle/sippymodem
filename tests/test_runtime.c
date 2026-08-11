@@ -108,35 +108,35 @@ static int unused_driver_control(
 	return 0;
 }
 
-enum sippymodem_datapumps_result sippymodem_datapumps_start(
-	struct sippymodem_datapumps *datapumps)
+enum datapumps_result datapumps_start(
+	struct datapumps *datapumps)
 {
 	capture.datapump_starts++;
 	if (datapumps == NULL)
-		return SIPPYMODEM_DATAPUMPS_INVALID_ARGUMENT;
+		return DATAPUMPS_INVALID_ARGUMENT;
 	if (capture.fail_datapumps)
-		return SIPPYMODEM_DATAPUMPS_REGISTRATION_CONFLICT;
+		return DATAPUMPS_REGISTRATION_CONFLICT;
 	datapumps->call_progress_registered = true;
 	datapumps->fsk300_registered = true;
 	datapumps->v23_registered = true;
-	return SIPPYMODEM_DATAPUMPS_OK;
+	return DATAPUMPS_OK;
 }
 
-enum sippymodem_datapumps_result sippymodem_datapumps_stop(
-	struct sippymodem_datapumps *datapumps)
+enum datapumps_result datapumps_stop(
+	struct datapumps *datapumps)
 {
 	capture.datapump_stops++;
 	if (datapumps == NULL || !datapumps->call_progress_registered ||
 	    !datapumps->fsk300_registered || !datapumps->v23_registered)
-		return SIPPYMODEM_DATAPUMPS_NOT_STARTED;
+		return DATAPUMPS_NOT_STARTED;
 	datapumps->call_progress_registered = false;
 	datapumps->fsk300_registered = false;
 	datapumps->v23_registered = false;
-	return SIPPYMODEM_DATAPUMPS_OK;
+	return DATAPUMPS_OK;
 }
 
-bool sippymodem_datapumps_are_started(
-	const struct sippymodem_datapumps *datapumps)
+bool datapumps_are_started(
+	const struct datapumps *datapumps)
 {
 	return datapumps != NULL && datapumps->call_progress_registered &&
 	       datapumps->fsk300_registered && datapumps->v23_registered;

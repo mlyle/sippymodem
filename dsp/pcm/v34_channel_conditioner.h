@@ -36,16 +36,16 @@ bool v34_channel_conditioner_is_valid(
 enum v34_channel_conditioner_result
 v34_channel_condition_point(
 	const struct v34_channel_conditioner *conditioner,
-	const struct sippymodem_qam_point *normalized_point,
-	struct sippymodem_qam_point *grid_estimate);
+	const struct qam_point *normalized_point,
+	struct qam_point *grid_estimate);
 
 /* Condition one complete 4-D interval atomically in transmission order. */
 enum v34_channel_conditioner_result
 v34_channel_condition_interval(
 	const struct v34_channel_conditioner *conditioner,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	struct sippymodem_qam_point
+	struct qam_point
 		grid_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL]);
 
 const char *v34_channel_conditioner_result_name(

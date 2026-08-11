@@ -69,11 +69,11 @@ static uint32_t next_generated_word(uint32_t *state)
 	return *state;
 }
 
-static struct sippymodem_qam_point complex_multiply(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+static struct qam_point complex_multiply(
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = left->in_phase * right->in_phase -
 			    left->quadrature * right->quadrature,
 		.quadrature = left->in_phase * right->quadrature +
@@ -81,18 +81,18 @@ static struct sippymodem_qam_point complex_multiply(
 	};
 }
 
-static struct sippymodem_qam_point pass_point_channel(
-	const struct sippymodem_qam_point channel[POINT_CHANNEL_TAPS],
-	struct sippymodem_qam_point history[POINT_CHANNEL_TAPS],
-	const struct sippymodem_qam_point *transmitted)
+static struct qam_point pass_point_channel(
+	const struct qam_point channel[POINT_CHANNEL_TAPS],
+	struct qam_point history[POINT_CHANNEL_TAPS],
+	const struct qam_point *transmitted)
 {
-	struct sippymodem_qam_point received = { 0 };
+	struct qam_point received = { 0 };
 
 	for (size_t tap = POINT_CHANNEL_TAPS - 1u; tap != 0; --tap)
 		history[tap] = history[tap - 1u];
 	history[0] = *transmitted;
 	for (size_t tap = 0; tap < POINT_CHANNEL_TAPS; ++tap) {
-		struct sippymodem_qam_point contribution =
+		struct qam_point contribution =
 			complex_multiply(&channel[tap], &history[tap]);
 
 		received.in_phase += contribution.in_phase;
@@ -102,26 +102,26 @@ static struct sippymodem_qam_point pass_point_channel(
 }
 
 static bool train_point_equalizer(
-	struct sippymodem_qam_equalizer *equalizer,
-	const struct sippymodem_qam_point channel[POINT_CHANNEL_TAPS],
-	struct sippymodem_qam_point channel_history[POINT_CHANNEL_TAPS],
+	struct qam_equalizer *equalizer,
+	const struct qam_point channel[POINT_CHANNEL_TAPS],
+	struct qam_point channel_history[POINT_CHANNEL_TAPS],
 	uint32_t seed)
 {
 	static const double level = 0.70710678118654752440;
-	struct sippymodem_qam_point target_history[
-		SIPPYMODEM_QAM_EQUALIZER_DELAY + 1u] = { 0 };
-	struct sippymodem_qam_point reference = { level, level };
-	struct sippymodem_qam_point received_reference =
+	struct qam_point target_history[
+		QAM_EQUALIZER_DELAY + 1u] = { 0 };
+	struct qam_point reference = { level, level };
+	struct qam_point received_reference =
 		complex_multiply(&channel[0], &reference);
 	uint32_t random = seed;
 
-	if (sippymodem_qam_equalizer_init(
+	if (qam_equalizer_init(
 		    equalizer, &received_reference, &reference) !=
-	    SIPPYMODEM_QAM_EQUALIZER_OK)
+	    QAM_EQUALIZER_OK)
 		return false;
 	for (size_t symbol = 0; symbol < POINT_EQUALIZER_TRAINING_SYMBOLS;
 	     ++symbol) {
-		struct sippymodem_qam_point transmitted = {
+		struct qam_point transmitted = {
 			.in_phase = (next_generated_word(&random) >> 31) != 0 ?
 				level :
 				-level,
@@ -129,37 +129,37 @@ static bool train_point_equalizer(
 				level :
 				-level,
 		};
-		struct sippymodem_qam_point received_point;
-		struct sippymodem_qam_point equalized;
+		struct qam_point received_point;
+		struct qam_point equalized;
 		bool ready;
 
-		for (size_t delay = SIPPYMODEM_QAM_EQUALIZER_DELAY;
+		for (size_t delay = QAM_EQUALIZER_DELAY;
 		     delay != 0; --delay)
 			target_history[delay] = target_history[delay - 1u];
 		target_history[0] = transmitted;
 		received_point = pass_point_channel(
 			channel, channel_history, &transmitted);
-		if (sippymodem_qam_equalizer_push(
+		if (qam_equalizer_push(
 			    equalizer, &received_point, &equalized, &ready) !=
-		    SIPPYMODEM_QAM_EQUALIZER_OK)
+		    QAM_EQUALIZER_OK)
 			return false;
 		if (ready &&
-		    sippymodem_qam_equalizer_adapt(
+		    qam_equalizer_adapt(
 			    equalizer,
-			    &target_history[SIPPYMODEM_QAM_EQUALIZER_DELAY],
-			    0.2) != SIPPYMODEM_QAM_EQUALIZER_OK)
+			    &target_history[QAM_EQUALIZER_DELAY],
+			    0.2) != QAM_EQUALIZER_OK)
 			return false;
 	}
-	return sippymodem_qam_equalizer_is_valid(equalizer);
+	return qam_equalizer_is_valid(equalizer);
 }
 
 static bool equalizer_has_dispersion(
-	const struct sippymodem_qam_equalizer *equalizer)
+	const struct qam_equalizer *equalizer)
 {
-	for (size_t tap = 0; tap < SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT; ++tap) {
+	for (size_t tap = 0; tap < QAM_EQUALIZER_TAP_COUNT; ++tap) {
 		double power;
 
-		if (tap == SIPPYMODEM_QAM_EQUALIZER_DELAY)
+		if (tap == QAM_EQUALIZER_DELAY)
 			continue;
 		power = equalizer->coefficients[tap].in_phase *
 				equalizer->coefficients[tap].in_phase +
@@ -325,8 +325,8 @@ static bool current_decision_matches(
 }
 
 static bool point_matches(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
 	double in_phase_scale = fmax(
 		1.0, fmax(fabs(left->in_phase), fabs(right->in_phase)));
@@ -381,11 +381,11 @@ static bool test_generated_channel_round_trip(void)
 			     interval <
 				     V34_4D_INTERVALS_PER_MAPPING_FRAME;
 			     ++interval) {
-				struct sippymodem_qam_point normalized
+				struct qam_point normalized
 					[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-				struct sippymodem_qam_point expected_targets
+				struct qam_point expected_targets
 					[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-				struct sippymodem_qam_point decision_targets
+				struct qam_point decision_targets
 					[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 				struct v34_survivor_decision current;
 				struct v34_received_mapping_frame received;
@@ -482,7 +482,7 @@ static bool test_generated_channel_round_trip(void)
 
 static bool test_generated_equalizer_round_trip(void)
 {
-	static const struct sippymodem_qam_point channel[POINT_CHANNEL_TAPS] = {
+	static const struct qam_point channel[POINT_CHANNEL_TAPS] = {
 		{ 0.84, -0.22 },
 		{ 0.08, 0.04 },
 		{ -0.04, 0.03 },
@@ -493,8 +493,8 @@ static bool test_generated_equalizer_round_trip(void)
 			&CONFIGURATIONS[mode];
 		struct expected_frame expected[MAX_GENERATED_MAPPING_FRAMES];
 		struct v34_data_equalizer_receiver receiver;
-		struct sippymodem_qam_equalizer trained_equalizer;
-		struct sippymodem_qam_point history[POINT_CHANNEL_TAPS] = { 0 };
+		struct qam_equalizer trained_equalizer;
+		struct qam_point history[POINT_CHANNEL_TAPS] = { 0 };
 		struct fixture fixture;
 		size_t received_frames = 0;
 		size_t transmitted_frames;
@@ -522,7 +522,7 @@ static bool test_generated_equalizer_round_trip(void)
 			struct v34_transmitted_mapping_frame transmitted;
 			size_t symbol_limit =
 				frame_index == transmitted_frames ?
-					SIPPYMODEM_QAM_EQUALIZER_DELAY :
+					QAM_EQUALIZER_DELAY :
 					V34_SYMBOLS_PER_MAPPING_FRAME;
 
 			CHECK(transmit_frame(
@@ -531,8 +531,8 @@ static bool test_generated_equalizer_round_trip(void)
 			      "equalizer mode %zu frame %zu did not transmit",
 			      mode, frame_index);
 			for (size_t symbol = 0; symbol < symbol_limit; ++symbol) {
-				struct sippymodem_qam_point normalized;
-				struct sippymodem_qam_point received_point;
+				struct qam_point normalized;
+				struct qam_point received_point;
 				struct v34_survivor_decision current;
 				struct v34_survivor_decision saved_current;
 				struct v34_received_mapping_frame received;
@@ -616,16 +616,16 @@ static bool test_generated_equalizer_round_trip(void)
 
 static bool outputs_are_unchanged_after(
 	struct v34_data_channel_receiver *receiver,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	enum v34_data_channel_receiver_result expected_result)
 {
 	struct v34_data_channel_receiver saved_receiver = *receiver;
 	struct v34_survivor_decision current;
 	struct v34_survivor_decision saved_current;
-	struct sippymodem_qam_point targets
+	struct qam_point targets
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct sippymodem_qam_point saved_targets
+	struct qam_point saved_targets
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_received_mapping_frame received;
 	struct v34_received_mapping_frame saved_received;
@@ -652,13 +652,13 @@ static bool test_validation_and_rollback(void)
 	struct v34_data_channel_receiver saved_receiver;
 	struct v34_q14_coefficient invalid_coefficients
 		[V34_PRECODER_TAP_COUNT];
-	struct sippymodem_qam_point invalid
+	struct qam_point invalid
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL] = {
 			{ 0.0, 0.0 },
 			{ 0.0, 0.0 },
 		};
 	struct v34_survivor_decision current;
-	struct sippymodem_qam_point targets
+	struct qam_point targets
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_received_mapping_frame received;
 
@@ -731,11 +731,11 @@ static bool test_validation_and_rollback(void)
 
 static bool test_equalizer_receiver_validation(void)
 {
-	const struct sippymodem_qam_point reference = { 1.0, 0.0 };
-	const struct sippymodem_qam_point received_reference = { 0.8, -0.2 };
-	const struct sippymodem_qam_point invalid = { NAN, 0.0 };
-	struct sippymodem_qam_equalizer equalizer;
-	struct sippymodem_qam_equalizer invalid_equalizer;
+	const struct qam_point reference = { 1.0, 0.0 };
+	const struct qam_point received_reference = { 0.8, -0.2 };
+	const struct qam_point invalid = { NAN, 0.0 };
+	struct qam_equalizer equalizer;
+	struct qam_equalizer invalid_equalizer;
 	struct v34_data_equalizer_receiver receiver;
 	struct v34_data_equalizer_receiver saved_receiver;
 	struct v34_data_equalizer_receiver corrupt;
@@ -746,9 +746,9 @@ static bool test_equalizer_receiver_validation(void)
 	struct fixture fixture;
 
 	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
-	      sippymodem_qam_equalizer_init(
+	      qam_equalizer_init(
 		      &equalizer, &received_reference, &reference) ==
-		      SIPPYMODEM_QAM_EQUALIZER_OK &&
+		      QAM_EQUALIZER_OK &&
 	      v34_data_equalizer_receiver_init(
 		      &receiver, &equalizer, &fixture.normalizer,
 		      &fixture.geometry,

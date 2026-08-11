@@ -64,7 +64,7 @@ v34_phase4_e_receive_decision(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
 	struct v34_phase4_e_receiver next;
-	struct sippymodem_qam_point checked_point;
+	struct qam_point checked_point;
 	uint8_t dibit;
 
 	if (!v34_phase4_e_receiver_is_valid(receiver) ||
@@ -103,7 +103,7 @@ v34_phase4_e_receive_decision(
 enum v34_phase4_e_receiver_result
 v34_phase4_e_receive_point(
 	struct v34_phase4_e_receiver *receiver,
-	const struct sippymodem_qam_point *point)
+	const struct qam_point *point)
 {
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;

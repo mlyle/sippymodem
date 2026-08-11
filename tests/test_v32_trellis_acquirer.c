@@ -12,11 +12,11 @@ enum {
 	PAYLOAD_SYMBOLS = 96,
 };
 
-static struct sippymodem_qam_point multiply(
-	struct sippymodem_qam_point left,
-	struct sippymodem_qam_point right)
+static struct qam_point multiply(
+	struct qam_point left,
+	struct qam_point right)
 {
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = left.in_phase * right.in_phase -
 			    left.quadrature * right.quadrature,
 		.quadrature = left.in_phase * right.quadrature +
@@ -27,7 +27,7 @@ static struct sippymodem_qam_point multiply(
 static bool encode_point(
 	struct sippymodem_v32_symbol_encoder *framing,
 	struct sippymodem_v32_trellis_encoder *trellis, uint8_t input,
-	struct sippymodem_qam_point *point)
+	struct qam_point *point)
 {
 	uint8_t scrambled;
 	uint8_t symbol;
@@ -45,12 +45,12 @@ static bool encode_point(
 
 static bool check_phase(uint8_t phase, uint8_t data_bits)
 {
-	static const struct sippymodem_qam_point channel = { 0.73, -0.31 };
+	static const struct qam_point channel = { 0.73, -0.31 };
 	struct sippymodem_v32_symbol_encoder framing_encoder;
 	struct sippymodem_v32_symbol_decoder framing_decoder;
 	struct sippymodem_v32_trellis_encoder trellis_encoder;
 	struct sippymodem_v32_trellis_acquirer acquirer;
-	struct sippymodem_qam_point reference;
+	struct qam_point reference;
 	uint8_t payload[PAYLOAD_SYMBOLS];
 	uint8_t previous_output;
 	uint8_t mask = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
@@ -77,7 +77,7 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 	      "V.32bis phase %u/%u acquisition did not initialize", phase,
 	      data_bits);
 	for (size_t index = 0; index < KNOWN_SYMBOLS; ++index) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 
 		CHECK(encode_point(
 			      &framing_encoder, &trellis_encoder, mask, &point),
@@ -97,7 +97,7 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 	      "V.32bis phase %u/%u selected hypothesis %u", phase,
 	      data_bits, acquirer.selected_phase);
 	for (size_t index = 0; index < PAYLOAD_SYMBOLS; ++index) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		uint8_t output = UINT8_MAX;
 		bool ready = true;
 
@@ -136,7 +136,7 @@ static bool test_generated_phase_acquisition(void)
 		SIPPYMODEM_V32_14400_DATA_BITS,
 	};
 
-	for (uint8_t phase = 0; phase < SIPPYMODEM_QPSK_QUADRANT_COUNT;
+	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
 	     ++phase)
 		for (size_t width = 0; width < ARRAY_LENGTH(widths); ++width)
 			if (!check_phase(phase, widths[width]))
@@ -149,7 +149,7 @@ static bool test_api_contract(void)
 	struct sippymodem_v32_symbol_decoder framing;
 	struct sippymodem_v32_trellis_acquirer acquirer;
 	struct sippymodem_v32_trellis_acquirer saved;
-	struct sippymodem_qam_point point = { 1.0, 1.0 };
+	struct qam_point point = { 1.0, 1.0 };
 	uint8_t output = UINT8_MAX;
 	bool ready = true;
 

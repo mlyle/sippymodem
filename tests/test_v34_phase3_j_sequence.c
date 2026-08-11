@@ -73,7 +73,7 @@ static bool prepare_trn(
 	struct v34_phase3_trn *trn,
 	enum v34_station_role role, unsigned int symbols)
 {
-	struct sippymodem_qam_point ignored_point;
+	struct qam_point ignored_point;
 	uint8_t ignored_rotation;
 
 	if (v34_phase3_trn_init(trn, role) !=
@@ -160,7 +160,7 @@ static bool test_patterns_and_phase(void)
 					&reference,
 					(uint8_t)(pattern[bit + 1u] - '0'));
 				uint8_t increment = (uint8_t)((i2 << 1) | i1);
-				struct sippymodem_qam_point point = { 7.0, -9.0 };
+				struct qam_point point = { 7.0, -9.0 };
 				uint8_t rotation = UINT8_MAX;
 				double angle;
 				double power;
@@ -220,7 +220,7 @@ static bool test_copy_and_restart(void)
 	struct v34_phase3_j_sequence first;
 	struct v34_phase3_j_sequence second;
 	struct v34_phase3_j_sequence restarted;
-	struct sippymodem_qam_point ignored;
+	struct qam_point ignored;
 	uint8_t ignored_rotation;
 
 	CHECK(prepare_trn(
@@ -237,8 +237,8 @@ static bool test_copy_and_restart(void)
 		      "J copy prefix stopped at %u", symbol);
 	second = first;
 	for (unsigned int symbol = 0; symbol < 257; ++symbol) {
-		struct sippymodem_qam_point first_point;
-		struct sippymodem_qam_point second_point;
+		struct qam_point first_point;
+		struct qam_point second_point;
 		uint8_t first_rotation;
 		uint8_t second_rotation;
 
@@ -273,8 +273,8 @@ static bool test_validation(void)
 	struct v34_phase3_j_sequence sequence;
 	struct v34_phase3_j_sequence before;
 	struct v34_phase3_j_sequence corrupt;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point before_point = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point before_point = point;
 	uint8_t rotation = UINT8_MAX;
 
 	memset(&sequence, 0xa5, sizeof(sequence));

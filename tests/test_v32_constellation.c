@@ -18,7 +18,7 @@ static bool close_to(double actual, double expected)
 static bool check_grid_point(
 	uint8_t symbol, int expected_in_phase, int expected_quadrature)
 {
-	struct sippymodem_qam_point point;
+	struct qam_point point;
 	double normalization = sqrt(18.0);
 
 	CHECK(sippymodem_v32_constellation_point(symbol, &point) ==
@@ -48,7 +48,7 @@ static bool test_generated_geometry(void)
 		{ 12, -1, 1 },
 		{ 15, -3, 3 },
 	};
-	struct sippymodem_qam_point points[
+	struct qam_point points[
 		SIPPYMODEM_V32_CONSTELLATION_SYMBOLS];
 	double maximum_power = 0.0;
 
@@ -103,7 +103,7 @@ static bool test_4800_signal_set(void)
 
 	for (uint8_t quadrant = 0;
 	     quadrant < SIPPYMODEM_V32_4800_SIGNAL_POINTS; ++quadrant) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		double power;
 
 		CHECK(sippymodem_v32_4800_constellation_point(
@@ -171,7 +171,7 @@ static bool test_trellis_signal_sets(void)
 
 		for (uint8_t symbol = 0;
 		     symbol < fixtures[fixture].signal_points; ++symbol) {
-			struct sippymodem_qam_point point;
+			struct qam_point point;
 			int power;
 
 			CHECK(sippymodem_v32_trellis_constellation_point(
@@ -184,7 +184,7 @@ static bool test_trellis_signal_sets(void)
 			      "V.32bis %u-bit signal point %u did not generate",
 			      fixtures[fixture].data_bits, symbol);
 			if (fixtures[fixture].data_bits == 3) {
-				struct sippymodem_qam_point compatibility_point;
+				struct qam_point compatibility_point;
 
 				CHECK(sippymodem_v32_7200_constellation_point(
 					      symbol, &compatibility_point) ==
@@ -253,7 +253,7 @@ static bool test_trellis_representative_points(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(representatives); ++index) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		int in_phase;
 		int quadrature;
 
@@ -272,8 +272,8 @@ static bool test_trellis_representative_points(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
-	struct sippymodem_qam_point saved = point;
+	struct qam_point point = { 7.0, -9.0 };
+	struct qam_point saved = point;
 
 	CHECK(sippymodem_v32_constellation_point(
 		      SIPPYMODEM_V32_CONSTELLATION_SYMBOLS, &point) ==

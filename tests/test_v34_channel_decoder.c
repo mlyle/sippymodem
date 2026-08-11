@@ -186,7 +186,7 @@ static bool test_generated_round_trip(void)
 				struct v34_decided_4d_interval decided;
 				struct v34_decided_4d_interval saved_decided;
 				struct v34_decoded_4d_interval decoded;
-				struct sippymodem_qam_point estimates[2];
+				struct qam_point estimates[2];
 				bool ready = true;
 
 				expected[interval].input = generated_input(
@@ -206,7 +206,7 @@ static bool test_generated_round_trip(void)
 					expected[interval].mapper_output[symbol] =
 						encoded.mapped[symbol].mapper_output;
 					estimates[symbol] =
-						(struct sippymodem_qam_point){
+						(struct qam_point){
 							.in_phase = encoded.precoded[symbol]
 									    .channel_output.in_phase +
 								    generated_noise(&random),
@@ -266,7 +266,7 @@ static bool test_generated_round_trip(void)
 
 static bool rejected_advance_is_transactional(
 	struct v34_channel_decoder *decoder,
-	const struct sippymodem_qam_point estimates[2], uint8_t inversion_bit,
+	const struct qam_point estimates[2], uint8_t inversion_bit,
 	enum v34_channel_decoder_result expected)
 {
 	struct v34_channel_decoder saved = *decoder;
@@ -290,7 +290,7 @@ static bool rejected_advance_is_transactional(
 
 static bool test_transactional_boundaries(void)
 {
-	static const struct sippymodem_qam_point estimates[2] = {
+	static const struct qam_point estimates[2] = {
 		{ 1.0, 1.0 }, { 1.0, 1.0 },
 	};
 	static const struct v34_q14_coefficient zero_coefficients
@@ -300,7 +300,7 @@ static bool test_transactional_boundaries(void)
 	struct v34_channel_decoder decoder;
 	struct v34_channel_decoder saved;
 	struct v34_channel_decoder corrupted;
-	struct sippymodem_qam_point malformed_estimates[2];
+	struct qam_point malformed_estimates[2];
 	struct v34_survivor_decision current;
 	struct v34_decided_4d_interval decided;
 	bool ready;

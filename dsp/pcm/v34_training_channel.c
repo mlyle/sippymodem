@@ -4,24 +4,24 @@
 
 enum v34_training_channel_result
 v34_training_channel_decide(
-	struct sippymodem_qam_gain *gain,
+	struct qam_gain *gain,
 	enum v34_constellation_size constellation,
-	const struct sippymodem_qam_point *received, uint8_t *quarter_point,
+	const struct qam_point *received, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
-	struct sippymodem_qam_gain next;
-	struct sippymodem_qam_point normalized;
-	struct sippymodem_qam_point decision;
+	struct qam_gain next;
+	struct qam_point normalized;
+	struct qam_point decision;
 	uint8_t next_quarter_point;
 	uint8_t next_clockwise_quarter_turns;
 
-	if (!sippymodem_qam_gain_is_valid(gain) || quarter_point == NULL ||
+	if (!qam_gain_is_valid(gain) || quarter_point == NULL ||
 	    clockwise_quarter_turns == NULL ||
 	    quarter_point == clockwise_quarter_turns)
 		return V34_TRAINING_CHANNEL_INVALID_ARGUMENT;
 	next = *gain;
-	if (sippymodem_qam_gain_equalize(&next, received, &normalized) !=
-		    SIPPYMODEM_QAM_GAIN_OK ||
+	if (qam_gain_equalize(&next, received, &normalized) !=
+		    QAM_GAIN_OK ||
 	    v34_training_constellation_slice(
 		    constellation, &normalized, &next_quarter_point,
 		    &next_clockwise_quarter_turns) !=
@@ -30,9 +30,9 @@ v34_training_channel_decide(
 		    constellation, next_quarter_point,
 		    next_clockwise_quarter_turns, &decision) !=
 		    V34_CONSTELLATION_OK ||
-	    sippymodem_qam_gain_track(&next, received, &decision) !=
-		    SIPPYMODEM_QAM_GAIN_OK ||
-	    !sippymodem_qam_gain_is_valid(&next))
+	    qam_gain_track(&next, received, &decision) !=
+		    QAM_GAIN_OK ||
+	    !qam_gain_is_valid(&next))
 		return V34_TRAINING_CHANNEL_INVALID_ARGUMENT;
 	*gain = next;
 	*quarter_point = next_quarter_point;

@@ -126,14 +126,14 @@ correct_receive_history(
 	struct v34_precoder *receive_precoder,
 	const struct v34_power_normalizer *normalizer,
 	const struct v34_survivor_decision *current,
-	struct sippymodem_qam_point
+	struct qam_point
 		decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL])
 {
 	for (size_t symbol = 0;
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		struct v34_grid_point mapper_output;
 		struct v34_precoder_symbol reconstructed;
-		struct sippymodem_qam_point projected;
+		struct qam_point projected;
 		enum v34_precoder_result result =
 			v34_precoder_inverse_step(
 				receive_precoder,
@@ -172,10 +172,10 @@ correct_receive_history(
 enum v34_channel_frame_receiver_result
 v34_channel_frame_receiver_advance(
 	struct v34_channel_frame_receiver *receiver,
-	const struct sippymodem_qam_point
+	const struct qam_point
 		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_survivor_decision *current,
-	struct sippymodem_qam_point
+	struct qam_point
 		decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_decided_4d_interval
 		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
@@ -183,12 +183,12 @@ v34_channel_frame_receiver_advance(
 {
 	struct v34_channel_frame_receiver next;
 	struct v34_precoder tentative_precoder;
-	struct sippymodem_qam_point precoded_estimates
+	struct qam_point precoded_estimates
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct sippymodem_qam_point channel_estimates
+	struct qam_point channel_estimates
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_survivor_decision generated_current;
-	struct sippymodem_qam_point generated_targets
+	struct qam_point generated_targets
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_decided_4d_interval generated_frame
 		[V34_4D_INTERVALS_PER_MAPPING_FRAME];

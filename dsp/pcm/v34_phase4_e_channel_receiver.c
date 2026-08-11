@@ -11,7 +11,7 @@ bool v34_phase4_e_channel_receiver_is_valid(
 	return receiver != NULL &&
 	       v34_phase4_e_receiver_is_valid(
 		       &receiver->symbol_receiver) &&
-	       sippymodem_qam_gain_is_valid(&receiver->gain);
+	       qam_gain_is_valid(&receiver->gain);
 }
 
 enum v34_phase4_e_receiver_result
@@ -38,7 +38,7 @@ v34_phase4_e_channel_receiver_init_from_mp(
 enum v34_phase4_e_receiver_result
 v34_phase4_e_channel_receive_point(
 	struct v34_phase4_e_channel_receiver *receiver,
-	const struct sippymodem_qam_point *received)
+	const struct qam_point *received)
 {
 	struct v34_phase4_e_channel_receiver next;
 	enum v34_phase4_e_receiver_result result;

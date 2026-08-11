@@ -43,7 +43,7 @@ enum v34_phase2_dpsk_result {
 };
 
 struct v34_phase2_dpsk_transmitter {
-	struct sippymodem_qam_modulator carrier;
+	struct qam_modulator carrier;
 	uint32_t guard_phase;
 	uint32_t guard_phase_step;
 	int16_t guard_amplitude;

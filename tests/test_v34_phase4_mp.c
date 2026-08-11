@@ -159,7 +159,7 @@ static uint8_t reference_mapped_dibit(
 	return (uint8_t)((second << 1) | first);
 }
 
-static struct sippymodem_qam_point reference_point(
+static struct qam_point reference_point(
 	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
@@ -175,15 +175,15 @@ static struct sippymodem_qam_point reference_point(
 		in_phase = quadrature;
 		quadrature = -saved_in_phase;
 	}
-	return (struct sippymodem_qam_point){
+	return (struct qam_point){
 		.in_phase = in_phase * unit,
 		.quadrature = quadrature * unit,
 	};
 }
 
 static bool points_are_close(
-	const struct sippymodem_qam_point *left,
-	const struct sippymodem_qam_point *right)
+	const struct qam_point *left,
+	const struct qam_point *right)
 {
 	return fabs(left->in_phase - right->in_phase) < TEST_TOLERANCE &&
 	       fabs(left->quadrature - right->quadrature) < TEST_TOLERANCE;
@@ -203,7 +203,7 @@ static bool generate_trn_prefix(
 		       V34_PHASE4_MP_RECEIVER_OK),
 	      "TRN prefix did not initialize");
 	for (size_t symbol = 0; symbol < TRN_PREFIX_SYMBOLS; ++symbol) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		struct v34_mp_receive_event event;
 		uint8_t quarter;
 		uint8_t rotation;
@@ -255,7 +255,7 @@ static bool receive_current_record(
 	     symbol < V34_PHASE4_MP_TYPE1_4_POINT_SYMBOLS &&
 	     !complete;
 	     ++symbol) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		struct v34_mp_receive_event emitted;
 		uint8_t quarter;
 		uint8_t rotation;
@@ -389,7 +389,7 @@ static bool test_receiver_validation(void)
 	struct v34_phase4_mp_receiver saved;
 	struct v34_mp_receive_event event;
 	struct v34_mp_receive_event saved_event;
-	struct sippymodem_qam_point invalid_point = { NAN, 0.0 };
+	struct qam_point invalid_point = { NAN, 0.0 };
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
@@ -496,8 +496,8 @@ static bool verify_encoded_record(
 			(reference->previous_clockwise_quarter_turns + increment) &
 			3u);
 		uint8_t quarter = 0;
-		struct sippymodem_qam_point expected;
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
+		struct qam_point expected;
+		struct qam_point point = { 7.0, -9.0 };
 		uint8_t emitted_quarter = UINT8_MAX;
 		uint8_t emitted_rotation = UINT8_MAX;
 		bool complete = true;
@@ -531,7 +531,7 @@ static bool verify_encoded_record(
 	      "MP record did not finish at its exact wire boundary");
 	{
 		struct v34_phase4_mp saved = *transmitter;
-		struct sippymodem_qam_point point = { 7.0, -9.0 };
+		struct qam_point point = { 7.0, -9.0 };
 		uint8_t quarter = UINT8_MAX;
 		uint8_t rotation = UINT8_MAX;
 		bool complete = false;
@@ -688,7 +688,7 @@ static bool test_copy_behavior(void)
 		      V34_PHASE4_MP_OK,
 	      "MP copy fixture did not initialize");
 	for (size_t symbol = 0; symbol < 7; ++symbol) {
-		struct sippymodem_qam_point point;
+		struct qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 		bool complete;
@@ -701,8 +701,8 @@ static bool test_copy_behavior(void)
 	}
 	copy = original;
 	for (size_t symbol = 0; symbol < 5; ++symbol) {
-		struct sippymodem_qam_point original_point;
-		struct sippymodem_qam_point copied_point;
+		struct qam_point original_point;
+		struct qam_point copied_point;
 		uint8_t original_quarter;
 		uint8_t copied_quarter;
 		uint8_t original_rotation;
@@ -738,7 +738,7 @@ static bool test_validation(void)
 	struct v34_mp_type1_parameters valid_type1 =
 		type1_parameters(false);
 	struct v34_mp_type1_parameters invalid_type1 = valid_type1;
-	struct sippymodem_qam_point point = { 7.0, -9.0 };
+	struct qam_point point = { 7.0, -9.0 };
 	uint8_t quarter = UINT8_MAX;
 	uint8_t rotation = UINT8_MAX;
 	bool complete = true;
@@ -764,7 +764,7 @@ static bool test_validation(void)
 	      transmitters_are_equal(&transmitter, &saved),
 	      "MP initialization accepted TRN without a final symbol");
 	{
-		struct sippymodem_qam_point trn_point;
+		struct qam_point trn_point;
 		uint8_t trn_quarter;
 		uint8_t trn_rotation;
 

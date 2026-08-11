@@ -13,7 +13,7 @@ enum {
 		SIPPYMODEM_V21_BIT_RATE,
 };
 
-const struct sippymodem_fsk_channel sippymodem_v21_channel_1 = {
+const struct fsk_channel sippymodem_v21_channel_1 = {
 	.sample_rate = SIPPYMODEM_V21_SAMPLE_RATE,
 	.symbol_rate_numerator = SIPPYMODEM_V21_BIT_RATE,
 	.symbol_rate_denominator = 1,
@@ -23,7 +23,7 @@ const struct sippymodem_fsk_channel sippymodem_v21_channel_1 = {
 	.metric_smoothing_shift = V21_METRIC_SMOOTHING_SHIFT,
 };
 
-const struct sippymodem_fsk_channel sippymodem_v21_channel_2 = {
+const struct fsk_channel sippymodem_v21_channel_2 = {
 	.sample_rate = SIPPYMODEM_V21_SAMPLE_RATE,
 	.symbol_rate_numerator = SIPPYMODEM_V21_BIT_RATE,
 	.symbol_rate_denominator = 1,

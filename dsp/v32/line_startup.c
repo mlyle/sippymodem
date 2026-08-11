@@ -15,7 +15,7 @@ static bool state_is_valid(enum sippymodem_v32_line_startup_state state)
 	       state <= SIPPYMODEM_V32_LINE_STARTUP_FAILED;
 }
 
-static const struct sippymodem_single_tone_detector *selected_detector(
+static const struct single_tone_detector *selected_detector(
 	const struct sippymodem_v32_line_startup *startup)
 {
 	if (startup->selected_turnaround_tone_hz ==
@@ -30,7 +30,7 @@ static const struct sippymodem_single_tone_detector *selected_detector(
 static bool selected_turnaround_is_valid(
 	const struct sippymodem_v32_line_startup *startup, bool required)
 {
-	const struct sippymodem_single_tone_detector *selected =
+	const struct single_tone_detector *selected =
 		selected_detector(startup);
 
 	if (!required)
@@ -42,7 +42,7 @@ static bool selected_turnaround_is_valid(
 		       !startup->low_turnaround_tone.tone_present;
 }
 
-static struct sippymodem_single_tone_detector *selected_detector_mutable(
+static struct single_tone_detector *selected_detector_mutable(
 	struct sippymodem_v32_line_startup *startup)
 {
 	if (startup->selected_turnaround_tone_hz ==
@@ -62,22 +62,22 @@ bool sippymodem_v32_line_startup_is_valid(
 	bool terminal;
 
 	if (startup == NULL || !state_is_valid(startup->state) ||
-	    !sippymodem_single_tone_detector_is_valid(&startup->answer_tone) ||
+	    !single_tone_detector_is_valid(&startup->answer_tone) ||
 	    startup->answer_tone.frequency_hz !=
 		    SIPPYMODEM_V32_ANSWER_TONE_HZ ||
-	    !sippymodem_single_tone_detector_is_valid(
+	    !single_tone_detector_is_valid(
 		    &startup->low_turnaround_tone) ||
 	    startup->low_turnaround_tone.frequency_hz !=
 		    SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ ||
 	    startup->low_turnaround_tone.minimum_carrier_share !=
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE ||
-	    !sippymodem_single_tone_detector_is_valid(
+	    !single_tone_detector_is_valid(
 		    &startup->high_turnaround_tone) ||
 	    startup->high_turnaround_tone.frequency_hz !=
 		    SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ ||
 	    startup->high_turnaround_tone.minimum_carrier_share !=
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE ||
-	    !sippymodem_single_tone_transmitter_is_valid(
+	    !single_tone_transmitter_is_valid(
 		    &startup->calling_carrier) ||
 	    startup->calling_carrier.frequency_hz !=
 		    SIPPYMODEM_V32_CALLING_CARRIER_HZ ||
@@ -121,24 +121,24 @@ enum sippymodem_v32_line_startup_result sippymodem_v32_line_startup_init(
 	struct sippymodem_v32_line_startup initialized = { 0 };
 
 	if (startup == NULL ||
-	    sippymodem_single_tone_detector_init(
+	    single_tone_detector_init(
 		    &initialized.answer_tone,
 		    SIPPYMODEM_V32_ANSWER_TONE_HZ) !=
-		    SIPPYMODEM_SINGLE_TONE_OK ||
-	    sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+		    SINGLE_TONE_OK ||
+	    single_tone_detector_init_with_minimum_carrier_share(
 		    &initialized.low_turnaround_tone,
 		    SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ,
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE) !=
-		    SIPPYMODEM_SINGLE_TONE_OK ||
-	    sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+		    SINGLE_TONE_OK ||
+	    single_tone_detector_init_with_minimum_carrier_share(
 		    &initialized.high_turnaround_tone,
 		    SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ,
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE) !=
-		    SIPPYMODEM_SINGLE_TONE_OK ||
-	    sippymodem_single_tone_transmitter_init(
+		    SINGLE_TONE_OK ||
+	    single_tone_transmitter_init(
 		    &initialized.calling_carrier,
 		    SIPPYMODEM_V32_CALLING_CARRIER_HZ,
-		    transmit_amplitude) != SIPPYMODEM_SINGLE_TONE_OK)
+		    transmit_amplitude) != SINGLE_TONE_OK)
 		return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 	initialized.state = SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE;
 	if (!sippymodem_v32_line_startup_is_valid(&initialized))
@@ -175,20 +175,20 @@ static void advance_state_clock(struct sippymodem_v32_line_startup *startup)
 		startup->state_samples++;
 }
 
-static enum sippymodem_single_tone_result reset_detectors(
+static enum single_tone_result reset_detectors(
 	struct sippymodem_v32_line_startup *startup)
 {
-	if (sippymodem_single_tone_detector_reset(&startup->answer_tone) !=
-		    SIPPYMODEM_SINGLE_TONE_OK ||
-	    sippymodem_single_tone_detector_reset(
+	if (single_tone_detector_reset(&startup->answer_tone) !=
+		    SINGLE_TONE_OK ||
+	    single_tone_detector_reset(
 		    &startup->low_turnaround_tone) !=
-		    SIPPYMODEM_SINGLE_TONE_OK ||
-	    sippymodem_single_tone_detector_reset(
+		    SINGLE_TONE_OK ||
+	    single_tone_detector_reset(
 		    &startup->high_turnaround_tone) !=
-		    SIPPYMODEM_SINGLE_TONE_OK)
-		return SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT;
+		    SINGLE_TONE_OK)
+		return SINGLE_TONE_INVALID_ARGUMENT;
 	startup->selected_turnaround_tone_hz = 0;
-	return SIPPYMODEM_SINGLE_TONE_OK;
+	return SINGLE_TONE_OK;
 }
 
 static enum sippymodem_v32_line_startup_result fail_startup(
@@ -197,7 +197,7 @@ static enum sippymodem_v32_line_startup_result fail_startup(
 	int16_t *transmit_sample, bool *complete)
 {
 	if (reset_detectors(next) !=
-	    SIPPYMODEM_SINGLE_TONE_OK)
+	    SINGLE_TONE_OK)
 		return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 	next->round_trip_samples = 0;
 	enter_state(next, SIPPYMODEM_V32_LINE_STARTUP_FAILED);
@@ -215,11 +215,11 @@ sippymodem_v32_line_startup_process(
 	int16_t *transmit_sample, bool *complete)
 {
 	struct sippymodem_v32_line_startup next;
-	struct sippymodem_single_tone_detector *turnaround_detector;
-	struct sippymodem_single_tone_event answer_event = { 0 };
-	struct sippymodem_single_tone_event low_event = { 0 };
-	struct sippymodem_single_tone_event high_event = { 0 };
-	struct sippymodem_single_tone_event turnaround_event = { 0 };
+	struct single_tone_detector *turnaround_detector;
+	struct single_tone_event answer_event = { 0 };
+	struct single_tone_event low_event = { 0 };
+	struct single_tone_event high_event = { 0 };
+	struct single_tone_event turnaround_event = { 0 };
 	int16_t generated = 0;
 
 	if (!sippymodem_v32_line_startup_is_valid(startup) ||
@@ -238,27 +238,27 @@ sippymodem_v32_line_startup_process(
 	next = *startup;
 	switch (next.state) {
 	case SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE:
-		if (sippymodem_single_tone_detector_sample(
+		if (single_tone_detector_sample(
 			    &next.answer_tone, receive_sample, &answer_event) !=
-		    SIPPYMODEM_SINGLE_TONE_OK)
+		    SINGLE_TONE_OK)
 			return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 		advance_state_clock(&next);
-		if (answer_event.kind == SIPPYMODEM_SINGLE_TONE_STARTED)
+		if (answer_event.kind == SINGLE_TONE_STARTED)
 			enter_state(&next, SIPPYMODEM_V32_LINE_ANSWER_GUARD);
 		break;
 	case SIPPYMODEM_V32_LINE_ANSWER_GUARD:
-		if (sippymodem_single_tone_detector_sample(
+		if (single_tone_detector_sample(
 			    &next.answer_tone, receive_sample, &answer_event) !=
-		    SIPPYMODEM_SINGLE_TONE_OK)
+		    SINGLE_TONE_OK)
 			return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
-		if (answer_event.kind == SIPPYMODEM_SINGLE_TONE_ENDED)
+		if (answer_event.kind == SINGLE_TONE_ENDED)
 			return fail_startup(
 				&next, startup, transmit_sample, complete);
 		advance_state_clock(&next);
 		if (next.state_samples ==
 		    SIPPYMODEM_V32_ANSWER_GUARD_SAMPLES) {
-			if (sippymodem_single_tone_detector_reset(
-				    &next.answer_tone) != SIPPYMODEM_SINGLE_TONE_OK)
+			if (single_tone_detector_reset(
+				    &next.answer_tone) != SINGLE_TONE_OK)
 				return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 			enter_state(
 				&next,
@@ -266,23 +266,23 @@ sippymodem_v32_line_startup_process(
 		}
 		break;
 	case SIPPYMODEM_V32_LINE_SEND_CALLING_CARRIER:
-		if (sippymodem_single_tone_detector_sample(
+		if (single_tone_detector_sample(
 			    &next.low_turnaround_tone, receive_sample,
-			    &low_event) != SIPPYMODEM_SINGLE_TONE_OK ||
-		    sippymodem_single_tone_detector_sample(
+			    &low_event) != SINGLE_TONE_OK ||
+		    single_tone_detector_sample(
 			    &next.high_turnaround_tone, receive_sample,
-			    &high_event) != SIPPYMODEM_SINGLE_TONE_OK)
+			    &high_event) != SINGLE_TONE_OK)
 			return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 		advance_state_clock(&next);
-		if (low_event.kind == SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED ||
-		    high_event.kind == SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED) {
+		if (low_event.kind == SINGLE_TONE_PHASE_REVERSED ||
+		    high_event.kind == SINGLE_TONE_PHASE_REVERSED) {
 			bool low_reversed =
 				low_event.kind ==
-				SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED;
+				SINGLE_TONE_PHASE_REVERSED;
 
 			if (low_reversed &&
 			    high_event.kind ==
-				    SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED)
+				    SINGLE_TONE_PHASE_REVERSED)
 				return fail_startup(
 					&next, startup, transmit_sample, complete);
 			next.selected_turnaround_tone_hz =
@@ -290,10 +290,10 @@ sippymodem_v32_line_startup_process(
 					SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ :
 					SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ;
 			turnaround_event = low_reversed ? low_event : high_event;
-			if (sippymodem_single_tone_detector_reset(
+			if (single_tone_detector_reset(
 				    low_reversed ? &next.high_turnaround_tone :
 						   &next.low_turnaround_tone) !=
-			    SIPPYMODEM_SINGLE_TONE_OK)
+			    SINGLE_TONE_OK)
 				return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 			enter_state(
 				&next,
@@ -305,21 +305,21 @@ sippymodem_v32_line_startup_process(
 	case SIPPYMODEM_V32_LINE_DELAY_CALLING_CARRIER_REVERSAL:
 		turnaround_detector = selected_detector_mutable(&next);
 		if (turnaround_detector == NULL ||
-		    sippymodem_single_tone_detector_sample(
+		    single_tone_detector_sample(
 			    turnaround_detector, receive_sample,
-			    &turnaround_event) != SIPPYMODEM_SINGLE_TONE_OK)
+			    &turnaround_event) != SINGLE_TONE_OK)
 			return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
-		if (turnaround_event.kind == SIPPYMODEM_SINGLE_TONE_ENDED ||
+		if (turnaround_event.kind == SINGLE_TONE_ENDED ||
 		    turnaround_event.kind ==
-			    SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED)
+			    SINGLE_TONE_PHASE_REVERSED)
 			return fail_startup(
 				&next, startup, transmit_sample, complete);
 		advance_state_clock(&next);
 		if (next.state_samples ==
 		    SIPPYMODEM_V32_REVERSAL_RESPONSE_SAMPLES) {
-			if (sippymodem_single_tone_transmitter_reverse(
+			if (single_tone_transmitter_reverse(
 				    &next.calling_carrier) !=
-			    SIPPYMODEM_SINGLE_TONE_OK)
+			    SINGLE_TONE_OK)
 				return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 			enter_state(
 				&next,
@@ -329,16 +329,16 @@ sippymodem_v32_line_startup_process(
 	case SIPPYMODEM_V32_LINE_SEND_REVERSED_CALLING_CARRIER:
 		turnaround_detector = selected_detector_mutable(&next);
 		if (turnaround_detector == NULL ||
-		    sippymodem_single_tone_detector_sample(
+		    single_tone_detector_sample(
 			    turnaround_detector, receive_sample,
-			    &turnaround_event) != SIPPYMODEM_SINGLE_TONE_OK)
+			    &turnaround_event) != SINGLE_TONE_OK)
 			return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
-		if (turnaround_event.kind == SIPPYMODEM_SINGLE_TONE_ENDED)
+		if (turnaround_event.kind == SINGLE_TONE_ENDED)
 			return fail_startup(
 				&next, startup, transmit_sample, complete);
 		advance_state_clock(&next);
 		if (turnaround_event.kind ==
-		    SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED) {
+		    SINGLE_TONE_PHASE_REVERSED) {
 			uint64_t measured =
 				(uint64_t)SIPPYMODEM_V32_REVERSAL_RESPONSE_SAMPLES +
 				next.state_samples;
@@ -351,7 +351,7 @@ sippymodem_v32_line_startup_process(
 				return fail_startup(
 					&next, startup, transmit_sample, complete);
 			next.round_trip_samples = (uint32_t)measured;
-			if (reset_detectors(&next) != SIPPYMODEM_SINGLE_TONE_OK)
+			if (reset_detectors(&next) != SINGLE_TONE_OK)
 				return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 			enter_state(
 				&next, SIPPYMODEM_V32_LINE_STARTUP_COMPLETE);
@@ -366,9 +366,9 @@ sippymodem_v32_line_startup_process(
 		    SIPPYMODEM_V32_LINE_DELAY_CALLING_CARRIER_REVERSAL ||
 	    next.state ==
 		    SIPPYMODEM_V32_LINE_SEND_REVERSED_CALLING_CARRIER) {
-		if (sippymodem_single_tone_transmitter_sample(
+		if (single_tone_transmitter_sample(
 			    &next.calling_carrier, &generated) !=
-		    SIPPYMODEM_SINGLE_TONE_OK)
+		    SINGLE_TONE_OK)
 			return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 	}
 	if (!sippymodem_v32_line_startup_is_valid(&next))
