@@ -123,4 +123,4 @@ size_t sippymodem_baudot_pending_text(
 const char *sippymodem_baudot_result_name(
 	enum sippymodem_baudot_result result);
 
-#endif
+#endif /* SIPPYMODEM_BAUDOT_H */

@@ -343,13 +343,13 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/sippymodem_datapumps.o \
-	$(BUILD_DIR)/sippymodem_baudot.o \
-	$(BUILD_DIR)/sippymodem_baudot_datapump.o \
+	$(BUILD_DIR)/baudot.o \
+	$(BUILD_DIR)/baudot_datapump.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
-	$(BUILD_DIR)/sippymodem_v21.o \
+	$(BUILD_DIR)/fsk300_datapump.o \
+	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/sippymodem_v8_ansam.o \
 	$(BUILD_DIR)/sippymodem_v8_answering.o \
 	$(BUILD_DIR)/sippymodem_v8_calling.o \
@@ -376,11 +376,11 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_v32_startup.o \
 	$(BUILD_DIR)/sippymodem_v32_trellis.o \
 	$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o \
-	$(BUILD_DIR)/sippymodem_v23_datapump.o
+	$(BUILD_DIR)/v23_datapump.o
 FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_v21.o
+	$(BUILD_DIR)/v21.o
 V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_ansam
 V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_ansam.o \
 	$(BUILD_DIR)/sippymodem_v8_ansam.o \
@@ -393,7 +393,7 @@ V8_ANSWERING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_answering.o \
 	$(BUILD_DIR)/sippymodem_v8_fsk.o \
 	$(BUILD_DIR)/sippymodem_v8_menu.o \
 	$(BUILD_DIR)/sippymodem_v8_framing.o \
-	$(BUILD_DIR)/sippymodem_v21.o \
+	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/sippymodem_fsk.o
 V8_CALLING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_calling
 V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_calling.o \
@@ -402,14 +402,14 @@ V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_calling.o \
 	$(BUILD_DIR)/sippymodem_v8_fsk.o \
 	$(BUILD_DIR)/sippymodem_v8_menu.o \
 	$(BUILD_DIR)/sippymodem_v8_framing.o \
-	$(BUILD_DIR)/sippymodem_v21.o \
+	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/sippymodem_fsk.o
 V8_FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_fsk
 V8_FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_fsk.o \
 	$(BUILD_DIR)/sippymodem_v8_fsk.o \
 	$(BUILD_DIR)/sippymodem_v8_menu.o \
 	$(BUILD_DIR)/sippymodem_v8_framing.o \
-	$(BUILD_DIR)/sippymodem_v21.o \
+	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
 	$(BUILD_DIR)/sippymodem_g711.o
 V8_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v8_framing
@@ -421,13 +421,13 @@ V8_MENU_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v8_menu.o \
 	$(BUILD_DIR)/sippymodem_v8_framing.o
 BAUDOT_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_baudot
 BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_baudot.o \
-	$(BUILD_DIR)/sippymodem_baudot.o $(BUILD_DIR)/sippymodem_fsk.o
+	$(BUILD_DIR)/baudot.o $(BUILD_DIR)/sippymodem_fsk.o
 V23_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v23
 V23_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v23.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_v23_datapump.o
+	$(BUILD_DIR)/v23_datapump.o
 V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v22_framing.o \
@@ -1037,13 +1037,13 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_fsk_integration.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/sippymodem_datapumps.o \
-	$(BUILD_DIR)/sippymodem_baudot.o \
-	$(BUILD_DIR)/sippymodem_baudot_datapump.o \
+	$(BUILD_DIR)/baudot.o \
+	$(BUILD_DIR)/baudot_datapump.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_fsk.o \
-	$(BUILD_DIR)/sippymodem_fsk300_datapump.o \
-	$(BUILD_DIR)/sippymodem_v21.o \
+	$(BUILD_DIR)/fsk300_datapump.o \
+	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/sippymodem_v8_ansam.o \
 	$(BUILD_DIR)/sippymodem_v8_answering.o \
 	$(BUILD_DIR)/sippymodem_v8_calling.o \
@@ -1070,7 +1070,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v32_startup.o \
 	$(BUILD_DIR)/sippymodem_v32_trellis.o \
 	$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o \
-	$(BUILD_DIR)/sippymodem_v23_datapump.o \
+	$(BUILD_DIR)/v23_datapump.o \
 	$(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
@@ -2034,28 +2034,28 @@ $(BUILD_DIR)/sippymodem_fsk.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_fsk.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v21.o: \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v21.c | $(BUILD_DIR)
+$(BUILD_DIR)/v21.o: \
+	$(DSP_V21_202_SOURCE_DIR)/v21.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_baudot.o: \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot.c | $(BUILD_DIR)
+$(BUILD_DIR)/baudot.o: \
+	$(DSP_V21_202_SOURCE_DIR)/baudot.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_baudot_datapump.o: \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot_datapump.c | $(BUILD_DIR)
+$(BUILD_DIR)/baudot_datapump.o: \
+	$(DSP_V21_202_SOURCE_DIR)/baudot_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_fsk300_datapump.o: \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_fsk300_datapump.c | $(BUILD_DIR)
+$(BUILD_DIR)/fsk300_datapump.o: \
+	$(DSP_V21_202_SOURCE_DIR)/fsk300_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v8_datapump.o: \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v23_datapump.o: \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v23_datapump.c | $(BUILD_DIR)
+$(BUILD_DIR)/v23_datapump.o: \
+	$(DSP_V21_202_SOURCE_DIR)/v23_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v22_framing.o: \

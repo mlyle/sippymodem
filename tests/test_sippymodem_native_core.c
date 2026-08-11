@@ -4,7 +4,7 @@
 #include <sippymodem_datapumps.h>
 #include <sippymodem_fsk.h>
 #include <sippymodem_single_tone.h>
-#include <sippymodem_v21.h>
+#include <v21.h>
 #include <sippymodem_v42_xid.h>
 #include <sippymodem_v32_datapump.h>
 #include <sippymodem_v32_line_startup.h>

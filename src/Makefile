@@ -107,11 +107,11 @@ SIPPYMODEM_SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_framing.c \
 	$(DSP_SOURCE_DIR)/sippymodem_v8_menu.c
 SIPPYMODEM_V21_202_SOURCES := \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot.c \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_baudot_datapump.c \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_fsk300_datapump.c \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v21.c \
-	$(DSP_V21_202_SOURCE_DIR)/sippymodem_v23_datapump.c
+	$(DSP_V21_202_SOURCE_DIR)/baudot.c \
+	$(DSP_V21_202_SOURCE_DIR)/baudot_datapump.c \
+	$(DSP_V21_202_SOURCE_DIR)/fsk300_datapump.c \
+	$(DSP_V21_202_SOURCE_DIR)/v21.c \
+	$(DSP_V21_202_SOURCE_DIR)/v23_datapump.c
 SIPPYMODEM_V22_SOURCES := \
 	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_datapump.c \
 	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_framing.c \

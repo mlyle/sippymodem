@@ -15,4 +15,4 @@ enum {
 extern const struct sippymodem_fsk_channel sippymodem_v21_channel_1;
 extern const struct sippymodem_fsk_channel sippymodem_v21_channel_2;
 
-#endif
+#endif /* SIPPYMODEM_V21_H */

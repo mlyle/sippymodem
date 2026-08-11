@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v23_datapump.h"
+#include "v23_datapump.h"
 
 #include "modem.h"
 #include "modem_param.h"

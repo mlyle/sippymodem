@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_fsk.h>
-#include <sippymodem_v21.h>
+#include <v21.h>
 
 #include "test.h"
 

@@ -2,7 +2,7 @@
 
 #include "sippymodem_v8_fsk.h"
 
-#include "sippymodem_v21.h"
+#include "v21.h"
 
 enum {
 	/* A quarter-scale peak leaves headroom for companding and media gain. */

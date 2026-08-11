@@ -9,4 +9,4 @@ int sippymodem_baudot_datapump_register(void);
 int sippymodem_baudot_datapump_unregister(void);
 bool sippymodem_baudot_datapump_is_busy(void);
 
-#endif
+#endif /* SIPPYMODEM_BAUDOT_DATAPUMP_H */

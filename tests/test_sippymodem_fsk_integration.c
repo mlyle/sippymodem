@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
-#include <sippymodem_baudot.h>
+#include <baudot.h>
 #include <sippymodem_datapumps.h>
-#include <sippymodem_fsk300_datapump.h>
+#include <fsk300_datapump.h>
 #include <sippymodem_media.h>
 #include <sippymodem_v22_datapump.h>
-#include <sippymodem_v23_datapump.h>
+#include <v23_datapump.h>
 #include <sippymodem_v32_datapump.h>
 #include <sippymodem_v8_datapump.h>
 

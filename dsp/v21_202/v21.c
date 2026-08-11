@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v21.h"
+#include "v21.h"
 
 enum {
 	V21_CHANNEL_1_MARK_HZ = 980,

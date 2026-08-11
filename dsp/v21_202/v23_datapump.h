@@ -14,4 +14,4 @@ int sippymodem_v23_datapump_register(void);
 int sippymodem_v23_datapump_unregister(void);
 bool sippymodem_v23_datapump_is_busy(void);
 
-#endif
+#endif /* SIPPYMODEM_V23_DATAPUMP_H */

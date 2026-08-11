@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <sippymodem_baudot.h>
+#include <baudot.h>
 
 #include "test.h"
 

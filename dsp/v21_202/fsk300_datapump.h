@@ -13,4 +13,4 @@ int sippymodem_fsk300_datapump_register(void);
 int sippymodem_fsk300_datapump_unregister(void);
 bool sippymodem_fsk300_datapump_is_busy(void);
 
-#endif
+#endif /* SIPPYMODEM_FSK300_DATAPUMP_H */
