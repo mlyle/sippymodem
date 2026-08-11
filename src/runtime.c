@@ -26,8 +26,8 @@ struct sippymodem_runtime {
 	struct slmodem_terminal modem_terminal;
 	struct sippymodem_terminal *terminal;
 	struct recording_files *recording_files;
-	struct sippymodem_host *host;
-	enum sippymodem_host_result last_host_result;
+	struct modem_host *host;
+	enum modem_host_result last_host_result;
 	enum sip_session_result last_session_result;
 	enum slmodem_calls_result last_calls_result;
 	enum slmodem_terminal_result last_modem_terminal_result;
@@ -39,7 +39,7 @@ static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
 {
 	if (runtime == NULL)
 		return;
-	sippymodem_host_destroy(runtime->host);
+	modem_host_destroy(runtime->host);
 	recording_files_destroy(runtime->recording_files);
 	if (runtime->modem != NULL)
 		modem_delete(runtime->modem);
@@ -103,7 +103,7 @@ struct sippymodem_runtime *sippymodem_runtime_create(
 		if (recorder == NULL)
 			goto fail;
 	}
-	runtime->host = sippymodem_host_create(
+	runtime->host = modem_host_create(
 		config, recorder,
 		slmodem_calls_callbacks(&runtime->calls),
 		slmodem_adapter_core(&runtime->adapter));
@@ -127,7 +127,7 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 
 	if (runtime == NULL)
 		return SIPPYMODEM_RUNTIME_INVALID_ARGUMENT;
-	if (sippymodem_host_is_open(runtime->host))
+	if (modem_host_is_open(runtime->host))
 		return sippymodem_terminal_is_open(runtime->terminal) ?
 			       SIPPYMODEM_RUNTIME_OK :
 			       SIPPYMODEM_RUNTIME_TERMINAL_ERROR;
@@ -167,7 +167,7 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 		return SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR;
 	}
 	runtime->terminal_client_connected = false;
-	runtime->last_session_result = sippymodem_host_open(runtime->host);
+	runtime->last_session_result = modem_host_open(runtime->host);
 	if (runtime->last_session_result == SIP_SESSION_OK)
 		return SIPPYMODEM_RUNTIME_OK;
 	runtime->last_modem_terminal_result =
@@ -188,9 +188,9 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 	stop_result = modem_report_remote_call_end(runtime->modem);
 	if (runtime->modem->started)
 		stop_result = modem_stop_now(runtime->modem);
-	if (sippymodem_host_is_open(runtime->host))
+	if (modem_host_is_open(runtime->host))
 		runtime->last_session_result =
-			sippymodem_host_close(runtime->host);
+			modem_host_close(runtime->host);
 	else
 		runtime->last_session_result = SIP_SESSION_NOT_OPEN;
 	runtime->last_modem_terminal_result =
@@ -325,7 +325,7 @@ enum sippymodem_runtime_result sippymodem_runtime_step(
 	if (runtime == NULL)
 		return SIPPYMODEM_RUNTIME_INVALID_ARGUMENT;
 	terminal_result = advance_terminal(runtime, terminal_bytes_received);
-	runtime->last_host_result = sippymodem_host_step(
+	runtime->last_host_result = modem_host_step(
 		runtime->host, now_ns, datagrams_received, frames_processed);
 	calls_result = drain_call_transitions(runtime);
 	if (runtime->recording_files != NULL &&
@@ -338,16 +338,16 @@ enum sippymodem_runtime_result sippymodem_runtime_step(
 	    terminal_result != SIPPYMODEM_RUNTIME_IDLE)
 		return terminal_result;
 	if (runtime->last_host_result ==
-	    SIPPYMODEM_HOST_MEDIA_BINDING_ERROR)
+	    MODEM_HOST_MEDIA_BINDING_ERROR)
 		return SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR;
 	/* The host has already suspended audio and requested SIP hangup. Keep the
 	 * terminal alive so the modem result can be reported and reused. */
-	if (runtime->last_host_result == SIPPYMODEM_HOST_MODEM_STOPPED)
+	if (runtime->last_host_result == MODEM_HOST_MODEM_STOPPED)
 		return SIPPYMODEM_RUNTIME_OK;
-	if (runtime->last_host_result != SIPPYMODEM_HOST_OK &&
-	    runtime->last_host_result != SIPPYMODEM_HOST_IDLE)
+	if (runtime->last_host_result != MODEM_HOST_OK &&
+	    runtime->last_host_result != MODEM_HOST_IDLE)
 		return SIPPYMODEM_RUNTIME_HOST_ERROR;
-	return runtime->last_host_result == SIPPYMODEM_HOST_OK ||
+	return runtime->last_host_result == MODEM_HOST_OK ||
 		       terminal_result == SIPPYMODEM_RUNTIME_OK ?
 		       SIPPYMODEM_RUNTIME_OK :
 		       SIPPYMODEM_RUNTIME_IDLE;
@@ -357,7 +357,7 @@ uint64_t sippymodem_runtime_wait_ns(
 	const struct sippymodem_runtime *runtime, uint64_t now_ns)
 {
 	return runtime != NULL ?
-		       sippymodem_host_wait_ns(runtime->host, now_ns) :
+		       modem_host_wait_ns(runtime->host, now_ns) :
 		       UINT64_MAX;
 }
 
@@ -369,7 +369,7 @@ void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime)
 	if (runtime->modem->started)
 		(void)modem_stop_now(runtime->modem);
 	(void)slmodem_driver_detach(&runtime->driver);
-	sippymodem_host_destroy(runtime->host);
+	modem_host_destroy(runtime->host);
 	recording_files_destroy(runtime->recording_files);
 	(void)slmodem_terminal_unbind(&runtime->modem_terminal);
 	modem_delete(runtime->modem);
@@ -391,7 +391,7 @@ const struct recording_files *sippymodem_runtime_recording_files(
 
 bool sippymodem_runtime_is_open(const struct sippymodem_runtime *runtime)
 {
-	return runtime != NULL && sippymodem_host_is_open(runtime->host) &&
+	return runtime != NULL && modem_host_is_open(runtime->host) &&
 	       sippymodem_terminal_is_open(runtime->terminal);
 }
 
@@ -427,11 +427,11 @@ const char *sippymodem_runtime_device_path(
 		       NULL;
 }
 
-enum sippymodem_host_result sippymodem_runtime_last_host_result(
+enum modem_host_result sippymodem_runtime_last_host_result(
 	const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL ? runtime->last_host_result :
-			       SIPPYMODEM_HOST_INVALID_ARGUMENT;
+			       MODEM_HOST_INVALID_ARGUMENT;
 }
 
 enum sip_session_result sippymodem_runtime_last_session_result(

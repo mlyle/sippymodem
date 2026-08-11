@@ -62,12 +62,12 @@ static int start_modem(struct modem *modem)
 	if (driver == NULL || !modem_media_is_compatible(modem))
 		return -EINVAL;
 	if (modem->caller) {
-		driver->last_signaling_result = sippymodem_host_dial(
+		driver->last_signaling_result = modem_host_dial(
 			driver->host,
 			modem->dial_string[0] != '\0' ? modem->dial_string : NULL);
 	} else if (!modem->command) {
 		driver->last_signaling_result =
-			sippymodem_host_answer(driver->host);
+			modem_host_answer(driver->host);
 	} else {
 		return -EOPNOTSUPP;
 	}
@@ -80,7 +80,7 @@ static int stop_modem(struct modem *modem)
 
 	if (driver == NULL)
 		return -EINVAL;
-	driver->last_signaling_result = sippymodem_host_hangup(driver->host);
+	driver->last_signaling_result = modem_host_hangup(driver->host);
 	/* The legacy core treats any stop error as "still started" after it has
 	 * already released its DSP state. Preserve the signaling result for the
 	 * owner, but always let core teardown finish in the stopped state. */
@@ -148,7 +148,7 @@ struct modem_driver *slmodem_driver_interface(
 bool slmodem_driver_attach(
 	struct slmodem_driver *driver,
 	struct modem *modem,
-	struct sippymodem_host *host)
+	struct modem_host *host)
 {
 	if (slmodem_driver_interface(driver) == NULL ||
 	    modem == NULL || host == NULL || driver->modem != NULL ||

@@ -207,7 +207,7 @@ static enum modem_core_result process_core(
 	return capture != NULL ? capture->result : MODEM_CORE_OK;
 }
 
-static struct sippymodem_host *create_host(
+static struct modem_host *create_host(
 	const struct media_recorder *recorder,
 	struct core_capture *core_capture)
 {
@@ -220,50 +220,50 @@ static struct sippymodem_host *create_host(
 	config_init(&config);
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 0;
-	return sippymodem_host_create(&config, recorder, NULL, &core);
+	return modem_host_create(&config, recorder, NULL, &core);
 }
 
 static bool test_owns_lifecycle_and_call_control(void)
 {
-	struct sippymodem_host *host;
+	struct modem_host *host;
 	size_t datagrams = 99;
 	size_t frames = 99;
 
 	memset(&fake, 0, sizeof(fake));
 	host = create_host(NULL, NULL);
-	CHECK(host != NULL && sippymodem_host_frame_samples(host) == 8 &&
-		      !sippymodem_host_is_open(host) &&
-		      !sippymodem_host_audio_is_active(host),
+	CHECK(host != NULL && modem_host_frame_samples(host) == 8 &&
+		      !modem_host_is_open(host) &&
+		      !modem_host_audio_is_active(host),
 	      "host did not construct the complete audio owner");
-	CHECK(sippymodem_host_wait_ns(host, 0) == UINT64_MAX &&
-		      sippymodem_host_step(host, 0, &datagrams, &frames) ==
-			      SIPPYMODEM_HOST_IDLE &&
+	CHECK(modem_host_wait_ns(host, 0) == UINT64_MAX &&
+		      modem_host_step(host, 0, &datagrams, &frames) ==
+			      MODEM_HOST_IDLE &&
 		      datagrams == 0 && frames == 0,
 	      "closed host exposed pending event-loop work");
-	CHECK(sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
+	CHECK(modem_host_dial(host, "sip:peer@127.0.0.1") ==
 		      SIP_SIGNALING_NOT_OPEN,
 	      "closed host accepted a call");
-	CHECK(sippymodem_host_open(host) == SIP_SESSION_OK &&
-		      sippymodem_host_is_open(host) && fake.opens == 1 &&
-		      !sippymodem_host_media_is_configured(host),
+	CHECK(modem_host_open(host) == SIP_SESSION_OK &&
+		      modem_host_is_open(host) && fake.opens == 1 &&
+		      !modem_host_media_is_configured(host),
 	      "host did not open its signaling and RTP session");
-	CHECK(sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
+	CHECK(modem_host_dial(host, "sip:peer@127.0.0.1") ==
 		      SIP_SIGNALING_OK &&
-		      sippymodem_host_media_is_configured(host) &&
-		      sippymodem_host_audio_is_active(host),
+		      modem_host_media_is_configured(host) &&
+		      modem_host_audio_is_active(host),
 	      "negotiated media did not activate the host audio path");
-	CHECK(sippymodem_host_answer(host) == SIP_SIGNALING_OK &&
-		      sippymodem_host_hangup(host) ==
+	CHECK(modem_host_answer(host) == SIP_SIGNALING_OK &&
+		      modem_host_hangup(host) ==
 			      SIP_SIGNALING_OK &&
-		      !sippymodem_host_media_is_configured(host) &&
-		      !sippymodem_host_audio_is_active(host) && fake.dials == 1 &&
+		      !modem_host_media_is_configured(host) &&
+		      !modem_host_audio_is_active(host) && fake.dials == 1 &&
 		      fake.answers == 1 && fake.hangups == 1,
 	      "host did not synchronize call control with media state");
-	CHECK(sippymodem_host_close(host) == SIP_SESSION_OK &&
-		      !sippymodem_host_is_open(host) && fake.closes == 1 &&
+	CHECK(modem_host_close(host) == SIP_SESSION_OK &&
+		      !modem_host_is_open(host) && fake.closes == 1 &&
 		      fake.destroys == 1,
 	      "host did not close its complete session");
-	sippymodem_host_destroy(host);
+	modem_host_destroy(host);
 	return true;
 }
 
@@ -273,15 +273,15 @@ static bool test_creation_validation_is_transactional(void)
 	struct modem_core core = { .process = process_core };
 
 	config_init(&config);
-	CHECK(sippymodem_host_create(NULL, NULL, NULL, &core) == NULL &&
-		      sippymodem_host_create(&config, NULL, NULL, NULL) == NULL,
+	CHECK(modem_host_create(NULL, NULL, NULL, &core) == NULL &&
+		      modem_host_create(&config, NULL, NULL, NULL) == NULL,
 	      "host accepted incomplete ownership");
 	config.media.frame_duration_ms = 0;
-	CHECK(sippymodem_host_create(&config, NULL, NULL, &core) == NULL,
+	CHECK(modem_host_create(&config, NULL, NULL, &core) == NULL,
 	      "host retained an invalid media session");
 	config_init(&config);
 	config.media.receive_gain = NAN;
-	CHECK(sippymodem_host_create(&config, NULL, NULL, &core) == NULL,
+	CHECK(modem_host_create(&config, NULL, NULL, &core) == NULL,
 	      "host retained a session after audio path rejection");
 	return true;
 }
@@ -312,20 +312,20 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 		.context = &recordings,
 		.write = capture_recording,
 	};
-	struct sippymodem_host *host;
+	struct modem_host *host;
 	size_t datagrams = 99;
 	size_t frames = 99;
 
 	memset(&fake, 0, sizeof(fake));
 	host = create_host(&recorder, &core);
 	CHECK(host != NULL &&
-		      sippymodem_host_open(host) == SIP_SESSION_OK &&
-		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
+		      modem_host_open(host) == SIP_SESSION_OK &&
+		      modem_host_dial(host, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_OK &&
-		      sippymodem_host_wait_ns(host, 1000000000) == 0,
+		      modem_host_wait_ns(host, 1000000000) == 0,
 	      "recorded host call did not become immediately runnable");
-	CHECK(sippymodem_host_step(host, 1000000000, &datagrams, &frames) ==
-		      SIPPYMODEM_HOST_OK &&
+	CHECK(modem_host_step(host, 1000000000, &datagrams, &frames) ==
+		      MODEM_HOST_OK &&
 		      datagrams == 0 && frames == 1 && core.calls == 1 &&
 		      core.received_silence &&
 		      recordings.calls == ARRAY_LENGTH(expected_streams) &&
@@ -333,7 +333,7 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 			     sizeof(expected_streams)) == 0 &&
 		      memcmp(recordings.formats, expected_formats,
 			     sizeof(expected_formats)) == 0 &&
-		      sippymodem_host_wait_ns(host, 1000000000) == 1000000,
+		      modem_host_wait_ns(host, 1000000000) == 1000000,
 	      "host did not process and record one complete modem frame");
 	for (size_t index = 0; index < recordings.calls; ++index) {
 		CHECK(recordings.sample_rates[index] ==
@@ -341,34 +341,34 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 			      recordings.counts[index] == 8,
 		      "recorded host block lost its media dimensions");
 	}
-	CHECK(sippymodem_host_step(host, 1000500000, NULL, &frames) ==
-		      SIPPYMODEM_HOST_IDLE &&
+	CHECK(modem_host_step(host, 1000500000, NULL, &frames) ==
+		      MODEM_HOST_IDLE &&
 		      frames == 0 && core.calls == 1 &&
-		      sippymodem_host_wait_ns(host, 1000500000) == 500000,
+		      modem_host_wait_ns(host, 1000500000) == 500000,
 	      "host ran audio ahead of the sample clock");
 
 	fake.emit_invalid_media_on_step = true;
-	CHECK(sippymodem_host_step(host, 1001000000, NULL, &frames) ==
-		      SIPPYMODEM_HOST_MEDIA_BINDING_ERROR &&
+	CHECK(modem_host_step(host, 1001000000, NULL, &frames) ==
+		      MODEM_HOST_MEDIA_BINDING_ERROR &&
 		      frames == 1 && core.calls == 2 &&
-		      sippymodem_host_audio_is_active(host) &&
-		      sippymodem_host_last_session_result(host) ==
+		      modem_host_audio_is_active(host) &&
+		      modem_host_last_session_result(host) ==
 			      SIP_SESSION_MEDIA_BINDING_ERROR &&
-		      sippymodem_host_last_audio_scheduler_result(host) ==
+		      modem_host_last_audio_scheduler_result(host) ==
 			      AUDIO_SCHEDULER_OK &&
-		      sippymodem_host_last_audio_path_result(host) ==
+		      modem_host_last_audio_path_result(host) ==
 			      AUDIO_PATH_OK,
 		      "rejected renegotiation interrupted established audio");
 	fake.step_result = SIP_SIGNALING_LIBRARY_ERROR;
-	CHECK(sippymodem_host_step(host, 1001500000, NULL, &frames) ==
-		      SIPPYMODEM_HOST_SESSION_ERROR &&
+	CHECK(modem_host_step(host, 1001500000, NULL, &frames) ==
+		      MODEM_HOST_SESSION_ERROR &&
 		      frames == 0 &&
-		      sippymodem_host_last_session_result(host) ==
+		      modem_host_last_session_result(host) ==
 			      SIP_SESSION_SIGNALING_ERROR,
 	      "host did not retain a fatal signaling-step result");
-	CHECK(sippymodem_host_close(host) == SIP_SESSION_OK,
+	CHECK(modem_host_close(host) == SIP_SESSION_OK,
 	      "recorded host did not close");
-	sippymodem_host_destroy(host);
+	modem_host_destroy(host);
 	return true;
 }
 
@@ -377,83 +377,83 @@ static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 	struct core_capture core = {
 		.result = MODEM_CORE_STOPPED,
 	};
-	struct sippymodem_host *host;
+	struct modem_host *host;
 	size_t frames = 99;
 
 	memset(&fake, 0, sizeof(fake));
 	fake.defer_hangup_media = true;
 	host = create_host(NULL, &core);
 	CHECK(host != NULL &&
-		      sippymodem_host_open(host) == SIP_SESSION_OK &&
-		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
+		      modem_host_open(host) == SIP_SESSION_OK &&
+		      modem_host_dial(host, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_OK,
 	      "failed-audio host call did not start");
-	CHECK(sippymodem_host_step(host, 0, NULL, &frames) ==
-		      SIPPYMODEM_HOST_MODEM_STOPPED &&
+	CHECK(modem_host_step(host, 0, NULL, &frames) ==
+		      MODEM_HOST_MODEM_STOPPED &&
 		      frames == 0 && core.calls == 1 && fake.hangups == 1 &&
-		      sippymodem_host_media_is_configured(host) &&
-		      !sippymodem_host_audio_is_active(host) &&
-		      sippymodem_host_wait_ns(host, 0) ==
-			      SIPPYMODEM_HOST_SIGNALING_POLL_NS,
+		      modem_host_media_is_configured(host) &&
+		      !modem_host_audio_is_active(host) &&
+		      modem_host_wait_ns(host, 0) ==
+			      MODEM_HOST_SIGNALING_POLL_NS,
 	      "stopped modem did not suspend audio and request hangup");
 	core.result = MODEM_CORE_OK;
-	CHECK(sippymodem_host_step(host, 1000000, NULL, &frames) ==
-		      SIPPYMODEM_HOST_IDLE &&
+	CHECK(modem_host_step(host, 1000000, NULL, &frames) ==
+		      MODEM_HOST_IDLE &&
 		      frames == 0 && core.calls == 1,
 	      "failed audio restarted before media became inactive");
 	fake.emit_inactive_on_step = true;
-	CHECK(sippymodem_host_step(host, 2000000, NULL, &frames) ==
-		      SIPPYMODEM_HOST_IDLE &&
-		      !sippymodem_host_media_is_configured(host) &&
-		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
+	CHECK(modem_host_step(host, 2000000, NULL, &frames) ==
+		      MODEM_HOST_IDLE &&
+		      !modem_host_media_is_configured(host) &&
+		      modem_host_dial(host, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_OK &&
-		      sippymodem_host_step(host, 3000000, NULL, &frames) ==
-			      SIPPYMODEM_HOST_OK &&
+		      modem_host_step(host, 3000000, NULL, &frames) ==
+			      MODEM_HOST_OK &&
 		      frames == 1 && core.calls == 2,
 	      "new media lifecycle did not rearm suspended audio");
 	core.result = MODEM_CORE_ERROR;
-	CHECK(sippymodem_host_step(host, 4000000, NULL, &frames) ==
-		      SIPPYMODEM_HOST_AUDIO_ERROR &&
-		      sippymodem_host_last_audio_path_result(host) ==
+	CHECK(modem_host_step(host, 4000000, NULL, &frames) ==
+		      MODEM_HOST_AUDIO_ERROR &&
+		      modem_host_last_audio_path_result(host) ==
 			      AUDIO_PATH_MODEM_ERROR &&
 		      fake.hangups == 2,
 	      "modem failure did not retain its typed audio cause");
-	CHECK(sippymodem_host_close(host) == SIP_SESSION_OK,
+	CHECK(modem_host_close(host) == SIP_SESSION_OK,
 	      "failed-audio host did not close");
-	sippymodem_host_destroy(host);
+	modem_host_destroy(host);
 	return true;
 }
 
 static bool test_destroy_closes_an_open_host(void)
 {
-	struct sippymodem_host *host;
+	struct modem_host *host;
 	size_t datagrams = 99;
 	size_t frames = 99;
 
 	memset(&fake, 0, sizeof(fake));
 	host = create_host(NULL, NULL);
 	CHECK(host != NULL &&
-		      sippymodem_host_open(host) == SIP_SESSION_OK,
+		      modem_host_open(host) == SIP_SESSION_OK,
 	      "open destroy fixture failed");
-	sippymodem_host_destroy(host);
+	modem_host_destroy(host);
 	CHECK(fake.closes == 1 && fake.destroys == 1,
 	      "destroy did not close and release an open host");
-	CHECK(sippymodem_host_frame_samples(NULL) == 0 &&
-		      !sippymodem_host_is_open(NULL) &&
-		      !sippymodem_host_media_is_configured(NULL) &&
-		      !sippymodem_host_audio_is_active(NULL) &&
-		      sippymodem_host_open(NULL) ==
+	CHECK(modem_host_frame_samples(NULL) == 0 &&
+		      !modem_host_is_open(NULL) &&
+		      !modem_host_media_is_configured(NULL) &&
+		      !modem_host_audio_is_active(NULL) &&
+		      modem_host_open(NULL) ==
 			      SIP_SESSION_INVALID_ARGUMENT &&
-		      sippymodem_host_close(NULL) ==
+		      modem_host_close(NULL) ==
 			      SIP_SESSION_INVALID_ARGUMENT &&
-		      sippymodem_host_dial(NULL, "sip:peer@127.0.0.1") ==
+		      modem_host_dial(NULL, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_INVALID_ARGUMENT &&
-		      sippymodem_host_step(NULL, 0, &datagrams, &frames) ==
-			      SIPPYMODEM_HOST_INVALID_ARGUMENT &&
+		      modem_host_step(NULL, 0, &datagrams, &frames) ==
+			      MODEM_HOST_INVALID_ARGUMENT &&
 		      datagrams == 0 && frames == 0 &&
-		      sippymodem_host_wait_ns(NULL, 0) == UINT64_MAX &&
-		      strcmp(sippymodem_host_result_name(
-				     SIPPYMODEM_HOST_AUDIO_ERROR),
+		      modem_host_wait_ns(NULL, 0) == UINT64_MAX &&
+		      strcmp(modem_host_result_name(
+				     MODEM_HOST_AUDIO_ERROR),
 			     "scheduled audio failed") == 0,
 	      "host null validation is inconsistent");
 	return true;

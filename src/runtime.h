@@ -66,7 +66,7 @@ int sippymodem_runtime_terminal_poll_fd(
 	const struct sippymodem_runtime *runtime);
 const char *sippymodem_runtime_device_path(
 	const struct sippymodem_runtime *runtime);
-enum sippymodem_host_result sippymodem_runtime_last_host_result(
+enum modem_host_result sippymodem_runtime_last_host_result(
 	const struct sippymodem_runtime *runtime);
 enum sip_session_result sippymodem_runtime_last_session_result(
 	const struct sippymodem_runtime *runtime);

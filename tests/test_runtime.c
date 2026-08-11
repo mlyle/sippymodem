@@ -17,7 +17,7 @@
 #include <string.h>
 #include <unistd.h>
 
-struct sippymodem_host {
+struct modem_host {
 	unsigned int marker;
 	bool opened;
 	struct sip_signaling_callbacks callbacks;
@@ -63,7 +63,7 @@ struct runtime_capture {
 	bool call_pending;
 	bool drain_never_idle;
 	struct sip_call_event call;
-	enum sippymodem_host_result host_step_result;
+	enum modem_host_result host_step_result;
 	enum slmodem_calls_result call_result;
 	enum sip_session_result host_open_result;
 	enum sip_session_result host_close_result;
@@ -164,7 +164,7 @@ struct modem_driver *slmodem_driver_interface(
 bool slmodem_driver_attach(
 	struct slmodem_driver *driver,
 	struct modem *modem,
-	struct sippymodem_host *host)
+	struct modem_host *host)
 {
 	capture.driver_attaches++;
 	if (capture.fail_attach)
@@ -380,13 +380,13 @@ enum recording_files_result recording_files_last_result(
 			       RECORDING_FILES_INVALID_BLOCK;
 }
 
-struct sippymodem_host *sippymodem_host_create(
+struct modem_host *modem_host_create(
 	const struct app_config *config,
 	const struct media_recorder *recorder,
 	const struct sip_signaling_callbacks *callbacks,
 	const struct modem_core *core)
 {
-	struct sippymodem_host *host;
+	struct modem_host *host;
 
 	(void)config;
 	capture.host_creates++;
@@ -401,7 +401,7 @@ struct sippymodem_host *sippymodem_host_create(
 	return host;
 }
 
-void sippymodem_host_destroy(struct sippymodem_host *host)
+void modem_host_destroy(struct modem_host *host)
 {
 	if (host == NULL)
 		return;
@@ -410,8 +410,8 @@ void sippymodem_host_destroy(struct sippymodem_host *host)
 	free(host);
 }
 
-enum sip_session_result sippymodem_host_open(
-	struct sippymodem_host *host)
+enum sip_session_result modem_host_open(
+	struct modem_host *host)
 {
 	capture.host_opens++;
 	if (capture.host_open_result == SIP_SESSION_OK)
@@ -419,8 +419,8 @@ enum sip_session_result sippymodem_host_open(
 	return capture.host_open_result;
 }
 
-enum sip_session_result sippymodem_host_close(
-	struct sippymodem_host *host)
+enum sip_session_result modem_host_close(
+	struct modem_host *host)
 {
 	capture.host_closes++;
 	host->opened = false;
@@ -428,13 +428,13 @@ enum sip_session_result sippymodem_host_close(
 	return capture.host_close_result;
 }
 
-bool sippymodem_host_is_open(const struct sippymodem_host *host)
+bool modem_host_is_open(const struct modem_host *host)
 {
 	return host != NULL && host->opened;
 }
 
-enum sippymodem_host_result sippymodem_host_step(
-	struct sippymodem_host *host, uint64_t now_ns,
+enum modem_host_result modem_host_step(
+	struct modem_host *host, uint64_t now_ns,
 	size_t *datagrams_received, size_t *frames_processed)
 {
 	(void)now_ns;
@@ -451,8 +451,8 @@ enum sippymodem_host_result sippymodem_host_step(
 	return capture.host_step_result;
 }
 
-uint64_t sippymodem_host_wait_ns(
-	const struct sippymodem_host *host, uint64_t now_ns)
+uint64_t modem_host_wait_ns(
+	const struct modem_host *host, uint64_t now_ns)
 {
 	(void)host;
 	(void)now_ns;
@@ -718,7 +718,7 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	      "runtime terminal command fixture was not ready");
 	recording = (struct recording_files *)
 		sippymodem_runtime_recording_files(runtime);
-	capture.host_step_result = SIPPYMODEM_HOST_OK;
+	capture.host_step_result = MODEM_HOST_OK;
 	capture.datagrams = 3;
 	capture.frames = 2;
 	capture.emit_call = true;
@@ -736,32 +736,32 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 			     sizeof(command) - 1) == 0 &&
 		      capture.calls_drained == 2 &&
 		      sippymodem_runtime_last_host_result(runtime) ==
-			      SIPPYMODEM_HOST_OK &&
+			      MODEM_HOST_OK &&
 		      sippymodem_runtime_last_calls_result(runtime) ==
 			      SLMODEM_CALLS_IDLE &&
 		      sippymodem_runtime_wait_ns(runtime, 100) == capture.wait_ns,
 	      "runtime did not advance and drain bounded host work");
 
-	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
+	capture.host_step_result = MODEM_HOST_IDLE;
 	CHECK(sippymodem_runtime_step(runtime, 101, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_IDLE,
 	      "idle host work was not distinguished");
-	capture.host_step_result = SIPPYMODEM_HOST_MEDIA_BINDING_ERROR;
+	capture.host_step_result = MODEM_HOST_MEDIA_BINDING_ERROR;
 	CHECK(sippymodem_runtime_step(runtime, 102, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR,
 	      "runtime hid rejected negotiated media");
-	capture.host_step_result = SIPPYMODEM_HOST_AUDIO_ERROR;
+	capture.host_step_result = MODEM_HOST_AUDIO_ERROR;
 	CHECK(sippymodem_runtime_step(runtime, 103, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_HOST_ERROR,
 	      "runtime hid a host audio failure");
-	capture.host_step_result = SIPPYMODEM_HOST_MODEM_STOPPED;
+	capture.host_step_result = MODEM_HOST_MODEM_STOPPED;
 	CHECK(sippymodem_runtime_step(runtime, 104, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_OK &&
 		      sippymodem_runtime_last_host_result(runtime) ==
-			      SIPPYMODEM_HOST_MODEM_STOPPED,
+			      MODEM_HOST_MODEM_STOPPED,
 	      "runtime treated a handled modem stop as fatal");
 
-	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
+	capture.host_step_result = MODEM_HOST_IDLE;
 	capture.emit_call = true;
 	capture.call.direction = (enum sip_call_direction)99;
 	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL, NULL) ==
@@ -808,7 +808,7 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 		      terminal_bytes == 0 && datagrams == 0 && frames == 0 &&
 		      sippymodem_runtime_wait_ns(NULL, 0) == UINT64_MAX &&
 		      sippymodem_runtime_last_host_result(NULL) ==
-			      SIPPYMODEM_HOST_INVALID_ARGUMENT &&
+			      MODEM_HOST_INVALID_ARGUMENT &&
 		      sippymodem_runtime_last_calls_result(NULL) ==
 			      SLMODEM_CALLS_INVALID_ARGUMENT &&
 		      sippymodem_runtime_last_modem_terminal_result(NULL) ==

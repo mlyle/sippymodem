@@ -8,12 +8,12 @@
 
 #include <stdbool.h>
 
-struct sippymodem_host;
+struct modem_host;
 
 struct slmodem_driver {
 	struct modem_driver interface;
 	struct modem *modem;
-	struct sippymodem_host *host;
+	struct modem_host *host;
 	enum sip_signaling_result last_signaling_result;
 };
 
@@ -27,7 +27,7 @@ struct modem_driver *slmodem_driver_interface(
 bool slmodem_driver_attach(
 	struct slmodem_driver *driver,
 	struct modem *modem,
-	struct sippymodem_host *host);
+	struct modem_host *host);
 /* Detach is allowed only after the modem has stopped. */
 bool slmodem_driver_detach(
 	struct slmodem_driver *driver);

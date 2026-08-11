@@ -7,12 +7,12 @@
 #include <errno.h>
 #include <string.h>
 
-struct sippymodem_host {
+struct modem_host {
 	unsigned int marker;
 };
 
 struct host_capture {
-	struct sippymodem_host *expected_host;
+	struct modem_host *expected_host;
 	unsigned int dials;
 	unsigned int answers;
 	unsigned int hangups;
@@ -25,8 +25,8 @@ struct host_capture {
 
 static struct host_capture capture;
 
-enum sip_signaling_result sippymodem_host_dial(
-	struct sippymodem_host *host, const char *target)
+enum sip_signaling_result modem_host_dial(
+	struct modem_host *host, const char *target)
 {
 	capture.dials++;
 	if (host != capture.expected_host)
@@ -39,8 +39,8 @@ enum sip_signaling_result sippymodem_host_dial(
 	return capture.dial_result;
 }
 
-enum sip_signaling_result sippymodem_host_answer(
-	struct sippymodem_host *host)
+enum sip_signaling_result modem_host_answer(
+	struct modem_host *host)
 {
 	capture.answers++;
 	return host == capture.expected_host ?
@@ -48,8 +48,8 @@ enum sip_signaling_result sippymodem_host_answer(
 		       SIP_SIGNALING_INVALID_ARGUMENT;
 }
 
-enum sip_signaling_result sippymodem_host_hangup(
-	struct sippymodem_host *host)
+enum sip_signaling_result modem_host_hangup(
+	struct modem_host *host)
 {
 	capture.hangups++;
 	return host == capture.expected_host ?
@@ -73,7 +73,7 @@ static struct modem configured_modem(
 static bool attach_fixture(
 	struct slmodem_driver *driver,
 	struct modem *modem,
-	struct sippymodem_host *host)
+	struct modem_host *host)
 {
 	memset(&capture, 0, sizeof(capture));
 	capture.expected_host = host;
@@ -87,7 +87,7 @@ static bool test_attachment_lifetime(void)
 {
 	struct slmodem_driver driver = { 0 };
 	struct slmodem_driver original = driver;
-	struct sippymodem_host host = { .marker = 1 };
+	struct modem_host host = { .marker = 1 };
 	struct modem modem;
 	struct modem_driver *interface;
 
@@ -134,7 +134,7 @@ static bool test_attachment_lifetime(void)
 static bool test_routes_call_control(void)
 {
 	struct slmodem_driver driver;
-	struct sippymodem_host host = { .marker = 2 };
+	struct modem_host host = { .marker = 2 };
 	struct modem modem;
 	struct modem_driver *interface;
 
@@ -177,7 +177,7 @@ static bool test_routes_call_control(void)
 static bool test_validates_media_and_controls(void)
 {
 	struct slmodem_driver driver;
-	struct sippymodem_host host = { .marker = 3 };
+	struct modem_host host = { .marker = 3 };
 	struct modem modem;
 	struct modem_driver *interface;
 
