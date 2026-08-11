@@ -81,17 +81,20 @@ static enum sippymodem_lapm_v44_result decode_peer_offer(
 	const uint8_t *input,
 	size_t input_length,
 	bool *present,
+	bool *private_present,
 	struct sippymodem_v44_offer *offer)
 {
 	struct sippymodem_v42_xid_fields fields;
 
-	if (input == NULL || input_length == 0)
+	if (input == NULL || input_length == 0 || present == NULL ||
+	    private_present == NULL || offer == NULL)
 		return SIPPYMODEM_LAPM_V44_INVALID_ARGUMENT;
 	if (input_length > SIPPYMODEM_LAPM_V44_MAX_XID_SIZE)
 		return SIPPYMODEM_LAPM_V44_XID_TOO_LARGE;
 	if (sippymodem_v42_xid_decode(input, input_length, &fields) !=
 	    SIPPYMODEM_V42_XID_OK)
 		return SIPPYMODEM_LAPM_V44_MALFORMED;
+	*private_present = fields.private_negotiation != NULL;
 	if (fields.user_data == NULL ||
 	    !explicitly_claims_v44(
 		    fields.user_data, fields.user_data_length)) {
@@ -196,8 +199,11 @@ enum sippymodem_lapm_v44_result sippymodem_lapm_v44_prepare_response(
 	struct sippymodem_lapm_v44_prepared *prepared)
 {
 	struct sippymodem_lapm_v44_prepared candidate = { 0 };
+	struct sippymodem_v42_xid_fields selected_fields;
 	struct sippymodem_v44_offer peer_offer;
 	bool peer_present;
+	bool private_present;
+	bool select_v44;
 	enum sippymodem_lapm_v44_result result;
 
 	if (!session_is_valid(session) || prepared == NULL)
@@ -219,7 +225,8 @@ enum sippymodem_lapm_v44_result sippymodem_lapm_v44_prepare_response(
 	if (session->phase != SIPPYMODEM_LAPM_V44_READY)
 		return SIPPYMODEM_LAPM_V44_INVALID_STATE;
 	result = decode_peer_offer(
-		command, command_length, &peer_present, &peer_offer);
+		command, command_length, &peer_present, &private_present,
+		&peer_offer);
 	if (result != SIPPYMODEM_LAPM_V44_OK)
 		return result;
 	candidate.owner = session;
@@ -237,9 +244,15 @@ enum sippymodem_lapm_v44_result sippymodem_lapm_v44_prepare_response(
 		candidate.offer.transmit.enabled = false;
 		candidate.offer.receive.enabled = false;
 	}
+	select_v44 = peer_present && has_enabled_direction(&candidate.offer);
+	selected_fields = base_fields != NULL ? *base_fields :
+		(struct sippymodem_v42_xid_fields) { 0 };
+	if (select_v44) {
+		selected_fields.private_negotiation = NULL;
+		selected_fields.private_negotiation_length = 0;
+	}
 	result = encode_envelope(
-		base_fields, &candidate.offer,
-		peer_present && session->config.enabled,
+		&selected_fields, &candidate.offer, select_v44,
 		candidate.data, &candidate.length);
 	if (result != SIPPYMODEM_LAPM_V44_OK)
 		return result;
@@ -310,6 +323,7 @@ enum sippymodem_lapm_v44_result sippymodem_lapm_v44_accept_response(
 	struct sippymodem_v44_offer peer_offer;
 	struct sippymodem_v44_offer selected;
 	bool peer_present;
+	bool private_present;
 	enum sippymodem_lapm_v44_result result;
 
 	if (!session_is_valid(session))
@@ -318,9 +332,12 @@ enum sippymodem_lapm_v44_result sippymodem_lapm_v44_accept_response(
 		return SIPPYMODEM_LAPM_V44_INVALID_STATE;
 	selected = session->command_offer;
 	result = decode_peer_offer(
-		response, response_length, &peer_present, &peer_offer);
+		response, response_length, &peer_present, &private_present,
+		&peer_offer);
 	if (result != SIPPYMODEM_LAPM_V44_OK)
 		return result;
+	if (peer_present && private_present)
+		return SIPPYMODEM_LAPM_V44_MALFORMED;
 	if (peer_present &&
 	    sippymodem_v44_xid_negotiate(
 		    &session->command_offer, &peer_offer, &selected) !=
@@ -335,5 +352,18 @@ enum sippymodem_lapm_v44_result sippymodem_lapm_v44_accept_response(
 		SIPPYMODEM_LAPM_V44_NEGOTIATED :
 		SIPPYMODEM_LAPM_V44_DECLINED;
 	session->revision++;
+	return SIPPYMODEM_LAPM_V44_OK;
+}
+
+enum sippymodem_lapm_v44_result
+sippymodem_lapm_v44_get_negotiated_offer(
+	const struct sippymodem_lapm_v44_session *session,
+	struct sippymodem_v44_offer *offer)
+{
+	if (!session_is_valid(session) || offer == NULL)
+		return SIPPYMODEM_LAPM_V44_INVALID_ARGUMENT;
+	if (session->phase != SIPPYMODEM_LAPM_V44_NEGOTIATED)
+		return SIPPYMODEM_LAPM_V44_INVALID_STATE;
+	*offer = session->negotiated_offer;
 	return SIPPYMODEM_LAPM_V44_OK;
 }

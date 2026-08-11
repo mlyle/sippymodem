@@ -119,4 +119,10 @@ enum sippymodem_lapm_v44_result sippymodem_lapm_v44_accept_response(
 	const uint8_t *response,
 	size_t response_length);
 
+/* Copies the local-perspective selection only after negotiation succeeds. */
+enum sippymodem_lapm_v44_result
+sippymodem_lapm_v44_get_negotiated_offer(
+	const struct sippymodem_lapm_v44_session *session,
+	struct sippymodem_v44_offer *offer);
+
 #endif

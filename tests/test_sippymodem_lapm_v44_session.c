@@ -74,9 +74,12 @@ static bool build_outer(
 static bool test_asymmetric_exchange(void)
 {
 	static const uint8_t parameters[] = { 0x03, 0x01, 0x00 };
+	static const uint8_t private_parameters[] = { 0x00, 0x01, 0x01 };
 	const struct sippymodem_v42_xid_fields base = {
 		.parameter_negotiation = parameters,
 		.parameter_negotiation_length = sizeof(parameters),
+		.private_negotiation = private_parameters,
+		.private_negotiation_length = sizeof(private_parameters),
 	};
 	const struct sippymodem_v44_offer calling_offer = {
 		.transmit = { true, { 4096, 200, 4096 } },
@@ -103,6 +106,10 @@ static bool test_asymmetric_exchange(void)
 	struct sippymodem_lapm_v44_prepared command;
 	struct sippymodem_lapm_v44_prepared response;
 	struct sippymodem_v44_offer decoded;
+	struct sippymodem_v44_offer selected;
+	struct sippymodem_v42_xid_fields decoded_fields;
+	uint8_t ambiguous[SIPPYMODEM_LAPM_V44_MAX_XID_SIZE];
+	size_t ambiguous_length = 0;
 
 	CHECK(sippymodem_lapm_v44_session_init(&caller, &calling_config) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
@@ -112,6 +119,11 @@ static bool test_asymmetric_exchange(void)
 	CHECK(sippymodem_lapm_v44_prepare_command(&caller, &base, &command) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      caller.phase == SIPPYMODEM_LAPM_V44_READY &&
+	      sippymodem_v42_xid_decode(
+		      command.data, command.length, &decoded_fields) ==
+		      SIPPYMODEM_V42_XID_OK &&
+	      decoded_fields.private_negotiation_length ==
+		      sizeof(private_parameters) &&
 	      decode_v44(command.data, command.length, &decoded) &&
 	      offers_equal(&decoded, &calling_offer),
 	      "preparing a command changed state or encoded the wrong offer");
@@ -123,19 +135,37 @@ static bool test_asymmetric_exchange(void)
 		      &answerer, command.data, command.length, &base, &response) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      answerer.phase == SIPPYMODEM_LAPM_V44_READY &&
+	      sippymodem_v42_xid_decode(
+		      response.data, response.length, &decoded_fields) ==
+		      SIPPYMODEM_V42_XID_OK &&
+	      decoded_fields.private_negotiation == NULL &&
 	      decode_v44(response.data, response.length, &decoded) &&
 	      offers_equal(&decoded, &expected_answer),
-	      "answer preparation did not select asymmetric minima");
+	      "answer preparation did not select only V.44 asymmetric minima");
 	CHECK(sippymodem_lapm_v44_commit(&answerer, &response) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      answerer.phase == SIPPYMODEM_LAPM_V44_NEGOTIATED &&
-	      offers_equal(&answerer.negotiated_offer, &expected_answer),
+	      sippymodem_lapm_v44_get_negotiated_offer(
+		      &answerer, &selected) == SIPPYMODEM_LAPM_V44_OK &&
+	      offers_equal(&selected, &expected_answer),
 	      "queued response did not commit responder selection");
+	decoded_fields.private_negotiation = private_parameters;
+	decoded_fields.private_negotiation_length = sizeof(private_parameters);
+	CHECK(sippymodem_v42_xid_encode(
+		      &decoded_fields, ambiguous, sizeof(ambiguous),
+		      &ambiguous_length) == SIPPYMODEM_V42_XID_OK &&
+	      sippymodem_lapm_v44_accept_response(
+		      &caller, ambiguous, ambiguous_length) ==
+		      SIPPYMODEM_LAPM_V44_MALFORMED &&
+	      caller.phase == SIPPYMODEM_LAPM_V44_COMMAND_PENDING,
+	      "an ambiguous dual-compression response completed negotiation");
 	CHECK(sippymodem_lapm_v44_accept_response(
 		      &caller, response.data, response.length) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      caller.phase == SIPPYMODEM_LAPM_V44_NEGOTIATED &&
-	      offers_equal(&caller.negotiated_offer, &expected_caller),
+	      sippymodem_lapm_v44_get_negotiated_offer(
+		      &caller, &selected) == SIPPYMODEM_LAPM_V44_OK &&
+	      offers_equal(&selected, &expected_caller),
 	      "caller did not invert directions and select asymmetric minima");
 	return true;
 }
@@ -243,11 +273,16 @@ static bool test_duplicate_command(void)
 static bool test_decline_and_malformed_tails(void)
 {
 	static const uint8_t unrelated[] = { 0xff, 0xfe, 0x01, 0xa5 };
+	static const uint8_t private_parameters[] = { 0x00, 0x01, 0x01 };
 	static const uint8_t malformed_v44[] = {
 		0xff, 0x40, 0x03, 'V', '4', '4', 0x41, 0x01, 0x3e,
 	};
 	const struct sippymodem_lapm_v44_config config =
 		config_for(sippymodem_v44_default_offer());
+	const struct sippymodem_v42_xid_fields legacy = {
+		.private_negotiation = private_parameters,
+		.private_negotiation_length = sizeof(private_parameters),
+	};
 	struct sippymodem_lapm_v44_session session;
 	struct sippymodem_lapm_v44_prepared response;
 	struct sippymodem_v42_xid_fields decoded;
@@ -258,16 +293,19 @@ static bool test_decline_and_malformed_tails(void)
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      build_outer(NULL, 0, command, &command_length) &&
 	      sippymodem_lapm_v44_prepare_response(
-		      &session, command, command_length, NULL, &response) ==
+		      &session, command, command_length, &legacy, &response) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      sippymodem_v42_xid_decode(
 		      response.data, response.length, &decoded) ==
 		      SIPPYMODEM_V42_XID_OK &&
 	      decoded.user_data == NULL &&
+	      decoded.private_negotiation_length == sizeof(private_parameters) &&
+	      memcmp(decoded.private_negotiation, private_parameters,
+		     sizeof(private_parameters)) == 0 &&
 	      sippymodem_lapm_v44_commit(&session, &response) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      session.phase == SIPPYMODEM_LAPM_V44_DECLINED,
-	      "missing V.44 user data was not a clean decline");
+	      "missing V.44 user data did not preserve legacy fallback");
 	CHECK(sippymodem_lapm_v44_session_call_reset(&session) ==
 		      SIPPYMODEM_LAPM_V44_OK &&
 	      build_outer(unrelated, sizeof(unrelated), command, &command_length) &&
