@@ -5,6 +5,7 @@
 #include <sippymodem_fsk.h>
 #include <sippymodem_single_tone.h>
 #include <sippymodem_v21.h>
+#include <sippymodem_v42_xid.h>
 #include <sippymodem_v32_datapump.h>
 #include <sippymodem_v32_line_startup.h>
 #include <sippymodem_v8_datapump.h>
@@ -236,6 +237,108 @@ static bool test_at_v42bis_compression_profile(void)
 		      modem_get_sreg(modem, SREG_COMP) == 2,
 	      "AT+DS accepted an unsupported compression type or changed state");
 	modem_delete(modem);
+	return true;
+}
+
+static bool test_lapm_xid_envelopes(void)
+{
+	enum { XID_CONTROL = 0xaf };
+	struct modem_driver driver = {
+		.name = "LAPM XID test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *caller = modem_create(&driver, "LAPM XID caller");
+	struct modem *answerer = modem_create(&driver, "LAPM XID answerer");
+	struct sippymodem_v42_xid_fields fields;
+	uint8_t received[LAPM_MAX_INFO_SIZE + 4];
+	frame_t incoming = { .buf = received };
+	frame_t *outgoing;
+
+	CHECK(caller != NULL && answerer != NULL,
+	      "LAPM XID peers could not be created");
+	caller->caller = 1;
+	answerer->caller = 0;
+	CHECK(modem_ec_init(caller) == 0 && modem_ec_init(answerer) == 0,
+	      "LAPM XID peers could not initialize");
+	modem_ec_start(caller);
+	modem_ec_start(answerer);
+	CHECK(caller->bit_timer_func != NULL,
+	      "LAPM caller did not schedule XID negotiation");
+	caller->bit_timer_func(caller);
+	outgoing = caller->packer.hdlc.get_tx_frame(
+		caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->size > 2 &&
+		      outgoing->buf[1] == XID_CONTROL &&
+		      sippymodem_v42_xid_decode(
+			      outgoing->buf + 2, (size_t)outgoing->size - 2U,
+			      &fields) == SIPPYMODEM_V42_XID_OK &&
+		      fields.parameter_negotiation_length == 19 &&
+		      fields.private_negotiation_length == 15 &&
+		      fields.user_data == NULL,
+	      "LAPM caller did not emit a bounded legacy XID envelope");
+	{
+		static const uint8_t truncated[] = {
+			0x82, 0x80, 0x00, 0x03, 0x03, 0x01,
+		};
+
+		received[0] = caller->ec.lapm.cmd_addr;
+		received[1] = XID_CONTROL;
+		memcpy(received + 2, truncated, sizeof(truncated));
+		incoming.count = 2 + sizeof(truncated);
+		caller->packer.hdlc.rx_complete(
+			caller->packer.hdlc.framer, &incoming);
+		CHECK(caller->ec.lapm.config == 1,
+		      "malformed XID response completed LAPM negotiation");
+	}
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	caller->packer.hdlc.tx_complete(
+		caller->packer.hdlc.framer, outgoing);
+	answerer->packer.hdlc.rx_complete(
+		answerer->packer.hdlc.framer, &incoming);
+	outgoing = answerer->packer.hdlc.get_tx_frame(
+		answerer->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->buf[1] == XID_CONTROL &&
+		      sippymodem_v42_xid_decode(
+			      outgoing->buf + 2, (size_t)outgoing->size - 2U,
+			      &fields) == SIPPYMODEM_V42_XID_OK,
+	      "LAPM answerer did not return a bounded XID envelope");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	answerer->packer.hdlc.tx_complete(
+		answerer->packer.hdlc.framer, outgoing);
+	caller->packer.hdlc.rx_complete(
+		caller->packer.hdlc.framer, &incoming);
+	CHECK(caller->ec.lapm.config == 0,
+	      "valid XID response did not complete LAPM negotiation");
+
+	{
+		static const uint8_t truncated[] = {
+			0x82, 0x80, 0x00, 0x03, 0x03, 0x01,
+		};
+		const unsigned int tx_size = answerer->ec.lapm.tx_info_size;
+		const unsigned int rx_size = answerer->ec.lapm.rx_info_size;
+		const uint8_t compression = answerer->cfg.comp;
+
+		received[0] = answerer->ec.lapm.rsp_addr;
+		received[1] = XID_CONTROL;
+		memcpy(received + 2, truncated, sizeof(truncated));
+		incoming.count = 2 + sizeof(truncated);
+		answerer->packer.hdlc.rx_complete(
+			answerer->packer.hdlc.framer, &incoming);
+		CHECK(answerer->ec.lapm.tx_info_size == tx_size &&
+			      answerer->ec.lapm.rx_info_size == rx_size &&
+			      answerer->cfg.comp == compression &&
+			      answerer->packer.hdlc.get_tx_frame(
+				      answerer->packer.hdlc.framer) == NULL,
+		      "truncated LAPM XID changed state or produced a response");
+	}
+	modem_ec_exit(caller);
+	modem_ec_exit(answerer);
+	modem_delete(caller);
+	modem_delete(answerer);
 	return true;
 }
 
@@ -680,6 +783,7 @@ int main(void)
 		  test_at_dial_destinations_are_bounded },
 		{ "AT V.42bis compression profile",
 		  test_at_v42bis_compression_profile },
+		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",
