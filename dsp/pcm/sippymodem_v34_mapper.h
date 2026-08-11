@@ -38,14 +38,13 @@ enum sippymodem_v34_mapper_result sippymodem_v34_map_2d_symbol(
 	const struct sippymodem_v34_2d_mapping_input *input,
 	struct sippymodem_v34_2d_mapping_output *output);
 
-/* Invert one exact mapper output when its selected rotation is known. This
- * is the receive-side boundary after trellis and precoder decisions; noisy
- * channel symbols must be decided before calling it. Rejection leaves the
- * destination unchanged. */
+/* Invert one exact mapper output, including the rotation encoded by its
+ * odd-grid coordinate residues. This is the receive-side boundary after
+ * trellis and precoder decisions; noisy channel symbols must be decided
+ * before calling it. Rejection leaves the destination unchanged. */
 enum sippymodem_v34_mapper_result sippymodem_v34_unmap_2d_symbol(
 	const struct sippymodem_v34_mapping_parameters *parameters,
 	const struct sippymodem_v34_grid_point *mapper_output,
-	uint8_t clockwise_quarter_turns,
 	struct sippymodem_v34_2d_mapping_input *input);
 
 const char *sippymodem_v34_mapper_result_name(

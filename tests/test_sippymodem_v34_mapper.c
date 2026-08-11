@@ -129,7 +129,7 @@ static bool test_all_supported_mappings(void)
 								      sippymodem_v34_unmap_2d_symbol(
 									      &parameters,
 									      &output.mapper_output,
-									      rotation, &recovered) ==
+									      &recovered) ==
 									      SIPPYMODEM_V34_MAPPER_OK &&
 								      recovered.ring_index == ring &&
 								      recovered.point_index == point &&
@@ -171,6 +171,7 @@ static bool test_validation(void)
 	struct sippymodem_v34_2d_mapping_input recovered;
 	struct sippymodem_v34_2d_mapping_input recovered_saved;
 	struct sippymodem_v34_grid_point invalid_point = { 3, 1 };
+	struct sippymodem_v34_grid_point off_grid_point = { 2, 1 };
 	struct sippymodem_v34_grid_point outside_point;
 
 	CHECK(sippymodem_v34_frame_geometry_init(
@@ -240,22 +241,22 @@ static bool test_validation(void)
 		     "unknown") == 0,
 	      "mapper result names changed");
 	CHECK(sippymodem_v34_unmap_2d_symbol(
-		      &low_parameters, &invalid_point, 0, &recovered) ==
+		      &low_parameters, &invalid_point, &recovered) ==
 		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
 	      sippymodem_v34_unmap_2d_symbol(
-		      &low_parameters, &outside_point, 0, &recovered) ==
+		      &low_parameters, &off_grid_point, &recovered) ==
 		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
 	      sippymodem_v34_unmap_2d_symbol(
-		      &low_parameters, &invalid_point, 4, &recovered) ==
+		      &low_parameters, &outside_point, &recovered) ==
 		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
 	      sippymodem_v34_unmap_2d_symbol(
-		      NULL, &invalid_point, 0, &recovered) ==
+		      NULL, &invalid_point, &recovered) ==
 		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
 	      sippymodem_v34_unmap_2d_symbol(
-		      &low_parameters, NULL, 0, &recovered) ==
+		      &low_parameters, NULL, &recovered) ==
 		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
 	      sippymodem_v34_unmap_2d_symbol(
-		      &low_parameters, &invalid_point, 0, NULL) ==
+		      &low_parameters, &invalid_point, NULL) ==
 		      SIPPYMODEM_V34_MAPPER_INVALID_ARGUMENT &&
 	      memcmp(&recovered, &recovered_saved, sizeof(recovered)) == 0,
 	      "invalid inverse mapper changed its output");
