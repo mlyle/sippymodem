@@ -2,8 +2,6 @@
 
 #include "v34_lattice.h"
 
-#include "v34_trellis.h"
-
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -11,16 +9,25 @@
 
 enum {
 	V34_LATTICE_CLASS_PERIOD = 4,
+	V34_LATTICE_SUBSET_PERIOD = 8,
 	V34_LATTICE_CLASS_ONE = 1,
 	V34_LATTICE_CLASS_THREE = 3,
 };
 
-static int class_coordinate(int class_index, int residue)
+static int class_coordinate(int class_index, int residue, int period)
 {
-	return residue + V34_LATTICE_CLASS_PERIOD * class_index;
+	return residue + period * class_index;
 }
 
-static int16_t nearest_class_coordinate(double estimate, int residue)
+static int coordinate_residue(int coordinate, int period)
+{
+	int residue = coordinate % period;
+
+	return residue < 0 ? residue + period : residue;
+}
+
+static int16_t nearest_residue_coordinate(
+	double estimate, int residue, int period)
 {
 	int minimum = -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
 	int maximum = SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
@@ -31,18 +38,18 @@ static int16_t nearest_class_coordinate(double estimate, int residue)
 	double lower_error;
 	double upper_error;
 
-	while (((uint16_t)minimum & 3u) != (uint16_t)residue)
+	while (coordinate_residue(minimum, period) != residue)
 		minimum++;
-	while (((uint16_t)maximum & 3u) != (uint16_t)residue)
+	while (coordinate_residue(maximum, period) != residue)
 		maximum--;
 	if (estimate <= minimum)
 		return (int16_t)minimum;
 	if (estimate >= maximum)
 		return (int16_t)maximum;
-	position = (estimate - residue) / V34_LATTICE_CLASS_PERIOD;
+	position = (estimate - residue) / period;
 	lower_index = (int)floor(position);
-	lower = class_coordinate(lower_index, residue);
-	upper = class_coordinate(lower_index + 1, residue);
+	lower = class_coordinate(lower_index, residue, period);
+	upper = class_coordinate(lower_index + 1, residue, period);
 	lower_error = fabs(estimate - lower);
 	upper_error = fabs(estimate - upper);
 	if (upper_error < lower_error ||
@@ -77,6 +84,34 @@ static bool candidate_error(
 	return true;
 }
 
+static int32_t point_magnitude_squared(
+	const struct sippymodem_v34_grid_point *point)
+{
+	return (int32_t)point->in_phase * point->in_phase +
+	       (int32_t)point->quadrature * point->quadrature;
+}
+
+static bool candidate_precedes(
+	const struct sippymodem_v34_lattice_candidate *candidate,
+	const struct sippymodem_v34_lattice_candidate *current)
+{
+	int32_t candidate_magnitude;
+	int32_t current_magnitude;
+
+	if (candidate->squared_error != current->squared_error)
+		return candidate->squared_error < current->squared_error;
+	candidate_magnitude = point_magnitude_squared(&candidate->channel_output);
+	current_magnitude = point_magnitude_squared(&current->channel_output);
+	if (candidate_magnitude != current_magnitude)
+		return candidate_magnitude < current_magnitude;
+	if (candidate->channel_output.in_phase !=
+	    current->channel_output.in_phase)
+		return candidate->channel_output.in_phase <
+		       current->channel_output.in_phase;
+	return candidate->channel_output.quadrature <
+	       current->channel_output.quadrature;
+}
+
 enum sippymodem_v34_lattice_result sippymodem_v34_slice_odd_lattice(
 	const struct sippymodem_qam_point *channel_estimate,
 	struct sippymodem_v34_lattice_slice *slice)
@@ -89,14 +124,18 @@ enum sippymodem_v34_lattice_result sippymodem_v34_slice_odd_lattice(
 	    !isfinite(channel_estimate->in_phase) ||
 	    !isfinite(channel_estimate->quadrature))
 		return SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT;
-	in_phase[0] = nearest_class_coordinate(
-		channel_estimate->in_phase, V34_LATTICE_CLASS_ONE);
-	in_phase[1] = nearest_class_coordinate(
-		channel_estimate->in_phase, V34_LATTICE_CLASS_THREE);
-	quadrature[0] = nearest_class_coordinate(
-		channel_estimate->quadrature, V34_LATTICE_CLASS_ONE);
-	quadrature[1] = nearest_class_coordinate(
-		channel_estimate->quadrature, V34_LATTICE_CLASS_THREE);
+	in_phase[0] = nearest_residue_coordinate(
+		channel_estimate->in_phase, V34_LATTICE_CLASS_ONE,
+		V34_LATTICE_CLASS_PERIOD);
+	in_phase[1] = nearest_residue_coordinate(
+		channel_estimate->in_phase, V34_LATTICE_CLASS_THREE,
+		V34_LATTICE_CLASS_PERIOD);
+	quadrature[0] = nearest_residue_coordinate(
+		channel_estimate->quadrature, V34_LATTICE_CLASS_ONE,
+		V34_LATTICE_CLASS_PERIOD);
+	quadrature[1] = nearest_residue_coordinate(
+		channel_estimate->quadrature, V34_LATTICE_CLASS_THREE,
+		V34_LATTICE_CLASS_PERIOD);
 	for (uint8_t path = 0;
 	     path < SIPPYMODEM_V34_LATTICE_CANDIDATE_COUNT; ++path) {
 		struct sippymodem_v34_lattice_candidate *candidate =
@@ -112,6 +151,62 @@ enum sippymodem_v34_lattice_result sippymodem_v34_slice_odd_lattice(
 			    channel_estimate, &candidate->channel_output,
 			    &candidate->squared_error))
 			return SIPPYMODEM_V34_LATTICE_NUMERIC_FAILURE;
+	}
+	*slice = generated;
+	return SIPPYMODEM_V34_LATTICE_OK;
+}
+
+enum sippymodem_v34_lattice_result sippymodem_v34_slice_grid_subsets(
+	const struct sippymodem_qam_point *channel_estimate,
+	struct sippymodem_v34_subset_slice *slice)
+{
+	struct sippymodem_v34_subset_slice generated = { 0 };
+	bool found[SIPPYMODEM_V34_SUBSET_LABEL_COUNT] = { false };
+
+	if (channel_estimate == NULL || slice == NULL ||
+	    !isfinite(channel_estimate->in_phase) ||
+	    !isfinite(channel_estimate->quadrature))
+		return SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT;
+	for (int in_phase_residue = 1; in_phase_residue < 8;
+	     in_phase_residue += 2) {
+		int16_t in_phase = nearest_residue_coordinate(
+			channel_estimate->in_phase, in_phase_residue,
+			V34_LATTICE_SUBSET_PERIOD);
+
+		for (int quadrature_residue = 1; quadrature_residue < 8;
+		     quadrature_residue += 2) {
+			struct sippymodem_v34_lattice_candidate candidate = {
+				.channel_output = {
+					.in_phase = in_phase,
+					.quadrature = nearest_residue_coordinate(
+						channel_estimate->quadrature,
+						quadrature_residue,
+						V34_LATTICE_SUBSET_PERIOD),
+				},
+			};
+			uint8_t label;
+
+			if (sippymodem_v34_grid_subset_label(
+				    &candidate.channel_output, &label) !=
+				    SIPPYMODEM_V34_TRELLIS_OK)
+				return SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT;
+			candidate.subset_label = label;
+			if (!candidate_error(
+				    channel_estimate, &candidate.channel_output,
+				    &candidate.squared_error))
+				return SIPPYMODEM_V34_LATTICE_NUMERIC_FAILURE;
+			if (!found[label] || candidate_precedes(
+						     &candidate,
+						     &generated.subset[label])) {
+				generated.subset[label] = candidate;
+				found[label] = true;
+			}
+		}
+	}
+	for (uint8_t label = 0; label < SIPPYMODEM_V34_SUBSET_LABEL_COUNT;
+	     ++label) {
+		if (!found[label])
+			return SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT;
 	}
 	*slice = generated;
 	return SIPPYMODEM_V34_LATTICE_OK;

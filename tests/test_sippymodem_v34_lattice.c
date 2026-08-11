@@ -127,6 +127,139 @@ static struct sippymodem_v34_grid_point expected_path_point(
 	};
 }
 
+static uint8_t figure9_label(
+	int16_t in_phase, int16_t quadrature)
+{
+	static const uint8_t labels[4][4] = {
+		{ 0, 7, 4, 3 },
+		{ 5, 2, 1, 6 },
+		{ 4, 3, 0, 7 },
+		{ 1, 6, 5, 2 },
+	};
+	uint8_t in_phase_index = (uint8_t)(((uint16_t)in_phase & 7u) >> 1);
+	uint8_t quadrature_index =
+		(uint8_t)(((uint16_t)quadrature & 7u) >> 1);
+
+	return labels[quadrature_index][in_phase_index];
+}
+
+static int32_t oracle_magnitude_squared(
+	const struct sippymodem_v34_grid_point *point)
+{
+	return (int32_t)point->in_phase * point->in_phase +
+	       (int32_t)point->quadrature * point->quadrature;
+}
+
+static bool oracle_precedes(
+	double error, const struct sippymodem_v34_grid_point *point,
+	double current_error, const struct sippymodem_v34_grid_point *current)
+{
+	int32_t magnitude;
+	int32_t current_magnitude;
+
+	if (error != current_error)
+		return error < current_error;
+	magnitude = oracle_magnitude_squared(point);
+	current_magnitude = oracle_magnitude_squared(current);
+	if (magnitude != current_magnitude)
+		return magnitude < current_magnitude;
+	if (point->in_phase != current->in_phase)
+		return point->in_phase < current->in_phase;
+	return point->quadrature < current->quadrature;
+}
+
+static void exhaustive_subset_oracle(
+	const struct sippymodem_qam_point *estimate,
+	struct sippymodem_v34_subset_slice *expected)
+{
+	bool found[SIPPYMODEM_V34_SUBSET_LABEL_COUNT] = { false };
+
+	memset(expected, 0, sizeof(*expected));
+	for (int in_phase = -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+	     in_phase <= SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+	     in_phase += 2) {
+		for (int quadrature = -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+		     quadrature <= SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+		     quadrature += 2) {
+			struct sippymodem_v34_grid_point point = {
+				(int16_t)in_phase, (int16_t)quadrature,
+			};
+			uint8_t label = figure9_label(
+				point.in_phase, point.quadrature);
+			double error_in_phase =
+				estimate->in_phase - point.in_phase;
+			double error_quadrature =
+				estimate->quadrature - point.quadrature;
+			double error = error_in_phase * error_in_phase +
+				       error_quadrature * error_quadrature;
+			struct sippymodem_v34_lattice_candidate *current =
+				&expected->subset[label];
+
+			if (!found[label] || oracle_precedes(
+						     error, &point,
+						     current->squared_error,
+						     &current->channel_output)) {
+				*current = (struct sippymodem_v34_lattice_candidate){
+					.channel_output = point,
+					.subset_label = label,
+					.squared_error = error,
+				};
+				found[label] = true;
+			}
+		}
+	}
+}
+
+static bool subset_slices_match(
+	const struct sippymodem_v34_subset_slice *actual,
+	const struct sippymodem_v34_subset_slice *expected, size_t index)
+{
+	for (uint8_t label = 0; label < SIPPYMODEM_V34_SUBSET_LABEL_COUNT;
+	     ++label) {
+		const struct sippymodem_v34_lattice_candidate *candidate =
+			&actual->subset[label];
+
+		CHECK(candidate_matches(
+			      candidate, &expected->subset[label].channel_output,
+			      label, expected->subset[label].squared_error),
+		      "subset slice %zu label %u changed", index, label);
+	}
+	return true;
+}
+
+static bool test_all_grid_subsets(void)
+{
+	const struct sippymodem_qam_point magnitude_tie = { 3.0, 3.0 };
+	const struct sippymodem_qam_point coordinate_tie = { -1.0, -1.0 };
+	struct sippymodem_v34_subset_slice slice;
+	uint32_t random = UINT32_C(0x8a11c0de);
+
+	CHECK(sippymodem_v34_slice_grid_subsets(&magnitude_tie, &slice) ==
+		      SIPPYMODEM_V34_LATTICE_OK &&
+	      slice.subset[0].channel_output.in_phase == 1 &&
+	      slice.subset[0].channel_output.quadrature == 1,
+	      "subset magnitude tie selected the wrong point");
+	CHECK(sippymodem_v34_slice_grid_subsets(&coordinate_tie, &slice) ==
+		      SIPPYMODEM_V34_LATTICE_OK &&
+	      slice.subset[4].channel_output.in_phase == -3 &&
+	      slice.subset[4].channel_output.quadrature == 1,
+	      "subset coordinate tie selected the wrong point");
+	for (size_t index = 0; index < 64u; ++index) {
+		const struct sippymodem_qam_point estimate = {
+			generated_estimate(&random),
+			generated_estimate(&random),
+		};
+		struct sippymodem_v34_subset_slice expected;
+
+		exhaustive_subset_oracle(&estimate, &expected);
+		CHECK(sippymodem_v34_slice_grid_subsets(&estimate, &slice) ==
+			      SIPPYMODEM_V34_LATTICE_OK &&
+		      subset_slices_match(&slice, &expected, index),
+		      "generated subset slice %zu failed", index);
+	}
+	return true;
+}
+
 static bool test_generated_sweep(void)
 {
 	uint32_t random = UINT32_C(0x34a11ce5);
@@ -203,6 +336,8 @@ static bool test_transactional_validation(void)
 	const struct sippymodem_qam_point overflow = { DBL_MAX, 0.0 };
 	struct sippymodem_v34_lattice_slice slice;
 	struct sippymodem_v34_lattice_slice saved;
+	struct sippymodem_v34_subset_slice subsets;
+	struct sippymodem_v34_subset_slice saved_subsets;
 
 	memset(&slice, 0xa5, sizeof(slice));
 	saved = slice;
@@ -220,6 +355,18 @@ static bool test_transactional_validation(void)
 		      SIPPYMODEM_V34_LATTICE_NUMERIC_FAILURE &&
 	      memcmp(&slice, &saved, sizeof(slice)) == 0,
 	      "rejected estimate changed the lattice slice");
+	memset(&subsets, 0x5a, sizeof(subsets));
+	saved_subsets = subsets;
+	CHECK(sippymodem_v34_slice_grid_subsets(NULL, &subsets) ==
+		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT &&
+	      sippymodem_v34_slice_grid_subsets(&valid, NULL) ==
+		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT &&
+	      sippymodem_v34_slice_grid_subsets(&not_finite[0], &subsets) ==
+		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT &&
+	      sippymodem_v34_slice_grid_subsets(&overflow, &subsets) ==
+		      SIPPYMODEM_V34_LATTICE_NUMERIC_FAILURE &&
+	      memcmp(&subsets, &saved_subsets, sizeof(subsets)) == 0,
+	      "rejected estimate changed the subset slice");
 	CHECK(strcmp(sippymodem_v34_lattice_result_name(
 			     SIPPYMODEM_V34_LATTICE_OK),
 		     "ok") == 0 &&
@@ -244,6 +391,7 @@ int main(void)
 	} tests[] = {
 		{ "known slices", test_known_slices },
 		{ "generated exhaustive sweep", test_generated_sweep },
+		{ "all grid subsets", test_all_grid_subsets },
 		{ "transactional validation", test_transactional_validation },
 	};
 	unsigned int failures = 0;

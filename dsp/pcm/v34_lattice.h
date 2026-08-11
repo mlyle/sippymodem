@@ -4,7 +4,7 @@
 #define SIPPYMODEM_V34_LATTICE_H
 
 #include "sippymodem_qam.h"
-#include "sippymodem_v34_constellation.h"
+#include "v34_trellis.h"
 
 #include <stdint.h>
 
@@ -29,6 +29,12 @@ struct sippymodem_v34_lattice_slice {
 		candidate[SIPPYMODEM_V34_LATTICE_CANDIDATE_COUNT];
 };
 
+struct sippymodem_v34_subset_slice {
+	/* Indexed by the three-bit Figure 9 subset label. */
+	struct sippymodem_v34_lattice_candidate
+		subset[SIPPYMODEM_V34_SUBSET_LABEL_COUNT];
+};
+
 /* Slice an already conditioned estimate of y(n), expressed in integer-grid
  * units, to the four surrounding odd-lattice paths. Path order is
  * (1,1), (1,3), (3,3), (3,1) modulo four on the two axes. Each coordinate is
@@ -38,6 +44,14 @@ struct sippymodem_v34_lattice_slice {
 enum sippymodem_v34_lattice_result sippymodem_v34_slice_odd_lattice(
 	const struct sippymodem_qam_point *channel_estimate,
 	struct sippymodem_v34_lattice_slice *slice);
+
+/* Find the nearest bounded odd-grid point in each of Figure 9's eight
+ * subsets. Exact metric ties select the point with smaller magnitude, then
+ * the lexicographically smaller coordinates. The destination is unchanged on
+ * failure. */
+enum sippymodem_v34_lattice_result sippymodem_v34_slice_grid_subsets(
+	const struct sippymodem_qam_point *channel_estimate,
+	struct sippymodem_v34_subset_slice *slice);
 
 const char *sippymodem_v34_lattice_result_name(
 	enum sippymodem_v34_lattice_result result);
