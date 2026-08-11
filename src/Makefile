@@ -95,6 +95,7 @@ SIPPYMODEM_SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_dc_filter.c \
 	$(DSP_SOURCE_DIR)/sippymodem_differential_qpsk.c \
 	$(DSP_SOURCE_DIR)/sippymodem_fsk.c \
+	$(DSP_SOURCE_DIR)/qam_equalizer.c \
 	$(DSP_SOURCE_DIR)/sippymodem_qam.c \
 	$(DSP_SOURCE_DIR)/sippymodem_qam_gain.c \
 	$(DSP_SOURCE_DIR)/sippymodem_self_sync_scrambler.c \
