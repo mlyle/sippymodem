@@ -45,6 +45,18 @@ sippymodem_v34_nonlinear_encode(
 	const struct sippymodem_v34_q7_point *precoded_symbol,
 	struct sippymodem_qam_point *projected_symbol);
 
+/* Invert the clause 9.7 radial projection for one finite equalized symbol.
+ * Both points use unscaled constellation-grid units. The returned estimate
+ * remains floating point because channel noise need not land on the Q7
+ * precoder grid. Input and destination may alias; the destination is unchanged
+ * on failure. */
+enum sippymodem_v34_nonlinear_result
+sippymodem_v34_nonlinear_unproject(
+	enum sippymodem_v34_nonlinear_parameter parameter,
+	double mean_squared_magnitude,
+	const struct sippymodem_qam_point *projected_symbol,
+	struct sippymodem_qam_point *precoded_estimate);
+
 const char *sippymodem_v34_nonlinear_result_name(
 	enum sippymodem_v34_nonlinear_result result);
 
