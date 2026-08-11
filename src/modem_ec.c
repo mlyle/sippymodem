@@ -764,12 +764,20 @@ static int ack_info(struct lapm_state *l, u8 nr)
 static void push_rest_data(struct modem *m, int bits)
 {
 	struct lapm_state *l = &m->ec.lapm;
-	if (!l->state == LAPM_DATA)
+	(void)bits;
+	if (l->state != LAPM_DATA)
 		return;
 	if (l->rx_count && l->modem->put_chars) {
 		int ret = l->modem->put_chars(l->modem,
 					      (const char*)(l->rx_buf+l->rx_head),
 					      l->rx_count);
+		if (ret < 0 || ret > l->rx_count) {
+			l->rx_head = l->rx_count = 0;
+			l->busy = 0;
+			l->modem->packer_process = NULL;
+			modem_update_status(l->modem, STATUS_EC_ERROR);
+			return;
+		}
 		if (ret > 0) {
 			l->rx_head += ret;
 			l->rx_count -= ret;
@@ -788,7 +796,11 @@ static void push_rest_data(struct modem *m, int bits)
 static int rx_info(struct lapm_state *l, frame_t *f)
 {
 	int ret = 0, n;
+	int payload_length;
 	//LAPM_PRINT_FRAME("rx_info",1,f);
+	if (f->count < 3)
+		return -1;
+	payload_length = f->count - 3;
 
 	/* ack I frames: nr -1 */
 	n = ack_info(l,FRAME_NR(f));
@@ -818,14 +830,16 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	/* recv data */
 	
 	if(l->modem->put_chars)
-		ret = l->modem->put_chars(l->modem,(const char*)(f->buf+3),f->count-3);
-	if(ret<0) {
-		/* FIXME: handle error*/ ;
+		ret = l->modem->put_chars(
+			l->modem, (const char *)(f->buf + 3), payload_length);
+	if (ret < 0 || ret > payload_length) {
+		modem_update_status(l->modem, STATUS_EC_ERROR);
+		return -1;
 	}
-	if (ret != f->count-3) {
+	if (ret != payload_length) {
 		/* save rest data, enter busy state */
 		l->rx_head = 0;
-		l->rx_count = f->count - 3 - ret;
+		l->rx_count = payload_length - ret;
 		memcpy(l->rx_buf,f->buf+3+ret,l->rx_count);
 		// TBD
 		l->busy = 1;
