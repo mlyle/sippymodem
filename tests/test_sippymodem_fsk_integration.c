@@ -54,6 +54,7 @@ struct modem_test_case {
 	unsigned int answerer_tx_rate;
 	unsigned int answerer_rx_rate;
 	unsigned int carrier_loss_samples;
+	bool automode;
 	bool test_prelink;
 };
 
@@ -253,7 +254,7 @@ static bool run_media_call(
 		.context = &capture,
 		.write = capture_recording,
 	};
-	bool uses_v8 =
+	bool uses_v8 = test_case->automode &&
 		sippymodem_v8_datapump_modulation(test_case->id) !=
 		SIPPYMODEM_V8_MODULATION_NONE;
 	bool online = false;
@@ -285,6 +286,8 @@ static bool run_media_call(
 			      selection_length) == selection_length &&
 		      MODEM_DP(caller.modem) == test_case->id &&
 		      MODEM_DP(answerer.modem) == test_case->id &&
+		      MODEM_AUTOMODE(caller.modem) == test_case->automode &&
+		      MODEM_AUTOMODE(answerer.modem) == test_case->automode &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      output_contains(&caller, "OK") &&
 		      output_contains(&answerer, "OK"),
@@ -592,7 +595,7 @@ int main(void)
 	static const struct modem_test_case test_cases[] = {
 		{
 			.id = DP_V21,
-			.name = "V.21",
+			.name = "forced V.21",
 			.selection_command = "AT+MS=21,0,300,300\r",
 			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
@@ -601,104 +604,125 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 		},
 		{
-			.id = DP_B103,
-			.name = "Bell 103",
-			.selection_command = "AT+MS=103,0,300,300\r",
+			.id = DP_V21,
+			.name = "V.21 automode",
+			.selection_command = "AT+MS=21,1,300,300\r",
 			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
+		},
+		{
+			.id = DP_B103,
+			.name = "Bell 103",
+			.selection_command = "AT+MS=103,1,300,300\r",
+			.caller_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.caller_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.answerer_tx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.answerer_rx_rate = SIPPYMODEM_FSK300_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V22,
 			.name = "V.22",
-			.selection_command = "AT+MS=22,0,1200,1200\r",
+			.selection_command = "AT+MS=22,1,1200,1200\r",
 			.caller_tx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V22BIS,
 			.name = "V.22bis",
-			.selection_command = "AT+MS=122,0,2400,2400\r",
+			.selection_command = "AT+MS=122,1,2400,2400\r",
 			.caller_tx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V32,
 			.name = "V.32 4800",
-			.selection_command = "AT+MS=32,0,4800,4800\r",
+			.selection_command = "AT+MS=32,1,4800,4800\r",
 			.caller_tx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V32,
 			.name = "V.32bis 7200",
-			.selection_command = "AT+MS=32,0,7200,7200\r",
+			.selection_command = "AT+MS=32,1,7200,7200\r",
 			.caller_tx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V32,
 			.name = "V.32 9600",
-			.selection_command = "AT+MS=32,0,9600,9600\r",
+			.selection_command = "AT+MS=32,1,9600,9600\r",
 			.caller_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V32,
 			.name = "V.32bis 12000",
-			.selection_command = "AT+MS=32,0,12000,12000\r",
+			.selection_command = "AT+MS=32,1,12000,12000\r",
 			.caller_tx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V32,
 			.name = "V.32bis 14400",
-			.selection_command = "AT+MS=32,0,14400,14400\r",
+			.selection_command = "AT+MS=32,1,14400,14400\r",
 			.caller_tx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_B212,
 			.name = "Bell 212A",
-			.selection_command = "AT+MS=212,0,1200,1200\r",
+			.selection_command = "AT+MS=212,1,1200,1200\r",
 			.caller_tx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V22_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
 		},
 		{
 			.id = DP_V23,
 			.name = "V.23",
-			.selection_command = "AT+MS=23,0,300,1200\r",
+			.selection_command = "AT+MS=23,1,300,1200\r",
 			.caller_tx_rate = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
 			.caller_rx_rate = SIPPYMODEM_V23_FORWARD_BIT_RATE,
 			.answerer_tx_rate = SIPPYMODEM_V23_FORWARD_BIT_RATE,
 			.answerer_rx_rate = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.automode = true,
 			.test_prelink = true,
 		},
 	};

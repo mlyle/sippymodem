@@ -1087,12 +1087,15 @@ static void do_modem_change_dp (struct modem *m)
 
 		id = dp_id;
 		if(dp_id == 0) {
-			enum sippymodem_v8_modulation modulation;
-
 			dp_id = MODEM_DP(m);
-			modulation = sippymodem_v8_datapump_modulation(dp_id);
-			id = modulation == SIPPYMODEM_V8_MODULATION_NONE ?
-				dp_id : DP_V8;
+			id = dp_id;
+			if (MODEM_AUTOMODE(m)) {
+				enum sippymodem_v8_modulation modulation =
+					sippymodem_v8_datapump_modulation(dp_id);
+
+				if (modulation != SIPPYMODEM_V8_MODULATION_NONE)
+					id = DP_V8;
+			}
 		}
 
 		MODEM_DBG("%ld: change dp: --> %d...\n", m->count, id);
