@@ -148,6 +148,82 @@ static bool test_literal_wire_and_round_trip(void)
 	return true;
 }
 
+static bool test_appendix_wire_image(void)
+{
+	static const uint8_t plain[] = {
+		'A', 'B', 'C', 'D', 'E', 'X',
+		'A', 'B', 'C', 'D', 'E', 'Y',
+		'A', 'B', 'C', 'D', 'E', 0xff, 'A', 'C',
+	};
+	static const uint8_t expected_wire[] = {
+		0x82, 0x84, 0x86, 0x88, 0x8a,
+		0xb0, 0x09, 0x29, 0x5b, 0x29,
+		0xf8, 0x17, 0x64, 0x68, 0x00,
+	};
+	const struct sippymodem_v44_parameters default_parameters =
+		sippymodem_v44_default_parameters();
+	uint8_t wire[32];
+	uint8_t decoded[sizeof(plain)];
+	size_t wire_length = 0;
+	size_t decoded_length = 0;
+
+	CHECK(encode_and_flush(
+		      &default_parameters, plain, sizeof(plain), wire,
+		      sizeof(wire), &wire_length),
+	      "could not encode V.44 Appendix II.1 example");
+	CHECK(wire_length == sizeof(expected_wire) &&
+	      memcmp(wire, expected_wire, sizeof(expected_wire)) == 0,
+	      "V.44 encoder changed the Appendix II.1 wire image");
+	CHECK(decode_wire(
+		      &default_parameters, wire, wire_length, decoded,
+		      sizeof(decoded), &decoded_length) &&
+	      decoded_length == sizeof(plain) &&
+	      memcmp(decoded, plain, sizeof(plain)) == 0,
+	      "V.44 Appendix II.1 encoding did not round-trip");
+	return true;
+}
+
+static bool test_repeated_string_wire_image(void)
+{
+	static const uint8_t plain[] = "CCCCCCCCCCX";
+	const struct sippymodem_v44_parameters default_parameters =
+		sippymodem_v44_default_parameters();
+	struct sippymodem_v44_test_wire *builder =
+		sippymodem_v44_test_wire_create(
+			default_parameters.max_string_length, 32);
+	uint8_t expected[32];
+	uint8_t wire[32];
+	uint8_t decoded[sizeof(plain) - 1U];
+	size_t expected_length = 0;
+	size_t wire_length = 0;
+	size_t decoded_length = 0;
+	bool built = builder != NULL &&
+		sippymodem_v44_test_wire_ordinal(builder, 'C') &&
+		sippymodem_v44_test_wire_codeword(builder, 4) &&
+		sippymodem_v44_test_wire_extension(builder, 7) &&
+		sippymodem_v44_test_wire_ordinal(builder, 'X') &&
+		sippymodem_v44_test_wire_control(
+			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
+		sippymodem_v44_test_wire_finish(
+			builder, expected, sizeof(expected), &expected_length);
+
+	sippymodem_v44_test_wire_destroy(builder);
+	CHECK(built && encode_and_flush(
+				 &default_parameters, plain, sizeof(plain) - 1U,
+				 wire, sizeof(wire), &wire_length),
+	      "could not encode repeated V.44 string");
+	CHECK(wire_length == expected_length &&
+	      memcmp(wire, expected, expected_length) == 0,
+	      "V.44 repeated-string encoding changed its wire image");
+	CHECK(decode_wire(
+		      &default_parameters, wire, wire_length, decoded,
+		      sizeof(decoded), &decoded_length) &&
+	      decoded_length == sizeof(decoded) &&
+	      memcmp(decoded, plain, sizeof(decoded)) == 0,
+	      "V.44 repeated-string encoding did not round-trip");
+	return true;
+}
+
 static bool test_dictionary_exhaustion_reinitializes(void)
 {
 	enum {
@@ -175,7 +251,8 @@ static bool test_dictionary_exhaustion_reinitializes(void)
 	bool built = builder != NULL;
 
 	for (size_t index = 0; index < sizeof(plain); ++index)
-		plain[index] = (uint8_t)(0x20U + index % 95U);
+		plain[index] = index % 2U == 0 ?
+				       0 : (uint8_t)((index + 1U) / 2U);
 	plain[REINIT_INDEX] = 0xff;
 	for (size_t index = 0; built && index < sizeof(plain); ++index) {
 		if (index == REINIT_INDEX)
@@ -231,13 +308,16 @@ static bool test_history_exhaustion_reinitializes(void)
 	size_t expected_length = 0;
 	size_t decoded_length = 0;
 	bool built = builder != NULL;
+	bool ordinal_stepped = false;
 
 	for (size_t index = 0; index < sizeof(plain); ++index)
-		plain[index] = (uint8_t)(0x20U + index % 95U);
-	plain[sizeof(plain) - 1] = 0xfe;
+		plain[index] = index % 2U == 0 ?
+				       0 : (uint8_t)((index + 1U) / 2U);
 	for (size_t index = 0; built && index < sizeof(plain); ++index) {
-		if (index == sizeof(plain) - 1)
+		if (!ordinal_stepped && plain[index] > 127) {
 			built = sippymodem_v44_test_wire_stepup_ordinal(builder);
+			ordinal_stepped = true;
+		}
 		if (built)
 			built = sippymodem_v44_test_wire_ordinal(
 				builder, plain[index]);
@@ -264,6 +344,67 @@ static bool test_history_exhaustion_reinitializes(void)
 	      decoded_length == sizeof(plain) &&
 	      memcmp(decoded, plain, sizeof(plain)) == 0,
 	      "history-boundary stream did not round-trip");
+	return true;
+}
+
+static bool test_generated_compression_round_trips(void)
+{
+	enum {
+		PLAIN_LENGTH = 1536,
+		WIRE_CAPACITY = 4096,
+	};
+	const struct sippymodem_v44_parameters selected[] = {
+		parameters,
+		{
+			.codeword_limit = SIPPYMODEM_V44_DEFAULT_CODEWORDS,
+			.max_string_length =
+				SIPPYMODEM_V44_DEFAULT_STRING_LENGTH,
+			.history_size = SIPPYMODEM_V44_DEFAULT_HISTORY_SIZE,
+		},
+	};
+	uint8_t plain[PLAIN_LENGTH];
+	uint8_t wire[WIRE_CAPACITY];
+	uint8_t decoded[PLAIN_LENGTH];
+	uint32_t random = UINT32_C(0x6d2b79f5);
+
+	for (size_t profile = 0; profile < ARRAY_LENGTH(selected); ++profile) {
+		for (unsigned int pattern = 0; pattern < 3; ++pattern) {
+			size_t wire_length = 0;
+			size_t decoded_length = 0;
+
+			for (size_t index = 0; index < sizeof(plain); ++index) {
+				if (pattern == 0) {
+					plain[index] = 'C';
+				} else if (pattern == 1) {
+					static const uint8_t phrase[] =
+						"ABCDEXABCDEY";
+
+					plain[index] = phrase[
+						index % (sizeof(phrase) - 1U)];
+				} else {
+					random = random * UINT32_C(1664525) +
+						 UINT32_C(1013904223);
+					plain[index] = (uint8_t)(random >> 24);
+				}
+			}
+			CHECK(encode_and_flush(
+				      &selected[profile], plain, sizeof(plain),
+				      wire, sizeof(wire), &wire_length),
+			      "generated V.44 profile %zu pattern %u did not encode",
+			      profile, pattern);
+			CHECK(decode_wire(
+				      &selected[profile], wire, wire_length, decoded,
+				      sizeof(decoded), &decoded_length) &&
+			      decoded_length == sizeof(plain) &&
+			      memcmp(decoded, plain, sizeof(plain)) == 0,
+			      "generated V.44 profile %zu pattern %u did not round-trip",
+			      profile, pattern);
+			if (pattern != 2)
+				CHECK(wire_length < sizeof(plain),
+				      "compressible V.44 profile %zu pattern %u expanded",
+				      profile, pattern);
+		}
+	}
 	return true;
 }
 
@@ -391,10 +532,15 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "literal wire and round trip",
 		  test_literal_wire_and_round_trip },
+		{ "Appendix II.1 wire image", test_appendix_wire_image },
+		{ "repeated string wire image",
+		  test_repeated_string_wire_image },
 		{ "dictionary exhaustion",
 		  test_dictionary_exhaustion_reinitializes },
 		{ "history exhaustion",
 		  test_history_exhaustion_reinitializes },
+		{ "generated compression round trips",
+		  test_generated_compression_round_trips },
 		{ "API and backpressure", test_api_and_backpressure },
 	};
 	unsigned int failures = 0;

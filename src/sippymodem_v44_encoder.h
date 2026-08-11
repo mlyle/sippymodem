@@ -27,14 +27,13 @@ void sippymodem_v44_encoder_destroy(
 	struct sippymodem_v44_encoder *encoder);
 
 /*
- * Accept at most one input octet. The current literal stage emits ordinals
- * while maintaining the same dictionary counters and history boundaries as
- * its peer decoder. A later matcher can select codewords without changing
- * this bounded stream API.
+ * Accept at most one input octet. Input may remain in bounded lookahead while
+ * the encoder determines a longest dictionary match or string extension.
+ * Calls can therefore make progress without consuming another input octet.
  *
- * NEED_OUTPUT may follow consumption of one input octet; drain encoded output
- * and retry with the updated input pointer. No further input is consumed until
- * that pending octet has been encoded completely.
+ * NEED_OUTPUT may follow input consumption; drain encoded output and retry
+ * with the updated input pointer. No further input is consumed while a field
+ * remains pending.
  */
 enum sippymodem_v44_encode_result sippymodem_v44_encoder_process(
 	struct sippymodem_v44_encoder *encoder,
