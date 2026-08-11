@@ -9,8 +9,8 @@
 
 enum {
 	SIPPYMODEM_SINGLE_TONE_SAMPLE_RATE = 8000,
-	/* Ten milliseconds contains whole cycles of the V.32 1800 Hz and
-	 * 2100 Hz startup carriers. */
+	/* Ten milliseconds contains whole cycles of the V.32 600, 1800,
+	 * 2100 and 3000 Hz startup carriers. */
 	SIPPYMODEM_SINGLE_TONE_WINDOW_SAMPLES =
 		SIPPYMODEM_SINGLE_TONE_SAMPLE_RATE / 100,
 	SIPPYMODEM_SINGLE_TONE_ACQUIRE_SAMPLES =
@@ -61,6 +61,7 @@ struct sippymodem_single_tone_detector {
 	double line_power;
 	double carrier_power;
 	double carrier_share;
+	double minimum_carrier_share;
 	uint32_t phase;
 	uint32_t phase_step;
 	size_t history_index;
@@ -99,6 +100,10 @@ sippymodem_single_tone_transmitter_sample(
 enum sippymodem_single_tone_result sippymodem_single_tone_detector_init(
 	struct sippymodem_single_tone_detector *detector,
 	unsigned int frequency_hz);
+enum sippymodem_single_tone_result
+sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+	struct sippymodem_single_tone_detector *detector,
+	unsigned int frequency_hz, double minimum_carrier_share);
 bool sippymodem_single_tone_detector_is_valid(
 	const struct sippymodem_single_tone_detector *detector);
 enum sippymodem_single_tone_result sippymodem_single_tone_detector_reset(

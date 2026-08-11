@@ -9,7 +9,7 @@ static const double SINGLE_TONE_TWO_PI =
 	6.283185307179586476925286766559;
 static const double SINGLE_TONE_PHASE_SCALE = 4294967296.0;
 static const double SINGLE_TONE_MIN_LINE_POWER = 256.0 * 256.0;
-static const double SINGLE_TONE_MIN_CARRIER_SHARE = 0.70;
+static const double SINGLE_TONE_DEFAULT_MIN_CARRIER_SHARE = 0.70;
 static const double SINGLE_TONE_MAX_CARRIER_SHARE = 1.20;
 static const double SINGLE_TONE_REVERSAL_COSINE = -0.80;
 static const double SINGLE_TONE_REFERENCE_TRACKING = 1.0 / 64.0;
@@ -125,6 +125,10 @@ bool sippymodem_single_tone_detector_is_valid(
 	    detector->carrier_power > 2.000001 * SINGLE_TONE_MAX_POWER ||
 	    !isfinite(detector->carrier_share) ||
 	    detector->carrier_share < 0.0 || detector->carrier_share > 2.000001 ||
+	    !isfinite(detector->minimum_carrier_share) ||
+	    detector->minimum_carrier_share <= 0.0 ||
+	    detector->minimum_carrier_share >
+		    SINGLE_TONE_MAX_CARRIER_SHARE ||
 	    detector->qualifying_samples >
 		    SIPPYMODEM_SINGLE_TONE_ACQUIRE_SAMPLES ||
 	    detector->missing_samples >= SIPPYMODEM_SINGLE_TONE_LOSS_SAMPLES ||
@@ -154,12 +158,24 @@ enum sippymodem_single_tone_result sippymodem_single_tone_detector_init(
 	struct sippymodem_single_tone_detector *detector,
 	unsigned int frequency_hz)
 {
+	return sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+		detector, frequency_hz,
+		SINGLE_TONE_DEFAULT_MIN_CARRIER_SHARE);
+}
+
+enum sippymodem_single_tone_result
+sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+	struct sippymodem_single_tone_detector *detector,
+	unsigned int frequency_hz, double minimum_carrier_share)
+{
 	struct sippymodem_single_tone_detector initialized = {
+		.minimum_carrier_share = minimum_carrier_share,
 		.phase_step = phase_step(frequency_hz),
 		.frequency_hz = (uint16_t)frequency_hz,
 	};
 
 	if (detector == NULL || !frequency_is_valid(frequency_hz) ||
+	    !isfinite(minimum_carrier_share) ||
 	    !sippymodem_single_tone_detector_is_valid(&initialized))
 		return SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT;
 	*detector = initialized;
@@ -170,11 +186,14 @@ enum sippymodem_single_tone_result sippymodem_single_tone_detector_reset(
 	struct sippymodem_single_tone_detector *detector)
 {
 	unsigned int frequency_hz;
+	double minimum_carrier_share;
 
 	if (!sippymodem_single_tone_detector_is_valid(detector))
 		return SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT;
 	frequency_hz = detector->frequency_hz;
-	return sippymodem_single_tone_detector_init(detector, frequency_hz);
+	minimum_carrier_share = detector->minimum_carrier_share;
+	return sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+		detector, frequency_hz, minimum_carrier_share);
 }
 
 static void add_observation(
@@ -225,7 +244,7 @@ static bool measurement_qualifies(
 						  detector->line_power :
 					  0.0;
 	return detector->line_power >= SINGLE_TONE_MIN_LINE_POWER &&
-	       detector->carrier_share >= SINGLE_TONE_MIN_CARRIER_SHARE &&
+	       detector->carrier_share >= detector->minimum_carrier_share &&
 	       detector->carrier_share <= SINGLE_TONE_MAX_CARRIER_SHARE;
 }
 

@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -13,6 +14,10 @@ enum {
 	TEST_ANSWER_HZ = 2100,
 	TEST_CARRIER_HZ = 1800,
 	TEST_WRONG_HZ = 2225,
+	TEST_MIXED_LOW_HZ = 600,
+	TEST_MIXED_HIGH_HZ = 3000,
+	TEST_MIXED_LOW_AMPLITUDE = 6000,
+	TEST_MIXED_HIGH_AMPLITUDE = 9000,
 };
 
 enum test_codec {
@@ -229,6 +234,106 @@ static bool test_detection_and_rejection(void)
 	return true;
 }
 
+static bool mixed_tone_sample(
+	struct sippymodem_single_tone_transmitter *low,
+	struct sippymodem_single_tone_transmitter *high,
+	enum test_codec codec, int16_t *sample)
+{
+	int16_t low_sample;
+	int16_t high_sample;
+
+	if (sippymodem_single_tone_transmitter_sample(low, &low_sample) !=
+		    SIPPYMODEM_SINGLE_TONE_OK ||
+	    sippymodem_single_tone_transmitter_sample(high, &high_sample) !=
+		    SIPPYMODEM_SINGLE_TONE_OK)
+		return false;
+	*sample = codec_round_trip(
+		(int16_t)((int32_t)low_sample + high_sample), codec);
+	return true;
+}
+
+static bool test_configurable_carrier_share(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		struct sippymodem_single_tone_transmitter low;
+		struct sippymodem_single_tone_transmitter high;
+		struct sippymodem_single_tone_detector strict;
+		struct sippymodem_single_tone_detector mixed;
+		struct sippymodem_single_tone_measurement measurement;
+		size_t strict_events = 0;
+		size_t mixed_started = 0;
+		size_t mixed_reversed = 0;
+
+		CHECK(sippymodem_single_tone_transmitter_init(
+			      &low, TEST_MIXED_LOW_HZ,
+			      TEST_MIXED_LOW_AMPLITUDE) ==
+			      SIPPYMODEM_SINGLE_TONE_OK &&
+		      sippymodem_single_tone_transmitter_init(
+			      &high, TEST_MIXED_HIGH_HZ,
+			      TEST_MIXED_HIGH_AMPLITUDE) ==
+			      SIPPYMODEM_SINGLE_TONE_OK &&
+		      sippymodem_single_tone_detector_init(
+			      &strict, TEST_MIXED_HIGH_HZ) ==
+			      SIPPYMODEM_SINGLE_TONE_OK &&
+		      sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+			      &mixed, TEST_MIXED_HIGH_HZ, 0.60) ==
+			      SIPPYMODEM_SINGLE_TONE_OK,
+		      "mixed-tone fixture did not initialize");
+		for (size_t sample_index = 0; sample_index < 480;
+		     ++sample_index) {
+			struct sippymodem_single_tone_event strict_event;
+			struct sippymodem_single_tone_event mixed_event;
+			int16_t sample;
+
+			CHECK(mixed_tone_sample(&low, &high, codec, &sample),
+			      "mixed-tone generation failed");
+			CHECK(sippymodem_single_tone_detector_sample(
+				      &strict, sample, &strict_event) ==
+				      SIPPYMODEM_SINGLE_TONE_OK &&
+			      sippymodem_single_tone_detector_sample(
+				      &mixed, sample, &mixed_event) ==
+				      SIPPYMODEM_SINGLE_TONE_OK,
+			      "mixed-tone detection failed");
+			strict_events += strict_event.kind !=
+					 SIPPYMODEM_SINGLE_TONE_NO_EVENT;
+			mixed_started += mixed_event.kind ==
+					 SIPPYMODEM_SINGLE_TONE_STARTED;
+		}
+		measurement = sippymodem_single_tone_detector_measure(&mixed);
+		CHECK(strict_events == 0 && !strict.tone_present &&
+			      mixed_started == 1 && measurement.tone_present &&
+			      measurement.carrier_share >= 0.60 &&
+			      measurement.carrier_share < 0.70,
+		      "configured detector did not distinguish a mixed carrier");
+		CHECK(sippymodem_single_tone_transmitter_reverse(&low) ==
+			      SIPPYMODEM_SINGLE_TONE_OK &&
+		      sippymodem_single_tone_transmitter_reverse(&high) ==
+			      SIPPYMODEM_SINGLE_TONE_OK,
+		      "mixed carrier did not reverse");
+		for (size_t sample_index = 0; sample_index < 180;
+		     ++sample_index) {
+			struct sippymodem_single_tone_event event;
+			int16_t sample;
+
+			CHECK(mixed_tone_sample(&low, &high, codec, &sample),
+			      "reversed mixed-tone generation failed");
+			CHECK(sippymodem_single_tone_detector_sample(
+				      &mixed, sample, &event) ==
+				      SIPPYMODEM_SINGLE_TONE_OK,
+			      "reversed mixed-tone detection failed");
+			mixed_reversed += event.kind ==
+					  SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED;
+		}
+		CHECK(mixed_reversed == 1 &&
+			      sippymodem_single_tone_detector_reset(&mixed) ==
+				      SIPPYMODEM_SINGLE_TONE_OK &&
+			      mixed.minimum_carrier_share == 0.60,
+		      "mixed-carrier profile did not detect or survive reset");
+	}
+	return true;
+}
+
 static bool test_validation_is_transactional(void)
 {
 	struct sippymodem_single_tone_detector detector;
@@ -263,6 +368,18 @@ static bool test_validation_is_transactional(void)
 			      &detector, TEST_CARRIER_HZ) ==
 			      SIPPYMODEM_SINGLE_TONE_OK,
 	      "single-tone validation fixture changed");
+	before = detector;
+	CHECK(sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+		      &detector, TEST_CARRIER_HZ, 0.0) ==
+		      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
+		      sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+			      &detector, TEST_CARRIER_HZ, 1.21) ==
+			      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
+		      sippymodem_single_tone_detector_init_with_minimum_carrier_share(
+			      &detector, TEST_CARRIER_HZ, NAN) ==
+			      SIPPYMODEM_SINGLE_TONE_INVALID_ARGUMENT &&
+		      memcmp(&detector, &before, sizeof(detector)) == 0,
+	      "invalid carrier-share profiles changed the detector");
 	transmitter.phase_step++;
 	transmitter_before = transmitter;
 	CHECK(sippymodem_single_tone_transmitter_sample(
@@ -295,6 +412,7 @@ int main(void)
 	} tests[] = {
 		{ "generation and reversal", test_generation_and_reversal },
 		{ "detection and rejection", test_detection_and_rejection },
+		{ "configurable carrier share", test_configurable_carrier_share },
 		{ "transactional validation", test_validation_is_transactional },
 	};
 	unsigned int failures = 0;
