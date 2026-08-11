@@ -44,6 +44,11 @@ baud instead of the North American 45.45-baud mode. Its bounded text path uses
 explicit half-duplex turns and preserves the complete mark-hold interval before
 listening again.
 
+When LAPM compression is requested, XID may offer both V.44 and the legacy
+method but selects exactly one in the response. A negotiated V.44 session owns
+bounded transmit and receive codecs at the I-frame character boundary, including
+terminal backpressure and automatic compressed/transparent mode adaptation.
+
 Focused tests and compact fixtures belong in this repository. Large audio,
 packet, and regression-vector collections will live in a parallel repository,
 which may be attached as an optional submodule. Tests and harnesses for that

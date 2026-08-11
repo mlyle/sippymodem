@@ -338,6 +338,15 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
 	$(BUILD_DIR)/sippymodem_lapm_v44_session.o \
 	$(BUILD_DIR)/sippymodem_v42_xid.o \
+	$(BUILD_DIR)/sippymodem_v44_character_path.o \
+	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
+	$(BUILD_DIR)/sippymodem_v44_decoder.o \
+	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
+	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
+	$(BUILD_DIR)/sippymodem_v44_duplex.o \
+	$(BUILD_DIR)/sippymodem_v44_encoder.o \
+	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
+	$(BUILD_DIR)/sippymodem_v44_tx_monitor.o \
 	$(BUILD_DIR)/sippymodem_v44_xid.o \
 	$(BUILD_DIR)/sippymodem_v44_stream.o
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \

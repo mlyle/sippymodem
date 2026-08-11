@@ -42,8 +42,32 @@ static struct {
 	int result;
 	unsigned int calls;
 	size_t length;
-	uint8_t data[16];
+	uint8_t data[256];
 } lapm_sink;
+
+static struct {
+	const uint8_t *data;
+	size_t length;
+	size_t offset;
+} lapm_source;
+
+static int scripted_lapm_source(
+	struct modem *modem, char *data, int capacity)
+{
+	size_t available;
+	size_t copied;
+
+	(void)modem;
+	if (data == NULL || capacity < 0 || lapm_source.offset > lapm_source.length ||
+	    (lapm_source.length != 0 && lapm_source.data == NULL))
+		return -1;
+	available = lapm_source.length - lapm_source.offset;
+	copied = available < (size_t)capacity ? available : (size_t)capacity;
+	if (copied != 0)
+		memcpy(data, lapm_source.data + lapm_source.offset, copied);
+	lapm_source.offset += copied;
+	return (int)copied;
+}
 
 static int scripted_lapm_sink(
 	struct modem *modem, const char *data, int length)
@@ -267,7 +291,7 @@ static bool test_at_v42bis_compression_profile(void)
 
 static bool test_lapm_xid_envelopes(void)
 {
-	enum { XID_CONTROL = 0xaf };
+	enum { XID_CONTROL = 0xaf, LAPM_DATA_STATE = 2 };
 	struct modem_driver driver = {
 		.name = "LAPM XID test",
 		.start = unused_start,
@@ -277,8 +301,10 @@ static bool test_lapm_xid_envelopes(void)
 	struct modem *caller = modem_create(&driver, "LAPM XID caller");
 	struct modem *answerer = modem_create(&driver, "LAPM XID answerer");
 	struct sippymodem_v42_xid_fields fields;
+	struct sippymodem_v44_offer v44_offer;
 	uint8_t command[LAPM_MAX_INFO_SIZE + 4];
 	uint8_t received[LAPM_MAX_INFO_SIZE + 4];
+	uint8_t payload[96];
 	frame_t incoming = { .buf = received };
 	frame_t *outgoing;
 	int command_size;
@@ -303,10 +329,14 @@ static bool test_lapm_xid_envelopes(void)
 			      &fields) == SIPPYMODEM_V42_XID_OK &&
 		      fields.parameter_negotiation_length == 19 &&
 		      fields.private_negotiation_length == 15 &&
-		      fields.user_data == NULL &&
+		      fields.user_data != NULL &&
+		      sippymodem_v44_xid_decode(
+			      fields.user_data, fields.user_data_length,
+			      &v44_offer) == SIPPYMODEM_V44_XID_OK &&
+		      v44_offer.transmit.enabled && v44_offer.receive.enabled &&
 		      caller->ec.lapm.v44_session.phase ==
 			      SIPPYMODEM_LAPM_V44_COMMAND_PENDING,
-	      "LAPM caller did not emit a bounded legacy XID envelope");
+	      "LAPM caller did not emit a bounded V.44 XID offer");
 	command_size = outgoing->size;
 	memcpy(command, outgoing->buf, (size_t)command_size);
 	caller->packer.hdlc.tx_complete(
@@ -350,6 +380,7 @@ static bool test_lapm_xid_envelopes(void)
 			    answerer->ec.lapm.rx_info_size == 96 &&
 			    answerer->ec.lapm.v44_session.phase ==
 				    SIPPYMODEM_LAPM_V44_READY &&
+			    answerer->ec.lapm.v44_path == NULL &&
 			    answerer->packer.hdlc.get_tx_frame(
 				    answerer->packer.hdlc.framer) == NULL;
 		answerer->ec.lapm.ctrl_list->next = saved_next;
@@ -361,8 +392,10 @@ static bool test_lapm_xid_envelopes(void)
 	CHECK(answerer->ec.lapm.tx_info_size == 128 &&
 		      answerer->ec.lapm.rx_info_size == 128 &&
 		      answerer->ec.lapm.v44_session.phase ==
-			      SIPPYMODEM_LAPM_V44_DECLINED,
-	      "disabled native V.44 did not decline the command safely");
+			      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+		      answerer->ec.lapm.v44_path != NULL &&
+		      answerer->cfg.comp == 0,
+	      "LAPM answerer did not own the negotiated V.44 path");
 	outgoing = answerer->packer.hdlc.get_tx_frame(
 		answerer->packer.hdlc.framer);
 	CHECK(outgoing != NULL && outgoing->buf[1] == XID_CONTROL &&
@@ -370,6 +403,8 @@ static bool test_lapm_xid_envelopes(void)
 			      outgoing->buf + 2, (size_t)outgoing->size - 2U,
 			      &fields) == SIPPYMODEM_V42_XID_OK,
 	      "LAPM answerer did not return a bounded XID envelope");
+	CHECK(fields.private_negotiation == NULL && fields.user_data != NULL,
+	      "LAPM answerer selected more than one compression method");
 	memcpy(received, outgoing->buf, (size_t)outgoing->size);
 	incoming.count = outgoing->size;
 	answerer->packer.hdlc.tx_complete(
@@ -378,8 +413,9 @@ static bool test_lapm_xid_envelopes(void)
 		caller->packer.hdlc.framer, &incoming);
 	CHECK(caller->ec.lapm.config == 0 &&
 		      caller->ec.lapm.v44_session.phase ==
-			      SIPPYMODEM_LAPM_V44_DECLINED,
-	      "valid XID response did not complete LAPM negotiation");
+			      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+		      caller->ec.lapm.v44_path != NULL && caller->cfg.comp == 0,
+	      "valid XID response did not activate the caller V.44 path");
 	outgoing = caller->packer.hdlc.get_tx_frame(
 		caller->packer.hdlc.framer);
 	CHECK(outgoing != NULL,
@@ -391,14 +427,22 @@ static bool test_lapm_xid_envelopes(void)
 	answerer->packer.hdlc.rx_complete(
 		answerer->packer.hdlc.framer, &incoming);
 	CHECK(answerer->ec.lapm.v44_session.phase ==
-		      SIPPYMODEM_LAPM_V44_DECLINED,
+		      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+		      answerer->ec.lapm.v44_path != NULL,
 	      "LAPM sequence reset erased completed V.44 negotiation");
 	outgoing = answerer->packer.hdlc.get_tx_frame(
 		answerer->packer.hdlc.framer);
 	CHECK(outgoing != NULL,
 	      "LAPM answerer did not acknowledge link establishment");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
 	answerer->packer.hdlc.tx_complete(
 		answerer->packer.hdlc.framer, outgoing);
+	caller->packer.hdlc.rx_complete(
+		caller->packer.hdlc.framer, &incoming);
+	CHECK(caller->ec.lapm.state == LAPM_DATA_STATE &&
+		      answerer->ec.lapm.state == LAPM_DATA_STATE,
+	      "LAPM peers did not enter the data state");
 
 	{
 		static const uint8_t truncated[] = {
@@ -418,11 +462,43 @@ static bool test_lapm_xid_envelopes(void)
 			      answerer->ec.lapm.rx_info_size == rx_size &&
 			      answerer->cfg.comp == compression &&
 			      answerer->ec.lapm.v44_session.phase ==
-				      SIPPYMODEM_LAPM_V44_DECLINED &&
+				      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+			      answerer->ec.lapm.v44_path != NULL &&
 			      answerer->packer.hdlc.get_tx_frame(
 				      answerer->packer.hdlc.framer) == NULL,
 		      "truncated LAPM XID changed state or produced a response");
 	}
+	for (size_t index = 0; index < sizeof(payload); ++index)
+		payload[index] = (uint8_t)('A' + (index / 16U) % 3U);
+	lapm_source.data = payload;
+	lapm_source.length = sizeof(payload);
+	lapm_source.offset = 0;
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	caller->get_chars = scripted_lapm_source;
+	answerer->put_chars = scripted_lapm_sink;
+	outgoing = caller->packer.hdlc.get_tx_frame(
+		caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->size > 3 &&
+		      outgoing->size < (int)sizeof(payload) + 3 &&
+		      lapm_source.offset == sizeof(payload),
+	      "V.44 did not produce a bounded compressed information field");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	caller->packer.hdlc.tx_complete(
+		caller->packer.hdlc.framer, outgoing);
+	answerer->packer.hdlc.rx_complete(
+		answerer->packer.hdlc.framer, &incoming);
+	CHECK(lapm_sink.length == 0 && answerer->ec.lapm.busy &&
+		      answerer->packer_process != NULL,
+	      "V.44 receive backpressure did not suspend LAPM input");
+	lapm_sink.result = 1;
+	answerer->packer_process(answerer, 0);
+	CHECK(lapm_sink.length == sizeof(payload) &&
+		      memcmp(lapm_sink.data, payload, sizeof(payload)) == 0 &&
+		      !answerer->ec.lapm.busy && answerer->ec.lapm.rx_count == 0 &&
+		      answerer->packer_process == NULL,
+	      "V.44 did not resume and deliver the information field exactly once");
+	memset(&lapm_source, 0, sizeof(lapm_source));
 	modem_ec_exit(caller);
 	modem_ec_exit(answerer);
 	modem_delete(caller);

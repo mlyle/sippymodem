@@ -44,6 +44,10 @@
 #include <modem.h>
 #include <modem_debug.h>
 #include <sippymodem_v42_xid.h>
+#include <sippymodem_v44_character_path.h>
+
+#include <limits.h>
+#include <stdbool.h>
 
 //#define EC_DEBUG 1
 
@@ -153,6 +157,67 @@ static void reset(struct lapm_state *l);
  * service functions
  *
  */
+
+static bool v44_offer_has_direction(
+	const struct sippymodem_v44_offer *offer)
+{
+	return offer->transmit.enabled || offer->receive.enabled;
+}
+
+static int v44_read_characters(
+	void *context, uint8_t *output, size_t output_capacity)
+{
+	struct lapm_state *l = context;
+
+	if (l == NULL || output_capacity > INT_MAX ||
+	    (output_capacity != 0 && output == NULL))
+		return -1;
+	if (l->modem->get_chars == NULL)
+		return 0;
+	return l->modem->get_chars(
+		l->modem, (char *)output, (int)output_capacity);
+}
+
+static int v44_write_characters(
+	void *context, const uint8_t *input, size_t input_length)
+{
+	struct lapm_state *l = context;
+
+	if (l == NULL || input_length > INT_MAX ||
+	    (input_length != 0 && input == NULL))
+		return -1;
+	if (l->modem->put_chars == NULL)
+		return 0;
+	return l->modem->put_chars(
+		l->modem, (const char *)input, (int)input_length);
+}
+
+static struct sippymodem_v44_character_path *create_v44_path(
+	struct lapm_state *l, const struct sippymodem_v44_offer *offer)
+{
+	struct sippymodem_v44_character_path_config config;
+
+	if (l == NULL || offer == NULL || !v44_offer_has_direction(offer))
+		return NULL;
+	config = (struct sippymodem_v44_character_path_config) {
+		.codec = {
+			.transmit_enabled = offer->transmit.enabled,
+			.transmit_parameters = offer->transmit.parameters,
+			.transmit_adaptation_enabled = offer->transmit.enabled,
+			.transmit_adaptation =
+				sippymodem_v44_tx_monitor_default_config(),
+			.receive_enabled = offer->receive.enabled,
+			.receive_parameters = offer->receive.parameters,
+		},
+		.receive_buffer_capacity = offer->receive.enabled ?
+			offer->receive.parameters.max_string_length :
+			LAPM_MAX_INFO_SIZE,
+		.context = l,
+		.read = v44_read_characters,
+		.write = v44_write_characters,
+	};
+	return sippymodem_v44_character_path_create(&config);
+}
 
 /* le/be value parsing */
 extern inline u32 lapm_get_le_val(const u8 *buf, int len)
@@ -558,6 +623,8 @@ static void apply_xid_config(
 	l->rx_win_size = config->rx_win_size;
 	l->tx_info_size = config->tx_info_size;
 	l->rx_info_size = config->rx_info_size;
+	if (l->v44_path != NULL)
+		modem.comp = 0;
 	modem_update_config(l->modem, &modem);
 }
 
@@ -676,6 +743,7 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 {
 	struct lapm_xid_config config;
 	struct sippymodem_lapm_v44_prepared prepared;
+	struct sippymodem_v44_character_path *candidate = NULL;
 	u8 parameters[XID_PARAMETER_LENGTH];
 	u8 private_parameters[XID_PRIVATE_LENGTH];
 	struct sippymodem_v42_xid_fields fields;
@@ -685,24 +753,52 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 	build_xid_fields(&config, parameters, private_parameters, &fields);
 	if (sippymodem_lapm_v44_prepare_response(
 			&l->v44_session, f->buf + 2, (size_t)f->count - 2U,
-			&fields, &prepared) != SIPPYMODEM_LAPM_V44_OK ||
-	    queue_xid(l, l->rsp_addr, &prepared) != 0)
+			&fields, &prepared) != SIPPYMODEM_LAPM_V44_OK)
 		return -1;
+	if (v44_offer_has_direction(&prepared.offer) && l->v44_path == NULL) {
+		candidate = create_v44_path(l, &prepared.offer);
+		if (candidate == NULL)
+			return -1;
+	}
+	if (queue_xid(l, l->rsp_addr, &prepared) != 0) {
+		sippymodem_v44_character_path_destroy(candidate);
+		return -1;
+	}
+	if (candidate != NULL)
+		l->v44_path = candidate;
 	apply_xid_config(l, &config);
 	return 0;
 }
 
-static int rx_xid_response(struct lapm_state *l, frame_t *f)
+enum rx_xid_response_result {
+	RX_XID_RESPONSE_ACCEPTED = 0,
+	RX_XID_RESPONSE_IGNORED = -1,
+	RX_XID_RESPONSE_FATAL = -2,
+};
+
+static enum rx_xid_response_result rx_xid_response(
+	struct lapm_state *l, frame_t *f)
 {
 	struct lapm_xid_config config;
+	struct sippymodem_v44_offer offer;
 
 	if (decode_xid(l, f, &config) != 0 ||
 	    sippymodem_lapm_v44_accept_response(
 		    &l->v44_session, f->buf + 2,
 		    (size_t)f->count - 2U) != SIPPYMODEM_LAPM_V44_OK)
-		return -1;
+		return RX_XID_RESPONSE_IGNORED;
+	if (l->v44_session.phase == SIPPYMODEM_LAPM_V44_NEGOTIATED) {
+		if (sippymodem_lapm_v44_get_negotiated_offer(
+			    &l->v44_session, &offer) != SIPPYMODEM_LAPM_V44_OK)
+			return RX_XID_RESPONSE_FATAL;
+		if (l->v44_path != NULL)
+			return RX_XID_RESPONSE_FATAL;
+		l->v44_path = create_v44_path(l, &offer);
+		if (l->v44_path == NULL)
+			return RX_XID_RESPONSE_FATAL;
+	}
 	apply_xid_config(l, &config);
-	return 0;
+	return RX_XID_RESPONSE_ACCEPTED;
 }
 
 
@@ -781,6 +877,30 @@ static void t403_timeout(struct lapm_state *l)
 
 
 /* transmit info */
+static int read_info_payload(
+	struct lapm_state *l, uint8_t *output, size_t output_capacity)
+{
+	if (l->v44_path != NULL) {
+		size_t output_length = 0;
+		enum sippymodem_v44_character_path_result result =
+			sippymodem_v44_character_path_transmit(
+				l->v44_path, output, output_capacity,
+				&output_length);
+
+		if (output_length > output_capacity || output_length > INT_MAX)
+			return -1;
+		if (result == SIPPYMODEM_V44_CHARACTER_PATH_IDLE)
+			return output_length == 0 ? 0 : -1;
+		if (result != SIPPYMODEM_V44_CHARACTER_PATH_OK)
+			return -1;
+		return (int)output_length;
+	}
+	if (l->modem->get_chars == NULL || output_capacity > INT_MAX)
+		return 0;
+	return l->modem->get_chars(
+		l->modem, (char *)output, (int)output_capacity);
+}
+
 static int tx_info(struct lapm_state *l)
 {
 	frame_t *f;
@@ -796,9 +916,7 @@ static int tx_info(struct lapm_state *l)
 			return 0;
 		}
 		f = l->info_list;
-		if(!l->modem->get_chars)
-			return 0;
-		n = l->modem->get_chars(l->modem,(char*)(f->buf+3),l->tx_info_size);
+		n = read_info_payload(l, f->buf + 3, l->tx_info_size);
 		if (n < 0) { /* error */
 			EC_ERR("tx_info: get chars error.\n");
 			modem_update_status(l->modem,STATUS_EC_ERROR);
@@ -878,21 +996,52 @@ static int ack_info(struct lapm_state *l, u8 nr)
 
 
 /* push rest data (when busy) */
+static void fail_receive_data(struct lapm_state *l)
+{
+	l->rx_head = l->rx_count = 0;
+	l->busy = 0;
+	l->modem->packer_process = NULL;
+	modem_update_status(l->modem, STATUS_EC_ERROR);
+}
+
 static void push_rest_data(struct modem *m, int bits)
 {
 	struct lapm_state *l = &m->ec.lapm;
 	(void)bits;
 	if (l->state != LAPM_DATA)
 		return;
+	if (l->v44_path != NULL) {
+		size_t consumed = 0;
+		enum sippymodem_v44_character_path_result result =
+			sippymodem_v44_character_path_receive(
+				l->v44_path,
+				l->rx_count == 0 ? NULL : l->rx_buf + l->rx_head,
+				(size_t)l->rx_count, &consumed);
+
+		if (consumed > (size_t)l->rx_count) {
+			fail_receive_data(l);
+			return;
+		}
+		l->rx_head += (int)consumed;
+		l->rx_count -= (int)consumed;
+		if (result == SIPPYMODEM_V44_CHARACTER_PATH_NEED_OUTPUT)
+			return;
+		if (result != SIPPYMODEM_V44_CHARACTER_PATH_OK || l->rx_count != 0) {
+			fail_receive_data(l);
+			return;
+		}
+		l->rx_head = 0;
+		l->busy = 0;
+		TX_RR(l,l->cmd_addr,0);
+		l->modem->packer_process = NULL;
+		return;
+	}
 	if (l->rx_count && l->modem->put_chars) {
 		int ret = l->modem->put_chars(l->modem,
 					      (const char*)(l->rx_buf+l->rx_head),
 					      l->rx_count);
 		if (ret < 0 || ret > l->rx_count) {
-			l->rx_head = l->rx_count = 0;
-			l->busy = 0;
-			l->modem->packer_process = NULL;
-			modem_update_status(l->modem, STATUS_EC_ERROR);
+			fail_receive_data(l);
 			return;
 		}
 		if (ret > 0) {
@@ -945,15 +1094,33 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	}
 	l->reject = 0;
 	/* recv data */
-	
-	if(l->modem->put_chars)
+
+	if (l->v44_path != NULL) {
+		size_t consumed = 0;
+		enum sippymodem_v44_character_path_result result =
+			sippymodem_v44_character_path_receive(
+				l->v44_path, f->buf + 3, (size_t)payload_length,
+				&consumed);
+
+		if (consumed > (size_t)payload_length ||
+		    (result != SIPPYMODEM_V44_CHARACTER_PATH_OK &&
+		     result != SIPPYMODEM_V44_CHARACTER_PATH_NEED_OUTPUT) ||
+		    (result == SIPPYMODEM_V44_CHARACTER_PATH_OK &&
+		     consumed != (size_t)payload_length)) {
+			modem_update_status(l->modem, STATUS_EC_ERROR);
+			return -1;
+		}
+		ret = (int)consumed;
+		if (result == SIPPYMODEM_V44_CHARACTER_PATH_NEED_OUTPUT)
+			l->busy = 1;
+	} else if(l->modem->put_chars)
 		ret = l->modem->put_chars(
 			l->modem, (const char *)(f->buf + 3), payload_length);
 	if (ret < 0 || ret > payload_length) {
 		modem_update_status(l->modem, STATUS_EC_ERROR);
 		return -1;
 	}
-	if (ret != payload_length) {
+	if (ret != payload_length || l->busy) {
 		/* save rest data, enter busy state */
 		l->rx_head = 0;
 		l->rx_count = payload_length - ret;
@@ -1206,15 +1373,25 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		/* TBD */
 		break;
 	case FRAME_U_XID:
-		if (l->config && rx_xid_response(l,f) == 0) {
-			l->config = 0;
-			T401_STOP(l);
-			if (l->state == LAPM_IDLE) {
-				lapm_connect(l);
+		if (l->config) {
+			enum rx_xid_response_result result =
+				rx_xid_response(l, f);
+
+			if (result == RX_XID_RESPONSE_ACCEPTED) {
+				l->config = 0;
+				T401_STOP(l);
+				if (l->state == LAPM_IDLE) {
+					lapm_connect(l);
+				}
+				else if (l->state == LAPM_DATA) {
+					l->busy = 0;
+					TX_RR(l,l->cmd_addr,0);
+				}
 			}
-			else if (l->state == LAPM_DATA) {
-				l->busy = 0;
-				TX_RR(l,l->cmd_addr,0);
+			else if (result == RX_XID_RESPONSE_FATAL) {
+				l->config = 0;
+				T401_STOP(l);
+				modem_update_status(l->modem, STATUS_EC_ERROR);
 			}
 		}
 		break;
@@ -1433,6 +1610,7 @@ static int alloc_frames(struct lapm_state *l)
 static int lapm_init(struct lapm_state *l, struct modem *m)
 {
 	struct sippymodem_lapm_v44_config v44_config;
+	struct sippymodem_v44_offer local_offer;
 
 	memset(l,0,sizeof(*l));
 	l->modem = m;
@@ -1447,10 +1625,13 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 	l->rx_win_size  = m->cfg.ec_rx_win_size;
 	l->tx_info_size = m->cfg.ec_tx_info_size;
 	l->rx_info_size = m->cfg.ec_rx_info_size;
+	local_offer = sippymodem_v44_default_offer();
+	local_offer.transmit.enabled = (m->cfg.comp & 0x2U) != 0;
+	local_offer.receive.enabled = (m->cfg.comp & 0x1U) != 0;
 	v44_config = (struct sippymodem_lapm_v44_config) {
-		.enabled = false,
-		.native_v44_ready = false,
-		.local_offer = sippymodem_v44_default_offer(),
+		.enabled = v44_offer_has_direction(&local_offer),
+		.native_v44_ready = true,
+		.local_offer = local_offer,
 	};
 	if (sippymodem_lapm_v44_session_init(
 			&l->v44_session, &v44_config) !=
@@ -1464,6 +1645,11 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 
 static int lapm_exit(struct lapm_state *l)
 {
+	if (l->modem != NULL)
+		l->modem->packer_process = NULL;
+	l->rx_head = l->rx_count = 0;
+	sippymodem_v44_character_path_destroy(l->v44_path);
+	l->v44_path = NULL;
 	reset(l);
 	l->info_list = 0;
 	l->ctrl_list = 0;
