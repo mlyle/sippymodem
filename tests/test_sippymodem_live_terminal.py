@@ -32,15 +32,24 @@ class LiveTerminalTests(unittest.TestCase):
 
     def test_response_decoder_handles_fragments_and_bounds(self) -> None:
         decoder = ResponseDecoder()
-        decoder.feed(b"ATDpeer\r\nModulation: V.21\r\nCON")
+        decoder.feed(
+            b"ATDpeer\r\nModulation: V21\r\nProtocol: LAPM\r\n"
+            b"Compression: V44\r\nTxRate: 14400\r\nCON"
+        )
         self.assertIsNone(decoder.pop())
-        decoder.feed(b"NECT 300\r")
+        decoder.feed(b"NECT 12000\r")
         self.assertEqual(decoder.pop(), "connect")
+        self.assertEqual(decoder.connect_report.modulation, "V.21")
+        self.assertEqual(decoder.connect_report.protocol, "LAPM")
+        self.assertEqual(decoder.connect_report.compression, "V.44")
+        self.assertEqual(decoder.connect_report.receive_bit_rate, 12000)
+        self.assertEqual(decoder.connect_report.transmit_bit_rate, 14400)
         decoder.feed(b"\nSIPPY")
         self.assertEqual(decoder.take_online_data(), b"SIPPY")
         decoder.feed(b"-LIVE\r\n")
         self.assertEqual(decoder.take_online_data(), b"-LIVE\r\n")
         decoder.begin_command_response()
+        self.assertIsNone(decoder.connect_report.modulation)
         decoder.feed(b"7\r\nNO CARRIER\r\n")
         self.assertEqual(decoder.pop(), "busy")
         self.assertEqual(decoder.pop(), "no-carrier")
@@ -48,8 +57,14 @@ class LiveTerminalTests(unittest.TestCase):
         self.assertEqual(decoder.pop(), "error")
         self.assertIsNone(decoder.pop())
 
-        decoder.feed(b"CONNECT 300\r\nSAME-READ")
+        decoder.feed(
+            b"Modulation: sip:private@example.invalid\r\n"
+            b"TxRate: 99999999\r\nCONNECT 300\r\nSAME-READ"
+        )
         self.assertEqual(decoder.pop(), "connect")
+        self.assertIsNone(decoder.connect_report.modulation)
+        self.assertIsNone(decoder.connect_report.transmit_bit_rate)
+        self.assertEqual(decoder.connect_report.receive_bit_rate, 300)
         self.assertEqual(decoder.take_online_data(), b"SAME-READ")
 
     def test_published_device_requires_a_bounded_pts_path(self) -> None:

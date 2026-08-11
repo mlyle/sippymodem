@@ -197,6 +197,26 @@ static struct dp_driver *get_dp_driver(enum DP_ID id)
 	return NULL;
 }
 
+static int rate_uses_v32bis(unsigned int rate)
+{
+	return rate == 7200 || rate == 12000 || rate == 14400;
+}
+
+const char *modem_active_modulation_name(const struct modem *m)
+{
+	struct dp_driver *driver;
+
+	if (m == NULL || m->dp == NULL)
+		return NULL;
+	/* V.32 and V.32bis share one family datapump. The negotiated rate
+	 * distinguishes the extension-only operating modes. */
+	if (m->dp->id == DP_V32 &&
+	    (rate_uses_v32bis(m->rx_rate) || rate_uses_v32bis(m->tx_rate)))
+		return "V32bis";
+	driver = get_dp_driver(m->dp->id);
+	return driver != NULL ? driver->name : NULL;
+}
+
 static struct dp_operations *get_dp_operations(enum DP_ID id)
 {
 	struct dp_driver *p;
@@ -295,10 +315,10 @@ static void modem_report_result(struct modem *m, enum MODEM_RESULT code)
 		if(code==RESULT_CONNECT) {
 			msg_mask = modem_get_sreg(m,SREG_CONNNECT_MSG_FORMAT);
 			if(msg_mask&1) {
-				struct dp_driver *dp_drv;
 				modem_put_chars(m,"Modulation: ",12);
-				dp_drv = get_dp_driver(m->dp->id);
-				msg = (dp_drv) ? dp_drv->name : none_str;
+				msg = modem_active_modulation_name(m);
+				if (msg == NULL)
+					msg = none_str;
 				modem_put_chars(m,msg,strlen(msg));
 				modem_put_chars(m,CRLF_CHARS(m),2);
 			}
@@ -310,7 +330,17 @@ static void modem_report_result(struct modem *m, enum MODEM_RESULT code)
 			}
 			if((msg_mask&3) == 3) {
 				modem_put_chars(m,"Compression: ",13);
-				msg = (m->cfg.ec && m->cfg.comp)? "V42bis" : none_str;
+				switch (modem_ec_active_compression(m)) {
+				case MODEM_EC_COMPRESSION_V44:
+					msg = "V44";
+					break;
+				case MODEM_EC_COMPRESSION_V42BIS:
+					msg = "V42bis";
+					break;
+				default:
+					msg = none_str;
+					break;
+				}
 				modem_put_chars(m,msg,strlen(msg));
 				modem_put_chars(m,CRLF_CHARS(m),2);
 			}

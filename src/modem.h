@@ -79,6 +79,12 @@ enum MODEM_MODE {
 #define STATUS_EC_RELEASE 0x2000 // 18
 #define STATUS_EC_ERROR   0x4000 // 19
 
+enum modem_ec_compression {
+	MODEM_EC_COMPRESSION_NONE = 0,
+	MODEM_EC_COMPRESSION_V42BIS,
+	MODEM_EC_COMPRESSION_V44,
+};
+
 
 /*
  *    parameters
@@ -448,6 +454,10 @@ extern int  modem_ec_init(struct modem *m);
 extern void modem_ec_exit(struct modem *m);
 extern void modem_ec_start(struct modem *m);
 extern void modem_ec_stop(struct modem *m);
+extern enum modem_ec_compression
+modem_ec_active_compression(const struct modem *m);
+/* Returns a process-lifetime literal, or NULL when no datapump is active. */
+extern const char *modem_active_modulation_name(const struct modem *m);
 
 /* status & config */
 extern void modem_update_status(struct modem *m, unsigned status);

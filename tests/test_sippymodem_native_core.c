@@ -147,6 +147,36 @@ static bool test_v32_preserves_error_control_detection(void)
 	return true;
 }
 
+static bool test_modulation_report_identity(void)
+{
+	struct modem modem = { 0 };
+	struct dp datapump = { .id = DP_V32 };
+	static const struct {
+		unsigned int rate;
+		const char *name;
+	} cases[] = {
+		{ 4800, "V32" },
+		{ 7200, "V32bis" },
+		{ 9600, "V32" },
+		{ 12000, "V32bis" },
+		{ 14400, "V32bis" },
+	};
+
+	CHECK(modem_active_modulation_name(NULL) == NULL &&
+		      modem_active_modulation_name(&modem) == NULL,
+	      "inactive modem reported a modulation");
+	modem.dp = &datapump;
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		modem.rx_rate = cases[index].rate;
+		modem.tx_rate = cases[index].rate;
+		CHECK(strcmp(modem_active_modulation_name(&modem),
+			     cases[index].name) == 0,
+		      "rate %u reported the wrong modulation family",
+		      cases[index].rate);
+	}
+	return true;
+}
+
 static bool test_v8_datapump_mapping(void)
 {
 	CHECK(sippymodem_v8_datapump_modulation(DP_V21) ==
@@ -281,6 +311,15 @@ static bool test_at_v42bis_compression_profile(void)
 	CHECK(process_at_command(modem, chained) == 0 &&
 		      modem_get_sreg(modem, SREG_COMP) == 0,
 	      "AT+DS did not preserve concatenated command parsing");
+	modem->cfg.ec = 1;
+	modem->cfg.comp = 3;
+	CHECK(modem_ec_active_compression(modem) ==
+		      MODEM_EC_COMPRESSION_V42BIS,
+	      "legacy compression state was not reported explicitly");
+	modem->cfg.ec = 0;
+	CHECK(modem_ec_active_compression(modem) ==
+		      MODEM_EC_COMPRESSION_NONE,
+	      "disabled error correction reported active compression");
 	CHECK(modem_set_sreg(modem, SREG_COMP, 2) == 0 &&
 		      process_at_command(modem, unsupported) == -1 &&
 		      modem_get_sreg(modem, SREG_COMP) == 2,
@@ -423,7 +462,9 @@ static bool test_lapm_xid_envelopes(void)
 	CHECK(caller->ec.lapm.config == 0 &&
 		      caller->ec.lapm.v44_session.phase ==
 			      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
-		      caller->ec.lapm.v44_path != NULL && caller->cfg.comp == 0,
+		      caller->ec.lapm.v44_path != NULL && caller->cfg.comp == 0 &&
+		      modem_ec_active_compression(caller) ==
+			      MODEM_EC_COMPRESSION_V44,
 	      "valid XID response did not activate the caller V.44 path");
 	outgoing = caller->packer.hdlc.get_tx_frame(
 		caller->packer.hdlc.framer);
@@ -1085,6 +1126,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
+		{ "modulation report identity", test_modulation_report_identity },
 		{ "V.32 error-control detection",
 		  test_v32_preserves_error_control_detection },
 		{ "source-built core lifecycle",

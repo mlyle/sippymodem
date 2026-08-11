@@ -128,6 +128,9 @@ bounded 54-byte pattern over direct SIP at V.21 300 bit/s and at every
 implemented V.32/V.32bis rate from 4800 through 14400 bit/s. These milestone
 observations establish functional interoperation, not a repeatability or
 impaired-line qualification matrix; their recordings remain private and ignored.
+Fresh diagnostic calls reported symmetric raw V.21 at 300 bit/s without LAPM
+or compression, V.32 at 9600 bit/s with LAPM and V.42bis, and V.32bis at 14400
+bit/s with LAPM and V.42bis; each again transferred all 54 expected bytes.
 
 The runner clears inherited SIP settings before applying the private file,
 uses ephemeral local ports unless the file explicitly selects ports, and never
@@ -137,7 +140,11 @@ redacted result, daemon diagnostics, and bounded media recordings. Enabled
 plans and credentials require the private configuration file to have no group
 or other permissions. Data-verifying plans also retain bounded
 `terminal-tx.bin` and `terminal-rx.bin` evidence there with owner-only access;
-the public result reports only expected and verified byte counts.
+the public result represents terminal payload only as expected and verified
+byte counts. The runner also requests CONNECT diagnostics and records the
+negotiated modulation, protocol, compression method, and transmit and receive
+rates; it accepts only known labels and bounded numeric rates, discarding
+arbitrary modem text.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
 import os
 import re
 import selectors
@@ -36,10 +37,39 @@ RESULT_BY_LINE = {
     b"BUSY": "busy",
     b"NO ANSWER": "no-answer",
 }
+CONNECT_MODULATIONS = {
+    b"V21": "V.21",
+    b"V22": "V.22",
+    b"V22BIS": "V.22bis",
+    b"V23": "V.23",
+    b"V32": "V.32",
+    b"V32BIS": "V.32bis",
+    b"BELL103": "Bell 103",
+    b"BELL212A": "Bell 212A",
+    b"BAUDOT TTY/TDD": "Baudot TTY/TDD",
+}
+CONNECT_PROTOCOLS = {b"LAPM": "LAPM", b"NONE": "none"}
+CONNECT_COMPRESSIONS = {
+    b"V44": "V.44",
+    b"V42BIS": "V.42bis",
+    b"NONE": "none",
+}
+CONNECT_RATE_MAX = 1_000_000
 
 
 class LiveTerminalError(RuntimeError):
     """A modem terminal published unsafe or unusable state."""
+
+
+@dataclass(frozen=True)
+class ConnectReport:
+    """Allowlisted modem details associated with one CONNECT response."""
+
+    modulation: str | None = None
+    protocol: str | None = None
+    compression: str | None = None
+    receive_bit_rate: int | None = None
+    transmit_bit_rate: int | None = None
 
 
 class ResponseDecoder:
@@ -52,6 +82,11 @@ class ResponseDecoder:
         self._discarding_line = False
         self._online = False
         self._skip_line_feed = False
+        self._modulation: str | None = None
+        self._protocol: str | None = None
+        self._compression: str | None = None
+        self._receive_bit_rate: int | None = None
+        self._transmit_bit_rate: int | None = None
 
     def feed(self, data: bytes) -> None:
         for byte in data:
@@ -66,10 +101,23 @@ class ResponseDecoder:
                 continue
             if byte in (0x0A, 0x0D):
                 if not self._discarding_line and self._line:
-                    result = _classify_response(bytes(self._line))
+                    line = bytes(self._line)
+                    detail = _classify_connect_detail(line)
+                    if detail is not None:
+                        name, value = detail
+                        if name == "modulation":
+                            self._modulation = value
+                        elif name == "protocol":
+                            self._protocol = value
+                        elif name == "compression":
+                            self._compression = value
+                        elif name == "transmit_bit_rate":
+                            self._transmit_bit_rate = value
+                    result = _classify_response(line)
                     if result is not None:
                         self._results.append(result)
                         if result == "connect":
+                            self._receive_bit_rate = _connect_rate(line)
                             self._online = True
                             self._skip_line_feed = byte == 0x0D
                 self._line.clear()
@@ -93,6 +141,16 @@ class ResponseDecoder:
         self._online_data.clear()
         return data
 
+    @property
+    def connect_report(self) -> ConnectReport:
+        return ConnectReport(
+            modulation=self._modulation,
+            protocol=self._protocol,
+            compression=self._compression,
+            receive_bit_rate=self._receive_bit_rate,
+            transmit_bit_rate=self._transmit_bit_rate,
+        )
+
     def begin_command_response(self) -> None:
         self._line.clear()
         self._online_data.clear()
@@ -100,6 +158,11 @@ class ResponseDecoder:
         self._discarding_line = False
         self._online = False
         self._skip_line_feed = False
+        self._modulation = None
+        self._protocol = None
+        self._compression = None
+        self._receive_bit_rate = None
+        self._transmit_bit_rate = None
 
 
 def _classify_response(line: bytes) -> str | None:
@@ -107,6 +170,39 @@ def _classify_response(line: bytes) -> str | None:
     if normalized == b"CONNECT" or normalized.startswith(b"CONNECT "):
         return "connect"
     return RESULT_BY_LINE.get(normalized)
+
+
+def _positive_rate(value: bytes) -> int | None:
+    if not value or len(value) > 7 or not value.isdigit():
+        return None
+    rate = int(value)
+    return rate if 0 < rate <= CONNECT_RATE_MAX else None
+
+
+def _connect_rate(line: bytes) -> int | None:
+    normalized = line.strip().upper()
+    prefix = b"CONNECT "
+    if not normalized.startswith(prefix):
+        return None
+    return _positive_rate(normalized[len(prefix) :])
+
+
+def _classify_connect_detail(line: bytes) -> tuple[str, str | int] | None:
+    normalized = line.strip().upper()
+    text_fields = (
+        (b"MODULATION:", "modulation", CONNECT_MODULATIONS),
+        (b"PROTOCOL:", "protocol", CONNECT_PROTOCOLS),
+        (b"COMPRESSION:", "compression", CONNECT_COMPRESSIONS),
+    )
+    for prefix, name, values in text_fields:
+        if normalized.startswith(prefix):
+            value = values.get(normalized[len(prefix) :].strip())
+            return (name, value) if value is not None else None
+    prefix = b"TXRATE:"
+    if normalized.startswith(prefix):
+        rate = _positive_rate(normalized[len(prefix) :].strip())
+        return ("transmit_bit_rate", rate) if rate is not None else None
+    return None
 
 
 class ModemTerminal:
@@ -133,6 +229,10 @@ class ModemTerminal:
             descriptor = self._descriptor
             self._descriptor = -1
             os.close(descriptor)
+
+    @property
+    def connect_report(self) -> ConnectReport:
+        return self._decoder.connect_report
 
     def __enter__(self) -> ModemTerminal:
         return self

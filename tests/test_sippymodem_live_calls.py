@@ -116,6 +116,11 @@ class LiveCallRunnerTests(unittest.TestCase):
                 "duration_seconds",
                 "terminal_expected_bytes",
                 "terminal_verified_bytes",
+                "modulation",
+                "protocol",
+                "compression",
+                "receive_bit_rate",
+                "transmit_bit_rate",
             },
         )
         self.assertNotIn("target", rendered)
@@ -176,6 +181,7 @@ master, slave = pty.openpty()
 tty.setraw(slave)
 print(os.ttyname(slave), flush=True)
 pending = b""
+details_enabled = False
 while True:
     pending += os.read(master, 4096)
     if b"+++" in pending:
@@ -183,8 +189,18 @@ while True:
         os.write(master, b"\\r\\nOK\\r\\n")
     while b"\\r" in pending:
         command, pending = pending.split(b"\\r", 1)
-        if command.startswith(b"ATD"):
-            os.write(master, b"\\r\\nCONNECT 300\\r\\nSIPPY-LIVE-OK\\r\\n")
+        if command == b"ATS95=7":
+            details_enabled = True
+            os.write(master, b"\\r\\nOK\\r\\n")
+        elif command.startswith(b"ATD") and details_enabled:
+            os.write(
+                master,
+                b"\\r\\nModulation: V32bis\\r\\nProtocol: LAPM\\r\\n"
+                b"Compression: V44\\r\\nTxRate: 12000\\r\\n"
+                b"CONNECT 14400\\r\\nSIPPY-LIVE-OK\\r\\n",
+            )
+        elif command.startswith(b"ATD"):
+            os.write(master, b"\\r\\nERROR\\r\\n")
         else:
             os.write(master, b"\\r\\nOK\\r\\n")
 """
@@ -210,6 +226,11 @@ while True:
             self.assertEqual(result.outcome, "connected")
             self.assertEqual(result.terminal_expected_bytes, 15)
             self.assertEqual(result.terminal_verified_bytes, 15)
+            self.assertEqual(result.modulation, "V.32bis")
+            self.assertEqual(result.protocol, "LAPM")
+            self.assertEqual(result.compression, "V.44")
+            self.assertEqual(result.receive_bit_rate, 14400)
+            self.assertEqual(result.transmit_bit_rate, 12000)
             attempt = next(config.artifact_directory.iterdir())
             received = attempt / "terminal-rx.bin"
             transmitted = attempt / "terminal-tx.bin"

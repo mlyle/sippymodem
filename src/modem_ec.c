@@ -1740,3 +1740,14 @@ void modem_ec_exit(struct modem *m)
 	struct lapm_state *l = &m->ec.lapm;
 	lapm_exit(l);
 }
+
+enum modem_ec_compression
+modem_ec_active_compression(const struct modem *m)
+{
+	if (m == NULL || !m->cfg.ec)
+		return MODEM_EC_COMPRESSION_NONE;
+	if (m->ec.lapm.v44_path != NULL)
+		return MODEM_EC_COMPRESSION_V44;
+	return m->cfg.comp ? MODEM_EC_COMPRESSION_V42BIS :
+			     MODEM_EC_COMPRESSION_NONE;
+}

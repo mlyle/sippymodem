@@ -30,6 +30,7 @@ if __package__:
         public_manifest,
     )
     from .sippymodem_live_terminal import (
+        ConnectReport,
         LiveTerminalError,
         ModemTerminal,
         read_published_device,
@@ -45,6 +46,7 @@ else:
         public_manifest,
     )
     from sippymodem_live_terminal import (
+        ConnectReport,
         LiveTerminalError,
         ModemTerminal,
         read_published_device,
@@ -69,6 +71,11 @@ class CallResult:
     duration_seconds: float
     terminal_expected_bytes: int = 0
     terminal_verified_bytes: int = 0
+    modulation: str | None = None
+    protocol: str | None = None
+    compression: str | None = None
+    receive_bit_rate: int | None = None
+    transmit_bit_rate: int | None = None
 
     def public_dict(self) -> dict[str, object]:
         return {
@@ -78,6 +85,11 @@ class CallResult:
             "duration_seconds": self.duration_seconds,
             "terminal_expected_bytes": self.terminal_expected_bytes,
             "terminal_verified_bytes": self.terminal_verified_bytes,
+            "modulation": self.modulation,
+            "protocol": self.protocol,
+            "compression": self.compression,
+            "receive_bit_rate": self.receive_bit_rate,
+            "transmit_bit_rate": self.transmit_bit_rate,
         }
 
 
@@ -198,12 +210,16 @@ class LiveCallAttempt:
         outcome = "infrastructure-error"
         expected_bytes = len(self._plan.online_expect)
         verified_bytes = 0
+        connect_report = ConnectReport()
         stage = "startup"
         try:
             self._start()
             stage = "setup"
             assert self._terminal is not None
-            commands = ("ATE0V1Q0",) + self._config.at_commands + self._plan.at_commands
+            commands = (
+                "ATE0V1Q0",
+                "ATS95=7",
+            ) + self._config.at_commands + self._plan.at_commands
             for command in commands:
                 if (
                     self._terminal.command(
@@ -220,6 +236,7 @@ class LiveCallAttempt:
                     self._config.call_timeout_seconds,
                 )
                 if response == "connect":
+                    connect_report = self._terminal.connect_report
                     if self._plan.online_expect:
                         stage = "data"
                         verified, received = self._terminal.exchange_online(
@@ -259,6 +276,11 @@ class LiveCallAttempt:
             duration_seconds=round(time.monotonic() - started, 3),
             terminal_expected_bytes=expected_bytes,
             terminal_verified_bytes=verified_bytes,
+            modulation=connect_report.modulation,
+            protocol=connect_report.protocol,
+            compression=connect_report.compression,
+            receive_bit_rate=connect_report.receive_bit_rate,
+            transmit_bit_rate=connect_report.transmit_bit_rate,
         )
         self._artifacts.write_result(result)
         return result
