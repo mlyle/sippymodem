@@ -66,6 +66,38 @@ static int unused_dp_process(
 	return DPSTAT_ERROR;
 }
 
+static bool test_v32_preserves_error_control_detection(void)
+{
+	struct modem_driver driver = {
+		.name = "V.32 error-control test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "V.32 error-control test");
+	struct dp datapump = {
+		.id = DP_V32,
+		.modem = modem,
+		.status = DPSTAT_CONNECT,
+	};
+
+	CHECK(modem != NULL, "V.32 error-control modem could not be created");
+	modem->dp = &datapump;
+	modem->caller = 1;
+	modem->cfg.ec = 1;
+	modem->cfg.ec_detector = 1;
+	modem->dsp_info.qc_lapm = 0;
+
+	modem_update_status(modem, STATUS_DP_LINK);
+	CHECK(modem->cfg.ec == 1 && modem->get_bits == modem_detector_get_bits &&
+		      modem->put_bits == modem_detector_put_bits,
+	      "V.32 link discarded its configured V.42 detector");
+
+	modem->dp = NULL;
+	modem_delete(modem);
+	return true;
+}
+
 static bool test_v8_datapump_mapping(void)
 {
 	CHECK(sippymodem_v8_datapump_modulation(DP_V21) ==
@@ -641,6 +673,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
+		{ "V.32 error-control detection",
+		  test_v32_preserves_error_control_detection },
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
 		{ "bounded AT dial destinations",
