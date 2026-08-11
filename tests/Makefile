@@ -54,6 +54,13 @@ V44_DICTIONARY_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v44_dictionary_decoder.o \
 	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
 	$(BUILD_DIR)/sippymodem_v44_stream.o
+V44_COMPRESSED_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v44_compressed_decoder
+V44_COMPRESSED_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v44_compressed_decoder.o \
+	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
+	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
+	$(BUILD_DIR)/sippymodem_v44_stream.o
 RTP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_rtp
 RTP_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_rtp.o \
 	$(BUILD_DIR)/sippymodem_rtp.o
@@ -944,6 +951,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(V44_STREAM_TEST_BINARY) $(V44_DICTIONARY_TEST_BINARY) \
+	$(V44_COMPRESSED_TEST_BINARY) \
 	$(RTP_TEST_BINARY) $(MEDIA_TEST_BINARY) $(RECEIVER_TEST_BINARY) \
 	$(STREAM_TEST_BINARY) $(ENDPOINT_TEST_BINARY) $(SIP_RTP_TEST_BINARY) \
 	$(RTP_RUNTIME_TEST_BINARY) $(SIP_MEDIA_BRIDGE_TEST_BINARY) \
@@ -1036,6 +1044,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(SDP_TEST_OBJECTS:.o=.d) $(G711_TEST_OBJECTS:.o=.d) \
 	$(V44_STREAM_TEST_OBJECTS:.o=.d) \
 	$(V44_DICTIONARY_TEST_OBJECTS:.o=.d) \
+	$(V44_COMPRESSED_TEST_OBJECTS:.o=.d) \
 	$(RTP_TEST_OBJECTS:.o=.d) $(MEDIA_TEST_OBJECTS:.o=.d) \
 	$(RECEIVER_TEST_OBJECTS:.o=.d) $(STREAM_TEST_OBJECTS:.o=.d) \
 	$(ENDPOINT_TEST_OBJECTS:.o=.d) $(SIP_RTP_TEST_OBJECTS:.o=.d) \
@@ -1147,6 +1156,7 @@ test: $(TEST_BINARIES)
 	./$(G711_TEST_BINARY)
 	./$(V44_STREAM_TEST_BINARY)
 	./$(V44_DICTIONARY_TEST_BINARY)
+	./$(V44_COMPRESSED_TEST_BINARY)
 	./$(RTP_TEST_BINARY)
 	./$(MEDIA_TEST_BINARY)
 	./$(RECEIVER_TEST_BINARY)
@@ -1277,6 +1287,9 @@ $(V44_STREAM_TEST_BINARY): $(V44_STREAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V44_DICTIONARY_TEST_BINARY): $(V44_DICTIONARY_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V44_COMPRESSED_TEST_BINARY): $(V44_COMPRESSED_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(RTP_TEST_BINARY): $(RTP_TEST_OBJECTS)
@@ -1645,6 +1658,10 @@ $(BUILD_DIR)/sippymodem_v44_stream.o: \
 
 $(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o: \
 	../src/sippymodem_v44_dictionary_decoder.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o: \
+	../src/sippymodem_v44_compressed_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_rtp.o: ../src/sippymodem_rtp.c | $(BUILD_DIR)
