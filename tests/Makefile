@@ -322,7 +322,10 @@ NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
 NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
-	$(BUILD_DIR)/sippymodem_v42_xid.o
+	$(BUILD_DIR)/sippymodem_lapm_v44_session.o \
+	$(BUILD_DIR)/sippymodem_v42_xid.o \
+	$(BUILD_DIR)/sippymodem_v44_xid.o \
+	$(BUILD_DIR)/sippymodem_v44_stream.o
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/sippymodem_datapumps.o \

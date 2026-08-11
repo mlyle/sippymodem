@@ -51,6 +51,7 @@
 #include <modem_dp.h>
 #include <modem_timer.h>
 #include <sippymodem_dc_filter.h>
+#include <sippymodem_lapm_v44_session.h>
 
 
 /* modem modes */
@@ -203,6 +204,7 @@ typedef struct hdlc_frame {
 struct lapm_state {
         /* modem link */
         struct modem *modem;
+        struct sippymodem_lapm_v44_session v44_session;
         int state;
         /* sub-states: may be optimized */
         int config;

@@ -426,8 +426,23 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
                  ((value)>=(default) && (param)>(value))) \
                 (param) = (value); }
 
-static int parse_xid_params(
-	struct lapm_state *l, const u8 *buf, int len)
+#define DEFAULT_MODEM_EC_CONFIG {1,1,15,15,128,128,0,512,6}
+
+enum {
+	XID_PARAMETER_LENGTH = 19,
+	XID_PRIVATE_LENGTH = 15,
+};
+
+struct lapm_xid_config {
+	unsigned int tx_win_size;
+	unsigned int rx_win_size;
+	unsigned int tx_info_size;
+	unsigned int rx_info_size;
+	struct modem_config modem;
+};
+
+static void parse_xid_params(
+	struct lapm_xid_config *config, const u8 *buf, int len)
 {
 	u32 pval;
 	u8 pid, plen;
@@ -440,36 +455,34 @@ static int parse_xid_params(
 			break;
 		switch (pid) {
 		case PI_HDLC_OPTFUNCS:
-			pval = lapm_get_le_val(buf,plen);
 			break;
 		case PI_TX_INFO_MAXSIZE:
 			pval = lapm_get_be_val(buf,plen);
 			pval >>= 3;
-			SET_PARAM(l->tx_info_size,pval,LAPM_DFLT_INFO_SIZE);
+			SET_PARAM(config->tx_info_size,pval,LAPM_DFLT_INFO_SIZE);
 			break;
 		case PI_RX_INFO_MAXSIZE:
 			pval = lapm_get_be_val(buf,plen);
 			pval >>= 3;
-			SET_PARAM(l->rx_info_size,pval,LAPM_DFLT_INFO_SIZE);
+			SET_PARAM(config->rx_info_size,pval,LAPM_DFLT_INFO_SIZE);
 			break;
 		case PI_TX_WINDOW_SIZE:
 			pval = lapm_get_be_val(buf,plen);
-			SET_PARAM(l->tx_win_size,pval,LAPM_DFLT_WIN_SIZE);
+			SET_PARAM(config->tx_win_size,pval,LAPM_DFLT_WIN_SIZE);
 			break;
 		case PI_RX_WINDOW_SIZE:
 			pval = lapm_get_be_val(buf,plen);
-			SET_PARAM(l->rx_win_size,pval,LAPM_DFLT_WIN_SIZE);
+			SET_PARAM(config->rx_win_size,pval,LAPM_DFLT_WIN_SIZE);
 			break;
 		default:
 			break;
 		}
 		buf += plen;
 	}
-	return 0;
 }
 
 
-static int parse_xid_private_params(
+static void parse_xid_private_params(
 	struct modem_config *cfg, const u8 *buf, int len)
 {
 	u8 pid, plen;
@@ -498,18 +511,15 @@ static int parse_xid_private_params(
 		}
 		buf += plen;
 	}
-	return 0;
 }
 
-#define DEFAULT_MODEM_EC_CONFIG {1,1,15,15,128,128,0,512,6}
-
-static int rx_xid(struct lapm_state *l, frame_t *f)
+static int decode_xid(
+	struct lapm_state *l, frame_t *f, struct lapm_xid_config *config)
 {
-	struct modem_config cfg = DEFAULT_MODEM_EC_CONFIG;
 	struct sippymodem_v42_xid_fields fields;
 	size_t length;
 
-	if (f == NULL || f->buf == NULL || f->count < 2)
+	if (f == NULL || f->buf == NULL || f->count < 2 || config == NULL)
 		return -1;
 	length = (size_t)f->count - 2U;
 	LAPM_PRINT_XID("rx_xid",f,(int)length);
@@ -517,82 +527,181 @@ static int rx_xid(struct lapm_state *l, frame_t *f)
 			f->buf + 2, length, &fields) !=
 			SIPPYMODEM_V42_XID_OK)
 		return -1;
+	*config = (struct lapm_xid_config) {
+		.tx_win_size = l->tx_win_size,
+		.rx_win_size = l->rx_win_size,
+		.tx_info_size = l->tx_info_size,
+		.rx_info_size = l->rx_info_size,
+		.modem = DEFAULT_MODEM_EC_CONFIG,
+	};
 	if (fields.parameter_negotiation != NULL)
 		parse_xid_params(
-			l, fields.parameter_negotiation,
+			config, fields.parameter_negotiation,
 			(int)fields.parameter_negotiation_length);
 	if (fields.private_negotiation != NULL)
 		parse_xid_private_params(
-			&cfg, fields.private_negotiation,
+			&config->modem, fields.private_negotiation,
 			(int)fields.private_negotiation_length);
-	cfg.ec_tx_win_size  = l->tx_win_size;
-	cfg.ec_rx_win_size  = l->rx_win_size;
-	cfg.ec_tx_info_size = l->tx_info_size;
-	cfg.ec_rx_info_size = l->rx_info_size;
-	modem_update_config(l->modem,&cfg);
+	config->modem.ec_tx_win_size = config->tx_win_size;
+	config->modem.ec_rx_win_size = config->rx_win_size;
+	config->modem.ec_tx_info_size = config->tx_info_size;
+	config->modem.ec_rx_info_size = config->rx_info_size;
 	return 0;
 }
 
-static int tx_xid(struct lapm_state *l, u8 addr)
+static void apply_xid_config(
+	struct lapm_state *l, const struct lapm_xid_config *config)
 {
-	enum {
-		PARAMETER_LENGTH = 19,
-		PRIVATE_LENGTH = 15,
-		XID_CAPACITY = 1 + 3 + PARAMETER_LENGTH + 3 + PRIVATE_LENGTH,
+	struct modem_config modem = config->modem;
+
+	l->tx_win_size = config->tx_win_size;
+	l->rx_win_size = config->rx_win_size;
+	l->tx_info_size = config->tx_info_size;
+	l->rx_info_size = config->rx_info_size;
+	modem_update_config(l->modem, &modem);
+}
+
+static struct lapm_xid_config current_xid_config(
+	const struct lapm_state *l)
+{
+	const struct lapm_xid_config config = {
+		.tx_win_size = l->tx_win_size,
+		.rx_win_size = l->rx_win_size,
+		.tx_info_size = l->tx_info_size,
+		.rx_info_size = l->rx_info_size,
+		.modem = l->modem->cfg,
 	};
-	u8 parameters[PARAMETER_LENGTH] = {
+
+	return config;
+}
+
+static void build_xid_fields(
+	const struct lapm_xid_config *config,
+	u8 parameters[XID_PARAMETER_LENGTH],
+	u8 private_parameters[XID_PRIVATE_LENGTH],
+	struct sippymodem_v42_xid_fields *fields)
+{
+	static const u8 parameter_template[XID_PARAMETER_LENGTH] = {
 		PI_HDLC_OPTFUNCS, 3, 0x8a, 0x89, 0x00,
 		PI_TX_INFO_MAXSIZE, 2, 0, 0,
 		PI_RX_INFO_MAXSIZE, 2, 0, 0,
 		PI_TX_WINDOW_SIZE, 1, 0,
 		PI_RX_WINDOW_SIZE, 1, 0,
 	};
-	u8 private_parameters[PRIVATE_LENGTH] = {
+	static const u8 private_template[XID_PRIVATE_LENGTH] = {
 		PI_PARAMETER_SET_ID, 3, 0x56, 0x34, 0x32,
 		PI_V42BIS_REQUEST, 1, 0,
 		PI_V42BIS_CW_NUMBER, 2, 0, 0,
 		PI_V42BIS_MAX_STRING, 1, 0,
 	};
-	u8 xid[XID_CAPACITY];
-	struct sippymodem_v42_xid_fields fields = {
-		.parameter_negotiation = parameters,
-		.parameter_negotiation_length = sizeof(parameters),
-	};
-	size_t xid_length = 0;
 	u32 pval;
-	frame_t *f;
 
-	pval = l->tx_info_size<<3;
+	memcpy(parameters, parameter_template, sizeof(parameter_template));
+	memcpy(private_parameters, private_template, sizeof(private_template));
+	*fields = (struct sippymodem_v42_xid_fields) {
+		.parameter_negotiation = parameters,
+		.parameter_negotiation_length = XID_PARAMETER_LENGTH,
+	};
+	pval = config->tx_info_size<<3;
 	parameters[7] = (pval>>8)&0xff;
 	parameters[8] = pval&0xff;
-	pval = l->rx_info_size<<3;
+	pval = config->rx_info_size<<3;
 	parameters[11] = (pval>>8)&0xff;
 	parameters[12] = pval&0xff;
-	parameters[15] = l->tx_win_size;
-	parameters[18] = l->rx_win_size;
-	if(l->modem->cfg.comp) {
-		private_parameters[7] = l->modem->cfg.comp;
-		pval = l->modem->cfg.comp_dict_size;
+	parameters[15] = config->tx_win_size;
+	parameters[18] = config->rx_win_size;
+	if(config->modem.comp) {
+		private_parameters[7] = config->modem.comp;
+		pval = config->modem.comp_dict_size;
 		private_parameters[10] = (pval>>8)&0xff;
 		private_parameters[11] = pval&0xff;
-		private_parameters[14] = l->modem->cfg.comp_max_string;
-		fields.private_negotiation = private_parameters;
-		fields.private_negotiation_length = sizeof(private_parameters);
+		private_parameters[14] = config->modem.comp_max_string;
+		fields->private_negotiation = private_parameters;
+		fields->private_negotiation_length = XID_PRIVATE_LENGTH;
 	}
-	if (sippymodem_v42_xid_encode(
-			&fields, xid, sizeof(xid), &xid_length) !=
-			SIPPYMODEM_V42_XID_OK)
+}
+
+static int queue_xid(
+	struct lapm_state *l, u8 addr,
+	const struct sippymodem_lapm_v44_prepared *prepared)
+{
+	frame_t *f;
+
+	if (prepared == NULL || prepared->length > LAPM_MAX_INFO_SIZE)
 		return -1;
 	f = get_ctrl_frame(l);
 	if (!f) {
-		EC_ERR("tx_xid: cannot alloc frame.\n");
+		EC_ERR("queue_xid: cannot alloc frame.\n");
 		return -1;
 	}
 	f->buf[0] = addr;
 	f->buf[1] = FRAME_U_XID;
-	memcpy(f->buf + 2, xid, xid_length);
-	f->size = 2 + xid_length;
-	LAPM_PRINT_XID("tx_xid",f,(int)xid_length);
+	memcpy(f->buf + 2, prepared->data, prepared->length);
+	f->size = 2 + prepared->length;
+	if (sippymodem_lapm_v44_commit(&l->v44_session, prepared) !=
+	    SIPPYMODEM_LAPM_V44_OK) {
+		l->ctrl_list = f;
+		l->ctrl_count++;
+		return -1;
+	}
+	LAPM_PRINT_XID("tx_xid",f,(int)prepared->length);
+	return 0;
+}
+
+static int tx_xid_command(struct lapm_state *l)
+{
+	struct sippymodem_lapm_v44_prepared prepared;
+	enum sippymodem_lapm_v44_result result;
+
+	if (l->v44_session.phase == SIPPYMODEM_LAPM_V44_COMMAND_PENDING)
+		result = sippymodem_lapm_v44_prepare_retransmission(
+			&l->v44_session, &prepared);
+	else {
+		struct lapm_xid_config config = current_xid_config(l);
+		u8 parameters[XID_PARAMETER_LENGTH];
+		u8 private_parameters[XID_PRIVATE_LENGTH];
+		struct sippymodem_v42_xid_fields fields;
+
+		build_xid_fields(
+			&config, parameters, private_parameters, &fields);
+		result = sippymodem_lapm_v44_prepare_command(
+			&l->v44_session, &fields, &prepared);
+	}
+	if (result != SIPPYMODEM_LAPM_V44_OK)
+		return -1;
+	return queue_xid(l, l->cmd_addr, &prepared);
+}
+
+static int rx_xid_command(struct lapm_state *l, frame_t *f)
+{
+	struct lapm_xid_config config;
+	struct sippymodem_lapm_v44_prepared prepared;
+	u8 parameters[XID_PARAMETER_LENGTH];
+	u8 private_parameters[XID_PRIVATE_LENGTH];
+	struct sippymodem_v42_xid_fields fields;
+
+	if (decode_xid(l, f, &config) != 0)
+		return -1;
+	build_xid_fields(&config, parameters, private_parameters, &fields);
+	if (sippymodem_lapm_v44_prepare_response(
+			&l->v44_session, f->buf + 2, (size_t)f->count - 2U,
+			&fields, &prepared) != SIPPYMODEM_LAPM_V44_OK ||
+	    queue_xid(l, l->rsp_addr, &prepared) != 0)
+		return -1;
+	apply_xid_config(l, &config);
+	return 0;
+}
+
+static int rx_xid_response(struct lapm_state *l, frame_t *f)
+{
+	struct lapm_xid_config config;
+
+	if (decode_xid(l, f, &config) != 0 ||
+	    sippymodem_lapm_v44_accept_response(
+		    &l->v44_session, f->buf + 2,
+		    (size_t)f->count - 2U) != SIPPYMODEM_LAPM_V44_OK)
+		return -1;
+	apply_xid_config(l, &config);
 	return 0;
 }
 
@@ -606,6 +715,14 @@ static void t401_timeout(struct modem *m)
 	if (l->rtx_count > LAPM_MAX_RTX ) {
 		EC_DBG("t401: max retransmission count was reached.\n");
 		l->rtx_count = 0;
+		if (l->config) {
+			l->config = 0;
+			l->state = LAPM_IDLE;
+			sippymodem_lapm_v44_session_call_reset(
+				&l->v44_session);
+			modem_update_status(l->modem, STATUS_EC_RELEASE);
+			return;
+		}
 		// TBD
 		switch(l->state) {
 		case LAPM_ESTAB:
@@ -623,7 +740,7 @@ static void t401_timeout(struct modem *m)
 	}
 	l->rtx_count++;
 	if (l->config) {
-		tx_xid(l,l->cmd_addr);
+		tx_xid_command(l);
 	}
 	else {
 		switch(l->state) {
@@ -1005,8 +1122,7 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_U_XID:
 		/* exchange general id info */
-		if (rx_xid(l,f) == 0)
-			tx_xid(l,l->rsp_addr);
+		rx_xid_command(l,f);
 		break;
 	case FRAME_U_TEST:
 		/* TBD */
@@ -1090,7 +1206,7 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		/* TBD */
 		break;
 	case FRAME_U_XID:
-		if (l->config && rx_xid(l,f) == 0) {
+		if (l->config && rx_xid_response(l,f) == 0) {
 			l->config = 0;
 			T401_STOP(l);
 			if (l->state == LAPM_IDLE) {
@@ -1242,12 +1358,13 @@ static int lapm_connect(struct lapm_state *l)
 /* negotiate params */
 static int lapm_config(struct lapm_state *l)
 {
+	if (tx_xid_command(l) != 0)
+		return -1;
 	l->config = 1;
 	if (l->state == LAPM_DATA) {
 		l->busy = 1;
 		TX_RNR(l,l->cmd_addr,1);
 	}
-	tx_xid(l,l->cmd_addr);
 	T401_START(l);
 	return 0;
 }
@@ -1315,6 +1432,8 @@ static int alloc_frames(struct lapm_state *l)
 
 static int lapm_init(struct lapm_state *l, struct modem *m)
 {
+	struct sippymodem_lapm_v44_config v44_config;
+
 	memset(l,0,sizeof(*l));
 	l->modem = m;
 	l->state      = LAPM_IDLE;
@@ -1328,6 +1447,15 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 	l->rx_win_size  = m->cfg.ec_rx_win_size;
 	l->tx_info_size = m->cfg.ec_tx_info_size;
 	l->rx_info_size = m->cfg.ec_rx_info_size;
+	v44_config = (struct sippymodem_lapm_v44_config) {
+		.enabled = false,
+		.native_v44_ready = false,
+		.local_offer = sippymodem_v44_default_offer(),
+	};
+	if (sippymodem_lapm_v44_session_init(
+			&l->v44_session, &v44_config) !=
+			SIPPYMODEM_LAPM_V44_OK)
+		return -1;
 
 	alloc_frames(l);
 	reset(l);
@@ -1349,7 +1477,8 @@ static void modem_ec_negotiate(struct modem *m)
 {
 	m->packer.hdlc.tx_complete  = lapm_tx_complete;
 	m->packer.hdlc.get_tx_frame = lapm_get_tx_frame;
-	lapm_config(&m->ec.lapm);
+	if (lapm_config(&m->ec.lapm) != 0)
+		modem_update_status(m, STATUS_EC_ERROR);
 }
 
 void modem_ec_start(struct modem *m)
@@ -1385,8 +1514,7 @@ void modem_ec_stop(struct modem *m)
 int modem_ec_init(struct modem *m)
 {
 	struct lapm_state *l = &m->ec.lapm;
-	lapm_init(l,m);
-	return 0;
+	return lapm_init(l,m);
 }
 
 void modem_ec_exit(struct modem *m)
