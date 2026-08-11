@@ -277,9 +277,11 @@ static bool test_lapm_xid_envelopes(void)
 	struct modem *caller = modem_create(&driver, "LAPM XID caller");
 	struct modem *answerer = modem_create(&driver, "LAPM XID answerer");
 	struct sippymodem_v42_xid_fields fields;
+	uint8_t command[LAPM_MAX_INFO_SIZE + 4];
 	uint8_t received[LAPM_MAX_INFO_SIZE + 4];
 	frame_t incoming = { .buf = received };
 	frame_t *outgoing;
+	int command_size;
 
 	CHECK(caller != NULL && answerer != NULL,
 	      "LAPM XID peers could not be created");
@@ -301,8 +303,14 @@ static bool test_lapm_xid_envelopes(void)
 			      &fields) == SIPPYMODEM_V42_XID_OK &&
 		      fields.parameter_negotiation_length == 19 &&
 		      fields.private_negotiation_length == 15 &&
-		      fields.user_data == NULL,
+		      fields.user_data == NULL &&
+		      caller->ec.lapm.v44_session.phase ==
+			      SIPPYMODEM_LAPM_V44_COMMAND_PENDING,
 	      "LAPM caller did not emit a bounded legacy XID envelope");
+	command_size = outgoing->size;
+	memcpy(command, outgoing->buf, (size_t)command_size);
+	caller->packer.hdlc.tx_complete(
+		caller->packer.hdlc.framer, outgoing);
 	{
 		static const uint8_t truncated[] = {
 			0x82, 0x80, 0x00, 0x03, 0x03, 0x01,
@@ -314,15 +322,47 @@ static bool test_lapm_xid_envelopes(void)
 		incoming.count = 2 + sizeof(truncated);
 		caller->packer.hdlc.rx_complete(
 			caller->packer.hdlc.framer, &incoming);
-		CHECK(caller->ec.lapm.config == 1,
+		CHECK(caller->ec.lapm.config == 1 &&
+			      caller->ec.lapm.v44_session.phase ==
+				      SIPPYMODEM_LAPM_V44_COMMAND_PENDING,
 		      "malformed XID response completed LAPM negotiation");
 	}
+	caller->bit_timer_func(caller);
+	outgoing = caller->packer.hdlc.get_tx_frame(
+		caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->size == command_size &&
+		      memcmp(outgoing->buf, command, (size_t)command_size) == 0,
+	      "LAPM XID retransmission changed its frozen wire image");
 	memcpy(received, outgoing->buf, (size_t)outgoing->size);
 	incoming.count = outgoing->size;
 	caller->packer.hdlc.tx_complete(
 		caller->packer.hdlc.framer, outgoing);
+	{
+		frame_t *const saved_next = answerer->ec.lapm.ctrl_list->next;
+		bool unchanged;
+
+		answerer->ec.lapm.tx_info_size = 96;
+		answerer->ec.lapm.rx_info_size = 96;
+		answerer->ec.lapm.ctrl_list->next = answerer->ec.lapm.tx_ctrl;
+		answerer->packer.hdlc.rx_complete(
+			answerer->packer.hdlc.framer, &incoming);
+		unchanged = answerer->ec.lapm.tx_info_size == 96 &&
+			    answerer->ec.lapm.rx_info_size == 96 &&
+			    answerer->ec.lapm.v44_session.phase ==
+				    SIPPYMODEM_LAPM_V44_READY &&
+			    answerer->packer.hdlc.get_tx_frame(
+				    answerer->packer.hdlc.framer) == NULL;
+		answerer->ec.lapm.ctrl_list->next = saved_next;
+		CHECK(unchanged,
+		      "XID response queue pressure changed negotiated state");
+	}
 	answerer->packer.hdlc.rx_complete(
 		answerer->packer.hdlc.framer, &incoming);
+	CHECK(answerer->ec.lapm.tx_info_size == 128 &&
+		      answerer->ec.lapm.rx_info_size == 128 &&
+		      answerer->ec.lapm.v44_session.phase ==
+			      SIPPYMODEM_LAPM_V44_DECLINED,
+	      "disabled native V.44 did not decline the command safely");
 	outgoing = answerer->packer.hdlc.get_tx_frame(
 		answerer->packer.hdlc.framer);
 	CHECK(outgoing != NULL && outgoing->buf[1] == XID_CONTROL &&
@@ -336,8 +376,29 @@ static bool test_lapm_xid_envelopes(void)
 		answerer->packer.hdlc.framer, outgoing);
 	caller->packer.hdlc.rx_complete(
 		caller->packer.hdlc.framer, &incoming);
-	CHECK(caller->ec.lapm.config == 0,
+	CHECK(caller->ec.lapm.config == 0 &&
+		      caller->ec.lapm.v44_session.phase ==
+			      SIPPYMODEM_LAPM_V44_DECLINED,
 	      "valid XID response did not complete LAPM negotiation");
+	outgoing = caller->packer.hdlc.get_tx_frame(
+		caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL,
+	      "completed XID negotiation did not queue link establishment");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	caller->packer.hdlc.tx_complete(
+		caller->packer.hdlc.framer, outgoing);
+	answerer->packer.hdlc.rx_complete(
+		answerer->packer.hdlc.framer, &incoming);
+	CHECK(answerer->ec.lapm.v44_session.phase ==
+		      SIPPYMODEM_LAPM_V44_DECLINED,
+	      "LAPM sequence reset erased completed V.44 negotiation");
+	outgoing = answerer->packer.hdlc.get_tx_frame(
+		answerer->packer.hdlc.framer);
+	CHECK(outgoing != NULL,
+	      "LAPM answerer did not acknowledge link establishment");
+	answerer->packer.hdlc.tx_complete(
+		answerer->packer.hdlc.framer, outgoing);
 
 	{
 		static const uint8_t truncated[] = {
@@ -356,6 +417,8 @@ static bool test_lapm_xid_envelopes(void)
 		CHECK(answerer->ec.lapm.tx_info_size == tx_size &&
 			      answerer->ec.lapm.rx_info_size == rx_size &&
 			      answerer->cfg.comp == compression &&
+			      answerer->ec.lapm.v44_session.phase ==
+				      SIPPYMODEM_LAPM_V44_DECLINED &&
 			      answerer->packer.hdlc.get_tx_frame(
 				      answerer->packer.hdlc.framer) == NULL,
 		      "truncated LAPM XID changed state or produced a response");
