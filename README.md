@@ -100,6 +100,25 @@ If the SIP development package is unavailable, the daemon build reports that
 dependency explicitly while `make test` continues to run the dependency-free
 native suite.
 
+Live interoperability calls are deliberately opt-in. Copy
+`tools/live-call.example.json` to the ignored `.live-call.json`, make it
+owner-readable only, replace the reserved example values locally, and enable
+only the plans that are safe to dial. `make live-call` runs every enabled plan
+in a fresh daemon process. Use repeated `--plan NAME` options with
+`python3 tools/sippymodem_live_calls.py` to select a subset. `--list` emits
+only a redacted manifest. The inert example covers an empty dial using the
+configured direct SIP target and selects V.21 at exactly 300 bit/s for the
+first physical-modem interoperability milestone. Add separately named plans
+when comparing modem profiles or AT setups against that same direct target.
+
+The runner clears inherited SIP settings before applying the private file,
+uses ephemeral local ports unless the file explicitly selects ports, and never
+prints endpoints, credentials, terminal paths, or artifact paths. Each attempt
+gets a private ignored directory under `live-call-artifacts/` containing its
+redacted result, daemon diagnostics, and bounded media recordings. Enabled
+plans and credentials require the private configuration file to have no group
+or other permissions.
+
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
 suite.

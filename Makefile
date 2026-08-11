@@ -1,4 +1,4 @@
-.PHONY: all clean install-hooks slmodemd test
+.PHONY: all clean install-hooks live-call slmodemd test
 
 all:
 	$(MAKE) -C src all
@@ -12,6 +12,9 @@ clean:
 
 test:
 	$(MAKE) -C tests test
+
+live-call:
+	python3 tools/sippymodem_live_calls.py
 
 install-hooks:
 	git config core.hooksPath .githooks

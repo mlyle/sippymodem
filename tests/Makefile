@@ -1,4 +1,5 @@
 CC ?= cc
+PYTHON ?= python3
 CPPFLAGS ?=
 CFLAGS ?= -O2 -g
 LDFLAGS ?=
@@ -1053,6 +1054,9 @@ endif
 all: $(TEST_BINARIES)
 
 test: $(TEST_BINARIES)
+	$(PYTHON) test_sippymodem_live_config.py
+	$(PYTHON) test_sippymodem_live_terminal.py
+	$(PYTHON) test_sippymodem_live_calls.py
 	./$(PACK_TEST_BINARY)
 	./$(CONFIG_TEST_BINARY)
 	./$(SIP_URI_TEST_BINARY)
