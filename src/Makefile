@@ -76,6 +76,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_driver.c \
 	sippymodem_slmodem_terminal.c \
 	sippymodem_terminal.c \
+	sippymodem_v42_xid.c \
 	sippymodem_v44_compressed_decoder.c \
 	sippymodem_v44_decoder.c \
 	sippymodem_v44_duplex.c \
