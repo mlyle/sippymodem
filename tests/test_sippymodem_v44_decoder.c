@@ -87,6 +87,140 @@ static bool test_mode_round_trip_and_ordering(void)
 	return true;
 }
 
+static bool test_parameter_handoff_and_failure(void)
+{
+	/* ETM, EPM, caller-owned parameter bytes, then transparent P. */
+	static const uint8_t wire[] = {
+		0x01, 0x00, 0x02, 0xaa, 0xbb, 'P',
+	};
+	static const uint8_t dangling_escape[] = { 0x00 };
+	struct sippymodem_v44_decoder *decoder =
+		sippymodem_v44_decoder_create(
+			&parameters, parameters.max_string_length);
+	const uint8_t *input = wire;
+	size_t input_length = sizeof(wire);
+	size_t output_length;
+	uint8_t output = 0;
+
+	CHECK(decoder != NULL, "could not create V.44 parameter decoder");
+	CHECK(sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_OK &&
+	      output_length == 0 &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_ENTER_PARAMETER &&
+	      input == wire + 3 && input_length == 3,
+	      "V.44 EPM did not preserve parameter input");
+	{
+		const uint8_t *unchanged_input = input;
+
+		CHECK(sippymodem_v44_decoder_process(
+			      decoder, &input, &input_length, &output, 1,
+			      &output_length) ==
+			      SIPPYMODEM_V44_DECODE_ENTER_PARAMETER &&
+		      sippymodem_v44_decoder_finish(decoder) ==
+			      SIPPYMODEM_V44_DECODE_ENTER_PARAMETER &&
+		      input == unchanged_input && input_length == 3,
+		      "V.44 parameter handoff was not latched");
+	}
+	/* Stand in for an external parameter parser consuming through End. */
+	input += 2;
+	input_length -= 2;
+	CHECK(sippymodem_v44_decoder_resume_transparent(decoder) ==
+		      SIPPYMODEM_V44_DECODE_OK &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_OK &&
+	      output_length == 1 && output == 'P' && input_length == 0 &&
+	      sippymodem_v44_decoder_resume_transparent(decoder) ==
+		      SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT,
+	      "V.44 did not resume transparent mode after parameter End");
+	input = dangling_escape;
+	input_length = sizeof(dangling_escape);
+	CHECK(sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_NEED_INPUT &&
+	      input_length == 0 &&
+	      sippymodem_v44_decoder_finish(decoder) ==
+		      SIPPYMODEM_V44_DECODE_PROCEDURAL_ERROR &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_PROCEDURAL_ERROR,
+	      "V.44 truncated transparent input did not fail closed");
+	sippymodem_v44_decoder_destroy(decoder);
+	return true;
+}
+
+static bool test_api_contract(void)
+{
+	static const struct {
+		enum sippymodem_v44_decode_result result;
+		const char *name;
+	} names[] = {
+		{ SIPPYMODEM_V44_DECODE_OK, "ok" },
+		{ SIPPYMODEM_V44_DECODE_NEED_INPUT, "need input" },
+		{ SIPPYMODEM_V44_DECODE_NEED_OUTPUT, "need output" },
+		{ SIPPYMODEM_V44_DECODE_FLUSHED, "flushed" },
+		{ SIPPYMODEM_V44_DECODE_ENTER_PARAMETER, "enter parameter" },
+		{ SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT, "invalid argument" },
+		{ SIPPYMODEM_V44_DECODE_PROCEDURAL_ERROR,
+		  "procedural error" },
+	};
+	struct sippymodem_v44_decoder *decoder =
+		sippymodem_v44_decoder_create(
+			&parameters, parameters.max_string_length);
+	const uint8_t *input = NULL;
+	size_t input_length = 0;
+	size_t output_length = 0;
+	uint8_t output = 0xa5;
+
+	CHECK(decoder != NULL &&
+	      sippymodem_v44_decoder_create(NULL, 32) == NULL &&
+	      sippymodem_v44_decoder_create(&parameters, 31) == NULL,
+	      "V.44 mode decoder accepted invalid creation arguments");
+	CHECK(sippymodem_v44_decoder_process(
+		      NULL, &input, &input_length, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT &&
+	      sippymodem_v44_decoder_process(
+		      decoder, NULL, &input_length, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, NULL, &output, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, NULL, 1,
+		      &output_length) == SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT &&
+	      sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, &output, 1, NULL) ==
+		      SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT,
+	      "V.44 mode decoder accepted invalid process arguments");
+	CHECK(sippymodem_v44_decoder_process(
+		      decoder, &input, &input_length, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DECODE_NEED_INPUT &&
+	      output_length == 0 && output == 0xa5 &&
+	      sippymodem_v44_decoder_finish(decoder) ==
+		      SIPPYMODEM_V44_DECODE_OK &&
+	      sippymodem_v44_decoder_resume_transparent(NULL) ==
+		      SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT &&
+	      sippymodem_v44_decoder_finish(NULL) ==
+		      SIPPYMODEM_V44_DECODE_INVALID_ARGUMENT,
+	      "V.44 empty stream or lifecycle validation changed");
+	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
+		CHECK(strcmp(
+			      sippymodem_v44_decode_result_name(names[index].result),
+			      names[index].name) == 0,
+		      "V.44 decode result %zu has the wrong name", index);
+	CHECK(strcmp(
+		      sippymodem_v44_decode_result_name(
+			      (enum sippymodem_v44_decode_result)99),
+		      "unknown") == 0,
+	      "unknown V.44 decode result has the wrong name");
+	sippymodem_v44_decoder_destroy(decoder);
+	sippymodem_v44_decoder_destroy(NULL);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -94,6 +228,9 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "mode round trip and ordering", test_mode_round_trip_and_ordering },
+		{ "parameter handoff and failure",
+		  test_parameter_handoff_and_failure },
+		{ "API contract", test_api_contract },
 	};
 	unsigned int failures = 0;
 
