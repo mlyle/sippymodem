@@ -25,55 +25,55 @@ static struct qam_point multiply(
 }
 
 static bool encode_point(
-	struct sippymodem_v32_symbol_encoder *framing,
-	struct sippymodem_v32_trellis_encoder *trellis, uint8_t input,
+	struct v32_symbol_encoder *framing,
+	struct v32_trellis_encoder *trellis, uint8_t input,
 	struct qam_point *point)
 {
 	uint8_t scrambled;
 	uint8_t symbol;
 
-	return sippymodem_v32_scramble_group(
+	return v32_scramble_group(
 		       &framing->scrambler, input,
 		       trellis->data_bits_per_symbol, &scrambled) ==
-		       SIPPYMODEM_V32_FRAMING_OK &&
-	       sippymodem_v32_trellis_encode(trellis, scrambled, &symbol) ==
-		       SIPPYMODEM_V32_TRELLIS_OK &&
-	       sippymodem_v32_trellis_constellation_point(
+		       V32_FRAMING_OK &&
+	       v32_trellis_encode(trellis, scrambled, &symbol) ==
+		       V32_TRELLIS_OK &&
+	       v32_trellis_constellation_point(
 		       trellis->data_bits_per_symbol, symbol, point) ==
-		       SIPPYMODEM_V32_CONSTELLATION_OK;
+		       V32_CONSTELLATION_OK;
 }
 
 static bool check_phase(uint8_t phase, uint8_t data_bits)
 {
 	static const struct qam_point channel = { 0.73, -0.31 };
-	struct sippymodem_v32_symbol_encoder framing_encoder;
-	struct sippymodem_v32_symbol_decoder framing_decoder;
-	struct sippymodem_v32_trellis_encoder trellis_encoder;
-	struct sippymodem_v32_trellis_acquirer acquirer;
+	struct v32_symbol_encoder framing_encoder;
+	struct v32_symbol_decoder framing_decoder;
+	struct v32_trellis_encoder trellis_encoder;
+	struct v32_trellis_acquirer acquirer;
 	struct qam_point reference;
 	uint8_t payload[PAYLOAD_SYMBOLS];
 	uint8_t previous_output;
 	uint8_t mask = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
 
-	CHECK(sippymodem_v32_symbol_encoder_init(
-		      &framing_encoder, SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
-		      phase) == SIPPYMODEM_V32_FRAMING_OK &&
-	      sippymodem_v32_symbol_decoder_init(
-		      &framing_decoder, SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
-		      0) == SIPPYMODEM_V32_FRAMING_OK &&
-	      sippymodem_v32_phase_to_differential_output(
-		      phase, &previous_output) == SIPPYMODEM_V32_FRAMING_OK &&
-	      sippymodem_v32_trellis_encoder_init(
+	CHECK(v32_symbol_encoder_init(
+		      &framing_encoder, V32_ANSWERING_TRANSMITTER,
+		      phase) == V32_FRAMING_OK &&
+	      v32_symbol_decoder_init(
+		      &framing_decoder, V32_ANSWERING_TRANSMITTER,
+		      0) == V32_FRAMING_OK &&
+	      v32_phase_to_differential_output(
+		      phase, &previous_output) == V32_FRAMING_OK &&
+	      v32_trellis_encoder_init(
 		      &trellis_encoder, data_bits, previous_output) ==
-		      SIPPYMODEM_V32_TRELLIS_OK &&
-	      sippymodem_v32_4800_constellation_point(phase, &reference) ==
-		      SIPPYMODEM_V32_CONSTELLATION_OK,
+		      V32_TRELLIS_OK &&
+	      v32_4800_constellation_point(phase, &reference) ==
+		      V32_CONSTELLATION_OK,
 	      "V.32bis phase %u/%u fixture did not initialize", phase,
 	      data_bits);
 	reference = multiply(channel, reference);
-	CHECK(sippymodem_v32_trellis_acquirer_init(
+	CHECK(v32_trellis_acquirer_init(
 		      &acquirer, &framing_decoder, &reference, data_bits) ==
-		      SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK,
+		      V32_TRELLIS_ACQUIRER_OK,
 	      "V.32bis phase %u/%u acquisition did not initialize", phase,
 	      data_bits);
 	for (size_t index = 0; index < KNOWN_SYMBOLS; ++index) {
@@ -85,14 +85,14 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 		      phase, data_bits, index);
 		point = multiply(channel, point);
 		CHECK(
-		      sippymodem_v32_trellis_acquirer_track_known(
+		      v32_trellis_acquirer_track_known(
 			      &acquirer, &point, mask) ==
-			      SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK,
+			      V32_TRELLIS_ACQUIRER_OK,
 		      "V.32bis phase %u/%u known symbol %zu failed", phase,
 		      data_bits, index);
 	}
-	CHECK(sippymodem_v32_trellis_acquirer_select(&acquirer) ==
-		      SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK &&
+	CHECK(v32_trellis_acquirer_select(&acquirer) ==
+		      V32_TRELLIS_ACQUIRER_OK &&
 	      acquirer.selected && acquirer.selected_phase == phase,
 	      "V.32bis phase %u/%u selected hypothesis %u", phase,
 	      data_bits, acquirer.selected_phase);
@@ -108,17 +108,17 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 		      "V.32bis phase %u/%u payload generation failed at %zu",
 		      phase, data_bits, index);
 		point = multiply(channel, point);
-		CHECK(sippymodem_v32_trellis_acquirer_decode(
+		CHECK(v32_trellis_acquirer_decode(
 			      &acquirer, &point, &output, &ready) ==
-			      SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK,
+			      V32_TRELLIS_ACQUIRER_OK,
 		      "V.32bis phase %u/%u payload decode failed at %zu", phase,
 		      data_bits, index);
-		if (index + 1u < SIPPYMODEM_V32_TRELLIS_RECEIVER_DELAY) {
+		if (index + 1u < V32_TRELLIS_RECEIVER_DELAY) {
 			CHECK(!ready && output == UINT8_MAX,
 			      "V.32bis phase acquisition exposed delayed payload");
 		} else {
 			size_t expected = index + 1u -
-					  SIPPYMODEM_V32_TRELLIS_RECEIVER_DELAY;
+					  V32_TRELLIS_RECEIVER_DELAY;
 
 			CHECK(ready && output == payload[expected],
 			      "V.32bis phase %u/%u decoded %u instead of %u",
@@ -131,9 +131,9 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 static bool test_generated_phase_acquisition(void)
 {
 	static const uint8_t widths[] = {
-		SIPPYMODEM_V32_7200_DATA_BITS,
-		SIPPYMODEM_V32_12000_DATA_BITS,
-		SIPPYMODEM_V32_14400_DATA_BITS,
+		V32_7200_DATA_BITS,
+		V32_12000_DATA_BITS,
+		V32_14400_DATA_BITS,
 	};
 
 	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
@@ -146,38 +146,38 @@ static bool test_generated_phase_acquisition(void)
 
 static bool test_api_contract(void)
 {
-	struct sippymodem_v32_symbol_decoder framing;
-	struct sippymodem_v32_trellis_acquirer acquirer;
-	struct sippymodem_v32_trellis_acquirer saved;
+	struct v32_symbol_decoder framing;
+	struct v32_trellis_acquirer acquirer;
+	struct v32_trellis_acquirer saved;
 	struct qam_point point = { 1.0, 1.0 };
 	uint8_t output = UINT8_MAX;
 	bool ready = true;
 
-	CHECK(sippymodem_v32_symbol_decoder_init(
-		      &framing, SIPPYMODEM_V32_CALLING_TRANSMITTER, 0) ==
-		      SIPPYMODEM_V32_FRAMING_OK &&
-	      sippymodem_v32_trellis_acquirer_init(
+	CHECK(v32_symbol_decoder_init(
+		      &framing, V32_CALLING_TRANSMITTER, 0) ==
+		      V32_FRAMING_OK &&
+	      v32_trellis_acquirer_init(
 		      &acquirer, &framing, &point,
-		      SIPPYMODEM_V32_7200_DATA_BITS) ==
-		      SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK,
+		      V32_7200_DATA_BITS) ==
+		      V32_TRELLIS_ACQUIRER_OK,
 	      "V.32bis acquisition API fixture did not initialize");
 	saved = acquirer;
-	CHECK(sippymodem_v32_trellis_acquirer_select(&acquirer) ==
-		      SIPPYMODEM_V32_TRELLIS_ACQUIRER_NOT_READY &&
-	      sippymodem_v32_trellis_acquirer_decode(
+	CHECK(v32_trellis_acquirer_select(&acquirer) ==
+		      V32_TRELLIS_ACQUIRER_NOT_READY &&
+	      v32_trellis_acquirer_decode(
 		      &acquirer, &point, &output, &ready) ==
-		      SIPPYMODEM_V32_TRELLIS_ACQUIRER_NOT_READY &&
-	      sippymodem_v32_trellis_acquirer_track_known(
+		      V32_TRELLIS_ACQUIRER_NOT_READY &&
+	      v32_trellis_acquirer_track_known(
 		      &acquirer, NULL, 7) ==
-		      SIPPYMODEM_V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT &&
+		      V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT &&
 	      memcmp(&acquirer, &saved, sizeof(acquirer)) == 0 &&
 	      output == UINT8_MAX && ready,
 	      "V.32bis acquisition API failure changed state or output");
 	CHECK(strcmp(
-		      sippymodem_v32_trellis_acquirer_result_name(
-			      SIPPYMODEM_V32_TRELLIS_ACQUIRER_NOT_READY),
+		      v32_trellis_acquirer_result_name(
+			      V32_TRELLIS_ACQUIRER_NOT_READY),
 		      "not ready") == 0 &&
-	      !sippymodem_v32_trellis_acquirer_is_valid(NULL),
+	      !v32_trellis_acquirer_is_valid(NULL),
 	      "V.32bis acquisition API names or validation changed");
 	return true;
 }

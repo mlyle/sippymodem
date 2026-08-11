@@ -12,14 +12,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct sippymodem_v8_datapump {
+struct v8_datapump {
 	struct dp dp;
 	union {
-		struct sippymodem_v8_calling calling;
-		struct sippymodem_v8_answering answering;
+		struct v8_calling calling;
+		struct v8_answering answering;
 	} handshake;
 	enum DP_ID requested_datapump;
-	enum sippymodem_v8_modulation negotiated_modulation;
+	enum v8_modulation negotiated_modulation;
 	bool caller;
 	bool handoff_requested;
 };
@@ -38,19 +38,19 @@ static struct dp_operations v8_operations = {
 	.process = process_v8,
 };
 
-static struct sippymodem_v8_datapump *v8_from_dp(struct dp *dp)
+static struct v8_datapump *v8_from_dp(struct dp *dp)
 {
-	struct sippymodem_v8_datapump *datapump;
-	enum sippymodem_v8_modulation modulation;
+	struct v8_datapump *datapump;
+	enum v8_modulation modulation;
 
 	if (dp == NULL || dp->id != DP_V8 || dp->op != &v8_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
-	modulation = sippymodem_v8_datapump_modulation(
+	modulation = v8_datapump_modulation(
 		datapump->requested_datapump);
 	if (&datapump->dp != dp ||
-	    modulation == SIPPYMODEM_V8_MODULATION_NONE ||
+	    modulation == V8_MODULATION_NONE ||
 	    modulation != datapump->negotiated_modulation)
 		return NULL;
 	return datapump;
@@ -60,10 +60,10 @@ static struct dp *create_v8(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
 {
-	struct sippymodem_v8_datapump *datapump;
-	struct sippymodem_v8_menu local_menu;
-	enum sippymodem_v8_modulation modulation =
-		sippymodem_v8_datapump_modulation(id);
+	struct v8_datapump *datapump;
+	struct v8_menu local_menu;
+	enum v8_modulation modulation =
+		v8_datapump_modulation(id);
 
 	/*
 	 * The current source-built handoffs expose raw asynchronous bits, so do
@@ -72,23 +72,23 @@ static struct dp *create_v8(
 	if (modem == NULL || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v8_operations || operations->use_count == INT_MAX ||
-	    modulation == SIPPYMODEM_V8_MODULATION_NONE ||
-	    sippymodem_v8_call_menu_init(
+	    modulation == V8_MODULATION_NONE ||
+	    v8_call_menu_init(
 		    &local_menu, modulation, false) !=
-		    SIPPYMODEM_V8_MENU_OK)
+		    V8_MENU_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
 	datapump->caller = caller != 0;
 	if ((datapump->caller &&
-	     sippymodem_v8_calling_init(
+	     v8_calling_init(
 		     &datapump->handshake.calling, &local_menu) !=
-		     SIPPYMODEM_V8_CALLING_OK) ||
+		     V8_CALLING_OK) ||
 	    (!datapump->caller &&
-	     sippymodem_v8_answering_init(
+	     v8_answering_init(
 		     &datapump->handshake.answering, &local_menu) !=
-		     SIPPYMODEM_V8_ANSWERING_OK)) {
+		     V8_ANSWERING_OK)) {
 		free(datapump);
 		return NULL;
 	}
@@ -107,7 +107,7 @@ static struct dp *create_v8(
 
 static int delete_v8(struct dp *dp)
 {
-	struct sippymodem_v8_datapump *datapump = v8_from_dp(dp);
+	struct v8_datapump *datapump = v8_from_dp(dp);
 
 	if (datapump == NULL || v8_operations.use_count <= 0)
 		return -1;
@@ -117,20 +117,20 @@ static int delete_v8(struct dp *dp)
 	return 0;
 }
 
-static int request_handoff(struct sippymodem_v8_datapump *datapump)
+static int request_handoff(struct v8_datapump *datapump)
 {
-	struct sippymodem_v8_menu menu;
-	enum sippymodem_v8_modulation modulation;
+	struct v8_menu menu;
+	enum v8_modulation modulation;
 	bool selected;
 
 	if (datapump->caller) {
-		selected = sippymodem_v8_calling_selection(
+		selected = v8_calling_selection(
 			&datapump->handshake.calling, &menu, &modulation) ==
-			SIPPYMODEM_V8_CALLING_OK;
+			V8_CALLING_OK;
 	} else {
-		selected = sippymodem_v8_answering_selection(
+		selected = v8_answering_selection(
 			&datapump->handshake.answering, &menu, &modulation) ==
-			SIPPYMODEM_V8_ANSWERING_OK;
+			V8_ANSWERING_OK;
 	}
 	if (!selected || modulation != datapump->negotiated_modulation ||
 	    menu.modulations != datapump->negotiated_modulation || menu.lapm ||
@@ -148,7 +148,7 @@ static int request_handoff(struct sippymodem_v8_datapump *datapump)
 static int process_v8(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
-	struct sippymodem_v8_datapump *datapump = v8_from_dp(dp);
+	struct v8_datapump *datapump = v8_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	bool complete;
@@ -165,23 +165,23 @@ static int process_v8(
 		return DPSTAT_CHANGEDP;
 	}
 	if (datapump->caller) {
-		enum sippymodem_v8_calling_result result =
-			sippymodem_v8_calling_process(
+		enum v8_calling_result result =
+			v8_calling_process(
 				&datapump->handshake.calling, receive, transmit,
 				(size_t)count);
 
-		failed = result != SIPPYMODEM_V8_CALLING_OK;
-		complete = sippymodem_v8_calling_is_complete(
+		failed = result != V8_CALLING_OK;
+		complete = v8_calling_is_complete(
 			&datapump->handshake.calling);
-		if (result == SIPPYMODEM_V8_CALLING_ANSWER_TIMEOUT) {
+		if (result == V8_CALLING_ANSWER_TIMEOUT) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_NOANSWER;
 		}
 	} else {
-		failed = sippymodem_v8_answering_process(
+		failed = v8_answering_process(
 				 &datapump->handshake.answering, receive, transmit,
-				 (size_t)count) != SIPPYMODEM_V8_ANSWERING_OK;
-		complete = sippymodem_v8_answering_is_complete(
+				 (size_t)count) != V8_ANSWERING_OK;
+		complete = v8_answering_is_complete(
 			&datapump->handshake.answering);
 	}
 	if (failed) {
@@ -191,17 +191,17 @@ static int process_v8(
 	return complete ? request_handoff(datapump) : DPSTAT_OK;
 }
 
-int sippymodem_v8_datapump_register(void)
+int v8_datapump_register(void)
 {
 	return modem_dp_register(DP_V8, &v8_operations);
 }
 
-int sippymodem_v8_datapump_unregister(void)
+int v8_datapump_unregister(void)
 {
 	return modem_dp_deregister(DP_V8, &v8_operations);
 }
 
-bool sippymodem_v8_datapump_is_busy(void)
+bool v8_datapump_is_busy(void)
 {
 	return v8_operations.use_count != 0;
 }

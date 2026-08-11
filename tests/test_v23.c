@@ -42,7 +42,7 @@ static bool pair_init(struct v23_pair *pair)
 	memset(pair, 0, sizeof(*pair));
 	initialize_modem(&pair->originator_modem);
 	initialize_modem(&pair->answerer_modem);
-	CHECK(sippymodem_v23_datapump_register() == 0,
+	CHECK(v23_datapump_register() == 0,
 	      "V.23 data-pump registration failed");
 	pair->operations = modem_dp_get_registered_ops(DP_V23);
 	CHECK(pair->operations != NULL && pair->operations->create != NULL &&
@@ -145,15 +145,15 @@ static bool test_training_roles_and_carrier_loss(void)
 	      "V.23 roles escaped their bounded carrier gates: %u/%u",
 	      originator_connect_frame, answerer_connect_frame);
 	CHECK(pair.originator_modem.tx_rate ==
-		      SIPPYMODEM_V23_BACKWARD_BIT_RATE &&
+		      V23_BACKWARD_BIT_RATE &&
 		      pair.originator_modem.rx_rate ==
-			      SIPPYMODEM_V23_FORWARD_BIT_RATE &&
+			      V23_FORWARD_BIT_RATE &&
 		      pair.answerer_modem.tx_rate ==
-			      SIPPYMODEM_V23_FORWARD_BIT_RATE &&
+			      V23_FORWARD_BIT_RATE &&
 		      pair.answerer_modem.rx_rate ==
-			      SIPPYMODEM_V23_BACKWARD_BIT_RATE,
+			      V23_BACKWARD_BIT_RATE,
 	      "V.23 roles reported the wrong asymmetric rates");
-	CHECK(sippymodem_v23_datapump_unregister() != 0,
+	CHECK(v23_datapump_unregister() != 0,
 	      "active V.23 pair did not protect its registration");
 
 	for (unsigned int frame = 0; frame < SHORT_GAP_FRAMES; ++frame)
@@ -175,7 +175,7 @@ static bool test_training_roles_and_carrier_loss(void)
 	      "V.23 sustained carrier loss was not debounced: frame %u",
 	      loss_frame);
 	pair_destroy(&pair);
-	CHECK(sippymodem_v23_datapump_unregister() == 0 &&
+	CHECK(v23_datapump_unregister() == 0 &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL,
 	      "V.23 registration did not release cleanly");
 	return true;

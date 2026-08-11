@@ -255,8 +255,8 @@ static bool run_media_call(
 		.write = capture_recording,
 	};
 	bool uses_v8 = test_case->automode &&
-		sippymodem_v8_datapump_modulation(test_case->id) !=
-		SIPPYMODEM_V8_MODULATION_NONE;
+		v8_datapump_modulation(test_case->id) !=
+		V8_MODULATION_NONE;
 	bool online = false;
 	bool answerer_used_v8 = !uses_v8;
 	bool prelink_queued = false;
@@ -448,7 +448,7 @@ static bool frame_has_signal(const int16_t samples[SIP_FRAME_SAMPLES])
 }
 
 static bool run_baudot_media_call(
-	enum sippymodem_baudot_rate rate,
+	enum baudot_rate rate,
 	enum sippymodem_media_codec codec)
 {
 	static const char request[] = "hello 123? ga";
@@ -457,7 +457,7 @@ static bool run_baudot_media_call(
 	static const char expected_reply[] = "OK GA";
 	static const char dial_command[] = "ATDpeer\r";
 	const char *selection_command =
-		rate == SIPPYMODEM_BAUDOT_RATE_50 ?
+		rate == BAUDOT_RATE_50 ?
 			"AT+MS=45,0,50,50\r" : "AT+MS=45,0,45,45\r";
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint caller;
@@ -473,7 +473,7 @@ static bool run_baudot_media_call(
 	bool reply_queued = false;
 	bool reply_received = false;
 	unsigned int silent_request_frames = 0;
-	int reported_rate = rate == SIPPYMODEM_BAUDOT_RATE_50 ? 50 : 45;
+	int reported_rate = rate == BAUDOT_RATE_50 ? 50 : 45;
 	int selection_length = (int)strlen(selection_command);
 
 	CHECK(datapumps_start(&datapumps) ==
@@ -629,10 +629,10 @@ int main(void)
 			.id = DP_V22,
 			.name = "V.22",
 			.selection_command = "AT+MS=22,1,1200,1200\r",
-			.caller_tx_rate = SIPPYMODEM_V22_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V22_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V22_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V22_BIT_RATE,
+			.caller_tx_rate = V22_BIT_RATE,
+			.caller_rx_rate = V22_BIT_RATE,
+			.answerer_tx_rate = V22_BIT_RATE,
+			.answerer_rx_rate = V22_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -640,10 +640,10 @@ int main(void)
 			.id = DP_V22BIS,
 			.name = "V.22bis",
 			.selection_command = "AT+MS=122,1,2400,2400\r",
-			.caller_tx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V22BIS_BIT_RATE,
+			.caller_tx_rate = V22BIS_BIT_RATE,
+			.caller_rx_rate = V22BIS_BIT_RATE,
+			.answerer_tx_rate = V22BIS_BIT_RATE,
+			.answerer_rx_rate = V22BIS_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -651,10 +651,10 @@ int main(void)
 			.id = DP_V32,
 			.name = "V.32 4800",
 			.selection_command = "AT+MS=32,1,4800,4800\r",
-			.caller_tx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V32_4800_BIT_RATE,
+			.caller_tx_rate = V32_4800_BIT_RATE,
+			.caller_rx_rate = V32_4800_BIT_RATE,
+			.answerer_tx_rate = V32_4800_BIT_RATE,
+			.answerer_rx_rate = V32_4800_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -662,10 +662,10 @@ int main(void)
 			.id = DP_V32,
 			.name = "V.32bis 7200",
 			.selection_command = "AT+MS=32,1,7200,7200\r",
-			.caller_tx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V32_7200_BIT_RATE,
+			.caller_tx_rate = V32_7200_BIT_RATE,
+			.caller_rx_rate = V32_7200_BIT_RATE,
+			.answerer_tx_rate = V32_7200_BIT_RATE,
+			.answerer_rx_rate = V32_7200_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -673,10 +673,10 @@ int main(void)
 			.id = DP_V32,
 			.name = "V.32 9600",
 			.selection_command = "AT+MS=32,1,9600,9600\r",
-			.caller_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V32_9600_BIT_RATE,
+			.caller_tx_rate = V32_9600_BIT_RATE,
+			.caller_rx_rate = V32_9600_BIT_RATE,
+			.answerer_tx_rate = V32_9600_BIT_RATE,
+			.answerer_rx_rate = V32_9600_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -684,10 +684,10 @@ int main(void)
 			.id = DP_V32,
 			.name = "V.32bis 12000",
 			.selection_command = "AT+MS=32,1,12000,12000\r",
-			.caller_tx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V32_12000_BIT_RATE,
+			.caller_tx_rate = V32_12000_BIT_RATE,
+			.caller_rx_rate = V32_12000_BIT_RATE,
+			.answerer_tx_rate = V32_12000_BIT_RATE,
+			.answerer_rx_rate = V32_12000_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -695,10 +695,10 @@ int main(void)
 			.id = DP_V32,
 			.name = "V.32bis 14400",
 			.selection_command = "AT+MS=32,1,14400,14400\r",
-			.caller_tx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V32_14400_BIT_RATE,
+			.caller_tx_rate = V32_14400_BIT_RATE,
+			.caller_rx_rate = V32_14400_BIT_RATE,
+			.answerer_tx_rate = V32_14400_BIT_RATE,
+			.answerer_rx_rate = V32_14400_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -706,10 +706,10 @@ int main(void)
 			.id = DP_B212,
 			.name = "Bell 212A",
 			.selection_command = "AT+MS=212,1,1200,1200\r",
-			.caller_tx_rate = SIPPYMODEM_V22_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V22_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V22_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V22_BIT_RATE,
+			.caller_tx_rate = V22_BIT_RATE,
+			.caller_rx_rate = V22_BIT_RATE,
+			.answerer_tx_rate = V22_BIT_RATE,
+			.answerer_rx_rate = V22_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 		},
@@ -717,10 +717,10 @@ int main(void)
 			.id = DP_V23,
 			.name = "V.23",
 			.selection_command = "AT+MS=23,1,300,1200\r",
-			.caller_tx_rate = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
-			.caller_rx_rate = SIPPYMODEM_V23_FORWARD_BIT_RATE,
-			.answerer_tx_rate = SIPPYMODEM_V23_FORWARD_BIT_RATE,
-			.answerer_rx_rate = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
+			.caller_tx_rate = V23_BACKWARD_BIT_RATE,
+			.caller_rx_rate = V23_FORWARD_BIT_RATE,
+			.answerer_tx_rate = V23_FORWARD_BIT_RATE,
+			.answerer_rx_rate = V23_BACKWARD_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.automode = true,
 			.test_prelink = true,
@@ -730,9 +730,9 @@ int main(void)
 		SIPPYMODEM_CODEC_PCMU,
 		SIPPYMODEM_CODEC_PCMA,
 	};
-	static const enum sippymodem_baudot_rate baudot_rates[] = {
-		SIPPYMODEM_BAUDOT_RATE_45,
-		SIPPYMODEM_BAUDOT_RATE_50,
+	static const enum baudot_rate baudot_rates[] = {
+		BAUDOT_RATE_45,
+		BAUDOT_RATE_50,
 	};
 
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
@@ -757,7 +757,7 @@ int main(void)
 		for (size_t rate = 0; rate < ARRAY_LENGTH(baudot_rates);
 		     ++rate) {
 			const char *rate_name =
-				baudot_rates[rate] == SIPPYMODEM_BAUDOT_RATE_50 ?
+				baudot_rates[rate] == BAUDOT_RATE_50 ?
 					"50" : "45.45";
 
 			fprintf(stderr,

@@ -188,7 +188,7 @@ static bool test_exact_symbol_clock_and_validation(void)
 {
 	struct fsk_transmitter transmitter;
 	struct fsk_receiver receiver;
-	struct fsk_channel invalid = sippymodem_v21_channel_1;
+	struct fsk_channel invalid = v21_channel_1;
 	unsigned int consumed_bits = 0;
 	int16_t sample = 0;
 	uint8_t bit = 0;
@@ -196,12 +196,12 @@ static bool test_exact_symbol_clock_and_validation(void)
 	bool ready = false;
 
 	CHECK(fsk_transmitter_init(
-		      &transmitter, &sippymodem_v21_channel_1, TEST_AMPLITUDE) ==
+		      &transmitter, &v21_channel_1, TEST_AMPLITUDE) ==
 		      FSK_OK &&
 		      fsk_transmitter_can_accept_bit(&transmitter),
 	      "FSK transmitter clock fixture failed");
 	for (unsigned int index = 0;
-	     index < sippymodem_v21_channel_1.sample_rate;
+	     index < v21_channel_1.sample_rate;
 	     ++index) {
 		CHECK(fsk_transmitter_sample(
 		      &transmitter, (uint8_t)(consumed_bits & 1u),
@@ -213,7 +213,7 @@ static bool test_exact_symbol_clock_and_validation(void)
 			consumed_bits++;
 	}
 	CHECK(consumed_bits ==
-		      sippymodem_v21_channel_1.symbol_rate_numerator &&
+		      v21_channel_1.symbol_rate_numerator &&
 		      transmitter.symbol_accumulator == 0 &&
 		      fsk_transmitter_can_accept_bit(&transmitter),
 	      "FSK symbol clock drifted over one exact second");
@@ -232,21 +232,21 @@ static bool test_exact_symbol_clock_and_validation(void)
 			      FSK_INVALID_ARGUMENT,
 	      "FSK transmitter accepted a corrupted symbol rate");
 	CHECK(fsk_receiver_init(
-		      &receiver, &sippymodem_v21_channel_2) ==
+		      &receiver, &v21_channel_2) ==
 		      FSK_OK,
 	      "FSK receiver validation fixture failed");
 	fsk_receiver_reset(&receiver);
 	CHECK(receiver.channel.mark_frequency_hz ==
-		      sippymodem_v21_channel_2.mark_frequency_hz &&
+		      v21_channel_2.mark_frequency_hz &&
 		      !fsk_receiver_measure(&receiver).ready,
 	      "FSK receiver reset discarded its configuration");
 	invalid.space_frequency_hz = invalid.sample_rate / 2;
 	transmitter.tones.mark_phase_step = 0;
 	CHECK(fsk_transmitter_init(
-		      NULL, &sippymodem_v21_channel_1, TEST_AMPLITUDE) ==
+		      NULL, &v21_channel_1, TEST_AMPLITUDE) ==
 		      FSK_INVALID_ARGUMENT &&
 		      fsk_transmitter_init(
-			      &transmitter, &sippymodem_v21_channel_1, 0) ==
+			      &transmitter, &v21_channel_1, 0) ==
 			      FSK_INVALID_ARGUMENT &&
 		      fsk_receiver_init(&receiver, &invalid) ==
 			      FSK_INVALID_ARGUMENT &&
@@ -359,28 +359,28 @@ static bool test_continuous_tone_detection(void)
 
 static bool test_v21_channel_pairs(void)
 {
-	return check_payload(&sippymodem_v21_channel_1, false) &&
-	       check_payload(&sippymodem_v21_channel_2, false) &&
-	       check_payload(&sippymodem_v21_channel_1, true) &&
-	       check_payload(&sippymodem_v21_channel_2, true);
+	return check_payload(&v21_channel_1, false) &&
+	       check_payload(&v21_channel_2, false) &&
+	       check_payload(&v21_channel_1, true) &&
+	       check_payload(&v21_channel_2, true);
 }
 
 static bool test_v21_profiles(void)
 {
-	CHECK(sippymodem_v21_channel_1.sample_rate ==
-		      SIPPYMODEM_V21_SAMPLE_RATE &&
-		      sippymodem_v21_channel_1.symbol_rate_numerator ==
-			      SIPPYMODEM_V21_BIT_RATE &&
-		      sippymodem_v21_channel_1.symbol_rate_denominator == 1 &&
-		      sippymodem_v21_channel_1.mark_frequency_hz == 980 &&
-		      sippymodem_v21_channel_1.space_frequency_hz == 1180 &&
-		      sippymodem_v21_channel_2.sample_rate ==
-			      SIPPYMODEM_V21_SAMPLE_RATE &&
-		      sippymodem_v21_channel_2.symbol_rate_numerator ==
-			      SIPPYMODEM_V21_BIT_RATE &&
-		      sippymodem_v21_channel_2.symbol_rate_denominator == 1 &&
-		      sippymodem_v21_channel_2.mark_frequency_hz == 1650 &&
-		      sippymodem_v21_channel_2.space_frequency_hz == 1850,
+	CHECK(v21_channel_1.sample_rate ==
+		      V21_SAMPLE_RATE &&
+		      v21_channel_1.symbol_rate_numerator ==
+			      V21_BIT_RATE &&
+		      v21_channel_1.symbol_rate_denominator == 1 &&
+		      v21_channel_1.mark_frequency_hz == 980 &&
+		      v21_channel_1.space_frequency_hz == 1180 &&
+		      v21_channel_2.sample_rate ==
+			      V21_SAMPLE_RATE &&
+		      v21_channel_2.symbol_rate_numerator ==
+			      V21_BIT_RATE &&
+		      v21_channel_2.symbol_rate_denominator == 1 &&
+		      v21_channel_2.mark_frequency_hz == 1650 &&
+		      v21_channel_2.space_frequency_hz == 1850,
 	      "V.21 profiles do not match the channel definitions");
 	return true;
 }

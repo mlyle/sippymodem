@@ -122,41 +122,41 @@ enum datapumps_result datapumps_start(
 			DP_CALLPROG, &call_progress_operations);
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	}
-	if (sippymodem_v8_datapump_register() != 0) {
+	if (v8_datapump_register() != 0) {
 		(void)fsk300_datapump_unregister();
 		(void)modem_dp_deregister(
 			DP_CALLPROG, &call_progress_operations);
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	}
-	if (sippymodem_v23_datapump_register() != 0) {
-		(void)sippymodem_v8_datapump_unregister();
+	if (v23_datapump_register() != 0) {
+		(void)v8_datapump_unregister();
 		(void)fsk300_datapump_unregister();
 		(void)modem_dp_deregister(
 			DP_CALLPROG, &call_progress_operations);
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	}
-	if (sippymodem_v22_datapump_register() != 0) {
-		(void)sippymodem_v23_datapump_unregister();
-		(void)sippymodem_v8_datapump_unregister();
+	if (v22_datapump_register() != 0) {
+		(void)v23_datapump_unregister();
+		(void)v8_datapump_unregister();
 		(void)fsk300_datapump_unregister();
 		(void)modem_dp_deregister(
 			DP_CALLPROG, &call_progress_operations);
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	}
-	if (sippymodem_v32_datapump_register() != 0) {
-		(void)sippymodem_v22_datapump_unregister();
-		(void)sippymodem_v23_datapump_unregister();
-		(void)sippymodem_v8_datapump_unregister();
+	if (v32_datapump_register() != 0) {
+		(void)v22_datapump_unregister();
+		(void)v23_datapump_unregister();
+		(void)v8_datapump_unregister();
 		(void)fsk300_datapump_unregister();
 		(void)modem_dp_deregister(
 			DP_CALLPROG, &call_progress_operations);
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	}
-	if (sippymodem_baudot_datapump_register() != 0) {
-		(void)sippymodem_v32_datapump_unregister();
-		(void)sippymodem_v22_datapump_unregister();
-		(void)sippymodem_v23_datapump_unregister();
-		(void)sippymodem_v8_datapump_unregister();
+	if (baudot_datapump_register() != 0) {
+		(void)v32_datapump_unregister();
+		(void)v22_datapump_unregister();
+		(void)v23_datapump_unregister();
+		(void)v8_datapump_unregister();
 		(void)fsk300_datapump_unregister();
 		(void)modem_dp_deregister(
 			DP_CALLPROG, &call_progress_operations);
@@ -189,34 +189,34 @@ enum datapumps_result datapumps_stop(
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	if (call_progress_operations.use_count != 0 ||
 	    fsk300_datapump_is_busy() ||
-	    sippymodem_v8_datapump_is_busy() ||
-	    sippymodem_v23_datapump_is_busy() ||
-	    sippymodem_v22_datapump_is_busy() ||
-	    sippymodem_v32_datapump_is_busy() ||
-	    sippymodem_baudot_datapump_is_busy())
+	    v8_datapump_is_busy() ||
+	    v23_datapump_is_busy() ||
+	    v22_datapump_is_busy() ||
+	    v32_datapump_is_busy() ||
+	    baudot_datapump_is_busy())
 		return DATAPUMPS_BUSY;
-	if (sippymodem_baudot_datapump_unregister() != 0)
+	if (baudot_datapump_unregister() != 0)
 		return DATAPUMPS_REGISTRATION_CONFLICT;
-	if (sippymodem_v32_datapump_unregister() != 0)
+	if (v32_datapump_unregister() != 0)
 		goto restore_baudot;
-	if (sippymodem_v22_datapump_unregister() != 0)
+	if (v22_datapump_unregister() != 0)
 		goto restore_v32;
-	if (sippymodem_v23_datapump_unregister() != 0)
+	if (v23_datapump_unregister() != 0)
 		goto restore_v22;
-	if (sippymodem_v8_datapump_unregister() != 0) {
-		(void)sippymodem_v23_datapump_register();
+	if (v8_datapump_unregister() != 0) {
+		(void)v23_datapump_register();
 		goto restore_v22;
 	}
 	if (fsk300_datapump_unregister() != 0) {
-		(void)sippymodem_v8_datapump_register();
-		(void)sippymodem_v23_datapump_register();
+		(void)v8_datapump_register();
+		(void)v23_datapump_register();
 		goto restore_v22;
 	}
 	if (modem_dp_deregister(
 		    DP_CALLPROG, &call_progress_operations) != 0) {
 		(void)fsk300_datapump_register();
-		(void)sippymodem_v8_datapump_register();
-		(void)sippymodem_v23_datapump_register();
+		(void)v8_datapump_register();
+		(void)v23_datapump_register();
 		goto restore_v22;
 	}
 	datapumps->call_progress_registered = false;
@@ -228,11 +228,11 @@ enum datapumps_result datapumps_stop(
 	datapumps->baudot_registered = false;
 	return DATAPUMPS_OK;
 restore_v22:
-	(void)sippymodem_v22_datapump_register();
+	(void)v22_datapump_register();
 restore_v32:
-	(void)sippymodem_v32_datapump_register();
+	(void)v32_datapump_register();
 restore_baudot:
-	(void)sippymodem_baudot_datapump_register();
+	(void)baudot_datapump_register();
 	return DATAPUMPS_REGISTRATION_CONFLICT;
 }
 

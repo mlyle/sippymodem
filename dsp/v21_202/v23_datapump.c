@@ -35,13 +35,13 @@ enum {
 
 _Static_assert(
 	(V23_PRESENTATION_MAX_SAMPLES + V23_FORWARD_DETECTOR_WINDOW) *
-			SIPPYMODEM_V23_FORWARD_BIT_RATE / MODEM_RATE <
+			V23_FORWARD_BIT_RATE / MODEM_RATE <
 		V23_PRELINK_BIT_CAPACITY,
 	"V.23 pre-link storage must cover the maximum presentation interval");
 
 static const struct fsk_channel v23_forward_channel = {
 	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = SIPPYMODEM_V23_FORWARD_BIT_RATE,
+	.symbol_rate_numerator = V23_FORWARD_BIT_RATE,
 	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = V23_FORWARD_MARK_HZ,
 	.space_frequency_hz = V23_FORWARD_SPACE_HZ,
@@ -51,7 +51,7 @@ static const struct fsk_channel v23_forward_channel = {
 
 static const struct fsk_channel v23_backward_channel = {
 	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = SIPPYMODEM_V23_BACKWARD_BIT_RATE,
+	.symbol_rate_numerator = V23_BACKWARD_BIT_RATE,
 	.symbol_rate_denominator = 1,
 	.mark_frequency_hz = V23_BACKWARD_MARK_HZ,
 	.space_frequency_hz = V23_BACKWARD_SPACE_HZ,
@@ -59,7 +59,7 @@ static const struct fsk_channel v23_backward_channel = {
 	.metric_smoothing_shift = V23_METRIC_SMOOTHING_SHIFT,
 };
 
-enum sippymodem_v23_phase {
+enum v23_phase {
 	V23_PHASE_ANSWER_TONE,
 	V23_PHASE_ANSWER_SILENCE,
 	V23_PHASE_WAIT_MARK,
@@ -67,11 +67,11 @@ enum sippymodem_v23_phase {
 	V23_PHASE_ONLINE,
 };
 
-struct sippymodem_v23_datapump {
+struct v23_datapump {
 	struct dp dp;
 	struct fsk_transmitter transmitter;
 	struct fsk_receiver receiver;
-	enum sippymodem_v23_phase phase;
+	enum v23_phase phase;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint32_t phase_samples;
@@ -100,9 +100,9 @@ static struct dp_operations v23_operations = {
 	.process = process_v23,
 };
 
-static struct sippymodem_v23_datapump *v23_from_dp(struct dp *dp)
+static struct v23_datapump *v23_from_dp(struct dp *dp)
 {
-	struct sippymodem_v23_datapump *datapump;
+	struct v23_datapump *datapump;
 
 	if (dp == NULL || dp->id != DP_V23 || dp->op != &v23_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
@@ -140,7 +140,7 @@ static struct dp *create_v23(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
 {
-	struct sippymodem_v23_datapump *datapump;
+	struct v23_datapump *datapump;
 	const struct fsk_channel *transmit_channel;
 	const struct fsk_channel *receive_channel;
 
@@ -181,7 +181,7 @@ static struct dp *create_v23(
 
 static int delete_v23(struct dp *dp)
 {
-	struct sippymodem_v23_datapump *datapump = v23_from_dp(dp);
+	struct v23_datapump *datapump = v23_from_dp(dp);
 
 	if (datapump == NULL || v23_operations.use_count <= 0)
 		return -1;
@@ -191,14 +191,14 @@ static int delete_v23(struct dp *dp)
 	return 0;
 }
 
-static bool phase_receives(enum sippymodem_v23_phase phase)
+static bool phase_receives(enum v23_phase phase)
 {
 	return phase == V23_PHASE_WAIT_MARK ||
 	       phase == V23_PHASE_PRESENTATION || phase == V23_PHASE_ONLINE;
 }
 
 static enum fsk_result generate_fsk_sample(
-	struct sippymodem_v23_datapump *datapump, uint8_t bit,
+	struct v23_datapump *datapump, uint8_t bit,
 	int16_t *sample)
 {
 	bool consumed;
@@ -208,7 +208,7 @@ static enum fsk_result generate_fsk_sample(
 }
 
 static enum fsk_result generate_data_sample(
-	struct sippymodem_v23_datapump *datapump, int16_t *sample)
+	struct v23_datapump *datapump, int16_t *sample)
 {
 	bool consumed;
 
@@ -233,7 +233,7 @@ static enum fsk_result generate_data_sample(
 }
 
 static enum fsk_result generate_output_sample(
-	struct sippymodem_v23_datapump *datapump, int16_t *sample)
+	struct v23_datapump *datapump, int16_t *sample)
 {
 	switch (datapump->phase) {
 	case V23_PHASE_ANSWER_TONE:
@@ -265,8 +265,8 @@ static enum fsk_result generate_output_sample(
 }
 
 static bool receive_input_sample(
-	struct sippymodem_v23_datapump *datapump,
-	enum sippymodem_v23_phase phase, int16_t sample)
+	struct v23_datapump *datapump,
+	enum v23_phase phase, int16_t sample)
 {
 	uint8_t bit = 0;
 	bool ready = false;
@@ -312,14 +312,14 @@ static void add_bounded(
 		       limit : *value + increment;
 }
 
-static int enter_online(struct sippymodem_v23_datapump *datapump)
+static int enter_online(struct v23_datapump *datapump)
 {
 	int transmit_rate = datapump->answerer ?
-		SIPPYMODEM_V23_FORWARD_BIT_RATE :
-		SIPPYMODEM_V23_BACKWARD_BIT_RATE;
+		V23_FORWARD_BIT_RATE :
+		V23_BACKWARD_BIT_RATE;
 	int receive_rate = datapump->answerer ?
-		SIPPYMODEM_V23_BACKWARD_BIT_RATE :
-		SIPPYMODEM_V23_FORWARD_BIT_RATE;
+		V23_BACKWARD_BIT_RATE :
+		V23_FORWARD_BIT_RATE;
 
 	if (modem_set_param(
 		    datapump->dp.modem, MDMPRM_TX_RATE, transmit_rate) != 0 ||
@@ -333,7 +333,7 @@ static int enter_online(struct sippymodem_v23_datapump *datapump)
 }
 
 static int advance_training(
-	struct sippymodem_v23_datapump *datapump,
+	struct v23_datapump *datapump,
 	const struct fsk_measurement *measurement,
 	uint32_t received_samples)
 {
@@ -380,7 +380,7 @@ static int advance_training(
 static int process_v23(struct dp *dp, void *receive_buffer,
 		       void *transmit_buffer, int count)
 {
-	struct sippymodem_v23_datapump *datapump = v23_from_dp(dp);
+	struct v23_datapump *datapump = v23_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	struct fsk_measurement measurement;
@@ -404,7 +404,7 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 		datapump->prelink_count = 0;
 	}
 	for (int index = 0; index < count; ++index) {
-		enum sippymodem_v23_phase receive_phase = datapump->phase;
+		enum v23_phase receive_phase = datapump->phase;
 
 		if (generate_output_sample(datapump, &transmit[index]) !=
 			    FSK_OK ||
@@ -441,17 +441,17 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
-int sippymodem_v23_datapump_register(void)
+int v23_datapump_register(void)
 {
 	return modem_dp_register(DP_V23, &v23_operations);
 }
 
-int sippymodem_v23_datapump_unregister(void)
+int v23_datapump_unregister(void)
 {
 	return modem_dp_deregister(DP_V23, &v23_operations);
 }
 
-bool sippymodem_v23_datapump_is_busy(void)
+bool v23_datapump_is_busy(void)
 {
 	return v23_operations.use_count != 0;
 }

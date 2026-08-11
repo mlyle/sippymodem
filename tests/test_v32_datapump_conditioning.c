@@ -22,7 +22,7 @@ enum {
 	TEST_TURNAROUND_SECONDARY_AMPLITUDE = 6000,
 	TEST_INITIAL_SILENCE_SAMPLES = 400,
 	TEST_ANSWER_TONE_SAMPLES =
-		SIPPYMODEM_V32_ANSWER_GUARD_SAMPLES + 500,
+		V32_ANSWER_GUARD_SAMPLES + 500,
 	TEST_TURNAROUND_SETTLE_SAMPLES = 400,
 	TEST_REVERSAL_SAMPLES = 800,
 	TEST_SILENCE_RUN = 24,
@@ -33,9 +33,9 @@ enum {
 
 static const struct qam_channel test_v32_channel = {
 	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = SIPPYMODEM_V32_STARTUP_SYMBOL_RATE,
+	.symbol_rate_numerator = V32_STARTUP_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
-	.carrier_frequency_numerator = SIPPYMODEM_V32_CALLING_CARRIER_HZ,
+	.carrier_frequency_numerator = V32_CALLING_CARRIER_HZ,
 	.carrier_frequency_denominator = 1,
 	.rolloff = 0.25,
 	.pulse_span_symbols = 6,
@@ -48,8 +48,8 @@ struct test_turnaround_signal {
 
 struct test_peer_qam {
 	struct qam_modulator modulator;
-	struct sippymodem_v32_conditioning_transmitter conditioning;
-	struct sippymodem_v32_symbol_encoder encoder;
+	struct v32_conditioning_transmitter conditioning;
+	struct v32_symbol_encoder encoder;
 	struct qam_point point;
 	uint16_t rate_word;
 	uint16_t end_word;
@@ -63,9 +63,9 @@ struct test_peer_qam {
 
 struct test_caller_qam_receiver {
 	struct qam_demodulator demodulator;
-	struct sippymodem_v32_conditioning_receiver conditioning;
-	struct sippymodem_v32_symbol_decoder decoder;
-	struct sippymodem_v32_rate_signal_detector rate_detector;
+	struct v32_conditioning_receiver conditioning;
+	struct v32_symbol_decoder decoder;
+	struct v32_rate_signal_detector rate_detector;
 	struct qam_gain gain;
 	struct qam_point previous_point;
 	bool conditioning_complete;
@@ -115,12 +115,12 @@ static bool turnaround_signal_init(struct test_turnaround_signal *signal)
 {
 	return single_tone_transmitter_init(
 		       &signal->primary,
-		       SIPPYMODEM_V32_LOW_TURNAROUND_TONE_HZ,
+		       V32_LOW_TURNAROUND_TONE_HZ,
 		       TEST_TURNAROUND_PRIMARY_AMPLITUDE) ==
 		       SINGLE_TONE_OK &&
 	       single_tone_transmitter_init(
 		       &signal->secondary,
-		       SIPPYMODEM_V32_HIGH_TURNAROUND_TONE_HZ,
+		       V32_HIGH_TURNAROUND_TONE_HZ,
 		       TEST_TURNAROUND_SECONDARY_AMPLITUDE) ==
 		       SINGLE_TONE_OK;
 }
@@ -159,7 +159,7 @@ static bool drive_line_startup(
 	int16_t transmit;
 
 	CHECK(single_tone_transmitter_init(
-		      &answer_tone, SIPPYMODEM_V32_ANSWER_TONE_HZ,
+		      &answer_tone, V32_ANSWER_TONE_HZ,
 		      TEST_TONE_AMPLITUDE) == SINGLE_TONE_OK &&
 		      turnaround_signal_init(&turnaround),
 	      "V.32 line fixture did not initialize");
@@ -222,8 +222,8 @@ static bool drive_line_startup(
 
 static bool peer_qam_init(struct test_peer_qam *peer)
 {
-	const struct sippymodem_v32_rate_offer offer = {
-		.rates = SIPPYMODEM_V32_RATE_CAPABILITY_4800,
+	const struct v32_rate_offer offer = {
+		.rates = V32_RATE_CAPABILITY_4800,
 		.trellis_at_highest_rate = false,
 	};
 
@@ -231,17 +231,17 @@ static bool peer_qam_init(struct test_peer_qam *peer)
 	return qam_modulator_init(
 		       &peer->modulator, &test_v32_channel,
 		       TEST_TONE_AMPLITUDE) == QAM_OK &&
-	       sippymodem_v32_conditioning_transmitter_init(
+	       v32_conditioning_transmitter_init(
 		       &peer->conditioning,
-		       SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
-		       SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
-		       SIPPYMODEM_V32_CONDITIONING_OK &&
-	       sippymodem_v32_rate_signal_encode(
-		       SIPPYMODEM_V32_RATE_SIGNAL, &offer, &peer->rate_word) ==
-		       SIPPYMODEM_V32_RATE_SIGNAL_OK &&
-	       sippymodem_v32_rate_signal_encode(
-		       SIPPYMODEM_V32_END_SIGNAL, &offer, &peer->end_word) ==
-		       SIPPYMODEM_V32_RATE_SIGNAL_OK;
+		       V32_ANSWERING_TRANSMITTER,
+		       V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+		       V32_CONDITIONING_OK &&
+	       v32_rate_signal_encode(
+		       V32_RATE_SIGNAL, &offer, &peer->rate_word) ==
+		       V32_RATE_SIGNAL_OK &&
+	       v32_rate_signal_encode(
+		       V32_END_SIGNAL, &offer, &peer->end_word) ==
+		       V32_RATE_SIGNAL_OK;
 }
 
 static bool peer_next_quadrant(
@@ -249,42 +249,42 @@ static bool peer_next_quadrant(
 {
 	uint8_t dibit;
 
-	if (!sippymodem_v32_conditioning_transmitter_is_complete(
+	if (!v32_conditioning_transmitter_is_complete(
 		    &peer->conditioning))
-		return sippymodem_v32_conditioning_transmitter_next(
+		return v32_conditioning_transmitter_next(
 			       &peer->conditioning, quadrant) ==
-		       SIPPYMODEM_V32_CONDITIONING_OK;
+		       V32_CONDITIONING_OK;
 	if (!peer->rate_started) {
-		if (sippymodem_v32_conditioning_transmitter_framing_state(
+		if (v32_conditioning_transmitter_framing_state(
 			    &peer->conditioning, &peer->encoder) !=
-		    SIPPYMODEM_V32_CONDITIONING_OK)
+		    V32_CONDITIONING_OK)
 			return false;
 		peer->rate_started = true;
 	}
 	if (peer->selection &&
 	    (peer->end_dibit != 0 ||
 	     (peer->end_requested && peer->rate_dibit == 0))) {
-		if (peer->end_dibit < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS) {
-			if (sippymodem_v32_rate_signal_dibit(
+		if (peer->end_dibit < V32_RATE_SIGNAL_DIBITS) {
+			if (v32_rate_signal_dibit(
 				    peer->end_word, peer->end_dibit, &dibit) !=
-			    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+			    V32_RATE_SIGNAL_OK)
 				return false;
 			peer->end_dibit++;
 		} else {
 			dibit = 3;
 		}
 	} else {
-		if (sippymodem_v32_rate_signal_dibit(
+		if (v32_rate_signal_dibit(
 			    peer->rate_word, peer->rate_dibit, &dibit) !=
-			    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+			    V32_RATE_SIGNAL_OK)
 			return false;
 		peer->rate_dibit = (peer->rate_dibit + 1u) %
-				   SIPPYMODEM_V32_RATE_SIGNAL_DIBITS;
+				   V32_RATE_SIGNAL_DIBITS;
 		peer->rate_symbols++;
 	}
-	if (sippymodem_v32_4800_symbol_encode(
+	if (v32_4800_symbol_encode(
 		    &peer->encoder, dibit, quadrant) !=
-		    SIPPYMODEM_V32_FRAMING_OK)
+		    V32_FRAMING_OK)
 		return false;
 	return true;
 }
@@ -299,9 +299,9 @@ static bool peer_qam_sample(struct test_peer_qam *peer, int16_t *sample)
 		uint8_t quadrant;
 
 		if (!peer_next_quadrant(peer, &quadrant) ||
-		    sippymodem_v32_4800_constellation_point(
+		    v32_4800_constellation_point(
 			    quadrant, &peer->point) !=
-			    SIPPYMODEM_V32_CONSTELLATION_OK)
+			    V32_CONSTELLATION_OK)
 			return false;
 	}
 	return qam_modulator_sample(
@@ -317,13 +317,13 @@ static bool caller_qam_receiver_init(
 	return qam_demodulator_init(
 		       &receiver->demodulator, &test_v32_channel) ==
 		       QAM_OK &&
-	       sippymodem_v32_conditioning_receiver_init(
+	       v32_conditioning_receiver_init(
 		       &receiver->conditioning,
-		       SIPPYMODEM_V32_CALLING_TRANSMITTER) ==
-		       SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK &&
-	       sippymodem_v32_rate_signal_detector_init(
+		       V32_CALLING_TRANSMITTER) ==
+		       V32_CONDITIONING_RECEIVER_OK &&
+	       v32_rate_signal_detector_init(
 		       &receiver->rate_detector) ==
-		       SIPPYMODEM_V32_RATE_SIGNAL_OK;
+		       V32_RATE_SIGNAL_OK;
 }
 
 static bool caller_qam_receiver_observe(
@@ -339,24 +339,24 @@ static bool caller_qam_receiver_observe(
 	if (!ready || receiver->end_detected)
 		return true;
 	if (!receiver->conditioning_complete) {
-		if (sippymodem_v32_conditioning_receiver_observe(
+		if (v32_conditioning_receiver_observe(
 			    &receiver->conditioning, &point, &ready) !=
-		    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK)
+		    V32_CONDITIONING_RECEIVER_OK)
 			return false;
 		if (!ready)
 			return true;
-		if (sippymodem_v32_conditioning_receiver_framing_state(
+		if (v32_conditioning_receiver_framing_state(
 			    &receiver->conditioning, &receiver->decoder,
 			    &receiver->gain) !=
-		    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK)
+		    V32_CONDITIONING_RECEIVER_OK)
 			return false;
 		receiver->previous_point = point;
 		receiver->conditioning_complete = true;
 		return true;
 	}
 	{
-		struct sippymodem_v32_rate_offer offer;
-		enum sippymodem_v32_rate_signal_event event;
+		struct v32_rate_offer offer;
+		enum v32_rate_signal_event event;
 		uint8_t quarter_turns;
 		uint8_t quadrant;
 		uint8_t dibit;
@@ -368,21 +368,21 @@ static bool caller_qam_receiver_observe(
 		quadrant = (uint8_t)((receiver->decoder.phase_quadrant +
 				      quarter_turns) &
 				     3u);
-		if (sippymodem_v32_4800_symbol_decode(
+		if (v32_4800_symbol_decode(
 			    &receiver->decoder, quadrant, &dibit) !=
-			    SIPPYMODEM_V32_FRAMING_OK ||
-		    sippymodem_v32_rate_signal_detector_observe(
+			    V32_FRAMING_OK ||
+		    v32_rate_signal_detector_observe(
 			    &receiver->rate_detector, dibit, &event, &offer) !=
-			    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+			    V32_RATE_SIGNAL_OK)
 			return false;
-		if (event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED) {
-			if (offer.rates != SIPPYMODEM_V32_RATE_CAPABILITY_4800 ||
+		if (event == V32_RATE_SIGNAL_DETECTED) {
+			if (offer.rates != V32_RATE_CAPABILITY_4800 ||
 			    offer.trellis_at_highest_rate)
 				return false;
 			receiver->rate_detected = true;
-		} else if (event == SIPPYMODEM_V32_END_SIGNAL_DETECTED) {
+		} else if (event == V32_END_SIGNAL_DETECTED) {
 			if (!receiver->rate_detected ||
-			    offer.rates != SIPPYMODEM_V32_RATE_CAPABILITY_4800 ||
+			    offer.rates != V32_RATE_CAPABILITY_4800 ||
 			    offer.trellis_at_highest_rate)
 				return false;
 			receiver->end_detected = true;
@@ -408,13 +408,13 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 	uint64_t response_power = 0;
 	bool connected = false;
 
-	CHECK(sippymodem_v32_datapump_register() == 0,
+	CHECK(v32_datapump_register() == 0,
 	      "V.32 datapump registration failed");
 	operations = modem_dp_get_registered_ops(DP_V32);
 	modem = modem_create(&driver, "V.32 conditioning handoff test");
 	CHECK(operations != NULL && modem != NULL,
 	      "V.32 conditioning handoff fixture did not initialize");
-	modem->min_rate = modem->max_rate = SIPPYMODEM_V32_4800_BIT_RATE;
+	modem->min_rate = modem->max_rate = V32_4800_BIT_RATE;
 	datapump = operations->create(
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(datapump != NULL && drive_line_startup(operations, datapump) &&
@@ -436,23 +436,23 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		      "V.32 conditioning-to-rate processing stopped");
 		if (peer.rate_symbols <
 		    TEST_RATE_WORDS_BEFORE_RESPONSE *
-			    SIPPYMODEM_V32_RATE_SIGNAL_DIBITS)
+			    V32_RATE_SIGNAL_DIBITS)
 			CHECK(transmit == 0,
 			      "V.32 caller responded before a repeated rate word");
 		response_power += (uint64_t)((int32_t)transmit * transmit);
 	}
 	CHECK(peer.rate_symbols >=
 		      TEST_RATE_WORDS_BEFORE_RESPONSE *
-			      SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
+			      V32_RATE_SIGNAL_DIBITS &&
 		      response_power >= UINT64_C(1000000000) &&
 		      caller_receiver.conditioning_complete &&
 		      caller_receiver.rate_detected,
 	      "V.32 caller did not return conditioning and a rate response");
-	CHECK(sippymodem_v32_conditioning_transmitter_init(
+	CHECK(v32_conditioning_transmitter_init(
 		      &peer.conditioning,
-		      SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
-		      SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
-		      SIPPYMODEM_V32_CONDITIONING_OK,
+		      V32_ANSWERING_TRANSMITTER,
+		      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+		      V32_CONDITIONING_OK,
 	      "V.32 peer receiver-training restart failed");
 	peer.rate_started = false;
 	peer.rate_dibit = 0;
@@ -490,24 +490,24 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 				      &caller_receiver, transmit),
 		      "V.32 second-conditioning handoff stopped");
 	}
-	CHECK(sippymodem_v32_conditioning_transmitter_is_complete(
+	CHECK(v32_conditioning_transmitter_is_complete(
 		      &peer.conditioning) &&
 		      peer.rate_symbols >=
-			      2 * SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
+			      2 * V32_RATE_SIGNAL_DIBITS &&
 		      peer.end_requested && caller_receiver.end_detected &&
-		      peer.end_dibit == SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
+		      peer.end_dibit == V32_RATE_SIGNAL_DIBITS &&
 		      connected,
 	      "V.32 caller did not reacquire second conditioning before R3 "
 	      "(conditioning=%d, rate symbols=%u, requested=%d, "
 	      "received=%d, E dibits=%u, link=%d)",
-	      sippymodem_v32_conditioning_transmitter_is_complete(
+	      v32_conditioning_transmitter_is_complete(
 		      &peer.conditioning),
 	      peer.rate_symbols, peer.end_requested, caller_receiver.end_detected,
 	      peer.end_dibit, connected);
 	CHECK(operations->delete(datapump) == 0,
 	      "V.32 datapump cleanup failed");
 	modem_delete(modem);
-	CHECK(sippymodem_v32_datapump_unregister() == 0,
+	CHECK(v32_datapump_unregister() == 0,
 	      "V.32 datapump deregistration failed");
 	return true;
 }

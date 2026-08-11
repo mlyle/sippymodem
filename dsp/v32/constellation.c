@@ -12,8 +12,8 @@ static double signed_coordinate(bool positive, bool outer)
 	return (positive ? magnitude : -magnitude) / sqrt(18.0);
 }
 
-enum sippymodem_v32_constellation_result
-sippymodem_v32_constellation_point(
+enum v32_constellation_result
+v32_constellation_point(
 	uint8_t symbol, struct qam_point *point)
 {
 	struct qam_point next;
@@ -23,8 +23,8 @@ sippymodem_v32_constellation_point(
 	bool outer_in_phase;
 	bool outer_quadrature;
 
-	if (symbol >= SIPPYMODEM_V32_CONSTELLATION_SYMBOLS || point == NULL)
-		return SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT;
+	if (symbol >= V32_CONSTELLATION_SYMBOLS || point == NULL)
+		return V32_CONSTELLATION_INVALID_ARGUMENT;
 	quadrant = (uint8_t)(symbol >> 2);
 	position = (uint8_t)(symbol & 3u);
 	swap_magnitude_bits = (quadrant & 1u) != 0;
@@ -41,16 +41,16 @@ sippymodem_v32_constellation_point(
 			quadrant >= 2, outer_quadrature),
 	};
 	*point = next;
-	return SIPPYMODEM_V32_CONSTELLATION_OK;
+	return V32_CONSTELLATION_OK;
 }
 
-enum sippymodem_v32_constellation_result
-sippymodem_v32_4800_constellation_point(
+enum v32_constellation_result
+v32_4800_constellation_point(
 	uint8_t quadrant, struct qam_point *point)
 {
-	if (quadrant >= SIPPYMODEM_V32_4800_SIGNAL_POINTS)
-		return SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT;
-	return sippymodem_v32_constellation_point(
+	if (quadrant >= V32_4800_SIGNAL_POINTS)
+		return V32_CONSTELLATION_INVALID_ARGUMENT;
+	return v32_constellation_point(
 		(uint8_t)(quadrant * 4u + 1u), point);
 }
 
@@ -176,8 +176,8 @@ static struct doubled_grid_point trellis_subset_transform(
 	return point;
 }
 
-enum sippymodem_v32_constellation_result
-sippymodem_v32_trellis_constellation_point(
+enum v32_constellation_result
+v32_trellis_constellation_point(
 	uint8_t data_bits_per_symbol, uint8_t signal_symbol,
 	struct qam_point *point)
 {
@@ -191,7 +191,7 @@ sippymodem_v32_trellis_constellation_point(
 	if (!trellis_data_bits_are_valid(data_bits_per_symbol) ||
 	    signal_symbol >= (UINT8_C(1) << (data_bits_per_symbol + 1u)) ||
 	    point == NULL)
-		return SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT;
+		return V32_CONSTELLATION_INVALID_ARGUMENT;
 	low_bit_count = (uint8_t)(data_bits_per_symbol - 2u);
 	low_mask = (uint8_t)((UINT8_C(1) << low_bit_count) - 1u);
 	subset = (uint8_t)(signal_symbol >> low_bit_count);
@@ -207,24 +207,24 @@ sippymodem_v32_trellis_constellation_point(
 		.quadrature = grid_point.quadrature / normalization,
 	};
 	*point = next;
-	return SIPPYMODEM_V32_CONSTELLATION_OK;
+	return V32_CONSTELLATION_OK;
 }
 
-enum sippymodem_v32_constellation_result
-sippymodem_v32_7200_constellation_point(
+enum v32_constellation_result
+v32_7200_constellation_point(
 	uint8_t signal_symbol, struct qam_point *point)
 {
-	return sippymodem_v32_trellis_constellation_point(
+	return v32_trellis_constellation_point(
 		3, signal_symbol, point);
 }
 
-const char *sippymodem_v32_constellation_result_name(
-	enum sippymodem_v32_constellation_result result)
+const char *v32_constellation_result_name(
+	enum v32_constellation_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V32_CONSTELLATION_OK:
+	case V32_CONSTELLATION_OK:
 		return "ok";
-	case SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT:
+	case V32_CONSTELLATION_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

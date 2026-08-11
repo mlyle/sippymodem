@@ -20,8 +20,8 @@ static uint32_t phase_step(unsigned int frequency_hz)
 	uint64_t scaled =
 		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
 
-	return (uint32_t)((scaled + SIPPYMODEM_V8_ANSAM_SAMPLE_RATE / 2u) /
-			  SIPPYMODEM_V8_ANSAM_SAMPLE_RATE);
+	return (uint32_t)((scaled + V8_ANSAM_SAMPLE_RATE / 2u) /
+			  V8_ANSAM_SAMPLE_RATE);
 }
 
 static double phase_radians(uint32_t phase)
@@ -30,53 +30,53 @@ static double phase_radians(uint32_t phase)
 }
 
 static bool generator_is_valid(
-	const struct sippymodem_v8_ansam_generator *generator)
+	const struct v8_ansam_generator *generator)
 {
 	return generator != NULL && generator->average_amplitude > 0 &&
 	       generator->average_amplitude <=
-		       SIPPYMODEM_V8_ANSAM_MAX_AVERAGE_AMPLITUDE &&
+		       V8_ANSAM_MAX_AVERAGE_AMPLITUDE &&
 	       generator->carrier_phase_step ==
-		       phase_step(SIPPYMODEM_V8_ANSAM_CARRIER_HZ) &&
+		       phase_step(V8_ANSAM_CARRIER_HZ) &&
 	       generator->modulation_phase_step ==
-		       phase_step(SIPPYMODEM_V8_ANSAM_MODULATION_HZ) &&
+		       phase_step(V8_ANSAM_MODULATION_HZ) &&
 	       ((!generator->phase_reversals &&
 		 generator->samples_until_reversal == 0) ||
 		(generator->phase_reversals &&
 		 generator->samples_until_reversal > 0 &&
 		 generator->samples_until_reversal <=
-			 SIPPYMODEM_V8_ANSAM_REVERSAL_SAMPLES));
+			 V8_ANSAM_REVERSAL_SAMPLES));
 }
 
-enum sippymodem_v8_ansam_result sippymodem_v8_ansam_generator_init(
-	struct sippymodem_v8_ansam_generator *generator,
+enum v8_ansam_result v8_ansam_generator_init(
+	struct v8_ansam_generator *generator,
 	int16_t average_amplitude, bool phase_reversals)
 {
-	struct sippymodem_v8_ansam_generator initialized = {
+	struct v8_ansam_generator initialized = {
 		.carrier_phase_step =
-			phase_step(SIPPYMODEM_V8_ANSAM_CARRIER_HZ),
+			phase_step(V8_ANSAM_CARRIER_HZ),
 		.modulation_phase_step =
-			phase_step(SIPPYMODEM_V8_ANSAM_MODULATION_HZ),
+			phase_step(V8_ANSAM_MODULATION_HZ),
 		.samples_until_reversal =
 			phase_reversals ?
-				SIPPYMODEM_V8_ANSAM_REVERSAL_SAMPLES : 0,
+				V8_ANSAM_REVERSAL_SAMPLES : 0,
 		.average_amplitude = average_amplitude,
 		.phase_reversals = phase_reversals,
 	};
 
 	if (generator == NULL || !generator_is_valid(&initialized))
-		return SIPPYMODEM_V8_ANSAM_INVALID_ARGUMENT;
+		return V8_ANSAM_INVALID_ARGUMENT;
 	*generator = initialized;
-	return SIPPYMODEM_V8_ANSAM_OK;
+	return V8_ANSAM_OK;
 }
 
-enum sippymodem_v8_ansam_result sippymodem_v8_ansam_generate(
-	struct sippymodem_v8_ansam_generator *generator,
+enum v8_ansam_result v8_ansam_generate(
+	struct v8_ansam_generator *generator,
 	int16_t *samples, size_t count)
 {
-	struct sippymodem_v8_ansam_generator next;
+	struct v8_ansam_generator next;
 
 	if (!generator_is_valid(generator) || (samples == NULL && count != 0))
-		return SIPPYMODEM_V8_ANSAM_INVALID_ARGUMENT;
+		return V8_ANSAM_INVALID_ARGUMENT;
 	next = *generator;
 	for (size_t index = 0; index < count; ++index) {
 		double carrier = sin(phase_radians(next.carrier_phase));
@@ -92,22 +92,22 @@ enum sippymodem_v8_ansam_result sippymodem_v8_ansam_generate(
 		    --next.samples_until_reversal == 0) {
 			next.carrier_phase += UINT32_C(0x80000000);
 			next.samples_until_reversal =
-				SIPPYMODEM_V8_ANSAM_REVERSAL_SAMPLES;
+				V8_ANSAM_REVERSAL_SAMPLES;
 		}
 	}
 	*generator = next;
-	return SIPPYMODEM_V8_ANSAM_OK;
+	return V8_ANSAM_OK;
 }
 
-static struct sippymodem_v8_ansam_projection projection(unsigned int frequency)
+static struct v8_ansam_projection projection(unsigned int frequency)
 {
-	return (struct sippymodem_v8_ansam_projection){
+	return (struct v8_ansam_projection){
 		.phase_step = phase_step(frequency),
 	};
 }
 
 static bool projection_is_valid(
-	const struct sippymodem_v8_ansam_projection *projection,
+	const struct v8_ansam_projection *projection,
 	unsigned int frequency)
 {
 	return projection != NULL && isfinite(projection->in_phase) &&
@@ -116,69 +116,69 @@ static bool projection_is_valid(
 }
 
 static bool detector_is_valid(
-	const struct sippymodem_v8_ansam_detector *detector)
+	const struct v8_ansam_detector *detector)
 {
 	return detector != NULL &&
 	       projection_is_valid(
 		       &detector->lower_sideband,
-		       SIPPYMODEM_V8_ANSAM_CARRIER_HZ -
-			       SIPPYMODEM_V8_ANSAM_MODULATION_HZ) &&
+		       V8_ANSAM_CARRIER_HZ -
+			       V8_ANSAM_MODULATION_HZ) &&
 	       projection_is_valid(
 		       &detector->carrier,
-		       SIPPYMODEM_V8_ANSAM_CARRIER_HZ) &&
+		       V8_ANSAM_CARRIER_HZ) &&
 	       projection_is_valid(
 		       &detector->upper_sideband,
-		       SIPPYMODEM_V8_ANSAM_CARRIER_HZ +
-			       SIPPYMODEM_V8_ANSAM_MODULATION_HZ) &&
+		       V8_ANSAM_CARRIER_HZ +
+			       V8_ANSAM_MODULATION_HZ) &&
 	       isfinite(detector->line_energy) && detector->line_energy >= 0.0 &&
 	       isfinite(detector->carrier_share) &&
 	       detector->carrier_share >= 0.0 &&
 	       isfinite(detector->modulation_ratio) &&
 	       detector->modulation_ratio >= 0.0 &&
 	       detector->sample_count <
-		       SIPPYMODEM_V8_ANSAM_DETECTOR_WINDOW_SAMPLES &&
+		       V8_ANSAM_DETECTOR_WINDOW_SAMPLES &&
 	       detector->qualifying_windows <=
-		       SIPPYMODEM_V8_ANSAM_REQUIRED_WINDOWS &&
+		       V8_ANSAM_REQUIRED_WINDOWS &&
 	       detector->missed_windows <= 1 &&
 	       (detector->qualifying_windows != 0 ||
 		detector->missed_windows == 0) &&
 	       detector->detected ==
 		       (detector->qualifying_windows ==
-			SIPPYMODEM_V8_ANSAM_REQUIRED_WINDOWS) &&
+			V8_ANSAM_REQUIRED_WINDOWS) &&
 	       (!detector->detected || detector->missed_windows == 0) &&
 	       (detector->measurement_ready ||
 		(detector->carrier_share == 0.0 &&
 		 detector->modulation_ratio == 0.0));
 }
 
-enum sippymodem_v8_ansam_result sippymodem_v8_ansam_detector_init(
-	struct sippymodem_v8_ansam_detector *detector)
+enum v8_ansam_result v8_ansam_detector_init(
+	struct v8_ansam_detector *detector)
 {
-	struct sippymodem_v8_ansam_detector initialized = {
+	struct v8_ansam_detector initialized = {
 		.lower_sideband = projection(
-			SIPPYMODEM_V8_ANSAM_CARRIER_HZ -
-			SIPPYMODEM_V8_ANSAM_MODULATION_HZ),
-		.carrier = projection(SIPPYMODEM_V8_ANSAM_CARRIER_HZ),
+			V8_ANSAM_CARRIER_HZ -
+			V8_ANSAM_MODULATION_HZ),
+		.carrier = projection(V8_ANSAM_CARRIER_HZ),
 		.upper_sideband = projection(
-			SIPPYMODEM_V8_ANSAM_CARRIER_HZ +
-			SIPPYMODEM_V8_ANSAM_MODULATION_HZ),
+			V8_ANSAM_CARRIER_HZ +
+			V8_ANSAM_MODULATION_HZ),
 	};
 
 	if (detector == NULL || !detector_is_valid(&initialized))
-		return SIPPYMODEM_V8_ANSAM_INVALID_ARGUMENT;
+		return V8_ANSAM_INVALID_ARGUMENT;
 	*detector = initialized;
-	return SIPPYMODEM_V8_ANSAM_OK;
+	return V8_ANSAM_OK;
 }
 
-void sippymodem_v8_ansam_detector_reset(
-	struct sippymodem_v8_ansam_detector *detector)
+void v8_ansam_detector_reset(
+	struct v8_ansam_detector *detector)
 {
 	if (detector != NULL)
-		(void)sippymodem_v8_ansam_detector_init(detector);
+		(void)v8_ansam_detector_init(detector);
 }
 
 static void project_sample(
-	struct sippymodem_v8_ansam_projection *projection, int16_t sample)
+	struct v8_ansam_projection *projection, int16_t sample)
 {
 	double radians = phase_radians(projection->phase);
 
@@ -188,13 +188,13 @@ static void project_sample(
 }
 
 static double projection_power(
-	const struct sippymodem_v8_ansam_projection *projection)
+	const struct v8_ansam_projection *projection)
 {
 	return projection->in_phase * projection->in_phase +
 	       projection->quadrature * projection->quadrature;
 }
 
-static void reset_window(struct sippymodem_v8_ansam_detector *detector)
+static void reset_window(struct v8_ansam_detector *detector)
 {
 	detector->lower_sideband.in_phase = 0.0;
 	detector->lower_sideband.quadrature = 0.0;
@@ -206,7 +206,7 @@ static void reset_window(struct sippymodem_v8_ansam_detector *detector)
 	detector->sample_count = 0;
 }
 
-static void evaluate_window(struct sippymodem_v8_ansam_detector *detector)
+static void evaluate_window(struct v8_ansam_detector *detector)
 {
 	double carrier_power = projection_power(&detector->carrier);
 	double sideband_power =
@@ -214,7 +214,7 @@ static void evaluate_window(struct sippymodem_v8_ansam_detector *detector)
 		projection_power(&detector->upper_sideband);
 	double mean_square =
 		detector->line_energy /
-		SIPPYMODEM_V8_ANSAM_DETECTOR_WINDOW_SAMPLES;
+		V8_ANSAM_DETECTOR_WINDOW_SAMPLES;
 	bool qualifies = false;
 
 	detector->carrier_share = 0.0;
@@ -222,7 +222,7 @@ static void evaluate_window(struct sippymodem_v8_ansam_detector *detector)
 	if (carrier_power > 0.0 && detector->line_energy > 0.0) {
 		detector->carrier_share =
 			2.0 * carrier_power /
-			((double)SIPPYMODEM_V8_ANSAM_DETECTOR_WINDOW_SAMPLES *
+			((double)V8_ANSAM_DETECTOR_WINDOW_SAMPLES *
 			 detector->line_energy);
 		detector->modulation_ratio = sideband_power / carrier_power;
 		qualifies = mean_square >= V8_ANSAM_MIN_MEAN_SQUARE &&
@@ -241,7 +241,7 @@ static void evaluate_window(struct sippymodem_v8_ansam_detector *detector)
 			detector->qualifying_windows++;
 			detector->missed_windows = 0;
 			if (detector->qualifying_windows ==
-			    SIPPYMODEM_V8_ANSAM_REQUIRED_WINDOWS)
+			    V8_ANSAM_REQUIRED_WINDOWS)
 				detector->detected = true;
 		} else if (detector->qualifying_windows != 0 &&
 			   detector->missed_windows == 0) {
@@ -257,15 +257,15 @@ static void evaluate_window(struct sippymodem_v8_ansam_detector *detector)
 	reset_window(detector);
 }
 
-enum sippymodem_v8_ansam_result sippymodem_v8_ansam_detect(
-	struct sippymodem_v8_ansam_detector *detector,
+enum v8_ansam_result v8_ansam_detect(
+	struct v8_ansam_detector *detector,
 	const int16_t *samples, size_t count, bool *detected)
 {
-	struct sippymodem_v8_ansam_detector next;
+	struct v8_ansam_detector next;
 
 	if (!detector_is_valid(detector) || detected == NULL ||
 	    (samples == NULL && count != 0))
-		return SIPPYMODEM_V8_ANSAM_INVALID_ARGUMENT;
+		return V8_ANSAM_INVALID_ARGUMENT;
 	next = *detector;
 	for (size_t index = 0; index < count; ++index) {
 		double sample = samples[index];
@@ -276,22 +276,22 @@ enum sippymodem_v8_ansam_result sippymodem_v8_ansam_detect(
 		next.line_energy += sample * sample;
 		next.sample_count++;
 		if (next.sample_count ==
-		    SIPPYMODEM_V8_ANSAM_DETECTOR_WINDOW_SAMPLES)
+		    V8_ANSAM_DETECTOR_WINDOW_SAMPLES)
 			evaluate_window(&next);
 	}
 	if (!detector_is_valid(&next))
-		return SIPPYMODEM_V8_ANSAM_INVALID_ARGUMENT;
+		return V8_ANSAM_INVALID_ARGUMENT;
 	*detector = next;
 	*detected = next.detected;
-	return SIPPYMODEM_V8_ANSAM_OK;
+	return V8_ANSAM_OK;
 }
 
-struct sippymodem_v8_ansam_measurement sippymodem_v8_ansam_measure(
-	const struct sippymodem_v8_ansam_detector *detector)
+struct v8_ansam_measurement v8_ansam_measure(
+	const struct v8_ansam_detector *detector)
 {
 	if (!detector_is_valid(detector))
-		return (struct sippymodem_v8_ansam_measurement){ 0 };
-	return (struct sippymodem_v8_ansam_measurement){
+		return (struct v8_ansam_measurement){ 0 };
+	return (struct v8_ansam_measurement){
 		.carrier_share = detector->carrier_share,
 		.modulation_ratio = detector->modulation_ratio,
 		.qualifying_windows = detector->qualifying_windows,
@@ -300,13 +300,13 @@ struct sippymodem_v8_ansam_measurement sippymodem_v8_ansam_measure(
 	};
 }
 
-const char *sippymodem_v8_ansam_result_name(
-	enum sippymodem_v8_ansam_result result)
+const char *v8_ansam_result_name(
+	enum v8_ansam_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V8_ANSAM_OK:
+	case V8_ANSAM_OK:
 		return "ok";
-	case SIPPYMODEM_V8_ANSAM_INVALID_ARGUMENT:
+	case V8_ANSAM_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

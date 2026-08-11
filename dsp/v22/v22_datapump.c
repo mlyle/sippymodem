@@ -55,7 +55,7 @@ static const struct qam_channel v22_high_channel = {
 	.pulse_span_symbols = V22_PULSE_SPAN_SYMBOLS,
 };
 
-enum sippymodem_v22_training_state {
+enum v22_training_state {
 	V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK,
 	V22_TRAINING_ORIGINATE_SILENCE,
 	V22_TRAINING_WAIT_SCRAMBLED_MARK,
@@ -64,7 +64,7 @@ enum sippymodem_v22_training_state {
 	V22_TRAINING_ONLINE,
 };
 
-enum sippymodem_v22_transmit_mode {
+enum v22_transmit_mode {
 	V22_TRANSMIT_SILENCE,
 	V22_TRANSMIT_UNSCRAMBLED_MARK,
 	V22_TRANSMIT_SCRAMBLED_MARK,
@@ -72,16 +72,16 @@ enum sippymodem_v22_transmit_mode {
 	V22_TRANSMIT_DATA,
 };
 
-struct sippymodem_v22_datapump {
+struct v22_datapump {
 	struct dp dp;
 	struct qam_modulator modulator;
 	struct qam_demodulator demodulator;
-	struct sippymodem_v22_symbol_encoder encoder;
-	struct sippymodem_v22_scrambler descrambler;
-	struct sippymodem_v22bis_symbol_encoder v22bis_encoder;
-	struct sippymodem_v22bis_receiver v22bis_receiver;
-	enum sippymodem_v22_training_state training_state;
-	enum sippymodem_v22_transmit_mode transmit_mode;
+	struct v22_symbol_encoder encoder;
+	struct v22_scrambler descrambler;
+	struct v22bis_symbol_encoder v22bis_encoder;
+	struct v22bis_receiver v22bis_receiver;
+	enum v22_training_state training_state;
+	enum v22_transmit_mode transmit_mode;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint32_t phase_samples;
@@ -104,7 +104,7 @@ static struct dp *create_v22(
 static int delete_v22(struct dp *dp);
 static int process_v22(
 	struct dp *dp, void *receive, void *transmit, int count);
-static int enter_link(struct sippymodem_v22_datapump *datapump);
+static int enter_link(struct v22_datapump *datapump);
 
 static struct dp_operations v22_operations = {
 	.name = "sippymodem V.22/V.22bis/Bell 212A",
@@ -121,13 +121,13 @@ static bool id_uses_v22_carrier(enum DP_ID id)
 }
 
 static bool datapump_uses_v22bis(
-	const struct sippymodem_v22_datapump *datapump)
+	const struct v22_datapump *datapump)
 {
 	return datapump != NULL && datapump->dp.id == DP_V22BIS;
 }
 
 static bool transmit_uses_v22bis_symbols(
-	const struct sippymodem_v22_datapump *datapump)
+	const struct v22_datapump *datapump)
 {
 	return datapump != NULL &&
 	       (datapump->transmit_mode == V22_TRANSMIT_V22BIS_MARK ||
@@ -135,9 +135,9 @@ static bool transmit_uses_v22bis_symbols(
 		 datapump_uses_v22bis(datapump)));
 }
 
-static struct sippymodem_v22_datapump *v22_from_dp(struct dp *dp)
+static struct v22_datapump *v22_from_dp(struct dp *dp)
 {
-	struct sippymodem_v22_datapump *datapump;
+	struct v22_datapump *datapump;
 
 	if (dp == NULL || !id_uses_v22_carrier(dp->id) ||
 	    dp->op != &v22_operations ||
@@ -156,18 +156,18 @@ static struct sippymodem_v22_datapump *v22_from_dp(struct dp *dp)
 		    V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS ||
 	    datapump->v22bis_confirm_bits > V22BIS_CONFIRM_BITS ||
 	    datapump->missing_carrier_samples > V22_CARRIER_LOSS_SAMPLES ||
-	    datapump->transmit_symbol >= SIPPYMODEM_V22BIS_SYMBOL_COUNT ||
+	    datapump->transmit_symbol >= V22BIS_SYMBOL_COUNT ||
 	    (datapump->has_previous_receive_point &&
 	     (!isfinite(datapump->previous_receive_point.in_phase) ||
 	      !isfinite(datapump->previous_receive_point.quadrature))) ||
 	    (datapump->v22bis_receiver_initialized &&
 	     (!datapump->has_previous_receive_point ||
-	      !sippymodem_v22bis_receiver_is_valid(
+	      !v22bis_receiver_is_valid(
 		      &datapump->v22bis_receiver))) ||
 	    (transmit_uses_v22bis_symbols(datapump) &&
 	     (datapump->v22bis_encoder.phase_quadrant >=
 		      QPSK_QUADRANT_COUNT ||
-	      !sippymodem_v22_scrambler_is_valid(
+	      !v22_scrambler_is_valid(
 		      &datapump->v22bis_encoder.scrambler))) ||
 	    (datapump->receiving_v22bis &&
 	     (!datapump->v22bis_receiver_initialized ||
@@ -191,8 +191,8 @@ static uint64_t training_timeout(struct modem *modem)
 
 static unsigned int selected_bit_rate(enum DP_ID id)
 {
-	return id == DP_V22BIS ? SIPPYMODEM_V22BIS_BIT_RATE :
-			       SIPPYMODEM_V22_BIT_RATE;
+	return id == DP_V22BIS ? V22BIS_BIT_RATE :
+			       V22_BIT_RATE;
 }
 
 static bool rate_is_selected(const struct modem *modem, enum DP_ID id)
@@ -207,7 +207,7 @@ static struct dp *create_v22(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
 {
-	struct sippymodem_v22_datapump *datapump;
+	struct v22_datapump *datapump;
 	const struct qam_channel *transmit_channel;
 	const struct qam_channel *receive_channel;
 
@@ -231,12 +231,12 @@ static struct dp *create_v22(
 	    qam_demodulator_init(
 		    &datapump->demodulator, receive_channel) !=
 		    QAM_OK ||
-	    sippymodem_v22_symbol_encoder_init(&datapump->encoder, 0) !=
-		    SIPPYMODEM_V22_FRAMING_OK) {
+	    v22_symbol_encoder_init(&datapump->encoder, 0) !=
+		    V22_FRAMING_OK) {
 		free(datapump);
 		return NULL;
 	}
-	sippymodem_v22_scrambler_reset(&datapump->descrambler);
+	v22_scrambler_reset(&datapump->descrambler);
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -259,7 +259,7 @@ static struct dp *create_v22(
 
 static int delete_v22(struct dp *dp)
 {
-	struct sippymodem_v22_datapump *datapump = v22_from_dp(dp);
+	struct v22_datapump *datapump = v22_from_dp(dp);
 
 	if (datapump == NULL || v22_operations.use_count <= 0)
 		return -1;
@@ -270,18 +270,18 @@ static int delete_v22(struct dp *dp)
 }
 
 static int start_scrambled_transmit(
-	struct sippymodem_v22_datapump *datapump)
+	struct v22_datapump *datapump)
 {
-	if (sippymodem_v22_symbol_encoder_init(
+	if (v22_symbol_encoder_init(
 		    &datapump->encoder, datapump->transmit_quadrant) !=
-	    SIPPYMODEM_V22_FRAMING_OK)
+	    V22_FRAMING_OK)
 		return -1;
 	datapump->transmit_mode = V22_TRANSMIT_SCRAMBLED_MARK;
 	return 0;
 }
 
 static int next_transmit_quadrant(
-	struct sippymodem_v22_datapump *datapump)
+	struct v22_datapump *datapump)
 {
 	uint8_t bits[2] = { 1, 1 };
 	uint8_t quadrant;
@@ -296,40 +296,40 @@ static int next_transmit_quadrant(
 		bits[0] = bits[1] = 1;
 	bits[0] &= 1u;
 	bits[1] &= 1u;
-	if (sippymodem_v22_symbol_encode(
+	if (v22_symbol_encode(
 		    &datapump->encoder, bits[0], bits[1], &quadrant) !=
-	    SIPPYMODEM_V22_FRAMING_OK)
+	    V22_FRAMING_OK)
 		return -1;
 	datapump->transmit_quadrant = quadrant;
 	return 0;
 }
 
 static int next_transmit_v22bis_symbol(
-	struct sippymodem_v22_datapump *datapump)
+	struct v22_datapump *datapump)
 {
-	uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL] = { 1, 1, 1, 1 };
+	uint8_t bits[V22BIS_BITS_PER_SYMBOL] = { 1, 1, 1, 1 };
 
 	if (datapump->transmit_mode == V22_TRANSMIT_DATA &&
 	    modem_get_bits(
 		    datapump->dp.modem, 1, bits,
-		    SIPPYMODEM_V22BIS_BITS_PER_SYMBOL) !=
-		    SIPPYMODEM_V22BIS_BITS_PER_SYMBOL)
+		    V22BIS_BITS_PER_SYMBOL) !=
+		    V22BIS_BITS_PER_SYMBOL)
 		for (size_t index = 0;
-		     index < SIPPYMODEM_V22BIS_BITS_PER_SYMBOL; ++index)
+		     index < V22BIS_BITS_PER_SYMBOL; ++index)
 			bits[index] = 1;
-	for (size_t index = 0; index < SIPPYMODEM_V22BIS_BITS_PER_SYMBOL;
+	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
 	     ++index)
 		bits[index] &= 1u;
-	return sippymodem_v22bis_symbol_encode(
+	return v22bis_symbol_encode(
 		       &datapump->v22bis_encoder, bits,
 		       &datapump->transmit_symbol) ==
-		       SIPPYMODEM_V22_FRAMING_OK ?
+		       V22_FRAMING_OK ?
 		       0 :
 		       -1;
 }
 
 static int generate_sample(
-	struct sippymodem_v22_datapump *datapump, int16_t *sample)
+	struct v22_datapump *datapump, int16_t *sample)
 {
 	static const struct qam_point quadrants[] = {
 		{ 1.0, 0.0 },
@@ -349,9 +349,9 @@ static int generate_sample(
 		&datapump->modulator);
 	if (transmit_uses_v22bis_symbols(datapump)) {
 		if ((can_accept && next_transmit_v22bis_symbol(datapump) != 0) ||
-		    sippymodem_v22bis_constellation_point(
+		    v22bis_constellation_point(
 			    datapump->transmit_symbol, &point) !=
-			    SIPPYMODEM_V22_FRAMING_OK)
+			    V22_FRAMING_OK)
 			return -1;
 	} else {
 		if (can_accept && next_transmit_quadrant(datapump) != 0)
@@ -367,7 +367,7 @@ static int generate_sample(
 }
 
 static int decode_phase_change(
-	struct sippymodem_v22_datapump *datapump, uint8_t quarter_turns,
+	struct v22_datapump *datapump, uint8_t quarter_turns,
 	uint8_t bits[2])
 {
 	uint8_t dibit;
@@ -380,24 +380,24 @@ static int decode_phase_change(
 		return -1;
 	first_scrambled = (uint8_t)(dibit >> 1);
 	second_scrambled = (uint8_t)(dibit & 1u);
-	if (sippymodem_v22_descramble_bit(
+	if (v22_descramble_bit(
 		    &datapump->descrambler, first_scrambled, &bits[0]) !=
-		    SIPPYMODEM_V22_FRAMING_OK ||
-	    sippymodem_v22_descramble_bit(
+		    V22_FRAMING_OK ||
+	    v22_descramble_bit(
 		    &datapump->descrambler, second_scrambled, &bits[1]) !=
-		    SIPPYMODEM_V22_FRAMING_OK)
+		    V22_FRAMING_OK)
 		return -1;
 	return 0;
 }
 
 static uint32_t scrambled_confirmation_target(
-	const struct sippymodem_v22_datapump *datapump)
+	const struct v22_datapump *datapump)
 {
 	return datapump->originator ? V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS :
 					V22_ANSWER_SCRAMBLED_CONFIRM_BITS;
 }
 
-static int begin_connect_hold(struct sippymodem_v22_datapump *datapump)
+static int begin_connect_hold(struct v22_datapump *datapump)
 {
 	if (!datapump->originator && start_scrambled_transmit(datapump) != 0)
 		return -1;
@@ -408,14 +408,14 @@ static int begin_connect_hold(struct sippymodem_v22_datapump *datapump)
 }
 
 static int start_v22bis_transmit(
-	struct sippymodem_v22_datapump *datapump)
+	struct v22_datapump *datapump)
 {
 	if (!datapump_uses_v22bis(datapump) ||
 	    !datapump->v22bis_receiver_initialized ||
-	    sippymodem_v22bis_symbol_encoder_init(
+	    v22bis_symbol_encoder_init(
 		    &datapump->v22bis_encoder,
 		    datapump->transmit_quadrant) !=
-		    SIPPYMODEM_V22_FRAMING_OK)
+		    V22_FRAMING_OK)
 		return -1;
 	datapump->transmit_mode = V22_TRANSMIT_V22BIS_MARK;
 	datapump->training_state = V22_TRAINING_V22BIS_CONFIRM;
@@ -424,7 +424,7 @@ static int start_v22bis_transmit(
 }
 
 static int observe_phase_change(
-	struct sippymodem_v22_datapump *datapump, uint8_t quarter_turns)
+	struct v22_datapump *datapump, uint8_t quarter_turns)
 {
 	uint8_t bits[2];
 
@@ -461,7 +461,7 @@ static int observe_phase_change(
 }
 
 static bool v22bis_is_ready_to_link(
-	const struct sippymodem_v22_datapump *datapump)
+	const struct v22_datapump *datapump)
 {
 	return datapump->training_state == V22_TRAINING_V22BIS_CONFIRM &&
 	       datapump->phase_samples >= V22BIS_CONFIRM_SAMPLES &&
@@ -469,17 +469,17 @@ static bool v22bis_is_ready_to_link(
 }
 
 static int observe_v22bis_bits(
-	struct sippymodem_v22_datapump *datapump,
-	uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL], bool *linked)
+	struct v22_datapump *datapump,
+	uint8_t bits[V22BIS_BITS_PER_SYMBOL], bool *linked)
 {
 	if (datapump->training_state == V22_TRAINING_ONLINE) {
 		if (datapump->dp.modem->put_bits != NULL)
 			(void)modem_put_bits(
 				datapump->dp.modem, 1, bits,
-				SIPPYMODEM_V22BIS_BITS_PER_SYMBOL);
+				V22BIS_BITS_PER_SYMBOL);
 		return 0;
 	}
-	for (size_t index = 0; index < SIPPYMODEM_V22BIS_BITS_PER_SYMBOL;
+	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
 	     ++index) {
 		if (bits[index] == 0) {
 			datapump->v22bis_confirm_bits = 0;
@@ -496,41 +496,41 @@ static int observe_v22bis_bits(
 }
 
 static int receive_v22bis_point(
-	struct sippymodem_v22_datapump *datapump,
+	struct v22_datapump *datapump,
 	const struct qam_point *point, bool *linked)
 {
-	uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
+	uint8_t bits[V22BIS_BITS_PER_SYMBOL];
 
 	if (!datapump->receiving_v22bis) {
 		uint8_t quarter_turns;
 		bool matches_v22;
 
-		if (sippymodem_v22bis_receiver_matches_v22(
+		if (v22bis_receiver_matches_v22(
 			    &datapump->v22bis_receiver, point, &matches_v22) !=
-		    SIPPYMODEM_V22BIS_RECEIVER_OK)
+		    V22BIS_RECEIVER_OK)
 			return -1;
 		if (matches_v22) {
 			if (qam_nearest_quarter_turn(
 				    &datapump->previous_receive_point, point,
 				    &quarter_turns) != QAM_OK ||
 			    observe_phase_change(datapump, quarter_turns) != 0 ||
-			    sippymodem_v22bis_receiver_track_v22(
+			    v22bis_receiver_track_v22(
 				    &datapump->v22bis_receiver, quarter_turns,
-				    point) != SIPPYMODEM_V22BIS_RECEIVER_OK)
+				    point) != V22BIS_RECEIVER_OK)
 				return -1;
 			return 0;
 		}
 	}
-	if (sippymodem_v22bis_receiver_decode(
+	if (v22bis_receiver_decode(
 		    &datapump->v22bis_receiver, point, bits) !=
-	    SIPPYMODEM_V22BIS_RECEIVER_OK)
+	    V22BIS_RECEIVER_OK)
 		return -1;
 	datapump->receiving_v22bis = true;
 	return observe_v22bis_bits(datapump, bits, linked);
 }
 
 static int receive_sample(
-	struct sippymodem_v22_datapump *datapump, int16_t sample, bool *linked)
+	struct v22_datapump *datapump, int16_t sample, bool *linked)
 {
 	struct qam_point point;
 	uint8_t quarter_turns;
@@ -557,9 +557,9 @@ static int receive_sample(
 	if (datapump_uses_v22bis(datapump) &&
 	    datapump->training_state >= V22_TRAINING_CONNECT_HOLD &&
 	    !datapump->v22bis_receiver_initialized) {
-		if (sippymodem_v22bis_receiver_init(
+		if (v22bis_receiver_init(
 			    &datapump->v22bis_receiver, &point) !=
-		    SIPPYMODEM_V22BIS_RECEIVER_OK)
+		    V22BIS_RECEIVER_OK)
 			return -1;
 		datapump->v22bis_receiver_initialized = true;
 	}
@@ -568,7 +568,7 @@ static int receive_sample(
 	return 0;
 }
 
-static int enter_link(struct sippymodem_v22_datapump *datapump)
+static int enter_link(struct v22_datapump *datapump)
 {
 	unsigned int bit_rate = selected_bit_rate(datapump->dp.id);
 
@@ -585,7 +585,7 @@ static int enter_link(struct sippymodem_v22_datapump *datapump)
 }
 
 static int advance_training_timer(
-	struct sippymodem_v22_datapump *datapump, bool *linked)
+	struct v22_datapump *datapump, bool *linked)
 {
 	if (datapump->training_state == V22_TRAINING_ORIGINATE_SILENCE) {
 		datapump->phase_samples++;
@@ -647,7 +647,7 @@ static void add_bounded(
 static int process_v22(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
-	struct sippymodem_v22_datapump *datapump = v22_from_dp(dp);
+	struct v22_datapump *datapump = v22_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	struct qam_measurement measurement;
@@ -691,7 +691,7 @@ static int process_v22(
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
-int sippymodem_v22_datapump_register(void)
+int v22_datapump_register(void)
 {
 	for (size_t index = 0; index < sizeof(v22_ids) / sizeof(v22_ids[0]);
 	     ++index) {
@@ -707,7 +707,7 @@ int sippymodem_v22_datapump_register(void)
 	return 0;
 }
 
-int sippymodem_v22_datapump_unregister(void)
+int v22_datapump_unregister(void)
 {
 	size_t count = sizeof(v22_ids) / sizeof(v22_ids[0]);
 
@@ -723,7 +723,7 @@ int sippymodem_v22_datapump_unregister(void)
 	return 0;
 }
 
-bool sippymodem_v22_datapump_is_busy(void)
+bool v22_datapump_is_busy(void)
 {
 	return v22_operations.use_count != 0;
 }

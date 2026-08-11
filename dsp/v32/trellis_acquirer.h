@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V32_TRELLIS_ACQUIRER_H
-#define SIPPYMODEM_V32_TRELLIS_ACQUIRER_H
+#ifndef V32_TRELLIS_ACQUIRER_H
+#define V32_TRELLIS_ACQUIRER_H
 
 #include "trellis_receiver.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
-enum sippymodem_v32_trellis_acquirer_result {
-	SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK,
-	SIPPYMODEM_V32_TRELLIS_ACQUIRER_NOT_READY,
-	SIPPYMODEM_V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT,
+enum v32_trellis_acquirer_result {
+	V32_TRELLIS_ACQUIRER_OK,
+	V32_TRELLIS_ACQUIRER_NOT_READY,
+	V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT,
 };
 
 /* Resolve the fourfold carrier-phase ambiguity while B1 supplies known data.
  * Each candidate owns its complete equalizer, trellis, and framing state. */
-struct sippymodem_v32_trellis_acquirer {
-	struct sippymodem_v32_trellis_receiver candidates[
+struct v32_trellis_acquirer {
+	struct v32_trellis_receiver candidates[
 		QPSK_QUADRANT_COUNT];
 	uint16_t confirmations[QPSK_QUADRANT_COUNT];
 	uint16_t observations;
@@ -25,32 +25,32 @@ struct sippymodem_v32_trellis_acquirer {
 	bool selected;
 };
 
-enum sippymodem_v32_trellis_acquirer_result
-sippymodem_v32_trellis_acquirer_init(
-	struct sippymodem_v32_trellis_acquirer *acquirer,
-	const struct sippymodem_v32_symbol_decoder *framing,
+enum v32_trellis_acquirer_result
+v32_trellis_acquirer_init(
+	struct v32_trellis_acquirer *acquirer,
+	const struct v32_symbol_decoder *framing,
 	const struct qam_point *reference_point,
 	uint8_t data_bits_per_symbol);
-bool sippymodem_v32_trellis_acquirer_is_valid(
-	const struct sippymodem_v32_trellis_acquirer *acquirer);
+bool v32_trellis_acquirer_is_valid(
+	const struct v32_trellis_acquirer *acquirer);
 
 /* Consume one known post-E group without assuming an absolute carrier phase. */
-enum sippymodem_v32_trellis_acquirer_result
-sippymodem_v32_trellis_acquirer_track_known(
-	struct sippymodem_v32_trellis_acquirer *acquirer,
+enum v32_trellis_acquirer_result
+v32_trellis_acquirer_track_known(
+	struct v32_trellis_acquirer *acquirer,
 	const struct qam_point *point, uint8_t input);
 
 /* Select a unique, well-separated phase hypothesis after known training. */
-enum sippymodem_v32_trellis_acquirer_result
-sippymodem_v32_trellis_acquirer_select(
-	struct sippymodem_v32_trellis_acquirer *acquirer);
+enum v32_trellis_acquirer_result
+v32_trellis_acquirer_select(
+	struct v32_trellis_acquirer *acquirer);
 
-enum sippymodem_v32_trellis_acquirer_result
-sippymodem_v32_trellis_acquirer_decode(
-	struct sippymodem_v32_trellis_acquirer *acquirer,
+enum v32_trellis_acquirer_result
+v32_trellis_acquirer_decode(
+	struct v32_trellis_acquirer *acquirer,
 	const struct qam_point *point, uint8_t *output, bool *ready);
 
-const char *sippymodem_v32_trellis_acquirer_result_name(
-	enum sippymodem_v32_trellis_acquirer_result result);
+const char *v32_trellis_acquirer_result_name(
+	enum v32_trellis_acquirer_result result);
 
 #endif

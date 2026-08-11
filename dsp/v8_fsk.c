@@ -10,18 +10,18 @@ enum {
 };
 
 static bool role_channels(
-	enum sippymodem_v8_station_role role,
+	enum v8_station_role role,
 	const struct fsk_channel **transmit,
 	const struct fsk_channel **receive)
 {
-	if (role == SIPPYMODEM_V8_CALLING_STATION) {
-		*transmit = &sippymodem_v21_channel_1;
-		*receive = &sippymodem_v21_channel_2;
+	if (role == V8_CALLING_STATION) {
+		*transmit = &v21_channel_1;
+		*receive = &v21_channel_2;
 		return true;
 	}
-	if (role == SIPPYMODEM_V8_ANSWERING_STATION) {
-		*transmit = &sippymodem_v21_channel_2;
-		*receive = &sippymodem_v21_channel_1;
+	if (role == V8_ANSWERING_STATION) {
+		*transmit = &v21_channel_2;
+		*receive = &v21_channel_1;
 		return true;
 	}
 	return false;
@@ -40,7 +40,7 @@ static bool channels_equal(
 	       left->metric_smoothing_shift == right->metric_smoothing_shift;
 }
 
-static bool fsk_is_configured(const struct sippymodem_v8_fsk *fsk)
+static bool fsk_is_configured(const struct v8_fsk *fsk)
 {
 	const struct fsk_channel *transmit;
 	const struct fsk_channel *receive;
@@ -51,46 +51,46 @@ static bool fsk_is_configured(const struct sippymodem_v8_fsk *fsk)
 	       fsk->transmitter.tones.amplitude == V8_FSK_TRANSMIT_AMPLITUDE;
 }
 
-enum sippymodem_v8_fsk_result sippymodem_v8_fsk_init(
-	struct sippymodem_v8_fsk *fsk,
-	enum sippymodem_v8_station_role role)
+enum v8_fsk_result v8_fsk_init(
+	struct v8_fsk *fsk,
+	enum v8_station_role role)
 {
 	const struct fsk_channel *transmit;
 	const struct fsk_channel *receive;
-	struct sippymodem_v8_fsk initialized = { 0 };
+	struct v8_fsk initialized = { 0 };
 
 	if (fsk == NULL || !role_channels(role, &transmit, &receive))
-		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
+		return V8_FSK_INVALID_ARGUMENT;
 	if (fsk_transmitter_init(
 		    &initialized.transmitter, transmit,
 		    V8_FSK_TRANSMIT_AMPLITUDE) != FSK_OK ||
 	    fsk_receiver_init(&initialized.receiver, receive) !=
 		    FSK_OK)
-		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
+		return V8_FSK_INVALID_ARGUMENT;
 	initialized.role = role;
 	*fsk = initialized;
-	return SIPPYMODEM_V8_FSK_OK;
+	return V8_FSK_OK;
 }
 
-enum sippymodem_v8_fsk_result sippymodem_v8_fsk_reset(
-	struct sippymodem_v8_fsk *fsk)
+enum v8_fsk_result v8_fsk_reset(
+	struct v8_fsk *fsk)
 {
 	if (fsk == NULL ||
-	    (fsk->role != SIPPYMODEM_V8_CALLING_STATION &&
-	     fsk->role != SIPPYMODEM_V8_ANSWERING_STATION))
-		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
-	return sippymodem_v8_fsk_init(fsk, fsk->role);
+	    (fsk->role != V8_CALLING_STATION &&
+	     fsk->role != V8_ANSWERING_STATION))
+		return V8_FSK_INVALID_ARGUMENT;
+	return v8_fsk_init(fsk, fsk->role);
 }
 
-bool sippymodem_v8_fsk_can_accept_bit(
-	const struct sippymodem_v8_fsk *fsk)
+bool v8_fsk_can_accept_bit(
+	const struct v8_fsk *fsk)
 {
 	return fsk_is_configured(fsk) &&
 	       fsk_transmitter_can_accept_bit(&fsk->transmitter);
 }
 
-enum sippymodem_v8_fsk_result sippymodem_v8_fsk_transmit_sample(
-	struct sippymodem_v8_fsk *fsk, uint8_t bit, int16_t *sample,
+enum v8_fsk_result v8_fsk_transmit_sample(
+	struct v8_fsk *fsk, uint8_t bit, int16_t *sample,
 	bool *bit_consumed)
 {
 	int16_t generated;
@@ -101,14 +101,14 @@ enum sippymodem_v8_fsk_result sippymodem_v8_fsk_transmit_sample(
 	    fsk_transmitter_sample(
 		    &fsk->transmitter, bit, &generated, &consumed) !=
 		    FSK_OK)
-		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
+		return V8_FSK_INVALID_ARGUMENT;
 	*sample = generated;
 	*bit_consumed = consumed;
-	return SIPPYMODEM_V8_FSK_OK;
+	return V8_FSK_OK;
 }
 
-enum sippymodem_v8_fsk_result sippymodem_v8_fsk_receive_sample(
-	struct sippymodem_v8_fsk *fsk, int16_t sample, uint8_t *bit,
+enum v8_fsk_result v8_fsk_receive_sample(
+	struct v8_fsk *fsk, int16_t sample, uint8_t *bit,
 	bool *bit_ready)
 {
 	uint8_t received;
@@ -118,19 +118,19 @@ enum sippymodem_v8_fsk_result sippymodem_v8_fsk_receive_sample(
 	    fsk_receiver_sample(
 		    &fsk->receiver, sample, &received, &ready) !=
 		    FSK_OK)
-		return SIPPYMODEM_V8_FSK_INVALID_ARGUMENT;
+		return V8_FSK_INVALID_ARGUMENT;
 	*bit = received;
 	*bit_ready = ready;
-	return SIPPYMODEM_V8_FSK_OK;
+	return V8_FSK_OK;
 }
 
-const char *sippymodem_v8_fsk_result_name(
-	enum sippymodem_v8_fsk_result result)
+const char *v8_fsk_result_name(
+	enum v8_fsk_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V8_FSK_OK:
+	case V8_FSK_OK:
 		return "ok";
-	case SIPPYMODEM_V8_FSK_INVALID_ARGUMENT:
+	case V8_FSK_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown V.8 FSK result";

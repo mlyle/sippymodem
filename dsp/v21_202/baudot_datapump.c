@@ -17,10 +17,10 @@ enum {
 	BAUDOT_MAX_CODES_PER_CHARACTER = 3,
 };
 
-struct sippymodem_baudot_datapump {
+struct baudot_datapump {
 	struct dp dp;
-	struct sippymodem_baudot_transmitter transmitter;
-	struct sippymodem_baudot_receiver receiver;
+	struct baudot_transmitter transmitter;
+	struct baudot_receiver receiver;
 	uint8_t terminal_receive[BAUDOT_TERMINAL_RECEIVE_CHUNK];
 	size_t terminal_receive_offset;
 	size_t terminal_receive_count;
@@ -44,9 +44,9 @@ static struct dp_operations baudot_operations = {
 	.process = process_baudot,
 };
 
-static struct sippymodem_baudot_datapump *baudot_from_dp(struct dp *dp)
+static struct baudot_datapump *baudot_from_dp(struct dp *dp)
 {
-	struct sippymodem_baudot_datapump *datapump;
+	struct baudot_datapump *datapump;
 
 	if (dp == NULL || dp->id != DP_BAUDOT ||
 	    dp->op != &baudot_operations || dp->modem == NULL ||
@@ -63,18 +63,18 @@ static struct sippymodem_baudot_datapump *baudot_from_dp(struct dp *dp)
 }
 
 static bool selected_rate(
-	const struct modem *modem, enum sippymodem_baudot_rate *rate)
+	const struct modem *modem, enum baudot_rate *rate)
 {
 	if (modem == NULL || rate == NULL)
 		return false;
-	if (modem->min_rate <= SIPPYMODEM_BAUDOT_RATE_45 &&
-	    modem->max_rate >= SIPPYMODEM_BAUDOT_RATE_45) {
-		*rate = SIPPYMODEM_BAUDOT_RATE_45;
+	if (modem->min_rate <= BAUDOT_RATE_45 &&
+	    modem->max_rate >= BAUDOT_RATE_45) {
+		*rate = BAUDOT_RATE_45;
 		return true;
 	}
-	if (modem->min_rate <= SIPPYMODEM_BAUDOT_RATE_50 &&
-	    modem->max_rate >= SIPPYMODEM_BAUDOT_RATE_50) {
-		*rate = SIPPYMODEM_BAUDOT_RATE_50;
+	if (modem->min_rate <= BAUDOT_RATE_50 &&
+	    modem->max_rate >= BAUDOT_RATE_50) {
+		*rate = BAUDOT_RATE_50;
 		return true;
 	}
 	return false;
@@ -84,8 +84,8 @@ static struct dp *create_baudot(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
 {
-	struct sippymodem_baudot_datapump *datapump;
-	enum sippymodem_baudot_rate rate;
+	struct baudot_datapump *datapump;
+	enum baudot_rate rate;
 
 	if (modem == NULL || id != DP_BAUDOT ||
 	    (caller != 0 && caller != 1) || sample_rate != MODEM_RATE ||
@@ -95,10 +95,10 @@ static struct dp *create_baudot(
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
-	if (sippymodem_baudot_transmitter_init(
-		    &datapump->transmitter, rate) != SIPPYMODEM_BAUDOT_OK ||
-	    sippymodem_baudot_receiver_init(
-		    &datapump->receiver, rate) != SIPPYMODEM_BAUDOT_OK) {
+	if (baudot_transmitter_init(
+		    &datapump->transmitter, rate) != BAUDOT_OK ||
+	    baudot_receiver_init(
+		    &datapump->receiver, rate) != BAUDOT_OK) {
 		free(datapump);
 		return NULL;
 	}
@@ -115,7 +115,7 @@ static struct dp *create_baudot(
 
 static int delete_baudot(struct dp *dp)
 {
-	struct sippymodem_baudot_datapump *datapump = baudot_from_dp(dp);
+	struct baudot_datapump *datapump = baudot_from_dp(dp);
 
 	if (datapump == NULL || baudot_operations.use_count <= 0)
 		return -1;
@@ -126,13 +126,13 @@ static int delete_baudot(struct dp *dp)
 }
 
 static void queue_terminal_text(
-	struct sippymodem_baudot_datapump *datapump)
+	struct baudot_datapump *datapump)
 {
 	struct modem *modem = datapump->dp.modem;
 
 	while (modem->get_chars != NULL &&
-	       sippymodem_baudot_pending_codes(&datapump->transmitter) <=
-		       SIPPYMODEM_BAUDOT_TX_CODE_CAPACITY -
+	       baudot_pending_codes(&datapump->transmitter) <=
+		       BAUDOT_TX_CODE_CAPACITY -
 			       BAUDOT_MAX_CODES_PER_CHARACTER) {
 		if (!datapump->held_terminal_character_valid) {
 			if (modem->get_chars(
@@ -142,7 +142,7 @@ static void queue_terminal_text(
 				break;
 			datapump->held_terminal_character_valid = true;
 		}
-		if (sippymodem_baudot_queue_text(
+		if (baudot_queue_text(
 			    &datapump->transmitter,
 			    &datapump->held_terminal_character, 1) != 1)
 			break;
@@ -151,7 +151,7 @@ static void queue_terminal_text(
 }
 
 static void flush_terminal_receive(
-	struct sippymodem_baudot_datapump *datapump)
+	struct baudot_datapump *datapump)
 {
 	struct modem *modem = datapump->dp.modem;
 	size_t remaining;
@@ -181,38 +181,38 @@ static void flush_terminal_receive(
 }
 
 static void collect_terminal_receive(
-	struct sippymodem_baudot_datapump *datapump)
+	struct baudot_datapump *datapump)
 {
 	if (datapump->terminal_receive_count != 0)
 		return;
-	datapump->terminal_receive_count = sippymodem_baudot_drain_text(
+	datapump->terminal_receive_count = baudot_drain_text(
 		&datapump->receiver, datapump->terminal_receive,
 		sizeof(datapump->terminal_receive));
 }
 
-static enum sippymodem_baudot_result process_audio(
-	struct sippymodem_baudot_datapump *datapump,
+static enum baudot_result process_audio(
+	struct baudot_datapump *datapump,
 	const int16_t *receive,
 	int16_t *transmit,
 	size_t count)
 {
 	for (size_t index = 0; index < count; ++index) {
-		bool transmitting = sippymodem_baudot_transmitting(
+		bool transmitting = baudot_transmitting(
 			&datapump->transmitter);
 
 		if (transmitting) {
 			if (!datapump->receive_suppressed) {
-				sippymodem_baudot_receiver_reset(
+				baudot_receiver_reset(
 					&datapump->receiver);
 				datapump->receive_suppressed = true;
 			}
-			if (sippymodem_baudot_generate(
+			if (baudot_generate(
 				    &datapump->transmitter, &transmit[index], 1) !=
-			    SIPPYMODEM_BAUDOT_OK)
-				return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
-			if (!sippymodem_baudot_transmitting(
+			    BAUDOT_OK)
+				return BAUDOT_INVALID_ARGUMENT;
+			if (!baudot_transmitting(
 				    &datapump->transmitter)) {
-				sippymodem_baudot_receiver_reset(
+				baudot_receiver_reset(
 					&datapump->receiver);
 				datapump->receive_suppressed = false;
 			}
@@ -220,23 +220,23 @@ static enum sippymodem_baudot_result process_audio(
 			int16_t input_sample = receive[index];
 
 			if (datapump->receive_suppressed) {
-				sippymodem_baudot_receiver_reset(
+				baudot_receiver_reset(
 					&datapump->receiver);
 				datapump->receive_suppressed = false;
 			}
 			transmit[index] = 0;
-			if (sippymodem_baudot_receive(
+			if (baudot_receive(
 				    &datapump->receiver, &input_sample, 1) !=
-			    SIPPYMODEM_BAUDOT_OK)
-				return SIPPYMODEM_BAUDOT_INVALID_ARGUMENT;
+			    BAUDOT_OK)
+				return BAUDOT_INVALID_ARGUMENT;
 		}
 	}
-	return SIPPYMODEM_BAUDOT_OK;
+	return BAUDOT_OK;
 }
 
-static int enter_link(struct sippymodem_baudot_datapump *datapump)
+static int enter_link(struct baudot_datapump *datapump)
 {
-	int rate = datapump->transmitter.rate == SIPPYMODEM_BAUDOT_RATE_50 ?
+	int rate = datapump->transmitter.rate == BAUDOT_RATE_50 ?
 			   50 : 45;
 
 	if (modem_set_param(datapump->dp.modem, MDMPRM_RX_RATE, rate) != 0 ||
@@ -250,7 +250,7 @@ static int enter_link(struct sippymodem_baudot_datapump *datapump)
 static int process_baudot(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
-	struct sippymodem_baudot_datapump *datapump = baudot_from_dp(dp);
+	struct baudot_datapump *datapump = baudot_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 
@@ -264,7 +264,7 @@ static int process_baudot(
 	queue_terminal_text(datapump);
 	if (process_audio(
 		    datapump, receive, transmit, (size_t)count) !=
-	    SIPPYMODEM_BAUDOT_OK) {
+	    BAUDOT_OK) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
@@ -273,17 +273,17 @@ static int process_baudot(
 	return datapump->linked ? DPSTAT_OK : enter_link(datapump);
 }
 
-int sippymodem_baudot_datapump_register(void)
+int baudot_datapump_register(void)
 {
 	return modem_dp_register(DP_BAUDOT, &baudot_operations);
 }
 
-int sippymodem_baudot_datapump_unregister(void)
+int baudot_datapump_unregister(void)
 {
 	return modem_dp_deregister(DP_BAUDOT, &baudot_operations);
 }
 
-bool sippymodem_baudot_datapump_is_busy(void)
+bool baudot_datapump_is_busy(void)
 {
 	return baudot_operations.use_count != 0;
 }

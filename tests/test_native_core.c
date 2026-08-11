@@ -179,30 +179,30 @@ static bool test_modulation_report_identity(void)
 
 static bool test_v8_datapump_mapping(void)
 {
-	CHECK(sippymodem_v8_datapump_modulation(DP_V21) ==
-		      SIPPYMODEM_V8_MODULATION_V21 &&
-		      sippymodem_v8_datapump_modulation(DP_V22) ==
-		      SIPPYMODEM_V8_MODULATION_V22 &&
-		      sippymodem_v8_datapump_modulation(DP_V22BIS) ==
-		      SIPPYMODEM_V8_MODULATION_V22 &&
-		      sippymodem_v8_datapump_modulation(DP_V23) ==
-		      SIPPYMODEM_V8_MODULATION_V23_DUPLEX &&
-		      sippymodem_v8_datapump_modulation(DP_V32) ==
-		      SIPPYMODEM_V8_MODULATION_V32 &&
-		      sippymodem_v8_datapump_modulation(DP_B103) ==
-			      SIPPYMODEM_V8_MODULATION_NONE &&
-		      sippymodem_v8_datapump_modulation(DP_B212) ==
-			      SIPPYMODEM_V8_MODULATION_NONE &&
-		      sippymodem_v8_datapump_modulation(DP_BAUDOT) ==
-			      SIPPYMODEM_V8_MODULATION_NONE &&
-		      sippymodem_v8_datapump_modulation(DP_V32BIS) ==
-			      SIPPYMODEM_V8_MODULATION_NONE &&
-		      sippymodem_v8_datapump_modulation(DP_V34) ==
-			      SIPPYMODEM_V8_MODULATION_NONE &&
-		      sippymodem_v8_datapump_modulation(DP_V90) ==
-			      SIPPYMODEM_V8_MODULATION_NONE &&
-		      sippymodem_v8_datapump_modulation(DP_V92) ==
-			      SIPPYMODEM_V8_MODULATION_NONE,
+	CHECK(v8_datapump_modulation(DP_V21) ==
+		      V8_MODULATION_V21 &&
+		      v8_datapump_modulation(DP_V22) ==
+		      V8_MODULATION_V22 &&
+		      v8_datapump_modulation(DP_V22BIS) ==
+		      V8_MODULATION_V22 &&
+		      v8_datapump_modulation(DP_V23) ==
+		      V8_MODULATION_V23_DUPLEX &&
+		      v8_datapump_modulation(DP_V32) ==
+		      V8_MODULATION_V32 &&
+		      v8_datapump_modulation(DP_B103) ==
+			      V8_MODULATION_NONE &&
+		      v8_datapump_modulation(DP_B212) ==
+			      V8_MODULATION_NONE &&
+		      v8_datapump_modulation(DP_BAUDOT) ==
+			      V8_MODULATION_NONE &&
+		      v8_datapump_modulation(DP_V32BIS) ==
+			      V8_MODULATION_NONE &&
+		      v8_datapump_modulation(DP_V34) ==
+			      V8_MODULATION_NONE &&
+		      v8_datapump_modulation(DP_V90) ==
+			      V8_MODULATION_NONE &&
+		      v8_datapump_modulation(DP_V92) ==
+			      V8_MODULATION_NONE,
 	      "V.8 datapump modulation mapping changed");
 	return true;
 }
@@ -729,7 +729,7 @@ static bool test_v21_originator_answers_brief_mark(void)
 	modem = modem_create(&driver, "V.21 mark acquisition test");
 	CHECK(operations != NULL && modem != NULL &&
 		      fsk_transmitter_init(
-			      &answerer, &sippymodem_v21_channel_2,
+			      &answerer, &v21_channel_2,
 			      TEST_FSK_AMPLITUDE) == FSK_OK,
 	      "V.21 mark acquisition fixture did not initialize");
 	datapump = operations->create(
@@ -978,7 +978,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG,
 		      v32_operations) == NULL,
 	      "V.32 accepted a range that excludes 4800 bit/s");
-	modem->min_rate = modem->max_rate = SIPPYMODEM_V32_4800_BIT_RATE;
+	modem->min_rate = modem->max_rate = V32_4800_BIT_RATE;
 	v32 = v32_operations->create(
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, v32_operations);
 	CHECK(v32 != NULL && v32->id == DP_V32 &&
@@ -987,7 +987,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 			      SINGLE_TONE_OK &&
 		      single_tone_transmitter_init(
 			      &v32_answer_tone,
-			      SIPPYMODEM_V32_ANSWER_TONE_HZ, 12000) ==
+			      V32_ANSWER_TONE_HZ, 12000) ==
 			      SINGLE_TONE_OK &&
 		      v32_operations->use_count == 1 &&
 		      datapumps_stop(&datapumps) ==

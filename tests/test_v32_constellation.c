@@ -21,8 +21,8 @@ static bool check_grid_point(
 	struct qam_point point;
 	double normalization = sqrt(18.0);
 
-	CHECK(sippymodem_v32_constellation_point(symbol, &point) ==
-		      SIPPYMODEM_V32_CONSTELLATION_OK &&
+	CHECK(v32_constellation_point(symbol, &point) ==
+		      V32_CONSTELLATION_OK &&
 		      close_to(point.in_phase * normalization,
 			       expected_in_phase) &&
 		      close_to(point.quadrature * normalization,
@@ -49,7 +49,7 @@ static bool test_generated_geometry(void)
 		{ 15, -3, 3 },
 	};
 	struct qam_point points[
-		SIPPYMODEM_V32_CONSTELLATION_SYMBOLS];
+		V32_CONSTELLATION_SYMBOLS];
 	double maximum_power = 0.0;
 
 	for (size_t index = 0; index < ARRAY_LENGTH(representatives); ++index) {
@@ -60,12 +60,12 @@ static bool test_generated_geometry(void)
 		      "V.32 representative point %zu failed", index);
 	}
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V32_CONSTELLATION_SYMBOLS; ++symbol) {
+	     symbol < V32_CONSTELLATION_SYMBOLS; ++symbol) {
 		double power;
 
-		CHECK(sippymodem_v32_constellation_point(
+		CHECK(v32_constellation_point(
 			      symbol, &points[symbol]) ==
-			      SIPPYMODEM_V32_CONSTELLATION_OK,
+			      V32_CONSTELLATION_OK,
 		      "V.32 signal point %u did not generate", symbol);
 		power = points[symbol].in_phase * points[symbol].in_phase +
 			points[symbol].quadrature * points[symbol].quadrature;
@@ -102,13 +102,13 @@ static bool test_4800_signal_set(void)
 	double normalization = sqrt(18.0);
 
 	for (uint8_t quadrant = 0;
-	     quadrant < SIPPYMODEM_V32_4800_SIGNAL_POINTS; ++quadrant) {
+	     quadrant < V32_4800_SIGNAL_POINTS; ++quadrant) {
 		struct qam_point point;
 		double power;
 
-		CHECK(sippymodem_v32_4800_constellation_point(
+		CHECK(v32_4800_constellation_point(
 			      quadrant, &point) ==
-			      SIPPYMODEM_V32_CONSTELLATION_OK &&
+			      V32_CONSTELLATION_OK &&
 			      close_to(point.in_phase * normalization,
 				       expected[quadrant][0]) &&
 			      close_to(point.quadrature * normalization,
@@ -150,18 +150,18 @@ static bool test_trellis_signal_sets(void)
 		int minimum_distance;
 		uint64_t digest;
 	} fixtures[] = {
-		{ 3, SIPPYMODEM_V32_7200_SIGNAL_POINTS, 40, 72, 16,
+		{ 3, V32_7200_SIGNAL_POINTS, 40, 72, 16,
 		  UINT64_C(0x3aa8e124eb808465) },
-		{ 4, SIPPYMODEM_V32_9600_TRELLIS_SIGNAL_POINTS, 40, 68, 8,
+		{ 4, V32_9600_TRELLIS_SIGNAL_POINTS, 40, 68, 8,
 		  UINT64_C(0x737b3bfd8eddcd45) },
-		{ 5, SIPPYMODEM_V32_12000_SIGNAL_POINTS, 42, 98, 4,
+		{ 5, V32_12000_SIGNAL_POINTS, 42, 98, 4,
 		  UINT64_C(0x8e4c96d89d69c705) },
-		{ 6, SIPPYMODEM_V32_14400_SIGNAL_POINTS, 41, 85, 2,
+		{ 6, V32_14400_SIGNAL_POINTS, 41, 85, 2,
 		  UINT64_C(0x7734533b6568a1a5) },
 	};
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(fixtures); ++fixture) {
-		int coordinate[SIPPYMODEM_V32_14400_SIGNAL_POINTS][2];
+		int coordinate[V32_14400_SIGNAL_POINTS][2];
 		int in_phase_sum = 0;
 		int quadrature_sum = 0;
 		int power_sum = 0;
@@ -174,9 +174,9 @@ static bool test_trellis_signal_sets(void)
 			struct qam_point point;
 			int power;
 
-			CHECK(sippymodem_v32_trellis_constellation_point(
+			CHECK(v32_trellis_constellation_point(
 				      fixtures[fixture].data_bits, symbol, &point) ==
-				      SIPPYMODEM_V32_CONSTELLATION_OK &&
+				      V32_CONSTELLATION_OK &&
 			      doubled_coordinate(
 				      point.in_phase, &coordinate[symbol][0]) &&
 			      doubled_coordinate(
@@ -186,9 +186,9 @@ static bool test_trellis_signal_sets(void)
 			if (fixtures[fixture].data_bits == 3) {
 				struct qam_point compatibility_point;
 
-				CHECK(sippymodem_v32_7200_constellation_point(
+				CHECK(v32_7200_constellation_point(
 					      symbol, &compatibility_point) ==
-					      SIPPYMODEM_V32_CONSTELLATION_OK &&
+					      V32_CONSTELLATION_OK &&
 				      close_to(
 					      compatibility_point.in_phase,
 					      point.in_phase) &&
@@ -257,10 +257,10 @@ static bool test_trellis_representative_points(void)
 		int in_phase;
 		int quadrature;
 
-		CHECK(sippymodem_v32_trellis_constellation_point(
+		CHECK(v32_trellis_constellation_point(
 			      representatives[index].data_bits,
 			      representatives[index].signal_symbol, &point) ==
-			      SIPPYMODEM_V32_CONSTELLATION_OK &&
+			      V32_CONSTELLATION_OK &&
 			      doubled_coordinate(point.in_phase, &in_phase) &&
 			      doubled_coordinate(point.quadrature, &quadrature) &&
 			      in_phase == representatives[index].in_phase &&
@@ -275,31 +275,31 @@ static bool test_validation(void)
 	struct qam_point point = { 7.0, -9.0 };
 	struct qam_point saved = point;
 
-	CHECK(sippymodem_v32_constellation_point(
-		      SIPPYMODEM_V32_CONSTELLATION_SYMBOLS, &point) ==
-		      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
+	CHECK(v32_constellation_point(
+		      V32_CONSTELLATION_SYMBOLS, &point) ==
+		      V32_CONSTELLATION_INVALID_ARGUMENT &&
 		      memcmp(&point, &saved, sizeof(point)) == 0 &&
-		      sippymodem_v32_constellation_point(0, NULL) ==
-			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
-		      sippymodem_v32_4800_constellation_point(
-			      SIPPYMODEM_V32_4800_SIGNAL_POINTS, &point) ==
-			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      v32_constellation_point(0, NULL) ==
+			      V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      v32_4800_constellation_point(
+			      V32_4800_SIGNAL_POINTS, &point) ==
+			      V32_CONSTELLATION_INVALID_ARGUMENT &&
 		      memcmp(&point, &saved, sizeof(point)) == 0 &&
-		      sippymodem_v32_7200_constellation_point(
-			      SIPPYMODEM_V32_7200_SIGNAL_POINTS, &point) ==
-			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
-		      sippymodem_v32_trellis_constellation_point(2, 0, &point) ==
-			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
-		      sippymodem_v32_trellis_constellation_point(7, 0, &point) ==
-			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
-		      sippymodem_v32_trellis_constellation_point(
-			      3, SIPPYMODEM_V32_7200_SIGNAL_POINTS, &point) ==
-			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
-		      sippymodem_v32_trellis_constellation_point(3, 0, NULL) ==
-			      SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      v32_7200_constellation_point(
+			      V32_7200_SIGNAL_POINTS, &point) ==
+			      V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      v32_trellis_constellation_point(2, 0, &point) ==
+			      V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      v32_trellis_constellation_point(7, 0, &point) ==
+			      V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      v32_trellis_constellation_point(
+			      3, V32_7200_SIGNAL_POINTS, &point) ==
+			      V32_CONSTELLATION_INVALID_ARGUMENT &&
+		      v32_trellis_constellation_point(3, 0, NULL) ==
+			      V32_CONSTELLATION_INVALID_ARGUMENT &&
 		      memcmp(&point, &saved, sizeof(point)) == 0 &&
-		      strcmp(sippymodem_v32_constellation_result_name(
-			     SIPPYMODEM_V32_CONSTELLATION_INVALID_ARGUMENT),
+		      strcmp(v32_constellation_result_name(
+			     V32_CONSTELLATION_INVALID_ARGUMENT),
 			     "invalid argument") == 0,
 	      "V.32 constellation validation changed state or diagnostics");
 	return true;

@@ -26,52 +26,52 @@ static const uint8_t next_trellis_state[8][4] = {
 
 static bool data_bits_are_valid(uint8_t data_bits_per_symbol)
 {
-	return data_bits_per_symbol >= SIPPYMODEM_V32_TRELLIS_MIN_DATA_BITS &&
-	       data_bits_per_symbol <= SIPPYMODEM_V32_TRELLIS_MAX_DATA_BITS;
+	return data_bits_per_symbol >= V32_TRELLIS_MIN_DATA_BITS &&
+	       data_bits_per_symbol <= V32_TRELLIS_MAX_DATA_BITS;
 }
 
-bool sippymodem_v32_trellis_encoder_is_valid(
-	const struct sippymodem_v32_trellis_encoder *encoder)
+bool v32_trellis_encoder_is_valid(
+	const struct v32_trellis_encoder *encoder)
 {
 	return encoder != NULL &&
-	       encoder->trellis_state < SIPPYMODEM_V32_TRELLIS_STATE_COUNT &&
+	       encoder->trellis_state < V32_TRELLIS_STATE_COUNT &&
 	       encoder->differential_output <
-		       SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT &&
+		       V32_TRELLIS_QUADRANT_COUNT &&
 	       data_bits_are_valid(encoder->data_bits_per_symbol);
 }
 
-enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encoder_init(
-	struct sippymodem_v32_trellis_encoder *encoder,
+enum v32_trellis_result v32_trellis_encoder_init(
+	struct v32_trellis_encoder *encoder,
 	uint8_t data_bits_per_symbol, uint8_t previous_differential_output)
 {
-	struct sippymodem_v32_trellis_encoder initialized = {
+	struct v32_trellis_encoder initialized = {
 		.differential_output = previous_differential_output,
 		.data_bits_per_symbol = data_bits_per_symbol,
 	};
 
 	if (encoder == NULL || !data_bits_are_valid(data_bits_per_symbol) ||
 	    previous_differential_output >=
-		    SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT)
-		return SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT;
+		    V32_TRELLIS_QUADRANT_COUNT)
+		return V32_TRELLIS_INVALID_ARGUMENT;
 	*encoder = initialized;
-	return SIPPYMODEM_V32_TRELLIS_OK;
+	return V32_TRELLIS_OK;
 }
 
-enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encode(
-	struct sippymodem_v32_trellis_encoder *encoder, uint8_t data,
+enum v32_trellis_result v32_trellis_encode(
+	struct v32_trellis_encoder *encoder, uint8_t data,
 	uint8_t *signal_symbol)
 {
-	struct sippymodem_v32_trellis_encoder next;
+	struct v32_trellis_encoder next;
 	uint8_t high_dibit;
 	uint8_t low_bit_count;
 	uint8_t low_mask;
 	uint8_t next_quadrant;
 	uint8_t subset;
 
-	if (!sippymodem_v32_trellis_encoder_is_valid(encoder) ||
+	if (!v32_trellis_encoder_is_valid(encoder) ||
 	    signal_symbol == NULL ||
 	    data >= (UINT8_C(1) << encoder->data_bits_per_symbol))
-		return SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT;
+		return V32_TRELLIS_INVALID_ARGUMENT;
 
 	next = *encoder;
 	low_bit_count = (uint8_t)(next.data_bits_per_symbol - 2u);
@@ -88,16 +88,16 @@ enum sippymodem_v32_trellis_result sippymodem_v32_trellis_encode(
 	*encoder = next;
 	*signal_symbol =
 		(uint8_t)((subset << low_bit_count) | (data & low_mask));
-	return SIPPYMODEM_V32_TRELLIS_OK;
+	return V32_TRELLIS_OK;
 }
 
-const char *sippymodem_v32_trellis_result_name(
-	enum sippymodem_v32_trellis_result result)
+const char *v32_trellis_result_name(
+	enum v32_trellis_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V32_TRELLIS_OK:
+	case V32_TRELLIS_OK:
 		return "ok";
-	case SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT:
+	case V32_TRELLIS_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

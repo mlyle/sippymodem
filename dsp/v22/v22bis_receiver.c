@@ -28,13 +28,13 @@ static bool point_power(
 	return true;
 }
 
-bool sippymodem_v22bis_receiver_is_valid(
-	const struct sippymodem_v22bis_receiver *receiver)
+bool v22bis_receiver_is_valid(
+	const struct v22bis_receiver *receiver)
 {
 	return receiver != NULL &&
 	       receiver->decoder.phase_quadrant <
 		       QPSK_QUADRANT_COUNT &&
-	       sippymodem_v22_scrambler_is_valid(
+	       v22_scrambler_is_valid(
 		       &receiver->decoder.descrambler) &&
 	       qam_gain_is_valid(&receiver->gain);
 }
@@ -63,36 +63,36 @@ static double squared_error(
 	return in_phase * in_phase + quadrature * quadrature;
 }
 
-enum sippymodem_v22bis_receiver_result sippymodem_v22bis_receiver_init(
-	struct sippymodem_v22bis_receiver *receiver,
+enum v22bis_receiver_result v22bis_receiver_init(
+	struct v22bis_receiver *receiver,
 	const struct qam_point *reference_point)
 {
-	struct sippymodem_v22bis_receiver next = { 0 };
+	struct v22bis_receiver next = { 0 };
 
 	if (receiver == NULL ||
 	    qam_gain_init(
 		    &next.gain, reference_point,
 		    V22BIS_CHANNEL_ADAPTATION) != QAM_GAIN_OK ||
-	    sippymodem_v22bis_symbol_decoder_init(&next.decoder, 0) !=
-		    SIPPYMODEM_V22_FRAMING_OK)
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+	    v22bis_symbol_decoder_init(&next.decoder, 0) !=
+		    V22_FRAMING_OK)
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
-	return SIPPYMODEM_V22BIS_RECEIVER_OK;
+	return V22BIS_RECEIVER_OK;
 }
 
-enum sippymodem_v22bis_receiver_result
-sippymodem_v22bis_receiver_matches_v22(
-	const struct sippymodem_v22bis_receiver *receiver,
+enum v22bis_receiver_result
+v22bis_receiver_matches_v22(
+	const struct v22bis_receiver *receiver,
 	const struct qam_point *point, bool *matches)
 {
 	double gain_power;
 	double best_error = DBL_MAX;
 
-	if (!sippymodem_v22bis_receiver_is_valid(receiver) ||
+	if (!v22bis_receiver_is_valid(receiver) ||
 	    receiver->v22bis_started || !point_power(point, NULL) ||
 	    matches == NULL ||
 	    !point_power(&receiver->gain.channel_gain, &gain_power))
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	for (uint8_t quadrant = 0;
 	     quadrant < QPSK_QUADRANT_COUNT; ++quadrant) {
 		struct qam_point ideal = quadrant_point(quadrant);
@@ -102,7 +102,7 @@ sippymodem_v22bis_receiver_matches_v22(
 		if (qam_gain_predict(
 			    &receiver->gain, &ideal, &predicted) !=
 		    QAM_GAIN_OK)
-			return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 		error = squared_error(point, &predicted);
 
 		if (error < best_error)
@@ -110,22 +110,22 @@ sippymodem_v22bis_receiver_matches_v22(
 	}
 	*matches = best_error <=
 		   gain_power * V22BIS_V22_REFERENCE_ERROR_RATIO;
-	return SIPPYMODEM_V22BIS_RECEIVER_OK;
+	return V22BIS_RECEIVER_OK;
 }
 
-enum sippymodem_v22bis_receiver_result
-sippymodem_v22bis_receiver_track_v22(
-	struct sippymodem_v22bis_receiver *receiver, uint8_t quarter_turns,
+enum v22bis_receiver_result
+v22bis_receiver_track_v22(
+	struct v22bis_receiver *receiver, uint8_t quarter_turns,
 	const struct qam_point *point)
 {
-	struct sippymodem_v22bis_receiver next;
+	struct v22bis_receiver next;
 	struct qam_point ideal;
 
-	if (!sippymodem_v22bis_receiver_is_valid(receiver) ||
+	if (!v22bis_receiver_is_valid(receiver) ||
 	    receiver->v22bis_started ||
 	    quarter_turns >= QPSK_QUADRANT_COUNT ||
 	    !point_power(point, NULL))
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	next.decoder.phase_quadrant =
 		(uint8_t)((next.decoder.phase_quadrant + quarter_turns) & 3u);
@@ -133,41 +133,41 @@ sippymodem_v22bis_receiver_track_v22(
 	if (qam_gain_init_from_reference(
 		    &next.gain, point, &ideal, V22BIS_CHANNEL_ADAPTATION) !=
 	    QAM_GAIN_OK)
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
-	if (!sippymodem_v22bis_receiver_is_valid(&next))
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
+	if (!v22bis_receiver_is_valid(&next))
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
-	return SIPPYMODEM_V22BIS_RECEIVER_OK;
+	return V22BIS_RECEIVER_OK;
 }
 
-enum sippymodem_v22bis_receiver_result sippymodem_v22bis_receiver_decode(
-	struct sippymodem_v22bis_receiver *receiver,
+enum v22bis_receiver_result v22bis_receiver_decode(
+	struct v22bis_receiver *receiver,
 	const struct qam_point *point,
-	uint8_t bits[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL])
+	uint8_t bits[V22BIS_BITS_PER_SYMBOL])
 {
-	struct sippymodem_v22bis_receiver next;
+	struct v22bis_receiver next;
 	struct qam_point best_point = { 0 };
-	uint8_t decoded[SIPPYMODEM_V22BIS_BITS_PER_SYMBOL];
+	uint8_t decoded[V22BIS_BITS_PER_SYMBOL];
 	uint8_t best_symbol = 0;
 	double best_error = DBL_MAX;
 
-	if (!sippymodem_v22bis_receiver_is_valid(receiver) ||
+	if (!v22bis_receiver_is_valid(receiver) ||
 	    !point_power(point, NULL) || bits == NULL)
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
-	for (uint8_t symbol = 0; symbol < SIPPYMODEM_V22BIS_SYMBOL_COUNT;
+	for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT;
 	     ++symbol) {
 		struct qam_point candidate;
 		struct qam_point predicted;
 		double error;
 
-		if (sippymodem_v22bis_constellation_point(
-			    symbol, &candidate) != SIPPYMODEM_V22_FRAMING_OK)
-			return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+		if (v22bis_constellation_point(
+			    symbol, &candidate) != V22_FRAMING_OK)
+			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 		if (qam_gain_predict(
 			    &next.gain, &candidate, &predicted) !=
 		    QAM_GAIN_OK)
-			return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 		error = squared_error(point, &predicted);
 		if (isfinite(error) && error < best_error) {
 			best_error = error;
@@ -176,30 +176,30 @@ enum sippymodem_v22bis_receiver_result sippymodem_v22bis_receiver_decode(
 		}
 	}
 	if (best_error == DBL_MAX ||
-	    sippymodem_v22bis_symbol_decode(
+	    v22bis_symbol_decode(
 		    &next.decoder, best_symbol, decoded) !=
-		    SIPPYMODEM_V22_FRAMING_OK)
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+		    V22_FRAMING_OK)
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next.v22bis_started = true;
 	if (qam_gain_track(&next.gain, point, &best_point) !=
 	    QAM_GAIN_OK)
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
-	if (!sippymodem_v22bis_receiver_is_valid(&next))
-		return SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT;
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
+	if (!v22bis_receiver_is_valid(&next))
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
-	for (size_t index = 0; index < SIPPYMODEM_V22BIS_BITS_PER_SYMBOL;
+	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
 	     ++index)
 		bits[index] = decoded[index];
-	return SIPPYMODEM_V22BIS_RECEIVER_OK;
+	return V22BIS_RECEIVER_OK;
 }
 
-const char *sippymodem_v22bis_receiver_result_name(
-	enum sippymodem_v22bis_receiver_result result)
+const char *v22bis_receiver_result_name(
+	enum v22bis_receiver_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V22BIS_RECEIVER_OK:
+	case V22BIS_RECEIVER_OK:
 		return "ok";
-	case SIPPYMODEM_V22BIS_RECEIVER_INVALID_ARGUMENT:
+	case V22BIS_RECEIVER_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

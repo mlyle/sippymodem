@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V8_ANSWERING_H
-#define SIPPYMODEM_V8_ANSWERING_H
+#ifndef V8_ANSWERING_H
+#define V8_ANSWERING_H
 
 #include "v8_ansam.h"
 #include "v8_fsk.h"
@@ -12,63 +12,63 @@
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_V8_ANSWERING_MAX_FRAGMENT_SAMPLES = 160,
-	SIPPYMODEM_V8_ANSWERING_CALL_MENU_TIMEOUT_SAMPLES =
-		12 * SIPPYMODEM_V8_ANSAM_SAMPLE_RATE,
-	SIPPYMODEM_V8_ANSWERING_CJ_TIMEOUT_SAMPLES =
-		7 * SIPPYMODEM_V8_ANSAM_SAMPLE_RATE,
-	SIPPYMODEM_V8_ANSWERING_POST_CJ_SILENCE_SAMPLES =
-		SIPPYMODEM_V8_ANSAM_SAMPLE_RATE * 75 / 1000,
+	V8_ANSWERING_MAX_FRAGMENT_SAMPLES = 160,
+	V8_ANSWERING_CALL_MENU_TIMEOUT_SAMPLES =
+		12 * V8_ANSAM_SAMPLE_RATE,
+	V8_ANSWERING_CJ_TIMEOUT_SAMPLES =
+		7 * V8_ANSAM_SAMPLE_RATE,
+	V8_ANSWERING_POST_CJ_SILENCE_SAMPLES =
+		V8_ANSAM_SAMPLE_RATE * 75 / 1000,
 };
 
-enum sippymodem_v8_answering_state {
-	SIPPYMODEM_V8_ANSWERING_WAIT_CALL_MENU,
-	SIPPYMODEM_V8_ANSWERING_SEND_JOINT_MENU,
-	SIPPYMODEM_V8_ANSWERING_POST_CJ_SILENCE,
-	SIPPYMODEM_V8_ANSWERING_COMPLETE,
-	SIPPYMODEM_V8_ANSWERING_FAILED,
+enum v8_answering_state {
+	V8_ANSWERING_WAIT_CALL_MENU,
+	V8_ANSWERING_SEND_JOINT_MENU,
+	V8_ANSWERING_POST_CJ_SILENCE,
+	V8_ANSWERING_COMPLETE,
+	V8_ANSWERING_FAILED,
 };
 
-enum sippymodem_v8_answering_result {
-	SIPPYMODEM_V8_ANSWERING_OK,
-	SIPPYMODEM_V8_ANSWERING_INVALID_ARGUMENT,
-	SIPPYMODEM_V8_ANSWERING_NOT_READY,
-	SIPPYMODEM_V8_ANSWERING_CALL_MENU_TIMEOUT,
-	SIPPYMODEM_V8_ANSWERING_CJ_TIMEOUT,
-	SIPPYMODEM_V8_ANSWERING_NO_COMMON_MODULATION,
+enum v8_answering_result {
+	V8_ANSWERING_OK,
+	V8_ANSWERING_INVALID_ARGUMENT,
+	V8_ANSWERING_NOT_READY,
+	V8_ANSWERING_CALL_MENU_TIMEOUT,
+	V8_ANSWERING_CJ_TIMEOUT,
+	V8_ANSWERING_NO_COMMON_MODULATION,
 };
 
-struct sippymodem_v8_answering {
-	struct sippymodem_v8_ansam_generator answer_signal;
-	struct sippymodem_v8_fsk fsk;
-	struct sippymodem_v8_menu_detector call_menu_detector;
-	struct sippymodem_v8_control_generator joint_menu_bits;
-	struct sippymodem_v8_cj_detector cj_detector;
-	struct sippymodem_v8_menu local_menu;
-	struct sippymodem_v8_menu call_menu;
-	struct sippymodem_v8_menu negotiated_menu;
-	enum sippymodem_v8_modulation selected_modulation;
-	enum sippymodem_v8_answering_state state;
-	enum sippymodem_v8_answering_result terminal_result;
+struct v8_answering {
+	struct v8_ansam_generator answer_signal;
+	struct v8_fsk fsk;
+	struct v8_menu_detector call_menu_detector;
+	struct v8_control_generator joint_menu_bits;
+	struct v8_cj_detector cj_detector;
+	struct v8_menu local_menu;
+	struct v8_menu call_menu;
+	struct v8_menu negotiated_menu;
+	enum v8_modulation selected_modulation;
+	enum v8_answering_state state;
+	enum v8_answering_result terminal_result;
 	uint32_t state_samples;
 	uint8_t transmit_bit;
 	bool negotiated;
 };
 
-enum sippymodem_v8_answering_result sippymodem_v8_answering_init(
-	struct sippymodem_v8_answering *answering,
-	const struct sippymodem_v8_menu *local_menu);
-enum sippymodem_v8_answering_result sippymodem_v8_answering_process(
-	struct sippymodem_v8_answering *answering, const int16_t *receive,
+enum v8_answering_result v8_answering_init(
+	struct v8_answering *answering,
+	const struct v8_menu *local_menu);
+enum v8_answering_result v8_answering_process(
+	struct v8_answering *answering, const int16_t *receive,
 	int16_t *transmit, size_t count);
-bool sippymodem_v8_answering_is_complete(
-	const struct sippymodem_v8_answering *answering);
-enum sippymodem_v8_answering_result sippymodem_v8_answering_selection(
-	const struct sippymodem_v8_answering *answering,
-	struct sippymodem_v8_menu *menu,
-	enum sippymodem_v8_modulation *modulation);
+bool v8_answering_is_complete(
+	const struct v8_answering *answering);
+enum v8_answering_result v8_answering_selection(
+	const struct v8_answering *answering,
+	struct v8_menu *menu,
+	enum v8_modulation *modulation);
 
-const char *sippymodem_v8_answering_result_name(
-	enum sippymodem_v8_answering_result result);
+const char *v8_answering_result_name(
+	enum v8_answering_result result);
 
 #endif

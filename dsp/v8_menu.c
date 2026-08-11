@@ -10,46 +10,46 @@ enum {
 	V8_PROTOCOL_TAG = 0x0a,
 	V8_EXTENSION_TAG = 0x10,
 	V8_DATA_CALL_FUNCTION =
-		V8_CALL_FUNCTION_TAG | (SIPPYMODEM_V8_CALL_DATA << 5),
+		V8_CALL_FUNCTION_TAG | (V8_CALL_DATA << 5),
 	V8_LAPM_PROTOCOL = V8_PROTOCOL_TAG | (1u << 5),
 };
 
 static uint8_t required_modulation_octets(uint16_t modulations)
 {
-	if ((modulations & (SIPPYMODEM_V8_MODULATION_V26TER |
-			    SIPPYMODEM_V8_MODULATION_V26BIS |
-			    SIPPYMODEM_V8_MODULATION_V23_DUPLEX |
-			    SIPPYMODEM_V8_MODULATION_V23_HALF_DUPLEX |
-			    SIPPYMODEM_V8_MODULATION_V21)) != 0)
+	if ((modulations & (V8_MODULATION_V26TER |
+			    V8_MODULATION_V26BIS |
+			    V8_MODULATION_V23_DUPLEX |
+			    V8_MODULATION_V23_HALF_DUPLEX |
+			    V8_MODULATION_V21)) != 0)
 		return 3;
-	if ((modulations & (SIPPYMODEM_V8_MODULATION_V32 |
-			    SIPPYMODEM_V8_MODULATION_V22 |
-			    SIPPYMODEM_V8_MODULATION_V17 |
-			    SIPPYMODEM_V8_MODULATION_V29_HALF_DUPLEX |
-			    SIPPYMODEM_V8_MODULATION_V27TER)) != 0)
+	if ((modulations & (V8_MODULATION_V32 |
+			    V8_MODULATION_V22 |
+			    V8_MODULATION_V17 |
+			    V8_MODULATION_V29_HALF_DUPLEX |
+			    V8_MODULATION_V27TER)) != 0)
 		return 2;
 	return 1;
 }
 
-static bool menu_is_valid(const struct sippymodem_v8_menu *menu)
+static bool menu_is_valid(const struct v8_menu *menu)
 {
 	return menu != NULL &&
-	       menu->call_function == SIPPYMODEM_V8_CALL_DATA &&
-	       (menu->modulations & ~SIPPYMODEM_V8_MODULATION_ALL) == 0 &&
+	       menu->call_function == V8_CALL_DATA &&
+	       (menu->modulations & ~V8_MODULATION_ALL) == 0 &&
 	       menu->modulation_octets != 0 &&
 	       menu->modulation_octets <=
-		       SIPPYMODEM_V8_MAX_MODULATION_OCTETS &&
+		       V8_MAX_MODULATION_OCTETS &&
 	       menu->modulation_octets >=
 		       required_modulation_octets(menu->modulations) &&
 	       1u + menu->modulation_octets + (menu->lapm ? 1u : 0u) <=
-		       SIPPYMODEM_V8_MAX_INFORMATION_OCTETS;
+		       V8_MAX_INFORMATION_OCTETS;
 }
 
-enum sippymodem_v8_menu_result sippymodem_v8_call_menu_init(
-	struct sippymodem_v8_menu *menu, uint16_t modulations, bool lapm)
+enum v8_menu_result v8_call_menu_init(
+	struct v8_menu *menu, uint16_t modulations, bool lapm)
 {
-	struct sippymodem_v8_menu initialized = {
-		.call_function = SIPPYMODEM_V8_CALL_DATA,
+	struct v8_menu initialized = {
+		.call_function = V8_CALL_DATA,
 		.modulations = modulations,
 		.modulation_octets = required_modulation_octets(modulations),
 		.lapm = lapm,
@@ -57,18 +57,18 @@ enum sippymodem_v8_menu_result sippymodem_v8_call_menu_init(
 
 	if (menu == NULL || modulations == 0 ||
 	    !menu_is_valid(&initialized))
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	*menu = initialized;
-	return SIPPYMODEM_V8_MENU_OK;
+	return V8_MENU_OK;
 }
 
 static uint8_t first_modulation_octet(uint16_t modulations)
 {
 	return (uint8_t)(
 		V8_MODULATION_TAG |
-		((modulations & SIPPYMODEM_V8_MODULATION_V34_DUPLEX) != 0 ?
+		((modulations & V8_MODULATION_V34_DUPLEX) != 0 ?
 			 1u << 6 : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V34_HALF_DUPLEX) != 0 ?
+		((modulations & V8_MODULATION_V34_HALF_DUPLEX) != 0 ?
 			 1u << 7 : 0));
 }
 
@@ -76,12 +76,12 @@ static uint8_t second_modulation_octet(uint16_t modulations)
 {
 	return (uint8_t)(
 		V8_EXTENSION_TAG |
-		((modulations & SIPPYMODEM_V8_MODULATION_V32) != 0 ? 1u : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V22) != 0 ? 1u << 1 : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V17) != 0 ? 1u << 2 : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V29_HALF_DUPLEX) != 0 ?
+		((modulations & V8_MODULATION_V32) != 0 ? 1u : 0) |
+		((modulations & V8_MODULATION_V22) != 0 ? 1u << 1 : 0) |
+		((modulations & V8_MODULATION_V17) != 0 ? 1u << 2 : 0) |
+		((modulations & V8_MODULATION_V29_HALF_DUPLEX) != 0 ?
 			 1u << 6 : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V27TER) != 0 ?
+		((modulations & V8_MODULATION_V27TER) != 0 ?
 			 1u << 7 : 0));
 }
 
@@ -89,30 +89,30 @@ static uint8_t third_modulation_octet(uint16_t modulations)
 {
 	return (uint8_t)(
 		V8_EXTENSION_TAG |
-		((modulations & SIPPYMODEM_V8_MODULATION_V26TER) != 0 ? 1u : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V26BIS) != 0 ?
+		((modulations & V8_MODULATION_V26TER) != 0 ? 1u : 0) |
+		((modulations & V8_MODULATION_V26BIS) != 0 ?
 			 1u << 1 : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V23_DUPLEX) != 0 ?
+		((modulations & V8_MODULATION_V23_DUPLEX) != 0 ?
 			 1u << 2 : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V23_HALF_DUPLEX) != 0 ?
+		((modulations & V8_MODULATION_V23_HALF_DUPLEX) != 0 ?
 			 1u << 6 : 0) |
-		((modulations & SIPPYMODEM_V8_MODULATION_V21) != 0 ?
+		((modulations & V8_MODULATION_V21) != 0 ?
 			 1u << 7 : 0));
 }
 
-enum sippymodem_v8_menu_result sippymodem_v8_menu_encode(
-	const struct sippymodem_v8_menu *menu, uint8_t *information,
+enum v8_menu_result v8_menu_encode(
+	const struct v8_menu *menu, uint8_t *information,
 	size_t capacity, size_t *information_count)
 {
-	uint8_t encoded[SIPPYMODEM_V8_MAX_INFORMATION_OCTETS] = { 0 };
+	uint8_t encoded[V8_MAX_INFORMATION_OCTETS] = { 0 };
 	size_t count;
 
 	if (!menu_is_valid(menu) || information == NULL ||
 	    information_count == NULL)
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	count = 1u + menu->modulation_octets + (menu->lapm ? 1u : 0u);
 	if (capacity < count)
-		return SIPPYMODEM_V8_MENU_BUFFER_TOO_SMALL;
+		return V8_MENU_BUFFER_TOO_SMALL;
 	encoded[0] = V8_DATA_CALL_FUNCTION;
 	encoded[1] = first_modulation_octet(menu->modulations);
 	for (size_t index = 2; index <= menu->modulation_octets; ++index) {
@@ -127,7 +127,7 @@ enum sippymodem_v8_menu_result sippymodem_v8_menu_encode(
 		encoded[count - 1u] = V8_LAPM_PROTOCOL;
 	memcpy(information, encoded, count);
 	*information_count = count;
-	return SIPPYMODEM_V8_MENU_OK;
+	return V8_MENU_OK;
 }
 
 static bool extension_is_valid(uint8_t octet)
@@ -141,9 +141,9 @@ static uint16_t decode_first_modulation_octet(uint8_t octet)
 	uint16_t modulations = 0;
 
 	if ((octet & (1u << 6)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V34_DUPLEX;
+		modulations |= V8_MODULATION_V34_DUPLEX;
 	if ((octet & (1u << 7)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V34_HALF_DUPLEX;
+		modulations |= V8_MODULATION_V34_HALF_DUPLEX;
 	return modulations;
 }
 
@@ -152,15 +152,15 @@ static uint16_t decode_second_modulation_octet(uint8_t octet)
 	uint16_t modulations = 0;
 
 	if ((octet & 1u) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V32;
+		modulations |= V8_MODULATION_V32;
 	if ((octet & (1u << 1)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V22;
+		modulations |= V8_MODULATION_V22;
 	if ((octet & (1u << 2)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V17;
+		modulations |= V8_MODULATION_V17;
 	if ((octet & (1u << 6)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V29_HALF_DUPLEX;
+		modulations |= V8_MODULATION_V29_HALF_DUPLEX;
 	if ((octet & (1u << 7)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V27TER;
+		modulations |= V8_MODULATION_V27TER;
 	return modulations;
 }
 
@@ -169,51 +169,51 @@ static uint16_t decode_third_modulation_octet(uint8_t octet)
 	uint16_t modulations = 0;
 
 	if ((octet & 1u) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V26TER;
+		modulations |= V8_MODULATION_V26TER;
 	if ((octet & (1u << 1)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V26BIS;
+		modulations |= V8_MODULATION_V26BIS;
 	if ((octet & (1u << 2)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V23_DUPLEX;
+		modulations |= V8_MODULATION_V23_DUPLEX;
 	if ((octet & (1u << 6)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V23_HALF_DUPLEX;
+		modulations |= V8_MODULATION_V23_HALF_DUPLEX;
 	if ((octet & (1u << 7)) != 0)
-		modulations |= SIPPYMODEM_V8_MODULATION_V21;
+		modulations |= V8_MODULATION_V21;
 	return modulations;
 }
 
-enum sippymodem_v8_menu_result sippymodem_v8_menu_decode(
+enum v8_menu_result v8_menu_decode(
 	const uint8_t *information, size_t information_count,
-	struct sippymodem_v8_menu *menu)
+	struct v8_menu *menu)
 {
-	struct sippymodem_v8_menu decoded = {
-		.call_function = SIPPYMODEM_V8_CALL_DATA,
+	struct v8_menu decoded = {
+		.call_function = V8_CALL_DATA,
 	};
 	bool modulation_seen = false;
 	bool protocol_seen = false;
 	size_t index = 1;
 
 	if (information == NULL || menu == NULL)
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	if (information_count == 0 ||
-	    information_count > SIPPYMODEM_V8_MAX_INFORMATION_OCTETS ||
+	    information_count > V8_MAX_INFORMATION_OCTETS ||
 	    (information[0] & UINT8_C(0x1f)) != V8_CALL_FUNCTION_TAG)
-		return SIPPYMODEM_V8_MENU_MALFORMED;
-	if ((information[0] >> 5) != SIPPYMODEM_V8_CALL_DATA)
-		return SIPPYMODEM_V8_MENU_UNSUPPORTED_CALL_FUNCTION;
+		return V8_MENU_MALFORMED;
+	if ((information[0] >> 5) != V8_CALL_DATA)
+		return V8_MENU_UNSUPPORTED_CALL_FUNCTION;
 	while (index < information_count) {
 		uint8_t category = information[index++];
 		uint8_t tag;
 		size_t extension_count = 0;
 
 		if ((category & V8_EXTENSION_TAG) != 0)
-			return SIPPYMODEM_V8_MENU_MALFORMED;
+			return V8_MENU_MALFORMED;
 		tag = category & UINT8_C(0x0f);
 		while (index < information_count &&
 		       (information[index] & V8_EXTENSION_TAG) != 0) {
 			uint8_t extension = information[index++];
 
 			if (!extension_is_valid(extension))
-				return SIPPYMODEM_V8_MENU_MALFORMED;
+				return V8_MENU_MALFORMED;
 			if (tag == V8_MODULATION_TAG) {
 				if (extension_count == 0)
 					decoded.modulations |=
@@ -225,10 +225,10 @@ enum sippymodem_v8_menu_result sippymodem_v8_menu_decode(
 			extension_count++;
 		}
 		if (tag == V8_CALL_FUNCTION_TAG)
-			return SIPPYMODEM_V8_MENU_MALFORMED;
+			return V8_MENU_MALFORMED;
 		if (tag == V8_MODULATION_TAG) {
 			if (modulation_seen)
-				return SIPPYMODEM_V8_MENU_MALFORMED;
+				return V8_MENU_MALFORMED;
 			decoded.modulations |=
 				decode_first_modulation_octet(category);
 			decoded.modulation_octets =
@@ -239,75 +239,75 @@ enum sippymodem_v8_menu_result sippymodem_v8_menu_decode(
 
 			if (protocol_seen ||
 			    (extension_count != 0 && option != 7))
-				return SIPPYMODEM_V8_MENU_MALFORMED;
+				return V8_MENU_MALFORMED;
 			decoded.lapm = option == 1;
 			protocol_seen = true;
 		}
 	}
 	if (!modulation_seen || !menu_is_valid(&decoded))
-		return SIPPYMODEM_V8_MENU_MALFORMED;
+		return V8_MENU_MALFORMED;
 	*menu = decoded;
-	return SIPPYMODEM_V8_MENU_OK;
+	return V8_MENU_OK;
 }
 
-enum sippymodem_v8_menu_result sippymodem_v8_joint_menu_select(
-	const struct sippymodem_v8_menu *call_menu,
-	const struct sippymodem_v8_menu *local_menu,
-	struct sippymodem_v8_menu *joint_menu)
+enum v8_menu_result v8_joint_menu_select(
+	const struct v8_menu *call_menu,
+	const struct v8_menu *local_menu,
+	struct v8_menu *joint_menu)
 {
-	struct sippymodem_v8_menu selected;
+	struct v8_menu selected;
 
 	if (!menu_is_valid(call_menu) || !menu_is_valid(local_menu) ||
 	    call_menu->modulations == 0 || local_menu->modulations == 0 ||
 	    joint_menu == NULL)
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
-	selected = (struct sippymodem_v8_menu){
+		return V8_MENU_INVALID_ARGUMENT;
+	selected = (struct v8_menu){
 		.call_function = call_menu->call_function,
 		.modulations = call_menu->modulations & local_menu->modulations,
 		.modulation_octets = call_menu->modulation_octets,
 		.lapm = call_menu->lapm && local_menu->lapm,
 	};
 	if (!menu_is_valid(&selected))
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	*joint_menu = selected;
-	return SIPPYMODEM_V8_MENU_OK;
+	return V8_MENU_OK;
 }
 
-enum sippymodem_v8_menu_result sippymodem_v8_menu_selected_modulation(
-	const struct sippymodem_v8_menu *menu,
-	enum sippymodem_v8_modulation *modulation)
+enum v8_menu_result v8_menu_selected_modulation(
+	const struct v8_menu *menu,
+	enum v8_modulation *modulation)
 {
-	uint16_t selected = SIPPYMODEM_V8_MODULATION_V34_DUPLEX;
+	uint16_t selected = V8_MODULATION_V34_DUPLEX;
 
 	if (!menu_is_valid(menu) || modulation == NULL)
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	if (menu->modulations == 0)
-		return SIPPYMODEM_V8_MENU_NO_COMMON_MODULATION;
+		return V8_MENU_NO_COMMON_MODULATION;
 	while ((menu->modulations & selected) == 0)
 		selected <<= 1;
-	*modulation = (enum sippymodem_v8_modulation)selected;
-	return SIPPYMODEM_V8_MENU_OK;
+	*modulation = (enum v8_modulation)selected;
+	return V8_MENU_OK;
 }
 
 static bool menu_detector_is_valid(
-	const struct sippymodem_v8_menu_detector *detector)
+	const struct v8_menu_detector *detector)
 {
-	struct sippymodem_v8_menu previous;
+	struct v8_menu previous;
 
 	if (detector == NULL ||
-	    detector->current_count > SIPPYMODEM_V8_MAX_INFORMATION_OCTETS ||
-	    detector->previous_count > SIPPYMODEM_V8_MAX_INFORMATION_OCTETS ||
+	    detector->current_count > V8_MAX_INFORMATION_OCTETS ||
+	    detector->previous_count > V8_MAX_INFORMATION_OCTETS ||
 	    (!detector->sequence_open &&
 	     (detector->current_count != 0 || detector->current_overflow)) ||
 	    (detector->current_overflow &&
-	     detector->current_count != SIPPYMODEM_V8_MAX_INFORMATION_OCTETS) ||
+	     detector->current_count != V8_MAX_INFORMATION_OCTETS) ||
 	    detector->have_previous != (detector->previous_count != 0) ||
 	    (detector->have_previous && !detector->sequence_open))
 		return false;
 	if (detector->have_previous &&
-	    sippymodem_v8_menu_decode(
+	    v8_menu_decode(
 		    detector->previous, detector->previous_count, &previous) !=
-		    SIPPYMODEM_V8_MENU_OK)
+		    V8_MENU_OK)
 		return false;
 	if (detector->confirmed)
 		return detector->have_previous && detector->current_count == 0 &&
@@ -325,43 +325,43 @@ static bool menu_detector_is_valid(
 	       !detector->confirmed_menu.lapm;
 }
 
-enum sippymodem_v8_menu_result sippymodem_v8_menu_detector_init(
-	struct sippymodem_v8_menu_detector *detector)
+enum v8_menu_result v8_menu_detector_init(
+	struct v8_menu_detector *detector)
 {
-	struct sippymodem_v8_menu_detector initialized = { 0 };
+	struct v8_menu_detector initialized = { 0 };
 
 	if (detector == NULL ||
-	    sippymodem_v8_control_receiver_init(&initialized.framing) !=
-		    SIPPYMODEM_V8_FRAMING_OK ||
+	    v8_control_receiver_init(&initialized.framing) !=
+		    V8_FRAMING_OK ||
 	    !menu_detector_is_valid(&initialized))
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	*detector = initialized;
-	return SIPPYMODEM_V8_MENU_OK;
+	return V8_MENU_OK;
 }
 
-void sippymodem_v8_menu_detector_reset(
-	struct sippymodem_v8_menu_detector *detector)
+void v8_menu_detector_reset(
+	struct v8_menu_detector *detector)
 {
 	if (detector != NULL)
-		(void)sippymodem_v8_menu_detector_init(detector);
+		(void)v8_menu_detector_init(detector);
 }
 
 static void reject_current_sequence(
-	struct sippymodem_v8_menu_detector *detector)
+	struct v8_menu_detector *detector)
 {
 	detector->previous_count = 0;
 	detector->have_previous = false;
 }
 
 static void finish_current_sequence(
-	struct sippymodem_v8_menu_detector *detector)
+	struct v8_menu_detector *detector)
 {
-	struct sippymodem_v8_menu decoded;
+	struct v8_menu decoded;
 
 	if (detector->current_overflow || detector->current_count == 0 ||
-	    sippymodem_v8_menu_decode(
+	    v8_menu_decode(
 		    detector->current, detector->current_count, &decoded) !=
-		    SIPPYMODEM_V8_MENU_OK) {
+		    V8_MENU_OK) {
 		reject_current_sequence(detector);
 		return;
 	}
@@ -379,19 +379,19 @@ static void finish_current_sequence(
 }
 
 static void observe_control_event(
-	struct sippymodem_v8_menu_detector *detector,
-	const struct sippymodem_v8_control_event *event)
+	struct v8_menu_detector *detector,
+	const struct v8_control_event *event)
 {
-	if (event->type == SIPPYMODEM_V8_CONTROL_SEQUENCE_START) {
+	if (event->type == V8_CONTROL_SEQUENCE_START) {
 		if (detector->sequence_open)
 			finish_current_sequence(detector);
 		detector->current_count = 0;
 		detector->current_overflow = false;
 		detector->sequence_open = true;
-	} else if (event->type == SIPPYMODEM_V8_CONTROL_INFORMATION_OCTET &&
+	} else if (event->type == V8_CONTROL_INFORMATION_OCTET &&
 		   detector->sequence_open) {
 		if (detector->current_count <
-		    SIPPYMODEM_V8_MAX_INFORMATION_OCTETS) {
+		    V8_MAX_INFORMATION_OCTETS) {
 			detector->current[detector->current_count++] = event->octet;
 		} else {
 			detector->current_overflow = true;
@@ -399,50 +399,50 @@ static void observe_control_event(
 	}
 }
 
-enum sippymodem_v8_menu_result sippymodem_v8_menu_detect_bit(
-	struct sippymodem_v8_menu_detector *detector, uint8_t bit,
-	struct sippymodem_v8_menu *menu, bool *confirmed)
+enum v8_menu_result v8_menu_detect_bit(
+	struct v8_menu_detector *detector, uint8_t bit,
+	struct v8_menu *menu, bool *confirmed)
 {
-	struct sippymodem_v8_menu_detector next;
-	struct sippymodem_v8_control_event event;
+	struct v8_menu_detector next;
+	struct v8_control_event event;
 
 	if (!menu_detector_is_valid(detector) || bit > 1 || menu == NULL ||
 	    confirmed == NULL)
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	if (detector->confirmed) {
 		*menu = detector->confirmed_menu;
 		*confirmed = true;
-		return SIPPYMODEM_V8_MENU_OK;
+		return V8_MENU_OK;
 	}
 	next = *detector;
-	if (sippymodem_v8_control_receive_bit(
-		    &next.framing, bit, &event) != SIPPYMODEM_V8_FRAMING_OK)
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+	if (v8_control_receive_bit(
+		    &next.framing, bit, &event) != V8_FRAMING_OK)
+		return V8_MENU_INVALID_ARGUMENT;
 	observe_control_event(&next, &event);
 	if (!menu_detector_is_valid(&next))
-		return SIPPYMODEM_V8_MENU_INVALID_ARGUMENT;
+		return V8_MENU_INVALID_ARGUMENT;
 	*detector = next;
 	*confirmed = next.confirmed;
 	if (next.confirmed)
 		*menu = next.confirmed_menu;
-	return SIPPYMODEM_V8_MENU_OK;
+	return V8_MENU_OK;
 }
 
-const char *sippymodem_v8_menu_result_name(
-	enum sippymodem_v8_menu_result result)
+const char *v8_menu_result_name(
+	enum v8_menu_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V8_MENU_OK:
+	case V8_MENU_OK:
 		return "ok";
-	case SIPPYMODEM_V8_MENU_INVALID_ARGUMENT:
+	case V8_MENU_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V8_MENU_BUFFER_TOO_SMALL:
+	case V8_MENU_BUFFER_TOO_SMALL:
 		return "buffer too small";
-	case SIPPYMODEM_V8_MENU_MALFORMED:
+	case V8_MENU_MALFORMED:
 		return "malformed menu";
-	case SIPPYMODEM_V8_MENU_UNSUPPORTED_CALL_FUNCTION:
+	case V8_MENU_UNSUPPORTED_CALL_FUNCTION:
 		return "unsupported call function";
-	case SIPPYMODEM_V8_MENU_NO_COMMON_MODULATION:
+	case V8_MENU_NO_COMMON_MODULATION:
 		return "no common modulation";
 	}
 	return "unknown";

@@ -1120,10 +1120,10 @@ static void do_modem_change_dp (struct modem *m)
 			dp_id = MODEM_DP(m);
 			id = dp_id;
 			if (MODEM_AUTOMODE(m)) {
-				enum sippymodem_v8_modulation modulation =
-					sippymodem_v8_datapump_modulation(dp_id);
+				enum v8_modulation modulation =
+					v8_datapump_modulation(dp_id);
 
-				if (modulation != SIPPYMODEM_V8_MODULATION_NONE)
+				if (modulation != V8_MODULATION_NONE)
 					id = DP_V8;
 			}
 		}

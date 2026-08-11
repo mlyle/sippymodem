@@ -54,26 +54,26 @@ static bool test_normative_sequences(void)
 	};
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(fixtures); ++fixture) {
-		struct sippymodem_v32_trellis_encoder encoder;
+		struct v32_trellis_encoder encoder;
 		const struct trellis_fixture *expected = &fixtures[fixture];
 
-		CHECK(sippymodem_v32_trellis_encoder_init(
+		CHECK(v32_trellis_encoder_init(
 			      &encoder, expected->data_bits, 0) ==
-			      SIPPYMODEM_V32_TRELLIS_OK,
+			      V32_TRELLIS_OK,
 		      "V.32 trellis fixture %zu did not initialize", fixture);
 		for (size_t index = 0; index < ARRAY_LENGTH(expected->input);
 		     ++index) {
 			uint8_t signal_symbol = UINT8_MAX;
 
-			CHECK(sippymodem_v32_trellis_encode(
+			CHECK(v32_trellis_encode(
 				      &encoder, expected->input[index],
 				      &signal_symbol) ==
-				      SIPPYMODEM_V32_TRELLIS_OK &&
+				      V32_TRELLIS_OK &&
 			      signal_symbol == expected->signal_symbol[index] &&
 			      signal_symbol <
 				      (UINT8_C(1) <<
 				       (expected->data_bits + 1u)) &&
-			      sippymodem_v32_trellis_encoder_is_valid(&encoder),
+			      v32_trellis_encoder_is_valid(&encoder),
 			      "V.32 trellis fixture %zu changed at symbol %zu",
 			      fixture, index);
 		}
@@ -91,14 +91,14 @@ static bool test_initial_differential_output(void)
 	static const uint8_t expected[] = { 0, 2, 4, 6 };
 
 	for (uint8_t initial = 0; initial < ARRAY_LENGTH(expected); ++initial) {
-		struct sippymodem_v32_trellis_encoder encoder;
+		struct v32_trellis_encoder encoder;
 		uint8_t signal_symbol = UINT8_MAX;
 
-		CHECK(sippymodem_v32_trellis_encoder_init(&encoder, 3, initial) ==
-			      SIPPYMODEM_V32_TRELLIS_OK &&
-			      sippymodem_v32_trellis_encode(
+		CHECK(v32_trellis_encoder_init(&encoder, 3, initial) ==
+			      V32_TRELLIS_OK &&
+			      v32_trellis_encode(
 				      &encoder, 0, &signal_symbol) ==
-				      SIPPYMODEM_V32_TRELLIS_OK &&
+				      V32_TRELLIS_OK &&
 			      signal_symbol == expected[initial],
 		      "V.32 initial differential output %u changed", initial);
 	}
@@ -107,54 +107,54 @@ static bool test_initial_differential_output(void)
 
 static bool test_validation_is_transactional(void)
 {
-	struct sippymodem_v32_trellis_encoder encoder = {
+	struct v32_trellis_encoder encoder = {
 		.trellis_state = 2,
 		.differential_output = 1,
 		.data_bits_per_symbol = 4,
 	};
-	struct sippymodem_v32_trellis_encoder saved = encoder;
+	struct v32_trellis_encoder saved = encoder;
 	uint8_t signal_symbol = 0xa5;
 
-	CHECK(!sippymodem_v32_trellis_encoder_is_valid(NULL) &&
-		      sippymodem_v32_trellis_encoder_init(NULL, 3, 0) ==
-			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
-		      sippymodem_v32_trellis_encoder_init(&encoder, 2, 0) ==
-			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
+	CHECK(!v32_trellis_encoder_is_valid(NULL) &&
+		      v32_trellis_encoder_init(NULL, 3, 0) ==
+			      V32_TRELLIS_INVALID_ARGUMENT &&
+		      v32_trellis_encoder_init(&encoder, 2, 0) ==
+			      V32_TRELLIS_INVALID_ARGUMENT &&
 		      memcmp(&encoder, &saved, sizeof(encoder)) == 0 &&
-		      sippymodem_v32_trellis_encoder_init(&encoder, 7, 0) ==
-			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
+		      v32_trellis_encoder_init(&encoder, 7, 0) ==
+			      V32_TRELLIS_INVALID_ARGUMENT &&
 		      memcmp(&encoder, &saved, sizeof(encoder)) == 0 &&
-		      sippymodem_v32_trellis_encoder_init(&encoder, 3, 4) ==
-			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
+		      v32_trellis_encoder_init(&encoder, 3, 4) ==
+			      V32_TRELLIS_INVALID_ARGUMENT &&
 		      memcmp(&encoder, &saved, sizeof(encoder)) == 0,
 	      "V.32 trellis initialization accepted invalid state");
 
-	CHECK(sippymodem_v32_trellis_encode(&encoder, 16, &signal_symbol) ==
-			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
+	CHECK(v32_trellis_encode(&encoder, 16, &signal_symbol) ==
+			      V32_TRELLIS_INVALID_ARGUMENT &&
 		      signal_symbol == 0xa5 &&
 		      memcmp(&encoder, &saved, sizeof(encoder)) == 0 &&
-		      sippymodem_v32_trellis_encode(&encoder, 0, NULL) ==
-			      SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT &&
+		      v32_trellis_encode(&encoder, 0, NULL) ==
+			      V32_TRELLIS_INVALID_ARGUMENT &&
 		      memcmp(&encoder, &saved, sizeof(encoder)) == 0,
 	      "V.32 trellis encoding changed state on invalid input");
 
 	encoder = saved;
-	encoder.trellis_state = SIPPYMODEM_V32_TRELLIS_STATE_COUNT;
-	CHECK(!sippymodem_v32_trellis_encoder_is_valid(&encoder),
+	encoder.trellis_state = V32_TRELLIS_STATE_COUNT;
+	CHECK(!v32_trellis_encoder_is_valid(&encoder),
 	      "V.32 trellis accepted an invalid convolutional state");
 	encoder = saved;
 	encoder.differential_output =
-		SIPPYMODEM_V32_TRELLIS_QUADRANT_COUNT;
-	CHECK(!sippymodem_v32_trellis_encoder_is_valid(&encoder),
+		V32_TRELLIS_QUADRANT_COUNT;
+	CHECK(!v32_trellis_encoder_is_valid(&encoder),
 	      "V.32 trellis accepted an invalid differential output");
 	encoder = saved;
 	encoder.data_bits_per_symbol = 0;
-	CHECK(!sippymodem_v32_trellis_encoder_is_valid(&encoder) &&
-		      strcmp(sippymodem_v32_trellis_result_name(
-			     SIPPYMODEM_V32_TRELLIS_INVALID_ARGUMENT),
+	CHECK(!v32_trellis_encoder_is_valid(&encoder) &&
+		      strcmp(v32_trellis_result_name(
+			     V32_TRELLIS_INVALID_ARGUMENT),
 			     "invalid argument") == 0 &&
-		      strcmp(sippymodem_v32_trellis_result_name(
-			     (enum sippymodem_v32_trellis_result)99),
+		      strcmp(v32_trellis_result_name(
+			     (enum v32_trellis_result)99),
 			     "unknown") == 0,
 	      "V.32 trellis validation diagnostics changed");
 	return true;

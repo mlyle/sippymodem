@@ -65,8 +65,8 @@ struct fsk300_profile {
 static const struct fsk300_profile fsk300_profiles[] = {
 	{
 		.id = DP_V21,
-		.originator_channel = &sippymodem_v21_channel_1,
-		.answerer_channel = &sippymodem_v21_channel_2,
+		.originator_channel = &v21_channel_1,
+		.answerer_channel = &v21_channel_2,
 	},
 	{
 		.id = DP_B103,
@@ -75,10 +75,10 @@ static const struct fsk300_profile fsk300_profiles[] = {
 	},
 };
 
-_Static_assert(MODEM_RATE == SIPPYMODEM_V21_SAMPLE_RATE,
+_Static_assert(MODEM_RATE == V21_SAMPLE_RATE,
 	       "the V.21 datapump requires 8 kHz audio");
 _Static_assert((int)FSK300_BIT_RATE ==
-		       (int)SIPPYMODEM_V21_BIT_RATE,
+		       (int)V21_BIT_RATE,
 	       "the V.21 datapump requires 300 bit/s profiles");
 
 enum fsk300_training_state {
