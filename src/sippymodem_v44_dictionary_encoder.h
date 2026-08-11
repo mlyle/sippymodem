@@ -23,6 +23,11 @@ struct sippymodem_v44_dictionary_match {
 	bool needs_more_input;
 };
 
+struct sippymodem_v44_dictionary_extension {
+	uint32_t length;
+	bool needs_more_input;
+};
+
 struct sippymodem_v44_dictionary_encoder *
 sippymodem_v44_dictionary_encoder_create(
 	const struct sippymodem_v44_parameters *parameters);
@@ -72,6 +77,15 @@ sippymodem_v44_dictionary_encoder_find_longest(
 	uint32_t history_start,
 	uint32_t available,
 	struct sippymodem_v44_dictionary_match *match);
+
+/* Compare source history with the continuation following a matched node. */
+enum sippymodem_v44_dictionary_encoder_result
+sippymodem_v44_dictionary_encoder_find_extension(
+	const struct sippymodem_v44_dictionary_encoder *encoder,
+	uint32_t codeword,
+	uint32_t history_start,
+	uint32_t available,
+	struct sippymodem_v44_dictionary_extension *extension);
 
 size_t sippymodem_v44_dictionary_encoder_history_length(
 	const struct sippymodem_v44_dictionary_encoder *encoder);

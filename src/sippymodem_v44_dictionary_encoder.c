@@ -9,6 +9,7 @@
 enum {
 	V44_FIRST_CODEWORD = 4,
 	V44_ROOT_COUNT = 256,
+	V44_MAX_EXTENSION_LENGTH = 253,
 };
 
 struct v44_encoder_node {
@@ -240,6 +241,42 @@ sippymodem_v44_dictionary_encoder_find_longest(
 				encoder, root, history_start, available, 1, &found);
 	}
 	*match = found;
+	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
+}
+
+enum sippymodem_v44_dictionary_encoder_result
+sippymodem_v44_dictionary_encoder_find_extension(
+	const struct sippymodem_v44_dictionary_encoder *encoder,
+	uint32_t codeword,
+	uint32_t history_start,
+	uint32_t available,
+	struct sippymodem_v44_dictionary_extension *extension)
+{
+	struct sippymodem_v44_dictionary_extension found = { 0 };
+	const struct v44_encoder_node *node;
+	uint32_t reference;
+	uint32_t limit;
+
+	if (!dictionary_is_valid(encoder) || extension == NULL ||
+	    codeword < V44_FIRST_CODEWORD ||
+	    codeword >= encoder->next_codeword ||
+	    history_start > encoder->history_length ||
+	    available > encoder->history_length - history_start)
+		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+	node = &encoder->nodes[codeword];
+	reference = node->history_start + node->segment_length;
+	if (reference >= history_start)
+		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+	limit = encoder->parameters.max_string_length - node->string_length;
+	if (limit > V44_MAX_EXTENSION_LENGTH)
+		limit = V44_MAX_EXTENSION_LENGTH;
+	while (found.length < available && found.length < limit &&
+	       encoder->history[reference + found.length] ==
+		       encoder->history[history_start + found.length])
+		found.length++;
+	found.needs_more_input =
+		found.length == available && found.length < limit;
+	*extension = found;
 	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
 }
 

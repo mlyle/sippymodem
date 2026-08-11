@@ -35,6 +35,7 @@ static bool test_history_and_node_insertion(void)
 	struct sippymodem_v44_dictionary_encoder *encoder =
 		sippymodem_v44_dictionary_encoder_create(&parameters);
 	uint8_t history[40];
+	struct sippymodem_v44_dictionary_extension extension = { 0 };
 	uint32_t codeword = UINT32_MAX;
 
 	for (size_t index = 0; index < sizeof(history); ++index)
@@ -63,7 +64,11 @@ static bool test_history_and_node_insertion(void)
 	CHECK(sippymodem_v44_dictionary_encoder_add_child_segment(
 		      encoder, 5, 4, 29, &codeword) ==
 		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
-	      codeword == 7,
+	      codeword == 7 &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, codeword, 34, 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      extension.length == 0 && !extension.needs_more_input,
 	      "V.44 encoder dictionary rejected a maximum-length string");
 	codeword = UINT32_MAX;
 	CHECK(sippymodem_v44_dictionary_encoder_add_child_segment(
@@ -248,6 +253,73 @@ static bool test_longest_match_lookup(void)
 	return true;
 }
 
+static bool test_extension_lookup(void)
+{
+	static const uint8_t repeated[] = "CCCCCCCCCCX";
+	struct sippymodem_v44_dictionary_encoder *encoder =
+		sippymodem_v44_dictionary_encoder_create(&parameters);
+	struct sippymodem_v44_dictionary_extension extension = {
+		.length = UINT32_MAX,
+		.needs_more_input = false,
+	};
+	uint32_t codeword = UINT32_MAX;
+
+	CHECK(encoder != NULL && append_octets(
+				  encoder, repeated, sizeof(repeated) - 1U) &&
+	      sippymodem_v44_dictionary_encoder_add_root_segment(
+		      encoder, 'C', 1, 1, &codeword) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      codeword == 4,
+	      "could not initialize repeated V.44 extension history");
+	CHECK(sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, 3, 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      extension.length == 1 && extension.needs_more_input &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, 3, 7, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      extension.length == 7 && extension.needs_more_input &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, 3, 8, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      extension.length == 7 && !extension.needs_more_input &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, 10, 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      extension.length == 0 && !extension.needs_more_input &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, 11, 0, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_OK &&
+	      extension.length == 0 && extension.needs_more_input,
+	      "V.44 extension lookup did not preserve overlapping history");
+	extension = (struct sippymodem_v44_dictionary_extension){
+		.length = UINT32_MAX,
+		.needs_more_input = true,
+	};
+	CHECK(sippymodem_v44_dictionary_encoder_find_extension(
+		      NULL, 4, 3, 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 3, 3, 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 5, 3, 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, 2, 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, sizeof(repeated), 1, &extension) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      sippymodem_v44_dictionary_encoder_find_extension(
+		      encoder, 4, 3, 1, NULL) ==
+		      SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT &&
+	      extension.length == UINT32_MAX && extension.needs_more_input,
+	      "invalid V.44 extension lookup changed output");
+	sippymodem_v44_dictionary_encoder_destroy(encoder);
+	return true;
+}
+
 static bool test_creation_and_result_names(void)
 {
 	struct sippymodem_v44_parameters invalid = parameters;
@@ -297,6 +369,7 @@ int main(void)
 		{ "bounded exhaustion and reset",
 		  test_bounded_exhaustion_and_reset },
 		{ "longest match lookup", test_longest_match_lookup },
+		{ "extension lookup", test_extension_lookup },
 		{ "creation and result names", test_creation_and_result_names },
 	};
 	unsigned int failures = 0;
