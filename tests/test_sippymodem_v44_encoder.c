@@ -709,8 +709,6 @@ static bool test_api_and_backpressure(void)
 	CHECK(sippymodem_v44_encoder_process(
 		      encoder, &input, &input_length) ==
 		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
 	      input == saved_input && input_length == saved_length,
 	      "V.44 output backpressure consumed more input");
 	CHECK(sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
@@ -726,19 +724,23 @@ static bool test_api_and_backpressure(void)
 	      input == plain + sizeof(plain) && input_length == 0 &&
 	      sippymodem_v44_encoder_pending(encoder) == 1,
 	      "V.44 encoder did not resume after output drain");
+	saved_input = input;
+	saved_length = input_length;
 	CHECK(sippymodem_v44_encoder_flush(encoder) ==
 		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
 	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_process(
+		      encoder, &input, &input_length) ==
+		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
+	      input == saved_input && input_length == saved_length &&
 	      sippymodem_v44_encoder_flush(encoder) ==
 		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
 	      sippymodem_v44_encoder_pending(encoder) == 1,
 	      "V.44 FLUSH did not preserve queued output ordering");
-	saved_input = input;
-	saved_length = input_length;
 	CHECK(sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
 	      sippymodem_v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT &&
+		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
 	      input == saved_input && input_length == saved_length &&
 	      sippymodem_v44_encoder_flush(encoder) ==
 		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
@@ -752,6 +754,9 @@ static bool test_api_and_backpressure(void)
 	      strcmp(sippymodem_v44_encode_result_name(
 			     SIPPYMODEM_V44_ENCODE_NEED_OUTPUT),
 		     "need output") == 0 &&
+	      strcmp(sippymodem_v44_encode_result_name(
+			     SIPPYMODEM_V44_ENCODE_INVALID_STATE),
+		     "invalid state") == 0 &&
 	      strcmp(sippymodem_v44_encode_result_name(
 			     SIPPYMODEM_V44_ENCODE_PROCEDURAL_ERROR),
 		     "procedural error") == 0 &&

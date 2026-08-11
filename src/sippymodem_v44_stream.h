@@ -65,6 +65,10 @@ size_t sippymodem_v44_bit_writer_read(
 	uint8_t *output,
 	size_t output_capacity);
 
+/* True when the next field starts at bit one of a new octet. */
+bool sippymodem_v44_bit_writer_at_octet_boundary(
+	const struct sippymodem_v44_bit_writer *writer);
+
 struct sippymodem_v44_bit_reader *sippymodem_v44_bit_reader_create(void);
 void sippymodem_v44_bit_reader_destroy(
 	struct sippymodem_v44_bit_reader *reader);

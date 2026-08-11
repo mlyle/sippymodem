@@ -173,6 +173,12 @@ size_t sippymodem_v44_bit_writer_read(
 	return count;
 }
 
+bool sippymodem_v44_bit_writer_at_octet_boundary(
+	const struct sippymodem_v44_bit_writer *writer)
+{
+	return writer != NULL && writer->bit_count == 0;
+}
+
 struct sippymodem_v44_bit_reader *sippymodem_v44_bit_reader_create(void)
 {
 	return calloc(1, sizeof(struct sippymodem_v44_bit_reader));

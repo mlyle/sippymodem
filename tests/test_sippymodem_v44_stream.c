@@ -77,16 +77,23 @@ static bool test_lsb_first_packing_and_alignment(void)
 	bool passed = false;
 
 	CHECK(writer != NULL, "could not create V.44 bit writer");
+	CHECK(sippymodem_v44_bit_writer_at_octet_boundary(writer) &&
+	      !sippymodem_v44_bit_writer_at_octet_boundary(NULL),
+	      "fresh V.44 writer boundary state was wrong");
 	if (sippymodem_v44_bit_writer_put(writer, 5, 3) !=
 		    SIPPYMODEM_V44_STREAM_OK ||
+	    sippymodem_v44_bit_writer_at_octet_boundary(writer) ||
 	    sippymodem_v44_bit_writer_put(writer, 2, 2) !=
 		    SIPPYMODEM_V44_STREAM_OK ||
 	    sippymodem_v44_bit_writer_align(writer) !=
 		    SIPPYMODEM_V44_STREAM_OK ||
+	    !sippymodem_v44_bit_writer_at_octet_boundary(writer) ||
 	    sippymodem_v44_bit_writer_put(writer, 0xabc, 12) !=
 		    SIPPYMODEM_V44_STREAM_OK ||
+	    sippymodem_v44_bit_writer_at_octet_boundary(writer) ||
 	    sippymodem_v44_bit_writer_align(writer) !=
-		    SIPPYMODEM_V44_STREAM_OK)
+		    SIPPYMODEM_V44_STREAM_OK ||
+	    !sippymodem_v44_bit_writer_at_octet_boundary(writer))
 		goto out;
 	if (sippymodem_v44_bit_writer_pending(writer) != sizeof(expected) ||
 	    sippymodem_v44_bit_writer_read(writer, actual, sizeof(actual)) !=

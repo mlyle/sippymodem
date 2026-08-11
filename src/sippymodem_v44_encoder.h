@@ -14,7 +14,13 @@ enum sippymodem_v44_encode_result {
 	SIPPYMODEM_V44_ENCODE_NEED_OUTPUT,
 	SIPPYMODEM_V44_ENCODE_FLUSHED,
 	SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT,
+	SIPPYMODEM_V44_ENCODE_INVALID_STATE,
 	SIPPYMODEM_V44_ENCODE_PROCEDURAL_ERROR,
+};
+
+enum sippymodem_v44_encoder_mode {
+	SIPPYMODEM_V44_ENCODER_COMPRESSED = 0,
+	SIPPYMODEM_V44_ENCODER_TRANSPARENT,
 };
 
 struct sippymodem_v44_encoder;
@@ -40,7 +46,22 @@ enum sippymodem_v44_encode_result sippymodem_v44_encoder_process(
 	const uint8_t **input,
 	size_t *input_length);
 
-/* Drive a C-FLUSH request until FLUSHED, draining on NEED_OUTPUT. */
+/*
+ * Explicitly change stream mode; automatic compressibility policy belongs to
+ * the caller. A request finishes all accepted data before ETM or ECM. Drain
+ * output and repeat the same request on NEED_OUTPUT. Until it returns OK,
+ * process and flush return INVALID_STATE and a conflicting request is
+ * rejected. ESCAPE evolves across mode changes and starts at zero on create.
+ */
+enum sippymodem_v44_encode_result sippymodem_v44_encoder_request_mode(
+	struct sippymodem_v44_encoder *encoder,
+	enum sippymodem_v44_encoder_mode target);
+
+/*
+ * Drive a flush through FLUSHED, draining on NEED_OUTPUT. Once requested,
+ * input and mode changes are rejected until the flush completes. Compressed
+ * mode emits C-FLUSH; transparent mode only drains already accepted octets.
+ */
 enum sippymodem_v44_encode_result sippymodem_v44_encoder_flush(
 	struct sippymodem_v44_encoder *encoder);
 

@@ -173,6 +173,7 @@ enum sippymodem_v44_duplex_result sippymodem_v44_duplex_transmit(
 			return SIPPYMODEM_V44_DUPLEX_NEED_INPUT;
 		case SIPPYMODEM_V44_ENCODE_FLUSHED:
 		case SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT:
+		case SIPPYMODEM_V44_ENCODE_INVALID_STATE:
 		case SIPPYMODEM_V44_ENCODE_PROCEDURAL_ERROR:
 			return fail_transmit(duplex);
 		}
@@ -213,6 +214,7 @@ enum sippymodem_v44_duplex_result sippymodem_v44_duplex_flush_transmit(
 			return SIPPYMODEM_V44_DUPLEX_FLUSHED;
 		case SIPPYMODEM_V44_ENCODE_NEED_INPUT:
 		case SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT:
+		case SIPPYMODEM_V44_ENCODE_INVALID_STATE:
 		case SIPPYMODEM_V44_ENCODE_PROCEDURAL_ERROR:
 			return fail_transmit(duplex);
 		}
