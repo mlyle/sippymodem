@@ -329,6 +329,13 @@ V32_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_startup.o \
 	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
 	$(BUILD_DIR)/sippymodem_v32_startup.o
+V32_LINE_STARTUP_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v32_line_startup
+V32_LINE_STARTUP_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v32_line_startup.o \
+	$(BUILD_DIR)/sippymodem_v32_line_startup.o \
+	$(BUILD_DIR)/sippymodem_single_tone.o \
+	$(BUILD_DIR)/sippymodem_g711.o
 V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_trellis
 V32_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_trellis.o \
@@ -903,6 +910,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V32_9600_RECEIVER_TEST_BINARY) \
 	$(V32_RATE_SIGNAL_TEST_BINARY) \
 	$(V32_STARTUP_TEST_BINARY) \
+	$(V32_LINE_STARTUP_TEST_BINARY) \
 	$(V32_TRELLIS_TEST_BINARY) \
 	$(V32_TRELLIS_DECODER_TEST_BINARY) \
 	$(V32_CARRIER_TEST_BINARY) \
@@ -999,6 +1007,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V32_9600_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V32_RATE_SIGNAL_TEST_OBJECTS:.o=.d) \
 	$(V32_STARTUP_TEST_OBJECTS:.o=.d) \
+	$(V32_LINE_STARTUP_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V32_CARRIER_TEST_OBJECTS:.o=.d) \
@@ -1112,6 +1121,7 @@ test: $(TEST_BINARIES)
 	./$(V32_9600_RECEIVER_TEST_BINARY)
 	./$(V32_RATE_SIGNAL_TEST_BINARY)
 	./$(V32_STARTUP_TEST_BINARY)
+	./$(V32_LINE_STARTUP_TEST_BINARY)
 	./$(V32_TRELLIS_TEST_BINARY)
 	./$(V32_TRELLIS_DECODER_TEST_BINARY)
 	./$(V32_CARRIER_TEST_BINARY)
@@ -1321,6 +1331,9 @@ $(V32_RATE_SIGNAL_TEST_BINARY): $(V32_RATE_SIGNAL_TEST_OBJECTS)
 
 $(V32_STARTUP_TEST_BINARY): $(V32_STARTUP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V32_LINE_STARTUP_TEST_BINARY): $(V32_LINE_STARTUP_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_TRELLIS_TEST_BINARY): $(V32_TRELLIS_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -1703,6 +1716,10 @@ $(BUILD_DIR)/sippymodem_v32_rate_signal.o: \
 
 $(BUILD_DIR)/sippymodem_v32_startup.o: \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_startup.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v32_line_startup.o: \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_line_startup.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_trellis.o: \
