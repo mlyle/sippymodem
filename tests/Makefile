@@ -64,6 +64,12 @@ V44_ENCODER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_encoder.o \
 	$(BUILD_DIR)/sippymodem_v44_transparent_decoder.o \
 	$(BUILD_DIR)/sippymodem_v44_dictionary_decoder.o \
 	$(BUILD_DIR)/sippymodem_v44_stream.o
+V44_DICTIONARY_ENCODER_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v44_dictionary_encoder
+V44_DICTIONARY_ENCODER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v44_dictionary_encoder.o \
+	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
+	$(BUILD_DIR)/sippymodem_v44_stream.o
 V44_TRANSPARENT_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v44_transparent_decoder
 V44_TRANSPARENT_TEST_OBJECTS := \
@@ -1005,6 +1011,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
 	$(V44_STREAM_TEST_BINARY) $(V44_DECODER_TEST_BINARY) \
 	$(V44_ENCODER_TEST_BINARY) \
+	$(V44_DICTIONARY_ENCODER_TEST_BINARY) \
 	$(V44_TRANSPARENT_TEST_BINARY) \
 	$(V44_DICTIONARY_TEST_BINARY) \
 	$(V44_COMPRESSED_TEST_BINARY) \
@@ -1105,6 +1112,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V44_STREAM_TEST_OBJECTS:.o=.d) \
 	$(V44_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V44_ENCODER_TEST_OBJECTS:.o=.d) \
+	$(V44_DICTIONARY_ENCODER_TEST_OBJECTS:.o=.d) \
 	$(V44_TRANSPARENT_TEST_OBJECTS:.o=.d) \
 	$(V44_DICTIONARY_TEST_OBJECTS:.o=.d) \
 	$(V44_COMPRESSED_TEST_OBJECTS:.o=.d) \
@@ -1224,6 +1232,7 @@ test: $(TEST_BINARIES)
 	./$(V44_STREAM_TEST_BINARY)
 	./$(V44_DECODER_TEST_BINARY)
 	./$(V44_ENCODER_TEST_BINARY)
+	./$(V44_DICTIONARY_ENCODER_TEST_BINARY)
 	./$(V44_TRANSPARENT_TEST_BINARY)
 	./$(V44_DICTIONARY_TEST_BINARY)
 	./$(V44_COMPRESSED_TEST_BINARY)
@@ -1364,6 +1373,10 @@ $(V44_DECODER_TEST_BINARY): $(V44_DECODER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V44_ENCODER_TEST_BINARY): $(V44_ENCODER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V44_DICTIONARY_ENCODER_TEST_BINARY): \
+	$(V44_DICTIONARY_ENCODER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V44_TRANSPARENT_TEST_BINARY): $(V44_TRANSPARENT_TEST_OBJECTS)
@@ -1761,6 +1774,10 @@ $(BUILD_DIR)/sippymodem_v44_decoder.o: \
 
 $(BUILD_DIR)/sippymodem_v44_encoder.o: \
 	../src/sippymodem_v44_encoder.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o: \
+	../src/sippymodem_v44_dictionary_encoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v44_transparent_decoder.o: \
