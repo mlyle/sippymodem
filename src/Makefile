@@ -47,7 +47,7 @@ MODEM_CORE_SOURCES := \
 	modem_param.c \
 	modem_timer.c \
 	sysdep_common.c
-SIPPYMODEM_SOURCES := \
+APP_SOURCES := \
 	audio_path.c \
 	audio_scheduler.c \
 	config.c \
@@ -89,7 +89,7 @@ SIPPYMODEM_SOURCES := \
 	v44_transparent_decoder.c \
 	v44_tx_monitor.c \
 	v44_xid.c
-SIPPYMODEM_SHARED_DSP_SOURCES := \
+SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/crc16_ccitt_false.c \
 	$(DSP_SOURCE_DIR)/datapumps.c \
 	$(DSP_SOURCE_DIR)/dc_filter.c \
@@ -132,7 +132,7 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/trellis_acquirer.c \
 	$(DSP_V32_SOURCE_DIR)/trellis_decoder.c \
 	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c
-SIPPYMODEM_PCM_SOURCES := \
+PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_4d_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_4d_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_receiver.c \
@@ -203,11 +203,11 @@ SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_trn.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_channel.c
-SIPPYMODEM_DSP_SOURCES := $(SIPPYMODEM_SHARED_DSP_SOURCES) \
+DSP_SOURCES := $(SHARED_DSP_SOURCES) \
 	$(V21_202_SOURCES) $(V22_SOURCES) \
-	$(V32_SOURCES) $(SIPPYMODEM_PCM_SOURCES)
-SOURCES := $(MODEM_CORE_SOURCES) $(SIPPYMODEM_SOURCES) \
-	$(SIPPYMODEM_DSP_SOURCES)
+	$(V32_SOURCES) $(PCM_SOURCES)
+SOURCES := $(MODEM_CORE_SOURCES) $(APP_SOURCES) \
+	$(DSP_SOURCES)
 OBJECTS := $(SOURCES:.c=.o)
 DEPENDENCIES := $(SOURCES:.c=.d)
 

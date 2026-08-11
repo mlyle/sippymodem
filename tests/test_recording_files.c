@@ -40,7 +40,7 @@ static void fixture_close(struct recording_fixture *fixture)
 
 static bool fixture_open(struct recording_fixture *fixture)
 {
-	char template[] = "/tmp/sippymodem-recording-XXXXXX";
+	char template[] = "/tmp/modem-recording-XXXXXX";
 	char *directory;
 
 	memset(fixture, 0, sizeof(*fixture));

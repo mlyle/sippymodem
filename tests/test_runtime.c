@@ -475,14 +475,14 @@ static bool test_owns_closed_runtime(void)
 	struct app_config config = runtime_config(true);
 	struct modem_runtime *runtime;
 	struct modem *modem;
-	char name[] = "sippymodem-test";
+	char name[] = "runtime-test";
 
 	memset(&capture, 0, sizeof(capture));
 	runtime = modem_runtime_create(&config, name);
 	modem = modem_runtime_modem(runtime);
 	name[0] = 'x';
 	CHECK(runtime != NULL && modem != NULL &&
-		      strcmp(modem->name, "sippymodem-test") == 0 &&
+		      strcmp(modem->name, "runtime-test") == 0 &&
 		      modem->dev_data != NULL && capture.datapump_starts == 1 &&
 		      capture.modem_creates == 1 &&
 		      capture.host_creates == 1 &&

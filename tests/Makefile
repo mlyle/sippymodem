@@ -2268,7 +2268,7 @@ $(BUILD_DIR)/loop.o: ../src/loop.c | $(BUILD_DIR)
 
 $(BUILD_DIR)/main_testable.o: \
 	../src/main.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) -DSIPPYMODEM_NO_PROCESS_ENTRY $(CFLAGS) \
+	$(CC) $(CPPFLAGS) -DPROGRAM_NO_PROCESS_ENTRY $(CFLAGS) \
 		-MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/dc_filter.o: \

@@ -46,7 +46,7 @@ enum rtp_result rtp_packet_parse(
 	size_t packet_size,
 	struct rtp_packet_view *view);
 
-/* The writer emits the fixed RTP header used by sippymodem.  Payload storage
+/* The writer emits the fixed RTP header used by the media path. Payload storage
  * may overlap the output buffer; packet_size is updated only on success. */
 enum rtp_result rtp_packet_write(
 	uint8_t *packet,

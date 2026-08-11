@@ -78,7 +78,7 @@ static bool set_test_environment(void)
 	       setenv("SIP_REMOTE_CLOCK", "false", 1) == 0 &&
 	       setenv("SIP_GAIN", "0.75", 1) == 0 &&
 	       setenv("SIP_RX_GAIN", "0.80", 1) == 0 &&
-	       setenv("SIP_RECORD_PREFIX", "/tmp/sippymodem-call", 1) == 0;
+	       setenv("SIP_RECORD_PREFIX", "/tmp/modem-call", 1) == 0;
 }
 
 static bool test_environment_overrides(void)
@@ -128,7 +128,7 @@ static bool test_environment_overrides(void)
 	CHECK(config.media.transmit_gain == 0.75 &&
 		      config.media.receive_gain == 0.80,
 	      "shared and directional gains have wrong precedence");
-	CHECK(strcmp(config.recording.prefix, "/tmp/sippymodem-call") == 0,
+	CHECK(strcmp(config.recording.prefix, "/tmp/modem-call") == 0,
 	      "recording prefix was not applied");
 	return true;
 }

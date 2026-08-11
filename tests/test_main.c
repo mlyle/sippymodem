@@ -64,7 +64,7 @@ static int run_program(int argc, char *argv[])
 		goto done;
 	if (dup2(sink, STDOUT_FILENO) < 0 || dup2(sink, STDERR_FILENO) < 0)
 		goto restore;
-	result = sippymodem_program_main(argc, argv);
+	result = program_main(argc, argv);
 	fflush(NULL);
 
 restore:
