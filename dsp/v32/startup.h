@@ -11,7 +11,6 @@
 enum {
 	/* One dibit is carried per 2400-baud training symbol. */
 	SIPPYMODEM_V32_STARTUP_TRAINING_DIBITS = 1280,
-	SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS = 32,
 	SIPPYMODEM_V32_STARTUP_CONFIRMATION_DIBITS = 128,
 };
 
@@ -53,7 +52,6 @@ struct sippymodem_v32_startup {
 	uint16_t end_word;
 	uint16_t phase_dibits;
 	uint16_t receive_mark_dibits;
-	uint16_t rate_gap_dibits;
 	enum sippymodem_v32_endpoint_role role;
 	enum sippymodem_v32_startup_phase phase;
 	/* Capability bit set retained independently from the chosen rate. */
@@ -65,6 +63,7 @@ struct sippymodem_v32_startup {
 	uint8_t word_dibit;
 	bool end_received;
 	bool end_pending;
+	bool selection_expected;
 };
 
 /* Supported rates may contain the uncoded 4800 and 9600 capability bits. */
@@ -75,6 +74,10 @@ bool sippymodem_v32_startup_is_valid(
 	const struct sippymodem_v32_startup *startup);
 bool sippymodem_v32_startup_is_complete(
 	const struct sippymodem_v32_startup *startup);
+
+/* Call after the calling modem's second receiver conditioning completes. */
+enum sippymodem_v32_startup_result sippymodem_v32_startup_expect_selection(
+	struct sippymodem_v32_startup *startup);
 
 enum sippymodem_v32_startup_result sippymodem_v32_startup_next_transmit(
 	struct sippymodem_v32_startup *startup,

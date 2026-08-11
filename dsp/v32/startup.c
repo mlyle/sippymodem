@@ -86,10 +86,15 @@ static bool rates_are_valid(const struct sippymodem_v32_startup *startup)
 	      (uint8_t)(startup->selected_rate - 1u)) != 0))
 		return false;
 	if (startup->role == SIPPYMODEM_V32_CALLER) {
+		if (startup->selection_expected &&
+		    (startup->phase != SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
+		     startup->selected_rate != 0 || startup->end_pending))
+			return false;
 		if (startup->phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER)
 			return startup->transmitted_rates ==
 				       startup->supported_rates &&
-			       startup->selected_rate == 0;
+			       startup->selected_rate == 0 &&
+			       !startup->selection_expected;
 		if (startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE)
 			return (startup->selected_rate != 0) ==
 				       startup->end_pending &&
@@ -102,9 +107,11 @@ static bool rates_are_valid(const struct sippymodem_v32_startup *startup)
 	if (startup->phase == SIPPYMODEM_V32_ANSWERER_TRAIN ||
 	    startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER)
 		return startup->transmitted_rates == startup->supported_rates &&
-		       startup->selected_rate == 0;
+		       startup->selected_rate == 0 &&
+		       !startup->selection_expected;
 	return startup->selected_rate != 0 &&
-	       startup->transmitted_rates == startup->selected_rate;
+	       startup->transmitted_rates == startup->selected_rate &&
+	       !startup->selection_expected;
 }
 
 static bool configure_caller_response(
@@ -174,8 +181,6 @@ bool sippymodem_v32_startup_is_valid(
 	       startup->phase_dibits <= phase_dibit_limit(startup->phase) &&
 	       startup->receive_mark_dibits <=
 		       SIPPYMODEM_V32_STARTUP_CONFIRMATION_DIBITS &&
-	       startup->rate_gap_dibits <=
-		       SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS &&
 	       startup->word_dibit < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
 	       (!startup->end_pending ||
 		(startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
@@ -215,15 +220,35 @@ bool sippymodem_v32_startup_is_complete(
 	       startup->phase == SIPPYMODEM_V32_DATA;
 }
 
+enum sippymodem_v32_startup_result sippymodem_v32_startup_expect_selection(
+	struct sippymodem_v32_startup *startup)
+{
+	struct sippymodem_v32_startup next;
+
+	if (!sippymodem_v32_startup_is_valid(startup) ||
+	    startup->role != SIPPYMODEM_V32_CALLER ||
+	    startup->phase != SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
+	    startup->selected_rate != 0 || startup->end_pending ||
+	    startup->selection_expected)
+		return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
+	next = *startup;
+	if (sippymodem_v32_rate_signal_detector_init(&next.detector) !=
+	    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+		return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
+	next.selection_expected = true;
+	*startup = next;
+	return SIPPYMODEM_V32_STARTUP_OK;
+}
+
 static void enter_phase(
 	struct sippymodem_v32_startup *startup,
 	enum sippymodem_v32_startup_phase phase)
 {
 	startup->phase = phase;
 	startup->phase_dibits = 0;
-	startup->rate_gap_dibits = 0;
 	startup->word_dibit = 0;
 	startup->end_pending = false;
+	startup->selection_expected = false;
 }
 
 static void add_bounded(uint16_t *value, uint16_t limit)
@@ -388,11 +413,8 @@ static enum sippymodem_v32_startup_result observe_rate_event(
 			return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, SIPPYMODEM_V32_CALLER_SEND_RESPONSE);
 	} else if (startup->phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE) {
-		if (startup->rate_gap_dibits <
-		    SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS) {
-			startup->rate_gap_dibits = 0;
-		} else if ((offer->rates &
-			    (uint8_t)(offer->rates - 1u)) == 0) {
+		if (startup->selection_expected &&
+		    (offer->rates & (uint8_t)(offer->rates - 1u)) == 0) {
 			uint8_t selected = offer->rates;
 
 			if (!offer_selects_rate(offer, selected) ||
@@ -401,10 +423,8 @@ static enum sippymodem_v32_startup_result observe_rate_event(
 			if (!configure_selected_rate(
 				    startup, selected, startup->transmitted_rates))
 				return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
-			startup->rate_gap_dibits = 0;
 			startup->end_pending = true;
-		} else {
-			startup->rate_gap_dibits = 0;
+			startup->selection_expected = false;
 		}
 	} else if (startup->phase == SIPPYMODEM_V32_ANSWERER_SEND_OFFER) {
 		uint8_t selected = highest_rate(compatible_rates(startup, offer));
@@ -437,18 +457,6 @@ static enum sippymodem_v32_startup_result observe_end_event(
 	return SIPPYMODEM_V32_STARTUP_OK;
 }
 
-static void observe_rate_gap(
-	struct sippymodem_v32_startup *startup, bool was_aligned)
-{
-	if (startup->phase != SIPPYMODEM_V32_CALLER_SEND_RESPONSE)
-		return;
-	if (!startup->detector.aligned &&
-	    (was_aligned || startup->rate_gap_dibits != 0))
-		add_bounded(
-			&startup->rate_gap_dibits,
-			SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS);
-}
-
 static void observe_confirmation_dibit(
 	struct sippymodem_v32_startup *startup, uint8_t dibit)
 {
@@ -473,7 +481,6 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_observe(
 	enum sippymodem_v32_rate_signal_event event;
 	enum sippymodem_v32_startup_result result =
 		SIPPYMODEM_V32_STARTUP_OK;
-	bool was_aligned;
 
 	if (!sippymodem_v32_startup_is_valid(startup) || dibit >= 4 ||
 	    connected == NULL)
@@ -483,12 +490,10 @@ enum sippymodem_v32_startup_result sippymodem_v32_startup_observe(
 		return SIPPYMODEM_V32_STARTUP_OK;
 	}
 	next = *startup;
-	was_aligned = next.detector.aligned;
 	if (sippymodem_v32_rate_signal_detector_observe(
 		    &next.detector, dibit, &event, &offer) !=
 	    SIPPYMODEM_V32_RATE_SIGNAL_OK)
 		return SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT;
-	observe_rate_gap(&next, was_aligned);
 	if (event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED)
 		result = observe_rate_event(&next, &offer);
 	else if (event == SIPPYMODEM_V32_END_SIGNAL_DETECTED)

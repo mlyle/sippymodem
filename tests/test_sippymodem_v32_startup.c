@@ -89,6 +89,14 @@ static bool check_role_exchange(
 		uint8_t caller_dibit = 3;
 		uint8_t answerer_dibit = 3;
 
+		if (caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
+		    answerer.phase ==
+			    SIPPYMODEM_V32_ANSWERER_SEND_SELECTION &&
+		    caller.selected_rate == 0 && !caller.selection_expected)
+			CHECK(sippymodem_v32_startup_expect_selection(&caller) ==
+				      SIPPYMODEM_V32_STARTUP_OK,
+			      "V.32 caller could not accept R3 at dibit %zu",
+			      index);
 		caller_phases |= UINT32_C(1) << caller.phase;
 		answerer_phases |= UINT32_C(1) << answerer.phase;
 		CHECK(sippymodem_v32_startup_next_transmit(
@@ -315,7 +323,7 @@ static bool test_training_boundary(void)
 	return true;
 }
 
-static bool test_end_waits_for_rate_boundary(void)
+static bool test_selection_readiness_and_rate_boundary(void)
 {
 	struct sippymodem_v32_startup caller;
 
@@ -350,9 +358,14 @@ static bool test_end_waits_for_rate_boundary(void)
 			      &caller, 3, &connected) ==
 			      SIPPYMODEM_V32_STARTUP_OK &&
 			      !connected,
-		      "V.32 boundary fixture could not observe its rate gap");
+		      "V.32 boundary fixture could not observe conditioning");
 	}
 	CHECK(observe_word(&caller, 0x0d11) &&
+		      observe_word(&caller, 0x0d11) &&
+		      caller.selected_rate == 0 && !caller.end_pending &&
+		      sippymodem_v32_startup_expect_selection(&caller) ==
+		      SIPPYMODEM_V32_STARTUP_OK &&
+		      observe_word(&caller, 0x0d11) &&
 		      observe_word(&caller, 0x0d11) && caller.end_pending &&
 		      caller.selected_rate ==
 			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
@@ -412,7 +425,7 @@ static bool test_repeated_initial_offer(void)
 			      &caller, 3, &connected) ==
 			      SIPPYMODEM_V32_STARTUP_OK &&
 			      !connected,
-		      "V.32 repeated-offer fixture could not observe its gap");
+		      "V.32 repeated-offer fixture could not observe conditioning");
 	}
 	CHECK(observe_word(&caller, broad_word) &&
 		      observe_word(&caller, broad_word) &&
@@ -467,9 +480,11 @@ static bool test_answerer_selects_lower_rate(void)
 			      &caller, 3, &connected) ==
 			      SIPPYMODEM_V32_STARTUP_OK &&
 			      !connected,
-		      "V.32 lower-selection fixture could not observe the gap");
+		      "V.32 lower-selection fixture could not observe conditioning");
 	}
-	CHECK(observe_word(&caller, selection_word) &&
+	CHECK(sippymodem_v32_startup_expect_selection(&caller) ==
+		      SIPPYMODEM_V32_STARTUP_OK &&
+		      observe_word(&caller, selection_word) &&
 		      observe_word(&caller, selection_word) &&
 		      caller.transmitted_rates == rates &&
 		      caller.rate_word == offer_word &&
@@ -538,9 +553,12 @@ static bool test_validation(void)
 		      sippymodem_v32_startup_is_valid(&startup),
 	      "V.32 validation startup did not initialize");
 	saved = startup;
-	CHECK(sippymodem_v32_startup_init(
-		      &startup, (enum sippymodem_v32_endpoint_role)2,
-		      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
+	CHECK(sippymodem_v32_startup_expect_selection(&startup) ==
+		      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
+		      memcmp(&startup, &saved, sizeof(startup)) == 0 &&
+		      sippymodem_v32_startup_init(
+			      &startup, (enum sippymodem_v32_endpoint_role)2,
+			      SIPPYMODEM_V32_RATE_CAPABILITY_4800) ==
 		      SIPPYMODEM_V32_STARTUP_INVALID_ARGUMENT &&
 		      memcmp(&startup, &saved, sizeof(startup)) == 0 &&
 		      sippymodem_v32_startup_init(
@@ -583,8 +601,8 @@ int main(void)
 		{ "uncoded fallback", test_uncoded_fallback },
 		{ "higher-rate offer fallback", test_higher_rate_offer_fallback },
 		{ "training boundary", test_training_boundary },
-		{ "end waits for rate boundary",
-		  test_end_waits_for_rate_boundary },
+		{ "selection readiness and rate boundary",
+		  test_selection_readiness_and_rate_boundary },
 		{ "repeated initial offer", test_repeated_initial_offer },
 		{ "answerer selects lower rate", test_answerer_selects_lower_rate },
 		{ "no common rate", test_no_common_rate },

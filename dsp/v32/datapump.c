@@ -35,6 +35,11 @@ enum {
 	V32_SIGNAL_B = 1,
 	V32_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
 	V32_MIN_LINE_POWER = 1000000,
+	/* Direct-QAM entry has no analog handoff, so wait through the complete
+	 * answerer retraining interval after its two-word R2 acquisition. */
+	V32_DIRECT_RETRAIN_DIBITS =
+		SIPPYMODEM_V32_STARTUP_TRAINING_DIBITS +
+		2 * SIPPYMODEM_V32_RATE_SIGNAL_DIBITS,
 	V32_DIRECT_QAM_QUALIFY_SAMPLES =
 		SIPPYMODEM_SINGLE_TONE_WINDOW_SAMPLES +
 		SIPPYMODEM_SINGLE_TONE_ACQUIRE_SAMPLES,
@@ -81,6 +86,7 @@ struct sippymodem_v32_datapump {
 	uint64_t training_timeout_samples;
 	uint32_t missing_carrier_samples;
 	uint32_t turnaround_s_symbols_remaining;
+	uint16_t direct_retrain_dibits;
 	uint16_t direct_qam_qualifying_samples;
 	enum v32_line_entry line_entry;
 	bool has_previous_receive_point;
@@ -176,7 +182,15 @@ static bool line_entry_is_valid(
 		    remote_role(datapump->caller) ||
 	    (datapump->second_conditioning_carrier_detected &&
 	     datapump->line_entry !=
-		     V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING))
+		     V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING) ||
+	    datapump->direct_retrain_dibits > V32_DIRECT_RETRAIN_DIBITS ||
+	    (datapump->direct_retrain_dibits != 0 &&
+	     (datapump->line_entry != V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
+	      !datapump->caller ||
+	      datapump->startup.phase !=
+		      SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
+	      datapump->startup.selected_rate != 0 ||
+	      datapump->startup.selection_expected)))
 		return false;
 	if (!datapump->caller)
 		return datapump->line_entry ==
@@ -277,7 +291,6 @@ static bool line_entry_is_valid(
 		       datapump->turnaround_s_symbols_remaining == 0 &&
 		       !datapump->second_conditioning_complete &&
 		       caller_awaits_second_conditioning(&datapump->startup) &&
-		       !datapump->startup.detector.aligned &&
 		       datapump->direct_qam_qualifying_samples == 0;
 	case V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY:
 		return datapump->line_startup.state ==
@@ -862,6 +875,52 @@ static int reset_second_conditioning_receiver(
 	return 0;
 }
 
+static int begin_second_conditioning(
+	struct sippymodem_v32_datapump *datapump)
+{
+	if (reset_second_conditioning_receiver(datapump, false) != 0)
+		return -1;
+	datapump->line_entry =
+		V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
+	return 0;
+}
+
+static int track_rate_signal_loss(
+	struct sippymodem_v32_datapump *datapump, double line_power)
+{
+	/* The demodulator's 256-sample power estimator already rejects brief
+	 * sample and media gaps before it crosses this threshold. */
+	if (datapump->line_entry != V32_LINE_ENTRY_CALLER_RATE_EXCHANGE ||
+	    datapump->second_conditioning_complete ||
+	    !caller_awaits_second_conditioning(&datapump->startup) ||
+	    line_power >= V32_MIN_LINE_POWER)
+		return 0;
+	return begin_second_conditioning(datapump);
+}
+
+static int update_direct_selection_wait(
+	struct sippymodem_v32_datapump *datapump)
+{
+	if (datapump->line_entry != V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
+	    !datapump->caller ||
+	    datapump->startup.phase !=
+		    SIPPYMODEM_V32_CALLER_SEND_RESPONSE ||
+	    datapump->startup.selected_rate != 0 ||
+	    datapump->startup.selection_expected) {
+		datapump->direct_retrain_dibits = 0;
+		return 0;
+	}
+	if (datapump->direct_retrain_dibits < V32_DIRECT_RETRAIN_DIBITS)
+		datapump->direct_retrain_dibits++;
+	if (datapump->direct_retrain_dibits != V32_DIRECT_RETRAIN_DIBITS)
+		return 0;
+	if (sippymodem_v32_startup_expect_selection(&datapump->startup) !=
+	    SIPPYMODEM_V32_STARTUP_OK)
+		return -1;
+	datapump->direct_retrain_dibits = 0;
+	return 0;
+}
+
 static int observe_dibit(
 	struct sippymodem_v32_datapump *datapump, uint8_t dibit,
 	const struct sippymodem_qam_point *point, bool *linked)
@@ -883,6 +942,8 @@ static int observe_dibit(
 			    &datapump->startup, dibit, &connected) !=
 			    SIPPYMODEM_V32_STARTUP_OK)
 			return -1;
+		if (update_direct_selection_wait(datapump) != 0)
+			return -1;
 		if (datapump->line_entry ==
 			    V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER &&
 		    previous_phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER &&
@@ -894,13 +955,8 @@ static int observe_dibit(
 		    !datapump->second_conditioning_complete &&
 		    caller_awaits_second_conditioning(&datapump->startup) &&
 		    !datapump->startup.detector.aligned &&
-		    datapump->startup.rate_gap_dibits ==
-			    SIPPYMODEM_V32_STARTUP_RATE_GAP_DIBITS) {
-			if (reset_second_conditioning_receiver(datapump, false) != 0)
-				return -1;
-			datapump->line_entry =
-				V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
-		}
+		    begin_second_conditioning(datapump) != 0)
+			return -1;
 		if (uses_trellis(datapump) && !end_was_received &&
 		    datapump->startup.end_received) {
 			if (initialize_trellis_receiver(datapump, point) != 0)
@@ -1011,6 +1067,10 @@ static int receive_sample(
 		    &datapump->demodulator, sample, &point, &ready) !=
 	    SIPPYMODEM_QAM_OK)
 		return -1;
+	measurement = sippymodem_qam_demodulator_measure(
+		&datapump->demodulator);
+	if (track_rate_signal_loss(datapump, measurement.line_power) != 0)
+		return -1;
 	if (datapump->line_entry ==
 		    V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING &&
 	    !datapump->second_conditioning_carrier_detected) {
@@ -1042,6 +1102,11 @@ static int receive_sample(
 			    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK)
 			return -1;
 		if (conditioning_ready) {
+			if (second_conditioning &&
+			    sippymodem_v32_startup_expect_selection(
+				    &datapump->startup) !=
+				    SIPPYMODEM_V32_STARTUP_OK)
+				return -1;
 			if (sippymodem_v32_conditioning_receiver_framing_state(
 				    &datapump->conditioning_receiver,
 				    &datapump->decoder,
