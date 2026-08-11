@@ -7,6 +7,7 @@
 #include "sippymodem_qam.h"
 #include "sippymodem_qam_gain.h"
 #include "sippymodem_v32_9600_receiver.h"
+#include "sippymodem_v32_conditioning_receiver.h"
 #include "sippymodem_v32_constellation.h"
 #include "sippymodem_v32_framing.h"
 #include "sippymodem_v32_line_startup.h"
@@ -20,9 +21,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The caller now performs the line tone and reversal exchange before entering
- * QAM startup. S sequences and two-wire echo cancellation remain follow-up
- * work. */
+/* The caller performs line turnaround and receiver conditioning before the
+ * rate exchange. Its own conditioning response and two-wire echo cancellation
+ * remain follow-up work. */
 enum {
 	V32_SYMBOL_RATE = 2400,
 	V32_CARRIER_HZ = 1800,
@@ -49,7 +50,8 @@ static const double V32_TRELLIS_CHANNEL_ADAPTATION = 1.0 / 32.0;
 
 enum v32_line_entry {
 	V32_LINE_ENTRY_CALLER_STARTUP,
-	V32_LINE_ENTRY_COMPLETE,
+	V32_LINE_ENTRY_CALLER_CONDITIONING,
+	V32_LINE_ENTRY_CALLER_RATE_EXCHANGE,
 	V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY,
 };
 
@@ -64,10 +66,12 @@ struct sippymodem_v32_datapump {
 	struct sippymodem_v32_scrambler known_trellis_scrambler;
 	struct sippymodem_v32_trellis_decoder trellis_decoder;
 	struct sippymodem_v32_9600_receiver receiver_9600;
+	struct sippymodem_v32_conditioning_receiver conditioning_receiver;
 	struct sippymodem_v32_line_startup line_startup;
 	struct sippymodem_v32_startup startup;
 	struct sippymodem_qam_point transmit_point;
 	struct sippymodem_qam_point previous_receive_point;
+	struct sippymodem_qam_gain conditioning_gain;
 	struct sippymodem_qam_gain trellis_gain;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
@@ -126,16 +130,23 @@ static bool line_entry_is_valid(
 {
 	if (datapump->line_entry < V32_LINE_ENTRY_CALLER_STARTUP ||
 	    datapump->line_entry > V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
-	    !sippymodem_v32_line_startup_is_valid(&datapump->line_startup))
+	    !sippymodem_v32_line_startup_is_valid(&datapump->line_startup) ||
+	    !sippymodem_v32_conditioning_receiver_is_valid(
+		    &datapump->conditioning_receiver))
 		return false;
 	if (!datapump->caller)
 		return datapump->line_entry ==
 			       V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY &&
-		       datapump->direct_qam_qualifying_samples == 0;
+		       datapump->direct_qam_qualifying_samples == 0 &&
+		       !sippymodem_v32_conditioning_receiver_is_complete(
+			       &datapump->conditioning_receiver);
 	switch (datapump->line_entry) {
 	case V32_LINE_ENTRY_CALLER_STARTUP:
 		return !sippymodem_v32_line_startup_is_complete(
 			&datapump->line_startup) &&
+		       !sippymodem_v32_conditioning_receiver_is_complete(
+			       &datapump->conditioning_receiver) &&
+		       !datapump->has_previous_receive_point &&
 		       datapump->line_startup.state !=
 			       SIPPYMODEM_V32_LINE_STARTUP_FAILED &&
 		       datapump->direct_qam_qualifying_samples <=
@@ -143,13 +154,27 @@ static bool line_entry_is_valid(
 		       (datapump->line_startup.state ==
 					SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE ||
 			datapump->direct_qam_qualifying_samples == 0);
-	case V32_LINE_ENTRY_COMPLETE:
+	case V32_LINE_ENTRY_CALLER_CONDITIONING:
 		return sippymodem_v32_line_startup_is_complete(
 			       &datapump->line_startup) &&
+		       !sippymodem_v32_conditioning_receiver_is_complete(
+			       &datapump->conditioning_receiver) &&
+		       !datapump->has_previous_receive_point &&
+		       datapump->direct_qam_qualifying_samples == 0;
+	case V32_LINE_ENTRY_CALLER_RATE_EXCHANGE:
+		return sippymodem_v32_line_startup_is_complete(
+			       &datapump->line_startup) &&
+		       sippymodem_v32_conditioning_receiver_is_complete(
+			       &datapump->conditioning_receiver) &&
+		       sippymodem_qam_gain_is_valid(
+			       &datapump->conditioning_gain) &&
+		       datapump->has_previous_receive_point &&
 		       datapump->direct_qam_qualifying_samples == 0;
 	case V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY:
 		return datapump->line_startup.state ==
 			       SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE &&
+		       !sippymodem_v32_conditioning_receiver_is_complete(
+			       &datapump->conditioning_receiver) &&
 		       datapump->direct_qam_qualifying_samples ==
 			       V32_DIRECT_QAM_QUALIFY_SAMPLES;
 	}
@@ -326,6 +351,9 @@ static struct dp *create_v32(
 	    sippymodem_v32_line_startup_init(
 		    &datapump->line_startup, V32_TRANSMIT_AMPLITUDE) !=
 		    SIPPYMODEM_V32_LINE_STARTUP_OK ||
+	    sippymodem_v32_conditioning_receiver_init(
+		    &datapump->conditioning_receiver, remote_role(is_caller)) !=
+		    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK ||
 	    sippymodem_v32_4800_constellation_point(
 		    0, &datapump->transmit_point) !=
 		    SIPPYMODEM_V32_CONSTELLATION_OK) {
@@ -505,8 +533,9 @@ static int generate_sample(
 	bool accepted;
 
 	if (datapump->caller &&
-	    datapump->line_entry == V32_LINE_ENTRY_COMPLETE &&
-	    datapump->startup.phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER) {
+	    (datapump->line_entry == V32_LINE_ENTRY_CALLER_CONDITIONING ||
+	     (datapump->line_entry == V32_LINE_ENTRY_CALLER_RATE_EXCHANGE &&
+	      datapump->startup.phase == SIPPYMODEM_V32_CALLER_WAIT_OFFER))) {
 		*sample = 0;
 		return 0;
 	}
@@ -540,7 +569,7 @@ static int process_caller_line_startup(
 		    SIPPYMODEM_QAM_OK)
 			return -1;
 		datapump->has_previous_receive_point = false;
-		datapump->line_entry = V32_LINE_ENTRY_COMPLETE;
+		datapump->line_entry = V32_LINE_ENTRY_CALLER_CONDITIONING;
 		return 0;
 	}
 	if (datapump->line_startup.state !=
@@ -877,6 +906,28 @@ static int receive_sample(
 		return -1;
 	if (!ready)
 		return 0;
+	if (datapump->line_entry == V32_LINE_ENTRY_CALLER_CONDITIONING) {
+		bool conditioning_ready;
+
+		if (sippymodem_v32_conditioning_receiver_observe(
+			    &datapump->conditioning_receiver, &point,
+			    &conditioning_ready) !=
+			    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK)
+			return -1;
+		if (conditioning_ready) {
+			if (sippymodem_v32_conditioning_receiver_framing_state(
+				    &datapump->conditioning_receiver,
+				    &datapump->decoder,
+				    &datapump->conditioning_gain) !=
+			    SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK)
+				return -1;
+			datapump->previous_receive_point = point;
+			datapump->has_previous_receive_point = true;
+			datapump->line_entry =
+				V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
+		}
+		return 0;
+	}
 	if (datapump->trellis_receiver_initialized) {
 		if (observe_trellis_point(datapump, &point, linked) != 0)
 			return -1;
