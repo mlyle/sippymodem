@@ -62,6 +62,7 @@ V44_DECODER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_decoder.o \
 V44_DUPLEX_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v44_duplex
 V44_DUPLEX_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_duplex.o \
 	$(BUILD_DIR)/sippymodem_v44_duplex.o \
+	$(BUILD_DIR)/sippymodem_v44_tx_monitor.o \
 	$(BUILD_DIR)/sippymodem_v44_encoder.o \
 	$(BUILD_DIR)/sippymodem_v44_dictionary_encoder.o \
 	$(BUILD_DIR)/sippymodem_v44_decoder.o \

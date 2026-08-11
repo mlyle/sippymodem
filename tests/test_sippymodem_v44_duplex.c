@@ -25,6 +25,16 @@ static void generate_payload(uint8_t *payload, size_t length, uint32_t seed)
 	}
 }
 
+static void generate_noise(uint8_t *payload, size_t length, uint32_t state)
+{
+	for (size_t index = 0; index < length; ++index) {
+		state ^= state << 13;
+		state ^= state >> 17;
+		state ^= state << 5;
+		payload[index] = (uint8_t)state;
+	}
+}
+
 static bool transmit_segment(
 	struct sippymodem_v44_duplex *duplex,
 	const uint8_t *plain,
@@ -107,6 +117,63 @@ static bool transmit_bytes(
 	return true;
 }
 
+static bool settle_transmit(
+	struct sippymodem_v44_duplex *duplex,
+	uint8_t *wire,
+	size_t wire_capacity,
+	size_t *wire_length)
+{
+	const uint8_t *input = NULL;
+	size_t input_length = 0;
+
+	for (size_t attempts = 0; attempts < 100000; ++attempts) {
+		size_t output_length = 0;
+		enum sippymodem_v44_duplex_result result;
+
+		if (*wire_length >= wire_capacity)
+			return false;
+		result = sippymodem_v44_duplex_transmit(
+			duplex, &input, &input_length, wire + *wire_length, 1,
+			&output_length);
+		if (output_length > 1)
+			return false;
+		*wire_length += output_length;
+		if (result == SIPPYMODEM_V44_DUPLEX_NEED_INPUT)
+			return true;
+		if (result != SIPPYMODEM_V44_DUPLEX_NEED_OUTPUT)
+			return false;
+	}
+	return false;
+}
+
+static bool transmit_until_mode(
+	struct sippymodem_v44_duplex *duplex,
+	const uint8_t *plain,
+	size_t plain_length,
+	enum sippymodem_v44_encoder_mode target,
+	uint8_t *wire,
+	size_t wire_capacity,
+	size_t *wire_length,
+	size_t *consumed)
+{
+	for (size_t index = 0; index < plain_length; ++index) {
+		enum sippymodem_v44_encoder_mode mode;
+
+		if (!transmit_bytes(
+			    duplex, plain + index, 1, wire, wire_capacity,
+			    wire_length) ||
+		    !settle_transmit(
+			    duplex, wire, wire_capacity, wire_length) ||
+		    !sippymodem_v44_duplex_get_transmit_mode(duplex, &mode))
+			return false;
+		if (mode == target) {
+			*consumed = index + 1;
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool request_transmit_mode(
 	struct sippymodem_v44_duplex *duplex,
 	enum sippymodem_v44_encoder_mode target,
@@ -141,6 +208,185 @@ static bool receive_segment(
 	size_t plain_capacity,
 	size_t *plain_length,
 	bool finish);
+
+static bool test_adaptive_transmit_modes(void)
+{
+	struct sippymodem_v44_duplex_config sender_config = {
+		.transmit_enabled = true,
+		.transmit_parameters = minimum_parameters,
+		.transmit_adaptation_enabled = true,
+		.transmit_adaptation = {
+			.window_octets = SIPPYMODEM_V44_MIN_STRING_LENGTH,
+			.leave_compressed_excess_bits = 0,
+			.enter_compressed_savings_bits = 0,
+		},
+	};
+	struct sippymodem_v44_duplex_config receiver_config = {
+		.receive_enabled = true,
+		.receive_parameters = minimum_parameters,
+	};
+	struct sippymodem_v44_duplex *sender =
+		sippymodem_v44_duplex_create(&sender_config);
+	struct sippymodem_v44_duplex *receiver =
+		sippymodem_v44_duplex_create(&receiver_config);
+	uint8_t noise[256];
+	uint8_t repeated[256];
+	uint8_t expected[sizeof(noise) + sizeof(repeated)];
+	uint8_t decoded[sizeof(expected)];
+	uint8_t wire[2048];
+	struct sippymodem_v44_tx_monitor_sample sample = {
+		.mode = SIPPYMODEM_V44_ENCODER_TRANSPARENT,
+		.represented_octets = 17,
+		.compressed_bits = 29,
+		.decision = SIPPYMODEM_V44_TX_MONITOR_STAY,
+	};
+	enum sippymodem_v44_encoder_mode mode =
+		SIPPYMODEM_V44_ENCODER_TRANSPARENT;
+	size_t noise_length = 0;
+	size_t repeated_length = 0;
+	size_t expected_length;
+	size_t decoded_length = 0;
+	size_t wire_length = 0;
+
+	CHECK(sender != NULL && receiver != NULL &&
+	      sippymodem_v44_duplex_transmit_adaptation_active(sender) &&
+	      sippymodem_v44_duplex_get_transmit_mode(sender, &mode) &&
+	      mode == SIPPYMODEM_V44_ENCODER_COMPRESSED &&
+	      !sippymodem_v44_duplex_get_last_transmit_sample(
+		      sender, &sample) &&
+	      sample.mode == SIPPYMODEM_V44_ENCODER_TRANSPARENT &&
+	      sample.represented_octets == 17 && sample.compressed_bits == 29,
+	      "could not create an adaptive V.44 transmit peer");
+	generate_noise(noise, sizeof(noise), UINT32_C(0xc3a5c85c));
+	memset(repeated, 'A', sizeof(repeated));
+	CHECK(transmit_until_mode(
+		      sender, noise, sizeof(noise),
+		      SIPPYMODEM_V44_ENCODER_TRANSPARENT, wire, sizeof(wire),
+		      &wire_length, &noise_length) &&
+	      sippymodem_v44_duplex_get_last_transmit_sample(
+		      sender, &sample) &&
+	      sample.mode == SIPPYMODEM_V44_ENCODER_COMPRESSED &&
+	      sample.decision ==
+		      SIPPYMODEM_V44_TX_MONITOR_ENTER_TRANSPARENT,
+	      "generated noise did not leave V.44 compressed mode");
+	CHECK(transmit_until_mode(
+		      sender, repeated, sizeof(repeated),
+		      SIPPYMODEM_V44_ENCODER_COMPRESSED, wire, sizeof(wire),
+		      &wire_length, &repeated_length) &&
+	      sippymodem_v44_duplex_get_last_transmit_sample(
+		      sender, &sample) &&
+	      sample.mode == SIPPYMODEM_V44_ENCODER_TRANSPARENT &&
+	      sample.decision ==
+		      SIPPYMODEM_V44_TX_MONITOR_ENTER_COMPRESSED &&
+	      sippymodem_v44_duplex_transmit_adaptation_active(sender),
+	      "generated repetition did not re-enter V.44 compressed mode");
+	CHECK(transmit_segment(
+		      sender, NULL, 0, wire, sizeof(wire), &wire_length),
+	      "could not finish the adaptive V.44 transmit stream");
+	memcpy(expected, noise, noise_length);
+	memcpy(expected + noise_length, repeated, repeated_length);
+	expected_length = noise_length + repeated_length;
+	CHECK(receive_segment(
+		      receiver, wire, wire_length, decoded, sizeof(decoded),
+		      &decoded_length, true) &&
+	      decoded_length == expected_length &&
+	      memcmp(decoded, expected, expected_length) == 0,
+	      "adaptive V.44 mode changes did not round trip");
+	sippymodem_v44_duplex_destroy(receiver);
+	sippymodem_v44_duplex_destroy(sender);
+	return true;
+}
+
+static bool test_adaptive_flush_decision(void)
+{
+	struct sippymodem_v44_duplex_config sender_config = {
+		.transmit_enabled = true,
+		.transmit_parameters = minimum_parameters,
+		.transmit_adaptation_enabled = true,
+		.transmit_adaptation = {
+			.window_octets = SIPPYMODEM_V44_MIN_STRING_LENGTH,
+			.leave_compressed_excess_bits = 0,
+			.enter_compressed_savings_bits = 0,
+		},
+	};
+	struct sippymodem_v44_duplex_config receiver_config = {
+		.receive_enabled = true,
+		.receive_parameters = minimum_parameters,
+	};
+	struct sippymodem_v44_duplex *sender =
+		sippymodem_v44_duplex_create(&sender_config);
+	struct sippymodem_v44_duplex *receiver =
+		sippymodem_v44_duplex_create(&receiver_config);
+	uint8_t noise[SIPPYMODEM_V44_MIN_STRING_LENGTH];
+	static const uint8_t following = 'Z';
+	uint8_t decoded[sizeof(noise)];
+	uint8_t wire[512];
+	struct sippymodem_v44_tx_monitor_sample sample;
+	enum sippymodem_v44_encoder_mode mode;
+	const uint8_t *blocked = &following;
+	size_t blocked_length = 1;
+	size_t decoded_length = 0;
+	size_t first_wire_length;
+	size_t output_length = 99;
+	size_t wire_length = 0;
+
+	generate_noise(noise, sizeof(noise), UINT32_C(0x9216ac43));
+	/* Leave a known four-octet match pending until C-FLUSH. */
+	memcpy(noise + sizeof(noise) - 4, noise, 4);
+	CHECK(sender != NULL && receiver != NULL,
+	      "could not create adaptive V.44 flush peers");
+	CHECK(transmit_bytes(
+		      sender, noise, sizeof(noise), wire, sizeof(wire),
+		      &wire_length),
+	      "could not feed the adaptive V.44 flush window");
+	CHECK(!sippymodem_v44_duplex_get_last_transmit_sample(sender, &sample),
+	      "adaptive V.44 sample completed before C-FLUSH");
+	CHECK(transmit_segment(
+		      sender, NULL, 0, wire, sizeof(wire), &wire_length) &&
+	      sippymodem_v44_duplex_get_last_transmit_sample(
+		      sender, &sample) &&
+	      sample.mode == SIPPYMODEM_V44_ENCODER_COMPRESSED &&
+	      sample.represented_octets == sizeof(noise) &&
+	      sample.decision ==
+		      SIPPYMODEM_V44_TX_MONITOR_ENTER_TRANSPARENT &&
+	      sippymodem_v44_duplex_get_transmit_mode(sender, &mode) &&
+	      mode == SIPPYMODEM_V44_ENCODER_COMPRESSED,
+	      "C-FLUSH did not expose an adaptive V.44 decision");
+	first_wire_length = wire_length;
+	CHECK(sippymodem_v44_duplex_transmit(
+		      sender, &blocked, &blocked_length, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_NEED_OUTPUT &&
+	      output_length == 0 && blocked == &following &&
+	      blocked_length == 1 &&
+	      settle_transmit(sender, wire, sizeof(wire), &wire_length) &&
+	      sippymodem_v44_duplex_get_transmit_mode(sender, &mode) &&
+	      mode == SIPPYMODEM_V44_ENCODER_TRANSPARENT &&
+	      transmit_bytes(
+		      sender, &following, 1, wire, sizeof(wire), &wire_length) &&
+	      request_transmit_mode(
+		      sender, SIPPYMODEM_V44_ENCODER_COMPRESSED, wire,
+		      sizeof(wire), &wire_length) &&
+	      transmit_segment(
+		      sender, NULL, 0, wire, sizeof(wire), &wire_length),
+	      "adaptive V.44 flush did not serialize its next transition");
+	CHECK(receive_segment(
+		      receiver, wire, first_wire_length, decoded,
+		      sizeof(decoded), &decoded_length, false) &&
+	      decoded_length == sizeof(noise) &&
+	      memcmp(decoded, noise, sizeof(noise)) == 0,
+	      "pre-transition V.44 flush segment did not round trip");
+	decoded_length = 0;
+	CHECK(receive_segment(
+		      receiver, wire + first_wire_length,
+		      wire_length - first_wire_length, decoded, sizeof(decoded),
+		      &decoded_length, true) &&
+	      decoded_length == 1 && decoded[0] == following &&
+	      sippymodem_v44_duplex_transmit_adaptation_active(sender),
+	      "flush-triggered V.44 mode transition did not round trip");
+	sippymodem_v44_duplex_destroy(receiver);
+	sippymodem_v44_duplex_destroy(sender);
+	return true;
+}
 
 static bool test_transmit_mode_handoff(void)
 {
@@ -437,15 +683,47 @@ static bool test_literal_bypass_and_api(void)
 		  "procedural error" },
 	};
 	struct sippymodem_v44_duplex_config config = { 0 };
+	struct sippymodem_v44_duplex_config adaptive_without_transmit = {
+		.transmit_adaptation_enabled = true,
+		.transmit_adaptation = {
+			.window_octets =
+				SIPPYMODEM_V44_TX_MONITOR_DEFAULT_WINDOW_OCTETS,
+			.leave_compressed_excess_bits =
+				SIPPYMODEM_V44_TX_MONITOR_DEFAULT_LEAVE_EXCESS_BITS,
+			.enter_compressed_savings_bits =
+				SIPPYMODEM_V44_TX_MONITOR_DEFAULT_ENTER_SAVINGS_BITS,
+		},
+	};
+	struct sippymodem_v44_duplex_config invalid_adaptation = {
+		.transmit_enabled = true,
+		.transmit_parameters = minimum_parameters,
+		.transmit_adaptation_enabled = true,
+		.transmit_adaptation = {
+			.window_octets =
+				SIPPYMODEM_V44_MIN_STRING_LENGTH - 1,
+		},
+	};
 	struct sippymodem_v44_duplex *duplex =
 		sippymodem_v44_duplex_create(&config);
 	const uint8_t *input = plain;
 	size_t input_length = sizeof(plain);
 	size_t output_length = 99;
 	uint8_t output[sizeof(plain)] = { 0 };
+	enum sippymodem_v44_encoder_mode mode =
+		SIPPYMODEM_V44_ENCODER_TRANSPARENT;
 
 	CHECK(duplex != NULL && sippymodem_v44_duplex_create(NULL) == NULL,
 	      "disabled or NULL V.44 configuration was mishandled");
+	CHECK(sippymodem_v44_duplex_create(&adaptive_without_transmit) == NULL &&
+	      sippymodem_v44_duplex_create(&invalid_adaptation) == NULL,
+	      "invalid V.44 transmit adaptation was accepted");
+	CHECK(!sippymodem_v44_duplex_get_transmit_mode(duplex, &mode) &&
+	      mode == SIPPYMODEM_V44_ENCODER_TRANSPARENT &&
+	      !sippymodem_v44_duplex_get_transmit_mode(NULL, &mode) &&
+	      !sippymodem_v44_duplex_transmit_adaptation_active(duplex) &&
+	      !sippymodem_v44_duplex_get_last_transmit_sample(
+		      duplex, NULL),
+	      "disabled V.44 transmit exposed adaptive diagnostics");
 	config.transmit_enabled = true;
 	CHECK(sippymodem_v44_duplex_create(&config) == NULL,
 	      "invalid enabled V.44 parameters were accepted");
@@ -625,6 +903,8 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "asymmetric duplex round trip",
 		  test_asymmetric_duplex_round_trip },
+		{ "adaptive transmit modes", test_adaptive_transmit_modes },
+		{ "adaptive flush decision", test_adaptive_flush_decision },
 		{ "transmit mode handoff", test_transmit_mode_handoff },
 		{ "transmit backpressure and flush state",
 		  test_transmit_backpressure_and_flush_state },
