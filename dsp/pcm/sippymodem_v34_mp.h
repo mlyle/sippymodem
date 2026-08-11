@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_MP_H
 #define SIPPYMODEM_V34_MP_H
 
-#include "sippymodem_v34_precoder.h"
+#include "v34_precoder.h"
 #include "sippymodem_v34_trellis.h"
 
 #include <stdbool.h>

@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V34_NONLINEAR_ENCODER_H
 #define SIPPYMODEM_V34_NONLINEAR_ENCODER_H
 
-#include "sippymodem_v34_precoder.h"
+#include "v34_precoder.h"
 
 #include <stdbool.h>
 

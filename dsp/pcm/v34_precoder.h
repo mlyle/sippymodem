@@ -67,7 +67,7 @@ struct sippymodem_v34_precoder_symbol {
 	struct sippymodem_v34_q7_point precoded_symbol;
 };
 
-/* Initialize zero history and derive the grid step from the high mapping
+/* Initialize with zero history and derive the grid step from the high mapping
  * frame. The destination is unchanged when any input is invalid. */
 enum sippymodem_v34_precoder_result sippymodem_v34_precoder_init(
 	struct sippymodem_v34_precoder *precoder,

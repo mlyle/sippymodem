@@ -5,7 +5,7 @@
 
 #include "sippymodem_v34_mapper.h"
 #include "sippymodem_v34_parser.h"
-#include "sippymodem_v34_precoder.h"
+#include "v34_precoder.h"
 #include "sippymodem_v34_trellis.h"
 
 #include <stdbool.h>
