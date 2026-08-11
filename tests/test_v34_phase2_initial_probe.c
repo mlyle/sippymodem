@@ -85,48 +85,48 @@ static void observe_turn(
 	    observation->answerer_first_probe_sample == SIZE_MAX)
 		observation->answerer_first_probe_sample = sample_index;
 	if (event->caller.initial_probe.receive_event.kind ==
-	    SIPPYMODEM_V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED)
+	    V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED)
 		observation->caller_acquired = true;
 	if (event->caller.initial_probe.receive_event.kind ==
-	    SIPPYMODEM_V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED)
+	    V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED)
 		observation->caller_l2_started = true;
 	if (event->caller.initial_probe.receive_event.kind ==
-	    SIPPYMODEM_V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY)
+	    V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY)
 		observation->caller_measurement_ready = sample_index;
 	if (event->answerer.initial_probe.transmit_event.kind ==
-	    SIPPYMODEM_V34_PHASE2_PROBE_SEQUENCE_EVENT_L2_STARTED)
+	    V34_PHASE2_PROBE_SEQUENCE_EVENT_L2_STARTED)
 		observation->answerer_l2_started = sample_index;
 	if (event->caller.initial_probe.kind ==
-	    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE)
+	    V34_PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE)
 		observation->caller_probe_complete = sample_index;
 	if (event->answerer.initial_probe.kind ==
-	    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
+	    V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
 		observation->answerer_probe_complete = sample_index;
 		observation->answerer_l2_samples =
 			event->answerer.initial_probe.transmit_event.l2_samples;
 	}
 	if (event->caller.initial_probe.kind ==
-	    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE)
+	    V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE)
 		observation->caller_tone_pair_active = sample_index;
 	if (pair->caller.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 	    pair->caller.initial_probe.phase !=
-		    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING)
+		    V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING)
 		observation->caller_tone_energy +=
 			(uint64_t)sample_magnitude(event->caller_transmit);
 	if (pair->answerer.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 	    pair->answerer.initial_probe.phase ==
-		    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A)
+		    V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A)
 		observation->answerer_tone_energy +=
 			(uint64_t)sample_magnitude(event->answerer_transmit);
 }
 
 static double measurement_power(
-	const struct sippymodem_v34_phase2_probe_spectrum_measurement *spectrum)
+	const struct v34_phase2_probe_spectrum_measurement *spectrum)
 {
 	double power = 0.0;
 
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++index)
+	     index < V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++index)
 		power += spectrum->harmonics[index].mean_square;
 	return power;
 }
@@ -134,7 +134,7 @@ static double measurement_power(
 static bool check_initial_probe_turn(
 	enum test_codec codec, size_t delay_samples)
 {
-	struct sippymodem_v34_phase2_probe_receiver_measurement measurement;
+	struct v34_phase2_probe_receiver_measurement measurement;
 	struct test_pair pair;
 	struct turn_observation observation;
 	size_t stable_samples = 0;
@@ -158,9 +158,9 @@ static bool check_initial_probe_turn(
 		if (pair.caller.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 		    pair.answerer.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 		    pair.caller.initial_probe.phase ==
-			    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_CALLER_TONE_PAIR_ACTIVE &&
+			    V34_PHASE2_INITIAL_PROBE_CALLER_TONE_PAIR_ACTIVE &&
 		    pair.answerer.initial_probe.phase ==
-			    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A) {
+			    V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A) {
 			if (++stable_samples == TEST_STABLE_TONE_SAMPLES)
 				break;
 		} else {
@@ -168,9 +168,9 @@ static bool check_initial_probe_turn(
 		}
 	}
 	CHECK(stable_samples == TEST_STABLE_TONE_SAMPLES &&
-	      sippymodem_v34_phase2_initial_probe_is_valid(
+	      v34_phase2_initial_probe_is_valid(
 		      &pair.caller.initial_probe) &&
-	      sippymodem_v34_phase2_initial_probe_is_valid(
+	      v34_phase2_initial_probe_is_valid(
 		      &pair.answerer.initial_probe),
 	      "probe turn did not establish the tone pair for codec %d delay %zu",
 	      codec, delay_samples);
@@ -183,7 +183,7 @@ static bool check_initial_probe_turn(
 	      "ranging did not hand off the following sample");
 	CHECK(observation.answerer_l2_started ==
 		      observation.answerer_first_probe_sample +
-			      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES - 1u,
+			      V34_PHASE2_PROBE_L1_SAMPLES - 1u,
 	      "answerer changed the exact 160 ms L1 boundary");
 	CHECK(observation.caller_acquired && observation.caller_l2_started &&
 	      observation.caller_measurement_ready != SIZE_MAX &&
@@ -195,21 +195,21 @@ static bool check_initial_probe_turn(
 	      observation.caller_tone_pair_active >
 		      observation.answerer_probe_complete + delay_samples &&
 	      observation.answerer_l2_samples >=
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES &&
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      observation.answerer_l2_samples <
 		      (uint32_t)
-			      SIPPYMODEM_V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
+			      V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
 		      pair.answerer.initial_probe.ranging.round_trip_delay_samples,
 	      "tone response did not end answerer L2 within its bound");
-	CHECK(sippymodem_v34_phase2_initial_probe_measure(
+	CHECK(v34_phase2_initial_probe_measure(
 		      &pair.caller.initial_probe, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK &&
+		      V34_PHASE2_INITIAL_PROBE_OK &&
 	      measurement.l1.sample_count ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES &&
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES &&
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2_samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES,
+		      V34_PHASE2_PROBE_L1_SAMPLES,
 	      "caller did not retain exact probe measurement windows");
 	{
 		double l1_power = measurement_power(&measurement.l1);
@@ -271,8 +271,8 @@ static bool samples_are_close(size_t first, size_t second, size_t tolerance)
 static bool check_probe_turnaround(
 	enum test_codec codec, size_t delay_samples)
 {
-	struct sippymodem_v34_phase2_probe_turnaround caller_terminal;
-	struct sippymodem_v34_phase2_probe_turnaround answerer_terminal;
+	struct v34_phase2_probe_turnaround caller_terminal;
+	struct v34_phase2_probe_turnaround answerer_terminal;
 	struct turnaround_observation observation;
 	struct test_pair pair;
 
@@ -287,10 +287,10 @@ static bool check_probe_turnaround(
 			pair.caller.stage == TEST_ENDPOINT_PROBE_TURNAROUND;
 		bool answerer_turning =
 			pair.answerer.stage == TEST_ENDPOINT_PROBE_TURNAROUND;
-		enum sippymodem_v34_phase2_probe_turnaround_phase caller_phase =
-			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_WAIT_A_REVERSAL;
-		enum sippymodem_v34_phase2_probe_turnaround_phase answerer_phase =
-			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
+		enum v34_phase2_probe_turnaround_phase caller_phase =
+			V34_PHASE2_PROBE_TURNAROUND_CALLER_WAIT_A_REVERSAL;
+		enum v34_phase2_probe_turnaround_phase answerer_phase =
+			V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
 		uint16_t caller_remaining = 0;
 
 		if (caller_turning) {
@@ -310,29 +310,29 @@ static bool check_probe_turnaround(
 			observation.answerer_entered = index;
 		if (answerer_turning &&
 		    answerer_phase ==
-			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A) {
+			    V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A) {
 			if (observation.answerer_first_a == SIZE_MAX)
 				observation.answerer_first_a = index;
 			observation.answerer_initial_a_samples++;
 		} else if (answerer_turning &&
 			   answerer_phase ==
-				   SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_REVERSAL_TAIL) {
+				   V34_PHASE2_PROBE_TURNAROUND_ANSWERER_REVERSAL_TAIL) {
 			if (observation.answerer_first_reversed_a == SIZE_MAX)
 				observation.answerer_first_reversed_a = index;
 			observation.answerer_reversed_a_samples++;
 		}
 		if (caller_turning &&
 		    (caller_phase ==
-			     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_REVERSAL_TAIL ||
+			     V34_PHASE2_PROBE_TURNAROUND_CALLER_REVERSAL_TAIL ||
 		     (caller_phase ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_RESPONSE_DELAY &&
+			      V34_PHASE2_PROBE_TURNAROUND_CALLER_RESPONSE_DELAY &&
 		      caller_remaining == 1))) {
 			if (observation.caller_first_reversed_b == SIZE_MAX)
 				observation.caller_first_reversed_b = index;
 			observation.caller_reversed_b_samples++;
 		}
 		if (event.caller.turnaround.tone_event.kind ==
-		    SIPPYMODEM_V34_PHASE2_TONE_PHASE_REVERSED) {
+		    V34_PHASE2_TONE_PHASE_REVERSED) {
 			uint16_t detector_delay =
 				event.caller.turnaround.tone_event
 					.reversal_delay_samples;
@@ -344,7 +344,7 @@ static bool check_probe_turnaround(
 				index - detector_delay;
 		}
 		if (event.answerer.turnaround.tone_event.kind ==
-		    SIPPYMODEM_V34_PHASE2_TONE_PHASE_REVERSED) {
+		    V34_PHASE2_TONE_PHASE_REVERSED) {
 			uint16_t detector_delay =
 				event.answerer.turnaround.tone_event
 					.reversal_delay_samples;
@@ -357,17 +357,17 @@ static bool check_probe_turnaround(
 				index - detector_delay;
 		}
 		if (event.caller.turnaround.kind ==
-		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY)
+		    V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY)
 			observation.caller_ready = index;
 		if (event.answerer.turnaround.kind ==
-		    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY)
+		    V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY)
 			observation.answerer_ready = index;
 		if (pair.caller.stage == TEST_ENDPOINT_PROBE_TURNAROUND &&
 		    pair.answerer.stage == TEST_ENDPOINT_PROBE_TURNAROUND &&
 		    pair.caller.turnaround.phase ==
-			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_CALLER_PROBE_READY &&
+			    V34_PHASE2_PROBE_TURNAROUND_CALLER_PROBE_READY &&
 		    pair.answerer.turnaround.phase ==
-			    SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_PROBE_READY)
+			    V34_PHASE2_PROBE_TURNAROUND_ANSWERER_PROBE_READY)
 			break;
 	}
 
@@ -375,12 +375,12 @@ static bool check_probe_turnaround(
 	      observation.answerer_entered != SIZE_MAX &&
 	      observation.answerer_first_a == observation.answerer_entered + 1u &&
 	      observation.answerer_initial_a_samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
+		      V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
 	      observation.answerer_first_reversed_a ==
 		      observation.answerer_first_a +
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
+			      V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
 	      observation.answerer_reversed_a_samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
+		      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
 	      "answerer changed the exact Tone A intervals");
 	CHECK(observation.caller_a_reversal_event != SIZE_MAX &&
 	      samples_are_close(
@@ -388,13 +388,13 @@ static bool check_probe_turnaround(
 		      observation.answerer_first_reversed_a + delay_samples, 4) &&
 	      observation.caller_first_reversed_b ==
 		      observation.caller_estimated_a_reversal +
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES,
+			      V34_PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES,
 	      "caller did not compensate the Tone A reversal deadline");
 	CHECK(observation.caller_reversed_b_samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES &&
+		      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES &&
 	      observation.caller_ready ==
 		      observation.caller_first_reversed_b +
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+			      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
 			      1u,
 	      "caller changed the exact reversed Tone B tail");
 	CHECK(observation.answerer_b_reversal_event != SIZE_MAX &&
@@ -404,8 +404,8 @@ static bool check_probe_turnaround(
 	      "answerer did not estimate the returning Tone B reversal");
 	{
 		const size_t handoff_delay =
-			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
-			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES;
+			V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+			V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES;
 		size_t expected_ready =
 			observation.answerer_b_reversal_delay >=
 					handoff_delay ?
@@ -417,9 +417,9 @@ static bool check_probe_turnaround(
 		CHECK(observation.answerer_ready == expected_ready,
 		      "answerer did not hand off the first reciprocal-probe sample");
 	}
-	CHECK(sippymodem_v34_phase2_probe_turnaround_is_valid(
+	CHECK(v34_phase2_probe_turnaround_is_valid(
 		      &pair.caller.turnaround) &&
-	      sippymodem_v34_phase2_probe_turnaround_is_valid(
+	      v34_phase2_probe_turnaround_is_valid(
 		      &pair.answerer.turnaround),
 	      "completed turnaround state is invalid");
 	caller_terminal = pair.caller.turnaround;
@@ -431,9 +431,9 @@ static bool check_probe_turnaround(
 		      event.caller_transmit == 0 &&
 		      event.answerer_transmit == 0 &&
 		      event.caller.turnaround.kind ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+			      V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 		      event.answerer.turnaround.kind ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+			      V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 		      memcmp(&pair.caller.turnaround, &caller_terminal,
 			     sizeof(caller_terminal)) == 0 &&
 		      memcmp(&pair.answerer.turnaround, &answerer_terminal,
@@ -462,8 +462,8 @@ static bool test_probe_turnaround(void)
 }
 
 static bool completed_ranging_pair(
-	struct sippymodem_v34_phase2_ranging *caller,
-	struct sippymodem_v34_phase2_ranging *answerer)
+	struct v34_phase2_ranging *caller,
+	struct v34_phase2_ranging *answerer)
 {
 	struct test_pair pair;
 
@@ -485,8 +485,8 @@ static bool completed_ranging_pair(
 }
 
 static bool completed_initial_probe_states(
-	struct sippymodem_v34_phase2_initial_probe *caller,
-	struct sippymodem_v34_phase2_initial_probe *answerer)
+	struct v34_phase2_initial_probe *caller,
+	struct v34_phase2_initial_probe *answerer)
 {
 	struct test_pair pair;
 	bool caller_ready = false;
@@ -501,13 +501,13 @@ static bool completed_initial_probe_states(
 			return false;
 		if (!answerer_ready &&
 		    event.answerer.initial_probe.kind ==
-			    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
+			    V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
 			*answerer = pair.answerer.initial_probe;
 			answerer_ready = true;
 		}
 		if (!caller_ready &&
 		    event.caller.initial_probe.kind ==
-			    SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) {
+			    V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) {
 			*caller = pair.caller.initial_probe;
 			caller_ready = true;
 		}
@@ -519,168 +519,168 @@ static bool completed_initial_probe_states(
 
 static bool test_bounded_failures(void)
 {
-	struct sippymodem_v34_phase2_ranging caller_ranging;
-	struct sippymodem_v34_phase2_ranging answerer_ranging;
-	struct sippymodem_v34_phase2_initial_probe caller;
-	struct sippymodem_v34_phase2_initial_probe answerer;
-	struct sippymodem_v34_phase2_initial_probe failed;
-	struct sippymodem_v34_phase2_probe_sequence remote_probe;
-	struct sippymodem_v34_phase2_initial_probe_event event;
+	struct v34_phase2_ranging caller_ranging;
+	struct v34_phase2_ranging answerer_ranging;
+	struct v34_phase2_initial_probe caller;
+	struct v34_phase2_initial_probe answerer;
+	struct v34_phase2_initial_probe failed;
+	struct v34_phase2_probe_sequence remote_probe;
+	struct v34_phase2_initial_probe_event event;
 	int16_t transmit;
 	size_t samples;
 
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging),
 	      "failure fixtures did not complete ranging");
-	CHECK(sippymodem_v34_phase2_initial_probe_init(
+	CHECK(v34_phase2_initial_probe_init(
 		      &caller, &caller_ranging) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "missing-probe fixture did not initialize");
 	for (samples = 0; samples < 1000 &&
 			  caller.phase !=
-				  SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_FAILED;
+				  V34_PHASE2_INITIAL_PROBE_FAILED;
 	     ++samples)
-		CHECK(sippymodem_v34_phase2_initial_probe_sample(
+		CHECK(v34_phase2_initial_probe_sample(
 			      &caller, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "missing-probe wait failed at sample %zu", samples);
-	CHECK(caller.phase == SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_FAILED &&
+	CHECK(caller.phase == V34_PHASE2_INITIAL_PROBE_FAILED &&
 	      caller.failure ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
+		      V34_PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND &&
+	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	      "missing remote probe did not fail explicitly");
 	failed = caller;
 	transmit = 1234;
-	CHECK(sippymodem_v34_phase2_initial_probe_sample(
+	CHECK(v34_phase2_initial_probe_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK &&
+		      V34_PHASE2_INITIAL_PROBE_OK &&
 	      transmit == 0 &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_NONE &&
+	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_NONE &&
 	      memcmp(&caller, &failed, sizeof(caller)) == 0,
 	      "failed controller did not remain silent and stable");
 
-	CHECK(sippymodem_v34_phase2_initial_probe_init(
+	CHECK(v34_phase2_initial_probe_init(
 		      &answerer, &answerer_ranging) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "transmit-limit fixture did not initialize");
 	for (samples = 0; samples < 7000 &&
 			  answerer.phase !=
-				  SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_FAILED;
+				  V34_PHASE2_INITIAL_PROBE_FAILED;
 	     ++samples)
-		CHECK(sippymodem_v34_phase2_initial_probe_sample(
+		CHECK(v34_phase2_initial_probe_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "probe transmit limit failed at sample %zu", samples);
-	CHECK(answerer.phase == SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_FAILED &&
+	CHECK(answerer.phase == V34_PHASE2_INITIAL_PROBE_FAILED &&
 	      answerer.failure ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_FAILED &&
+		      V34_PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
+	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_FAILED &&
 	      event.transmit_event.kind ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED,
+		      V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED,
 	      "unanswered local probe did not reach its RTD-adjusted limit");
 
-	CHECK(sippymodem_v34_phase2_initial_probe_init(
+	CHECK(v34_phase2_initial_probe_init(
 		      &caller, &caller_ranging) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK &&
-	      sippymodem_v34_phase2_probe_sequence_init(
+		      V34_PHASE2_INITIAL_PROBE_OK &&
+	      v34_phase2_probe_sequence_init(
 		      &remote_probe, TEST_AMPLITUDE,
 		      caller_ranging.round_trip_delay_samples) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SEQUENCE_OK,
+		      V34_PHASE2_PROBE_SEQUENCE_OK,
 	      "tone-timeout fixture did not initialize");
 	for (samples = 0; samples < 3000 &&
 			  caller.phase ==
-				  SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING;
+				  V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING;
 	     ++samples) {
-		struct sippymodem_v34_phase2_probe_sequence_event probe_event;
+		struct v34_phase2_probe_sequence_event probe_event;
 		int16_t received;
 
-		CHECK(sippymodem_v34_phase2_probe_sequence_sample(
+		CHECK(v34_phase2_probe_sequence_sample(
 			      &remote_probe, false, &received, &probe_event) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SEQUENCE_OK &&
-		      sippymodem_v34_phase2_initial_probe_sample(
+			      V34_PHASE2_PROBE_SEQUENCE_OK &&
+		      v34_phase2_initial_probe_sample(
 			      &caller, received, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "tone-timeout probe failed at sample %zu", samples);
 	}
 	CHECK(caller.phase ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_CALLER_TONE_B,
+		      V34_PHASE2_INITIAL_PROBE_CALLER_TONE_B,
 	      "caller did not begin Tone B after measuring the remote probe");
 	for (samples = 0;
-	     samples < SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-	     caller.phase != SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_FAILED;
+	     samples < V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
+	     caller.phase != V34_PHASE2_INITIAL_PROBE_FAILED;
 	     ++samples)
-		CHECK(sippymodem_v34_phase2_initial_probe_sample(
+		CHECK(v34_phase2_initial_probe_sample(
 			      &caller, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "remote-tone timeout failed at sample %zu", samples);
 	CHECK(samples + 1u ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-	      caller.phase == SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_FAILED &&
+		      V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
+	      caller.phase == V34_PHASE2_INITIAL_PROBE_FAILED &&
 	      caller.failure ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
+		      V34_PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT &&
+	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	      "missing Tone A did not reach the exact bounded timeout");
 	return true;
 }
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_info0 local_capabilities =
+	struct v34_info0 local_capabilities =
 		test_v34_phase2_capabilities(
-			SIPPYMODEM_V34_CALLING_STATION);
-	struct sippymodem_v34_phase2_ranging unready;
-	struct sippymodem_v34_phase2_ranging caller_ranging;
-	struct sippymodem_v34_phase2_ranging answerer_ranging;
-	struct sippymodem_v34_phase2_initial_probe probe;
-	struct sippymodem_v34_phase2_initial_probe before;
-	struct sippymodem_v34_phase2_initial_probe invalid;
-	struct sippymodem_v34_phase2_initial_probe_event event = {
-		.kind = SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
+			V34_CALLING_STATION);
+	struct v34_phase2_ranging unready;
+	struct v34_phase2_ranging caller_ranging;
+	struct v34_phase2_ranging answerer_ranging;
+	struct v34_phase2_initial_probe probe;
+	struct v34_phase2_initial_probe before;
+	struct v34_phase2_initial_probe invalid;
+	struct v34_phase2_initial_probe_event event = {
+		.kind = V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	};
-	struct sippymodem_v34_phase2_initial_probe_event event_before = event;
+	struct v34_phase2_initial_probe_event event_before = event;
 	int16_t transmit = 1234;
 
-	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &unready, SIPPYMODEM_V34_CALLING_STATION,
+	CHECK(v34_phase2_ranging_init(
+		      &unready, V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &local_capabilities) ==
-		      SIPPYMODEM_V34_PHASE2_RANGING_OK &&
+		      V34_PHASE2_RANGING_OK &&
 	      completed_ranging_pair(&caller_ranging, &answerer_ranging),
 	      "validation fixtures did not initialize");
 	memset(&probe, 0xa5, sizeof(probe));
 	before = probe;
-	CHECK(sippymodem_v34_phase2_initial_probe_init(&probe, &unready) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+	CHECK(v34_phase2_initial_probe_init(&probe, &unready) ==
+		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
 	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
-	      sippymodem_v34_phase2_initial_probe_init(NULL, &caller_ranging) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
+	      v34_phase2_initial_probe_init(NULL, &caller_ranging) ==
+		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "invalid initialization changed caller-owned state");
-	CHECK(sippymodem_v34_phase2_initial_probe_init(
+	CHECK(v34_phase2_initial_probe_init(
 		      &probe, &caller_ranging) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "validation controller did not initialize");
 	before = probe;
-	CHECK(sippymodem_v34_phase2_initial_probe_sample(
+	CHECK(v34_phase2_initial_probe_sample(
 		      &probe, 0, NULL, &event) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_initial_probe_sample(
+		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+	      v34_phase2_initial_probe_sample(
 		      &probe, 0, &transmit, NULL) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
 	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid sample output was not transactional");
 	invalid = probe;
 	invalid.phase =
-		SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_ANSWERER_TRANSMITTING;
-	CHECK(!sippymodem_v34_phase2_initial_probe_is_valid(&invalid) &&
-	      sippymodem_v34_phase2_initial_probe_measure(&probe, NULL) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+		V34_PHASE2_INITIAL_PROBE_ANSWERER_TRANSMITTING;
+	CHECK(!v34_phase2_initial_probe_is_valid(&invalid) &&
+	      v34_phase2_initial_probe_measure(&probe, NULL) ==
+		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
 	      strcmp(
-		      sippymodem_v34_phase2_initial_probe_result_name(
-			      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK),
+		      v34_phase2_initial_probe_result_name(
+			      V34_PHASE2_INITIAL_PROBE_OK),
 		      "ok") == 0 &&
 	      strcmp(
-		      sippymodem_v34_phase2_initial_probe_result_name(
-			      (enum sippymodem_v34_phase2_initial_probe_result)99),
+		      v34_phase2_initial_probe_result_name(
+			      (enum v34_phase2_initial_probe_result)99),
 		      "unknown") == 0,
 	      "validation or result-name contract changed");
 	return true;
@@ -688,126 +688,126 @@ static bool test_validation(void)
 
 static bool test_turnaround_failures_and_validation(void)
 {
-	struct sippymodem_v34_phase2_initial_probe caller_probe;
-	struct sippymodem_v34_phase2_initial_probe answerer_probe;
-	struct sippymodem_v34_phase2_initial_probe unready_probe;
-	struct sippymodem_v34_phase2_ranging caller_ranging;
-	struct sippymodem_v34_phase2_ranging answerer_ranging;
-	struct sippymodem_v34_phase2_probe_turnaround caller;
-	struct sippymodem_v34_phase2_probe_turnaround answerer;
-	struct sippymodem_v34_phase2_probe_turnaround before;
-	struct sippymodem_v34_phase2_probe_turnaround invalid;
-	struct sippymodem_v34_phase2_probe_turnaround_event event;
-	struct sippymodem_v34_phase2_probe_turnaround_event event_before;
+	struct v34_phase2_initial_probe caller_probe;
+	struct v34_phase2_initial_probe answerer_probe;
+	struct v34_phase2_initial_probe unready_probe;
+	struct v34_phase2_ranging caller_ranging;
+	struct v34_phase2_ranging answerer_ranging;
+	struct v34_phase2_probe_turnaround caller;
+	struct v34_phase2_probe_turnaround answerer;
+	struct v34_phase2_probe_turnaround before;
+	struct v34_phase2_probe_turnaround invalid;
+	struct v34_phase2_probe_turnaround_event event;
+	struct v34_phase2_probe_turnaround_event event_before;
 	int16_t transmit;
 	size_t samples;
 
 	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe) &&
-	      sippymodem_v34_phase2_probe_turnaround_init(
+	      v34_phase2_probe_turnaround_init(
 		      &caller, &caller_probe) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK &&
-	      sippymodem_v34_phase2_probe_turnaround_init(
+		      V34_PHASE2_PROBE_TURNAROUND_OK &&
+	      v34_phase2_probe_turnaround_init(
 		      &answerer, &answerer_probe) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+		      V34_PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround failure fixtures did not initialize");
 	for (samples = 0;
-	     samples < SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	     caller.phase != SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
+	     samples < V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	     caller.phase != V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
 	     ++samples)
-		CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+		CHECK(v34_phase2_probe_turnaround_sample(
 			      &caller, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+			      V34_PHASE2_PROBE_TURNAROUND_OK,
 		      "caller reversal timeout failed at sample %zu", samples);
 	CHECK(samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	      caller.phase == SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
+		      V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	      caller.phase == V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
 	      caller.failure ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
+		      V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
 	      event.kind ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		      V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 	      "caller did not report its exact bounded reversal timeout");
 	before = caller;
 	transmit = 1234;
-	CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+	CHECK(v34_phase2_probe_turnaround_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      V34_PHASE2_PROBE_TURNAROUND_OK &&
 	      transmit == 0 &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+	      event.kind == V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 	      memcmp(&caller, &before, sizeof(caller)) == 0,
 	      "timed-out caller was not silent and stable");
 
 	for (samples = 0;
 	     samples <
-		     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
-			     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
-			     SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	     answerer.phase != SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
+		     V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			     V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+			     V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	     answerer.phase != V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
 	     ++samples)
-		CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+		CHECK(v34_phase2_probe_turnaround_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+			      V34_PHASE2_PROBE_TURNAROUND_OK,
 		      "answerer reversal timeout failed at sample %zu", samples);
 	CHECK(samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+		      V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+			      V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
 	      answerer.phase ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
+		      V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
 	      answerer.failure ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
+		      V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
 	      event.kind ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		      V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 	      "answerer did not report its exact bounded reversal timeout");
 
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
-	      sippymodem_v34_phase2_initial_probe_init(
+	      v34_phase2_initial_probe_init(
 		      &unready_probe, &caller_ranging) ==
-		      SIPPYMODEM_V34_PHASE2_INITIAL_PROBE_OK,
+		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "turnaround validation fixtures did not initialize");
 	memset(&invalid, 0xa5, sizeof(invalid));
 	before = invalid;
-	CHECK(sippymodem_v34_phase2_probe_turnaround_init(
+	CHECK(v34_phase2_probe_turnaround_init(
 		      &invalid, &unready_probe) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
 	      memcmp(&invalid, &before, sizeof(invalid)) == 0 &&
-	      sippymodem_v34_phase2_probe_turnaround_init(NULL, &caller_probe) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT,
+	      v34_phase2_probe_turnaround_init(NULL, &caller_probe) ==
+		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT,
 	      "invalid turnaround initialization changed caller-owned state");
-	CHECK(sippymodem_v34_phase2_probe_turnaround_init(
+	CHECK(v34_phase2_probe_turnaround_init(
 		      &caller, &caller_probe) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK,
+		      V34_PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround validation controller did not initialize");
 	before = caller;
-	event = (struct sippymodem_v34_phase2_probe_turnaround_event){
-		.kind = SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+	event = (struct v34_phase2_probe_turnaround_event){
+		.kind = V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 		.failure =
-			SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT,
+			V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT,
 	};
 	event_before = event;
 	transmit = 1234;
-	CHECK(sippymodem_v34_phase2_probe_turnaround_sample(
+	CHECK(v34_phase2_probe_turnaround_sample(
 		      &caller, 0, NULL, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_probe_turnaround_sample(
+		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+	      v34_phase2_probe_turnaround_sample(
 		      &caller, 0, &transmit, NULL) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
 	      memcmp(&caller, &before, sizeof(caller)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid turnaround sample output was not transactional");
 	invalid = caller;
 	invalid.phase =
-		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
+		V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
 	invalid.phase_samples_remaining =
-		SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
-	CHECK(!sippymodem_v34_phase2_probe_turnaround_is_valid(&invalid) &&
+		V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
+	CHECK(!v34_phase2_probe_turnaround_is_valid(&invalid) &&
 	      strcmp(
-		      sippymodem_v34_phase2_probe_turnaround_result_name(
-			      SIPPYMODEM_V34_PHASE2_PROBE_TURNAROUND_OK),
+		      v34_phase2_probe_turnaround_result_name(
+			      V34_PHASE2_PROBE_TURNAROUND_OK),
 		      "ok") == 0 &&
 	      strcmp(
-		      sippymodem_v34_phase2_probe_turnaround_result_name(
-			      (enum sippymodem_v34_phase2_probe_turnaround_result)99),
+		      v34_phase2_probe_turnaround_result_name(
+			      (enum v34_phase2_probe_turnaround_result)99),
 		      "unknown") == 0,
 	      "turnaround validation or result-name contract changed");
 	return true;

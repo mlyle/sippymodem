@@ -1,29 +1,29 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V34_TRAINING_CHANNEL_H
-#define SIPPYMODEM_V34_TRAINING_CHANNEL_H
+#ifndef V34_TRAINING_CHANNEL_H
+#define V34_TRAINING_CHANNEL_H
 
 #include "qam_gain.h"
 #include "v34_constellation.h"
 
 #include <stdint.h>
 
-enum sippymodem_v34_training_channel_result {
-	SIPPYMODEM_V34_TRAINING_CHANNEL_OK,
-	SIPPYMODEM_V34_TRAINING_CHANNEL_INVALID_ARGUMENT,
+enum v34_training_channel_result {
+	V34_TRAINING_CHANNEL_OK,
+	V34_TRAINING_CHANNEL_INVALID_ARGUMENT,
 };
 
 /* Equalize one raw channel point, slice the Phase 3/4 training
  * constellation, and decision-direct the scalar gain estimate. Rejected
  * calls leave the tracker and both labels unchanged. */
-enum sippymodem_v34_training_channel_result
-sippymodem_v34_training_channel_decide(
+enum v34_training_channel_result
+v34_training_channel_decide(
 	struct sippymodem_qam_gain *gain,
-	enum sippymodem_v34_constellation_size constellation,
+	enum v34_constellation_size constellation,
 	const struct sippymodem_qam_point *received, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *sippymodem_v34_training_channel_result_name(
-	enum sippymodem_v34_training_channel_result result);
+const char *v34_training_channel_result_name(
+	enum v34_training_channel_result result);
 
 #endif

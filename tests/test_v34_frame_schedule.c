@@ -7,7 +7,7 @@
 #include <string.h>
 
 struct symbol_rate_fixture {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t data_frames;
 	uint8_t mapping_frames;
 	uint8_t minimum_rate;
@@ -16,12 +16,12 @@ struct symbol_rate_fixture {
 };
 
 static const struct symbol_rate_fixture SYMBOL_RATES[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 7, 12, 1, 9, 0x06db },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 8, 12, 2, 11, 0x056b },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 7, 14, 2, 11, 0x15ab },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 7, 15, 2, 12, 0x2aab },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 7, 16, 2, 13, 0x5555 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 8, 15, 2, 14, 0x1555 },
+	{ V34_SYMBOL_RATE_2400, 7, 12, 1, 9, 0x06db },
+	{ V34_SYMBOL_RATE_2743, 8, 12, 2, 11, 0x056b },
+	{ V34_SYMBOL_RATE_2800, 7, 14, 2, 11, 0x15ab },
+	{ V34_SYMBOL_RATE_3000, 7, 15, 2, 12, 0x2aab },
+	{ V34_SYMBOL_RATE_3200, 7, 16, 2, 13, 0x5555 },
+	{ V34_SYMBOL_RATE_3429, 8, 15, 2, 14, 0x1555 },
 };
 
 struct collected_frame {
@@ -35,8 +35,8 @@ struct collected_frame {
 };
 
 static bool geometries_are_equal(
-	const struct sippymodem_v34_frame_geometry *left,
-	const struct sippymodem_v34_frame_geometry *right)
+	const struct v34_frame_geometry *left,
+	const struct v34_frame_geometry *right)
 {
 	return left->symbol_rate == right->symbol_rate &&
 	       left->data_bits_per_frame == right->data_bits_per_frame &&
@@ -57,8 +57,8 @@ static bool geometries_are_equal(
 }
 
 static bool schedules_are_equal(
-	const struct sippymodem_v34_frame_schedule *left,
-	const struct sippymodem_v34_frame_schedule *right)
+	const struct v34_frame_schedule *left,
+	const struct v34_frame_schedule *right)
 {
 	return geometries_are_equal(&left->geometry, &right->geometry) &&
 	       left->data_frame_in_superframe ==
@@ -67,8 +67,8 @@ static bool schedules_are_equal(
 }
 
 static bool mapping_frames_are_equal(
-	const struct sippymodem_v34_mapping_frame *left,
-	const struct sippymodem_v34_mapping_frame *right)
+	const struct v34_mapping_frame *left,
+	const struct v34_mapping_frame *right)
 {
 	return left->index == right->index &&
 	       left->data_bits == right->data_bits &&
@@ -81,7 +81,7 @@ static bool mapping_frames_are_equal(
 }
 
 static bool collect_schedule(
-	struct sippymodem_v34_frame_schedule *schedule,
+	struct v34_frame_schedule *schedule,
 	struct collected_frame *collected)
 {
 	struct collected_frame generated = { 0 };
@@ -89,11 +89,11 @@ static bool collect_schedule(
 		schedule->geometry.mapping_frames_per_data_frame;
 
 	for (uint8_t index = 0; index < mapping_frames; ++index) {
-		struct sippymodem_v34_mapping_frame mapping_frame;
+		struct v34_mapping_frame mapping_frame;
 
-		CHECK(sippymodem_v34_frame_schedule_next(
+		CHECK(v34_frame_schedule_next(
 			      schedule, &mapping_frame) ==
-			      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+			      V34_FRAME_SCHEDULE_OK,
 		      "frame schedule stopped at mapping frame %u/%u", index,
 		      mapping_frames);
 		CHECK(mapping_frame.index == index &&
@@ -125,11 +125,11 @@ static bool collect_schedule(
 		generated.inversion_masks[index] =
 			mapping_frame.inversion_4d_mask;
 	}
-	CHECK(sippymodem_v34_frame_schedule_is_complete(schedule),
+	CHECK(v34_frame_schedule_is_complete(schedule),
 	      "frame schedule did not finish at its mapping-frame boundary");
 	{
-		struct sippymodem_v34_frame_schedule saved = *schedule;
-		struct sippymodem_v34_mapping_frame output = {
+		struct v34_frame_schedule saved = *schedule;
+		struct v34_mapping_frame output = {
 			.index = UINT8_MAX,
 			.data_bits = UINT8_MAX,
 			.primary_bits = UINT8_MAX,
@@ -138,10 +138,10 @@ static bool collect_schedule(
 			.carries_auxiliary_bit = true,
 			.completes_data_frame = false,
 		};
-		struct sippymodem_v34_mapping_frame expected = output;
+		struct v34_mapping_frame expected = output;
 
-		CHECK(sippymodem_v34_frame_schedule_next(schedule, &output) ==
-			      SIPPYMODEM_V34_FRAME_SCHEDULE_FRAME_COMPLETE &&
+		CHECK(v34_frame_schedule_next(schedule, &output) ==
+			      V34_FRAME_SCHEDULE_FRAME_COMPLETE &&
 		      schedules_are_equal(schedule, &saved) &&
 		      mapping_frames_are_equal(&output, &expected),
 		      "completed frame schedule emitted another mapping frame");
@@ -151,14 +151,14 @@ static bool collect_schedule(
 }
 
 static bool collect_frame(
-	const struct sippymodem_v34_frame_geometry *geometry,
+	const struct v34_frame_geometry *geometry,
 	uint8_t data_frame_in_superframe, struct collected_frame *collected)
 {
-	struct sippymodem_v34_frame_schedule schedule;
+	struct v34_frame_schedule schedule;
 
-	CHECK(sippymodem_v34_frame_schedule_init(
+	CHECK(v34_frame_schedule_init(
 		      &schedule, geometry, data_frame_in_superframe) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+		      V34_FRAME_SCHEDULE_OK,
 	      "frame %u schedule did not initialize",
 	      data_frame_in_superframe);
 	return collect_schedule(&schedule, collected);
@@ -167,35 +167,35 @@ static bool collect_frame(
 static bool test_normative_patterns(void)
 {
 	static const struct {
-		enum sippymodem_v34_symbol_rate symbol_rate;
+		enum v34_symbol_rate symbol_rate;
 		uint8_t primary_rate;
 		bool auxiliary;
 		uint8_t high_bits;
 		uint16_t switching_pattern;
 	} switching[] = {
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, false, 8, 0x0fff },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, true, 9, 0x06db },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, false, 14, 0x0fff },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, true, 15, 0x056b },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 2, false, 14, 0x1bb7 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 2, true, 15, 0x0489 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false, 52, 0x0421 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true, 52, 0x3777 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 13, false, 78, 0xffff },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 13, true, 79, 0x5555 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 14, false, 79, 0x14a5 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 14, true, 79, 0x3f7f },
+		{ V34_SYMBOL_RATE_2400, 1, false, 8, 0x0fff },
+		{ V34_SYMBOL_RATE_2400, 1, true, 9, 0x06db },
+		{ V34_SYMBOL_RATE_2743, 2, false, 14, 0x0fff },
+		{ V34_SYMBOL_RATE_2743, 2, true, 15, 0x056b },
+		{ V34_SYMBOL_RATE_2800, 2, false, 14, 0x1bb7 },
+		{ V34_SYMBOL_RATE_2800, 2, true, 15, 0x0489 },
+		{ V34_SYMBOL_RATE_3000, 8, false, 52, 0x0421 },
+		{ V34_SYMBOL_RATE_3000, 8, true, 52, 0x3777 },
+		{ V34_SYMBOL_RATE_3200, 13, false, 78, 0xffff },
+		{ V34_SYMBOL_RATE_3200, 13, true, 79, 0x5555 },
+		{ V34_SYMBOL_RATE_3429, 14, false, 79, 0x14a5 },
+		{ V34_SYMBOL_RATE_3429, 14, true, 79, 0x3f7f },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(switching); ++index) {
-		struct sippymodem_v34_frame_geometry geometry;
+		struct v34_frame_geometry geometry;
 		struct collected_frame frame;
 
-		CHECK(sippymodem_v34_frame_geometry_init(
+		CHECK(v34_frame_geometry_init(
 			      &geometry, switching[index].symbol_rate,
 			      switching[index].primary_rate,
 			      switching[index].auxiliary) ==
-			      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+			      V34_FRAME_SCHEDULE_OK &&
 		      collect_frame(&geometry, 0, &frame),
 		      "normative switching fixture %zu did not run", index);
 		CHECK(geometry.high_mapping_frame_bits ==
@@ -210,13 +210,13 @@ static bool test_normative_patterns(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(SYMBOL_RATES); ++index) {
 		const struct symbol_rate_fixture *fixture =
 			&SYMBOL_RATES[index];
-		struct sippymodem_v34_frame_geometry geometry;
+		struct v34_frame_geometry geometry;
 		struct collected_frame frame;
 
-		CHECK(sippymodem_v34_frame_geometry_init(
+		CHECK(v34_frame_geometry_init(
 			      &geometry, fixture->symbol_rate,
 			      fixture->minimum_rate, true) ==
-			      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+			      V34_FRAME_SCHEDULE_OK &&
 		      collect_frame(&geometry, 0, &frame),
 		      "auxiliary fixture %zu did not run", index);
 		CHECK(geometry.data_frames_per_superframe ==
@@ -241,7 +241,7 @@ static bool test_all_supported_schedules(void)
 		     rate <= fixture->maximum_rate; ++rate) {
 			for (unsigned int auxiliary = 0; auxiliary < 2;
 			     ++auxiliary) {
-				struct sippymodem_v34_frame_geometry geometry;
+				struct v34_frame_geometry geometry;
 				struct collected_frame frame;
 				uint16_t primary_bits = (uint16_t)rate *
 					(fixture->data_frames == 7u ? 96u : 84u);
@@ -257,11 +257,11 @@ static bool test_all_supported_schedules(void)
 					(uint16_t)(high_bits - 1u) *
 						fixture->mapping_frames);
 
-				CHECK(sippymodem_v34_frame_geometry_init(
+				CHECK(v34_frame_geometry_init(
 					      &geometry, fixture->symbol_rate, rate,
 					      auxiliary != 0) ==
-					      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-				      sippymodem_v34_frame_geometry_is_valid(
+					      V34_FRAME_SCHEDULE_OK &&
+				      v34_frame_geometry_is_valid(
 					      &geometry) &&
 				      collect_frame(&geometry, 0, &frame),
 				      "schedule %zu/%u/%u did not run", rate_index,
@@ -284,7 +284,7 @@ static bool test_all_supported_schedules(void)
 }
 
 static uint8_t expected_inversion_mask(
-	const struct sippymodem_v34_frame_geometry *geometry,
+	const struct v34_frame_geometry *geometry,
 	uint8_t data_frame, uint8_t mapping_frame)
 {
 	static const uint8_t j7[] = {
@@ -313,12 +313,12 @@ static bool test_inversion_and_b1(void)
 	     rate_index < ARRAY_LENGTH(SYMBOL_RATES); ++rate_index) {
 		const struct symbol_rate_fixture *fixture =
 			&SYMBOL_RATES[rate_index];
-		struct sippymodem_v34_frame_geometry geometry;
+		struct v34_frame_geometry geometry;
 
-		CHECK(sippymodem_v34_frame_geometry_init(
+		CHECK(v34_frame_geometry_init(
 			      &geometry, fixture->symbol_rate,
 			      fixture->minimum_rate, false) ==
-			      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+			      V34_FRAME_SCHEDULE_OK,
 		      "inversion fixture %zu did not initialize", rate_index);
 		for (uint8_t data_frame = 0;
 		     data_frame < geometry.data_frames_per_superframe;
@@ -340,12 +340,12 @@ static bool test_inversion_and_b1(void)
 			}
 		}
 		{
-			struct sippymodem_v34_frame_schedule b1;
+			struct v34_frame_schedule b1;
 			struct collected_frame frame;
 
-			CHECK(sippymodem_v34_b1_frame_schedule_init(
+			CHECK(v34_b1_frame_schedule_init(
 				      &b1, &geometry) ==
-				      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+				      V34_FRAME_SCHEDULE_OK &&
 			      b1.data_frame_in_superframe ==
 				      geometry.data_frames_per_superframe - 1u &&
 			      collect_schedule(&b1, &frame),
@@ -369,41 +369,41 @@ static bool test_data_frame_rollover(void)
 	     rate_index < ARRAY_LENGTH(SYMBOL_RATES); ++rate_index) {
 		const struct symbol_rate_fixture *fixture =
 			&SYMBOL_RATES[rate_index];
-		struct sippymodem_v34_frame_geometry geometry;
+		struct v34_frame_geometry geometry;
 
-		CHECK(sippymodem_v34_frame_geometry_init(
+		CHECK(v34_frame_geometry_init(
 			      &geometry, fixture->symbol_rate,
 			      fixture->minimum_rate, true) ==
-			      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+			      V34_FRAME_SCHEDULE_OK,
 		      "rollover geometry %zu did not initialize", rate_index);
 		for (uint8_t data_frame = 0;
 		     data_frame < geometry.data_frames_per_superframe;
 		     ++data_frame) {
-			struct sippymodem_v34_frame_schedule schedule;
-			struct sippymodem_v34_frame_schedule advanced;
+			struct v34_frame_schedule schedule;
+			struct v34_frame_schedule advanced;
 			struct collected_frame ignored;
 			uint8_t expected = (uint8_t)(data_frame + 1u);
 
 			if (expected == geometry.data_frames_per_superframe)
 				expected = 0;
-			CHECK(sippymodem_v34_frame_schedule_init(
+			CHECK(v34_frame_schedule_init(
 				      &schedule, &geometry, data_frame) ==
-				      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
+				      V34_FRAME_SCHEDULE_OK &&
 			      collect_schedule(&schedule, &ignored) &&
-			      sippymodem_v34_frame_schedule_advance_data_frame(
+			      v34_frame_schedule_advance_data_frame(
 				      &schedule) ==
-				      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-			      sippymodem_v34_frame_schedule_is_valid(&schedule) &&
-			      !sippymodem_v34_frame_schedule_is_complete(
+				      V34_FRAME_SCHEDULE_OK &&
+			      v34_frame_schedule_is_valid(&schedule) &&
+			      !v34_frame_schedule_is_complete(
 				      &schedule) &&
 			      schedule.data_frame_in_superframe == expected &&
 			      schedule.next_mapping_frame == 0,
 			      "data frame %zu/%u did not roll over", rate_index,
 			      data_frame);
 			advanced = schedule;
-			CHECK(sippymodem_v34_frame_schedule_advance_data_frame(
+			CHECK(v34_frame_schedule_advance_data_frame(
 				      &schedule) ==
-				      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+				      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
 			      schedules_are_equal(&schedule, &advanced),
 			      "incomplete schedule %zu/%u advanced", rate_index,
 			      data_frame);
@@ -414,11 +414,11 @@ static bool test_data_frame_rollover(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_frame_geometry saved_geometry;
-	struct sippymodem_v34_frame_schedule schedule;
-	struct sippymodem_v34_frame_schedule saved_schedule;
-	struct sippymodem_v34_mapping_frame mapping_frame = {
+	struct v34_frame_geometry geometry;
+	struct v34_frame_geometry saved_geometry;
+	struct v34_frame_schedule schedule;
+	struct v34_frame_schedule saved_schedule;
+	struct v34_mapping_frame mapping_frame = {
 		.index = 3,
 		.data_bits = 17,
 		.primary_bits = 16,
@@ -427,72 +427,72 @@ static bool test_validation(void)
 		.carries_auxiliary_bit = true,
 		.completes_data_frame = false,
 	};
-	struct sippymodem_v34_mapping_frame saved_mapping_frame = mapping_frame;
+	struct v34_mapping_frame saved_mapping_frame = mapping_frame;
 
-	CHECK(sippymodem_v34_frame_geometry_init(
-		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+	CHECK(v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_3000, 8, true) ==
+		      V34_FRAME_SCHEDULE_OK,
 	      "validation geometry did not initialize");
 	saved_geometry = geometry;
-	CHECK(sippymodem_v34_frame_geometry_init(
-		      NULL, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_frame_geometry_init(
-		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_COUNT, 8, true) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_frame_geometry_init(
-		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 0, true) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_frame_geometry_init(
-		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3429, 1, true) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION &&
-	      sippymodem_v34_frame_geometry_init(
-		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_2400, 10, true) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION &&
+	CHECK(v34_frame_geometry_init(
+		      NULL, V34_SYMBOL_RATE_3000, 8, true) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_COUNT, 8, true) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_3000, 0, true) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_3429, 1, true) ==
+		      V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION &&
+	      v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_2400, 10, true) ==
+		      V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION &&
 	      geometries_are_equal(&geometry, &saved_geometry),
 	      "invalid geometry selection changed its destination");
 
 	geometry = saved_geometry;
 	geometry.data_bits_per_frame++;
-	CHECK(!sippymodem_v34_frame_geometry_is_valid(&geometry),
+	CHECK(!v34_frame_geometry_is_valid(&geometry),
 	      "geometry accepted a changed bit total");
 	geometry = saved_geometry;
 	geometry.high_mapping_frame_count++;
-	CHECK(!sippymodem_v34_frame_geometry_is_valid(&geometry),
+	CHECK(!v34_frame_geometry_is_valid(&geometry),
 	      "geometry accepted a changed switching count");
 	geometry = saved_geometry;
 	geometry.auxiliary_channel_enabled = false;
-	CHECK(!sippymodem_v34_frame_geometry_is_valid(&geometry) &&
-	      !sippymodem_v34_frame_geometry_is_valid(NULL),
+	CHECK(!v34_frame_geometry_is_valid(&geometry) &&
+	      !v34_frame_geometry_is_valid(NULL),
 	      "geometry accepted inconsistent auxiliary state");
 
 	geometry = saved_geometry;
-	CHECK(sippymodem_v34_frame_schedule_init(&schedule, &geometry, 2) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+	CHECK(v34_frame_schedule_init(&schedule, &geometry, 2) ==
+		      V34_FRAME_SCHEDULE_OK,
 	      "validation schedule did not initialize");
 	saved_schedule = schedule;
-	CHECK(sippymodem_v34_frame_schedule_init(NULL, &geometry, 2) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_frame_schedule_init(&schedule, NULL, 2) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_frame_schedule_init(
+	CHECK(v34_frame_schedule_init(NULL, &geometry, 2) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_frame_schedule_init(&schedule, NULL, 2) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_frame_schedule_init(
 		      &schedule, &geometry,
 		      geometry.data_frames_per_superframe) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_b1_frame_schedule_init(NULL, &geometry) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_b1_frame_schedule_init(&schedule, NULL) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_b1_frame_schedule_init(NULL, &geometry) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_b1_frame_schedule_init(&schedule, NULL) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
 	      schedules_are_equal(&schedule, &saved_schedule),
 	      "invalid schedule initialization changed its destination");
 
-	CHECK(sippymodem_v34_frame_schedule_next(
+	CHECK(v34_frame_schedule_next(
 		      NULL, &mapping_frame) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_frame_schedule_advance_data_frame(NULL) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      sippymodem_v34_frame_schedule_next(&schedule, NULL) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_frame_schedule_advance_data_frame(NULL) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      v34_frame_schedule_next(&schedule, NULL) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
 	      schedules_are_equal(&schedule, &saved_schedule) &&
 	      mapping_frames_are_equal(
 		      &mapping_frame, &saved_mapping_frame),
@@ -500,24 +500,24 @@ static bool test_validation(void)
 	schedule = saved_schedule;
 	schedule.next_mapping_frame =
 		(uint8_t)(geometry.mapping_frames_per_data_frame + 1u);
-	CHECK(!sippymodem_v34_frame_schedule_is_valid(&schedule) &&
-	      sippymodem_v34_frame_schedule_next(
+	CHECK(!v34_frame_schedule_is_valid(&schedule) &&
+	      v34_frame_schedule_next(
 		      &schedule, &mapping_frame) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
 	      mapping_frames_are_equal(
 		      &mapping_frame, &saved_mapping_frame) &&
-	      !sippymodem_v34_frame_schedule_is_valid(NULL) &&
-	      !sippymodem_v34_frame_schedule_is_complete(NULL),
+	      !v34_frame_schedule_is_valid(NULL) &&
+	      !v34_frame_schedule_is_complete(NULL),
 	      "schedule accepted corrupt state");
 
-	CHECK(strcmp(sippymodem_v34_frame_schedule_result_name(
-		     SIPPYMODEM_V34_FRAME_SCHEDULE_FRAME_COMPLETE),
+	CHECK(strcmp(v34_frame_schedule_result_name(
+		     V34_FRAME_SCHEDULE_FRAME_COMPLETE),
 		     "frame complete") == 0 &&
-	      strcmp(sippymodem_v34_frame_schedule_result_name(
-		     SIPPYMODEM_V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION),
+	      strcmp(v34_frame_schedule_result_name(
+		     V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION),
 		     "unsupported selection") == 0 &&
-	      strcmp(sippymodem_v34_frame_schedule_result_name(
-		     (enum sippymodem_v34_frame_schedule_result)4),
+	      strcmp(v34_frame_schedule_result_name(
+		     (enum v34_frame_schedule_result)4),
 		     "unknown") == 0,
 	      "frame schedule result names changed");
 	return true;

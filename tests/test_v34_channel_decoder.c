@@ -14,51 +14,51 @@ enum {
 	GENERATED_INTERVALS = 128,
 };
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 struct channel_profile {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t primary_rate;
 };
 
 static const struct channel_profile PROFILES[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 8 },
+	{ V34_SYMBOL_RATE_3000, 8 },
+	{ V34_SYMBOL_RATE_2743, 8 },
 };
 
 struct expected_interval {
-	struct sippymodem_v34_4d_encoder_input input;
-	struct sippymodem_v34_grid_point mapper_output[2];
+	struct v34_4d_encoder_input input;
+	struct v34_grid_point mapper_output[2];
 	uint8_t trellis_output;
 	uint8_t differential_output;
 };
 
 static bool initialize_parameters(
 	const struct channel_profile *profile,
-	struct sippymodem_v34_mapping_parameters *parameters)
+	struct v34_mapping_parameters *parameters)
 {
-	struct sippymodem_v34_frame_geometry geometry;
+	struct v34_frame_geometry geometry;
 
-	return sippymodem_v34_frame_geometry_init(
+	return v34_frame_geometry_init(
 		       &geometry, profile->symbol_rate, profile->primary_rate,
-		       false) == SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_mapping_parameters_init(
+		       false) == V34_FRAME_SCHEDULE_OK &&
+	       v34_mapping_parameters_init(
 		       parameters, &geometry, false) ==
-		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK;
+		       V34_MAPPING_PARAMETERS_OK;
 }
 
-static struct sippymodem_v34_4d_encoder_input generated_input(
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	enum sippymodem_v34_trellis_selection selection, size_t interval)
+static struct v34_4d_encoder_input generated_input(
+	const struct v34_mapping_parameters *parameters,
+	enum v34_trellis_selection selection, size_t interval)
 {
 	uint8_t point_count = (uint8_t)(
 		1u << parameters->point_index_bits_per_2d_symbol);
 
-	return (struct sippymodem_v34_4d_encoder_input){
+	return (struct v34_4d_encoder_input){
 		.mapping = {
 			.rotation_bit = (uint8_t)((interval >> 1) & 1u),
 			.differential_input =
@@ -92,25 +92,25 @@ static double generated_noise(uint32_t *state)
 	return (unit - 0.5) * 0.75;
 }
 
-static struct sippymodem_v34_survivor_decision encoded_decision(
-	const struct sippymodem_v34_4d_encoder_output *encoded,
+static struct v34_survivor_decision encoded_decision(
+	const struct v34_4d_encoder_output *encoded,
 	uint8_t inversion_bit)
 {
-	struct sippymodem_v34_survivor_decision decision = {
+	struct v34_survivor_decision decision = {
 		.convolutional_output = encoded->convolutional_output,
 		.inversion_bit = inversion_bit,
 	};
 
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
 		decision.channel_output[symbol] =
 			encoded->precoded[symbol].channel_output;
 	return decision;
 }
 
 static bool decisions_are_equal(
-	const struct sippymodem_v34_survivor_decision *left,
-	const struct sippymodem_v34_survivor_decision *right)
+	const struct v34_survivor_decision *left,
+	const struct v34_survivor_decision *right)
 {
 	return left->convolutional_output == right->convolutional_output &&
 	       left->inversion_bit == right->inversion_bit &&
@@ -120,7 +120,7 @@ static bool decisions_are_equal(
 }
 
 static bool decided_matches(
-	const struct sippymodem_v34_decided_4d_interval *decided,
+	const struct v34_decided_4d_interval *decided,
 	const struct expected_interval *expected)
 {
 	return decided->trellis_output == expected->trellis_output &&
@@ -130,7 +130,7 @@ static bool decided_matches(
 }
 
 static bool decoded_matches(
-	const struct sippymodem_v34_decoded_4d_interval *decoded,
+	const struct v34_decoded_4d_interval *decoded,
 	const struct expected_interval *expected)
 {
 	return decoded->mapping.rotation_bit ==
@@ -151,57 +151,57 @@ static bool test_generated_round_trip(void)
 {
 	for (size_t profile_index = 0; profile_index < ARRAY_LENGTH(PROFILES);
 	     ++profile_index) {
-		struct sippymodem_v34_mapping_parameters parameters;
+		struct v34_mapping_parameters parameters;
 
 		CHECK(initialize_parameters(
 			      &PROFILES[profile_index], &parameters),
 		      "channel profile %zu did not initialize", profile_index);
-		for (enum sippymodem_v34_trellis_selection selection =
-			     SIPPYMODEM_V34_TRELLIS_16_STATE;
-		     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE;
+		for (enum v34_trellis_selection selection =
+			     V34_TRELLIS_16_STATE;
+		     selection <= V34_TRELLIS_64_STATE;
 		     ++selection) {
 			struct expected_interval expected[GENERATED_INTERVALS];
-			struct sippymodem_v34_4d_encoder encoder;
-			struct sippymodem_v34_channel_decoder channel_decoder;
-			struct sippymodem_v34_4d_decoder mapping_decoder;
+			struct v34_4d_encoder encoder;
+			struct v34_channel_decoder channel_decoder;
+			struct v34_4d_decoder mapping_decoder;
 			uint32_t random = UINT32_C(0x3f74a921) + selection;
 
-			CHECK(sippymodem_v34_4d_encoder_init(
+			CHECK(v34_4d_encoder_init(
 				      &encoder, &parameters, COEFFICIENTS,
-				      selection) == SIPPYMODEM_V34_4D_ENCODER_OK &&
-			      sippymodem_v34_channel_decoder_init(
+				      selection) == V34_4D_ENCODER_OK &&
+			      v34_channel_decoder_init(
 				      &channel_decoder, &parameters, COEFFICIENTS,
 				      selection) ==
-				      SIPPYMODEM_V34_CHANNEL_DECODER_OK &&
-			      sippymodem_v34_4d_decoder_init(
+				      V34_CHANNEL_DECODER_OK &&
+			      v34_4d_decoder_init(
 				      &mapping_decoder, &parameters) ==
-				      SIPPYMODEM_V34_4D_DECODER_OK,
+				      V34_4D_DECODER_OK,
 			      "channel mode %zu/%u did not initialize",
 			      profile_index, selection);
 			for (size_t interval = 0;
 			     interval < GENERATED_INTERVALS; ++interval) {
-				struct sippymodem_v34_4d_encoder_output encoded;
-				struct sippymodem_v34_survivor_decision current;
-				struct sippymodem_v34_survivor_decision expected_current;
-				struct sippymodem_v34_decided_4d_interval decided;
-				struct sippymodem_v34_decided_4d_interval saved_decided;
-				struct sippymodem_v34_decoded_4d_interval decoded;
+				struct v34_4d_encoder_output encoded;
+				struct v34_survivor_decision current;
+				struct v34_survivor_decision expected_current;
+				struct v34_decided_4d_interval decided;
+				struct v34_decided_4d_interval saved_decided;
+				struct v34_decoded_4d_interval decoded;
 				struct sippymodem_qam_point estimates[2];
 				bool ready = true;
 
 				expected[interval].input = generated_input(
 					&parameters, selection, interval);
-				CHECK(sippymodem_v34_4d_encoder_step(
+				CHECK(v34_4d_encoder_step(
 					      &encoder, &expected[interval].input,
 					      &encoded) ==
-					      SIPPYMODEM_V34_4D_ENCODER_OK,
+					      V34_4D_ENCODER_OK,
 				      "channel encode %zu/%u/%zu failed",
 				      profile_index, selection, interval);
 				expected_current = encoded_decision(
 					&encoded, expected[interval].input.inversion_bit);
 				for (uint8_t symbol = 0;
 				     symbol <
-					     SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+					     V34_2D_SYMBOLS_PER_4D_INTERVAL;
 				     ++symbol) {
 					expected[interval].mapper_output[symbol] =
 						encoded.mapped[symbol].mapper_output;
@@ -221,29 +221,29 @@ static bool test_generated_round_trip(void)
 					encoded.differential_output;
 				memset(&decided, 0xa5, sizeof(decided));
 				saved_decided = decided;
-				CHECK(sippymodem_v34_channel_decoder_advance(
+				CHECK(v34_channel_decoder_advance(
 					      &channel_decoder, estimates,
 					      expected[interval].input.inversion_bit,
 					      &current, &decided, &ready) ==
-					      SIPPYMODEM_V34_CHANNEL_DECODER_OK &&
+					      V34_CHANNEL_DECODER_OK &&
 				      decisions_are_equal(
 					      &current, &expected_current) &&
 				      ready ==
 					      (interval + 1u >=
-					       SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS),
+					       V34_SURVIVOR_TRACEBACK_INTERVALS),
 				      "channel decision %zu/%u/%zu changed",
 				      profile_index, selection, interval);
 				if (ready) {
 					size_t recovered =
 						interval + 1u -
-						SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS;
+						V34_SURVIVOR_TRACEBACK_INTERVALS;
 
 					CHECK(decided_matches(
 						      &decided, &expected[recovered]) &&
-					      sippymodem_v34_decode_4d_interval(
+					      v34_decode_4d_interval(
 						      &mapping_decoder, &decided,
 						      &decoded) ==
-						      SIPPYMODEM_V34_4D_DECODER_OK &&
+						      V34_4D_DECODER_OK &&
 					      decoded_matches(
 						      &decoded, &expected[recovered]),
 					      "channel traceback %zu/%u/%zu changed",
@@ -255,7 +255,7 @@ static bool test_generated_round_trip(void)
 					      "channel emitted before traceback");
 				}
 			}
-			CHECK(sippymodem_v34_channel_decoder_is_valid(
+			CHECK(v34_channel_decoder_is_valid(
 				      &channel_decoder),
 			      "channel mode %zu/%u ended invalid", profile_index,
 			      selection);
@@ -265,22 +265,22 @@ static bool test_generated_round_trip(void)
 }
 
 static bool rejected_advance_is_transactional(
-	struct sippymodem_v34_channel_decoder *decoder,
+	struct v34_channel_decoder *decoder,
 	const struct sippymodem_qam_point estimates[2], uint8_t inversion_bit,
-	enum sippymodem_v34_channel_decoder_result expected)
+	enum v34_channel_decoder_result expected)
 {
-	struct sippymodem_v34_channel_decoder saved = *decoder;
-	struct sippymodem_v34_survivor_decision current;
-	struct sippymodem_v34_survivor_decision saved_current;
-	struct sippymodem_v34_decided_4d_interval decided;
-	struct sippymodem_v34_decided_4d_interval saved_decided;
+	struct v34_channel_decoder saved = *decoder;
+	struct v34_survivor_decision current;
+	struct v34_survivor_decision saved_current;
+	struct v34_decided_4d_interval decided;
+	struct v34_decided_4d_interval saved_decided;
 	bool ready = true;
 
 	memset(&current, 0x5a, sizeof(current));
 	memset(&decided, 0xa5, sizeof(decided));
 	saved_current = current;
 	saved_decided = decided;
-	return sippymodem_v34_channel_decoder_advance(
+	return v34_channel_decoder_advance(
 		       decoder, estimates, inversion_bit, &current, &decided,
 		       &ready) == expected &&
 	       memcmp(decoder, &saved, sizeof(saved)) == 0 &&
@@ -293,16 +293,16 @@ static bool test_transactional_boundaries(void)
 	static const struct sippymodem_qam_point estimates[2] = {
 		{ 1.0, 1.0 }, { 1.0, 1.0 },
 	};
-	static const struct sippymodem_v34_q14_coefficient zero_coefficients
-		[SIPPYMODEM_V34_PRECODER_TAP_COUNT] = { 0 };
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_mapping_parameters malformed_parameters;
-	struct sippymodem_v34_channel_decoder decoder;
-	struct sippymodem_v34_channel_decoder saved;
-	struct sippymodem_v34_channel_decoder corrupted;
+	static const struct v34_q14_coefficient zero_coefficients
+		[V34_PRECODER_TAP_COUNT] = { 0 };
+	struct v34_mapping_parameters parameters;
+	struct v34_mapping_parameters malformed_parameters;
+	struct v34_channel_decoder decoder;
+	struct v34_channel_decoder saved;
+	struct v34_channel_decoder corrupted;
 	struct sippymodem_qam_point malformed_estimates[2];
-	struct sippymodem_v34_survivor_decision current;
-	struct sippymodem_v34_decided_4d_interval decided;
+	struct v34_survivor_decision current;
+	struct v34_decided_4d_interval decided;
 	bool ready;
 
 	memset(&decoder, 0xa5, sizeof(decoder));
@@ -311,57 +311,57 @@ static bool test_transactional_boundaries(void)
 	      "channel boundary parameters did not initialize");
 	malformed_parameters = parameters;
 	malformed_parameters.ring_count++;
-	CHECK(sippymodem_v34_channel_decoder_init(
+	CHECK(v34_channel_decoder_init(
 		      NULL, &parameters, zero_coefficients,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_decoder_init(
 		      &decoder, NULL, zero_coefficients,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_decoder_init(
 		      &decoder, &parameters, NULL,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_decoder_init(
 		      &decoder, &malformed_parameters, zero_coefficients,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_decoder_init(
 		      &decoder, &parameters, zero_coefficients,
-		      (enum sippymodem_v34_trellis_selection)3) ==
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+		      (enum v34_trellis_selection)3) ==
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
 	      memcmp(&decoder, &saved, sizeof(decoder)) == 0,
 	      "invalid channel initialization changed its destination");
-	CHECK(sippymodem_v34_channel_decoder_init(
+	CHECK(v34_channel_decoder_init(
 		      &decoder, &parameters, zero_coefficients,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_DECODER_OK &&
-	      sippymodem_v34_channel_decoder_is_valid(&decoder) &&
-	      !sippymodem_v34_channel_decoder_is_valid(NULL),
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_DECODER_OK &&
+	      v34_channel_decoder_is_valid(&decoder) &&
+	      !v34_channel_decoder_is_valid(NULL),
 	      "valid channel decoder did not initialize");
 	{
-		struct sippymodem_v34_channel_decoder before = decoder;
-		struct sippymodem_v34_survivor_decision saved_current;
-		struct sippymodem_v34_decided_4d_interval saved_decided;
+		struct v34_channel_decoder before = decoder;
+		struct v34_survivor_decision saved_current;
+		struct v34_decided_4d_interval saved_decided;
 
 		memset(&current, 0x5a, sizeof(current));
 		memset(&decided, 0xa5, sizeof(decided));
 		saved_current = current;
 		saved_decided = decided;
 		ready = true;
-		CHECK(sippymodem_v34_channel_decoder_advance(
+		CHECK(v34_channel_decoder_advance(
 			      NULL, estimates, 0, &current, &decided, &ready) ==
-			      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
-		      sippymodem_v34_channel_decoder_advance(
+			      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+		      v34_channel_decoder_advance(
 			      &decoder, estimates, 0, NULL, &decided, &ready) ==
-			      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
-		      sippymodem_v34_channel_decoder_advance(
+			      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+		      v34_channel_decoder_advance(
 			      &decoder, estimates, 0, &current, NULL, &ready) ==
-			      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
-		      sippymodem_v34_channel_decoder_advance(
+			      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+		      v34_channel_decoder_advance(
 			      &decoder, estimates, 0, &current, &decided, NULL) ==
-			      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+			      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
 		      memcmp(&decoder, &before, sizeof(before)) == 0 &&
 		      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 		      memcmp(&decided, &saved_decided, sizeof(decided)) == 0 &&
@@ -370,77 +370,77 @@ static bool test_transactional_boundaries(void)
 	}
 	CHECK(rejected_advance_is_transactional(
 		      &decoder, NULL, 0,
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT) &&
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT) &&
 	      rejected_advance_is_transactional(
 		      &decoder, estimates, 2,
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT),
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "invalid channel input was not transactional");
 	malformed_estimates[0] = estimates[0];
 	malformed_estimates[1] = estimates[1];
 	malformed_estimates[0].in_phase = NAN;
 	CHECK(rejected_advance_is_transactional(
 		      &decoder, malformed_estimates, 0,
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT),
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "non-finite channel estimate was accepted");
 	malformed_estimates[0].in_phase = DBL_MAX;
 	CHECK(rejected_advance_is_transactional(
 		      &decoder, malformed_estimates, 0,
-		      SIPPYMODEM_V34_CHANNEL_DECODER_NUMERIC_FAILURE),
+		      V34_CHANNEL_DECODER_NUMERIC_FAILURE),
 	      "overflowing channel metric was accepted");
 	corrupted = decoder;
 	corrupted.survivor.selection =
-		(enum sippymodem_v34_trellis_selection)3;
-	CHECK(!sippymodem_v34_channel_decoder_is_valid(&corrupted) &&
+		(enum v34_trellis_selection)3;
+	CHECK(!v34_channel_decoder_is_valid(&corrupted) &&
 	      rejected_advance_is_transactional(
 		      &corrupted, estimates, 0,
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT),
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "corrupt channel state was accepted");
 	corrupted = decoder;
 	corrupted.inverse_precoder.grid_step =
-		SIPPYMODEM_V34_PRECODER_GRID_STEP_4;
-	CHECK(!sippymodem_v34_channel_decoder_is_valid(&corrupted) &&
+		V34_PRECODER_GRID_STEP_4;
+	CHECK(!v34_channel_decoder_is_valid(&corrupted) &&
 	      rejected_advance_is_transactional(
 		      &corrupted, estimates, 0,
-		      SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT),
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "mismatched channel grid was accepted");
 
 	for (size_t interval = 0;
-	     interval + 1u < SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS;
+	     interval + 1u < V34_SURVIVOR_TRACEBACK_INTERVALS;
 	     ++interval) {
-		CHECK(sippymodem_v34_channel_decoder_advance(
+		CHECK(v34_channel_decoder_advance(
 			      &decoder, estimates, 0, &current, &decided,
-			      &ready) == SIPPYMODEM_V34_CHANNEL_DECODER_OK &&
+			      &ready) == V34_CHANNEL_DECODER_OK &&
 		      !ready,
 		      "channel late-failure history %zu changed", interval);
 	}
-	decoder.inverse_precoder = (struct sippymodem_v34_precoder){
+	decoder.inverse_precoder = (struct v34_precoder){
 		.coefficients = {
 			{ INT16_MAX, 0 }, { INT16_MAX, 0 }, { 0, 0 },
 		},
 		.previous_symbols = {
 			{ 1000000000, 0 }, { -1000000000, 0 }, { 0, 0 },
 		},
-		.grid_step = SIPPYMODEM_V34_PRECODER_GRID_STEP_2,
+		.grid_step = V34_PRECODER_GRID_STEP_2,
 	};
-	CHECK(sippymodem_v34_channel_decoder_is_valid(&decoder) &&
+	CHECK(v34_channel_decoder_is_valid(&decoder) &&
 	      rejected_advance_is_transactional(
 		      &decoder, estimates, 0,
-		      SIPPYMODEM_V34_CHANNEL_DECODER_OUT_OF_RANGE),
+		      V34_CHANNEL_DECODER_OUT_OF_RANGE),
 	      "traceback path failure changed channel state");
-	CHECK(strcmp(sippymodem_v34_channel_decoder_result_name(
-			     SIPPYMODEM_V34_CHANNEL_DECODER_OK),
+	CHECK(strcmp(v34_channel_decoder_result_name(
+			     V34_CHANNEL_DECODER_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_channel_decoder_result_name(
-			     SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT),
+	      strcmp(v34_channel_decoder_result_name(
+			     V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_channel_decoder_result_name(
-			     SIPPYMODEM_V34_CHANNEL_DECODER_NUMERIC_FAILURE),
+	      strcmp(v34_channel_decoder_result_name(
+			     V34_CHANNEL_DECODER_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_channel_decoder_result_name(
-			     SIPPYMODEM_V34_CHANNEL_DECODER_OUT_OF_RANGE),
+	      strcmp(v34_channel_decoder_result_name(
+			     V34_CHANNEL_DECODER_OUT_OF_RANGE),
 		     "out of range") == 0 &&
-	      strcmp(sippymodem_v34_channel_decoder_result_name(
-			     (enum sippymodem_v34_channel_decoder_result)99),
+	      strcmp(v34_channel_decoder_result_name(
+			     (enum v34_channel_decoder_result)99),
 		     "unknown") == 0,
 	      "channel decoder result names changed");
 	return true;

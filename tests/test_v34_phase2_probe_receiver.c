@@ -42,42 +42,42 @@ static bool harmonic_is_omitted(unsigned int harmonic)
 }
 
 static double bin_peak(
-	const struct sippymodem_v34_phase2_probe_spectrum_bin *bin)
+	const struct v34_phase2_probe_spectrum_bin *bin)
 {
 	return hypot(bin->in_phase_peak, bin->quadrature_peak);
 }
 
 static bool feed_measurement_window(
-	struct sippymodem_v34_phase2_probe_receiver *receiver,
-	struct sippymodem_v34_phase2_probe_transmitter *transmitter,
-	enum sippymodem_v34_phase2_probe_level level,
+	struct v34_phase2_probe_receiver *receiver,
+	struct v34_phase2_probe_transmitter *transmitter,
+	enum v34_phase2_probe_level level,
 	enum test_codec codec,
-	enum sippymodem_v34_phase2_probe_receiver_event_kind final_event)
+	enum v34_phase2_probe_receiver_event_kind final_event)
 {
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES; ++index) {
-		struct sippymodem_v34_phase2_probe_receiver_event event;
+	     index < V34_PHASE2_PROBE_L1_SAMPLES; ++index) {
+		struct v34_phase2_probe_receiver_event event;
 		bool final_sample = index + 1u ==
-				    SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES;
-		enum sippymodem_v34_phase2_probe_receiver_event_kind expected_kind =
+				    V34_PHASE2_PROBE_L1_SAMPLES;
+		enum v34_phase2_probe_receiver_event_kind expected_kind =
 			final_sample ?
 				final_event :
-				SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_NONE;
+				V34_PHASE2_PROBE_RECEIVER_EVENT_NONE;
 		uint32_t expected_l2_samples =
 			final_sample &&
 				final_event ==
-					SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY ?
-				SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES :
+					V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY ?
+				V34_PHASE2_PROBE_L1_SAMPLES :
 				0;
 		int16_t sample;
 
-		CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
+		CHECK(v34_phase2_probe_transmitter_sample(
 			      transmitter, level, &sample) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_OK &&
-		      sippymodem_v34_phase2_probe_receiver_sample(
+			      V34_PHASE2_PROBE_OK &&
+		      v34_phase2_probe_receiver_sample(
 			      receiver, codec_round_trip(sample, codec), false,
 			      &event) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK,
+			      V34_PHASE2_PROBE_RECEIVER_OK,
 		      "probe receive window failed at sample %zu", index);
 		CHECK(event.kind == expected_kind &&
 		      event.l2_samples == expected_l2_samples,
@@ -88,28 +88,28 @@ static bool feed_measurement_window(
 }
 
 static bool measurement_spectrum_is_plausible(
-	const struct sippymodem_v34_phase2_probe_receiver_measurement *measurement,
+	const struct v34_phase2_probe_receiver_measurement *measurement,
 	enum test_codec codec)
 {
 	double expected_l2_peak =
 		(double)TEST_NOMINAL_AMPLITUDE /
-		sqrt((double)SIPPYMODEM_V34_PHASE2_PROBE_TONE_COUNT);
+		sqrt((double)V34_PHASE2_PROBE_TONE_COUNT);
 	double l1_power = 0.0;
 	double l2_power = 0.0;
 	double peak_tolerance = codec == TEST_CODEC_LINEAR ? 0.5 : 40.0;
 	double omitted_tolerance = codec == TEST_CODEC_LINEAR ? 0.5 : 32.0;
 
 	CHECK(measurement->l1.sample_count ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES &&
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement->l2.sample_count ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES,
+		      V34_PHASE2_PROBE_L1_SAMPLES,
 	      "probe receiver did not preserve complete measurement windows");
 	for (unsigned int harmonic = 1;
-	     harmonic <= SIPPYMODEM_V34_PHASE2_PROBE_HIGHEST_HARMONIC;
+	     harmonic <= V34_PHASE2_PROBE_HIGHEST_HARMONIC;
 	     ++harmonic) {
-		const struct sippymodem_v34_phase2_probe_spectrum_bin *l1_bin =
+		const struct v34_phase2_probe_spectrum_bin *l1_bin =
 			&measurement->l1.harmonics[harmonic - 1u];
-		const struct sippymodem_v34_phase2_probe_spectrum_bin *l2_bin =
+		const struct v34_phase2_probe_spectrum_bin *l2_bin =
 			&measurement->l2.harmonics[harmonic - 1u];
 
 		if (harmonic_is_omitted(harmonic)) {
@@ -135,84 +135,84 @@ static bool measurement_spectrum_is_plausible(
 
 static bool check_measurement_and_completion(enum test_codec codec)
 {
-	struct sippymodem_v34_phase2_probe_transmitter transmitter;
-	struct sippymodem_v34_phase2_probe_receiver receiver;
-	struct sippymodem_v34_phase2_probe_receiver before;
-	struct sippymodem_v34_phase2_probe_receiver_measurement measurement;
-	struct sippymodem_v34_phase2_probe_receiver_measurement
+	struct v34_phase2_probe_transmitter transmitter;
+	struct v34_phase2_probe_receiver receiver;
+	struct v34_phase2_probe_receiver before;
+	struct v34_phase2_probe_receiver_measurement measurement;
+	struct v34_phase2_probe_receiver_measurement
 		initial_measurement;
-	struct sippymodem_v34_phase2_probe_receiver_event event;
+	struct v34_phase2_probe_receiver_event event;
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK &&
-	      sippymodem_v34_phase2_probe_receiver_init(&receiver) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK,
+		      V34_PHASE2_PROBE_OK &&
+	      v34_phase2_probe_receiver_init(&receiver) ==
+		      V34_PHASE2_PROBE_RECEIVER_OK,
 	      "probe receiver fixture did not initialize for codec %d", codec);
 	CHECK(feed_measurement_window(
-		      &receiver, &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L1,
+		      &receiver, &transmitter, V34_PHASE2_PROBE_L1,
 		      codec,
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED) &&
+		      V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED) &&
 	      receiver.phase ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_MEASURE_L2,
+		      V34_PHASE2_PROBE_RECEIVER_MEASURE_L2,
 	      "probe receiver did not enter L2 for codec %d", codec);
 	CHECK(feed_measurement_window(
-		      &receiver, &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
+		      &receiver, &transmitter, V34_PHASE2_PROBE_L2,
 		      codec,
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY) &&
+		      V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY) &&
 	      receiver.phase ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END &&
-	      sippymodem_v34_phase2_probe_receiver_measure(
+		      V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END &&
+	      v34_phase2_probe_receiver_measure(
 		      &receiver, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
+		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      measurement.l2_samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES &&
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement_spectrum_is_plausible(&measurement, codec),
 	      "probe measurement failed for codec %d", codec);
 	initial_measurement = measurement;
 	for (size_t index = 0; index < TEST_EXTRA_L2_SAMPLES; ++index) {
 		int16_t sample;
 
-		CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
-			      &sample) == SIPPYMODEM_V34_PHASE2_PROBE_OK &&
-		      sippymodem_v34_phase2_probe_receiver_sample(
+		CHECK(v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L2,
+			      &sample) == V34_PHASE2_PROBE_OK &&
+		      v34_phase2_probe_receiver_sample(
 			      &receiver, codec_round_trip(sample, codec), false,
 			      &event) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
+			      V34_PHASE2_PROBE_RECEIVER_OK &&
 		      event.kind ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
+			      V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
 		      event.l2_samples == 0,
 		      "extended L2 changed event state at sample %zu", index);
 	}
-	CHECK(sippymodem_v34_phase2_probe_receiver_measure(
+	CHECK(v34_phase2_probe_receiver_measure(
 		      &receiver, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
+		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      memcmp(&measurement.l1, &initial_measurement.l1,
 		     sizeof(measurement.l1)) == 0 &&
 	      memcmp(&measurement.l2, &initial_measurement.l2,
 		     sizeof(measurement.l2)) == 0 &&
 	      measurement.l2_samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES +
+		      V34_PHASE2_PROBE_L1_SAMPLES +
 			      TEST_EXTRA_L2_SAMPLES,
 	      "extended L2 changed the fixed measurement for codec %d", codec);
-	CHECK(sippymodem_v34_phase2_probe_receiver_sample(
+	CHECK(v34_phase2_probe_receiver_sample(
 		      &receiver, INT16_MIN, true, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
+		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      event.kind ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_COMPLETED &&
+		      V34_PHASE2_PROBE_RECEIVER_EVENT_COMPLETED &&
 	      event.l2_samples ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES +
+		      V34_PHASE2_PROBE_L1_SAMPLES +
 			      TEST_EXTRA_L2_SAMPLES &&
 	      receiver.phase ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_COMPLETE,
+		      V34_PHASE2_PROBE_RECEIVER_COMPLETE,
 	      "L2 completion consumed the following signal for codec %d", codec);
 	before = receiver;
-	CHECK(sippymodem_v34_phase2_probe_receiver_sample(
+	CHECK(v34_phase2_probe_receiver_sample(
 		      &receiver, 1234, false, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
+		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      event.kind ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
+		      V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "completed receiver changed terminal state for codec %d", codec);
 	return true;
@@ -229,139 +229,139 @@ static bool test_measurement_and_completion(void)
 
 static bool test_l2_limit(void)
 {
-	struct sippymodem_v34_phase2_probe_transmitter transmitter;
-	struct sippymodem_v34_phase2_probe_receiver receiver;
-	struct sippymodem_v34_phase2_probe_receiver_event event;
+	struct v34_phase2_probe_transmitter transmitter;
+	struct v34_phase2_probe_receiver receiver;
+	struct v34_phase2_probe_receiver_event event;
 	uint32_t expected_limit =
-		SIPPYMODEM_V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES;
+		V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES;
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK &&
-	      sippymodem_v34_phase2_probe_receiver_init(&receiver) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
+		      V34_PHASE2_PROBE_OK &&
+	      v34_phase2_probe_receiver_init(&receiver) ==
+		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      feed_measurement_window(
-		      &receiver, &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L1,
+		      &receiver, &transmitter, V34_PHASE2_PROBE_L1,
 		      TEST_CODEC_LINEAR,
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED) &&
+		      V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED) &&
 	      feed_measurement_window(
-		      &receiver, &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
+		      &receiver, &transmitter, V34_PHASE2_PROBE_L2,
 		      TEST_CODEC_LINEAR,
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY),
+		      V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY),
 	      "L2 limit fixture failed");
 	while (receiver.l2_samples < expected_limit) {
 		uint32_t next_count = receiver.l2_samples + 1u;
 
-		CHECK(sippymodem_v34_phase2_probe_receiver_sample(
+		CHECK(v34_phase2_probe_receiver_sample(
 			      &receiver, 0, false, &event) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK,
+			      V34_PHASE2_PROBE_RECEIVER_OK,
 		      "L2 limit failed at sample %u", next_count);
 		if (next_count == expected_limit)
 			CHECK(event.kind ==
-				      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_LIMIT_REACHED &&
+				      V34_PHASE2_PROBE_RECEIVER_EVENT_LIMIT_REACHED &&
 				      event.l2_samples == expected_limit,
 			      "L2 limit did not report its exact boundary");
 		else
 			CHECK(event.kind ==
-				      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
+				      V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
 				      event.l2_samples == 0,
 			      "L2 limit reported an early event");
 	}
 	CHECK(receiver.phase ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_LIMIT_REACHED &&
+		      V34_PHASE2_PROBE_RECEIVER_LIMIT_REACHED &&
 	      receiver.l2_samples == expected_limit &&
-	      sippymodem_v34_phase2_probe_receiver_is_valid(&receiver),
+	      v34_phase2_probe_receiver_is_valid(&receiver),
 	      "L2 receive limit state changed");
 	return true;
 }
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_phase2_probe_transmitter transmitter;
-	struct sippymodem_v34_phase2_probe_receiver receiver;
-	struct sippymodem_v34_phase2_probe_receiver before;
-	struct sippymodem_v34_phase2_probe_receiver_event event = {
-		.kind = SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_COMPLETED,
+	struct v34_phase2_probe_transmitter transmitter;
+	struct v34_phase2_probe_receiver receiver;
+	struct v34_phase2_probe_receiver before;
+	struct v34_phase2_probe_receiver_event event = {
+		.kind = V34_PHASE2_PROBE_RECEIVER_EVENT_COMPLETED,
 		.l2_samples = 99,
 	};
-	struct sippymodem_v34_phase2_probe_receiver_event event_before = event;
-	struct sippymodem_v34_phase2_probe_receiver_measurement measurement;
-	struct sippymodem_v34_phase2_probe_receiver_measurement
+	struct v34_phase2_probe_receiver_event event_before = event;
+	struct v34_phase2_probe_receiver_measurement measurement;
+	struct v34_phase2_probe_receiver_measurement
 		measurement_before;
 
-	CHECK(sippymodem_v34_phase2_probe_receiver_init(&receiver) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK,
+	CHECK(v34_phase2_probe_receiver_init(&receiver) ==
+		      V34_PHASE2_PROBE_RECEIVER_OK,
 	      "validation fixture did not initialize");
 	before = receiver;
 	memset(&measurement, 0xa5, sizeof(measurement));
 	measurement_before = measurement;
-	CHECK(sippymodem_v34_phase2_probe_receiver_sample(
+	CHECK(v34_phase2_probe_receiver_sample(
 		      &receiver, 1, true, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_probe_receiver_measure(
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase2_probe_receiver_measure(
 		      &receiver, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      memcmp(&measurement, &measurement_before,
 		     sizeof(measurement)) == 0,
 	      "premature L2 operations changed caller-owned state");
-	receiver.phase = SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_MEASURE_L2;
+	receiver.phase = V34_PHASE2_PROBE_RECEIVER_MEASURE_L2;
 	before = receiver;
-	CHECK(!sippymodem_v34_phase2_probe_receiver_is_valid(&receiver) &&
-	      sippymodem_v34_phase2_probe_receiver_sample(
+	CHECK(!v34_phase2_probe_receiver_is_valid(&receiver) &&
+	      v34_phase2_probe_receiver_sample(
 		      &receiver, 1, false, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "inconsistent L2 phase was accepted");
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK &&
-	      sippymodem_v34_phase2_probe_receiver_init(&receiver) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
+		      V34_PHASE2_PROBE_OK &&
+	      v34_phase2_probe_receiver_init(&receiver) ==
+		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      feed_measurement_window(
-		      &receiver, &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L1,
+		      &receiver, &transmitter, V34_PHASE2_PROBE_L1,
 		      TEST_CODEC_LINEAR,
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED),
+		      V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED),
 	      "L2 validation fixture did not reach its boundary");
 	before = receiver;
-	CHECK(sippymodem_v34_phase2_probe_receiver_sample(
+	CHECK(v34_phase2_probe_receiver_sample(
 		      &receiver, 1, true, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "partial L2 measurement accepted completion");
 	receiver.l1_spectrum.harmonics[0].in_phase_sum = NAN;
 	before = receiver;
-	CHECK(!sippymodem_v34_phase2_probe_receiver_is_valid(&receiver) &&
-	      sippymodem_v34_phase2_probe_receiver_sample(
+	CHECK(!v34_phase2_probe_receiver_is_valid(&receiver) &&
+	      v34_phase2_probe_receiver_sample(
 		      &receiver, 1, false, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "non-finite probe receiver state was accepted");
-	CHECK(sippymodem_v34_phase2_probe_receiver_init(&receiver) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK &&
-	      sippymodem_v34_phase2_probe_receiver_init(NULL) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_probe_receiver_sample(
+	CHECK(v34_phase2_probe_receiver_init(&receiver) ==
+		      V34_PHASE2_PROBE_RECEIVER_OK &&
+	      v34_phase2_probe_receiver_init(NULL) ==
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase2_probe_receiver_sample(
 		      NULL, 0, false, &event) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_probe_receiver_sample(
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase2_probe_receiver_sample(
 		      &receiver, 0, false, NULL) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_probe_receiver_measure(NULL, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_probe_receiver_measure(&receiver, NULL) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
-	      !sippymodem_v34_phase2_probe_receiver_is_valid(NULL),
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase2_probe_receiver_measure(NULL, &measurement) ==
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase2_probe_receiver_measure(&receiver, NULL) ==
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+	      !v34_phase2_probe_receiver_is_valid(NULL),
 	      "probe receiver null validation changed");
 	CHECK(strcmp(
-		      sippymodem_v34_phase2_probe_receiver_result_name(
-			      SIPPYMODEM_V34_PHASE2_PROBE_RECEIVER_OK),
+		      v34_phase2_probe_receiver_result_name(
+			      V34_PHASE2_PROBE_RECEIVER_OK),
 		      "ok") == 0 &&
 	      strcmp(
-		      sippymodem_v34_phase2_probe_receiver_result_name(
-			      (enum sippymodem_v34_phase2_probe_receiver_result)99),
+		      v34_phase2_probe_receiver_result_name(
+			      (enum v34_phase2_probe_receiver_result)99),
 		      "unknown") == 0,
 	      "probe receiver result names changed");
 	return true;

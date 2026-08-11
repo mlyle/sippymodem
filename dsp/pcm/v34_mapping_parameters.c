@@ -24,7 +24,7 @@ static uint8_t minimum_ring_count(uint8_t shell_mapper_bits)
 	uint64_t required_sequences = UINT64_C(1) << shell_mapper_bits;
 
 	for (uint8_t rings = 1;
-	     rings <= SIPPYMODEM_V34_MAX_RING_COUNT; ++rings) {
+	     rings <= V34_MAX_RING_COUNT; ++rings) {
 		if (eighth_power(rings) >= required_sequences)
 			return rings;
 	}
@@ -41,7 +41,7 @@ static uint8_t expanded_ring_count(
 	uint64_t target = UINT64_C(390625) << shell_mapper_bits;
 
 	for (uint8_t rings = minimum_rings;
-	     rings <= SIPPYMODEM_V34_MAX_RING_COUNT; ++rings) {
+	     rings <= V34_MAX_RING_COUNT; ++rings) {
 		uint64_t midpoint = eighth_power((uint32_t)rings * 2u + 1u) << 8;
 
 		if (target < midpoint)
@@ -52,19 +52,19 @@ static uint8_t expanded_ring_count(
 
 static bool derive_parameters(
 	uint8_t mapping_frame_bits, bool expanded_shaping,
-	struct sippymodem_v34_mapping_parameters *parameters)
+	struct v34_mapping_parameters *parameters)
 {
 	uint8_t shell_mapper_bits = 0;
 	uint8_t point_index_bits = 0;
 	uint8_t ring_count;
 
 	if (mapping_frame_bits < V34_MIN_MAPPING_FRAME_BITS ||
-	    mapping_frame_bits > SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS)
+	    mapping_frame_bits > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
 	if (mapping_frame_bits > V34_FIXED_MAPPING_BITS)
 		shell_mapper_bits =
 			(uint8_t)(mapping_frame_bits - V34_FIXED_MAPPING_BITS);
-	while (shell_mapper_bits > SIPPYMODEM_V34_MAX_SHELL_MAPPER_BITS) {
+	while (shell_mapper_bits > V34_MAX_SHELL_MAPPER_BITS) {
 		shell_mapper_bits -= V34_2D_SYMBOLS_PER_MAPPING_FRAME;
 		++point_index_bits;
 	}
@@ -75,7 +75,7 @@ static bool derive_parameters(
 	if (ring_count == 0)
 		return false;
 
-	*parameters = (struct sippymodem_v34_mapping_parameters){
+	*parameters = (struct v34_mapping_parameters){
 		.constellation_points = (uint16_t)(
 			V34_CONSTELLATION_QUADRANTS * ring_count *
 			(1u << point_index_bits)),
@@ -89,8 +89,8 @@ static bool derive_parameters(
 }
 
 static bool parameters_are_equal(
-	const struct sippymodem_v34_mapping_parameters *left,
-	const struct sippymodem_v34_mapping_parameters *right)
+	const struct v34_mapping_parameters *left,
+	const struct v34_mapping_parameters *right)
 {
 	return left->constellation_points == right->constellation_points &&
 	       left->mapping_frame_bits == right->mapping_frame_bits &&
@@ -101,28 +101,28 @@ static bool parameters_are_equal(
 	       left->expanded_shaping == right->expanded_shaping;
 }
 
-enum sippymodem_v34_mapping_parameters_result
-sippymodem_v34_mapping_parameters_init(
-	struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_frame_geometry *geometry,
+enum v34_mapping_parameters_result
+v34_mapping_parameters_init(
+	struct v34_mapping_parameters *parameters,
+	const struct v34_frame_geometry *geometry,
 	bool expanded_shaping)
 {
-	struct sippymodem_v34_mapping_parameters derived;
+	struct v34_mapping_parameters derived;
 
 	if (parameters == NULL ||
-	    !sippymodem_v34_frame_geometry_is_valid(geometry) ||
+	    !v34_frame_geometry_is_valid(geometry) ||
 	    !derive_parameters(
 		    geometry->high_mapping_frame_bits, expanded_shaping,
 		    &derived))
-		return SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT;
+		return V34_MAPPING_PARAMETERS_INVALID_ARGUMENT;
 	*parameters = derived;
-	return SIPPYMODEM_V34_MAPPING_PARAMETERS_OK;
+	return V34_MAPPING_PARAMETERS_OK;
 }
 
-bool sippymodem_v34_mapping_parameters_is_valid(
-	const struct sippymodem_v34_mapping_parameters *parameters)
+bool v34_mapping_parameters_is_valid(
+	const struct v34_mapping_parameters *parameters)
 {
-	struct sippymodem_v34_mapping_parameters derived;
+	struct v34_mapping_parameters derived;
 
 	return parameters != NULL &&
 	       derive_parameters(
@@ -131,13 +131,13 @@ bool sippymodem_v34_mapping_parameters_is_valid(
 	       parameters_are_equal(parameters, &derived);
 }
 
-const char *sippymodem_v34_mapping_parameters_result_name(
-	enum sippymodem_v34_mapping_parameters_result result)
+const char *v34_mapping_parameters_result_name(
+	enum v34_mapping_parameters_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_MAPPING_PARAMETERS_OK:
+	case V34_MAPPING_PARAMETERS_OK:
 		return "ok";
-	case SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT:
+	case V34_MAPPING_PARAMETERS_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

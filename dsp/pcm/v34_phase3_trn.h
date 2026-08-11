@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V34_PHASE3_TRN_H
-#define SIPPYMODEM_V34_PHASE3_TRN_H
+#ifndef V34_PHASE3_TRN_H
+#define V34_PHASE3_TRN_H
 
 #include "qam.h"
 #include "v34_framing.h"
@@ -11,37 +11,37 @@
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_V34_PHASE3_TRN_MIN_SYMBOLS = 512,
+	V34_PHASE3_TRN_MIN_SYMBOLS = 512,
 };
 
-enum sippymodem_v34_phase3_trn_result {
-	SIPPYMODEM_V34_PHASE3_TRN_OK,
-	SIPPYMODEM_V34_PHASE3_TRN_INVALID_ARGUMENT,
+enum v34_phase3_trn_result {
+	V34_PHASE3_TRN_OK,
+	V34_PHASE3_TRN_INVALID_ARGUMENT,
 };
 
 /* Phase 3 TRN has no intrinsic end marker. The owning startup controller
  * decides when at least 512 symbols have trained the remote receiver. */
-struct sippymodem_v34_phase3_trn {
-	struct sippymodem_v34_scrambler scrambler;
-	enum sippymodem_v34_station_role role;
+struct v34_phase3_trn {
+	struct v34_scrambler scrambler;
+	enum v34_station_role role;
 	uint8_t last_clockwise_quarter_turns;
 	bool has_last_symbol;
 };
 
-enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_init(
-	struct sippymodem_v34_phase3_trn *trn,
-	enum sippymodem_v34_station_role role);
-bool sippymodem_v34_phase3_trn_is_valid(
-	const struct sippymodem_v34_phase3_trn *trn);
+enum v34_phase3_trn_result v34_phase3_trn_init(
+	struct v34_phase3_trn *trn,
+	enum v34_station_role role);
+bool v34_phase3_trn_is_valid(
+	const struct v34_phase3_trn *trn);
 
 /* Consume two binary ones in transmission order and emit one unit-energy
  * four-point TRN symbol. Rejected calls leave state and outputs unchanged. */
-enum sippymodem_v34_phase3_trn_result sippymodem_v34_phase3_trn_next(
-	struct sippymodem_v34_phase3_trn *trn,
+enum v34_phase3_trn_result v34_phase3_trn_next(
+	struct v34_phase3_trn *trn,
 	struct sippymodem_qam_point *point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *sippymodem_v34_phase3_trn_result_name(
-	enum sippymodem_v34_phase3_trn_result result);
+const char *v34_phase3_trn_result_name(
+	enum v34_phase3_trn_result result);
 
 #endif

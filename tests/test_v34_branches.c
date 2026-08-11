@@ -10,75 +10,75 @@
 #include <stdint.h>
 #include <string.h>
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 static bool initialize_parameters(
-	struct sippymodem_v34_mapping_parameters *parameters)
+	struct v34_mapping_parameters *parameters)
 {
-	struct sippymodem_v34_frame_geometry geometry;
+	struct v34_frame_geometry geometry;
 
-	return sippymodem_v34_frame_geometry_init(
-		       &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_mapping_parameters_init(
+	return v34_frame_geometry_init(
+		       &geometry, V34_SYMBOL_RATE_3000, 8, false) ==
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_mapping_parameters_init(
 		       parameters, &geometry, true) ==
-		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK;
+		       V34_MAPPING_PARAMETERS_OK;
 }
 
 static bool grid_points_are_equal(
-	const struct sippymodem_v34_grid_point *left,
-	const struct sippymodem_v34_grid_point *right)
+	const struct v34_grid_point *left,
+	const struct v34_grid_point *right)
 {
 	return left->in_phase == right->in_phase &&
 	       left->quadrature == right->quadrature;
 }
 
 static bool inputs_are_equal(
-	const struct sippymodem_v34_convolutional_input *left,
-	const struct sippymodem_v34_convolutional_input *right)
+	const struct v34_convolutional_input *left,
+	const struct v34_convolutional_input *right)
 {
 	return left->y1 == right->y1 && left->y2 == right->y2 &&
 	       left->y3 == right->y3 && left->y4 == right->y4;
 }
 
 static uint8_t expected_branch_count(
-	enum sippymodem_v34_trellis_selection selection)
+	enum v34_trellis_selection selection)
 {
 	switch (selection) {
-	case SIPPYMODEM_V34_TRELLIS_16_STATE:
+	case V34_TRELLIS_16_STATE:
 		return 8;
-	case SIPPYMODEM_V34_TRELLIS_32_STATE:
+	case V34_TRELLIS_32_STATE:
 		return 16;
-	case SIPPYMODEM_V34_TRELLIS_64_STATE:
+	case V34_TRELLIS_64_STATE:
 		return 32;
 	}
 	return 0;
 }
 
 static uint8_t expected_subset_index(
-	const struct sippymodem_v34_convolutional_input *input, uint8_t y0,
-	enum sippymodem_v34_trellis_selection selection)
+	const struct v34_convolutional_input *input, uint8_t y0,
+	enum v34_trellis_selection selection)
 {
 	uint8_t index = y0 | (uint8_t)(input->y1 << 1) |
 			(uint8_t)(input->y2 << 2);
 
-	if (selection == SIPPYMODEM_V34_TRELLIS_32_STATE)
+	if (selection == V34_TRELLIS_32_STATE)
 		index |= (uint8_t)(input->y4 << 3);
-	else if (selection == SIPPYMODEM_V34_TRELLIS_64_STATE)
+	else if (selection == V34_TRELLIS_64_STATE)
 		index |= (uint8_t)(input->y3 << 3) |
 			 (uint8_t)(input->y4 << 4);
 	return index;
 }
 
 static int32_t pair_magnitude_squared(
-	const struct sippymodem_v34_subset_slice slices[2],
+	const struct v34_subset_slice slices[2],
 	uint8_t first, uint8_t second)
 {
-	const struct sippymodem_v34_grid_point *points[] = {
+	const struct v34_grid_point *points[] = {
 		&slices[0].subset[first].channel_output,
 		&slices[1].subset[second].channel_output,
 	};
@@ -93,8 +93,8 @@ static int32_t pair_magnitude_squared(
 }
 
 static bool selected_pair_precedes(
-	const struct sippymodem_v34_branch *selected,
-	const struct sippymodem_v34_subset_slice slices[2], uint8_t first,
+	const struct v34_branch *selected,
+	const struct v34_subset_slice slices[2], uint8_t first,
 	uint8_t second, double squared_error)
 {
 	uint8_t selected_first = selected->symbol[0].subset_label;
@@ -115,23 +115,23 @@ static bool selected_pair_precedes(
 }
 
 static bool verify_reduction(
-	const struct sippymodem_v34_subset_slice slices[2],
+	const struct v34_subset_slice slices[2],
 	uint8_t inversion_bit,
-	enum sippymodem_v34_trellis_selection selection, size_t case_index)
+	enum v34_trellis_selection selection, size_t case_index)
 {
-	struct sippymodem_v34_branch_set set;
+	struct v34_branch_set set;
 	uint8_t count = expected_branch_count(selection);
 
-	CHECK(sippymodem_v34_build_branch_set(
+	CHECK(v34_build_branch_set(
 		      slices, inversion_bit, selection, &set) ==
-		      SIPPYMODEM_V34_BRANCHES_OK &&
+		      V34_BRANCHES_OK &&
 	      set.selection == selection && set.count == count &&
 	      set.inversion_bit == inversion_bit &&
-	      sippymodem_v34_branch_set_is_valid(&set),
+	      v34_branch_set_is_valid(&set),
 	      "branch set %zu/%u/%u did not build", case_index, inversion_bit,
 	      selection);
 	for (uint8_t index = 0; index < count; ++index) {
-		const struct sippymodem_v34_branch *branch = &set.branch[index];
+		const struct v34_branch *branch = &set.branch[index];
 
 		CHECK(expected_subset_index(
 			      &branch->convolutional_input,
@@ -142,11 +142,11 @@ static bool verify_reduction(
 		      "branch set %zu/%u/%u subset %u changed", case_index,
 		      inversion_bit, selection, index);
 	}
-	for (uint8_t first = 0; first < SIPPYMODEM_V34_SUBSET_LABEL_COUNT;
+	for (uint8_t first = 0; first < V34_SUBSET_LABEL_COUNT;
 	     ++first) {
 		for (uint8_t second = 0;
-		     second < SIPPYMODEM_V34_SUBSET_LABEL_COUNT; ++second) {
-			struct sippymodem_v34_convolutional_input input;
+		     second < V34_SUBSET_LABEL_COUNT; ++second) {
+			struct v34_convolutional_input input;
 			uint8_t y0 = (uint8_t)(
 				(first ^ second ^ inversion_bit) & 1u);
 			double squared_error =
@@ -154,9 +154,9 @@ static bool verify_reduction(
 				slices[1].subset[second].squared_error;
 			uint8_t index;
 
-			CHECK(sippymodem_v34_convolutional_input_from_subset_labels(
+			CHECK(v34_convolutional_input_from_subset_labels(
 				      first, second, &input) ==
-				      SIPPYMODEM_V34_TRELLIS_OK,
+				      V34_TRELLIS_OK,
 			      "oracle pair %u/%u was rejected", first, second);
 			index = expected_subset_index(&input, y0, selection);
 			CHECK(selected_pair_precedes(
@@ -186,7 +186,7 @@ static double generated_estimate(uint32_t *state)
 
 static bool test_generated_reduction(void)
 {
-	struct sippymodem_v34_subset_slice slices[2];
+	struct v34_subset_slice slices[2];
 	uint32_t random = UINT32_C(0xb4a6c43e);
 
 	for (size_t index = 0; index < 96u; ++index) {
@@ -196,15 +196,15 @@ static bool test_generated_reduction(void)
 				generated_estimate(&random),
 			};
 
-			CHECK(sippymodem_v34_slice_grid_subsets(
+			CHECK(v34_slice_grid_subsets(
 				      &estimate, &slices[symbol]) ==
-				      SIPPYMODEM_V34_LATTICE_OK,
+				      V34_LATTICE_OK,
 			      "generated slice %zu/%zu failed", index, symbol);
 		}
 		for (uint8_t inversion = 0; inversion < 2u; ++inversion) {
-			for (enum sippymodem_v34_trellis_selection selection =
-				     SIPPYMODEM_V34_TRELLIS_16_STATE;
-			     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE;
+			for (enum v34_trellis_selection selection =
+				     V34_TRELLIS_16_STATE;
+			     selection <= V34_TRELLIS_64_STATE;
 			     ++selection)
 				CHECK(verify_reduction(
 					      slices, inversion, selection, index),
@@ -214,12 +214,12 @@ static bool test_generated_reduction(void)
 	}
 	for (size_t symbol = 0; symbol < ARRAY_LENGTH(slices); ++symbol)
 		for (uint8_t label = 0;
-		     label < SIPPYMODEM_V34_SUBSET_LABEL_COUNT; ++label)
+		     label < V34_SUBSET_LABEL_COUNT; ++label)
 			slices[symbol].subset[label].squared_error = 0.0;
 	for (uint8_t inversion = 0; inversion < 2u; ++inversion)
-		for (enum sippymodem_v34_trellis_selection selection =
-			     SIPPYMODEM_V34_TRELLIS_16_STATE;
-		     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE;
+		for (enum v34_trellis_selection selection =
+			     V34_TRELLIS_16_STATE;
+		     selection <= V34_TRELLIS_64_STATE;
 		     ++selection)
 			CHECK(verify_reduction(
 				      slices, inversion, selection, 96u),
@@ -228,8 +228,8 @@ static bool test_generated_reduction(void)
 }
 
 static bool branch_matches_encoder(
-	const struct sippymodem_v34_branch *branch,
-	const struct sippymodem_v34_4d_encoder_output *encoded)
+	const struct v34_branch *branch,
+	const struct v34_4d_encoder_output *encoded)
 {
 	if (branch->convolutional_output != encoded->convolutional_output ||
 	    !inputs_are_equal(
@@ -238,7 +238,7 @@ static bool branch_matches_encoder(
 	    branch->squared_error != 0.0)
 		return false;
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		if (branch->symbol[symbol].subset_label !=
 			    encoded->subset_label[symbol] ||
 		    !grid_points_are_equal(
@@ -252,23 +252,23 @@ static bool branch_matches_encoder(
 
 static bool test_encoder_agreement(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
+	struct v34_mapping_parameters parameters;
 
 	CHECK(initialize_parameters(&parameters),
 	      "encoder-agreement parameters failed");
-	for (enum sippymodem_v34_trellis_selection selection =
-		     SIPPYMODEM_V34_TRELLIS_16_STATE;
-	     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE; ++selection) {
-		struct sippymodem_v34_4d_encoder encoder;
+	for (enum v34_trellis_selection selection =
+		     V34_TRELLIS_16_STATE;
+	     selection <= V34_TRELLIS_64_STATE; ++selection) {
+		struct v34_4d_encoder encoder;
 		uint8_t point_limit = (uint8_t)(
 			1u << parameters.point_index_bits_per_2d_symbol);
 
-		CHECK(sippymodem_v34_4d_encoder_init(
+		CHECK(v34_4d_encoder_init(
 			      &encoder, &parameters, COEFFICIENTS, selection) ==
-			      SIPPYMODEM_V34_4D_ENCODER_OK,
+			      V34_4D_ENCODER_OK,
 		      "encoder-agreement mode %u did not initialize", selection);
 		for (uint8_t interval = 0; interval < 96u; ++interval) {
-			struct sippymodem_v34_4d_encoder_input input = {
+			struct v34_4d_encoder_input input = {
 				.mapping = {
 					.rotation_bit = (uint8_t)((interval >> 1) & 1u),
 					.differential_input = interval & 3u,
@@ -286,18 +286,18 @@ static bool test_encoder_agreement(void)
 				},
 				.inversion_bit = (uint8_t)((interval >> 2) & 1u),
 			};
-			struct sippymodem_v34_4d_encoder_output encoded;
-			struct sippymodem_v34_subset_slice slices[2];
-			struct sippymodem_v34_branch_set set;
+			struct v34_4d_encoder_output encoded;
+			struct v34_subset_slice slices[2];
+			struct v34_branch_set set;
 			uint8_t index;
 
-			CHECK(sippymodem_v34_4d_encoder_step(
+			CHECK(v34_4d_encoder_step(
 				      &encoder, &input, &encoded) ==
-				      SIPPYMODEM_V34_4D_ENCODER_OK,
+				      V34_4D_ENCODER_OK,
 			      "encoder-agreement mode %u interval %u failed",
 			      selection, interval);
 			for (uint8_t symbol = 0;
-			     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+			     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 			     ++symbol) {
 				const struct sippymodem_qam_point estimate = {
 					encoded.precoded[symbol]
@@ -306,15 +306,15 @@ static bool test_encoder_agreement(void)
 						.channel_output.quadrature,
 				};
 
-				CHECK(sippymodem_v34_slice_grid_subsets(
+				CHECK(v34_slice_grid_subsets(
 					      &estimate, &slices[symbol]) ==
-					      SIPPYMODEM_V34_LATTICE_OK,
+					      V34_LATTICE_OK,
 				      "encoded slice %u/%u/%u failed", selection,
 				      interval, symbol);
 			}
-			CHECK(sippymodem_v34_build_branch_set(
+			CHECK(v34_build_branch_set(
 				      slices, input.inversion_bit, selection, &set) ==
-				      SIPPYMODEM_V34_BRANCHES_OK,
+				      V34_BRANCHES_OK,
 			      "encoded branch set %u/%u failed", selection,
 			      interval);
 			index = expected_subset_index(
@@ -329,17 +329,17 @@ static bool test_encoder_agreement(void)
 }
 
 static bool rejection_is_transactional(
-	const struct sippymodem_v34_subset_slice *slices,
+	const struct v34_subset_slice *slices,
 	uint8_t inversion_bit,
-	enum sippymodem_v34_trellis_selection selection,
-	enum sippymodem_v34_branches_result expected)
+	enum v34_trellis_selection selection,
+	enum v34_branches_result expected)
 {
-	struct sippymodem_v34_branch_set set;
-	struct sippymodem_v34_branch_set saved;
+	struct v34_branch_set set;
+	struct v34_branch_set saved;
 
 	memset(&set, 0xa5, sizeof(set));
 	saved = set;
-	return sippymodem_v34_build_branch_set(
+	return v34_build_branch_set(
 		       slices, inversion_bit, selection, &set) == expected &&
 	       memcmp(&set, &saved, sizeof(set)) == 0;
 }
@@ -349,101 +349,101 @@ static bool test_validation(void)
 	const struct sippymodem_qam_point estimates[] = {
 		{ 1.25, -3.5 }, { -7.75, 9.0 },
 	};
-	struct sippymodem_v34_subset_slice slices[2];
-	struct sippymodem_v34_subset_slice malformed[2];
-	struct sippymodem_v34_branch_set branches;
-	struct sippymodem_v34_branch_set malformed_branches;
+	struct v34_subset_slice slices[2];
+	struct v34_subset_slice malformed[2];
+	struct v34_branch_set branches;
+	struct v34_branch_set malformed_branches;
 
 	for (size_t symbol = 0; symbol < ARRAY_LENGTH(slices); ++symbol)
-		CHECK(sippymodem_v34_slice_grid_subsets(
+		CHECK(v34_slice_grid_subsets(
 			      &estimates[symbol], &slices[symbol]) ==
-			      SIPPYMODEM_V34_LATTICE_OK,
+			      V34_LATTICE_OK,
 		      "validation slice %zu failed", symbol);
-	CHECK(sippymodem_v34_build_branch_set(
-		      slices, 0, SIPPYMODEM_V34_TRELLIS_16_STATE, &branches) ==
-		      SIPPYMODEM_V34_BRANCHES_OK &&
-	      sippymodem_v34_branch_set_is_valid(&branches) &&
-	      !sippymodem_v34_branch_set_is_valid(NULL),
+	CHECK(v34_build_branch_set(
+		      slices, 0, V34_TRELLIS_16_STATE, &branches) ==
+		      V34_BRANCHES_OK &&
+	      v34_branch_set_is_valid(&branches) &&
+	      !v34_branch_set_is_valid(NULL),
 	      "valid branch-set contract changed");
 	malformed_branches = branches;
 	malformed_branches.count--;
-	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	CHECK(!v34_branch_set_is_valid(&malformed_branches),
 	      "incomplete branch set was accepted");
 	malformed_branches = branches;
 	malformed_branches.inversion_bit ^= 1u;
-	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	CHECK(!v34_branch_set_is_valid(&malformed_branches),
 	      "inconsistent branch inversion was accepted");
 	malformed_branches = branches;
 	malformed_branches.branch[0].convolutional_input.y3 ^= 1u;
-	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	CHECK(!v34_branch_set_is_valid(&malformed_branches),
 	      "branch labels disagreed with their convolutional input");
 	malformed_branches = branches;
 	malformed_branches.branch[0].squared_error += 1.0;
-	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	CHECK(!v34_branch_set_is_valid(&malformed_branches),
 	      "inconsistent branch metric was accepted");
 	CHECK(rejection_is_transactional(
-		      NULL, 0, SIPPYMODEM_V34_TRELLIS_16_STATE,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT) &&
+		      NULL, 0, V34_TRELLIS_16_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT) &&
 	      rejection_is_transactional(
-		      slices, 2, SIPPYMODEM_V34_TRELLIS_16_STATE,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT) &&
+		      slices, 2, V34_TRELLIS_16_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT) &&
 	      rejection_is_transactional(
-		      slices, 0, (enum sippymodem_v34_trellis_selection)3,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT) &&
-	      sippymodem_v34_build_branch_set(
-		      slices, 0, SIPPYMODEM_V34_TRELLIS_16_STATE, NULL) ==
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT,
+		      slices, 0, (enum v34_trellis_selection)3,
+		      V34_BRANCHES_INVALID_ARGUMENT) &&
+	      v34_build_branch_set(
+		      slices, 0, V34_TRELLIS_16_STATE, NULL) ==
+		      V34_BRANCHES_INVALID_ARGUMENT,
 	      "invalid branch-set arguments were accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].subset_label = 1;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, SIPPYMODEM_V34_TRELLIS_16_STATE,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT),
+		      malformed, 0, V34_TRELLIS_16_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "mislabelled subset was accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].channel_output.in_phase = 0;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, SIPPYMODEM_V34_TRELLIS_32_STATE,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT),
+		      malformed, 0, V34_TRELLIS_32_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "off-grid subset was accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].channel_output.in_phase = 257;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, SIPPYMODEM_V34_TRELLIS_64_STATE,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT),
+		      malformed, 0, V34_TRELLIS_64_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "out-of-range subset was accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].squared_error = NAN;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, SIPPYMODEM_V34_TRELLIS_16_STATE,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT),
+		      malformed, 0, V34_TRELLIS_16_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "non-finite subset metric was accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].squared_error = -1.0;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, SIPPYMODEM_V34_TRELLIS_16_STATE,
-		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT),
+		      malformed, 0, V34_TRELLIS_16_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "negative subset metric was accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	for (size_t symbol = 0; symbol < ARRAY_LENGTH(malformed); ++symbol)
 		for (uint8_t label = 0;
-		     label < SIPPYMODEM_V34_SUBSET_LABEL_COUNT; ++label)
+		     label < V34_SUBSET_LABEL_COUNT; ++label)
 			malformed[symbol].subset[label].squared_error = DBL_MAX;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, SIPPYMODEM_V34_TRELLIS_64_STATE,
-		      SIPPYMODEM_V34_BRANCHES_NUMERIC_FAILURE),
+		      malformed, 0, V34_TRELLIS_64_STATE,
+		      V34_BRANCHES_NUMERIC_FAILURE),
 	      "overflowing branch metric was accepted");
-	CHECK(strcmp(sippymodem_v34_branches_result_name(
-			     SIPPYMODEM_V34_BRANCHES_OK),
+	CHECK(strcmp(v34_branches_result_name(
+			     V34_BRANCHES_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_branches_result_name(
-			     SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT),
+	      strcmp(v34_branches_result_name(
+			     V34_BRANCHES_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_branches_result_name(
-			     SIPPYMODEM_V34_BRANCHES_NUMERIC_FAILURE),
+	      strcmp(v34_branches_result_name(
+			     V34_BRANCHES_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_branches_result_name(
-			     (enum sippymodem_v34_branches_result)99),
+	      strcmp(v34_branches_result_name(
+			     (enum v34_branches_result)99),
 		     "unknown") == 0,
 	      "branch result names changed");
 	return true;

@@ -11,43 +11,43 @@ enum {
 	V34_NONLINEAR_INVERSE_ITERATIONS = 64,
 };
 
-bool sippymodem_v34_nonlinear_parameter_is_valid(
-	enum sippymodem_v34_nonlinear_parameter parameter)
+bool v34_nonlinear_parameter_is_valid(
+	enum v34_nonlinear_parameter parameter)
 {
-	return parameter == SIPPYMODEM_V34_NONLINEAR_THETA_ZERO ||
-	       parameter == SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16;
+	return parameter == V34_NONLINEAR_THETA_ZERO ||
+	       parameter == V34_NONLINEAR_THETA_5_OVER_16;
 }
 
-bool sippymodem_v34_nonlinear_configuration_is_valid(
-	enum sippymodem_v34_nonlinear_parameter parameter,
+bool v34_nonlinear_configuration_is_valid(
+	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude)
 {
-	return sippymodem_v34_nonlinear_parameter_is_valid(parameter) &&
+	return v34_nonlinear_parameter_is_valid(parameter) &&
 	       isfinite(mean_squared_magnitude) && mean_squared_magnitude > 0.0;
 }
 
-static enum sippymodem_v34_nonlinear_result projection_factor(
-	enum sippymodem_v34_nonlinear_parameter parameter,
+static enum v34_nonlinear_result projection_factor(
+	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude, double squared_magnitude,
 	double *factor)
 {
 	double generated = 1.0;
 
-	if (!sippymodem_v34_nonlinear_configuration_is_valid(
+	if (!v34_nonlinear_configuration_is_valid(
 		    parameter, mean_squared_magnitude) ||
 	    !isfinite(squared_magnitude) || squared_magnitude < 0.0 ||
 	    factor == NULL)
-		return SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT;
-	if (parameter == SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16) {
+		return V34_NONLINEAR_INVALID_ARGUMENT;
+	if (parameter == V34_NONLINEAR_THETA_5_OVER_16) {
 		double zeta = V34_NONLINEAR_THETA * squared_magnitude /
 			mean_squared_magnitude;
 
 		generated = 1.0 + zeta / 6.0 + zeta * zeta / 120.0;
 	}
 	if (!isfinite(generated))
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	*factor = generated;
-	return SIPPYMODEM_V34_NONLINEAR_OK;
+	return V34_NONLINEAR_OK;
 }
 
 static double projection_log_factor(double zeta)
@@ -81,7 +81,7 @@ static bool projected_zeta_is_below(
  * increasing. Its inverse is bounded above both by t and by
  * (14400*t)^(1/5), which keeps a fixed bisection well-conditioned without a
  * coefficient table even near the limits of binary64. */
-static enum sippymodem_v34_nonlinear_result inverse_zeta(
+static enum v34_nonlinear_result inverse_zeta(
 	double projected_log_power, double *zeta)
 {
 	double upper_log;
@@ -90,7 +90,7 @@ static enum sippymodem_v34_nonlinear_result inverse_zeta(
 	double projected_power;
 
 	if (!isfinite(projected_log_power) || zeta == NULL)
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	projected_power = exp(projected_log_power);
 	upper_log = fmin(
 		projected_log_power,
@@ -98,10 +98,10 @@ static enum sippymodem_v34_nonlinear_result inverse_zeta(
 	upper = exp(upper_log);
 	if (upper == 0.0) {
 		*zeta = 0.0;
-		return SIPPYMODEM_V34_NONLINEAR_OK;
+		return V34_NONLINEAR_OK;
 	}
 	if (!isfinite(upper))
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	upper = nextafter(upper, INFINITY);
 	for (unsigned int attempt = 0;
 	     attempt < 4u &&
@@ -112,7 +112,7 @@ static enum sippymodem_v34_nonlinear_result inverse_zeta(
 	if (!isfinite(upper) ||
 	    projected_zeta_is_below(
 		    upper, projected_log_power, projected_power))
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	for (unsigned int iteration = 0;
 	     iteration < V34_NONLINEAR_INVERSE_ITERATIONS; ++iteration) {
 		double midpoint = lower + (upper - lower) / 2.0;
@@ -126,37 +126,37 @@ static enum sippymodem_v34_nonlinear_result inverse_zeta(
 			upper = midpoint;
 	}
 	*zeta = lower + (upper - lower) / 2.0;
-	return SIPPYMODEM_V34_NONLINEAR_OK;
+	return V34_NONLINEAR_OK;
 }
 
-enum sippymodem_v34_nonlinear_result
-sippymodem_v34_nonlinear_project_power(
-	enum sippymodem_v34_nonlinear_parameter parameter,
+enum v34_nonlinear_result
+v34_nonlinear_project_power(
+	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude, double squared_magnitude,
 	double *projected_squared_magnitude)
 {
 	double factor;
 	double generated;
-	enum sippymodem_v34_nonlinear_result result;
+	enum v34_nonlinear_result result;
 
 	if (projected_squared_magnitude == NULL)
-		return SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT;
+		return V34_NONLINEAR_INVALID_ARGUMENT;
 	result = projection_factor(
 		parameter, mean_squared_magnitude, squared_magnitude, &factor);
-	if (result != SIPPYMODEM_V34_NONLINEAR_OK)
+	if (result != V34_NONLINEAR_OK)
 		return result;
 	generated = squared_magnitude * factor * factor;
 	if (!isfinite(generated))
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	*projected_squared_magnitude = generated;
-	return SIPPYMODEM_V34_NONLINEAR_OK;
+	return V34_NONLINEAR_OK;
 }
 
-enum sippymodem_v34_nonlinear_result
-sippymodem_v34_nonlinear_encode(
-	enum sippymodem_v34_nonlinear_parameter parameter,
+enum v34_nonlinear_result
+v34_nonlinear_encode(
+	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude,
-	const struct sippymodem_v34_q7_point *precoded_symbol,
+	const struct v34_q7_point *precoded_symbol,
 	struct sippymodem_qam_point *projected_symbol)
 {
 	struct sippymodem_qam_point generated;
@@ -164,20 +164,20 @@ sippymodem_v34_nonlinear_encode(
 	double quadrature;
 	double squared_magnitude;
 	double projection;
-	enum sippymodem_v34_nonlinear_result result;
+	enum v34_nonlinear_result result;
 
 	if (precoded_symbol == NULL || projected_symbol == NULL)
-		return SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT;
+		return V34_NONLINEAR_INVALID_ARGUMENT;
 	in_phase = (double)precoded_symbol->in_phase /
-		SIPPYMODEM_V34_Q7_SCALE;
+		V34_Q7_SCALE;
 	quadrature = (double)precoded_symbol->quadrature /
-		SIPPYMODEM_V34_Q7_SCALE;
+		V34_Q7_SCALE;
 	squared_magnitude =
 		in_phase * in_phase + quadrature * quadrature;
 	result = projection_factor(
 		parameter, mean_squared_magnitude, squared_magnitude,
 		&projection);
-	if (result != SIPPYMODEM_V34_NONLINEAR_OK)
+	if (result != V34_NONLINEAR_OK)
 		return result;
 	generated = (struct sippymodem_qam_point){
 		.in_phase = in_phase * projection,
@@ -185,14 +185,14 @@ sippymodem_v34_nonlinear_encode(
 	};
 	if (!isfinite(generated.in_phase) ||
 	    !isfinite(generated.quadrature))
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	*projected_symbol = generated;
-	return SIPPYMODEM_V34_NONLINEAR_OK;
+	return V34_NONLINEAR_OK;
 }
 
-enum sippymodem_v34_nonlinear_result
-sippymodem_v34_nonlinear_unproject(
-	enum sippymodem_v34_nonlinear_parameter parameter,
+enum v34_nonlinear_result
+v34_nonlinear_unproject(
+	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude,
 	const struct sippymodem_qam_point *projected_symbol,
 	struct sippymodem_qam_point *precoded_estimate)
@@ -205,23 +205,23 @@ sippymodem_v34_nonlinear_unproject(
 	double zeta;
 	double factor;
 
-	if (!sippymodem_v34_nonlinear_configuration_is_valid(
+	if (!v34_nonlinear_configuration_is_valid(
 		    parameter, mean_squared_magnitude) ||
 	    projected_symbol == NULL || precoded_estimate == NULL ||
 	    !isfinite(projected_symbol->in_phase) ||
 	    !isfinite(projected_symbol->quadrature))
-		return SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT;
+		return V34_NONLINEAR_INVALID_ARGUMENT;
 	generated = *projected_symbol;
-	if (parameter == SIPPYMODEM_V34_NONLINEAR_THETA_ZERO) {
+	if (parameter == V34_NONLINEAR_THETA_ZERO) {
 		*precoded_estimate = generated;
-		return SIPPYMODEM_V34_NONLINEAR_OK;
+		return V34_NONLINEAR_OK;
 	}
 	maximum_axis = fmax(
 		fabs(projected_symbol->in_phase),
 		fabs(projected_symbol->quadrature));
 	if (maximum_axis == 0.0) {
 		*precoded_estimate = generated;
-		return SIPPYMODEM_V34_NONLINEAR_OK;
+		return V34_NONLINEAR_OK;
 	}
 	minimum_axis = fmin(
 		fabs(projected_symbol->in_phase),
@@ -231,8 +231,8 @@ sippymodem_v34_nonlinear_unproject(
 		log(V34_NONLINEAR_THETA) + 2.0 * log(maximum_axis) +
 		log1p(axis_ratio * axis_ratio) - log(mean_squared_magnitude);
 	if (inverse_zeta(projected_log_power, &zeta) !=
-	    SIPPYMODEM_V34_NONLINEAR_OK)
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+	    V34_NONLINEAR_OK)
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	factor = 1.0 + zeta / 6.0 + zeta * zeta / 120.0;
 	if (isfinite(factor)) {
 		generated.in_phase /= factor;
@@ -249,20 +249,20 @@ sippymodem_v34_nonlinear_unproject(
 	}
 	if (!isfinite(generated.in_phase) ||
 	    !isfinite(generated.quadrature))
-		return SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE;
+		return V34_NONLINEAR_NUMERIC_FAILURE;
 	*precoded_estimate = generated;
-	return SIPPYMODEM_V34_NONLINEAR_OK;
+	return V34_NONLINEAR_OK;
 }
 
-const char *sippymodem_v34_nonlinear_result_name(
-	enum sippymodem_v34_nonlinear_result result)
+const char *v34_nonlinear_result_name(
+	enum v34_nonlinear_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_NONLINEAR_OK:
+	case V34_NONLINEAR_OK:
 		return "ok";
-	case SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT:
+	case V34_NONLINEAR_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE:
+	case V34_NONLINEAR_NUMERIC_FAILURE:
 		return "numeric failure";
 	}
 	return "unknown";

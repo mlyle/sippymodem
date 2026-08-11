@@ -7,139 +7,139 @@
 #include <stddef.h>
 #include <string.h>
 
-static enum sippymodem_v34_data_stream_result transmitter_result(
-	enum sippymodem_v34_data_transmitter_result result)
+static enum v34_data_stream_result transmitter_result(
+	enum v34_data_transmitter_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_DATA_TRANSMITTER_OK:
-		return SIPPYMODEM_V34_DATA_STREAM_OK;
-	case SIPPYMODEM_V34_DATA_TRANSMITTER_INVALID_ARGUMENT:
-		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
-	case SIPPYMODEM_V34_DATA_TRANSMITTER_OUT_OF_RANGE:
-		return SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE;
-	case SIPPYMODEM_V34_DATA_TRANSMITTER_CLIPPING_RISK:
-		return SIPPYMODEM_V34_DATA_STREAM_CLIPPING_RISK;
-	case SIPPYMODEM_V34_DATA_TRANSMITTER_NUMERIC_FAILURE:
-		return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
-	case SIPPYMODEM_V34_DATA_TRANSMITTER_MAPPING_FRAME_REQUIRED:
-	case SIPPYMODEM_V34_DATA_TRANSMITTER_MAPPING_FRAME_PENDING:
+	case V34_DATA_TRANSMITTER_OK:
+		return V34_DATA_STREAM_OK;
+	case V34_DATA_TRANSMITTER_INVALID_ARGUMENT:
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	case V34_DATA_TRANSMITTER_OUT_OF_RANGE:
+		return V34_DATA_STREAM_OUT_OF_RANGE;
+	case V34_DATA_TRANSMITTER_CLIPPING_RISK:
+		return V34_DATA_STREAM_CLIPPING_RISK;
+	case V34_DATA_TRANSMITTER_NUMERIC_FAILURE:
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
+	case V34_DATA_TRANSMITTER_MAPPING_FRAME_REQUIRED:
+	case V34_DATA_TRANSMITTER_MAPPING_FRAME_PENDING:
 		break;
 	}
-	return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	return V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
-static enum sippymodem_v34_data_stream_result geometry_result(
-	enum sippymodem_v34_frame_schedule_result result)
+static enum v34_data_stream_result geometry_result(
+	enum v34_frame_schedule_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_FRAME_SCHEDULE_OK:
-		return SIPPYMODEM_V34_DATA_STREAM_OK;
-	case SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT:
-		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
-	case SIPPYMODEM_V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION:
-		return SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE;
-	case SIPPYMODEM_V34_FRAME_SCHEDULE_FRAME_COMPLETE:
+	case V34_FRAME_SCHEDULE_OK:
+		return V34_DATA_STREAM_OK;
+	case V34_FRAME_SCHEDULE_INVALID_ARGUMENT:
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	case V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION:
+		return V34_DATA_STREAM_OUT_OF_RANGE;
+	case V34_FRAME_SCHEDULE_FRAME_COMPLETE:
 		break;
 	}
-	return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	return V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
-static enum sippymodem_v34_data_stream_result calibration_result(
-	enum sippymodem_v34_power_calibration_result result)
+static enum v34_data_stream_result calibration_result(
+	enum v34_power_calibration_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_POWER_CALIBRATION_OK:
-		return SIPPYMODEM_V34_DATA_STREAM_OK;
-	case SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT:
-		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
-	case SIPPYMODEM_V34_POWER_CALIBRATION_OUT_OF_RANGE:
-		return SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE;
-	case SIPPYMODEM_V34_POWER_CALIBRATION_NUMERIC_FAILURE:
-		return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	case V34_POWER_CALIBRATION_OK:
+		return V34_DATA_STREAM_OK;
+	case V34_POWER_CALIBRATION_INVALID_ARGUMENT:
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	case V34_POWER_CALIBRATION_OUT_OF_RANGE:
+		return V34_DATA_STREAM_OUT_OF_RANGE;
+	case V34_POWER_CALIBRATION_NUMERIC_FAILURE:
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	}
-	return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	return V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
-enum sippymodem_v34_data_stream_result sippymodem_v34_data_stream_init(
-	struct sippymodem_v34_data_stream *stream,
-	const struct sippymodem_v34_data_stream_configuration *configuration)
+enum v34_data_stream_result v34_data_stream_init(
+	struct v34_data_stream *stream,
+	const struct v34_data_stream_configuration *configuration)
 {
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_frame_schedule schedule;
-	struct sippymodem_v34_scrambler scrambler;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_power_normalizer normalizer;
-	struct sippymodem_v34_data_transmitter transmitter;
-	struct sippymodem_v34_data_stream initialized;
-	enum sippymodem_v34_data_stream_result result;
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_frame_schedule schedule;
+	struct v34_scrambler scrambler;
+	struct v34_4d_encoder encoder;
+	struct v34_power_normalizer normalizer;
+	struct v34_data_transmitter transmitter;
+	struct v34_data_stream initialized;
+	enum v34_data_stream_result result;
 
 	if (stream == NULL || configuration == NULL ||
-	    !sippymodem_v34_phase3_profile_is_valid(&configuration->profile) ||
+	    !v34_phase3_profile_is_valid(&configuration->profile) ||
 	    configuration->primary_data_rate_2400_bps_units >
 		    configuration->profile
 			    .projected_data_rate_2400_bps_units ||
 	    configuration->sample_rate == 0 ||
 	    configuration->nominal_peak_amplitude <= 0 ||
-	    !sippymodem_v34_trellis_selection_is_valid(
+	    !v34_trellis_selection_is_valid(
 		    configuration->trellis_selection) ||
-	    !sippymodem_v34_nonlinear_parameter_is_valid(
+	    !v34_nonlinear_parameter_is_valid(
 		    configuration->nonlinear_parameter))
-		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = geometry_result(sippymodem_v34_frame_geometry_init(
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = geometry_result(v34_frame_geometry_init(
 		&geometry, configuration->profile.symbol_rate,
 		configuration->primary_data_rate_2400_bps_units,
 		configuration->auxiliary_channel_enabled));
-	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+	if (result != V34_DATA_STREAM_OK)
 		return result;
-	if (sippymodem_v34_mapping_parameters_init(
+	if (v34_mapping_parameters_init(
 		    &parameters, &geometry, configuration->expanded_shaping) !=
-	    SIPPYMODEM_V34_MAPPING_PARAMETERS_OK ||
-	    sippymodem_v34_b1_frame_schedule_init(&schedule, &geometry) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
-	    sippymodem_v34_transmit_scrambler_init(
+	    V34_MAPPING_PARAMETERS_OK ||
+	    v34_b1_frame_schedule_init(&schedule, &geometry) !=
+		    V34_FRAME_SCHEDULE_OK ||
+	    v34_transmit_scrambler_init(
 		    &scrambler, configuration->profile.local_role) !=
-		    SIPPYMODEM_V34_FRAMING_OK)
-		return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
-	if (sippymodem_v34_4d_encoder_init(
+		    V34_FRAMING_OK)
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
+	if (v34_4d_encoder_init(
 		    &encoder, &parameters,
 		    configuration->precoder_coefficients,
 		    configuration->trellis_selection) !=
-	    SIPPYMODEM_V34_4D_ENCODER_OK)
-		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = calibration_result(sippymodem_v34_calibrate_mapping_power(
+	    V34_4D_ENCODER_OK)
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = calibration_result(v34_calibrate_mapping_power(
 		&schedule, &scrambler, &encoder,
 		configuration->nonlinear_parameter, &normalizer));
-	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+	if (result != V34_DATA_STREAM_OK)
 		return result;
-	result = transmitter_result(sippymodem_v34_data_transmitter_init(
+	result = transmitter_result(v34_data_transmitter_init(
 		&transmitter, &schedule, &scrambler, &encoder, &normalizer,
 		&configuration->profile, configuration->sample_rate,
 		configuration->nominal_peak_amplitude));
-	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+	if (result != V34_DATA_STREAM_OK)
 		return result;
-	result = sippymodem_v34_data_stream_init_b1(
+	result = v34_data_stream_init_b1(
 		&initialized, &transmitter);
-	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+	if (result != V34_DATA_STREAM_OK)
 		return result;
 	*stream = initialized;
-	return SIPPYMODEM_V34_DATA_STREAM_OK;
+	return V34_DATA_STREAM_OK;
 }
 
 static bool schedule_is_at_b1_start(
-	const struct sippymodem_v34_frame_schedule *schedule)
+	const struct v34_frame_schedule *schedule)
 {
-	return sippymodem_v34_frame_schedule_is_valid(schedule) &&
+	return v34_frame_schedule_is_valid(schedule) &&
 	       schedule->data_frame_in_superframe + 1u ==
 		       schedule->geometry.data_frames_per_superframe &&
 	       schedule->next_mapping_frame == 0;
 }
 
-bool sippymodem_v34_data_stream_is_valid(
-	const struct sippymodem_v34_data_stream *stream)
+bool v34_data_stream_is_valid(
+	const struct v34_data_stream *stream)
 {
 	return stream != NULL &&
-	       sippymodem_v34_data_transmitter_is_valid(
+	       v34_data_transmitter_is_valid(
 		       &stream->transmitter) &&
 	       (!stream->b1_active ||
 		stream->transmitter.schedule.data_frame_in_superframe + 1u ==
@@ -147,31 +147,31 @@ bool sippymodem_v34_data_stream_is_valid(
 				.data_frames_per_superframe);
 }
 
-enum sippymodem_v34_data_stream_result sippymodem_v34_data_stream_init_b1(
-	struct sippymodem_v34_data_stream *stream,
-	const struct sippymodem_v34_data_transmitter *transmitter)
+enum v34_data_stream_result v34_data_stream_init_b1(
+	struct v34_data_stream *stream,
+	const struct v34_data_transmitter *transmitter)
 {
-	struct sippymodem_v34_data_stream initialized;
+	struct v34_data_stream initialized;
 
 	if (stream == NULL ||
-	    !sippymodem_v34_data_transmitter_is_valid(transmitter) ||
-	    !sippymodem_v34_data_transmitter_needs_mapping_frame(transmitter) ||
+	    !v34_data_transmitter_is_valid(transmitter) ||
+	    !v34_data_transmitter_needs_mapping_frame(transmitter) ||
 	    !schedule_is_at_b1_start(&transmitter->schedule))
-		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
-	initialized = (struct sippymodem_v34_data_stream){
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	initialized = (struct v34_data_stream){
 		.transmitter = *transmitter,
 		.b1_active = true,
 	};
-	if (!sippymodem_v34_data_stream_is_valid(&initialized))
-		return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	if (!v34_data_stream_is_valid(&initialized))
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	*stream = initialized;
-	return SIPPYMODEM_V34_DATA_STREAM_OK;
+	return V34_DATA_STREAM_OK;
 }
 
-bool sippymodem_v34_data_stream_is_transmitting_b1(
-	const struct sippymodem_v34_data_stream *stream)
+bool v34_data_stream_is_transmitting_b1(
+	const struct v34_data_stream *stream)
 {
-	return sippymodem_v34_data_stream_is_valid(stream) &&
+	return v34_data_stream_is_valid(stream) &&
 	       stream->b1_active;
 }
 
@@ -187,10 +187,10 @@ static bool bits_are_binary(const uint8_t *bits, size_t count)
 }
 
 static bool acquire_mapping_frame(
-	const struct sippymodem_v34_data_stream *stream,
-	sippymodem_v34_mapping_frame_source source, void *source_context,
-	const struct sippymodem_v34_mapping_frame *request,
-	uint8_t primary_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS],
+	const struct v34_data_stream *stream,
+	v34_mapping_frame_source source, void *source_context,
+	const struct v34_mapping_frame *request,
+	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS],
 	uint8_t *auxiliary_bit)
 {
 	uint8_t *auxiliary = request->carries_auxiliary_bit ?
@@ -211,75 +211,75 @@ static bool acquire_mapping_frame(
 	       (auxiliary == NULL || *auxiliary <= 1u);
 }
 
-enum sippymodem_v34_data_stream_result sippymodem_v34_data_stream_sample(
-	struct sippymodem_v34_data_stream *stream,
-	sippymodem_v34_mapping_frame_source source, void *source_context,
+enum v34_data_stream_result v34_data_stream_sample(
+	struct v34_data_stream *stream,
+	v34_mapping_frame_source source, void *source_context,
 	int16_t *sample, bool *symbol_accepted)
 {
-	struct sippymodem_v34_data_stream next;
-	struct sippymodem_v34_mapping_frame request;
-	uint8_t primary_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	struct v34_data_stream next;
+	struct v34_mapping_frame request;
+	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t auxiliary_bit;
 	const uint8_t *auxiliary;
 	int16_t generated_sample;
 	bool generated_accepted;
-	enum sippymodem_v34_data_stream_result result;
+	enum v34_data_stream_result result;
 
-	if (!sippymodem_v34_data_stream_is_valid(stream) || sample == NULL ||
+	if (!v34_data_stream_is_valid(stream) || sample == NULL ||
 	    symbol_accepted == NULL)
-		return SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT;
-	if (!sippymodem_v34_data_transmitter_needs_mapping_frame(
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	if (!v34_data_transmitter_needs_mapping_frame(
 		    &stream->transmitter))
-		return transmitter_result(sippymodem_v34_data_transmitter_sample(
+		return transmitter_result(v34_data_transmitter_sample(
 			&stream->transmitter, sample, symbol_accepted));
 
 	next = *stream;
-	if (next.b1_active && sippymodem_v34_frame_schedule_is_complete(
+	if (next.b1_active && v34_frame_schedule_is_complete(
 				      &next.transmitter.schedule))
 		next.b1_active = false;
 	result = transmitter_result(
-		sippymodem_v34_data_transmitter_preview_mapping_frame(
+		v34_data_transmitter_preview_mapping_frame(
 			&next.transmitter, &request));
-	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+	if (result != V34_DATA_STREAM_OK)
 		return result;
 	if (!acquire_mapping_frame(
 		    &next, source, source_context, &request, primary_bits,
 		    &auxiliary_bit))
-		return SIPPYMODEM_V34_DATA_STREAM_SOURCE_FAILURE;
+		return V34_DATA_STREAM_SOURCE_FAILURE;
 	auxiliary = request.carries_auxiliary_bit ? &auxiliary_bit : NULL;
 	result = transmitter_result(
-		sippymodem_v34_data_transmitter_queue_mapping_frame(
+		v34_data_transmitter_queue_mapping_frame(
 			&next.transmitter, primary_bits, request.primary_bits,
 			auxiliary));
-	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+	if (result != V34_DATA_STREAM_OK)
 		return result;
-	result = transmitter_result(sippymodem_v34_data_transmitter_sample(
+	result = transmitter_result(v34_data_transmitter_sample(
 		&next.transmitter, &generated_sample, &generated_accepted));
-	if (result != SIPPYMODEM_V34_DATA_STREAM_OK)
+	if (result != V34_DATA_STREAM_OK)
 		return result;
-	if (!sippymodem_v34_data_stream_is_valid(&next))
-		return SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE;
+	if (!v34_data_stream_is_valid(&next))
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	*stream = next;
 	*sample = generated_sample;
 	*symbol_accepted = generated_accepted;
-	return SIPPYMODEM_V34_DATA_STREAM_OK;
+	return V34_DATA_STREAM_OK;
 }
 
-const char *sippymodem_v34_data_stream_result_name(
-	enum sippymodem_v34_data_stream_result result)
+const char *v34_data_stream_result_name(
+	enum v34_data_stream_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_DATA_STREAM_OK:
+	case V34_DATA_STREAM_OK:
 		return "ok";
-	case SIPPYMODEM_V34_DATA_STREAM_SOURCE_FAILURE:
+	case V34_DATA_STREAM_SOURCE_FAILURE:
 		return "mapping-frame source failure";
-	case SIPPYMODEM_V34_DATA_STREAM_INVALID_ARGUMENT:
+	case V34_DATA_STREAM_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_DATA_STREAM_OUT_OF_RANGE:
+	case V34_DATA_STREAM_OUT_OF_RANGE:
 		return "out of range";
-	case SIPPYMODEM_V34_DATA_STREAM_CLIPPING_RISK:
+	case V34_DATA_STREAM_CLIPPING_RISK:
 		return "clipping risk";
-	case SIPPYMODEM_V34_DATA_STREAM_NUMERIC_FAILURE:
+	case V34_DATA_STREAM_NUMERIC_FAILURE:
 		return "numeric failure";
 	}
 	return "unknown";

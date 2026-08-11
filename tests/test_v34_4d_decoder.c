@@ -7,42 +7,42 @@
 #include <string.h>
 
 struct symbol_rate_fixture {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t minimum_rate;
 	uint8_t maximum_rate;
 };
 
 static const struct symbol_rate_fixture SYMBOL_RATES[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, 9 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, 11 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 2, 11 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 2, 12 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 2, 13 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 2, 14 },
+	{ V34_SYMBOL_RATE_2400, 1, 9 },
+	{ V34_SYMBOL_RATE_2743, 2, 11 },
+	{ V34_SYMBOL_RATE_2800, 2, 11 },
+	{ V34_SYMBOL_RATE_3000, 2, 12 },
+	{ V34_SYMBOL_RATE_3200, 2, 13 },
+	{ V34_SYMBOL_RATE_3429, 2, 14 },
 };
 
 static bool initialize_parameters(
-	enum sippymodem_v34_symbol_rate symbol_rate, uint8_t rate,
+	enum v34_symbol_rate symbol_rate, uint8_t rate,
 	bool auxiliary, bool expanded,
-	struct sippymodem_v34_mapping_parameters *parameters)
+	struct v34_mapping_parameters *parameters)
 {
-	struct sippymodem_v34_frame_geometry geometry;
+	struct v34_frame_geometry geometry;
 
-	return sippymodem_v34_frame_geometry_init(
+	return v34_frame_geometry_init(
 		       &geometry, symbol_rate, rate, auxiliary) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_mapping_parameters_init(
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_mapping_parameters_init(
 		       parameters, &geometry, expanded) ==
-		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK;
+		       V34_MAPPING_PARAMETERS_OK;
 }
 
 static bool generate_decision(
-	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct v34_mapping_parameters *parameters,
 	uint8_t previous_differential_output,
-	const struct sippymodem_v34_4d_mapping_input *mapping,
-	const uint8_t ring_index[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_4d_mapping_input *mapping,
+	const uint8_t ring_index[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	uint8_t trellis_output,
-	struct sippymodem_v34_decided_4d_interval *decided)
+	struct v34_decided_4d_interval *decided)
 {
 	uint8_t differential_output = (uint8_t)(
 		(previous_differential_output + mapping->differential_input) &
@@ -56,17 +56,17 @@ static bool generate_decision(
 
 	decided->trellis_output = trellis_output;
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		const struct sippymodem_v34_2d_mapping_input input = {
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		const struct v34_2d_mapping_input input = {
 			.ring_index = ring_index[symbol],
 			.point_index = mapping->point_index[symbol],
 			.clockwise_quarter_turns = rotations[symbol],
 		};
-		struct sippymodem_v34_2d_mapping_output output;
+		struct v34_2d_mapping_output output;
 
-		if (sippymodem_v34_map_2d_symbol(
+		if (v34_map_2d_symbol(
 			    parameters, &input, &output) !=
-		    SIPPYMODEM_V34_MAPPER_OK)
+		    V34_MAPPER_OK)
 			return false;
 		decided->mapper_output[symbol] = output.mapper_output;
 	}
@@ -74,9 +74,9 @@ static bool generate_decision(
 }
 
 static bool decoded_matches(
-	const struct sippymodem_v34_decoded_4d_interval *decoded,
-	const struct sippymodem_v34_4d_mapping_input *mapping,
-	const uint8_t ring_index[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_decoded_4d_interval *decoded,
+	const struct v34_4d_mapping_input *mapping,
+	const uint8_t ring_index[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	uint8_t differential_output)
 {
 	return decoded->mapping.rotation_bit == mapping->rotation_bit &&
@@ -109,8 +109,8 @@ static bool test_all_supported_sequences(void)
 		     rate <= fixture->maximum_rate; ++rate) {
 			for (uint8_t auxiliary = 0; auxiliary < 2u; ++auxiliary) {
 				for (uint8_t expanded = 0; expanded < 2u; ++expanded) {
-					struct sippymodem_v34_mapping_parameters parameters;
-					struct sippymodem_v34_4d_decoder decoder;
+					struct v34_mapping_parameters parameters;
+					struct v34_4d_decoder decoder;
 					uint8_t previous = 0;
 					uint8_t point_limit;
 
@@ -118,9 +118,9 @@ static bool test_all_supported_sequences(void)
 						      fixture->symbol_rate, rate,
 						      auxiliary != 0u, expanded != 0u,
 						      &parameters) &&
-					      sippymodem_v34_4d_decoder_init(
+					      v34_4d_decoder_init(
 						      &decoder, &parameters) ==
-						      SIPPYMODEM_V34_4D_DECODER_OK,
+						      V34_4D_DECODER_OK,
 					      "decoder configuration %zu/%u/%u/%u failed",
 					      rate_index, rate, auxiliary, expanded);
 					point_limit = (uint8_t)(
@@ -131,7 +131,7 @@ static bool test_all_supported_sequences(void)
 					configuration_count++;
 					for (uint8_t interval = 0; interval < 8u;
 					     ++interval) {
-						struct sippymodem_v34_4d_mapping_input mapping = {
+						struct v34_4d_mapping_input mapping = {
 							.rotation_bit =
 								(uint8_t)((interval + rate) & 1u),
 							.differential_input = (uint8_t)(
@@ -153,15 +153,15 @@ static bool test_all_supported_sequences(void)
 							(uint8_t)((interval + auxiliary) & 1u);
 						uint8_t current = (uint8_t)(
 							(previous + mapping.differential_input) & 3u);
-						struct sippymodem_v34_decided_4d_interval decided;
-						struct sippymodem_v34_decoded_4d_interval decoded;
+						struct v34_decided_4d_interval decided;
+						struct v34_decoded_4d_interval decoded;
 
 						CHECK(generate_decision(
 							      &parameters, previous, &mapping,
 							      ring_index, trellis_output, &decided) &&
-						      sippymodem_v34_decode_4d_interval(
+						      v34_decode_4d_interval(
 							      &decoder, &decided, &decoded) ==
-							      SIPPYMODEM_V34_4D_DECODER_OK &&
+							      V34_4D_DECODER_OK &&
 						      decoded_matches(
 							      &decoded, &mapping, ring_index, current) &&
 						      decoder.previous_differential_output == current,
@@ -191,8 +191,8 @@ static bool test_all_supported_sequences(void)
 }
 
 static bool decoders_are_equal(
-	const struct sippymodem_v34_4d_decoder *left,
-	const struct sippymodem_v34_4d_decoder *right)
+	const struct v34_4d_decoder *left,
+	const struct v34_4d_decoder *right)
 {
 	return memcmp(
 		       &left->parameters, &right->parameters,
@@ -202,67 +202,67 @@ static bool decoders_are_equal(
 }
 
 static bool rejection_is_transactional(
-	struct sippymodem_v34_4d_decoder *decoder,
-	const struct sippymodem_v34_decided_4d_interval *decided)
+	struct v34_4d_decoder *decoder,
+	const struct v34_decided_4d_interval *decided)
 {
-	struct sippymodem_v34_4d_decoder saved = *decoder;
-	struct sippymodem_v34_decoded_4d_interval decoded;
-	struct sippymodem_v34_decoded_4d_interval decoded_saved;
+	struct v34_4d_decoder saved = *decoder;
+	struct v34_decoded_4d_interval decoded;
+	struct v34_decoded_4d_interval decoded_saved;
 
 	memset(&decoded, 0xa5, sizeof(decoded));
 	decoded_saved = decoded;
-	return sippymodem_v34_decode_4d_interval(
+	return v34_decode_4d_interval(
 		       decoder, decided, &decoded) ==
-		       SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT &&
+		       V34_4D_DECODER_INVALID_ARGUMENT &&
 	       decoders_are_equal(decoder, &saved) &&
 	       memcmp(&decoded, &decoded_saved, sizeof(decoded)) == 0;
 }
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_mapping_parameters invalid_parameters;
-	struct sippymodem_v34_4d_decoder decoder;
-	struct sippymodem_v34_4d_decoder saved;
-	struct sippymodem_v34_4d_decoder invalid;
-	struct sippymodem_v34_4d_mapping_input mapping = { 0 };
+	struct v34_mapping_parameters parameters;
+	struct v34_mapping_parameters invalid_parameters;
+	struct v34_4d_decoder decoder;
+	struct v34_4d_decoder saved;
+	struct v34_4d_decoder invalid;
+	struct v34_4d_mapping_input mapping = { 0 };
 	uint8_t ring_index[2] = { 0 };
-	struct sippymodem_v34_decided_4d_interval decided;
-	struct sippymodem_v34_decided_4d_interval malformed;
-	struct sippymodem_v34_decoded_4d_interval decoded;
-	struct sippymodem_v34_2d_mapping_input rotated = {
+	struct v34_decided_4d_interval decided;
+	struct v34_decided_4d_interval malformed;
+	struct v34_decoded_4d_interval decoded;
+	struct v34_2d_mapping_input rotated = {
 		.clockwise_quarter_turns = 1,
 	};
-	struct sippymodem_v34_2d_mapping_output rotated_output;
+	struct v34_2d_mapping_output rotated_output;
 
 	CHECK(initialize_parameters(
-		      SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, false, false,
+		      V34_SYMBOL_RATE_2400, 1, false, false,
 		      &parameters) &&
-	      sippymodem_v34_4d_decoder_init(&decoder, &parameters) ==
-		      SIPPYMODEM_V34_4D_DECODER_OK &&
+	      v34_4d_decoder_init(&decoder, &parameters) ==
+		      V34_4D_DECODER_OK &&
 	      generate_decision(
 		      &parameters, 0, &mapping, ring_index, 0, &decided),
 	      "decoder validation fixture did not initialize");
 	saved = decoder;
 	invalid_parameters = parameters;
 	invalid_parameters.ring_count++;
-	CHECK(sippymodem_v34_4d_decoder_init(NULL, &parameters) ==
-		      SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_decoder_init(&decoder, NULL) ==
-		      SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_decoder_init(
+	CHECK(v34_4d_decoder_init(NULL, &parameters) ==
+		      V34_4D_DECODER_INVALID_ARGUMENT &&
+	      v34_4d_decoder_init(&decoder, NULL) ==
+		      V34_4D_DECODER_INVALID_ARGUMENT &&
+	      v34_4d_decoder_init(
 		      &decoder, &invalid_parameters) ==
-		      SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT &&
+		      V34_4D_DECODER_INVALID_ARGUMENT &&
 	      decoders_are_equal(&decoder, &saved),
 	      "invalid decoder initialization changed its destination");
-	CHECK(sippymodem_v34_4d_decoder_is_valid(&decoder) &&
-	      !sippymodem_v34_4d_decoder_is_valid(NULL) &&
-	      sippymodem_v34_decode_4d_interval(NULL, &decided, &decoded) ==
-		      SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_decode_4d_interval(&decoder, NULL, &decoded) ==
-		      SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_decode_4d_interval(&decoder, &decided, NULL) ==
-		      SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT,
+	CHECK(v34_4d_decoder_is_valid(&decoder) &&
+	      !v34_4d_decoder_is_valid(NULL) &&
+	      v34_decode_4d_interval(NULL, &decided, &decoded) ==
+		      V34_4D_DECODER_INVALID_ARGUMENT &&
+	      v34_decode_4d_interval(&decoder, NULL, &decoded) ==
+		      V34_4D_DECODER_INVALID_ARGUMENT &&
+	      v34_decode_4d_interval(&decoder, &decided, NULL) ==
+		      V34_4D_DECODER_INVALID_ARGUMENT,
 	      "decoder accepted an invalid boundary argument");
 
 	malformed = decided;
@@ -273,9 +273,9 @@ static bool test_validation(void)
 	malformed.mapper_output[0].in_phase++;
 	CHECK(rejection_is_transactional(&decoder, &malformed),
 	      "off-grid mapper output changed decoder state");
-	CHECK(sippymodem_v34_map_2d_symbol(
+	CHECK(v34_map_2d_symbol(
 		      &parameters, &rotated, &rotated_output) ==
-		      SIPPYMODEM_V34_MAPPER_OK,
+		      V34_MAPPER_OK,
 	      "inconsistent-rotation fixture did not map");
 	malformed = decided;
 	malformed.mapper_output[1] = rotated_output.mapper_output;
@@ -283,22 +283,22 @@ static bool test_validation(void)
 	      "inconsistent 4D rotation changed decoder state");
 	invalid = decoder;
 	invalid.previous_differential_output = 4;
-	CHECK(!sippymodem_v34_4d_decoder_is_valid(&invalid) &&
+	CHECK(!v34_4d_decoder_is_valid(&invalid) &&
 	      rejection_is_transactional(&invalid, &decided),
 	      "invalid differential state was accepted");
 	invalid = decoder;
 	invalid.parameters = invalid_parameters;
-	CHECK(!sippymodem_v34_4d_decoder_is_valid(&invalid) &&
+	CHECK(!v34_4d_decoder_is_valid(&invalid) &&
 	      rejection_is_transactional(&invalid, &decided),
 	      "invalid mapping parameters were accepted");
-	CHECK(strcmp(sippymodem_v34_4d_decoder_result_name(
-		     SIPPYMODEM_V34_4D_DECODER_OK),
+	CHECK(strcmp(v34_4d_decoder_result_name(
+		     V34_4D_DECODER_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_4d_decoder_result_name(
-		     SIPPYMODEM_V34_4D_DECODER_INVALID_ARGUMENT),
+	      strcmp(v34_4d_decoder_result_name(
+		     V34_4D_DECODER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_4d_decoder_result_name(
-		     (enum sippymodem_v34_4d_decoder_result)2),
+	      strcmp(v34_4d_decoder_result_name(
+		     (enum v34_4d_decoder_result)2),
 		     "unknown") == 0,
 	      "decoder result names changed");
 	return true;

@@ -12,19 +12,19 @@ struct primary_bit_cursor {
 };
 
 struct primary_bit_builder {
-	uint8_t bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS];
 	size_t count;
 	size_t limit;
 };
 
 static bool mapping_frame_matches_parameters(
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
-	const struct sippymodem_v34_mapping_parameters *parameters)
+	const struct v34_mapping_frame *mapping_frame,
+	const struct v34_mapping_parameters *parameters)
 {
 	uint8_t expected_bits;
 
 	if (mapping_frame == NULL ||
-	    !sippymodem_v34_mapping_parameters_is_valid(parameters))
+	    !v34_mapping_parameters_is_valid(parameters))
 		return false;
 	expected_bits = (uint8_t)(
 		parameters->mapping_frame_bits - !mapping_frame->high_frame);
@@ -94,7 +94,7 @@ static bool put_primary_value(
 
 static bool take_rotation_bit(
 	struct primary_bit_cursor *cursor,
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
+	const struct v34_mapping_frame *mapping_frame,
 	const uint8_t *auxiliary_bit, uint8_t interval, uint8_t *bit)
 {
 	if (interval == 0 && mapping_frame->carries_auxiliary_bit) {
@@ -106,10 +106,10 @@ static bool take_rotation_bit(
 
 static bool parse_regular_frame(
 	struct primary_bit_cursor *cursor,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_mapping_frame *mapping_frame,
 	const uint8_t *auxiliary_bit,
-	struct sippymodem_v34_parsed_mapping_frame *parsed)
+	struct v34_parsed_mapping_frame *parsed)
 {
 	uint8_t shell_bits = (uint8_t)(
 		parameters->shell_mapper_bits - !mapping_frame->high_frame);
@@ -117,9 +117,9 @@ static bool parse_regular_frame(
 	if (!take_primary_value(cursor, shell_bits, &parsed->shell_label))
 		return false;
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
-		struct sippymodem_v34_4d_mapping_input *input =
+		struct v34_4d_mapping_input *input =
 			&parsed->interval[interval];
 		uint8_t i2;
 		uint8_t i3;
@@ -132,7 +132,7 @@ static bool parse_regular_frame(
 			return false;
 		input->differential_input = (uint8_t)(i2 | (i3 << 1));
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol) {
 			uint32_t point_index;
 
@@ -169,9 +169,9 @@ static bool special_i3_interval_count(
 
 static bool parse_short_frame(
 	struct primary_bit_cursor *cursor,
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
+	const struct v34_mapping_frame *mapping_frame,
 	const uint8_t *auxiliary_bit,
-	struct sippymodem_v34_parsed_mapping_frame *parsed)
+	struct v34_parsed_mapping_frame *parsed)
 {
 	uint8_t i3_intervals;
 
@@ -179,9 +179,9 @@ static bool parse_short_frame(
 		    mapping_frame->data_bits, &i3_intervals))
 		return false;
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
-		struct sippymodem_v34_4d_mapping_input *input =
+		struct v34_4d_mapping_input *input =
 			&parsed->interval[interval];
 		uint8_t i2;
 		uint8_t i3 = 0;
@@ -198,15 +198,15 @@ static bool parse_short_frame(
 	return true;
 }
 
-bool sippymodem_v34_parsed_mapping_frame_is_valid(
-	const struct sippymodem_v34_parsed_mapping_frame *parsed,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_mapping_frame *mapping_frame)
+bool v34_parsed_mapping_frame_is_valid(
+	const struct v34_parsed_mapping_frame *parsed,
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_mapping_frame *mapping_frame)
 {
 	uint32_t shell_limit;
 	uint8_t point_limit;
 	uint8_t i3_intervals =
-		SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+		V34_4D_INTERVALS_PER_MAPPING_FRAME;
 
 	if (parsed == NULL ||
 	    !mapping_frame_matches_parameters(mapping_frame, parameters))
@@ -224,9 +224,9 @@ bool sippymodem_v34_parsed_mapping_frame_is_valid(
 	if (parsed->shell_label >= shell_limit)
 		return false;
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
-		const struct sippymodem_v34_4d_mapping_input *input =
+		const struct v34_4d_mapping_input *input =
 			&parsed->interval[interval];
 
 		if (input->rotation_bit > 1u ||
@@ -235,7 +235,7 @@ bool sippymodem_v34_parsed_mapping_frame_is_valid(
 		     input->differential_input > 1u))
 			return false;
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol) {
 			if (input->point_index[symbol] >= point_limit)
 				return false;
@@ -244,14 +244,14 @@ bool sippymodem_v34_parsed_mapping_frame_is_valid(
 	return true;
 }
 
-enum sippymodem_v34_parser_result sippymodem_v34_parse_mapping_frame(
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
+enum v34_parser_result v34_parse_mapping_frame(
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_mapping_frame *mapping_frame,
 	const uint8_t *scrambled_primary_bits,
 	size_t scrambled_primary_bit_count, const uint8_t *auxiliary_bit,
-	struct sippymodem_v34_parsed_mapping_frame *parsed)
+	struct v34_parsed_mapping_frame *parsed)
 {
-	struct sippymodem_v34_parsed_mapping_frame generated = { 0 };
+	struct v34_parsed_mapping_frame generated = { 0 };
 	struct primary_bit_cursor cursor = {
 		.bits = scrambled_primary_bits,
 		.count = scrambled_primary_bit_count,
@@ -264,11 +264,11 @@ enum sippymodem_v34_parser_result sippymodem_v34_parse_mapping_frame(
 	    scrambled_primary_bit_count != mapping_frame->primary_bits ||
 	    !primary_bits_are_valid(
 		    scrambled_primary_bits, scrambled_primary_bit_count))
-		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
+		return V34_PARSER_INVALID_ARGUMENT;
 	auxiliary_expected = mapping_frame->carries_auxiliary_bit;
 	if ((auxiliary_bit != NULL) != auxiliary_expected ||
 	    (auxiliary_expected && *auxiliary_bit > 1u))
-		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
+		return V34_PARSER_INVALID_ARGUMENT;
 
 	if (parameters->mapping_frame_bits > 12u)
 		parsed_ok = parse_regular_frame(
@@ -278,22 +278,22 @@ enum sippymodem_v34_parser_result sippymodem_v34_parse_mapping_frame(
 		parsed_ok = parse_short_frame(
 			&cursor, mapping_frame, auxiliary_bit, &generated);
 	if (!parsed_ok || cursor.next != cursor.count ||
-	    !sippymodem_v34_parsed_mapping_frame_is_valid(
+	    !v34_parsed_mapping_frame_is_valid(
 		    &generated, parameters, mapping_frame))
-		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
+		return V34_PARSER_INVALID_ARGUMENT;
 	*parsed = generated;
-	return SIPPYMODEM_V34_PARSER_OK;
+	return V34_PARSER_OK;
 }
 
 static bool recover_parsed_bits(
 	struct primary_bit_builder *builder,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
-	const struct sippymodem_v34_parsed_mapping_frame *parsed,
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_mapping_frame *mapping_frame,
+	const struct v34_parsed_mapping_frame *parsed,
 	uint8_t *auxiliary_bit)
 {
 	uint8_t i3_intervals =
-		SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+		V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	uint8_t shell_bits = 0;
 
 	if (parameters->mapping_frame_bits > 12u) {
@@ -306,9 +306,9 @@ static bool recover_parsed_bits(
 	if (!put_primary_value(builder, parsed->shell_label, shell_bits))
 		return false;
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
-		const struct sippymodem_v34_4d_mapping_input *input =
+		const struct v34_4d_mapping_input *input =
 			&parsed->interval[interval];
 
 		if (interval == 0 && mapping_frame->carries_auxiliary_bit)
@@ -323,7 +323,7 @@ static bool recover_parsed_bits(
 			     (input->differential_input >> 1) & 1u)))
 			return false;
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol) {
 			if (!put_primary_value(
 				    builder, input->point_index[symbol],
@@ -335,11 +335,11 @@ static bool recover_parsed_bits(
 	return builder->count == builder->limit;
 }
 
-enum sippymodem_v34_parser_result
-sippymodem_v34_recover_mapping_frame_bits(
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_mapping_frame *mapping_frame,
-	const struct sippymodem_v34_parsed_mapping_frame *parsed,
+enum v34_parser_result
+v34_recover_mapping_frame_bits(
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_mapping_frame *mapping_frame,
+	const struct v34_parsed_mapping_frame *parsed,
 	uint8_t *scrambled_primary_bits, size_t scrambled_primary_bit_count,
 	uint8_t *auxiliary_bit)
 {
@@ -349,30 +349,30 @@ sippymodem_v34_recover_mapping_frame_bits(
 	uint8_t recovered_auxiliary = 0;
 	bool auxiliary_expected;
 
-	if (!sippymodem_v34_parsed_mapping_frame_is_valid(
+	if (!v34_parsed_mapping_frame_is_valid(
 		    parsed, parameters, mapping_frame) ||
 	    scrambled_primary_bits == NULL ||
 	    scrambled_primary_bit_count != mapping_frame->primary_bits)
-		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
+		return V34_PARSER_INVALID_ARGUMENT;
 	auxiliary_expected = mapping_frame->carries_auxiliary_bit;
 	if ((auxiliary_bit != NULL) != auxiliary_expected ||
 	    !recover_parsed_bits(
 		    &builder, parameters, mapping_frame, parsed,
 		    &recovered_auxiliary))
-		return SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT;
+		return V34_PARSER_INVALID_ARGUMENT;
 	memcpy(scrambled_primary_bits, builder.bits, builder.count);
 	if (auxiliary_bit != NULL)
 		*auxiliary_bit = recovered_auxiliary;
-	return SIPPYMODEM_V34_PARSER_OK;
+	return V34_PARSER_OK;
 }
 
-const char *sippymodem_v34_parser_result_name(
-	enum sippymodem_v34_parser_result result)
+const char *v34_parser_result_name(
+	enum v34_parser_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_PARSER_OK:
+	case V34_PARSER_OK:
 		return "ok";
-	case SIPPYMODEM_V34_PARSER_INVALID_ARGUMENT:
+	case V34_PARSER_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

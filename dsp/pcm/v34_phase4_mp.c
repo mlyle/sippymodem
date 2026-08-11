@@ -5,14 +5,14 @@
 #include <string.h>
 
 struct encoded_mp_record {
-	uint8_t frame[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES];
+	uint8_t frame[V34_MP_TYPE1_FRAME_BYTES];
 	size_t bit_count;
 };
 
 static size_t bits_per_symbol(
-	enum sippymodem_v34_constellation_size constellation)
+	enum v34_constellation_size constellation)
 {
-	return constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT ? 4u :
+	return constellation == V34_CONSTELLATION_16_POINT ? 4u :
 								    2u;
 }
 
@@ -30,7 +30,7 @@ static bool unused_frame_storage_is_zero(
 			return false;
 		++byte_index;
 	}
-	for (; byte_index < SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES;
+	for (; byte_index < V34_MP_TYPE1_FRAME_BYTES;
 	     ++byte_index) {
 		if (frame[byte_index] != 0)
 			return false;
@@ -40,36 +40,36 @@ static bool unused_frame_storage_is_zero(
 
 static bool frame_is_valid(const uint8_t *frame, size_t bit_count)
 {
-	if (bit_count != SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS &&
-	    bit_count != SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS)
+	if (bit_count != V34_MP_TYPE0_FRAME_BITS &&
+	    bit_count != V34_MP_TYPE1_FRAME_BITS)
 		return false;
 	if (!unused_frame_storage_is_zero(frame, bit_count))
 		return false;
-	if (bit_count == SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS) {
-		struct sippymodem_v34_mp_parameters parameters;
+	if (bit_count == V34_MP_TYPE0_FRAME_BITS) {
+		struct v34_mp_parameters parameters;
 
-		return sippymodem_v34_mp_type0_decode(
-			       frame, SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES,
-			       &parameters) == SIPPYMODEM_V34_MP_OK;
+		return v34_mp_type0_decode(
+			       frame, V34_MP_TYPE0_FRAME_BYTES,
+			       &parameters) == V34_MP_OK;
 	}
 	{
-		struct sippymodem_v34_mp_type1_parameters parameters;
+		struct v34_mp_type1_parameters parameters;
 
-		return sippymodem_v34_mp_type1_decode(
-			       frame, SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES,
-			       &parameters) == SIPPYMODEM_V34_MP_OK;
+		return v34_mp_type1_decode(
+			       frame, V34_MP_TYPE1_FRAME_BYTES,
+			       &parameters) == V34_MP_OK;
 	}
 }
 
-bool sippymodem_v34_phase4_mp_is_valid(
-	const struct sippymodem_v34_phase4_mp *transmitter)
+bool v34_phase4_mp_is_valid(
+	const struct v34_phase4_mp *transmitter)
 {
 	size_t symbol_bits;
 
 	if (transmitter == NULL ||
-	    !sippymodem_v34_constellation_size_is_valid(
+	    !v34_constellation_size_is_valid(
 		    transmitter->constellation) ||
-	    !sippymodem_v34_transmit_scrambler_is_valid(
+	    !v34_transmit_scrambler_is_valid(
 		    &transmitter->scrambler, transmitter->role) ||
 	    transmitter->previous_clockwise_quarter_turns > 3u ||
 	    transmitter->bit_index > transmitter->frame_bit_count ||
@@ -80,78 +80,78 @@ bool sippymodem_v34_phase4_mp_is_valid(
 	return transmitter->bit_index % symbol_bits == 0;
 }
 
-bool sippymodem_v34_phase4_mp_record_is_complete(
-	const struct sippymodem_v34_phase4_mp *transmitter)
+bool v34_phase4_mp_record_is_complete(
+	const struct v34_phase4_mp *transmitter)
 {
-	return sippymodem_v34_phase4_mp_is_valid(transmitter) &&
+	return v34_phase4_mp_is_valid(transmitter) &&
 	       transmitter->bit_index == transmitter->frame_bit_count;
 }
 
-static enum sippymodem_v34_phase4_mp_result codec_result(
-	enum sippymodem_v34_mp_result result)
+static enum v34_phase4_mp_result codec_result(
+	enum v34_mp_result result)
 {
-	if (result == SIPPYMODEM_V34_MP_OK)
-		return SIPPYMODEM_V34_PHASE4_MP_OK;
-	if (result == SIPPYMODEM_V34_MP_INVALID_PARAMETERS)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_PARAMETERS;
-	return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+	if (result == V34_MP_OK)
+		return V34_PHASE4_MP_OK;
+	if (result == V34_MP_INVALID_PARAMETERS)
+		return V34_PHASE4_MP_INVALID_PARAMETERS;
+	return V34_PHASE4_MP_INVALID_ARGUMENT;
 }
 
-static enum sippymodem_v34_phase4_mp_result encode_type0_record(
+static enum v34_phase4_mp_result encode_type0_record(
 	struct encoded_mp_record *record,
-	const struct sippymodem_v34_mp_parameters *parameters)
+	const struct v34_mp_parameters *parameters)
 {
 	struct encoded_mp_record encoded = {
-		.bit_count = SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS,
+		.bit_count = V34_MP_TYPE0_FRAME_BITS,
 	};
-	enum sippymodem_v34_mp_result result;
+	enum v34_mp_result result;
 
 	if (record == NULL || parameters == NULL)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
-	result = sippymodem_v34_mp_type0_encode(
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
+	result = v34_mp_type0_encode(
 		parameters, encoded.frame, sizeof(encoded.frame));
-	if (result != SIPPYMODEM_V34_MP_OK)
+	if (result != V34_MP_OK)
 		return codec_result(result);
 	*record = encoded;
-	return SIPPYMODEM_V34_PHASE4_MP_OK;
+	return V34_PHASE4_MP_OK;
 }
 
-static enum sippymodem_v34_phase4_mp_result encode_type1_record(
+static enum v34_phase4_mp_result encode_type1_record(
 	struct encoded_mp_record *record,
-	const struct sippymodem_v34_mp_type1_parameters *parameters)
+	const struct v34_mp_type1_parameters *parameters)
 {
 	struct encoded_mp_record encoded = {
-		.bit_count = SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS,
+		.bit_count = V34_MP_TYPE1_FRAME_BITS,
 	};
-	enum sippymodem_v34_mp_result result;
+	enum v34_mp_result result;
 
 	if (record == NULL || parameters == NULL)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
-	result = sippymodem_v34_mp_type1_encode(
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
+	result = v34_mp_type1_encode(
 		parameters, encoded.frame, sizeof(encoded.frame));
-	if (result != SIPPYMODEM_V34_MP_OK)
+	if (result != V34_MP_OK)
 		return codec_result(result);
 	*record = encoded;
-	return SIPPYMODEM_V34_PHASE4_MP_OK;
+	return V34_PHASE4_MP_OK;
 }
 
 static bool can_initialize_from_trn(
-	const struct sippymodem_v34_phase4_mp *transmitter,
-	const struct sippymodem_v34_phase4_trn *trn)
+	const struct v34_phase4_mp *transmitter,
+	const struct v34_phase4_trn *trn)
 {
-	return transmitter != NULL && sippymodem_v34_phase4_trn_is_valid(trn) &&
+	return transmitter != NULL && v34_phase4_trn_is_valid(trn) &&
 	       trn->has_last_symbol;
 }
 
-static enum sippymodem_v34_phase4_mp_result initialize_from_record(
-	struct sippymodem_v34_phase4_mp *transmitter,
-	const struct sippymodem_v34_phase4_trn *trn,
+static enum v34_phase4_mp_result initialize_from_record(
+	struct v34_phase4_mp *transmitter,
+	const struct v34_phase4_trn *trn,
 	const struct encoded_mp_record *record)
 {
-	struct sippymodem_v34_phase4_mp initialized = { 0 };
+	struct v34_phase4_mp initialized = { 0 };
 
 	if (!can_initialize_from_trn(transmitter, trn) || record == NULL)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	memcpy(initialized.frame, record->frame, sizeof(initialized.frame));
 	initialized.scrambler = trn->scrambler;
 	initialized.role = trn->role;
@@ -159,105 +159,105 @@ static enum sippymodem_v34_phase4_mp_result initialize_from_record(
 	initialized.frame_bit_count = record->bit_count;
 	initialized.previous_clockwise_quarter_turns =
 		trn->last_clockwise_quarter_turns;
-	if (!sippymodem_v34_phase4_mp_is_valid(&initialized))
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+	if (!v34_phase4_mp_is_valid(&initialized))
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	*transmitter = initialized;
-	return SIPPYMODEM_V34_PHASE4_MP_OK;
+	return V34_PHASE4_MP_OK;
 }
 
-enum sippymodem_v34_phase4_mp_result
-sippymodem_v34_phase4_mp_init_type0_from_trn(
-	struct sippymodem_v34_phase4_mp *transmitter,
-	const struct sippymodem_v34_phase4_trn *trn,
-	const struct sippymodem_v34_mp_parameters *parameters)
+enum v34_phase4_mp_result
+v34_phase4_mp_init_type0_from_trn(
+	struct v34_phase4_mp *transmitter,
+	const struct v34_phase4_trn *trn,
+	const struct v34_mp_parameters *parameters)
 {
 	struct encoded_mp_record record;
-	enum sippymodem_v34_phase4_mp_result result;
+	enum v34_phase4_mp_result result;
 
 	if (!can_initialize_from_trn(transmitter, trn))
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	result = encode_type0_record(&record, parameters);
-	if (result != SIPPYMODEM_V34_PHASE4_MP_OK)
+	if (result != V34_PHASE4_MP_OK)
 		return result;
 	return initialize_from_record(transmitter, trn, &record);
 }
 
-enum sippymodem_v34_phase4_mp_result
-sippymodem_v34_phase4_mp_init_type1_from_trn(
-	struct sippymodem_v34_phase4_mp *transmitter,
-	const struct sippymodem_v34_phase4_trn *trn,
-	const struct sippymodem_v34_mp_type1_parameters *parameters)
+enum v34_phase4_mp_result
+v34_phase4_mp_init_type1_from_trn(
+	struct v34_phase4_mp *transmitter,
+	const struct v34_phase4_trn *trn,
+	const struct v34_mp_type1_parameters *parameters)
 {
 	struct encoded_mp_record record;
-	enum sippymodem_v34_phase4_mp_result result;
+	enum v34_phase4_mp_result result;
 
 	if (!can_initialize_from_trn(transmitter, trn))
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	result = encode_type1_record(&record, parameters);
-	if (result != SIPPYMODEM_V34_PHASE4_MP_OK)
+	if (result != V34_PHASE4_MP_OK)
 		return result;
 	return initialize_from_record(transmitter, trn, &record);
 }
 
-static enum sippymodem_v34_phase4_mp_result record_boundary(
-	const struct sippymodem_v34_phase4_mp *transmitter)
+static enum v34_phase4_mp_result record_boundary(
+	const struct v34_phase4_mp *transmitter)
 {
-	if (!sippymodem_v34_phase4_mp_is_valid(transmitter))
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+	if (!v34_phase4_mp_is_valid(transmitter))
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	if (transmitter->bit_index != transmitter->frame_bit_count)
-		return SIPPYMODEM_V34_PHASE4_MP_RECORD_IN_PROGRESS;
-	return SIPPYMODEM_V34_PHASE4_MP_OK;
+		return V34_PHASE4_MP_RECORD_IN_PROGRESS;
+	return V34_PHASE4_MP_OK;
 }
 
-static enum sippymodem_v34_phase4_mp_result replace_record(
-	struct sippymodem_v34_phase4_mp *transmitter,
+static enum v34_phase4_mp_result replace_record(
+	struct v34_phase4_mp *transmitter,
 	const struct encoded_mp_record *record)
 {
-	struct sippymodem_v34_phase4_mp next = *transmitter;
+	struct v34_phase4_mp next = *transmitter;
 
 	memcpy(next.frame, record->frame, sizeof(next.frame));
 	next.frame_bit_count = record->bit_count;
 	next.bit_index = 0;
-	if (!sippymodem_v34_phase4_mp_is_valid(&next))
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+	if (!v34_phase4_mp_is_valid(&next))
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	*transmitter = next;
-	return SIPPYMODEM_V34_PHASE4_MP_OK;
+	return V34_PHASE4_MP_OK;
 }
 
-enum sippymodem_v34_phase4_mp_result
-sippymodem_v34_phase4_mp_start_next_type0_record(
-	struct sippymodem_v34_phase4_mp *transmitter,
-	const struct sippymodem_v34_mp_parameters *parameters)
+enum v34_phase4_mp_result
+v34_phase4_mp_start_next_type0_record(
+	struct v34_phase4_mp *transmitter,
+	const struct v34_mp_parameters *parameters)
 {
 	struct encoded_mp_record record;
-	enum sippymodem_v34_phase4_mp_result result;
+	enum v34_phase4_mp_result result;
 
 	if (parameters == NULL)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	result = record_boundary(transmitter);
-	if (result != SIPPYMODEM_V34_PHASE4_MP_OK)
+	if (result != V34_PHASE4_MP_OK)
 		return result;
 	result = encode_type0_record(&record, parameters);
-	if (result != SIPPYMODEM_V34_PHASE4_MP_OK)
+	if (result != V34_PHASE4_MP_OK)
 		return result;
 	return replace_record(transmitter, &record);
 }
 
-enum sippymodem_v34_phase4_mp_result
-sippymodem_v34_phase4_mp_start_next_type1_record(
-	struct sippymodem_v34_phase4_mp *transmitter,
-	const struct sippymodem_v34_mp_type1_parameters *parameters)
+enum v34_phase4_mp_result
+v34_phase4_mp_start_next_type1_record(
+	struct v34_phase4_mp *transmitter,
+	const struct v34_mp_type1_parameters *parameters)
 {
 	struct encoded_mp_record record;
-	enum sippymodem_v34_phase4_mp_result result;
+	enum v34_phase4_mp_result result;
 
 	if (parameters == NULL)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	result = record_boundary(transmitter);
-	if (result != SIPPYMODEM_V34_PHASE4_MP_OK)
+	if (result != V34_PHASE4_MP_OK)
 		return result;
 	result = encode_type1_record(&record, parameters);
-	if (result != SIPPYMODEM_V34_PHASE4_MP_OK)
+	if (result != V34_PHASE4_MP_OK)
 		return result;
 	return replace_record(transmitter, &record);
 }
@@ -275,66 +275,66 @@ static uint8_t frame_dibit(const uint8_t *frame, size_t first_bit)
 			 frame_bit(frame, first_bit + 1u));
 }
 
-enum sippymodem_v34_phase4_mp_result sippymodem_v34_phase4_mp_next(
-	struct sippymodem_v34_phase4_mp *transmitter,
+enum v34_phase4_mp_result v34_phase4_mp_next(
+	struct v34_phase4_mp *transmitter,
 	struct sippymodem_qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete)
 {
-	struct sippymodem_v34_phase4_mp next;
+	struct v34_phase4_mp next;
 	struct sippymodem_qam_point next_point;
 	uint8_t next_quarter_point = 0;
 	uint8_t next_rotation;
 	bool complete;
 
-	if (!sippymodem_v34_phase4_mp_is_valid(transmitter) ||
+	if (!v34_phase4_mp_is_valid(transmitter) ||
 	    point == NULL || quarter_point == NULL ||
 	    clockwise_quarter_turns == NULL || record_complete == NULL)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	if (transmitter->bit_index == transmitter->frame_bit_count)
-		return SIPPYMODEM_V34_PHASE4_MP_RECORD_COMPLETE;
+		return V34_PHASE4_MP_RECORD_COMPLETE;
 	next = *transmitter;
-	if (sippymodem_v34_scramble_differential_dibit(
+	if (v34_scramble_differential_dibit(
 		    &next.scrambler,
 		    frame_dibit(next.frame, next.bit_index),
 		    next.previous_clockwise_quarter_turns,
-		    &next_rotation) != SIPPYMODEM_V34_FRAMING_OK)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
-	if (next.constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT &&
-	    sippymodem_v34_scramble_mapped_dibit(
+		    &next_rotation) != V34_FRAMING_OK)
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
+	if (next.constellation == V34_CONSTELLATION_16_POINT &&
+	    v34_scramble_mapped_dibit(
 		    &next.scrambler,
 		    frame_dibit(next.frame, next.bit_index + 2u),
-		    &next_quarter_point) != SIPPYMODEM_V34_FRAMING_OK)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
-	if (sippymodem_v34_training_constellation_point(
+		    &next_quarter_point) != V34_FRAMING_OK)
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
+	if (v34_training_constellation_point(
 		    next.constellation, next_quarter_point, next_rotation,
-		    &next_point) != SIPPYMODEM_V34_CONSTELLATION_OK)
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+		    &next_point) != V34_CONSTELLATION_OK)
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	next.previous_clockwise_quarter_turns = next_rotation;
 	next.bit_index += bits_per_symbol(next.constellation);
 	complete = next.bit_index == next.frame_bit_count;
-	if (!sippymodem_v34_phase4_mp_is_valid(&next))
-		return SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT;
+	if (!v34_phase4_mp_is_valid(&next))
+		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	*transmitter = next;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
 	*clockwise_quarter_turns = next_rotation;
 	*record_complete = complete;
-	return SIPPYMODEM_V34_PHASE4_MP_OK;
+	return V34_PHASE4_MP_OK;
 }
 
-const char *sippymodem_v34_phase4_mp_result_name(
-	enum sippymodem_v34_phase4_mp_result result)
+const char *v34_phase4_mp_result_name(
+	enum v34_phase4_mp_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_PHASE4_MP_OK:
+	case V34_PHASE4_MP_OK:
 		return "ok";
-	case SIPPYMODEM_V34_PHASE4_MP_RECORD_COMPLETE:
+	case V34_PHASE4_MP_RECORD_COMPLETE:
 		return "record complete";
-	case SIPPYMODEM_V34_PHASE4_MP_RECORD_IN_PROGRESS:
+	case V34_PHASE4_MP_RECORD_IN_PROGRESS:
 		return "record in progress";
-	case SIPPYMODEM_V34_PHASE4_MP_INVALID_ARGUMENT:
+	case V34_PHASE4_MP_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_PHASE4_MP_INVALID_PARAMETERS:
+	case V34_PHASE4_MP_INVALID_PARAMETERS:
 		return "invalid parameters";
 	}
 	return "unknown";

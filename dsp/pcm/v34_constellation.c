@@ -29,11 +29,11 @@ static const double V34_POINT_ZERO_COORDINATE =
 static const double V34_SIXTEEN_POINT_GRID_UNIT =
 	0.31622776601683793319988935444327;
 
-bool sippymodem_v34_constellation_size_is_valid(
-	enum sippymodem_v34_constellation_size constellation)
+bool v34_constellation_size_is_valid(
+	enum v34_constellation_size constellation)
 {
-	return constellation == SIPPYMODEM_V34_CONSTELLATION_4_POINT ||
-	       constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT;
+	return constellation == V34_CONSTELLATION_4_POINT ||
+	       constellation == V34_CONSTELLATION_16_POINT;
 }
 
 static int squared_magnitude(int in_phase, int quadrature)
@@ -41,18 +41,18 @@ static int squared_magnitude(int in_phase, int quadrature)
 	return in_phase * in_phase + quadrature * quadrature;
 }
 
-enum sippymodem_v34_constellation_result
-sippymodem_v34_quarter_superconstellation_generate(
-	struct sippymodem_v34_grid_point *points, size_t point_count)
+enum v34_constellation_result
+v34_quarter_superconstellation_generate(
+	struct v34_grid_point *points, size_t point_count)
 {
-	struct sippymodem_v34_grid_point
-		generated[SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	struct v34_grid_point
+		generated[V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
 	size_t generated_count = 0;
 
 	if (points == NULL || point_count == 0 ||
 	    point_count >
-		    SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+		    V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 
 	/* Odd-coordinate squared magnitudes are 2 modulo 8. Scanning only
 	 * those magnitudes and visiting quadrature coordinates from greatest
@@ -71,7 +71,7 @@ sippymodem_v34_quarter_superconstellation_generate(
 				    magnitude)
 					continue;
 				generated[generated_count++] =
-					(struct sippymodem_v34_grid_point){
+					(struct v34_grid_point){
 						.in_phase = (int16_t)in_phase,
 						.quadrature = (int16_t)quadrature,
 					};
@@ -83,10 +83,10 @@ sippymodem_v34_quarter_superconstellation_generate(
 		}
 	}
 	if (generated_count != point_count)
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	for (size_t index = 0; index < point_count; ++index)
 		points[index] = generated[index];
-	return SIPPYMODEM_V34_CONSTELLATION_OK;
+	return V34_CONSTELLATION_OK;
 }
 
 static size_t magnitude_bucket(int in_phase, int quadrature)
@@ -97,9 +97,9 @@ static size_t magnitude_bucket(int in_phase, int quadrature)
 		V34_QUARTER_SQUARED_MAGNITUDE_STEP);
 }
 
-enum sippymodem_v34_constellation_result
-sippymodem_v34_quarter_superconstellation_point(
-	size_t label, struct sippymodem_v34_grid_point *point)
+enum v34_constellation_result
+v34_quarter_superconstellation_point(
+	size_t label, struct v34_grid_point *point)
 {
 	uint16_t magnitude_counts[V34_QUARTER_MAGNITUDE_BUCKET_COUNT] = { 0 };
 	size_t rank = label;
@@ -107,8 +107,8 @@ sippymodem_v34_quarter_superconstellation_point(
 	int selected_magnitude;
 
 	if (point == NULL ||
-	    label >= SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	    label >= V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	/* A generated histogram finds the label's magnitude in one lattice
 	 * pass, avoiding both a retained table and the bulk generator's scan
 	 * across every empty squared magnitude. */
@@ -129,7 +129,7 @@ sippymodem_v34_quarter_superconstellation_point(
 		rank -= magnitude_counts[bucket];
 	}
 	if (selected_bucket == V34_QUARTER_MAGNITUDE_BUCKET_COUNT)
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	selected_magnitude = V34_QUARTER_FIRST_SQUARED_MAGNITUDE +
 		(int)selected_bucket * V34_QUARTER_SQUARED_MAGNITUDE_STEP;
 	for (int quadrature = V34_QUARTER_GRID_MAX;
@@ -145,14 +145,14 @@ sippymodem_v34_quarter_superconstellation_point(
 				--rank;
 				continue;
 			}
-			*point = (struct sippymodem_v34_grid_point){
+			*point = (struct v34_grid_point){
 				.in_phase = (int16_t)in_phase,
 				.quadrature = (int16_t)quadrature,
 			};
-			return SIPPYMODEM_V34_CONSTELLATION_OK;
+			return V34_CONSTELLATION_OK;
 		}
 	}
-	return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	return V34_CONSTELLATION_INVALID_ARGUMENT;
 }
 
 static bool quarter_grid_coordinate_is_valid(int16_t coordinate)
@@ -162,9 +162,9 @@ static bool quarter_grid_coordinate_is_valid(int16_t coordinate)
 	       ((uint16_t)coordinate & 3u) == 1u;
 }
 
-enum sippymodem_v34_constellation_result
-sippymodem_v34_quarter_superconstellation_label(
-	const struct sippymodem_v34_grid_point *point, size_t *label)
+enum v34_constellation_result
+v34_quarter_superconstellation_label(
+	const struct v34_grid_point *point, size_t *label)
 {
 	size_t rank = 0;
 	int selected_magnitude;
@@ -172,7 +172,7 @@ sippymodem_v34_quarter_superconstellation_label(
 	if (point == NULL || label == NULL ||
 	    !quarter_grid_coordinate_is_valid(point->in_phase) ||
 	    !quarter_grid_coordinate_is_valid(point->quadrature))
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	selected_magnitude = squared_magnitude(
 		point->in_phase, point->quadrature);
 	/* Labels are ordered first by magnitude, then by descending
@@ -195,10 +195,10 @@ sippymodem_v34_quarter_superconstellation_label(
 				rank++;
 		}
 	}
-	if (rank >= SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	if (rank >= V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT)
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	*label = rank;
-	return SIPPYMODEM_V34_CONSTELLATION_OK;
+	return V34_CONSTELLATION_OK;
 }
 
 static struct sippymodem_qam_point rotate_point(
@@ -230,7 +230,7 @@ static struct sippymodem_qam_point rotate_point(
 	return (struct sippymodem_qam_point){ 0 };
 }
 
-struct sippymodem_qam_point sippymodem_v34_rotated_point_zero(
+struct sippymodem_qam_point v34_rotated_point_zero(
 	int counterclockwise_quarter_turns)
 {
 	struct sippymodem_qam_point point = {
@@ -241,9 +241,9 @@ struct sippymodem_qam_point sippymodem_v34_rotated_point_zero(
 	return rotate_point(point, counterclockwise_quarter_turns);
 }
 
-enum sippymodem_v34_constellation_result
-sippymodem_v34_training_constellation_point(
-	enum sippymodem_v34_constellation_size constellation,
+enum v34_constellation_result
+v34_training_constellation_point(
+	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
 	struct sippymodem_qam_point *point)
 {
@@ -251,21 +251,21 @@ sippymodem_v34_training_constellation_point(
 	double grid_unit;
 
 	if (point == NULL || clockwise_quarter_turns > 3u ||
-	    !sippymodem_v34_constellation_size_is_valid(constellation))
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+	    !v34_constellation_size_is_valid(constellation))
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	switch (constellation) {
-	case SIPPYMODEM_V34_CONSTELLATION_4_POINT:
+	case V34_CONSTELLATION_4_POINT:
 		if (quarter_point != 0u)
-			return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+			return V34_CONSTELLATION_INVALID_ARGUMENT;
 		grid_unit = V34_POINT_ZERO_COORDINATE;
 		break;
-	case SIPPYMODEM_V34_CONSTELLATION_16_POINT:
+	case V34_CONSTELLATION_16_POINT:
 		if (quarter_point > 3u)
-			return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+			return V34_CONSTELLATION_INVALID_ARGUMENT;
 		grid_unit = V34_SIXTEEN_POINT_GRID_UNIT;
 		break;
 	default:
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	}
 	next = (struct sippymodem_qam_point){
 		.in_phase = (quarter_point & 1u) != 0u ? -3.0 * grid_unit :
@@ -275,12 +275,12 @@ sippymodem_v34_training_constellation_point(
 	};
 	next = rotate_point(next, -(int)clockwise_quarter_turns);
 	*point = next;
-	return SIPPYMODEM_V34_CONSTELLATION_OK;
+	return V34_CONSTELLATION_OK;
 }
 
-enum sippymodem_v34_constellation_result
-sippymodem_v34_training_constellation_slice(
-	enum sippymodem_v34_constellation_size constellation,
+enum v34_constellation_result
+v34_training_constellation_slice(
+	enum v34_constellation_size constellation,
 	const struct sippymodem_qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns)
 {
@@ -290,13 +290,13 @@ sippymodem_v34_training_constellation_slice(
 	uint8_t quarter_count;
 	bool found = false;
 
-	if (!sippymodem_v34_constellation_size_is_valid(constellation) ||
+	if (!v34_constellation_size_is_valid(constellation) ||
 	    point == NULL || !isfinite(point->in_phase) ||
 	    !isfinite(point->quadrature) || quarter_point == NULL ||
 	    clockwise_quarter_turns == NULL ||
 	    quarter_point == clockwise_quarter_turns)
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
-	quarter_count = constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT ?
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
+	quarter_count = constellation == V34_CONSTELLATION_16_POINT ?
 				4u :
 				1u;
 	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
@@ -306,10 +306,10 @@ sippymodem_v34_training_constellation_slice(
 			double quadrature_error;
 			double distance;
 
-			if (sippymodem_v34_training_constellation_point(
+			if (v34_training_constellation_point(
 				    constellation, quarter, rotation,
-				    &candidate) != SIPPYMODEM_V34_CONSTELLATION_OK)
-				return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+				    &candidate) != V34_CONSTELLATION_OK)
+				return V34_CONSTELLATION_INVALID_ARGUMENT;
 			in_phase_error = point->in_phase - candidate.in_phase;
 			quadrature_error =
 				point->quadrature - candidate.quadrature;
@@ -324,19 +324,19 @@ sippymodem_v34_training_constellation_slice(
 		}
 	}
 	if (!found)
-		return SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT;
+		return V34_CONSTELLATION_INVALID_ARGUMENT;
 	*quarter_point = best_quarter;
 	*clockwise_quarter_turns = best_rotation;
-	return SIPPYMODEM_V34_CONSTELLATION_OK;
+	return V34_CONSTELLATION_OK;
 }
 
-const char *sippymodem_v34_constellation_result_name(
-	enum sippymodem_v34_constellation_result result)
+const char *v34_constellation_result_name(
+	enum v34_constellation_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_CONSTELLATION_OK:
+	case V34_CONSTELLATION_OK:
 		return "ok";
-	case SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT:
+	case V34_CONSTELLATION_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

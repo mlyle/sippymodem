@@ -24,15 +24,15 @@ static const double V34_PHASE2_TONE_MAX_SAMPLE_POWER =
 	V34_PHASE2_TONE_MAX_SAMPLE_MAGNITUDE;
 static const double V34_PHASE2_TONE_MAX_PROJECTION =
 	V34_PHASE2_TONE_MAX_SAMPLE_MAGNITUDE *
-	SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES;
+	V34_PHASE2_TONE_WINDOW_SAMPLES;
 static const double V34_PHASE2_TONE_MAX_WINDOW_ENERGY =
 	V34_PHASE2_TONE_MAX_SAMPLE_POWER *
-	SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES;
+	V34_PHASE2_TONE_WINDOW_SAMPLES;
 
-static bool role_is_valid(enum sippymodem_v34_station_role role)
+static bool role_is_valid(enum v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_CALLING_STATION ||
-	       role == SIPPYMODEM_V34_ANSWERING_STATION;
+	return role == V34_CALLING_STATION ||
+	       role == V34_ANSWERING_STATION;
 }
 
 static uint32_t phase_step(uint32_t frequency_hz)
@@ -41,8 +41,8 @@ static uint32_t phase_step(uint32_t frequency_hz)
 		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
 
 	return (uint32_t)(
-		(scaled + SIPPYMODEM_V34_PHASE2_SAMPLE_RATE / 2u) /
-		SIPPYMODEM_V34_PHASE2_SAMPLE_RATE);
+		(scaled + V34_PHASE2_SAMPLE_RATE / 2u) /
+		V34_PHASE2_SAMPLE_RATE);
 }
 
 static double phase_radians(uint32_t phase)
@@ -52,23 +52,23 @@ static double phase_radians(uint32_t phase)
 }
 
 static uint32_t local_carrier_hz(
-	enum sippymodem_v34_station_role role)
+	enum v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_CALLING_STATION ?
-		       SIPPYMODEM_V34_PHASE2_CALLING_CARRIER_HZ :
-		       SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ;
+	return role == V34_CALLING_STATION ?
+		       V34_PHASE2_CALLING_CARRIER_HZ :
+		       V34_PHASE2_ANSWERING_CARRIER_HZ;
 }
 
 static uint32_t remote_carrier_hz(
-	enum sippymodem_v34_station_role local_role)
+	enum v34_station_role local_role)
 {
-	return local_role == SIPPYMODEM_V34_CALLING_STATION ?
-		       SIPPYMODEM_V34_PHASE2_ANSWERING_CARRIER_HZ :
-		       SIPPYMODEM_V34_PHASE2_CALLING_CARRIER_HZ;
+	return local_role == V34_CALLING_STATION ?
+		       V34_PHASE2_ANSWERING_CARRIER_HZ :
+		       V34_PHASE2_CALLING_CARRIER_HZ;
 }
 
-bool sippymodem_v34_phase2_tone_transmitter_is_valid(
-	const struct sippymodem_v34_phase2_tone_transmitter *transmitter)
+bool v34_phase2_tone_transmitter_is_valid(
+	const struct v34_phase2_tone_transmitter *transmitter)
 {
 	if (transmitter == NULL || !role_is_valid(transmitter->local_role) ||
 	    transmitter->carrier_amplitude <= 0 ||
@@ -76,23 +76,23 @@ bool sippymodem_v34_phase2_tone_transmitter_is_valid(
 		    phase_step(local_carrier_hz(transmitter->local_role)))
 		return false;
 	if (transmitter->local_role ==
-	    SIPPYMODEM_V34_CALLING_STATION)
+	    V34_CALLING_STATION)
 		return transmitter->guard_amplitude == 0 &&
 		       transmitter->guard_phase_step == 0;
 	return transmitter->guard_amplitude > 0 &&
 	       transmitter->guard_phase_step ==
-		       phase_step(SIPPYMODEM_V34_PHASE2_ANSWERING_GUARD_HZ) &&
+		       phase_step(V34_PHASE2_ANSWERING_GUARD_HZ) &&
 	       transmitter->carrier_amplitude <=
 		       INT16_MAX - transmitter->guard_amplitude;
 }
 
-enum sippymodem_v34_phase2_tone_result
-sippymodem_v34_phase2_tone_transmitter_init(
-	struct sippymodem_v34_phase2_tone_transmitter *transmitter,
-	enum sippymodem_v34_station_role local_role,
+enum v34_phase2_tone_result
+v34_phase2_tone_transmitter_init(
+	struct v34_phase2_tone_transmitter *transmitter,
+	enum v34_station_role local_role,
 	int16_t nominal_amplitude)
 {
-	struct sippymodem_v34_phase2_tone_transmitter initialized = {
+	struct v34_phase2_tone_transmitter initialized = {
 		.local_role = local_role,
 	};
 	long carrier_amplitude = nominal_amplitude;
@@ -100,48 +100,48 @@ sippymodem_v34_phase2_tone_transmitter_init(
 
 	if (transmitter == NULL || !role_is_valid(local_role) ||
 	    nominal_amplitude <= 0)
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
-	if (local_role == SIPPYMODEM_V34_ANSWERING_STATION) {
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	if (local_role == V34_ANSWERING_STATION) {
 		carrier_amplitude = lround(
 			(double)nominal_amplitude *
 			V34_PHASE2_TONE_ANSWERING_CARRIER_GAIN);
 		guard_amplitude = nominal_amplitude;
 		initialized.guard_phase_step = phase_step(
-			SIPPYMODEM_V34_PHASE2_ANSWERING_GUARD_HZ);
+			V34_PHASE2_ANSWERING_GUARD_HZ);
 	}
 	if (carrier_amplitude <= 0 || guard_amplitude < 0 ||
 	    carrier_amplitude + guard_amplitude > INT16_MAX)
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	initialized.carrier_phase_step = phase_step(
 		local_carrier_hz(local_role));
 	initialized.carrier_amplitude = (int16_t)carrier_amplitude;
 	initialized.guard_amplitude = (int16_t)guard_amplitude;
-	if (!sippymodem_v34_phase2_tone_transmitter_is_valid(&initialized))
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+	if (!v34_phase2_tone_transmitter_is_valid(&initialized))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	*transmitter = initialized;
-	return SIPPYMODEM_V34_PHASE2_TONE_OK;
+	return V34_PHASE2_TONE_OK;
 }
 
-enum sippymodem_v34_phase2_tone_result
-sippymodem_v34_phase2_tone_transmitter_reverse(
-	struct sippymodem_v34_phase2_tone_transmitter *transmitter)
+enum v34_phase2_tone_result
+v34_phase2_tone_transmitter_reverse(
+	struct v34_phase2_tone_transmitter *transmitter)
 {
-	if (!sippymodem_v34_phase2_tone_transmitter_is_valid(transmitter))
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+	if (!v34_phase2_tone_transmitter_is_valid(transmitter))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	transmitter->carrier_phase += UINT32_C(0x80000000);
-	return SIPPYMODEM_V34_PHASE2_TONE_OK;
+	return V34_PHASE2_TONE_OK;
 }
 
-enum sippymodem_v34_phase2_tone_result
-sippymodem_v34_phase2_tone_transmitter_sample(
-	struct sippymodem_v34_phase2_tone_transmitter *transmitter,
+enum v34_phase2_tone_result
+v34_phase2_tone_transmitter_sample(
+	struct v34_phase2_tone_transmitter *transmitter,
 	int16_t *sample)
 {
 	long mixed;
 
-	if (!sippymodem_v34_phase2_tone_transmitter_is_valid(transmitter) ||
+	if (!v34_phase2_tone_transmitter_is_valid(transmitter) ||
 	    sample == NULL)
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	mixed = lround(
 		(double)transmitter->carrier_amplitude *
 		sin(phase_radians(transmitter->carrier_phase)));
@@ -153,11 +153,11 @@ sippymodem_v34_phase2_tone_transmitter_sample(
 		transmitter->guard_phase += transmitter->guard_phase_step;
 	}
 	*sample = (int16_t)mixed;
-	return SIPPYMODEM_V34_PHASE2_TONE_OK;
+	return V34_PHASE2_TONE_OK;
 }
 
 static bool observation_is_valid(
-	const struct sippymodem_v34_phase2_tone_observation *observation)
+	const struct v34_phase2_tone_observation *observation)
 {
 	return isfinite(observation->in_phase) &&
 	       fabs(observation->in_phase) <=
@@ -170,17 +170,17 @@ static bool observation_is_valid(
 }
 
 static bool history_is_valid(
-	const struct sippymodem_v34_phase2_tone_detector *detector)
+	const struct v34_phase2_tone_detector *detector)
 {
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES; ++index)
+	     index < V34_PHASE2_TONE_WINDOW_SAMPLES; ++index)
 		if (!observation_is_valid(&detector->history[index]))
 			return false;
 	return true;
 }
 
-bool sippymodem_v34_phase2_tone_detector_is_valid(
-	const struct sippymodem_v34_phase2_tone_detector *detector)
+bool v34_phase2_tone_detector_is_valid(
+	const struct v34_phase2_tone_detector *detector)
 {
 	double reference_power;
 
@@ -209,30 +209,30 @@ bool sippymodem_v34_phase2_tone_detector_is_valid(
 	    detector->carrier_share < 0.0 ||
 	    detector->carrier_share > 2.000001 ||
 	    detector->history_index >=
-		    SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES ||
+		    V34_PHASE2_TONE_WINDOW_SAMPLES ||
 	    detector->history_count >
-		    SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES ||
+		    V34_PHASE2_TONE_WINDOW_SAMPLES ||
 	    detector->measurement_ready !=
 		    (detector->history_count ==
-		     SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES) ||
+		     V34_PHASE2_TONE_WINDOW_SAMPLES) ||
 	    detector->qualifying_samples >
-		    SIPPYMODEM_V34_PHASE2_TONE_ACQUIRE_SAMPLES ||
+		    V34_PHASE2_TONE_ACQUIRE_SAMPLES ||
 	    detector->missing_samples >=
-		    SIPPYMODEM_V34_PHASE2_TONE_LOSS_SAMPLES ||
+		    V34_PHASE2_TONE_LOSS_SAMPLES ||
 	    (!detector->tone_present &&
 	     (detector->qualifying_samples ==
-		      SIPPYMODEM_V34_PHASE2_TONE_ACQUIRE_SAMPLES ||
+		      V34_PHASE2_TONE_ACQUIRE_SAMPLES ||
 	      detector->missing_samples != 0 || detector->reversal_pending)) ||
 	    (detector->tone_present &&
 	     detector->qualifying_samples !=
-		     SIPPYMODEM_V34_PHASE2_TONE_ACQUIRE_SAMPLES) ||
+		     V34_PHASE2_TONE_ACQUIRE_SAMPLES) ||
 	    (detector->reversal_pending !=
 	     (detector->reversal_delay_samples != 0)) ||
 	    (detector->reversal_pending &&
 	     (detector->reversal_delay_samples <
-		      SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES / 2 ||
+		      V34_PHASE2_TONE_WINDOW_SAMPLES / 2 ||
 	      detector->reversal_delay_samples >
-		      SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES * 2)))
+		      V34_PHASE2_TONE_WINDOW_SAMPLES * 2)))
 		return false;
 	reference_power =
 		detector->reference_in_phase * detector->reference_in_phase +
@@ -241,42 +241,42 @@ bool sippymodem_v34_phase2_tone_detector_is_valid(
 				       reference_power == 0.0;
 }
 
-enum sippymodem_v34_phase2_tone_result
-sippymodem_v34_phase2_tone_detector_init(
-	struct sippymodem_v34_phase2_tone_detector *detector,
-	enum sippymodem_v34_station_role local_role)
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_init(
+	struct v34_phase2_tone_detector *detector,
+	enum v34_station_role local_role)
 {
-	struct sippymodem_v34_phase2_tone_detector initialized = {
+	struct v34_phase2_tone_detector initialized = {
 		.carrier_phase_step = phase_step(remote_carrier_hz(local_role)),
 		.local_role = local_role,
 	};
 
 	if (detector == NULL || !role_is_valid(local_role) ||
-	    !sippymodem_v34_phase2_tone_detector_is_valid(&initialized))
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+	    !v34_phase2_tone_detector_is_valid(&initialized))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	*detector = initialized;
-	return SIPPYMODEM_V34_PHASE2_TONE_OK;
+	return V34_PHASE2_TONE_OK;
 }
 
-enum sippymodem_v34_phase2_tone_result
-sippymodem_v34_phase2_tone_detector_reset(
-	struct sippymodem_v34_phase2_tone_detector *detector)
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_reset(
+	struct v34_phase2_tone_detector *detector)
 {
-	enum sippymodem_v34_station_role local_role;
+	enum v34_station_role local_role;
 
-	if (!sippymodem_v34_phase2_tone_detector_is_valid(detector))
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+	if (!v34_phase2_tone_detector_is_valid(detector))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	local_role = detector->local_role;
-	return sippymodem_v34_phase2_tone_detector_init(detector, local_role);
+	return v34_phase2_tone_detector_init(detector, local_role);
 }
 
 static void add_observation(
-	struct sippymodem_v34_phase2_tone_detector *detector, int16_t sample)
+	struct v34_phase2_tone_detector *detector, int16_t sample)
 {
-	struct sippymodem_v34_phase2_tone_observation *old =
+	struct v34_phase2_tone_observation *old =
 		&detector->history[detector->history_index];
 	double radians = phase_radians(detector->carrier_phase);
-	struct sippymodem_v34_phase2_tone_observation current = {
+	struct v34_phase2_tone_observation current = {
 		.in_phase = (double)sample * cos(radians),
 		.quadrature = (double)sample * sin(radians),
 		.energy = (double)sample * sample,
@@ -284,7 +284,7 @@ static void add_observation(
 
 	detector->carrier_phase += detector->carrier_phase_step;
 	if (detector->history_count ==
-	    SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES) {
+	    V34_PHASE2_TONE_WINDOW_SAMPLES) {
 		detector->in_phase -= old->in_phase;
 		detector->quadrature -= old->quadrature;
 		detector->line_energy -= old->energy;
@@ -297,21 +297,21 @@ static void add_observation(
 	*old = current;
 	detector->history_index =
 		(detector->history_index + 1u) %
-		SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES;
+		V34_PHASE2_TONE_WINDOW_SAMPLES;
 	detector->measurement_ready =
 		detector->history_count ==
-		SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES;
+		V34_PHASE2_TONE_WINDOW_SAMPLES;
 }
 
 static bool measurement_qualifies(
-	struct sippymodem_v34_phase2_tone_detector *detector)
+	struct v34_phase2_tone_detector *detector)
 {
-	double count = SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES;
+	double count = V34_PHASE2_TONE_WINDOW_SAMPLES;
 	double projection_power =
 		detector->in_phase * detector->in_phase +
 		detector->quadrature * detector->quadrature;
 	double minimum_share =
-		detector->local_role == SIPPYMODEM_V34_CALLING_STATION ?
+		detector->local_role == V34_CALLING_STATION ?
 			V34_PHASE2_TONE_MIN_ANSWERING_CARRIER_SHARE :
 			V34_PHASE2_TONE_MIN_CALLING_CARRIER_SHARE;
 
@@ -331,7 +331,7 @@ static bool measurement_qualifies(
 }
 
 static void clear_tone_lock(
-	struct sippymodem_v34_phase2_tone_detector *detector)
+	struct v34_phase2_tone_detector *detector)
 {
 	detector->reference_in_phase = 0.0;
 	detector->reference_quadrature = 0.0;
@@ -342,36 +342,36 @@ static void clear_tone_lock(
 	detector->reversal_pending = false;
 }
 
-static enum sippymodem_v34_phase2_tone_event_kind acquire_or_release(
-	struct sippymodem_v34_phase2_tone_detector *detector,
+static enum v34_phase2_tone_event_kind acquire_or_release(
+	struct v34_phase2_tone_detector *detector,
 	bool qualifies)
 {
 	if (!detector->tone_present) {
 		if (!qualifies) {
 			detector->qualifying_samples = 0;
-			return SIPPYMODEM_V34_PHASE2_TONE_NO_EVENT;
+			return V34_PHASE2_TONE_NO_EVENT;
 		}
 		if (++detector->qualifying_samples <
-		    SIPPYMODEM_V34_PHASE2_TONE_ACQUIRE_SAMPLES)
-			return SIPPYMODEM_V34_PHASE2_TONE_NO_EVENT;
+		    V34_PHASE2_TONE_ACQUIRE_SAMPLES)
+			return V34_PHASE2_TONE_NO_EVENT;
 		detector->tone_present = true;
 		detector->reference_in_phase = detector->in_phase;
 		detector->reference_quadrature = detector->quadrature;
-		return SIPPYMODEM_V34_PHASE2_TONE_STARTED;
+		return V34_PHASE2_TONE_STARTED;
 	}
 	if (qualifies) {
 		detector->missing_samples = 0;
-		return SIPPYMODEM_V34_PHASE2_TONE_NO_EVENT;
+		return V34_PHASE2_TONE_NO_EVENT;
 	}
 	if (++detector->missing_samples <
-	    SIPPYMODEM_V34_PHASE2_TONE_LOSS_SAMPLES)
-		return SIPPYMODEM_V34_PHASE2_TONE_NO_EVENT;
+	    V34_PHASE2_TONE_LOSS_SAMPLES)
+		return V34_PHASE2_TONE_NO_EVENT;
 	clear_tone_lock(detector);
-	return SIPPYMODEM_V34_PHASE2_TONE_ENDED;
+	return V34_PHASE2_TONE_ENDED;
 }
 
 static bool observe_reversal(
-	struct sippymodem_v34_phase2_tone_detector *detector,
+	struct v34_phase2_tone_detector *detector,
 	bool qualifies, uint16_t *delay_samples)
 {
 	double current_power =
@@ -389,10 +389,10 @@ static bool observe_reversal(
 	if (!detector->reversal_pending && dot < 0.0) {
 		detector->reversal_pending = true;
 		detector->reversal_delay_samples =
-			SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES / 2;
+			V34_PHASE2_TONE_WINDOW_SAMPLES / 2;
 	} else if (detector->reversal_pending &&
 		   detector->reversal_delay_samples <
-			   SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES * 2) {
+			   V34_PHASE2_TONE_WINDOW_SAMPLES * 2) {
 		detector->reversal_delay_samples++;
 	}
 	if (detector->reversal_pending && qualifies &&
@@ -406,7 +406,7 @@ static bool observe_reversal(
 	}
 	if (detector->reversal_pending &&
 	    (cosine > 0.25 || detector->reversal_delay_samples ==
-			      SIPPYMODEM_V34_PHASE2_TONE_WINDOW_SAMPLES * 2)) {
+			      V34_PHASE2_TONE_WINDOW_SAMPLES * 2)) {
 		detector->reversal_pending = false;
 		detector->reversal_delay_samples = 0;
 	}
@@ -421,19 +421,19 @@ static bool observe_reversal(
 	return false;
 }
 
-enum sippymodem_v34_phase2_tone_result
-sippymodem_v34_phase2_tone_detector_sample(
-	struct sippymodem_v34_phase2_tone_detector *detector,
-	int16_t sample, struct sippymodem_v34_phase2_tone_event *event)
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_sample(
+	struct v34_phase2_tone_detector *detector,
+	int16_t sample, struct v34_phase2_tone_event *event)
 {
-	struct sippymodem_v34_phase2_tone_detector next;
-	struct sippymodem_v34_phase2_tone_event emitted = { 0 };
+	struct v34_phase2_tone_detector next;
+	struct v34_phase2_tone_event emitted = { 0 };
 	bool was_present;
 	bool qualifies = false;
 
-	if (!sippymodem_v34_phase2_tone_detector_is_valid(detector) ||
+	if (!v34_phase2_tone_detector_is_valid(detector) ||
 	    event == NULL)
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	next = *detector;
 	was_present = next.tone_present;
 	add_observation(&next, sample);
@@ -443,21 +443,21 @@ sippymodem_v34_phase2_tone_detector_sample(
 	if (was_present && next.tone_present &&
 	    observe_reversal(
 		    &next, qualifies, &emitted.reversal_delay_samples))
-		emitted.kind = SIPPYMODEM_V34_PHASE2_TONE_PHASE_REVERSED;
-	if (!sippymodem_v34_phase2_tone_detector_is_valid(&next))
-		return SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT;
+		emitted.kind = V34_PHASE2_TONE_PHASE_REVERSED;
+	if (!v34_phase2_tone_detector_is_valid(&next))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	*detector = next;
 	*event = emitted;
-	return SIPPYMODEM_V34_PHASE2_TONE_OK;
+	return V34_PHASE2_TONE_OK;
 }
 
-struct sippymodem_v34_phase2_tone_measurement
-sippymodem_v34_phase2_tone_detector_measure(
-	const struct sippymodem_v34_phase2_tone_detector *detector)
+struct v34_phase2_tone_measurement
+v34_phase2_tone_detector_measure(
+	const struct v34_phase2_tone_detector *detector)
 {
-	if (!sippymodem_v34_phase2_tone_detector_is_valid(detector))
-		return (struct sippymodem_v34_phase2_tone_measurement){ 0 };
-	return (struct sippymodem_v34_phase2_tone_measurement){
+	if (!v34_phase2_tone_detector_is_valid(detector))
+		return (struct v34_phase2_tone_measurement){ 0 };
+	return (struct v34_phase2_tone_measurement){
 		.line_power = detector->line_power,
 		.carrier_power = detector->carrier_power,
 		.carrier_share = detector->carrier_share,
@@ -466,13 +466,13 @@ sippymodem_v34_phase2_tone_detector_measure(
 	};
 }
 
-const char *sippymodem_v34_phase2_tone_result_name(
-	enum sippymodem_v34_phase2_tone_result result)
+const char *v34_phase2_tone_result_name(
+	enum v34_phase2_tone_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_PHASE2_TONE_OK:
+	case V34_PHASE2_TONE_OK:
 		return "ok";
-	case SIPPYMODEM_V34_PHASE2_TONE_INVALID_ARGUMENT:
+	case V34_PHASE2_TONE_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

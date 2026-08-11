@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V34_FRAME_SCHEDULE_H
-#define SIPPYMODEM_V34_FRAME_SCHEDULE_H
+#ifndef V34_FRAME_SCHEDULE_H
+#define V34_FRAME_SCHEDULE_H
 
 #include "v34_info1.h"
 
@@ -9,18 +9,18 @@
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME = 4,
+	V34_4D_INTERVALS_PER_MAPPING_FRAME = 4,
 };
 
-enum sippymodem_v34_frame_schedule_result {
-	SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
-	SIPPYMODEM_V34_FRAME_SCHEDULE_FRAME_COMPLETE,
-	SIPPYMODEM_V34_FRAME_SCHEDULE_INVALID_ARGUMENT,
-	SIPPYMODEM_V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION,
+enum v34_frame_schedule_result {
+	V34_FRAME_SCHEDULE_OK,
+	V34_FRAME_SCHEDULE_FRAME_COMPLETE,
+	V34_FRAME_SCHEDULE_INVALID_ARGUMENT,
+	V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION,
 };
 
-struct sippymodem_v34_frame_geometry {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+struct v34_frame_geometry {
+	enum v34_symbol_rate symbol_rate;
 	uint16_t data_bits_per_frame;
 	uint8_t primary_data_rate_2400_bps_units;
 	uint8_t data_frames_per_superframe;
@@ -33,22 +33,22 @@ struct sippymodem_v34_frame_geometry {
 
 /* Derive clause 8 frame geometry using its counter construction rather than
  * storing the rate-by-symbol-rate switching table. */
-enum sippymodem_v34_frame_schedule_result
-sippymodem_v34_frame_geometry_init(
-	struct sippymodem_v34_frame_geometry *geometry,
-	enum sippymodem_v34_symbol_rate symbol_rate,
+enum v34_frame_schedule_result
+v34_frame_geometry_init(
+	struct v34_frame_geometry *geometry,
+	enum v34_symbol_rate symbol_rate,
 	uint8_t primary_data_rate_2400_bps_units,
 	bool auxiliary_channel_enabled);
-bool sippymodem_v34_frame_geometry_is_valid(
-	const struct sippymodem_v34_frame_geometry *geometry);
+bool v34_frame_geometry_is_valid(
+	const struct v34_frame_geometry *geometry);
 
-struct sippymodem_v34_frame_schedule {
-	struct sippymodem_v34_frame_geometry geometry;
+struct v34_frame_schedule {
+	struct v34_frame_geometry geometry;
 	uint8_t data_frame_in_superframe;
 	uint8_t next_mapping_frame;
 };
 
-struct sippymodem_v34_mapping_frame {
+struct v34_mapping_frame {
 	uint8_t index;
 	uint8_t data_bits;
 	uint8_t primary_bits;
@@ -59,38 +59,38 @@ struct sippymodem_v34_mapping_frame {
 	bool completes_data_frame;
 };
 
-enum sippymodem_v34_frame_schedule_result
-sippymodem_v34_frame_schedule_init(
-	struct sippymodem_v34_frame_schedule *schedule,
-	const struct sippymodem_v34_frame_geometry *geometry,
+enum v34_frame_schedule_result
+v34_frame_schedule_init(
+	struct v34_frame_schedule *schedule,
+	const struct v34_frame_geometry *geometry,
 	uint8_t data_frame_in_superframe);
 
 /* B1 is sent with the inversion position of the last data frame in a
  * superframe; ordinary data starts a fresh superframe after it. */
-enum sippymodem_v34_frame_schedule_result
-sippymodem_v34_b1_frame_schedule_init(
-	struct sippymodem_v34_frame_schedule *schedule,
-	const struct sippymodem_v34_frame_geometry *geometry);
+enum v34_frame_schedule_result
+v34_b1_frame_schedule_init(
+	struct v34_frame_schedule *schedule,
+	const struct v34_frame_geometry *geometry);
 
-bool sippymodem_v34_frame_schedule_is_valid(
-	const struct sippymodem_v34_frame_schedule *schedule);
-bool sippymodem_v34_frame_schedule_is_complete(
-	const struct sippymodem_v34_frame_schedule *schedule);
+bool v34_frame_schedule_is_valid(
+	const struct v34_frame_schedule *schedule);
+bool v34_frame_schedule_is_complete(
+	const struct v34_frame_schedule *schedule);
 
 /* Continue a completed schedule at the next data frame, wrapping at the
  * superframe boundary. Incomplete and invalid schedules are unchanged. */
-enum sippymodem_v34_frame_schedule_result
-sippymodem_v34_frame_schedule_advance_data_frame(
-	struct sippymodem_v34_frame_schedule *schedule);
+enum v34_frame_schedule_result
+v34_frame_schedule_advance_data_frame(
+	struct v34_frame_schedule *schedule);
 
 /* Emit one mapping-frame description. Rejected and completed calls leave the
  * schedule and output unchanged. */
-enum sippymodem_v34_frame_schedule_result
-sippymodem_v34_frame_schedule_next(
-	struct sippymodem_v34_frame_schedule *schedule,
-	struct sippymodem_v34_mapping_frame *mapping_frame);
+enum v34_frame_schedule_result
+v34_frame_schedule_next(
+	struct v34_frame_schedule *schedule,
+	struct v34_mapping_frame *mapping_frame);
 
-const char *sippymodem_v34_frame_schedule_result_name(
-	enum sippymodem_v34_frame_schedule_result result);
+const char *v34_frame_schedule_result_name(
+	enum v34_frame_schedule_result result);
 
 #endif

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V34_ENCODER_TEST_HELPERS_H
-#define SIPPYMODEM_V34_ENCODER_TEST_HELPERS_H
+#ifndef V34_ENCODER_TEST_HELPERS_H
+#define V34_ENCODER_TEST_HELPERS_H
 
 #include <v34_mapping_frame_encoder.h>
 
@@ -10,24 +10,24 @@
 #include <stdint.h>
 
 static inline bool v34_test_grid_points_are_equal(
-	const struct sippymodem_v34_grid_point *left,
-	const struct sippymodem_v34_grid_point *right)
+	const struct v34_grid_point *left,
+	const struct v34_grid_point *right)
 {
 	return left->in_phase == right->in_phase &&
 	       left->quadrature == right->quadrature;
 }
 
 static inline bool v34_test_q7_points_are_equal(
-	const struct sippymodem_v34_q7_point *left,
-	const struct sippymodem_v34_q7_point *right)
+	const struct v34_q7_point *left,
+	const struct v34_q7_point *right)
 {
 	return left->in_phase == right->in_phase &&
 	       left->quadrature == right->quadrature;
 }
 
 static inline bool v34_test_mapping_parameters_are_equal(
-	const struct sippymodem_v34_mapping_parameters *left,
-	const struct sippymodem_v34_mapping_parameters *right)
+	const struct v34_mapping_parameters *left,
+	const struct v34_mapping_parameters *right)
 {
 	return left->constellation_points == right->constellation_points &&
 	       left->mapping_frame_bits == right->mapping_frame_bits &&
@@ -39,8 +39,8 @@ static inline bool v34_test_mapping_parameters_are_equal(
 }
 
 static inline bool v34_test_interval_outputs_are_equal(
-	const struct sippymodem_v34_4d_encoder_output *left,
-	const struct sippymodem_v34_4d_encoder_output *right)
+	const struct v34_4d_encoder_output *left,
+	const struct v34_4d_encoder_output *right)
 {
 	if (left->differential_output != right->differential_output ||
 	    left->modulo_output != right->modulo_output ||
@@ -52,10 +52,10 @@ static inline bool v34_test_interval_outputs_are_equal(
 	    left->convolutional_input.y4 != right->convolutional_input.y4)
 		return false;
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		const struct sippymodem_v34_precoder_symbol *left_precoded =
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		const struct v34_precoder_symbol *left_precoded =
 			&left->precoded[symbol];
-		const struct sippymodem_v34_precoder_symbol *right_precoded =
+		const struct v34_precoder_symbol *right_precoded =
 			&right->precoded[symbol];
 
 		if (left->subset_label[symbol] != right->subset_label[symbol] ||
@@ -82,17 +82,17 @@ static inline bool v34_test_interval_outputs_are_equal(
 }
 
 static inline bool v34_test_encoded_frames_are_equal(
-	const struct sippymodem_v34_encoded_mapping_frame *left,
-	const struct sippymodem_v34_encoded_mapping_frame *right)
+	const struct v34_encoded_mapping_frame *left,
+	const struct v34_encoded_mapping_frame *right)
 {
 	if (left->parsed.shell_label != right->parsed.shell_label)
 		return false;
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
-		const struct sippymodem_v34_4d_mapping_input *left_mapping =
+		const struct v34_4d_mapping_input *left_mapping =
 			&left->parsed.interval[interval];
-		const struct sippymodem_v34_4d_mapping_input *right_mapping =
+		const struct v34_4d_mapping_input *right_mapping =
 			&right->parsed.interval[interval];
 
 		if (left_mapping->rotation_bit != right_mapping->rotation_bit ||
@@ -103,7 +103,7 @@ static inline bool v34_test_encoded_frames_are_equal(
 			    &right->interval[interval]))
 			return false;
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol) {
 			if (left_mapping->point_index[symbol] !=
 				    right_mapping->point_index[symbol] ||
@@ -116,8 +116,8 @@ static inline bool v34_test_encoded_frames_are_equal(
 }
 
 static inline bool v34_test_encoders_are_equal(
-	const struct sippymodem_v34_4d_encoder *left,
-	const struct sippymodem_v34_4d_encoder *right)
+	const struct v34_4d_encoder *left,
+	const struct v34_4d_encoder *right)
 {
 	if (!v34_test_mapping_parameters_are_equal(
 		    &left->parameters, &right->parameters) ||
@@ -129,7 +129,7 @@ static inline bool v34_test_encoders_are_equal(
 	    left->previous_differential_output !=
 		    right->previous_differential_output)
 		return false;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT;
 	     ++tap) {
 		if (left->precoder.coefficients[tap].real !=
 			    right->precoder.coefficients[tap].real ||

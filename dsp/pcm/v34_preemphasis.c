@@ -17,12 +17,12 @@ static const double PREEMPHASIS_TEMPLATE_LOW_END = 0.4;
 static const double PREEMPHASIS_TEMPLATE_HIGH_START = 0.8;
 static const double PREEMPHASIS_SUM_TOLERANCE = 1e-9;
 
-_Static_assert((SIPPYMODEM_V34_PREEMPHASIS_TAPS & 1u) != 0,
+_Static_assert((V34_PREEMPHASIS_TAPS & 1u) != 0,
 	       "V.34 pre-emphasis FIR must have an integral group delay");
 
 static bool filter_index_is_valid(uint8_t filter_index)
 {
-	return filter_index <= SIPPYMODEM_V34_PREEMPHASIS_MAX_FILTER_INDEX;
+	return filter_index <= V34_PREEMPHASIS_MAX_FILTER_INDEX;
 }
 
 static double template_magnitude_db(
@@ -59,8 +59,8 @@ static double template_magnitude_db(
 	}
 }
 
-enum sippymodem_v34_preemphasis_result
-sippymodem_v34_preemphasis_template_db(
+enum v34_preemphasis_result
+v34_preemphasis_template_db(
 	uint8_t filter_index, double normalized_frequency,
 	double *magnitude_db, bool *constrained)
 {
@@ -68,10 +68,10 @@ sippymodem_v34_preemphasis_template_db(
 	    !isfinite(normalized_frequency) || normalized_frequency < 0.0 ||
 	    normalized_frequency > PREEMPHASIS_MAX_NORMALIZED_FREQUENCY ||
 	    magnitude_db == NULL || constrained == NULL)
-		return SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT;
+		return V34_PREEMPHASIS_INVALID_ARGUMENT;
 	*magnitude_db = template_magnitude_db(
 		filter_index, normalized_frequency, constrained);
-	return SIPPYMODEM_V34_PREEMPHASIS_OK;
+	return V34_PREEMPHASIS_OK;
 }
 
 static uint32_t greatest_common_divisor(uint32_t left, uint32_t right)
@@ -112,7 +112,7 @@ static double extended_template_amplitude(
 }
 
 static bool generate_coefficients(
-	struct sippymodem_v34_preemphasis *filter)
+	struct v34_preemphasis *filter)
 {
 	double sum = 0.0;
 
@@ -126,11 +126,11 @@ static bool generate_coefficients(
 	 * inside the recommendation's 1 dB tolerance. */
 	if (filter->filter_index == 0) {
 		filter->coefficients[
-			SIPPYMODEM_V34_PREEMPHASIS_DELAY_SAMPLES] = 1.0;
+			V34_PREEMPHASIS_DELAY_SAMPLES] = 1.0;
 		return true;
 	}
 	for (size_t offset = 0;
-	     offset <= SIPPYMODEM_V34_PREEMPHASIS_DELAY_SAMPLES;
+	     offset <= V34_PREEMPHASIS_DELAY_SAMPLES;
 	     ++offset) {
 		double coefficient = 0.0;
 
@@ -151,18 +151,18 @@ static bool generate_coefficients(
 		}
 		coefficient /= PREEMPHASIS_DESIGN_BINS;
 		filter->coefficients[
-			SIPPYMODEM_V34_PREEMPHASIS_DELAY_SAMPLES - offset] =
+			V34_PREEMPHASIS_DELAY_SAMPLES - offset] =
 			coefficient;
 		filter->coefficients[
-			SIPPYMODEM_V34_PREEMPHASIS_DELAY_SAMPLES + offset] =
+			V34_PREEMPHASIS_DELAY_SAMPLES + offset] =
 			coefficient;
 	}
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS;
 	     ++tap)
 		sum += filter->coefficients[tap];
 	if (!isfinite(sum) || fabs(sum) <= DBL_EPSILON)
 		return false;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS;
 	     ++tap) {
 		filter->coefficients[tap] /= sum;
 		if (!isfinite(filter->coefficients[tap]))
@@ -171,19 +171,19 @@ static bool generate_coefficients(
 	return true;
 }
 
-enum sippymodem_v34_preemphasis_result
-sippymodem_v34_preemphasis_init(
-	struct sippymodem_v34_preemphasis *filter, uint32_t sample_rate,
+enum v34_preemphasis_result
+v34_preemphasis_init(
+	struct v34_preemphasis *filter, uint32_t sample_rate,
 	uint32_t symbol_rate_numerator, uint32_t symbol_rate_denominator,
 	uint8_t filter_index)
 {
-	struct sippymodem_v34_preemphasis initialized = { 0 };
+	struct v34_preemphasis initialized = { 0 };
 	uint32_t divisor;
 
 	if (filter == NULL || !filter_index_is_valid(filter_index) ||
 	    !rates_are_valid(sample_rate, symbol_rate_numerator,
 			    symbol_rate_denominator))
-		return SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT;
+		return V34_PREEMPHASIS_INVALID_ARGUMENT;
 	divisor = greatest_common_divisor(
 		symbol_rate_numerator, symbol_rate_denominator);
 	initialized.sample_rate = sample_rate;
@@ -191,14 +191,14 @@ sippymodem_v34_preemphasis_init(
 	initialized.symbol_rate_denominator = symbol_rate_denominator / divisor;
 	initialized.filter_index = filter_index;
 	if (!generate_coefficients(&initialized) ||
-	    !sippymodem_v34_preemphasis_is_valid(&initialized))
-		return SIPPYMODEM_V34_PREEMPHASIS_NUMERIC_FAILURE;
+	    !v34_preemphasis_is_valid(&initialized))
+		return V34_PREEMPHASIS_NUMERIC_FAILURE;
 	*filter = initialized;
-	return SIPPYMODEM_V34_PREEMPHASIS_OK;
+	return V34_PREEMPHASIS_OK;
 }
 
-bool sippymodem_v34_preemphasis_is_valid(
-	const struct sippymodem_v34_preemphasis *filter)
+bool v34_preemphasis_is_valid(
+	const struct v34_preemphasis *filter)
 {
 	double coefficient_sum = 0.0;
 
@@ -208,15 +208,15 @@ bool sippymodem_v34_preemphasis_is_valid(
 			    filter->symbol_rate_denominator) ||
 	    greatest_common_divisor(filter->symbol_rate_numerator,
 				    filter->symbol_rate_denominator) != 1 ||
-	    filter->next_history >= SIPPYMODEM_V34_PREEMPHASIS_TAPS)
+	    filter->next_history >= V34_PREEMPHASIS_TAPS)
 		return false;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS;
 	     ++tap) {
 		if (!isfinite(filter->coefficients[tap]) ||
 		    !isfinite(filter->history[tap]) ||
 		    filter->coefficients[tap] !=
 			    filter->coefficients[
-				    SIPPYMODEM_V34_PREEMPHASIS_TAPS - 1u - tap])
+				    V34_PREEMPHASIS_TAPS - 1u - tap])
 			return false;
 		coefficient_sum += filter->coefficients[tap];
 	}
@@ -224,20 +224,20 @@ bool sippymodem_v34_preemphasis_is_valid(
 	       fabs(coefficient_sum - 1.0) <= PREEMPHASIS_SUM_TOLERANCE;
 }
 
-enum sippymodem_v34_preemphasis_result
-sippymodem_v34_preemphasis_reset(
-	struct sippymodem_v34_preemphasis *filter)
+enum v34_preemphasis_result
+v34_preemphasis_reset(
+	struct v34_preemphasis *filter)
 {
-	if (!sippymodem_v34_preemphasis_is_valid(filter))
-		return SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT;
+	if (!v34_preemphasis_is_valid(filter))
+		return V34_PREEMPHASIS_INVALID_ARGUMENT;
 	memset(filter->history, 0, sizeof(filter->history));
 	filter->next_history = 0;
-	return SIPPYMODEM_V34_PREEMPHASIS_OK;
+	return V34_PREEMPHASIS_OK;
 }
 
-enum sippymodem_v34_preemphasis_result
-sippymodem_v34_preemphasis_response_db(
-	const struct sippymodem_v34_preemphasis *filter,
+enum v34_preemphasis_result
+v34_preemphasis_response_db(
+	const struct v34_preemphasis *filter,
 	double normalized_frequency, double *magnitude_db)
 {
 	double angle;
@@ -246,84 +246,84 @@ sippymodem_v34_preemphasis_response_db(
 	double magnitude;
 	double response_db;
 
-	if (!sippymodem_v34_preemphasis_is_valid(filter) ||
+	if (!v34_preemphasis_is_valid(filter) ||
 	    !isfinite(normalized_frequency) || normalized_frequency < 0.0 ||
 	    magnitude_db == NULL)
-		return SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT;
+		return V34_PREEMPHASIS_INVALID_ARGUMENT;
 	angle = 2.0 * PREEMPHASIS_PI * normalized_frequency *
 		filter->symbol_rate_numerator /
 		((double)filter->sample_rate *
 		 filter->symbol_rate_denominator);
 	if (!isfinite(angle) || angle > PREEMPHASIS_PI)
-		return SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+		return V34_PREEMPHASIS_INVALID_ARGUMENT;
+	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS;
 	     ++tap) {
 		in_phase += filter->coefficients[tap] * cos(angle * tap);
 		quadrature -= filter->coefficients[tap] * sin(angle * tap);
 	}
 	magnitude = hypot(in_phase, quadrature);
 	if (!isfinite(magnitude) || magnitude <= DBL_MIN)
-		return SIPPYMODEM_V34_PREEMPHASIS_NUMERIC_FAILURE;
+		return V34_PREEMPHASIS_NUMERIC_FAILURE;
 	response_db = 20.0 * log10(magnitude);
 	if (!isfinite(response_db))
-		return SIPPYMODEM_V34_PREEMPHASIS_NUMERIC_FAILURE;
+		return V34_PREEMPHASIS_NUMERIC_FAILURE;
 	*magnitude_db = response_db;
-	return SIPPYMODEM_V34_PREEMPHASIS_OK;
+	return V34_PREEMPHASIS_OK;
 }
 
-enum sippymodem_v34_preemphasis_result
-sippymodem_v34_preemphasis_sample(
-	struct sippymodem_v34_preemphasis *filter, double input,
+enum v34_preemphasis_result
+v34_preemphasis_sample(
+	struct v34_preemphasis *filter, double input,
 	double *output)
 {
 	double filtered = 0.0;
 	size_t history;
 
-	if (!sippymodem_v34_preemphasis_is_valid(filter) || !isfinite(input) ||
+	if (!v34_preemphasis_is_valid(filter) || !isfinite(input) ||
 	    output == NULL)
-		return SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT;
+		return V34_PREEMPHASIS_INVALID_ARGUMENT;
 	history = filter->next_history;
 	filtered = filter->coefficients[0] * input;
-	for (size_t tap = 1; tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+	for (size_t tap = 1; tap < V34_PREEMPHASIS_TAPS;
 	     ++tap) {
 		size_t previous =
-			(history + SIPPYMODEM_V34_PREEMPHASIS_TAPS - tap) %
-			SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+			(history + V34_PREEMPHASIS_TAPS - tap) %
+			V34_PREEMPHASIS_TAPS;
 
 		filtered += filter->coefficients[tap] *
 			    filter->history[previous];
 	}
 	if (!isfinite(filtered))
-		return SIPPYMODEM_V34_PREEMPHASIS_NUMERIC_FAILURE;
+		return V34_PREEMPHASIS_NUMERIC_FAILURE;
 	filter->history[history] = input;
 	filter->next_history =
-		(history + 1u) % SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+		(history + 1u) % V34_PREEMPHASIS_TAPS;
 	*output = filtered;
-	return SIPPYMODEM_V34_PREEMPHASIS_OK;
+	return V34_PREEMPHASIS_OK;
 }
 
-double sippymodem_v34_preemphasis_peak_gain_bound(
-	const struct sippymodem_v34_preemphasis *filter)
+double v34_preemphasis_peak_gain_bound(
+	const struct v34_preemphasis *filter)
 {
 	double bound = 0.0;
 
-	if (!sippymodem_v34_preemphasis_is_valid(filter))
+	if (!v34_preemphasis_is_valid(filter))
 		return 0.0;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS;
 	     ++tap)
 		bound += fabs(filter->coefficients[tap]);
 	return isfinite(bound) ? bound : 0.0;
 }
 
-const char *sippymodem_v34_preemphasis_result_name(
-	enum sippymodem_v34_preemphasis_result result)
+const char *v34_preemphasis_result_name(
+	enum v34_preemphasis_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_PREEMPHASIS_OK:
+	case V34_PREEMPHASIS_OK:
 		return "ok";
-	case SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT:
+	case V34_PREEMPHASIS_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_PREEMPHASIS_NUMERIC_FAILURE:
+	case V34_PREEMPHASIS_NUMERIC_FAILURE:
 		return "numeric failure";
 	}
 	return "unknown";

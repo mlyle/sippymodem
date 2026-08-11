@@ -12,21 +12,21 @@
 #include <stdint.h>
 #include <string.h>
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 struct carrier_fixture {
-	struct sippymodem_v34_phase3_profile profile;
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_frame_schedule schedule;
-	struct sippymodem_v34_scrambler scrambler;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_power_normalizer normalizer;
-	struct sippymodem_v34_transmitted_mapping_frame frame;
+	struct v34_phase3_profile profile;
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_frame_schedule schedule;
+	struct v34_scrambler scrambler;
+	struct v34_4d_encoder encoder;
+	struct v34_power_normalizer normalizer;
+	struct v34_transmitted_mapping_frame frame;
 };
 
 struct exact_profile_rates {
@@ -37,52 +37,52 @@ struct exact_profile_rates {
 };
 
 static struct exact_profile_rates profile_rates(
-	enum sippymodem_v34_symbol_rate rate, bool high_carrier)
+	enum v34_symbol_rate rate, bool high_carrier)
 {
 	switch (rate) {
-	case SIPPYMODEM_V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2400:
 		return (struct exact_profile_rates){
 			2400, 1, high_carrier ? 1800u : 1600u, 1,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_2743:
 		return (struct exact_profile_rates){
 			19200, 7, high_carrier ? 12800u : 11520u, 7,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_2800:
+	case V34_SYMBOL_RATE_2800:
 		return (struct exact_profile_rates){
 			2800, 1, high_carrier ? 5600u : 1680u,
 			high_carrier ? 3u : 1u,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_3000:
 		return (struct exact_profile_rates){
 			3000, 1, high_carrier ? 2000u : 1800u, 1,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_3200:
+	case V34_SYMBOL_RATE_3200:
 		return (struct exact_profile_rates){
 			3200, 1, high_carrier ? 1920u : 12800u,
 			high_carrier ? 1u : 7u,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_3429:
+	case V34_SYMBOL_RATE_3429:
 		return (struct exact_profile_rates){ 24000, 7, 96000, 49 };
-	case SIPPYMODEM_V34_SYMBOL_RATE_COUNT:
+	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}
 	return (struct exact_profile_rates){ 0 };
 }
 
-static struct sippymodem_v34_phase3_profile profile_for_rate(
-	enum sippymodem_v34_symbol_rate rate, bool high_carrier,
+static struct v34_phase3_profile profile_for_rate(
+	enum v34_symbol_rate rate, bool high_carrier,
 	uint8_t primary_rate)
 {
 	struct exact_profile_rates rates = profile_rates(rate, high_carrier);
 
-	return (struct sippymodem_v34_phase3_profile){
+	return (struct v34_phase3_profile){
 		.symbol_rate_numerator = rates.symbol_numerator,
 		.symbol_rate_denominator = rates.symbol_denominator,
 		.carrier_frequency_numerator = rates.carrier_numerator,
 		.carrier_frequency_denominator = rates.carrier_denominator,
 		.symbol_rate = rate,
-		.local_role = SIPPYMODEM_V34_CALLING_STATION,
+		.local_role = V34_CALLING_STATION,
 		.projected_data_rate_2400_bps_units = primary_rate,
 		.high_carrier = high_carrier,
 	};
@@ -97,50 +97,50 @@ static uint8_t next_generated_bit(uint32_t *state)
 static bool initialize_fixture(struct carrier_fixture *fixture)
 {
 	struct carrier_fixture generated = { 0 };
-	struct sippymodem_v34_frame_schedule preview;
-	struct sippymodem_v34_mapping_frame mapping_frame;
-	uint8_t primary_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	struct v34_frame_schedule preview;
+	struct v34_mapping_frame mapping_frame;
+	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t auxiliary_bit;
 	const uint8_t *auxiliary_pointer = NULL;
 	uint32_t random = UINT32_C(0xc411e221);
 
-	generated.profile = (struct sippymodem_v34_phase3_profile){
+	generated.profile = (struct v34_phase3_profile){
 		.symbol_rate_numerator = 3000,
 		.symbol_rate_denominator = 1,
 		.carrier_frequency_numerator = 2000,
 		.carrier_frequency_denominator = 1,
-		.symbol_rate = SIPPYMODEM_V34_SYMBOL_RATE_3000,
-		.local_role = SIPPYMODEM_V34_CALLING_STATION,
+		.symbol_rate = V34_SYMBOL_RATE_3000,
+		.local_role = V34_CALLING_STATION,
 		.projected_data_rate_2400_bps_units = 8,
 		.high_carrier = true,
 	};
-	if (!sippymodem_v34_phase3_profile_is_valid(&generated.profile) ||
-	    sippymodem_v34_frame_geometry_init(
-		    &generated.geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8,
-		    true) != SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
-	    sippymodem_v34_mapping_parameters_init(
+	if (!v34_phase3_profile_is_valid(&generated.profile) ||
+	    v34_frame_geometry_init(
+		    &generated.geometry, V34_SYMBOL_RATE_3000, 8,
+		    true) != V34_FRAME_SCHEDULE_OK ||
+	    v34_mapping_parameters_init(
 		    &generated.parameters, &generated.geometry, false) !=
-		    SIPPYMODEM_V34_MAPPING_PARAMETERS_OK ||
-	    sippymodem_v34_frame_schedule_init(
+		    V34_MAPPING_PARAMETERS_OK ||
+	    v34_frame_schedule_init(
 		    &generated.schedule, &generated.geometry, 3) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
-	    sippymodem_v34_transmit_scrambler_init(
-		    &generated.scrambler, SIPPYMODEM_V34_CALLING_STATION) !=
-		    SIPPYMODEM_V34_FRAMING_OK ||
-	    sippymodem_v34_4d_encoder_init(
+		    V34_FRAME_SCHEDULE_OK ||
+	    v34_transmit_scrambler_init(
+		    &generated.scrambler, V34_CALLING_STATION) !=
+		    V34_FRAMING_OK ||
+	    v34_4d_encoder_init(
 		    &generated.encoder, &generated.parameters, COEFFICIENTS,
-		    SIPPYMODEM_V34_TRELLIS_32_STATE) !=
-		    SIPPYMODEM_V34_4D_ENCODER_OK ||
-	    sippymodem_v34_calibrate_mapping_power(
+		    V34_TRELLIS_32_STATE) !=
+		    V34_4D_ENCODER_OK ||
+	    v34_calibrate_mapping_power(
 		    &generated.schedule, &generated.scrambler,
 		    &generated.encoder,
-		    SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		    V34_NONLINEAR_THETA_5_OVER_16,
 		    &generated.normalizer) !=
-		    SIPPYMODEM_V34_POWER_CALIBRATION_OK)
+		    V34_POWER_CALIBRATION_OK)
 		return false;
 	preview = generated.schedule;
-	if (sippymodem_v34_frame_schedule_next(&preview, &mapping_frame) !=
-	    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+	if (v34_frame_schedule_next(&preview, &mapping_frame) !=
+	    V34_FRAME_SCHEDULE_OK)
 		return false;
 	for (size_t bit = 0; bit < mapping_frame.primary_bits; ++bit)
 		primary_bits[bit] = next_generated_bit(&random);
@@ -148,14 +148,14 @@ static bool initialize_fixture(struct carrier_fixture *fixture)
 		auxiliary_bit = next_generated_bit(&random);
 		auxiliary_pointer = &auxiliary_bit;
 	}
-	if (sippymodem_v34_transmit_mapping_frame(
+	if (v34_transmit_mapping_frame(
 		    &generated.schedule, &generated.scrambler,
 		    &generated.encoder, primary_bits, mapping_frame.primary_bits,
 		    auxiliary_pointer,
-		    SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		    V34_NONLINEAR_THETA_5_OVER_16,
 		    generated.normalizer.precoded_mean_squared_magnitude,
 		    &generated.frame) !=
-	    SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OK)
+	    V34_MAPPING_FRAME_TRANSMITTER_OK)
 		return false;
 	*fixture = generated;
 	return true;
@@ -164,8 +164,8 @@ static bool initialize_fixture(struct carrier_fixture *fixture)
 static bool test_streaming_handoff(void)
 {
 	struct carrier_fixture fixture;
-	struct sippymodem_v34_data_carrier carrier;
-	struct sippymodem_v34_data_carrier waiting;
+	struct v34_data_carrier carrier;
+	struct v34_data_carrier waiting;
 	struct sippymodem_qam_modulator model;
 	size_t model_symbol = 0;
 	size_t sample_count = 0;
@@ -174,44 +174,44 @@ static bool test_streaming_handoff(void)
 	bool waiting_accepted = true;
 
 	CHECK(initialize_fixture(&fixture) &&
-	      sippymodem_v34_data_carrier_init(
+	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, &fixture.geometry,
 		      &fixture.normalizer, 8000) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_OK &&
-	      sippymodem_v34_data_carrier_needs_mapping_frame(&carrier) &&
+		      V34_DATA_CARRIER_OK &&
+	      v34_data_carrier_needs_mapping_frame(&carrier) &&
 	      carrier.modulator.maximum_point_power ==
 		      fixture.normalizer.maximum_normalized_point_power &&
 	      carrier.modulator.channel.symbol_rate_numerator == 3000u &&
 	      carrier.modulator.channel.carrier_frequency_numerator == 2000u,
 	      "data-carrier fixture did not initialize");
 	waiting = carrier;
-	CHECK(sippymodem_v34_data_carrier_sample(
+	CHECK(v34_data_carrier_sample(
 		      &carrier, &waiting_sample, &waiting_accepted) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED &&
+		      V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED &&
 	      memcmp(&carrier, &waiting, sizeof(carrier)) == 0 &&
 	      waiting_sample == 123.0 && waiting_accepted,
 	      "empty data carrier advanced before a mapping frame");
 	model = carrier.modulator;
-	CHECK(sippymodem_v34_data_carrier_load_mapping_frame(
+	CHECK(v34_data_carrier_load_mapping_frame(
 		      &carrier, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_OK &&
-	      !sippymodem_v34_data_carrier_needs_mapping_frame(&carrier),
+		      V34_DATA_CARRIER_OK &&
+	      !v34_data_carrier_needs_mapping_frame(&carrier),
 	      "data carrier did not load a mapping frame");
 	for (size_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME; ++symbol) {
+	     symbol < V34_SYMBOLS_PER_MAPPING_FRAME; ++symbol) {
 		struct sippymodem_qam_point expected;
 
-		CHECK(sippymodem_v34_normalize_power(
+		CHECK(v34_normalize_power(
 			      &fixture.normalizer,
 			      &fixture.frame.projected_symbol[symbol], &expected) ==
-			      SIPPYMODEM_V34_SYMBOL_POWER_OK &&
+			      V34_SYMBOL_POWER_OK &&
 		      carrier.normalized_symbol[symbol].in_phase ==
 			      expected.in_phase &&
 		      carrier.normalized_symbol[symbol].quadrature ==
 			      expected.quadrature,
 		      "data carrier changed normalized symbol %zu", symbol);
 	}
-	while (!sippymodem_v34_data_carrier_needs_mapping_frame(&carrier)) {
+	while (!v34_data_carrier_needs_mapping_frame(&carrier)) {
 		const struct sippymodem_qam_point *point =
 			&carrier.normalized_symbol[model_symbol];
 		double expected_sample;
@@ -223,9 +223,9 @@ static bool test_streaming_handoff(void)
 		      sippymodem_qam_modulator_sample_f64(
 			      &model, point, &expected_sample,
 			      &expected_accepted) == SIPPYMODEM_QAM_OK &&
-		      sippymodem_v34_data_carrier_sample(
+		      v34_data_carrier_sample(
 			      &carrier, &actual_sample, &actual_accepted) ==
-			      SIPPYMODEM_V34_DATA_CARRIER_OK &&
+			      V34_DATA_CARRIER_OK &&
 		      actual_sample == expected_sample &&
 		      actual_accepted == expected_accepted,
 		      "data carrier diverged at sample %zu", sample_count);
@@ -234,13 +234,13 @@ static bool test_streaming_handoff(void)
 		nonzero_sample_seen |= actual_sample != 0.0;
 		sample_count++;
 	}
-	CHECK(model_symbol == SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME &&
-	      carrier.next_symbol == SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME &&
+	CHECK(model_symbol == V34_SYMBOLS_PER_MAPPING_FRAME &&
+	      carrier.next_symbol == V34_SYMBOLS_PER_MAPPING_FRAME &&
 	      memcmp(&carrier.modulator, &model, sizeof(model)) == 0 &&
 	      nonzero_sample_seen && sample_count > model_symbol &&
-	      sippymodem_v34_data_carrier_load_mapping_frame(
+	      v34_data_carrier_load_mapping_frame(
 		      &carrier, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_OK,
+		      V34_DATA_CARRIER_OK,
 	      "data carrier did not consume and reload the mapping frame");
 	return true;
 }
@@ -248,36 +248,36 @@ static bool test_streaming_handoff(void)
 static bool test_line_output(void)
 {
 	struct carrier_fixture fixture;
-	struct sippymodem_v34_data_line_transmitter transmitter;
-	struct sippymodem_v34_data_line_transmitter waiting;
-	struct sippymodem_v34_data_carrier model_carrier;
-	struct sippymodem_v34_preemphasis model_filter;
+	struct v34_data_line_transmitter transmitter;
+	struct v34_data_line_transmitter waiting;
+	struct v34_data_carrier model_carrier;
+	struct v34_preemphasis model_filter;
 	size_t samples = 0;
 	bool nonzero_seen = false;
 	int16_t waiting_sample = 1234;
 	bool waiting_accepted = true;
 
 	CHECK(initialize_fixture(&fixture) &&
-	      sippymodem_v34_data_line_transmitter_init(
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
-	      sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK &&
+	      v34_data_line_transmitter_needs_mapping_frame(
 		      &transmitter),
 	      "data line transmitter did not initialize");
 	waiting = transmitter;
-	CHECK(sippymodem_v34_data_line_transmitter_sample(
+	CHECK(v34_data_line_transmitter_sample(
 		      &transmitter, &waiting_sample, &waiting_accepted) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED &&
+		      V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED &&
 	      memcmp(&transmitter, &waiting, sizeof(transmitter)) == 0 &&
 	      waiting_sample == 1234 && waiting_accepted &&
-	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+	      v34_data_line_transmitter_load_mapping_frame(
 		      &transmitter, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+		      V34_DATA_LINE_TRANSMITTER_OK,
 	      "data line transmitter changed while waiting for a frame");
 	model_carrier = transmitter.carrier;
 	model_filter = transmitter.preemphasis;
-	while (!sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+	while (!v34_data_line_transmitter_needs_mapping_frame(
 		&transmitter)) {
 		double carrier_sample;
 		double filtered_sample;
@@ -287,25 +287,25 @@ static bool test_line_output(void)
 		bool actual_accepted;
 
 		CHECK(samples < 64u &&
-		      sippymodem_v34_data_carrier_sample(
+		      v34_data_carrier_sample(
 			      &model_carrier, &carrier_sample,
 			      &expected_accepted) ==
-			      SIPPYMODEM_V34_DATA_CARRIER_OK &&
-		      sippymodem_v34_preemphasis_sample(
+			      V34_DATA_CARRIER_OK &&
+		      v34_preemphasis_sample(
 			      &model_filter, carrier_sample, &filtered_sample) ==
-			      SIPPYMODEM_V34_PREEMPHASIS_OK,
+			      V34_PREEMPHASIS_OK,
 		      "data line model failed at sample %zu", samples);
 		expected_sample = lround(filtered_sample * transmitter.output_gain);
-		CHECK(sippymodem_v34_data_line_transmitter_sample(
+		CHECK(v34_data_line_transmitter_sample(
 			      &transmitter, &actual_sample, &actual_accepted) ==
-			      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+			      V34_DATA_LINE_TRANSMITTER_OK &&
 		      actual_sample == expected_sample &&
 		      actual_accepted == expected_accepted,
 		      "data line output diverged at sample %zu", samples);
 		nonzero_seen |= actual_sample != 0;
 		samples++;
 	}
-	CHECK(samples > SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME &&
+	CHECK(samples > V34_SYMBOLS_PER_MAPPING_FRAME &&
 	      transmitter.generated_samples == samples && nonzero_seen &&
 	      memcmp(&transmitter.carrier, &model_carrier,
 		     sizeof(model_carrier)) == 0 &&
@@ -318,9 +318,9 @@ static bool test_line_output(void)
 static bool test_line_power_reduction(void)
 {
 	struct carrier_fixture fixture;
-	struct sippymodem_v34_phase3_profile reduced_profile;
-	struct sippymodem_v34_data_line_transmitter full;
-	struct sippymodem_v34_data_line_transmitter reduced;
+	struct v34_phase3_profile reduced_profile;
+	struct v34_data_line_transmitter full;
+	struct v34_data_line_transmitter reduced;
 	long double full_sum_squares = 0.0L;
 	long double reduced_sum_squares = 0.0L;
 	double expected_ratio = pow(10.0, -6.0 / 20.0);
@@ -330,14 +330,14 @@ static bool test_line_power_reduction(void)
 	      "line-power fixture did not initialize");
 	reduced_profile = fixture.profile;
 	reduced_profile.transmit_power_reduction_db = 6;
-	CHECK(sippymodem_v34_data_line_transmitter_init(
+	CHECK(v34_data_line_transmitter_init(
 		      &full, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK &&
+	      v34_data_line_transmitter_init(
 		      &reduced, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &reduced_profile,
-		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK &&
 	      memcmp(&full.calibration, &reduced.calibration,
 		     sizeof(full.calibration)) == 0 &&
 	      fabs(reduced.target_rms / full.target_rms - expected_ratio) <
@@ -345,14 +345,14 @@ static bool test_line_power_reduction(void)
 	      fabs(reduced.output_gain / full.output_gain - expected_ratio) <
 		      1e-12,
 	      "negotiated reduction changed calibration or gain");
-	CHECK(sippymodem_v34_data_line_transmitter_load_mapping_frame(
+	CHECK(v34_data_line_transmitter_load_mapping_frame(
 		      &full, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
-	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      V34_DATA_LINE_TRANSMITTER_OK &&
+	      v34_data_line_transmitter_load_mapping_frame(
 		      &reduced, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+		      V34_DATA_LINE_TRANSMITTER_OK,
 	      "line-power comparison frame did not load");
-	while (!sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+	while (!v34_data_line_transmitter_needs_mapping_frame(
 		&full)) {
 		int16_t full_sample;
 		int16_t reduced_sample;
@@ -360,14 +360,14 @@ static bool test_line_power_reduction(void)
 		bool reduced_accepted;
 
 		CHECK(samples < 64u &&
-		      !sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+		      !v34_data_line_transmitter_needs_mapping_frame(
 			      &reduced) &&
-		      sippymodem_v34_data_line_transmitter_sample(
+		      v34_data_line_transmitter_sample(
 			      &full, &full_sample, &full_accepted) ==
-			      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
-		      sippymodem_v34_data_line_transmitter_sample(
+			      V34_DATA_LINE_TRANSMITTER_OK &&
+		      v34_data_line_transmitter_sample(
 			      &reduced, &reduced_sample, &reduced_accepted) ==
-			      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK &&
+			      V34_DATA_LINE_TRANSMITTER_OK &&
 		      full_accepted == reduced_accepted,
 		      "reduced line output diverged at sample %zu", samples);
 		full_sum_squares += (long double)full_sample * full_sample;
@@ -376,7 +376,7 @@ static bool test_line_power_reduction(void)
 		samples++;
 	}
 	CHECK(samples != 0 &&
-	      sippymodem_v34_data_line_transmitter_needs_mapping_frame(
+	      v34_data_line_transmitter_needs_mapping_frame(
 		      &reduced) &&
 	      fabsl(sqrtl(reduced_sum_squares / samples) /
 			    sqrtl(full_sum_squares / samples) -
@@ -388,10 +388,10 @@ static bool test_line_power_reduction(void)
 static bool test_line_transactional_validation(void)
 {
 	struct carrier_fixture fixture;
-	struct sippymodem_v34_data_line_transmitter transmitter;
-	struct sippymodem_v34_data_line_transmitter before;
-	struct sippymodem_v34_data_line_transmitter corrupt;
-	struct sippymodem_v34_phase3_profile invalid_profile;
+	struct v34_data_line_transmitter transmitter;
+	struct v34_data_line_transmitter before;
+	struct v34_data_line_transmitter corrupt;
+	struct v34_phase3_profile invalid_profile;
 	int16_t sample = 1234;
 	bool accepted = true;
 
@@ -401,104 +401,104 @@ static bool test_line_transactional_validation(void)
 	before = transmitter;
 	invalid_profile = fixture.profile;
 	invalid_profile.transmit_power_reduction_db = UINT8_MAX;
-	CHECK(sippymodem_v34_data_line_transmitter_init(
+	CHECK(v34_data_line_transmitter_init(
 		      NULL, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
 		      8000, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, NULL, &fixture.scrambler, &fixture.encoder,
 		      &fixture.normalizer, &fixture.profile, 8000, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, NULL, &fixture.encoder,
 		      &fixture.normalizer, &fixture.profile, 8000, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler, NULL,
 		      &fixture.normalizer, &fixture.profile, 8000, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, NULL, &fixture.profile, 8000, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, NULL, 8000, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &invalid_profile,
 		      8000, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
 		      0, 4000) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_init(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
 		      8000, 0) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "rejected line initialization changed its destination");
-	CHECK(sippymodem_v34_data_line_transmitter_init(
+	CHECK(v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
 		      8000, INT16_MAX) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK &&
+		      V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "clipping-risk initialization changed its destination");
-	CHECK(sippymodem_v34_data_line_transmitter_init(
+	CHECK(v34_data_line_transmitter_init(
 		      &transmitter, &fixture.schedule, &fixture.scrambler,
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
 	      "valid data-line state did not initialize");
 	before = transmitter;
-	CHECK(!sippymodem_v34_data_line_transmitter_is_valid(NULL) &&
-	      !sippymodem_v34_data_line_transmitter_needs_mapping_frame(NULL) &&
-	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+	CHECK(!v34_data_line_transmitter_is_valid(NULL) &&
+	      !v34_data_line_transmitter_needs_mapping_frame(NULL) &&
+	      v34_data_line_transmitter_load_mapping_frame(
 		      NULL, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_load_mapping_frame(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_load_mapping_frame(
 		      &transmitter, NULL) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_sample(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_sample(
 		      NULL, &sample, &accepted) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_sample(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_sample(
 		      &transmitter, NULL, &accepted) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_line_transmitter_sample(
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_sample(
 		      &transmitter, &sample, NULL) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
 	      sample == 1234 && accepted,
 	      "invalid data-line operation changed state or output");
-	CHECK(sippymodem_v34_data_line_transmitter_load_mapping_frame(
+	CHECK(v34_data_line_transmitter_load_mapping_frame(
 		      &transmitter, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK,
+		      V34_DATA_LINE_TRANSMITTER_OK,
 	      "validation frame did not load");
 	before = transmitter;
-	CHECK(sippymodem_v34_data_line_transmitter_load_mapping_frame(
+	CHECK(v34_data_line_transmitter_load_mapping_frame(
 		      &transmitter, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING &&
+		      V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "data line replaced a pending mapping frame");
 
 	corrupt = before;
 	corrupt.generated_samples = 1;
-	CHECK(!sippymodem_v34_data_line_transmitter_is_valid(&corrupt) &&
-	      sippymodem_v34_data_line_transmitter_sample(
+	CHECK(!v34_data_line_transmitter_is_valid(&corrupt) &&
+	      v34_data_line_transmitter_sample(
 		      &corrupt, &sample, &accepted) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
 	      sample == 1234 && accepted,
 	      "data line accepted inconsistent clock state");
 	corrupt = before;
 	corrupt.generated_samples = UINT64_MAX;
 	corrupt.preemphasis.next_history =
-		UINT64_MAX % SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+		UINT64_MAX % V34_PREEMPHASIS_TAPS;
 	corrupt.carrier.modulator.carrier_phase =
 		(uint32_t)UINT64_MAX *
 		corrupt.carrier.modulator.carrier_phase_step;
@@ -507,36 +507,36 @@ static bool test_line_transactional_validation(void)
 		corrupt.carrier.profile.symbol_rate_numerator %
 		corrupt.carrier.modulator.symbol_period_units;
 	before = corrupt;
-	CHECK(sippymodem_v34_data_line_transmitter_is_valid(&corrupt) &&
-	      sippymodem_v34_data_line_transmitter_sample(
+	CHECK(v34_data_line_transmitter_is_valid(&corrupt) &&
+	      v34_data_line_transmitter_sample(
 		      &corrupt, &sample, &accepted) ==
-		      SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE &&
+		      V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE &&
 	      memcmp(&corrupt, &before, sizeof(corrupt)) == 0 &&
 	      sample == 1234 && accepted,
 	      "exhausted sample count changed state or output");
-	CHECK(strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OK),
+	CHECK(strcmp(v34_data_line_transmitter_result_name(
+		     V34_DATA_LINE_TRANSMITTER_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED),
+	      strcmp(v34_data_line_transmitter_result_name(
+		     V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED),
 		     "mapping frame required") == 0 &&
-	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING),
+	      strcmp(v34_data_line_transmitter_result_name(
+		     V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING),
 		     "mapping frame pending") == 0 &&
-	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT),
+	      strcmp(v34_data_line_transmitter_result_name(
+		     V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE),
+	      strcmp(v34_data_line_transmitter_result_name(
+		     V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE),
 		     "out of range") == 0 &&
-	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK),
+	      strcmp(v34_data_line_transmitter_result_name(
+		     V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK),
 		     "clipping risk") == 0 &&
-	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     SIPPYMODEM_V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE),
+	      strcmp(v34_data_line_transmitter_result_name(
+		     V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_data_line_transmitter_result_name(
-		     (enum sippymodem_v34_data_line_transmitter_result)99),
+	      strcmp(v34_data_line_transmitter_result_name(
+		     (enum v34_data_line_transmitter_result)99),
 		     "unknown") == 0,
 	      "data-line result names changed");
 	return true;
@@ -548,42 +548,42 @@ static bool test_all_line_profiles(void)
 	size_t configuration_count = 0;
 
 	for (unsigned int rate_index = 0;
-	     rate_index < SIPPYMODEM_V34_SYMBOL_RATE_COUNT; ++rate_index) {
-		enum sippymodem_v34_symbol_rate rate =
-			(enum sippymodem_v34_symbol_rate)rate_index;
+	     rate_index < V34_SYMBOL_RATE_COUNT; ++rate_index) {
+		enum v34_symbol_rate rate =
+			(enum v34_symbol_rate)rate_index;
 		unsigned int carrier_count =
-			rate == SIPPYMODEM_V34_SYMBOL_RATE_3429 ? 1u : 2u;
+			rate == V34_SYMBOL_RATE_3429 ? 1u : 2u;
 
 		for (unsigned int high = 0; high < carrier_count; ++high) {
-			struct sippymodem_v34_phase3_profile profile =
+			struct v34_phase3_profile profile =
 				profile_for_rate(
 					rate, high != 0, PRIMARY_RATES[rate_index]);
-			struct sippymodem_v34_frame_geometry geometry;
-			struct sippymodem_v34_mapping_parameters parameters;
-			struct sippymodem_v34_symbol_power_measurement measurement = {
+			struct v34_frame_geometry geometry;
+			struct v34_mapping_parameters parameters;
+			struct v34_symbol_power_measurement measurement = {
 				.mean_squared_magnitude = 1.0,
 				.symbol_count = 1,
 			};
-			struct sippymodem_v34_power_normalizer normalizer;
-			struct sippymodem_v34_data_carrier carrier;
+			struct v34_power_normalizer normalizer;
+			struct v34_data_carrier carrier;
 
-			CHECK(sippymodem_v34_phase3_profile_is_valid(&profile) &&
-			      sippymodem_v34_frame_geometry_init(
+			CHECK(v34_phase3_profile_is_valid(&profile) &&
+			      v34_frame_geometry_init(
 				      &geometry, rate, PRIMARY_RATES[rate_index],
 				      false) ==
-				      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-			      sippymodem_v34_mapping_parameters_init(
+				      V34_FRAME_SCHEDULE_OK &&
+			      v34_mapping_parameters_init(
 				      &parameters, &geometry, false) ==
-				      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
-			      sippymodem_v34_power_normalizer_init(
+				      V34_MAPPING_PARAMETERS_OK &&
+			      v34_power_normalizer_init(
 				      &normalizer, &parameters,
-				      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO,
+				      V34_NONLINEAR_THETA_ZERO,
 				      &measurement, &measurement) ==
-				      SIPPYMODEM_V34_SYMBOL_POWER_OK &&
-			      sippymodem_v34_data_carrier_init(
+				      V34_SYMBOL_POWER_OK &&
+			      v34_data_carrier_init(
 				      &carrier, &profile, &geometry, &normalizer,
-				      8000) == SIPPYMODEM_V34_DATA_CARRIER_OK &&
-			      sippymodem_v34_data_carrier_is_valid(&carrier) &&
+				      8000) == V34_DATA_CARRIER_OK &&
+			      v34_data_carrier_is_valid(&carrier) &&
 			      carrier.modulator.channel.symbol_rate_numerator ==
 				      profile.symbol_rate_numerator &&
 			      carrier.modulator.channel.symbol_rate_denominator ==
@@ -617,13 +617,13 @@ static bool bytes_are_filled(
 }
 
 static bool rejected_frame_is_transactional(
-	struct sippymodem_v34_data_carrier *carrier,
-	const struct sippymodem_v34_transmitted_mapping_frame *frame,
-	enum sippymodem_v34_data_carrier_result expected)
+	struct v34_data_carrier *carrier,
+	const struct v34_transmitted_mapping_frame *frame,
+	enum v34_data_carrier_result expected)
 {
-	struct sippymodem_v34_data_carrier saved = *carrier;
+	struct v34_data_carrier saved = *carrier;
 
-	return sippymodem_v34_data_carrier_load_mapping_frame(carrier, frame) ==
+	return v34_data_carrier_load_mapping_frame(carrier, frame) ==
 		       expected &&
 	       memcmp(carrier, &saved, sizeof(saved)) == 0;
 }
@@ -631,35 +631,35 @@ static bool rejected_frame_is_transactional(
 static bool test_transactional_validation(void)
 {
 	struct carrier_fixture fixture;
-	struct sippymodem_v34_data_carrier carrier;
-	struct sippymodem_v34_data_carrier saved;
-	struct sippymodem_v34_data_carrier corrupt;
-	struct sippymodem_v34_transmitted_mapping_frame invalid_frame;
-	struct sippymodem_v34_phase3_profile limited_profile;
-	struct sippymodem_v34_phase3_profile mismatched_profile;
-	struct sippymodem_v34_power_normalizer mismatched_normalizer;
-	struct sippymodem_v34_frame_geometry mismatched_geometry;
-	struct sippymodem_v34_mapping_parameters mismatched_parameters;
+	struct v34_data_carrier carrier;
+	struct v34_data_carrier saved;
+	struct v34_data_carrier corrupt;
+	struct v34_transmitted_mapping_frame invalid_frame;
+	struct v34_phase3_profile limited_profile;
+	struct v34_phase3_profile mismatched_profile;
+	struct v34_power_normalizer mismatched_normalizer;
+	struct v34_frame_geometry mismatched_geometry;
+	struct v34_mapping_parameters mismatched_parameters;
 	double sample = 123.0;
 	bool accepted = true;
 
 	CHECK(initialize_fixture(&fixture) &&
-	      sippymodem_v34_data_carrier_init(
+	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, &fixture.geometry,
 		      &fixture.normalizer, 8000) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_OK,
+		      V34_DATA_CARRIER_OK,
 	      "data-carrier validation fixture did not initialize");
 	invalid_frame = fixture.frame;
 	invalid_frame.projected_symbol[7].in_phase = NAN;
 	CHECK(rejected_frame_is_transactional(
 		      &carrier, &invalid_frame,
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT),
+		      V34_DATA_CARRIER_INVALID_ARGUMENT),
 	      "data carrier accepted a nonfinite late symbol");
 	invalid_frame = fixture.frame;
 	invalid_frame.projected_symbol[7].in_phase = DBL_MAX;
 	CHECK(rejected_frame_is_transactional(
 		      &carrier, &invalid_frame,
-		      SIPPYMODEM_V34_DATA_CARRIER_NUMERIC_FAILURE),
+		      V34_DATA_CARRIER_NUMERIC_FAILURE),
 	      "data carrier accepted an overflowing late symbol");
 	invalid_frame = fixture.frame;
 	invalid_frame.projected_symbol[7] = (struct sippymodem_qam_point){
@@ -669,114 +669,114 @@ static bool test_transactional_validation(void)
 	};
 	CHECK(rejected_frame_is_transactional(
 		      &carrier, &invalid_frame,
-		      SIPPYMODEM_V34_DATA_CARRIER_OUT_OF_RANGE),
+		      V34_DATA_CARRIER_OUT_OF_RANGE),
 	      "data carrier accepted an excessive late symbol");
-	CHECK(sippymodem_v34_data_carrier_load_mapping_frame(
+	CHECK(v34_data_carrier_load_mapping_frame(
 		      &carrier, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_OK,
+		      V34_DATA_CARRIER_OK,
 	      "data carrier did not load the validation frame");
 	saved = carrier;
-	CHECK(sippymodem_v34_data_carrier_load_mapping_frame(
+	CHECK(v34_data_carrier_load_mapping_frame(
 		      &carrier, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_MAPPING_FRAME_PENDING &&
+		      V34_DATA_CARRIER_MAPPING_FRAME_PENDING &&
 	      memcmp(&carrier, &saved, sizeof(saved)) == 0,
 	      "data carrier replaced a pending mapping frame");
 
 	limited_profile = fixture.profile;
 	limited_profile.projected_data_rate_2400_bps_units = 7;
 	mismatched_profile = profile_for_rate(
-		SIPPYMODEM_V34_SYMBOL_RATE_2800, false, 8);
-	CHECK(sippymodem_v34_frame_geometry_init(
-		      &mismatched_geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 7,
-		      true) == SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	      sippymodem_v34_mapping_parameters_init(
+		V34_SYMBOL_RATE_2800, false, 8);
+	CHECK(v34_frame_geometry_init(
+		      &mismatched_geometry, V34_SYMBOL_RATE_3000, 7,
+		      true) == V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(
 		      &mismatched_parameters, &mismatched_geometry, false) ==
-		      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK,
+		      V34_MAPPING_PARAMETERS_OK,
 	      "mismatched data-carrier geometry did not initialize");
 	mismatched_normalizer = fixture.normalizer;
 	mismatched_normalizer.parameters = mismatched_parameters;
 	memset(&carrier, 0xa5, sizeof(carrier));
-	CHECK(sippymodem_v34_data_carrier_init(
+	CHECK(v34_data_carrier_init(
 		      NULL, &fixture.profile, &fixture.geometry,
 		      &fixture.normalizer, 8000) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, NULL, &fixture.geometry, &fixture.normalizer,
-		      8000) == SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      8000) == V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, NULL, &fixture.normalizer,
-		      8000) == SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      8000) == V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, &fixture.geometry, NULL,
-		      8000) == SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      8000) == V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, &fixture.geometry,
 		      &fixture.normalizer, 0) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, &limited_profile, &fixture.geometry,
 		      &fixture.normalizer, 8000) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, &mismatched_profile, &fixture.geometry,
 		      &fixture.normalizer, 8000) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, &fixture.geometry,
 		      &mismatched_normalizer, 8000) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_init(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, &fixture.geometry,
 		      &fixture.normalizer, 7000) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
 	      bytes_are_filled(&carrier, sizeof(carrier), 0xa5),
 	      "invalid data-carrier initialization changed its destination");
 
 	corrupt = saved;
 	corrupt.modulator.maximum_point_power = NAN;
-	CHECK(!sippymodem_v34_data_carrier_is_valid(NULL) &&
-	      !sippymodem_v34_data_carrier_needs_mapping_frame(NULL) &&
-	      sippymodem_v34_data_carrier_load_mapping_frame(
+	CHECK(!v34_data_carrier_is_valid(NULL) &&
+	      !v34_data_carrier_needs_mapping_frame(NULL) &&
+	      v34_data_carrier_load_mapping_frame(
 		      NULL, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_load_mapping_frame(&saved, NULL) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_sample(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_load_mapping_frame(&saved, NULL) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_sample(
 		      NULL, &sample, &accepted) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_sample(&saved, NULL, &accepted) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_sample(&saved, &sample, NULL) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      !sippymodem_v34_data_carrier_is_valid(&corrupt) &&
-	      sippymodem_v34_data_carrier_load_mapping_frame(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_sample(&saved, NULL, &accepted) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_sample(&saved, &sample, NULL) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      !v34_data_carrier_is_valid(&corrupt) &&
+	      v34_data_carrier_load_mapping_frame(
 		      &corrupt, &fixture.frame) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_carrier_sample(
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_sample(
 		      &corrupt, &sample, &accepted) ==
-		      SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT &&
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
 	      sample == 123.0 && accepted,
 	      "corrupt data carrier changed outputs");
-	CHECK(strcmp(sippymodem_v34_data_carrier_result_name(
-		     SIPPYMODEM_V34_DATA_CARRIER_OK),
+	CHECK(strcmp(v34_data_carrier_result_name(
+		     V34_DATA_CARRIER_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_data_carrier_result_name(
-		     SIPPYMODEM_V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED),
+	      strcmp(v34_data_carrier_result_name(
+		     V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED),
 		     "mapping frame required") == 0 &&
-	      strcmp(sippymodem_v34_data_carrier_result_name(
-		     SIPPYMODEM_V34_DATA_CARRIER_MAPPING_FRAME_PENDING),
+	      strcmp(v34_data_carrier_result_name(
+		     V34_DATA_CARRIER_MAPPING_FRAME_PENDING),
 		     "mapping frame pending") == 0 &&
-	      strcmp(sippymodem_v34_data_carrier_result_name(
-		     SIPPYMODEM_V34_DATA_CARRIER_INVALID_ARGUMENT),
+	      strcmp(v34_data_carrier_result_name(
+		     V34_DATA_CARRIER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_data_carrier_result_name(
-		     SIPPYMODEM_V34_DATA_CARRIER_OUT_OF_RANGE),
+	      strcmp(v34_data_carrier_result_name(
+		     V34_DATA_CARRIER_OUT_OF_RANGE),
 		     "out of range") == 0 &&
-	      strcmp(sippymodem_v34_data_carrier_result_name(
-		     SIPPYMODEM_V34_DATA_CARRIER_NUMERIC_FAILURE),
+	      strcmp(v34_data_carrier_result_name(
+		     V34_DATA_CARRIER_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_data_carrier_result_name(
-		     (enum sippymodem_v34_data_carrier_result)6),
+	      strcmp(v34_data_carrier_result_name(
+		     (enum v34_data_carrier_result)6),
 		     "unknown") == 0,
 	      "data-carrier result names changed");
 	return true;

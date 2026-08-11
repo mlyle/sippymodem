@@ -16,14 +16,14 @@ static bool close_to(double left, double right)
 }
 
 static int grid_squared_magnitude(
-	const struct sippymodem_v34_grid_point *point)
+	const struct v34_grid_point *point)
 {
 	return point->in_phase * point->in_phase +
 	       point->quadrature * point->quadrature;
 }
 
 static size_t independent_quarter_grid_rank(
-	const struct sippymodem_v34_grid_point *point)
+	const struct v34_grid_point *point)
 {
 	size_t rank = 0;
 	int selected_magnitude = grid_squared_magnitude(point);
@@ -45,7 +45,7 @@ static size_t independent_quarter_grid_rank(
 }
 
 static uint64_t quarter_constellation_digest(
-	const struct sippymodem_v34_grid_point *points, size_t point_count)
+	const struct v34_grid_point *points, size_t point_count)
 {
 	uint64_t digest = UINT64_C(14695981039346656037);
 
@@ -66,12 +66,12 @@ static uint64_t quarter_constellation_digest(
 
 static bool test_quarter_superconstellation(void)
 {
-	struct sippymodem_v34_grid_point
-		points[SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	struct v34_grid_point
+		points[V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
 
-	CHECK(sippymodem_v34_quarter_superconstellation_generate(
+	CHECK(v34_quarter_superconstellation_generate(
 		      points, ARRAY_LENGTH(points)) ==
-		      SIPPYMODEM_V34_CONSTELLATION_OK,
+		      V34_CONSTELLATION_OK,
 	      "quarter-superconstellation generation failed");
 	for (size_t index = 0; index < ARRAY_LENGTH(points); ++index) {
 		int magnitude = grid_squared_magnitude(&points[index]);
@@ -105,30 +105,30 @@ static bool test_quarter_superconstellation(void)
 
 static bool test_indexed_quarter_superconstellation(void)
 {
-	struct sippymodem_v34_grid_point
-		points[SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	struct v34_grid_point
+		points[V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
 
-	CHECK(sippymodem_v34_quarter_superconstellation_generate(
+	CHECK(v34_quarter_superconstellation_generate(
 		      points, ARRAY_LENGTH(points)) ==
-		      SIPPYMODEM_V34_CONSTELLATION_OK,
+		      V34_CONSTELLATION_OK,
 	      "indexed fixture generation failed");
 	/* 37 is coprime to 416, so this visits every label in a deliberately
 	 * non-sequential order. */
 	for (size_t visit = 0; visit < ARRAY_LENGTH(points); ++visit) {
 		size_t label = visit * 37u % ARRAY_LENGTH(points);
 		size_t recovered_label = SIZE_MAX;
-		struct sippymodem_v34_grid_point selected = { 0 };
+		struct v34_grid_point selected = { 0 };
 
-		CHECK(sippymodem_v34_quarter_superconstellation_point(
+		CHECK(v34_quarter_superconstellation_point(
 			      label, &selected) ==
-			      SIPPYMODEM_V34_CONSTELLATION_OK,
+			      V34_CONSTELLATION_OK,
 		      "indexed label %zu was rejected", label);
 		CHECK(selected.in_phase == points[label].in_phase &&
 		      selected.quadrature == points[label].quadrature &&
 		      independent_quarter_grid_rank(&selected) == label &&
-		      sippymodem_v34_quarter_superconstellation_label(
+		      v34_quarter_superconstellation_label(
 			      &selected, &recovered_label) ==
-			      SIPPYMODEM_V34_CONSTELLATION_OK &&
+			      V34_CONSTELLATION_OK &&
 		      recovered_label == label,
 		      "indexed label %zu selected the wrong point", label);
 	}
@@ -137,15 +137,15 @@ static bool test_indexed_quarter_superconstellation(void)
 
 static bool test_quarter_superconstellation_prefixes(void)
 {
-	struct sippymodem_v34_grid_point
-		full[SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
-	struct sippymodem_v34_grid_point prefix[32];
-	struct sippymodem_v34_grid_point sentinel[32];
+	struct v34_grid_point
+		full[V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	struct v34_grid_point prefix[32];
+	struct v34_grid_point sentinel[32];
 	static const size_t prefix_lengths[] = { 1, 4, 16, 32 };
 
-	CHECK(sippymodem_v34_quarter_superconstellation_generate(
+	CHECK(v34_quarter_superconstellation_generate(
 		      full, ARRAY_LENGTH(full)) ==
-		      SIPPYMODEM_V34_CONSTELLATION_OK,
+		      V34_CONSTELLATION_OK,
 	      "full prefix fixture generation failed");
 	memset(sentinel, 0x5a, sizeof(sentinel));
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(prefix_lengths);
@@ -153,9 +153,9 @@ static bool test_quarter_superconstellation_prefixes(void)
 		size_t prefix_length = prefix_lengths[fixture];
 
 		memcpy(prefix, sentinel, sizeof(prefix));
-		CHECK(sippymodem_v34_quarter_superconstellation_generate(
+		CHECK(v34_quarter_superconstellation_generate(
 			      prefix, prefix_length) ==
-			      SIPPYMODEM_V34_CONSTELLATION_OK,
+			      V34_CONSTELLATION_OK,
 		      "prefix length %zu was rejected", prefix_length);
 		for (size_t index = 0; index < prefix_length; ++index) {
 			CHECK(prefix[index].in_phase == full[index].in_phase &&
@@ -208,7 +208,7 @@ static bool test_point_zero_rotations(void)
 {
 	for (int turns = -9; turns <= 9; ++turns) {
 		struct sippymodem_qam_point point =
-			sippymodem_v34_rotated_point_zero(turns);
+			v34_rotated_point_zero(turns);
 		struct sippymodem_qam_point expected =
 			expected_rotated_grid_point(
 				1, 1, sqrt(0.5),
@@ -232,10 +232,10 @@ static bool test_four_point_constellation(void)
 			expected_rotated_grid_point(1, 1, sqrt(0.5), rotation);
 		double power;
 
-		CHECK(sippymodem_v34_training_constellation_point(
-			      SIPPYMODEM_V34_CONSTELLATION_4_POINT, 0,
+		CHECK(v34_training_constellation_point(
+			      V34_CONSTELLATION_4_POINT, 0,
 			      rotation, &point) ==
-			      SIPPYMODEM_V34_CONSTELLATION_OK,
+			      V34_CONSTELLATION_OK,
 		      "four-point rotation %u was not generated", rotation);
 		power = point.in_phase * point.in_phase +
 			point.quadrature * point.quadrature;
@@ -269,10 +269,10 @@ static bool test_sixteen_point_constellation(void)
 					rotation);
 			double power;
 
-			CHECK(sippymodem_v34_training_constellation_point(
-				      SIPPYMODEM_V34_CONSTELLATION_16_POINT,
+			CHECK(v34_training_constellation_point(
+				      V34_CONSTELLATION_16_POINT,
 				      quarter, rotation, &points[count]) ==
-				      SIPPYMODEM_V34_CONSTELLATION_OK,
+				      V34_CONSTELLATION_OK,
 			      "sixteen-point selection %u/%u was not generated",
 			      quarter, rotation);
 			CHECK(close_to(points[count].in_phase,
@@ -309,9 +309,9 @@ static bool test_sixteen_point_constellation(void)
 
 static bool test_training_constellation_slicing(void)
 {
-	static const enum sippymodem_v34_constellation_size constellations[] = {
-		SIPPYMODEM_V34_CONSTELLATION_4_POINT,
-		SIPPYMODEM_V34_CONSTELLATION_16_POINT,
+	static const enum v34_constellation_size constellations[] = {
+		V34_CONSTELLATION_4_POINT,
+		V34_CONSTELLATION_16_POINT,
 	};
 	static const struct sippymodem_qam_point perturbations[] = {
 		{ 0.0, 0.0 },
@@ -321,10 +321,10 @@ static bool test_training_constellation_slicing(void)
 
 	for (size_t fixture = 0; fixture < ARRAY_LENGTH(constellations);
 	     ++fixture) {
-		enum sippymodem_v34_constellation_size constellation =
+		enum v34_constellation_size constellation =
 			constellations[fixture];
 		uint8_t quarter_count =
-			constellation == SIPPYMODEM_V34_CONSTELLATION_16_POINT ?
+			constellation == V34_CONSTELLATION_16_POINT ?
 				4u :
 				1u;
 
@@ -333,10 +333,10 @@ static bool test_training_constellation_slicing(void)
 			     ++quarter) {
 				struct sippymodem_qam_point exact;
 
-				CHECK(sippymodem_v34_training_constellation_point(
+				CHECK(v34_training_constellation_point(
 					      constellation, quarter, rotation,
 					      &exact) ==
-					      SIPPYMODEM_V34_CONSTELLATION_OK,
+					      V34_CONSTELLATION_OK,
 				      "slicer fixture %zu/%u/%u failed",
 				      fixture, quarter, rotation);
 				for (size_t noise = 0;
@@ -351,11 +351,11 @@ static bool test_training_constellation_slicing(void)
 					uint8_t sliced_quarter = UINT8_MAX;
 					uint8_t sliced_rotation = UINT8_MAX;
 
-					CHECK(sippymodem_v34_training_constellation_slice(
+					CHECK(v34_training_constellation_slice(
 						      constellation, &observed,
 						      &sliced_quarter,
 						      &sliced_rotation) ==
-						      SIPPYMODEM_V34_CONSTELLATION_OK &&
+						      V34_CONSTELLATION_OK &&
 					      sliced_quarter == quarter &&
 					      sliced_rotation == rotation,
 					      "slicer changed %zu/%u/%u at noise %zu",
@@ -368,9 +368,9 @@ static bool test_training_constellation_slicing(void)
 			uint8_t quarter = UINT8_MAX;
 			uint8_t rotation = UINT8_MAX;
 
-			CHECK(sippymodem_v34_training_constellation_slice(
+			CHECK(v34_training_constellation_slice(
 				      constellation, &tie, &quarter, &rotation) ==
-				      SIPPYMODEM_V34_CONSTELLATION_OK &&
+				      V34_CONSTELLATION_OK &&
 			      quarter == 0u && rotation == 0u,
 			      "slicer tie order changed for fixture %zu", fixture);
 		}
@@ -382,11 +382,11 @@ static bool test_validation(void)
 {
 	struct sippymodem_qam_point point = { 7.0, -9.0 };
 	struct sippymodem_qam_point before = point;
-	struct sippymodem_v34_grid_point generated[4];
-	struct sippymodem_v34_grid_point saved[4];
-	struct sippymodem_v34_grid_point indexed = { 23, -29 };
-	struct sippymodem_v34_grid_point saved_indexed = indexed;
-	static const struct sippymodem_v34_grid_point invalid_labels[] = {
+	struct v34_grid_point generated[4];
+	struct v34_grid_point saved[4];
+	struct v34_grid_point indexed = { 23, -29 };
+	struct v34_grid_point saved_indexed = indexed;
+	static const struct v34_grid_point invalid_labels[] = {
 		{ 3, 1 },
 		{ 49, 1 },
 		{ 45, 45 },
@@ -400,91 +400,91 @@ static bool test_validation(void)
 	memset(generated, 0x5a, sizeof(generated));
 	memcpy(saved, generated, sizeof(saved));
 
-	CHECK(sippymodem_v34_constellation_size_is_valid(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT) &&
-	      sippymodem_v34_constellation_size_is_valid(
-		      SIPPYMODEM_V34_CONSTELLATION_16_POINT) &&
-	      !sippymodem_v34_constellation_size_is_valid(
-		      (enum sippymodem_v34_constellation_size)8) &&
-	      sippymodem_v34_training_constellation_point(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, 1, 0,
-		      &point) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_point(
-		      SIPPYMODEM_V34_CONSTELLATION_16_POINT, 4, 0,
-		      &point) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_point(
-		      SIPPYMODEM_V34_CONSTELLATION_16_POINT, 0, 4,
-		      &point) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_point(
-		      (enum sippymodem_v34_constellation_size)8, 0, 0,
-		      &point) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_point(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, 0, 0, NULL) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	CHECK(v34_constellation_size_is_valid(
+		      V34_CONSTELLATION_4_POINT) &&
+	      v34_constellation_size_is_valid(
+		      V34_CONSTELLATION_16_POINT) &&
+	      !v34_constellation_size_is_valid(
+		      (enum v34_constellation_size)8) &&
+	      v34_training_constellation_point(
+		      V34_CONSTELLATION_4_POINT, 1, 0,
+		      &point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_point(
+		      V34_CONSTELLATION_16_POINT, 4, 0,
+		      &point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_point(
+		      V34_CONSTELLATION_16_POINT, 0, 4,
+		      &point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_point(
+		      (enum v34_constellation_size)8, 0, 0,
+		      &point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_point(
+		      V34_CONSTELLATION_4_POINT, 0, 0, NULL) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      memcmp(&point, &before, sizeof(point)) == 0,
 	      "constellation validation changed its output");
-	CHECK(sippymodem_v34_quarter_superconstellation_generate(NULL, 1) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_quarter_superconstellation_generate(
+	CHECK(v34_quarter_superconstellation_generate(NULL, 1) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_quarter_superconstellation_generate(
 		      generated, 0) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_quarter_superconstellation_generate(
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_quarter_superconstellation_generate(
 		      generated,
-		      SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT +
+		      V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT +
 			      1u) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      memcmp(generated, saved, sizeof(generated)) == 0,
 	      "invalid quarter-superconstellation generation changed output");
-	CHECK(sippymodem_v34_quarter_superconstellation_point(
-		      SIPPYMODEM_V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT,
+	CHECK(v34_quarter_superconstellation_point(
+		      V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT,
 		      &indexed) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_quarter_superconstellation_point(0, NULL) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_quarter_superconstellation_point(0, NULL) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      memcmp(&indexed, &saved_indexed, sizeof(indexed)) == 0,
 	      "invalid indexed lookup changed its output");
 	for (size_t invalid = 0; invalid < ARRAY_LENGTH(invalid_labels);
 	     ++invalid) {
-		CHECK(sippymodem_v34_quarter_superconstellation_label(
+		CHECK(v34_quarter_superconstellation_label(
 			      &invalid_labels[invalid], &label) ==
-			      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+			      V34_CONSTELLATION_INVALID_ARGUMENT &&
 		      label == 0xa5a5u,
 		      "invalid inverse label %zu changed its output", invalid);
 	}
-	CHECK(sippymodem_v34_quarter_superconstellation_label(NULL, &label) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_quarter_superconstellation_label(&indexed, NULL) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+	CHECK(v34_quarter_superconstellation_label(NULL, &label) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_quarter_superconstellation_label(&indexed, NULL) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      label == 0xa5a5u,
 	      "invalid inverse-label pointer changed its output");
-	CHECK(sippymodem_v34_training_constellation_slice(
-		      (enum sippymodem_v34_constellation_size)8, &point,
+	CHECK(v34_training_constellation_slice(
+		      (enum v34_constellation_size)8, &point,
 		      &quarter, &rotation) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_slice(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, NULL, &quarter,
-		      &rotation) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_slice(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &not_finite,
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_slice(
+		      V34_CONSTELLATION_4_POINT, NULL, &quarter,
+		      &rotation) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_slice(
+		      V34_CONSTELLATION_4_POINT, &not_finite,
 		      &quarter, &rotation) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_slice(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &too_large,
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_slice(
+		      V34_CONSTELLATION_4_POINT, &too_large,
 		      &quarter, &rotation) ==
-		      SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_slice(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &point, NULL,
-		      &rotation) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_training_constellation_slice(
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, &point, &quarter,
-		      &quarter) == SIPPYMODEM_V34_CONSTELLATION_INVALID_ARGUMENT &&
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_slice(
+		      V34_CONSTELLATION_4_POINT, &point, NULL,
+		      &rotation) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_slice(
+		      V34_CONSTELLATION_4_POINT, &point, &quarter,
+		      &quarter) == V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      quarter == 0xa5 && rotation == 0x5a,
 	      "invalid training-constellation slice changed outputs");
-	CHECK(strcmp(sippymodem_v34_constellation_result_name(
-			     SIPPYMODEM_V34_CONSTELLATION_OK),
+	CHECK(strcmp(v34_constellation_result_name(
+			     V34_CONSTELLATION_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_constellation_result_name(
-			     (enum sippymodem_v34_constellation_result)99),
+	      strcmp(v34_constellation_result_name(
+			     (enum v34_constellation_result)99),
 		     "unknown") == 0,
 	      "constellation result names changed");
 	return true;

@@ -7,61 +7,61 @@
 #include <limits.h>
 #include <string.h>
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 struct symbol_rate_fixture {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t minimum_rate;
 	uint8_t maximum_rate;
 };
 
 static const struct symbol_rate_fixture SYMBOL_RATES[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, 9 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, 11 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 2, 11 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 2, 12 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 2, 13 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 2, 14 },
+	{ V34_SYMBOL_RATE_2400, 1, 9 },
+	{ V34_SYMBOL_RATE_2743, 2, 11 },
+	{ V34_SYMBOL_RATE_2800, 2, 11 },
+	{ V34_SYMBOL_RATE_3000, 2, 12 },
+	{ V34_SYMBOL_RATE_3200, 2, 13 },
+	{ V34_SYMBOL_RATE_3429, 2, 14 },
 };
 
 static bool initialize_parameters(
-	enum sippymodem_v34_symbol_rate symbol_rate, uint8_t primary_rate,
+	enum v34_symbol_rate symbol_rate, uint8_t primary_rate,
 	bool auxiliary, bool expanded,
-	struct sippymodem_v34_mapping_parameters *parameters)
+	struct v34_mapping_parameters *parameters)
 {
-	struct sippymodem_v34_frame_geometry geometry;
+	struct v34_frame_geometry geometry;
 
-	return sippymodem_v34_frame_geometry_init(
+	return v34_frame_geometry_init(
 		       &geometry, symbol_rate, primary_rate, auxiliary) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_mapping_parameters_init(
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_mapping_parameters_init(
 		       parameters, &geometry, expanded) ==
-		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK;
+		       V34_MAPPING_PARAMETERS_OK;
 }
 
 static bool grid_points_are_equal(
-	const struct sippymodem_v34_grid_point *left,
-	const struct sippymodem_v34_grid_point *right)
+	const struct v34_grid_point *left,
+	const struct v34_grid_point *right)
 {
 	return left->in_phase == right->in_phase &&
 	       left->quadrature == right->quadrature;
 }
 
 static bool q7_points_are_equal(
-	const struct sippymodem_v34_q7_point *left,
-	const struct sippymodem_v34_q7_point *right)
+	const struct v34_q7_point *left,
+	const struct v34_q7_point *right)
 {
 	return left->in_phase == right->in_phase &&
 	       left->quadrature == right->quadrature;
 }
 
 static bool precoder_symbols_are_equal(
-	const struct sippymodem_v34_precoder_symbol *left,
-	const struct sippymodem_v34_precoder_symbol *right)
+	const struct v34_precoder_symbol *left,
+	const struct v34_precoder_symbol *right)
 {
 	return q7_points_are_equal(
 		       &left->filter_output, &right->filter_output) &&
@@ -74,12 +74,12 @@ static bool precoder_symbols_are_equal(
 }
 
 static bool precoders_are_equal(
-	const struct sippymodem_v34_precoder *left,
-	const struct sippymodem_v34_precoder *right)
+	const struct v34_precoder *left,
+	const struct v34_precoder *right)
 {
 	if (left->grid_step != right->grid_step)
 		return false;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT;
 	     ++tap) {
 		if (left->coefficients[tap].real !=
 			    right->coefficients[tap].real ||
@@ -94,8 +94,8 @@ static bool precoders_are_equal(
 }
 
 static bool encoders_are_equal(
-	const struct sippymodem_v34_4d_encoder *left,
-	const struct sippymodem_v34_4d_encoder *right)
+	const struct v34_4d_encoder *left,
+	const struct v34_4d_encoder *right)
 {
 	return memcmp(
 		       &left->parameters, &right->parameters,
@@ -110,8 +110,8 @@ static bool encoders_are_equal(
 }
 
 static bool outputs_are_equal(
-	const struct sippymodem_v34_4d_encoder_output *left,
-	const struct sippymodem_v34_4d_encoder_output *right)
+	const struct v34_4d_encoder_output *left,
+	const struct v34_4d_encoder_output *right)
 {
 	if (left->differential_output != right->differential_output ||
 	    left->modulo_output != right->modulo_output ||
@@ -122,7 +122,7 @@ static bool outputs_are_equal(
 		    sizeof(left->convolutional_input)) != 0)
 		return false;
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		if (left->subset_label[symbol] != right->subset_label[symbol] ||
 		    left->mapped[symbol].constellation_label !=
 			    right->mapped[symbol].constellation_label ||
@@ -137,45 +137,45 @@ static bool outputs_are_equal(
 }
 
 static bool model_step(
-	struct sippymodem_v34_4d_encoder *encoder,
-	const struct sippymodem_v34_4d_encoder_input *input,
-	struct sippymodem_v34_4d_encoder_output *output)
+	struct v34_4d_encoder *encoder,
+	const struct v34_4d_encoder_input *input,
+	struct v34_4d_encoder_output *output)
 {
-	struct sippymodem_v34_4d_encoder next = *encoder;
-	struct sippymodem_v34_4d_encoder_output generated = { 0 };
-	struct sippymodem_v34_precoder_prediction second_prediction;
-	struct sippymodem_v34_2d_mapping_input mapping;
+	struct v34_4d_encoder next = *encoder;
+	struct v34_4d_encoder_output generated = { 0 };
+	struct v34_precoder_prediction second_prediction;
+	struct v34_2d_mapping_input mapping;
 
 	generated.differential_output = (uint8_t)(
 		(next.previous_differential_output +
 		 input->mapping.differential_input) &
 		3u);
-	mapping = (struct sippymodem_v34_2d_mapping_input){
+	mapping = (struct v34_2d_mapping_input){
 		.ring_index = input->ring_index[0],
 		.point_index = input->mapping.point_index[0],
 		.clockwise_quarter_turns = generated.differential_output,
 	};
-	if (sippymodem_v34_map_2d_symbol(
+	if (v34_map_2d_symbol(
 		    &next.parameters, &mapping, &generated.mapped[0]) !=
-		    SIPPYMODEM_V34_MAPPER_OK ||
-	    sippymodem_v34_precoder_step(
+		    V34_MAPPER_OK ||
+	    v34_precoder_step(
 		    &next.precoder, &generated.mapped[0].mapper_output,
-		    &generated.precoded[0]) != SIPPYMODEM_V34_PRECODER_OK ||
-	    sippymodem_v34_precoder_predict(
+		    &generated.precoded[0]) != V34_PRECODER_OK ||
+	    v34_precoder_predict(
 		    &next.precoder, &second_prediction) !=
-		    SIPPYMODEM_V34_PRECODER_OK ||
-	    sippymodem_v34_modulo_encoder_output(
+		    V34_PRECODER_OK ||
+	    v34_modulo_encoder_output(
 		    &generated.precoded[0].lattice_offset,
 		    &second_prediction.lattice_offset,
-		    &generated.modulo_output) != SIPPYMODEM_V34_TRELLIS_OK ||
-	    sippymodem_v34_convolutional_encoder_output(
+		    &generated.modulo_output) != V34_TRELLIS_OK ||
+	    v34_convolutional_encoder_output(
 		    &next.convolutional_encoder,
-		    &generated.convolutional_output) != SIPPYMODEM_V34_TRELLIS_OK)
+		    &generated.convolutional_output) != V34_TRELLIS_OK)
 		return false;
 	generated.trellis_output =
 		generated.modulo_output ^ generated.convolutional_output ^
 		input->inversion_bit;
-	mapping = (struct sippymodem_v34_2d_mapping_input){
+	mapping = (struct v34_2d_mapping_input){
 		.ring_index = input->ring_index[1],
 		.point_index = input->mapping.point_index[1],
 		.clockwise_quarter_turns = (uint8_t)(
@@ -184,27 +184,27 @@ static bool model_step(
 			 generated.trellis_output) &
 			3u),
 	};
-	if (sippymodem_v34_map_2d_symbol(
+	if (v34_map_2d_symbol(
 		    &next.parameters, &mapping, &generated.mapped[1]) !=
-		    SIPPYMODEM_V34_MAPPER_OK ||
-	    sippymodem_v34_precoder_step(
+		    V34_MAPPER_OK ||
+	    v34_precoder_step(
 		    &next.precoder, &generated.mapped[1].mapper_output,
-		    &generated.precoded[1]) != SIPPYMODEM_V34_PRECODER_OK)
+		    &generated.precoded[1]) != V34_PRECODER_OK)
 		return false;
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		if (sippymodem_v34_grid_subset_label(
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		if (v34_grid_subset_label(
 			    &generated.precoded[symbol].channel_output,
 			    &generated.subset_label[symbol]) !=
-		    SIPPYMODEM_V34_TRELLIS_OK)
+		    V34_TRELLIS_OK)
 			return false;
 	}
-	if (sippymodem_v34_convolutional_input_from_subset_labels(
+	if (v34_convolutional_input_from_subset_labels(
 		    generated.subset_label[0], generated.subset_label[1],
-		    &generated.convolutional_input) != SIPPYMODEM_V34_TRELLIS_OK ||
-	    sippymodem_v34_convolutional_encoder_advance(
+		    &generated.convolutional_input) != V34_TRELLIS_OK ||
+	    v34_convolutional_encoder_advance(
 		    &next.convolutional_encoder,
-		    &generated.convolutional_input) != SIPPYMODEM_V34_TRELLIS_OK)
+		    &generated.convolutional_input) != V34_TRELLIS_OK)
 		return false;
 	next.previous_differential_output = generated.differential_output;
 	*encoder = next;
@@ -214,26 +214,26 @@ static bool model_step(
 
 static bool test_initialization(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
+	struct v34_mapping_parameters parameters;
 
 	CHECK(initialize_parameters(
-		      SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false, false,
+		      V34_SYMBOL_RATE_3000, 8, false, false,
 		      &parameters),
 	      "initialization parameters failed");
-	for (enum sippymodem_v34_trellis_selection selection =
-		     SIPPYMODEM_V34_TRELLIS_16_STATE;
-	     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE; ++selection) {
-		struct sippymodem_v34_4d_encoder encoder;
+	for (enum v34_trellis_selection selection =
+		     V34_TRELLIS_16_STATE;
+	     selection <= V34_TRELLIS_64_STATE; ++selection) {
+		struct v34_4d_encoder encoder;
 
-		CHECK(sippymodem_v34_4d_encoder_init(
+		CHECK(v34_4d_encoder_init(
 			      &encoder, &parameters, COEFFICIENTS, selection) ==
-			      SIPPYMODEM_V34_4D_ENCODER_OK &&
-		      sippymodem_v34_4d_encoder_is_valid(&encoder) &&
+			      V34_4D_ENCODER_OK &&
+		      v34_4d_encoder_is_valid(&encoder) &&
 		      encoder.previous_differential_output == 0u &&
 		      encoder.convolutional_encoder.state == 0u &&
 		      encoder.convolutional_encoder.selection == selection,
 		      "trellis selection %u did not initialize", selection);
-		for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT;
 		     ++tap) {
 			CHECK(encoder.precoder.coefficients[tap].real ==
 				      COEFFICIENTS[tap].real &&
@@ -263,7 +263,7 @@ static bool test_all_supported_sequences(void)
 		     rate <= SYMBOL_RATES[rate_index].maximum_rate; ++rate) {
 			for (uint8_t auxiliary = 0; auxiliary < 2; ++auxiliary) {
 				for (uint8_t expanded = 0; expanded < 2; ++expanded) {
-					struct sippymodem_v34_mapping_parameters parameters;
+					struct v34_mapping_parameters parameters;
 
 					CHECK(initialize_parameters(
 						      SYMBOL_RATES[rate_index].symbol_rate,
@@ -271,30 +271,30 @@ static bool test_all_supported_sequences(void)
 						      &parameters),
 					      "configuration %zu/%u/%u/%u failed",
 					      rate_index, rate, auxiliary, expanded);
-					for (enum sippymodem_v34_trellis_selection selection =
-						     SIPPYMODEM_V34_TRELLIS_16_STATE;
-					     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE;
+					for (enum v34_trellis_selection selection =
+						     V34_TRELLIS_16_STATE;
+					     selection <= V34_TRELLIS_64_STATE;
 					     ++selection) {
-						struct sippymodem_v34_4d_encoder actual;
-						struct sippymodem_v34_4d_encoder model;
+						struct v34_4d_encoder actual;
+						struct v34_4d_encoder model;
 						uint8_t point_limit = (uint8_t)(
 							1u << parameters
 								      .point_index_bits_per_2d_symbol);
 
-						CHECK(sippymodem_v34_4d_encoder_init(
+						CHECK(v34_4d_encoder_init(
 							      &actual, &parameters, COEFFICIENTS,
 							      selection) ==
-							      SIPPYMODEM_V34_4D_ENCODER_OK,
+							      V34_4D_ENCODER_OK,
 						      "encoder configuration did not initialize");
 						model = actual;
 						configuration_count++;
 						trellis_seen[selection] = true;
 						grid_step_seen[actual.precoder.grid_step ==
-							       SIPPYMODEM_V34_PRECODER_GRID_STEP_4] =
+							       V34_PRECODER_GRID_STEP_4] =
 							true;
 						for (uint8_t interval = 0; interval < 8;
 						     ++interval) {
-							struct sippymodem_v34_4d_encoder_input input = {
+							struct v34_4d_encoder_input input = {
 								.mapping = {
 									.rotation_bit = interval & 1u,
 									.differential_input =
@@ -317,13 +317,13 @@ static bool test_all_supported_sequences(void)
 								.inversion_bit =
 									(uint8_t)((interval >> 1) & 1u),
 							};
-							struct sippymodem_v34_4d_encoder_output expected;
-							struct sippymodem_v34_4d_encoder_output generated;
+							struct v34_4d_encoder_output expected;
+							struct v34_4d_encoder_output generated;
 
 							CHECK(model_step(&model, &input, &expected) &&
-							      sippymodem_v34_4d_encoder_step(
+							      v34_4d_encoder_step(
 								      &actual, &input, &generated) ==
-								      SIPPYMODEM_V34_4D_ENCODER_OK &&
+								      V34_4D_ENCODER_OK &&
 							      outputs_are_equal(&generated, &expected) &&
 							      encoders_are_equal(&actual, &model),
 							      "sequence %zu/%u/%u/%u/%u/%u changed",
@@ -334,7 +334,7 @@ static bool test_all_supported_sequences(void)
 							trellis_output_seen[generated.trellis_output] = true;
 							for (uint8_t symbol = 0;
 							     symbol <
-								     SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+								     V34_2D_SYMBOLS_PER_4D_INTERVAL;
 							     ++symbol) {
 								nonzero_offset_seen |=
 									generated.precoded[symbol]
@@ -361,17 +361,17 @@ static bool test_all_supported_sequences(void)
 }
 
 static bool rejected_step_is_transactional(
-	struct sippymodem_v34_4d_encoder *encoder,
-	const struct sippymodem_v34_4d_encoder_input *input,
-	enum sippymodem_v34_4d_encoder_result expected_result)
+	struct v34_4d_encoder *encoder,
+	const struct v34_4d_encoder_input *input,
+	enum v34_4d_encoder_result expected_result)
 {
-	struct sippymodem_v34_4d_encoder saved = *encoder;
-	struct sippymodem_v34_4d_encoder_output output;
-	struct sippymodem_v34_4d_encoder_output saved_output;
+	struct v34_4d_encoder saved = *encoder;
+	struct v34_4d_encoder_output output;
+	struct v34_4d_encoder_output saved_output;
 
 	memset(&output, 0xa5, sizeof(output));
 	saved_output = output;
-	return sippymodem_v34_4d_encoder_step(encoder, input, &output) ==
+	return v34_4d_encoder_step(encoder, input, &output) ==
 		       expected_result &&
 	       encoders_are_equal(encoder, &saved) &&
 	       memcmp(&output, &saved_output, sizeof(output)) == 0;
@@ -379,50 +379,50 @@ static bool rejected_step_is_transactional(
 
 static bool test_transactional_failures(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_4d_encoder invalid;
-	struct sippymodem_v34_4d_encoder_input input = { 0 };
+	struct v34_mapping_parameters parameters;
+	struct v34_4d_encoder encoder;
+	struct v34_4d_encoder invalid;
+	struct v34_4d_encoder_input input = { 0 };
 	uint8_t point_limit;
 
 	CHECK(initialize_parameters(
-		      SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false, false,
+		      V34_SYMBOL_RATE_3000, 8, false, false,
 		      &parameters) &&
-	      sippymodem_v34_4d_encoder_init(
+	      v34_4d_encoder_init(
 		      &encoder, &parameters, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_OK,
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_OK,
 	      "transactional fixture did not initialize");
 	point_limit = (uint8_t)(
 		1u << parameters.point_index_bits_per_2d_symbol);
 	input.mapping.rotation_bit = 2;
 	CHECK(rejected_step_is_transactional(
 		      &encoder, &input,
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+		      V34_4D_ENCODER_INVALID_ARGUMENT),
 	      "invalid rotation changed state or output");
 	input.mapping.rotation_bit = 0;
 	input.mapping.differential_input = 4;
 	CHECK(rejected_step_is_transactional(
 		      &encoder, &input,
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+		      V34_4D_ENCODER_INVALID_ARGUMENT),
 	      "invalid differential input changed state or output");
 	input.mapping.differential_input = 0;
 	input.inversion_bit = 2;
 	CHECK(rejected_step_is_transactional(
 		      &encoder, &input,
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+		      V34_4D_ENCODER_INVALID_ARGUMENT),
 	      "invalid inversion changed state or output");
 	input.inversion_bit = 0;
 	input.ring_index[0] = parameters.ring_count;
 	CHECK(rejected_step_is_transactional(
 		      &encoder, &input,
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+		      V34_4D_ENCODER_INVALID_ARGUMENT),
 	      "invalid ring changed state or output");
 	input.ring_index[0] = 0;
 	input.mapping.point_index[1] = point_limit;
 	CHECK(rejected_step_is_transactional(
 		      &encoder, &input,
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+		      V34_4D_ENCODER_INVALID_ARGUMENT),
 	      "invalid point index changed state or output");
 	input.mapping.point_index[1] = 0;
 
@@ -430,24 +430,24 @@ static bool test_transactional_failures(void)
 	invalid.precoder.coefficients[0].real = INT16_MAX;
 	invalid.precoder.coefficients[1].real = INT16_MAX;
 	invalid.precoder.coefficients[2].real = INT16_MAX;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT;
 	     ++tap) {
 		invalid.precoder.previous_symbols[tap].in_phase = INT32_MAX;
 		invalid.precoder.previous_symbols[tap].quadrature = INT32_MAX;
 	}
-	CHECK(sippymodem_v34_4d_encoder_is_valid(&invalid) &&
+	CHECK(v34_4d_encoder_is_valid(&invalid) &&
 	      rejected_step_is_transactional(
-		      &invalid, &input, SIPPYMODEM_V34_4D_ENCODER_OUT_OF_RANGE),
+		      &invalid, &input, V34_4D_ENCODER_OUT_OF_RANGE),
 	      "precoder overflow changed interval state or output");
 
 	invalid = encoder;
 	memset(invalid.precoder.coefficients, 0,
 	       sizeof(invalid.precoder.coefficients));
-	invalid.precoder.coefficients[1].real = SIPPYMODEM_V34_Q14_SCALE;
+	invalid.precoder.coefficients[1].real = V34_Q14_SCALE;
 	invalid.precoder.previous_symbols[0] =
-		(struct sippymodem_v34_q7_point){
-			254 * SIPPYMODEM_V34_Q7_SCALE,
-			254 * SIPPYMODEM_V34_Q7_SCALE,
+		(struct v34_q7_point){
+			254 * V34_Q7_SCALE,
+			254 * V34_Q7_SCALE,
 		};
 	invalid.precoder.previous_symbols[1] =
 		invalid.precoder.previous_symbols[0];
@@ -455,94 +455,94 @@ static bool test_transactional_failures(void)
 	input.mapping.rotation_bit = 1;
 	input.ring_index[1] = 1;
 	CHECK(parameters.ring_count > 1u &&
-	      sippymodem_v34_4d_encoder_is_valid(&invalid) &&
+	      v34_4d_encoder_is_valid(&invalid) &&
 	      rejected_step_is_transactional(
-		      &invalid, &input, SIPPYMODEM_V34_4D_ENCODER_OUT_OF_RANGE),
+		      &invalid, &input, V34_4D_ENCODER_OUT_OF_RANGE),
 	      "second-symbol overflow did not roll back the interval");
 	return true;
 }
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_mapping_parameters invalid_parameters;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_4d_encoder saved;
-	struct sippymodem_v34_q14_coefficient invalid_coefficients
-		[SIPPYMODEM_V34_PRECODER_TAP_COUNT] = { 0 };
-	struct sippymodem_v34_4d_encoder_input input = { 0 };
-	struct sippymodem_v34_4d_encoder_output output;
+	struct v34_mapping_parameters parameters;
+	struct v34_mapping_parameters invalid_parameters;
+	struct v34_4d_encoder encoder;
+	struct v34_4d_encoder saved;
+	struct v34_q14_coefficient invalid_coefficients
+		[V34_PRECODER_TAP_COUNT] = { 0 };
+	struct v34_4d_encoder_input input = { 0 };
+	struct v34_4d_encoder_output output;
 
 	CHECK(initialize_parameters(
-		      SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false, false,
+		      V34_SYMBOL_RATE_3000, 8, false, false,
 		      &parameters) &&
-	      sippymodem_v34_4d_encoder_init(
+	      v34_4d_encoder_init(
 		      &encoder, &parameters, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_OK,
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_OK,
 	      "validation fixture did not initialize");
 	saved = encoder;
 	invalid_parameters = parameters;
 	invalid_parameters.ring_count++;
 	invalid_coefficients[0].real = INT16_MIN;
-	CHECK(sippymodem_v34_4d_encoder_init(
+	CHECK(v34_4d_encoder_init(
 		      NULL, &parameters, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_encoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      v34_4d_encoder_init(
 		      &encoder, NULL, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_encoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      v34_4d_encoder_init(
 		      &encoder, &invalid_parameters, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_encoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      v34_4d_encoder_init(
 		      &encoder, &parameters, NULL,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_encoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      v34_4d_encoder_init(
 		      &encoder, &parameters, invalid_coefficients,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_encoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      v34_4d_encoder_init(
 		      &encoder, &parameters, COEFFICIENTS,
-		      (enum sippymodem_v34_trellis_selection)3) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
+		      (enum v34_trellis_selection)3) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
 	      encoders_are_equal(&encoder, &saved),
 	      "invalid initialization changed its destination");
-	CHECK(!sippymodem_v34_4d_encoder_is_valid(NULL) &&
-	      !sippymodem_v34_4d_encoder_input_is_valid(NULL, &parameters) &&
-	      !sippymodem_v34_4d_encoder_input_is_valid(
+	CHECK(!v34_4d_encoder_is_valid(NULL) &&
+	      !v34_4d_encoder_input_is_valid(NULL, &parameters) &&
+	      !v34_4d_encoder_input_is_valid(
 		      &input, &invalid_parameters) &&
-	      sippymodem_v34_4d_encoder_step(NULL, &input, &output) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_encoder_step(&encoder, NULL, &output) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_4d_encoder_step(&encoder, &input, NULL) ==
-		      SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT,
+	      v34_4d_encoder_step(NULL, &input, &output) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      v34_4d_encoder_step(&encoder, NULL, &output) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT &&
+	      v34_4d_encoder_step(&encoder, &input, NULL) ==
+		      V34_4D_ENCODER_INVALID_ARGUMENT,
 	      "null or inconsistent input was accepted");
 	encoder.previous_differential_output = 4;
-	CHECK(!sippymodem_v34_4d_encoder_is_valid(&encoder),
+	CHECK(!v34_4d_encoder_is_valid(&encoder),
 	      "invalid differential state was accepted");
 	encoder = saved;
 	encoder.precoder.grid_step =
-		encoder.precoder.grid_step == SIPPYMODEM_V34_PRECODER_GRID_STEP_2 ?
-			SIPPYMODEM_V34_PRECODER_GRID_STEP_4 :
-			SIPPYMODEM_V34_PRECODER_GRID_STEP_2;
-	CHECK(!sippymodem_v34_4d_encoder_is_valid(&encoder),
+		encoder.precoder.grid_step == V34_PRECODER_GRID_STEP_2 ?
+			V34_PRECODER_GRID_STEP_4 :
+			V34_PRECODER_GRID_STEP_2;
+	CHECK(!v34_4d_encoder_is_valid(&encoder),
 	      "inconsistent precoder grid was accepted");
-	CHECK(strcmp(sippymodem_v34_4d_encoder_result_name(
-		     SIPPYMODEM_V34_4D_ENCODER_OK),
+	CHECK(strcmp(v34_4d_encoder_result_name(
+		     V34_4D_ENCODER_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_4d_encoder_result_name(
-		     SIPPYMODEM_V34_4D_ENCODER_INVALID_ARGUMENT),
+	      strcmp(v34_4d_encoder_result_name(
+		     V34_4D_ENCODER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_4d_encoder_result_name(
-		     SIPPYMODEM_V34_4D_ENCODER_OUT_OF_RANGE),
+	      strcmp(v34_4d_encoder_result_name(
+		     V34_4D_ENCODER_OUT_OF_RANGE),
 		     "out of range") == 0 &&
-	      strcmp(sippymodem_v34_4d_encoder_result_name(
-		     (enum sippymodem_v34_4d_encoder_result)3),
+	      strcmp(v34_4d_encoder_result_name(
+		     (enum v34_4d_encoder_result)3),
 		     "unknown") == 0,
 	      "result names changed");
 	return true;

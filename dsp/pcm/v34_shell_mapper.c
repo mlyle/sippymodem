@@ -6,7 +6,7 @@
 #include <stddef.h>
 
 enum {
-	V34_MAX_2_RING_SUM = 2 * (SIPPYMODEM_V34_MAX_RING_COUNT - 1),
+	V34_MAX_2_RING_SUM = 2 * (V34_MAX_RING_COUNT - 1),
 	V34_MAX_4_RING_SUM = 2 * V34_MAX_2_RING_SUM,
 	V34_MAX_2_RING_SUM_COUNT = V34_MAX_2_RING_SUM + 1,
 	V34_MAX_4_RING_SUM_COUNT = V34_MAX_4_RING_SUM + 1,
@@ -100,7 +100,7 @@ static bool select_eight_ring_sum(
 
 static void split_ring_pair(
 	uint8_t ring_count, uint8_t sum, uint64_t selector,
-	uint8_t pair[SIPPYMODEM_V34_RING_INDICES_PER_4D_INTERVAL])
+	uint8_t pair[V34_RING_INDICES_PER_4D_INTERVAL])
 {
 	if (sum < ring_count) {
 		pair[0] = (uint8_t)selector;
@@ -129,7 +129,7 @@ static uint64_t partition_prefix(
 
 static uint8_t ring_pair_selector(
 	uint8_t ring_count, uint8_t sum,
-	const uint8_t pair[SIPPYMODEM_V34_RING_INDICES_PER_4D_INTERVAL])
+	const uint8_t pair[V34_RING_INDICES_PER_4D_INTERVAL])
 {
 	return sum < ring_count ? pair[0] :
 		(uint8_t)(ring_count - 1u - pair[1]);
@@ -137,7 +137,7 @@ static uint8_t ring_pair_selector(
 
 static bool rank_ring_quartet(
 	const struct shell_coefficients *coefficients, uint8_t ring_count,
-	const struct sippymodem_v34_ring_indices *indices,
+	const struct v34_ring_indices *indices,
 	uint8_t first_interval, uint8_t *sum, uint64_t *rank)
 {
 	const uint8_t *first_pair = indices->index[first_interval];
@@ -163,7 +163,7 @@ static bool rank_ring_quartet(
 
 static bool recover_shell_label(
 	const struct shell_coefficients *coefficients, uint8_t ring_count,
-	const struct sippymodem_v34_ring_indices *indices, uint64_t *shell_label)
+	const struct v34_ring_indices *indices, uint64_t *shell_label)
 {
 	uint8_t first_four_sum;
 	uint8_t second_four_sum;
@@ -193,7 +193,7 @@ static bool recover_shell_label(
 
 static bool map_shell_label(
 	const struct shell_coefficients *coefficients, uint8_t ring_count,
-	uint32_t shell_label, struct sippymodem_v34_ring_indices *indices)
+	uint32_t shell_label, struct v34_ring_indices *indices)
 {
 	uint64_t eight_ring_rank;
 	uint64_t partitioned_rank;
@@ -250,18 +250,18 @@ static bool map_shell_label(
 	return true;
 }
 
-bool sippymodem_v34_ring_indices_are_valid(
-	const struct sippymodem_v34_ring_indices *indices,
-	const struct sippymodem_v34_mapping_parameters *parameters)
+bool v34_ring_indices_are_valid(
+	const struct v34_ring_indices *indices,
+	const struct v34_mapping_parameters *parameters)
 {
 	if (indices == NULL ||
-	    !sippymodem_v34_mapping_parameters_is_valid(parameters))
+	    !v34_mapping_parameters_is_valid(parameters))
 		return false;
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_RING_INDICES_PER_4D_INTERVAL;
+		     symbol < V34_RING_INDICES_PER_4D_INTERVAL;
 		     ++symbol) {
 			if (indices->index[interval][symbol] >=
 			    parameters->ring_count)
@@ -272,61 +272,61 @@ bool sippymodem_v34_ring_indices_are_valid(
 }
 
 static uint32_t shell_label_limit(
-	const struct sippymodem_v34_mapping_parameters *parameters)
+	const struct v34_mapping_parameters *parameters)
 {
 	return parameters->shell_mapper_bits == 0 ? 1u :
 		UINT32_C(1) << parameters->shell_mapper_bits;
 }
 
-enum sippymodem_v34_shell_mapper_result sippymodem_v34_shell_map(
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	uint32_t shell_label, struct sippymodem_v34_ring_indices *indices)
+enum v34_shell_mapper_result v34_shell_map(
+	const struct v34_mapping_parameters *parameters,
+	uint32_t shell_label, struct v34_ring_indices *indices)
 {
-	struct sippymodem_v34_ring_indices generated = { 0 };
+	struct v34_ring_indices generated = { 0 };
 	struct shell_coefficients coefficients;
 	uint32_t label_limit;
 
-	if (!sippymodem_v34_mapping_parameters_is_valid(parameters) ||
+	if (!v34_mapping_parameters_is_valid(parameters) ||
 	    indices == NULL)
-		return SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT;
+		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
 	label_limit = shell_label_limit(parameters);
 	if (shell_label >= label_limit ||
 	    !generate_coefficients(parameters->ring_count, &coefficients) ||
 	    !map_shell_label(
 		    &coefficients, parameters->ring_count, shell_label,
 		    &generated) ||
-	    !sippymodem_v34_ring_indices_are_valid(&generated, parameters))
-		return SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT;
+	    !v34_ring_indices_are_valid(&generated, parameters))
+		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
 	*indices = generated;
-	return SIPPYMODEM_V34_SHELL_MAPPER_OK;
+	return V34_SHELL_MAPPER_OK;
 }
 
-enum sippymodem_v34_shell_mapper_result sippymodem_v34_shell_unmap(
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_ring_indices *indices,
+enum v34_shell_mapper_result v34_shell_unmap(
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_ring_indices *indices,
 	uint32_t *shell_label)
 {
 	struct shell_coefficients coefficients;
 	uint64_t recovered;
 
-	if (!sippymodem_v34_ring_indices_are_valid(indices, parameters) ||
+	if (!v34_ring_indices_are_valid(indices, parameters) ||
 	    shell_label == NULL ||
 	    !generate_coefficients(parameters->ring_count, &coefficients) ||
 	    !recover_shell_label(
 		    &coefficients, parameters->ring_count, indices, &recovered) ||
 	    recovered >= shell_label_limit(parameters))
-		return SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT;
+		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
 	*shell_label = (uint32_t)recovered;
-	return SIPPYMODEM_V34_SHELL_MAPPER_OK;
+	return V34_SHELL_MAPPER_OK;
 }
 
-const char *sippymodem_v34_shell_mapper_result_name(
-	enum sippymodem_v34_shell_mapper_result result)
+const char *v34_shell_mapper_result_name(
+	enum v34_shell_mapper_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_SHELL_MAPPER_OK:
+	case V34_SHELL_MAPPER_OK:
 		return "ok";
-	case SIPPYMODEM_V34_SHELL_MAPPER_INVALID_ARGUMENT:
+	case V34_SHELL_MAPPER_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

@@ -16,33 +16,33 @@ enum {
 	FAULT_TEST_INTERVALS = 80,
 };
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 static bool initialize_parameters(
-	struct sippymodem_v34_mapping_parameters *parameters)
+	struct v34_mapping_parameters *parameters)
 {
-	struct sippymodem_v34_frame_geometry geometry;
+	struct v34_frame_geometry geometry;
 
-	return sippymodem_v34_frame_geometry_init(
-		       &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_mapping_parameters_init(
+	return v34_frame_geometry_init(
+		       &geometry, V34_SYMBOL_RATE_3000, 8, false) ==
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_mapping_parameters_init(
 		       parameters, &geometry, true) ==
-		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK;
+		       V34_MAPPING_PARAMETERS_OK;
 }
 
-static struct sippymodem_v34_4d_encoder_input fixture_input(
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	enum sippymodem_v34_trellis_selection selection, size_t interval)
+static struct v34_4d_encoder_input fixture_input(
+	const struct v34_mapping_parameters *parameters,
+	enum v34_trellis_selection selection, size_t interval)
 {
 	uint8_t point_count = (uint8_t)(
 		1u << parameters->point_index_bits_per_2d_symbol);
 
-	return (struct sippymodem_v34_4d_encoder_input){
+	return (struct v34_4d_encoder_input){
 		.mapping = {
 			.rotation_bit = (uint8_t)((interval >> 1) & 1u),
 			.differential_input = (uint8_t)((3u * interval + 1u) & 3u),
@@ -73,47 +73,47 @@ static double generated_noise(uint32_t *state)
 	return (unit - 0.5) * 0.75;
 }
 
-static struct sippymodem_v34_survivor_decision encoded_decision(
-	const struct sippymodem_v34_4d_encoder_output *encoded,
+static struct v34_survivor_decision encoded_decision(
+	const struct v34_4d_encoder_output *encoded,
 	uint8_t inversion_bit)
 {
-	struct sippymodem_v34_survivor_decision decision = {
+	struct v34_survivor_decision decision = {
 		.convolutional_output = encoded->convolutional_output,
 		.inversion_bit = inversion_bit,
 	};
 
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
 		decision.channel_output[symbol] =
 			encoded->precoded[symbol].channel_output;
 	return decision;
 }
 
-static struct sippymodem_v34_survivor_decision branch_decision(
-	const struct sippymodem_v34_branch *branch, uint8_t inversion_bit)
+static struct v34_survivor_decision branch_decision(
+	const struct v34_branch *branch, uint8_t inversion_bit)
 {
-	struct sippymodem_v34_survivor_decision decision = {
+	struct v34_survivor_decision decision = {
 		.convolutional_output = branch->convolutional_output,
 		.inversion_bit = inversion_bit,
 	};
 
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
 		decision.channel_output[symbol] =
 			branch->symbol[symbol].channel_output;
 	return decision;
 }
 
 static bool decisions_are_equal(
-	const struct sippymodem_v34_survivor_decision *left,
-	const struct sippymodem_v34_survivor_decision *right)
+	const struct v34_survivor_decision *left,
+	const struct v34_survivor_decision *right)
 {
 	if (left->convolutional_output != right->convolutional_output)
 		return false;
 	if (left->inversion_bit != right->inversion_bit)
 		return false;
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		if (left->channel_output[symbol].in_phase !=
 			    right->channel_output[symbol].in_phase ||
 		    left->channel_output[symbol].quadrature !=
@@ -124,15 +124,15 @@ static bool decisions_are_equal(
 }
 
 static bool build_branches(
-	const struct sippymodem_v34_4d_encoder_output *encoded,
+	const struct v34_4d_encoder_output *encoded,
 	uint8_t inversion_bit, uint32_t *random, bool add_noise,
-	enum sippymodem_v34_trellis_selection selection,
-	struct sippymodem_v34_branch_set *branches)
+	enum v34_trellis_selection selection,
+	struct v34_branch_set *branches)
 {
-	struct sippymodem_v34_subset_slice slices[2];
+	struct v34_subset_slice slices[2];
 
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		struct sippymodem_qam_point estimate = {
 			encoded->precoded[symbol].channel_output.in_phase,
 			encoded->precoded[symbol].channel_output.quadrature,
@@ -142,21 +142,21 @@ static bool build_branches(
 			estimate.in_phase += generated_noise(random);
 			estimate.quadrature += generated_noise(random);
 		}
-		if (sippymodem_v34_slice_grid_subsets(&estimate, &slices[symbol]) !=
-		    SIPPYMODEM_V34_LATTICE_OK)
+		if (v34_slice_grid_subsets(&estimate, &slices[symbol]) !=
+		    V34_LATTICE_OK)
 			return false;
 	}
-	return sippymodem_v34_build_branch_set(
+	return v34_build_branch_set(
 		       slices, inversion_bit, selection, branches) ==
-		       SIPPYMODEM_V34_BRANCHES_OK;
+		       V34_BRANCHES_OK;
 }
 
 static uint8_t encoded_branch_index(
-	const struct sippymodem_v34_branch_set *branches,
-	const struct sippymodem_v34_survivor_decision *expected)
+	const struct v34_branch_set *branches,
+	const struct v34_survivor_decision *expected)
 {
 	for (uint8_t branch = 0; branch < branches->count; ++branch) {
-		struct sippymodem_v34_survivor_decision candidate =
+		struct v34_survivor_decision candidate =
 			branch_decision(
 				&branches->branch[branch], branches->inversion_bit);
 
@@ -168,41 +168,41 @@ static uint8_t encoded_branch_index(
 
 static bool test_generated_round_trip(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
+	struct v34_mapping_parameters parameters;
 
 	CHECK(initialize_parameters(&parameters),
 	      "survivor parameters did not initialize");
-	for (enum sippymodem_v34_trellis_selection selection =
-		     SIPPYMODEM_V34_TRELLIS_16_STATE;
-	     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE; ++selection) {
-		struct sippymodem_v34_survivor_decision
+	for (enum v34_trellis_selection selection =
+		     V34_TRELLIS_16_STATE;
+	     selection <= V34_TRELLIS_64_STATE; ++selection) {
+		struct v34_survivor_decision
 			expected[ROUND_TRIP_INTERVALS];
-		struct sippymodem_v34_4d_encoder encoder;
-		struct sippymodem_v34_survivor survivor;
+		struct v34_4d_encoder encoder;
+		struct v34_survivor survivor;
 		uint32_t random = UINT32_C(0x8421c637) + selection;
 
-		CHECK(sippymodem_v34_4d_encoder_init(
+		CHECK(v34_4d_encoder_init(
 			      &encoder, &parameters, COEFFICIENTS, selection) ==
-			      SIPPYMODEM_V34_4D_ENCODER_OK &&
-		      sippymodem_v34_survivor_init(&survivor, selection) ==
-			      SIPPYMODEM_V34_SURVIVOR_OK,
+			      V34_4D_ENCODER_OK &&
+		      v34_survivor_init(&survivor, selection) ==
+			      V34_SURVIVOR_OK,
 		      "survivor mode %u did not initialize", selection);
 		for (size_t interval = 0; interval < ROUND_TRIP_INTERVALS;
 		     ++interval) {
-			struct sippymodem_v34_4d_encoder_input input =
+			struct v34_4d_encoder_input input =
 				fixture_input(&parameters, selection, interval);
-			struct sippymodem_v34_4d_encoder_output encoded;
-			struct sippymodem_v34_branch_set branches;
-			struct sippymodem_v34_survivor_decision current;
-			struct sippymodem_v34_survivor_decision traceback;
-			struct sippymodem_v34_survivor_decision saved_traceback;
+			struct v34_4d_encoder_output encoded;
+			struct v34_branch_set branches;
+			struct v34_survivor_decision current;
+			struct v34_survivor_decision traceback;
+			struct v34_survivor_decision saved_traceback;
 			bool ready = true;
 
 			memset(&traceback, 0xa5, sizeof(traceback));
 			saved_traceback = traceback;
-			CHECK(sippymodem_v34_4d_encoder_step(
+			CHECK(v34_4d_encoder_step(
 				      &encoder, &input, &encoded) ==
-				      SIPPYMODEM_V34_4D_ENCODER_OK &&
+				      V34_4D_ENCODER_OK &&
 			      build_branches(
 				      &encoded, input.inversion_bit, &random, true,
 				      selection, &branches),
@@ -210,19 +210,19 @@ static bool test_generated_round_trip(void)
 			      interval);
 			expected[interval] = encoded_decision(
 				&encoded, input.inversion_bit);
-			CHECK(sippymodem_v34_survivor_advance(
+			CHECK(v34_survivor_advance(
 				      &survivor, &branches, &current, &traceback,
-				      &ready) == SIPPYMODEM_V34_SURVIVOR_OK &&
+				      &ready) == V34_SURVIVOR_OK &&
 			      decisions_are_equal(&current, &expected[interval]) &&
 			      ready ==
 				      (interval + 1u >=
-				       SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS),
+				       V34_SURVIVOR_TRACEBACK_INTERVALS),
 			      "survivor mode %u decision %zu changed", selection,
 			      interval);
 			if (ready) {
 				size_t decoded =
 					interval + 1u -
-					SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS;
+					V34_SURVIVOR_TRACEBACK_INTERVALS;
 
 				CHECK(decisions_are_equal(
 					      &traceback, &expected[decoded]),
@@ -236,7 +236,7 @@ static bool test_generated_round_trip(void)
 				      selection);
 			}
 		}
-		CHECK(sippymodem_v34_survivor_is_valid(&survivor),
+		CHECK(v34_survivor_is_valid(&survivor),
 		      "survivor mode %u ended invalid", selection);
 		for (uint8_t state = 0; state < (uint8_t)(16u << selection);
 		     ++state)
@@ -248,7 +248,7 @@ static bool test_generated_round_trip(void)
 }
 
 static void set_branch_metric(
-	struct sippymodem_v34_branch *branch, double metric)
+	struct v34_branch *branch, double metric)
 {
 	branch->symbol[0].squared_error = metric;
 	branch->symbol[1].squared_error = 0.0;
@@ -256,11 +256,11 @@ static void set_branch_metric(
 }
 
 static uint8_t corrective_fault_branch(
-	const struct sippymodem_v34_branch_set *branches, uint8_t origin_state,
+	const struct v34_branch_set *branches, uint8_t origin_state,
 	uint8_t correct_branch, uint8_t correct_next_state)
 {
 	for (uint8_t branch = 0; branch < branches->count; ++branch) {
-		struct sippymodem_v34_convolutional_encoder candidate = {
+		struct v34_convolutional_encoder candidate = {
 			.state = origin_state,
 			.selection = branches->selection,
 		};
@@ -269,10 +269,10 @@ static uint8_t corrective_fault_branch(
 		    branches->branch[branch].convolutional_output !=
 			    (origin_state & 1u))
 			continue;
-		if (sippymodem_v34_convolutional_encoder_advance(
+		if (v34_convolutional_encoder_advance(
 			    &candidate,
 			    &branches->branch[branch].convolutional_input) ==
-			    SIPPYMODEM_V34_TRELLIS_OK &&
+			    V34_TRELLIS_OK &&
 		    (candidate.state & 1u) != (correct_next_state & 1u))
 			return branch;
 	}
@@ -281,41 +281,41 @@ static uint8_t corrective_fault_branch(
 
 static bool test_path_correction(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
+	struct v34_mapping_parameters parameters;
 
 	CHECK(initialize_parameters(&parameters),
 	      "correction parameters did not initialize");
-	for (enum sippymodem_v34_trellis_selection selection =
-		     SIPPYMODEM_V34_TRELLIS_16_STATE;
-	     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE; ++selection) {
-		struct sippymodem_v34_survivor_decision
+	for (enum v34_trellis_selection selection =
+		     V34_TRELLIS_16_STATE;
+	     selection <= V34_TRELLIS_64_STATE; ++selection) {
+		struct v34_survivor_decision
 			expected[FAULT_TEST_INTERVALS];
-		struct sippymodem_v34_4d_encoder encoder;
-		struct sippymodem_v34_survivor survivor;
+		struct v34_4d_encoder encoder;
+		struct v34_survivor survivor;
 		bool local_error_seen = false;
 
-		CHECK(sippymodem_v34_4d_encoder_init(
+		CHECK(v34_4d_encoder_init(
 			      &encoder, &parameters, COEFFICIENTS, selection) ==
-			      SIPPYMODEM_V34_4D_ENCODER_OK &&
-		      sippymodem_v34_survivor_init(&survivor, selection) ==
-			      SIPPYMODEM_V34_SURVIVOR_OK,
+			      V34_4D_ENCODER_OK &&
+		      v34_survivor_init(&survivor, selection) ==
+			      V34_SURVIVOR_OK,
 		      "correction mode %u did not initialize", selection);
 		for (size_t interval = 0; interval < FAULT_TEST_INTERVALS;
 		     ++interval) {
-			struct sippymodem_v34_4d_encoder_input input =
+			struct v34_4d_encoder_input input =
 				fixture_input(&parameters, selection, interval);
-			struct sippymodem_v34_4d_encoder_output encoded;
-			struct sippymodem_v34_branch_set branches;
-			struct sippymodem_v34_survivor_decision current;
-			struct sippymodem_v34_survivor_decision traceback;
+			struct v34_4d_encoder_output encoded;
+			struct v34_branch_set branches;
+			struct v34_survivor_decision current;
+			struct v34_survivor_decision traceback;
 			uint8_t origin_state = encoder.convolutional_encoder.state;
 			uint8_t correct_branch;
 			uint8_t wrong_branch = UINT8_MAX;
 			bool ready;
 
-			CHECK(sippymodem_v34_4d_encoder_step(
+			CHECK(v34_4d_encoder_step(
 				      &encoder, &input, &encoded) ==
-				      SIPPYMODEM_V34_4D_ENCODER_OK &&
+				      V34_4D_ENCODER_OK &&
 			      build_branches(
 				      &encoded, input.inversion_bit, NULL, false,
 				      selection, &branches),
@@ -341,14 +341,14 @@ static bool test_path_correction(void)
 				set_branch_metric(&branches.branch[correct_branch], 2.0);
 				set_branch_metric(&branches.branch[wrong_branch], 0.0);
 			}
-			CHECK(sippymodem_v34_branch_set_is_valid(&branches) &&
-			      sippymodem_v34_survivor_advance(
+			CHECK(v34_branch_set_is_valid(&branches) &&
+			      v34_survivor_advance(
 				      &survivor, &branches, &current, &traceback,
-				      &ready) == SIPPYMODEM_V34_SURVIVOR_OK,
+				      &ready) == V34_SURVIVOR_OK,
 			      "correction survivor %u/%zu failed", selection,
 			      interval);
 			if (interval == FAULT_INTERVAL) {
-				struct sippymodem_v34_survivor_decision wrong =
+				struct v34_survivor_decision wrong =
 					branch_decision(
 						&branches.branch[wrong_branch],
 						branches.inversion_bit);
@@ -361,7 +361,7 @@ static bool test_path_correction(void)
 			if (ready) {
 				size_t decoded =
 					interval + 1u -
-					SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS;
+					V34_SURVIVOR_TRACEBACK_INTERVALS;
 
 				CHECK(decisions_are_equal(
 					      &traceback, &expected[decoded]),
@@ -377,15 +377,15 @@ static bool test_path_correction(void)
 }
 
 static bool rejected_advance_is_transactional(
-	struct sippymodem_v34_survivor *survivor,
-	const struct sippymodem_v34_branch_set *branches,
-	enum sippymodem_v34_survivor_result expected)
+	struct v34_survivor *survivor,
+	const struct v34_branch_set *branches,
+	enum v34_survivor_result expected)
 {
-	struct sippymodem_v34_survivor saved = { 0 };
-	struct sippymodem_v34_survivor_decision current;
-	struct sippymodem_v34_survivor_decision traceback;
-	struct sippymodem_v34_survivor_decision saved_current;
-	struct sippymodem_v34_survivor_decision saved_traceback;
+	struct v34_survivor saved = { 0 };
+	struct v34_survivor_decision current;
+	struct v34_survivor_decision traceback;
+	struct v34_survivor_decision saved_current;
+	struct v34_survivor_decision saved_traceback;
 	bool ready = true;
 
 	if (survivor != NULL)
@@ -394,7 +394,7 @@ static bool rejected_advance_is_transactional(
 	memset(&traceback, 0xa5, sizeof(traceback));
 	saved_current = current;
 	saved_traceback = traceback;
-	return sippymodem_v34_survivor_advance(
+	return v34_survivor_advance(
 		       survivor, branches, &current, &traceback, &ready) ==
 		       expected &&
 	       (survivor == NULL ||
@@ -406,69 +406,69 @@ static bool rejected_advance_is_transactional(
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_4d_encoder_output encoded;
-	struct sippymodem_v34_4d_encoder_input input;
-	struct sippymodem_v34_branch_set branches;
-	struct sippymodem_v34_branch_set malformed;
-	struct sippymodem_v34_survivor survivor;
-	struct sippymodem_v34_survivor saved;
-	struct sippymodem_v34_survivor corrupted;
+	struct v34_mapping_parameters parameters;
+	struct v34_4d_encoder encoder;
+	struct v34_4d_encoder_output encoded;
+	struct v34_4d_encoder_input input;
+	struct v34_branch_set branches;
+	struct v34_branch_set malformed;
+	struct v34_survivor survivor;
+	struct v34_survivor saved;
+	struct v34_survivor corrupted;
 
 	memset(&survivor, 0xa5, sizeof(survivor));
 	saved = survivor;
-	CHECK(sippymodem_v34_survivor_init(NULL,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT &&
-	      sippymodem_v34_survivor_init(
-		      &survivor, (enum sippymodem_v34_trellis_selection)3) ==
-		      SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT &&
+	CHECK(v34_survivor_init(NULL,
+		      V34_TRELLIS_16_STATE) ==
+		      V34_SURVIVOR_INVALID_ARGUMENT &&
+	      v34_survivor_init(
+		      &survivor, (enum v34_trellis_selection)3) ==
+		      V34_SURVIVOR_INVALID_ARGUMENT &&
 	      memcmp(&survivor, &saved, sizeof(saved)) == 0,
 	      "invalid survivor initialization changed its destination");
 	CHECK(initialize_parameters(&parameters) &&
-	      sippymodem_v34_4d_encoder_init(
+	      v34_4d_encoder_init(
 		      &encoder, &parameters, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_OK &&
-	      sippymodem_v34_survivor_init(
-		      &survivor, SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_SURVIVOR_OK,
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_OK &&
+	      v34_survivor_init(
+		      &survivor, V34_TRELLIS_16_STATE) ==
+		      V34_SURVIVOR_OK,
 	      "validation survivor did not initialize");
 	input = fixture_input(
-		&parameters, SIPPYMODEM_V34_TRELLIS_16_STATE, 0);
-	CHECK(sippymodem_v34_4d_encoder_step(&encoder, &input, &encoded) ==
-		      SIPPYMODEM_V34_4D_ENCODER_OK &&
+		&parameters, V34_TRELLIS_16_STATE, 0);
+	CHECK(v34_4d_encoder_step(&encoder, &input, &encoded) ==
+		      V34_4D_ENCODER_OK &&
 	      build_branches(
 		      &encoded, input.inversion_bit, NULL, false,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE, &branches),
+		      V34_TRELLIS_16_STATE, &branches),
 	      "validation branches did not build");
 	CHECK(rejected_advance_is_transactional(
-		      NULL, &branches, SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT) &&
+		      NULL, &branches, V34_SURVIVOR_INVALID_ARGUMENT) &&
 	      rejected_advance_is_transactional(
-		      &survivor, NULL, SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT),
+		      &survivor, NULL, V34_SURVIVOR_INVALID_ARGUMENT),
 	      "null survivor arguments were accepted");
 	{
-		struct sippymodem_v34_survivor_decision current;
-		struct sippymodem_v34_survivor_decision traceback;
-		struct sippymodem_v34_survivor_decision saved_current;
-		struct sippymodem_v34_survivor_decision saved_traceback;
-		struct sippymodem_v34_survivor before = survivor;
+		struct v34_survivor_decision current;
+		struct v34_survivor_decision traceback;
+		struct v34_survivor_decision saved_current;
+		struct v34_survivor_decision saved_traceback;
+		struct v34_survivor before = survivor;
 		bool ready = true;
 
 		memset(&current, 0x5a, sizeof(current));
 		memset(&traceback, 0xa5, sizeof(traceback));
 		saved_current = current;
 		saved_traceback = traceback;
-		CHECK(sippymodem_v34_survivor_advance(
+		CHECK(v34_survivor_advance(
 			      &survivor, &branches, NULL, &traceback, &ready) ==
-			      SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT &&
-		      sippymodem_v34_survivor_advance(
+			      V34_SURVIVOR_INVALID_ARGUMENT &&
+		      v34_survivor_advance(
 			      &survivor, &branches, &current, NULL, &ready) ==
-			      SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT &&
-		      sippymodem_v34_survivor_advance(
+			      V34_SURVIVOR_INVALID_ARGUMENT &&
+		      v34_survivor_advance(
 			      &survivor, &branches, &current, &traceback, NULL) ==
-			      SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT &&
+			      V34_SURVIVOR_INVALID_ARGUMENT &&
 		      memcmp(&survivor, &before, sizeof(before)) == 0 &&
 		      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 		      memcmp(
@@ -478,62 +478,62 @@ static bool test_validation(void)
 		      "null survivor outputs changed state");
 	}
 	malformed = branches;
-	malformed.selection = SIPPYMODEM_V34_TRELLIS_32_STATE;
-	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed) &&
+	malformed.selection = V34_TRELLIS_32_STATE;
+	CHECK(!v34_branch_set_is_valid(&malformed) &&
 	      rejected_advance_is_transactional(
 		      &survivor, &malformed,
-		      SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT),
+		      V34_SURVIVOR_INVALID_ARGUMENT),
 	      "mismatched branch selection was accepted");
 	malformed = branches;
 	for (uint8_t branch = 0; branch < malformed.count; ++branch)
 		set_branch_metric(&malformed.branch[branch], DBL_MAX);
-	CHECK(sippymodem_v34_branch_set_is_valid(&malformed) &&
+	CHECK(v34_branch_set_is_valid(&malformed) &&
 	      rejected_advance_is_transactional(
 		      &survivor, &malformed,
-		      SIPPYMODEM_V34_SURVIVOR_NUMERIC_FAILURE),
+		      V34_SURVIVOR_NUMERIC_FAILURE),
 	      "unusable finite metrics did not fail transactionally");
 
-	CHECK(sippymodem_v34_survivor_is_valid(&survivor) &&
-	      !sippymodem_v34_survivor_is_valid(NULL),
+	CHECK(v34_survivor_is_valid(&survivor) &&
+	      !v34_survivor_is_valid(NULL),
 	      "fresh survivor validity changed");
 	corrupted = survivor;
 	corrupted.path_metric[0] = 1.0;
-	CHECK(!sippymodem_v34_survivor_is_valid(&corrupted),
+	CHECK(!v34_survivor_is_valid(&corrupted),
 	      "unnormalized survivor metrics were accepted");
 	corrupted = survivor;
 	corrupted.path_index = 1;
-	CHECK(!sippymodem_v34_survivor_is_valid(&corrupted),
+	CHECK(!v34_survivor_is_valid(&corrupted),
 	      "inconsistent survivor cursor was accepted");
 	{
-		struct sippymodem_v34_survivor_decision current;
-		struct sippymodem_v34_survivor_decision traceback;
+		struct v34_survivor_decision current;
+		struct v34_survivor_decision traceback;
 		bool ready;
 
-		CHECK(sippymodem_v34_survivor_advance(
+		CHECK(v34_survivor_advance(
 			      &survivor, &branches, &current, &traceback, &ready) ==
-			      SIPPYMODEM_V34_SURVIVOR_OK &&
+			      V34_SURVIVOR_OK &&
 		      !ready,
 		      "validation survivor did not populate history");
 	}
 	corrupted = survivor;
 	corrupted.path[0].predecessor[0] = 16;
-	CHECK(!sippymodem_v34_survivor_is_valid(&corrupted),
+	CHECK(!v34_survivor_is_valid(&corrupted),
 	      "out-of-range survivor predecessor was accepted");
 	corrupted = survivor;
 	corrupted.path[0].branch[0].channel_output[0].in_phase = 0;
-	CHECK(!sippymodem_v34_survivor_is_valid(&corrupted),
+	CHECK(!v34_survivor_is_valid(&corrupted),
 	      "off-grid survivor history was accepted");
-	CHECK(strcmp(sippymodem_v34_survivor_result_name(
-			     SIPPYMODEM_V34_SURVIVOR_OK),
+	CHECK(strcmp(v34_survivor_result_name(
+			     V34_SURVIVOR_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_survivor_result_name(
-			     SIPPYMODEM_V34_SURVIVOR_INVALID_ARGUMENT),
+	      strcmp(v34_survivor_result_name(
+			     V34_SURVIVOR_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_survivor_result_name(
-			     SIPPYMODEM_V34_SURVIVOR_NUMERIC_FAILURE),
+	      strcmp(v34_survivor_result_name(
+			     V34_SURVIVOR_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_survivor_result_name(
-			     (enum sippymodem_v34_survivor_result)99),
+	      strcmp(v34_survivor_result_name(
+			     (enum v34_survivor_result)99),
 		     "unknown") == 0,
 	      "survivor result names changed");
 	return true;

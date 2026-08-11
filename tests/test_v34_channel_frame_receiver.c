@@ -15,51 +15,51 @@
 
 enum {
 	PIPELINE_MAPPING_FRAMES =
-		SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS /
-		SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME,
+		V34_SURVIVOR_TRACEBACK_INTERVALS /
+		V34_4D_INTERVALS_PER_MAPPING_FRAME,
 	MAX_GENERATED_MAPPING_FRAMES = 48,
 	POINT_CHANNEL_TAPS = 3,
 	POINT_EQUALIZER_TRAINING_SYMBOLS = 1024,
 };
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 struct configuration {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t primary_rate;
 	bool auxiliary;
 	bool expanded;
-	enum sippymodem_v34_station_role transmitting_role;
-	enum sippymodem_v34_trellis_selection trellis;
-	enum sippymodem_v34_nonlinear_parameter nonlinear;
+	enum v34_station_role transmitting_role;
+	enum v34_trellis_selection trellis;
+	enum v34_nonlinear_parameter nonlinear;
 };
 
 static const struct configuration CONFIGURATIONS[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true, false,
-	  SIPPYMODEM_V34_CALLING_STATION, SIPPYMODEM_V34_TRELLIS_16_STATE,
-	  SIPPYMODEM_V34_NONLINEAR_THETA_ZERO },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 14, false, true,
-	  SIPPYMODEM_V34_ANSWERING_STATION, SIPPYMODEM_V34_TRELLIS_64_STATE,
-	  SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16 },
+	{ V34_SYMBOL_RATE_3000, 8, true, false,
+	  V34_CALLING_STATION, V34_TRELLIS_16_STATE,
+	  V34_NONLINEAR_THETA_ZERO },
+	{ V34_SYMBOL_RATE_3429, 14, false, true,
+	  V34_ANSWERING_STATION, V34_TRELLIS_64_STATE,
+	  V34_NONLINEAR_THETA_5_OVER_16 },
 };
 
 struct fixture {
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_frame_schedule transmit_schedule;
-	struct sippymodem_v34_scrambler scrambler;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_power_normalizer normalizer;
-	struct sippymodem_v34_data_channel_receiver receiver;
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_frame_schedule transmit_schedule;
+	struct v34_scrambler scrambler;
+	struct v34_4d_encoder encoder;
+	struct v34_power_normalizer normalizer;
+	struct v34_data_channel_receiver receiver;
 };
 
 struct expected_frame {
-	struct sippymodem_v34_mapping_frame mapping_frame;
-	uint8_t primary_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	struct v34_mapping_frame mapping_frame;
+	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t auxiliary_bit;
 };
 
@@ -184,53 +184,53 @@ static double generated_noise(uint32_t *state, double normalization_gain)
 static bool initialize_fixture(
 	struct fixture *fixture, const struct configuration *configuration)
 {
-	const struct sippymodem_v34_symbol_power_measurement precoded = {
+	const struct v34_symbol_power_measurement precoded = {
 		.mean_squared_magnitude = 25.0,
 		.symbol_count = 256,
 	};
-	struct sippymodem_v34_symbol_power_measurement projected = {
+	struct v34_symbol_power_measurement projected = {
 		.mean_squared_magnitude = 30.0,
 		.symbol_count = 256,
 	};
 	struct fixture generated = { 0 };
 
-	if (configuration->nonlinear == SIPPYMODEM_V34_NONLINEAR_THETA_ZERO)
+	if (configuration->nonlinear == V34_NONLINEAR_THETA_ZERO)
 		projected.mean_squared_magnitude =
 			precoded.mean_squared_magnitude;
-	if (sippymodem_v34_frame_geometry_init(
+	if (v34_frame_geometry_init(
 		    &generated.geometry, configuration->symbol_rate,
 		    configuration->primary_rate, configuration->auxiliary) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
-	    sippymodem_v34_mapping_parameters_init(
+		    V34_FRAME_SCHEDULE_OK ||
+	    v34_mapping_parameters_init(
 		    &generated.parameters, &generated.geometry,
 		    configuration->expanded) !=
-		    SIPPYMODEM_V34_MAPPING_PARAMETERS_OK ||
-	    sippymodem_v34_b1_frame_schedule_init(
+		    V34_MAPPING_PARAMETERS_OK ||
+	    v34_b1_frame_schedule_init(
 		    &generated.transmit_schedule, &generated.geometry) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
-	    sippymodem_v34_transmit_scrambler_init(
+		    V34_FRAME_SCHEDULE_OK ||
+	    v34_transmit_scrambler_init(
 		    &generated.scrambler, configuration->transmitting_role) !=
-		    SIPPYMODEM_V34_FRAMING_OK ||
-	    sippymodem_v34_4d_encoder_init(
+		    V34_FRAMING_OK ||
+	    v34_4d_encoder_init(
 		    &generated.encoder, &generated.parameters, COEFFICIENTS,
-		    configuration->trellis) != SIPPYMODEM_V34_4D_ENCODER_OK ||
-	    sippymodem_v34_power_normalizer_init(
+		    configuration->trellis) != V34_4D_ENCODER_OK ||
+	    v34_power_normalizer_init(
 		    &generated.normalizer, &generated.parameters,
 		    configuration->nonlinear, &precoded, &projected) !=
-		    SIPPYMODEM_V34_SYMBOL_POWER_OK ||
-	    sippymodem_v34_data_channel_receiver_init(
+		    V34_SYMBOL_POWER_OK ||
+	    v34_data_channel_receiver_init(
 		    &generated.receiver, &generated.normalizer,
 		    &generated.geometry, configuration->expanded, COEFFICIENTS,
 		    configuration->trellis,
 		    configuration->transmitting_role) !=
-		    SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_OK)
+		    V34_DATA_CHANNEL_RECEIVER_OK)
 		return false;
 	*fixture = generated;
 	return true;
 }
 
 static void generate_primary_bits(
-	uint8_t bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS], size_t count,
+	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS], size_t count,
 	uint32_t seed)
 {
 	uint32_t state = seed | 1u;
@@ -242,23 +242,23 @@ static void generate_primary_bits(
 static bool transmit_frame(
 	struct fixture *fixture, const struct configuration *configuration,
 	size_t frame_index, struct expected_frame *expected,
-	struct sippymodem_v34_transmitted_mapping_frame *frame)
+	struct v34_transmitted_mapping_frame *frame)
 {
-	struct sippymodem_v34_frame_schedule preview;
+	struct v34_frame_schedule preview;
 	const uint8_t *auxiliary;
 	bool b1 = frame_index <
 		fixture->geometry.mapping_frames_per_data_frame;
 
-	if (sippymodem_v34_frame_schedule_is_complete(
+	if (v34_frame_schedule_is_complete(
 		    &fixture->transmit_schedule) &&
-	    sippymodem_v34_frame_schedule_advance_data_frame(
+	    v34_frame_schedule_advance_data_frame(
 		    &fixture->transmit_schedule) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+		    V34_FRAME_SCHEDULE_OK)
 		return false;
 	preview = fixture->transmit_schedule;
-	if (sippymodem_v34_frame_schedule_next(
+	if (v34_frame_schedule_next(
 		    &preview, &expected->mapping_frame) !=
-	    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+	    V34_FRAME_SCHEDULE_OK)
 		return false;
 	if (b1)
 		memset(expected->primary_bits, 1,
@@ -272,22 +272,22 @@ static bool transmit_frame(
 	auxiliary = expected->mapping_frame.carries_auxiliary_bit ?
 		&expected->auxiliary_bit :
 		NULL;
-	return sippymodem_v34_transmit_mapping_frame(
+	return v34_transmit_mapping_frame(
 		       &fixture->transmit_schedule, &fixture->scrambler,
 		       &fixture->encoder, expected->primary_bits,
 		       expected->mapping_frame.primary_bits,
 		       auxiliary, configuration->nonlinear,
 		       fixture->normalizer.precoded_mean_squared_magnitude,
-		       frame) == SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OK;
+		       frame) == V34_MAPPING_FRAME_TRANSMITTER_OK;
 }
 
 static bool received_matches(
-	const struct sippymodem_v34_received_mapping_frame *received,
+	const struct v34_received_mapping_frame *received,
 	const struct expected_frame *expected)
 {
-	const struct sippymodem_v34_mapping_frame *left =
+	const struct v34_mapping_frame *left =
 		&received->mapping_frame;
-	const struct sippymodem_v34_mapping_frame *right =
+	const struct v34_mapping_frame *right =
 		&expected->mapping_frame;
 
 	return left->index == right->index &&
@@ -307,15 +307,15 @@ static bool received_matches(
 }
 
 static bool current_decision_matches(
-	const struct sippymodem_v34_survivor_decision *current,
-	const struct sippymodem_v34_4d_encoder_output *encoded,
+	const struct v34_survivor_decision *current,
+	const struct v34_4d_encoder_output *encoded,
 	uint8_t inversion_bit)
 {
 	if (current->convolutional_output != encoded->convolutional_output ||
 	    current->inversion_bit != inversion_bit)
 		return false;
 	for (size_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		if (memcmp(&current->channel_output[symbol],
 			   &encoded->precoded[symbol].channel_output,
 			   sizeof(current->channel_output[symbol])) != 0)
@@ -340,8 +340,8 @@ static bool point_matches(
 }
 
 static bool precoder_histories_match(
-	const struct sippymodem_v34_precoder *left,
-	const struct sippymodem_v34_precoder *right)
+	const struct v34_precoder *left,
+	const struct v34_precoder *right)
 {
 	return left->grid_step == right->grid_step &&
 	       memcmp(left->coefficients, right->coefficients,
@@ -369,7 +369,7 @@ static bool test_generated_channel_round_trip(void)
 		      "channel receiver mode %zu fixture is too small", mode);
 		for (size_t frame_index = 0;
 		     frame_index < transmitted_frames; ++frame_index) {
-			struct sippymodem_v34_transmitted_mapping_frame transmitted;
+			struct v34_transmitted_mapping_frame transmitted;
 
 			CHECK(transmit_frame(
 				      &fixture, configuration, frame_index,
@@ -379,19 +379,19 @@ static bool test_generated_channel_round_trip(void)
 			      mode, frame_index);
 			for (size_t interval = 0;
 			     interval <
-				     SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+				     V34_4D_INTERVALS_PER_MAPPING_FRAME;
 			     ++interval) {
 				struct sippymodem_qam_point normalized
-					[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
+					[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 				struct sippymodem_qam_point expected_targets
-					[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
+					[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 				struct sippymodem_qam_point decision_targets
-					[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
-				struct sippymodem_v34_survivor_decision current;
-				struct sippymodem_v34_received_mapping_frame received;
-				struct sippymodem_v34_received_mapping_frame saved_received;
-				enum sippymodem_v34_data_channel_receiver_result result;
-				enum sippymodem_v34_data_channel_receiver_result expected_result;
+					[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+				struct v34_survivor_decision current;
+				struct v34_received_mapping_frame received;
+				struct v34_received_mapping_frame saved_received;
+				enum v34_data_channel_receiver_result result;
+				enum v34_data_channel_receiver_result expected_result;
 				uint8_t inversion_bit = (uint8_t)(
 					(transmitted.mapping_frame.inversion_4d_mask >>
 					 interval) &
@@ -399,17 +399,17 @@ static bool test_generated_channel_round_trip(void)
 
 				for (size_t symbol = 0;
 				     symbol <
-					     SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+					     V34_2D_SYMBOLS_PER_4D_INTERVAL;
 				     ++symbol) {
 					size_t index = interval *
-						       SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL +
+						       V34_2D_SYMBOLS_PER_4D_INTERVAL +
 					       symbol;
 
-					CHECK(sippymodem_v34_normalize_power(
+					CHECK(v34_normalize_power(
 						      &fixture.normalizer,
 						      &transmitted.projected_symbol[index],
 						      &normalized[symbol]) ==
-						      SIPPYMODEM_V34_SYMBOL_POWER_OK,
+						      V34_SYMBOL_POWER_OK,
 						      "mode %zu frame %zu symbol %zu did not normalize",
 						      mode, frame_index, index);
 					expected_targets[symbol] = normalized[symbol];
@@ -422,11 +422,11 @@ static bool test_generated_channel_round_trip(void)
 				}
 				memset(&received, 0xa5, sizeof(received));
 				saved_received = received;
-				result = sippymodem_v34_data_channel_receiver_advance(
+				result = v34_data_channel_receiver_advance(
 					&fixture.receiver, normalized, &current,
 					decision_targets, &received);
 				CHECK(result <=
-					      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE &&
+					      V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE &&
 				      current_decision_matches(
 					      &current,
 					      &transmitted.encoded.interval[interval],
@@ -439,7 +439,7 @@ static bool test_generated_channel_round_trip(void)
 					      &expected_targets[1]),
 				      "mode %zu frame %zu interval %zu decision changed",
 				      mode, frame_index, interval);
-				if (result == SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_OK) {
+				if (result == V34_DATA_CHANNEL_RECEIVER_OK) {
 					CHECK(memcmp(&received, &saved_received,
 						     sizeof(received)) == 0,
 					      "channel receiver emitted a partial frame");
@@ -452,9 +452,9 @@ static bool test_generated_channel_round_trip(void)
 						(received_frames + 1u ==
 								 fixture.geometry
 									 .mapping_frames_per_data_frame ?
-							 SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE :
-							 SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS) :
-						SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY;
+							 V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE :
+							 V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS) :
+						V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY;
 				CHECK(received_frames < frame_index &&
 					      result == expected_result &&
 					      received_matches(
@@ -472,7 +472,7 @@ static bool test_generated_channel_round_trip(void)
 		}
 		CHECK(received_frames ==
 			      transmitted_frames - PIPELINE_MAPPING_FRAMES &&
-		      !sippymodem_v34_data_channel_receiver_is_receiving_b1(
+		      !v34_data_channel_receiver_is_receiving_b1(
 			      &fixture.receiver) &&
 		      fixture.receiver.data_receiver.b1_error_bits == 0u,
 		      "mode %zu emitted %zu frames", mode, received_frames);
@@ -492,7 +492,7 @@ static bool test_generated_equalizer_round_trip(void)
 		const struct configuration *configuration =
 			&CONFIGURATIONS[mode];
 		struct expected_frame expected[MAX_GENERATED_MAPPING_FRAMES];
-		struct sippymodem_v34_data_equalizer_receiver receiver;
+		struct v34_data_equalizer_receiver receiver;
 		struct sippymodem_qam_equalizer trained_equalizer;
 		struct sippymodem_qam_point history[POINT_CHANNEL_TAPS] = { 0 };
 		struct fixture fixture;
@@ -508,22 +508,22 @@ static bool test_generated_equalizer_round_trip(void)
 			      UINT32_C(0x4e4c4d53) ^ (uint32_t)mode) &&
 		      equalizer_has_dispersion(&trained_equalizer) &&
 		      transmitted_frames + 1u <= ARRAY_LENGTH(expected) &&
-		      sippymodem_v34_data_equalizer_receiver_init(
+		      v34_data_equalizer_receiver_init(
 			      &receiver, &trained_equalizer,
 			      &fixture.normalizer, &fixture.geometry,
 			      configuration->expanded, COEFFICIENTS,
 			      configuration->trellis,
 			      configuration->transmitting_role,
 			      0.01) ==
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_OK,
+			      V34_DATA_EQUALIZER_RECEIVER_OK,
 		      "equalizer receiver mode %zu rejected its channel", mode);
 		for (size_t frame_index = 0;
 		     frame_index <= transmitted_frames; ++frame_index) {
-			struct sippymodem_v34_transmitted_mapping_frame transmitted;
+			struct v34_transmitted_mapping_frame transmitted;
 			size_t symbol_limit =
 				frame_index == transmitted_frames ?
 					SIPPYMODEM_QAM_EQUALIZER_DELAY :
-					SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME;
+					V34_SYMBOLS_PER_MAPPING_FRAME;
 
 			CHECK(transmit_frame(
 				      &fixture, configuration, frame_index,
@@ -533,17 +533,17 @@ static bool test_generated_equalizer_round_trip(void)
 			for (size_t symbol = 0; symbol < symbol_limit; ++symbol) {
 				struct sippymodem_qam_point normalized;
 				struct sippymodem_qam_point received_point;
-				struct sippymodem_v34_survivor_decision current;
-				struct sippymodem_v34_survivor_decision saved_current;
-				struct sippymodem_v34_received_mapping_frame received;
-				struct sippymodem_v34_received_mapping_frame saved_received;
-				enum sippymodem_v34_data_equalizer_receiver_result result;
+				struct v34_survivor_decision current;
+				struct v34_survivor_decision saved_current;
+				struct v34_received_mapping_frame received;
+				struct v34_received_mapping_frame saved_received;
+				enum v34_data_equalizer_receiver_result result;
 
-				CHECK(sippymodem_v34_normalize_power(
+				CHECK(v34_normalize_power(
 					      &fixture.normalizer,
 					      &transmitted.projected_symbol[symbol],
 					      &normalized) ==
-					      SIPPYMODEM_V34_SYMBOL_POWER_OK,
+					      V34_SYMBOL_POWER_OK,
 				      "equalizer mode %zu symbol %zu did not normalize",
 				      mode, symbol);
 				received_point = pass_point_channel(
@@ -552,16 +552,16 @@ static bool test_generated_equalizer_round_trip(void)
 				saved_current = current;
 				memset(&received, 0x5a, sizeof(received));
 				saved_received = received;
-				result = sippymodem_v34_data_equalizer_receive_point(
+				result = v34_data_equalizer_receive_point(
 					&receiver, &received_point, &current, &received);
 				CHECK(result <=
-					      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE,
+					      V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE,
 				      "equalizer mode %zu frame %zu symbol %zu failed: %s",
 				      mode, frame_index, symbol,
-				      sippymodem_v34_data_equalizer_receiver_result_name(
+				      v34_data_equalizer_receiver_result_name(
 					      result));
 				if (result ==
-				    SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_OK) {
+				    V34_DATA_EQUALIZER_RECEIVER_OK) {
 					CHECK(memcmp(&current, &saved_current,
 						     sizeof(current)) == 0 &&
 						      memcmp(&received, &saved_received,
@@ -570,7 +570,7 @@ static bool test_generated_equalizer_round_trip(void)
 					continue;
 				}
 				if (result ==
-				    SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY) {
+				    V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY) {
 					CHECK(memcmp(&current, &saved_current,
 						     sizeof(current)) != 0 &&
 						      memcmp(&received, &saved_received,
@@ -579,7 +579,7 @@ static bool test_generated_equalizer_round_trip(void)
 					continue;
 				}
 				{
-					enum sippymodem_v34_data_equalizer_receiver_result
+					enum v34_data_equalizer_receiver_result
 						expected_result =
 							received_frames <
 									fixture.geometry
@@ -587,9 +587,9 @@ static bool test_generated_equalizer_round_trip(void)
 								(received_frames + 1u ==
 										 fixture.geometry
 											 .mapping_frames_per_data_frame ?
-									 SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE :
-									 SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS) :
-								SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY;
+									 V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE :
+									 V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS) :
+								V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY;
 
 					CHECK(result == expected_result &&
 						      received_matches(
@@ -603,7 +603,7 @@ static bool test_generated_equalizer_round_trip(void)
 		}
 		CHECK(received_frames ==
 			      transmitted_frames - PIPELINE_MAPPING_FRAMES &&
-		      !sippymodem_v34_data_equalizer_receiver_is_receiving_b1(
+		      !v34_data_equalizer_receiver_is_receiving_b1(
 			      &receiver) &&
 		      receiver.data_receiver.data_receiver.b1_error_bits == 0u &&
 		      receiver.training_outputs_remaining == 0 &&
@@ -615,20 +615,20 @@ static bool test_generated_equalizer_round_trip(void)
 }
 
 static bool outputs_are_unchanged_after(
-	struct sippymodem_v34_data_channel_receiver *receiver,
+	struct v34_data_channel_receiver *receiver,
 	const struct sippymodem_qam_point
-		normalized[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	enum sippymodem_v34_data_channel_receiver_result expected_result)
+		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	enum v34_data_channel_receiver_result expected_result)
 {
-	struct sippymodem_v34_data_channel_receiver saved_receiver = *receiver;
-	struct sippymodem_v34_survivor_decision current;
-	struct sippymodem_v34_survivor_decision saved_current;
+	struct v34_data_channel_receiver saved_receiver = *receiver;
+	struct v34_survivor_decision current;
+	struct v34_survivor_decision saved_current;
 	struct sippymodem_qam_point targets
-		[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
+		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct sippymodem_qam_point saved_targets
-		[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct sippymodem_v34_received_mapping_frame received;
-	struct sippymodem_v34_received_mapping_frame saved_received;
+		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	struct v34_received_mapping_frame received;
+	struct v34_received_mapping_frame saved_received;
 
 	memset(&current, 0xa5, sizeof(current));
 	saved_current = current;
@@ -636,7 +636,7 @@ static bool outputs_are_unchanged_after(
 	memcpy(saved_targets, targets, sizeof(targets));
 	memset(&received, 0x5a, sizeof(received));
 	saved_received = received;
-	return sippymodem_v34_data_channel_receiver_advance(
+	return v34_data_channel_receiver_advance(
 		       receiver, normalized, &current, targets, &received) ==
 		       expected_result &&
 	       memcmp(receiver, &saved_receiver, sizeof(*receiver)) == 0 &&
@@ -649,18 +649,18 @@ static bool test_validation_and_rollback(void)
 {
 	struct fixture fixture;
 	struct fixture other;
-	struct sippymodem_v34_data_channel_receiver saved_receiver;
-	struct sippymodem_v34_q14_coefficient invalid_coefficients
-		[SIPPYMODEM_V34_PRECODER_TAP_COUNT];
+	struct v34_data_channel_receiver saved_receiver;
+	struct v34_q14_coefficient invalid_coefficients
+		[V34_PRECODER_TAP_COUNT];
 	struct sippymodem_qam_point invalid
-		[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL] = {
+		[V34_2D_SYMBOLS_PER_4D_INTERVAL] = {
 			{ 0.0, 0.0 },
 			{ 0.0, 0.0 },
 		};
-	struct sippymodem_v34_survivor_decision current;
+	struct v34_survivor_decision current;
 	struct sippymodem_qam_point targets
-		[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct sippymodem_v34_received_mapping_frame received;
+		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	struct v34_received_mapping_frame received;
 
 	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
 		      initialize_fixture(&other, &CONFIGURATIONS[1]),
@@ -669,62 +669,62 @@ static bool test_validation_and_rollback(void)
 	memcpy(invalid_coefficients, COEFFICIENTS,
 	       sizeof(invalid_coefficients));
 	invalid_coefficients[0].real = INT16_MIN;
-	CHECK(sippymodem_v34_data_channel_receiver_init(
+	CHECK(v34_data_channel_receiver_init(
 		      &fixture.receiver, &fixture.normalizer, &fixture.geometry,
 		      CONFIGURATIONS[0].expanded, invalid_coefficients,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_channel_receiver_init(
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_channel_receiver_init(
 		      &fixture.receiver, &fixture.normalizer, &other.geometry,
 		      CONFIGURATIONS[1].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[1].trellis,
 		      CONFIGURATIONS[1].transmitting_role) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&fixture.receiver, &saved_receiver,
 		     sizeof(fixture.receiver)) == 0,
 	      "invalid initialization changed the receiver");
 	invalid[1].quadrature = NAN;
 	CHECK(outputs_are_unchanged_after(
 		      &fixture.receiver, invalid,
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT),
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT),
 	      "non-finite input was not transactional");
 	invalid[1].quadrature = 0.0;
 	invalid[0].in_phase =
-		((double)INT32_MAX / SIPPYMODEM_V34_Q7_SCALE + 2.0) *
+		((double)INT32_MAX / V34_Q7_SCALE + 2.0) *
 		fixture.normalizer.normalization_gain;
 	CHECK(outputs_are_unchanged_after(
 		      &fixture.receiver, invalid,
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE),
+		      V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE),
 	      "unrepresentable feedback was not transactional");
 	invalid[0].in_phase = DBL_MAX;
 	CHECK(outputs_are_unchanged_after(
 		      &fixture.receiver, invalid,
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE),
+		      V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE),
 	      "conditioning overflow was not transactional");
 	fixture.receiver.channel_receiver.receive_precoder.coefficients[0].real =
 		INT16_MIN;
-	CHECK(!sippymodem_v34_data_channel_receiver_is_valid(NULL) &&
-	      !sippymodem_v34_data_channel_receiver_is_valid(
+	CHECK(!v34_data_channel_receiver_is_valid(NULL) &&
+	      !v34_data_channel_receiver_is_valid(
 		      &fixture.receiver) &&
-	      sippymodem_v34_data_channel_receiver_advance(
+	      v34_data_channel_receiver_advance(
 		      &fixture.receiver, invalid, &current, targets, &received) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_channel_receiver_advance(
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_channel_receiver_advance(
 		      NULL, invalid, &current, targets, &received) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_channel_receiver_advance(
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_channel_receiver_advance(
 		      &saved_receiver, NULL, &current, targets, &received) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_channel_receiver_advance(
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_channel_receiver_advance(
 		      &saved_receiver, invalid, NULL, targets, &received) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_channel_receiver_advance(
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_channel_receiver_advance(
 		      &saved_receiver, invalid, &current, NULL, &received) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_channel_receiver_advance(
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_channel_receiver_advance(
 		      &saved_receiver, invalid, &current, targets, NULL) ==
-		      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT,
+		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT,
 	      "invalid receiver arguments were accepted");
 	return true;
 }
@@ -736,126 +736,126 @@ static bool test_equalizer_receiver_validation(void)
 	const struct sippymodem_qam_point invalid = { NAN, 0.0 };
 	struct sippymodem_qam_equalizer equalizer;
 	struct sippymodem_qam_equalizer invalid_equalizer;
-	struct sippymodem_v34_data_equalizer_receiver receiver;
-	struct sippymodem_v34_data_equalizer_receiver saved_receiver;
-	struct sippymodem_v34_data_equalizer_receiver corrupt;
-	struct sippymodem_v34_survivor_decision current;
-	struct sippymodem_v34_survivor_decision saved_current;
-	struct sippymodem_v34_received_mapping_frame received;
-	struct sippymodem_v34_received_mapping_frame saved_received;
+	struct v34_data_equalizer_receiver receiver;
+	struct v34_data_equalizer_receiver saved_receiver;
+	struct v34_data_equalizer_receiver corrupt;
+	struct v34_survivor_decision current;
+	struct v34_survivor_decision saved_current;
+	struct v34_received_mapping_frame received;
+	struct v34_received_mapping_frame saved_received;
 	struct fixture fixture;
 
 	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
 	      sippymodem_qam_equalizer_init(
 		      &equalizer, &received_reference, &reference) ==
 		      SIPPYMODEM_QAM_EQUALIZER_OK &&
-	      sippymodem_v34_data_equalizer_receiver_init(
+	      v34_data_equalizer_receiver_init(
 		      &receiver, &equalizer, &fixture.normalizer,
 		      &fixture.geometry,
 		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
-		      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_OK,
+		      V34_DATA_EQUALIZER_RECEIVER_OK,
 	      "equalizer validation fixture did not initialize");
 	saved_receiver = receiver;
 	memset(&current, 0xa5, sizeof(current));
 	saved_current = current;
 	memset(&received, 0x5a, sizeof(received));
 	saved_received = received;
-	CHECK(sippymodem_v34_data_equalizer_receive_point(
+	CHECK(v34_data_equalizer_receive_point(
 		      &receiver, &invalid, &current, &received) ==
-		      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 	      memcmp(&received, &saved_received, sizeof(received)) == 0,
 	      "invalid equalizer point was not transactional");
 	invalid_equalizer = equalizer;
 	invalid_equalizer.coefficients[0].in_phase = INFINITY;
-	CHECK(sippymodem_v34_data_equalizer_receiver_init(
+	CHECK(v34_data_equalizer_receiver_init(
 		      &receiver, &equalizer, &fixture.normalizer,
 		      &fixture.geometry,
 		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, NAN) ==
-		      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_equalizer_receiver_init(
+		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_equalizer_receiver_init(
 		      &receiver, &invalid_equalizer, &fixture.normalizer,
 		      &fixture.geometry,
 		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
-		      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
 	      "invalid equalizer initialization changed the receiver");
 	corrupt = receiver;
 	corrupt.first_observation.pending = true;
-	CHECK(!sippymodem_v34_data_equalizer_receiver_is_valid(NULL) &&
-	      !sippymodem_v34_data_equalizer_receiver_is_valid(&corrupt) &&
-	      sippymodem_v34_data_equalizer_receive_point(
+	CHECK(!v34_data_equalizer_receiver_is_valid(NULL) &&
+	      !v34_data_equalizer_receiver_is_valid(&corrupt) &&
+	      v34_data_equalizer_receive_point(
 		      NULL, &reference, &current, &received) ==
-		      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_equalizer_receive_point(
+		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_equalizer_receive_point(
 		      &receiver, &reference, NULL, &received) ==
-		      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_data_equalizer_receive_point(
+		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_equalizer_receive_point(
 		      &receiver, &reference, &current, NULL) ==
-		      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT,
+		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT,
 	      "invalid equalizer receiver arguments were accepted");
 	return true;
 }
 
 static bool test_result_names(void)
 {
-	return strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_OK),
+	return strcmp(v34_data_channel_receiver_result_name(
+			      V34_DATA_CHANNEL_RECEIVER_OK),
 		      "ok") == 0 &&
-	       strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY),
+	       strcmp(v34_data_channel_receiver_result_name(
+			      V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY),
 		      "mapping frame ready") == 0 &&
-	       strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS),
+	       strcmp(v34_data_channel_receiver_result_name(
+			      V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS),
 		      "B1 in progress") == 0 &&
-	       strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE),
+	       strcmp(v34_data_channel_receiver_result_name(
+			      V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE),
 		      "B1 complete") == 0 &&
-	       strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT),
+	       strcmp(v34_data_channel_receiver_result_name(
+			      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT),
 		      "invalid argument") == 0 &&
-	       strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE),
+	       strcmp(v34_data_channel_receiver_result_name(
+			      V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE),
 		      "numeric failure") == 0 &&
-	       strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE),
+	       strcmp(v34_data_channel_receiver_result_name(
+			      V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE),
 		      "out of range") == 0 &&
-	       strcmp(sippymodem_v34_data_channel_receiver_result_name(
-			      (enum sippymodem_v34_data_channel_receiver_result)99),
+	       strcmp(v34_data_channel_receiver_result_name(
+			      (enum v34_data_channel_receiver_result)99),
 		      "unknown") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_OK),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_OK),
 		      "ok") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY),
 		      "interval ready") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY),
 		      "mapping frame ready") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS),
 		      "B1 in progress") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE),
 		      "B1 complete") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT),
 		      "invalid argument") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE),
 		      "numeric failure") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      SIPPYMODEM_V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE),
 		      "out of range") == 0 &&
-	       strcmp(sippymodem_v34_data_equalizer_receiver_result_name(
-			      (enum sippymodem_v34_data_equalizer_receiver_result)99),
+	       strcmp(v34_data_equalizer_receiver_result_name(
+			      (enum v34_data_equalizer_receiver_result)99),
 		      "unknown") == 0;
 }
 

@@ -8,23 +8,23 @@
 #include <stddef.h>
 #include <string.h>
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 struct calibration_fixture {
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_frame_schedule schedule;
-	struct sippymodem_v34_scrambler scrambler;
-	struct sippymodem_v34_4d_encoder encoder;
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_frame_schedule schedule;
+	struct v34_scrambler scrambler;
+	struct v34_4d_encoder encoder;
 };
 
 static bool schedules_are_equal(
-	const struct sippymodem_v34_frame_schedule *left,
-	const struct sippymodem_v34_frame_schedule *right)
+	const struct v34_frame_schedule *left,
+	const struct v34_frame_schedule *right)
 {
 	return left->geometry.symbol_rate == right->geometry.symbol_rate &&
 	       left->geometry.data_bits_per_frame ==
@@ -49,16 +49,16 @@ static bool schedules_are_equal(
 }
 
 static bool scramblers_are_equal(
-	const struct sippymodem_v34_scrambler *left,
-	const struct sippymodem_v34_scrambler *right)
+	const struct v34_scrambler *left,
+	const struct v34_scrambler *right)
 {
 	return left->history == right->history &&
 	       left->polynomial == right->polynomial;
 }
 
 static bool normalizers_are_equal(
-	const struct sippymodem_v34_power_normalizer *left,
-	const struct sippymodem_v34_power_normalizer *right)
+	const struct v34_power_normalizer *left,
+	const struct v34_power_normalizer *right)
 {
 	return v34_test_mapping_parameters_are_equal(
 		       &left->parameters, &right->parameters) &&
@@ -92,33 +92,33 @@ static bool bytes_are_filled(
 
 static bool initialize_fixture(
 	struct calibration_fixture *fixture,
-	enum sippymodem_v34_station_role role,
-	enum sippymodem_v34_trellis_selection trellis,
+	enum v34_station_role role,
+	enum v34_trellis_selection trellis,
 	uint8_t data_frame, uint8_t mapping_frame_offset)
 {
 	struct calibration_fixture generated = { 0 };
 
-	if (sippymodem_v34_frame_geometry_init(
-		    &generated.geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8,
-		    true) != SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
-	    sippymodem_v34_mapping_parameters_init(
+	if (v34_frame_geometry_init(
+		    &generated.geometry, V34_SYMBOL_RATE_3000, 8,
+		    true) != V34_FRAME_SCHEDULE_OK ||
+	    v34_mapping_parameters_init(
 		    &generated.parameters, &generated.geometry, false) !=
-		    SIPPYMODEM_V34_MAPPING_PARAMETERS_OK ||
-	    sippymodem_v34_frame_schedule_init(
+		    V34_MAPPING_PARAMETERS_OK ||
+	    v34_frame_schedule_init(
 		    &generated.schedule, &generated.geometry, data_frame) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK ||
-	    sippymodem_v34_transmit_scrambler_init(
-		    &generated.scrambler, role) != SIPPYMODEM_V34_FRAMING_OK ||
-	    sippymodem_v34_4d_encoder_init(
+		    V34_FRAME_SCHEDULE_OK ||
+	    v34_transmit_scrambler_init(
+		    &generated.scrambler, role) != V34_FRAMING_OK ||
+	    v34_4d_encoder_init(
 		    &generated.encoder, &generated.parameters, COEFFICIENTS,
-		    trellis) != SIPPYMODEM_V34_4D_ENCODER_OK)
+		    trellis) != V34_4D_ENCODER_OK)
 		return false;
 	for (uint8_t frame = 0; frame < mapping_frame_offset; ++frame) {
-		struct sippymodem_v34_mapping_frame ignored;
+		struct v34_mapping_frame ignored;
 
-		if (sippymodem_v34_frame_schedule_next(
+		if (v34_frame_schedule_next(
 			    &generated.schedule, &ignored) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+		    V34_FRAME_SCHEDULE_OK)
 			return false;
 	}
 	*fixture = generated;
@@ -128,39 +128,39 @@ static bool initialize_fixture(
 static bool test_generated_calibration(void)
 {
 	struct calibration_fixture fixture;
-	struct sippymodem_v34_power_normalizer normalizer;
-	struct sippymodem_v34_power_normalizer repeated;
-	struct sippymodem_v34_power_normalizer linear;
-	struct sippymodem_v34_frame_schedule saved_schedule;
-	struct sippymodem_v34_scrambler saved_scrambler;
-	struct sippymodem_v34_4d_encoder saved_encoder;
+	struct v34_power_normalizer normalizer;
+	struct v34_power_normalizer repeated;
+	struct v34_power_normalizer linear;
+	struct v34_frame_schedule saved_schedule;
+	struct v34_scrambler saved_scrambler;
+	struct v34_4d_encoder saved_encoder;
 	uint32_t expected_symbols;
 
 	CHECK(initialize_fixture(
-		      &fixture, SIPPYMODEM_V34_CALLING_STATION,
-		      SIPPYMODEM_V34_TRELLIS_32_STATE, 3, 7),
+		      &fixture, V34_CALLING_STATION,
+		      V34_TRELLIS_32_STATE, 3, 7),
 	      "generated calibration fixture did not initialize");
 	saved_schedule = fixture.schedule;
 	saved_scrambler = fixture.scrambler;
 	saved_encoder = fixture.encoder;
 	expected_symbols =
-		SIPPYMODEM_V34_POWER_CALIBRATION_SUPERFRAMES *
+		V34_POWER_CALIBRATION_SUPERFRAMES *
 		fixture.geometry.data_frames_per_superframe *
 		fixture.geometry.mapping_frames_per_data_frame *
-		SIPPYMODEM_V34_SYMBOLS_PER_MAPPING_FRAME;
-	CHECK(sippymodem_v34_calibrate_mapping_power(
+		V34_SYMBOLS_PER_MAPPING_FRAME;
+	CHECK(v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_5_OVER_16, &normalizer) ==
+		      V34_POWER_CALIBRATION_OK &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, &repeated) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_5_OVER_16, &repeated) ==
+		      V34_POWER_CALIBRATION_OK &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &linear) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
-	      sippymodem_v34_power_normalizer_is_valid(&normalizer) &&
+		      V34_NONLINEAR_THETA_ZERO, &linear) ==
+		      V34_POWER_CALIBRATION_OK &&
+	      v34_power_normalizer_is_valid(&normalizer) &&
 	      normalizers_are_equal(&normalizer, &repeated) &&
 	      normalizer.calibration_symbol_count == expected_symbols &&
 	      normalizer.precoded_mean_squared_magnitude ==
@@ -183,48 +183,48 @@ static bool test_generated_calibration(void)
 static bool test_generated_line_power(void)
 {
 	struct calibration_fixture fixture;
-	struct sippymodem_v34_power_normalizer normalizer;
-	struct sippymodem_v34_line_power_measurement unfiltered;
-	struct sippymodem_v34_line_power_measurement repeated;
-	struct sippymodem_v34_line_power_measurement emphasized;
-	struct sippymodem_v34_frame_schedule saved_schedule;
-	struct sippymodem_v34_scrambler saved_scrambler;
-	struct sippymodem_v34_4d_encoder saved_encoder;
-	struct sippymodem_v34_phase3_profile profile = {
+	struct v34_power_normalizer normalizer;
+	struct v34_line_power_measurement unfiltered;
+	struct v34_line_power_measurement repeated;
+	struct v34_line_power_measurement emphasized;
+	struct v34_frame_schedule saved_schedule;
+	struct v34_scrambler saved_scrambler;
+	struct v34_4d_encoder saved_encoder;
+	struct v34_phase3_profile profile = {
 		.symbol_rate_numerator = 3000,
 		.symbol_rate_denominator = 1,
 		.carrier_frequency_numerator = 2000,
 		.carrier_frequency_denominator = 1,
-		.symbol_rate = SIPPYMODEM_V34_SYMBOL_RATE_3000,
-		.local_role = SIPPYMODEM_V34_CALLING_STATION,
+		.symbol_rate = V34_SYMBOL_RATE_3000,
+		.local_role = V34_CALLING_STATION,
 		.projected_data_rate_2400_bps_units = 8,
 		.high_carrier = true,
 	};
 	uint32_t expected_samples =
-		(SIPPYMODEM_V34_POWER_CALIBRATION_SUPERFRAMES -
-		 SIPPYMODEM_V34_LINE_POWER_WARMUP_SUPERFRAMES) *
+		(V34_POWER_CALIBRATION_SUPERFRAMES -
+		 V34_LINE_POWER_WARMUP_SUPERFRAMES) *
 		8000u * 280u / 1000u;
 
 	CHECK(initialize_fixture(
-		      &fixture, SIPPYMODEM_V34_CALLING_STATION,
-		      SIPPYMODEM_V34_TRELLIS_32_STATE, 3, 7) &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      &fixture, V34_CALLING_STATION,
+		      V34_TRELLIS_32_STATE, 3, 7) &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
-		      &normalizer) == SIPPYMODEM_V34_POWER_CALIBRATION_OK,
+		      V34_NONLINEAR_THETA_5_OVER_16,
+		      &normalizer) == V34_POWER_CALIBRATION_OK,
 	      "line-power fixture did not initialize");
 	saved_schedule = fixture.schedule;
 	saved_scrambler = fixture.scrambler;
 	saved_encoder = fixture.encoder;
-	CHECK(sippymodem_v34_calibrate_line_power(
+	CHECK(v34_calibrate_line_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      &normalizer, &profile, 8000, &unfiltered) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
-	      sippymodem_v34_calibrate_line_power(
+		      V34_POWER_CALIBRATION_OK &&
+	      v34_calibrate_line_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      &normalizer, &profile, 8000, &repeated) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
-	      sippymodem_v34_line_power_measurement_is_valid(&unfiltered) &&
+		      V34_POWER_CALIBRATION_OK &&
+	      v34_line_power_measurement_is_valid(&unfiltered) &&
 	      unfiltered.mean_squared_amplitude ==
 		      repeated.mean_squared_amplitude &&
 	      unfiltered.peak_amplitude == repeated.peak_amplitude &&
@@ -235,11 +235,11 @@ static bool test_generated_line_power(void)
 	      v34_test_encoders_are_equal(&fixture.encoder, &saved_encoder),
 	      "generated line-power calibration changed");
 	profile.preemphasis_filter_index = 5;
-	CHECK(sippymodem_v34_calibrate_line_power(
+	CHECK(v34_calibrate_line_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      &normalizer, &profile, 8000, &emphasized) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
-	      sippymodem_v34_line_power_measurement_is_valid(&emphasized) &&
+		      V34_POWER_CALIBRATION_OK &&
+	      v34_line_power_measurement_is_valid(&emphasized) &&
 	      emphasized.sample_count == expected_samples &&
 	      emphasized.mean_squared_amplitude !=
 		      unfiltered.mean_squared_amplitude,
@@ -249,14 +249,14 @@ static bool test_generated_line_power(void)
 
 static bool test_configuration_sweep(void)
 {
-	static const enum sippymodem_v34_station_role ROLES[] = {
-		SIPPYMODEM_V34_CALLING_STATION,
-		SIPPYMODEM_V34_ANSWERING_STATION,
+	static const enum v34_station_role ROLES[] = {
+		V34_CALLING_STATION,
+		V34_ANSWERING_STATION,
 	};
-	static const enum sippymodem_v34_trellis_selection TRELLISES[] = {
-		SIPPYMODEM_V34_TRELLIS_16_STATE,
-		SIPPYMODEM_V34_TRELLIS_32_STATE,
-		SIPPYMODEM_V34_TRELLIS_64_STATE,
+	static const enum v34_trellis_selection TRELLISES[] = {
+		V34_TRELLIS_16_STATE,
+		V34_TRELLIS_32_STATE,
+		V34_TRELLIS_64_STATE,
 	};
 	double raw_mean[ARRAY_LENGTH(ROLES)][ARRAY_LENGTH(TRELLISES)] = { 0 };
 	bool completed_start_seen = false;
@@ -269,11 +269,11 @@ static bool test_configuration_sweep(void)
 			for (unsigned int nonlinear = 0; nonlinear < 2;
 			     ++nonlinear) {
 				struct calibration_fixture fixture;
-				struct sippymodem_v34_power_normalizer normalizer;
-				enum sippymodem_v34_nonlinear_parameter parameter =
+				struct v34_power_normalizer normalizer;
+				enum v34_nonlinear_parameter parameter =
 					nonlinear != 0 ?
-						SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16 :
-						SIPPYMODEM_V34_NONLINEAR_THETA_ZERO;
+						V34_NONLINEAR_THETA_5_OVER_16 :
+						V34_NONLINEAR_THETA_ZERO;
 				uint8_t data_frame = (uint8_t)(
 					(role_index * ARRAY_LENGTH(TRELLISES) +
 					 trellis_index) %
@@ -289,12 +289,12 @@ static bool test_configuration_sweep(void)
 					      &fixture, ROLES[role_index],
 					      TRELLISES[trellis_index], data_frame,
 					      mapping_frame_offset) &&
-				      sippymodem_v34_calibrate_mapping_power(
+				      v34_calibrate_mapping_power(
 					      &fixture.schedule, &fixture.scrambler,
 					      &fixture.encoder, parameter,
 					      &normalizer) ==
-					      SIPPYMODEM_V34_POWER_CALIBRATION_OK &&
-				      sippymodem_v34_power_normalizer_is_valid(
+					      V34_POWER_CALIBRATION_OK &&
+				      v34_power_normalizer_is_valid(
 					      &normalizer),
 				      "calibration configuration %zu/%zu/%u failed",
 				      role_index, trellis_index, nonlinear);
@@ -334,119 +334,119 @@ static bool test_transactional_validation(void)
 	struct calibration_fixture fixture;
 	struct calibration_fixture mismatched;
 	struct calibration_fixture out_of_range;
-	struct sippymodem_v34_frame_schedule invalid_schedule;
-	struct sippymodem_v34_scrambler invalid_scrambler;
-	struct sippymodem_v34_4d_encoder invalid_encoder;
-	struct sippymodem_v34_power_normalizer normalizer;
-	struct sippymodem_v34_q14_coefficient range_coefficients
-		[SIPPYMODEM_V34_PRECODER_TAP_COUNT] = { 0 };
+	struct v34_frame_schedule invalid_schedule;
+	struct v34_scrambler invalid_scrambler;
+	struct v34_4d_encoder invalid_encoder;
+	struct v34_power_normalizer normalizer;
+	struct v34_q14_coefficient range_coefficients
+		[V34_PRECODER_TAP_COUNT] = { 0 };
 
 	CHECK(initialize_fixture(
-		      &fixture, SIPPYMODEM_V34_CALLING_STATION,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE, 0, 0) &&
+		      &fixture, V34_CALLING_STATION,
+		      V34_TRELLIS_16_STATE, 0, 0) &&
 	      initialize_fixture(
-		      &mismatched, SIPPYMODEM_V34_CALLING_STATION,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE, 0, 0) &&
+		      &mismatched, V34_CALLING_STATION,
+		      V34_TRELLIS_16_STATE, 0, 0) &&
 	      initialize_fixture(
-		      &out_of_range, SIPPYMODEM_V34_CALLING_STATION,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE, 0, 0),
+		      &out_of_range, V34_CALLING_STATION,
+		      V34_TRELLIS_16_STATE, 0, 0),
 	      "calibration validation fixtures did not initialize");
-	CHECK(sippymodem_v34_frame_geometry_init(
-		      &mismatched.geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 7,
-		      true) == SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	      sippymodem_v34_mapping_parameters_init(
+	CHECK(v34_frame_geometry_init(
+		      &mismatched.geometry, V34_SYMBOL_RATE_3000, 7,
+		      true) == V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(
 		      &mismatched.parameters, &mismatched.geometry, false) ==
-		      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
-	      sippymodem_v34_4d_encoder_init(
+		      V34_MAPPING_PARAMETERS_OK &&
+	      v34_4d_encoder_init(
 		      &mismatched.encoder, &mismatched.parameters, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_OK,
+		      V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_OK,
 	      "mismatched calibration encoder did not initialize");
-	range_coefficients[2].real = SIPPYMODEM_V34_Q14_SCALE;
-	CHECK(sippymodem_v34_4d_encoder_init(
+	range_coefficients[2].real = V34_Q14_SCALE;
+	CHECK(v34_4d_encoder_init(
 		      &out_of_range.encoder, &out_of_range.parameters,
-		      range_coefficients, SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_4D_ENCODER_OK,
+		      range_coefficients, V34_TRELLIS_16_STATE) ==
+		      V34_4D_ENCODER_OK,
 	      "range calibration encoder did not initialize");
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PRECODER_TAP_COUNT; ++tap) {
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
 		out_of_range.encoder.precoder.previous_symbols[tap] =
-			(struct sippymodem_v34_q7_point){
-				254 * SIPPYMODEM_V34_Q7_SCALE,
-				254 * SIPPYMODEM_V34_Q7_SCALE,
+			(struct v34_q7_point){
+				254 * V34_Q7_SCALE,
+				254 * V34_Q7_SCALE,
 			};
 	}
-	CHECK(sippymodem_v34_4d_encoder_is_valid(&out_of_range.encoder),
+	CHECK(v34_4d_encoder_is_valid(&out_of_range.encoder),
 	      "range calibration encoder became invalid");
 	invalid_schedule = fixture.schedule;
 	invalid_schedule.next_mapping_frame = (uint8_t)(
 		invalid_schedule.geometry.mapping_frames_per_data_frame + 1u);
 	invalid_scrambler = fixture.scrambler;
 	invalid_scrambler.polynomial =
-		(enum sippymodem_v34_scrambler_polynomial)2;
+		(enum v34_scrambler_polynomial)2;
 	invalid_encoder = fixture.encoder;
 	invalid_encoder.previous_differential_output = 4;
 	memset(&normalizer, 0xa5, sizeof(normalizer));
-	CHECK(sippymodem_v34_calibrate_mapping_power(
+	CHECK(v34_calibrate_mapping_power(
 		      NULL, &fixture.scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, NULL, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, NULL,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, NULL) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, NULL) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &invalid_schedule, &fixture.scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &invalid_scrambler, &fixture.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, &invalid_encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler,
 		      &mismatched.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
-	      sippymodem_v34_calibrate_mapping_power(
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_mapping_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
-		      (enum sippymodem_v34_nonlinear_parameter)2,
+		      (enum v34_nonlinear_parameter)2,
 		      &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+		      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
 	      bytes_are_filled(&normalizer, sizeof(normalizer), 0xa5),
 	      "invalid calibration changed its destination");
-	CHECK(sippymodem_v34_calibrate_mapping_power(
+	CHECK(v34_calibrate_mapping_power(
 		      &out_of_range.schedule, &out_of_range.scrambler,
 		      &out_of_range.encoder,
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, &normalizer) ==
-		      SIPPYMODEM_V34_POWER_CALIBRATION_OUT_OF_RANGE &&
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_OUT_OF_RANGE &&
 	      bytes_are_filled(&normalizer, sizeof(normalizer), 0xa5),
 	      "range calibration changed its destination");
-	CHECK(strcmp(sippymodem_v34_power_calibration_result_name(
-		     SIPPYMODEM_V34_POWER_CALIBRATION_OK),
+	CHECK(strcmp(v34_power_calibration_result_name(
+		     V34_POWER_CALIBRATION_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_power_calibration_result_name(
-		     SIPPYMODEM_V34_POWER_CALIBRATION_INVALID_ARGUMENT),
+	      strcmp(v34_power_calibration_result_name(
+		     V34_POWER_CALIBRATION_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_power_calibration_result_name(
-		     SIPPYMODEM_V34_POWER_CALIBRATION_OUT_OF_RANGE),
+	      strcmp(v34_power_calibration_result_name(
+		     V34_POWER_CALIBRATION_OUT_OF_RANGE),
 		     "out of range") == 0 &&
-	      strcmp(sippymodem_v34_power_calibration_result_name(
-		     SIPPYMODEM_V34_POWER_CALIBRATION_NUMERIC_FAILURE),
+	      strcmp(v34_power_calibration_result_name(
+		     V34_POWER_CALIBRATION_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_power_calibration_result_name(
-		     (enum sippymodem_v34_power_calibration_result)4),
+	      strcmp(v34_power_calibration_result_name(
+		     (enum v34_power_calibration_result)4),
 		     "unknown") == 0,
 	      "power-calibration result names changed");
 	return true;

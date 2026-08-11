@@ -16,20 +16,20 @@ enum {
 
 struct info1_exchange_pair {
 	struct test_pair channel;
-	struct sippymodem_v34_phase2_info1_exchange caller;
-	struct sippymodem_v34_phase2_info1_exchange answerer;
+	struct v34_phase2_info1_exchange caller;
+	struct v34_phase2_info1_exchange answerer;
 };
 
 struct info1_exchange_pair_event {
-	struct sippymodem_v34_phase2_info1_exchange_event caller;
-	struct sippymodem_v34_phase2_info1_exchange_event answerer;
+	struct v34_phase2_info1_exchange_event caller;
+	struct v34_phase2_info1_exchange_event answerer;
 	int16_t caller_transmit;
 	int16_t answerer_transmit;
 };
 
-static struct sippymodem_v34_info1c info1c_fixture(void)
+static struct v34_info1c info1c_fixture(void)
 {
-	struct sippymodem_v34_info1c info1c = {
+	struct v34_info1c info1c = {
 		.common = {
 			.minimum_peer_power_reduction_db = 2,
 			.additional_peer_power_reduction_db = 1,
@@ -38,10 +38,10 @@ static struct sippymodem_v34_info1c info1c_fixture(void)
 		},
 	};
 
-	for (size_t index = 0; index < SIPPYMODEM_V34_SYMBOL_RATE_COUNT;
+	for (size_t index = 0; index < V34_SYMBOL_RATE_COUNT;
 	     ++index) {
 		info1c.answer_transmit[index] =
-			(struct sippymodem_v34_info1_probe_result){
+			(struct v34_info1_probe_result){
 				.high_carrier = (index & 1u) != 0,
 				.preemphasis_filter_index = (uint8_t)(2u * index),
 				.projected_data_rate_2400_bps_units =
@@ -51,9 +51,9 @@ static struct sippymodem_v34_info1c info1c_fixture(void)
 	return info1c;
 }
 
-static struct sippymodem_v34_info1a info1a_fixture(void)
+static struct v34_info1a info1a_fixture(void)
 {
-	return (struct sippymodem_v34_info1a){
+	return (struct v34_info1a){
 		.common = {
 			.minimum_peer_power_reduction_db = 3,
 			.additional_peer_power_reduction_db = 2,
@@ -61,40 +61,40 @@ static struct sippymodem_v34_info1a info1a_fixture(void)
 			.frequency_offset_1_50_hz_units = 31,
 		},
 		.call_transmit = { true, 4, 10 },
-		.answer_to_call_symbol_rate = SIPPYMODEM_V34_SYMBOL_RATE_3200,
-		.call_to_answer_symbol_rate = SIPPYMODEM_V34_SYMBOL_RATE_3000,
+		.answer_to_call_symbol_rate = V34_SYMBOL_RATE_3200,
+		.call_to_answer_symbol_rate = V34_SYMBOL_RATE_3000,
 	};
 }
 
 static bool info1c_equal(
-	const struct sippymodem_v34_info1c *left,
-	const struct sippymodem_v34_info1c *right)
+	const struct v34_info1c *left,
+	const struct v34_info1c *right)
 {
-	uint8_t left_payload[SIPPYMODEM_V34_INFO1C_PAYLOAD_BYTES];
-	uint8_t right_payload[SIPPYMODEM_V34_INFO1C_PAYLOAD_BYTES];
+	uint8_t left_payload[V34_INFO1C_PAYLOAD_BYTES];
+	uint8_t right_payload[V34_INFO1C_PAYLOAD_BYTES];
 
-	return sippymodem_v34_info1c_encode(
+	return v34_info1c_encode(
 		       left, left_payload, sizeof(left_payload)) ==
-		       SIPPYMODEM_V34_INFO1_OK &&
-	       sippymodem_v34_info1c_encode(
+		       V34_INFO1_OK &&
+	       v34_info1c_encode(
 		       right, right_payload, sizeof(right_payload)) ==
-		       SIPPYMODEM_V34_INFO1_OK &&
+		       V34_INFO1_OK &&
 	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
 }
 
 static bool info1a_equal(
-	const struct sippymodem_v34_info1a *left,
-	const struct sippymodem_v34_info1a *right)
+	const struct v34_info1a *left,
+	const struct v34_info1a *right)
 {
-	uint8_t left_payload[SIPPYMODEM_V34_INFO1A_PAYLOAD_BYTES];
-	uint8_t right_payload[SIPPYMODEM_V34_INFO1A_PAYLOAD_BYTES];
+	uint8_t left_payload[V34_INFO1A_PAYLOAD_BYTES];
+	uint8_t right_payload[V34_INFO1A_PAYLOAD_BYTES];
 
-	return sippymodem_v34_info1a_encode(
+	return v34_info1a_encode(
 		       left, left_payload, sizeof(left_payload)) ==
-		       SIPPYMODEM_V34_INFO1_OK &&
-	       sippymodem_v34_info1a_encode(
+		       V34_INFO1_OK &&
+	       v34_info1a_encode(
 		       right, right_payload, sizeof(right_payload)) ==
-		       SIPPYMODEM_V34_INFO1_OK &&
+		       V34_INFO1_OK &&
 	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
 }
 
@@ -130,9 +130,9 @@ static bool probes_are_complete(const struct test_pair *pair)
 	return pair->caller.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
 	       pair->answerer.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
 	       pair->caller.reciprocal_probe.phase ==
-		       SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE &&
+		       V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE &&
 	       pair->answerer.reciprocal_probe.phase ==
-		       SIPPYMODEM_V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A;
+		       V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A;
 }
 
 static bool completed_probe_pair(
@@ -157,21 +157,21 @@ static bool completed_probe_pair(
 
 static bool exchange_pair_init(
 	struct info1_exchange_pair *pair, enum test_codec codec,
-	size_t delay_samples, const struct sippymodem_v34_info1c *info1c)
+	size_t delay_samples, const struct v34_info1c *info1c)
 {
 	struct info1_exchange_pair initialized;
 
 	memset(&initialized, 0, sizeof(initialized));
 	if (!completed_probe_pair(
 		    &initialized.channel, codec, delay_samples) ||
-	    sippymodem_v34_phase2_info1_exchange_caller_init(
+	    v34_phase2_info1_exchange_caller_init(
 		    &initialized.caller,
 		    &initialized.channel.caller.reciprocal_probe, info1c) !=
-		    SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK ||
-	    sippymodem_v34_phase2_info1_exchange_answerer_init(
+		    V34_PHASE2_INFO1_EXCHANGE_OK ||
+	    v34_phase2_info1_exchange_answerer_init(
 		    &initialized.answerer,
 		    &initialized.channel.answerer.reciprocal_probe) !=
-		    SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK)
+		    V34_PHASE2_INFO1_EXCHANGE_OK)
 		return false;
 	*pair = initialized;
 	return true;
@@ -187,13 +187,13 @@ static bool exchange_pair_sample(
 	int16_t answerer_receive =
 		delay_line_receive(&pair->channel.caller_to_answerer);
 
-	if (sippymodem_v34_phase2_info1_exchange_sample(
+	if (v34_phase2_info1_exchange_sample(
 		    &pair->caller, caller_receive, &emitted.caller_transmit,
-		    &emitted.caller) != SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK ||
-	    sippymodem_v34_phase2_info1_exchange_sample(
+		    &emitted.caller) != V34_PHASE2_INFO1_EXCHANGE_OK ||
+	    v34_phase2_info1_exchange_sample(
 		    &pair->answerer, answerer_receive,
 		    &emitted.answerer_transmit, &emitted.answerer) !=
-		    SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK)
+		    V34_PHASE2_INFO1_EXCHANGE_OK)
 		return false;
 	delay_line_transmit(
 		&pair->channel.caller_to_answerer,
@@ -208,8 +208,8 @@ static bool exchange_pair_sample(
 static bool check_bidirectional_exchange(
 	enum test_codec codec, size_t delay_samples)
 {
-	struct sippymodem_v34_info1c info1c = info1c_fixture();
-	struct sippymodem_v34_info1a info1a = info1a_fixture();
+	struct v34_info1c info1c = info1c_fixture();
+	struct v34_info1a info1a = info1a_fixture();
 	struct info1_exchange_pair pair;
 	size_t caller_sent = SIZE_MAX;
 	size_t answerer_received = SIZE_MAX;
@@ -229,17 +229,17 @@ static bool check_bidirectional_exchange(
 		      "INFO1 exchange failed for codec %d delay %zu at sample %zu",
 		      codec, delay_samples, index);
 		if (event.caller.kind ==
-		    SIPPYMODEM_V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT)
+		    V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT)
 			caller_sent = index;
 		if (event.answerer.kind ==
-		    SIPPYMODEM_V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED) {
+		    V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED) {
 			answerer_received = index;
 			CHECK(info1c_equal(
 				      &event.answerer.peer_parameters.info1c,
 				      &info1c) &&
-			      sippymodem_v34_phase2_info1_exchange_answerer_reply(
+			      v34_phase2_info1_exchange_answerer_reply(
 				      &pair.answerer, &info1a) ==
-				      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK,
+				      V34_PHASE2_INFO1_EXCHANGE_OK,
 			      "answerer did not accept decoded INFO1c");
 			CHECK(pair.answerer.transmitter.modulation.carrier
 				      .carrier_phase +
@@ -250,17 +250,17 @@ static bool check_bidirectional_exchange(
 			      "Tone A to INFO1a phase continuity changed");
 		}
 		if (event.answerer.kind ==
-		    SIPPYMODEM_V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT)
+		    V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT)
 			answerer_sent = index;
 		if (event.caller.kind ==
-		    SIPPYMODEM_V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+		    V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
 			caller_received = index;
 			CHECK(info1a_equal(
 				      &event.caller.peer_parameters.info1a, &info1a),
 			      "caller decoded different INFO1a parameters");
 		}
-		if (pair.caller.phase == SIPPYMODEM_V34_PHASE2_INFO1_COMPLETE &&
-		    pair.answerer.phase == SIPPYMODEM_V34_PHASE2_INFO1_COMPLETE)
+		if (pair.caller.phase == V34_PHASE2_INFO1_COMPLETE &&
+		    pair.answerer.phase == V34_PHASE2_INFO1_COMPLETE)
 			break;
 	}
 	CHECK(caller_sent < answerer_received &&
@@ -269,25 +269,25 @@ static bool check_bidirectional_exchange(
 	      "INFO1 event order changed: %zu/%zu/%zu/%zu",
 	      caller_sent, answerer_received, answerer_sent, caller_received);
 	CHECK(pair.caller.carrier_tail_symbols ==
-		      SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
+		      V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 	      pair.answerer.carrier_tail_symbols ==
-		      SIPPYMODEM_V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
+		      V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 	      pair.caller.peer_parameters_received &&
 	      pair.answerer.peer_parameters_received &&
 	      info1a_equal(&pair.caller.peer_parameters.info1a, &info1a) &&
 	      info1c_equal(&pair.answerer.peer_parameters.info1c, &info1c) &&
-	      sippymodem_v34_phase2_info1_exchange_is_valid(&pair.caller) &&
-	      sippymodem_v34_phase2_info1_exchange_is_valid(&pair.answerer),
+	      v34_phase2_info1_exchange_is_valid(&pair.caller) &&
+	      v34_phase2_info1_exchange_is_valid(&pair.answerer),
 	      "completed INFO1 state lost its parameters or causal tail");
 	{
-		struct sippymodem_v34_phase2_info1_exchange caller = pair.caller;
-		struct sippymodem_v34_phase2_info1_exchange answerer = pair.answerer;
+		struct v34_phase2_info1_exchange caller = pair.caller;
+		struct v34_phase2_info1_exchange answerer = pair.answerer;
 		struct info1_exchange_pair_event event;
 
 		CHECK(exchange_pair_sample(&pair, &event) &&
 		      event.caller_transmit == 0 && event.answerer_transmit == 0 &&
-		      event.caller.kind == SIPPYMODEM_V34_PHASE2_INFO1_EVENT_NONE &&
-		      event.answerer.kind == SIPPYMODEM_V34_PHASE2_INFO1_EVENT_NONE &&
+		      event.caller.kind == V34_PHASE2_INFO1_EVENT_NONE &&
+		      event.answerer.kind == V34_PHASE2_INFO1_EVENT_NONE &&
 		      memcmp(&pair.caller, &caller, sizeof(caller)) == 0 &&
 		      memcmp(&pair.answerer, &answerer, sizeof(answerer)) == 0,
 		      "completed INFO1 endpoints were not silent and stable");
@@ -315,12 +315,12 @@ static bool test_bidirectional_exchange(void)
 
 static bool test_exact_deadlines(void)
 {
-	struct sippymodem_v34_info1c info1c = info1c_fixture();
+	struct v34_info1c info1c = info1c_fixture();
 	struct test_pair probes;
-	struct sippymodem_v34_phase2_info1_exchange caller;
-	struct sippymodem_v34_phase2_info1_exchange answerer;
-	struct sippymodem_v34_phase2_info1_exchange terminal;
-	struct sippymodem_v34_phase2_info1_exchange_event event;
+	struct v34_phase2_info1_exchange caller;
+	struct v34_phase2_info1_exchange answerer;
+	struct v34_phase2_info1_exchange terminal;
+	struct v34_phase2_info1_exchange_event event;
 	uint32_t caller_deadline;
 	uint32_t answerer_deadline;
 	uint32_t answerer_initial_elapsed;
@@ -329,62 +329,62 @@ static bool test_exact_deadlines(void)
 	int16_t transmit;
 
 	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 13) &&
-	      sippymodem_v34_phase2_info1_exchange_caller_init(
+	      v34_phase2_info1_exchange_caller_init(
 		      &caller, &probes.caller.reciprocal_probe, &info1c) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK &&
-	      sippymodem_v34_phase2_info1_exchange_answerer_init(
+		      V34_PHASE2_INFO1_EXCHANGE_OK &&
+	      v34_phase2_info1_exchange_answerer_init(
 		      &answerer, &probes.answerer.reciprocal_probe) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK,
+		      V34_PHASE2_INFO1_EXCHANGE_OK,
 	      "INFO1 timeout fixtures did not initialize");
 	caller_deadline =
-		(uint32_t)SIPPYMODEM_V34_PHASE2_CALLER_INFO1A_WAIT_BASE_SAMPLES +
+		(uint32_t)V34_PHASE2_CALLER_INFO1A_WAIT_BASE_SAMPLES +
 		caller.round_trip_delay_samples;
 	answerer_deadline =
-		(uint32_t)SIPPYMODEM_V34_PHASE2_ANSWERER_INFO1C_WAIT_BASE_SAMPLES +
+		(uint32_t)V34_PHASE2_ANSWERER_INFO1C_WAIT_BASE_SAMPLES +
 		2u * answerer.round_trip_delay_samples;
 	answerer_initial_elapsed = answerer.peer_deadline_elapsed_samples;
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
-		enum sippymodem_v34_phase2_info1_exchange_phase before =
+		enum v34_phase2_info1_exchange_phase before =
 			caller.phase;
 
-		CHECK(sippymodem_v34_phase2_info1_exchange_sample(
+		CHECK(v34_phase2_info1_exchange_sample(
 			      &caller, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK,
+			      V34_PHASE2_INFO1_EXCHANGE_OK,
 		      "caller timeout failed at sample %zu", index);
-		if (before == SIPPYMODEM_V34_PHASE2_INFO1_WAITING_FOR_PEER)
+		if (before == V34_PHASE2_INFO1_WAITING_FOR_PEER)
 			caller_wait_samples++;
-		if (caller.phase == SIPPYMODEM_V34_PHASE2_INFO1_FAILED)
+		if (caller.phase == V34_PHASE2_INFO1_FAILED)
 			break;
 	}
 	CHECK(caller_wait_samples == caller_deadline &&
 	      caller.peer_deadline_elapsed_samples == caller_deadline &&
-	      caller.failure == SIPPYMODEM_V34_PHASE2_INFO1_PEER_TIMEOUT &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_INFO1_EVENT_FAILED,
+	      caller.failure == V34_PHASE2_INFO1_PEER_TIMEOUT &&
+	      event.kind == V34_PHASE2_INFO1_EVENT_FAILED,
 	      "caller did not fail exactly 700 ms plus RTD after INFO1c");
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
-		CHECK(sippymodem_v34_phase2_info1_exchange_sample(
+		CHECK(v34_phase2_info1_exchange_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK,
+			      V34_PHASE2_INFO1_EXCHANGE_OK,
 		      "answerer timeout failed at sample %zu", index);
 		answerer_wait_samples++;
-		if (answerer.phase == SIPPYMODEM_V34_PHASE2_INFO1_FAILED)
+		if (answerer.phase == V34_PHASE2_INFO1_FAILED)
 			break;
 	}
 	CHECK(answerer_wait_samples ==
 		      answerer_deadline - answerer_initial_elapsed &&
 	      answerer.peer_deadline_elapsed_samples == answerer_deadline &&
-	      answerer.failure == SIPPYMODEM_V34_PHASE2_INFO1_PEER_TIMEOUT &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_INFO1_EVENT_FAILED,
+	      answerer.failure == V34_PHASE2_INFO1_PEER_TIMEOUT &&
+	      event.kind == V34_PHASE2_INFO1_EVENT_FAILED,
 	      "answerer did not preserve the 2000 ms plus two-RTD epoch");
 
 	terminal = caller;
 	transmit = 1234;
-	CHECK(sippymodem_v34_phase2_info1_exchange_sample(
+	CHECK(v34_phase2_info1_exchange_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK &&
+		      V34_PHASE2_INFO1_EXCHANGE_OK &&
 	      transmit == 0 &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_INFO1_EVENT_NONE &&
+	      event.kind == V34_PHASE2_INFO1_EVENT_NONE &&
 	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
 	      "failed INFO1 controller was not silent and stable");
 	return true;
@@ -392,15 +392,15 @@ static bool test_exact_deadlines(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_info1c info1c = info1c_fixture();
-	struct sippymodem_v34_info1c invalid_info1c = info1c;
-	struct sippymodem_v34_info1a info1a = info1a_fixture();
+	struct v34_info1c info1c = info1c_fixture();
+	struct v34_info1c invalid_info1c = info1c;
+	struct v34_info1a info1a = info1a_fixture();
 	struct test_pair probes;
-	struct sippymodem_v34_phase2_info1_exchange exchange;
-	struct sippymodem_v34_phase2_info1_exchange before;
-	struct sippymodem_v34_phase2_info1_exchange invalid;
-	struct sippymodem_v34_phase2_info1_exchange_event event;
-	struct sippymodem_v34_phase2_info1_exchange_event event_before;
+	struct v34_phase2_info1_exchange exchange;
+	struct v34_phase2_info1_exchange before;
+	struct v34_phase2_info1_exchange invalid;
+	struct v34_phase2_info1_exchange_event event;
+	struct v34_phase2_info1_exchange_event event_before;
 	int16_t transmit = 1234;
 
 	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 1),
@@ -408,56 +408,56 @@ static bool test_validation(void)
 	invalid_info1c.common.frequency_offset_1_50_hz_units = -513;
 	memset(&exchange, 0xa5, sizeof(exchange));
 	before = exchange;
-	CHECK(sippymodem_v34_phase2_info1_exchange_caller_init(
+	CHECK(v34_phase2_info1_exchange_caller_init(
 		      &exchange, &probes.answerer.reciprocal_probe, &info1c) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_info1_exchange_caller_init(
+		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_caller_init(
 		      &exchange, &probes.caller.reciprocal_probe,
 		      &invalid_info1c) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_info1_exchange_caller_init(
+		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_caller_init(
 		      NULL, &probes.caller.reciprocal_probe, &info1c) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0,
 	      "invalid INFO1 initialization mutated output state");
-	CHECK(sippymodem_v34_phase2_info1_exchange_caller_init(
+	CHECK(v34_phase2_info1_exchange_caller_init(
 		      &exchange, &probes.caller.reciprocal_probe, &info1c) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK,
+		      V34_PHASE2_INFO1_EXCHANGE_OK,
 	      "valid INFO1 caller did not initialize");
 	before = exchange;
 	memset(&event, 0x5a, sizeof(event));
 	event_before = event;
-	CHECK(sippymodem_v34_phase2_info1_exchange_sample(
+	CHECK(v34_phase2_info1_exchange_sample(
 		      &exchange, 0, NULL, &event) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_info1_exchange_sample(
+		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_sample(
 		      &exchange, 0, &transmit, NULL) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase2_info1_exchange_answerer_reply(
+		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_answerer_reply(
 		      &exchange, &info1a) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid INFO1 operation was not transactional");
 	invalid = exchange;
 	invalid.peer_parameters_received = true;
-	CHECK(!sippymodem_v34_phase2_info1_exchange_is_valid(&invalid),
+	CHECK(!v34_phase2_info1_exchange_is_valid(&invalid),
 	      "INFO1 validation accepted parameters without a peer event");
-	CHECK(sippymodem_v34_phase2_info1_exchange_answerer_init(
+	CHECK(v34_phase2_info1_exchange_answerer_init(
 		      &exchange, &probes.answerer.reciprocal_probe) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_OK,
+		      V34_PHASE2_INFO1_EXCHANGE_OK,
 	      "valid INFO1 answerer did not initialize");
 	before = exchange;
-	CHECK(sippymodem_v34_phase2_info1_exchange_answerer_reply(
+	CHECK(v34_phase2_info1_exchange_answerer_reply(
 		      &exchange, &info1a) ==
-		      SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
-	      strcmp(sippymodem_v34_phase2_info1_exchange_result_name(
-			     SIPPYMODEM_V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT),
+	      strcmp(v34_phase2_info1_exchange_result_name(
+			     V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_phase2_info1_exchange_result_name(
-			     (enum sippymodem_v34_phase2_info1_exchange_result)99),
+	      strcmp(v34_phase2_info1_exchange_result_name(
+			     (enum v34_phase2_info1_exchange_result)99),
 		     "unknown") == 0,
 	      "INFO1 reply validation or result names changed");
 	return true;

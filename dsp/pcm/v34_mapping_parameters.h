@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V34_MAPPING_PARAMETERS_H
-#define SIPPYMODEM_V34_MAPPING_PARAMETERS_H
+#ifndef V34_MAPPING_PARAMETERS_H
+#define V34_MAPPING_PARAMETERS_H
 
 #include "v34_frame_schedule.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
-enum sippymodem_v34_mapping_parameters_result {
-	SIPPYMODEM_V34_MAPPING_PARAMETERS_OK,
-	SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT,
+enum v34_mapping_parameters_result {
+	V34_MAPPING_PARAMETERS_OK,
+	V34_MAPPING_PARAMETERS_INVALID_ARGUMENT,
 };
 
 enum {
-	SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS = 79,
-	SIPPYMODEM_V34_MAX_SHELL_MAPPER_BITS = 31,
-	SIPPYMODEM_V34_MAX_RING_COUNT = 18,
+	V34_MAX_MAPPING_FRAME_BITS = 79,
+	V34_MAX_SHELL_MAPPER_BITS = 31,
+	V34_MAX_RING_COUNT = 18,
 };
 
 /* Clause 9.2 dimensions for one high mapping frame. */
-struct sippymodem_v34_mapping_parameters {
+struct v34_mapping_parameters {
 	uint16_t constellation_points;
 	uint8_t mapping_frame_bits;
 	uint8_t shell_mapper_bits;
@@ -31,16 +31,16 @@ struct sippymodem_v34_mapping_parameters {
 
 /* Generate K, q, M, and L from the selected frame geometry. The result uses
  * exact integer comparisons instead of floating point or stored ring tables. */
-enum sippymodem_v34_mapping_parameters_result
-sippymodem_v34_mapping_parameters_init(
-	struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_frame_geometry *geometry,
+enum v34_mapping_parameters_result
+v34_mapping_parameters_init(
+	struct v34_mapping_parameters *parameters,
+	const struct v34_frame_geometry *geometry,
 	bool expanded_shaping);
 
-bool sippymodem_v34_mapping_parameters_is_valid(
-	const struct sippymodem_v34_mapping_parameters *parameters);
+bool v34_mapping_parameters_is_valid(
+	const struct v34_mapping_parameters *parameters);
 
-const char *sippymodem_v34_mapping_parameters_result_name(
-	enum sippymodem_v34_mapping_parameters_result result);
+const char *v34_mapping_parameters_result_name(
+	enum v34_mapping_parameters_result result);
 
 #endif

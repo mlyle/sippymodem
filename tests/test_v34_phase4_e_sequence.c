@@ -8,8 +8,8 @@
 #include <string.h>
 
 enum {
-	TRN_PREFIX_SYMBOLS = SIPPYMODEM_V34_PHASE4_TRN_MIN_SYMBOLS + 3,
-	V34_HISTORY_MASK = (1u << SIPPYMODEM_V34_SCRAMBLER_BITS) - 1u,
+	TRN_PREFIX_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 3,
+	V34_HISTORY_MASK = (1u << V34_SCRAMBLER_BITS) - 1u,
 	V34_COMMON_TAP_DELAY = 23,
 };
 
@@ -21,13 +21,13 @@ struct reference_mapper {
 	uint8_t previous_clockwise_quarter_turns;
 };
 
-static struct sippymodem_v34_mp_parameters parameters(bool acknowledged)
+static struct v34_mp_parameters parameters(bool acknowledged)
 {
-	return (struct sippymodem_v34_mp_parameters){
+	return (struct v34_mp_parameters){
 		.maximum_call_to_answer_rate_2400_bps_units = 10,
 		.maximum_answer_to_call_rate_2400_bps_units = 9,
 		.remote_transmitter_trellis =
-			SIPPYMODEM_V34_TRELLIS_32_STATE,
+			V34_TRELLIS_32_STATE,
 		.acknowledges_peer_mp = acknowledged,
 		.data_rate_capability_mask = 0x1555,
 		.asymmetric_rates_enabled = true,
@@ -35,8 +35,8 @@ static struct sippymodem_v34_mp_parameters parameters(bool acknowledged)
 }
 
 static bool sequences_are_equal(
-	const struct sippymodem_v34_phase4_e_sequence *left,
-	const struct sippymodem_v34_phase4_e_sequence *right)
+	const struct v34_phase4_e_sequence *left,
+	const struct v34_phase4_e_sequence *right)
 {
 	return left->scrambler.history == right->scrambler.history &&
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
@@ -72,10 +72,10 @@ static uint8_t reference_mapped_ones(struct reference_mapper *mapper)
 }
 
 static struct sippymodem_qam_point reference_point(
-	enum sippymodem_v34_constellation_size constellation,
+	enum v34_constellation_size constellation,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
 {
-	double unit = constellation == SIPPYMODEM_V34_CONSTELLATION_4_POINT ?
+	double unit = constellation == V34_CONSTELLATION_4_POINT ?
 			      sqrt(0.5) :
 			      sqrt(0.1);
 	double in_phase = (quarter_point & 1u) != 0u ? -3.0 : 1.0;
@@ -102,41 +102,41 @@ static bool points_are_close(
 }
 
 static bool generate_completed_mp(
-	struct sippymodem_v34_phase4_mp *mp,
-	enum sippymodem_v34_station_role role,
-	enum sippymodem_v34_constellation_size constellation,
+	struct v34_phase4_mp *mp,
+	enum v34_station_role role,
+	enum v34_constellation_size constellation,
 	bool acknowledged)
 {
-	struct sippymodem_v34_phase4_trn trn;
-	struct sippymodem_v34_mp_parameters selected =
+	struct v34_phase4_trn trn;
+	struct v34_mp_parameters selected =
 		parameters(acknowledged);
 
-	CHECK(sippymodem_v34_phase4_trn_init(&trn, role, constellation) ==
-		      SIPPYMODEM_V34_PHASE4_TRN_OK,
+	CHECK(v34_phase4_trn_init(&trn, role, constellation) ==
+		      V34_PHASE4_TRN_OK,
 	      "E fixture TRN did not initialize");
 	for (size_t symbol = 0; symbol < TRN_PREFIX_SYMBOLS; ++symbol) {
 		struct sippymodem_qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 
-		CHECK(sippymodem_v34_phase4_trn_next(
+		CHECK(v34_phase4_trn_next(
 			      &trn, &point, &quarter, &rotation) ==
-			      SIPPYMODEM_V34_PHASE4_TRN_OK,
+			      V34_PHASE4_TRN_OK,
 		      "E fixture TRN stopped at symbol %zu", symbol);
 	}
-	CHECK(sippymodem_v34_phase4_mp_init_type0_from_trn(
+	CHECK(v34_phase4_mp_init_type0_from_trn(
 		      mp, &trn, &selected) ==
-		      SIPPYMODEM_V34_PHASE4_MP_OK,
+		      V34_PHASE4_MP_OK,
 	      "E fixture MP did not initialize");
-	while (!sippymodem_v34_phase4_mp_record_is_complete(mp)) {
+	while (!v34_phase4_mp_record_is_complete(mp)) {
 		struct sippymodem_qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 		bool complete;
 
-		CHECK(sippymodem_v34_phase4_mp_next(
+		CHECK(v34_phase4_mp_next(
 			      mp, &point, &quarter, &rotation, &complete) ==
-			      SIPPYMODEM_V34_PHASE4_MP_OK,
+			      V34_PHASE4_MP_OK,
 		      "E fixture MP stopped at bit %zu", mp->bit_index);
 	}
 	return true;
@@ -144,27 +144,27 @@ static bool generate_completed_mp(
 
 static void reference_mapper_init(
 	struct reference_mapper *mapper,
-	const struct sippymodem_v34_phase4_mp *mp)
+	const struct v34_phase4_mp *mp)
 {
 	*mapper = (struct reference_mapper){
 		.history = mp->scrambler.history,
 		.primary_tap_delay =
-			mp->role == SIPPYMODEM_V34_CALLING_STATION ? 18u : 5u,
+			mp->role == V34_CALLING_STATION ? 18u : 5u,
 		.previous_clockwise_quarter_turns =
 			mp->previous_clockwise_quarter_turns,
 	};
 }
 
 static bool verify_sequence(
-	struct sippymodem_v34_phase4_e_sequence *sequence,
+	struct v34_phase4_e_sequence *sequence,
 	struct reference_mapper *reference)
 {
 	uint8_t symbol_bits =
 		sequence->constellation ==
-				SIPPYMODEM_V34_CONSTELLATION_16_POINT ?
+				V34_CONSTELLATION_16_POINT ?
 			4u :
 			2u;
-	size_t symbol_count = SIPPYMODEM_V34_PHASE4_E_BITS / symbol_bits;
+	size_t symbol_count = V34_PHASE4_E_BITS / symbol_bits;
 
 	for (size_t symbol = 0; symbol < symbol_count; ++symbol) {
 		uint8_t increment = reference_mapped_ones(reference);
@@ -182,10 +182,10 @@ static bool verify_sequence(
 		reference->previous_clockwise_quarter_turns = rotation;
 		expected = reference_point(
 			sequence->constellation, quarter, rotation);
-		CHECK(sippymodem_v34_phase4_e_sequence_next(
+		CHECK(v34_phase4_e_sequence_next(
 			      sequence, &point, &emitted_quarter,
 			      &emitted_rotation) ==
-			      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK,
+			      V34_PHASE4_E_SEQUENCE_OK,
 		      "E sequence stopped at symbol %zu/%zu", symbol,
 		      symbol_count);
 		CHECK(emitted_quarter == quarter &&
@@ -195,20 +195,20 @@ static bool verify_sequence(
 		      sequence->scrambler.history == reference->history &&
 		      sequence->previous_clockwise_quarter_turns ==
 			      reference->previous_clockwise_quarter_turns &&
-		      sippymodem_v34_phase4_e_sequence_is_valid(sequence) &&
-		      sippymodem_v34_phase4_e_sequence_is_complete(sequence) ==
+		      v34_phase4_e_sequence_is_valid(sequence) &&
+		      v34_phase4_e_sequence_is_complete(sequence) ==
 			      (symbol + 1u == symbol_count),
 		      "E symbol %zu/%zu changed", symbol, symbol_count);
 	}
 	{
-		struct sippymodem_v34_phase4_e_sequence saved = *sequence;
+		struct v34_phase4_e_sequence saved = *sequence;
 		struct sippymodem_qam_point point = { 7.0, -9.0 };
 		uint8_t quarter = UINT8_MAX;
 		uint8_t rotation = UINT8_MAX;
 
-		CHECK(sippymodem_v34_phase4_e_sequence_next(
+		CHECK(v34_phase4_e_sequence_next(
 			      sequence, &point, &quarter, &rotation) ==
-			      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_COMPLETE &&
+			      V34_PHASE4_E_SEQUENCE_COMPLETE &&
 		      sequences_are_equal(sequence, &saved) &&
 		      point.in_phase == 7.0 && point.quadrature == -9.0 &&
 		      quarter == UINT8_MAX && rotation == UINT8_MAX,
@@ -219,18 +219,18 @@ static bool verify_sequence(
 
 static bool test_roles_constellations_and_records(void)
 {
-	static const enum sippymodem_v34_station_role roles[] = {
-		SIPPYMODEM_V34_CALLING_STATION,
-		SIPPYMODEM_V34_ANSWERING_STATION,
+	static const enum v34_station_role roles[] = {
+		V34_CALLING_STATION,
+		V34_ANSWERING_STATION,
 	};
-	static const enum sippymodem_v34_constellation_size constellations[] = {
-		SIPPYMODEM_V34_CONSTELLATION_4_POINT,
-		SIPPYMODEM_V34_CONSTELLATION_16_POINT,
+	static const enum v34_constellation_size constellations[] = {
+		V34_CONSTELLATION_4_POINT,
+		V34_CONSTELLATION_16_POINT,
 	};
 
-	CHECK(SIPPYMODEM_V34_PHASE4_E_BITS == 20 &&
-	      SIPPYMODEM_V34_PHASE4_E_4_POINT_SYMBOLS == 10 &&
-	      SIPPYMODEM_V34_PHASE4_E_16_POINT_SYMBOLS == 5,
+	CHECK(V34_PHASE4_E_BITS == 20 &&
+	      V34_PHASE4_E_4_POINT_SYMBOLS == 10 &&
+	      V34_PHASE4_E_16_POINT_SYMBOLS == 5,
 	      "E sequence dimensions changed");
 	for (size_t role_index = 0; role_index < ARRAY_LENGTH(roles);
 	     ++role_index) {
@@ -239,8 +239,8 @@ static bool test_roles_constellations_and_records(void)
 		     ++constellation_index) {
 			for (unsigned int acknowledged = 0; acknowledged < 2;
 			     ++acknowledged) {
-				struct sippymodem_v34_phase4_mp mp;
-				struct sippymodem_v34_phase4_e_sequence sequence;
+				struct v34_phase4_mp mp;
+				struct v34_phase4_e_sequence sequence;
 				struct reference_mapper reference;
 
 				CHECK(generate_completed_mp(
@@ -250,16 +250,16 @@ static bool test_roles_constellations_and_records(void)
 				      "E MP fixture %zu/%zu/%u failed", role_index,
 				      constellation_index, acknowledged);
 				reference_mapper_init(&reference, &mp);
-				CHECK(sippymodem_v34_phase4_e_sequence_init_from_mp(
+				CHECK(v34_phase4_e_sequence_init_from_mp(
 					      &sequence, &mp) ==
-					      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK &&
+					      V34_PHASE4_E_SEQUENCE_OK &&
 				      sequence.scrambler.history == mp.scrambler.history &&
 				      sequence.scrambler.polynomial ==
 					      mp.scrambler.polynomial &&
 				      sequence.previous_clockwise_quarter_turns ==
 					      mp.previous_clockwise_quarter_turns &&
 				      sequence.emitted_bits == 0 &&
-				      !sippymodem_v34_phase4_e_sequence_is_complete(
+				      !v34_phase4_e_sequence_is_complete(
 					      &sequence),
 				      "E transition %zu/%zu/%u did not inherit MP state",
 				      role_index, constellation_index, acknowledged);
@@ -274,28 +274,28 @@ static bool test_roles_constellations_and_records(void)
 
 static bool test_copy_behavior(void)
 {
-	struct sippymodem_v34_phase4_mp mp;
-	struct sippymodem_v34_phase4_e_sequence original;
-	struct sippymodem_v34_phase4_e_sequence copy;
+	struct v34_phase4_mp mp;
+	struct v34_phase4_e_sequence original;
+	struct v34_phase4_e_sequence copy;
 
 	CHECK(generate_completed_mp(
-		      &mp, SIPPYMODEM_V34_CALLING_STATION,
-		      SIPPYMODEM_V34_CONSTELLATION_16_POINT, true) &&
-	      sippymodem_v34_phase4_e_sequence_init_from_mp(&original, &mp) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK,
+		      &mp, V34_CALLING_STATION,
+		      V34_CONSTELLATION_16_POINT, true) &&
+	      v34_phase4_e_sequence_init_from_mp(&original, &mp) ==
+		      V34_PHASE4_E_SEQUENCE_OK,
 	      "E copy fixture did not initialize");
 	{
 		struct sippymodem_qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 
-		CHECK(sippymodem_v34_phase4_e_sequence_next(
+		CHECK(v34_phase4_e_sequence_next(
 			      &original, &point, &quarter, &rotation) ==
-			      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK,
+			      V34_PHASE4_E_SEQUENCE_OK,
 		      "E copy fixture did not advance");
 	}
 	copy = original;
-	while (!sippymodem_v34_phase4_e_sequence_is_complete(&original)) {
+	while (!v34_phase4_e_sequence_is_complete(&original)) {
 		struct sippymodem_qam_point original_point;
 		struct sippymodem_qam_point copied_point;
 		uint8_t original_quarter;
@@ -303,14 +303,14 @@ static bool test_copy_behavior(void)
 		uint8_t original_rotation;
 		uint8_t copied_rotation;
 
-		CHECK(sippymodem_v34_phase4_e_sequence_next(
+		CHECK(v34_phase4_e_sequence_next(
 			      &original, &original_point, &original_quarter,
 			      &original_rotation) ==
-			      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK &&
-		      sippymodem_v34_phase4_e_sequence_next(
+			      V34_PHASE4_E_SEQUENCE_OK &&
+		      v34_phase4_e_sequence_next(
 			      &copy, &copied_point, &copied_quarter,
 			      &copied_rotation) ==
-			      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK &&
+			      V34_PHASE4_E_SEQUENCE_OK &&
 		      sequences_are_equal(&original, &copy) &&
 		      original_quarter == copied_quarter &&
 		      original_rotation == copied_rotation &&
@@ -323,55 +323,55 @@ static bool test_copy_behavior(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_phase4_mp mp;
-	struct sippymodem_v34_phase4_e_sequence sequence = {
+	struct v34_phase4_mp mp;
+	struct v34_phase4_e_sequence sequence = {
 		.scrambler = {
 			.history = 7,
-			.polynomial = SIPPYMODEM_V34_POLYNOMIAL_GPC,
+			.polynomial = V34_POLYNOMIAL_GPC,
 		},
-		.role = SIPPYMODEM_V34_CALLING_STATION,
-		.constellation = SIPPYMODEM_V34_CONSTELLATION_4_POINT,
+		.role = V34_CALLING_STATION,
+		.constellation = V34_CONSTELLATION_4_POINT,
 		.previous_clockwise_quarter_turns = 2,
 		.emitted_bits = 4,
 	};
-	struct sippymodem_v34_phase4_e_sequence saved = sequence;
+	struct v34_phase4_e_sequence saved = sequence;
 	struct sippymodem_qam_point point = { 7.0, -9.0 };
 	uint8_t quarter = UINT8_MAX;
 	uint8_t rotation = UINT8_MAX;
 
 	CHECK(generate_completed_mp(
-		      &mp, SIPPYMODEM_V34_ANSWERING_STATION,
-		      SIPPYMODEM_V34_CONSTELLATION_4_POINT, true),
+		      &mp, V34_ANSWERING_STATION,
+		      V34_CONSTELLATION_4_POINT, true),
 	      "E validation MP fixture failed");
 	mp.bit_index = 0;
-	CHECK(sippymodem_v34_phase4_e_sequence_init_from_mp(
+	CHECK(v34_phase4_e_sequence_init_from_mp(
 		      NULL, &mp) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_e_sequence_init_from_mp(
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase4_e_sequence_init_from_mp(
 		      &sequence, NULL) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_e_sequence_init_from_mp(
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase4_e_sequence_init_from_mp(
 		      &sequence, &mp) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
 	      sequences_are_equal(&sequence, &saved),
 	      "E initialization accepted an incomplete MP record");
-	mp.bit_index = SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS;
-	CHECK(sippymodem_v34_phase4_e_sequence_init_from_mp(&sequence, &mp) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_OK,
+	mp.bit_index = V34_MP_TYPE0_FRAME_BITS;
+	CHECK(v34_phase4_e_sequence_init_from_mp(&sequence, &mp) ==
+		      V34_PHASE4_E_SEQUENCE_OK,
 	      "E validation fixture did not initialize");
 	saved = sequence;
-	CHECK(sippymodem_v34_phase4_e_sequence_next(
+	CHECK(v34_phase4_e_sequence_next(
 		      NULL, &point, &quarter, &rotation) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_e_sequence_next(
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase4_e_sequence_next(
 		      &sequence, NULL, &quarter, &rotation) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_e_sequence_next(
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase4_e_sequence_next(
 		      &sequence, &point, NULL, &rotation) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase4_e_sequence_next(
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase4_e_sequence_next(
 		      &sequence, &point, &quarter, NULL) ==
-		      SIPPYMODEM_V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
+		      V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT &&
 	      sequences_are_equal(&sequence, &saved) &&
 	      point.in_phase == 7.0 && point.quadrature == -9.0 &&
 	      quarter == UINT8_MAX && rotation == UINT8_MAX,
@@ -379,38 +379,38 @@ static bool test_validation(void)
 
 	sequence = saved;
 	sequence.emitted_bits = 1;
-	CHECK(!sippymodem_v34_phase4_e_sequence_is_valid(&sequence),
+	CHECK(!v34_phase4_e_sequence_is_valid(&sequence),
 	      "E accepted a partial-symbol cursor");
 	sequence = saved;
-	sequence.emitted_bits = SIPPYMODEM_V34_PHASE4_E_BITS + 1;
-	CHECK(!sippymodem_v34_phase4_e_sequence_is_valid(&sequence),
+	sequence.emitted_bits = V34_PHASE4_E_BITS + 1;
+	CHECK(!v34_phase4_e_sequence_is_valid(&sequence),
 	      "E accepted a cursor beyond its fixed length");
 	sequence = saved;
 	sequence.previous_clockwise_quarter_turns = 4;
-	CHECK(!sippymodem_v34_phase4_e_sequence_is_valid(&sequence),
+	CHECK(!v34_phase4_e_sequence_is_valid(&sequence),
 	      "E accepted an invalid differential phase");
 	sequence = saved;
-	sequence.role = SIPPYMODEM_V34_CALLING_STATION;
-	CHECK(!sippymodem_v34_phase4_e_sequence_is_valid(&sequence),
+	sequence.role = V34_CALLING_STATION;
+	CHECK(!v34_phase4_e_sequence_is_valid(&sequence),
 	      "E accepted a role/polynomial mismatch");
 	sequence = saved;
 	sequence.constellation =
-		(enum sippymodem_v34_constellation_size)8;
-	CHECK(!sippymodem_v34_phase4_e_sequence_is_valid(&sequence),
+		(enum v34_constellation_size)8;
+	CHECK(!v34_phase4_e_sequence_is_valid(&sequence),
 	      "E accepted an invalid constellation");
 	sequence = saved;
 	sequence.scrambler.history = UINT32_C(1) <<
-		SIPPYMODEM_V34_SCRAMBLER_BITS;
-	CHECK(!sippymodem_v34_phase4_e_sequence_is_valid(&sequence) &&
-	      !sippymodem_v34_phase4_e_sequence_is_valid(NULL) &&
-	      !sippymodem_v34_phase4_e_sequence_is_complete(NULL),
+		V34_SCRAMBLER_BITS;
+	CHECK(!v34_phase4_e_sequence_is_valid(&sequence) &&
+	      !v34_phase4_e_sequence_is_valid(NULL) &&
+	      !v34_phase4_e_sequence_is_complete(NULL),
 	      "E accepted corrupt state");
 
-	CHECK(strcmp(sippymodem_v34_phase4_e_sequence_result_name(
-		     SIPPYMODEM_V34_PHASE4_E_SEQUENCE_COMPLETE),
+	CHECK(strcmp(v34_phase4_e_sequence_result_name(
+		     V34_PHASE4_E_SEQUENCE_COMPLETE),
 		     "complete") == 0 &&
-	      strcmp(sippymodem_v34_phase4_e_sequence_result_name(
-		     (enum sippymodem_v34_phase4_e_sequence_result)3),
+	      strcmp(v34_phase4_e_sequence_result_name(
+		     (enum v34_phase4_e_sequence_result)3),
 		     "unknown") == 0,
 	      "E result names changed");
 	return true;

@@ -8,23 +8,23 @@
 #include <string.h>
 
 struct symbol_rate_fixture {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t minimum_rate;
 	uint8_t maximum_rate;
 };
 
 static const struct symbol_rate_fixture SYMBOL_RATES[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, 9 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, 11 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 2, 11 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 2, 12 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 2, 13 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 2, 14 },
+	{ V34_SYMBOL_RATE_2400, 1, 9 },
+	{ V34_SYMBOL_RATE_2743, 2, 11 },
+	{ V34_SYMBOL_RATE_2800, 2, 11 },
+	{ V34_SYMBOL_RATE_3000, 2, 12 },
+	{ V34_SYMBOL_RATE_3200, 2, 13 },
+	{ V34_SYMBOL_RATE_3429, 2, 14 },
 };
 
 static bool parameters_are_equal(
-	const struct sippymodem_v34_mapping_parameters *left,
-	const struct sippymodem_v34_mapping_parameters *right)
+	const struct v34_mapping_parameters *left,
+	const struct v34_mapping_parameters *right)
 {
 	return left->constellation_points == right->constellation_points &&
 	       left->mapping_frame_bits == right->mapping_frame_bits &&
@@ -38,7 +38,7 @@ static bool parameters_are_equal(
 static bool test_normative_parameters(void)
 {
 	static const struct {
-		enum sippymodem_v34_symbol_rate symbol_rate;
+		enum v34_symbol_rate symbol_rate;
 		uint8_t primary_rate;
 		uint8_t mapping_bits;
 		uint8_t shell_bits;
@@ -48,34 +48,34 @@ static bool test_normative_parameters(void)
 		uint16_t minimum_points;
 		uint16_t expanded_points;
 	} cases[] = {
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, 8, 0, 0,
+		{ V34_SYMBOL_RATE_2400, 1, 8, 0, 0,
 		  1, 1, 4, 4 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 3, 24, 12, 0,
+		{ V34_SYMBOL_RATE_2400, 3, 24, 12, 0,
 		  3, 4, 12, 16 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 9, 72, 28, 4,
+		{ V34_SYMBOL_RATE_2400, 9, 72, 28, 4,
 		  12, 14, 768, 896 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 6, 42, 30, 0,
+		{ V34_SYMBOL_RATE_2743, 6, 42, 30, 0,
 		  14, 17, 56, 68 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_2800, 11, 76, 24, 5,
+		{ V34_SYMBOL_RATE_2800, 11, 76, 24, 5,
 		  8, 10, 1024, 1280 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 12, 77, 25, 5,
+		{ V34_SYMBOL_RATE_3000, 12, 77, 25, 5,
 		  9, 11, 1152, 1408 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3200, 13, 78, 26, 5,
+		{ V34_SYMBOL_RATE_3200, 13, 78, 26, 5,
 		  10, 12, 1280, 1536 },
-		{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 14, 79, 27, 5,
+		{ V34_SYMBOL_RATE_3429, 14, 79, 27, 5,
 		  11, 13, 1408, 1664 },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
-		struct sippymodem_v34_frame_geometry geometry;
+		struct v34_frame_geometry geometry;
 
-		CHECK(sippymodem_v34_frame_geometry_init(
+		CHECK(v34_frame_geometry_init(
 			      &geometry, cases[index].symbol_rate,
 			      cases[index].primary_rate, false) ==
-			      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+			      V34_FRAME_SCHEDULE_OK,
 		      "normative mapping fixture %zu did not initialize", index);
 		for (unsigned int expanded = 0; expanded < 2; ++expanded) {
-			struct sippymodem_v34_mapping_parameters parameters;
+			struct v34_mapping_parameters parameters;
 			uint8_t expected_rings = expanded != 0 ?
 				cases[index].expanded_rings :
 				cases[index].minimum_rings;
@@ -83,9 +83,9 @@ static bool test_normative_parameters(void)
 				cases[index].expanded_points :
 				cases[index].minimum_points;
 
-			CHECK(sippymodem_v34_mapping_parameters_init(
+			CHECK(v34_mapping_parameters_init(
 				      &parameters, &geometry, expanded != 0) ==
-				      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK,
+				      V34_MAPPING_PARAMETERS_OK,
 			      "normative mapping fixture %zu/%u did not run",
 			      index, expanded);
 			CHECK(parameters.mapping_frame_bits ==
@@ -145,17 +145,17 @@ static bool test_all_supported_geometries(void)
 		     rate <= fixture->maximum_rate; ++rate) {
 			for (unsigned int auxiliary = 0; auxiliary < 2;
 			     ++auxiliary) {
-				struct sippymodem_v34_frame_geometry geometry;
+				struct v34_frame_geometry geometry;
 
-				CHECK(sippymodem_v34_frame_geometry_init(
+				CHECK(v34_frame_geometry_init(
 					      &geometry, fixture->symbol_rate, rate,
 					      auxiliary != 0) ==
-					      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+					      V34_FRAME_SCHEDULE_OK,
 				      "mapping geometry %zu/%u/%u was rejected",
 				      symbol_index, rate, auxiliary);
 				for (unsigned int expanded = 0; expanded < 2;
 				     ++expanded) {
-					struct sippymodem_v34_mapping_parameters
+					struct v34_mapping_parameters
 						parameters;
 					uint16_t expected_points;
 					uint8_t expected_shell_bits;
@@ -167,11 +167,11 @@ static bool test_all_supported_geometries(void)
 						expanded != 0, &expected_shell_bits,
 						&expected_point_bits, &expected_rings,
 						&expected_points);
-					CHECK(sippymodem_v34_mapping_parameters_init(
+					CHECK(v34_mapping_parameters_init(
 						      &parameters, &geometry,
 						      expanded != 0) ==
-						      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
-					      sippymodem_v34_mapping_parameters_is_valid(
+						      V34_MAPPING_PARAMETERS_OK &&
+					      v34_mapping_parameters_is_valid(
 						      &parameters),
 					      "mapping parameters %zu/%u/%u/%u failed",
 					      symbol_index, rate, auxiliary, expanded);
@@ -203,72 +203,72 @@ static bool test_all_supported_geometries(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_mapping_parameters saved;
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_mapping_parameters saved;
 
-	CHECK(sippymodem_v34_frame_geometry_init(
-		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, false) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	      sippymodem_v34_mapping_parameters_init(
+	CHECK(v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_3000, 8, false) ==
+		      V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(
 		      &parameters, &geometry, false) ==
-		      SIPPYMODEM_V34_MAPPING_PARAMETERS_OK,
+		      V34_MAPPING_PARAMETERS_OK,
 	      "validation mapping parameters did not initialize");
 	saved = parameters;
-	CHECK(sippymodem_v34_mapping_parameters_init(
+	CHECK(v34_mapping_parameters_init(
 		      NULL, &geometry, false) ==
-		      SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
-	      sippymodem_v34_mapping_parameters_init(
+		      V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
+	      v34_mapping_parameters_init(
 		      &parameters, NULL, false) ==
-		      SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
+		      V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
 	      parameters_are_equal(&parameters, &saved),
 	      "invalid mapping initialization changed its destination");
 
 	geometry.high_mapping_frame_bits++;
-	CHECK(sippymodem_v34_mapping_parameters_init(
+	CHECK(v34_mapping_parameters_init(
 		      &parameters, &geometry, false) ==
-		      SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
+		      V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
 	      parameters_are_equal(&parameters, &saved),
 	      "corrupt geometry changed mapping parameters");
 
 	parameters = saved;
 	parameters.constellation_points++;
-	CHECK(!sippymodem_v34_mapping_parameters_is_valid(&parameters),
+	CHECK(!v34_mapping_parameters_is_valid(&parameters),
 	      "mapping parameters accepted a changed constellation size");
 	parameters = saved;
 	parameters.mapping_frame_bits = 7;
-	CHECK(!sippymodem_v34_mapping_parameters_is_valid(&parameters),
+	CHECK(!v34_mapping_parameters_is_valid(&parameters),
 	      "mapping parameters accepted too few frame bits");
 	parameters = saved;
 	parameters.mapping_frame_bits = 80;
-	CHECK(!sippymodem_v34_mapping_parameters_is_valid(&parameters),
+	CHECK(!v34_mapping_parameters_is_valid(&parameters),
 	      "mapping parameters accepted too many frame bits");
 	parameters = saved;
 	parameters.shell_mapper_bits++;
-	CHECK(!sippymodem_v34_mapping_parameters_is_valid(&parameters),
+	CHECK(!v34_mapping_parameters_is_valid(&parameters),
 	      "mapping parameters accepted a changed shell width");
 	parameters = saved;
 	parameters.point_index_bits_per_2d_symbol++;
-	CHECK(!sippymodem_v34_mapping_parameters_is_valid(&parameters),
+	CHECK(!v34_mapping_parameters_is_valid(&parameters),
 	      "mapping parameters accepted a changed point width");
 	parameters = saved;
 	parameters.ring_count++;
-	CHECK(!sippymodem_v34_mapping_parameters_is_valid(&parameters),
+	CHECK(!v34_mapping_parameters_is_valid(&parameters),
 	      "mapping parameters accepted a changed ring count");
 	parameters = saved;
 	parameters.expanded_shaping = true;
-	CHECK(!sippymodem_v34_mapping_parameters_is_valid(&parameters) &&
-	      !sippymodem_v34_mapping_parameters_is_valid(NULL),
+	CHECK(!v34_mapping_parameters_is_valid(&parameters) &&
+	      !v34_mapping_parameters_is_valid(NULL),
 	      "mapping parameters accepted inconsistent shaping");
 
-	CHECK(strcmp(sippymodem_v34_mapping_parameters_result_name(
-		     SIPPYMODEM_V34_MAPPING_PARAMETERS_OK),
+	CHECK(strcmp(v34_mapping_parameters_result_name(
+		     V34_MAPPING_PARAMETERS_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_mapping_parameters_result_name(
-		     SIPPYMODEM_V34_MAPPING_PARAMETERS_INVALID_ARGUMENT),
+	      strcmp(v34_mapping_parameters_result_name(
+		     V34_MAPPING_PARAMETERS_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_mapping_parameters_result_name(
-		     (enum sippymodem_v34_mapping_parameters_result)2),
+	      strcmp(v34_mapping_parameters_result_name(
+		     (enum v34_mapping_parameters_result)2),
 		     "unknown") == 0,
 	      "mapping parameter result names changed");
 	return true;

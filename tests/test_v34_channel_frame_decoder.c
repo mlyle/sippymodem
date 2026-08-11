@@ -14,85 +14,85 @@
 
 enum {
 	PIPELINE_MAPPING_FRAMES =
-		SIPPYMODEM_V34_SURVIVOR_TRACEBACK_INTERVALS /
-		SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME,
+		V34_SURVIVOR_TRACEBACK_INTERVALS /
+		V34_4D_INTERVALS_PER_MAPPING_FRAME,
 	MAX_GENERATED_MAPPING_FRAMES = 48,
 };
 
-static const struct sippymodem_v34_q14_coefficient COEFFICIENTS[] = {
+static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 4096, 2048 },
 	{ -2048, 1024 },
 	{ 1024, -2048 },
 };
 
 struct configuration {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t primary_rate;
 	bool auxiliary;
 	bool expanded;
-	enum sippymodem_v34_station_role transmitting_role;
+	enum v34_station_role transmitting_role;
 };
 
 static const struct configuration CONFIGURATIONS[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true, false,
-	  SIPPYMODEM_V34_CALLING_STATION },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 14, false, true,
-	  SIPPYMODEM_V34_ANSWERING_STATION },
+	{ V34_SYMBOL_RATE_3000, 8, true, false,
+	  V34_CALLING_STATION },
+	{ V34_SYMBOL_RATE_3429, 14, false, true,
+	  V34_ANSWERING_STATION },
 };
 
 struct fixture {
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_frame_schedule transmit_schedule;
-	struct sippymodem_v34_scrambler scrambler;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_channel_frame_decoder channel_decoder;
-	struct sippymodem_v34_data_receiver data_receiver;
+	struct v34_frame_geometry geometry;
+	struct v34_frame_schedule transmit_schedule;
+	struct v34_scrambler scrambler;
+	struct v34_4d_encoder encoder;
+	struct v34_channel_frame_decoder channel_decoder;
+	struct v34_data_receiver data_receiver;
 	bool transmitting_b1;
 };
 
 struct expected_mapping_frame {
-	struct sippymodem_v34_mapping_frame mapping_frame;
-	struct sippymodem_v34_decided_4d_interval decided[4];
-	uint8_t primary_bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	struct v34_mapping_frame mapping_frame;
+	struct v34_decided_4d_interval decided[4];
+	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t auxiliary_bit;
 	bool b1;
 };
 
 static bool initialize_fixture(
 	struct fixture *fixture, const struct configuration *configuration,
-	enum sippymodem_v34_trellis_selection selection)
+	enum v34_trellis_selection selection)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
+	struct v34_mapping_parameters parameters;
 
 	memset(fixture, 0, sizeof(*fixture));
 	fixture->transmitting_b1 = true;
-	return sippymodem_v34_frame_geometry_init(
+	return v34_frame_geometry_init(
 		       &fixture->geometry, configuration->symbol_rate,
 		       configuration->primary_rate, configuration->auxiliary) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_mapping_parameters_init(
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_mapping_parameters_init(
 		       &parameters, &fixture->geometry,
 		       configuration->expanded) ==
-		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
-	       sippymodem_v34_b1_frame_schedule_init(
+		       V34_MAPPING_PARAMETERS_OK &&
+	       v34_b1_frame_schedule_init(
 		       &fixture->transmit_schedule, &fixture->geometry) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_transmit_scrambler_init(
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_transmit_scrambler_init(
 		       &fixture->scrambler,
 		       configuration->transmitting_role) ==
-		       SIPPYMODEM_V34_FRAMING_OK &&
-	       sippymodem_v34_4d_encoder_init(
+		       V34_FRAMING_OK &&
+	       v34_4d_encoder_init(
 		       &fixture->encoder, &parameters, COEFFICIENTS,
-		       selection) == SIPPYMODEM_V34_4D_ENCODER_OK &&
-	       sippymodem_v34_channel_frame_decoder_init(
+		       selection) == V34_4D_ENCODER_OK &&
+	       v34_channel_frame_decoder_init(
 		       &fixture->channel_decoder, &fixture->geometry,
 		       configuration->expanded, COEFFICIENTS, selection) ==
-		       SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_OK &&
-	       sippymodem_v34_data_receiver_init(
+		       V34_CHANNEL_FRAME_DECODER_OK &&
+	       v34_data_receiver_init(
 		       &fixture->data_receiver, &fixture->geometry,
 		       configuration->expanded,
 		       configuration->transmitting_role) ==
-		       SIPPYMODEM_V34_DATA_RECEIVER_OK;
+		       V34_DATA_RECEIVER_OK;
 }
 
 static uint32_t next_generated_word(uint32_t *state)
@@ -110,7 +110,7 @@ static double generated_noise(uint32_t *state)
 }
 
 static void generate_primary_bits(
-	uint8_t bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS], uint8_t count,
+	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS], uint8_t count,
 	uint32_t seed)
 {
 	uint32_t state = seed | 1u;
@@ -122,23 +122,23 @@ static void generate_primary_bits(
 static bool prepare_next_mapping_frame(
 	struct fixture *fixture, size_t frame_index,
 	struct expected_mapping_frame *expected,
-	struct sippymodem_v34_transmitted_mapping_frame *transmitted)
+	struct v34_transmitted_mapping_frame *transmitted)
 {
-	struct sippymodem_v34_frame_schedule preview;
+	struct v34_frame_schedule preview;
 	const uint8_t *auxiliary;
 
-	if (sippymodem_v34_frame_schedule_is_complete(
+	if (v34_frame_schedule_is_complete(
 		    &fixture->transmit_schedule)) {
 		fixture->transmitting_b1 = false;
-		if (sippymodem_v34_frame_schedule_advance_data_frame(
+		if (v34_frame_schedule_advance_data_frame(
 			    &fixture->transmit_schedule) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+		    V34_FRAME_SCHEDULE_OK)
 			return false;
 	}
 	preview = fixture->transmit_schedule;
-	if (sippymodem_v34_frame_schedule_next(
+	if (v34_frame_schedule_next(
 		    &preview, &expected->mapping_frame) !=
-	    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+	    V34_FRAME_SCHEDULE_OK)
 		return false;
 	expected->b1 = fixture->transmitting_b1;
 	if (expected->b1) {
@@ -155,21 +155,21 @@ static bool prepare_next_mapping_frame(
 	auxiliary = expected->mapping_frame.carries_auxiliary_bit ?
 		&expected->auxiliary_bit :
 		NULL;
-	if (sippymodem_v34_transmit_mapping_frame(
+	if (v34_transmit_mapping_frame(
 		    &fixture->transmit_schedule, &fixture->scrambler,
 		    &fixture->encoder, expected->primary_bits,
 		    expected->mapping_frame.primary_bits, auxiliary,
-		    SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 512.0,
+		    V34_NONLINEAR_THETA_ZERO, 512.0,
 		    transmitted) !=
-	    SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OK)
+	    V34_MAPPING_FRAME_TRANSMITTER_OK)
 		return false;
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
 		expected->decided[interval].trellis_output =
 			transmitted->encoded.interval[interval].trellis_output;
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol)
 			expected->decided[interval].mapper_output[symbol] =
 				transmitted->encoded.interval[interval]
@@ -180,8 +180,8 @@ static bool prepare_next_mapping_frame(
 }
 
 static bool survivor_decision_matches(
-	const struct sippymodem_v34_survivor_decision *decision,
-	const struct sippymodem_v34_4d_encoder_output *encoded,
+	const struct v34_survivor_decision *decision,
+	const struct v34_4d_encoder_output *encoded,
 	uint8_t inversion_bit)
 {
 	if (decision->convolutional_output !=
@@ -189,7 +189,7 @@ static bool survivor_decision_matches(
 	    decision->inversion_bit != inversion_bit)
 		return false;
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		if (memcmp(
 			    &decision->channel_output[symbol],
 			    &encoded->precoded[symbol].channel_output,
@@ -200,12 +200,12 @@ static bool survivor_decision_matches(
 }
 
 static bool received_matches(
-	const struct sippymodem_v34_received_mapping_frame *received,
+	const struct v34_received_mapping_frame *received,
 	const struct expected_mapping_frame *expected)
 {
-	const struct sippymodem_v34_mapping_frame *left =
+	const struct v34_mapping_frame *left =
 		&received->mapping_frame;
-	const struct sippymodem_v34_mapping_frame *right =
+	const struct v34_mapping_frame *right =
 		&expected->mapping_frame;
 
 	return left->index == right->index &&
@@ -228,9 +228,9 @@ static bool test_generated_b1_and_data_round_trip(void)
 {
 	for (size_t configuration = 0;
 	     configuration < ARRAY_LENGTH(CONFIGURATIONS); ++configuration) {
-		for (enum sippymodem_v34_trellis_selection selection =
-			     SIPPYMODEM_V34_TRELLIS_16_STATE;
-		     selection <= SIPPYMODEM_V34_TRELLIS_64_STATE;
+		for (enum v34_trellis_selection selection =
+			     V34_TRELLIS_16_STATE;
+		     selection <= V34_TRELLIS_64_STATE;
 		     ++selection) {
 			struct expected_mapping_frame
 				expected[MAX_GENERATED_MAPPING_FRAMES];
@@ -252,7 +252,7 @@ static bool test_generated_b1_and_data_round_trip(void)
 			CHECK(mapping_frames <= ARRAY_LENGTH(expected),
 			      "channel frame fixture is too small");
 			for (size_t frame = 0; frame < mapping_frames; ++frame) {
-				struct sippymodem_v34_transmitted_mapping_frame
+				struct v34_transmitted_mapping_frame
 					transmitted;
 
 				CHECK(prepare_next_mapping_frame(
@@ -262,13 +262,13 @@ static bool test_generated_b1_and_data_round_trip(void)
 				      configuration, selection, frame);
 				for (uint8_t interval = 0;
 				     interval <
-					     SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+					     V34_4D_INTERVALS_PER_MAPPING_FRAME;
 				     ++interval) {
 					struct sippymodem_qam_point estimates[2];
-					struct sippymodem_v34_survivor_decision current;
-					struct sippymodem_v34_decided_4d_interval
+					struct v34_survivor_decision current;
+					struct v34_decided_4d_interval
 						decided[4];
-					struct sippymodem_v34_decided_4d_interval
+					struct v34_decided_4d_interval
 						saved_decided[4];
 					bool ready = true;
 					bool expected_ready;
@@ -296,10 +296,10 @@ static bool test_generated_b1_and_data_round_trip(void)
 					calls++;
 					expected_ready = calls >= 35u &&
 						((calls - 35u) % 4u) == 0u;
-					CHECK(sippymodem_v34_channel_frame_decoder_advance(
+					CHECK(v34_channel_frame_decoder_advance(
 						      &fixture.channel_decoder, estimates,
 						      &current, decided, &ready) ==
-						      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_OK &&
+						      V34_CHANNEL_FRAME_DECODER_OK &&
 					      survivor_decision_matches(
 						      &current,
 						      &transmitted.encoded.interval[interval],
@@ -321,15 +321,15 @@ static bool test_generated_b1_and_data_round_trip(void)
 					      "channel frame %zu/%u/%zu decisions changed",
 					      configuration, selection, received_frames);
 					{
-						struct sippymodem_v34_received_mapping_frame
+						struct v34_received_mapping_frame
 							received;
-						enum sippymodem_v34_data_receiver_result
+						enum v34_data_receiver_result
 							result;
-						enum sippymodem_v34_data_receiver_result
+						enum v34_data_receiver_result
 							expected_result;
 
 						result =
-							sippymodem_v34_data_receiver_receive_mapping_frame(
+							v34_data_receiver_receive_mapping_frame(
 								&fixture.data_receiver,
 								decided, &received);
 						expected_result =
@@ -337,9 +337,9 @@ static bool test_generated_b1_and_data_round_trip(void)
 								(expected[received_frames]
 									 .mapping_frame
 									 .completes_data_frame ?
-									 SIPPYMODEM_V34_DATA_RECEIVER_B1_COMPLETE :
-									 SIPPYMODEM_V34_DATA_RECEIVER_B1_IN_PROGRESS) :
-								SIPPYMODEM_V34_DATA_RECEIVER_OK;
+									 V34_DATA_RECEIVER_B1_COMPLETE :
+									 V34_DATA_RECEIVER_B1_IN_PROGRESS) :
+								V34_DATA_RECEIVER_OK;
 						CHECK(result == expected_result &&
 						      received_matches(
 							      &received,
@@ -354,10 +354,10 @@ static bool test_generated_b1_and_data_round_trip(void)
 			CHECK(received_frames ==
 				      2u * fixture.geometry
 						   .mapping_frames_per_data_frame &&
-			      !sippymodem_v34_data_receiver_is_receiving_b1(
+			      !v34_data_receiver_is_receiving_b1(
 				      &fixture.data_receiver) &&
 			      fixture.data_receiver.b1_error_bits == 0u &&
-			      sippymodem_v34_channel_frame_decoder_is_valid(
+			      v34_channel_frame_decoder_is_valid(
 				      &fixture.channel_decoder),
 			      "channel frame mode %zu/%u did not complete",
 			      configuration, selection);
@@ -367,22 +367,22 @@ static bool test_generated_b1_and_data_round_trip(void)
 }
 
 static bool rejected_advance_is_transactional(
-	struct sippymodem_v34_channel_frame_decoder *decoder,
+	struct v34_channel_frame_decoder *decoder,
 	const struct sippymodem_qam_point estimates[2],
-	enum sippymodem_v34_channel_frame_decoder_result expected_result)
+	enum v34_channel_frame_decoder_result expected_result)
 {
-	struct sippymodem_v34_channel_frame_decoder saved = *decoder;
-	struct sippymodem_v34_survivor_decision current;
-	struct sippymodem_v34_survivor_decision saved_current;
-	struct sippymodem_v34_decided_4d_interval decided[4];
-	struct sippymodem_v34_decided_4d_interval saved_decided[4];
+	struct v34_channel_frame_decoder saved = *decoder;
+	struct v34_survivor_decision current;
+	struct v34_survivor_decision saved_current;
+	struct v34_decided_4d_interval decided[4];
+	struct v34_decided_4d_interval saved_decided[4];
 	bool ready = true;
 
 	memset(&current, 0x5a, sizeof(current));
 	memset(decided, 0xa5, sizeof(decided));
 	saved_current = current;
 	memcpy(saved_decided, decided, sizeof(decided));
-	return sippymodem_v34_channel_frame_decoder_advance(
+	return v34_channel_frame_decoder_advance(
 		       decoder, estimates, &current, decided, &ready) ==
 		       expected_result &&
 	       memcmp(decoder, &saved, sizeof(saved)) == 0 &&
@@ -395,79 +395,79 @@ static bool test_transactional_boundaries(void)
 	static const struct sippymodem_qam_point estimates[2] = {
 		{ 1.0, 1.0 }, { 1.0, 1.0 },
 	};
-	struct sippymodem_v34_q14_coefficient invalid_coefficients[3] = {
+	struct v34_q14_coefficient invalid_coefficients[3] = {
 		{ INT16_MIN, 0 }, { 0, 0 }, { 0, 0 },
 	};
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_frame_geometry invalid_geometry;
-	struct sippymodem_v34_channel_frame_decoder decoder;
-	struct sippymodem_v34_channel_frame_decoder saved;
-	struct sippymodem_v34_channel_frame_decoder corrupted;
+	struct v34_frame_geometry geometry;
+	struct v34_frame_geometry invalid_geometry;
+	struct v34_channel_frame_decoder decoder;
+	struct v34_channel_frame_decoder saved;
+	struct v34_channel_frame_decoder corrupted;
 	struct sippymodem_qam_point malformed_estimates[2];
-	struct sippymodem_v34_survivor_decision current;
-	struct sippymodem_v34_decided_4d_interval decided[4];
+	struct v34_survivor_decision current;
+	struct v34_decided_4d_interval decided[4];
 	bool ready;
 
-	CHECK(sippymodem_v34_frame_geometry_init(
-		      &geometry, SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true) ==
-		      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+	CHECK(v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_3000, 8, true) ==
+		      V34_FRAME_SCHEDULE_OK,
 	      "channel frame boundary geometry did not initialize");
 	invalid_geometry = geometry;
 	invalid_geometry.mapping_frames_per_data_frame = 0;
 	memset(&decoder, 0xa5, sizeof(decoder));
 	saved = decoder;
-	CHECK(sippymodem_v34_channel_frame_decoder_init(
+	CHECK(v34_channel_frame_decoder_init(
 		      NULL, &geometry, false, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_init(
 		      &decoder, NULL, false, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_init(
 		      &decoder, &invalid_geometry, false, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_init(
 		      &decoder, &geometry, false, NULL,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_init(
 		      &decoder, &geometry, false, invalid_coefficients,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_init(
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_init(
 		      &decoder, &geometry, false, COEFFICIENTS,
-		      (enum sippymodem_v34_trellis_selection)3) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+		      (enum v34_trellis_selection)3) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
 	      memcmp(&decoder, &saved, sizeof(decoder)) == 0,
 	      "invalid channel frame initialization changed its destination");
-	CHECK(sippymodem_v34_channel_frame_decoder_init(
+	CHECK(v34_channel_frame_decoder_init(
 		      &decoder, &geometry, false, COEFFICIENTS,
-		      SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_OK &&
-	      sippymodem_v34_channel_frame_decoder_is_valid(&decoder) &&
-	      !sippymodem_v34_channel_frame_decoder_is_valid(NULL),
+		      V34_TRELLIS_16_STATE) ==
+		      V34_CHANNEL_FRAME_DECODER_OK &&
+	      v34_channel_frame_decoder_is_valid(&decoder) &&
+	      !v34_channel_frame_decoder_is_valid(NULL),
 	      "valid channel frame decoder did not initialize");
 	saved = decoder;
 	memset(&current, 0x5a, sizeof(current));
 	memset(decided, 0xa5, sizeof(decided));
 	ready = true;
-	CHECK(sippymodem_v34_channel_frame_decoder_advance(
+	CHECK(v34_channel_frame_decoder_advance(
 		      NULL, estimates, &current, decided, &ready) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_advance(
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
 		      &decoder, NULL, &current, decided, &ready) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_advance(
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
 		      &decoder, estimates, NULL, decided, &ready) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_advance(
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
 		      &decoder, estimates, &current, NULL, &ready) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
-	      sippymodem_v34_channel_frame_decoder_advance(
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
 		      &decoder, estimates, &current, decided, NULL) ==
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
 	      memcmp(&decoder, &saved, sizeof(saved)) == 0,
 	      "null channel frame arguments changed state");
 	malformed_estimates[0] = estimates[0];
@@ -475,46 +475,46 @@ static bool test_transactional_boundaries(void)
 	malformed_estimates[0].in_phase = NAN;
 	CHECK(rejected_advance_is_transactional(
 		      &decoder, malformed_estimates,
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
 	      "non-finite channel frame estimate was accepted");
 	malformed_estimates[0].in_phase = DBL_MAX;
 	CHECK(rejected_advance_is_transactional(
 		      &decoder, malformed_estimates,
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE),
+		      V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE),
 	      "overflowing channel frame metric was accepted");
 	corrupted = decoder;
 	corrupted.next_channel_interval = 4;
-	CHECK(!sippymodem_v34_channel_frame_decoder_is_valid(&corrupted) &&
+	CHECK(!v34_channel_frame_decoder_is_valid(&corrupted) &&
 	      rejected_advance_is_transactional(
 		      &corrupted, estimates,
-		      SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
 	      "corrupt channel interval was accepted");
 	corrupted = decoder;
 	corrupted.channel_frame.inversion_4d_mask ^= 1u;
-	CHECK(!sippymodem_v34_channel_frame_decoder_is_valid(&corrupted),
+	CHECK(!v34_channel_frame_decoder_is_valid(&corrupted),
 	      "mismatched channel frame schedule was accepted");
 	corrupted = decoder;
 	corrupted.pending_interval_count = 1;
-	CHECK(!sippymodem_v34_channel_frame_decoder_is_valid(&corrupted),
+	CHECK(!v34_channel_frame_decoder_is_valid(&corrupted),
 	      "misaligned pending frame was accepted");
 	corrupted = decoder;
 	corrupted.channel_decoder.survivor.path_index = 1;
-	CHECK(!sippymodem_v34_channel_frame_decoder_is_valid(&corrupted),
+	CHECK(!v34_channel_frame_decoder_is_valid(&corrupted),
 	      "misaligned survivor cursor was accepted");
-	CHECK(strcmp(sippymodem_v34_channel_frame_decoder_result_name(
-		     SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_OK),
+	CHECK(strcmp(v34_channel_frame_decoder_result_name(
+		     V34_CHANNEL_FRAME_DECODER_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_channel_frame_decoder_result_name(
-		     SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
+	      strcmp(v34_channel_frame_decoder_result_name(
+		     V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_channel_frame_decoder_result_name(
-		     SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE),
+	      strcmp(v34_channel_frame_decoder_result_name(
+		     V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_channel_frame_decoder_result_name(
-		     SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_OUT_OF_RANGE),
+	      strcmp(v34_channel_frame_decoder_result_name(
+		     V34_CHANNEL_FRAME_DECODER_OUT_OF_RANGE),
 		     "out of range") == 0 &&
-	      strcmp(sippymodem_v34_channel_frame_decoder_result_name(
-		     (enum sippymodem_v34_channel_frame_decoder_result)99),
+	      strcmp(v34_channel_frame_decoder_result_name(
+		     (enum v34_channel_frame_decoder_result)99),
 		     "unknown") == 0,
 	      "channel frame result names changed");
 	return true;

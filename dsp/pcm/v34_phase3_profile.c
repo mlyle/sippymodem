@@ -9,66 +9,66 @@ struct exact_fraction {
 	uint32_t denominator;
 };
 
-static bool role_is_valid(enum sippymodem_v34_station_role role)
+static bool role_is_valid(enum v34_station_role role)
 {
-	return role == SIPPYMODEM_V34_CALLING_STATION ||
-	       role == SIPPYMODEM_V34_ANSWERING_STATION;
+	return role == V34_CALLING_STATION ||
+	       role == V34_ANSWERING_STATION;
 }
 
 static bool symbol_rate_fraction(
-	enum sippymodem_v34_symbol_rate rate, struct exact_fraction *fraction)
+	enum v34_symbol_rate rate, struct exact_fraction *fraction)
 {
 	switch (rate) {
-	case SIPPYMODEM_V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2400:
 		*fraction = (struct exact_fraction){ 2400, 1 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_2743:
 		*fraction = (struct exact_fraction){ 19200, 7 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_2800:
+	case V34_SYMBOL_RATE_2800:
 		*fraction = (struct exact_fraction){ 2800, 1 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_3000:
 		*fraction = (struct exact_fraction){ 3000, 1 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_3200:
+	case V34_SYMBOL_RATE_3200:
 		*fraction = (struct exact_fraction){ 3200, 1 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_3429:
+	case V34_SYMBOL_RATE_3429:
 		*fraction = (struct exact_fraction){ 24000, 7 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_COUNT:
+	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}
 	return false;
 }
 
 static bool carrier_ratio(
-	enum sippymodem_v34_symbol_rate rate, bool high_carrier,
+	enum v34_symbol_rate rate, bool high_carrier,
 	struct exact_fraction *ratio)
 {
 	switch (rate) {
-	case SIPPYMODEM_V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2400:
 		*ratio = high_carrier ?
 			(struct exact_fraction){ 3, 4 } :
 			(struct exact_fraction){ 2, 3 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_2743:
-	case SIPPYMODEM_V34_SYMBOL_RATE_2800:
-	case SIPPYMODEM_V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_2800:
+	case V34_SYMBOL_RATE_3000:
 		*ratio = high_carrier ?
 			(struct exact_fraction){ 2, 3 } :
 			(struct exact_fraction){ 3, 5 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_3200:
+	case V34_SYMBOL_RATE_3200:
 		*ratio = high_carrier ?
 			(struct exact_fraction){ 3, 5 } :
 			(struct exact_fraction){ 4, 7 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_3429:
+	case V34_SYMBOL_RATE_3429:
 		*ratio = (struct exact_fraction){ 4, 7 };
 		return true;
-	case SIPPYMODEM_V34_SYMBOL_RATE_COUNT:
+	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}
 	return false;
@@ -115,7 +115,7 @@ static bool md_symbol_count(
 }
 
 static bool profile_fields_match_rates(
-	const struct sippymodem_v34_phase3_profile *profile)
+	const struct v34_phase3_profile *profile)
 {
 	struct exact_fraction symbol_rate;
 	struct exact_fraction ratio;
@@ -136,30 +136,30 @@ static bool profile_fields_match_rates(
 	       profile->md_symbol_count == expected_md_symbols;
 }
 
-bool sippymodem_v34_phase3_profile_is_valid(
-	const struct sippymodem_v34_phase3_profile *profile)
+bool v34_phase3_profile_is_valid(
+	const struct v34_phase3_profile *profile)
 {
 	return profile != NULL && role_is_valid(profile->local_role) &&
 	       profile->transmit_power_reduction_db <=
-		       SIPPYMODEM_V34_INFO1_MAX_POWER_REDUCTION_DB &&
+		       V34_INFO1_MAX_POWER_REDUCTION_DB &&
 	       profile->preemphasis_filter_index <=
-		       SIPPYMODEM_V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX &&
+		       V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX &&
 	       profile->projected_data_rate_2400_bps_units > 0 &&
 	       profile->projected_data_rate_2400_bps_units <=
-		       SIPPYMODEM_V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS &&
+		       V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS &&
 	       profile->md_length_35_ms_units <=
-		       SIPPYMODEM_V34_INFO1_MAX_MD_LENGTH_35_MS_UNITS &&
+		       V34_INFO1_MAX_MD_LENGTH_35_MS_UNITS &&
 	       profile_fields_match_rates(profile);
 }
 
-static enum sippymodem_v34_phase3_profile_result build_profile(
-	struct sippymodem_v34_phase3_profile *profile,
-	enum sippymodem_v34_station_role local_role,
-	enum sippymodem_v34_symbol_rate symbol_rate,
-	const struct sippymodem_v34_info1_probe_result *probe_result,
+static enum v34_phase3_profile_result build_profile(
+	struct v34_phase3_profile *profile,
+	enum v34_station_role local_role,
+	enum v34_symbol_rate symbol_rate,
+	const struct v34_info1_probe_result *probe_result,
 	uint8_t power_reduction_db, uint8_t md_length_35_ms_units)
 {
-	struct sippymodem_v34_phase3_profile selected = {
+	struct v34_phase3_profile selected = {
 		.symbol_rate = symbol_rate,
 		.local_role = local_role,
 		.transmit_power_reduction_db = power_reduction_db,
@@ -175,68 +175,68 @@ static enum sippymodem_v34_phase3_profile_result build_profile(
 	struct exact_fraction frequency;
 
 	if (probe_result->projected_data_rate_2400_bps_units == 0)
-		return SIPPYMODEM_V34_PHASE3_PROFILE_UNUSABLE_SELECTION;
+		return V34_PHASE3_PROFILE_UNUSABLE_SELECTION;
 	if (!symbol_rate_fraction(symbol_rate, &rate) ||
 	    !carrier_ratio(symbol_rate, selected.high_carrier, &ratio) ||
 	    !md_symbol_count(
 		    rate, md_length_35_ms_units, &selected.md_symbol_count))
-		return SIPPYMODEM_V34_PHASE3_PROFILE_INVALID_ARGUMENT;
+		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
 	frequency = carrier_frequency(rate, ratio);
 	selected.symbol_rate_numerator = rate.numerator;
 	selected.symbol_rate_denominator = rate.denominator;
 	selected.carrier_frequency_numerator = frequency.numerator;
 	selected.carrier_frequency_denominator = frequency.denominator;
-	if (!sippymodem_v34_phase3_profile_is_valid(&selected))
-		return SIPPYMODEM_V34_PHASE3_PROFILE_INVALID_ARGUMENT;
+	if (!v34_phase3_profile_is_valid(&selected))
+		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
 	*profile = selected;
-	return SIPPYMODEM_V34_PHASE3_PROFILE_OK;
+	return V34_PHASE3_PROFILE_OK;
 }
 
-enum sippymodem_v34_phase3_profile_result
-sippymodem_v34_phase3_caller_profile(
-	struct sippymodem_v34_phase3_profile *profile,
-	const struct sippymodem_v34_info1c *local_info1c,
-	const struct sippymodem_v34_info1a *peer_info1a)
+enum v34_phase3_profile_result
+v34_phase3_caller_profile(
+	struct v34_phase3_profile *profile,
+	const struct v34_info1c *local_info1c,
+	const struct v34_info1a *peer_info1a)
 {
-	if (profile == NULL || !sippymodem_v34_info1c_is_valid(local_info1c) ||
-	    !sippymodem_v34_info1a_is_valid(peer_info1a))
-		return SIPPYMODEM_V34_PHASE3_PROFILE_INVALID_ARGUMENT;
+	if (profile == NULL || !v34_info1c_is_valid(local_info1c) ||
+	    !v34_info1a_is_valid(peer_info1a))
+		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
 	return build_profile(
-		profile, SIPPYMODEM_V34_CALLING_STATION,
+		profile, V34_CALLING_STATION,
 		peer_info1a->call_to_answer_symbol_rate,
 		&peer_info1a->call_transmit,
 		peer_info1a->common.minimum_peer_power_reduction_db,
 		local_info1c->common.local_md_length_35_ms_units);
 }
 
-enum sippymodem_v34_phase3_profile_result
-sippymodem_v34_phase3_answerer_profile(
-	struct sippymodem_v34_phase3_profile *profile,
-	const struct sippymodem_v34_info1a *local_info1a,
-	const struct sippymodem_v34_info1c *peer_info1c)
+enum v34_phase3_profile_result
+v34_phase3_answerer_profile(
+	struct v34_phase3_profile *profile,
+	const struct v34_info1a *local_info1a,
+	const struct v34_info1c *peer_info1c)
 {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 
-	if (profile == NULL || !sippymodem_v34_info1a_is_valid(local_info1a) ||
-	    !sippymodem_v34_info1c_is_valid(peer_info1c))
-		return SIPPYMODEM_V34_PHASE3_PROFILE_INVALID_ARGUMENT;
+	if (profile == NULL || !v34_info1a_is_valid(local_info1a) ||
+	    !v34_info1c_is_valid(peer_info1c))
+		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
 	symbol_rate = local_info1a->answer_to_call_symbol_rate;
 	return build_profile(
-		profile, SIPPYMODEM_V34_ANSWERING_STATION, symbol_rate,
+		profile, V34_ANSWERING_STATION, symbol_rate,
 		&peer_info1c->answer_transmit[symbol_rate],
 		peer_info1c->common.minimum_peer_power_reduction_db,
 		local_info1a->common.local_md_length_35_ms_units);
 }
 
-const char *sippymodem_v34_phase3_profile_result_name(
-	enum sippymodem_v34_phase3_profile_result result)
+const char *v34_phase3_profile_result_name(
+	enum v34_phase3_profile_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_PHASE3_PROFILE_OK:
+	case V34_PHASE3_PROFILE_OK:
 		return "ok";
-	case SIPPYMODEM_V34_PHASE3_PROFILE_INVALID_ARGUMENT:
+	case V34_PHASE3_PROFILE_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_PHASE3_PROFILE_UNUSABLE_SELECTION:
+	case V34_PHASE3_PROFILE_UNUSABLE_SELECTION:
 		return "unusable selection";
 	}
 	return "unknown";

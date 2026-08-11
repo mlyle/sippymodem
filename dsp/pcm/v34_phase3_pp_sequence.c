@@ -9,13 +9,13 @@ static const double V34_COSINE_PI_OVER_SIX =
 static const double V34_SINE_PI_OVER_SIX = 0.5;
 
 _Static_assert(
-	SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_SYMBOLS <= UINT16_MAX,
+	V34_PHASE3_PP_SEQUENCE_SYMBOLS <= UINT16_MAX,
 	"V.34 PP sequence counter must hold the complete sequence");
 
 static unsigned int pp_phase(uint16_t symbol)
 {
 	unsigned int period_symbol =
-		symbol % SIPPYMODEM_V34_PHASE3_PP_PERIOD_SYMBOLS;
+		symbol % V34_PHASE3_PP_PERIOD_SYMBOLS;
 	unsigned int k = period_symbol / 4u;
 	unsigned int i = period_symbol % 4u;
 	unsigned int phase = k * i;
@@ -46,59 +46,59 @@ static struct sippymodem_qam_point unit_circle_point(unsigned int phase)
 	return point;
 }
 
-bool sippymodem_v34_phase3_pp_sequence_is_valid(
-	const struct sippymodem_v34_phase3_pp_sequence *sequence)
+bool v34_phase3_pp_sequence_is_valid(
+	const struct v34_phase3_pp_sequence *sequence)
 {
 	return sequence != NULL &&
 	       sequence->emitted_symbols <=
-		       SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_SYMBOLS;
+		       V34_PHASE3_PP_SEQUENCE_SYMBOLS;
 }
 
-bool sippymodem_v34_phase3_pp_sequence_is_complete(
-	const struct sippymodem_v34_phase3_pp_sequence *sequence)
+bool v34_phase3_pp_sequence_is_complete(
+	const struct v34_phase3_pp_sequence *sequence)
 {
-	return sippymodem_v34_phase3_pp_sequence_is_valid(sequence) &&
+	return v34_phase3_pp_sequence_is_valid(sequence) &&
 	       sequence->emitted_symbols ==
-		       SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_SYMBOLS;
+		       V34_PHASE3_PP_SEQUENCE_SYMBOLS;
 }
 
-enum sippymodem_v34_phase3_pp_sequence_result
-sippymodem_v34_phase3_pp_sequence_init(
-	struct sippymodem_v34_phase3_pp_sequence *sequence)
+enum v34_phase3_pp_sequence_result
+v34_phase3_pp_sequence_init(
+	struct v34_phase3_pp_sequence *sequence)
 {
 	if (sequence == NULL)
-		return SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT;
-	*sequence = (struct sippymodem_v34_phase3_pp_sequence){ 0 };
-	return SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_OK;
+		return V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT;
+	*sequence = (struct v34_phase3_pp_sequence){ 0 };
+	return V34_PHASE3_PP_SEQUENCE_OK;
 }
 
-enum sippymodem_v34_phase3_pp_sequence_result
-sippymodem_v34_phase3_pp_sequence_next(
-	struct sippymodem_v34_phase3_pp_sequence *sequence,
+enum v34_phase3_pp_sequence_result
+v34_phase3_pp_sequence_next(
+	struct v34_phase3_pp_sequence *sequence,
 	struct sippymodem_qam_point *point)
 {
 	struct sippymodem_qam_point next_point;
 
-	if (!sippymodem_v34_phase3_pp_sequence_is_valid(sequence) ||
+	if (!v34_phase3_pp_sequence_is_valid(sequence) ||
 	    point == NULL)
-		return SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT;
-	if (sippymodem_v34_phase3_pp_sequence_is_complete(sequence))
-		return SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_COMPLETE;
+		return V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT;
+	if (v34_phase3_pp_sequence_is_complete(sequence))
+		return V34_PHASE3_PP_SEQUENCE_COMPLETE;
 	next_point = unit_circle_point(pp_phase(sequence->emitted_symbols));
 	sequence->emitted_symbols++;
 	*point = next_point;
-	return SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_OK;
+	return V34_PHASE3_PP_SEQUENCE_OK;
 }
 
-const char *sippymodem_v34_phase3_pp_sequence_result_name(
-	enum sippymodem_v34_phase3_pp_sequence_result result)
+const char *v34_phase3_pp_sequence_result_name(
+	enum v34_phase3_pp_sequence_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_OK:
+	case V34_PHASE3_PP_SEQUENCE_OK:
 		return "ok";
-	case SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_COMPLETE:
+	case V34_PHASE3_PP_SEQUENCE_COMPLETE:
 		return "complete";
-	case SIPPYMODEM_V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT:
+	case V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

@@ -46,9 +46,9 @@ static bool check_template_point(
 	double magnitude_db = -99.0;
 	bool constrained = !expected_constrained;
 
-	CHECK(sippymodem_v34_preemphasis_template_db(
+	CHECK(v34_preemphasis_template_db(
 		      filter_index, frequency, &magnitude_db, &constrained) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_OK &&
+		      V34_PREEMPHASIS_OK &&
 	      fabs(magnitude_db - expected_db) < 1e-12 &&
 	      constrained == expected_constrained,
 	      "pre-emphasis index %u template changed at %.1f S",
@@ -68,7 +68,7 @@ static bool test_normative_templates(void)
 		      "sloping pre-emphasis template %u failed", filter_index);
 	}
 	for (uint8_t filter_index = 6;
-	     filter_index <= SIPPYMODEM_V34_PREEMPHASIS_MAX_FILTER_INDEX;
+	     filter_index <= V34_PREEMPHASIS_MAX_FILTER_INDEX;
 	     ++filter_index) {
 		double beta = 0.5 * (filter_index - 5u);
 
@@ -91,8 +91,8 @@ static bool test_generated_responses(void)
 	unsigned int bridged_points = 0;
 	double worst_error = 0.0;
 
-	CHECK(SIPPYMODEM_V34_PREEMPHASIS_TAPS == 21 &&
-	      SIPPYMODEM_V34_PREEMPHASIS_DELAY_SAMPLES == 10,
+	CHECK(V34_PREEMPHASIS_TAPS == 21 &&
+	      V34_PREEMPHASIS_DELAY_SAMPLES == 10,
 	      "pre-emphasis FIR size or delay changed");
 	for (size_t band_index = 0; band_index < ARRAY_LENGTH(V34_BANDS);
 	     ++band_index) {
@@ -102,35 +102,35 @@ static bool test_generated_responses(void)
 
 		for (uint8_t filter_index = 0;
 		     filter_index <=
-			     SIPPYMODEM_V34_PREEMPHASIS_MAX_FILTER_INDEX;
+			     V34_PREEMPHASIS_MAX_FILTER_INDEX;
 		     ++filter_index) {
-			struct sippymodem_v34_preemphasis filter;
+			struct v34_preemphasis filter;
 			double coefficient_sum = 0.0;
 
-			CHECK(sippymodem_v34_preemphasis_init(
+			CHECK(v34_preemphasis_init(
 				      &filter, TEST_SAMPLE_RATE,
 				      band->symbol_rate_numerator,
 				      band->symbol_rate_denominator,
 				      filter_index) ==
-				      SIPPYMODEM_V34_PREEMPHASIS_OK &&
-			      sippymodem_v34_preemphasis_is_valid(&filter) &&
+				      V34_PREEMPHASIS_OK &&
+			      v34_preemphasis_is_valid(&filter) &&
 			      filter.filter_index == filter_index,
 			      "pre-emphasis filter %u did not initialize for band %zu",
 			      filter_index, band_index);
 			for (size_t tap = 0;
-			     tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS; ++tap) {
+			     tap < V34_PREEMPHASIS_TAPS; ++tap) {
 				CHECK(filter.coefficients[tap] ==
 					      filter.coefficients[
-						      SIPPYMODEM_V34_PREEMPHASIS_TAPS -
+						      V34_PREEMPHASIS_TAPS -
 						      1u - tap],
 				      "pre-emphasis filter %u lost linear phase",
 				      filter_index);
 				coefficient_sum += filter.coefficients[tap];
 			}
 			CHECK(fabs(coefficient_sum - 1.0) < 1e-12 &&
-			      sippymodem_v34_preemphasis_peak_gain_bound(
+			      v34_preemphasis_peak_gain_bound(
 				      &filter) >= 1.0 &&
-			      sippymodem_v34_preemphasis_peak_gain_bound(
+			      v34_preemphasis_peak_gain_bound(
 				      &filter) < 5.0,
 			      "pre-emphasis filter %u normalization changed",
 			      filter_index);
@@ -145,14 +145,14 @@ static bool test_generated_responses(void)
 				double error;
 				bool constrained;
 
-				CHECK(sippymodem_v34_preemphasis_template_db(
+				CHECK(v34_preemphasis_template_db(
 					      filter_index, normalized_frequency,
 					      &target_db, &constrained) ==
-					      SIPPYMODEM_V34_PREEMPHASIS_OK &&
-				      sippymodem_v34_preemphasis_response_db(
+					      V34_PREEMPHASIS_OK &&
+				      v34_preemphasis_response_db(
 					      &filter, normalized_frequency,
 					      &response_db) ==
-					      SIPPYMODEM_V34_PREEMPHASIS_OK,
+					      V34_PREEMPHASIS_OK,
 				      "pre-emphasis response %u:%zu:%u failed",
 				      filter_index, band_index, step);
 				error = fabs(response_db - target_db);
@@ -184,24 +184,24 @@ static uint32_t next_random(uint32_t *state)
 
 static bool test_streaming_filter(void)
 {
-	struct sippymodem_v34_preemphasis first;
-	struct sippymodem_v34_preemphasis second;
+	struct v34_preemphasis first;
+	struct v34_preemphasis second;
 	uint32_t random = UINT32_C(0x3d4a29c7);
 
-	CHECK(sippymodem_v34_preemphasis_init(
+	CHECK(v34_preemphasis_init(
 		      &first, TEST_SAMPLE_RATE, 2400, 1, 5) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_OK,
+		      V34_PREEMPHASIS_OK,
 	      "pre-emphasis impulse fixture did not initialize");
 	for (size_t sample = 0;
-	     sample < SIPPYMODEM_V34_PREEMPHASIS_TAPS + 5u; ++sample) {
+	     sample < V34_PREEMPHASIS_TAPS + 5u; ++sample) {
 		double output = -99.0;
-		double expected = sample < SIPPYMODEM_V34_PREEMPHASIS_TAPS ?
+		double expected = sample < V34_PREEMPHASIS_TAPS ?
 				  first.coefficients[sample] :
 				  0.0;
 
-		CHECK(sippymodem_v34_preemphasis_sample(
+		CHECK(v34_preemphasis_sample(
 			      &first, sample == 0 ? 1.0 : 0.0, &output) ==
-			      SIPPYMODEM_V34_PREEMPHASIS_OK &&
+			      V34_PREEMPHASIS_OK &&
 		      fabs(output - expected) < 1e-14,
 		      "pre-emphasis impulse response changed at sample %zu",
 		      sample);
@@ -210,9 +210,9 @@ static bool test_streaming_filter(void)
 		double input = (double)(int32_t)next_random(&random) / INT32_MAX;
 		double output;
 
-		CHECK(sippymodem_v34_preemphasis_sample(
+		CHECK(v34_preemphasis_sample(
 			      &first, input, &output) ==
-			      SIPPYMODEM_V34_PREEMPHASIS_OK,
+			      V34_PREEMPHASIS_OK,
 		      "pre-emphasis prefix failed at sample %u", sample);
 	}
 	second = first;
@@ -221,18 +221,18 @@ static bool test_streaming_filter(void)
 		double first_output;
 		double second_output;
 
-		CHECK(sippymodem_v34_preemphasis_sample(
+		CHECK(v34_preemphasis_sample(
 			      &first, input, &first_output) ==
-			      SIPPYMODEM_V34_PREEMPHASIS_OK &&
-		      sippymodem_v34_preemphasis_sample(
+			      V34_PREEMPHASIS_OK &&
+		      v34_preemphasis_sample(
 			      &second, input, &second_output) ==
-			      SIPPYMODEM_V34_PREEMPHASIS_OK &&
+			      V34_PREEMPHASIS_OK &&
 		      first_output == second_output &&
 		      memcmp(&first, &second, sizeof(first)) == 0,
 		      "copied pre-emphasis filter diverged at sample %u", sample);
 	}
-	CHECK(sippymodem_v34_preemphasis_reset(&first) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_OK &&
+	CHECK(v34_preemphasis_reset(&first) ==
+		      V34_PREEMPHASIS_OK &&
 	      first.next_history == 0 &&
 	      memcmp(first.coefficients, second.coefficients,
 		     sizeof(first.coefficients)) == 0,
@@ -240,9 +240,9 @@ static bool test_streaming_filter(void)
 	for (size_t sample = 0; sample < ARRAY_LENGTH(first.history); ++sample)
 		CHECK(first.history[sample] == 0.0,
 		      "pre-emphasis reset retained sample %zu", sample);
-	CHECK(sippymodem_v34_preemphasis_init(
+	CHECK(v34_preemphasis_init(
 		      &first, TEST_SAMPLE_RATE, 5600, 2, 3) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_OK &&
+		      V34_PREEMPHASIS_OK &&
 	      first.symbol_rate_numerator == 2800 &&
 	      first.symbol_rate_denominator == 1,
 	      "pre-emphasis rate fraction was not reduced");
@@ -251,12 +251,12 @@ static bool test_streaming_filter(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_preemphasis filter;
-	struct sippymodem_v34_preemphasis before;
-	struct sippymodem_v34_preemphasis target;
-	struct sippymodem_v34_preemphasis before_target;
-	struct sippymodem_v34_preemphasis invalid;
-	struct sippymodem_v34_preemphasis huge;
+	struct v34_preemphasis filter;
+	struct v34_preemphasis before;
+	struct v34_preemphasis target;
+	struct v34_preemphasis before_target;
+	struct v34_preemphasis invalid;
+	struct v34_preemphasis huge;
 	double output = -99.0;
 	double before_output = output;
 	bool constrained = true;
@@ -264,121 +264,121 @@ static bool test_validation(void)
 
 	memset(&target, 0xa5, sizeof(target));
 	before_target = target;
-	CHECK(sippymodem_v34_preemphasis_init(
+	CHECK(v34_preemphasis_init(
 		      NULL, TEST_SAMPLE_RATE, 2400, 1, 0) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_init(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_init(
 		      &target, 0, 2400, 1, 0) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_init(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_init(
 		      &target, TEST_SAMPLE_RATE, 0, 1, 0) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_init(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_init(
 		      &target, TEST_SAMPLE_RATE, 2400, 0, 0) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_init(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_init(
 		      &target, 4800, 2400, 1, 0) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_init(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_init(
 		      &target, TEST_SAMPLE_RATE, 2400, 1, 11) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
 	      memcmp(&target, &before_target, sizeof(target)) == 0,
 	      "invalid pre-emphasis initialization mutated its target");
-	CHECK(sippymodem_v34_preemphasis_init(
+	CHECK(v34_preemphasis_init(
 		      &filter, TEST_SAMPLE_RATE, 2400, 1, 5) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_OK,
+		      V34_PREEMPHASIS_OK,
 	      "pre-emphasis validation fixture did not initialize");
 	before = filter;
-	CHECK(sippymodem_v34_preemphasis_sample(NULL, 0.0, &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_sample(&filter, NAN, &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_sample(&filter, INFINITY, &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_sample(&filter, 0.0, NULL) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	CHECK(v34_preemphasis_sample(NULL, 0.0, &output) ==
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_sample(&filter, NAN, &output) ==
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_sample(&filter, INFINITY, &output) ==
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_sample(&filter, 0.0, NULL) ==
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
 	      memcmp(&filter, &before, sizeof(filter)) == 0 &&
 	      output == before_output,
 	      "invalid pre-emphasis sample mutated state");
 	huge = filter;
-	for (size_t tap = 0; tap < SIPPYMODEM_V34_PREEMPHASIS_TAPS; ++tap) {
+	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS; ++tap) {
 		size_t previous =
-			(huge.next_history + SIPPYMODEM_V34_PREEMPHASIS_TAPS - tap) %
-			SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+			(huge.next_history + V34_PREEMPHASIS_TAPS - tap) %
+			V34_PREEMPHASIS_TAPS;
 
 		huge.history[previous] =
 			copysign(DBL_MAX, huge.coefficients[tap]);
 	}
 	before = huge;
-	CHECK(sippymodem_v34_preemphasis_sample(
+	CHECK(v34_preemphasis_sample(
 		      &huge, copysign(DBL_MAX, huge.coefficients[0]), &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_NUMERIC_FAILURE &&
+		      V34_PREEMPHASIS_NUMERIC_FAILURE &&
 	      memcmp(&huge, &before, sizeof(huge)) == 0 &&
 	      output == before_output,
 	      "overflowing pre-emphasis sample was not transactional");
 	invalid = filter;
-	invalid.next_history = SIPPYMODEM_V34_PREEMPHASIS_TAPS;
+	invalid.next_history = V34_PREEMPHASIS_TAPS;
 	before = invalid;
-	CHECK(!sippymodem_v34_preemphasis_is_valid(NULL) &&
-	      !sippymodem_v34_preemphasis_is_valid(&invalid) &&
-	      sippymodem_v34_preemphasis_reset(NULL) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_reset(&invalid) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	CHECK(!v34_preemphasis_is_valid(NULL) &&
+	      !v34_preemphasis_is_valid(&invalid) &&
+	      v34_preemphasis_reset(NULL) ==
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_reset(&invalid) ==
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
 	      memcmp(&invalid, &before, sizeof(invalid)) == 0 &&
-	      sippymodem_v34_preemphasis_peak_gain_bound(NULL) == 0.0 &&
-	      sippymodem_v34_preemphasis_peak_gain_bound(&invalid) == 0.0,
+	      v34_preemphasis_peak_gain_bound(NULL) == 0.0 &&
+	      v34_preemphasis_peak_gain_bound(&invalid) == 0.0,
 	      "invalid pre-emphasis state was accepted");
-	CHECK(sippymodem_v34_preemphasis_response_db(
+	CHECK(v34_preemphasis_response_db(
 		      NULL, 0.0, &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_response_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_response_db(
 		      &filter, -0.1, &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_response_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_response_db(
 		      &filter, NAN, &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_response_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_response_db(
 		      &filter, 2.0, &output) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_response_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_response_db(
 		      &filter, 0.0, NULL) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
 	      output == before_output,
 	      "invalid pre-emphasis response query mutated its output");
-	CHECK(sippymodem_v34_preemphasis_template_db(
+	CHECK(v34_preemphasis_template_db(
 		      11, 0.0, &output, &constrained) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_template_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_template_db(
 		      0, -0.1, &output, &constrained) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_template_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_template_db(
 		      0, 1.21, &output, &constrained) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_template_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_template_db(
 		      0, 0.0, NULL, &constrained) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
-	      sippymodem_v34_preemphasis_template_db(
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
+	      v34_preemphasis_template_db(
 		      0, 0.0, &output, NULL) ==
-		      SIPPYMODEM_V34_PREEMPHASIS_INVALID_ARGUMENT &&
+		      V34_PREEMPHASIS_INVALID_ARGUMENT &&
 	      output == before_output && constrained == before_constrained,
 	      "invalid pre-emphasis template query mutated its outputs");
 	invalid = filter;
 	invalid.coefficients[0] += 0.25;
-	CHECK(!sippymodem_v34_preemphasis_is_valid(&invalid),
+	CHECK(!v34_preemphasis_is_valid(&invalid),
 	      "asymmetric pre-emphasis coefficients were accepted");
 	invalid = filter;
 	invalid.history[0] = NAN;
-	CHECK(!sippymodem_v34_preemphasis_is_valid(&invalid),
+	CHECK(!v34_preemphasis_is_valid(&invalid),
 	      "non-finite pre-emphasis history was accepted");
-	CHECK(strcmp(sippymodem_v34_preemphasis_result_name(
-			     SIPPYMODEM_V34_PREEMPHASIS_OK),
+	CHECK(strcmp(v34_preemphasis_result_name(
+			     V34_PREEMPHASIS_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_preemphasis_result_name(
-			     SIPPYMODEM_V34_PREEMPHASIS_NUMERIC_FAILURE),
+	      strcmp(v34_preemphasis_result_name(
+			     V34_PREEMPHASIS_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_preemphasis_result_name(
-			     (enum sippymodem_v34_preemphasis_result)99),
+	      strcmp(v34_preemphasis_result_name(
+			     (enum v34_preemphasis_result)99),
 		     "unknown") == 0,
 	      "pre-emphasis result names changed");
 	return true;

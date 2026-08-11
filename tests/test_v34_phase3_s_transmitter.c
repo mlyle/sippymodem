@@ -23,52 +23,52 @@ struct marker_statistics {
 };
 
 static struct exact_profile_rates profile_rates(
-	enum sippymodem_v34_symbol_rate rate, bool high_carrier)
+	enum v34_symbol_rate rate, bool high_carrier)
 {
 	switch (rate) {
-	case SIPPYMODEM_V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2400:
 		return (struct exact_profile_rates){
 			2400, 1, high_carrier ? 1800u : 1600u, 1,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_2743:
 		return (struct exact_profile_rates){
 			19200, 7, high_carrier ? 12800u : 11520u, 7,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_2800:
+	case V34_SYMBOL_RATE_2800:
 		return (struct exact_profile_rates){
 			2800, 1, high_carrier ? 5600u : 1680u,
 			high_carrier ? 3u : 1u,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_3000:
 		return (struct exact_profile_rates){
 			3000, 1, high_carrier ? 2000u : 1800u, 1,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_3200:
+	case V34_SYMBOL_RATE_3200:
 		return (struct exact_profile_rates){
 			3200, 1, high_carrier ? 1920u : 12800u,
 			high_carrier ? 1u : 7u,
 		};
-	case SIPPYMODEM_V34_SYMBOL_RATE_3429:
+	case V34_SYMBOL_RATE_3429:
 		return (struct exact_profile_rates){ 24000, 7, 96000, 49 };
-	case SIPPYMODEM_V34_SYMBOL_RATE_COUNT:
+	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}
 	return (struct exact_profile_rates){ 0 };
 }
 
-static struct sippymodem_v34_phase3_profile profile_fixture(
-	enum sippymodem_v34_symbol_rate rate, bool high_carrier,
+static struct v34_phase3_profile profile_fixture(
+	enum v34_symbol_rate rate, bool high_carrier,
 	uint8_t power_reduction_db, uint8_t filter_index)
 {
 	struct exact_profile_rates rates = profile_rates(rate, high_carrier);
 
-	return (struct sippymodem_v34_phase3_profile){
+	return (struct v34_phase3_profile){
 		.symbol_rate_numerator = rates.symbol_numerator,
 		.symbol_rate_denominator = rates.symbol_denominator,
 		.carrier_frequency_numerator = rates.carrier_numerator,
 		.carrier_frequency_denominator = rates.carrier_denominator,
 		.symbol_rate = rate,
-		.local_role = SIPPYMODEM_V34_CALLING_STATION,
+		.local_role = V34_CALLING_STATION,
 		.transmit_power_reduction_db = power_reduction_db,
 		.preemphasis_filter_index = filter_index,
 		.projected_data_rate_2400_bps_units = 1,
@@ -77,11 +77,11 @@ static struct sippymodem_v34_phase3_profile profile_fixture(
 }
 
 static uint32_t expected_samples(
-	const struct sippymodem_v34_phase3_profile *profile,
+	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate)
 {
-	uint64_t last_symbol = SIPPYMODEM_V34_PHASE3_S_SEQUENCE_SYMBOLS +
-		SIPPYMODEM_V34_PHASE3_S_TAIL_SYMBOLS - 1u;
+	uint64_t last_symbol = V34_PHASE3_S_SEQUENCE_SYMBOLS +
+		V34_PHASE3_S_TAIL_SYMBOLS - 1u;
 	uint64_t numerator = last_symbol * sample_rate *
 		profile->symbol_rate_denominator;
 	uint64_t last_acceptance =
@@ -89,26 +89,26 @@ static uint32_t expected_samples(
 		profile->symbol_rate_numerator;
 
 	return (uint32_t)(last_acceptance + 1u +
-		SIPPYMODEM_V34_PHASE3_S_FILTER_TAIL_SAMPLES);
+		V34_PHASE3_S_FILTER_TAIL_SAMPLES);
 }
 
 static bool render_marker(
-	struct sippymodem_v34_phase3_s_transmitter *transmitter,
+	struct v34_phase3_s_transmitter *transmitter,
 	struct marker_statistics *statistics)
 {
 	uint32_t limit = expected_samples(
 		&transmitter->profile, transmitter->carrier.channel.sample_rate);
 
 	memset(statistics, 0, sizeof(*statistics));
-	while (!sippymodem_v34_phase3_s_transmitter_is_complete(transmitter)) {
+	while (!v34_phase3_s_transmitter_is_complete(transmitter)) {
 		int16_t sample;
 		int magnitude;
 
 		statistics->stages_seen |= 1u << transmitter->stage;
 		CHECK(statistics->samples < limit &&
-		      sippymodem_v34_phase3_s_transmitter_sample(
+		      v34_phase3_s_transmitter_sample(
 			      transmitter, &sample) ==
-			      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK,
+			      V34_PHASE3_S_TRANSMITTER_OK,
 		      "marker stopped at sample %u", statistics->samples);
 		statistics->sum_squares +=
 			(long double)sample * (long double)sample;
@@ -127,21 +127,21 @@ static bool test_all_line_profiles(void)
 	unsigned int filter_index = 0;
 
 	for (unsigned int rate_index = 0;
-	     rate_index < SIPPYMODEM_V34_SYMBOL_RATE_COUNT; ++rate_index) {
-		enum sippymodem_v34_symbol_rate rate =
-			(enum sippymodem_v34_symbol_rate)rate_index;
+	     rate_index < V34_SYMBOL_RATE_COUNT; ++rate_index) {
+		enum v34_symbol_rate rate =
+			(enum v34_symbol_rate)rate_index;
 		unsigned int carrier_count =
-			rate == SIPPYMODEM_V34_SYMBOL_RATE_3429 ? 1u : 2u;
+			rate == V34_SYMBOL_RATE_3429 ? 1u : 2u;
 
 		for (unsigned int high = 0; high < carrier_count; ++high) {
-			struct sippymodem_v34_phase3_profile profile =
+			struct v34_phase3_profile profile =
 				profile_fixture(
 					rate, high != 0, 0,
 					(uint8_t)filter_index);
-			struct sippymodem_v34_phase3_s_transmitter transmitter;
+			struct v34_phase3_s_transmitter transmitter;
 			struct marker_statistics statistics;
 			struct sippymodem_qam_modulator drained_carrier;
-			struct sippymodem_v34_preemphasis drained_filter;
+			struct v34_preemphasis drained_filter;
 			const struct sippymodem_qam_point zero = { 0 };
 			double carrier_sample;
 			double filtered_sample;
@@ -149,10 +149,10 @@ static bool test_all_line_profiles(void)
 			long double measured_rms;
 			uint32_t count = expected_samples(&profile, sample_rate);
 
-			CHECK(sippymodem_v34_phase3_profile_is_valid(&profile) &&
-			      sippymodem_v34_phase3_s_transmitter_init(
+			CHECK(v34_phase3_profile_is_valid(&profile) &&
+			      v34_phase3_s_transmitter_init(
 				      &transmitter, &profile, sample_rate, 5000) ==
-				      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK,
+				      V34_PHASE3_S_TRANSMITTER_OK,
 			      "profile %u/%u marker did not initialize",
 			      rate_index, high);
 			CHECK(transmitter.carrier.channel
@@ -180,13 +180,13 @@ static bool test_all_line_profiles(void)
 			CHECK(statistics.samples == count &&
 			      transmitter.generated_samples == count &&
 			      transmitter.sequence.emitted_symbols ==
-				      SIPPYMODEM_V34_PHASE3_S_SEQUENCE_SYMBOLS &&
+				      V34_PHASE3_S_SEQUENCE_SYMBOLS &&
 			      transmitter.tail_symbols ==
-				      SIPPYMODEM_V34_PHASE3_S_TAIL_SYMBOLS &&
+				      V34_PHASE3_S_TAIL_SYMBOLS &&
 			      transmitter.filter_tail_samples ==
-				      SIPPYMODEM_V34_PHASE3_S_FILTER_TAIL_SAMPLES &&
+				      V34_PHASE3_S_FILTER_TAIL_SAMPLES &&
 			      statistics.stages_seen ==
-				      (1u << (SIPPYMODEM_V34_PHASE3_S_TRANSMIT_COMPLETE +
+				      (1u << (V34_PHASE3_S_TRANSMIT_COMPLETE +
 					      1u)) -
 					      1u &&
 			      statistics.peak > 0 && statistics.peak <= INT16_MAX &&
@@ -196,10 +196,10 @@ static bool test_all_line_profiles(void)
 			CHECK(sippymodem_qam_modulator_sample_f64(
 				      &drained_carrier, &zero, &carrier_sample,
 				      &accepted) == SIPPYMODEM_QAM_OK &&
-			      sippymodem_v34_preemphasis_sample(
+			      v34_preemphasis_sample(
 				      &drained_filter, carrier_sample,
 				      &filtered_sample) ==
-				      SIPPYMODEM_V34_PREEMPHASIS_OK &&
+				      V34_PREEMPHASIS_OK &&
 			      carrier_sample == 0.0 && filtered_sample == 0.0,
 			      "profile %u/%u left an undrained line sample",
 			      rate_index, high);
@@ -213,11 +213,11 @@ static bool test_all_line_profiles(void)
 
 static bool test_negotiated_power(void)
 {
-	struct sippymodem_v34_phase3_profile full_profile = profile_fixture(
-		SIPPYMODEM_V34_SYMBOL_RATE_3000, true, 0, 8);
-	struct sippymodem_v34_phase3_profile reduced_profile = full_profile;
-	struct sippymodem_v34_phase3_s_transmitter full;
-	struct sippymodem_v34_phase3_s_transmitter reduced;
+	struct v34_phase3_profile full_profile = profile_fixture(
+		V34_SYMBOL_RATE_3000, true, 0, 8);
+	struct v34_phase3_profile reduced_profile = full_profile;
+	struct v34_phase3_s_transmitter full;
+	struct v34_phase3_s_transmitter reduced;
 	struct marker_statistics full_statistics;
 	struct marker_statistics reduced_statistics;
 	long double full_rms;
@@ -225,12 +225,12 @@ static bool test_negotiated_power(void)
 	double expected_ratio = pow(10.0, -6.0 / 20.0);
 
 	reduced_profile.transmit_power_reduction_db = 6;
-	CHECK(sippymodem_v34_phase3_s_transmitter_init(
+	CHECK(v34_phase3_s_transmitter_init(
 		      &full, &full_profile, 8000, 6000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK &&
-	      sippymodem_v34_phase3_s_transmitter_init(
+		      V34_PHASE3_S_TRANSMITTER_OK &&
+	      v34_phase3_s_transmitter_init(
 		      &reduced, &reduced_profile, 8000, 6000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK &&
+		      V34_PHASE3_S_TRANSMITTER_OK &&
 	      full.raw_rms == reduced.raw_rms &&
 	      fabs(reduced.output_gain / full.output_gain - expected_ratio) <
 		      1e-12,
@@ -252,46 +252,46 @@ static bool test_negotiated_power(void)
 
 static bool test_copy_and_completion(void)
 {
-	struct sippymodem_v34_phase3_profile profile = profile_fixture(
-		SIPPYMODEM_V34_SYMBOL_RATE_2743, true, 2, 7);
-	struct sippymodem_v34_phase3_s_transmitter first;
-	struct sippymodem_v34_phase3_s_transmitter second;
+	struct v34_phase3_profile profile = profile_fixture(
+		V34_SYMBOL_RATE_2743, true, 2, 7);
+	struct v34_phase3_s_transmitter first;
+	struct v34_phase3_s_transmitter second;
 
-	CHECK(sippymodem_v34_phase3_s_transmitter_init(
+	CHECK(v34_phase3_s_transmitter_init(
 		      &first, &profile, 8000, 5000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK,
+		      V34_PHASE3_S_TRANSMITTER_OK,
 	      "copy fixture did not initialize");
 	for (unsigned int index = 0; index < 137; ++index) {
 		int16_t ignored;
 
-		CHECK(sippymodem_v34_phase3_s_transmitter_sample(
+		CHECK(v34_phase3_s_transmitter_sample(
 			      &first, &ignored) ==
-			      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK,
+			      V34_PHASE3_S_TRANSMITTER_OK,
 		      "copy fixture prefix stopped at %u", index);
 	}
 	second = first;
-	while (!sippymodem_v34_phase3_s_transmitter_is_complete(&first)) {
+	while (!v34_phase3_s_transmitter_is_complete(&first)) {
 		int16_t first_sample;
 		int16_t second_sample;
 
-		CHECK(sippymodem_v34_phase3_s_transmitter_sample(
+		CHECK(v34_phase3_s_transmitter_sample(
 			      &first, &first_sample) ==
-			      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK &&
-		      sippymodem_v34_phase3_s_transmitter_sample(
+			      V34_PHASE3_S_TRANSMITTER_OK &&
+		      v34_phase3_s_transmitter_sample(
 			      &second, &second_sample) ==
-			      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK &&
+			      V34_PHASE3_S_TRANSMITTER_OK &&
 		      first_sample == second_sample &&
 		      memcmp(&first, &second, sizeof(first)) == 0,
 		      "copied marker diverged at sample %u",
 		      first.generated_samples);
 	}
 	{
-		struct sippymodem_v34_phase3_s_transmitter before = first;
+		struct v34_phase3_s_transmitter before = first;
 		int16_t sample = 1234;
 
-		CHECK(sippymodem_v34_phase3_s_transmitter_sample(
+		CHECK(v34_phase3_s_transmitter_sample(
 			      &first, &sample) ==
-			      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_COMPLETE &&
+			      V34_PHASE3_S_TRANSMITTER_COMPLETE &&
 		      memcmp(&first, &before, sizeof(first)) == 0 &&
 		      sample == 1234,
 		      "completed marker mutated state or output");
@@ -301,65 +301,65 @@ static bool test_copy_and_completion(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_phase3_profile profile = profile_fixture(
-		SIPPYMODEM_V34_SYMBOL_RATE_3429, false, 0, 10);
-	struct sippymodem_v34_phase3_profile invalid_profile = profile;
-	struct sippymodem_v34_phase3_s_transmitter transmitter;
-	struct sippymodem_v34_phase3_s_transmitter before;
+	struct v34_phase3_profile profile = profile_fixture(
+		V34_SYMBOL_RATE_3429, false, 0, 10);
+	struct v34_phase3_profile invalid_profile = profile;
+	struct v34_phase3_s_transmitter transmitter;
+	struct v34_phase3_s_transmitter before;
 	int16_t sample = 1234;
 
 	memset(&transmitter, 0xa5, sizeof(transmitter));
 	before = transmitter;
 	invalid_profile.preemphasis_filter_index = 11;
-	CHECK(sippymodem_v34_phase3_s_transmitter_init(
+	CHECK(v34_phase3_s_transmitter_init(
 		      NULL, &profile, 8000, 5000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase3_s_transmitter_init(
+		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_s_transmitter_init(
 		      &transmitter, NULL, 8000, 5000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase3_s_transmitter_init(
+		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_s_transmitter_init(
 		      &transmitter, &invalid_profile, 8000, 5000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase3_s_transmitter_init(
+		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_s_transmitter_init(
 		      &transmitter, &profile, 7000, 5000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
-	      sippymodem_v34_phase3_s_transmitter_init(
+		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_s_transmitter_init(
 		      &transmitter, &profile, 8000, 0) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
+		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "invalid marker initialization mutated its destination");
-	CHECK(sippymodem_v34_phase3_s_transmitter_init(
+	CHECK(v34_phase3_s_transmitter_init(
 		      &transmitter, &profile, 8000, INT16_MAX) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_CLIPPING_RISK &&
+		      V34_PHASE3_S_TRANSMITTER_CLIPPING_RISK &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "clipping marker was accepted or mutated its destination");
-	CHECK(sippymodem_v34_phase3_s_transmitter_init(
+	CHECK(v34_phase3_s_transmitter_init(
 		      &transmitter, &profile, 8000, 5000) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_OK &&
-	      sippymodem_v34_phase3_s_transmitter_is_valid(&transmitter) &&
-	      !sippymodem_v34_phase3_s_transmitter_is_valid(NULL) &&
-	      !sippymodem_v34_phase3_s_transmitter_is_complete(NULL),
+		      V34_PHASE3_S_TRANSMITTER_OK &&
+	      v34_phase3_s_transmitter_is_valid(&transmitter) &&
+	      !v34_phase3_s_transmitter_is_valid(NULL) &&
+	      !v34_phase3_s_transmitter_is_complete(NULL),
 	      "valid marker state was not recognized");
 	before = transmitter;
-	CHECK(sippymodem_v34_phase3_s_transmitter_sample(
+	CHECK(v34_phase3_s_transmitter_sample(
 		      &transmitter, NULL) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
+		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "null marker output mutated state");
 	transmitter.generated_samples = UINT32_MAX;
 	before = transmitter;
-	CHECK(!sippymodem_v34_phase3_s_transmitter_is_valid(&transmitter) &&
-	      sippymodem_v34_phase3_s_transmitter_sample(
+	CHECK(!v34_phase3_s_transmitter_is_valid(&transmitter) &&
+	      v34_phase3_s_transmitter_sample(
 		      &transmitter, &sample) ==
-		      SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
+		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
 	      sample == 1234,
 	      "invalid marker state mutated state or output");
-	CHECK(strcmp(sippymodem_v34_phase3_s_transmitter_result_name(
-			     SIPPYMODEM_V34_PHASE3_S_TRANSMITTER_CLIPPING_RISK),
+	CHECK(strcmp(v34_phase3_s_transmitter_result_name(
+			     V34_PHASE3_S_TRANSMITTER_CLIPPING_RISK),
 		     "clipping risk") == 0 &&
-	      strcmp(sippymodem_v34_phase3_s_transmitter_result_name(
-			     (enum sippymodem_v34_phase3_s_transmitter_result)99),
+	      strcmp(v34_phase3_s_transmitter_result_name(
+			     (enum v34_phase3_s_transmitter_result)99),
 		     "unknown") == 0,
 	      "marker result names changed");
 	return true;

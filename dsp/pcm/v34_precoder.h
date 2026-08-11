@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V34_PRECODER_H
-#define SIPPYMODEM_V34_PRECODER_H
+#ifndef V34_PRECODER_H
+#define V34_PRECODER_H
 
 #include "v34_constellation.h"
 #include "v34_mapping_parameters.h"
@@ -10,86 +10,86 @@
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_V34_PRECODER_TAP_COUNT = 3,
-	SIPPYMODEM_V34_Q7_SCALE = 128,
-	SIPPYMODEM_V34_Q14_SCALE = 16384,
+	V34_PRECODER_TAP_COUNT = 3,
+	V34_Q7_SCALE = 128,
+	V34_Q14_SCALE = 16384,
 };
 
 /* Complex protocol values with seven fractional bits. The wider components
  * retain valid intermediate p(n) values without signed 16-bit wraparound. */
-struct sippymodem_v34_q7_point {
+struct v34_q7_point {
 	int32_t in_phase;
 	int32_t quadrature;
 };
 
 /* Each component is signed Q14 in the half-open interval (-2, 2). */
-struct sippymodem_v34_q14_coefficient {
+struct v34_q14_coefficient {
 	int16_t real;
 	int16_t imaginary;
 };
 
-enum sippymodem_v34_precoder_grid_step {
-	SIPPYMODEM_V34_PRECODER_GRID_STEP_2 = 2,
-	SIPPYMODEM_V34_PRECODER_GRID_STEP_4 = 4,
+enum v34_precoder_grid_step {
+	V34_PRECODER_GRID_STEP_2 = 2,
+	V34_PRECODER_GRID_STEP_4 = 4,
 };
 
-enum sippymodem_v34_precoder_result {
-	SIPPYMODEM_V34_PRECODER_OK,
-	SIPPYMODEM_V34_PRECODER_INVALID_ARGUMENT,
-	SIPPYMODEM_V34_PRECODER_OUT_OF_RANGE,
+enum v34_precoder_result {
+	V34_PRECODER_OK,
+	V34_PRECODER_INVALID_ARGUMENT,
+	V34_PRECODER_OUT_OF_RANGE,
 };
 
-struct sippymodem_v34_precoder {
-	struct sippymodem_v34_q14_coefficient
-		coefficients[SIPPYMODEM_V34_PRECODER_TAP_COUNT];
+struct v34_precoder {
+	struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT];
 	/* x(n - 1) is first; all entries are signed Q7. */
-	struct sippymodem_v34_q7_point
-		previous_symbols[SIPPYMODEM_V34_PRECODER_TAP_COUNT];
-	enum sippymodem_v34_precoder_grid_step grid_step;
+	struct v34_q7_point
+		previous_symbols[V34_PRECODER_TAP_COUNT];
+	enum v34_precoder_grid_step grid_step;
 };
 
-struct sippymodem_v34_precoder_prediction {
+struct v34_precoder_prediction {
 	/* p(n), after exact Q7 rounding of the complex filter output. */
-	struct sippymodem_v34_q7_point filter_output;
+	struct v34_q7_point filter_output;
 	/* c(n), represented in exact integer grid units. */
-	struct sippymodem_v34_grid_point lattice_offset;
+	struct v34_grid_point lattice_offset;
 };
 
-struct sippymodem_v34_precoder_symbol {
+struct v34_precoder_symbol {
 	/* p(n), after exact Q7 rounding of the complex filter output. */
-	struct sippymodem_v34_q7_point filter_output;
+	struct v34_q7_point filter_output;
 	/* c(n), represented in exact integer grid units. */
-	struct sippymodem_v34_grid_point lattice_offset;
+	struct v34_grid_point lattice_offset;
 	/* y(n) = u(n) + c(n), represented in exact integer grid units. */
-	struct sippymodem_v34_grid_point channel_output;
+	struct v34_grid_point channel_output;
 	/* x(n) = y(n) - p(n), represented in signed Q7. */
-	struct sippymodem_v34_q7_point precoded_symbol;
+	struct v34_q7_point precoded_symbol;
 };
 
 /* Initialize with zero history and derive the grid step from the high mapping
  * frame. The destination is unchanged when any input is invalid. */
-enum sippymodem_v34_precoder_result sippymodem_v34_precoder_init(
-	struct sippymodem_v34_precoder *precoder,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_q14_coefficient
-		coefficients[SIPPYMODEM_V34_PRECODER_TAP_COUNT]);
+enum v34_precoder_result v34_precoder_init(
+	struct v34_precoder *precoder,
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT]);
 
-bool sippymodem_v34_precoder_is_valid(
-	const struct sippymodem_v34_precoder *precoder);
+bool v34_precoder_is_valid(
+	const struct v34_precoder *precoder);
 
 /* Derive p(n) and c(n) from the current history without advancing it. This is
  * needed before mapping the second symbol of a four-dimensional interval. */
-enum sippymodem_v34_precoder_result sippymodem_v34_precoder_predict(
-	const struct sippymodem_v34_precoder *precoder,
-	struct sippymodem_v34_precoder_prediction *prediction);
+enum v34_precoder_result v34_precoder_predict(
+	const struct v34_precoder *precoder,
+	struct v34_precoder_prediction *prediction);
 
 /* Process one odd-integer mapper point. Rounding and quantization break exact
  * half-way ties toward the value with smaller magnitude. State and output are
  * both unchanged on failure. */
-enum sippymodem_v34_precoder_result sippymodem_v34_precoder_step(
-	struct sippymodem_v34_precoder *precoder,
-	const struct sippymodem_v34_grid_point *mapper_output,
-	struct sippymodem_v34_precoder_symbol *symbol);
+enum v34_precoder_result v34_precoder_step(
+	struct v34_precoder *precoder,
+	const struct v34_grid_point *mapper_output,
+	struct v34_precoder_symbol *symbol);
 
 /* Recover one complete 4-D interval of soft y(n) channel estimates from
  * equalized, nonlinear-decoded x(n) estimates. This receive history must be a
@@ -99,13 +99,13 @@ enum sippymodem_v34_precoder_result sippymodem_v34_precoder_step(
  * prediction follows the transmitter's feedback arithmetic, while the
  * current soft residual is preserved in each returned estimate. Input and
  * output may alias. State and both outputs are unchanged on failure. */
-enum sippymodem_v34_precoder_result
-sippymodem_v34_precoder_reconstruct_interval(
-	struct sippymodem_v34_precoder *receive_history,
+enum v34_precoder_result
+v34_precoder_reconstruct_interval(
+	struct v34_precoder *receive_history,
 	const struct sippymodem_qam_point
-		precoded_estimates[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
+		precoded_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_qam_point
-		channel_estimates[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL]);
+		channel_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL]);
 
 /* Invert one exact, survivor-selected odd-grid channel point y(n). This is a
  * post-trellis operation, not a noisy-sample slicer. It recovers u(n), reports
@@ -113,13 +113,13 @@ sippymodem_v34_precoder_reconstruct_interval(
  * advances the shared precoder history. channel_output and mapper_output may
  * refer to the same object. State and both destinations are unchanged on
  * failure. */
-enum sippymodem_v34_precoder_result sippymodem_v34_precoder_inverse_step(
-	struct sippymodem_v34_precoder *precoder,
-	const struct sippymodem_v34_grid_point *channel_output,
-	struct sippymodem_v34_grid_point *mapper_output,
-	struct sippymodem_v34_precoder_symbol *symbol);
+enum v34_precoder_result v34_precoder_inverse_step(
+	struct v34_precoder *precoder,
+	const struct v34_grid_point *channel_output,
+	struct v34_grid_point *mapper_output,
+	struct v34_precoder_symbol *symbol);
 
-const char *sippymodem_v34_precoder_result_name(
-	enum sippymodem_v34_precoder_result result);
+const char *v34_precoder_result_name(
+	enum v34_precoder_result result);
 
 #endif

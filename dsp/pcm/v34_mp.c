@@ -33,23 +33,23 @@ enum {
 };
 
 static bool trellis_is_valid(
-	enum sippymodem_v34_trellis_selection trellis)
+	enum v34_trellis_selection trellis)
 {
-	return trellis == SIPPYMODEM_V34_TRELLIS_16_STATE ||
-	       trellis == SIPPYMODEM_V34_TRELLIS_32_STATE ||
-	       trellis == SIPPYMODEM_V34_TRELLIS_64_STATE;
+	return trellis == V34_TRELLIS_16_STATE ||
+	       trellis == V34_TRELLIS_32_STATE ||
+	       trellis == V34_TRELLIS_64_STATE;
 }
 
 static bool rate_is_valid(uint8_t rate_2400_bps_units)
 {
 	return rate_2400_bps_units >=
-		       SIPPYMODEM_V34_MP_MINIMUM_RATE_2400_BPS_UNITS &&
+		       V34_MP_MINIMUM_RATE_2400_BPS_UNITS &&
 	       rate_2400_bps_units <=
-		       SIPPYMODEM_V34_MP_MAXIMUM_RATE_2400_BPS_UNITS;
+		       V34_MP_MAXIMUM_RATE_2400_BPS_UNITS;
 }
 
-bool sippymodem_v34_mp_parameters_are_valid(
-	const struct sippymodem_v34_mp_parameters *parameters)
+bool v34_mp_parameters_are_valid(
+	const struct v34_mp_parameters *parameters)
 {
 	return parameters != NULL &&
 	       rate_is_valid(
@@ -58,16 +58,16 @@ bool sippymodem_v34_mp_parameters_are_valid(
 		       parameters->maximum_answer_to_call_rate_2400_bps_units) &&
 	       trellis_is_valid(parameters->remote_transmitter_trellis) &&
 	       (parameters->data_rate_capability_mask &
-		~SIPPYMODEM_V34_MP_RATE_CAPABILITY_MASK) == 0;
+		~V34_MP_RATE_CAPABILITY_MASK) == 0;
 }
 
-bool sippymodem_v34_mp_type1_parameters_are_valid(
-	const struct sippymodem_v34_mp_type1_parameters *parameters)
+bool v34_mp_type1_parameters_are_valid(
+	const struct v34_mp_type1_parameters *parameters)
 {
 	if (parameters == NULL ||
-	    !sippymodem_v34_mp_parameters_are_valid(&parameters->common))
+	    !v34_mp_parameters_are_valid(&parameters->common))
 		return false;
-	for (size_t index = 0; index < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
 	     ++index) {
 		if (parameters->precoder_coefficients[index].real == INT16_MIN ||
 		    parameters->precoder_coefficients[index].imaginary ==
@@ -152,11 +152,11 @@ static uint16_t frame_crc(const uint8_t *frame, size_t crc_first_bit)
 }
 
 static void encode_common_parameters(
-	uint8_t *frame, const struct sippymodem_v34_mp_parameters *parameters,
+	uint8_t *frame, const struct v34_mp_parameters *parameters,
 	bool type1)
 {
 	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
-	     index < SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
+	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
 		set_frame_bit(frame, index, true);
 	set_frame_bit(frame, V34_MP_TYPE_BIT, type1);
 	encode_lsb_first_field(
@@ -184,7 +184,7 @@ static void encode_common_parameters(
 		parameters->acknowledges_peer_mp);
 	encode_lsb_first_field(
 		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
-		SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS,
+		V34_MP_RATE_CAPABILITY_BITS,
 		parameters->data_rate_capability_mask);
 	set_frame_bit(
 		frame, V34_MP_ASYMMETRIC_RATES_BIT,
@@ -192,7 +192,7 @@ static void encode_common_parameters(
 }
 
 static void decode_common_parameters(
-	const uint8_t *frame, struct sippymodem_v34_mp_parameters *parameters)
+	const uint8_t *frame, struct v34_mp_parameters *parameters)
 {
 	parameters->maximum_call_to_answer_rate_2400_bps_units =
 		(uint8_t)decode_lsb_first_field(
@@ -207,7 +207,7 @@ static void decode_common_parameters(
 	parameters->auxiliary_channel_enabled =
 		frame_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
 	parameters->remote_transmitter_trellis =
-		(enum sippymodem_v34_trellis_selection)decode_lsb_first_field(
+		(enum v34_trellis_selection)decode_lsb_first_field(
 			frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS);
 	parameters->remote_transmitter_nonlinear_encoding =
 		frame_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
@@ -217,23 +217,23 @@ static void decode_common_parameters(
 		frame_bit(frame, V34_MP_ACKNOWLEDGMENT_BIT) != 0;
 	parameters->data_rate_capability_mask = decode_lsb_first_field(
 		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
-		SIPPYMODEM_V34_MP_RATE_CAPABILITY_BITS);
+		V34_MP_RATE_CAPABILITY_BITS);
 	parameters->asymmetric_rates_enabled =
 		frame_bit(frame, V34_MP_ASYMMETRIC_RATES_BIT) != 0;
 }
 
-enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_encode(
-	const struct sippymodem_v34_mp_parameters *parameters,
+enum v34_mp_result v34_mp_type0_encode(
+	const struct v34_mp_parameters *parameters,
 	uint8_t *frame, size_t frame_capacity)
 {
-	uint8_t encoded[SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES] = { 0 };
+	uint8_t encoded[V34_MP_TYPE0_FRAME_BYTES] = { 0 };
 	uint16_t crc;
 
 	if (parameters == NULL || frame == NULL ||
-	    frame_capacity < SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES)
-		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
-	if (!sippymodem_v34_mp_parameters_are_valid(parameters))
-		return SIPPYMODEM_V34_MP_INVALID_PARAMETERS;
+	    frame_capacity < V34_MP_TYPE0_FRAME_BYTES)
+		return V34_MP_INVALID_ARGUMENT;
+	if (!v34_mp_parameters_are_valid(parameters))
+		return V34_MP_INVALID_PARAMETERS;
 
 	encode_common_parameters(encoded, parameters, false);
 
@@ -242,15 +242,15 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_encode(
 	 * output in its most-significant bit. */
 	encode_msb_first_field(
 		encoded, V34_MP_TYPE0_CRC_FIRST_BIT,
-		SIPPYMODEM_V34_MP_CRC_BITS, crc);
+		V34_MP_CRC_BITS, crc);
 	memcpy(frame, encoded, sizeof(encoded));
-	return SIPPYMODEM_V34_MP_OK;
+	return V34_MP_OK;
 }
 
 static bool frame_sync_is_valid(const uint8_t *frame)
 {
 	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
-	     index < SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS; ++index) {
+	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index) {
 		if (frame_bit(frame, index) == 0)
 			return false;
 	}
@@ -277,31 +277,31 @@ static bool framing_bits_are_valid(
 	return true;
 }
 
-enum sippymodem_v34_mp_result sippymodem_v34_mp_type0_decode(
+enum v34_mp_result v34_mp_type0_decode(
 	const uint8_t *frame, size_t frame_capacity,
-	struct sippymodem_v34_mp_parameters *parameters)
+	struct v34_mp_parameters *parameters)
 {
-	struct sippymodem_v34_mp_parameters decoded = { 0 };
+	struct v34_mp_parameters decoded = { 0 };
 	uint16_t received_crc;
 
 	if (frame == NULL || parameters == NULL ||
-	    frame_capacity < SIPPYMODEM_V34_MP_TYPE0_FRAME_BYTES)
-		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
+	    frame_capacity < V34_MP_TYPE0_FRAME_BYTES)
+		return V34_MP_INVALID_ARGUMENT;
 	if (!framing_bits_are_valid(
 		    frame, false, V34_MP_TYPE0_CRC_FIRST_BIT,
 		    V34_MP_TYPE0_FILL_FIRST_BIT, V34_MP_TYPE0_FILL_BITS))
-		return SIPPYMODEM_V34_MP_INVALID_FRAME;
+		return V34_MP_INVALID_FRAME;
 	received_crc = decode_msb_first_field(
 		frame, V34_MP_TYPE0_CRC_FIRST_BIT,
-		SIPPYMODEM_V34_MP_CRC_BITS);
+		V34_MP_CRC_BITS);
 	if (received_crc != frame_crc(frame, V34_MP_TYPE0_CRC_FIRST_BIT))
-		return SIPPYMODEM_V34_MP_CRC_MISMATCH;
+		return V34_MP_CRC_MISMATCH;
 
 	decode_common_parameters(frame, &decoded);
-	if (!sippymodem_v34_mp_parameters_are_valid(&decoded))
-		return SIPPYMODEM_V34_MP_INVALID_FRAME;
+	if (!v34_mp_parameters_are_valid(&decoded))
+		return V34_MP_INVALID_FRAME;
 	*parameters = decoded;
-	return SIPPYMODEM_V34_MP_OK;
+	return V34_MP_OK;
 }
 
 static size_t coefficient_component_first_bit(
@@ -319,21 +319,21 @@ static int16_t decode_twos_complement(uint16_t value)
 	return (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
 }
 
-enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_encode(
-	const struct sippymodem_v34_mp_type1_parameters *parameters,
+enum v34_mp_result v34_mp_type1_encode(
+	const struct v34_mp_type1_parameters *parameters,
 	uint8_t *frame, size_t frame_capacity)
 {
-	uint8_t encoded[SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES] = { 0 };
+	uint8_t encoded[V34_MP_TYPE1_FRAME_BYTES] = { 0 };
 	uint16_t crc;
 
 	if (parameters == NULL || frame == NULL ||
-	    frame_capacity < SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES)
-		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
-	if (!sippymodem_v34_mp_type1_parameters_are_valid(parameters))
-		return SIPPYMODEM_V34_MP_INVALID_PARAMETERS;
+	    frame_capacity < V34_MP_TYPE1_FRAME_BYTES)
+		return V34_MP_INVALID_ARGUMENT;
+	if (!v34_mp_type1_parameters_are_valid(parameters))
+		return V34_MP_INVALID_PARAMETERS;
 
 	encode_common_parameters(encoded, &parameters->common, true);
-	for (size_t index = 0; index < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
 	     ++index) {
 		encode_lsb_first_field(
 			encoded, coefficient_component_first_bit(index, false),
@@ -347,33 +347,33 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_encode(
 	crc = frame_crc(encoded, V34_MP_TYPE1_CRC_FIRST_BIT);
 	encode_msb_first_field(
 		encoded, V34_MP_TYPE1_CRC_FIRST_BIT,
-		SIPPYMODEM_V34_MP_CRC_BITS, crc);
+		V34_MP_CRC_BITS, crc);
 	memcpy(frame, encoded, sizeof(encoded));
-	return SIPPYMODEM_V34_MP_OK;
+	return V34_MP_OK;
 }
 
-enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_decode(
+enum v34_mp_result v34_mp_type1_decode(
 	const uint8_t *frame, size_t frame_capacity,
-	struct sippymodem_v34_mp_type1_parameters *parameters)
+	struct v34_mp_type1_parameters *parameters)
 {
-	struct sippymodem_v34_mp_type1_parameters decoded = { 0 };
+	struct v34_mp_type1_parameters decoded = { 0 };
 	uint16_t received_crc;
 
 	if (frame == NULL || parameters == NULL ||
-	    frame_capacity < SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES)
-		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
+	    frame_capacity < V34_MP_TYPE1_FRAME_BYTES)
+		return V34_MP_INVALID_ARGUMENT;
 	if (!framing_bits_are_valid(
 		    frame, true, V34_MP_TYPE1_CRC_FIRST_BIT,
 		    V34_MP_TYPE1_FILL_FIRST_BIT, V34_MP_TYPE1_FILL_BITS))
-		return SIPPYMODEM_V34_MP_INVALID_FRAME;
+		return V34_MP_INVALID_FRAME;
 	received_crc = decode_msb_first_field(
 		frame, V34_MP_TYPE1_CRC_FIRST_BIT,
-		SIPPYMODEM_V34_MP_CRC_BITS);
+		V34_MP_CRC_BITS);
 	if (received_crc != frame_crc(frame, V34_MP_TYPE1_CRC_FIRST_BIT))
-		return SIPPYMODEM_V34_MP_CRC_MISMATCH;
+		return V34_MP_CRC_MISMATCH;
 
 	decode_common_parameters(frame, &decoded.common);
-	for (size_t index = 0; index < SIPPYMODEM_V34_PRECODER_TAP_COUNT;
+	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
 	     ++index) {
 		decoded.precoder_coefficients[index].real =
 			decode_twos_complement(decode_lsb_first_field(
@@ -386,10 +386,10 @@ enum sippymodem_v34_mp_result sippymodem_v34_mp_type1_decode(
 				coefficient_component_first_bit(index, true),
 				V34_MP_COEFFICIENT_COMPONENT_BITS));
 	}
-	if (!sippymodem_v34_mp_type1_parameters_are_valid(&decoded))
-		return SIPPYMODEM_V34_MP_INVALID_FRAME;
+	if (!v34_mp_type1_parameters_are_valid(&decoded))
+		return V34_MP_INVALID_FRAME;
 	*parameters = decoded;
-	return SIPPYMODEM_V34_MP_OK;
+	return V34_MP_OK;
 }
 
 static bool packed_tail_is_zero(
@@ -406,7 +406,7 @@ static bool packed_tail_is_zero(
 			return false;
 		++byte_index;
 	}
-	for (; byte_index < SIPPYMODEM_V34_MP_TYPE1_FRAME_BYTES;
+	for (; byte_index < V34_MP_TYPE1_FRAME_BYTES;
 	     ++byte_index) {
 		if (frame[byte_index] != 0)
 			return false;
@@ -420,122 +420,122 @@ static bool receive_prefix_is_valid(const uint8_t *frame)
 	       frame_bit(frame, V34_MP_START0_BIT) == 0;
 }
 
-static bool receive_stage_is_valid(enum sippymodem_v34_mp_receive_stage stage)
+static bool receive_stage_is_valid(enum v34_mp_receive_stage stage)
 {
-	return stage == SIPPYMODEM_V34_MP_SEARCH_SYNC ||
-	       stage == SIPPYMODEM_V34_MP_RECEIVE_TYPE ||
-	       stage == SIPPYMODEM_V34_MP_RECEIVE_FRAME;
+	return stage == V34_MP_SEARCH_SYNC ||
+	       stage == V34_MP_RECEIVE_TYPE ||
+	       stage == V34_MP_RECEIVE_FRAME;
 }
 
-bool sippymodem_v34_mp_receiver_is_valid(
-	const struct sippymodem_v34_mp_receiver *receiver)
+bool v34_mp_receiver_is_valid(
+	const struct v34_mp_receiver *receiver)
 {
 	if (receiver == NULL ||
-	    receiver->sync_one_count > SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS ||
-	    receiver->bit_index > SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS ||
+	    receiver->sync_one_count > V34_MP_TYPE0_FRAME_SYNC_BITS ||
+	    receiver->bit_index > V34_MP_TYPE1_FRAME_BITS ||
 	    !receive_stage_is_valid(receiver->stage) ||
 	    !packed_tail_is_zero(receiver->frame, receiver->bit_index))
 		return false;
 	switch (receiver->stage) {
-	case SIPPYMODEM_V34_MP_SEARCH_SYNC:
+	case V34_MP_SEARCH_SYNC:
 		return receiver->frame_bit_count == 0 &&
 		       receiver->bit_index == 0;
-	case SIPPYMODEM_V34_MP_RECEIVE_TYPE:
+	case V34_MP_RECEIVE_TYPE:
 		return receiver->frame_bit_count == 0 &&
 		       receiver->bit_index == V34_MP_TYPE_BIT &&
 		       receiver->sync_one_count == 0 &&
 		       receive_prefix_is_valid(receiver->frame);
-	case SIPPYMODEM_V34_MP_RECEIVE_FRAME:
+	case V34_MP_RECEIVE_FRAME:
 		return (receiver->frame_bit_count ==
-				SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS ||
+				V34_MP_TYPE0_FRAME_BITS ||
 			receiver->frame_bit_count ==
-				SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS) &&
+				V34_MP_TYPE1_FRAME_BITS) &&
 		       receiver->bit_index > V34_MP_TYPE_BIT &&
 		       receiver->bit_index < receiver->frame_bit_count &&
 		       receiver->sync_one_count == 0 &&
 		       receive_prefix_is_valid(receiver->frame) &&
 		       frame_bit(receiver->frame, V34_MP_TYPE_BIT) ==
 			       (uint8_t)(receiver->frame_bit_count ==
-					 SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS);
+					 V34_MP_TYPE1_FRAME_BITS);
 	}
 	return false;
 }
 
-enum sippymodem_v34_mp_result sippymodem_v34_mp_receiver_init(
-	struct sippymodem_v34_mp_receiver *receiver)
+enum v34_mp_result v34_mp_receiver_init(
+	struct v34_mp_receiver *receiver)
 {
-	struct sippymodem_v34_mp_receiver initialized = {
-		.stage = SIPPYMODEM_V34_MP_SEARCH_SYNC,
+	struct v34_mp_receiver initialized = {
+		.stage = V34_MP_SEARCH_SYNC,
 	};
 
 	if (receiver == NULL ||
-	    !sippymodem_v34_mp_receiver_is_valid(&initialized))
-		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
+	    !v34_mp_receiver_is_valid(&initialized))
+		return V34_MP_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return SIPPYMODEM_V34_MP_OK;
+	return V34_MP_OK;
 }
 
-static void clear_receive_frame(struct sippymodem_v34_mp_receiver *receiver)
+static void clear_receive_frame(struct v34_mp_receiver *receiver)
 {
 	memset(receiver->frame, 0, sizeof(receiver->frame));
 	receiver->frame_bit_count = 0;
 	receiver->bit_index = 0;
 	receiver->sync_one_count = 0;
-	receiver->stage = SIPPYMODEM_V34_MP_SEARCH_SYNC;
+	receiver->stage = V34_MP_SEARCH_SYNC;
 }
 
-static void begin_receive_frame(struct sippymodem_v34_mp_receiver *receiver)
+static void begin_receive_frame(struct v34_mp_receiver *receiver)
 {
 	clear_receive_frame(receiver);
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
+	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
 		set_frame_bit(receiver->frame, index, true);
 	receiver->bit_index = V34_MP_TYPE_BIT;
-	receiver->stage = SIPPYMODEM_V34_MP_RECEIVE_TYPE;
+	receiver->stage = V34_MP_RECEIVE_TYPE;
 }
 
 static void complete_receive_frame(
-	struct sippymodem_v34_mp_receiver *receiver,
-	struct sippymodem_v34_mp_receive_event *event)
+	struct v34_mp_receiver *receiver,
+	struct v34_mp_receive_event *event)
 {
-	enum sippymodem_v34_mp_result result;
+	enum v34_mp_result result;
 
-	if (receiver->frame_bit_count == SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS) {
-		struct sippymodem_v34_mp_parameters parameters;
+	if (receiver->frame_bit_count == V34_MP_TYPE0_FRAME_BITS) {
+		struct v34_mp_parameters parameters;
 
-		result = sippymodem_v34_mp_type0_decode(
+		result = v34_mp_type0_decode(
 			receiver->frame, sizeof(receiver->frame), &parameters);
-		if (result == SIPPYMODEM_V34_MP_OK) {
-			event->type = SIPPYMODEM_V34_MP_RECEIVE_TYPE0;
+		if (result == V34_MP_OK) {
+			event->type = V34_MP_RECEIVE_TYPE0;
 			event->parameters.type0 = parameters;
 		}
 	} else {
-		struct sippymodem_v34_mp_type1_parameters parameters;
+		struct v34_mp_type1_parameters parameters;
 
-		result = sippymodem_v34_mp_type1_decode(
+		result = v34_mp_type1_decode(
 			receiver->frame, sizeof(receiver->frame), &parameters);
-		if (result == SIPPYMODEM_V34_MP_OK) {
-			event->type = SIPPYMODEM_V34_MP_RECEIVE_TYPE1;
+		if (result == V34_MP_OK) {
+			event->type = V34_MP_RECEIVE_TYPE1;
 			event->parameters.type1 = parameters;
 		}
 	}
 	event->frame_result = result;
-	if (result != SIPPYMODEM_V34_MP_OK)
-		event->type = SIPPYMODEM_V34_MP_RECEIVE_REJECTED;
+	if (result != V34_MP_OK)
+		event->type = V34_MP_RECEIVE_REJECTED;
 	clear_receive_frame(receiver);
 }
 
 static void receive_frame_bit(
-	struct sippymodem_v34_mp_receiver *receiver, uint8_t bit,
-	struct sippymodem_v34_mp_receive_event *event)
+	struct v34_mp_receiver *receiver, uint8_t bit,
+	struct v34_mp_receive_event *event)
 {
-	if (receiver->stage == SIPPYMODEM_V34_MP_SEARCH_SYNC) {
+	if (receiver->stage == V34_MP_SEARCH_SYNC) {
 		if (bit != 0) {
 			if (receiver->sync_one_count <
-			    SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS)
+			    V34_MP_TYPE0_FRAME_SYNC_BITS)
 				receiver->sync_one_count++;
 		} else if (receiver->sync_one_count ==
-			   SIPPYMODEM_V34_MP_TYPE0_FRAME_SYNC_BITS) {
+			   V34_MP_TYPE0_FRAME_SYNC_BITS) {
 			begin_receive_frame(receiver);
 		} else {
 			receiver->sync_one_count = 0;
@@ -545,48 +545,48 @@ static void receive_frame_bit(
 
 	set_frame_bit(receiver->frame, receiver->bit_index, bit != 0);
 	receiver->bit_index++;
-	if (receiver->stage == SIPPYMODEM_V34_MP_RECEIVE_TYPE) {
+	if (receiver->stage == V34_MP_RECEIVE_TYPE) {
 		receiver->frame_bit_count = bit != 0 ?
-			SIPPYMODEM_V34_MP_TYPE1_FRAME_BITS :
-			SIPPYMODEM_V34_MP_TYPE0_FRAME_BITS;
-		receiver->stage = SIPPYMODEM_V34_MP_RECEIVE_FRAME;
+			V34_MP_TYPE1_FRAME_BITS :
+			V34_MP_TYPE0_FRAME_BITS;
+		receiver->stage = V34_MP_RECEIVE_FRAME;
 	}
 	if (receiver->bit_index == receiver->frame_bit_count)
 		complete_receive_frame(receiver, event);
 }
 
-enum sippymodem_v34_mp_result sippymodem_v34_mp_receive_bit(
-	struct sippymodem_v34_mp_receiver *receiver, uint8_t bit,
-	struct sippymodem_v34_mp_receive_event *event)
+enum v34_mp_result v34_mp_receive_bit(
+	struct v34_mp_receiver *receiver, uint8_t bit,
+	struct v34_mp_receive_event *event)
 {
-	struct sippymodem_v34_mp_receiver next;
-	struct sippymodem_v34_mp_receive_event emitted = { 0 };
+	struct v34_mp_receiver next;
+	struct v34_mp_receive_event emitted = { 0 };
 
-	if (!sippymodem_v34_mp_receiver_is_valid(receiver) || bit > 1u ||
+	if (!v34_mp_receiver_is_valid(receiver) || bit > 1u ||
 	    event == NULL)
-		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
+		return V34_MP_INVALID_ARGUMENT;
 	next = *receiver;
 	receive_frame_bit(&next, bit, &emitted);
-	if (!sippymodem_v34_mp_receiver_is_valid(&next))
-		return SIPPYMODEM_V34_MP_INVALID_ARGUMENT;
+	if (!v34_mp_receiver_is_valid(&next))
+		return V34_MP_INVALID_ARGUMENT;
 	*receiver = next;
 	*event = emitted;
-	return SIPPYMODEM_V34_MP_OK;
+	return V34_MP_OK;
 }
 
-const char *sippymodem_v34_mp_result_name(
-	enum sippymodem_v34_mp_result result)
+const char *v34_mp_result_name(
+	enum v34_mp_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_MP_OK:
+	case V34_MP_OK:
 		return "ok";
-	case SIPPYMODEM_V34_MP_INVALID_ARGUMENT:
+	case V34_MP_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_MP_INVALID_PARAMETERS:
+	case V34_MP_INVALID_PARAMETERS:
 		return "invalid parameters";
-	case SIPPYMODEM_V34_MP_INVALID_FRAME:
+	case V34_MP_INVALID_FRAME:
 		return "invalid frame";
-	case SIPPYMODEM_V34_MP_CRC_MISMATCH:
+	case V34_MP_CRC_MISMATCH:
 		return "CRC mismatch";
 	}
 	return "unknown";

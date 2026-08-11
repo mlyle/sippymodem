@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V34_CHANNEL_DECODER_H
-#define SIPPYMODEM_V34_CHANNEL_DECODER_H
+#ifndef V34_CHANNEL_DECODER_H
+#define V34_CHANNEL_DECODER_H
 
 #include "v34_lattice.h"
 #include "v34_path_decoder.h"
@@ -9,31 +9,31 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum sippymodem_v34_channel_decoder_result {
-	SIPPYMODEM_V34_CHANNEL_DECODER_OK,
-	SIPPYMODEM_V34_CHANNEL_DECODER_INVALID_ARGUMENT,
-	SIPPYMODEM_V34_CHANNEL_DECODER_NUMERIC_FAILURE,
-	SIPPYMODEM_V34_CHANNEL_DECODER_OUT_OF_RANGE,
+enum v34_channel_decoder_result {
+	V34_CHANNEL_DECODER_OK,
+	V34_CHANNEL_DECODER_INVALID_ARGUMENT,
+	V34_CHANNEL_DECODER_NUMERIC_FAILURE,
+	V34_CHANNEL_DECODER_OUT_OF_RANGE,
 };
 
-struct sippymodem_v34_channel_decoder {
-	struct sippymodem_v34_mapping_parameters parameters;
-	struct sippymodem_v34_survivor survivor;
-	struct sippymodem_v34_precoder inverse_precoder;
+struct v34_channel_decoder {
+	struct v34_mapping_parameters parameters;
+	struct v34_survivor survivor;
+	struct v34_precoder inverse_precoder;
 };
 
 /* Initialize the convolutional and inverse-precoder histories to their B1
  * all-zero state. The destination is unchanged on rejection. */
-enum sippymodem_v34_channel_decoder_result
-sippymodem_v34_channel_decoder_init(
-	struct sippymodem_v34_channel_decoder *decoder,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	const struct sippymodem_v34_q14_coefficient
-		coefficients[SIPPYMODEM_V34_PRECODER_TAP_COUNT],
-	enum sippymodem_v34_trellis_selection selection);
+enum v34_channel_decoder_result
+v34_channel_decoder_init(
+	struct v34_channel_decoder *decoder,
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT],
+	enum v34_trellis_selection selection);
 
-bool sippymodem_v34_channel_decoder_is_valid(
-	const struct sippymodem_v34_channel_decoder *decoder);
+bool v34_channel_decoder_is_valid(
+	const struct v34_channel_decoder *decoder);
 
 /* Decode one pair of already conditioned integer-grid channel estimates.
  * Scaling, equalization, timing recovery, and nonlinear inversion precede this
@@ -41,17 +41,17 @@ bool sippymodem_v34_channel_decoder_is_valid(
  * channel tracking. `decided` is unchanged until `decided_ready` becomes true
  * at the survivor traceback depth, then receives one mapper interval in
  * transmission order. State and every output are unchanged on failure. */
-enum sippymodem_v34_channel_decoder_result
-sippymodem_v34_channel_decoder_advance(
-	struct sippymodem_v34_channel_decoder *decoder,
+enum v34_channel_decoder_result
+v34_channel_decoder_advance(
+	struct v34_channel_decoder *decoder,
 	const struct sippymodem_qam_point
-		estimates[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
+		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	uint8_t inversion_bit,
-	struct sippymodem_v34_survivor_decision *current,
-	struct sippymodem_v34_decided_4d_interval *decided,
+	struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval *decided,
 	bool *decided_ready);
 
-const char *sippymodem_v34_channel_decoder_result_name(
-	enum sippymodem_v34_channel_decoder_result result);
+const char *v34_channel_decoder_result_name(
+	enum v34_channel_decoder_result result);
 
-#endif /* SIPPYMODEM_V34_CHANNEL_DECODER_H */
+#endif /* V34_CHANNEL_DECODER_H */

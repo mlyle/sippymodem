@@ -33,49 +33,49 @@ static bool harmonic_is_omitted(unsigned int harmonic)
 }
 
 static double bin_peak(
-	const struct sippymodem_v34_phase2_probe_spectrum_bin *bin)
+	const struct v34_phase2_probe_spectrum_bin *bin)
 {
 	return hypot(bin->in_phase_peak, bin->quadrature_peak);
 }
 
 static bool test_generated_probe_spectrum(void)
 {
-	struct sippymodem_v34_phase2_probe_transmitter transmitter;
-	struct sippymodem_v34_phase2_probe_spectrum spectrum;
-	struct sippymodem_v34_phase2_probe_spectrum_measurement measurement;
+	struct v34_phase2_probe_transmitter transmitter;
+	struct v34_phase2_probe_spectrum spectrum;
+	struct v34_phase2_probe_spectrum_measurement measurement;
 	double expected_peak =
 		(double)TEST_NOMINAL_AMPLITUDE /
-		sqrt((double)SIPPYMODEM_V34_PHASE2_PROBE_TONE_COUNT);
+		sqrt((double)V34_PHASE2_PROBE_TONE_COUNT);
 	double measured_power = 0.0;
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK &&
-		      sippymodem_v34_phase2_probe_spectrum_init(&spectrum) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+		      V34_PHASE2_PROBE_OK &&
+		      v34_phase2_probe_spectrum_init(&spectrum) ==
+		      V34_PHASE2_PROBE_SPECTRUM_OK,
 	      "probe spectrum fixture did not initialize");
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
+	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
 		int16_t sample;
 
-		CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
-			      &sample) == SIPPYMODEM_V34_PHASE2_PROBE_OK &&
-		      sippymodem_v34_phase2_probe_spectrum_sample(
+		CHECK(v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L2,
+			      &sample) == V34_PHASE2_PROBE_OK &&
+		      v34_phase2_probe_spectrum_sample(
 			      &spectrum, sample) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+			      V34_PHASE2_PROBE_SPECTRUM_OK,
 		      "probe spectrum failed at sample %zu", index);
 	}
-	CHECK(sippymodem_v34_phase2_probe_spectrum_measure(
+	CHECK(v34_phase2_probe_spectrum_measure(
 		      &spectrum, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK &&
+		      V34_PHASE2_PROBE_SPECTRUM_OK &&
 		      measurement.sample_count ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES,
+			      V34_PHASE2_PROBE_PERIOD_SAMPLES,
 	      "probe spectrum did not measure one complete period");
 	for (unsigned int harmonic = 1;
-	     harmonic <= SIPPYMODEM_V34_PHASE2_PROBE_HIGHEST_HARMONIC;
+	     harmonic <= V34_PHASE2_PROBE_HIGHEST_HARMONIC;
 	     ++harmonic) {
-		const struct sippymodem_v34_phase2_probe_spectrum_bin *bin =
+		const struct v34_phase2_probe_spectrum_bin *bin =
 			&measurement.harmonics[harmonic - 1u];
 		double peak = bin_peak(bin);
 
@@ -103,9 +103,9 @@ static bool test_generated_probe_spectrum(void)
 static int16_t phase_test_sample(uint32_t sample_index)
 {
 	double angle = TEST_TWO_PI * TEST_PHASE_HARMONIC *
-		       SIPPYMODEM_V34_PHASE2_PROBE_TONE_SPACING_HZ *
+		       V34_PHASE2_PROBE_TONE_SPACING_HZ *
 		       (double)sample_index /
-		       (double)SIPPYMODEM_V34_PHASE2_SAMPLE_RATE +
+		       (double)V34_PHASE2_SAMPLE_RATE +
 		       TEST_PHASE_RADIANS;
 
 	return (int16_t)lround(TEST_PHASE_AMPLITUDE * cos(angle));
@@ -113,46 +113,46 @@ static int16_t phase_test_sample(uint32_t sample_index)
 
 static bool test_phase_and_window_restart(void)
 {
-	struct sippymodem_v34_phase2_probe_spectrum spectrum;
-	struct sippymodem_v34_phase2_probe_spectrum before;
-	struct sippymodem_v34_phase2_probe_spectrum_measurement measurement;
-	struct sippymodem_v34_phase2_probe_spectrum_measurement untouched;
+	struct v34_phase2_probe_spectrum spectrum;
+	struct v34_phase2_probe_spectrum before;
+	struct v34_phase2_probe_spectrum_measurement measurement;
+	struct v34_phase2_probe_spectrum_measurement untouched;
 	double expected_in_phase =
 		TEST_PHASE_AMPLITUDE * cos(TEST_PHASE_RADIANS);
 	double expected_quadrature =
 		TEST_PHASE_AMPLITUDE * sin(TEST_PHASE_RADIANS);
 
-	CHECK(sippymodem_v34_phase2_probe_spectrum_init(&spectrum) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+	CHECK(v34_phase2_probe_spectrum_init(&spectrum) ==
+		      V34_PHASE2_PROBE_SPECTRUM_OK,
 	      "phase spectrum fixture did not initialize");
 	for (uint32_t index = 0; index < TEST_SKIP_SAMPLES; ++index)
-		CHECK(sippymodem_v34_phase2_probe_spectrum_sample(
+		CHECK(v34_phase2_probe_spectrum_sample(
 			      &spectrum, 0) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+			      V34_PHASE2_PROBE_SPECTRUM_OK,
 		      "phase spectrum skip failed at sample %u", index);
-	CHECK(sippymodem_v34_phase2_probe_spectrum_restart_window(
+	CHECK(v34_phase2_probe_spectrum_restart_window(
 		      &spectrum) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK &&
+		      V34_PHASE2_PROBE_SPECTRUM_OK &&
 		      spectrum.samples_observed == TEST_SKIP_SAMPLES &&
 		      spectrum.window_start_sample == TEST_SKIP_SAMPLES,
 	      "window restart did not preserve absolute phase");
 	for (uint32_t index = 0;
-	     index < 2u * SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES;
+	     index < 2u * V34_PHASE2_PROBE_PERIOD_SAMPLES;
 	     ++index) {
-		CHECK(sippymodem_v34_phase2_probe_spectrum_sample(
+		CHECK(v34_phase2_probe_spectrum_sample(
 			      &spectrum,
 			      phase_test_sample(TEST_SKIP_SAMPLES + index)) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+			      V34_PHASE2_PROBE_SPECTRUM_OK,
 		      "phase spectrum failed at window sample %u", index);
 	}
-	CHECK(sippymodem_v34_phase2_probe_spectrum_measure(
+	CHECK(v34_phase2_probe_spectrum_measure(
 		      &spectrum, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK &&
+		      V34_PHASE2_PROBE_SPECTRUM_OK &&
 		      measurement.sample_count ==
-			      2u * SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES,
+			      2u * V34_PHASE2_PROBE_PERIOD_SAMPLES,
 	      "phase spectrum measured the wrong window");
 	{
-		const struct sippymodem_v34_phase2_probe_spectrum_bin *bin =
+		const struct v34_phase2_probe_spectrum_bin *bin =
 			&measurement.harmonics[TEST_PHASE_HARMONIC - 1u];
 
 		CHECK(fabs(bin->in_phase_peak - expected_in_phase) <
@@ -164,17 +164,17 @@ static bool test_phase_and_window_restart(void)
 		      expected_in_phase, expected_quadrature);
 	}
 	before = spectrum;
-	CHECK(sippymodem_v34_phase2_probe_spectrum_restart_window(
+	CHECK(v34_phase2_probe_spectrum_restart_window(
 		      &spectrum) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK &&
+		      V34_PHASE2_PROBE_SPECTRUM_OK &&
 		      spectrum.samples_observed == before.samples_observed &&
 		      spectrum.window_start_sample == before.samples_observed,
 	      "second window restart changed the sample timeline");
 	memset(&measurement, 0xa5, sizeof(measurement));
 	untouched = measurement;
-	CHECK(sippymodem_v34_phase2_probe_spectrum_measure(
+	CHECK(v34_phase2_probe_spectrum_measure(
 		      &spectrum, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      memcmp(&measurement, &untouched, sizeof(measurement)) == 0,
 	      "empty restarted window produced a measurement");
 	return true;
@@ -182,80 +182,80 @@ static bool test_phase_and_window_restart(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_phase2_probe_spectrum spectrum;
-	struct sippymodem_v34_phase2_probe_spectrum before;
-	struct sippymodem_v34_phase2_probe_spectrum_measurement measurement;
-	struct sippymodem_v34_phase2_probe_spectrum_measurement measurement_before;
+	struct v34_phase2_probe_spectrum spectrum;
+	struct v34_phase2_probe_spectrum before;
+	struct v34_phase2_probe_spectrum_measurement measurement;
+	struct v34_phase2_probe_spectrum_measurement measurement_before;
 
-	CHECK(sippymodem_v34_phase2_probe_spectrum_init(&spectrum) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+	CHECK(v34_phase2_probe_spectrum_init(&spectrum) ==
+		      V34_PHASE2_PROBE_SPECTRUM_OK,
 	      "validation fixture did not initialize");
 	memset(&measurement, 0xa5, sizeof(measurement));
 	measurement_before = measurement;
 	before = spectrum;
-	CHECK(sippymodem_v34_phase2_probe_spectrum_measure(
+	CHECK(v34_phase2_probe_spectrum_measure(
 		      &spectrum, &measurement) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      memcmp(&spectrum, &before, sizeof(spectrum)) == 0 &&
 		      memcmp(&measurement, &measurement_before,
 			     sizeof(measurement)) == 0 &&
-		      sippymodem_v34_phase2_probe_spectrum_measure(
+		      v34_phase2_probe_spectrum_measure(
 			      &spectrum, NULL) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT,
+			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT,
 	      "invalid measurement changed caller-owned state");
 	spectrum.window_start_sample = 1;
 	before = spectrum;
-	CHECK(!sippymodem_v34_phase2_probe_spectrum_is_valid(&spectrum) &&
-		      sippymodem_v34_phase2_probe_spectrum_sample(
+	CHECK(!v34_phase2_probe_spectrum_is_valid(&spectrum) &&
+		      v34_phase2_probe_spectrum_sample(
 			      &spectrum, 1) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      sippymodem_v34_phase2_probe_spectrum_restart_window(
+			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+		      v34_phase2_probe_spectrum_restart_window(
 			      &spectrum) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      memcmp(&spectrum, &before, sizeof(spectrum)) == 0,
 	      "inconsistent window timeline was accepted");
-	CHECK(sippymodem_v34_phase2_probe_spectrum_init(&spectrum) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+	CHECK(v34_phase2_probe_spectrum_init(&spectrum) ==
+		      V34_PHASE2_PROBE_SPECTRUM_OK,
 	      "validation fixture did not reset");
 	spectrum.harmonics[3].in_phase_sum = NAN;
 	before = spectrum;
-	CHECK(!sippymodem_v34_phase2_probe_spectrum_is_valid(&spectrum) &&
-		      sippymodem_v34_phase2_probe_spectrum_sample(
+	CHECK(!v34_phase2_probe_spectrum_is_valid(&spectrum) &&
+		      v34_phase2_probe_spectrum_sample(
 			      &spectrum, 1) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      memcmp(&spectrum, &before, sizeof(spectrum)) == 0,
 	      "non-finite accumulator was accepted");
-	CHECK(sippymodem_v34_phase2_probe_spectrum_init(&spectrum) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK,
+	CHECK(v34_phase2_probe_spectrum_init(&spectrum) ==
+		      V34_PHASE2_PROBE_SPECTRUM_OK,
 	      "overflow fixture did not initialize");
 	spectrum.samples_observed = UINT32_MAX;
 	spectrum.window_start_sample = UINT32_MAX;
 	before = spectrum;
-	CHECK(sippymodem_v34_phase2_probe_spectrum_is_valid(&spectrum) &&
-		      sippymodem_v34_phase2_probe_spectrum_sample(
+	CHECK(v34_phase2_probe_spectrum_is_valid(&spectrum) &&
+		      v34_phase2_probe_spectrum_sample(
 			      &spectrum, 1) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      memcmp(&spectrum, &before, sizeof(spectrum)) == 0,
 	      "sample counter overflow was not rejected transactionally");
-	CHECK(sippymodem_v34_phase2_probe_spectrum_init(NULL) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      sippymodem_v34_phase2_probe_spectrum_sample(NULL, 0) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      sippymodem_v34_phase2_probe_spectrum_restart_window(NULL) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      !sippymodem_v34_phase2_probe_spectrum_is_valid(NULL),
+	CHECK(v34_phase2_probe_spectrum_init(NULL) ==
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+		      v34_phase2_probe_spectrum_sample(NULL, 0) ==
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+		      v34_phase2_probe_spectrum_restart_window(NULL) ==
+		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
+		      !v34_phase2_probe_spectrum_is_valid(NULL),
 	      "null spectrum was accepted");
 	CHECK(strcmp(
-		      sippymodem_v34_phase2_probe_spectrum_result_name(
-			      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_OK),
+		      v34_phase2_probe_spectrum_result_name(
+			      V34_PHASE2_PROBE_SPECTRUM_OK),
 		      "ok") == 0 &&
 		      strcmp(
-			      sippymodem_v34_phase2_probe_spectrum_result_name(
-				      SIPPYMODEM_V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT),
+			      v34_phase2_probe_spectrum_result_name(
+				      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT),
 			      "invalid argument") == 0 &&
 		      strcmp(
-			      sippymodem_v34_phase2_probe_spectrum_result_name(
-				      (enum sippymodem_v34_phase2_probe_spectrum_result)99),
+			      v34_phase2_probe_spectrum_result_name(
+				      (enum v34_phase2_probe_spectrum_result)99),
 			      "unknown") == 0,
 	      "spectrum result names changed");
 	return true;

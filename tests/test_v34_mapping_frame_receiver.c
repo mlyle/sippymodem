@@ -7,43 +7,43 @@
 
 #include <string.h>
 
-static const struct sippymodem_v34_q14_coefficient ZERO_COEFFICIENTS[] = {
+static const struct v34_q14_coefficient ZERO_COEFFICIENTS[] = {
 	{ 0, 0 },
 	{ 0, 0 },
 	{ 0, 0 },
 };
 
 struct configuration {
-	enum sippymodem_v34_symbol_rate symbol_rate;
+	enum v34_symbol_rate symbol_rate;
 	uint8_t primary_rate;
 	bool auxiliary;
 	bool expanded;
-	enum sippymodem_v34_station_role transmitting_role;
+	enum v34_station_role transmitting_role;
 	uint8_t data_frame;
 };
 
 static const struct configuration CONFIGURATIONS[] = {
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2400, 1, false, false,
-	  SIPPYMODEM_V34_CALLING_STATION, 0 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_2743, 2, true, true,
-	  SIPPYMODEM_V34_ANSWERING_STATION, 1 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3000, 8, true, false,
-	  SIPPYMODEM_V34_CALLING_STATION, 2 },
-	{ SIPPYMODEM_V34_SYMBOL_RATE_3429, 14, false, true,
-	  SIPPYMODEM_V34_ANSWERING_STATION, 3 },
+	{ V34_SYMBOL_RATE_2400, 1, false, false,
+	  V34_CALLING_STATION, 0 },
+	{ V34_SYMBOL_RATE_2743, 2, true, true,
+	  V34_ANSWERING_STATION, 1 },
+	{ V34_SYMBOL_RATE_3000, 8, true, false,
+	  V34_CALLING_STATION, 2 },
+	{ V34_SYMBOL_RATE_3429, 14, false, true,
+	  V34_ANSWERING_STATION, 3 },
 };
 
 struct modem_pair {
-	struct sippymodem_v34_frame_schedule transmit_schedule;
-	struct sippymodem_v34_frame_schedule receive_schedule;
-	struct sippymodem_v34_scrambler scrambler;
-	struct sippymodem_v34_scrambler descrambler;
-	struct sippymodem_v34_4d_encoder encoder;
-	struct sippymodem_v34_4d_decoder decoder;
+	struct v34_frame_schedule transmit_schedule;
+	struct v34_frame_schedule receive_schedule;
+	struct v34_scrambler scrambler;
+	struct v34_scrambler descrambler;
+	struct v34_4d_encoder encoder;
+	struct v34_4d_decoder decoder;
 };
 
 static void generate_primary_bits(
-	uint8_t bits[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS], uint8_t count,
+	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS], uint8_t count,
 	uint32_t seed)
 {
 	uint32_t state = seed | 1u;
@@ -55,17 +55,17 @@ static void generate_primary_bits(
 }
 
 static void decisions_from_encoded(
-	const struct sippymodem_v34_encoded_mapping_frame *encoded,
-	struct sippymodem_v34_decided_4d_interval
-		decided[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME])
+	const struct v34_encoded_mapping_frame *encoded,
+	struct v34_decided_4d_interval
+		decided[V34_4D_INTERVALS_PER_MAPPING_FRAME])
 {
 	for (uint8_t interval = 0;
-	     interval < SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 	     ++interval) {
 		decided[interval].trellis_output =
 			encoded->interval[interval].trellis_output;
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol)
 			decided[interval].mapper_output[symbol] =
 				encoded->interval[interval]
@@ -75,8 +75,8 @@ static void decisions_from_encoded(
 }
 
 static bool mapping_frames_are_equal(
-	const struct sippymodem_v34_mapping_frame *left,
-	const struct sippymodem_v34_mapping_frame *right)
+	const struct v34_mapping_frame *left,
+	const struct v34_mapping_frame *right)
 {
 	return left->index == right->index &&
 	       left->data_bits == right->data_bits &&
@@ -88,9 +88,9 @@ static bool mapping_frames_are_equal(
 }
 
 static bool received_matches(
-	const struct sippymodem_v34_received_mapping_frame *received,
-	const struct sippymodem_v34_mapping_frame *frame,
-	const uint8_t primary[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS],
+	const struct v34_received_mapping_frame *received,
+	const struct v34_mapping_frame *frame,
+	const uint8_t primary[V34_MAX_MAPPING_FRAME_BITS],
 	uint8_t auxiliary)
 {
 	if (!mapping_frames_are_equal(&received->mapping_frame, frame) ||
@@ -102,7 +102,7 @@ static bool received_matches(
 	     received->auxiliary_bit != auxiliary))
 		return false;
 	for (uint8_t index = frame->primary_bits;
-	     index < SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS; ++index) {
+	     index < V34_MAX_MAPPING_FRAME_BITS; ++index) {
 		if (received->primary_bits[index] != 0)
 			return false;
 	}
@@ -111,39 +111,39 @@ static bool received_matches(
 
 static bool initialize_pair(
 	struct modem_pair *pair, const struct configuration *configuration,
-	struct sippymodem_v34_frame_geometry *geometry)
+	struct v34_frame_geometry *geometry)
 {
-	struct sippymodem_v34_mapping_parameters parameters;
+	struct v34_mapping_parameters parameters;
 
-	if (sippymodem_v34_frame_geometry_init(
+	if (v34_frame_geometry_init(
 		    geometry, configuration->symbol_rate,
 		    configuration->primary_rate, configuration->auxiliary) !=
-		    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+		    V34_FRAME_SCHEDULE_OK)
 		return false;
-	return sippymodem_v34_mapping_parameters_init(
+	return v34_mapping_parameters_init(
 		       &parameters, geometry, configuration->expanded) ==
-		       SIPPYMODEM_V34_MAPPING_PARAMETERS_OK &&
-	       sippymodem_v34_frame_schedule_init(
+		       V34_MAPPING_PARAMETERS_OK &&
+	       v34_frame_schedule_init(
 		       &pair->transmit_schedule, geometry,
 		       (uint8_t)(configuration->data_frame %
 				 geometry->data_frames_per_superframe)) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_frame_schedule_init(
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_frame_schedule_init(
 		       &pair->receive_schedule, geometry,
 		       pair->transmit_schedule.data_frame_in_superframe) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK &&
-	       sippymodem_v34_transmit_scrambler_init(
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_transmit_scrambler_init(
 		       &pair->scrambler, configuration->transmitting_role) ==
-		       SIPPYMODEM_V34_FRAMING_OK &&
-	       sippymodem_v34_transmit_scrambler_init(
+		       V34_FRAMING_OK &&
+	       v34_transmit_scrambler_init(
 		       &pair->descrambler, configuration->transmitting_role) ==
-		       SIPPYMODEM_V34_FRAMING_OK &&
-	       sippymodem_v34_4d_encoder_init(
+		       V34_FRAMING_OK &&
+	       v34_4d_encoder_init(
 		       &pair->encoder, &parameters, ZERO_COEFFICIENTS,
-		       SIPPYMODEM_V34_TRELLIS_16_STATE) ==
-		       SIPPYMODEM_V34_4D_ENCODER_OK &&
-	       sippymodem_v34_4d_decoder_init(&pair->decoder, &parameters) ==
-		       SIPPYMODEM_V34_4D_DECODER_OK;
+		       V34_TRELLIS_16_STATE) ==
+		       V34_4D_ENCODER_OK &&
+	       v34_4d_decoder_init(&pair->decoder, &parameters) ==
+		       V34_4D_DECODER_OK;
 }
 
 static bool test_generated_round_trip(void)
@@ -155,28 +155,28 @@ static bool test_generated_round_trip(void)
 
 	for (size_t configuration = 0;
 	     configuration < ARRAY_LENGTH(CONFIGURATIONS); ++configuration) {
-		struct sippymodem_v34_frame_geometry geometry;
+		struct v34_frame_geometry geometry;
 		struct modem_pair pair;
 
 		CHECK(initialize_pair(
 			      &pair, &CONFIGURATIONS[configuration], &geometry),
 		      "configuration %zu did not initialize", configuration);
 		polynomial_seen[pair.scrambler.polynomial] = true;
-		while (!sippymodem_v34_frame_schedule_is_complete(
+		while (!v34_frame_schedule_is_complete(
 			&pair.transmit_schedule)) {
-			struct sippymodem_v34_frame_schedule preview =
+			struct v34_frame_schedule preview =
 				pair.transmit_schedule;
-			struct sippymodem_v34_mapping_frame frame;
-			struct sippymodem_v34_transmitted_mapping_frame transmitted;
-			struct sippymodem_v34_received_mapping_frame received;
-			struct sippymodem_v34_decided_4d_interval
-				decided[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME];
-			uint8_t primary[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS] = { 0 };
+			struct v34_mapping_frame frame;
+			struct v34_transmitted_mapping_frame transmitted;
+			struct v34_received_mapping_frame received;
+			struct v34_decided_4d_interval
+				decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+			uint8_t primary[V34_MAX_MAPPING_FRAME_BITS] = { 0 };
 			uint8_t auxiliary = (uint8_t)(mapping_frame_count & 1u);
 			const uint8_t *auxiliary_pointer;
 
-			CHECK(sippymodem_v34_frame_schedule_next(&preview, &frame) ==
-				      SIPPYMODEM_V34_FRAME_SCHEDULE_OK,
+			CHECK(v34_frame_schedule_next(&preview, &frame) ==
+				      V34_FRAME_SCHEDULE_OK,
 			      "configuration %zu ended early", configuration);
 			generate_primary_bits(
 				primary, frame.primary_bits,
@@ -184,19 +184,19 @@ static bool test_generated_round_trip(void)
 			auxiliary_pointer = frame.carries_auxiliary_bit ?
 				&auxiliary :
 				NULL;
-			CHECK(sippymodem_v34_transmit_mapping_frame(
+			CHECK(v34_transmit_mapping_frame(
 				      &pair.transmit_schedule, &pair.scrambler,
 				      &pair.encoder, primary, frame.primary_bits,
 				      auxiliary_pointer,
-				      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 512.0,
+				      V34_NONLINEAR_THETA_ZERO, 512.0,
 				      &transmitted) ==
-				      SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OK,
+				      V34_MAPPING_FRAME_TRANSMITTER_OK,
 			      "mapping frame %zu did not transmit", mapping_frame_count);
 			decisions_from_encoded(&transmitted.encoded, decided);
-			CHECK(sippymodem_v34_receive_mapping_frame(
+			CHECK(v34_receive_mapping_frame(
 				      &pair.receive_schedule, &pair.descrambler,
 				      &pair.decoder, decided, &received) ==
-				      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_OK &&
+				      V34_MAPPING_FRAME_RECEIVER_OK &&
 			      received_matches(&received, &frame, primary, auxiliary) &&
 			      pair.receive_schedule.data_frame_in_superframe ==
 				      pair.transmit_schedule.data_frame_in_superframe &&
@@ -220,38 +220,38 @@ static bool test_generated_round_trip(void)
 
 struct rejection_fixture {
 	struct modem_pair pair;
-	struct sippymodem_v34_mapping_frame frame;
-	struct sippymodem_v34_decided_4d_interval
-		decided[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME];
-	uint8_t primary[SIPPYMODEM_V34_MAX_MAPPING_FRAME_BITS];
+	struct v34_mapping_frame frame;
+	struct v34_decided_4d_interval
+		decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+	uint8_t primary[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t auxiliary;
 };
 
 static bool initialize_rejection_fixture(struct rejection_fixture *fixture)
 {
-	struct sippymodem_v34_frame_geometry geometry;
-	struct sippymodem_v34_frame_schedule preview;
-	struct sippymodem_v34_transmitted_mapping_frame transmitted;
+	struct v34_frame_geometry geometry;
+	struct v34_frame_schedule preview;
+	struct v34_transmitted_mapping_frame transmitted;
 	const uint8_t *auxiliary_pointer;
 
 	memset(fixture, 0, sizeof(*fixture));
 	if (!initialize_pair(&fixture->pair, &CONFIGURATIONS[2], &geometry))
 		return false;
 	preview = fixture->pair.transmit_schedule;
-	if (sippymodem_v34_frame_schedule_next(&preview, &fixture->frame) !=
-	    SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+	if (v34_frame_schedule_next(&preview, &fixture->frame) !=
+	    V34_FRAME_SCHEDULE_OK)
 		return false;
 	generate_primary_bits(fixture->primary, fixture->frame.primary_bits, 23u);
 	fixture->auxiliary = 1;
 	auxiliary_pointer = fixture->frame.carries_auxiliary_bit ?
 		&fixture->auxiliary :
 		NULL;
-	if (sippymodem_v34_transmit_mapping_frame(
+	if (v34_transmit_mapping_frame(
 		    &fixture->pair.transmit_schedule, &fixture->pair.scrambler,
 		    &fixture->pair.encoder, fixture->primary,
 		    fixture->frame.primary_bits, auxiliary_pointer,
-		    SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 512.0,
-		    &transmitted) != SIPPYMODEM_V34_MAPPING_FRAME_TRANSMITTER_OK)
+		    V34_NONLINEAR_THETA_ZERO, 512.0,
+		    &transmitted) != V34_MAPPING_FRAME_TRANSMITTER_OK)
 		return false;
 	decisions_from_encoded(&transmitted.encoded, fixture->decided);
 	return true;
@@ -259,9 +259,9 @@ static bool initialize_rejection_fixture(struct rejection_fixture *fixture)
 
 static bool receiver_state_is_equal(
 	const struct modem_pair *pair,
-	const struct sippymodem_v34_frame_schedule *schedule,
-	const struct sippymodem_v34_scrambler *descrambler,
-	const struct sippymodem_v34_4d_decoder *decoder)
+	const struct v34_frame_schedule *schedule,
+	const struct v34_scrambler *descrambler,
+	const struct v34_4d_decoder *decoder)
 {
 	return memcmp(&pair->receive_schedule, schedule, sizeof(*schedule)) == 0 &&
 	       memcmp(&pair->descrambler, descrambler, sizeof(*descrambler)) == 0 &&
@@ -271,13 +271,13 @@ static bool receiver_state_is_equal(
 static bool test_transactional_boundaries(void)
 {
 	struct rejection_fixture fixture;
-	struct sippymodem_v34_frame_schedule saved_schedule;
-	struct sippymodem_v34_scrambler saved_descrambler;
-	struct sippymodem_v34_4d_decoder saved_decoder;
-	struct sippymodem_v34_decided_4d_interval
-		malformed[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME];
-	struct sippymodem_v34_received_mapping_frame received;
-	struct sippymodem_v34_received_mapping_frame saved_received;
+	struct v34_frame_schedule saved_schedule;
+	struct v34_scrambler saved_descrambler;
+	struct v34_4d_decoder saved_decoder;
+	struct v34_decided_4d_interval
+		malformed[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+	struct v34_received_mapping_frame received;
+	struct v34_received_mapping_frame saved_received;
 
 	CHECK(initialize_rejection_fixture(&fixture),
 	      "receiver rejection fixture did not initialize");
@@ -288,10 +288,10 @@ static bool test_transactional_boundaries(void)
 	saved_received = received;
 	memcpy(malformed, fixture.decided, sizeof(malformed));
 	malformed[3].trellis_output = 2;
-	CHECK(sippymodem_v34_receive_mapping_frame(
+	CHECK(v34_receive_mapping_frame(
 		      &fixture.pair.receive_schedule, &fixture.pair.descrambler,
 		      &fixture.pair.decoder, malformed, &received) ==
-		      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
+		      V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
 	      receiver_state_is_equal(
 		      &fixture.pair, &saved_schedule, &saved_descrambler,
 		      &saved_decoder) &&
@@ -299,8 +299,8 @@ static bool test_transactional_boundaries(void)
 	      "late decision rejection changed state or output");
 	{
 		struct modem_pair other;
-		struct sippymodem_v34_frame_geometry other_geometry;
-		struct sippymodem_v34_4d_decoder saved_other;
+		struct v34_frame_geometry other_geometry;
+		struct v34_4d_decoder saved_other;
 
 		CHECK(initialize_pair(
 			      &other, &CONFIGURATIONS[0], &other_geometry) &&
@@ -308,11 +308,11 @@ static bool test_transactional_boundaries(void)
 			      saved_schedule.geometry.high_mapping_frame_bits,
 		      "mismatched decoder fixture did not initialize");
 		saved_other = other.decoder;
-		CHECK(sippymodem_v34_receive_mapping_frame(
+		CHECK(v34_receive_mapping_frame(
 			      &fixture.pair.receive_schedule,
 			      &fixture.pair.descrambler, &other.decoder,
 			      fixture.decided, &received) ==
-			      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
+			      V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&other.decoder, &saved_other, sizeof(saved_other)) == 0 &&
 		      receiver_state_is_equal(
 			      &fixture.pair, &saved_schedule, &saved_descrambler,
@@ -320,57 +320,57 @@ static bool test_transactional_boundaries(void)
 		      memcmp(&received, &saved_received, sizeof(received)) == 0,
 		      "mismatched decoder changed receiver state or output");
 	}
-	CHECK(sippymodem_v34_receive_mapping_frame(
+	CHECK(v34_receive_mapping_frame(
 		      NULL, &fixture.pair.descrambler, &fixture.pair.decoder,
 		      fixture.decided, &received) ==
-		      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_receive_mapping_frame(
+		      V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
+	      v34_receive_mapping_frame(
 		      &fixture.pair.receive_schedule, NULL, &fixture.pair.decoder,
 		      fixture.decided, &received) ==
-		      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_receive_mapping_frame(
+		      V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
+	      v34_receive_mapping_frame(
 		      &fixture.pair.receive_schedule, &fixture.pair.descrambler,
 		      NULL, fixture.decided, &received) ==
-		      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_receive_mapping_frame(
+		      V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
+	      v34_receive_mapping_frame(
 		      &fixture.pair.receive_schedule, &fixture.pair.descrambler,
 		      &fixture.pair.decoder, NULL, &received) ==
-		      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
-	      sippymodem_v34_receive_mapping_frame(
+		      V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
+	      v34_receive_mapping_frame(
 		      &fixture.pair.receive_schedule, &fixture.pair.descrambler,
 		      &fixture.pair.decoder, fixture.decided, NULL) ==
-		      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
+		      V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT &&
 	      receiver_state_is_equal(
 		      &fixture.pair, &saved_schedule, &saved_descrambler,
 		      &saved_decoder) &&
 	      memcmp(&received, &saved_received, sizeof(received)) == 0,
 	      "invalid arguments changed receiver state or output");
-	CHECK(sippymodem_v34_receive_mapping_frame(
+	CHECK(v34_receive_mapping_frame(
 		      &fixture.pair.receive_schedule, &fixture.pair.descrambler,
 		      &fixture.pair.decoder, fixture.decided, &received) ==
-		      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_OK &&
+		      V34_MAPPING_FRAME_RECEIVER_OK &&
 	      received_matches(
 		      &received, &fixture.frame, fixture.primary,
 		      fixture.auxiliary),
 	      "valid frame did not recover after rejection");
 	{
-		struct sippymodem_v34_frame_schedule completed = saved_schedule;
-		struct sippymodem_v34_frame_schedule expected_completed;
-		struct sippymodem_v34_scrambler expected_descrambler;
-		struct sippymodem_v34_4d_decoder expected_decoder;
-		struct sippymodem_v34_mapping_frame ignored;
+		struct v34_frame_schedule completed = saved_schedule;
+		struct v34_frame_schedule expected_completed;
+		struct v34_scrambler expected_descrambler;
+		struct v34_4d_decoder expected_decoder;
+		struct v34_mapping_frame ignored;
 
-		while (sippymodem_v34_frame_schedule_next(&completed, &ignored) ==
-		       SIPPYMODEM_V34_FRAME_SCHEDULE_OK)
+		while (v34_frame_schedule_next(&completed, &ignored) ==
+		       V34_FRAME_SCHEDULE_OK)
 			;
 		expected_completed = completed;
 		expected_descrambler = saved_descrambler;
 		expected_decoder = saved_decoder;
 		received = saved_received;
-		CHECK(sippymodem_v34_receive_mapping_frame(
+		CHECK(v34_receive_mapping_frame(
 			      &completed, &saved_descrambler, &saved_decoder,
 			      fixture.decided, &received) ==
-			      SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_FRAME_COMPLETE &&
+			      V34_MAPPING_FRAME_RECEIVER_FRAME_COMPLETE &&
 		      memcmp(&completed, &expected_completed,
 			     sizeof(completed)) == 0 &&
 		      memcmp(&saved_descrambler, &expected_descrambler,
@@ -380,17 +380,17 @@ static bool test_transactional_boundaries(void)
 		      memcmp(&received, &saved_received, sizeof(received)) == 0,
 		      "completed schedule changed receiver state or output");
 	}
-	CHECK(strcmp(sippymodem_v34_mapping_frame_receiver_result_name(
-		     SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_OK),
+	CHECK(strcmp(v34_mapping_frame_receiver_result_name(
+		     V34_MAPPING_FRAME_RECEIVER_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_mapping_frame_receiver_result_name(
-		     SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_FRAME_COMPLETE),
+	      strcmp(v34_mapping_frame_receiver_result_name(
+		     V34_MAPPING_FRAME_RECEIVER_FRAME_COMPLETE),
 		     "frame complete") == 0 &&
-	      strcmp(sippymodem_v34_mapping_frame_receiver_result_name(
-		     SIPPYMODEM_V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT),
+	      strcmp(v34_mapping_frame_receiver_result_name(
+		     V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_mapping_frame_receiver_result_name(
-		     (enum sippymodem_v34_mapping_frame_receiver_result)3),
+	      strcmp(v34_mapping_frame_receiver_result_name(
+		     (enum v34_mapping_frame_receiver_result)3),
 		     "unknown") == 0,
 	      "mapping-frame receiver result names changed");
 	return true;

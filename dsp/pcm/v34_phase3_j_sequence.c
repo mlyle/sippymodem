@@ -12,112 +12,112 @@ enum {
 };
 
 _Static_assert(
-	SIPPYMODEM_V34_PHASE3_J_PATTERN_SYMBOLS * 2 ==
-		SIPPYMODEM_V34_PHASE3_J_PATTERN_BITS,
+	V34_PHASE3_J_PATTERN_SYMBOLS * 2 ==
+		V34_PHASE3_J_PATTERN_BITS,
 	"V.34 J must carry two bits in every 2D symbol");
 
-bool sippymodem_v34_phase3_j_sequence_is_valid(
-	const struct sippymodem_v34_phase3_j_sequence *sequence)
+bool v34_phase3_j_sequence_is_valid(
+	const struct v34_phase3_j_sequence *sequence)
 {
 	return sequence != NULL &&
-	       sippymodem_v34_constellation_size_is_valid(
+	       v34_constellation_size_is_valid(
 		       sequence->remote_constellation) &&
 	       sequence->previous_clockwise_quarter_turns < 4u &&
 	       sequence->symbol_in_pattern <
-		       SIPPYMODEM_V34_PHASE3_J_PATTERN_SYMBOLS &&
-	       sippymodem_v34_transmit_scrambler_is_valid(
+		       V34_PHASE3_J_PATTERN_SYMBOLS &&
+	       v34_transmit_scrambler_is_valid(
 		       &sequence->scrambler, sequence->role);
 }
 
-enum sippymodem_v34_phase3_j_sequence_result
-sippymodem_v34_phase3_j_sequence_init_from_trn(
-	struct sippymodem_v34_phase3_j_sequence *sequence,
-	const struct sippymodem_v34_phase3_trn *trn,
-	enum sippymodem_v34_constellation_size remote_constellation)
+enum v34_phase3_j_sequence_result
+v34_phase3_j_sequence_init_from_trn(
+	struct v34_phase3_j_sequence *sequence,
+	const struct v34_phase3_trn *trn,
+	enum v34_constellation_size remote_constellation)
 {
-	struct sippymodem_v34_phase3_j_sequence initialized;
+	struct v34_phase3_j_sequence initialized;
 
-	if (sequence == NULL || !sippymodem_v34_phase3_trn_is_valid(trn) ||
+	if (sequence == NULL || !v34_phase3_trn_is_valid(trn) ||
 	    !trn->has_last_symbol ||
-	    !sippymodem_v34_constellation_size_is_valid(
+	    !v34_constellation_size_is_valid(
 		    remote_constellation))
-		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
-	initialized = (struct sippymodem_v34_phase3_j_sequence){
+		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
+	initialized = (struct v34_phase3_j_sequence){
 		.scrambler = trn->scrambler,
 		.role = trn->role,
 		.remote_constellation = remote_constellation,
 		.previous_clockwise_quarter_turns =
 			trn->last_clockwise_quarter_turns,
 	};
-	if (!sippymodem_v34_phase3_j_sequence_is_valid(&initialized))
-		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
+	if (!v34_phase3_j_sequence_is_valid(&initialized))
+		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	*sequence = initialized;
-	return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_OK;
+	return V34_PHASE3_J_SEQUENCE_OK;
 }
 
-bool sippymodem_v34_phase3_j_sequence_at_pattern_boundary(
-	const struct sippymodem_v34_phase3_j_sequence *sequence)
+bool v34_phase3_j_sequence_at_pattern_boundary(
+	const struct v34_phase3_j_sequence *sequence)
 {
-	return sippymodem_v34_phase3_j_sequence_is_valid(sequence) &&
+	return v34_phase3_j_sequence_is_valid(sequence) &&
 	       sequence->symbol_in_pattern == 0;
 }
 
 static uint8_t input_dibit(
-	const struct sippymodem_v34_phase3_j_sequence *sequence)
+	const struct v34_phase3_j_sequence *sequence)
 {
 	uint16_t pattern =
 		sequence->remote_constellation ==
-				SIPPYMODEM_V34_CONSTELLATION_4_POINT ?
+				V34_CONSTELLATION_4_POINT ?
 			V34_PHASE3_J_4_POINT_PATTERN :
 			V34_PHASE3_J_16_POINT_PATTERN;
 	unsigned int shift =
-		2u * (SIPPYMODEM_V34_PHASE3_J_PATTERN_SYMBOLS - 1u -
+		2u * (V34_PHASE3_J_PATTERN_SYMBOLS - 1u -
 		      sequence->symbol_in_pattern);
 
 	/* Table 18 writes the first transmitted bit on the left. */
 	return (uint8_t)((pattern >> shift) & 3u);
 }
 
-enum sippymodem_v34_phase3_j_sequence_result
-sippymodem_v34_phase3_j_sequence_next(
-	struct sippymodem_v34_phase3_j_sequence *sequence,
+enum v34_phase3_j_sequence_result
+v34_phase3_j_sequence_next(
+	struct v34_phase3_j_sequence *sequence,
 	struct sippymodem_qam_point *point,
 	uint8_t *clockwise_quarter_turns)
 {
-	struct sippymodem_v34_phase3_j_sequence next;
+	struct v34_phase3_j_sequence next;
 	struct sippymodem_qam_point next_point;
 	uint8_t rotation;
 
-	if (!sippymodem_v34_phase3_j_sequence_is_valid(sequence) ||
+	if (!v34_phase3_j_sequence_is_valid(sequence) ||
 	    point == NULL || clockwise_quarter_turns == NULL)
-		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
+		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	next = *sequence;
-	if (sippymodem_v34_scramble_differential_dibit(
+	if (v34_scramble_differential_dibit(
 		    &next.scrambler, input_dibit(&next),
 		    next.previous_clockwise_quarter_turns, &rotation) !=
-	    SIPPYMODEM_V34_FRAMING_OK)
-		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
+	    V34_FRAMING_OK)
+		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	next.previous_clockwise_quarter_turns = rotation;
 	next.symbol_in_pattern++;
 	if (next.symbol_in_pattern ==
-	    SIPPYMODEM_V34_PHASE3_J_PATTERN_SYMBOLS)
+	    V34_PHASE3_J_PATTERN_SYMBOLS)
 		next.symbol_in_pattern = 0;
-	next_point = sippymodem_v34_rotated_point_zero(-(int)rotation);
-	if (!sippymodem_v34_phase3_j_sequence_is_valid(&next))
-		return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
+	next_point = v34_rotated_point_zero(-(int)rotation);
+	if (!v34_phase3_j_sequence_is_valid(&next))
+		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	*sequence = next;
 	*point = next_point;
 	*clockwise_quarter_turns = rotation;
-	return SIPPYMODEM_V34_PHASE3_J_SEQUENCE_OK;
+	return V34_PHASE3_J_SEQUENCE_OK;
 }
 
-const char *sippymodem_v34_phase3_j_sequence_result_name(
-	enum sippymodem_v34_phase3_j_sequence_result result)
+const char *v34_phase3_j_sequence_result_name(
+	enum v34_phase3_j_sequence_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_PHASE3_J_SEQUENCE_OK:
+	case V34_PHASE3_J_SEQUENCE_OK:
 		return "ok";
-	case SIPPYMODEM_V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT:
+	case V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

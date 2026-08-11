@@ -19,20 +19,20 @@ struct test_projection {
 };
 
 static bool render_period(
-	enum sippymodem_v34_phase2_probe_level level,
-	int16_t samples[SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES])
+	enum v34_phase2_probe_level level,
+	int16_t samples[V34_PHASE2_PROBE_PERIOD_SAMPLES])
 {
-	struct sippymodem_v34_phase2_probe_transmitter transmitter;
+	struct v34_phase2_probe_transmitter transmitter;
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+		      V34_PHASE2_PROBE_OK,
 	      "probe transmitter did not initialize");
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index)
-		CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
+	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index)
+		CHECK(v34_phase2_probe_transmitter_sample(
 			      &transmitter, level, &samples[index]) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+			      V34_PHASE2_PROBE_OK,
 		      "probe generation failed at sample %zu", index);
 	CHECK(transmitter.period_index == 0,
 	      "one probe period did not return to its phase origin");
@@ -40,26 +40,26 @@ static bool render_period(
 }
 
 static struct test_projection project_harmonic(
-	const int16_t samples[SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES],
+	const int16_t samples[V34_PHASE2_PROBE_PERIOD_SAMPLES],
 	unsigned int harmonic)
 {
 	struct test_projection projection = { 0 };
 
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
+	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
 		double angle =
 			2.0 * TEST_PI *
-			(double)SIPPYMODEM_V34_PHASE2_PROBE_TONE_SPACING_HZ *
+			(double)V34_PHASE2_PROBE_TONE_SPACING_HZ *
 			(double)harmonic * (double)index /
-			(double)SIPPYMODEM_V34_PHASE2_SAMPLE_RATE;
+			(double)V34_PHASE2_SAMPLE_RATE;
 
 		projection.cosine += (double)samples[index] * cos(angle);
 		projection.sine += (double)samples[index] * sin(angle);
 	}
 	projection.cosine *=
-		2.0 / SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES;
+		2.0 / V34_PHASE2_PROBE_PERIOD_SAMPLES;
 	projection.sine *=
-		2.0 / SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES;
+		2.0 / V34_PHASE2_PROBE_PERIOD_SAMPLES;
 	return projection;
 }
 
@@ -77,14 +77,14 @@ static bool test_spectrum_and_initial_phases(void)
 		{ 25, 1 },
 	};
 	static const unsigned int omitted_harmonics[] = { 6, 8, 12, 16 };
-	int16_t samples[SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES];
+	int16_t samples[V34_PHASE2_PROBE_PERIOD_SAMPLES];
 	double expected_tone_peak =
 		(double)TEST_NOMINAL_AMPLITUDE /
-		sqrt((double)SIPPYMODEM_V34_PHASE2_PROBE_TONE_COUNT);
+		sqrt((double)V34_PHASE2_PROBE_TONE_COUNT);
 
 	CHECK(ARRAY_LENGTH(expected_tones) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_TONE_COUNT &&
-		      render_period(SIPPYMODEM_V34_PHASE2_PROBE_L2, samples),
+		      V34_PHASE2_PROBE_TONE_COUNT &&
+		      render_period(V34_PHASE2_PROBE_L2, samples),
 	      "probe spectrum fixture failed");
 	for (size_t index = 0; index < ARRAY_LENGTH(expected_tones); ++index) {
 		struct test_projection projection = project_harmonic(
@@ -112,31 +112,31 @@ static bool test_spectrum_and_initial_phases(void)
 }
 
 static double mean_square(
-	const int16_t samples[SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES])
+	const int16_t samples[V34_PHASE2_PROBE_PERIOD_SAMPLES])
 {
 	double power = 0.0;
 
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
+	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
 		double sample = samples[index];
 
 		power += sample * sample;
 	}
-	return power / SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES;
+	return power / V34_PHASE2_PROBE_PERIOD_SAMPLES;
 }
 
 static bool test_power_levels(void)
 {
-	int16_t l1[SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES];
-	int16_t l2[SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES];
+	int16_t l1[V34_PHASE2_PROBE_PERIOD_SAMPLES];
+	int16_t l2[V34_PHASE2_PROBE_PERIOD_SAMPLES];
 	double l1_power;
 	double l2_power;
 	double nominal_power =
 		(double)TEST_NOMINAL_AMPLITUDE * TEST_NOMINAL_AMPLITUDE / 2.0;
 	double expected_ratio = pow(10.0, 6.0 / 10.0);
 
-	CHECK(render_period(SIPPYMODEM_V34_PHASE2_PROBE_L1, l1) &&
-		      render_period(SIPPYMODEM_V34_PHASE2_PROBE_L2, l2),
+	CHECK(render_period(V34_PHASE2_PROBE_L1, l1) &&
+		      render_period(V34_PHASE2_PROBE_L2, l2),
 	      "probe power fixture failed");
 	l1_power = mean_square(l1);
 	l2_power = mean_square(l2);
@@ -151,53 +151,53 @@ static bool test_power_levels(void)
 
 static bool test_period_and_l1_boundary(void)
 {
-	struct sippymodem_v34_phase2_probe_transmitter transmitter;
-	int16_t two_periods[2 * SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES];
+	struct v34_phase2_probe_transmitter transmitter;
+	int16_t two_periods[2 * V34_PHASE2_PROBE_PERIOD_SAMPLES];
 	int16_t first_l2_sample;
 
-	CHECK(SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES == 160 &&
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES == 1280 &&
-		      SIPPYMODEM_V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES == 4000 &&
-		      SIPPYMODEM_V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES == 4400 &&
-		      SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES *
-				      SIPPYMODEM_V34_PHASE2_PROBE_TONE_SPACING_HZ /
-			      SIPPYMODEM_V34_PHASE2_SAMPLE_RATE ==
+	CHECK(V34_PHASE2_PROBE_PERIOD_SAMPLES == 160 &&
+		      V34_PHASE2_PROBE_L1_SAMPLES == 1280 &&
+		      V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES == 4000 &&
+		      V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES == 4400 &&
+		      V34_PHASE2_PROBE_L1_SAMPLES *
+				      V34_PHASE2_PROBE_TONE_SPACING_HZ /
+			      V34_PHASE2_SAMPLE_RATE ==
 			      24,
 	      "probe timing constants changed");
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+		      V34_PHASE2_PROBE_OK,
 	      "period fixture did not initialize");
 	for (size_t index = 0; index < ARRAY_LENGTH(two_periods); ++index)
-		CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
+		CHECK(v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L2,
 			      &two_periods[index]) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+			      V34_PHASE2_PROBE_OK,
 		      "period fixture failed at sample %zu", index);
 	CHECK(memcmp(
 		      two_periods,
-		      &two_periods[SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES],
+		      &two_periods[V34_PHASE2_PROBE_PERIOD_SAMPLES],
 		      sizeof(two_periods) / 2) == 0,
 	      "generated probe periods are not sample-exact");
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+		      V34_PHASE2_PROBE_OK,
 	      "L1 boundary fixture did not initialize");
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_L1_SAMPLES; ++index) {
+	     index < V34_PHASE2_PROBE_L1_SAMPLES; ++index) {
 		int16_t discarded;
 
-		CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L1,
-			      &discarded) == SIPPYMODEM_V34_PHASE2_PROBE_OK,
+		CHECK(v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L1,
+			      &discarded) == V34_PHASE2_PROBE_OK,
 		      "L1 boundary fixture failed at sample %zu", index);
 	}
 	CHECK(transmitter.period_index == 0 &&
-		      sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
+		      v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L2,
 			      &first_l2_sample) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_OK &&
+			      V34_PHASE2_PROBE_OK &&
 		      first_l2_sample == two_periods[0],
 	      "L1 did not hand L2 an exact phase boundary");
 	return true;
@@ -205,16 +205,16 @@ static bool test_period_and_l1_boundary(void)
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_phase2_probe_transmitter transmitter;
-	struct sippymodem_v34_phase2_probe_transmitter before;
+	struct v34_phase2_probe_transmitter transmitter;
+	struct v34_phase2_probe_transmitter before;
 	int maximum_amplitude = 0;
 	int16_t sample = 1234;
 	int16_t maximum_sample = 0;
 
 	for (int amplitude = 1; amplitude <= INT16_MAX; ++amplitude) {
-		if (sippymodem_v34_phase2_probe_transmitter_init(
+		if (v34_phase2_probe_transmitter_init(
 			    &transmitter, (int16_t)amplitude) !=
-		    SIPPYMODEM_V34_PHASE2_PROBE_OK)
+		    V34_PHASE2_PROBE_OK)
 			break;
 		maximum_amplitude = amplitude;
 	}
@@ -223,31 +223,31 @@ static bool test_validation(void)
 	      "probe amplitude bound is missing or unexpectedly restrictive");
 	memset(&transmitter, 0xa5, sizeof(transmitter));
 	before = transmitter;
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, (int16_t)(maximum_amplitude + 1)) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT &&
+		      V34_PHASE2_PROBE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
-		      sippymodem_v34_phase2_probe_transmitter_init(
+		      v34_phase2_probe_transmitter_init(
 			      &transmitter, 0) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT &&
+			      V34_PHASE2_PROBE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
-		      sippymodem_v34_phase2_probe_transmitter_init(
+		      v34_phase2_probe_transmitter_init(
 			      &transmitter, -1) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT &&
+			      V34_PHASE2_PROBE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
-		      sippymodem_v34_phase2_probe_transmitter_init(NULL, 1) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT,
+		      v34_phase2_probe_transmitter_init(NULL, 1) ==
+			      V34_PHASE2_PROBE_INVALID_ARGUMENT,
 	      "invalid probe initialization changed caller-owned state");
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, (int16_t)maximum_amplitude) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+		      V34_PHASE2_PROBE_OK,
 	      "maximum safe probe amplitude was rejected");
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
-		CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L1,
-			      &sample) == SIPPYMODEM_V34_PHASE2_PROBE_OK,
+	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
+		CHECK(v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L1,
+			      &sample) == V34_PHASE2_PROBE_OK,
 		      "maximum L1 level failed at sample %zu", index);
 		if (sample > maximum_sample)
 			maximum_sample = sample;
@@ -255,51 +255,51 @@ static bool test_validation(void)
 	CHECK(maximum_sample >= INT16_MAX - 2,
 	      "probe amplitude bound leaves unexplained headroom");
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+		      V34_PHASE2_PROBE_OK,
 	      "validation fixture did not initialize");
 	transmitter.period_index =
-		SIPPYMODEM_V34_PHASE2_PROBE_PERIOD_SAMPLES;
+		V34_PHASE2_PROBE_PERIOD_SAMPLES;
 	before = transmitter;
 	sample = 1234;
-	CHECK(!sippymodem_v34_phase2_probe_transmitter_is_valid(&transmitter) &&
-		      sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
+	CHECK(!v34_phase2_probe_transmitter_is_valid(&transmitter) &&
+		      v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L2,
 			      &sample) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT &&
+			      V34_PHASE2_PROBE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
 		      sample == 1234,
 	      "corrupt probe state was not rejected transactionally");
 
-	CHECK(sippymodem_v34_phase2_probe_transmitter_init(
+	CHECK(v34_phase2_probe_transmitter_init(
 		      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_OK,
+		      V34_PHASE2_PROBE_OK,
 	      "argument validation fixture did not initialize");
 	before = transmitter;
-	CHECK(sippymodem_v34_phase2_probe_transmitter_sample(
+	CHECK(v34_phase2_probe_transmitter_sample(
 		      &transmitter,
-		      (enum sippymodem_v34_phase2_probe_level)99, &sample) ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT &&
+		      (enum v34_phase2_probe_level)99, &sample) ==
+		      V34_PHASE2_PROBE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
-		      sippymodem_v34_phase2_probe_transmitter_sample(
-			      &transmitter, SIPPYMODEM_V34_PHASE2_PROBE_L2,
+		      v34_phase2_probe_transmitter_sample(
+			      &transmitter, V34_PHASE2_PROBE_L2,
 			      NULL) ==
-			      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT &&
+			      V34_PHASE2_PROBE_INVALID_ARGUMENT &&
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
-		      !sippymodem_v34_phase2_probe_transmitter_is_valid(NULL),
+		      !v34_phase2_probe_transmitter_is_valid(NULL),
 	      "invalid probe sampling changed transmitter state");
 	CHECK(strcmp(
-		      sippymodem_v34_phase2_probe_result_name(
-			      SIPPYMODEM_V34_PHASE2_PROBE_OK),
+		      v34_phase2_probe_result_name(
+			      V34_PHASE2_PROBE_OK),
 		      "ok") == 0 &&
 		      strcmp(
-			      sippymodem_v34_phase2_probe_result_name(
-				      SIPPYMODEM_V34_PHASE2_PROBE_INVALID_ARGUMENT),
+			      v34_phase2_probe_result_name(
+				      V34_PHASE2_PROBE_INVALID_ARGUMENT),
 			      "invalid argument") == 0 &&
 		      strcmp(
-			      sippymodem_v34_phase2_probe_result_name(
-				      (enum sippymodem_v34_phase2_probe_result)99),
+			      v34_phase2_probe_result_name(
+				      (enum v34_phase2_probe_result)99),
 			      "unknown") == 0,
 	      "probe result names changed");
 	return true;

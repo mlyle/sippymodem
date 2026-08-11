@@ -18,8 +18,8 @@ static bool doubles_are_close(double left, double right)
 }
 
 static bool candidate_matches(
-	const struct sippymodem_v34_lattice_candidate *candidate,
-	const struct sippymodem_v34_grid_point *point, uint8_t subset_label,
+	const struct v34_lattice_candidate *candidate,
+	const struct v34_grid_point *point, uint8_t subset_label,
 	double squared_error)
 {
 	return candidate->channel_output.in_phase == point->in_phase &&
@@ -30,24 +30,24 @@ static bool candidate_matches(
 
 static bool test_known_slices(void)
 {
-	static const struct sippymodem_v34_grid_point expected[] = {
+	static const struct v34_grid_point expected[] = {
 		{ 1, 1 }, { 1, 3 }, { 3, 3 }, { 3, 1 },
 	};
 	static const uint8_t expected_label[] = { 0, 5, 2, 7 };
 	static const double expected_error[] = { 2.93, 0.13, 3.33, 6.13 };
-	static const struct sippymodem_v34_grid_point expected_tie[] = {
+	static const struct v34_grid_point expected_tie[] = {
 		{ 1, 1 }, { 1, -1 }, { -1, -1 }, { -1, 1 },
 	};
-	static const struct sippymodem_v34_grid_point expected_boundary[] = {
+	static const struct v34_grid_point expected_boundary[] = {
 		{ 253, -255 }, { 253, -253 }, { 255, -253 }, { 255, -255 },
 	};
 	const struct sippymodem_qam_point estimate = { 1.2, 2.7 };
 	const struct sippymodem_qam_point tie = { -1.0, 1.0 };
 	const struct sippymodem_qam_point boundary = { 1000000.0, -1000000.0 };
-	struct sippymodem_v34_lattice_slice slice;
+	struct v34_lattice_slice slice;
 
-	CHECK(sippymodem_v34_slice_odd_lattice(&estimate, &slice) ==
-		      SIPPYMODEM_V34_LATTICE_OK,
+	CHECK(v34_slice_odd_lattice(&estimate, &slice) ==
+		      V34_LATTICE_OK,
 	      "known odd-lattice slice failed");
 	for (size_t path = 0; path < ARRAY_LENGTH(expected); ++path)
 		CHECK(candidate_matches(
@@ -55,8 +55,8 @@ static bool test_known_slices(void)
 			      expected_label[path], expected_error[path]),
 		      "known candidate %zu changed", path);
 
-	CHECK(sippymodem_v34_slice_odd_lattice(&tie, &slice) ==
-		      SIPPYMODEM_V34_LATTICE_OK,
+	CHECK(v34_slice_odd_lattice(&tie, &slice) ==
+		      V34_LATTICE_OK,
 	      "same-class tie slice failed");
 	for (size_t path = 0; path < ARRAY_LENGTH(expected_tie); ++path)
 		CHECK(slice.candidate[path].channel_output.in_phase ==
@@ -65,8 +65,8 @@ static bool test_known_slices(void)
 			      expected_tie[path].quadrature,
 		      "tie candidate %zu selected the wrong magnitude", path);
 
-	CHECK(sippymodem_v34_slice_odd_lattice(&boundary, &slice) ==
-		      SIPPYMODEM_V34_LATTICE_OK,
+	CHECK(v34_slice_odd_lattice(&boundary, &slice) ==
+		      V34_LATTICE_OK,
 	      "bounded odd-lattice slice failed");
 	for (size_t path = 0; path < ARRAY_LENGTH(expected_boundary); ++path)
 		CHECK(slice.candidate[path].channel_output.in_phase ==
@@ -98,8 +98,8 @@ static int16_t exhaustive_axis_candidate(double estimate, uint8_t residue)
 	double best_error = DBL_MAX;
 	int best = 0;
 
-	for (int coordinate = -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
-	     coordinate <= SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+	for (int coordinate = -V34_CHANNEL_COORDINATE_LIMIT;
+	     coordinate <= V34_CHANNEL_COORDINATE_LIMIT;
 	     coordinate += 2) {
 		double error;
 
@@ -116,13 +116,13 @@ static int16_t exhaustive_axis_candidate(double estimate, uint8_t residue)
 	return (int16_t)best;
 }
 
-static struct sippymodem_v34_grid_point expected_path_point(
+static struct v34_grid_point expected_path_point(
 	const int16_t in_phase[2], const int16_t quadrature[2], uint8_t path)
 {
 	uint8_t in_phase_index = path >> 1;
 	uint8_t quadrature_index = (uint8_t)(in_phase_index ^ (path & 1u));
 
-	return (struct sippymodem_v34_grid_point){
+	return (struct v34_grid_point){
 		in_phase[in_phase_index], quadrature[quadrature_index],
 	};
 }
@@ -144,15 +144,15 @@ static uint8_t figure9_label(
 }
 
 static int32_t oracle_magnitude_squared(
-	const struct sippymodem_v34_grid_point *point)
+	const struct v34_grid_point *point)
 {
 	return (int32_t)point->in_phase * point->in_phase +
 	       (int32_t)point->quadrature * point->quadrature;
 }
 
 static bool oracle_precedes(
-	double error, const struct sippymodem_v34_grid_point *point,
-	double current_error, const struct sippymodem_v34_grid_point *current)
+	double error, const struct v34_grid_point *point,
+	double current_error, const struct v34_grid_point *current)
 {
 	int32_t magnitude;
 	int32_t current_magnitude;
@@ -170,18 +170,18 @@ static bool oracle_precedes(
 
 static void exhaustive_subset_oracle(
 	const struct sippymodem_qam_point *estimate,
-	struct sippymodem_v34_subset_slice *expected)
+	struct v34_subset_slice *expected)
 {
-	bool found[SIPPYMODEM_V34_SUBSET_LABEL_COUNT] = { false };
+	bool found[V34_SUBSET_LABEL_COUNT] = { false };
 
 	memset(expected, 0, sizeof(*expected));
-	for (int in_phase = -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
-	     in_phase <= SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+	for (int in_phase = -V34_CHANNEL_COORDINATE_LIMIT;
+	     in_phase <= V34_CHANNEL_COORDINATE_LIMIT;
 	     in_phase += 2) {
-		for (int quadrature = -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
-		     quadrature <= SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+		for (int quadrature = -V34_CHANNEL_COORDINATE_LIMIT;
+		     quadrature <= V34_CHANNEL_COORDINATE_LIMIT;
 		     quadrature += 2) {
-			struct sippymodem_v34_grid_point point = {
+			struct v34_grid_point point = {
 				(int16_t)in_phase, (int16_t)quadrature,
 			};
 			uint8_t label = figure9_label(
@@ -192,14 +192,14 @@ static void exhaustive_subset_oracle(
 				estimate->quadrature - point.quadrature;
 			double error = error_in_phase * error_in_phase +
 				       error_quadrature * error_quadrature;
-			struct sippymodem_v34_lattice_candidate *current =
+			struct v34_lattice_candidate *current =
 				&expected->subset[label];
 
 			if (!found[label] || oracle_precedes(
 						     error, &point,
 						     current->squared_error,
 						     &current->channel_output)) {
-				*current = (struct sippymodem_v34_lattice_candidate){
+				*current = (struct v34_lattice_candidate){
 					.channel_output = point,
 					.subset_label = label,
 					.squared_error = error,
@@ -211,12 +211,12 @@ static void exhaustive_subset_oracle(
 }
 
 static bool subset_slices_match(
-	const struct sippymodem_v34_subset_slice *actual,
-	const struct sippymodem_v34_subset_slice *expected, size_t index)
+	const struct v34_subset_slice *actual,
+	const struct v34_subset_slice *expected, size_t index)
 {
-	for (uint8_t label = 0; label < SIPPYMODEM_V34_SUBSET_LABEL_COUNT;
+	for (uint8_t label = 0; label < V34_SUBSET_LABEL_COUNT;
 	     ++label) {
-		const struct sippymodem_v34_lattice_candidate *candidate =
+		const struct v34_lattice_candidate *candidate =
 			&actual->subset[label];
 
 		CHECK(candidate_matches(
@@ -231,16 +231,16 @@ static bool test_all_grid_subsets(void)
 {
 	const struct sippymodem_qam_point magnitude_tie = { 3.0, 3.0 };
 	const struct sippymodem_qam_point coordinate_tie = { -1.0, -1.0 };
-	struct sippymodem_v34_subset_slice slice;
+	struct v34_subset_slice slice;
 	uint32_t random = UINT32_C(0x8a11c0de);
 
-	CHECK(sippymodem_v34_slice_grid_subsets(&magnitude_tie, &slice) ==
-		      SIPPYMODEM_V34_LATTICE_OK &&
+	CHECK(v34_slice_grid_subsets(&magnitude_tie, &slice) ==
+		      V34_LATTICE_OK &&
 	      slice.subset[0].channel_output.in_phase == 1 &&
 	      slice.subset[0].channel_output.quadrature == 1,
 	      "subset magnitude tie selected the wrong point");
-	CHECK(sippymodem_v34_slice_grid_subsets(&coordinate_tie, &slice) ==
-		      SIPPYMODEM_V34_LATTICE_OK &&
+	CHECK(v34_slice_grid_subsets(&coordinate_tie, &slice) ==
+		      V34_LATTICE_OK &&
 	      slice.subset[4].channel_output.in_phase == -3 &&
 	      slice.subset[4].channel_output.quadrature == 1,
 	      "subset coordinate tie selected the wrong point");
@@ -249,11 +249,11 @@ static bool test_all_grid_subsets(void)
 			generated_estimate(&random),
 			generated_estimate(&random),
 		};
-		struct sippymodem_v34_subset_slice expected;
+		struct v34_subset_slice expected;
 
 		exhaustive_subset_oracle(&estimate, &expected);
-		CHECK(sippymodem_v34_slice_grid_subsets(&estimate, &slice) ==
-			      SIPPYMODEM_V34_LATTICE_OK &&
+		CHECK(v34_slice_grid_subsets(&estimate, &slice) ==
+			      V34_LATTICE_OK &&
 		      subset_slices_match(&slice, &expected, index),
 		      "generated subset slice %zu failed", index);
 	}
@@ -279,18 +279,18 @@ static bool test_generated_sweep(void)
 			exhaustive_axis_candidate(estimate.quadrature, 1),
 			exhaustive_axis_candidate(estimate.quadrature, 3),
 		};
-		struct sippymodem_v34_lattice_slice slice;
-		bool label_seen[SIPPYMODEM_V34_SUBSET_LABEL_COUNT] = { false };
+		struct v34_lattice_slice slice;
+		bool label_seen[V34_SUBSET_LABEL_COUNT] = { false };
 
-		CHECK(sippymodem_v34_slice_odd_lattice(&estimate, &slice) ==
-			      SIPPYMODEM_V34_LATTICE_OK,
+		CHECK(v34_slice_odd_lattice(&estimate, &slice) ==
+			      V34_LATTICE_OK,
 		      "generated slice %zu failed", index);
 		for (uint8_t path = 0;
-		     path < SIPPYMODEM_V34_LATTICE_CANDIDATE_COUNT; ++path) {
-			struct sippymodem_v34_grid_point expected =
+		     path < V34_LATTICE_CANDIDATE_COUNT; ++path) {
+			struct v34_grid_point expected =
 				expected_path_point(
 					in_phase, quadrature, path);
-			const struct sippymodem_v34_lattice_candidate *candidate =
+			const struct v34_lattice_candidate *candidate =
 				&slice.candidate[path];
 			double error_in_phase =
 				estimate.in_phase - expected.in_phase;
@@ -301,9 +301,9 @@ static bool test_generated_sweep(void)
 				error_quadrature * error_quadrature;
 			uint8_t expected_label;
 
-			CHECK(sippymodem_v34_grid_subset_label(
+			CHECK(v34_grid_subset_label(
 				      &expected, &expected_label) ==
-				      SIPPYMODEM_V34_TRELLIS_OK &&
+				      V34_TRELLIS_OK &&
 			      candidate_matches(
 				      candidate, &expected, expected_label,
 				      expected_error) &&
@@ -312,14 +312,14 @@ static bool test_generated_sweep(void)
 			label_seen[expected_label] = true;
 			lower_bound_seen |=
 				candidate->channel_output.in_phase ==
-					-SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT ||
+					-V34_CHANNEL_COORDINATE_LIMIT ||
 				candidate->channel_output.quadrature ==
-					-SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+					-V34_CHANNEL_COORDINATE_LIMIT;
 			upper_bound_seen |=
 				candidate->channel_output.in_phase ==
-					SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT ||
+					V34_CHANNEL_COORDINATE_LIMIT ||
 				candidate->channel_output.quadrature ==
-					SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+					V34_CHANNEL_COORDINATE_LIMIT;
 		}
 	}
 	CHECK(lower_bound_seen && upper_bound_seen,
@@ -334,50 +334,50 @@ static bool test_transactional_validation(void)
 		{ NAN, 0.0 }, { 0.0, INFINITY },
 	};
 	const struct sippymodem_qam_point overflow = { DBL_MAX, 0.0 };
-	struct sippymodem_v34_lattice_slice slice;
-	struct sippymodem_v34_lattice_slice saved;
-	struct sippymodem_v34_subset_slice subsets;
-	struct sippymodem_v34_subset_slice saved_subsets;
+	struct v34_lattice_slice slice;
+	struct v34_lattice_slice saved;
+	struct v34_subset_slice subsets;
+	struct v34_subset_slice saved_subsets;
 
 	memset(&slice, 0xa5, sizeof(slice));
 	saved = slice;
-	CHECK(sippymodem_v34_slice_odd_lattice(NULL, &slice) ==
-		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT &&
-	      sippymodem_v34_slice_odd_lattice(&valid, NULL) ==
-		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT,
+	CHECK(v34_slice_odd_lattice(NULL, &slice) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_odd_lattice(&valid, NULL) ==
+		      V34_LATTICE_INVALID_ARGUMENT,
 	      "missing lattice argument was accepted");
 	for (size_t index = 0; index < ARRAY_LENGTH(not_finite); ++index)
-		CHECK(sippymodem_v34_slice_odd_lattice(
+		CHECK(v34_slice_odd_lattice(
 			      &not_finite[index], &slice) ==
-			      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT,
+			      V34_LATTICE_INVALID_ARGUMENT,
 		      "non-finite estimate %zu was accepted", index);
-	CHECK(sippymodem_v34_slice_odd_lattice(&overflow, &slice) ==
-		      SIPPYMODEM_V34_LATTICE_NUMERIC_FAILURE &&
+	CHECK(v34_slice_odd_lattice(&overflow, &slice) ==
+		      V34_LATTICE_NUMERIC_FAILURE &&
 	      memcmp(&slice, &saved, sizeof(slice)) == 0,
 	      "rejected estimate changed the lattice slice");
 	memset(&subsets, 0x5a, sizeof(subsets));
 	saved_subsets = subsets;
-	CHECK(sippymodem_v34_slice_grid_subsets(NULL, &subsets) ==
-		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT &&
-	      sippymodem_v34_slice_grid_subsets(&valid, NULL) ==
-		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT &&
-	      sippymodem_v34_slice_grid_subsets(&not_finite[0], &subsets) ==
-		      SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT &&
-	      sippymodem_v34_slice_grid_subsets(&overflow, &subsets) ==
-		      SIPPYMODEM_V34_LATTICE_NUMERIC_FAILURE &&
+	CHECK(v34_slice_grid_subsets(NULL, &subsets) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_grid_subsets(&valid, NULL) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_grid_subsets(&not_finite[0], &subsets) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_grid_subsets(&overflow, &subsets) ==
+		      V34_LATTICE_NUMERIC_FAILURE &&
 	      memcmp(&subsets, &saved_subsets, sizeof(subsets)) == 0,
 	      "rejected estimate changed the subset slice");
-	CHECK(strcmp(sippymodem_v34_lattice_result_name(
-			     SIPPYMODEM_V34_LATTICE_OK),
+	CHECK(strcmp(v34_lattice_result_name(
+			     V34_LATTICE_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v34_lattice_result_name(
-			     SIPPYMODEM_V34_LATTICE_INVALID_ARGUMENT),
+	      strcmp(v34_lattice_result_name(
+			     V34_LATTICE_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(sippymodem_v34_lattice_result_name(
-			     SIPPYMODEM_V34_LATTICE_NUMERIC_FAILURE),
+	      strcmp(v34_lattice_result_name(
+			     V34_LATTICE_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&
-	      strcmp(sippymodem_v34_lattice_result_name(
-			     (enum sippymodem_v34_lattice_result)99),
+	      strcmp(v34_lattice_result_name(
+			     (enum v34_lattice_result)99),
 		     "unknown") == 0,
 	      "lattice result names changed");
 	return true;

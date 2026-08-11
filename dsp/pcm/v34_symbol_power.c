@@ -8,8 +8,8 @@
 
 static const double V34_POWER_COMPARISON_EPSILON = 1e-12;
 
-bool sippymodem_v34_symbol_power_measurement_is_valid(
-	const struct sippymodem_v34_symbol_power_measurement *measurement)
+bool v34_symbol_power_measurement_is_valid(
+	const struct v34_symbol_power_measurement *measurement)
 {
 	return measurement != NULL &&
 	       isfinite(measurement->mean_squared_magnitude) &&
@@ -18,28 +18,28 @@ bool sippymodem_v34_symbol_power_measurement_is_valid(
 		measurement->mean_squared_magnitude == 0.0);
 }
 
-enum sippymodem_v34_symbol_power_result
-sippymodem_v34_symbol_power_measurement_reset(
-	struct sippymodem_v34_symbol_power_measurement *measurement)
+enum v34_symbol_power_result
+v34_symbol_power_measurement_reset(
+	struct v34_symbol_power_measurement *measurement)
 {
 	if (measurement == NULL)
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	*measurement =
-		(struct sippymodem_v34_symbol_power_measurement){ 0 };
-	return SIPPYMODEM_V34_SYMBOL_POWER_OK;
+		(struct v34_symbol_power_measurement){ 0 };
+	return V34_SYMBOL_POWER_OK;
 }
 
-static enum sippymodem_v34_symbol_power_result observe_power(
-	struct sippymodem_v34_symbol_power_measurement *measurement,
+static enum v34_symbol_power_result observe_power(
+	struct v34_symbol_power_measurement *measurement,
 	double squared_magnitude)
 {
-	struct sippymodem_v34_symbol_power_measurement next;
+	struct v34_symbol_power_measurement next;
 
-	if (!sippymodem_v34_symbol_power_measurement_is_valid(measurement) ||
+	if (!v34_symbol_power_measurement_is_valid(measurement) ||
 	    !isfinite(squared_magnitude) || squared_magnitude < 0.0)
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	if (measurement->symbol_count == UINT32_MAX)
-		return SIPPYMODEM_V34_SYMBOL_POWER_OUT_OF_RANGE;
+		return V34_SYMBOL_POWER_OUT_OF_RANGE;
 	next = *measurement;
 	next.symbol_count++;
 	next.mean_squared_magnitude +=
@@ -47,44 +47,44 @@ static enum sippymodem_v34_symbol_power_result observe_power(
 		next.symbol_count;
 	if (!isfinite(next.mean_squared_magnitude) ||
 	    next.mean_squared_magnitude < 0.0)
-		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	*measurement = next;
-	return SIPPYMODEM_V34_SYMBOL_POWER_OK;
+	return V34_SYMBOL_POWER_OK;
 }
 
-enum sippymodem_v34_symbol_power_result
-sippymodem_v34_symbol_power_observe_q7(
-	struct sippymodem_v34_symbol_power_measurement *measurement,
-	const struct sippymodem_v34_q7_point *point)
+enum v34_symbol_power_result
+v34_symbol_power_observe_q7(
+	struct v34_symbol_power_measurement *measurement,
+	const struct v34_q7_point *point)
 {
 	struct sippymodem_qam_point converted;
 
 	if (point == NULL)
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	converted = (struct sippymodem_qam_point){
 		.in_phase =
-			(double)point->in_phase / SIPPYMODEM_V34_Q7_SCALE,
+			(double)point->in_phase / V34_Q7_SCALE,
 		.quadrature =
-			(double)point->quadrature / SIPPYMODEM_V34_Q7_SCALE,
+			(double)point->quadrature / V34_Q7_SCALE,
 	};
-	return sippymodem_v34_symbol_power_observe_point(
+	return v34_symbol_power_observe_point(
 		measurement, &converted);
 }
 
-enum sippymodem_v34_symbol_power_result
-sippymodem_v34_symbol_power_observe_point(
-	struct sippymodem_v34_symbol_power_measurement *measurement,
+enum v34_symbol_power_result
+v34_symbol_power_observe_point(
+	struct v34_symbol_power_measurement *measurement,
 	const struct sippymodem_qam_point *point)
 {
 	double squared_magnitude;
 
 	if (point == NULL || !isfinite(point->in_phase) ||
 	    !isfinite(point->quadrature))
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	squared_magnitude = point->in_phase * point->in_phase +
 		point->quadrature * point->quadrature;
 	if (!isfinite(squared_magnitude))
-		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	return observe_power(measurement, squared_magnitude);
 }
 
@@ -102,25 +102,25 @@ static bool power_does_not_exceed(double power, double maximum)
 }
 
 static bool measured_power_relation_is_valid(
-	enum sippymodem_v34_nonlinear_parameter nonlinear_parameter,
+	enum v34_nonlinear_parameter nonlinear_parameter,
 	double precoded_mean, double projected_mean)
 {
-	if (nonlinear_parameter == SIPPYMODEM_V34_NONLINEAR_THETA_ZERO)
+	if (nonlinear_parameter == V34_NONLINEAR_THETA_ZERO)
 		return nearly_equal(precoded_mean, projected_mean);
 	return projected_mean >= precoded_mean ||
 	       nearly_equal(precoded_mean, projected_mean);
 }
 
 static bool maximum_precoded_point_power(
-	const struct sippymodem_v34_mapping_parameters *parameters,
+	const struct v34_mapping_parameters *parameters,
 	double *maximum)
 {
 	int64_t maximum_squared_q7 = 0;
 	int64_t half_grid_step_q7 =
 		(int64_t)(parameters->mapping_frame_bits < 56u ?
-				  SIPPYMODEM_V34_PRECODER_GRID_STEP_2 :
-				  SIPPYMODEM_V34_PRECODER_GRID_STEP_4) *
-		SIPPYMODEM_V34_Q7_SCALE / 2;
+				  V34_PRECODER_GRID_STEP_2 :
+				  V34_PRECODER_GRID_STEP_4) *
+		V34_Q7_SCALE / 2;
 	size_t quarter_point_count = parameters->constellation_points / 4u;
 
 	/* c(n) is the nearest grid multiple to p(n), so each component of
@@ -128,55 +128,55 @@ static bool maximum_precoded_point_power(
 	 * labels and adding that residual outward gives a data-independent
 	 * envelope for x(n) without retaining a constellation table. */
 	for (size_t label = 0; label < quarter_point_count; ++label) {
-		struct sippymodem_v34_grid_point point;
+		struct v34_grid_point point;
 		int64_t in_phase;
 		int64_t quadrature;
 		int64_t squared_q7;
 
-		if (sippymodem_v34_quarter_superconstellation_point(
-			    label, &point) != SIPPYMODEM_V34_CONSTELLATION_OK)
+		if (v34_quarter_superconstellation_point(
+			    label, &point) != V34_CONSTELLATION_OK)
 			return false;
 		in_phase =
 			(point.in_phase < 0 ? -(int64_t)point.in_phase :
 					      point.in_phase) *
-				SIPPYMODEM_V34_Q7_SCALE +
+				V34_Q7_SCALE +
 			half_grid_step_q7;
 		quadrature =
 			(point.quadrature < 0 ? -(int64_t)point.quadrature :
 						 point.quadrature) *
-				SIPPYMODEM_V34_Q7_SCALE +
+				V34_Q7_SCALE +
 			half_grid_step_q7;
 		squared_q7 = in_phase * in_phase + quadrature * quadrature;
 		if (squared_q7 > maximum_squared_q7)
 			maximum_squared_q7 = squared_q7;
 	}
 	*maximum = (double)maximum_squared_q7 /
-		((double)SIPPYMODEM_V34_Q7_SCALE * SIPPYMODEM_V34_Q7_SCALE);
+		((double)V34_Q7_SCALE * V34_Q7_SCALE);
 	return isfinite(*maximum) && *maximum > 0.0;
 }
 
-static enum sippymodem_v34_symbol_power_result derive_normalizer(
-	struct sippymodem_v34_power_normalizer *normalizer,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	enum sippymodem_v34_nonlinear_parameter nonlinear_parameter,
-	const struct sippymodem_v34_symbol_power_measurement
+static enum v34_symbol_power_result derive_normalizer(
+	struct v34_power_normalizer *normalizer,
+	const struct v34_mapping_parameters *parameters,
+	enum v34_nonlinear_parameter nonlinear_parameter,
+	const struct v34_symbol_power_measurement
 		*precoded_measurement,
-	const struct sippymodem_v34_symbol_power_measurement
+	const struct v34_symbol_power_measurement
 		*projected_measurement)
 {
-	struct sippymodem_v34_power_normalizer generated = { 0 };
-	enum sippymodem_v34_nonlinear_result nonlinear_result;
+	struct v34_power_normalizer generated = { 0 };
+	enum v34_nonlinear_result nonlinear_result;
 
 	if (normalizer == NULL ||
-	    !sippymodem_v34_mapping_parameters_is_valid(parameters) ||
-	    !sippymodem_v34_symbol_power_measurement_is_valid(
+	    !v34_mapping_parameters_is_valid(parameters) ||
+	    !v34_symbol_power_measurement_is_valid(
 		    precoded_measurement) ||
-	    !sippymodem_v34_symbol_power_measurement_is_valid(
+	    !v34_symbol_power_measurement_is_valid(
 		    projected_measurement) ||
 	    precoded_measurement->symbol_count == 0 ||
 	    precoded_measurement->symbol_count !=
 		    projected_measurement->symbol_count ||
-	    !sippymodem_v34_nonlinear_configuration_is_valid(
+	    !v34_nonlinear_configuration_is_valid(
 		    nonlinear_parameter,
 		    precoded_measurement->mean_squared_magnitude) ||
 	    projected_measurement->mean_squared_magnitude <= 0.0 ||
@@ -185,17 +185,17 @@ static enum sippymodem_v34_symbol_power_result derive_normalizer(
 	    !power_does_not_exceed(
 		    precoded_measurement->mean_squared_magnitude,
 		    generated.maximum_precoded_point_power))
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
-	nonlinear_result = sippymodem_v34_nonlinear_project_power(
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
+	nonlinear_result = v34_nonlinear_project_power(
 		nonlinear_parameter,
 		precoded_measurement->mean_squared_magnitude,
 		generated.maximum_precoded_point_power,
 		&generated.maximum_projected_point_power);
 	if (nonlinear_result ==
-	    SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE)
-		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
-	if (nonlinear_result != SIPPYMODEM_V34_NONLINEAR_OK)
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+	    V34_NONLINEAR_NUMERIC_FAILURE)
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
+	if (nonlinear_result != V34_NONLINEAR_OK)
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	if (!power_does_not_exceed(
 		    projected_measurement->mean_squared_magnitude,
 		    generated.maximum_projected_point_power) ||
@@ -203,7 +203,7 @@ static enum sippymodem_v34_symbol_power_result derive_normalizer(
 		    nonlinear_parameter,
 		    precoded_measurement->mean_squared_magnitude,
 		    projected_measurement->mean_squared_magnitude))
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	generated.parameters = *parameters;
 	generated.precoded_mean_squared_magnitude =
 		precoded_measurement->mean_squared_magnitude;
@@ -220,46 +220,46 @@ static enum sippymodem_v34_symbol_power_result derive_normalizer(
 	    generated.normalization_gain <= 0.0 ||
 	    !isfinite(generated.maximum_normalized_point_power) ||
 	    generated.maximum_normalized_point_power <= 0.0)
-		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	*normalizer = generated;
-	return SIPPYMODEM_V34_SYMBOL_POWER_OK;
+	return V34_SYMBOL_POWER_OK;
 }
 
-enum sippymodem_v34_symbol_power_result
-sippymodem_v34_power_normalizer_init(
-	struct sippymodem_v34_power_normalizer *normalizer,
-	const struct sippymodem_v34_mapping_parameters *parameters,
-	enum sippymodem_v34_nonlinear_parameter nonlinear_parameter,
-	const struct sippymodem_v34_symbol_power_measurement
+enum v34_symbol_power_result
+v34_power_normalizer_init(
+	struct v34_power_normalizer *normalizer,
+	const struct v34_mapping_parameters *parameters,
+	enum v34_nonlinear_parameter nonlinear_parameter,
+	const struct v34_symbol_power_measurement
 		*precoded_measurement,
-	const struct sippymodem_v34_symbol_power_measurement
+	const struct v34_symbol_power_measurement
 		*projected_measurement)
 {
-	struct sippymodem_v34_power_normalizer generated;
-	enum sippymodem_v34_symbol_power_result result;
+	struct v34_power_normalizer generated;
+	enum v34_symbol_power_result result;
 
 	if (normalizer == NULL)
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	result = derive_normalizer(
 		&generated, parameters, nonlinear_parameter,
 		precoded_measurement, projected_measurement);
-	if (result == SIPPYMODEM_V34_SYMBOL_POWER_OK)
+	if (result == V34_SYMBOL_POWER_OK)
 		*normalizer = generated;
 	return result;
 }
 
-bool sippymodem_v34_power_normalizer_is_valid(
-	const struct sippymodem_v34_power_normalizer *normalizer)
+bool v34_power_normalizer_is_valid(
+	const struct v34_power_normalizer *normalizer)
 {
 	double expected_maximum_projected;
 	double expected_gain;
 	double expected_maximum_normalized;
 
 	if (normalizer == NULL ||
-	    !sippymodem_v34_mapping_parameters_is_valid(
+	    !v34_mapping_parameters_is_valid(
 		    &normalizer->parameters) ||
 	    normalizer->calibration_symbol_count == 0 ||
-	    !sippymodem_v34_nonlinear_configuration_is_valid(
+	    !v34_nonlinear_configuration_is_valid(
 		    normalizer->nonlinear_parameter,
 		    normalizer->precoded_mean_squared_magnitude) ||
 	    !isfinite(normalizer->projected_mean_squared_magnitude) ||
@@ -273,12 +273,12 @@ bool sippymodem_v34_power_normalizer_is_valid(
 		    normalizer->nonlinear_parameter,
 		    normalizer->precoded_mean_squared_magnitude,
 		    normalizer->projected_mean_squared_magnitude) ||
-	    sippymodem_v34_nonlinear_project_power(
+	    v34_nonlinear_project_power(
 		    normalizer->nonlinear_parameter,
 		    normalizer->precoded_mean_squared_magnitude,
 		    normalizer->maximum_precoded_point_power,
 		    &expected_maximum_projected) !=
-		    SIPPYMODEM_V34_NONLINEAR_OK)
+		    V34_NONLINEAR_OK)
 		return false;
 	expected_gain =
 		1.0 / sqrt(normalizer->projected_mean_squared_magnitude);
@@ -296,8 +296,8 @@ bool sippymodem_v34_power_normalizer_is_valid(
 	       normalizer->maximum_normalized_point_power > 0.0;
 }
 
-enum sippymodem_v34_symbol_power_result sippymodem_v34_normalize_power(
-	const struct sippymodem_v34_power_normalizer *normalizer,
+enum v34_symbol_power_result v34_normalize_power(
+	const struct v34_power_normalizer *normalizer,
 	const struct sippymodem_qam_point *projected_point,
 	struct sippymodem_qam_point *normalized_point)
 {
@@ -305,19 +305,19 @@ enum sippymodem_v34_symbol_power_result sippymodem_v34_normalize_power(
 	double projected_power;
 	double normalized_power;
 
-	if (!sippymodem_v34_power_normalizer_is_valid(normalizer) ||
+	if (!v34_power_normalizer_is_valid(normalizer) ||
 	    projected_point == NULL || normalized_point == NULL ||
 	    !isfinite(projected_point->in_phase) ||
 	    !isfinite(projected_point->quadrature))
-		return SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT;
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	projected_power =
 		projected_point->in_phase * projected_point->in_phase +
 		projected_point->quadrature * projected_point->quadrature;
 	if (!isfinite(projected_power))
-		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	if (!power_does_not_exceed(
 		    projected_power, normalizer->maximum_projected_point_power))
-		return SIPPYMODEM_V34_SYMBOL_POWER_OUT_OF_RANGE;
+		return V34_SYMBOL_POWER_OUT_OF_RANGE;
 	generated = (struct sippymodem_qam_point){
 		.in_phase =
 			projected_point->in_phase * normalizer->normalization_gain,
@@ -327,26 +327,26 @@ enum sippymodem_v34_symbol_power_result sippymodem_v34_normalize_power(
 	normalized_power = generated.in_phase * generated.in_phase +
 		generated.quadrature * generated.quadrature;
 	if (!isfinite(normalized_power))
-		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	if (!power_does_not_exceed(
 		    normalized_power,
 		    normalizer->maximum_normalized_point_power))
-		return SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE;
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
 	*normalized_point = generated;
-	return SIPPYMODEM_V34_SYMBOL_POWER_OK;
+	return V34_SYMBOL_POWER_OK;
 }
 
-const char *sippymodem_v34_symbol_power_result_name(
-	enum sippymodem_v34_symbol_power_result result)
+const char *v34_symbol_power_result_name(
+	enum v34_symbol_power_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_SYMBOL_POWER_OK:
+	case V34_SYMBOL_POWER_OK:
 		return "ok";
-	case SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT:
+	case V34_SYMBOL_POWER_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_SYMBOL_POWER_OUT_OF_RANGE:
+	case V34_SYMBOL_POWER_OUT_OF_RANGE:
 		return "out of range";
-	case SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE:
+	case V34_SYMBOL_POWER_NUMERIC_FAILURE:
 		return "numeric failure";
 	}
 	return "unknown";

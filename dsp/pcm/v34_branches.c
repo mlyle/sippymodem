@@ -7,36 +7,36 @@
 #include <stddef.h>
 
 static uint8_t branch_count(
-	enum sippymodem_v34_trellis_selection selection)
+	enum v34_trellis_selection selection)
 {
 	switch (selection) {
-	case SIPPYMODEM_V34_TRELLIS_16_STATE:
+	case V34_TRELLIS_16_STATE:
 		return 8;
-	case SIPPYMODEM_V34_TRELLIS_32_STATE:
+	case V34_TRELLIS_32_STATE:
 		return 16;
-	case SIPPYMODEM_V34_TRELLIS_64_STATE:
+	case V34_TRELLIS_64_STATE:
 		return 32;
 	}
 	return 0;
 }
 
 static bool grid_point_is_bounded(
-	const struct sippymodem_v34_grid_point *point)
+	const struct v34_grid_point *point)
 {
-	return point->in_phase >= -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->in_phase <= SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature >= -SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature <= SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT;
+	return point->in_phase >= -V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->in_phase <= V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->quadrature >= -V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->quadrature <= V34_CHANNEL_COORDINATE_LIMIT;
 }
 
 static bool subset_slice_is_valid(
-	const struct sippymodem_v34_subset_slice *slice)
+	const struct v34_subset_slice *slice)
 {
 	if (slice == NULL)
 		return false;
-	for (uint8_t label = 0; label < SIPPYMODEM_V34_SUBSET_LABEL_COUNT;
+	for (uint8_t label = 0; label < V34_SUBSET_LABEL_COUNT;
 	     ++label) {
-		const struct sippymodem_v34_lattice_candidate *candidate =
+		const struct v34_lattice_candidate *candidate =
 			&slice->subset[label];
 		uint8_t actual_label;
 
@@ -44,9 +44,9 @@ static bool subset_slice_is_valid(
 		    !grid_point_is_bounded(&candidate->channel_output) ||
 		    !isfinite(candidate->squared_error) ||
 		    candidate->squared_error < 0.0 ||
-		    sippymodem_v34_grid_subset_label(
+		    v34_grid_subset_label(
 			    &candidate->channel_output, &actual_label) !=
-			    SIPPYMODEM_V34_TRELLIS_OK ||
+			    V34_TRELLIS_OK ||
 		    actual_label != label)
 			return false;
 	}
@@ -54,29 +54,29 @@ static bool subset_slice_is_valid(
 }
 
 static uint8_t subset_index(
-	const struct sippymodem_v34_convolutional_input *input,
+	const struct v34_convolutional_input *input,
 	uint8_t convolutional_output,
-	enum sippymodem_v34_trellis_selection selection)
+	enum v34_trellis_selection selection)
 {
 	uint8_t index = convolutional_output | (uint8_t)(input->y1 << 1) |
 			(uint8_t)(input->y2 << 2);
 
-	if (selection == SIPPYMODEM_V34_TRELLIS_32_STATE)
+	if (selection == V34_TRELLIS_32_STATE)
 		return (uint8_t)(index | (uint8_t)(input->y4 << 3));
-	if (selection == SIPPYMODEM_V34_TRELLIS_64_STATE)
+	if (selection == V34_TRELLIS_64_STATE)
 		return (uint8_t)(index | (uint8_t)(input->y3 << 3) |
 				 (uint8_t)(input->y4 << 4));
 	return index;
 }
 
 static int32_t branch_magnitude_squared(
-	const struct sippymodem_v34_branch *branch)
+	const struct v34_branch *branch)
 {
 	int32_t magnitude = 0;
 
 	for (uint8_t symbol = 0;
-	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		const struct sippymodem_v34_grid_point *point =
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		const struct v34_grid_point *point =
 			&branch->symbol[symbol].channel_output;
 
 		magnitude += (int32_t)point->in_phase * point->in_phase +
@@ -86,8 +86,8 @@ static int32_t branch_magnitude_squared(
 }
 
 static bool branch_precedes(
-	const struct sippymodem_v34_branch *candidate,
-	const struct sippymodem_v34_branch *current)
+	const struct v34_branch *candidate,
+	const struct v34_branch *current)
 {
 	int32_t magnitude;
 	int32_t current_magnitude;
@@ -106,8 +106,8 @@ static bool branch_precedes(
 	       current->symbol[1].subset_label;
 }
 
-bool sippymodem_v34_branch_set_is_valid(
-	const struct sippymodem_v34_branch_set *set)
+bool v34_branch_set_is_valid(
+	const struct v34_branch_set *set)
 {
 	uint8_t count;
 
@@ -117,11 +117,11 @@ bool sippymodem_v34_branch_set_is_valid(
 	if (count == 0 || set->count != count || set->inversion_bit > 1u)
 		return false;
 	for (uint8_t index = 0; index < count; ++index) {
-		const struct sippymodem_v34_branch *branch = &set->branch[index];
-		struct sippymodem_v34_convolutional_input derived;
+		const struct v34_branch *branch = &set->branch[index];
+		struct v34_convolutional_input derived;
 
 		if (branch->convolutional_output > 1u ||
-		    !sippymodem_v34_convolutional_input_is_valid(
+		    !v34_convolutional_input_is_valid(
 			    &branch->convolutional_input) ||
 		    !isfinite(branch->squared_error) ||
 		    branch->squared_error < 0.0 ||
@@ -130,27 +130,27 @@ bool sippymodem_v34_branch_set_is_valid(
 				    branch->symbol[1].squared_error)
 			return false;
 		for (uint8_t symbol = 0;
-		     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL;
+		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol) {
-			const struct sippymodem_v34_lattice_candidate *candidate =
+			const struct v34_lattice_candidate *candidate =
 				&branch->symbol[symbol];
 			uint8_t actual_label;
 
 			if (candidate->subset_label >=
-				    SIPPYMODEM_V34_SUBSET_LABEL_COUNT ||
+				    V34_SUBSET_LABEL_COUNT ||
 			    !grid_point_is_bounded(&candidate->channel_output) ||
 			    !isfinite(candidate->squared_error) ||
 			    candidate->squared_error < 0.0 ||
-			    sippymodem_v34_grid_subset_label(
+			    v34_grid_subset_label(
 				    &candidate->channel_output, &actual_label) !=
-				    SIPPYMODEM_V34_TRELLIS_OK ||
+				    V34_TRELLIS_OK ||
 			    actual_label != candidate->subset_label)
 				return false;
 		}
-		if (sippymodem_v34_convolutional_input_from_subset_labels(
+		if (v34_convolutional_input_from_subset_labels(
 			    branch->symbol[0].subset_label,
 			    branch->symbol[1].subset_label, &derived) !=
-			    SIPPYMODEM_V34_TRELLIS_OK ||
+			    V34_TRELLIS_OK ||
 		    derived.y1 != branch->convolutional_input.y1 ||
 		    derived.y2 != branch->convolutional_input.y2 ||
 		    derived.y3 != branch->convolutional_input.y3 ||
@@ -168,29 +168,29 @@ bool sippymodem_v34_branch_set_is_valid(
 	return true;
 }
 
-enum sippymodem_v34_branches_result sippymodem_v34_build_branch_set(
-	const struct sippymodem_v34_subset_slice
-		slices[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
+enum v34_branches_result v34_build_branch_set(
+	const struct v34_subset_slice
+		slices[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	uint8_t inversion_bit,
-	enum sippymodem_v34_trellis_selection selection,
-	struct sippymodem_v34_branch_set *set)
+	enum v34_trellis_selection selection,
+	struct v34_branch_set *set)
 {
-	struct sippymodem_v34_branch_set generated = {
+	struct v34_branch_set generated = {
 		.selection = selection,
 		.count = branch_count(selection),
 		.inversion_bit = inversion_bit,
 	};
-	bool found[SIPPYMODEM_V34_MAX_BRANCH_COUNT] = { false };
+	bool found[V34_MAX_BRANCH_COUNT] = { false };
 
 	if (generated.count == 0 || inversion_bit > 1u || set == NULL ||
 	    slices == NULL || !subset_slice_is_valid(&slices[0]) ||
 	    !subset_slice_is_valid(&slices[1]))
-		return SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT;
-	for (uint8_t first = 0; first < SIPPYMODEM_V34_SUBSET_LABEL_COUNT;
+		return V34_BRANCHES_INVALID_ARGUMENT;
+	for (uint8_t first = 0; first < V34_SUBSET_LABEL_COUNT;
 	     ++first) {
 		for (uint8_t second = 0;
-		     second < SIPPYMODEM_V34_SUBSET_LABEL_COUNT; ++second) {
-			struct sippymodem_v34_branch candidate = {
+		     second < V34_SUBSET_LABEL_COUNT; ++second) {
+			struct v34_branch candidate = {
 				.symbol = {
 					slices[0].subset[first],
 					slices[1].subset[second],
@@ -198,11 +198,11 @@ enum sippymodem_v34_branches_result sippymodem_v34_build_branch_set(
 			};
 			uint8_t index;
 
-			if (sippymodem_v34_convolutional_input_from_subset_labels(
+			if (v34_convolutional_input_from_subset_labels(
 				    first, second,
 				    &candidate.convolutional_input) !=
-				    SIPPYMODEM_V34_TRELLIS_OK)
-				return SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT;
+				    V34_TRELLIS_OK)
+				return V34_BRANCHES_INVALID_ARGUMENT;
 			/* Each label's low bit is its quarter-turn parity. Their
 			 * XOR is U0 xor C0, so applying V0 recovers Y0. */
 			candidate.convolutional_output =
@@ -211,7 +211,7 @@ enum sippymodem_v34_branches_result sippymodem_v34_build_branch_set(
 				candidate.symbol[0].squared_error +
 				candidate.symbol[1].squared_error;
 			if (!isfinite(candidate.squared_error))
-				return SIPPYMODEM_V34_BRANCHES_NUMERIC_FAILURE;
+				return V34_BRANCHES_NUMERIC_FAILURE;
 			index = subset_index(
 				&candidate.convolutional_input,
 				candidate.convolutional_output, selection);
@@ -225,21 +225,21 @@ enum sippymodem_v34_branches_result sippymodem_v34_build_branch_set(
 	}
 	for (uint8_t index = 0; index < generated.count; ++index) {
 		if (!found[index])
-			return SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT;
+			return V34_BRANCHES_INVALID_ARGUMENT;
 	}
 	*set = generated;
-	return SIPPYMODEM_V34_BRANCHES_OK;
+	return V34_BRANCHES_OK;
 }
 
-const char *sippymodem_v34_branches_result_name(
-	enum sippymodem_v34_branches_result result)
+const char *v34_branches_result_name(
+	enum v34_branches_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V34_BRANCHES_OK:
+	case V34_BRANCHES_OK:
 		return "ok";
-	case SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT:
+	case V34_BRANCHES_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V34_BRANCHES_NUMERIC_FAILURE:
+	case V34_BRANCHES_NUMERIC_FAILURE:
 		return "numeric failure";
 	}
 	return "unknown";

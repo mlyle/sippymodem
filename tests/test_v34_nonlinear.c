@@ -17,13 +17,13 @@ static bool nearly_equal(double actual, long double expected)
 }
 
 static struct sippymodem_qam_point reference_projection(
-	const struct sippymodem_v34_q7_point *input,
+	const struct v34_q7_point *input,
 	double mean_squared_magnitude)
 {
 	long double in_phase =
-		(long double)input->in_phase / SIPPYMODEM_V34_Q7_SCALE;
+		(long double)input->in_phase / V34_Q7_SCALE;
 	long double quadrature =
-		(long double)input->quadrature / SIPPYMODEM_V34_Q7_SCALE;
+		(long double)input->quadrature / V34_Q7_SCALE;
 	long double energy =
 		in_phase * in_phase + quadrature * quadrature;
 	long double zeta = 5.0L * energy /
@@ -40,16 +40,16 @@ static struct sippymodem_qam_point reference_projection(
 static bool test_normative_projection(void)
 {
 	static const struct {
-		struct sippymodem_v34_q7_point input;
+		struct v34_q7_point input;
 		double mean_squared_magnitude;
 	} cases[] = {
 		{ { 0, 0 }, 25.0 },
-		{ { 3 * SIPPYMODEM_V34_Q7_SCALE,
-		    4 * SIPPYMODEM_V34_Q7_SCALE }, 25.0 },
-		{ { -6 * SIPPYMODEM_V34_Q7_SCALE,
-		    8 * SIPPYMODEM_V34_Q7_SCALE }, 25.0 },
-		{ { 17 * SIPPYMODEM_V34_Q7_SCALE + 3,
-		    -9 * SIPPYMODEM_V34_Q7_SCALE - 61 }, 419.25 },
+		{ { 3 * V34_Q7_SCALE,
+		    4 * V34_Q7_SCALE }, 25.0 },
+		{ { -6 * V34_Q7_SCALE,
+		    8 * V34_Q7_SCALE }, 25.0 },
+		{ { 17 * V34_Q7_SCALE + 3,
+		    -9 * V34_Q7_SCALE - 61 }, 419.25 },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
@@ -63,30 +63,30 @@ static bool test_normative_projection(void)
 			(long double)expected.in_phase * expected.in_phase +
 			(long double)expected.quadrature * expected.quadrature;
 		double input_in_phase = (double)cases[index].input.in_phase /
-			SIPPYMODEM_V34_Q7_SCALE;
+			V34_Q7_SCALE;
 		double input_quadrature =
 			(double)cases[index].input.quadrature /
-			SIPPYMODEM_V34_Q7_SCALE;
+			V34_Q7_SCALE;
 		double input_power = input_in_phase * input_in_phase +
 			input_quadrature * input_quadrature;
 
-		CHECK(sippymodem_v34_nonlinear_encode(
-			      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		CHECK(v34_nonlinear_encode(
+			      V34_NONLINEAR_THETA_5_OVER_16,
 			      cases[index].mean_squared_magnitude,
 			      &cases[index].input, &actual) ==
-			      SIPPYMODEM_V34_NONLINEAR_OK &&
+			      V34_NONLINEAR_OK &&
 		      nearly_equal(actual.in_phase, expected.in_phase) &&
 		      nearly_equal(actual.quadrature, expected.quadrature) &&
-		      sippymodem_v34_nonlinear_project_power(
-			      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		      v34_nonlinear_project_power(
+			      V34_NONLINEAR_THETA_5_OVER_16,
 			      cases[index].mean_squared_magnitude, input_power,
 			      &projected_power) ==
-			      SIPPYMODEM_V34_NONLINEAR_OK &&
+			      V34_NONLINEAR_OK &&
 		      nearly_equal(projected_power, expected_power) &&
-		      sippymodem_v34_nonlinear_unproject(
-			      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		      v34_nonlinear_unproject(
+			      V34_NONLINEAR_THETA_5_OVER_16,
 			      cases[index].mean_squared_magnitude, &actual,
-			      &unprojected) == SIPPYMODEM_V34_NONLINEAR_OK &&
+			      &unprojected) == V34_NONLINEAR_OK &&
 		      nearly_equal(unprojected.in_phase, input_in_phase) &&
 		      nearly_equal(unprojected.quadrature, input_quadrature),
 		      "non-linear projection case %zu changed", index);
@@ -96,7 +96,7 @@ static bool test_normative_projection(void)
 
 static bool test_disabled_projection(void)
 {
-	static const struct sippymodem_v34_q7_point inputs[] = {
+	static const struct v34_q7_point inputs[] = {
 		{ 0, 0 },
 		{ 1, -1 },
 		{ 127, -129 },
@@ -107,31 +107,31 @@ static bool test_disabled_projection(void)
 		struct sippymodem_qam_point output;
 		struct sippymodem_qam_point unprojected;
 		double in_phase = (double)inputs[index].in_phase /
-			SIPPYMODEM_V34_Q7_SCALE;
+			V34_Q7_SCALE;
 		double quadrature = (double)inputs[index].quadrature /
-			SIPPYMODEM_V34_Q7_SCALE;
+			V34_Q7_SCALE;
 		double power = in_phase * in_phase + quadrature * quadrature;
 		double projected_power = -1.0;
 
-		CHECK(sippymodem_v34_nonlinear_encode(
-			      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0,
+		CHECK(v34_nonlinear_encode(
+			      V34_NONLINEAR_THETA_ZERO, 1.0,
 			      &inputs[index], &output) ==
-			      SIPPYMODEM_V34_NONLINEAR_OK &&
+			      V34_NONLINEAR_OK &&
 		      output.in_phase ==
 			      (double)inputs[index].in_phase /
-				      SIPPYMODEM_V34_Q7_SCALE &&
+				      V34_Q7_SCALE &&
 		      output.quadrature ==
 			      (double)inputs[index].quadrature /
-				      SIPPYMODEM_V34_Q7_SCALE &&
-		      sippymodem_v34_nonlinear_project_power(
-			      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0,
+				      V34_Q7_SCALE &&
+		      v34_nonlinear_project_power(
+			      V34_NONLINEAR_THETA_ZERO, 1.0,
 			      power, &projected_power) ==
-			      SIPPYMODEM_V34_NONLINEAR_OK &&
+			      V34_NONLINEAR_OK &&
 		      projected_power == power &&
-		      sippymodem_v34_nonlinear_unproject(
-			      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0,
+		      v34_nonlinear_unproject(
+			      V34_NONLINEAR_THETA_ZERO, 1.0,
 			      &output, &unprojected) ==
-			      SIPPYMODEM_V34_NONLINEAR_OK &&
+			      V34_NONLINEAR_OK &&
 		      unprojected.in_phase == output.in_phase &&
 		      unprojected.quadrature == output.quadrature,
 		      "zero-theta projection case %zu changed", index);
@@ -151,8 +151,8 @@ static bool test_generated_sweep(void)
 		0.5,
 		25.0,
 		1024.0,
-		2.0 * SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT *
-			SIPPYMODEM_V34_CHANNEL_COORDINATE_LIMIT,
+		2.0 * V34_CHANNEL_COORDINATE_LIMIT *
+			V34_CHANNEL_COORDINATE_LIMIT,
 	};
 	uint32_t random = UINT32_C(0x46a091bf);
 	size_t nonzero_count = 0;
@@ -160,7 +160,7 @@ static bool test_generated_sweep(void)
 	for (size_t energy_index = 0;
 	     energy_index < ARRAY_LENGTH(MEAN_ENERGIES); ++energy_index) {
 		for (unsigned int sample = 0; sample < 512; ++sample) {
-			struct sippymodem_v34_q7_point input = {
+			struct v34_q7_point input = {
 				.in_phase = (int32_t)(next_random(&random) % 65281u) -
 					32768,
 				.quadrature =
@@ -173,9 +173,9 @@ static bool test_generated_sweep(void)
 			struct sippymodem_qam_point actual;
 			struct sippymodem_qam_point unprojected;
 			double in_phase = (double)input.in_phase /
-				SIPPYMODEM_V34_Q7_SCALE;
+				V34_Q7_SCALE;
 			double quadrature = (double)input.quadrature /
-				SIPPYMODEM_V34_Q7_SCALE;
+				V34_Q7_SCALE;
 			double input_power = in_phase * in_phase +
 				quadrature * quadrature;
 			double projected_power;
@@ -184,25 +184,25 @@ static bool test_generated_sweep(void)
 				(long double)expected.quadrature * expected.quadrature;
 			long double cross_product;
 
-			CHECK(sippymodem_v34_nonlinear_encode(
-				      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+			CHECK(v34_nonlinear_encode(
+				      V34_NONLINEAR_THETA_5_OVER_16,
 				      MEAN_ENERGIES[energy_index], &input,
 				      &actual) ==
-				      SIPPYMODEM_V34_NONLINEAR_OK &&
+				      V34_NONLINEAR_OK &&
 			      nearly_equal(actual.in_phase, expected.in_phase) &&
 			      nearly_equal(
 				      actual.quadrature, expected.quadrature) &&
-			      sippymodem_v34_nonlinear_project_power(
-				      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+			      v34_nonlinear_project_power(
+				      V34_NONLINEAR_THETA_5_OVER_16,
 				      MEAN_ENERGIES[energy_index], input_power,
 				      &projected_power) ==
-				      SIPPYMODEM_V34_NONLINEAR_OK &&
+				      V34_NONLINEAR_OK &&
 			      nearly_equal(projected_power, expected_power) &&
-			      sippymodem_v34_nonlinear_unproject(
-				      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+			      v34_nonlinear_unproject(
+				      V34_NONLINEAR_THETA_5_OVER_16,
 				      MEAN_ENERGIES[energy_index], &actual,
 				      &unprojected) ==
-				      SIPPYMODEM_V34_NONLINEAR_OK &&
+				      V34_NONLINEAR_OK &&
 			      nearly_equal(unprojected.in_phase, in_phase) &&
 			      nearly_equal(
 				      unprojected.quadrature, quadrature),
@@ -275,11 +275,11 @@ static bool test_inverse_dynamic_range(void)
 			fabs(cases[index].projected.quadrature));
 		double unprojected_scale;
 
-		CHECK(sippymodem_v34_nonlinear_unproject(
-			      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16,
+		CHECK(v34_nonlinear_unproject(
+			      V34_NONLINEAR_THETA_5_OVER_16,
 			      cases[index].mean_squared_magnitude,
 			      &cases[index].projected, &unprojected) ==
-			      SIPPYMODEM_V34_NONLINEAR_OK &&
+			      V34_NONLINEAR_OK &&
 		      isfinite(unprojected.in_phase) &&
 		      isfinite(unprojected.quadrature),
 		      "dynamic inverse case %zu failed", index);
@@ -313,137 +313,137 @@ static bool test_inverse_dynamic_range(void)
 
 static bool test_validation(void)
 {
-	const struct sippymodem_v34_q7_point input = { INT32_MAX, INT32_MAX };
+	const struct v34_q7_point input = { INT32_MAX, INT32_MAX };
 	struct sippymodem_qam_point output = { 123.0, -456.0 };
 	const struct sippymodem_qam_point saved = output;
 	struct sippymodem_qam_point projected = { 1.0, -2.0 };
 	double projected_power = 789.0;
 
-	CHECK(sippymodem_v34_nonlinear_parameter_is_valid(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO) &&
-	      sippymodem_v34_nonlinear_parameter_is_valid(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16) &&
-	      !sippymodem_v34_nonlinear_parameter_is_valid(
-		      (enum sippymodem_v34_nonlinear_parameter)2) &&
-	      sippymodem_v34_nonlinear_configuration_is_valid(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0) &&
-	      sippymodem_v34_nonlinear_configuration_is_valid(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, DBL_MAX) &&
-	      !sippymodem_v34_nonlinear_configuration_is_valid(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 0.0) &&
-	      !sippymodem_v34_nonlinear_configuration_is_valid(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, NAN),
+	CHECK(v34_nonlinear_parameter_is_valid(
+		      V34_NONLINEAR_THETA_ZERO) &&
+	      v34_nonlinear_parameter_is_valid(
+		      V34_NONLINEAR_THETA_5_OVER_16) &&
+	      !v34_nonlinear_parameter_is_valid(
+		      (enum v34_nonlinear_parameter)2) &&
+	      v34_nonlinear_configuration_is_valid(
+		      V34_NONLINEAR_THETA_ZERO, 1.0) &&
+	      v34_nonlinear_configuration_is_valid(
+		      V34_NONLINEAR_THETA_5_OVER_16, DBL_MAX) &&
+	      !v34_nonlinear_configuration_is_valid(
+		      V34_NONLINEAR_THETA_5_OVER_16, 0.0) &&
+	      !v34_nonlinear_configuration_is_valid(
+		      V34_NONLINEAR_THETA_5_OVER_16, NAN),
 	      "non-linear parameter validation changed");
-	CHECK(sippymodem_v34_nonlinear_encode(
-		      (enum sippymodem_v34_nonlinear_parameter)2, 1.0,
+	CHECK(v34_nonlinear_encode(
+		      (enum v34_nonlinear_parameter)2, 1.0,
 		      &input, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_encode(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 0.0,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_encode(
+		      V34_NONLINEAR_THETA_5_OVER_16, 0.0,
 		      &input, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_encode(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, -1.0,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_encode(
+		      V34_NONLINEAR_THETA_5_OVER_16, -1.0,
 		      &input, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_encode(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, NAN,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_encode(
+		      V34_NONLINEAR_THETA_5_OVER_16, NAN,
 		      &input, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_encode(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, INFINITY,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_encode(
+		      V34_NONLINEAR_THETA_5_OVER_16, INFINITY,
 		      &input, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_encode(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0, NULL,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_encode(
+		      V34_NONLINEAR_THETA_ZERO, 1.0, NULL,
 		      &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_encode(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0, &input,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_encode(
+		      V34_NONLINEAR_THETA_ZERO, 1.0, &input,
 		      NULL) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
 	      output.in_phase == saved.in_phase &&
 	      output.quadrature == saved.quadrature,
 	      "invalid projection mutated its destination");
-	CHECK(sippymodem_v34_nonlinear_project_power(
-		      (enum sippymodem_v34_nonlinear_parameter)2, 1.0, 1.0,
+	CHECK(v34_nonlinear_project_power(
+		      (enum v34_nonlinear_parameter)2, 1.0, 1.0,
 		      &projected_power) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_project_power(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 0.0, 1.0,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_project_power(
+		      V34_NONLINEAR_THETA_5_OVER_16, 0.0, 1.0,
 		      &projected_power) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_project_power(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 1.0, -1.0,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_project_power(
+		      V34_NONLINEAR_THETA_5_OVER_16, 1.0, -1.0,
 		      &projected_power) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_project_power(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 1.0, NAN,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_project_power(
+		      V34_NONLINEAR_THETA_5_OVER_16, 1.0, NAN,
 		      &projected_power) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_project_power(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0, 1.0, NULL) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_project_power(
+		      V34_NONLINEAR_THETA_ZERO, 1.0, 1.0, NULL) ==
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
 		      projected_power == 789.0,
 	      "invalid energy projection mutated its destination");
-	CHECK(sippymodem_v34_nonlinear_encode(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, DBL_MIN,
+	CHECK(v34_nonlinear_encode(
+		      V34_NONLINEAR_THETA_5_OVER_16, DBL_MIN,
 		      &input, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE &&
+		      V34_NONLINEAR_NUMERIC_FAILURE &&
 		      output.in_phase == saved.in_phase &&
 		      output.quadrature == saved.quadrature,
 	      "overflowing projection mutated its destination");
-	CHECK(sippymodem_v34_nonlinear_project_power(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, DBL_MIN,
+	CHECK(v34_nonlinear_project_power(
+		      V34_NONLINEAR_THETA_5_OVER_16, DBL_MIN,
 		      DBL_MAX, &projected_power) ==
-		      SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE &&
+		      V34_NONLINEAR_NUMERIC_FAILURE &&
 		      projected_power == 789.0,
 	      "overflowing energy projection mutated its destination");
-	CHECK(sippymodem_v34_nonlinear_unproject(
-		      (enum sippymodem_v34_nonlinear_parameter)2, 1.0,
+	CHECK(v34_nonlinear_unproject(
+		      (enum v34_nonlinear_parameter)2, 1.0,
 		      &projected, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_unproject(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 0.0,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_unproject(
+		      V34_NONLINEAR_THETA_5_OVER_16, 0.0,
 		      &projected, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_unproject(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 1.0,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_unproject(
+		      V34_NONLINEAR_THETA_5_OVER_16, 1.0,
 		      &(struct sippymodem_qam_point){ NAN, 0.0 }, &output) ==
-		      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_unproject(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_5_OVER_16, 1.0,
+		      V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_unproject(
+		      V34_NONLINEAR_THETA_5_OVER_16, 1.0,
 		      &(struct sippymodem_qam_point){ 0.0, INFINITY },
-		      &output) == SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_unproject(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0, NULL,
-		      &output) == SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
-	      sippymodem_v34_nonlinear_unproject(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0, &projected,
-		      NULL) == SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT &&
+		      &output) == V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_unproject(
+		      V34_NONLINEAR_THETA_ZERO, 1.0, NULL,
+		      &output) == V34_NONLINEAR_INVALID_ARGUMENT &&
+	      v34_nonlinear_unproject(
+		      V34_NONLINEAR_THETA_ZERO, 1.0, &projected,
+		      NULL) == V34_NONLINEAR_INVALID_ARGUMENT &&
 	      output.in_phase == saved.in_phase &&
 	      output.quadrature == saved.quadrature,
 	      "invalid inverse projection mutated its destination");
-	CHECK(sippymodem_v34_nonlinear_unproject(
-		      SIPPYMODEM_V34_NONLINEAR_THETA_ZERO, 1.0,
-		      &projected, &projected) == SIPPYMODEM_V34_NONLINEAR_OK &&
+	CHECK(v34_nonlinear_unproject(
+		      V34_NONLINEAR_THETA_ZERO, 1.0,
+		      &projected, &projected) == V34_NONLINEAR_OK &&
 	      projected.in_phase == 1.0 && projected.quadrature == -2.0,
 	      "in-place inverse projection changed its input");
 	CHECK(strcmp(
-		      sippymodem_v34_nonlinear_result_name(
-			      SIPPYMODEM_V34_NONLINEAR_OK),
+		      v34_nonlinear_result_name(
+			      V34_NONLINEAR_OK),
 		      "ok") == 0 &&
 	      strcmp(
-		      sippymodem_v34_nonlinear_result_name(
-			      SIPPYMODEM_V34_NONLINEAR_INVALID_ARGUMENT),
+		      v34_nonlinear_result_name(
+			      V34_NONLINEAR_INVALID_ARGUMENT),
 		      "invalid argument") == 0 &&
 	      strcmp(
-		      sippymodem_v34_nonlinear_result_name(
-			      SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE),
+		      v34_nonlinear_result_name(
+			      V34_NONLINEAR_NUMERIC_FAILURE),
 		      "numeric failure") == 0 &&
 	      strcmp(
-		      sippymodem_v34_nonlinear_result_name(
-			      (enum sippymodem_v34_nonlinear_result)3),
+		      v34_nonlinear_result_name(
+			      (enum v34_nonlinear_result)3),
 		      "unknown") == 0,
 	      "non-linear result names changed");
 	return true;

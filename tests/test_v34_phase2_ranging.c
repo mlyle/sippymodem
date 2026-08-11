@@ -68,25 +68,25 @@ static void delay_line_transmit(
 	line->cursor = (line->cursor + 1u) % line->delay_samples;
 }
 
-static struct sippymodem_v34_info0 calling_capabilities(void)
+static struct v34_info0 calling_capabilities(void)
 {
-	return (struct sippymodem_v34_info0){
+	return (struct v34_info0){
 		.symbol_rate_2800_supported = true,
 		.low_carrier_3000_supported = true,
 		.maximum_symbol_rate_difference_steps = 2,
-		.transmit_clock_source = SIPPYMODEM_V34_INFO0_CLOCK_INTERNAL,
+		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
 	};
 }
 
-static struct sippymodem_v34_info0 answering_capabilities(void)
+static struct v34_info0 answering_capabilities(void)
 {
-	return (struct sippymodem_v34_info0){
+	return (struct v34_info0){
 		.symbol_rate_3429_supported = true,
 		.high_carrier_3200_supported = true,
 		.constellation_1664_supported = true,
 		.maximum_symbol_rate_difference_steps = 4,
 		.transmit_clock_source =
-			SIPPYMODEM_V34_INFO0_CLOCK_RECEIVE_TIMING,
+			V34_INFO0_CLOCK_RECEIVE_TIMING,
 	};
 }
 
@@ -103,53 +103,53 @@ static void initialize_observation(struct ranging_observation *observation)
 }
 
 static void observe_ranging_events(
-	const struct sippymodem_v34_phase2_ranging_event *caller_event,
-	const struct sippymodem_v34_phase2_ranging_event *answer_event,
+	const struct v34_phase2_ranging_event *caller_event,
+	const struct v34_phase2_ranging_event *answer_event,
 	size_t sample_index,
 	struct ranging_observation *observation)
 {
 	if (answer_event->kind ==
-	    SIPPYMODEM_V34_PHASE2_ROUND_TRIP_DELAY_MEASURED) {
+	    V34_PHASE2_ROUND_TRIP_DELAY_MEASURED) {
 		observation->answer_delay_measured = true;
 		observation->answer_round_trip_delay_samples =
 			answer_event->round_trip_delay_samples;
 	}
-	if (caller_event->kind == SIPPYMODEM_V34_PHASE2_PROBE_RECEIVE_READY) {
+	if (caller_event->kind == V34_PHASE2_PROBE_RECEIVE_READY) {
 		observation->caller_probe_ready = true;
 		observation->caller_probe_ready_sample = sample_index;
 		observation->caller_round_trip_delay_samples =
 			caller_event->round_trip_delay_samples;
 	}
-	if (answer_event->kind == SIPPYMODEM_V34_PHASE2_PROBE_TRANSMIT_READY)
+	if (answer_event->kind == V34_PHASE2_PROBE_TRANSMIT_READY)
 		observation->answer_probe_ready_sample = sample_index;
 }
 
 static void observe_phase_transition(
-	enum sippymodem_v34_phase2_ranging_phase before,
-	enum sippymodem_v34_phase2_info0_transmit_phase transmit_before,
-	const struct sippymodem_v34_phase2_ranging *after,
+	enum v34_phase2_ranging_phase before,
+	enum v34_phase2_info0_transmit_phase transmit_before,
+	const struct v34_phase2_ranging *after,
 	bool caller, size_t sample_index,
 	struct ranging_observation *observation)
 {
 	if (!caller &&
-	    transmit_before != SIPPYMODEM_V34_PHASE2_INFO0_TONE &&
+	    transmit_before != V34_PHASE2_INFO0_TONE &&
 	    after->info0_exchange.transmit_phase ==
-		    SIPPYMODEM_V34_PHASE2_INFO0_TONE &&
+		    V34_PHASE2_INFO0_TONE &&
 	    observation->answer_tone_start_sample == SIZE_MAX)
 		observation->answer_tone_start_sample = sample_index + 1u;
 	if (before == after->phase)
 		return;
 	if (caller &&
 	    after->phase ==
-		    SIPPYMODEM_V34_PHASE2_RESPONSE_TONE_TAIL)
+		    V34_PHASE2_RESPONSE_TONE_TAIL)
 		observation->caller_reversal_sample = sample_index;
 	if (!caller &&
 	    after->phase ==
-		    SIPPYMODEM_V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
+		    V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
 		observation->first_answer_reversal_sample = sample_index;
 	if (!caller &&
 	    after->phase ==
-		    SIPPYMODEM_V34_PHASE2_RESPONSE_TONE_TAIL)
+		    V34_PHASE2_RESPONSE_TONE_TAIL)
 		observation->second_answer_reversal_sample = sample_index;
 }
 
@@ -160,10 +160,10 @@ static size_t absolute_difference(size_t left, size_t right)
 
 static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 {
-	struct sippymodem_v34_info0 calling = calling_capabilities();
-	struct sippymodem_v34_info0 answering = answering_capabilities();
-	struct sippymodem_v34_phase2_ranging caller;
-	struct sippymodem_v34_phase2_ranging answerer;
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging caller;
+	struct v34_phase2_ranging answerer;
 	struct test_delay_line caller_to_answer = {
 		.delay_samples = line_delay_samples,
 	};
@@ -177,49 +177,49 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 	CHECK(line_delay_samples != 0 &&
 		      line_delay_samples <= TEST_MAXIMUM_LINE_DELAY,
 	      "invalid ranging-test line delay");
-	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &caller, SIPPYMODEM_V34_CALLING_STATION,
+	CHECK(v34_phase2_ranging_init(
+		      &caller, V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &calling) ==
-		      SIPPYMODEM_V34_PHASE2_RANGING_OK &&
-	      sippymodem_v34_phase2_ranging_init(
-		      &answerer, SIPPYMODEM_V34_ANSWERING_STATION,
+		      V34_PHASE2_RANGING_OK &&
+	      v34_phase2_ranging_init(
+		      &answerer, V34_ANSWERING_STATION,
 		      TEST_AMPLITUDE, &answering) ==
-		      SIPPYMODEM_V34_PHASE2_RANGING_OK,
+		      V34_PHASE2_RANGING_OK,
 	      "ranging endpoints did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
-		struct sippymodem_v34_phase2_ranging_event caller_event;
-		struct sippymodem_v34_phase2_ranging_event answer_event;
-		enum sippymodem_v34_phase2_ranging_phase caller_before =
+		struct v34_phase2_ranging_event caller_event;
+		struct v34_phase2_ranging_event answer_event;
+		enum v34_phase2_ranging_phase caller_before =
 			caller.phase;
-		enum sippymodem_v34_phase2_ranging_phase answer_before =
+		enum v34_phase2_ranging_phase answer_before =
 			answerer.phase;
-		enum sippymodem_v34_phase2_info0_transmit_phase
+		enum v34_phase2_info0_transmit_phase
 			caller_transmit_before =
 				caller.info0_exchange.transmit_phase;
-		enum sippymodem_v34_phase2_info0_transmit_phase
+		enum v34_phase2_info0_transmit_phase
 			answer_transmit_before =
 				answerer.info0_exchange.transmit_phase;
 		int16_t caller_transmit;
 		int16_t answer_transmit;
 
-		CHECK(sippymodem_v34_phase2_ranging_sample(
+		CHECK(v34_phase2_ranging_sample(
 			      &caller,
 			      delay_line_receive(&answer_to_caller),
 			      &caller_transmit, &caller_event) ==
-			      SIPPYMODEM_V34_PHASE2_RANGING_OK &&
-		      sippymodem_v34_phase2_ranging_sample(
+			      V34_PHASE2_RANGING_OK &&
+		      v34_phase2_ranging_sample(
 			      &answerer,
 			      delay_line_receive(&caller_to_answer),
 			      &answer_transmit, &answer_event) ==
-			      SIPPYMODEM_V34_PHASE2_RANGING_OK,
+			      V34_PHASE2_RANGING_OK,
 		      "ranging failed for codec %d delay %zu at sample %zu",
 		      codec, line_delay_samples, index);
 		if (caller_before ==
-		    SIPPYMODEM_V34_PHASE2_PROBE_READY)
+		    V34_PHASE2_PROBE_READY)
 			CHECK(caller_transmit == 0,
 			      "caller emitted audio after its probe boundary");
 		if (answer_before ==
-		    SIPPYMODEM_V34_PHASE2_PROBE_READY)
+		    V34_PHASE2_PROBE_READY)
 			CHECK(answer_transmit == 0,
 			      "answerer emitted placeholder audio at its probe boundary");
 		delay_line_transmit(
@@ -237,40 +237,40 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 		observe_ranging_events(
 			&caller_event, &answer_event, index, &observation);
 		if (caller.phase ==
-			    SIPPYMODEM_V34_PHASE2_PROBE_READY &&
+			    V34_PHASE2_PROBE_READY &&
 		    answerer.phase ==
-			    SIPPYMODEM_V34_PHASE2_PROBE_READY &&
+			    V34_PHASE2_PROBE_READY &&
 		    index > observation.answer_probe_ready_sample + 1u)
 			break;
 	}
 	CHECK(caller.phase ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_READY &&
+		      V34_PHASE2_PROBE_READY &&
 	      answerer.phase ==
-		      SIPPYMODEM_V34_PHASE2_PROBE_READY,
+		      V34_PHASE2_PROBE_READY,
 	      "ranging did not reach both probe boundaries for codec %d delay %zu",
 	      codec, line_delay_samples);
 	CHECK(observation.answer_tone_start_sample != SIZE_MAX &&
 	      observation.first_answer_reversal_sample ==
 		      observation.answer_tone_start_sample +
-			      SIPPYMODEM_V34_PHASE2_RANGING_INITIAL_TONE_SAMPLES,
+			      V34_PHASE2_RANGING_INITIAL_TONE_SAMPLES,
 	      "answerer did not preserve the initial 50 ms Tone A interval");
 	CHECK(absolute_difference(
 		      observation.caller_reversal_sample,
 		      observation.first_answer_reversal_sample +
 			      line_delay_samples +
-			      SIPPYMODEM_V34_PHASE2_RANGING_TURNAROUND_SAMPLES) <=
+			      V34_PHASE2_RANGING_TURNAROUND_SAMPLES) <=
 		      TEST_EDGE_TOLERANCE_SAMPLES,
 	      "caller response was not 40 ms from the received Tone A edge");
 	CHECK(absolute_difference(
 		      observation.second_answer_reversal_sample,
 		      observation.caller_reversal_sample +
 			      line_delay_samples +
-			      SIPPYMODEM_V34_PHASE2_RANGING_TURNAROUND_SAMPLES) <=
+			      V34_PHASE2_RANGING_TURNAROUND_SAMPLES) <=
 		      TEST_EDGE_TOLERANCE_SAMPLES,
 	      "answerer response was not 40 ms from the received Tone B edge");
 	CHECK(observation.answer_probe_ready_sample ==
 		      observation.second_answer_reversal_sample +
-			      SIPPYMODEM_V34_PHASE2_RANGING_TONE_TAIL_SAMPLES - 1u,
+			      V34_PHASE2_RANGING_TONE_TAIL_SAMPLES - 1u,
 	      "answerer did not preserve the 10 ms post-reversal tone");
 	CHECK(absolute_difference(
 		      observation.caller_probe_ready_sample,
@@ -311,95 +311,95 @@ static bool test_bidirectional_ranging(void)
 
 static bool test_missing_second_reversal_times_out(void)
 {
-	struct sippymodem_v34_info0 calling = calling_capabilities();
-	struct sippymodem_v34_info0 answering = answering_capabilities();
-	struct sippymodem_v34_phase2_ranging caller;
-	struct sippymodem_v34_phase2_ranging answerer;
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging caller;
+	struct v34_phase2_ranging answerer;
 	int16_t caller_line_sample = 0;
 	int16_t answer_line_sample = 0;
 	bool caller_reversed = false;
 	size_t timeout_count = 0;
 
-	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &caller, SIPPYMODEM_V34_CALLING_STATION,
+	CHECK(v34_phase2_ranging_init(
+		      &caller, V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &calling) ==
-		      SIPPYMODEM_V34_PHASE2_RANGING_OK &&
-	      sippymodem_v34_phase2_ranging_init(
-		      &answerer, SIPPYMODEM_V34_ANSWERING_STATION,
+		      V34_PHASE2_RANGING_OK &&
+	      v34_phase2_ranging_init(
+		      &answerer, V34_ANSWERING_STATION,
 		      TEST_AMPLITUDE, &answering) ==
-		      SIPPYMODEM_V34_PHASE2_RANGING_OK,
+		      V34_PHASE2_RANGING_OK,
 	      "timeout fixture did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT && !caller_reversed;
 	     ++index) {
-		struct sippymodem_v34_phase2_ranging_event caller_event;
-		struct sippymodem_v34_phase2_ranging_event answer_event;
+		struct v34_phase2_ranging_event caller_event;
+		struct v34_phase2_ranging_event answer_event;
 		int16_t next_caller;
 		int16_t next_answer;
 
-		CHECK(sippymodem_v34_phase2_ranging_sample(
+		CHECK(v34_phase2_ranging_sample(
 			      &caller, answer_line_sample, &next_caller,
-			      &caller_event) == SIPPYMODEM_V34_PHASE2_RANGING_OK &&
-		      sippymodem_v34_phase2_ranging_sample(
+			      &caller_event) == V34_PHASE2_RANGING_OK &&
+		      v34_phase2_ranging_sample(
 			      &answerer, caller_line_sample, &next_answer,
-			      &answer_event) == SIPPYMODEM_V34_PHASE2_RANGING_OK,
+			      &answer_event) == V34_PHASE2_RANGING_OK,
 		      "timeout setup failed at sample %zu", index);
 		caller_line_sample = next_caller;
 		answer_line_sample = next_answer;
 		caller_reversed = caller.phase ==
-			SIPPYMODEM_V34_PHASE2_RESPONSE_TONE_TAIL;
+			V34_PHASE2_RESPONSE_TONE_TAIL;
 	}
 	CHECK(caller_reversed, "timeout fixture never reached caller reversal");
 	for (size_t index = 0;
-	     index < SIPPYMODEM_V34_PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 4u;
+	     index < V34_PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 4u;
 	     ++index) {
-		struct sippymodem_v34_phase2_ranging_event event;
+		struct v34_phase2_ranging_event event;
 		int16_t transmit;
 
-		CHECK(sippymodem_v34_phase2_ranging_sample(
+		CHECK(v34_phase2_ranging_sample(
 			      &caller, 0, &transmit, &event) ==
-			      SIPPYMODEM_V34_PHASE2_RANGING_OK,
+			      V34_PHASE2_RANGING_OK,
 		      "missing-reversal wait failed at sample %zu", index);
-		if (event.kind == SIPPYMODEM_V34_PHASE2_RANGING_TIMEOUT)
+		if (event.kind == V34_PHASE2_RANGING_TIMEOUT)
 			timeout_count++;
 	}
-	CHECK(caller.phase == SIPPYMODEM_V34_PHASE2_RANGING_TIMED_OUT &&
+	CHECK(caller.phase == V34_PHASE2_RANGING_TIMED_OUT &&
 	      timeout_count == 1 &&
-	      sippymodem_v34_phase2_ranging_is_valid(&caller),
+	      v34_phase2_ranging_is_valid(&caller),
 	      "missing reversal did not produce one bounded timeout");
 	return true;
 }
 
 static bool test_validation(void)
 {
-	struct sippymodem_v34_info0 capabilities = calling_capabilities();
-	struct sippymodem_v34_phase2_ranging ranging;
-	struct sippymodem_v34_phase2_ranging before;
-	struct sippymodem_v34_phase2_ranging_event event = {
-		.kind = SIPPYMODEM_V34_PHASE2_RANGING_TIMEOUT,
+	struct v34_info0 capabilities = calling_capabilities();
+	struct v34_phase2_ranging ranging;
+	struct v34_phase2_ranging before;
+	struct v34_phase2_ranging_event event = {
+		.kind = V34_PHASE2_RANGING_TIMEOUT,
 	};
 	int16_t sample = 1234;
 
-	CHECK(sippymodem_v34_phase2_ranging_init(
-		      &ranging, SIPPYMODEM_V34_CALLING_STATION,
+	CHECK(v34_phase2_ranging_init(
+		      &ranging, V34_CALLING_STATION,
 		      TEST_AMPLITUDE, &capabilities) ==
-		      SIPPYMODEM_V34_PHASE2_RANGING_OK,
+		      V34_PHASE2_RANGING_OK,
 	      "validation fixture did not initialize");
 	ranging.info0_exchange.info_receiver.modulation.detector_output = NAN;
 	before = ranging;
-	CHECK(sippymodem_v34_phase2_ranging_sample(
+	CHECK(v34_phase2_ranging_sample(
 		      &ranging, 0, &sample, &event) ==
-		      SIPPYMODEM_V34_PHASE2_RANGING_INVALID_ARGUMENT &&
+		      V34_PHASE2_RANGING_INVALID_ARGUMENT &&
 	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
 	      sample == 1234 &&
-	      event.kind == SIPPYMODEM_V34_PHASE2_RANGING_TIMEOUT,
+	      event.kind == V34_PHASE2_RANGING_TIMEOUT,
 	      "invalid ranging state mutated state or outputs");
 	CHECK(strcmp(
-		      sippymodem_v34_phase2_ranging_result_name(
-			      SIPPYMODEM_V34_PHASE2_RANGING_OK),
+		      v34_phase2_ranging_result_name(
+			      V34_PHASE2_RANGING_OK),
 		      "ok") == 0 &&
 	      strcmp(
-		      sippymodem_v34_phase2_ranging_result_name(
-			      (enum sippymodem_v34_phase2_ranging_result)99),
+		      v34_phase2_ranging_result_name(
+			      (enum v34_phase2_ranging_result)99),
 		      "unknown") == 0,
 	      "ranging result names changed");
 	return true;
