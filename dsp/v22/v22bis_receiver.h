@@ -4,7 +4,7 @@
 #define SIPPYMODEM_V22BIS_RECEIVER_H
 
 #include "sippymodem_qam_gain.h"
-#include "sippymodem_v22bis_symbols.h"
+#include "v22bis_symbols.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -42,4 +42,4 @@ enum sippymodem_v22bis_receiver_result sippymodem_v22bis_receiver_decode(
 const char *sippymodem_v22bis_receiver_result_name(
 	enum sippymodem_v22bis_receiver_result result);
 
-#endif
+#endif /* SIPPYMODEM_V22BIS_RECEIVER_H */

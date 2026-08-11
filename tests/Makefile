@@ -370,10 +370,10 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam_gain.o \
 	$(BUILD_DIR)/sippymodem_single_tone.o \
-	$(BUILD_DIR)/sippymodem_v22_datapump.o \
-	$(BUILD_DIR)/sippymodem_v22_framing.o \
-	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
-	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
+	$(BUILD_DIR)/v22_datapump.o \
+	$(BUILD_DIR)/v22_framing.o \
+	$(BUILD_DIR)/v22bis_receiver.o \
+	$(BUILD_DIR)/v22bis_symbols.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
@@ -444,17 +444,17 @@ V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_v22_framing.o \
-	$(BUILD_DIR)/sippymodem_v22bis_symbols.o
+	$(BUILD_DIR)/v22_framing.o \
+	$(BUILD_DIR)/v22bis_symbols.o
 V22BIS_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v22bis_receiver
 V22BIS_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_qam_gain.o \
-	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
-	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
-	$(BUILD_DIR)/sippymodem_v22_framing.o
+	$(BUILD_DIR)/v22bis_receiver.o \
+	$(BUILD_DIR)/v22bis_symbols.o \
+	$(BUILD_DIR)/v22_framing.o
 V32_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_framing
 V32_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_framing.o \
@@ -1098,10 +1098,10 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam_gain.o \
 	$(BUILD_DIR)/sippymodem_single_tone.o \
-	$(BUILD_DIR)/sippymodem_v22_datapump.o \
-	$(BUILD_DIR)/sippymodem_v22_framing.o \
-	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
-	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
+	$(BUILD_DIR)/v22_datapump.o \
+	$(BUILD_DIR)/v22_framing.o \
+	$(BUILD_DIR)/v22bis_receiver.o \
+	$(BUILD_DIR)/v22bis_symbols.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
@@ -2124,16 +2124,16 @@ $(BUILD_DIR)/v23_datapump.o: \
 	$(DSP_V21_202_SOURCE_DIR)/v23_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v22_framing.o: \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_framing.c | $(BUILD_DIR)
+$(BUILD_DIR)/v22_framing.o: \
+	$(DSP_V22_SOURCE_DIR)/v22_framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v22bis_symbols.o: \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_symbols.c | $(BUILD_DIR)
+$(BUILD_DIR)/v22bis_symbols.o: \
+	$(DSP_V22_SOURCE_DIR)/v22bis_symbols.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v22bis_receiver.o: \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/v22bis_receiver.o: \
+	$(DSP_V22_SOURCE_DIR)/v22bis_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/framing.o: \
@@ -2425,8 +2425,8 @@ $(BUILD_DIR)/sippymodem_v34_phase2_tone.o: \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_phase2_tone.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v22_datapump.o: \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_datapump.c | $(BUILD_DIR)
+$(BUILD_DIR)/v22_datapump.o: \
+	$(DSP_V22_SOURCE_DIR)/v22_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_qam.o: \

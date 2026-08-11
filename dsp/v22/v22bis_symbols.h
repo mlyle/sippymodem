@@ -4,7 +4,7 @@
 #define SIPPYMODEM_V22BIS_SYMBOLS_H
 
 #include "sippymodem_qam.h"
-#include "sippymodem_v22_framing.h"
+#include "v22_framing.h"
 
 #include <stdint.h>
 
@@ -41,4 +41,4 @@ enum sippymodem_v22_framing_result sippymodem_v22bis_symbol_decode(
 enum sippymodem_v22_framing_result sippymodem_v22bis_constellation_point(
 	uint8_t symbol, struct sippymodem_qam_point *point);
 
-#endif
+#endif /* SIPPYMODEM_V22BIS_SYMBOLS_H */

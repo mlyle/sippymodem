@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v22_datapump.h"
+#include "v22_datapump.h"
 
 #include "modem.h"
 #include "modem_param.h"
 #include "sippymodem_qam.h"
-#include "sippymodem_v22_framing.h"
-#include "sippymodem_v22bis_receiver.h"
-#include "sippymodem_v22bis_symbols.h"
+#include "v22_framing.h"
+#include "v22bis_receiver.h"
+#include "v22bis_symbols.h"
 
 #include <limits.h>
 #include <math.h>

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v22bis_receiver.h"
+#include "v22bis_receiver.h"
 
 #include <float.h>
 #include <math.h>

@@ -60,4 +60,4 @@ enum sippymodem_v22_framing_result sippymodem_v22_symbol_decode(
 const char *sippymodem_v22_framing_result_name(
 	enum sippymodem_v22_framing_result result);
 
-#endif
+#endif /* SIPPYMODEM_V22_FRAMING_H */

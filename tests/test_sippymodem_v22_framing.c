@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <sippymodem_v22_framing.h>
-#include <sippymodem_v22bis_symbols.h>
+#include <v22_framing.h>
+#include <v22bis_symbols.h>
 
 #include "test.h"
 

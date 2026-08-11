@@ -114,10 +114,10 @@ SIPPYMODEM_V21_202_SOURCES := \
 	$(DSP_V21_202_SOURCE_DIR)/v21.c \
 	$(DSP_V21_202_SOURCE_DIR)/v23_datapump.c
 SIPPYMODEM_V22_SOURCES := \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_datapump.c \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22_framing.c \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_receiver.c \
-	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_symbols.c
+	$(DSP_V22_SOURCE_DIR)/v22_datapump.c \
+	$(DSP_V22_SOURCE_DIR)/v22_framing.c \
+	$(DSP_V22_SOURCE_DIR)/v22bis_receiver.c \
+	$(DSP_V22_SOURCE_DIR)/v22bis_symbols.c
 SIPPYMODEM_V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/datapump.c \
 	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c \

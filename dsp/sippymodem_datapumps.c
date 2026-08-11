@@ -6,7 +6,7 @@
 #include "baudot_datapump.h"
 #include "fsk300_datapump.h"
 #include "sippymodem_v8_datapump.h"
-#include "sippymodem_v22_datapump.h"
+#include "v22_datapump.h"
 #include "v23_datapump.h"
 #include "datapump.h"
 
