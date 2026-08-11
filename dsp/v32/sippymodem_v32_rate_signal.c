@@ -8,7 +8,9 @@ enum {
 	/* ITU-T V.32 Tables 6 and 7, with B0 stored in bit 15. */
 	V32_RATE_FIXED_BITS = 0x0111,
 	V32_END_FIXED_BITS = 0xf111,
-	V32_B4_DATA_MODE = 0x0800,
+	/* B4 advertises 2400 bit/s in V.32 and, together with B8, marks a
+	 * V.32bis rate word. This implementation does not offer 2400 bit/s. */
+	V32_B4_2400_OR_BIS = 0x0800,
 	V32_B5_4800 = 0x0400,
 	V32_B6_9600 = 0x0200,
 	V32_B8_TRELLIS = 0x0080,
@@ -18,7 +20,7 @@ enum {
 	/* V.32 bis reserves B13 and B14 for later definition and requires
 	 * receivers to ignore them. */
 	V32_IGNORED_EXTENSION_BITS = 0x0006,
-	V32_RATE_FIELD_MASK = V32_B4_DATA_MODE | V32_B5_4800 |
+	V32_RATE_FIELD_MASK = V32_B4_2400_OR_BIS | V32_B5_4800 |
 			       V32_B6_9600 | V32_B9_7200 |
 			       V32_B10_12000 | V32_B12_14400,
 	V32_KNOWN_PAYLOAD_MASK = V32_RATE_FIELD_MASK | V32_B8_TRELLIS,
@@ -85,7 +87,12 @@ static bool offer_is_valid(
 
 static uint16_t encode_rates(uint8_t rates)
 {
-	uint16_t word = V32_B4_DATA_MODE;
+	uint16_t word = 0;
+
+	if ((rates & (SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+		      SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+		      SIPPYMODEM_V32_RATE_CAPABILITY_14400)) != 0)
+		word |= V32_B4_2400_OR_BIS;
 
 	if ((rates & SIPPYMODEM_V32_RATE_CAPABILITY_4800) != 0)
 		word |= V32_B5_4800;
@@ -155,7 +162,7 @@ enum sippymodem_v32_rate_signal_result sippymodem_v32_rate_signal_decode(
 		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
 	}
 	decoded.rates = decode_rates(word);
-	if ((word & V32_B4_DATA_MODE) == 0 &&
+	if ((word & V32_B4_2400_OR_BIS) == 0 &&
 	    (decoded.rates &
 	     (SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
 	      SIPPYMODEM_V32_RATE_CAPABILITY_12000 |

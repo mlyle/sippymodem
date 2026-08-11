@@ -236,7 +236,7 @@ static bool test_uncoded_fallback(void)
 		      caller.phase == SIPPYMODEM_V32_CALLER_SEND_RESPONSE &&
 		      caller.selected_rate ==
 			      SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
-		      caller.rate_word == 0x0d11 && caller.end_word == 0xfd11,
+		      caller.rate_word == 0x0511 && caller.end_word == 0xf511,
 	      "V.32 startup did not fall back from trellis-only 9600");
 	return true;
 }
@@ -265,7 +265,7 @@ static bool test_higher_rate_offer_fallback(void)
 		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
 	      observe_word(&caller, word) && observe_word(&caller, word) &&
 	      caller.selected_rate == SIPPYMODEM_V32_RATE_CAPABILITY_9600 &&
-	      caller.rate_word == 0x0b11 && caller.end_word == 0xfb11,
+	      caller.rate_word == 0x0311 && caller.end_word == 0xf311,
 	      "V.32 startup did not select its highest supported fallback");
 	return true;
 }
