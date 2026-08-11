@@ -10,6 +10,8 @@
 #include <stdint.h>
 #include <string.h>
 
+extern int process_at_command(struct modem *modem, char *command);
+
 static int unused_start(struct modem *modem)
 {
 	(void)modem;
@@ -119,6 +121,57 @@ static bool test_core_has_no_external_dsp_owner(void)
 		      modem->dc_filter.sample_count == ARRAY_LENGTH(receive),
 	      "native core did not advance its source-owned sample state");
 	modem_delete(modem);
+	return true;
+}
+
+static bool test_at_dial_destinations_are_bounded(void)
+{
+	char oversized[sizeof(((struct modem *)0)->dial_string) + 4];
+	static struct {
+		char command[64];
+		const char *destination;
+	} cases[] = {
+		{ "ATDextension", "extension" },
+		{ "ATDuser@example.invalid", "user@example.invalid" },
+		{ "ATDsip:peer@example.invalid", "sip:peer@example.invalid" },
+	};
+	struct sippymodem_datapumps datapumps = { 0 };
+	struct modem_driver driver = {
+		.name = "AT dial test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+
+	CHECK(sippymodem_datapumps_start(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_OK,
+	      "AT dial test registrations did not start");
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct modem *modem = modem_create(&driver, "AT dial test");
+
+		CHECK(modem != NULL,
+		      "AT dial modem %zu could not be created", index);
+		CHECK(process_at_command(modem, cases[index].command) == 1 &&
+			      strcmp(modem->dial_string,
+				     cases[index].destination) == 0,
+		      "AT dial destination %zu changed", index);
+		modem_delete(modem);
+	}
+	{
+		struct modem *modem = modem_create(&driver, "AT dial bound test");
+
+		CHECK(modem != NULL, "bounded AT dial modem could not be created");
+		memcpy(oversized, "ATD", 3);
+		memset(oversized + 3, 'x', sizeof(modem->dial_string));
+		oversized[sizeof(oversized) - 1] = '\0';
+		CHECK(process_at_command(modem, oversized) == -1 &&
+			      modem->dial_string[0] == '\0' && !modem->started,
+		      "oversized AT destination was truncated or started a call");
+		modem_delete(modem);
+	}
+	CHECK(sippymodem_datapumps_stop(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_OK,
+	      "AT dial test registrations did not stop");
 	return true;
 }
 
@@ -405,6 +458,8 @@ int main(void)
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
+		{ "bounded AT dial destinations",
+		  test_at_dial_destinations_are_bounded },
 		{ "source-built data-pump ownership",
 		  test_owns_source_built_datapump_registrations },
 	};

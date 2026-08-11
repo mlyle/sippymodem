@@ -167,7 +167,7 @@ static int process_D(struct modem *m, char *p, int *len)
 		modem_set_sreg(m,SREG_TONE_OR_PULSE,0);
 		break;
 	case 'L':
-		if(m->dial_string) {
+		if(m->dial_string[0] != '\0') {
 			modem_send_to_tty(m,"Dialing ",8);
 			modem_send_to_tty(m,m->dial_string,
 						strlen(m->dial_string));
@@ -179,8 +179,13 @@ static int process_D(struct modem *m, char *p, int *len)
 	default:
 		break;
 	}
-	if (p)
-		strncpy(m->dial_string,p,sizeof(m->dial_string));
+	if (p) {
+		size_t length = strlen(p);
+
+		if (length >= sizeof(m->dial_string))
+			return -1;
+		memcpy(m->dial_string, p, length + 1);
+	}
 	ret = modem_dial(m);
 	if (ret)
 		return -1;
@@ -1201,4 +1206,3 @@ int process_at_command(struct modem *m, char *cmd)
 	}
 	return 0;
 }
-
