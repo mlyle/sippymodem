@@ -3,15 +3,12 @@
 #ifndef SIPPYMODEM_V34_PARSER_H
 #define SIPPYMODEM_V34_PARSER_H
 
+#include "sippymodem_v34_constellation.h"
 #include "sippymodem_v34_mapping_parameters.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-enum {
-	SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL = 2,
-};
 
 enum sippymodem_v34_parser_result {
 	SIPPYMODEM_V34_PARSER_OK,
