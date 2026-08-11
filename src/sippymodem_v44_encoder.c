@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "sippymodem_v44_encoder.h"
+#include "sippymodem_v44_dictionary_encoder.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -36,12 +37,12 @@ enum v44_control_action {
 struct sippymodem_v44_encoder {
 	struct sippymodem_v44_parameters parameters;
 	struct sippymodem_v44_bit_writer *writer;
+	struct sippymodem_v44_dictionary_encoder *dictionary;
 	enum v44_encode_phase phase;
 	enum v44_control_action control_action;
-	uint32_t next_codeword;
-	uint32_t history_length;
 	unsigned int ordinal_bits;
 	uint8_t pending_ordinal;
+	uint8_t previous_ordinal;
 	bool have_previous;
 	bool input_pending;
 };
@@ -64,9 +65,13 @@ static bool encoder_is_valid(const struct sippymodem_v44_encoder *encoder)
 	    encoder->phase > V44_ENCODE_FAILED ||
 	    encoder->control_action < V44_ACTION_NONE ||
 	    encoder->control_action > V44_ACTION_FLUSH ||
-	    encoder->next_codeword < V44_FIRST_CODEWORD ||
-	    encoder->next_codeword > encoder->parameters.codeword_limit ||
-	    encoder->history_length > encoder->parameters.history_size ||
+	    encoder->dictionary == NULL ||
+	    sippymodem_v44_dictionary_encoder_next_codeword(
+		    encoder->dictionary) < V44_FIRST_CODEWORD ||
+	    sippymodem_v44_dictionary_encoder_next_codeword(
+		    encoder->dictionary) > encoder->parameters.codeword_limit ||
+	    sippymodem_v44_dictionary_encoder_history_length(
+		    encoder->dictionary) > encoder->parameters.history_size ||
 	    (encoder->ordinal_bits != V44_INITIAL_ORDINAL_BITS &&
 	     encoder->ordinal_bits != 8))
 		return false;
@@ -79,12 +84,15 @@ static bool encoder_is_valid(const struct sippymodem_v44_encoder *encoder)
 		encoder->control_action == V44_ACTION_NONE);
 }
 
-static void reset_dictionary(struct sippymodem_v44_encoder *encoder)
+static bool reset_dictionary(struct sippymodem_v44_encoder *encoder)
 {
-	encoder->next_codeword = V44_FIRST_CODEWORD;
-	encoder->history_length = 0;
+	if (sippymodem_v44_dictionary_encoder_reinitialize(
+		    encoder->dictionary) !=
+	    SIPPYMODEM_V44_DICTIONARY_ENCODER_OK)
+		return false;
 	encoder->ordinal_bits = V44_INITIAL_ORDINAL_BITS;
 	encoder->have_previous = false;
+	return true;
 }
 
 struct sippymodem_v44_encoder *sippymodem_v44_encoder_create(
@@ -100,11 +108,13 @@ struct sippymodem_v44_encoder *sippymodem_v44_encoder_create(
 		return NULL;
 	encoder->parameters = *parameters;
 	encoder->writer = sippymodem_v44_bit_writer_create(output_capacity);
-	if (encoder->writer == NULL) {
+	encoder->dictionary =
+		sippymodem_v44_dictionary_encoder_create(parameters);
+	if (encoder->writer == NULL || encoder->dictionary == NULL ||
+	    !reset_dictionary(encoder)) {
 		sippymodem_v44_encoder_destroy(encoder);
 		return NULL;
 	}
-	reset_dictionary(encoder);
 	return encoder;
 }
 
@@ -113,6 +123,7 @@ void sippymodem_v44_encoder_destroy(
 {
 	if (encoder == NULL)
 		return;
+	sippymodem_v44_dictionary_encoder_destroy(encoder->dictionary);
 	sippymodem_v44_bit_writer_destroy(encoder->writer);
 	free(encoder);
 }
@@ -159,18 +170,38 @@ static void begin_ordinal(struct sippymodem_v44_encoder *encoder)
 		encoder->phase = V44_ENCODE_ORDINAL_PREFIX;
 }
 
-static void complete_control(struct sippymodem_v44_encoder *encoder)
+static bool prepare_ordinal(struct sippymodem_v44_encoder *encoder)
+{
+	uint32_t history_index = UINT32_MAX;
+	uint32_t codeword = UINT32_MAX;
+
+	if (sippymodem_v44_dictionary_encoder_append(
+		    encoder->dictionary, encoder->pending_ordinal,
+		    &history_index) != SIPPYMODEM_V44_DICTIONARY_ENCODER_OK)
+		return false;
+	if (encoder->have_previous &&
+	    sippymodem_v44_dictionary_encoder_add_root_segment(
+		    encoder->dictionary, encoder->previous_ordinal,
+		    history_index, 1, &codeword) !=
+		    SIPPYMODEM_V44_DICTIONARY_ENCODER_OK)
+		return false;
+	return true;
+}
+
+static bool complete_control(struct sippymodem_v44_encoder *encoder)
 {
 	enum v44_control_action action = encoder->control_action;
 
 	encoder->control_action = V44_ACTION_NONE;
 	switch (action) {
 	case V44_ACTION_REINIT_BEFORE_INPUT:
-		reset_dictionary(encoder);
+		if (!reset_dictionary(encoder) || !prepare_ordinal(encoder))
+			return false;
 		begin_ordinal(encoder);
 		break;
 	case V44_ACTION_REINIT_AFTER_INPUT:
-		reset_dictionary(encoder);
+		if (!reset_dictionary(encoder))
+			return false;
 		encoder->input_pending = false;
 		encoder->phase = V44_ENCODE_IDLE;
 		break;
@@ -183,8 +214,9 @@ static void complete_control(struct sippymodem_v44_encoder *encoder)
 		break;
 	case V44_ACTION_NONE:
 		encoder->phase = V44_ENCODE_FAILED;
-		break;
+		return false;
 	}
+	return true;
 }
 
 static uint32_t control_value(enum v44_control_action action)
@@ -206,15 +238,10 @@ static uint32_t control_value(enum v44_control_action action)
 static enum sippymodem_v44_encode_result complete_ordinal(
 	struct sippymodem_v44_encoder *encoder)
 {
-	if (encoder->history_length >= encoder->parameters.history_size ||
-	    (encoder->have_previous &&
-	     encoder->next_codeword >= encoder->parameters.codeword_limit))
-		return fail_encoder(encoder);
-	encoder->history_length++;
-	if (encoder->have_previous)
-		encoder->next_codeword++;
+	encoder->previous_ordinal = encoder->pending_ordinal;
 	encoder->have_previous = true;
-	if (encoder->history_length == encoder->parameters.history_size) {
+	if (sippymodem_v44_dictionary_encoder_history_length(
+		    encoder->dictionary) == encoder->parameters.history_size) {
 		begin_control(encoder, V44_ACTION_REINIT_AFTER_INPUT);
 		return SIPPYMODEM_V44_ENCODE_OK;
 	}
@@ -242,8 +269,8 @@ static enum sippymodem_v44_encode_result advance_encoder(
 				V44_INITIAL_CODEWORD_BITS);
 			if (result != SIPPYMODEM_V44_ENCODE_OK)
 				return result;
-			complete_control(encoder);
-			if (encoder->phase == V44_ENCODE_FAILED)
+			if (!complete_control(encoder) ||
+			    encoder->phase == V44_ENCODE_FAILED)
 				return fail_encoder(encoder);
 			break;
 		case V44_ENCODE_ORDINAL_PREFIX:
@@ -307,12 +334,16 @@ enum sippymodem_v44_encode_result sippymodem_v44_encoder_process(
 	encoder->input_pending = true;
 	(*input)++;
 	(*input_length)--;
-	if (encoder->history_length >= encoder->parameters.history_size ||
+	if (sippymodem_v44_dictionary_encoder_history_length(
+		    encoder->dictionary) >= encoder->parameters.history_size ||
 	    (encoder->have_previous &&
-	     encoder->next_codeword >= encoder->parameters.codeword_limit))
+	     sippymodem_v44_dictionary_encoder_next_codeword(
+		     encoder->dictionary) >= encoder->parameters.codeword_limit))
 		begin_control(encoder, V44_ACTION_REINIT_BEFORE_INPUT);
-	else
+	else if (prepare_ordinal(encoder))
 		begin_ordinal(encoder);
+	else
+		return fail_encoder(encoder);
 	return advance_encoder(encoder);
 }
 
