@@ -44,6 +44,9 @@ struct sippymodem_v34_survivor {
 	uint8_t path_intervals;
 };
 
+bool sippymodem_v34_survivor_decision_is_valid(
+	const struct sippymodem_v34_survivor_decision *decision);
+
 /* Start at the all-zero convolutional state required at the beginning of B1.
  * The destination is unchanged when the selection is invalid. */
 enum sippymodem_v34_survivor_result sippymodem_v34_survivor_init(

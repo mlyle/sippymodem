@@ -32,13 +32,12 @@ static bool grid_point_label(
 		       SIPPYMODEM_V34_TRELLIS_OK;
 }
 
-static bool decision_is_valid(
-	const struct sippymodem_v34_survivor_decision *decision,
-	uint8_t branch_index)
+bool sippymodem_v34_survivor_decision_is_valid(
+	const struct sippymodem_v34_survivor_decision *decision)
 {
 	uint8_t label[2];
 
-	if (decision->convolutional_output != (branch_index & 1u) ||
+	if (decision == NULL || decision->convolutional_output > 1u ||
 	    decision->inversion_bit > 1u)
 		return false;
 	for (uint8_t symbol = 0;
@@ -64,7 +63,9 @@ static bool traceback_step_is_valid(
 	}
 	for (uint8_t branch = 0; branch < branch_count; ++branch) {
 		if (step->branch[branch].inversion_bit != inversion_bit ||
-		    !decision_is_valid(&step->branch[branch], branch))
+		    step->branch[branch].convolutional_output != (branch & 1u) ||
+		    !sippymodem_v34_survivor_decision_is_valid(
+			    &step->branch[branch]))
 			return false;
 	}
 	return true;
