@@ -65,8 +65,8 @@ struct runtime_capture {
 	struct sip_call_event call;
 	enum sippymodem_host_result host_step_result;
 	enum slmodem_calls_result call_result;
-	enum sippymodem_session_result host_open_result;
-	enum sippymodem_session_result host_close_result;
+	enum sip_session_result host_open_result;
+	enum sip_session_result host_close_result;
 	int remote_end_result;
 	int forced_stop_result;
 	uint64_t wait_ns;
@@ -381,7 +381,7 @@ enum recording_files_result recording_files_last_result(
 }
 
 struct sippymodem_host *sippymodem_host_create(
-	const struct sippymodem_config *config,
+	const struct app_config *config,
 	const struct media_recorder *recorder,
 	const struct sip_signaling_callbacks *callbacks,
 	const struct modem_core *core)
@@ -410,16 +410,16 @@ void sippymodem_host_destroy(struct sippymodem_host *host)
 	free(host);
 }
 
-enum sippymodem_session_result sippymodem_host_open(
+enum sip_session_result sippymodem_host_open(
 	struct sippymodem_host *host)
 {
 	capture.host_opens++;
-	if (capture.host_open_result == SIPPYMODEM_SESSION_OK)
+	if (capture.host_open_result == SIP_SESSION_OK)
 		host->opened = true;
 	return capture.host_open_result;
 }
 
-enum sippymodem_session_result sippymodem_host_close(
+enum sip_session_result sippymodem_host_close(
 	struct sippymodem_host *host)
 {
 	capture.host_closes++;
@@ -459,9 +459,9 @@ uint64_t sippymodem_host_wait_ns(
 	return capture.wait_ns;
 }
 
-static struct sippymodem_config runtime_config(bool recording)
+static struct app_config runtime_config(bool recording)
 {
-	struct sippymodem_config config;
+	struct app_config config;
 
 	memset(&config, 0, sizeof(config));
 	if (recording)
@@ -472,7 +472,7 @@ static struct sippymodem_config runtime_config(bool recording)
 
 static bool test_owns_closed_runtime(void)
 {
-	struct sippymodem_config config = runtime_config(true);
+	struct app_config config = runtime_config(true);
 	struct sippymodem_runtime *runtime;
 	struct modem *modem;
 	char name[] = "sippymodem-test";
@@ -507,7 +507,7 @@ static bool test_owns_closed_runtime(void)
 
 static bool test_creation_rolls_back(void)
 {
-	struct sippymodem_config config = runtime_config(true);
+	struct app_config config = runtime_config(true);
 	char long_name[SIPPYMODEM_RUNTIME_NAME_MAX + 1];
 
 	memset(&capture, 0, sizeof(capture));
@@ -562,7 +562,7 @@ static bool test_creation_rolls_back(void)
 
 static bool test_opens_and_closes_in_dependency_order(void)
 {
-	struct sippymodem_config config = runtime_config(false);
+	struct app_config config = runtime_config(false);
 	struct sippymodem_runtime *runtime;
 	struct modem *modem;
 	const char *device_path;
@@ -605,32 +605,32 @@ static bool test_opens_and_closes_in_dependency_order(void)
 
 static bool test_reports_lifecycle_failures(void)
 {
-	struct sippymodem_config config = runtime_config(false);
+	struct app_config config = runtime_config(false);
 	struct sippymodem_runtime *runtime;
 	struct modem *modem;
 
 	memset(&capture, 0, sizeof(capture));
-	capture.host_open_result = SIPPYMODEM_SESSION_SIGNALING_ERROR;
+	capture.host_open_result = SIP_SESSION_SIGNALING_ERROR;
 	runtime = sippymodem_runtime_create(&config, "failed-open");
 	CHECK(runtime != NULL &&
 		      sippymodem_runtime_open(runtime) ==
 			      SIPPYMODEM_RUNTIME_SESSION_ERROR &&
 		      sippymodem_runtime_last_session_result(runtime) ==
-			      SIPPYMODEM_SESSION_SIGNALING_ERROR &&
+			      SIP_SESSION_SIGNALING_ERROR &&
 		      sippymodem_runtime_terminal_fd(runtime) == -1 &&
 		      sippymodem_runtime_modem(runtime)->pty == -1,
 	      "runtime hid a session open failure");
 	sippymodem_runtime_destroy(runtime);
 
 	memset(&capture, 0, sizeof(capture));
-	capture.host_close_result = SIPPYMODEM_SESSION_SIGNALING_ERROR;
+	capture.host_close_result = SIP_SESSION_SIGNALING_ERROR;
 	runtime = sippymodem_runtime_create(&config, "failed-host-close");
 	CHECK(runtime != NULL &&
 		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK &&
 		      sippymodem_runtime_close(runtime) ==
 			      SIPPYMODEM_RUNTIME_SESSION_ERROR &&
 		      sippymodem_runtime_last_session_result(runtime) ==
-			      SIPPYMODEM_SESSION_SIGNALING_ERROR,
+			      SIP_SESSION_SIGNALING_ERROR,
 	      "runtime hid a session close failure");
 	sippymodem_runtime_destroy(runtime);
 
@@ -689,7 +689,7 @@ static bool test_reports_lifecycle_failures(void)
 
 static bool test_steps_bounded_host_and_evidence_work(void)
 {
-	struct sippymodem_config config = runtime_config(true);
+	struct app_config config = runtime_config(true);
 	struct sippymodem_runtime *runtime;
 	struct recording_files *recording;
 	struct modem *modem;

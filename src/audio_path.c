@@ -13,7 +13,7 @@
 #include <string.h>
 
 struct audio_path {
-	struct sippymodem_session *session;
+	struct sip_session *session;
 	struct media_recorder recorder;
 	struct modem_core modem_core;
 	double receive_gain;
@@ -49,7 +49,7 @@ static void apply_gain(int16_t *samples, size_t count, double gain)
 }
 
 struct audio_path *audio_path_create(
-	struct sippymodem_session *session,
+	struct sip_session *session,
 	const struct media_config *config,
 	const struct media_recorder *recorder,
 	const struct modem_core *modem_core)
@@ -63,7 +63,7 @@ struct audio_path *audio_path_create(
 	    !gain_is_valid(config->receive_gain) ||
 	    !gain_is_valid(config->transmit_gain))
 		return NULL;
-	frame_samples = sippymodem_session_frame_samples(session);
+	frame_samples = sip_session_frame_samples(session);
 	if (frame_samples == 0 ||
 	    frame_samples >
 		    (SIZE_MAX - sizeof(*path)) / (2 * sizeof(int16_t)))
@@ -106,7 +106,7 @@ enum audio_path_result audio_path_process_frame(
 		return AUDIO_PATH_INVALID_ARGUMENT;
 	receive_samples = path->samples;
 	transmit_samples = path->samples + path->frame_samples;
-	path->last_media_result = sippymodem_session_play(
+	path->last_media_result = sip_session_play(
 		path->session, receive_samples, path->frame_samples, NULL);
 	if (path->last_media_result != MEDIA_OK)
 		return AUDIO_PATH_PLAYOUT_ERROR;
@@ -131,7 +131,7 @@ enum audio_path_result audio_path_process_frame(
 		RECORD_S16_NATIVE, MEDIA_SAMPLE_RATE,
 		transmit_samples, path->frame_samples);
 	apply_gain(transmit_samples, path->frame_samples, path->transmit_gain);
-	path->last_rtp_result = sippymodem_session_send(
+	path->last_rtp_result = sip_session_send(
 		path->session, transmit_samples, path->frame_samples);
 	return path->last_rtp_result == RTP_ENDPOINT_OK ?
 		       AUDIO_PATH_OK :

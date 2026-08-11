@@ -29,16 +29,16 @@ enum sippymodem_host_result {
 struct sippymodem_host;
 
 struct sippymodem_host *sippymodem_host_create(
-	const struct sippymodem_config *config,
+	const struct app_config *config,
 	const struct media_recorder *recorder,
 	const struct sip_signaling_callbacks *callbacks,
 	const struct modem_core *modem_core);
 /* Call destroy outside signaling and modem-core callbacks. */
 void sippymodem_host_destroy(struct sippymodem_host *host);
 
-enum sippymodem_session_result sippymodem_host_open(
+enum sip_session_result sippymodem_host_open(
 	struct sippymodem_host *host);
-enum sippymodem_session_result sippymodem_host_close(
+enum sip_session_result sippymodem_host_close(
 	struct sippymodem_host *host);
 
 enum sip_signaling_result sippymodem_host_dial(
@@ -64,7 +64,7 @@ bool sippymodem_host_is_open(const struct sippymodem_host *host);
 bool sippymodem_host_media_is_configured(
 	const struct sippymodem_host *host);
 bool sippymodem_host_audio_is_active(const struct sippymodem_host *host);
-enum sippymodem_session_result sippymodem_host_last_session_result(
+enum sip_session_result sippymodem_host_last_session_result(
 	const struct sippymodem_host *host);
 enum audio_scheduler_result
 sippymodem_host_last_audio_scheduler_result(

@@ -28,7 +28,7 @@ struct sippymodem_runtime {
 	struct recording_files *recording_files;
 	struct sippymodem_host *host;
 	enum sippymodem_host_result last_host_result;
-	enum sippymodem_session_result last_session_result;
+	enum sip_session_result last_session_result;
 	enum slmodem_calls_result last_calls_result;
 	enum slmodem_terminal_result last_modem_terminal_result;
 	enum sippymodem_terminal_result last_terminal_result;
@@ -50,7 +50,7 @@ static void destroy_incomplete_runtime(struct sippymodem_runtime *runtime)
 }
 
 struct sippymodem_runtime *sippymodem_runtime_create(
-	const struct sippymodem_config *config, const char *modem_name)
+	const struct app_config *config, const char *modem_name)
 {
 	struct sippymodem_runtime *runtime;
 	const struct media_recorder *recorder = NULL;
@@ -168,7 +168,7 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 	}
 	runtime->terminal_client_connected = false;
 	runtime->last_session_result = sippymodem_host_open(runtime->host);
-	if (runtime->last_session_result == SIPPYMODEM_SESSION_OK)
+	if (runtime->last_session_result == SIP_SESSION_OK)
 		return SIPPYMODEM_RUNTIME_OK;
 	runtime->last_modem_terminal_result =
 		slmodem_terminal_unbind(&runtime->modem_terminal);
@@ -192,7 +192,7 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 		runtime->last_session_result =
 			sippymodem_host_close(runtime->host);
 	else
-		runtime->last_session_result = SIPPYMODEM_SESSION_NOT_OPEN;
+		runtime->last_session_result = SIP_SESSION_NOT_OPEN;
 	runtime->last_modem_terminal_result =
 		slmodem_terminal_unbind(&runtime->modem_terminal);
 	runtime->terminal_client_connected = false;
@@ -200,8 +200,8 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 		sippymodem_terminal_close(runtime->terminal);
 	if (stop_result != 0)
 		return SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR;
-	if (runtime->last_session_result != SIPPYMODEM_SESSION_OK &&
-	    runtime->last_session_result != SIPPYMODEM_SESSION_NOT_OPEN)
+	if (runtime->last_session_result != SIP_SESSION_OK &&
+	    runtime->last_session_result != SIP_SESSION_NOT_OPEN)
 		return SIPPYMODEM_RUNTIME_SESSION_ERROR;
 	if (runtime->last_modem_terminal_result !=
 		    SLMODEM_TERMINAL_OK &&
@@ -434,11 +434,11 @@ enum sippymodem_host_result sippymodem_runtime_last_host_result(
 			       SIPPYMODEM_HOST_INVALID_ARGUMENT;
 }
 
-enum sippymodem_session_result sippymodem_runtime_last_session_result(
+enum sip_session_result sippymodem_runtime_last_session_result(
 	const struct sippymodem_runtime *runtime)
 {
 	return runtime != NULL ? runtime->last_session_result :
-			       SIPPYMODEM_SESSION_INVALID_ARGUMENT;
+			       SIP_SESSION_INVALID_ARGUMENT;
 }
 
 enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(

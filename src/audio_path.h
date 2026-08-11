@@ -37,7 +37,7 @@ enum audio_path_result {
 struct audio_path;
 
 struct audio_path *audio_path_create(
-	struct sippymodem_session *session,
+	struct sip_session *session,
 	const struct media_config *config,
 	const struct media_recorder *recorder,
 	const struct modem_core *modem_core);

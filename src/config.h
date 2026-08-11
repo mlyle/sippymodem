@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_CONFIG_H
-#define SIPPYMODEM_CONFIG_H
+#ifndef APP_CONFIG_H
+#define APP_CONFIG_H
 
 #include "media.h"
 
 #include <stdbool.h>
 
-#define SIPPYMODEM_CONFIG_TEXT_MAX 256
-#define SIPPYMODEM_CONFIG_ERROR_MAX 128
+#define APP_CONFIG_TEXT_MAX 256
+#define CONFIG_ERROR_MAX 128
 
 struct sip_config {
-	char login[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char user[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char password[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char domain[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char server[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char public_address[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char bound_address[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char identity_uri[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char registrar_uri[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char proxy_uri[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char realm[SIPPYMODEM_CONFIG_TEXT_MAX];
-	char target[SIPPYMODEM_CONFIG_TEXT_MAX];
+	char login[APP_CONFIG_TEXT_MAX];
+	char user[APP_CONFIG_TEXT_MAX];
+	char password[APP_CONFIG_TEXT_MAX];
+	char domain[APP_CONFIG_TEXT_MAX];
+	char server[APP_CONFIG_TEXT_MAX];
+	char public_address[APP_CONFIG_TEXT_MAX];
+	char bound_address[APP_CONFIG_TEXT_MAX];
+	char identity_uri[APP_CONFIG_TEXT_MAX];
+	char registrar_uri[APP_CONFIG_TEXT_MAX];
+	char proxy_uri[APP_CONFIG_TEXT_MAX];
+	char realm[APP_CONFIG_TEXT_MAX];
+	char target[APP_CONFIG_TEXT_MAX];
 	unsigned int listen_port;
 	unsigned int log_level;
 	bool registration_enabled;
@@ -40,23 +40,23 @@ struct media_config {
 };
 
 struct recording_config {
-	char prefix[SIPPYMODEM_CONFIG_TEXT_MAX];
+	char prefix[APP_CONFIG_TEXT_MAX];
 };
 
-struct sippymodem_config {
+struct app_config {
 	struct sip_config sip;
 	struct media_config media;
 	struct recording_config recording;
 };
 
-struct sippymodem_config_error {
+struct config_error {
 	char setting[32];
-	char message[SIPPYMODEM_CONFIG_ERROR_MAX];
+	char message[CONFIG_ERROR_MAX];
 };
 
-void sippymodem_config_init(struct sippymodem_config *config);
-int sippymodem_config_apply_environment(
-	struct sippymodem_config *config,
-	struct sippymodem_config_error *error);
+void config_init(struct app_config *config);
+int config_apply_environment(
+	struct app_config *config,
+	struct config_error *error);
 
 #endif

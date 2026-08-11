@@ -123,8 +123,8 @@ static void report_loop_error(
 
 int sippymodem_program_main(int argc, char *argv[])
 {
-	struct sippymodem_config config;
-	struct sippymodem_config_error config_error;
+	struct app_config config;
+	struct config_error config_error;
 	struct modem_loop_error loop_error;
 	struct signal_handlers handlers;
 	struct sippymodem_runtime *runtime;
@@ -146,8 +146,8 @@ int sippymodem_program_main(int argc, char *argv[])
 		return SIPPYMODEM_EXIT_USAGE;
 	}
 
-	sippymodem_config_init(&config);
-	if (sippymodem_config_apply_environment(&config, &config_error) != 0) {
+	config_init(&config);
+	if (config_apply_environment(&config, &config_error) != 0) {
 		fprintf(stderr, "sippymodem: %s: %s\n", config_error.setting,
 			config_error.message);
 		return SIPPYMODEM_EXIT_USAGE;

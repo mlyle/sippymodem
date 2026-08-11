@@ -26,13 +26,13 @@ struct fake_signaling_control {
 static struct fake_signaling_control fake;
 
 struct sip_signaling {
-	struct sippymodem_config config;
+	struct app_config config;
 	struct sip_signaling_callbacks callbacks;
 	bool opened;
 };
 
 struct sip_signaling *sip_signaling_create(
-	const struct sippymodem_config *config,
+	const struct app_config *config,
 	const struct sip_signaling_callbacks *callbacks)
 {
 	struct sip_signaling *signaling;
@@ -211,13 +211,13 @@ static struct sippymodem_host *create_host(
 	const struct media_recorder *recorder,
 	struct core_capture *core_capture)
 {
-	struct sippymodem_config config;
+	struct app_config config;
 	const struct modem_core core = {
 		.context = core_capture,
 		.process = process_core,
 	};
 
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 0;
 	return sippymodem_host_create(&config, recorder, NULL, &core);
@@ -243,7 +243,7 @@ static bool test_owns_lifecycle_and_call_control(void)
 	CHECK(sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
 		      SIP_SIGNALING_NOT_OPEN,
 	      "closed host accepted a call");
-	CHECK(sippymodem_host_open(host) == SIPPYMODEM_SESSION_OK &&
+	CHECK(sippymodem_host_open(host) == SIP_SESSION_OK &&
 		      sippymodem_host_is_open(host) && fake.opens == 1 &&
 		      !sippymodem_host_media_is_configured(host),
 	      "host did not open its signaling and RTP session");
@@ -259,7 +259,7 @@ static bool test_owns_lifecycle_and_call_control(void)
 		      !sippymodem_host_audio_is_active(host) && fake.dials == 1 &&
 		      fake.answers == 1 && fake.hangups == 1,
 	      "host did not synchronize call control with media state");
-	CHECK(sippymodem_host_close(host) == SIPPYMODEM_SESSION_OK &&
+	CHECK(sippymodem_host_close(host) == SIP_SESSION_OK &&
 		      !sippymodem_host_is_open(host) && fake.closes == 1 &&
 		      fake.destroys == 1,
 	      "host did not close its complete session");
@@ -269,17 +269,17 @@ static bool test_owns_lifecycle_and_call_control(void)
 
 static bool test_creation_validation_is_transactional(void)
 {
-	struct sippymodem_config config;
+	struct app_config config;
 	struct modem_core core = { .process = process_core };
 
-	sippymodem_config_init(&config);
+	config_init(&config);
 	CHECK(sippymodem_host_create(NULL, NULL, NULL, &core) == NULL &&
 		      sippymodem_host_create(&config, NULL, NULL, NULL) == NULL,
 	      "host accepted incomplete ownership");
 	config.media.frame_duration_ms = 0;
 	CHECK(sippymodem_host_create(&config, NULL, NULL, &core) == NULL,
 	      "host retained an invalid media session");
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.media.receive_gain = NAN;
 	CHECK(sippymodem_host_create(&config, NULL, NULL, &core) == NULL,
 	      "host retained a session after audio path rejection");
@@ -319,7 +319,7 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 	memset(&fake, 0, sizeof(fake));
 	host = create_host(&recorder, &core);
 	CHECK(host != NULL &&
-		      sippymodem_host_open(host) == SIPPYMODEM_SESSION_OK &&
+		      sippymodem_host_open(host) == SIP_SESSION_OK &&
 		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_OK &&
 		      sippymodem_host_wait_ns(host, 1000000000) == 0,
@@ -353,7 +353,7 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 		      frames == 1 && core.calls == 2 &&
 		      sippymodem_host_audio_is_active(host) &&
 		      sippymodem_host_last_session_result(host) ==
-			      SIPPYMODEM_SESSION_MEDIA_BINDING_ERROR &&
+			      SIP_SESSION_MEDIA_BINDING_ERROR &&
 		      sippymodem_host_last_audio_scheduler_result(host) ==
 			      AUDIO_SCHEDULER_OK &&
 		      sippymodem_host_last_audio_path_result(host) ==
@@ -364,9 +364,9 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 		      SIPPYMODEM_HOST_SESSION_ERROR &&
 		      frames == 0 &&
 		      sippymodem_host_last_session_result(host) ==
-			      SIPPYMODEM_SESSION_SIGNALING_ERROR,
+			      SIP_SESSION_SIGNALING_ERROR,
 	      "host did not retain a fatal signaling-step result");
-	CHECK(sippymodem_host_close(host) == SIPPYMODEM_SESSION_OK,
+	CHECK(sippymodem_host_close(host) == SIP_SESSION_OK,
 	      "recorded host did not close");
 	sippymodem_host_destroy(host);
 	return true;
@@ -384,7 +384,7 @@ static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 	fake.defer_hangup_media = true;
 	host = create_host(NULL, &core);
 	CHECK(host != NULL &&
-		      sippymodem_host_open(host) == SIPPYMODEM_SESSION_OK &&
+		      sippymodem_host_open(host) == SIP_SESSION_OK &&
 		      sippymodem_host_dial(host, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_OK,
 	      "failed-audio host call did not start");
@@ -418,7 +418,7 @@ static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 			      AUDIO_PATH_MODEM_ERROR &&
 		      fake.hangups == 2,
 	      "modem failure did not retain its typed audio cause");
-	CHECK(sippymodem_host_close(host) == SIPPYMODEM_SESSION_OK,
+	CHECK(sippymodem_host_close(host) == SIP_SESSION_OK,
 	      "failed-audio host did not close");
 	sippymodem_host_destroy(host);
 	return true;
@@ -433,7 +433,7 @@ static bool test_destroy_closes_an_open_host(void)
 	memset(&fake, 0, sizeof(fake));
 	host = create_host(NULL, NULL);
 	CHECK(host != NULL &&
-		      sippymodem_host_open(host) == SIPPYMODEM_SESSION_OK,
+		      sippymodem_host_open(host) == SIP_SESSION_OK,
 	      "open destroy fixture failed");
 	sippymodem_host_destroy(host);
 	CHECK(fake.closes == 1 && fake.destroys == 1,
@@ -443,9 +443,9 @@ static bool test_destroy_closes_an_open_host(void)
 		      !sippymodem_host_media_is_configured(NULL) &&
 		      !sippymodem_host_audio_is_active(NULL) &&
 		      sippymodem_host_open(NULL) ==
-			      SIPPYMODEM_SESSION_INVALID_ARGUMENT &&
+			      SIP_SESSION_INVALID_ARGUMENT &&
 		      sippymodem_host_close(NULL) ==
-			      SIPPYMODEM_SESSION_INVALID_ARGUMENT &&
+			      SIP_SESSION_INVALID_ARGUMENT &&
 		      sippymodem_host_dial(NULL, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_INVALID_ARGUMENT &&
 		      sippymodem_host_step(NULL, 0, &datagrams, &frames) ==

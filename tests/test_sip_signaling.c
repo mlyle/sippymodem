@@ -147,7 +147,7 @@ static void capture_media(
 }
 
 static struct sip_signaling *create_signaling(
-	const struct sippymodem_config *config,
+	const struct app_config *config,
 	struct callback_capture *capture)
 {
 	struct sip_signaling_callbacks callbacks = {
@@ -168,9 +168,9 @@ static struct sip_signaling *create_signaling(
 static struct sip_signaling *create_local_signaling(
 	struct callback_capture *capture)
 {
-	struct sippymodem_config config;
+	struct app_config config;
 
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.sip.listen_port = 0;
 	config.sip.log_level = 3;
 	config.sip.registration_enabled = false;
@@ -230,7 +230,7 @@ static bool test_singleton_and_account_boundary(void)
 		create_local_signaling(&first_capture);
 	struct sip_signaling *second =
 		create_local_signaling(&second_capture);
-	struct sippymodem_config account_config;
+	struct app_config account_config;
 	struct sip_signaling *account;
 	enum sip_signaling_result account_close_result =
 		SIP_SIGNALING_NOT_OPEN;
@@ -258,7 +258,7 @@ static bool test_singleton_and_account_boundary(void)
 	sip_signaling_destroy(first);
 	sip_signaling_destroy(second);
 
-	sippymodem_config_init(&account_config);
+	config_init(&account_config);
 	account = create_signaling(&account_config, &account_capture);
 	CHECK(account != NULL, "could not allocate account boundary test");
 	account_open_result = sip_signaling_open(account);
@@ -267,7 +267,7 @@ static bool test_singleton_and_account_boundary(void)
 	      "registration without credentials was accepted");
 
 	memset(&account_capture, 0, sizeof(account_capture));
-	sippymodem_config_init(&account_config);
+	config_init(&account_config);
 	account_config.sip.listen_port = 0;
 	account_config.sip.registration_enabled = false;
 	(void)snprintf(account_config.sip.login,
@@ -814,7 +814,7 @@ static bool test_loopback_registration_lifecycle(void)
 {
 	struct callback_capture capture = { 0 };
 	struct loopback_registrar registrar;
-	struct sippymodem_config config;
+	struct app_config config;
 	struct sip_signaling *signaling = NULL;
 	enum sip_signaling_result open_result =
 		SIP_SIGNALING_INVALID_ARGUMENT;
@@ -828,7 +828,7 @@ static bool test_loopback_registration_lifecycle(void)
 
 	CHECK(start_loopback_registrar(&registrar),
 	      "could not start loopback SIP registrar");
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.sip.listen_port = 0;
 	config.sip.log_level = 3;
 	config.sip.registration_enabled = true;
@@ -918,7 +918,7 @@ static bool test_outgoing_call_lifecycle(void)
 {
 	struct callback_capture capture = { 0 };
 	struct loopback_call_peer peer;
-	struct sippymodem_config config;
+	struct app_config config;
 	struct sip_signaling *signaling = NULL;
 	enum sip_signaling_result open_result =
 		SIP_SIGNALING_INVALID_ARGUMENT;
@@ -939,7 +939,7 @@ static bool test_outgoing_call_lifecycle(void)
 
 	CHECK(start_loopback_call(&peer),
 	      "could not start loopback SIP call peer");
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.sip.listen_port = 0;
 	config.sip.log_level = 3;
 	config.sip.registration_enabled = false;
@@ -1039,7 +1039,7 @@ static bool test_incoming_call_lifecycle(void)
 {
 	struct callback_capture capture = { 0 };
 	struct loopback_incoming_peer peer;
-	struct sippymodem_config config;
+	struct app_config config;
 	struct sip_signaling *signaling;
 	enum sip_signaling_result open_result;
 	enum sip_signaling_result answer_result =
@@ -1056,7 +1056,7 @@ static bool test_incoming_call_lifecycle(void)
 	bool final_state_idle = false;
 	bool final_media_inactive = false;
 
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.sip.listen_port = 0;
 	config.sip.log_level = 3;
 	config.sip.registration_enabled = false;

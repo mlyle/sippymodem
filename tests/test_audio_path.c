@@ -13,7 +13,7 @@ enum {
 	TEST_RECORDINGS = 4,
 };
 
-struct sippymodem_session {
+struct sip_session {
 	size_t frame_samples;
 	int16_t receive_samples[TEST_FRAME_SAMPLES];
 	int16_t sent_samples[TEST_FRAME_SAMPLES];
@@ -23,14 +23,14 @@ struct sippymodem_session {
 	unsigned int send_calls;
 };
 
-size_t sippymodem_session_frame_samples(
-	const struct sippymodem_session *session)
+size_t sip_session_frame_samples(
+	const struct sip_session *session)
 {
 	return session != NULL ? session->frame_samples : 0;
 }
 
-enum media_result sippymodem_session_play(
-	struct sippymodem_session *session, int16_t *samples, size_t count,
+enum media_result sip_session_play(
+	struct sip_session *session, int16_t *samples, size_t count,
 	struct rtp_playout_report *report)
 {
 	if (session == NULL || samples == NULL || count != session->frame_samples)
@@ -45,8 +45,8 @@ enum media_result sippymodem_session_play(
 	return MEDIA_OK;
 }
 
-enum rtp_endpoint_result sippymodem_session_send(
-	struct sippymodem_session *session, const int16_t *samples, size_t count)
+enum rtp_endpoint_result sip_session_send(
+	struct sip_session *session, const int16_t *samples, size_t count)
 {
 	if (session == NULL || samples == NULL || count != session->frame_samples)
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
@@ -104,7 +104,7 @@ static void capture_recording(
 
 static bool test_processes_gained_recorded_frame(void)
 {
-	struct sippymodem_session session = {
+	struct sip_session session = {
 		.frame_samples = TEST_FRAME_SAMPLES,
 		.receive_samples = { 1001, -1001, 20000, -20000 },
 		.play_result = MEDIA_OK,
@@ -161,7 +161,7 @@ static bool test_processes_gained_recorded_frame(void)
 
 static bool test_stops_at_each_failed_boundary(void)
 {
-	struct sippymodem_session session = {
+	struct sip_session session = {
 		.frame_samples = TEST_FRAME_SAMPLES,
 		.play_result = MEDIA_OUTPUT_TOO_SMALL,
 		.send_result = RTP_ENDPOINT_NO_REMOTE,
@@ -216,7 +216,7 @@ static bool test_stops_at_each_failed_boundary(void)
 
 static bool test_rejects_invalid_ownership_and_gain(void)
 {
-	struct sippymodem_session session = {
+	struct sip_session session = {
 		.frame_samples = TEST_FRAME_SAMPLES,
 	};
 	struct media_config config = {

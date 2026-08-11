@@ -9,10 +9,10 @@
 #include <stdlib.h>
 
 struct sippymodem_host {
-	struct sippymodem_session *session;
+	struct sip_session *session;
 	struct audio_path *audio_path;
 	struct audio_scheduler audio_scheduler;
-	enum sippymodem_session_result last_session_result;
+	enum sip_session_result last_session_result;
 	enum audio_scheduler_result last_audio_scheduler_result;
 	bool media_was_configured;
 	bool audio_suspended;
@@ -20,8 +20,8 @@ struct sippymodem_host {
 
 static void synchronize_audio(struct sippymodem_host *host)
 {
-	bool media_configured = sippymodem_session_is_open(host->session) &&
-				sippymodem_session_media_is_configured(
+	bool media_configured = sip_session_is_open(host->session) &&
+				sip_session_media_is_configured(
 					host->session);
 
 	if (!media_configured || !host->media_was_configured)
@@ -33,7 +33,7 @@ static void synchronize_audio(struct sippymodem_host *host)
 }
 
 struct sippymodem_host *sippymodem_host_create(
-	const struct sippymodem_config *config,
+	const struct app_config *config,
 	const struct media_recorder *recorder,
 	const struct sip_signaling_callbacks *callbacks,
 	const struct modem_core *modem_core)
@@ -45,7 +45,7 @@ struct sippymodem_host *sippymodem_host_create(
 	host = calloc(1, sizeof(*host));
 	if (host == NULL)
 		return NULL;
-	host->session = sippymodem_session_create(config, recorder, callbacks);
+	host->session = sip_session_create(config, recorder, callbacks);
 	if (host->session == NULL)
 		goto fail;
 	host->audio_path = audio_path_create(
@@ -60,7 +60,7 @@ struct sippymodem_host *sippymodem_host_create(
 
 fail:
 	audio_path_destroy(host->audio_path);
-	sippymodem_session_destroy(host->session);
+	sip_session_destroy(host->session);
 	free(host);
 	return NULL;
 }
@@ -69,35 +69,35 @@ void sippymodem_host_destroy(struct sippymodem_host *host)
 {
 	if (host == NULL)
 		return;
-	if (sippymodem_session_is_open(host->session))
+	if (sip_session_is_open(host->session))
 		sippymodem_host_close(host);
 	audio_path_destroy(host->audio_path);
-	sippymodem_session_destroy(host->session);
+	sip_session_destroy(host->session);
 	free(host);
 }
 
-enum sippymodem_session_result sippymodem_host_open(
+enum sip_session_result sippymodem_host_open(
 	struct sippymodem_host *host)
 {
-	enum sippymodem_session_result result;
+	enum sip_session_result result;
 
 	if (host == NULL)
-		return SIPPYMODEM_SESSION_INVALID_ARGUMENT;
-	result = sippymodem_session_open(host->session);
+		return SIP_SESSION_INVALID_ARGUMENT;
+	result = sip_session_open(host->session);
 	host->last_session_result = result;
 	synchronize_audio(host);
 	return result;
 }
 
-enum sippymodem_session_result sippymodem_host_close(
+enum sip_session_result sippymodem_host_close(
 	struct sippymodem_host *host)
 {
 	if (host == NULL)
-		return SIPPYMODEM_SESSION_INVALID_ARGUMENT;
+		return SIP_SESSION_INVALID_ARGUMENT;
 	audio_scheduler_set_active(&host->audio_scheduler, false);
 	host->media_was_configured = false;
 	host->audio_suspended = false;
-	host->last_session_result = sippymodem_session_close(host->session);
+	host->last_session_result = sip_session_close(host->session);
 	return host->last_session_result;
 }
 
@@ -108,7 +108,7 @@ enum sip_signaling_result sippymodem_host_dial(
 
 	if (host == NULL)
 		return SIP_SIGNALING_INVALID_ARGUMENT;
-	result = sippymodem_session_dial(host->session, target);
+	result = sip_session_dial(host->session, target);
 	synchronize_audio(host);
 	return result;
 }
@@ -118,7 +118,7 @@ static enum sippymodem_host_result suspend_failed_audio(
 {
 	host->audio_suspended = true;
 	audio_scheduler_set_active(&host->audio_scheduler, false);
-	sippymodem_session_hangup(host->session);
+	sip_session_hangup(host->session);
 	synchronize_audio(host);
 	return result;
 }
@@ -137,19 +137,19 @@ enum sippymodem_host_result sippymodem_host_step(
 		*frames_processed = 0;
 	if (host == NULL)
 		return SIPPYMODEM_HOST_INVALID_ARGUMENT;
-	if (!sippymodem_session_is_open(host->session)) {
+	if (!sip_session_is_open(host->session)) {
 		synchronize_audio(host);
 		return SIPPYMODEM_HOST_IDLE;
 	}
 
 	host->last_session_result =
-		sippymodem_session_step(host->session, 0, &datagrams);
+		sip_session_step(host->session, 0, &datagrams);
 	if (datagrams_received != NULL)
 		*datagrams_received = datagrams;
 	synchronize_audio(host);
 	binding_failed = host->last_session_result ==
-			 SIPPYMODEM_SESSION_MEDIA_BINDING_ERROR;
-	if (host->last_session_result != SIPPYMODEM_SESSION_OK &&
+			 SIP_SESSION_MEDIA_BINDING_ERROR;
+	if (host->last_session_result != SIP_SESSION_OK &&
 	    !binding_failed)
 		return SIPPYMODEM_HOST_SESSION_ERROR;
 
@@ -179,7 +179,7 @@ uint64_t sippymodem_host_wait_ns(
 {
 	uint64_t audio_wait;
 
-	if (host == NULL || !sippymodem_session_is_open(host->session))
+	if (host == NULL || !sip_session_is_open(host->session))
 		return UINT64_MAX;
 	audio_wait = audio_scheduler_wait_ns(
 		&host->audio_scheduler, now_ns);
@@ -195,7 +195,7 @@ enum sip_signaling_result sippymodem_host_answer(
 
 	if (host == NULL)
 		return SIP_SIGNALING_INVALID_ARGUMENT;
-	result = sippymodem_session_answer(host->session);
+	result = sip_session_answer(host->session);
 	synchronize_audio(host);
 	return result;
 }
@@ -207,7 +207,7 @@ enum sip_signaling_result sippymodem_host_hangup(
 
 	if (host == NULL)
 		return SIP_SIGNALING_INVALID_ARGUMENT;
-	result = sippymodem_session_hangup(host->session);
+	result = sip_session_hangup(host->session);
 	synchronize_audio(host);
 	return result;
 }
@@ -221,14 +221,14 @@ size_t sippymodem_host_frame_samples(const struct sippymodem_host *host)
 
 bool sippymodem_host_is_open(const struct sippymodem_host *host)
 {
-	return host != NULL && sippymodem_session_is_open(host->session);
+	return host != NULL && sip_session_is_open(host->session);
 }
 
 bool sippymodem_host_media_is_configured(
 	const struct sippymodem_host *host)
 {
 	return host != NULL &&
-	       sippymodem_session_media_is_configured(host->session);
+	       sip_session_media_is_configured(host->session);
 }
 
 bool sippymodem_host_audio_is_active(const struct sippymodem_host *host)
@@ -237,11 +237,11 @@ bool sippymodem_host_audio_is_active(const struct sippymodem_host *host)
 			       &host->audio_scheduler);
 }
 
-enum sippymodem_session_result sippymodem_host_last_session_result(
+enum sip_session_result sippymodem_host_last_session_result(
 	const struct sippymodem_host *host)
 {
 	return host != NULL ? host->last_session_result :
-			      SIPPYMODEM_SESSION_INVALID_ARGUMENT;
+			      SIP_SESSION_INVALID_ARGUMENT;
 }
 
 enum audio_scheduler_result

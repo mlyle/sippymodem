@@ -27,9 +27,9 @@ static void clear_environment(void)
 
 static bool test_defaults(void)
 {
-	struct sippymodem_config config;
+	struct app_config config;
 
-	sippymodem_config_init(&config);
+	config_init(&config);
 	CHECK(config.sip.listen_port == 5060, "wrong default SIP port");
 	CHECK(config.sip.log_level == 4, "wrong default SIP log level");
 	CHECK(config.sip.registration_enabled,
@@ -83,13 +83,13 @@ static bool set_test_environment(void)
 
 static bool test_environment_overrides(void)
 {
-	struct sippymodem_config config;
-	struct sippymodem_config_error error;
+	struct app_config config;
+	struct config_error error;
 
 	clear_environment();
 	CHECK(set_test_environment(), "failed to prepare configuration environment");
-	sippymodem_config_init(&config);
-	CHECK(sippymodem_config_apply_environment(&config, &error) == 0,
+	config_init(&config);
+	CHECK(config_apply_environment(&config, &error) == 0,
 	      "%s: %s", error.setting, error.message);
 	clear_environment();
 
@@ -135,15 +135,15 @@ static bool test_environment_overrides(void)
 
 static bool expect_invalid_value(const char *name, const char *value)
 {
-	struct sippymodem_config config;
-	struct sippymodem_config original;
-	struct sippymodem_config_error error;
+	struct app_config config;
+	struct app_config original;
+	struct config_error error;
 
 	clear_environment();
 	CHECK(setenv(name, value, 1) == 0, "failed to set %s", name);
-	sippymodem_config_init(&config);
+	config_init(&config);
 	original = config;
-	CHECK(sippymodem_config_apply_environment(&config, &error) != 0,
+	CHECK(config_apply_environment(&config, &error) != 0,
 	      "%s unexpectedly accepted '%s'", name, value);
 	clear_environment();
 	CHECK(strcmp(error.setting, name) == 0,
@@ -156,7 +156,7 @@ static bool expect_invalid_value(const char *name, const char *value)
 
 static bool test_invalid_environment(void)
 {
-	char oversized[SIPPYMODEM_CONFIG_TEXT_MAX + 1];
+	char oversized[APP_CONFIG_TEXT_MAX + 1];
 
 	memset(oversized, 'x', sizeof(oversized) - 1);
 	oversized[sizeof(oversized) - 1] = '\0';

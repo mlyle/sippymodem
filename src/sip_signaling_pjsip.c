@@ -13,7 +13,7 @@
 #include <string.h>
 
 enum {
-	SIP_ACCOUNT_URI_MAX = SIPPYMODEM_CONFIG_TEXT_MAX * 2 + 16,
+	SIP_ACCOUNT_URI_MAX = APP_CONFIG_TEXT_MAX * 2 + 16,
 	SIP_CALL_IDENTITY_MAX = 256,
 	SIP_CALL_REASON_MAX = 128,
 	SIP_MEDIA_ADDRESS_MAX = 64,
@@ -22,7 +22,7 @@ enum {
 };
 
 struct sip_signaling {
-	struct sippymodem_config config;
+	struct app_config config;
 	struct sip_signaling_callbacks callbacks;
 	pjsua_transport_id transport_id;
 	pjsua_acc_id account_id;
@@ -30,7 +30,7 @@ struct sip_signaling {
 	int last_library_status;
 	unsigned int local_port;
 	unsigned int callback_depth;
-	char login_buffer[SIPPYMODEM_CONFIG_TEXT_MAX];
+	char login_buffer[APP_CONFIG_TEXT_MAX];
 	char identity_uri[SIP_ACCOUNT_URI_MAX];
 	char registrar_uri[SIP_ACCOUNT_URI_MAX];
 	char proxy_uri[SIP_ACCOUNT_URI_MAX];
@@ -454,7 +454,7 @@ static bool account_text_is_terminated(const struct sip_config *sip)
 }
 
 static enum sip_signaling_result validate_config(
-	const struct sippymodem_config *config)
+	const struct app_config *config)
 {
 	if (config->sip.listen_port > 65535 ||
 	    config->media.rtp_listen_port > UINT16_MAX ||
@@ -565,7 +565,7 @@ static enum sip_signaling_result resolve_account(
 	return SIP_SIGNALING_OK;
 }
 
-static void configure_media(const struct sippymodem_config *config,
+static void configure_media(const struct app_config *config,
 			    pjsua_media_config *media)
 {
 	int jitter_buffer_ms = (int)config->media.jitter_buffer_ms;
@@ -827,7 +827,7 @@ static enum sip_signaling_result close_now(
 }
 
 struct sip_signaling *sip_signaling_create(
-	const struct sippymodem_config *config,
+	const struct app_config *config,
 	const struct sip_signaling_callbacks *callbacks)
 {
 	struct sip_signaling *signaling;

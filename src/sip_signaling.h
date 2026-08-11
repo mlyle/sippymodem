@@ -122,7 +122,7 @@ struct sip_signaling_callbacks {
 struct sip_signaling;
 
 struct sip_signaling *sip_signaling_create(
-	const struct sippymodem_config *config,
+	const struct app_config *config,
 	const struct sip_signaling_callbacks *callbacks);
 
 /*

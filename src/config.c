@@ -9,13 +9,13 @@
 #include <string.h>
 #include <strings.h>
 
-static void clear_error(struct sippymodem_config_error *error)
+static void clear_error(struct config_error *error)
 {
 	if (error != NULL)
 		memset(error, 0, sizeof(*error));
 }
 
-static int set_error(struct sippymodem_config_error *error,
+static int set_error(struct config_error *error,
 		     const char *setting, const char *message)
 {
 	if (error != NULL) {
@@ -33,7 +33,7 @@ static const char *environment_value(const char *name)
 }
 
 static int apply_string(char *destination, size_t capacity, const char *name,
-			struct sippymodem_config_error *error)
+			struct config_error *error)
 {
 	const char *value = environment_value(name);
 	size_t length;
@@ -63,7 +63,7 @@ static int parse_boolean(const char *text, bool *result)
 }
 
 static int apply_boolean(bool *destination, const char *name,
-			 struct sippymodem_config_error *error)
+			 struct config_error *error)
 {
 	const char *value = environment_value(name);
 	bool parsed;
@@ -78,7 +78,7 @@ static int apply_boolean(bool *destination, const char *name,
 
 static int apply_unsigned(unsigned int *destination, const char *name,
 			  unsigned int minimum, unsigned int maximum,
-			  struct sippymodem_config_error *error)
+			  struct config_error *error)
 {
 	const char *value = environment_value(name);
 	char *end = NULL;
@@ -96,7 +96,7 @@ static int apply_unsigned(unsigned int *destination, const char *name,
 }
 
 static int apply_gain(double *destination, const char *name,
-		      struct sippymodem_config_error *error)
+		      struct config_error *error)
 {
 	const char *value = environment_value(name);
 	char *end = NULL;
@@ -115,7 +115,7 @@ static int apply_gain(double *destination, const char *name,
 
 static int apply_codec(enum media_codec *destination,
 		       const char *name,
-		       struct sippymodem_config_error *error)
+		       struct config_error *error)
 {
 	const char *value = environment_value(name);
 
@@ -135,7 +135,7 @@ static int apply_codec(enum media_codec *destination,
 	return 0;
 }
 
-void sippymodem_config_init(struct sippymodem_config *config)
+void config_init(struct app_config *config)
 {
 	if (config == NULL)
 		return;
@@ -153,11 +153,11 @@ void sippymodem_config_init(struct sippymodem_config *config)
 	config->media.receive_gain = 1.0;
 }
 
-int sippymodem_config_apply_environment(
-	struct sippymodem_config *config,
-	struct sippymodem_config_error *error)
+int config_apply_environment(
+	struct app_config *config,
+	struct config_error *error)
 {
-	struct sippymodem_config updated;
+	struct app_config updated;
 	double shared_gain;
 
 	clear_error(error);

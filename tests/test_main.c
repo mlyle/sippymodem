@@ -82,14 +82,14 @@ done:
 	return result;
 }
 
-void sippymodem_config_init(struct sippymodem_config *config)
+void config_init(struct app_config *config)
 {
 	record_call('i');
 	memset(config, 0, sizeof(*config));
 }
 
-int sippymodem_config_apply_environment(
-	struct sippymodem_config *config, struct sippymodem_config_error *error)
+int config_apply_environment(
+	struct app_config *config, struct config_error *error)
 {
 	(void)config;
 	record_call('a');
@@ -101,7 +101,7 @@ int sippymodem_config_apply_environment(
 }
 
 struct sippymodem_runtime *sippymodem_runtime_create(
-	const struct sippymodem_config *config, const char *modem_name)
+	const struct app_config *config, const char *modem_name)
 {
 	(void)config;
 	record_call('c');

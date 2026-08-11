@@ -50,7 +50,7 @@ static bool open_peer(int *socket_fd, struct sockaddr_in *address)
 
 static bool test_owns_bounded_media_storage(void)
 {
-	struct sippymodem_config config;
+	struct app_config config;
 	struct recording_capture capture = { 0 };
 	const struct media_recorder recorder = {
 		.context = &capture,
@@ -70,7 +70,7 @@ static bool test_owns_bounded_media_storage(void)
 	ssize_t received;
 	int peer_socket;
 
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 2;
 	runtime = rtp_runtime_create(&config.media, &recorder);
@@ -129,9 +129,9 @@ static bool test_owns_bounded_media_storage(void)
 
 static bool test_rejects_unusable_media_config(void)
 {
-	struct sippymodem_config config;
+	struct app_config config;
 
-	sippymodem_config_init(&config);
+	config_init(&config);
 	config.media.codec = MEDIA_CODEC_CLEARMODE;
 	CHECK(rtp_runtime_create(&config.media, NULL) == NULL,
 	      "RTP runtime accepted media without a linear mapping");

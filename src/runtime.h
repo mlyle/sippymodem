@@ -40,7 +40,7 @@ struct sippymodem_runtime;
 /* Owns the modem, closed SIP host, optional recording files, and every adapter
  * between them. Construction does not open a transport. */
 struct sippymodem_runtime *sippymodem_runtime_create(
-	const struct sippymodem_config *config, const char *modem_name);
+	const struct app_config *config, const char *modem_name);
 void sippymodem_runtime_destroy(struct sippymodem_runtime *runtime);
 
 enum sippymodem_runtime_result sippymodem_runtime_open(
@@ -68,7 +68,7 @@ const char *sippymodem_runtime_device_path(
 	const struct sippymodem_runtime *runtime);
 enum sippymodem_host_result sippymodem_runtime_last_host_result(
 	const struct sippymodem_runtime *runtime);
-enum sippymodem_session_result sippymodem_runtime_last_session_result(
+enum sip_session_result sippymodem_runtime_last_session_result(
 	const struct sippymodem_runtime *runtime);
 enum sippymodem_terminal_result sippymodem_runtime_last_terminal_result(
 	const struct sippymodem_runtime *runtime);
