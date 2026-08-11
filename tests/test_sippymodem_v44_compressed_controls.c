@@ -88,7 +88,9 @@ static bool test_control_boundaries_and_backpressure(void)
 			size_t unchanged_length = input_length;
 			size_t count;
 
-			CHECK(sippymodem_v44_compressed_decoder_process(
+			CHECK(sippymodem_v44_compressed_decoder_finish(decoder) ==
+				      SIPPYMODEM_V44_COMPRESSED_NEED_OUTPUT &&
+			      sippymodem_v44_compressed_decoder_process(
 				      decoder, &input, &input_length) ==
 				      SIPPYMODEM_V44_COMPRESSED_NEED_OUTPUT &&
 			      input == unchanged_input &&
@@ -120,6 +122,8 @@ static bool test_control_boundaries_and_backpressure(void)
 
 		CHECK(sippymodem_v44_compressed_decoder_process(
 			      decoder, &input, &input_length) ==
+			      SIPPYMODEM_V44_COMPRESSED_ENTER_TRANSPARENT &&
+		      sippymodem_v44_compressed_decoder_finish(decoder) ==
 			      SIPPYMODEM_V44_COMPRESSED_ENTER_TRANSPARENT &&
 		      input == unchanged_input && input_length == unchanged_length,
 		      "V.44 transparent transition was not latched");

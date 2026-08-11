@@ -46,6 +46,14 @@ sippymodem_v44_compressed_decoder_process(
 	const uint8_t **input,
 	size_t *input_length);
 
+/*
+ * Finish a complete compressed stream. Decoded output may remain queued, but
+ * a partial field, unresolved STEPUP, or non-aligned trailing bits fail closed.
+ */
+enum sippymodem_v44_compressed_result
+sippymodem_v44_compressed_decoder_finish(
+	struct sippymodem_v44_compressed_decoder *decoder);
+
 size_t sippymodem_v44_compressed_decoder_pending(
 	const struct sippymodem_v44_compressed_decoder *decoder);
 size_t sippymodem_v44_compressed_decoder_read(

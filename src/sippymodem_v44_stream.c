@@ -228,9 +228,18 @@ enum sippymodem_v44_stream_result sippymodem_v44_bit_reader_align(
 	if (reader == NULL || reader->pending_field_bits != 0)
 		return SIPPYMODEM_V44_STREAM_INVALID_ARGUMENT;
 	padding = reader->bit_count & 7U;
+	if ((reader->bits & v44_low_mask(padding)) != 0)
+		return SIPPYMODEM_V44_STREAM_INVALID_ARGUMENT;
 	reader->bits >>= padding;
 	reader->bit_count -= padding;
 	return SIPPYMODEM_V44_STREAM_OK;
+}
+
+bool sippymodem_v44_bit_reader_at_boundary(
+	const struct sippymodem_v44_bit_reader *reader)
+{
+	return reader != NULL && reader->bit_count == 0 &&
+	       reader->pending_field_bits == 0;
 }
 
 const char *sippymodem_v44_stream_result_name(

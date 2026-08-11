@@ -165,6 +165,9 @@ static bool test_chunked_reader_preserves_partial_field(void)
 	uint32_t value = 0xdeadbeef;
 
 	CHECK(reader != NULL, "could not create V.44 bit reader");
+	CHECK(sippymodem_v44_bit_reader_at_boundary(reader) &&
+	      !sippymodem_v44_bit_reader_at_boundary(NULL),
+	      "fresh V.44 reader boundary state was wrong");
 	input = NULL;
 	input_length = 0;
 	CHECK(sippymodem_v44_bit_reader_get(
@@ -172,6 +175,8 @@ static bool test_chunked_reader_preserves_partial_field(void)
 		      SIPPYMODEM_V44_STREAM_NEED_INPUT &&
 		      input == NULL && input_length == 0 && value == 0xdeadbeef,
 	      "empty V.44 input changed a partial field");
+	CHECK(!sippymodem_v44_bit_reader_at_boundary(reader),
+	      "partial V.44 field reported a clean boundary");
 	input = first;
 	input_length = sizeof(first);
 	CHECK(sippymodem_v44_bit_reader_get(
@@ -206,6 +211,30 @@ static bool test_chunked_reader_preserves_partial_field(void)
 		      SIPPYMODEM_V44_STREAM_OK &&
 		      value == 0x7e && input_length == 0,
 	      "V.44 reader did not continue at the byte boundary");
+	CHECK(sippymodem_v44_bit_reader_at_boundary(reader),
+	      "drained V.44 reader did not report a clean boundary");
+	sippymodem_v44_bit_reader_destroy(reader);
+	return true;
+}
+
+static bool test_reader_rejects_nonzero_padding(void)
+{
+	static const uint8_t encoded[] = { 0xe1 };
+	struct sippymodem_v44_bit_reader *reader =
+		sippymodem_v44_bit_reader_create();
+	const uint8_t *input = encoded;
+	size_t input_length = sizeof(encoded);
+	uint32_t value = 0;
+
+	CHECK(reader != NULL, "could not create V.44 padding reader");
+	CHECK(sippymodem_v44_bit_reader_get(
+		      reader, &input, &input_length, 5, &value) ==
+		      SIPPYMODEM_V44_STREAM_OK &&
+		      value == 1 && input_length == 0 &&
+		      sippymodem_v44_bit_reader_align(reader) ==
+		      SIPPYMODEM_V44_STREAM_INVALID_ARGUMENT &&
+		      !sippymodem_v44_bit_reader_at_boundary(reader),
+	      "V.44 reader accepted nonzero alignment padding");
 	sippymodem_v44_bit_reader_destroy(reader);
 	return true;
 }
@@ -329,6 +358,8 @@ int main(void)
 		  test_bounded_queue_and_empty_read },
 		{ "chunked partial field",
 		  test_chunked_reader_preserves_partial_field },
+		{ "zero padding validation",
+		  test_reader_rejects_nonzero_padding },
 		{ "generated chunked round trip",
 		  test_generated_chunked_round_trip },
 	};

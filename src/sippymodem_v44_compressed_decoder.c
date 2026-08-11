@@ -385,6 +385,24 @@ sippymodem_v44_compressed_decoder_process(
 	}
 }
 
+enum sippymodem_v44_compressed_result
+sippymodem_v44_compressed_decoder_finish(
+	struct sippymodem_v44_compressed_decoder *decoder)
+{
+	if (!decoder_is_valid(decoder))
+		return SIPPYMODEM_V44_COMPRESSED_INVALID_ARGUMENT;
+	if (decoder->failed)
+		return SIPPYMODEM_V44_COMPRESSED_PROCEDURAL_ERROR;
+	if (decoder->transparent)
+		return SIPPYMODEM_V44_COMPRESSED_ENTER_TRANSPARENT;
+	if (decoder->pending_type != V44_PENDING_NONE)
+		return SIPPYMODEM_V44_COMPRESSED_NEED_OUTPUT;
+	if (decoder->state != V44_PARSE_PREFIX || decoder->stepup_pending ||
+	    !sippymodem_v44_bit_reader_at_boundary(decoder->reader))
+		return fail_decoder(decoder);
+	return SIPPYMODEM_V44_COMPRESSED_OK;
+}
+
 size_t sippymodem_v44_compressed_decoder_pending(
 	const struct sippymodem_v44_compressed_decoder *decoder)
 {

@@ -80,9 +80,13 @@ enum sippymodem_v44_stream_result sippymodem_v44_bit_reader_get(
 	unsigned int bit_count,
 	uint32_t *value);
 
-/* Discard padding through the next byte boundary. */
+/* Validate zero padding and discard it through the next byte boundary. */
 enum sippymodem_v44_stream_result sippymodem_v44_bit_reader_align(
 	struct sippymodem_v44_bit_reader *reader);
+
+/* True only when no buffered or partially collected field bits remain. */
+bool sippymodem_v44_bit_reader_at_boundary(
+	const struct sippymodem_v44_bit_reader *reader);
 
 const char *sippymodem_v44_stream_result_name(
 	enum sippymodem_v44_stream_result result);
