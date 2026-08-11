@@ -125,7 +125,9 @@ static bool verify_reduction(
 	CHECK(sippymodem_v34_build_branch_set(
 		      slices, inversion_bit, selection, &set) ==
 		      SIPPYMODEM_V34_BRANCHES_OK &&
-	      set.selection == selection && set.count == count,
+	      set.selection == selection && set.count == count &&
+	      set.inversion_bit == inversion_bit &&
+	      sippymodem_v34_branch_set_is_valid(&set),
 	      "branch set %zu/%u/%u did not build", case_index, inversion_bit,
 	      selection);
 	for (uint8_t index = 0; index < count; ++index) {
@@ -349,12 +351,36 @@ static bool test_validation(void)
 	};
 	struct sippymodem_v34_subset_slice slices[2];
 	struct sippymodem_v34_subset_slice malformed[2];
+	struct sippymodem_v34_branch_set branches;
+	struct sippymodem_v34_branch_set malformed_branches;
 
 	for (size_t symbol = 0; symbol < ARRAY_LENGTH(slices); ++symbol)
 		CHECK(sippymodem_v34_slice_grid_subsets(
 			      &estimates[symbol], &slices[symbol]) ==
 			      SIPPYMODEM_V34_LATTICE_OK,
 		      "validation slice %zu failed", symbol);
+	CHECK(sippymodem_v34_build_branch_set(
+		      slices, 0, SIPPYMODEM_V34_TRELLIS_16_STATE, &branches) ==
+		      SIPPYMODEM_V34_BRANCHES_OK &&
+	      sippymodem_v34_branch_set_is_valid(&branches) &&
+	      !sippymodem_v34_branch_set_is_valid(NULL),
+	      "valid branch-set contract changed");
+	malformed_branches = branches;
+	malformed_branches.count--;
+	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	      "incomplete branch set was accepted");
+	malformed_branches = branches;
+	malformed_branches.inversion_bit ^= 1u;
+	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	      "inconsistent branch inversion was accepted");
+	malformed_branches = branches;
+	malformed_branches.branch[0].convolutional_input.y3 ^= 1u;
+	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	      "branch labels disagreed with their convolutional input");
+	malformed_branches = branches;
+	malformed_branches.branch[0].squared_error += 1.0;
+	CHECK(!sippymodem_v34_branch_set_is_valid(&malformed_branches),
+	      "inconsistent branch metric was accepted");
 	CHECK(rejection_is_transactional(
 		      NULL, 0, SIPPYMODEM_V34_TRELLIS_16_STATE,
 		      SIPPYMODEM_V34_BRANCHES_INVALID_ARGUMENT) &&
