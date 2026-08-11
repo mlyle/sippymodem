@@ -314,6 +314,18 @@ V32_CONDITIONING_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/sippymodem_v32_conditioning.o \
 	$(BUILD_DIR)/sippymodem_v32_framing.o
+V32_CONDITIONING_RECEIVER_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v32_conditioning_receiver
+V32_CONDITIONING_RECEIVER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v32_conditioning_receiver.o \
+	$(BUILD_DIR)/sippymodem_qam.o \
+	$(BUILD_DIR)/sippymodem_qam_gain.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/sippymodem_v32_conditioning.o \
+	$(BUILD_DIR)/sippymodem_v32_conditioning_receiver.o \
+	$(BUILD_DIR)/sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/sippymodem_v32_framing.o
 V32_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_constellation
 V32_CONSTELLATION_TEST_OBJECTS := \
@@ -919,6 +931,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(BAUDOT_TEST_BINARY) $(V23_TEST_BINARY) \
 	$(V22_FRAMING_TEST_BINARY) $(V22BIS_RECEIVER_TEST_BINARY) \
 	$(V32_FRAMING_TEST_BINARY) $(V32_CONDITIONING_TEST_BINARY) \
+	$(V32_CONDITIONING_RECEIVER_TEST_BINARY) \
 	$(V32_CONSTELLATION_TEST_BINARY) \
 	$(V32_9600_RECEIVER_TEST_BINARY) \
 	$(V32_RATE_SIGNAL_TEST_BINARY) \
@@ -1017,6 +1030,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V22BIS_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V32_FRAMING_TEST_OBJECTS:.o=.d) \
 	$(V32_CONDITIONING_TEST_OBJECTS:.o=.d) \
+	$(V32_CONDITIONING_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V32_CONSTELLATION_TEST_OBJECTS:.o=.d) \
 	$(V32_9600_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V32_RATE_SIGNAL_TEST_OBJECTS:.o=.d) \
@@ -1132,6 +1146,7 @@ test: $(TEST_BINARIES)
 	./$(V22BIS_RECEIVER_TEST_BINARY)
 	./$(V32_FRAMING_TEST_BINARY)
 	./$(V32_CONDITIONING_TEST_BINARY)
+	./$(V32_CONDITIONING_RECEIVER_TEST_BINARY)
 	./$(V32_CONSTELLATION_TEST_BINARY)
 	./$(V32_9600_RECEIVER_TEST_BINARY)
 	./$(V32_RATE_SIGNAL_TEST_BINARY)
@@ -1337,6 +1352,10 @@ $(V32_FRAMING_TEST_BINARY): $(V32_FRAMING_TEST_OBJECTS)
 
 $(V32_CONDITIONING_TEST_BINARY): $(V32_CONDITIONING_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V32_CONDITIONING_RECEIVER_TEST_BINARY): \
+	$(V32_CONDITIONING_RECEIVER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_CONSTELLATION_TEST_BINARY): $(V32_CONSTELLATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -1722,6 +1741,11 @@ $(BUILD_DIR)/sippymodem_v32_framing.o: \
 
 $(BUILD_DIR)/sippymodem_v32_conditioning.o: \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/sippymodem_v32_conditioning_receiver.o: \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning_receiver.c | \
+	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v32_constellation.o: \

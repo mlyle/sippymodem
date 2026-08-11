@@ -108,6 +108,7 @@ SIPPYMODEM_V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_datapump.c \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_9600_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning.c \
+	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_constellation.c \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_framing.c \
 	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_line_startup.c \
