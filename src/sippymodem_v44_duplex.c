@@ -10,6 +10,7 @@
 
 enum v44_transmit_state {
 	V44_TRANSMIT_READY = 0,
+	V44_TRANSMIT_SWITCHING,
 	V44_TRANSMIT_FLUSHING,
 	V44_TRANSMIT_FAILED,
 };
@@ -24,6 +25,7 @@ enum v44_receive_state {
 struct sippymodem_v44_duplex {
 	struct sippymodem_v44_encoder *transmit;
 	enum v44_transmit_state transmit_state;
+	enum sippymodem_v44_encoder_mode requested_transmit_mode;
 	struct sippymodem_v44_decoder *receive;
 	enum v44_receive_state receive_state;
 };
@@ -134,6 +136,62 @@ static enum sippymodem_v44_duplex_result drain_transmit(
 		       SIPPYMODEM_V44_DUPLEX_NEED_OUTPUT;
 }
 
+enum sippymodem_v44_duplex_result
+sippymodem_v44_duplex_request_transmit_mode(
+	struct sippymodem_v44_duplex *duplex,
+	enum sippymodem_v44_encoder_mode target,
+	uint8_t *output,
+	size_t output_capacity,
+	size_t *output_length)
+{
+	if (duplex == NULL || output_length == NULL ||
+	    (output_capacity != 0 && output == NULL) ||
+	    target < SIPPYMODEM_V44_ENCODER_COMPRESSED ||
+	    target > SIPPYMODEM_V44_ENCODER_TRANSPARENT)
+		return SIPPYMODEM_V44_DUPLEX_INVALID_ARGUMENT;
+	*output_length = 0;
+	if (duplex->transmit_state == V44_TRANSMIT_FAILED)
+		return SIPPYMODEM_V44_DUPLEX_PROCEDURAL_ERROR;
+	if (duplex->transmit == NULL ||
+	    duplex->transmit_state == V44_TRANSMIT_FLUSHING)
+		return SIPPYMODEM_V44_DUPLEX_INVALID_STATE;
+	if (duplex->transmit_state == V44_TRANSMIT_READY) {
+		duplex->requested_transmit_mode = target;
+		duplex->transmit_state = V44_TRANSMIT_SWITCHING;
+	} else if (duplex->transmit_state != V44_TRANSMIT_SWITCHING ||
+		   target != duplex->requested_transmit_mode) {
+		return SIPPYMODEM_V44_DUPLEX_INVALID_STATE;
+	}
+
+	for (;;) {
+		enum sippymodem_v44_encode_result result =
+			sippymodem_v44_encoder_request_mode(
+				duplex->transmit, target);
+
+		switch (result) {
+		case SIPPYMODEM_V44_ENCODE_OK:
+			duplex->transmit_state = V44_TRANSMIT_READY;
+			return SIPPYMODEM_V44_DUPLEX_OK;
+		case SIPPYMODEM_V44_ENCODE_NEED_OUTPUT: {
+			enum sippymodem_v44_duplex_result drain_result =
+				drain_transmit(
+					duplex, output, output_capacity,
+					output_length);
+
+			if (drain_result != SIPPYMODEM_V44_DUPLEX_OK)
+				return drain_result;
+			break;
+		}
+		case SIPPYMODEM_V44_ENCODE_NEED_INPUT:
+		case SIPPYMODEM_V44_ENCODE_FLUSHED:
+		case SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT:
+		case SIPPYMODEM_V44_ENCODE_INVALID_STATE:
+		case SIPPYMODEM_V44_ENCODE_PROCEDURAL_ERROR:
+			return fail_transmit(duplex);
+		}
+	}
+}
+
 enum sippymodem_v44_duplex_result sippymodem_v44_duplex_transmit(
 	struct sippymodem_v44_duplex *duplex,
 	const uint8_t **input,
@@ -192,6 +250,9 @@ enum sippymodem_v44_duplex_result sippymodem_v44_duplex_flush_transmit(
 	*output_length = 0;
 	if (duplex->transmit_state == V44_TRANSMIT_FAILED)
 		return SIPPYMODEM_V44_DUPLEX_PROCEDURAL_ERROR;
+	if (duplex->transmit_state != V44_TRANSMIT_READY &&
+	    duplex->transmit_state != V44_TRANSMIT_FLUSHING)
+		return SIPPYMODEM_V44_DUPLEX_INVALID_STATE;
 	if (duplex->transmit == NULL)
 		return SIPPYMODEM_V44_DUPLEX_FLUSHED;
 	duplex->transmit_state = V44_TRANSMIT_FLUSHING;

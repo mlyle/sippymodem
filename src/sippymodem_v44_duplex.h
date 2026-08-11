@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V44_DUPLEX_H
 #define SIPPYMODEM_V44_DUPLEX_H
 
-#include "sippymodem_v44_stream.h"
+#include "sippymodem_v44_encoder.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -46,6 +46,21 @@ struct sippymodem_v44_duplex *sippymodem_v44_duplex_create(
 	const struct sippymodem_v44_duplex_config *config);
 void sippymodem_v44_duplex_destroy(
 	struct sippymodem_v44_duplex *duplex);
+
+/*
+ * Explicitly change transmit stream mode. Drain output and repeat the same
+ * target on NEED_OUTPUT. Until the request returns OK, transmit and flush are
+ * rejected, as is a conflicting target. A request for the current mode is an
+ * idempotent no-op, not an output barrier. Disabled transmit has no stream
+ * mode.
+ */
+enum sippymodem_v44_duplex_result
+sippymodem_v44_duplex_request_transmit_mode(
+	struct sippymodem_v44_duplex *duplex,
+	enum sippymodem_v44_encoder_mode target,
+	uint8_t *output,
+	size_t output_capacity,
+	size_t *output_length);
 
 /*
  * Consume uncompressed bytes and drain compressed bytes directly into the

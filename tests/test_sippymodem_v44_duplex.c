@@ -74,6 +74,170 @@ static bool transmit_segment(
 	}
 }
 
+static bool transmit_bytes(
+	struct sippymodem_v44_duplex *duplex,
+	const uint8_t *plain,
+	size_t plain_length,
+	uint8_t *wire,
+	size_t wire_capacity,
+	size_t *wire_length)
+{
+	const uint8_t *input = plain;
+	size_t input_length = plain_length;
+
+	for (size_t iterations = 0; input_length != 0; ++iterations) {
+		enum sippymodem_v44_duplex_result result;
+		size_t output_length = 0;
+
+		if (*wire_length >= wire_capacity || iterations > 100000)
+			return false;
+		result = sippymodem_v44_duplex_transmit(
+			duplex, &input, &input_length, wire + *wire_length, 1,
+			&output_length);
+		if (output_length > 1)
+			return false;
+		*wire_length += output_length;
+		if (result == SIPPYMODEM_V44_DUPLEX_NEED_INPUT) {
+			if (input_length != 0)
+				return false;
+		} else if (result != SIPPYMODEM_V44_DUPLEX_NEED_OUTPUT) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool request_transmit_mode(
+	struct sippymodem_v44_duplex *duplex,
+	enum sippymodem_v44_encoder_mode target,
+	uint8_t *wire,
+	size_t wire_capacity,
+	size_t *wire_length)
+{
+	for (size_t attempts = 0; attempts < 100000; ++attempts) {
+		enum sippymodem_v44_duplex_result result;
+		size_t output_length = 0;
+
+		if (*wire_length >= wire_capacity)
+			return false;
+		result = sippymodem_v44_duplex_request_transmit_mode(
+			duplex, target, wire + *wire_length, 1, &output_length);
+		if (output_length > 1)
+			return false;
+		*wire_length += output_length;
+		if (result == SIPPYMODEM_V44_DUPLEX_OK)
+			return true;
+		if (result != SIPPYMODEM_V44_DUPLEX_NEED_OUTPUT)
+			return false;
+	}
+	return false;
+}
+
+static bool receive_segment(
+	struct sippymodem_v44_duplex *duplex,
+	const uint8_t *wire,
+	size_t wire_length,
+	uint8_t *plain,
+	size_t plain_capacity,
+	size_t *plain_length,
+	bool finish);
+
+static bool test_transmit_mode_handoff(void)
+{
+	static const uint8_t compressed_prefix[] = { 'A' };
+	static const uint8_t transparent[] = { 0, 'T' };
+	static const uint8_t compressed_suffix[] = "ABRACADABRA";
+	struct sippymodem_v44_duplex_config sender_config = {
+		.transmit_enabled = true,
+		.transmit_parameters = minimum_parameters,
+	};
+	struct sippymodem_v44_duplex_config receiver_config = {
+		.receive_enabled = true,
+		.receive_parameters = minimum_parameters,
+	};
+	struct sippymodem_v44_duplex *sender =
+		sippymodem_v44_duplex_create(&sender_config);
+	struct sippymodem_v44_duplex *receiver =
+		sippymodem_v44_duplex_create(&receiver_config);
+	uint8_t wire[512];
+	uint8_t expected[sizeof(compressed_prefix) + sizeof(transparent) +
+			sizeof(compressed_suffix)];
+	uint8_t decoded[sizeof(expected) + 1];
+	static const uint8_t blocked_byte = 'B';
+	const uint8_t *blocked = &blocked_byte;
+	size_t blocked_length = 1;
+	size_t wire_length = 0;
+	size_t decoded_length = 0;
+	size_t output_length = 99;
+
+	CHECK(sender != NULL && receiver != NULL,
+	      "could not create V.44 mode-handoff peers");
+	CHECK(transmit_bytes(
+		      sender, compressed_prefix, sizeof(compressed_prefix), wire,
+		      sizeof(wire), &wire_length) &&
+	      sippymodem_v44_duplex_request_transmit_mode(
+		      sender, SIPPYMODEM_V44_ENCODER_TRANSPARENT, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_NEED_OUTPUT &&
+	      output_length == 0 &&
+	      sippymodem_v44_duplex_transmit(
+		      sender, &blocked, &blocked_length, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_INVALID_STATE &&
+	      blocked == &blocked_byte && blocked_length == 1 &&
+	      sippymodem_v44_duplex_request_transmit_mode(
+		      sender, SIPPYMODEM_V44_ENCODER_COMPRESSED, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_INVALID_STATE &&
+	      sippymodem_v44_duplex_flush_transmit(
+		      sender, NULL, 0, &output_length) ==
+		      SIPPYMODEM_V44_DUPLEX_INVALID_STATE &&
+	      request_transmit_mode(
+		      sender, SIPPYMODEM_V44_ENCODER_TRANSPARENT, wire,
+		      sizeof(wire), &wire_length),
+	      "V.44 duplex did not serialize its ETM transition");
+	CHECK(transmit_bytes(
+		      sender, transparent, sizeof(transparent), wire,
+		      sizeof(wire), &wire_length) &&
+	      request_transmit_mode(
+		      sender, SIPPYMODEM_V44_ENCODER_COMPRESSED, wire,
+		      sizeof(wire), &wire_length) &&
+	      transmit_segment(
+		      sender, compressed_suffix, sizeof(compressed_suffix), wire,
+		      sizeof(wire), &wire_length),
+	      "V.44 duplex did not complete its ECM transition");
+	memcpy(expected, compressed_prefix, sizeof(compressed_prefix));
+	memcpy(expected + sizeof(compressed_prefix), transparent,
+	       sizeof(transparent));
+	memcpy(expected + sizeof(compressed_prefix) + sizeof(transparent),
+	       compressed_suffix, sizeof(compressed_suffix));
+	CHECK(receive_segment(
+		      receiver, wire, wire_length, decoded, sizeof(decoded),
+		      &decoded_length, true) &&
+	      decoded_length == sizeof(expected) &&
+	      memcmp(decoded, expected, sizeof(expected)) == 0,
+	      "V.44 duplex mixed-mode stream did not round trip");
+	output_length = 99;
+	CHECK(sippymodem_v44_duplex_request_transmit_mode(
+		      sender, SIPPYMODEM_V44_ENCODER_COMPRESSED, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_OK &&
+	      output_length == 0 &&
+	      sippymodem_v44_duplex_request_transmit_mode(
+		      sender, (enum sippymodem_v44_encoder_mode)99, NULL, 0,
+		      &output_length) ==
+		      SIPPYMODEM_V44_DUPLEX_INVALID_ARGUMENT &&
+	      sippymodem_v44_duplex_request_transmit_mode(
+		      NULL, SIPPYMODEM_V44_ENCODER_COMPRESSED, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_INVALID_ARGUMENT,
+	      "V.44 duplex mode API validation changed state");
+	output_length = 99;
+	CHECK(sippymodem_v44_duplex_request_transmit_mode(
+		      NULL, SIPPYMODEM_V44_ENCODER_COMPRESSED, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_INVALID_ARGUMENT &&
+	      output_length == 99,
+	      "invalid V.44 mode request changed caller output state");
+	sippymodem_v44_duplex_destroy(receiver);
+	sippymodem_v44_duplex_destroy(sender);
+	return true;
+}
+
 static bool receive_segment(
 	struct sippymodem_v44_duplex *duplex,
 	const uint8_t *wire,
@@ -299,6 +463,11 @@ static bool test_literal_bypass_and_api(void)
 		      duplex, NULL, 0, &output_length) ==
 		      SIPPYMODEM_V44_DUPLEX_FLUSHED && output_length == 0,
 	      "disabled transmit emitted a flush command");
+	CHECK(sippymodem_v44_duplex_request_transmit_mode(
+		      duplex, SIPPYMODEM_V44_ENCODER_TRANSPARENT, NULL, 0,
+		      &output_length) == SIPPYMODEM_V44_DUPLEX_INVALID_STATE &&
+	      output_length == 0,
+	      "disabled transmit acquired a V.44 stream mode");
 	input = plain;
 	input_length = sizeof(plain);
 	memset(output, 0, sizeof(output));
@@ -456,6 +625,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "asymmetric duplex round trip",
 		  test_asymmetric_duplex_round_trip },
+		{ "transmit mode handoff", test_transmit_mode_handoff },
 		{ "transmit backpressure and flush state",
 		  test_transmit_backpressure_and_flush_state },
 		{ "literal bypass and API", test_literal_bypass_and_api },
