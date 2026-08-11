@@ -43,6 +43,7 @@
 
 #include <modem.h>
 #include <modem_debug.h>
+#include <sippymodem_v42_xid.h>
 
 //#define EC_DEBUG 1
 
@@ -125,10 +126,6 @@
 #endif /* !T403 */
 
 /* xid sub-fields definitions */
-#define FI_GENERAL		0x82
-#define GI_PARAM_NEGOTIATION	0x80
-#define GI_PRIVATE_NEGOTIATION	0xf0
-#define GI_USER_DATA		0xff
 /* param negotiation */
 #define PI_HDLC_OPTFUNCS	0x03
 #define PI_TX_INFO_MAXSIZE	0x05
@@ -158,7 +155,7 @@ static void reset(struct lapm_state *l);
  */
 
 /* le/be value parsing */
-extern inline u32 lapm_get_le_val(u8 *buf, int len)
+extern inline u32 lapm_get_le_val(const u8 *buf, int len)
 {
 	u32 val = 0;
 	while(len--) {
@@ -168,7 +165,7 @@ extern inline u32 lapm_get_le_val(u8 *buf, int len)
 	return val;
 }
 
-extern inline u32 lapm_get_be_val(u8 *buf, int len)
+extern inline u32 lapm_get_be_val(const u8 *buf, int len)
 {
 	u32 val = 0;
 	while(len--) {
@@ -240,7 +237,7 @@ static void print_frame(struct lapm_state *l, char *title, int cmd, frame_t *f)
 #define LAPM_PRINT_FRAME(str,cmd,f) print_frame(l,str,cmd,f)
 
 /* XID debug prints */
-static int print_xid_params(char *str_buf, u8 *buf, int len)
+static int print_xid_params(char *str_buf, const u8 *buf, int len)
 {
 	u8 pid, plen;
 	u32 pval;
@@ -283,7 +280,7 @@ static int print_xid_params(char *str_buf, u8 *buf, int len)
 	return i;
 }
 
-static int print_xid_private_params(char *str_buf, u8 *buf, int len)
+static int print_xid_private_params(char *str_buf, const u8 *buf, int len)
 {
 	u8 pid, plen;
 	int i = 0;
@@ -323,36 +320,34 @@ static int print_xid_private_params(char *str_buf, u8 *buf, int len)
 
 static int print_xid(struct lapm_state *l,char *str,frame_t *f, int len)
 {
-	u8 *buf = f->buf + 2;
+	struct sippymodem_v42_xid_fields fields;
 	int i = 0;
 
-	i = sprintf(print_buf,"XID: FID %02x;\n",*buf);
-
-	buf++; len--;
-	while(len > 0) {
-		u8  gid = buf[0];
-		u16 glen = buf[1];
-		glen = glen << 8 | buf[2];
-		buf += 3;
-		len -= 3 + glen;
-		if (len < 0)
-			break;
-		switch (gid) {
-		case GI_PARAM_NEGOTIATION:
-			i += sprintf(print_buf+i,"GI_PARAMS(%d): ",glen);
-			i += print_xid_params(print_buf+i,buf,glen);
-			break;
-		case GI_PRIVATE_NEGOTIATION:
-			i += sprintf(print_buf+i,"GI_PRIVATE_PARAMS(%d): ",glen);
-			i += print_xid_private_params(print_buf+i,buf,glen);
-			break;
-		default:
-			i += sprintf(print_buf+i,"unknown GI = 0x%x (%d) ??\n",
-					gid,glen);
-			break;
-		}
-		buf += glen;
+	if (len < 0 || sippymodem_v42_xid_decode(
+			f->buf + 2, (size_t)len, &fields) !=
+			SIPPYMODEM_V42_XID_OK) {
+		EC_DBG("%s: malformed XID\n", str);
+		return -1;
 	}
+	i = sprintf(print_buf,"XID: FID %02x;\n",
+		      SIPPYMODEM_V42_XID_GENERAL_FORMAT);
+	if (fields.parameter_negotiation != NULL) {
+		i += sprintf(print_buf+i,"GI_PARAMS(%zu): ",
+			     fields.parameter_negotiation_length);
+		i += print_xid_params(
+			print_buf+i, fields.parameter_negotiation,
+			(int)fields.parameter_negotiation_length);
+	}
+	if (fields.private_negotiation != NULL) {
+		i += sprintf(print_buf+i,"GI_PRIVATE_PARAMS(%zu): ",
+			     fields.private_negotiation_length);
+		i += print_xid_private_params(
+			print_buf+i, fields.private_negotiation,
+			(int)fields.private_negotiation_length);
+	}
+	if (fields.user_data != NULL)
+		i += sprintf(print_buf+i,"GI_USER_DATA(%zu)\n",
+			     fields.user_data_length);
 	EC_DBG("%s : %s\n", str, print_buf);
 	return 0;
 }
@@ -431,7 +426,8 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
                  ((value)>=(default) && (param)>(value))) \
                 (param) = (value); }
 
-static int parse_xid_params(struct lapm_state *l, u8 *buf, int len)
+static int parse_xid_params(
+	struct lapm_state *l, const u8 *buf, int len)
 {
 	u32 pval;
 	u8 pid, plen;
@@ -473,7 +469,8 @@ static int parse_xid_params(struct lapm_state *l, u8 *buf, int len)
 }
 
 
-static int parse_xid_private_params(struct lapm_state *l, struct modem_config *cfg, u8 *buf, int len)
+static int parse_xid_private_params(
+	struct modem_config *cfg, const u8 *buf, int len)
 {
 	u8 pid, plen;
 	while (len > 0) {
@@ -509,36 +506,25 @@ static int parse_xid_private_params(struct lapm_state *l, struct modem_config *c
 static int rx_xid(struct lapm_state *l, frame_t *f)
 {
 	struct modem_config cfg = DEFAULT_MODEM_EC_CONFIG;
-	u8 *buf = f->buf;
-	int len = f->count;
+	struct sippymodem_v42_xid_fields fields;
+	size_t length;
 
-	/* skip addr and ctrl */
-	buf += 2; len -= 2;
-
-	LAPM_PRINT_XID("rx_xid",f,len);
-	if (*buf != FI_GENERAL)
+	if (f == NULL || f->buf == NULL || f->count < 2)
 		return -1;
-	buf++; len--;
-	while(len > 0) {
-		u8  gid = buf[0];
-		u16 glen = buf[1];
-		glen = glen << 8 | buf[2];
-		buf += 3;
-		len -= 3 + glen;
-		if (len < 0)
-			break;
-		switch (gid) {
-		case GI_PARAM_NEGOTIATION:
-			parse_xid_params(l,buf,glen);
-			break;
-		case GI_PRIVATE_NEGOTIATION:
-			parse_xid_private_params(l,&cfg,buf,glen);
-			break;
-		default:
-			break;
-		}
-		buf += glen;
-	}
+	length = (size_t)f->count - 2U;
+	LAPM_PRINT_XID("rx_xid",f,(int)length);
+	if (sippymodem_v42_xid_decode(
+			f->buf + 2, length, &fields) !=
+			SIPPYMODEM_V42_XID_OK)
+		return -1;
+	if (fields.parameter_negotiation != NULL)
+		parse_xid_params(
+			l, fields.parameter_negotiation,
+			(int)fields.parameter_negotiation_length);
+	if (fields.private_negotiation != NULL)
+		parse_xid_private_params(
+			&cfg, fields.private_negotiation,
+			(int)fields.private_negotiation_length);
 	cfg.ec_tx_win_size  = l->tx_win_size;
 	cfg.ec_rx_win_size  = l->rx_win_size;
 	cfg.ec_tx_info_size = l->tx_info_size;
@@ -549,89 +535,64 @@ static int rx_xid(struct lapm_state *l, frame_t *f)
 
 static int tx_xid(struct lapm_state *l, u8 addr)
 {
-	u8 *buf;
-	int size = 2 + 1 + (3+19) + (3+15);
-	int len = 0;
+	enum {
+		PARAMETER_LENGTH = 19,
+		PRIVATE_LENGTH = 15,
+		XID_CAPACITY = 1 + 3 + PARAMETER_LENGTH + 3 + PRIVATE_LENGTH,
+	};
+	u8 parameters[PARAMETER_LENGTH] = {
+		PI_HDLC_OPTFUNCS, 3, 0x8a, 0x89, 0x00,
+		PI_TX_INFO_MAXSIZE, 2, 0, 0,
+		PI_RX_INFO_MAXSIZE, 2, 0, 0,
+		PI_TX_WINDOW_SIZE, 1, 0,
+		PI_RX_WINDOW_SIZE, 1, 0,
+	};
+	u8 private_parameters[PRIVATE_LENGTH] = {
+		PI_PARAMETER_SET_ID, 3, 0x56, 0x34, 0x32,
+		PI_V42BIS_REQUEST, 1, 0,
+		PI_V42BIS_CW_NUMBER, 2, 0, 0,
+		PI_V42BIS_MAX_STRING, 1, 0,
+	};
+	u8 xid[XID_CAPACITY];
+	struct sippymodem_v42_xid_fields fields = {
+		.parameter_negotiation = parameters,
+		.parameter_negotiation_length = sizeof(parameters),
+	};
+	size_t xid_length = 0;
 	u32 pval;
-	int glen;
-	frame_t *f = get_ctrl_frame(l);
+	frame_t *f;
+
+	pval = l->tx_info_size<<3;
+	parameters[7] = (pval>>8)&0xff;
+	parameters[8] = pval&0xff;
+	pval = l->rx_info_size<<3;
+	parameters[11] = (pval>>8)&0xff;
+	parameters[12] = pval&0xff;
+	parameters[15] = l->tx_win_size;
+	parameters[18] = l->rx_win_size;
+	if(l->modem->cfg.comp) {
+		private_parameters[7] = l->modem->cfg.comp;
+		pval = l->modem->cfg.comp_dict_size;
+		private_parameters[10] = (pval>>8)&0xff;
+		private_parameters[11] = pval&0xff;
+		private_parameters[14] = l->modem->cfg.comp_max_string;
+		fields.private_negotiation = private_parameters;
+		fields.private_negotiation_length = sizeof(private_parameters);
+	}
+	if (sippymodem_v42_xid_encode(
+			&fields, xid, sizeof(xid), &xid_length) !=
+			SIPPYMODEM_V42_XID_OK)
+		return -1;
+	f = get_ctrl_frame(l);
 	if (!f) {
 		EC_ERR("tx_xid: cannot alloc frame.\n");
 		return -1;
 	}
-
-	buf = f->buf;
-
-	*buf++ = addr; /* addr */
-	*buf++ = FRAME_U_XID;   /* ctrl */
-	*buf++ = FI_GENERAL;  /* fid */
-	len += 3;
-	/* param negotiation group */
-	*buf++ = GI_PARAM_NEGOTIATION; /* group id */
-	glen = 19;                     /* group length */  // v42vmi: 19
-	*buf++ = (glen>>8)&0xff;
-	*buf++ = glen&0xff;
-	len += 3;
-	*buf++ = PI_HDLC_OPTFUNCS;
-	*buf++ = 3; /* p length */ // v42vmi : 3
-	*buf++ = 0x8a; /* p value */
-	*buf++ = 0x89;
-	*buf++ = 0x00; 
-	//*buf++ = 0x00;
-	*buf++ = PI_TX_INFO_MAXSIZE;
-	pval = l->tx_info_size<<3;
-	*buf++ = 2; /* p length */
-	*buf++ = (pval>>8)&0xff; /* p value */
-	*buf++ = (pval&0xff);
-	*buf++ = PI_RX_INFO_MAXSIZE;
-	pval = l->rx_info_size<<3;
-	*buf++ = 2; /* p length */
-	*buf++ = (pval>>8)&0xff; /* p value */
-	*buf++ = (pval&0xff);
-	*buf++ = PI_TX_WINDOW_SIZE;
-	*buf++ = 1; /* p length */
-	*buf++ = l->tx_win_size; /* p value */
-	*buf++ = PI_RX_WINDOW_SIZE;
-	*buf++ = 1; /* p length */
-	*buf++ = l->rx_win_size; /* p value */
-	len += glen;
-
-#if 1 /* v42bis-like compressor */
-	if(l->modem->cfg.comp) {
-		/* private param negotiation group */
-		*buf++ = GI_PRIVATE_NEGOTIATION; /* group id */
-		glen = 15;                       /* group length (msb first) */
-		*buf++ = (glen>>8)&0xff;
-		*buf++ = glen&0xff;
-		len += 3;
-		*buf++ = PI_PARAMETER_SET_ID;
-		*buf++ = 3;    /* p length */
-		*buf++ = 0x56;/*old 0x26 */ /* p value */ // v42vmi: 0x56
-		*buf++ = 0x34;
-		*buf++ = 0x32;
-		*buf++ = PI_V42BIS_REQUEST;
-		*buf++ = 1; /* p length */
-		*buf++ = l->modem->cfg.comp; /* 3 - compression in both direction */
-		*buf++ = PI_V42BIS_CW_NUMBER;
-		*buf++ = 2; /* p length */
-		pval = l->modem->cfg.comp_dict_size;
-		*buf++ = (pval>>8)&0xff; /* p value */
-		*buf++ = (pval&0xff);
-		*buf++ = PI_V42BIS_MAX_STRING;
-		*buf++ = 1; /* p length */
-		*buf++ = l->modem->cfg.comp_max_string;
-		len += glen;
-	}
-#endif
-
-	/* user data */
-	/* ... */
-	if (len > size) {
-		EC_ERR("tx_xid: result length(%d)  > size (%d).\n", len, size);
-		return -1;
-	}
-	f->size = len;
-	LAPM_PRINT_XID("tx_xid",f,len);
+	f->buf[0] = addr;
+	f->buf[1] = FRAME_U_XID;
+	memcpy(f->buf + 2, xid, xid_length);
+	f->size = 2 + xid_length;
+	LAPM_PRINT_XID("tx_xid",f,(int)xid_length);
 	return 0;
 }
 
@@ -1030,8 +991,8 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_U_XID:
 		/* exchange general id info */
-		rx_xid(l,f);
-		tx_xid(l,l->rsp_addr);
+		if (rx_xid(l,f) == 0)
+			tx_xid(l,l->rsp_addr);
 		break;
 	case FRAME_U_TEST:
 		/* TBD */
@@ -1115,8 +1076,7 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 		/* TBD */
 		break;
 	case FRAME_U_XID:
-		if (l->config) {
-			rx_xid(l,f);
+		if (l->config && rx_xid(l,f) == 0) {
 			l->config = 0;
 			T401_STOP(l);
 			if (l->state == LAPM_IDLE) {
