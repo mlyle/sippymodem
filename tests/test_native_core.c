@@ -346,8 +346,8 @@ static bool test_lapm_xid_envelopes(void)
 	};
 	struct modem *caller = modem_create(&driver, "LAPM XID caller");
 	struct modem *answerer = modem_create(&driver, "LAPM XID answerer");
-	struct sippymodem_v42_xid_fields fields;
-	struct sippymodem_v44_offer v44_offer;
+	struct v42_xid_fields fields;
+	struct v44_offer v44_offer;
 	uint8_t command[LAPM_MAX_INFO_SIZE + 4];
 	uint8_t received[LAPM_MAX_INFO_SIZE + 4];
 	uint8_t payload[96];
@@ -372,18 +372,18 @@ static bool test_lapm_xid_envelopes(void)
 		caller->packer.hdlc.framer);
 	CHECK(outgoing != NULL && outgoing->size > 2 &&
 		      outgoing->buf[1] == XID_CONTROL &&
-		      sippymodem_v42_xid_decode(
+		      v42_xid_decode(
 			      outgoing->buf + 2, (size_t)outgoing->size - 2U,
-			      &fields) == SIPPYMODEM_V42_XID_OK &&
+			      &fields) == V42_XID_OK &&
 		      fields.parameter_negotiation_length == 19 &&
 		      fields.private_negotiation_length == 15 &&
 		      fields.user_data != NULL &&
-		      sippymodem_v44_xid_decode(
+		      v44_xid_decode(
 			      fields.user_data, fields.user_data_length,
-			      &v44_offer) == SIPPYMODEM_V44_XID_OK &&
+			      &v44_offer) == V44_XID_OK &&
 		      v44_offer.transmit.enabled && v44_offer.receive.enabled &&
 		      caller->ec.lapm.v44_session.phase ==
-			      SIPPYMODEM_LAPM_V44_COMMAND_PENDING,
+			      LAPM_V44_COMMAND_PENDING,
 	      "LAPM caller did not emit a bounded V.44 XID offer");
 	command_size = outgoing->size;
 	memcpy(command, outgoing->buf, (size_t)command_size);
@@ -402,7 +402,7 @@ static bool test_lapm_xid_envelopes(void)
 			caller->packer.hdlc.framer, &incoming);
 		CHECK(caller->ec.lapm.config == 1 &&
 			      caller->ec.lapm.v44_session.phase ==
-				      SIPPYMODEM_LAPM_V44_COMMAND_PENDING,
+				      LAPM_V44_COMMAND_PENDING,
 		      "malformed XID response completed LAPM negotiation");
 	}
 	caller->bit_timer_func(caller);
@@ -427,7 +427,7 @@ static bool test_lapm_xid_envelopes(void)
 		unchanged = answerer->ec.lapm.tx_info_size == 96 &&
 			    answerer->ec.lapm.rx_info_size == 96 &&
 			    answerer->ec.lapm.v44_session.phase ==
-				    SIPPYMODEM_LAPM_V44_READY &&
+				    LAPM_V44_READY &&
 			    answerer->ec.lapm.v44_path == NULL &&
 			    answerer->packer.hdlc.get_tx_frame(
 				    answerer->packer.hdlc.framer) == NULL;
@@ -440,16 +440,16 @@ static bool test_lapm_xid_envelopes(void)
 	CHECK(answerer->ec.lapm.tx_info_size == 128 &&
 		      answerer->ec.lapm.rx_info_size == 128 &&
 		      answerer->ec.lapm.v44_session.phase ==
-			      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+			      LAPM_V44_NEGOTIATED &&
 		      answerer->ec.lapm.v44_path != NULL &&
 		      answerer->cfg.comp == 0,
 	      "LAPM answerer did not own the negotiated V.44 path");
 	outgoing = answerer->packer.hdlc.get_tx_frame(
 		answerer->packer.hdlc.framer);
 	CHECK(outgoing != NULL && outgoing->buf[1] == XID_CONTROL &&
-		      sippymodem_v42_xid_decode(
+		      v42_xid_decode(
 			      outgoing->buf + 2, (size_t)outgoing->size - 2U,
-			      &fields) == SIPPYMODEM_V42_XID_OK,
+			      &fields) == V42_XID_OK,
 	      "LAPM answerer did not return a bounded XID envelope");
 	CHECK(fields.private_negotiation == NULL && fields.user_data != NULL,
 	      "LAPM answerer selected more than one compression method");
@@ -461,7 +461,7 @@ static bool test_lapm_xid_envelopes(void)
 		caller->packer.hdlc.framer, &incoming);
 	CHECK(caller->ec.lapm.config == 0 &&
 		      caller->ec.lapm.v44_session.phase ==
-			      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+			      LAPM_V44_NEGOTIATED &&
 		      caller->ec.lapm.v44_path != NULL && caller->cfg.comp == 0 &&
 		      modem_ec_active_compression(caller) ==
 			      MODEM_EC_COMPRESSION_V44,
@@ -477,7 +477,7 @@ static bool test_lapm_xid_envelopes(void)
 	answerer->packer.hdlc.rx_complete(
 		answerer->packer.hdlc.framer, &incoming);
 	CHECK(answerer->ec.lapm.v44_session.phase ==
-		      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+		      LAPM_V44_NEGOTIATED &&
 		      answerer->ec.lapm.v44_path != NULL,
 	      "LAPM sequence reset erased completed V.44 negotiation");
 	outgoing = answerer->packer.hdlc.get_tx_frame(
@@ -512,7 +512,7 @@ static bool test_lapm_xid_envelopes(void)
 			      answerer->ec.lapm.rx_info_size == rx_size &&
 			      answerer->cfg.comp == compression &&
 			      answerer->ec.lapm.v44_session.phase ==
-				      SIPPYMODEM_LAPM_V44_NEGOTIATED &&
+				      LAPM_V44_NEGOTIATED &&
 			      answerer->ec.lapm.v44_path != NULL &&
 			      answerer->packer.hdlc.get_tx_frame(
 				      answerer->packer.hdlc.framer) == NULL,

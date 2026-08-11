@@ -9,8 +9,8 @@
 #include <string.h>
 
 static bool fields_equal(
-	const struct sippymodem_v42_xid_fields *left,
-	const struct sippymodem_v42_xid_fields *right)
+	const struct v42_xid_fields *left,
+	const struct v42_xid_fields *right)
 {
 	return left->parameter_negotiation == right->parameter_negotiation &&
 	       left->parameter_negotiation_length ==
@@ -37,14 +37,14 @@ static bool test_standard_envelope(void)
 		0x02, 0x02, 0x04, 0x00,
 		0x03, 0x01, 0x20,
 	};
-	const struct sippymodem_v44_offer v44_offer =
-		sippymodem_v44_default_offer();
-	struct sippymodem_v44_offer decoded_v44 = { 0 };
-	uint8_t v44[SIPPYMODEM_V44_XID_OFFER_SIZE];
+	const struct v44_offer v44_offer =
+		v44_default_offer();
+	struct v44_offer decoded_v44 = { 0 };
+	uint8_t v44[V44_XID_OFFER_SIZE];
 	uint8_t wire[128];
 	uint8_t rebuilt[sizeof(wire)];
-	struct sippymodem_v42_xid_fields fields;
-	struct sippymodem_v42_xid_fields decoded = { 0 };
+	struct v42_xid_fields fields;
+	struct v42_xid_fields decoded = { 0 };
 	size_t v44_length = 0;
 	size_t wire_length = 0;
 	size_t rebuilt_length = 0;
@@ -52,12 +52,12 @@ static bool test_standard_envelope(void)
 	const size_t user_offset =
 		private_offset + 3U + sizeof(private_parameters);
 
-	CHECK(sippymodem_v44_xid_encode(
+	CHECK(v44_xid_encode(
 		      &v44_offer, v44, sizeof(v44), &v44_length) ==
-		      SIPPYMODEM_V44_XID_OK &&
+		      V44_XID_OK &&
 	      v44_length == sizeof(v44),
 	      "could not build a V.44 user-data subfield");
-	fields = (struct sippymodem_v42_xid_fields) {
+	fields = (struct v42_xid_fields) {
 		.parameter_negotiation = parameters,
 		.parameter_negotiation_length = sizeof(parameters),
 		.private_negotiation = private_parameters,
@@ -65,11 +65,11 @@ static bool test_standard_envelope(void)
 		.user_data = v44,
 		.user_data_length = v44_length,
 	};
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &fields, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_OK &&
+		      V42_XID_OK &&
 	      wire_length == user_offset + sizeof(v44) &&
-	      wire[0] == SIPPYMODEM_V42_XID_GENERAL_FORMAT &&
+	      wire[0] == V42_XID_GENERAL_FORMAT &&
 	      wire[1] == 0x80 && wire[2] == 0 &&
 	      wire[3] == sizeof(parameters) &&
 	      wire[private_offset] == 0xf0 &&
@@ -77,8 +77,8 @@ static bool test_standard_envelope(void)
 	      wire[private_offset + 2U] == sizeof(private_parameters) &&
 	      memcmp(wire + user_offset, v44, sizeof(v44)) == 0,
 	      "V.42 XID groups were not encoded in standard order");
-	CHECK(sippymodem_v42_xid_decode(
-		      wire, wire_length, &decoded) == SIPPYMODEM_V42_XID_OK &&
+	CHECK(v42_xid_decode(
+		      wire, wire_length, &decoded) == V42_XID_OK &&
 	      decoded.parameter_negotiation == wire + 4 &&
 	      decoded.parameter_negotiation_length == sizeof(parameters) &&
 	      decoded.private_negotiation == wire + private_offset + 3U &&
@@ -86,13 +86,13 @@ static bool test_standard_envelope(void)
 		      sizeof(private_parameters) &&
 	      decoded.user_data == wire + user_offset &&
 	      decoded.user_data_length == sizeof(v44) &&
-	      sippymodem_v44_xid_decode(
+	      v44_xid_decode(
 		      decoded.user_data, decoded.user_data_length,
-		      &decoded_v44) == SIPPYMODEM_V44_XID_OK,
+		      &decoded_v44) == V44_XID_OK,
 	      "V.42 XID envelope did not expose its bounded subfields");
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &decoded, rebuilt, sizeof(rebuilt), &rebuilt_length) ==
-		      SIPPYMODEM_V42_XID_OK &&
+		      V42_XID_OK &&
 	      rebuilt_length == wire_length &&
 	      memcmp(rebuilt, wire, wire_length) == 0,
 	      "known V.42 XID groups did not round trip");
@@ -109,33 +109,33 @@ static bool test_optional_and_unknown_groups(void)
 	static const uint8_t expected_user_only[] = {
 		0x82, 0xff, 0xfe, 0x01, 0xa5,
 	};
-	const struct sippymodem_v42_xid_fields empty = { 0 };
-	struct sippymodem_v42_xid_fields decoded = { 0 };
+	const struct v42_xid_fields empty = { 0 };
+	struct v42_xid_fields decoded = { 0 };
 	uint8_t wire[sizeof(unknown)];
 	size_t wire_length = 0;
 
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &empty, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_OK &&
+		      V42_XID_OK &&
 	      wire_length == 1 &&
-	      wire[0] == SIPPYMODEM_V42_XID_GENERAL_FORMAT &&
-	      sippymodem_v42_xid_decode(wire, wire_length, &decoded) ==
-		      SIPPYMODEM_V42_XID_OK &&
+	      wire[0] == V42_XID_GENERAL_FORMAT &&
+	      v42_xid_decode(wire, wire_length, &decoded) ==
+		      V42_XID_OK &&
 	      decoded.parameter_negotiation == NULL &&
 	      decoded.private_negotiation == NULL &&
 	      decoded.user_data == NULL,
 	      "empty optional V.42 XID groups were not omitted");
-	CHECK(sippymodem_v42_xid_decode(
+	CHECK(v42_xid_decode(
 		      unknown, sizeof(unknown), &decoded) ==
-		      SIPPYMODEM_V42_XID_OK &&
+		      V42_XID_OK &&
 	      decoded.parameter_negotiation == NULL &&
 	      decoded.private_negotiation == NULL &&
 	      decoded.user_data == unknown + 7 &&
 	      decoded.user_data_length == 4,
 	      "unknown V.42 data-link group was not ignored");
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &decoded, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_OK &&
+		      V42_XID_OK &&
 	      wire_length == sizeof(expected_user_only) &&
 	      memcmp(wire, expected_user_only, sizeof(expected_user_only)) == 0,
 	      "known V.42 XID fields changed after an unknown group");
@@ -185,7 +185,7 @@ static bool test_malformed_envelopes(void)
 		{ empty_user_data, sizeof(empty_user_data) },
 		{ short_user_parameter, sizeof(short_user_parameter) },
 	};
-	const struct sippymodem_v42_xid_fields unchanged = {
+	const struct v42_xid_fields unchanged = {
 		.parameter_negotiation = wrong_format,
 		.parameter_negotiation_length = 11,
 		.private_negotiation = short_group,
@@ -195,11 +195,11 @@ static bool test_malformed_envelopes(void)
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(malformed); ++index) {
-		struct sippymodem_v42_xid_fields decoded = unchanged;
+		struct v42_xid_fields decoded = unchanged;
 
-		CHECK(sippymodem_v42_xid_decode(
+		CHECK(v42_xid_decode(
 			      malformed[index].wire, malformed[index].length,
-			      &decoded) == SIPPYMODEM_V42_XID_MALFORMED &&
+			      &decoded) == V42_XID_MALFORMED &&
 		      fields_equal(&decoded, &unchanged),
 		      "malformed V.42 XID case %zu changed caller state", index);
 	}
@@ -210,35 +210,35 @@ static bool test_wide_group_length(void)
 {
 	uint8_t parameter[257];
 	uint8_t wire[1U + 3U + sizeof(parameter)];
-	struct sippymodem_v42_xid_fields fields;
-	struct sippymodem_v42_xid_fields decoded;
+	struct v42_xid_fields fields;
+	struct v42_xid_fields decoded;
 	size_t wire_length = 0;
 
 	parameter[0] = 0x7e;
 	parameter[1] = 255;
 	for (size_t index = 2; index < sizeof(parameter); ++index)
 		parameter[index] = (uint8_t)(index * 37U + 11U);
-	fields = (struct sippymodem_v42_xid_fields) {
+	fields = (struct v42_xid_fields) {
 		.parameter_negotiation = parameter,
 		.parameter_negotiation_length = sizeof(parameter),
 	};
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &fields, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_OK &&
+		      V42_XID_OK &&
 	      wire_length == sizeof(wire) &&
-	      wire[0] == SIPPYMODEM_V42_XID_GENERAL_FORMAT &&
+	      wire[0] == V42_XID_GENERAL_FORMAT &&
 	      wire[1] == 0x80 && wire[2] == 0x01 && wire[3] == 0x01 &&
 	      memcmp(wire + 4, parameter, sizeof(parameter)) == 0,
 	      "wide V.42 XID group length was encoded incorrectly");
-	CHECK(sippymodem_v42_xid_decode(
-		      wire, wire_length, &decoded) == SIPPYMODEM_V42_XID_OK &&
+	CHECK(v42_xid_decode(
+		      wire, wire_length, &decoded) == V42_XID_OK &&
 	      decoded.parameter_negotiation == wire + 4 &&
 	      decoded.parameter_negotiation_length == sizeof(parameter),
 	      "wide V.42 XID group did not decode");
 	decoded = fields;
-	CHECK(sippymodem_v42_xid_decode(
+	CHECK(v42_xid_decode(
 		      wire, wire_length - 1U, &decoded) ==
-		      SIPPYMODEM_V42_XID_MALFORMED &&
+		      V42_XID_MALFORMED &&
 	      fields_equal(&decoded, &fields),
 	      "truncated wide V.42 XID group changed caller state");
 	return true;
@@ -248,75 +248,75 @@ static bool test_api_and_backpressure(void)
 {
 	static const uint8_t parameter[] = { 0x03, 0x01, 0x00 };
 	static const uint8_t bad_user[] = { 0xfe, 0x01, 0x00 };
-	struct sippymodem_v42_xid_fields fields = {
+	struct v42_xid_fields fields = {
 		.parameter_negotiation = parameter,
 		.parameter_negotiation_length = sizeof(parameter),
 	};
 	uint8_t wire[7];
 	size_t wire_length = 77;
-	struct sippymodem_v42_xid_fields decoded = { 0 };
+	struct v42_xid_fields decoded = { 0 };
 	static const char *const names[] = {
 		"ok", "need output", "malformed", "invalid argument",
 	};
 
 	memset(wire, 0xa5, sizeof(wire));
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &fields, wire, sizeof(wire) - 1U, &wire_length) ==
-		      SIPPYMODEM_V42_XID_NEED_OUTPUT &&
+		      V42_XID_NEED_OUTPUT &&
 	      wire_length == 77 && wire[0] == 0xa5 &&
-	      sippymodem_v42_xid_encode(
+	      v42_xid_encode(
 		      &fields, NULL, 0, &wire_length) ==
-		      SIPPYMODEM_V42_XID_NEED_OUTPUT &&
+		      V42_XID_NEED_OUTPUT &&
 	      wire_length == 77,
 	      "V.42 XID output backpressure changed caller state");
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &fields, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_OK &&
+		      V42_XID_OK &&
 	      wire_length == sizeof(wire),
 	      "V.42 XID exact output capacity was rejected");
 	fields.parameter_negotiation = NULL;
 	memset(wire, 0xa5, sizeof(wire));
 	wire_length = 77;
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &fields, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_INVALID_ARGUMENT &&
+		      V42_XID_INVALID_ARGUMENT &&
 	      wire_length == 77 && wire[0] == 0xa5,
 	      "invalid V.42 XID input changed caller output");
 	fields.parameter_negotiation = parameter;
 	fields.parameter_negotiation_length = (size_t)UINT16_MAX + 1U;
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &fields, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_INVALID_ARGUMENT,
+		      V42_XID_INVALID_ARGUMENT,
 	      "V.42 XID accepted an unencodable group length");
-	fields = (struct sippymodem_v42_xid_fields) {
+	fields = (struct v42_xid_fields) {
 		.user_data = bad_user,
 		.user_data_length = sizeof(bad_user),
 	};
-	CHECK(sippymodem_v42_xid_encode(
+	CHECK(v42_xid_encode(
 		      &fields, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_INVALID_ARGUMENT &&
-	      sippymodem_v42_xid_encode(
+		      V42_XID_INVALID_ARGUMENT &&
+	      v42_xid_encode(
 		      NULL, wire, sizeof(wire), &wire_length) ==
-		      SIPPYMODEM_V42_XID_INVALID_ARGUMENT &&
-	      sippymodem_v42_xid_encode(
+		      V42_XID_INVALID_ARGUMENT &&
+	      v42_xid_encode(
 		      &fields, wire, sizeof(wire), NULL) ==
-		      SIPPYMODEM_V42_XID_INVALID_ARGUMENT &&
-	      sippymodem_v42_xid_decode(NULL, 0, &decoded) ==
-		      SIPPYMODEM_V42_XID_INVALID_ARGUMENT &&
-	      sippymodem_v42_xid_decode(wire, sizeof(wire), NULL) ==
-		      SIPPYMODEM_V42_XID_INVALID_ARGUMENT &&
-	      sippymodem_v42_xid_decode(wire, 0, &decoded) ==
-		      SIPPYMODEM_V42_XID_MALFORMED,
+		      V42_XID_INVALID_ARGUMENT &&
+	      v42_xid_decode(NULL, 0, &decoded) ==
+		      V42_XID_INVALID_ARGUMENT &&
+	      v42_xid_decode(wire, sizeof(wire), NULL) ==
+		      V42_XID_INVALID_ARGUMENT &&
+	      v42_xid_decode(wire, 0, &decoded) ==
+		      V42_XID_MALFORMED,
 	      "V.42 XID API accepted an invalid argument");
 	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
 		CHECK(strcmp(
-			      sippymodem_v42_xid_result_name(
-				      (enum sippymodem_v42_xid_result)index),
+			      v42_xid_result_name(
+				      (enum v42_xid_result)index),
 			      names[index]) == 0,
 		      "V.42 XID result %zu has the wrong name", index);
 	CHECK(strcmp(
-		      sippymodem_v42_xid_result_name(
-			      (enum sippymodem_v42_xid_result)99),
+		      v42_xid_result_name(
+			      (enum v42_xid_result)99),
 		      "unknown") == 0,
 	      "unknown V.42 XID result has the wrong name");
 	return true;

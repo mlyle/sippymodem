@@ -53,7 +53,7 @@
 #include <dc_filter.h>
 #include <lapm_v44_session.h>
 
-struct sippymodem_v44_character_path;
+struct v44_character_path;
 
 
 /* modem modes */
@@ -212,8 +212,8 @@ typedef struct hdlc_frame {
 struct lapm_state {
         /* modem link */
         struct modem *modem;
-        struct sippymodem_lapm_v44_session v44_session;
-        struct sippymodem_v44_character_path *v44_path;
+        struct lapm_v44_session v44_session;
+        struct v44_character_path *v44_path;
         int state;
         /* sub-states: may be optimized */
         int config;

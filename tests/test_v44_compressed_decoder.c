@@ -19,10 +19,10 @@ static bool test_appendix_wire_image(void)
 		'A', 'B', 'C', 'D', 'E', 'Y',
 		'A', 'B', 'C', 'D', 'E', 0xff, 'A', 'C',
 	};
-	const struct sippymodem_v44_parameters parameters =
-		sippymodem_v44_default_parameters();
-	struct sippymodem_v44_compressed_decoder *decoder =
-		sippymodem_v44_compressed_decoder_create(
+	const struct v44_parameters parameters =
+		v44_default_parameters();
+	struct v44_compressed_decoder *decoder =
+		v44_compressed_decoder_create(
 			&parameters, parameters.max_string_length);
 	const uint8_t *input = NULL;
 	size_t input_length = 0;
@@ -32,34 +32,34 @@ static bool test_appendix_wire_image(void)
 
 	CHECK(decoder != NULL, "could not create V.44 wire-image decoder");
 	while (item < 15) {
-		enum sippymodem_v44_compressed_result result;
+		enum v44_compressed_result result;
 
 		if (input_length == 0 && wire_offset < sizeof(wire)) {
 			input = wire + wire_offset++;
 			input_length = 1;
 		}
-		result = sippymodem_v44_compressed_decoder_process(
+		result = v44_compressed_decoder_process(
 			decoder, &input, &input_length);
-		if (result == SIPPYMODEM_V44_COMPRESSED_NEED_INPUT) {
+		if (result == V44_COMPRESSED_NEED_INPUT) {
 			CHECK(input_length == 0 && wire_offset < sizeof(wire),
 			      "V.44 wire image ended in a partial field");
 			continue;
 		}
 		CHECK(result == (item == 14 ?
-					 SIPPYMODEM_V44_COMPRESSED_FLUSHED :
-					 SIPPYMODEM_V44_COMPRESSED_OK),
+					 V44_COMPRESSED_FLUSHED :
+					 V44_COMPRESSED_OK),
 		      "V.44 wire item %zu returned %s", item,
-		      sippymodem_v44_compressed_result_name(result));
+		      v44_compressed_result_name(result));
 		item++;
 	}
 	CHECK(wire_offset == sizeof(wire) && input_length == 0 &&
-	      sippymodem_v44_compressed_decoder_pending(decoder) ==
+	      v44_compressed_decoder_pending(decoder) ==
 		      sizeof(expected) &&
-	      sippymodem_v44_compressed_decoder_read(
+	      v44_compressed_decoder_read(
 		      decoder, actual, sizeof(actual)) == sizeof(actual) &&
 	      memcmp(actual, expected, sizeof(expected)) == 0,
 	      "V.44 Appendix II.1 wire image decoded incorrectly");
-	sippymodem_v44_compressed_decoder_destroy(decoder);
+	v44_compressed_decoder_destroy(decoder);
 	return true;
 }
 

@@ -33,7 +33,7 @@ static bool parameter_field_is_valid(const uint8_t *field, size_t length)
 }
 
 static bool fields_are_valid(
-	const struct sippymodem_v42_xid_fields *fields)
+	const struct v42_xid_fields *fields)
 {
 	if (fields == NULL)
 		return false;
@@ -62,7 +62,7 @@ static bool add_size(size_t *total, size_t amount)
 }
 
 static bool encoded_size(
-	const struct sippymodem_v42_xid_fields *fields, size_t *size)
+	const struct v42_xid_fields *fields, size_t *size)
 {
 	size_t total = 1;
 
@@ -95,8 +95,8 @@ static void put_data_link_group(
 	*offset += length;
 }
 
-enum sippymodem_v42_xid_result sippymodem_v42_xid_encode(
-	const struct sippymodem_v42_xid_fields *fields,
+enum v42_xid_result v42_xid_encode(
+	const struct v42_xid_fields *fields,
 	uint8_t *output,
 	size_t output_capacity,
 	size_t *output_length)
@@ -107,10 +107,10 @@ enum sippymodem_v42_xid_result sippymodem_v42_xid_encode(
 	if (!fields_are_valid(fields) || output_length == NULL ||
 	    (output_capacity != 0 && output == NULL) ||
 	    !encoded_size(fields, &required))
-		return SIPPYMODEM_V42_XID_INVALID_ARGUMENT;
+		return V42_XID_INVALID_ARGUMENT;
 	if (required > output_capacity)
-		return SIPPYMODEM_V42_XID_NEED_OUTPUT;
-	output[offset++] = SIPPYMODEM_V42_XID_GENERAL_FORMAT;
+		return V42_XID_NEED_OUTPUT;
+	output[offset++] = V42_XID_GENERAL_FORMAT;
 	if (fields->parameter_negotiation_length != 0)
 		put_data_link_group(
 			output, &offset, V42_XID_PARAMETER_NEGOTIATION,
@@ -128,7 +128,7 @@ enum sippymodem_v42_xid_result sippymodem_v42_xid_encode(
 		offset += fields->user_data_length;
 	}
 	*output_length = offset;
-	return SIPPYMODEM_V42_XID_OK;
+	return V42_XID_OK;
 }
 
 static bool group_follows(uint8_t identifier, bool have_previous,
@@ -137,21 +137,21 @@ static bool group_follows(uint8_t identifier, bool have_previous,
 	return !have_previous || identifier > previous;
 }
 
-enum sippymodem_v42_xid_result sippymodem_v42_xid_decode(
+enum v42_xid_result v42_xid_decode(
 	const uint8_t *input,
 	size_t input_length,
-	struct sippymodem_v42_xid_fields *fields)
+	struct v42_xid_fields *fields)
 {
-	struct sippymodem_v42_xid_fields decoded = { 0 };
+	struct v42_xid_fields decoded = { 0 };
 	size_t offset = 1;
 	uint8_t previous = 0;
 	bool have_previous = false;
 
 	if (input == NULL || fields == NULL)
-		return SIPPYMODEM_V42_XID_INVALID_ARGUMENT;
+		return V42_XID_INVALID_ARGUMENT;
 	if (input_length == 0 ||
-	    input[0] != SIPPYMODEM_V42_XID_GENERAL_FORMAT)
-		return SIPPYMODEM_V42_XID_MALFORMED;
+	    input[0] != V42_XID_GENERAL_FORMAT)
+		return V42_XID_MALFORMED;
 	while (offset < input_length) {
 		const uint8_t identifier = input[offset++];
 		const uint8_t *field;
@@ -163,7 +163,7 @@ enum sippymodem_v42_xid_result sippymodem_v42_xid_decode(
 			if (field_length <= 1 ||
 			    !parameter_field_is_valid(
 				    field + 1, field_length - 1U))
-				return SIPPYMODEM_V42_XID_MALFORMED;
+				return V42_XID_MALFORMED;
 			decoded.user_data = field;
 			decoded.user_data_length = field_length;
 			offset = input_length;
@@ -171,15 +171,15 @@ enum sippymodem_v42_xid_result sippymodem_v42_xid_decode(
 		}
 		if (!group_follows(identifier, have_previous, previous) ||
 		    input_length - offset < 2)
-			return SIPPYMODEM_V42_XID_MALFORMED;
+			return V42_XID_MALFORMED;
 		field_length = (size_t)input[offset] << 8 |
 			       input[offset + 1U];
 		offset += 2;
 		if (field_length == 0 || field_length > input_length - offset)
-			return SIPPYMODEM_V42_XID_MALFORMED;
+			return V42_XID_MALFORMED;
 		field = input + offset;
 		if (!parameter_field_is_valid(field, field_length))
-			return SIPPYMODEM_V42_XID_MALFORMED;
+			return V42_XID_MALFORMED;
 		if (identifier == V42_XID_PARAMETER_NEGOTIATION) {
 			decoded.parameter_negotiation = field;
 			decoded.parameter_negotiation_length = field_length;
@@ -192,20 +192,20 @@ enum sippymodem_v42_xid_result sippymodem_v42_xid_decode(
 		have_previous = true;
 	}
 	*fields = decoded;
-	return SIPPYMODEM_V42_XID_OK;
+	return V42_XID_OK;
 }
 
-const char *sippymodem_v42_xid_result_name(
-	enum sippymodem_v42_xid_result result)
+const char *v42_xid_result_name(
+	enum v42_xid_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V42_XID_OK:
+	case V42_XID_OK:
 		return "ok";
-	case SIPPYMODEM_V42_XID_NEED_OUTPUT:
+	case V42_XID_NEED_OUTPUT:
 		return "need output";
-	case SIPPYMODEM_V42_XID_MALFORMED:
+	case V42_XID_MALFORMED:
 		return "malformed";
-	case SIPPYMODEM_V42_XID_INVALID_ARGUMENT:
+	case V42_XID_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

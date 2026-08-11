@@ -30,8 +30,8 @@ struct v44_previous_code {
 	uint8_t first;
 };
 
-struct sippymodem_v44_dictionary_decoder {
-	struct sippymodem_v44_parameters parameters;
+struct v44_dictionary_decoder {
+	struct v44_parameters parameters;
 	struct v44_decoded_string *strings;
 	uint8_t *history;
 	uint8_t *output;
@@ -45,7 +45,7 @@ struct sippymodem_v44_dictionary_decoder {
 };
 
 static bool previous_code_is_valid(
-	const struct sippymodem_v44_dictionary_decoder *decoder)
+	const struct v44_dictionary_decoder *decoder)
 {
 	const struct v44_previous_code *previous = &decoder->previous;
 
@@ -71,10 +71,10 @@ static bool previous_code_is_valid(
 }
 
 static bool decoder_is_valid(
-	const struct sippymodem_v44_dictionary_decoder *decoder)
+	const struct v44_dictionary_decoder *decoder)
 {
 	return decoder != NULL &&
-	       sippymodem_v44_parameters_are_valid(&decoder->parameters) &&
+	       v44_parameters_are_valid(&decoder->parameters) &&
 	       decoder->strings != NULL && decoder->history != NULL &&
 	       decoder->output != NULL &&
 	       decoder->output_capacity >= decoder->parameters.max_string_length &&
@@ -88,21 +88,21 @@ static bool decoder_is_valid(
 }
 
 static void reset_dictionary(
-	struct sippymodem_v44_dictionary_decoder *decoder)
+	struct v44_dictionary_decoder *decoder)
 {
 	decoder->next_codeword = V44_FIRST_CODEWORD;
 	decoder->history_length = 0;
 	decoder->previous = (struct v44_previous_code){ 0 };
 }
 
-struct sippymodem_v44_dictionary_decoder *
-sippymodem_v44_dictionary_decoder_create(
-	const struct sippymodem_v44_parameters *parameters,
+struct v44_dictionary_decoder *
+v44_dictionary_decoder_create(
+	const struct v44_parameters *parameters,
 	size_t output_capacity)
 {
-	struct sippymodem_v44_dictionary_decoder *decoder;
+	struct v44_dictionary_decoder *decoder;
 
-	if (!sippymodem_v44_parameters_are_valid(parameters) ||
+	if (!v44_parameters_are_valid(parameters) ||
 	    output_capacity < parameters->max_string_length)
 		return NULL;
 	decoder = calloc(1, sizeof(*decoder));
@@ -116,15 +116,15 @@ sippymodem_v44_dictionary_decoder_create(
 	decoder->output = malloc(output_capacity);
 	if (decoder->strings == NULL || decoder->history == NULL ||
 	    decoder->output == NULL) {
-		sippymodem_v44_dictionary_decoder_destroy(decoder);
+		v44_dictionary_decoder_destroy(decoder);
 		return NULL;
 	}
 	reset_dictionary(decoder);
 	return decoder;
 }
 
-void sippymodem_v44_dictionary_decoder_destroy(
-	struct sippymodem_v44_dictionary_decoder *decoder)
+void v44_dictionary_decoder_destroy(
+	struct v44_dictionary_decoder *decoder)
 {
 	if (decoder == NULL)
 		return;
@@ -134,26 +134,26 @@ void sippymodem_v44_dictionary_decoder_destroy(
 	free(decoder);
 }
 
-enum sippymodem_v44_dictionary_result
-sippymodem_v44_dictionary_decoder_reinitialize(
-	struct sippymodem_v44_dictionary_decoder *decoder)
+enum v44_dictionary_result
+v44_dictionary_decoder_reinitialize(
+	struct v44_dictionary_decoder *decoder)
 {
 	if (!decoder_is_valid(decoder))
-		return SIPPYMODEM_V44_DICTIONARY_INVALID_ARGUMENT;
+		return V44_DICTIONARY_INVALID_ARGUMENT;
 	reset_dictionary(decoder);
-	return SIPPYMODEM_V44_DICTIONARY_OK;
+	return V44_DICTIONARY_OK;
 }
 
 static bool previous_accepts_append(
-	const struct sippymodem_v44_dictionary_decoder *decoder)
+	const struct v44_dictionary_decoder *decoder)
 {
 	return (decoder->previous.type == V44_PREVIOUS_ORDINAL ||
 		decoder->previous.type == V44_PREVIOUS_CODEWORD) &&
 	       decoder->previous.length < decoder->parameters.max_string_length;
 }
 
-static enum sippymodem_v44_dictionary_result reserve_decoded_string(
-	const struct sippymodem_v44_dictionary_decoder *decoder,
+static enum v44_dictionary_result reserve_decoded_string(
+	const struct v44_dictionary_decoder *decoder,
 	size_t length,
 	bool creates_string)
 {
@@ -161,14 +161,14 @@ static enum sippymodem_v44_dictionary_result reserve_decoded_string(
 	    length > decoder->parameters.history_size - decoder->history_length ||
 	    (creates_string &&
 	     decoder->next_codeword >= decoder->parameters.codeword_limit))
-		return SIPPYMODEM_V44_DICTIONARY_PROCEDURAL_ERROR;
+		return V44_DICTIONARY_PROCEDURAL_ERROR;
 	if (length > decoder->output_capacity - decoder->output_length)
-		return SIPPYMODEM_V44_DICTIONARY_NEED_OUTPUT;
-	return SIPPYMODEM_V44_DICTIONARY_OK;
+		return V44_DICTIONARY_NEED_OUTPUT;
+	return V44_DICTIONARY_OK;
 }
 
 static void emit_decoded_byte(
-	struct sippymodem_v44_dictionary_decoder *decoder,
+	struct v44_dictionary_decoder *decoder,
 	uint8_t value)
 {
 	decoder->history[decoder->history_length++] = value;
@@ -179,7 +179,7 @@ static void emit_decoded_byte(
 }
 
 static void create_appended_string(
-	struct sippymodem_v44_dictionary_decoder *decoder,
+	struct v44_dictionary_decoder *decoder,
 	uint32_t current_start)
 {
 	struct v44_decoded_string *string =
@@ -189,20 +189,20 @@ static void create_appended_string(
 	string->length = decoder->previous.length + 1;
 }
 
-enum sippymodem_v44_dictionary_result
-sippymodem_v44_dictionary_decoder_decode_ordinal(
-	struct sippymodem_v44_dictionary_decoder *decoder,
+enum v44_dictionary_result
+v44_dictionary_decoder_decode_ordinal(
+	struct v44_dictionary_decoder *decoder,
 	uint8_t ordinal)
 {
 	bool append;
 	uint32_t start;
-	enum sippymodem_v44_dictionary_result result;
+	enum v44_dictionary_result result;
 
 	if (!decoder_is_valid(decoder))
-		return SIPPYMODEM_V44_DICTIONARY_INVALID_ARGUMENT;
+		return V44_DICTIONARY_INVALID_ARGUMENT;
 	append = previous_accepts_append(decoder);
 	result = reserve_decoded_string(decoder, 1, append);
-	if (result != SIPPYMODEM_V44_DICTIONARY_OK)
+	if (result != V44_DICTIONARY_OK)
 		return result;
 	start = (uint32_t)decoder->history_length;
 	emit_decoded_byte(decoder, ordinal);
@@ -214,11 +214,11 @@ sippymodem_v44_dictionary_decoder_decode_ordinal(
 		.length = 1,
 		.first = ordinal,
 	};
-	return SIPPYMODEM_V44_DICTIONARY_OK;
+	return V44_DICTIONARY_OK;
 }
 
 static bool decoded_string_is_valid(
-	const struct sippymodem_v44_dictionary_decoder *decoder,
+	const struct v44_dictionary_decoder *decoder,
 	const struct v44_decoded_string *string)
 {
 	return string->length >= 2 &&
@@ -227,9 +227,9 @@ static bool decoded_string_is_valid(
 	       string->length <= string->last_history_index + 1;
 }
 
-enum sippymodem_v44_dictionary_result
-sippymodem_v44_dictionary_decoder_decode_codeword(
-	struct sippymodem_v44_dictionary_decoder *decoder,
+enum v44_dictionary_result
+v44_dictionary_decoder_decode_codeword(
+	struct v44_dictionary_decoder *decoder,
 	uint32_t codeword)
 {
 	const struct v44_decoded_string *string = NULL;
@@ -239,32 +239,32 @@ sippymodem_v44_dictionary_decoder_decode_codeword(
 	uint8_t first;
 	bool append;
 	bool next;
-	enum sippymodem_v44_dictionary_result result;
+	enum v44_dictionary_result result;
 
 	if (!decoder_is_valid(decoder))
-		return SIPPYMODEM_V44_DICTIONARY_INVALID_ARGUMENT;
+		return V44_DICTIONARY_INVALID_ARGUMENT;
 	if (codeword < V44_FIRST_CODEWORD ||
 	    codeword > decoder->next_codeword ||
 	    codeword >= decoder->parameters.codeword_limit)
-		return SIPPYMODEM_V44_DICTIONARY_PROCEDURAL_ERROR;
+		return V44_DICTIONARY_PROCEDURAL_ERROR;
 	next = codeword == decoder->next_codeword;
 	append = previous_accepts_append(decoder);
 	if (next) {
 		if (!append)
-			return SIPPYMODEM_V44_DICTIONARY_PROCEDURAL_ERROR;
+			return V44_DICTIONARY_PROCEDURAL_ERROR;
 		source = decoder->previous.history_start;
 		length = decoder->previous.length + 1;
 		first = decoder->previous.first;
 	} else {
 		string = &decoder->strings[codeword];
 		if (!decoded_string_is_valid(decoder, string))
-			return SIPPYMODEM_V44_DICTIONARY_PROCEDURAL_ERROR;
+			return V44_DICTIONARY_PROCEDURAL_ERROR;
 		length = string->length;
 		source = string->last_history_index + 1 - length;
 		first = decoder->history[source];
 	}
 	result = reserve_decoded_string(decoder, length, append);
-	if (result != SIPPYMODEM_V44_DICTIONARY_OK)
+	if (result != V44_DICTIONARY_OK)
 		return result;
 	start = (uint32_t)decoder->history_length;
 	if (next) {
@@ -284,35 +284,35 @@ sippymodem_v44_dictionary_decoder_decode_codeword(
 		.length = length,
 		.first = first,
 	};
-	return SIPPYMODEM_V44_DICTIONARY_OK;
+	return V44_DICTIONARY_OK;
 }
 
-enum sippymodem_v44_dictionary_result
-sippymodem_v44_dictionary_decoder_decode_extension(
-	struct sippymodem_v44_dictionary_decoder *decoder,
+enum v44_dictionary_result
+v44_dictionary_decoder_decode_extension(
+	struct v44_dictionary_decoder *decoder,
 	uint32_t extension_length)
 {
 	const struct v44_decoded_string *base;
 	uint32_t source;
 	uint32_t total_length;
-	enum sippymodem_v44_dictionary_result result;
+	enum v44_dictionary_result result;
 
 	if (!decoder_is_valid(decoder))
-		return SIPPYMODEM_V44_DICTIONARY_INVALID_ARGUMENT;
+		return V44_DICTIONARY_INVALID_ARGUMENT;
 	if (decoder->previous.type != V44_PREVIOUS_CODEWORD ||
 	    extension_length == 0 ||
 	    extension_length > V44_MAX_EXTENSION_LENGTH ||
 	    extension_length > decoder->parameters.max_string_length -
 		decoder->previous.length)
-		return SIPPYMODEM_V44_DICTIONARY_PROCEDURAL_ERROR;
+		return V44_DICTIONARY_PROCEDURAL_ERROR;
 	base = &decoder->strings[decoder->previous.codeword];
 	if (!decoded_string_is_valid(decoder, base) ||
 	    base->last_history_index + 1 >= decoder->history_length)
-		return SIPPYMODEM_V44_DICTIONARY_PROCEDURAL_ERROR;
+		return V44_DICTIONARY_PROCEDURAL_ERROR;
 	source = base->last_history_index + 1;
 	total_length = decoder->previous.length + extension_length;
 	result = reserve_decoded_string(decoder, extension_length, true);
-	if (result != SIPPYMODEM_V44_DICTIONARY_OK)
+	if (result != V44_DICTIONARY_OK)
 		return result;
 	for (uint32_t index = 0; index < extension_length; ++index)
 		emit_decoded_byte(decoder, decoder->history[source + index]);
@@ -325,17 +325,17 @@ sippymodem_v44_dictionary_decoder_decode_extension(
 	decoder->previous = (struct v44_previous_code){
 		.type = V44_PREVIOUS_EXTENSION,
 	};
-	return SIPPYMODEM_V44_DICTIONARY_OK;
+	return V44_DICTIONARY_OK;
 }
 
-size_t sippymodem_v44_dictionary_decoder_pending(
-	const struct sippymodem_v44_dictionary_decoder *decoder)
+size_t v44_dictionary_decoder_pending(
+	const struct v44_dictionary_decoder *decoder)
 {
 	return decoder_is_valid(decoder) ? decoder->output_length : 0;
 }
 
-size_t sippymodem_v44_dictionary_decoder_read(
-	struct sippymodem_v44_dictionary_decoder *decoder,
+size_t v44_dictionary_decoder_read(
+	struct v44_dictionary_decoder *decoder,
 	uint8_t *output,
 	size_t output_capacity)
 {
@@ -359,17 +359,17 @@ size_t sippymodem_v44_dictionary_decoder_read(
 	return count;
 }
 
-const char *sippymodem_v44_dictionary_result_name(
-	enum sippymodem_v44_dictionary_result result)
+const char *v44_dictionary_result_name(
+	enum v44_dictionary_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V44_DICTIONARY_OK:
+	case V44_DICTIONARY_OK:
 		return "ok";
-	case SIPPYMODEM_V44_DICTIONARY_NEED_OUTPUT:
+	case V44_DICTIONARY_NEED_OUTPUT:
 		return "need output";
-	case SIPPYMODEM_V44_DICTIONARY_INVALID_ARGUMENT:
+	case V44_DICTIONARY_INVALID_ARGUMENT:
 		return "invalid argument";
-	case SIPPYMODEM_V44_DICTIONARY_PROCEDURAL_ERROR:
+	case V44_DICTIONARY_PROCEDURAL_ERROR:
 		return "procedural error";
 	}
 	return "unknown";

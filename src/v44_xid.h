@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V44_XID_H
-#define SIPPYMODEM_V44_XID_H
+#ifndef V44_XID_H
+#define V44_XID_H
 
 #include "v44_stream.h"
 
@@ -10,32 +10,32 @@
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_V44_XID_OFFER_SIZE = 34,
+	V44_XID_OFFER_SIZE = 34,
 };
 
-struct sippymodem_v44_direction_offer {
+struct v44_direction_offer {
 	bool enabled;
-	struct sippymodem_v44_parameters parameters;
+	struct v44_parameters parameters;
 };
 
 /* Transmit and receive are relative to the entity represented by the offer. */
-struct sippymodem_v44_offer {
-	struct sippymodem_v44_direction_offer transmit;
-	struct sippymodem_v44_direction_offer receive;
+struct v44_offer {
+	struct v44_direction_offer transmit;
+	struct v44_direction_offer receive;
 };
 
-enum sippymodem_v44_xid_result {
-	SIPPYMODEM_V44_XID_OK = 0,
-	SIPPYMODEM_V44_XID_NEED_OUTPUT,
-	SIPPYMODEM_V44_XID_MALFORMED,
-	SIPPYMODEM_V44_XID_INVALID_ARGUMENT,
+enum v44_xid_result {
+	V44_XID_OK = 0,
+	V44_XID_NEED_OUTPUT,
+	V44_XID_MALFORMED,
+	V44_XID_INVALID_ARGUMENT,
 };
 
-struct sippymodem_v44_offer sippymodem_v44_default_offer(void);
+struct v44_offer v44_default_offer(void);
 
 /* Encode the complete V.42 XID User Data Subfield for a V.44 offer. */
-enum sippymodem_v44_xid_result sippymodem_v44_xid_encode(
-	const struct sippymodem_v44_offer *offer,
+enum v44_xid_result v44_xid_encode(
+	const struct v44_offer *offer,
 	uint8_t *output,
 	size_t output_capacity,
 	size_t *output_length);
@@ -49,22 +49,22 @@ enum sippymodem_v44_xid_result sippymodem_v44_xid_encode(
  * The capability bit for later Parameter Mode is accepted but does not cause
  * that mode to be entered; this codec selects any parameters carried in XID.
  */
-enum sippymodem_v44_xid_result sippymodem_v44_xid_decode(
+enum v44_xid_result v44_xid_decode(
 	const uint8_t *input,
 	size_t input_length,
-	struct sippymodem_v44_offer *offer);
+	struct v44_offer *offer);
 
 /*
  * Select parameters from the local perspective. A direction is enabled only
  * when the sender and corresponding receiver both request it. Each selected
  * resource limit is the lesser of the two peers' proposals.
  */
-enum sippymodem_v44_xid_result sippymodem_v44_xid_negotiate(
-	const struct sippymodem_v44_offer *local,
-	const struct sippymodem_v44_offer *peer,
-	struct sippymodem_v44_offer *negotiated);
+enum v44_xid_result v44_xid_negotiate(
+	const struct v44_offer *local,
+	const struct v44_offer *peer,
+	struct v44_offer *negotiated);
 
-const char *sippymodem_v44_xid_result_name(
-	enum sippymodem_v44_xid_result result);
+const char *v44_xid_result_name(
+	enum v44_xid_result result);
 
 #endif

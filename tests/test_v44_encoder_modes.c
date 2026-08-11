@@ -8,20 +8,20 @@
 #include <stdint.h>
 #include <string.h>
 
-static const struct sippymodem_v44_parameters parameters = {
-	.codeword_limit = SIPPYMODEM_V44_MIN_CODEWORDS,
-	.max_string_length = SIPPYMODEM_V44_MIN_STRING_LENGTH,
-	.history_size = SIPPYMODEM_V44_MIN_HISTORY_SIZE,
+static const struct v44_parameters parameters = {
+	.codeword_limit = V44_MIN_CODEWORDS,
+	.max_string_length = V44_MIN_STRING_LENGTH,
+	.history_size = V44_MIN_HISTORY_SIZE,
 };
 
 static bool drain_one(
-	struct sippymodem_v44_encoder *encoder,
+	struct v44_encoder *encoder,
 	uint8_t *wire,
 	size_t wire_capacity,
 	size_t *wire_length)
 {
 	if (*wire_length >= wire_capacity ||
-	    sippymodem_v44_encoder_read(
+	    v44_encoder_read(
 		    encoder, wire + *wire_length, 1) != 1)
 		return false;
 	(*wire_length)++;
@@ -29,21 +29,21 @@ static bool drain_one(
 }
 
 static bool progress_is(
-	const struct sippymodem_v44_encoder *encoder,
-	enum sippymodem_v44_encoder_mode mode,
+	const struct v44_encoder *encoder,
+	enum v44_encoder_mode mode,
 	uint64_t represented_octets,
 	uint64_t wire_bits)
 {
-	struct sippymodem_v44_encoder_progress progress;
+	struct v44_encoder_progress progress;
 
-	return sippymodem_v44_encoder_get_progress(encoder, &progress) &&
+	return v44_encoder_get_progress(encoder, &progress) &&
 	       progress.mode == mode &&
 	       progress.represented_octets == represented_octets &&
 	       progress.wire_bits == wire_bits;
 }
 
 static bool pump_input(
-	struct sippymodem_v44_encoder *encoder,
+	struct v44_encoder *encoder,
 	const uint8_t *plain,
 	size_t plain_length,
 	uint8_t *wire,
@@ -54,17 +54,17 @@ static bool pump_input(
 	size_t input_length = plain_length;
 
 	for (size_t attempts = 0; input_length != 0; ++attempts) {
-		enum sippymodem_v44_encode_result result;
+		enum v44_encode_result result;
 
 		if (attempts > 100000)
 			return false;
-		result = sippymodem_v44_encoder_process(
+		result = v44_encoder_process(
 			encoder, &input, &input_length);
-		if (result == SIPPYMODEM_V44_ENCODE_NEED_OUTPUT) {
+		if (result == V44_ENCODE_NEED_OUTPUT) {
 			if (!drain_one(
 				    encoder, wire, wire_capacity, wire_length))
 				return false;
-		} else if (result != SIPPYMODEM_V44_ENCODE_OK) {
+		} else if (result != V44_ENCODE_OK) {
 			return false;
 		}
 	}
@@ -72,19 +72,19 @@ static bool pump_input(
 }
 
 static bool pump_mode(
-	struct sippymodem_v44_encoder *encoder,
-	enum sippymodem_v44_encoder_mode target,
+	struct v44_encoder *encoder,
+	enum v44_encoder_mode target,
 	uint8_t *wire,
 	size_t wire_capacity,
 	size_t *wire_length)
 {
 	for (size_t attempts = 0; attempts < 100000; ++attempts) {
-		enum sippymodem_v44_encode_result result =
-			sippymodem_v44_encoder_request_mode(encoder, target);
+		enum v44_encode_result result =
+			v44_encoder_request_mode(encoder, target);
 
-		if (result == SIPPYMODEM_V44_ENCODE_OK)
+		if (result == V44_ENCODE_OK)
 			return true;
-		if (result != SIPPYMODEM_V44_ENCODE_NEED_OUTPUT ||
+		if (result != V44_ENCODE_NEED_OUTPUT ||
 		    !drain_one(encoder, wire, wire_capacity, wire_length))
 			return false;
 	}
@@ -92,18 +92,18 @@ static bool pump_mode(
 }
 
 static bool pump_flush(
-	struct sippymodem_v44_encoder *encoder,
+	struct v44_encoder *encoder,
 	uint8_t *wire,
 	size_t wire_capacity,
 	size_t *wire_length)
 {
 	for (size_t attempts = 0; attempts < 100000; ++attempts) {
-		enum sippymodem_v44_encode_result result =
-			sippymodem_v44_encoder_flush(encoder);
+		enum v44_encode_result result =
+			v44_encoder_flush(encoder);
 
-		if (result == SIPPYMODEM_V44_ENCODE_FLUSHED)
+		if (result == V44_ENCODE_FLUSHED)
 			return true;
-		if (result != SIPPYMODEM_V44_ENCODE_NEED_OUTPUT ||
+		if (result != V44_ENCODE_NEED_OUTPUT ||
 		    !drain_one(encoder, wire, wire_capacity, wire_length))
 			return false;
 	}
@@ -117,8 +117,8 @@ static bool decode_one_byte_chunks(
 	size_t plain_capacity,
 	size_t *plain_length)
 {
-	struct sippymodem_v44_decoder *decoder =
-		sippymodem_v44_decoder_create(
+	struct v44_decoder *decoder =
+		v44_decoder_create(
 			&parameters, parameters.max_string_length);
 	size_t offset = 0;
 	bool flushed = false;
@@ -132,8 +132,8 @@ static bool decode_one_byte_chunks(
 		size_t input_length = offered;
 		size_t output_length = 0;
 		size_t output_capacity = *plain_length < plain_capacity ? 1 : 0;
-		enum sippymodem_v44_decode_result result =
-			sippymodem_v44_decoder_process(
+		enum v44_decode_result result =
+			v44_decoder_process(
 				decoder, &input, &input_length,
 				output_capacity != 0 ? plain + *plain_length : NULL,
 				output_capacity, &output_length);
@@ -142,25 +142,25 @@ static bool decode_one_byte_chunks(
 			goto fail;
 		offset += offered - input_length;
 		*plain_length += output_length;
-		if (result == SIPPYMODEM_V44_DECODE_FLUSHED)
+		if (result == V44_DECODE_FLUSHED)
 			flushed = true;
-		else if (result != SIPPYMODEM_V44_DECODE_OK &&
-			 result != SIPPYMODEM_V44_DECODE_NEED_INPUT &&
-			 result != SIPPYMODEM_V44_DECODE_NEED_OUTPUT)
+		else if (result != V44_DECODE_OK &&
+			 result != V44_DECODE_NEED_INPUT &&
+			 result != V44_DECODE_NEED_OUTPUT)
 			goto fail;
-		if (result == SIPPYMODEM_V44_DECODE_NEED_INPUT &&
+		if (result == V44_DECODE_NEED_INPUT &&
 		    offset == wire_length)
 			goto fail;
 	}
 	if (!flushed || offset != wire_length ||
-	    sippymodem_v44_decoder_finish(decoder) !=
-		    SIPPYMODEM_V44_DECODE_OK)
+	    v44_decoder_finish(decoder) !=
+		    V44_DECODE_OK)
 		goto fail;
-	sippymodem_v44_decoder_destroy(decoder);
+	v44_decoder_destroy(decoder);
 	return true;
 
 fail:
-	sippymodem_v44_decoder_destroy(decoder);
+	v44_decoder_destroy(decoder);
 	return false;
 }
 
@@ -171,10 +171,10 @@ static bool test_exact_mode_round_trip(void)
 	static const uint8_t expected_prefix[] = {
 		0x82, 0x01, 'T', 0, 1, 'U', 51, 0,
 	};
-	struct sippymodem_v44_encoder *encoder =
-		sippymodem_v44_encoder_create(&parameters, 2);
-	struct sippymodem_v44_encoder *fresh =
-		sippymodem_v44_encoder_create(&parameters, 2);
+	struct v44_encoder *encoder =
+		v44_encoder_create(&parameters, 2);
+	struct v44_encoder *fresh =
+		v44_encoder_create(&parameters, 2);
 	uint8_t post[96];
 	uint8_t wire[512];
 	uint8_t fresh_wire[512];
@@ -195,30 +195,30 @@ static bool test_exact_mode_round_trip(void)
 	CHECK(pump_input(
 		      encoder, compressed_prefix, sizeof(compressed_prefix), wire,
 		      sizeof(wire), &wire_length) &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-	      sippymodem_v44_encoder_process(
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_TRANSPARENT) ==
+		      V44_ENCODE_NEED_OUTPUT &&
+	      v44_encoder_process(
 		      encoder, &blocked, &blocked_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
+		      V44_ENCODE_INVALID_STATE &&
 	      blocked == transparent && blocked_length == sizeof(transparent) &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_INVALID_STATE &&
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_COMPRESSED) ==
+		      V44_ENCODE_INVALID_STATE &&
 	      pump_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, wire,
+		      encoder, V44_ENCODER_TRANSPARENT, wire,
 		      sizeof(wire), &wire_length) &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
-		      SIPPYMODEM_V44_ENCODE_OK,
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_TRANSPARENT) ==
+		      V44_ENCODE_OK,
 	      "V.44 ETM transition did not serialize accepted data");
 	CHECK(pump_input(
 		      encoder, transparent, sizeof(transparent), wire,
 		      sizeof(wire), &wire_length) &&
 	      pump_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, wire,
+		      encoder, V44_ENCODER_COMPRESSED, wire,
 		      sizeof(wire), &wire_length) &&
 	      wire_length == sizeof(expected_prefix) &&
 	      memcmp(wire, expected_prefix, sizeof(expected_prefix)) == 0,
@@ -247,32 +247,32 @@ static bool test_exact_mode_round_trip(void)
 	      decoded_length == sizeof(expected_plain) &&
 	      memcmp(decoded, expected_plain, sizeof(expected_plain)) == 0,
 	      "mixed V.44 modes did not round trip in one-byte chunks");
-	sippymodem_v44_encoder_destroy(fresh);
-	sippymodem_v44_encoder_destroy(encoder);
+	v44_encoder_destroy(fresh);
+	v44_encoder_destroy(encoder);
 	return true;
 }
 
 static bool test_escape_cycle_and_transition_backpressure(void)
 {
-	struct sippymodem_v44_encoder *encoder =
-		sippymodem_v44_encoder_create(&parameters, 2);
+	struct v44_encoder *encoder =
+		v44_encoder_create(&parameters, 2);
 	uint8_t transition[8];
 	size_t transition_length = 0;
 	uint8_t escape = 0;
 	bool saw_wrap = false;
 
 	CHECK(encoder != NULL &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, (enum sippymodem_v44_encoder_mode)99) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT &&
-	      sippymodem_v44_encoder_request_mode(
-		      NULL, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT &&
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_COMPRESSED) ==
+		      V44_ENCODE_OK &&
+	      v44_encoder_request_mode(
+		      encoder, (enum v44_encoder_mode)99) ==
+		      V44_ENCODE_INVALID_ARGUMENT &&
+	      v44_encoder_request_mode(
+		      NULL, V44_ENCODER_TRANSPARENT) ==
+		      V44_ENCODE_INVALID_ARGUMENT &&
 	      pump_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, transition,
+		      encoder, V44_ENCODER_TRANSPARENT, transition,
 		      sizeof(transition), &transition_length) &&
 	      transition_length == 1 && transition[0] == 0x01,
 	      "empty V.44 ETM transition changed its wire image");
@@ -285,22 +285,22 @@ static bool test_escape_cycle_and_transition_backpressure(void)
 		size_t blocked_length = 1;
 		uint8_t output = 0xff;
 
-		CHECK(sippymodem_v44_encoder_process(
+		CHECK(v44_encoder_process(
 			      encoder, &input, &input_length) ==
-			      SIPPYMODEM_V44_ENCODE_OK &&
+			      V44_ENCODE_OK &&
 		      input_length == 0 &&
-		      sippymodem_v44_encoder_pending(encoder) == 2 &&
-		      sippymodem_v44_encoder_process(
+		      v44_encoder_pending(encoder) == 2 &&
+		      v44_encoder_process(
 			      encoder, &blocked, &blocked_length) ==
-			      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+			      V44_ENCODE_NEED_OUTPUT &&
 		      blocked == &next_value && blocked_length == 1 &&
-		      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+		      v44_encoder_read(encoder, &output, 1) == 1 &&
 		      output == escape &&
-		      sippymodem_v44_encoder_process(
+		      v44_encoder_process(
 			      encoder, &blocked, &blocked_length) ==
-			      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+			      V44_ENCODE_NEED_OUTPUT &&
 		      blocked == &next_value && blocked_length == 1 &&
-		      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+		      v44_encoder_read(encoder, &output, 1) == 1 &&
 		      output == 1,
 		      "V.44 EID rotation %u was not atomic", index);
 		if (escape == 255 && next_value == 50)
@@ -318,46 +318,46 @@ static bool test_escape_cycle_and_transition_backpressure(void)
 		size_t blocked_length = sizeof(blocked_byte);
 		uint8_t output = 0xff;
 
-		CHECK(sippymodem_v44_encoder_process(
+		CHECK(v44_encoder_process(
 			      encoder, &input, &input_length) ==
-			      SIPPYMODEM_V44_ENCODE_OK &&
-		      sippymodem_v44_encoder_request_mode(
-			      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-			      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-		      sippymodem_v44_encoder_process(
+			      V44_ENCODE_OK &&
+		      v44_encoder_request_mode(
+			      encoder, V44_ENCODER_COMPRESSED) ==
+			      V44_ENCODE_NEED_OUTPUT &&
+		      v44_encoder_process(
 			      encoder, &blocked, &blocked_length) ==
-			      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
+			      V44_ENCODE_INVALID_STATE &&
 		      blocked == blocked_byte &&
 		      blocked_length == sizeof(blocked_byte) &&
-		      sippymodem_v44_encoder_request_mode(
-			      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
-			      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
-		      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+		      v44_encoder_request_mode(
+			      encoder, V44_ENCODER_TRANSPARENT) ==
+			      V44_ENCODE_INVALID_STATE &&
+		      v44_encoder_read(encoder, &output, 1) == 1 &&
 		      output == 'Q' &&
-		      sippymodem_v44_encoder_request_mode(
-			      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-			      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-		      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+		      v44_encoder_request_mode(
+			      encoder, V44_ENCODER_COMPRESSED) ==
+			      V44_ENCODE_NEED_OUTPUT &&
+		      v44_encoder_read(encoder, &output, 1) == 1 &&
 		      output == 0 &&
-		      sippymodem_v44_encoder_request_mode(
-			      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-			      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-		      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+		      v44_encoder_request_mode(
+			      encoder, V44_ENCODER_COMPRESSED) ==
+			      V44_ENCODE_NEED_OUTPUT &&
+		      v44_encoder_read(encoder, &output, 1) == 1 &&
 		      output == 0 &&
-		      sippymodem_v44_encoder_request_mode(
-			      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-			      SIPPYMODEM_V44_ENCODE_OK,
+		      v44_encoder_request_mode(
+			      encoder, V44_ENCODER_COMPRESSED) ==
+			      V44_ENCODE_OK,
 		      "V.44 ECM transition duplicated or reordered output");
 	}
-	sippymodem_v44_encoder_destroy(encoder);
+	v44_encoder_destroy(encoder);
 	return true;
 }
 
 static bool test_transparent_flush(void)
 {
 	static const uint8_t plain[] = { 'X' };
-	struct sippymodem_v44_encoder *encoder =
-		sippymodem_v44_encoder_create(&parameters, 2);
+	struct v44_encoder *encoder =
+		v44_encoder_create(&parameters, 2);
 	uint8_t wire[8];
 	size_t wire_length = 0;
 	const uint8_t *input = plain;
@@ -367,30 +367,30 @@ static bool test_transparent_flush(void)
 
 	CHECK(encoder != NULL &&
 	      pump_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, wire,
+		      encoder, V44_ENCODER_TRANSPARENT, wire,
 		      sizeof(wire), &wire_length),
 	      "could not enter V.44 transparent flush mode");
 	wire_length = 0;
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+		      V44_ENCODE_OK &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_NEED_OUTPUT &&
 	      drain_one(encoder, wire, sizeof(wire), &wire_length) &&
-	      sippymodem_v44_encoder_process(
+	      v44_encoder_process(
 		      encoder, &blocked, &blocked_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
+		      V44_ENCODE_INVALID_STATE &&
 	      blocked == plain && blocked_length == sizeof(plain) &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_COMPRESSED) ==
+		      V44_ENCODE_INVALID_STATE &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_FLUSHED &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_FLUSHED &&
 	      wire_length == 1 && wire[0] == 'X',
 	      "transparent V.44 flush emitted a compressed control");
-	sippymodem_v44_encoder_destroy(encoder);
+	v44_encoder_destroy(encoder);
 	return true;
 }
 
@@ -400,10 +400,10 @@ static bool test_progress_accounting(void)
 	static const uint8_t transparent_escape[] = { 0 };
 	static const uint8_t transparent_t[] = { 'T' };
 	static const uint8_t compressed_b[] = { 'B' };
-	struct sippymodem_v44_encoder *encoder =
-		sippymodem_v44_encoder_create(&parameters, 2);
-	struct sippymodem_v44_encoder_progress unchanged = {
-		.mode = SIPPYMODEM_V44_ENCODER_TRANSPARENT,
+	struct v44_encoder *encoder =
+		v44_encoder_create(&parameters, 2);
+	struct v44_encoder_progress unchanged = {
+		.mode = V44_ENCODER_TRANSPARENT,
 		.represented_octets = 91,
 		.wire_bits = 73,
 	};
@@ -413,105 +413,105 @@ static bool test_progress_accounting(void)
 
 	CHECK(encoder != NULL &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 0, 0) &&
-	      !sippymodem_v44_encoder_get_progress(NULL, &unchanged) &&
-	      unchanged.mode == SIPPYMODEM_V44_ENCODER_TRANSPARENT &&
+		      encoder, V44_ENCODER_COMPRESSED, 0, 0) &&
+	      !v44_encoder_get_progress(NULL, &unchanged) &&
+	      unchanged.mode == V44_ENCODER_TRANSPARENT &&
 	      unchanged.represented_octets == 91 && unchanged.wire_bits == 73 &&
-	      !sippymodem_v44_encoder_get_progress(encoder, NULL),
+	      !v44_encoder_get_progress(encoder, NULL),
 	      "fresh V.44 encoder progress was invalid");
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      V44_ENCODE_OK &&
 	      input_length == 0 &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 1, 8),
+		      encoder, V44_ENCODER_COMPRESSED, 1, 8),
 	      "queued V.44 ordinal was not reported as represented");
-	CHECK(sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	CHECK(v44_encoder_request_mode(
+		      encoder, V44_ENCODER_TRANSPARENT) ==
+		      V44_ENCODE_NEED_OUTPUT &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 1, 8) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+		      encoder, V44_ENCODER_COMPRESSED, 1, 8) &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_TRANSPARENT) ==
+		      V44_ENCODE_NEED_OUTPUT &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 1, 16) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      encoder, V44_ENCODER_COMPRESSED, 1, 16) &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_TRANSPARENT) ==
+		      V44_ENCODE_OK &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 1, 16),
+		      encoder, V44_ENCODER_TRANSPARENT, 1, 16),
 	      "V.44 ETM progress duplicated data or missed padding");
 	input = transparent_escape;
 	input_length = sizeof(transparent_escape);
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      V44_ENCODE_OK &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 2, 32) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+		      encoder, V44_ENCODER_TRANSPARENT, 2, 32) &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 2, 32) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1,
+		      encoder, V44_ENCODER_TRANSPARENT, 2, 32) &&
+	      v44_encoder_read(encoder, &output, 1) == 1,
 	      "V.44 EID progress depended on output draining");
 	input = transparent_t;
 	input_length = sizeof(transparent_t);
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      V44_ENCODE_OK &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 40) &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
+		      encoder, V44_ENCODER_TRANSPARENT, 3, 40) &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_NEED_OUTPUT &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_FLUSHED &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 40),
+		      encoder, V44_ENCODER_TRANSPARENT, 3, 40),
 	      "transparent V.44 flush changed progress");
-	CHECK(sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	CHECK(v44_encoder_request_mode(
+		      encoder, V44_ENCODER_COMPRESSED) ==
+		      V44_ENCODE_NEED_OUTPUT &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 56) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+		      encoder, V44_ENCODER_TRANSPARENT, 3, 56) &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_COMPRESSED) ==
+		      V44_ENCODE_NEED_OUTPUT &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 56) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_request_mode(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      encoder, V44_ENCODER_TRANSPARENT, 3, 56) &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_request_mode(
+		      encoder, V44_ENCODER_COMPRESSED) ==
+		      V44_ENCODE_OK &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 3, 56),
+		      encoder, V44_ENCODER_COMPRESSED, 3, 56),
 	      "V.44 ECM progress changed across backpressure retries");
 	input = compressed_b;
 	input_length = sizeof(compressed_b);
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      V44_ENCODE_OK &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 64) &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+		      encoder, V44_ENCODER_COMPRESSED, 4, 64) &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_NEED_OUTPUT &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 64) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+		      encoder, V44_ENCODER_COMPRESSED, 4, 64) &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_NEED_OUTPUT &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 72) &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
+		      encoder, V44_ENCODER_COMPRESSED, 4, 72) &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_FLUSHED &&
 	      progress_is(
-		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 72),
+		      encoder, V44_ENCODER_COMPRESSED, 4, 72),
 	      "V.44 compressed FLUSH progress was not exact");
-	sippymodem_v44_encoder_destroy(encoder);
+	v44_encoder_destroy(encoder);
 	return true;
 }
 

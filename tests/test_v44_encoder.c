@@ -9,21 +9,21 @@
 #include <stdint.h>
 #include <string.h>
 
-static const struct sippymodem_v44_parameters parameters = {
-	.codeword_limit = SIPPYMODEM_V44_MIN_CODEWORDS,
-	.max_string_length = SIPPYMODEM_V44_MIN_STRING_LENGTH,
-	.history_size = SIPPYMODEM_V44_MIN_HISTORY_SIZE,
+static const struct v44_parameters parameters = {
+	.codeword_limit = V44_MIN_CODEWORDS,
+	.max_string_length = V44_MIN_STRING_LENGTH,
+	.history_size = V44_MIN_HISTORY_SIZE,
 };
 
 static bool drain_one(
-	struct sippymodem_v44_encoder *encoder,
+	struct v44_encoder *encoder,
 	uint8_t *wire,
 	size_t wire_capacity,
 	size_t *wire_length)
 {
 	if (*wire_length >= wire_capacity)
 		return false;
-	if (sippymodem_v44_encoder_read(
+	if (v44_encoder_read(
 		    encoder, wire + *wire_length, 1) != 1)
 		return false;
 	(*wire_length)++;
@@ -31,7 +31,7 @@ static bool drain_one(
 }
 
 static bool encode_segment(
-	struct sippymodem_v44_encoder *encoder,
+	struct v44_encoder *encoder,
 	const uint8_t *plain,
 	size_t plain_length,
 	uint8_t *wire,
@@ -42,25 +42,25 @@ static bool encode_segment(
 	size_t input_length = plain_length;
 
 	while (input_length != 0) {
-		enum sippymodem_v44_encode_result result =
-			sippymodem_v44_encoder_process(
+		enum v44_encode_result result =
+			v44_encoder_process(
 				encoder, &input, &input_length);
 
-		if (result == SIPPYMODEM_V44_ENCODE_NEED_OUTPUT) {
+		if (result == V44_ENCODE_NEED_OUTPUT) {
 			if (!drain_one(
 				    encoder, wire, wire_capacity, wire_length))
 				return false;
-		} else if (result != SIPPYMODEM_V44_ENCODE_OK) {
+		} else if (result != V44_ENCODE_OK) {
 			return false;
 		}
 	}
 	for (;;) {
-		enum sippymodem_v44_encode_result result =
-			sippymodem_v44_encoder_flush(encoder);
+		enum v44_encode_result result =
+			v44_encoder_flush(encoder);
 
-		if (result == SIPPYMODEM_V44_ENCODE_FLUSHED)
+		if (result == V44_ENCODE_FLUSHED)
 			break;
-		if (result != SIPPYMODEM_V44_ENCODE_NEED_OUTPUT ||
+		if (result != V44_ENCODE_NEED_OUTPUT ||
 		    !drain_one(encoder, wire, wire_capacity, wire_length))
 			return false;
 	}
@@ -68,15 +68,15 @@ static bool encode_segment(
 }
 
 static bool encode_and_flush(
-	const struct sippymodem_v44_parameters *selected_parameters,
+	const struct v44_parameters *selected_parameters,
 	const uint8_t *plain,
 	size_t plain_length,
 	uint8_t *wire,
 	size_t wire_capacity,
 	size_t *wire_length)
 {
-	struct sippymodem_v44_encoder *encoder =
-		sippymodem_v44_encoder_create(selected_parameters, 2);
+	struct v44_encoder *encoder =
+		v44_encoder_create(selected_parameters, 2);
 	bool encoded;
 
 	if (encoder == NULL)
@@ -84,12 +84,12 @@ static bool encode_and_flush(
 	*wire_length = 0;
 	encoded = encode_segment(
 		encoder, plain, plain_length, wire, wire_capacity, wire_length);
-	sippymodem_v44_encoder_destroy(encoder);
+	v44_encoder_destroy(encoder);
 	return encoded;
 }
 
 static bool decode_wire_flushes(
-	const struct sippymodem_v44_parameters *selected_parameters,
+	const struct v44_parameters *selected_parameters,
 	const uint8_t *wire,
 	size_t wire_length,
 	uint8_t *plain,
@@ -97,8 +97,8 @@ static bool decode_wire_flushes(
 	size_t *plain_length,
 	unsigned int expected_flushes)
 {
-	struct sippymodem_v44_decoder *decoder =
-		sippymodem_v44_decoder_create(
+	struct v44_decoder *decoder =
+		v44_decoder_create(
 			selected_parameters,
 			selected_parameters->max_string_length);
 	const uint8_t *input = wire;
@@ -111,32 +111,32 @@ static bool decode_wire_flushes(
 	while (flush_count < expected_flushes) {
 		size_t available = plain_capacity - *plain_length;
 		size_t produced = 0;
-		enum sippymodem_v44_decode_result result;
+		enum v44_decode_result result;
 
-		result = sippymodem_v44_decoder_process(
+		result = v44_decoder_process(
 			decoder, &input, &input_length,
 			available != 0 ? plain + *plain_length : NULL,
 			available, &produced);
-		if (result == SIPPYMODEM_V44_DECODE_FLUSHED)
+		if (result == V44_DECODE_FLUSHED)
 			flush_count++;
-		else if (result != SIPPYMODEM_V44_DECODE_OK)
+		else if (result != V44_DECODE_OK)
 			goto fail;
 		*plain_length += produced;
 	}
 	if (input_length != 0 || flush_count != expected_flushes ||
-	    sippymodem_v44_decoder_finish(decoder) !=
-		    SIPPYMODEM_V44_DECODE_OK)
+	    v44_decoder_finish(decoder) !=
+		    V44_DECODE_OK)
 		goto fail;
-	sippymodem_v44_decoder_destroy(decoder);
+	v44_decoder_destroy(decoder);
 	return true;
 
 fail:
-	sippymodem_v44_decoder_destroy(decoder);
+	v44_decoder_destroy(decoder);
 	return false;
 }
 
 static bool decode_wire(
-	const struct sippymodem_v44_parameters *selected_parameters,
+	const struct v44_parameters *selected_parameters,
 	const uint8_t *wire,
 	size_t wire_length,
 	uint8_t *plain,
@@ -185,8 +185,8 @@ static bool test_appendix_wire_image(void)
 		0xb0, 0x09, 0x29, 0x5b, 0x29,
 		0xf8, 0x17, 0x64, 0x68, 0x00,
 	};
-	const struct sippymodem_v44_parameters default_parameters =
-		sippymodem_v44_default_parameters();
+	const struct v44_parameters default_parameters =
+		v44_default_parameters();
 	uint8_t wire[32];
 	uint8_t decoded[sizeof(plain)];
 	size_t wire_length = 0;
@@ -211,10 +211,10 @@ static bool test_appendix_wire_image(void)
 static bool test_repeated_string_wire_image(void)
 {
 	static const uint8_t plain[] = "CCCCCCCCCCX";
-	const struct sippymodem_v44_parameters default_parameters =
-		sippymodem_v44_default_parameters();
-	struct sippymodem_v44_test_wire *builder =
-		sippymodem_v44_test_wire_create(
+	const struct v44_parameters default_parameters =
+		v44_default_parameters();
+	struct v44_test_wire *builder =
+		v44_test_wire_create(
 			default_parameters.max_string_length, 32);
 	uint8_t expected[32];
 	uint8_t wire[32];
@@ -223,16 +223,16 @@ static bool test_repeated_string_wire_image(void)
 	size_t wire_length = 0;
 	size_t decoded_length = 0;
 	bool built = builder != NULL &&
-		sippymodem_v44_test_wire_ordinal(builder, 'C') &&
-		sippymodem_v44_test_wire_codeword(builder, 4) &&
-		sippymodem_v44_test_wire_extension(builder, 7) &&
-		sippymodem_v44_test_wire_ordinal(builder, 'X') &&
-		sippymodem_v44_test_wire_control(
-			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-		sippymodem_v44_test_wire_finish(
+		v44_test_wire_ordinal(builder, 'C') &&
+		v44_test_wire_codeword(builder, 4) &&
+		v44_test_wire_extension(builder, 7) &&
+		v44_test_wire_ordinal(builder, 'X') &&
+		v44_test_wire_control(
+			builder, V44_TEST_FLUSH) &&
+		v44_test_wire_finish(
 			builder, expected, sizeof(expected), &expected_length);
 
-	sippymodem_v44_test_wire_destroy(builder);
+	v44_test_wire_destroy(builder);
 	CHECK(built && encode_and_flush(
 				 &default_parameters, plain, sizeof(plain) - 1U,
 				 wire, sizeof(wire), &wire_length),
@@ -251,10 +251,10 @@ static bool test_repeated_string_wire_image(void)
 
 static bool check_codeword_stepup(size_t target_codeword)
 {
-	const struct sippymodem_v44_parameters default_parameters =
-		sippymodem_v44_default_parameters();
-	struct sippymodem_v44_test_wire *builder =
-		sippymodem_v44_test_wire_create(
+	const struct v44_parameters default_parameters =
+		v44_default_parameters();
+	struct v44_test_wire *builder =
+		v44_test_wire_create(
 			default_parameters.max_string_length, 512);
 	uint8_t plain[256];
 	uint8_t expected[512];
@@ -275,18 +275,18 @@ static bool check_codeword_stepup(size_t target_codeword)
 	plain[target_codeword - 2U] = plain[target_codeword - 4U];
 	plain[target_codeword - 1U] = plain[target_codeword - 3U];
 	for (size_t index = 0; built && index < prefix_length; ++index)
-		built = sippymodem_v44_test_wire_ordinal(builder, plain[index]);
+		built = v44_test_wire_ordinal(builder, plain[index]);
 	while (built && target_codeword >= threshold) {
-		built = sippymodem_v44_test_wire_stepup_codeword(builder);
+		built = v44_test_wire_stepup_codeword(builder);
 		threshold *= 2U;
 	}
-	built = built && sippymodem_v44_test_wire_codeword(
+	built = built && v44_test_wire_codeword(
 				   builder, (uint32_t)target_codeword) &&
-		sippymodem_v44_test_wire_control(
-			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-		sippymodem_v44_test_wire_finish(
+		v44_test_wire_control(
+			builder, V44_TEST_FLUSH) &&
+		v44_test_wire_finish(
 			builder, expected, sizeof(expected), &expected_length);
-	sippymodem_v44_test_wire_destroy(builder);
+	v44_test_wire_destroy(builder);
 	CHECK(built && encode_and_flush(
 				 &default_parameters, plain, target_codeword, wire,
 				 sizeof(wire), &wire_length),
@@ -324,13 +324,13 @@ static bool test_extension_field_boundaries(void)
 	uint8_t decoded[sizeof(plain)];
 
 	for (size_t item = 0; item < ARRAY_LENGTH(cases); ++item) {
-		const struct sippymodem_v44_parameters selected = {
-			.codeword_limit = SIPPYMODEM_V44_DEFAULT_CODEWORDS,
+		const struct v44_parameters selected = {
+			.codeword_limit = V44_DEFAULT_CODEWORDS,
 			.max_string_length = cases[item].max_string_length,
-			.history_size = SIPPYMODEM_V44_DEFAULT_HISTORY_SIZE,
+			.history_size = V44_DEFAULT_HISTORY_SIZE,
 		};
-		struct sippymodem_v44_test_wire *builder =
-			sippymodem_v44_test_wire_create(
+		struct v44_test_wire *builder =
+			v44_test_wire_create(
 				selected.max_string_length, sizeof(expected));
 		size_t plain_length = cases[item].extension_length + 4U;
 		size_t expected_length = 0;
@@ -341,17 +341,17 @@ static bool test_extension_field_boundaries(void)
 		memset(plain, 'C', plain_length - 1U);
 		plain[plain_length - 1U] = 'X';
 		built = builder != NULL &&
-			sippymodem_v44_test_wire_ordinal(builder, 'C') &&
-			sippymodem_v44_test_wire_codeword(builder, 4) &&
-			sippymodem_v44_test_wire_extension(
+			v44_test_wire_ordinal(builder, 'C') &&
+			v44_test_wire_codeword(builder, 4) &&
+			v44_test_wire_extension(
 				builder, cases[item].extension_length) &&
-			sippymodem_v44_test_wire_ordinal(builder, 'X') &&
-			sippymodem_v44_test_wire_control(
-				builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-			sippymodem_v44_test_wire_finish(
+			v44_test_wire_ordinal(builder, 'X') &&
+			v44_test_wire_control(
+				builder, V44_TEST_FLUSH) &&
+			v44_test_wire_finish(
 				builder, expected, sizeof(expected),
 				&expected_length);
-		sippymodem_v44_test_wire_destroy(builder);
+		v44_test_wire_destroy(builder);
 		CHECK(built && encode_and_flush(
 					 &selected, plain, plain_length, wire,
 					 sizeof(wire), &wire_length),
@@ -380,10 +380,10 @@ static bool test_flush_dictionary_continuity(void)
 	static const uint8_t first[] = { 'A', 'B' };
 	static const uint8_t second[] = { 'A', 'B', 'X' };
 	static const uint8_t plain[] = { 'A', 'B', 'A', 'B', 'X' };
-	struct sippymodem_v44_encoder *encoder =
-		sippymodem_v44_encoder_create(&parameters, 2);
-	struct sippymodem_v44_test_wire *builder =
-		sippymodem_v44_test_wire_create(
+	struct v44_encoder *encoder =
+		v44_encoder_create(&parameters, 2);
+	struct v44_test_wire *builder =
+		v44_test_wire_create(
 			parameters.max_string_length, 32);
 	uint8_t expected[32];
 	uint8_t wire[32];
@@ -392,19 +392,19 @@ static bool test_flush_dictionary_continuity(void)
 	size_t wire_length = 0;
 	size_t decoded_length = 0;
 	bool built = builder != NULL &&
-		sippymodem_v44_test_wire_ordinal(builder, 'A') &&
-		sippymodem_v44_test_wire_ordinal(builder, 'B') &&
-		sippymodem_v44_test_wire_control(
-			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-		sippymodem_v44_test_wire_codeword(builder, 4) &&
-		sippymodem_v44_test_wire_ordinal(builder, 'X') &&
-		sippymodem_v44_test_wire_control(
-			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-		sippymodem_v44_test_wire_finish(
+		v44_test_wire_ordinal(builder, 'A') &&
+		v44_test_wire_ordinal(builder, 'B') &&
+		v44_test_wire_control(
+			builder, V44_TEST_FLUSH) &&
+		v44_test_wire_codeword(builder, 4) &&
+		v44_test_wire_ordinal(builder, 'X') &&
+		v44_test_wire_control(
+			builder, V44_TEST_FLUSH) &&
+		v44_test_wire_finish(
 			builder, expected, sizeof(expected), &expected_length);
 	bool encoded = encoder != NULL && built;
 
-	sippymodem_v44_test_wire_destroy(builder);
+	v44_test_wire_destroy(builder);
 	if (encoded)
 		encoded = encode_segment(
 			encoder, first, sizeof(first), wire, sizeof(wire),
@@ -413,7 +413,7 @@ static bool test_flush_dictionary_continuity(void)
 		encoded = encode_segment(
 			encoder, second, sizeof(second), wire, sizeof(wire),
 			&wire_length);
-	sippymodem_v44_encoder_destroy(encoder);
+	v44_encoder_destroy(encoder);
 	CHECK(encoded,
 	      "could not encode V.44 stream across FLUSH");
 	CHECK(wire_length == expected_length &&
@@ -431,8 +431,8 @@ static bool test_flush_dictionary_continuity(void)
 static bool test_flush_terminates_extension(void)
 {
 	static const uint8_t plain[] = { 'C', 'C', 'C', 'C' };
-	struct sippymodem_v44_test_wire *builder =
-		sippymodem_v44_test_wire_create(
+	struct v44_test_wire *builder =
+		v44_test_wire_create(
 			parameters.max_string_length, 16);
 	uint8_t expected[16];
 	uint8_t wire[16];
@@ -441,15 +441,15 @@ static bool test_flush_terminates_extension(void)
 	size_t wire_length = 0;
 	size_t decoded_length = 0;
 	bool built = builder != NULL &&
-		sippymodem_v44_test_wire_ordinal(builder, 'C') &&
-		sippymodem_v44_test_wire_codeword(builder, 4) &&
-		sippymodem_v44_test_wire_extension(builder, 1) &&
-		sippymodem_v44_test_wire_control(
-			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-		sippymodem_v44_test_wire_finish(
+		v44_test_wire_ordinal(builder, 'C') &&
+		v44_test_wire_codeword(builder, 4) &&
+		v44_test_wire_extension(builder, 1) &&
+		v44_test_wire_control(
+			builder, V44_TEST_FLUSH) &&
+		v44_test_wire_finish(
 			builder, expected, sizeof(expected), &expected_length);
 
-	sippymodem_v44_test_wire_destroy(builder);
+	v44_test_wire_destroy(builder);
 	CHECK(built && encode_and_flush(
 				 &parameters, plain, sizeof(plain), wire,
 				 sizeof(wire), &wire_length),
@@ -470,18 +470,18 @@ static bool test_dictionary_exhaustion_reinitializes(void)
 {
 	enum {
 		V44_FIRST_CODEWORD = 4,
-		REINIT_INDEX = SIPPYMODEM_V44_MIN_CODEWORDS -
+		REINIT_INDEX = V44_MIN_CODEWORDS -
 			       V44_FIRST_CODEWORD + 1,
 		INPUT_LENGTH = REINIT_INDEX + 2,
 		WIRE_CAPACITY = 1024,
 	};
-	const struct sippymodem_v44_parameters boundary_parameters = {
-		.codeword_limit = SIPPYMODEM_V44_MIN_CODEWORDS,
-		.max_string_length = SIPPYMODEM_V44_MIN_STRING_LENGTH,
-		.history_size = SIPPYMODEM_V44_MAX_HISTORY_SIZE,
+	const struct v44_parameters boundary_parameters = {
+		.codeword_limit = V44_MIN_CODEWORDS,
+		.max_string_length = V44_MIN_STRING_LENGTH,
+		.history_size = V44_MAX_HISTORY_SIZE,
 	};
-	struct sippymodem_v44_test_wire *builder =
-		sippymodem_v44_test_wire_create(
+	struct v44_test_wire *builder =
+		v44_test_wire_create(
 			boundary_parameters.max_string_length, WIRE_CAPACITY);
 	uint8_t plain[INPUT_LENGTH];
 	uint8_t wire[WIRE_CAPACITY];
@@ -498,18 +498,18 @@ static bool test_dictionary_exhaustion_reinitializes(void)
 	plain[REINIT_INDEX] = 0xff;
 	for (size_t index = 0; built && index < sizeof(plain); ++index) {
 		if (index == REINIT_INDEX)
-			built = sippymodem_v44_test_wire_control(
-					builder, SIPPYMODEM_V44_TEST_REINIT) &&
-				sippymodem_v44_test_wire_stepup_ordinal(builder);
+			built = v44_test_wire_control(
+					builder, V44_TEST_REINIT) &&
+				v44_test_wire_stepup_ordinal(builder);
 		if (built)
-			built = sippymodem_v44_test_wire_ordinal(
+			built = v44_test_wire_ordinal(
 				builder, plain[index]);
 	}
-	built = built && sippymodem_v44_test_wire_control(
-				   builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-		sippymodem_v44_test_wire_finish(
+	built = built && v44_test_wire_control(
+				   builder, V44_TEST_FLUSH) &&
+		v44_test_wire_finish(
 			builder, expected, sizeof(expected), &expected_length);
-	sippymodem_v44_test_wire_destroy(builder);
+	v44_test_wire_destroy(builder);
 
 	CHECK(built, "could not build dictionary-boundary wire image");
 	CHECK(encode_and_flush(
@@ -531,16 +531,16 @@ static bool test_dictionary_exhaustion_reinitializes(void)
 static bool test_history_exhaustion_reinitializes(void)
 {
 	enum {
-		INPUT_LENGTH = SIPPYMODEM_V44_MIN_HISTORY_SIZE,
+		INPUT_LENGTH = V44_MIN_HISTORY_SIZE,
 		WIRE_CAPACITY = 1024,
 	};
-	const struct sippymodem_v44_parameters boundary_parameters = {
-		.codeword_limit = SIPPYMODEM_V44_MAX_CODEWORDS,
-		.max_string_length = SIPPYMODEM_V44_MIN_STRING_LENGTH,
-		.history_size = SIPPYMODEM_V44_MIN_HISTORY_SIZE,
+	const struct v44_parameters boundary_parameters = {
+		.codeword_limit = V44_MAX_CODEWORDS,
+		.max_string_length = V44_MIN_STRING_LENGTH,
+		.history_size = V44_MIN_HISTORY_SIZE,
 	};
-	struct sippymodem_v44_test_wire *builder =
-		sippymodem_v44_test_wire_create(
+	struct v44_test_wire *builder =
+		v44_test_wire_create(
 			boundary_parameters.max_string_length, WIRE_CAPACITY);
 	uint8_t plain[INPUT_LENGTH];
 	uint8_t wire[WIRE_CAPACITY];
@@ -557,20 +557,20 @@ static bool test_history_exhaustion_reinitializes(void)
 				       0 : (uint8_t)((index + 1U) / 2U);
 	for (size_t index = 0; built && index < sizeof(plain); ++index) {
 		if (!ordinal_stepped && plain[index] > 127) {
-			built = sippymodem_v44_test_wire_stepup_ordinal(builder);
+			built = v44_test_wire_stepup_ordinal(builder);
 			ordinal_stepped = true;
 		}
 		if (built)
-			built = sippymodem_v44_test_wire_ordinal(
+			built = v44_test_wire_ordinal(
 				builder, plain[index]);
 	}
-	built = built && sippymodem_v44_test_wire_control(
-				   builder, SIPPYMODEM_V44_TEST_REINIT) &&
-		sippymodem_v44_test_wire_control(
-			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
-		sippymodem_v44_test_wire_finish(
+	built = built && v44_test_wire_control(
+				   builder, V44_TEST_REINIT) &&
+		v44_test_wire_control(
+			builder, V44_TEST_FLUSH) &&
+		v44_test_wire_finish(
 			builder, expected, sizeof(expected), &expected_length);
-	sippymodem_v44_test_wire_destroy(builder);
+	v44_test_wire_destroy(builder);
 
 	CHECK(built, "could not build history-boundary wire image");
 	CHECK(encode_and_flush(
@@ -595,13 +595,13 @@ static bool test_generated_compression_round_trips(void)
 		PLAIN_LENGTH = 1536,
 		WIRE_CAPACITY = 4096,
 	};
-	const struct sippymodem_v44_parameters selected[] = {
+	const struct v44_parameters selected[] = {
 		parameters,
 		{
-			.codeword_limit = SIPPYMODEM_V44_DEFAULT_CODEWORDS,
+			.codeword_limit = V44_DEFAULT_CODEWORDS,
 			.max_string_length =
-				SIPPYMODEM_V44_DEFAULT_STRING_LENGTH,
-			.history_size = SIPPYMODEM_V44_DEFAULT_HISTORY_SIZE,
+				V44_DEFAULT_STRING_LENGTH,
+			.history_size = V44_DEFAULT_HISTORY_SIZE,
 		},
 	};
 	uint8_t plain[PLAIN_LENGTH];
@@ -652,8 +652,8 @@ static bool test_generated_compression_round_trips(void)
 
 static bool test_api_and_backpressure(void)
 {
-	struct sippymodem_v44_parameters invalid_parameters = parameters;
-	struct sippymodem_v44_encoder *encoder;
+	struct v44_parameters invalid_parameters = parameters;
+	struct v44_encoder *encoder;
 	static const uint8_t plain[] = { 0xff, 'A' };
 	const uint8_t *input = NULL;
 	const uint8_t *saved_input;
@@ -662,110 +662,110 @@ static bool test_api_and_backpressure(void)
 	uint8_t output = 0xa5;
 
 	invalid_parameters.codeword_limit--;
-	CHECK(sippymodem_v44_encoder_create(NULL, 2) == NULL &&
-	      sippymodem_v44_encoder_create(&invalid_parameters, 2) == NULL &&
-	      sippymodem_v44_encoder_create(&parameters, 1) == NULL,
+	CHECK(v44_encoder_create(NULL, 2) == NULL &&
+	      v44_encoder_create(&invalid_parameters, 2) == NULL &&
+	      v44_encoder_create(&parameters, 1) == NULL,
 	      "V.44 encoder accepted invalid creation parameters");
-	encoder = sippymodem_v44_encoder_create(&parameters, 2);
+	encoder = v44_encoder_create(&parameters, 2);
 	CHECK(encoder != NULL, "could not create API-test V.44 encoder");
-	CHECK(sippymodem_v44_encoder_pending(encoder) == 0 &&
-	      sippymodem_v44_encoder_pending(NULL) == 0 &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 0 &&
+	CHECK(v44_encoder_pending(encoder) == 0 &&
+	      v44_encoder_pending(NULL) == 0 &&
+	      v44_encoder_read(encoder, &output, 1) == 0 &&
 	      output == 0xa5 &&
-	      sippymodem_v44_encoder_read(NULL, &output, 1) == 0 &&
-	      sippymodem_v44_encoder_read(encoder, NULL, 1) == 0 &&
-	      sippymodem_v44_encoder_read(encoder, &output, 0) == 0,
+	      v44_encoder_read(NULL, &output, 1) == 0 &&
+	      v44_encoder_read(encoder, NULL, 1) == 0 &&
+	      v44_encoder_read(encoder, &output, 0) == 0,
 	      "empty V.44 encoder output changed its destination");
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_INPUT &&
+		      V44_ENCODE_NEED_INPUT &&
 	      input == NULL && input_length == 0 &&
-	      sippymodem_v44_encoder_process(NULL, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT &&
-	      sippymodem_v44_encoder_process(encoder, NULL, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT &&
-	      sippymodem_v44_encoder_process(encoder, &input, NULL) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT &&
-	      sippymodem_v44_encoder_flush(NULL) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT,
+	      v44_encoder_process(NULL, &input, &input_length) ==
+		      V44_ENCODE_INVALID_ARGUMENT &&
+	      v44_encoder_process(encoder, NULL, &input_length) ==
+		      V44_ENCODE_INVALID_ARGUMENT &&
+	      v44_encoder_process(encoder, &input, NULL) ==
+		      V44_ENCODE_INVALID_ARGUMENT &&
+	      v44_encoder_flush(NULL) ==
+		      V44_ENCODE_INVALID_ARGUMENT,
 	      "V.44 encoder API validation changed state");
 	input_length = 1;
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_ARGUMENT &&
+		      V44_ENCODE_INVALID_ARGUMENT &&
 	      input == NULL && input_length == 1,
 	      "V.44 encoder accepted null non-empty input");
 
 	input = plain;
 	input_length = sizeof(plain);
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      V44_ENCODE_OK &&
 	      input == plain + 1 && input_length == 1 &&
-	      sippymodem_v44_encoder_pending(encoder) == 2,
+	      v44_encoder_pending(encoder) == 2,
 	      "V.44 encoder did not atomically accept its first octet");
 	saved_input = input;
 	saved_length = input_length;
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+		      V44_ENCODE_NEED_OUTPUT &&
 	      input == saved_input && input_length == saved_length,
 	      "V.44 output backpressure consumed more input");
-	CHECK(sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+		      V44_ENCODE_NEED_OUTPUT &&
 	      input == saved_input && input_length == saved_length &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1,
+	      v44_encoder_read(encoder, &output, 1) == 1,
 	      "partial V.44 output drain changed the pending transaction");
-	CHECK(sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_OK &&
+		      V44_ENCODE_OK &&
 	      input == plain + sizeof(plain) && input_length == 0 &&
-	      sippymodem_v44_encoder_pending(encoder) == 1,
+	      v44_encoder_pending(encoder) == 1,
 	      "V.44 encoder did not resume after output drain");
 	saved_input = input;
 	saved_length = input_length;
-	CHECK(sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_flush(encoder) ==
+		      V44_ENCODE_NEED_OUTPUT &&
+	      v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
+		      V44_ENCODE_INVALID_STATE &&
 	      input == saved_input && input_length == saved_length &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
-	      sippymodem_v44_encoder_pending(encoder) == 1,
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_NEED_OUTPUT &&
+	      v44_encoder_pending(encoder) == 1,
 	      "V.44 FLUSH did not preserve queued output ordering");
-	CHECK(sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
-	      sippymodem_v44_encoder_process(
+	CHECK(v44_encoder_read(encoder, &output, 1) == 1 &&
+	      v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_INVALID_STATE &&
+		      V44_ENCODE_INVALID_STATE &&
 	      input == saved_input && input_length == saved_length &&
-	      sippymodem_v44_encoder_flush(encoder) ==
-		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
-	      sippymodem_v44_encoder_process(
+	      v44_encoder_flush(encoder) ==
+		      V44_ENCODE_FLUSHED &&
+	      v44_encoder_process(
 		      encoder, &input, &input_length) ==
-		      SIPPYMODEM_V44_ENCODE_NEED_INPUT,
+		      V44_ENCODE_NEED_INPUT,
 	      "V.44 FLUSH completion allowed an early input transition");
-	CHECK(strcmp(sippymodem_v44_encode_result_name(
-			     SIPPYMODEM_V44_ENCODE_OK),
+	CHECK(strcmp(v44_encode_result_name(
+			     V44_ENCODE_OK),
 		     "ok") == 0 &&
-	      strcmp(sippymodem_v44_encode_result_name(
-			     SIPPYMODEM_V44_ENCODE_NEED_OUTPUT),
+	      strcmp(v44_encode_result_name(
+			     V44_ENCODE_NEED_OUTPUT),
 		     "need output") == 0 &&
-	      strcmp(sippymodem_v44_encode_result_name(
-			     SIPPYMODEM_V44_ENCODE_INVALID_STATE),
+	      strcmp(v44_encode_result_name(
+			     V44_ENCODE_INVALID_STATE),
 		     "invalid state") == 0 &&
-	      strcmp(sippymodem_v44_encode_result_name(
-			     SIPPYMODEM_V44_ENCODE_PROCEDURAL_ERROR),
+	      strcmp(v44_encode_result_name(
+			     V44_ENCODE_PROCEDURAL_ERROR),
 		     "procedural error") == 0 &&
-	      strcmp(sippymodem_v44_encode_result_name(
-			     (enum sippymodem_v44_encode_result)99),
+	      strcmp(v44_encode_result_name(
+			     (enum v44_encode_result)99),
 		     "unknown") == 0,
 	      "V.44 encoder result names changed");
-	sippymodem_v44_encoder_destroy(encoder);
-	sippymodem_v44_encoder_destroy(NULL);
+	v44_encoder_destroy(encoder);
+	v44_encoder_destroy(NULL);
 	return true;
 }
 

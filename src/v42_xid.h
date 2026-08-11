@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V42_XID_H
-#define SIPPYMODEM_V42_XID_H
+#ifndef V42_XID_H
+#define V42_XID_H
 
 #include <stddef.h>
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_V42_XID_GENERAL_FORMAT = 0x82,
+	V42_XID_GENERAL_FORMAT = 0x82,
 };
 
 /*
@@ -15,7 +15,7 @@ enum {
  * group length. user_data is the complete unlengthened subfield, including
  * its 0xff group identifier. Decoded fields borrow the input storage.
  */
-struct sippymodem_v42_xid_fields {
+struct v42_xid_fields {
 	const uint8_t *parameter_negotiation;
 	size_t parameter_negotiation_length;
 	const uint8_t *private_negotiation;
@@ -24,11 +24,11 @@ struct sippymodem_v42_xid_fields {
 	size_t user_data_length;
 };
 
-enum sippymodem_v42_xid_result {
-	SIPPYMODEM_V42_XID_OK = 0,
-	SIPPYMODEM_V42_XID_NEED_OUTPUT,
-	SIPPYMODEM_V42_XID_MALFORMED,
-	SIPPYMODEM_V42_XID_INVALID_ARGUMENT,
+enum v42_xid_result {
+	V42_XID_OK = 0,
+	V42_XID_NEED_OUTPUT,
+	V42_XID_MALFORMED,
+	V42_XID_INVALID_ARGUMENT,
 };
 
 /*
@@ -36,8 +36,8 @@ enum sippymodem_v42_xid_result {
  * with zero length is omitted. Input fields and output must not overlap.
  * NEED_OUTPUT and errors leave output and output_length unchanged.
  */
-enum sippymodem_v42_xid_result sippymodem_v42_xid_encode(
-	const struct sippymodem_v42_xid_fields *fields,
+enum v42_xid_result v42_xid_encode(
+	const struct v42_xid_fields *fields,
 	uint8_t *output,
 	size_t output_capacity,
 	size_t *output_length);
@@ -49,12 +49,12 @@ enum sippymodem_v42_xid_result sippymodem_v42_xid_encode(
  * Present groups, including user data, must contain a complete parameter.
  * Errors leave fields unchanged.
  */
-enum sippymodem_v42_xid_result sippymodem_v42_xid_decode(
+enum v42_xid_result v42_xid_decode(
 	const uint8_t *input,
 	size_t input_length,
-	struct sippymodem_v42_xid_fields *fields);
+	struct v42_xid_fields *fields);
 
-const char *sippymodem_v42_xid_result_name(
-	enum sippymodem_v42_xid_result result);
+const char *v42_xid_result_name(
+	enum v42_xid_result result);
 
 #endif

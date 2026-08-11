@@ -1,31 +1,31 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V44_TRANSPARENT_DECODER_H
-#define SIPPYMODEM_V44_TRANSPARENT_DECODER_H
+#ifndef V44_TRANSPARENT_DECODER_H
+#define V44_TRANSPARENT_DECODER_H
 
 #include <stddef.h>
 #include <stdint.h>
 
-enum sippymodem_v44_transparent_result {
-	SIPPYMODEM_V44_TRANSPARENT_OK = 0,
-	SIPPYMODEM_V44_TRANSPARENT_NEED_INPUT,
-	SIPPYMODEM_V44_TRANSPARENT_NEED_OUTPUT,
-	SIPPYMODEM_V44_TRANSPARENT_ENTER_COMPRESSED,
-	SIPPYMODEM_V44_TRANSPARENT_ENTER_PARAMETER,
-	SIPPYMODEM_V44_TRANSPARENT_INVALID_ARGUMENT,
-	SIPPYMODEM_V44_TRANSPARENT_PROCEDURAL_ERROR,
+enum v44_transparent_result {
+	V44_TRANSPARENT_OK = 0,
+	V44_TRANSPARENT_NEED_INPUT,
+	V44_TRANSPARENT_NEED_OUTPUT,
+	V44_TRANSPARENT_ENTER_COMPRESSED,
+	V44_TRANSPARENT_ENTER_PARAMETER,
+	V44_TRANSPARENT_INVALID_ARGUMENT,
+	V44_TRANSPARENT_PROCEDURAL_ERROR,
 };
 
-struct sippymodem_v44_transparent_decoder;
+struct v44_transparent_decoder;
 
 /*
  * A new decoder represents the C-INIT state: compressed mode with ESCAPE equal
  * to zero. Enter transparent mode explicitly after decoding ETM.
  */
-struct sippymodem_v44_transparent_decoder *
-sippymodem_v44_transparent_decoder_create(void);
-void sippymodem_v44_transparent_decoder_destroy(
-	struct sippymodem_v44_transparent_decoder *decoder);
+struct v44_transparent_decoder *
+v44_transparent_decoder_create(void);
+void v44_transparent_decoder_destroy(
+	struct v44_transparent_decoder *decoder);
 
 /*
  * Process at most one transparent character or command sequence. NEED_INPUT
@@ -39,9 +39,9 @@ void sippymodem_v44_transparent_decoder_destroy(
  * the preserved input to a parameter-mode parser. The mode owner must deliver
  * any compressed output queued before ETM ahead of transparent output.
  */
-enum sippymodem_v44_transparent_result
-sippymodem_v44_transparent_decoder_process(
-	struct sippymodem_v44_transparent_decoder *decoder,
+enum v44_transparent_result
+v44_transparent_decoder_process(
+	struct v44_transparent_decoder *decoder,
 	const uint8_t **input,
 	size_t *input_length,
 	uint8_t *output,
@@ -53,19 +53,19 @@ sippymodem_v44_transparent_decoder_process(
  * ESCAPE value is preserved. Create a fresh decoder when a full C-INIT
  * reinitialization must restore ESCAPE to zero.
  */
-enum sippymodem_v44_transparent_result
-sippymodem_v44_transparent_decoder_enter(
-	struct sippymodem_v44_transparent_decoder *decoder);
+enum v44_transparent_result
+v44_transparent_decoder_enter(
+	struct v44_transparent_decoder *decoder);
 
 /*
  * Local robustness policy fails closed on an undefined command or a dangling
  * ESCAPE at the end of a complete stream.
  */
-enum sippymodem_v44_transparent_result
-sippymodem_v44_transparent_decoder_finish(
-	struct sippymodem_v44_transparent_decoder *decoder);
+enum v44_transparent_result
+v44_transparent_decoder_finish(
+	struct v44_transparent_decoder *decoder);
 
-const char *sippymodem_v44_transparent_result_name(
-	enum sippymodem_v44_transparent_result result);
+const char *v44_transparent_result_name(
+	enum v44_transparent_result result);
 
 #endif

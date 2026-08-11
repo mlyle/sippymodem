@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef SIPPYMODEM_V44_TX_MONITOR_H
-#define SIPPYMODEM_V44_TX_MONITOR_H
+#ifndef V44_TX_MONITOR_H
+#define V44_TX_MONITOR_H
 
 #include "v44_encoder.h"
 
@@ -9,51 +9,51 @@
 #include <stdint.h>
 
 enum {
-	SIPPYMODEM_V44_TX_MONITOR_DEFAULT_WINDOW_OCTETS = 256,
-	SIPPYMODEM_V44_TX_MONITOR_DEFAULT_LEAVE_EXCESS_BITS = 32,
-	SIPPYMODEM_V44_TX_MONITOR_DEFAULT_ENTER_SAVINGS_BITS = 64,
+	V44_TX_MONITOR_DEFAULT_WINDOW_OCTETS = 256,
+	V44_TX_MONITOR_DEFAULT_LEAVE_EXCESS_BITS = 32,
+	V44_TX_MONITOR_DEFAULT_ENTER_SAVINGS_BITS = 64,
 };
 
-struct sippymodem_v44_tx_monitor_config {
+struct v44_tx_monitor_config {
 	uint32_t window_octets;
 	uint32_t leave_compressed_excess_bits;
 	uint32_t enter_compressed_savings_bits;
 };
 
-enum sippymodem_v44_tx_monitor_decision {
-	SIPPYMODEM_V44_TX_MONITOR_STAY = 0,
-	SIPPYMODEM_V44_TX_MONITOR_ENTER_COMPRESSED,
-	SIPPYMODEM_V44_TX_MONITOR_ENTER_TRANSPARENT,
+enum v44_tx_monitor_decision {
+	V44_TX_MONITOR_STAY = 0,
+	V44_TX_MONITOR_ENTER_COMPRESSED,
+	V44_TX_MONITOR_ENTER_TRANSPARENT,
 };
 
-struct sippymodem_v44_tx_monitor_sample {
-	enum sippymodem_v44_encoder_mode mode;
+struct v44_tx_monitor_sample {
+	enum v44_encoder_mode mode;
 	uint64_t represented_octets;
 	uint64_t compressed_bits;
-	enum sippymodem_v44_tx_monitor_decision decision;
+	enum v44_tx_monitor_decision decision;
 };
 
-enum sippymodem_v44_tx_monitor_result {
-	SIPPYMODEM_V44_TX_MONITOR_OK = 0,
-	SIPPYMODEM_V44_TX_MONITOR_DISABLED,
-	SIPPYMODEM_V44_TX_MONITOR_INVALID_ARGUMENT,
-	SIPPYMODEM_V44_TX_MONITOR_INVALID_STATE,
+enum v44_tx_monitor_result {
+	V44_TX_MONITOR_OK = 0,
+	V44_TX_MONITOR_DISABLED,
+	V44_TX_MONITOR_INVALID_ARGUMENT,
+	V44_TX_MONITOR_INVALID_STATE,
 };
 
-struct sippymodem_v44_tx_monitor;
+struct v44_tx_monitor;
 
-struct sippymodem_v44_tx_monitor_config
-sippymodem_v44_tx_monitor_default_config(void);
+struct v44_tx_monitor_config
+v44_tx_monitor_default_config(void);
 
 /*
  * The sample window must be at least the negotiated maximum string length.
  * A new monitor starts in compressed mode, matching a new stream encoder.
  */
-struct sippymodem_v44_tx_monitor *sippymodem_v44_tx_monitor_create(
-	const struct sippymodem_v44_parameters *parameters,
-	const struct sippymodem_v44_tx_monitor_config *config);
-void sippymodem_v44_tx_monitor_destroy(
-	struct sippymodem_v44_tx_monitor *monitor);
+struct v44_tx_monitor *v44_tx_monitor_create(
+	const struct v44_parameters *parameters,
+	const struct v44_tx_monitor_config *config);
+void v44_tx_monitor_destroy(
+	struct v44_tx_monitor *monitor);
 
 /*
  * Observe one octet after the real encoder accepts it. The monitor owns and
@@ -65,19 +65,19 @@ void sippymodem_v44_tx_monitor_destroy(
  * DISABLED means adaptation stopped permanently; the real data path may
  * continue without the monitor.
  */
-enum sippymodem_v44_tx_monitor_result sippymodem_v44_tx_monitor_observe(
-	struct sippymodem_v44_tx_monitor *monitor,
+enum v44_tx_monitor_result v44_tx_monitor_observe(
+	struct v44_tx_monitor *monitor,
 	uint8_t octet,
-	enum sippymodem_v44_tx_monitor_decision *decision);
+	enum v44_tx_monitor_decision *decision);
 
 /*
  * Mirror a real C-FLUSH after all preceding octets have been observed. The
  * flush can finish a sample, so it returns and latches a decision exactly as
  * observe does. Valid calls initialize decision.
  */
-enum sippymodem_v44_tx_monitor_result sippymodem_v44_tx_monitor_flush(
-	struct sippymodem_v44_tx_monitor *monitor,
-	enum sippymodem_v44_tx_monitor_decision *decision);
+enum v44_tx_monitor_result v44_tx_monitor_flush(
+	struct v44_tx_monitor *monitor,
+	enum v44_tx_monitor_decision *decision);
 
 /*
  * Confirm a completed real mode transition. A pending decision requires its
@@ -85,17 +85,17 @@ enum sippymodem_v44_tx_monitor_result sippymodem_v44_tx_monitor_flush(
  * caller-requested transition. Pre-transition costs are excluded from the
  * next sample, and an ECM confirmation resets the shadow dictionary.
  */
-enum sippymodem_v44_tx_monitor_result
-sippymodem_v44_tx_monitor_confirm_mode(
-	struct sippymodem_v44_tx_monitor *monitor,
-	enum sippymodem_v44_encoder_mode mode);
+enum v44_tx_monitor_result
+v44_tx_monitor_confirm_mode(
+	struct v44_tx_monitor *monitor,
+	enum v44_encoder_mode mode);
 
 /* Leave sample unchanged when no completed sample is available. */
-bool sippymodem_v44_tx_monitor_get_last_sample(
-	const struct sippymodem_v44_tx_monitor *monitor,
-	struct sippymodem_v44_tx_monitor_sample *sample);
+bool v44_tx_monitor_get_last_sample(
+	const struct v44_tx_monitor *monitor,
+	struct v44_tx_monitor_sample *sample);
 
-const char *sippymodem_v44_tx_monitor_result_name(
-	enum sippymodem_v44_tx_monitor_result result);
+const char *v44_tx_monitor_result_name(
+	enum v44_tx_monitor_result result);
 
 #endif

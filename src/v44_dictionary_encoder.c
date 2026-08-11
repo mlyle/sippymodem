@@ -20,8 +20,8 @@ struct v44_encoder_node {
 	uint32_t next_sibling;
 };
 
-struct sippymodem_v44_dictionary_encoder {
-	struct sippymodem_v44_parameters parameters;
+struct v44_dictionary_encoder {
+	struct v44_parameters parameters;
 	struct v44_encoder_node *nodes;
 	uint8_t *history;
 	uint32_t roots[V44_ROOT_COUNT];
@@ -30,10 +30,10 @@ struct sippymodem_v44_dictionary_encoder {
 };
 
 static bool dictionary_is_valid(
-	const struct sippymodem_v44_dictionary_encoder *encoder)
+	const struct v44_dictionary_encoder *encoder)
 {
 	return encoder != NULL &&
-	       sippymodem_v44_parameters_are_valid(&encoder->parameters) &&
+	       v44_parameters_are_valid(&encoder->parameters) &&
 	       encoder->nodes != NULL && encoder->history != NULL &&
 	       encoder->next_codeword >= V44_FIRST_CODEWORD &&
 	       encoder->next_codeword <= encoder->parameters.codeword_limit &&
@@ -41,20 +41,20 @@ static bool dictionary_is_valid(
 }
 
 static void reset_dictionary(
-	struct sippymodem_v44_dictionary_encoder *encoder)
+	struct v44_dictionary_encoder *encoder)
 {
 	memset(encoder->roots, 0, sizeof(encoder->roots));
 	encoder->next_codeword = V44_FIRST_CODEWORD;
 	encoder->history_length = 0;
 }
 
-struct sippymodem_v44_dictionary_encoder *
-sippymodem_v44_dictionary_encoder_create(
-	const struct sippymodem_v44_parameters *parameters)
+struct v44_dictionary_encoder *
+v44_dictionary_encoder_create(
+	const struct v44_parameters *parameters)
 {
-	struct sippymodem_v44_dictionary_encoder *encoder;
+	struct v44_dictionary_encoder *encoder;
 
-	if (!sippymodem_v44_parameters_are_valid(parameters))
+	if (!v44_parameters_are_valid(parameters))
 		return NULL;
 	encoder = calloc(1, sizeof(*encoder));
 	if (encoder == NULL)
@@ -64,15 +64,15 @@ sippymodem_v44_dictionary_encoder_create(
 		parameters->codeword_limit, sizeof(*encoder->nodes));
 	encoder->history = malloc(parameters->history_size);
 	if (encoder->nodes == NULL || encoder->history == NULL) {
-		sippymodem_v44_dictionary_encoder_destroy(encoder);
+		v44_dictionary_encoder_destroy(encoder);
 		return NULL;
 	}
 	reset_dictionary(encoder);
 	return encoder;
 }
 
-void sippymodem_v44_dictionary_encoder_destroy(
-	struct sippymodem_v44_dictionary_encoder *encoder)
+void v44_dictionary_encoder_destroy(
+	struct v44_dictionary_encoder *encoder)
 {
 	if (encoder == NULL)
 		return;
@@ -81,33 +81,33 @@ void sippymodem_v44_dictionary_encoder_destroy(
 	free(encoder);
 }
 
-enum sippymodem_v44_dictionary_encoder_result
-sippymodem_v44_dictionary_encoder_reinitialize(
-	struct sippymodem_v44_dictionary_encoder *encoder)
+enum v44_dictionary_encoder_result
+v44_dictionary_encoder_reinitialize(
+	struct v44_dictionary_encoder *encoder)
 {
 	if (!dictionary_is_valid(encoder))
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	reset_dictionary(encoder);
-	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
+	return V44_DICTIONARY_ENCODER_OK;
 }
 
-enum sippymodem_v44_dictionary_encoder_result
-sippymodem_v44_dictionary_encoder_append(
-	struct sippymodem_v44_dictionary_encoder *encoder,
+enum v44_dictionary_encoder_result
+v44_dictionary_encoder_append(
+	struct v44_dictionary_encoder *encoder,
 	uint8_t value,
 	uint32_t *history_index)
 {
 	if (!dictionary_is_valid(encoder) || history_index == NULL)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	if (encoder->history_length >= encoder->parameters.history_size)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_FULL;
+		return V44_DICTIONARY_ENCODER_FULL;
 	*history_index = encoder->history_length;
 	encoder->history[encoder->history_length++] = value;
-	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
+	return V44_DICTIONARY_ENCODER_OK;
 }
 
-static enum sippymodem_v44_dictionary_encoder_result add_segment(
-	struct sippymodem_v44_dictionary_encoder *encoder,
+static enum v44_dictionary_encoder_result add_segment(
+	struct v44_dictionary_encoder *encoder,
 	uint32_t *siblings,
 	uint32_t parent_string_length,
 	uint32_t history_start,
@@ -123,9 +123,9 @@ static enum sippymodem_v44_dictionary_encoder_result add_segment(
 	    parent_string_length >= encoder->parameters.max_string_length ||
 	    length > encoder->parameters.max_string_length -
 			     parent_string_length)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	if (encoder->next_codeword >= encoder->parameters.codeword_limit)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_FULL;
+		return V44_DICTIONARY_ENCODER_FULL;
 
 	assigned = encoder->next_codeword;
 	node = &encoder->nodes[assigned];
@@ -138,27 +138,27 @@ static enum sippymodem_v44_dictionary_encoder_result add_segment(
 	*siblings = assigned;
 	encoder->next_codeword++;
 	*codeword = assigned;
-	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
+	return V44_DICTIONARY_ENCODER_OK;
 }
 
-enum sippymodem_v44_dictionary_encoder_result
-sippymodem_v44_dictionary_encoder_add_root_segment(
-	struct sippymodem_v44_dictionary_encoder *encoder,
+enum v44_dictionary_encoder_result
+v44_dictionary_encoder_add_root_segment(
+	struct v44_dictionary_encoder *encoder,
 	uint8_t root,
 	uint32_t history_start,
 	uint32_t length,
 	uint32_t *codeword)
 {
 	if (!dictionary_is_valid(encoder))
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	return add_segment(
 		encoder, &encoder->roots[root], 1, history_start, length,
 		codeword);
 }
 
-enum sippymodem_v44_dictionary_encoder_result
-sippymodem_v44_dictionary_encoder_add_child_segment(
-	struct sippymodem_v44_dictionary_encoder *encoder,
+enum v44_dictionary_encoder_result
+v44_dictionary_encoder_add_child_segment(
+	struct v44_dictionary_encoder *encoder,
 	uint32_t parent_codeword,
 	uint32_t history_start,
 	uint32_t length,
@@ -169,7 +169,7 @@ sippymodem_v44_dictionary_encoder_add_child_segment(
 	if (!dictionary_is_valid(encoder) ||
 	    parent_codeword < V44_FIRST_CODEWORD ||
 	    parent_codeword >= encoder->next_codeword)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	parent = &encoder->nodes[parent_codeword];
 	return add_segment(
 		encoder, &parent->first_child, parent->string_length,
@@ -177,12 +177,12 @@ sippymodem_v44_dictionary_encoder_add_child_segment(
 }
 
 static void match_siblings(
-	const struct sippymodem_v44_dictionary_encoder *encoder,
+	const struct v44_dictionary_encoder *encoder,
 	uint32_t sibling,
 	uint32_t input_start,
 	uint32_t available,
 	uint32_t depth,
-	struct sippymodem_v44_dictionary_match *match)
+	struct v44_dictionary_match *match)
 {
 	while (sibling != 0) {
 		const struct v44_encoder_node *node = &encoder->nodes[sibling];
@@ -218,20 +218,20 @@ static void match_siblings(
 	}
 }
 
-enum sippymodem_v44_dictionary_encoder_result
-sippymodem_v44_dictionary_encoder_find_longest(
-	const struct sippymodem_v44_dictionary_encoder *encoder,
+enum v44_dictionary_encoder_result
+v44_dictionary_encoder_find_longest(
+	const struct v44_dictionary_encoder *encoder,
 	uint32_t history_start,
 	uint32_t available,
-	struct sippymodem_v44_dictionary_match *match)
+	struct v44_dictionary_match *match)
 {
-	struct sippymodem_v44_dictionary_match found = { 0 };
+	struct v44_dictionary_match found = { 0 };
 	uint32_t root;
 
 	if (!dictionary_is_valid(encoder) || match == NULL || available == 0 ||
 	    history_start >= encoder->history_length ||
 	    available > encoder->history_length - history_start)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	root = encoder->roots[encoder->history[history_start]];
 	if (root != 0) {
 		if (available == 1)
@@ -241,18 +241,18 @@ sippymodem_v44_dictionary_encoder_find_longest(
 				encoder, root, history_start, available, 1, &found);
 	}
 	*match = found;
-	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
+	return V44_DICTIONARY_ENCODER_OK;
 }
 
-enum sippymodem_v44_dictionary_encoder_result
-sippymodem_v44_dictionary_encoder_find_extension(
-	const struct sippymodem_v44_dictionary_encoder *encoder,
+enum v44_dictionary_encoder_result
+v44_dictionary_encoder_find_extension(
+	const struct v44_dictionary_encoder *encoder,
 	uint32_t codeword,
 	uint32_t history_start,
 	uint32_t available,
-	struct sippymodem_v44_dictionary_extension *extension)
+	struct v44_dictionary_extension *extension)
 {
-	struct sippymodem_v44_dictionary_extension found = { 0 };
+	struct v44_dictionary_extension found = { 0 };
 	const struct v44_encoder_node *node;
 	uint32_t reference;
 	uint32_t limit;
@@ -262,11 +262,11 @@ sippymodem_v44_dictionary_encoder_find_extension(
 	    codeword >= encoder->next_codeword ||
 	    history_start > encoder->history_length ||
 	    available > encoder->history_length - history_start)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	node = &encoder->nodes[codeword];
 	reference = node->history_start + node->segment_length;
 	if (reference >= history_start)
-		return SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
+		return V44_DICTIONARY_ENCODER_INVALID_ARGUMENT;
 	limit = encoder->parameters.max_string_length - node->string_length;
 	if (limit > V44_MAX_EXTENSION_LENGTH)
 		limit = V44_MAX_EXTENSION_LENGTH;
@@ -277,30 +277,30 @@ sippymodem_v44_dictionary_encoder_find_extension(
 	found.needs_more_input =
 		found.length == available && found.length < limit;
 	*extension = found;
-	return SIPPYMODEM_V44_DICTIONARY_ENCODER_OK;
+	return V44_DICTIONARY_ENCODER_OK;
 }
 
-size_t sippymodem_v44_dictionary_encoder_history_length(
-	const struct sippymodem_v44_dictionary_encoder *encoder)
+size_t v44_dictionary_encoder_history_length(
+	const struct v44_dictionary_encoder *encoder)
 {
 	return dictionary_is_valid(encoder) ? encoder->history_length : 0;
 }
 
-uint32_t sippymodem_v44_dictionary_encoder_next_codeword(
-	const struct sippymodem_v44_dictionary_encoder *encoder)
+uint32_t v44_dictionary_encoder_next_codeword(
+	const struct v44_dictionary_encoder *encoder)
 {
 	return dictionary_is_valid(encoder) ? encoder->next_codeword : 0;
 }
 
-const char *sippymodem_v44_dictionary_encoder_result_name(
-	enum sippymodem_v44_dictionary_encoder_result result)
+const char *v44_dictionary_encoder_result_name(
+	enum v44_dictionary_encoder_result result)
 {
 	switch (result) {
-	case SIPPYMODEM_V44_DICTIONARY_ENCODER_OK:
+	case V44_DICTIONARY_ENCODER_OK:
 		return "ok";
-	case SIPPYMODEM_V44_DICTIONARY_ENCODER_FULL:
+	case V44_DICTIONARY_ENCODER_FULL:
 		return "full";
-	case SIPPYMODEM_V44_DICTIONARY_ENCODER_INVALID_ARGUMENT:
+	case V44_DICTIONARY_ENCODER_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";
