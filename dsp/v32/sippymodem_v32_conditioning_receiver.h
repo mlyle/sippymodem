@@ -40,10 +40,12 @@ struct sippymodem_v32_conditioning_receiver {
 	enum sippymodem_v32_conditioning_receiver_phase phase;
 	uint8_t observed_quadrant;
 	uint8_t quadrant_offset;
+	uint8_t pending_quadrant_offset;
 	uint8_t alternating_transitions;
 	uint8_t previous_turn;
 	uint8_t prefix_match;
 	uint8_t consecutive_mismatches;
+	uint8_t phase_corrections;
 	bool has_previous_point;
 };
 

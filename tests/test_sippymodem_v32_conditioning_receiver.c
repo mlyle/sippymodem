@@ -138,13 +138,12 @@ static bool test_answering_source(void)
 	return check_role(SIPPYMODEM_V32_ANSWERING_TRANSMITTER, &channel);
 }
 
-static bool test_reacquisition(void)
+static bool test_phase_slip_recovery(void)
 {
 	const struct sippymodem_qam_point channel = { 1.1, 0.25 };
 	struct sippymodem_v32_conditioning_receiver receiver;
 	struct sippymodem_v32_conditioning_transmitter transmitter;
-	struct sippymodem_v32_conditioning_transmitter finished;
-	unsigned int injected_symbols = 0;
+	bool phase_shifted = false;
 	bool ready = false;
 
 	CHECK(sippymodem_v32_conditioning_receiver_init(
@@ -155,7 +154,7 @@ static bool test_reacquisition(void)
 			      SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
 			      SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
 			      SIPPYMODEM_V32_CONDITIONING_OK,
-	      "V.32 reacquisition fixture did not initialize");
+	      "V.32 phase-slip fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
 		struct sippymodem_qam_point received;
 		uint8_t quadrant;
@@ -163,31 +162,70 @@ static bool test_reacquisition(void)
 		CHECK(sippymodem_v32_conditioning_transmitter_next(
 			      &transmitter, &quadrant) ==
 			      SIPPYMODEM_V32_CONDITIONING_OK,
-		      "V.32 reacquisition fixture stopped");
+		      "V.32 phase-slip fixture stopped");
 		if (symbol < TEST_ACQUISITION_START)
 			continue;
-		if (receiver.phase == SIPPYMODEM_V32_CONDITIONING_TRAIN_TRN &&
-		    injected_symbols < 3) {
+		if (receiver.phase == SIPPYMODEM_V32_CONDITIONING_TRAIN_TRN)
+			phase_shifted = true;
+		if (phase_shifted)
 			quadrant = (uint8_t)((quadrant + 1u) & 3u);
-			injected_symbols++;
-		}
 		CHECK(generated_point(quadrant, &channel, &received) &&
 		      sippymodem_v32_conditioning_receiver_observe(
 			      &receiver, &received, &ready) ==
 			      SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK,
-		      "V.32 conditioning rejected a recoverable mismatch");
-		if (injected_symbols == 3 &&
-		    receiver.phase == SIPPYMODEM_V32_CONDITIONING_SEARCH_S_BAR)
-			break;
+		      "V.32 conditioning rejected a persistent phase slip");
 	}
-	CHECK(injected_symbols == 3 &&
-		      receiver.phase == SIPPYMODEM_V32_CONDITIONING_SEARCH_S_BAR &&
-		      !ready,
-	      "V.32 conditioning did not restart after persistent mismatch");
-	CHECK(run_sequence(
-		      &receiver, SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
-		      &channel, &finished),
-	      "V.32 conditioning did not reacquire a fresh sequence");
+	CHECK(phase_shifted && ready &&
+		      sippymodem_v32_conditioning_receiver_is_complete(&receiver) &&
+		      receiver.phase_corrections != 0,
+	      "V.32 conditioning did not recover the persistent phase slip");
+	return true;
+}
+
+static bool test_mapping_transition_rephase(void)
+{
+	const struct sippymodem_qam_point channel = { 0.85, -0.2 };
+	struct sippymodem_v32_conditioning_receiver receiver;
+	struct sippymodem_v32_conditioning_transmitter transmitter;
+	const uint16_t phase_step_symbol =
+		SIPPYMODEM_V32_CONDITIONING_S_SYMBOLS +
+		SIPPYMODEM_V32_CONDITIONING_S_BAR_SYMBOLS +
+		SIPPYMODEM_V32_CONDITIONING_TRN_PREFIX_SYMBOLS - 1u;
+	bool ready = false;
+
+	CHECK(sippymodem_v32_conditioning_receiver_init(
+		      &receiver, SIPPYMODEM_V32_ANSWERING_TRANSMITTER) ==
+		      SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK &&
+		      sippymodem_v32_conditioning_transmitter_init(
+			      &transmitter,
+			      SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
+			      SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+			      SIPPYMODEM_V32_CONDITIONING_OK,
+	      "V.32 mapping-transition fixture did not initialize");
+	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
+		struct sippymodem_qam_point received;
+		uint8_t quadrant;
+
+		CHECK(sippymodem_v32_conditioning_transmitter_next(
+			      &transmitter, &quadrant) ==
+			      SIPPYMODEM_V32_CONDITIONING_OK,
+		      "V.32 mapping-transition fixture stopped at symbol %u",
+		      symbol);
+		if (symbol < TEST_ACQUISITION_START)
+			continue;
+		if (symbol >= phase_step_symbol)
+			quadrant = (uint8_t)((quadrant + 1u) & 3u);
+		CHECK(generated_point(quadrant, &channel, &received) &&
+		      sippymodem_v32_conditioning_receiver_observe(
+			      &receiver, &received, &ready) ==
+			      SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK,
+		      "V.32 receiver rejected a mapping-boundary phase step at %u",
+		      symbol);
+	}
+	CHECK(ready &&
+		      sippymodem_v32_conditioning_receiver_is_complete(&receiver) &&
+		      receiver.quadrant_offset != 0,
+	      "V.32 receiver did not resolve the mapping-boundary phase step");
 	return true;
 }
 
@@ -262,7 +300,9 @@ int main(void)
 	} tests[] = {
 		{ "calling source", test_calling_source },
 		{ "answering source", test_answering_source },
-		{ "reacquisition", test_reacquisition },
+		{ "mapping transition rephase",
+		  test_mapping_transition_rephase },
+		{ "phase-slip recovery", test_phase_slip_recovery },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

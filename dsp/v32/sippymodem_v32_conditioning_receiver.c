@@ -12,6 +12,7 @@ enum {
 		SIPPYMODEM_V32_CONDITIONING_S_SYMBOLS +
 		SIPPYMODEM_V32_CONDITIONING_S_BAR_SYMBOLS,
 	V32_CONDITIONING_MISMATCH_RESTART = 3,
+	V32_CONDITIONING_MAX_PHASE_CORRECTIONS = 8,
 };
 
 static const double V32_CONDITIONING_GAIN_ADAPTATION = 1.0 / 32.0;
@@ -65,6 +66,8 @@ bool sippymodem_v32_conditioning_receiver_is_valid(
 	    !phase_is_valid(receiver->phase) || !pattern_is_valid(receiver) ||
 	    receiver->observed_quadrant >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
 	    receiver->quadrant_offset >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
+	    receiver->pending_quadrant_offset >=
+		    SIPPYMODEM_QPSK_QUADRANT_COUNT ||
 	    receiver->alternating_transitions >
 		    SIPPYMODEM_V32_CONDITIONING_S_BAR_ACQUIRE_TRANSITIONS ||
 	    receiver->previous_turn >= SIPPYMODEM_QPSK_QUADRANT_COUNT ||
@@ -72,6 +75,8 @@ bool sippymodem_v32_conditioning_receiver_is_valid(
 		    SIPPYMODEM_V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS ||
 	    receiver->consecutive_mismatches >=
 		    V32_CONDITIONING_MISMATCH_RESTART ||
+	    receiver->phase_corrections >
+		    V32_CONDITIONING_MAX_PHASE_CORRECTIONS ||
 	    (receiver->has_previous_point &&
 	     !point_has_power(&receiver->previous_point)))
 		return false;
@@ -79,7 +84,8 @@ bool sippymodem_v32_conditioning_receiver_is_valid(
 		   receiver->phase == SIPPYMODEM_V32_CONDITIONING_READY;
 	if (!training)
 		return receiver->trn_symbols == 0 &&
-		       receiver->consecutive_mismatches == 0;
+		       receiver->consecutive_mismatches == 0 &&
+		       receiver->phase_corrections == 0;
 	if (!sippymodem_v32_conditioning_transmitter_is_valid(
 		    &receiver->reference) ||
 	    !sippymodem_qam_gain_is_valid(&receiver->gain) ||
@@ -254,6 +260,7 @@ static int begin_training(
 	receiver->trn_symbols = matched_symbols;
 	receiver->quadrant_offset =
 		(uint8_t)((receiver->observed_quadrant - expected_quadrant) & 3u);
+	receiver->pending_quadrant_offset = receiver->quadrant_offset;
 	receiver->prefix_match = 0;
 	receiver->phase = SIPPYMODEM_V32_CONDITIONING_TRAIN_TRN;
 	return 0;
@@ -266,6 +273,7 @@ static int train_symbol(
 	struct sippymodem_qam_point expected_point;
 	uint8_t expected_quadrant;
 	uint8_t observed_expected;
+	uint8_t candidate_offset;
 
 	if (sippymodem_v32_conditioning_transmitter_next(
 		    &receiver->reference, &expected_quadrant) !=
@@ -278,15 +286,35 @@ static int train_symbol(
 		(uint8_t)((expected_quadrant + receiver->quadrant_offset) & 3u);
 	if (receiver->observed_quadrant == observed_expected) {
 		receiver->consecutive_mismatches = 0;
+		receiver->pending_quadrant_offset = receiver->quadrant_offset;
 		if (sippymodem_qam_gain_track(
 			    &receiver->gain, point, &expected_point) !=
 		    SIPPYMODEM_QAM_GAIN_OK)
 			return -1;
 	} else {
-		receiver->consecutive_mismatches++;
+		candidate_offset = (uint8_t)(
+			(receiver->observed_quadrant - expected_quadrant) & 3u);
+		if (receiver->consecutive_mismatches == 0 ||
+		    receiver->pending_quadrant_offset != candidate_offset) {
+			receiver->pending_quadrant_offset = candidate_offset;
+			receiver->consecutive_mismatches = 1;
+		} else {
+			receiver->consecutive_mismatches++;
+		}
 		if (receiver->consecutive_mismatches ==
-		    V32_CONDITIONING_MISMATCH_RESTART)
-			return 1;
+		    V32_CONDITIONING_MISMATCH_RESTART) {
+			if (receiver->phase_corrections ==
+			    V32_CONDITIONING_MAX_PHASE_CORRECTIONS)
+				return 1;
+			receiver->quadrant_offset =
+				receiver->pending_quadrant_offset;
+			receiver->consecutive_mismatches = 0;
+			receiver->phase_corrections++;
+			if (sippymodem_qam_gain_track(
+				    &receiver->gain, point, &expected_point) !=
+			    SIPPYMODEM_QAM_GAIN_OK)
+				return -1;
+		}
 	}
 	receiver->trn_symbols++;
 	if (receiver->trn_symbols ==
