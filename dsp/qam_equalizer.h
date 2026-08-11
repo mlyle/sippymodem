@@ -56,7 +56,8 @@ enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_push(
 
 /* Push one symbol while retaining the exact output and tap inputs needed for
  * delayed adaptation. observation must not already be pending. It changes
- * only when ready becomes true; the caller then owns it until adaptation. */
+ * only when ready becomes true; the caller then owns it until adaptation or
+ * deliberate discard. */
 enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_observe(
 	struct sippymodem_qam_equalizer *equalizer,
 	const struct sippymodem_qam_point *received,
