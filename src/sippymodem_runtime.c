@@ -340,6 +340,10 @@ enum sippymodem_runtime_result sippymodem_runtime_step(
 	if (runtime->last_host_result ==
 	    SIPPYMODEM_HOST_MEDIA_BINDING_ERROR)
 		return SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR;
+	/* The host has already suspended audio and requested SIP hangup. Keep the
+	 * terminal alive so the modem result can be reported and reused. */
+	if (runtime->last_host_result == SIPPYMODEM_HOST_MODEM_STOPPED)
+		return SIPPYMODEM_RUNTIME_OK;
 	if (runtime->last_host_result != SIPPYMODEM_HOST_OK &&
 	    runtime->last_host_result != SIPPYMODEM_HOST_IDLE)
 		return SIPPYMODEM_RUNTIME_HOST_ERROR;

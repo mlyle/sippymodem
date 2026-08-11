@@ -754,23 +754,29 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	CHECK(sippymodem_runtime_step(runtime, 103, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_HOST_ERROR,
 	      "runtime hid a host audio failure");
+	capture.host_step_result = SIPPYMODEM_HOST_MODEM_STOPPED;
+	CHECK(sippymodem_runtime_step(runtime, 104, NULL, NULL, NULL) ==
+		      SIPPYMODEM_RUNTIME_OK &&
+		      sippymodem_runtime_last_host_result(runtime) ==
+			      SIPPYMODEM_HOST_MODEM_STOPPED,
+	      "runtime treated a handled modem stop as fatal");
 
 	capture.host_step_result = SIPPYMODEM_HOST_IDLE;
 	capture.emit_call = true;
 	capture.call.direction = (enum sippymodem_sip_call_direction)99;
-	CHECK(sippymodem_runtime_step(runtime, 104, NULL, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
 		      sippymodem_runtime_last_calls_result(runtime) ==
 			      SIPPYMODEM_SLMODEM_CALLS_INVALID_EVENT,
 	      "runtime hid an invalid call transition");
 	recording->result = SIPPYMODEM_RECORDING_FILES_WRITE_ERROR;
-	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 106, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_RECORDING_ERROR,
 	      "runtime continued after recording evidence failed");
 	recording->result = SIPPYMODEM_RECORDING_FILES_OK;
 	capture.calls_drained = 0;
 	capture.drain_never_idle = true;
-	CHECK(sippymodem_runtime_step(runtime, 106, NULL, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 107, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
 		      capture.calls_drained ==
 			      SIPPYMODEM_RUNTIME_MAX_CALL_TRANSITIONS,
@@ -780,14 +786,14 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	capture.short_modem_write = true;
 	CHECK(write(device_fd, command, sizeof(command) - 1) ==
 		      (ssize_t)sizeof(command) - 1 &&
-		      sippymodem_runtime_step(runtime, 107, NULL, NULL, NULL) ==
+		      sippymodem_runtime_step(runtime, 108, NULL, NULL, NULL) ==
 			      SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR &&
 		      sippymodem_runtime_last_modem_terminal_result(runtime) ==
 			      SIPPYMODEM_SLMODEM_TERMINAL_INPUT_ERROR,
 	      "runtime hid partially accepted terminal input");
 	capture.short_modem_write = false;
 	close(device_fd);
-	CHECK(sippymodem_runtime_step(runtime, 108, NULL, NULL, NULL) ==
+	CHECK(sippymodem_runtime_step(runtime, 109, NULL, NULL, NULL) ==
 		      SIPPYMODEM_RUNTIME_OK &&
 		      capture.hangups == 1 &&
 		      sippymodem_runtime_terminal_poll_fd(runtime) == -1,

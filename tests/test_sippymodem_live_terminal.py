@@ -5,18 +5,31 @@ import os
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.sippymodem_live_terminal import (  # noqa: E402
     LiveTerminalError,
+    ModemTerminal,
     ResponseDecoder,
     read_published_device,
 )
 
 
 class LiveTerminalTests(unittest.TestCase):
+    def test_escape_cleanup_tolerates_a_missing_response(self) -> None:
+        terminal = ModemTerminal(-1)
+        with (
+            mock.patch("tools.sippymodem_live_terminal.time.sleep"),
+            mock.patch.object(terminal, "_write"),
+            mock.patch.object(
+                terminal, "_read_result", side_effect=TimeoutError
+            ),
+        ):
+            terminal.escape_and_hang_up()
+
     def test_response_decoder_handles_fragments_and_bounds(self) -> None:
         decoder = ResponseDecoder()
         decoder.feed(b"ATDpeer\r\nModulation: V.21\r\nCON")

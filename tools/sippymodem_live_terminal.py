@@ -118,12 +118,12 @@ class ModemTerminal:
     def escape_and_hang_up(self) -> None:
         time.sleep(1.1)
         deadline = time.monotonic() + 3.0
-        self._write(b"+++", deadline)
-        if self._read_result(deadline) == "ok":
-            try:
+        try:
+            self._write(b"+++", deadline)
+            if self._read_result(deadline) == "ok":
                 self.command("ATH", 3.0)
-            except (LiveTerminalError, OSError, TimeoutError):
-                pass
+        except (LiveTerminalError, OSError, TimeoutError):
+            pass
 
     def _write(self, data: bytes, deadline: float) -> None:
         view = memoryview(data)
