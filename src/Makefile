@@ -75,7 +75,8 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_slmodem_calls.c \
 	sippymodem_slmodem_driver.c \
 	sippymodem_slmodem_terminal.c \
-	sippymodem_terminal.c
+	sippymodem_terminal.c \
+	sippymodem_v44_stream.c
 SIPPYMODEM_SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/sippymodem_crc16_ccitt_false.c \
 	$(DSP_SOURCE_DIR)/sippymodem_datapumps.c \
