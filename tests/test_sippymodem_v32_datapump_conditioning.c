@@ -27,6 +27,7 @@ enum {
 	TEST_REVERSAL_SAMPLES = 800,
 	TEST_SILENCE_RUN = 24,
 	TEST_RATE_WORDS_BEFORE_RESPONSE = 2,
+	TEST_SECOND_CONDITIONING_SILENCE = 800,
 	TEST_QAM_SAMPLE_LIMIT = 14000,
 };
 
@@ -51,9 +52,13 @@ struct test_peer_qam {
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_qam_point point;
 	uint16_t rate_word;
+	uint16_t end_word;
 	unsigned int rate_dibit;
 	unsigned int rate_symbols;
+	unsigned int end_dibit;
 	bool rate_started;
+	bool selection;
+	bool end_requested;
 };
 
 struct test_caller_qam_receiver {
@@ -65,6 +70,7 @@ struct test_caller_qam_receiver {
 	struct sippymodem_qam_point previous_point;
 	bool conditioning_complete;
 	bool rate_detected;
+	bool end_detected;
 };
 
 static int unused_start(struct modem *modem)
@@ -93,6 +99,16 @@ static bool process_sample(
 	int16_t *transmit)
 {
 	return operations->process(datapump, &receive, transmit, 1) == DPSTAT_OK;
+}
+
+static bool process_sample_until_link(
+	struct dp_operations *operations, struct dp *datapump, int16_t receive,
+	int16_t *transmit, bool *connected)
+{
+	int status = operations->process(datapump, &receive, transmit, 1);
+
+	*connected = status == DPSTAT_CONNECT;
+	return status == DPSTAT_OK || *connected;
 }
 
 static bool turnaround_signal_init(struct test_turnaround_signal *signal)
@@ -222,6 +238,9 @@ static bool peer_qam_init(struct test_peer_qam *peer)
 		       SIPPYMODEM_V32_CONDITIONING_OK &&
 	       sippymodem_v32_rate_signal_encode(
 		       SIPPYMODEM_V32_RATE_SIGNAL, &offer, &peer->rate_word) ==
+		       SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+	       sippymodem_v32_rate_signal_encode(
+		       SIPPYMODEM_V32_END_SIGNAL, &offer, &peer->end_word) ==
 		       SIPPYMODEM_V32_RATE_SIGNAL_OK;
 }
 
@@ -242,16 +261,31 @@ static bool peer_next_quadrant(
 			return false;
 		peer->rate_started = true;
 	}
-	if (sippymodem_v32_rate_signal_dibit(
-		    peer->rate_word, peer->rate_dibit, &dibit) !=
-		    SIPPYMODEM_V32_RATE_SIGNAL_OK ||
-	    sippymodem_v32_4800_symbol_encode(
+	if (peer->selection &&
+	    (peer->end_dibit != 0 ||
+	     (peer->end_requested && peer->rate_dibit == 0))) {
+		if (peer->end_dibit < SIPPYMODEM_V32_RATE_SIGNAL_DIBITS) {
+			if (sippymodem_v32_rate_signal_dibit(
+				    peer->end_word, peer->end_dibit, &dibit) !=
+			    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+				return false;
+			peer->end_dibit++;
+		} else {
+			dibit = 3;
+		}
+	} else {
+		if (sippymodem_v32_rate_signal_dibit(
+			    peer->rate_word, peer->rate_dibit, &dibit) !=
+			    SIPPYMODEM_V32_RATE_SIGNAL_OK)
+			return false;
+		peer->rate_dibit = (peer->rate_dibit + 1u) %
+				   SIPPYMODEM_V32_RATE_SIGNAL_DIBITS;
+		peer->rate_symbols++;
+	}
+	if (sippymodem_v32_4800_symbol_encode(
 		    &peer->encoder, dibit, quadrant) !=
 		    SIPPYMODEM_V32_FRAMING_OK)
 		return false;
-	peer->rate_dibit =
-		(peer->rate_dibit + 1u) % SIPPYMODEM_V32_RATE_SIGNAL_DIBITS;
-	peer->rate_symbols++;
 	return true;
 }
 
@@ -302,7 +336,7 @@ static bool caller_qam_receiver_observe(
 		    &receiver->demodulator, sample, &point, &ready) !=
 	    SIPPYMODEM_QAM_OK)
 		return false;
-	if (!ready || receiver->rate_detected)
+	if (!ready || receiver->end_detected)
 		return true;
 	if (!receiver->conditioning_complete) {
 		if (sippymodem_v32_conditioning_receiver_observe(
@@ -341,12 +375,17 @@ static bool caller_qam_receiver_observe(
 			    &receiver->rate_detector, dibit, &event, &offer) !=
 			    SIPPYMODEM_V32_RATE_SIGNAL_OK)
 			return false;
-		if (event != SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT) {
-			if (event != SIPPYMODEM_V32_RATE_SIGNAL_DETECTED ||
-			    offer.rates != SIPPYMODEM_V32_RATE_CAPABILITY_4800 ||
+		if (event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED) {
+			if (offer.rates != SIPPYMODEM_V32_RATE_CAPABILITY_4800 ||
 			    offer.trellis_at_highest_rate)
 				return false;
 			receiver->rate_detected = true;
+		} else if (event == SIPPYMODEM_V32_END_SIGNAL_DETECTED) {
+			if (!receiver->rate_detected ||
+			    offer.rates != SIPPYMODEM_V32_RATE_CAPABILITY_4800 ||
+			    offer.trellis_at_highest_rate)
+				return false;
+			receiver->end_detected = true;
 		}
 	}
 	receiver->previous_point = point;
@@ -367,6 +406,7 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 	struct modem *modem;
 	struct dp *datapump;
 	uint64_t response_power = 0;
+	bool connected = false;
 
 	CHECK(sippymodem_v32_datapump_register() == 0,
 	      "V.32 datapump registration failed");
@@ -408,6 +448,62 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		      caller_receiver.conditioning_complete &&
 		      caller_receiver.rate_detected,
 	      "V.32 caller did not return conditioning and a rate response");
+	CHECK(sippymodem_v32_conditioning_transmitter_init(
+		      &peer.conditioning,
+		      SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
+		      SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+		      SIPPYMODEM_V32_CONDITIONING_OK,
+	      "V.32 peer receiver-training restart failed");
+	peer.rate_started = false;
+	peer.rate_dibit = 0;
+	peer.rate_symbols = 0;
+	peer.end_dibit = 0;
+	peer.selection = true;
+	caller_receiver.rate_detected = false;
+	for (unsigned int count = 0;
+	     count < TEST_SECOND_CONDITIONING_SILENCE; ++count) {
+		int16_t transmit;
+		bool processed = process_sample(
+			operations, datapump, 0, &transmit);
+		bool observed = processed && caller_qam_receiver_observe(
+			&caller_receiver, transmit);
+
+		CHECK(processed && observed,
+		      "V.32 second-conditioning gap failed at sample %u "
+		      "(process=%d, observe=%d)",
+		      count, processed, observed);
+	}
+	CHECK(caller_receiver.rate_detected && !caller_receiver.end_detected,
+	      "V.32 caller did not continue R2 before second conditioning");
+	for (unsigned int count = 0;
+	     count < TEST_QAM_SAMPLE_LIMIT && !connected;
+	     ++count) {
+		int16_t receive;
+		int16_t transmit;
+
+		peer.end_requested = caller_receiver.end_detected;
+		CHECK(peer_qam_sample(&peer, &receive) &&
+			      process_sample_until_link(
+				      operations, datapump, receive, &transmit,
+				      &connected) &&
+			      caller_qam_receiver_observe(
+				      &caller_receiver, transmit),
+		      "V.32 second-conditioning handoff stopped");
+	}
+	CHECK(sippymodem_v32_conditioning_transmitter_is_complete(
+		      &peer.conditioning) &&
+		      peer.rate_symbols >=
+			      2 * SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
+		      peer.end_requested && caller_receiver.end_detected &&
+		      peer.end_dibit == SIPPYMODEM_V32_RATE_SIGNAL_DIBITS &&
+		      connected,
+	      "V.32 caller did not reacquire second conditioning before R3 "
+	      "(conditioning=%d, rate symbols=%u, requested=%d, "
+	      "received=%d, E dibits=%u, link=%d)",
+	      sippymodem_v32_conditioning_transmitter_is_complete(
+		      &peer.conditioning),
+	      peer.rate_symbols, peer.end_requested, caller_receiver.end_detected,
+	      peer.end_dibit, connected);
 	CHECK(operations->delete(datapump) == 0,
 	      "V.32 datapump cleanup failed");
 	modem_delete(modem);
