@@ -138,6 +138,8 @@ enum qam_result qam_modulator_sample(
 enum qam_result qam_demodulator_init(
 	struct qam_demodulator *demodulator,
 	const struct qam_channel *channel);
+bool qam_demodulator_is_valid(
+	const struct qam_demodulator *demodulator);
 enum qam_result qam_demodulator_reset(
 	struct qam_demodulator *demodulator);
 /* Ready points are unnormalized matched-filter coordinates interpolated at

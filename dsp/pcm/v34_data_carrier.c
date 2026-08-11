@@ -9,23 +9,6 @@
 static const double V34_DATA_ROLLOFF = 0.1;
 static const double V34_DATA_POWER_EPSILON = 1e-12;
 
-static struct qam_channel data_channel(
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate)
-{
-	return (struct qam_channel){
-		.sample_rate = sample_rate,
-		.symbol_rate_numerator = profile->symbol_rate_numerator,
-		.symbol_rate_denominator = profile->symbol_rate_denominator,
-		.carrier_frequency_numerator =
-			profile->carrier_frequency_numerator,
-		.carrier_frequency_denominator =
-			profile->carrier_frequency_denominator,
-		.rolloff = V34_DATA_ROLLOFF,
-		.pulse_span_symbols = V34_DATA_PULSE_SPAN_SYMBOLS,
-	};
-}
-
 static bool occupied_band_fits(
 	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate)
@@ -39,6 +22,32 @@ static bool occupied_band_fits(
 		carrier + 0.5L * (1.0L + V34_DATA_ROLLOFF) * symbol_rate;
 
 	return upper_edge < 0.5L * sample_rate;
+}
+
+enum v34_data_carrier_result v34_data_carrier_channel(
+	const struct v34_phase3_profile *profile,
+	uint32_t sample_rate, struct qam_channel *channel)
+{
+	struct qam_channel configured;
+
+	if (!v34_phase3_profile_is_valid(profile) || sample_rate == 0 ||
+	    channel == NULL)
+		return V34_DATA_CARRIER_INVALID_ARGUMENT;
+	if (!occupied_band_fits(profile, sample_rate))
+		return V34_DATA_CARRIER_OUT_OF_RANGE;
+	configured = (struct qam_channel){
+		.sample_rate = sample_rate,
+		.symbol_rate_numerator = profile->symbol_rate_numerator,
+		.symbol_rate_denominator = profile->symbol_rate_denominator,
+		.carrier_frequency_numerator =
+			profile->carrier_frequency_numerator,
+		.carrier_frequency_denominator =
+			profile->carrier_frequency_denominator,
+		.rolloff = V34_DATA_ROLLOFF,
+		.pulse_span_symbols = V34_DATA_PULSE_SPAN_SYMBOLS,
+	};
+	*channel = configured;
+	return V34_DATA_CARRIER_OK;
 }
 
 static bool channel_matches_configuration(
@@ -140,7 +149,9 @@ enum v34_data_carrier_result v34_data_carrier_init(
 	initialized.geometry = *geometry;
 	initialized.normalizer = *normalizer;
 	initialized.next_symbol = V34_SYMBOLS_PER_MAPPING_FRAME;
-	channel = data_channel(profile, sample_rate);
+	if (v34_data_carrier_channel(profile, sample_rate, &channel) !=
+	    V34_DATA_CARRIER_OK)
+		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	if (qam_modulator_init_with_point_power_limit(
 		    &initialized.modulator, &channel, INT16_MAX,
 		    normalizer->maximum_normalized_point_power) !=

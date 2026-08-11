@@ -33,6 +33,13 @@ struct v34_data_carrier {
 	uint8_t next_symbol;
 };
 
+/* Derive the shared transmit/receive waveform from an exact Phase 3 profile.
+ * The destination is unchanged when the profile is invalid or its occupied
+ * band does not fit below the selected sample rate's Nyquist frequency. */
+enum v34_data_carrier_result v34_data_carrier_channel(
+	const struct v34_phase3_profile *profile,
+	uint32_t sample_rate, struct qam_channel *channel);
+
 /* Configure the exact negotiated symbol and carrier clocks. The returned
  * waveform is a raw floating-point carrier; negotiated line gain and
  * pre-emphasis remain separate downstream responsibilities. */

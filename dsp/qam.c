@@ -483,7 +483,7 @@ static bool recovery_step_is_valid(
 	       demodulator->recovery_step_units <= maximum;
 }
 
-static bool demodulator_is_valid(
+bool qam_demodulator_is_valid(
 	const struct qam_demodulator *demodulator)
 {
 	uint64_t period = 0;
@@ -569,7 +569,7 @@ enum qam_result qam_demodulator_reset(
 {
 	struct qam_channel channel;
 
-	if (!demodulator_is_valid(demodulator))
+	if (!qam_demodulator_is_valid(demodulator))
 		return QAM_INVALID_ARGUMENT;
 	channel = demodulator->channel;
 	return qam_demodulator_init(demodulator, &channel);
@@ -846,7 +846,7 @@ enum qam_result qam_demodulator_sample(
 	double in_phase;
 	double quadrature;
 
-	if (!demodulator_is_valid(demodulator) || point == NULL ||
+	if (!qam_demodulator_is_valid(demodulator) || point == NULL ||
 	    symbol_ready == NULL)
 		return QAM_INVALID_ARGUMENT;
 	*point = (struct qam_point){ 0 };
@@ -870,7 +870,7 @@ enum qam_result qam_demodulator_sample(
 struct qam_measurement qam_demodulator_measure(
 	const struct qam_demodulator *demodulator)
 {
-	if (!demodulator_is_valid(demodulator))
+	if (!qam_demodulator_is_valid(demodulator))
 		return (struct qam_measurement){ 0 };
 	return (struct qam_measurement){
 		.line_power = demodulator->line_power,
