@@ -14,9 +14,12 @@ enum {
 	TEST_SYMBOL_RATE = 600,
 	TEST_AMPLITUDE = 12000,
 	TEST_SYMBOL_COUNT = 640,
-	TEST_DECODED_CAPACITY = 512,
 	TEST_SYNC_SYMBOLS = 32,
 	TEST_PAYLOAD_SYMBOLS = 128,
+	TRACKING_SYMBOL_COUNT = 8192,
+	TRACKING_DECODED_CAPACITY = TRACKING_SYMBOL_COUNT + 1024,
+	TRACKING_SYNC_SYMBOLS = 64,
+	TRACKING_PAYLOAD_SYMBOLS = 2048,
 };
 
 static const double TEST_PI = 3.1415926535897932384626433832795;
@@ -470,11 +473,11 @@ static int16_t impair_sample(int16_t sample, bool impaired, uint32_t *random)
 	return (int16_t)value;
 }
 
-static void build_phase_changes(uint8_t changes[TEST_SYMBOL_COUNT])
+static void build_phase_changes(uint8_t *changes, size_t count)
 {
 	uint32_t random = UINT32_C(0x51f22d79);
 
-	for (size_t index = 0; index < TEST_SYMBOL_COUNT; ++index)
+	for (size_t index = 0; index < count; ++index)
 		changes[index] = (uint8_t)(fixture_random(&random) >> 30);
 }
 
@@ -493,7 +496,9 @@ static size_t find_pattern(
 
 static bool check_receive_loopback(
 	uint32_t transmit_carrier_hz, uint32_t receive_carrier_hz,
-	unsigned int leading_silence, bool impaired)
+	uint32_t transmit_symbol_rate, uint32_t receive_symbol_rate,
+	double rolloff, unsigned int leading_silence, bool impaired,
+	size_t symbol_count, size_t sync_symbols, size_t payload_symbols)
 {
 	struct sippymodem_qam_channel transmit_channel =
 		v22_channel(transmit_carrier_hz);
@@ -502,19 +507,30 @@ static bool check_receive_loopback(
 	struct sippymodem_qam_modulator modulator;
 	struct sippymodem_qam_demodulator demodulator;
 	struct sippymodem_qam_measurement measurement;
-	uint8_t changes[TEST_SYMBOL_COUNT];
-	uint8_t decoded[TEST_DECODED_CAPACITY];
+	uint8_t changes[TRACKING_SYMBOL_COUNT];
+	uint8_t decoded[TRACKING_DECODED_CAPACITY];
 	uint32_t random = UINT32_C(0x912ca775);
 	struct sippymodem_qam_point previous_point = { 0 };
 	uint8_t quadrant = 0;
 	size_t accepted = 0;
 	size_t decoded_count = 0;
 	size_t sync_offset;
+	size_t payload_errors = SIZE_MAX;
 	bool has_previous_point = false;
 	size_t sample_limit = leading_silence +
-		(TEST_SYMBOL_COUNT + 16u) * TEST_SAMPLE_RATE / TEST_SYMBOL_RATE;
+		((symbol_count + 16u) * TEST_SAMPLE_RATE +
+		 transmit_symbol_rate - 1u) /
+			transmit_symbol_rate;
 
-	build_phase_changes(changes);
+	CHECK(transmit_symbol_rate != 0 && receive_symbol_rate != 0 &&
+		      symbol_count <= ARRAY_LENGTH(changes) &&
+		      sync_symbols + payload_symbols <= symbol_count,
+	      "QAM receive-loopback fixture is invalid");
+	transmit_channel.symbol_rate_numerator = transmit_symbol_rate;
+	receive_channel.symbol_rate_numerator = receive_symbol_rate;
+	transmit_channel.rolloff = rolloff;
+	receive_channel.rolloff = rolloff;
+	build_phase_changes(changes, symbol_count);
 	CHECK(sippymodem_qam_modulator_init(
 		      &modulator, &transmit_channel, TEST_AMPLITUDE) ==
 		      SIPPYMODEM_QAM_OK &&
@@ -538,7 +554,7 @@ static bool check_receive_loopback(
 				      &modulator, &transmit_point, &sample,
 				      &symbol_accepted) == SIPPYMODEM_QAM_OK,
 			      "QAM loopback modulator failed");
-			if (symbol_accepted && accepted < TEST_SYMBOL_COUNT) {
+			if (symbol_accepted && accepted < symbol_count) {
 				quadrant =
 					(uint8_t)((quadrant + changes[accepted]) & 3u);
 				accepted++;
@@ -568,37 +584,75 @@ static bool check_receive_loopback(
 			has_previous_point = true;
 		}
 	}
-	CHECK(accepted == TEST_SYMBOL_COUNT,
+	CHECK(accepted == symbol_count,
 	      "QAM loopback did not consume its symbol fixture");
 	sync_offset = find_pattern(
 		decoded, decoded_count,
-		changes + TEST_SYMBOL_COUNT -
-			TEST_SYNC_SYMBOLS - TEST_PAYLOAD_SYMBOLS,
-		TEST_SYNC_SYMBOLS);
+		changes + symbol_count - sync_symbols - payload_symbols,
+		sync_symbols);
+	if (sync_offset != SIZE_MAX &&
+	    sync_offset + sync_symbols + payload_symbols <= decoded_count) {
+		payload_errors = 0;
+		for (size_t index = 0; index < payload_symbols; ++index)
+			if (decoded[sync_offset + sync_symbols + index] !=
+			    changes[symbol_count - payload_symbols + index])
+				payload_errors++;
+	}
 	CHECK(sync_offset != SIZE_MAX &&
-		      sync_offset + TEST_SYNC_SYMBOLS + TEST_PAYLOAD_SYMBOLS <=
+		      sync_offset + sync_symbols + payload_symbols <=
 			      decoded_count &&
-		      memcmp(decoded + sync_offset + TEST_SYNC_SYMBOLS,
-			     changes + TEST_SYMBOL_COUNT - TEST_PAYLOAD_SYMBOLS,
-			     TEST_PAYLOAD_SYMBOLS) == 0,
-	      "QAM receiver changed its post-acquisition payload");
+		      memcmp(decoded + sync_offset + sync_symbols,
+			     changes + symbol_count - payload_symbols,
+			     payload_symbols) == 0,
+	      "QAM receiver changed its post-acquisition payload "
+	      "(%u/%u symbols, decoded=%zu, sync=%zu, errors=%zu)",
+	      transmit_symbol_rate, receive_symbol_rate, decoded_count,
+	      sync_offset, payload_errors);
 	measurement = sippymodem_qam_demodulator_measure(&demodulator);
 	CHECK(measurement.timing_locked && measurement.line_power > 1.0 &&
 		      measurement.symbol_power > 1.0,
 	      "QAM receiver did not retain carrier measurements");
+	CHECK(demodulator.recovery_step_units == transmit_symbol_rate,
+	      "QAM receiver tracked %llu instead of %u symbol-rate units",
+	      (unsigned long long)demodulator.recovery_step_units,
+	      transmit_symbol_rate);
 	return true;
 }
 
 static bool test_receive_loopback(void)
 {
-	return check_receive_loopback(1200, 1200, 0, false) &&
-	       check_receive_loopback(2400, 2400, 0, false);
+	return check_receive_loopback(
+		       1200, 1200, TEST_SYMBOL_RATE, TEST_SYMBOL_RATE, 0.75, 0,
+		       false, TEST_SYMBOL_COUNT, TEST_SYNC_SYMBOLS,
+		       TEST_PAYLOAD_SYMBOLS) &&
+	       check_receive_loopback(
+		       2400, 2400, TEST_SYMBOL_RATE, TEST_SYMBOL_RATE, 0.75, 0,
+		       false, TEST_SYMBOL_COUNT, TEST_SYNC_SYMBOLS,
+		       TEST_PAYLOAD_SYMBOLS);
 }
 
 static bool test_receive_tolerance(void)
 {
-	return check_receive_loopback(1207, 1200, 19, true) &&
-	       check_receive_loopback(2393, 2400, 31, true);
+	return check_receive_loopback(
+		       1207, 1200, TEST_SYMBOL_RATE, TEST_SYMBOL_RATE, 0.75, 19,
+		       true, TEST_SYMBOL_COUNT, TEST_SYNC_SYMBOLS,
+		       TEST_PAYLOAD_SYMBOLS) &&
+	       check_receive_loopback(
+		       2393, 2400, TEST_SYMBOL_RATE, TEST_SYMBOL_RATE, 0.75, 31,
+		       true, TEST_SYMBOL_COUNT, TEST_SYNC_SYMBOLS,
+		       TEST_PAYLOAD_SYMBOLS);
+}
+
+static bool test_receive_clock_tracking(void)
+{
+	return check_receive_loopback(
+		       1807, 1800, 2401, 2400, 0.25, 17, true,
+		       TRACKING_SYMBOL_COUNT, TRACKING_SYNC_SYMBOLS,
+		       TRACKING_PAYLOAD_SYMBOLS) &&
+	       check_receive_loopback(
+		       1793, 1800, 2399, 2400, 0.25, 29, true,
+		       TRACKING_SYMBOL_COUNT, TRACKING_SYNC_SYMBOLS,
+		       TRACKING_PAYLOAD_SYMBOLS);
 }
 
 static bool test_silence_does_not_lock(void)
@@ -735,6 +789,24 @@ static bool test_validation(void)
 		      sippymodem_qam_demodulator_reset(&demodulator) ==
 			      SIPPYMODEM_QAM_OK,
 		      "QAM demodulator reset rejected valid state");
+	{
+		uint64_t recovery_step = demodulator.recovery_step_units;
+		size_t reference_index = demodulator.timing_reference_index;
+
+		demodulator.recovery_step_units = 0;
+		CHECK(sippymodem_qam_demodulator_sample(
+			      &demodulator, 0, &received_point, &accepted) ==
+			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+		      "QAM accepted a corrupt recovery step");
+		demodulator.recovery_step_units = recovery_step;
+		demodulator.timing_reference_index =
+			demodulator.timing_candidate_count;
+		CHECK(sippymodem_qam_demodulator_sample(
+			      &demodulator, 0, &received_point, &accepted) ==
+			      SIPPYMODEM_QAM_INVALID_ARGUMENT,
+		      "QAM accepted a corrupt timing reference");
+		demodulator.timing_reference_index = reference_index;
+	}
 	CHECK(sippymodem_qam_modulator_sample(
 		      &modulator, &bounded_point, &sample, &accepted) ==
 		      SIPPYMODEM_QAM_OK &&
@@ -806,6 +878,7 @@ int main(void)
 		{ "floating transmit path", test_floating_transmit_path },
 		{ "receive loopback", test_receive_loopback },
 		{ "receive tolerance", test_receive_tolerance },
+		{ "receive clock tracking", test_receive_clock_tracking },
 		{ "silence does not lock", test_silence_does_not_lock },
 		{ "configurable point power", test_configurable_point_power },
 		{ "validation", test_validation },

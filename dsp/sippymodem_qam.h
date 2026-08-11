@@ -74,6 +74,8 @@ struct sippymodem_qam_demodulator {
 		timing[SIPPYMODEM_QAM_MAX_TIMING_CANDIDATES];
 	uint64_t symbol_period_units;
 	uint64_t timing_step_units;
+	/* Recovered symbol-phase advance for each input sample. */
+	uint64_t recovery_step_units;
 	uint64_t locked_phase_units;
 	uint32_t carrier_phase;
 	uint32_t carrier_phase_step;
@@ -83,6 +85,8 @@ struct sippymodem_qam_demodulator {
 	size_t history_index;
 	size_t history_count;
 	size_t timing_candidate_count;
+	/* Candidate used as the nominal-clock reference for the next window. */
+	size_t timing_reference_index;
 	double line_power;
 	double symbol_power;
 	double previous_in_phase;

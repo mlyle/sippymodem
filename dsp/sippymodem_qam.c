@@ -12,6 +12,9 @@ enum {
 	 * neighboring symbol phase; average across the modem training interval. */
 	QAM_ACQUISITION_SYMBOLS = 256,
 	QAM_MIN_ACQUISITION_SYMBOLS = 192,
+	/* Bound the recovered clock to one percent around the configured rate,
+	 * retaining one phase unit of range for very small exact numerators. */
+	QAM_CLOCK_TRACKING_RANGE_DIVISOR = 100,
 };
 
 static const double QAM_PI = 3.1415926535897932384626433832795;
@@ -22,6 +25,7 @@ static const double QAM_POINT_EPSILON = 1e-12;
 /* Unit-average-power square training constellations reach 9/5 at a corner. */
 static const double QAM_MAX_POINT_POWER = 9.0 / 5.0;
 static const double QAM_MIN_ACQUISITION_POWER = 64.0;
+static const double QAM_TIMING_POWER_HYSTERESIS = 1.005;
 
 static bool point_is_finite(const struct sippymodem_qam_point *point)
 {
@@ -453,6 +457,32 @@ static void initialize_timing_candidates(
 			index * demodulator->timing_step_units;
 }
 
+static void recovery_step_bounds(
+	const struct sippymodem_qam_demodulator *demodulator,
+	uint64_t *minimum, uint64_t *maximum)
+{
+	uint64_t nominal = demodulator->channel.symbol_rate_numerator;
+	uint64_t adjustment = nominal / QAM_CLOCK_TRACKING_RANGE_DIVISOR;
+
+	if (adjustment == 0)
+		adjustment = 1;
+	*minimum = nominal > adjustment ? nominal - adjustment : 1;
+	*maximum = nominal + adjustment;
+	if (*maximum > demodulator->symbol_period_units)
+		*maximum = demodulator->symbol_period_units;
+}
+
+static bool recovery_step_is_valid(
+	const struct sippymodem_qam_demodulator *demodulator)
+{
+	uint64_t minimum;
+	uint64_t maximum;
+
+	recovery_step_bounds(demodulator, &minimum, &maximum);
+	return demodulator->recovery_step_units >= minimum &&
+	       demodulator->recovery_step_units <= maximum;
+}
+
 static bool demodulator_is_valid(
 	const struct sippymodem_qam_demodulator *demodulator)
 {
@@ -469,8 +499,10 @@ static bool demodulator_is_valid(
 		    &candidate_count, &timing_step, &acquisition_samples) ||
 	    demodulator->symbol_period_units != period ||
 	    demodulator->timing_step_units != timing_step ||
+	    !recovery_step_is_valid(demodulator) ||
 	    demodulator->matched_filter_count != filter_count ||
 	    demodulator->timing_candidate_count != candidate_count ||
+	    demodulator->timing_reference_index >= candidate_count ||
 	    demodulator->acquisition_sample_target != acquisition_samples ||
 	    demodulator->acquisition_sample_count >= acquisition_samples ||
 	    demodulator->history_index >= filter_count ||
@@ -520,6 +552,7 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_init(
 	demodulator->channel = *channel;
 	demodulator->symbol_period_units = period;
 	demodulator->timing_step_units = timing_step;
+	demodulator->recovery_step_units = channel->symbol_rate_numerator;
 	demodulator->carrier_phase_step = phase_step(
 		channel->sample_rate, channel->carrier_frequency_numerator,
 		channel->carrier_frequency_denominator);
@@ -627,11 +660,71 @@ static void reset_timing_scores(
 	demodulator->acquisition_sample_count = 0;
 }
 
+static uint64_t timing_phase_distance(
+	uint64_t left, uint64_t right, uint64_t period)
+{
+	uint64_t forward = left >= right ? left - right : period - (right - left);
+	uint64_t backward = right >= left ? right - left : period - (left - right);
+
+	return forward < backward ? forward : backward;
+}
+
+static int timing_phase_direction(
+	uint64_t current, uint64_t target, uint64_t period)
+{
+	uint64_t forward = target >= current ? target - current :
+					       period - (current - target);
+	uint64_t backward = current >= target ? current - target :
+					       period - (target - current);
+
+	if (forward == 0 || forward == backward)
+		return 0;
+	return forward < backward ? 1 : -1;
+}
+
+static void track_recovery_step(
+	struct sippymodem_qam_demodulator *demodulator,
+	uint64_t reference_phase, uint64_t target_phase)
+{
+	uint64_t minimum;
+	uint64_t maximum;
+	uint64_t distance = timing_phase_distance(
+		reference_phase, target_phase, demodulator->symbol_period_units);
+	uint64_t samples = demodulator->acquisition_sample_target;
+	uint64_t adjustment = distance / samples;
+	uint64_t remainder = distance % samples;
+	uint64_t nominal = demodulator->channel.symbol_rate_numerator;
+	int direction = timing_phase_direction(
+		reference_phase, target_phase,
+		demodulator->symbol_period_units);
+
+	/* The reference candidate has advanced at the nominal clock since the
+	 * previous window. Its displacement from the new best candidate is
+	 * therefore the accumulated symbol-rate error over this window. */
+	if (remainder >= (samples + 1u) / 2u)
+		adjustment++;
+	recovery_step_bounds(demodulator, &minimum, &maximum);
+	if (direction > 0) {
+		if (adjustment > maximum - nominal)
+			adjustment = maximum - nominal;
+		demodulator->recovery_step_units = nominal + adjustment;
+	} else if (direction < 0) {
+		if (adjustment > nominal - minimum)
+			adjustment = nominal - minimum;
+		demodulator->recovery_step_units = nominal - adjustment;
+	} else {
+		demodulator->recovery_step_units = nominal;
+	}
+}
+
 static void select_timing_candidate(
 	struct sippymodem_qam_demodulator *demodulator)
 {
 	struct sippymodem_qam_timing_candidate *best = NULL;
+	struct sippymodem_qam_timing_candidate *reference = NULL;
 	double best_power = 0.0;
+	double reference_power = 0.0;
+	size_t best_index = 0;
 
 	for (size_t index = 0; index < demodulator->timing_candidate_count;
 	     ++index) {
@@ -645,6 +738,12 @@ static void select_timing_candidate(
 		if (average > best_power) {
 			best = candidate;
 			best_power = average;
+			best_index = index;
+		}
+		if (demodulator->timing_locked &&
+		    index == demodulator->timing_reference_index) {
+			reference = candidate;
+			reference_power = average;
 		}
 	}
 	/* Companded media can decode an idle octet to a small nonzero sample.
@@ -653,10 +752,26 @@ static void select_timing_candidate(
 		reset_timing_scores(demodulator);
 		return;
 	}
-	demodulator->locked_phase_units = best->phase_units;
+	if (reference != NULL && best != reference &&
+	    best_power <= reference_power * QAM_TIMING_POWER_HYSTERESIS) {
+		best = reference;
+		best_power = reference_power;
+		best_index = demodulator->timing_reference_index;
+	}
+	if (demodulator->timing_locked) {
+		track_recovery_step(
+			demodulator,
+			demodulator
+				->timing[demodulator->timing_reference_index]
+				.phase_units,
+			best->phase_units);
+	} else {
+		demodulator->locked_phase_units = best->phase_units;
+	}
+	demodulator->timing_reference_index = best_index;
+	reset_timing_scores(demodulator);
 	demodulator->symbol_power = best_power;
 	demodulator->timing_locked = true;
-	demodulator->acquisition_sample_count = 0;
 }
 
 static void acquire_symbol_timing(
@@ -699,7 +814,7 @@ static bool recover_symbol(
 	if (!advance_symbol_phase(
 		    &demodulator->locked_phase_units,
 		    demodulator->symbol_period_units,
-		    demodulator->channel.symbol_rate_numerator, &fraction))
+		    demodulator->recovery_step_units, &fraction))
 		return false;
 	*point = (struct sippymodem_qam_point){
 		.in_phase = interpolate(
@@ -747,6 +862,7 @@ enum sippymodem_qam_result sippymodem_qam_demodulator_sample(
 	}
 	*symbol_ready = recover_symbol(
 		demodulator, in_phase, quadrature, point);
+	acquire_symbol_timing(demodulator, in_phase, quadrature);
 	remember_matched_sample(demodulator, in_phase, quadrature);
 	return SIPPYMODEM_QAM_OK;
 }
