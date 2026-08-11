@@ -135,6 +135,7 @@ SIPPYMODEM_V32_SOURCES := \
 SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_encoder.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_constellation.c \
