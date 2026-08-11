@@ -150,7 +150,10 @@ static bool rank_ring_quartet(
 		ring_count, second_sum, second_pair);
 	uint8_t quartet_sum = (uint8_t)(first_sum + second_sum);
 
-	if (first_selector >= coefficients->g2[first_sum] ||
+	if (first_sum >= coefficients->g2_count ||
+	    second_sum >= coefficients->g2_count ||
+	    quartet_sum >= coefficients->g4_count ||
+	    first_selector >= coefficients->g2[first_sum] ||
 	    second_selector >= coefficients->g2[second_sum])
 		return false;
 	*sum = quartet_sum;
