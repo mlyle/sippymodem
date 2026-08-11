@@ -16,13 +16,13 @@ enum modem_loop_result {
 };
 
 struct modem_loop_error {
-	enum sippymodem_runtime_result runtime_result;
+	enum modem_runtime_result runtime_result;
 	int system_error;
 };
 
 /* Run bounded runtime steps until running becomes zero or an error occurs. */
 enum modem_loop_result modem_loop_run(
-	struct sippymodem_runtime *runtime,
+	struct modem_runtime *runtime,
 	volatile sig_atomic_t *running,
 	struct modem_loop_error *error);
 const char *modem_loop_result_name(enum modem_loop_result result);

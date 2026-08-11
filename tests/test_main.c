@@ -14,7 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 
-struct sippymodem_runtime {
+struct modem_runtime {
 	int unused;
 };
 
@@ -23,10 +23,10 @@ static struct {
 	size_t call_count;
 	int config_result;
 	bool create_fails;
-	enum sippymodem_runtime_result open_result;
-	enum sippymodem_runtime_result close_result;
+	enum modem_runtime_result open_result;
+	enum modem_runtime_result close_result;
 	enum modem_loop_result loop_result;
-	enum sippymodem_runtime_result loop_runtime_result;
+	enum modem_runtime_result loop_runtime_result;
 	int signal_number;
 	bool saw_running;
 	bool saw_stop;
@@ -34,7 +34,7 @@ static struct {
 	char modem_name[32];
 } fixture;
 
-static struct sippymodem_runtime runtime;
+static struct modem_runtime runtime;
 
 static void record_call(char call)
 {
@@ -100,7 +100,7 @@ int config_apply_environment(
 	return fixture.config_result;
 }
 
-struct sippymodem_runtime *sippymodem_runtime_create(
+struct modem_runtime *modem_runtime_create(
 	const struct app_config *config, const char *modem_name)
 {
 	(void)config;
@@ -113,15 +113,15 @@ struct sippymodem_runtime *sippymodem_runtime_create(
 	return &runtime;
 }
 
-void sippymodem_runtime_destroy(struct sippymodem_runtime *owned_runtime)
+void modem_runtime_destroy(struct modem_runtime *owned_runtime)
 {
 	if (owned_runtime != &runtime)
 		fixture.wrong_runtime = true;
 	record_call('d');
 }
 
-enum sippymodem_runtime_result sippymodem_runtime_open(
-	struct sippymodem_runtime *owned_runtime)
+enum modem_runtime_result modem_runtime_open(
+	struct modem_runtime *owned_runtime)
 {
 	if (owned_runtime != &runtime)
 		fixture.wrong_runtime = true;
@@ -129,8 +129,8 @@ enum sippymodem_runtime_result sippymodem_runtime_open(
 	return fixture.open_result;
 }
 
-enum sippymodem_runtime_result sippymodem_runtime_close(
-	struct sippymodem_runtime *owned_runtime)
+enum modem_runtime_result modem_runtime_close(
+	struct modem_runtime *owned_runtime)
 {
 	if (owned_runtime != &runtime)
 		fixture.wrong_runtime = true;
@@ -138,8 +138,8 @@ enum sippymodem_runtime_result sippymodem_runtime_close(
 	return fixture.close_result;
 }
 
-const char *sippymodem_runtime_device_path(
-	const struct sippymodem_runtime *owned_runtime)
+const char *modem_runtime_device_path(
+	const struct modem_runtime *owned_runtime)
 {
 	if (owned_runtime != &runtime)
 		fixture.wrong_runtime = true;
@@ -148,7 +148,7 @@ const char *sippymodem_runtime_device_path(
 }
 
 enum modem_loop_result modem_loop_run(
-	struct sippymodem_runtime *owned_runtime,
+	struct modem_runtime *owned_runtime,
 	volatile sig_atomic_t *running,
 	struct modem_loop_error *error)
 {
@@ -168,8 +168,8 @@ enum modem_loop_result modem_loop_run(
 	return fixture.loop_result;
 }
 
-const char *sippymodem_runtime_result_name(
-	enum sippymodem_runtime_result result)
+const char *modem_runtime_result_name(
+	enum modem_runtime_result result)
 {
 	(void)result;
 	return "runtime test error";
@@ -225,7 +225,7 @@ static bool test_unwinds_creation_and_open_failures(void)
 		      strcmp(fixture.calls, "iac") == 0,
 	      "runtime creation failure was not isolated");
 	reset_fixture();
-	fixture.open_result = SIPPYMODEM_RUNTIME_SESSION_ERROR;
+	fixture.open_result = MODEM_RUNTIME_SESSION_ERROR;
 	CHECK(run_program(1, arguments) == 1 &&
 		      strcmp(fixture.calls, "iacod") == 0,
 	      "runtime open failure was not destroyed without looping");
@@ -238,12 +238,12 @@ static bool test_reports_loop_and_close_failures(void)
 
 	reset_fixture();
 	fixture.loop_result = MODEM_LOOP_RUNTIME_ERROR;
-	fixture.loop_runtime_result = SIPPYMODEM_RUNTIME_RECORDING_ERROR;
+	fixture.loop_runtime_result = MODEM_RUNTIME_RECORDING_ERROR;
 	CHECK(run_program(1, arguments) == 1 &&
 		      strcmp(fixture.calls, "iacoplxd") == 0,
 	      "runtime failure bypassed ordered shutdown");
 	reset_fixture();
-	fixture.close_result = SIPPYMODEM_RUNTIME_SESSION_ERROR;
+	fixture.close_result = MODEM_RUNTIME_SESSION_ERROR;
 	CHECK(run_program(1, arguments) == 1 &&
 		      strcmp(fixture.calls, "iacoplxd") == 0,
 	      "shutdown failure was hidden");

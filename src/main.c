@@ -110,7 +110,7 @@ static void report_loop_error(
 {
 	if (result == MODEM_LOOP_RUNTIME_ERROR) {
 		fprintf(stderr, "sippymodem: %s\n",
-			sippymodem_runtime_result_name(error->runtime_result));
+			modem_runtime_result_name(error->runtime_result));
 	} else if (error->system_error != 0) {
 		fprintf(stderr, "sippymodem: %s: %s\n",
 			modem_loop_result_name(result),
@@ -127,9 +127,9 @@ int sippymodem_program_main(int argc, char *argv[])
 	struct config_error config_error;
 	struct modem_loop_error loop_error;
 	struct signal_handlers handlers;
-	struct sippymodem_runtime *runtime;
-	enum sippymodem_runtime_result open_result;
-	enum sippymodem_runtime_result close_result;
+	struct modem_runtime *runtime;
+	enum modem_runtime_result open_result;
+	enum modem_runtime_result close_result;
 	enum modem_loop_result loop_result;
 	const char *program = argv != NULL && argc > 0 ? argv[0] : NULL;
 	const char *device_path;
@@ -160,7 +160,7 @@ int sippymodem_program_main(int argc, char *argv[])
 	}
 
 	errno = 0;
-	runtime = sippymodem_runtime_create(&config, "sippymodem");
+	runtime = modem_runtime_create(&config, "sippymodem");
 	if (runtime == NULL) {
 		failure = errno != 0 ? errno : EINVAL;
 		fprintf(stderr, "sippymodem: cannot create runtime: %s\n",
@@ -168,14 +168,14 @@ int sippymodem_program_main(int argc, char *argv[])
 		restore_signal_handlers(&handlers);
 		return SIPPYMODEM_EXIT_FAILURE;
 	}
-	open_result = sippymodem_runtime_open(runtime);
-	if (open_result != SIPPYMODEM_RUNTIME_OK) {
+	open_result = modem_runtime_open(runtime);
+	if (open_result != MODEM_RUNTIME_OK) {
 		fprintf(stderr, "sippymodem: cannot open runtime: %s\n",
-			sippymodem_runtime_result_name(open_result));
+			modem_runtime_result_name(open_result));
 		exit_code = SIPPYMODEM_EXIT_FAILURE;
 		goto destroy;
 	}
-	device_path = sippymodem_runtime_device_path(runtime);
+	device_path = modem_runtime_device_path(runtime);
 	if (device_path == NULL || fprintf(stdout, "%s\n", device_path) < 0 ||
 	    fflush(stdout) != 0) {
 		failure = errno != 0 ? errno : EIO;
@@ -191,15 +191,15 @@ int sippymodem_program_main(int argc, char *argv[])
 	}
 
 close:
-	close_result = sippymodem_runtime_close(runtime);
-	if (close_result != SIPPYMODEM_RUNTIME_OK) {
+	close_result = modem_runtime_close(runtime);
+	if (close_result != MODEM_RUNTIME_OK) {
 		fprintf(stderr, "sippymodem: cannot close runtime: %s\n",
-			sippymodem_runtime_result_name(close_result));
+			modem_runtime_result_name(close_result));
 		exit_code = SIPPYMODEM_EXIT_FAILURE;
 	}
 
 destroy:
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 	restore_signal_handlers(&handlers);
 	return exit_code;
 }

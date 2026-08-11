@@ -50,11 +50,11 @@ static enum modem_loop_result monotonic_now(
 }
 
 static enum modem_loop_result wait_for_work(
-	struct sippymodem_runtime *runtime, uint64_t wait_ns,
+	struct modem_runtime *runtime, uint64_t wait_ns,
 	struct modem_loop_error *error)
 {
 	struct pollfd terminal = {
-		.fd = sippymodem_runtime_terminal_poll_fd(runtime),
+		.fd = modem_runtime_terminal_poll_fd(runtime),
 		.events = POLLIN,
 	};
 	struct timespec timeout;
@@ -83,11 +83,11 @@ static enum modem_loop_result wait_for_work(
 }
 
 enum modem_loop_result modem_loop_run(
-	struct sippymodem_runtime *runtime, volatile sig_atomic_t *running,
+	struct modem_runtime *runtime, volatile sig_atomic_t *running,
 	struct modem_loop_error *error)
 {
 	enum modem_loop_result result;
-	enum sippymodem_runtime_result runtime_result;
+	enum modem_runtime_result runtime_result;
 	uint64_t now_ns;
 
 	clear_error(error);
@@ -97,10 +97,10 @@ enum modem_loop_result modem_loop_run(
 		result = monotonic_now(&now_ns, error);
 		if (result != MODEM_LOOP_OK)
 			return result;
-		runtime_result = sippymodem_runtime_step(
+		runtime_result = modem_runtime_step(
 			runtime, now_ns, NULL, NULL, NULL);
-		if (runtime_result != SIPPYMODEM_RUNTIME_OK &&
-		    runtime_result != SIPPYMODEM_RUNTIME_IDLE) {
+		if (runtime_result != MODEM_RUNTIME_OK &&
+		    runtime_result != MODEM_RUNTIME_IDLE) {
 			if (error != NULL)
 				error->runtime_result = runtime_result;
 			return MODEM_LOOP_RUNTIME_ERROR;
@@ -111,7 +111,7 @@ enum modem_loop_result modem_loop_run(
 		if (result != MODEM_LOOP_OK)
 			return result;
 		result = wait_for_work(
-			runtime, sippymodem_runtime_wait_ns(runtime, now_ns), error);
+			runtime, modem_runtime_wait_ns(runtime, now_ns), error);
 		if (result != MODEM_LOOP_OK)
 			return result;
 	}

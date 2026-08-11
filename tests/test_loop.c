@@ -9,18 +9,18 @@
 #include <string.h>
 #include <unistd.h>
 
-struct sippymodem_runtime {
+struct modem_runtime {
 	int terminal_fd;
 	uint64_t wait_ns;
 	unsigned int steps;
 	unsigned int stop_after_steps;
-	enum sippymodem_runtime_result step_result;
+	enum modem_runtime_result step_result;
 };
 
 static volatile sig_atomic_t *active_running;
 
-enum sippymodem_runtime_result sippymodem_runtime_step(
-	struct sippymodem_runtime *runtime, uint64_t now_ns,
+enum modem_runtime_result modem_runtime_step(
+	struct modem_runtime *runtime, uint64_t now_ns,
 	size_t *terminal_bytes_received, size_t *datagrams_received,
 	size_t *frames_processed)
 {
@@ -34,22 +34,22 @@ enum sippymodem_runtime_result sippymodem_runtime_step(
 	return runtime->step_result;
 }
 
-uint64_t sippymodem_runtime_wait_ns(
-	const struct sippymodem_runtime *runtime, uint64_t now_ns)
+uint64_t modem_runtime_wait_ns(
+	const struct modem_runtime *runtime, uint64_t now_ns)
 {
 	(void)now_ns;
 	return runtime->wait_ns;
 }
 
-int sippymodem_runtime_terminal_poll_fd(
-	const struct sippymodem_runtime *runtime)
+int modem_runtime_terminal_poll_fd(
+	const struct modem_runtime *runtime)
 {
 	return runtime->terminal_fd;
 }
 
 static bool test_stops_after_bounded_steps(void)
 {
-	struct sippymodem_runtime runtime = {
+	struct modem_runtime runtime = {
 		.terminal_fd = -1,
 		.wait_ns = 0,
 		.stop_after_steps = 2,
@@ -68,7 +68,7 @@ static bool test_stops_after_bounded_steps(void)
 
 static bool test_wakes_for_terminal_input(void)
 {
-	struct sippymodem_runtime runtime = {
+	struct modem_runtime runtime = {
 		.wait_ns = UINT64_MAX,
 		.stop_after_steps = 2,
 	};
@@ -93,11 +93,11 @@ static bool test_wakes_for_terminal_input(void)
 static bool test_reports_runtime_and_wait_errors(void)
 {
 	struct modem_loop_error error;
-	struct sippymodem_runtime runtime = {
+	struct modem_runtime runtime = {
 		.terminal_fd = -1,
 		.wait_ns = 0,
 		.stop_after_steps = 2,
-		.step_result = SIPPYMODEM_RUNTIME_HOST_ERROR,
+		.step_result = MODEM_RUNTIME_HOST_ERROR,
 	};
 	volatile sig_atomic_t running = 1;
 	int descriptors[2];
@@ -105,14 +105,14 @@ static bool test_reports_runtime_and_wait_errors(void)
 	active_running = &running;
 	CHECK(modem_loop_run(&runtime, &running, &error) ==
 			      MODEM_LOOP_RUNTIME_ERROR &&
-		      error.runtime_result == SIPPYMODEM_RUNTIME_HOST_ERROR,
+		      error.runtime_result == MODEM_RUNTIME_HOST_ERROR,
 	      "loop hid a runtime failure");
 	CHECK(pipe(descriptors) == 0, "invalid-descriptor fixture was not created");
 	close(descriptors[0]);
 	close(descriptors[1]);
 	runtime.terminal_fd = descriptors[0];
 	runtime.wait_ns = UINT64_MAX;
-	runtime.step_result = SIPPYMODEM_RUNTIME_IDLE;
+	runtime.step_result = MODEM_RUNTIME_IDLE;
 	runtime.steps = 0;
 	running = 1;
 	CHECK(modem_loop_run(&runtime, &running, &error) ==
@@ -124,16 +124,16 @@ static bool test_reports_runtime_and_wait_errors(void)
 
 static bool test_rejects_invalid_arguments(void)
 {
-	struct sippymodem_runtime runtime = { 0 };
+	struct modem_runtime runtime = { 0 };
 	struct modem_loop_error error = {
-		.runtime_result = SIPPYMODEM_RUNTIME_HOST_ERROR,
+		.runtime_result = MODEM_RUNTIME_HOST_ERROR,
 		.system_error = EIO,
 	};
 	volatile sig_atomic_t running = 0;
 
 	CHECK(modem_loop_run(NULL, &running, &error) ==
 			      MODEM_LOOP_INVALID_ARGUMENT &&
-		      error.runtime_result == SIPPYMODEM_RUNTIME_OK &&
+		      error.runtime_result == MODEM_RUNTIME_OK &&
 		      error.system_error == 0 &&
 		      modem_loop_run(&runtime, NULL, NULL) ==
 			      MODEM_LOOP_INVALID_ARGUMENT &&

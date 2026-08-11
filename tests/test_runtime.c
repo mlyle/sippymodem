@@ -473,13 +473,13 @@ static struct app_config runtime_config(bool recording)
 static bool test_owns_closed_runtime(void)
 {
 	struct app_config config = runtime_config(true);
-	struct sippymodem_runtime *runtime;
+	struct modem_runtime *runtime;
 	struct modem *modem;
 	char name[] = "sippymodem-test";
 
 	memset(&capture, 0, sizeof(capture));
-	runtime = sippymodem_runtime_create(&config, name);
-	modem = sippymodem_runtime_modem(runtime);
+	runtime = modem_runtime_create(&config, name);
+	modem = modem_runtime_modem(runtime);
 	name[0] = 'x';
 	CHECK(runtime != NULL && modem != NULL &&
 		      strcmp(modem->name, "sippymodem-test") == 0 &&
@@ -488,19 +488,19 @@ static bool test_owns_closed_runtime(void)
 		      capture.host_creates == 1 &&
 		      capture.recording_creates == 1 &&
 		      capture.host_received_recorder &&
-		      sippymodem_runtime_recording_files(runtime) != NULL &&
+		      modem_runtime_recording_files(runtime) != NULL &&
 		      modem->pty == -1 &&
-		      sippymodem_runtime_terminal_fd(runtime) == -1 &&
-		      sippymodem_runtime_device_path(runtime) == NULL,
+		      modem_runtime_terminal_fd(runtime) == -1 &&
+		      modem_runtime_device_path(runtime) == NULL,
 	      "runtime did not own its complete closed graph");
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 	CHECK(strcmp(capture.teardown_order, "HRM") == 0 &&
 		      capture.datapump_stops == 1 &&
 		      capture.driver_detaches == 1 && capture.host_destroys == 1 &&
 		      capture.recording_destroys == 1 &&
 		      capture.modem_deletes == 1 &&
-		      sippymodem_runtime_modem(NULL) == NULL &&
-		      sippymodem_runtime_recording_files(NULL) == NULL,
+		      modem_runtime_modem(NULL) == NULL &&
+		      modem_runtime_recording_files(NULL) == NULL,
 	      "runtime teardown order was unsafe or incomplete");
 	return true;
 }
@@ -508,51 +508,51 @@ static bool test_owns_closed_runtime(void)
 static bool test_creation_rolls_back(void)
 {
 	struct app_config config = runtime_config(true);
-	char long_name[SIPPYMODEM_RUNTIME_NAME_MAX + 1];
+	char long_name[MODEM_RUNTIME_NAME_MAX + 1];
 
 	memset(&capture, 0, sizeof(capture));
 	memset(long_name, 'x', sizeof(long_name) - 1);
 	long_name[sizeof(long_name) - 1] = '\0';
-	CHECK(sippymodem_runtime_create(NULL, "test") == NULL &&
+	CHECK(modem_runtime_create(NULL, "test") == NULL &&
 		      errno == EINVAL &&
-		      sippymodem_runtime_create(&config, long_name) == NULL &&
+		      modem_runtime_create(&config, long_name) == NULL &&
 		      errno == ENAMETOOLONG,
 	      "runtime accepted invalid construction arguments");
 
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_datapumps = true;
-	CHECK(sippymodem_runtime_create(&config, "busy-datapumps") == NULL &&
+	CHECK(modem_runtime_create(&config, "busy-datapumps") == NULL &&
 		      errno == EBUSY && capture.datapump_starts == 1 &&
 		      capture.datapump_stops == 0 && capture.modem_creates == 0,
 	      "runtime hid a data-pump registration conflict");
 
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_adapter = true;
-	CHECK(sippymodem_runtime_create(&config, "bad-adapter") == NULL &&
+	CHECK(modem_runtime_create(&config, "bad-adapter") == NULL &&
 		      capture.modem_deletes == 1 && capture.datapump_stops == 1 &&
 		      capture.host_creates == 0,
 	      "runtime retained an incompatible modem adapter");
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_recording = true;
-	CHECK(sippymodem_runtime_create(&config, "bad-recording") == NULL &&
+	CHECK(modem_runtime_create(&config, "bad-recording") == NULL &&
 		      errno == EACCES && capture.modem_deletes == 1 &&
 		      capture.host_creates == 0,
 	      "runtime retained owners after recording setup failed");
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_recorder = true;
-	CHECK(sippymodem_runtime_create(&config, "bad-recorder") == NULL &&
+	CHECK(modem_runtime_create(&config, "bad-recorder") == NULL &&
 		      capture.recording_destroys == 1 &&
 		      capture.modem_deletes == 1 && capture.host_creates == 0,
 	      "runtime accepted a recording owner without a recorder");
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_host = true;
-	CHECK(sippymodem_runtime_create(&config, "bad-host") == NULL &&
+	CHECK(modem_runtime_create(&config, "bad-host") == NULL &&
 		      capture.recording_destroys == 1 &&
 		      capture.modem_deletes == 1,
 	      "runtime retained owners after host creation failed");
 	memset(&capture, 0, sizeof(capture));
 	capture.fail_attach = true;
-	CHECK(sippymodem_runtime_create(&config, "bad-attach") == NULL &&
+	CHECK(modem_runtime_create(&config, "bad-attach") == NULL &&
 		      capture.host_destroys == 1 &&
 		      capture.recording_destroys == 1 &&
 		      capture.modem_deletes == 1,
@@ -563,39 +563,39 @@ static bool test_creation_rolls_back(void)
 static bool test_opens_and_closes_in_dependency_order(void)
 {
 	struct app_config config = runtime_config(false);
-	struct sippymodem_runtime *runtime;
+	struct modem_runtime *runtime;
 	struct modem *modem;
 	const char *device_path;
 
 	memset(&capture, 0, sizeof(capture));
-	runtime = sippymodem_runtime_create(&config, "lifecycle-test");
+	runtime = modem_runtime_create(&config, "lifecycle-test");
 	CHECK(runtime != NULL &&
-		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK &&
-		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK &&
-		      capture.host_opens == 1 && sippymodem_runtime_is_open(runtime),
+		      modem_runtime_open(runtime) == MODEM_RUNTIME_OK &&
+		      modem_runtime_open(runtime) == MODEM_RUNTIME_OK &&
+		      capture.host_opens == 1 && modem_runtime_is_open(runtime),
 	      "runtime open was not idempotent");
-	modem = sippymodem_runtime_modem(runtime);
-	device_path = sippymodem_runtime_device_path(runtime);
-	CHECK(device_path != NULL && sippymodem_runtime_terminal_fd(runtime) >= 0 &&
-		      modem->pty == sippymodem_runtime_terminal_fd(runtime) &&
+	modem = modem_runtime_modem(runtime);
+	device_path = modem_runtime_device_path(runtime);
+	CHECK(device_path != NULL && modem_runtime_terminal_fd(runtime) >= 0 &&
+		      modem->pty == modem_runtime_terminal_fd(runtime) &&
 		      modem->pty_name == device_path &&
-		      sippymodem_runtime_terminal_poll_fd(runtime) == modem->pty &&
+		      modem_runtime_terminal_poll_fd(runtime) == modem->pty &&
 		      capture.termios_updates == 1 &&
 		      cfgetispeed(&modem->termios) == B115200,
 	      "runtime did not bind its terminal to the modem");
 	modem->xmit.count = (int)modem->xmit.size;
-	CHECK(sippymodem_runtime_terminal_poll_fd(runtime) == -1,
+	CHECK(modem_runtime_terminal_poll_fd(runtime) == -1,
 	      "runtime polled terminal input without modem capacity");
 	modem->xmit.count = 0;
 	modem->started = 1;
-	CHECK(sippymodem_runtime_close(runtime) == SIPPYMODEM_RUNTIME_OK &&
+	CHECK(modem_runtime_close(runtime) == MODEM_RUNTIME_OK &&
 		      capture.remote_ends == 1 && !modem->started &&
-		      capture.host_closes == 1 && !sippymodem_runtime_is_open(runtime) &&
+		      capture.host_closes == 1 && !modem_runtime_is_open(runtime) &&
 		      modem->pty == -1 && modem->pty_name == NULL &&
-		      sippymodem_runtime_terminal_fd(runtime) == -1 &&
-		      sippymodem_runtime_device_path(runtime) == NULL,
+		      modem_runtime_terminal_fd(runtime) == -1 &&
+		      modem_runtime_device_path(runtime) == NULL,
 	      "runtime did not stop the modem before closing its host");
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 	CHECK(strcmp(capture.teardown_order, "CHM") == 0 &&
 		      capture.host_closes == 1 && capture.host_destroys == 1 &&
 		      capture.modem_deletes == 1,
@@ -606,82 +606,82 @@ static bool test_opens_and_closes_in_dependency_order(void)
 static bool test_reports_lifecycle_failures(void)
 {
 	struct app_config config = runtime_config(false);
-	struct sippymodem_runtime *runtime;
+	struct modem_runtime *runtime;
 	struct modem *modem;
 
 	memset(&capture, 0, sizeof(capture));
 	capture.host_open_result = SIP_SESSION_SIGNALING_ERROR;
-	runtime = sippymodem_runtime_create(&config, "failed-open");
+	runtime = modem_runtime_create(&config, "failed-open");
 	CHECK(runtime != NULL &&
-		      sippymodem_runtime_open(runtime) ==
-			      SIPPYMODEM_RUNTIME_SESSION_ERROR &&
-		      sippymodem_runtime_last_session_result(runtime) ==
+		      modem_runtime_open(runtime) ==
+			      MODEM_RUNTIME_SESSION_ERROR &&
+		      modem_runtime_last_session_result(runtime) ==
 			      SIP_SESSION_SIGNALING_ERROR &&
-		      sippymodem_runtime_terminal_fd(runtime) == -1 &&
-		      sippymodem_runtime_modem(runtime)->pty == -1,
+		      modem_runtime_terminal_fd(runtime) == -1 &&
+		      modem_runtime_modem(runtime)->pty == -1,
 	      "runtime hid a session open failure");
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 
 	memset(&capture, 0, sizeof(capture));
 	capture.host_close_result = SIP_SESSION_SIGNALING_ERROR;
-	runtime = sippymodem_runtime_create(&config, "failed-host-close");
+	runtime = modem_runtime_create(&config, "failed-host-close");
 	CHECK(runtime != NULL &&
-		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK &&
-		      sippymodem_runtime_close(runtime) ==
-			      SIPPYMODEM_RUNTIME_SESSION_ERROR &&
-		      sippymodem_runtime_last_session_result(runtime) ==
+		      modem_runtime_open(runtime) == MODEM_RUNTIME_OK &&
+		      modem_runtime_close(runtime) ==
+			      MODEM_RUNTIME_SESSION_ERROR &&
+		      modem_runtime_last_session_result(runtime) ==
 			      SIP_SESSION_SIGNALING_ERROR,
 	      "runtime hid a session close failure");
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 
 	memset(&capture, 0, sizeof(capture));
-	runtime = sippymodem_runtime_create(&config, "failed-stop");
+	runtime = modem_runtime_create(&config, "failed-stop");
 	CHECK(runtime != NULL &&
-		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+		      modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
 	      "failed-stop fixture did not open");
 	capture.remote_end_result = -1;
-	CHECK(sippymodem_runtime_close(runtime) ==
-		      SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR &&
+	CHECK(modem_runtime_close(runtime) ==
+		      MODEM_RUNTIME_MODEM_STOP_ERROR &&
 		      capture.host_closes == 1,
 	      "runtime hid a modem stop failure or skipped host close");
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 
 	memset(&capture, 0, sizeof(capture));
-	runtime = sippymodem_runtime_create(&config, "forced-stop");
+	runtime = modem_runtime_create(&config, "forced-stop");
 	CHECK(runtime != NULL &&
-		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+		      modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
 	      "forced-stop fixture did not open");
-	modem = sippymodem_runtime_modem(runtime);
+	modem = modem_runtime_modem(runtime);
 	modem->started = 1;
 	capture.remote_end_result = -1;
-	CHECK(sippymodem_runtime_close(runtime) == SIPPYMODEM_RUNTIME_OK &&
+	CHECK(modem_runtime_close(runtime) == MODEM_RUNTIME_OK &&
 		      capture.forced_stops == 1 && !modem->started,
 	      "runtime did not recover a deferred modem stop");
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 
 	memset(&capture, 0, sizeof(capture));
-	runtime = sippymodem_runtime_create(&config, "failed-forced-stop");
+	runtime = modem_runtime_create(&config, "failed-forced-stop");
 	CHECK(runtime != NULL &&
-		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+		      modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
 	      "failed forced-stop fixture did not open");
-	modem = sippymodem_runtime_modem(runtime);
+	modem = modem_runtime_modem(runtime);
 	modem->started = 1;
 	capture.remote_end_result = -1;
 	capture.forced_stop_result = -1;
-	CHECK(sippymodem_runtime_close(runtime) ==
-		      SIPPYMODEM_RUNTIME_MODEM_STOP_ERROR &&
+	CHECK(modem_runtime_close(runtime) ==
+		      MODEM_RUNTIME_MODEM_STOP_ERROR &&
 		      !modem->started,
 	      "forced-stop error left released modem state runnable");
-	sippymodem_runtime_destroy(runtime);
-	CHECK(sippymodem_runtime_open(NULL) ==
-		      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
-		      sippymodem_runtime_close(NULL) ==
-			      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
-		      !sippymodem_runtime_is_open(NULL) &&
-		      sippymodem_runtime_terminal_fd(NULL) == -1 &&
-		      sippymodem_runtime_terminal_poll_fd(NULL) == -1 &&
-		      sippymodem_runtime_device_path(NULL) == NULL &&
-		      sippymodem_runtime_last_terminal_result(NULL) ==
+	modem_runtime_destroy(runtime);
+	CHECK(modem_runtime_open(NULL) ==
+		      MODEM_RUNTIME_INVALID_ARGUMENT &&
+		      modem_runtime_close(NULL) ==
+			      MODEM_RUNTIME_INVALID_ARGUMENT &&
+		      !modem_runtime_is_open(NULL) &&
+		      modem_runtime_terminal_fd(NULL) == -1 &&
+		      modem_runtime_terminal_poll_fd(NULL) == -1 &&
+		      modem_runtime_device_path(NULL) == NULL &&
+		      modem_runtime_last_terminal_result(NULL) ==
 			      PTY_TERMINAL_INVALID_ARGUMENT,
 	      "runtime lifecycle accepted a missing owner");
 	return true;
@@ -690,7 +690,7 @@ static bool test_reports_lifecycle_failures(void)
 static bool test_steps_bounded_host_and_evidence_work(void)
 {
 	struct app_config config = runtime_config(true);
-	struct sippymodem_runtime *runtime;
+	struct modem_runtime *runtime;
 	struct recording_files *recording;
 	struct modem *modem;
 	struct termios attributes;
@@ -702,12 +702,12 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 
 	memset(&capture, 0, sizeof(capture));
 	capture.wait_ns = 7654321;
-	runtime = sippymodem_runtime_create(&config, "step-test");
+	runtime = modem_runtime_create(&config, "step-test");
 	CHECK(runtime != NULL &&
-		      sippymodem_runtime_open(runtime) == SIPPYMODEM_RUNTIME_OK,
+		      modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
 	      "runtime step fixture did not open");
-	modem = sippymodem_runtime_modem(runtime);
-	device_fd = open(sippymodem_runtime_device_path(runtime),
+	modem = modem_runtime_modem(runtime);
+	device_fd = open(modem_runtime_device_path(runtime),
 			 O_RDWR | O_NOCTTY);
 	CHECK(device_fd >= 0 && tcgetattr(device_fd, &attributes) == 0,
 	      "runtime terminal client did not open");
@@ -717,7 +717,7 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 			      (ssize_t)sizeof(command) - 1,
 	      "runtime terminal command fixture was not ready");
 	recording = (struct recording_files *)
-		sippymodem_runtime_recording_files(runtime);
+		modem_runtime_recording_files(runtime);
 	capture.host_step_result = MODEM_HOST_OK;
 	capture.datagrams = 3;
 	capture.frames = 2;
@@ -725,9 +725,9 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	capture.call.direction = SIP_CALL_DIRECTION_OUTGOING;
 	capture.call.state = SIP_CALL_CONNECTED;
 	modem->event = 1;
-	CHECK(sippymodem_runtime_step(
+	CHECK(modem_runtime_step(
 		      runtime, 100, &terminal_bytes, &datagrams, &frames) ==
-		      SIPPYMODEM_RUNTIME_OK &&
+		      MODEM_RUNTIME_OK &&
 		      terminal_bytes == sizeof(command) - 1 && datagrams == 3 &&
 		      frames == 2 && capture.host_steps == 1 &&
 		      capture.modem_events == 1 &&
@@ -735,89 +735,89 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 		      memcmp(capture.terminal_input, command,
 			     sizeof(command) - 1) == 0 &&
 		      capture.calls_drained == 2 &&
-		      sippymodem_runtime_last_host_result(runtime) ==
+		      modem_runtime_last_host_result(runtime) ==
 			      MODEM_HOST_OK &&
-		      sippymodem_runtime_last_calls_result(runtime) ==
+		      modem_runtime_last_calls_result(runtime) ==
 			      SLMODEM_CALLS_IDLE &&
-		      sippymodem_runtime_wait_ns(runtime, 100) == capture.wait_ns,
+		      modem_runtime_wait_ns(runtime, 100) == capture.wait_ns,
 	      "runtime did not advance and drain bounded host work");
 
 	capture.host_step_result = MODEM_HOST_IDLE;
-	CHECK(sippymodem_runtime_step(runtime, 101, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_IDLE,
+	CHECK(modem_runtime_step(runtime, 101, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_IDLE,
 	      "idle host work was not distinguished");
 	capture.host_step_result = MODEM_HOST_MEDIA_BINDING_ERROR;
-	CHECK(sippymodem_runtime_step(runtime, 102, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_MEDIA_BINDING_ERROR,
+	CHECK(modem_runtime_step(runtime, 102, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_MEDIA_BINDING_ERROR,
 	      "runtime hid rejected negotiated media");
 	capture.host_step_result = MODEM_HOST_AUDIO_ERROR;
-	CHECK(sippymodem_runtime_step(runtime, 103, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_HOST_ERROR,
+	CHECK(modem_runtime_step(runtime, 103, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_HOST_ERROR,
 	      "runtime hid a host audio failure");
 	capture.host_step_result = MODEM_HOST_MODEM_STOPPED;
-	CHECK(sippymodem_runtime_step(runtime, 104, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_OK &&
-		      sippymodem_runtime_last_host_result(runtime) ==
+	CHECK(modem_runtime_step(runtime, 104, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_OK &&
+		      modem_runtime_last_host_result(runtime) ==
 			      MODEM_HOST_MODEM_STOPPED,
 	      "runtime treated a handled modem stop as fatal");
 
 	capture.host_step_result = MODEM_HOST_IDLE;
 	capture.emit_call = true;
 	capture.call.direction = (enum sip_call_direction)99;
-	CHECK(sippymodem_runtime_step(runtime, 105, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
-		      sippymodem_runtime_last_calls_result(runtime) ==
+	CHECK(modem_runtime_step(runtime, 105, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_CALL_ERROR &&
+		      modem_runtime_last_calls_result(runtime) ==
 			      SLMODEM_CALLS_INVALID_EVENT,
 	      "runtime hid an invalid call transition");
 	recording->result = RECORDING_FILES_WRITE_ERROR;
-	CHECK(sippymodem_runtime_step(runtime, 106, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_RECORDING_ERROR,
+	CHECK(modem_runtime_step(runtime, 106, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_RECORDING_ERROR,
 	      "runtime continued after recording evidence failed");
 	recording->result = RECORDING_FILES_OK;
 	capture.calls_drained = 0;
 	capture.drain_never_idle = true;
-	CHECK(sippymodem_runtime_step(runtime, 107, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_CALL_ERROR &&
+	CHECK(modem_runtime_step(runtime, 107, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_CALL_ERROR &&
 		      capture.calls_drained ==
-			      SIPPYMODEM_RUNTIME_MAX_CALL_TRANSITIONS,
+			      MODEM_RUNTIME_MAX_CALL_TRANSITIONS,
 	      "runtime call draining was not bounded");
 	capture.drain_never_idle = false;
 
 	capture.short_modem_write = true;
 	CHECK(write(device_fd, command, sizeof(command) - 1) ==
 		      (ssize_t)sizeof(command) - 1 &&
-		      sippymodem_runtime_step(runtime, 108, NULL, NULL, NULL) ==
-			      SIPPYMODEM_RUNTIME_MODEM_TERMINAL_ERROR &&
-		      sippymodem_runtime_last_modem_terminal_result(runtime) ==
+		      modem_runtime_step(runtime, 108, NULL, NULL, NULL) ==
+			      MODEM_RUNTIME_MODEM_TERMINAL_ERROR &&
+		      modem_runtime_last_modem_terminal_result(runtime) ==
 			      SLMODEM_TERMINAL_INPUT_ERROR,
 	      "runtime hid partially accepted terminal input");
 	capture.short_modem_write = false;
 	close(device_fd);
-	CHECK(sippymodem_runtime_step(runtime, 109, NULL, NULL, NULL) ==
-		      SIPPYMODEM_RUNTIME_OK &&
+	CHECK(modem_runtime_step(runtime, 109, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_OK &&
 		      capture.hangups == 1 &&
-		      sippymodem_runtime_terminal_poll_fd(runtime) == -1,
+		      modem_runtime_terminal_poll_fd(runtime) == -1,
 	      "runtime did not apply terminal HUPCL on disconnect");
 
 	terminal_bytes = 99;
 	datagrams = 99;
 	frames = 99;
-	CHECK(sippymodem_runtime_step(
+	CHECK(modem_runtime_step(
 		      NULL, 0, &terminal_bytes, &datagrams, &frames) ==
-		      SIPPYMODEM_RUNTIME_INVALID_ARGUMENT &&
+		      MODEM_RUNTIME_INVALID_ARGUMENT &&
 		      terminal_bytes == 0 && datagrams == 0 && frames == 0 &&
-		      sippymodem_runtime_wait_ns(NULL, 0) == UINT64_MAX &&
-		      sippymodem_runtime_last_host_result(NULL) ==
+		      modem_runtime_wait_ns(NULL, 0) == UINT64_MAX &&
+		      modem_runtime_last_host_result(NULL) ==
 			      MODEM_HOST_INVALID_ARGUMENT &&
-		      sippymodem_runtime_last_calls_result(NULL) ==
+		      modem_runtime_last_calls_result(NULL) ==
 			      SLMODEM_CALLS_INVALID_ARGUMENT &&
-		      sippymodem_runtime_last_modem_terminal_result(NULL) ==
+		      modem_runtime_last_modem_terminal_result(NULL) ==
 			      SLMODEM_TERMINAL_INVALID_ARGUMENT &&
-		      strcmp(sippymodem_runtime_result_name(
-			     SIPPYMODEM_RUNTIME_RECORDING_ERROR),
+		      strcmp(modem_runtime_result_name(
+			     MODEM_RUNTIME_RECORDING_ERROR),
 			     "recording evidence failed") == 0,
 	      "runtime step diagnostics were incomplete");
-	sippymodem_runtime_destroy(runtime);
+	modem_runtime_destroy(runtime);
 	return true;
 }
 
