@@ -78,6 +78,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_terminal.c \
 	sippymodem_v44_compressed_decoder.c \
 	sippymodem_v44_decoder.c \
+	sippymodem_v44_duplex.c \
 	sippymodem_v44_dictionary_encoder.c \
 	sippymodem_v44_dictionary_decoder.c \
 	sippymodem_v44_encoder.c \
