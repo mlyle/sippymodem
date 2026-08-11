@@ -57,6 +57,7 @@ V44_DECODER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_decoder.o \
 	$(BUILD_DIR)/sippymodem_v44_stream.o
 V44_ENCODER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v44_encoder
 V44_ENCODER_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_v44_encoder.o \
+	$(BUILD_DIR)/sippymodem_v44_test_wire.o \
 	$(BUILD_DIR)/sippymodem_v44_encoder.o \
 	$(BUILD_DIR)/sippymodem_v44_decoder.o \
 	$(BUILD_DIR)/sippymodem_v44_compressed_decoder.o \
