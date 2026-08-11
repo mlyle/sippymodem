@@ -11,6 +11,7 @@ enum {
 	TEST_4800_SYMBOLS = 96,
 	TEST_KNOWN_9600_SYMBOLS = 128,
 	TEST_9600_SYMBOLS = 1024,
+	TEST_CHANNEL_TAPS = 4,
 };
 
 static uint32_t fixture_random(uint32_t *state)
@@ -39,6 +40,32 @@ static double fixture_noise(uint32_t *random)
 	return (unit - 0.5) * 0.004;
 }
 
+static struct sippymodem_qam_point apply_test_channel(
+	struct sippymodem_qam_point history[TEST_CHANNEL_TAPS],
+	const struct sippymodem_qam_point *transmitted,
+	const struct sippymodem_qam_point *gain)
+{
+	static const struct sippymodem_qam_point taps[TEST_CHANNEL_TAPS] = {
+		{ 1.0, 0.0 },
+		{ 0.28, -0.18 },
+		{ -0.12, 0.09 },
+		{ 0.05, 0.03 },
+	};
+	struct sippymodem_qam_point distorted = { 0 };
+
+	for (size_t index = TEST_CHANNEL_TAPS - 1; index != 0; --index)
+		history[index] = history[index - 1];
+	history[0] = *transmitted;
+	for (size_t index = 0; index < TEST_CHANNEL_TAPS; ++index) {
+		struct sippymodem_qam_point contribution = complex_multiply(
+			&taps[index], &history[index]);
+
+		distorted.in_phase += contribution.in_phase;
+		distorted.quadrature += contribution.quadrature;
+	}
+	return complex_multiply(gain, &distorted);
+}
+
 static bool check_transition(
 	enum sippymodem_v32_transmitter_role role,
 	uint8_t initial_transmit_quadrant)
@@ -51,11 +78,16 @@ static bool check_transition(
 	struct sippymodem_v32_symbol_decoder decoder;
 	struct sippymodem_v32_9600_receiver receiver;
 	struct sippymodem_qam_point channel = { 0.72, -0.31 };
+	struct sippymodem_qam_point channel_history[TEST_CHANNEL_TAPS] = { 0 };
+	struct sippymodem_v32_symbol_encoder encoder_history[
+		SIPPYMODEM_QAM_EQUALIZER_DELAY + 1] = { 0 };
+	uint8_t input_history[SIPPYMODEM_QAM_EQUALIZER_DELAY + 1] = { 0 };
 	struct sippymodem_qam_point transmitted;
 	struct sippymodem_qam_point received_reference;
 	uint32_t random = UINT32_C(0x32009600) +
 			  (uint32_t)role * 4u + initial_transmit_quadrant;
 	uint8_t previous_transmit_quadrant = initial_transmit_quadrant;
+	unsigned int delivered = 0;
 
 	CHECK(sippymodem_v32_symbol_encoder_init(
 		      &encoder, role, initial_transmit_quadrant) ==
@@ -116,7 +148,8 @@ static bool check_transition(
 		      "V.32 9600 known fixture %u/%u failed at %zu", role,
 		      initial_transmit_quadrant, index);
 		channel = complex_multiply(&channel, &drift);
-		received = complex_multiply(&channel, &transmitted);
+		received = apply_test_channel(
+			channel_history, &transmitted, &channel);
 		received.in_phase += fixture_noise(&random);
 		received.quadrature += fixture_noise(&random);
 		CHECK(sippymodem_v32_9600_receiver_track_known(
@@ -130,6 +163,14 @@ static bool check_transition(
 		uint8_t input = (uint8_t)(fixture_random(&random) & 15u);
 		uint8_t output;
 		uint8_t symbol;
+		bool ready;
+
+		for (size_t delayed = SIPPYMODEM_QAM_EQUALIZER_DELAY;
+		     delayed != 0; --delayed) {
+			input_history[delayed] = input_history[delayed - 1];
+			encoder_history[delayed] = encoder_history[delayed - 1];
+		}
+		input_history[0] = input;
 
 		CHECK(sippymodem_v32_9600_symbol_encode(
 			      &encoder, input, &symbol) ==
@@ -137,26 +178,43 @@ static bool check_transition(
 			      sippymodem_v32_constellation_point(
 				      symbol, &transmitted) ==
 				      SIPPYMODEM_V32_CONSTELLATION_OK,
-		      "V.32 9600 fixture %u/%u failed at %zu", role,
+			      "V.32 9600 fixture %u/%u failed at %zu", role,
 		      initial_transmit_quadrant, index);
+		encoder_history[0] = encoder;
 		channel = complex_multiply(&channel, &drift);
-		received = complex_multiply(&channel, &transmitted);
+		received = apply_test_channel(
+			channel_history, &transmitted, &channel);
 		received.in_phase += fixture_noise(&random);
 		received.quadrature += fixture_noise(&random);
 		CHECK(sippymodem_v32_9600_receiver_decode(
-			      &receiver, &received, &output) ==
-			      SIPPYMODEM_V32_9600_RECEIVER_OK &&
-			      output == input,
+			      &receiver, &received, &output, &ready) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_OK,
 		      "V.32 9600 receiver %u/%u changed symbol %zu", role,
 		      initial_transmit_quadrant, index);
+		if (index < SIPPYMODEM_QAM_EQUALIZER_DELAY) {
+			CHECK(!ready,
+			      "V.32 9600 receiver %u/%u exposed delayed symbol %zu",
+			      role, initial_transmit_quadrant, index);
+			continue;
+		}
+		CHECK(ready &&
+		      output == input_history[SIPPYMODEM_QAM_EQUALIZER_DELAY] &&
+		      receiver.decoder.descrambler.history ==
+			      encoder_history[SIPPYMODEM_QAM_EQUALIZER_DELAY]
+				      .scrambler.history &&
+		      receiver.decoder.phase_quadrant ==
+			      (uint8_t)((encoder_history[
+						      SIPPYMODEM_QAM_EQUALIZER_DELAY]
+					      .phase_quadrant -
+					      initial_transmit_quadrant) &
+				     3u),
+		      "V.32 9600 receiver %u/%u changed delayed symbol %zu",
+		      role, initial_transmit_quadrant, index);
+		delivered++;
 	}
-	CHECK(encoder.scrambler.history ==
-		      receiver.decoder.descrambler.history &&
-		      (uint8_t)((encoder.phase_quadrant -
-				 initial_transmit_quadrant) &
-				3u) == receiver.decoder.phase_quadrant,
-	      "V.32 9600 receiver %u/%u state diverged", role,
-	      initial_transmit_quadrant);
+	CHECK(delivered == TEST_9600_SYMBOLS - SIPPYMODEM_QAM_EQUALIZER_DELAY,
+	      "V.32 9600 receiver %u/%u delivered %u symbols", role,
+	      initial_transmit_quadrant, delivered);
 	return true;
 }
 
@@ -182,6 +240,8 @@ static bool test_validation(void)
 	struct sippymodem_qam_point zero = { 0.0, 0.0 };
 	struct sippymodem_qam_point invalid = { NAN, 0.0 };
 	uint8_t output = UINT8_MAX;
+	bool ready = true;
+	bool saved_ready = ready;
 
 	CHECK(sippymodem_v32_symbol_decoder_init(
 		      &decoder, SIPPYMODEM_V32_CALLING_TRANSMITTER, 0) ==
@@ -207,19 +267,22 @@ static bool test_validation(void)
 		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 		      sippymodem_v32_9600_receiver_decode(
-			      NULL, &reference, &output) ==
+			      NULL, &reference, &output, &ready) ==
 		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v32_9600_receiver_decode(
-			      &receiver, NULL, &output) ==
+			      &receiver, NULL, &output, &ready) ==
 		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v32_9600_receiver_decode(
-			      &receiver, &zero, &output) ==
+			      &receiver, &zero, &output, &ready) ==
 		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v32_9600_receiver_decode(
-			      &receiver, &invalid, &output) ==
+			      &receiver, &invalid, &output, &ready) ==
 		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v32_9600_receiver_decode(
-			      &receiver, &reference, NULL) ==
+			      &receiver, &reference, NULL, &ready) ==
+			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
+		      sippymodem_v32_9600_receiver_decode(
+			      &receiver, &reference, &output, NULL) ==
 			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      sippymodem_v32_9600_receiver_track_known(
 			      NULL, &reference, 15) ==
@@ -238,12 +301,12 @@ static bool test_validation(void)
 			      SIPPYMODEM_V32_9600_SYMBOL_COUNT) ==
 			      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
-		      output == UINT8_MAX,
+		      output == UINT8_MAX && ready == saved_ready,
 	      "V.32 9600 invalid input was not transactional");
-	receiver.gain.channel_gain.in_phase = INFINITY;
+	receiver.equalizer.coefficients[0].in_phase = INFINITY;
 	CHECK(!sippymodem_v32_9600_receiver_is_valid(&receiver) &&
 		      sippymodem_v32_9600_receiver_decode(
-			      &receiver, &reference, &output) ==
+			      &receiver, &reference, &output, &ready) ==
 		      SIPPYMODEM_V32_9600_RECEIVER_INVALID_ARGUMENT &&
 		      output == UINT8_MAX &&
 		      strcmp(sippymodem_v32_9600_receiver_result_name(

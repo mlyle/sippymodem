@@ -1081,13 +1081,16 @@ static int observe_9600_point(
 		return -1;
 	if (datapump->linked) {
 		uint8_t bits;
+		bool ready;
 
 		if (sippymodem_v32_9600_receiver_decode(
-			    &datapump->receiver_9600, point, &bits) !=
+			    &datapump->receiver_9600, point, &bits, &ready) !=
 		    SIPPYMODEM_V32_9600_RECEIVER_OK)
 			return -1;
-		deliver_bits(
-			datapump, bits, SIPPYMODEM_V32_9600_BITS_PER_SYMBOL);
+		if (ready)
+			deliver_bits(
+				datapump, bits,
+				SIPPYMODEM_V32_9600_BITS_PER_SYMBOL);
 	} else {
 		bool connected;
 

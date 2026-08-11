@@ -342,6 +342,7 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(BUILD_DIR)/sippymodem_v44_stream.o
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
+	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/sippymodem_datapumps.o \
 	$(BUILD_DIR)/baudot.o \
 	$(BUILD_DIR)/baudot_datapump.o \
@@ -479,7 +480,7 @@ V32_9600_RECEIVER_TEST_BINARY := \
 V32_9600_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_9600_receiver.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
-	$(BUILD_DIR)/sippymodem_qam_gain.o \
+	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
 	$(BUILD_DIR)/sippymodem_v32_constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
@@ -506,6 +507,7 @@ V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
 V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_datapump_conditioning.o \
 	$(NATIVE_CORE_OBJECTS) \
+	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/sippymodem_dc_filter.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
@@ -1039,6 +1041,7 @@ FSK_INTEGRATION_TEST_BINARY := \
 FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_fsk_integration.o \
 	$(NATIVE_CORE_OBJECTS) \
+	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/sippymodem_datapumps.o \
 	$(BUILD_DIR)/baudot.o \
 	$(BUILD_DIR)/baudot_datapump.o \
