@@ -229,6 +229,46 @@ static bool test_mapping_transition_rephase(void)
 	return true;
 }
 
+static bool test_trn_prefix_acquisition(void)
+{
+	const struct sippymodem_qam_point channel = { 0.75, 0.15 };
+	struct sippymodem_v32_conditioning_receiver receiver;
+	struct sippymodem_v32_conditioning_transmitter transmitter;
+	bool ready = false;
+
+	CHECK(sippymodem_v32_conditioning_receiver_init(
+		      &receiver, SIPPYMODEM_V32_ANSWERING_TRANSMITTER) ==
+		      SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK &&
+		      sippymodem_v32_conditioning_transmitter_init(
+			      &transmitter,
+			      SIPPYMODEM_V32_ANSWERING_TRANSMITTER,
+			      SIPPYMODEM_V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+			      SIPPYMODEM_V32_CONDITIONING_OK,
+	      "V.32 TRN-prefix fixture did not initialize");
+	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
+		struct sippymodem_qam_point received;
+		uint8_t quadrant;
+
+		CHECK(sippymodem_v32_conditioning_transmitter_next(
+			      &transmitter, &quadrant) ==
+			      SIPPYMODEM_V32_CONDITIONING_OK,
+		      "V.32 TRN-prefix fixture stopped at symbol %u", symbol);
+		if (symbol < SIPPYMODEM_V32_CONDITIONING_S_SYMBOLS +
+				     SIPPYMODEM_V32_CONDITIONING_S_BAR_SYMBOLS)
+			continue;
+		CHECK(generated_point(quadrant, &channel, &received) &&
+			      sippymodem_v32_conditioning_receiver_observe(
+				      &receiver, &received, &ready) ==
+				      SIPPYMODEM_V32_CONDITIONING_RECEIVER_OK,
+		      "V.32 receiver rejected direct TRN acquisition at %u",
+		      symbol);
+	}
+	CHECK(ready &&
+		      sippymodem_v32_conditioning_receiver_is_complete(&receiver),
+	      "V.32 receiver did not acquire directly from the TRN prefix");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	const struct sippymodem_qam_point valid_point = { 1.0, 0.0 };
@@ -303,6 +343,7 @@ int main(void)
 		{ "mapping transition rephase",
 		  test_mapping_transition_rephase },
 		{ "phase-slip recovery", test_phase_slip_recovery },
+		{ "TRN-prefix acquisition", test_trn_prefix_acquisition },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -349,7 +349,11 @@ sippymodem_v32_conditioning_receiver_observe(
 		next.observed_quadrant =
 			(uint8_t)((next.observed_quadrant + turn) & 3u);
 		if (next.phase == SIPPYMODEM_V32_CONDITIONING_SEARCH_S_BAR) {
+			bool prefix_ready = observe_prefix_turn(&next, turn);
+
 			observe_s_bar(&next, turn);
+			if (prefix_ready && begin_training(&next, point) != 0)
+				return SIPPYMODEM_V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 		} else if (next.phase == SIPPYMODEM_V32_CONDITIONING_MATCH_TRN) {
 			if (observe_prefix_turn(&next, turn) &&
 			    begin_training(&next, point) != 0)
