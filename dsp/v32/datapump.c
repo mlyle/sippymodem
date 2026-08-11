@@ -14,6 +14,7 @@
 #include "line_startup.h"
 #include "startup.h"
 #include "trellis.h"
+#include "trellis_acquirer.h"
 
 #include <limits.h>
 #include <math.h>
@@ -49,8 +50,6 @@ static const struct sippymodem_qam_channel v32_channel = {
 	.pulse_span_symbols = V32_PULSE_SPAN_SYMBOLS,
 };
 
-static const double V32_TRELLIS_CHANNEL_ADAPTATION = 1.0 / 32.0;
-
 enum v32_line_entry {
 	V32_LINE_ENTRY_CALLER_STARTUP,
 	V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING,
@@ -68,9 +67,7 @@ struct sippymodem_v32_datapump {
 	struct sippymodem_v32_symbol_encoder encoder;
 	struct sippymodem_v32_symbol_decoder decoder;
 	struct sippymodem_v32_trellis_encoder trellis_encoder;
-	struct sippymodem_v32_trellis_encoder known_trellis_encoder;
-	struct sippymodem_v32_scrambler known_trellis_scrambler;
-	struct sippymodem_v32_trellis_decoder trellis_decoder;
+	struct sippymodem_v32_trellis_acquirer trellis_acquirer;
 	struct sippymodem_v32_9600_receiver receiver_9600;
 	struct sippymodem_v32_conditioning_transmitter
 		conditioning_transmitter;
@@ -80,13 +77,11 @@ struct sippymodem_v32_datapump {
 	struct sippymodem_qam_point transmit_point;
 	struct sippymodem_qam_point previous_receive_point;
 	struct sippymodem_qam_gain conditioning_gain;
-	struct sippymodem_qam_gain trellis_gain;
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint32_t missing_carrier_samples;
 	uint32_t turnaround_s_symbols_remaining;
 	uint16_t direct_qam_qualifying_samples;
-	uint8_t receive_trellis_link_symbols;
 	enum v32_line_entry line_entry;
 	bool has_previous_receive_point;
 	bool trellis_encoder_initialized;
@@ -353,19 +348,13 @@ static bool trellis_receiver_is_valid(
 {
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 
-	return sippymodem_v32_trellis_decoder_is_valid(
-		       &datapump->trellis_decoder) &&
-	       datapump->trellis_decoder.data_bits_per_symbol == data_bits &&
-	       sippymodem_v32_trellis_encoder_is_valid(
-		       &datapump->known_trellis_encoder) &&
-	       datapump->known_trellis_encoder.data_bits_per_symbol == data_bits &&
-	       sippymodem_v32_scrambler_is_valid(
-		       &datapump->known_trellis_scrambler) &&
-	       datapump->known_trellis_scrambler.transmitter_role ==
-		       remote_role(datapump->caller) &&
-	       sippymodem_qam_gain_is_valid(&datapump->trellis_gain) &&
-	       datapump->receive_trellis_link_symbols <=
-		       SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS;
+	return sippymodem_v32_trellis_acquirer_is_valid(
+		       &datapump->trellis_acquirer) &&
+	       datapump->trellis_acquirer.candidates[0]
+			       .decoder.data_bits_per_symbol == data_bits &&
+	       datapump->trellis_acquirer.candidates[0]
+			       .descrambler.transmitter_role ==
+		       remote_role(datapump->caller);
 }
 
 static struct sippymodem_v32_datapump *v32_from_dp(struct dp *dp)
@@ -545,13 +534,19 @@ static int encode_trellis_transmit_point(
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 	uint8_t scrambled;
 	uint8_t signal_symbol;
+	uint8_t previous_differential_output;
 
 	if (data_bits == 0)
 		return -1;
 	if (datapump->trellis_encoder_initialized) {
 		next_encoder = datapump->trellis_encoder;
-	} else if (sippymodem_v32_trellis_encoder_init(
-			   &next_encoder, data_bits, 0) !=
+	} else if (sippymodem_v32_phase_to_differential_output(
+			   datapump->encoder.phase_quadrant,
+			   &previous_differential_output) !=
+			   SIPPYMODEM_V32_FRAMING_OK ||
+		   sippymodem_v32_trellis_encoder_init(
+			   &next_encoder, data_bits,
+			   previous_differential_output) !=
 		   SIPPYMODEM_V32_TRELLIS_OK) {
 		return -1;
 	}
@@ -801,6 +796,12 @@ static int enter_link(struct sippymodem_v32_datapump *datapump)
 	      !datapump->trellis_encoder_initialized)) ||
 	    (uses_9600(datapump) && !datapump->receiver_9600_initialized))
 		return -1;
+	if (uses_trellis(datapump)) {
+		if (sippymodem_v32_trellis_acquirer_select(
+			    &datapump->trellis_acquirer) !=
+		    SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK)
+			return -1;
+	}
 	if (modem_set_param(
 		    datapump->dp.modem, MDMPRM_TX_RATE, (int)bit_rate) != 0 ||
 	    modem_set_param(
@@ -829,132 +830,16 @@ static int initialize_trellis_receiver(
 	struct sippymodem_v32_datapump *datapump,
 	const struct sippymodem_qam_point *reference_point)
 {
-	struct sippymodem_v32_trellis_encoder known_encoder;
-	struct sippymodem_v32_trellis_decoder decoder;
-	struct sippymodem_qam_gain gain;
-	struct sippymodem_qam_point ideal;
+	struct sippymodem_v32_trellis_acquirer acquirer;
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 
 	if (data_bits == 0 ||
-	    sippymodem_v32_4800_constellation_point(
-		    datapump->decoder.phase_quadrant, &ideal) !=
-		    SIPPYMODEM_V32_CONSTELLATION_OK ||
-	    sippymodem_qam_gain_init_from_reference(
-		    &gain, reference_point, &ideal,
-		    V32_TRELLIS_CHANNEL_ADAPTATION) != SIPPYMODEM_QAM_GAIN_OK ||
-	    sippymodem_v32_trellis_encoder_init(
-		    &known_encoder, data_bits, 0) !=
-		    SIPPYMODEM_V32_TRELLIS_OK ||
-	    sippymodem_v32_trellis_decoder_init(
-		    &decoder, data_bits, 0) !=
-		    SIPPYMODEM_V32_TRELLIS_OK)
+	    sippymodem_v32_trellis_acquirer_init(
+		    &acquirer, &datapump->decoder, reference_point,
+		    data_bits) != SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK)
 		return -1;
-	datapump->known_trellis_encoder = known_encoder;
-	datapump->known_trellis_scrambler = datapump->decoder.descrambler;
-	datapump->trellis_decoder = decoder;
-	datapump->trellis_gain = gain;
-	datapump->receive_trellis_link_symbols = 0;
+	datapump->trellis_acquirer = acquirer;
 	datapump->trellis_receiver_initialized = true;
-	return 0;
-}
-
-static int track_known_trellis_point(
-	struct sippymodem_v32_datapump *datapump,
-	const struct sippymodem_qam_point *point, uint8_t input,
-	bool *confirmed)
-{
-	struct sippymodem_v32_scrambler known_scrambler =
-		datapump->known_trellis_scrambler;
-	struct sippymodem_v32_scrambler output_descrambler =
-		datapump->decoder.descrambler;
-	struct sippymodem_v32_trellis_encoder known_encoder =
-		datapump->known_trellis_encoder;
-	struct sippymodem_v32_trellis_decoder decoder =
-		datapump->trellis_decoder;
-	struct sippymodem_qam_gain gain = datapump->trellis_gain;
-	struct sippymodem_qam_point equalized;
-	struct sippymodem_qam_point transmitted;
-	uint8_t data_bits = selected_trellis_data_bits(datapump);
-	uint8_t decoded = 0;
-	uint8_t plain = 0;
-	uint8_t scrambled;
-	uint8_t signal_symbol;
-	bool ready;
-
-	if (!datapump->trellis_receiver_initialized || data_bits == 0 ||
-	    confirmed == NULL ||
-	    sippymodem_v32_scramble_group(
-		    &known_scrambler, input, data_bits,
-		    &scrambled) != SIPPYMODEM_V32_FRAMING_OK ||
-	    sippymodem_v32_trellis_encode(
-		    &known_encoder, scrambled, &signal_symbol) !=
-		    SIPPYMODEM_V32_TRELLIS_OK ||
-	    sippymodem_v32_trellis_constellation_point(
-		    data_bits, signal_symbol, &transmitted) !=
-		    SIPPYMODEM_V32_CONSTELLATION_OK ||
-	    sippymodem_qam_gain_track(&gain, point, &transmitted) !=
-		    SIPPYMODEM_QAM_GAIN_OK ||
-	    sippymodem_qam_gain_equalize(&gain, point, &equalized) !=
-		    SIPPYMODEM_QAM_GAIN_OK ||
-	    sippymodem_v32_trellis_decode(
-		    &decoder, &equalized, &decoded, &ready) !=
-		    SIPPYMODEM_V32_TRELLIS_OK ||
-	    (ready &&
-	     sippymodem_v32_descramble_group(
-		     &output_descrambler, decoded, data_bits, &plain) !=
-		     SIPPYMODEM_V32_FRAMING_OK))
-		return -1;
-	datapump->decoder.descrambler = output_descrambler;
-	datapump->known_trellis_encoder = known_encoder;
-	datapump->known_trellis_scrambler = known_scrambler;
-	datapump->trellis_decoder = decoder;
-	datapump->trellis_gain = gain;
-	*confirmed = ready && plain == input;
-	return 0;
-}
-
-static int decode_trellis_point(
-	struct sippymodem_v32_datapump *datapump,
-	const struct sippymodem_qam_point *point, uint8_t *output, bool *ready)
-{
-	struct sippymodem_v32_scrambler descrambler =
-		datapump->decoder.descrambler;
-	struct sippymodem_v32_trellis_decoder decoder =
-		datapump->trellis_decoder;
-	struct sippymodem_qam_point equalized;
-	uint8_t data_bits = selected_trellis_data_bits(datapump);
-	uint8_t link_symbols = datapump->receive_trellis_link_symbols;
-	uint8_t decoded = 0;
-	uint8_t scrambled = 0;
-	bool trellis_ready;
-	bool payload_ready;
-
-	if (!datapump->trellis_receiver_initialized || data_bits == 0 ||
-	    output == NULL ||
-	    ready == NULL ||
-	    sippymodem_qam_gain_equalize(
-		    &datapump->trellis_gain, point, &equalized) !=
-		    SIPPYMODEM_QAM_GAIN_OK ||
-	    sippymodem_v32_trellis_decode(
-		    &decoder, &equalized, &scrambled, &trellis_ready) !=
-		    SIPPYMODEM_V32_TRELLIS_OK)
-		return -1;
-	if (link_symbols < SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS)
-		link_symbols++;
-	payload_ready =
-		trellis_ready &&
-		link_symbols == SIPPYMODEM_V32_TRELLIS_TRACEBACK_SYMBOLS;
-	if (trellis_ready &&
-	    sippymodem_v32_descramble_group(
-		    &descrambler, scrambled, data_bits,
-		    &decoded) != SIPPYMODEM_V32_FRAMING_OK)
-		return -1;
-	datapump->decoder.descrambler = descrambler;
-	datapump->trellis_decoder = decoder;
-	datapump->receive_trellis_link_symbols = link_symbols;
-	*ready = payload_ready;
-	if (payload_ready)
-		*output = decoded;
 	return 0;
 }
 
@@ -1050,19 +935,23 @@ static int observe_trellis_point(
 		uint8_t bits;
 		bool ready;
 
-		if (decode_trellis_point(datapump, point, &bits, &ready) != 0)
+		if (sippymodem_v32_trellis_acquirer_decode(
+			    &datapump->trellis_acquirer, point, &bits,
+			    &ready) != SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK)
 			return -1;
 		if (ready)
 			deliver_bits(datapump, bits, data_bits);
 	} else {
 		bool connected;
-		bool confirmed;
-
-		if (track_known_trellis_point(
-			    datapump, point, mark, &confirmed) != 0 ||
-		    sippymodem_v32_startup_observe(
-			    &datapump->startup, confirmed ? 3 : 0,
-			    &connected) != SIPPYMODEM_V32_STARTUP_OK)
+		if (sippymodem_v32_trellis_acquirer_track_known(
+			    &datapump->trellis_acquirer, point, mark) !=
+		    SIPPYMODEM_V32_TRELLIS_ACQUIRER_OK)
+			return -1;
+		/* B1 confirmation counts the accepted known symbol.  Its decoded
+		 * value is intentionally delayed by equalization and traceback. */
+		if (sippymodem_v32_startup_observe(
+			    &datapump->startup, 3, &connected) !=
+		    SIPPYMODEM_V32_STARTUP_OK)
 			return -1;
 		if (connected) {
 			if (enter_link(datapump) != 0)

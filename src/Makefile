@@ -129,7 +129,9 @@ SIPPYMODEM_V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/rate_signal.c \
 	$(DSP_V32_SOURCE_DIR)/startup.c \
 	$(DSP_V32_SOURCE_DIR)/trellis.c \
-	$(DSP_V32_SOURCE_DIR)/trellis_decoder.c
+	$(DSP_V32_SOURCE_DIR)/trellis_acquirer.c \
+	$(DSP_V32_SOURCE_DIR)/trellis_decoder.c \
+	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c
 SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_encoder.c \

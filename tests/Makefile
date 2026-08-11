@@ -377,6 +377,8 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/startup.o \
 	$(BUILD_DIR)/trellis.o \
 	$(BUILD_DIR)/trellis_decoder.o \
+	$(BUILD_DIR)/trellis_acquirer.o \
+	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/v23_datapump.o
 FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
@@ -524,7 +526,9 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/rate_signal.o \
 	$(BUILD_DIR)/startup.o \
 	$(BUILD_DIR)/trellis.o \
-	$(BUILD_DIR)/trellis_decoder.o
+	$(BUILD_DIR)/trellis_decoder.o \
+	$(BUILD_DIR)/trellis_acquirer.o \
+	$(BUILD_DIR)/trellis_receiver.o
 V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_trellis
 V32_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_trellis.o \
@@ -548,6 +552,19 @@ V32_TRELLIS_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/trellis.o \
 	$(BUILD_DIR)/trellis_decoder.o \
 	$(BUILD_DIR)/trellis_receiver.o
+V32_TRELLIS_ACQUIRER_TEST_BINARY := \
+	$(BUILD_DIR)/test_sippymodem_v32_trellis_acquirer
+V32_TRELLIS_ACQUIRER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_sippymodem_v32_trellis_acquirer.o \
+	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/qam_equalizer.o \
+	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/framing.o \
+	$(BUILD_DIR)/trellis.o \
+	$(BUILD_DIR)/trellis_decoder.o \
+	$(BUILD_DIR)/trellis_receiver.o \
+	$(BUILD_DIR)/trellis_acquirer.o
 V32_CARRIER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_carrier
 V32_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_carrier.o \
@@ -1088,6 +1105,8 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/startup.o \
 	$(BUILD_DIR)/trellis.o \
 	$(BUILD_DIR)/trellis_decoder.o \
+	$(BUILD_DIR)/trellis_acquirer.o \
+	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/v23_datapump.o \
 	$(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
@@ -1140,6 +1159,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V32_TRELLIS_TEST_BINARY) \
 	$(V32_TRELLIS_DECODER_TEST_BINARY) \
 	$(V32_TRELLIS_RECEIVER_TEST_BINARY) \
+	$(V32_TRELLIS_ACQUIRER_TEST_BINARY) \
 	$(V32_CARRIER_TEST_BINARY) \
 	$(V34_FRAMING_TEST_BINARY) \
 	$(V34_FRAME_SCHEDULE_TEST_BINARY) \
@@ -1260,6 +1280,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V32_TRELLIS_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_RECEIVER_TEST_OBJECTS:.o=.d) \
+	$(V32_TRELLIS_ACQUIRER_TEST_OBJECTS:.o=.d) \
 	$(V32_CARRIER_TEST_OBJECTS:.o=.d) \
 	$(V34_FRAMING_TEST_OBJECTS:.o=.d) \
 	$(V34_FRAME_SCHEDULE_TEST_OBJECTS:.o=.d) \
@@ -1397,6 +1418,7 @@ test: $(TEST_BINARIES)
 	./$(V32_TRELLIS_TEST_BINARY)
 	./$(V32_TRELLIS_DECODER_TEST_BINARY)
 	./$(V32_TRELLIS_RECEIVER_TEST_BINARY)
+	./$(V32_TRELLIS_ACQUIRER_TEST_BINARY)
 	./$(V32_CARRIER_TEST_BINARY)
 	./$(V34_FRAMING_TEST_BINARY)
 	./$(V34_FRAME_SCHEDULE_TEST_BINARY)
@@ -1688,6 +1710,10 @@ $(V32_TRELLIS_DECODER_TEST_BINARY): \
 
 $(V32_TRELLIS_RECEIVER_TEST_BINARY): \
 	$(V32_TRELLIS_RECEIVER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V32_TRELLIS_ACQUIRER_TEST_BINARY): \
+	$(V32_TRELLIS_ACQUIRER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_CARRIER_TEST_BINARY): $(V32_CARRIER_TEST_OBJECTS)
@@ -2144,6 +2170,10 @@ $(BUILD_DIR)/trellis_decoder.o: \
 
 $(BUILD_DIR)/trellis_receiver.o: \
 	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/trellis_acquirer.o: \
+	$(DSP_V32_SOURCE_DIR)/trellis_acquirer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/datapump.o: \
