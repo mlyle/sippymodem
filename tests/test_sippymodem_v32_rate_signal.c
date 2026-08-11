@@ -131,6 +131,50 @@ static bool observe_word(
 	return true;
 }
 
+static bool test_ignored_receive_extensions(void)
+{
+	const uint8_t all_rates =
+		SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
+		SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+		SIPPYMODEM_V32_RATE_CAPABILITY_9600 |
+		SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+		SIPPYMODEM_V32_RATE_CAPABILITY_14400;
+	struct sippymodem_v32_rate_signal_detector detector;
+	struct sippymodem_v32_rate_offer offer = { 0 };
+	enum sippymodem_v32_rate_signal_type type;
+	enum sippymodem_v32_rate_signal_event event;
+
+	CHECK(sippymodem_v32_rate_signal_decode(0x0fff, &type, &offer) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      type == SIPPYMODEM_V32_RATE_SIGNAL &&
+		      offer.rates == all_rates && offer.trellis_at_highest_rate,
+	      "V.32 receiver rejected ignored rate-word extension bits");
+	CHECK(sippymodem_v32_rate_signal_decode(0x0511, &type, &offer) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      type == SIPPYMODEM_V32_RATE_SIGNAL &&
+		      offer.rates == SIPPYMODEM_V32_RATE_CAPABILITY_4800 &&
+		      !offer.trellis_at_highest_rate,
+	      "V.32 receiver rejected a base-mode rate word without B4");
+	{
+		struct sippymodem_v32_rate_offer saved = offer;
+		enum sippymodem_v32_rate_signal_type saved_type = type;
+
+		CHECK(sippymodem_v32_rate_signal_decode(0xfd17, &type, &offer) ==
+			      SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD &&
+			      type == saved_type && offers_are_equal(&offer, &saved),
+		      "V.32 receiver ignored reserved bits in sequence E");
+	}
+	CHECK(sippymodem_v32_rate_signal_detector_init(&detector) ==
+		      SIPPYMODEM_V32_RATE_SIGNAL_OK &&
+		      observe_word(&detector, 0x0fff, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_NO_EVENT &&
+		      observe_word(&detector, 0x0fff, &event, &offer) &&
+		      event == SIPPYMODEM_V32_RATE_SIGNAL_DETECTED &&
+		      offer.rates == all_rates,
+	      "V.32 detector did not lock through ignored extension bits");
+	return true;
+}
+
 static bool test_repeated_rate_detection(void)
 {
 	struct sippymodem_v32_rate_signal_detector detector;
@@ -317,6 +361,8 @@ int main(void)
 		{ "normative words", test_normative_words },
 		{ "capability round trip", test_capability_round_trip },
 		{ "transmission order", test_transmission_order },
+		{ "ignored receive extensions",
+		  test_ignored_receive_extensions },
 		{ "repeated rate detection", test_repeated_rate_detection },
 		{ "aligned end detection", test_aligned_end_detection },
 		{ "detector reacquisition", test_detector_reacquisition },

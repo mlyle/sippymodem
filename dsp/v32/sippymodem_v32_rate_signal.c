@@ -15,10 +15,15 @@ enum {
 	V32_B9_7200 = 0x0040,
 	V32_B10_12000 = 0x0020,
 	V32_B12_14400 = 0x0008,
+	/* V.32 bis reserves B13 and B14 for later definition and requires
+	 * receivers to ignore them. */
+	V32_IGNORED_EXTENSION_BITS = 0x0006,
 	V32_RATE_FIELD_MASK = V32_B4_DATA_MODE | V32_B5_4800 |
 			       V32_B6_9600 | V32_B9_7200 |
 			       V32_B10_12000 | V32_B12_14400,
-	V32_PAYLOAD_MASK = V32_RATE_FIELD_MASK | V32_B8_TRELLIS,
+	V32_KNOWN_PAYLOAD_MASK = V32_RATE_FIELD_MASK | V32_B8_TRELLIS,
+	V32_RATE_RECEIVE_MASK = V32_KNOWN_PAYLOAD_MASK |
+				V32_IGNORED_EXTENSION_BITS,
 	V32_RATE_CAPABILITY_MASK = SIPPYMODEM_V32_RATE_CAPABILITY_4800 |
 				   SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
 				   SIPPYMODEM_V32_RATE_CAPABILITY_9600 |
@@ -137,20 +142,25 @@ enum sippymodem_v32_rate_signal_result sippymodem_v32_rate_signal_decode(
 {
 	struct sippymodem_v32_rate_offer decoded;
 	enum sippymodem_v32_rate_signal_type decoded_type;
-	uint16_t fixed = word & (uint16_t)~V32_PAYLOAD_MASK;
+	uint16_t rate_fixed = word & (uint16_t)~V32_RATE_RECEIVE_MASK;
+	uint16_t end_fixed = word & (uint16_t)~V32_KNOWN_PAYLOAD_MASK;
 
 	if (type == NULL || offer == NULL)
 		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_ARGUMENT;
-	if (fixed == V32_RATE_FIXED_BITS) {
+	if (rate_fixed == V32_RATE_FIXED_BITS) {
 		decoded_type = SIPPYMODEM_V32_RATE_SIGNAL;
-	} else if (fixed == V32_END_FIXED_BITS) {
+	} else if (end_fixed == V32_END_FIXED_BITS) {
 		decoded_type = SIPPYMODEM_V32_END_SIGNAL;
 	} else {
 		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
 	}
-	if ((word & V32_B4_DATA_MODE) == 0)
-		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
 	decoded.rates = decode_rates(word);
+	if ((word & V32_B4_DATA_MODE) == 0 &&
+	    (decoded.rates &
+	     (SIPPYMODEM_V32_RATE_CAPABILITY_7200 |
+	      SIPPYMODEM_V32_RATE_CAPABILITY_12000 |
+	      SIPPYMODEM_V32_RATE_CAPABILITY_14400)) != 0)
+		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
 	decoded.trellis_at_highest_rate = (word & V32_B8_TRELLIS) != 0;
 	if (!offer_is_valid(&decoded, decoded_type))
 		return SIPPYMODEM_V32_RATE_SIGNAL_INVALID_WORD;
