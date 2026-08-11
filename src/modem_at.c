@@ -51,14 +51,14 @@
  *	AT&: C D E F H P R S F W
  *	AT\: A N
  * 	AT%: C E
- * 	AT+: MS FCLASS GCI GMI GMM GMR
+ * 	AT+: DS MS FCLASS GCI GMI GMM GMR
  *      AT#: CID
  *	
  ********************************************************************
  *
  * 	2. Not implemented yet:
  *
- * 	AT+: DSC DS DS44 DR
+ * 	AT+: DSC DS44 DR
  *           FAE FTS FRS FTM FRM FRH FTH
  * 	AT&: A K V Z
  * 	AT\: B K
@@ -127,6 +127,59 @@ static int set_sreg(struct modem *m, int num, char c, int low, int hi, int *len)
 	if ( c >= low + '0' && c <= hi + '0' )
 		return modem_set_sreg(m,num,c - '0');
 	return -1;
+}
+
+/* ------------------------------------------------------------ */
+
+static int process_plus_DS(struct modem *m, char *p, int *len)
+{
+	char response[16];
+	char *end;
+	unsigned long direction;
+	unsigned long compression_type;
+
+	switch (*p) {
+	case '=':
+		p++;
+		*len = 1;
+		if (*p == '?') {
+			const char capabilities[] = "(0-3),(1)";
+
+			modem_send_to_tty(m, capabilities,
+					  (int)strlen(capabilities));
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			*len += 1;
+			return 0;
+		}
+		if (!isdigit((unsigned char)*p))
+			return -1;
+		direction = strtoul(p, &end, 10);
+		if (direction > 3)
+			return -1;
+		*len += (int)(end - p);
+		p = end;
+		if (*p == ',') {
+			p++;
+			*len += 1;
+			if (!isdigit((unsigned char)*p))
+				return -1;
+			compression_type = strtoul(p, &end, 10);
+			if (compression_type != 1 || *end == ',')
+				return -1;
+			*len += (int)(end - p);
+		}
+		return modem_set_sreg(m, SREG_COMP, (int)direction);
+	case '?':
+		*len = 1;
+		snprintf(response, sizeof(response), "%d,1",
+			 modem_get_sreg(m, SREG_COMP));
+		modem_send_to_tty(m, response, (int)strlen(response));
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		return 0;
+	default:
+		*len = 0;
+		return -1;
+	}
 }
 
 /* ------------------------------------------------------------ */
@@ -1088,21 +1141,16 @@ int process_at_command(struct modem *m, char *cmd)
 		case '+':
 			c = toupper(*p++);
 			switch (c) {
-#if 0
 			case 'D': /* AT+D */
 				c = toupper(*p++);
 				switch (c) {
-				case 'C': /* AT+DC */
-					break;
 				case 'S': /* AT+DS */
-					break;
-				case 'R': /* AT+DR */
+					ret = process_plus_DS(m, p, &len);
 					break;
 				default:
 					return -1;
 				}
 				break;
-#endif
 			case 'G': /* AT+G - generic DCE cntrl */
 				c = toupper(*p++);
 				switch (c) {

@@ -177,6 +177,35 @@ static bool test_at_dial_destinations_are_bounded(void)
 	return true;
 }
 
+static bool test_at_v42bis_compression_profile(void)
+{
+	struct modem_driver driver = {
+		.name = "AT compression test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "AT compression test");
+	char enable[] = "AT+DS=3,1";
+	char chained[] = "AT+DS=2,1%C0";
+	char unsupported[] = "AT+DS=3,2";
+
+	CHECK(modem != NULL, "AT compression modem could not be created");
+	CHECK(modem_set_sreg(modem, SREG_COMP, 0) == 0 &&
+		      process_at_command(modem, enable) == 0 &&
+		      modem_get_sreg(modem, SREG_COMP) == 3,
+	      "AT+DS did not enable bidirectional V.42bis compression");
+	CHECK(process_at_command(modem, chained) == 0 &&
+		      modem_get_sreg(modem, SREG_COMP) == 0,
+	      "AT+DS did not preserve concatenated command parsing");
+	CHECK(modem_set_sreg(modem, SREG_COMP, 2) == 0 &&
+		      process_at_command(modem, unsupported) == -1 &&
+		      modem_get_sreg(modem, SREG_COMP) == 2,
+	      "AT+DS accepted an unsupported compression type or changed state");
+	modem_delete(modem);
+	return true;
+}
+
 static bool samples_are_silent(const int16_t *samples, size_t count)
 {
 	for (size_t index = 0; index < count; ++index)
@@ -551,6 +580,8 @@ int main(void)
 		  test_core_has_no_external_dsp_owner },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
+		{ "AT V.42bis compression profile",
+		  test_at_v42bis_compression_profile },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",
