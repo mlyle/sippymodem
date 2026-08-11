@@ -43,7 +43,9 @@ bool sippymodem_v34_channel_frame_receiver_is_valid(
  * recovery. The receiver reverses power normalization and nonlinear
  * projection, reconstructs y(n), applies scheduled trellis decoding, and
  * corrects its present-time feedback history from the hard decision.
- * `current` always receives that decision. `decided_frame` changes only when
+ * `current` always receives that decision. `decision_targets` receives the
+ * corresponding exact nonlinear-projected, power-normalized line symbols for
+ * decision-directed channel adaptation. `decided_frame` changes only when
  * `frame_ready` becomes true after traceback. State and every output are
  * unchanged on failure. Advance one instance from only one thread at a time. */
 enum sippymodem_v34_channel_frame_receiver_result
@@ -52,6 +54,8 @@ sippymodem_v34_channel_frame_receiver_advance(
 	const struct sippymodem_qam_point
 		normalized[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_survivor_decision *current,
+	struct sippymodem_qam_point
+		decision_targets[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_decided_4d_interval
 		decided_frame[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready);

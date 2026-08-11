@@ -3,6 +3,7 @@
 #include "v34_data_channel_receiver.h"
 
 #include <stddef.h>
+#include <string.h>
 
 static bool geometries_are_equal(
 	const struct sippymodem_v34_frame_geometry *left,
@@ -130,10 +131,14 @@ sippymodem_v34_data_channel_receiver_advance(
 	const struct sippymodem_qam_point
 		normalized[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_survivor_decision *current,
+	struct sippymodem_qam_point
+		decision_targets[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_received_mapping_frame *received)
 {
 	struct sippymodem_v34_data_channel_receiver next;
 	struct sippymodem_v34_survivor_decision generated_current;
+	struct sippymodem_qam_point generated_targets
+		[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct sippymodem_v34_decided_4d_interval decided
 		[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME];
 	struct sippymodem_v34_received_mapping_frame generated_received;
@@ -143,12 +148,13 @@ sippymodem_v34_data_channel_receiver_advance(
 	bool frame_ready;
 
 	if (!sippymodem_v34_data_channel_receiver_is_valid(receiver) ||
-	    normalized == NULL || current == NULL || received == NULL)
+	    normalized == NULL || current == NULL || decision_targets == NULL ||
+	    received == NULL)
 		return SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	channel_status = sippymodem_v34_channel_frame_receiver_advance(
-		&next.channel_receiver, normalized, &generated_current, decided,
-		&frame_ready);
+		&next.channel_receiver, normalized, &generated_current,
+		generated_targets, decided, &frame_ready);
 	if (channel_status != SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_OK)
 		return channel_result(channel_status);
 	if (!frame_ready) {
@@ -156,6 +162,8 @@ sippymodem_v34_data_channel_receiver_advance(
 			return SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
 		*receiver = next;
 		*current = generated_current;
+		memcpy(decision_targets, generated_targets,
+		       sizeof(generated_targets));
 		return SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_OK;
 	}
 	data_status = sippymodem_v34_data_receiver_receive_mapping_frame(
@@ -167,6 +175,7 @@ sippymodem_v34_data_channel_receiver_advance(
 		return SIPPYMODEM_V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
 	*current = generated_current;
+	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
 	*received = generated_received;
 	return emitted_status;
 }

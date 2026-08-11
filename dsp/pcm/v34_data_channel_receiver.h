@@ -44,17 +44,20 @@ bool sippymodem_v34_data_channel_receiver_is_valid(
 bool sippymodem_v34_data_channel_receiver_is_receiving_b1(
 	const struct sippymodem_v34_data_channel_receiver *receiver);
 
-/* Accept one equalized, unit-average-power 4-D interval. `current` always
- * receives the present-time hard channel decision after a successful call.
- * `received` changes only for MAPPING_FRAME_READY or either B1 result. State
- * and both outputs are unchanged on failure. Separate instances are
- * independent; serialize calls that advance the same instance. */
+/* Accept one equalized, unit-average-power 4-D interval. `current` and
+ * `decision_targets` always receive the present-time hard channel decision
+ * and its exact normalized line symbols after a successful call. `received`
+ * changes only for MAPPING_FRAME_READY or either B1 result. State and every
+ * output are unchanged on failure. Separate instances are independent;
+ * serialize calls that advance the same instance. */
 enum sippymodem_v34_data_channel_receiver_result
 sippymodem_v34_data_channel_receiver_advance(
 	struct sippymodem_v34_data_channel_receiver *receiver,
 	const struct sippymodem_qam_point
 		normalized[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_survivor_decision *current,
+	struct sippymodem_qam_point
+		decision_targets[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_received_mapping_frame *received);
 
 const char *sippymodem_v34_data_channel_receiver_result_name(

@@ -121,24 +121,52 @@ static enum sippymodem_v34_channel_frame_receiver_result decoder_result(
 	return SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
 }
 
-static enum sippymodem_v34_precoder_result correct_receive_history(
+static enum sippymodem_v34_channel_frame_receiver_result
+correct_receive_history(
 	struct sippymodem_v34_precoder *receive_precoder,
-	const struct sippymodem_v34_survivor_decision *current)
+	const struct sippymodem_v34_power_normalizer *normalizer,
+	const struct sippymodem_v34_survivor_decision *current,
+	struct sippymodem_qam_point
+		decision_targets[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL])
 {
 	for (size_t symbol = 0;
 	     symbol < SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		struct sippymodem_v34_grid_point mapper_output;
 		struct sippymodem_v34_precoder_symbol reconstructed;
+		struct sippymodem_qam_point projected;
 		enum sippymodem_v34_precoder_result result =
 			sippymodem_v34_precoder_inverse_step(
 				receive_precoder,
 				&current->channel_output[symbol],
 				&mapper_output, &reconstructed);
+		enum sippymodem_v34_nonlinear_result nonlinear_result;
+		enum sippymodem_v34_symbol_power_result power_result;
 
 		if (result != SIPPYMODEM_V34_PRECODER_OK)
-			return result;
+			return precoder_result(result);
+		nonlinear_result = sippymodem_v34_nonlinear_encode(
+			normalizer->nonlinear_parameter,
+			normalizer->precoded_mean_squared_magnitude,
+			&reconstructed.precoded_symbol, &projected);
+		if (nonlinear_result != SIPPYMODEM_V34_NONLINEAR_OK)
+			return nonlinear_result ==
+				       SIPPYMODEM_V34_NONLINEAR_NUMERIC_FAILURE ?
+				SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE :
+				SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+		power_result = sippymodem_v34_normalize_power(
+			normalizer, &projected, &decision_targets[symbol]);
+		switch (power_result) {
+		case SIPPYMODEM_V34_SYMBOL_POWER_OK:
+			break;
+		case SIPPYMODEM_V34_SYMBOL_POWER_OUT_OF_RANGE:
+			return SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_OUT_OF_RANGE;
+		case SIPPYMODEM_V34_SYMBOL_POWER_NUMERIC_FAILURE:
+			return SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE;
+		case SIPPYMODEM_V34_SYMBOL_POWER_INVALID_ARGUMENT:
+			return SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+		}
 	}
-	return SIPPYMODEM_V34_PRECODER_OK;
+	return SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_OK;
 }
 
 enum sippymodem_v34_channel_frame_receiver_result
@@ -147,6 +175,8 @@ sippymodem_v34_channel_frame_receiver_advance(
 	const struct sippymodem_qam_point
 		normalized[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_survivor_decision *current,
+	struct sippymodem_qam_point
+		decision_targets[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct sippymodem_v34_decided_4d_interval
 		decided_frame[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready)
@@ -158,6 +188,8 @@ sippymodem_v34_channel_frame_receiver_advance(
 	struct sippymodem_qam_point channel_estimates
 		[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct sippymodem_v34_survivor_decision generated_current;
+	struct sippymodem_qam_point generated_targets
+		[SIPPYMODEM_V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct sippymodem_v34_decided_4d_interval generated_frame
 		[SIPPYMODEM_V34_4D_INTERVALS_PER_MAPPING_FRAME];
 	bool generated_ready;
@@ -166,8 +198,8 @@ sippymodem_v34_channel_frame_receiver_advance(
 	enum sippymodem_v34_channel_frame_decoder_result frame_result;
 
 	if (!sippymodem_v34_channel_frame_receiver_is_valid(receiver) ||
-	    normalized == NULL || current == NULL || decided_frame == NULL ||
-	    frame_ready == NULL)
+	    normalized == NULL || current == NULL || decision_targets == NULL ||
+	    decided_frame == NULL || frame_ready == NULL)
 		return SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	condition_result = sippymodem_v34_channel_condition_interval(
@@ -184,14 +216,20 @@ sippymodem_v34_channel_frame_receiver_advance(
 		generated_frame, &generated_ready);
 	if (frame_result != SIPPYMODEM_V34_CHANNEL_FRAME_DECODER_OK)
 		return decoder_result(frame_result);
-	prediction_result = correct_receive_history(
-		&next.receive_precoder, &generated_current);
-	if (prediction_result != SIPPYMODEM_V34_PRECODER_OK)
-		return precoder_result(prediction_result);
+	{
+		enum sippymodem_v34_channel_frame_receiver_result result =
+			correct_receive_history(
+				&next.receive_precoder, &next.conditioner.normalizer,
+				&generated_current, generated_targets);
+
+		if (result != SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_OK)
+			return result;
+	}
 	if (!sippymodem_v34_channel_frame_receiver_is_valid(&next))
 		return SIPPYMODEM_V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
 	*current = generated_current;
+	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
 	*frame_ready = generated_ready;
 	if (generated_ready)
 		memcpy(decided_frame, generated_frame, sizeof(generated_frame));
