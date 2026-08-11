@@ -20,6 +20,7 @@
       "dial": "",
       "configured_target": "sip:ata.example.invalid",
       "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
       "enabled": false
     }
   ]

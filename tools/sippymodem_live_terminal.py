@@ -13,7 +13,7 @@ import selectors
 import termios
 import time
 import tty
-from typing import IO
+from typing import Callable, IO
 
 
 DEVICE_PATH_RE = re.compile(r"/dev/pts/[0-9]+\Z")
@@ -55,6 +55,11 @@ CONNECT_COMPRESSIONS = {
     b"NONE": "none",
 }
 CONNECT_RATE_MAX = 1_000_000
+ONLINE_PING_REQUEST = b"\r\n\r\nPING\r\n"
+ONLINE_PONG_RE = re.compile(
+    rb"(?:^|[\r\n])GETTY:PONG:[0-9a-fA-F]{32}:"
+    rb"[0-9]{10}(?:[0-9]{3}){0,2}\r\n"
+)
 
 
 class LiveTerminalError(RuntimeError):
@@ -264,11 +269,31 @@ class ModemTerminal:
         self, send: bytes, expected: bytes, timeout_seconds: float
     ) -> tuple[bool, bytes]:
         if (
-            not isinstance(send, bytes)
-            or not isinstance(expected, bytes)
+            not isinstance(expected, bytes)
             or not expected
-            or len(send) > ONLINE_PATTERN_MAX
             or len(expected) > ONLINE_PATTERN_MAX
+        ):
+            raise LiveTerminalError("invalid online terminal exchange")
+        return self._exchange_online(
+            send, lambda received: expected in received, timeout_seconds
+        )
+
+    def probe_online_ping(self, timeout_seconds: float) -> tuple[bool, bytes]:
+        return self._exchange_online(
+            ONLINE_PING_REQUEST,
+            lambda received: ONLINE_PONG_RE.search(received) is not None,
+            timeout_seconds,
+        )
+
+    def _exchange_online(
+        self,
+        send: bytes,
+        complete: Callable[[bytearray], bool],
+        timeout_seconds: float,
+    ) -> tuple[bool, bytes]:
+        if (
+            not isinstance(send, bytes)
+            or len(send) > ONLINE_PATTERN_MAX
             or timeout_seconds <= 0
             or not self._decoder.online
         ):
@@ -277,7 +302,7 @@ class ModemTerminal:
         if send:
             self._write(send, deadline)
         received = bytearray(self._decoder.take_online_data())
-        while expected not in received:
+        while not complete(received):
             if len(received) >= ONLINE_CAPTURE_MAX:
                 raise LiveTerminalError("online terminal data is too long")
             try:

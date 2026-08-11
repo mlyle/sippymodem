@@ -33,6 +33,7 @@ if __package__:
         ConnectReport,
         LiveTerminalError,
         ModemTerminal,
+        ONLINE_PING_REQUEST,
         read_published_device,
     )
 else:
@@ -49,6 +50,7 @@ else:
         ConnectReport,
         LiveTerminalError,
         ModemTerminal,
+        ONLINE_PING_REQUEST,
         read_published_device,
     )
 
@@ -71,6 +73,9 @@ class CallResult:
     duration_seconds: float
     terminal_expected_bytes: int = 0
     terminal_verified_bytes: int = 0
+    terminal_transmitted_bytes: int = 0
+    round_trip_probe: str | None = None
+    round_trip_verified: bool = False
     modulation: str | None = None
     protocol: str | None = None
     compression: str | None = None
@@ -85,6 +90,9 @@ class CallResult:
             "duration_seconds": self.duration_seconds,
             "terminal_expected_bytes": self.terminal_expected_bytes,
             "terminal_verified_bytes": self.terminal_verified_bytes,
+            "terminal_transmitted_bytes": self.terminal_transmitted_bytes,
+            "round_trip_probe": self.round_trip_probe,
+            "round_trip_verified": self.round_trip_verified,
             "modulation": self.modulation,
             "protocol": self.protocol,
             "compression": self.compression,
@@ -210,6 +218,8 @@ class LiveCallAttempt:
         outcome = "infrastructure-error"
         expected_bytes = len(self._plan.online_expect)
         verified_bytes = 0
+        transmitted = b""
+        round_trip_verified = False
         connect_report = ConnectReport()
         stage = "startup"
         try:
@@ -239,19 +249,40 @@ class LiveCallAttempt:
                     connect_report = self._terminal.connect_report
                     if self._plan.online_expect:
                         stage = "data"
-                        verified, received = self._terminal.exchange_online(
+                        data_verified, received = self._terminal.exchange_online(
                             self._plan.online_send,
                             self._plan.online_expect,
                             self._config.online_timeout_seconds,
                         )
-                        self._artifacts.write_terminal_exchange(
-                            self._plan.online_send, received
-                        )
-                        if verified:
+                        transmitted = self._plan.online_send
+                        if data_verified:
                             verified_bytes = expected_bytes
+                        if (
+                            data_verified
+                            and self._plan.round_trip_probe == "ping"
+                        ):
+                            stage = "round-trip"
+                            round_trip_verified, probe_received = (
+                                self._terminal.probe_online_ping(
+                                    self._config.online_timeout_seconds
+                                )
+                            )
+                            transmitted += ONLINE_PING_REQUEST
+                            received += probe_received
+                        self._artifacts.write_terminal_exchange(
+                            transmitted, received
+                        )
+                        if not data_verified:
+                            outcome = "data-missing"
+                        elif (
+                            self._plan.round_trip_probe
+                            and not round_trip_verified
+                        ):
+                            outcome = "round-trip-missing"
+                        else:
+                            outcome = "connected"
                     else:
-                        verified = True
-                    outcome = "connected" if verified else "data-missing"
+                        outcome = "connected"
                     time.sleep(self._config.hold_seconds)
                     self._terminal.escape_and_hang_up()
                 elif response == "ok":
@@ -276,6 +307,9 @@ class LiveCallAttempt:
             duration_seconds=round(time.monotonic() - started, 3),
             terminal_expected_bytes=expected_bytes,
             terminal_verified_bytes=verified_bytes,
+            terminal_transmitted_bytes=len(transmitted),
+            round_trip_probe=self._plan.round_trip_probe or None,
+            round_trip_verified=round_trip_verified,
             modulation=connect_report.modulation,
             protocol=connect_report.protocol,
             compression=connect_report.compression,

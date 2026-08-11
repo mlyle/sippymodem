@@ -47,7 +47,12 @@ class LiveCallConfigTests(unittest.TestCase):
                     "online_send_hex": "70696e67",
                     "online_expect_hex": "706f6e67",
                 },
-                {"name": "bare", "dial": "extension"},
+                {
+                    "name": "bare",
+                    "dial": "extension",
+                    "online_expect_hex": "6d61726b6572",
+                    "round_trip_probe": "ping",
+                },
                 {"name": "address", "dial": "peer@private.example"},
                 {"name": "uri", "dial": "sip:peer@private.example"},
             ],
@@ -70,6 +75,7 @@ class LiveCallConfigTests(unittest.TestCase):
             self.assertEqual(config.hold_seconds, 1.0)
             self.assertEqual(config.plans[0].online_send, b"ping")
             self.assertEqual(config.plans[0].online_expect, b"pong")
+            self.assertEqual(config.plans[1].round_trip_probe, "ping")
             self.assertEqual(
                 [dial_form(plan) for plan in config.plans],
                 [
@@ -89,6 +95,7 @@ class LiveCallConfigTests(unittest.TestCase):
             self.assertIn('"name": "configured"', rendered)
             self.assertIn('"form": "sip-uri"', rendered)
             self.assertIn('"terminal_data": true', rendered)
+            self.assertIn('"round_trip_probe": "ping"', rendered)
             for private in (
                 "private-user",
                 "private-password",
@@ -142,6 +149,42 @@ class LiveCallConfigTests(unittest.TestCase):
                     "plans": [
                         {"name": "same", "dial": "one"},
                         {"name": "same", "dial": "two"},
+                    ]
+                }
+            ),
+            lambda value: value.update(
+                {
+                    "plans": [
+                        {
+                            "name": "unknown-probe",
+                            "dial": "peer",
+                            "online_expect_hex": "00",
+                            "round_trip_probe": "arbitrary",
+                        }
+                    ]
+                }
+            ),
+            lambda value: value.update(
+                {
+                    "plans": [
+                        {
+                            "name": "probe-without-marker",
+                            "dial": "peer",
+                            "round_trip_probe": "ping",
+                        }
+                    ]
+                }
+            ),
+            lambda value: value.update(
+                {
+                    "plans": [
+                        {
+                            "name": "ambiguous-probe",
+                            "dial": "peer",
+                            "online_send_hex": "00",
+                            "online_expect_hex": "01",
+                            "round_trip_probe": "ping",
+                        }
                     ]
                 }
             ),
@@ -216,6 +259,7 @@ class LiveCallConfigTests(unittest.TestCase):
         self.assertFalse(any(plan.enabled for plan in config.plans))
         self.assertNotIn("SIP_PASSWORD", config.environment_dict())
         self.assertTrue(config.plans[0].online_expect)
+        self.assertEqual(config.plans[0].round_trip_probe, "ping")
         self.assertEqual(
             [dial_form(plan) for plan in config.plans],
             ["configured-target"],

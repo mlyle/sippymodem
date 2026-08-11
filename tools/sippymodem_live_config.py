@@ -63,10 +63,12 @@ PLAN_KEYS = frozenset(
         "at_commands",
         "online_send_hex",
         "online_expect_hex",
+        "round_trip_probe",
     }
 )
 PLAN_NAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9_.-]{0,62}[a-z0-9])?\Z")
 ONLINE_PATTERN_MAX = 512
+ROUND_TRIP_PROBES = frozenset({"ping"})
 
 
 class LiveCallConfigError(ValueError):
@@ -82,6 +84,7 @@ class DialPlan:
     at_commands: tuple[str, ...]
     online_send: bytes = b""
     online_expect: bytes = b""
+    round_trip_probe: str = ""
 
 
 @dataclass(frozen=True)
@@ -201,9 +204,19 @@ def _plan(value: Any, index: int) -> DialPlan:
     online_expect = _hex_bytes(
         value.get("online_expect_hex", ""), f"{field}.online_expect_hex"
     )
+    round_trip_probe = value.get("round_trip_probe", "")
+    if not isinstance(round_trip_probe, str) or (
+        round_trip_probe and round_trip_probe not in ROUND_TRIP_PROBES
+    ):
+        raise LiveCallConfigError(f"{field}.round_trip_probe is unsupported")
     if online_send and not online_expect:
         raise LiveCallConfigError(
             f"{field}.online_send_hex requires an expected response"
+        )
+    if round_trip_probe and (not online_expect or online_send):
+        raise LiveCallConfigError(
+            f"{field}.round_trip_probe requires an initial receive pattern and "
+            "cannot be combined with online_send_hex"
         )
     return DialPlan(
         name=name,
@@ -213,6 +226,7 @@ def _plan(value: Any, index: int) -> DialPlan:
         at_commands=_commands(value.get("at_commands", []), f"{field}.at_commands"),
         online_send=online_send,
         online_expect=online_expect,
+        round_trip_probe=round_trip_probe,
     )
 
 
@@ -321,6 +335,7 @@ def public_manifest(config: LiveCallConfig) -> dict[str, Any]:
                 "form": dial_form(plan),
                 "at_command_count": len(plan.at_commands),
                 "terminal_data": bool(plan.online_expect),
+                "round_trip_probe": plan.round_trip_probe or None,
             }
             for plan in config.plans
         ],

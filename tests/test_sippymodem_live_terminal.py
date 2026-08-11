@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.sippymodem_live_terminal import (  # noqa: E402
     LiveTerminalError,
     ModemTerminal,
+    ONLINE_PING_REQUEST,
     ResponseDecoder,
     read_published_device,
 )
@@ -29,6 +30,51 @@ class LiveTerminalTests(unittest.TestCase):
             ),
         ):
             terminal.escape_and_hang_up()
+
+    def test_ping_probe_requires_a_complete_structured_response(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 300\r\n")
+        response = (
+            b"GETTY:PONG:0123456789abcdef0123456789abcdef:"
+            b"1783737600123\r\n"
+        )
+        with (
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch(
+                "tools.sippymodem_live_terminal._wait_for_descriptor"
+            ),
+            mock.patch(
+                "tools.sippymodem_live_terminal.os.read",
+                side_effect=(response[:-2], response[-2:]),
+            ),
+        ):
+            verified, received = terminal.probe_online_ping(1.0)
+
+        self.assertTrue(verified)
+        self.assertEqual(received, response)
+        self.assertEqual(write.call_args.args[0], ONLINE_PING_REQUEST)
+
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 300\r\n")
+        malformed = (
+            b"GETTY:PONG:0123456789abcdef0123456789abcdef:"
+            b"178373760012\r\n"
+        )
+        with (
+            mock.patch.object(terminal, "_write"),
+            mock.patch(
+                "tools.sippymodem_live_terminal._wait_for_descriptor",
+                side_effect=(None, TimeoutError),
+            ),
+            mock.patch(
+                "tools.sippymodem_live_terminal.os.read",
+                return_value=malformed,
+            ),
+        ):
+            verified, received = terminal.probe_online_ping(1.0)
+
+        self.assertFalse(verified)
+        self.assertEqual(received, malformed)
 
     def test_response_decoder_handles_fragments_and_bounds(self) -> None:
         decoder = ResponseDecoder()

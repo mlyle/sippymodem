@@ -116,6 +116,9 @@ class LiveCallRunnerTests(unittest.TestCase):
                 "duration_seconds",
                 "terminal_expected_bytes",
                 "terminal_verified_bytes",
+                "terminal_transmitted_bytes",
+                "round_trip_probe",
+                "round_trip_verified",
                 "modulation",
                 "protocol",
                 "compression",
@@ -182,11 +185,21 @@ tty.setraw(slave)
 print(os.ttyname(slave), flush=True)
 pending = b""
 details_enabled = False
+online = False
 while True:
     pending += os.read(master, 4096)
-    if b"+++" in pending:
+    if online and b"\\r\\n\\r\\nPING\\r\\n" in pending:
+        _before, pending = pending.split(b"\\r\\n\\r\\nPING\\r\\n", 1)
+        os.write(
+            master,
+            b"GETTY:PONG:0123456789abcdef0123456789abcdef:1783737600123\\r\\n",
+        )
+    if online and b"+++" in pending:
         _before, pending = pending.split(b"+++", 1)
+        online = False
         os.write(master, b"\\r\\nOK\\r\\n")
+    if online:
+        continue
     while b"\\r" in pending:
         command, pending = pending.split(b"\\r", 1)
         if command == b"ATS95=7":
@@ -199,6 +212,7 @@ while True:
                 b"Compression: V44\\r\\nTxRate: 12000\\r\\n"
                 b"CONNECT 14400\\r\\nSIPPY-LIVE-OK\\r\\n",
             )
+            online = True
         elif command.startswith(b"ATD"):
             os.write(master, b"\\r\\nERROR\\r\\n")
         else:
@@ -215,8 +229,8 @@ while True:
                     "",
                     True,
                     (),
-                    b"",
-                    b"SIPPY-LIVE-OK\r\n",
+                    online_expect=b"SIPPY-LIVE-OK\r\n",
+                    round_trip_probe="ping",
                 ),
             )
             config = self.config(directory, plans)
@@ -226,6 +240,9 @@ while True:
             self.assertEqual(result.outcome, "connected")
             self.assertEqual(result.terminal_expected_bytes, 15)
             self.assertEqual(result.terminal_verified_bytes, 15)
+            self.assertEqual(result.terminal_transmitted_bytes, 10)
+            self.assertEqual(result.round_trip_probe, "ping")
+            self.assertTrue(result.round_trip_verified)
             self.assertEqual(result.modulation, "V.32bis")
             self.assertEqual(result.protocol, "LAPM")
             self.assertEqual(result.compression, "V.44")
@@ -234,8 +251,13 @@ while True:
             attempt = next(config.artifact_directory.iterdir())
             received = attempt / "terminal-rx.bin"
             transmitted = attempt / "terminal-tx.bin"
-            self.assertEqual(received.read_bytes(), b"SIPPY-LIVE-OK\r\n")
-            self.assertEqual(transmitted.read_bytes(), b"")
+            self.assertEqual(
+                received.read_bytes(),
+                b"SIPPY-LIVE-OK\r\n"
+                b"GETTY:PONG:0123456789abcdef0123456789abcdef:"
+                b"1783737600123\r\n",
+            )
+            self.assertEqual(transmitted.read_bytes(), b"\r\n\r\nPING\r\n")
             self.assertEqual(stat.S_IMODE(received.stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE(transmitted.stat().st_mode), 0o600)
 

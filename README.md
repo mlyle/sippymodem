@@ -121,7 +121,11 @@ An optional `online_send_hex` can drive an echo or request/response check;
 outbound data is rejected unless an expected response is also configured.
 Both patterns are limited to 512 bytes, and `online_timeout_seconds` bounds the
 wait. When an expectation is present, a plan reports `connected` only after
-the terminal receives that exact byte sequence.
+the terminal receives that exact byte sequence. Alternatively,
+`"round_trip_probe": "ping"` waits for that initial sequence, sends one fixed
+PING command, and requires a complete nonce-and-timestamp PONG response. This
+probe is mutually exclusive with custom transmitted bytes and exposes only its
+name, byte count, and pass/fail result outside the private artifacts.
 
 The current physical interoperability baseline has transferred an exact,
 bounded 54-byte pattern over direct SIP at V.21 300 bit/s and at every
@@ -130,7 +134,9 @@ observations establish functional interoperation, not a repeatability or
 impaired-line qualification matrix; their recordings remain private and ignored.
 Fresh diagnostic calls reported symmetric raw V.21 at 300 bit/s without LAPM
 or compression, V.32 at 9600 bit/s with LAPM and V.42bis, and V.32bis at 14400
-bit/s with LAPM and V.42bis; each again transferred all 54 expected bytes.
+bit/s with LAPM and V.42bis; each again transferred all 54 expected bytes. The
+structured PING/PONG probe also proved terminal data in both directions on the
+V.21 and 9600-bit/s V.32 calls.
 
 The runner clears inherited SIP settings before applying the private file,
 uses ephemeral local ports unless the file explicitly selects ports, and never
