@@ -30,22 +30,17 @@ static bool drain_one(
 	return true;
 }
 
-static bool encode_and_flush(
-	const struct sippymodem_v44_parameters *selected_parameters,
+static bool encode_segment(
+	struct sippymodem_v44_encoder *encoder,
 	const uint8_t *plain,
 	size_t plain_length,
 	uint8_t *wire,
 	size_t wire_capacity,
 	size_t *wire_length)
 {
-	struct sippymodem_v44_encoder *encoder =
-		sippymodem_v44_encoder_create(selected_parameters, 2);
 	const uint8_t *input = plain;
 	size_t input_length = plain_length;
 
-	if (encoder == NULL)
-		return false;
-	*wire_length = 0;
 	while (input_length != 0) {
 		enum sippymodem_v44_encode_result result =
 			sippymodem_v44_encoder_process(
@@ -54,9 +49,9 @@ static bool encode_and_flush(
 		if (result == SIPPYMODEM_V44_ENCODE_NEED_OUTPUT) {
 			if (!drain_one(
 				    encoder, wire, wire_capacity, wire_length))
-				goto fail;
+				return false;
 		} else if (result != SIPPYMODEM_V44_ENCODE_OK) {
-			goto fail;
+			return false;
 		}
 	}
 	for (;;) {
@@ -67,23 +62,40 @@ static bool encode_and_flush(
 			break;
 		if (result != SIPPYMODEM_V44_ENCODE_NEED_OUTPUT ||
 		    !drain_one(encoder, wire, wire_capacity, wire_length))
-			goto fail;
+			return false;
 	}
-	sippymodem_v44_encoder_destroy(encoder);
 	return true;
-
-fail:
-	sippymodem_v44_encoder_destroy(encoder);
-	return false;
 }
 
-static bool decode_wire(
+static bool encode_and_flush(
+	const struct sippymodem_v44_parameters *selected_parameters,
+	const uint8_t *plain,
+	size_t plain_length,
+	uint8_t *wire,
+	size_t wire_capacity,
+	size_t *wire_length)
+{
+	struct sippymodem_v44_encoder *encoder =
+		sippymodem_v44_encoder_create(selected_parameters, 2);
+	bool encoded;
+
+	if (encoder == NULL)
+		return false;
+	*wire_length = 0;
+	encoded = encode_segment(
+		encoder, plain, plain_length, wire, wire_capacity, wire_length);
+	sippymodem_v44_encoder_destroy(encoder);
+	return encoded;
+}
+
+static bool decode_wire_flushes(
 	const struct sippymodem_v44_parameters *selected_parameters,
 	const uint8_t *wire,
 	size_t wire_length,
 	uint8_t *plain,
 	size_t plain_capacity,
-	size_t *plain_length)
+	size_t *plain_length,
+	unsigned int expected_flushes)
 {
 	struct sippymodem_v44_decoder *decoder =
 		sippymodem_v44_decoder_create(
@@ -96,7 +108,7 @@ static bool decode_wire(
 	if (decoder == NULL)
 		return false;
 	*plain_length = 0;
-	while (flush_count == 0) {
+	while (flush_count < expected_flushes) {
 		size_t available = plain_capacity - *plain_length;
 		size_t produced = 0;
 		enum sippymodem_v44_decode_result result;
@@ -111,7 +123,7 @@ static bool decode_wire(
 			goto fail;
 		*plain_length += produced;
 	}
-	if (input_length != 0 || flush_count != 1 ||
+	if (input_length != 0 || flush_count != expected_flushes ||
 	    sippymodem_v44_decoder_finish(decoder) !=
 		    SIPPYMODEM_V44_DECODE_OK)
 		goto fail;
@@ -121,6 +133,19 @@ static bool decode_wire(
 fail:
 	sippymodem_v44_decoder_destroy(decoder);
 	return false;
+}
+
+static bool decode_wire(
+	const struct sippymodem_v44_parameters *selected_parameters,
+	const uint8_t *wire,
+	size_t wire_length,
+	uint8_t *plain,
+	size_t plain_capacity,
+	size_t *plain_length)
+{
+	return decode_wire_flushes(
+		selected_parameters, wire, wire_length, plain, plain_capacity,
+		plain_length, 1);
 }
 
 static bool test_literal_wire_and_round_trip(void)
@@ -221,6 +246,223 @@ static bool test_repeated_string_wire_image(void)
 	      decoded_length == sizeof(decoded) &&
 	      memcmp(decoded, plain, sizeof(decoded)) == 0,
 	      "V.44 repeated-string encoding did not round-trip");
+	return true;
+}
+
+static bool check_codeword_stepup(size_t target_codeword)
+{
+	const struct sippymodem_v44_parameters default_parameters =
+		sippymodem_v44_default_parameters();
+	struct sippymodem_v44_test_wire *builder =
+		sippymodem_v44_test_wire_create(
+			default_parameters.max_string_length, 512);
+	uint8_t plain[256];
+	uint8_t expected[512];
+	uint8_t wire[512];
+	uint8_t decoded[sizeof(plain)];
+	size_t prefix_length = target_codeword - 2U;
+	size_t expected_length = 0;
+	size_t wire_length = 0;
+	size_t decoded_length = 0;
+	size_t threshold = 64;
+	bool built = builder != NULL;
+
+	if (target_codeword < 4 || target_codeword > sizeof(plain))
+		return false;
+	for (size_t index = 0; index < prefix_length; ++index)
+		plain[index] = index % 2U == 0 ?
+				       0 : (uint8_t)((index + 1U) / 2U);
+	plain[target_codeword - 2U] = plain[target_codeword - 4U];
+	plain[target_codeword - 1U] = plain[target_codeword - 3U];
+	for (size_t index = 0; built && index < prefix_length; ++index)
+		built = sippymodem_v44_test_wire_ordinal(builder, plain[index]);
+	while (built && target_codeword >= threshold) {
+		built = sippymodem_v44_test_wire_stepup_codeword(builder);
+		threshold *= 2U;
+	}
+	built = built && sippymodem_v44_test_wire_codeword(
+				   builder, (uint32_t)target_codeword) &&
+		sippymodem_v44_test_wire_control(
+			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
+		sippymodem_v44_test_wire_finish(
+			builder, expected, sizeof(expected), &expected_length);
+	sippymodem_v44_test_wire_destroy(builder);
+	CHECK(built && encode_and_flush(
+				 &default_parameters, plain, target_codeword, wire,
+				 sizeof(wire), &wire_length),
+	      "could not encode V.44 codeword %zu boundary", target_codeword);
+	CHECK(wire_length == expected_length &&
+	      memcmp(wire, expected, expected_length) == 0,
+	      "V.44 codeword %zu STEPUP wire image changed", target_codeword);
+	CHECK(decode_wire(
+		      &default_parameters, wire, wire_length, decoded,
+		      target_codeword, &decoded_length) &&
+	      decoded_length == target_codeword &&
+	      memcmp(decoded, plain, target_codeword) == 0,
+	      "V.44 codeword %zu STEPUP did not round-trip", target_codeword);
+	return true;
+}
+
+static bool test_codeword_stepup_boundaries(void)
+{
+	return check_codeword_stepup(64) && check_codeword_stepup(256);
+}
+
+static bool test_extension_field_boundaries(void)
+{
+	static const struct {
+		uint32_t max_string_length;
+		uint32_t extension_length;
+	} cases[] = {
+		{ 32, 1 }, { 32, 4 }, { 32, 5 }, { 32, 12 }, { 32, 13 },
+		{ 32, 30 }, { 46, 44 }, { 47, 45 }, { 78, 76 },
+		{ 79, 77 }, { 142, 140 }, { 143, 141 }, { 255, 253 },
+	};
+	uint8_t plain[257];
+	uint8_t expected[512];
+	uint8_t wire[512];
+	uint8_t decoded[sizeof(plain)];
+
+	for (size_t item = 0; item < ARRAY_LENGTH(cases); ++item) {
+		const struct sippymodem_v44_parameters selected = {
+			.codeword_limit = SIPPYMODEM_V44_DEFAULT_CODEWORDS,
+			.max_string_length = cases[item].max_string_length,
+			.history_size = SIPPYMODEM_V44_DEFAULT_HISTORY_SIZE,
+		};
+		struct sippymodem_v44_test_wire *builder =
+			sippymodem_v44_test_wire_create(
+				selected.max_string_length, sizeof(expected));
+		size_t plain_length = cases[item].extension_length + 4U;
+		size_t expected_length = 0;
+		size_t wire_length = 0;
+		size_t decoded_length = 0;
+		bool built;
+
+		memset(plain, 'C', plain_length - 1U);
+		plain[plain_length - 1U] = 'X';
+		built = builder != NULL &&
+			sippymodem_v44_test_wire_ordinal(builder, 'C') &&
+			sippymodem_v44_test_wire_codeword(builder, 4) &&
+			sippymodem_v44_test_wire_extension(
+				builder, cases[item].extension_length) &&
+			sippymodem_v44_test_wire_ordinal(builder, 'X') &&
+			sippymodem_v44_test_wire_control(
+				builder, SIPPYMODEM_V44_TEST_FLUSH) &&
+			sippymodem_v44_test_wire_finish(
+				builder, expected, sizeof(expected),
+				&expected_length);
+		sippymodem_v44_test_wire_destroy(builder);
+		CHECK(built && encode_and_flush(
+					 &selected, plain, plain_length, wire,
+					 sizeof(wire), &wire_length),
+		      "could not encode V.44 extension boundary %u/%u",
+		      cases[item].max_string_length,
+		      cases[item].extension_length);
+		CHECK(wire_length == expected_length &&
+		      memcmp(wire, expected, expected_length) == 0,
+		      "V.44 extension boundary %u/%u wire image changed",
+		      cases[item].max_string_length,
+		      cases[item].extension_length);
+		CHECK(decode_wire(
+			      &selected, wire, wire_length, decoded,
+			      plain_length, &decoded_length) &&
+		      decoded_length == plain_length &&
+		      memcmp(decoded, plain, plain_length) == 0,
+		      "V.44 extension boundary %u/%u did not round-trip",
+		      cases[item].max_string_length,
+		      cases[item].extension_length);
+	}
+	return true;
+}
+
+static bool test_flush_dictionary_continuity(void)
+{
+	static const uint8_t first[] = { 'A', 'B' };
+	static const uint8_t second[] = { 'A', 'B', 'X' };
+	static const uint8_t plain[] = { 'A', 'B', 'A', 'B', 'X' };
+	struct sippymodem_v44_encoder *encoder =
+		sippymodem_v44_encoder_create(&parameters, 2);
+	struct sippymodem_v44_test_wire *builder =
+		sippymodem_v44_test_wire_create(
+			parameters.max_string_length, 32);
+	uint8_t expected[32];
+	uint8_t wire[32];
+	uint8_t decoded[sizeof(plain)];
+	size_t expected_length = 0;
+	size_t wire_length = 0;
+	size_t decoded_length = 0;
+	bool built = builder != NULL &&
+		sippymodem_v44_test_wire_ordinal(builder, 'A') &&
+		sippymodem_v44_test_wire_ordinal(builder, 'B') &&
+		sippymodem_v44_test_wire_control(
+			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
+		sippymodem_v44_test_wire_codeword(builder, 4) &&
+		sippymodem_v44_test_wire_ordinal(builder, 'X') &&
+		sippymodem_v44_test_wire_control(
+			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
+		sippymodem_v44_test_wire_finish(
+			builder, expected, sizeof(expected), &expected_length);
+	bool encoded = encoder != NULL && built;
+
+	sippymodem_v44_test_wire_destroy(builder);
+	if (encoded)
+		encoded = encode_segment(
+			encoder, first, sizeof(first), wire, sizeof(wire),
+			&wire_length);
+	if (encoded)
+		encoded = encode_segment(
+			encoder, second, sizeof(second), wire, sizeof(wire),
+			&wire_length);
+	sippymodem_v44_encoder_destroy(encoder);
+	CHECK(encoded,
+	      "could not encode V.44 stream across FLUSH");
+	CHECK(wire_length == expected_length &&
+	      memcmp(wire, expected, expected_length) == 0,
+	      "V.44 FLUSH did not preserve dictionary wire context");
+	CHECK(decode_wire_flushes(
+		      &parameters, wire, wire_length, decoded, sizeof(decoded),
+		      &decoded_length, 2) &&
+	      decoded_length == sizeof(plain) &&
+	      memcmp(decoded, plain, sizeof(plain)) == 0,
+	      "V.44 FLUSH dictionary continuity did not round-trip");
+	return true;
+}
+
+static bool test_flush_terminates_extension(void)
+{
+	static const uint8_t plain[] = { 'C', 'C', 'C', 'C' };
+	struct sippymodem_v44_test_wire *builder =
+		sippymodem_v44_test_wire_create(
+			parameters.max_string_length, 16);
+	uint8_t expected[16];
+	uint8_t wire[16];
+	uint8_t decoded[sizeof(plain)];
+	size_t expected_length = 0;
+	size_t wire_length = 0;
+	size_t decoded_length = 0;
+	bool built = builder != NULL &&
+		sippymodem_v44_test_wire_ordinal(builder, 'C') &&
+		sippymodem_v44_test_wire_codeword(builder, 4) &&
+		sippymodem_v44_test_wire_extension(builder, 1) &&
+		sippymodem_v44_test_wire_control(
+			builder, SIPPYMODEM_V44_TEST_FLUSH) &&
+		sippymodem_v44_test_wire_finish(
+			builder, expected, sizeof(expected), &expected_length);
+
+	sippymodem_v44_test_wire_destroy(builder);
+	CHECK(built && encode_and_flush(
+				 &parameters, plain, sizeof(plain), wire,
+				 sizeof(wire), &wire_length),
+	      "could not flush a pending V.44 string extension");
+	CHECK(wire_length == expected_length &&
+	      memcmp(wire, expected, expected_length) == 0,
+	      "V.44 FLUSH did not terminate its pending extension exactly");
+	CHECK(decode_wire(
+		      &parameters, wire, wire_length, decoded, sizeof(decoded),
+		      &decoded_length) &&
+	      decoded_length == sizeof(plain) &&
+	      memcmp(decoded, plain, sizeof(plain)) == 0,
+	      "flushed V.44 string extension did not round-trip");
 	return true;
 }
 
@@ -535,6 +777,14 @@ int main(void)
 		{ "Appendix II.1 wire image", test_appendix_wire_image },
 		{ "repeated string wire image",
 		  test_repeated_string_wire_image },
+		{ "codeword STEPUP boundaries",
+		  test_codeword_stepup_boundaries },
+		{ "extension field boundaries",
+		  test_extension_field_boundaries },
+		{ "FLUSH dictionary continuity",
+		  test_flush_dictionary_continuity },
+		{ "FLUSH terminates extension",
+		  test_flush_terminates_extension },
 		{ "dictionary exhaustion",
 		  test_dictionary_exhaustion_reinitializes },
 		{ "history exhaustion",
