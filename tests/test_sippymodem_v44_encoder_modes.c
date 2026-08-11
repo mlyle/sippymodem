@@ -28,6 +28,20 @@ static bool drain_one(
 	return true;
 }
 
+static bool progress_is(
+	const struct sippymodem_v44_encoder *encoder,
+	enum sippymodem_v44_encoder_mode mode,
+	uint64_t represented_octets,
+	uint64_t wire_bits)
+{
+	struct sippymodem_v44_encoder_progress progress;
+
+	return sippymodem_v44_encoder_get_progress(encoder, &progress) &&
+	       progress.mode == mode &&
+	       progress.represented_octets == represented_octets &&
+	       progress.wire_bits == wire_bits;
+}
+
 static bool pump_input(
 	struct sippymodem_v44_encoder *encoder,
 	const uint8_t *plain,
@@ -380,6 +394,127 @@ static bool test_transparent_flush(void)
 	return true;
 }
 
+static bool test_progress_accounting(void)
+{
+	static const uint8_t compressed_a[] = { 'A' };
+	static const uint8_t transparent_escape[] = { 0 };
+	static const uint8_t transparent_t[] = { 'T' };
+	static const uint8_t compressed_b[] = { 'B' };
+	struct sippymodem_v44_encoder *encoder =
+		sippymodem_v44_encoder_create(&parameters, 2);
+	struct sippymodem_v44_encoder_progress unchanged = {
+		.mode = SIPPYMODEM_V44_ENCODER_TRANSPARENT,
+		.represented_octets = 91,
+		.wire_bits = 73,
+	};
+	const uint8_t *input = compressed_a;
+	size_t input_length = sizeof(compressed_a);
+	uint8_t output = 0;
+
+	CHECK(encoder != NULL &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 0, 0) &&
+	      !sippymodem_v44_encoder_get_progress(NULL, &unchanged) &&
+	      unchanged.mode == SIPPYMODEM_V44_ENCODER_TRANSPARENT &&
+	      unchanged.represented_octets == 91 && unchanged.wire_bits == 73 &&
+	      !sippymodem_v44_encoder_get_progress(encoder, NULL),
+	      "fresh V.44 encoder progress was invalid");
+	CHECK(sippymodem_v44_encoder_process(
+		      encoder, &input, &input_length) ==
+		      SIPPYMODEM_V44_ENCODE_OK &&
+	      input_length == 0 &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 1, 8),
+	      "queued V.44 ordinal was not reported as represented");
+	CHECK(sippymodem_v44_encoder_request_mode(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
+		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 1, 8) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_request_mode(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
+		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 1, 16) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_request_mode(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT) ==
+		      SIPPYMODEM_V44_ENCODE_OK &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 1, 16),
+	      "V.44 ETM progress duplicated data or missed padding");
+	input = transparent_escape;
+	input_length = sizeof(transparent_escape);
+	CHECK(sippymodem_v44_encoder_process(
+		      encoder, &input, &input_length) ==
+		      SIPPYMODEM_V44_ENCODE_OK &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 2, 32) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 2, 32) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1,
+	      "V.44 EID progress depended on output draining");
+	input = transparent_t;
+	input_length = sizeof(transparent_t);
+	CHECK(sippymodem_v44_encoder_process(
+		      encoder, &input, &input_length) ==
+		      SIPPYMODEM_V44_ENCODE_OK &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 40) &&
+	      sippymodem_v44_encoder_flush(encoder) ==
+		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_flush(encoder) ==
+		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 40),
+	      "transparent V.44 flush changed progress");
+	CHECK(sippymodem_v44_encoder_request_mode(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
+		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 56) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_request_mode(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
+		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_TRANSPARENT, 3, 56) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_request_mode(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED) ==
+		      SIPPYMODEM_V44_ENCODE_OK &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 3, 56),
+	      "V.44 ECM progress changed across backpressure retries");
+	input = compressed_b;
+	input_length = sizeof(compressed_b);
+	CHECK(sippymodem_v44_encoder_process(
+		      encoder, &input, &input_length) ==
+		      SIPPYMODEM_V44_ENCODE_OK &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 64) &&
+	      sippymodem_v44_encoder_flush(encoder) ==
+		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 64) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_flush(encoder) ==
+		      SIPPYMODEM_V44_ENCODE_NEED_OUTPUT &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 72) &&
+	      sippymodem_v44_encoder_read(encoder, &output, 1) == 1 &&
+	      sippymodem_v44_encoder_flush(encoder) ==
+		      SIPPYMODEM_V44_ENCODE_FLUSHED &&
+	      progress_is(
+		      encoder, SIPPYMODEM_V44_ENCODER_COMPRESSED, 4, 72),
+	      "V.44 compressed FLUSH progress was not exact");
+	sippymodem_v44_encoder_destroy(encoder);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -392,6 +527,7 @@ int main(void)
 		{ "escape cycle and transition backpressure",
 		  test_escape_cycle_and_transition_backpressure },
 		{ "transparent flush", test_transparent_flush },
+		{ "progress accounting", test_progress_accounting },
 	};
 	unsigned int failures = 0;
 

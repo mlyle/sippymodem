@@ -93,6 +93,8 @@ struct sippymodem_v44_encoder {
 	unsigned int pending_field_bits;
 	unsigned int codeword_bits;
 	unsigned int ordinal_bits;
+	uint64_t represented_octets;
+	uint64_t wire_bits;
 	enum sippymodem_v44_encoder_mode mode;
 	enum sippymodem_v44_encoder_mode requested_mode;
 	uint8_t escape;
@@ -162,6 +164,8 @@ static bool encoder_is_valid(const struct sippymodem_v44_encoder *encoder)
 	    encoder->codeword_bits > V44_MAX_CODEWORD_BITS ||
 	    encoder->codeword_threshold !=
 		    (UINT32_C(1) << encoder->codeword_bits) ||
+	    sippymodem_v44_bit_writer_at_octet_boundary(encoder->writer) !=
+		    ((encoder->wire_bits & UINT64_C(7)) == 0) ||
 	    (encoder->ordinal_bits != V44_INITIAL_ORDINAL_BITS &&
 	     encoder->ordinal_bits != 8) ||
 	    encoder->mode < SIPPYMODEM_V44_ENCODER_COMPRESSED ||
@@ -301,12 +305,36 @@ static enum sippymodem_v44_encode_result put_bits(
 	uint32_t value,
 	unsigned int bit_count)
 {
-	enum sippymodem_v44_stream_result result =
-		sippymodem_v44_bit_writer_put(
-			encoder->writer, value, bit_count);
+	enum sippymodem_v44_stream_result result;
 
-	if (result == SIPPYMODEM_V44_STREAM_OK)
+	if (UINT64_MAX - encoder->wire_bits < bit_count)
+		return fail_encoder(encoder);
+	result = sippymodem_v44_bit_writer_put(
+		encoder->writer, value, bit_count);
+
+	if (result == SIPPYMODEM_V44_STREAM_OK) {
+		encoder->wire_bits += bit_count;
 		return SIPPYMODEM_V44_ENCODE_OK;
+	}
+	if (result == SIPPYMODEM_V44_STREAM_NEED_OUTPUT)
+		return SIPPYMODEM_V44_ENCODE_NEED_OUTPUT;
+	return fail_encoder(encoder);
+}
+
+static enum sippymodem_v44_encode_result align_writer(
+	struct sippymodem_v44_encoder *encoder)
+{
+	const unsigned int padding =
+		(unsigned int)(-encoder->wire_bits & UINT64_C(7));
+	enum sippymodem_v44_stream_result result;
+
+	if (UINT64_MAX - encoder->wire_bits < padding)
+		return fail_encoder(encoder);
+	result = sippymodem_v44_bit_writer_align(encoder->writer);
+	if (result == SIPPYMODEM_V44_STREAM_OK) {
+		encoder->wire_bits += padding;
+		return SIPPYMODEM_V44_ENCODE_OK;
+	}
 	if (result == SIPPYMODEM_V44_STREAM_NEED_OUTPUT)
 		return SIPPYMODEM_V44_ENCODE_NEED_OUTPUT;
 	return fail_encoder(encoder);
@@ -353,10 +381,13 @@ static void consume_lookahead(
 static bool complete_data(struct sippymodem_v44_encoder *encoder)
 {
 	struct v44_previous_code current = { 0 };
+	uint32_t represented_length;
 
 	if (encoder->lookahead_length == 0 || encoder->pending_length == 0 ||
-	    encoder->pending_length > encoder->lookahead_length)
+	    encoder->pending_length > encoder->lookahead_length ||
+	    UINT64_MAX - encoder->represented_octets < encoder->pending_length)
 		return false;
+	represented_length = encoder->pending_length;
 
 	switch (encoder->data_action) {
 	case V44_DATA_ORDINAL:
@@ -404,6 +435,7 @@ static bool complete_data(struct sippymodem_v44_encoder *encoder)
 	encoder->pending_field = 0;
 	encoder->pending_field_bits = 0;
 	encoder->phase = V44_ENCODE_IDLE;
+	encoder->represented_octets += represented_length;
 	return true;
 }
 
@@ -598,12 +630,9 @@ static enum sippymodem_v44_encode_result advance_wire(
 				       SIPPYMODEM_V44_ENCODE_OK :
 				       fail_encoder(encoder);
 		case V44_ENCODE_FLUSH_ALIGN:
-			if (sippymodem_v44_bit_writer_align(encoder->writer) !=
-			    SIPPYMODEM_V44_STREAM_OK)
-				return sippymodem_v44_bit_writer_pending(
-					       encoder->writer) != 0 ?
-					       SIPPYMODEM_V44_ENCODE_NEED_OUTPUT :
-					       fail_encoder(encoder);
+			result = align_writer(encoder);
+			if (result != SIPPYMODEM_V44_ENCODE_OK)
+				return result;
 			encoder->phase = V44_ENCODE_FLUSH_DRAIN;
 			return SIPPYMODEM_V44_ENCODE_NEED_OUTPUT;
 		case V44_ENCODE_IDLE:
@@ -611,12 +640,9 @@ static enum sippymodem_v44_encode_result advance_wire(
 		case V44_ENCODE_FLUSH_DRAIN:
 			return SIPPYMODEM_V44_ENCODE_NEED_OUTPUT;
 		case V44_ENCODE_MODE_ALIGN:
-			if (sippymodem_v44_bit_writer_align(encoder->writer) !=
-			    SIPPYMODEM_V44_STREAM_OK)
-				return sippymodem_v44_bit_writer_pending(
-					       encoder->writer) != 0 ?
-					       SIPPYMODEM_V44_ENCODE_NEED_OUTPUT :
-					       fail_encoder(encoder);
+			result = align_writer(encoder);
+			if (result != SIPPYMODEM_V44_ENCODE_OK)
+				return result;
 			encoder->phase = V44_ENCODE_MODE_DRAIN;
 			return SIPPYMODEM_V44_ENCODE_NEED_OUTPUT;
 		case V44_ENCODE_MODE_DRAIN:
@@ -802,6 +828,8 @@ static enum sippymodem_v44_encode_result process_transparent(
 		return fail_encoder(encoder);
 	if (*input_length == 0)
 		return SIPPYMODEM_V44_ENCODE_NEED_INPUT;
+	if (encoder->represented_octets == UINT64_MAX)
+		return fail_encoder(encoder);
 	value = **input;
 	if (value == encoder->escape)
 		result = put_bits(
@@ -817,6 +845,7 @@ static enum sippymodem_v44_encode_result process_transparent(
 			encoder->escape + V44_ESCAPE_STEP);
 	(*input)++;
 	(*input_length)--;
+	encoder->represented_octets++;
 	return SIPPYMODEM_V44_ENCODE_OK;
 }
 
@@ -982,6 +1011,20 @@ size_t sippymodem_v44_encoder_read(
 	return encoder_is_valid(encoder) ?
 		       sippymodem_v44_bit_writer_read(
 			       encoder->writer, output, output_capacity) : 0;
+}
+
+bool sippymodem_v44_encoder_get_progress(
+	const struct sippymodem_v44_encoder *encoder,
+	struct sippymodem_v44_encoder_progress *progress)
+{
+	if (!encoder_is_valid(encoder) || progress == NULL)
+		return false;
+	*progress = (struct sippymodem_v44_encoder_progress) {
+		.mode = encoder->mode,
+		.represented_octets = encoder->represented_octets,
+		.wire_bits = encoder->wire_bits,
+	};
+	return true;
 }
 
 const char *sippymodem_v44_encode_result_name(

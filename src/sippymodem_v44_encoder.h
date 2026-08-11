@@ -25,6 +25,12 @@ enum sippymodem_v44_encoder_mode {
 
 struct sippymodem_v44_encoder;
 
+struct sippymodem_v44_encoder_progress {
+	enum sippymodem_v44_encoder_mode mode;
+	uint64_t represented_octets;
+	uint64_t wire_bits;
+};
+
 /* The bounded encoded-output queue must hold at least two octets. */
 struct sippymodem_v44_encoder *sippymodem_v44_encoder_create(
 	const struct sippymodem_v44_parameters *parameters,
@@ -71,6 +77,15 @@ size_t sippymodem_v44_encoder_read(
 	struct sippymodem_v44_encoder *encoder,
 	uint8_t *output,
 	size_t output_capacity);
+
+/*
+ * Return monotonic progress independent of output draining. Input counts only
+ * after its complete representation enters the bit writer; wire_bits includes
+ * controls and alignment. During a mode transition, mode is the source mode.
+ */
+bool sippymodem_v44_encoder_get_progress(
+	const struct sippymodem_v44_encoder *encoder,
+	struct sippymodem_v44_encoder_progress *progress);
 
 const char *sippymodem_v44_encode_result_name(
 	enum sippymodem_v44_encode_result result);
