@@ -30,6 +30,9 @@ enum {
 	V32_TRANSMIT_AMPLITUDE = 12000,
 	V32_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
 	V32_MIN_LINE_POWER = 1000000,
+	V32_DIRECT_QAM_QUALIFY_SAMPLES =
+		SIPPYMODEM_SINGLE_TONE_WINDOW_SAMPLES +
+		SIPPYMODEM_SINGLE_TONE_ACQUIRE_SAMPLES,
 };
 
 static const struct sippymodem_qam_channel v32_channel = {
@@ -69,6 +72,7 @@ struct sippymodem_v32_datapump {
 	uint64_t training_samples;
 	uint64_t training_timeout_samples;
 	uint32_t missing_carrier_samples;
+	uint16_t direct_qam_qualifying_samples;
 	uint8_t receive_trellis_link_symbols;
 	enum v32_line_entry line_entry;
 	bool has_previous_receive_point;
@@ -126,17 +130,30 @@ static bool line_entry_is_valid(
 		return false;
 	if (!datapump->caller)
 		return datapump->line_entry ==
-		       V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY;
-	if (datapump->line_entry == V32_LINE_ENTRY_CALLER_STARTUP)
+			       V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY &&
+		       datapump->direct_qam_qualifying_samples == 0;
+	switch (datapump->line_entry) {
+	case V32_LINE_ENTRY_CALLER_STARTUP:
 		return !sippymodem_v32_line_startup_is_complete(
 			&datapump->line_startup) &&
 		       datapump->line_startup.state !=
-			       SIPPYMODEM_V32_LINE_STARTUP_FAILED;
-	if (datapump->line_entry == V32_LINE_ENTRY_COMPLETE)
+			       SIPPYMODEM_V32_LINE_STARTUP_FAILED &&
+		       datapump->direct_qam_qualifying_samples <=
+			       V32_DIRECT_QAM_QUALIFY_SAMPLES &&
+		       (datapump->line_startup.state ==
+					SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE ||
+			datapump->direct_qam_qualifying_samples == 0);
+	case V32_LINE_ENTRY_COMPLETE:
 		return sippymodem_v32_line_startup_is_complete(
-			&datapump->line_startup);
-	return datapump->line_startup.state ==
-	       SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE;
+			       &datapump->line_startup) &&
+		       datapump->direct_qam_qualifying_samples == 0;
+	case V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY:
+		return datapump->line_startup.state ==
+			       SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE &&
+		       datapump->direct_qam_qualifying_samples ==
+			       V32_DIRECT_QAM_QUALIFY_SAMPLES;
+	}
+	return false;
 }
 
 static uint8_t rate_capabilities(const struct modem *modem)
@@ -527,8 +544,10 @@ static int process_caller_line_startup(
 		return 0;
 	}
 	if (datapump->line_startup.state !=
-	    SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE)
+	    SIPPYMODEM_V32_LINE_WAIT_ANSWER_TONE) {
+		datapump->direct_qam_qualifying_samples = 0;
 		return 0;
+	}
 	if (sippymodem_qam_demodulator_sample(
 		    &datapump->demodulator, receive_sample, &ignored_point,
 		    &ignored_ready) != SIPPYMODEM_QAM_OK)
@@ -536,7 +555,15 @@ static int process_caller_line_startup(
 	measurement = sippymodem_qam_demodulator_measure(
 		&datapump->demodulator);
 	if (measurement.timing_locked &&
-	    measurement.line_power >= V32_MIN_LINE_POWER)
+	    measurement.line_power >= V32_MIN_LINE_POWER) {
+		if (datapump->direct_qam_qualifying_samples <
+		    V32_DIRECT_QAM_QUALIFY_SAMPLES)
+			datapump->direct_qam_qualifying_samples++;
+	} else {
+		datapump->direct_qam_qualifying_samples = 0;
+	}
+	if (datapump->direct_qam_qualifying_samples ==
+	    V32_DIRECT_QAM_QUALIFY_SAMPLES)
 		datapump->line_entry = V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY;
 	return 0;
 }

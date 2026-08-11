@@ -331,6 +331,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp *v22bis;
 	struct dp *bell212;
 	struct dp *v32;
+	struct sippymodem_single_tone_transmitter v32_line_artifact;
 	struct sippymodem_single_tone_transmitter v32_answer_tone;
 	int16_t receive[MODEM_FRAG];
 	int16_t transmit[MODEM_FRAG];
@@ -497,13 +498,32 @@ static bool test_owns_source_built_datapump_registrations(void)
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, v32_operations);
 	CHECK(v32 != NULL && v32->id == DP_V32 &&
 		      sippymodem_single_tone_transmitter_init(
+			      &v32_line_artifact, 50, 512) ==
+			      SIPPYMODEM_SINGLE_TONE_OK &&
+		      sippymodem_single_tone_transmitter_init(
 			      &v32_answer_tone,
 			      SIPPYMODEM_V32_ANSWER_TONE_HZ, 12000) ==
 			      SIPPYMODEM_SINGLE_TONE_OK &&
 		      v32_operations->use_count == 1 &&
 		      sippymodem_datapumps_stop(&datapumps) ==
 			      SIPPYMODEM_DATAPUMPS_BUSY,
-	      "V.32 data pump did not retain its registration");
+		      "V.32 data pump did not retain its registration");
+	for (size_t presented = 0; presented < MODEM_RATE * 3u / 20u;) {
+		size_t remaining = MODEM_RATE * 3u / 20u - presented;
+		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
+
+		for (size_t index = 0; index < count; ++index)
+			CHECK(sippymodem_single_tone_transmitter_sample(
+				      &v32_line_artifact, &receive[index]) ==
+				      SIPPYMODEM_SINGLE_TONE_OK,
+			      "V.32 line-artifact generation failed");
+		memset(transmit, 1, sizeof(transmit));
+		CHECK(v32_operations->process(
+			      v32, receive, transmit, (int)count) == DPSTAT_OK &&
+			      samples_are_silent(transmit, count),
+		      "V.32 caller treated a low-frequency artifact as QAM");
+		presented += count;
+	}
 	for (size_t presented = 0; presented < MODEM_RATE;) {
 		size_t remaining = MODEM_RATE - presented;
 		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
