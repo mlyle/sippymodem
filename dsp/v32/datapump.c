@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v32_datapump.h"
+#include "datapump.h"
 
 #include "modem.h"
 #include "modem_param.h"
 #include "sippymodem_qam.h"
 #include "sippymodem_qam_gain.h"
-#include "sippymodem_v32_9600_receiver.h"
-#include "sippymodem_v32_conditioning.h"
-#include "sippymodem_v32_conditioning_receiver.h"
-#include "sippymodem_v32_constellation.h"
-#include "sippymodem_v32_framing.h"
-#include "sippymodem_v32_line_startup.h"
-#include "sippymodem_v32_startup.h"
-#include "sippymodem_v32_trellis.h"
+#include "uncoded_receiver.h"
+#include "conditioning.h"
+#include "conditioning_receiver.h"
+#include "constellation.h"
+#include "framing.h"
+#include "line_startup.h"
+#include "startup.h"
+#include "trellis.h"
 
 #include <limits.h>
 #include <math.h>

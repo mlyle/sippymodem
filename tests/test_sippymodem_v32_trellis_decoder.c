@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <sippymodem_v32_constellation.h>
-#include <sippymodem_v32_trellis.h>
+#include <constellation.h>
+#include <trellis.h>
 
 #include "test.h"
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <sippymodem_v32_rate_signal.h>
+#include <rate_signal.h>
 
 #include "test.h"
 

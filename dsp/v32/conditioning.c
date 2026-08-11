@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v32_conditioning.h"
+#include "conditioning.h"
 
 #include <stddef.h>
 

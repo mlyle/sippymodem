@@ -6,8 +6,8 @@
 #include <sippymodem_single_tone.h>
 #include <v21.h>
 #include <sippymodem_v42_xid.h>
-#include <sippymodem_v32_datapump.h>
-#include <sippymodem_v32_line_startup.h>
+#include <datapump.h>
+#include <line_startup.h>
 #include <sippymodem_v8_datapump.h>
 
 #include "test.h"

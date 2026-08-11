@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_qam_gain.h>
-#include <sippymodem_v32_conditioning.h>
-#include <sippymodem_v32_conditioning_receiver.h>
-#include <sippymodem_v32_constellation.h>
+#include <conditioning.h>
+#include <conditioning_receiver.h>
+#include <constellation.h>
 
 #include "test.h"
 

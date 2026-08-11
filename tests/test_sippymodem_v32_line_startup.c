@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <sippymodem_g711.h>
-#include <sippymodem_v32_line_startup.h>
+#include <line_startup.h>
 
 #include "test.h"
 

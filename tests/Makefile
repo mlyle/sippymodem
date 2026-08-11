@@ -365,18 +365,18 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_native_core.o \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
-	$(BUILD_DIR)/sippymodem_v32_datapump.o \
-	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_conditioning.o \
-	$(BUILD_DIR)/sippymodem_v32_conditioning_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/datapump.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/conditioning_receiver.o \
+	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_framing.o \
-	$(BUILD_DIR)/sippymodem_v32_line_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
-	$(BUILD_DIR)/sippymodem_v32_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o \
+	$(BUILD_DIR)/framing.o \
+	$(BUILD_DIR)/line_startup.o \
+	$(BUILD_DIR)/rate_signal.o \
+	$(BUILD_DIR)/startup.o \
+	$(BUILD_DIR)/trellis.o \
+	$(BUILD_DIR)/trellis_decoder.o \
 	$(BUILD_DIR)/v23_datapump.o
 FSK_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_sippymodem_fsk.o \
@@ -449,15 +449,15 @@ V32_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_framing.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_framing.o
+	$(BUILD_DIR)/framing.o
 V32_CONDITIONING_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_conditioning
 V32_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_conditioning.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_conditioning.o \
-	$(BUILD_DIR)/sippymodem_v32_framing.o
+	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/framing.o
 V32_CONDITIONING_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_conditioning_receiver
 V32_CONDITIONING_RECEIVER_TEST_OBJECTS := \
@@ -466,40 +466,40 @@ V32_CONDITIONING_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_qam_gain.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_conditioning.o \
-	$(BUILD_DIR)/sippymodem_v32_conditioning_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o \
-	$(BUILD_DIR)/sippymodem_v32_framing.o
+	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/conditioning_receiver.o \
+	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/framing.o
 V32_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_constellation
 V32_CONSTELLATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_constellation.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o
+	$(BUILD_DIR)/constellation.o
 V32_9600_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_9600_receiver
 V32_9600_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_9600_receiver.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_framing.o
+	$(BUILD_DIR)/framing.o
 V32_RATE_SIGNAL_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_rate_signal
 V32_RATE_SIGNAL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_rate_signal.o \
-	$(BUILD_DIR)/sippymodem_v32_rate_signal.o
+	$(BUILD_DIR)/rate_signal.o
 V32_STARTUP_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_startup
 V32_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
-	$(BUILD_DIR)/sippymodem_v32_startup.o
+	$(BUILD_DIR)/rate_signal.o \
+	$(BUILD_DIR)/startup.o
 V32_LINE_STARTUP_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_line_startup
 V32_LINE_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_line_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_line_startup.o \
+	$(BUILD_DIR)/line_startup.o \
 	$(BUILD_DIR)/sippymodem_single_tone.o \
 	$(BUILD_DIR)/sippymodem_g711.o
 V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
@@ -513,38 +513,38 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_qam.o \
 	$(BUILD_DIR)/sippymodem_qam_gain.o \
 	$(BUILD_DIR)/sippymodem_single_tone.o \
-	$(BUILD_DIR)/sippymodem_v32_datapump.o \
-	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_conditioning.o \
-	$(BUILD_DIR)/sippymodem_v32_conditioning_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/datapump.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/conditioning_receiver.o \
+	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_framing.o \
-	$(BUILD_DIR)/sippymodem_v32_line_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
-	$(BUILD_DIR)/sippymodem_v32_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o
+	$(BUILD_DIR)/framing.o \
+	$(BUILD_DIR)/line_startup.o \
+	$(BUILD_DIR)/rate_signal.o \
+	$(BUILD_DIR)/startup.o \
+	$(BUILD_DIR)/trellis.o \
+	$(BUILD_DIR)/trellis_decoder.o
 V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_trellis
 V32_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_trellis.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis.o
+	$(BUILD_DIR)/trellis.o
 V32_TRELLIS_DECODER_TEST_BINARY := \
 	$(BUILD_DIR)/test_sippymodem_v32_trellis_decoder
 V32_TRELLIS_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_trellis_decoder.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o
+	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/trellis.o \
+	$(BUILD_DIR)/trellis_decoder.o
 V32_CARRIER_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v32_carrier
 V32_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v32_carrier.o \
 	$(BUILD_DIR)/sippymodem_differential_qpsk.o \
 	$(BUILD_DIR)/sippymodem_g711.o \
 	$(BUILD_DIR)/sippymodem_qam.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_framing.o
+	$(BUILD_DIR)/framing.o
 V34_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_sippymodem_v34_framing
 V34_FRAMING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_sippymodem_v34_framing.o \
@@ -1064,18 +1064,18 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/sippymodem_v22_framing.o \
 	$(BUILD_DIR)/sippymodem_v22bis_receiver.o \
 	$(BUILD_DIR)/sippymodem_v22bis_symbols.o \
-	$(BUILD_DIR)/sippymodem_v32_datapump.o \
-	$(BUILD_DIR)/sippymodem_v32_9600_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_conditioning.o \
-	$(BUILD_DIR)/sippymodem_v32_conditioning_receiver.o \
-	$(BUILD_DIR)/sippymodem_v32_constellation.o \
+	$(BUILD_DIR)/datapump.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/conditioning_receiver.o \
+	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/sippymodem_v32_framing.o \
-	$(BUILD_DIR)/sippymodem_v32_line_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_rate_signal.o \
-	$(BUILD_DIR)/sippymodem_v32_startup.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis.o \
-	$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o \
+	$(BUILD_DIR)/framing.o \
+	$(BUILD_DIR)/line_startup.o \
+	$(BUILD_DIR)/rate_signal.o \
+	$(BUILD_DIR)/startup.o \
+	$(BUILD_DIR)/trellis.o \
+	$(BUILD_DIR)/trellis_decoder.o \
 	$(BUILD_DIR)/v23_datapump.o \
 	$(BUILD_DIR)/sippymodem_media.o \
 	$(BUILD_DIR)/sippymodem_g711.o
@@ -2082,49 +2082,49 @@ $(BUILD_DIR)/sippymodem_v22bis_receiver.o: \
 	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_framing.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_framing.c | $(BUILD_DIR)
+$(BUILD_DIR)/framing.o: \
+	$(DSP_V32_SOURCE_DIR)/framing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_conditioning.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning.c | $(BUILD_DIR)
+$(BUILD_DIR)/conditioning.o: \
+	$(DSP_V32_SOURCE_DIR)/conditioning.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_conditioning_receiver.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning_receiver.c | \
+$(BUILD_DIR)/conditioning_receiver.o: \
+	$(DSP_V32_SOURCE_DIR)/conditioning_receiver.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_constellation.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_constellation.c | $(BUILD_DIR)
+$(BUILD_DIR)/constellation.o: \
+	$(DSP_V32_SOURCE_DIR)/constellation.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_9600_receiver.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_9600_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/uncoded_receiver.o: \
+	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_rate_signal.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_rate_signal.c | $(BUILD_DIR)
+$(BUILD_DIR)/rate_signal.o: \
+	$(DSP_V32_SOURCE_DIR)/rate_signal.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_startup.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_startup.c | $(BUILD_DIR)
+$(BUILD_DIR)/startup.o: \
+	$(DSP_V32_SOURCE_DIR)/startup.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_line_startup.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_line_startup.c | $(BUILD_DIR)
+$(BUILD_DIR)/line_startup.o: \
+	$(DSP_V32_SOURCE_DIR)/line_startup.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_trellis.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis.c | $(BUILD_DIR)
+$(BUILD_DIR)/trellis.o: \
+	$(DSP_V32_SOURCE_DIR)/trellis.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_trellis_decoder.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c | $(BUILD_DIR)
+$(BUILD_DIR)/trellis_decoder.o: \
+	$(DSP_V32_SOURCE_DIR)/trellis_decoder.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/sippymodem_v32_datapump.o: \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_datapump.c | $(BUILD_DIR)
+$(BUILD_DIR)/datapump.o: \
+	$(DSP_V32_SOURCE_DIR)/datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/sippymodem_v34_framing.o: \

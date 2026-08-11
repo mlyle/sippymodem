@@ -119,17 +119,17 @@ SIPPYMODEM_V22_SOURCES := \
 	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_receiver.c \
 	$(DSP_V22_SOURCE_DIR)/sippymodem_v22bis_symbols.c
 SIPPYMODEM_V32_SOURCES := \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_datapump.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_9600_receiver.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_conditioning_receiver.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_constellation.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_framing.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_line_startup.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_rate_signal.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_startup.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis.c \
-	$(DSP_V32_SOURCE_DIR)/sippymodem_v32_trellis_decoder.c
+	$(DSP_V32_SOURCE_DIR)/datapump.c \
+	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c \
+	$(DSP_V32_SOURCE_DIR)/conditioning.c \
+	$(DSP_V32_SOURCE_DIR)/conditioning_receiver.c \
+	$(DSP_V32_SOURCE_DIR)/constellation.c \
+	$(DSP_V32_SOURCE_DIR)/framing.c \
+	$(DSP_V32_SOURCE_DIR)/line_startup.c \
+	$(DSP_V32_SOURCE_DIR)/rate_signal.c \
+	$(DSP_V32_SOURCE_DIR)/startup.c \
+	$(DSP_V32_SOURCE_DIR)/trellis.c \
+	$(DSP_V32_SOURCE_DIR)/trellis_decoder.c
 SIPPYMODEM_PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/sippymodem_v34_4d_encoder.c \

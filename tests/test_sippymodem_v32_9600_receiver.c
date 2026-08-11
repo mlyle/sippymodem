@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <sippymodem_v32_9600_receiver.h>
+#include <uncoded_receiver.h>
 
 #include "test.h"
 

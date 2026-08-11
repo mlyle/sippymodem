@@ -4,13 +4,13 @@
 #include <sippymodem_qam.h>
 #include <sippymodem_qam_gain.h>
 #include <sippymodem_single_tone.h>
-#include <sippymodem_v32_conditioning.h>
-#include <sippymodem_v32_conditioning_receiver.h>
-#include <sippymodem_v32_constellation.h>
-#include <sippymodem_v32_datapump.h>
-#include <sippymodem_v32_framing.h>
-#include <sippymodem_v32_line_startup.h>
-#include <sippymodem_v32_rate_signal.h>
+#include <conditioning.h>
+#include <conditioning_receiver.h>
+#include <constellation.h>
+#include <datapump.h>
+#include <framing.h>
+#include <line_startup.h>
+#include <rate_signal.h>
 
 #include "test.h"
 

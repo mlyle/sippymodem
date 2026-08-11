@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V32_CONDITIONING_H
 #define SIPPYMODEM_V32_CONDITIONING_H
 
-#include "sippymodem_v32_framing.h"
+#include "framing.h"
 
 #include <stdbool.h>
 #include <stdint.h>

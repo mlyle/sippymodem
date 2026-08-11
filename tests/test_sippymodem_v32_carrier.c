@@ -2,8 +2,8 @@
 
 #include <sippymodem_g711.h>
 #include <sippymodem_qam.h>
-#include <sippymodem_v32_constellation.h>
-#include <sippymodem_v32_framing.h>
+#include <constellation.h>
+#include <framing.h>
 
 #include "test.h"
 

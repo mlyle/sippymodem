@@ -4,8 +4,8 @@
 #define SIPPYMODEM_V32_9600_RECEIVER_H
 
 #include "qam_equalizer.h"
-#include "sippymodem_v32_constellation.h"
-#include "sippymodem_v32_framing.h"
+#include "constellation.h"
+#include "framing.h"
 
 #include <stdbool.h>
 #include <stdint.h>

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v32_framing.h"
+#include "framing.h"
 
 #include "sippymodem_self_sync_scrambler.h"
 

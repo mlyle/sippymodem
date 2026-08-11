@@ -4,7 +4,7 @@
 #define SIPPYMODEM_V32_CONDITIONING_RECEIVER_H
 
 #include "sippymodem_qam_gain.h"
-#include "sippymodem_v32_conditioning.h"
+#include "conditioning.h"
 
 #include <stdbool.h>
 #include <stdint.h>

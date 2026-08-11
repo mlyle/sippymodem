@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "sippymodem_v32_line_startup.h"
+#include "line_startup.h"
 
 #include <limits.h>
 

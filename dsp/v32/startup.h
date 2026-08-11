@@ -3,7 +3,7 @@
 #ifndef SIPPYMODEM_V32_STARTUP_H
 #define SIPPYMODEM_V32_STARTUP_H
 
-#include "sippymodem_v32_rate_signal.h"
+#include "rate_signal.h"
 
 #include <stdbool.h>
 #include <stdint.h>
