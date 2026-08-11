@@ -54,6 +54,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_frame_clock.c \
 	sippymodem_g711.c \
 	sippymodem_host.c \
+	sippymodem_lapm_v44_session.c \
 	sippymodem_loop.c \
 	sippymodem_main.c \
 	sippymodem_media.c \
