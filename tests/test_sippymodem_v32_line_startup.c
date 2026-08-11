@@ -129,6 +129,8 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 	CHECK(sippymodem_v32_line_startup_init(
 		      &startup, TEST_AMPLITUDE) ==
 		      SIPPYMODEM_V32_LINE_STARTUP_OK &&
+		      sippymodem_v32_line_startup_round_trip_samples(&startup) ==
+			      0 &&
 		      sippymodem_single_tone_transmitter_init(
 			      &answerer, SIPPYMODEM_V32_ANSWER_TONE_HZ,
 			      TEST_AMPLITUDE) == SIPPYMODEM_SINGLE_TONE_OK &&
@@ -249,8 +251,23 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 			CHECK(transmit == 0,
 			      "caller continued after the second reversal");
 	}
-	CHECK(complete && sippymodem_v32_line_startup_is_complete(&startup),
-	      "caller did not finish the line startup at peer turnaround");
+	{
+		uint32_t expected =
+			SIPPYMODEM_V32_REVERSAL_RESPONSE_SAMPLES + 400;
+		uint32_t measured =
+			sippymodem_v32_line_startup_round_trip_samples(&startup);
+
+		CHECK(complete &&
+			      sippymodem_v32_line_startup_is_complete(&startup) &&
+			      measured >=
+				      expected -
+					      SIPPYMODEM_V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
+			      measured <=
+				      expected +
+					      SIPPYMODEM_V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES,
+		      "caller measured %u samples for a %u-sample turnaround",
+		      measured, expected);
+	}
 	return true;
 }
 
@@ -305,6 +322,7 @@ static bool test_early_answer_loss_fails(void)
 static bool test_validation_is_transactional(void)
 {
 	struct sippymodem_v32_line_startup startup;
+	struct sippymodem_v32_line_startup initialized;
 	struct sippymodem_v32_line_startup before;
 	int16_t transmit = 123;
 	bool complete = true;
@@ -312,8 +330,9 @@ static bool test_validation_is_transactional(void)
 	CHECK(sippymodem_v32_line_startup_init(&startup, TEST_AMPLITUDE) ==
 		      SIPPYMODEM_V32_LINE_STARTUP_OK &&
 		      sippymodem_v32_line_startup_init(&startup, 0) ==
-			      SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT,
+		      SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT,
 	      "V.32 line-startup validation fixture changed");
+	initialized = startup;
 	startup.answer_tone.phase_step++;
 	before = startup;
 	CHECK(sippymodem_v32_line_startup_process(
@@ -328,6 +347,12 @@ static bool test_validation_is_transactional(void)
 			     SIPPYMODEM_V32_LINE_STARTUP_PROTOCOL_ERROR),
 			     "protocol error") == 0,
 	      "invalid V.32 line-startup mutation was not transactional");
+	startup = initialized;
+	startup.round_trip_samples = 1;
+	CHECK(!sippymodem_v32_line_startup_is_valid(&startup) &&
+		      sippymodem_v32_line_startup_round_trip_samples(&startup) ==
+			      0,
+	      "V.32 line startup exposed an incomplete turnaround interval");
 	return true;
 }
 

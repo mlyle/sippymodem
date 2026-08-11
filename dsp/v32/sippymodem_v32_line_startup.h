@@ -50,6 +50,7 @@ struct sippymodem_v32_line_startup {
 	struct sippymodem_single_tone_detector high_turnaround_tone;
 	struct sippymodem_single_tone_transmitter calling_carrier;
 	uint32_t state_samples;
+	uint32_t round_trip_samples;
 	uint16_t selected_turnaround_tone_hz;
 	enum sippymodem_v32_line_startup_state state;
 };
@@ -60,6 +61,8 @@ enum sippymodem_v32_line_startup_result sippymodem_v32_line_startup_init(
 bool sippymodem_v32_line_startup_is_valid(
 	const struct sippymodem_v32_line_startup *startup);
 bool sippymodem_v32_line_startup_is_complete(
+	const struct sippymodem_v32_line_startup *startup);
+uint32_t sippymodem_v32_line_startup_round_trip_samples(
 	const struct sippymodem_v32_line_startup *startup);
 
 enum sippymodem_v32_line_startup_result

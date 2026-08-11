@@ -109,7 +109,9 @@ bool sippymodem_v32_line_startup_is_valid(
 	       (!terminal ||
 		(startup->state_samples == 0 &&
 		 !startup->low_turnaround_tone.tone_present &&
-		 !startup->high_turnaround_tone.tone_present));
+		 !startup->high_turnaround_tone.tone_present)) &&
+	       (startup->round_trip_samples != 0) ==
+		       (startup->state == SIPPYMODEM_V32_LINE_STARTUP_COMPLETE);
 }
 
 enum sippymodem_v32_line_startup_result sippymodem_v32_line_startup_init(
@@ -152,6 +154,13 @@ bool sippymodem_v32_line_startup_is_complete(
 	       startup->state == SIPPYMODEM_V32_LINE_STARTUP_COMPLETE;
 }
 
+uint32_t sippymodem_v32_line_startup_round_trip_samples(
+	const struct sippymodem_v32_line_startup *startup)
+{
+	return sippymodem_v32_line_startup_is_complete(startup) ?
+		       startup->round_trip_samples : 0;
+}
+
 static void enter_state(
 	struct sippymodem_v32_line_startup *startup,
 	enum sippymodem_v32_line_startup_state state)
@@ -190,6 +199,7 @@ static enum sippymodem_v32_line_startup_result fail_startup(
 	if (reset_detectors(next) !=
 	    SIPPYMODEM_SINGLE_TONE_OK)
 		return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
+	next->round_trip_samples = 0;
 	enter_state(next, SIPPYMODEM_V32_LINE_STARTUP_FAILED);
 	if (!sippymodem_v32_line_startup_is_valid(next))
 		return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
@@ -329,6 +339,18 @@ sippymodem_v32_line_startup_process(
 		advance_state_clock(&next);
 		if (turnaround_event.kind ==
 		    SIPPYMODEM_SINGLE_TONE_PHASE_REVERSED) {
+			uint64_t measured =
+				(uint64_t)SIPPYMODEM_V32_REVERSAL_RESPONSE_SAMPLES +
+				next.state_samples;
+
+			if (measured <= turnaround_event.reversal_delay_samples)
+				return fail_startup(
+					&next, startup, transmit_sample, complete);
+			measured -= turnaround_event.reversal_delay_samples;
+			if (measured > UINT32_MAX)
+				return fail_startup(
+					&next, startup, transmit_sample, complete);
+			next.round_trip_samples = (uint32_t)measured;
 			if (reset_detectors(&next) != SIPPYMODEM_SINGLE_TONE_OK)
 				return SIPPYMODEM_V32_LINE_STARTUP_INVALID_ARGUMENT;
 			enter_state(
