@@ -14,7 +14,10 @@
 #include <string.h>
 
 enum {
-	FSK300_MARK_ACQUIRE_SAMPLES = 480,
+	/* The tone-pair detector already rejects weak and ambiguous energy.
+	 * More than four detector windows are enough to answer the short mark
+	 * presented by interoperating V.21 modems without reacting to a transient. */
+	FSK300_MARK_ACQUIRE_SAMPLES = MODEM_RATE * 15 / 1000,
 	FSK300_ANSWER_GUARD_SAMPLES = 1280,
 	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
 	FSK300_CARRIER_LOSS_SAMPLES = 1600,

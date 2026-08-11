@@ -2,6 +2,8 @@
 
 #include <modem.h>
 #include <sippymodem_datapumps.h>
+#include <sippymodem_fsk.h>
+#include <sippymodem_v21.h>
 #include <sippymodem_v32_datapump.h>
 #include <sippymodem_v8_datapump.h>
 
@@ -172,6 +174,82 @@ static bool test_at_dial_destinations_are_bounded(void)
 	CHECK(sippymodem_datapumps_stop(&datapumps) ==
 		      SIPPYMODEM_DATAPUMPS_OK,
 	      "AT dial test registrations did not stop");
+	return true;
+}
+
+static bool samples_are_silent(const int16_t *samples, size_t count)
+{
+	for (size_t index = 0; index < count; ++index)
+		if (samples[index] != 0)
+			return false;
+	return true;
+}
+
+static bool test_v21_originator_answers_brief_mark(void)
+{
+	enum {
+		BRIEF_MARK_SAMPLES = MODEM_RATE * 15 / 1000,
+		TEST_FSK_AMPLITUDE = 8192,
+	};
+	struct sippymodem_datapumps datapumps = { 0 };
+	struct modem_driver driver = {
+		.name = "V.21 mark acquisition test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct sippymodem_fsk_transmitter answerer;
+	struct dp_operations *operations;
+	struct modem *modem;
+	struct dp *datapump;
+	int16_t receive[MODEM_FRAG] = { 0 };
+	int16_t transmit[MODEM_FRAG];
+
+	CHECK(sippymodem_datapumps_start(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_OK,
+	      "V.21 mark acquisition registrations did not start");
+	operations = modem_dp_get_registered_ops(DP_V21);
+	modem = modem_create(&driver, "V.21 mark acquisition test");
+	CHECK(operations != NULL && modem != NULL &&
+		      sippymodem_fsk_transmitter_init(
+			      &answerer, &sippymodem_v21_channel_2,
+			      TEST_FSK_AMPLITUDE) == SIPPYMODEM_FSK_OK,
+	      "V.21 mark acquisition fixture did not initialize");
+	datapump = operations->create(
+		modem, DP_V21, 1, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(datapump != NULL, "V.21 originator did not initialize");
+	for (size_t presented = 0; presented < BRIEF_MARK_SAMPLES;) {
+		size_t remaining = BRIEF_MARK_SAMPLES - presented;
+		size_t count = remaining < MODEM_FRAG ? remaining : MODEM_FRAG;
+
+		for (size_t index = 0; index < count; ++index) {
+			bool consumed;
+
+			CHECK(sippymodem_fsk_transmitter_sample(
+				      &answerer, 1, &receive[index], &consumed) ==
+				      SIPPYMODEM_FSK_OK,
+			      "V.21 answer mark generation failed");
+		}
+		memset(transmit, 1, sizeof(transmit));
+		CHECK(operations->process(
+			      datapump, receive, transmit, (int)count) ==
+			      DPSTAT_OK &&
+			      samples_are_silent(transmit, count),
+		      "V.21 originator transmitted before acquiring answer mark");
+		presented += count;
+	}
+	memset(receive, 0, sizeof(receive));
+	memset(transmit, 0, sizeof(transmit));
+	CHECK(operations->process(
+		      datapump, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+		      !samples_are_silent(transmit, MODEM_FRAG),
+	      "V.21 originator did not answer a 15 ms mark");
+	CHECK(operations->delete(datapump) == 0,
+	      "V.21 originator did not release its data pump");
+	modem_delete(modem);
+	CHECK(sippymodem_datapumps_stop(&datapumps) ==
+		      SIPPYMODEM_DATAPUMPS_OK,
+	      "V.21 mark acquisition registrations did not stop");
 	return true;
 }
 
@@ -460,6 +538,8 @@ int main(void)
 		  test_core_has_no_external_dsp_owner },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
+		{ "V.21 brief answer mark",
+		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",
 		  test_owns_source_built_datapump_registrations },
 	};
