@@ -19,6 +19,20 @@ static double point_power(const struct sippymodem_qam_point *point)
 	       point->quadrature * point->quadrature;
 }
 
+bool sippymodem_qam_equalizer_observation_is_pending(
+	const struct sippymodem_qam_equalizer_observation *observation)
+{
+	if (observation == NULL || !observation->pending ||
+	    !point_is_finite(&observation->output))
+		return false;
+	for (size_t index = 0; index < SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT;
+	     ++index) {
+		if (!point_is_finite(&observation->history[index]))
+			return false;
+	}
+	return true;
+}
+
 static struct sippymodem_qam_point multiply(
 	const struct sippymodem_qam_point *left,
 	const struct sippymodem_qam_point *right)
@@ -137,13 +151,83 @@ enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_push(
 	return SIPPYMODEM_QAM_EQUALIZER_OK;
 }
 
+enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_observe(
+	struct sippymodem_qam_equalizer *equalizer,
+	const struct sippymodem_qam_point *received,
+	struct sippymodem_qam_equalizer_observation *observation, bool *ready)
+{
+	struct sippymodem_qam_equalizer next;
+	struct sippymodem_qam_point output = { 0 };
+	bool generated_ready;
+	enum sippymodem_qam_equalizer_result result;
+
+	if (!sippymodem_qam_equalizer_is_valid(equalizer) ||
+	    observation == NULL || ready == NULL)
+		return SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT;
+	if (observation->pending)
+		return SIPPYMODEM_QAM_EQUALIZER_INVALID_STATE;
+	next = *equalizer;
+	result = sippymodem_qam_equalizer_push(
+		&next, received, &output, &generated_ready);
+	if (result != SIPPYMODEM_QAM_EQUALIZER_OK)
+		return result;
+	/* A retained observation is the sole adaptation path for this output. */
+	next.can_adapt = false;
+	if (!sippymodem_qam_equalizer_is_valid(&next))
+		return SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT;
+	*equalizer = next;
+	*ready = generated_ready;
+	if (generated_ready) {
+		*observation = (struct sippymodem_qam_equalizer_observation){
+			.output = output,
+			.pending = true,
+		};
+		for (size_t index = 0;
+		     index < SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT; ++index)
+			observation->history[index] = next.history[index];
+	}
+	return SIPPYMODEM_QAM_EQUALIZER_OK;
+}
+
+static bool apply_adaptation(
+	struct sippymodem_qam_equalizer *equalizer,
+	const struct sippymodem_qam_point history[
+		SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT],
+	const struct sippymodem_qam_point *output,
+	const struct sippymodem_qam_point *target, double adaptation)
+{
+	struct sippymodem_qam_point error = {
+		.in_phase = target->in_phase - output->in_phase,
+		.quadrature = target->quadrature - output->quadrature,
+	};
+	double power = QAM_EQUALIZER_MINIMUM_POWER;
+
+	for (size_t index = 0; index < SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT;
+	     ++index)
+		power += point_power(&history[index]);
+	if (!isfinite(power))
+		return false;
+	for (size_t index = 0; index < SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT;
+	     ++index) {
+		struct sippymodem_qam_point conjugate = {
+			.in_phase = history[index].in_phase,
+			.quadrature = -history[index].quadrature,
+		};
+		struct sippymodem_qam_point update = multiply(&error, &conjugate);
+
+		equalizer->coefficients[index].in_phase +=
+			adaptation * update.in_phase / power;
+		equalizer->coefficients[index].quadrature +=
+			adaptation * update.quadrature / power;
+	}
+	return sippymodem_qam_equalizer_is_valid(equalizer);
+}
+
 enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_adapt(
 	struct sippymodem_qam_equalizer *equalizer,
 	const struct sippymodem_qam_point *target, double adaptation)
 {
 	struct sippymodem_qam_equalizer next;
-	struct sippymodem_qam_point error;
-	double power = QAM_EQUALIZER_MINIMUM_POWER;
 
 	if (!sippymodem_qam_equalizer_is_valid(equalizer) ||
 	    !point_is_finite(target) || !isfinite(adaptation) ||
@@ -152,32 +236,40 @@ enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_adapt(
 	if (!equalizer->can_adapt)
 		return SIPPYMODEM_QAM_EQUALIZER_INVALID_STATE;
 	next = *equalizer;
-	error = (struct sippymodem_qam_point){
-		.in_phase = target->in_phase - next.last_output.in_phase,
-		.quadrature = target->quadrature - next.last_output.quadrature,
-	};
-	for (size_t index = 0; index < SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT;
-	     ++index)
-		power += point_power(&next.history[index]);
-	if (!isfinite(power))
+	if (!apply_adaptation(
+		    &next, next.history, &next.last_output, target, adaptation))
 		return SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT;
-	for (size_t index = 0; index < SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT;
-	     ++index) {
-		struct sippymodem_qam_point conjugate = {
-			.in_phase = next.history[index].in_phase,
-			.quadrature = -next.history[index].quadrature,
-		};
-		struct sippymodem_qam_point update = multiply(&error, &conjugate);
-
-		next.coefficients[index].in_phase +=
-			adaptation * update.in_phase / power;
-		next.coefficients[index].quadrature +=
-			adaptation * update.quadrature / power;
-	}
 	next.can_adapt = false;
 	if (!sippymodem_qam_equalizer_is_valid(&next))
 		return SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT;
 	*equalizer = next;
+	return SIPPYMODEM_QAM_EQUALIZER_OK;
+}
+
+enum sippymodem_qam_equalizer_result
+sippymodem_qam_equalizer_adapt_observation(
+	struct sippymodem_qam_equalizer *equalizer,
+	struct sippymodem_qam_equalizer_observation *observation,
+	const struct sippymodem_qam_point *target, double adaptation)
+{
+	struct sippymodem_qam_equalizer next;
+	struct sippymodem_qam_equalizer_observation consumed;
+
+	if (!sippymodem_qam_equalizer_is_valid(equalizer) ||
+	    observation == NULL || !point_is_finite(target) ||
+	    !isfinite(adaptation) || adaptation < 0.0 || adaptation > 1.0)
+		return SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT;
+	if (!sippymodem_qam_equalizer_observation_is_pending(observation))
+		return SIPPYMODEM_QAM_EQUALIZER_INVALID_STATE;
+	next = *equalizer;
+	consumed = *observation;
+	if (!apply_adaptation(
+		    &next, consumed.history, &consumed.output, target,
+		    adaptation))
+		return SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT;
+	consumed.pending = false;
+	*equalizer = next;
+	*observation = consumed;
 	return SIPPYMODEM_QAM_EQUALIZER_OK;
 }
 

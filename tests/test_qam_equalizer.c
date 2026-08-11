@@ -218,6 +218,103 @@ static bool test_generated_isi_channel(void)
 	return true;
 }
 
+static bool test_delayed_observations(void)
+{
+	static const struct sippymodem_qam_point transmitted[] = {
+		{ 1.0, 1.0 },
+		{ -3.0, 1.0 },
+		{ 3.0, -1.0 },
+		{ -1.0, -3.0 },
+		{ 1.0, 3.0 },
+	};
+	const struct sippymodem_qam_point gain = { 0.8, -0.3 };
+	const struct sippymodem_qam_point invalid = { NAN, 0.0 };
+	struct sippymodem_qam_equalizer_observation observation[2] = { 0 };
+	struct sippymodem_qam_point received_reference =
+		multiply(gain, transmitted[0]);
+	struct sippymodem_qam_equalizer equalizer;
+	bool ready = true;
+
+	CHECK(ARRAY_LENGTH(transmitted) ==
+		      SIPPYMODEM_QAM_EQUALIZER_DELAY + 2u &&
+	      sippymodem_qam_equalizer_init(
+		      &equalizer, &received_reference, &transmitted[0]) ==
+		      SIPPYMODEM_QAM_EQUALIZER_OK,
+	      "delayed observation fixture did not initialize");
+	for (size_t index = 0; index < ARRAY_LENGTH(transmitted); ++index) {
+		struct sippymodem_qam_point received =
+			multiply(gain, transmitted[index]);
+		struct sippymodem_qam_equalizer_observation *destination =
+			index <= SIPPYMODEM_QAM_EQUALIZER_DELAY ?
+				&observation[0] :
+				&observation[1];
+
+		CHECK(sippymodem_qam_equalizer_observe(
+			      &equalizer, &received, destination, &ready) ==
+			      SIPPYMODEM_QAM_EQUALIZER_OK &&
+		      ready == (index >= SIPPYMODEM_QAM_EQUALIZER_DELAY),
+		      "delayed observation push %zu changed readiness", index);
+	}
+	CHECK(sippymodem_qam_equalizer_observation_is_pending(
+		      &observation[0]) &&
+	      sippymodem_qam_equalizer_observation_is_pending(
+		      &observation[1]) &&
+	      points_are_close(&observation[0].output, &transmitted[0]) &&
+	      points_are_close(&observation[1].output, &transmitted[1]) &&
+	      sippymodem_qam_equalizer_adapt(
+		      &equalizer, &transmitted[1], 0.2) ==
+		      SIPPYMODEM_QAM_EQUALIZER_INVALID_STATE,
+	      "delayed observations did not retain both outputs");
+	{
+		struct sippymodem_qam_equalizer saved_equalizer = equalizer;
+		struct sippymodem_qam_equalizer_observation saved =
+			observation[1];
+		struct sippymodem_qam_point received =
+			multiply(gain, transmitted[2]);
+
+		CHECK(sippymodem_qam_equalizer_observe(
+			      &equalizer, &received, &observation[1], &ready) ==
+			      SIPPYMODEM_QAM_EQUALIZER_INVALID_STATE &&
+		      sippymodem_qam_equalizer_adapt_observation(
+			      &equalizer, &observation[1], &invalid, 0.2) ==
+			      SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&equalizer, &saved_equalizer,
+			     sizeof(equalizer)) == 0 &&
+		      memcmp(&observation[1], &saved, sizeof(saved)) == 0,
+		      "pending observation rejection was not transactional");
+	}
+	{
+		struct sippymodem_qam_equalizer before = equalizer;
+		struct sippymodem_qam_point adjusted = {
+			.in_phase = transmitted[0].in_phase + 0.25,
+			.quadrature = transmitted[0].quadrature - 0.125,
+		};
+
+		CHECK(sippymodem_qam_equalizer_adapt_observation(
+			      &equalizer, &observation[0], &adjusted, 0.2) ==
+			      SIPPYMODEM_QAM_EQUALIZER_OK &&
+		      !sippymodem_qam_equalizer_observation_is_pending(
+			      &observation[0]) &&
+		      memcmp(&equalizer.coefficients, &before.coefficients,
+			     sizeof(equalizer.coefficients)) != 0 &&
+		      sippymodem_qam_equalizer_adapt_observation(
+			      &equalizer, &observation[0], &adjusted, 0.2) ==
+			      SIPPYMODEM_QAM_EQUALIZER_INVALID_STATE &&
+		      sippymodem_qam_equalizer_adapt_observation(
+			      &equalizer, &observation[1], &transmitted[1], 0.2) ==
+			      SIPPYMODEM_QAM_EQUALIZER_OK &&
+		      !sippymodem_qam_equalizer_observation_is_pending(
+			      &observation[1]),
+		      "delayed observations were not consumed exactly once");
+	}
+	CHECK(!sippymodem_qam_equalizer_observation_is_pending(NULL) &&
+	      sippymodem_qam_equalizer_observe(
+		      NULL, &transmitted[0], &observation[0], &ready) ==
+		      SIPPYMODEM_QAM_EQUALIZER_INVALID_ARGUMENT,
+	      "invalid delayed observation arguments were accepted");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	const struct sippymodem_qam_point reference = { 1.0, -1.0 };
@@ -280,6 +377,7 @@ int main(void)
 	} tests[] = {
 		{ "decision delay and flat channel", test_delay_and_flat_channel },
 		{ "generated ISI channel", test_generated_isi_channel },
+		{ "delayed observations", test_delayed_observations },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

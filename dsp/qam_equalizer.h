@@ -30,6 +30,16 @@ struct sippymodem_qam_equalizer {
 	bool can_adapt;
 };
 
+/* An explicitly owned gradient snapshot for a decision that becomes known
+ * after a later symbol. Pending observations may be copied with their owning
+ * receiver state, but must be adapted only along the same equalizer lineage. */
+struct sippymodem_qam_equalizer_observation {
+	struct sippymodem_qam_point history[
+		SIPPYMODEM_QAM_EQUALIZER_TAP_COUNT];
+	struct sippymodem_qam_point output;
+	bool pending;
+};
+
 enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_init(
 	struct sippymodem_qam_equalizer *equalizer,
 	const struct sippymodem_qam_point *received_reference,
@@ -44,10 +54,29 @@ enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_push(
 	const struct sippymodem_qam_point *received,
 	struct sippymodem_qam_point *output, bool *ready);
 
+/* Push one symbol while retaining the exact output and tap inputs needed for
+ * delayed adaptation. observation must not already be pending. It changes
+ * only when ready becomes true; the caller then owns it until adaptation. */
+enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_observe(
+	struct sippymodem_qam_equalizer *equalizer,
+	const struct sippymodem_qam_point *received,
+	struct sippymodem_qam_equalizer_observation *observation, bool *ready);
+
+bool sippymodem_qam_equalizer_observation_is_pending(
+	const struct sippymodem_qam_equalizer_observation *observation);
+
 /* Adapt the most recently produced output toward a known or decided symbol.
  * Each output may be adapted at most once. */
 enum sippymodem_qam_equalizer_result sippymodem_qam_equalizer_adapt(
 	struct sippymodem_qam_equalizer *equalizer,
+	const struct sippymodem_qam_point *target, double adaptation);
+
+/* Apply and consume one delayed observation transactionally. The equalizer
+ * may have accepted later symbols since the observation was produced. */
+enum sippymodem_qam_equalizer_result
+sippymodem_qam_equalizer_adapt_observation(
+	struct sippymodem_qam_equalizer *equalizer,
+	struct sippymodem_qam_equalizer_observation *observation,
 	const struct sippymodem_qam_point *target, double adaptation);
 
 const char *sippymodem_qam_equalizer_result_name(
