@@ -79,6 +79,7 @@ SIPPYMODEM_SOURCES := \
 	sippymodem_v44_compressed_decoder.c \
 	sippymodem_v44_decoder.c \
 	sippymodem_v44_dictionary_decoder.c \
+	sippymodem_v44_encoder.c \
 	sippymodem_v44_stream.c \
 	sippymodem_v44_transparent_decoder.c
 SIPPYMODEM_SHARED_DSP_SOURCES := \
