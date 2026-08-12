@@ -1005,6 +1005,7 @@ V34_CALLER_TRAINING_TEST_BINARY := \
 V34_CALLER_TRAINING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_caller_training.o \
 	$(BUILD_DIR)/v34_caller_training.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/qam.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
@@ -1019,6 +1020,9 @@ V34_CALLER_TRAINING_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_caller.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
 	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase4_mp.o \
+	$(BUILD_DIR)/v34_phase4_e_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o
 V34_PHASE4_TRN_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_trn

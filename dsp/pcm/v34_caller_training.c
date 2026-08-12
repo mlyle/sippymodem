@@ -27,6 +27,22 @@ static bool stage_is_valid(
 			       training->phase3.remote_constellation &&
 		       training->phase4.trn.has_last_symbol ==
 			       (training->phase4_trn_symbols != 0);
+	case V34_CALLER_TRAINING_PHASE4_MP:
+		return phase3_complete &&
+		       training->phase4_trn_symbols >=
+			       V34_PHASE4_TRN_MIN_SYMBOLS &&
+		       v34_phase4_mp_is_valid(&training->phase4.mp) &&
+		       training->phase4.mp.role == V34_CALLING_STATION &&
+		       training->phase4.mp.constellation ==
+			       training->phase3.remote_constellation;
+	case V34_CALLER_TRAINING_PHASE4_E:
+		return phase3_complete &&
+		       training->phase4_trn_symbols >=
+			       V34_PHASE4_TRN_MIN_SYMBOLS &&
+		       v34_phase4_e_sequence_is_valid(&training->phase4.e) &&
+		       training->phase4.e.role == V34_CALLING_STATION &&
+		       training->phase4.e.constellation ==
+			       training->phase3.remote_constellation;
 	}
 	return false;
 }
@@ -136,6 +152,104 @@ enum v34_caller_training_result v34_caller_training_finish_j(
 	return V34_CALLER_TRAINING_OK;
 }
 
+static enum v34_caller_training_result mp_result(
+	enum v34_phase4_mp_result result)
+{
+	switch (result) {
+	case V34_PHASE4_MP_OK:
+		return V34_CALLER_TRAINING_OK;
+	case V34_PHASE4_MP_RECORD_COMPLETE:
+	case V34_PHASE4_MP_RECORD_IN_PROGRESS:
+		return V34_CALLER_TRAINING_INVALID_STATE;
+	case V34_PHASE4_MP_INVALID_PARAMETERS:
+		return V34_CALLER_TRAINING_INVALID_PARAMETERS;
+	case V34_PHASE4_MP_INVALID_ARGUMENT:
+		break;
+	}
+	return V34_CALLER_TRAINING_NUMERIC_FAILURE;
+}
+
+static enum v34_caller_training_result start_mp(
+	struct v34_caller_training *training,
+	const struct v34_mp_parameters *type0,
+	const struct v34_mp_type1_parameters *type1)
+{
+	struct v34_caller_training next;
+	enum v34_phase4_mp_result result;
+
+	if (!v34_caller_training_is_valid(training) ||
+	    (type0 == NULL) == (type1 == NULL))
+		return V34_CALLER_TRAINING_INVALID_ARGUMENT;
+	next = *training;
+	if (next.stage == V34_CALLER_TRAINING_PHASE4_TRN) {
+		struct v34_phase4_mp mp;
+
+		if (!v34_caller_training_phase4_trn_ready(&next))
+			return V34_CALLER_TRAINING_INVALID_STATE;
+		result = type0 != NULL ?
+			v34_phase4_mp_init_type0_from_trn(
+				&mp, &next.phase4.trn, type0) :
+			v34_phase4_mp_init_type1_from_trn(
+				&mp, &next.phase4.trn, type1);
+		if (result != V34_PHASE4_MP_OK)
+			return mp_result(result);
+		next.phase4 = (union v34_caller_phase4_state){ 0 };
+		next.phase4.mp = mp;
+		next.stage = V34_CALLER_TRAINING_PHASE4_MP;
+	} else if (next.stage == V34_CALLER_TRAINING_PHASE4_MP) {
+		result = type0 != NULL ?
+			v34_phase4_mp_start_next_type0_record(
+				&next.phase4.mp, type0) :
+			v34_phase4_mp_start_next_type1_record(
+				&next.phase4.mp, type1);
+		if (result != V34_PHASE4_MP_OK)
+			return mp_result(result);
+	} else {
+		return V34_CALLER_TRAINING_INVALID_STATE;
+	}
+	if (!v34_caller_training_is_valid(&next))
+		return V34_CALLER_TRAINING_NUMERIC_FAILURE;
+	*training = next;
+	return V34_CALLER_TRAINING_OK;
+}
+
+enum v34_caller_training_result v34_caller_training_start_mp_type0(
+	struct v34_caller_training *training,
+	const struct v34_mp_parameters *parameters)
+{
+	return start_mp(training, parameters, NULL);
+}
+
+enum v34_caller_training_result v34_caller_training_start_mp_type1(
+	struct v34_caller_training *training,
+	const struct v34_mp_type1_parameters *parameters)
+{
+	return start_mp(training, NULL, parameters);
+}
+
+enum v34_caller_training_result v34_caller_training_start_e(
+	struct v34_caller_training *training)
+{
+	struct v34_caller_training next;
+	struct v34_phase4_e_sequence e;
+
+	if (!v34_caller_training_is_valid(training))
+		return V34_CALLER_TRAINING_INVALID_ARGUMENT;
+	if (!v34_caller_training_phase4_mp_record_complete(training))
+		return V34_CALLER_TRAINING_INVALID_STATE;
+	next = *training;
+	if (v34_phase4_e_sequence_init_from_mp(
+		    &e, &next.phase4.mp) != V34_PHASE4_E_SEQUENCE_OK)
+		return V34_CALLER_TRAINING_NUMERIC_FAILURE;
+	next.phase4 = (union v34_caller_phase4_state){ 0 };
+	next.phase4.e = e;
+	next.stage = V34_CALLER_TRAINING_PHASE4_E;
+	if (!v34_caller_training_is_valid(&next))
+		return V34_CALLER_TRAINING_NUMERIC_FAILURE;
+	*training = next;
+	return V34_CALLER_TRAINING_OK;
+}
+
 static enum v34_caller_training_result next_phase3_point(
 	struct v34_caller_training *training, struct qam_point *point)
 {
@@ -184,6 +298,39 @@ static enum v34_caller_training_result next_phase4_trn_point(
 	return V34_CALLER_TRAINING_OK;
 }
 
+static enum v34_caller_training_result next_mp_point(
+	struct v34_caller_training *training, struct qam_point *point)
+{
+	uint8_t quarter_point;
+	uint8_t rotation;
+	bool complete;
+	enum v34_phase4_mp_result result = v34_phase4_mp_next(
+		&training->phase4.mp, point, &quarter_point, &rotation,
+		&complete);
+
+	if (result == V34_PHASE4_MP_RECORD_COMPLETE)
+		return V34_CALLER_TRAINING_INVALID_STATE;
+	return result == V34_PHASE4_MP_OK ?
+		       V34_CALLER_TRAINING_OK :
+		       V34_CALLER_TRAINING_NUMERIC_FAILURE;
+}
+
+static enum v34_caller_training_result next_e_point(
+	struct v34_caller_training *training, struct qam_point *point)
+{
+	uint8_t quarter_point;
+	uint8_t rotation;
+	enum v34_phase4_e_sequence_result result =
+		v34_phase4_e_sequence_next(
+			&training->phase4.e, point, &quarter_point, &rotation);
+
+	if (result == V34_PHASE4_E_SEQUENCE_COMPLETE)
+		return V34_CALLER_TRAINING_INVALID_STATE;
+	return result == V34_PHASE4_E_SEQUENCE_OK ?
+		       V34_CALLER_TRAINING_OK :
+		       V34_CALLER_TRAINING_NUMERIC_FAILURE;
+}
+
 static enum v34_caller_training_result next_point(
 	struct v34_caller_training *training, struct qam_point *point)
 {
@@ -194,6 +341,10 @@ static enum v34_caller_training_result next_point(
 		return next_j_prime_point(training, point);
 	case V34_CALLER_TRAINING_PHASE4_TRN:
 		return next_phase4_trn_point(training, point);
+	case V34_CALLER_TRAINING_PHASE4_MP:
+		return next_mp_point(training, point);
+	case V34_CALLER_TRAINING_PHASE4_E:
+		return next_e_point(training, point);
 	}
 	return V34_CALLER_TRAINING_NUMERIC_FAILURE;
 }
@@ -239,6 +390,22 @@ bool v34_caller_training_phase4_trn_ready(
 	       training->phase4_trn_symbols >= V34_PHASE4_TRN_MIN_SYMBOLS;
 }
 
+bool v34_caller_training_phase4_mp_record_complete(
+	const struct v34_caller_training *training)
+{
+	return v34_caller_training_is_valid(training) &&
+	       training->stage == V34_CALLER_TRAINING_PHASE4_MP &&
+	       v34_phase4_mp_record_is_complete(&training->phase4.mp);
+}
+
+bool v34_caller_training_phase4_e_complete(
+	const struct v34_caller_training *training)
+{
+	return v34_caller_training_is_valid(training) &&
+	       training->stage == V34_CALLER_TRAINING_PHASE4_E &&
+	       v34_phase4_e_sequence_is_complete(&training->phase4.e);
+}
+
 const char *v34_caller_training_result_name(
 	enum v34_caller_training_result result)
 {
@@ -249,6 +416,8 @@ const char *v34_caller_training_result_name(
 		return "invalid argument";
 	case V34_CALLER_TRAINING_INVALID_STATE:
 		return "invalid state";
+	case V34_CALLER_TRAINING_INVALID_PARAMETERS:
+		return "invalid parameters";
 	case V34_CALLER_TRAINING_OUT_OF_RANGE:
 		return "out of range";
 	case V34_CALLER_TRAINING_CLIPPING_RISK:

@@ -29,6 +29,30 @@ static struct v34_phase3_profile profile_fixture(void)
 	};
 }
 
+static struct v34_mp_parameters mp_parameters(bool acknowledges_peer)
+{
+	return (struct v34_mp_parameters){
+		.maximum_call_to_answer_rate_2400_bps_units = 1,
+		.maximum_answer_to_call_rate_2400_bps_units = 1,
+		.remote_transmitter_trellis = V34_TRELLIS_16_STATE,
+		.acknowledges_peer_mp = acknowledges_peer,
+		.data_rate_capability_mask = 1,
+	};
+}
+
+static struct v34_mp_type1_parameters
+mp_type1_parameters(bool acknowledges_peer)
+{
+	return (struct v34_mp_type1_parameters){
+		.common = mp_parameters(acknowledges_peer),
+		.precoder_coefficients = {
+			{ .real = 4096, .imaginary = -2048 },
+			{ .real = 1024, .imaginary = 512 },
+			{ .real = -256, .imaginary = 128 },
+		},
+	};
+}
+
 static bool model_init(
 	struct model_training *model,
 	const struct v34_phase3_profile *profile,
@@ -57,6 +81,62 @@ static bool model_finish_j(struct model_training *model)
 		    V34_PHASE3_CALLER_OK)
 		return false;
 	model->stage = V34_CALLER_TRAINING_J_PRIME;
+	return true;
+}
+
+static bool model_start_mp_type0(
+	struct model_training *model,
+	const struct v34_mp_parameters *parameters)
+{
+	if (model->stage == V34_CALLER_TRAINING_PHASE4_TRN) {
+		struct v34_phase4_mp mp;
+
+		if (v34_phase4_mp_init_type0_from_trn(
+			    &mp, &model->phase4.trn, parameters) !=
+		    V34_PHASE4_MP_OK)
+			return false;
+		model->phase4 = (union v34_caller_phase4_state){ 0 };
+		model->phase4.mp = mp;
+		model->stage = V34_CALLER_TRAINING_PHASE4_MP;
+		return true;
+	}
+	return model->stage == V34_CALLER_TRAINING_PHASE4_MP &&
+	       v34_phase4_mp_start_next_type0_record(
+		       &model->phase4.mp, parameters) == V34_PHASE4_MP_OK;
+}
+
+static bool model_start_mp_type1(
+	struct model_training *model,
+	const struct v34_mp_type1_parameters *parameters)
+{
+	if (model->stage == V34_CALLER_TRAINING_PHASE4_TRN) {
+		struct v34_phase4_mp mp;
+
+		if (v34_phase4_mp_init_type1_from_trn(
+			    &mp, &model->phase4.trn, parameters) !=
+		    V34_PHASE4_MP_OK)
+			return false;
+		model->phase4 = (union v34_caller_phase4_state){ 0 };
+		model->phase4.mp = mp;
+		model->stage = V34_CALLER_TRAINING_PHASE4_MP;
+		return true;
+	}
+	return model->stage == V34_CALLER_TRAINING_PHASE4_MP &&
+	       v34_phase4_mp_start_next_type1_record(
+		       &model->phase4.mp, parameters) == V34_PHASE4_MP_OK;
+}
+
+static bool model_start_e(struct model_training *model)
+{
+	struct v34_phase4_e_sequence e;
+
+	if (model->stage != V34_CALLER_TRAINING_PHASE4_MP ||
+	    v34_phase4_e_sequence_init_from_mp(
+		    &e, &model->phase4.mp) != V34_PHASE4_E_SEQUENCE_OK)
+		return false;
+	model->phase4 = (union v34_caller_phase4_state){ 0 };
+	model->phase4.e = e;
+	model->stage = V34_CALLER_TRAINING_PHASE4_E;
 	return true;
 }
 
@@ -99,6 +179,23 @@ static bool model_next_point(
 		model->phase4_trn_symbols++;
 		return true;
 	}
+	case V34_CALLER_TRAINING_PHASE4_MP: {
+		uint8_t quarter_point;
+		uint8_t rotation;
+		bool complete;
+
+		return v34_phase4_mp_next(
+			       &model->phase4.mp, point, &quarter_point,
+			       &rotation, &complete) == V34_PHASE4_MP_OK;
+	}
+	case V34_CALLER_TRAINING_PHASE4_E: {
+		uint8_t quarter_point;
+		uint8_t rotation;
+
+		return v34_phase4_e_sequence_next(
+			       &model->phase4.e, point, &quarter_point,
+			       &rotation) == V34_PHASE4_E_SEQUENCE_OK;
+	}
 	}
 	return false;
 }
@@ -128,6 +225,30 @@ static bool protocol_state_matches(
 		       model->phase4.trn.has_last_symbol &&
 		       actual->phase4.trn.last_clockwise_quarter_turns ==
 		       model->phase4.trn.last_clockwise_quarter_turns;
+	case V34_CALLER_TRAINING_PHASE4_MP:
+		return memcmp(
+			       actual->phase4.mp.frame,
+			       model->phase4.mp.frame,
+			       sizeof(actual->phase4.mp.frame)) == 0 &&
+		       actual->phase4.mp.scrambler.history ==
+			       model->phase4.mp.scrambler.history &&
+		       actual->phase4.mp.scrambler.polynomial ==
+			       model->phase4.mp.scrambler.polynomial &&
+		       actual->phase4.mp.frame_bit_count ==
+			       model->phase4.mp.frame_bit_count &&
+		       actual->phase4.mp.bit_index ==
+			       model->phase4.mp.bit_index &&
+		       actual->phase4.mp.previous_clockwise_quarter_turns ==
+			       model->phase4.mp.previous_clockwise_quarter_turns;
+	case V34_CALLER_TRAINING_PHASE4_E:
+		return actual->phase4.e.scrambler.history ==
+			       model->phase4.e.scrambler.history &&
+		       actual->phase4.e.scrambler.polynomial ==
+			       model->phase4.e.scrambler.polynomial &&
+		       actual->phase4.e.emitted_bits ==
+			       model->phase4.e.emitted_bits &&
+		       actual->phase4.e.previous_clockwise_quarter_turns ==
+			       model->phase4.e.previous_clockwise_quarter_turns;
 	}
 	return false;
 }
@@ -136,24 +257,29 @@ static bool run_composed_sequence(
 	enum v34_constellation_size constellation)
 {
 	struct v34_phase3_profile profile = profile_fixture();
+	struct v34_mp_parameters mp = mp_parameters(false);
+	struct v34_mp_type1_parameters mp_prime =
+		mp_type1_parameters(true);
 	struct v34_caller_training actual;
 	struct model_training model;
 	uint32_t samples = 0;
 	unsigned int stages_seen = 0;
+	bool mp_prime_started = false;
 
 	CHECK(v34_caller_training_init(
 		      &actual, &profile, constellation, 8000, 5000) ==
 		      V34_CALLER_TRAINING_OK &&
 	      model_init(&model, &profile, constellation),
 	      "selection %u did not initialize", constellation);
-	while (model.phase4_trn_symbols < 600) {
+	while (model.stage != V34_CALLER_TRAINING_PHASE4_E ||
+	       !v34_phase4_e_sequence_is_complete(&model.phase4.e)) {
 		struct qam_point point;
 		const struct qam_point *point_pointer = NULL;
 		int16_t expected;
 		int16_t sample;
 		bool accepted;
 
-		CHECK(samples < 6000,
+		CHECK(samples < 7000,
 		      "selection %u exceeded its line-sample bound",
 		      constellation);
 		if (model.stage == V34_CALLER_TRAINING_PHASE3) {
@@ -176,6 +302,30 @@ static bool run_composed_sequence(
 				      "selection %u did not enter J-prime",
 				      constellation);
 				stages_seen |= 1u << V34_PHASE3_CALLER_COMPLETE;
+			}
+		}
+		if (model.stage == V34_CALLER_TRAINING_PHASE4_TRN &&
+		    model.phase4_trn_symbols == 600) {
+			CHECK(v34_caller_training_start_mp_type0(
+				      &actual, &mp) == V34_CALLER_TRAINING_OK &&
+			      model_start_mp_type0(&model, &mp),
+			      "selection %u did not enter MP", constellation);
+		}
+		if (model.stage == V34_CALLER_TRAINING_PHASE4_MP &&
+		    v34_phase4_mp_record_is_complete(&model.phase4.mp)) {
+			if (!mp_prime_started) {
+				CHECK(v34_caller_training_start_mp_type1(
+					      &actual, &mp_prime) ==
+					      V34_CALLER_TRAINING_OK &&
+				      model_start_mp_type1(&model, &mp_prime),
+				      "selection %u did not enter MP-prime",
+				      constellation);
+				mp_prime_started = true;
+			} else {
+				CHECK(v34_caller_training_start_e(&actual) ==
+					      V34_CALLER_TRAINING_OK &&
+				      model_start_e(&model),
+				      "selection %u did not enter E", constellation);
 			}
 		}
 		stages_seen |= 1u << (8u + model.stage);
@@ -206,10 +356,15 @@ static bool run_composed_sequence(
 		      (((1u << (V34_PHASE3_CALLER_COMPLETE + 1u)) - 1u) |
 		       (1u << (8u + V34_CALLER_TRAINING_PHASE3)) |
 		       (1u << (8u + V34_CALLER_TRAINING_J_PRIME)) |
-		       (1u << (8u + V34_CALLER_TRAINING_PHASE4_TRN))) &&
+		       (1u << (8u + V34_CALLER_TRAINING_PHASE4_TRN)) |
+		       (1u << (8u + V34_CALLER_TRAINING_PHASE4_MP)) |
+		       (1u << (8u + V34_CALLER_TRAINING_PHASE4_E))) &&
 	      actual.line.generated_samples == samples &&
-	      v34_caller_training_phase4_trn_ready(&actual),
-	      "selection %u missed a stage or Phase 4 minimum", constellation);
+	      mp_prime_started &&
+	      v34_caller_training_phase4_e_complete(&actual) &&
+	      !v34_caller_training_phase4_trn_ready(&actual) &&
+	      !v34_caller_training_phase4_mp_record_complete(&actual),
+	      "selection %u missed a Phase 4 transmit stage", constellation);
 	return true;
 }
 
@@ -237,6 +392,65 @@ static bool advance_to_phase4(struct v34_caller_training *training)
 			    V34_CALLER_TRAINING_OK)
 			return false;
 		if (training->stage == V34_CALLER_TRAINING_PHASE4_TRN)
+			return true;
+		if (v34_caller_training_sample(training, &ignored) !=
+		    V34_CALLER_TRAINING_OK)
+			return false;
+	}
+	return false;
+}
+
+static bool advance_phase4_trn_to(
+	struct v34_caller_training *training, uint32_t target_symbols)
+{
+	for (uint32_t sample_count = 0; sample_count < 2000; ++sample_count) {
+		int16_t ignored;
+
+		if (training->stage != V34_CALLER_TRAINING_PHASE4_TRN)
+			return false;
+		if (training->phase4_trn_symbols >= target_symbols)
+			return true;
+		if (v34_caller_training_sample(training, &ignored) !=
+		    V34_CALLER_TRAINING_OK)
+			return false;
+	}
+	return false;
+}
+
+static bool complete_mp_record(struct v34_caller_training *training)
+{
+	for (uint32_t sample_count = 0; sample_count < 1000; ++sample_count) {
+		int16_t ignored;
+
+		if (v34_caller_training_phase4_mp_record_complete(training))
+			return true;
+		if (v34_caller_training_sample(training, &ignored) !=
+		    V34_CALLER_TRAINING_OK)
+			return false;
+	}
+	return false;
+}
+
+static bool complete_e(struct v34_caller_training *training)
+{
+	for (uint32_t sample_count = 0; sample_count < 100; ++sample_count) {
+		int16_t ignored;
+
+		if (v34_caller_training_phase4_e_complete(training))
+			return true;
+		if (v34_caller_training_sample(training, &ignored) !=
+		    V34_CALLER_TRAINING_OK)
+			return false;
+	}
+	return false;
+}
+
+static bool drain_to_point_boundary(struct v34_caller_training *training)
+{
+	for (unsigned int sample_count = 0; sample_count < 8; ++sample_count) {
+		int16_t ignored;
+
+		if (v34_training_line_needs_point(&training->line))
 			return true;
 		if (v34_caller_training_sample(training, &ignored) !=
 		    V34_CALLER_TRAINING_OK)
@@ -304,6 +518,83 @@ static bool test_copy_controls_and_overflow(void)
 	return true;
 }
 
+static bool test_phase4_controls(void)
+{
+	struct v34_phase3_profile profile = profile_fixture();
+	struct v34_mp_parameters mp_prime = mp_parameters(true);
+	struct v34_mp_type1_parameters mp = mp_type1_parameters(false);
+	struct v34_mp_type1_parameters invalid = mp;
+	struct v34_caller_training training;
+	struct v34_caller_training before;
+	int16_t sample = 1234;
+
+	CHECK(v34_caller_training_init(
+		      &training, &profile, V34_CONSTELLATION_16_POINT,
+		      8000, 5000) == V34_CALLER_TRAINING_OK &&
+	      advance_to_phase4(&training),
+	      "Phase 4 control fixture did not initialize");
+	before = training;
+	CHECK(v34_caller_training_start_mp_type0(
+		      &training, &mp_prime) == V34_CALLER_TRAINING_INVALID_STATE &&
+	      v34_caller_training_start_mp_type0(&training, NULL) ==
+		      V34_CALLER_TRAINING_INVALID_ARGUMENT &&
+	      v34_caller_training_start_mp_type1(&training, NULL) ==
+		      V34_CALLER_TRAINING_INVALID_ARGUMENT &&
+	      v34_caller_training_start_e(&training) ==
+		      V34_CALLER_TRAINING_INVALID_STATE &&
+	      !v34_caller_training_phase4_mp_record_complete(&training) &&
+	      !v34_caller_training_phase4_e_complete(&training) &&
+	      memcmp(&training, &before, sizeof(training)) == 0,
+	      "early Phase 4 control changed state");
+	CHECK(advance_phase4_trn_to(
+		      &training, V34_PHASE4_TRN_MIN_SYMBOLS) &&
+	      v34_caller_training_phase4_trn_ready(&training),
+	      "Phase 4 control fixture did not reach the TRN minimum");
+	invalid.common.maximum_call_to_answer_rate_2400_bps_units = 0;
+	before = training;
+	CHECK(v34_caller_training_start_mp_type1(&training, &invalid) ==
+		      V34_CALLER_TRAINING_INVALID_PARAMETERS &&
+	      memcmp(&training, &before, sizeof(training)) == 0 &&
+	      v34_caller_training_start_mp_type1(&training, &mp) ==
+		      V34_CALLER_TRAINING_OK &&
+	      training.stage == V34_CALLER_TRAINING_PHASE4_MP,
+	      "first MP record did not validate transactionally");
+	before = training;
+	CHECK(v34_caller_training_start_mp_type0(
+		      &training, &mp_prime) == V34_CALLER_TRAINING_INVALID_STATE &&
+	      v34_caller_training_start_e(&training) ==
+		      V34_CALLER_TRAINING_INVALID_STATE &&
+	      memcmp(&training, &before, sizeof(training)) == 0 &&
+	      complete_mp_record(&training) &&
+	      drain_to_point_boundary(&training),
+	      "active MP record accepted a transition");
+	before = training;
+	sample = 1234;
+	CHECK(v34_caller_training_sample(&training, &sample) ==
+		      V34_CALLER_TRAINING_INVALID_STATE &&
+	      sample == 1234 && memcmp(&training, &before, sizeof(training)) == 0 &&
+	      v34_caller_training_start_mp_type0(
+		      &training, &mp_prime) == V34_CALLER_TRAINING_OK &&
+	      complete_mp_record(&training) &&
+	      v34_caller_training_start_e(&training) ==
+		      V34_CALLER_TRAINING_OK &&
+	      complete_e(&training) &&
+	      drain_to_point_boundary(&training),
+	      "MP-prime or E transition failed");
+	before = training;
+	sample = 1234;
+	CHECK(v34_caller_training_sample(&training, &sample) ==
+		      V34_CALLER_TRAINING_INVALID_STATE &&
+	      sample == 1234 && memcmp(&training, &before, sizeof(training)) == 0 &&
+	      v34_caller_training_start_mp_type0(
+		      &training, &mp_prime) == V34_CALLER_TRAINING_INVALID_STATE &&
+	      v34_caller_training_start_e(&training) ==
+		      V34_CALLER_TRAINING_INVALID_STATE &&
+	      memcmp(&training, &before, sizeof(training)) == 0,
+	      "completed E emitted or accepted an extra transition");
+	return true;
+}
+
 static bool test_initialization(void)
 {
 	struct v34_phase3_profile profile = profile_fixture();
@@ -338,9 +629,14 @@ static bool test_initialization(void)
 	      "clipping caller training mutated its destination");
 	CHECK(!v34_caller_training_is_valid(NULL) &&
 	      !v34_caller_training_phase4_trn_ready(NULL) &&
+	      !v34_caller_training_phase4_mp_record_complete(NULL) &&
+	      !v34_caller_training_phase4_e_complete(NULL) &&
 	      strcmp(v34_caller_training_result_name(
 		     V34_CALLER_TRAINING_CLIPPING_RISK),
 		     "clipping risk") == 0 &&
+	      strcmp(v34_caller_training_result_name(
+		     V34_CALLER_TRAINING_INVALID_PARAMETERS),
+		     "invalid parameters") == 0 &&
 	      strcmp(v34_caller_training_result_name(
 		     (enum v34_caller_training_result)99),
 		     "unknown") == 0,
@@ -356,6 +652,7 @@ int main(void)
 	} tests[] = {
 		{ "composed line", test_composed_line },
 		{ "copy, controls, and overflow", test_copy_controls_and_overflow },
+		{ "Phase 4 controls", test_phase4_controls },
 		{ "initialization", test_initialization },
 	};
 	unsigned int failures = 0;
