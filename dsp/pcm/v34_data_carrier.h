@@ -40,6 +40,12 @@ enum v34_data_carrier_result v34_data_carrier_channel(
 	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate, struct qam_channel *channel);
 
+/* Return true only when every clock, carrier, pulse, and sample-rate field is
+ * the exact waveform derived from the profile. */
+bool v34_data_carrier_channel_matches(
+	const struct v34_phase3_profile *profile,
+	const struct qam_channel *channel);
+
 /* Configure the exact negotiated symbol and carrier clocks. The returned
  * waveform is a raw floating-point carrier; negotiated line gain and
  * pre-emphasis remain separate downstream responsibilities. */

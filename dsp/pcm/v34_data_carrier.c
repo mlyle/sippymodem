@@ -50,6 +50,29 @@ enum v34_data_carrier_result v34_data_carrier_channel(
 	return V34_DATA_CARRIER_OK;
 }
 
+bool v34_data_carrier_channel_matches(
+	const struct v34_phase3_profile *profile,
+	const struct qam_channel *channel)
+{
+	struct qam_channel expected;
+
+	return channel != NULL &&
+	       v34_data_carrier_channel(
+		       profile, channel->sample_rate, &expected) ==
+		       V34_DATA_CARRIER_OK &&
+	       channel->sample_rate == expected.sample_rate &&
+	       channel->symbol_rate_numerator ==
+		       expected.symbol_rate_numerator &&
+	       channel->symbol_rate_denominator ==
+		       expected.symbol_rate_denominator &&
+	       channel->carrier_frequency_numerator ==
+		       expected.carrier_frequency_numerator &&
+	       channel->carrier_frequency_denominator ==
+		       expected.carrier_frequency_denominator &&
+	       channel->rolloff == expected.rolloff &&
+	       channel->pulse_span_symbols == expected.pulse_span_symbols;
+}
+
 static bool channel_matches_configuration(
 	const struct qam_modulator *modulator,
 	const struct v34_phase3_profile *profile,

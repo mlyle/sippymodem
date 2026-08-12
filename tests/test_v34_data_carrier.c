@@ -584,6 +584,8 @@ static bool test_all_line_profiles(void)
 				      &carrier, &profile, &geometry, &normalizer,
 				      8000) == V34_DATA_CARRIER_OK &&
 			      v34_data_carrier_is_valid(&carrier) &&
+			      v34_data_carrier_channel_matches(
+				      &profile, &carrier.modulator.channel) &&
 			      carrier.modulator.channel.symbol_rate_numerator ==
 				      profile.symbol_rate_numerator &&
 			      carrier.modulator.channel.symbol_rate_denominator ==
@@ -637,6 +639,7 @@ static bool test_transactional_validation(void)
 	struct v34_transmitted_mapping_frame invalid_frame;
 	struct v34_phase3_profile limited_profile;
 	struct v34_phase3_profile mismatched_profile;
+	struct qam_channel mismatched_channel;
 	struct v34_power_normalizer mismatched_normalizer;
 	struct v34_frame_geometry mismatched_geometry;
 	struct v34_mapping_parameters mismatched_parameters;
@@ -686,6 +689,13 @@ static bool test_transactional_validation(void)
 	limited_profile.projected_data_rate_2400_bps_units = 7;
 	mismatched_profile = profile_for_rate(
 		V34_SYMBOL_RATE_2800, false, 8);
+	mismatched_channel = saved.modulator.channel;
+	mismatched_channel.carrier_frequency_numerator++;
+	CHECK(!v34_data_carrier_channel_matches(NULL, &saved.modulator.channel) &&
+	      !v34_data_carrier_channel_matches(&fixture.profile, NULL) &&
+	      !v34_data_carrier_channel_matches(
+		      &fixture.profile, &mismatched_channel),
+	      "data carrier accepted a mismatched receive waveform");
 	CHECK(v34_frame_geometry_init(
 		      &mismatched_geometry, V34_SYMBOL_RATE_3000, 7,
 		      true) == V34_FRAME_SCHEDULE_OK &&

@@ -5,20 +5,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static bool channels_are_equal(
-	const struct qam_channel *left, const struct qam_channel *right)
-{
-	return left->sample_rate == right->sample_rate &&
-	       left->symbol_rate_numerator == right->symbol_rate_numerator &&
-	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
-	       left->carrier_frequency_numerator ==
-		       right->carrier_frequency_numerator &&
-	       left->carrier_frequency_denominator ==
-		       right->carrier_frequency_denominator &&
-	       left->rolloff == right->rolloff &&
-	       left->pulse_span_symbols == right->pulse_span_symbols;
-}
-
 static bool geometries_are_equal(
 	const struct v34_frame_geometry *left,
 	const struct v34_frame_geometry *right)
@@ -50,13 +36,9 @@ static bool waveform_matches_profile(
 	const struct qam_demodulator *demodulator,
 	const struct v34_phase3_profile *profile)
 {
-	struct qam_channel expected;
-
 	return qam_demodulator_is_valid(demodulator) &&
-	       v34_data_carrier_channel(
-		       profile, demodulator->channel.sample_rate, &expected) ==
-		       V34_DATA_CARRIER_OK &&
-	       channels_are_equal(&demodulator->channel, &expected);
+	       v34_data_carrier_channel_matches(
+		       profile, &demodulator->channel);
 }
 
 bool v34_data_line_receiver_is_valid(
