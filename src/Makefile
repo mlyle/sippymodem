@@ -162,6 +162,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja_search.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_jd.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_pcm_symbol.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_line_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_digital_tx.c \
