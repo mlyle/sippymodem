@@ -21,4 +21,10 @@ bool v90_pcm_symbol_make(
 	struct v90_pcm_symbol *symbol, enum g711_law law,
 	uint8_t ucode, bool positive);
 
+/* Recover the universal code and sign without first decoding the network
+ * character to linear PCM. This preserves the PCMU negative-zero character. */
+bool v90_pcm_symbol_parse(
+	struct v90_pcm_symbol *symbol, enum g711_law law,
+	uint8_t octet);
+
 #endif

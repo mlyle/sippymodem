@@ -143,6 +143,29 @@ static bool test_jd_boundary(void)
 	return true;
 }
 
+static bool test_pcm_symbol_parsing(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		for (unsigned int octet = 0; octet <= UINT8_MAX; ++octet) {
+			struct v90_pcm_symbol parsed;
+			struct v90_pcm_symbol rebuilt;
+
+			CHECK(v90_pcm_symbol_parse(
+				      &parsed, law, (uint8_t)octet) &&
+			      v90_pcm_symbol_make(
+				      &rebuilt, law, parsed.ucode,
+				      parsed.positive) &&
+			      rebuilt.octet == octet &&
+			      rebuilt.sample == parsed.sample &&
+			      encode_sample(law, parsed.sample) == octet,
+			      "PCM character %u did not round trip for law %u",
+			      octet, (unsigned int)law);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v90_phase3_signs signs;
@@ -187,6 +210,9 @@ static bool test_validation(void)
 		      !v90_pcm_symbol_make(
 			      &invalid_symbol, G711_LAW_PCMU, 128, true) &&
 		      !v90_pcm_symbol_make(NULL, G711_LAW_PCMU, 78, true) &&
+		      !v90_pcm_symbol_parse(
+			      &invalid_symbol, (enum g711_law)2, 0) &&
+		      !v90_pcm_symbol_parse(NULL, G711_LAW_PCMU, 0) &&
 		      memcmp(&invalid_symbol, &saved_symbol,
 			     sizeof(invalid_symbol)) == 0,
 	      "invalid PCM symbol construction changed output");
@@ -208,6 +234,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "continuous TRN1d, Jd, and Jd-prime", test_continuous_streams },
 		{ "Jd handoff boundary", test_jd_boundary },
+		{ "exact PCM symbol parsing", test_pcm_symbol_parsing },
 		{ "validation and transactionality", test_validation },
 	};
 	unsigned int failures = 0;

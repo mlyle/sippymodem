@@ -21,3 +21,21 @@ bool v90_pcm_symbol_make(
 	*symbol = generated;
 	return true;
 }
+
+bool v90_pcm_symbol_parse(
+	struct v90_pcm_symbol *symbol, enum g711_law law,
+	uint8_t octet)
+{
+	struct v90_pcm_symbol parsed;
+	uint8_t ucode = law == G711_LAW_PCMA ?
+			(uint8_t)((octet ^ UINT8_C(0xd5)) & UINT8_C(0x7f)) :
+			(uint8_t)(~octet & UINT8_C(0x7f));
+	bool positive = (octet & UINT8_C(0x80)) != 0;
+
+	if (symbol == NULL ||
+	    !v90_pcm_symbol_make(&parsed, law, ucode, positive) ||
+	    parsed.octet != octet)
+		return false;
+	*symbol = parsed;
+	return true;
+}
