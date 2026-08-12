@@ -323,17 +323,17 @@ static bool test_generated_data_preparation(void)
 	      answerer_seen == common_events,
 	      "Phase 4 event coverage differed: caller=0x%x answerer=0x%x",
 	      caller_seen, answerer_seen);
-	CHECK(caller.phase4.transmit.stage ==
+	CHECK(caller.phase4.transmit.training.stage ==
 		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
-	      answerer.phase4.transmit.stage ==
+	      answerer.phase4.transmit.training.stage ==
 		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
-	      caller.phase4.receive.state.phase4.control.stage ==
+	      caller.phase4.receive.training.state.phase4.control.stage ==
 		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E &&
-	      answerer.phase4.receive.state.phase4.control.stage ==
+	      answerer.phase4.receive.training.state.phase4.control.stage ==
 		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E &&
-	      caller.phase4.transmit.phase4_trn_symbols >=
+	      caller.phase4.transmit.training.phase4_trn_symbols >=
 		      V34_PHASE4_TRN_MIN_SYMBOLS &&
-	      answerer.phase4.transmit.phase4_trn_symbols >=
+	      answerer.phase4.transmit.training.phase4_trn_symbols >=
 		      V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      !v34_phase4_exchange_has_failed(&caller.phase4) &&
 	      !v34_phase4_exchange_has_failed(&answerer.phase4) &&

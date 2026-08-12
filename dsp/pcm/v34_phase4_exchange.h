@@ -4,6 +4,7 @@
 #define V34_PHASE4_EXCHANGE_H
 
 #include "v34_data_startup.h"
+#include "v34_data_stream.h"
 #include "v34_mp.h"
 #include "v34_phase3_exchange.h"
 #include "v34_training_receiver.h"
@@ -45,6 +46,16 @@ struct v34_phase4_exchange_configuration {
 	double data_equalizer_adaptation;
 };
 
+union v34_phase4_transmit_path {
+	struct v34_training_transmitter training;
+	struct v34_data_stream data;
+};
+
+union v34_phase4_receive_path {
+	struct v34_training_receiver training;
+	struct v34_data_line_receiver data;
+};
+
 /* Own both sample directions from the exact Phase 3 handoff through the
  * reciprocal MP-prime handshake, with both post-E data paths prepared. The
  * caller ends J only after receiving the answerer's complete S/S-bar marker
@@ -53,10 +64,11 @@ struct v34_phase4_exchange_configuration {
  * calibration outside the real-time callback. A valid final peer MP-prime
  * record arms E reception at that exact record boundary. Local E transmission
  * and the B1 handoff remain with the following controller slice. Calls on one
- * instance must be serialized. */
+ * instance must be serialized. Each tagged directional union reuses its
+ * training storage for the post-E data owner. */
 struct v34_phase4_exchange {
-	struct v34_training_transmitter transmit;
-	struct v34_training_receiver receive;
+	union v34_phase4_transmit_path transmit;
+	union v34_phase4_receive_path receive;
 	struct v34_data_startup data_startup;
 	struct v34_mp_record transmit_mp;
 	struct v34_mp_record peer_mp;
@@ -71,6 +83,8 @@ struct v34_phase4_exchange {
 	bool peer_mp_prime_received;
 	bool data_preparation_required;
 	bool data_startup_prepared;
+	bool transmit_data_active;
+	bool receive_data_active;
 	bool ready_announced;
 	bool failed;
 };

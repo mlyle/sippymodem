@@ -87,7 +87,7 @@ static bool outputs_overlap(
 static bool trn_minimum_complete(
 	const struct v34_phase4_exchange *exchange)
 {
-	return exchange->transmit.phase4_trn_symbols >=
+	return exchange->transmit.training.phase4_trn_symbols >=
 	       V34_PHASE4_TRN_MIN_SYMBOLS;
 }
 
@@ -118,9 +118,9 @@ static bool data_state_is_valid(
 	const struct v34_phase4_exchange *exchange)
 {
 	enum v34_phase4_equalizer_receiver_stage receive_stage =
-		exchange->receive.state.phase4.control.stage;
+		exchange->receive.training.state.phase4.control.stage;
 	bool record_pending =
-		exchange->receive.state.phase4.control.record_pending;
+		exchange->receive.training.state.phase4.control.record_pending;
 
 	if (!isfinite(exchange->data_equalizer_adaptation) ||
 	    exchange->data_equalizer_adaptation < 0.0 ||
@@ -137,10 +137,10 @@ static bool data_state_is_valid(
 	    !v34_data_startup_is_valid(&exchange->data_startup) ||
 	    !profiles_are_equal(
 		    &exchange->data_startup.transmit.transmitting_profile,
-		    &exchange->transmit.line.profile) ||
+		    &exchange->transmit.training.line.profile) ||
 	    !profiles_are_equal(
 		    &exchange->data_startup.receive.transmitting_profile,
-		    &exchange->receive.state.phase4.transmitting_profile) ||
+		    &exchange->receive.training.state.phase4.transmitting_profile) ||
 	    exchange->data_startup.receive.equalizer_adaptation !=
 		    exchange->data_equalizer_adaptation ||
 	    (record_pending && !exchange->failed) ||
@@ -157,21 +157,23 @@ static bool transmitter_mp_matches(
 	uint8_t frame[V34_MP_TYPE1_FRAME_BYTES];
 	size_t bit_count;
 
-	if (exchange->transmit.stage !=
+	if (exchange->transmit.training.stage !=
 	    V34_TRAINING_TRANSMITTER_PHASE4_MP)
 		return true;
 	set_record_acknowledgment(
 		&expected, exchange->transmit_mp_prime_started);
 	return encode_record(&expected, frame, &bit_count) &&
-	       exchange->transmit.phase4.mp.frame_bit_count == bit_count &&
-	       memcmp(exchange->transmit.phase4.mp.frame, frame,
+	       exchange->transmit.training.phase4.mp.frame_bit_count ==
+		       bit_count &&
+	       memcmp(exchange->transmit.training.phase4.mp.frame, frame,
 		      sizeof(frame)) == 0;
 }
 
 static bool transmitter_stage_is_valid(
 	const struct v34_phase4_exchange *exchange)
 {
-	enum v34_training_transmitter_stage stage = exchange->transmit.stage;
+	enum v34_training_transmitter_stage stage =
+		exchange->transmit.training.stage;
 	bool entered_trn = stage == V34_TRAINING_TRANSMITTER_PHASE4_TRN ||
 			   stage == V34_TRAINING_TRANSMITTER_PHASE4_MP;
 	bool entered_mp = stage == V34_TRAINING_TRANSMITTER_PHASE4_MP;
@@ -193,20 +195,24 @@ bool v34_phase4_exchange_is_valid(
 	enum v34_station_role peer_role;
 
 	if (exchange == NULL ||
-	    !v34_training_transmitter_is_valid(&exchange->transmit) ||
-	    !v34_training_receiver_is_valid(&exchange->receive) ||
+	    exchange->transmit_data_active || exchange->receive_data_active ||
+	    !v34_training_transmitter_is_valid(&exchange->transmit.training) ||
+	    !v34_training_receiver_is_valid(&exchange->receive.training) ||
 	    !v34_mp_record_is_valid(&exchange->transmit_mp) ||
 	    record_is_acknowledged(&exchange->transmit_mp) ||
-	    exchange->receive.stage != V34_TRAINING_RECEIVER_PHASE4 ||
+	    exchange->receive.training.stage != V34_TRAINING_RECEIVER_PHASE4 ||
 	    !transmitter_stage_is_valid(exchange) ||
 	    !transmitter_mp_matches(exchange) || !data_state_is_valid(exchange))
 		return false;
-	peer_role = exchange->receive.state.phase4.transmitting_profile.local_role;
-	if (exchange->local_role != exchange->transmit.phase3.local_role ||
+	peer_role = exchange->receive.training.state.phase4
+			    .transmitting_profile.local_role;
+	if (exchange->local_role !=
+		    exchange->transmit.training.phase3.local_role ||
 	    exchange->local_role == peer_role ||
-	    exchange->transmit.line.carrier.channel.sample_rate !=
-		    exchange->receive.state.phase4.demodulator.channel.sample_rate ||
-	    (v34_training_receiver_has_failed(&exchange->receive) &&
+	    exchange->transmit.training.line.carrier.channel.sample_rate !=
+		    exchange->receive.training.state.phase4.demodulator.channel
+			    .sample_rate ||
+	    (v34_training_receiver_has_failed(&exchange->receive.training) &&
 	     !exchange->failed) ||
 	    exchange->transmit_trn_ready_announced !=
 		    trn_minimum_complete(exchange) ||
@@ -229,11 +235,11 @@ bool v34_phase4_exchange_is_valid(
 	if (exchange->local_role != V34_CALLING_STATION)
 		return false;
 	if (exchange->finish_j_requested)
-		return exchange->transmit.stage ==
+		return exchange->transmit.training.stage ==
 		       V34_TRAINING_TRANSMITTER_PHASE3;
-	return exchange->transmit.stage !=
+	return exchange->transmit.training.stage !=
 		       V34_TRAINING_TRANSMITTER_PHASE3 ||
-	       exchange->receive.state.phase4.control.stage ==
+	       exchange->receive.training.state.phase4.control.stage ==
 		       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S;
 }
 
@@ -277,12 +283,12 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	    configuration->data_equalizer_adaptation > 1.0)
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	transmit = v34_training_transmitter_continue(
-		&initialized.transmit, &handoff->transmit_line,
+		&initialized.transmit.training, &handoff->transmit_line,
 		&handoff->phase3_transmit);
 	if (transmit != V34_TRAINING_TRANSMITTER_OK)
 		return transmit_result(transmit);
 	receive = v34_training_receiver_continue(
-		&initialized.receive, &handoff->receive,
+		&initialized.receive.training, &handoff->receive,
 		&configuration->receive);
 	if (receive != V34_TRAINING_RECEIVER_OK)
 		return receive == V34_TRAINING_RECEIVER_OUT_OF_RANGE ?
@@ -356,9 +362,9 @@ static enum v34_phase4_exchange_result start_transmit_mp(
 	set_record_acknowledgment(&record, acknowledged);
 	result = record.type == V34_MP_RECORD_TYPE0 ?
 		v34_training_transmitter_start_mp_type0(
-			&exchange->transmit, &record.parameters.type0) :
+			&exchange->transmit.training, &record.parameters.type0) :
 		v34_training_transmitter_start_mp_type1(
-			&exchange->transmit, &record.parameters.type1);
+			&exchange->transmit.training, &record.parameters.type1);
 	return transmit_result(result);
 }
 
@@ -368,12 +374,14 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 	enum v34_phase4_exchange_result result;
 
 	if (exchange->finish_j_requested &&
-	    exchange->transmit.stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
-	    exchange->transmit.phase3.j_symbols >=
+	    exchange->transmit.training.stage ==
+		    V34_TRAINING_TRANSMITTER_PHASE3 &&
+	    exchange->transmit.training.phase3.j_symbols >=
 		    V34_PHASE3_J_PATTERN_SYMBOLS &&
 	    v34_phase3_j_sequence_at_pattern_boundary(
-		    &exchange->transmit.phase3.state.j)) {
-		if (v34_training_transmitter_finish_j(&exchange->transmit) !=
+		    &exchange->transmit.training.phase3.state.j)) {
+		if (v34_training_transmitter_finish_j(
+			    &exchange->transmit.training) !=
 		    V34_TRAINING_TRANSMITTER_OK)
 			return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 		exchange->finish_j_requested = false;
@@ -388,7 +396,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 	}
 	if (exchange->transmit_mp_started &&
 	    v34_training_transmitter_phase4_mp_record_complete(
-		    &exchange->transmit)) {
+			    &exchange->transmit.training)) {
 		bool acknowledged = exchange->peer_mp_received;
 
 		result = start_transmit_mp(exchange, acknowledged);
@@ -407,7 +415,7 @@ static void note_transmitter(
 	struct v34_phase4_exchange *exchange, uint32_t *events)
 {
 	if (!exchange->transmit_trn_started &&
-	    exchange->transmit.stage ==
+	    exchange->transmit.training.stage ==
 		    V34_TRAINING_TRANSMITTER_PHASE4_TRN) {
 		exchange->transmit_trn_started = true;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED;
@@ -446,7 +454,7 @@ static enum v34_phase4_exchange_result continue_mp_receiver(
 	struct v34_phase4_exchange *exchange)
 {
 	enum v34_training_receiver_result result =
-		v34_training_receiver_continue_mp(&exchange->receive);
+		v34_training_receiver_continue_mp(&exchange->receive.training);
 
 	if (result == V34_TRAINING_RECEIVER_OK)
 		return V34_PHASE4_EXCHANGE_OK;
@@ -459,7 +467,7 @@ static enum v34_phase4_exchange_result expect_e_receiver(
 	struct v34_phase4_exchange *exchange)
 {
 	enum v34_training_receiver_result result =
-		v34_training_receiver_expect_e(&exchange->receive);
+		v34_training_receiver_expect_e(&exchange->receive.training);
 
 	if (result == V34_TRAINING_RECEIVER_OK)
 		return V34_PHASE4_EXCHANGE_OK;
@@ -509,8 +517,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 		return latch_failure(
 			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
 	startup_result = v34_data_startup_prepare(
-		&startup, &mode, &exchange->transmit.line.profile,
-		&exchange->receive.state.phase4.transmitting_profile,
+		&startup, &mode, &exchange->transmit.training.line.profile,
+		&exchange->receive.training.state.phase4.transmitting_profile,
 		exchange->data_equalizer_adaptation);
 	if (startup_result != V34_DATA_STARTUP_OK) {
 		result = startup_result == V34_DATA_STARTUP_OUT_OF_RANGE ?
@@ -584,7 +592,8 @@ static enum v34_phase4_exchange_result drive_receiver(
 {
 	struct v34_mp_receive_event event = { 0 };
 	enum v34_training_receiver_result result =
-		v34_training_receiver_sample(&exchange->receive, sample, &event);
+		v34_training_receiver_sample(
+			&exchange->receive.training, sample, &event);
 
 	switch (result) {
 	case V34_TRAINING_RECEIVER_OK:
@@ -592,7 +601,7 @@ static enum v34_phase4_exchange_result drive_receiver(
 		return V34_PHASE4_EXCHANGE_OK;
 	case V34_TRAINING_RECEIVER_S_DETECTED:
 		if (exchange->local_role != V34_CALLING_STATION ||
-		    exchange->transmit.stage !=
+		    exchange->transmit.training.stage !=
 			    V34_TRAINING_TRANSMITTER_PHASE3 ||
 		    exchange->finish_j_requested)
 			return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
@@ -667,7 +676,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 		return result;
 	}
 	result = transmit_result(v34_training_transmitter_sample(
-		&next.transmit, &generated));
+		&next.transmit.training, &generated));
 	if (result != V34_PHASE4_EXCHANGE_OK) {
 		exchange->failed = true;
 		return result;
