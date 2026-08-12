@@ -167,6 +167,7 @@ static bool check_measurement_and_completion(enum test_codec codec)
 		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      measurement.l2_samples ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
+	      v34_phase2_probe_measurement_is_valid(&measurement) &&
 	      measurement_spectrum_is_plausible(&measurement, codec),
 	      "probe measurement failed for codec %d", codec);
 	initial_measurement = measurement;
@@ -339,6 +340,16 @@ static bool test_validation(void)
 		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "non-finite probe receiver state was accepted");
+	memset(&measurement, 0, sizeof(measurement));
+	measurement.l1.sample_count = V34_PHASE2_PROBE_L1_SAMPLES;
+	measurement.l2.sample_count = V34_PHASE2_PROBE_L1_SAMPLES;
+	measurement.l2_samples = V34_PHASE2_PROBE_L1_SAMPLES;
+	CHECK(v34_phase2_probe_measurement_is_valid(&measurement),
+	      "finite completed probe measurement was rejected");
+	measurement.l1.harmonics[0].mean_square = -1.0;
+	CHECK(!v34_phase2_probe_measurement_is_valid(&measurement) &&
+	      !v34_phase2_probe_measurement_is_valid(NULL),
+	      "invalid completed probe measurement was accepted");
 	CHECK(v34_phase2_probe_receiver_init(&receiver) ==
 		      V34_PHASE2_PROBE_RECEIVER_OK &&
 	      v34_phase2_probe_receiver_init(NULL) ==

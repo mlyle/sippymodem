@@ -47,6 +47,9 @@ struct v34_phase2_probe_receiver_measurement {
 	uint32_t l2_samples;
 };
 
+bool v34_phase2_probe_measurement_is_valid(
+	const struct v34_phase2_probe_receiver_measurement *measurement);
+
 /* The first sample passed after initialization must be the synchronized first
  * L1 sample. The receiver measures one exact 160 ms window at each level,
  * then waits for its protocol owner to report the end of L2. Independently,

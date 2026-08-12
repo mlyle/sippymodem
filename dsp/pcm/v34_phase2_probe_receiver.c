@@ -2,6 +2,7 @@
 
 #include "v34_phase2_probe_receiver.h"
 
+#include <math.h>
 #include <stddef.h>
 
 _Static_assert(
@@ -13,6 +14,34 @@ _Static_assert(
 	V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES >
 		V34_PHASE2_PROBE_L1_SAMPLES,
 	"V.34 L2 limit must allow a complete measurement window");
+
+bool v34_phase2_probe_measurement_is_valid(
+	const struct v34_phase2_probe_receiver_measurement *measurement)
+{
+	if (measurement == NULL ||
+	    measurement->l1.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples >=
+		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
+		return false;
+	for (size_t index = 0; index < V34_PHASE2_PROBE_HIGHEST_HARMONIC;
+	     ++index) {
+		const struct v34_phase2_probe_spectrum_bin *l1 =
+			&measurement->l1.harmonics[index];
+		const struct v34_phase2_probe_spectrum_bin *l2 =
+			&measurement->l2.harmonics[index];
+
+		if (!isfinite(l1->in_phase_peak) ||
+		    !isfinite(l1->quadrature_peak) ||
+		    !isfinite(l1->mean_square) || l1->mean_square < 0.0 ||
+		    !isfinite(l2->in_phase_peak) ||
+		    !isfinite(l2->quadrature_peak) ||
+		    !isfinite(l2->mean_square) || l2->mean_square < 0.0)
+			return false;
+	}
+	return true;
+}
 
 bool v34_phase2_probe_receiver_is_valid(
 	const struct v34_phase2_probe_receiver *receiver)

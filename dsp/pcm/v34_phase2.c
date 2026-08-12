@@ -2,7 +2,6 @@
 
 #include "v34_phase2.h"
 
-#include <math.h>
 #include <stddef.h>
 
 static bool failure_is_valid(enum v34_phase2_failure failure)
@@ -29,33 +28,6 @@ static const struct v34_info0 *answerer_info0(
 {
 	return phase2->local_role == V34_ANSWERING_STATION ?
 		       &phase2->local_info0 : &phase2->peer_info0;
-}
-
-static bool measurement_is_valid(
-	const struct v34_phase2_probe_receiver_measurement *measurement)
-{
-	if (measurement->l1.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2_samples >=
-		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
-		return false;
-	for (size_t index = 0; index < V34_PHASE2_PROBE_HIGHEST_HARMONIC;
-	     ++index) {
-		const struct v34_phase2_probe_spectrum_bin *l1 =
-			&measurement->l1.harmonics[index];
-		const struct v34_phase2_probe_spectrum_bin *l2 =
-			&measurement->l2.harmonics[index];
-
-		if (!isfinite(l1->in_phase_peak) ||
-		    !isfinite(l1->quadrature_peak) ||
-		    !isfinite(l1->mean_square) || l1->mean_square < 0.0 ||
-		    !isfinite(l2->in_phase_peak) ||
-		    !isfinite(l2->quadrature_peak) ||
-		    !isfinite(l2->mean_square) || l2->mean_square < 0.0)
-			return false;
-	}
-	return true;
 }
 
 static enum v34_phase2_failure initial_probe_failure(
@@ -195,7 +167,8 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 	    (phase2->peer_info0_stored &&
 	     !v34_info0_is_valid(&phase2->peer_info0)) ||
 	    (phase2->remote_probe_stored &&
-	     !measurement_is_valid(&phase2->remote_probe)) ||
+	     !v34_phase2_probe_measurement_is_valid(
+		     &phase2->remote_probe)) ||
 	    !local_info1_is_valid(phase2) ||
 	    (phase2->stage != V34_PHASE2_RANGING &&
 	     !phase2->peer_info0_stored))
@@ -575,7 +548,8 @@ static bool sample_initial_probe(
 			    &phase2->state.initial_probe,
 			    &phase2->remote_probe) !=
 		    V34_PHASE2_INITIAL_PROBE_OK ||
-		    !measurement_is_valid(&phase2->remote_probe))
+		    !v34_phase2_probe_measurement_is_valid(
+			    &phase2->remote_probe))
 			return false;
 		phase2->remote_probe_stored = true;
 		event->kind =
@@ -639,7 +613,8 @@ static bool sample_reciprocal_probe(
 			    &phase2->state.reciprocal_probe,
 			    &phase2->remote_probe) !=
 		    PHASE2_RECIPROCAL_PROBE_OK ||
-		    !measurement_is_valid(&phase2->remote_probe))
+		    !v34_phase2_probe_measurement_is_valid(
+			    &phase2->remote_probe))
 			return false;
 		phase2->remote_probe_stored = true;
 		event->kind = V34_PHASE2_EVENT_READY_FOR_INFO1;
