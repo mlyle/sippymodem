@@ -7,10 +7,9 @@
 
 #include <stdbool.h>
 
-/* Phase 4 detects the final E symbol only after the equalizer delay has
- * accepted the first QAM_EQUALIZER_DELAY B1 inputs. This value transfers that
- * exact history to the data receiver; the next input therefore produces the
- * first B1 output rather than another training output. */
+/* Transfer an equalizer across a delayed training boundary. The source has
+ * already accepted QAM_EQUALIZER_DELAY inputs from the following interval;
+ * the next input therefore produces its first output without replay. */
 struct v34_equalizer_handoff {
 	struct qam_equalizer equalizer;
 };
