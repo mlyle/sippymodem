@@ -158,6 +158,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_info0_exchange.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase2_ranging.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_transmitter.c \
