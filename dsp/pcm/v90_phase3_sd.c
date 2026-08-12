@@ -23,7 +23,7 @@ static bool kind_is_valid(enum v90_phase3_sd_kind kind)
 	return kind == V90_PHASE3_SD || kind == V90_PHASE3_SD_BAR;
 }
 
-static bool sequence_is_valid(const struct v90_phase3_sd *sequence)
+bool v90_phase3_sd_is_valid(const struct v90_phase3_sd *sequence)
 {
 	uint16_t expected_total;
 
@@ -85,7 +85,7 @@ enum v90_phase3_sd_result v90_phase3_sd_next(
 
 	if (sequence == NULL || symbol == NULL)
 		return V90_PHASE3_SD_INVALID_ARGUMENT;
-	if (!sequence_is_valid(sequence))
+	if (!v90_phase3_sd_is_valid(sequence))
 		return V90_PHASE3_SD_INVALID_STATE;
 	if (sequence->emitted_symbols == sequence->total_symbols)
 		return V90_PHASE3_SD_COMPLETE;
@@ -102,7 +102,7 @@ enum v90_phase3_sd_result v90_phase3_sd_next(
 size_t v90_phase3_sd_remaining(
 	const struct v90_phase3_sd *sequence)
 {
-	return sequence_is_valid(sequence) ?
+	return v90_phase3_sd_is_valid(sequence) ?
 		       (size_t)(sequence->total_symbols -
 				sequence->emitted_symbols) :
 		       0;

@@ -5,6 +5,7 @@
 
 #include "v90_pcm_symbol.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -36,6 +37,8 @@ struct v90_phase3_sd {
 enum v90_phase3_sd_result v90_phase3_sd_init(
 	struct v90_phase3_sd *sequence, enum g711_law law,
 	uint8_t training_ucode, enum v90_phase3_sd_kind kind);
+bool v90_phase3_sd_is_valid(
+	const struct v90_phase3_sd *sequence);
 
 /* Generates one 8000-symbol/s network character.  A call after the last
  * symbol returns COMPLETE and leaves both the sequence and output untouched. */
