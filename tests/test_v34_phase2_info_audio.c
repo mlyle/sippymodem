@@ -161,6 +161,7 @@ static bool check_frame_recovery(
 	struct v34_phase2_info_audio_transmitter transmitter;
 	struct v34_phase2_info_audio_receiver receiver;
 	struct v34_phase2_info_event event = { 0 };
+	struct v34_phase2_info_event received_event = { 0 };
 	struct v34_phase2_dpsk_measurement measurement;
 	bool transmit_complete = false;
 	bool frame_received = false;
@@ -214,12 +215,15 @@ static bool check_frame_recovery(
 		      (int)transmit_role, (int)codec, index);
 		if (event.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
 			frame_received = true;
-			break;
+			received_event = event;
 		}
+		if (transmit_complete && frame_received)
+			break;
 	}
 	CHECK(transmit_complete && frame_received &&
-		      event.payload_bit_count == TEST_PAYLOAD_BITS &&
-		      memcmp(event.payload, payload, sizeof(payload)) == 0,
+		      received_event.payload_bit_count == TEST_PAYLOAD_BITS &&
+		      memcmp(received_event.payload, payload,
+			     sizeof(payload)) == 0,
 	      "Phase 2 INFO payload changed across G.711 audio");
 	measurement =
 		v34_phase2_info_audio_receiver_measure(&receiver);

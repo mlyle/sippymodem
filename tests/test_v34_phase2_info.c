@@ -444,13 +444,13 @@ static bool test_receive_reacquisition(void)
 	CHECK(feed_frame(
 		      &receiver, payload, 17, frame_bit_count - 1u,
 		      &capture) &&
-	      capture.received == 1 && capture.rejected == 2 &&
-	      capture.rejected_bit == frame_bit_count - 1u &&
+	      capture.received == 2 && capture.rejected == 1 &&
+	      capture.received_bit == frame_bit_count - 1u &&
 	      feed_frame(&receiver, payload, 17, SIZE_MAX, &capture) &&
-	      capture.received == 2 && capture.rejected == 2 &&
+	      capture.received == 3 && capture.rejected == 1 &&
 	      capture.last.payload_bit_count == 17 &&
 	      memcmp(capture.last.payload, payload, 2) == 0,
-	      "receiver did not reacquire after an end-marker rejection");
+	      "unprotected trailing fill affected a valid frame");
 	return true;
 }
 

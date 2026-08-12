@@ -193,7 +193,7 @@ static bool receive_stage_is_valid(
 	return stage == V34_PHASE2_INFO_SEARCH_SYNC ||
 	       stage == V34_PHASE2_INFO_RECEIVE_PAYLOAD ||
 	       stage == V34_PHASE2_INFO_RECEIVE_CRC ||
-	       stage == V34_PHASE2_INFO_RECEIVE_END;
+	       stage == V34_PHASE2_INFO_RECEIVE_TAIL;
 }
 
 bool v34_phase2_info_receiver_is_valid(
@@ -206,7 +206,7 @@ bool v34_phase2_info_receiver_is_valid(
 	    receiver->payload_bit_index >
 		    receiver->expected_payload_bit_count ||
 	    receiver->crc_bit_count > V34_PHASE2_INFO_CRC_BITS ||
-	    receiver->trailing_fill_bit_count >=
+	    receiver->tail_bit_count >=
 		    V34_PHASE2_INFO_TRAILING_FILL_BITS ||
 	    receiver->sync_window > V34_PHASE2_INFO_PREFIX_MASK ||
 	    !packed_tail_is_zero(
@@ -221,7 +221,7 @@ bool v34_phase2_info_receiver_is_valid(
 			       CRC16_CCITT_FALSE_INITIAL_REMAINDER &&
 		       receiver->received_crc == 0 &&
 		       receiver->crc_bit_count == 0 &&
-		       receiver->trailing_fill_bit_count == 0;
+		       receiver->tail_bit_count == 0;
 	case V34_PHASE2_INFO_RECEIVE_PAYLOAD:
 		return receiver->expected_payload_bit_count != 0 &&
 		       receiver->payload_bit_index <
@@ -231,7 +231,7 @@ bool v34_phase2_info_receiver_is_valid(
 				       receiver->payload_bit_index) &&
 		       receiver->received_crc == 0 &&
 		       receiver->crc_bit_count == 0 &&
-		       receiver->trailing_fill_bit_count == 0;
+		       receiver->tail_bit_count == 0;
 	case V34_PHASE2_INFO_RECEIVE_CRC:
 		return receiver->payload_bit_index ==
 			       receiver->expected_payload_bit_count &&
@@ -242,8 +242,8 @@ bool v34_phase2_info_receiver_is_valid(
 			       V34_PHASE2_INFO_CRC_BITS &&
 		       (uint32_t)receiver->received_crc <
 			       (UINT32_C(1) << receiver->crc_bit_count) &&
-		       receiver->trailing_fill_bit_count == 0;
-	case V34_PHASE2_INFO_RECEIVE_END:
+		       receiver->tail_bit_count == 0;
+	case V34_PHASE2_INFO_RECEIVE_TAIL:
 		return receiver->payload_bit_index ==
 			       receiver->expected_payload_bit_count &&
 		       receiver->crc == payload_crc(
@@ -265,7 +265,7 @@ static void clear_receive_frame(
 		CRC16_CCITT_FALSE_INITIAL_REMAINDER;
 	receiver->received_crc = 0;
 	receiver->crc_bit_count = 0;
-	receiver->trailing_fill_bit_count = 0;
+	receiver->tail_bit_count = 0;
 }
 
 static void search_for_sync(
@@ -380,18 +380,15 @@ v34_phase2_info_receive_bit(
 		    V34_PHASE2_INFO_CRC_BITS) {
 			if (next.received_crc == next.crc)
 				next.stage =
-					V34_PHASE2_INFO_RECEIVE_END;
+					V34_PHASE2_INFO_RECEIVE_TAIL;
 			else
 				reject_receive_frame(&next, &emitted);
 		}
 		break;
-	case V34_PHASE2_INFO_RECEIVE_END:
-		if (bit == 0) {
-			reject_receive_frame(&next, &emitted);
-		} else if (++next.trailing_fill_bit_count ==
-			   V34_PHASE2_INFO_TRAILING_FILL_BITS) {
+	case V34_PHASE2_INFO_RECEIVE_TAIL:
+		if (++next.tail_bit_count ==
+		    V34_PHASE2_INFO_TRAILING_FILL_BITS)
 			accept_receive_frame(&next, &emitted);
-		}
 		break;
 	}
 	if (!v34_phase2_info_receiver_is_valid(&next))

@@ -54,7 +54,7 @@ enum v34_phase2_info_receive_stage {
 	V34_PHASE2_INFO_SEARCH_SYNC,
 	V34_PHASE2_INFO_RECEIVE_PAYLOAD,
 	V34_PHASE2_INFO_RECEIVE_CRC,
-	V34_PHASE2_INFO_RECEIVE_END,
+	V34_PHASE2_INFO_RECEIVE_TAIL,
 };
 
 struct v34_phase2_info_receiver {
@@ -65,7 +65,7 @@ struct v34_phase2_info_receiver {
 	uint16_t crc;
 	uint16_t received_crc;
 	uint8_t crc_bit_count;
-	uint8_t trailing_fill_bit_count;
+	uint8_t tail_bit_count;
 	enum v34_phase2_info_receive_stage stage;
 };
 
@@ -87,7 +87,7 @@ enum v34_phase2_info_result
 v34_phase2_info_generator_reset(
 	struct v34_phase2_info_generator *generator);
 
-/* frame_complete accompanies the final end-marker bit. */
+/* frame_complete accompanies the final transmitted fill bit. */
 enum v34_phase2_info_result
 v34_phase2_info_next_bit(
 	struct v34_phase2_info_generator *generator,
