@@ -25,6 +25,7 @@ DSP_V22_SOURCE_DIR := $(DSP_SOURCE_DIR)/v22
 DSP_V32_SOURCE_DIR := $(DSP_SOURCE_DIR)/v32
 DSP_PCM_SOURCE_DIR := $(DSP_SOURCE_DIR)/pcm
 V34_NATIVE_SOURCE_NAMES := \
+	phase2_info0_exchange.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v34_*.c))
 V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
@@ -1338,6 +1339,7 @@ V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o \
 	$(BUILD_DIR)/v34_phase2_info_audio.o \
+	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/v34_phase2_info0_exchange.o \
 	$(BUILD_DIR)/v34_phase2_tone.o
 V34_PHASE2_RANGING_TEST_BINARY := \
@@ -1351,6 +1353,7 @@ V34_PHASE2_RANGING_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o \
 	$(BUILD_DIR)/v34_phase2_info_audio.o \
+	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/v34_phase2_info0_exchange.o \
 	$(BUILD_DIR)/v34_phase2_ranging.o \
 	$(BUILD_DIR)/v34_phase2_tone.o
@@ -1363,6 +1366,7 @@ V34_PHASE2_PROBE_FLOW_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o \
 	$(BUILD_DIR)/v34_phase2_info_audio.o \
+	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/v34_phase2_info0_exchange.o \
 	$(BUILD_DIR)/v34_phase2_initial_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
@@ -3158,6 +3162,10 @@ $(BUILD_DIR)/v34_phase2_dpsk.o: \
 
 $(BUILD_DIR)/v34_phase2_info_audio.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info_audio.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/phase2_info0_exchange.o: \
+	$(DSP_PCM_SOURCE_DIR)/phase2_info0_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase2_info0_exchange.o: \

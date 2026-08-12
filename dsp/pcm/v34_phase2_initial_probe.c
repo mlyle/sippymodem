@@ -18,7 +18,7 @@ static int16_t nominal_amplitude(
 	const struct v34_phase2_ranging *ranging)
 {
 	const struct v34_phase2_tone_transmitter *tone =
-		&ranging->info0_exchange.tone_transmitter;
+		&ranging->info0_exchange.transport.tone_transmitter;
 
 	return ranging->info0_exchange.local_role ==
 		       V34_CALLING_STATION ?
@@ -176,7 +176,7 @@ static bool observe_remote_tone(
 	struct v34_phase2_initial_probe_event *event)
 {
 	return v34_phase2_tone_detector_sample(
-		       &probe->ranging.info0_exchange.tone_detector,
+		       &probe->ranging.info0_exchange.transport.tone_detector,
 		       received_sample, &event->tone_event) ==
 	       V34_PHASE2_TONE_OK;
 }
@@ -185,7 +185,7 @@ static bool reset_remote_tone_detector(
 	struct v34_phase2_initial_probe *probe)
 {
 	return v34_phase2_tone_detector_reset(
-		       &probe->ranging.info0_exchange.tone_detector) ==
+		       &probe->ranging.info0_exchange.transport.tone_detector) ==
 	       V34_PHASE2_TONE_OK;
 }
 
@@ -193,7 +193,8 @@ static bool generate_local_tone(
 	struct v34_phase2_initial_probe *probe, int16_t *sample)
 {
 	return v34_phase2_tone_transmitter_sample(
-		       &probe->ranging.info0_exchange.tone_transmitter, sample) ==
+		       &probe->ranging.info0_exchange.transport.tone_transmitter,
+		       sample) ==
 	       V34_PHASE2_TONE_OK;
 }
 

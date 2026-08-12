@@ -176,7 +176,8 @@ static bool observe_remote_tone(
 	struct v34_phase2_probe_turnaround_event *event)
 {
 	return v34_phase2_tone_detector_sample(
-		       &turnaround->initial_probe.ranging.info0_exchange.tone_detector,
+		       &turnaround->initial_probe.ranging.info0_exchange.transport
+			.tone_detector,
 		       received_sample, &event->tone_event) ==
 	       V34_PHASE2_TONE_OK;
 }
@@ -187,7 +188,7 @@ static bool generate_local_tone(
 {
 	return v34_phase2_tone_transmitter_sample(
 		       &turnaround->initial_probe.ranging.info0_exchange
-			.tone_transmitter,
+			.transport.tone_transmitter,
 		       sample) == V34_PHASE2_TONE_OK;
 }
 
@@ -196,7 +197,7 @@ static bool reverse_local_tone(
 {
 	return v34_phase2_tone_transmitter_reverse(
 		       &turnaround->initial_probe.ranging.info0_exchange
-			.tone_transmitter) == V34_PHASE2_TONE_OK;
+			.transport.tone_transmitter) == V34_PHASE2_TONE_OK;
 }
 
 static bool phase_transmits_tone(

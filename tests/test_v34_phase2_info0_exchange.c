@@ -156,10 +156,10 @@ static bool check_exchange(enum test_codec codec)
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_info0_exchange_event caller_event;
 		struct v34_phase2_info0_exchange_event answer_event;
-		enum v34_phase2_info0_transmit_phase caller_before =
-			caller.transmit_phase;
-		enum v34_phase2_info0_transmit_phase answer_before =
-			answerer.transmit_phase;
+		enum phase2_info0_transmit_phase caller_before =
+			caller.transport.transmit_phase;
+		enum phase2_info0_transmit_phase answer_before =
+			answerer.transport.transmit_phase;
 		int16_t next_caller_sample;
 		int16_t next_answer_sample;
 
@@ -181,20 +181,20 @@ static bool check_exchange(enum test_codec codec)
 		if (index < V34_PHASE2_POST_V8_SILENCE_SAMPLES)
 			CHECK(next_caller_sample == 0 && next_answer_sample == 0,
 			      "post-V.8 silence ended at sample %zu", index);
-		if (caller_before != caller.transmit_phase) {
-			if (caller.transmit_phase ==
-			    V34_PHASE2_INFO0_SEQUENCE)
+		if (caller_before != caller.transport.transmit_phase) {
+			if (caller.transport.transmit_phase ==
+			    PHASE2_INFO0_SEQUENCE)
 				caller_info_start = index + 1u;
-			if (caller.transmit_phase ==
-			    V34_PHASE2_INFO0_TONE)
+			if (caller.transport.transmit_phase ==
+			    PHASE2_INFO0_TONE)
 				caller_tone_start = index + 1u;
 		}
-		if (answer_before != answerer.transmit_phase) {
-			if (answerer.transmit_phase ==
-			    V34_PHASE2_INFO0_SEQUENCE)
+		if (answer_before != answerer.transport.transmit_phase) {
+			if (answerer.transport.transmit_phase ==
+			    PHASE2_INFO0_SEQUENCE)
 				answer_info_start = index + 1u;
-			if (answerer.transmit_phase ==
-			    V34_PHASE2_INFO0_TONE)
+			if (answerer.transport.transmit_phase ==
+			    PHASE2_INFO0_TONE)
 				answer_tone_start = index + 1u;
 		}
 		caller_line_sample = next_caller_sample;
@@ -214,12 +214,13 @@ static bool check_exchange(enum test_codec codec)
 		      caller_tone_start < caller_info_start + 750u &&
 		      answer_tone_start == caller_tone_start,
 	      "INFO0 transmit timing changed");
-	CHECK(caller.transmit_phase == V34_PHASE2_INFO0_TONE &&
-		      answerer.transmit_phase ==
-			      V34_PHASE2_INFO0_TONE &&
+	CHECK(caller.transport.transmit_phase == PHASE2_INFO0_TONE &&
+		      answerer.transport.transmit_phase ==
+			      PHASE2_INFO0_TONE &&
 		      caller.peer_info0_received && answerer.peer_info0_received,
 	      "INFO0 exchange stopped at phases %d/%d peer %d/%d events %zu/%zu rejected %zu/%zu",
-	      caller.transmit_phase, answerer.transmit_phase,
+	      caller.transport.transmit_phase,
+	      answerer.transport.transmit_phase,
 	      caller.peer_info0_received, answerer.peer_info0_received,
 	      caller_observation.info_received_count,
 	      answer_observation.info_received_count,
@@ -277,7 +278,7 @@ static bool test_validation(void)
 		      TEST_AMPLITUDE, &capabilities) ==
 		      V34_PHASE2_INFO0_EXCHANGE_OK,
 	      "INFO0 validation fixture did not initialize");
-	exchange.info_receiver.modulation.detector_output = NAN;
+	exchange.transport.info_receiver.modulation.detector_output = NAN;
 	before = exchange;
 	CHECK(v34_phase2_info0_exchange_sample(
 		      &exchange, 0, &sample, &event) ==

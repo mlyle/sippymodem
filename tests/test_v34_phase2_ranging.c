@@ -126,15 +126,15 @@ static void observe_ranging_events(
 
 static void observe_phase_transition(
 	enum v34_phase2_ranging_phase before,
-	enum v34_phase2_info0_transmit_phase transmit_before,
+	enum phase2_info0_transmit_phase transmit_before,
 	const struct v34_phase2_ranging *after,
 	bool caller, size_t sample_index,
 	struct ranging_observation *observation)
 {
 	if (!caller &&
-	    transmit_before != V34_PHASE2_INFO0_TONE &&
-	    after->info0_exchange.transmit_phase ==
-		    V34_PHASE2_INFO0_TONE &&
+	    transmit_before != PHASE2_INFO0_TONE &&
+	    after->info0_exchange.transport.transmit_phase ==
+		    PHASE2_INFO0_TONE &&
 	    observation->answer_tone_start_sample == SIZE_MAX)
 		observation->answer_tone_start_sample = sample_index + 1u;
 	if (before == after->phase)
@@ -193,12 +193,12 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 			caller.phase;
 		enum v34_phase2_ranging_phase answer_before =
 			answerer.phase;
-		enum v34_phase2_info0_transmit_phase
+		enum phase2_info0_transmit_phase
 			caller_transmit_before =
-				caller.info0_exchange.transmit_phase;
-		enum v34_phase2_info0_transmit_phase
+				caller.info0_exchange.transport.transmit_phase;
+		enum phase2_info0_transmit_phase
 			answer_transmit_before =
-				answerer.info0_exchange.transmit_phase;
+				answerer.info0_exchange.transport.transmit_phase;
 		int16_t caller_transmit;
 		int16_t answer_transmit;
 
@@ -384,7 +384,8 @@ static bool test_validation(void)
 		      TEST_AMPLITUDE, &capabilities) ==
 		      V34_PHASE2_RANGING_OK,
 	      "validation fixture did not initialize");
-	ranging.info0_exchange.info_receiver.modulation.detector_output = NAN;
+	ranging.info0_exchange.transport.info_receiver.modulation.detector_output =
+		NAN;
 	before = ranging;
 	CHECK(v34_phase2_ranging_sample(
 		      &ranging, 0, &sample, &event) ==

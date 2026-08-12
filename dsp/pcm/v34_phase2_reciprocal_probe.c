@@ -113,7 +113,8 @@ static int16_t nominal_amplitude(
 	const struct v34_phase2_probe_turnaround *turnaround)
 {
 	const struct v34_phase2_tone_transmitter *tone =
-		&turnaround->initial_probe.ranging.info0_exchange.tone_transmitter;
+		&turnaround->initial_probe.ranging.info0_exchange.transport
+			.tone_transmitter;
 
 	return turnaround->initial_probe.ranging.info0_exchange.local_role ==
 		       V34_CALLING_STATION ?
@@ -141,7 +142,8 @@ v34_phase2_reciprocal_probe_init(
 			V34_PHASE2_RECIPROCAL_PROBE_CALLER_TRANSMITTING;
 		if (v34_phase2_tone_detector_reset(
 			    &initialized.turnaround.initial_probe.ranging.info0_exchange
-				     .tone_detector) != V34_PHASE2_TONE_OK ||
+				     .transport.tone_detector) !=
+			    V34_PHASE2_TONE_OK ||
 		    v34_phase2_probe_sequence_init(
 			    &initialized.path.transmit,
 			    nominal_amplitude(completed_turnaround),
@@ -172,7 +174,7 @@ static bool observe_remote_tone(
 {
 	return v34_phase2_tone_detector_sample(
 		       &probe->turnaround.initial_probe.ranging.info0_exchange
-			.tone_detector,
+			.transport.tone_detector,
 		       received_sample, &event->tone_event) ==
 	       V34_PHASE2_TONE_OK;
 }
@@ -182,7 +184,7 @@ static bool generate_local_tone(
 {
 	return v34_phase2_tone_transmitter_sample(
 		       &probe->turnaround.initial_probe.ranging.info0_exchange
-			.tone_transmitter,
+			.transport.tone_transmitter,
 		       sample) == V34_PHASE2_TONE_OK;
 }
 

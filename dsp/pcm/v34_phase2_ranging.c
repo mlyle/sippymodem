@@ -7,8 +7,8 @@
 static bool has_ranging_context(
 	const struct v34_phase2_ranging *ranging)
 {
-	return ranging->info0_exchange.transmit_phase ==
-		       V34_PHASE2_INFO0_TONE &&
+	return ranging->info0_exchange.transport.transmit_phase ==
+		       PHASE2_INFO0_TONE &&
 	       ranging->info0_exchange.peer_info0_received;
 }
 
@@ -197,7 +197,7 @@ static bool prepare_transmitter(
 	}
 	return !reverse ||
 	       v34_phase2_tone_transmitter_reverse(
-		       &ranging->info0_exchange.tone_transmitter) ==
+		       &ranging->info0_exchange.transport.tone_transmitter) ==
 		       V34_PHASE2_TONE_OK;
 }
 
@@ -207,7 +207,7 @@ static void enter_active_ranging(
 	if (ranging->phase !=
 		    V34_PHASE2_RANGING_INFO0_EXCHANGE ||
 	    !ranging->info0_exchange.peer_info0_received ||
-	    !ranging->info0_exchange.tone_detector.tone_present)
+	    !ranging->info0_exchange.transport.tone_detector.tone_present)
 		return;
 	ranging->phase = ranging->info0_exchange.local_role ==
 				 V34_CALLING_STATION ?
@@ -382,7 +382,7 @@ v34_phase2_ranging_sample(
 {
 	struct v34_phase2_ranging next;
 	struct v34_phase2_ranging_event emitted = { 0 };
-	enum v34_phase2_info0_transmit_phase transmit_phase_before;
+	enum phase2_info0_transmit_phase transmit_phase_before;
 	bool pure_tone_sample;
 	int16_t generated;
 
@@ -392,9 +392,10 @@ v34_phase2_ranging_sample(
 	next = *ranging;
 	if (!prepare_transmitter(&next))
 		return V34_PHASE2_RANGING_INVALID_ARGUMENT;
-	transmit_phase_before = next.info0_exchange.transmit_phase;
+	transmit_phase_before =
+		next.info0_exchange.transport.transmit_phase;
 	pure_tone_sample = transmit_phase_before ==
-			   V34_PHASE2_INFO0_TONE;
+			   PHASE2_INFO0_TONE;
 	if (v34_phase2_info0_exchange_sample(
 		    &next.info0_exchange, received_sample, &generated,
 		    &emitted.exchange_event) !=

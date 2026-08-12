@@ -185,6 +185,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_selection.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_dpsk.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_initial_probe.c \
+	$(DSP_PCM_SOURCE_DIR)/phase2_info0_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info0_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info1_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info_audio.c \

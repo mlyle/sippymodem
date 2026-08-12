@@ -31,7 +31,7 @@ static int16_t probe_nominal_amplitude(
 {
 	const struct v34_phase2_tone_transmitter *tone =
 		&probe->turnaround.initial_probe.ranging.info0_exchange
-			 .tone_transmitter;
+			 .transport.tone_transmitter;
 
 	return probe_role(probe) == V34_CALLING_STATION ?
 		       tone->carrier_amplitude :
@@ -270,7 +270,7 @@ v34_phase2_info1_exchange_answerer_init(
 	initialize_handoff_context(&initialized, completed_probe);
 	initialized.answerer_tone_a = completed_probe->turnaround.initial_probe
 					      .ranging.info0_exchange
-					      .tone_transmitter;
+					      .transport.tone_transmitter;
 	initialized.peer_deadline_elapsed_samples =
 		completed_probe->answerer_info1c_elapsed_samples;
 	if (initialized.peer_deadline_elapsed_samples >=
