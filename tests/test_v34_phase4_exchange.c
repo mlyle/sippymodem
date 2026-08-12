@@ -17,6 +17,7 @@ struct endpoint {
 	struct v34_phase4_exchange phase4;
 	struct v34_phase3_exchange_handoff handoff;
 	struct v34_phase4_exchange_configuration phase4_configuration;
+	unsigned int data_preparation_count;
 	bool phase4_active;
 };
 
@@ -67,8 +68,7 @@ static struct v34_mp_parameters mp_parameters(
 		.remote_transmitter_nonlinear_encoding =
 			role == V34_ANSWERING_STATION,
 		.remote_transmitter_expanded_shaping = true,
-		.data_rate_capability_mask =
-			role == V34_CALLING_STATION ? 0x1a55u : 0x0aaau,
+		.data_rate_capability_mask = 0x00ffu,
 		.asymmetric_rates_enabled = true,
 	};
 }
@@ -140,6 +140,7 @@ phase4_configuration(enum v34_station_role role)
 			.phase4_equalizer_adaptation = 0.03,
 		},
 		.transmit_mp = mp_record(role),
+		.data_equalizer_adaptation = 0.02,
 	};
 }
 
@@ -172,10 +173,28 @@ static bool endpoint_sample(
 	struct endpoint *endpoint, int16_t received, int16_t *transmit,
 	uint32_t *phase4_events)
 {
-	if (endpoint->phase4_active)
-		return v34_phase4_exchange_sample(
-			       &endpoint->phase4, received, transmit,
-			       phase4_events) == V34_PHASE4_EXCHANGE_OK;
+	if (endpoint->phase4_active) {
+		enum v34_phase4_exchange_result result =
+			v34_phase4_exchange_sample(
+				&endpoint->phase4, received, transmit,
+				phase4_events);
+
+		if (result != V34_PHASE4_EXCHANGE_OK) {
+			fprintf(stderr, "Phase 4 sample: %s\n",
+				v34_phase4_exchange_result_name(result));
+			return false;
+		}
+		if (!v34_phase4_exchange_needs_data_preparation(
+			    &endpoint->phase4))
+			return true;
+		endpoint->data_preparation_count++;
+		result = v34_phase4_exchange_prepare_data_startup(
+			&endpoint->phase4);
+		if (result != V34_PHASE4_EXCHANGE_OK)
+			fprintf(stderr, "Phase 4 data preparation: %s\n",
+				v34_phase4_exchange_result_name(result));
+		return result == V34_PHASE4_EXCHANGE_OK;
+	}
 	{
 		uint32_t phase3_events;
 
@@ -252,13 +271,26 @@ static bool run_pair(
 		}
 	}
 	CHECK(false,
-	      "Phase 4 did not complete reciprocal MP-prime: active=%d/%d "
+	      "Phase 4 did not prepare reciprocal E: active=%d/%d "
 	      "events=0x%x/0x%x",
 	      calling.phase4_active, answering.phase4_active,
 	      caller_events_seen, answerer_events_seen);
 }
 
-static bool test_generated_mp_negotiation(void)
+static bool directions_are_equal(
+	const struct v34_data_direction_parameters *left,
+	const struct v34_data_direction_parameters *right)
+{
+	return left->trellis_selection == right->trellis_selection &&
+	       left->nonlinear_parameter == right->nonlinear_parameter &&
+	       left->primary_data_rate_2400_bps_units ==
+		       right->primary_data_rate_2400_bps_units &&
+	       left->expanded_shaping == right->expanded_shaping &&
+	       memcmp(left->precoder_coefficients, right->precoder_coefficients,
+		      sizeof(left->precoder_coefficients)) == 0;
+}
+
+static bool test_generated_data_preparation(void)
 {
 	const uint32_t common_events =
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED |
@@ -270,6 +302,8 @@ static bool test_generated_mp_negotiation(void)
 		V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E;
 	struct endpoint caller;
 	struct endpoint answerer;
+	struct v34_data_startup caller_startup;
+	struct v34_data_startup answerer_startup;
 	struct v34_mp_record caller_peer;
 	struct v34_mp_record answerer_peer;
 	struct v34_mp_record expected_caller_peer =
@@ -293,13 +327,40 @@ static bool test_generated_mp_negotiation(void)
 		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
 	      answerer.phase4.transmit.stage ==
 		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
+	      caller.phase4.receive.state.phase4.control.stage ==
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP &&
+	      answerer.phase4.receive.state.phase4.control.stage ==
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP &&
 	      caller.phase4.transmit.phase4_trn_symbols >=
 		      V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      answerer.phase4.transmit.phase4_trn_symbols >=
 		      V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      !v34_phase4_exchange_has_failed(&caller.phase4) &&
-	      !v34_phase4_exchange_has_failed(&answerer.phase4),
-	      "Phase 4 owners reached the wrong MP-prime boundary");
+	      !v34_phase4_exchange_has_failed(&answerer.phase4) &&
+	      caller.data_preparation_count == 1 &&
+	      answerer.data_preparation_count == 1,
+	      "Phase 4 owners reached the wrong prepared boundary");
+	CHECK(v34_phase4_exchange_get_data_startup(
+		      &caller.phase4, &caller_startup) &&
+	      v34_phase4_exchange_get_data_startup(
+		      &answerer.phase4, &answerer_startup) &&
+	      v34_data_startup_is_valid(&caller_startup) &&
+	      v34_data_startup_is_valid(&answerer_startup) &&
+	      caller_startup.mode.transmit
+		      .primary_data_rate_2400_bps_units == 8 &&
+	      caller_startup.mode.receive
+		      .primary_data_rate_2400_bps_units == 7 &&
+	      answerer_startup.mode.transmit
+		      .primary_data_rate_2400_bps_units == 7 &&
+	      answerer_startup.mode.receive
+		      .primary_data_rate_2400_bps_units == 8 &&
+	      directions_are_equal(
+		      &caller_startup.mode.transmit,
+		      &answerer_startup.mode.receive) &&
+	      directions_are_equal(
+		      &caller_startup.mode.receive,
+		      &answerer_startup.mode.transmit),
+	      "Phase 4 prepared incompatible post-E data directions");
 	CHECK(v34_phase4_exchange_get_peer_mp(
 		      &caller.phase4, &caller_peer) &&
 	      v34_phase4_exchange_get_peer_mp(
@@ -319,6 +380,8 @@ static bool test_validation_and_transactionality(void)
 		phase4_configuration(V34_CALLING_STATION);
 	struct v34_phase4_exchange exchange;
 	struct v34_phase4_exchange saved;
+	struct v34_data_startup startup = { 0 };
+	struct v34_data_startup saved_startup;
 	struct v34_mp_record peer = mp_record(V34_CALLING_STATION);
 	struct v34_mp_record saved_peer = peer;
 	struct v34_mp_record invalid_record = peer;
@@ -342,6 +405,15 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "invalid Phase 4 initialization changed the destination");
+	invalid = phase4_configuration(V34_CALLING_STATION);
+	invalid.data_equalizer_adaptation = NAN;
+	memset(&exchange, 0xa5, sizeof(exchange));
+	saved = exchange;
+	CHECK(v34_phase4_exchange_init(
+		      &exchange, &caller.handoff, &invalid) ==
+		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
+	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
+	      "invalid data adaptation changed the Phase 4 destination");
 	invalid = phase4_configuration(V34_CALLING_STATION);
 	invalid.transmit_mp.parameters.type1.common.acknowledges_peer_mp = true;
 	memset(&exchange, 0xa5, sizeof(exchange));
@@ -370,10 +442,22 @@ static bool test_validation_and_transactionality(void)
 	      sample == 1234 && events == UINT32_C(0x5aa5a55a) &&
 	      overlap.events == UINT32_C(0xa55a5aa5),
 	      "rejected Phase 4 samples were not transactional");
+	saved = caller.phase4;
+	CHECK(v34_phase4_exchange_prepare_data_startup(&caller.phase4) ==
+		      V34_PHASE4_EXCHANGE_INVALID_STATE &&
+	      memcmp(&caller.phase4, &saved, sizeof(saved)) == 0,
+	      "out-of-sequence data preparation changed the exchange");
+	memset(&startup, 0xa5, sizeof(startup));
+	saved_startup = startup;
 	CHECK(!v34_phase4_exchange_is_valid(NULL) &&
 	      !v34_phase4_exchange_has_failed(NULL) &&
 	      !v34_phase4_exchange_is_trn_ready(NULL) &&
+	      !v34_phase4_exchange_needs_data_preparation(NULL) &&
 	      !v34_phase4_exchange_is_ready_for_e(NULL) &&
+	      !v34_phase4_exchange_get_data_startup(NULL, &startup) &&
+	      !v34_phase4_exchange_get_data_startup(
+		      &caller.phase4, NULL) &&
+	      memcmp(&startup, &saved_startup, sizeof(startup)) == 0 &&
 	      !v34_phase4_exchange_get_peer_mp(NULL, &peer) &&
 	      !v34_phase4_exchange_get_peer_mp(&caller.phase4, NULL) &&
 	      memcmp(&peer, &saved_peer, sizeof(peer)) == 0 &&
@@ -381,6 +465,9 @@ static bool test_validation_and_transactionality(void)
 	      strcmp(v34_phase4_exchange_result_name(
 		     V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH),
 		     "sequence mismatch") == 0 &&
+	      strcmp(v34_phase4_exchange_result_name(
+		     V34_PHASE4_EXCHANGE_NO_COMMON_RATE),
+		     "no common rate") == 0 &&
 	      strcmp(v34_phase4_exchange_result_name(
 		     (enum v34_phase4_exchange_result)99),
 		     "unknown") == 0,
@@ -397,7 +484,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "generated MP negotiation", test_generated_mp_negotiation },
+		{ "generated data preparation",
+		  test_generated_data_preparation },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

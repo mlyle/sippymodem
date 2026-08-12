@@ -1243,9 +1243,11 @@ V34_PHASE4_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase4_exchange.o \
 	$(BUILD_DIR)/v34_phase4_exchange.o \
 	$(sort $(filter-out \
+		$(BUILD_DIR)/test_v34_data_startup.o \
 		$(BUILD_DIR)/test_v34_phase3_exchange.o \
 		$(BUILD_DIR)/test_v34_phase3_phase4_line.o \
 		$(BUILD_DIR)/test_v34_training_transmitter.o, \
+		$(V34_DATA_STARTUP_TEST_OBJECTS) \
 		$(V34_PHASE3_EXCHANGE_TEST_OBJECTS) \
 		$(V34_PHASE3_PHASE4_LINE_TEST_OBJECTS) \
 		$(V34_TRAINING_TRANSMITTER_TEST_OBJECTS)))

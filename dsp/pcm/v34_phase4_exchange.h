@@ -3,6 +3,7 @@
 #ifndef V34_PHASE4_EXCHANGE_H
 #define V34_PHASE4_EXCHANGE_H
 
+#include "v34_data_startup.h"
 #include "v34_mp.h"
 #include "v34_phase3_exchange.h"
 #include "v34_training_receiver.h"
@@ -15,6 +16,8 @@ enum v34_phase4_exchange_result {
 	V34_PHASE4_EXCHANGE_OK,
 	V34_PHASE4_EXCHANGE_FAILED,
 	V34_PHASE4_EXCHANGE_INVALID_ARGUMENT,
+	V34_PHASE4_EXCHANGE_INVALID_STATE,
+	V34_PHASE4_EXCHANGE_NO_COMMON_RATE,
 	V34_PHASE4_EXCHANGE_OUT_OF_RANGE,
 	V34_PHASE4_EXCHANGE_CLIPPING_RISK,
 	V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH,
@@ -39,17 +42,24 @@ struct v34_phase4_exchange_configuration {
 	/* Supply an ordinary MP. The exchange sets the acknowledgment bit only
 	 * after receiving a valid peer record. */
 	struct v34_mp_record transmit_mp;
+	double data_equalizer_adaptation;
 };
 
 /* Own both sample directions from the exact Phase 3 handoff through the
- * reciprocal MP-prime handshake. The caller ends J only after receiving the
- * answerer's complete S/S-bar marker and reaching a J-pattern boundary.
- * Calls on one instance must be serialized. */
+ * reciprocal MP-prime handshake, with both post-E data paths prepared. The
+ * caller ends J only after receiving the answerer's complete S/S-bar marker
+ * and reaching a J-pattern boundary. Receipt of the first valid peer MP pauses
+ * the sample path until prepare_data_startup() performs the negotiated mapping
+ * calibration outside the real-time callback. E acquisition and the B1
+ * handoff remain with the following controller slice. Calls on one instance
+ * must be serialized. */
 struct v34_phase4_exchange {
 	struct v34_training_transmitter transmit;
 	struct v34_training_receiver receive;
+	struct v34_data_startup data_startup;
 	struct v34_mp_record transmit_mp;
 	struct v34_mp_record peer_mp;
+	double data_equalizer_adaptation;
 	enum v34_station_role local_role;
 	bool finish_j_requested;
 	bool transmit_trn_started;
@@ -58,6 +68,8 @@ struct v34_phase4_exchange {
 	bool transmit_mp_prime_started;
 	bool peer_mp_received;
 	bool peer_mp_prime_received;
+	bool data_preparation_required;
+	bool data_startup_prepared;
 	bool ready_announced;
 	bool failed;
 };
@@ -73,10 +85,25 @@ bool v34_phase4_exchange_has_failed(
 	const struct v34_phase4_exchange *exchange);
 bool v34_phase4_exchange_is_trn_ready(
 	const struct v34_phase4_exchange *exchange);
-/* Both acknowledgments are committed. E must still begin at a complete local
- * MP-prime record boundary, which the following controller slice will own. */
+bool v34_phase4_exchange_needs_data_preparation(
+	const struct v34_phase4_exchange *exchange);
+
+/* Resolve the pending first peer MP, selecting and calibrating both negotiated
+ * data directions. Rejected calls leave the exchange unchanged. A terminal
+ * preparation failure is latched because the paused line sample cannot be
+ * skipped or replayed. */
+enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
+	struct v34_phase4_exchange *exchange);
+
+/* Both acknowledgments are committed and both post-E paths are prepared. E
+ * must still begin at a complete local MP-prime record boundary. */
 bool v34_phase4_exchange_is_ready_for_e(
 	const struct v34_phase4_exchange *exchange);
+
+/* Copy the prepared post-E mapping and receive configuration atomically. */
+bool v34_phase4_exchange_get_data_startup(
+	const struct v34_phase4_exchange *exchange,
+	struct v34_data_startup *startup);
 
 /* Copy the first accepted peer record with its acknowledgment bit cleared.
  * A rejected call leaves the destination unchanged. */
@@ -84,9 +111,11 @@ bool v34_phase4_exchange_get_peer_mp(
 	const struct v34_phase4_exchange *exchange,
 	struct v34_mp_record *record);
 
-/* Consume and produce one simultaneous line sample. Receive events affect the
- * next unconsumed transmit symbol. Terminal receive errors still commit the
- * consumed input, generated output, and event bits. */
+/* Consume and produce one simultaneous line sample. Calls while data
+ * preparation is required return INVALID_STATE without consuming or producing
+ * anything. Receive events affect the next unconsumed transmit symbol.
+ * Terminal receive errors still commit the consumed input, generated output,
+ * and event bits. */
 enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 	struct v34_phase4_exchange *exchange, int16_t received_sample,
 	int16_t *transmit_sample, uint32_t *events);
