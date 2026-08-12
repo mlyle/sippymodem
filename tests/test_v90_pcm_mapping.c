@@ -7,6 +7,10 @@
 #include <stdint.h>
 #include <string.h>
 
+enum {
+	MAX_MODULUS_BITS = 39,
+};
+
 static void add_ucode(
 	struct v90_cp_constellation *constellation, uint8_t ucode)
 {
@@ -67,12 +71,61 @@ static struct v90_cp_parameters parameters(
 	return value;
 }
 
+static struct v90_cp_parameters mixed_parameters(void)
+{
+	static const uint8_t sizes[V90_CP_FRAME_INTERVALS] = {
+		2, 3, 5, 7, 11, 13,
+	};
+	struct v90_cp_parameters value =
+		parameters(V90_CP_TRAINING, 11, 1, 2, true);
+
+	memset(value.transmit_constellations, 0,
+	       sizeof(value.transmit_constellations));
+	memset(value.codec_constellations, 0,
+	       sizeof(value.codec_constellations));
+	value.constellation_count = V90_CP_FRAME_INTERVALS;
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		fill_constellation(
+			&value.transmit_constellations[interval],
+			(uint8_t)(interval * 16u), sizes[interval]);
+		fill_constellation(
+			&value.codec_constellations[interval],
+			(uint8_t)(7u + interval * 16u), sizes[interval]);
+		value.frame_constellation[interval] = (uint8_t)interval;
+	}
+	return value;
+}
+
+static void bits_from_value(
+	uint64_t value, uint8_t *bits, size_t bit_count)
+{
+	for (size_t bit = 0; bit < bit_count; ++bit)
+		bits[bit] = (uint8_t)((value >> bit) & 1u);
+}
+
+static uint64_t labels_value(
+	const struct v90_pcm_mapping *mapping,
+	const uint8_t labels[V90_CP_FRAME_INTERVALS])
+{
+	uint64_t value = 0;
+	uint64_t place = 1;
+
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		value += place * labels[interval];
+		place *= mapping->modulus[interval];
+	}
+	return value;
+}
+
 static bool test_training_mapping(void)
 {
 	struct v90_cp_parameters source =
 		parameters(V90_CP_TRAINING, 13, 1, 8, true);
 	struct v90_pcm_mapping mapping;
 	uint8_t bits[16];
+	uint8_t decoded[16] = { 0 };
 	uint8_t labels[V90_CP_FRAME_INTERVALS] = { 0 };
 	static const uint8_t expected_labels[] = { 2, 3, 5, 2, 2, 1 };
 	uint16_t input = 0xa55au;
@@ -123,8 +176,201 @@ static bool test_training_mapping(void)
 	CHECK(v90_pcm_mapping_encode_modulus(
 		      &mapping, bits, ARRAY_LENGTH(bits), labels) ==
 		      V90_PCM_MAPPING_OK &&
-	      memcmp(labels, expected_labels, sizeof(labels)) == 0,
+	      memcmp(labels, expected_labels, sizeof(labels)) == 0 &&
+	      labels_value(&mapping, labels) == input &&
+	      v90_pcm_mapping_decode_modulus(
+		      &mapping, labels, decoded, ARRAY_LENGTH(decoded)) ==
+		      V90_PCM_MAPPING_OK &&
+	      memcmp(decoded, bits, sizeof(bits)) == 0,
 	      "mixed-radix mapping changed for 0xa55a");
+	return true;
+}
+
+static bool test_generated_inverse_mapping(void)
+{
+	struct v90_cp_parameters source = mixed_parameters();
+	struct v90_pcm_mapping mapping;
+	uint8_t bits[MAX_MODULUS_BITS];
+	uint8_t decoded[MAX_MODULUS_BITS];
+	uint8_t labels[V90_CP_FRAME_INTERVALS];
+	uint8_t recovered[V90_CP_FRAME_INTERVALS];
+	uint64_t limit;
+
+	CHECK(v90_pcm_mapping_init(&mapping, &source) ==
+		      V90_PCM_MAPPING_OK &&
+	      mapping.modulus_bits == 14 &&
+	      mapping.modulus[0] == 2 && mapping.modulus[1] == 3 &&
+	      mapping.modulus[2] == 5 && mapping.modulus[3] == 7 &&
+	      mapping.modulus[4] == 11 && mapping.modulus[5] == 13,
+	      "uneven generated mapping did not initialize");
+	limit = UINT64_C(1) << mapping.modulus_bits;
+	for (uint64_t value = 0; value < limit; ++value) {
+		bits_from_value(value, bits, mapping.modulus_bits);
+		CHECK(v90_pcm_mapping_encode_modulus(
+			      &mapping, bits, mapping.modulus_bits,
+			      labels) == V90_PCM_MAPPING_OK &&
+		      labels_value(&mapping, labels) == value &&
+		      v90_pcm_mapping_decode_modulus(
+			      &mapping, labels, decoded,
+			      mapping.modulus_bits) ==
+			      V90_PCM_MAPPING_OK &&
+		      memcmp(decoded, bits, mapping.modulus_bits) == 0,
+		      "uneven mixed-radix round trip failed for %llu",
+		      (unsigned long long)value);
+		for (size_t interval = 0;
+		     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+			uint8_t transmit;
+			uint8_t codec;
+
+			CHECK(v90_pcm_mapping_ucode(
+				      &mapping,
+				      V90_PCM_MAPPING_TRANSMIT, interval,
+				      labels[interval], &transmit) ==
+				      V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_label(
+				      &mapping,
+				      V90_PCM_MAPPING_TRANSMIT, interval,
+				      transmit, &recovered[interval]) ==
+				      V90_PCM_MAPPING_OK &&
+			      recovered[interval] == labels[interval] &&
+			      v90_pcm_mapping_ucode(
+				      &mapping, V90_PCM_MAPPING_CODEC,
+				      interval, labels[interval], &codec) ==
+				      V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_label(
+				      &mapping, V90_PCM_MAPPING_CODEC,
+				      interval, codec,
+				      &recovered[interval]) ==
+				      V90_PCM_MAPPING_OK &&
+			      recovered[interval] == labels[interval],
+			      "Ucode inverse failed for value %llu interval %zu",
+			      (unsigned long long)value, interval);
+		}
+	}
+	return true;
+}
+
+static bool test_inverse_rate_boundaries(void)
+{
+	static const struct {
+		enum v90_cp_kind kind;
+		uint8_t rate_index;
+		uint8_t sign_redundancy;
+		uint8_t constellation_size;
+	} cases[] = {
+		{ V90_CP_TRAINING, 1, 3, 2 },
+		{ V90_CP_TRAINING, 22, 0, 16 },
+		{ V90_CP_DATA, 1, 0, 8 },
+		{ V90_CP_DATA, 22, 3, 128 },
+	};
+	uint8_t bits[MAX_MODULUS_BITS];
+	uint8_t decoded[MAX_MODULUS_BITS];
+	uint8_t labels[V90_CP_FRAME_INTERVALS];
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v90_cp_parameters source = parameters(
+			cases[index].kind, cases[index].rate_index,
+			cases[index].sign_redundancy,
+			cases[index].constellation_size, false);
+		struct v90_pcm_mapping mapping;
+		uint64_t limit;
+		uint64_t values[4];
+
+		CHECK(v90_pcm_mapping_init(&mapping, &source) ==
+			      V90_PCM_MAPPING_OK,
+		      "inverse boundary %zu did not initialize", index);
+		limit = UINT64_C(1) << mapping.modulus_bits;
+		values[0] = 0;
+		values[1] = 1;
+		values[2] = limit / 3u;
+		values[3] = limit - 1u;
+		for (size_t pattern = 0;
+		     pattern < ARRAY_LENGTH(values); ++pattern) {
+			bits_from_value(
+				values[pattern], bits,
+				mapping.modulus_bits);
+			CHECK(v90_pcm_mapping_encode_modulus(
+				      &mapping, bits,
+				      mapping.modulus_bits, labels) ==
+				      V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_decode_modulus(
+				      &mapping, labels, decoded,
+				      mapping.modulus_bits) ==
+				      V90_PCM_MAPPING_OK &&
+			      memcmp(decoded, bits,
+				     mapping.modulus_bits) == 0,
+			      "inverse boundary %zu pattern %zu failed",
+			      index, pattern);
+		}
+	}
+	return true;
+}
+
+static bool test_inverse_rejection(void)
+{
+	struct v90_cp_parameters source = mixed_parameters();
+	struct v90_pcm_mapping mapping;
+	uint8_t labels[V90_CP_FRAME_INTERVALS];
+	uint8_t bits[MAX_MODULUS_BITS];
+	uint8_t saved_bits[MAX_MODULUS_BITS];
+	uint8_t label = 0xa5;
+
+	CHECK(v90_pcm_mapping_init(&mapping, &source) ==
+		      V90_PCM_MAPPING_OK,
+	      "inverse rejection fixture did not initialize");
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval)
+		labels[interval] = (uint8_t)(mapping.modulus[interval] - 1u);
+	memset(bits, 0xa5, sizeof(bits));
+	memcpy(saved_bits, bits, sizeof(bits));
+	CHECK(labels_value(&mapping, labels) >=
+		      (UINT64_C(1) << mapping.modulus_bits) &&
+	      v90_pcm_mapping_decode_modulus(
+		      &mapping, labels, bits, mapping.modulus_bits) ==
+		      V90_PCM_MAPPING_OUT_OF_RANGE &&
+	      memcmp(bits, saved_bits, sizeof(bits)) == 0,
+	      "unused mixed-radix tuple was not rejected transactionally");
+	labels[0] = mapping.modulus[0];
+	CHECK(v90_pcm_mapping_decode_modulus(
+		      &mapping, labels, bits, mapping.modulus_bits) ==
+		      V90_PCM_MAPPING_OUT_OF_RANGE &&
+	      v90_pcm_mapping_decode_modulus(
+		      &mapping, labels, bits,
+		      mapping.modulus_bits - 1u) ==
+		      V90_PCM_MAPPING_OUT_OF_RANGE &&
+	      v90_pcm_mapping_decode_modulus(
+		      NULL, labels, bits, mapping.modulus_bits) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_decode_modulus(
+		      &mapping, NULL, bits, mapping.modulus_bits) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_decode_modulus(
+		      &mapping, labels, NULL, mapping.modulus_bits) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      memcmp(bits, saved_bits, sizeof(bits)) == 0,
+	      "invalid inverse call changed its destination");
+
+	CHECK(v90_pcm_mapping_label(
+		      &mapping, V90_PCM_MAPPING_TRANSMIT, 0,
+		      127, &label) == V90_PCM_MAPPING_OUT_OF_RANGE &&
+	      v90_pcm_mapping_label(
+		      &mapping, V90_PCM_MAPPING_TRANSMIT,
+		      V90_CP_FRAME_INTERVALS, 0, &label) ==
+		      V90_PCM_MAPPING_OUT_OF_RANGE &&
+	      v90_pcm_mapping_label(
+		      &mapping, (enum v90_pcm_mapping_plane)99,
+		      0, 0, &label) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_label(
+		      NULL, V90_PCM_MAPPING_TRANSMIT,
+		      0, 0, &label) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_label(
+		      &mapping, V90_PCM_MAPPING_TRANSMIT,
+		      0, 0, NULL) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      label == 0xa5,
+	      "rejected inverse Ucode lookup changed its output");
 	return true;
 }
 
@@ -325,6 +571,11 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "training mapping", test_training_mapping },
+		{ "generated inverse mapping",
+		  test_generated_inverse_mapping },
+		{ "inverse rate boundaries",
+		  test_inverse_rate_boundaries },
+		{ "inverse rejection", test_inverse_rejection },
 		{ "rate boundaries", test_rate_boundaries },
 		{ "capacity and codec fallback",
 		  test_capacity_and_codec_fallback },
