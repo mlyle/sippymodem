@@ -57,6 +57,7 @@ struct modem_test_case {
 	unsigned int carrier_loss_samples;
 	unsigned int training_frame_limit;
 	bool automode;
+	bool requires_v8;
 	bool test_prelink;
 	bool pcmu_only;
 };
@@ -257,7 +258,7 @@ static bool run_media_call(
 		.context = &capture,
 		.write = capture_recording,
 	};
-	bool uses_v8 = test_case->automode &&
+	bool uses_v8 = (test_case->automode || test_case->requires_v8) &&
 		v8_datapump_modulation(test_case->id) !=
 		V8_MODULATION_NONE;
 	bool online = false;
@@ -722,6 +723,7 @@ int main(void)
 			.answerer_rx_rate = V34_INITIAL_MAX_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.training_frame_limit = 1000,
+			.requires_v8 = true,
 			.pcmu_only = true,
 		},
 		{

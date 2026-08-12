@@ -1096,6 +1096,13 @@ static int modem_comp_put_chars(struct modem *m, const char *buf, int n)
  *
  */
 
+static bool datapump_requires_v8(enum DP_ID id)
+{
+	/* V.34 Phase 1 is V.8 even when +MS fixes the only permitted
+	 * modulation.  The automode flag controls fallback, not Phase 1. */
+	return id == DP_V34;
+}
+
 static void do_modem_change_dp (struct modem *m)
 {
 	struct dp_operations *op;
@@ -1119,7 +1126,7 @@ static void do_modem_change_dp (struct modem *m)
 		if(dp_id == 0) {
 			dp_id = MODEM_DP(m);
 			id = dp_id;
-			if (MODEM_AUTOMODE(m)) {
+			if (MODEM_AUTOMODE(m) || datapump_requires_v8(dp_id)) {
 				enum v8_modulation modulation =
 					v8_datapump_modulation(dp_id);
 
