@@ -210,7 +210,7 @@ while True:
                 master,
                 b"\\r\\nModulation: V32bis\\r\\nProtocol: LAPM\\r\\n"
                 b"Compression: V44\\r\\nTxRate: 12000\\r\\n"
-                b"CONNECT 14400\\r\\nSIPPY-LIVE-OK\\r\\n",
+                b"CONNECT 14400\\r\\nMODEM-LIVE-OK\\r\\n",
             )
             online = True
         elif command.startswith(b"ATD"):
@@ -229,7 +229,7 @@ while True:
                     "",
                     True,
                     (),
-                    online_expect=b"SIPPY-LIVE-OK\r\n",
+                    online_expect=b"MODEM-LIVE-OK\r\n",
                     round_trip_probe="ping",
                 ),
             )
@@ -253,7 +253,7 @@ while True:
             transmitted = attempt / "terminal-tx.bin"
             self.assertEqual(
                 received.read_bytes(),
-                b"SIPPY-LIVE-OK\r\n"
+                b"MODEM-LIVE-OK\r\n"
                 b"GETTY:PONG:0123456789abcdef0123456789abcdef:"
                 b"1783737600123\r\n",
             )
