@@ -1338,10 +1338,13 @@ V90_PHASE3_SD_TEST_OBJECTS := \
 V90_PHASE3_SIGNS_TEST_BINARY := $(BUILD_DIR)/test_v90_phase3_signs
 V90_PHASE3_SIGNS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase3_signs.o \
+	$(BUILD_DIR)/v90_phase3_sign_receiver.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
+	$(BUILD_DIR)/v90_jd.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/g711.o
 V90_PHASE3_DIGITAL_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase3_digital_tx
@@ -3161,6 +3164,10 @@ $(BUILD_DIR)/v90_pcm_symbol.o: \
 
 $(BUILD_DIR)/v90_phase3_signs.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_signs.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase3_sign_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sign_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase3_digital_tx.o: \
