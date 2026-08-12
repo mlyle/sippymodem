@@ -533,20 +533,20 @@ static bool sample_ranging(
 		phase2->peer_info0_stored = true;
 	}
 	switch (child.kind) {
-	case V34_PHASE2_ROUND_TRIP_DELAY_MEASURED:
+	case PHASE2_ROUND_TRIP_DELAY_MEASURED:
 		event->kind = V34_PHASE2_EVENT_ROUND_TRIP_DELAY;
 		event->round_trip_delay_samples =
 			child.round_trip_delay_samples;
 		break;
-	case V34_PHASE2_PROBE_RECEIVE_READY:
-	case V34_PHASE2_PROBE_TRANSMIT_READY:
+	case PHASE2_PROBE_RECEIVE_READY:
+	case PHASE2_PROBE_TRANSMIT_READY:
 		return enter_initial_probe(phase2, event);
-	case V34_PHASE2_RANGING_TIMEOUT:
+	case PHASE2_RANGING_TIMEOUT:
 		phase2->failure = V34_PHASE2_FAILURE_RANGING_TIMEOUT;
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		break;
-	case V34_PHASE2_RANGING_NO_EVENT:
+	case PHASE2_RANGING_NO_EVENT:
 		break;
 	}
 	return true;

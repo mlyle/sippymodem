@@ -109,18 +109,18 @@ static void observe_ranging_events(
 	struct ranging_observation *observation)
 {
 	if (answer_event->kind ==
-	    V34_PHASE2_ROUND_TRIP_DELAY_MEASURED) {
+	    PHASE2_ROUND_TRIP_DELAY_MEASURED) {
 		observation->answer_delay_measured = true;
 		observation->answer_round_trip_delay_samples =
 			answer_event->round_trip_delay_samples;
 	}
-	if (caller_event->kind == V34_PHASE2_PROBE_RECEIVE_READY) {
+	if (caller_event->kind == PHASE2_PROBE_RECEIVE_READY) {
 		observation->caller_probe_ready = true;
 		observation->caller_probe_ready_sample = sample_index;
 		observation->caller_round_trip_delay_samples =
 			caller_event->round_trip_delay_samples;
 	}
-	if (answer_event->kind == V34_PHASE2_PROBE_TRANSMIT_READY)
+	if (answer_event->kind == PHASE2_PROBE_TRANSMIT_READY)
 		observation->answer_probe_ready_sample = sample_index;
 }
 
@@ -359,7 +359,7 @@ static bool test_missing_second_reversal_times_out(void)
 			      &caller, 0, &transmit, &event) ==
 			      V34_PHASE2_RANGING_OK,
 		      "missing-reversal wait failed at sample %zu", index);
-		if (event.kind == V34_PHASE2_RANGING_TIMEOUT)
+		if (event.kind == PHASE2_RANGING_TIMEOUT)
 			timeout_count++;
 	}
 	CHECK(caller.control.phase == PHASE2_RANGING_TIMED_OUT &&
@@ -375,7 +375,7 @@ static bool test_validation(void)
 	struct v34_phase2_ranging ranging;
 	struct v34_phase2_ranging before;
 	struct v34_phase2_ranging_event event = {
-		.kind = V34_PHASE2_RANGING_TIMEOUT,
+		.kind = PHASE2_RANGING_TIMEOUT,
 	};
 	int16_t sample = 1234;
 
@@ -392,7 +392,7 @@ static bool test_validation(void)
 		      V34_PHASE2_RANGING_INVALID_ARGUMENT &&
 	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
 	      sample == 1234 &&
-	      event.kind == V34_PHASE2_RANGING_TIMEOUT,
+	      event.kind == PHASE2_RANGING_TIMEOUT,
 	      "invalid ranging state mutated state or outputs");
 	CHECK(strcmp(
 		      v34_phase2_ranging_result_name(

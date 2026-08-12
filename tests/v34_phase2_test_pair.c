@@ -118,11 +118,11 @@ static bool endpoint_sample(
 	struct test_endpoint_event emitted = { 0 };
 
 	if (endpoint->stage == TEST_ENDPOINT_RANGING) {
-		enum v34_phase2_ranging_event_kind expected_ready =
+		enum phase2_ranging_event_kind expected_ready =
 			endpoint->ranging.info0_exchange.local_role ==
 					V34_CALLING_STATION ?
-				V34_PHASE2_PROBE_RECEIVE_READY :
-				V34_PHASE2_PROBE_TRANSMIT_READY;
+				PHASE2_PROBE_RECEIVE_READY :
+				PHASE2_PROBE_TRANSMIT_READY;
 
 		if (v34_phase2_ranging_sample(
 			    &endpoint->ranging, received_sample, transmit_sample,

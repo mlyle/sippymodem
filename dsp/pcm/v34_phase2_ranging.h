@@ -14,17 +14,9 @@ enum v34_phase2_ranging_result {
 	V34_PHASE2_RANGING_INVALID_ARGUMENT,
 };
 
-enum v34_phase2_ranging_event_kind {
-	V34_PHASE2_RANGING_NO_EVENT,
-	V34_PHASE2_ROUND_TRIP_DELAY_MEASURED,
-	V34_PHASE2_PROBE_RECEIVE_READY,
-	V34_PHASE2_PROBE_TRANSMIT_READY,
-	V34_PHASE2_RANGING_TIMEOUT,
-};
-
 struct v34_phase2_ranging_event {
 	struct v34_phase2_info0_exchange_event exchange_event;
-	enum v34_phase2_ranging_event_kind kind;
+	enum phase2_ranging_event_kind kind;
 	uint16_t round_trip_delay_samples;
 };
 
