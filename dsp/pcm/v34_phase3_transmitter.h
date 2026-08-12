@@ -65,6 +65,13 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_next(
 enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j(
 	struct v34_phase3_transmitter *transmitter);
 
+/* Copy the live boundary after at least 512 TRN symbols. This lets another
+ * standards-defined continuation reuse the common S/PP/TRN prefix without
+ * entering V.34 J. */
+enum v34_phase3_transmitter_result v34_phase3_transmitter_trn_boundary(
+	const struct v34_phase3_transmitter *transmitter,
+	struct v34_phase3_trn *trn);
+
 /* Finish J only after at least one whole Table 18 pattern and at a pattern
  * boundary. The transmitter may keep emitting J while it waits for the remote
  * S/S-bar event and the next boundary. */

@@ -217,6 +217,19 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j(
 	return V34_PHASE3_TRANSMITTER_OK;
 }
 
+enum v34_phase3_transmitter_result v34_phase3_transmitter_trn_boundary(
+	const struct v34_phase3_transmitter *transmitter,
+	struct v34_phase3_trn *trn)
+{
+	if (!v34_phase3_transmitter_is_valid(transmitter) || trn == NULL)
+		return V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT;
+	if (transmitter->stage != V34_PHASE3_TRANSMITTER_TRN ||
+	    transmitter->trn_symbols < V34_PHASE3_TRN_MIN_SYMBOLS)
+		return V34_PHASE3_TRANSMITTER_INVALID_STATE;
+	*trn = transmitter->state.trn;
+	return V34_PHASE3_TRANSMITTER_OK;
+}
+
 enum v34_phase3_transmitter_result v34_phase3_transmitter_finish_j(
 	struct v34_phase3_transmitter *transmitter)
 {
