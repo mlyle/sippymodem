@@ -69,6 +69,14 @@ enum v34_training_receiver_result v34_training_receiver_init(
 	uint32_t sample_rate,
 	const struct v34_training_receiver_configuration *configuration);
 
+/* Continue at an exact completed-J handoff without restarting carrier timing
+ * or equalization. Both inputs are copied and every rejected call leaves the
+ * destination unchanged. */
+enum v34_training_receiver_result v34_training_receiver_continue(
+	struct v34_training_receiver *receiver,
+	const struct v34_phase3_line_handoff *handoff,
+	const struct v34_training_receiver_configuration *configuration);
+
 /* Consume one line sample. `event` changes only for RECORD_READY. J detection
  * commits the Phase 3-to-Phase 4 handoff at that exact sample boundary. */
 enum v34_training_receiver_result v34_training_receiver_sample(

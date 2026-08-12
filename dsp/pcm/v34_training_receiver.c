@@ -103,6 +103,29 @@ enum v34_training_receiver_result v34_training_receiver_init(
 	return V34_TRAINING_RECEIVER_OK;
 }
 
+enum v34_training_receiver_result v34_training_receiver_continue(
+	struct v34_training_receiver *receiver,
+	const struct v34_phase3_line_handoff *handoff,
+	const struct v34_training_receiver_configuration *configuration)
+{
+	struct v34_training_receiver initialized = {
+		.stage = V34_TRAINING_RECEIVER_PHASE4,
+	};
+
+	if (receiver == NULL || !v34_phase3_line_handoff_is_valid(handoff) ||
+	    !v34_training_receiver_configuration_is_valid(configuration))
+		return V34_TRAINING_RECEIVER_INVALID_ARGUMENT;
+	initialized.configuration = *configuration;
+	if (v34_phase4_line_receiver_init_from_phase3(
+		    &initialized.state.phase4, handoff,
+		    configuration->phase4_equalizer_adaptation) !=
+		    V34_PHASE4_LINE_RECEIVER_OK ||
+	    !v34_training_receiver_is_valid(&initialized))
+		return V34_TRAINING_RECEIVER_NUMERIC_FAILURE;
+	*receiver = initialized;
+	return V34_TRAINING_RECEIVER_OK;
+}
+
 static enum v34_training_receiver_result phase3_result(
 	enum v34_phase3_line_receiver_result result)
 {

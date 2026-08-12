@@ -244,6 +244,48 @@ static bool initialize_phase4(
 		       handoff.phase3.j.detection.sequence.remote_constellation;
 }
 
+static bool initialize_owned_phase4(
+	const struct v34_phase3_line_receiver *phase3,
+	const struct v34_phase4_line_receiver *expected,
+	struct v34_training_receiver *receiver)
+{
+	struct v34_training_receiver_configuration config =
+		training_configuration();
+	struct v34_training_receiver_configuration invalid = config;
+	struct v34_phase3_line_handoff handoff;
+	struct v34_phase3_line_handoff corrupt;
+	struct v34_training_receiver unchanged;
+
+	if (phase3 == NULL || expected == NULL || receiver == NULL ||
+	    v34_phase3_line_receiver_handoff(phase3, &handoff) !=
+		    V34_PHASE3_LINE_RECEIVER_OK)
+		return false;
+	corrupt = handoff;
+	corrupt.demodulator.timing_locked = false;
+	invalid.phase4_equalizer_adaptation = NAN;
+	memset(receiver, 0xa5, sizeof(*receiver));
+	unchanged = *receiver;
+	if (v34_training_receiver_continue(NULL, &handoff, &config) !=
+		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
+	    v34_training_receiver_continue(receiver, NULL, &config) !=
+		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
+	    v34_training_receiver_continue(receiver, &corrupt, &config) !=
+		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
+	    v34_training_receiver_continue(receiver, &handoff, NULL) !=
+		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
+	    v34_training_receiver_continue(receiver, &handoff, &invalid) !=
+		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
+	    memcmp(receiver, &unchanged, sizeof(*receiver)) != 0 ||
+	    v34_training_receiver_continue(receiver, &handoff, &config) !=
+		    V34_TRAINING_RECEIVER_OK)
+		return false;
+	return v34_training_receiver_is_valid(receiver) &&
+	       receiver->stage == V34_TRAINING_RECEIVER_PHASE4 &&
+	       memcmp(&receiver->configuration, &config, sizeof(config)) == 0 &&
+	       memcmp(&receiver->state.phase4, expected,
+		      sizeof(*expected)) == 0;
+}
+
 static bool test_continuous_training_line(void)
 {
 	struct v34_phase3_profile transmitting_profile = profile();
@@ -251,6 +293,7 @@ static bool test_continuous_training_line(void)
 		phase3_configuration();
 	struct v34_phase3_line_receiver phase3;
 	struct v34_phase4_line_receiver phase4;
+	struct v34_training_receiver receiver;
 	struct line_source source;
 	unsigned int timing_events = 0;
 	unsigned int s_events = 0;
@@ -289,7 +332,9 @@ static bool test_continuous_training_line(void)
 				break;
 			case V34_PHASE3_LINE_RECEIVER_J_DETECTED:
 				j_events++;
-				CHECK(initialize_phase4(&phase3, &phase4),
+				CHECK(initialize_phase4(&phase3, &phase4) &&
+				      initialize_owned_phase4(
+					      &phase3, &phase4, &receiver),
 				      "Phase 3 handoff did not initialize Phase 4");
 				receiving_phase4 = true;
 				break;
@@ -302,25 +347,24 @@ static bool test_continuous_training_line(void)
 		}
 		{
 			struct v34_mp_receive_event event = { 0 };
-			enum v34_phase4_line_receiver_result result =
-				v34_phase4_line_receiver_sample(
-					&phase4, sample, &event);
+			enum v34_training_receiver_result result =
+				v34_training_receiver_sample(
+					&receiver, sample, &event);
 
-			CHECK(result != V34_PHASE4_LINE_RECEIVER_FAILED &&
-			      result != V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT &&
-			      result != V34_PHASE4_LINE_RECEIVER_INVALID_STATE &&
-			      result != V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE &&
-			      result !=
-				      V34_PHASE4_LINE_RECEIVER_SEQUENCE_MISMATCH,
+			CHECK(result != V34_TRAINING_RECEIVER_FAILED &&
+			      result != V34_TRAINING_RECEIVER_INVALID_ARGUMENT &&
+			      result != V34_TRAINING_RECEIVER_INVALID_STATE &&
+			      result != V34_TRAINING_RECEIVER_NUMERIC_FAILURE &&
+			      result != V34_TRAINING_RECEIVER_SEQUENCE_MISMATCH,
 			      "Phase 4 failed at sample %u: %s", index,
-			      v34_phase4_line_receiver_result_name(result));
-			if (result != V34_PHASE4_LINE_RECEIVER_RECORD_READY)
+			      v34_training_receiver_result_name(result));
+			if (result != V34_TRAINING_RECEIVER_RECORD_READY)
 				continue;
 			if (event.type == V34_MP_RECEIVE_REJECTED) {
 				rejected_records++;
-				CHECK(v34_phase4_line_receiver_continue_mp(
-					      &phase4) ==
-					      V34_PHASE4_LINE_RECEIVER_OK,
+				CHECK(v34_training_receiver_continue_mp(
+					      &receiver) ==
+					      V34_TRAINING_RECEIVER_OK,
 				      "rejected Phase 4 record did not resume");
 				continue;
 			}
@@ -336,8 +380,8 @@ static bool test_continuous_training_line(void)
 	CHECK(mp_received && receiving_phase4 && timing_events == 1 &&
 	      s_events == 1 && pp_events == 1 && j_events == 1 &&
 	      source.completed_records != 0 &&
-	      v34_phase4_line_receiver_is_valid(&phase4) &&
-	      !v34_phase4_line_receiver_has_failed(&phase4),
+	      v34_training_receiver_is_valid(&receiver) &&
+	      !v34_training_receiver_has_failed(&receiver),
 	      "continuous Phase 3/4 timeline did not reach MP (%u rejects)",
 	      rejected_records);
 	return true;
