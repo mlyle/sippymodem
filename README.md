@@ -93,9 +93,9 @@ media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
-103, Bell 212A, V.23, V.22bis, V.32/V.32bis, and Baudot TTY/TDD are currently
-registered. Higher-speed modes remain deliberately unavailable until their
-source-built implementations arrive as reviewable slices.
+103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, and the current
+V.34 baseline are registered. V.90/V.92 datapumps and their AT controls remain
+unavailable until they arrive as complete reviewable slices.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 
@@ -119,15 +119,34 @@ identify files that do not already exist.
 
 Live interoperability calls are deliberately opt-in. Copy
 `tools/live-call.example.json` to the ignored `.live-call.json`, make it
-owner-readable only, replace the reserved example values locally, and enable
-only the plans that are safe to dial. `make live-call` runs every enabled plan
-in a fresh daemon process. Use repeated `--plan NAME` options with
-`python3 tools/live_calls.py` to select a subset. `--list` emits
-only a redacted manifest. The inert example covers an empty dial using the
-configured direct SIP target and selects V.21 at exactly 300 bit/s for the
-first physical-modem interoperability milestone. Add separately named plans
-when comparing modem profiles or AT setups against that same direct target.
-The example also includes a short placeholder online-data marker in
+owner-readable only, add `SIP_TARGET` to its `environment` object, and enable
+only the plans that are safe to call. That ignored value is the single direct
+SIP target used by every scenario; targets and dial strings do not appear in
+tracked plans. `make live-call` expands every enabled plan and runs each
+profile, link mode, and repetition in a fresh daemon process. Use repeated
+`--plan NAME` options with `python3 tools/live_calls.py` to select enabled plan
+groups. `--list` emits only a redacted manifest and performs no calls.
+
+The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
+Baudot at both supported rates, V.32/V.32bis, the current symmetric V.34
+9600-bit/s baseline, and generated future matrices. The future matrices keep
+V.34 receive and transmit caps separate across every standard symbol rate,
+including the exact 2743-symbol/s cadence, and independently sweep V.90/V.92
+downstream, conventional upstream, PCM-upstream, quick-connect, head-end, and
+analogue-fallback cases without a Cartesian explosion. Plans select individual
+`profiles`, reusable `profile_groups`, `lapm` and/or `raw` link modes, and a
+bounded attempt count.
+
+Every expanded case has an explicit `readiness` and optional `prerequisite` in
+the redacted `--list` output and result. Current cases are `runnable`; profiles
+which need AT controls or datapumps not yet present are `prerequisite`. Even if
+a future plan is enabled locally, the runner reports each prerequisite case
+without starting the daemon or making a call. The inert example keeps the
+implemented-mode matrix, current and future V.34 coverage, directional digital
+sweeps, V.92 head-end/originator and quick-connect cases, V.90/V.92 analogue
+fallback, and matched-peer V.22 600-bit/s coverage separately disabled. A plan
+can append extra AT commands without changing the reviewed base profile
+sequence. The example also includes a short placeholder online-data marker in
 `online_expect_hex`. Replace it with the bytes emitted by the private peer.
 An optional `online_send_hex` can drive an echo or request/response check;
 outbound data is rejected unless an expected response is also configured.
@@ -155,8 +174,11 @@ uses ephemeral local ports unless the file explicitly selects ports, and never
 prints endpoints, credentials, terminal paths, or artifact paths. Each attempt
 gets a private ignored directory under `live-call-artifacts/` containing its
 redacted result, daemon diagnostics, and bounded media recordings. Enabled
-plans and credentials require the private configuration file to have no group
-or other permissions. Data-verifying plans also retain bounded
+plans, credentials, and the direct target require the private configuration
+file to have no group or other permissions. Timeouts, repetition counts, and
+the total expanded scenario count are bounded. A failed scenario does not stop
+later scenarios, and every result identifies only its public plan, profile,
+link mode, repetition, and readiness. Data-verifying plans also retain bounded
 `terminal-tx.bin` and `terminal-rx.bin` evidence there with owner-only access;
 the public result represents terminal payload only as expected and verified
 byte counts. The runner also requests CONNECT diagnostics and records the
