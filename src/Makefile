@@ -142,6 +142,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_carrier.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_mapping.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_mode.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_points.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_stream.c \
