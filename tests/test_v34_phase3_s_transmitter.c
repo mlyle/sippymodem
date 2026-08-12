@@ -97,7 +97,8 @@ static bool render_marker(
 	struct marker_statistics *statistics)
 {
 	uint32_t limit = expected_samples(
-		&transmitter->profile, transmitter->carrier.channel.sample_rate);
+		&transmitter->line.profile,
+		transmitter->line.carrier.channel.sample_rate);
 
 	memset(statistics, 0, sizeof(*statistics));
 	while (!v34_phase3_s_transmitter_is_complete(transmitter)) {
@@ -155,30 +156,31 @@ static bool test_all_line_profiles(void)
 				      V34_PHASE3_S_TRANSMITTER_OK,
 			      "profile %u/%u marker did not initialize",
 			      rate_index, high);
-			CHECK(transmitter.carrier.channel
+			CHECK(transmitter.line.carrier.channel
 				      .symbol_rate_numerator ==
 				      profile.symbol_rate_numerator &&
-			      transmitter.carrier.channel
+			      transmitter.line.carrier.channel
 				      .symbol_rate_denominator ==
 				      profile.symbol_rate_denominator &&
-			      transmitter.carrier.channel
+			      transmitter.line.carrier.channel
 				      .carrier_frequency_numerator ==
 				      profile.carrier_frequency_numerator &&
-			      transmitter.carrier.channel
+			      transmitter.line.carrier.channel
 				      .carrier_frequency_denominator ==
 				      profile.carrier_frequency_denominator &&
-			      transmitter.preemphasis.filter_index == filter_index,
+			      transmitter.line.preemphasis.filter_index ==
+				      filter_index,
 			      "profile %u/%u settings were not connected",
 			      rate_index, high);
 			CHECK(render_marker(&transmitter, &statistics),
 			      "profile %u/%u marker did not render",
 			      rate_index, high);
-			drained_carrier = transmitter.carrier;
-			drained_filter = transmitter.preemphasis;
+			drained_carrier = transmitter.line.carrier;
+			drained_filter = transmitter.line.preemphasis;
 			measured_rms = sqrtl(
 				statistics.sum_squares / statistics.samples);
 			CHECK(statistics.samples == count &&
-			      transmitter.generated_samples == count &&
+			      transmitter.line.generated_samples == count &&
 			      transmitter.sequence.emitted_symbols ==
 				      V34_PHASE3_S_SEQUENCE_SYMBOLS &&
 			      transmitter.tail_symbols ==
@@ -190,7 +192,8 @@ static bool test_all_line_profiles(void)
 					      1u)) -
 					      1u &&
 			      statistics.peak > 0 && statistics.peak <= INT16_MAX &&
-			      fabsl(measured_rms - transmitter.target_rms) < 1.0L,
+			      fabsl(measured_rms - transmitter.line.target_rms) <
+				      1.0L,
 			      "profile %u/%u cadence or power changed",
 			      rate_index, high);
 			CHECK(qam_modulator_sample_f64(
@@ -231,8 +234,9 @@ static bool test_negotiated_power(void)
 	      v34_phase3_s_transmitter_init(
 		      &reduced, &reduced_profile, 8000, 6000) ==
 		      V34_PHASE3_S_TRANSMITTER_OK &&
-	      full.raw_rms == reduced.raw_rms &&
-	      fabs(reduced.output_gain / full.output_gain - expected_ratio) <
+	      full.line.raw_rms == reduced.line.raw_rms &&
+	      fabs(reduced.line.output_gain / full.line.output_gain -
+		   expected_ratio) <
 		      1e-12,
 	      "negotiated power did not scale the common raw waveform");
 	CHECK(render_marker(&full, &full_statistics) &&
@@ -243,10 +247,72 @@ static bool test_negotiated_power(void)
 	reduced_rms = sqrtl(reduced_statistics.sum_squares /
 			    reduced_statistics.samples);
 	CHECK(full_statistics.samples == reduced_statistics.samples &&
-	      fabsl(full_rms - full.target_rms) < 1.0L &&
-	      fabsl(reduced_rms - reduced.target_rms) < 1.0L &&
+	      fabsl(full_rms - full.line.target_rms) < 1.0L &&
+	      fabsl(reduced_rms - reduced.line.target_rms) < 1.0L &&
 	      fabsl(reduced_rms / full_rms - expected_ratio) < 0.001L,
 	      "rendered marker did not honor the negotiated power reduction");
+	return true;
+}
+
+static bool test_shared_line_equivalence(void)
+{
+	struct v34_phase3_profile profile = profile_fixture(
+		V34_SYMBOL_RATE_2743, true, 3, 6);
+	struct v34_phase3_s_transmitter transmitter;
+	struct v34_training_line line;
+	struct v34_phase3_s_sequence sequence;
+	uint32_t samples = 0;
+	uint32_t limit = expected_samples(&profile, 8000);
+
+	CHECK(v34_phase3_s_transmitter_init(
+		      &transmitter, &profile, 8000, 5000) ==
+		      V34_PHASE3_S_TRANSMITTER_OK &&
+	      v34_training_line_init(&line, &profile, 8000, 5000) ==
+		      V34_TRAINING_LINE_OK &&
+	      v34_phase3_s_sequence_init(&sequence) ==
+		      V34_PHASE3_S_SEQUENCE_OK,
+	      "shared-line comparison did not initialize");
+	while (!v34_phase3_s_transmitter_is_complete(&transmitter)) {
+		struct qam_point point = { 0 };
+		const struct qam_point *point_pointer = NULL;
+		enum v34_phase3_s_section section;
+		int16_t expected;
+		int16_t actual;
+		bool accepted;
+
+		CHECK(samples < limit,
+		      "shared-line comparison exceeded its sample bound");
+		if (v34_training_line_needs_point(&line)) {
+			point_pointer = &point;
+			if (!v34_phase3_s_sequence_is_complete(&sequence))
+				CHECK(v34_phase3_s_sequence_next(
+					      &sequence, &point, &section) ==
+					      V34_PHASE3_S_SEQUENCE_OK,
+				      "comparison sequence stopped early");
+		}
+		CHECK(v34_training_line_sample(
+			      &line, point_pointer, &expected, &accepted) ==
+			      V34_TRAINING_LINE_OK &&
+		      accepted == (point_pointer != NULL) &&
+		      v34_phase3_s_transmitter_sample(
+			      &transmitter, &actual) ==
+			      V34_PHASE3_S_TRANSMITTER_OK &&
+		      actual == expected &&
+		      transmitter.line.generated_samples ==
+			      line.generated_samples &&
+		      transmitter.line.carrier.carrier_phase ==
+			      line.carrier.carrier_phase &&
+		      transmitter.line.carrier.symbol_phase_units ==
+			      line.carrier.symbol_phase_units &&
+		      transmitter.line.preemphasis.next_history ==
+			      line.preemphasis.next_history,
+		      "finite marker diverged from the shared line at sample %u",
+		      samples);
+		samples++;
+	}
+	CHECK(samples == limit &&
+	      transmitter.sequence.emitted_symbols == sequence.emitted_symbols,
+	      "finite marker did not preserve exact line ownership");
 	return true;
 }
 
@@ -283,7 +349,7 @@ static bool test_copy_and_completion(void)
 		      first_sample == second_sample &&
 		      memcmp(&first, &second, sizeof(first)) == 0,
 		      "copied marker diverged at sample %u",
-		      first.generated_samples);
+		      (unsigned int)first.line.generated_samples);
 	}
 	{
 		struct v34_phase3_s_transmitter before = first;
@@ -346,7 +412,7 @@ static bool test_validation(void)
 		      V34_PHASE3_S_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &before, sizeof(transmitter)) == 0,
 	      "null marker output mutated state");
-	transmitter.generated_samples = UINT32_MAX;
+	transmitter.line.generated_samples = UINT64_MAX;
 	before = transmitter;
 	CHECK(!v34_phase3_s_transmitter_is_valid(&transmitter) &&
 	      v34_phase3_s_transmitter_sample(
@@ -373,6 +439,7 @@ int main(void)
 	} tests[] = {
 		{ "all line profiles", test_all_line_profiles },
 		{ "negotiated power", test_negotiated_power },
+		{ "shared line equivalence", test_shared_line_equivalence },
 		{ "copy and completion", test_copy_and_completion },
 		{ "validation", test_validation },
 	};

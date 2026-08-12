@@ -958,6 +958,7 @@ V34_PHASE3_S_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_preemphasis.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/v34_training_line.o \
 	$(BUILD_DIR)/v34_phase3_s_transmitter.o
 V34_PHASE3_TRN_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_trn

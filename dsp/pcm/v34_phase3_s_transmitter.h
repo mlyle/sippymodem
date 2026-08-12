@@ -3,20 +3,19 @@
 #ifndef V34_PHASE3_S_TRANSMITTER_H
 #define V34_PHASE3_S_TRANSMITTER_H
 
-#include "qam.h"
-#include "v34_phase3_profile.h"
 #include "v34_phase3_s_sequence.h"
-#include "v34_preemphasis.h"
+#include "v34_training_line.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
 enum {
-	V34_PHASE3_S_PULSE_SPAN_SYMBOLS = 8,
+	V34_PHASE3_S_PULSE_SPAN_SYMBOLS =
+		V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS,
 	V34_PHASE3_S_TAIL_SYMBOLS =
-		V34_PHASE3_S_PULSE_SPAN_SYMBOLS,
+		V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS,
 	V34_PHASE3_S_FILTER_TAIL_SAMPLES =
-		V34_PREEMPHASIS_TAPS - 1,
+		V34_TRAINING_LINE_FILTER_TAIL_SAMPLES,
 };
 
 enum v34_phase3_s_transmitter_stage {
@@ -35,18 +34,10 @@ enum v34_phase3_s_transmitter_result {
 };
 
 struct v34_phase3_s_transmitter {
-	struct v34_phase3_profile profile;
-	struct qam_modulator carrier;
-	struct v34_preemphasis preemphasis;
+	struct v34_training_line line;
 	struct v34_phase3_s_sequence sequence;
-	double output_gain;
-	double raw_rms;
-	double raw_peak;
-	double target_rms;
-	uint32_t generated_samples;
 	uint16_t tail_symbols;
 	uint8_t filter_tail_samples;
-	int16_t nominal_peak_amplitude;
 	enum v34_phase3_s_transmitter_stage stage;
 };
 
