@@ -42,7 +42,8 @@ static bool ring_is_valid(const struct v34_phase3_j_receiver *receiver)
 					 V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ||
 			 index < receiver->buffered_decisions;
 
-		if (receiver->decisions[index] >= 16u ||
+		if (receiver->preceding_rotations[index] >= 4u ||
+		    receiver->decisions[index] >= 16u ||
 		    (populated &&
 		     (!v34_phase3_trn_is_valid(&receiver->boundaries[index]) ||
 		      receiver->boundaries[index].role != receiver->trn.role)))
@@ -107,6 +108,12 @@ static const struct v34_phase3_trn *window_boundary(
 	return &receiver->boundaries[receiver->next_decision];
 }
 
+static uint8_t window_preceding_rotation(
+	const struct v34_phase3_j_receiver *receiver)
+{
+	return receiver->preceding_rotations[receiver->next_decision];
+}
+
 static bool correlate_candidate(
 	const struct v34_phase3_j_receiver *receiver,
 	enum v34_constellation_size constellation,
@@ -119,6 +126,10 @@ static bool correlate_candidate(
 		    &sequence, window_boundary(receiver), constellation) !=
 	    V34_PHASE3_J_SEQUENCE_OK)
 		return false;
+	/* The scrambler boundary follows locally generated TRN, but the
+	 * differential phase follows the actual final received TRN symbol. */
+	sequence.previous_clockwise_quarter_turns =
+		window_preceding_rotation(receiver);
 	for (size_t symbol = 0;
 	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
 		struct qam_point point;
@@ -193,6 +204,15 @@ enum v34_phase3_j_receiver_result v34_phase3_j_receiver_receive(
 		return V34_PHASE3_J_RECEIVER_OUT_OF_RANGE;
 	next = *receiver;
 	next.boundaries[next.next_decision] = next.trn;
+	if (next.received_symbols != 0) {
+		size_t preceding =
+			(next.next_decision +
+			 V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS - 1u) %
+			V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS;
+
+		next.preceding_rotations[next.next_decision] =
+			next.decisions[preceding] & 3u;
+	}
 	next.decisions[next.next_decision] =
 		(uint8_t)(quarter_point * 4u + clockwise_quarter_turns);
 	if (v34_phase3_trn_next(

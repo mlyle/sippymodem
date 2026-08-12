@@ -15,9 +15,10 @@ static bool start_pair(
 	       v34_phase3_trn_init(source, role) == V34_PHASE3_TRN_OK;
 }
 
-static bool feed_trn(
+static bool feed_trn_offset(
 	struct v34_phase3_j_receiver *receiver,
-	struct v34_phase3_trn *source, unsigned int symbols)
+	struct v34_phase3_trn *source, unsigned int symbols,
+	uint8_t rotation_offset)
 {
 	for (unsigned int symbol = 0; symbol < symbols; ++symbol) {
 		struct qam_point point;
@@ -25,11 +26,20 @@ static bool feed_trn(
 
 		if (v34_phase3_trn_next(source, &point, &rotation) !=
 			    V34_PHASE3_TRN_OK ||
-		    v34_phase3_j_receiver_receive(receiver, 0, rotation) !=
+		    v34_phase3_j_receiver_receive(
+			    receiver, 0,
+			    (uint8_t)((rotation + rotation_offset) & 3u)) !=
 			    V34_PHASE3_J_RECEIVER_OK)
 			return false;
 	}
 	return true;
+}
+
+static bool feed_trn(
+	struct v34_phase3_j_receiver *receiver,
+	struct v34_phase3_trn *source, unsigned int symbols)
+{
+	return feed_trn_offset(receiver, source, symbols, 0);
 }
 
 static bool feed_j(
@@ -213,6 +223,57 @@ static bool test_continued_trn_rejection(void)
 	return true;
 }
 
+static bool test_carrier_phase_ambiguity(void)
+{
+	for (uint8_t offset = 1; offset < 4u; ++offset) {
+		struct v34_phase3_j_receiver receiver;
+		struct v34_phase3_trn source_trn;
+		struct v34_phase3_j_sequence source_j;
+		struct v34_phase3_j_detection detection;
+
+		CHECK(start_pair(
+			      &receiver, &source_trn,
+			      V34_ANSWERING_STATION) &&
+		      feed_trn_offset(&receiver, &source_trn, 701, offset) &&
+		      v34_phase3_j_sequence_init_from_trn(
+			      &source_j, &source_trn,
+			      V34_CONSTELLATION_16_POINT) ==
+			      V34_PHASE3_J_SEQUENCE_OK,
+		      "offset %u carrier-phase fixture did not initialize",
+		      offset);
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
+			struct qam_point point;
+			uint8_t rotation;
+			enum v34_phase3_j_receiver_result expected =
+				symbol + 1u ==
+					V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ?
+					V34_PHASE3_J_RECEIVER_DETECTED :
+					V34_PHASE3_J_RECEIVER_OK;
+
+			CHECK(v34_phase3_j_sequence_next(
+				      &source_j, &point, &rotation) ==
+				      V34_PHASE3_J_SEQUENCE_OK &&
+			      v34_phase3_j_receiver_receive(
+				      &receiver, 0,
+				      (uint8_t)((rotation + offset) & 3u)) ==
+				      expected,
+			      "offset %u J symbol %u was not detected",
+			      offset, symbol);
+		}
+		source_j.previous_clockwise_quarter_turns = (uint8_t)(
+			(source_j.previous_clockwise_quarter_turns + offset) & 3u);
+		CHECK(v34_phase3_j_receiver_get_detection(
+			      &receiver, &detection) &&
+		      detection.errors == 0 &&
+		      detection.trn_symbols == 701 &&
+		      memcmp(&detection.sequence, &source_j,
+			     sizeof(source_j)) == 0,
+		      "offset %u did not survive the J handoff", offset);
+	}
+	return true;
+}
+
 static bool test_validation_and_range(void)
 {
 	struct v34_phase3_j_receiver receiver;
@@ -292,6 +353,7 @@ int main(void)
 		{ "minimum and error threshold",
 		  test_minimum_and_error_threshold },
 		{ "continued TRN rejection", test_continued_trn_rejection },
+		{ "carrier phase ambiguity", test_carrier_phase_ambiguity },
 		{ "validation and range", test_validation_and_range },
 	};
 	unsigned int failures = 0;

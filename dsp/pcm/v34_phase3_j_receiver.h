@@ -46,6 +46,10 @@ struct v34_phase3_j_receiver {
 	struct v34_phase3_trn trn;
 	struct v34_phase3_trn
 		boundaries[V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS];
+	/* Observed phase immediately before each retained decision. J's
+	 * differential encoder continues from the final transmitted TRN
+	 * symbol, whose absolute carrier phase need not match our generator. */
+	uint8_t preceding_rotations[V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS];
 	uint8_t decisions[V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS];
 	struct v34_phase3_j_detection detection;
 	uint32_t received_symbols;
