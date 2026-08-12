@@ -188,6 +188,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_reciprocal_probe.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_tone.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_preemphasis.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_caller.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_pp_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_s_sequence.c \

@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#ifndef V34_PHASE3_CALLER_H
+#define V34_PHASE3_CALLER_H
+
+#include "v34_phase3_j_sequence.h"
+#include "v34_phase3_pp_sequence.h"
+#include "v34_phase3_s_sequence.h"
+#include "v34_phase3_trn.h"
+#include "v34_phase4_j_prime_sequence.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+enum v34_phase3_caller_stage {
+	V34_PHASE3_CALLER_S,
+	V34_PHASE3_CALLER_PP,
+	V34_PHASE3_CALLER_TRN,
+	V34_PHASE3_CALLER_J,
+	V34_PHASE3_CALLER_COMPLETE,
+};
+
+enum v34_phase3_caller_result {
+	V34_PHASE3_CALLER_OK,
+	V34_PHASE3_CALLER_DONE,
+	V34_PHASE3_CALLER_INVALID_ARGUMENT,
+	V34_PHASE3_CALLER_INVALID_STATE,
+	V34_PHASE3_CALLER_NUMERIC_FAILURE,
+};
+
+union v34_phase3_caller_state {
+	struct v34_phase3_s_sequence s;
+	struct v34_phase3_pp_sequence pp;
+	struct v34_phase3_trn trn;
+	struct v34_phase3_j_sequence j;
+};
+
+/* Own the calling station's Phase 3 symbol sequence. The call controller
+ * decides when the open-ended TRN and J intervals may end; this object keeps
+ * their scrambler and differential phase continuous. */
+struct v34_phase3_caller {
+	union v34_phase3_caller_state state;
+	enum v34_constellation_size remote_constellation;
+	enum v34_phase3_caller_stage stage;
+	uint32_t trn_symbols;
+	uint32_t j_symbols;
+};
+
+enum v34_phase3_caller_result v34_phase3_caller_init(
+	struct v34_phase3_caller *caller,
+	enum v34_constellation_size remote_constellation);
+
+bool v34_phase3_caller_is_valid(
+	const struct v34_phase3_caller *caller);
+
+/* Emit the next normalized 2D symbol. S/S-bar and PP advance automatically;
+ * TRN and J continue until their explicit transition functions are called.
+ * Rejected calls leave both state and output unchanged. */
+enum v34_phase3_caller_result v34_phase3_caller_next(
+	struct v34_phase3_caller *caller, struct qam_point *point);
+
+/* Enter J after at least 512 TRN symbols. */
+enum v34_phase3_caller_result v34_phase3_caller_start_j(
+	struct v34_phase3_caller *caller);
+
+/* Finish J only after at least one whole Table 18 pattern and at a pattern
+ * boundary. The caller may keep emitting J while it waits for the remote
+ * S/S-bar event and the next boundary. */
+enum v34_phase3_caller_result v34_phase3_caller_finish_j(
+	struct v34_phase3_caller *caller);
+
+/* Initialize the one-pattern J-prime continuation without changing the
+ * completed Phase 3 owner or the destination on failure. */
+enum v34_phase3_caller_result v34_phase3_caller_start_j_prime(
+	const struct v34_phase3_caller *caller,
+	struct v34_phase4_j_prime_sequence *j_prime);
+
+const char *v34_phase3_caller_result_name(
+	enum v34_phase3_caller_result result);
+
+#endif
