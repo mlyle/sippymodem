@@ -7,9 +7,7 @@
 static enum v34_station_role transmitting_role(
 	const struct v34_phase4_equalizer_receiver *control)
 {
-	return control->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP ?
-		       control->mp_receiver.transmitting_role :
-		       control->e_receiver.transmitting_role;
+	return control->mp_receiver.transmitting_role;
 }
 
 bool v34_phase4_line_receiver_is_valid(
@@ -73,6 +71,8 @@ static enum v34_phase4_line_receiver_result control_result(
 		return V34_PHASE4_LINE_RECEIVER_OK;
 	case V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL:
 		return V34_PHASE4_LINE_RECEIVER_SYMBOL;
+	case V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED:
+		return V34_PHASE4_LINE_RECEIVER_S_DETECTED;
 	case V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY:
 		return V34_PHASE4_LINE_RECEIVER_RECORD_READY;
 	case V34_PHASE4_EQUALIZER_RECEIVER_E_COMPLETE:
@@ -225,6 +225,8 @@ const char *v34_phase4_line_receiver_result_name(
 		return "ok";
 	case V34_PHASE4_LINE_RECEIVER_SYMBOL:
 		return "symbol";
+	case V34_PHASE4_LINE_RECEIVER_S_DETECTED:
+		return "S detected";
 	case V34_PHASE4_LINE_RECEIVER_RECORD_READY:
 		return "record ready";
 	case V34_PHASE4_LINE_RECEIVER_E_COMPLETE:

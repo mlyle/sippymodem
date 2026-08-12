@@ -13,6 +13,7 @@ enum v34_phase4_line_receiver_result {
 	/* A line sample was accepted without producing a control symbol. */
 	V34_PHASE4_LINE_RECEIVER_OK,
 	V34_PHASE4_LINE_RECEIVER_SYMBOL,
+	V34_PHASE4_LINE_RECEIVER_S_DETECTED,
 	V34_PHASE4_LINE_RECEIVER_RECORD_READY,
 	V34_PHASE4_LINE_RECEIVER_E_COMPLETE,
 	V34_PHASE4_LINE_RECEIVER_COMPLETE,
@@ -34,8 +35,8 @@ struct v34_phase4_line_receiver {
 	bool failed;
 };
 
-/* Begin while the peer is transmitting Phase 4 TRN. Both trained inputs are
- * copied and must describe the profile's exact waveform with timing locked. */
+/* Begin at the Phase 3-to-Phase 4 boundary. Both trained inputs are copied
+ * and must describe the profile's exact waveform with timing locked. */
 enum v34_phase4_line_receiver_result
 v34_phase4_line_receiver_init(
 	struct v34_phase4_line_receiver *receiver,

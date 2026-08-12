@@ -27,7 +27,7 @@ struct line_source {
 	bool complete_training;
 };
 
-static struct v34_phase3_profile profile(void)
+static struct v34_phase3_profile profile(enum v34_station_role role)
 {
 	return (struct v34_phase3_profile){
 		.symbol_rate_numerator = 3000,
@@ -35,7 +35,7 @@ static struct v34_phase3_profile profile(void)
 		.carrier_frequency_numerator = 2000,
 		.carrier_frequency_denominator = 1,
 		.symbol_rate = V34_SYMBOL_RATE_3000,
-		.local_role = V34_CALLING_STATION,
+		.local_role = role,
 		.preemphasis_filter_index = 3,
 		.projected_data_rate_2400_bps_units = 8,
 		.high_carrier = true,
@@ -286,9 +286,9 @@ static bool initialize_owned_phase4(
 		      sizeof(*expected)) == 0;
 }
 
-static bool test_continuous_training_line(void)
+static bool test_continuous_training_line_case(enum v34_station_role role)
 {
-	struct v34_phase3_profile transmitting_profile = profile();
+	struct v34_phase3_profile transmitting_profile = profile(role);
 	struct v34_phase3_line_receiver_configuration config =
 		phase3_configuration();
 	struct v34_phase3_line_receiver phase3;
@@ -299,6 +299,7 @@ static bool test_continuous_training_line(void)
 	unsigned int s_events = 0;
 	unsigned int pp_events = 0;
 	unsigned int j_events = 0;
+	unsigned int answer_s_events = 0;
 	unsigned int rejected_records = 0;
 	bool receiving_phase4 = false;
 	bool mp_received = false;
@@ -358,6 +359,10 @@ static bool test_continuous_training_line(void)
 			      result != V34_TRAINING_RECEIVER_SEQUENCE_MISMATCH,
 			      "Phase 4 failed at sample %u: %s", index,
 			      v34_training_receiver_result_name(result));
+			if (result == V34_TRAINING_RECEIVER_S_DETECTED) {
+				answer_s_events++;
+				continue;
+			}
 			if (result != V34_TRAINING_RECEIVER_RECORD_READY)
 				continue;
 			if (event.type == V34_MP_RECEIVE_REJECTED) {
@@ -378,18 +383,29 @@ static bool test_continuous_training_line(void)
 		}
 	}
 	CHECK(mp_received && receiving_phase4 && timing_events == 1 &&
-	      s_events == 1 && pp_events == 1 && j_events == 1 &&
+	      s_events == 1 &&
+	      answer_s_events ==
+		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
+	      pp_events == 1 && j_events == 1 &&
 	      source.completed_records != 0 &&
 	      v34_training_receiver_is_valid(&receiver) &&
 	      !v34_training_receiver_has_failed(&receiver),
-	      "continuous Phase 3/4 timeline did not reach MP (%u rejects)",
-	      rejected_records);
+	      "continuous Phase 3/4 timeline did not reach MP role=%d "
+	      "events=%u/%u/%u/%u/%u records=%u rejects=%u",
+	      role, timing_events, s_events, answer_s_events, pp_events, j_events,
+	      source.completed_records, rejected_records);
 	return true;
 }
 
-static bool test_owned_training_receiver(void)
+static bool test_continuous_training_line(void)
 {
-	struct v34_phase3_profile transmitting_profile = profile();
+	return test_continuous_training_line_case(V34_CALLING_STATION) &&
+	       test_continuous_training_line_case(V34_ANSWERING_STATION);
+}
+
+static bool test_owned_training_receiver_case(enum v34_station_role role)
+{
+	struct v34_phase3_profile transmitting_profile = profile(role);
 	struct v34_training_receiver_configuration config =
 		training_configuration();
 	struct v34_data_line_receiver_configuration data_config;
@@ -510,7 +526,8 @@ static bool test_owned_training_receiver(void)
 		CHECK(memcmp(&event, &saved_event, sizeof(event)) == 0,
 		      "non-record owned training result changed its event");
 	}
-	CHECK(e_complete && timing_events == 1 && s_events == 1 &&
+	CHECK(e_complete && timing_events == 1 &&
+	      s_events == (role == V34_ANSWERING_STATION ? 2u : 1u) &&
 	      pp_events == 1 && j_events == 1 && initial_records != 0 &&
 	      final_record && source.completed_records >= 3u &&
 	      v34_training_receiver_is_valid(&receiver) &&
@@ -543,6 +560,12 @@ static bool test_owned_training_receiver(void)
 		      "completed owned training consumed another sample");
 	}
 	return true;
+}
+
+static bool test_owned_training_receiver(void)
+{
+	return test_owned_training_receiver_case(V34_CALLING_STATION) &&
+	       test_owned_training_receiver_case(V34_ANSWERING_STATION);
 }
 
 int main(void)

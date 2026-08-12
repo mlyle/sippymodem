@@ -3,6 +3,7 @@
 #include <v34_phase4_line_receiver.h>
 
 #include <v34_constellation.h>
+#include <v34_phase3_s_sequence.h>
 #include <v34_phase4_e_sequence.h>
 #include <v34_phase4_mp.h>
 #include <v34_phase4_trn.h>
@@ -81,6 +82,7 @@ static bool parameters_are_equal(
 
 struct line_source {
 	struct qam_modulator modulator;
+	struct v34_phase3_s_sequence answer_s;
 	struct v34_phase4_trn trn;
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence e;
@@ -92,6 +94,7 @@ struct line_source {
 	bool record_complete;
 	enum {
 		SOURCE_CONSTANT,
+		SOURCE_ANSWER_S,
 		SOURCE_TRN,
 		SOURCE_MP,
 		SOURCE_E,
@@ -145,6 +148,32 @@ static bool source_next_trn(struct line_source *source)
 		       &source->trn, &source->point, &quarter_point,
 		       &clockwise_quarter_turns) ==
 	       V34_PHASE4_TRN_OK;
+}
+
+static bool source_start_answer_s(struct line_source *source)
+{
+	enum v34_phase3_s_section section;
+
+	if (v34_phase3_s_sequence_init(&source->answer_s) !=
+		    V34_PHASE3_S_SEQUENCE_OK ||
+	    v34_phase3_s_sequence_next(
+		    &source->answer_s, &source->point, &section) !=
+		    V34_PHASE3_S_SEQUENCE_OK)
+		return false;
+	source->stage = SOURCE_ANSWER_S;
+	return true;
+}
+
+static bool source_next_answer_s(struct line_source *source)
+{
+	enum v34_phase3_s_section section;
+
+	if (v34_phase3_s_sequence_is_complete(&source->answer_s))
+		return source_start_trn(
+			source, source->trn.role, source->trn.constellation);
+	return v34_phase3_s_sequence_next(
+		       &source->answer_s, &source->point, &section) ==
+	       V34_PHASE3_S_SEQUENCE_OK;
 }
 
 static bool source_start_mp(struct line_source *source)
@@ -223,6 +252,8 @@ static bool source_advance(struct line_source *source)
 	switch (source->stage) {
 	case SOURCE_CONSTANT:
 		return true;
+	case SOURCE_ANSWER_S:
+		return source_next_answer_s(source);
 	case SOURCE_TRN:
 		return source_next_trn(source);
 	case SOURCE_MP:
@@ -409,6 +440,7 @@ static bool run_line_case(
 	struct qam_demodulator demodulator;
 	struct qam_equalizer equalizer;
 	unsigned int control_trn_symbols = 0;
+	unsigned int answer_s_events = 0;
 	unsigned int initial_records = 0;
 	bool final_record = false;
 	bool e_complete = false;
@@ -422,6 +454,9 @@ static bool run_line_case(
 		      constellation, 0.03) == V34_PHASE4_LINE_RECEIVER_OK,
 	      "Phase 4 line fixture did not initialize role=%d constellation=%d",
 	      role, constellation);
+	if (role == V34_ANSWERING_STATION)
+		CHECK(source_start_answer_s(&source),
+		      "Phase 4 line answer marker did not initialize");
 	memset(&data_receiver, 0xa5, sizeof(data_receiver));
 	saved_data_receiver = data_receiver;
 	CHECK(v34_phase4_line_receiver_start_data(
@@ -479,10 +514,15 @@ static bool run_line_case(
 			CHECK(memcmp(&event, &saved_event, sizeof(event)) == 0,
 			      "non-record line result changed the MP event");
 		}
+		if (result == V34_PHASE4_LINE_RECEIVER_S_DETECTED)
+			answer_s_events++;
 		e_complete =
 			result == V34_PHASE4_LINE_RECEIVER_E_COMPLETE;
 	}
-	CHECK(e_complete && initial_records != 0 && final_record &&
+	CHECK(e_complete &&
+	      answer_s_events ==
+		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
+	      initial_records != 0 && final_record &&
 	      v34_phase4_line_receiver_is_valid(&receiver) &&
 	      !v34_phase4_line_receiver_has_failed(&receiver) &&
 	      receiver.control.stage ==
@@ -540,6 +580,9 @@ static bool test_result_names(void)
 	return strcmp(v34_phase4_line_receiver_result_name(
 			      V34_PHASE4_LINE_RECEIVER_OK),
 		      "ok") == 0 &&
+	      strcmp(v34_phase4_line_receiver_result_name(
+			      V34_PHASE4_LINE_RECEIVER_S_DETECTED),
+		      "S detected") == 0 &&
 	       strcmp(v34_phase4_line_receiver_result_name(
 			      V34_PHASE4_LINE_RECEIVER_RECORD_READY),
 		      "record ready") == 0 &&

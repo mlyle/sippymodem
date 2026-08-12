@@ -1188,6 +1188,8 @@ V34_PHASE4_EQUALIZER_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_equalizer_handoff.o \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v34_mp.o \
 	$(BUILD_DIR)/v34_phase4_trn.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \

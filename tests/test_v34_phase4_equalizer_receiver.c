@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase4_equalizer_receiver.h>
+#include <v34_phase3_s_sequence.h>
 #include <v34_phase4_e_sequence.h>
 #include <v34_phase4_mp.h>
 #include <v34_phase4_trn.h>
@@ -26,6 +27,7 @@ struct receive_fixture {
 	struct fixture_channel channel;
 	struct v34_mp_parameters first_parameters;
 	struct v34_mp_parameters second_parameters;
+	unsigned int answer_s_events;
 	unsigned int accepted_records;
 	unsigned int rejected_records;
 };
@@ -106,6 +108,8 @@ static bool receive_point(
 	saved_event = event;
 	*result = v34_phase4_equalizer_receive_point(
 		&fixture->receiver, received, &event);
+	if (*result == V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED)
+		fixture->answer_s_events++;
 	if (*result != V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY) {
 		CHECK(memcmp(&event, &saved_event, sizeof(event)) == 0,
 		      "non-record result changed the MP event");
@@ -182,6 +186,7 @@ static bool run_stream(
 		.second_parameters = parameters(true),
 	};
 	struct v34_phase4_trn trn;
+	struct v34_phase3_s_sequence answer_s;
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence e;
 	struct qam_equalizer equalizer;
@@ -192,6 +197,7 @@ static bool run_stream(
 	enum v34_phase4_equalizer_receiver_result result;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
+	enum v34_phase3_s_section answer_s_section;
 	bool record_complete;
 	bool equalized_ready;
 
@@ -234,15 +240,28 @@ static bool run_stream(
 	}
 	CHECK(v34_phase4_equalizer_receiver_init(
 		      &fixture.receiver, &equalizer, role, constellation,
-		      0.05) == V34_PHASE4_EQUALIZER_RECEIVER_OK &&
-	      v34_phase4_trn_next(
-		      &trn, &transmitted, &quarter_point,
-		      &clockwise_quarter_turns) == V34_PHASE4_TRN_OK &&
-	      transmit_point(
-		      &fixture, &transmitted, &result, &received) &&
-	      result == V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL,
+		      0.05) == V34_PHASE4_EQUALIZER_RECEIVER_OK,
 	      "Phase 4 equalizer fixture did not transfer trained state");
-	for (size_t symbol = 1; symbol < TRAINING_SYMBOLS; ++symbol) {
+	if (role == V34_ANSWERING_STATION) {
+		CHECK(v34_phase3_s_sequence_init(&answer_s) ==
+			      V34_PHASE3_S_SEQUENCE_OK,
+		      "Phase 4 answer marker did not initialize");
+		while (!v34_phase3_s_sequence_is_complete(&answer_s)) {
+			CHECK(v34_phase3_s_sequence_next(
+				      &answer_s, &transmitted,
+				      &answer_s_section) ==
+				      V34_PHASE3_S_SEQUENCE_OK &&
+			      transmit_point(
+				      &fixture, &transmitted, &result,
+				      &received) &&
+			      result == V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL,
+			      "Phase 4 answer marker failed before its boundary");
+		}
+	}
+	CHECK(v34_phase4_trn_init(&trn, role, constellation) ==
+		      V34_PHASE4_TRN_OK,
+	      "fresh Phase 4 TRN did not initialize");
+	for (size_t symbol = 0; symbol < TRAINING_SYMBOLS; ++symbol) {
 		CHECK(v34_phase4_trn_next(
 			      &trn, &transmitted, &quarter_point,
 			      &clockwise_quarter_turns) ==
@@ -251,10 +270,18 @@ static bool run_stream(
 			      &fixture, &transmitted, &result, &received) &&
 		      (result == V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL ||
 		       result ==
+			       V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED ||
+		       result ==
 			       V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY),
 		      "TRN receive failed at symbol %zu with %s", symbol,
 		      v34_phase4_equalizer_receiver_result_name(result));
 	}
+	CHECK(fixture.answer_s_events ==
+		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
+	      fixture.receiver.stage ==
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP,
+	      "Phase 4 answer marker count=%u role=%d",
+	      fixture.answer_s_events, role);
 	CHECK(v34_phase4_mp_init_type0_from_trn(
 		      &mp, &trn, &fixture.first_parameters) ==
 		      V34_PHASE4_MP_OK,
@@ -442,6 +469,21 @@ static bool test_validation(void)
 	      v34_phase4_equalizer_receiver_is_valid(&receiver) &&
 	      !v34_phase4_equalizer_receiver_is_valid(NULL),
 	      "validation receiver did not initialize");
+	receiver.stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S;
+	CHECK(!v34_phase4_equalizer_receiver_is_valid(&receiver),
+	      "calling receiver accepted an answer-marker stage");
+	CHECK(v34_phase4_equalizer_receiver_init(
+		      &receiver, &equalizer, V34_ANSWERING_STATION,
+		      V34_CONSTELLATION_4_POINT, 0.1) ==
+		      V34_PHASE4_EQUALIZER_RECEIVER_OK &&
+	      receiver.stage ==
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S,
+	      "answering receiver did not await its Phase 4 marker");
+	CHECK(v34_phase4_equalizer_receiver_init(
+		      &receiver, &equalizer, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT, 0.1) ==
+		      V34_PHASE4_EQUALIZER_RECEIVER_OK,
+	      "validation caller receiver did not reset");
 	saved = receiver;
 	CHECK(v34_phase4_equalizer_receive_point(
 		      NULL, &reference, &event) ==
@@ -463,6 +505,9 @@ static bool test_validation(void)
 	      strcmp(v34_phase4_equalizer_receiver_result_name(
 		     V34_PHASE4_EQUALIZER_RECEIVER_OK),
 		     "ok") == 0 &&
+	      strcmp(v34_phase4_equalizer_receiver_result_name(
+		     V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED),
+		     "S detected") == 0 &&
 	      strcmp(v34_phase4_equalizer_receiver_result_name(
 		     V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY),
 		     "record ready") == 0 &&

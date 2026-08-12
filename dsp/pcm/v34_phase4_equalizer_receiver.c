@@ -15,8 +15,25 @@ static bool point_is_finite(const struct qam_point *point)
 static bool stage_is_valid(
 	enum v34_phase4_equalizer_receiver_stage stage)
 {
-	return stage >= V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP &&
+	return stage >= V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S &&
 	       stage <= V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE;
+}
+
+static bool answer_s_state_is_valid(
+	const struct v34_phase4_equalizer_receiver *receiver)
+{
+	bool complete;
+
+	if (!v34_phase3_s_receiver_is_valid(&receiver->answer_s))
+		return false;
+	complete = v34_phase3_s_receiver_is_complete(&receiver->answer_s);
+	if (receiver->mp_receiver.transmitting_role == V34_ANSWERING_STATION)
+		return complete ==
+		       (receiver->stage !=
+			V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S);
+	return receiver->stage !=
+		       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S &&
+	       !complete && receiver->answer_s.buffered_decisions == 0;
 }
 
 bool v34_phase4_equalizer_receiver_is_valid(
@@ -26,13 +43,22 @@ bool v34_phase4_equalizer_receiver_is_valid(
 	    receiver->equalizer.can_adapt || !isfinite(receiver->adaptation) ||
 	    receiver->adaptation < 0.0 || receiver->adaptation > 1.0 ||
 	    !stage_is_valid(receiver->stage) ||
+	    !v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver) ||
+	    !answer_s_state_is_valid(receiver) ||
 	    (receiver->pending_record_is_valid && !receiver->record_pending) ||
 	    (receiver->stage != V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP &&
 	     receiver->record_pending))
 		return false;
-	if (receiver->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP)
-		return v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver);
+	if (receiver->stage ==
+		    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S ||
+	    receiver->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP)
+		return true;
 	if (!v34_phase4_e_receiver_is_valid(&receiver->e_receiver))
+		return false;
+	if (receiver->e_receiver.transmitting_role !=
+		    receiver->mp_receiver.transmitting_role ||
+	    receiver->e_receiver.constellation !=
+		    receiver->mp_receiver.constellation)
 		return false;
 	return (receiver->stage ==
 		V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE) ==
@@ -68,11 +94,15 @@ v34_phase4_equalizer_receiver_init(
 {
 	struct v34_phase4_equalizer_receiver initialized = {
 		.adaptation = adaptation,
-		.stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP,
+		.stage = transmitting_role == V34_ANSWERING_STATION ?
+				 V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S :
+				 V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP,
 	};
 
 	if (receiver == NULL || !qam_equalizer_is_valid(equalizer) ||
 	    !isfinite(adaptation) || adaptation < 0.0 || adaptation > 1.0 ||
+	    v34_phase3_s_receiver_init(&initialized.answer_s) !=
+		    V34_PHASE3_S_RECEIVER_OK ||
 	    v34_phase4_mp_receiver_init(
 		    &initialized.mp_receiver, transmitting_role,
 		    constellation) != V34_PHASE4_MP_RECEIVER_OK)
@@ -153,6 +183,24 @@ static enum v34_phase4_equalizer_receiver_result receive_mp(
 	return V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY;
 }
 
+static enum v34_phase4_equalizer_receiver_result receive_answer_s(
+	struct v34_phase4_equalizer_receiver *receiver,
+	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
+{
+	enum v34_phase3_s_receiver_result result =
+		v34_phase3_s_receiver_receive(
+			&receiver->answer_s, quarter_point,
+			clockwise_quarter_turns);
+
+	if (result == V34_PHASE3_S_RECEIVER_DETECTED) {
+		receiver->stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP;
+		return V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED;
+	}
+	if (result != V34_PHASE3_S_RECEIVER_OK)
+		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+	return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
+}
+
 static enum v34_phase4_equalizer_receiver_result receive_e(
 	struct v34_phase4_equalizer_receiver *receiver,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
@@ -209,7 +257,11 @@ v34_phase4_equalizer_receive_point(
 		*receiver = next;
 		return V34_PHASE4_EQUALIZER_RECEIVER_WARMING;
 	}
-	constellation = next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP ?
+	constellation = next.stage ==
+				V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S ?
+				V34_CONSTELLATION_4_POINT :
+			next.stage ==
+				V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP ?
 				next.mp_receiver.constellation :
 				next.e_receiver.constellation;
 	if (v34_training_constellation_slice(
@@ -222,13 +274,15 @@ v34_phase4_equalizer_receive_point(
 		    &next.equalizer, &observation, &target,
 		    next.adaptation) != QAM_EQUALIZER_OK)
 		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
-	result = next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP ?
-			 receive_mp(
-				 &next, quarter_point,
-				 clockwise_quarter_turns, &emitted) :
-			 receive_e(
-				 &next, quarter_point,
-				 clockwise_quarter_turns);
+	if (next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S)
+		result = receive_answer_s(
+			&next, quarter_point, clockwise_quarter_turns);
+	else if (next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP)
+		result = receive_mp(
+			&next, quarter_point, clockwise_quarter_turns, &emitted);
+	else
+		result = receive_e(
+			&next, quarter_point, clockwise_quarter_turns);
 	if (result == V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE ||
 	    result == V34_PHASE4_EQUALIZER_RECEIVER_SEQUENCE_MISMATCH)
 		return result;
@@ -250,6 +304,8 @@ const char *v34_phase4_equalizer_receiver_result_name(
 		return "warming";
 	case V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL:
 		return "symbol";
+	case V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED:
+		return "S detected";
 	case V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY:
 		return "record ready";
 	case V34_PHASE4_EQUALIZER_RECEIVER_E_COMPLETE:
