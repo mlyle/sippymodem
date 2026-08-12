@@ -75,4 +75,13 @@ bool test_v34_phase2_pair_init(
 bool test_v34_phase2_pair_sample(
 	struct test_pair *pair, struct test_pair_event *event);
 
+/* Reuse only the generated delay/codec line while a focused test owns the
+ * endpoint controllers. Receive must precede transmit for each sample. */
+bool test_v34_phase2_channel_receive(
+	const struct test_pair *pair, int16_t *caller_receive,
+	int16_t *answerer_receive);
+bool test_v34_phase2_channel_transmit(
+	struct test_pair *pair, int16_t caller_transmit,
+	int16_t answerer_transmit);
+
 #endif

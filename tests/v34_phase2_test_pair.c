@@ -31,6 +31,47 @@ static void delay_line_transmit(
 	line->cursor = (line->cursor + 1u) % line->delay_samples;
 }
 
+static bool channel_is_valid(const struct test_pair *pair)
+{
+	return pair != NULL && (unsigned int)pair->codec <= TEST_CODEC_PCMA &&
+	       pair->caller_to_answerer.delay_samples != 0 &&
+	       pair->caller_to_answerer.delay_samples <=
+		       TEST_MAXIMUM_LINE_DELAY &&
+	       pair->answerer_to_caller.delay_samples ==
+		       pair->caller_to_answerer.delay_samples &&
+	       pair->caller_to_answerer.cursor <
+		       pair->caller_to_answerer.delay_samples &&
+	       pair->answerer_to_caller.cursor <
+		       pair->answerer_to_caller.delay_samples;
+}
+
+bool test_v34_phase2_channel_receive(
+	const struct test_pair *pair, int16_t *caller_receive,
+	int16_t *answerer_receive)
+{
+	if (!channel_is_valid(pair) || caller_receive == NULL ||
+	    answerer_receive == NULL)
+		return false;
+	*caller_receive = delay_line_receive(&pair->answerer_to_caller);
+	*answerer_receive = delay_line_receive(&pair->caller_to_answerer);
+	return true;
+}
+
+bool test_v34_phase2_channel_transmit(
+	struct test_pair *pair, int16_t caller_transmit,
+	int16_t answerer_transmit)
+{
+	if (!channel_is_valid(pair))
+		return false;
+	delay_line_transmit(
+		&pair->caller_to_answerer,
+		codec_round_trip(caller_transmit, pair->codec));
+	delay_line_transmit(
+		&pair->answerer_to_caller,
+		codec_round_trip(answerer_transmit, pair->codec));
+	return true;
+}
+
 struct v34_info0 test_v34_phase2_capabilities(
 	enum v34_station_role role)
 {
@@ -177,23 +218,23 @@ bool test_v34_phase2_pair_sample(
 	struct test_pair *pair, struct test_pair_event *event)
 {
 	struct test_pair_event emitted = { 0 };
+	int16_t caller_receive;
+	int16_t answerer_receive;
 
 	if (pair == NULL || event == NULL ||
+	    !test_v34_phase2_channel_receive(
+		    pair, &caller_receive, &answerer_receive) ||
 	    !endpoint_sample(
-		    &pair->caller,
-		    delay_line_receive(&pair->answerer_to_caller),
+		    &pair->caller, caller_receive,
 		    &emitted.caller_transmit, &emitted.caller) ||
 	    !endpoint_sample(
-		    &pair->answerer,
-		    delay_line_receive(&pair->caller_to_answerer),
+		    &pair->answerer, answerer_receive,
 		    &emitted.answerer_transmit, &emitted.answerer))
 		return false;
-	delay_line_transmit(
-		&pair->caller_to_answerer,
-		codec_round_trip(emitted.caller_transmit, pair->codec));
-	delay_line_transmit(
-		&pair->answerer_to_caller,
-		codec_round_trip(emitted.answerer_transmit, pair->codec));
+	if (!test_v34_phase2_channel_transmit(
+		    pair, emitted.caller_transmit,
+		    emitted.answerer_transmit))
+		return false;
 	*event = emitted;
 	return true;
 }
