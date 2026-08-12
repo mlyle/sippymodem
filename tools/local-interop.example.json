@@ -1,0 +1,51 @@
+{
+  "enabled": false,
+  "artifact_directory": "local-interop-artifacts",
+  "originator": {
+    "executable": "../src/slmodemd",
+    "arguments": [],
+    "environment": {
+      "SIP_CODEC": "PCMU",
+      "SIP_LOG_LEVEL": "2"
+    },
+    "at_commands": [
+      "ATZ",
+      "ATE0",
+      "AT&A7",
+      "ATX3",
+      "AT\\N0",
+      "AT+DS=0,1",
+      "AT+MS=21,0,300,300"
+    ]
+  },
+  "answerer": {
+    "executable": "../src/slmodemd",
+    "arguments": [],
+    "environment": {
+      "SIP_CODEC": "PCMU",
+      "SIP_LOG_LEVEL": "2"
+    },
+    "at_commands": [
+      "ATZ",
+      "ATE0",
+      "AT&A7",
+      "ATX3",
+      "AT\\N0",
+      "AT+DS=0,1",
+      "AT+MS=21,0,300,300"
+    ]
+  },
+  "originator_payload_hex": "4f524947494e2d544f2d414e535745520d0a",
+  "answerer_payload_hex": "414e535745522d544f2d4f524947494e0d0a",
+  "startup_timeout_seconds": 15,
+  "setup_timeout_seconds": 30,
+  "connect_timeout_seconds": 180,
+  "online_timeout_seconds": 30,
+  "cleanup_timeout_seconds": 5,
+  "ports": {
+    "originator_sip": 0,
+    "answerer_sip": 0,
+    "originator_rtp": 0,
+    "answerer_rtp": 0
+  }
+}

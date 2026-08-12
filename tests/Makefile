@@ -1967,6 +1967,7 @@ test: $(TEST_BINARIES)
 	$(PYTHON) test_live_profiles.py
 	$(PYTHON) test_live_terminal.py
 	$(PYTHON) test_live_calls.py
+	$(PYTHON) test_interop_config.py
 	./$(PACK_TEST_BINARY)
 	./$(CONFIG_TEST_BINARY)
 	./$(SIP_URI_TEST_BINARY)
