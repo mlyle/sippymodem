@@ -2,6 +2,7 @@
 
 #include <g711.h>
 #include <v90_phase2_initial_probe.h>
+#include <v90_phase2_info1_exchange.h>
 #include <v90_phase2_probe_turnaround.h>
 #include <v90_phase2_reciprocal_probe.h>
 
@@ -85,6 +86,167 @@ static struct v90_info0d digital_capabilities(enum test_codec codec)
 				   V90_PCM_MU_LAW : V90_PCM_A_LAW,
 		.upstream_symbol_rate_3429_supported = true,
 	};
+}
+
+static struct v34_info1c digital_info1(void)
+{
+	struct v34_info1c info1d = {
+		.common = {
+			.minimum_peer_power_reduction_db = 2,
+			.additional_peer_power_reduction_db = 1,
+			.local_md_length_35_ms_units = 7,
+			.frequency_offset_1_50_hz_units = -23,
+		},
+	};
+
+	for (size_t index = 0; index < V34_SYMBOL_RATE_COUNT; ++index)
+		info1d.answer_transmit[index] =
+			(struct v34_info1_probe_result){
+				.high_carrier = (index & 1u) != 0,
+				.preemphasis_filter_index = (uint8_t)(2u * index),
+				.projected_data_rate_2400_bps_units =
+					(uint8_t)(6u + index),
+			};
+	return info1d;
+}
+
+static struct v90_info1a analog_info1(void)
+{
+	return (struct v90_info1a){
+		.local_md_length_35_ms_units = 5,
+		.training_ucode = 91,
+		.upstream_symbol_rate = V34_SYMBOL_RATE_3200,
+		.frequency_offset_1_50_hz_units = 31,
+	};
+}
+
+static bool info1d_equal(
+	const struct v34_info1c *left, const struct v34_info1c *right)
+{
+	uint8_t left_payload[V34_INFO1C_PAYLOAD_BYTES];
+	uint8_t right_payload[V34_INFO1C_PAYLOAD_BYTES];
+
+	return v34_info1c_encode(left, left_payload, sizeof(left_payload)) ==
+		       V34_INFO1_OK &&
+	       v34_info1c_encode(right, right_payload, sizeof(right_payload)) ==
+		       V34_INFO1_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+}
+
+static bool info1a_equal(
+	const struct v90_info1a *left, const struct v90_info1a *right)
+{
+	uint8_t left_payload[V90_INFO1A_PAYLOAD_BYTES];
+	uint8_t right_payload[V90_INFO1A_PAYLOAD_BYTES];
+
+	return v90_info1a_encode(left, left_payload, sizeof(left_payload)) ==
+		       V90_INFO1_OK &&
+	       v90_info1a_encode(right, right_payload, sizeof(right_payload)) ==
+		       V90_INFO1_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+}
+
+static bool check_info1_exchange(
+	enum test_codec codec, struct test_delay_line *analog_to_digital,
+	struct test_delay_line *digital_to_analog,
+	const struct v90_phase2_reciprocal_probe *analog_probe,
+	const struct v90_phase2_reciprocal_probe *digital_probe)
+{
+	struct v34_info1c info1d = digital_info1();
+	struct v90_info1a info1a = analog_info1();
+	struct v90_phase2_info1_exchange analog;
+	struct v90_phase2_info1_exchange digital;
+	struct v90_phase2_info1_exchange untouched;
+	struct v90_phase2_info1_exchange untouched_before;
+	size_t digital_sent = SIZE_MAX;
+	size_t analog_received = SIZE_MAX;
+	size_t analog_sent = SIZE_MAX;
+	size_t digital_received = SIZE_MAX;
+
+	memset(&untouched, 0xa5, sizeof(untouched));
+	untouched_before = untouched;
+	CHECK(v90_phase2_info1_init_analog(&untouched, digital_probe) ==
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
+	      v90_phase2_info1_init_digital(
+		      &untouched, analog_probe, &info1d) ==
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
+	      memcmp(&untouched, &untouched_before, sizeof(untouched)) == 0,
+	      "wrong-role V.90 INFO1 handoff mutated output state");
+	CHECK(v90_phase2_info1_init_analog(&analog, analog_probe) ==
+		      PHASE2_INFO1_OK &&
+	      v90_phase2_info1_init_digital(
+		      &digital, digital_probe, &info1d) == PHASE2_INFO1_OK &&
+	      analog.control.nominal_amplitude == TEST_AMPLITUDE &&
+	      digital.control.nominal_amplitude == TEST_AMPLITUDE,
+	      "V.90 INFO1 endpoints did not preserve their handoff");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v90_phase2_info1_event analog_event;
+		struct v90_phase2_info1_event digital_event;
+		int16_t analog_transmit;
+		int16_t digital_transmit;
+
+		CHECK(v90_phase2_info1_sample(
+			      &analog, delay_line_receive(digital_to_analog),
+			      &analog_transmit, &analog_event) == PHASE2_INFO1_OK &&
+		      v90_phase2_info1_sample(
+			      &digital, delay_line_receive(analog_to_digital),
+			      &digital_transmit, &digital_event) == PHASE2_INFO1_OK,
+		      "V.90 INFO1 exchange failed for codec %d at sample %zu",
+		      codec, index);
+		delay_line_transmit(
+			analog_to_digital,
+			codec_round_trip(analog_transmit, codec));
+		delay_line_transmit(
+			digital_to_analog,
+			codec_round_trip(digital_transmit, codec));
+		if (digital_event.kind ==
+		    V90_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT)
+			digital_sent = index;
+		if (analog_event.kind ==
+		    V90_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED) {
+			struct v90_phase2_info1_exchange before = analog;
+			struct v90_info1a invalid = info1a;
+
+			analog_received = index;
+			invalid.training_ucode = V90_INFO1A_MIN_TRAINING_UCODE - 1;
+			CHECK(info1d_equal(
+				      &analog_event.peer_record.info1d, &info1d) &&
+			      v90_phase2_info1_reply_analog(&analog, &invalid) ==
+				      PHASE2_INFO1_INVALID_ARGUMENT &&
+			      memcmp(&analog, &before, sizeof(analog)) == 0 &&
+			      v90_phase2_info1_reply_analog(&analog, &info1a) ==
+				      PHASE2_INFO1_OK &&
+			      analog.control.transmitter.modulation.carrier
+					      .carrier_phase +
+					      UINT32_C(0x40000000) ==
+				      analog.control.signal_a_tone.carrier_phase &&
+			      analog.control.transmitter.modulation.guard_phase ==
+				      analog.control.signal_a_tone.guard_phase,
+			      "analog modem did not accept INFO1d phase-continuously");
+		}
+		if (analog_event.kind ==
+		    V90_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT)
+			analog_sent = index;
+		if (digital_event.kind ==
+		    V90_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+			digital_received = index;
+			CHECK(info1a_equal(
+				      &digital_event.peer_record.info1a, &info1a),
+			      "digital modem decoded a different V.90 selection");
+		}
+		if (analog.control.phase == PHASE2_INFO1_COMPLETE &&
+		    digital.control.phase == PHASE2_INFO1_COMPLETE)
+			break;
+	}
+	CHECK(digital_sent < analog_received && analog_received < analog_sent &&
+	      analog_sent < digital_received &&
+	      analog.peer_record_received && digital.peer_record_received &&
+	      info1d_equal(&analog.peer_record.info1d, &info1d) &&
+	      info1a_equal(&digital.peer_record.info1a, &info1a) &&
+	      v90_phase2_info1_is_valid(&analog) &&
+	      v90_phase2_info1_is_valid(&digital),
+	      "V.90 INFO1 order or retained selections changed");
+	return true;
 }
 
 static bool endpoint_sample(
@@ -355,7 +517,11 @@ static bool check_initial_probe(enum test_codec codec)
 	      v90_phase2_reciprocal_probe_measure(
 		      &digital_reciprocal, &measurement) ==
 		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT,
-	      "V.90 analog reciprocal-probe measurement was unavailable");
+		      "V.90 analog reciprocal-probe measurement was unavailable");
+	CHECK(check_info1_exchange(
+		      codec, &analog_to_digital, &digital_to_analog,
+		      &analog_reciprocal, &digital_reciprocal),
+	      "V.90 INFO1 exchange failed for codec %d", codec);
 
 	{
 		struct v90_phase2_probe_turnaround before;
@@ -408,11 +574,11 @@ static bool test_pcm_initial_probe(void)
 
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] PCMU and PCMA reciprocal probes\n");
+	fprintf(stderr, "[ RUN      ] PCMU and PCMA Phase 2 through INFO1\n");
 	if (!test_pcm_initial_probe()) {
-		fprintf(stderr, "[  FAILED  ] PCMU and PCMA reciprocal probes\n");
+		fprintf(stderr, "[  FAILED  ] PCMU and PCMA Phase 2 through INFO1\n");
 		return 1;
 	}
-	fprintf(stderr, "[       OK ] PCMU and PCMA reciprocal probes\n");
+	fprintf(stderr, "[       OK ] PCMU and PCMA Phase 2 through INFO1\n");
 	return 0;
 }
