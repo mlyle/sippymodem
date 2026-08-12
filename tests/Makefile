@@ -1371,6 +1371,8 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_phase2_initial_probe.o \
 	$(BUILD_DIR)/phase2_probe_turnaround.o \
 	$(BUILD_DIR)/v90_phase2_probe_turnaround.o \
+	$(BUILD_DIR)/phase2_reciprocal_probe.o \
+	$(BUILD_DIR)/v90_phase2_reciprocal_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
@@ -3089,6 +3091,10 @@ $(BUILD_DIR)/v90_phase2_initial_probe.o: \
 
 $(BUILD_DIR)/v90_phase2_probe_turnaround.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_probe_turnaround.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase2_reciprocal_probe.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase2_reciprocal_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_info1.o: \

@@ -3,6 +3,7 @@
 #include <g711.h>
 #include <v90_phase2_initial_probe.h>
 #include <v90_phase2_probe_turnaround.h>
+#include <v90_phase2_reciprocal_probe.h>
 
 #include "test.h"
 
@@ -129,6 +130,8 @@ static bool check_initial_probe(enum test_codec codec)
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v90_phase2_probe_turnaround analog_turnaround;
 	struct v90_phase2_probe_turnaround digital_turnaround;
+	struct v90_phase2_reciprocal_probe analog_reciprocal;
+	struct v90_phase2_reciprocal_probe digital_reciprocal;
 	uint32_t transmitted_l2_samples = 0;
 	bool analog_l2_started = false;
 	bool analog_probe_complete = false;
@@ -284,6 +287,75 @@ static bool check_initial_probe(enum test_codec codec)
 			      &digital_turnaround),
 		      "V.90 probe turnaround did not complete both role handoffs");
 	}
+	CHECK(v90_phase2_reciprocal_probe_init(
+		      &analog_reciprocal, &analog_turnaround) ==
+		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      v90_phase2_reciprocal_probe_init(
+		      &digital_reciprocal, &digital_turnaround) ==
+		      PHASE2_RECIPROCAL_PROBE_OK,
+	      "V.90 reciprocal-probe endpoints did not initialize");
+	{
+		bool analog_measured = false;
+		bool digital_acknowledged = false;
+
+		for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+			struct phase2_reciprocal_probe_event analog_event;
+			struct phase2_reciprocal_probe_event digital_event;
+			int16_t analog_transmit;
+			int16_t digital_transmit;
+
+			CHECK(v90_phase2_reciprocal_probe_sample(
+				      &analog_reciprocal,
+				      delay_line_receive(&digital_to_analog),
+				      &analog_transmit, &analog_event) ==
+				      PHASE2_RECIPROCAL_PROBE_OK &&
+			      v90_phase2_reciprocal_probe_sample(
+				      &digital_reciprocal,
+				      delay_line_receive(&analog_to_digital),
+				      &digital_transmit, &digital_event) ==
+				      PHASE2_RECIPROCAL_PROBE_OK,
+			      "V.90 reciprocal probe failed for codec %d at sample %zu",
+			      codec, index);
+			delay_line_transmit(
+				&analog_to_digital,
+				codec_round_trip(analog_transmit, codec));
+			delay_line_transmit(
+				&digital_to_analog,
+				codec_round_trip(digital_transmit, codec));
+			analog_measured |= analog_event.kind ==
+				PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED;
+			digital_acknowledged |= digital_event.kind ==
+				PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED;
+			if (analog_measured && digital_acknowledged)
+				break;
+		}
+		CHECK(analog_measured && digital_acknowledged &&
+		      analog_reciprocal.control.phase ==
+			      PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE &&
+		      digital_reciprocal.control.phase ==
+			      PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE &&
+		      analog_reciprocal.control
+				      .signal_a_reversal_elapsed_samples >
+			      analog_turnaround.control
+				      .signal_a_reversal_elapsed_samples &&
+		      v90_phase2_reciprocal_probe_is_valid(
+			      &analog_reciprocal) &&
+		      v90_phase2_reciprocal_probe_is_valid(
+			      &digital_reciprocal),
+		      "V.90 reciprocal probe did not complete both role handoffs");
+	}
+	CHECK(v90_phase2_reciprocal_probe_measure(
+		      &analog_reciprocal, &measurement) ==
+		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      measurement.l1.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
+	      measurement.l2.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
+	      measurement.l2_samples == V34_PHASE2_PROBE_L1_SAMPLES &&
+	      measurement.l1.harmonics[0].mean_square > 0.0 &&
+	      measurement.l2.harmonics[0].mean_square > 0.0 &&
+	      v90_phase2_reciprocal_probe_measure(
+		      &digital_reciprocal, &measurement) ==
+		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT,
+	      "V.90 analog reciprocal-probe measurement was unavailable");
 
 	{
 		struct v90_phase2_probe_turnaround before;
@@ -304,6 +376,24 @@ static bool check_initial_probe(enum test_codec codec)
 		      event.kind == PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 		      "invalid V.90 turnaround mutated state or outputs");
 	}
+	{
+		struct v90_phase2_reciprocal_probe before;
+		struct phase2_reciprocal_probe_event event = {
+			.kind = PHASE2_RECIPROCAL_PROBE_EVENT_FAILED,
+		};
+		int16_t output = 1234;
+
+		analog_reciprocal.turnaround.initial_probe.ranging.info0_exchange
+			.transport.info_receiver.modulation.detector_output = NAN;
+		before = analog_reciprocal;
+		CHECK(v90_phase2_reciprocal_probe_sample(
+			      &analog_reciprocal, 0, &output, &event) ==
+			      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
+		      memcmp(&analog_reciprocal, &before, sizeof(before)) == 0 &&
+		      output == 1234 &&
+		      event.kind == PHASE2_RECIPROCAL_PROBE_EVENT_FAILED,
+		      "invalid V.90 reciprocal probe mutated state or outputs");
+	}
 	return true;
 }
 
@@ -318,11 +408,11 @@ static bool test_pcm_initial_probe(void)
 
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] PCMU and PCMA line-probe turn\n");
+	fprintf(stderr, "[ RUN      ] PCMU and PCMA reciprocal probes\n");
 	if (!test_pcm_initial_probe()) {
-		fprintf(stderr, "[  FAILED  ] PCMU and PCMA line-probe turn\n");
+		fprintf(stderr, "[  FAILED  ] PCMU and PCMA reciprocal probes\n");
 		return 1;
 	}
-	fprintf(stderr, "[       OK ] PCMU and PCMA line-probe turn\n");
+	fprintf(stderr, "[       OK ] PCMU and PCMA reciprocal probes\n");
 	return 0;
 }
