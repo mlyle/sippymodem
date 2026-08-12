@@ -1190,6 +1190,7 @@ V34_PHASE3_PHASE4_LINE_TEST_BINARY := \
 V34_PHASE3_PHASE4_LINE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase3_phase4_line.o \
 	$(BUILD_DIR)/v34_phase4_line_handoff.o \
+	$(BUILD_DIR)/v34_training_receiver.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_phase3_line_receiver.o \
 		$(BUILD_DIR)/test_v34_phase4_line_receiver.o, \
@@ -2919,6 +2920,10 @@ $(BUILD_DIR)/v34_phase4_line_receiver.o: \
 
 $(BUILD_DIR)/v34_phase4_line_handoff.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_line_handoff.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_training_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_training_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_training_channel.o: \

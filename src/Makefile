@@ -216,6 +216,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_line_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_trn.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_training_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_channel.c
 DSP_SOURCES := $(SHARED_DSP_SOURCES) \
 	$(V21_202_SOURCES) $(V22_SOURCES) \
