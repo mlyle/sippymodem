@@ -79,7 +79,7 @@ static bool test_owns_bounded_media_storage(void)
 	CHECK(rtp_runtime_frame_samples(runtime) ==
 		      ARRAY_LENGTH(samples) &&
 		      endpoint != NULL && endpoint->stream != NULL &&
-		      endpoint->stream->receiver.slot_count == 24 &&
+		      endpoint->stream->receiver.slot_count == 56 &&
 		      endpoint->stream->receiver.config.prefill_samples == 16,
 	      "RTP runtime storage does not match the media timing");
 	open_result = rtp_runtime_open(runtime, &local);
@@ -127,6 +127,85 @@ static bool test_owns_bounded_media_storage(void)
 	return true;
 }
 
+static bool test_buffers_scheduler_catchup_burst(void)
+{
+	struct app_config config;
+	struct rtp_runtime *runtime;
+	struct rtp_endpoint *endpoint;
+	struct rtp_receiver *receiver;
+	uint8_t payloads[8][8];
+	uint8_t played[8];
+	uint8_t expected[7 * 8];
+	uint8_t actual[7 * 8];
+	size_t actual_count = 0;
+
+	config_init(&config);
+	config.media.frame_duration_ms = 1;
+	config.media.jitter_buffer_ms = 2;
+	runtime = rtp_runtime_create(&config.media, NULL);
+	CHECK(runtime != NULL, "catch-up RTP runtime creation failed");
+	endpoint = rtp_runtime_endpoint(runtime);
+	receiver = &endpoint->stream->receiver;
+	CHECK(receiver->slot_count ==
+		      16 + 8 * (MEDIA_MAX_CATCHUP_FRAMES + 1),
+	      "RTP window does not reserve four catch-up frames");
+
+	for (size_t packet_index = 0;
+	     packet_index < ARRAY_LENGTH(payloads); ++packet_index) {
+		struct rtp_packet_view packet = {
+			.header = {
+				.payload_type = 0,
+				.sequence = (uint16_t)packet_index,
+				.timestamp = 1000 + (uint32_t)(packet_index * 8),
+				.ssrc = 1,
+			},
+			.payload = payloads[packet_index],
+			.payload_size = ARRAY_LENGTH(payloads[packet_index]),
+		};
+
+		memset(payloads[packet_index], (int)(packet_index + 1),
+		       sizeof(payloads[packet_index]));
+		if (packet_index < 4) {
+			CHECK(rtp_receiver_push(receiver, &packet) ==
+				      RTP_RECEIVE_ACCEPTED,
+			      "initial RTP packet %zu was rejected", packet_index);
+			if (packet_index == 2) {
+				CHECK(rtp_receiver_play(receiver, played,
+							ARRAY_LENGTH(played), NULL) &&
+					      rtp_receiver_play(receiver, played,
+							ARRAY_LENGTH(played), NULL),
+				      "RTP prefill failed");
+				CHECK(rtp_receiver_play(receiver, played,
+							ARRAY_LENGTH(played), NULL),
+				      "first RTP frame did not play");
+			}
+			continue;
+		}
+
+		CHECK(rtp_receiver_push(receiver, &packet) ==
+			      RTP_RECEIVE_ACCEPTED,
+		      "catch-up RTP packet %zu was rejected", packet_index);
+	}
+
+	for (size_t packet_index = 1;
+	     packet_index < ARRAY_LENGTH(payloads); ++packet_index) {
+		memcpy(expected + (packet_index - 1) * sizeof(payloads[0]),
+		       payloads[packet_index], sizeof(payloads[packet_index]));
+		CHECK(rtp_receiver_play(receiver, played,
+					ARRAY_LENGTH(played), NULL),
+		      "buffered catch-up frame did not play");
+		memcpy(actual + actual_count, played, sizeof(played));
+		actual_count += sizeof(played);
+	}
+	CHECK(memcmp(actual, expected, sizeof(expected)) == 0 &&
+		      receiver->stats.early_samples == 0 &&
+		      receiver->stats.samples_concealed == 0,
+	      "catch-up burst was dropped or concealed");
+
+	rtp_runtime_destroy(runtime);
+	return true;
+}
+
 static bool test_rejects_unusable_media_config(void)
 {
 	struct app_config config;
@@ -154,6 +233,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "bounded media storage", test_owns_bounded_media_storage },
+		{ "scheduler catch-up burst", test_buffers_scheduler_catchup_burst },
 		{ "unusable media config", test_rejects_unusable_media_config },
 	};
 	unsigned int failures = 0;

@@ -54,7 +54,7 @@ struct modem_host *modem_host_create(
 	    !audio_scheduler_init(
 		    &host->audio_scheduler, host->audio_path,
 		    MEDIA_SAMPLE_RATE,
-		    MODEM_HOST_MAXIMUM_CATCHUP_FRAMES))
+		    MEDIA_MAX_CATCHUP_FRAMES))
 		goto fail;
 	return host;
 

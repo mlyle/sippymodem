@@ -12,7 +12,6 @@
 #include <stdint.h>
 
 enum {
-	MODEM_HOST_MAXIMUM_CATCHUP_FRAMES = 4,
 	MODEM_HOST_SIGNALING_POLL_NS = 20000000,
 };
 

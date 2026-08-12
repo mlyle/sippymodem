@@ -9,6 +9,7 @@
 
 enum {
 	MEDIA_SAMPLE_RATE = 8000,
+	MEDIA_MAX_CATCHUP_FRAMES = 4,
 };
 
 enum media_codec {

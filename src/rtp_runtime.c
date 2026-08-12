@@ -63,6 +63,7 @@ static bool calculate_storage(const struct media_config *config,
 {
 	size_t frame;
 	size_t prefill;
+	size_t playout_window;
 
 	if (config == NULL || config->frame_duration_ms == 0 ||
 	    config->frame_duration_ms >
@@ -74,10 +75,17 @@ static bool calculate_storage(const struct media_config *config,
 	prefill = config->jitter_buffer_ms * SAMPLES_PER_MILLISECOND;
 	if (frame > RTP_ENDPOINT_MAX_DATAGRAM -
 			    RTP_HEADER_SIZE ||
-	    prefill > (size_t)INT32_MAX - frame)
+	    frame > (size_t)INT32_MAX /
+			    (MEDIA_MAX_CATCHUP_FRAMES + 1))
+		return false;
+	/* The host drains the socket before processing overdue audio frames.
+	 * Reserve those frames beyond the normal prefill window so an in-order
+	 * burst is not rejected before the scheduler catches up. */
+	playout_window = frame * (MEDIA_MAX_CATCHUP_FRAMES + 1);
+	if (prefill > (size_t)INT32_MAX - playout_window)
 		return false;
 	*frame_samples = frame;
-	*slot_count = prefill + frame;
+	*slot_count = prefill + playout_window;
 	return true;
 }
 
