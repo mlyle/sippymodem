@@ -174,6 +174,12 @@ static bool test_validation_and_transactionality(void)
 	      memcmp(&rx, &saved, sizeof(rx)) == 0,
 	      "invalid analogue receive configuration changed state");
 	config = configuration();
+	CHECK(v90_phase3_analog_rx_init_suffix(
+		      &rx, &config,
+		      V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS - 1u) ==
+		      V90_PHASE3_ANALOG_RX_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "invalid analogue S suffix changed destination state");
 	CHECK(v90_phase3_analog_rx_init(&rx, &config) ==
 		      V90_PHASE3_ANALOG_RX_OK &&
 	      v90_phase3_analog_rx_is_valid(&rx) &&

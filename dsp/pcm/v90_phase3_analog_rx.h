@@ -67,6 +67,12 @@ bool v90_phase3_analog_rx_configuration_is_valid(
 enum v90_phase3_analog_rx_result v90_phase3_analog_rx_init(
 	struct v90_phase3_analog_rx *rx,
 	const struct v90_phase3_analog_rx_configuration *configuration);
+/* Begin from a qualified suffix when an upstream line receiver spends the
+ * start of finite S acquiring symbol timing. */
+enum v90_phase3_analog_rx_result v90_phase3_analog_rx_init_suffix(
+	struct v90_phase3_analog_rx *rx,
+	const struct v90_phase3_analog_rx_configuration *configuration,
+	uint8_t s_symbols);
 bool v90_phase3_analog_rx_is_valid(
 	const struct v90_phase3_analog_rx *rx);
 bool v90_phase3_analog_rx_is_complete(

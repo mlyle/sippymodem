@@ -4,13 +4,13 @@
 #define V90_PHASE3_ANALOG_LINE_TX_H
 
 #include "v34_training_line.h"
+#include "v90_phase3.h"
 #include "v90_phase3_analog_tx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
 enum {
-	V90_PHASE3_SAMPLE_RATE = 8000,
 	V90_PHASE3_ANALOG_LEADING_SILENCE_SAMPLES =
 		70 * V90_PHASE3_SAMPLE_RATE / 1000,
 };

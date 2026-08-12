@@ -103,6 +103,15 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_init(
 	struct v90_phase3_analog_rx *rx,
 	const struct v90_phase3_analog_rx_configuration *configuration)
 {
+	return v90_phase3_analog_rx_init_suffix(
+		rx, configuration, V34_PHASE3_S_SYMBOLS);
+}
+
+enum v90_phase3_analog_rx_result v90_phase3_analog_rx_init_suffix(
+	struct v90_phase3_analog_rx *rx,
+	const struct v90_phase3_analog_rx_configuration *configuration,
+	uint8_t s_symbols)
+{
 	struct v90_phase3_analog_rx initialized = {
 		.stage = V90_PHASE3_ANALOG_RX_STAGE_PREFIX,
 	};
@@ -121,8 +130,9 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_init(
 			configuration->tracking_equalizer_adaptation,
 	};
 	initialized.configuration = *configuration;
-	if (v34_phase3_receiver_init(
-		    &initialized.state.prefix, &prefix_configuration) !=
+	if (v34_phase3_receiver_init_suffix(
+		    &initialized.state.prefix, &prefix_configuration,
+		    s_symbols) !=
 		    V34_PHASE3_RECEIVER_OK ||
 	    !v90_phase3_analog_rx_is_valid(&initialized))
 		return V90_PHASE3_ANALOG_RX_INVALID_ARGUMENT;
