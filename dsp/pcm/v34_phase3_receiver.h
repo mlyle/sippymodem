@@ -9,9 +9,17 @@
 #include "v34_phase3_s_receiver.h"
 
 #include <stdbool.h>
+#include <stdint.h>
+
+enum {
+	/* The largest legal 127 * 35 ms interval at 24000/7 symbols/s. */
+	V34_PHASE3_RECEIVER_MAX_MD_SYMBOLS = 15240,
+};
 
 enum v34_phase3_receiver_stage {
 	V34_PHASE3_RECEIVER_STAGE_S,
+	V34_PHASE3_RECEIVER_STAGE_MD,
+	V34_PHASE3_RECEIVER_STAGE_REPEATED_S,
 	V34_PHASE3_RECEIVER_STAGE_PP,
 	V34_PHASE3_RECEIVER_STAGE_J,
 	V34_PHASE3_RECEIVER_STAGE_COMPLETE,
@@ -20,6 +28,8 @@ enum v34_phase3_receiver_stage {
 enum v34_phase3_receiver_result {
 	V34_PHASE3_RECEIVER_OK,
 	V34_PHASE3_RECEIVER_S_DETECTED,
+	V34_PHASE3_RECEIVER_MD_COMPLETE,
+	V34_PHASE3_RECEIVER_REPEATED_S_DETECTED,
 	V34_PHASE3_RECEIVER_PP_COMPLETE,
 	V34_PHASE3_RECEIVER_J_DETECTED,
 	V34_PHASE3_RECEIVER_COMPLETE,
@@ -31,6 +41,8 @@ enum v34_phase3_receiver_result {
 
 struct v34_phase3_receiver_configuration {
 	enum v34_station_role transmitting_role;
+	/* Exact symbol count derived from the peer's validated INFO1 profile. */
+	uint32_t md_symbols;
 	double s_gain_adaptation;
 	double pp_equalizer_adaptation;
 	double tracking_equalizer_adaptation;
@@ -70,6 +82,7 @@ struct v34_phase3_receiver {
 	union v34_phase3_receiver_state state;
 	struct v34_phase3_receiver_configuration configuration;
 	struct v34_phase3_s_detection s_detection;
+	uint32_t md_symbols_remaining;
 	enum v34_phase3_receiver_stage stage;
 };
 
@@ -90,8 +103,9 @@ enum v34_phase3_receiver_result v34_phase3_receive_point(
 	struct v34_phase3_receiver *receiver,
 	const struct qam_point *received);
 
-/* Copy the S marker result after S_DETECTED, or the complete Phase 3 handoff
- * after J_DETECTED. Failed calls leave their destination unchanged. */
+/* Copy the most recently completed S marker, including the first marker while
+ * MD or repeated-S reception is active, or the complete Phase 3 handoff after
+ * J_DETECTED. Failed calls leave their destination unchanged. */
 bool v34_phase3_receiver_get_s_detection(
 	const struct v34_phase3_receiver *receiver,
 	struct v34_phase3_s_detection *detection);

@@ -54,10 +54,11 @@ static struct qam_point channel_point(
 }
 
 static struct v34_phase3_receiver_configuration configuration(
-	enum v34_station_role role)
+	enum v34_station_role role, uint32_t md_symbols)
 {
 	return (struct v34_phase3_receiver_configuration){
 		.transmitting_role = role,
+		.md_symbols = md_symbols,
 		.s_gain_adaptation = 0.15,
 		.pp_equalizer_adaptation = 0.2,
 		.tracking_equalizer_adaptation = 0.05,
@@ -76,10 +77,10 @@ static enum v34_phase3_receiver_result receive_point(
 static bool run_timeline(
 	enum v34_station_role role,
 	enum v34_constellation_size constellation,
-	unsigned int trn_symbols)
+	unsigned int trn_symbols, uint32_t md_symbols)
 {
 	struct v34_phase3_receiver_configuration config =
-		configuration(role);
+		configuration(role, md_symbols);
 	struct v34_phase3_receiver receiver;
 	struct v34_phase3_s_sequence s;
 	struct v34_phase3_pp_sequence pp;
@@ -88,6 +89,7 @@ static bool run_timeline(
 	struct v34_phase3_j_sequence detection_boundary;
 	struct v34_phase3_handoff handoff;
 	struct v34_phase3_s_detection s_detection;
+	struct v34_phase3_s_detection first_s_detection;
 	struct test_channel channel = { 0 };
 	struct qam_point transmitted;
 	uint8_t rotation;
@@ -116,11 +118,68 @@ static bool run_timeline(
 		      "role %d S/S-bar point %u did not cross its boundary",
 		      role, symbol);
 	}
+	CHECK(v34_phase3_receiver_get_s_detection(
+		      &receiver, &first_s_detection) &&
+	      v34_phase3_s_detection_is_valid(&first_s_detection),
+	      "role %d S/S-bar result was not retained", role);
+	if (md_symbols != 0) {
+		struct v34_phase3_receiver saved = receiver;
+		struct qam_point invalid = { NAN, 0.0 };
+
+		CHECK(receiver.stage == V34_PHASE3_RECEIVER_STAGE_MD,
+		      "role %d did not enter its MD interval", role);
+		CHECK(v34_phase3_receive_point(&receiver, &invalid) ==
+			      V34_PHASE3_RECEIVER_INVALID_ARGUMENT &&
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      "role %d invalid MD point changed its interval", role);
+		for (uint32_t symbol = 0; symbol < md_symbols; ++symbol) {
+			int in_phase = (int)(symbol % 11u) - 5;
+			int quadrature = (int)((symbol * 3u) % 13u) - 6;
+			enum v34_phase3_receiver_result expected =
+				symbol + 1u == md_symbols ?
+					V34_PHASE3_RECEIVER_MD_COMPLETE :
+					V34_PHASE3_RECEIVER_OK;
+
+			transmitted = (struct qam_point){
+				.in_phase = in_phase / 7.0,
+				.quadrature = quadrature / 8.0,
+			};
+			CHECK(receive_point(
+				      &receiver, &channel, &transmitted) ==
+				      expected,
+			      "role %d MD point %u failed", role, symbol);
+		}
+		CHECK(receiver.stage ==
+			      V34_PHASE3_RECEIVER_STAGE_REPEATED_S &&
+		      v34_phase3_s_sequence_init(&s) ==
+			      V34_PHASE3_S_SEQUENCE_OK,
+		      "role %d did not begin repeated S/S-bar", role);
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
+			enum v34_phase3_s_section section;
+			enum v34_phase3_receiver_result expected =
+				symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS ?
+					V34_PHASE3_RECEIVER_REPEATED_S_DETECTED :
+					V34_PHASE3_RECEIVER_OK;
+
+			CHECK(v34_phase3_s_sequence_next(
+				      &s, &transmitted, &section) ==
+				      V34_PHASE3_S_SEQUENCE_OK &&
+			      receive_point(
+				      &receiver, &channel, &transmitted) ==
+				      expected,
+			      "role %d repeated S/S-bar point %u failed",
+			      role, symbol);
+		}
+	} else {
+		CHECK(receiver.stage == V34_PHASE3_RECEIVER_STAGE_PP,
+		      "role %d zero-MD path did not enter PP", role);
+	}
 	CHECK(receiver.stage == V34_PHASE3_RECEIVER_STAGE_PP &&
 	      v34_phase3_receiver_get_s_detection(
 		      &receiver, &s_detection) &&
 	      v34_phase3_s_detection_is_valid(&s_detection),
-	      "role %d S/S-bar result was not retained", role);
+	      "role %d training S/S-bar result was not retained", role);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_PP_SEQUENCE_SYMBOLS; ++symbol) {
 		CHECK(v34_phase3_pp_sequence_next(&pp, &transmitted) ==
@@ -238,9 +297,10 @@ static bool run_timeline(
 static bool test_generated_continuous_timeline(void)
 {
 	CHECK(run_timeline(
-		      V34_CALLING_STATION, V34_CONSTELLATION_4_POINT, 613) &&
+		      V34_CALLING_STATION, V34_CONSTELLATION_4_POINT, 613, 0) &&
 	      run_timeline(
-		      V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, 777),
+		      V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, 777,
+		      137),
 	      "generated Phase 3 timelines failed");
 	return true;
 }
@@ -248,7 +308,7 @@ static bool test_generated_continuous_timeline(void)
 static bool test_validation_and_transactionality(void)
 {
 	struct v34_phase3_receiver_configuration config =
-		configuration(V34_CALLING_STATION);
+		configuration(V34_CALLING_STATION, 0);
 	struct v34_phase3_receiver receiver;
 	struct v34_phase3_receiver saved;
 	struct v34_phase3_receiver corrupt;
@@ -269,11 +329,18 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE3_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid Phase 3 role changed destination state");
-	config = configuration(V34_CALLING_STATION);
+	config = configuration(V34_CALLING_STATION, 0);
 	config.s_gain_adaptation = NAN;
 	CHECK(!v34_phase3_receiver_configuration_is_valid(&config),
 	      "non-finite Phase 3 adaptation was valid");
-	config = configuration(V34_CALLING_STATION);
+	config = configuration(V34_CALLING_STATION, 0);
+	config.md_symbols = V34_PHASE3_RECEIVER_MAX_MD_SYMBOLS;
+	CHECK(v34_phase3_receiver_configuration_is_valid(&config),
+	      "maximum Phase 3 MD interval was invalid");
+	config.md_symbols = V34_PHASE3_RECEIVER_MAX_MD_SYMBOLS + 1u;
+	CHECK(!v34_phase3_receiver_configuration_is_valid(&config),
+	      "oversized Phase 3 MD interval was valid");
+	config = configuration(V34_CALLING_STATION, 0);
 	CHECK(v34_phase3_receiver_init(&receiver, &config) ==
 		      V34_PHASE3_RECEIVER_OK &&
 	      v34_phase3_receiver_is_valid(&receiver) &&

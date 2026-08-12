@@ -25,6 +25,8 @@ bool v34_phase3_receiver_configuration_is_valid(
 {
 	return configuration != NULL &&
 	       role_is_valid(configuration->transmitting_role) &&
+	       configuration->md_symbols <=
+		       V34_PHASE3_RECEIVER_MAX_MD_SYMBOLS &&
 	       adaptation_is_valid(configuration->s_gain_adaptation) &&
 	       adaptation_is_valid(configuration->pp_equalizer_adaptation) &&
 	       adaptation_is_valid(
@@ -47,14 +49,22 @@ static bool detection_is_clear(
 }
 
 static bool s_state_is_valid(
-	const struct v34_phase3_receiver *receiver)
+	const struct v34_phase3_receiver *receiver, bool repeated)
 {
 	const struct v34_phase3_s_point_receiver *s = &receiver->state.s;
 
 	if (!v34_phase3_s_receiver_is_valid(&s->detector) ||
 	    v34_phase3_s_receiver_is_complete(&s->detector) ||
-	    !detection_is_clear(&receiver->s_detection))
+	    receiver->md_symbols_remaining != 0)
 		return false;
+	if (repeated) {
+		if (receiver->configuration.md_symbols == 0 ||
+		    !v34_phase3_s_detection_is_valid(
+			    &receiver->s_detection))
+			return false;
+	} else if (!detection_is_clear(&receiver->s_detection)) {
+		return false;
+	}
 	if (s->gain_seeded)
 		return qam_gain_is_valid(&s->gain) &&
 		       s->gain.adaptation ==
@@ -73,9 +83,19 @@ bool v34_phase3_receiver_is_valid(
 		return false;
 	switch (receiver->stage) {
 	case V34_PHASE3_RECEIVER_STAGE_S:
-		return s_state_is_valid(receiver);
+		return s_state_is_valid(receiver, false);
+	case V34_PHASE3_RECEIVER_STAGE_MD:
+		return receiver->configuration.md_symbols != 0 &&
+		       receiver->md_symbols_remaining != 0 &&
+		       receiver->md_symbols_remaining <=
+			       receiver->configuration.md_symbols &&
+		       v34_phase3_s_detection_is_valid(
+			       &receiver->s_detection);
+	case V34_PHASE3_RECEIVER_STAGE_REPEATED_S:
+		return s_state_is_valid(receiver, true);
 	case V34_PHASE3_RECEIVER_STAGE_PP:
-		return v34_phase3_s_detection_is_valid(
+		return receiver->md_symbols_remaining == 0 &&
+		       v34_phase3_s_detection_is_valid(
 			       &receiver->s_detection) &&
 		       v34_phase3_pp_receiver_is_valid(&receiver->state.pp) &&
 		       !v34_phase3_pp_receiver_is_complete(
@@ -83,7 +103,8 @@ bool v34_phase3_receiver_is_valid(
 		       receiver->state.pp.adaptation ==
 			       receiver->configuration.pp_equalizer_adaptation;
 	case V34_PHASE3_RECEIVER_STAGE_J:
-		return v34_phase3_s_detection_is_valid(
+		return receiver->md_symbols_remaining == 0 &&
+		       v34_phase3_s_detection_is_valid(
 			       &receiver->s_detection) &&
 		       v34_phase3_j_equalizer_receiver_is_valid(
 			       &receiver->state.j) &&
@@ -95,7 +116,8 @@ bool v34_phase3_receiver_is_valid(
 			       receiver->configuration
 				       .tracking_equalizer_adaptation;
 	case V34_PHASE3_RECEIVER_STAGE_COMPLETE:
-		return v34_phase3_s_detection_is_valid(
+		return receiver->md_symbols_remaining == 0 &&
+		       v34_phase3_s_detection_is_valid(
 			       &receiver->s_detection) &&
 		       v34_phase3_j_equalizer_receiver_is_complete(
 			       &receiver->state.j) &&
@@ -170,8 +192,18 @@ static enum v34_phase3_receiver_result receive_s(
 	if (result == V34_PHASE3_S_RECEIVER_OK)
 		return V34_PHASE3_RECEIVER_OK;
 	if (result != V34_PHASE3_S_RECEIVER_DETECTED ||
-	    !v34_phase3_s_receiver_get_detection(&s->detector, &detection) ||
-	    v34_phase3_pp_receiver_init(
+	    !v34_phase3_s_receiver_get_detection(&s->detector, &detection))
+		return V34_PHASE3_RECEIVER_NUMERIC_FAILURE;
+	if (receiver->stage == V34_PHASE3_RECEIVER_STAGE_S &&
+	    receiver->configuration.md_symbols != 0) {
+		receiver->state = (union v34_phase3_receiver_state){ 0 };
+		receiver->s_detection = detection;
+		receiver->md_symbols_remaining =
+			receiver->configuration.md_symbols;
+		receiver->stage = V34_PHASE3_RECEIVER_STAGE_MD;
+		return V34_PHASE3_RECEIVER_S_DETECTED;
+	}
+	if (v34_phase3_pp_receiver_init(
 		    &pp,
 		    receiver->configuration.pp_equalizer_adaptation) !=
 		    V34_PHASE3_PP_RECEIVER_OK)
@@ -180,7 +212,26 @@ static enum v34_phase3_receiver_result receive_s(
 	receiver->state.pp = pp;
 	receiver->s_detection = detection;
 	receiver->stage = V34_PHASE3_RECEIVER_STAGE_PP;
-	return V34_PHASE3_RECEIVER_S_DETECTED;
+	return receiver->configuration.md_symbols != 0 ?
+		       V34_PHASE3_RECEIVER_REPEATED_S_DETECTED :
+		       V34_PHASE3_RECEIVER_S_DETECTED;
+}
+
+static enum v34_phase3_receiver_result receive_md(
+	struct v34_phase3_receiver *receiver)
+{
+	struct v34_phase3_s_point_receiver s = { 0 };
+
+	receiver->md_symbols_remaining--;
+	if (receiver->md_symbols_remaining != 0)
+		return V34_PHASE3_RECEIVER_OK;
+	if (v34_phase3_s_receiver_init(&s.detector) !=
+	    V34_PHASE3_S_RECEIVER_OK)
+		return V34_PHASE3_RECEIVER_NUMERIC_FAILURE;
+	receiver->state = (union v34_phase3_receiver_state){ 0 };
+	receiver->state.s = s;
+	receiver->stage = V34_PHASE3_RECEIVER_STAGE_REPEATED_S;
+	return V34_PHASE3_RECEIVER_MD_COMPLETE;
 }
 
 static enum v34_phase3_receiver_result receive_pp(
@@ -243,6 +294,8 @@ static bool result_commits(enum v34_phase3_receiver_result result)
 {
 	return result == V34_PHASE3_RECEIVER_OK ||
 	       result == V34_PHASE3_RECEIVER_S_DETECTED ||
+	       result == V34_PHASE3_RECEIVER_MD_COMPLETE ||
+	       result == V34_PHASE3_RECEIVER_REPEATED_S_DETECTED ||
 	       result == V34_PHASE3_RECEIVER_PP_COMPLETE ||
 	       result == V34_PHASE3_RECEIVER_J_DETECTED;
 }
@@ -262,7 +315,11 @@ enum v34_phase3_receiver_result v34_phase3_receive_point(
 	next = *receiver;
 	switch (next.stage) {
 	case V34_PHASE3_RECEIVER_STAGE_S:
+	case V34_PHASE3_RECEIVER_STAGE_REPEATED_S:
 		result = receive_s(&next, received);
+		break;
+	case V34_PHASE3_RECEIVER_STAGE_MD:
+		result = receive_md(&next);
 		break;
 	case V34_PHASE3_RECEIVER_STAGE_PP:
 		result = receive_pp(&next, received);
@@ -322,6 +379,10 @@ const char *v34_phase3_receiver_result_name(
 		return "ok";
 	case V34_PHASE3_RECEIVER_S_DETECTED:
 		return "S detected";
+	case V34_PHASE3_RECEIVER_MD_COMPLETE:
+		return "MD complete";
+	case V34_PHASE3_RECEIVER_REPEATED_S_DETECTED:
+		return "repeated S detected";
 	case V34_PHASE3_RECEIVER_PP_COMPLETE:
 		return "PP complete";
 	case V34_PHASE3_RECEIVER_J_DETECTED:
