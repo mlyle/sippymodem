@@ -157,6 +157,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_cp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_dil.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja_search.c \
