@@ -1,0 +1,304 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "v90_cp_receiver.h"
+
+#include <string.h>
+
+enum {
+	CP_SYNC_BITS = 17,
+	CP_START_BIT = 17,
+	CP_INFORMATION_FIRST_BIT = 18,
+	CP_MAP_FIRST_BIT = 103,
+	CP_MAP_BITS = 4,
+	CP_CODEC_DIFFERENCE_BIT = 128,
+	CP_HEADER_LAST_BIT = CP_CODEC_DIFFERENCE_BIT,
+};
+
+static uint8_t frame_bit(
+	const uint8_t *frame, size_t bit_index)
+{
+	return (uint8_t)((frame[bit_index / 8u] >>
+			  (7u - bit_index % 8u)) &
+			 1u);
+}
+
+static void set_frame_bit(
+	uint8_t *frame, size_t bit_index, bool value)
+{
+	uint8_t mask = (uint8_t)(1u << (7u - bit_index % 8u));
+
+	if (value)
+		frame[bit_index / 8u] |= mask;
+	else
+		frame[bit_index / 8u] &= (uint8_t)~mask;
+}
+
+static uint8_t decode_lsb_first(
+	const uint8_t *frame, size_t first_bit, size_t bit_count)
+{
+	uint8_t value = 0;
+
+	for (size_t index = 0; index < bit_count; ++index)
+		value |= (uint8_t)(frame_bit(frame, first_bit + index) << index);
+	return value;
+}
+
+static size_t map_first_bit(size_t interval)
+{
+	return CP_MAP_FIRST_BIT + interval * CP_MAP_BITS +
+	       (interval >= 4u ? 1u : 0u);
+}
+
+static bool infer_frame_bit_count(
+	const uint8_t *frame, size_t *frame_bit_count)
+{
+	size_t constellation_count = 1;
+	size_t set_count;
+
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		uint8_t index = decode_lsb_first(
+			frame, map_first_bit(interval), CP_MAP_BITS);
+
+		if (index >= V90_CP_MAX_CONSTELLATIONS)
+			return false;
+		if ((size_t)index + 1u > constellation_count)
+			constellation_count = (size_t)index + 1u;
+	}
+	set_count = constellation_count *
+		    (frame_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0 ? 2u : 1u);
+	*frame_bit_count = V90_CP_HEADER_BITS +
+			   set_count * V90_CP_CONSTELLATION_BITS +
+			   V90_CP_TRAILER_BITS;
+	return true;
+}
+
+static bool stage_is_valid(enum v90_cp_receive_stage stage)
+{
+	return stage == V90_CP_RECEIVER_SEARCH_SYNC ||
+	       stage == V90_CP_RECEIVER_READ_HEADER ||
+	       stage == V90_CP_RECEIVER_READ_FRAME;
+}
+
+static bool packed_tail_is_zero(
+	const uint8_t *frame, size_t used_bits)
+{
+	size_t byte_index = used_bits / 8u;
+	size_t partial_bits = used_bits % 8u;
+
+	if (partial_bits != 0) {
+		uint8_t unused = (uint8_t)((1u << (8u - partial_bits)) - 1u);
+
+		if ((frame[byte_index] & unused) != 0)
+			return false;
+		++byte_index;
+	}
+	for (; byte_index < V90_CP_MAX_FRAME_BYTES; ++byte_index) {
+		if (frame[byte_index] != 0)
+			return false;
+	}
+	return true;
+}
+
+static bool prefix_is_valid(const uint8_t *frame)
+{
+	for (size_t index = 0; index < CP_SYNC_BITS; ++index) {
+		if (frame_bit(frame, index) == 0)
+			return false;
+	}
+	return frame_bit(frame, CP_START_BIT) == 0;
+}
+
+static bool bit_must_be_zero(
+	size_t bit_index, size_t frame_bit_count)
+{
+	return bit_index % 17u == 0 || bit_index == 18u ||
+	       (bit_index >= 25u && bit_index <= 29u) ||
+	       (bit_index >= 129u && bit_index <= 135u) ||
+	       (frame_bit_count != 0 &&
+		bit_index >= frame_bit_count - 3u);
+}
+
+static bool received_bits_are_valid(
+	const struct v90_cp_receiver *receiver)
+{
+	for (size_t index = CP_INFORMATION_FIRST_BIT;
+	     index < receiver->bit_index; ++index) {
+		if (bit_must_be_zero(index, receiver->frame_bit_count) &&
+		    frame_bit(receiver->frame, index) != 0)
+			return false;
+	}
+	return true;
+}
+
+bool v90_cp_receiver_is_valid(
+	const struct v90_cp_receiver *receiver)
+{
+	size_t inferred_bits;
+
+	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
+	    receiver->sync_one_count > CP_SYNC_BITS ||
+	    receiver->bit_index > V90_CP_MAX_FRAME_BITS ||
+	    !packed_tail_is_zero(receiver->frame, receiver->bit_index))
+		return false;
+	switch (receiver->stage) {
+	case V90_CP_RECEIVER_SEARCH_SYNC:
+		return receiver->frame_bit_count == 0 &&
+		       receiver->bit_index == 0;
+	case V90_CP_RECEIVER_READ_HEADER:
+		return receiver->frame_bit_count == 0 &&
+		       receiver->bit_index >= CP_INFORMATION_FIRST_BIT &&
+		       receiver->bit_index <= CP_HEADER_LAST_BIT &&
+		       receiver->sync_one_count == 0 &&
+		       prefix_is_valid(receiver->frame) &&
+		       received_bits_are_valid(receiver);
+	case V90_CP_RECEIVER_READ_FRAME:
+		return receiver->frame_bit_count >= V90_CP_MIN_FRAME_BITS &&
+		       receiver->frame_bit_count <= V90_CP_MAX_FRAME_BITS &&
+		       receiver->bit_index > CP_HEADER_LAST_BIT &&
+		       receiver->bit_index < receiver->frame_bit_count &&
+		       receiver->sync_one_count == 0 &&
+		       prefix_is_valid(receiver->frame) &&
+		       received_bits_are_valid(receiver) &&
+		       infer_frame_bit_count(receiver->frame, &inferred_bits) &&
+		       inferred_bits == receiver->frame_bit_count;
+	}
+	return false;
+}
+
+enum v90_cp_result v90_cp_receiver_init(
+	struct v90_cp_receiver *receiver)
+{
+	struct v90_cp_receiver initialized = {
+		.stage = V90_CP_RECEIVER_SEARCH_SYNC,
+	};
+
+	if (receiver == NULL || !v90_cp_receiver_is_valid(&initialized))
+		return V90_CP_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return V90_CP_OK;
+}
+
+static void clear_frame(struct v90_cp_receiver *receiver)
+{
+	memset(receiver->frame, 0, sizeof(receiver->frame));
+	receiver->frame_bit_count = 0;
+	receiver->bit_index = 0;
+	receiver->sync_one_count = 0;
+	receiver->stage = V90_CP_RECEIVER_SEARCH_SYNC;
+}
+
+static void begin_frame(struct v90_cp_receiver *receiver)
+{
+	clear_frame(receiver);
+	for (size_t index = 0; index < CP_SYNC_BITS; ++index)
+		set_frame_bit(receiver->frame, index, true);
+	receiver->bit_index = CP_INFORMATION_FIRST_BIT;
+	receiver->stage = V90_CP_RECEIVER_READ_HEADER;
+}
+
+static uint8_t trailing_ones(
+	const struct v90_cp_receiver *receiver)
+{
+	uint8_t count = 0;
+
+	for (size_t index = receiver->bit_index;
+	     index > 0 && count < CP_SYNC_BITS; --index) {
+		if (frame_bit(receiver->frame, index - 1u) == 0)
+			break;
+		++count;
+	}
+	return count;
+}
+
+static void reject_frame(
+	struct v90_cp_receiver *receiver,
+	struct v90_cp_receive_event *event,
+	enum v90_cp_result result)
+{
+	uint8_t suffix_ones = trailing_ones(receiver);
+	size_t observed_bits = receiver->bit_index;
+
+	clear_frame(receiver);
+	receiver->sync_one_count = suffix_ones;
+	event->type = V90_CP_RECEIVE_REJECTED;
+	event->frame_result = result;
+	event->observed_bits = observed_bits;
+}
+
+static void complete_frame(
+	struct v90_cp_receiver *receiver,
+	struct v90_cp_receive_event *event)
+{
+	struct v90_cp_parameters parameters;
+	enum v90_cp_result result = v90_cp_decode(
+		receiver->frame, sizeof(receiver->frame),
+		receiver->frame_bit_count, &parameters);
+	size_t observed_bits = receiver->bit_index;
+
+	clear_frame(receiver);
+	event->frame_result = result;
+	event->observed_bits = observed_bits;
+	if (result == V90_CP_OK) {
+		event->type = V90_CP_RECEIVE_FRAME;
+		event->parameters = parameters;
+	} else {
+		event->type = V90_CP_RECEIVE_REJECTED;
+	}
+}
+
+static void receive_bit(
+	struct v90_cp_receiver *receiver, uint8_t bit,
+	struct v90_cp_receive_event *event)
+{
+	if (receiver->stage == V90_CP_RECEIVER_SEARCH_SYNC) {
+		if (bit != 0) {
+			if (receiver->sync_one_count < CP_SYNC_BITS)
+				receiver->sync_one_count++;
+		} else if (receiver->sync_one_count == CP_SYNC_BITS) {
+			begin_frame(receiver);
+		} else {
+			receiver->sync_one_count = 0;
+		}
+		return;
+	}
+
+	set_frame_bit(receiver->frame, receiver->bit_index, bit != 0);
+	receiver->bit_index++;
+	if (bit != 0 && bit_must_be_zero(
+			       receiver->bit_index - 1u,
+			       receiver->frame_bit_count)) {
+		reject_frame(receiver, event, V90_CP_INVALID_FRAME);
+		return;
+	}
+	if (receiver->stage == V90_CP_RECEIVER_READ_HEADER &&
+	    receiver->bit_index == CP_HEADER_LAST_BIT + 1u) {
+		if (!infer_frame_bit_count(
+			    receiver->frame, &receiver->frame_bit_count)) {
+			reject_frame(receiver, event, V90_CP_INVALID_FRAME);
+			return;
+		}
+		receiver->stage = V90_CP_RECEIVER_READ_FRAME;
+	}
+	if (receiver->stage == V90_CP_RECEIVER_READ_FRAME &&
+	    receiver->bit_index == receiver->frame_bit_count)
+		complete_frame(receiver, event);
+}
+
+enum v90_cp_result v90_cp_receiver_receive_bit(
+	struct v90_cp_receiver *receiver, uint8_t bit,
+	struct v90_cp_receive_event *event)
+{
+	struct v90_cp_receiver next;
+	struct v90_cp_receive_event emitted = { 0 };
+
+	if (!v90_cp_receiver_is_valid(receiver) || bit > 1u || event == NULL)
+		return V90_CP_INVALID_ARGUMENT;
+	next = *receiver;
+	receive_bit(&next, bit, &emitted);
+	if (!v90_cp_receiver_is_valid(&next))
+		return V90_CP_INVALID_ARGUMENT;
+	*receiver = next;
+	*event = emitted;
+	return V90_CP_OK;
+}
