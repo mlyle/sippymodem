@@ -74,10 +74,15 @@ static uint16_t enabled_rate_mask(
 
 static struct v34_info0 baseline_info0(void)
 {
-	/* The first live profile deliberately uses mandatory 2400-symbol/s
-	 * operation in both directions. Measured higher-rate selection can be
-	 * added without changing the sample owner. */
 	return (struct v34_info0){
+		.symbol_rate_2800_supported = true,
+		.symbol_rate_3429_supported = true,
+		.low_carrier_3000_supported = true,
+		.high_carrier_3000_supported = true,
+		.low_carrier_3200_supported = true,
+		.high_carrier_3200_supported = true,
+		.symbol_rate_3429_transmit_permitted = true,
+		.constellation_1664_supported = true,
 		.maximum_symbol_rate_difference_steps = 0,
 		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
 	};
@@ -88,20 +93,26 @@ static union v34_local_info1 baseline_info1(
 {
 	union v34_local_info1 info1 = { 0 };
 
+	/* Probe scoring is not wired into the datapump yet. Use one symmetric,
+	 * fully implemented profile until measured selection owns these fields. */
 	if (caller) {
 		info1.calling.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
-		info1.calling.answer_transmit[V34_SYMBOL_RATE_2400]
+		info1.calling.answer_transmit[V34_SYMBOL_RATE_3429]
+			.preemphasis_filter_index = 8;
+		info1.calling.answer_transmit[V34_SYMBOL_RATE_3429]
 			.projected_data_rate_2400_bps_units = projected_rate_units;
 	} else {
 		info1.answering.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 		info1.answering.call_transmit
+			.preemphasis_filter_index = 8;
+		info1.answering.call_transmit
 			.projected_data_rate_2400_bps_units = projected_rate_units;
 		info1.answering.answer_to_call_symbol_rate =
-			V34_SYMBOL_RATE_2400;
+			V34_SYMBOL_RATE_3429;
 		info1.answering.call_to_answer_symbol_rate =
-			V34_SYMBOL_RATE_2400;
+			V34_SYMBOL_RATE_3429;
 	}
 	return info1;
 }
