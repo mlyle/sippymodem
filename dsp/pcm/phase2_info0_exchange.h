@@ -3,6 +3,7 @@
 #ifndef PHASE2_INFO0_EXCHANGE_H
 #define PHASE2_INFO0_EXCHANGE_H
 
+#include "phase2_signal.h"
 #include "v34_phase2_info_audio.h"
 #include "v34_phase2_tone.h"
 
@@ -13,14 +14,6 @@
 enum {
 	PHASE2_INFO0_POST_V8_SILENCE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 75 / 1000,
-};
-
-/* Signal A uses the 2400 Hz carrier and 1800 Hz guard. Signal B uses the
- * unguarded 1200 Hz carrier. V.34 assigns these by station role; PCM modes
- * assign them by analogue/digital role. */
-enum phase2_signal_role {
-	PHASE2_SIGNAL_A,
-	PHASE2_SIGNAL_B,
 };
 
 enum phase2_info0_exchange_result {
