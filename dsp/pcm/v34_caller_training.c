@@ -53,7 +53,9 @@ bool v34_caller_training_is_valid(
 	return training != NULL &&
 	       v34_training_line_is_valid(&training->line) &&
 	       training->line.profile.local_role == V34_CALLING_STATION &&
+	       training->line.profile.md_symbol_count == 0 &&
 	       v34_phase3_transmitter_is_valid(&training->phase3) &&
+	       training->phase3.local_role == V34_CALLING_STATION &&
 	       stage_is_valid(training);
 }
 
@@ -85,7 +87,8 @@ enum v34_caller_training_result v34_caller_training_init(
 	enum v34_training_line_result result;
 
 	if (training == NULL || profile == NULL ||
-	    profile->local_role != V34_CALLING_STATION)
+	    profile->local_role != V34_CALLING_STATION ||
+	    profile->md_symbol_count != 0)
 		return V34_CALLER_TRAINING_INVALID_ARGUMENT;
 	result = v34_training_line_init(
 		&initialized.line, profile, sample_rate,
@@ -93,7 +96,8 @@ enum v34_caller_training_result v34_caller_training_init(
 	if (result != V34_TRAINING_LINE_OK)
 		return line_result(result);
 	if (v34_phase3_transmitter_init(
-		    &initialized.phase3, remote_constellation) !=
+		    &initialized.phase3, V34_CALLING_STATION,
+		    remote_constellation) !=
 		    V34_PHASE3_TRANSMITTER_OK)
 		return V34_CALLER_TRAINING_INVALID_ARGUMENT;
 	initialized.stage = V34_CALLER_TRAINING_PHASE3;

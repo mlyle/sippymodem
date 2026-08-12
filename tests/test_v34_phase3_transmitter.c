@@ -46,7 +46,9 @@ static bool j_matches(
 	       left->symbol_in_pattern == right->symbol_in_pattern;
 }
 
-static bool run_sequence(enum v34_constellation_size constellation)
+static bool run_sequence(
+	enum v34_station_role role,
+	enum v34_constellation_size constellation)
 {
 	struct v34_phase3_transmitter transmitter;
 	struct v34_phase3_s_sequence expected_s;
@@ -60,14 +62,16 @@ static bool run_sequence(enum v34_constellation_size constellation)
 	unsigned int extra_trn =
 		constellation == V34_CONSTELLATION_16_POINT ? 37u : 0u;
 
-	CHECK(v34_phase3_transmitter_init(&transmitter, constellation) ==
+	CHECK(v34_phase3_transmitter_init(
+		      &transmitter, role, constellation) ==
 		      V34_PHASE3_TRANSMITTER_OK &&
 	      v34_phase3_s_sequence_init(&expected_s) ==
 		      V34_PHASE3_S_SEQUENCE_OK &&
 	      v34_phase3_transmitter_is_valid(&transmitter) &&
+	      transmitter.local_role == role &&
 	      transmitter.stage == V34_PHASE3_TRANSMITTER_S,
-	      "Phase 3 transmitter did not initialize constellation=%d",
-	      constellation);
+	      "Phase 3 transmitter did not initialize role=%d constellation=%d",
+	      role, constellation);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
 		struct qam_point actual;
@@ -101,8 +105,7 @@ static bool run_sequence(enum v34_constellation_size constellation)
 	}
 	CHECK(v34_phase3_pp_sequence_is_complete(&expected_pp) &&
 	      transmitter.stage == V34_PHASE3_TRANSMITTER_TRN &&
-	      v34_phase3_trn_init(
-		      &expected_trn, V34_CALLING_STATION) ==
+	      v34_phase3_trn_init(&expected_trn, role) ==
 		      V34_PHASE3_TRN_OK,
 	      "PP did not hand off to TRN");
 	for (unsigned int symbol = 0;
@@ -172,30 +175,43 @@ static bool run_sequence(enum v34_constellation_size constellation)
 	CHECK(v34_phase3_j_sequence_at_pattern_boundary(&expected_j) &&
 	      v34_phase3_transmitter_finish_j(&transmitter) ==
 		      V34_PHASE3_TRANSMITTER_OK &&
-	      transmitter.stage == V34_PHASE3_TRANSMITTER_COMPLETE &&
-	      v34_phase3_transmitter_start_j_prime(&transmitter, &j_prime) ==
-		      V34_PHASE3_TRANSMITTER_OK &&
-	      v34_phase4_j_prime_sequence_init_from_j(
-		      &expected_j_prime, &expected_j) ==
-		      V34_PHASE4_J_PRIME_SEQUENCE_OK,
-	      "J did not hand off to J-prime");
-	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE4_J_PRIME_SYMBOLS; ++symbol) {
-		struct qam_point actual;
-		struct qam_point expected;
-		uint8_t actual_rotation;
-		uint8_t expected_rotation;
+	      transmitter.stage == V34_PHASE3_TRANSMITTER_COMPLETE,
+	      "J did not reach the Phase 3 boundary");
+	if (role == V34_CALLING_STATION) {
+		CHECK(v34_phase3_transmitter_start_j_prime(
+			      &transmitter, &j_prime) ==
+			      V34_PHASE3_TRANSMITTER_OK &&
+		      v34_phase4_j_prime_sequence_init_from_j(
+			      &expected_j_prime, &expected_j) ==
+			      V34_PHASE4_J_PRIME_SEQUENCE_OK,
+		      "calling J did not hand off to J-prime");
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE4_J_PRIME_SYMBOLS; ++symbol) {
+			struct qam_point actual;
+			struct qam_point expected;
+			uint8_t actual_rotation;
+			uint8_t expected_rotation;
 
-		CHECK(v34_phase4_j_prime_sequence_next(
-			      &j_prime, &actual, &actual_rotation) ==
-			      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
-		      v34_phase4_j_prime_sequence_next(
-			      &expected_j_prime, &expected,
-			      &expected_rotation) ==
-			      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
-		      points_match(&actual, &expected) &&
-		      actual_rotation == expected_rotation,
-		      "J-prime handoff diverged at symbol %u", symbol);
+			CHECK(v34_phase4_j_prime_sequence_next(
+				      &j_prime, &actual, &actual_rotation) ==
+				      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
+			      v34_phase4_j_prime_sequence_next(
+				      &expected_j_prime, &expected,
+				      &expected_rotation) ==
+				      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
+			      points_match(&actual, &expected) &&
+			      actual_rotation == expected_rotation,
+			      "J-prime handoff diverged at symbol %u", symbol);
+		}
+	} else {
+		memset(&j_prime, 0xa5, sizeof(j_prime));
+		saved_j_prime = j_prime;
+		CHECK(v34_phase3_transmitter_start_j_prime(
+			      &transmitter, &j_prime) ==
+			      V34_PHASE3_TRANSMITTER_INVALID_STATE &&
+		      memcmp(&j_prime, &saved_j_prime,
+			     sizeof(j_prime)) == 0,
+		      "answering J crossed the caller-only J-prime boundary");
 	}
 	{
 		struct v34_phase3_transmitter saved = transmitter;
@@ -213,8 +229,18 @@ static bool run_sequence(enum v34_constellation_size constellation)
 
 static bool test_sequences(void)
 {
-	return run_sequence(V34_CONSTELLATION_4_POINT) &&
-	       run_sequence(V34_CONSTELLATION_16_POINT);
+	return run_sequence(
+		       V34_CALLING_STATION,
+		       V34_CONSTELLATION_4_POINT) &&
+	       run_sequence(
+		       V34_CALLING_STATION,
+		       V34_CONSTELLATION_16_POINT) &&
+	       run_sequence(
+		       V34_ANSWERING_STATION,
+		       V34_CONSTELLATION_4_POINT) &&
+	       run_sequence(
+		       V34_ANSWERING_STATION,
+		       V34_CONSTELLATION_16_POINT);
 }
 
 static bool test_validation_and_overflow(void)
@@ -224,15 +250,26 @@ static bool test_validation_and_overflow(void)
 	struct qam_point point = { 3.0, 4.0 };
 	struct qam_point saved_point = point;
 
-	CHECK(v34_phase3_transmitter_init(NULL, V34_CONSTELLATION_4_POINT) ==
+	memset(&transmitter, 0xa5, sizeof(transmitter));
+	saved = transmitter;
+	CHECK(v34_phase3_transmitter_init(
+		      NULL, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_phase3_transmitter_init(
-		      &transmitter, (enum v34_constellation_size)99) ==
+		      &transmitter, V34_CALLING_STATION,
+		      (enum v34_constellation_size)99) ==
 		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_transmitter_init(
+		      &transmitter, (enum v34_station_role)99,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
 	      !v34_phase3_transmitter_is_valid(NULL),
-	      "Phase 3 transmitter accepted invalid initialization");
+	      "invalid Phase 3 initialization changed its destination");
 	CHECK(v34_phase3_transmitter_init(
-		      &transmitter, V34_CONSTELLATION_4_POINT) ==
+		      &transmitter, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE3_TRANSMITTER_OK,
 	      "validation transmitter did not initialize");
 	saved = transmitter;
@@ -240,14 +277,30 @@ static bool test_validation_and_overflow(void)
 		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "null output changed the Phase 3 transmitter");
-	transmitter.stage = (enum v34_phase3_transmitter_stage)99;
+	transmitter.local_role = (enum v34_station_role)99;
+	saved = transmitter;
 	CHECK(!v34_phase3_transmitter_is_valid(&transmitter) &&
 	      v34_phase3_transmitter_next(&transmitter, &point) ==
 		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      memcmp(&point, &saved_point, sizeof(point)) == 0,
+	      "invalid Phase 3 role changed its output");
+	CHECK(v34_phase3_transmitter_init(
+		      &transmitter, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_PHASE3_TRANSMITTER_OK,
+	      "stage validation transmitter did not initialize");
+	transmitter.stage = (enum v34_phase3_transmitter_stage)99;
+	saved = transmitter;
+	CHECK(!v34_phase3_transmitter_is_valid(&transmitter) &&
+	      v34_phase3_transmitter_next(&transmitter, &point) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
 	      memcmp(&point, &saved_point, sizeof(point)) == 0,
 	      "invalid Phase 3 state changed its output");
 	CHECK(v34_phase3_transmitter_init(
-		      &transmitter, V34_CONSTELLATION_4_POINT) ==
+		      &transmitter, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE3_TRANSMITTER_OK,
 	      "overflow transmitter did not initialize");
 	for (size_t symbol = 0;
@@ -282,7 +335,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "composed calling sequences", test_sequences },
+		{ "composed role sequences", test_sequences },
 		{ "validation and overflow", test_validation_and_overflow },
 	};
 	unsigned int failures = 0;

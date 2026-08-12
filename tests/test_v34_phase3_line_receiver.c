@@ -20,7 +20,7 @@ struct line_source {
 	struct v34_phase3_transmitter symbols;
 };
 
-static struct v34_phase3_profile profile(void)
+static struct v34_phase3_profile profile(enum v34_station_role role)
 {
 	return (struct v34_phase3_profile){
 		.symbol_rate_numerator = 3000,
@@ -28,7 +28,7 @@ static struct v34_phase3_profile profile(void)
 		.carrier_frequency_numerator = 2000,
 		.carrier_frequency_denominator = 1,
 		.symbol_rate = V34_SYMBOL_RATE_3000,
-		.local_role = V34_CALLING_STATION,
+		.local_role = role,
 		.preemphasis_filter_index = 0,
 		.projected_data_rate_2400_bps_units = 8,
 		.high_carrier = true,
@@ -52,7 +52,8 @@ static bool source_init(
 		       &source->line, transmitting_profile,
 		       SAMPLE_RATE, 6000) == V34_TRAINING_LINE_OK &&
 	       v34_phase3_transmitter_init(
-		       &source->symbols, V34_CONSTELLATION_16_POINT) ==
+		       &source->symbols, transmitting_profile->local_role,
+		       V34_CONSTELLATION_16_POINT) ==
 		       V34_PHASE3_TRANSMITTER_OK;
 }
 
@@ -80,9 +81,9 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 	       accepted == accepting;
 }
 
-static bool test_generated_line_timeline(void)
+static bool run_generated_line_timeline(enum v34_station_role role)
 {
-	struct v34_phase3_profile transmitting_profile = profile();
+	struct v34_phase3_profile transmitting_profile = profile(role);
 	struct v34_phase3_line_receiver_configuration config =
 		configuration();
 	struct v34_phase3_line_receiver receiver;
@@ -162,9 +163,16 @@ static bool test_generated_line_timeline(void)
 	return true;
 }
 
+static bool test_generated_line_timeline(void)
+{
+	return run_generated_line_timeline(V34_CALLING_STATION) &&
+	       run_generated_line_timeline(V34_ANSWERING_STATION);
+}
+
 static bool test_validation(void)
 {
-	struct v34_phase3_profile transmitting_profile = profile();
+	struct v34_phase3_profile transmitting_profile =
+		profile(V34_CALLING_STATION);
 	struct v34_phase3_line_receiver_configuration config =
 		configuration();
 	struct v34_phase3_line_receiver receiver;

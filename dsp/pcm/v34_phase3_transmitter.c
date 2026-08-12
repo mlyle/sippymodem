@@ -4,6 +4,12 @@
 
 #include <stddef.h>
 
+static bool role_is_valid(enum v34_station_role role)
+{
+	return role == V34_CALLING_STATION ||
+	       role == V34_ANSWERING_STATION;
+}
+
 static bool counters_are_valid(const struct v34_phase3_transmitter *transmitter)
 {
 	switch (transmitter->stage) {
@@ -30,6 +36,7 @@ bool v34_phase3_transmitter_is_valid(
 	const struct v34_phase3_transmitter *transmitter)
 {
 	if (transmitter == NULL ||
+	    !role_is_valid(transmitter->local_role) ||
 	    !v34_constellation_size_is_valid(
 		    transmitter->remote_constellation) ||
 	    !counters_are_valid(transmitter))
@@ -43,16 +50,16 @@ bool v34_phase3_transmitter_is_valid(
 		       !v34_phase3_pp_sequence_is_complete(&transmitter->state.pp);
 	case V34_PHASE3_TRANSMITTER_TRN:
 		return v34_phase3_trn_is_valid(&transmitter->state.trn) &&
-		       transmitter->state.trn.role == V34_CALLING_STATION;
+		       transmitter->state.trn.role == transmitter->local_role;
 	case V34_PHASE3_TRANSMITTER_J:
 		return v34_phase3_j_sequence_is_valid(&transmitter->state.j) &&
-		       transmitter->state.j.role == V34_CALLING_STATION &&
+		       transmitter->state.j.role == transmitter->local_role &&
 		       transmitter->state.j.remote_constellation ==
 			       transmitter->remote_constellation;
 	case V34_PHASE3_TRANSMITTER_COMPLETE:
 		return v34_phase3_j_sequence_at_pattern_boundary(
 			       &transmitter->state.j) &&
-		       transmitter->state.j.role == V34_CALLING_STATION &&
+		       transmitter->state.j.role == transmitter->local_role &&
 		       transmitter->state.j.remote_constellation ==
 			       transmitter->remote_constellation;
 	}
@@ -61,14 +68,16 @@ bool v34_phase3_transmitter_is_valid(
 
 enum v34_phase3_transmitter_result v34_phase3_transmitter_init(
 	struct v34_phase3_transmitter *transmitter,
+	enum v34_station_role local_role,
 	enum v34_constellation_size remote_constellation)
 {
 	struct v34_phase3_transmitter initialized = {
 		.remote_constellation = remote_constellation,
+		.local_role = local_role,
 		.stage = V34_PHASE3_TRANSMITTER_S,
 	};
 
-	if (transmitter == NULL ||
+	if (transmitter == NULL || !role_is_valid(local_role) ||
 	    !v34_constellation_size_is_valid(remote_constellation) ||
 	    v34_phase3_s_sequence_init(&initialized.state.s) !=
 		    V34_PHASE3_S_SEQUENCE_OK ||
@@ -106,7 +115,8 @@ static enum v34_phase3_transmitter_result next_pp(
 	if (v34_phase3_pp_sequence_is_complete(&transmitter->state.pp)) {
 		transmitter->state = (union v34_phase3_transmitter_state){ 0 };
 		if (v34_phase3_trn_init(
-			    &transmitter->state.trn, V34_CALLING_STATION) !=
+			    &transmitter->state.trn,
+			    transmitter->local_role) !=
 		    V34_PHASE3_TRN_OK)
 			return V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE;
 		transmitter->stage = V34_PHASE3_TRANSMITTER_TRN;
@@ -232,7 +242,8 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j_prime(
 {
 	if (!v34_phase3_transmitter_is_valid(transmitter) || j_prime == NULL)
 		return V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT;
-	if (transmitter->stage != V34_PHASE3_TRANSMITTER_COMPLETE)
+	if (transmitter->stage != V34_PHASE3_TRANSMITTER_COMPLETE ||
+	    transmitter->local_role != V34_CALLING_STATION)
 		return V34_PHASE3_TRANSMITTER_INVALID_STATE;
 	if (v34_phase4_j_prime_sequence_init_from_j(
 		    j_prime, &transmitter->state.j) !=

@@ -35,12 +35,13 @@ union v34_phase3_transmitter_state {
 	struct v34_phase3_j_sequence j;
 };
 
-/* Own the calling station's Phase 3 symbol sequence. The call controller
+/* Own one station's zero-MD Phase 3 symbol sequence. The call controller
  * decides when the open-ended TRN and J intervals may end; this object keeps
- * their scrambler and differential phase continuous. */
+ * their role-specific scrambler and differential phase continuous. */
 struct v34_phase3_transmitter {
 	union v34_phase3_transmitter_state state;
 	enum v34_constellation_size remote_constellation;
+	enum v34_station_role local_role;
 	enum v34_phase3_transmitter_stage stage;
 	uint32_t trn_symbols;
 	uint32_t j_symbols;
@@ -48,6 +49,7 @@ struct v34_phase3_transmitter {
 
 enum v34_phase3_transmitter_result v34_phase3_transmitter_init(
 	struct v34_phase3_transmitter *transmitter,
+	enum v34_station_role local_role,
 	enum v34_constellation_size remote_constellation);
 
 bool v34_phase3_transmitter_is_valid(
@@ -69,8 +71,9 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j(
 enum v34_phase3_transmitter_result v34_phase3_transmitter_finish_j(
 	struct v34_phase3_transmitter *transmitter);
 
-/* Initialize the one-pattern J-prime continuation without changing the
- * completed Phase 3 owner or the destination on failure. */
+/* Initialize the calling station's one-pattern J-prime continuation without
+ * changing the completed Phase 3 owner or the destination on failure. An
+ * answering transmitter reports INVALID_STATE. */
 enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j_prime(
 	const struct v34_phase3_transmitter *transmitter,
 	struct v34_phase4_j_prime_sequence *j_prime);

@@ -40,7 +40,8 @@ union v34_caller_phase4_state {
 
 /* Calling-station normalized training and its uninterrupted line waveform.
  * The call controller selects the remote training constellation, decides when
- * open-ended intervals may end, and owns MP/MP-prime negotiation policy. */
+ * open-ended intervals may end, and owns MP/MP-prime negotiation policy. The
+ * current sequence owner accepts only a negotiated zero-length MD interval. */
 struct v34_caller_training {
 	struct v34_training_line line;
 	struct v34_phase3_transmitter phase3;

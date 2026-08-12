@@ -64,7 +64,8 @@ static bool model_init(
 		    &initialized.line, profile, 8000, 5000) !=
 		    V34_TRAINING_LINE_OK ||
 	    v34_phase3_transmitter_init(
-		    &initialized.phase3, constellation) !=
+		    &initialized.phase3, V34_CALLING_STATION,
+		    constellation) !=
 		    V34_PHASE3_TRANSMITTER_OK)
 		return false;
 	initialized.stage = V34_CALLER_TRAINING_PHASE3;
@@ -599,10 +600,13 @@ static bool test_initialization(void)
 {
 	struct v34_phase3_profile profile = profile_fixture();
 	struct v34_phase3_profile answering = profile;
+	struct v34_phase3_profile with_md = profile;
 	struct v34_caller_training training;
 	struct v34_caller_training before;
 
 	answering.local_role = V34_ANSWERING_STATION;
+	with_md.md_length_35_ms_units = 1;
+	with_md.md_symbol_count = 105;
 	memset(&training, 0xa5, sizeof(training));
 	before = training;
 	CHECK(v34_caller_training_init(
@@ -613,6 +617,10 @@ static bool test_initialization(void)
 		      V34_CALLER_TRAINING_INVALID_ARGUMENT &&
 	      v34_caller_training_init(
 		      &training, &answering, V34_CONSTELLATION_4_POINT,
+		      8000, 5000) == V34_CALLER_TRAINING_INVALID_ARGUMENT &&
+	      v34_phase3_profile_is_valid(&with_md) &&
+	      v34_caller_training_init(
+		      &training, &with_md, V34_CONSTELLATION_4_POINT,
 		      8000, 5000) == V34_CALLER_TRAINING_INVALID_ARGUMENT &&
 	      v34_caller_training_init(
 		      &training, &profile, (enum v34_constellation_size)8,
