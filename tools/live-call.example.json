@@ -1,24 +1,85 @@
 {
-  "slmodemd": "../src/slmodemd",
-  "artifact_directory": "../live-call-artifacts",
+  "slmodemd": "src/slmodemd",
+  "artifact_directory": "live-call-artifacts",
   "environment": {
     "SIP_CODEC": "PCMU",
     "SIP_REGISTER": "0"
   },
-  "at_commands": [
-    "ATZ",
-    "ATX3",
-    "AT+MS=21,0,300,300"
-  ],
+  "at_commands": [],
   "startup_timeout_seconds": 15,
-  "call_timeout_seconds": 90,
-  "online_timeout_seconds": 15,
+  "call_timeout_seconds": 180,
+  "online_timeout_seconds": 30,
   "hold_seconds": 3,
+  "inter_scenario_seconds": 90,
   "plans": [
     {
-      "name": "v21-direct",
-      "dial": "",
-      "configured_target": "sip:ata.example.invalid",
+      "name": "implemented-matrix",
+      "profile_groups": ["implemented"],
+      "link_modes": ["lapm", "raw"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "v34-current",
+      "profile_groups": ["v34-current"],
+      "link_modes": ["lapm", "raw"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "v90-directional-sweeps",
+      "profile_groups": ["v90-down", "v90-up"],
+      "link_modes": ["lapm"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "v92-directional-sweeps",
+      "profile_groups": ["v92-down", "v92-up", "v92-pcmup"],
+      "link_modes": ["lapm"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "v92-headend-originator",
+      "profile_groups": ["v92-headend"],
+      "link_modes": ["lapm"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "v92-quick-connect",
+      "profile_groups": ["v92-qc"],
+      "link_modes": ["lapm"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "v34-sweep",
+      "profile_groups": ["v34"],
+      "link_modes": ["lapm"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "analog-fallback-features",
+      "profile_groups": ["analog-fallback"],
+      "link_modes": ["lapm"],
+      "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
+      "round_trip_probe": "ping",
+      "enabled": false
+    },
+    {
+      "name": "matched-v22-600",
+      "profile_groups": ["v22-600-matched"],
+      "link_modes": ["raw"],
       "online_expect_hex": "53495050594d4f44454d2d4c4956452d4f4b0d0a",
       "round_trip_probe": "ping",
       "enabled": false

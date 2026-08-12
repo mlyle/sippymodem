@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Run explicitly enabled SIP dial plans without publishing their targets."""
+"""Run explicitly enabled SIP scenarios without publishing private settings."""
 
 from __future__ import annotations
 
@@ -21,11 +21,12 @@ from typing import IO, Mapping, Sequence
 
 if __package__:
     from .live_config import (
+        CallScenario,
         CONFIG_ENVIRONMENT_KEYS,
-        DialPlan,
         LiveCallConfig,
         LiveCallConfigError,
-        dial_form,
+        ScenarioPlan,
+        expand_plan,
         load_live_call_config,
         public_manifest,
     )
@@ -38,11 +39,12 @@ if __package__:
     )
 else:
     from live_config import (
+        CallScenario,
         CONFIG_ENVIRONMENT_KEYS,
-        DialPlan,
         LiveCallConfig,
         LiveCallConfigError,
-        dial_form,
+        ScenarioPlan,
+        expand_plan,
         load_live_call_config,
         public_manifest,
     )
@@ -56,7 +58,7 @@ else:
 
 
 PRIVATE_RUN_ENVIRONMENT_KEYS = CONFIG_ENVIRONMENT_KEYS | frozenset(
-    {"SIP_RECORD_PREFIX", "SIP_TARGET"}
+    {"SIP_RECORD_PREFIX"}
 )
 SKIPPED_EXIT_CODE = 77
 
@@ -67,8 +69,14 @@ class LiveCallRunError(RuntimeError):
 
 @dataclass(frozen=True)
 class CallResult:
+    scenario_name: str
     plan_name: str
-    form: str
+    profile_name: str
+    family: str
+    link_mode: str
+    attempt: int
+    readiness: str
+    prerequisite: str | None
     outcome: str
     duration_seconds: float
     terminal_expected_bytes: int = 0
@@ -84,8 +92,14 @@ class CallResult:
 
     def public_dict(self) -> dict[str, object]:
         return {
+            "scenario": self.scenario_name,
             "plan": self.plan_name,
-            "form": self.form,
+            "profile": self.profile_name,
+            "family": self.family,
+            "link_mode": self.link_mode,
+            "attempt": self.attempt,
+            "readiness": self.readiness,
+            "prerequisite": self.prerequisite,
             "outcome": self.outcome,
             "duration_seconds": self.duration_seconds,
             "terminal_expected_bytes": self.terminal_expected_bytes,
@@ -111,13 +125,13 @@ class AttemptArtifacts:
     terminal_tx: Path
 
     @classmethod
-    def create(cls, root: Path, plan_name: str) -> AttemptArtifacts:
+    def create(cls, root: Path, scenario_name: str) -> AttemptArtifacts:
         private_root = root.absolute()
         private_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         _require_private_directory(private_root)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         directory = Path(
-            tempfile.mkdtemp(prefix=f"{stamp}-{plan_name}-", dir=private_root)
+            tempfile.mkdtemp(prefix=f"{stamp}-{scenario_name}-", dir=private_root)
         )
         _require_private_directory(directory)
         return cls(
@@ -171,7 +185,6 @@ def _open_private_binary(path: Path) -> IO[bytes]:
 
 def build_child_environment(
     config: LiveCallConfig,
-    plan: DialPlan,
     recording_prefix: Path,
     base_environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
@@ -181,33 +194,41 @@ def build_child_environment(
     environment.update(config.environment_dict())
     environment.setdefault("SIP_PORT", "0")
     environment.setdefault("SIP_RTP_PORT", "0")
-    if plan.configured_target:
-        environment["SIP_TARGET"] = plan.configured_target
     environment["SIP_RECORD_PREFIX"] = str(recording_prefix.absolute())
     return environment
 
 
-def selected_plans(
+def selected_scenarios(
     config: LiveCallConfig, requested_names: Sequence[str]
-) -> tuple[DialPlan, ...]:
+) -> tuple[CallScenario, ...]:
     enabled = {plan.name: plan for plan in config.plans if plan.enabled}
     if not requested_names:
-        return tuple(plan for plan in config.plans if plan.enabled)
-    if len(requested_names) != len(set(requested_names)):
-        raise LiveCallRunError("a dial plan was selected more than once")
-    if any(name not in enabled for name in requested_names):
-        raise LiveCallRunError("a selected dial plan is unavailable or disabled")
-    return tuple(enabled[name] for name in requested_names)
+        plans: tuple[ScenarioPlan, ...] = tuple(
+            plan for plan in config.plans if plan.enabled
+        )
+    elif len(requested_names) != len(set(requested_names)):
+        raise LiveCallRunError("a scenario plan was selected more than once")
+    else:
+        if any(name not in enabled for name in requested_names):
+            raise LiveCallRunError(
+                "a selected scenario plan is unavailable or disabled"
+            )
+        plans = tuple(enabled[name] for name in requested_names)
+    return tuple(
+        scenario for plan in plans for scenario in expand_plan(config, plan)
+    )
 
 
 class LiveCallAttempt:
-    """Own all process, terminal, and artifact state for one dial plan."""
+    """Own all process, terminal, and artifact state for one scenario."""
 
-    def __init__(self, config: LiveCallConfig, plan: DialPlan) -> None:
+    def __init__(self, config: LiveCallConfig, scenario: CallScenario) -> None:
+        if scenario.readiness != "runnable":
+            raise LiveCallRunError("scenario has an unmet public prerequisite")
         self._config = config
-        self._plan = plan
+        self._scenario = scenario
         self._artifacts = AttemptArtifacts.create(
-            config.artifact_directory, plan.name
+            config.artifact_directory, scenario.name
         )
         self._process: subprocess.Popen[bytes] | None = None
         self._terminal: ModemTerminal | None = None
@@ -216,7 +237,7 @@ class LiveCallAttempt:
     def run(self) -> CallResult:
         started = time.monotonic()
         outcome = "infrastructure-error"
-        expected_bytes = len(self._plan.online_expect)
+        expected_bytes = len(self._scenario.online_expect)
         verified_bytes = 0
         transmitted = b""
         round_trip_verified = False
@@ -226,11 +247,7 @@ class LiveCallAttempt:
             self._start()
             stage = "setup"
             assert self._terminal is not None
-            commands = (
-                "ATE0V1Q0",
-                "ATS95=7",
-            ) + self._config.at_commands + self._plan.at_commands
-            for command in commands:
+            for command in self._scenario.at_commands:
                 if (
                     self._terminal.command(
                         command, self._config.startup_timeout_seconds
@@ -242,24 +259,24 @@ class LiveCallAttempt:
             else:
                 stage = "call"
                 response = self._terminal.command(
-                    "ATD" + self._plan.dial,
+                    "ATD",
                     self._config.call_timeout_seconds,
                 )
                 if response == "connect":
                     connect_report = self._terminal.connect_report
-                    if self._plan.online_expect:
+                    if self._scenario.online_expect:
                         stage = "data"
                         data_verified, received = self._terminal.exchange_online(
-                            self._plan.online_send,
-                            self._plan.online_expect,
+                            self._scenario.online_send,
+                            self._scenario.online_expect,
                             self._config.online_timeout_seconds,
                         )
-                        transmitted = self._plan.online_send
+                        transmitted = self._scenario.online_send
                         if data_verified:
                             verified_bytes = expected_bytes
                         if (
                             data_verified
-                            and self._plan.round_trip_probe == "ping"
+                            and self._scenario.round_trip_probe == "ping"
                         ):
                             stage = "round-trip"
                             round_trip_verified, probe_received = (
@@ -275,7 +292,7 @@ class LiveCallAttempt:
                         if not data_verified:
                             outcome = "data-missing"
                         elif (
-                            self._plan.round_trip_probe
+                            self._scenario.round_trip_probe
                             and not round_trip_verified
                         ):
                             outcome = "round-trip-missing"
@@ -301,14 +318,20 @@ class LiveCallAttempt:
         finally:
             self._close()
         result = CallResult(
-            plan_name=self._plan.name,
-            form=dial_form(self._plan),
+            scenario_name=self._scenario.name,
+            plan_name=self._scenario.plan_name,
+            profile_name=self._scenario.profile_name,
+            family=self._scenario.family,
+            link_mode=self._scenario.link_mode,
+            attempt=self._scenario.attempt,
+            readiness=self._scenario.readiness,
+            prerequisite=self._scenario.prerequisite or None,
             outcome=outcome,
             duration_seconds=round(time.monotonic() - started, 3),
             terminal_expected_bytes=expected_bytes,
             terminal_verified_bytes=verified_bytes,
             terminal_transmitted_bytes=len(transmitted),
-            round_trip_probe=self._plan.round_trip_probe or None,
+            round_trip_probe=self._scenario.round_trip_probe or None,
             round_trip_verified=round_trip_verified,
             modulation=connect_report.modulation,
             protocol=connect_report.protocol,
@@ -326,7 +349,6 @@ class LiveCallAttempt:
         self._daemon_log = _open_private_text(self._artifacts.daemon_log)
         environment = build_child_environment(
             self._config,
-            self._plan,
             self._artifacts.recording_prefix,
         )
         self._process = subprocess.Popen(
@@ -407,34 +429,62 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(json.dumps(public_manifest(config), indent=2, sort_keys=True))
         return 0
     try:
-        plans = selected_plans(config, options.plan)
+        scenarios = selected_scenarios(config, options.plan)
     except LiveCallRunError as error:
         print(f"live-call: {error}", file=sys.stderr)
         return 2
-    if not plans:
-        print("live-call: no dial plans are enabled", file=sys.stderr)
+    if not scenarios:
+        print("live-call: no scenario plans are enabled", file=sys.stderr)
         return SKIPPED_EXIT_CODE
-    if not config.slmodemd.absolute().is_file():
+    if (
+        any(scenario.readiness == "runnable" for scenario in scenarios)
+        and not config.slmodemd.absolute().is_file()
+    ):
         print("live-call: modem executable is unavailable", file=sys.stderr)
         return SKIPPED_EXIT_CODE
     results = []
+    ran_call = False
     try:
-        for plan in plans:
-            try:
-                result = LiveCallAttempt(config, plan).run()
-            except (
-                LiveCallRunError,
-                LiveTerminalError,
-                OSError,
-                subprocess.SubprocessError,
-            ):
+        for scenario in scenarios:
+            if scenario.readiness != "runnable":
                 result = CallResult(
-                    plan_name=plan.name,
-                    form=dial_form(plan),
-                    outcome="artifact-failed",
+                    scenario_name=scenario.name,
+                    plan_name=scenario.plan_name,
+                    profile_name=scenario.profile_name,
+                    family=scenario.family,
+                    link_mode=scenario.link_mode,
+                    attempt=scenario.attempt,
+                    readiness=scenario.readiness,
+                    prerequisite=scenario.prerequisite or None,
+                    outcome="prerequisite",
                     duration_seconds=0.0,
-                    terminal_expected_bytes=len(plan.online_expect),
+                    terminal_expected_bytes=len(scenario.online_expect),
                 )
+            else:
+                if ran_call and config.inter_scenario_seconds:
+                    time.sleep(config.inter_scenario_seconds)
+                try:
+                    result = LiveCallAttempt(config, scenario).run()
+                except (
+                    LiveCallRunError,
+                    LiveTerminalError,
+                    OSError,
+                    subprocess.SubprocessError,
+                ):
+                    result = CallResult(
+                        scenario_name=scenario.name,
+                        plan_name=scenario.plan_name,
+                        profile_name=scenario.profile_name,
+                        family=scenario.family,
+                        link_mode=scenario.link_mode,
+                        attempt=scenario.attempt,
+                        readiness=scenario.readiness,
+                        prerequisite=None,
+                        outcome="artifact-failed",
+                        duration_seconds=0.0,
+                        terminal_expected_bytes=len(scenario.online_expect),
+                    )
+                ran_call = True
             results.append(result)
             print(json.dumps(result.public_dict(), sort_keys=True))
     except KeyboardInterrupt:
