@@ -1538,6 +1538,7 @@ V90_PHASE4_CP_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_rx
 V90_PHASE4_CP_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_rx.o \
+	$(BUILD_DIR)/v90_phase4_line_fixture.o \
 	$(BUILD_DIR)/v90_phase4_cp_line_rx.o \
 	$(BUILD_DIR)/v90_phase4_cp_rx.o \
 	$(BUILD_DIR)/v90_cp_receiver.o \
