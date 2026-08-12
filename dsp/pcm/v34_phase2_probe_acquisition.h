@@ -31,7 +31,7 @@ struct v34_phase2_probe_acquisition_event {
 	enum v34_phase2_probe_acquisition_event_kind kind;
 	uint16_t leading_samples;
 	uint16_t replay_samples;
-	double normalized_correlation;
+	double probe_energy_fraction;
 	uint32_t l2_samples;
 };
 

@@ -2,12 +2,19 @@
 
 #include "v34_phase2_probe_synchronizer.h"
 
+#include "v34_phase2_probe_spectrum.h"
+
 #include <math.h>
 #include <stddef.h>
 
-static const double V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_CORRELATION = 0.80;
-static const int16_t V34_PHASE2_PROBE_SYNCHRONIZER_REFERENCE_AMPLITUDE =
-	10000;
+static const double
+	V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_ENERGY_FRACTION = 0.60;
+static const double
+	V34_PHASE2_PROBE_SYNCHRONIZER_PLATEAU_TOLERANCE = 0.001;
+
+enum {
+	V34_PHASE2_PROBE_OMITTED_TONES = 4,
+};
 
 _Static_assert(
 	V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES > 0,
@@ -15,6 +22,11 @@ _Static_assert(
 _Static_assert(
 	V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES <= UINT16_MAX,
 	"V.34 probe synchronization counters must contain the capture");
+_Static_assert(
+	V34_PHASE2_PROBE_HIGHEST_HARMONIC -
+		V34_PHASE2_PROBE_OMITTED_TONES ==
+		V34_PHASE2_PROBE_TONE_COUNT,
+	"V.34 probe energy selection must contain every transmitted tone");
 
 bool v34_phase2_probe_synchronizer_is_valid(
 	const struct v34_phase2_probe_synchronizer *synchronizer)
@@ -26,9 +38,9 @@ bool v34_phase2_probe_synchronizer_is_valid(
 		    V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES ||
 	    synchronizer->leading_samples >
 		    V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES ||
-	    !isfinite(synchronizer->normalized_correlation) ||
-	    synchronizer->normalized_correlation < 0.0 ||
-	    synchronizer->normalized_correlation > 1.0)
+	    !isfinite(synchronizer->probe_energy_fraction) ||
+	    synchronizer->probe_energy_fraction < 0.0 ||
+	    synchronizer->probe_energy_fraction > 1.0)
 		return false;
 
 	switch (synchronizer->phase) {
@@ -36,17 +48,17 @@ bool v34_phase2_probe_synchronizer_is_valid(
 		return synchronizer->samples_observed <
 			       V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
 		       synchronizer->leading_samples == 0 &&
-		       synchronizer->normalized_correlation == 0.0;
+		       synchronizer->probe_energy_fraction == 0.0;
 	case V34_PHASE2_PROBE_SYNCHRONIZER_ACQUIRED:
 		return synchronizer->samples_observed ==
 			       V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
-		       synchronizer->normalized_correlation >=
-			       V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_CORRELATION;
+		       synchronizer->probe_energy_fraction >=
+			       V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_ENERGY_FRACTION;
 	case V34_PHASE2_PROBE_SYNCHRONIZER_NOT_FOUND:
 		return synchronizer->samples_observed ==
 			       V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
-		       synchronizer->normalized_correlation <
-			       V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_CORRELATION;
+		       synchronizer->probe_energy_fraction <
+			       V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_ENERGY_FRACTION;
 	}
 	return false;
 }
@@ -64,79 +76,96 @@ v34_phase2_probe_synchronizer_init(
 	return V34_PHASE2_PROBE_SYNCHRONIZER_OK;
 }
 
-static bool generate_reference(
-	int16_t reference[V34_PHASE2_PROBE_PERIOD_SAMPLES])
+static bool harmonic_is_omitted(unsigned int harmonic)
 {
-	struct v34_phase2_probe_transmitter transmitter;
-
-	if (v34_phase2_probe_transmitter_init(
-		    &transmitter,
-		    V34_PHASE2_PROBE_SYNCHRONIZER_REFERENCE_AMPLITUDE) !=
-	    V34_PHASE2_PROBE_OK)
-		return false;
-	for (size_t index = 0;
-	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index)
-		if (v34_phase2_probe_transmitter_sample(
-			    &transmitter, V34_PHASE2_PROBE_L1,
-			    &reference[index]) != V34_PHASE2_PROBE_OK)
-			return false;
-	return true;
+	return harmonic == 6 || harmonic == 8 || harmonic == 12 ||
+	       harmonic == 16;
 }
 
-static double normalized_correlation(
-	const int16_t *received,
-	const int16_t reference[V34_PHASE2_PROBE_PERIOD_SAMPLES])
+static bool measure_probe_energy_fraction(
+	const int16_t *received, double *fraction)
 {
-	double correlation;
-	double dot_product = 0.0;
-	double received_energy = 0.0;
-	double reference_energy = 0.0;
+	struct v34_phase2_probe_spectrum spectrum;
+	struct v34_phase2_probe_spectrum_measurement measurement;
+	double probe_mean_square = 0.0;
+	double sample_mean_square = 0.0;
 
+	if (v34_phase2_probe_spectrum_init(&spectrum) !=
+	    V34_PHASE2_PROBE_SPECTRUM_OK)
+		return false;
 	for (size_t index = 0;
 	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
-		double received_sample = received[index];
-		double reference_sample = reference[index];
+		double sample = received[index];
 
-		dot_product += received_sample * reference_sample;
-		received_energy += received_sample * received_sample;
-		reference_energy += reference_sample * reference_sample;
+		if (v34_phase2_probe_spectrum_sample(
+			    &spectrum, received[index]) !=
+		    V34_PHASE2_PROBE_SPECTRUM_OK)
+			return false;
+		sample_mean_square += sample * sample;
 	}
-	if (received_energy == 0.0 || reference_energy == 0.0)
-		return 0.0;
-	correlation =
-		fabs(dot_product) / sqrt(received_energy * reference_energy);
+	if (sample_mean_square == 0.0) {
+		*fraction = 0.0;
+		return true;
+	}
+	if (v34_phase2_probe_spectrum_measure(
+		    &spectrum, &measurement) !=
+	    V34_PHASE2_PROBE_SPECTRUM_OK)
+		return false;
+	for (unsigned int harmonic = 1;
+	     harmonic <= V34_PHASE2_PROBE_HIGHEST_HARMONIC;
+	     ++harmonic)
+		if (!harmonic_is_omitted(harmonic))
+			probe_mean_square +=
+				measurement.harmonics[harmonic - 1u]
+					.mean_square;
+	sample_mean_square /= V34_PHASE2_PROBE_PERIOD_SAMPLES;
+	*fraction = probe_mean_square / sample_mean_square;
 	/* Roundoff may exceed the mathematical upper bound by a few ulps. */
-	return correlation > 1.0 ? 1.0 : correlation;
+	if (*fraction > 1.0)
+		*fraction = 1.0;
+	return isfinite(*fraction);
 }
 
 static bool find_onset(
 	struct v34_phase2_probe_synchronizer *synchronizer,
 	struct v34_phase2_probe_synchronizer_event *event)
 {
-	int16_t reference[V34_PHASE2_PROBE_PERIOD_SAMPLES];
-	double best_correlation = 0.0;
+	double fractions[V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES + 1u];
+	double best_fraction = 0.0;
 	uint16_t best_candidate = 0;
 
-	if (!generate_reference(reference))
-		return false;
 	for (uint16_t candidate = 0;
 	     candidate <=
 	     V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES;
 	     ++candidate) {
-		double correlation = normalized_correlation(
-			&synchronizer->capture[candidate], reference);
+		double fraction;
 
-		if (correlation > best_correlation) {
-			best_correlation = correlation;
+		if (!measure_probe_energy_fraction(
+			    &synchronizer->capture[candidate], &fraction))
+			return false;
+		fractions[candidate] = fraction;
+		if (fraction > best_fraction) {
+			best_fraction = fraction;
 			best_candidate = candidate;
 		}
 	}
+	/* A periodic probe gives every post-onset candidate the same spectrum.
+	 * Select the first point on that plateau instead of letting floating-point
+	 * roundoff move the edge later in an otherwise identical period. */
+	for (uint16_t candidate = 0; candidate < best_candidate; ++candidate)
+		if (fractions[candidate] >=
+		    best_fraction -
+			    V34_PHASE2_PROBE_SYNCHRONIZER_PLATEAU_TOLERANCE) {
+			best_candidate = candidate;
+			best_fraction = fractions[candidate];
+			break;
+		}
 	synchronizer->leading_samples = best_candidate;
-	synchronizer->normalized_correlation = best_correlation;
+	synchronizer->probe_energy_fraction = best_fraction;
 	event->leading_samples = best_candidate;
-	event->normalized_correlation = best_correlation;
-	if (best_correlation >=
-	    V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_CORRELATION) {
+	event->probe_energy_fraction = best_fraction;
+	if (best_fraction >=
+	    V34_PHASE2_PROBE_SYNCHRONIZER_MINIMUM_ENERGY_FRACTION) {
 		synchronizer->phase =
 			V34_PHASE2_PROBE_SYNCHRONIZER_ACQUIRED;
 		event->kind =

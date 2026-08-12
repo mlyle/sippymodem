@@ -128,7 +128,7 @@ static bool replay_synchronized_prefix(
 	event->kind = V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED;
 	event->leading_samples = sync_event->leading_samples;
 	event->replay_samples = replay_samples;
-	event->normalized_correlation = sync_event->normalized_correlation;
+	event->probe_energy_fraction = sync_event->probe_energy_fraction;
 	return true;
 }
 
@@ -155,8 +155,8 @@ static bool search_for_probe(
 		event->kind =
 			V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND;
 		event->leading_samples = sync_event.leading_samples;
-		event->normalized_correlation =
-			sync_event.normalized_correlation;
+		event->probe_energy_fraction =
+			sync_event.probe_energy_fraction;
 		return true;
 	}
 	return false;

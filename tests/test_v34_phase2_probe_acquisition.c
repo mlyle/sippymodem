@@ -141,7 +141,7 @@ static bool stream_to_measurement(struct test_stream *stream)
 			      event.replay_samples ==
 				      V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES -
 					      stream->leading_samples &&
-			      event.normalized_correlation > 0.99,
+			      event.probe_energy_fraction > 0.99,
 			      "probe acquisition diagnostics changed");
 		if (event.kind ==
 		    V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY)
@@ -307,7 +307,7 @@ static bool test_not_found(void)
 	}
 	CHECK(acquisition.phase ==
 		      V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND &&
-	      event.normalized_correlation == 0.0,
+	      event.probe_energy_fraction == 0.0,
 	      "silence acquired as a probe");
 	before = acquisition;
 	CHECK(v34_phase2_probe_acquisition_sample(
@@ -328,7 +328,7 @@ static bool test_validation(void)
 		.kind = V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED,
 		.leading_samples = 4,
 		.replay_samples = 172,
-		.normalized_correlation = 0.9,
+		.probe_energy_fraction = 0.9,
 		.l2_samples = 99,
 	};
 	struct v34_phase2_probe_acquisition_event event_before =

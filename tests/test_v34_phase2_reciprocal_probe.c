@@ -211,7 +211,7 @@ static bool check_reciprocal_probe(
 	      pair.answerer.reciprocal_probe.path.receive.synchronizer
 		      .leading_samples,
 	      pair.answerer.reciprocal_probe.path.receive.synchronizer
-		      .normalized_correlation);
+		      .probe_energy_fraction);
 	CHECK(observation.caller_l2_started ==
 		      observation.caller_first_probe_sample +
 			      V34_PHASE2_PROBE_L1_SAMPLES - 1u,

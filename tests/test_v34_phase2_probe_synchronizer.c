@@ -13,6 +13,9 @@
 
 enum { TEST_NOMINAL_AMPLITUDE = 7000 };
 
+static const double TEST_TWO_PI =
+	6.283185307179586476925286766559;
+
 enum test_codec {
 	TEST_CODEC_LINEAR,
 	TEST_CODEC_PCMU,
@@ -97,11 +100,11 @@ static bool acquire_probe(
 	      event.replay_samples ==
 		      V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES -
 			      leading_samples &&
-	      event.normalized_correlation > 0.99,
+	      event.probe_energy_fraction > 0.99,
 	      "probe edge changed at offset %u, codec %d, polarity %d: "
-	      "offset %u, replay %u, correlation %.6f",
+	      "offset %u, replay %u, energy %.6f",
 	      leading_samples, codec, inverted, event.leading_samples,
-	      event.replay_samples, event.normalized_correlation);
+	      event.replay_samples, event.probe_energy_fraction);
 	CHECK(v34_phase2_probe_synchronizer_replay_count(
 		      synchronizer) == event.replay_samples,
 	      "probe replay count disagreed with acquisition event");
@@ -209,6 +212,99 @@ static bool test_offsets_and_codecs(void)
 	return true;
 }
 
+static bool harmonic_is_omitted(unsigned int harmonic)
+{
+	return harmonic == 6 || harmonic == 8 || harmonic == 12 ||
+	       harmonic == 16;
+}
+
+static int16_t phase_distorted_probe_sample(uint16_t period_index)
+{
+	double sum = 0.0;
+
+	for (unsigned int harmonic = 1;
+	     harmonic <= V34_PHASE2_PROBE_HIGHEST_HARMONIC;
+	     ++harmonic) {
+		double phase;
+
+		if (harmonic_is_omitted(harmonic))
+			continue;
+		phase = TEST_TWO_PI * 3.0 * (double)harmonic *
+			(double)period_index /
+			(double)V34_PHASE2_PROBE_PERIOD_SAMPLES +
+			0.173 * (double)harmonic * (double)harmonic;
+		sum += cos(phase);
+	}
+	/* This bound is safe even if every generated cosine aligns. */
+	return (int16_t)lround(
+		sum * 3000.0 / sqrt((double)V34_PHASE2_PROBE_TONE_COUNT));
+}
+
+static bool test_phase_distortion(void)
+{
+	enum { LEADING_SAMPLES = 7 };
+	struct v34_phase2_probe_synchronizer synchronizer;
+	struct v34_phase2_probe_synchronizer_event event;
+	struct v34_phase2_probe_transmitter reference;
+	struct v34_phase2_tone_transmitter tone;
+	double dot_product = 0.0;
+	double reference_energy = 0.0;
+	double distorted_energy = 0.0;
+	double correlation;
+
+	CHECK(v34_phase2_probe_synchronizer_init(&synchronizer) ==
+		      V34_PHASE2_PROBE_SYNCHRONIZER_OK &&
+	      v34_phase2_probe_transmitter_init(
+		      &reference, 3000) == V34_PHASE2_PROBE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &tone, V34_CALLING_STATION,
+		      TEST_NOMINAL_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "phase-distortion fixture did not initialize");
+	for (uint16_t index = 0;
+	     index < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+	     ++index) {
+		int16_t sample;
+
+		if (index < LEADING_SAMPLES) {
+			CHECK(v34_phase2_tone_transmitter_sample(
+				      &tone, &sample) == V34_PHASE2_TONE_OK,
+			      "phase-distortion prefix failed at %u", index);
+		} else {
+			sample = phase_distorted_probe_sample(
+				(uint16_t)((index - LEADING_SAMPLES) %
+					   V34_PHASE2_PROBE_PERIOD_SAMPLES));
+		}
+		CHECK(v34_phase2_probe_synchronizer_sample(
+			      &synchronizer, sample, &event) ==
+			      V34_PHASE2_PROBE_SYNCHRONIZER_OK,
+		      "phase-distorted acquisition failed at %u", index);
+	}
+	for (uint16_t index = 0;
+	     index < V34_PHASE2_PROBE_PERIOD_SAMPLES; ++index) {
+		int16_t standard;
+		double distorted = phase_distorted_probe_sample(index);
+
+		CHECK(v34_phase2_probe_transmitter_sample(
+			      &reference, V34_PHASE2_PROBE_L1, &standard) ==
+			      V34_PHASE2_PROBE_OK,
+		      "reference probe failed at %u", index);
+		dot_product += (double)standard * distorted;
+		reference_energy += (double)standard * standard;
+		distorted_energy += distorted * distorted;
+	}
+	correlation = fabs(dot_product) /
+		      sqrt(reference_energy * distorted_energy);
+	CHECK(event.kind ==
+		      V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_ACQUIRED &&
+	      event.leading_samples == LEADING_SAMPLES &&
+	      event.probe_energy_fraction > 0.99 && correlation < 0.80,
+	      "spectral acquisition did not tolerate phase rotation: "
+	      "offset %u, energy %.6f, correlation %.6f",
+	      event.leading_samples, event.probe_energy_fraction,
+	      correlation);
+	return true;
+}
+
 static bool check_rejected_signal(bool silence)
 {
 	struct v34_phase2_probe_synchronizer synchronizer;
@@ -262,9 +358,39 @@ static bool check_rejected_signal(bool silence)
 	return true;
 }
 
+static bool check_rejected_noise(void)
+{
+	struct v34_phase2_probe_synchronizer synchronizer;
+	struct v34_phase2_probe_synchronizer_event event;
+	uint32_t random = UINT32_C(0x91e10da5);
+
+	CHECK(v34_phase2_probe_synchronizer_init(&synchronizer) ==
+		      V34_PHASE2_PROBE_SYNCHRONIZER_OK,
+	      "noise rejection fixture did not initialize");
+	for (uint16_t index = 0;
+	     index < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+	     ++index) {
+		bool final_sample =
+			index + 1u ==
+			V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		CHECK(v34_phase2_probe_synchronizer_sample(
+			      &synchronizer, (int16_t)(random >> 16), &event) ==
+			      V34_PHASE2_PROBE_SYNCHRONIZER_OK &&
+		      event.kind ==
+			      (final_sample ?
+				       V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_NOT_FOUND :
+				       V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_NONE),
+		      "broadband noise changed acquisition at sample %u", index);
+	}
+	return true;
+}
+
 static bool test_false_acquisition(void)
 {
-	return check_rejected_signal(true) && check_rejected_signal(false);
+	return check_rejected_signal(true) && check_rejected_signal(false) &&
+	       check_rejected_noise();
 }
 
 static bool test_validation(void)
@@ -275,7 +401,7 @@ static bool test_validation(void)
 		.kind = V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_ACQUIRED,
 		.leading_samples = 12,
 		.replay_samples = 34,
-		.normalized_correlation = 0.5,
+		.probe_energy_fraction = 0.5,
 	};
 	struct v34_phase2_probe_synchronizer_event event_before =
 		event;
@@ -318,10 +444,10 @@ static bool test_validation(void)
 	CHECK(v34_phase2_probe_synchronizer_init(&synchronizer) ==
 		      V34_PHASE2_PROBE_SYNCHRONIZER_OK,
 	      "probe synchronizer did not reinitialize");
-	synchronizer.normalized_correlation = NAN;
+	synchronizer.probe_energy_fraction = NAN;
 	CHECK(!v34_phase2_probe_synchronizer_is_valid(
 		      &synchronizer),
-	      "non-finite correlation was accepted");
+	      "non-finite probe energy was accepted");
 	CHECK(v34_phase2_probe_synchronizer_init(NULL) ==
 		      V34_PHASE2_PROBE_SYNCHRONIZER_INVALID_ARGUMENT &&
 	      !v34_phase2_probe_synchronizer_is_valid(NULL) &&
@@ -351,6 +477,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "offsets and codecs", test_offsets_and_codecs },
+		{ "independent phase distortion", test_phase_distortion },
 		{ "false acquisition", test_false_acquisition },
 		{ "validation", test_validation },
 	};

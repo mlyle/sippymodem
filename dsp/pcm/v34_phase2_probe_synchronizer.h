@@ -35,7 +35,7 @@ struct v34_phase2_probe_synchronizer_event {
 	enum v34_phase2_probe_synchronizer_event_kind kind;
 	uint16_t leading_samples;
 	uint16_t replay_samples;
-	double normalized_correlation;
+	double probe_energy_fraction;
 };
 
 enum v34_phase2_probe_synchronizer_result {
@@ -48,12 +48,13 @@ struct v34_phase2_probe_synchronizer {
 	enum v34_phase2_probe_synchronizer_phase phase;
 	uint16_t samples_observed;
 	uint16_t leading_samples;
-	double normalized_correlation;
+	double probe_energy_fraction;
 };
 
 /* Collect a bounded interval beginning near the expected L1 edge. Acquisition
- * compares every candidate against a generated probe period and is invariant
- * to line gain and polarity. No waveform or coefficient table is stored. */
+ * measures every candidate over one exact probe period. It is invariant to
+ * line gain, polarity, carrier phase, and independent phase rotation of the
+ * probe frequencies. No waveform or coefficient table is stored. */
 enum v34_phase2_probe_synchronizer_result
 v34_phase2_probe_synchronizer_init(
 	struct v34_phase2_probe_synchronizer *synchronizer);
