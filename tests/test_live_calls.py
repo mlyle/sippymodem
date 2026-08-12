@@ -392,7 +392,7 @@ while True:
             "plans": [
                 {
                     "name": "future",
-                    "profiles": ["v34_rx_4800_b2743", "v90_down_28000"],
+                    "profiles": ["v34_rx_4800_b2800", "v90_down_28000"],
                     "enabled": True,
                 }
             ],

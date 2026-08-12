@@ -23,7 +23,7 @@ from tools.live_profiles import (
 
 class LiveProfileTests(unittest.TestCase):
     def test_current_profiles_use_registered_controls(self) -> None:
-        self.assertEqual(len(PROFILES), 287)
+        self.assertEqual(len(PROFILES), 267)
         self.assertEqual(len(PROFILE_GROUPS["implemented"]), 14)
         self.assertEqual(len(PROFILE_GROUPS["analog-fallback"]), 5)
         self.assertEqual(
@@ -96,12 +96,10 @@ class LiveProfileTests(unittest.TestCase):
 
         self.assertEqual(receive, expected)
         self.assertEqual(transmit, expected - {(2400, 2400)})
-        self.assertEqual(
-            V34_RATES_BY_SYMBOL_RATE[2743],
-            tuple(range(4800, 26401, 2400)),
-        )
-        self.assertEqual(len(PROFILE_GROUPS["v34-rx"]), 65)
-        self.assertEqual(len(PROFILE_GROUPS["v34-tx"]), 64)
+        self.assertNotIn(2743, V34_RATES_BY_SYMBOL_RATE)
+        self.assertFalse(any("_b2743" in name for name in PROFILES))
+        self.assertEqual(len(PROFILE_GROUPS["v34-rx"]), 55)
+        self.assertEqual(len(PROFILE_GROUPS["v34-tx"]), 54)
 
     def test_generated_digital_matrix_is_directional(self) -> None:
         self.assertEqual(len(PROFILE_GROUPS["v90-down"]), 22)

@@ -38,12 +38,11 @@ LINK_MODE_AT_COMMANDS = {
 }
 
 V34_UPSTREAM_MIN_RATE = 4800
-# The primary-rate limits match the implemented V.34 geometry. In particular,
-# 2743 symbol/s is the exact 19200/7 cadence and permits rate units 2 through
-# 11, so omitting it would leave a real V.34 operating point unplanned.
+# The primary-rate limits match the maintained +V34B command repertoire.
+# Although 2743 symbol/s is a V.34 cadence, +V34B deliberately rejects it;
+# generating that command would leave every such scenario failing setup.
 V34_RATES_BY_SYMBOL_RATE: dict[int, tuple[int, ...]] = {
     2400: tuple(range(2400, 21600 + 1, 2400)),
-    2743: tuple(range(4800, 26400 + 1, 2400)),
     2800: tuple(range(4800, 26400 + 1, 2400)),
     3000: tuple(range(4800, 28800 + 1, 2400)),
     3200: tuple(range(4800, 31200 + 1, 2400)),

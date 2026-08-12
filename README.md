@@ -130,12 +130,15 @@ groups. `--list` emits only a redacted manifest and performs no calls.
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
 Baudot at both supported rates, V.32/V.32bis, the current symmetric V.34
 9600-bit/s baseline, and generated future matrices. The future matrices keep
-V.34 receive and transmit caps separate across every standard symbol rate,
-including the exact 2743-symbol/s cadence, and independently sweep V.90/V.92
+V.34 receive and transmit caps separate across the maintained `+V34B` symbol
+rate repertoire. The optional 2743-symbol/s cadence is excluded because that
+control does not accept it. The catalog independently sweeps V.90/V.92
 downstream, conventional upstream, PCM-upstream, quick-connect, head-end, and
 analogue-fallback cases without a Cartesian explosion. Plans select individual
 `profiles`, reusable `profile_groups`, `lapm` and/or `raw` link modes, and a
-bounded attempt count.
+bounded attempt count. Plan names are printed verbatim as public diagnostic
+labels, so they must not contain endpoints, credentials, or other site-specific
+values.
 
 Every expanded case has an explicit `readiness` and optional `prerequisite` in
 the redacted `--list` output and result. Current cases are `runnable`; profiles
