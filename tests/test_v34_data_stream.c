@@ -52,48 +52,48 @@ static struct v34_mp_parameters mp_parameters_fixture(void)
 }
 
 static bool completed_caller_training_fixture(
-	struct v34_caller_training *training,
+	struct v34_training_transmitter *training,
 	const struct v34_data_stream_configuration *configuration,
 	enum v34_constellation_size constellation)
 {
 	struct v34_mp_parameters parameters = mp_parameters_fixture();
 
 	if (configuration == NULL ||
-	    v34_caller_training_init(
+	    v34_training_transmitter_init(
 		    training, &configuration->profile, constellation,
 		    configuration->sample_rate,
 		    configuration->nominal_peak_amplitude) !=
-		    V34_CALLER_TRAINING_OK)
+		    V34_TRAINING_TRANSMITTER_OK)
 		return false;
 	for (size_t sample_count = 0; sample_count < 8000u; ++sample_count) {
 		int16_t ignored;
 
-		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
+		if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
 		    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
 		    training->phase3.trn_symbols ==
 			    V34_PHASE3_TRN_MIN_SYMBOLS &&
-		    v34_caller_training_start_j(training) !=
-			    V34_CALLER_TRAINING_OK)
+		    v34_training_transmitter_start_j(training) !=
+			    V34_TRAINING_TRANSMITTER_OK)
 			return false;
-		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
+		if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
 		    training->phase3.stage == V34_PHASE3_TRANSMITTER_J &&
 		    training->phase3.j_symbols == V34_PHASE3_J_PATTERN_SYMBOLS &&
-		    v34_caller_training_finish_j(training) !=
-			    V34_CALLER_TRAINING_OK)
+		    v34_training_transmitter_finish_j(training) !=
+			    V34_TRAINING_TRANSMITTER_OK)
 			return false;
-		if (training->stage == V34_CALLER_TRAINING_PHASE4_TRN &&
+		if (training->stage == V34_TRAINING_TRANSMITTER_PHASE4_TRN &&
 		    training->phase4_trn_symbols == V34_PHASE4_TRN_MIN_SYMBOLS &&
-		    v34_caller_training_start_mp_type0(
-			    training, &parameters) != V34_CALLER_TRAINING_OK)
+		    v34_training_transmitter_start_mp_type0(
+			    training, &parameters) != V34_TRAINING_TRANSMITTER_OK)
 			return false;
-		if (v34_caller_training_phase4_mp_record_complete(training) &&
-		    v34_caller_training_start_e(training) !=
-			    V34_CALLER_TRAINING_OK)
+		if (v34_training_transmitter_phase4_mp_record_complete(training) &&
+		    v34_training_transmitter_start_e(training) !=
+			    V34_TRAINING_TRANSMITTER_OK)
 			return false;
-		if (v34_caller_training_phase4_e_complete(training))
+		if (v34_training_transmitter_phase4_e_complete(training))
 			return true;
-		if (v34_caller_training_sample(training, &ignored) !=
-		    V34_CALLER_TRAINING_OK)
+		if (v34_training_transmitter_sample(training, &ignored) !=
+		    V34_TRAINING_TRANSMITTER_OK)
 			return false;
 	}
 	return false;
@@ -342,8 +342,8 @@ static bool test_phase4_b1_handoff(void)
 	     constellation < ARRAY_LENGTH(constellations); ++constellation) {
 		struct v34_data_stream_configuration configuration =
 			configuration_fixture();
-		struct v34_caller_training training;
-		struct v34_caller_training training_before;
+		struct v34_training_transmitter training;
+		struct v34_training_transmitter training_before;
 		struct v34_data_stream stream;
 		struct v34_data_line_transmitter model_line;
 		int16_t expected_sample;
@@ -403,8 +403,8 @@ static bool test_phase4_b1_handoff_validation(void)
 {
 	struct v34_data_stream_configuration configuration =
 		configuration_fixture();
-	struct v34_caller_training complete;
-	struct v34_caller_training incomplete;
+	struct v34_training_transmitter complete;
+	struct v34_training_transmitter incomplete;
 	struct v34_data_stream rejected;
 
 	CHECK(completed_caller_training_fixture(
@@ -413,8 +413,8 @@ static bool test_phase4_b1_handoff_validation(void)
 	      "Phase 4 B1 validation E did not complete");
 	incomplete = complete;
 	incomplete.phase4.e.emitted_bits -= 2u;
-	CHECK(v34_caller_training_is_valid(&incomplete) &&
-	      !v34_caller_training_phase4_e_complete(&incomplete),
+	CHECK(v34_training_transmitter_is_valid(&incomplete) &&
+	      !v34_training_transmitter_phase4_e_complete(&incomplete),
 	      "Phase 4 B1 validation did not form an incomplete E");
 	memset(&rejected, 0xa5, sizeof(rejected));
 	CHECK(v34_phase4_caller_b1_stream_init(

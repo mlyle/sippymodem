@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v34_caller_training.h>
+#include <v34_training_transmitter.h>
 #include <v34_mapping_parameters.h>
 #include <v34_phase3_line_receiver.h>
 #include <v34_phase4_line_handoff.h>
@@ -20,7 +20,7 @@ enum {
 };
 
 struct line_source {
-	struct v34_caller_training training;
+	struct v34_training_transmitter training;
 	struct v34_mp_parameters initial_mp;
 	struct v34_mp_parameters final_mp;
 	unsigned int completed_records;
@@ -78,10 +78,10 @@ static bool source_init(
 		.complete_training = complete_training,
 	};
 
-	if (v34_caller_training_init(
+	if (v34_training_transmitter_init(
 		    &initialized.training, transmitting_profile,
 		    V34_CONSTELLATION_16_POINT, SAMPLE_RATE, 5000) !=
-	    V34_CALLER_TRAINING_OK)
+	    V34_TRAINING_TRANSMITTER_OK)
 		return false;
 	*source = initialized;
 	return true;
@@ -89,43 +89,43 @@ static bool source_init(
 
 static bool prepare_source(struct line_source *source)
 {
-	struct v34_caller_training *training = &source->training;
+	struct v34_training_transmitter *training = &source->training;
 
-	if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
+	if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
 	    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
 	    training->phase3.trn_symbols == PHASE3_TRN_SYMBOLS)
-		return v34_caller_training_start_j(training) ==
-		       V34_CALLER_TRAINING_OK;
-	if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
+		return v34_training_transmitter_start_j(training) ==
+		       V34_TRAINING_TRANSMITTER_OK;
+	if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
 	    training->phase3.stage == V34_PHASE3_TRANSMITTER_J &&
 	    training->phase3.j_symbols == PHASE3_J_SYMBOLS)
-		return v34_caller_training_finish_j(training) ==
-		       V34_CALLER_TRAINING_OK;
-	if (training->stage == V34_CALLER_TRAINING_PHASE4_TRN &&
+		return v34_training_transmitter_finish_j(training) ==
+		       V34_TRAINING_TRANSMITTER_OK;
+	if (training->stage == V34_TRAINING_TRANSMITTER_PHASE4_TRN &&
 	    training->phase4_trn_symbols == PHASE4_TRN_SYMBOLS)
-		return v34_caller_training_start_mp_type0(
+		return v34_training_transmitter_start_mp_type0(
 			       training, &source->initial_mp) ==
-		       V34_CALLER_TRAINING_OK;
-	if (v34_caller_training_phase4_mp_record_complete(training)) {
+		       V34_TRAINING_TRANSMITTER_OK;
+	if (v34_training_transmitter_phase4_mp_record_complete(training)) {
 		source->completed_records++;
 		if (source->complete_training &&
 		    source->completed_records >= 3u)
-			return v34_caller_training_start_e(training) ==
-			       V34_CALLER_TRAINING_OK;
-		return v34_caller_training_start_mp_type0(
+			return v34_training_transmitter_start_e(training) ==
+			       V34_TRAINING_TRANSMITTER_OK;
+		return v34_training_transmitter_start_mp_type0(
 			       training,
 			       source->complete_training &&
 				       source->completed_records == 2u ?
 				       &source->final_mp :
 				       &source->initial_mp) ==
-		       V34_CALLER_TRAINING_OK;
+		       V34_TRAINING_TRANSMITTER_OK;
 	}
 	return true;
 }
 
 static bool source_sample(struct line_source *source, int16_t *sample)
 {
-	if (v34_caller_training_phase4_e_complete(&source->training)) {
+	if (v34_training_transmitter_phase4_e_complete(&source->training)) {
 		struct qam_point b1 = { 0.25, -0.25 };
 		const struct qam_point *point =
 			v34_training_line_needs_point(&source->training.line) ?
@@ -139,8 +139,8 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 		       accepted == (point != NULL);
 	}
 	return prepare_source(source) &&
-	       v34_caller_training_sample(&source->training, sample) ==
-		       V34_CALLER_TRAINING_OK;
+	       v34_training_transmitter_sample(&source->training, sample) ==
+		       V34_TRAINING_TRANSMITTER_OK;
 }
 
 static struct v34_phase3_line_receiver_configuration
