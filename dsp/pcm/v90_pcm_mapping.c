@@ -212,6 +212,44 @@ enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
 	return V90_PCM_MAPPING_OK;
 }
 
+enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
+	const struct v90_pcm_mapping *mapping,
+	const uint8_t labels[V90_CP_FRAME_INTERVALS],
+	uint8_t *bits, size_t bit_count)
+{
+	uint8_t decoded[V90_DATA_MAX_MODULUS_BITS];
+	uint64_t value = 0;
+	uint64_t limit;
+
+	if (!v90_pcm_mapping_is_valid(mapping) || labels == NULL ||
+	    bits == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	if (bit_count != mapping->modulus_bits)
+		return V90_PCM_MAPPING_OUT_OF_RANGE;
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		if (labels[interval] >= mapping->modulus[interval])
+			return V90_PCM_MAPPING_OUT_OF_RANGE;
+	}
+	for (size_t interval = V90_CP_FRAME_INTERVALS;
+	     interval > 0; --interval) {
+		size_t index = interval - 1u;
+		uint8_t modulus = mapping->modulus[index];
+
+		if (value >
+		    (UINT64_MAX - labels[index]) / modulus)
+			return V90_PCM_MAPPING_INVALID_PARAMETERS;
+		value = value * modulus + labels[index];
+	}
+	limit = UINT64_C(1) << mapping->modulus_bits;
+	if (value >= limit)
+		return V90_PCM_MAPPING_OUT_OF_RANGE;
+	for (size_t bit = 0; bit < bit_count; ++bit)
+		decoded[bit] = (uint8_t)((value >> bit) & 1u);
+	memcpy(bits, decoded, bit_count);
+	return V90_PCM_MAPPING_OK;
+}
+
 enum v90_pcm_mapping_result v90_pcm_mapping_ucode(
 	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane plane, size_t interval,
@@ -242,6 +280,39 @@ enum v90_pcm_mapping_result v90_pcm_mapping_ucode(
 		}
 	}
 	return V90_PCM_MAPPING_INVALID_PARAMETERS;
+}
+
+enum v90_pcm_mapping_result v90_pcm_mapping_label(
+	const struct v90_pcm_mapping *mapping,
+	enum v90_pcm_mapping_plane plane, size_t interval,
+	uint8_t ucode, uint8_t *label)
+{
+	const struct v90_cp_constellation *constellation;
+	uint8_t ordinal = 0;
+
+	if (!v90_pcm_mapping_is_valid(mapping) || label == NULL ||
+	    (plane != V90_PCM_MAPPING_TRANSMIT &&
+	     plane != V90_PCM_MAPPING_CODEC))
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	if (interval >= V90_CP_FRAME_INTERVALS ||
+	    ucode >= V90_CP_CONSTELLATION_UCODES)
+		return V90_PCM_MAPPING_OUT_OF_RANGE;
+	constellation = plane == V90_PCM_MAPPING_CODEC ?
+				&mapping->codec[interval] :
+				&mapping->transmit[interval];
+	for (unsigned int candidate = V90_CP_CONSTELLATION_UCODES;
+	     candidate > 0; --candidate) {
+		uint8_t value = (uint8_t)(candidate - 1u);
+
+		if (!v90_cp_constellation_contains(constellation, value))
+			continue;
+		if (value == ucode) {
+			*label = ordinal;
+			return V90_PCM_MAPPING_OK;
+		}
+		ordinal++;
+	}
+	return V90_PCM_MAPPING_OUT_OF_RANGE;
 }
 
 const char *v90_pcm_mapping_result_name(

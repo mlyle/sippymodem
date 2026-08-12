@@ -56,6 +56,14 @@ enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
 	const uint8_t *bits, size_t bit_count,
 	uint8_t labels[V90_CP_FRAME_INTERVALS]);
 
+/* Recover K LSB-first modulus bits from labels K0..K5. Label tuples outside
+ * the 2^K input range are unused and rejected. Rejected calls leave the
+ * destination unchanged. */
+enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
+	const struct v90_pcm_mapping *mapping,
+	const uint8_t labels[V90_CP_FRAME_INTERVALS],
+	uint8_t *bits, size_t bit_count);
+
 /* Resolve a label using the descending-Ucode ordering required by the PCM
  * mapper. Codec masks with incompatible cardinality fall back atomically to
  * the transmitter plane during initialization. */
@@ -63,6 +71,13 @@ enum v90_pcm_mapping_result v90_pcm_mapping_ucode(
 	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane plane, size_t interval,
 	uint8_t label, uint8_t *ucode);
+
+/* Reverse a Ucode to its descending-order constellation label. Ucodes absent
+ * from the selected interval and plane are rejected without changing label. */
+enum v90_pcm_mapping_result v90_pcm_mapping_label(
+	const struct v90_pcm_mapping *mapping,
+	enum v90_pcm_mapping_plane plane, size_t interval,
+	uint8_t ucode, uint8_t *label);
 
 const char *v90_pcm_mapping_result_name(
 	enum v90_pcm_mapping_result result);
