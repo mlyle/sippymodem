@@ -212,6 +212,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_channel_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_equalizer_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_line_handoff.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_line_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_trn.c \
