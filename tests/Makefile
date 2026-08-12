@@ -908,9 +908,15 @@ V34_DATA_STREAM_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_data_stream.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
+	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_phase3_j_sequence.o \
+	$(BUILD_DIR)/v34_phase3_caller.o \
+	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
 	$(BUILD_DIR)/v34_phase4_trn.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o \
+	$(BUILD_DIR)/v34_caller_training.o \
 	$(BUILD_DIR)/v34_phase4_b1_handoff.o
 V34_DATA_LINE_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_data_line_receiver

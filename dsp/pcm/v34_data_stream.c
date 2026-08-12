@@ -60,21 +60,23 @@ static enum v34_data_stream_result calibration_result(
 	return V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
-enum v34_data_stream_result v34_data_stream_init(
-	struct v34_data_stream *stream,
-	const struct v34_data_stream_configuration *configuration)
-{
+struct b1_mapping_state {
 	struct v34_frame_geometry geometry;
 	struct v34_mapping_parameters parameters;
 	struct v34_frame_schedule schedule;
 	struct v34_scrambler scrambler;
 	struct v34_4d_encoder encoder;
 	struct v34_power_normalizer normalizer;
-	struct v34_data_transmitter transmitter;
-	struct v34_data_stream initialized;
+};
+
+static enum v34_data_stream_result prepare_b1_mapping(
+	const struct v34_data_stream_configuration *configuration,
+	struct b1_mapping_state *state)
+{
+	struct b1_mapping_state prepared = { 0 };
 	enum v34_data_stream_result result;
 
-	if (stream == NULL || configuration == NULL ||
+	if (configuration == NULL || state == NULL ||
 	    !v34_phase3_profile_is_valid(&configuration->profile) ||
 	    configuration->primary_data_rate_2400_bps_units >
 		    configuration->profile
@@ -87,43 +89,116 @@ enum v34_data_stream_result v34_data_stream_init(
 		    configuration->nonlinear_parameter))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
 	result = geometry_result(v34_frame_geometry_init(
-		&geometry, configuration->profile.symbol_rate,
+		&prepared.geometry, configuration->profile.symbol_rate,
 		configuration->primary_data_rate_2400_bps_units,
 		configuration->auxiliary_channel_enabled));
 	if (result != V34_DATA_STREAM_OK)
 		return result;
 	if (v34_mapping_parameters_init(
-		    &parameters, &geometry, configuration->expanded_shaping) !=
+		    &prepared.parameters, &prepared.geometry,
+		    configuration->expanded_shaping) !=
 	    V34_MAPPING_PARAMETERS_OK ||
-	    v34_b1_frame_schedule_init(&schedule, &geometry) !=
+	    v34_b1_frame_schedule_init(
+		    &prepared.schedule, &prepared.geometry) !=
 		    V34_FRAME_SCHEDULE_OK ||
 	    v34_transmit_scrambler_init(
-		    &scrambler, configuration->profile.local_role) !=
+		    &prepared.scrambler,
+		    configuration->profile.local_role) !=
 		    V34_FRAMING_OK)
 		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	if (v34_4d_encoder_init(
-		    &encoder, &parameters,
+		    &prepared.encoder, &prepared.parameters,
 		    configuration->precoder_coefficients,
 		    configuration->trellis_selection) !=
 	    V34_4D_ENCODER_OK)
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
 	result = calibration_result(v34_calibrate_mapping_power(
-		&schedule, &scrambler, &encoder,
-		configuration->nonlinear_parameter, &normalizer));
+		&prepared.schedule, &prepared.scrambler, &prepared.encoder,
+		configuration->nonlinear_parameter, &prepared.normalizer));
+	if (result != V34_DATA_STREAM_OK)
+		return result;
+	*state = prepared;
+	return V34_DATA_STREAM_OK;
+}
+
+static bool profiles_are_equal(
+	const struct v34_phase3_profile *left,
+	const struct v34_phase3_profile *right)
+{
+	return left->symbol_rate_numerator == right->symbol_rate_numerator &&
+	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
+	       left->carrier_frequency_numerator ==
+		       right->carrier_frequency_numerator &&
+	       left->carrier_frequency_denominator ==
+		       right->carrier_frequency_denominator &&
+	       left->md_symbol_count == right->md_symbol_count &&
+	       left->symbol_rate == right->symbol_rate &&
+	       left->local_role == right->local_role &&
+	       left->transmit_power_reduction_db ==
+		       right->transmit_power_reduction_db &&
+	       left->preemphasis_filter_index ==
+		       right->preemphasis_filter_index &&
+	       left->projected_data_rate_2400_bps_units ==
+		       right->projected_data_rate_2400_bps_units &&
+	       left->md_length_35_ms_units == right->md_length_35_ms_units &&
+	       left->high_carrier == right->high_carrier;
+}
+
+static bool configuration_matches_line(
+	const struct v34_data_stream_configuration *configuration,
+	const struct v34_training_line *line)
+{
+	return configuration != NULL && v34_training_line_is_valid(line) &&
+	       profiles_are_equal(&configuration->profile, &line->profile) &&
+	       configuration->sample_rate == line->carrier.channel.sample_rate &&
+	       configuration->nominal_peak_amplitude ==
+		       line->nominal_peak_amplitude;
+}
+
+enum v34_data_stream_result v34_data_stream_init(
+	struct v34_data_stream *stream,
+	const struct v34_data_stream_configuration *configuration)
+{
+	struct b1_mapping_state mapping;
+	struct v34_data_transmitter transmitter;
+	enum v34_data_stream_result result;
+
+	if (stream == NULL)
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = prepare_b1_mapping(configuration, &mapping);
 	if (result != V34_DATA_STREAM_OK)
 		return result;
 	result = transmitter_result(v34_data_transmitter_init(
-		&transmitter, &schedule, &scrambler, &encoder, &normalizer,
+		&transmitter, &mapping.schedule, &mapping.scrambler,
+		&mapping.encoder, &mapping.normalizer,
 		&configuration->profile, configuration->sample_rate,
 		configuration->nominal_peak_amplitude));
 	if (result != V34_DATA_STREAM_OK)
 		return result;
-	result = v34_data_stream_init_b1(
-		&initialized, &transmitter);
+	return v34_data_stream_init_b1(stream, &transmitter);
+}
+
+enum v34_data_stream_result v34_data_stream_continue_b1(
+	struct v34_data_stream *stream,
+	const struct v34_training_line *active_line,
+	const struct v34_data_stream_configuration *configuration)
+{
+	struct b1_mapping_state mapping;
+	struct v34_data_transmitter transmitter;
+	enum v34_data_stream_result result;
+
+	if (stream == NULL ||
+	    !configuration_matches_line(configuration, active_line))
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = prepare_b1_mapping(configuration, &mapping);
 	if (result != V34_DATA_STREAM_OK)
 		return result;
-	*stream = initialized;
-	return V34_DATA_STREAM_OK;
+	result = transmitter_result(v34_data_transmitter_continue(
+		&transmitter, active_line, &mapping.schedule,
+		&mapping.scrambler, &mapping.encoder, &mapping.normalizer));
+	if (result != V34_DATA_STREAM_OK)
+		return result;
+	return v34_data_stream_init_b1(stream, &transmitter);
 }
 
 static bool schedule_is_at_b1_start(

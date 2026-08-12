@@ -53,6 +53,13 @@ enum v34_data_stream_result v34_data_stream_init(
 	struct v34_data_stream *stream,
 	const struct v34_data_stream_configuration *configuration);
 
+/* Derive the first B1 mapping frame while continuing an active training
+ * waveform with the exact same profile and line settings. */
+enum v34_data_stream_result v34_data_stream_continue_b1(
+	struct v34_data_stream *stream,
+	const struct v34_training_line *active_line,
+	const struct v34_data_stream_configuration *configuration);
+
 /* Take ownership of a transmitter positioned at the first mapping frame of
  * B1. The one-frame B1 payload is generated internally as binary ones; the
  * external source is not consulted until the following data frame. */

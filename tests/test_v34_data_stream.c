@@ -51,47 +51,52 @@ static struct v34_mp_parameters mp_parameters_fixture(void)
 	};
 }
 
-static bool completed_e_fixture(
-	struct v34_phase4_e_sequence *sequence,
-	enum v34_station_role role,
+static bool completed_caller_training_fixture(
+	struct v34_caller_training *training,
+	const struct v34_data_stream_configuration *configuration,
 	enum v34_constellation_size constellation)
 {
-	struct v34_mp_parameters parameters =
-		mp_parameters_fixture();
-	struct v34_phase4_trn trn;
-	struct v34_phase4_mp mp;
-	struct qam_point point;
-	uint8_t quarter_point;
-	uint8_t clockwise_quarter_turns;
-	bool record_complete;
+	struct v34_mp_parameters parameters = mp_parameters_fixture();
 
-	if (sequence == NULL ||
-	    v34_phase4_trn_init(&trn, role, constellation) !=
-		    V34_PHASE4_TRN_OK ||
-	    v34_phase4_trn_next(
-		    &trn, &point, &quarter_point,
-		    &clockwise_quarter_turns) != V34_PHASE4_TRN_OK ||
-	    v34_phase4_mp_init_type0_from_trn(
-		    &mp, &trn, &parameters) != V34_PHASE4_MP_OK)
+	if (configuration == NULL ||
+	    v34_caller_training_init(
+		    training, &configuration->profile, constellation,
+		    configuration->sample_rate,
+		    configuration->nominal_peak_amplitude) !=
+		    V34_CALLER_TRAINING_OK)
 		return false;
-	while (!v34_phase4_mp_record_is_complete(&mp)) {
-		if (v34_phase4_mp_next(
-			    &mp, &point, &quarter_point,
-			    &clockwise_quarter_turns, &record_complete) !=
-		    V34_PHASE4_MP_OK)
+	for (size_t sample_count = 0; sample_count < 8000u; ++sample_count) {
+		int16_t ignored;
+
+		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
+		    training->phase3.stage == V34_PHASE3_CALLER_TRN &&
+		    training->phase3.trn_symbols ==
+			    V34_PHASE3_TRN_MIN_SYMBOLS &&
+		    v34_caller_training_start_j(training) !=
+			    V34_CALLER_TRAINING_OK)
+			return false;
+		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
+		    training->phase3.stage == V34_PHASE3_CALLER_J &&
+		    training->phase3.j_symbols == V34_PHASE3_J_PATTERN_SYMBOLS &&
+		    v34_caller_training_finish_j(training) !=
+			    V34_CALLER_TRAINING_OK)
+			return false;
+		if (training->stage == V34_CALLER_TRAINING_PHASE4_TRN &&
+		    training->phase4_trn_symbols == V34_PHASE4_TRN_MIN_SYMBOLS &&
+		    v34_caller_training_start_mp_type0(
+			    training, &parameters) != V34_CALLER_TRAINING_OK)
+			return false;
+		if (v34_caller_training_phase4_mp_record_complete(training) &&
+		    v34_caller_training_start_e(training) !=
+			    V34_CALLER_TRAINING_OK)
+			return false;
+		if (v34_caller_training_phase4_e_complete(training))
+			return true;
+		if (v34_caller_training_sample(training, &ignored) !=
+		    V34_CALLER_TRAINING_OK)
 			return false;
 	}
-	if (v34_phase4_e_sequence_init_from_mp(sequence, &mp) !=
-	    V34_PHASE4_E_SEQUENCE_OK)
-		return false;
-	while (!v34_phase4_e_sequence_is_complete(sequence)) {
-		if (v34_phase4_e_sequence_next(
-			    sequence, &point, &quarter_point,
-			    &clockwise_quarter_turns) !=
-		    V34_PHASE4_E_SEQUENCE_OK)
-			return false;
-	}
-	return true;
+	return false;
 }
 
 static bool compose_transmitter(
@@ -333,34 +338,63 @@ static bool test_phase4_b1_handoff(void)
 		V34_CONSTELLATION_16_POINT,
 	};
 
-	for (unsigned int role = V34_CALLING_STATION;
-	     role <= V34_ANSWERING_STATION; ++role) {
-		for (size_t constellation = 0;
-		     constellation < ARRAY_LENGTH(constellations);
-		     ++constellation) {
-			struct v34_data_stream_configuration configuration =
-				configuration_fixture();
-			struct v34_phase4_e_sequence transmitted_e;
-			struct v34_data_stream expected;
-			struct v34_data_stream actual;
+	for (size_t constellation = 0;
+	     constellation < ARRAY_LENGTH(constellations); ++constellation) {
+		struct v34_data_stream_configuration configuration =
+			configuration_fixture();
+		struct v34_caller_training training;
+		struct v34_caller_training training_before;
+		struct v34_data_stream stream;
+		struct v34_data_line_transmitter model_line;
+		int16_t expected_sample;
+		int16_t actual_sample;
+		bool expected_accepted;
+		bool actual_accepted;
 
-			configuration.profile.local_role =
-				(enum v34_station_role)role;
-			CHECK(completed_e_fixture(
-				      &transmitted_e, configuration.profile.local_role,
-				      constellations[constellation]) &&
-			      v34_data_stream_init(
-				      &expected, &configuration) ==
-				      V34_DATA_STREAM_OK &&
-			      v34_phase4_b1_transmit_stream_init(
-				      &actual, &transmitted_e, &configuration) ==
-				      V34_DATA_STREAM_OK &&
-			      v34_data_stream_is_transmitting_b1(
-				      &actual) &&
-			      streams_match_through_b1(&actual, &expected),
-			      "Phase 4 B1 handoff changed role %u constellation %zu",
-			      role, constellation);
-		}
+		CHECK(completed_caller_training_fixture(
+			      &training, &configuration,
+			      constellations[constellation]) &&
+		      !v34_training_line_needs_point(&training.line),
+		      "Phase 4 caller fixture %zu did not complete between points",
+		      constellation);
+		training_before = training;
+		CHECK(v34_phase4_caller_b1_stream_init(
+			      &stream, &training, &configuration) ==
+			      V34_DATA_STREAM_OK &&
+		      memcmp(&training, &training_before, sizeof(training)) == 0 &&
+		      v34_data_stream_is_transmitting_b1(&stream) &&
+		      stream.transmitter.line.generated_samples ==
+			      training.line.generated_samples &&
+		      stream.transmitter.line.output_gain ==
+			      training.line.output_gain &&
+		      memcmp(&stream.transmitter.line.preemphasis,
+			     &training.line.preemphasis,
+			     sizeof(training.line.preemphasis)) == 0 &&
+		      stream.transmitter.line.carrier.modulator.carrier_phase ==
+			      training.line.carrier.carrier_phase &&
+		      stream.transmitter.line.carrier.modulator.symbol_phase_units ==
+			      training.line.carrier.symbol_phase_units &&
+		      stream.transmitter.line.carrier.modulator.active_count ==
+			      training.line.carrier.active_count &&
+		      memcmp(stream.transmitter.line.carrier.modulator.active,
+			     training.line.carrier.active,
+			     sizeof(training.line.carrier.active)) == 0,
+		      "Phase 4 B1 handoff reset caller line %zu", constellation);
+		model_line = stream.transmitter.line;
+		CHECK(v34_data_line_transmitter_sample(
+			      &model_line, NULL, &expected_sample,
+			      &expected_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
+		      v34_data_stream_sample(
+			      &stream, NULL, NULL, &actual_sample,
+			      &actual_accepted) == V34_DATA_STREAM_OK &&
+		      actual_sample == expected_sample &&
+		      actual_accepted == expected_accepted &&
+		      !actual_accepted &&
+		      stream.transmitter.points.next_point == 0 &&
+		      memcmp(&stream.transmitter.line, &model_line,
+			     sizeof(model_line)) == 0,
+		      "Phase 4 B1 handoff lost the retained E tail %zu",
+		      constellation);
 	}
 	return true;
 }
@@ -369,43 +403,64 @@ static bool test_phase4_b1_handoff_validation(void)
 {
 	struct v34_data_stream_configuration configuration =
 		configuration_fixture();
-	struct v34_phase4_e_sequence complete;
-	struct v34_phase4_e_sequence incomplete;
+	struct v34_caller_training complete;
+	struct v34_caller_training incomplete;
 	struct v34_data_stream rejected;
 
-	CHECK(completed_e_fixture(
-		      &complete, configuration.profile.local_role,
+	CHECK(completed_caller_training_fixture(
+		      &complete, &configuration,
 		      V34_CONSTELLATION_4_POINT),
 	      "Phase 4 B1 validation E did not complete");
 	incomplete = complete;
-	incomplete.emitted_bits -= 2u;
-	CHECK(v34_phase4_e_sequence_is_valid(&incomplete) &&
-	      !v34_phase4_e_sequence_is_complete(&incomplete),
+	incomplete.phase4.e.emitted_bits -= 2u;
+	CHECK(v34_caller_training_is_valid(&incomplete) &&
+	      !v34_caller_training_phase4_e_complete(&incomplete),
 	      "Phase 4 B1 validation did not form an incomplete E");
 	memset(&rejected, 0xa5, sizeof(rejected));
-	CHECK(v34_phase4_b1_transmit_stream_init(
+	CHECK(v34_phase4_caller_b1_stream_init(
 		      NULL, &complete, &configuration) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_phase4_b1_transmit_stream_init(
+	      v34_phase4_caller_b1_stream_init(
 		      &rejected, NULL, &configuration) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_phase4_b1_transmit_stream_init(
+	      v34_phase4_caller_b1_stream_init(
 		      &rejected, &complete, NULL) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_phase4_b1_transmit_stream_init(
+	      v34_phase4_caller_b1_stream_init(
 		      &rejected, &incomplete, &configuration) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
 	      "invalid Phase 4 B1 handoff changed the stream");
 	configuration.profile.local_role = V34_ANSWERING_STATION;
-	CHECK(v34_phase4_b1_transmit_stream_init(
+	CHECK(v34_phase4_caller_b1_stream_init(
 		      &rejected, &complete, &configuration) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
 	      "Phase 4 B1 handoff accepted a local-role mismatch");
 	configuration = configuration_fixture();
+	configuration.profile.preemphasis_filter_index++;
+	CHECK(v34_phase4_caller_b1_stream_init(
+		      &rejected, &complete, &configuration) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "Phase 4 B1 handoff accepted a different line profile");
+	configuration = configuration_fixture();
+	configuration.sample_rate *= 2u;
+	CHECK(v34_phase4_caller_b1_stream_init(
+		      &rejected, &complete, &configuration) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "Phase 4 B1 handoff accepted a different sample clock");
+	configuration = configuration_fixture();
+	configuration.nominal_peak_amplitude++;
+	CHECK(v34_phase4_caller_b1_stream_init(
+		      &rejected, &complete, &configuration) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "Phase 4 B1 handoff accepted a different line amplitude");
+	configuration = configuration_fixture();
 	configuration.primary_data_rate_2400_bps_units = 1;
-	CHECK(v34_phase4_b1_transmit_stream_init(
+	CHECK(v34_phase4_caller_b1_stream_init(
 		      &rejected, &complete, &configuration) ==
 		      V34_DATA_STREAM_OUT_OF_RANGE &&
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
