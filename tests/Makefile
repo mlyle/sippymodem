@@ -26,6 +26,7 @@ DSP_V32_SOURCE_DIR := $(DSP_SOURCE_DIR)/v32
 DSP_PCM_SOURCE_DIR := $(DSP_SOURCE_DIR)/pcm
 V34_NATIVE_SOURCE_NAMES := \
 	phase2_info0_exchange.c \
+	phase2_info1_exchange.c \
 	phase2_initial_probe.c \
 	phase2_probe_turnaround.c \
 	phase2_reciprocal_probe.c \
@@ -1457,6 +1458,7 @@ V34_PHASE2_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_phase2.o \
+	$(BUILD_DIR)/phase2_info1_exchange.o \
 	$(BUILD_DIR)/v34_phase2_info1_exchange.o \
 	$(BUILD_DIR)/v34_phase2_selection.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
@@ -1486,6 +1488,7 @@ V34_PHASE2_INFO1_EXCHANGE_TEST_BINARY := \
 V34_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2_info1_exchange.o \
 	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/phase2_info1_exchange.o \
 	$(BUILD_DIR)/v34_phase2_info1_exchange.o \
 	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
 V34_PHASE2_PROBE_TEST_BINARY := \
@@ -3301,6 +3304,10 @@ $(BUILD_DIR)/phase2_ranging.o: \
 
 $(BUILD_DIR)/v34_phase2_info0_exchange.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info0_exchange.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/phase2_info1_exchange.o: \
+	$(DSP_PCM_SOURCE_DIR)/phase2_info1_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase2_info1_exchange.o: \

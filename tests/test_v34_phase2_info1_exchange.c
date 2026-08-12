@@ -167,11 +167,11 @@ static bool exchange_pair_init(
 	    v34_phase2_info1_exchange_caller_init(
 		    &initialized.caller,
 		    &initialized.channel.caller.reciprocal_probe, info1c) !=
-		    V34_PHASE2_INFO1_EXCHANGE_OK ||
+		    PHASE2_INFO1_OK ||
 	    v34_phase2_info1_exchange_answerer_init(
 		    &initialized.answerer,
 		    &initialized.channel.answerer.reciprocal_probe) !=
-		    V34_PHASE2_INFO1_EXCHANGE_OK)
+		    PHASE2_INFO1_OK)
 		return false;
 	*pair = initialized;
 	return true;
@@ -189,11 +189,11 @@ static bool exchange_pair_sample(
 
 	if (v34_phase2_info1_exchange_sample(
 		    &pair->caller, caller_receive, &emitted.caller_transmit,
-		    &emitted.caller) != V34_PHASE2_INFO1_EXCHANGE_OK ||
+		    &emitted.caller) != PHASE2_INFO1_OK ||
 	    v34_phase2_info1_exchange_sample(
 		    &pair->answerer, answerer_receive,
 		    &emitted.answerer_transmit, &emitted.answerer) !=
-		    V34_PHASE2_INFO1_EXCHANGE_OK)
+		    PHASE2_INFO1_OK)
 		return false;
 	delay_line_transmit(
 		&pair->channel.caller_to_answerer,
@@ -219,8 +219,8 @@ static bool check_bidirectional_exchange(
 	CHECK(exchange_pair_init(&pair, codec, delay_samples, &info1c),
 	      "INFO1 endpoints did not initialize for codec %d delay %zu",
 	      codec, delay_samples);
-	CHECK(pair.caller.nominal_amplitude == TEST_AMPLITUDE &&
-	      pair.answerer.nominal_amplitude == TEST_AMPLITUDE,
+	CHECK(pair.caller.control.nominal_amplitude == TEST_AMPLITUDE &&
+	      pair.answerer.control.nominal_amplitude == TEST_AMPLITUDE,
 	      "INFO1 handoff did not preserve nominal power");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct info1_exchange_pair_event event;
@@ -239,14 +239,15 @@ static bool check_bidirectional_exchange(
 				      &info1c) &&
 			      v34_phase2_info1_exchange_answerer_reply(
 				      &pair.answerer, &info1a) ==
-				      V34_PHASE2_INFO1_EXCHANGE_OK,
+				      PHASE2_INFO1_OK,
 			      "answerer did not accept decoded INFO1c");
-			CHECK(pair.answerer.transmitter.modulation.carrier
+			CHECK(pair.answerer.control.transmitter.modulation.carrier
 				      .carrier_phase +
 				      UINT32_C(0x40000000) ==
-				      pair.answerer.answerer_tone_a.carrier_phase &&
-			      pair.answerer.transmitter.modulation.guard_phase ==
-				      pair.answerer.answerer_tone_a.guard_phase,
+				      pair.answerer.control.signal_a_tone.carrier_phase &&
+			      pair.answerer.control.transmitter.modulation
+					      .guard_phase ==
+				      pair.answerer.control.signal_a_tone.guard_phase,
 			      "Tone A to INFO1a phase continuity changed");
 		}
 		if (event.answerer.kind ==
@@ -259,8 +260,8 @@ static bool check_bidirectional_exchange(
 				      &event.caller.peer_parameters.info1a, &info1a),
 			      "caller decoded different INFO1a parameters");
 		}
-		if (pair.caller.phase == V34_PHASE2_INFO1_COMPLETE &&
-		    pair.answerer.phase == V34_PHASE2_INFO1_COMPLETE)
+		if (pair.caller.control.phase == PHASE2_INFO1_COMPLETE &&
+		    pair.answerer.control.phase == PHASE2_INFO1_COMPLETE)
 			break;
 	}
 	CHECK(caller_sent < answerer_received &&
@@ -268,9 +269,9 @@ static bool check_bidirectional_exchange(
 	      answerer_sent < caller_received,
 	      "INFO1 event order changed: %zu/%zu/%zu/%zu",
 	      caller_sent, answerer_received, answerer_sent, caller_received);
-	CHECK(pair.caller.carrier_tail_symbols ==
+	CHECK(pair.caller.control.carrier_tail_symbols ==
 		      V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
-	      pair.answerer.carrier_tail_symbols ==
+	      pair.answerer.control.carrier_tail_symbols ==
 		      V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 	      pair.caller.peer_parameters_received &&
 	      pair.answerer.peer_parameters_received &&
@@ -331,50 +332,50 @@ static bool test_exact_deadlines(void)
 	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 13) &&
 	      v34_phase2_info1_exchange_caller_init(
 		      &caller, &probes.caller.reciprocal_probe, &info1c) ==
-		      V34_PHASE2_INFO1_EXCHANGE_OK &&
+		      PHASE2_INFO1_OK &&
 	      v34_phase2_info1_exchange_answerer_init(
 		      &answerer, &probes.answerer.reciprocal_probe) ==
-		      V34_PHASE2_INFO1_EXCHANGE_OK,
+		      PHASE2_INFO1_OK,
 	      "INFO1 timeout fixtures did not initialize");
 	caller_deadline =
-		(uint32_t)V34_PHASE2_CALLER_INFO1A_WAIT_BASE_SAMPLES +
-		caller.round_trip_delay_samples;
+		(uint32_t)PHASE2_INFO1_SIGNAL_B_WAIT_BASE_SAMPLES +
+		caller.control.round_trip_delay_samples;
 	answerer_deadline =
-		(uint32_t)V34_PHASE2_ANSWERER_INFO1C_WAIT_BASE_SAMPLES +
-		2u * answerer.round_trip_delay_samples;
-	answerer_initial_elapsed = answerer.peer_deadline_elapsed_samples;
+		(uint32_t)PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES +
+		2u * answerer.control.round_trip_delay_samples;
+	answerer_initial_elapsed =
+		answerer.control.peer_deadline_elapsed_samples;
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
-		enum v34_phase2_info1_exchange_phase before =
-			caller.phase;
+		enum phase2_info1_phase before = caller.control.phase;
 
 		CHECK(v34_phase2_info1_exchange_sample(
 			      &caller, 0, &transmit, &event) ==
-			      V34_PHASE2_INFO1_EXCHANGE_OK,
+			      PHASE2_INFO1_OK,
 		      "caller timeout failed at sample %zu", index);
-		if (before == V34_PHASE2_INFO1_WAITING_FOR_PEER)
+		if (before == PHASE2_INFO1_WAITING_FOR_PEER)
 			caller_wait_samples++;
-		if (caller.phase == V34_PHASE2_INFO1_FAILED)
+		if (caller.control.phase == PHASE2_INFO1_FAILED)
 			break;
 	}
 	CHECK(caller_wait_samples == caller_deadline &&
-	      caller.peer_deadline_elapsed_samples == caller_deadline &&
-	      caller.failure == V34_PHASE2_INFO1_PEER_TIMEOUT &&
+	      caller.control.peer_deadline_elapsed_samples == caller_deadline &&
+	      caller.control.failure == PHASE2_INFO1_PEER_TIMEOUT &&
 	      event.kind == V34_PHASE2_INFO1_EVENT_FAILED,
 	      "caller did not fail exactly 700 ms plus RTD after INFO1c");
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		CHECK(v34_phase2_info1_exchange_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      V34_PHASE2_INFO1_EXCHANGE_OK,
+			      PHASE2_INFO1_OK,
 		      "answerer timeout failed at sample %zu", index);
 		answerer_wait_samples++;
-		if (answerer.phase == V34_PHASE2_INFO1_FAILED)
+		if (answerer.control.phase == PHASE2_INFO1_FAILED)
 			break;
 	}
 	CHECK(answerer_wait_samples ==
 		      answerer_deadline - answerer_initial_elapsed &&
-	      answerer.peer_deadline_elapsed_samples == answerer_deadline &&
-	      answerer.failure == V34_PHASE2_INFO1_PEER_TIMEOUT &&
+	      answerer.control.peer_deadline_elapsed_samples == answerer_deadline &&
+	      answerer.control.failure == PHASE2_INFO1_PEER_TIMEOUT &&
 	      event.kind == V34_PHASE2_INFO1_EVENT_FAILED,
 	      "answerer did not preserve the 2000 ms plus two-RTD epoch");
 
@@ -382,11 +383,88 @@ static bool test_exact_deadlines(void)
 	transmit = 1234;
 	CHECK(v34_phase2_info1_exchange_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
-		      V34_PHASE2_INFO1_EXCHANGE_OK &&
+		      PHASE2_INFO1_OK &&
 	      transmit == 0 &&
 	      event.kind == V34_PHASE2_INFO1_EVENT_NONE &&
 	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
 	      "failed INFO1 controller was not silent and stable");
+	return true;
+}
+
+static bool test_semantic_frame_rejection(void)
+{
+	struct v34_info1c info1c = info1c_fixture();
+	struct test_pair probes;
+	struct v34_phase2_info1_exchange caller;
+	struct v34_phase2_info1_exchange_event event;
+	struct v34_phase2_info_audio_transmitter peer;
+	/* Symbol-rate value seven in payload bits 22..24 is not a V.34 rate. */
+	uint8_t invalid_payload[V34_INFO1A_PAYLOAD_BYTES] = {
+		[2] = UINT8_C(0x03),
+		[3] = UINT8_C(0x80),
+	};
+	struct v34_info1a decoded;
+	uint32_t elapsed_before;
+	size_t received_samples = 0;
+	bool rejected = false;
+
+	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 1) &&
+	      v34_phase2_info1_exchange_caller_init(
+		      &caller, &probes.caller.reciprocal_probe, &info1c) ==
+		      PHASE2_INFO1_OK,
+	      "semantic-rejection fixture did not initialize");
+	for (size_t index = 0;
+	     index < TEST_SAMPLE_LIMIT &&
+	     caller.control.phase != PHASE2_INFO1_WAITING_FOR_PEER;
+	     ++index) {
+		int16_t transmit;
+
+		CHECK(v34_phase2_info1_exchange_sample(
+			      &caller, 0, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "caller did not reach its peer wait");
+	}
+	CHECK(caller.control.phase == PHASE2_INFO1_WAITING_FOR_PEER &&
+	      v34_info1a_decode(
+		      invalid_payload, sizeof(invalid_payload),
+		      V34_INFO1A_PAYLOAD_BITS, &decoded) != V34_INFO1_OK &&
+	      v34_phase2_info_audio_transmitter_init(
+		      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+		      invalid_payload, V34_INFO1A_PAYLOAD_BITS) ==
+		      V34_PHASE2_INFO_AUDIO_OK,
+	      "invalid semantic frame fixture was not usable");
+	elapsed_before = caller.control.peer_deadline_elapsed_samples;
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT && !rejected; ++index) {
+		int16_t received;
+		int16_t transmit;
+		bool frame_complete;
+		bool bit_accepted;
+
+		if (!peer.frame_complete)
+			CHECK(v34_phase2_info_audio_transmitter_sample(
+				      &peer, &received, &frame_complete) ==
+				      V34_PHASE2_INFO_AUDIO_OK,
+			      "invalid semantic frame transmitter failed");
+		else
+			CHECK(v34_phase2_dpsk_transmitter_sample(
+				      &peer.modulation, 0, &received,
+				      &bit_accepted) == V34_PHASE2_DPSK_OK,
+			      "invalid semantic frame tail failed");
+		CHECK(v34_phase2_info1_exchange_sample(
+			      &caller, received, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "caller failed while rejecting semantic frame");
+		received_samples++;
+		rejected = event.kind ==
+			   V34_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
+	}
+	CHECK(rejected &&
+	      caller.control.phase == PHASE2_INFO1_WAITING_FOR_PEER &&
+	      caller.control.peer_deadline_elapsed_samples ==
+		      elapsed_before + received_samples &&
+	      !caller.peer_parameters_received &&
+	      v34_phase2_info1_exchange_is_valid(&caller),
+	      "semantic rejection committed parameters or lost deadline time");
 	return true;
 }
 
@@ -410,32 +488,32 @@ static bool test_validation(void)
 	before = exchange;
 	CHECK(v34_phase2_info1_exchange_caller_init(
 		      &exchange, &probes.answerer.reciprocal_probe, &info1c) ==
-		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      v34_phase2_info1_exchange_caller_init(
 		      &exchange, &probes.caller.reciprocal_probe,
 		      &invalid_info1c) ==
-		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      v34_phase2_info1_exchange_caller_init(
 		      NULL, &probes.caller.reciprocal_probe, &info1c) ==
-		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0,
 	      "invalid INFO1 initialization mutated output state");
 	CHECK(v34_phase2_info1_exchange_caller_init(
 		      &exchange, &probes.caller.reciprocal_probe, &info1c) ==
-		      V34_PHASE2_INFO1_EXCHANGE_OK,
+		      PHASE2_INFO1_OK,
 	      "valid INFO1 caller did not initialize");
 	before = exchange;
 	memset(&event, 0x5a, sizeof(event));
 	event_before = event;
 	CHECK(v34_phase2_info1_exchange_sample(
 		      &exchange, 0, NULL, &event) ==
-		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      v34_phase2_info1_exchange_sample(
 		      &exchange, 0, &transmit, NULL) ==
-		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      v34_phase2_info1_exchange_answerer_reply(
 		      &exchange, &info1a) ==
-		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
@@ -446,18 +524,18 @@ static bool test_validation(void)
 	      "INFO1 validation accepted parameters without a peer event");
 	CHECK(v34_phase2_info1_exchange_answerer_init(
 		      &exchange, &probes.answerer.reciprocal_probe) ==
-		      V34_PHASE2_INFO1_EXCHANGE_OK,
+		      PHASE2_INFO1_OK,
 	      "valid INFO1 answerer did not initialize");
 	before = exchange;
 	CHECK(v34_phase2_info1_exchange_answerer_reply(
 		      &exchange, &info1a) ==
-		      V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT &&
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
-	      strcmp(v34_phase2_info1_exchange_result_name(
-			     V34_PHASE2_INFO1_EXCHANGE_INVALID_ARGUMENT),
+	      strcmp(phase2_info1_result_name(
+			     PHASE2_INFO1_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(v34_phase2_info1_exchange_result_name(
-			     (enum v34_phase2_info1_exchange_result)99),
+	      strcmp(phase2_info1_result_name(
+			     (enum phase2_info1_result)99),
 		     "unknown") == 0,
 	      "INFO1 reply validation or result names changed");
 	return true;
@@ -471,6 +549,7 @@ int main(void)
 	} tests[] = {
 		{ "bidirectional exchange", test_bidirectional_exchange },
 		{ "exact peer deadlines", test_exact_deadlines },
+		{ "semantic frame rejection", test_semantic_frame_rejection },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
