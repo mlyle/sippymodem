@@ -214,6 +214,33 @@ static bool test_capacity_and_codec_fallback(void)
 	return true;
 }
 
+static bool test_shaping_coefficient_boundaries(void)
+{
+	struct v90_cp_parameters source =
+		parameters(V90_CP_TRAINING, 13, 1, 8, false);
+	struct v90_pcm_mapping mapping;
+
+	source.shaping_a1_q1_6 = -64;
+	source.shaping_a2_q1_6 = 64;
+	source.shaping_b1_q1_6 = -64;
+	source.shaping_b2_q1_6 = 64;
+	CHECK(v90_pcm_mapping_init(&mapping, &source) ==
+		      V90_PCM_MAPPING_OK,
+	      "mapping rejected coefficient magnitudes of exactly 1.0");
+	source.shaping_a1_q1_6 = -65;
+	CHECK(rejected_init_is_transactional(&source),
+	      "mapping accepted a shaping coefficient below -1.0");
+	source.shaping_a1_q1_6 = -64;
+	source.shaping_b2_q1_6 = 65;
+	CHECK(rejected_init_is_transactional(&source),
+	      "mapping accepted a shaping coefficient above 1.0");
+
+	mapping.shaping_b2_q1_6 = 65;
+	CHECK(!v90_pcm_mapping_is_valid(&mapping),
+	      "mapping validator accepted an out-of-range coefficient");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_cp_parameters source =
@@ -301,6 +328,8 @@ int main(void)
 		{ "rate boundaries", test_rate_boundaries },
 		{ "capacity and codec fallback",
 		  test_capacity_and_codec_fallback },
+		{ "shaping coefficient boundaries",
+		  test_shaping_coefficient_boundaries },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;
