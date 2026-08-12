@@ -13,7 +13,7 @@ _Static_assert(
 		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
 	"V.34 J correlation must retain matching evidence");
 
-static bool detection_is_valid(
+bool v34_phase3_j_detection_is_valid(
 	const struct v34_phase3_j_detection *detection)
 {
 	return detection != NULL &&
@@ -62,7 +62,7 @@ bool v34_phase3_j_receiver_is_valid(
 		       receiver->detection.errors == 0;
 	return receiver->buffered_decisions ==
 		       V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
-	       detection_is_valid(&receiver->detection) &&
+	       v34_phase3_j_detection_is_valid(&receiver->detection) &&
 	       receiver->detection.sequence.role == receiver->trn.role &&
 	       receiver->detection.trn_symbols <=
 		       UINT32_MAX - V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&

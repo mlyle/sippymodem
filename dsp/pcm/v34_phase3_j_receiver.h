@@ -35,6 +35,9 @@ struct v34_phase3_j_detection {
 	uint8_t errors;
 };
 
+bool v34_phase3_j_detection_is_valid(
+	const struct v34_phase3_j_detection *detection);
+
 /* Locate the TRN-to-J transition from hard four-point decisions. A rolling
  * three-pattern window rejects continued TRN and correlates both possible J
  * selections. Candidate symbols are generated from retained TRN boundary
