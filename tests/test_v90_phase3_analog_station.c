@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
-#include <v90_phase3_analog_line_rx.h>
 #include <v90_phase3_analog_station.h>
-#include <v90_phase3_digital_tx.h>
-#include <v90_phase3_return_line_rx.h>
+#include <v90_phase3_digital_station.h>
 
 #include "test.h"
 
@@ -17,24 +15,6 @@ enum {
 	POST_POINT_LIMIT =
 		2 * V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS +
 		QAM_EQUALIZER_DELAY,
-};
-
-enum digital_receive_stage {
-	DIGITAL_RECEIVE_INITIAL,
-	DIGITAL_RECEIVE_RETURN,
-	DIGITAL_RECEIVE_COMPLETE,
-};
-
-union digital_receive_state {
-	struct v90_phase3_analog_line_rx initial;
-	struct v90_phase3_return_line_rx returning;
-};
-
-struct digital_endpoint {
-	union digital_receive_state receive;
-	struct v90_phase3_digital_tx transmit;
-	enum digital_receive_stage receive_stage;
-	bool transmit_started;
 };
 
 static struct v34_phase3_profile profile(void)
@@ -78,12 +58,6 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
-static uint8_t silence_octet(enum g711_law law)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_encode_pcma(0) : g711_encode_pcmu(0);
-}
-
 static bool jd_equal(
 	const struct v90_jd_parameters *left,
 	const struct v90_jd_parameters *right)
@@ -95,101 +69,6 @@ static bool jd_equal(
 		       right->rate_renegotiation_constellation &&
 	       left->maximum_spectral_shaping_lookahead ==
 		       right->maximum_spectral_shaping_lookahead;
-}
-
-static bool digital_init(
-	struct digital_endpoint *digital,
-	const struct v34_phase3_profile *selected)
-{
-	struct v90_phase3_analog_rx_configuration configuration =
-		receive_configuration();
-
-	*digital = (struct digital_endpoint){ 0 };
-	return v90_phase3_analog_line_rx_init(
-		       &digital->receive.initial, selected, &configuration) ==
-	       V90_PHASE3_ANALOG_LINE_RX_OK;
-}
-
-static bool digital_start_transmit(
-	struct digital_endpoint *digital, enum g711_law law,
-	uint8_t training_ucode,
-	const struct v90_jd_parameters *parameters)
-{
-	return v90_phase3_digital_tx_init(
-		       &digital->transmit, law, training_ucode, parameters) ==
-		       V90_PHASE3_DIGITAL_TX_OK &&
-	       (digital->transmit_started = true);
-}
-
-static bool digital_receive(
-	struct digital_endpoint *digital, int16_t sample, enum g711_law law,
-	uint8_t training_ucode,
-	const struct v90_jd_parameters *parameters)
-{
-	if (digital->receive_stage == DIGITAL_RECEIVE_INITIAL) {
-		struct v90_phase3_analog_line_handoff handoff;
-		enum v90_phase3_analog_line_rx_result result =
-			v90_phase3_analog_line_rx_sample(
-				&digital->receive.initial, sample);
-
-		if (result == V90_PHASE3_ANALOG_LINE_RX_JA_DETECTED) {
-			struct v90_phase3_return_line_rx returning;
-
-			if (v90_phase3_analog_line_rx_handoff(
-				    &digital->receive.initial, &handoff) !=
-				    V90_PHASE3_ANALOG_LINE_RX_OK ||
-			    v90_phase3_return_line_rx_init(
-				    &returning, &handoff, 0.05) !=
-				    V90_PHASE3_RETURN_LINE_RX_OK ||
-			    !digital_start_transmit(
-				    digital, law, training_ucode, parameters))
-				return false;
-			digital->receive = (union digital_receive_state){ 0 };
-			digital->receive.returning = returning;
-			digital->receive_stage = DIGITAL_RECEIVE_RETURN;
-			return true;
-		}
-		return result == V90_PHASE3_ANALOG_LINE_RX_OK ||
-		       result == V90_PHASE3_ANALOG_LINE_RX_TIMING_ACQUIRED ||
-		       result == V90_PHASE3_ANALOG_LINE_RX_S_DETECTED ||
-		       result == V90_PHASE3_ANALOG_LINE_RX_PP_COMPLETE ||
-		       result == V90_PHASE3_ANALOG_LINE_RX_JA_REJECTED;
-	}
-	if (digital->receive_stage == DIGITAL_RECEIVE_RETURN) {
-		enum v90_phase3_return_line_rx_result result =
-			v90_phase3_return_line_rx_sample(
-				&digital->receive.returning, sample);
-
-		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
-			return digital->transmit_started &&
-			       v90_phase3_digital_tx_finish_jd(
-				       &digital->transmit) ==
-				       V90_PHASE3_DIGITAL_TX_OK;
-		if (result == V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED) {
-			digital->receive_stage = DIGITAL_RECEIVE_COMPLETE;
-			return true;
-		}
-		return result == V90_PHASE3_RETURN_LINE_RX_OK;
-	}
-	return true;
-}
-
-static bool digital_transmit(
-	struct digital_endpoint *digital, enum g711_law law,
-	uint8_t *network_octet)
-{
-	struct v90_pcm_symbol symbol;
-
-	if (!digital->transmit_started ||
-	    digital->transmit.stage == V90_PHASE3_DIGITAL_TX_COMPLETE) {
-		*network_octet = silence_octet(law);
-		return true;
-	}
-	if (v90_phase3_digital_tx_next(&digital->transmit, &symbol) !=
-	    V90_PHASE3_DIGITAL_TX_OK)
-		return false;
-	*network_octet = symbol.octet;
-	return true;
 }
 
 static bool continue_phase4_line(
@@ -218,12 +97,15 @@ static bool continue_phase4_line(
 static bool run_exchange(enum g711_law law)
 {
 	struct v34_phase3_profile selected = profile();
+	struct v90_phase3_analog_rx_configuration configuration =
+		receive_configuration();
 	struct v90_jd_parameters parameters = jd_parameters();
 	struct v90_phase3_analog_station analog;
-	struct digital_endpoint digital;
+	struct v90_phase3_digital_station digital;
 	struct v34_training_line phase4_line;
 	struct v90_phase3_analog_receive_handoff receive_handoff;
 	struct v90_phase3_return_line_handoff return_handoff;
+	struct v90_phase3_digital_transmit_handoff transmit_handoff;
 	uint8_t training_ucode = 91;
 	uint32_t phase4_points = 0;
 	uint32_t receive_complete_at = UINT32_MAX;
@@ -233,7 +115,10 @@ static bool run_exchange(enum g711_law law)
 	CHECK(v90_phase3_analog_station_init(
 		      &analog, &selected, law, training_ucode,
 		      NOMINAL_AMPLITUDE) == V90_PHASE3_ANALOG_STATION_OK &&
-	      digital_init(&digital, &selected),
+	      v90_phase3_digital_station_init(
+		      &digital, &selected, &configuration, law,
+		      training_ucode, &parameters) ==
+		      V90_PHASE3_DIGITAL_STATION_OK,
 	      "law %u endpoints did not initialize", (unsigned int)law);
 	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t analog_sample;
@@ -261,9 +146,14 @@ static bool run_exchange(enum g711_law law)
 			      "law %u Phase 4 continuation failed at %u",
 			      (unsigned int)law, index);
 		}
-		CHECK(digital_transmit(&digital, law, &digital_octet),
-		      "law %u digital transmit failed at %u",
-		      (unsigned int)law, index);
+		if (!v90_phase3_digital_station_transmit_complete(&digital))
+			CHECK(v90_phase3_digital_station_transmit(
+				      &digital, &digital_octet) ==
+				      V90_PHASE3_DIGITAL_STATION_OK,
+			      "law %u digital transmit failed at %u",
+			      (unsigned int)law, index);
+		else
+			digital_octet = 0;
 		if (!v90_phase3_analog_station_receive_complete(&analog)) {
 			CHECK(v90_phase3_analog_station_receive(
 				      &analog, digital_octet) ==
@@ -273,36 +163,43 @@ static bool run_exchange(enum g711_law law)
 			if (v90_phase3_analog_station_receive_complete(&analog))
 				receive_complete_at = index;
 		}
-		CHECK(digital_receive(
-			      &digital, quantize(law, analog_sample), law,
-			      training_ucode, &parameters),
-		      "law %u digital receive failed at %u",
-		      (unsigned int)law, index);
+		if (!v90_phase3_digital_station_receive_complete(&digital))
+			CHECK(v90_phase3_digital_station_receive(
+				      &digital,
+				      quantize(law, analog_sample)) ==
+				      V90_PHASE3_DIGITAL_STATION_OK,
+			      "law %u digital receive failed at %u",
+			      (unsigned int)law, index);
 		if (phase4_line_active &&
-		    digital.receive_stage == DIGITAL_RECEIVE_COMPLETE)
+		    v90_phase3_digital_station_receive_complete(&digital))
 			break;
 	}
 	CHECK(receive_complete_at < transmit_complete_at &&
 	      phase4_line_active &&
-	      digital.receive_stage == DIGITAL_RECEIVE_COMPLETE &&
-	      digital.transmit.stage == V90_PHASE3_DIGITAL_TX_COMPLETE &&
+	      v90_phase3_digital_station_receive_complete(&digital) &&
+	      v90_phase3_digital_station_transmit_complete(&digital) &&
 	      phase4_points >= QAM_EQUALIZER_DELAY &&
 	      v90_phase3_analog_station_receive_handoff(
 		      &analog, &receive_handoff) ==
 		      V90_PHASE3_ANALOG_STATION_OK &&
-	      v90_phase3_return_line_rx_handoff(
-		      &digital.receive.returning, &return_handoff) ==
-		      V90_PHASE3_RETURN_LINE_RX_OK &&
+	      v90_phase3_digital_station_receive_handoff(
+		      &digital, &return_handoff) ==
+		      V90_PHASE3_DIGITAL_STATION_OK &&
+	      v90_phase3_digital_station_transmit_handoff(
+		      &digital, &transmit_handoff) ==
+		      V90_PHASE3_DIGITAL_STATION_OK &&
 	      v90_phase3_return_line_handoff_is_valid(&return_handoff) &&
 	      jd_equal(&receive_handoff.jd, &parameters) &&
+	      jd_equal(&transmit_handoff.jd, &parameters) &&
 	      receive_handoff.descrambler.history ==
-		      digital.transmit.sequence.signs.scrambler.history &&
+		      transmit_handoff.scrambler.history &&
 	      receive_handoff.last_sign ==
-		      digital.transmit.sequence.signs.last_sign &&
+		      transmit_handoff.last_sign &&
 	      receive_handoff.trn1d_symbols == V90_PHASE3_TRN1D_MIN_SYMBOLS &&
 	      analog.transmit.returning.points.s_symbols >=
 		      V34_PHASE3_S_SYMBOLS &&
-	      !v90_phase3_analog_station_has_failed(&analog),
+	      !v90_phase3_analog_station_has_failed(&analog) &&
+	      !v90_phase3_digital_station_has_failed(&digital),
 	      "law %u did not reach matching independent handoffs",
 	      (unsigned int)law);
 	{
@@ -318,6 +215,19 @@ static bool run_exchange(enum g711_law law)
 		      "law %u complete station consumed media",
 		      (unsigned int)law);
 	}
+	{
+		struct v90_phase3_digital_station saved = digital;
+		uint8_t octet = 0xa5;
+
+		CHECK(v90_phase3_digital_station_transmit(&digital, &octet) ==
+			      V90_PHASE3_DIGITAL_STATION_COMPLETE &&
+		      v90_phase3_digital_station_receive(&digital, 1234) ==
+			      V90_PHASE3_DIGITAL_STATION_COMPLETE &&
+		      octet == 0xa5 &&
+		      memcmp(&digital, &saved, sizeof(digital)) == 0,
+		      "law %u complete digital station consumed media",
+		      (unsigned int)law);
+	}
 	return true;
 }
 
@@ -331,12 +241,22 @@ static bool test_generated_exchange(void)
 static bool test_validation(void)
 {
 	struct v34_phase3_profile selected = profile();
+	struct v90_phase3_analog_rx_configuration configuration =
+		receive_configuration();
+	struct v90_jd_parameters parameters = jd_parameters();
 	struct v90_phase3_analog_station station;
 	struct v90_phase3_analog_station saved;
+	struct v90_phase3_digital_station digital;
+	struct v90_phase3_digital_station saved_digital;
 	struct v34_training_line line;
 	struct v34_training_line saved_line;
 	struct v90_phase3_analog_receive_handoff handoff;
 	struct v90_phase3_analog_receive_handoff saved_handoff;
+	struct v90_phase3_digital_transmit_handoff transmit_handoff;
+	struct v90_phase3_digital_transmit_handoff saved_transmit_handoff;
+	struct v90_phase3_return_line_handoff return_handoff;
+	struct v90_phase3_return_line_handoff saved_return_handoff;
+	uint8_t octet = 0xa5;
 	int16_t sample = 777;
 
 	memset(&station, 0xa5, sizeof(station));
@@ -391,6 +311,63 @@ static bool test_validation(void)
 		     (enum v90_phase3_analog_station_result)99),
 		     "unknown") == 0,
 	      "failure latch or result names changed");
+	memset(&digital, 0xa5, sizeof(digital));
+	saved_digital = digital;
+	CHECK(v90_phase3_digital_station_init(
+		      NULL, &selected, &configuration, G711_LAW_PCMU, 91,
+		      &parameters) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase3_digital_station_init(
+		      &digital, &selected, &configuration,
+		      (enum g711_law)99, 91, &parameters) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
+	      "invalid digital initialization changed state");
+	CHECK(v90_phase3_digital_station_init(
+		      &digital, &selected, &configuration, G711_LAW_PCMU, 91,
+		      &parameters) == V90_PHASE3_DIGITAL_STATION_OK,
+	      "validation digital station did not initialize");
+	saved_digital = digital;
+	CHECK(v90_phase3_digital_station_transmit(&digital, &octet) ==
+		      V90_PHASE3_DIGITAL_STATION_OK &&
+	      octet == g711_encode_pcmu(0) &&
+	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
+	      "pre-Ja digital silence changed state");
+	memset(&transmit_handoff, 0x5a, sizeof(transmit_handoff));
+	saved_transmit_handoff = transmit_handoff;
+	memset(&return_handoff, 0xa5, sizeof(return_handoff));
+	saved_return_handoff = return_handoff;
+	octet = 0x3c;
+	CHECK(v90_phase3_digital_station_transmit(NULL, &octet) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase3_digital_station_transmit(&digital, NULL) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase3_digital_station_receive(NULL, 0) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase3_digital_station_transmit_handoff(
+		      &digital, &transmit_handoff) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_STATE &&
+	      v90_phase3_digital_station_receive_handoff(
+		      &digital, &return_handoff) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_STATE &&
+	      octet == 0x3c &&
+	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0 &&
+	      memcmp(&transmit_handoff, &saved_transmit_handoff,
+		     sizeof(transmit_handoff)) == 0 &&
+	      memcmp(&return_handoff, &saved_return_handoff,
+		     sizeof(return_handoff)) == 0 &&
+	      !v90_phase3_digital_transmit_handoff_is_valid(NULL) &&
+	      strcmp(v90_phase3_digital_station_result_name(
+		     V90_PHASE3_DIGITAL_STATION_UNSUPPORTED),
+		     "unsupported") == 0 &&
+	      strcmp(v90_phase3_digital_station_result_name(
+		     (enum v90_phase3_digital_station_result)99),
+		     "unknown") == 0,
+	      "invalid digital calls or result names changed");
+	digital.receive.initial.failed = true;
+	CHECK(!v90_phase3_digital_station_is_valid(&digital) &&
+	      !v90_phase3_digital_station_has_failed(&digital),
+	      "digital receiver failure escaped the owner invariant");
 	return true;
 }
 

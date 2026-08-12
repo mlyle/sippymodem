@@ -1481,6 +1481,7 @@ V90_PHASE3_ANALOG_STATION_TEST_BINARY := \
 V90_PHASE3_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase3_analog_station.o \
 	$(BUILD_DIR)/v90_phase3_analog_station.o \
+	$(BUILD_DIR)/v90_phase3_digital_station.o \
 	$(BUILD_DIR)/v90_phase3_sd_receiver.o \
 	$(BUILD_DIR)/v90_phase3_sign_receiver.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_digital_tx.o, \
@@ -3418,6 +3419,10 @@ $(BUILD_DIR)/v90_phase3_digital_tx.o: \
 
 $(BUILD_DIR)/v90_phase3_analog_station.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_station.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase3_digital_station.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_digital_station.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase3_return_line_rx.o: \
