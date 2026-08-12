@@ -3,48 +3,18 @@
 #ifndef V34_PHASE2_INITIAL_PROBE_H
 #define V34_PHASE2_INITIAL_PROBE_H
 
-#include "v34_phase2_probe_acquisition.h"
-#include "v34_phase2_probe_sequence.h"
+#include "phase2_initial_probe.h"
 #include "v34_phase2_ranging.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
-enum {
-	V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 2,
-};
-
-enum v34_phase2_initial_probe_phase {
-	V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING,
-	V34_PHASE2_INITIAL_PROBE_CALLER_TONE_B,
-	V34_PHASE2_INITIAL_PROBE_CALLER_TONE_PAIR_ACTIVE,
-	V34_PHASE2_INITIAL_PROBE_ANSWERER_TRANSMITTING,
-	V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A,
-	V34_PHASE2_INITIAL_PROBE_FAILED,
-};
-
-enum v34_phase2_initial_probe_failure {
-	V34_PHASE2_INITIAL_PROBE_NO_FAILURE,
-	V34_PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND,
-	V34_PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT,
-	V34_PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT,
-};
-
-enum v34_phase2_initial_probe_event_kind {
-	V34_PHASE2_INITIAL_PROBE_EVENT_NONE,
-	V34_PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE,
-	V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE,
-	V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE,
-	V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
-};
-
 struct v34_phase2_initial_probe_event {
 	struct v34_phase2_probe_acquisition_event receive_event;
 	struct v34_phase2_probe_sequence_event transmit_event;
 	struct v34_phase2_tone_event tone_event;
-	enum v34_phase2_initial_probe_event_kind kind;
-	enum v34_phase2_initial_probe_failure failure;
+	enum phase2_initial_probe_event_kind kind;
+	enum phase2_initial_probe_failure failure;
 };
 
 enum v34_phase2_initial_probe_result {
@@ -52,17 +22,9 @@ enum v34_phase2_initial_probe_result {
 	V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 };
 
-union v34_phase2_initial_probe_path {
-	struct v34_phase2_probe_acquisition receive;
-	struct v34_phase2_probe_sequence transmit;
-};
-
 struct v34_phase2_initial_probe {
 	struct v34_phase2_ranging ranging;
-	union v34_phase2_initial_probe_path path;
-	enum v34_phase2_initial_probe_phase phase;
-	enum v34_phase2_initial_probe_failure failure;
-	uint16_t tone_wait_samples;
+	struct phase2_initial_probe control;
 };
 
 /* Continue from a ranging controller after it emits its role-appropriate

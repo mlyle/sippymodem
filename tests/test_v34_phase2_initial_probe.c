@@ -97,25 +97,25 @@ static void observe_turn(
 	    V34_PHASE2_PROBE_SEQUENCE_EVENT_L2_STARTED)
 		observation->answerer_l2_started = sample_index;
 	if (event->caller.initial_probe.kind ==
-	    V34_PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE)
+	    PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE)
 		observation->caller_probe_complete = sample_index;
 	if (event->answerer.initial_probe.kind ==
-	    V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
+	    PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
 		observation->answerer_probe_complete = sample_index;
 		observation->answerer_l2_samples =
 			event->answerer.initial_probe.transmit_event.l2_samples;
 	}
 	if (event->caller.initial_probe.kind ==
-	    V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE)
+	    PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE)
 		observation->caller_tone_pair_active = sample_index;
 	if (pair->caller.stage == TEST_ENDPOINT_INITIAL_PROBE &&
-	    pair->caller.initial_probe.phase !=
-		    V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING)
+	    pair->caller.initial_probe.control.phase !=
+		    PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING)
 		observation->caller_tone_energy +=
 			(uint64_t)sample_magnitude(event->caller_transmit);
 	if (pair->answerer.stage == TEST_ENDPOINT_INITIAL_PROBE &&
-	    pair->answerer.initial_probe.phase ==
-		    V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A)
+	    pair->answerer.initial_probe.control.phase ==
+		    PHASE2_INITIAL_PROBE_SIGNAL_A_TONE)
 		observation->answerer_tone_energy +=
 			(uint64_t)sample_magnitude(event->answerer_transmit);
 }
@@ -157,10 +157,10 @@ static bool check_initial_probe_turn(
 			index, &observation);
 		if (pair.caller.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 		    pair.answerer.stage == TEST_ENDPOINT_INITIAL_PROBE &&
-		    pair.caller.initial_probe.phase ==
-			    V34_PHASE2_INITIAL_PROBE_CALLER_TONE_PAIR_ACTIVE &&
-		    pair.answerer.initial_probe.phase ==
-			    V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A) {
+		    pair.caller.initial_probe.control.phase ==
+			    PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE &&
+		    pair.answerer.initial_probe.control.phase ==
+			    PHASE2_INITIAL_PROBE_SIGNAL_A_TONE) {
 			if (++stable_samples == TEST_STABLE_TONE_SAMPLES)
 				break;
 		} else {
@@ -502,13 +502,13 @@ static bool completed_initial_probe_states(
 			return false;
 		if (!answerer_ready &&
 		    event.answerer.initial_probe.kind ==
-			    V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
+			    PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
 			*answerer = pair.answerer.initial_probe;
 			answerer_ready = true;
 		}
 		if (!caller_ready &&
 		    event.caller.initial_probe.kind ==
-			    V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) {
+			    PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) {
 			*caller = pair.caller.initial_probe;
 			caller_ready = true;
 		}
@@ -537,17 +537,17 @@ static bool test_bounded_failures(void)
 		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "missing-probe fixture did not initialize");
 	for (samples = 0; samples < 1000 &&
-			  caller.phase !=
-				  V34_PHASE2_INITIAL_PROBE_FAILED;
+			  caller.control.phase !=
+				  PHASE2_INITIAL_PROBE_FAILED;
 	     ++samples)
 		CHECK(v34_phase2_initial_probe_sample(
 			      &caller, 0, &transmit, &event) ==
 			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "missing-probe wait failed at sample %zu", samples);
-	CHECK(caller.phase == V34_PHASE2_INITIAL_PROBE_FAILED &&
-	      caller.failure ==
-		      V34_PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND &&
-	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
+	CHECK(caller.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
+	      caller.control.failure ==
+		      PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND &&
+	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	      "missing remote probe did not fail explicitly");
 	failed = caller;
 	transmit = 1234;
@@ -555,7 +555,7 @@ static bool test_bounded_failures(void)
 		      &caller, INT16_MIN, &transmit, &event) ==
 		      V34_PHASE2_INITIAL_PROBE_OK &&
 	      transmit == 0 &&
-	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_NONE &&
+	      event.kind == PHASE2_INITIAL_PROBE_EVENT_NONE &&
 	      memcmp(&caller, &failed, sizeof(caller)) == 0,
 	      "failed controller did not remain silent and stable");
 
@@ -564,17 +564,17 @@ static bool test_bounded_failures(void)
 		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "transmit-limit fixture did not initialize");
 	for (samples = 0; samples < 7000 &&
-			  answerer.phase !=
-				  V34_PHASE2_INITIAL_PROBE_FAILED;
+			  answerer.control.phase !=
+				  PHASE2_INITIAL_PROBE_FAILED;
 	     ++samples)
 		CHECK(v34_phase2_initial_probe_sample(
 			      &answerer, 0, &transmit, &event) ==
 			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "probe transmit limit failed at sample %zu", samples);
-	CHECK(answerer.phase == V34_PHASE2_INITIAL_PROBE_FAILED &&
-	      answerer.failure ==
-		      V34_PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
-	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_FAILED &&
+	CHECK(answerer.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
+	      answerer.control.failure ==
+		      PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
+	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED &&
 	      event.transmit_event.kind ==
 		      V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED,
 	      "unanswered local probe did not reach its RTD-adjusted limit");
@@ -588,8 +588,8 @@ static bool test_bounded_failures(void)
 		      V34_PHASE2_PROBE_SEQUENCE_OK,
 	      "tone-timeout fixture did not initialize");
 	for (samples = 0; samples < 3000 &&
-			  caller.phase ==
-				  V34_PHASE2_INITIAL_PROBE_CALLER_RECEIVING;
+			  caller.control.phase ==
+				  PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING;
 	     ++samples) {
 		struct v34_phase2_probe_sequence_event probe_event;
 		int16_t received;
@@ -602,23 +602,23 @@ static bool test_bounded_failures(void)
 			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "tone-timeout probe failed at sample %zu", samples);
 	}
-	CHECK(caller.phase ==
-		      V34_PHASE2_INITIAL_PROBE_CALLER_TONE_B,
+	CHECK(caller.control.phase ==
+		      PHASE2_INITIAL_PROBE_SIGNAL_B_TONE,
 	      "caller did not begin Tone B after measuring the remote probe");
 	for (samples = 0;
-	     samples < V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-	     caller.phase != V34_PHASE2_INITIAL_PROBE_FAILED;
+	     samples < PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
+	     caller.control.phase != PHASE2_INITIAL_PROBE_FAILED;
 	     ++samples)
 		CHECK(v34_phase2_initial_probe_sample(
 			      &caller, 0, &transmit, &event) ==
 			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "remote-tone timeout failed at sample %zu", samples);
 	CHECK(samples + 1u ==
-		      V34_PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-	      caller.phase == V34_PHASE2_INITIAL_PROBE_FAILED &&
-	      caller.failure ==
-		      V34_PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT &&
-	      event.kind == V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
+		      PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
+	      caller.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
+	      caller.control.failure ==
+		      PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT &&
+	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	      "missing Tone A did not reach the exact bounded timeout");
 	return true;
 }
@@ -635,7 +635,7 @@ static bool test_validation(void)
 	struct v34_phase2_initial_probe before;
 	struct v34_phase2_initial_probe invalid;
 	struct v34_phase2_initial_probe_event event = {
-		.kind = V34_PHASE2_INITIAL_PROBE_EVENT_FAILED,
+		.kind = PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	};
 	struct v34_phase2_initial_probe_event event_before = event;
 	int16_t transmit = 1234;
@@ -670,8 +670,8 @@ static bool test_validation(void)
 	      transmit == 1234,
 	      "invalid sample output was not transactional");
 	invalid = probe;
-	invalid.phase =
-		V34_PHASE2_INITIAL_PROBE_ANSWERER_TRANSMITTING;
+	invalid.control.phase =
+		PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;
 	CHECK(!v34_phase2_initial_probe_is_valid(&invalid) &&
 	      v34_phase2_initial_probe_measure(&probe, NULL) ==
 		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&

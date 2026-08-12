@@ -137,11 +137,11 @@ static bool endpoint_sample(
 			emitted.entered_initial_probe = true;
 		}
 	} else if (endpoint->stage == TEST_ENDPOINT_INITIAL_PROBE) {
-		enum v34_phase2_initial_probe_event_kind expected_ready =
+		enum phase2_initial_probe_event_kind expected_ready =
 			endpoint->initial_probe.ranging.info0_exchange.local_role ==
 					V34_CALLING_STATION ?
-				V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE :
-				V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
+				PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE :
+				PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
 
 		if (v34_phase2_initial_probe_sample(
 			    &endpoint->initial_probe, received_sample, transmit_sample,

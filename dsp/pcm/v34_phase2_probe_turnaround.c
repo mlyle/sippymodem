@@ -27,10 +27,10 @@ static bool completed_probe_matches_role(
 		probe->ranging.info0_exchange.local_role;
 
 	return role == V34_CALLING_STATION ?
-		       probe->phase ==
-			       V34_PHASE2_INITIAL_PROBE_CALLER_TONE_PAIR_ACTIVE :
-		       probe->phase ==
-			       V34_PHASE2_INITIAL_PROBE_ANSWERER_TONE_A;
+		       probe->control.phase ==
+			       PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE :
+		       probe->control.phase ==
+			       PHASE2_INITIAL_PROBE_SIGNAL_A_TONE;
 }
 
 static bool caller_phase_is_valid(

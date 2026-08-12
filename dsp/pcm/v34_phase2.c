@@ -59,16 +59,16 @@ static bool measurement_is_valid(
 }
 
 static enum v34_phase2_failure initial_probe_failure(
-	enum v34_phase2_initial_probe_failure failure)
+	enum phase2_initial_probe_failure failure)
 {
 	switch (failure) {
-	case V34_PHASE2_INITIAL_PROBE_NO_FAILURE:
+	case PHASE2_INITIAL_PROBE_NO_FAILURE:
 		return V34_PHASE2_FAILURE_NONE;
-	case V34_PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND:
+	case PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND:
 		return V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
-	case V34_PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
+	case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
 		return V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
-	case V34_PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT:
+	case PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT:
 		return V34_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT;
 	}
 	return V34_PHASE2_FAILURE_INTERNAL;
@@ -110,7 +110,7 @@ static enum v34_phase2_failure active_failure(
 			       V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_INITIAL_PROBE:
 		return initial_probe_failure(
-			phase2->state.initial_probe.failure);
+			phase2->state.initial_probe.control.failure);
 	case V34_PHASE2_PROBE_TURNAROUND:
 		return phase2->state.turnaround.failure ==
 			       V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT ?
@@ -563,12 +563,12 @@ static bool sample_initial_probe(
 		    &phase2->state.initial_probe, received_sample,
 		    transmit_sample, &child) != V34_PHASE2_INITIAL_PROBE_OK)
 		return false;
-	if (child.kind == V34_PHASE2_INITIAL_PROBE_EVENT_FAILED) {
+	if (child.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED) {
 		phase2->failure = initial_probe_failure(child.failure);
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 	} else if (child.kind ==
-		   V34_PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE) {
+		   PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE) {
 		if (v34_phase2_initial_probe_measure(
 			    &phase2->state.initial_probe,
 			    &phase2->remote_probe) !=
@@ -580,10 +580,10 @@ static bool sample_initial_probe(
 			V34_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 	} else if ((role == V34_CALLING_STATION &&
 		    child.kind ==
-			    V34_PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) ||
+			    PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) ||
 		   (role == V34_ANSWERING_STATION &&
 		    child.kind ==
-			    V34_PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE)) {
+			    PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE)) {
 		return enter_turnaround(phase2, event);
 	}
 	return true;
