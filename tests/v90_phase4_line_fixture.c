@@ -180,30 +180,42 @@ static bool finish_return_s(
 	return false;
 }
 
+bool v90_phase4_fixture_prepare_boundary(
+	enum g711_law law, struct v34_training_line *line,
+	struct v90_phase3_return_line_rx *receive)
+{
+	struct v90_phase3_analog_line_tx prefix_transmit;
+	struct v90_phase3_analog_line_handoff prefix_handoff;
+	struct v90_phase3_return_line_tx return_transmit;
+
+	if (line == NULL || receive == NULL)
+		return false;
+	return establish_ja(law, &prefix_transmit, &prefix_handoff) &&
+	       v90_phase3_return_line_rx_init(
+		       receive, &prefix_handoff, 0.05) ==
+		       V90_PHASE3_RETURN_LINE_RX_OK &&
+	       finish_ja(law, &prefix_transmit, receive, line) &&
+	       v90_phase3_return_line_tx_init(&return_transmit, line) ==
+		       V90_PHASE3_RETURN_LINE_TX_OK &&
+	       finish_return_s(law, &return_transmit, receive, line);
+}
+
 bool v90_phase4_line_fixture_init(
 	enum g711_law law, enum v34_constellation_size constellation,
 	const struct v90_cp_parameters *training,
 	struct v90_phase4_cp_line_tx *transmit,
 	struct v90_phase3_return_line_handoff *receive)
 {
-	struct v90_phase3_analog_line_tx prefix_transmit;
-	struct v90_phase3_analog_line_handoff prefix_handoff;
-	struct v90_phase3_return_line_tx return_transmit;
+	struct v90_phase4_cp_line_tx generated_transmit;
+	struct v90_phase3_return_line_handoff generated_receive;
 	struct v90_phase3_return_line_rx return_receive;
 	struct v34_training_line line;
 
 	if (transmit == NULL || receive == NULL ||
-	    !establish_ja(law, &prefix_transmit, &prefix_handoff) ||
-	    v90_phase3_return_line_rx_init(
-		    &return_receive, &prefix_handoff, 0.05) !=
-		    V90_PHASE3_RETURN_LINE_RX_OK ||
-	    !finish_ja(law, &prefix_transmit, &return_receive, &line) ||
-	    v90_phase3_return_line_tx_init(&return_transmit, &line) !=
-		    V90_PHASE3_RETURN_LINE_TX_OK ||
-	    !finish_return_s(
-		    law, &return_transmit, &return_receive, &line) ||
+	    !v90_phase4_fixture_prepare_boundary(
+		    law, &line, &return_receive) ||
 	    v90_phase4_cp_line_tx_init(
-		    transmit, &line, constellation, training) !=
+		    &generated_transmit, &line, constellation, training) !=
 		    V90_PHASE4_CP_LINE_TX_OK)
 		return false;
 	for (uint32_t index = 0;
@@ -211,18 +223,24 @@ bool v90_phase4_line_fixture_init(
 		int16_t sample;
 		enum v90_phase3_return_line_rx_result result;
 
-		if (v90_phase4_cp_line_tx_sample(transmit, &sample) !=
+		if (v90_phase4_cp_line_tx_sample(
+			    &generated_transmit, &sample) !=
 		    V90_PHASE4_CP_LINE_TX_OK)
 			return false;
 		result = v90_phase3_return_line_rx_sample(
 			&return_receive, quantize(law, sample));
-		if (result == V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED)
-			return transmit->symbols.bit_index > 0 &&
-			       transmit->symbols.bit_index <
-				       transmit->symbols.frame_bit_count &&
-			       v90_phase3_return_line_rx_handoff(
-				       &return_receive, receive) ==
-				       V90_PHASE3_RETURN_LINE_RX_OK;
+		if (result == V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED) {
+			if (generated_transmit.symbols.bit_index == 0 ||
+			    generated_transmit.symbols.bit_index >=
+				    generated_transmit.symbols.frame_bit_count ||
+			    v90_phase3_return_line_rx_handoff(
+				    &return_receive, &generated_receive) !=
+				    V90_PHASE3_RETURN_LINE_RX_OK)
+				return false;
+			*transmit = generated_transmit;
+			*receive = generated_receive;
+			return true;
+		}
 		if (result != V90_PHASE3_RETURN_LINE_RX_OK)
 			return false;
 	}

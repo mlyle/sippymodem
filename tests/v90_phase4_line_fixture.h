@@ -17,4 +17,9 @@ bool v90_phase4_line_fixture_init(
 	struct v90_phase4_cp_line_tx *transmit,
 	struct v90_phase3_return_line_handoff *receive);
 
+/* Shared construction seam for a fixture that owns the Phase 4 transmitter. */
+bool v90_phase4_fixture_prepare_boundary(
+	enum g711_law law, struct v34_training_line *line,
+	struct v90_phase3_return_line_rx *receive);
+
 #endif /* V90_PHASE4_LINE_FIXTURE_H */
