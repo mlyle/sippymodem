@@ -94,6 +94,82 @@ static bool mapping_frames_are_equal(
 	       left->completes_data_frame == right->completes_data_frame;
 }
 
+static bool advance_training_line(struct v34_training_line *line)
+{
+	uint32_t accepted_points = 0;
+
+	for (size_t sample_index = 0; sample_index < 128u; ++sample_index) {
+		struct qam_point point = {
+			.in_phase = (accepted_points & 1u) != 0 ? 0.5 : -0.5,
+			.quadrature = (accepted_points & 2u) != 0 ? 0.5 : -0.5,
+		};
+		const struct qam_point *point_pointer =
+			v34_training_line_needs_point(line) ? &point : NULL;
+		int16_t ignored;
+		bool accepted;
+
+		if (v34_training_line_sample(
+			    line, point_pointer, &ignored, &accepted) !=
+			    V34_TRAINING_LINE_OK ||
+		    accepted != (point_pointer != NULL))
+			return false;
+		accepted_points += accepted;
+	}
+	if (v34_training_line_needs_point(line)) {
+		const struct qam_point point = { 0.5, -0.5 };
+		int16_t ignored;
+		bool accepted;
+
+		if (v34_training_line_sample(
+			    line, &point, &ignored, &accepted) !=
+			    V34_TRAINING_LINE_OK ||
+		    !accepted)
+			return false;
+	}
+	return accepted_points != 0 &&
+	       !v34_training_line_needs_point(line);
+}
+
+static bool test_active_line_composition(void)
+{
+	struct transmitter_fixture fixture;
+	struct v34_training_line active_line;
+	struct v34_training_line active_before;
+	struct v34_data_points expected_points;
+	struct v34_data_line_transmitter expected_line;
+	struct v34_data_transmitter transmitter;
+
+	CHECK(initialize_fixture(&fixture) &&
+	      v34_training_line_init(
+		      &active_line, &fixture.profile, 8000, 5000) ==
+		      V34_TRAINING_LINE_OK &&
+	      advance_training_line(&active_line),
+	      "active-line composition fixture did not initialize");
+	active_before = active_line;
+	CHECK(v34_data_points_init(
+		      &expected_points, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer,
+		      fixture.profile.local_role) == V34_DATA_POINTS_OK &&
+	      v34_data_line_transmitter_continue(
+		      &expected_line, &active_line, &fixture.schedule,
+		      &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer) == V34_DATA_LINE_TRANSMITTER_OK &&
+	      v34_data_transmitter_continue(
+		      &transmitter, &active_line, &fixture.schedule,
+		      &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer) == V34_DATA_TRANSMITTER_OK &&
+	      memcmp(&active_line, &active_before, sizeof(active_line)) == 0 &&
+	      memcmp(&transmitter.points, &expected_points,
+		     sizeof(expected_points)) == 0 &&
+	      memcmp(&transmitter.line, &expected_line,
+		     sizeof(expected_line)) == 0 &&
+	      transmitter.line.generated_samples ==
+		      active_line.generated_samples &&
+	      v34_data_transmitter_needs_mapping_frame(&transmitter),
+	      "composed transmitter did not retain the active line");
+	return true;
+}
+
 static bool test_streaming_composition(void)
 {
 	struct transmitter_fixture fixture;
@@ -259,6 +335,8 @@ static bool rejected_queue_is_transactional(
 static bool test_transactional_validation(void)
 {
 	struct transmitter_fixture fixture;
+	struct v34_training_line active_line;
+	struct v34_training_line invalid_line;
 	struct v34_data_transmitter transmitter;
 	struct v34_data_transmitter before;
 	struct v34_data_transmitter corrupt;
@@ -280,6 +358,12 @@ static bool test_transactional_validation(void)
 
 	CHECK(initialize_fixture(&fixture),
 	      "validation fixture did not initialize");
+	CHECK(v34_training_line_init(
+		      &active_line, &fixture.profile, 8000, 5000) ==
+		      V34_TRAINING_LINE_OK,
+	      "continuation validation line did not initialize");
+	invalid_line = active_line;
+	invalid_line.generated_samples++;
 	memset(&transmitter, 0xa5, sizeof(transmitter));
 	CHECK(v34_data_transmitter_init(
 		      NULL, &fixture.schedule, &fixture.scrambler,
@@ -300,6 +384,21 @@ static bool test_transactional_validation(void)
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
 		      8000, INT16_MAX) ==
 		      V34_DATA_TRANSMITTER_CLIPPING_RISK &&
+	      v34_data_transmitter_continue(
+		      NULL, &active_line, &fixture.schedule,
+		      &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer) ==
+		      V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_transmitter_continue(
+		      &transmitter, NULL, &fixture.schedule,
+		      &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer) ==
+		      V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_transmitter_continue(
+		      &transmitter, &invalid_line, &fixture.schedule,
+		      &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer) ==
+		      V34_DATA_TRANSMITTER_INVALID_ARGUMENT &&
 	      bytes_are_filled(&transmitter, sizeof(transmitter), 0xa5),
 	      "rejected streaming initialization changed its destination");
 	CHECK(v34_data_transmitter_init(
@@ -440,6 +539,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "streaming composition", test_streaming_composition },
+		{ "active-line composition", test_active_line_composition },
 		{ "transactional validation", test_transactional_validation },
 	};
 	unsigned int failures = 0;

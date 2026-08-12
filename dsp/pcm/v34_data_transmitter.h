@@ -38,6 +38,18 @@ v34_data_transmitter_init(
 	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate, int16_t nominal_peak_amplitude);
 
+/* Start the mapping stream while retaining a compatible active training
+ * waveform. Only newly accepted data points receive the calibrated data
+ * gain; carrier, pulse, filter, and sample-clock state continue unchanged. */
+enum v34_data_transmitter_result
+v34_data_transmitter_continue(
+	struct v34_data_transmitter *transmitter,
+	const struct v34_training_line *active_line,
+	const struct v34_frame_schedule *initial_schedule,
+	const struct v34_scrambler *initial_scrambler,
+	const struct v34_4d_encoder *initial_mapping_encoder,
+	const struct v34_power_normalizer *normalizer);
+
 bool v34_data_transmitter_is_valid(
 	const struct v34_data_transmitter *transmitter);
 bool v34_data_transmitter_needs_mapping_frame(

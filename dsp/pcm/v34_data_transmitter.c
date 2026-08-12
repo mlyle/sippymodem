@@ -143,6 +143,36 @@ enum v34_data_transmitter_result v34_data_transmitter_init(
 	return V34_DATA_TRANSMITTER_OK;
 }
 
+enum v34_data_transmitter_result v34_data_transmitter_continue(
+	struct v34_data_transmitter *transmitter,
+	const struct v34_training_line *active_line,
+	const struct v34_frame_schedule *initial_schedule,
+	const struct v34_scrambler *initial_scrambler,
+	const struct v34_4d_encoder *initial_mapping_encoder,
+	const struct v34_power_normalizer *normalizer)
+{
+	struct v34_data_transmitter continued = { 0 };
+	enum v34_data_transmitter_result result;
+
+	if (transmitter == NULL || !v34_training_line_is_valid(active_line))
+		return V34_DATA_TRANSMITTER_INVALID_ARGUMENT;
+	result = points_result(v34_data_points_init(
+		&continued.points, initial_schedule, initial_scrambler,
+		initial_mapping_encoder, normalizer,
+		active_line->profile.local_role));
+	if (result != V34_DATA_TRANSMITTER_OK)
+		return result;
+	result = line_result(v34_data_line_transmitter_continue(
+		&continued.line, active_line, initial_schedule,
+		initial_scrambler, initial_mapping_encoder, normalizer));
+	if (result != V34_DATA_TRANSMITTER_OK)
+		return result;
+	if (!v34_data_transmitter_is_valid(&continued))
+		return V34_DATA_TRANSMITTER_NUMERIC_FAILURE;
+	*transmitter = continued;
+	return V34_DATA_TRANSMITTER_OK;
+}
+
 bool v34_data_transmitter_needs_mapping_frame(
 	const struct v34_data_transmitter *transmitter)
 {
