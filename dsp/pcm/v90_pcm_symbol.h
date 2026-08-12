@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#ifndef V90_PCM_SYMBOL_H
+#define V90_PCM_SYMBOL_H
+
+#include "g711.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/* octet is authoritative at a digital network interface.  sample is the
+ * exact-round-trip representation used by the signed-linear modem path. */
+struct v90_pcm_symbol {
+	uint8_t ucode;
+	bool positive;
+	uint8_t octet;
+	int16_t sample;
+};
+
+#endif
