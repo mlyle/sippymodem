@@ -1000,6 +1000,26 @@ V34_PHASE3_CALLER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_trn.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o
+V34_CALLER_TRAINING_TEST_BINARY := \
+	$(BUILD_DIR)/test_v34_caller_training
+V34_CALLER_TRAINING_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v34_caller_training.o \
+	$(BUILD_DIR)/v34_caller_training.o \
+	$(BUILD_DIR)/qam.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_phase3_profile.o \
+	$(BUILD_DIR)/v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
+	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_phase3_j_sequence.o \
+	$(BUILD_DIR)/v34_phase3_caller.o \
+	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
+	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_training_line.o
 V34_PHASE4_TRN_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_trn
 V34_PHASE4_TRN_TEST_OBJECTS := \
@@ -1382,6 +1402,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE3_J_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE3_CALLER_TEST_BINARY) \
+	$(V34_CALLER_TRAINING_TEST_BINARY) \
 	$(V34_PHASE4_TRN_TEST_BINARY) \
 	$(V34_PHASE4_MP_TEST_BINARY) \
 	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY) \
@@ -1518,6 +1539,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE3_J_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_CALLER_TEST_OBJECTS:.o=.d) \
+	$(V34_CALLER_TRAINING_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_TRN_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_MP_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS:.o=.d) \
@@ -1675,6 +1697,7 @@ test: $(TEST_BINARIES)
 	./$(V34_PHASE3_J_SEQUENCE_TEST_BINARY)
 	./$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY)
 	./$(V34_PHASE3_CALLER_TEST_BINARY)
+	./$(V34_CALLER_TRAINING_TEST_BINARY)
 	./$(V34_PHASE4_TRN_TEST_BINARY)
 	./$(V34_PHASE4_MP_TEST_BINARY)
 	./$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY)
@@ -2089,6 +2112,9 @@ $(V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY): \
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE3_CALLER_TEST_BINARY): $(V34_PHASE3_CALLER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V34_CALLER_TRAINING_TEST_BINARY): $(V34_CALLER_TRAINING_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE4_TRN_TEST_BINARY): $(V34_PHASE4_TRN_TEST_OBJECTS)
@@ -2628,6 +2654,10 @@ $(BUILD_DIR)/v34_phase3_profile.o: \
 
 $(BUILD_DIR)/v34_phase3_caller.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_caller.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_caller_training.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_caller_training.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase3_pp_sequence.o: \
