@@ -20,10 +20,10 @@ static bool completed_probe_matches_role(
 	const struct v34_phase2_reciprocal_probe *probe)
 {
 	return probe_role(probe) == V34_CALLING_STATION ?
-		       probe->phase ==
-			       V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE :
-		       probe->phase ==
-			       V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A;
+		       probe->control.phase ==
+			       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE :
+		       probe->control.phase ==
+			       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
 }
 
 static int16_t probe_nominal_amplitude(
@@ -273,7 +273,7 @@ v34_phase2_info1_exchange_answerer_init(
 					      .ranging.info0_exchange
 					      .transport.tone_transmitter;
 	initialized.peer_deadline_elapsed_samples =
-		completed_probe->answerer_info1c_elapsed_samples;
+		completed_probe->control.signal_a_reversal_elapsed_samples;
 	if (initialized.peer_deadline_elapsed_samples >=
 		    peer_deadline_samples(&initialized) ||
 	    v34_phase2_info_audio_receiver_init(

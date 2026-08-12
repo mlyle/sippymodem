@@ -129,10 +129,10 @@ static bool probes_are_complete(const struct test_pair *pair)
 {
 	return pair->caller.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
 	       pair->answerer.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
-	       pair->caller.reciprocal_probe.phase ==
-		       V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE &&
-	       pair->answerer.reciprocal_probe.phase ==
-		       V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A;
+	       pair->caller.reciprocal_probe.control.phase ==
+		       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE &&
+	       pair->answerer.reciprocal_probe.control.phase ==
+		       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
 }
 
 static bool completed_probe_pair(

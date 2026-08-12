@@ -74,7 +74,7 @@ static void observe_probe(
 		observation->answerer_entered = sample_index;
 		observation->answerer_info1c_elapsed_at_entry =
 			pair->answerer.reciprocal_probe
-				.answerer_info1c_elapsed_samples;
+				.control.signal_a_reversal_elapsed_samples;
 	}
 	if (caller_was_probing &&
 	    observation->caller_first_probe_sample == SIZE_MAX)
@@ -102,23 +102,23 @@ static void observe_probe(
 		break;
 	}
 	if (event->answerer.reciprocal_probe.kind ==
-	    V34_PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED) {
+	    PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED) {
 		observation->answerer_probe_measured = sample_index;
 		observation->answerer_l2_samples =
 			event->answerer.reciprocal_probe.receive_event.l2_samples;
 		observation->answerer_info1c_elapsed_at_measurement =
 			pair->answerer.reciprocal_probe
-				.answerer_info1c_elapsed_samples;
+				.control.signal_a_reversal_elapsed_samples;
 	}
 	if (event->caller.reciprocal_probe.kind ==
-	    V34_PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
+	    PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
 		observation->caller_probe_acknowledged = sample_index;
 		observation->caller_l2_samples =
 			event->caller.reciprocal_probe.transmit_event.l2_samples;
 	}
 	if (pair->answerer.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
-	    pair->answerer.reciprocal_probe.phase ==
-		    V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A)
+	    pair->answerer.reciprocal_probe.control.phase ==
+		    PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE)
 		observation->answerer_tone_magnitude +=
 			(uint64_t)sample_magnitude(event->answerer_transmit);
 }
@@ -165,10 +165,10 @@ static bool check_reciprocal_probe(
 			index, &observation);
 		if (pair.caller.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
 		    pair.answerer.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
-		    pair.caller.reciprocal_probe.phase ==
-			    V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE &&
-		    pair.answerer.reciprocal_probe.phase ==
-			    V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A) {
+		    pair.caller.reciprocal_probe.control.phase ==
+			    PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE &&
+		    pair.answerer.reciprocal_probe.control.phase ==
+			    PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE) {
 			if (++stable_samples == TEST_STABLE_TONE_SAMPLES)
 				break;
 		} else {
@@ -202,15 +202,15 @@ static bool check_reciprocal_probe(
 	CHECK(stable_samples == TEST_STABLE_TONE_SAMPLES,
 	      "reciprocal probe did not settle: caller=%d/%d answerer=%d/%d "
 	      "edges=%zu/%zu sync=%u/%.6f",
-	      pair.caller.reciprocal_probe.phase,
-	      pair.caller.reciprocal_probe.failure,
-	      pair.answerer.reciprocal_probe.phase,
-	      pair.answerer.reciprocal_probe.failure,
+	      pair.caller.reciprocal_probe.control.phase,
+	      pair.caller.reciprocal_probe.control.failure,
+	      pair.answerer.reciprocal_probe.control.phase,
+	      pair.answerer.reciprocal_probe.control.failure,
 	      observation.caller_first_probe_sample + delay_samples,
 	      observation.answerer_first_probe_sample,
-	      pair.answerer.reciprocal_probe.path.receive.synchronizer
+	      pair.answerer.reciprocal_probe.control.path.receive.synchronizer
 		      .leading_samples,
-	      pair.answerer.reciprocal_probe.path.receive.synchronizer
+	      pair.answerer.reciprocal_probe.control.path.receive.synchronizer
 		      .probe_energy_fraction);
 	CHECK(observation.caller_l2_started ==
 		      observation.caller_first_probe_sample +
@@ -236,7 +236,7 @@ static bool check_reciprocal_probe(
 	      "final Tone A did not end caller L2 within its RTD-adjusted bound");
 	CHECK(v34_phase2_reciprocal_probe_measure(
 		      &pair.answerer.reciprocal_probe, &measurement) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_OK &&
+		      PHASE2_RECIPROCAL_PROBE_OK &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count ==
@@ -266,9 +266,9 @@ static bool check_reciprocal_probe(
 		CHECK(test_v34_phase2_pair_sample(&pair, &event) &&
 		      event.caller_transmit == 0 &&
 		      event.caller.reciprocal_probe.kind ==
-			      V34_PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
+			      PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
 		      event.answerer.reciprocal_probe.kind ==
-			      V34_PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
+			      PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
 		      memcmp(&pair.caller.reciprocal_probe, &caller_terminal,
 			     sizeof(caller_terminal)) == 0,
 		      "reciprocal-probe terminal behavior changed");
@@ -336,7 +336,7 @@ static bool test_bounded_failures(void)
 	struct v34_phase2_reciprocal_probe caller;
 	struct v34_phase2_reciprocal_probe answerer;
 	struct v34_phase2_reciprocal_probe terminal;
-	struct v34_phase2_reciprocal_probe_event event;
+	struct phase2_reciprocal_probe_event event;
 	int16_t transmit;
 	size_t samples;
 	uint32_t caller_l2_limit;
@@ -345,10 +345,10 @@ static bool test_bounded_failures(void)
 		      &caller_turnaround, &answerer_turnaround) &&
 	      v34_phase2_reciprocal_probe_init(
 		      &caller, &caller_turnaround) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_OK &&
+		      PHASE2_RECIPROCAL_PROBE_OK &&
 	      v34_phase2_reciprocal_probe_init(
 		      &answerer, &answerer_turnaround) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_OK,
+		      PHASE2_RECIPROCAL_PROBE_OK,
 	      "reciprocal-probe failure fixtures did not initialize");
 	caller_l2_limit =
 		(uint32_t)V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
@@ -356,19 +356,19 @@ static bool test_bounded_failures(void)
 			.round_trip_delay_samples;
 	for (samples = 0;
 	     samples < V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit &&
-	     caller.phase != V34_PHASE2_RECIPROCAL_PROBE_FAILED;
+	     caller.control.phase != PHASE2_RECIPROCAL_PROBE_FAILED;
 	     ++samples)
 		CHECK(v34_phase2_reciprocal_probe_sample(
 			      &caller, 0, &transmit, &event) ==
-			      V34_PHASE2_RECIPROCAL_PROBE_OK,
+			      PHASE2_RECIPROCAL_PROBE_OK,
 		      "caller transmit limit failed at sample %zu", samples);
 	CHECK(samples ==
 		      V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit &&
-	      caller.phase == V34_PHASE2_RECIPROCAL_PROBE_FAILED &&
-	      caller.failure ==
-		      V34_PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
+	      caller.control.phase == PHASE2_RECIPROCAL_PROBE_FAILED &&
+	      caller.control.failure ==
+		      PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
 	      event.kind ==
-		      V34_PHASE2_RECIPROCAL_PROBE_EVENT_FAILED &&
+		      PHASE2_RECIPROCAL_PROBE_EVENT_FAILED &&
 	      event.transmit_event.kind ==
 		      V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED &&
 	      event.transmit_event.l2_samples == caller_l2_limit,
@@ -377,26 +377,26 @@ static bool test_bounded_failures(void)
 	transmit = 1234;
 	CHECK(v34_phase2_reciprocal_probe_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_OK &&
+		      PHASE2_RECIPROCAL_PROBE_OK &&
 	      transmit == 0 &&
-	      event.kind == V34_PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
+	      event.kind == PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
 	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
 	      "failed caller was not silent and stable");
 
 	for (samples = 0;
 	     samples < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
-	     answerer.phase != V34_PHASE2_RECIPROCAL_PROBE_FAILED;
+	     answerer.control.phase != PHASE2_RECIPROCAL_PROBE_FAILED;
 	     ++samples)
 		CHECK(v34_phase2_reciprocal_probe_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      V34_PHASE2_RECIPROCAL_PROBE_OK,
+			      PHASE2_RECIPROCAL_PROBE_OK,
 		      "missing reciprocal probe failed at sample %zu", samples);
 	CHECK(samples == V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
-	      answerer.phase == V34_PHASE2_RECIPROCAL_PROBE_FAILED &&
-	      answerer.failure ==
-		      V34_PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND &&
+	      answerer.control.phase == PHASE2_RECIPROCAL_PROBE_FAILED &&
+	      answerer.control.failure ==
+		      PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND &&
 	      event.kind ==
-		      V34_PHASE2_RECIPROCAL_PROBE_EVENT_FAILED &&
+		      PHASE2_RECIPROCAL_PROBE_EVENT_FAILED &&
 	      event.receive_event.kind ==
 		      V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND,
 	      "missing reciprocal probe did not fail at the acquisition bound");
@@ -411,10 +411,10 @@ static bool test_validation(void)
 	struct v34_phase2_reciprocal_probe probe;
 	struct v34_phase2_reciprocal_probe before;
 	struct v34_phase2_reciprocal_probe invalid;
-	struct v34_phase2_reciprocal_probe_event event = {
-		.kind = V34_PHASE2_RECIPROCAL_PROBE_EVENT_FAILED,
+	struct phase2_reciprocal_probe_event event = {
+		.kind = PHASE2_RECIPROCAL_PROBE_EVENT_FAILED,
 	};
-	struct v34_phase2_reciprocal_probe_event event_before = event;
+	struct phase2_reciprocal_probe_event event_before = event;
 	int16_t transmit = 1234;
 
 	CHECK(completed_turnaround_states(
@@ -428,40 +428,40 @@ static bool test_validation(void)
 	memset(&probe, 0xa5, sizeof(probe));
 	before = probe;
 	CHECK(v34_phase2_reciprocal_probe_init(&probe, &unready) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
+		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
 	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
 	      v34_phase2_reciprocal_probe_init(
 		      NULL, &caller_turnaround) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT,
+		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT,
 	      "invalid reciprocal-probe initialization changed caller state");
 	CHECK(v34_phase2_reciprocal_probe_init(
 		      &probe, &caller_turnaround) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_OK,
+		      PHASE2_RECIPROCAL_PROBE_OK,
 	      "reciprocal-probe validation controller did not initialize");
 	before = probe;
 	CHECK(v34_phase2_reciprocal_probe_sample(
 		      &probe, 0, NULL, &event) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
+		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
 	      v34_phase2_reciprocal_probe_sample(
 		      &probe, 0, &transmit, NULL) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
+		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
 	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid reciprocal-probe sample output was not transactional");
 	invalid = probe;
-	invalid.phase =
-		V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_RECEIVING;
+	invalid.control.phase =
+		PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING;
 	CHECK(!v34_phase2_reciprocal_probe_is_valid(&invalid) &&
 	      v34_phase2_reciprocal_probe_measure(&probe, NULL) ==
-		      V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
+		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT &&
 	      strcmp(
-		      v34_phase2_reciprocal_probe_result_name(
-			      V34_PHASE2_RECIPROCAL_PROBE_OK),
+		      phase2_reciprocal_probe_result_name(
+			      PHASE2_RECIPROCAL_PROBE_OK),
 		      "ok") == 0 &&
 	      strcmp(
-		      v34_phase2_reciprocal_probe_result_name(
-			      (enum v34_phase2_reciprocal_probe_result)99),
+		      phase2_reciprocal_probe_result_name(
+			      (enum phase2_reciprocal_probe_result)99),
 		      "unknown") == 0,
 	      "reciprocal-probe validation or result-name contract changed");
 	return true;

@@ -176,7 +176,7 @@ static bool endpoint_sample(
 			if (v34_phase2_reciprocal_probe_init(
 				    &endpoint->reciprocal_probe,
 				    &endpoint->turnaround) !=
-			    V34_PHASE2_RECIPROCAL_PROBE_OK)
+			    PHASE2_RECIPROCAL_PROBE_OK)
 				return false;
 			endpoint->stage = TEST_ENDPOINT_RECIPROCAL_PROBE;
 			emitted.entered_reciprocal_probe = true;
@@ -184,7 +184,7 @@ static bool endpoint_sample(
 	} else if (v34_phase2_reciprocal_probe_sample(
 			   &endpoint->reciprocal_probe, received_sample, transmit_sample,
 			   &emitted.reciprocal_probe) !=
-		   V34_PHASE2_RECIPROCAL_PROBE_OK) {
+		   PHASE2_RECIPROCAL_PROBE_OK) {
 		return false;
 	}
 	*event = emitted;

@@ -117,12 +117,12 @@ static enum v34_phase2_failure active_failure(
 			       V34_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT :
 			       V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_RECIPROCAL_PROBE:
-		switch (phase2->state.reciprocal_probe.failure) {
-		case V34_PHASE2_RECIPROCAL_PROBE_NO_FAILURE:
+		switch (phase2->state.reciprocal_probe.control.failure) {
+		case PHASE2_RECIPROCAL_PROBE_NO_FAILURE:
 			return V34_PHASE2_FAILURE_NONE;
-		case V34_PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND:
+		case PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND:
 			return V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
-		case V34_PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT:
+		case PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT:
 			return V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 		}
 		break;
@@ -244,10 +244,10 @@ static bool ready_for_info1(const struct v34_phase2 *phase2)
 	    phase2->stage != V34_PHASE2_RECIPROCAL_PROBE)
 		return false;
 	return phase2->local_role == V34_CALLING_STATION ?
-		       phase2->state.reciprocal_probe.phase ==
-			       V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE :
-		       phase2->state.reciprocal_probe.phase ==
-			       V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_TONE_A;
+		       phase2->state.reciprocal_probe.control.phase ==
+			       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE :
+		       phase2->state.reciprocal_probe.control.phase ==
+			       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
 }
 
 bool v34_phase2_is_ready_for_info1(const struct v34_phase2 *phase2)
@@ -509,7 +509,7 @@ static bool enter_reciprocal_probe(
 
 	if (v34_phase2_reciprocal_probe_init(
 		    &next, &phase2->state.turnaround) !=
-	    V34_PHASE2_RECIPROCAL_PROBE_OK)
+	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
 	phase2->state.reciprocal_probe = next;
 	phase2->stage = V34_PHASE2_RECIPROCAL_PROBE;
@@ -617,32 +617,32 @@ static bool sample_reciprocal_probe(
 	struct v34_phase2 *phase2, int16_t received_sample,
 	int16_t *transmit_sample, struct v34_phase2_event *event)
 {
-	struct v34_phase2_reciprocal_probe_event child;
+	struct phase2_reciprocal_probe_event child;
 
 	if (v34_phase2_reciprocal_probe_sample(
 		    &phase2->state.reciprocal_probe, received_sample,
 		    transmit_sample, &child) !=
-	    V34_PHASE2_RECIPROCAL_PROBE_OK)
+	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
-	if (child.kind == V34_PHASE2_RECIPROCAL_PROBE_EVENT_FAILED) {
+	if (child.kind == PHASE2_RECIPROCAL_PROBE_EVENT_FAILED) {
 		phase2->failure = child.failure ==
-					  V34_PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND ?
+					  PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND ?
 				  V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND :
 				  V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 	} else if (child.kind ==
-		   V34_PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED) {
+		   PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED) {
 		if (v34_phase2_reciprocal_probe_measure(
 			    &phase2->state.reciprocal_probe,
 			    &phase2->remote_probe) !=
-		    V34_PHASE2_RECIPROCAL_PROBE_OK ||
+		    PHASE2_RECIPROCAL_PROBE_OK ||
 		    !measurement_is_valid(&phase2->remote_probe))
 			return false;
 		phase2->remote_probe_stored = true;
 		event->kind = V34_PHASE2_EVENT_READY_FOR_INFO1;
 	} else if (child.kind ==
-		   V34_PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
+		   PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
 		if (!phase2->remote_probe_stored)
 			return false;
 		event->kind = V34_PHASE2_EVENT_READY_FOR_INFO1;
