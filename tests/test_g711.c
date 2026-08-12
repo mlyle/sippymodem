@@ -121,6 +121,95 @@ static bool test_all_linear_samples(void)
 	return true;
 }
 
+static uint8_t encode_sample(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMA ? g711_encode_pcma(sample) :
+					   g711_encode_pcmu(sample);
+}
+
+static bool test_ucode_space(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		for (unsigned int code = 0; code < 128; ++code) {
+			for (unsigned int sign = 0; sign < 2; ++sign) {
+				uint8_t octet = 0;
+				int16_t sample = 0;
+				uint8_t positive = law == G711_LAW_PCMA ?
+					(uint8_t)(code ^ 0xd5u) :
+					(uint8_t)~code;
+				uint8_t expected = sign != 0 ? positive :
+					(uint8_t)(positive ^ 0x80u);
+
+				CHECK(g711_ucode_octet(
+					      law, (uint8_t)code, sign != 0,
+					      &octet) &&
+					      octet == expected,
+				      "law %u Ucode %u sign %u produced %#02x",
+				      (unsigned int)law, code, sign, octet);
+				CHECK(g711_ucode_sample(
+					      law, (uint8_t)code, sign != 0,
+					      &sample) &&
+					      encode_sample(law, sample) == expected,
+				      "law %u Ucode %u sign %u lost exact octet",
+				      (unsigned int)law, code, sign);
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_ucode_boundaries(void)
+{
+	static const struct {
+		enum g711_law law;
+		uint8_t ucode;
+		uint8_t octet;
+		int16_t sample;
+	} cases[] = {
+		{ G711_LAW_PCMU, 0, 0xff, 0 },
+		{ G711_LAW_PCMU, 16, 0xef, 132 },
+		{ G711_LAW_PCMU, 127, 0x80, 32124 },
+		{ G711_LAW_PCMA, 0, 0xd5, 8 },
+		{ G711_LAW_PCMA, 16, 0xc5, 264 },
+		{ G711_LAW_PCMA, 127, 0xaa, 32256 },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		uint8_t octet = 0;
+		int16_t sample = 0;
+
+		CHECK(g711_ucode_octet(
+			      cases[index].law, cases[index].ucode, true,
+			      &octet) &&
+			      octet == cases[index].octet,
+		      "Ucode boundary %zu has the wrong octet", index);
+		CHECK(g711_ucode_sample(
+			      cases[index].law, cases[index].ucode, true,
+			      &sample) &&
+			      sample == cases[index].sample,
+		      "Ucode boundary %zu has the wrong level", index);
+	}
+	return true;
+}
+
+static bool test_ucode_rejection_is_transactional(void)
+{
+	uint8_t octet = 0xa5;
+	int16_t sample = 1234;
+
+	CHECK(!g711_ucode_octet(G711_LAW_PCMU, 128, true, &octet) &&
+		      octet == 0xa5,
+	      "invalid Ucode changed the octet output");
+	CHECK(!g711_ucode_sample((enum g711_law)2, 0, true, &sample) &&
+		      sample == 1234,
+	      "invalid law changed the sample output");
+	CHECK(!g711_ucode_octet(G711_LAW_PCMA, 0, true, NULL) &&
+		      !g711_ucode_sample(G711_LAW_PCMA, 0, true, NULL),
+	      "NULL Ucode outputs were accepted");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -134,6 +223,9 @@ int main(void)
 		{ "PCMU code space", test_pcmu_code_space },
 		{ "PCMA code space", test_pcma_code_space },
 		{ "all linear samples", test_all_linear_samples },
+		{ "V.90 Ucode space", test_ucode_space },
+		{ "V.90 Ucode boundaries", test_ucode_boundaries },
+		{ "V.90 Ucode rejection", test_ucode_rejection_is_transactional },
 	};
 	unsigned int failures = 0;
 

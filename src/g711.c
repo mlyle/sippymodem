@@ -2,6 +2,7 @@
 
 #include "g711.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -101,4 +102,45 @@ int16_t g711_decode_pcma(uint8_t octet)
 		magnitude = (magnitude + 0x108) << (segment - 1);
 
 	return (int16_t)(((code & 0x80) != 0) ? magnitude : -magnitude);
+}
+
+static bool g711_law_is_valid(enum g711_law law)
+{
+	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
+}
+
+bool g711_ucode_octet(
+	enum g711_law law, uint8_t ucode, bool positive,
+	uint8_t *octet)
+{
+	uint8_t encoded;
+
+	if (!g711_law_is_valid(law) || ucode > UINT8_C(127) ||
+	    octet == NULL)
+		return false;
+	encoded = law == G711_LAW_PCMA ?
+			(uint8_t)(ucode ^ UINT8_C(0xd5)) :
+			(uint8_t)~ucode;
+	*octet = positive ? encoded : (uint8_t)(encoded ^ UINT8_C(0x80));
+	return true;
+}
+
+bool g711_ucode_sample(
+	enum g711_law law, uint8_t ucode, bool positive,
+	int16_t *sample)
+{
+	uint8_t octet;
+
+	if (sample == NULL ||
+	    !g711_ucode_octet(law, ucode, positive, &octet))
+		return false;
+	if (law == G711_LAW_PCMU) {
+		/* Both PCMU zeros decode to zero.  -1 is the smallest input that
+		 * encodes as the negative-zero character, 0x7f. */
+		*sample = octet == UINT8_C(0x7f) ? -1 :
+						 g711_decode_pcmu(octet);
+	} else {
+		*sample = g711_decode_pcma(octet);
+	}
+	return true;
 }
