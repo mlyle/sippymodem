@@ -18,6 +18,11 @@ static bool run_timeline(uint32_t finish_after)
 {
 	struct v90_phase3_return_tx tx;
 	struct qam_point point;
+	uint32_t expected_s_symbols = finish_after < V34_PHASE3_S_SYMBOLS ?
+		V34_PHASE3_S_SYMBOLS : finish_after;
+
+	if ((expected_s_symbols & 1u) != 0u)
+		expected_s_symbols++;
 
 	CHECK(v90_phase3_return_tx_init(&tx) == V90_PHASE3_RETURN_TX_OK,
 	      "finish %u return transmitter did not initialize", finish_after);
@@ -50,8 +55,10 @@ static bool run_timeline(uint32_t finish_after)
 		      point_equal(&point, &expected),
 		      "finish %u minimum S extension changed", finish_after);
 	}
-	CHECK(tx.s_symbols >= V34_PHASE3_S_SYMBOLS,
-	      "finish %u entered S-bar before minimum S", finish_after);
+	CHECK(tx.s_symbols == expected_s_symbols &&
+	      (tx.s_symbols & 1u) == 0u,
+	      "finish %u entered S-bar after %u rather than %u symbols",
+	      finish_after, tx.s_symbols, expected_s_symbols);
 	for (size_t index = 0; index < V34_PHASE3_S_BAR_SYMBOLS; ++index) {
 		struct qam_point expected = v34_rotated_point_zero(
 			(int)(2u + (index & 1u)));
@@ -88,6 +95,7 @@ static bool test_validation_and_transactionality(void)
 {
 	struct v90_phase3_return_tx tx;
 	struct v90_phase3_return_tx saved;
+	struct v90_phase3_return_tx corrupt;
 	struct qam_point point = { 3.0, -2.0 };
 	struct qam_point saved_point = point;
 
@@ -112,6 +120,13 @@ static bool test_validation_and_transactionality(void)
 	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
 	      point_equal(&point, &saved_point),
 	      "silence overflow was not transactional");
+	corrupt = (struct v90_phase3_return_tx){
+		.stage = V90_PHASE3_RETURN_TX_S_BAR,
+		.s_symbols = V34_PHASE3_S_SYMBOLS + 1u,
+		.finish_s_requested = true,
+	};
+	CHECK(!v90_phase3_return_tx_is_valid(&corrupt),
+	      "S-bar accepted an invalid odd S boundary");
 	tx.stage = (enum v90_phase3_return_tx_stage)99;
 	CHECK(!v90_phase3_return_tx_is_valid(NULL) &&
 	      !v90_phase3_return_tx_is_valid(&tx) &&

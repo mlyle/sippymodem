@@ -26,7 +26,9 @@ enum v90_phase3_return_tx_result {
 
 /* Own the analogue modem's return signal after Ja: silence until a valid Jd
  * is received, open-ended S for at least 128T, then exactly 16T of S-bar once
- * Jd-prime is received. Controls affect the next unconsumed point. */
+ * Jd-prime is received. S is extended by one symbol when necessary so it ends
+ * on its counterclockwise 90-degree point. Controls affect the next
+ * unconsumed point. */
 struct v90_phase3_return_tx {
 	enum v90_phase3_return_tx_stage stage;
 	uint32_t silence_symbols;

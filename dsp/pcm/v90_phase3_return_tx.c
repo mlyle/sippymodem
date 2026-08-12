@@ -18,13 +18,16 @@ bool v90_phase3_return_tx_is_valid(
 	case V90_PHASE3_RETURN_TX_S:
 		return tx->s_bar_symbols == 0 &&
 		       (!tx->finish_s_requested ||
-			tx->s_symbols < V34_PHASE3_S_SYMBOLS);
+			tx->s_symbols < V34_PHASE3_S_SYMBOLS ||
+			(tx->s_symbols & 1u) != 0u);
 	case V90_PHASE3_RETURN_TX_S_BAR:
 		return tx->s_symbols >= V34_PHASE3_S_SYMBOLS &&
+		       (tx->s_symbols & 1u) == 0u &&
 		       tx->s_bar_symbols < V34_PHASE3_S_BAR_SYMBOLS &&
 		       tx->finish_s_requested;
 	case V90_PHASE3_RETURN_TX_COMPLETE:
 		return tx->s_symbols >= V34_PHASE3_S_SYMBOLS &&
+		       (tx->s_symbols & 1u) == 0u &&
 		       tx->s_bar_symbols == V34_PHASE3_S_BAR_SYMBOLS &&
 		       tx->finish_s_requested;
 	}
@@ -81,7 +84,8 @@ enum v90_phase3_return_tx_result v90_phase3_return_tx_finish_s(
 		return V90_PHASE3_RETURN_TX_OK;
 	next = *tx;
 	next.finish_s_requested = true;
-	if (next.s_symbols >= V34_PHASE3_S_SYMBOLS)
+	if (next.s_symbols >= V34_PHASE3_S_SYMBOLS &&
+	    (next.s_symbols & 1u) == 0u)
 		next.stage = V90_PHASE3_RETURN_TX_S_BAR;
 	if (!v90_phase3_return_tx_is_valid(&next))
 		return V90_PHASE3_RETURN_TX_INVALID_STATE;
@@ -113,7 +117,8 @@ enum v90_phase3_return_tx_result v90_phase3_return_tx_next(
 			(int)(next.s_symbols & 1u));
 		next.s_symbols++;
 		if (next.finish_s_requested &&
-		    next.s_symbols >= V34_PHASE3_S_SYMBOLS)
+		    next.s_symbols >= V34_PHASE3_S_SYMBOLS &&
+		    (next.s_symbols & 1u) == 0u)
 			next.stage = V90_PHASE3_RETURN_TX_S_BAR;
 		break;
 	case V90_PHASE3_RETURN_TX_S_BAR:
