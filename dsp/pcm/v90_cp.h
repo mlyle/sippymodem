@@ -36,6 +36,14 @@ enum v90_cp_kind {
 	V90_CP_DATA,
 };
 
+enum v90_cp_result {
+	V90_CP_OK,
+	V90_CP_INVALID_ARGUMENT,
+	V90_CP_INVALID_PARAMETERS,
+	V90_CP_INVALID_FRAME,
+	V90_CP_CRC_MISMATCH,
+};
+
 /* Bit n represents Ucode n. The transmitted order is Ucode 0 through 127;
  * this packed form avoids a 128-entry level table. */
 struct v90_cp_constellation {
@@ -79,5 +87,21 @@ bool v90_cp_parameters_are_valid(
  * low-order storage bits; frame_bits is the authoritative wire length. */
 size_t v90_cp_frame_bits(const struct v90_cp_parameters *parameters);
 size_t v90_cp_frame_bytes(const struct v90_cp_parameters *parameters);
+
+/* Pack bits in transmission order, most-significant bit first within each
+ * storage octet. Rejected calls leave every output unchanged. */
+enum v90_cp_result v90_cp_encode(
+	const struct v90_cp_parameters *parameters,
+	uint8_t *frame, size_t frame_capacity,
+	size_t *frame_bit_count);
+
+/* frame_bit_count is the exact wire length, not the rounded storage size.
+ * Decode accepts no unused constellation records or nonzero storage padding. */
+enum v90_cp_result v90_cp_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t frame_bit_count,
+	struct v90_cp_parameters *parameters);
+
+const char *v90_cp_result_name(enum v90_cp_result result);
 
 #endif /* V90_CP_H */
