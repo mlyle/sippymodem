@@ -279,9 +279,16 @@ static bool test_completion_and_validation(void)
 	      "invalid input changed receiver or detection output");
 	corrupt = receiver;
 	corrupt.next_decision = V34_PHASE3_S_SEQUENCE_SYMBOLS;
+	detection = (struct v34_phase3_s_detection){
+		.clockwise_quarter_turn_offset = 3,
+		.s_errors = V34_PHASE3_S_RECEIVER_MAX_S_ERRORS,
+		.s_bar_errors = V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
+	};
 	CHECK(!v34_phase3_s_receiver_is_valid(NULL) &&
 	      !v34_phase3_s_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_s_receiver_is_complete(&corrupt) &&
+	      v34_phase3_s_detection_is_valid(&detection) &&
+	      !v34_phase3_s_detection_is_valid(NULL) &&
 	      v34_phase3_s_receiver_init(NULL) ==
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_s_receiver_receive(NULL, 0, 0) ==

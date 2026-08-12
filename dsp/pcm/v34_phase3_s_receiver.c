@@ -13,7 +13,7 @@ _Static_assert(
 	V34_PHASE3_S_SEQUENCE_SYMBOLS <= UINT8_MAX,
 	"V.34 S/S-bar receive history must fit its counters");
 
-static bool detection_is_valid(
+bool v34_phase3_s_detection_is_valid(
 	const struct v34_phase3_s_detection *detection)
 {
 	return detection != NULL &&
@@ -33,7 +33,7 @@ bool v34_phase3_s_receiver_is_valid(
 	     receiver->next_decision != receiver->buffered_decisions) ||
 	    (receiver->complete &&
 	     (receiver->buffered_decisions != V34_PHASE3_S_SEQUENCE_SYMBOLS ||
-	      !detection_is_valid(&receiver->detection))) ||
+	      !v34_phase3_s_detection_is_valid(&receiver->detection))) ||
 	    (!receiver->complete &&
 	     (receiver->detection.clockwise_quarter_turn_offset != 0 ||
 	      receiver->detection.s_errors != 0 ||
@@ -121,7 +121,7 @@ static bool correlate(
 			else
 				candidate.s_bar_errors++;
 		}
-		if (detection_is_valid(&candidate)) {
+		if (v34_phase3_s_detection_is_valid(&candidate)) {
 			unsigned int errors =
 				candidate.s_errors + candidate.s_bar_errors;
 

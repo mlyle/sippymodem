@@ -30,6 +30,9 @@ struct v34_phase3_s_detection {
 	uint8_t s_bar_errors;
 };
 
+bool v34_phase3_s_detection_is_valid(
+	const struct v34_phase3_s_detection *detection);
+
 /* Bounded hard-decision history for locating the complete 128T S followed by
  * 16T S-bar marker at an arbitrary input boundary. The last two S and first
  * two S-bar decisions form an exact boundary anchor; bounded errors are
