@@ -2,6 +2,7 @@
 
 #include <g711.h>
 #include <v90_phase2_initial_probe.h>
+#include <v90_phase2_probe_turnaround.h>
 
 #include "test.h"
 
@@ -126,6 +127,8 @@ static bool check_initial_probe(enum test_codec codec)
 	struct test_delay_line analog_to_digital = { 0 };
 	struct test_delay_line digital_to_analog = { 0 };
 	struct v34_phase2_probe_receiver_measurement measurement;
+	struct v90_phase2_probe_turnaround analog_turnaround;
+	struct v90_phase2_probe_turnaround digital_turnaround;
 	uint32_t transmitted_l2_samples = 0;
 	bool analog_l2_started = false;
 	bool analog_probe_complete = false;
@@ -207,24 +210,99 @@ static bool check_initial_probe(enum test_codec codec)
 		      &analog.probe, &measurement) ==
 		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "V.90 digital probe measurement was unavailable or malformed");
-
 	{
+		struct v90_phase2_initial_probe invalid = analog.probe;
 		struct v90_phase2_initial_probe before;
 		struct phase2_initial_probe_event event = {
 			.kind = PHASE2_INITIAL_PROBE_EVENT_FAILED,
 		};
 		int16_t output = 1234;
 
-		analog.probe.ranging.info0_exchange.transport.info_receiver
-			.modulation.detector_output = NAN;
-		before = analog.probe;
+		invalid.ranging.info0_exchange.transport.info_receiver.modulation
+			.detector_output = NAN;
+		before = invalid;
 		CHECK(v90_phase2_initial_probe_sample(
-			      &analog.probe, 0, &output, &event) ==
+			      &invalid, 0, &output, &event) ==
 			      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
-		      memcmp(&analog.probe, &before, sizeof(before)) == 0 &&
+		      memcmp(&invalid, &before, sizeof(before)) == 0 &&
 		      output == 1234 &&
 		      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED,
 		      "invalid V.90 probe state mutated state or outputs");
+	}
+	CHECK(v90_phase2_probe_turnaround_init(
+		      &analog_turnaround, &analog.probe) ==
+		      PHASE2_PROBE_TURNAROUND_OK &&
+	      v90_phase2_probe_turnaround_init(
+		      &digital_turnaround, &digital.probe) ==
+		      PHASE2_PROBE_TURNAROUND_OK,
+	      "V.90 probe-turnaround endpoints did not initialize");
+	{
+		bool analog_ready = false;
+		bool digital_ready = false;
+
+		for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+			struct phase2_probe_turnaround_event analog_event;
+			struct phase2_probe_turnaround_event digital_event;
+			int16_t analog_transmit;
+			int16_t digital_transmit;
+
+			CHECK(v90_phase2_probe_turnaround_sample(
+				      &analog_turnaround,
+				      delay_line_receive(&digital_to_analog),
+				      &analog_transmit, &analog_event) ==
+				      PHASE2_PROBE_TURNAROUND_OK &&
+			      v90_phase2_probe_turnaround_sample(
+				      &digital_turnaround,
+				      delay_line_receive(&analog_to_digital),
+				      &digital_transmit, &digital_event) ==
+				      PHASE2_PROBE_TURNAROUND_OK,
+			      "V.90 probe turnaround failed for codec %d at sample %zu",
+			      codec, index);
+			delay_line_transmit(
+				&analog_to_digital,
+				codec_round_trip(analog_transmit, codec));
+			delay_line_transmit(
+				&digital_to_analog,
+				codec_round_trip(digital_transmit, codec));
+			analog_ready |= analog_event.kind ==
+				PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY;
+			digital_ready |= digital_event.kind ==
+				PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY;
+			if (analog_ready && digital_ready)
+				break;
+		}
+		CHECK(analog_ready && digital_ready &&
+		      analog_turnaround.control.phase ==
+			      PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY &&
+		      digital_turnaround.control.phase ==
+			      PHASE2_PROBE_TURNAROUND_SIGNAL_B_PROBE_READY &&
+		      analog_turnaround.control
+				      .signal_a_reversal_elapsed_samples != 0 &&
+		      v90_phase2_probe_turnaround_is_valid(
+			      &analog_turnaround) &&
+		      v90_phase2_probe_turnaround_is_valid(
+			      &digital_turnaround),
+		      "V.90 probe turnaround did not complete both role handoffs");
+	}
+
+	{
+		struct v90_phase2_probe_turnaround before;
+		struct phase2_probe_turnaround_event event = {
+			.kind = PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		};
+		int16_t output = 1234;
+
+		analog_turnaround.initial_probe.ranging.info0_exchange.transport
+			.info_receiver
+			.modulation.detector_output = NAN;
+		before = analog_turnaround;
+		CHECK(v90_phase2_probe_turnaround_sample(
+			      &analog_turnaround, 0, &output, &event) ==
+			      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+		      memcmp(&analog_turnaround, &before, sizeof(before)) == 0 &&
+		      output == 1234 &&
+		      event.kind == PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		      "invalid V.90 turnaround mutated state or outputs");
 	}
 	return true;
 }
@@ -240,11 +318,11 @@ static bool test_pcm_initial_probe(void)
 
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] PCMU and PCMA first line probe\n");
+	fprintf(stderr, "[ RUN      ] PCMU and PCMA line-probe turn\n");
 	if (!test_pcm_initial_probe()) {
-		fprintf(stderr, "[  FAILED  ] PCMU and PCMA first line probe\n");
+		fprintf(stderr, "[  FAILED  ] PCMU and PCMA line-probe turn\n");
 		return 1;
 	}
-	fprintf(stderr, "[       OK ] PCMU and PCMA first line probe\n");
+	fprintf(stderr, "[       OK ] PCMU and PCMA line-probe turn\n");
 	return 0;
 }
