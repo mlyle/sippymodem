@@ -91,6 +91,18 @@ static bool decoded_matches(
 	       decoded->differential_output == differential_output;
 }
 
+static struct v34_grid_point rotate_clockwise(
+	struct v34_grid_point point, uint8_t quarter_turns)
+{
+	for (uint8_t turn = 0; turn < quarter_turns; ++turn) {
+		int16_t saved_in_phase = point.in_phase;
+
+		point.in_phase = point.quadrature;
+		point.quadrature = (int16_t)-saved_in_phase;
+	}
+	return point;
+}
+
 static bool test_all_supported_sequences(void)
 {
 	bool point_width_seen[6] = { false };
@@ -304,6 +316,38 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_noisy_decision_folding(void)
+{
+	struct v34_mapping_parameters parameters;
+	struct v34_4d_decoder decoder;
+	const struct v34_4d_mapping_input mapping = {
+		.rotation_bit = 1,
+		.differential_input = 1,
+	};
+	const uint8_t ring_index[2] = { 0 };
+	struct v34_decided_4d_interval decided;
+	struct v34_decoded_4d_interval decoded;
+	struct v34_grid_point outside;
+
+	CHECK(initialize_parameters(
+		      V34_SYMBOL_RATE_2400, 1, false, false,
+		      &parameters) &&
+	      v34_4d_decoder_init(&decoder, &parameters) ==
+		      V34_4D_DECODER_OK &&
+	      generate_decision(
+		      &parameters, 0, &mapping, ring_index, 0, &decided) &&
+	      v34_quarter_superconstellation_point(
+		      1, &outside) == V34_CONSTELLATION_OK,
+	      "noisy-decision fixture did not initialize");
+	decided.mapper_output[0] = rotate_clockwise(outside, 1);
+	decided.mapper_output[1] = rotate_clockwise(outside, 3);
+	CHECK(v34_decode_4d_interval(
+		      &decoder, &decided, &decoded) == V34_4D_DECODER_OK &&
+	      decoded_matches(&decoded, &mapping, ring_index, 1),
+	      "outside-prefix hard decision did not preserve the 4-D mapping");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -311,6 +355,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "all supported sequences", test_all_supported_sequences },
+		{ "noisy decision folding", test_noisy_decision_folding },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

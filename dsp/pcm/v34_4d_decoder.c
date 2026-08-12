@@ -43,7 +43,7 @@ enum v34_4d_decoder_result v34_decode_4d_interval(
 	next = *decoder;
 	for (uint8_t symbol = 0;
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		if (v34_unmap_2d_symbol(
+		if (v34_unmap_2d_decision(
 			    &next.parameters, &decided->mapper_output[symbol],
 			    &mapped[symbol]) != V34_MAPPER_OK)
 			return V34_4D_DECODER_INVALID_ARGUMENT;

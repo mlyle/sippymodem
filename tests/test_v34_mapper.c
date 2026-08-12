@@ -263,6 +263,64 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_hard_decision_folding(void)
+{
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	struct v34_grid_point outside;
+	struct v34_2d_mapping_input recovered;
+	struct v34_2d_mapping_input saved;
+
+	CHECK(v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_2400, 1, false) ==
+		      V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(
+		      &parameters, &geometry, false) ==
+		      V34_MAPPING_PARAMETERS_OK &&
+	      parameters.constellation_points == 4u &&
+	      v34_quarter_superconstellation_point(
+		      1, &outside) == V34_CONSTELLATION_OK,
+	      "hard-decision fixture did not initialize");
+	for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
+		struct v34_grid_point decided =
+			rotate_clockwise(outside, rotation);
+
+		CHECK(v34_unmap_2d_symbol(
+			      &parameters, &decided, &recovered) ==
+			      V34_MAPPER_INVALID_ARGUMENT &&
+		      v34_unmap_2d_decision(
+			      &parameters, &decided, &recovered) ==
+			      V34_MAPPER_OK &&
+		      recovered.ring_index == 0u &&
+		      recovered.point_index == 0u &&
+		      recovered.clockwise_quarter_turns == rotation,
+		      "hard decision rotation %u did not fold", rotation);
+	}
+	recovered = (struct v34_2d_mapping_input){
+		.ring_index = 0xa5,
+		.point_index = 0x5a,
+		.clockwise_quarter_turns = 0xa5,
+	};
+	saved = recovered;
+	CHECK(v34_unmap_2d_decision(
+		      &parameters,
+		      &(const struct v34_grid_point){ 2, 1 },
+		      &recovered) == V34_MAPPER_INVALID_ARGUMENT &&
+	      v34_unmap_2d_decision(
+		      &parameters,
+		      &(const struct v34_grid_point){ 47, 1 },
+		      &recovered) == V34_MAPPER_INVALID_ARGUMENT &&
+	      v34_unmap_2d_decision(NULL, &outside, &recovered) ==
+		      V34_MAPPER_INVALID_ARGUMENT &&
+	      v34_unmap_2d_decision(&parameters, NULL, &recovered) ==
+		      V34_MAPPER_INVALID_ARGUMENT &&
+	      v34_unmap_2d_decision(&parameters, &outside, NULL) ==
+		      V34_MAPPER_INVALID_ARGUMENT &&
+	      memcmp(&recovered, &saved, sizeof(recovered)) == 0,
+	      "invalid hard decision changed its output");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -270,6 +328,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "all supported mappings", test_all_supported_mappings },
+		{ "hard decision folding", test_hard_decision_folding },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

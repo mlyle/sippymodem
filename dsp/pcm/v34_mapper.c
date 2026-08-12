@@ -98,37 +98,78 @@ static bool recover_clockwise_quarter_turns(
 	return true;
 }
 
+static bool recover_label_and_rotation(
+	const struct v34_grid_point *mapper_output, size_t *label,
+	uint8_t *clockwise_quarter_turns)
+{
+	struct v34_grid_point quarter_point;
+
+	return recover_clockwise_quarter_turns(
+		       mapper_output, clockwise_quarter_turns) &&
+	       rotate_clockwise(
+		       mapper_output,
+		       (uint8_t)((4u - *clockwise_quarter_turns) & 3u),
+		       &quarter_point) &&
+	       v34_quarter_superconstellation_label(
+		       &quarter_point, label) == V34_CONSTELLATION_OK;
+}
+
+static struct v34_2d_mapping_input recovered_input(
+	const struct v34_mapping_parameters *parameters, size_t label,
+	uint8_t clockwise_quarter_turns)
+{
+	uint16_t point_mask = (uint16_t)(
+		(1u << parameters->point_index_bits_per_2d_symbol) - 1u);
+
+	return (struct v34_2d_mapping_input){
+		.ring_index = (uint8_t)(label >>
+			parameters->point_index_bits_per_2d_symbol),
+		.point_index = (uint8_t)(label & point_mask),
+		.clockwise_quarter_turns = clockwise_quarter_turns,
+	};
+}
+
 enum v34_mapper_result v34_unmap_2d_symbol(
 	const struct v34_mapping_parameters *parameters,
 	const struct v34_grid_point *mapper_output,
 	struct v34_2d_mapping_input *input)
 {
 	struct v34_2d_mapping_input recovered;
-	struct v34_grid_point quarter_point;
 	size_t label;
-	uint16_t point_mask;
 	uint8_t clockwise_quarter_turns;
 
 	if (!v34_mapping_parameters_is_valid(parameters) ||
 	    mapper_output == NULL || input == NULL ||
-	    !recover_clockwise_quarter_turns(
-		    mapper_output, &clockwise_quarter_turns) ||
-	    !rotate_clockwise(
-		    mapper_output,
-		    (uint8_t)((4u - clockwise_quarter_turns) & 3u),
-		    &quarter_point) ||
-	    v34_quarter_superconstellation_label(
-		    &quarter_point, &label) != V34_CONSTELLATION_OK ||
+	    !recover_label_and_rotation(
+		    mapper_output, &label, &clockwise_quarter_turns) ||
 	    label >= parameters->constellation_points / 4u)
 		return V34_MAPPER_INVALID_ARGUMENT;
-	point_mask = (uint16_t)(
-		(1u << parameters->point_index_bits_per_2d_symbol) - 1u);
-	recovered = (struct v34_2d_mapping_input){
-		.ring_index = (uint8_t)(label >>
-			parameters->point_index_bits_per_2d_symbol),
-		.point_index = (uint8_t)(label & point_mask),
-		.clockwise_quarter_turns = clockwise_quarter_turns,
-	};
+	recovered = recovered_input(
+		parameters, label, clockwise_quarter_turns);
+	if (!v34_2d_mapping_input_is_valid(&recovered, parameters))
+		return V34_MAPPER_INVALID_ARGUMENT;
+	*input = recovered;
+	return V34_MAPPER_OK;
+}
+
+enum v34_mapper_result v34_unmap_2d_decision(
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_grid_point *mapper_output,
+	struct v34_2d_mapping_input *input)
+{
+	struct v34_2d_mapping_input recovered;
+	size_t label;
+	size_t label_count;
+	uint8_t clockwise_quarter_turns;
+
+	if (!v34_mapping_parameters_is_valid(parameters) ||
+	    mapper_output == NULL || input == NULL ||
+	    !recover_label_and_rotation(
+		    mapper_output, &label, &clockwise_quarter_turns))
+		return V34_MAPPER_INVALID_ARGUMENT;
+	label_count = parameters->constellation_points / 4u;
+	recovered = recovered_input(
+		parameters, label % label_count, clockwise_quarter_turns);
 	if (!v34_2d_mapping_input_is_valid(&recovered, parameters))
 		return V34_MAPPER_INVALID_ARGUMENT;
 	*input = recovered;
