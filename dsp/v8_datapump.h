@@ -8,7 +8,7 @@
 
 #include <stdbool.h>
 
-/* Returns NONE when the requested datapump has no V.8 handoff yet. */
+/* Returns the classic V.8 mode carried with the requested datapump. */
 static inline enum v8_modulation
 v8_datapump_modulation(enum DP_ID id)
 {
@@ -23,10 +23,18 @@ v8_datapump_modulation(enum DP_ID id)
 	case DP_V32:
 		return V8_MODULATION_V32;
 	case DP_V34:
+	case DP_V90:
+	case DP_V90_NO_V8BIS:
+	case DP_V92:
 		return V8_MODULATION_V34_DUPLEX;
 	default:
 		return V8_MODULATION_NONE;
 	}
+}
+
+static inline bool v8_datapump_uses_pcm(enum DP_ID id)
+{
+	return id == DP_V90 || id == DP_V90_NO_V8BIS || id == DP_V92;
 }
 
 int v8_datapump_register(void);

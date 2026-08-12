@@ -64,18 +64,23 @@ static struct dp *create_v8(
 	struct v8_menu local_menu;
 	enum v8_modulation modulation =
 		v8_datapump_modulation(id);
+	enum v8_menu_result menu_result;
 
 	/*
 	 * The current source-built handoffs expose raw asynchronous bits, so do
 	 * not negotiate LAPM until their downstream paths implement it.
 	 */
+	if (v8_datapump_uses_pcm(id))
+		menu_result = v8_pcm_call_menu_init(
+			&local_menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
+			V8_PSTN_DIGITAL, false);
+	else
+		menu_result = v8_call_menu_init(
+			&local_menu, modulation, false);
 	if (modem == NULL || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v8_operations || operations->use_count == INT_MAX ||
-	    modulation == V8_MODULATION_NONE ||
-	    v8_call_menu_init(
-		    &local_menu, modulation, false) !=
-		    V8_MENU_OK)
+	    modulation == V8_MODULATION_NONE || menu_result != V8_MENU_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
@@ -117,10 +122,37 @@ static int delete_v8(struct dp *dp)
 	return 0;
 }
 
+static bool selected_pcm_role(
+	const struct v8_datapump *datapump,
+	const struct v8_menu *joint_menu,
+	enum modem_pcm_role *role)
+{
+	const struct v8_menu *call_menu;
+	struct v8_pcm_roles roles;
+	enum v8_pcm_role local_role;
+
+	if (datapump->caller)
+		call_menu = &datapump->handshake.calling.local_menu;
+	else
+		call_menu = &datapump->handshake.answering.call_menu;
+	if (v8_pcm_select_roles(call_menu, joint_menu, &roles) != V8_MENU_OK)
+		return false;
+	local_role = datapump->caller ? roles.caller : roles.answerer;
+	if (local_role == V8_PCM_ROLE_ANALOG)
+		*role = MODEM_PCM_ROLE_ANALOG;
+	else if (local_role == V8_PCM_ROLE_DIGITAL)
+		*role = MODEM_PCM_ROLE_DIGITAL;
+	else
+		*role = MODEM_PCM_ROLE_NONE;
+	return true;
+}
+
 static int request_handoff(struct v8_datapump *datapump)
 {
 	struct v8_menu menu;
 	enum v8_modulation modulation;
+	enum modem_pcm_role pcm_role = MODEM_PCM_ROLE_NONE;
+	enum DP_ID handoff = datapump->requested_datapump;
 	bool selected;
 
 	if (datapump->caller) {
@@ -133,11 +165,23 @@ static int request_handoff(struct v8_datapump *datapump)
 			V8_ANSWERING_OK;
 	}
 	if (!selected || modulation != datapump->negotiated_modulation ||
-	    menu.modulations != datapump->negotiated_modulation || menu.lapm ||
-	    modem_set_param(
-		    datapump->dp.modem, MDMPRM_DP_REQUESTED,
-		    datapump->requested_datapump) != 0)
+	    menu.modulations != datapump->negotiated_modulation || menu.lapm)
 		return DPSTAT_ERROR;
+	if (v8_datapump_uses_pcm(datapump->requested_datapump)) {
+		if (!selected_pcm_role(datapump, &menu, &pcm_role))
+			return DPSTAT_ERROR;
+		if (!menu.pcm_present)
+			handoff = DP_V34;
+		else if (pcm_role == MODEM_PCM_ROLE_NONE)
+			return DPSTAT_ERROR;
+	} else if (menu.pcm_present) {
+		return DPSTAT_ERROR;
+	}
+	if (modem_set_param(
+		    datapump->dp.modem, MDMPRM_DP_REQUESTED,
+		    handoff) != 0)
+		return DPSTAT_ERROR;
+	datapump->dp.modem->dsp_info.pcm_role = pcm_role;
 	datapump->dp.modem->cfg.ec = menu.lapm;
 	datapump->dp.modem->dsp_info.qc_lapm = menu.lapm;
 	datapump->handoff_requested = true;

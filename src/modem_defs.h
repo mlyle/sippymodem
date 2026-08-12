@@ -354,6 +354,12 @@ enum DP_ID {
         MAX_DP = 128
 };
 
+enum modem_pcm_role {
+	MODEM_PCM_ROLE_NONE,
+	MODEM_PCM_ROLE_ANALOG,
+	MODEM_PCM_ROLE_DIGITAL,
+};
+
 /* dp status */
 #define DPSTAT_OK         0
 #define DPSTAT_CONNECT    1
@@ -369,6 +375,7 @@ struct dsp_info {
 	long     clock_deviation;
 	unsigned qc_lapm;
 	unsigned qc_index;
+	enum modem_pcm_role pcm_role;
 };
 
 

@@ -1098,9 +1098,8 @@ static int modem_comp_put_chars(struct modem *m, const char *buf, int n)
 
 static bool datapump_requires_v8(enum DP_ID id)
 {
-	/* V.34 Phase 1 is V.8 even when +MS fixes the only permitted
-	 * modulation.  The automode flag controls fallback, not Phase 1. */
-	return id == DP_V34;
+	/* Phase 1 remains mandatory when +MS fixes the permitted mode. */
+	return id == DP_V34 || v8_datapump_uses_pcm(id);
 }
 
 static void do_modem_change_dp (struct modem *m)
@@ -1191,6 +1190,7 @@ static void modem_setup_config(struct modem *m)
 	/* setup dsp data */
 	/* Only an exchanged V.8 menu can establish quick-connect LAPM. */
 	m->dsp_info.qc_lapm = 0;
+	m->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
 }
 
 

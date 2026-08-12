@@ -201,10 +201,81 @@ static bool test_v8_datapump_mapping(void)
 		      v8_datapump_modulation(DP_V34) ==
 			      V8_MODULATION_V34_DUPLEX &&
 		      v8_datapump_modulation(DP_V90) ==
-			      V8_MODULATION_NONE &&
+			      V8_MODULATION_V34_DUPLEX &&
 		      v8_datapump_modulation(DP_V92) ==
-			      V8_MODULATION_NONE,
+			      V8_MODULATION_V34_DUPLEX &&
+		      v8_datapump_uses_pcm(DP_V90) &&
+		      v8_datapump_uses_pcm(DP_V90_NO_V8BIS) &&
+		      v8_datapump_uses_pcm(DP_V92) &&
+		      !v8_datapump_uses_pcm(DP_V34),
 	      "V.8 datapump modulation mapping changed");
+	return true;
+}
+
+static bool test_v8_pcm_handoff(void)
+{
+	struct modem_driver driver = {
+		.name = "V.8 PCM handoff test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct datapumps datapumps = { 0 };
+	struct modem *caller;
+	struct modem *answerer;
+	struct dp_operations *operations;
+	struct dp *calling_dp;
+	struct dp *answering_dp;
+	int16_t calling_audio[MODEM_FRAG] = { 0 };
+	int16_t answering_audio[MODEM_FRAG] = { 0 };
+	int calling_status = DPSTAT_OK;
+	int answering_status = DPSTAT_OK;
+
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
+	      "V.8 PCM handoff registrations did not start");
+	operations = modem_dp_get_registered_ops(DP_V8);
+	caller = modem_create(&driver, "V.8 PCM caller");
+	answerer = modem_create(&driver, "V.8 PCM answerer");
+	CHECK(operations != NULL && caller != NULL && answerer != NULL,
+	      "V.8 PCM handoff endpoints did not initialize");
+	calling_dp = operations->create(
+		caller, DP_V90, 1, MODEM_RATE, MODEM_FRAG, operations);
+	answering_dp = operations->create(
+		answerer, DP_V90, 0, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(calling_dp != NULL && answering_dp != NULL &&
+		      operations->use_count == 2,
+	      "V.8 PCM handshakes were not independently owned");
+	for (size_t frame = 0;
+	     frame < 7u * MODEM_RATE / MODEM_FRAG + 1u;
+	     ++frame) {
+		answering_status = operations->process(
+			answering_dp, calling_audio, answering_audio, MODEM_FRAG);
+		calling_status = operations->process(
+			calling_dp, answering_audio, calling_audio, MODEM_FRAG);
+		CHECK((answering_status == DPSTAT_OK ||
+		       answering_status == DPSTAT_CHANGEDP) &&
+		      (calling_status == DPSTAT_OK ||
+		       calling_status == DPSTAT_CHANGEDP),
+		      "V.8 PCM negotiation failed at frame %zu", frame);
+		if (calling_status == DPSTAT_CHANGEDP &&
+		    answering_status == DPSTAT_CHANGEDP)
+			break;
+	}
+	CHECK(calling_status == DPSTAT_CHANGEDP &&
+		      answering_status == DPSTAT_CHANGEDP &&
+		      caller->dp_requested == DP_V90 &&
+		      answerer->dp_requested == DP_V90 &&
+		      caller->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG &&
+		      answerer->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL,
+	      "V.8 PCM peers did not agree on complementary handoff roles");
+	CHECK(operations->delete(calling_dp) == 0 &&
+		      operations->delete(answering_dp) == 0 &&
+		      operations->use_count == 0,
+	      "V.8 PCM handshakes did not release their state");
+	modem_delete(caller);
+	modem_delete(answerer);
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "V.8 PCM handoff registrations did not stop");
 	return true;
 }
 
@@ -1162,6 +1233,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
+		{ "V.8 PCM handoff", test_v8_pcm_handoff },
 		{ "modulation report identity", test_modulation_report_identity },
 		{ "V.32 error-control detection",
 		  test_v32_preserves_error_control_detection },
