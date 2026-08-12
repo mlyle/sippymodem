@@ -7,11 +7,13 @@
 #include "v34_phase4_line_receiver.h"
 
 /* Continue the exact carrier, timing, and delayed equalizer boundary detected
- * from J. The peer's J selection supplies the Phase 4 constellation. */
+ * from J. `phase4_constellation` is the selection this receiver announced in
+ * its own J; the J detected in `handoff` selects the opposite transmit path. */
 enum v34_phase4_line_receiver_result
 v34_phase4_line_receiver_init_from_phase3(
 	struct v34_phase4_line_receiver *receiver,
 	const struct v34_phase3_line_handoff *handoff,
+	enum v34_constellation_size phase4_constellation,
 	double adaptation);
 
 #endif /* V34_PHASE4_LINE_HANDOFF_H */

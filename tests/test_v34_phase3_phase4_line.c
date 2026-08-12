@@ -215,22 +215,26 @@ static bool initialize_phase4(
 	corrupt = handoff;
 	corrupt.demodulator.timing_locked = false;
 	if (v34_phase4_line_receiver_init_from_phase3(
-		    NULL, &handoff, 0.03) !=
+		    NULL, &handoff, V34_CONSTELLATION_16_POINT, 0.03) !=
 		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
 	    v34_phase4_line_receiver_init_from_phase3(
-		    phase4, NULL, 0.03) !=
-		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
-	    memcmp(phase4, &unchanged, sizeof(*phase4)) != 0 ||
-	    v34_phase4_line_receiver_init_from_phase3(
-		    phase4, &corrupt, 0.03) !=
+		    phase4, NULL, V34_CONSTELLATION_16_POINT, 0.03) !=
 		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
 	    memcmp(phase4, &unchanged, sizeof(*phase4)) != 0 ||
 	    v34_phase4_line_receiver_init_from_phase3(
-		    phase4, &handoff, NAN) !=
+		    phase4, &corrupt, V34_CONSTELLATION_16_POINT, 0.03) !=
 		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
 	    memcmp(phase4, &unchanged, sizeof(*phase4)) != 0 ||
 	    v34_phase4_line_receiver_init_from_phase3(
-		    phase4, &handoff, 0.03) !=
+		    phase4, &handoff, V34_CONSTELLATION_16_POINT, NAN) !=
+		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
+	    memcmp(phase4, &unchanged, sizeof(*phase4)) != 0 ||
+	    v34_phase4_line_receiver_init_from_phase3(
+		    phase4, &handoff, (enum v34_constellation_size)8, 0.03) !=
+		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
+	    memcmp(phase4, &unchanged, sizeof(*phase4)) != 0 ||
+	    v34_phase4_line_receiver_init_from_phase3(
+		    phase4, &handoff, V34_CONSTELLATION_16_POINT, 0.03) !=
 		    V34_PHASE4_LINE_RECEIVER_OK)
 		return false;
 	return phase4->demodulator.carrier_phase ==
@@ -241,7 +245,7 @@ static bool initialize_phase4(
 		      &handoff.phase3.j.equalizer.equalizer,
 		      sizeof(phase4->control.equalizer)) == 0 &&
 	       phase4->control.mp_receiver.constellation ==
-		       handoff.phase3.j.detection.sequence.remote_constellation;
+		       V34_CONSTELLATION_16_POINT;
 }
 
 static bool initialize_owned_phase4(
@@ -265,22 +269,33 @@ static bool initialize_owned_phase4(
 	invalid.phase4_equalizer_adaptation = NAN;
 	memset(receiver, 0xa5, sizeof(*receiver));
 	unchanged = *receiver;
-	if (v34_training_receiver_continue(NULL, &handoff, &config) !=
+	if (v34_training_receiver_continue(
+		    NULL, &handoff, V34_CONSTELLATION_16_POINT, &config) !=
 		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
-	    v34_training_receiver_continue(receiver, NULL, &config) !=
+	    v34_training_receiver_continue(
+		    receiver, NULL, V34_CONSTELLATION_16_POINT, &config) !=
 		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
-	    v34_training_receiver_continue(receiver, &corrupt, &config) !=
+	    v34_training_receiver_continue(
+		    receiver, &corrupt, V34_CONSTELLATION_16_POINT, &config) !=
 		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
-	    v34_training_receiver_continue(receiver, &handoff, NULL) !=
+	    v34_training_receiver_continue(
+		    receiver, &handoff, V34_CONSTELLATION_16_POINT, NULL) !=
 		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
-	    v34_training_receiver_continue(receiver, &handoff, &invalid) !=
+	    v34_training_receiver_continue(
+		    receiver, &handoff, V34_CONSTELLATION_16_POINT, &invalid) !=
+		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
+	    v34_training_receiver_continue(
+		    receiver, &handoff, (enum v34_constellation_size)8,
+		    &config) !=
 		    V34_TRAINING_RECEIVER_INVALID_ARGUMENT ||
 	    memcmp(receiver, &unchanged, sizeof(*receiver)) != 0 ||
-	    v34_training_receiver_continue(receiver, &handoff, &config) !=
+	    v34_training_receiver_continue(
+		    receiver, &handoff, V34_CONSTELLATION_16_POINT, &config) !=
 		    V34_TRAINING_RECEIVER_OK)
 		return false;
 	return v34_training_receiver_is_valid(receiver) &&
 	       receiver->stage == V34_TRAINING_RECEIVER_PHASE4 &&
+	       receiver->phase4_constellation == V34_CONSTELLATION_16_POINT &&
 	       memcmp(&receiver->configuration, &config, sizeof(config)) == 0 &&
 	       memcmp(&receiver->state.phase4, expected,
 		      sizeof(*expected)) == 0;
@@ -429,13 +444,21 @@ static bool test_owned_training_receiver_case(enum v34_station_role role)
 	CHECK(!v34_training_receiver_configuration_is_valid(&config) &&
 	      v34_training_receiver_init(
 		      &receiver, &transmitting_profile, SAMPLE_RATE,
+		      V34_CONSTELLATION_16_POINT,
 		      &config) == V34_TRAINING_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid owned training configuration changed its destination");
 	config = training_configuration();
+	CHECK(v34_training_receiver_init(
+		      &receiver, &transmitting_profile, SAMPLE_RATE,
+		      (enum v34_constellation_size)8, &config) ==
+		      V34_TRAINING_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "invalid owned Phase 4 constellation changed its destination");
 	CHECK(data_configuration(&transmitting_profile, &data_config) &&
 	      v34_training_receiver_init(
 		      &receiver, &transmitting_profile, SAMPLE_RATE,
+		      V34_CONSTELLATION_16_POINT,
 		      &config) == V34_TRAINING_RECEIVER_OK &&
 	      source_init(&source, &transmitting_profile, true),
 	      "owned training receiver did not initialize");

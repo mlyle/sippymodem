@@ -50,6 +50,8 @@ union v34_training_receiver_state {
 struct v34_training_receiver {
 	union v34_training_receiver_state state;
 	struct v34_training_receiver_configuration configuration;
+	/* Constellation selected for the peer transmitter by our own J. */
+	enum v34_constellation_size phase4_constellation;
 	enum v34_training_receiver_stage stage;
 	bool failed;
 };
@@ -63,18 +65,23 @@ bool v34_training_receiver_has_failed(
 bool v34_training_receiver_is_complete(
 	const struct v34_training_receiver *receiver);
 
+/* `phase4_constellation` is the selection announced in this endpoint's J for
+ * the peer transmitter; it is deliberately independent of a detected J. */
 enum v34_training_receiver_result v34_training_receiver_init(
 	struct v34_training_receiver *receiver,
 	const struct v34_phase3_profile *transmitting_profile,
 	uint32_t sample_rate,
+	enum v34_constellation_size phase4_constellation,
 	const struct v34_training_receiver_configuration *configuration);
 
 /* Continue at an exact completed-J handoff without restarting carrier timing
- * or equalization. Both inputs are copied and every rejected call leaves the
- * destination unchanged. */
+ * or equalization. `phase4_constellation` is still the selection announced in
+ * this endpoint's J, not the selection carried by the detected peer J. Both
+ * inputs are copied and every rejected call leaves the destination unchanged. */
 enum v34_training_receiver_result v34_training_receiver_continue(
 	struct v34_training_receiver *receiver,
 	const struct v34_phase3_line_handoff *handoff,
+	enum v34_constellation_size phase4_constellation,
 	const struct v34_training_receiver_configuration *configuration);
 
 /* Consume one line sample. `event` changes only for RECORD_READY. J detection

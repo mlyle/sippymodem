@@ -22,6 +22,7 @@ struct endpoint {
 	unsigned int mapping_frames_received;
 	int16_t next_received;
 	uint8_t transmit_bit;
+	bool constellations_routed;
 	bool phase4_active;
 };
 
@@ -270,6 +271,20 @@ static bool endpoint_sample(
 			    &endpoint->phase4_configuration) !=
 				    V34_PHASE4_EXCHANGE_OK)
 			return false;
+		endpoint->constellations_routed =
+			endpoint->phase4.transmit.training.phase4_constellation ==
+				endpoint->handoff.receive.phase3.j.detection.sequence
+					.remote_constellation &&
+			endpoint->phase4.receive.training.phase4_constellation ==
+				endpoint->handoff.phase3_transmit.remote_constellation &&
+			endpoint->phase4.receive.training.state.phase4.control
+					.mp_receiver.constellation ==
+				endpoint->handoff.phase3_transmit.remote_constellation;
+		if (!endpoint->constellations_routed) {
+			fprintf(stderr,
+				"Phase 4 crossed the two J constellation selections\n");
+			return false;
+		}
 		endpoint->phase4_active = true;
 		return true;
 	}
@@ -409,6 +424,8 @@ static bool test_generated_online_exchange(void)
 	      !v34_phase4_exchange_has_failed(&answerer.phase4) &&
 	      caller.data_preparation_count == 1 &&
 	      answerer.data_preparation_count == 1 &&
+	      caller.constellations_routed &&
+	      answerer.constellations_routed &&
 	      caller.mapping_frames_supplied >=
 		      answerer.mapping_frames_received &&
 	      answerer.mapping_frames_supplied >=

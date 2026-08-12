@@ -403,6 +403,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	const struct v34_phase4_exchange_configuration *configuration)
 {
 	struct v34_phase4_exchange initialized = { 0 };
+	enum v34_constellation_size local_transmit_constellation;
+	enum v34_constellation_size peer_transmit_constellation;
 	enum v34_training_transmitter_result transmit;
 	enum v34_training_receiver_result receive;
 
@@ -417,13 +419,19 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	    configuration->data_equalizer_adaptation < 0.0 ||
 	    configuration->data_equalizer_adaptation > 1.0)
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
+	/* Each J selects the other station's Phase 4 transmitter. */
+	local_transmit_constellation =
+		handoff->receive.phase3.j.detection.sequence.remote_constellation;
+	peer_transmit_constellation =
+		handoff->phase3_transmit.remote_constellation;
 	transmit = v34_training_transmitter_continue(
 		&initialized.transmit.training, &handoff->transmit_line,
-		&handoff->phase3_transmit);
+		&handoff->phase3_transmit, local_transmit_constellation);
 	if (transmit != V34_TRAINING_TRANSMITTER_OK)
 		return transmit_result(transmit);
 	receive = v34_training_receiver_continue(
 		&initialized.receive.training, &handoff->receive,
+		peer_transmit_constellation,
 		&configuration->receive);
 	if (receive != V34_TRAINING_RECEIVER_OK)
 		return receive == V34_TRAINING_RECEIVER_OUT_OF_RANGE ?

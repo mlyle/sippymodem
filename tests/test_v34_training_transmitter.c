@@ -10,6 +10,7 @@ struct model_training {
 	struct v34_training_line line;
 	struct v34_phase3_transmitter phase3;
 	union v34_training_transmitter_phase4_state phase4;
+	enum v34_constellation_size phase4_constellation;
 	uint32_t phase4_trn_symbols;
 	enum v34_training_transmitter_stage stage;
 };
@@ -70,6 +71,7 @@ static bool model_init(
 		    V34_PHASE3_TRANSMITTER_OK)
 		return false;
 	initialized.stage = V34_TRAINING_TRANSMITTER_PHASE3;
+	initialized.phase4_constellation = constellation;
 	*model = initialized;
 	return true;
 }
@@ -171,7 +173,7 @@ static bool model_next_point(
 			return true;
 		if (v34_phase4_trn_init(
 			    &trn, V34_ANSWERING_STATION,
-			    model->phase3.remote_constellation) !=
+			    model->phase4_constellation) !=
 		    V34_PHASE4_TRN_OK)
 			return false;
 		model->phase4 =
@@ -193,7 +195,7 @@ static bool model_next_point(
 			return true;
 		if (v34_phase4_trn_init(
 			    &trn, V34_CALLING_STATION,
-			    model->phase3.remote_constellation) !=
+			    model->phase4_constellation) !=
 		    V34_PHASE4_TRN_OK)
 			return false;
 		model->phase4 = (union v34_training_transmitter_phase4_state){ 0 };
@@ -238,6 +240,7 @@ static bool protocol_state_matches(
 	const struct model_training *model)
 {
 	if (actual->stage != model->stage ||
+	    actual->phase4_constellation != model->phase4_constellation ||
 	    actual->phase4_trn_symbols != model->phase4_trn_symbols ||
 	    actual->phase3.stage != model->phase3.stage ||
 	    actual->phase3.trn_symbols != model->phase3.trn_symbols ||
@@ -503,6 +506,8 @@ static bool build_phase3_boundary(
 
 static bool run_continued_sequence(enum v34_station_role role)
 {
+	const enum v34_constellation_size phase4_constellation =
+		V34_CONSTELLATION_4_POINT;
 	struct v34_training_line line;
 	struct v34_phase3_transmitter phase3;
 	struct v34_training_transmitter actual;
@@ -512,13 +517,16 @@ static bool run_continued_sequence(enum v34_station_role role)
 	unsigned int stages_seen = 0;
 
 	CHECK(build_phase3_boundary(role, &line, &phase3) &&
-	      v34_training_transmitter_continue(&actual, &line, &phase3) ==
+	      v34_training_transmitter_continue(
+		      &actual, &line, &phase3, phase4_constellation) ==
 		      V34_TRAINING_TRANSMITTER_OK &&
 	      memcmp(&actual.line, &line, sizeof(line)) == 0 &&
-	      memcmp(&actual.phase3, &phase3, sizeof(phase3)) == 0,
+	      memcmp(&actual.phase3, &phase3, sizeof(phase3)) == 0 &&
+	      actual.phase4_constellation == phase4_constellation,
 	      "role %u continuation did not copy its exact boundary", role);
 	model.line = line;
 	model.phase3 = phase3;
+	model.phase4_constellation = phase4_constellation;
 	if (role == V34_CALLING_STATION) {
 		model.stage = V34_TRAINING_TRANSMITTER_PHASE3;
 		CHECK(v34_training_transmitter_finish_j(&actual) ==
@@ -628,28 +636,40 @@ static bool test_continuation_validation(void)
 	memset(&training, 0xa5, sizeof(training));
 	before = training;
 	CHECK(v34_training_transmitter_continue(
-		      NULL, &caller_line, &caller) ==
+		      NULL, &caller_line, &caller,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_training_transmitter_continue(
-		      &training, NULL, &caller) ==
+		      &training, NULL, &caller,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_training_transmitter_continue(
-		      &training, &caller_line, NULL) ==
+		      &training, &caller_line, NULL,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_training_transmitter_continue(
-		      &training, &caller_line, &answer) ==
+		      &training, &caller_line, &answer,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_training_transmitter_continue(
-		      &training, &caller_line, &caller_complete) ==
+		      &training, &caller_line, &caller_complete,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_training_transmitter_continue(
-		      &training, &answer_line, &answer_j) ==
+		      &training, &answer_line, &answer_j,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_training_transmitter_continue(
-		      &training, &with_md, &caller) ==
+		      &training, &with_md, &caller,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      v34_training_transmitter_continue(
-		      &training, &corrupt, &caller) ==
+		      &training, &corrupt, &caller,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_training_transmitter_continue(
+		      &training, &caller_line, &caller,
+		      (enum v34_constellation_size)8) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&training, &before, sizeof(training)) == 0,
 	      "invalid continuation changed its destination");

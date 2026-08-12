@@ -6,6 +6,7 @@ enum v34_phase4_line_receiver_result
 v34_phase4_line_receiver_init_from_phase3(
 	struct v34_phase4_line_receiver *receiver,
 	const struct v34_phase3_line_handoff *handoff,
+	enum v34_constellation_size phase4_constellation,
 	double adaptation)
 {
 	if (!v34_phase3_line_handoff_is_valid(handoff))
@@ -14,6 +15,6 @@ v34_phase4_line_receiver_init_from_phase3(
 		receiver, &handoff->demodulator,
 		&handoff->phase3.j.equalizer.equalizer,
 		&handoff->transmitting_profile,
-		handoff->phase3.j.detection.sequence.remote_constellation,
+		phase4_constellation,
 		adaptation);
 }

@@ -49,6 +49,8 @@ struct v34_training_transmitter {
 	struct v34_training_line line;
 	struct v34_phase3_transmitter phase3;
 	union v34_training_transmitter_phase4_state phase4;
+	/* Constellation selected for this transmitter by the peer's J. */
+	enum v34_constellation_size phase4_constellation;
 	uint32_t phase4_trn_symbols;
 	enum v34_training_transmitter_stage stage;
 };
@@ -63,11 +65,13 @@ enum v34_training_transmitter_result v34_training_transmitter_init(
 
 /* Continue an exact Phase 3 exchange boundary. A caller must still be sending
  * J; an answerer must have completed J and begins its 128T S plus 16T S-bar.
- * Both inputs are copied and remain unchanged on every result. */
+ * `phase4_constellation` is the selection received in the peer's J. Both
+ * inputs are copied and remain unchanged on every result. */
 enum v34_training_transmitter_result v34_training_transmitter_continue(
 	struct v34_training_transmitter *training,
 	const struct v34_training_line *active_line,
-	const struct v34_phase3_transmitter *phase3);
+	const struct v34_phase3_transmitter *phase3,
+	enum v34_constellation_size phase4_constellation);
 
 bool v34_training_transmitter_is_valid(
 	const struct v34_training_transmitter *training);

@@ -35,6 +35,8 @@ bool v34_training_receiver_is_valid(
 	const struct v34_training_receiver *receiver)
 {
 	if (receiver == NULL ||
+	    !v34_constellation_size_is_valid(
+		    receiver->phase4_constellation) ||
 	    !v34_training_receiver_configuration_is_valid(
 		    &receiver->configuration))
 		return false;
@@ -52,6 +54,8 @@ bool v34_training_receiver_is_valid(
 	case V34_TRAINING_RECEIVER_PHASE4:
 		return v34_phase4_line_receiver_is_valid(
 			       &receiver->state.phase4) &&
+		       receiver->state.phase4.control.mp_receiver.constellation ==
+			       receiver->phase4_constellation &&
 		       receiver->state.phase4.control.adaptation ==
 			       receiver->configuration
 				       .phase4_equalizer_adaptation &&
@@ -81,15 +85,18 @@ enum v34_training_receiver_result v34_training_receiver_init(
 	struct v34_training_receiver *receiver,
 	const struct v34_phase3_profile *transmitting_profile,
 	uint32_t sample_rate,
+	enum v34_constellation_size phase4_constellation,
 	const struct v34_training_receiver_configuration *configuration)
 {
 	struct v34_training_receiver initialized = { 0 };
 	enum v34_phase3_line_receiver_result result;
 
 	if (receiver == NULL ||
+	    !v34_constellation_size_is_valid(phase4_constellation) ||
 	    !v34_training_receiver_configuration_is_valid(configuration))
 		return V34_TRAINING_RECEIVER_INVALID_ARGUMENT;
 	initialized.configuration = *configuration;
+	initialized.phase4_constellation = phase4_constellation;
 	initialized.stage = V34_TRAINING_RECEIVER_PHASE3;
 	result = v34_phase3_line_receiver_init(
 		&initialized.state.phase3, transmitting_profile, sample_rate,
@@ -106,6 +113,7 @@ enum v34_training_receiver_result v34_training_receiver_init(
 enum v34_training_receiver_result v34_training_receiver_continue(
 	struct v34_training_receiver *receiver,
 	const struct v34_phase3_line_handoff *handoff,
+	enum v34_constellation_size phase4_constellation,
 	const struct v34_training_receiver_configuration *configuration)
 {
 	struct v34_training_receiver initialized = {
@@ -113,11 +121,13 @@ enum v34_training_receiver_result v34_training_receiver_continue(
 	};
 
 	if (receiver == NULL || !v34_phase3_line_handoff_is_valid(handoff) ||
+	    !v34_constellation_size_is_valid(phase4_constellation) ||
 	    !v34_training_receiver_configuration_is_valid(configuration))
 		return V34_TRAINING_RECEIVER_INVALID_ARGUMENT;
 	initialized.configuration = *configuration;
+	initialized.phase4_constellation = phase4_constellation;
 	if (v34_phase4_line_receiver_init_from_phase3(
-		    &initialized.state.phase4, handoff,
+		    &initialized.state.phase4, handoff, phase4_constellation,
 		    configuration->phase4_equalizer_adaptation) !=
 		    V34_PHASE4_LINE_RECEIVER_OK ||
 	    !v34_training_receiver_is_valid(&initialized))
@@ -202,6 +212,7 @@ static enum v34_training_receiver_result enter_phase4(
 	struct v34_phase4_line_receiver phase4;
 	struct v34_training_receiver transitioned = {
 		.configuration = receiver->configuration,
+		.phase4_constellation = receiver->phase4_constellation,
 		.stage = V34_TRAINING_RECEIVER_PHASE4,
 	};
 
@@ -209,7 +220,7 @@ static enum v34_training_receiver_result enter_phase4(
 		    &receiver->state.phase3, &handoff) !=
 		    V34_PHASE3_LINE_RECEIVER_OK ||
 	    v34_phase4_line_receiver_init_from_phase3(
-		    &phase4, &handoff,
+		    &phase4, &handoff, receiver->phase4_constellation,
 		    receiver->configuration.phase4_equalizer_adaptation) !=
 		    V34_PHASE4_LINE_RECEIVER_OK) {
 		receiver->state.phase3.failed = true;
