@@ -1640,6 +1640,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/trellis_acquirer.o \
 	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/v23_datapump.o \
+	$(BUILD_DIR)/channel_bench.o \
 	$(BUILD_DIR)/media.o \
 	$(BUILD_DIR)/g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \

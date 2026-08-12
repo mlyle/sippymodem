@@ -11,12 +11,14 @@
 #include <v8_datapump.h>
 #include <v34_datapump.h>
 
+#include "channel_bench.h"
 #include "test.h"
 
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -28,6 +30,7 @@ enum {
 	NEGOTIATED_TRAINING_FRAME_LIMIT = 500,
 	LINK_DRAIN_FRAME_LIMIT = 50,
 	DATA_FRAME_LIMIT = 400,
+	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
 };
 
 struct integration_endpoint {
@@ -601,8 +604,91 @@ static const char *codec_name(enum media_codec codec)
 	return codec == MEDIA_CODEC_PCMU ? "PCMU" : "PCMA";
 }
 
+static bool configure_recording_replay(
+	struct integration_endpoint *endpoint)
+{
+	static const char *const commands[] = {
+		"ATZ\r",
+		"ATE0\r",
+		"ATX3\r",
+		"AT+DS=0,1\r",
+		"AT\\N0\r",
+		"AT+MS=34,0,9600,9600\r",
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(commands); ++index) {
+		int length = (int)strlen(commands[index]);
+
+		endpoint->output_count = 0;
+		if (modem_write(endpoint->modem, commands[index], length) !=
+			    length ||
+		    !endpoint_drain(endpoint) ||
+		    !output_contains(endpoint, "OK"))
+			return false;
+	}
+	endpoint->output_count = 0;
+	return true;
+}
+
+static bool run_v34_recording_replay(const char *path)
+{
+	static const char dial_command[] = "ATDrecording\r";
+	struct channel_bench_recording recording = { 0 };
+	struct datapumps datapumps = { 0 };
+	struct integration_endpoint endpoint;
+	size_t connected_at = SIZE_MAX;
+	bool passed = false;
+
+	CHECK(channel_bench_recording_load(
+		      path, REPLAY_MAX_SAMPLES, &recording) ==
+		      CHANNEL_BENCH_OK,
+	      "optional V.34 recording could not be loaded");
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
+		      endpoint_init(&endpoint, "V.34 recording replay"),
+	      "V.34 recording replay did not initialize");
+	CHECK(configure_recording_replay(&endpoint),
+	      "V.34 recording replay setup was rejected");
+	CHECK(modem_write(
+		      endpoint.modem, dial_command,
+		      (int)(sizeof(dial_command) - 1u)) ==
+		      (int)(sizeof(dial_command) - 1u) &&
+		      modem_report_outgoing_call_connected(endpoint.modem) == 0,
+	      "V.34 recording replay did not start the call");
+	for (size_t offset = 0; offset < recording.count;) {
+		size_t count = recording.count - offset;
+
+		if (count > SIP_FRAME_SAMPLES)
+			count = SIP_FRAME_SAMPLES;
+		memcpy(endpoint.receive, recording.samples + offset,
+		       count * sizeof(*endpoint.receive));
+		modem_process(
+			endpoint.modem, endpoint.receive, endpoint.transmit,
+			(int)count);
+		offset += count;
+		CHECK(endpoint_drain(&endpoint),
+		      "V.34 recording replay terminal output overflowed");
+		if (connected_at == SIZE_MAX &&
+		    modem_is_online(endpoint.modem, DP_V34))
+			connected_at = offset;
+	}
+	passed = connected_at != SIZE_MAX;
+	CHECK(passed,
+	      "V.34 recording did not reproduce carrier acquisition");
+	fprintf(stderr,
+		"[       OK ] V.34 recording replay (%zu samples, carrier at %zu, terminal bytes %zu)\n",
+		recording.count, connected_at, endpoint.output_count);
+
+	endpoint_destroy(&endpoint);
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "V.34 recording replay registrations remained busy");
+	channel_bench_recording_release(&recording);
+	return true;
+}
+
 int main(void)
 {
+	const char *recording_path =
+		getenv("V34_REPLAY_RX_PCM");
 	static const struct modem_test_case test_cases[] = {
 		{
 			.id = DP_V21,
@@ -814,6 +900,12 @@ int main(void)
 				"[       OK ] Baudot %s over %s SIP media\n",
 				rate_name, codec_name(codecs[codec]));
 		}
+	}
+	if (recording_path == NULL || recording_path[0] == '\0') {
+		fprintf(stderr,
+			"[  SKIPPED ] V.34 recording replay (V34_REPLAY_RX_PCM unset)\n");
+	} else if (!run_v34_recording_replay(recording_path)) {
+		return 1;
 	}
 	return 0;
 }
