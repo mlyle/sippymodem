@@ -90,12 +90,9 @@ enum v90_phase3_sd_result v90_phase3_sd_next(
 	if (sequence->emitted_symbols == sequence->total_symbols)
 		return V90_PHASE3_SD_COMPLETE;
 	symbol_values(sequence, &generated.ucode, &generated.positive);
-	if (!g711_ucode_octet(
-		    sequence->law, generated.ucode, generated.positive,
-		    &generated.octet) ||
-	    !g711_ucode_sample(
-		    sequence->law, generated.ucode, generated.positive,
-		    &generated.sample))
+	if (!v90_pcm_symbol_make(
+		    &generated, sequence->law, generated.ucode,
+		    generated.positive))
 		return V90_PHASE3_SD_INVALID_STATE;
 	*symbol = generated;
 	sequence->emitted_symbols++;

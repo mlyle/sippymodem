@@ -157,7 +157,9 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_pcm_symbol.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_signs.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_info0_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_ranging.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_initial_probe.c \

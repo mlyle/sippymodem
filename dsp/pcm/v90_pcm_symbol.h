@@ -17,4 +17,8 @@ struct v90_pcm_symbol {
 	int16_t sample;
 };
 
+bool v90_pcm_symbol_make(
+	struct v90_pcm_symbol *symbol, enum g711_law law,
+	uint8_t ucode, bool positive);
+
 #endif
