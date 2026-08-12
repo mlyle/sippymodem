@@ -5,6 +5,7 @@
 
 #include "v34_power_calibration.h"
 #include "v34_preemphasis.h"
+#include "v34_training_line.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,6 +41,19 @@ v34_data_line_transmitter_init(
 	const struct v34_power_normalizer *normalizer,
 	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate, int16_t nominal_peak_amplitude);
+
+/* Continue a compatible active training line into normalized data. The
+ * carrier clock, active pulses, pre-emphasis history, output gain, and sample
+ * count are retained. A separate point gain gives newly accepted data symbols
+ * their calibrated steady-state level without rescaling training tails. */
+enum v34_data_line_transmitter_result
+v34_data_line_transmitter_continue(
+	struct v34_data_line_transmitter *transmitter,
+	const struct v34_training_line *active_line,
+	const struct v34_frame_schedule *calibration_schedule,
+	const struct v34_scrambler *calibration_scrambler,
+	const struct v34_4d_encoder *calibration_encoder,
+	const struct v34_power_normalizer *normalizer);
 
 bool v34_data_line_transmitter_is_valid(
 	const struct v34_data_line_transmitter *transmitter);

@@ -356,6 +356,147 @@ static bool test_line_output(void)
 	return true;
 }
 
+static bool advance_training_line(struct v34_training_line *line)
+{
+	uint32_t accepted_points = 0;
+
+	for (size_t sample_index = 0; sample_index < 128u; ++sample_index) {
+		struct qam_point point =
+			v34_rotated_point_zero((int)(accepted_points & 3u));
+		const struct qam_point *point_pointer =
+			v34_training_line_needs_point(line) ? &point : NULL;
+		int16_t ignored;
+		bool accepted;
+
+		if (v34_training_line_sample(
+			    line, point_pointer, &ignored, &accepted) !=
+			    V34_TRAINING_LINE_OK ||
+		    accepted != (point_pointer != NULL))
+			return false;
+		accepted_points += accepted;
+	}
+	if (v34_training_line_needs_point(line)) {
+		struct qam_point point =
+			v34_rotated_point_zero((int)(accepted_points & 3u));
+		int16_t ignored;
+		bool accepted;
+
+		if (v34_training_line_sample(
+			    line, &point, &ignored, &accepted) !=
+			    V34_TRAINING_LINE_OK ||
+		    !accepted)
+			return false;
+	}
+	return !v34_training_line_needs_point(line);
+}
+
+static bool test_active_line_handoff(void)
+{
+	static const struct qam_point ZERO = { 0 };
+	struct carrier_fixture fixture;
+	struct v34_training_line training;
+	struct v34_training_line training_before;
+	struct v34_data_line_transmitter standalone;
+	struct v34_data_line_transmitter continued;
+	struct v34_data_points points;
+	struct qam_modulator model_carrier;
+	struct v34_preemphasis model_filter;
+	double expected_point_gain;
+	bool retained_tail_seen = false;
+	bool data_point_accepted = false;
+
+	CHECK(initialize_fixture(&fixture) &&
+	      v34_training_line_init(
+		      &training, &fixture.profile, 8000, 4000) ==
+		      V34_TRAINING_LINE_OK &&
+	      advance_training_line(&training) &&
+	      v34_data_line_transmitter_init(
+		      &standalone, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
+		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
+	      "active-line fixture did not initialize");
+	training_before = training;
+	expected_point_gain = standalone.output_gain / training.output_gain;
+	CHECK(expected_point_gain > 0.0 &&
+	      fabs(expected_point_gain - 1.0) > 0.01 &&
+	      v34_data_line_transmitter_continue(
+		      &continued, &training, &fixture.schedule,
+		      &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer) == V34_DATA_LINE_TRANSMITTER_OK &&
+	      memcmp(&training, &training_before, sizeof(training)) == 0 &&
+	      continued.output_gain == training.output_gain &&
+	      continued.carrier.point_gain == expected_point_gain &&
+	      fabs(continued.output_gain * continued.carrier.point_gain -
+		   standalone.output_gain) < 1e-12 &&
+	      continued.target_rms == training.target_rms &&
+	      continued.generated_samples == training.generated_samples &&
+	      memcmp(&continued.preemphasis, &training.preemphasis,
+		     sizeof(training.preemphasis)) == 0 &&
+	      continued.carrier.modulator.carrier_phase ==
+		      training.carrier.carrier_phase &&
+	      continued.carrier.modulator.symbol_phase_units ==
+		      training.carrier.symbol_phase_units &&
+	      continued.carrier.modulator.active_count ==
+		      training.carrier.active_count &&
+	      memcmp(continued.carrier.modulator.active,
+		     training.carrier.active,
+		     sizeof(training.carrier.active)) == 0,
+	      "data line did not preserve the active training waveform");
+	points = fixture.points;
+	model_carrier = continued.carrier.modulator;
+	model_filter = training.preemphasis;
+	for (size_t sample_index = 0;
+	     sample_index < 32u && !data_point_accepted; ++sample_index) {
+		struct qam_point point;
+		struct qam_point scaled;
+		const struct qam_point *point_pointer = NULL;
+		const struct qam_point *model_pointer = &ZERO;
+		double carrier_sample;
+		double filtered_sample;
+		long expected_sample;
+		int16_t actual_sample;
+		bool expected_accepted;
+		bool actual_accepted;
+
+		if (v34_data_line_transmitter_needs_point(&continued)) {
+			CHECK(v34_data_points_next(&points, &point) ==
+				      V34_DATA_POINTS_OK,
+			      "continued line did not obtain a data point");
+			point_pointer = &point;
+			scaled = (struct qam_point){
+				.in_phase = point.in_phase * expected_point_gain,
+				.quadrature = point.quadrature * expected_point_gain,
+			};
+			model_pointer = &scaled;
+		}
+		CHECK(qam_modulator_sample_f64(
+			      &model_carrier, model_pointer, &carrier_sample,
+			      &expected_accepted) == QAM_OK &&
+		      v34_preemphasis_sample(
+			      &model_filter, carrier_sample, &filtered_sample) ==
+			      V34_PREEMPHASIS_OK,
+		      "continued line model failed at sample %zu", sample_index);
+		expected_sample = lround(filtered_sample * training.output_gain);
+		CHECK(expected_sample >= INT16_MIN &&
+		      expected_sample <= INT16_MAX &&
+		      v34_data_line_transmitter_sample(
+			      &continued, point_pointer, &actual_sample,
+			      &actual_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
+		      actual_sample == expected_sample &&
+		      actual_accepted == expected_accepted &&
+		      memcmp(&continued.carrier.modulator, &model_carrier,
+			     sizeof(model_carrier)) == 0 &&
+		      memcmp(&continued.preemphasis, &model_filter,
+			     sizeof(model_filter)) == 0,
+		      "continued line diverged at sample %zu", sample_index);
+		retained_tail_seen |= point_pointer == NULL && actual_sample != 0;
+		data_point_accepted |= actual_accepted;
+	}
+	CHECK(retained_tail_seen && data_point_accepted,
+	      "continued line lost its training tail or first data point");
+	return true;
+}
+
 static bool test_line_power_reduction(void)
 {
 	struct carrier_fixture fixture;
@@ -490,6 +631,8 @@ static bool test_transactional_validation(void)
 	struct v34_data_carrier carrier_before;
 	struct v34_data_line_transmitter line;
 	struct v34_data_line_transmitter line_before;
+	struct v34_training_line training;
+	struct v34_training_line invalid_training;
 	struct v34_phase3_profile limited_profile;
 	struct v34_frame_geometry other_geometry;
 	struct qam_point point = { 0.1, -0.2 };
@@ -626,6 +769,12 @@ static bool test_transactional_validation(void)
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
 		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
 	      "valid line did not initialize");
+	CHECK(v34_training_line_init(
+		      &training, &fixture.profile, 8000, 4000) ==
+		      V34_TRAINING_LINE_OK,
+	      "line-continuation fixture did not initialize");
+	invalid_training = training;
+	invalid_training.generated_samples++;
 	line_before = line;
 	CHECK(!v34_data_line_transmitter_is_valid(NULL) &&
 	      !v34_data_line_transmitter_needs_point(NULL) &&
@@ -644,6 +793,21 @@ static bool test_transactional_validation(void)
 	      memcmp(&line, &line_before, sizeof(line)) == 0 &&
 	      line_sample == 1234 && accepted,
 	      "invalid line point changed state or output");
+	CHECK(v34_data_line_transmitter_continue(
+		      NULL, &training, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer) ==
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_continue(
+		      &line, NULL, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer) ==
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_data_line_transmitter_continue(
+		      &line, &invalid_training, &fixture.schedule,
+		      &fixture.scrambler, &fixture.encoder,
+		      &fixture.normalizer) ==
+		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&line, &line_before, sizeof(line)) == 0,
+	      "invalid line continuation changed its destination");
 	CHECK(v34_data_line_transmitter_sample(
 		      &line, &point, &line_sample, &accepted) ==
 		      V34_DATA_LINE_TRANSMITTER_OK && accepted,
@@ -714,6 +878,7 @@ int main(void)
 		{ "carrier point stream", test_carrier_point_stream },
 		{ "active carrier handoff", test_active_carrier_handoff },
 		{ "line output", test_line_output },
+		{ "active line handoff", test_active_line_handoff },
 		{ "line power reduction", test_line_power_reduction },
 		{ "all carrier profiles", test_all_carrier_profiles },
 		{ "transactional validation", test_transactional_validation },
