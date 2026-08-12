@@ -40,6 +40,8 @@ static bool remote_probe_state_is_valid(const struct v90_phase2 *phase2)
 		return false;
 	if (phase2->stage == V90_PHASE2_RANGING)
 		return !phase2->remote_probe_stored;
+	if (phase2->stage == V90_PHASE2_INFO1)
+		return phase2->remote_probe_stored;
 	if (phase2->local_role == V90_ANALOG_MODEM)
 		return phase2->stage == V90_PHASE2_RECIPROCAL_PROBE ||
 		       !phase2->remote_probe_stored;
@@ -61,6 +63,10 @@ static enum v90_modem_role child_role(const struct v90_phase2 *phase2)
 	case V90_PHASE2_RECIPROCAL_PROBE:
 		return phase2->state.reciprocal_probe.turnaround.initial_probe
 			.ranging.info0_exchange.local_role;
+	case V90_PHASE2_INFO1:
+		return phase2->state.info1.control.signal_role ==
+			       PHASE2_SIGNAL_A ?
+			       V90_ANALOG_MODEM : V90_DIGITAL_MODEM;
 	}
 	return (enum v90_modem_role)-1;
 }
@@ -108,8 +114,37 @@ static enum v90_phase2_failure active_failure(
 			return V90_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 		}
 		break;
+	case V90_PHASE2_INFO1:
+		return phase2->state.info1.control.failure ==
+			       PHASE2_INFO1_PEER_TIMEOUT ?
+			       V90_PHASE2_FAILURE_INFO1_TIMEOUT :
+			       V90_PHASE2_FAILURE_NONE;
 	}
 	return V90_PHASE2_FAILURE_INTERNAL;
+}
+
+static bool local_info1_is_valid(const struct v90_phase2 *phase2)
+{
+	bool expected;
+
+	if (phase2->stage != V90_PHASE2_INFO1)
+		return !phase2->local_info1_stored;
+	if (phase2->local_role == V90_DIGITAL_MODEM)
+		expected = true;
+	else
+		expected = phase2->state.info1.control.phase ==
+				   PHASE2_INFO1_TRANSMITTING ||
+			   phase2->state.info1.control.phase ==
+				   PHASE2_INFO1_CARRIER_TAIL ||
+			   phase2->state.info1.control.phase ==
+				   PHASE2_INFO1_COMPLETE;
+	if (phase2->local_info1_stored != expected)
+		return false;
+	if (!expected)
+		return true;
+	return phase2->local_role == V90_DIGITAL_MODEM ?
+		       v34_info1c_is_valid(&phase2->local_info1.info1d) :
+		       v90_info1a_is_valid(&phase2->local_info1.info1a);
 }
 
 bool v90_phase2_is_valid(const struct v90_phase2 *phase2)
@@ -121,6 +156,7 @@ bool v90_phase2_is_valid(const struct v90_phase2 *phase2)
 	    !failure_is_valid(phase2->failure) ||
 	    !local_info0_is_valid(phase2) || !peer_info0_is_valid(phase2) ||
 	    !remote_probe_state_is_valid(phase2) ||
+	    !local_info1_is_valid(phase2) ||
 	    (phase2->stage != V90_PHASE2_RANGING &&
 	     !phase2->peer_info0_stored))
 		return false;
@@ -140,6 +176,11 @@ bool v90_phase2_is_valid(const struct v90_phase2 *phase2)
 	case V90_PHASE2_RECIPROCAL_PROBE:
 		child_valid = v90_phase2_reciprocal_probe_is_valid(
 			&phase2->state.reciprocal_probe);
+		break;
+	case V90_PHASE2_INFO1:
+		child_valid = phase2->peer_info0_stored &&
+			      phase2->remote_probe_stored &&
+			      v90_phase2_info1_is_valid(&phase2->state.info1);
 		break;
 	default:
 		return false;
@@ -174,6 +215,20 @@ static bool ready_for_info1(const struct v90_phase2 *phase2)
 bool v90_phase2_is_ready_for_info1(const struct v90_phase2 *phase2)
 {
 	return v90_phase2_is_valid(phase2) && ready_for_info1(phase2);
+}
+
+static bool ready_for_phase3(const struct v90_phase2 *phase2)
+{
+	return phase2->failure == V90_PHASE2_FAILURE_NONE &&
+	       phase2->stage == V90_PHASE2_INFO1 &&
+	       phase2->state.info1.control.phase == PHASE2_INFO1_COMPLETE &&
+	       phase2->state.info1.peer_record_received &&
+	       phase2->local_info1_stored;
+}
+
+bool v90_phase2_is_ready_for_phase3(const struct v90_phase2 *phase2)
+{
+	return v90_phase2_is_valid(phase2) && ready_for_phase3(phase2);
 }
 
 enum v90_phase2_result v90_phase2_init_analog(
@@ -242,6 +297,113 @@ enum v90_phase2_result v90_phase2_peer_info0d(
 	    !phase2->peer_info0_stored)
 		return V90_PHASE2_INVALID_STATE;
 	*peer_info0d = phase2->peer_info0.digital;
+	return V90_PHASE2_OK;
+}
+
+enum v90_phase2_result v90_phase2_start_digital_info1(
+	struct v90_phase2 *phase2, const struct v34_info1c *local_info1d)
+{
+	struct v90_phase2_info1_exchange exchange;
+	struct v90_phase2 next;
+
+	if (!v90_phase2_is_valid(phase2) ||
+	    !v34_info1c_is_valid(local_info1d))
+		return V90_PHASE2_INVALID_ARGUMENT;
+	if (phase2->local_role != V90_DIGITAL_MODEM ||
+	    !ready_for_info1(phase2))
+		return V90_PHASE2_INVALID_STATE;
+	if (v90_phase2_info1_init_digital(
+		    &exchange, &phase2->state.reciprocal_probe,
+		    local_info1d) != PHASE2_INFO1_OK)
+		return V90_PHASE2_INVALID_STATE;
+	next = *phase2;
+	next.state.info1 = exchange;
+	next.local_info1.info1d = *local_info1d;
+	next.local_info1_stored = true;
+	next.stage = V90_PHASE2_INFO1;
+	if (!v90_phase2_is_valid(&next))
+		return V90_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return V90_PHASE2_OK;
+}
+
+enum v90_phase2_result v90_phase2_start_analog_info1(
+	struct v90_phase2 *phase2)
+{
+	struct v90_phase2_info1_exchange exchange;
+	struct v90_phase2 next;
+
+	if (!v90_phase2_is_valid(phase2))
+		return V90_PHASE2_INVALID_ARGUMENT;
+	if (phase2->local_role != V90_ANALOG_MODEM ||
+	    !ready_for_info1(phase2))
+		return V90_PHASE2_INVALID_STATE;
+	if (v90_phase2_info1_init_analog(
+		    &exchange, &phase2->state.reciprocal_probe) !=
+	    PHASE2_INFO1_OK)
+		return V90_PHASE2_INVALID_STATE;
+	next = *phase2;
+	next.state.info1 = exchange;
+	next.local_info1 = (union v90_info1_record){ 0 };
+	next.local_info1_stored = false;
+	next.stage = V90_PHASE2_INFO1;
+	if (!v90_phase2_is_valid(&next))
+		return V90_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return V90_PHASE2_OK;
+}
+
+enum v90_phase2_result v90_phase2_reply_analog(
+	struct v90_phase2 *phase2, const struct v90_info1a *local_info1a)
+{
+	struct v90_phase2 next;
+
+	if (!v90_phase2_is_valid(phase2) ||
+	    !v90_info1a_is_valid(local_info1a))
+		return V90_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != V90_PHASE2_FAILURE_NONE ||
+	    phase2->stage != V90_PHASE2_INFO1 ||
+	    phase2->local_role != V90_ANALOG_MODEM ||
+	    phase2->state.info1.control.phase !=
+		    PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED)
+		return V90_PHASE2_INVALID_STATE;
+	next = *phase2;
+	if (v90_phase2_info1_reply_analog(
+		    &next.state.info1, local_info1a) != PHASE2_INFO1_OK)
+		return V90_PHASE2_INVALID_STATE;
+	next.local_info1.info1a = *local_info1a;
+	next.local_info1_stored = true;
+	if (!v90_phase2_is_valid(&next))
+		return V90_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return V90_PHASE2_OK;
+}
+
+enum v90_phase2_result v90_phase2_peer_info1d(
+	const struct v90_phase2 *phase2, struct v34_info1c *peer_info1d)
+{
+	if (!v90_phase2_is_valid(phase2) || peer_info1d == NULL)
+		return V90_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != V90_PHASE2_FAILURE_NONE ||
+	    phase2->stage != V90_PHASE2_INFO1 ||
+	    phase2->local_role != V90_ANALOG_MODEM ||
+	    !phase2->state.info1.peer_record_received)
+		return V90_PHASE2_INVALID_STATE;
+	*peer_info1d = phase2->state.info1.peer_record.info1d;
+	return V90_PHASE2_OK;
+}
+
+enum v90_phase2_result v90_phase2_peer_info1a(
+	const struct v90_phase2 *phase2, struct v90_info1a *peer_info1a)
+{
+	if (!v90_phase2_is_valid(phase2) || peer_info1a == NULL)
+		return V90_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != V90_PHASE2_FAILURE_NONE ||
+	    phase2->stage != V90_PHASE2_INFO1 ||
+	    phase2->local_role != V90_DIGITAL_MODEM ||
+	    !phase2->state.info1.peer_record_received)
+		return V90_PHASE2_INVALID_STATE;
+	*peer_info1a = phase2->state.info1.peer_record.info1a;
 	return V90_PHASE2_OK;
 }
 
@@ -453,6 +615,43 @@ static bool sample_reciprocal_probe(
 	return false;
 }
 
+static bool sample_info1(
+	struct v90_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct v90_phase2_event *event)
+{
+	struct v90_phase2_info1_event child;
+
+	if (v90_phase2_info1_sample(
+		    &phase2->state.info1, received_sample,
+		    transmit_sample, &child) != PHASE2_INFO1_OK)
+		return false;
+	switch (child.kind) {
+	case V90_PHASE2_INFO1_EVENT_NONE:
+		return true;
+	case V90_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT:
+		event->kind = V90_PHASE2_EVENT_LOCAL_INFO1D_SENT;
+		return true;
+	case V90_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED:
+		event->kind = V90_PHASE2_EVENT_PEER_INFO1D_RECEIVED;
+		return true;
+	case V90_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT:
+		event->kind = V90_PHASE2_EVENT_LOCAL_INFO1A_SENT;
+		return true;
+	case V90_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED:
+		event->kind = V90_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
+		return true;
+	case V90_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
+		event->kind = V90_PHASE2_EVENT_PEER_INFO1_REJECTED;
+		return true;
+	case V90_PHASE2_INFO1_EVENT_FAILED:
+		phase2->failure = V90_PHASE2_FAILURE_INFO1_TIMEOUT;
+		event->kind = V90_PHASE2_EVENT_FAILED;
+		event->failure = phase2->failure;
+		return true;
+	}
+	return false;
+}
+
 enum v90_phase2_result v90_phase2_sample(
 	struct v90_phase2 *phase2, int16_t received_sample,
 	int16_t *transmit_sample, struct v90_phase2_event *event)
@@ -486,6 +685,10 @@ enum v90_phase2_result v90_phase2_sample(
 		accepted = sample_reciprocal_probe(
 			phase2, received_sample, &generated, &emitted);
 		break;
+	case V90_PHASE2_INFO1:
+		accepted = sample_info1(
+			phase2, received_sample, &generated, &emitted);
+		break;
 	default:
 		return V90_PHASE2_INVALID_ARGUMENT;
 	}
@@ -505,7 +708,7 @@ enum v90_phase2_result v90_phase2_measure_remote_probe(
 {
 	if (!v90_phase2_is_valid(phase2) || measurement == NULL)
 		return V90_PHASE2_INVALID_ARGUMENT;
-	if (!ready_for_info1(phase2))
+	if (!ready_for_info1(phase2) && phase2->stage != V90_PHASE2_INFO1)
 		return V90_PHASE2_INVALID_STATE;
 	*measurement = phase2->remote_probe;
 	return V90_PHASE2_OK;
@@ -539,6 +742,8 @@ const char *v90_phase2_failure_name(enum v90_phase2_failure failure)
 		return "remote tone timeout";
 	case V90_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT:
 		return "remote reversal timeout";
+	case V90_PHASE2_FAILURE_INFO1_TIMEOUT:
+		return "INFO1 timeout";
 	case V90_PHASE2_FAILURE_INTERNAL:
 		return "internal failure";
 	}
