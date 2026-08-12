@@ -1,0 +1,191 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "v34_phase2_selection.h"
+
+#include <stddef.h>
+
+static bool receiver_supports_rate(
+	const struct v34_info0 *receiver, enum v34_symbol_rate rate)
+{
+	switch (rate) {
+	case V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_3200:
+		return true;
+	case V34_SYMBOL_RATE_2743:
+		return receiver->symbol_rate_2743_supported;
+	case V34_SYMBOL_RATE_2800:
+		return receiver->symbol_rate_2800_supported;
+	case V34_SYMBOL_RATE_3429:
+		return receiver->symbol_rate_3429_supported;
+	case V34_SYMBOL_RATE_COUNT:
+		break;
+	}
+	return false;
+}
+
+static bool transmitter_supports_rate(
+	const struct v34_info0 *transmitter, enum v34_symbol_rate rate,
+	bool high_carrier)
+{
+	switch (rate) {
+	case V34_SYMBOL_RATE_2400:
+		return true;
+	case V34_SYMBOL_RATE_2743:
+		return transmitter->symbol_rate_2743_supported;
+	case V34_SYMBOL_RATE_2800:
+		return transmitter->symbol_rate_2800_supported;
+	case V34_SYMBOL_RATE_3000:
+		return high_carrier ?
+			transmitter->high_carrier_3000_supported :
+			transmitter->low_carrier_3000_supported;
+	case V34_SYMBOL_RATE_3200:
+		return high_carrier ?
+			transmitter->high_carrier_3200_supported :
+			transmitter->low_carrier_3200_supported;
+	case V34_SYMBOL_RATE_3429:
+		return transmitter->symbol_rate_3429_supported &&
+		       transmitter->symbol_rate_3429_transmit_permitted;
+	case V34_SYMBOL_RATE_COUNT:
+		break;
+	}
+	return false;
+}
+
+static bool power_request_is_consistent(
+	const struct v34_info1_common *request,
+	const struct v34_info0 *transmitter)
+{
+	return transmitter->transmit_power_reduction_supported ||
+	       (request->minimum_peer_power_reduction_db == 0 &&
+		request->additional_peer_power_reduction_db == 0);
+}
+
+static bool probe_result_is_consistent(
+	const struct v34_info1_probe_result *probe,
+	enum v34_symbol_rate rate, const struct v34_info0 *transmitter,
+	const struct v34_info0 *receiver)
+{
+	if (probe->projected_data_rate_2400_bps_units == 0)
+		return true;
+	return transmitter_supports_rate(
+		       transmitter, rate, probe->high_carrier) &&
+	       receiver_supports_rate(receiver, rate) &&
+	       (probe->projected_data_rate_2400_bps_units <= 12 ||
+		transmitter->constellation_1664_supported);
+}
+
+bool v34_phase2_info1c_is_consistent(
+	const struct v34_info0 *caller_info0,
+	const struct v34_info0 *answerer_info0,
+	const struct v34_info1c *info1c)
+{
+	if (!v34_info0_is_valid(caller_info0) ||
+	    !v34_info0_is_valid(answerer_info0) ||
+	    !v34_info1c_is_valid(info1c) ||
+	    !power_request_is_consistent(
+		    &info1c->common, answerer_info0))
+		return false;
+	for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT;
+	     ++index) {
+		if (!probe_result_is_consistent(
+			    &info1c->answer_transmit[index],
+			    (enum v34_symbol_rate)index, answerer_info0,
+			    caller_info0))
+			return false;
+	}
+	return true;
+}
+
+static unsigned int symbol_rate_difference(
+	enum v34_symbol_rate first, enum v34_symbol_rate second)
+{
+	return first > second ? (unsigned int)first - (unsigned int)second :
+				(unsigned int)second - (unsigned int)first;
+}
+
+bool v34_phase2_info1a_is_consistent(
+	const struct v34_info0 *caller_info0,
+	const struct v34_info0 *answerer_info0,
+	const struct v34_info1c *info1c,
+	const struct v34_info1a *info1a)
+{
+	const struct v34_info1_probe_result *answer_transmit;
+	unsigned int rate_difference;
+
+	if (!v34_phase2_info1c_is_consistent(
+		    caller_info0, answerer_info0, info1c) ||
+	    !v34_info1a_is_valid(info1a) ||
+	    !power_request_is_consistent(
+		    &info1a->common, caller_info0))
+		return false;
+	answer_transmit =
+		&info1c->answer_transmit[
+			info1a->answer_to_call_symbol_rate];
+	if (answer_transmit->projected_data_rate_2400_bps_units == 0 ||
+	    info1a->call_transmit.projected_data_rate_2400_bps_units == 0 ||
+	    !probe_result_is_consistent(
+		    &info1a->call_transmit,
+		    info1a->call_to_answer_symbol_rate,
+		    caller_info0, answerer_info0))
+		return false;
+	rate_difference = symbol_rate_difference(
+		info1a->answer_to_call_symbol_rate,
+		info1a->call_to_answer_symbol_rate);
+	return rate_difference <=
+		       caller_info0->maximum_symbol_rate_difference_steps &&
+	       rate_difference <=
+		       answerer_info0->maximum_symbol_rate_difference_steps;
+}
+
+enum v34_phase2_selection_result v34_phase2_select_profiles(
+	const struct v34_info0 *caller_info0,
+	const struct v34_info0 *answerer_info0,
+	const struct v34_info1c *info1c,
+	const struct v34_info1a *info1a,
+	struct v34_phase3_profile *caller_transmit,
+	struct v34_phase3_profile *answerer_transmit)
+{
+	struct v34_phase3_profile selected_caller;
+	struct v34_phase3_profile selected_answerer;
+
+	if (caller_transmit == NULL || answerer_transmit == NULL ||
+	    caller_transmit == answerer_transmit ||
+	    !v34_info0_is_valid(caller_info0) ||
+	    !v34_info0_is_valid(answerer_info0) ||
+	    !v34_info1c_is_valid(info1c) ||
+	    !v34_info1a_is_valid(info1a))
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	if (!v34_phase2_info1c_is_consistent(
+		    caller_info0, answerer_info0, info1c))
+		return V34_PHASE2_SELECTION_INCONSISTENT_INFO1C;
+	if (!v34_phase2_info1a_is_consistent(
+		    caller_info0, answerer_info0, info1c, info1a))
+		return V34_PHASE2_SELECTION_INCONSISTENT_INFO1A;
+	if (v34_phase3_caller_profile(
+		    &selected_caller, info1c, info1a) !=
+		    V34_PHASE3_PROFILE_OK ||
+	    v34_phase3_answerer_profile(
+		    &selected_answerer, info1a, info1c) !=
+		    V34_PHASE3_PROFILE_OK)
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	*caller_transmit = selected_caller;
+	*answerer_transmit = selected_answerer;
+	return V34_PHASE2_SELECTION_OK;
+}
+
+const char *v34_phase2_selection_result_name(
+	enum v34_phase2_selection_result result)
+{
+	switch (result) {
+	case V34_PHASE2_SELECTION_OK:
+		return "ok";
+	case V34_PHASE2_SELECTION_INVALID_ARGUMENT:
+		return "invalid argument";
+	case V34_PHASE2_SELECTION_INCONSISTENT_INFO1C:
+		return "inconsistent INFO1c";
+	case V34_PHASE2_SELECTION_INCONSISTENT_INFO1A:
+		return "inconsistent INFO1a";
+	}
+	return "unknown";
+}

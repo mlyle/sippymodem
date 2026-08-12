@@ -173,6 +173,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_symbol_power.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_trellis.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase2_selection.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_dpsk.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_initial_probe.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_info0_exchange.c \
