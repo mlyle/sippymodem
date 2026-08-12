@@ -177,6 +177,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sign_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_signs.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase4_ri.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_info0_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_ranging.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_initial_probe.c \
