@@ -20,6 +20,112 @@ struct owned_pair {
 	struct v34_phase2 answerer;
 };
 
+static struct v34_info1c caller_info1c(void)
+{
+	struct v34_info1c info1c = {
+		.common = {
+			.local_md_length_35_ms_units = 2,
+			.frequency_offset_1_50_hz_units = -10,
+		},
+	};
+
+	info1c.answer_transmit[V34_SYMBOL_RATE_3200] =
+		(struct v34_info1_probe_result){
+			.high_carrier = true,
+			.preemphasis_filter_index = 3,
+			.projected_data_rate_2400_bps_units = 10,
+		};
+	return info1c;
+}
+
+static struct v34_info1a answerer_info1a(void)
+{
+	return (struct v34_info1a){
+		.common = {
+			.local_md_length_35_ms_units = 3,
+			.frequency_offset_1_50_hz_units = 11,
+		},
+		.call_transmit = {
+			.preemphasis_filter_index = 4,
+			.projected_data_rate_2400_bps_units = 9,
+		},
+		.answer_to_call_symbol_rate = V34_SYMBOL_RATE_3200,
+		.call_to_answer_symbol_rate = V34_SYMBOL_RATE_3000,
+	};
+}
+
+static bool info0_equal(
+	const struct v34_info0 *first, const struct v34_info0 *second)
+{
+	uint8_t first_payload[V34_INFO0_PAYLOAD_BYTES];
+	uint8_t second_payload[V34_INFO0_PAYLOAD_BYTES];
+
+	return v34_info0_encode(
+		       first, first_payload, sizeof(first_payload)) ==
+		       V34_INFO0_OK &&
+	       v34_info0_encode(
+		       second, second_payload, sizeof(second_payload)) ==
+		       V34_INFO0_OK &&
+	       memcmp(first_payload, second_payload,
+		      sizeof(first_payload)) == 0;
+}
+
+static bool info1c_equal(
+	const struct v34_info1c *first, const struct v34_info1c *second)
+{
+	uint8_t first_payload[V34_INFO1C_PAYLOAD_BYTES];
+	uint8_t second_payload[V34_INFO1C_PAYLOAD_BYTES];
+
+	return v34_info1c_encode(
+		       first, first_payload, sizeof(first_payload)) ==
+		       V34_INFO1_OK &&
+	       v34_info1c_encode(
+		       second, second_payload, sizeof(second_payload)) ==
+		       V34_INFO1_OK &&
+	       memcmp(first_payload, second_payload,
+		      sizeof(first_payload)) == 0;
+}
+
+static bool info1a_equal(
+	const struct v34_info1a *first, const struct v34_info1a *second)
+{
+	uint8_t first_payload[V34_INFO1A_PAYLOAD_BYTES];
+	uint8_t second_payload[V34_INFO1A_PAYLOAD_BYTES];
+
+	return v34_info1a_encode(
+		       first, first_payload, sizeof(first_payload)) ==
+		       V34_INFO1_OK &&
+	       v34_info1a_encode(
+		       second, second_payload, sizeof(second_payload)) ==
+		       V34_INFO1_OK &&
+	       memcmp(first_payload, second_payload,
+		      sizeof(first_payload)) == 0;
+}
+
+static bool profiles_equal(
+	const struct v34_phase3_profile *first,
+	const struct v34_phase3_profile *second)
+{
+	return first->symbol_rate_numerator == second->symbol_rate_numerator &&
+	       first->symbol_rate_denominator == second->symbol_rate_denominator &&
+	       first->carrier_frequency_numerator ==
+		       second->carrier_frequency_numerator &&
+	       first->carrier_frequency_denominator ==
+		       second->carrier_frequency_denominator &&
+	       first->md_symbol_count == second->md_symbol_count &&
+	       first->symbol_rate == second->symbol_rate &&
+	       first->local_role == second->local_role &&
+	       first->transmit_power_reduction_db ==
+		       second->transmit_power_reduction_db &&
+	       first->preemphasis_filter_index ==
+		       second->preemphasis_filter_index &&
+	       first->projected_data_rate_2400_bps_units ==
+		       second->projected_data_rate_2400_bps_units &&
+	       first->md_length_35_ms_units ==
+		       second->md_length_35_ms_units &&
+	       first->high_carrier == second->high_carrier;
+}
+
 static bool pair_init(
 	struct owned_pair *pair, enum test_codec codec,
 	size_t delay_samples)
@@ -105,12 +211,33 @@ static bool check_timeline(
 		(UINT32_C(1) << V34_PHASE2_EVENT_PROBE_TURNAROUND_STARTED) |
 		(UINT32_C(1) << V34_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED) |
 		(UINT32_C(1) << V34_PHASE2_EVENT_READY_FOR_INFO1);
+	const uint32_t caller_info1_events =
+		(UINT32_C(1) << V34_PHASE2_EVENT_LOCAL_INFO1C_SENT) |
+		(UINT32_C(1) << V34_PHASE2_EVENT_PEER_INFO1A_RECEIVED);
+	const uint32_t answerer_info1_events =
+		(UINT32_C(1) << V34_PHASE2_EVENT_PEER_INFO1C_RECEIVED) |
+		(UINT32_C(1) << V34_PHASE2_EVENT_LOCAL_INFO1A_SENT);
+	struct v34_info0 expected_caller_info0 =
+		test_v34_phase2_capabilities(V34_CALLING_STATION);
+	struct v34_info0 expected_answerer_info0 =
+		test_v34_phase2_capabilities(V34_ANSWERING_STATION);
+	struct v34_info0 caller_peer_info0;
+	struct v34_info0 answerer_peer_info0;
+	struct v34_info1c local_info1c = caller_info1c();
+	struct v34_info1c received_info1c;
+	struct v34_info1a local_info1a = answerer_info1a();
+	struct v34_info1a received_info1a;
 	struct v34_phase2_probe_receiver_measurement caller_measurement;
 	struct v34_phase2_probe_receiver_measurement answerer_measurement;
+	struct v34_phase3_profile caller_local_profile;
+	struct v34_phase3_profile caller_peer_profile;
+	struct v34_phase3_profile answerer_local_profile;
+	struct v34_phase3_profile answerer_peer_profile;
 	struct owned_pair pair;
 	uint64_t answerer_tone_magnitude = 0;
 	uint32_t caller_events = 0;
 	uint32_t answerer_events = 0;
+	bool answerer_replied = false;
 
 	CHECK(pair_init(&pair, codec, delay_samples),
 	      "Phase 2 pair did not initialize for codec %d delay %zu",
@@ -143,6 +270,13 @@ static bool check_timeline(
 	      ((caller_events | answerer_events) &
 	       (UINT32_C(1) << V34_PHASE2_EVENT_ROUND_TRIP_DELAY)) != 0,
 	      "Phase 2 transition events were incomplete");
+	CHECK(v34_phase2_peer_info0(
+		      &pair.caller, &caller_peer_info0) == V34_PHASE2_OK &&
+	      v34_phase2_peer_info0(
+		      &pair.answerer, &answerer_peer_info0) == V34_PHASE2_OK &&
+	      info0_equal(&caller_peer_info0, &expected_answerer_info0) &&
+	      info0_equal(&answerer_peer_info0, &expected_caller_info0),
+	      "Phase 2 did not retain reciprocal INFO0 records");
 	CHECK(v34_phase2_measure_remote_probe(
 		      &pair.caller, &caller_measurement) == V34_PHASE2_OK &&
 	      v34_phase2_measure_remote_probe(
@@ -169,6 +303,113 @@ static bool check_timeline(
 	}
 	CHECK(answerer_tone_magnitude != 0,
 	      "answerer did not retain Tone A at the INFO1 boundary");
+	{
+		struct v34_info1c inconsistent = local_info1c;
+		struct v34_phase2 saved = pair.caller;
+
+		inconsistent.answer_transmit[V34_SYMBOL_RATE_3429]
+			.projected_data_rate_2400_bps_units = 8;
+		CHECK(v34_phase2_start_caller_info1(
+			      &pair.caller, &inconsistent) ==
+			      V34_PHASE2_INVALID_ARGUMENT &&
+		      memcmp(&pair.caller, &saved, sizeof(saved)) == 0,
+		      "inconsistent caller INFO1c changed Phase 2 state");
+	}
+	CHECK(v34_phase2_start_caller_info1(
+		      &pair.caller, &local_info1c) == V34_PHASE2_OK &&
+	      v34_phase2_start_answerer_info1(&pair.answerer) ==
+		      V34_PHASE2_OK &&
+	      v34_phase2_answerer_reply(
+		      &pair.answerer, &local_info1a) ==
+		      V34_PHASE2_INVALID_STATE,
+	      "INFO1 did not start at the reciprocal-probe boundary");
+	{
+		struct v34_phase3_profile local = { .md_symbol_count = 17 };
+		struct v34_phase3_profile peer = { .md_symbol_count = 19 };
+		struct v34_phase3_profile saved_local = local;
+		struct v34_phase3_profile saved_peer = peer;
+
+		CHECK(v34_phase2_profiles(
+			      &pair.caller, &local, &peer) ==
+			      V34_PHASE2_INVALID_STATE &&
+		      memcmp(&local, &saved_local, sizeof(local)) == 0 &&
+		      memcmp(&peer, &saved_peer, sizeof(peer)) == 0,
+		      "premature profile export changed its destinations");
+	}
+
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_event caller_event;
+		struct v34_phase2_event answerer_event;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		CHECK(pair_sample(
+			      &pair, &caller_event, &answerer_event,
+			      &caller_transmit, &answerer_transmit) &&
+		      record_event(&caller_event, &caller_events) &&
+		      record_event(&answerer_event, &answerer_events),
+		      "INFO1 pair failed at sample %zu", index);
+		if (answerer_event.kind ==
+		    V34_PHASE2_EVENT_PEER_INFO1C_RECEIVED) {
+			CHECK(!answerer_replied &&
+			      v34_phase2_peer_info1c(
+				      &pair.answerer, &received_info1c) ==
+				      V34_PHASE2_OK &&
+			      info1c_equal(&received_info1c, &local_info1c) &&
+			      v34_phase2_answerer_reply(
+				      &pair.answerer, &local_info1a) ==
+				      V34_PHASE2_OK,
+			      "answerer did not accept and answer INFO1c");
+			answerer_replied = true;
+		}
+		if (v34_phase2_is_ready_for_phase3(&pair.caller) &&
+		    v34_phase2_is_ready_for_phase3(&pair.answerer))
+			break;
+	}
+	CHECK(answerer_replied &&
+	      v34_phase2_is_ready_for_phase3(&pair.caller) &&
+	      v34_phase2_is_ready_for_phase3(&pair.answerer) &&
+	      !v34_phase2_is_ready_for_info1(&pair.caller) &&
+	      !v34_phase2_is_ready_for_info1(&pair.answerer) &&
+	      (caller_events & caller_info1_events) == caller_info1_events &&
+	      (answerer_events & answerer_info1_events) ==
+		      answerer_info1_events &&
+	      v34_phase2_peer_info1a(
+		      &pair.caller, &received_info1a) == V34_PHASE2_OK &&
+	      info1a_equal(&received_info1a, &local_info1a),
+	      "INFO1 exchange did not complete with both records");
+	CHECK(v34_phase2_profiles(
+		      &pair.caller, &caller_local_profile,
+		      &caller_peer_profile) == V34_PHASE2_OK &&
+	      v34_phase2_profiles(
+		      &pair.answerer, &answerer_local_profile,
+		      &answerer_peer_profile) == V34_PHASE2_OK &&
+	      profiles_equal(&caller_local_profile, &answerer_peer_profile) &&
+	      profiles_equal(&caller_peer_profile, &answerer_local_profile) &&
+	      caller_local_profile.symbol_rate == V34_SYMBOL_RATE_3000 &&
+	      answerer_local_profile.symbol_rate == V34_SYMBOL_RATE_3200,
+	      "INFO1 did not produce reciprocal Phase 3 profiles");
+	CHECK(v34_phase2_measure_remote_probe(
+		      &pair.caller, &caller_measurement) == V34_PHASE2_OK &&
+	      v34_phase2_measure_remote_probe(
+		      &pair.answerer, &answerer_measurement) == V34_PHASE2_OK &&
+	      measurement_is_finite(&caller_measurement) &&
+	      measurement_is_finite(&answerer_measurement),
+	      "INFO1 handoff discarded probe measurements");
+	for (size_t index = 0; index < TEST_TONE_SAMPLES; ++index) {
+		struct v34_phase2_event caller_event;
+		struct v34_phase2_event answerer_event;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		CHECK(pair_sample(
+			      &pair, &caller_event, &answerer_event,
+			      &caller_transmit, &answerer_transmit) &&
+		      caller_transmit == 0 && answerer_transmit == 0 &&
+		      caller_event.kind == V34_PHASE2_EVENT_NONE &&
+		      answerer_event.kind == V34_PHASE2_EVENT_NONE,
+		      "completed INFO1 owner was not silent and stable");
+	}
 	return true;
 }
 
@@ -275,6 +516,55 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_info1_timeout(void)
+{
+	struct v34_info1c local_info1c = caller_info1c();
+	struct owned_pair pair;
+	struct v34_phase2_event event;
+	int16_t transmit;
+	bool ready = false;
+	bool failed = false;
+
+	CHECK(pair_init(&pair, TEST_CODEC_LINEAR, 1),
+	      "INFO1 timeout pair did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_event caller_event;
+		struct v34_phase2_event answerer_event;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		CHECK(pair_sample(
+			      &pair, &caller_event, &answerer_event,
+			      &caller_transmit, &answerer_transmit),
+		      "INFO1 timeout pair stopped at %zu", index);
+		if (v34_phase2_is_ready_for_info1(&pair.caller)) {
+			ready = true;
+			break;
+		}
+	}
+	CHECK(ready && v34_phase2_start_caller_info1(
+			       &pair.caller, &local_info1c) == V34_PHASE2_OK,
+	      "caller did not reach the isolated INFO1 test");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		CHECK(v34_phase2_sample(
+			      &pair.caller, 0, &transmit, &event) ==
+			      V34_PHASE2_OK,
+		      "isolated INFO1 failed at %zu", index);
+		if (event.kind == V34_PHASE2_EVENT_FAILED) {
+			failed = true;
+			break;
+		}
+	}
+	CHECK(failed && v34_phase2_has_failed(&pair.caller) &&
+	      event.failure == V34_PHASE2_FAILURE_INFO1_TIMEOUT,
+	      "Phase 2 did not retain the INFO1 peer timeout");
+	CHECK(v34_phase2_sample(&pair.caller, INT16_MAX, &transmit, &event) ==
+		      V34_PHASE2_OK &&
+	      transmit == 0 && event.kind == V34_PHASE2_EVENT_NONE,
+	      "failed INFO1 owner was not silent and stable");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -283,6 +573,7 @@ int main(void)
 	} tests[] = {
 		{ "generated probe timelines", test_generated_timelines },
 		{ "validation", test_validation },
+		{ "INFO1 timeout", test_info1_timeout },
 	};
 	unsigned int failures = 0;
 

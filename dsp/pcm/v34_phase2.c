@@ -2,6 +2,7 @@
 
 #include "v34_phase2.h"
 
+#include <math.h>
 #include <stddef.h>
 
 static bool failure_is_valid(enum v34_phase2_failure failure)
@@ -10,22 +11,51 @@ static bool failure_is_valid(enum v34_phase2_failure failure)
 	       failure <= V34_PHASE2_FAILURE_INTERNAL;
 }
 
-static enum v34_station_role local_role(const struct v34_phase2 *phase2)
+static bool role_is_valid(enum v34_station_role role)
 {
-	switch (phase2->stage) {
-	case V34_PHASE2_RANGING:
-		return phase2->state.ranging.info0_exchange.local_role;
-	case V34_PHASE2_INITIAL_PROBE:
-		return phase2->state.initial_probe.ranging.info0_exchange
-			.local_role;
-	case V34_PHASE2_PROBE_TURNAROUND:
-		return phase2->state.turnaround.initial_probe.ranging
-			.info0_exchange.local_role;
-	case V34_PHASE2_RECIPROCAL_PROBE:
-		return phase2->state.reciprocal_probe.turnaround.initial_probe
-			.ranging.info0_exchange.local_role;
+	return role == V34_CALLING_STATION ||
+	       role == V34_ANSWERING_STATION;
+}
+
+static const struct v34_info0 *caller_info0(
+	const struct v34_phase2 *phase2)
+{
+	return phase2->local_role == V34_CALLING_STATION ?
+		       &phase2->local_info0 : &phase2->peer_info0;
+}
+
+static const struct v34_info0 *answerer_info0(
+	const struct v34_phase2 *phase2)
+{
+	return phase2->local_role == V34_ANSWERING_STATION ?
+		       &phase2->local_info0 : &phase2->peer_info0;
+}
+
+static bool measurement_is_valid(
+	const struct v34_phase2_probe_receiver_measurement *measurement)
+{
+	if (measurement->l1.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples >=
+		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
+		return false;
+	for (size_t index = 0; index < V34_PHASE2_PROBE_HIGHEST_HARMONIC;
+	     ++index) {
+		const struct v34_phase2_probe_spectrum_bin *l1 =
+			&measurement->l1.harmonics[index];
+		const struct v34_phase2_probe_spectrum_bin *l2 =
+			&measurement->l2.harmonics[index];
+
+		if (!isfinite(l1->in_phase_peak) ||
+		    !isfinite(l1->quadrature_peak) ||
+		    !isfinite(l1->mean_square) || l1->mean_square < 0.0 ||
+		    !isfinite(l2->in_phase_peak) ||
+		    !isfinite(l2->quadrature_peak) ||
+		    !isfinite(l2->mean_square) || l2->mean_square < 0.0)
+			return false;
 	}
-	return (enum v34_station_role)-1;
+	return true;
 }
 
 static enum v34_phase2_failure initial_probe_failure(
@@ -42,6 +72,31 @@ static enum v34_phase2_failure initial_probe_failure(
 		return V34_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT;
 	}
 	return V34_PHASE2_FAILURE_INTERNAL;
+}
+
+static bool info1_records_are_consistent(
+	const struct v34_phase2 *phase2)
+{
+	const struct v34_phase2_info1_exchange *exchange =
+		&phase2->state.info1;
+	const struct v34_info1c *info1c;
+
+	if (!exchange->peer_parameters_received)
+		return true;
+	info1c = phase2->local_role == V34_CALLING_STATION ?
+			 &phase2->local_info1.info1c :
+			 &exchange->peer_parameters.info1c;
+	if (!v34_phase2_info1c_is_consistent(
+		    caller_info0(phase2), answerer_info0(phase2), info1c))
+		return false;
+	if (phase2->local_role == V34_CALLING_STATION)
+		return v34_phase2_info1a_is_consistent(
+			caller_info0(phase2), answerer_info0(phase2),
+			info1c, &exchange->peer_parameters.info1a);
+	return !phase2->local_info1_stored ||
+	       v34_phase2_info1a_is_consistent(
+		       caller_info0(phase2), answerer_info0(phase2), info1c,
+		       &phase2->local_info1.info1a);
 }
 
 static enum v34_phase2_failure active_failure(
@@ -71,8 +126,60 @@ static enum v34_phase2_failure active_failure(
 			return V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 		}
 		break;
+	case V34_PHASE2_INFO1:
+		if (phase2->state.info1.failure ==
+		    V34_PHASE2_INFO1_PEER_TIMEOUT)
+			return V34_PHASE2_FAILURE_INFO1_TIMEOUT;
+		if (!info1_records_are_consistent(phase2))
+			return V34_PHASE2_FAILURE_INCONSISTENT_INFO1;
+		return V34_PHASE2_FAILURE_NONE;
 	}
 	return V34_PHASE2_FAILURE_INTERNAL;
+}
+
+static enum v34_station_role child_role(
+	const struct v34_phase2 *phase2)
+{
+	switch (phase2->stage) {
+	case V34_PHASE2_RANGING:
+		return phase2->state.ranging.info0_exchange.local_role;
+	case V34_PHASE2_INITIAL_PROBE:
+		return phase2->state.initial_probe.ranging.info0_exchange
+			.local_role;
+	case V34_PHASE2_PROBE_TURNAROUND:
+		return phase2->state.turnaround.initial_probe.ranging
+			.info0_exchange.local_role;
+	case V34_PHASE2_RECIPROCAL_PROBE:
+		return phase2->state.reciprocal_probe.turnaround.initial_probe
+			.ranging.info0_exchange.local_role;
+	case V34_PHASE2_INFO1:
+		return phase2->state.info1.local_role;
+	}
+	return (enum v34_station_role)-1;
+}
+
+static bool local_info1_is_valid(const struct v34_phase2 *phase2)
+{
+	bool expected;
+
+	if (phase2->stage != V34_PHASE2_INFO1)
+		return !phase2->local_info1_stored;
+	if (phase2->local_role == V34_CALLING_STATION)
+		expected = true;
+	else
+		expected = phase2->state.info1.phase ==
+				   V34_PHASE2_INFO1_TRANSMITTING ||
+			   phase2->state.info1.phase ==
+				   V34_PHASE2_INFO1_CARRIER_TAIL ||
+			   phase2->state.info1.phase ==
+				   V34_PHASE2_INFO1_COMPLETE;
+	if (phase2->local_info1_stored != expected)
+		return false;
+	if (!expected)
+		return true;
+	return phase2->local_role == V34_CALLING_STATION ?
+		       v34_info1c_is_valid(&phase2->local_info1.info1c) :
+		       v34_info1a_is_valid(&phase2->local_info1.info1a);
 }
 
 bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
@@ -80,7 +187,16 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 	enum v34_phase2_failure child_failure;
 	bool child_valid;
 
-	if (phase2 == NULL || !failure_is_valid(phase2->failure))
+	if (phase2 == NULL || !failure_is_valid(phase2->failure) ||
+	    !role_is_valid(phase2->local_role) ||
+	    !v34_info0_is_valid(&phase2->local_info0) ||
+	    (phase2->peer_info0_stored &&
+	     !v34_info0_is_valid(&phase2->peer_info0)) ||
+	    (phase2->remote_probe_stored &&
+	     !measurement_is_valid(&phase2->remote_probe)) ||
+	    !local_info1_is_valid(phase2) ||
+	    (phase2->stage != V34_PHASE2_RANGING &&
+	     !phase2->peer_info0_stored))
 		return false;
 	switch (phase2->stage) {
 	case V34_PHASE2_RANGING:
@@ -99,10 +215,16 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 		child_valid = v34_phase2_reciprocal_probe_is_valid(
 			&phase2->state.reciprocal_probe);
 		break;
+	case V34_PHASE2_INFO1:
+		child_valid = phase2->peer_info0_stored &&
+			      phase2->remote_probe_stored &&
+			      v34_phase2_info1_exchange_is_valid(
+				      &phase2->state.info1);
+		break;
 	default:
 		return false;
 	}
-	if (!child_valid)
+	if (!child_valid || child_role(phase2) != phase2->local_role)
 		return false;
 	child_failure = active_failure(phase2);
 	return phase2->failure == V34_PHASE2_FAILURE_INTERNAL ?
@@ -121,7 +243,7 @@ static bool ready_for_info1(const struct v34_phase2 *phase2)
 	if (phase2->failure != V34_PHASE2_FAILURE_NONE ||
 	    phase2->stage != V34_PHASE2_RECIPROCAL_PROBE)
 		return false;
-	return local_role(phase2) == V34_CALLING_STATION ?
+	return phase2->local_role == V34_CALLING_STATION ?
 		       phase2->state.reciprocal_probe.phase ==
 			       V34_PHASE2_RECIPROCAL_PROBE_CALLER_COMPLETE :
 		       phase2->state.reciprocal_probe.phase ==
@@ -133,21 +255,206 @@ bool v34_phase2_is_ready_for_info1(const struct v34_phase2 *phase2)
 	return v34_phase2_is_valid(phase2) && ready_for_info1(phase2);
 }
 
+static bool ready_for_phase3(const struct v34_phase2 *phase2)
+{
+	return phase2->failure == V34_PHASE2_FAILURE_NONE &&
+	       phase2->stage == V34_PHASE2_INFO1 &&
+	       phase2->state.info1.phase == V34_PHASE2_INFO1_COMPLETE &&
+	       phase2->local_info1_stored &&
+	       info1_records_are_consistent(phase2);
+}
+
+bool v34_phase2_is_ready_for_phase3(const struct v34_phase2 *phase2)
+{
+	return v34_phase2_is_valid(phase2) && ready_for_phase3(phase2);
+}
+
 enum v34_phase2_result v34_phase2_init(
 	struct v34_phase2 *phase2, enum v34_station_role role,
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0)
 {
 	struct v34_phase2 initialized = {
+		.local_role = role,
 		.stage = V34_PHASE2_RANGING,
 	};
 
-	if (phase2 == NULL ||
-	    v34_phase2_ranging_init(
+	if (phase2 == NULL || !v34_info0_is_valid(local_info0))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	initialized.local_info0 = *local_info0;
+	initialized.local_info0.acknowledges_peer_info0 = false;
+	if (v34_phase2_ranging_init(
 		    &initialized.state.ranging, role, nominal_amplitude,
-		    local_info0) != V34_PHASE2_RANGING_OK ||
+		    &initialized.local_info0) != V34_PHASE2_RANGING_OK ||
 	    !v34_phase2_is_valid(&initialized))
 		return V34_PHASE2_INVALID_ARGUMENT;
 	*phase2 = initialized;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_peer_info0(
+	const struct v34_phase2 *phase2, struct v34_info0 *peer_info0)
+{
+	if (!v34_phase2_is_valid(phase2) || peer_info0 == NULL)
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (!phase2->peer_info0_stored)
+		return V34_PHASE2_INVALID_STATE;
+	*peer_info0 = phase2->peer_info0;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_start_caller_info1(
+	struct v34_phase2 *phase2, const struct v34_info1c *local_info1c)
+{
+	struct v34_phase2_info1_exchange exchange;
+	struct v34_phase2 next;
+
+	if (!v34_phase2_is_valid(phase2) ||
+	    !v34_info1c_is_valid(local_info1c))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (phase2->local_role != V34_CALLING_STATION ||
+	    !ready_for_info1(phase2) || !phase2->peer_info0_stored ||
+	    !phase2->remote_probe_stored)
+		return V34_PHASE2_INVALID_STATE;
+	if (!v34_phase2_info1c_is_consistent(
+		    caller_info0(phase2), answerer_info0(phase2), local_info1c))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (v34_phase2_info1_exchange_caller_init(
+		    &exchange, &phase2->state.reciprocal_probe,
+		    local_info1c) != V34_PHASE2_INFO1_EXCHANGE_OK)
+		return V34_PHASE2_INVALID_STATE;
+	next = *phase2;
+	next.state.info1 = exchange;
+	next.local_info1.info1c = *local_info1c;
+	next.local_info1_stored = true;
+	next.stage = V34_PHASE2_INFO1;
+	if (!v34_phase2_is_valid(&next))
+		return V34_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_start_answerer_info1(
+	struct v34_phase2 *phase2)
+{
+	struct v34_phase2_info1_exchange exchange;
+	struct v34_phase2 next;
+
+	if (!v34_phase2_is_valid(phase2))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (phase2->local_role != V34_ANSWERING_STATION ||
+	    !ready_for_info1(phase2) || !phase2->peer_info0_stored ||
+	    !phase2->remote_probe_stored)
+		return V34_PHASE2_INVALID_STATE;
+	if (v34_phase2_info1_exchange_answerer_init(
+		    &exchange, &phase2->state.reciprocal_probe) !=
+	    V34_PHASE2_INFO1_EXCHANGE_OK)
+		return V34_PHASE2_INVALID_STATE;
+	next = *phase2;
+	next.state.info1 = exchange;
+	next.local_info1 = (union v34_phase2_info1_parameters){ 0 };
+	next.local_info1_stored = false;
+	next.stage = V34_PHASE2_INFO1;
+	if (!v34_phase2_is_valid(&next))
+		return V34_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_peer_info1c(
+	const struct v34_phase2 *phase2, struct v34_info1c *peer_info1c)
+{
+	if (!v34_phase2_is_valid(phase2) || peer_info1c == NULL)
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != V34_PHASE2_FAILURE_NONE ||
+	    phase2->stage != V34_PHASE2_INFO1 ||
+	    phase2->local_role != V34_ANSWERING_STATION ||
+	    !phase2->state.info1.peer_parameters_received ||
+	    !info1_records_are_consistent(phase2))
+		return V34_PHASE2_INVALID_STATE;
+	*peer_info1c = phase2->state.info1.peer_parameters.info1c;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_peer_info1a(
+	const struct v34_phase2 *phase2, struct v34_info1a *peer_info1a)
+{
+	if (!v34_phase2_is_valid(phase2) || peer_info1a == NULL)
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != V34_PHASE2_FAILURE_NONE ||
+	    phase2->stage != V34_PHASE2_INFO1 ||
+	    phase2->local_role != V34_CALLING_STATION ||
+	    !phase2->state.info1.peer_parameters_received ||
+	    !info1_records_are_consistent(phase2))
+		return V34_PHASE2_INVALID_STATE;
+	*peer_info1a = phase2->state.info1.peer_parameters.info1a;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_answerer_reply(
+	struct v34_phase2 *phase2, const struct v34_info1a *local_info1a)
+{
+	struct v34_phase2 next;
+	const struct v34_info1c *peer_info1c;
+
+	if (!v34_phase2_is_valid(phase2) ||
+	    !v34_info1a_is_valid(local_info1a))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != V34_PHASE2_FAILURE_NONE ||
+	    phase2->stage != V34_PHASE2_INFO1 ||
+	    phase2->local_role != V34_ANSWERING_STATION ||
+	    phase2->state.info1.phase !=
+		    V34_PHASE2_INFO1_ANSWERER_REPLY_NEEDED)
+		return V34_PHASE2_INVALID_STATE;
+	peer_info1c = &phase2->state.info1.peer_parameters.info1c;
+	if (!v34_phase2_info1a_is_consistent(
+		    caller_info0(phase2), answerer_info0(phase2),
+		    peer_info1c, local_info1a))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	next = *phase2;
+	if (v34_phase2_info1_exchange_answerer_reply(
+		    &next.state.info1, local_info1a) !=
+	    V34_PHASE2_INFO1_EXCHANGE_OK)
+		return V34_PHASE2_INVALID_STATE;
+	next.local_info1.info1a = *local_info1a;
+	next.local_info1_stored = true;
+	if (!v34_phase2_is_valid(&next))
+		return V34_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_profiles(
+	const struct v34_phase2 *phase2,
+	struct v34_phase3_profile *local_transmit,
+	struct v34_phase3_profile *peer_transmit)
+{
+	struct v34_phase3_profile caller;
+	struct v34_phase3_profile answerer;
+	const struct v34_info1c *info1c;
+	const struct v34_info1a *info1a;
+
+	if (!v34_phase2_is_valid(phase2) || local_transmit == NULL ||
+	    peer_transmit == NULL || local_transmit == peer_transmit)
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (!ready_for_phase3(phase2))
+		return V34_PHASE2_INVALID_STATE;
+	info1c = phase2->local_role == V34_CALLING_STATION ?
+			 &phase2->local_info1.info1c :
+			 &phase2->state.info1.peer_parameters.info1c;
+	info1a = phase2->local_role == V34_ANSWERING_STATION ?
+			 &phase2->local_info1.info1a :
+			 &phase2->state.info1.peer_parameters.info1a;
+	if (v34_phase2_select_profiles(
+		    caller_info0(phase2), answerer_info0(phase2), info1c,
+		    info1a, &caller, &answerer) != V34_PHASE2_SELECTION_OK)
+		return V34_PHASE2_INVALID_STATE;
+	if (phase2->local_role == V34_CALLING_STATION) {
+		*local_transmit = caller;
+		*peer_transmit = answerer;
+	} else {
+		*local_transmit = answerer;
+		*peer_transmit = caller;
+	}
 	return V34_PHASE2_OK;
 }
 
@@ -163,11 +470,17 @@ static bool enter_initial_probe(
 	struct v34_phase2 *phase2, struct v34_phase2_event *event)
 {
 	struct v34_phase2_initial_probe next;
+	const struct v34_phase2_info0_exchange *exchange =
+		&phase2->state.ranging.info0_exchange;
 
-	if (v34_phase2_initial_probe_init(
+	if (!exchange->peer_info0_received ||
+	    !v34_info0_is_valid(&exchange->peer_info0) ||
+	    v34_phase2_initial_probe_init(
 		    &next, &phase2->state.ranging) !=
 	    V34_PHASE2_INITIAL_PROBE_OK)
 		return false;
+	phase2->peer_info0 = exchange->peer_info0;
+	phase2->peer_info0_stored = true;
 	phase2->state.initial_probe = next;
 	phase2->stage = V34_PHASE2_INITIAL_PROBE;
 	event->kind = V34_PHASE2_EVENT_INITIAL_PROBE_STARTED;
@@ -214,6 +527,11 @@ static bool sample_ranging(
 		    &phase2->state.ranging, received_sample,
 		    transmit_sample, &child) != V34_PHASE2_RANGING_OK)
 		return false;
+	if (child.exchange_event.peer_info0_event ==
+	    V34_PHASE2_PEER_INFO0_RECEIVED) {
+		phase2->peer_info0 = child.exchange_event.peer_info0;
+		phase2->peer_info0_stored = true;
+	}
 	switch (child.kind) {
 	case V34_PHASE2_ROUND_TRIP_DELAY_MEASURED:
 		event->kind = V34_PHASE2_EVENT_ROUND_TRIP_DELAY;
@@ -239,7 +557,7 @@ static bool sample_initial_probe(
 	int16_t *transmit_sample, struct v34_phase2_event *event)
 {
 	struct v34_phase2_initial_probe_event child;
-	enum v34_station_role role = local_role(phase2);
+	enum v34_station_role role = phase2->local_role;
 
 	if (v34_phase2_initial_probe_sample(
 		    &phase2->state.initial_probe, received_sample,
@@ -251,6 +569,13 @@ static bool sample_initial_probe(
 		event->failure = phase2->failure;
 	} else if (child.kind ==
 		   V34_PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE) {
+		if (v34_phase2_initial_probe_measure(
+			    &phase2->state.initial_probe,
+			    &phase2->remote_probe) !=
+		    V34_PHASE2_INITIAL_PROBE_OK ||
+		    !measurement_is_valid(&phase2->remote_probe))
+			return false;
+		phase2->remote_probe_stored = true;
 		event->kind =
 			V34_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 	} else if ((role == V34_CALLING_STATION &&
@@ -307,10 +632,65 @@ static bool sample_reciprocal_probe(
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 	} else if (child.kind ==
-			   V34_PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED ||
-		   child.kind ==
-			   V34_PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
+		   V34_PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED) {
+		if (v34_phase2_reciprocal_probe_measure(
+			    &phase2->state.reciprocal_probe,
+			    &phase2->remote_probe) !=
+		    V34_PHASE2_RECIPROCAL_PROBE_OK ||
+		    !measurement_is_valid(&phase2->remote_probe))
+			return false;
+		phase2->remote_probe_stored = true;
 		event->kind = V34_PHASE2_EVENT_READY_FOR_INFO1;
+	} else if (child.kind ==
+		   V34_PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
+		if (!phase2->remote_probe_stored)
+			return false;
+		event->kind = V34_PHASE2_EVENT_READY_FOR_INFO1;
+	}
+	return true;
+}
+
+static bool sample_info1(
+	struct v34_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct v34_phase2_event *event)
+{
+	struct v34_phase2_info1_exchange_event child;
+
+	if (v34_phase2_info1_exchange_sample(
+		    &phase2->state.info1, received_sample,
+		    transmit_sample, &child) !=
+	    V34_PHASE2_INFO1_EXCHANGE_OK)
+		return false;
+	switch (child.kind) {
+	case V34_PHASE2_INFO1_EVENT_NONE:
+		break;
+	case V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT:
+		event->kind = V34_PHASE2_EVENT_LOCAL_INFO1C_SENT;
+		break;
+	case V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED:
+		event->kind = V34_PHASE2_EVENT_PEER_INFO1C_RECEIVED;
+		break;
+	case V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT:
+		event->kind = V34_PHASE2_EVENT_LOCAL_INFO1A_SENT;
+		break;
+	case V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED:
+		event->kind = V34_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
+		break;
+	case V34_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
+		event->kind = V34_PHASE2_EVENT_PEER_INFO1_REJECTED;
+		break;
+	case V34_PHASE2_INFO1_EVENT_FAILED:
+		phase2->failure = V34_PHASE2_FAILURE_INFO1_TIMEOUT;
+		event->kind = V34_PHASE2_EVENT_FAILED;
+		event->failure = phase2->failure;
+		break;
+	}
+	if ((child.kind == V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED ||
+	     child.kind == V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) &&
+	    !info1_records_are_consistent(phase2)) {
+		phase2->failure = V34_PHASE2_FAILURE_INCONSISTENT_INFO1;
+		event->kind = V34_PHASE2_EVENT_FAILED;
+		event->failure = phase2->failure;
 	}
 	return true;
 }
@@ -348,6 +728,10 @@ enum v34_phase2_result v34_phase2_sample(
 		accepted = sample_reciprocal_probe(
 			phase2, received_sample, &generated, &emitted);
 		break;
+	case V34_PHASE2_INFO1:
+		accepted = sample_info1(
+			phase2, received_sample, &generated, &emitted);
+		break;
 	default:
 		return V34_PHASE2_INVALID_ARGUMENT;
 	}
@@ -367,22 +751,11 @@ enum v34_phase2_result v34_phase2_measure_remote_probe(
 {
 	if (!v34_phase2_is_valid(phase2) || measurement == NULL)
 		return V34_PHASE2_INVALID_ARGUMENT;
-	if (!ready_for_info1(phase2))
+	if (!phase2->remote_probe_stored ||
+	    (!ready_for_info1(phase2) && phase2->stage != V34_PHASE2_INFO1))
 		return V34_PHASE2_INVALID_STATE;
-	if (local_role(phase2) == V34_CALLING_STATION) {
-		const struct v34_phase2_initial_probe *probe =
-			&phase2->state.reciprocal_probe.turnaround.initial_probe;
-
-		return v34_phase2_initial_probe_measure(probe, measurement) ==
-			       V34_PHASE2_INITIAL_PROBE_OK ?
-			       V34_PHASE2_OK :
-			       V34_PHASE2_INVALID_STATE;
-	}
-	return v34_phase2_reciprocal_probe_measure(
-		       &phase2->state.reciprocal_probe, measurement) ==
-		       V34_PHASE2_RECIPROCAL_PROBE_OK ?
-		       V34_PHASE2_OK :
-		       V34_PHASE2_INVALID_STATE;
+	*measurement = phase2->remote_probe;
+	return V34_PHASE2_OK;
 }
 
 const char *v34_phase2_result_name(enum v34_phase2_result result)
@@ -413,6 +786,10 @@ const char *v34_phase2_failure_name(enum v34_phase2_failure failure)
 		return "remote tone timeout";
 	case V34_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT:
 		return "remote reversal timeout";
+	case V34_PHASE2_FAILURE_INFO1_TIMEOUT:
+		return "INFO1 timeout";
+	case V34_PHASE2_FAILURE_INCONSISTENT_INFO1:
+		return "inconsistent INFO1";
 	case V34_PHASE2_FAILURE_INTERNAL:
 		return "internal failure";
 	}

@@ -1309,7 +1309,11 @@ V34_PHASE2_PROBE_FLOW_OBJECTS := \
 V34_PHASE2_TEST_BINARY := $(BUILD_DIR)/test_v34_phase2
 V34_PHASE2_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2.o \
+	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_phase2.o \
+	$(BUILD_DIR)/v34_phase2_info1_exchange.o \
+	$(BUILD_DIR)/v34_phase2_selection.o \
+	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
 V34_PHASE2_INITIAL_PROBE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_initial_probe
