@@ -148,7 +148,7 @@ v34_phase2_reciprocal_probe_init(
 			    &initialized.path.transmit,
 			    nominal_amplitude(completed_turnaround),
 			    completed_turnaround->initial_probe.ranging
-				    .round_trip_delay_samples) !=
+				    .control.round_trip_delay_samples) !=
 			    V34_PHASE2_PROBE_SEQUENCE_OK)
 			return V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	} else {

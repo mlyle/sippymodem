@@ -199,7 +199,8 @@ static bool check_initial_probe_turn(
 	      observation.answerer_l2_samples <
 		      (uint32_t)
 			      V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
-		      pair.answerer.initial_probe.ranging.round_trip_delay_samples,
+		      pair.answerer.initial_probe.ranging.control
+			      .round_trip_delay_samples,
 	      "tone response did not end answerer L2 within its bound");
 	CHECK(v34_phase2_initial_probe_measure(
 		      &pair.caller.initial_probe, &measurement) ==
@@ -583,7 +584,7 @@ static bool test_bounded_failures(void)
 		      V34_PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_probe_sequence_init(
 		      &remote_probe, TEST_AMPLITUDE,
-		      caller_ranging.round_trip_delay_samples) ==
+		      caller_ranging.control.round_trip_delay_samples) ==
 		      V34_PHASE2_PROBE_SEQUENCE_OK,
 	      "tone-timeout fixture did not initialize");
 	for (samples = 0; samples < 3000 &&

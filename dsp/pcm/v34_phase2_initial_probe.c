@@ -122,7 +122,7 @@ bool v34_phase2_initial_probe_is_valid(
 {
 	if (probe == NULL ||
 	    !v34_phase2_ranging_is_valid(&probe->ranging) ||
-	    probe->ranging.phase != V34_PHASE2_PROBE_READY ||
+	    probe->ranging.control.phase != PHASE2_RANGING_PROBE_READY ||
 	    (unsigned int)probe->phase >
 		    V34_PHASE2_INITIAL_PROBE_FAILED ||
 	    (unsigned int)probe->failure >
@@ -143,7 +143,7 @@ v34_phase2_initial_probe_init(
 
 	if (probe == NULL ||
 	    !v34_phase2_ranging_is_valid(completed_ranging) ||
-	    completed_ranging->phase != V34_PHASE2_PROBE_READY)
+	    completed_ranging->control.phase != PHASE2_RANGING_PROBE_READY)
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	initialized.ranging = *completed_ranging;
 	role = completed_ranging->info0_exchange.local_role;
@@ -160,7 +160,8 @@ v34_phase2_initial_probe_init(
 		if (v34_phase2_probe_sequence_init(
 			    &initialized.path.transmit,
 			    nominal_amplitude(completed_ranging),
-			    completed_ranging->round_trip_delay_samples) !=
+			    completed_ranging->control
+				    .round_trip_delay_samples) !=
 		    V34_PHASE2_PROBE_SEQUENCE_OK)
 			return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	}

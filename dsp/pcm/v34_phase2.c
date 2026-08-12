@@ -104,8 +104,8 @@ static enum v34_phase2_failure active_failure(
 {
 	switch (phase2->stage) {
 	case V34_PHASE2_RANGING:
-		return phase2->state.ranging.phase ==
-			       V34_PHASE2_RANGING_TIMED_OUT ?
+		return phase2->state.ranging.control.phase ==
+			       PHASE2_RANGING_TIMED_OUT ?
 			       V34_PHASE2_FAILURE_RANGING_TIMEOUT :
 			       V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_INITIAL_PROBE:

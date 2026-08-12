@@ -125,7 +125,7 @@ static void observe_ranging_events(
 }
 
 static void observe_phase_transition(
-	enum v34_phase2_ranging_phase before,
+	enum phase2_ranging_phase before,
 	enum phase2_info0_transmit_phase transmit_before,
 	const struct v34_phase2_ranging *after,
 	bool caller, size_t sample_index,
@@ -137,19 +137,19 @@ static void observe_phase_transition(
 		    PHASE2_INFO0_TONE &&
 	    observation->answer_tone_start_sample == SIZE_MAX)
 		observation->answer_tone_start_sample = sample_index + 1u;
-	if (before == after->phase)
+	if (before == after->control.phase)
 		return;
 	if (caller &&
-	    after->phase ==
-		    V34_PHASE2_RESPONSE_TONE_TAIL)
+	    after->control.phase ==
+		    PHASE2_RESPONSE_TONE_TAIL)
 		observation->caller_reversal_sample = sample_index;
 	if (!caller &&
-	    after->phase ==
-		    V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
+	    after->control.phase ==
+		    PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
 		observation->first_answer_reversal_sample = sample_index;
 	if (!caller &&
-	    after->phase ==
-		    V34_PHASE2_RESPONSE_TONE_TAIL)
+	    after->control.phase ==
+		    PHASE2_RESPONSE_TONE_TAIL)
 		observation->second_answer_reversal_sample = sample_index;
 }
 
@@ -189,10 +189,10 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_ranging_event caller_event;
 		struct v34_phase2_ranging_event answer_event;
-		enum v34_phase2_ranging_phase caller_before =
-			caller.phase;
-		enum v34_phase2_ranging_phase answer_before =
-			answerer.phase;
+		enum phase2_ranging_phase caller_before =
+			caller.control.phase;
+		enum phase2_ranging_phase answer_before =
+			answerer.control.phase;
 		enum phase2_info0_transmit_phase
 			caller_transmit_before =
 				caller.info0_exchange.transport.transmit_phase;
@@ -215,11 +215,11 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 		      "ranging failed for codec %d delay %zu at sample %zu",
 		      codec, line_delay_samples, index);
 		if (caller_before ==
-		    V34_PHASE2_PROBE_READY)
+		    PHASE2_RANGING_PROBE_READY)
 			CHECK(caller_transmit == 0,
 			      "caller emitted audio after its probe boundary");
 		if (answer_before ==
-		    V34_PHASE2_PROBE_READY)
+		    PHASE2_RANGING_PROBE_READY)
 			CHECK(answer_transmit == 0,
 			      "answerer emitted placeholder audio at its probe boundary");
 		delay_line_transmit(
@@ -236,41 +236,41 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 			index, &observation);
 		observe_ranging_events(
 			&caller_event, &answer_event, index, &observation);
-		if (caller.phase ==
-			    V34_PHASE2_PROBE_READY &&
-		    answerer.phase ==
-			    V34_PHASE2_PROBE_READY &&
+		if (caller.control.phase ==
+			    PHASE2_RANGING_PROBE_READY &&
+		    answerer.control.phase ==
+			    PHASE2_RANGING_PROBE_READY &&
 		    index > observation.answer_probe_ready_sample + 1u)
 			break;
 	}
-	CHECK(caller.phase ==
-		      V34_PHASE2_PROBE_READY &&
-	      answerer.phase ==
-		      V34_PHASE2_PROBE_READY,
+	CHECK(caller.control.phase ==
+		      PHASE2_RANGING_PROBE_READY &&
+	      answerer.control.phase ==
+		      PHASE2_RANGING_PROBE_READY,
 	      "ranging did not reach both probe boundaries for codec %d delay %zu",
 	      codec, line_delay_samples);
 	CHECK(observation.answer_tone_start_sample != SIZE_MAX &&
 	      observation.first_answer_reversal_sample ==
 		      observation.answer_tone_start_sample +
-			      V34_PHASE2_RANGING_INITIAL_TONE_SAMPLES,
+			      PHASE2_RANGING_INITIAL_TONE_SAMPLES,
 	      "answerer did not preserve the initial 50 ms Tone A interval");
 	CHECK(absolute_difference(
 		      observation.caller_reversal_sample,
 		      observation.first_answer_reversal_sample +
 			      line_delay_samples +
-			      V34_PHASE2_RANGING_TURNAROUND_SAMPLES) <=
+			      PHASE2_RANGING_TURNAROUND_SAMPLES) <=
 		      TEST_EDGE_TOLERANCE_SAMPLES,
 	      "caller response was not 40 ms from the received Tone A edge");
 	CHECK(absolute_difference(
 		      observation.second_answer_reversal_sample,
 		      observation.caller_reversal_sample +
 			      line_delay_samples +
-			      V34_PHASE2_RANGING_TURNAROUND_SAMPLES) <=
+			      PHASE2_RANGING_TURNAROUND_SAMPLES) <=
 		      TEST_EDGE_TOLERANCE_SAMPLES,
 	      "answerer response was not 40 ms from the received Tone B edge");
 	CHECK(observation.answer_probe_ready_sample ==
 		      observation.second_answer_reversal_sample +
-			      V34_PHASE2_RANGING_TONE_TAIL_SAMPLES - 1u,
+			      PHASE2_RANGING_TONE_TAIL_SAMPLES - 1u,
 	      "answerer did not preserve the 10 ms post-reversal tone");
 	CHECK(absolute_difference(
 		      observation.caller_probe_ready_sample,
@@ -345,12 +345,12 @@ static bool test_missing_second_reversal_times_out(void)
 		      "timeout setup failed at sample %zu", index);
 		caller_line_sample = next_caller;
 		answer_line_sample = next_answer;
-		caller_reversed = caller.phase ==
-			V34_PHASE2_RESPONSE_TONE_TAIL;
+		caller_reversed = caller.control.phase ==
+			PHASE2_RESPONSE_TONE_TAIL;
 	}
 	CHECK(caller_reversed, "timeout fixture never reached caller reversal");
 	for (size_t index = 0;
-	     index < V34_PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 4u;
+	     index < PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 4u;
 	     ++index) {
 		struct v34_phase2_ranging_event event;
 		int16_t transmit;
@@ -362,7 +362,7 @@ static bool test_missing_second_reversal_times_out(void)
 		if (event.kind == V34_PHASE2_RANGING_TIMEOUT)
 			timeout_count++;
 	}
-	CHECK(caller.phase == V34_PHASE2_RANGING_TIMED_OUT &&
+	CHECK(caller.control.phase == PHASE2_RANGING_TIMED_OUT &&
 	      timeout_count == 1 &&
 	      v34_phase2_ranging_is_valid(&caller),
 	      "missing reversal did not produce one bounded timeout");

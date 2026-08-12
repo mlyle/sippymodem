@@ -212,7 +212,8 @@ static void initialize_handoff_context(
 {
 	exchange->local_role = probe_role(probe);
 	exchange->round_trip_delay_samples =
-		probe->turnaround.initial_probe.ranging.round_trip_delay_samples;
+		probe->turnaround.initial_probe.ranging.control
+			.round_trip_delay_samples;
 	exchange->nominal_amplitude = probe_nominal_amplitude(probe);
 }
 

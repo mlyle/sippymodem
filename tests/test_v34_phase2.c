@@ -521,8 +521,8 @@ static bool test_validation(void)
 			      &caller_transmit, &answerer_transmit),
 		      "failure pair stopped at %zu", index);
 		if (pair.answerer.stage == V34_PHASE2_RANGING &&
-		    pair.answerer.state.ranging.phase ==
-			    V34_PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+		    pair.answerer.state.ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
 			ranging_active = true;
 			break;
 		}

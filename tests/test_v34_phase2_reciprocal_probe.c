@@ -232,7 +232,7 @@ static bool check_reciprocal_probe(
 		      (uint32_t)
 			      V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
 		      pair.caller.reciprocal_probe.turnaround.initial_probe.ranging
-			      .round_trip_delay_samples,
+			      .control.round_trip_delay_samples,
 	      "final Tone A did not end caller L2 within its RTD-adjusted bound");
 	CHECK(v34_phase2_reciprocal_probe_measure(
 		      &pair.answerer.reciprocal_probe, &measurement) ==
@@ -352,7 +352,8 @@ static bool test_bounded_failures(void)
 	      "reciprocal-probe failure fixtures did not initialize");
 	caller_l2_limit =
 		(uint32_t)V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
-		caller_turnaround.initial_probe.ranging.round_trip_delay_samples;
+		caller_turnaround.initial_probe.ranging.control
+			.round_trip_delay_samples;
 	for (samples = 0;
 	     samples < V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit &&
 	     caller.phase != V34_PHASE2_RECIPROCAL_PROBE_FAILED;
