@@ -104,6 +104,9 @@ static bool outputs_overlap(
 		       events, sizeof(*events), received, sizeof(*received));
 }
 
+static void note_ready(
+	struct v34_phase4_exchange *exchange, uint32_t *events);
+
 static bool trn_minimum_complete(
 	const struct v34_phase4_exchange *exchange)
 {
@@ -678,7 +681,7 @@ static enum v34_phase4_exchange_result latch_failure(
 }
 
 enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
-	struct v34_phase4_exchange *exchange)
+	struct v34_phase4_exchange *exchange, uint32_t *events)
 {
 	struct v34_phase4_exchange next;
 	struct v34_data_mode mode;
@@ -686,8 +689,11 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	enum v34_data_mode_result mode_result;
 	enum v34_data_startup_result startup_result;
 	enum v34_phase4_exchange_result result;
+	uint32_t emitted = 0;
 
-	if (!v34_phase4_exchange_is_valid(exchange))
+	if (!v34_phase4_exchange_is_valid(exchange) || events == NULL ||
+	    regions_overlap(
+		    exchange, sizeof(*exchange), events, sizeof(*events)))
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	if (exchange->failed)
 		return V34_PHASE4_EXCHANGE_FAILED;
@@ -728,10 +734,12 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 			exchange->failed = true;
 		return result;
 	}
+	note_ready(&next, &emitted);
 	if (!v34_phase4_exchange_is_valid(&next))
 		return latch_failure(
 			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
 	*exchange = next;
+	*events |= emitted;
 	return V34_PHASE4_EXCHANGE_OK;
 }
 

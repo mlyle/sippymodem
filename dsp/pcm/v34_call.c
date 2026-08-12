@@ -370,8 +370,9 @@ static enum v34_call_result sample_phase4(
 	if (!v34_phase4_exchange_needs_data_preparation(
 		    &call->state.phase4))
 		return V34_CALL_OK;
-	return phase4_result(v34_phase4_exchange_prepare_data_startup(
-		&call->state.phase4));
+	result = v34_phase4_exchange_prepare_data_startup(
+		&call->state.phase4, &observation->events.phase4);
+	return phase4_result(result);
 }
 
 enum v34_call_result v34_call_sample(

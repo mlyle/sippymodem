@@ -115,11 +115,13 @@ bool v34_phase4_exchange_needs_data_preparation(
 	const struct v34_phase4_exchange *exchange);
 
 /* Resolve the pending first peer MP, selecting and calibrating both negotiated
- * data directions. Rejected calls leave the exchange unchanged. A terminal
- * preparation failure is latched because the paused line sample cannot be
- * skipped or replayed. */
+ * data directions. If an acknowledged first record already completed the
+ * reciprocal MP exchange, READY_FOR_E is ORed into events here. Rejected
+ * calls leave the exchange and events unchanged. A terminal preparation
+ * failure is latched because the paused line sample cannot be skipped or
+ * replayed. */
 enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
-	struct v34_phase4_exchange *exchange);
+	struct v34_phase4_exchange *exchange, uint32_t *events);
 
 /* True once both acknowledgments were committed and both post-E paths were
  * prepared. The milestone remains observable after E has begun. */

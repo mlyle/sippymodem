@@ -17,12 +17,14 @@ struct endpoint {
 	struct v34_phase4_exchange phase4;
 	struct v34_phase3_exchange_handoff handoff;
 	struct v34_phase4_exchange_configuration phase4_configuration;
+	struct v34_phase4_exchange preparation_snapshot;
 	unsigned int data_preparation_count;
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
 	int16_t next_received;
 	uint8_t transmit_bit;
 	bool constellations_routed;
+	bool has_preparation_snapshot;
 	bool phase4_active;
 };
 
@@ -245,9 +247,13 @@ static bool endpoint_sample(
 		if (!v34_phase4_exchange_needs_data_preparation(
 			    &endpoint->phase4))
 			return true;
+		if (!endpoint->has_preparation_snapshot) {
+			endpoint->preparation_snapshot = endpoint->phase4;
+			endpoint->has_preparation_snapshot = true;
+		}
 		endpoint->data_preparation_count++;
 		result = v34_phase4_exchange_prepare_data_startup(
-			&endpoint->phase4);
+			&endpoint->phase4, phase4_events);
 		if (result != V34_PHASE4_EXCHANGE_OK)
 			fprintf(stderr, "Phase 4 data preparation: %s\n",
 				v34_phase4_exchange_result_name(result));
@@ -509,6 +515,76 @@ static bool test_source_backpressure(void)
 	CHECK(false, "mapping source was not consulted within one data frame");
 }
 
+static bool test_acknowledged_first_record(void)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct v34_phase4_exchange pending;
+	const struct v34_phase4_exchange *snapshot;
+	uint32_t caller_seen;
+	uint32_t answerer_seen;
+	uint32_t events = UINT32_C(0x40000000);
+
+	CHECK(run_pair(
+		      &caller, &answerer, &caller_seen, &answerer_seen),
+	      "acknowledged-record setup pair failed");
+	CHECK(caller.has_preparation_snapshot &&
+	      answerer.has_preparation_snapshot,
+	      "generated exchange did not expose its preparation boundary");
+	snapshot = !caller.preparation_snapshot.peer_mp_prime_received ?
+		&caller.preparation_snapshot :
+		&answerer.preparation_snapshot;
+	CHECK(!snapshot->peer_mp_prime_received &&
+	      snapshot->peer_mp_received &&
+	      v34_phase4_exchange_needs_data_preparation(snapshot),
+	      "preparation snapshot cannot model an acknowledged first record");
+	pending = *snapshot;
+	for (size_t sample_index = 0;
+	     !v34_training_transmitter_phase4_mp_record_complete(
+		     &pending.transmit.training);
+	     ++sample_index) {
+		int16_t sample;
+
+		CHECK(sample_index < 1000u &&
+		      v34_training_transmitter_sample(
+			      &pending.transmit.training, &sample) ==
+			      V34_TRAINING_TRANSMITTER_OK,
+		      "local MP did not reach its record boundary");
+	}
+	if (pending.transmit_mp.type == V34_MP_RECORD_TYPE0) {
+		struct v34_mp_parameters acknowledged =
+			pending.transmit_mp.parameters.type0;
+
+		acknowledged.acknowledges_peer_mp = true;
+		CHECK(v34_training_transmitter_start_mp_type0(
+			      &pending.transmit.training, &acknowledged) ==
+			      V34_TRAINING_TRANSMITTER_OK,
+		      "acknowledged local type-0 MP did not start");
+	} else {
+		struct v34_mp_type1_parameters acknowledged =
+			pending.transmit_mp.parameters.type1;
+
+		acknowledged.common.acknowledges_peer_mp = true;
+		CHECK(v34_training_transmitter_start_mp_type1(
+			      &pending.transmit.training, &acknowledged) ==
+			      V34_TRAINING_TRANSMITTER_OK,
+		      "acknowledged local type-1 MP did not start");
+	}
+	pending.transmit_mp_prime_started = true;
+	pending.peer_mp_prime_received = true;
+	CHECK(v34_phase4_exchange_is_valid(&pending),
+	      "acknowledged first record made pending state invalid");
+	CHECK(v34_phase4_exchange_prepare_data_startup(
+		      &pending, &events) == V34_PHASE4_EXCHANGE_OK &&
+	      v34_phase4_exchange_is_valid(&pending) &&
+	      !v34_phase4_exchange_needs_data_preparation(&pending) &&
+	      v34_phase4_exchange_is_ready_for_e(&pending) &&
+	      events == (UINT32_C(0x40000000) |
+			 V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E),
+	      "acknowledged first record lost the ready-for-E boundary");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
 	struct endpoint caller;
@@ -588,9 +664,20 @@ static bool test_validation_and_transactionality(void)
 	      overlap.events == UINT32_C(0xa55a5aa5),
 	      "rejected Phase 4 samples were not transactional");
 	saved = caller.phase4;
-	CHECK(v34_phase4_exchange_prepare_data_startup(&caller.phase4) ==
+	CHECK(v34_phase4_exchange_prepare_data_startup(
+		      &caller.phase4, &events) ==
 		      V34_PHASE4_EXCHANGE_INVALID_STATE &&
-	      memcmp(&caller.phase4, &saved, sizeof(saved)) == 0,
+	      v34_phase4_exchange_prepare_data_startup(
+		      NULL, &events) ==
+		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase4_exchange_prepare_data_startup(
+		      &caller.phase4, NULL) ==
+		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase4_exchange_prepare_data_startup(
+		      &caller.phase4, (uint32_t *)&caller.phase4) ==
+		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
+	      memcmp(&caller.phase4, &saved, sizeof(saved)) == 0 &&
+	      events == UINT32_C(0x5aa5a55a),
 	      "out-of-sequence data preparation changed the exchange");
 	memset(&startup, 0xa5, sizeof(startup));
 	saved_startup = startup;
@@ -637,6 +724,8 @@ int main(void)
 		  test_generated_online_exchange },
 		{ "mapping source backpressure",
 		  test_source_backpressure },
+		{ "acknowledged first MP record",
+		  test_acknowledged_first_record },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};
