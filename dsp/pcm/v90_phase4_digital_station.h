@@ -4,6 +4,7 @@
 #define V90_PHASE4_DIGITAL_STATION_H
 
 #include "v90_jd.h"
+#include "v90_pcm_mapping.h"
 #include "v90_phase4_cp_line_rx.h"
 #include "v90_phase4_ri.h"
 
@@ -21,7 +22,7 @@ enum v90_phase4_digital_station_result {
 
 /* State needed to start TRN2d immediately after the final Ri-bar character. */
 struct v90_phase4_digital_transmit_handoff {
-	struct v90_cp_parameters training_parameters;
+	struct v90_pcm_mapping training_mapping;
 };
 
 /* Own the digital modem's initial Phase 4 exchange. Ri begins immediately;
@@ -32,7 +33,7 @@ struct v90_phase4_digital_transmit_handoff {
 struct v90_phase4_digital_station {
 	struct v90_phase4_cp_line_rx receive;
 	struct v90_phase4_ri_tx transmit;
-	struct v90_cp_parameters training_parameters;
+	struct v90_pcm_mapping training_mapping;
 	uint8_t maximum_spectral_lookahead;
 	bool cpt_received;
 	bool failed;

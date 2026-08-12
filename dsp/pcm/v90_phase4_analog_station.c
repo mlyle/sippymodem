@@ -4,21 +4,35 @@
 
 #include <stddef.h>
 
+static bool training_parameters_are_supported(
+	const struct v90_cp_parameters *parameters,
+	enum g711_law law, uint8_t maximum_spectral_lookahead)
+{
+	struct v90_pcm_mapping mapping;
+
+	return parameters != NULL &&
+	       parameters->kind == V90_CP_TRAINING &&
+	       parameters->law == law &&
+	       parameters->spectral_lookahead <=
+		       maximum_spectral_lookahead &&
+	       v90_pcm_mapping_init(&mapping, parameters) ==
+		       V90_PCM_MAPPING_OK;
+}
+
 bool v90_phase4_analog_station_is_valid(
 	const struct v90_phase4_analog_station *station)
 {
 	if (station == NULL ||
 	    !v90_phase4_cp_line_tx_is_valid(&station->transmit) ||
 	    !v90_phase4_ri_rx_is_valid(&station->receive) ||
-	    !v90_cp_parameters_are_valid(&station->training_parameters) ||
-	    station->training_parameters.kind != V90_CP_TRAINING ||
-	    station->training_parameters.law != station->receive.law ||
 	    station->maximum_spectral_lookahead <
 		    V90_JD_MINIMUM_LOOKAHEAD ||
 	    station->maximum_spectral_lookahead >
 		    V90_JD_MAXIMUM_LOOKAHEAD ||
-	    station->training_parameters.spectral_lookahead >
-		    station->maximum_spectral_lookahead)
+	    !training_parameters_are_supported(
+		    &station->training_parameters,
+		    station->receive.law,
+		    station->maximum_spectral_lookahead))
 		return false;
 	return station->finish_cpt_requested ==
 	       (station->receive.stage != V90_PHASE4_RI);
@@ -68,11 +82,9 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 	if (station == NULL || training_parameters == NULL ||
 	    !v90_jd_parameters_are_valid(jd))
 		return V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
-	if (!v90_cp_parameters_are_valid(training_parameters) ||
-	    training_parameters->kind != V90_CP_TRAINING ||
-	    training_parameters->law != law ||
-	    training_parameters->spectral_lookahead >
-		    jd->maximum_spectral_shaping_lookahead)
+	if (!training_parameters_are_supported(
+		    training_parameters, law,
+		    jd->maximum_spectral_shaping_lookahead))
 		return V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS;
 	result = transmit_result(v90_phase4_cp_line_tx_init(
 		&initialized.transmit, phase3_transmit,
@@ -200,8 +212,8 @@ bool v90_phase4_analog_receive_handoff_is_valid(
 	const struct v90_phase4_analog_receive_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_cp_parameters_are_valid(&handoff->training_parameters) &&
-	       handoff->training_parameters.kind == V90_CP_TRAINING;
+	       v90_pcm_mapping_is_valid(&handoff->training_mapping) &&
+	       handoff->training_mapping.kind == V90_CP_TRAINING;
 }
 
 enum v90_phase4_analog_station_result
@@ -217,9 +229,11 @@ v90_phase4_analog_station_receive_handoff(
 		return V90_PHASE4_ANALOG_STATION_FAILED;
 	if (!v90_phase4_analog_station_receive_complete(station))
 		return V90_PHASE4_ANALOG_STATION_INVALID_STATE;
-	generated = (struct v90_phase4_analog_receive_handoff){
-		.training_parameters = station->training_parameters,
-	};
+	generated = (struct v90_phase4_analog_receive_handoff){ 0 };
+	if (v90_pcm_mapping_init(
+		    &generated.training_mapping,
+		    &station->training_parameters) != V90_PCM_MAPPING_OK)
+		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	if (!v90_phase4_analog_receive_handoff_is_valid(&generated))
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	*handoff = generated;

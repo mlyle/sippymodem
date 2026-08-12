@@ -4,6 +4,7 @@
 #define V90_PHASE4_ANALOG_STATION_H
 
 #include "v90_jd.h"
+#include "v90_pcm_mapping.h"
 #include "v90_phase4_cp_line_tx.h"
 #include "v90_phase4_ri.h"
 
@@ -27,7 +28,7 @@ enum v90_phase4_analog_station_result {
  * Ri-bar. TRN2d initializes its own coder, so no Phase 3 history crosses this
  * boundary. */
 struct v90_phase4_analog_receive_handoff {
-	struct v90_cp_parameters training_parameters;
+	struct v90_pcm_mapping training_mapping;
 };
 
 /* Own the analogue modem's initial Phase 4 exchange. CPt is repeated on the

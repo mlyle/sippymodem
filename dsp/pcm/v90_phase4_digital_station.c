@@ -4,18 +4,31 @@
 
 #include <stddef.h>
 
-static bool initial_cpt_is_supported(
-	const struct v90_cp_parameters *parameters, enum g711_law law,
+static bool training_mapping_is_supported(
+	const struct v90_pcm_mapping *mapping, enum g711_law law,
 	uint8_t maximum_spectral_lookahead)
 {
-	return v90_cp_parameters_are_valid(parameters) &&
+	return v90_pcm_mapping_is_valid(mapping) &&
+	       mapping->kind == V90_CP_TRAINING &&
+	       mapping->law == law &&
+	       mapping->spectral_lookahead <=
+		       maximum_spectral_lookahead;
+}
+
+static bool initial_cpt_mapping(
+	const struct v90_cp_parameters *parameters, enum g711_law law,
+	uint8_t maximum_spectral_lookahead,
+	struct v90_pcm_mapping *mapping)
+{
+	return parameters != NULL && mapping != NULL &&
 	       parameters->kind == V90_CP_TRAINING &&
 	       parameters->law == law &&
-	       parameters->selected_rate_index != 0 &&
 	       parameters->spectral_lookahead <=
 		       maximum_spectral_lookahead &&
 	       !parameters->request_silence &&
-	       !parameters->acknowledges_peer;
+	       !parameters->acknowledges_peer &&
+	       v90_pcm_mapping_init(mapping, parameters) ==
+		       V90_PCM_MAPPING_OK;
 }
 
 bool v90_phase4_digital_station_is_valid(
@@ -35,8 +48,8 @@ bool v90_phase4_digital_station_is_valid(
 	     !station->failed) ||
 	    station->cpt_received != station->transmit.finish_requested)
 		return false;
-	parameters_are_valid = initial_cpt_is_supported(
-		&station->training_parameters, station->transmit.law,
+	parameters_are_valid = training_mapping_is_supported(
+		&station->training_mapping, station->transmit.law,
 		station->maximum_spectral_lookahead);
 	return station->cpt_received == parameters_are_valid;
 }
@@ -148,18 +161,20 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_receive(
 	    receive_result == V90_PHASE4_CP_LINE_RX_INVALID_STATE)
 		return fail_receive(station, &next);
 	if (receive_result == V90_PHASE4_CP_LINE_RX_RECORD_READY) {
+		struct v90_pcm_mapping mapping;
 		bool supported =
 			v90_phase4_cp_line_rx_pending_record_is_valid(
 				&next.receive) &&
-			initial_cpt_is_supported(
+			initial_cpt_mapping(
 				&event.parameters, next.transmit.law,
-				next.maximum_spectral_lookahead);
+				next.maximum_spectral_lookahead,
+				&mapping);
 
 		if (v90_phase4_cp_line_rx_continue(&next.receive) !=
 		    V90_PHASE4_CP_LINE_RX_OK)
 			return fail_receive(station, &next);
 		if (supported) {
-			next.training_parameters = event.parameters;
+			next.training_mapping = mapping;
 			next.cpt_received = true;
 			if (v90_phase4_ri_tx_request_finish(&next.transmit) !=
 			    V90_PHASE4_RI_OK)
@@ -176,11 +191,8 @@ bool v90_phase4_digital_transmit_handoff_is_valid(
 	const struct v90_phase4_digital_transmit_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_cp_parameters_are_valid(&handoff->training_parameters) &&
-	       handoff->training_parameters.kind == V90_CP_TRAINING &&
-	       handoff->training_parameters.selected_rate_index != 0 &&
-	       !handoff->training_parameters.request_silence &&
-	       !handoff->training_parameters.acknowledges_peer;
+	       v90_pcm_mapping_is_valid(&handoff->training_mapping) &&
+	       handoff->training_mapping.kind == V90_CP_TRAINING;
 }
 
 enum v90_phase4_digital_station_result
@@ -197,7 +209,7 @@ v90_phase4_digital_station_transmit_handoff(
 	if (!v90_phase4_digital_station_transmit_complete(station))
 		return V90_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	generated = (struct v90_phase4_digital_transmit_handoff){
-		.training_parameters = station->training_parameters,
+		.training_mapping = station->training_mapping,
 	};
 	if (!v90_phase4_digital_transmit_handoff_is_valid(&generated))
 		return V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE;
