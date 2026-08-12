@@ -288,19 +288,19 @@ static bool check_probe_turnaround(
 			pair.caller.stage == TEST_ENDPOINT_PROBE_TURNAROUND;
 		bool answerer_turning =
 			pair.answerer.stage == TEST_ENDPOINT_PROBE_TURNAROUND;
-		enum v34_phase2_probe_turnaround_phase caller_phase =
-			V34_PHASE2_PROBE_TURNAROUND_CALLER_WAIT_A_REVERSAL;
-		enum v34_phase2_probe_turnaround_phase answerer_phase =
-			V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
+		enum phase2_probe_turnaround_phase caller_phase =
+			PHASE2_PROBE_TURNAROUND_SIGNAL_B_WAIT_A_REVERSAL;
+		enum phase2_probe_turnaround_phase answerer_phase =
+			PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE;
 		uint16_t caller_remaining = 0;
 
 		if (caller_turning) {
-			caller_phase = pair.caller.turnaround.phase;
+			caller_phase = pair.caller.turnaround.control.phase;
 			caller_remaining =
-				pair.caller.turnaround.phase_samples_remaining;
+				pair.caller.turnaround.control.phase_samples_remaining;
 		}
 		if (answerer_turning)
-			answerer_phase = pair.answerer.turnaround.phase;
+			answerer_phase = pair.answerer.turnaround.control.phase;
 		CHECK(test_v34_phase2_pair_sample(&pair, &event),
 		      "turnaround failed for codec %d delay %zu at sample %zu",
 		      codec, delay_samples, index);
@@ -311,22 +311,22 @@ static bool check_probe_turnaround(
 			observation.answerer_entered = index;
 		if (answerer_turning &&
 		    answerer_phase ==
-			    V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A) {
+			    PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE) {
 			if (observation.answerer_first_a == SIZE_MAX)
 				observation.answerer_first_a = index;
 			observation.answerer_initial_a_samples++;
 		} else if (answerer_turning &&
 			   answerer_phase ==
-				   V34_PHASE2_PROBE_TURNAROUND_ANSWERER_REVERSAL_TAIL) {
+				   PHASE2_PROBE_TURNAROUND_SIGNAL_A_REVERSAL_TAIL) {
 			if (observation.answerer_first_reversed_a == SIZE_MAX)
 				observation.answerer_first_reversed_a = index;
 			observation.answerer_reversed_a_samples++;
 		}
 		if (caller_turning &&
 		    (caller_phase ==
-			     V34_PHASE2_PROBE_TURNAROUND_CALLER_REVERSAL_TAIL ||
+			     PHASE2_PROBE_TURNAROUND_SIGNAL_B_REVERSAL_TAIL ||
 		     (caller_phase ==
-			      V34_PHASE2_PROBE_TURNAROUND_CALLER_RESPONSE_DELAY &&
+			      PHASE2_PROBE_TURNAROUND_SIGNAL_B_RESPONSE_DELAY &&
 		      caller_remaining == 1))) {
 			if (observation.caller_first_reversed_b == SIZE_MAX)
 				observation.caller_first_reversed_b = index;
@@ -358,17 +358,17 @@ static bool check_probe_turnaround(
 				index - detector_delay;
 		}
 		if (event.caller.turnaround.kind ==
-		    V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY)
+		    PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY)
 			observation.caller_ready = index;
 		if (event.answerer.turnaround.kind ==
-		    V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY)
+		    PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY)
 			observation.answerer_ready = index;
 		if (pair.caller.stage == TEST_ENDPOINT_PROBE_TURNAROUND &&
 		    pair.answerer.stage == TEST_ENDPOINT_PROBE_TURNAROUND &&
-		    pair.caller.turnaround.phase ==
-			    V34_PHASE2_PROBE_TURNAROUND_CALLER_PROBE_READY &&
-		    pair.answerer.turnaround.phase ==
-			    V34_PHASE2_PROBE_TURNAROUND_ANSWERER_PROBE_READY)
+		    pair.caller.turnaround.control.phase ==
+			    PHASE2_PROBE_TURNAROUND_SIGNAL_B_PROBE_READY &&
+		    pair.answerer.turnaround.control.phase ==
+			    PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY)
 			break;
 	}
 
@@ -376,12 +376,12 @@ static bool check_probe_turnaround(
 	      observation.answerer_entered != SIZE_MAX &&
 	      observation.answerer_first_a == observation.answerer_entered + 1u &&
 	      observation.answerer_initial_a_samples ==
-		      V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
+		      PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
 	      observation.answerer_first_reversed_a ==
 		      observation.answerer_first_a +
-			      V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
+			      PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
 	      observation.answerer_reversed_a_samples ==
-		      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
+		      PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES,
 	      "answerer changed the exact Tone A intervals");
 	CHECK(observation.caller_a_reversal_event != SIZE_MAX &&
 	      samples_are_close(
@@ -389,13 +389,13 @@ static bool check_probe_turnaround(
 		      observation.answerer_first_reversed_a + delay_samples, 4) &&
 	      observation.caller_first_reversed_b ==
 		      observation.caller_estimated_a_reversal +
-			      V34_PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES,
+			      PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES,
 	      "caller did not compensate the Tone A reversal deadline");
 	CHECK(observation.caller_reversed_b_samples ==
-		      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES &&
+		      PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES &&
 	      observation.caller_ready ==
 		      observation.caller_first_reversed_b +
-			      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+			      PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
 			      1u,
 	      "caller changed the exact reversed Tone B tail");
 	CHECK(observation.answerer_b_reversal_event != SIZE_MAX &&
@@ -405,8 +405,8 @@ static bool check_probe_turnaround(
 	      "answerer did not estimate the returning Tone B reversal");
 	{
 		const size_t handoff_delay =
-			V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
-			V34_PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES;
+			PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES -
+			PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES;
 		size_t expected_ready =
 			observation.answerer_b_reversal_delay >=
 					handoff_delay ?
@@ -432,9 +432,9 @@ static bool check_probe_turnaround(
 		      event.caller_transmit == 0 &&
 		      event.answerer_transmit == 0 &&
 		      event.caller.turnaround.kind ==
-			      V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+			      PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 		      event.answerer.turnaround.kind ==
-			      V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+			      PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 		      memcmp(&pair.caller.turnaround, &caller_terminal,
 			     sizeof(caller_terminal)) == 0 &&
 		      memcmp(&pair.answerer.turnaround, &answerer_terminal,
@@ -712,20 +712,20 @@ static bool test_turnaround_failures_and_validation(void)
 		      V34_PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround failure fixtures did not initialize");
 	for (samples = 0;
-	     samples < V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	     caller.phase != V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
+	     samples < PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	     caller.control.phase != PHASE2_PROBE_TURNAROUND_TIMED_OUT;
 	     ++samples)
 		CHECK(v34_phase2_probe_turnaround_sample(
 			      &caller, 0, &transmit, &event) ==
 			      V34_PHASE2_PROBE_TURNAROUND_OK,
 		      "caller reversal timeout failed at sample %zu", samples);
 	CHECK(samples ==
-		      V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	      caller.phase == V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
-	      caller.failure ==
-		      V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
+		      PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	      caller.control.phase == PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
+	      caller.control.failure ==
+		      PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
 	      event.kind ==
-		      V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		      PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 	      "caller did not report its exact bounded reversal timeout");
 	before = caller;
 	transmit = 1234;
@@ -733,31 +733,31 @@ static bool test_turnaround_failures_and_validation(void)
 		      &caller, INT16_MIN, &transmit, &event) ==
 		      V34_PHASE2_PROBE_TURNAROUND_OK &&
 	      transmit == 0 &&
-	      event.kind == V34_PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
+	      event.kind == PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 	      memcmp(&caller, &before, sizeof(caller)) == 0,
 	      "timed-out caller was not silent and stable");
 
 	for (samples = 0;
 	     samples <
-		     V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
-			     V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
-			     V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	     answerer.phase != V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT;
+		     PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			     PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+			     PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	     answerer.control.phase != PHASE2_PROBE_TURNAROUND_TIMED_OUT;
 	     ++samples)
 		CHECK(v34_phase2_probe_turnaround_sample(
 			      &answerer, 0, &transmit, &event) ==
 			      V34_PHASE2_PROBE_TURNAROUND_OK,
 		      "answerer reversal timeout failed at sample %zu", samples);
 	CHECK(samples ==
-		      V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
-			      V34_PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
-			      V34_PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	      answerer.phase ==
-		      V34_PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
-	      answerer.failure ==
-		      V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
+		      PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			      PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+			      PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+	      answerer.control.phase ==
+		      PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
+	      answerer.control.failure ==
+		      PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
 	      event.kind ==
-		      V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		      PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 	      "answerer did not report its exact bounded reversal timeout");
 
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
@@ -780,9 +780,9 @@ static bool test_turnaround_failures_and_validation(void)
 	      "turnaround validation controller did not initialize");
 	before = caller;
 	event = (struct v34_phase2_probe_turnaround_event){
-		.kind = V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
+		.kind = PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 		.failure =
-			V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT,
+			PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT,
 	};
 	event_before = event;
 	transmit = 1234;
@@ -797,10 +797,10 @@ static bool test_turnaround_failures_and_validation(void)
 	      transmit == 1234,
 	      "invalid turnaround sample output was not transactional");
 	invalid = caller;
-	invalid.phase =
-		V34_PHASE2_PROBE_TURNAROUND_ANSWERER_INITIAL_TONE_A;
-	invalid.phase_samples_remaining =
-		V34_PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
+	invalid.control.phase =
+		PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE;
+	invalid.control.phase_samples_remaining =
+		PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
 	CHECK(!v34_phase2_probe_turnaround_is_valid(&invalid) &&
 	      strcmp(
 		      v34_phase2_probe_turnaround_result_name(

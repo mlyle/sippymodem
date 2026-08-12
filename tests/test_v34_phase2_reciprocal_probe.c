@@ -313,13 +313,13 @@ static bool completed_turnaround_states(
 			return false;
 		if (!caller_ready &&
 		    event.caller.turnaround.kind ==
-			    V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY) {
+			    PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY) {
 			*caller = pair.caller.turnaround;
 			caller_ready = true;
 		}
 		if (!answerer_ready &&
 		    event.answerer.turnaround.kind ==
-			    V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY) {
+			    PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY) {
 			*answerer = pair.answerer.turnaround;
 			answerer_ready = true;
 		}
@@ -421,8 +421,8 @@ static bool test_validation(void)
 		      &caller_turnaround, &answerer_turnaround),
 	      "reciprocal-probe validation fixtures did not initialize");
 	unready = caller_turnaround;
-	unready.phase =
-		V34_PHASE2_PROBE_TURNAROUND_CALLER_WAIT_A_REVERSAL;
+	unready.control.phase =
+		PHASE2_PROBE_TURNAROUND_SIGNAL_B_WAIT_A_REVERSAL;
 	CHECK(v34_phase2_probe_turnaround_is_valid(&unready),
 	      "unready turnaround fixture is invalid");
 	memset(&probe, 0xa5, sizeof(probe));

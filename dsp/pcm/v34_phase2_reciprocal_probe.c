@@ -17,10 +17,10 @@ static bool completed_turnaround_matches_role(
 		turnaround->initial_probe.ranging.info0_exchange.local_role;
 
 	return role == V34_CALLING_STATION ?
-		       turnaround->phase ==
-			       V34_PHASE2_PROBE_TURNAROUND_CALLER_PROBE_READY :
-		       turnaround->phase ==
-			       V34_PHASE2_PROBE_TURNAROUND_ANSWERER_PROBE_READY;
+		       turnaround->control.phase ==
+			       PHASE2_PROBE_TURNAROUND_SIGNAL_B_PROBE_READY :
+		       turnaround->control.phase ==
+			       PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY;
 }
 
 static bool caller_path_is_valid(
@@ -105,7 +105,8 @@ bool v34_phase2_reciprocal_probe_is_valid(
 		return probe->answerer_info1c_elapsed_samples == 0 &&
 		       caller_path_is_valid(probe);
 	return probe->answerer_info1c_elapsed_samples >=
-		       probe->turnaround.answerer_info1c_elapsed_samples &&
+		       probe->turnaround.control
+			       .signal_a_reversal_elapsed_samples &&
 	       answerer_path_is_valid(probe);
 }
 
@@ -153,7 +154,8 @@ v34_phase2_reciprocal_probe_init(
 			return V34_PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	} else {
 		initialized.answerer_info1c_elapsed_samples =
-			completed_turnaround->answerer_info1c_elapsed_samples;
+			completed_turnaround->control
+				.signal_a_reversal_elapsed_samples;
 		initialized.phase =
 			V34_PHASE2_RECIPROCAL_PROBE_ANSWERER_RECEIVING;
 		if (v34_phase2_probe_acquisition_init(

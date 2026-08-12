@@ -202,6 +202,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_spectrum.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_synchronizer.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_sequence.c \
+	$(DSP_PCM_SOURCE_DIR)/phase2_probe_turnaround.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_probe_turnaround.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_ranging.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_reciprocal_probe.c \

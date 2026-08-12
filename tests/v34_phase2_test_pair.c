@@ -159,12 +159,12 @@ static bool endpoint_sample(
 			emitted.entered_turnaround = true;
 		}
 	} else if (endpoint->stage == TEST_ENDPOINT_PROBE_TURNAROUND) {
-		enum v34_phase2_probe_turnaround_event_kind expected_ready =
+		enum phase2_probe_turnaround_event_kind expected_ready =
 			endpoint->turnaround.initial_probe.ranging.info0_exchange
 					.local_role ==
 					V34_CALLING_STATION ?
-				V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY :
-				V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY;
+				PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY :
+				PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY;
 
 		if (v34_phase2_probe_turnaround_sample(
 			    &endpoint->turnaround, received_sample, transmit_sample,

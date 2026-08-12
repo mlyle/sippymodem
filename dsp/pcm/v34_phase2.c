@@ -112,8 +112,8 @@ static enum v34_phase2_failure active_failure(
 		return initial_probe_failure(
 			phase2->state.initial_probe.control.failure);
 	case V34_PHASE2_PROBE_TURNAROUND:
-		return phase2->state.turnaround.failure ==
-			       V34_PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT ?
+		return phase2->state.turnaround.control.failure ==
+			       PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT ?
 			       V34_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT :
 			       V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_RECIPROCAL_PROBE:
@@ -600,14 +600,14 @@ static bool sample_turnaround(
 		    transmit_sample, &child) !=
 	    V34_PHASE2_PROBE_TURNAROUND_OK)
 		return false;
-	if (child.kind == V34_PHASE2_PROBE_TURNAROUND_EVENT_FAILED) {
+	if (child.kind == PHASE2_PROBE_TURNAROUND_EVENT_FAILED) {
 		phase2->failure = V34_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT;
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 	} else if (child.kind ==
-			   V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY ||
+			   PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY ||
 		   child.kind ==
-			   V34_PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY) {
+			   PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY) {
 		return enter_reciprocal_probe(phase2, event);
 	}
 	return true;
