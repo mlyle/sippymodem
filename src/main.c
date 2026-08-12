@@ -58,6 +58,18 @@ struct signal_handlers {
 
 static volatile sig_atomic_t running;
 
+static const char *program_label(const char *program)
+{
+	const char *separator;
+
+	if (program == NULL || program[0] == '\0')
+		return "modem";
+	separator = strrchr(program, '/');
+	return separator != NULL && separator[1] != '\0' ?
+		       separator + 1 :
+		       program;
+}
+
 static void request_stop(int signal_number)
 {
 	(void)signal_number;
@@ -99,24 +111,25 @@ static void print_usage(FILE *stream, const char *program)
 {
 	fprintf(stream,
 		"Usage: %s [--help]\n"
-		"Run sippymodem in the foreground; SIP_* environment variables "
+		"Run the modem in the foreground; SIP_* environment variables "
 		"provide configuration.\n",
 		program != NULL ? program : "slmodemd");
 }
 
 static void report_loop_error(
+	const char *label,
 	enum modem_loop_result result,
 	const struct modem_loop_error *error)
 {
 	if (result == MODEM_LOOP_RUNTIME_ERROR) {
-		fprintf(stderr, "sippymodem: %s\n",
+		fprintf(stderr, "%s: %s\n", label,
 			modem_runtime_result_name(error->runtime_result));
 	} else if (error->system_error != 0) {
-		fprintf(stderr, "sippymodem: %s: %s\n",
+		fprintf(stderr, "%s: %s: %s\n", label,
 			modem_loop_result_name(result),
 			strerror(error->system_error));
 	} else {
-		fprintf(stderr, "sippymodem: %s\n",
+		fprintf(stderr, "%s: %s\n", label,
 			modem_loop_result_name(result));
 	}
 }
@@ -132,6 +145,7 @@ int program_main(int argc, char *argv[])
 	enum modem_runtime_result close_result;
 	enum modem_loop_result loop_result;
 	const char *program = argv != NULL && argc > 0 ? argv[0] : NULL;
+	const char *label = program_label(program);
 	const char *device_path;
 	int failure;
 	int exit_code = PROGRAM_EXIT_OK;
@@ -148,29 +162,29 @@ int program_main(int argc, char *argv[])
 
 	config_init(&config);
 	if (config_apply_environment(&config, &config_error) != 0) {
-		fprintf(stderr, "sippymodem: %s: %s\n", config_error.setting,
+		fprintf(stderr, "%s: %s: %s\n", label, config_error.setting,
 			config_error.message);
 		return PROGRAM_EXIT_USAGE;
 	}
 	running = 1;
 	if (!install_signal_handlers(&handlers)) {
-		fprintf(stderr, "sippymodem: cannot install signal handlers: %s\n",
-			strerror(errno));
+		fprintf(stderr, "%s: cannot install signal handlers: %s\n",
+			label, strerror(errno));
 		return PROGRAM_EXIT_FAILURE;
 	}
 
 	errno = 0;
-	runtime = modem_runtime_create(&config, "sippymodem");
+	runtime = modem_runtime_create(&config, label);
 	if (runtime == NULL) {
 		failure = errno != 0 ? errno : EINVAL;
-		fprintf(stderr, "sippymodem: cannot create runtime: %s\n",
+		fprintf(stderr, "%s: cannot create runtime: %s\n", label,
 			strerror(failure));
 		restore_signal_handlers(&handlers);
 		return PROGRAM_EXIT_FAILURE;
 	}
 	open_result = modem_runtime_open(runtime);
 	if (open_result != MODEM_RUNTIME_OK) {
-		fprintf(stderr, "sippymodem: cannot open runtime: %s\n",
+		fprintf(stderr, "%s: cannot open runtime: %s\n", label,
 			modem_runtime_result_name(open_result));
 		exit_code = PROGRAM_EXIT_FAILURE;
 		goto destroy;
@@ -179,21 +193,21 @@ int program_main(int argc, char *argv[])
 	if (device_path == NULL || fprintf(stdout, "%s\n", device_path) < 0 ||
 	    fflush(stdout) != 0) {
 		failure = errno != 0 ? errno : EIO;
-		fprintf(stderr, "sippymodem: cannot publish modem device: %s\n",
+		fprintf(stderr, "%s: cannot publish modem device: %s\n", label,
 			strerror(failure));
 		exit_code = PROGRAM_EXIT_FAILURE;
 		goto close;
 	}
 	loop_result = modem_loop_run(runtime, &running, &loop_error);
 	if (loop_result != MODEM_LOOP_OK) {
-		report_loop_error(loop_result, &loop_error);
+		report_loop_error(label, loop_result, &loop_error);
 		exit_code = PROGRAM_EXIT_FAILURE;
 	}
 
 close:
 	close_result = modem_runtime_close(runtime);
 	if (close_result != MODEM_RUNTIME_OK) {
-		fprintf(stderr, "sippymodem: cannot close runtime: %s\n",
+		fprintf(stderr, "%s: cannot close runtime: %s\n", label,
 			modem_runtime_result_name(close_result));
 		exit_code = PROGRAM_EXIT_FAILURE;
 	}

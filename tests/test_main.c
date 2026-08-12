@@ -183,13 +183,13 @@ const char *modem_loop_result_name(enum modem_loop_result result)
 
 static bool test_runs_owned_lifecycle(void)
 {
-	char *arguments[] = { "slmodemd", NULL };
+	char *arguments[] = { "/usr/local/bin/slmodemd", NULL };
 
 	reset_fixture();
 	fixture.signal_number = SIGTERM;
 	CHECK(run_program(1, arguments) == 0 &&
 		      strcmp(fixture.calls, "iacoplxd") == 0 &&
-		      strcmp(fixture.modem_name, "sippymodem") == 0 &&
+		      strcmp(fixture.modem_name, "slmodemd") == 0 &&
 		      fixture.saw_running && fixture.saw_stop &&
 		      !fixture.wrong_runtime,
 	      "entry point did not run the bounded runtime lifecycle");
