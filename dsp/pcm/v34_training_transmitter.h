@@ -3,6 +3,7 @@
 #ifndef V34_TRAINING_TRANSMITTER_H
 #define V34_TRAINING_TRANSMITTER_H
 
+#include "v34_phase3_s_sequence.h"
 #include "v34_phase3_transmitter.h"
 #include "v34_phase4_e_sequence.h"
 #include "v34_phase4_j_prime_sequence.h"
@@ -15,6 +16,7 @@
 
 enum v34_training_transmitter_stage {
 	V34_TRAINING_TRANSMITTER_PHASE3,
+	V34_TRAINING_TRANSMITTER_ANSWER_S,
 	V34_TRAINING_TRANSMITTER_J_PRIME,
 	V34_TRAINING_TRANSMITTER_PHASE4_TRN,
 	V34_TRAINING_TRANSMITTER_PHASE4_MP,
@@ -32,16 +34,17 @@ enum v34_training_transmitter_result {
 };
 
 union v34_training_transmitter_phase4_state {
+	struct v34_phase3_s_sequence answer_s;
 	struct v34_phase4_j_prime_sequence j_prime;
 	struct v34_phase4_trn trn;
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence e;
 };
 
-/* Calling-station normalized training and its uninterrupted line waveform.
- * The call controller selects the remote training constellation, decides when
- * open-ended intervals may end, and owns MP/MP-prime negotiation policy. The
- * current sequence owner accepts only a negotiated zero-length MD interval. */
+/* One station's normalized training and uninterrupted line waveform. The call
+ * controller decides when open-ended intervals may end and owns MP/MP-prime
+ * negotiation policy. The current sequence owner accepts only a negotiated
+ * zero-length MD interval. */
 struct v34_training_transmitter {
 	struct v34_training_line line;
 	struct v34_phase3_transmitter phase3;
@@ -50,17 +53,28 @@ struct v34_training_transmitter {
 	enum v34_training_transmitter_stage stage;
 };
 
+/* Begin either station's normalized Phase 3 sequence on a new waveform. The
+ * exchange controller supplies role-specific start and transition timing. */
 enum v34_training_transmitter_result v34_training_transmitter_init(
 	struct v34_training_transmitter *training,
 	const struct v34_phase3_profile *profile,
 	enum v34_constellation_size remote_constellation,
 	uint32_t sample_rate, int16_t nominal_peak_amplitude);
 
+/* Continue an exact Phase 3 exchange boundary. A caller must still be sending
+ * J; an answerer must have completed J and begins its 128T S plus 16T S-bar.
+ * Both inputs are copied and remain unchanged on every result. */
+enum v34_training_transmitter_result v34_training_transmitter_continue(
+	struct v34_training_transmitter *training,
+	const struct v34_training_line *active_line,
+	const struct v34_phase3_transmitter *phase3);
+
 bool v34_training_transmitter_is_valid(
 	const struct v34_training_transmitter *training);
 
 /* These controls apply at the next unconsumed symbol boundary. Calls before
- * the Phase 3 minimum/pattern boundary leave the complete instance unchanged. */
+ * the Phase 3 minimum/pattern boundary leave the complete instance unchanged.
+ * Finishing J starts J-prime for a caller or S/S-bar for an answerer. */
 enum v34_training_transmitter_result v34_training_transmitter_start_j(
 	struct v34_training_transmitter *training);
 enum v34_training_transmitter_result v34_training_transmitter_finish_j(
