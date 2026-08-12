@@ -2,7 +2,7 @@
 
 #include "v34_data_stream.h"
 
-#include "v34_mapping_parameters.h"
+#include "v34_data_mapping.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -28,97 +28,43 @@ static enum v34_data_stream_result transmitter_result(
 	return V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
-static enum v34_data_stream_result geometry_result(
-	enum v34_frame_schedule_result result)
+static enum v34_data_stream_result mapping_result(
+	enum v34_data_mapping_result result)
 {
 	switch (result) {
-	case V34_FRAME_SCHEDULE_OK:
+	case V34_DATA_MAPPING_OK:
 		return V34_DATA_STREAM_OK;
-	case V34_FRAME_SCHEDULE_INVALID_ARGUMENT:
+	case V34_DATA_MAPPING_INVALID_ARGUMENT:
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	case V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION:
+	case V34_DATA_MAPPING_OUT_OF_RANGE:
 		return V34_DATA_STREAM_OUT_OF_RANGE;
-	case V34_FRAME_SCHEDULE_FRAME_COMPLETE:
-		break;
-	}
-	return V34_DATA_STREAM_NUMERIC_FAILURE;
-}
-
-static enum v34_data_stream_result calibration_result(
-	enum v34_power_calibration_result result)
-{
-	switch (result) {
-	case V34_POWER_CALIBRATION_OK:
-		return V34_DATA_STREAM_OK;
-	case V34_POWER_CALIBRATION_INVALID_ARGUMENT:
-		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	case V34_POWER_CALIBRATION_OUT_OF_RANGE:
-		return V34_DATA_STREAM_OUT_OF_RANGE;
-	case V34_POWER_CALIBRATION_NUMERIC_FAILURE:
+	case V34_DATA_MAPPING_NUMERIC_FAILURE:
 		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	}
 	return V34_DATA_STREAM_NUMERIC_FAILURE;
 }
 
-struct b1_mapping_state {
-	struct v34_frame_geometry geometry;
-	struct v34_mapping_parameters parameters;
-	struct v34_frame_schedule schedule;
-	struct v34_scrambler scrambler;
-	struct v34_4d_encoder encoder;
-	struct v34_power_normalizer normalizer;
-};
-
-static enum v34_data_stream_result prepare_b1_mapping(
+static enum v34_data_stream_result prepare_mapping(
 	const struct v34_data_stream_configuration *configuration,
-	struct b1_mapping_state *state)
+	struct v34_data_mapping *mapping)
 {
-	struct b1_mapping_state prepared = { 0 };
-	enum v34_data_stream_result result;
+	struct v34_data_direction_parameters parameters = { 0 };
 
-	if (configuration == NULL || state == NULL ||
-	    !v34_phase3_profile_is_valid(&configuration->profile) ||
-	    configuration->primary_data_rate_2400_bps_units >
-		    configuration->profile
-			    .projected_data_rate_2400_bps_units ||
+	if (configuration == NULL || mapping == NULL ||
 	    configuration->sample_rate == 0 ||
-	    configuration->nominal_peak_amplitude <= 0 ||
-	    !v34_trellis_selection_is_valid(
-		    configuration->trellis_selection) ||
-	    !v34_nonlinear_parameter_is_valid(
-		    configuration->nonlinear_parameter))
+	    configuration->nominal_peak_amplitude <= 0)
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = geometry_result(v34_frame_geometry_init(
-		&prepared.geometry, configuration->profile.symbol_rate,
-		configuration->primary_data_rate_2400_bps_units,
+	memcpy(parameters.precoder_coefficients,
+	       configuration->precoder_coefficients,
+	       sizeof(parameters.precoder_coefficients));
+	parameters.trellis_selection = configuration->trellis_selection;
+	parameters.nonlinear_parameter = configuration->nonlinear_parameter;
+	parameters.primary_data_rate_2400_bps_units =
+		configuration->primary_data_rate_2400_bps_units;
+	parameters.expanded_shaping = configuration->expanded_shaping;
+	return mapping_result(v34_data_mapping_prepare(
+		mapping, &configuration->profile, &parameters,
 		configuration->auxiliary_channel_enabled));
-	if (result != V34_DATA_STREAM_OK)
-		return result;
-	if (v34_mapping_parameters_init(
-		    &prepared.parameters, &prepared.geometry,
-		    configuration->expanded_shaping) !=
-	    V34_MAPPING_PARAMETERS_OK ||
-	    v34_b1_frame_schedule_init(
-		    &prepared.schedule, &prepared.geometry) !=
-		    V34_FRAME_SCHEDULE_OK ||
-	    v34_transmit_scrambler_init(
-		    &prepared.scrambler,
-		    configuration->profile.local_role) !=
-		    V34_FRAMING_OK)
-		return V34_DATA_STREAM_NUMERIC_FAILURE;
-	if (v34_4d_encoder_init(
-		    &prepared.encoder, &prepared.parameters,
-		    configuration->precoder_coefficients,
-		    configuration->trellis_selection) !=
-	    V34_4D_ENCODER_OK)
-		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = calibration_result(v34_calibrate_mapping_power(
-		&prepared.schedule, &prepared.scrambler, &prepared.encoder,
-		configuration->nonlinear_parameter, &prepared.normalizer));
-	if (result != V34_DATA_STREAM_OK)
-		return result;
-	*state = prepared;
-	return V34_DATA_STREAM_OK;
 }
 
 static bool profiles_are_equal(
@@ -159,13 +105,13 @@ enum v34_data_stream_result v34_data_stream_init(
 	struct v34_data_stream *stream,
 	const struct v34_data_stream_configuration *configuration)
 {
-	struct b1_mapping_state mapping;
+	struct v34_data_mapping mapping;
 	struct v34_data_transmitter transmitter;
 	enum v34_data_stream_result result;
 
 	if (stream == NULL)
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = prepare_b1_mapping(configuration, &mapping);
+	result = prepare_mapping(configuration, &mapping);
 	if (result != V34_DATA_STREAM_OK)
 		return result;
 	result = transmitter_result(v34_data_transmitter_init(
@@ -183,19 +129,37 @@ enum v34_data_stream_result v34_data_stream_continue_b1(
 	const struct v34_training_line *active_line,
 	const struct v34_data_stream_configuration *configuration)
 {
-	struct b1_mapping_state mapping;
-	struct v34_data_transmitter transmitter;
+	struct v34_data_mapping mapping;
 	enum v34_data_stream_result result;
 
 	if (stream == NULL ||
 	    !configuration_matches_line(configuration, active_line))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	result = prepare_b1_mapping(configuration, &mapping);
+	result = prepare_mapping(configuration, &mapping);
 	if (result != V34_DATA_STREAM_OK)
 		return result;
+	return v34_data_stream_continue_prepared_b1(
+		stream, active_line, &mapping);
+}
+
+enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
+	struct v34_data_stream *stream,
+	const struct v34_training_line *active_line,
+	const struct v34_data_mapping *mapping)
+{
+	struct v34_data_transmitter transmitter;
+	enum v34_data_stream_result result;
+
+	if (stream == NULL || !v34_data_mapping_is_valid(mapping) ||
+	    !v34_training_line_is_valid(active_line) ||
+	    !profiles_are_equal(
+		    &mapping->transmitting_profile,
+		    &active_line->profile))
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
 	result = transmitter_result(v34_data_transmitter_continue(
-		&transmitter, active_line, &mapping.schedule,
-		&mapping.scrambler, &mapping.encoder, &mapping.normalizer));
+		&transmitter, active_line, &mapping->schedule,
+		&mapping->scrambler, &mapping->encoder,
+		&mapping->normalizer));
 	if (result != V34_DATA_STREAM_OK)
 		return result;
 	return v34_data_stream_init_b1(stream, &transmitter);

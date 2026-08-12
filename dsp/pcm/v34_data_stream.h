@@ -3,6 +3,7 @@
 #ifndef V34_DATA_STREAM_H
 #define V34_DATA_STREAM_H
 
+#include "v34_data_mapping.h"
 #include "v34_data_transmitter.h"
 
 #include <stdbool.h>
@@ -59,6 +60,14 @@ enum v34_data_stream_result v34_data_stream_continue_b1(
 	struct v34_data_stream *stream,
 	const struct v34_training_line *active_line,
 	const struct v34_data_stream_configuration *configuration);
+
+/* Continue an active training waveform with a mapping prepared before the E
+ * boundary. This avoids repeating deterministic calibration while the first
+ * B1 samples are already due. */
+enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
+	struct v34_data_stream *stream,
+	const struct v34_training_line *active_line,
+	const struct v34_data_mapping *mapping);
 
 /* Take ownership of a transmitter positioned at the first mapping frame of
  * B1. The one-frame B1 payload is generated internally as binary ones; the

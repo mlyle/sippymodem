@@ -345,6 +345,17 @@ static bool test_phase4_b1_handoff(void)
 		struct v34_training_transmitter training;
 		struct v34_training_transmitter training_before;
 		struct v34_data_stream stream;
+		struct v34_data_stream prepared_stream;
+		struct v34_data_stream stream_model;
+		struct v34_data_stream prepared_model;
+		struct v34_data_mapping mapping;
+		struct v34_data_direction_parameters parameters = {
+			.trellis_selection = configuration.trellis_selection,
+			.nonlinear_parameter = configuration.nonlinear_parameter,
+			.primary_data_rate_2400_bps_units =
+				configuration.primary_data_rate_2400_bps_units,
+			.expanded_shaping = configuration.expanded_shaping,
+		};
 		struct v34_data_line_transmitter model_line;
 		int16_t expected_sample;
 		int16_t actual_sample;
@@ -357,9 +368,19 @@ static bool test_phase4_b1_handoff(void)
 		      !v34_training_line_needs_point(&training.line),
 		      "Phase 4 caller fixture %zu did not complete between points",
 		      constellation);
+		memcpy(parameters.precoder_coefficients,
+		       configuration.precoder_coefficients,
+		       sizeof(parameters.precoder_coefficients));
 		training_before = training;
 		CHECK(v34_phase4_caller_b1_stream_init(
 			      &stream, &training, &configuration) ==
+			      V34_DATA_STREAM_OK &&
+		      v34_data_mapping_prepare(
+			      &mapping, &configuration.profile, &parameters,
+			      configuration.auxiliary_channel_enabled) ==
+			      V34_DATA_MAPPING_OK &&
+		      v34_data_stream_continue_prepared_b1(
+			      &prepared_stream, &training.line, &mapping) ==
 			      V34_DATA_STREAM_OK &&
 		      memcmp(&training, &training_before, sizeof(training)) == 0 &&
 		      v34_data_stream_is_transmitting_b1(&stream) &&
@@ -380,6 +401,10 @@ static bool test_phase4_b1_handoff(void)
 			     training.line.carrier.active,
 			     sizeof(training.line.carrier.active)) == 0,
 		      "Phase 4 B1 handoff reset caller line %zu", constellation);
+		stream_model = stream;
+		prepared_model = prepared_stream;
+		CHECK(streams_match_through_b1(&stream_model, &prepared_model),
+		      "prepared Phase 4 mapping changed B1 %zu", constellation);
 		model_line = stream.transmitter.line;
 		CHECK(v34_data_line_transmitter_sample(
 			      &model_line, NULL, &expected_sample,
