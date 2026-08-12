@@ -77,6 +77,41 @@ union v34_mp_received_parameters {
 	struct v34_mp_type1_parameters type1;
 };
 
+enum v34_mp_record_type {
+	V34_MP_RECORD_TYPE0,
+	V34_MP_RECORD_TYPE1,
+};
+
+struct v34_mp_record {
+	enum v34_mp_record_type type;
+	union v34_mp_received_parameters parameters;
+};
+
+bool v34_mp_record_is_valid(const struct v34_mp_record *record);
+
+enum v34_mp_rate_result {
+	V34_MP_RATE_OK,
+	V34_MP_RATE_INVALID_ARGUMENT,
+	V34_MP_RATE_NO_COMMON_RATE,
+};
+
+struct v34_mp_rates {
+	uint8_t call_to_answer_2400_bps_units;
+	uint8_t answer_to_call_2400_bps_units;
+	bool auxiliary_channel_enabled;
+	bool asymmetric_rates_enabled;
+};
+
+/* Select the highest rate enabled by both records within both advertised
+ * directional maxima. If either modem disables asymmetric operation, both
+ * directions use the highest rate satisfying all four maxima. */
+enum v34_mp_rate_result v34_mp_select_rates(
+	const struct v34_mp_record *first,
+	const struct v34_mp_record *second,
+	struct v34_mp_rates *rates);
+
+const char *v34_mp_rate_result_name(enum v34_mp_rate_result result);
+
 struct v34_mp_receive_event {
 	enum v34_mp_receive_event_type type;
 	/* Meaningful for a rejected frame; accepted frames report OK. */

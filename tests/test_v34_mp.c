@@ -721,6 +721,121 @@ static bool test_type1_validation(void)
 	return true;
 }
 
+static struct v34_mp_record type0_record(
+	const struct v34_mp_parameters *parameters)
+{
+	return (struct v34_mp_record){
+		.type = V34_MP_RECORD_TYPE0,
+		.parameters.type0 = *parameters,
+	};
+}
+
+static struct v34_mp_record type1_record(
+	const struct v34_mp_parameters *parameters)
+{
+	return (struct v34_mp_record){
+		.type = V34_MP_RECORD_TYPE1,
+		.parameters.type1.common = *parameters,
+	};
+}
+
+static bool test_rate_selection(void)
+{
+	struct v34_mp_parameters first_parameters = base_parameters(false);
+	struct v34_mp_parameters second_parameters = base_parameters(true);
+	struct v34_mp_record first;
+	struct v34_mp_record second;
+	struct v34_mp_record invalid;
+	struct v34_mp_rates selected;
+	struct v34_mp_rates reverse;
+	uint8_t saved[sizeof(selected)];
+
+	first_parameters.maximum_call_to_answer_rate_2400_bps_units = 10;
+	first_parameters.maximum_answer_to_call_rate_2400_bps_units = 9;
+	first_parameters.auxiliary_channel_enabled = true;
+	first_parameters.data_rate_capability_mask = 0x03ff;
+	first_parameters.asymmetric_rates_enabled = true;
+	second_parameters.maximum_call_to_answer_rate_2400_bps_units = 8;
+	second_parameters.maximum_answer_to_call_rate_2400_bps_units = 11;
+	second_parameters.auxiliary_channel_enabled = true;
+	second_parameters.data_rate_capability_mask = 0x07ff;
+	second_parameters.asymmetric_rates_enabled = true;
+	first = type0_record(&first_parameters);
+	second = type1_record(&second_parameters);
+	CHECK(v34_mp_record_is_valid(&first) &&
+	      v34_mp_record_is_valid(&second) &&
+	      v34_mp_select_rates(&first, &second, &selected) ==
+		      V34_MP_RATE_OK &&
+	      v34_mp_select_rates(&second, &first, &reverse) ==
+		      V34_MP_RATE_OK &&
+	      selected.call_to_answer_2400_bps_units == 8 &&
+	      selected.answer_to_call_2400_bps_units == 9 &&
+	      selected.auxiliary_channel_enabled &&
+	      selected.asymmetric_rates_enabled &&
+	      selected.call_to_answer_2400_bps_units ==
+		      reverse.call_to_answer_2400_bps_units &&
+	      selected.answer_to_call_2400_bps_units ==
+		      reverse.answer_to_call_2400_bps_units &&
+	      selected.auxiliary_channel_enabled ==
+		      reverse.auxiliary_channel_enabled &&
+	      selected.asymmetric_rates_enabled ==
+		      reverse.asymmetric_rates_enabled,
+	      "asymmetric MP rate selection changed direction or type");
+
+	second_parameters.asymmetric_rates_enabled = false;
+	second_parameters.auxiliary_channel_enabled = false;
+	second_parameters.data_rate_capability_mask &=
+		(uint16_t)~(1u << (8u - 1u));
+	second = type1_record(&second_parameters);
+	CHECK(v34_mp_select_rates(&first, &second, &selected) ==
+		      V34_MP_RATE_OK &&
+	      selected.call_to_answer_2400_bps_units == 7 &&
+	      selected.answer_to_call_2400_bps_units == 7 &&
+	      !selected.auxiliary_channel_enabled &&
+	      !selected.asymmetric_rates_enabled,
+	      "symmetric MP rate selection did not honor all four maxima");
+
+	first_parameters.data_rate_capability_mask = UINT16_C(1);
+	second_parameters.data_rate_capability_mask = UINT16_C(2);
+	first = type0_record(&first_parameters);
+	second = type1_record(&second_parameters);
+	memset(&selected, 0xa5, sizeof(selected));
+	memcpy(saved, &selected, sizeof(saved));
+	CHECK(v34_mp_select_rates(&first, &second, &selected) ==
+		      V34_MP_RATE_NO_COMMON_RATE &&
+	      memcmp(&selected, saved, sizeof(selected)) == 0,
+	      "disjoint MP capabilities changed the selected rates");
+	first_parameters.data_rate_capability_mask = 1u << (14u - 1u);
+	second_parameters.data_rate_capability_mask =
+		first_parameters.data_rate_capability_mask;
+	first = type0_record(&first_parameters);
+	second = type1_record(&second_parameters);
+	CHECK(v34_mp_select_rates(&first, &second, &selected) ==
+		      V34_MP_RATE_NO_COMMON_RATE &&
+	      memcmp(&selected, saved, sizeof(selected)) == 0,
+	      "MP selected a capability above the directional maximum");
+
+	invalid = first;
+	invalid.type = (enum v34_mp_record_type)99;
+	CHECK(!v34_mp_record_is_valid(NULL) &&
+	      !v34_mp_record_is_valid(&invalid) &&
+	      v34_mp_select_rates(NULL, &second, &selected) ==
+		      V34_MP_RATE_INVALID_ARGUMENT &&
+	      v34_mp_select_rates(&first, NULL, &selected) ==
+		      V34_MP_RATE_INVALID_ARGUMENT &&
+	      v34_mp_select_rates(&invalid, &second, &selected) ==
+		      V34_MP_RATE_INVALID_ARGUMENT &&
+	      v34_mp_select_rates(&first, &second, NULL) ==
+		      V34_MP_RATE_INVALID_ARGUMENT &&
+	      memcmp(&selected, saved, sizeof(selected)) == 0 &&
+	      strcmp(v34_mp_rate_result_name(V34_MP_RATE_NO_COMMON_RATE),
+		     "no common rate") == 0 &&
+	      strcmp(v34_mp_rate_result_name((enum v34_mp_rate_result)99),
+		     "unknown") == 0,
+	      "MP rate validation changed state or result names");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_mp_parameters valid = base_parameters(false);
@@ -808,6 +923,7 @@ int main(void)
 		{ "Type 1 reserved bits and frame rejection",
 		  test_type1_reserved_bits_and_frame_rejection },
 		{ "Type 1 validation", test_type1_validation },
+		{ "data rate selection", test_rate_selection },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

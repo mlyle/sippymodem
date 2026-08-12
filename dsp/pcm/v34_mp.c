@@ -77,6 +77,106 @@ bool v34_mp_type1_parameters_are_valid(
 	return true;
 }
 
+bool v34_mp_record_is_valid(const struct v34_mp_record *record)
+{
+	if (record == NULL)
+		return false;
+	if (record->type == V34_MP_RECORD_TYPE0)
+		return v34_mp_parameters_are_valid(&record->parameters.type0);
+	return record->type == V34_MP_RECORD_TYPE1 &&
+	       v34_mp_type1_parameters_are_valid(&record->parameters.type1);
+}
+
+static const struct v34_mp_parameters *record_common(
+	const struct v34_mp_record *record)
+{
+	return record->type == V34_MP_RECORD_TYPE0 ?
+		       &record->parameters.type0 :
+		       &record->parameters.type1.common;
+}
+
+static uint8_t minimum_rate(uint8_t first, uint8_t second)
+{
+	return first < second ? first : second;
+}
+
+static uint8_t highest_enabled_rate(uint16_t enabled, uint8_t limit)
+{
+	while (limit != 0) {
+		if ((enabled & (uint16_t)(1u << (limit - 1u))) != 0)
+			return limit;
+		--limit;
+	}
+	return 0;
+}
+
+enum v34_mp_rate_result v34_mp_select_rates(
+	const struct v34_mp_record *first,
+	const struct v34_mp_record *second,
+	struct v34_mp_rates *rates)
+{
+	const struct v34_mp_parameters *first_common;
+	const struct v34_mp_parameters *second_common;
+	struct v34_mp_rates selected;
+	uint16_t enabled;
+	uint8_t call_limit;
+	uint8_t answer_limit;
+
+	if (!v34_mp_record_is_valid(first) ||
+	    !v34_mp_record_is_valid(second) || rates == NULL)
+		return V34_MP_RATE_INVALID_ARGUMENT;
+	first_common = record_common(first);
+	second_common = record_common(second);
+	enabled = (uint16_t)(first_common->data_rate_capability_mask &
+			     second_common->data_rate_capability_mask);
+	call_limit = minimum_rate(
+		first_common->maximum_call_to_answer_rate_2400_bps_units,
+		second_common->maximum_call_to_answer_rate_2400_bps_units);
+	answer_limit = minimum_rate(
+		first_common->maximum_answer_to_call_rate_2400_bps_units,
+		second_common->maximum_answer_to_call_rate_2400_bps_units);
+	selected = (struct v34_mp_rates){
+		.auxiliary_channel_enabled =
+			first_common->auxiliary_channel_enabled &&
+			second_common->auxiliary_channel_enabled,
+		.asymmetric_rates_enabled =
+			first_common->asymmetric_rates_enabled &&
+			second_common->asymmetric_rates_enabled,
+	};
+	if (!selected.asymmetric_rates_enabled) {
+		uint8_t symmetric_limit =
+			minimum_rate(call_limit, answer_limit);
+
+		selected.call_to_answer_2400_bps_units =
+			highest_enabled_rate(enabled, symmetric_limit);
+		selected.answer_to_call_2400_bps_units =
+			selected.call_to_answer_2400_bps_units;
+	} else {
+		selected.call_to_answer_2400_bps_units =
+			highest_enabled_rate(enabled, call_limit);
+		selected.answer_to_call_2400_bps_units =
+			highest_enabled_rate(enabled, answer_limit);
+	}
+	if (selected.call_to_answer_2400_bps_units == 0 ||
+	    selected.answer_to_call_2400_bps_units == 0)
+		return V34_MP_RATE_NO_COMMON_RATE;
+	*rates = selected;
+	return V34_MP_RATE_OK;
+}
+
+const char *v34_mp_rate_result_name(enum v34_mp_rate_result result)
+{
+	switch (result) {
+	case V34_MP_RATE_OK:
+		return "ok";
+	case V34_MP_RATE_INVALID_ARGUMENT:
+		return "invalid argument";
+	case V34_MP_RATE_NO_COMMON_RATE:
+		return "no common rate";
+	}
+	return "unknown";
+}
+
 static uint8_t frame_bit(const uint8_t *frame, size_t bit_index)
 {
 	return (uint8_t)((frame[bit_index / 8u] >>

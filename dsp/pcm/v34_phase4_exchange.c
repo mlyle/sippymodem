@@ -21,16 +21,6 @@ static const struct v34_mp_parameters *record_common_const(
 		       &record->parameters.type1.common;
 }
 
-bool v34_mp_record_is_valid(const struct v34_mp_record *record)
-{
-	if (record == NULL)
-		return false;
-	if (record->type == V34_MP_RECORD_TYPE0)
-		return v34_mp_parameters_are_valid(&record->parameters.type0);
-	return record->type == V34_MP_RECORD_TYPE1 &&
-	       v34_mp_type1_parameters_are_valid(&record->parameters.type1);
-}
-
 static void set_record_acknowledgment(
 	struct v34_mp_record *record, bool acknowledged)
 {

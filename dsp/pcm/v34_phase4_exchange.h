@@ -34,18 +34,6 @@ enum v34_phase4_exchange_event {
 	V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E = 1u << 8,
 };
 
-enum v34_mp_record_type {
-	V34_MP_RECORD_TYPE0,
-	V34_MP_RECORD_TYPE1,
-};
-
-struct v34_mp_record {
-	enum v34_mp_record_type type;
-	union v34_mp_received_parameters parameters;
-};
-
-bool v34_mp_record_is_valid(const struct v34_mp_record *record);
-
 struct v34_phase4_exchange_configuration {
 	struct v34_training_receiver_configuration receive;
 	/* Supply an ordinary MP. The exchange sets the acknowledgment bit only
