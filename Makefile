@@ -1,17 +1,19 @@
+include build/pjsip.mk
+
 .PHONY: all clean install-hooks live-call slmodemd test
 
-all:
-	$(MAKE) -C src all
+all: pjsip-required
+	$(MAKE) -C src $(PJSIP_SUBMAKE_OPTIONS) all
 
-slmodemd:
-	$(MAKE) -C src $@
+slmodemd: pjsip-required
+	$(MAKE) -C src $(PJSIP_SUBMAKE_OPTIONS) $@
 
 clean:
 	$(MAKE) -C src clean
 	$(MAKE) -C tests clean
 
-test:
-	$(MAKE) -C tests test
+test: pjsip
+	$(MAKE) -C tests $(PJSIP_SUBMAKE_OPTIONS) test
 
 live-call:
 	python3 tools/live_calls.py

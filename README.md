@@ -97,13 +97,25 @@ standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
 registered. Higher-speed modes remain deliberately unavailable until their
 source-built implementations arrive as reviewable slices.
 
-Build with `make`, configure the daemon through the validated `SIP_*`
-environment variables, and run `./src/slmodemd` without a hardware-device
-argument or helper process. Set `SIP_RECORD_PREFIX` to enable the bounded
-recording interface; the prefix must identify files that do not already exist.
-If the SIP development package is unavailable, the daemon build reports that
-dependency explicitly while `make test` continues to run the dependency-free
-native suite.
+Initialize the pinned pjproject submodule once, then build with `make`:
+
+```
+make pjproject-init
+make
+```
+
+The ordinary build performs no network access. With its submodule initialized,
+it automatically configures a minimal static PJSIP build and installs the
+private build outputs under `.build/`. Without the submodule, it falls back to
+a system `libpjproject` discovered through `pkg-config`. Set
+`PJSIP_PROVIDER=submodule`, `system`, or `none` to make that choice explicit;
+the default is `auto`. `make test` continues to run the dependency-free native
+suite and reports a clear SIP signaling skip when neither provider is present.
+
+Configure the daemon through the validated `SIP_*` environment variables, and
+run `./src/slmodemd` without a hardware-device argument or helper process. Set
+`SIP_RECORD_PREFIX` to enable the bounded recording interface; the prefix must
+identify files that do not already exist.
 
 Live interoperability calls are deliberately opt-in. Copy
 `tools/live-call.example.json` to the ignored `.live-call.json`, make it
@@ -156,12 +168,12 @@ Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
 suite.
 
-When `libpjproject` is available through `pkg-config`, the native suite also
-opens, polls, and closes a real local SIP UDP transport, normalizes account
-credentials, and verifies a real loopback registration request. Registration
-progress and results are exposed as typed events, and confirmed registrations
-receive a bounded graceful unregistration on shutdown. The test reports a
-clear skip when that optional development dependency is unavailable.
+When the submodule build or a system `libpjproject` is available, the native
+suite also opens, polls, and closes a real local SIP UDP transport, normalizes
+account credentials, and verifies a real loopback registration request.
+Registration progress and results are exposed as typed events, and confirmed
+registrations receive a bounded graceful unregistration on shutdown. The test
+reports a clear skip when that optional dependency is unavailable.
 
 Historical Smart Link and distribution documentation is retained under
 `docs/legacy/`. It describes the original package and is not current build or

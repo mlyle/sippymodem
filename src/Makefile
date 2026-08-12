@@ -16,13 +16,16 @@ CPPFLAGS ?=
 CFLAGS ?= -O2 -g
 LDFLAGS ?=
 LDLIBS ?=
+PKG_CONFIG ?= pkg-config
 
 PJSIP_PACKAGE ?= libpjproject
+PJSIP_DEPENDENCY ?=
 PJSIP_AVAILABLE := $(shell \
-	pkg-config --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
-PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
+	$(PKG_CONFIG) --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
+PJSIP_CFLAGS := $(shell \
+	$(PKG_CONFIG) --cflags $(PJSIP_PACKAGE) 2>/dev/null)
 PJSIP_LDLIBS := $(shell \
-	pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
+	$(PKG_CONFIG) --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
 DSP_SOURCE_DIR := ../dsp
 DSP_V21_202_SOURCE_DIR := $(DSP_SOURCE_DIR)/v21_202
@@ -239,8 +242,8 @@ DEPENDENCIES := $(SOURCES:.c=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 all: slmodemd
 
-slmodemd: $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+slmodemd: $(OBJECTS) $(PJSIP_DEPENDENCY)
+	$(CC) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
 else
 .PHONY: slmodemd
 

@@ -3,12 +3,16 @@ PYTHON ?= python3
 CPPFLAGS ?=
 CFLAGS ?= -O2 -g
 LDFLAGS ?=
+PKG_CONFIG ?= pkg-config
 
 PJSIP_PACKAGE ?= libpjproject
+PJSIP_DEPENDENCY ?=
 PJSIP_AVAILABLE := $(shell \
-	pkg-config --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
-PJSIP_CFLAGS := $(shell pkg-config --cflags $(PJSIP_PACKAGE) 2>/dev/null)
-PJSIP_LDLIBS := $(shell pkg-config --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
+	$(PKG_CONFIG) --exists $(PJSIP_PACKAGE) 2>/dev/null && echo yes)
+PJSIP_CFLAGS := $(shell \
+	$(PKG_CONFIG) --cflags $(PJSIP_PACKAGE) 2>/dev/null)
+PJSIP_LDLIBS := $(shell \
+	$(PKG_CONFIG) --static --libs $(PJSIP_PACKAGE) 2>/dev/null)
 
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -I../src -I../dsp \
 	-I../dsp/v21_202 -I../dsp/v22 -I../dsp/v32 -I../dsp/pcm
@@ -1962,8 +1966,8 @@ $(SIP_URI_TEST_BINARY): $(SIP_URI_TEST_OBJECTS)
 $(SDP_TEST_BINARY): $(SDP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
-$(PJSIP_TEST_BINARY): $(PJSIP_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ $(PJSIP_LDLIBS)
+$(PJSIP_TEST_BINARY): $(PJSIP_TEST_OBJECTS) $(PJSIP_DEPENDENCY)
+	$(CC) $(LDFLAGS) -o $@ $(PJSIP_TEST_OBJECTS) $(PJSIP_LDLIBS)
 
 $(G711_TEST_BINARY): $(G711_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
