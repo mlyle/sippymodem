@@ -718,6 +718,34 @@ static bool test_timing_windows(void)
 	      demodulator.timing_sample_count == 0,
 	      "QAM acquisition window advanced before carrier onset");
 	for (uint32_t sample_index = 0;
+	     sample_index < acquisition_samples / 2u; ++sample_index) {
+		struct qam_point received;
+		int16_t sample;
+		bool accepted;
+		bool ready;
+
+		CHECK(qam_modulator_sample(
+			      &modulator, &point, &sample, &accepted) == QAM_OK &&
+		      qam_demodulator_sample(
+			      &demodulator, sample, &received, &ready) == QAM_OK &&
+		      !ready,
+		      "QAM carrier-tail fixture failed at %u", sample_index);
+	}
+	for (uint32_t sample_index = 0;
+	     sample_index < acquisition_samples; ++sample_index) {
+		struct qam_point received;
+		bool ready;
+
+		CHECK(qam_demodulator_sample(
+			      &demodulator, 0, &received, &ready) == QAM_OK &&
+		      !ready,
+		      "QAM carrier tail produced a symbol at %u", sample_index);
+	}
+	CHECK(!qam_demodulator_measure(&demodulator).timing_locked &&
+	      !demodulator.acquisition_started &&
+	      demodulator.timing_sample_count == 0,
+	      "QAM acquired a carrier that ended before its timing window");
+	for (uint32_t sample_index = 0;
 	     sample_index < acquisition_samples +
 				channel.sample_rate;
 	     ++sample_index) {

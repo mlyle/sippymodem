@@ -788,7 +788,7 @@ static void track_recovery_step(
 }
 
 static void select_timing_candidate(
-	struct qam_demodulator *demodulator)
+	struct qam_demodulator *demodulator, double current_power)
 {
 	struct qam_timing_candidate *best = NULL;
 	struct qam_timing_candidate *reference = NULL;
@@ -835,9 +835,11 @@ static void select_timing_candidate(
 			reference_power = average;
 		}
 	}
-	/* Companded media can decode an idle octet to a small nonzero sample.
-	 * Do not mistake that codec baseline for a carrier. */
-	if (best == NULL || best_power <= QAM_MIN_ACQUISITION_POWER) {
+	/* Companded media can decode an idle octet to a small nonzero sample, and
+	 * a decaying carrier tail can dominate a short acquisition average after
+	 * the line enters silence. Require both average and final carrier energy. */
+	if (best == NULL || best_power <= QAM_MIN_ACQUISITION_POWER ||
+	    (acquiring && current_power <= QAM_MIN_ACQUISITION_POWER)) {
 		reset_timing_scores(demodulator);
 		if (acquiring)
 			demodulator->acquisition_started = false;
@@ -904,7 +906,9 @@ static void acquire_symbol_timing(
 	demodulator->timing_sample_count++;
 	if (demodulator->timing_sample_count ==
 	    demodulator->timing_sample_target)
-		select_timing_candidate(demodulator);
+		select_timing_candidate(
+			demodulator,
+			in_phase * in_phase + quadrature * quadrature);
 }
 
 static bool recover_symbol(
