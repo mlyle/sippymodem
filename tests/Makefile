@@ -24,6 +24,10 @@ DSP_V21_202_SOURCE_DIR := $(DSP_SOURCE_DIR)/v21_202
 DSP_V22_SOURCE_DIR := $(DSP_SOURCE_DIR)/v22
 DSP_V32_SOURCE_DIR := $(DSP_SOURCE_DIR)/v32
 DSP_PCM_SOURCE_DIR := $(DSP_SOURCE_DIR)/pcm
+V34_NATIVE_SOURCE_NAMES := \
+	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v34_*.c))
+V34_NATIVE_OBJECTS := \
+	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
 PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
 PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
@@ -355,6 +359,8 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(BUILD_DIR)/v44_stream.o
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
+	$(V34_NATIVE_OBJECTS) \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/datapumps.o \
 	$(BUILD_DIR)/baudot.o \
@@ -1460,6 +1466,8 @@ FSK_INTEGRATION_TEST_BINARY := \
 FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_fsk_integration.o \
 	$(NATIVE_CORE_OBJECTS) \
+	$(V34_NATIVE_OBJECTS) \
+	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/datapumps.o \
 	$(BUILD_DIR)/baudot.o \
@@ -2970,6 +2978,10 @@ $(BUILD_DIR)/v34_phase4_exchange.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_call.o: $(DSP_PCM_SOURCE_DIR)/v34_call.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_datapump.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_datapump.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_training_transmitter.o: \

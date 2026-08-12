@@ -9,6 +9,7 @@
 #include <datapump.h>
 #include <line_startup.h>
 #include <v8_datapump.h>
+#include <v34_datapump.h>
 
 #include "test.h"
 
@@ -198,7 +199,7 @@ static bool test_v8_datapump_mapping(void)
 		      v8_datapump_modulation(DP_V32BIS) ==
 			      V8_MODULATION_NONE &&
 		      v8_datapump_modulation(DP_V34) ==
-			      V8_MODULATION_NONE &&
+			      V8_MODULATION_V34_DUPLEX &&
 		      v8_datapump_modulation(DP_V90) ==
 			      V8_MODULATION_NONE &&
 		      v8_datapump_modulation(DP_V92) ==
@@ -808,6 +809,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *v22bis_operations;
 	struct dp_operations *bell212_operations;
 	struct dp_operations *v32_operations;
+	struct dp_operations *v34_operations;
 	struct dp_operations *baudot_operations;
 	struct dp *call_progress;
 	struct dp *v8;
@@ -816,6 +818,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp *v22bis;
 	struct dp *bell212;
 	struct dp *v32;
+	struct dp *v34;
 	struct single_tone_transmitter v32_line_artifact;
 	struct single_tone_transmitter v32_answer_tone;
 	int16_t receive[MODEM_FRAG];
@@ -831,6 +834,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
+		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_register(DP_V8, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
@@ -845,6 +849,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
+		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_deregister(DP_V8, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
@@ -860,6 +865,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	v22bis_operations = modem_dp_get_registered_ops(DP_V22BIS);
 	bell212_operations = modem_dp_get_registered_ops(DP_B212);
 	v32_operations = modem_dp_get_registered_ops(DP_V32);
+	v34_operations = modem_dp_get_registered_ops(DP_V34);
 	baudot_operations = modem_dp_get_registered_ops(DP_BAUDOT);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
@@ -898,6 +904,15 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v32_operations->delete != NULL &&
 		      v32_operations->process != NULL &&
 		      v32_operations->use_count == 0 &&
+		      v34_operations != NULL &&
+		      v34_operations != v21_operations &&
+		      v34_operations != v23_operations &&
+		      v34_operations != v22_operations &&
+		      v34_operations != v32_operations &&
+		      v34_operations->create != NULL &&
+		      v34_operations->delete != NULL &&
+		      v34_operations->process != NULL &&
+		      v34_operations->use_count == 0 &&
 		      baudot_operations != NULL &&
 		      baudot_operations != v21_operations &&
 		      baudot_operations != v23_operations &&
@@ -1048,6 +1063,26 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v32_operations->delete(v32) == 0 &&
 		      v32_operations->use_count == 0,
 	      "V.32 data pump did not release after line startup");
+	modem->min_rate = 10000;
+	modem->max_rate = 12000;
+	CHECK(v34_operations->create(
+		      modem, DP_V34, 1, MODEM_RATE, MODEM_FRAG,
+		      v34_operations) == NULL &&
+		      v34_operations->use_count == 0,
+	      "V.34 accepted a range above its implemented rates");
+	modem->min_rate = modem->max_rate = V34_INITIAL_MAX_BIT_RATE;
+	v34 = v34_operations->create(
+		modem, DP_V34, 1, MODEM_RATE, MODEM_FRAG, v34_operations);
+	memset(receive, 0, sizeof(receive));
+	memset(transmit, 1, sizeof(transmit));
+	CHECK(v34 != NULL && v34->id == DP_V34 &&
+		      v34_operations->use_count == 1 &&
+		      v34_operations->process(
+			      v34, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+		      datapumps_stop(&datapumps) == DATAPUMPS_BUSY &&
+		      v34_operations->delete(v34) == 0 &&
+		      v34_operations->use_count == 0,
+	      "V.34 data pump did not retain and release its call state");
 	modem->min_rate = 46;
 	modem->max_rate = 49;
 	CHECK(baudot_operations->create(
@@ -1108,6 +1143,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
+		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      !datapumps_are_started(&datapumps) &&
 		      datapumps_stop(&datapumps) ==

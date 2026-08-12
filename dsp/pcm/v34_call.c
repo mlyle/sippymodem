@@ -6,6 +6,10 @@
 #include <stddef.h>
 #include <string.h>
 
+static bool regions_overlap(
+	const void *left, size_t left_size,
+	const void *right, size_t right_size);
+
 static bool role_is_valid(enum v34_station_role role)
 {
 	return role == V34_CALLING_STATION ||
@@ -164,6 +168,16 @@ enum v34_call_stage v34_call_current_stage(const struct v34_call *call)
 {
 	return v34_call_is_valid(call) ? call->stage :
 				       (enum v34_call_stage)-1;
+}
+
+bool v34_call_get_data_startup(
+	const struct v34_call *call, struct v34_data_startup *startup)
+{
+	return v34_call_is_valid(call) && !call->failed &&
+	       call->stage == V34_CALL_PHASE4 && startup != NULL &&
+	       !regions_overlap(call, sizeof(*call), startup, sizeof(*startup)) &&
+	       v34_phase4_exchange_get_data_startup(
+		       &call->state.phase4, startup);
 }
 
 static bool regions_overlap(

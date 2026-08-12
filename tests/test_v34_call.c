@@ -287,6 +287,8 @@ static bool test_pcmu_call(void)
 {
 	struct endpoint caller;
 	struct endpoint answerer;
+	struct v34_data_startup caller_startup;
+	struct v34_data_startup answerer_startup;
 
 	CHECK(run_online_pair(&caller, &answerer, NULL),
 	      "PCMU call failed");
@@ -296,6 +298,16 @@ static bool test_pcmu_call(void)
 	      v34_call_current_stage(&answerer.call) == V34_CALL_PHASE4 &&
 	      !v34_call_has_failed(&caller.call) &&
 	      !v34_call_has_failed(&answerer.call) &&
+	      v34_call_get_data_startup(&caller.call, &caller_startup) &&
+	      v34_call_get_data_startup(&answerer.call, &answerer_startup) &&
+	      caller_startup.mode.transmit
+			      .primary_data_rate_2400_bps_units == 4 &&
+	      caller_startup.mode.receive
+			      .primary_data_rate_2400_bps_units == 4 &&
+	      answerer_startup.mode.transmit
+			      .primary_data_rate_2400_bps_units == 4 &&
+	      answerer_startup.mode.receive
+			      .primary_data_rate_2400_bps_units == 4 &&
 	      caller.mapping_frames_supplied >=
 		      answerer.mapping_frames_received &&
 	      answerer.mapping_frames_supplied >=
@@ -394,6 +406,9 @@ static bool test_validation(void)
 	      memcmp(&call, &saved, sizeof(call)) == 0 && transmit == 1234 &&
 	      !v34_call_is_valid(NULL) && !v34_call_has_failed(NULL) &&
 	      !v34_call_is_online(NULL) &&
+	      !v34_call_get_data_startup(NULL, NULL) &&
+	      !v34_call_get_data_startup(
+		      &call, (struct v34_data_startup *)&call) &&
 	      v34_call_current_stage(NULL) == (enum v34_call_stage)-1 &&
 	      strcmp(v34_call_result_name(V34_CALL_SOURCE_FAILURE),
 		     "mapping-frame source failure") == 0 &&

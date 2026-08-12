@@ -22,6 +22,8 @@ v8_datapump_modulation(enum DP_ID id)
 		return V8_MODULATION_V23_DUPLEX;
 	case DP_V32:
 		return V8_MODULATION_V32;
+	case DP_V34:
+		return V8_MODULATION_V34_DUPLEX;
 	default:
 		return V8_MODULATION_NONE;
 	}

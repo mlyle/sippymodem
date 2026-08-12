@@ -87,6 +87,10 @@ bool v34_call_has_failed(const struct v34_call *call);
 bool v34_call_is_online(const struct v34_call *call);
 enum v34_call_stage v34_call_current_stage(const struct v34_call *call);
 
+/* Copy the negotiated data directions once Phase 4 has prepared them. */
+bool v34_call_get_data_startup(
+	const struct v34_call *call, struct v34_data_startup *startup);
+
 /* Consume and produce one simultaneous 8 kHz sample. The mapping source is
  * ignored before Phase 4 and NULL deliberately sends idle ones afterward.
  * `received` changes only when the Phase 4 observation contains

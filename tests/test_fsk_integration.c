@@ -9,6 +9,7 @@
 #include <v23_datapump.h>
 #include <datapump.h>
 #include <v8_datapump.h>
+#include <v34_datapump.h>
 
 #include "test.h"
 
@@ -54,8 +55,10 @@ struct modem_test_case {
 	unsigned int answerer_tx_rate;
 	unsigned int answerer_rx_rate;
 	unsigned int carrier_loss_samples;
+	unsigned int training_frame_limit;
 	bool automode;
 	bool test_prelink;
+	bool pcmu_only;
 };
 
 static int start_modem(struct modem *modem)
@@ -264,7 +267,10 @@ static bool run_media_call(
 	bool transferred = false;
 	enum DP_ID initial_datapump = uses_v8 ? DP_V8 : test_case->id;
 	unsigned int training_frame_limit =
-		uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT : TRAINING_FRAME_LIMIT;
+		test_case->training_frame_limit != 0 ?
+			test_case->training_frame_limit :
+			(uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT :
+				   TRAINING_FRAME_LIMIT);
 	int selection_length = (int)strlen(test_case->selection_command);
 
 	CHECK(datapumps_start(&datapumps) ==
@@ -352,10 +358,14 @@ static bool run_media_call(
 		CHECK(endpoint_drain(&caller) && endpoint_drain(&answerer),
 		      "%s connection output could not be read", test_case->name);
 		if (!test_case->test_prelink ||
-		    output_contains(&caller, prelink_payload)) {
+		    output_contains(&caller, prelink_payload))
 			prelink_delivered = true;
+		if (prelink_delivered &&
+		    output_contains_connect(
+			    &caller, test_case->caller_rx_rate) &&
+		    output_contains_connect(
+			    &answerer, test_case->answerer_rx_rate))
 			break;
-		}
 		CHECK(process_sip_frame(
 			      &caller, &answerer, codec, &recorder),
 		      "%s pre-link delivery failed at the SIP media boundary",
@@ -703,6 +713,31 @@ int main(void)
 			.automode = true,
 		},
 		{
+			.id = DP_V34,
+			.name = "V.34 9600",
+			.selection_command = "AT+MS=34,0,9600,9600\r",
+			.caller_tx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.caller_rx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.answerer_tx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.answerer_rx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = 1000,
+			.pcmu_only = true,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 9600 automode",
+			.selection_command = "AT+MS=34,1,9600,9600\r",
+			.caller_tx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.caller_rx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.answerer_tx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.answerer_rx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = 1500,
+			.automode = true,
+			.pcmu_only = true,
+		},
+		{
 			.id = DP_B212,
 			.name = "Bell 212A",
 			.selection_command = "AT+MS=212,1,1200,1200\r",
@@ -738,6 +773,9 @@ int main(void)
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
 	     ++standard) {
 		for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+			if (test_cases[standard].pcmu_only &&
+			    codecs[codec] != MEDIA_CODEC_PCMU)
+				continue;
 			fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
 				test_cases[standard].name,
 				codec_name(codecs[codec]));
