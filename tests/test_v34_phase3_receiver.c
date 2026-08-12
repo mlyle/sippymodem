@@ -341,6 +341,12 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_phase3_receiver_configuration_is_valid(&config),
 	      "oversized Phase 3 MD interval was valid");
 	config = configuration(V34_CALLING_STATION, 0);
+	CHECK(v34_phase3_receiver_init_suffix(
+		      &receiver, &config,
+		      V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS - 1u) ==
+		      V34_PHASE3_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "invalid Phase 3 S suffix changed destination state");
 	CHECK(v34_phase3_receiver_init(&receiver, &config) ==
 		      V34_PHASE3_RECEIVER_OK &&
 	      v34_phase3_receiver_is_valid(&receiver) &&

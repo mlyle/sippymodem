@@ -42,6 +42,15 @@ struct v34_training_line {
 	int16_t nominal_peak_amplitude;
 };
 
+/* Derive or validate the exact Phase 3/4 training waveform without creating
+ * mutable line state. The destination is unchanged on failure. */
+enum v34_training_line_result v34_training_line_channel(
+	const struct v34_phase3_profile *profile,
+	uint32_t sample_rate, struct qam_channel *channel);
+bool v34_training_line_channel_matches(
+	const struct v34_phase3_profile *profile,
+	const struct qam_channel *channel);
+
 enum v34_training_line_result v34_training_line_init(
 	struct v34_training_line *line,
 	const struct v34_phase3_profile *profile,

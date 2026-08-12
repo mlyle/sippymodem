@@ -75,9 +75,10 @@ bool v34_phase3_handoff_is_valid(
 	const struct v34_phase3_handoff *handoff);
 
 /* Join S/S-bar acquisition, PP equalizer training, and TRN-to-J detection on
- * one carrier- and timing-recovered point stream. The upstream owner must
- * supply a complete S/S-bar marker; the first nonzero point seeds a scalar
- * gain estimate. No sample clock or carrier state is owned here. */
+ * one carrier- and timing-recovered point stream. The upstream owner supplies
+ * the configured S suffix and a complete S-bar marker; the first nonzero point
+ * seeds a scalar gain estimate. No sample clock or carrier state is owned
+ * here. */
 struct v34_phase3_receiver {
 	union v34_phase3_receiver_state state;
 	struct v34_phase3_receiver_configuration configuration;
@@ -89,6 +90,13 @@ struct v34_phase3_receiver {
 enum v34_phase3_receiver_result v34_phase3_receiver_init(
 	struct v34_phase3_receiver *receiver,
 	const struct v34_phase3_receiver_configuration *configuration);
+/* Use a qualified S suffix when an upstream sample receiver acquires timing
+ * after the finite S marker has begun. Repeated S after MD still requires its
+ * complete 128T marker. */
+enum v34_phase3_receiver_result v34_phase3_receiver_init_suffix(
+	struct v34_phase3_receiver *receiver,
+	const struct v34_phase3_receiver_configuration *configuration,
+	uint8_t s_symbols);
 
 bool v34_phase3_receiver_is_valid(
 	const struct v34_phase3_receiver *receiver);

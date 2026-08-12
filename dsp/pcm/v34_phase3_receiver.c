@@ -141,6 +141,15 @@ enum v34_phase3_receiver_result v34_phase3_receiver_init(
 	struct v34_phase3_receiver *receiver,
 	const struct v34_phase3_receiver_configuration *configuration)
 {
+	return v34_phase3_receiver_init_suffix(
+		receiver, configuration, V34_PHASE3_S_SYMBOLS);
+}
+
+enum v34_phase3_receiver_result v34_phase3_receiver_init_suffix(
+	struct v34_phase3_receiver *receiver,
+	const struct v34_phase3_receiver_configuration *configuration,
+	uint8_t s_symbols)
+{
 	struct v34_phase3_receiver initialized = { 0 };
 
 	if (receiver == NULL ||
@@ -148,7 +157,8 @@ enum v34_phase3_receiver_result v34_phase3_receiver_init(
 		return V34_PHASE3_RECEIVER_INVALID_ARGUMENT;
 	initialized.configuration = *configuration;
 	initialized.stage = V34_PHASE3_RECEIVER_STAGE_S;
-	if (v34_phase3_s_receiver_init(&initialized.state.s.detector) !=
+	if (v34_phase3_s_receiver_init_suffix(
+		    &initialized.state.s.detector, s_symbols) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    !v34_phase3_receiver_is_valid(&initialized))
 		return V34_PHASE3_RECEIVER_INVALID_ARGUMENT;
