@@ -52,8 +52,83 @@ static struct v34_phase3_exchange_configuration phase3_configuration(
 	};
 }
 
+static struct v34_mp_parameters mp_parameters(
+	enum v34_station_role role)
+{
+	return (struct v34_mp_parameters){
+		.maximum_call_to_answer_rate_2400_bps_units =
+			role == V34_CALLING_STATION ? 10u : 8u,
+		.maximum_answer_to_call_rate_2400_bps_units =
+			role == V34_CALLING_STATION ? 9u : 7u,
+		.auxiliary_channel_enabled = role == V34_CALLING_STATION,
+		.remote_transmitter_trellis =
+			role == V34_CALLING_STATION ?
+				V34_TRELLIS_32_STATE : V34_TRELLIS_16_STATE,
+		.remote_transmitter_nonlinear_encoding =
+			role == V34_ANSWERING_STATION,
+		.remote_transmitter_expanded_shaping = true,
+		.data_rate_capability_mask =
+			role == V34_CALLING_STATION ? 0x1a55u : 0x0aaau,
+		.asymmetric_rates_enabled = true,
+	};
+}
+
+static struct v34_mp_record mp_record(enum v34_station_role role)
+{
+	struct v34_mp_record record = {
+		.type = role == V34_CALLING_STATION ?
+			V34_MP_RECORD_TYPE1 : V34_MP_RECORD_TYPE0,
+	};
+
+	if (record.type == V34_MP_RECORD_TYPE0) {
+		record.parameters.type0 = mp_parameters(role);
+	} else {
+		record.parameters.type1 = (struct v34_mp_type1_parameters){
+			.common = mp_parameters(role),
+			.precoder_coefficients = {
+				{ .real = 0x1234, .imaginary = -1 },
+				{ .real = -8192, .imaginary = 4096 },
+				{ .real = 0, .imaginary = 2048 },
+			},
+		};
+	}
+	return record;
+}
+
+static bool mp_records_are_equal(
+	const struct v34_mp_record *left,
+	const struct v34_mp_record *right)
+{
+	uint8_t left_frame[V34_MP_TYPE1_FRAME_BYTES] = { 0 };
+	uint8_t right_frame[V34_MP_TYPE1_FRAME_BYTES] = { 0 };
+	enum v34_mp_result left_result;
+	enum v34_mp_result right_result;
+
+	if (left->type != right->type)
+		return false;
+	if (left->type == V34_MP_RECORD_TYPE0) {
+		left_result = v34_mp_type0_encode(
+			&left->parameters.type0, left_frame,
+			sizeof(left_frame));
+		right_result = v34_mp_type0_encode(
+			&right->parameters.type0, right_frame,
+			sizeof(right_frame));
+	} else if (left->type == V34_MP_RECORD_TYPE1) {
+		left_result = v34_mp_type1_encode(
+			&left->parameters.type1, left_frame,
+			sizeof(left_frame));
+		right_result = v34_mp_type1_encode(
+			&right->parameters.type1, right_frame,
+			sizeof(right_frame));
+	} else {
+		return false;
+	}
+	return left_result == V34_MP_OK && right_result == V34_MP_OK &&
+	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
+}
+
 static struct v34_phase4_exchange_configuration
-phase4_configuration(void)
+phase4_configuration(enum v34_station_role role)
 {
 	return (struct v34_phase4_exchange_configuration){
 		.receive = {
@@ -64,6 +139,7 @@ phase4_configuration(void)
 			},
 			.phase4_equalizer_adaptation = 0.03,
 		},
+		.transmit_mp = mp_record(role),
 	};
 }
 
@@ -80,7 +156,7 @@ static bool endpoint_init(
 				V34_CONSTELLATION_16_POINT :
 				V34_CONSTELLATION_4_POINT);
 	struct endpoint initialized = {
-		.phase4_configuration = phase4_configuration(),
+		.phase4_configuration = phase4_configuration(role),
 	};
 
 	if (endpoint == NULL ||
@@ -166,8 +242,8 @@ static bool run_pair(
 		caller_receive = answerer_transmit;
 		answerer_receive = caller_transmit;
 		if (calling.phase4_active && answering.phase4_active &&
-		    v34_phase4_exchange_is_trn_ready(&calling.phase4) &&
-		    v34_phase4_exchange_is_trn_ready(&answering.phase4)) {
+		    v34_phase4_exchange_is_ready_for_e(&calling.phase4) &&
+		    v34_phase4_exchange_is_ready_for_e(&answering.phase4)) {
 			*caller = calling;
 			*answerer = answering;
 			*caller_seen = caller_events_seen;
@@ -176,19 +252,30 @@ static bool run_pair(
 		}
 	}
 	CHECK(false,
-	      "Phase 4 did not reach reciprocal TRN: active=%d/%d "
+	      "Phase 4 did not complete reciprocal MP-prime: active=%d/%d "
 	      "events=0x%x/0x%x",
 	      calling.phase4_active, answering.phase4_active,
 	      caller_events_seen, answerer_events_seen);
 }
 
-static bool test_generated_duplex_entry(void)
+static bool test_generated_mp_negotiation(void)
 {
 	const uint32_t common_events =
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED |
-		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_READY;
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_READY |
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED |
+		V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED |
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED |
+		V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED |
+		V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E;
 	struct endpoint caller;
 	struct endpoint answerer;
+	struct v34_mp_record caller_peer;
+	struct v34_mp_record answerer_peer;
+	struct v34_mp_record expected_caller_peer =
+		mp_record(V34_ANSWERING_STATION);
+	struct v34_mp_record expected_answerer_peer =
+		mp_record(V34_CALLING_STATION);
 	uint32_t caller_seen;
 	uint32_t answerer_seen;
 
@@ -203,16 +290,24 @@ static bool test_generated_duplex_entry(void)
 	      "Phase 4 event coverage differed: caller=0x%x answerer=0x%x",
 	      caller_seen, answerer_seen);
 	CHECK(caller.phase4.transmit.stage ==
-		      V34_TRAINING_TRANSMITTER_PHASE4_TRN &&
+		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
 	      answerer.phase4.transmit.stage ==
-		      V34_TRAINING_TRANSMITTER_PHASE4_TRN &&
+		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
 	      caller.phase4.transmit.phase4_trn_symbols >=
 		      V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      answerer.phase4.transmit.phase4_trn_symbols >=
 		      V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      !v34_phase4_exchange_has_failed(&caller.phase4) &&
 	      !v34_phase4_exchange_has_failed(&answerer.phase4),
-	      "Phase 4 owners reached the wrong TRN boundary");
+	      "Phase 4 owners reached the wrong MP-prime boundary");
+	CHECK(v34_phase4_exchange_get_peer_mp(
+		      &caller.phase4, &caller_peer) &&
+	      v34_phase4_exchange_get_peer_mp(
+		      &answerer.phase4, &answerer_peer) &&
+	      mp_records_are_equal(&caller_peer, &expected_caller_peer) &&
+	      mp_records_are_equal(
+		      &answerer_peer, &expected_answerer_peer),
+	      "Phase 4 owners did not retain normalized peer records");
 	return true;
 }
 
@@ -221,9 +316,12 @@ static bool test_validation_and_transactionality(void)
 	struct endpoint caller;
 	struct endpoint answerer;
 	struct v34_phase4_exchange_configuration invalid =
-		phase4_configuration();
+		phase4_configuration(V34_CALLING_STATION);
 	struct v34_phase4_exchange exchange;
 	struct v34_phase4_exchange saved;
+	struct v34_mp_record peer = mp_record(V34_CALLING_STATION);
+	struct v34_mp_record saved_peer = peer;
+	struct v34_mp_record invalid_record = peer;
 	union {
 		uint32_t events;
 		int16_t samples[2];
@@ -244,6 +342,15 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "invalid Phase 4 initialization changed the destination");
+	invalid = phase4_configuration(V34_CALLING_STATION);
+	invalid.transmit_mp.parameters.type1.common.acknowledges_peer_mp = true;
+	memset(&exchange, 0xa5, sizeof(exchange));
+	saved = exchange;
+	CHECK(v34_phase4_exchange_init(
+		      &exchange, &caller.handoff, &invalid) ==
+		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
+	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
+	      "pre-acknowledged MP configuration changed the destination");
 	saved = caller.phase4;
 	CHECK(v34_phase4_exchange_sample(
 		      &caller.phase4, 0, NULL, &events) ==
@@ -266,6 +373,11 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_phase4_exchange_is_valid(NULL) &&
 	      !v34_phase4_exchange_has_failed(NULL) &&
 	      !v34_phase4_exchange_is_trn_ready(NULL) &&
+	      !v34_phase4_exchange_is_ready_for_e(NULL) &&
+	      !v34_phase4_exchange_get_peer_mp(NULL, &peer) &&
+	      !v34_phase4_exchange_get_peer_mp(&caller.phase4, NULL) &&
+	      memcmp(&peer, &saved_peer, sizeof(peer)) == 0 &&
+	      !v34_mp_record_is_valid(NULL) &&
 	      strcmp(v34_phase4_exchange_result_name(
 		     V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH),
 		     "sequence mismatch") == 0 &&
@@ -273,6 +385,9 @@ static bool test_validation_and_transactionality(void)
 		     (enum v34_phase4_exchange_result)99),
 		     "unknown") == 0,
 	      "Phase 4 validation helpers returned the wrong result");
+	invalid_record.type = (enum v34_mp_record_type)99;
+	CHECK(!v34_mp_record_is_valid(&invalid_record),
+	      "Phase 4 accepted an unknown MP record type");
 	return true;
 }
 
@@ -282,7 +397,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "generated duplex entry", test_generated_duplex_entry },
+		{ "generated MP negotiation", test_generated_mp_negotiation },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};
