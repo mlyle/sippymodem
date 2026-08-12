@@ -38,7 +38,7 @@ static int process_baudot(
 	struct dp *dp, void *receive, void *transmit, int count);
 
 static struct dp_operations baudot_operations = {
-	.name = "sippymodem Baudot TTY/TDD",
+	.name = "Baudot TTY/TDD",
 	.create = create_baudot,
 	.delete = delete_baudot,
 	.process = process_baudot,

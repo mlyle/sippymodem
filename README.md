@@ -1,6 +1,6 @@
 # sippymodem
 
-This repository contains sippymodem, an implementation of a complete dial-up
+This repository contains an implementation of a complete dial-up
 modem suite built from the user-space Smart Link software modem lineage. The
 resulting modem is implemented in auditable source without proprietary binary
 blobs, and its scope exceeds the original modem with features including

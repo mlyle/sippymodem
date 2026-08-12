@@ -710,11 +710,11 @@ static void *serve_incoming_call(void *context)
 	destination.sin_port = htons((uint16_t)peer->destination_port);
 	invite_size = snprintf(
 		invite, sizeof(invite),
-		"INVITE sip:sippymodem@127.0.0.1:%u SIP/2.0\r\n"
+		"INVITE sip:modem@127.0.0.1:%u SIP/2.0\r\n"
 		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-inbound\r\n"
 		"Max-Forwards: 70\r\n"
 		"From: <sip:caller@127.0.0.1>;tag=caller\r\n"
-		"To: <sip:sippymodem@127.0.0.1:%u>\r\n"
+		"To: <sip:modem@127.0.0.1:%u>\r\n"
 		"Call-ID: incoming-loopback\r\n"
 		"CSeq: 1 INVITE\r\n"
 		"Contact: <sip:caller@127.0.0.1:%u>\r\n"
@@ -765,7 +765,7 @@ static void *serve_incoming_call(void *context)
 	}
 	ack_size = snprintf(
 		ack, sizeof(ack),
-		"ACK sip:sippymodem@127.0.0.1:%u SIP/2.0\r\n"
+		"ACK sip:modem@127.0.0.1:%u SIP/2.0\r\n"
 		"Via: SIP/2.0/UDP 127.0.0.1:%u;branch=z9hG4bK-ack\r\n"
 		"Max-Forwards: 70\r\n"
 		"From: <sip:caller@127.0.0.1>;tag=caller\r\n"

@@ -380,7 +380,7 @@ class LiveCallAttempt:
 
 def _argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run private, explicitly enabled sippymodem live-call plans."
+        description="Run private, explicitly enabled modem live-call plans."
     )
     parser.add_argument("--config", default=".live-call.json")
     parser.add_argument(
@@ -409,13 +409,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         plans = selected_plans(config, options.plan)
     except LiveCallRunError as error:
-        print(f"sippymodem-live: {error}", file=sys.stderr)
+        print(f"live-call: {error}", file=sys.stderr)
         return 2
     if not plans:
-        print("sippymodem-live: no dial plans are enabled", file=sys.stderr)
+        print("live-call: no dial plans are enabled", file=sys.stderr)
         return SKIPPED_EXIT_CODE
     if not config.slmodemd.absolute().is_file():
-        print("sippymodem-live: modem executable is unavailable", file=sys.stderr)
+        print("live-call: modem executable is unavailable", file=sys.stderr)
         return SKIPPED_EXIT_CODE
     results = []
     try:
@@ -438,7 +438,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             results.append(result)
             print(json.dumps(result.public_dict(), sort_keys=True))
     except KeyboardInterrupt:
-        print("sippymodem-live: interrupted", file=sys.stderr)
+        print("live-call: interrupted", file=sys.stderr)
         return 130
     return 0 if all(result.outcome == "connected" for result in results) else 1
 

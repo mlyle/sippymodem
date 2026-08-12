@@ -122,7 +122,7 @@ bool slmodem_driver_init(
 {
 	const struct slmodem_driver initialized = {
 		.interface = {
-			.name = "sippymodem SIP media",
+			.name = "SIP media",
 			.start = start_modem,
 			.stop = stop_modem,
 			.ioctl = control_modem,

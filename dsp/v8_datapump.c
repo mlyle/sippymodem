@@ -32,7 +32,7 @@ static int process_v8(
 	struct dp *dp, void *receive, void *transmit, int count);
 
 static struct dp_operations v8_operations = {
-	.name = "sippymodem V.8 negotiation",
+	.name = "V.8 negotiation",
 	.create = create_v8,
 	.delete = delete_v8,
 	.process = process_v8,

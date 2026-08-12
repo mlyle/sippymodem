@@ -108,7 +108,7 @@ static int process_v32(
 static int enter_link(struct v32_datapump *datapump);
 
 static struct dp_operations v32_operations = {
-	.name = "sippymodem V.32",
+	.name = "V.32",
 	.create = create_v32,
 	.delete = delete_v32,
 	.process = process_v32,

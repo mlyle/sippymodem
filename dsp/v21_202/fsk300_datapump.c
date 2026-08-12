@@ -112,7 +112,7 @@ static int process_fsk300(
 	struct dp *dp, void *receive, void *transmit, int count);
 
 static struct dp_operations fsk300_operations = {
-	.name = "sippymodem 300-bit/s FSK",
+	.name = "300-bit/s FSK",
 	.create = create_fsk300,
 	.delete = delete_fsk300,
 	.process = process_fsk300,

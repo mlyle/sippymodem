@@ -94,7 +94,7 @@ static int process_v23(
 	struct dp *dp, void *receive, void *transmit, int count);
 
 static struct dp_operations v23_operations = {
-	.name = "sippymodem V.23",
+	.name = "V.23",
 	.create = create_v23,
 	.delete = delete_v23,
 	.process = process_v23,
