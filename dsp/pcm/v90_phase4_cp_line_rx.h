@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#ifndef V90_PHASE4_CP_LINE_RX_H
+#define V90_PHASE4_CP_LINE_RX_H
+
+#include "v90_phase3_return_line_rx.h"
+#include "v90_phase4_cp_rx.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+enum v90_phase4_cp_line_rx_result {
+	/* A sample was consumed without producing an equalized symbol. */
+	V90_PHASE4_CP_LINE_RX_OK,
+	V90_PHASE4_CP_LINE_RX_SYMBOL,
+	V90_PHASE4_CP_LINE_RX_RECORD_READY,
+	V90_PHASE4_CP_LINE_RX_FAILED,
+	V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT,
+	V90_PHASE4_CP_LINE_RX_INVALID_STATE,
+	V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE,
+};
+
+/* Continue the digital modem's locked carrier and trained equalizer after
+ * S-bar. The inherited equalizer delay owns the first CPt points, so the next
+ * carrier point produces the first undelivered CP decision without replay. */
+struct v90_phase4_cp_line_rx {
+	struct qam_demodulator demodulator;
+	struct qam_equalizer equalizer;
+	struct v90_phase4_cp_rx symbols;
+	struct v34_phase3_profile transmitting_profile;
+	double adaptation;
+	bool record_pending;
+	bool pending_record_is_valid;
+	bool failed;
+};
+
+enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
+	struct v90_phase4_cp_line_rx *rx,
+	const struct v90_phase3_return_line_handoff *handoff,
+	enum v34_constellation_size constellation, double adaptation);
+bool v90_phase4_cp_line_rx_is_valid(
+	const struct v90_phase4_cp_line_rx *rx);
+bool v90_phase4_cp_line_rx_has_failed(
+	const struct v90_phase4_cp_line_rx *rx);
+bool v90_phase4_cp_line_rx_has_pending_record(
+	const struct v90_phase4_cp_line_rx *rx);
+bool v90_phase4_cp_line_rx_pending_record_is_valid(
+	const struct v90_phase4_cp_line_rx *rx);
+
+/* A record event pauses input so a controller cannot consume the first symbol
+ * of a different section. Continue after accepting or rejecting the record. */
+enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_continue(
+	struct v90_phase4_cp_line_rx *rx);
+
+/* Consume one signed 8 kHz sample. event changes only for RECORD_READY.
+ * Invalid, paused, and failed calls consume nothing. A terminal DSP failure
+ * consumes the sample, latches failure, and leaves event unchanged. */
+enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
+	struct v90_phase4_cp_line_rx *rx, int16_t sample,
+	struct v90_cp_receive_event *event);
+
+const char *v90_phase4_cp_line_rx_result_name(
+	enum v90_phase4_cp_line_rx_result result);
+
+#endif /* V90_PHASE4_CP_LINE_RX_H */
