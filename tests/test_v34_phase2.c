@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase2.h>
+#include <v34_phase3_line_transmitter.h>
 
 #include "v34_phase2_test_pair.h"
 #include "test.h"
@@ -20,11 +21,11 @@ struct owned_pair {
 	struct v34_phase2 answerer;
 };
 
-static struct v34_info1c caller_info1c(void)
+static struct v34_info1c caller_info1c(bool zero_md)
 {
 	struct v34_info1c info1c = {
 		.common = {
-			.local_md_length_35_ms_units = 2,
+			.local_md_length_35_ms_units = zero_md ? 0 : 2,
 			.frequency_offset_1_50_hz_units = -10,
 		},
 	};
@@ -38,11 +39,11 @@ static struct v34_info1c caller_info1c(void)
 	return info1c;
 }
 
-static struct v34_info1a answerer_info1a(void)
+static struct v34_info1a answerer_info1a(bool zero_md)
 {
 	return (struct v34_info1a){
 		.common = {
-			.local_md_length_35_ms_units = 3,
+			.local_md_length_35_ms_units = zero_md ? 0 : 3,
 			.frequency_offset_1_50_hz_units = 11,
 		},
 		.call_transmit = {
@@ -204,7 +205,7 @@ static bool measurement_is_finite(
 }
 
 static bool check_timeline(
-	enum test_codec codec, size_t delay_samples)
+	enum test_codec codec, size_t delay_samples, bool zero_md)
 {
 	const uint32_t common_events =
 		(UINT32_C(1) << V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) |
@@ -223,9 +224,9 @@ static bool check_timeline(
 		test_v34_phase2_capabilities(V34_ANSWERING_STATION);
 	struct v34_info0 caller_peer_info0;
 	struct v34_info0 answerer_peer_info0;
-	struct v34_info1c local_info1c = caller_info1c();
+	struct v34_info1c local_info1c = caller_info1c(zero_md);
 	struct v34_info1c received_info1c;
-	struct v34_info1a local_info1a = answerer_info1a();
+	struct v34_info1a local_info1a = answerer_info1a(zero_md);
 	struct v34_info1a received_info1a;
 	struct v34_phase2_probe_receiver_measurement caller_measurement;
 	struct v34_phase2_probe_receiver_measurement answerer_measurement;
@@ -389,6 +390,31 @@ static bool check_timeline(
 	      caller_local_profile.symbol_rate == V34_SYMBOL_RATE_3000 &&
 	      answerer_local_profile.symbol_rate == V34_SYMBOL_RATE_3200,
 	      "INFO1 did not produce reciprocal Phase 3 profiles");
+	if (zero_md) {
+		struct v34_phase3_line_transmitter caller_phase3;
+		struct v34_phase3_line_transmitter answerer_phase3;
+
+		CHECK(v34_phase3_line_transmitter_init(
+			      &caller_phase3, &caller_local_profile,
+			      V34_CONSTELLATION_16_POINT, 8000,
+			      TEST_AMPLITUDE) ==
+			      V34_PHASE3_LINE_TRANSMITTER_OK &&
+		      v34_phase3_line_transmitter_init(
+			      &answerer_phase3, &answerer_local_profile,
+			      V34_CONSTELLATION_16_POINT, 8000,
+			      TEST_AMPLITUDE) ==
+			      V34_PHASE3_LINE_TRANSMITTER_OK &&
+		      profiles_equal(
+			      &caller_phase3.line.profile,
+			      &caller_local_profile) &&
+		      profiles_equal(
+			      &answerer_phase3.line.profile,
+			      &answerer_local_profile) &&
+		      caller_phase3.symbols.local_role == V34_CALLING_STATION &&
+		      answerer_phase3.symbols.local_role ==
+			      V34_ANSWERING_STATION,
+		      "Phase 2 profiles did not initialize reciprocal Phase 3 lines");
+	}
 	CHECK(v34_phase2_measure_remote_probe(
 		      &pair.caller, &caller_measurement) == V34_PHASE2_OK &&
 	      v34_phase2_measure_remote_probe(
@@ -418,16 +444,18 @@ static bool test_generated_timelines(void)
 	static const struct {
 		enum test_codec codec;
 		size_t delay_samples;
+		bool zero_md;
 	} cases[] = {
-		{ TEST_CODEC_LINEAR, 1 },
-		{ TEST_CODEC_PCMU, 13 },
-		{ TEST_CODEC_PCMA, 47 },
+		{ TEST_CODEC_LINEAR, 1, true },
+		{ TEST_CODEC_PCMU, 13, false },
+		{ TEST_CODEC_PCMA, 47, false },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
 		CHECK(check_timeline(
 			      cases[index].codec,
-			      cases[index].delay_samples),
+			      cases[index].delay_samples,
+			      cases[index].zero_md),
 		      "generated Phase 2 case %zu failed", index);
 	return true;
 }
@@ -518,7 +546,7 @@ static bool test_validation(void)
 
 static bool test_info1_timeout(void)
 {
-	struct v34_info1c local_info1c = caller_info1c();
+	struct v34_info1c local_info1c = caller_info1c(false);
 	struct owned_pair pair;
 	struct v34_phase2_event event;
 	int16_t transmit;

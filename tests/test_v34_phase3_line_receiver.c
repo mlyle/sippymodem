@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v34_phase3_transmitter.h>
 #include <v34_phase3_line_receiver.h>
-#include <v34_training_line.h>
+#include <v34_phase3_line_transmitter.h>
 
 #include "test.h"
 
@@ -13,11 +12,6 @@ enum {
 	SAMPLE_RATE = 8000,
 	TRN_SYMBOLS = 640,
 	SAMPLE_LIMIT = 30000,
-};
-
-struct line_source {
-	struct v34_training_line line;
-	struct v34_phase3_transmitter symbols;
 };
 
 static struct v34_phase3_profile profile(enum v34_station_role role)
@@ -45,40 +39,25 @@ static struct v34_phase3_line_receiver_configuration configuration(void)
 }
 
 static bool source_init(
-	struct line_source *source,
+	struct v34_phase3_line_transmitter *source,
 	const struct v34_phase3_profile *transmitting_profile)
 {
-	return v34_training_line_init(
-		       &source->line, transmitting_profile,
-		       SAMPLE_RATE, 6000) == V34_TRAINING_LINE_OK &&
-	       v34_phase3_transmitter_init(
-		       &source->symbols, transmitting_profile->local_role,
-		       V34_CONSTELLATION_16_POINT) ==
-		       V34_PHASE3_TRANSMITTER_OK;
+	return v34_phase3_line_transmitter_init(
+		       source, transmitting_profile,
+		       V34_CONSTELLATION_16_POINT, SAMPLE_RATE, 6000) ==
+	       V34_PHASE3_LINE_TRANSMITTER_OK;
 }
 
-static bool source_sample(struct line_source *source, int16_t *sample)
+static bool source_sample(
+	struct v34_phase3_line_transmitter *source, int16_t *sample)
 {
-	struct qam_point point;
-	const struct qam_point *point_pointer = NULL;
-	bool accepting = v34_training_line_needs_point(&source->line);
-	bool accepted;
-
-	if (accepting) {
-		if (source->symbols.stage == V34_PHASE3_TRANSMITTER_TRN &&
-		    source->symbols.trn_symbols == TRN_SYMBOLS &&
-		    v34_phase3_transmitter_start_j(&source->symbols) !=
-			    V34_PHASE3_TRANSMITTER_OK)
-			return false;
-		if (v34_phase3_transmitter_next(&source->symbols, &point) !=
-		    V34_PHASE3_TRANSMITTER_OK)
-			return false;
-		point_pointer = &point;
-	}
-	return v34_training_line_sample(
-		       &source->line, point_pointer, sample, &accepted) ==
-		       V34_TRAINING_LINE_OK &&
-	       accepted == accepting;
+	if (source->symbols.stage == V34_PHASE3_TRANSMITTER_TRN &&
+	    source->symbols.trn_symbols == TRN_SYMBOLS &&
+	    v34_phase3_line_transmitter_start_j(source) !=
+		    V34_PHASE3_LINE_TRANSMITTER_OK)
+		return false;
+	return v34_phase3_line_transmitter_sample(source, sample) ==
+	       V34_PHASE3_LINE_TRANSMITTER_OK;
 }
 
 static bool run_generated_line_timeline(enum v34_station_role role)
@@ -90,7 +69,7 @@ static bool run_generated_line_timeline(enum v34_station_role role)
 	struct v34_phase3_line_receiver complete;
 	struct v34_phase3_line_handoff handoff;
 	struct v34_phase3_line_handoff unchanged;
-	struct line_source source;
+	struct v34_phase3_line_transmitter source;
 	unsigned int timing_events = 0;
 	unsigned int s_events = 0;
 	unsigned int pp_events = 0;
@@ -169,6 +148,149 @@ static bool test_generated_line_timeline(void)
 	       run_generated_line_timeline(V34_ANSWERING_STATION);
 }
 
+static bool run_transmitter_handoff(enum v34_station_role role)
+{
+	struct v34_phase3_profile transmitting_profile = profile(role);
+	struct v34_phase3_line_transmitter transmitter;
+	struct v34_phase3_line_transmitter saved;
+	struct v34_training_line handoff;
+	struct v34_training_line saved_handoff;
+	int16_t sample = 1234;
+	bool started_j = false;
+	bool finished_j = false;
+	bool complete = false;
+
+	memset(&handoff, 0x5a, sizeof(handoff));
+	saved_handoff = handoff;
+	CHECK(v34_phase3_line_transmitter_init(
+		      &transmitter, &transmitting_profile,
+		      V34_CONSTELLATION_16_POINT, SAMPLE_RATE, 6000) ==
+		      V34_PHASE3_LINE_TRANSMITTER_OK &&
+	      v34_phase3_line_transmitter_handoff(
+		      &transmitter, &handoff) ==
+		      V34_PHASE3_LINE_TRANSMITTER_INVALID_STATE &&
+	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
+	      "Phase 3 transmitter exposed a premature role=%d handoff", role);
+	for (unsigned int index = 0; index < SAMPLE_LIMIT; ++index) {
+		enum v34_phase3_line_transmitter_result result;
+
+		if (transmitter.symbols.stage ==
+			    V34_PHASE3_TRANSMITTER_TRN &&
+		    transmitter.symbols.trn_symbols ==
+			    V34_PHASE3_TRN_MIN_SYMBOLS) {
+			CHECK(!started_j &&
+			      v34_phase3_line_transmitter_start_j(
+				      &transmitter) ==
+				      V34_PHASE3_LINE_TRANSMITTER_OK,
+			      "role=%d did not enter J", role);
+			started_j = true;
+		}
+		if (transmitter.symbols.stage ==
+			    V34_PHASE3_TRANSMITTER_J &&
+		    transmitter.symbols.j_symbols ==
+			    V34_PHASE3_J_PATTERN_SYMBOLS) {
+			CHECK(!finished_j &&
+			      v34_phase3_line_transmitter_finish_j(
+				      &transmitter) ==
+				      V34_PHASE3_LINE_TRANSMITTER_OK,
+			      "role=%d did not finish J", role);
+			finished_j = true;
+		}
+		result = v34_phase3_line_transmitter_sample(
+			&transmitter, &sample);
+		if (result == V34_PHASE3_LINE_TRANSMITTER_COMPLETE) {
+			complete = true;
+			break;
+		}
+		CHECK(result == V34_PHASE3_LINE_TRANSMITTER_OK,
+		      "role=%d line stopped at sample %u: %s", role, index,
+		      v34_phase3_line_transmitter_result_name(result));
+	}
+	saved = transmitter;
+	sample = 1234;
+	CHECK(started_j && finished_j && complete &&
+	      v34_phase3_line_transmitter_is_handoff_ready(&transmitter) &&
+	      v34_phase3_line_transmitter_sample(&transmitter, &sample) ==
+		      V34_PHASE3_LINE_TRANSMITTER_COMPLETE &&
+	      sample == 1234 &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      v34_phase3_line_transmitter_handoff(
+		      &transmitter, &handoff) ==
+		      V34_PHASE3_LINE_TRANSMITTER_OK &&
+	      v34_training_line_is_valid(&handoff) &&
+	      memcmp(&handoff, &transmitter.line, sizeof(handoff)) == 0,
+	      "role=%d Phase 3 line handoff was not boundary-exact", role);
+	return true;
+}
+
+static bool test_transmitter_handoff(void)
+{
+	return run_transmitter_handoff(V34_CALLING_STATION) &&
+	       run_transmitter_handoff(V34_ANSWERING_STATION);
+}
+
+static bool test_transmitter_validation(void)
+{
+	struct v34_phase3_profile transmitting_profile =
+		profile(V34_CALLING_STATION);
+	struct v34_phase3_profile with_md = transmitting_profile;
+	struct v34_phase3_line_transmitter transmitter;
+	struct v34_phase3_line_transmitter saved;
+	int16_t sample = 1234;
+
+	with_md.md_length_35_ms_units = 1;
+	with_md.md_symbol_count = 105;
+	memset(&transmitter, 0xa5, sizeof(transmitter));
+	saved = transmitter;
+	CHECK(v34_phase3_profile_is_valid(&with_md) &&
+	      v34_phase3_line_transmitter_init(
+		      NULL, &transmitting_profile,
+		      V34_CONSTELLATION_4_POINT, SAMPLE_RATE, 6000) ==
+		      V34_PHASE3_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_line_transmitter_init(
+		      &transmitter, &with_md, V34_CONSTELLATION_4_POINT,
+		      SAMPLE_RATE, 6000) ==
+		      V34_PHASE3_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_line_transmitter_init(
+		      &transmitter, &transmitting_profile,
+		      (enum v34_constellation_size)99, SAMPLE_RATE, 6000) ==
+		      V34_PHASE3_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_line_transmitter_init(
+		      &transmitter, &transmitting_profile,
+		      V34_CONSTELLATION_4_POINT, 1000, 6000) ==
+		      V34_PHASE3_LINE_TRANSMITTER_OUT_OF_RANGE &&
+	      v34_phase3_line_transmitter_init(
+		      &transmitter, &transmitting_profile,
+		      V34_CONSTELLATION_4_POINT, SAMPLE_RATE, INT16_MAX) ==
+		      V34_PHASE3_LINE_TRANSMITTER_CLIPPING_RISK &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
+	      "invalid Phase 3 transmitter initialization changed its owner");
+	CHECK(v34_phase3_line_transmitter_init(
+		      &transmitter, &transmitting_profile,
+		      V34_CONSTELLATION_4_POINT, SAMPLE_RATE, 6000) ==
+		      V34_PHASE3_LINE_TRANSMITTER_OK,
+	      "Phase 3 transmitter validation fixture did not initialize");
+	saved = transmitter;
+	CHECK(v34_phase3_line_transmitter_start_j(&transmitter) ==
+		      V34_PHASE3_LINE_TRANSMITTER_INVALID_STATE &&
+	      v34_phase3_line_transmitter_finish_j(&transmitter) ==
+		      V34_PHASE3_LINE_TRANSMITTER_INVALID_STATE &&
+	      v34_phase3_line_transmitter_sample(&transmitter, NULL) ==
+		      V34_PHASE3_LINE_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      sample == 1234 &&
+	      !v34_phase3_line_transmitter_is_valid(NULL) &&
+	      !v34_phase3_line_transmitter_is_handoff_ready(NULL) &&
+	      strcmp(v34_phase3_line_transmitter_result_name(
+		     V34_PHASE3_LINE_TRANSMITTER_NUMERIC_FAILURE),
+		     "numeric failure") == 0 &&
+	      strcmp(v34_phase3_line_transmitter_result_name(
+		     (enum v34_phase3_line_transmitter_result)99),
+		     "unknown") == 0,
+	      "Phase 3 transmitter validation was not transactional");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase3_profile transmitting_profile =
@@ -231,6 +353,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated line timeline", test_generated_line_timeline },
+		{ "transmitter handoff", test_transmitter_handoff },
+		{ "transmitter validation", test_transmitter_validation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
