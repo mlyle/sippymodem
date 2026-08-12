@@ -8,10 +8,6 @@
 
 enum {
 	QAM_NORMALIZATION_PHASES = 512,
-	/* Structured training can bias a short energy comparison toward a
-	 * neighboring symbol phase; average across the modem training interval. */
-	QAM_ACQUISITION_SYMBOLS = 256,
-	QAM_MIN_ACQUISITION_SYMBOLS = 192,
 	/* Bound the recovered clock to one percent around the configured rate,
 	 * retaining one phase unit of range for very small exact numerators. */
 	QAM_CLOCK_TRACKING_RANGE_DIVISOR = 100,
@@ -404,29 +400,52 @@ static uint64_t greatest_common_divisor(uint64_t left, uint64_t right)
 static bool demodulator_shape_is_valid(
 	const struct qam_channel *channel, uint64_t period,
 	size_t *filter_count, size_t *candidate_count,
-	uint64_t *timing_step, uint32_t *acquisition_samples)
+	uint64_t *timing_step)
 {
 	uint64_t step = channel->symbol_rate_numerator;
 	uint64_t support = period * channel->pulse_span_symbols;
 	uint64_t count = support / step + (support % step != 0 ? 1u : 0u) + 1u;
 	uint64_t timing_gcd = greatest_common_divisor(period, step);
 	uint64_t candidates = period / timing_gcd;
-	uint64_t whole_samples = period / step;
-	uint64_t remainder_units = period % step;
-	uint64_t target = QAM_ACQUISITION_SYMBOLS * whole_samples +
-		(QAM_ACQUISITION_SYMBOLS * remainder_units + step - 1u) /
-			step +
-		candidates;
 
 	if (count < 2 || count > QAM_MAX_MATCHED_FILTER_SAMPLES ||
 	    candidates == 0 ||
-	    candidates > QAM_MAX_TIMING_CANDIDATES ||
-	    target > UINT32_MAX)
+	    candidates > QAM_MAX_TIMING_CANDIDATES)
 		return false;
 	*filter_count = (size_t)count;
 	*candidate_count = (size_t)candidates;
 	*timing_step = timing_gcd;
-	*acquisition_samples = (uint32_t)target;
+	return true;
+}
+
+static bool timing_window_is_valid(uint32_t symbols)
+{
+	return symbols >= QAM_MIN_TIMING_WINDOW_SYMBOLS &&
+	       symbols <= QAM_MAX_TIMING_WINDOW_SYMBOLS;
+}
+
+static bool timing_sample_target(
+	const struct qam_channel *channel, uint64_t period,
+	size_t candidate_count, uint32_t symbols, uint32_t *samples)
+{
+	uint64_t step = channel->symbol_rate_numerator;
+	uint64_t whole_samples = period / step;
+	uint64_t remainder_units = period % step;
+	uint64_t fractional_samples;
+	uint64_t target;
+
+	if (!timing_window_is_valid(symbols) || samples == NULL)
+		return false;
+	if (whole_samples > UINT32_MAX / symbols)
+		return false;
+	fractional_samples =
+		((uint64_t)symbols * remainder_units + step - 1u) / step;
+	target = (uint64_t)symbols * whole_samples;
+	if (fractional_samples > UINT32_MAX - target ||
+	    candidate_count > UINT32_MAX - target - fractional_samples)
+		return false;
+	target += fractional_samples + candidate_count;
+	*samples = (uint32_t)target;
 	return true;
 }
 
@@ -491,20 +510,32 @@ bool qam_demodulator_is_valid(
 	size_t candidate_count = 0;
 	uint64_t timing_step = 0;
 	uint32_t acquisition_samples = 0;
+	uint32_t tracking_samples = 0;
+	uint32_t expected_samples;
 
 	if (demodulator == NULL ||
 	    !channel_is_valid(&demodulator->channel, &period) ||
 	    !demodulator_shape_is_valid(
 		    &demodulator->channel, period, &filter_count,
-		    &candidate_count, &timing_step, &acquisition_samples) ||
+		    &candidate_count, &timing_step) ||
+	    !timing_window_is_valid(
+		    demodulator->acquisition_window_symbols) ||
+	    !timing_window_is_valid(
+		    demodulator->tracking_window_symbols) ||
+	    !timing_sample_target(
+		    &demodulator->channel, period, candidate_count,
+		    demodulator->acquisition_window_symbols,
+		    &acquisition_samples) ||
+	    !timing_sample_target(
+		    &demodulator->channel, period, candidate_count,
+		    demodulator->tracking_window_symbols,
+		    &tracking_samples) ||
 	    demodulator->symbol_period_units != period ||
 	    demodulator->timing_step_units != timing_step ||
 	    !recovery_step_is_valid(demodulator) ||
 	    demodulator->matched_filter_count != filter_count ||
 	    demodulator->timing_candidate_count != candidate_count ||
 	    demodulator->timing_reference_index >= candidate_count ||
-	    demodulator->acquisition_sample_target != acquisition_samples ||
-	    demodulator->acquisition_sample_count >= acquisition_samples ||
 	    demodulator->history_index >= filter_count ||
 	    demodulator->history_count > filter_count ||
 	    demodulator->carrier_phase_step !=
@@ -520,6 +551,12 @@ bool qam_demodulator_is_valid(
 	    (demodulator->timing_locked &&
 	     (demodulator->locked_phase_units >= period ||
 	      !demodulator->has_previous_matched_sample)))
+		return false;
+	expected_samples = demodulator->timing_locked ?
+			   tracking_samples : acquisition_samples;
+	if (demodulator->timing_sample_target != expected_samples ||
+	    demodulator->timing_sample_count >=
+		    demodulator->timing_sample_target)
 		return false;
 	for (size_t index = 0; index < candidate_count; ++index) {
 		const struct qam_timing_candidate *candidate =
@@ -537,16 +574,35 @@ enum qam_result qam_demodulator_init(
 	struct qam_demodulator *demodulator,
 	const struct qam_channel *channel)
 {
+	return qam_demodulator_init_with_timing_windows(
+		demodulator, channel, QAM_DEFAULT_TIMING_WINDOW_SYMBOLS,
+		QAM_DEFAULT_TIMING_WINDOW_SYMBOLS);
+}
+
+enum qam_result qam_demodulator_init_with_timing_windows(
+	struct qam_demodulator *demodulator,
+	const struct qam_channel *channel,
+	uint32_t acquisition_symbols, uint32_t tracking_symbols)
+{
 	uint64_t period = 0;
 	size_t filter_count = 0;
 	size_t candidate_count = 0;
 	uint64_t timing_step = 0;
 	uint32_t acquisition_samples = 0;
+	uint32_t tracking_samples = 0;
 
 	if (demodulator == NULL || !channel_is_valid(channel, &period) ||
 	    !demodulator_shape_is_valid(
 		    channel, period, &filter_count, &candidate_count,
-		    &timing_step, &acquisition_samples))
+		    &timing_step) ||
+	    !timing_window_is_valid(acquisition_symbols) ||
+	    !timing_window_is_valid(tracking_symbols) ||
+	    !timing_sample_target(
+		    channel, period, candidate_count, acquisition_symbols,
+		    &acquisition_samples) ||
+	    !timing_sample_target(
+		    channel, period, candidate_count, tracking_symbols,
+		    &tracking_samples))
 		return QAM_INVALID_ARGUMENT;
 	memset(demodulator, 0, sizeof(*demodulator));
 	demodulator->channel = *channel;
@@ -558,7 +614,9 @@ enum qam_result qam_demodulator_init(
 		channel->carrier_frequency_denominator);
 	demodulator->matched_filter_count = filter_count;
 	demodulator->timing_candidate_count = candidate_count;
-	demodulator->acquisition_sample_target = acquisition_samples;
+	demodulator->timing_sample_target = acquisition_samples;
+	demodulator->acquisition_window_symbols = acquisition_symbols;
+	demodulator->tracking_window_symbols = tracking_symbols;
 	build_matched_filter(demodulator);
 	initialize_timing_candidates(demodulator);
 	return QAM_OK;
@@ -568,11 +626,16 @@ enum qam_result qam_demodulator_reset(
 	struct qam_demodulator *demodulator)
 {
 	struct qam_channel channel;
+	uint32_t acquisition_symbols;
+	uint32_t tracking_symbols;
 
 	if (!qam_demodulator_is_valid(demodulator))
 		return QAM_INVALID_ARGUMENT;
 	channel = demodulator->channel;
-	return qam_demodulator_init(demodulator, &channel);
+	acquisition_symbols = demodulator->acquisition_window_symbols;
+	tracking_symbols = demodulator->tracking_window_symbols;
+	return qam_demodulator_init_with_timing_windows(
+		demodulator, &channel, acquisition_symbols, tracking_symbols);
 }
 
 static void mix_sample(
@@ -657,7 +720,7 @@ static void reset_timing_scores(
 		candidate->symbol_power_sum = 0.0;
 		candidate->symbol_count = 0;
 	}
-	demodulator->acquisition_sample_count = 0;
+	demodulator->timing_sample_count = 0;
 }
 
 static uint64_t timing_phase_distance(
@@ -690,7 +753,7 @@ static void track_recovery_step(
 	uint64_t maximum;
 	uint64_t distance = timing_phase_distance(
 		reference_phase, target_phase, demodulator->symbol_period_units);
-	uint64_t samples = demodulator->acquisition_sample_target;
+	uint64_t samples = demodulator->timing_sample_target;
 	uint64_t adjustment = distance / samples;
 	uint64_t remainder = distance % samples;
 	uint64_t nominal = demodulator->channel.symbol_rate_numerator;
@@ -725,6 +788,25 @@ static void select_timing_candidate(
 	double best_power = 0.0;
 	double reference_power = 0.0;
 	size_t best_index = 0;
+	uint32_t active_window = demodulator->timing_locked ?
+				 demodulator->tracking_window_symbols :
+				 demodulator->acquisition_window_symbols;
+	uint32_t minimum_symbols =
+		(active_window * 3u + 3u) / 4u;
+	bool acquiring = !demodulator->timing_locked;
+	uint32_t next_sample_target = demodulator->timing_sample_target;
+
+	/* Structured training can favor a neighboring phase in a short energy
+	 * comparison. Require observations across three quarters of the window. */
+	if (acquiring && !timing_sample_target(
+				 &demodulator->channel,
+				 demodulator->symbol_period_units,
+				 demodulator->timing_candidate_count,
+				 demodulator->tracking_window_symbols,
+				 &next_sample_target)) {
+		reset_timing_scores(demodulator);
+		return;
+	}
 
 	for (size_t index = 0; index < demodulator->timing_candidate_count;
 	     ++index) {
@@ -732,7 +814,7 @@ static void select_timing_candidate(
 			&demodulator->timing[index];
 		double average;
 
-		if (candidate->symbol_count < QAM_MIN_ACQUISITION_SYMBOLS)
+		if (candidate->symbol_count < minimum_symbols)
 			continue;
 		average = candidate->symbol_power_sum / candidate->symbol_count;
 		if (average > best_power) {
@@ -772,6 +854,7 @@ static void select_timing_candidate(
 	reset_timing_scores(demodulator);
 	demodulator->symbol_power = best_power;
 	demodulator->timing_locked = true;
+	demodulator->timing_sample_target = next_sample_target;
 }
 
 static void acquire_symbol_timing(
@@ -799,9 +882,9 @@ static void acquire_symbol_timing(
 					demodulator->previous_quadrature,
 					quadrature, fraction));
 	}
-	demodulator->acquisition_sample_count++;
-	if (demodulator->acquisition_sample_count ==
-	    demodulator->acquisition_sample_target)
+	demodulator->timing_sample_count++;
+	if (demodulator->timing_sample_count ==
+	    demodulator->timing_sample_target)
 		select_timing_candidate(demodulator);
 }
 

@@ -678,6 +678,77 @@ static bool test_silence_does_not_lock(void)
 	return true;
 }
 
+static bool test_timing_windows(void)
+{
+	struct qam_channel channel = v22_channel(1200);
+	struct qam_demodulator defaults;
+	struct qam_demodulator demodulator;
+	struct qam_demodulator saved;
+	struct qam_modulator modulator;
+	struct qam_point point = { 0.75, 0.0 };
+	uint32_t acquisition_samples;
+	bool locked = false;
+
+	CHECK(qam_demodulator_init(&defaults, &channel) == QAM_OK &&
+	      defaults.acquisition_window_symbols ==
+		      QAM_DEFAULT_TIMING_WINDOW_SYMBOLS &&
+	      defaults.tracking_window_symbols ==
+		      QAM_DEFAULT_TIMING_WINDOW_SYMBOLS &&
+	      qam_demodulator_init_with_timing_windows(
+		      &demodulator, &channel, 64, 384) == QAM_OK &&
+	      qam_modulator_init(&modulator, &channel, TEST_AMPLITUDE) ==
+		      QAM_OK &&
+	      demodulator.timing_sample_target <
+		      defaults.timing_sample_target,
+	      "QAM timing windows did not initialize");
+	acquisition_samples = demodulator.timing_sample_target;
+	for (uint32_t sample_index = 0;
+	     sample_index < acquisition_samples +
+				channel.sample_rate;
+	     ++sample_index) {
+		struct qam_point received;
+		int16_t sample;
+		bool accepted;
+		bool ready;
+
+		CHECK(qam_modulator_sample(
+			      &modulator, &point, &sample, &accepted) == QAM_OK &&
+		      qam_demodulator_sample(
+			      &demodulator, sample, &received, &ready) == QAM_OK,
+		      "QAM timing-window fixture failed at %u", sample_index);
+		if (accepted)
+			point = quadrant_point(
+				(uint8_t)((sample_index / 7u) & 3u), 0.75);
+		if (qam_demodulator_measure(&demodulator).timing_locked) {
+			locked = true;
+			break;
+		}
+	}
+	CHECK(locked && demodulator.timing_sample_count == 0 &&
+	      demodulator.timing_sample_target > acquisition_samples &&
+	      demodulator.acquisition_window_symbols == 64 &&
+	      demodulator.tracking_window_symbols == 384,
+	      "QAM did not move from acquisition to tracking timing");
+	CHECK(qam_demodulator_reset(&demodulator) == QAM_OK &&
+	      !qam_demodulator_measure(&demodulator).timing_locked &&
+	      demodulator.timing_sample_target == acquisition_samples &&
+	      demodulator.acquisition_window_symbols == 64 &&
+	      demodulator.tracking_window_symbols == 384,
+	      "QAM reset did not preserve its timing-window policy");
+	saved = demodulator;
+	CHECK(qam_demodulator_init_with_timing_windows(
+		      &demodulator, &channel,
+		      QAM_MIN_TIMING_WINDOW_SYMBOLS - 1u, 384) ==
+		      QAM_INVALID_ARGUMENT &&
+	      qam_demodulator_init_with_timing_windows(
+		      &demodulator, &channel, 64,
+		      QAM_MAX_TIMING_WINDOW_SYMBOLS + 1u) ==
+		      QAM_INVALID_ARGUMENT &&
+	      memcmp(&demodulator, &saved, sizeof(saved)) == 0,
+	      "invalid QAM timing windows changed the receiver");
+	return true;
+}
+
 static bool test_configurable_point_power(void)
 {
 	struct qam_channel channel = v22_channel(1200);
@@ -880,6 +951,7 @@ int main(void)
 		{ "receive tolerance", test_receive_tolerance },
 		{ "receive clock tracking", test_receive_clock_tracking },
 		{ "silence does not lock", test_silence_does_not_lock },
+		{ "timing windows", test_timing_windows },
 		{ "configurable point power", test_configurable_point_power },
 		{ "validation", test_validation },
 	};

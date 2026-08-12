@@ -13,6 +13,9 @@ enum {
 		QAM_MAX_PULSE_SPAN_SYMBOLS + 1,
 	QAM_MAX_MATCHED_FILTER_SAMPLES = 256,
 	QAM_MAX_TIMING_CANDIDATES = 64,
+	QAM_DEFAULT_TIMING_WINDOW_SYMBOLS = 256,
+	QAM_MIN_TIMING_WINDOW_SYMBOLS = 32,
+	QAM_MAX_TIMING_WINDOW_SYMBOLS = 4096,
 };
 
 struct qam_channel {
@@ -79,8 +82,10 @@ struct qam_demodulator {
 	uint64_t locked_phase_units;
 	uint32_t carrier_phase;
 	uint32_t carrier_phase_step;
-	uint32_t acquisition_sample_count;
-	uint32_t acquisition_sample_target;
+	uint32_t timing_sample_count;
+	uint32_t timing_sample_target;
+	uint32_t acquisition_window_symbols;
+	uint32_t tracking_window_symbols;
 	size_t matched_filter_count;
 	size_t history_index;
 	size_t history_count;
@@ -138,6 +143,14 @@ enum qam_result qam_modulator_sample(
 enum qam_result qam_demodulator_init(
 	struct qam_demodulator *demodulator,
 	const struct qam_channel *channel);
+/* Use a bounded initial timing window, then automatically move to the longer
+ * tracking window after lock. The ordinary initializer uses the default for
+ * both. Short acquisition windows are intended for finite training markers,
+ * not as a substitute for a mode-specific marker detector. */
+enum qam_result qam_demodulator_init_with_timing_windows(
+	struct qam_demodulator *demodulator,
+	const struct qam_channel *channel,
+	uint32_t acquisition_symbols, uint32_t tracking_symbols);
 bool qam_demodulator_is_valid(
 	const struct qam_demodulator *demodulator);
 enum qam_result qam_demodulator_reset(
