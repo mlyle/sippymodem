@@ -1,0 +1,366 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <v90_phase4_digital_station.h>
+#include <v90_info1.h>
+
+#include <g711.h>
+
+#include "test.h"
+#include "v90_phase4_line_fixture.h"
+
+#include <math.h>
+#include <string.h>
+
+enum {
+	TRAINING_UCODE = 91,
+	SAMPLE_LIMIT = 10000,
+};
+
+static struct v90_jd_parameters jd_parameters(
+	enum v34_constellation_size constellation)
+{
+	return (struct v90_jd_parameters){
+		.data_rate_capability_mask = 0x15555u,
+		.training_constellation = constellation,
+		.rate_renegotiation_constellation =
+			V34_CONSTELLATION_4_POINT,
+		.maximum_spectral_shaping_lookahead = 2,
+	};
+}
+
+static void add_ucode(
+	struct v90_cp_constellation *constellation, uint8_t ucode)
+{
+	constellation->ucode_mask[ucode / 8u] |=
+		(uint8_t)(1u << (ucode % 8u));
+}
+
+static struct v90_cp_parameters parameters(enum g711_law law)
+{
+	struct v90_cp_parameters selected = {
+		.kind = V90_CP_TRAINING,
+		.law = law,
+		.upstream_rate_mask = 0x1555u,
+		.trn1d_ratio_q3_13 = 0x2000u,
+		.shaping_a1_q1_6 = -16,
+		.shaping_a2_q1_6 = 8,
+		.shaping_b1_q1_6 = -1,
+		.shaping_b2_q1_6 = 31,
+		.selected_rate_index = 13,
+		.sign_redundancy = 1,
+		.spectral_lookahead = 2,
+		.constellation_count = 1,
+	};
+
+	add_ucode(&selected.transmit_constellations[0], 12);
+	add_ucode(&selected.transmit_constellations[0], TRAINING_UCODE);
+	add_ucode(&selected.transmit_constellations[0], 119);
+	return selected;
+}
+
+static bool parameters_match(
+	const struct v90_cp_parameters *left,
+	const struct v90_cp_parameters *right)
+{
+	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
+	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
+	size_t left_bits = 0;
+	size_t right_bits = 0;
+
+	return v90_cp_encode(
+		       left, left_frame, sizeof(left_frame), &left_bits) ==
+		       V90_CP_OK &&
+	       v90_cp_encode(
+		       right, right_frame, sizeof(right_frame), &right_bits) ==
+		       V90_CP_OK &&
+	       left_bits == right_bits &&
+	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
+}
+
+static int16_t quantize(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMA ?
+		       g711_decode_pcma(g711_encode_pcma(sample)) :
+		       g711_decode_pcmu(g711_encode_pcmu(sample));
+}
+
+static bool run_exchange(
+	enum g711_law law, enum v34_constellation_size constellation)
+{
+	struct v90_jd_parameters jd = jd_parameters(constellation);
+	struct v90_cp_parameters records[7];
+	struct v90_phase3_return_line_handoff phase3_receive;
+	struct v90_phase4_cp_line_tx analog_transmit;
+	struct v90_phase4_digital_station station;
+	struct v90_phase4_ri_tx model_ri;
+	struct v90_phase4_cp_line_rx receive_handoff;
+	struct v90_phase4_digital_transmit_handoff transmit_handoff;
+	size_t next_record = 1;
+	bool cpt_seen = false;
+	bool receive_handoff_checked = false;
+	bool complete = false;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(records); ++index)
+		records[index] = parameters(law);
+	records[0].selected_rate_index = 0;
+	records[1].kind = V90_CP_DATA;
+	records[2].law = law == G711_LAW_PCMU ?
+			 G711_LAW_PCMA : G711_LAW_PCMU;
+	records[3].spectral_lookahead = 3;
+	records[4].request_silence = true;
+	records[5].acknowledges_peer = true;
+
+	CHECK(v90_phase4_line_fixture_init(
+		      law, constellation, &records[0],
+		      &analog_transmit, &phase3_receive),
+	      "Phase 4 digital fixture did not reach CPt");
+	CHECK(v90_phase4_digital_station_init(
+		      &station, &phase3_receive, &jd, law,
+		      TRAINING_UCODE, 0.05) ==
+		      V90_PHASE4_DIGITAL_STATION_OK &&
+	      v90_phase4_ri_tx_init(&model_ri, law, TRAINING_UCODE) ==
+		      V90_PHASE4_RI_OK,
+	      "digital station did not initialize");
+
+	for (size_t clock = 0; clock < SAMPLE_LIMIT; ++clock) {
+		if (!v90_phase4_digital_station_transmit_complete(&station)) {
+			uint8_t actual;
+			uint8_t expected;
+
+			CHECK(v90_phase4_ri_tx_next(&model_ri, &expected) ==
+				      V90_PHASE4_RI_OK &&
+			      v90_phase4_digital_station_transmit(
+				      &station, &actual) ==
+				      V90_PHASE4_DIGITAL_STATION_OK &&
+			      actual == expected &&
+			      memcmp(&station.transmit, &model_ri,
+				     sizeof(model_ri)) == 0,
+			      "Ri waveform diverged at clock %zu", clock);
+		}
+
+		if (!v90_phase4_digital_station_receive_complete(&station)) {
+			int16_t sample;
+			bool previously_received = station.cpt_received;
+
+			if (v90_phase4_cp_line_tx_record_is_complete(
+				    &analog_transmit)) {
+				const struct v90_cp_parameters *next =
+					next_record < ARRAY_LENGTH(records) ?
+						&records[next_record++] :
+						&records[ARRAY_LENGTH(records) - 1u];
+
+				CHECK(v90_phase4_cp_line_tx_start_next_record(
+					      &analog_transmit, next) ==
+					      V90_PHASE4_CP_LINE_TX_OK,
+				      "analogue side could not continue CP record %zu",
+				      next_record);
+			}
+			CHECK(v90_phase4_cp_line_tx_sample(
+				      &analog_transmit, &sample) ==
+				      V90_PHASE4_CP_LINE_TX_OK &&
+			      v90_phase4_digital_station_receive(
+				      &station, quantize(law, sample)) ==
+				      V90_PHASE4_DIGITAL_STATION_OK,
+			      "CPt receive path failed at clock %zu", clock);
+			if (!previously_received && station.cpt_received) {
+				CHECK(next_record == ARRAY_LENGTH(records) &&
+				      parameters_match(
+					      &station.training_parameters,
+					      &records[ARRAY_LENGTH(records) - 1u]) &&
+				      v90_phase4_ri_tx_request_finish(&model_ri) ==
+					      V90_PHASE4_RI_OK &&
+				      memcmp(&station.transmit, &model_ri,
+					     sizeof(model_ri)) == 0,
+				      "digital side accepted a non-initial CPt");
+				cpt_seen = true;
+			}
+		}
+
+		if (v90_phase4_digital_station_receive_complete(&station) &&
+		    !receive_handoff_checked) {
+			CHECK(v90_phase4_digital_station_receive_handoff(
+				      &station, &receive_handoff) ==
+				      V90_PHASE4_DIGITAL_STATION_OK &&
+			      v90_phase4_cp_line_rx_is_valid(&receive_handoff) &&
+			      !v90_phase4_cp_line_rx_has_pending_record(
+				      &receive_handoff) &&
+			      memcmp(&receive_handoff, &station.receive,
+				     sizeof(receive_handoff)) == 0,
+			      "CP receive handoff lost its exact boundary");
+			receive_handoff_checked = true;
+		}
+
+		if (v90_phase4_digital_station_transmit_complete(&station) &&
+		    v90_phase4_digital_station_receive_complete(&station)) {
+			complete = true;
+			break;
+		}
+	}
+
+	CHECK(complete && cpt_seen && receive_handoff_checked &&
+	      v90_phase4_ri_tx_is_complete(&model_ri) &&
+	      v90_phase4_digital_station_transmit_handoff(
+		      &station, &transmit_handoff) ==
+		      V90_PHASE4_DIGITAL_STATION_OK &&
+	      v90_phase4_digital_transmit_handoff_is_valid(
+		      &transmit_handoff) &&
+	      parameters_match(
+		      &transmit_handoff.training_parameters,
+		      &records[ARRAY_LENGTH(records) - 1u]),
+	      "TRN2d transmit handoff changed the accepted CPt");
+	{
+		struct v90_phase4_digital_station saved = station;
+		uint8_t octet = 0xa5;
+
+		CHECK(v90_phase4_digital_station_transmit(
+			      &station, &octet) ==
+			      V90_PHASE4_DIGITAL_STATION_COMPLETE &&
+		      v90_phase4_digital_station_receive(&station, 1234) ==
+			      V90_PHASE4_DIGITAL_STATION_COMPLETE &&
+		      memcmp(&station, &saved, sizeof(station)) == 0 &&
+		      octet == 0xa5,
+		      "completed digital station consumed another boundary");
+	}
+	return true;
+}
+
+static bool test_initial_exchange(void)
+{
+	CHECK(run_exchange(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT),
+	      "PCMU four-point digital exchange failed");
+	CHECK(run_exchange(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT),
+	      "PCMA sixteen-point digital exchange failed");
+	return true;
+}
+
+static bool test_contracts(void)
+{
+	struct v90_jd_parameters jd =
+		jd_parameters(V34_CONSTELLATION_4_POINT);
+	struct v90_jd_parameters bad_jd = jd;
+	struct v90_cp_parameters training = parameters(G711_LAW_PCMU);
+	struct v90_phase3_return_line_handoff phase3_receive;
+	struct v90_phase3_return_line_handoff bad_receive;
+	struct v90_phase4_cp_line_tx analog_transmit;
+	struct v90_phase4_digital_station station;
+	struct v90_phase4_digital_station untouched;
+	struct v90_phase4_digital_station untouched_saved;
+	struct v90_phase4_cp_line_rx receive_handoff;
+	struct v90_phase4_cp_line_rx receive_saved;
+	struct v90_phase4_digital_transmit_handoff transmit_handoff;
+	struct v90_phase4_digital_transmit_handoff transmit_saved;
+	uint8_t octet = 0xa5;
+
+	CHECK(v90_phase4_line_fixture_init(
+		      G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
+		      &training, &analog_transmit, &phase3_receive),
+	      "digital validation fixture did not initialize");
+	bad_receive = phase3_receive;
+	bad_receive.phase3.equalizer.equalizer.fill = 0;
+	bad_jd.maximum_spectral_shaping_lookahead = 0;
+	memset(&untouched, 0xa5, sizeof(untouched));
+	untouched_saved = untouched;
+	CHECK(v90_phase4_digital_station_init(
+		      NULL, &phase3_receive, &jd, G711_LAW_PCMU,
+		      TRAINING_UCODE, 0.05) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase4_digital_station_init(
+		      &untouched, &phase3_receive, NULL, G711_LAW_PCMU,
+		      TRAINING_UCODE, 0.05) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase4_digital_station_init(
+		      &untouched, &phase3_receive, &bad_jd, G711_LAW_PCMU,
+		      TRAINING_UCODE, 0.05) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase4_digital_station_init(
+		      &untouched, &bad_receive, &jd, G711_LAW_PCMU,
+		      TRAINING_UCODE, 0.05) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase4_digital_station_init(
+		      &untouched, &phase3_receive, &jd, G711_LAW_PCMU,
+		      TRAINING_UCODE, NAN) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase4_digital_station_init(
+		      &untouched, &phase3_receive, &jd, G711_LAW_PCMU,
+		      V90_INFO1A_MIN_TRAINING_UCODE - 1u, 0.05) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
+	      "rejected digital initialization changed its destination");
+
+	CHECK(v90_phase4_digital_station_init(
+		      &station, &phase3_receive, &jd, G711_LAW_PCMU,
+		      TRAINING_UCODE, 0.05) ==
+		      V90_PHASE4_DIGITAL_STATION_OK,
+	      "valid digital station did not initialize");
+	memset(&receive_handoff, 0x5a, sizeof(receive_handoff));
+	receive_saved = receive_handoff;
+	memset(&transmit_handoff, 0x5a, sizeof(transmit_handoff));
+	transmit_saved = transmit_handoff;
+	{
+		struct v90_phase4_digital_station saved = station;
+
+		CHECK(v90_phase4_digital_station_transmit(NULL, &octet) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      v90_phase4_digital_station_transmit(&station, NULL) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      v90_phase4_digital_station_receive(NULL, 0) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      v90_phase4_digital_station_receive_handoff(
+			      &station, &receive_handoff) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+		      v90_phase4_digital_station_transmit_handoff(
+			      &station, &transmit_handoff) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+		      memcmp(&station, &saved, sizeof(station)) == 0 &&
+		      memcmp(&receive_handoff, &receive_saved,
+			     sizeof(receive_handoff)) == 0 &&
+		      memcmp(&transmit_handoff, &transmit_saved,
+			     sizeof(transmit_handoff)) == 0 &&
+		      octet == 0xa5,
+		      "rejected digital operation was not transactional");
+	}
+	transmit_handoff =
+		(struct v90_phase4_digital_transmit_handoff){
+			.training_parameters = training,
+		};
+	CHECK(v90_phase4_digital_transmit_handoff_is_valid(
+		      &transmit_handoff),
+	      "valid TRN2d handoff was rejected");
+	transmit_handoff.training_parameters.selected_rate_index = 0;
+	CHECK(!v90_phase4_digital_station_is_valid(NULL) &&
+	      !v90_phase4_digital_station_has_failed(NULL) &&
+	      !v90_phase4_digital_transmit_handoff_is_valid(NULL) &&
+	      !v90_phase4_digital_transmit_handoff_is_valid(
+		      &transmit_handoff) &&
+	      strcmp(v90_phase4_digital_station_result_name(
+		     V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE),
+		     "numeric failure") == 0 &&
+	      strcmp(v90_phase4_digital_station_result_name(
+		     (enum v90_phase4_digital_station_result)99),
+		     "unknown") == 0,
+	      "digital validation or result names changed");
+	return true;
+}
+
+int main(void)
+{
+	static const struct {
+		const char *name;
+		bool (*run)(void);
+	} tests[] = {
+		{ "initial exchange", test_initial_exchange },
+		{ "contracts", test_contracts },
+	};
+	unsigned int failures = 0;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
+		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
+		if (!tests[index].run()) {
+			fprintf(stderr, "[  FAILED  ] %s\n", tests[index].name);
+			failures++;
+		} else {
+			fprintf(stderr, "[       OK ] %s\n", tests[index].name);
+		}
+	}
+	return failures == 0 ? 0 : 1;
+}
