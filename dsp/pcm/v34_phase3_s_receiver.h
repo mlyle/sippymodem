@@ -11,6 +11,9 @@
 enum {
 	V34_PHASE3_S_RECEIVER_MAX_S_ERRORS = 8,
 	V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS = 2,
+	/* A sample-domain receiver may lock after S begins. Retaining at least
+	 * 32T before the complete 16T S-bar still gives a bounded correlation. */
+	V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS = 32,
 };
 
 enum v34_phase3_s_receiver_result {
@@ -33,21 +36,26 @@ struct v34_phase3_s_detection {
 bool v34_phase3_s_detection_is_valid(
 	const struct v34_phase3_s_detection *detection);
 
-/* Bounded hard-decision history for locating the complete 128T S followed by
- * 16T S-bar marker at an arbitrary input boundary. The last two S and first
- * two S-bar decisions form an exact boundary anchor; bounded errors are
- * tolerated elsewhere. Expected rotations are generated during correlation,
- * so no sequence table is stored. */
+/* Bounded hard-decision history for locating S followed by the complete 16T
+ * S-bar marker at an arbitrary input boundary. The ordinary initializer
+ * requires all 128T of S; a suffix initializer supports a receiver that locks
+ * during S. The last two S and first two S-bar decisions form an exact
+ * boundary anchor. Expected rotations are generated during correlation. */
 struct v34_phase3_s_receiver {
 	uint8_t decisions[V34_PHASE3_S_SEQUENCE_SYMBOLS];
 	struct v34_phase3_s_detection detection;
 	uint8_t next_decision;
 	uint8_t buffered_decisions;
+	uint8_t s_symbols;
 	bool complete;
 };
 
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init(
 	struct v34_phase3_s_receiver *receiver);
+/* Detect a suffix of S followed by the complete S-bar. This is for receivers
+ * whose carrier and symbol timing lock after S has already begun. */
+enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init_suffix(
+	struct v34_phase3_s_receiver *receiver, uint8_t s_symbols);
 
 bool v34_phase3_s_receiver_is_valid(
 	const struct v34_phase3_s_receiver *receiver);
@@ -57,8 +65,8 @@ bool v34_phase3_s_receiver_is_complete(
 /* Accept one hard decision in the training-constellation convention. S and
  * S-bar use quarter point zero; a different valid point counts as a symbol
  * error. Labels outside 0..3 and already-complete calls consume nothing. The
- * full window is required so the following PP symbol remains unconsumed for
- * the equalizer-training owner. */
+ * configured S suffix and complete S-bar window are required so the following
+ * PP symbol remains unconsumed for the equalizer-training owner. */
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns);

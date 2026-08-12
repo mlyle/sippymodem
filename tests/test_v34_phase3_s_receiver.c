@@ -248,6 +248,97 @@ static bool test_exact_transition_anchor(void)
 	return true;
 }
 
+static bool receive_suffix(
+	struct v34_phase3_s_receiver *receiver,
+	const uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS],
+	uint8_t offset, uint8_t s_symbols, unsigned int s_errors)
+{
+	size_t first = V34_PHASE3_S_SYMBOLS - s_symbols;
+	size_t count = s_symbols + V34_PHASE3_S_BAR_SYMBOLS;
+
+	for (size_t local = 0; local < count; ++local) {
+		size_t symbol = first + local;
+		uint8_t rotation =
+			(uint8_t)((rotations[symbol] + offset) & 3u);
+		enum v34_phase3_s_receiver_result expected =
+			local + 1u == count ? V34_PHASE3_S_RECEIVER_DETECTED :
+					      V34_PHASE3_S_RECEIVER_OK;
+
+		if (local < s_symbols - 2u && local < s_errors)
+			rotation = (uint8_t)((rotation + 1u) & 3u);
+		if (v34_phase3_s_receiver_receive(
+			    receiver, 0, rotation) != expected)
+			return false;
+	}
+	return true;
+}
+
+static bool test_suffix_acquisition(void)
+{
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	struct v34_phase3_s_receiver receiver;
+	struct v34_phase3_s_receiver saved;
+	struct v34_phase3_s_detection detection;
+	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+
+	CHECK(generate_marker(rotations),
+	      "suffix marker did not generate");
+	for (uint8_t offset = 0; offset < 4u; ++offset) {
+		CHECK(v34_phase3_s_receiver_init_suffix(
+			      &receiver, suffix) == V34_PHASE3_S_RECEIVER_OK,
+		      "suffix receiver %u did not initialize", offset);
+		for (unsigned int prefix = 0; prefix < 61; ++prefix)
+			CHECK(v34_phase3_s_receiver_receive(
+				      &receiver, 3,
+				      (uint8_t)((prefix * 3u) & 3u)) ==
+				      V34_PHASE3_S_RECEIVER_OK,
+			      "suffix receiver %u accepted noise at %u",
+			      offset, prefix);
+		CHECK(receive_suffix(
+			      &receiver, rotations, offset, suffix, 2) &&
+		      v34_phase3_s_receiver_get_detection(
+			      &receiver, &detection) &&
+		      detection.clockwise_quarter_turn_offset == offset &&
+		      detection.s_errors == 2 &&
+		      detection.s_bar_errors == 0,
+		      "suffix receiver did not recover offset %u", offset);
+	}
+	CHECK(v34_phase3_s_receiver_init_suffix(
+		      &receiver, suffix + 1u) == V34_PHASE3_S_RECEIVER_OK &&
+	      receive_suffix(&receiver, rotations, 2, suffix + 1u, 0) &&
+	      v34_phase3_s_receiver_get_detection(&receiver, &detection) &&
+	      detection.clockwise_quarter_turn_offset == 2,
+	      "odd-length suffix lost its absolute marker phase");
+	CHECK(v34_phase3_s_receiver_init_suffix(
+		      &receiver, suffix) == V34_PHASE3_S_RECEIVER_OK,
+	      "suffix rejection receiver did not initialize");
+	for (size_t symbol = V34_PHASE3_S_SYMBOLS - suffix;
+	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
+		uint8_t rotation = rotations[symbol];
+		size_t local = symbol - (V34_PHASE3_S_SYMBOLS - suffix);
+
+		if (local < 3u)
+			rotation = (uint8_t)((rotation + 1u) & 3u);
+		CHECK(v34_phase3_s_receiver_receive(
+			      &receiver, 0, rotation) ==
+			      V34_PHASE3_S_RECEIVER_OK,
+		      "excess-error suffix changed result at %zu", local);
+	}
+	CHECK(!v34_phase3_s_receiver_is_complete(&receiver),
+	      "suffix accepted more than its proportional S error bound");
+	memset(&receiver, 0xa5, sizeof(receiver));
+	saved = receiver;
+	CHECK(v34_phase3_s_receiver_init_suffix(
+		      &receiver, suffix - 1u) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_s_receiver_init_suffix(
+		      &receiver, V34_PHASE3_S_SYMBOLS + 1u) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "invalid suffix length changed the receiver");
+	return true;
+}
+
 static bool test_completion_and_validation(void)
 {
 	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
@@ -320,6 +411,7 @@ int main(void)
 		{ "rejection thresholds", test_rejection_thresholds },
 		{ "point-zero requirement", test_point_zero_requirement },
 		{ "exact transition anchor", test_exact_transition_anchor },
+		{ "suffix acquisition", test_suffix_acquisition },
 		{ "completion and validation", test_completion_and_validation },
 	};
 	unsigned int failures = 0;
