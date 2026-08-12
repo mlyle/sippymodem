@@ -161,6 +161,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_cp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_pcm_mapping.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_pcm_frame_encoder.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_sign_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_sign_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_spectral_shaper.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_trn2d_tx.c \
