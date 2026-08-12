@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v34_phase3_caller.h>
+#include <v34_phase3_transmitter.h>
 
 #include "test.h"
 
@@ -48,7 +48,7 @@ static bool j_matches(
 
 static bool run_sequence(enum v34_constellation_size constellation)
 {
-	struct v34_phase3_caller caller;
+	struct v34_phase3_transmitter transmitter;
 	struct v34_phase3_s_sequence expected_s;
 	struct v34_phase3_pp_sequence expected_pp;
 	struct v34_phase3_trn expected_trn;
@@ -60,13 +60,13 @@ static bool run_sequence(enum v34_constellation_size constellation)
 	unsigned int extra_trn =
 		constellation == V34_CONSTELLATION_16_POINT ? 37u : 0u;
 
-	CHECK(v34_phase3_caller_init(&caller, constellation) ==
-		      V34_PHASE3_CALLER_OK &&
+	CHECK(v34_phase3_transmitter_init(&transmitter, constellation) ==
+		      V34_PHASE3_TRANSMITTER_OK &&
 	      v34_phase3_s_sequence_init(&expected_s) ==
 		      V34_PHASE3_S_SEQUENCE_OK &&
-	      v34_phase3_caller_is_valid(&caller) &&
-	      caller.stage == V34_PHASE3_CALLER_S,
-	      "Phase 3 caller did not initialize constellation=%d",
+	      v34_phase3_transmitter_is_valid(&transmitter) &&
+	      transmitter.stage == V34_PHASE3_TRANSMITTER_S,
+	      "Phase 3 transmitter did not initialize constellation=%d",
 	      constellation);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
@@ -77,13 +77,13 @@ static bool run_sequence(enum v34_constellation_size constellation)
 		CHECK(v34_phase3_s_sequence_next(
 			      &expected_s, &expected, &section) ==
 			      V34_PHASE3_S_SEQUENCE_OK &&
-		      v34_phase3_caller_next(&caller, &actual) ==
-			      V34_PHASE3_CALLER_OK &&
+		      v34_phase3_transmitter_next(&transmitter, &actual) ==
+			      V34_PHASE3_TRANSMITTER_OK &&
 		      points_match(&actual, &expected),
 		      "S/S-bar composition diverged at symbol %u", symbol);
 	}
 	CHECK(v34_phase3_s_sequence_is_complete(&expected_s) &&
-	      caller.stage == V34_PHASE3_CALLER_PP &&
+	      transmitter.stage == V34_PHASE3_TRANSMITTER_PP &&
 	      v34_phase3_pp_sequence_init(&expected_pp) ==
 		      V34_PHASE3_PP_SEQUENCE_OK,
 	      "S/S-bar did not hand off to PP");
@@ -94,13 +94,13 @@ static bool run_sequence(enum v34_constellation_size constellation)
 
 		CHECK(v34_phase3_pp_sequence_next(&expected_pp, &expected) ==
 			      V34_PHASE3_PP_SEQUENCE_OK &&
-		      v34_phase3_caller_next(&caller, &actual) ==
-			      V34_PHASE3_CALLER_OK &&
+		      v34_phase3_transmitter_next(&transmitter, &actual) ==
+			      V34_PHASE3_TRANSMITTER_OK &&
 		      points_match(&actual, &expected),
 		      "PP composition diverged at symbol %u", symbol);
 	}
 	CHECK(v34_phase3_pp_sequence_is_complete(&expected_pp) &&
-	      caller.stage == V34_PHASE3_CALLER_TRN &&
+	      transmitter.stage == V34_PHASE3_TRANSMITTER_TRN &&
 	      v34_phase3_trn_init(
 		      &expected_trn, V34_CALLING_STATION) ==
 		      V34_PHASE3_TRN_OK,
@@ -112,38 +112,38 @@ static bool run_sequence(enum v34_constellation_size constellation)
 		uint8_t rotation;
 
 		if (symbol + 1u == V34_PHASE3_TRN_MIN_SYMBOLS) {
-			struct v34_phase3_caller saved = caller;
+			struct v34_phase3_transmitter saved = transmitter;
 
-			CHECK(v34_phase3_caller_start_j(&caller) ==
-				      V34_PHASE3_CALLER_INVALID_STATE &&
-			      memcmp(&caller, &saved, sizeof(caller)) == 0,
+			CHECK(v34_phase3_transmitter_start_j(&transmitter) ==
+				      V34_PHASE3_TRANSMITTER_INVALID_STATE &&
+			      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 			      "TRN ended before its minimum");
 		}
 		CHECK(v34_phase3_trn_next(
 			      &expected_trn, &expected, &rotation) ==
 			      V34_PHASE3_TRN_OK &&
-		      v34_phase3_caller_next(&caller, &actual) ==
-			      V34_PHASE3_CALLER_OK &&
+		      v34_phase3_transmitter_next(&transmitter, &actual) ==
+			      V34_PHASE3_TRANSMITTER_OK &&
 		      points_match(&actual, &expected),
 		      "TRN composition diverged at symbol %u", symbol);
 	}
-	CHECK(caller.trn_symbols ==
+	CHECK(transmitter.trn_symbols ==
 		      V34_PHASE3_TRN_MIN_SYMBOLS + extra_trn &&
-	      trn_matches(&caller.state.trn, &expected_trn) &&
-	      v34_phase3_caller_start_j(&caller) ==
-		      V34_PHASE3_CALLER_OK &&
+	      trn_matches(&transmitter.state.trn, &expected_trn) &&
+	      v34_phase3_transmitter_start_j(&transmitter) ==
+		      V34_PHASE3_TRANSMITTER_OK &&
 	      v34_phase3_j_sequence_init_from_trn(
 		      &expected_j, &expected_trn, constellation) ==
 		      V34_PHASE3_J_SEQUENCE_OK &&
-	      j_matches(&caller.state.j, &expected_j),
+	      j_matches(&transmitter.state.j, &expected_j),
 	      "TRN did not preserve its J boundary");
 	memset(&rejected_j_prime, 0xa5, sizeof(rejected_j_prime));
 	saved_j_prime = rejected_j_prime;
-	CHECK(v34_phase3_caller_finish_j(&caller) ==
-		      V34_PHASE3_CALLER_INVALID_STATE &&
-	      v34_phase3_caller_start_j_prime(
-		      &caller, &rejected_j_prime) ==
-		      V34_PHASE3_CALLER_INVALID_STATE &&
+	CHECK(v34_phase3_transmitter_finish_j(&transmitter) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_STATE &&
+	      v34_phase3_transmitter_start_j_prime(
+		      &transmitter, &rejected_j_prime) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_STATE &&
 	      memcmp(&rejected_j_prime, &saved_j_prime,
 		     sizeof(rejected_j_prime)) == 0,
 	      "empty J interval crossed the Phase 4 boundary");
@@ -156,25 +156,25 @@ static bool run_sequence(enum v34_constellation_size constellation)
 		CHECK(v34_phase3_j_sequence_next(
 			      &expected_j, &expected, &rotation) ==
 			      V34_PHASE3_J_SEQUENCE_OK &&
-		      v34_phase3_caller_next(&caller, &actual) ==
-			      V34_PHASE3_CALLER_OK &&
+		      v34_phase3_transmitter_next(&transmitter, &actual) ==
+			      V34_PHASE3_TRANSMITTER_OK &&
 		      points_match(&actual, &expected),
 		      "J composition diverged at symbol %u", symbol);
 		if (symbol == 0) {
-			struct v34_phase3_caller saved = caller;
+			struct v34_phase3_transmitter saved = transmitter;
 
-			CHECK(v34_phase3_caller_finish_j(&caller) ==
-				      V34_PHASE3_CALLER_INVALID_STATE &&
-			      memcmp(&caller, &saved, sizeof(caller)) == 0,
+			CHECK(v34_phase3_transmitter_finish_j(&transmitter) ==
+				      V34_PHASE3_TRANSMITTER_INVALID_STATE &&
+			      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 			      "J ended between pattern boundaries");
 		}
 	}
 	CHECK(v34_phase3_j_sequence_at_pattern_boundary(&expected_j) &&
-	      v34_phase3_caller_finish_j(&caller) ==
-		      V34_PHASE3_CALLER_OK &&
-	      caller.stage == V34_PHASE3_CALLER_COMPLETE &&
-	      v34_phase3_caller_start_j_prime(&caller, &j_prime) ==
-		      V34_PHASE3_CALLER_OK &&
+	      v34_phase3_transmitter_finish_j(&transmitter) ==
+		      V34_PHASE3_TRANSMITTER_OK &&
+	      transmitter.stage == V34_PHASE3_TRANSMITTER_COMPLETE &&
+	      v34_phase3_transmitter_start_j_prime(&transmitter, &j_prime) ==
+		      V34_PHASE3_TRANSMITTER_OK &&
 	      v34_phase4_j_prime_sequence_init_from_j(
 		      &expected_j_prime, &expected_j) ==
 		      V34_PHASE4_J_PRIME_SEQUENCE_OK,
@@ -198,15 +198,15 @@ static bool run_sequence(enum v34_constellation_size constellation)
 		      "J-prime handoff diverged at symbol %u", symbol);
 	}
 	{
-		struct v34_phase3_caller saved = caller;
+		struct v34_phase3_transmitter saved = transmitter;
 		struct qam_point output = { 12.0, -7.0 };
 		struct qam_point expected_output = output;
 
-		CHECK(v34_phase3_caller_next(&caller, &output) ==
-			      V34_PHASE3_CALLER_DONE &&
-		      memcmp(&caller, &saved, sizeof(caller)) == 0 &&
+		CHECK(v34_phase3_transmitter_next(&transmitter, &output) ==
+			      V34_PHASE3_TRANSMITTER_DONE &&
+		      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
 		      memcmp(&output, &expected_output, sizeof(output)) == 0,
-		      "completed Phase 3 caller emitted another symbol");
+		      "completed Phase 3 transmitter emitted another symbol");
 	}
 	return true;
 }
@@ -219,60 +219,60 @@ static bool test_sequences(void)
 
 static bool test_validation_and_overflow(void)
 {
-	struct v34_phase3_caller caller;
-	struct v34_phase3_caller saved;
+	struct v34_phase3_transmitter transmitter;
+	struct v34_phase3_transmitter saved;
 	struct qam_point point = { 3.0, 4.0 };
 	struct qam_point saved_point = point;
 
-	CHECK(v34_phase3_caller_init(NULL, V34_CONSTELLATION_4_POINT) ==
-		      V34_PHASE3_CALLER_INVALID_ARGUMENT &&
-	      v34_phase3_caller_init(
-		      &caller, (enum v34_constellation_size)99) ==
-		      V34_PHASE3_CALLER_INVALID_ARGUMENT &&
-	      !v34_phase3_caller_is_valid(NULL),
-	      "Phase 3 caller accepted invalid initialization");
-	CHECK(v34_phase3_caller_init(
-		      &caller, V34_CONSTELLATION_4_POINT) ==
-		      V34_PHASE3_CALLER_OK,
-	      "validation caller did not initialize");
-	saved = caller;
-	CHECK(v34_phase3_caller_next(&caller, NULL) ==
-		      V34_PHASE3_CALLER_INVALID_ARGUMENT &&
-	      memcmp(&caller, &saved, sizeof(caller)) == 0,
-	      "null output changed the Phase 3 caller");
-	caller.stage = (enum v34_phase3_caller_stage)99;
-	CHECK(!v34_phase3_caller_is_valid(&caller) &&
-	      v34_phase3_caller_next(&caller, &point) ==
-		      V34_PHASE3_CALLER_INVALID_ARGUMENT &&
+	CHECK(v34_phase3_transmitter_init(NULL, V34_CONSTELLATION_4_POINT) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_phase3_transmitter_init(
+		      &transmitter, (enum v34_constellation_size)99) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
+	      !v34_phase3_transmitter_is_valid(NULL),
+	      "Phase 3 transmitter accepted invalid initialization");
+	CHECK(v34_phase3_transmitter_init(
+		      &transmitter, V34_CONSTELLATION_4_POINT) ==
+		      V34_PHASE3_TRANSMITTER_OK,
+	      "validation transmitter did not initialize");
+	saved = transmitter;
+	CHECK(v34_phase3_transmitter_next(&transmitter, NULL) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
+	      "null output changed the Phase 3 transmitter");
+	transmitter.stage = (enum v34_phase3_transmitter_stage)99;
+	CHECK(!v34_phase3_transmitter_is_valid(&transmitter) &&
+	      v34_phase3_transmitter_next(&transmitter, &point) ==
+		      V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT &&
 	      memcmp(&point, &saved_point, sizeof(point)) == 0,
 	      "invalid Phase 3 state changed its output");
-	CHECK(v34_phase3_caller_init(
-		      &caller, V34_CONSTELLATION_4_POINT) ==
-		      V34_PHASE3_CALLER_OK,
-	      "overflow caller did not initialize");
+	CHECK(v34_phase3_transmitter_init(
+		      &transmitter, V34_CONSTELLATION_4_POINT) ==
+		      V34_PHASE3_TRANSMITTER_OK,
+	      "overflow transmitter did not initialize");
 	for (size_t symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS +
 			      V34_PHASE3_PP_SEQUENCE_SYMBOLS + 1u;
 	     ++symbol)
-		CHECK(v34_phase3_caller_next(&caller, &point) ==
-			      V34_PHASE3_CALLER_OK,
-		      "overflow caller did not reach TRN");
-	caller.trn_symbols = UINT32_MAX;
-	saved = caller;
+		CHECK(v34_phase3_transmitter_next(&transmitter, &point) ==
+			      V34_PHASE3_TRANSMITTER_OK,
+		      "overflow transmitter did not reach TRN");
+	transmitter.trn_symbols = UINT32_MAX;
+	saved = transmitter;
 	point = saved_point;
-	CHECK(v34_phase3_caller_is_valid(&caller) &&
-	      v34_phase3_caller_next(&caller, &point) ==
-		      V34_PHASE3_CALLER_NUMERIC_FAILURE &&
-	      memcmp(&caller, &saved, sizeof(caller)) == 0 &&
+	CHECK(v34_phase3_transmitter_is_valid(&transmitter) &&
+	      v34_phase3_transmitter_next(&transmitter, &point) ==
+		      V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
 	      memcmp(&point, &saved_point, sizeof(point)) == 0,
 	      "TRN counter overflow was not transactional");
-	CHECK(strcmp(v34_phase3_caller_result_name(
-		      V34_PHASE3_CALLER_NUMERIC_FAILURE),
+	CHECK(strcmp(v34_phase3_transmitter_result_name(
+		      V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE),
 		      "numeric failure") == 0 &&
-	      strcmp(v34_phase3_caller_result_name(
-		      (enum v34_phase3_caller_result)99),
+	      strcmp(v34_phase3_transmitter_result_name(
+		      (enum v34_phase3_transmitter_result)99),
 		      "unknown") == 0,
-	      "Phase 3 caller result names changed");
+	      "Phase 3 transmitter result names changed");
 	return true;
 }
 

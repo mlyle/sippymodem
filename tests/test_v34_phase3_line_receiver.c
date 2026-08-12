@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v34_phase3_caller.h>
+#include <v34_phase3_transmitter.h>
 #include <v34_phase3_line_receiver.h>
 #include <v34_training_line.h>
 
@@ -17,7 +17,7 @@ enum {
 
 struct line_source {
 	struct v34_training_line line;
-	struct v34_phase3_caller symbols;
+	struct v34_phase3_transmitter symbols;
 };
 
 static struct v34_phase3_profile profile(void)
@@ -51,9 +51,9 @@ static bool source_init(
 	return v34_training_line_init(
 		       &source->line, transmitting_profile,
 		       SAMPLE_RATE, 6000) == V34_TRAINING_LINE_OK &&
-	       v34_phase3_caller_init(
+	       v34_phase3_transmitter_init(
 		       &source->symbols, V34_CONSTELLATION_16_POINT) ==
-		       V34_PHASE3_CALLER_OK;
+		       V34_PHASE3_TRANSMITTER_OK;
 }
 
 static bool source_sample(struct line_source *source, int16_t *sample)
@@ -64,13 +64,13 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 	bool accepted;
 
 	if (accepting) {
-		if (source->symbols.stage == V34_PHASE3_CALLER_TRN &&
+		if (source->symbols.stage == V34_PHASE3_TRANSMITTER_TRN &&
 		    source->symbols.trn_symbols == TRN_SYMBOLS &&
-		    v34_phase3_caller_start_j(&source->symbols) !=
-			    V34_PHASE3_CALLER_OK)
+		    v34_phase3_transmitter_start_j(&source->symbols) !=
+			    V34_PHASE3_TRANSMITTER_OK)
 			return false;
-		if (v34_phase3_caller_next(&source->symbols, &point) !=
-		    V34_PHASE3_CALLER_OK)
+		if (v34_phase3_transmitter_next(&source->symbols, &point) !=
+		    V34_PHASE3_TRANSMITTER_OK)
 			return false;
 		point_pointer = &point;
 	}

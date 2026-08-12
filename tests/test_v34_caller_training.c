@@ -8,7 +8,7 @@
 
 struct model_training {
 	struct v34_training_line line;
-	struct v34_phase3_caller phase3;
+	struct v34_phase3_transmitter phase3;
 	union v34_caller_phase4_state phase4;
 	uint32_t phase4_trn_symbols;
 	enum v34_caller_training_stage stage;
@@ -63,9 +63,9 @@ static bool model_init(
 	if (v34_training_line_init(
 		    &initialized.line, profile, 8000, 5000) !=
 		    V34_TRAINING_LINE_OK ||
-	    v34_phase3_caller_init(
+	    v34_phase3_transmitter_init(
 		    &initialized.phase3, constellation) !=
-		    V34_PHASE3_CALLER_OK)
+		    V34_PHASE3_TRANSMITTER_OK)
 		return false;
 	initialized.stage = V34_CALLER_TRAINING_PHASE3;
 	*model = initialized;
@@ -74,11 +74,11 @@ static bool model_init(
 
 static bool model_finish_j(struct model_training *model)
 {
-	if (v34_phase3_caller_finish_j(&model->phase3) !=
-		    V34_PHASE3_CALLER_OK ||
-	    v34_phase3_caller_start_j_prime(
+	if (v34_phase3_transmitter_finish_j(&model->phase3) !=
+		    V34_PHASE3_TRANSMITTER_OK ||
+	    v34_phase3_transmitter_start_j_prime(
 		    &model->phase3, &model->phase4.j_prime) !=
-		    V34_PHASE3_CALLER_OK)
+		    V34_PHASE3_TRANSMITTER_OK)
 		return false;
 	model->stage = V34_CALLER_TRAINING_J_PRIME;
 	return true;
@@ -145,8 +145,8 @@ static bool model_next_point(
 {
 	switch (model->stage) {
 	case V34_CALLER_TRAINING_PHASE3:
-		return v34_phase3_caller_next(&model->phase3, point) ==
-		       V34_PHASE3_CALLER_OK;
+		return v34_phase3_transmitter_next(&model->phase3, point) ==
+		       V34_PHASE3_TRANSMITTER_OK;
 	case V34_CALLER_TRAINING_J_PRIME: {
 		struct v34_phase4_trn trn;
 		uint8_t rotation;
@@ -284,16 +284,16 @@ static bool run_composed_sequence(
 		      constellation);
 		if (model.stage == V34_CALLER_TRAINING_PHASE3) {
 			stages_seen |= 1u << model.phase3.stage;
-			if (model.phase3.stage == V34_PHASE3_CALLER_TRN &&
+			if (model.phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
 			    model.phase3.trn_symbols ==
 				    V34_PHASE3_TRN_MIN_SYMBOLS) {
 				CHECK(v34_caller_training_start_j(&actual) ==
 					      V34_CALLER_TRAINING_OK &&
-				      v34_phase3_caller_start_j(&model.phase3) ==
-					      V34_PHASE3_CALLER_OK,
+				      v34_phase3_transmitter_start_j(&model.phase3) ==
+					      V34_PHASE3_TRANSMITTER_OK,
 				      "selection %u did not enter J", constellation);
 			}
-			if (model.phase3.stage == V34_PHASE3_CALLER_J &&
+			if (model.phase3.stage == V34_PHASE3_TRANSMITTER_J &&
 			    model.phase3.j_symbols ==
 				    V34_PHASE3_J_PATTERN_SYMBOLS) {
 				CHECK(v34_caller_training_finish_j(&actual) ==
@@ -301,7 +301,7 @@ static bool run_composed_sequence(
 				      model_finish_j(&model),
 				      "selection %u did not enter J-prime",
 				      constellation);
-				stages_seen |= 1u << V34_PHASE3_CALLER_COMPLETE;
+				stages_seen |= 1u << V34_PHASE3_TRANSMITTER_COMPLETE;
 			}
 		}
 		if (model.stage == V34_CALLER_TRAINING_PHASE4_TRN &&
@@ -353,7 +353,7 @@ static bool run_composed_sequence(
 		samples++;
 	}
 	CHECK(stages_seen ==
-		      (((1u << (V34_PHASE3_CALLER_COMPLETE + 1u)) - 1u) |
+		      (((1u << (V34_PHASE3_TRANSMITTER_COMPLETE + 1u)) - 1u) |
 		       (1u << (8u + V34_CALLER_TRAINING_PHASE3)) |
 		       (1u << (8u + V34_CALLER_TRAINING_J_PRIME)) |
 		       (1u << (8u + V34_CALLER_TRAINING_PHASE4_TRN)) |
@@ -380,13 +380,13 @@ static bool advance_to_phase4(struct v34_caller_training *training)
 		int16_t ignored;
 
 		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
-		    training->phase3.stage == V34_PHASE3_CALLER_TRN &&
+		    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
 		    training->phase3.trn_symbols == V34_PHASE3_TRN_MIN_SYMBOLS &&
 		    v34_caller_training_start_j(training) !=
 			    V34_CALLER_TRAINING_OK)
 			return false;
 		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
-		    training->phase3.stage == V34_PHASE3_CALLER_J &&
+		    training->phase3.stage == V34_PHASE3_TRANSMITTER_J &&
 		    training->phase3.j_symbols == V34_PHASE3_J_PATTERN_SYMBOLS &&
 		    v34_caller_training_finish_j(training) !=
 			    V34_CALLER_TRAINING_OK)

@@ -69,14 +69,14 @@ static bool completed_caller_training_fixture(
 		int16_t ignored;
 
 		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
-		    training->phase3.stage == V34_PHASE3_CALLER_TRN &&
+		    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
 		    training->phase3.trn_symbols ==
 			    V34_PHASE3_TRN_MIN_SYMBOLS &&
 		    v34_caller_training_start_j(training) !=
 			    V34_CALLER_TRAINING_OK)
 			return false;
 		if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
-		    training->phase3.stage == V34_PHASE3_CALLER_J &&
+		    training->phase3.stage == V34_PHASE3_TRANSMITTER_J &&
 		    training->phase3.j_symbols == V34_PHASE3_J_PATTERN_SYMBOLS &&
 		    v34_caller_training_finish_j(training) !=
 			    V34_CALLER_TRAINING_OK)

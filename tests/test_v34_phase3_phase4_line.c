@@ -92,12 +92,12 @@ static bool prepare_source(struct line_source *source)
 	struct v34_caller_training *training = &source->training;
 
 	if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
-	    training->phase3.stage == V34_PHASE3_CALLER_TRN &&
+	    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
 	    training->phase3.trn_symbols == PHASE3_TRN_SYMBOLS)
 		return v34_caller_training_start_j(training) ==
 		       V34_CALLER_TRAINING_OK;
 	if (training->stage == V34_CALLER_TRAINING_PHASE3 &&
-	    training->phase3.stage == V34_PHASE3_CALLER_J &&
+	    training->phase3.stage == V34_PHASE3_TRANSMITTER_J &&
 	    training->phase3.j_symbols == PHASE3_J_SYMBOLS)
 		return v34_caller_training_finish_j(training) ==
 		       V34_CALLER_TRAINING_OK;

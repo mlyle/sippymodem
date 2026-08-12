@@ -3,7 +3,7 @@
 #ifndef V34_CALLER_TRAINING_H
 #define V34_CALLER_TRAINING_H
 
-#include "v34_phase3_caller.h"
+#include "v34_phase3_transmitter.h"
 #include "v34_phase4_e_sequence.h"
 #include "v34_phase4_j_prime_sequence.h"
 #include "v34_phase4_mp.h"
@@ -43,7 +43,7 @@ union v34_caller_phase4_state {
  * open-ended intervals may end, and owns MP/MP-prime negotiation policy. */
 struct v34_caller_training {
 	struct v34_training_line line;
-	struct v34_phase3_caller phase3;
+	struct v34_phase3_transmitter phase3;
 	union v34_caller_phase4_state phase4;
 	uint32_t phase4_trn_symbols;
 	enum v34_caller_training_stage stage;

@@ -8,7 +8,7 @@ static bool stage_is_valid(
 	const struct v34_caller_training *training)
 {
 	bool phase3_complete =
-		training->phase3.stage == V34_PHASE3_CALLER_COMPLETE;
+		training->phase3.stage == V34_PHASE3_TRANSMITTER_COMPLETE;
 
 	switch (training->stage) {
 	case V34_CALLER_TRAINING_PHASE3:
@@ -53,7 +53,7 @@ bool v34_caller_training_is_valid(
 	return training != NULL &&
 	       v34_training_line_is_valid(&training->line) &&
 	       training->line.profile.local_role == V34_CALLING_STATION &&
-	       v34_phase3_caller_is_valid(&training->phase3) &&
+	       v34_phase3_transmitter_is_valid(&training->phase3) &&
 	       stage_is_valid(training);
 }
 
@@ -92,9 +92,9 @@ enum v34_caller_training_result v34_caller_training_init(
 		nominal_peak_amplitude);
 	if (result != V34_TRAINING_LINE_OK)
 		return line_result(result);
-	if (v34_phase3_caller_init(
+	if (v34_phase3_transmitter_init(
 		    &initialized.phase3, remote_constellation) !=
-		    V34_PHASE3_CALLER_OK)
+		    V34_PHASE3_TRANSMITTER_OK)
 		return V34_CALLER_TRAINING_INVALID_ARGUMENT;
 	initialized.stage = V34_CALLER_TRAINING_PHASE3;
 	if (!v34_caller_training_is_valid(&initialized))
@@ -107,17 +107,17 @@ enum v34_caller_training_result v34_caller_training_start_j(
 	struct v34_caller_training *training)
 {
 	struct v34_caller_training next;
-	enum v34_phase3_caller_result result;
+	enum v34_phase3_transmitter_result result;
 
 	if (!v34_caller_training_is_valid(training))
 		return V34_CALLER_TRAINING_INVALID_ARGUMENT;
 	if (training->stage != V34_CALLER_TRAINING_PHASE3)
 		return V34_CALLER_TRAINING_INVALID_STATE;
 	next = *training;
-	result = v34_phase3_caller_start_j(&next.phase3);
-	if (result == V34_PHASE3_CALLER_INVALID_STATE)
+	result = v34_phase3_transmitter_start_j(&next.phase3);
+	if (result == V34_PHASE3_TRANSMITTER_INVALID_STATE)
 		return V34_CALLER_TRAINING_INVALID_STATE;
-	if (result != V34_PHASE3_CALLER_OK ||
+	if (result != V34_PHASE3_TRANSMITTER_OK ||
 	    !v34_caller_training_is_valid(&next))
 		return V34_CALLER_TRAINING_NUMERIC_FAILURE;
 	*training = next;
@@ -129,19 +129,19 @@ enum v34_caller_training_result v34_caller_training_finish_j(
 {
 	struct v34_caller_training next;
 	struct v34_phase4_j_prime_sequence j_prime;
-	enum v34_phase3_caller_result result;
+	enum v34_phase3_transmitter_result result;
 
 	if (!v34_caller_training_is_valid(training))
 		return V34_CALLER_TRAINING_INVALID_ARGUMENT;
 	if (training->stage != V34_CALLER_TRAINING_PHASE3)
 		return V34_CALLER_TRAINING_INVALID_STATE;
 	next = *training;
-	result = v34_phase3_caller_finish_j(&next.phase3);
-	if (result == V34_PHASE3_CALLER_INVALID_STATE)
+	result = v34_phase3_transmitter_finish_j(&next.phase3);
+	if (result == V34_PHASE3_TRANSMITTER_INVALID_STATE)
 		return V34_CALLER_TRAINING_INVALID_STATE;
-	if (result != V34_PHASE3_CALLER_OK ||
-	    v34_phase3_caller_start_j_prime(
-		    &next.phase3, &j_prime) != V34_PHASE3_CALLER_OK)
+	if (result != V34_PHASE3_TRANSMITTER_OK ||
+	    v34_phase3_transmitter_start_j_prime(
+		    &next.phase3, &j_prime) != V34_PHASE3_TRANSMITTER_OK)
 		return V34_CALLER_TRAINING_NUMERIC_FAILURE;
 	next.phase4 = (union v34_caller_phase4_state){ 0 };
 	next.phase4.j_prime = j_prime;
@@ -253,8 +253,8 @@ enum v34_caller_training_result v34_caller_training_start_e(
 static enum v34_caller_training_result next_phase3_point(
 	struct v34_caller_training *training, struct qam_point *point)
 {
-	return v34_phase3_caller_next(&training->phase3, point) ==
-		       V34_PHASE3_CALLER_OK ?
+	return v34_phase3_transmitter_next(&training->phase3, point) ==
+		       V34_PHASE3_TRANSMITTER_OK ?
 		       V34_CALLER_TRAINING_OK :
 		       V34_CALLER_TRAINING_NUMERIC_FAILURE;
 }
