@@ -13,6 +13,8 @@ enum {
 };
 
 struct e_fixture {
+	struct v34_phase4_mp mp;
+	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_sequence transmitter;
 	struct v34_phase4_e_receiver decision_receiver;
 	struct v34_phase4_e_receiver point_receiver;
@@ -41,7 +43,8 @@ static bool receivers_are_equal(
 	       left->constellation == right->constellation &&
 	       left->previous_clockwise_quarter_turns ==
 		       right->previous_clockwise_quarter_turns &&
-	       left->received_bits == right->received_bits;
+	       left->received_bits == right->received_bits &&
+	       left->searching == right->searching;
 }
 
 static bool initialize_fixture(
@@ -51,15 +54,13 @@ static bool initialize_fixture(
 	struct v34_mp_parameters parameters =
 		test_parameters(acknowledged);
 	struct v34_phase4_trn trn;
-	struct v34_phase4_mp mp;
-	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_mp_receive_event event = { 0 };
 
 	CHECK(fixture != NULL &&
 	      v34_phase4_trn_init(&trn, role, constellation) ==
 		      V34_PHASE4_TRN_OK &&
 	      v34_phase4_mp_receiver_init(
-		      &mp_receiver, role, constellation) ==
+		      &fixture->mp_receiver, role, constellation) ==
 		      V34_PHASE4_MP_RECEIVER_OK,
 	      "E receiver fixture did not initialize");
 	for (size_t symbol = 0; symbol < TEST_TRN_SYMBOLS; ++symbol) {
@@ -72,22 +73,22 @@ static bool initialize_fixture(
 			      &clockwise_quarter_turns) ==
 			      V34_PHASE4_TRN_OK &&
 		      v34_phase4_mp_receive_decision(
-			      &mp_receiver, quarter_point,
+			      &fixture->mp_receiver, quarter_point,
 			      clockwise_quarter_turns, &event) ==
 			      V34_PHASE4_MP_RECEIVER_OK,
 		      "E receiver fixture TRN stopped at symbol %zu", symbol);
 	}
 	CHECK(v34_phase4_mp_init_type0_from_trn(
-		      &mp, &trn, &parameters) == V34_PHASE4_MP_OK,
+		      &fixture->mp, &trn, &parameters) == V34_PHASE4_MP_OK,
 	      "E receiver fixture MP did not initialize");
 	for (unsigned int record = 0; record < 2; ++record) {
 		if (record != 0)
 			CHECK(v34_phase4_mp_start_next_type0_record(
-				      &mp, &parameters) ==
+				      &fixture->mp, &parameters) ==
 				      V34_PHASE4_MP_OK,
 			      "E receiver fixture MP-prime did not start");
 		event = (struct v34_mp_receive_event){ 0 };
-		while (!v34_phase4_mp_record_is_complete(&mp)) {
+		while (!v34_phase4_mp_record_is_complete(&fixture->mp)) {
 			struct v34_mp_receive_event emitted;
 			struct qam_point point;
 			uint8_t quarter_point;
@@ -95,16 +96,16 @@ static bool initialize_fixture(
 			bool record_complete;
 
 			CHECK(v34_phase4_mp_next(
-				      &mp, &point, &quarter_point,
+				      &fixture->mp, &point, &quarter_point,
 				      &clockwise_quarter_turns,
 				      &record_complete) ==
 				      V34_PHASE4_MP_OK &&
 			      v34_phase4_mp_receive_decision(
-				      &mp_receiver, quarter_point,
+				      &fixture->mp_receiver, quarter_point,
 				      clockwise_quarter_turns, &emitted) ==
 				      V34_PHASE4_MP_RECEIVER_OK,
 			      "E receiver fixture MP stopped at bit %zu",
-			      mp.bit_index);
+			      fixture->mp.bit_index);
 			if (emitted.type != V34_MP_RECEIVE_NO_EVENT)
 				event = emitted;
 		}
@@ -112,13 +113,77 @@ static bool initialize_fixture(
 	CHECK(event.type == V34_MP_RECEIVE_TYPE0 &&
 	      event.frame_result == V34_MP_OK &&
 	      v34_phase4_e_sequence_init_from_mp(
-		      &fixture->transmitter, &mp) ==
+		      &fixture->transmitter, &fixture->mp) ==
 		      V34_PHASE4_E_SEQUENCE_OK &&
 	      v34_phase4_e_receiver_init_from_mp(
-		      &fixture->decision_receiver, &mp_receiver) ==
+		      &fixture->decision_receiver, &fixture->mp_receiver) ==
 		      V34_PHASE4_E_RECEIVER_OK,
 	      "E receiver fixture did not accept MP");
 	fixture->point_receiver = fixture->decision_receiver;
+	return true;
+}
+
+static bool test_search_across_repeated_mp_prime(void)
+{
+	struct e_fixture fixture;
+	struct v34_phase4_e_receiver receiver;
+	struct v34_mp_parameters parameters = test_parameters(true);
+	struct v34_phase4_e_sequence e;
+
+	CHECK(initialize_fixture(
+		      &fixture, V34_CALLING_STATION,
+		      V34_CONSTELLATION_16_POINT, true) &&
+	      v34_phase4_e_receiver_search_from_mp(
+		      &receiver, &fixture.mp_receiver) ==
+		      V34_PHASE4_E_RECEIVER_OK &&
+	      v34_phase4_mp_start_next_type0_record(
+		      &fixture.mp, &parameters) == V34_PHASE4_MP_OK,
+	      "E search fixture did not initialize");
+	while (!v34_phase4_mp_record_is_complete(&fixture.mp)) {
+		struct qam_point point;
+		uint8_t quarter_point;
+		uint8_t clockwise_quarter_turns;
+		bool complete;
+
+		CHECK(v34_phase4_mp_next(
+			      &fixture.mp, &point, &quarter_point,
+			      &clockwise_quarter_turns, &complete) ==
+			      V34_PHASE4_MP_OK &&
+		      v34_phase4_e_receive_decision(
+			      &receiver, quarter_point,
+			      clockwise_quarter_turns) ==
+			      V34_PHASE4_E_RECEIVER_OK,
+		      "repeated MP-prime falsely completed E search");
+	}
+	CHECK(receiver.received_bits < V34_PHASE4_E_BITS &&
+	      v34_phase4_e_sequence_init_from_mp(&e, &fixture.mp) ==
+		      V34_PHASE4_E_SEQUENCE_OK,
+	      "repeated MP-prime left an invalid E search boundary");
+	while (!v34_phase4_e_sequence_is_complete(&e)) {
+		struct qam_point point;
+		uint8_t quarter_point;
+		uint8_t clockwise_quarter_turns;
+		enum v34_phase4_e_receiver_result expected;
+
+		CHECK(v34_phase4_e_sequence_next(
+			      &e, &point, &quarter_point,
+			      &clockwise_quarter_turns) ==
+			      V34_PHASE4_E_SEQUENCE_OK,
+		      "E search transmitter stopped");
+		expected = v34_phase4_e_sequence_is_complete(&e) ?
+				   V34_PHASE4_E_RECEIVER_COMPLETE :
+				   V34_PHASE4_E_RECEIVER_OK;
+		CHECK(v34_phase4_e_receive_decision(
+			      &receiver, quarter_point,
+			      clockwise_quarter_turns) == expected,
+		      "E search did not complete at 20 consecutive bits");
+	}
+	CHECK(v34_phase4_e_receiver_is_complete(&receiver) &&
+	      receiver.searching &&
+	      receiver.descrambler.history == e.scrambler.history &&
+	      receiver.previous_clockwise_quarter_turns ==
+		      e.previous_clockwise_quarter_turns,
+	      "E search lost scrambler or phase continuity");
 	return true;
 }
 
@@ -273,6 +338,9 @@ static bool test_validation(void)
 	      v34_phase4_e_receiver_init_from_mp(
 		      &receiver, NULL) ==
 		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase4_e_receiver_search_from_mp(
+		      NULL, &mp_receiver) ==
+		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_e_receiver_init_from_mp(
 		      &receiver, &mp_receiver) ==
 		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
@@ -345,6 +413,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated continuous sequence", test_generated_sequence },
+		{ "search across repeated MP-prime",
+		  test_search_across_repeated_mp_prime },
 		{ "transactional mismatch", test_mismatch_is_transactional },
 		{ "validation", test_validation },
 	};

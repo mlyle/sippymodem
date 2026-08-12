@@ -328,9 +328,9 @@ static bool test_generated_data_preparation(void)
 	      answerer.phase4.transmit.stage ==
 		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
 	      caller.phase4.receive.state.phase4.control.stage ==
-		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP &&
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E &&
 	      answerer.phase4.receive.state.phase4.control.stage ==
-		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP &&
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E &&
 	      caller.phase4.transmit.phase4_trn_symbols >=
 		      V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      answerer.phase4.transmit.phase4_trn_symbols >=

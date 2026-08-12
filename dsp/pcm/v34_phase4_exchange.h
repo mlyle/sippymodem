@@ -50,9 +50,10 @@ struct v34_phase4_exchange_configuration {
  * caller ends J only after receiving the answerer's complete S/S-bar marker
  * and reaching a J-pattern boundary. Receipt of the first valid peer MP pauses
  * the sample path until prepare_data_startup() performs the negotiated mapping
- * calibration outside the real-time callback. E acquisition and the B1
- * handoff remain with the following controller slice. Calls on one instance
- * must be serialized. */
+ * calibration outside the real-time callback. A valid final peer MP-prime
+ * record arms E reception at that exact record boundary. Local E transmission
+ * and the B1 handoff remain with the following controller slice. Calls on one
+ * instance must be serialized. */
 struct v34_phase4_exchange {
 	struct v34_training_transmitter transmit;
 	struct v34_training_receiver receive;

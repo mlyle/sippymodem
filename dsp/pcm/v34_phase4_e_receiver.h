@@ -23,6 +23,7 @@ struct v34_phase4_e_receiver {
 	enum v34_constellation_size constellation;
 	uint8_t previous_clockwise_quarter_turns;
 	uint8_t received_bits;
+	bool searching;
 };
 
 /* E continues the peer's scrambler and differential phase immediately after
@@ -30,6 +31,14 @@ struct v34_phase4_e_receiver {
  * acceptance decision. */
 enum v34_phase4_e_receiver_result
 v34_phase4_e_receiver_init_from_mp(
+	struct v34_phase4_e_receiver *receiver,
+	const struct v34_phase4_mp_receiver *mp_receiver);
+
+/* Search for E after an accepted MP-prime record while tolerating repeated
+ * MP-prime records. The descrambler and differential phase remain continuous;
+ * received_bits counts the current run of scrambled binary ones. */
+enum v34_phase4_e_receiver_result
+v34_phase4_e_receiver_search_from_mp(
 	struct v34_phase4_e_receiver *receiver,
 	const struct v34_phase4_mp_receiver *mp_receiver);
 bool v34_phase4_e_receiver_is_valid(

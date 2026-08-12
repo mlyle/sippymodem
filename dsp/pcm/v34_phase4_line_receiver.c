@@ -136,6 +136,14 @@ v34_phase4_line_receiver_start_e(
 }
 
 enum v34_phase4_line_receiver_result
+v34_phase4_line_receiver_expect_e(
+	struct v34_phase4_line_receiver *receiver)
+{
+	return update_control(
+		receiver, v34_phase4_equalizer_receiver_expect_e);
+}
+
+enum v34_phase4_line_receiver_result
 v34_phase4_line_receiver_sample(
 	struct v34_phase4_line_receiver *receiver, int16_t sample,
 	struct v34_mp_receive_event *event)

@@ -160,6 +160,31 @@ v34_phase4_equalizer_receiver_start_e(
 	return V34_PHASE4_EQUALIZER_RECEIVER_OK;
 }
 
+enum v34_phase4_equalizer_receiver_result
+v34_phase4_equalizer_receiver_expect_e(
+	struct v34_phase4_equalizer_receiver *receiver)
+{
+	struct v34_phase4_equalizer_receiver next;
+
+	if (!v34_phase4_equalizer_receiver_is_valid(receiver))
+		return V34_PHASE4_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+	if (receiver->stage != V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP ||
+	    !receiver->record_pending || !receiver->pending_record_is_valid)
+		return V34_PHASE4_EQUALIZER_RECEIVER_INVALID_STATE;
+	next = *receiver;
+	if (v34_phase4_e_receiver_search_from_mp(
+		    &next.e_receiver, &next.mp_receiver) !=
+	    V34_PHASE4_E_RECEIVER_OK)
+		return V34_PHASE4_EQUALIZER_RECEIVER_INVALID_STATE;
+	next.stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E;
+	next.record_pending = false;
+	next.pending_record_is_valid = false;
+	if (!v34_phase4_equalizer_receiver_is_valid(&next))
+		return V34_PHASE4_EQUALIZER_RECEIVER_INVALID_STATE;
+	*receiver = next;
+	return V34_PHASE4_EQUALIZER_RECEIVER_OK;
+}
+
 static enum v34_phase4_equalizer_receiver_result receive_mp(
 	struct v34_phase4_equalizer_receiver *receiver,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,

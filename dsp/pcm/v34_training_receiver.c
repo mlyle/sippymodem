@@ -314,6 +314,12 @@ enum v34_training_receiver_result v34_training_receiver_start_e(
 	return update_phase4(receiver, v34_phase4_line_receiver_start_e);
 }
 
+enum v34_training_receiver_result v34_training_receiver_expect_e(
+	struct v34_training_receiver *receiver)
+{
+	return update_phase4(receiver, v34_phase4_line_receiver_expect_e);
+}
+
 enum v34_training_receiver_result v34_training_receiver_start_data(
 	const struct v34_training_receiver *receiver,
 	struct v34_data_line_receiver *data_receiver,

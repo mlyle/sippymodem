@@ -59,6 +59,9 @@ v34_phase4_line_receiver_continue_mp(
 enum v34_phase4_line_receiver_result
 v34_phase4_line_receiver_start_e(
 	struct v34_phase4_line_receiver *receiver);
+enum v34_phase4_line_receiver_result
+v34_phase4_line_receiver_expect_e(
+	struct v34_phase4_line_receiver *receiver);
 
 /* Consume one signed line sample. `event` changes only for RECORD_READY.
  * Invalid, paused, complete, and already-failed calls consume nothing. A

@@ -125,7 +125,6 @@ static bool data_state_is_valid(
 	if (!isfinite(exchange->data_equalizer_adaptation) ||
 	    exchange->data_equalizer_adaptation < 0.0 ||
 	    exchange->data_equalizer_adaptation > 1.0 ||
-	    receive_stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E ||
 	    receive_stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE)
 		return false;
 	if (!exchange->peer_mp_received)
@@ -144,7 +143,9 @@ static bool data_state_is_valid(
 		    &exchange->receive.state.phase4.transmitting_profile) ||
 	    exchange->data_startup.receive.equalizer_adaptation !=
 		    exchange->data_equalizer_adaptation ||
-	    (record_pending && !exchange->failed))
+	    (record_pending && !exchange->failed) ||
+	    (exchange->peer_mp_prime_received !=
+	     (receive_stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E)))
 		return false;
 	return true;
 }
@@ -454,6 +455,19 @@ static enum v34_phase4_exchange_result continue_mp_receiver(
 		       V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 }
 
+static enum v34_phase4_exchange_result expect_e_receiver(
+	struct v34_phase4_exchange *exchange)
+{
+	enum v34_training_receiver_result result =
+		v34_training_receiver_expect_e(&exchange->receive);
+
+	if (result == V34_TRAINING_RECEIVER_OK)
+		return V34_PHASE4_EXCHANGE_OK;
+	return result == V34_TRAINING_RECEIVER_FAILED ?
+		       V34_PHASE4_EXCHANGE_FAILED :
+		       V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+}
+
 static enum v34_phase4_exchange_result latch_failure(
 	struct v34_phase4_exchange *exchange,
 	enum v34_phase4_exchange_result result)
@@ -510,7 +524,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	next.data_startup = startup;
 	next.data_preparation_required = false;
 	next.data_startup_prepared = true;
-	result = continue_mp_receiver(&next);
+	result = next.peer_mp_prime_received ?
+		expect_e_receiver(&next) : continue_mp_receiver(&next);
 	if (result != V34_PHASE4_EXCHANGE_OK) {
 		next.failed = true;
 		if (v34_phase4_exchange_is_valid(&next))
@@ -558,6 +573,7 @@ static enum v34_phase4_exchange_result accept_mp_record(
 			return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
 		exchange->peer_mp_prime_received = true;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED;
+		return expect_e_receiver(exchange);
 	}
 	return continue_mp_receiver(exchange);
 }

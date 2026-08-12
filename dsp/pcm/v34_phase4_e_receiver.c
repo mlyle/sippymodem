@@ -22,9 +22,10 @@ bool v34_phase4_e_receiver_is_valid(
 	    receiver->previous_clockwise_quarter_turns > 3u ||
 	    receiver->received_bits > V34_PHASE4_E_BITS)
 		return false;
-	return receiver->received_bits %
+	return receiver->searching ||
+	       receiver->received_bits %
 		       bits_per_symbol(receiver->constellation) ==
-	       0;
+		       0;
 }
 
 bool v34_phase4_e_receiver_is_complete(
@@ -59,6 +60,64 @@ v34_phase4_e_receiver_init_from_mp(
 }
 
 enum v34_phase4_e_receiver_result
+v34_phase4_e_receiver_search_from_mp(
+	struct v34_phase4_e_receiver *receiver,
+	const struct v34_phase4_mp_receiver *mp_receiver)
+{
+	struct v34_phase4_e_receiver initialized;
+	enum v34_phase4_e_receiver_result result =
+		v34_phase4_e_receiver_init_from_mp(&initialized, mp_receiver);
+
+	if (receiver == NULL || result != V34_PHASE4_E_RECEIVER_OK)
+		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
+	initialized.searching = true;
+	if (!v34_phase4_e_receiver_is_valid(&initialized))
+		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return V34_PHASE4_E_RECEIVER_OK;
+}
+
+static uint8_t extend_one_run(uint8_t current, uint8_t dibit)
+{
+	if (dibit == 3u) {
+		unsigned int extended = (unsigned int)current + 2u;
+
+		return extended < V34_PHASE4_E_BITS ?
+			       (uint8_t)extended : V34_PHASE4_E_BITS;
+	}
+	return dibit == 1u ? 1u : 0u;
+}
+
+static enum v34_phase4_e_receiver_result search_decision(
+	struct v34_phase4_e_receiver *receiver,
+	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
+{
+	struct v34_phase4_e_receiver next = *receiver;
+	uint8_t dibit;
+
+	if (v34_descramble_differential_dibit(
+		    &next.descrambler,
+		    next.previous_clockwise_quarter_turns,
+		    clockwise_quarter_turns, &dibit) != V34_FRAMING_OK)
+		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
+	next.received_bits = extend_one_run(next.received_bits, dibit);
+	if (next.constellation == V34_CONSTELLATION_16_POINT) {
+		if (v34_descramble_mapped_dibit(
+			    &next.descrambler, quarter_point, &dibit) !=
+		    V34_FRAMING_OK)
+			return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
+		next.received_bits = extend_one_run(next.received_bits, dibit);
+	}
+	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
+	if (!v34_phase4_e_receiver_is_valid(&next))
+		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
+	*receiver = next;
+	return v34_phase4_e_receiver_is_complete(receiver) ?
+		       V34_PHASE4_E_RECEIVER_COMPLETE :
+		       V34_PHASE4_E_RECEIVER_OK;
+}
+
+enum v34_phase4_e_receiver_result
 v34_phase4_e_receive_decision(
 	struct v34_phase4_e_receiver *receiver,
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
@@ -75,6 +134,9 @@ v34_phase4_e_receive_decision(
 		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
 	if (v34_phase4_e_receiver_is_complete(receiver))
 		return V34_PHASE4_E_RECEIVER_COMPLETE;
+	if (receiver->searching)
+		return search_decision(
+			receiver, quarter_point, clockwise_quarter_turns);
 	next = *receiver;
 	if (v34_descramble_differential_dibit(
 		    &next.descrambler,

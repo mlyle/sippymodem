@@ -80,6 +80,9 @@ v34_phase4_equalizer_receiver_continue_mp(
 enum v34_phase4_equalizer_receiver_result
 v34_phase4_equalizer_receiver_start_e(
 	struct v34_phase4_equalizer_receiver *receiver);
+enum v34_phase4_equalizer_receiver_result
+v34_phase4_equalizer_receiver_expect_e(
+	struct v34_phase4_equalizer_receiver *receiver);
 
 /* Accept one finite, carrier- and timing-recovered QAM point. `event` changes
  * only when RECORD_READY is returned. Rejected calls and sequence mismatches

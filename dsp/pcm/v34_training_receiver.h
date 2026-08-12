@@ -89,6 +89,8 @@ enum v34_training_receiver_result v34_training_receiver_continue_mp(
 	struct v34_training_receiver *receiver);
 enum v34_training_receiver_result v34_training_receiver_start_e(
 	struct v34_training_receiver *receiver);
+enum v34_training_receiver_result v34_training_receiver_expect_e(
+	struct v34_training_receiver *receiver);
 
 /* Copy the completed E-to-B1 boundary into the steady-state data receiver. */
 enum v34_training_receiver_result v34_training_receiver_start_data(
