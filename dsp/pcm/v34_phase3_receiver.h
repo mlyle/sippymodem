@@ -71,8 +71,19 @@ struct v34_phase3_handoff {
 	struct v34_phase3_j_handoff j;
 };
 
+/* Shared V.34-family training boundary after S/S-bar and PP. The equalizer
+ * retains the delayed TRN inputs needed to produce the first post-PP
+ * decision. This boundary is available only on the PP_COMPLETE event, before
+ * the protocol-specific suffix consumes another point. */
+struct v34_phase3_prefix_handoff {
+	struct v34_phase3_s_detection s;
+	struct v34_equalizer_handoff equalizer;
+};
+
 bool v34_phase3_handoff_is_valid(
 	const struct v34_phase3_handoff *handoff);
+bool v34_phase3_prefix_handoff_is_valid(
+	const struct v34_phase3_prefix_handoff *handoff);
 
 /* Join S/S-bar acquisition, PP equalizer training, and TRN-to-J detection on
  * one carrier- and timing-recovered point stream. The upstream owner supplies
@@ -117,6 +128,9 @@ enum v34_phase3_receiver_result v34_phase3_receive_point(
 bool v34_phase3_receiver_get_s_detection(
 	const struct v34_phase3_receiver *receiver,
 	struct v34_phase3_s_detection *detection);
+enum v34_phase3_receiver_result v34_phase3_receiver_prefix_handoff(
+	const struct v34_phase3_receiver *receiver,
+	struct v34_phase3_prefix_handoff *handoff);
 enum v34_phase3_receiver_result v34_phase3_receiver_handoff(
 	const struct v34_phase3_receiver *receiver,
 	struct v34_phase3_handoff *handoff);

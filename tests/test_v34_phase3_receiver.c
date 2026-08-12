@@ -88,6 +88,7 @@ static bool run_timeline(
 	struct v34_phase3_j_sequence j;
 	struct v34_phase3_j_sequence detection_boundary;
 	struct v34_phase3_handoff handoff;
+	struct v34_phase3_prefix_handoff prefix_handoff;
 	struct v34_phase3_s_detection s_detection;
 	struct v34_phase3_s_detection first_s_detection;
 	struct test_channel channel = { 0 };
@@ -200,10 +201,31 @@ static bool run_timeline(
 		      receive_point(&receiver, &channel, &transmitted) ==
 			      expected,
 		      "role %d TRN point %u failed", role, symbol);
-		if (symbol + 1u == QAM_EQUALIZER_DELAY)
+		if (symbol + 1u == QAM_EQUALIZER_DELAY) {
 			CHECK(receiver.stage ==
-				      V34_PHASE3_RECEIVER_STAGE_J,
+				      V34_PHASE3_RECEIVER_STAGE_J &&
+			      v34_phase3_receiver_prefix_handoff(
+				      &receiver, &prefix_handoff) ==
+				      V34_PHASE3_RECEIVER_OK &&
+			      v34_phase3_prefix_handoff_is_valid(
+				      &prefix_handoff) &&
+			      memcmp(&prefix_handoff.s, &s_detection,
+				     sizeof(s_detection)) == 0 &&
+			      memcmp(&prefix_handoff.equalizer.equalizer,
+				     &receiver.state.j.equalizer,
+				     sizeof(receiver.state.j.equalizer)) == 0,
 			      "role %d did not enter J search", role);
+		} else if (symbol + 1u == QAM_EQUALIZER_DELAY + 1u) {
+			struct v34_phase3_prefix_handoff unchanged =
+				prefix_handoff;
+
+			CHECK(v34_phase3_receiver_prefix_handoff(
+				      &receiver, &prefix_handoff) ==
+				      V34_PHASE3_RECEIVER_INVALID_STATE &&
+			      memcmp(&prefix_handoff, &unchanged,
+				     sizeof(unchanged)) == 0,
+			      "role %d exported a late prefix boundary", role);
+		}
 	}
 	CHECK(v34_phase3_j_sequence_init_from_trn(
 		      &j, &trn, constellation) ==
@@ -377,6 +399,7 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_phase3_receiver_is_valid(NULL) &&
 	      !v34_phase3_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_handoff_is_valid(NULL) &&
+	      !v34_phase3_prefix_handoff_is_valid(NULL) &&
 	      !v34_phase3_s_detection_is_valid(NULL) &&
 	      strcmp(v34_phase3_receiver_result_name(
 		     V34_PHASE3_RECEIVER_PP_COMPLETE),

@@ -41,6 +41,14 @@ bool v34_phase3_handoff_is_valid(
 	       v34_phase3_j_handoff_is_valid(&handoff->j);
 }
 
+bool v34_phase3_prefix_handoff_is_valid(
+	const struct v34_phase3_prefix_handoff *handoff)
+{
+	return handoff != NULL &&
+	       v34_phase3_s_detection_is_valid(&handoff->s) &&
+	       v34_equalizer_handoff_is_valid(&handoff->equalizer);
+}
+
 static bool detection_is_clear(
 	const struct v34_phase3_s_detection *detection)
 {
@@ -359,6 +367,25 @@ bool v34_phase3_receiver_get_s_detection(
 		return false;
 	*detection = receiver->s_detection;
 	return true;
+}
+
+enum v34_phase3_receiver_result v34_phase3_receiver_prefix_handoff(
+	const struct v34_phase3_receiver *receiver,
+	struct v34_phase3_prefix_handoff *handoff)
+{
+	struct v34_phase3_prefix_handoff generated;
+
+	if (!v34_phase3_receiver_is_valid(receiver) || handoff == NULL)
+		return V34_PHASE3_RECEIVER_INVALID_ARGUMENT;
+	if (receiver->stage != V34_PHASE3_RECEIVER_STAGE_J ||
+	    receiver->state.j.detector.received_symbols != 0)
+		return V34_PHASE3_RECEIVER_INVALID_STATE;
+	generated.s = receiver->s_detection;
+	generated.equalizer.equalizer = receiver->state.j.equalizer;
+	if (!v34_phase3_prefix_handoff_is_valid(&generated))
+		return V34_PHASE3_RECEIVER_INVALID_STATE;
+	*handoff = generated;
+	return V34_PHASE3_RECEIVER_OK;
 }
 
 enum v34_phase3_receiver_result v34_phase3_receiver_handoff(
