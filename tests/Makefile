@@ -1969,6 +1969,7 @@ test: $(TEST_BINARIES)
 	$(PYTHON) test_live_calls.py
 	$(PYTHON) test_interop_config.py
 	$(PYTHON) test_interop_endpoint.py
+	$(PYTHON) test_local_interop.py
 	./$(PACK_TEST_BINARY)
 	./$(CONFIG_TEST_BINARY)
 	./$(SIP_URI_TEST_BINARY)

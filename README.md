@@ -127,6 +127,25 @@ profile, link mode, and repetition in a fresh daemon process. Use repeated
 `--plan NAME` options with `python3 tools/live_calls.py` to select enabled plan
 groups. `--list` emits only a redacted manifest and performs no calls.
 
+For a faster cross-implementation check without an external SIP endpoint,
+copy `tools/local-interop.example.json` to an owner-only file beneath the
+ignored `live-call-artifacts/` directory. Configure the two executable and
+argument lists, select the desired AT profiles, set `enabled` to true, and run:
+
+```
+python3 tools/local_interop.py \
+    --config live-call-artifacts/local-interop.json
+```
+
+The runner starts both modems, constructs loopback-only SIP and RTP routing,
+waits for RING before issuing ATA, and verifies distinct terminal payloads in
+both directions under shared deadlines. Raw daemon logs, terminal traffic, and
+media recordings remain in owner-only artifacts; stdout contains only bounded,
+redacted status fields. The checked-in example is an inert raw V.21 baseline,
+but its AT command lists are intentionally generic so the same runner can test
+LAPM and compression. A cross-implementation PCMU run has also connected at
+symmetric V.34 9600 bit/s and verified all 15 payload bytes in each direction.
+
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
 Baudot at both supported rates, V.32/V.32bis, the current symmetric V.34
 9600-bit/s baseline, and generated future matrices. The future matrices keep
