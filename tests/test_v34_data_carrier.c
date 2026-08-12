@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
@@ -208,6 +209,92 @@ static bool test_carrier_point_stream(void)
 	return true;
 }
 
+static bool test_active_carrier_handoff(void)
+{
+	static const struct qam_point ZERO = { 0 };
+	static const struct qam_point TRAINING_POINT = { 1.0, 0.0 };
+	const double point_gain = 1.25;
+	struct carrier_fixture fixture;
+	struct v34_data_points points;
+	struct qam_channel channel;
+	struct qam_modulator active;
+	struct qam_modulator active_before;
+	struct qam_modulator model;
+	struct v34_data_carrier carrier;
+	struct qam_point point;
+	double ignored;
+	double required_power;
+	bool ignored_accepted;
+	bool data_point_accepted = false;
+	bool retained_pulse_seen = false;
+
+	CHECK(initialize_fixture(&fixture) &&
+	      v34_data_carrier_channel(
+		      &fixture.profile, 8000, &channel) == V34_DATA_CARRIER_OK &&
+	      qam_modulator_init(&active, &channel, INT16_MAX) == QAM_OK &&
+	      qam_modulator_sample_f64(
+		      &active, &TRAINING_POINT, &ignored,
+		      &ignored_accepted) == QAM_OK &&
+	      ignored_accepted && active.active_count != 0,
+	      "active-carrier fixture did not retain its training pulse");
+	active_before = active;
+	required_power = fixture.normalizer.maximum_normalized_point_power *
+		point_gain * point_gain;
+	CHECK(required_power > active.maximum_point_power &&
+	      v34_data_carrier_continue(
+		      &carrier, &active, &fixture.profile, &fixture.geometry,
+		      &fixture.normalizer, point_gain) == V34_DATA_CARRIER_OK &&
+	      memcmp(&active, &active_before, sizeof(active)) == 0 &&
+	      carrier.point_gain == point_gain &&
+	      carrier.modulator.maximum_point_power == required_power &&
+	      carrier.modulator.active_count == active.active_count &&
+	      memcmp(carrier.modulator.active, active.active,
+		     sizeof(active.active)) == 0 &&
+	      carrier.modulator.carrier_phase == active.carrier_phase &&
+	      carrier.modulator.symbol_phase_units ==
+		      active.symbol_phase_units,
+	      "data continuation reset or changed the active carrier");
+	points = fixture.points;
+	model = carrier.modulator;
+	for (size_t sample_index = 0;
+	     sample_index < 16u && !data_point_accepted; ++sample_index) {
+		struct qam_point scaled;
+		const struct qam_point *point_pointer = NULL;
+		const struct qam_point *model_pointer = &ZERO;
+		double expected;
+		double actual;
+		bool model_accepted;
+		bool actual_accepted;
+
+		if (v34_data_carrier_needs_point(&carrier)) {
+			CHECK(v34_data_points_next(&points, &point) ==
+				      V34_DATA_POINTS_OK,
+			      "continued carrier did not obtain a data point");
+			point_pointer = &point;
+			scaled = (struct qam_point){
+				.in_phase = point.in_phase * point_gain,
+				.quadrature = point.quadrature * point_gain,
+			};
+			model_pointer = &scaled;
+		}
+		CHECK(qam_modulator_sample_f64(
+			      &model, model_pointer, &expected,
+			      &model_accepted) == QAM_OK &&
+		      v34_data_carrier_sample(
+			      &carrier, point_pointer, &actual,
+			      &actual_accepted) == V34_DATA_CARRIER_OK &&
+		      actual == expected &&
+		      actual_accepted == model_accepted &&
+		      memcmp(&carrier.modulator, &model, sizeof(model)) == 0,
+		      "continued carrier diverged at sample %zu", sample_index);
+		retained_pulse_seen |= point_pointer == NULL && actual != 0.0;
+		data_point_accepted |= actual_accepted;
+	}
+	CHECK(retained_pulse_seen && data_point_accepted,
+	      "continued carrier lost its pulse tail or next data point");
+	return true;
+}
+
 static bool test_line_output(void)
 {
 	struct carrier_fixture fixture;
@@ -407,6 +494,8 @@ static bool test_transactional_validation(void)
 	struct v34_frame_geometry other_geometry;
 	struct qam_point point = { 0.1, -0.2 };
 	struct qam_point excessive;
+	struct qam_modulator active;
+	struct qam_channel other_channel;
 	double carrier_sample = 123.0;
 	int16_t line_sample = 1234;
 	bool accepted = true;
@@ -445,6 +534,39 @@ static bool test_transactional_validation(void)
 		      &carrier, &fixture.profile, &fixture.geometry,
 		      &fixture.normalizer, 8000) == V34_DATA_CARRIER_OK,
 	      "valid carrier did not initialize");
+	active = carrier.modulator;
+	other_channel = active.channel;
+	other_channel.carrier_frequency_numerator = 1800;
+	CHECK(qam_modulator_init(
+		      &active, &other_channel, INT16_MAX) == QAM_OK,
+	      "mismatched active carrier did not initialize");
+	carrier_before = carrier;
+	CHECK(v34_data_carrier_continue(
+		      NULL, &carrier.modulator, &fixture.profile,
+		      &fixture.geometry, &fixture.normalizer, 1.0) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_continue(
+		      &carrier, NULL, &fixture.profile, &fixture.geometry,
+		      &fixture.normalizer, 1.0) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_continue(
+		      &carrier, &active, &fixture.profile, &fixture.geometry,
+		      &fixture.normalizer, 1.0) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_continue(
+		      &carrier, &carrier.modulator, &fixture.profile,
+		      &fixture.geometry, &fixture.normalizer, 0.0) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_continue(
+		      &carrier, &carrier.modulator, &fixture.profile,
+		      &fixture.geometry, &fixture.normalizer, NAN) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      v34_data_carrier_continue(
+		      &carrier, &carrier.modulator, &fixture.profile,
+		      &fixture.geometry, &fixture.normalizer, DBL_MAX) ==
+		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	      memcmp(&carrier, &carrier_before, sizeof(carrier)) == 0,
+	      "invalid active-carrier continuation changed its destination");
 	carrier_before = carrier;
 	excessive = (struct qam_point){
 		.in_phase =
@@ -590,6 +712,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "carrier point stream", test_carrier_point_stream },
+		{ "active carrier handoff", test_active_carrier_handoff },
 		{ "line output", test_line_output },
 		{ "line power reduction", test_line_power_reduction },
 		{ "all carrier profiles", test_all_carrier_profiles },
