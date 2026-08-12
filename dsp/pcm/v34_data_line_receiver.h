@@ -46,14 +46,14 @@ struct v34_data_line_receiver {
 	bool failed;
 };
 
-/* Begin immediately before the next line sample that will recover the first
- * B1 symbol. Pulse-shaping history may already contain earlier B1 waveform
- * samples. Both trained inputs and all negotiated configuration are copied;
- * the demodulator must hold timing lock for the profile's exact waveform. */
+/* Begin after Phase 4 has decoded E and retained the first equalizer-delay B1
+ * inputs. The demodulator and handoff must describe that same sample boundary.
+ * Both trained values and the negotiated configuration are copied; the
+ * demodulator must hold timing lock for the exact waveform. */
 enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	struct v34_data_line_receiver *receiver,
 	const struct qam_demodulator *demodulator,
-	const struct qam_equalizer *equalizer,
+	const struct v34_equalizer_handoff *handoff,
 	const struct v34_data_line_receiver_configuration *configuration);
 
 bool v34_data_line_receiver_is_valid(

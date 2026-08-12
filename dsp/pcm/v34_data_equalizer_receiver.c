@@ -42,6 +42,40 @@ bool v34_data_equalizer_receiver_is_valid(
 		       receiver->first_observation.output.quadrature;
 }
 
+static enum v34_data_equalizer_receiver_result initialize_receiver(
+	struct v34_data_equalizer_receiver *receiver,
+	const struct qam_equalizer *equalizer,
+	const struct v34_power_normalizer *normalizer,
+	const struct v34_frame_geometry *geometry,
+	bool expanded_shaping,
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT],
+	enum v34_trellis_selection selection,
+	enum v34_station_role transmitting_role,
+	double adaptation, uint8_t training_outputs_remaining)
+{
+	struct v34_data_equalizer_receiver initialized = { 0 };
+
+	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
+	    adaptation > 1.0 || !qam_equalizer_is_valid(equalizer) ||
+	    training_outputs_remaining > QAM_EQUALIZER_DELAY ||
+	    v34_data_channel_receiver_init(
+		    &initialized.data_receiver, normalizer, geometry,
+		    expanded_shaping, coefficients, selection,
+		    transmitting_role) !=
+		    V34_DATA_CHANNEL_RECEIVER_OK)
+		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+	initialized.equalizer = *equalizer;
+	/* The new owner closes any immediate update not retained by a caller. */
+	initialized.equalizer.can_adapt = false;
+	initialized.adaptation = adaptation;
+	initialized.training_outputs_remaining = training_outputs_remaining;
+	if (!v34_data_equalizer_receiver_is_valid(&initialized))
+		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return V34_DATA_EQUALIZER_RECEIVER_OK;
+}
+
 enum v34_data_equalizer_receiver_result
 v34_data_equalizer_receiver_init(
 	struct v34_data_equalizer_receiver *receiver,
@@ -55,28 +89,38 @@ v34_data_equalizer_receiver_init(
 	enum v34_station_role transmitting_role,
 	double adaptation)
 {
-	struct v34_data_equalizer_receiver initialized = { 0 };
+	uint8_t remaining;
 
-	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
-	    adaptation > 1.0 || !qam_equalizer_is_valid(equalizer) ||
-	    v34_data_channel_receiver_init(
-		    &initialized.data_receiver, normalizer, geometry,
-		    expanded_shaping, coefficients, selection,
-		    transmitting_role) !=
-		    V34_DATA_CHANNEL_RECEIVER_OK)
+	if (!qam_equalizer_is_valid(equalizer))
 		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
-	initialized.equalizer = *equalizer;
-	/* The data owner deliberately closes any immediate Phase 4 update. */
-	initialized.equalizer.can_adapt = false;
-	initialized.adaptation = adaptation;
-	initialized.training_outputs_remaining =
-		equalizer->fill < QAM_EQUALIZER_DELAY ?
-			(uint8_t)equalizer->fill :
-			QAM_EQUALIZER_DELAY;
-	if (!v34_data_equalizer_receiver_is_valid(&initialized))
+	remaining = equalizer->fill < QAM_EQUALIZER_DELAY ?
+			    (uint8_t)equalizer->fill :
+			    QAM_EQUALIZER_DELAY;
+	return initialize_receiver(
+		receiver, equalizer, normalizer, geometry, expanded_shaping,
+		coefficients, selection, transmitting_role, adaptation,
+		remaining);
+}
+
+enum v34_data_equalizer_receiver_result
+v34_data_equalizer_receiver_init_from_handoff(
+	struct v34_data_equalizer_receiver *receiver,
+	const struct v34_equalizer_handoff *handoff,
+	const struct v34_power_normalizer *normalizer,
+	const struct v34_frame_geometry *geometry,
+	bool expanded_shaping,
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT],
+	enum v34_trellis_selection selection,
+	enum v34_station_role transmitting_role,
+	double adaptation)
+{
+	if (!v34_equalizer_handoff_is_valid(handoff))
 		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
-	*receiver = initialized;
-	return V34_DATA_EQUALIZER_RECEIVER_OK;
+	return initialize_receiver(
+		receiver, &handoff->equalizer, normalizer, geometry,
+		expanded_shaping, coefficients, selection, transmitting_role,
+		adaptation, 0);
 }
 
 bool v34_data_equalizer_receiver_is_receiving_b1(

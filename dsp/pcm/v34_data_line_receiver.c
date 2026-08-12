@@ -74,6 +74,7 @@ bool v34_data_line_receiver_is_valid(
 	       qam_demodulator_measure(&receiver->demodulator).timing_locked &&
 	       v34_data_equalizer_receiver_is_valid(
 		       &receiver->equalizer_receiver) &&
+	       receiver->equalizer_receiver.training_outputs_remaining == 0 &&
 	       geometries_are_equal(
 		       &receiver->geometry, data_geometry(receiver));
 }
@@ -81,7 +82,7 @@ bool v34_data_line_receiver_is_valid(
 enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	struct v34_data_line_receiver *receiver,
 	const struct qam_demodulator *demodulator,
-	const struct qam_equalizer *equalizer,
+	const struct v34_equalizer_handoff *handoff,
 	const struct v34_data_line_receiver_configuration *configuration)
 {
 	struct v34_data_line_receiver initialized = { 0 };
@@ -98,14 +99,14 @@ enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	    !waveform_matches_profile(
 		    demodulator, &configuration->transmitting_profile) ||
 	    !qam_demodulator_measure(demodulator).timing_locked ||
-	    !qam_equalizer_is_valid(equalizer))
+	    !v34_equalizer_handoff_is_valid(handoff))
 		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
 	initialized.demodulator = *demodulator;
 	initialized.transmitting_profile =
 		configuration->transmitting_profile;
 	initialized.geometry = configuration->geometry;
-	if (v34_data_equalizer_receiver_init(
-		    &initialized.equalizer_receiver, equalizer,
+	if (v34_data_equalizer_receiver_init_from_handoff(
+		    &initialized.equalizer_receiver, handoff,
 		    &configuration->normalizer, &configuration->geometry,
 		    configuration->expanded_shaping,
 		    configuration->precoder_coefficients,

@@ -4,6 +4,7 @@
 #define V34_PHASE4_EQUALIZER_RECEIVER_H
 
 #include "qam_equalizer.h"
+#include "v34_equalizer_handoff.h"
 #include "v34_phase4_e_receiver.h"
 
 #include <stdbool.h>
@@ -54,6 +55,13 @@ v34_phase4_equalizer_receiver_init(
 
 bool v34_phase4_equalizer_receiver_is_valid(
 	const struct v34_phase4_equalizer_receiver *receiver);
+
+/* Copy the completed E-to-B1 boundary. The output changes only on success and
+ * may be copied into a data receiver without replaying retained inputs. */
+enum v34_phase4_equalizer_receiver_result
+v34_phase4_equalizer_receiver_handoff(
+	const struct v34_phase4_equalizer_receiver *receiver,
+	struct v34_equalizer_handoff *handoff);
 
 /* A record event pauses input so the startup controller cannot accidentally
  * parse the first symbols of E as another MP record. Continue after an MP or

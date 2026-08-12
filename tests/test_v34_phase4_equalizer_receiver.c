@@ -312,6 +312,18 @@ static bool run_stream(
 		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E,
 	      "Phase 4 accepted %u MP records before E",
 	      fixture.accepted_records);
+	{
+		struct v34_equalizer_handoff rejected;
+		struct v34_equalizer_handoff saved;
+
+		memset(&rejected, 0xa5, sizeof(rejected));
+		saved = rejected;
+		CHECK(v34_phase4_equalizer_receiver_handoff(
+			      &fixture.receiver, &rejected) ==
+			      V34_PHASE4_EQUALIZER_RECEIVER_INVALID_STATE &&
+		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+		      "Phase 4 exported a handoff before delayed E completion");
+	}
 	for (size_t index = 0; index < ARRAY_LENGTH(lookahead); ++index) {
 		transmitted = (struct qam_point){
 			.in_phase = 0.17 + 0.11 * (double)index,
@@ -344,6 +356,17 @@ static bool run_stream(
 	      fixture.receiver.equalizer.history[2].quadrature ==
 		      lookahead[0].quadrature,
 	      "E completion did not preserve ordered B1 lookahead");
+	{
+		struct v34_equalizer_handoff handoff;
+
+		CHECK(v34_phase4_equalizer_receiver_handoff(
+			      &fixture.receiver, &handoff) ==
+			      V34_PHASE4_EQUALIZER_RECEIVER_OK &&
+		      v34_equalizer_handoff_is_valid(&handoff) &&
+		      memcmp(&handoff.equalizer, &fixture.receiver.equalizer,
+			     sizeof(handoff.equalizer)) == 0,
+		      "Phase 4 did not export its exact B1 equalizer history");
+	}
 	{
 		struct v34_phase4_equalizer_receiver saved = fixture.receiver;
 		struct v34_mp_receive_event event;

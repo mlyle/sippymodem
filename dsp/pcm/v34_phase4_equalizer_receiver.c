@@ -40,6 +40,26 @@ bool v34_phase4_equalizer_receiver_is_valid(
 }
 
 enum v34_phase4_equalizer_receiver_result
+v34_phase4_equalizer_receiver_handoff(
+	const struct v34_phase4_equalizer_receiver *receiver,
+	struct v34_equalizer_handoff *handoff)
+{
+	struct v34_equalizer_handoff generated;
+
+	if (!v34_phase4_equalizer_receiver_is_valid(receiver) ||
+	    handoff == NULL)
+		return V34_PHASE4_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+	if (receiver->stage !=
+	    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE)
+		return V34_PHASE4_EQUALIZER_RECEIVER_INVALID_STATE;
+	generated.equalizer = receiver->equalizer;
+	if (!v34_equalizer_handoff_is_valid(&generated))
+		return V34_PHASE4_EQUALIZER_RECEIVER_INVALID_STATE;
+	*handoff = generated;
+	return V34_PHASE4_EQUALIZER_RECEIVER_OK;
+}
+
+enum v34_phase4_equalizer_receiver_result
 v34_phase4_equalizer_receiver_init(
 	struct v34_phase4_equalizer_receiver *receiver,
 	const struct qam_equalizer *equalizer,

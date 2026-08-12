@@ -797,6 +797,7 @@ V34_CHANNEL_FRAME_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_channel_frame_receiver.o \
 	$(BUILD_DIR)/v34_data_channel_receiver.o \
 	$(BUILD_DIR)/v34_data_equalizer_receiver.o \
+	$(BUILD_DIR)/v34_equalizer_handoff.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_channel_frame_decoder.o \
@@ -1019,6 +1020,7 @@ V34_PHASE4_EQUALIZER_RECEIVER_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/qam_equalizer.o \
+	$(BUILD_DIR)/v34_equalizer_handoff.o \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_mp.o \
@@ -2477,6 +2479,10 @@ $(BUILD_DIR)/v34_data_equalizer_receiver.o: \
 
 $(BUILD_DIR)/v34_data_line_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_equalizer_handoff.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_equalizer_handoff.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_trellis.o: \

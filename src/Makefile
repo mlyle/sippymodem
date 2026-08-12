@@ -163,6 +163,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_channel_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_equalizer_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_equalizer_handoff.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_lattice.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_path_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_precoder.c \

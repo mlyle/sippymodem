@@ -315,12 +315,54 @@ static bool advance_training_tail(
 
 			if (qam_equalizer_push(
 				    equalizer, &received, &output,
-				    &output_ready) != QAM_EQUALIZER_OK)
+				    &output_ready) != QAM_EQUALIZER_OK ||
+			    (output_ready &&
+			     qam_equalizer_adapt(
+				     equalizer, &output, 0.0) !=
+				     QAM_EQUALIZER_OK))
 				return false;
-			(void)output_ready;
 		}
 	}
 	return true;
+}
+
+static bool retain_b1_lookahead(
+	struct v34_data_stream *stream,
+	struct qam_demodulator *demodulator,
+	struct qam_equalizer *equalizer)
+{
+	size_t retained = 0;
+
+	for (size_t index = 0;
+	     index < HANDOFF_SEARCH_SAMPLES &&
+	     retained < QAM_EQUALIZER_DELAY;
+	     ++index) {
+		struct qam_point received;
+		struct qam_point output;
+		int16_t sample;
+		bool accepted;
+		bool ready;
+		bool output_ready;
+
+		if (v34_data_stream_sample(
+			    stream, NULL, NULL, &sample, &accepted) !=
+			    V34_DATA_STREAM_OK ||
+		    qam_demodulator_sample(
+			    demodulator, sample, &received, &ready) != QAM_OK)
+			return false;
+		(void)accepted;
+		if (!ready)
+			continue;
+		if (qam_equalizer_push(
+			    equalizer, &received, &output,
+			    &output_ready) != QAM_EQUALIZER_OK ||
+		    (output_ready &&
+		     qam_equalizer_adapt(
+			     equalizer, &output, 0.0) != QAM_EQUALIZER_OK))
+			return false;
+		retained++;
+	}
+	return retained == QAM_EQUALIZER_DELAY;
 }
 
 struct handoff_fixture {
@@ -335,6 +377,7 @@ static bool prepare_handoff(struct handoff_fixture *fixture)
 		.configuration = stream_configuration(),
 	};
 	struct v34_data_line_receiver_configuration receiver_config;
+	struct v34_equalizer_handoff handoff;
 	struct qam_demodulator demodulator;
 	struct qam_equalizer equalizer;
 	size_t handoff_sample;
@@ -349,12 +392,17 @@ static bool prepare_handoff(struct handoff_fixture *fixture)
 		    &handoff_sample) ||
 	    !advance_training_tail(
 		    &prepared.stream, &demodulator, &equalizer,
-		    handoff_sample))
+		    handoff_sample) ||
+	    !retain_b1_lookahead(
+		    &prepared.stream, &demodulator, &equalizer))
+		return false;
+	handoff.equalizer = equalizer;
+	if (!v34_equalizer_handoff_is_valid(&handoff))
 		return false;
 	receiver_config = receiver_configuration(
 		&prepared.stream, &prepared.configuration);
 	if (v34_data_line_receiver_init(
-		    &prepared.receiver, &demodulator, &equalizer,
+		    &prepared.receiver, &demodulator, &handoff,
 		    &receiver_config) != V34_DATA_LINE_RECEIVER_OK)
 		return false;
 	*fixture = prepared;
@@ -494,6 +542,8 @@ static bool test_validation_and_failure_latch(void)
 	struct handoff_fixture fixture;
 	struct v34_data_line_receiver rejected;
 	struct v34_data_line_receiver_configuration configuration;
+	struct v34_equalizer_handoff handoff;
+	struct v34_equalizer_handoff invalid_handoff;
 	struct qam_demodulator unlocked;
 	struct qam_channel channel;
 	struct qam_channel saved_channel;
@@ -504,6 +554,9 @@ static bool test_validation_and_failure_latch(void)
 
 	CHECK(prepare_handoff(&fixture),
 	      "V.34 line validation fixture did not initialize");
+	handoff.equalizer = fixture.receiver.equalizer_receiver.equalizer;
+	CHECK(v34_equalizer_handoff_is_valid(&handoff),
+	      "V.34 line validation handoff is invalid");
 	configuration = receiver_configuration(
 		&fixture.stream, &fixture.configuration);
 	CHECK(v34_data_carrier_channel(&profile, 8000, &channel) ==
@@ -513,11 +566,22 @@ static bool test_validation_and_failure_latch(void)
 	      "V.34 line validation demodulator did not initialize");
 	memset(&rejected, 0xa5, sizeof(rejected));
 	CHECK(v34_data_line_receiver_init(
-		      &rejected, &unlocked,
-		      &fixture.receiver.equalizer_receiver.equalizer,
+		      &rejected, &unlocked, &handoff,
 		      &configuration) == V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
 	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
 	      "V.34 line receiver accepted an unlocked handoff");
+	invalid_handoff = handoff;
+	invalid_handoff.equalizer.fill = QAM_EQUALIZER_DELAY;
+	CHECK(v34_data_line_receiver_init(
+		      &rejected, &fixture.receiver.demodulator,
+		      &invalid_handoff, &configuration) ==
+		      V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_data_line_receiver_init(
+		      &rejected, &fixture.receiver.demodulator, NULL,
+		      &configuration) ==
+		      V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
+	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
+	      "V.34 line receiver accepted an incomplete handoff");
 	saved_channel = channel;
 	profile.carrier_frequency_numerator = 0;
 	CHECK(v34_data_carrier_channel(&profile, 8000, &channel) ==
