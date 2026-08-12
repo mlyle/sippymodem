@@ -37,6 +37,7 @@ enum rtp_endpoint_result rtp_runtime_drain(
 enum media_result rtp_runtime_play(
 	struct rtp_runtime *runtime,
 	int16_t *samples,
+	uint8_t *source_octets,
 	size_t count,
 	struct rtp_playout_report *report);
 enum rtp_endpoint_result rtp_runtime_send(

@@ -198,12 +198,13 @@ enum rtp_endpoint_result rtp_runtime_drain(
 }
 
 enum media_result rtp_runtime_play(
-	struct rtp_runtime *runtime, int16_t *samples, size_t count,
+	struct rtp_runtime *runtime, int16_t *samples,
+	uint8_t *source_octets, size_t count,
 	struct rtp_playout_report *report)
 {
 	if (runtime == NULL || count != runtime->frame_samples)
 		return MEDIA_INVALID_ARGUMENT;
-	return rtp_stream_play(&runtime->stream, samples, count,
+	return rtp_stream_play(&runtime->stream, samples, source_octets, count,
 					  report);
 }
 

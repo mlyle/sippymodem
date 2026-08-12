@@ -107,7 +107,7 @@ enum audio_path_result audio_path_process_frame(
 	receive_samples = path->samples;
 	transmit_samples = path->samples + path->frame_samples;
 	path->last_media_result = sip_session_play(
-		path->session, receive_samples, path->frame_samples, NULL);
+		path->session, receive_samples, NULL, path->frame_samples, NULL);
 	if (path->last_media_result != MEDIA_OK)
 		return AUDIO_PATH_PLAYOUT_ERROR;
 

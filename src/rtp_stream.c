@@ -5,6 +5,7 @@
 #include "rtp.h"
 
 #include <stdint.h>
+#include <string.h>
 
 bool rtp_stream_init(
 	struct rtp_stream *stream,
@@ -63,9 +64,12 @@ enum rtp_receive_result rtp_stream_receive(
 enum media_result rtp_stream_play(
 	struct rtp_stream *stream,
 	int16_t *samples,
+	uint8_t *source_octets,
 	size_t count,
 	struct rtp_playout_report *report)
 {
+	enum media_result result;
+
 	if (stream == NULL || samples == NULL || count == 0 ||
 	    count > stream->receive_workspace_size)
 		return MEDIA_INVALID_ARGUMENT;
@@ -73,9 +77,12 @@ enum media_result rtp_stream_play(
 					   stream->receive_workspace, count,
 					   report))
 		return MEDIA_INVALID_ARGUMENT;
-	return media_decode(stream->codec,
-				       stream->receive_workspace, count, samples,
-				       count, &stream->recorder);
+	result = media_decode(stream->codec,
+			      stream->receive_workspace, count, samples,
+			      count, &stream->recorder);
+	if (result == MEDIA_OK && source_octets != NULL)
+		memcpy(source_octets, stream->receive_workspace, count);
+	return result;
 }
 
 enum media_result rtp_stream_write(

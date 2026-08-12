@@ -64,7 +64,8 @@ static bool init_stream(struct rtp_stream *stream,
 
 static bool test_receive_playout_and_recording(void)
 {
-	static const uint8_t payload[] = { 0xff, 0xfe, 0x7e, 0x80 };
+	static const uint8_t payload[] = { 0x7f, 0xfe, 0x7e, 0x80 };
+	static const uint8_t expected_octets[] = { 0xff, 0xff, 0x7f, 0xfe };
 	static const int16_t expected[] = { 0, 0, 0, 8 };
 	struct rtp_jitter_slot slots[TEST_SLOTS];
 	struct rtp_stream stream;
@@ -78,6 +79,7 @@ static bool test_receive_playout_and_recording(void)
 	struct rtp_playout_report report;
 	uint8_t workspace[TEST_WORKSPACE];
 	uint8_t packet[32];
+	uint8_t source_octets[ARRAY_LENGTH(payload)];
 	int16_t samples[ARRAY_LENGTH(payload)];
 	size_t packet_size;
 	enum rtp_result packet_result;
@@ -94,21 +96,23 @@ static bool test_receive_playout_and_recording(void)
 		      packet_result == RTP_OK,
 	      "stream rejected receive packet");
 	CHECK(capture.calls == 0, "arrival was recorded before playout");
-	CHECK(rtp_stream_play(&stream, samples,
+	CHECK(rtp_stream_play(&stream, samples, source_octets,
 				  ARRAY_LENGTH(samples), &report) ==
 		      MEDIA_OK,
 	      "stream playout failed");
 	CHECK(memcmp(samples, expected, sizeof(expected)) == 0 &&
+		      memcmp(source_octets, expected_octets,
+			     sizeof(expected_octets)) == 0 &&
 		      report.prefill_samples == 2 &&
 		      report.received_samples == 2,
-	      "stream playout samples are wrong");
+	      "stream playout samples or codewords are wrong");
 	CHECK(capture.calls == 2 &&
 		      capture.streams[0] ==
 			      RECORD_RX_RTP_PAYLOAD_PLAYOUT &&
 		      capture.streams[1] == RECORD_RX_LINE_PCM &&
 		      capture.counts[0] == ARRAY_LENGTH(payload) &&
 		      memcmp(capture.data[0],
-			     (uint8_t[]){ 0xff, 0xff, 0xff, 0xfe },
+			     expected_octets,
 			     sizeof(payload)) == 0,
 	      "receive recordings are not in playout order");
 	return true;
@@ -193,7 +197,7 @@ static bool test_validation_is_transactional(void)
 	CHECK(packet_size == 999 && stream.transmit_header.sequence == sequence &&
 		      capture.calls == 0,
 	      "failed transmit changed state or emitted a recording");
-	CHECK(rtp_stream_play(&stream, playout,
+	CHECK(rtp_stream_play(&stream, playout, NULL,
 				  TEST_WORKSPACE + 1, NULL) ==
 		      MEDIA_INVALID_ARGUMENT,
 	      "stream accepted playout beyond its workspace");

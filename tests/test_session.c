@@ -187,6 +187,7 @@ static bool test_owns_transport_lifetimes(void)
 	struct callback_capture capture = { 0 };
 	struct sip_session *session;
 	struct rtp_playout_report report;
+	uint8_t source_octets[8];
 	int16_t samples[8];
 	size_t drained = 99;
 
@@ -226,10 +227,16 @@ static bool test_owns_transport_lifetimes(void)
 			      SIP_SIGNALING_OK,
 	      "session did not preserve typed call control");
 	memset(samples, 1, sizeof(samples));
-	CHECK(sip_session_play(session, samples, ARRAY_LENGTH(samples),
+	memset(source_octets, 0, sizeof(source_octets));
+	CHECK(sip_session_play(session, samples, source_octets,
+				      ARRAY_LENGTH(samples),
 				      &report) == MEDIA_OK &&
 		      !report.stream_active &&
 		      memcmp(samples, (int16_t[8]){ 0 }, sizeof(samples)) == 0 &&
+		      memcmp(source_octets,
+			     (uint8_t[8]){ 0xff, 0xff, 0xff, 0xff,
+					   0xff, 0xff, 0xff, 0xff },
+			     sizeof(source_octets)) == 0 &&
 		      sip_session_send(session, samples,
 					       ARRAY_LENGTH(samples)) ==
 			      RTP_ENDPOINT_OK,

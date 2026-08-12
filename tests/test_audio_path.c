@@ -30,7 +30,8 @@ size_t sip_session_frame_samples(
 }
 
 enum media_result sip_session_play(
-	struct sip_session *session, int16_t *samples, size_t count,
+	struct sip_session *session, int16_t *samples,
+	uint8_t *source_octets, size_t count,
 	struct rtp_playout_report *report)
 {
 	if (session == NULL || samples == NULL || count != session->frame_samples)
@@ -40,6 +41,8 @@ enum media_result sip_session_play(
 		return session->play_result;
 	memcpy(samples, session->receive_samples,
 	       count * sizeof(samples[0]));
+	if (source_octets != NULL)
+		memset(source_octets, 0xff, count);
 	if (report != NULL)
 		memset(report, 0, sizeof(*report));
 	return MEDIA_OK;

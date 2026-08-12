@@ -194,7 +194,7 @@ static bool test_loopback_media_and_recording(void)
 		      memcmp(receiver.recordings.data[0], encoded,
 			     sizeof(encoded)) == 0,
 	      "arrival recording is missing or wrong");
-	CHECK(rtp_stream_play(&receiver.stream, played,
+	CHECK(rtp_stream_play(&receiver.stream, played, NULL,
 				  ARRAY_LENGTH(played), &report) ==
 		      MEDIA_OK &&
 		      memcmp(played, expected, sizeof(expected)) == 0,
@@ -354,7 +354,7 @@ static bool test_symmetric_remote_learning(void)
 		      transmit_address.sin_addr.s_addr ==
 				 sender_address.sin_addr.s_addr,
 	      "receiver did not select the learned symmetric route");
-	CHECK(rtp_stream_play(&receiver.stream, played,
+	CHECK(rtp_stream_play(&receiver.stream, played, NULL,
 				  ARRAY_LENGTH(played), NULL) ==
 		      MEDIA_OK &&
 		      memcmp(played, expected, sizeof(expected)) == 0,
@@ -366,7 +366,7 @@ static bool test_symmetric_remote_learning(void)
 		      wait_for_datagram(&sender.endpoint) &&
 		      rtp_endpoint_drain(&sender.endpoint, &drained) ==
 			      RTP_ENDPOINT_OK &&
-		      rtp_stream_play(&sender.stream, played,
+		      rtp_stream_play(&sender.stream, played, NULL,
 					    ARRAY_LENGTH(played), NULL) ==
 			      MEDIA_OK &&
 		      memcmp(played, expected, sizeof(expected)) == 0,
