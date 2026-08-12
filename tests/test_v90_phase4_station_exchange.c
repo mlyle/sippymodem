@@ -271,7 +271,8 @@ static bool run_exchange(
 	      mapping_matches(
 		      &analog_receive.training_mapping, &training) &&
 	      mapping_matches(
-		      &digital_transmit.training_mapping, &training),
+		      &digital_transmit.transmitter.encoder.mapping,
+		      &training),
 	      "paired owners disagreed about their Phase 4 handoffs");
 	CHECK(verify_cp_handoffs(
 		      law, &analog_transmit, &digital_receive, &training),

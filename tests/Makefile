@@ -1599,6 +1599,8 @@ V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \
+	$(filter-out $(BUILD_DIR)/test_v90_trn2d_tx.o, \
+		$(V90_TRN2D_TX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_cp_line_rx.o, \
 		$(V90_PHASE4_CP_LINE_RX_TEST_OBJECTS)))
 V90_PHASE4_STATION_EXCHANGE_TEST_BINARY := \

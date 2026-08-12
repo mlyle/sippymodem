@@ -203,7 +203,7 @@ static bool run_exchange(
 	      v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff) &&
 	      mapping_matches(
-		      &transmit_handoff.training_mapping,
+		      &transmit_handoff.transmitter.encoder.mapping,
 		      &records[ARRAY_LENGTH(records) - 1u]),
 	      "TRN2d transmit handoff changed the accepted mapping");
 	{
@@ -321,14 +321,15 @@ static bool test_contracts(void)
 	CHECK(v90_pcm_mapping_init(&training_mapping, &training) ==
 		      V90_PCM_MAPPING_OK,
 	      "valid handoff mapping did not initialize");
-	transmit_handoff =
-		(struct v90_phase4_digital_transmit_handoff){
-			.training_mapping = training_mapping,
-		};
+	memset(&transmit_handoff, 0, sizeof(transmit_handoff));
+	CHECK(v90_trn2d_tx_init(
+		      &transmit_handoff.transmitter,
+		      &training_mapping) == V90_TRN2D_TX_OK,
+	      "valid handoff transmitter did not initialize");
 	CHECK(v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff),
 	      "valid TRN2d handoff was rejected");
-	transmit_handoff.training_mapping.modulus[0]--;
+	transmit_handoff.transmitter.encoder.mapping.modulus[0]--;
 	CHECK(!v90_phase4_digital_station_is_valid(NULL) &&
 	      !v90_phase4_digital_station_has_failed(NULL) &&
 	      !v90_phase4_digital_transmit_handoff_is_valid(NULL) &&
