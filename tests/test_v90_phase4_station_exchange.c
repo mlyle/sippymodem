@@ -95,6 +95,48 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
+static bool trn2d_symbols_match(
+	const struct v90_trn2d_symbol *left,
+	const struct v90_trn2d_symbol *right)
+{
+	return left->pcm.ucode == right->pcm.ucode &&
+	       left->pcm.positive == right->pcm.positive &&
+	       left->pcm.octet == right->pcm.octet &&
+	       left->pcm.sample == right->pcm.sample &&
+	       left->shaping_rule == right->shaping_rule &&
+	       left->shaping_rule_valid == right->shaping_rule_valid &&
+	       left->shaping_frame_start == right->shaping_frame_start;
+}
+
+static bool verify_trn2d_handoffs(
+	struct v90_phase4_digital_transmit_handoff *digital,
+	const struct v90_phase4_analog_receive_handoff *analog)
+{
+	struct v90_trn2d_tx expected;
+
+	CHECK(v90_trn2d_tx_init(
+		      &expected, &analog->training_mapping) ==
+		      V90_TRN2D_TX_OK,
+	      "analogue mapping could not initialize TRN2d model");
+	for (size_t symbol = 0; symbol < 48; ++symbol) {
+		struct v90_trn2d_symbol actual_symbol;
+		struct v90_trn2d_symbol expected_symbol;
+
+		CHECK(v90_trn2d_tx_next(
+			      &digital->transmitter, &actual_symbol) ==
+			      V90_TRN2D_TX_OK &&
+		      v90_trn2d_tx_next(&expected, &expected_symbol) ==
+			      V90_TRN2D_TX_OK &&
+		      trn2d_symbols_match(
+			      &actual_symbol, &expected_symbol),
+		      "paired TRN2d symbol %zu differed", symbol);
+	}
+	CHECK(digital->transmitter.transmitted_symbols == 48 &&
+	      expected.transmitted_symbols == 48,
+	      "paired TRN2d handoff lost its exact Ri boundary");
+	return true;
+}
+
 static bool verify_cp_handoffs(
 	enum g711_law law, struct v90_phase4_cp_line_tx *transmit,
 	struct v90_phase4_cp_line_rx *receive,
@@ -274,6 +316,8 @@ static bool run_exchange(
 		      &digital_transmit.transmitter.encoder.mapping,
 		      &training),
 	      "paired owners disagreed about their Phase 4 handoffs");
+	CHECK(verify_trn2d_handoffs(&digital_transmit, &analog_receive),
+	      "paired owners disagreed after the Ri-to-TRN2d boundary");
 	CHECK(verify_cp_handoffs(
 		      law, &analog_transmit, &digital_receive, &training),
 	      "paired CP histories did not continue");
