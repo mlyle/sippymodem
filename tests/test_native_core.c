@@ -372,6 +372,8 @@ static bool test_at_v42bis_compression_profile(void)
 	};
 	struct modem *modem = modem_create(&driver, "AT compression test");
 	char enable[] = "AT+DS=3,1";
+	char disable[] = "AT+DS=0,1";
+	char disable_ec[] = "AT\\N0";
 	char chained[] = "AT+DS=2,1%C0";
 	char unsupported[] = "AT+DS=3,2";
 
@@ -383,6 +385,14 @@ static bool test_at_v42bis_compression_profile(void)
 	CHECK(process_at_command(modem, chained) == 0 &&
 		      modem_get_sreg(modem, SREG_COMP) == 0,
 	      "AT+DS did not preserve concatenated command parsing");
+	CHECK(modem_set_sreg(modem, SREG_COMP, 3) == 0 &&
+		      process_at_command(modem, disable) == 0 &&
+		      modem_get_sreg(modem, SREG_COMP) == 0,
+	      "AT+DS did not accept the raw-mode compression setting");
+	CHECK(modem_set_sreg(modem, SREG_EC, 3) == 0 &&
+		      process_at_command(modem, disable_ec) == 0 &&
+		      modem_get_sreg(modem, SREG_EC) == 0,
+	      "AT\\N did not accept the raw-mode error-correction setting");
 	modem->cfg.ec = 1;
 	modem->cfg.comp = 3;
 	CHECK(modem_ec_active_compression(modem) ==

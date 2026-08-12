@@ -28,7 +28,7 @@ class LiveProfileTests(unittest.TestCase):
         self.assertEqual(len(PROFILE_GROUPS["analog-fallback"]), 5)
         self.assertEqual(
             LINK_MODE_AT_COMMANDS["raw"],
-            ("ATZ", "ATE0", "AT&A7", "ATX3", "AT\\N0", "AT+DS=0,0"),
+            ("ATZ", "ATE0", "AT&A7", "ATX3", "AT\\N0", "AT+DS=0,1"),
         )
         self.assertEqual(
             PROFILE_GROUPS["lower"][0:2], ("bell103_300", "v21_300")
