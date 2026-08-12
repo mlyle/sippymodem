@@ -11,10 +11,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum {
-	V90_PCM_FRAME_MAX_BITS = 42,
-};
-
 enum v90_pcm_frame_encoder_result {
 	V90_PCM_FRAME_ENCODER_OK,
 	V90_PCM_FRAME_ENCODER_SYMBOLS_READY,

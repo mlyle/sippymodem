@@ -9,6 +9,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum {
+	V90_PCM_FRAME_MAX_BITS = 42,
+};
+
 enum v90_pcm_mapping_plane {
 	V90_PCM_MAPPING_TRANSMIT,
 	V90_PCM_MAPPING_CODEC,
