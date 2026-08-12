@@ -194,6 +194,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_caller.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_pp_sequence.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_s_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_s_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_s_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_trn.c \
