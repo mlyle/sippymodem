@@ -269,7 +269,11 @@ v34_phase4_equalizer_receive_point(
 		    &clockwise_quarter_turns) != V34_CONSTELLATION_OK ||
 	    v34_training_constellation_point(
 		    constellation, quarter_point, clockwise_quarter_turns,
-		    &target) != V34_CONSTELLATION_OK ||
+		    &target) != V34_CONSTELLATION_OK)
+		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+	/* Before S/S-bar, the input may still be the required Phase 3 drain.
+	 * A nearest-point decision in that interval is not a training symbol. */
+	if (next.stage != V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S &&
 	    qam_equalizer_adapt_observation(
 		    &next.equalizer, &observation, &target,
 		    next.adaptation) != QAM_EQUALIZER_OK)

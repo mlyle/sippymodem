@@ -15,6 +15,7 @@
 enum {
 	PRETRAINING_SYMBOLS = 1024,
 	TRAINING_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 256,
+	ANSWER_S_DRAIN_SYMBOLS = 40,
 	CHANNEL_TAPS = 3,
 };
 
@@ -243,6 +244,18 @@ static bool run_stream(
 		      0.05) == V34_PHASE4_EQUALIZER_RECEIVER_OK,
 	      "Phase 4 equalizer fixture did not transfer trained state");
 	if (role == V34_ANSWERING_STATION) {
+		static const struct qam_point zero;
+
+		for (size_t symbol = 0; symbol < ANSWER_S_DRAIN_SYMBOLS;
+		     ++symbol) {
+			CHECK(transmit_point(
+				      &fixture, &zero, &result, &received) &&
+			      (result ==
+				       V34_PHASE4_EQUALIZER_RECEIVER_WARMING ||
+			       result ==
+				       V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL),
+			      "Phase 3 drain failed at symbol %zu", symbol);
+		}
 		CHECK(v34_phase3_s_sequence_init(&answer_s) ==
 			      V34_PHASE3_S_SEQUENCE_OK,
 		      "Phase 4 answer marker did not initialize");
