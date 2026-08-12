@@ -78,6 +78,13 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_init(
 enum v34_phase3_line_receiver_result v34_phase3_line_receiver_sample(
 	struct v34_phase3_line_receiver *receiver, int16_t sample);
 
+/* After J detection, keep the carrier, matched filter, and recovered symbol
+ * clock continuous while discarding points that no longer belong to Phase 3.
+ * Calls before the point receiver completes consume nothing. */
+enum v34_phase3_line_receiver_result
+v34_phase3_line_receiver_track_sample(
+	struct v34_phase3_line_receiver *receiver, int16_t sample);
+
 /* Copy the continuous carrier/equalizer boundary after J detection. A failed
  * call leaves the destination unchanged. */
 enum v34_phase3_line_receiver_result v34_phase3_line_receiver_handoff(

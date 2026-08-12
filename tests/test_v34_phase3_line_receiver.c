@@ -67,6 +67,7 @@ static bool run_generated_line_timeline(enum v34_station_role role)
 		configuration();
 	struct v34_phase3_line_receiver receiver;
 	struct v34_phase3_line_receiver complete;
+	struct v34_phase3_receiver completed_points;
 	struct v34_phase3_line_handoff handoff;
 	struct v34_phase3_line_handoff unchanged;
 	struct v34_phase3_line_transmitter source;
@@ -74,6 +75,7 @@ static bool run_generated_line_timeline(enum v34_station_role role)
 	unsigned int s_events = 0;
 	unsigned int pp_events = 0;
 	unsigned int j_events = 0;
+	uint32_t carrier_phase_before_tracking;
 	bool complete_seen = false;
 
 	memset(&handoff, 0x5a, sizeof(handoff));
@@ -134,6 +136,25 @@ static bool run_generated_line_timeline(enum v34_station_role role)
 		     &transmitting_profile,
 		     sizeof(transmitting_profile)) == 0,
 	      "Phase 3 line did not preserve its continuous handoff");
+	completed_points = receiver.points;
+	carrier_phase_before_tracking = receiver.demodulator.carrier_phase;
+	for (unsigned int index = 0; index < 31; ++index) {
+		int16_t sample;
+
+		CHECK(source_sample(&source, &sample) &&
+		      v34_phase3_line_receiver_track_sample(
+			      &receiver, sample) == V34_PHASE3_LINE_RECEIVER_OK,
+		      "completed Phase 3 line did not track sample %u", index);
+	}
+	CHECK(memcmp(&receiver.points, &completed_points,
+		     sizeof(completed_points)) == 0 &&
+	      receiver.demodulator.carrier_phase !=
+		      carrier_phase_before_tracking &&
+	      v34_phase3_line_receiver_handoff(&receiver, &handoff) ==
+		      V34_PHASE3_LINE_RECEIVER_OK &&
+	      memcmp(&handoff.demodulator, &receiver.demodulator,
+		     sizeof(handoff.demodulator)) == 0,
+	      "post-J line tracking did not preserve its handoff boundary");
 	complete = receiver;
 	CHECK(v34_phase3_line_receiver_sample(&receiver, 0) ==
 		      V34_PHASE3_LINE_RECEIVER_COMPLETE &&
@@ -328,6 +349,7 @@ static bool test_validation(void)
 		      &receiver, &transmitting_profile, SAMPLE_RATE,
 		      &config) == V34_PHASE3_LINE_RECEIVER_OK,
 	      "valid Phase 3 line validation fixture did not initialize");
+	saved = receiver;
 	corrupt = receiver;
 	corrupt.demodulator.acquisition_window_symbols++;
 	CHECK(!v34_phase3_line_receiver_is_valid(NULL) &&
@@ -336,6 +358,11 @@ static bool test_validation(void)
 	      !v34_phase3_line_handoff_is_valid(NULL) &&
 	      v34_phase3_line_receiver_sample(NULL, 0) ==
 		      V34_PHASE3_LINE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_line_receiver_track_sample(NULL, 0) ==
+		      V34_PHASE3_LINE_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_line_receiver_track_sample(&receiver, 0) ==
+		      V34_PHASE3_LINE_RECEIVER_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      strcmp(v34_phase3_line_receiver_result_name(
 		     V34_PHASE3_LINE_RECEIVER_TIMING_ACQUIRED),
 		     "timing acquired") == 0 &&

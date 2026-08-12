@@ -203,6 +203,31 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_sample(
 	return result;
 }
 
+enum v34_phase3_line_receiver_result
+v34_phase3_line_receiver_track_sample(
+	struct v34_phase3_line_receiver *receiver, int16_t sample)
+{
+	struct v34_phase3_line_receiver next;
+	struct qam_point discarded;
+	bool ready;
+
+	if (!v34_phase3_line_receiver_is_valid(receiver))
+		return V34_PHASE3_LINE_RECEIVER_INVALID_ARGUMENT;
+	if (receiver->failed)
+		return V34_PHASE3_LINE_RECEIVER_FAILED;
+	if (!v34_phase3_receiver_is_complete(&receiver->points))
+		return V34_PHASE3_LINE_RECEIVER_INVALID_STATE;
+	next = *receiver;
+	if (qam_demodulator_sample(
+		    &next.demodulator, sample, &discarded, &ready) != QAM_OK ||
+	    !v34_phase3_line_receiver_is_valid(&next)) {
+		receiver->failed = true;
+		return V34_PHASE3_LINE_RECEIVER_NUMERIC_FAILURE;
+	}
+	*receiver = next;
+	return V34_PHASE3_LINE_RECEIVER_OK;
+}
+
 enum v34_phase3_line_receiver_result v34_phase3_line_receiver_handoff(
 	const struct v34_phase3_line_receiver *receiver,
 	struct v34_phase3_line_handoff *handoff)
