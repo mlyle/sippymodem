@@ -7,6 +7,7 @@
 #include "v90_pcm_mapping.h"
 #include "v90_phase4_cp_line_rx.h"
 #include "v90_phase4_ri.h"
+#include "v90_trn2d_tx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -20,9 +21,10 @@ enum v90_phase4_digital_station_result {
 	V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE,
 };
 
-/* State needed to start TRN2d immediately after the final Ri-bar character. */
+/* Ready-to-run TRN2d owner with every coder history initialized to zero at
+ * the exact boundary following the final Ri-bar character. */
 struct v90_phase4_digital_transmit_handoff {
-	struct v90_pcm_mapping training_mapping;
+	struct v90_trn2d_tx transmitter;
 };
 
 /* Own the digital modem's initial Phase 4 exchange. Ri begins immediately;

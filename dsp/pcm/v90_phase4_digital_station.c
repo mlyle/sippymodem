@@ -191,8 +191,11 @@ bool v90_phase4_digital_transmit_handoff_is_valid(
 	const struct v90_phase4_digital_transmit_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_pcm_mapping_is_valid(&handoff->training_mapping) &&
-	       handoff->training_mapping.kind == V90_CP_TRAINING;
+	       v90_trn2d_tx_is_valid(&handoff->transmitter) &&
+	       handoff->transmitter.accepted_frames == 0 &&
+	       handoff->transmitter.transmitted_symbols == 0 &&
+	       !handoff->transmitter.finish_requested &&
+	       !handoff->transmitter.complete;
 }
 
 enum v90_phase4_digital_station_result
@@ -208,9 +211,11 @@ v90_phase4_digital_station_transmit_handoff(
 		return V90_PHASE4_DIGITAL_STATION_FAILED;
 	if (!v90_phase4_digital_station_transmit_complete(station))
 		return V90_PHASE4_DIGITAL_STATION_INVALID_STATE;
-	generated = (struct v90_phase4_digital_transmit_handoff){
-		.training_mapping = station->training_mapping,
-	};
+	generated = (struct v90_phase4_digital_transmit_handoff){ 0 };
+	if (v90_trn2d_tx_init(
+		    &generated.transmitter, &station->training_mapping) !=
+	    V90_TRN2D_TX_OK)
+		return V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE;
 	if (!v90_phase4_digital_transmit_handoff_is_valid(&generated))
 		return V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE;
 	*handoff = generated;
