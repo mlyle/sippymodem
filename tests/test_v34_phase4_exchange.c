@@ -18,8 +18,55 @@ struct endpoint {
 	struct v34_phase3_exchange_handoff handoff;
 	struct v34_phase4_exchange_configuration phase4_configuration;
 	unsigned int data_preparation_count;
+	unsigned int mapping_frames_supplied;
+	unsigned int mapping_frames_received;
+	int16_t next_received;
+	uint8_t transmit_bit;
 	bool phase4_active;
 };
+
+static bool supply_mapping_frame(
+	void *context, const struct v34_mapping_frame *request,
+	uint8_t *primary_bits, uint8_t *auxiliary_bit)
+{
+	struct endpoint *endpoint = context;
+
+	if (endpoint == NULL || request == NULL || primary_bits == NULL)
+		return false;
+	memset(primary_bits, endpoint->transmit_bit, request->primary_bits);
+	if (auxiliary_bit != NULL)
+		*auxiliary_bit = endpoint->transmit_bit;
+	endpoint->mapping_frames_supplied++;
+	return true;
+}
+
+static bool reject_mapping_frame(
+	void *context, const struct v34_mapping_frame *request,
+	uint8_t *primary_bits, uint8_t *auxiliary_bit)
+{
+	(void)context;
+	(void)request;
+	(void)primary_bits;
+	(void)auxiliary_bit;
+	return false;
+}
+
+static bool accept_mapping_frame(
+	struct endpoint *endpoint,
+	const struct v34_received_mapping_frame *received)
+{
+	uint8_t expected = (uint8_t)(endpoint->transmit_bit ^ 1u);
+
+	for (uint8_t index = 0; index < received->primary_bit_count; ++index) {
+		if (received->primary_bits[index] != expected)
+			return false;
+	}
+	if (received->auxiliary_bit_count != 0 &&
+	    received->auxiliary_bit != expected)
+		return false;
+	endpoint->mapping_frames_received++;
+	return true;
+}
 
 static struct v34_phase3_profile profile(enum v34_station_role role)
 {
@@ -57,10 +104,11 @@ static struct v34_mp_parameters mp_parameters(
 	enum v34_station_role role)
 {
 	return (struct v34_mp_parameters){
-		.maximum_call_to_answer_rate_2400_bps_units =
-			role == V34_CALLING_STATION ? 10u : 8u,
-		.maximum_answer_to_call_rate_2400_bps_units =
-			role == V34_CALLING_STATION ? 9u : 7u,
+		/* Establish the first online controller at a conservative 9.6
+		 * kbit/s in each direction; faster shell-mapped line modes remain a
+		 * separate robustness step. */
+		.maximum_call_to_answer_rate_2400_bps_units = 4,
+		.maximum_answer_to_call_rate_2400_bps_units = 4,
 		.auxiliary_channel_enabled = role == V34_CALLING_STATION,
 		.remote_transmitter_trellis =
 			role == V34_CALLING_STATION ?
@@ -158,6 +206,7 @@ static bool endpoint_init(
 				V34_CONSTELLATION_4_POINT);
 	struct endpoint initialized = {
 		.phase4_configuration = phase4_configuration(role),
+		.transmit_bit = role == V34_ANSWERING_STATION,
 	};
 
 	if (endpoint == NULL ||
@@ -174,14 +223,22 @@ static bool endpoint_sample(
 	uint32_t *phase4_events)
 {
 	if (endpoint->phase4_active) {
+		struct v34_received_mapping_frame received_frame;
 		enum v34_phase4_exchange_result result =
 			v34_phase4_exchange_sample(
-				&endpoint->phase4, received, transmit,
-				phase4_events);
+				&endpoint->phase4, received,
+				supply_mapping_frame, endpoint,
+				transmit, phase4_events, &received_frame);
 
 		if (result != V34_PHASE4_EXCHANGE_OK) {
 			fprintf(stderr, "Phase 4 sample: %s\n",
 				v34_phase4_exchange_result_name(result));
+			return false;
+		}
+		if ((*phase4_events &
+		     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) != 0 &&
+		    !accept_mapping_frame(endpoint, &received_frame)) {
+			fprintf(stderr, "Phase 4 mapping frame differed\n");
 			return false;
 		}
 		if (!v34_phase4_exchange_needs_data_preparation(
@@ -220,9 +277,12 @@ static bool endpoint_sample(
 
 static bool add_events(uint32_t events, uint32_t *seen)
 {
-	if ((events & *seen) != 0)
+	uint32_t one_shot =
+		events & ~V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED;
+
+	if ((one_shot & *seen) != 0)
 		return false;
-	*seen |= events;
+	*seen |= one_shot;
 	return true;
 }
 
@@ -261,8 +321,12 @@ static bool run_pair(
 		caller_receive = answerer_transmit;
 		answerer_receive = caller_transmit;
 		if (calling.phase4_active && answering.phase4_active &&
-		    v34_phase4_exchange_is_ready_for_e(&calling.phase4) &&
-		    v34_phase4_exchange_is_ready_for_e(&answering.phase4)) {
+		    v34_phase4_exchange_is_online(&calling.phase4) &&
+		    v34_phase4_exchange_is_online(&answering.phase4) &&
+		    calling.mapping_frames_received >= 4u &&
+		    answering.mapping_frames_received >= 4u) {
+			calling.next_received = caller_receive;
+			answering.next_received = answerer_receive;
 			*caller = calling;
 			*answerer = answering;
 			*caller_seen = caller_events_seen;
@@ -271,10 +335,12 @@ static bool run_pair(
 		}
 	}
 	CHECK(false,
-	      "Phase 4 did not prepare reciprocal E: active=%d/%d "
-	      "events=0x%x/0x%x",
+	      "Phase 4 did not reach reciprocal data: active=%d/%d "
+	      "events=0x%x/0x%x frames=%u/%u",
 	      calling.phase4_active, answering.phase4_active,
-	      caller_events_seen, answerer_events_seen);
+	      caller_events_seen, answerer_events_seen,
+	      calling.mapping_frames_received,
+	      answering.mapping_frames_received);
 }
 
 static bool directions_are_equal(
@@ -290,7 +356,7 @@ static bool directions_are_equal(
 		      sizeof(left->precoder_coefficients)) == 0;
 }
 
-static bool test_generated_data_preparation(void)
+static bool test_generated_online_exchange(void)
 {
 	const uint32_t common_events =
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED |
@@ -299,7 +365,13 @@ static bool test_generated_data_preparation(void)
 		V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED |
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED |
 		V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED |
-		V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E;
+		V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E |
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED |
+		V34_PHASE4_EXCHANGE_EVENT_PEER_E_RECEIVED |
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_B1_STARTED |
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_B1_COMPLETE |
+		V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED |
+		V34_PHASE4_EXCHANGE_EVENT_ONLINE;
 	struct endpoint caller;
 	struct endpoint answerer;
 	struct v34_data_startup caller_startup;
@@ -323,23 +395,25 @@ static bool test_generated_data_preparation(void)
 	      answerer_seen == common_events,
 	      "Phase 4 event coverage differed: caller=0x%x answerer=0x%x",
 	      caller_seen, answerer_seen);
-	CHECK(caller.phase4.transmit.training.stage ==
-		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
-	      answerer.phase4.transmit.training.stage ==
-		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
-	      caller.phase4.receive.training.state.phase4.control.stage ==
-		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E &&
-	      answerer.phase4.receive.training.state.phase4.control.stage ==
-		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E &&
-	      caller.phase4.transmit.training.phase4_trn_symbols >=
-		      V34_PHASE4_TRN_MIN_SYMBOLS &&
-	      answerer.phase4.transmit.training.phase4_trn_symbols >=
-		      V34_PHASE4_TRN_MIN_SYMBOLS &&
+	CHECK(caller.phase4.transmit_data_active &&
+	      answerer.phase4.transmit_data_active &&
+	      caller.phase4.receive_data_active &&
+	      answerer.phase4.receive_data_active &&
+	      caller.phase4.transmit_b1_complete &&
+	      answerer.phase4.transmit_b1_complete &&
+	      caller.phase4.receive_b1_complete &&
+	      answerer.phase4.receive_b1_complete &&
+	      v34_phase4_exchange_is_online(&caller.phase4) &&
+	      v34_phase4_exchange_is_online(&answerer.phase4) &&
 	      !v34_phase4_exchange_has_failed(&caller.phase4) &&
 	      !v34_phase4_exchange_has_failed(&answerer.phase4) &&
 	      caller.data_preparation_count == 1 &&
-	      answerer.data_preparation_count == 1,
-	      "Phase 4 owners reached the wrong prepared boundary");
+	      answerer.data_preparation_count == 1 &&
+	      caller.mapping_frames_supplied >=
+		      answerer.mapping_frames_received &&
+	      answerer.mapping_frames_supplied >=
+		      caller.mapping_frames_received,
+	      "Phase 4 owners reached the wrong online boundary");
 	CHECK(v34_phase4_exchange_get_data_startup(
 		      &caller.phase4, &caller_startup) &&
 	      v34_phase4_exchange_get_data_startup(
@@ -347,13 +421,13 @@ static bool test_generated_data_preparation(void)
 	      v34_data_startup_is_valid(&caller_startup) &&
 	      v34_data_startup_is_valid(&answerer_startup) &&
 	      caller_startup.mode.transmit
-		      .primary_data_rate_2400_bps_units == 8 &&
+		      .primary_data_rate_2400_bps_units == 4 &&
 	      caller_startup.mode.receive
-		      .primary_data_rate_2400_bps_units == 7 &&
+		      .primary_data_rate_2400_bps_units == 4 &&
 	      answerer_startup.mode.transmit
-		      .primary_data_rate_2400_bps_units == 7 &&
+		      .primary_data_rate_2400_bps_units == 4 &&
 	      answerer_startup.mode.receive
-		      .primary_data_rate_2400_bps_units == 8 &&
+		      .primary_data_rate_2400_bps_units == 4 &&
 	      directions_are_equal(
 		      &caller_startup.mode.transmit,
 		      &answerer_startup.mode.receive) &&
@@ -370,6 +444,52 @@ static bool test_generated_data_preparation(void)
 		      &answerer_peer, &expected_answerer_peer),
 	      "Phase 4 owners did not retain normalized peer records");
 	return true;
+}
+
+static bool test_source_backpressure(void)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	uint32_t caller_seen;
+	uint32_t answerer_seen;
+
+	CHECK(run_pair(
+		      &caller, &answerer, &caller_seen, &answerer_seen),
+	      "source-backpressure pair failed");
+	for (size_t index = 0; index < 1000u; ++index) {
+		struct v34_phase4_exchange before = caller.phase4;
+		struct v34_received_mapping_frame received;
+		struct v34_received_mapping_frame received_before;
+		int16_t caller_transmit = 1234;
+		int16_t answerer_transmit;
+		uint32_t caller_events = UINT32_C(0x5aa5a55a);
+		uint32_t answerer_events;
+		enum v34_phase4_exchange_result result;
+
+		memset(&received, 0xa5, sizeof(received));
+		received_before = received;
+		result = v34_phase4_exchange_sample(
+			&caller.phase4, caller.next_received,
+			reject_mapping_frame, NULL, &caller_transmit,
+			&caller_events, &received);
+		if (result == V34_PHASE4_EXCHANGE_SOURCE_FAILURE) {
+			CHECK(memcmp(&caller.phase4, &before, sizeof(before)) == 0 &&
+			      caller_transmit == 1234 &&
+			      caller_events == UINT32_C(0x5aa5a55a) &&
+			      memcmp(&received, &received_before,
+				     sizeof(received)) == 0,
+			      "failed mapping source changed Phase 4 state or outputs");
+			return true;
+		}
+		CHECK(result == V34_PHASE4_EXCHANGE_OK &&
+		      endpoint_sample(
+			      &answerer, answerer.next_received,
+			      &answerer_transmit, &answerer_events),
+		      "source-backpressure timeline failed at sample %zu", index);
+		caller.next_received = answerer_transmit;
+		answerer.next_received = caller_transmit;
+	}
+	CHECK(false, "mapping source was not consulted within one data frame");
 }
 
 static bool test_validation_and_transactionality(void)
@@ -425,18 +545,26 @@ static bool test_validation_and_transactionality(void)
 	      "pre-acknowledged MP configuration changed the destination");
 	saved = caller.phase4;
 	CHECK(v34_phase4_exchange_sample(
-		      &caller.phase4, 0, NULL, &events) ==
+		      &caller.phase4, 0, NULL, NULL,
+		      NULL, &events, (struct v34_received_mapping_frame[1]){ 0 }) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchange_sample(
-		      &caller.phase4, 0, &sample, NULL) ==
+		      &caller.phase4, 0, NULL, NULL,
+		      &sample, NULL, (struct v34_received_mapping_frame[1]){ 0 }) ==
+		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase4_exchange_sample(
+		      &caller.phase4, 0, NULL, NULL,
+		      &sample, &events, NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchange_sample(
 		      &caller.phase4, 0,
-		      &overlap.samples[0], &overlap.events) ==
+		      NULL, NULL, &overlap.samples[0], &overlap.events,
+		      (struct v34_received_mapping_frame[1]){ 0 }) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase4_exchange_sample(
 		      &caller.phase4, 0,
-		      &overlap.samples[1], &overlap.events) ==
+		      NULL, NULL, &overlap.samples[1], &overlap.events,
+		      (struct v34_received_mapping_frame[1]){ 0 }) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&caller.phase4, &saved, sizeof(saved)) == 0 &&
 	      sample == 1234 && events == UINT32_C(0x5aa5a55a) &&
@@ -454,6 +582,7 @@ static bool test_validation_and_transactionality(void)
 	      !v34_phase4_exchange_is_trn_ready(NULL) &&
 	      !v34_phase4_exchange_needs_data_preparation(NULL) &&
 	      !v34_phase4_exchange_is_ready_for_e(NULL) &&
+	      !v34_phase4_exchange_is_online(NULL) &&
 	      !v34_phase4_exchange_get_data_startup(NULL, &startup) &&
 	      !v34_phase4_exchange_get_data_startup(
 		      &caller.phase4, NULL) &&
@@ -462,6 +591,9 @@ static bool test_validation_and_transactionality(void)
 	      !v34_phase4_exchange_get_peer_mp(&caller.phase4, NULL) &&
 	      memcmp(&peer, &saved_peer, sizeof(peer)) == 0 &&
 	      !v34_mp_record_is_valid(NULL) &&
+	      strcmp(v34_phase4_exchange_result_name(
+		     V34_PHASE4_EXCHANGE_SOURCE_FAILURE),
+		     "mapping-frame source failure") == 0 &&
 	      strcmp(v34_phase4_exchange_result_name(
 		     V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH),
 		     "sequence mismatch") == 0 &&
@@ -484,8 +616,10 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "generated data preparation",
-		  test_generated_data_preparation },
+		{ "generated online exchange",
+		  test_generated_online_exchange },
+		{ "mapping source backpressure",
+		  test_source_backpressure },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

@@ -15,6 +15,7 @@
 
 enum v34_phase4_exchange_result {
 	V34_PHASE4_EXCHANGE_OK,
+	V34_PHASE4_EXCHANGE_SOURCE_FAILURE,
 	V34_PHASE4_EXCHANGE_FAILED,
 	V34_PHASE4_EXCHANGE_INVALID_ARGUMENT,
 	V34_PHASE4_EXCHANGE_INVALID_STATE,
@@ -36,6 +37,13 @@ enum v34_phase4_exchange_event {
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED = 1u << 6,
 	V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED = 1u << 7,
 	V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E = 1u << 8,
+	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED = 1u << 9,
+	V34_PHASE4_EXCHANGE_EVENT_PEER_E_RECEIVED = 1u << 10,
+	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_B1_STARTED = 1u << 11,
+	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_B1_COMPLETE = 1u << 12,
+	V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED = 1u << 13,
+	V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED = 1u << 14,
+	V34_PHASE4_EXCHANGE_EVENT_ONLINE = 1u << 15,
 };
 
 struct v34_phase4_exchange_configuration {
@@ -57,15 +65,15 @@ union v34_phase4_receive_path {
 };
 
 /* Own both sample directions from the exact Phase 3 handoff through the
- * reciprocal MP-prime handshake, with both post-E data paths prepared. The
+ * reciprocal MP-prime, E, and B1 exchanges and into mapped data. The
  * caller ends J only after receiving the answerer's complete S/S-bar marker
  * and reaching a J-pattern boundary. Receipt of the first valid peer MP pauses
  * the sample path until prepare_data_startup() performs the negotiated mapping
  * calibration outside the real-time callback. A valid final peer MP-prime
- * record arms E reception at that exact record boundary. Local E transmission
- * and the B1 handoff remain with the following controller slice. Calls on one
- * instance must be serialized. Each tagged directional union reuses its
- * training storage for the post-E data owner. */
+ * record arms E reception at that exact record boundary. Transmit and receive
+ * enter B1 independently, retaining early mapped data in the sample-call
+ * outputs. Calls on one instance must be serialized. Each tagged directional
+ * union reuses its training storage for the post-E data owner. */
 struct v34_phase4_exchange {
 	union v34_phase4_transmit_path transmit;
 	union v34_phase4_receive_path receive;
@@ -85,7 +93,10 @@ struct v34_phase4_exchange {
 	bool data_startup_prepared;
 	bool transmit_data_active;
 	bool receive_data_active;
+	bool transmit_b1_complete;
+	bool receive_b1_complete;
 	bool ready_announced;
+	bool online_announced;
 	bool failed;
 };
 
@@ -110,9 +121,11 @@ bool v34_phase4_exchange_needs_data_preparation(
 enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	struct v34_phase4_exchange *exchange);
 
-/* Both acknowledgments are committed and both post-E paths are prepared. E
- * must still begin at a complete local MP-prime record boundary. */
+/* True once both acknowledgments were committed and both post-E paths were
+ * prepared. The milestone remains observable after E has begun. */
 bool v34_phase4_exchange_is_ready_for_e(
+	const struct v34_phase4_exchange *exchange);
+bool v34_phase4_exchange_is_online(
 	const struct v34_phase4_exchange *exchange);
 
 /* Copy the prepared post-E mapping and receive configuration atomically. */
@@ -126,14 +139,19 @@ bool v34_phase4_exchange_get_peer_mp(
 	const struct v34_phase4_exchange *exchange,
 	struct v34_mp_record *record);
 
-/* Consume and produce one simultaneous line sample. Calls while data
- * preparation is required return INVALID_STATE without consuming or producing
- * anything. Receive events affect the next unconsumed transmit symbol.
- * Terminal receive errors still commit the consumed input, generated output,
- * and event bits. */
+/* Consume and produce one simultaneous line sample. `source` supplies local
+ * post-B1 mapping frames; NULL deliberately emits idle ones. `received` changes
+ * only with MAPPING_FRAME_RECEIVED and never exposes the peer's B1 frame.
+ * Calls while data preparation is required return INVALID_STATE without
+ * consuming or producing anything. Receive events affect the next unconsumed
+ * transmit symbol.
+ * SOURCE_FAILURE consumes neither the input nor any output. Terminal receive
+ * errors still commit the consumed input, generated output, and event bits. */
 enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 	struct v34_phase4_exchange *exchange, int16_t received_sample,
-	int16_t *transmit_sample, uint32_t *events);
+	v34_mapping_frame_source source, void *source_context,
+	int16_t *transmit_sample, uint32_t *events,
+	struct v34_received_mapping_frame *received);
 
 const char *v34_phase4_exchange_result_name(
 	enum v34_phase4_exchange_result result);
