@@ -549,6 +549,10 @@ bool qam_demodulator_is_valid(
 	    !isfinite(demodulator->previous_in_phase) ||
 	    !isfinite(demodulator->previous_quadrature) ||
 	    (demodulator->timing_locked &&
+	     !demodulator->acquisition_started) ||
+	    (!demodulator->acquisition_started &&
+	     demodulator->timing_sample_count != 0) ||
+	    (demodulator->timing_locked &&
 	     (demodulator->locked_phase_units >= period ||
 	      !demodulator->has_previous_matched_sample)))
 		return false;
@@ -564,7 +568,10 @@ bool qam_demodulator_is_valid(
 
 		if (candidate->phase_units >= period ||
 		    !isfinite(candidate->symbol_power_sum) ||
-		    candidate->symbol_power_sum < 0.0)
+		    candidate->symbol_power_sum < 0.0 ||
+		    (!demodulator->acquisition_started &&
+		     (candidate->symbol_count != 0 ||
+		      candidate->symbol_power_sum != 0.0)))
 			return false;
 	}
 	return true;
@@ -832,6 +839,8 @@ static void select_timing_candidate(
 	 * Do not mistake that codec baseline for a carrier. */
 	if (best == NULL || best_power <= QAM_MIN_ACQUISITION_POWER) {
 		reset_timing_scores(demodulator);
+		if (acquiring)
+			demodulator->acquisition_started = false;
 		return;
 	}
 	if (reference != NULL && best != reference &&
@@ -861,6 +870,14 @@ static void acquire_symbol_timing(
 	struct qam_demodulator *demodulator,
 	double in_phase, double quadrature)
 {
+	bool observe = demodulator->timing_locked ||
+		       demodulator->acquisition_started;
+
+	if (!observe && in_phase * in_phase + quadrature * quadrature >
+			QAM_MIN_ACQUISITION_POWER) {
+		demodulator->acquisition_started = true;
+		observe = true;
+	}
 	for (size_t index = 0; index < demodulator->timing_candidate_count;
 	     ++index) {
 		struct qam_timing_candidate *candidate =
@@ -872,7 +889,7 @@ static void acquire_symbol_timing(
 			    demodulator->symbol_period_units,
 			    demodulator->channel.symbol_rate_numerator,
 			    &fraction) &&
-		    demodulator->has_previous_matched_sample)
+		    demodulator->has_previous_matched_sample && observe)
 			observe_timing_candidate(
 				candidate,
 				interpolate(
@@ -882,6 +899,8 @@ static void acquire_symbol_timing(
 					demodulator->previous_quadrature,
 					quadrature, fraction));
 	}
+	if (!observe)
+		return;
 	demodulator->timing_sample_count++;
 	if (demodulator->timing_sample_count ==
 	    demodulator->timing_sample_target)

@@ -97,6 +97,8 @@ struct qam_demodulator {
 	double previous_in_phase;
 	double previous_quadrature;
 	bool timing_locked;
+	/* The initial timing window begins with carrier energy, not silence. */
+	bool acquisition_started;
 	bool has_previous_matched_sample;
 };
 

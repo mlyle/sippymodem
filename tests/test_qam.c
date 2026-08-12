@@ -687,6 +687,7 @@ static bool test_timing_windows(void)
 	struct qam_modulator modulator;
 	struct qam_point point = { 0.75, 0.0 };
 	uint32_t acquisition_samples;
+	uint32_t signal_samples = 0;
 	bool locked = false;
 
 	CHECK(qam_demodulator_init(&defaults, &channel) == QAM_OK &&
@@ -702,6 +703,20 @@ static bool test_timing_windows(void)
 		      defaults.timing_sample_target,
 	      "QAM timing windows did not initialize");
 	acquisition_samples = demodulator.timing_sample_target;
+	for (uint32_t sample_index = 0;
+	     sample_index < acquisition_samples / 2u; ++sample_index) {
+		struct qam_point received;
+		bool ready;
+
+		CHECK(qam_demodulator_sample(
+			      &demodulator, 8, &received, &ready) == QAM_OK &&
+			      !ready,
+		      "quiet QAM acquisition failed at %u", sample_index);
+	}
+	CHECK(!qam_demodulator_measure(&demodulator).timing_locked &&
+	      !demodulator.acquisition_started &&
+	      demodulator.timing_sample_count == 0,
+	      "QAM acquisition window advanced before carrier onset");
 	for (uint32_t sample_index = 0;
 	     sample_index < acquisition_samples +
 				channel.sample_rate;
@@ -721,16 +736,19 @@ static bool test_timing_windows(void)
 				(uint8_t)((sample_index / 7u) & 3u), 0.75);
 		if (qam_demodulator_measure(&demodulator).timing_locked) {
 			locked = true;
+			signal_samples = sample_index + 1u;
 			break;
 		}
 	}
-	CHECK(locked && demodulator.timing_sample_count == 0 &&
+	CHECK(locked && signal_samples >= acquisition_samples &&
+	      demodulator.timing_sample_count == 0 &&
 	      demodulator.timing_sample_target > acquisition_samples &&
 	      demodulator.acquisition_window_symbols == 64 &&
 	      demodulator.tracking_window_symbols == 384,
-	      "QAM did not move from acquisition to tracking timing");
+	      "QAM did not measure a carrier-relative acquisition window");
 	CHECK(qam_demodulator_reset(&demodulator) == QAM_OK &&
 	      !qam_demodulator_measure(&demodulator).timing_locked &&
+	      !demodulator.acquisition_started &&
 	      demodulator.timing_sample_target == acquisition_samples &&
 	      demodulator.acquisition_window_symbols == 64 &&
 	      demodulator.tracking_window_symbols == 384,
