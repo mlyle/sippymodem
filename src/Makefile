@@ -159,6 +159,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_cp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_cp_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_dil.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja.c \
