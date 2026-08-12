@@ -47,6 +47,10 @@ static bool calling_is_valid(const struct v8_calling *calling)
 	} else if (calling->negotiated_menu.call_function != 0 ||
 		   calling->negotiated_menu.modulations != 0 ||
 		   calling->negotiated_menu.modulation_octets != 0 ||
+		   calling->negotiated_menu.pcm_availability != 0 ||
+		   calling->negotiated_menu.pstn_access != 0 ||
+		   calling->negotiated_menu.pcm_present ||
+		   calling->negotiated_menu.pstn_access_present ||
 		   calling->negotiated_menu.lapm || selected != 0 ||
 		   calling->cj_bit_index != 0) {
 		return false;

@@ -54,10 +54,18 @@ static bool answering_is_valid(
 	} else if (answering->call_menu.call_function != 0 ||
 		   answering->call_menu.modulations != 0 ||
 		   answering->call_menu.modulation_octets != 0 ||
+		   answering->call_menu.pcm_availability != 0 ||
+		   answering->call_menu.pstn_access != 0 ||
+		   answering->call_menu.pcm_present ||
+		   answering->call_menu.pstn_access_present ||
 		   answering->call_menu.lapm ||
 		   answering->negotiated_menu.call_function != 0 ||
 		   answering->negotiated_menu.modulations != 0 ||
 		   answering->negotiated_menu.modulation_octets != 0 ||
+		   answering->negotiated_menu.pcm_availability != 0 ||
+		   answering->negotiated_menu.pstn_access != 0 ||
+		   answering->negotiated_menu.pcm_present ||
+		   answering->negotiated_menu.pstn_access_present ||
 		   answering->negotiated_menu.lapm ||
 		   answering->selected_modulation != 0) {
 		return false;

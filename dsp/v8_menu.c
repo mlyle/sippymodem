@@ -7,7 +7,9 @@
 enum {
 	V8_CALL_FUNCTION_TAG = 0x01,
 	V8_MODULATION_TAG = 0x05,
+	V8_PCM_TAG = 0x07,
 	V8_PROTOCOL_TAG = 0x0a,
+	V8_PSTN_ACCESS_TAG = 0x0d,
 	V8_EXTENSION_TAG = 0x10,
 	V8_DATA_CALL_FUNCTION =
 		V8_CALL_FUNCTION_TAG | (V8_CALL_DATA << 5),
@@ -33,16 +35,31 @@ static uint8_t required_modulation_octets(uint16_t modulations)
 
 static bool menu_is_valid(const struct v8_menu *menu)
 {
-	return menu != NULL &&
-	       menu->call_function == V8_CALL_DATA &&
+	size_t category_count;
+
+	if (menu == NULL)
+		return false;
+	category_count = 1u + menu->modulation_octets +
+			 (menu->lapm ? 1u : 0u) +
+			 (menu->pcm_present ? 1u : 0u) +
+			 (menu->pstn_access_present ? 1u : 0u);
+	return menu->call_function == V8_CALL_DATA &&
 	       (menu->modulations & ~V8_MODULATION_ALL) == 0 &&
+	       (menu->pcm_availability & ~V8_PCM_ALL) == 0 &&
+	       (menu->pstn_access & ~V8_PSTN_ALL) == 0 &&
+	       (menu->pcm_present || menu->pcm_availability == 0) &&
+	       (menu->pstn_access_present || menu->pstn_access == 0) &&
+	       (!menu->pcm_present || menu->pstn_access_present) &&
+	       (!menu->pcm_present ||
+		(menu->pcm_availability &
+		 (V8_PCM_ANALOG | V8_PCM_DIGITAL)) == 0 ||
+		(menu->modulations & V8_MODULATION_V34_DUPLEX) != 0) &&
 	       menu->modulation_octets != 0 &&
 	       menu->modulation_octets <=
 		       V8_MAX_MODULATION_OCTETS &&
 	       menu->modulation_octets >=
 		       required_modulation_octets(menu->modulations) &&
-	       1u + menu->modulation_octets + (menu->lapm ? 1u : 0u) <=
-		       V8_MAX_INFORMATION_OCTETS;
+	       category_count <= V8_MAX_INFORMATION_OCTETS;
 }
 
 enum v8_menu_result v8_call_menu_init(
@@ -62,13 +79,37 @@ enum v8_menu_result v8_call_menu_init(
 	return V8_MENU_OK;
 }
 
-static uint8_t first_modulation_octet(uint16_t modulations)
+enum v8_menu_result v8_pcm_call_menu_init(
+	struct v8_menu *menu, uint8_t pcm_availability,
+	uint8_t pstn_access, bool lapm)
+{
+	struct v8_menu initialized = {
+		.call_function = V8_CALL_DATA,
+		.modulations = V8_MODULATION_V34_DUPLEX,
+		.modulation_octets = 1,
+		.pcm_availability = pcm_availability,
+		.pstn_access = pstn_access,
+		.pcm_present = true,
+		.pstn_access_present = true,
+		.lapm = lapm,
+	};
+
+	if (menu == NULL ||
+	    (pcm_availability & (V8_PCM_ANALOG | V8_PCM_DIGITAL)) == 0 ||
+	    !menu_is_valid(&initialized))
+		return V8_MENU_INVALID_ARGUMENT;
+	*menu = initialized;
+	return V8_MENU_OK;
+}
+
+static uint8_t first_modulation_octet(const struct v8_menu *menu)
 {
 	return (uint8_t)(
 		V8_MODULATION_TAG |
-		((modulations & V8_MODULATION_V34_DUPLEX) != 0 ?
+		(menu->pcm_present ? 1u << 5 : 0) |
+		((menu->modulations & V8_MODULATION_V34_DUPLEX) != 0 ?
 			 1u << 6 : 0) |
-		((modulations & V8_MODULATION_V34_HALF_DUPLEX) != 0 ?
+		((menu->modulations & V8_MODULATION_V34_HALF_DUPLEX) != 0 ?
 			 1u << 7 : 0));
 }
 
@@ -110,11 +151,13 @@ enum v8_menu_result v8_menu_encode(
 	if (!menu_is_valid(menu) || information == NULL ||
 	    information_count == NULL)
 		return V8_MENU_INVALID_ARGUMENT;
-	count = 1u + menu->modulation_octets + (menu->lapm ? 1u : 0u);
+	count = 1u + menu->modulation_octets + (menu->lapm ? 1u : 0u) +
+		(menu->pstn_access_present ? 1u : 0u) +
+		(menu->pcm_present ? 1u : 0u);
 	if (capacity < count)
 		return V8_MENU_BUFFER_TOO_SMALL;
 	encoded[0] = V8_DATA_CALL_FUNCTION;
-	encoded[1] = first_modulation_octet(menu->modulations);
+	encoded[1] = first_modulation_octet(menu);
 	for (size_t index = 2; index <= menu->modulation_octets; ++index) {
 		if (index == 2)
 			encoded[index] = second_modulation_octet(menu->modulations);
@@ -123,8 +166,18 @@ enum v8_menu_result v8_menu_encode(
 		else
 			encoded[index] = V8_EXTENSION_TAG;
 	}
-	if (menu->lapm)
-		encoded[count - 1u] = V8_LAPM_PROTOCOL;
+	{
+		size_t index = 1u + menu->modulation_octets;
+
+		if (menu->lapm)
+			encoded[index++] = V8_LAPM_PROTOCOL;
+		if (menu->pstn_access_present)
+			encoded[index++] = (uint8_t)(
+				V8_PSTN_ACCESS_TAG | menu->pstn_access << 5);
+		if (menu->pcm_present)
+			encoded[index] = (uint8_t)(
+				V8_PCM_TAG | menu->pcm_availability << 5);
+	}
 	memcpy(information, encoded, count);
 	*information_count = count;
 	return V8_MENU_OK;
@@ -190,6 +243,7 @@ enum v8_menu_result v8_menu_decode(
 	};
 	bool modulation_seen = false;
 	bool protocol_seen = false;
+	bool pcm_indicator = false;
 	size_t index = 1;
 
 	if (information == NULL || menu == NULL)
@@ -231,6 +285,7 @@ enum v8_menu_result v8_menu_decode(
 				return V8_MENU_MALFORMED;
 			decoded.modulations |=
 				decode_first_modulation_octet(category);
+			pcm_indicator = (category & (1u << 5)) != 0;
 			decoded.modulation_octets =
 				(uint8_t)(extension_count + 1u);
 			modulation_seen = true;
@@ -242,9 +297,20 @@ enum v8_menu_result v8_menu_decode(
 				return V8_MENU_MALFORMED;
 			decoded.lapm = option == 1;
 			protocol_seen = true;
+		} else if (tag == V8_PCM_TAG) {
+			if (decoded.pcm_present)
+				return V8_MENU_MALFORMED;
+			decoded.pcm_availability = category >> 5;
+			decoded.pcm_present = true;
+		} else if (tag == V8_PSTN_ACCESS_TAG) {
+			if (decoded.pstn_access_present)
+				return V8_MENU_MALFORMED;
+			decoded.pstn_access = category >> 5;
+			decoded.pstn_access_present = true;
 		}
 	}
-	if (!modulation_seen || !menu_is_valid(&decoded))
+	if (!modulation_seen || pcm_indicator != decoded.pcm_present ||
+	    !menu_is_valid(&decoded))
 		return V8_MENU_MALFORMED;
 	*menu = decoded;
 	return V8_MENU_OK;
@@ -318,10 +384,22 @@ static bool menu_detector_is_valid(
 			       previous.modulations &&
 		       detector->confirmed_menu.modulation_octets ==
 			       previous.modulation_octets &&
+		       detector->confirmed_menu.pcm_availability ==
+			       previous.pcm_availability &&
+		       detector->confirmed_menu.pstn_access ==
+			       previous.pstn_access &&
+		       detector->confirmed_menu.pcm_present ==
+			       previous.pcm_present &&
+		       detector->confirmed_menu.pstn_access_present ==
+			       previous.pstn_access_present &&
 		       detector->confirmed_menu.lapm == previous.lapm;
 	return detector->confirmed_menu.call_function == 0 &&
 	       detector->confirmed_menu.modulations == 0 &&
 	       detector->confirmed_menu.modulation_octets == 0 &&
+	       detector->confirmed_menu.pcm_availability == 0 &&
+	       detector->confirmed_menu.pstn_access == 0 &&
+	       !detector->confirmed_menu.pcm_present &&
+	       !detector->confirmed_menu.pstn_access_present &&
 	       !detector->confirmed_menu.lapm;
 }
 

@@ -31,6 +31,20 @@ enum v8_modulation {
 		(1u << 12) - 1u,
 };
 
+enum v8_pcm_availability {
+	V8_PCM_ANALOG = 1u << 0,
+	V8_PCM_DIGITAL = 1u << 1,
+	V8_PCM_V91 = 1u << 2,
+	V8_PCM_ALL = (1u << 3) - 1u,
+};
+
+enum v8_pstn_access {
+	V8_PSTN_CALL_CELLULAR = 1u << 0,
+	V8_PSTN_ANSWER_CELLULAR = 1u << 1,
+	V8_PSTN_DIGITAL = 1u << 2,
+	V8_PSTN_ALL = (1u << 3) - 1u,
+};
+
 enum {
 	V8_MAX_MODULATION_OCTETS =
 		V8_MAX_INFORMATION_OCTETS - 1,
@@ -49,6 +63,10 @@ struct v8_menu {
 	enum v8_call_function call_function;
 	uint16_t modulations;
 	uint8_t modulation_octets;
+	uint8_t pcm_availability;
+	uint8_t pstn_access;
+	bool pcm_present;
+	bool pstn_access_present;
 	bool lapm;
 };
 
@@ -67,6 +85,9 @@ struct v8_menu_detector {
 
 enum v8_menu_result v8_call_menu_init(
 	struct v8_menu *menu, uint16_t modulations, bool lapm);
+enum v8_menu_result v8_pcm_call_menu_init(
+	struct v8_menu *menu, uint8_t pcm_availability,
+	uint8_t pstn_access, bool lapm);
 enum v8_menu_result v8_menu_encode(
 	const struct v8_menu *menu, uint8_t *information,
 	size_t capacity, size_t *information_count);

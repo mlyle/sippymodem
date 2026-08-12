@@ -23,6 +23,10 @@ static bool encode_equals(
 	       memcmp(information, expected, expected_count) == 0;
 }
 
+static bool decode_has_result(
+	const uint8_t *information, size_t information_count,
+	enum v8_menu_result expected);
+
 static bool test_v21_data_menu(void)
 {
 	static const uint8_t expected[] = {
@@ -123,9 +127,122 @@ static bool test_decode_round_trip(void)
 		      decoded.call_function == encoded.call_function &&
 		      decoded.modulations == encoded.modulations &&
 		      decoded.modulation_octets == encoded.modulation_octets &&
+		      decoded.pcm_availability == 0 &&
+		      decoded.pstn_access == 0 && !decoded.pcm_present &&
+		      !decoded.pstn_access_present &&
 		      decoded.lapm == encoded.lapm,
 		      "V.8 menu round trip changed case %zu", index);
 	}
+	return true;
+}
+
+static bool test_pcm_categories(void)
+{
+	static const uint8_t digital_information[] = {
+		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x2a),
+		UINT8_C(0x8d), UINT8_C(0x67),
+	};
+	static const uint8_t analog_information[] = {
+		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x0d),
+		UINT8_C(0x27),
+	};
+	struct v8_menu menu;
+	struct v8_menu decoded;
+	uint8_t encoded[V8_MAX_INFORMATION_OCTETS];
+	size_t encoded_count;
+
+	CHECK(v8_pcm_call_menu_init(
+		      &menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
+		      V8_PSTN_DIGITAL, true) == V8_MENU_OK &&
+	      v8_menu_encode(
+		      &menu, encoded, sizeof(encoded), &encoded_count) ==
+		      V8_MENU_OK &&
+	      encoded_count == ARRAY_LENGTH(digital_information) &&
+	      memcmp(encoded, digital_information, encoded_count) == 0 &&
+	      v8_menu_decode(
+		      encoded, encoded_count, &decoded) == V8_MENU_OK &&
+	      decoded.modulations == V8_MODULATION_V34_DUPLEX &&
+	      decoded.modulation_octets == 1 &&
+	      decoded.pcm_availability ==
+		      (V8_PCM_ANALOG | V8_PCM_DIGITAL) &&
+	      decoded.pstn_access == V8_PSTN_DIGITAL &&
+	      decoded.pcm_present && decoded.pstn_access_present &&
+	      decoded.lapm,
+	      "V.8 digital PCM categories changed");
+	CHECK(v8_pcm_call_menu_init(
+		      &menu, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
+	      v8_menu_encode(
+		      &menu, encoded, sizeof(encoded), &encoded_count) ==
+		      V8_MENU_OK &&
+	      encoded_count == ARRAY_LENGTH(analog_information) &&
+	      memcmp(encoded, analog_information, encoded_count) == 0 &&
+	      v8_menu_decode(
+		      encoded, encoded_count, &decoded) == V8_MENU_OK &&
+	      decoded.pcm_availability == V8_PCM_ANALOG &&
+	      decoded.pstn_access == 0 && decoded.pcm_present &&
+	      decoded.pstn_access_present && !decoded.lapm,
+	      "V.8 analog PSTN access presence was lost");
+	return true;
+}
+
+static bool test_pcm_category_rejection(void)
+{
+	static const uint8_t missing_indicator[] = {
+		UINT8_C(0xc1), UINT8_C(0x45), UINT8_C(0x0d), UINT8_C(0x27),
+	};
+	static const uint8_t orphan_indicator[] = {
+		UINT8_C(0xc1), UINT8_C(0x65),
+	};
+	static const uint8_t missing_access[] = {
+		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x27),
+	};
+	static const uint8_t missing_v34[] = {
+		UINT8_C(0xc1), UINT8_C(0x25), UINT8_C(0x0d), UINT8_C(0x27),
+	};
+	static const uint8_t duplicate_pcm[] = {
+		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x0d),
+		UINT8_C(0x27), UINT8_C(0x27),
+	};
+	static const uint8_t duplicate_access[] = {
+		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x0d),
+		UINT8_C(0x0d), UINT8_C(0x27),
+	};
+	struct v8_menu unchanged = {
+		.modulations = UINT16_MAX,
+	};
+	struct v8_menu saved = unchanged;
+
+	CHECK(decode_has_result(
+		      missing_indicator, ARRAY_LENGTH(missing_indicator),
+		      V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      orphan_indicator, ARRAY_LENGTH(orphan_indicator),
+		      V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      missing_access, ARRAY_LENGTH(missing_access),
+		      V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      missing_v34, ARRAY_LENGTH(missing_v34),
+		      V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      duplicate_pcm, ARRAY_LENGTH(duplicate_pcm),
+		      V8_MENU_MALFORMED) &&
+	      decode_has_result(
+		      duplicate_access, ARRAY_LENGTH(duplicate_access),
+		      V8_MENU_MALFORMED) &&
+	      v8_pcm_call_menu_init(
+		      &unchanged, 0, 0, false) == V8_MENU_INVALID_ARGUMENT &&
+	      memcmp(&unchanged, &saved, sizeof(unchanged)) == 0 &&
+	      v8_pcm_call_menu_init(
+		      &unchanged, V8_PCM_V91, 0, false) ==
+		      V8_MENU_INVALID_ARGUMENT &&
+	      v8_pcm_call_menu_init(
+		      &unchanged, V8_PCM_ANALOG,
+		      V8_PSTN_ALL + 1u, false) == V8_MENU_INVALID_ARGUMENT &&
+	      v8_pcm_call_menu_init(
+		      NULL, V8_PCM_ANALOG, 0, false) ==
+		      V8_MENU_INVALID_ARGUMENT,
+	      "V.8 PCM category coupling accepted malformed state");
 	return true;
 }
 
@@ -588,6 +705,8 @@ int main(void)
 		{ "minimal modulation width", test_minimal_modulation_width },
 		{ "extended zero capabilities", test_extended_zero_capabilities },
 		{ "decode round trip", test_decode_round_trip },
+		{ "PCM categories", test_pcm_categories },
+		{ "PCM category rejection", test_pcm_category_rejection },
 		{ "future categories", test_future_categories },
 		{ "decode rejection", test_decode_rejection },
 		{ "joint menu selection", test_joint_menu_selection },
