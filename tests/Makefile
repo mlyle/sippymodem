@@ -1332,6 +1332,7 @@ V90_PHASE3_SD_TEST_BINARY := $(BUILD_DIR)/test_v90_phase3_sd
 V90_PHASE3_SD_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase3_sd.o \
 	$(BUILD_DIR)/v90_phase3_sd.o \
+	$(BUILD_DIR)/v90_phase3_sd_receiver.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/g711.o
 V90_PHASE3_SIGNS_TEST_BINARY := $(BUILD_DIR)/test_v90_phase3_signs
@@ -3148,6 +3149,10 @@ $(BUILD_DIR)/v90_jd.o: \
 
 $(BUILD_DIR)/v90_phase3_sd.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase3_sd_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_pcm_symbol.o: \

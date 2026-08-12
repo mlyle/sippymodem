@@ -8,11 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum {
-	V90_SD_PATTERN_SYMBOLS = 6,
-	V90_SD_TRAINING_OFFSET = 16,
-};
-
 static bool law_is_valid(enum g711_law law)
 {
 	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
@@ -67,14 +62,14 @@ static void symbol_values(
 	uint8_t *ucode, bool *positive)
 {
 	unsigned int phase = sequence->emitted_symbols %
-			     V90_SD_PATTERN_SYMBOLS;
+			     V90_PHASE3_SD_PATTERN_SYMBOLS;
 	bool inverted = sequence->kind == V90_PHASE3_SD_BAR;
 
 	/* A Ucode is a seven-bit universal character; offset arithmetic stays
 	 * in that code space. */
 	*ucode = phase == 1 || phase == 4 ? 0 :
 		 (uint8_t)((sequence->training_ucode +
-			    V90_SD_TRAINING_OFFSET) & UINT8_C(0x7f));
+			    V90_PHASE3_SD_TRAINING_OFFSET) & UINT8_C(0x7f));
 	*positive = (phase < 3) != inverted;
 }
 
