@@ -20,6 +20,18 @@ from tools.live_terminal import (  # noqa: E402
 
 
 class LiveTerminalTests(unittest.TestCase):
+    def test_response_decoder_allowlists_high_speed_profile_labels(self) -> None:
+        for wire_name, expected in (
+            (b"V34", "V.34"),
+            (b"V90", "V.90"),
+            (b"V92", "V.92"),
+        ):
+            with self.subTest(wire_name=wire_name):
+                decoder = ResponseDecoder()
+                decoder.feed(b"Modulation: " + wire_name + b"\r\nCONNECT 9600\r\n")
+                self.assertEqual(decoder.pop(), "connect")
+                self.assertEqual(decoder.connect_report.modulation, expected)
+
     def test_escape_cleanup_tolerates_a_missing_response(self) -> None:
         terminal = ModemTerminal(-1)
         with (
