@@ -1353,6 +1353,23 @@ V90_PHASE4_CP_RX_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o
+V90_PHASE4_CP_LINE_TX_TEST_BINARY := \
+	$(BUILD_DIR)/test_v90_phase4_cp_line_tx
+V90_PHASE4_CP_LINE_TX_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v90_phase4_cp_line_tx.o \
+	$(BUILD_DIR)/v90_phase4_cp_line_tx.o \
+	$(BUILD_DIR)/v90_phase4_cp_tx.o \
+	$(BUILD_DIR)/v90_cp.o \
+	$(CRC16_CCITT_FALSE_OBJECT) \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_info1.o \
+	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_phase3_profile.o \
+	$(BUILD_DIR)/v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/v34_training_line.o
 V90_DIL_TEST_BINARY := $(BUILD_DIR)/test_v90_dil
 V90_DIL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_dil.o \
@@ -1930,6 +1947,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_CP_RECEIVER_TEST_BINARY) \
 	$(V90_PHASE4_CP_TX_TEST_BINARY) \
 	$(V90_PHASE4_CP_RX_TEST_BINARY) \
+	$(V90_PHASE4_CP_LINE_TX_TEST_BINARY) \
 	$(V90_DIL_TEST_BINARY) \
 	$(V90_JA_TEST_BINARY) \
 	$(V90_JA_SEARCH_TEST_BINARY) \
@@ -2109,6 +2127,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_CP_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE4_CP_TX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE4_CP_RX_TEST_OBJECTS:.o=.d) \
+	$(V90_PHASE4_CP_LINE_TX_TEST_OBJECTS:.o=.d) \
 	$(V90_DIL_TEST_OBJECTS:.o=.d) \
 	$(V90_JA_TEST_OBJECTS:.o=.d) \
 	$(V90_JA_SEARCH_TEST_OBJECTS:.o=.d) \
@@ -2314,6 +2333,7 @@ test: $(TEST_BINARIES)
 	./$(V90_CP_RECEIVER_TEST_BINARY)
 	./$(V90_PHASE4_CP_TX_TEST_BINARY)
 	./$(V90_PHASE4_CP_RX_TEST_BINARY)
+	./$(V90_PHASE4_CP_LINE_TX_TEST_BINARY)
 	./$(V90_DIL_TEST_BINARY)
 	./$(V90_JA_TEST_BINARY)
 	./$(V90_JA_SEARCH_TEST_BINARY)
@@ -2847,6 +2867,10 @@ $(V90_PHASE4_CP_TX_TEST_BINARY): $(V90_PHASE4_CP_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_PHASE4_CP_RX_TEST_BINARY): $(V90_PHASE4_CP_RX_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V90_PHASE4_CP_LINE_TX_TEST_BINARY): \
+	$(V90_PHASE4_CP_LINE_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_DIL_TEST_BINARY): $(V90_DIL_TEST_OBJECTS)
@@ -3441,6 +3465,10 @@ $(BUILD_DIR)/v90_phase4_cp_tx.o: \
 
 $(BUILD_DIR)/v90_phase4_cp_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase4_cp_line_tx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_line_tx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_dil.o: \
