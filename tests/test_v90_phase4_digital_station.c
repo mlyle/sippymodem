@@ -52,29 +52,22 @@ static struct v90_cp_parameters parameters(enum g711_law law)
 		.constellation_count = 1,
 	};
 
-	add_ucode(&selected.transmit_constellations[0], 12);
-	add_ucode(&selected.transmit_constellations[0], TRAINING_UCODE);
-	add_ucode(&selected.transmit_constellations[0], 119);
+	for (uint8_t index = 0; index < 8; ++index)
+		add_ucode(
+			&selected.transmit_constellations[0],
+			(uint8_t)(24u + 12u * index));
 	return selected;
 }
 
-static bool parameters_match(
-	const struct v90_cp_parameters *left,
-	const struct v90_cp_parameters *right)
+static bool mapping_matches(
+	const struct v90_pcm_mapping *mapping,
+	const struct v90_cp_parameters *parameters)
 {
-	uint8_t left_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	uint8_t right_frame[V90_CP_MAX_FRAME_BYTES] = { 0 };
-	size_t left_bits = 0;
-	size_t right_bits = 0;
+	struct v90_pcm_mapping expected;
 
-	return v90_cp_encode(
-		       left, left_frame, sizeof(left_frame), &left_bits) ==
-		       V90_CP_OK &&
-	       v90_cp_encode(
-		       right, right_frame, sizeof(right_frame), &right_bits) ==
-		       V90_CP_OK &&
-	       left_bits == right_bits &&
-	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
+	return v90_pcm_mapping_init(&expected, parameters) ==
+		       V90_PCM_MAPPING_OK &&
+	       memcmp(mapping, &expected, sizeof(expected)) == 0;
 }
 
 static int16_t quantize(enum g711_law law, int16_t sample)
@@ -88,7 +81,7 @@ static bool run_exchange(
 	enum g711_law law, enum v34_constellation_size constellation)
 {
 	struct v90_jd_parameters jd = jd_parameters(constellation);
-	struct v90_cp_parameters records[7];
+	struct v90_cp_parameters records[8];
 	struct v90_phase3_return_line_handoff phase3_receive;
 	struct v90_phase4_cp_line_tx analog_transmit;
 	struct v90_phase4_digital_station station;
@@ -109,6 +102,11 @@ static bool run_exchange(
 	records[3].spectral_lookahead = 3;
 	records[4].request_silence = true;
 	records[5].acknowledges_peer = true;
+	memset(records[6].transmit_constellations[0].ucode_mask, 0,
+	       sizeof(records[6].transmit_constellations[0].ucode_mask));
+	add_ucode(&records[6].transmit_constellations[0], 12);
+	add_ucode(&records[6].transmit_constellations[0], TRAINING_UCODE);
+	add_ucode(&records[6].transmit_constellations[0], 119);
 
 	CHECK(v90_phase4_line_fixture_init(
 		      law, constellation, &records[0],
@@ -164,8 +162,8 @@ static bool run_exchange(
 			      "CPt receive path failed at clock %zu", clock);
 			if (!previously_received && station.cpt_received) {
 				CHECK(next_record == ARRAY_LENGTH(records) &&
-				      parameters_match(
-					      &station.training_parameters,
+				      mapping_matches(
+					      &station.training_mapping,
 					      &records[ARRAY_LENGTH(records) - 1u]) &&
 				      v90_phase4_ri_tx_request_finish(&model_ri) ==
 					      V90_PHASE4_RI_OK &&
@@ -204,10 +202,10 @@ static bool run_exchange(
 		      V90_PHASE4_DIGITAL_STATION_OK &&
 	      v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff) &&
-	      parameters_match(
-		      &transmit_handoff.training_parameters,
+	      mapping_matches(
+		      &transmit_handoff.training_mapping,
 		      &records[ARRAY_LENGTH(records) - 1u]),
-	      "TRN2d transmit handoff changed the accepted CPt");
+	      "TRN2d transmit handoff changed the accepted mapping");
 	{
 		struct v90_phase4_digital_station saved = station;
 		uint8_t octet = 0xa5;
@@ -249,6 +247,7 @@ static bool test_contracts(void)
 	struct v90_phase4_cp_line_rx receive_saved;
 	struct v90_phase4_digital_transmit_handoff transmit_handoff;
 	struct v90_phase4_digital_transmit_handoff transmit_saved;
+	struct v90_pcm_mapping training_mapping;
 	uint8_t octet = 0xa5;
 
 	CHECK(v90_phase4_line_fixture_init(
@@ -319,14 +318,17 @@ static bool test_contracts(void)
 		      octet == 0xa5,
 		      "rejected digital operation was not transactional");
 	}
+	CHECK(v90_pcm_mapping_init(&training_mapping, &training) ==
+		      V90_PCM_MAPPING_OK,
+	      "valid handoff mapping did not initialize");
 	transmit_handoff =
 		(struct v90_phase4_digital_transmit_handoff){
-			.training_parameters = training,
+			.training_mapping = training_mapping,
 		};
 	CHECK(v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff),
 	      "valid TRN2d handoff was rejected");
-	transmit_handoff.training_parameters.selected_rate_index = 0;
+	transmit_handoff.training_mapping.modulus[0]--;
 	CHECK(!v90_phase4_digital_station_is_valid(NULL) &&
 	      !v90_phase4_digital_station_has_failed(NULL) &&
 	      !v90_phase4_digital_transmit_handoff_is_valid(NULL) &&

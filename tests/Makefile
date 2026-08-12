@@ -1382,6 +1382,7 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
+	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(BUILD_DIR)/g711.o \
@@ -1558,6 +1559,7 @@ V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_digital_station.o \
 	$(BUILD_DIR)/v90_phase4_digital_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
+	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_cp_line_rx.o, \

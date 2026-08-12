@@ -51,9 +51,10 @@ static struct v90_cp_parameters training_parameters(enum g711_law law)
 		.constellation_count = 1,
 	};
 
-	add_ucode(&parameters.transmit_constellations[0], 12);
-	add_ucode(&parameters.transmit_constellations[0], TRAINING_UCODE);
-	add_ucode(&parameters.transmit_constellations[0], 119);
+	for (uint8_t index = 0; index < 8; ++index)
+		add_ucode(
+			&parameters.transmit_constellations[0],
+			(uint8_t)(24u + 12u * index));
 	return parameters;
 }
 
@@ -76,6 +77,17 @@ static bool parameters_match(
 	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
 }
 
+static bool mapping_matches(
+	const struct v90_pcm_mapping *mapping,
+	const struct v90_cp_parameters *parameters)
+{
+	struct v90_pcm_mapping expected;
+
+	return v90_pcm_mapping_init(&expected, parameters) ==
+		       V90_PCM_MAPPING_OK &&
+	       memcmp(mapping, &expected, sizeof(expected)) == 0;
+}
+
 static int16_t quantize(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
@@ -92,6 +104,7 @@ static bool verify_cp_handoffs(
 	bool received = false;
 
 	data.kind = V90_CP_DATA;
+	data.selected_rate_index = 1;
 	data.acknowledges_peer = true;
 	CHECK(v90_phase4_cp_line_tx_start_next_record(transmit, &data) ==
 		      V90_PHASE4_CP_LINE_TX_OK,
@@ -255,10 +268,10 @@ static bool run_exchange(
 	      v90_phase4_digital_station_transmit_handoff(
 		      &digital, &digital_transmit) ==
 		      V90_PHASE4_DIGITAL_STATION_OK &&
-	      parameters_match(
-		      &analog_receive.training_parameters, &training) &&
-	      parameters_match(
-		      &digital_transmit.training_parameters, &training),
+	      mapping_matches(
+		      &analog_receive.training_mapping, &training) &&
+	      mapping_matches(
+		      &digital_transmit.training_mapping, &training),
 	      "paired owners disagreed about their Phase 4 handoffs");
 	CHECK(verify_cp_handoffs(
 		      law, &analog_transmit, &digital_receive, &training),

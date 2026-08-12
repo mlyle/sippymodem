@@ -66,10 +66,22 @@ static struct v90_cp_parameters training_parameters(enum g711_law law)
 		.constellation_count = 1,
 	};
 
-	add_ucode(&parameters.transmit_constellations[0], 12);
-	add_ucode(&parameters.transmit_constellations[0], TRAINING_UCODE);
-	add_ucode(&parameters.transmit_constellations[0], 119);
+	for (uint8_t index = 0; index < 8; ++index)
+		add_ucode(
+			&parameters.transmit_constellations[0],
+			(uint8_t)(24u + 12u * index));
 	return parameters;
+}
+
+static bool mapping_matches(
+	const struct v90_pcm_mapping *mapping,
+	const struct v90_cp_parameters *parameters)
+{
+	struct v90_pcm_mapping expected;
+
+	return v90_pcm_mapping_init(&expected, parameters) ==
+		       V90_PCM_MAPPING_OK &&
+	       memcmp(mapping, &expected, sizeof(expected)) == 0;
 }
 
 static struct qam_point warmup_point(size_t point_index)
@@ -193,9 +205,10 @@ static bool run_exchange(
 				      V90_PHASE4_ANALOG_STATION_OK &&
 			      v90_phase4_analog_receive_handoff_is_valid(
 				      &receive_handoff) &&
-			      memcmp(&receive_handoff.training_parameters,
-				     &training, sizeof(training)) == 0,
-			      "TRN2d handoff changed the CPt parameters");
+			      mapping_matches(
+				      &receive_handoff.training_mapping,
+				      &training),
+			      "TRN2d handoff changed the CPt mapping");
 			receive_handoff_checked = true;
 		}
 
@@ -258,6 +271,7 @@ static bool run_exchange(
 		rotation = transmit_handoff.symbols
 			.previous_clockwise_quarter_turns;
 		data.kind = V90_CP_DATA;
+		data.selected_rate_index = 1;
 		data.acknowledges_peer = true;
 		CHECK(v90_phase4_cp_line_tx_start_next_record(
 			      &transmit_handoff, &data) ==
@@ -350,6 +364,18 @@ static bool test_contracts(void)
 		      V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS &&
 	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
 	      "station accepted unsupported spectral lookahead");
+	bad = training;
+	memset(bad.transmit_constellations[0].ucode_mask, 0,
+	       sizeof(bad.transmit_constellations[0].ucode_mask));
+	add_ucode(&bad.transmit_constellations[0], 12);
+	add_ucode(&bad.transmit_constellations[0], TRAINING_UCODE);
+	add_ucode(&bad.transmit_constellations[0], 119);
+	CHECK(v90_phase4_analog_station_init(
+		      &untouched, &line, &jd, G711_LAW_PCMU,
+		      TRAINING_UCODE, &bad) ==
+		      V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS &&
+	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
+	      "station accepted an undersized CPt mapping");
 
 	CHECK(v90_phase4_analog_station_init(
 		      &station, &line, &jd, G711_LAW_PCMU,
