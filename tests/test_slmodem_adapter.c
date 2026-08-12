@@ -15,6 +15,9 @@ struct modem_process_capture {
 	int count;
 	void *receive;
 	void *transmit;
+	const uint8_t *codewords;
+	enum g711_law law;
+	unsigned int g711_calls;
 	bool stop_modem;
 };
 
@@ -36,6 +39,16 @@ void modem_process(struct modem *modem, void *receive, void *transmit,
 		modem->started = 0;
 }
 
+void modem_process_g711(
+	struct modem *modem, enum g711_law law,
+	const uint8_t *codewords, void *receive, void *transmit, int count)
+{
+	capture.g711_calls++;
+	capture.law = law;
+	capture.codewords = codewords;
+	modem_process(modem, receive, transmit, count);
+}
+
 static struct modem configured_modem(void)
 {
 	struct modem modem;
@@ -51,6 +64,7 @@ static bool test_forwards_exact_host_frames(void)
 {
 	int16_t receive[] = { 1, -2, 300, -400 };
 	static const int16_t expected[] = { -1, 2, -300, 400 };
+	static const uint8_t codewords[] = { 0x7f, 0xff, 0x55, 0xd5 };
 	struct modem modem = configured_modem();
 	struct slmodem_adapter adapter;
 	const struct modem_core *core;
@@ -78,11 +92,20 @@ static bool test_forwards_exact_host_frames(void)
 		      capture.transmit == transmit &&
 		      memcmp(transmit, expected, sizeof(expected)) == 0,
 	      "adapter changed or truncated the modem frame");
+	memset(transmit, 0, sizeof(transmit));
+	CHECK(core->process_g711(
+		      core->context, G711_LAW_PCMU, codewords,
+		      receive, transmit, ARRAY_LENGTH(receive)) == MODEM_CORE_OK &&
+		      capture.calls == 2 && capture.g711_calls == 1 &&
+		      capture.law == G711_LAW_PCMU &&
+		      capture.codewords == codewords &&
+		      memcmp(transmit, expected, sizeof(expected)) == 0,
+	      "adapter did not preserve the exact G.711 frame");
 	capture.stop_modem = true;
 	CHECK(core->process(core->context, receive, transmit,
 			    ARRAY_LENGTH(receive)) ==
 		      MODEM_CORE_STOPPED &&
-		      capture.calls == 2,
+		      capture.calls == 3,
 	      "adapter lost a stop raised during modem processing");
 	return true;
 }
@@ -95,6 +118,7 @@ static bool test_validation_is_transactional(void)
 	};
 	struct slmodem_adapter original = adapter;
 	const struct modem_core *core;
+	uint8_t codeword = 0xff;
 	int16_t sample = 0;
 
 	modem.srate++;
@@ -129,6 +153,13 @@ static bool test_validation_is_transactional(void)
 				    (size_t)INT_MAX + 1) ==
 			      MODEM_CORE_ERROR,
 	      "adapter accepted an unsafe legacy frame");
+	CHECK(core->process_g711(
+		      core->context, (enum g711_law)99, &codeword,
+		      &sample, &sample, 1) == MODEM_CORE_ERROR &&
+		      core->process_g711(
+			      core->context, G711_LAW_PCMU, NULL,
+			      &sample, &sample, 1) == MODEM_CORE_ERROR,
+	      "adapter accepted an unsafe G.711 frame");
 	return true;
 }
 

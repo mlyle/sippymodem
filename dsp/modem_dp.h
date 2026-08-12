@@ -41,6 +41,7 @@
 #ifndef __MODEM_DP_H__
 #define __MODEM_DP_H__
 
+#include <g711.h>
 #include <modem_defs.h>
 
 
@@ -60,6 +61,8 @@ struct dp_operations {
 			     struct dp_operations *);
 	int (*delete)(struct dp *);
 	int (*process)(struct dp *, void *in, void *out, int cnt);
+	int (*process_g711)(struct dp *, enum g711_law law,
+			     const u8 *codewords, void *in, void *out, int cnt);
 	int (*hangup)(struct dp *);
 };
 

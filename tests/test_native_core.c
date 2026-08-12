@@ -17,6 +17,7 @@
 #include <string.h>
 
 extern int process_at_command(struct modem *modem, char *command);
+extern int modem_dial(struct modem *modem);
 
 static int unused_start(struct modem *modem)
 {
@@ -115,6 +116,111 @@ static int unused_dp_process(
 	(void)transmit;
 	(void)count;
 	return DPSTAT_ERROR;
+}
+
+static struct {
+	struct dp datapump;
+	const uint8_t *codewords;
+	enum g711_law law;
+	unsigned int linear_calls;
+	unsigned int g711_calls;
+} g711_dp;
+
+static struct dp *create_g711_dp(
+	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
+	int max_fragment, struct dp_operations *operations)
+{
+	if (modem == NULL || id != DP_CALLPROG || caller != 1 ||
+	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
+	    operations == NULL || operations->use_count != 0)
+		return NULL;
+	g711_dp.datapump = (struct dp){
+		.id = id,
+		.modem = modem,
+		.op = operations,
+	};
+	operations->use_count++;
+	return &g711_dp.datapump;
+}
+
+static int delete_g711_dp(struct dp *datapump)
+{
+	if (datapump != &g711_dp.datapump || datapump->op == NULL ||
+	    datapump->op->use_count != 1)
+		return -1;
+	datapump->op->use_count--;
+	memset(&g711_dp.datapump, 0, sizeof(g711_dp.datapump));
+	return 0;
+}
+
+static int process_g711_dp(
+	struct dp *datapump, void *receive, void *transmit, int count)
+{
+	(void)receive;
+	if (datapump != &g711_dp.datapump || transmit == NULL || count <= 0)
+		return DPSTAT_ERROR;
+	g711_dp.linear_calls++;
+	memset(transmit, 0, (size_t)count * sizeof(int16_t));
+	return DPSTAT_OK;
+}
+
+static int process_g711_codewords(
+	struct dp *datapump, enum g711_law law,
+	const uint8_t *codewords, void *receive, void *transmit, int count)
+{
+	(void)receive;
+	if (datapump != &g711_dp.datapump || codewords == NULL ||
+	    transmit == NULL || count <= 0)
+		return DPSTAT_ERROR;
+	g711_dp.g711_calls++;
+	g711_dp.law = law;
+	g711_dp.codewords = codewords;
+	memset(transmit, 0, (size_t)count * sizeof(int16_t));
+	return DPSTAT_OK;
+}
+
+static bool test_g711_datapump_input(void)
+{
+	struct modem_driver driver = {
+		.name = "G.711 data pump test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct dp_operations operations = {
+		.name = "G.711 input test",
+		.create = create_g711_dp,
+		.delete = delete_g711_dp,
+		.process = process_g711_dp,
+		.process_g711 = process_g711_codewords,
+	};
+	uint8_t codewords[MODEM_FRAG];
+	int16_t receive[MODEM_FRAG] = { 0 };
+	int16_t transmit[MODEM_FRAG];
+	struct modem *modem;
+
+	memset(&g711_dp, 0, sizeof(g711_dp));
+	memset(codewords, 0x7f, sizeof(codewords));
+	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
+	      "G.711 test data pump did not register");
+	modem = modem_create(&driver, "G.711 data pump test");
+	CHECK(modem != NULL && modem_dial(modem) == 0,
+	      "G.711 test call did not start");
+	modem_process_g711(
+		modem, G711_LAW_PCMU, codewords, receive, transmit, MODEM_FRAG);
+	CHECK(g711_dp.g711_calls == 1 && g711_dp.linear_calls == 0 &&
+		      g711_dp.law == G711_LAW_PCMU &&
+		      g711_dp.codewords == codewords,
+	      "exact codewords did not reach the opt-in data pump");
+	modem_process(modem, receive, transmit, MODEM_FRAG);
+	CHECK(g711_dp.g711_calls == 1 && g711_dp.linear_calls == 1,
+	      "linear processing did not retain its legacy path");
+	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
+	      "G.711 test data pump did not stop cleanly");
+	modem_delete(modem);
+	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
+	      "G.711 test data pump did not deregister");
+	return true;
 }
 
 static bool test_v32_preserves_error_control_detection(void)
@@ -1249,6 +1355,7 @@ int main(void)
 		  test_v32_preserves_error_control_detection },
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
+		{ "G.711 data-pump input", test_g711_datapump_input },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT V.42bis compression profile",

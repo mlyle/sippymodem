@@ -693,7 +693,9 @@ static unsigned dpstat2status(unsigned dpstat)
 }
 
 
-static void modem_dp_process(struct modem *m,void *in,void *out,int count)
+static void modem_dp_process_frame(struct modem *m, enum g711_law law,
+				   const u8 *codewords, void *in, void *out,
+				   int count)
 {
 	int ret;
 	unsigned cnt;
@@ -703,7 +705,11 @@ static void modem_dp_process(struct modem *m,void *in,void *out,int count)
 		if (cnt > m->frag)
 			cnt = m->frag;
 		//MODEM_DBG("%d: running dp %s...\n", m->count,dp->name);
-		ret = m->dp->op->process(m->dp,in,out,cnt);
+		if (codewords != NULL && m->dp->op->process_g711 != NULL)
+			ret = m->dp->op->process_g711(
+				m->dp, law, codewords, in, out, cnt);
+		else
+			ret = m->dp->op->process(m->dp,in,out,cnt);
 		switch(ret) {
 		case DPSTAT_OK:
 			break;
@@ -725,19 +731,32 @@ static void modem_dp_process(struct modem *m,void *in,void *out,int count)
 		count -= cnt;
 		out += cnt<<MFMT_SHIFT(m->format);
 		in  += cnt<<MFMT_SHIFT(m->format);
+		if (codewords != NULL)
+			codewords += cnt;
 	}
 	if(count)
 		memset(out,0,count<<MFMT_SHIFT(m->format));
 }
 
+static void modem_dp_process(struct modem *m,void *in,void *out,int count)
+{
+	modem_dp_process_frame(m, G711_LAW_PCMU, NULL, in, out, count);
+}
 
-void modem_process(struct modem *m,void *in,void *out,int count)
+static void modem_process_frame(struct modem *m, enum g711_law law,
+				const u8 *codewords, void *in, void *out,
+				int count)
 {
 	/* clean DC */
 	(void)dc_filter_process(&m->dc_filter, in, (size_t)count);
 	modem_debug_log_data(m,MODEM_DBG_RX_SAMPLES,in,count<<MFMT_SHIFT(m->format));
-	if(m->process)
-		m->process(m,in,out,count);
+	if(m->process) {
+		if (codewords != NULL && m->process == modem_dp_process)
+			modem_dp_process_frame(
+				m, law, codewords, in, out, count);
+		else
+			m->process(m,in,out,count);
+	}
 	else  /* mute output */
 		memset(out,0,count<<MFMT_SHIFT(m->format));
 	modem_debug_log_data(m,MODEM_DBG_TX_SAMPLES,out,count<<MFMT_SHIFT(m->format));
@@ -748,6 +767,17 @@ void modem_process(struct modem *m,void *in,void *out,int count)
 		m->sample_timer_func = NULL;
 		if(f) f(m);
 	}
+}
+
+void modem_process(struct modem *m,void *in,void *out,int count)
+{
+	modem_process_frame(m, G711_LAW_PCMU, NULL, in, out, count);
+}
+
+void modem_process_g711(struct modem *m, enum g711_law law,
+			 const u8 *codewords, void *in, void *out, int count)
+{
+	modem_process_frame(m, law, codewords, in, out, count);
 }
 
 

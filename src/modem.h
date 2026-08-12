@@ -438,6 +438,8 @@ extern void modem_error  (struct modem *m);
 extern void modem_ring   (struct modem *m);
 extern void modem_event  (struct modem *m);
 extern void modem_process(struct modem *m,void *in,void *out,int cnt);
+extern void modem_process_g711(struct modem *m, enum g711_law law,
+			       const u8 *codewords, void *in, void *out, int cnt);
 
 /* packers && EC */ // FIXME: improve interface
 extern void modem_async_start(struct modem *m);

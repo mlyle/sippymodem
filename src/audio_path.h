@@ -4,6 +4,7 @@
 #define AUDIO_PATH_H
 
 #include "config.h"
+#include "g711.h"
 #include "session.h"
 
 #include <stddef.h>
@@ -20,6 +21,15 @@ struct modem_core {
 	/* Both sample buffers are writable scratch storage owned by the caller. */
 	enum modem_core_result (*process)(
 		void *context,
+		int16_t *receive_samples,
+		int16_t *transmit_samples,
+		size_t count);
+	/* Optional exact-codeword path. receive_samples include configured gain;
+	 * receive_codewords retain the original G.711 playout values. */
+	enum modem_core_result (*process_g711)(
+		void *context,
+		enum g711_law law,
+		const uint8_t *receive_codewords,
 		int16_t *receive_samples,
 		int16_t *transmit_samples,
 		size_t count);

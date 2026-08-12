@@ -19,6 +19,7 @@ struct audio_path {
 	double receive_gain;
 	double transmit_gain;
 	size_t frame_samples;
+	enum g711_law law;
 	enum media_result last_media_result;
 	enum rtp_endpoint_result last_rtp_result;
 	int16_t samples[];
@@ -27,6 +28,19 @@ struct audio_path {
 static bool gain_is_valid(double gain)
 {
 	return isfinite(gain) && gain >= 0.0 && gain <= 4.0;
+}
+
+static bool codec_law(enum media_codec codec, enum g711_law *law)
+{
+	if (law == NULL)
+		return false;
+	if (codec == MEDIA_CODEC_PCMU)
+		*law = G711_LAW_PCMU;
+	else if (codec == MEDIA_CODEC_PCMA)
+		*law = G711_LAW_PCMA;
+	else
+		return false;
+	return true;
 }
 
 static int16_t apply_gain_to_sample(int16_t sample, double gain)
@@ -57,19 +71,23 @@ struct audio_path *audio_path_create(
 	struct audio_path *path;
 	size_t frame_samples;
 	size_t allocation_size;
+	enum g711_law law;
 
 	if (session == NULL || config == NULL || modem_core == NULL ||
 	    modem_core->process == NULL ||
+	    !codec_law(config->codec, &law) ||
 	    !gain_is_valid(config->receive_gain) ||
 	    !gain_is_valid(config->transmit_gain))
 		return NULL;
 	frame_samples = sip_session_frame_samples(session);
 	if (frame_samples == 0 ||
 	    frame_samples >
-		    (SIZE_MAX - sizeof(*path)) / (2 * sizeof(int16_t)))
+		    (SIZE_MAX - sizeof(*path)) /
+			    (2 * sizeof(int16_t) + sizeof(uint8_t)))
 		return NULL;
 	allocation_size =
-		sizeof(*path) + 2 * frame_samples * sizeof(int16_t);
+		sizeof(*path) +
+		frame_samples * (2 * sizeof(int16_t) + sizeof(uint8_t));
 	path = calloc(1, allocation_size);
 	if (path == NULL)
 		return NULL;
@@ -79,6 +97,7 @@ struct audio_path *audio_path_create(
 	path->receive_gain = config->receive_gain;
 	path->transmit_gain = config->transmit_gain;
 	path->frame_samples = frame_samples;
+	path->law = law;
 	if (recorder != NULL)
 		path->recorder = *recorder;
 	return path;
@@ -100,14 +119,17 @@ enum audio_path_result audio_path_process_frame(
 {
 	int16_t *receive_samples;
 	int16_t *transmit_samples;
+	uint8_t *receive_codewords;
 	enum modem_core_result core_result;
 
 	if (path == NULL)
 		return AUDIO_PATH_INVALID_ARGUMENT;
 	receive_samples = path->samples;
 	transmit_samples = path->samples + path->frame_samples;
+	receive_codewords = (uint8_t *)(transmit_samples + path->frame_samples);
 	path->last_media_result = sip_session_play(
-		path->session, receive_samples, NULL, path->frame_samples, NULL);
+		path->session, receive_samples, receive_codewords,
+		path->frame_samples, NULL);
 	if (path->last_media_result != MEDIA_OK)
 		return AUDIO_PATH_PLAYOUT_ERROR;
 
@@ -118,9 +140,14 @@ enum audio_path_result audio_path_process_frame(
 		receive_samples, path->frame_samples);
 	memset(transmit_samples, 0,
 	       path->frame_samples * sizeof(transmit_samples[0]));
-	core_result = path->modem_core.process(
-		path->modem_core.context, receive_samples, transmit_samples,
-		path->frame_samples);
+	if (path->modem_core.process_g711 != NULL)
+		core_result = path->modem_core.process_g711(
+			path->modem_core.context, path->law, receive_codewords,
+			receive_samples, transmit_samples, path->frame_samples);
+	else
+		core_result = path->modem_core.process(
+			path->modem_core.context, receive_samples, transmit_samples,
+			path->frame_samples);
 	if (core_result == MODEM_CORE_STOPPED)
 		return AUDIO_PATH_MODEM_STOPPED;
 	if (core_result != MODEM_CORE_OK)

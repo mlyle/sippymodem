@@ -15,6 +15,7 @@ enum {
 
 struct sip_session {
 	size_t frame_samples;
+	uint8_t receive_codewords[TEST_FRAME_SAMPLES];
 	int16_t receive_samples[TEST_FRAME_SAMPLES];
 	int16_t sent_samples[TEST_FRAME_SAMPLES];
 	enum media_result play_result;
@@ -42,7 +43,7 @@ enum media_result sip_session_play(
 	memcpy(samples, session->receive_samples,
 	       count * sizeof(samples[0]));
 	if (source_octets != NULL)
-		memset(source_octets, 0xff, count);
+		memcpy(source_octets, session->receive_codewords, count);
 	if (report != NULL)
 		memset(report, 0, sizeof(*report));
 	return MEDIA_OK;
@@ -65,7 +66,10 @@ struct core_capture {
 	int16_t transmit[TEST_FRAME_SAMPLES];
 	enum modem_core_result result;
 	unsigned int calls;
+	unsigned int g711_calls;
 	bool receive_matched;
+	bool codewords_matched;
+	enum g711_law law;
 };
 
 static enum modem_core_result process_core(
@@ -82,6 +86,23 @@ static enum modem_core_result process_core(
 	memcpy(transmit_samples, capture->transmit,
 	       count * sizeof(transmit_samples[0]));
 	return capture->result;
+}
+
+static enum modem_core_result process_core_g711(
+	void *context, enum g711_law law,
+	const uint8_t *receive_codewords, int16_t *receive_samples,
+	int16_t *transmit_samples, size_t count)
+{
+	struct core_capture *capture = context;
+
+	capture->g711_calls++;
+	capture->law = law;
+	capture->codewords_matched =
+		count == TEST_FRAME_SAMPLES &&
+		memcmp(receive_codewords,
+		       (uint8_t[]){ 0x7f, 0xff, 0x55, 0xd5 }, count) == 0;
+	return process_core(
+		context, receive_samples, transmit_samples, count);
 }
 
 struct recording_capture {
@@ -109,6 +130,7 @@ static bool test_processes_gained_recorded_frame(void)
 {
 	struct sip_session session = {
 		.frame_samples = TEST_FRAME_SAMPLES,
+		.receive_codewords = { 0x7f, 0xff, 0x55, 0xd5 },
 		.receive_samples = { 1001, -1001, 20000, -20000 },
 		.play_result = MEDIA_OK,
 		.send_result = RTP_ENDPOINT_OK,
@@ -130,6 +152,7 @@ static bool test_processes_gained_recorded_frame(void)
 	const struct modem_core modem_core = {
 		.context = &core,
 		.process = process_core,
+		.process_g711 = process_core_g711,
 	};
 	const int16_t expected_transmit[] = { 2002, -2002, 32767, -32768 };
 	struct audio_path *path = audio_path_create(
@@ -141,7 +164,9 @@ static bool test_processes_gained_recorded_frame(void)
 	CHECK(audio_path_process_frame(path) ==
 		      AUDIO_PATH_OK &&
 		      session.play_calls == 1 && session.send_calls == 1 &&
-		      core.calls == 1 && core.receive_matched &&
+		      core.calls == 1 && core.g711_calls == 1 &&
+		      core.law == G711_LAW_PCMU && core.receive_matched &&
+		      core.codewords_matched &&
 		      memcmp(session.sent_samples, expected_transmit,
 			     sizeof(expected_transmit)) == 0,
 	      "audio path did not process or saturate the frame correctly");
@@ -239,6 +264,11 @@ static bool test_rejects_invalid_ownership_and_gain(void)
 					   &modem_core) == NULL,
 	      "audio path accepted gain outside the configured range");
 	config.transmit_gain = 1.0;
+	config.codec = MEDIA_CODEC_CLEARMODE;
+	CHECK(audio_path_create(&session, &config, NULL,
+				   &modem_core) == NULL,
+	      "audio path accepted a codec without G.711 codewords");
+	config.codec = MEDIA_CODEC_PCMU;
 	modem_core.process = NULL;
 	CHECK(audio_path_create(&session, &config, NULL,
 					   &modem_core) == NULL,
