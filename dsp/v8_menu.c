@@ -318,24 +318,76 @@ enum v8_menu_result v8_menu_decode(
 
 enum v8_menu_result v8_joint_menu_select(
 	const struct v8_menu *call_menu,
-	const struct v8_menu *local_menu,
+	const struct v8_menu *answer_menu,
 	struct v8_menu *joint_menu)
 {
 	struct v8_menu selected;
+	struct v8_pcm_roles roles;
 
-	if (!menu_is_valid(call_menu) || !menu_is_valid(local_menu) ||
-	    call_menu->modulations == 0 || local_menu->modulations == 0 ||
+	if (!menu_is_valid(call_menu) || !menu_is_valid(answer_menu) ||
+	    call_menu->modulations == 0 || answer_menu->modulations == 0 ||
 	    joint_menu == NULL)
 		return V8_MENU_INVALID_ARGUMENT;
 	selected = (struct v8_menu){
 		.call_function = call_menu->call_function,
-		.modulations = call_menu->modulations & local_menu->modulations,
+		.modulations = call_menu->modulations & answer_menu->modulations,
 		.modulation_octets = call_menu->modulation_octets,
-		.lapm = call_menu->lapm && local_menu->lapm,
+		.pcm_availability = answer_menu->pcm_availability,
+		.pstn_access =
+			(call_menu->pstn_access & V8_PSTN_CALL_CELLULAR) |
+			(answer_menu->pstn_access &
+			 (V8_PSTN_ANSWER_CELLULAR | V8_PSTN_DIGITAL)),
+		.pcm_present =
+			call_menu->pcm_present && answer_menu->pcm_present,
+		.pstn_access_present =
+			answer_menu->pstn_access_present ||
+			(call_menu->pstn_access_present &&
+			 (call_menu->pstn_access & V8_PSTN_CALL_CELLULAR) != 0),
+		.lapm = call_menu->lapm && answer_menu->lapm,
 	};
-	if (!menu_is_valid(&selected))
+	if (!menu_is_valid(&selected) ||
+	    v8_pcm_select_roles(call_menu, &selected, &roles) != V8_MENU_OK)
 		return V8_MENU_INVALID_ARGUMENT;
+	if (roles.caller == V8_PCM_ROLE_NONE) {
+		selected.pcm_availability = 0;
+		selected.pcm_present = false;
+	}
 	*joint_menu = selected;
+	return V8_MENU_OK;
+}
+
+enum v8_menu_result v8_pcm_select_roles(
+	const struct v8_menu *call_menu,
+	const struct v8_menu *joint_menu,
+	struct v8_pcm_roles *roles)
+{
+	struct v8_pcm_roles selected = { 0 };
+	bool answer_can_be_digital;
+	bool caller_can_be_digital;
+
+	if (!menu_is_valid(call_menu) || !menu_is_valid(joint_menu) ||
+	    roles == NULL)
+		return V8_MENU_INVALID_ARGUMENT;
+	if (!call_menu->pcm_present || !joint_menu->pcm_present) {
+		*roles = selected;
+		return V8_MENU_OK;
+	}
+	answer_can_be_digital =
+		(call_menu->pcm_availability & V8_PCM_ANALOG) != 0 &&
+		(joint_menu->pcm_availability & V8_PCM_DIGITAL) != 0 &&
+		(joint_menu->pstn_access & V8_PSTN_DIGITAL) != 0;
+	caller_can_be_digital =
+		(call_menu->pcm_availability & V8_PCM_DIGITAL) != 0 &&
+		(call_menu->pstn_access & V8_PSTN_DIGITAL) != 0 &&
+		(joint_menu->pcm_availability & V8_PCM_ANALOG) != 0;
+	if (answer_can_be_digital) {
+		selected.caller = V8_PCM_ROLE_ANALOG;
+		selected.answerer = V8_PCM_ROLE_DIGITAL;
+	} else if (caller_can_be_digital) {
+		selected.caller = V8_PCM_ROLE_DIGITAL;
+		selected.answerer = V8_PCM_ROLE_ANALOG;
+	}
+	*roles = selected;
 	return V8_MENU_OK;
 }
 

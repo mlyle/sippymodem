@@ -177,7 +177,7 @@ static enum v8_calling_result exchange_menu_sample(
 				calling,
 				V8_CALLING_NO_COMMON_MODULATION);
 		if (v8_joint_menu_select(
-			    &remote_menu, &calling->local_menu, &joint_menu) !=
+			    &calling->local_menu, &remote_menu, &joint_menu) !=
 		    V8_MENU_OK)
 			return V8_CALLING_INVALID_ARGUMENT;
 		selection_result = v8_menu_selected_modulation(

@@ -45,6 +45,17 @@ enum v8_pstn_access {
 	V8_PSTN_ALL = (1u << 3) - 1u,
 };
 
+enum v8_pcm_role {
+	V8_PCM_ROLE_NONE,
+	V8_PCM_ROLE_ANALOG,
+	V8_PCM_ROLE_DIGITAL,
+};
+
+struct v8_pcm_roles {
+	enum v8_pcm_role caller;
+	enum v8_pcm_role answerer;
+};
+
 enum {
 	V8_MAX_MODULATION_OCTETS =
 		V8_MAX_INFORMATION_OCTETS - 1,
@@ -96,8 +107,12 @@ enum v8_menu_result v8_menu_decode(
 	struct v8_menu *menu);
 enum v8_menu_result v8_joint_menu_select(
 	const struct v8_menu *call_menu,
-	const struct v8_menu *local_menu,
+	const struct v8_menu *answer_menu,
 	struct v8_menu *joint_menu);
+enum v8_menu_result v8_pcm_select_roles(
+	const struct v8_menu *call_menu,
+	const struct v8_menu *joint_menu,
+	struct v8_pcm_roles *roles);
 enum v8_menu_result v8_menu_selected_modulation(
 	const struct v8_menu *menu,
 	enum v8_modulation *modulation);

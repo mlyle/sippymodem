@@ -382,6 +382,94 @@ static bool test_joint_menu_selection(void)
 	return true;
 }
 
+static bool test_pcm_role_selection(void)
+{
+	struct v8_menu call_menu;
+	struct v8_menu answer_menu;
+	struct v8_menu joint_menu;
+	struct v8_pcm_roles roles;
+
+	CHECK(v8_pcm_call_menu_init(
+		      &call_menu, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
+	      v8_pcm_call_menu_init(
+		      &answer_menu, V8_PCM_DIGITAL,
+		      V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
+	      v8_joint_menu_select(
+		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
+	      joint_menu.pcm_present &&
+	      joint_menu.pcm_availability == V8_PCM_DIGITAL &&
+	      joint_menu.pstn_access_present &&
+	      joint_menu.pstn_access == V8_PSTN_DIGITAL &&
+	      v8_pcm_select_roles(
+		      &call_menu, &joint_menu, &roles) == V8_MENU_OK &&
+	      roles.caller == V8_PCM_ROLE_ANALOG &&
+	      roles.answerer == V8_PCM_ROLE_DIGITAL,
+	      "V.8 did not choose a digital answer modem");
+	CHECK(v8_pcm_call_menu_init(
+		      &call_menu, V8_PCM_DIGITAL,
+		      V8_PSTN_CALL_CELLULAR | V8_PSTN_DIGITAL,
+		      false) == V8_MENU_OK &&
+	      v8_pcm_call_menu_init(
+		      &answer_menu, V8_PCM_ANALOG,
+		      V8_PSTN_ANSWER_CELLULAR, false) == V8_MENU_OK &&
+	      v8_joint_menu_select(
+		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
+	      joint_menu.pcm_present &&
+	      joint_menu.pcm_availability == V8_PCM_ANALOG &&
+	      joint_menu.pstn_access ==
+		      (V8_PSTN_CALL_CELLULAR |
+		       V8_PSTN_ANSWER_CELLULAR) &&
+	      v8_pcm_select_roles(
+		      &call_menu, &joint_menu, &roles) == V8_MENU_OK &&
+	      roles.caller == V8_PCM_ROLE_DIGITAL &&
+	      roles.answerer == V8_PCM_ROLE_ANALOG,
+	      "V.8 did not choose a digital call modem");
+	return true;
+}
+
+static bool test_pcm_role_fallback(void)
+{
+	struct v8_menu call_menu;
+	struct v8_menu answer_menu;
+	struct v8_menu joint_menu;
+	struct v8_pcm_roles roles = {
+		.caller = V8_PCM_ROLE_DIGITAL,
+		.answerer = V8_PCM_ROLE_ANALOG,
+	};
+	struct v8_pcm_roles saved = roles;
+	const struct v8_pcm_roles expected_saved = roles;
+
+	CHECK(v8_pcm_call_menu_init(
+		      &call_menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
+		      V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
+	      v8_pcm_call_menu_init(
+		      &answer_menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
+		      V8_PSTN_DIGITAL, false) == V8_MENU_OK &&
+	      v8_joint_menu_select(
+		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
+	      v8_pcm_select_roles(
+		      &call_menu, &joint_menu, &roles) == V8_MENU_OK &&
+	      roles.caller == V8_PCM_ROLE_ANALOG &&
+	      roles.answerer == V8_PCM_ROLE_DIGITAL,
+	      "V.8 did not apply the dual-digital role preference");
+	CHECK(v8_pcm_call_menu_init(
+		      &call_menu, V8_PCM_ANALOG, 0, false) == V8_MENU_OK &&
+	      v8_pcm_call_menu_init(
+		      &answer_menu, V8_PCM_DIGITAL, 0, false) == V8_MENU_OK &&
+	      v8_joint_menu_select(
+		      &call_menu, &answer_menu, &joint_menu) == V8_MENU_OK &&
+	      !joint_menu.pcm_present && joint_menu.pcm_availability == 0 &&
+	      v8_pcm_select_roles(
+		      &call_menu, &joint_menu, &roles) == V8_MENU_OK &&
+	      roles.caller == V8_PCM_ROLE_NONE &&
+	      roles.answerer == V8_PCM_ROLE_NONE &&
+	      v8_pcm_select_roles(
+		      NULL, &joint_menu, &saved) == V8_MENU_INVALID_ARGUMENT &&
+	      memcmp(&saved, &expected_saved, sizeof(saved)) == 0,
+	      "V.8 did not fall back when no digital access was available");
+	return true;
+}
+
 static bool test_no_common_modulation(void)
 {
 	static const uint8_t expected[] = {
@@ -710,6 +798,8 @@ int main(void)
 		{ "future categories", test_future_categories },
 		{ "decode rejection", test_decode_rejection },
 		{ "joint menu selection", test_joint_menu_selection },
+		{ "PCM role selection", test_pcm_role_selection },
+		{ "PCM role fallback", test_pcm_role_fallback },
 		{ "no common modulation", test_no_common_modulation },
 		{ "joint validation", test_joint_validation },
 		{ "repeated menu confirmation", test_repeated_menu_confirmation },
