@@ -11,8 +11,6 @@
 
 enum v34_data_line_transmitter_result {
 	V34_DATA_LINE_TRANSMITTER_OK,
-	V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED,
-	V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING,
 	V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT,
 	V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE,
 	V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK,
@@ -45,19 +43,16 @@ v34_data_line_transmitter_init(
 
 bool v34_data_line_transmitter_is_valid(
 	const struct v34_data_line_transmitter *transmitter);
-bool v34_data_line_transmitter_needs_mapping_frame(
+bool v34_data_line_transmitter_needs_point(
 	const struct v34_data_line_transmitter *transmitter);
 
-enum v34_data_line_transmitter_result
-v34_data_line_transmitter_load_mapping_frame(
-	struct v34_data_line_transmitter *transmitter,
-	const struct v34_transmitted_mapping_frame *frame);
-
 /* Emit one rounded line sample. Backpressure, clipping, and errors leave the
- * transmitter and both outputs unchanged; samples are never saturated. */
+ * transmitter and both outputs unchanged; samples are never saturated.
+ * Supply a normalized point precisely when needs_point() is true. */
 enum v34_data_line_transmitter_result
 v34_data_line_transmitter_sample(
 	struct v34_data_line_transmitter *transmitter,
+	const struct qam_point *point,
 	int16_t *sample, bool *symbol_accepted);
 
 const char *v34_data_line_transmitter_result_name(

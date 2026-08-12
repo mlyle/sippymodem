@@ -4,11 +4,8 @@
 
 #include <limits.h>
 #include <math.h>
-#include <stddef.h>
 
 static const double V34_DATA_ROLLOFF = 0.1;
-static const double V34_DATA_POWER_EPSILON = 1e-12;
-
 static bool occupied_band_fits(
 	const struct v34_phase3_profile *profile,
 	uint32_t sample_rate)
@@ -96,20 +93,6 @@ static bool channel_matches_configuration(
 		       normalizer->maximum_normalized_point_power;
 }
 
-static bool point_fits(
-	const struct qam_point *point, double maximum_power)
-{
-	double power;
-
-	if (!isfinite(point->in_phase) || !isfinite(point->quadrature))
-		return false;
-	power = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	return isfinite(power) &&
-	       (power <= maximum_power ||
-		power / maximum_power <= 1.0 + V34_DATA_POWER_EPSILON);
-}
-
 bool v34_data_carrier_is_valid(
 	const struct v34_data_carrier *carrier)
 {
@@ -127,24 +110,16 @@ bool v34_data_carrier_is_valid(
 		    &carrier->profile, carrier->modulator.channel.sample_rate) ||
 	    !channel_matches_configuration(
 		    &carrier->modulator, &carrier->profile,
-		    &carrier->normalizer) ||
-	    carrier->next_symbol > V34_SYMBOLS_PER_MAPPING_FRAME)
+		    &carrier->normalizer))
 		return false;
-	for (size_t index = 0;
-	     index < V34_SYMBOLS_PER_MAPPING_FRAME; ++index) {
-		if (!point_fits(
-			    &carrier->normalized_symbol[index],
-			    carrier->normalizer.maximum_normalized_point_power))
-			return false;
-	}
 	return true;
 }
 
-bool v34_data_carrier_needs_mapping_frame(
+bool v34_data_carrier_needs_point(
 	const struct v34_data_carrier *carrier)
 {
 	return v34_data_carrier_is_valid(carrier) &&
-	       carrier->next_symbol == V34_SYMBOLS_PER_MAPPING_FRAME;
+	       qam_modulator_can_accept_symbol(&carrier->modulator);
 }
 
 enum v34_data_carrier_result v34_data_carrier_init(
@@ -171,7 +146,6 @@ enum v34_data_carrier_result v34_data_carrier_init(
 	initialized.profile = *profile;
 	initialized.geometry = *geometry;
 	initialized.normalizer = *normalizer;
-	initialized.next_symbol = V34_SYMBOLS_PER_MAPPING_FRAME;
 	if (v34_data_carrier_channel(profile, sample_rate, &channel) !=
 	    V34_DATA_CARRIER_OK)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
@@ -184,83 +158,31 @@ enum v34_data_carrier_result v34_data_carrier_init(
 	*carrier = initialized;
 	return V34_DATA_CARRIER_OK;
 }
-
-static enum v34_data_carrier_result normalization_result(
-	enum v34_symbol_power_result result)
-{
-	switch (result) {
-	case V34_SYMBOL_POWER_OK:
-		return V34_DATA_CARRIER_OK;
-	case V34_SYMBOL_POWER_OUT_OF_RANGE:
-		return V34_DATA_CARRIER_OUT_OF_RANGE;
-	case V34_SYMBOL_POWER_NUMERIC_FAILURE:
-		return V34_DATA_CARRIER_NUMERIC_FAILURE;
-	case V34_SYMBOL_POWER_INVALID_ARGUMENT:
-		break;
-	}
-	return V34_DATA_CARRIER_INVALID_ARGUMENT;
-}
-
-enum v34_data_carrier_result
-v34_data_carrier_load_mapping_frame(
-	struct v34_data_carrier *carrier,
-	const struct v34_transmitted_mapping_frame *frame)
-{
-	struct qam_point
-		normalized[V34_SYMBOLS_PER_MAPPING_FRAME];
-
-	if (!v34_data_carrier_is_valid(carrier) || frame == NULL)
-		return V34_DATA_CARRIER_INVALID_ARGUMENT;
-	if (!v34_data_carrier_needs_mapping_frame(carrier))
-		return V34_DATA_CARRIER_MAPPING_FRAME_PENDING;
-	for (size_t index = 0;
-	     index < V34_SYMBOLS_PER_MAPPING_FRAME; ++index) {
-		enum v34_data_carrier_result result =
-			normalization_result(v34_normalize_power(
-				&carrier->normalizer, &frame->projected_symbol[index],
-				&normalized[index]));
-
-		if (result != V34_DATA_CARRIER_OK)
-			return result;
-	}
-	for (size_t index = 0;
-	     index < V34_SYMBOLS_PER_MAPPING_FRAME; ++index)
-		carrier->normalized_symbol[index] = normalized[index];
-	carrier->next_symbol = 0;
-	return V34_DATA_CARRIER_OK;
-}
-
 enum v34_data_carrier_result v34_data_carrier_sample(
-	struct v34_data_carrier *carrier, double *sample,
+	struct v34_data_carrier *carrier,
+	const struct qam_point *point, double *sample,
 	bool *symbol_accepted)
 {
 	static const struct qam_point ZERO = { 0 };
 	struct v34_data_carrier next;
-	const struct qam_point *point;
 	double generated;
+	bool accepting;
 	bool accepted;
 
 	if (!v34_data_carrier_is_valid(carrier) || sample == NULL ||
 	    symbol_accepted == NULL)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
-	if (qam_modulator_can_accept_symbol(&carrier->modulator) &&
-	    v34_data_carrier_needs_mapping_frame(carrier))
-		return V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED;
+	accepting = qam_modulator_can_accept_symbol(&carrier->modulator);
+	if ((point != NULL) != accepting)
+		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	next = *carrier;
-	point = next.next_symbol < V34_SYMBOLS_PER_MAPPING_FRAME ?
-		&next.normalized_symbol[next.next_symbol] :
-		&ZERO;
 	if (qam_modulator_sample_f64(
-		    &next.modulator, point, &generated, &accepted) !=
+		    &next.modulator, point != NULL ? point : &ZERO,
+		    &generated, &accepted) !=
 	    QAM_OK)
-		return V34_DATA_CARRIER_NUMERIC_FAILURE;
-	if (accepted) {
-		if (next.next_symbol >=
-		    V34_SYMBOLS_PER_MAPPING_FRAME)
-			return V34_DATA_CARRIER_NUMERIC_FAILURE;
-		next.next_symbol++;
-	}
-	if (!isfinite(generated) ||
+		return point != NULL ? V34_DATA_CARRIER_INVALID_ARGUMENT :
+				       V34_DATA_CARRIER_NUMERIC_FAILURE;
+	if (accepted != accepting || !isfinite(generated) ||
 	    !v34_data_carrier_is_valid(&next))
 		return V34_DATA_CARRIER_NUMERIC_FAILURE;
 	*carrier = next;
@@ -275,10 +197,6 @@ const char *v34_data_carrier_result_name(
 	switch (result) {
 	case V34_DATA_CARRIER_OK:
 		return "ok";
-	case V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED:
-		return "mapping frame required";
-	case V34_DATA_CARRIER_MAPPING_FRAME_PENDING:
-		return "mapping frame pending";
 	case V34_DATA_CARRIER_INVALID_ARGUMENT:
 		return "invalid argument";
 	case V34_DATA_CARRIER_OUT_OF_RANGE:

@@ -16,10 +16,6 @@ static enum v34_data_line_transmitter_result carrier_result(
 	switch (result) {
 	case V34_DATA_CARRIER_OK:
 		return V34_DATA_LINE_TRANSMITTER_OK;
-	case V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED:
-		return V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED;
-	case V34_DATA_CARRIER_MAPPING_FRAME_PENDING:
-		return V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING;
 	case V34_DATA_CARRIER_OUT_OF_RANGE:
 		return V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE;
 	case V34_DATA_CARRIER_NUMERIC_FAILURE:
@@ -172,28 +168,18 @@ v34_data_line_transmitter_init(
 	return V34_DATA_LINE_TRANSMITTER_OK;
 }
 
-bool v34_data_line_transmitter_needs_mapping_frame(
+bool v34_data_line_transmitter_needs_point(
 	const struct v34_data_line_transmitter *transmitter)
 {
 	return v34_data_line_transmitter_is_valid(transmitter) &&
-	       v34_data_carrier_needs_mapping_frame(
+	       v34_data_carrier_needs_point(
 		       &transmitter->carrier);
-}
-
-enum v34_data_line_transmitter_result
-v34_data_line_transmitter_load_mapping_frame(
-	struct v34_data_line_transmitter *transmitter,
-	const struct v34_transmitted_mapping_frame *frame)
-{
-	if (!v34_data_line_transmitter_is_valid(transmitter))
-		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
-	return carrier_result(v34_data_carrier_load_mapping_frame(
-		&transmitter->carrier, frame));
 }
 
 enum v34_data_line_transmitter_result
 v34_data_line_transmitter_sample(
 	struct v34_data_line_transmitter *transmitter,
+	const struct qam_point *point,
 	int16_t *sample, bool *symbol_accepted)
 {
 	struct v34_data_line_transmitter next;
@@ -209,7 +195,7 @@ v34_data_line_transmitter_sample(
 		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
 	next = *transmitter;
 	result = carrier_result(v34_data_carrier_sample(
-		&next.carrier, &carrier_sample, &accepted));
+		&next.carrier, point, &carrier_sample, &accepted));
 	if (result != V34_DATA_LINE_TRANSMITTER_OK)
 		return result;
 	if (v34_preemphasis_sample(
@@ -242,10 +228,6 @@ const char *v34_data_line_transmitter_result_name(
 	switch (result) {
 	case V34_DATA_LINE_TRANSMITTER_OK:
 		return "ok";
-	case V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_REQUIRED:
-		return "mapping frame required";
-	case V34_DATA_LINE_TRANSMITTER_MAPPING_FRAME_PENDING:
-		return "mapping frame pending";
 	case V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT:
 		return "invalid argument";
 	case V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE:

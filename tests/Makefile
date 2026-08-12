@@ -856,6 +856,7 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_nonlinear.o \
 	$(BUILD_DIR)/v34_symbol_power.o \
 	$(BUILD_DIR)/v34_mapping_frame_transmitter.o \
+	$(BUILD_DIR)/v34_data_points.o \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
@@ -882,6 +883,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_nonlinear.o \
 	$(BUILD_DIR)/v34_symbol_power.o \
 	$(BUILD_DIR)/v34_mapping_frame_transmitter.o \
+	$(BUILD_DIR)/v34_data_points.o \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \

@@ -94,22 +94,12 @@ static bool mapping_frames_are_equal(
 	       left->completes_data_frame == right->completes_data_frame;
 }
 
-static bool prepare_model_schedule(
-	struct v34_frame_schedule *schedule)
-{
-	return !v34_frame_schedule_is_complete(schedule) ||
-	       v34_frame_schedule_advance_data_frame(schedule) ==
-		       V34_FRAME_SCHEDULE_OK;
-}
-
 static bool test_streaming_composition(void)
 {
 	struct transmitter_fixture fixture;
 	struct v34_data_transmitter transmitter;
 	struct v34_data_transmitter waiting;
-	struct v34_frame_schedule model_schedule;
-	struct v34_scrambler model_scrambler;
-	struct v34_4d_encoder model_encoder;
+	struct v34_data_points model_points;
 	struct v34_data_line_transmitter model_line;
 	size_t mapping_frames;
 	size_t samples = 0;
@@ -125,9 +115,7 @@ static bool test_streaming_composition(void)
 	      v34_data_transmitter_needs_mapping_frame(
 		      &transmitter),
 	      "streaming transmitter fixture did not initialize");
-	model_schedule = fixture.schedule;
-	model_scrambler = fixture.scrambler;
-	model_encoder = fixture.encoder;
+	model_points = transmitter.points;
 	model_line = transmitter.line;
 	waiting = transmitter;
 	CHECK(v34_data_transmitter_sample(
@@ -141,20 +129,15 @@ static bool test_streaming_composition(void)
 		1u;
 	for (size_t frame_index = 0; frame_index < mapping_frames;
 	     ++frame_index) {
-		struct v34_frame_schedule preview_schedule;
 		struct v34_mapping_frame expected_request;
 		struct v34_mapping_frame actual_request;
-		struct v34_transmitted_mapping_frame model_frame;
 		uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 		uint8_t auxiliary_bit = (uint8_t)(frame_index & 1u);
 		const uint8_t *auxiliary_pointer;
 
-		CHECK(prepare_model_schedule(&model_schedule),
-		      "model schedule did not advance at frame %zu", frame_index);
-		preview_schedule = model_schedule;
-		CHECK(v34_frame_schedule_next(
-			      &preview_schedule, &expected_request) ==
-			      V34_FRAME_SCHEDULE_OK &&
+		CHECK(v34_data_points_preview_mapping_frame(
+			      &model_points, &expected_request) ==
+			      V34_DATA_POINTS_OK &&
 		      v34_data_transmitter_preview_mapping_frame(
 			      &transmitter, &actual_request) ==
 			      V34_DATA_TRANSMITTER_OK &&
@@ -166,27 +149,16 @@ static bool test_streaming_composition(void)
 			UINT32_C(0x71073ebd) ^ (uint32_t)frame_index);
 		auxiliary_pointer = expected_request.carries_auxiliary_bit ?
 			&auxiliary_bit : NULL;
-		CHECK(v34_transmit_mapping_frame(
-			      &model_schedule, &model_scrambler, &model_encoder,
-			      primary_bits, expected_request.primary_bits,
-			      auxiliary_pointer,
-			      fixture.normalizer.nonlinear_parameter,
-			      fixture.normalizer.precoded_mean_squared_magnitude,
-			      &model_frame) ==
-			      V34_MAPPING_FRAME_TRANSMITTER_OK &&
-		      v34_data_line_transmitter_load_mapping_frame(
-			      &model_line, &model_frame) ==
-			      V34_DATA_LINE_TRANSMITTER_OK &&
+		CHECK(v34_data_points_queue_mapping_frame(
+			      &model_points, primary_bits,
+			      expected_request.primary_bits,
+			      auxiliary_pointer) == V34_DATA_POINTS_OK &&
 		      v34_data_transmitter_queue_mapping_frame(
 			      &transmitter, primary_bits,
 			      expected_request.primary_bits, auxiliary_pointer) ==
 			      V34_DATA_TRANSMITTER_OK &&
-		      memcmp(&transmitter.schedule, &model_schedule,
-			     sizeof(model_schedule)) == 0 &&
-		      memcmp(&transmitter.scrambler, &model_scrambler,
-			     sizeof(model_scrambler)) == 0 &&
-		      memcmp(&transmitter.mapping_encoder, &model_encoder,
-			     sizeof(model_encoder)) == 0 &&
+		      memcmp(&transmitter.points, &model_points,
+			     sizeof(model_points)) == 0 &&
 		      memcmp(&transmitter.line, &model_line,
 			     sizeof(model_line)) == 0,
 		      "mapping composition diverged at frame %zu", frame_index);
@@ -209,18 +181,27 @@ static bool test_streaming_composition(void)
 			      memcmp(&transmitter, &queued, sizeof(transmitter)) == 0,
 			      "pending frame was replaced");
 		}
-		while (!v34_data_line_transmitter_needs_mapping_frame(
-			&model_line)) {
+		while (!v34_data_points_needs_mapping_frame(&model_points)) {
+			struct qam_point point;
+			const struct qam_point *point_pointer = NULL;
 			int16_t expected_sample;
 			int16_t actual_sample;
 			bool expected_accepted;
 			bool actual_accepted;
 
+			if (v34_data_line_transmitter_needs_point(&model_line)) {
+				CHECK(v34_data_points_next(
+					      &model_points, &point) ==
+					      V34_DATA_POINTS_OK,
+				      "model point stream failed after sample %zu",
+				      samples);
+				point_pointer = &point;
+			}
 			CHECK(samples < 1024u &&
 			      !v34_data_transmitter_needs_mapping_frame(
 				      &transmitter) &&
 			      v34_data_line_transmitter_sample(
-				      &model_line, &expected_sample,
+				      &model_line, point_pointer, &expected_sample,
 				      &expected_accepted) ==
 				      V34_DATA_LINE_TRANSMITTER_OK &&
 			      v34_data_transmitter_sample(
@@ -239,10 +220,10 @@ static bool test_streaming_composition(void)
 			      &transmitter),
 		      "frame %zu did not return backpressure", frame_index);
 	}
-	CHECK(model_schedule.data_frame_in_superframe == 0 &&
-	      model_schedule.next_mapping_frame == 1 &&
-	      transmitter.schedule.data_frame_in_superframe == 0 &&
-	      transmitter.schedule.next_mapping_frame == 1 &&
+	CHECK(model_points.schedule.data_frame_in_superframe == 0 &&
+	      model_points.schedule.next_mapping_frame == 1 &&
+	      transmitter.points.schedule.data_frame_in_superframe == 0 &&
+	      transmitter.points.schedule.next_mapping_frame == 1 &&
 	      samples > mapping_frames * V34_SYMBOLS_PER_MAPPING_FRAME &&
 	      nonzero_seen,
 	      "stream did not cross the superframe boundary");
@@ -353,8 +334,8 @@ static bool test_transactional_validation(void)
 	      sample == 1234 && accepted,
 	      "invalid streaming operation changed state or output");
 
-	transmitter.schedule.next_mapping_frame =
-		transmitter.schedule.geometry.mapping_frames_per_data_frame;
+	transmitter.points.schedule.next_mapping_frame =
+		transmitter.points.schedule.geometry.mapping_frames_per_data_frame;
 	CHECK(v34_data_transmitter_is_valid(&transmitter),
 	      "completed schedule was not a valid streaming boundary");
 	before = transmitter;
@@ -385,8 +366,8 @@ static bool test_transactional_validation(void)
 	CHECK(v34_data_transmitter_queue_mapping_frame(
 		      &transmitter, primary_bits, request.primary_bits,
 		      auxiliary_pointer) == V34_DATA_TRANSMITTER_OK &&
-	      transmitter.schedule.data_frame_in_superframe == 0 &&
-	      transmitter.schedule.next_mapping_frame == 1,
+	      transmitter.points.schedule.data_frame_in_superframe == 0 &&
+	      transmitter.points.schedule.next_mapping_frame == 1,
 	      "valid frame did not commit superframe rollover");
 
 	CHECK(v34_frame_geometry_init(
@@ -407,15 +388,15 @@ static bool test_transactional_validation(void)
 		      V34_FRAMING_OK,
 	      "mismatched valid owners did not initialize");
 	corrupt = transmitter;
-	corrupt.schedule = other_schedule;
+	corrupt.points.schedule = other_schedule;
 	CHECK(!v34_data_transmitter_is_valid(&corrupt),
 	      "stream accepted a different frame geometry");
 	corrupt = transmitter;
-	corrupt.mapping_encoder = expanded_encoder;
+	corrupt.points.encoder = expanded_encoder;
 	CHECK(!v34_data_transmitter_is_valid(&corrupt),
 	      "stream accepted different mapping parameters");
 	corrupt = transmitter;
-	corrupt.scrambler = other_scrambler;
+	corrupt.points.scrambler = other_scrambler;
 	before = corrupt;
 	CHECK(!v34_data_transmitter_is_valid(&corrupt) &&
 	      v34_data_transmitter_sample(

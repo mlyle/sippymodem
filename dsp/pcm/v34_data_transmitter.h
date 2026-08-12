@@ -4,7 +4,7 @@
 #define V34_DATA_TRANSMITTER_H
 
 #include "v34_data_line_transmitter.h"
-#include "v34_mapping_frame_transmitter.h"
+#include "v34_data_points.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -21,9 +21,7 @@ enum v34_data_transmitter_result {
 };
 
 struct v34_data_transmitter {
-	struct v34_frame_schedule schedule;
-	struct v34_scrambler scrambler;
-	struct v34_4d_encoder mapping_encoder;
+	struct v34_data_points points;
 	struct v34_data_line_transmitter line;
 };
 

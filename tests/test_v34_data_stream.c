@@ -225,7 +225,7 @@ static bool test_b1_and_host_handoff(void)
 
 			if (model_b1 &&
 			    v34_frame_schedule_is_complete(
-				    &model.schedule))
+				    &model.points.schedule))
 				model_b1 = false;
 			CHECK(v34_data_transmitter_preview_mapping_frame(
 				      &model, &request) ==
@@ -261,7 +261,7 @@ static bool test_b1_and_host_handoff(void)
 		      "stream diverged at sample %zu", samples - 1u);
 	}
 	CHECK(!v34_data_stream_is_transmitting_b1(&stream) &&
-	      stream.transmitter.schedule.data_frame_in_superframe == 0 &&
+	      stream.transmitter.points.schedule.data_frame_in_superframe == 0 &&
 	      samples > 0,
 	      "host source did not begin after B1");
 	return true;
@@ -276,7 +276,7 @@ static bool advance_to_b1_handoff(
 
 		if (stream->b1_active &&
 		    v34_frame_schedule_is_complete(
-			    &stream->transmitter.schedule) &&
+			    &stream->transmitter.points.schedule) &&
 		    v34_data_transmitter_needs_mapping_frame(
 			    &stream->transmitter))
 			return true;
@@ -523,7 +523,7 @@ static bool test_transactional_boundaries(void)
 	CHECK(initialize_transmitter(&transmitter),
 	      "validation transmitter did not initialize");
 	wrong_position = transmitter;
-	wrong_position.schedule.data_frame_in_superframe = 0;
+	wrong_position.points.schedule.data_frame_in_superframe = 0;
 	memset(&rejected, 0xa5, sizeof(rejected));
 	CHECK(v34_data_stream_init_b1(NULL, &transmitter) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&

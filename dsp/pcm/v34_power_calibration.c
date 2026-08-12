@@ -2,6 +2,7 @@
 
 #include "v34_power_calibration.h"
 
+#include "v34_data_points.h"
 #include "v34_preemphasis.h"
 
 #include <math.h>
@@ -262,13 +263,51 @@ static enum v34_power_calibration_result carrier_result(
 		return V34_POWER_CALIBRATION_OUT_OF_RANGE;
 	case V34_DATA_CARRIER_NUMERIC_FAILURE:
 		return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
-	case V34_DATA_CARRIER_MAPPING_FRAME_REQUIRED:
-	case V34_DATA_CARRIER_MAPPING_FRAME_PENDING:
-		return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
 	case V34_DATA_CARRIER_INVALID_ARGUMENT:
 		break;
 	}
 	return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
+}
+
+static enum v34_power_calibration_result data_points_result(
+	enum v34_data_points_result result)
+{
+	switch (result) {
+	case V34_DATA_POINTS_OK:
+		return V34_POWER_CALIBRATION_OK;
+	case V34_DATA_POINTS_OUT_OF_RANGE:
+		return V34_POWER_CALIBRATION_OUT_OF_RANGE;
+	case V34_DATA_POINTS_NUMERIC_FAILURE:
+	case V34_DATA_POINTS_MAPPING_FRAME_REQUIRED:
+	case V34_DATA_POINTS_MAPPING_FRAME_PENDING:
+		return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
+	case V34_DATA_POINTS_INVALID_ARGUMENT:
+		break;
+	}
+	return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
+}
+
+static enum v34_power_calibration_result queue_generated_points(
+	struct v34_data_points *points, uint32_t *random_state)
+{
+	struct v34_mapping_frame request;
+	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
+	uint8_t auxiliary_bit;
+	const uint8_t *auxiliary_pointer = NULL;
+	enum v34_power_calibration_result result;
+
+	result = data_points_result(v34_data_points_preview_mapping_frame(
+		points, &request));
+	if (result != V34_POWER_CALIBRATION_OK)
+		return result;
+	for (size_t bit = 0; bit < request.primary_bits; ++bit)
+		primary_bits[bit] = next_generated_bit(random_state);
+	if (request.carries_auxiliary_bit) {
+		auxiliary_bit = next_generated_bit(random_state);
+		auxiliary_pointer = &auxiliary_bit;
+	}
+	return data_points_result(v34_data_points_queue_mapping_frame(
+		points, primary_bits, request.primary_bits, auxiliary_pointer));
 }
 
 enum v34_power_calibration_result
@@ -281,9 +320,7 @@ v34_calibrate_line_power(
 	uint32_t sample_rate,
 	struct v34_line_power_measurement *measurement)
 {
-	struct v34_frame_schedule schedule;
-	struct v34_scrambler scrambler;
-	struct v34_4d_encoder encoder;
+	struct v34_data_points points;
 	struct v34_data_carrier carrier;
 	struct v34_preemphasis preemphasis;
 	struct v34_line_power_measurement measured = { 0 };
@@ -304,11 +341,13 @@ v34_calibrate_line_power(
 		    &initial_encoder->parameters, &normalizer->parameters) ||
 	    measurement == NULL)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
-	schedule = *initial_schedule;
-	scrambler = *initial_scrambler;
-	encoder = *initial_encoder;
+	if (v34_data_points_init(
+		    &points, initial_schedule, initial_scrambler,
+		    initial_encoder, normalizer, profile->local_role) !=
+	    V34_DATA_POINTS_OK)
+		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	if (v34_data_carrier_init(
-		    &carrier, profile, &schedule.geometry, normalizer,
+		    &carrier, profile, &points.schedule.geometry, normalizer,
 		    sample_rate) != V34_DATA_CARRIER_OK)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	preemphasis_result = v34_preemphasis_init(
@@ -320,8 +359,8 @@ v34_calibrate_line_power(
 	if (preemphasis_result != V34_PREEMPHASIS_OK)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	frames_per_superframe =
-		(uint32_t)schedule.geometry.data_frames_per_superframe *
-		schedule.geometry.mapping_frames_per_data_frame;
+		(uint32_t)points.schedule.geometry.data_frames_per_superframe *
+		points.schedule.geometry.mapping_frames_per_data_frame;
 	frame_count = V34_POWER_CALIBRATION_SUPERFRAMES *
 		frames_per_superframe;
 	warmup_frames = V34_LINE_POWER_WARMUP_SUPERFRAMES *
@@ -333,35 +372,35 @@ v34_calibrate_line_power(
 			 profile->symbol_rate_numerator +
 		 1u);
 	for (uint32_t frame = 0; frame < frame_count; ++frame) {
-		struct v34_transmitted_mapping_frame transmitted;
 		enum v34_power_calibration_result result;
 		uint64_t frame_samples = 0;
 
-		result = generate_mapping_frame(
-			&schedule, &scrambler, &encoder,
-			normalizer->nonlinear_parameter,
-			normalizer->precoded_mean_squared_magnitude,
-			&random_state, &transmitted);
+		result = queue_generated_points(&points, &random_state);
 		if (result != V34_POWER_CALIBRATION_OK)
 			return result;
-		result = carrier_result(
-			v34_data_carrier_load_mapping_frame(
-				&carrier, &transmitted));
-		if (result != V34_POWER_CALIBRATION_OK)
-			return result;
-		while (!v34_data_carrier_needs_mapping_frame(
-			       &carrier)) {
+		while (!v34_data_points_needs_mapping_frame(&points)) {
+			struct qam_point point;
+			const struct qam_point *point_pointer = NULL;
 			double carrier_sample;
 			double line_sample;
 			bool symbol_accepted;
 
 			if (++frame_samples > maximum_frame_samples)
 				return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
+			if (v34_data_carrier_needs_point(&carrier)) {
+				result = data_points_result(v34_data_points_next(
+					&points, &point));
+				if (result != V34_POWER_CALIBRATION_OK)
+					return result;
+				point_pointer = &point;
+			}
 			result = carrier_result(v34_data_carrier_sample(
-				&carrier, &carrier_sample, &symbol_accepted));
-			(void)symbol_accepted;
+				&carrier, point_pointer, &carrier_sample,
+				&symbol_accepted));
 			if (result != V34_POWER_CALIBRATION_OK)
 				return result;
+			if (symbol_accepted != (point_pointer != NULL))
+				return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
 			if (v34_preemphasis_sample(
 				    &preemphasis, carrier_sample, &line_sample) !=
 			    V34_PREEMPHASIS_OK)

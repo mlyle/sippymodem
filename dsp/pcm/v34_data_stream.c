@@ -142,8 +142,8 @@ bool v34_data_stream_is_valid(
 	       v34_data_transmitter_is_valid(
 		       &stream->transmitter) &&
 	       (!stream->b1_active ||
-		stream->transmitter.schedule.data_frame_in_superframe + 1u ==
-			stream->transmitter.schedule.geometry
+		stream->transmitter.points.schedule.data_frame_in_superframe + 1u ==
+			stream->transmitter.points.schedule.geometry
 				.data_frames_per_superframe);
 }
 
@@ -156,7 +156,7 @@ enum v34_data_stream_result v34_data_stream_init_b1(
 	if (stream == NULL ||
 	    !v34_data_transmitter_is_valid(transmitter) ||
 	    !v34_data_transmitter_needs_mapping_frame(transmitter) ||
-	    !schedule_is_at_b1_start(&transmitter->schedule))
+	    !schedule_is_at_b1_start(&transmitter->points.schedule))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
 	initialized = (struct v34_data_stream){
 		.transmitter = *transmitter,
@@ -235,7 +235,7 @@ enum v34_data_stream_result v34_data_stream_sample(
 
 	next = *stream;
 	if (next.b1_active && v34_frame_schedule_is_complete(
-				      &next.transmitter.schedule))
+				      &next.transmitter.points.schedule))
 		next.b1_active = false;
 	result = transmitter_result(
 		v34_data_transmitter_preview_mapping_frame(

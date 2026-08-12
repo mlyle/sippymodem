@@ -63,7 +63,7 @@ static struct v34_data_line_receiver_configuration receiver_configuration(
 {
 	struct v34_data_line_receiver_configuration receiver = {
 		.transmitting_profile = configuration->profile,
-		.geometry = stream->transmitter.schedule.geometry,
+		.geometry = stream->transmitter.points.schedule.geometry,
 		.normalizer = stream->transmitter.line.carrier.normalizer,
 		.equalizer_adaptation = 0.01,
 		.trellis_selection = configuration->trellis_selection,
@@ -232,14 +232,13 @@ static bool find_handoff_sample(
 			    QAM_OK)
 			return false;
 		if (accepted) {
-			size_t next = probe_stream.transmitter.line.carrier.next_symbol;
+			size_t next = probe_stream.transmitter.points.next_point;
 
 			if (next == 0 || next > V34_SYMBOLS_PER_MAPPING_FRAME ||
 			    transmitted_count == HANDOFF_POINT_CAPACITY)
 				return false;
 			transmitted[transmitted_count++] =
-				probe_stream.transmitter.line.carrier
-					.normalized_symbol[next - 1u];
+				probe_stream.transmitter.points.point[next - 1u];
 		}
 		if (ready) {
 			if (ready_count == HANDOFF_POINT_CAPACITY ||
