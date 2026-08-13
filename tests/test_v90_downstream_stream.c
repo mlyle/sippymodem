@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <v90_downstream_data_handoff.h>
 #include <v90_downstream_rx.h>
 #include <v90_downstream_tx.h>
 
@@ -20,16 +21,18 @@ static void add_ucode(
 }
 
 static bool make_mapping(
-	struct v90_pcm_mapping *mapping, enum g711_law law)
+	struct v90_pcm_mapping *mapping, enum g711_law law,
+	enum v90_cp_kind kind)
 {
 	struct v90_cp_parameters parameters = {
-		.kind = V90_CP_TRAINING,
+		.kind = kind,
 		.law = law,
 		.shaping_a1_q1_6 = 29,
 		.shaping_a2_q1_6 = -13,
 		.shaping_b1_q1_6 = 43,
 		.shaping_b2_q1_6 = -5,
-		.selected_rate_index = FRAME_BITS - 8,
+		.selected_rate_index = kind == V90_CP_TRAINING ?
+			FRAME_BITS - 8 : 1,
 		.sign_redundancy = 2,
 		.spectral_lookahead = 2,
 		.constellation_count = 1,
@@ -131,7 +134,7 @@ static bool run_stream(
 	bool ed_requested = false;
 	bool ed_received = false;
 
-	CHECK(make_mapping(&mapping, law) &&
+	CHECK(make_mapping(&mapping, law, V90_CP_TRAINING) &&
 	      mapping.frame_bits == FRAME_BITS &&
 	      v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK &&
@@ -241,6 +244,16 @@ static bool run_stream(
 	struct v90_downstream_tx completed = transmitter;
 	struct v90_downstream_symbol untouched;
 	struct v90_downstream_symbol saved;
+	struct v90_pcm_mapping data_mapping;
+	struct v90_pcm_mapping other_law_mapping;
+	struct v90_downstream_data_tx data_transmit;
+	struct v90_downstream_data_rx data_receive;
+	struct v90_downstream_data_tx expected_transmit;
+	struct v90_downstream_data_rx expected_receive;
+	struct v90_downstream_data_tx rejected_transmit;
+	struct v90_downstream_data_rx rejected_receive;
+	struct v90_downstream_tx incomplete_transmit = transmitter;
+	struct v90_downstream_rx incomplete_receive = receiver;
 
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;
@@ -251,6 +264,69 @@ static bool run_stream(
 	      memcmp(&transmitter, &completed, sizeof(transmitter)) == 0 &&
 	      memcmp(&untouched, &saved, sizeof(untouched)) == 0,
 	      "completed Ed transmitter changed state or output");
+	incomplete_transmit.complete = false;
+	incomplete_receive.stage = V90_DOWNSTREAM_RX_ED_SEARCH;
+	incomplete_receive.ed_frames--;
+	memset(&rejected_transmit, 0xa5, sizeof(rejected_transmit));
+	memset(&rejected_receive, 0x5a, sizeof(rejected_receive));
+	CHECK(make_mapping(&data_mapping, law, V90_CP_DATA),
+	      "post-Ed data mapping was invalid");
+	CHECK(make_mapping(
+		      &other_law_mapping,
+		      law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU,
+		      V90_CP_DATA),
+	      "post-Ed alternate-law mapping was invalid");
+	CHECK(v90_downstream_tx_is_valid(&incomplete_transmit) &&
+	      !v90_downstream_tx_is_complete(&incomplete_transmit),
+	      "post-Ed incomplete transmitter was invalid");
+	CHECK(v90_downstream_rx_is_valid(&incomplete_receive) &&
+	      !v90_downstream_rx_is_complete(&incomplete_receive),
+	      "post-Ed incomplete receiver was invalid");
+	CHECK(v90_downstream_data_tx_start_after_ed(
+		      &data_transmit, &transmitter, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_OK &&
+	      v90_downstream_data_rx_start_after_ed(
+		      &data_receive, &receiver, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_RX_OK &&
+	      v90_downstream_data_tx_init(
+		      &expected_transmit, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_OK &&
+	      v90_downstream_data_rx_init(
+		      &expected_receive, &data_mapping,
+		      receiver.stream.decoder.decision_plane) ==
+		      V90_DOWNSTREAM_DATA_RX_OK &&
+	      memcmp(&data_transmit, &expected_transmit,
+		     sizeof(data_transmit)) == 0 &&
+	      memcmp(&data_receive, &expected_receive,
+		     sizeof(data_receive)) == 0,
+	      "Ed did not start a fresh B1d epoch");
+	CHECK(v90_downstream_data_tx_start_after_ed(
+		      NULL, &transmitter, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v90_downstream_data_tx_start_after_ed(
+		      &rejected_transmit, &incomplete_transmit,
+		      &data_mapping) == V90_DOWNSTREAM_DATA_TX_INVALID_STATE &&
+	      v90_downstream_data_tx_start_after_ed(
+		      &rejected_transmit, &transmitter,
+		      &other_law_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_INVALID_PARAMETERS &&
+	      v90_downstream_data_rx_start_after_ed(
+		      NULL, &receiver, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v90_downstream_data_rx_start_after_ed(
+		      &rejected_receive, &incomplete_receive,
+		      &data_mapping) == V90_DOWNSTREAM_DATA_RX_INVALID_STATE &&
+	      v90_downstream_data_rx_start_after_ed(
+		      &rejected_receive, &receiver,
+		      &other_law_mapping) ==
+		      V90_DOWNSTREAM_DATA_RX_INVALID_PARAMETERS,
+	      "post-Ed handoff accepted an invalid boundary");
+	for (size_t byte = 0; byte < sizeof(rejected_transmit); ++byte)
+		CHECK(((const uint8_t *)&rejected_transmit)[byte] == 0xa5,
+		      "rejected transmit handoff changed byte %zu", byte);
+	for (size_t byte = 0; byte < sizeof(rejected_receive); ++byte)
+		CHECK(((const uint8_t *)&rejected_receive)[byte] == 0x5a,
+		      "rejected receive handoff changed byte %zu", byte);
 	return true;
 }
 
@@ -272,7 +348,8 @@ static bool test_contracts(void)
 	struct v90_downstream_tx transmitter;
 	struct v90_downstream_tx saved;
 
-	CHECK(make_mapping(&mapping, G711_LAW_PCMU) &&
+	CHECK(make_mapping(
+		      &mapping, G711_LAW_PCMU, V90_CP_TRAINING) &&
 	      v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK,
 	      "contract fixture did not initialize");
@@ -365,7 +442,8 @@ static bool test_boundary_request(void)
 	struct v90_downstream_symbol symbol;
 	size_t symbols = 0;
 
-	CHECK(make_mapping(&mapping, G711_LAW_PCMU) &&
+	CHECK(make_mapping(
+		      &mapping, G711_LAW_PCMU, V90_CP_TRAINING) &&
 	      v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK &&
 	      v90_downstream_tx_start_mp(&transmitter, &record) ==

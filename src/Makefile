@@ -167,6 +167,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_pcm_frame_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_tx.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_handoff.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_sign_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_sign_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_spectral_shaper.c \
