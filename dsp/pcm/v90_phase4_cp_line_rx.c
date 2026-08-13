@@ -94,8 +94,14 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	if (v90_phase4_cp_rx_init(
 		    &initialized.symbols,
 		    initialized.transmitting_profile.local_role,
-		    constellation) != V90_CP_OK ||
-	    !v90_phase4_cp_line_rx_is_valid(&initialized))
+		    constellation) != V90_CP_OK)
+		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
+	/* The equalizer intentionally preserves the fixed quadrant ambiguity
+	 * measured from S/S-bar. Seed the differential CP decoder with that
+	 * received phase so the first CPt dibit is independent of line delay. */
+	initialized.symbols.previous_clockwise_quarter_turns =
+		handoff->phase3.marker.clockwise_quarter_turn_offset;
+	if (!v90_phase4_cp_line_rx_is_valid(&initialized))
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	*rx = initialized;
 	return V90_PHASE4_CP_LINE_RX_OK;

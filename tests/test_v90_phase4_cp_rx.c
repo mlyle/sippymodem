@@ -84,6 +84,7 @@ static bool transfer_record(
 	struct v90_phase4_cp_tx *tx,
 	struct v90_phase4_cp_rx *rx,
 	bool receive_points, size_t corrupt_symbol,
+	uint8_t rotation_offset,
 	struct v90_cp_receive_event *event)
 {
 	struct v90_cp_receive_event captured = { 0 };
@@ -107,7 +108,12 @@ static bool transfer_record(
 			else
 				rotation ^= 1u;
 		}
+		rotation = (uint8_t)((rotation + rotation_offset) & 3u);
 		if (receive_points) {
+			CHECK(v34_training_constellation_point(
+				      tx->constellation, quarter, rotation, &point) ==
+				      V34_CONSTELLATION_OK,
+			      "CP point rotation failed at symbol %zu", symbol);
 			point.in_phase += symbol % 2u == 0 ? 0.02 : -0.02;
 			point.quadrature += symbol % 3u == 0 ? -0.015 : 0.015;
 			CHECK(v90_phase4_cp_rx_receive_point(
@@ -159,7 +165,7 @@ static bool test_first_symbol_and_continuous_records(void)
 				      &rx, roles[role], constellations[constellation]) ==
 				      V90_CP_OK &&
 			      transfer_record(
-				      &tx, &rx, true, SIZE_MAX, &event) &&
+				      &tx, &rx, true, SIZE_MAX, 0, &event) &&
 			      event.type == V90_CP_RECEIVE_FRAME &&
 			      event.frame_result == V90_CP_OK &&
 			      event.observed_bits == V90_CP_MIN_FRAME_BITS &&
@@ -169,7 +175,7 @@ static bool test_first_symbol_and_continuous_records(void)
 			CHECK(v90_phase4_cp_tx_start_next_record(
 				      &tx, &data) == V90_PHASE4_CP_TX_OK &&
 			      transfer_record(
-				      &tx, &rx, false, SIZE_MAX, &event) &&
+				      &tx, &rx, false, SIZE_MAX, 0, &event) &&
 			      event.type == V90_CP_RECEIVE_FRAME &&
 			      event.frame_result == V90_CP_OK &&
 			      event.observed_bits == V90_CP_MAX_FRAME_BITS &&
@@ -211,7 +217,7 @@ static bool test_corruption_and_reacquisition(void)
 			      &rx, V34_CALLING_STATION,
 			      constellations[constellation]) == V90_CP_OK &&
 		      transfer_record(
-			      &tx, &rx, false, corrupt_symbol, &event) &&
+			      &tx, &rx, false, corrupt_symbol, 0, &event) &&
 		      event.type == V90_CP_RECEIVE_REJECTED &&
 		      event.frame_result == V90_CP_CRC_MISMATCH,
 		      "corrupt CP was not rejected for constellation %zu",
@@ -219,12 +225,50 @@ static bool test_corruption_and_reacquisition(void)
 		CHECK(v90_phase4_cp_tx_start_next_record(
 			      &tx, &training) == V90_PHASE4_CP_TX_OK &&
 		      transfer_record(
-			      &tx, &rx, false, SIZE_MAX, &event) &&
+			      &tx, &rx, false, SIZE_MAX, 0, &event) &&
 		      event.type == V90_CP_RECEIVE_FRAME &&
 		      event.frame_result == V90_CP_OK &&
 		      parameters_are_equal(&event.parameters, &training),
 		      "CP receiver did not reacquire constellation %zu",
 		      constellation);
+	}
+	return true;
+}
+
+static bool test_fixed_phase_ambiguity(void)
+{
+	static const enum v34_constellation_size constellations[] = {
+		V34_CONSTELLATION_4_POINT,
+		V34_CONSTELLATION_16_POINT,
+	};
+	struct v90_cp_parameters training = parameters(
+		V90_CP_TRAINING, 1, false, 0);
+
+	for (size_t constellation = 0;
+	     constellation < ARRAY_LENGTH(constellations); ++constellation) {
+		for (uint8_t offset = 0; offset < 4u; ++offset) {
+			struct v90_phase4_cp_tx tx;
+			struct v90_phase4_cp_rx rx;
+			struct v90_cp_receive_event event;
+
+			CHECK(v90_phase4_cp_tx_init(
+				      &tx, V34_CALLING_STATION,
+				      constellations[constellation], &training) ==
+				      V90_PHASE4_CP_TX_OK &&
+			      v90_phase4_cp_rx_init(
+				      &rx, V34_CALLING_STATION,
+				      constellations[constellation]) == V90_CP_OK,
+			      "CP phase-offset fixture %zu/%u did not initialize",
+			      constellation, offset);
+			rx.previous_clockwise_quarter_turns = offset;
+			CHECK(transfer_record(
+				      &tx, &rx, false, SIZE_MAX, offset, &event) &&
+			      event.type == V90_CP_RECEIVE_FRAME &&
+			      event.frame_result == V90_CP_OK &&
+			      parameters_are_equal(&event.parameters, &training),
+			      "CP fixed phase offset %zu/%u changed the record",
+			      constellation, offset);
+		}
 	}
 	return true;
 }
@@ -295,6 +339,7 @@ int main(void)
 		  test_first_symbol_and_continuous_records },
 		{ "corruption and reacquisition",
 		  test_corruption_and_reacquisition },
+		{ "fixed phase ambiguity", test_fixed_phase_ambiguity },
 		{ "transactional contracts", test_transactional_contracts },
 	};
 	unsigned int failures = 0;

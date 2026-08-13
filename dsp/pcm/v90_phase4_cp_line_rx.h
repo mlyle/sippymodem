@@ -22,7 +22,8 @@ enum v90_phase4_cp_line_rx_result {
 
 /* Continue the digital modem's locked carrier and trained equalizer after
  * S-bar. The inherited equalizer delay owns the first CPt points, so the next
- * carrier point produces the first undelivered CP decision without replay. */
+ * carrier point produces the first undelivered CP decision without replay.
+ * The S/S-bar phase ambiguity seeds the first differential CP decision. */
 struct v90_phase4_cp_line_rx {
 	struct qam_demodulator demodulator;
 	struct qam_equalizer equalizer;

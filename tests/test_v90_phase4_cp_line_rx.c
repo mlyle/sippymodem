@@ -187,6 +187,7 @@ static bool test_transactional_contracts(void)
 		      G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
 		      &training, &tx, &handoff),
 	      "CP validation fixture did not reach CPt");
+	handoff.phase3.marker.clockwise_quarter_turn_offset = 3;
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_saved = untouched;
 	CHECK(v90_phase4_cp_line_rx_init(
@@ -204,7 +205,9 @@ static bool test_transactional_contracts(void)
 		     sizeof(untouched)) == 0 &&
 	      v90_phase4_cp_line_rx_init(
 		      &rx, &handoff, V34_CONSTELLATION_4_POINT, 0.05) ==
-		      V90_PHASE4_CP_LINE_RX_OK,
+		      V90_PHASE4_CP_LINE_RX_OK &&
+	      rx.symbols.previous_clockwise_quarter_turns ==
+		      handoff.phase3.marker.clockwise_quarter_turn_offset,
 	      "CP line initialization contract changed");
 	saved = rx;
 	CHECK(v90_phase4_cp_line_rx_sample(NULL, 0, &event) ==
