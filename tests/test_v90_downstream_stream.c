@@ -128,6 +128,8 @@ static bool run_stream(
 	size_t prime_records = 0;
 	size_t symbols = 0;
 	bool prime_requested = false;
+	bool ed_requested = false;
+	bool ed_received = false;
 
 	CHECK(make_mapping(&mapping, law) &&
 	      mapping.frame_bits == FRAME_BITS &&
@@ -149,13 +151,18 @@ static bool run_stream(
 		prime_requested = true;
 	}
 
-	while (prime_records < 2 && symbols < MAXIMUM_STREAM_SYMBOLS) {
+	while (!v90_downstream_tx_is_complete(&transmitter) &&
+	       symbols < MAXIMUM_STREAM_SYMBOLS) {
 		struct v90_downstream_symbol symbol;
 		struct v90_downstream_event event;
+		enum v90_downstream_tx_result transmit_result;
 		enum v90_downstream_rx_result result;
 
-		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
-			      V90_DOWNSTREAM_TX_OK,
+		transmit_result =
+			v90_downstream_tx_next(&transmitter, &symbol);
+		if (transmit_result == V90_DOWNSTREAM_TX_COMPLETE)
+			break;
+		CHECK(transmit_result == V90_DOWNSTREAM_TX_OK,
 		      "stream transmitter stopped at symbol %zu", symbols);
 		symbols++;
 		if (!prime_requested &&
@@ -186,6 +193,15 @@ static bool run_stream(
 			mp_records++;
 			continue;
 		}
+		if (result == V90_DOWNSTREAM_RX_ED) {
+			CHECK(ed_requested && !ed_received &&
+			      event.ed.bit_count ==
+				      V90_PHASE4_ED_FRAMES * FRAME_BITS &&
+			      event.ed.bit_errors == 0,
+			      "stream Ed event changed");
+			ed_received = true;
+			continue;
+		}
 		CHECK(result == V90_DOWNSTREAM_RX_MP_PRIME,
 		      "stream receiver returned %s",
 		      v90_downstream_rx_result_name(result));
@@ -196,16 +212,45 @@ static bool run_stream(
 		      records_match(&event.mp.record, &expected),
 		      "MP prime record %zu changed", prime_records);
 		prime_records++;
+		if (prime_records == 2) {
+			CHECK(v90_downstream_rx_expect_ed(&receiver) ==
+				      V90_DOWNSTREAM_RX_OK &&
+			      v90_downstream_rx_expect_ed(&receiver) ==
+				      V90_DOWNSTREAM_RX_OK &&
+			      v90_downstream_tx_request_ed(&transmitter) ==
+				      V90_DOWNSTREAM_TX_OK &&
+			      v90_downstream_tx_request_ed(&transmitter) ==
+				      V90_DOWNSTREAM_TX_OK,
+			      "Ed requests were not idempotent");
+			ed_requested = true;
+		}
 	}
 	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS && prime_requested &&
+	      ed_requested && ed_received &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
-	      mp_records == 1 && prime_records == 2 &&
-	      transmitter.stage == V90_DOWNSTREAM_TX_MP_PRIME &&
+	      mp_records == 1 && prime_records == 3 &&
+	      transmitter.stage == V90_DOWNSTREAM_TX_ED &&
+	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&
 	      transmitter.transmitted_symbols == symbols &&
 	      receiver.stream.training_bit_errors == 0 &&
+	      v90_downstream_tx_is_complete(&transmitter) &&
+	      v90_downstream_rx_is_complete(&receiver) &&
 	      v90_downstream_tx_is_valid(&transmitter) &&
 	      v90_downstream_rx_is_valid(&receiver),
-	      "continuous stream boundary or accounting changed");
+	      "continuous Ed boundary or accounting changed");
+	struct v90_downstream_tx completed = transmitter;
+	struct v90_downstream_symbol untouched;
+	struct v90_downstream_symbol saved;
+
+	memset(&untouched, 0xa5, sizeof(untouched));
+	saved = untouched;
+	CHECK(v90_downstream_tx_request_ed(&transmitter) ==
+		      V90_DOWNSTREAM_TX_COMPLETE &&
+	      v90_downstream_tx_next(&transmitter, &untouched) ==
+		      V90_DOWNSTREAM_TX_COMPLETE &&
+	      memcmp(&transmitter, &completed, sizeof(transmitter)) == 0 &&
+	      memcmp(&untouched, &saved, sizeof(untouched)) == 0,
+	      "completed Ed transmitter changed state or output");
 	return true;
 }
 
@@ -239,7 +284,11 @@ static bool test_contracts(void)
 		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT &&
 	      v90_downstream_tx_request_mp_prime(NULL) ==
 		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      v90_downstream_tx_request_ed(NULL) ==
+		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT &&
 	      v90_downstream_tx_request_mp_prime(&transmitter) ==
+		      V90_DOWNSTREAM_TX_INVALID_STATE &&
+	      v90_downstream_tx_request_ed(&transmitter) ==
 		      V90_DOWNSTREAM_TX_INVALID_STATE &&
 	      v90_downstream_tx_start_mp(&transmitter, &acknowledged) ==
 		      V90_DOWNSTREAM_TX_INVALID_PARAMETERS &&
@@ -255,6 +304,8 @@ static bool test_contracts(void)
 		      V90_DOWNSTREAM_TX_OK &&
 	      v90_downstream_tx_start_mp(&transmitter, &changed) ==
 		      V90_DOWNSTREAM_TX_INVALID_STATE &&
+	      v90_downstream_tx_request_ed(&transmitter) ==
+		      V90_DOWNSTREAM_TX_INVALID_STATE &&
 	      v90_downstream_tx_request_finish(&transmitter) ==
 		      V90_DOWNSTREAM_TX_INVALID_STATE &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
@@ -267,6 +318,14 @@ static bool test_contracts(void)
 		      V90_DOWNSTREAM_TX_OK &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "repeated MP prime request changed state");
+	CHECK(v90_downstream_tx_request_ed(&transmitter) ==
+		      V90_DOWNSTREAM_TX_OK,
+	      "early Ed request failed");
+	saved = transmitter;
+	CHECK(v90_downstream_tx_request_ed(&transmitter) ==
+		      V90_DOWNSTREAM_TX_OK &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
+	      "repeated Ed request changed state");
 
 	CHECK(v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK &&
@@ -288,6 +347,8 @@ static bool test_contracts(void)
 	saved = transmitter;
 	CHECK(!v90_downstream_tx_is_valid(&transmitter) &&
 	      v90_downstream_tx_request_mp_prime(&transmitter) ==
+		      V90_DOWNSTREAM_TX_INVALID_STATE &&
+	      v90_downstream_tx_request_ed(&transmitter) ==
 		      V90_DOWNSTREAM_TX_INVALID_STATE &&
 	      v90_downstream_tx_start_mp(&transmitter, &record) ==
 		      V90_DOWNSTREAM_TX_INVALID_STATE &&
@@ -327,6 +388,25 @@ static bool test_boundary_request(void)
 	      transmitter.mp_bit_index == 0 &&
 	      v90_downstream_tx_is_valid(&transmitter),
 	      "record-boundary request did not switch immediately");
+	while ((!transmitter.mp_prime_record_accepted ||
+		transmitter.mp_bit_index != 0) &&
+	       symbols < MAXIMUM_STREAM_SYMBOLS) {
+		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
+			      V90_DOWNSTREAM_TX_OK,
+		      "MP-prime boundary fixture stopped at symbol %zu",
+		      symbols);
+		symbols++;
+	}
+	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS &&
+	      transmitter.stage == V90_DOWNSTREAM_TX_MP_PRIME &&
+	      transmitter.mp_prime_record_accepted &&
+	      transmitter.mp_bit_index == 0 &&
+	      v90_downstream_tx_request_ed(&transmitter) ==
+		      V90_DOWNSTREAM_TX_OK &&
+	      transmitter.stage == V90_DOWNSTREAM_TX_ED &&
+	      transmitter.ed_frames == 0 &&
+	      v90_downstream_tx_is_valid(&transmitter),
+	      "record-boundary Ed request did not switch immediately");
 	return true;
 }
 

@@ -28,7 +28,7 @@ enum v90_phase4_analog_station_result {
  * Ri-bar. Authoritative G.711 characters use the transmit constellation
  * plane. A future analogue slicer must initialize a separate codec-plane
  * receiver at this same boundary. TRN2d starts a fresh coder epoch, which
- * continues unchanged through MP and MP-prime. */
+ * continues unchanged through MP, MP-prime, and Ed. */
 struct v90_phase4_analog_receive_handoff {
 	struct v90_downstream_rx receiver;
 };

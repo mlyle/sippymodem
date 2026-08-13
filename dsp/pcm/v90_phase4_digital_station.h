@@ -21,8 +21,8 @@ enum v90_phase4_digital_station_result {
 	V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE,
 };
 
-/* Ready-to-run TRN2d/MP owner with every coder history initialized to zero at
- * the exact boundary following the final Ri-bar character. */
+/* Ready-to-run TRN2d/MP/Ed owner with every coder history initialized to zero
+ * at the exact boundary following the final Ri-bar character. */
 struct v90_phase4_digital_transmit_handoff {
 	struct v90_downstream_tx transmitter;
 };

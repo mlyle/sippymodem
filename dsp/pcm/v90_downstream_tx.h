@@ -36,9 +36,10 @@ enum v90_downstream_tx_stage {
 	V90_DOWNSTREAM_TX_TRN2D,
 	V90_DOWNSTREAM_TX_MP,
 	V90_DOWNSTREAM_TX_MP_PRIME,
+	V90_DOWNSTREAM_TX_ED,
 };
 
-/* Own continuous TRN2d and MP transmission with zero-initialized GPC
+/* Own continuous TRN2d, MP, and Ed transmission with zero-initialized GPC
  * scrambling, PCM coding, and a bounded six-symbol output queue. Source
  * generation—and therefore stage—may lead network output by the negotiated
  * shaping look-ahead. */
@@ -54,8 +55,11 @@ struct v90_downstream_tx {
 	size_t mp_bit_index;
 	enum v90_downstream_tx_stage stage;
 	uint8_t queue_count;
+	uint8_t ed_frames;
 	bool mp_configured;
 	bool mp_prime_requested;
+	bool mp_prime_record_accepted;
+	bool ed_requested;
 	bool finish_requested;
 	bool complete;
 };
@@ -76,6 +80,13 @@ enum v90_downstream_tx_result v90_downstream_tx_start_mp(
 /* Request MP prime. A request during TRN2d preserves one complete MP record;
  * a request during MP takes effect at its next padded record boundary. */
 enum v90_downstream_tx_result v90_downstream_tx_request_mp_prime(
+	struct v90_downstream_tx *transmitter);
+
+/* Request Ed after MP prime has been selected. At least one complete MP-prime
+ * source record is retained; a mid-record request finishes that record. Ed
+ * then contributes exactly two zero-source frames to the continuous training
+ * coder before its delayed spectral output is drained. */
+enum v90_downstream_tx_result v90_downstream_tx_request_ed(
 	struct v90_downstream_tx *transmitter);
 
 /* End after every already accepted six-symbol frame has drained. The request

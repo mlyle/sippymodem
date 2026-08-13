@@ -8,7 +8,8 @@ static bool stage_is_valid(enum v90_downstream_tx_stage stage)
 {
 	return stage == V90_DOWNSTREAM_TX_TRN2D ||
 	       stage == V90_DOWNSTREAM_TX_MP ||
-	       stage == V90_DOWNSTREAM_TX_MP_PRIME;
+	       stage == V90_DOWNSTREAM_TX_MP_PRIME ||
+	       stage == V90_DOWNSTREAM_TX_ED;
 }
 
 static struct v90_mp_parameters *record_common(
@@ -66,6 +67,9 @@ static bool mp_state_is_valid(const struct v90_downstream_tx *transmitter)
 	if (!transmitter->mp_configured)
 		return transmitter->stage == V90_DOWNSTREAM_TX_TRN2D &&
 		       !transmitter->mp_prime_requested &&
+		       !transmitter->mp_prime_record_accepted &&
+		       !transmitter->ed_requested &&
+		       transmitter->ed_frames == 0 &&
 		       transmitter->mp_sequence_bits == 0 &&
 		       transmitter->mp_bit_index == 0 &&
 		       memcmp(&transmitter->mp_record, &empty_record,
@@ -74,7 +78,6 @@ static bool mp_state_is_valid(const struct v90_downstream_tx *transmitter)
 			      sizeof(empty_sequence)) == 0;
 	if (!v90_mp_record_is_valid(&transmitter->mp_record) ||
 	    const_record_common(&transmitter->mp_record)->acknowledges_cp ||
-	    transmitter->finish_requested || transmitter->complete ||
 	    transmitter->mp_sequence_bits == 0 ||
 	    transmitter->mp_bit_index >= transmitter->mp_sequence_bits ||
 	    transmitter->mp_bit_index %
@@ -88,9 +91,34 @@ static bool mp_state_is_valid(const struct v90_downstream_tx *transmitter)
 	     !transmitter->mp_prime_requested) ||
 	    (transmitter->stage == V90_DOWNSTREAM_TX_MP &&
 	     transmitter->mp_prime_requested &&
-	     transmitter->mp_bit_index == 0))
+	     transmitter->mp_bit_index == 0) ||
+	    (transmitter->mp_prime_record_accepted &&
+	     (!transmitter->mp_prime_requested ||
+	      (transmitter->stage != V90_DOWNSTREAM_TX_MP_PRIME &&
+	       transmitter->stage != V90_DOWNSTREAM_TX_ED))) ||
+	    (transmitter->ed_requested &&
+	     !transmitter->mp_prime_requested))
 		return false;
-	prime = transmitter->stage == V90_DOWNSTREAM_TX_MP_PRIME;
+	if (transmitter->stage == V90_DOWNSTREAM_TX_ED) {
+		if (!transmitter->ed_requested ||
+		    !transmitter->mp_prime_record_accepted ||
+		    transmitter->mp_bit_index != 0 ||
+		    transmitter->ed_frames > V90_PHASE4_ED_FRAMES ||
+		    transmitter->finish_requested !=
+			    (transmitter->ed_frames == V90_PHASE4_ED_FRAMES) ||
+		    (transmitter->complete &&
+		     !transmitter->finish_requested))
+			return false;
+	} else if (transmitter->ed_frames != 0 ||
+		   transmitter->finish_requested || transmitter->complete ||
+		   (transmitter->stage == V90_DOWNSTREAM_TX_MP_PRIME &&
+		    transmitter->ed_requested &&
+		    transmitter->mp_prime_record_accepted &&
+		    transmitter->mp_bit_index == 0)) {
+		return false;
+	}
+	prime = transmitter->stage == V90_DOWNSTREAM_TX_MP_PRIME ||
+		transmitter->stage == V90_DOWNSTREAM_TX_ED;
 	return encode_mp_sequence(
 		       &transmitter->mp_record,
 		       transmitter->encoder.mapping.frame_bits, prime,
@@ -337,6 +365,32 @@ enum v90_downstream_tx_result v90_downstream_tx_request_mp_prime(
 	return V90_DOWNSTREAM_TX_OK;
 }
 
+enum v90_downstream_tx_result v90_downstream_tx_request_ed(
+	struct v90_downstream_tx *transmitter)
+{
+	struct v90_downstream_tx next;
+
+	if (transmitter == NULL)
+		return V90_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	if (!v90_downstream_tx_is_valid(transmitter) ||
+	    !transmitter->mp_configured ||
+	    !transmitter->mp_prime_requested)
+		return V90_DOWNSTREAM_TX_INVALID_STATE;
+	if (transmitter->complete)
+		return V90_DOWNSTREAM_TX_COMPLETE;
+	if (transmitter->ed_requested)
+		return V90_DOWNSTREAM_TX_OK;
+	next = *transmitter;
+	next.ed_requested = true;
+	if (next.stage == V90_DOWNSTREAM_TX_MP_PRIME &&
+	    next.mp_prime_record_accepted && next.mp_bit_index == 0)
+		next.stage = V90_DOWNSTREAM_TX_ED;
+	if (!v90_downstream_tx_is_valid(&next))
+		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
+	*transmitter = next;
+	return V90_DOWNSTREAM_TX_OK;
+}
+
 enum v90_downstream_tx_result v90_downstream_tx_request_finish(
 	struct v90_downstream_tx *transmitter)
 {
@@ -423,12 +477,16 @@ static enum v90_downstream_tx_result generate_frame(
 		    V90_PHASE4_TRN2D_MINIMUM_FRAMES)
 		transmitter->stage = V90_DOWNSTREAM_TX_MP;
 	for (size_t bit = 0; bit < bit_count; ++bit) {
-		uint8_t source = transmitter->stage ==
-					 V90_DOWNSTREAM_TX_TRN2D ?
-					 1 :
-					 packed_bit(
-						 transmitter->mp_sequence,
-						 transmitter->mp_bit_index + bit);
+		uint8_t source;
+
+		if (transmitter->stage == V90_DOWNSTREAM_TX_TRN2D)
+			source = 1;
+		else if (transmitter->stage == V90_DOWNSTREAM_TX_ED)
+			source = 0;
+		else
+			source = packed_bit(
+				transmitter->mp_sequence,
+				transmitter->mp_bit_index + bit);
 
 		if (v34_scramble_group(
 			    &transmitter->scrambler, source, 1,
@@ -443,7 +501,8 @@ static enum v90_downstream_tx_result generate_frame(
 	    result != V90_PCM_FRAME_ENCODER_SYMBOLS_READY)
 		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 	transmitter->accepted_frames++;
-	if (transmitter->stage != V90_DOWNSTREAM_TX_TRN2D) {
+	if (transmitter->stage == V90_DOWNSTREAM_TX_MP ||
+	    transmitter->stage == V90_DOWNSTREAM_TX_MP_PRIME) {
 		transmitter->mp_bit_index += bit_count;
 		if (transmitter->mp_bit_index ==
 		    transmitter->mp_sequence_bits) {
@@ -459,8 +518,18 @@ static enum v90_downstream_tx_result generate_frame(
 					    transmitter->mp_sequence,
 					    &transmitter->mp_sequence_bits))
 					return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
+			} else if (transmitter->stage ==
+				   V90_DOWNSTREAM_TX_MP_PRIME) {
+				transmitter->mp_prime_record_accepted = true;
+				if (transmitter->ed_requested)
+					transmitter->stage =
+						V90_DOWNSTREAM_TX_ED;
 			}
 		}
+	} else if (transmitter->stage == V90_DOWNSTREAM_TX_ED) {
+		transmitter->ed_frames++;
+		if (transmitter->ed_frames == V90_PHASE4_ED_FRAMES)
+			transmitter->finish_requested = true;
 	}
 	if (result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
 	    !fill_queue(transmitter, &output))
@@ -528,13 +597,24 @@ enum v90_downstream_tx_result v90_downstream_tx_next(
 	} else if (next.queue_count == 0) {
 		for (size_t attempt = 0;
 		     attempt <= next.encoder.mapping.spectral_lookahead &&
-		     next.queue_count == 0; ++attempt) {
+		     next.queue_count == 0 && !next.finish_requested;
+		     ++attempt) {
 			result = generate_frame(&next);
 			if (result != V90_DOWNSTREAM_TX_OK)
 				break;
 		}
-		if (result == V90_DOWNSTREAM_TX_OK && next.queue_count == 0)
+		if (result == V90_DOWNSTREAM_TX_OK &&
+		    next.queue_count == 0 && next.finish_requested)
+			result = drain_encoder(&next);
+		else if (result == V90_DOWNSTREAM_TX_OK &&
+			 next.queue_count == 0)
 			result = V90_DOWNSTREAM_TX_INTERNAL_ERROR;
+	}
+	if (result == V90_DOWNSTREAM_TX_COMPLETE) {
+		if (!v90_downstream_tx_is_valid(&next))
+			return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
+		*transmitter = next;
+		return V90_DOWNSTREAM_TX_COMPLETE;
 	}
 	if (result != V90_DOWNSTREAM_TX_OK)
 		return result;
