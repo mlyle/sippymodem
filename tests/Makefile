@@ -1826,8 +1826,13 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase2_initial_probe.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/pcm_startup.o \
+	$(BUILD_DIR)/pcm_info1.o \
 	$(BUILD_DIR)/v90_info0.o \
+	$(BUILD_DIR)/v92_info0.o \
 	$(BUILD_DIR)/v90_info1.o \
+	$(BUILD_DIR)/v92_info1d.o \
+	$(BUILD_DIR)/v92_pcm_info1a.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
@@ -1846,6 +1851,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/phase2_info1_exchange.o \
 	$(BUILD_DIR)/v90_phase2_info1_exchange.o \
 	$(BUILD_DIR)/v90_phase2.o \
+	$(BUILD_DIR)/v90_phase2_info1_handoff.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
@@ -4072,6 +4078,10 @@ $(BUILD_DIR)/v90_phase2_info1_exchange.o: \
 
 $(BUILD_DIR)/v90_phase2.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase2_info1_handoff.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase2_info1_handoff.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_info1.o: \

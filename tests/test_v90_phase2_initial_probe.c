@@ -2,6 +2,7 @@
 
 #include <g711.h>
 #include <v90_phase2.h>
+#include <v90_phase2_info1_handoff.h>
 #include <v90_phase2_initial_probe.h>
 #include <v90_phase2_info1_exchange.h>
 #include <v90_phase2_probe_turnaround.h>
@@ -582,6 +583,8 @@ static bool check_phase2_controller(enum test_codec codec)
 	struct v90_info1a peer_info1a;
 	struct v34_phase2_probe_receiver_measurement untouched_measurement;
 	struct v34_phase2_probe_receiver_measurement untouched_before;
+	struct pcm_info1_selection untouched_selection;
+	struct pcm_info1_selection untouched_selection_before;
 	bool analog_initial = false;
 	bool digital_initial = false;
 	bool digital_measured_initial = false;
@@ -610,6 +613,19 @@ static bool check_phase2_controller(enum test_codec codec)
 		      &untouched_measurement, &untouched_before,
 		      sizeof(untouched_measurement)) == 0,
 	      "premature V.90 probe access mutated its destination");
+	memset(&untouched_selection, 0xa5, sizeof(untouched_selection));
+	untouched_selection_before = untouched_selection;
+	CHECK(v90_phase2_info1_handoff(
+		      &analog, &untouched_selection) ==
+		      PCM_INFO1_INVALID_RECORD &&
+	      memcmp(
+		      &untouched_selection, &untouched_selection_before,
+		      sizeof(untouched_selection)) == 0 &&
+	      v90_phase2_info1_handoff(NULL, &untouched_selection) ==
+		      PCM_INFO1_INVALID_ARGUMENT &&
+	      v90_phase2_info1_handoff(&analog, NULL) ==
+		      PCM_INFO1_INVALID_ARGUMENT,
+	      "rejected V.90 INFO1 handoff mutated its destination");
 	for (size_t index = 0; index < 4u * TEST_SAMPLE_LIMIT; ++index) {
 		struct v90_phase2_event analog_event;
 		struct v90_phase2_event digital_event;
@@ -715,6 +731,32 @@ static bool check_phase2_controller(enum test_codec codec)
 	      v90_phase2_peer_info1a(&digital, &peer_info1a) == V90_PHASE2_OK &&
 	      info1a_equal(&peer_info1a, &info1a),
 	      "V.90 Phase 2 controller did not complete INFO1 in order");
+	{
+		struct pcm_info1_selection analog_selection;
+		struct pcm_info1_selection digital_selection;
+
+		CHECK(v90_phase2_info1_handoff(
+			      &analog, &analog_selection) == PCM_INFO1_OK &&
+		      v90_phase2_info1_handoff(
+			      &digital, &digital_selection) == PCM_INFO1_OK &&
+		      pcm_info1_selection_is_valid(&analog_selection) &&
+		      pcm_info1_selection_is_valid(&digital_selection) &&
+		      analog_selection.startup.protocol == PCM_PROTOCOL_V90 &&
+		      digital_selection.startup.protocol == PCM_PROTOCOL_V90 &&
+		      analog_selection.startup.phase2 == PCM_PHASE2_FULL &&
+		      digital_selection.startup.phase2 == PCM_PHASE2_FULL &&
+		      analog_selection.upstream == PCM_UPSTREAM_V34 &&
+		      digital_selection.upstream == PCM_UPSTREAM_V34 &&
+		      info1d_equal(
+			      &analog_selection.digital.record.v90, &info1d) &&
+		      info1d_equal(
+			      &digital_selection.digital.record.v90, &info1d) &&
+		      info1a_equal(
+			      &analog_selection.analog.conventional, &info1a) &&
+		      info1a_equal(
+			      &digital_selection.analog.conventional, &info1a),
+		      "V.90 Phase 2 did not hand off one common INFO1 decision");
+	}
 	{
 		struct v90_phase2_event event = {
 			.kind = V90_PHASE2_EVENT_FAILED,

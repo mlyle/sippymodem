@@ -43,9 +43,9 @@ union pcm_info1a_record {
 	struct v92_pcm_info1a pcm;
 };
 
-/* Self-contained handoff from common Phase 2 into the selected Phase 3
- * child. The conventional record is shared by V.90 and V.92; PCM upstream is
- * possible only for V.92 when the digital INFO1d advertised support. */
+/* Self-contained INFO1 decision for the selected Phase 3 child. The
+ * conventional record is shared by V.90 and V.92; PCM upstream is possible
+ * only for V.92 when the digital INFO1d advertised support. */
 struct pcm_info1_selection {
 	struct pcm_startup_selection startup;
 	struct pcm_info1d digital;
