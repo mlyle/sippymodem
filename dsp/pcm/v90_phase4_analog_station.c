@@ -74,14 +74,32 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 	uint8_t training_ucode,
 	const struct v90_cp_parameters *training_parameters)
 {
+	struct v90_phase4_ri_rx receive;
+
+	if (v90_phase4_ri_rx_init(&receive, law, training_ucode) !=
+	    V90_PHASE4_RI_OK)
+		return V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
+	return v90_phase4_analog_station_resume(
+		station, phase3_transmit, &receive, jd,
+		training_parameters);
+}
+
+enum v90_phase4_analog_station_result v90_phase4_analog_station_resume(
+	struct v90_phase4_analog_station *station,
+	const struct v34_training_line *phase3_transmit,
+	const struct v90_phase4_ri_rx *receive,
+	const struct v90_jd_parameters *jd,
+	const struct v90_cp_parameters *training_parameters)
+{
 	struct v90_phase4_analog_station initialized = { 0 };
 	enum v90_phase4_analog_station_result result;
 
-	if (station == NULL || training_parameters == NULL ||
+	if (station == NULL ||
+	    !v90_phase4_ri_rx_is_valid(receive) ||
 	    !v90_jd_parameters_are_valid(jd))
 		return V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
 	if (!training_parameters_are_supported(
-		    training_parameters, law,
+		    training_parameters, receive->law,
 		    jd->maximum_spectral_shaping_lookahead))
 		return V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS;
 	result = transmit_result(v90_phase4_cp_line_tx_init(
@@ -90,13 +108,12 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 		training_parameters));
 	if (result != V90_PHASE4_ANALOG_STATION_OK)
 		return result;
-	if (v90_phase4_ri_rx_init(
-		    &initialized.receive, law, training_ucode) !=
-	    V90_PHASE4_RI_OK)
-		return V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
+	initialized.receive = *receive;
 	initialized.training_parameters = *training_parameters;
 	initialized.maximum_spectral_lookahead =
 		jd->maximum_spectral_shaping_lookahead;
+	initialized.finish_cpt_requested =
+		receive->stage != V90_PHASE4_RI;
 	if (!v90_phase4_analog_station_is_valid(&initialized))
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	*station = initialized;

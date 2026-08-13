@@ -75,18 +75,35 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_init(
 	const struct v90_jd_parameters *jd, enum g711_law law,
 	uint8_t training_ucode, double equalizer_adaptation)
 {
+	struct v90_phase4_ri_tx transmit;
+
+	if (v90_phase4_ri_tx_init(&transmit, law, training_ucode) !=
+	    V90_PHASE4_RI_OK)
+		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	return v90_phase4_digital_station_resume(
+		station, phase3_receive, jd, &transmit,
+		equalizer_adaptation);
+}
+
+enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
+	struct v90_phase4_digital_station *station,
+	const struct v90_phase3_return_line_handoff *phase3_receive,
+	const struct v90_jd_parameters *jd,
+	const struct v90_phase4_ri_tx *transmit,
+	double equalizer_adaptation)
+{
 	struct v90_phase4_digital_station initialized = { 0 };
 
-	if (station == NULL || !v90_jd_parameters_are_valid(jd))
+	if (station == NULL || !v90_jd_parameters_are_valid(jd) ||
+	    !v90_phase4_ri_tx_is_valid(transmit) ||
+	    transmit->finish_requested)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (v90_phase4_cp_line_rx_init(
 		    &initialized.receive, phase3_receive,
 		    jd->training_constellation,
-		    equalizer_adaptation) != V90_PHASE4_CP_LINE_RX_OK ||
-	    v90_phase4_ri_tx_init(
-		    &initialized.transmit, law, training_ucode) !=
-		    V90_PHASE4_RI_OK)
+		    equalizer_adaptation) != V90_PHASE4_CP_LINE_RX_OK)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	initialized.transmit = *transmit;
 	initialized.maximum_spectral_lookahead =
 		jd->maximum_spectral_shaping_lookahead;
 	if (!v90_phase4_digital_station_is_valid(&initialized))

@@ -53,6 +53,16 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 	const struct v90_jd_parameters *jd, enum g711_law law,
 	uint8_t training_ucode,
 	const struct v90_cp_parameters *training_parameters);
+
+/* Join a Phase 3 transmit handoff to a Phase 4 Ri receiver that has already
+ * consumed the intervening network characters. This is the lossless boundary
+ * used when the two full-duplex directions leave Phase 3 independently. */
+enum v90_phase4_analog_station_result v90_phase4_analog_station_resume(
+	struct v90_phase4_analog_station *station,
+	const struct v34_training_line *phase3_transmit,
+	const struct v90_phase4_ri_rx *receive,
+	const struct v90_jd_parameters *jd,
+	const struct v90_cp_parameters *training_parameters);
 bool v90_phase4_analog_station_is_valid(
 	const struct v90_phase4_analog_station *station);
 bool v90_phase4_analog_station_has_failed(

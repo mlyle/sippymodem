@@ -92,6 +92,19 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
+static bool ri_transmit_matches(
+	const struct v90_phase4_ri_tx *left,
+	const struct v90_phase4_ri_tx *right)
+{
+	return left->stage == right->stage &&
+	       left->law == right->law &&
+	       left->ri_symbols == right->ri_symbols &&
+	       left->ri_bar_symbols == right->ri_bar_symbols &&
+	       left->phase == right->phase &&
+	       left->training_ucode == right->training_ucode &&
+	       left->finish_requested == right->finish_requested;
+}
+
 static bool run_exchange(
 	enum g711_law law, enum v34_constellation_size constellation)
 {
@@ -140,16 +153,27 @@ static bool run_exchange(
 		if (!v90_phase4_digital_station_transmit_complete(&station)) {
 			uint8_t actual;
 			uint8_t expected;
+			enum v90_phase4_ri_result model_result;
+			enum v90_phase4_digital_station_result station_result;
 
-			CHECK(v90_phase4_ri_tx_next(&model_ri, &expected) ==
-				      V90_PHASE4_RI_OK &&
-			      v90_phase4_digital_station_transmit(
-				      &station, &actual) ==
-				      V90_PHASE4_DIGITAL_STATION_OK &&
+			model_result = v90_phase4_ri_tx_next(
+				&model_ri, &expected);
+			station_result = v90_phase4_digital_station_transmit(
+				&station, &actual);
+			CHECK(model_result == V90_PHASE4_RI_OK &&
+			      station_result == V90_PHASE4_DIGITAL_STATION_OK &&
 			      actual == expected &&
-			      memcmp(&station.transmit, &model_ri,
-				     sizeof(model_ri)) == 0,
-			      "Ri waveform diverged at clock %zu", clock);
+			      ri_transmit_matches(
+				      &station.transmit, &model_ri),
+			      "Ri waveform diverged at clock %zu: "
+			      "result=%d/%d octet=%u/%u state=%u/%u/%u vs %u/%u/%u",
+			      clock, model_result, station_result,
+			      expected, actual,
+			      model_ri.ri_symbols, model_ri.phase,
+			      model_ri.training_ucode,
+			      station.transmit.ri_symbols,
+			      station.transmit.phase,
+			      station.transmit.training_ucode);
 		}
 
 		if (!v90_phase4_digital_station_receive_complete(&station)) {
@@ -183,8 +207,8 @@ static bool run_exchange(
 					      &records[ARRAY_LENGTH(records) - 1u]) &&
 				      v90_phase4_ri_tx_request_finish(&model_ri) ==
 					      V90_PHASE4_RI_OK &&
-				      memcmp(&station.transmit, &model_ri,
-					     sizeof(model_ri)) == 0,
+				      ri_transmit_matches(
+					      &station.transmit, &model_ri),
 				      "digital side accepted a non-initial CPt");
 				cpt_seen = true;
 			}
@@ -235,6 +259,80 @@ static bool run_exchange(
 		      octet == 0xa5,
 		      "completed digital station consumed another boundary");
 	}
+	return true;
+}
+
+static bool resume_after_ri_prefix(enum g711_law law)
+{
+	struct v90_jd_parameters jd =
+		jd_parameters(V34_CONSTELLATION_4_POINT);
+	struct v90_cp_parameters training = parameters(law);
+	struct v90_phase3_return_line_handoff phase3_receive;
+	struct v90_phase4_cp_line_tx analog_transmit;
+	struct v90_phase4_ri_tx transmit;
+	struct v90_phase4_digital_station station;
+
+	CHECK(v90_phase4_line_fixture_init(
+		      law, V34_CONSTELLATION_4_POINT, &training,
+		      &analog_transmit, &phase3_receive) &&
+	      v90_phase4_ri_tx_init(&transmit, law, TRAINING_UCODE) ==
+		      V90_PHASE4_RI_OK,
+	      "law %u resume fixture did not initialize",
+	      (unsigned int)law);
+	for (size_t index = 0; index < 37; ++index) {
+		uint8_t octet;
+
+		CHECK(v90_phase4_ri_tx_next(&transmit, &octet) ==
+			      V90_PHASE4_RI_OK,
+		      "law %u Ri prefix stopped at %zu",
+		      (unsigned int)law, index);
+	}
+	CHECK(v90_phase4_digital_station_resume(
+		      &station, &phase3_receive, &jd,
+		      &transmit, 0.05) == V90_PHASE4_DIGITAL_STATION_OK &&
+	      ri_transmit_matches(&station.transmit, &transmit),
+	      "law %u advanced Ri transmitter was not preserved",
+	      (unsigned int)law);
+	{
+		struct v90_phase4_ri_tx model = transmit;
+		uint8_t expected;
+		uint8_t actual;
+
+		CHECK(v90_phase4_ri_tx_next(&model, &expected) ==
+			      V90_PHASE4_RI_OK &&
+		      v90_phase4_digital_station_transmit(
+			      &station, &actual) ==
+			      V90_PHASE4_DIGITAL_STATION_OK &&
+		      actual == expected &&
+		      ri_transmit_matches(&station.transmit, &model),
+		      "law %u resumed Ri transmitter repeated its prefix",
+		      (unsigned int)law);
+	}
+	{
+		struct v90_phase4_digital_station untouched;
+		struct v90_phase4_digital_station saved;
+		struct v90_phase4_ri_tx requested = transmit;
+
+		memset(&untouched, 0xa5, sizeof(untouched));
+		saved = untouched;
+		CHECK(v90_phase4_ri_tx_request_finish(&requested) ==
+			      V90_PHASE4_RI_OK &&
+		      v90_phase4_digital_station_resume(
+			      &untouched, &phase3_receive, &jd,
+			      &requested, 0.05) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      memcmp(&untouched, &saved, sizeof(saved)) == 0,
+		      "law %u resume accepted an unexplained finish request",
+		      (unsigned int)law);
+	}
+	return true;
+}
+
+static bool test_directional_resume(void)
+{
+	CHECK(resume_after_ri_prefix(G711_LAW_PCMU) &&
+	      resume_after_ri_prefix(G711_LAW_PCMA),
+	      "advanced Ri transmitter resume failed");
 	return true;
 }
 
@@ -382,6 +480,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "initial exchange", test_initial_exchange },
+		{ "advanced Ri transmit resume", test_directional_resume },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

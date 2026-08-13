@@ -128,6 +128,20 @@ static bool model_sample(
 	       V90_PHASE4_CP_LINE_TX_OK;
 }
 
+static bool ri_receive_matches(
+	const struct v90_phase4_ri_rx *left,
+	const struct v90_phase4_ri_rx *right)
+{
+	return left->stage == right->stage &&
+	       left->law == right->law &&
+	       left->ri_symbols == right->ri_symbols &&
+	       left->ri_bar_symbols == right->ri_bar_symbols &&
+	       left->phase == right->phase &&
+	       left->training_ucode == right->training_ucode &&
+	       left->polarity_known == right->polarity_known &&
+	       left->inverted == right->inverted;
+}
+
 static bool run_exchange(
 	enum g711_law law, enum v34_constellation_size constellation)
 {
@@ -319,6 +333,79 @@ static bool run_exchange(
 	return true;
 }
 
+static bool resume_after_ri_transition(enum g711_law law)
+{
+	struct v90_jd_parameters jd =
+		jd_parameters(V34_CONSTELLATION_4_POINT);
+	struct v90_cp_parameters training = training_parameters(law);
+	struct v34_training_line line;
+	struct v90_phase4_ri_tx transmit;
+	struct v90_phase4_ri_rx receive;
+	struct v90_phase4_analog_station station;
+	bool transition_seen = false;
+
+	CHECK(prepare_line(&line) &&
+	      v90_phase4_ri_tx_init(&transmit, law, TRAINING_UCODE) ==
+		      V90_PHASE4_RI_OK &&
+	      v90_phase4_ri_rx_init(&receive, law, TRAINING_UCODE) ==
+		      V90_PHASE4_RI_OK &&
+	      v90_phase4_ri_tx_request_finish(&transmit) ==
+		      V90_PHASE4_RI_OK,
+	      "law %u resume fixture did not initialize",
+	      (unsigned int)law);
+	for (size_t index = 0;
+	     index < V90_PHASE4_RI_MIN_SYMBOLS + V90_PHASE4_RI_PERIOD;
+	     ++index) {
+		uint8_t octet;
+		enum v90_phase4_ri_result result;
+
+		CHECK(v90_phase4_ri_tx_next(&transmit, &octet) ==
+			      V90_PHASE4_RI_OK,
+		      "law %u Ri prefix stopped at %zu",
+		      (unsigned int)law, index);
+		result = v90_phase4_ri_rx_receive(&receive, octet);
+		CHECK(result == V90_PHASE4_RI_OK ||
+		      result == V90_PHASE4_RI_TRANSITION_DETECTED,
+		      "law %u Ri prefix was rejected at %zu",
+		      (unsigned int)law, index);
+		if (result == V90_PHASE4_RI_TRANSITION_DETECTED) {
+			transition_seen = true;
+			break;
+		}
+	}
+	CHECK(transition_seen &&
+	      v90_phase4_analog_station_resume(
+		      &station, &line, &receive, &jd, &training) ==
+		      V90_PHASE4_ANALOG_STATION_OK &&
+	      station.finish_cpt_requested &&
+	      ri_receive_matches(&station.receive, &receive),
+	      "law %u advanced Ri receiver was not preserved",
+	      (unsigned int)law);
+	{
+		struct v90_phase4_ri_rx model = receive;
+		uint8_t octet;
+
+		CHECK(v90_phase4_ri_tx_next(&transmit, &octet) ==
+			      V90_PHASE4_RI_OK &&
+		      v90_phase4_ri_rx_receive(&model, octet) ==
+			      V90_PHASE4_RI_OK &&
+		      v90_phase4_analog_station_receive(&station, octet) ==
+			      V90_PHASE4_ANALOG_STATION_OK &&
+		      ri_receive_matches(&station.receive, &model),
+		      "law %u resumed Ri receiver replayed its prefix",
+		      (unsigned int)law);
+	}
+	return true;
+}
+
+static bool test_directional_resume(void)
+{
+	CHECK(resume_after_ri_transition(G711_LAW_PCMU) &&
+	      resume_after_ri_transition(G711_LAW_PCMA),
+	      "advanced Ri receiver resume failed");
+	return true;
+}
+
 static bool test_initial_exchange(void)
 {
 	CHECK(run_exchange(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT),
@@ -484,6 +571,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "initial exchange", test_initial_exchange },
+		{ "advanced Ri receive resume", test_directional_resume },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;
