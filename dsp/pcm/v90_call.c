@@ -40,12 +40,22 @@ static bool analog_configuration_is_valid(
 
 static bool digital_configuration_is_valid(
 	const union v90_call_local_info1 *info1,
-	const union v90_call_phase3_configuration *phase3)
+	const union v90_call_phase3_configuration *phase3,
+	const struct v90_call_digital_phase4_configuration *phase4)
 {
+	const struct v90_mp_record *mp = &phase4->initial_mp;
+	bool acknowledges_cp;
+
+	if (!v90_mp_record_is_valid(mp))
+		return false;
+	acknowledges_cp = mp->type == V90_MP_RECORD_TYPE0 ?
+			  mp->parameters.type0.acknowledges_cp :
+			  mp->parameters.type1.common.acknowledges_cp;
 	return v34_info1c_is_valid(&info1->digital) &&
 	       v90_phase3_analog_rx_configuration_is_valid(
 		       &phase3->digital.receive) &&
-	       v90_jd_parameters_are_valid(&phase3->digital.jd);
+	       v90_jd_parameters_are_valid(&phase3->digital.jd) &&
+	       !acknowledges_cp;
 }
 
 static bool configuration_is_valid(
@@ -70,7 +80,8 @@ static bool configuration_is_valid(
 		       configuration->law &&
 	       digital_configuration_is_valid(
 		       &configuration->local_info1,
-		       &configuration->phase3);
+		       &configuration->phase3,
+		       &configuration->digital_phase4);
 }
 
 static bool stored_configuration_is_valid(const struct v90_call *call)
@@ -85,7 +96,8 @@ static bool stored_configuration_is_valid(const struct v90_call *call)
 			       call->law) :
 		       digital_configuration_is_valid(
 			       &call->local_info1,
-			       &call->phase3_configuration);
+			       &call->phase3_configuration,
+			       &call->digital_phase4_configuration);
 }
 
 static bool analog_mixed_is_valid(const struct v90_call *call)
@@ -172,14 +184,14 @@ bool v90_call_is_valid(const struct v90_call *call)
 		break;
 	case V90_CALL_PHASE4:
 		if (call->local_role == V90_ANALOG_MODEM) {
-			child_valid = v90_phase4_analog_station_is_valid(
+			child_valid = v90_phase4_analog_startup_is_valid(
 				&call->state.phase4.analog);
-			child_failed = v90_phase4_analog_station_has_failed(
+			child_failed = v90_phase4_analog_startup_has_failed(
 				&call->state.phase4.analog);
 		} else {
-			child_valid = v90_phase4_digital_station_is_valid(
+			child_valid = v90_phase4_digital_startup_is_valid(
 				&call->state.phase4.digital);
-			child_failed = v90_phase4_digital_station_has_failed(
+			child_failed = v90_phase4_digital_startup_has_failed(
 				&call->state.phase4.digital);
 		}
 		break;
@@ -222,6 +234,8 @@ enum v90_call_result v90_call_init(
 			configuration->local_info1.digital;
 		initialized.phase3_configuration.digital =
 			configuration->phase3.digital;
+		initialized.digital_phase4_configuration =
+			configuration->digital_phase4;
 	}
 	initialized.local_role = configuration->local_role;
 	initialized.law = configuration->law;
@@ -239,8 +253,14 @@ bool v90_call_has_failed(const struct v90_call *call)
 
 bool v90_call_phase4_is_ready(const struct v90_call *call)
 {
-	return v90_call_is_valid(call) && !call->failed &&
-	       call->stage == V90_CALL_PHASE4;
+	if (!v90_call_is_valid(call) || call->failed ||
+	    call->stage != V90_CALL_PHASE4)
+		return false;
+	return call->local_role == V90_ANALOG_MODEM ?
+		       v90_phase4_analog_startup_is_complete(
+			       &call->state.phase4.analog) :
+		       v90_phase4_digital_startup_is_complete(
+			       &call->state.phase4.digital);
 }
 
 enum v90_call_stage v90_call_current_stage(const struct v90_call *call)
@@ -499,6 +519,7 @@ static enum v90_call_result enter_phase4(struct v90_call *call)
 		struct v90_phase3_analog_receive_handoff receive_handoff;
 		struct v34_training_line transmit_handoff;
 		struct v90_phase4_analog_station station;
+		struct v90_phase4_analog_startup startup;
 		enum v90_call_result result;
 
 		if (v90_phase3_analog_station_transmit_handoff(
@@ -515,12 +536,16 @@ static enum v90_call_result enter_phase4(struct v90_call *call)
 				.training_parameters));
 		if (result != V90_CALL_OK)
 			return result;
-		next.state.phase4.analog = station;
+		if (v90_phase4_analog_startup_init(&startup, &station) !=
+		    V90_PHASE4_STARTUP_OK)
+			return V90_CALL_NUMERIC_FAILURE;
+		next.state.phase4.analog = startup;
 	} else {
 		const struct v90_call_digital_mixed_state *mixed =
 			&call->state.mixed.digital;
 		struct v90_phase3_return_line_handoff receive_handoff;
 		struct v90_phase4_digital_station station;
+		struct v90_phase4_digital_startup startup;
 
 		if (v90_phase3_digital_station_receive_handoff(
 			    &mixed->phase3, &receive_handoff) !=
@@ -534,7 +559,12 @@ static enum v90_call_result enter_phase4(struct v90_call *call)
 				    .tracking_equalizer_adaptation) !=
 			    V90_PHASE4_DIGITAL_STATION_OK)
 			return V90_CALL_NUMERIC_FAILURE;
-		next.state.phase4.digital = station;
+		if (v90_phase4_digital_startup_init(
+			    &startup, &station,
+			    &call->digital_phase4_configuration.initial_mp) !=
+		    V90_PHASE4_STARTUP_OK)
+			return V90_CALL_NUMERIC_FAILURE;
+		next.state.phase4.digital = startup;
 	}
 	next.stage = V90_CALL_PHASE4;
 	if (!v90_call_is_valid(&next))
@@ -655,6 +685,48 @@ static enum v90_call_result sample_mixed_phase3(
 	return result == V90_CALL_OK ? advance_phase3(call) : result;
 }
 
+static enum v90_call_result phase4_startup_result(
+	enum v90_phase4_startup_result result)
+{
+	switch (result) {
+	case V90_PHASE4_STARTUP_OK:
+		return V90_CALL_OK;
+	case V90_PHASE4_STARTUP_FAILED:
+		return V90_CALL_FAILED;
+	case V90_PHASE4_STARTUP_INVALID_PARAMETERS:
+		return V90_CALL_UNUSABLE_SELECTION;
+	case V90_PHASE4_STARTUP_OUT_OF_RANGE:
+		return V90_CALL_OUT_OF_RANGE;
+	case V90_PHASE4_STARTUP_CLIPPING_RISK:
+		return V90_CALL_CLIPPING_RISK;
+	case V90_PHASE4_STARTUP_SEQUENCE_MISMATCH:
+		return V90_CALL_SEQUENCE_MISMATCH;
+	case V90_PHASE4_STARTUP_DONE:
+	case V90_PHASE4_STARTUP_INVALID_STATE:
+		return V90_CALL_INVALID_STATE;
+	case V90_PHASE4_STARTUP_INVALID_ARGUMENT:
+	case V90_PHASE4_STARTUP_NUMERIC_FAILURE:
+		break;
+	}
+	return V90_CALL_NUMERIC_FAILURE;
+}
+
+static enum v90_call_result sample_phase4(
+	struct v90_call *call, uint8_t received_octet,
+	uint8_t *transmit_octet)
+{
+	enum v90_phase4_startup_result result =
+		call->local_role == V90_ANALOG_MODEM ?
+			v90_phase4_analog_startup_octet(
+				&call->state.phase4.analog,
+				received_octet, transmit_octet) :
+			v90_phase4_digital_startup_octet(
+				&call->state.phase4.digital,
+				received_octet, transmit_octet);
+
+	return phase4_startup_result(result);
+}
+
 static bool regions_overlap(
 	const void *left, size_t left_size,
 	const void *right, size_t right_size)
@@ -715,6 +787,9 @@ enum v90_call_result v90_call_octet(
 			call, received_octet, &generated);
 		break;
 	case V90_CALL_PHASE4:
+		result = sample_phase4(
+			call, received_octet, &generated);
+		break;
 	default:
 		return V90_CALL_NUMERIC_FAILURE;
 	}

@@ -2060,6 +2060,9 @@ V90_CALL_TEST_BINARY := $(BUILD_DIR)/test_v90_call
 V90_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_call.o \
 	$(BUILD_DIR)/v90_call.o \
+	$(BUILD_DIR)/v90_phase4_startup.o \
+	$(BUILD_DIR)/v90_phase4_analog_startup.o \
+	$(BUILD_DIR)/v90_phase4_digital_startup.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase2_initial_probe.o, \
 		$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_analog_station.o, \

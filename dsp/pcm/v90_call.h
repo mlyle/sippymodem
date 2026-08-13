@@ -6,8 +6,8 @@
 #include "v90_phase2.h"
 #include "v90_phase3_analog_station.h"
 #include "v90_phase3_digital_station.h"
-#include "v90_phase4_analog_station.h"
-#include "v90_phase4_digital_station.h"
+#include "v90_phase4_analog_startup.h"
+#include "v90_phase4_digital_startup.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -63,6 +63,11 @@ struct v90_call_analog_phase4_configuration {
 	struct v90_cp_parameters training_parameters;
 };
 
+struct v90_call_digital_phase4_configuration {
+	/* Initial MP sent after TRN2d; the CP acknowledgement starts clear. */
+	struct v90_mp_record initial_mp;
+};
+
 struct v90_call_configuration {
 	enum v90_modem_role local_role;
 	enum g711_law law;
@@ -71,6 +76,7 @@ struct v90_call_configuration {
 	union v90_call_local_info1 local_info1;
 	union v90_call_phase3_configuration phase3;
 	struct v90_call_analog_phase4_configuration analog_phase4;
+	struct v90_call_digital_phase4_configuration digital_phase4;
 };
 
 union v90_call_phase3_state {
@@ -97,8 +103,8 @@ union v90_call_mixed_state {
 };
 
 union v90_call_phase4_state {
-	struct v90_phase4_analog_station analog;
-	struct v90_phase4_digital_station digital;
+	struct v90_phase4_analog_startup analog;
+	struct v90_phase4_digital_startup digital;
 };
 
 union v90_call_state {
@@ -116,15 +122,17 @@ struct v90_call_observation {
 	struct v90_phase2_event phase2;
 };
 
-/* Own one post-V.8 V.90 startup through entry into the role-specific Phase 4
- * station. Calls on one instance must be serialized; separate instances share
- * no state. */
+/* Own one post-V.8 V.90 startup through the initial role-specific Phase 4
+ * exchange. Calls on one instance must be serialized; separate instances
+ * share no state. */
 struct v90_call {
 	union v90_call_state state;
 	union v90_call_local_info1 local_info1;
 	union v90_call_phase3_configuration phase3_configuration;
 	struct v90_call_analog_phase4_configuration
 		analog_phase4_configuration;
+	struct v90_call_digital_phase4_configuration
+		digital_phase4_configuration;
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum v90_call_stage stage;
@@ -140,12 +148,12 @@ bool v90_call_has_failed(const struct v90_call *call);
 bool v90_call_phase4_is_ready(const struct v90_call *call);
 enum v90_call_stage v90_call_current_stage(const struct v90_call *call);
 
-/* Consume and produce one simultaneous 8 ksymbol/s G.711 character during
- * Phases 2 and 3. A phase change takes effect on the following call.
- * PHASE4_READY
- * consumes no character, changes no output, and leaves the initialized station
- * available to the next owner. Terminal protocol failures consume the
- * character and expose the generated output and observation. */
+/* Consume and produce one simultaneous 8 ksymbol/s G.711 character through
+ * the initial Phase 4 CPt/Ri exchange. A phase change takes effect on the
+ * following call. PHASE4_READY consumes no character, changes no output, and
+ * leaves both continuous directions available to the next owner. Terminal
+ * protocol failures consume the character and expose the generated output and
+ * observation. */
 enum v90_call_result v90_call_octet(
 	struct v90_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet,
