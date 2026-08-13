@@ -65,7 +65,9 @@ static bool run_timeline(enum g711_law law)
 	      v90_phase3_digital_tx_init(
 		      &transmitter, law, training_ucode, &parameters) ==
 		      V90_PHASE3_DIGITAL_TX_OK &&
-	      transmitter.stage == V90_PHASE3_DIGITAL_TX_SD,
+	      transmitter.stage == V90_PHASE3_DIGITAL_TX_PREFIX &&
+	      transmitter.sequence.prefix.stage ==
+		      PCM_PHASE3_DIGITAL_PREFIX_SD,
 	      "digital Phase 3 initialization failed for law %u",
 	      (unsigned int)law);
 	for (size_t index = 0; index < V90_PHASE3_SD_SYMBOLS; ++index) {
@@ -79,7 +81,9 @@ static bool run_timeline(enum g711_law law)
 		      "Sd mismatch for law %u at symbol %zu",
 		      (unsigned int)law, index);
 	}
-	CHECK(transmitter.stage == V90_PHASE3_DIGITAL_TX_SD_BAR,
+	CHECK(transmitter.stage == V90_PHASE3_DIGITAL_TX_PREFIX &&
+	      transmitter.sequence.prefix.stage ==
+		      PCM_PHASE3_DIGITAL_PREFIX_SD_BAR,
 	      "Sd did not hand off to Sd-bar");
 	for (size_t index = 0; index < V90_PHASE3_SD_BAR_SYMBOLS; ++index) {
 		struct v90_pcm_symbol symbol;
@@ -92,7 +96,9 @@ static bool run_timeline(enum g711_law law)
 		      "Sd-bar mismatch for law %u at symbol %zu",
 		      (unsigned int)law, index);
 	}
-	CHECK(transmitter.stage == V90_PHASE3_DIGITAL_TX_TRN1D,
+	CHECK(transmitter.stage == V90_PHASE3_DIGITAL_TX_PREFIX &&
+	      transmitter.sequence.prefix.stage ==
+		      PCM_PHASE3_DIGITAL_PREFIX_TRN1D,
 	      "Sd-bar did not hand off to TRN1d");
 	for (size_t index = 0;
 	     index < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++index) {

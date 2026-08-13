@@ -1654,6 +1654,17 @@ PCM_BINARY_SIGN_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/self_sync_scrambler.o
+PCM_PHASE3_DIGITAL_PREFIX_TEST_BINARY := \
+	$(BUILD_DIR)/test_pcm_phase3_digital_prefix
+PCM_PHASE3_DIGITAL_PREFIX_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_pcm_phase3_digital_prefix.o \
+	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
+	$(BUILD_DIR)/v90_phase3_sd.o \
+	$(BUILD_DIR)/v90_phase3_signs.o \
+	$(BUILD_DIR)/v90_pcm_symbol.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/g711.o
 V90_DIL_TEST_BINARY := $(BUILD_DIR)/test_v90_dil
 V90_DIL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_dil.o \
@@ -1708,6 +1719,7 @@ V90_PHASE3_DIGITAL_TX_TEST_BINARY := \
 V90_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase3_digital_tx.o \
 	$(BUILD_DIR)/v90_phase3_digital_tx.o \
+	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
 	$(BUILD_DIR)/v90_phase3_sd.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
@@ -2317,6 +2329,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_PHASE4_STATION_EXCHANGE_TEST_BINARY) \
 	$(PCM_DIL_DESCRIPTOR_TEST_BINARY) \
 	$(PCM_BINARY_SIGN_TEST_BINARY) \
+	$(PCM_PHASE3_DIGITAL_PREFIX_TEST_BINARY) \
 	$(V90_DIL_TEST_BINARY) \
 	$(V90_JA_TEST_BINARY) \
 	$(V90_JA_SEARCH_TEST_BINARY) \
@@ -2530,6 +2543,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(PCM_DIL_DESCRIPTOR_TEST_OBJECTS:.o=.d) \
 	$(PCM_BINARY_SIGN_TEST_OBJECTS:.o=.d) \
+	$(PCM_PHASE3_DIGITAL_PREFIX_TEST_OBJECTS:.o=.d) \
 	$(V90_DIL_TEST_OBJECTS:.o=.d) \
 	$(V90_JA_TEST_OBJECTS:.o=.d) \
 	$(V90_JA_SEARCH_TEST_OBJECTS:.o=.d) \
@@ -2769,6 +2783,7 @@ test: $(TEST_BINARIES)
 	./$(V90_PHASE4_STATION_EXCHANGE_TEST_BINARY)
 	./$(PCM_DIL_DESCRIPTOR_TEST_BINARY)
 	./$(PCM_BINARY_SIGN_TEST_BINARY)
+	./$(PCM_PHASE3_DIGITAL_PREFIX_TEST_BINARY)
 	./$(V90_DIL_TEST_BINARY)
 	./$(V90_JA_TEST_BINARY)
 	./$(V90_JA_SEARCH_TEST_BINARY)
@@ -3403,6 +3418,10 @@ $(PCM_DIL_DESCRIPTOR_TEST_BINARY): $(PCM_DIL_DESCRIPTOR_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(PCM_BINARY_SIGN_TEST_BINARY): $(PCM_BINARY_SIGN_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(PCM_PHASE3_DIGITAL_PREFIX_TEST_BINARY): \
+	$(PCM_PHASE3_DIGITAL_PREFIX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V90_DIL_TEST_BINARY): $(V90_DIL_TEST_OBJECTS)
@@ -4141,6 +4160,10 @@ $(BUILD_DIR)/v90_phase4_cp_line_rx.o: \
 
 $(BUILD_DIR)/pcm_dil_descriptor.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_dil_descriptor.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/pcm_phase3_digital_prefix.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_digital_prefix.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_dil.o: \

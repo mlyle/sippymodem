@@ -3,18 +3,15 @@
 #ifndef V90_PHASE3_DIGITAL_TX_H
 #define V90_PHASE3_DIGITAL_TX_H
 
+#include "pcm_phase3_digital_prefix.h"
 #include "v90_jd.h"
-#include "v90_phase3_sd.h"
-#include "v90_phase3_signs.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 enum v90_phase3_digital_tx_stage {
-	V90_PHASE3_DIGITAL_TX_SD,
-	V90_PHASE3_DIGITAL_TX_SD_BAR,
-	V90_PHASE3_DIGITAL_TX_TRN1D,
+	V90_PHASE3_DIGITAL_TX_PREFIX,
 	V90_PHASE3_DIGITAL_TX_JD,
 	V90_PHASE3_DIGITAL_TX_JD_PRIME,
 	V90_PHASE3_DIGITAL_TX_COMPLETE,
@@ -29,14 +26,14 @@ enum v90_phase3_digital_tx_result {
 };
 
 union v90_phase3_digital_tx_sequence {
-	struct v90_phase3_sd sd;
+	struct pcm_phase3_digital_prefix prefix;
 	struct v90_phase3_signs signs;
 };
 
 /* Owns the digital modem's exact zero-DIL Phase 3 network-character stream
- * after Ja. The call controller owns the optional pre-Sd delay and detects
- * the remote S signal; this object owns every sequence boundary and
- * continuity rule. */
+ * after Ja. The shared prefix owns Sd through TRN1d; this V.90 child owns Jd
+ * and Jd-prime. The call controller owns the optional pre-Sd delay and
+ * detects the remote S signal. */
 struct v90_phase3_digital_tx {
 	union v90_phase3_digital_tx_sequence sequence;
 	uint8_t jd_frame[V90_JD_FRAME_BYTES];

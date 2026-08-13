@@ -9,7 +9,7 @@
 
 static bool stage_is_valid(enum v90_phase3_digital_tx_stage stage)
 {
-	return stage >= V90_PHASE3_DIGITAL_TX_SD &&
+	return stage >= V90_PHASE3_DIGITAL_TX_PREFIX &&
 	       stage <= V90_PHASE3_DIGITAL_TX_COMPLETE;
 }
 
@@ -28,7 +28,7 @@ static bool jd_frame_is_valid(const uint8_t *frame)
 static bool counters_are_valid(
 	const struct v90_phase3_digital_tx *transmitter)
 {
-	if (transmitter->stage < V90_PHASE3_DIGITAL_TX_JD)
+	if (transmitter->stage == V90_PHASE3_DIGITAL_TX_PREFIX)
 		return transmitter->jd_records == 0 &&
 		       transmitter->bit_index == 0 &&
 		       !transmitter->finish_jd_requested;
@@ -56,20 +56,9 @@ bool v90_phase3_digital_tx_is_valid(
 	    !counters_are_valid(transmitter))
 		return false;
 	switch (transmitter->stage) {
-	case V90_PHASE3_DIGITAL_TX_SD:
-		return v90_phase3_sd_is_valid(&transmitter->sequence.sd) &&
-		       transmitter->sequence.sd.kind == V90_PHASE3_SD &&
-		       v90_phase3_sd_remaining(&transmitter->sequence.sd) != 0;
-	case V90_PHASE3_DIGITAL_TX_SD_BAR:
-		return v90_phase3_sd_is_valid(&transmitter->sequence.sd) &&
-		       transmitter->sequence.sd.kind == V90_PHASE3_SD_BAR &&
-		       v90_phase3_sd_remaining(&transmitter->sequence.sd) != 0;
-	case V90_PHASE3_DIGITAL_TX_TRN1D:
-		return v90_phase3_signs_is_valid(&transmitter->sequence.signs) &&
-		       transmitter->sequence.signs.phase ==
-			       V90_PHASE3_SIGNS_TRN1D &&
-		       transmitter->sequence.signs.trn1d_symbols <
-			       V90_PHASE3_TRN1D_MIN_SYMBOLS;
+	case V90_PHASE3_DIGITAL_TX_PREFIX:
+		return pcm_phase3_digital_prefix_is_valid(
+			&transmitter->sequence.prefix);
 	case V90_PHASE3_DIGITAL_TX_JD:
 	case V90_PHASE3_DIGITAL_TX_JD_PRIME:
 	case V90_PHASE3_DIGITAL_TX_COMPLETE:
@@ -87,68 +76,50 @@ enum v90_phase3_digital_tx_result v90_phase3_digital_tx_init(
 	const struct v90_jd_parameters *jd_parameters)
 {
 	struct v90_phase3_digital_tx initialized = {
-		.stage = V90_PHASE3_DIGITAL_TX_SD,
+		.stage = V90_PHASE3_DIGITAL_TX_PREFIX,
 	};
 
 	if (transmitter == NULL || jd_parameters == NULL ||
 	    v90_jd_encode(
 		    jd_parameters, initialized.jd_frame,
 		    sizeof(initialized.jd_frame)) != V90_JD_OK ||
-	    v90_phase3_sd_init(
-		    &initialized.sequence.sd, law, training_ucode,
-		    V90_PHASE3_SD) != V90_PHASE3_SD_OK ||
+	    pcm_phase3_digital_prefix_init(
+		    &initialized.sequence.prefix, law, training_ucode) !=
+		    PCM_PHASE3_DIGITAL_PREFIX_OK ||
 	    !v90_phase3_digital_tx_is_valid(&initialized))
 		return V90_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
 	*transmitter = initialized;
 	return V90_PHASE3_DIGITAL_TX_OK;
 }
 
-static enum v90_phase3_digital_tx_result next_sd(
+static enum v90_phase3_digital_tx_result next_prefix(
 	struct v90_phase3_digital_tx *transmitter,
 	struct v90_pcm_symbol *symbol)
 {
-	enum g711_law law = transmitter->sequence.sd.law;
-	uint8_t training_ucode = transmitter->sequence.sd.training_ucode;
-	enum v90_phase3_sd_kind kind = transmitter->sequence.sd.kind;
-
-	if (v90_phase3_sd_next(&transmitter->sequence.sd, symbol) !=
-	    V90_PHASE3_SD_OK)
+	if (pcm_phase3_digital_prefix_next(
+		    &transmitter->sequence.prefix, symbol) !=
+	    PCM_PHASE3_DIGITAL_PREFIX_OK)
 		return V90_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
-	if (v90_phase3_sd_remaining(&transmitter->sequence.sd) != 0)
+	if (!pcm_phase3_digital_prefix_is_complete(
+		    &transmitter->sequence.prefix))
 		return V90_PHASE3_DIGITAL_TX_OK;
-	transmitter->sequence =
-		(union v90_phase3_digital_tx_sequence){ 0 };
-	if (kind == V90_PHASE3_SD) {
-		if (v90_phase3_sd_init(
-			    &transmitter->sequence.sd, law, training_ucode,
-			    V90_PHASE3_SD_BAR) != V90_PHASE3_SD_OK)
-			return V90_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
-		transmitter->stage = V90_PHASE3_DIGITAL_TX_SD_BAR;
-	} else {
-		if (v90_phase3_signs_init(
-			    &transmitter->sequence.signs, law,
-			    training_ucode) != V90_PHASE3_SIGNS_OK)
-			return V90_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
-		transmitter->stage = V90_PHASE3_DIGITAL_TX_TRN1D;
-	}
-	return V90_PHASE3_DIGITAL_TX_OK;
-}
+	{
+		struct v90_phase3_signs signs;
 
-static enum v90_phase3_digital_tx_result next_trn1d(
-	struct v90_phase3_digital_tx *transmitter,
-	struct v90_pcm_symbol *symbol)
-{
-	if (v90_phase3_signs_next_trn1d(
-		    &transmitter->sequence.signs, symbol) !=
-	    V90_PHASE3_SIGNS_OK)
-		return V90_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
-	if (transmitter->sequence.signs.trn1d_symbols ==
-	    V90_PHASE3_TRN1D_MIN_SYMBOLS) {
-		if (v90_phase3_signs_begin_jd(&transmitter->sequence.signs) !=
-		    V90_PHASE3_SIGNS_OK)
+		if (pcm_phase3_digital_prefix_handoff(
+			    &transmitter->sequence.prefix, &signs) !=
+			    PCM_PHASE3_DIGITAL_PREFIX_OK ||
+		    v90_phase3_signs_begin_jd(&signs) !=
+			    V90_PHASE3_SIGNS_OK)
 			return V90_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
-		transmitter->stage = V90_PHASE3_DIGITAL_TX_JD;
+		transmitter->sequence =
+			(union v90_phase3_digital_tx_sequence){
+				.signs = signs,
+			};
 	}
+	transmitter->stage = V90_PHASE3_DIGITAL_TX_JD;
+	if (!v90_phase3_digital_tx_is_valid(transmitter))
+		return V90_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
 	return V90_PHASE3_DIGITAL_TX_OK;
 }
 
@@ -209,12 +180,8 @@ enum v90_phase3_digital_tx_result v90_phase3_digital_tx_next(
 		return V90_PHASE3_DIGITAL_TX_DONE;
 	next = *transmitter;
 	switch (next.stage) {
-	case V90_PHASE3_DIGITAL_TX_SD:
-	case V90_PHASE3_DIGITAL_TX_SD_BAR:
-		result = next_sd(&next, &generated);
-		break;
-	case V90_PHASE3_DIGITAL_TX_TRN1D:
-		result = next_trn1d(&next, &generated);
+	case V90_PHASE3_DIGITAL_TX_PREFIX:
+		result = next_prefix(&next, &generated);
 		break;
 	case V90_PHASE3_DIGITAL_TX_JD:
 		result = next_jd(&next, &generated);
