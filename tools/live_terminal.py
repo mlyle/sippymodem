@@ -281,6 +281,17 @@ class ModemTerminal:
             send, lambda received: expected in received, timeout_seconds
         )
 
+    def send_online(self, data: bytes, timeout_seconds: float) -> None:
+        if (
+            not isinstance(data, bytes)
+            or not data
+            or len(data) > ONLINE_PATTERN_MAX
+            or timeout_seconds <= 0
+            or not self._decoder.online
+        ):
+            raise LiveTerminalError("invalid online terminal transmission")
+        self._write(data, time.monotonic() + timeout_seconds)
+
     def probe_online_ping(self, timeout_seconds: float) -> tuple[bool, bytes]:
         return self._exchange_online(
             ONLINE_PING_REQUEST,

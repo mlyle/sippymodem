@@ -88,6 +88,21 @@ class LiveTerminalTests(unittest.TestCase):
         self.assertFalse(verified)
         self.assertEqual(received, malformed)
 
+    def test_online_send_requires_connected_bounded_data(self) -> None:
+        terminal = ModemTerminal(-1)
+        with self.assertRaises(LiveTerminalError):
+            terminal.send_online(b"data", 1.0)
+
+        terminal._decoder.feed(b"CONNECT 300\r\n")
+        with mock.patch.object(terminal, "_write") as write:
+            terminal.send_online(b"data", 1.0)
+        self.assertEqual(write.call_args.args[0], b"data")
+
+        for data, timeout in ((b"", 1.0), (b"x" * 513, 1.0), (b"x", 0.0)):
+            with self.subTest(size=len(data), timeout=timeout):
+                with self.assertRaises(LiveTerminalError):
+                    terminal.send_online(data, timeout)
+
     def test_response_decoder_handles_fragments_and_bounds(self) -> None:
         decoder = ResponseDecoder()
         decoder.feed(

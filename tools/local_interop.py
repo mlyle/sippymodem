@@ -140,7 +140,28 @@ def _exchange_endpoints(
     originator_payload: bytes,
     answerer_payload: bytes,
     deadline: float,
+    turn_taking: bool,
 ) -> tuple[tuple[bool, bytes], tuple[bool, bytes]]:
+    if turn_taking:
+        assert originator.terminal is not None
+        assert answerer.terminal is not None
+        try:
+            originator.terminal.send_online(
+                originator_payload, remaining(deadline)
+            )
+            answer_exchange = answerer.terminal.exchange_online(
+                b"", originator_payload, remaining(deadline)
+            )
+            if not answer_exchange[0]:
+                return (False, b""), answer_exchange
+            answerer.terminal.send_online(answerer_payload, remaining(deadline))
+            origin_exchange = originator.terminal.exchange_online(
+                b"", answerer_payload, remaining(deadline)
+            )
+            return origin_exchange, answer_exchange
+        except (InteropRunError, LiveTerminalError, OSError, TimeoutError):
+            return (False, b""), (False, b"")
+
     with ThreadPoolExecutor(max_workers=2) as executor:
         origin_future = executor.submit(
             _exchange_endpoint,
@@ -183,7 +204,9 @@ def _stop_endpoints(
     return results[0], results[1]
 
 
-def run_interop(config: InteropConfig) -> InteropResult:
+def run_interop(
+    config: InteropConfig, *, turn_taking: bool = False
+) -> InteropResult:
     """Run the configured pair and retain private evidence for every outcome."""
 
     if not config.enabled:
@@ -259,6 +282,7 @@ def run_interop(config: InteropConfig) -> InteropResult:
                 config.originator_payload,
                 config.answerer_payload,
                 data_deadline,
+                turn_taking,
             )
             originator_state.exchange_verified, originator_state.received = (
                 origin_exchange
