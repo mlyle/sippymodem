@@ -36,6 +36,8 @@ enum v92_cpt_result {
 	V92_CPT_INVALID_ARGUMENT,
 	V92_CPT_INVALID_PARAMETERS,
 	V92_CPT_OUTPUT_TOO_SMALL,
+	V92_CPT_INVALID_FRAME,
+	V92_CPT_CRC_MISMATCH,
 };
 
 /* Exact Table 23 fields owned by CPt. Reserved and fixed fields are generated
@@ -76,6 +78,15 @@ enum v92_cpt_result v92_cpt_encode(
 	const struct v92_cpt_parameters *parameters,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count);
+
+/* frame_bit_count is the exact wire length, not the rounded storage size.
+ * Reserved fields are covered by the CRC but otherwise ignored. Decode
+ * accepts no unused constellation records, nonzero fill, or nonzero storage
+ * padding. Rejected calls leave parameters unchanged. */
+enum v92_cpt_result v92_cpt_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t frame_bit_count,
+	struct v92_cpt_parameters *parameters);
 
 const char *v92_cpt_result_name(enum v92_cpt_result result);
 

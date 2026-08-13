@@ -32,6 +32,16 @@ static uint8_t bit_at(const uint8_t *frame, size_t index)
 			 1u);
 }
 
+static void set_bit(uint8_t *frame, size_t index, uint8_t value)
+{
+	uint8_t mask = (uint8_t)(1u << (7u - index % 8u));
+
+	if (value != 0)
+		frame[index / 8u] |= mask;
+	else
+		frame[index / 8u] &= (uint8_t)~mask;
+}
+
 static uint32_t lsb_field(
 	const uint8_t *frame, size_t first, size_t count)
 {
@@ -70,6 +80,16 @@ static uint16_t reference_crc(
 			remainder ^= UINT16_C(0x1021);
 	}
 	return remainder;
+}
+
+static void rewrite_crc(uint8_t *frame, size_t payload_end)
+{
+	uint16_t crc = reference_crc(frame, payload_end);
+
+	for (size_t index = 0; index < CPT_CRC_BITS; ++index)
+		set_bit(
+			frame, payload_end + 1u + index,
+			(uint8_t)((crc >> (CPT_CRC_BITS - index - 1u)) & 1u));
 }
 
 static void add_ucode(
@@ -119,6 +139,37 @@ static struct v92_cpt_parameters parameters(
 		value.frame_constellation[interval] =
 			(uint8_t)(interval % count);
 	return value;
+}
+
+static bool parameters_match(
+	const struct v92_cpt_parameters *left,
+	const struct v92_cpt_parameters *right)
+{
+	return left->law == right->law &&
+	       left->trn1d_ratio_q3_13 == right->trn1d_ratio_q3_13 &&
+	       left->shaping_a1_q1_6 == right->shaping_a1_q1_6 &&
+	       left->shaping_a2_q1_6 == right->shaping_a2_q1_6 &&
+	       left->shaping_b1_q1_6 == right->shaping_b1_q1_6 &&
+	       left->shaping_b2_q1_6 == right->shaping_b2_q1_6 &&
+	       left->selected_rate_index == right->selected_rate_index &&
+	       left->sign_redundancy == right->sign_redundancy &&
+	       left->spectral_lookahead == right->spectral_lookahead &&
+	       left->constellation_count == right->constellation_count &&
+	       left->acknowledges_peer == right->acknowledges_peer &&
+	       left->codec_constellations_differ ==
+		       right->codec_constellations_differ &&
+	       memcmp(
+		       left->frame_constellation,
+		       right->frame_constellation,
+		       sizeof(left->frame_constellation)) == 0 &&
+	       memcmp(
+		       left->transmit_constellations,
+		       right->transmit_constellations,
+		       sizeof(left->transmit_constellations)) == 0 &&
+	       memcmp(
+		       left->codec_constellations,
+		       right->codec_constellations,
+		       sizeof(left->codec_constellations)) == 0;
 }
 
 static size_t map_first_bit(size_t interval)
@@ -261,6 +312,183 @@ static bool test_wire_fields(void)
 	return true;
 }
 
+static bool test_decode_layouts(void)
+{
+	for (uint8_t count = 1;
+	     count <= V92_CPT_MAX_CONSTELLATIONS; ++count) {
+		for (unsigned int differs = 0; differs < 2; ++differs) {
+			struct v92_cpt_parameters wanted =
+				parameters(count, differs != 0);
+			struct v92_cpt_parameters decoded;
+			uint8_t frame[V92_CPT_MAX_FRAME_BYTES];
+			size_t frame_bits = 0;
+
+			memset(&decoded, 0xa5, sizeof(decoded));
+			CHECK(v92_cpt_encode(
+				      &wanted, frame, sizeof(frame), &frame_bits) ==
+				      V92_CPT_OK &&
+			      v92_cpt_decode(
+				      frame, (frame_bits + 7u) / 8u, frame_bits,
+				      &decoded) == V92_CPT_OK &&
+			      parameters_match(&wanted, &decoded),
+			      "CPt count %u set count %u did not round-trip",
+			      count, differs + 1u);
+		}
+	}
+	return true;
+}
+
+static bool decode_rejects_unchanged(
+	const uint8_t *frame, size_t capacity, size_t frame_bits,
+	enum v92_cpt_result wanted)
+{
+	struct v92_cpt_parameters decoded;
+	struct v92_cpt_parameters before;
+
+	memset(&decoded, 0xa5, sizeof(decoded));
+	before = decoded;
+	return v92_cpt_decode(
+		       frame, capacity, frame_bits, &decoded) == wanted &&
+	       memcmp(&decoded, &before, sizeof(decoded)) == 0;
+}
+
+static bool test_decode_corruption(void)
+{
+	struct v92_cpt_parameters wanted = parameters(1, false);
+	struct v92_cpt_parameters decoded;
+	uint8_t original[V92_CPT_MAX_FRAME_BYTES] = { 0 };
+	uint8_t changed[V92_CPT_MAX_FRAME_BYTES];
+	size_t frame_bits = 0;
+	size_t frame_bytes;
+	size_t payload_end = V92_CPT_HEADER_BITS +
+		V92_CPT_CONSTELLATION_BITS;
+
+	CHECK(v92_cpt_encode(
+		      &wanted, original, sizeof(original), &frame_bits) ==
+		      V92_CPT_OK && frame_bits == V92_CPT_MIN_FRAME_BITS,
+	      "CPt corruption fixture did not encode");
+	frame_bytes = (frame_bits + 7u) / 8u;
+
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, 0, 0);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted a broken sync prefix");
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, 19, 1);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted a non-CPt record type");
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, 34, 1);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted a nonzero start bit");
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, CPT_MASKS_FIRST_BIT, 1);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted a nonzero mask-row start bit");
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, CPT_RATE_FIRST_BIT,
+		(uint8_t)!bit_at(changed, CPT_RATE_FIRST_BIT));
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_CRC_MISMATCH),
+	      "CPt accepted corrupted information");
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, payload_end + 1u,
+		(uint8_t)!bit_at(changed, payload_end + 1u));
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_CRC_MISMATCH),
+	      "CPt accepted a corrupted CRC");
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, payload_end + 1u + CPT_CRC_BITS, 1);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted nonzero frame fill");
+	memcpy(changed, original, sizeof(changed));
+	set_bit(changed, frame_bits, 1);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted nonzero storage padding");
+
+	memcpy(changed, original, sizeof(changed));
+	for (size_t index = 26; index <= 30; ++index)
+		set_bit(changed, index, 1);
+	for (size_t index = 36; index <= 48; ++index)
+		set_bit(changed, index, 1);
+	for (size_t index = 129; index <= 135; ++index)
+		set_bit(changed, index, 1);
+	rewrite_crc(changed, payload_end);
+	CHECK(v92_cpt_decode(
+		      changed, frame_bytes, frame_bits, &decoded) ==
+		      V92_CPT_OK && parameters_match(&wanted, &decoded),
+	      "CPt decoder interpreted reserved fields");
+
+	memcpy(changed, original, sizeof(changed));
+	for (uint8_t ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode)
+		set_bit(changed, mask_bit(0, ucode), 0);
+	rewrite_crc(changed, payload_end);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted an empty active constellation");
+	return true;
+}
+
+static bool test_decode_extent(void)
+{
+	struct v92_cpt_parameters wanted = parameters(2, false);
+	uint8_t frame[V92_CPT_MAX_FRAME_BYTES] = { 0 };
+	uint8_t changed[V92_CPT_MAX_FRAME_BYTES];
+	size_t frame_bits = 0;
+	size_t frame_bytes;
+
+	CHECK(v92_cpt_encode(
+		      &wanted, frame, sizeof(frame), &frame_bits) == V92_CPT_OK,
+	      "CPt extent fixture did not encode");
+	frame_bytes = (frame_bits + 7u) / 8u;
+	CHECK(decode_rejects_unchanged(
+		      frame, frame_bytes - 1u, frame_bits,
+		      V92_CPT_INVALID_ARGUMENT) &&
+	      decode_rejects_unchanged(
+		      frame, frame_bytes, frame_bits - 1u,
+		      V92_CPT_INVALID_FRAME) &&
+	      decode_rejects_unchanged(
+		      frame, frame_bytes, V92_CPT_MIN_FRAME_BITS - 12u,
+		      V92_CPT_INVALID_FRAME) &&
+	      decode_rejects_unchanged(
+		      frame, frame_bytes, V92_CPT_MAX_FRAME_BITS + 12u,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt decoder accepted an invalid extent");
+	memcpy(changed, frame, sizeof(changed));
+	for (size_t bit = 0; bit < 4u; ++bit)
+		set_bit(changed, map_first_bit(0) + bit, 1);
+	CHECK(decode_rejects_unchanged(
+		      changed, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted an out-of-range constellation map");
+
+	for (size_t interval = 0;
+	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
+		for (size_t bit = 0; bit < 4u; ++bit)
+			set_bit(frame, map_first_bit(interval) + bit, 0);
+	}
+	CHECK(decode_rejects_unchanged(
+		      frame, frame_bytes, frame_bits,
+		      V92_CPT_INVALID_FRAME),
+	      "CPt accepted unused constellation records");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v92_cpt_parameters valid = parameters(1, false);
@@ -355,6 +583,12 @@ static bool test_transactionality(void)
 		      V92_CPT_INVALID_ARGUMENT &&
 	      memcmp(frame, saved, sizeof(frame)) == 0 && frame_bits == 123,
 	      "invalid CPt arguments changed output");
+	CHECK(decode_rejects_unchanged(
+		      NULL, sizeof(frame), V92_CPT_MIN_FRAME_BITS,
+		      V92_CPT_INVALID_ARGUMENT) &&
+	      v92_cpt_decode(frame, sizeof(frame), V92_CPT_MIN_FRAME_BITS,
+			     NULL) == V92_CPT_INVALID_ARGUMENT,
+	      "invalid CPt decode arguments were accepted");
 	CHECK(strcmp(v92_cpt_result_name(V92_CPT_OK), "ok") == 0 &&
 	      strcmp(v92_cpt_result_name(V92_CPT_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
@@ -362,6 +596,10 @@ static bool test_transactionality(void)
 		     "invalid parameters") == 0 &&
 	      strcmp(v92_cpt_result_name(V92_CPT_OUTPUT_TOO_SMALL),
 		     "output too small") == 0 &&
+	      strcmp(v92_cpt_result_name(V92_CPT_INVALID_FRAME),
+		     "invalid frame") == 0 &&
+	      strcmp(v92_cpt_result_name(V92_CPT_CRC_MISMATCH),
+		     "CRC mismatch") == 0 &&
 	      strcmp(v92_cpt_result_name((enum v92_cpt_result)99),
 		     "unknown") == 0,
 	      "CPt result names changed");
@@ -376,6 +614,9 @@ int main(void)
 	} tests[] = {
 		{ "frame dimensions", test_dimensions },
 		{ "wire fields", test_wire_fields },
+		{ "decode layouts", test_decode_layouts },
+		{ "decode corruption", test_decode_corruption },
+		{ "decode extent", test_decode_extent },
 		{ "validation", test_validation },
 		{ "transactionality", test_transactionality },
 	};
