@@ -216,6 +216,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_digital_station.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_digital_tx.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_entry.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_line_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_rx.c \
