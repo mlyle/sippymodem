@@ -22,15 +22,18 @@ from tools.fast_matrix import (  # noqa: E402
     payload_pair,
     supported_media_codecs,
 )
-from tools.live_profiles import PROFILES  # noqa: E402
+from tools.live_profiles import (  # noqa: E402
+    PROFILES,
+    V34_RUNNABLE_RATES_BY_SYMBOL_RATE,
+)
 
 
 class FastMatrixTests(unittest.TestCase):
     def test_matrix_covers_every_supported_rate_codec_and_role(self) -> None:
         matrix = build_fast_matrix()
 
-        self.assertEqual(len(FAST_PROFILE_NAMES), 15)
-        self.assertEqual(len(matrix), 58)
+        self.assertEqual(len(FAST_PROFILE_NAMES), 39)
+        self.assertEqual(len(matrix), 106)
         self.assertIn("v22_600", FAST_PROFILE_NAMES)
         self.assertEqual(
             {case.profile.name for case in matrix}, set(FAST_PROFILE_NAMES)
@@ -54,8 +57,21 @@ class FastMatrixTests(unittest.TestCase):
         matrix = build_fast_matrix()
         v34 = [case for case in matrix if case.profile.family == "v34"]
 
-        self.assertEqual(len(v34), 2)
+        self.assertEqual(len(v34), 50)
         self.assertEqual({case.media_codec for case in v34}, {"PCMU"})
+        self.assertEqual(
+            {
+                (case.profile.symbol_rate, case.profile.receive_rate)
+                for case in v34
+            },
+            {
+                (symbol_rate, rate)
+                for symbol_rate, rates in (
+                    V34_RUNNABLE_RATES_BY_SYMBOL_RATE.items()
+                )
+                for rate in rates
+            },
+        )
         self.assertTrue(
             all(
                 supported_media_codecs(PROFILES[name]) == MEDIA_CODECS

@@ -15,6 +15,7 @@ from tools.live_profiles import (
     READINESS_PREREQUISITE,
     READINESS_RUNNABLE,
     V34_RATES_BY_SYMBOL_RATE,
+    V34_RUNNABLE_RATES_BY_SYMBOL_RATE,
     V90_DOWNSTREAM_RATES,
     V90_UPSTREAM_RATES_BY_SYMBOL_RATE,
     V92_PCM_UPSTREAM_RATES,
@@ -23,8 +24,8 @@ from tools.live_profiles import (
 
 class LiveProfileTests(unittest.TestCase):
     def test_current_profiles_use_registered_controls(self) -> None:
-        self.assertEqual(len(PROFILES), 267)
-        self.assertEqual(len(PROFILE_GROUPS["implemented"]), 14)
+        self.assertEqual(len(PROFILES), 321)
+        self.assertEqual(len(PROFILE_GROUPS["implemented"]), 38)
         self.assertEqual(len(PROFILE_GROUPS["analog-fallback"]), 5)
         self.assertEqual(
             LINK_MODE_AT_COMMANDS["raw"],
@@ -43,27 +44,30 @@ class LiveProfileTests(unittest.TestCase):
             ("AT+MS=32,0,14400,14400",),
         )
         self.assertEqual(
-            PROFILES["v34_9600"].at_commands,
-            ("AT+MS=34,0,9600,9600",),
+            PROFILES["v34_9600_b2400"].at_commands,
+            ("AT+MS=34,0,9600,9600", "AT+V34B=2400"),
         )
         self.assertEqual(
-            PROFILES["v34_9600"].readiness,
+            PROFILES["v34_9600_b2400"].readiness,
             READINESS_RUNNABLE,
         )
 
     def test_future_profiles_are_inert(self) -> None:
-        unsupported = ("AT+V34B", "AT+V90U", "AT+V92Q", "AT+V92U")
+        unsupported = ("AT+V90U", "AT+V92Q", "AT+V92U")
         runnable = tuple(
             profile
             for profile in PROFILES.values()
             if profile.readiness == READINESS_RUNNABLE
         )
 
-        self.assertEqual(len(runnable), 15)
+        self.assertEqual(len(runnable), 39)
         for profile in runnable:
             self.assertTrue(profile.at_commands)
             self.assertTrue(
-                all(command.startswith("AT+MS=") for command in profile.at_commands)
+                all(
+                    command.startswith(("AT+MS=", "AT+V34B="))
+                    for command in profile.at_commands
+                )
             )
             self.assertFalse(
                 any(
@@ -93,13 +97,34 @@ class LiveProfileTests(unittest.TestCase):
             (PROFILES[name].symbol_rate, PROFILES[name].transmit_rate)
             for name in PROFILE_GROUPS["v34-tx"]
         }
+        matched = {
+            (PROFILES[name].symbol_rate, PROFILES[name].receive_rate)
+            for name in PROFILE_GROUPS["v34-matched"]
+        }
+        current = {
+            (PROFILES[name].symbol_rate, PROFILES[name].receive_rate)
+            for name in PROFILE_GROUPS["v34-current"]
+        }
+        runnable_expected = {
+            (symbol_rate, rate)
+            for symbol_rate, rates in V34_RUNNABLE_RATES_BY_SYMBOL_RATE.items()
+            for rate in rates
+        }
 
+        self.assertEqual(matched, expected)
+        self.assertEqual(current, runnable_expected)
         self.assertEqual(receive, expected)
         self.assertEqual(transmit, expected - {(2400, 2400)})
         self.assertNotIn(2743, V34_RATES_BY_SYMBOL_RATE)
         self.assertFalse(any("_b2743" in name for name in PROFILES))
         self.assertEqual(len(PROFILE_GROUPS["v34-rx"]), 55)
         self.assertEqual(len(PROFILE_GROUPS["v34-tx"]), 54)
+        self.assertEqual(len(PROFILE_GROUPS["v34-matched"]), 55)
+        self.assertEqual(len(PROFILE_GROUPS["v34-current"]), 25)
+        self.assertEqual(
+            PROFILES["v34_33600_b3429"].readiness,
+            READINESS_PREREQUISITE,
+        )
 
     def test_generated_digital_matrix_is_directional(self) -> None:
         self.assertEqual(len(PROFILE_GROUPS["v90-down"]), 22)

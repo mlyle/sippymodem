@@ -154,11 +154,12 @@ candidate endpoint, issue ATO1, and verify a fresh byte exchange after it
 returns online.
 
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
-Baudot at both supported rates, V.32/V.32bis, the current symmetric V.34
-9600-bit/s baseline, and generated future matrices. The future matrices keep
-V.34 receive and transmit caps separate across the maintained `+V34B` symbol
-rate repertoire. The optional 2743-symbol/s cadence is excluded because that
-control does not accept it. The catalog independently sweeps V.90/V.92
+Baudot at both supported rates, V.32/V.32bis, and every valid fixed V.34
+bit-rate/symbol-rate pair selectable through `+MS` and `+V34B`. The fast
+matrix runs the V.34 pairs that currently pass in both station roles; denser
+pairs remain explicit prerequisite cases as the receiver matures. The optional
+2743-symbol/s cadence is excluded because the control does not accept it. The
+catalog independently sweeps V.90/V.92
 downstream, conventional upstream, PCM-upstream, quick-connect, head-end, and
 analogue-fallback cases without a Cartesian explosion. Plans select individual
 `profiles`, reusable `profile_groups`, `lapm` and/or `raw` link modes, and a

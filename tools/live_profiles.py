@@ -10,8 +10,9 @@ from dataclasses import dataclass
 
 READINESS_RUNNABLE = "runnable"
 READINESS_PREREQUISITE = "prerequisite"
-V34_RECEIVE_PREREQUISITE = "AT+V34B symbol-rate control"
-V34_TRANSMIT_PREREQUISITE = "AT+V34B and AT+V90U directional controls"
+V34_RECEIVE_PREREQUISITE = "directional V.34 receive-rate control"
+V34_TRANSMIT_PREREQUISITE = "AT+V90U directional transmit control"
+V34_HIGH_DENSITY_PREREQUISITE = "higher-density V.34 line receiver"
 V90_PREREQUISITE = "V.90 datapump and AT+V90U control"
 V92_PREREQUISITE = "V.92 datapump and AT+V92Q/AT+V92U controls"
 
@@ -38,15 +39,22 @@ LINK_MODE_AT_COMMANDS = {
 }
 
 V34_UPSTREAM_MIN_RATE = 4800
-# The primary-rate limits match the maintained +V34B command repertoire.
-# Although 2743 symbol/s is a V.34 cadence, +V34B deliberately rejects it;
-# generating that command would leave every such scenario failing setup.
+# These are the valid fixed primary-rate/cadence pairs exposed by the public
+# scenario catalog. Although 2743 symbol/s is a V.34 cadence, +V34B
+# deliberately rejects it; generating that command would fail setup.
 V34_RATES_BY_SYMBOL_RATE: dict[int, tuple[int, ...]] = {
     2400: tuple(range(2400, 21600 + 1, 2400)),
     2800: tuple(range(4800, 26400 + 1, 2400)),
     3000: tuple(range(4800, 28800 + 1, 2400)),
     3200: tuple(range(4800, 31200 + 1, 2400)),
     3429: tuple(range(4800, 33600 + 1, 2400)),
+}
+V34_RUNNABLE_RATES_BY_SYMBOL_RATE: dict[int, tuple[int, ...]] = {
+    2400: tuple(range(2400, 12000 + 1, 2400)),
+    2800: tuple(range(4800, 14400 + 1, 2400)),
+    3000: tuple(range(4800, 14400 + 1, 2400)),
+    3200: tuple(range(4800, 14400 + 1, 2400)),
+    3429: tuple(range(4800, 14400 + 1, 2400)),
 }
 
 # V.90 conventional upstream excludes the lower V.34 symbol rates. Keeping
@@ -69,6 +77,10 @@ V90_REPRESENTATIVE_UPSTREAM_SYMBOL_RATE = 3429
 
 def _fixed_rate(datapump: int, rate: int) -> tuple[str, ...]:
     return (f"AT+MS={datapump},0,{rate},{rate}",)
+
+
+def _v34_matched(rate: int, symbol_rate: int) -> tuple[str, ...]:
+    return _fixed_rate(34, rate) + (f"AT+V34B={symbol_rate}",)
 
 
 def _v34_receive(rate: int, symbol_rate: int) -> tuple[str, ...]:
@@ -258,22 +270,32 @@ def _build_profiles() -> dict[str, ModemProfile]:
             ),
         )
 
-    # The current source datapump supports one symmetric, mandatory
-    # 2400-symbol/s V.34 baseline selected entirely through AT+MS.
-    _add(
-        profiles,
-        ModemProfile(
-            name="v34_9600",
-            family="v34",
-            description="current symmetric V.34 baseline at 9600 bit/s",
-            at_commands=_fixed_rate(34, 9600),
-            receive_rate=9600,
-            transmit_rate=9600,
-            symbol_rate=2400,
-        ),
-    )
     for symbol_rate, rates in V34_RATES_BY_SYMBOL_RATE.items():
         for rate in rates:
+            runnable = rate in V34_RUNNABLE_RATES_BY_SYMBOL_RATE[symbol_rate]
+            _add(
+                profiles,
+                ModemProfile(
+                    name=f"v34_{rate}_b{symbol_rate}",
+                    family="v34",
+                    description=(
+                        f"matched V.34 at {rate} bit/s and "
+                        f"{symbol_rate} symbol/s"
+                    ),
+                    at_commands=_v34_matched(rate, symbol_rate),
+                    receive_rate=rate,
+                    transmit_rate=rate,
+                    symbol_rate=symbol_rate,
+                    readiness=(
+                        READINESS_RUNNABLE
+                        if runnable
+                        else READINESS_PREREQUISITE
+                    ),
+                    prerequisite=(
+                        "" if runnable else V34_HIGH_DENSITY_PREREQUISITE
+                    ),
+                ),
+            )
             _add(
                 profiles,
                 ModemProfile(
@@ -464,7 +486,16 @@ PROFILE_GROUPS: dict[str, tuple[str, ...]] = {
     "baudot": _named("baudot_"),
     "v32": _named("v32_"),
     "v32bis": _named("v32bis_"),
-    "v34-current": ("v34_9600",),
+    "v34-matched": tuple(
+        f"v34_{rate}_b{symbol_rate}"
+        for symbol_rate, rates in V34_RATES_BY_SYMBOL_RATE.items()
+        for rate in rates
+    ),
+    "v34-current": tuple(
+        f"v34_{rate}_b{symbol_rate}"
+        for symbol_rate, rates in V34_RUNNABLE_RATES_BY_SYMBOL_RATE.items()
+        for rate in rates
+    ),
     "v34-rx": _named("v34_rx_"),
     "v34-tx": _named("v34_tx_"),
     "v90-down": _named("v90_down_"),
