@@ -721,6 +721,28 @@ static enum sip_signaling_result create_transport(
 	return SIP_SIGNALING_OK;
 }
 
+static pj_status_t make_local_account_media_ephemeral(pjsua_acc_id account_id)
+{
+	pjsua_acc_config account;
+	pj_pool_t *pool = pjsua_pool_create("sip-local-account", 512, 512);
+	pj_status_t status;
+
+	if (pool == NULL)
+		return PJ_ENOMEM;
+	status = pjsua_acc_get_config(account_id, pool, &account);
+	if (status == PJ_SUCCESS) {
+		/* Media samples use the separately owned RTP endpoint advertised by
+		 * the SDP callback. The library transport is therefore only an
+		 * internal placeholder and must not claim a process-global fixed
+		 * port. */
+		account.rtp_cfg.port = 0;
+		account.rtp_cfg.port_range = 0;
+		status = pjsua_acc_modify(account_id, &account);
+	}
+	pj_pool_release(pool);
+	return status;
+}
+
 static enum sip_signaling_result add_account(
 	struct sip_signaling *signaling)
 {
@@ -731,8 +753,12 @@ static enum sip_signaling_result add_account(
 	if (!signaling->account_configured) {
 		status = pjsua_acc_add_local(signaling->transport_id, PJ_TRUE,
 					     &signaling->account_id);
+		if (status == PJ_SUCCESS)
+			status = make_local_account_media_ephemeral(
+				signaling->account_id);
 	} else {
 		pjsua_acc_config_default(&account);
+		account.rtp_cfg.port = 0;
 		account.id = pj_str(signaling->identity_uri);
 		if (signaling->config.sip.registration_enabled)
 			account.reg_uri = pj_str(signaling->registrar_uri);

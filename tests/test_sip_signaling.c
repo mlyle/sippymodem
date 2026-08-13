@@ -2,6 +2,8 @@
 
 #include <sip_signaling.h>
 
+#include <pjsua-lib/pjsua.h>
+
 #include "test.h"
 
 #include <arpa/inet.h>
@@ -177,6 +179,27 @@ static struct sip_signaling *create_local_signaling(
 	return create_signaling(&config, capture);
 }
 
+static bool library_media_transport_is_ephemeral(void)
+{
+	pjsua_acc_id account_ids[2];
+	unsigned int account_count = ARRAY_LENGTH(account_ids);
+	pjsua_acc_config account;
+	pj_pool_t *pool;
+	bool ephemeral = false;
+
+	if (pjsua_enum_accs(account_ids, &account_count) != PJ_SUCCESS ||
+	    account_count != 1)
+		return false;
+	pool = pjsua_pool_create("test-account", 512, 512);
+	if (pool == NULL)
+		return false;
+	if (pjsua_acc_get_config(account_ids[0], pool, &account) == PJ_SUCCESS)
+		ephemeral = account.rtp_cfg.port == 0 &&
+			    account.rtp_cfg.port_range == 0;
+	pj_pool_release(pool);
+	return ephemeral;
+}
+
 static bool test_local_transport_lifecycle(void)
 {
 	struct callback_capture capture = { 0 };
@@ -200,6 +223,8 @@ static bool test_local_transport_lifecycle(void)
 	CHECK(sip_signaling_is_open(signaling) &&
 		      sip_signaling_local_port(signaling) != 0,
 	      "signaling transport did not bind a local port");
+	CHECK(library_media_transport_is_ephemeral(),
+	      "unused library media transport retained a fixed port");
 	CHECK(capture.ready_count == 1 && capture.error_count == 0 &&
 		      capture.trace_count != 0 && capture.adapter_trace_count != 0,
 	      "open callbacks were wrong");
@@ -823,6 +848,7 @@ static bool test_loopback_registration_lifecycle(void)
 	enum sip_signaling_result close_result =
 		SIP_SIGNALING_NOT_OPEN;
 	bool identity_normalized = false;
+	bool media_transport_ephemeral = false;
 	bool final_state_unregistered = false;
 	bool registrar_succeeded;
 
@@ -850,6 +876,8 @@ static bool test_loopback_registration_lifecycle(void)
 
 			identity_normalized = identity != NULL &&
 				strcmp(identity, "sip:alice@127.0.0.1") == 0;
+			media_transport_ephemeral =
+				library_media_transport_is_ephemeral();
 			step_result = SIP_SIGNALING_OK;
 			for (unsigned int attempt = 0;
 			     attempt < 50 &&
@@ -877,6 +905,8 @@ static bool test_loopback_registration_lifecycle(void)
 	      "registered account did not open: %s",
 	      sip_signaling_result_name(open_result));
 	CHECK(identity_normalized, "registered identity was not normalized");
+	CHECK(media_transport_ephemeral,
+	      "registered account retained a fixed library media port");
 	CHECK(step_result == SIP_SIGNALING_OK,
 	      "registration event polling failed");
 	CHECK(registrar_succeeded && registrar.request_count == 2 &&

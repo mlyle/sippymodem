@@ -3696,6 +3696,11 @@ $(BUILD_DIR)/sip_uri.o: \
 	../src/sip_uri.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
+$(BUILD_DIR)/test_sip_signaling.o: \
+	test_sip_signaling.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) -D_DEFAULT_SOURCE $(CFLAGS) $(PJSIP_CFLAGS) \
+		-MMD -MP -c -o $@ $<
+
 $(BUILD_DIR)/sdp.o: ../src/sdp.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
