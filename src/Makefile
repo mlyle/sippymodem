@@ -163,6 +163,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_info1d.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_info1a.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_pcm_dil.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_ru.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_opening.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_trn1u.c \
