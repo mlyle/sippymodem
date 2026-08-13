@@ -2,6 +2,11 @@
 
 #include <v90_phase4_analog_station.h>
 #include <v90_phase4_digital_station.h>
+#include <v90_phase4_e_line_tx.h>
+#include <v90_upstream_data.h>
+#include <v90_downstream_data_handoff.h>
+#include <v90_downstream_data_rx.h>
+#include <v90_downstream_data_tx.h>
 
 #include <g711.h>
 
@@ -14,6 +19,8 @@ enum {
 	TRAINING_UCODE = 91,
 	SAMPLE_LIMIT = 12000,
 	DOWNSTREAM_SYMBOL_LIMIT = 4096,
+	DATA_FRAMES_TO_RECEIVE = 4,
+	DATA_FRAME_LIMIT = 16,
 };
 
 static struct v90_jd_parameters jd_parameters(
@@ -103,26 +110,6 @@ static bool mapping_matches(
 	       memcmp(mapping, &expected, sizeof(expected)) == 0;
 }
 
-static bool mp_records_match(
-	const struct v90_mp_record *left,
-	const struct v90_mp_record *right, uint8_t frame_bits)
-{
-	uint8_t left_sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
-	uint8_t right_sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
-	size_t left_bits = 0;
-	size_t right_bits = 0;
-
-	return v90_mp_encode(
-		       left, frame_bits, left_sequence,
-		       sizeof(left_sequence), &left_bits) == V90_MP_OK &&
-	       v90_mp_encode(
-		       right, frame_bits, right_sequence,
-		       sizeof(right_sequence), &right_bits) == V90_MP_OK &&
-	       left_bits == right_bits &&
-	       memcmp(left_sequence, right_sequence,
-		      (left_bits + 7u) / 8u) == 0;
-}
-
 static int16_t quantize(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
@@ -130,205 +117,377 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
-static bool trn2d_symbols_match(
-	const struct v90_downstream_symbol *left,
-	const struct v90_downstream_symbol *right)
+static bool mp_acknowledges_cp(const struct v90_mp_record *record)
 {
-	return left->pcm.ucode == right->pcm.ucode &&
-	       left->pcm.positive == right->pcm.positive &&
-	       left->pcm.octet == right->pcm.octet &&
-	       left->pcm.sample == right->pcm.sample &&
-	       left->shaping_rule == right->shaping_rule &&
-	       left->shaping_rule_valid == right->shaping_rule_valid &&
-	       left->shaping_frame_start == right->shaping_frame_start;
+	return record->type == V90_MP_RECORD_TYPE0 ?
+		       record->parameters.type0.acknowledges_cp :
+		       record->parameters.type1.common.acknowledges_cp;
 }
 
-static bool verify_downstream_handoffs(
-	struct v90_phase4_digital_transmit_handoff *digital,
-	struct v90_phase4_analog_receive_handoff *analog)
+static void generate_data_bits(
+	uint8_t *bits, size_t bit_count, size_t frame)
 {
-	struct v90_downstream_tx expected;
-	const struct v90_pcm_mapping *mapping =
-		&analog->receiver.stream.decoder.mapping;
-	size_t training_frames = 0;
-	size_t mp_records = 0;
-	size_t symbols = 0;
-	bool prime_requested = false;
-	bool prime_received = false;
+	for (size_t bit = 0; bit < bit_count; ++bit)
+		bits[bit] = (uint8_t)(
+			(frame * 13u + bit * 7u + (frame >> (bit % 3u))) & 1u);
+}
 
-	CHECK(v90_downstream_tx_init(
-		      &expected, mapping) ==
-		      V90_DOWNSTREAM_TX_OK,
-	      "analogue mapping could not initialize TRN2d model");
-	for (; symbols < 48; ++symbols) {
-		struct v90_downstream_symbol actual_symbol;
-		struct v90_downstream_symbol expected_symbol;
-		struct v90_downstream_event event;
-		struct v90_downstream_event untouched;
-		enum v90_downstream_rx_result receive_result;
+static bool receive_data_output(
+	struct v90_downstream_data_rx *receiver,
+	const struct v90_pcm_frame_output *output,
+	const uint8_t expected[DATA_FRAME_LIMIT][V90_PCM_FRAME_MAX_BITS],
+	size_t accepted_data_frames, size_t *b1d_frames,
+	size_t *data_frames)
+{
+	for (size_t symbol = 0; symbol < output->symbol_count; ++symbol) {
+		struct v90_pcm_stream_frame frame;
+		enum v90_downstream_data_rx_result result =
+			v90_downstream_data_rx_receive_octet(
+				receiver, output->symbols[symbol].octet, &frame);
 
-		memset(&event, 0xa5, sizeof(event));
-		untouched = event;
-
-		CHECK(v90_downstream_tx_next(
-			      &digital->transmitter, &actual_symbol) ==
-			      V90_DOWNSTREAM_TX_OK &&
-		      v90_downstream_tx_next(&expected, &expected_symbol) ==
-			      V90_DOWNSTREAM_TX_OK &&
-		      trn2d_symbols_match(
-			      &actual_symbol, &expected_symbol),
-		      "paired TRN2d symbol %zu differed", symbols);
-		receive_result = v90_downstream_rx_receive(
-			&analog->receiver, actual_symbol.pcm.octet, &event);
-		if ((symbols + 1u) % V90_CP_FRAME_INTERVALS != 0) {
-			CHECK(receive_result == V90_DOWNSTREAM_RX_BUFFERING &&
-			      memcmp(&event, &untouched, sizeof(event)) == 0,
-			      "TRN2d frame advanced early at symbol %zu", symbols);
+		if (result == V90_DOWNSTREAM_DATA_RX_BUFFERING)
+			continue;
+		if (result == V90_DOWNSTREAM_DATA_RX_B1D_FRAME ||
+		    result == V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) {
+			for (size_t bit = 0; bit < frame.bit_count; ++bit)
+				CHECK(frame.bits[bit] == 1,
+				      "B1d frame %zu bit %zu changed",
+				      *b1d_frames, bit);
+			(*b1d_frames)++;
+			CHECK((result == V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) ==
+				      (*b1d_frames == V90_PHASE4_B1D_FRAMES),
+			      "B1d completion moved to frame %zu", *b1d_frames);
 			continue;
 		}
-		CHECK(receive_result == V90_DOWNSTREAM_RX_TRN2D_FRAME &&
-		      event.trn2d.bit_count == mapping->frame_bits &&
-		      event.trn2d.training_bit_errors == 0,
-		      "TRN2d frame %zu did not decode cleanly",
-		      symbols / V90_CP_FRAME_INTERVALS);
-		for (size_t bit = 0; bit < event.trn2d.bit_count; ++bit)
-			CHECK(event.trn2d.bits[bit] == 1,
-			      "TRN2d frame %zu bit %zu was not training data",
-			      symbols / V90_CP_FRAME_INTERVALS, bit);
-		training_frames++;
+		CHECK(result == V90_DOWNSTREAM_DATA_RX_DATA_FRAME &&
+		      *data_frames < accepted_data_frames &&
+		      memcmp(frame.bits, expected[*data_frames],
+			     frame.bit_count) == 0,
+		      "post-B1d data frame %zu changed (%s)",
+		      *data_frames,
+		      v90_downstream_data_rx_result_name(result));
+		(*data_frames)++;
 	}
-	CHECK(digital->transmitter.transmitted_symbols == symbols &&
-	      expected.transmitted_symbols == 48 &&
-	      analog->receiver.stream.received_symbols == symbols &&
-	      training_frames == 8 &&
-	      analog->receiver.trn2d_bit_errors == 0 &&
-	      v90_downstream_rx_is_valid(&analog->receiver),
-	      "paired TRN2d handoff lost its exact Ri boundary");
-
-	while (!prime_received && symbols < DOWNSTREAM_SYMBOL_LIMIT) {
-		struct v90_downstream_symbol symbol;
-		struct v90_downstream_event event;
-		enum v90_downstream_rx_result result;
-
-		CHECK(v90_downstream_tx_next(
-			      &digital->transmitter, &symbol) ==
-			      V90_DOWNSTREAM_TX_OK,
-		      "paired downstream transmitter stopped at %zu", symbols);
-		symbols++;
-		result = v90_downstream_rx_receive(
-			&analog->receiver, symbol.pcm.octet, &event);
-		if (result == V90_DOWNSTREAM_RX_BUFFERING)
-			continue;
-		if (result == V90_DOWNSTREAM_RX_TRN2D_FRAME) {
-			CHECK(event.trn2d.bit_count == mapping->frame_bits &&
-			      event.trn2d.training_bit_errors == 0,
-			      "paired TRN2d frame %zu changed",
-			      training_frames);
-			for (size_t bit = 0;
-			     bit < event.trn2d.bit_count; ++bit)
-				CHECK(event.trn2d.bits[bit] == 1,
-				      "paired TRN2d frame %zu bit %zu changed",
-				      training_frames, bit);
-			training_frames++;
-			continue;
-		}
-		if (result == V90_DOWNSTREAM_RX_MP) {
-			CHECK(!prime_received &&
-			      mp_records_match(
-				      &event.mp.record,
-				      &digital->transmitter.mp_record,
-				      mapping->frame_bits),
-			      "paired MP record %zu changed", mp_records);
-			mp_records++;
-			if (!prime_requested) {
-				CHECK(v90_downstream_tx_request_mp_prime(
-					      &digital->transmitter) ==
-					      V90_DOWNSTREAM_TX_OK,
-				      "paired MP prime request failed");
-				prime_requested = true;
-			}
-			continue;
-		}
-		CHECK(result == V90_DOWNSTREAM_RX_MP_PRIME,
-		      "paired downstream receiver returned %s",
-		      v90_downstream_rx_result_name(result));
-		struct v90_mp_record expected_prime =
-			digital->transmitter.mp_record;
-
-		expected_prime.parameters.type0.acknowledges_cp = true;
-		CHECK(mp_records >= 1 &&
-		      mp_records_match(
-			      &event.mp.record, &expected_prime,
-			      mapping->frame_bits),
-		      "paired MP prime record changed");
-		prime_received = true;
-	}
-	CHECK(prime_received && prime_requested && mp_records >= 1 &&
-	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
-	      digital->transmitter.transmitted_symbols == symbols &&
-	      analog->receiver.stream.received_symbols == symbols &&
-	      analog->receiver.trn2d_bit_errors == 0 &&
-	      v90_downstream_tx_is_valid(&digital->transmitter) &&
-	      v90_downstream_rx_is_valid(&analog->receiver),
-	      "paired handoffs did not reach MP prime continuously");
 	return true;
 }
 
-static bool verify_cp_handoffs(
-	enum g711_law law, struct v90_phase4_cp_line_tx *transmit,
-	struct v90_phase4_cp_line_rx *receive,
+static bool verify_data_epoch(
+	const struct v90_downstream_tx *completed_transmit,
+	const struct v90_downstream_rx *completed_receive,
+	const struct v90_pcm_mapping *data_mapping)
+{
+	struct v90_downstream_data_tx transmit;
+	struct v90_downstream_data_rx receive;
+	uint8_t expected[DATA_FRAME_LIMIT][V90_PCM_FRAME_MAX_BITS] = { 0 };
+	size_t accepted_data_frames = 0;
+	size_t b1d_frames = 0;
+	size_t data_frames = 0;
+
+	CHECK(v90_downstream_data_tx_start_after_ed(
+		      &transmit, completed_transmit, data_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_OK &&
+	      v90_downstream_data_rx_start_after_ed(
+		      &receive, completed_receive, data_mapping) ==
+		      V90_DOWNSTREAM_DATA_RX_OK,
+	      "completed Ed did not start B1d");
+	for (size_t frame = 0; frame < V90_PHASE4_B1D_FRAMES; ++frame) {
+		struct v90_pcm_frame_output output;
+		enum v90_downstream_data_tx_result result =
+			v90_downstream_data_tx_next_b1d(&transmit, &output);
+
+		CHECK(result == V90_DOWNSTREAM_DATA_TX_BUFFERING ||
+		      result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
+		      "B1d source frame %zu failed", frame);
+		if (result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY)
+			CHECK(receive_data_output(
+				      &receive, &output, expected,
+				      accepted_data_frames, &b1d_frames,
+				      &data_frames),
+			      "B1d output frame %zu failed", frame);
+	}
+	while (data_frames < DATA_FRAMES_TO_RECEIVE &&
+	       accepted_data_frames < DATA_FRAME_LIMIT) {
+		struct v90_pcm_frame_output output;
+		uint8_t *bits = expected[accepted_data_frames];
+		enum v90_downstream_data_tx_result result;
+
+		generate_data_bits(
+			bits, data_mapping->frame_bits,
+			accepted_data_frames + 1u);
+		result = v90_downstream_data_tx_process(
+			&transmit, bits, data_mapping->frame_bits, &output);
+		CHECK(result == V90_DOWNSTREAM_DATA_TX_BUFFERING ||
+		      result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
+		      "data source frame %zu failed", accepted_data_frames);
+		accepted_data_frames++;
+		if (result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY)
+			CHECK(receive_data_output(
+				      &receive, &output, expected,
+				      accepted_data_frames, &b1d_frames,
+				      &data_frames),
+			      "data output frame %zu failed",
+			      accepted_data_frames - 1u);
+	}
+	CHECK(v90_downstream_data_tx_b1d_complete(&transmit) &&
+	      v90_downstream_data_rx_b1d_complete(&receive) &&
+	      b1d_frames == V90_PHASE4_B1D_FRAMES &&
+	      receive.b1d_bit_errors == 0 &&
+	      data_frames == DATA_FRAMES_TO_RECEIVE,
+	      "B1d/data epoch stopped at %zu B1d and %zu data frames",
+	      b1d_frames, data_frames);
+	return true;
+}
+
+static bool verify_final_downstream_exchange(
+	enum g711_law law, struct v90_phase4_cp_line_tx *cp_transmit,
+	struct v90_phase4_cp_line_rx *cp_receive,
+	struct v90_phase4_digital_transmit_handoff *digital,
+	struct v90_phase4_analog_receive_handoff *analog,
 	const struct v90_cp_parameters *training)
 {
-	struct v90_cp_parameters data = *training;
-	bool received = false;
+	struct v90_cp_parameters active_cp = *training;
+	struct v90_cp_parameters accepted_cp;
+	struct v90_pcm_mapping data_mapping;
+	struct v90_phase4_e_line_tx e_transmit;
+	struct v34_data_stream upstream_data;
+	size_t training_frames = 0;
+	size_t downstream_symbols = 0;
+	bool cp_received = false;
+	bool cp_prime_received = false;
+	bool cp_prime_sent = false;
+	bool cp_finishing = false;
+	bool cp_stopped = false;
+	bool e_started = false;
+	bool e_complete = false;
+	bool upstream_started = false;
+	bool upstream_b1_complete = false;
+	bool mp_received = false;
+	bool mp_prime_received = false;
+	bool ed_armed = false;
+	bool ed_received = false;
 
-	data.kind = V90_CP_DATA;
-	data.selected_rate_index = 1;
-	data.acknowledges_peer = true;
-	CHECK(v90_phase4_cp_line_tx_start_next_record(transmit, &data) ==
+	active_cp.kind = V90_CP_DATA;
+	active_cp.selected_rate_index = 1;
+	active_cp.acknowledges_peer = false;
+	CHECK(v90_pcm_mapping_init(&data_mapping, &active_cp) ==
+		      V90_PCM_MAPPING_OK &&
+	      v90_phase4_cp_line_tx_start_next_record(
+		      cp_transmit, &active_cp) ==
 		      V90_PHASE4_CP_LINE_TX_OK,
-	      "analogue CP handoff could not start CP");
-	for (size_t clock = 0; clock < SAMPLE_LIMIT; ++clock) {
-		struct v90_cp_receive_event event = { 0 };
-		enum v90_phase4_cp_line_rx_result result;
-		int16_t sample;
+	      "data CP did not start at the CPt boundary");
 
-		if (v90_phase4_cp_line_tx_record_is_complete(transmit)) {
-			CHECK(v90_phase4_cp_line_tx_start_next_record(
-				      transmit, &data) ==
-				      V90_PHASE4_CP_LINE_TX_OK,
-			      "analogue CP handoff could not repeat CP");
-		}
-		CHECK(v90_phase4_cp_line_tx_sample(transmit, &sample) ==
-			      V90_PHASE4_CP_LINE_TX_OK,
-		      "analogue CP handoff failed at clock %zu", clock);
-		result = v90_phase4_cp_line_rx_sample(
-			receive, quantize(law, sample), &event);
-		CHECK(result == V90_PHASE4_CP_LINE_RX_OK ||
-		      result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
-		      result == V90_PHASE4_CP_LINE_RX_RECORD_READY,
-		      "digital CP handoff failed at clock %zu", clock);
-		if (result == V90_PHASE4_CP_LINE_RX_RECORD_READY) {
-			CHECK(v90_phase4_cp_line_rx_pending_record_is_valid(
-				      receive),
-			      "continued CP record failed its frame checks");
-			if (event.parameters.kind == V90_CP_TRAINING) {
-				CHECK(parameters_match(
-					      &event.parameters, training),
-				      "trailing CPt changed at the handoff");
+	for (size_t clock = 0; clock < SAMPLE_LIMIT; ++clock) {
+		if (!cp_stopped && !cp_finishing &&
+		    v90_phase4_cp_line_tx_record_is_complete(cp_transmit)) {
+			if (active_cp.acknowledges_peer)
+				cp_prime_sent = true;
+			if (cp_prime_sent && mp_prime_received) {
+				cp_finishing = true;
 			} else {
-				CHECK(parameters_match(&event.parameters, &data),
-				      "continued CP changed at the handoff");
-				received = true;
+				active_cp.acknowledges_peer = mp_received;
+				CHECK(v90_phase4_cp_line_tx_start_next_record(
+					      cp_transmit, &active_cp) ==
+					      V90_PHASE4_CP_LINE_TX_OK,
+				      "CP repetition failed at clock %zu", clock);
 			}
-			CHECK(v90_phase4_cp_line_rx_continue(receive) ==
-				      V90_PHASE4_CP_LINE_RX_OK,
-			      "continued CP record was not released");
-			if (received)
-				break;
 		}
+
+		if (!cp_stopped || (e_started && !e_complete) ||
+		    (upstream_started && !upstream_b1_complete)) {
+			struct v90_cp_receive_event event = { 0 };
+			enum v90_phase4_cp_line_rx_result result;
+			bool sample_ready = false;
+			int16_t sample;
+
+			if (!cp_stopped) {
+				enum v90_phase4_cp_line_tx_result transmit_result =
+					v90_phase4_cp_line_tx_sample(
+						cp_transmit, &sample);
+
+				CHECK(transmit_result == V90_PHASE4_CP_LINE_TX_OK ||
+				      transmit_result ==
+					      V90_PHASE4_CP_LINE_TX_COMPLETE,
+				      "CP line stopped at clock %zu", clock);
+				if (transmit_result == V90_PHASE4_CP_LINE_TX_OK) {
+					sample_ready = true;
+				} else {
+					CHECK(v90_phase4_e_line_tx_init(
+						      &e_transmit, cp_transmit) ==
+						      V90_PHASE4_E_LINE_TX_OK,
+					      "CP prime did not hand off to E");
+					cp_stopped = true;
+					e_started = true;
+				}
+			}
+			if (!sample_ready && e_started && !e_complete) {
+				enum v90_phase4_e_line_tx_result transmit_result =
+					v90_phase4_e_line_tx_sample(
+						&e_transmit, &sample);
+
+				CHECK(transmit_result == V90_PHASE4_E_LINE_TX_OK ||
+				      transmit_result ==
+					      V90_PHASE4_E_LINE_TX_COMPLETE,
+				      "E line stopped at clock %zu", clock);
+				if (transmit_result == V90_PHASE4_E_LINE_TX_OK)
+					sample_ready = true;
+				else {
+					e_complete = true;
+					CHECK(v90_upstream_data_start_after_e(
+						      &upstream_data, &e_transmit,
+						      &digital->transmitter.mp_record) ==
+						      V90_UPSTREAM_DATA_OK,
+					      "E did not hand off to upstream B1");
+					upstream_started = true;
+				}
+			}
+			if (!sample_ready && upstream_started &&
+			    !upstream_b1_complete) {
+				bool accepted;
+
+				CHECK(v34_data_stream_sample(
+					      &upstream_data, NULL, NULL, &sample,
+					      &accepted) == V34_DATA_STREAM_OK,
+				      "upstream B1 failed at clock %zu", clock);
+				sample_ready = true;
+				upstream_b1_complete =
+					!v34_data_stream_is_transmitting_b1(
+						&upstream_data);
+			}
+			if (sample_ready && !cp_prime_received) {
+				result = v90_phase4_cp_line_rx_sample(
+					cp_receive, quantize(law, sample), &event);
+				CHECK(result == V90_PHASE4_CP_LINE_RX_OK ||
+				      result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
+				      result == V90_PHASE4_CP_LINE_RX_RECORD_READY,
+				      "CP receive failed at clock %zu", clock);
+			}
+			if (sample_ready && !cp_prime_received &&
+			    result == V90_PHASE4_CP_LINE_RX_RECORD_READY) {
+				CHECK(v90_phase4_cp_line_rx_pending_record_is_valid(
+					      cp_receive),
+				      "continued CP failed its frame checks");
+				if (event.parameters.kind == V90_CP_DATA) {
+					struct v90_cp_parameters normalized =
+						event.parameters;
+
+					normalized.acknowledges_peer = false;
+					struct v90_cp_parameters expected = active_cp;
+
+					expected.acknowledges_peer = false;
+					CHECK(parameters_match(
+						      &normalized, &expected),
+					      "received CP parameters changed");
+					if (!cp_received) {
+						accepted_cp = normalized;
+						cp_received = true;
+						CHECK(v90_downstream_tx_request_mp_prime(
+							      &digital->transmitter) ==
+							      V90_DOWNSTREAM_TX_OK,
+						      "CP did not authorize MP prime");
+					} else {
+						CHECK(parameters_match(
+							      &normalized,
+							      &accepted_cp),
+						      "repeated CP changed");
+					}
+					if (event.parameters.acknowledges_peer &&
+					    !cp_prime_received) {
+						cp_prime_received = true;
+						CHECK(v90_downstream_tx_request_ed(
+							      &digital->transmitter) ==
+							      V90_DOWNSTREAM_TX_OK,
+						      "CP prime did not authorize Ed");
+					}
+				}
+				CHECK(v90_phase4_cp_line_rx_continue(cp_receive) ==
+					      V90_PHASE4_CP_LINE_RX_OK,
+				      "CP receiver did not resume");
+			}
+		}
+
+		if (!v90_downstream_tx_is_complete(&digital->transmitter)) {
+			struct v90_downstream_symbol symbol;
+			struct v90_downstream_event event;
+			enum v90_downstream_tx_result tx_result =
+				v90_downstream_tx_next(
+					&digital->transmitter, &symbol);
+
+			CHECK(tx_result == V90_DOWNSTREAM_TX_OK ||
+			      tx_result == V90_DOWNSTREAM_TX_COMPLETE,
+			      "downstream transmit failed at clock %zu", clock);
+			if (tx_result == V90_DOWNSTREAM_TX_OK) {
+				enum v90_downstream_rx_result rx_result =
+					v90_downstream_rx_receive(
+						&analog->receiver,
+						symbol.pcm.octet, &event);
+
+				downstream_symbols++;
+				if (rx_result == V90_DOWNSTREAM_RX_TRN2D_FRAME) {
+					CHECK(event.trn2d.training_bit_errors == 0,
+					      "TRN2d frame %zu changed",
+					      training_frames);
+					training_frames++;
+				} else if (rx_result == V90_DOWNSTREAM_RX_MP) {
+					CHECK(!mp_acknowledges_cp(
+						      &event.mp.record),
+					      "ordinary MP acknowledged CP");
+					mp_received = true;
+				} else if (rx_result ==
+					   V90_DOWNSTREAM_RX_MP_PRIME) {
+					CHECK(mp_received &&
+					      mp_acknowledges_cp(
+						      &event.mp.record),
+					      "MP prime preceded MP");
+					mp_prime_received = true;
+				} else if (rx_result == V90_DOWNSTREAM_RX_ED) {
+					CHECK(ed_armed && event.ed.bit_errors == 0,
+					      "Ed was early or corrupt");
+					ed_received = true;
+				} else {
+					CHECK(rx_result ==
+						      V90_DOWNSTREAM_RX_BUFFERING,
+					      "downstream receive returned %s",
+					      v90_downstream_rx_result_name(
+						      rx_result));
+				}
+			}
+		}
+
+		if (!ed_armed && cp_prime_sent && mp_prime_received) {
+			CHECK(v90_downstream_rx_expect_ed(&analog->receiver) ==
+				      V90_DOWNSTREAM_RX_OK,
+			      "reciprocal acknowledgements did not arm Ed");
+			ed_armed = true;
+		}
+		if (v90_downstream_tx_is_complete(&digital->transmitter) &&
+		    v90_downstream_rx_is_complete(&analog->receiver) &&
+		    upstream_b1_complete)
+			break;
 	}
-	CHECK(received, "continued CP record was not recovered");
+
+	CHECK(cp_received && cp_prime_received && cp_prime_sent &&
+	      mp_received && mp_prime_received && ed_armed && ed_received &&
+	      e_started && e_complete && upstream_started &&
+	      upstream_b1_complete &&
+	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      downstream_symbols < DOWNSTREAM_SYMBOL_LIMIT &&
+	      v90_downstream_tx_is_complete(&digital->transmitter) &&
+	      v90_downstream_rx_is_complete(&analog->receiver),
+	      "paired control stopped: CP=%d/%d/%d MP=%d/%d Ed=%d/%d "
+	      "E/B1=%d/%d/%d/%d "
+	      "TRN=%zu symbols=%zu stages=%d/%d complete=%d/%d",
+	      cp_received, cp_prime_received, cp_prime_sent,
+	      mp_received, mp_prime_received, ed_armed, ed_received,
+	      e_started, e_complete, upstream_started,
+	      upstream_b1_complete,
+	      training_frames, downstream_symbols,
+	      digital->transmitter.stage, analog->receiver.stage,
+	      v90_downstream_tx_is_complete(&digital->transmitter),
+	      v90_downstream_rx_is_complete(&analog->receiver));
+	CHECK(verify_data_epoch(
+		      &digital->transmitter, &analog->receiver,
+		      &data_mapping),
+	      "paired B1d/data epoch failed");
 	return true;
 }
 
@@ -455,11 +614,10 @@ static bool run_exchange(
 		      &digital_transmit.transmitter.encoder.mapping,
 		      &training),
 	      "paired owners disagreed about their Phase 4 handoffs");
-	CHECK(verify_downstream_handoffs(&digital_transmit, &analog_receive),
-	      "paired owners disagreed through MP prime");
-	CHECK(verify_cp_handoffs(
-		      law, &analog_transmit, &digital_receive, &training),
-	      "paired CP histories did not continue");
+	CHECK(verify_final_downstream_exchange(
+		      law, &analog_transmit, &digital_receive,
+		      &digital_transmit, &analog_receive, &training),
+	      "paired owners disagreed through downstream data");
 	return true;
 }
 
