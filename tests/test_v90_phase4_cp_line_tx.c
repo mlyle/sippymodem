@@ -164,6 +164,8 @@ static bool verify_continuation(
 	bool started_data = false;
 	bool complete = false;
 
+	data.request_silence = false;
+
 	CHECK(v34_training_line_init(
 		      &source, &selected, V90_PHASE3_SAMPLE_RATE,
 		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK &&
@@ -233,7 +235,9 @@ static bool verify_continuation(
 	      v90_phase4_e_line_tx_init(&e, &tx) ==
 		      V90_PHASE4_E_LINE_TX_OK &&
 	      memcmp(&e.line, &model_line, sizeof(model_line)) == 0 &&
-	      memcmp(&e.sequence, &model_e, sizeof(model_e)) == 0,
+	      memcmp(&e.sequence, &model_e, sizeof(model_e)) == 0 &&
+	      e.cp.kind == V90_CP_DATA && e.cp.acknowledges_peer &&
+	      !e.cp.request_silence,
 	      "E did not preserve the completed CP histories");
 	for (size_t sample_index = 0;
 	     sample_index < SAMPLE_LIMIT &&

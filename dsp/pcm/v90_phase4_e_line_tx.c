@@ -19,6 +19,11 @@ bool v90_phase4_e_line_tx_is_valid(
 {
 	return transmitter != NULL && line_is_analog(&transmitter->line) &&
 	       v34_phase4_e_sequence_is_valid(&transmitter->sequence) &&
+	       v90_cp_parameters_are_valid(&transmitter->cp) &&
+	       transmitter->cp.kind == V90_CP_DATA &&
+	       transmitter->cp.selected_rate_index != 0 &&
+	       transmitter->cp.acknowledges_peer &&
+	       !transmitter->cp.request_silence &&
 	       transmitter->sequence.role ==
 		       transmitter->line.profile.local_role;
 }
@@ -40,6 +45,17 @@ enum v90_phase4_e_line_tx_result v90_phase4_e_line_tx_init(
 	if (transmitter == NULL || completed_cp == NULL)
 		return V90_PHASE4_E_LINE_TX_INVALID_ARGUMENT;
 	if (!v90_phase4_cp_line_tx_is_handoff_ready(completed_cp))
+		return V90_PHASE4_E_LINE_TX_INVALID_STATE;
+	if (v90_cp_decode(
+		    completed_cp->symbols.frame,
+		    (completed_cp->symbols.frame_bit_count + 7u) / 8u,
+		    completed_cp->symbols.frame_bit_count,
+		    &initialized.cp) != V90_CP_OK)
+		return V90_PHASE4_E_LINE_TX_INTERNAL_ERROR;
+	if (initialized.cp.kind != V90_CP_DATA ||
+	    initialized.cp.selected_rate_index == 0 ||
+	    !initialized.cp.acknowledges_peer ||
+	    initialized.cp.request_silence)
 		return V90_PHASE4_E_LINE_TX_INVALID_STATE;
 	if (v90_phase4_cp_line_tx_handoff(
 		    completed_cp, &initialized.line) !=

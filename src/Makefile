@@ -179,6 +179,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_e_line_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_digital_station.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_upstream_data.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_dil.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja_search.c \

@@ -25,6 +25,7 @@ enum v90_phase4_e_line_tx_result {
 struct v90_phase4_e_line_tx {
 	struct v34_training_line line;
 	struct v34_phase4_e_sequence sequence;
+	struct v90_cp_parameters cp;
 };
 
 enum v90_phase4_e_line_tx_result v90_phase4_e_line_tx_init(
