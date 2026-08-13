@@ -140,6 +140,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_dil_descriptor.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_binary_sign.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_j_frame.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_digital_prefix.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_call.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_datapump.c \

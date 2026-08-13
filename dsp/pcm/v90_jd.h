@@ -3,6 +3,7 @@
 #ifndef V90_JD_H
 #define V90_JD_H
 
+#include "pcm_j_frame.h"
 #include "v34_constellation.h"
 
 #include <stdbool.h>
@@ -10,14 +11,14 @@
 #include <stdint.h>
 
 enum {
-	V90_JD_FRAME_SYNC_BITS = 17,
+	V90_JD_FRAME_SYNC_BITS = PCM_J_FRAME_SYNC_BITS,
 	V90_JD_RATE_CAPABILITY_BITS = 22,
 	V90_JD_RATE_CAPABILITY_MASK =
 		(1u << V90_JD_RATE_CAPABILITY_BITS) - 1u,
 	V90_JD_MINIMUM_LOOKAHEAD = 1,
 	V90_JD_MAXIMUM_LOOKAHEAD = 3,
-	V90_JD_FRAME_BITS = 72,
-	V90_JD_FRAME_BYTES = V90_JD_FRAME_BITS / 8,
+	V90_JD_FRAME_BITS = PCM_J_FRAME_BITS,
+	V90_JD_FRAME_BYTES = PCM_J_FRAME_BYTES,
 };
 
 enum v90_jd_result {
