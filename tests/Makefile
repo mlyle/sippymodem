@@ -2045,7 +2045,12 @@ V90_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_call.o \
 	$(BUILD_DIR)/v90_call.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase2_initial_probe.o, \
-		$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS)))
+		$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS)) \
+	$(filter-out $(BUILD_DIR)/test_v90_phase4_analog_station.o, \
+		$(V90_PHASE4_ANALOG_STATION_TEST_OBJECTS)) \
+	$(filter-out $(BUILD_DIR)/test_v90_phase4_digital_station.o \
+		$(BUILD_DIR)/v90_phase4_line_fixture.o, \
+		$(V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS)))
 V34_PHASE2_DPSK_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_dpsk
 V34_PHASE2_DPSK_TEST_OBJECTS := \

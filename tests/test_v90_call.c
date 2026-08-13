@@ -9,7 +9,7 @@
 #include <string.h>
 
 enum {
-	CALL_SAMPLE_LIMIT = 60000,
+	CALL_SAMPLE_LIMIT = 120000,
 	LINE_DELAY_CHARACTERS = 13,
 	PHASE2_NOMINAL_AMPLITUDE = 12000,
 	PHASE3_NOMINAL_AMPLITUDE = 6000,
@@ -23,7 +23,11 @@ struct channel {
 
 struct endpoint {
 	struct v90_call call;
+	size_t mixed_octets;
+	uint16_t phase4_entry_ri_symbols;
 	bool entered_phase3;
+	bool entered_mixed;
+	bool entered_phase4;
 };
 
 static uint8_t silence_octet(enum g711_law law)
@@ -120,6 +124,37 @@ static struct v90_jd_parameters jd_parameters(void)
 	};
 }
 
+static void add_ucode(
+	struct pcm_constellation *constellation, uint8_t ucode)
+{
+	constellation->ucode_mask[ucode / 8u] |=
+		(uint8_t)(1u << (ucode % 8u));
+}
+
+static struct v90_cp_parameters training_parameters(enum g711_law law)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_TRAINING,
+		.law = law,
+		.upstream_rate_mask = 0x1555u,
+		.trn1d_ratio_q3_13 = 0x2000u,
+		.shaping_a1_q1_6 = -16,
+		.shaping_a2_q1_6 = 8,
+		.shaping_b1_q1_6 = -1,
+		.shaping_b2_q1_6 = 31,
+		.selected_rate_index = 13,
+		.sign_redundancy = 1,
+		.spectral_lookahead = 2,
+		.constellation_count = 1,
+	};
+
+	for (uint8_t index = 0; index < 8; ++index)
+		add_ucode(
+			&parameters.transmit_constellations[0],
+			(uint8_t)(24u + 12u * index));
+	return parameters;
+}
+
 static struct v90_call_configuration configuration(
 	enum v90_modem_role role, enum g711_law law)
 {
@@ -134,6 +169,8 @@ static struct v90_call_configuration configuration(
 		configuration.local_info1.analog = analog_info1();
 		configuration.phase3.analog.nominal_peak_amplitude =
 			PHASE3_NOMINAL_AMPLITUDE;
+		configuration.analog_phase4.training_parameters =
+			training_parameters(law);
 	} else {
 		configuration.local_info0.digital = digital_info0(law);
 		configuration.local_info1.digital = digital_info1();
@@ -189,19 +226,66 @@ static bool endpoint_octet(
 {
 	struct v90_call_observation observation;
 
-	if (v90_call_phase3_is_ready(&endpoint->call)) {
-		*transmitted = silence_octet(law);
-		return true;
+	if (v90_call_phase4_is_ready(&endpoint->call)) {
+		if (endpoint->call.local_role == V90_ANALOG_MODEM) {
+			int16_t sample;
+
+			if (v90_phase4_analog_station_transmit(
+				    &endpoint->call.state.phase4.analog,
+				    &sample) != V90_PHASE4_ANALOG_STATION_OK ||
+			    v90_phase4_analog_station_receive(
+				    &endpoint->call.state.phase4.analog,
+				    received) != V90_PHASE4_ANALOG_STATION_OK)
+				return false;
+			*transmitted = law == G711_LAW_PCMA ?
+				g711_encode_pcma(sample) :
+				g711_encode_pcmu(sample);
+		} else {
+			if (v90_phase4_digital_station_transmit(
+				    &endpoint->call.state.phase4.digital,
+				    transmitted) !=
+					    V90_PHASE4_DIGITAL_STATION_OK ||
+			    v90_phase4_digital_station_receive(
+				    &endpoint->call.state.phase4.digital,
+				    law == G711_LAW_PCMA ?
+					    g711_decode_pcma(received) :
+					    g711_decode_pcmu(received)) !=
+					    V90_PHASE4_DIGITAL_STATION_OK)
+				return false;
+		}
+		return v90_call_is_valid(&endpoint->call);
 	}
 	if (v90_call_octet(
 		    &endpoint->call, received, transmitted,
 		    &observation) != V90_CALL_OK)
 		return false;
+	endpoint->mixed_octets +=
+		observation.processed == V90_CALL_PHASE3_MIXED;
 	endpoint->entered_phase3 |= observation.next == V90_CALL_PHASE3;
+	endpoint->entered_mixed |=
+		observation.next == V90_CALL_PHASE3_MIXED;
+	endpoint->entered_phase4 |= observation.next == V90_CALL_PHASE4;
+	if (observation.next == V90_CALL_PHASE4) {
+		endpoint->phase4_entry_ri_symbols =
+			endpoint->call.local_role == V90_ANALOG_MODEM ?
+				endpoint->call.state.phase4.analog.receive
+					.ri_symbols :
+				endpoint->call.state.phase4.digital.transmit
+					.ri_symbols;
+	}
 	return true;
 }
 
-static bool phase3_boundary_is_transactional(
+static bool ri_progress_is_exact(const struct endpoint *endpoint)
+{
+	size_t expected = endpoint->mixed_octets;
+
+	if (expected > V90_PHASE4_RI_MIN_SYMBOLS)
+		expected = V90_PHASE4_RI_MIN_SYMBOLS;
+	return endpoint->phase4_entry_ri_symbols == expected;
+}
+
+static bool phase4_boundary_is_transactional(
 	struct endpoint *endpoint, enum g711_law law)
 {
 	struct v90_call before = endpoint->call;
@@ -213,7 +297,7 @@ static bool phase3_boundary_is_transactional(
 	observation_before = observation;
 	return v90_call_octet(
 		       &endpoint->call, silence_octet(law),
-		       &output, &observation) == V90_CALL_PHASE3_READY &&
+		       &output, &observation) == V90_CALL_PHASE4_READY &&
 	       output == 0xa5 &&
 	       memcmp(&observation, &observation_before,
 		      sizeof(observation)) == 0 &&
@@ -250,34 +334,37 @@ static bool run_call(enum g711_law law)
 		      (unsigned int)law, clock);
 		channel_transmit(
 			&channel, analog_transmitted, digital_transmitted);
-		if (v90_call_phase3_is_ready(&analog.call) &&
-		    v90_call_phase3_is_ready(&digital.call)) {
+		if (v90_call_phase4_is_ready(&analog.call) &&
+		    v90_call_phase4_is_ready(&digital.call)) {
 			ready = true;
 			break;
 		}
 	}
 	CHECK(ready && analog.entered_phase3 && digital.entered_phase3 &&
-	      v90_call_current_stage(&analog.call) == V90_CALL_PHASE3 &&
-	      v90_call_current_stage(&digital.call) == V90_CALL_PHASE3 &&
-	      v90_phase3_analog_station_is_valid(
-		      &analog.call.state.phase3.analog) &&
-	      v90_phase3_digital_station_is_valid(
-		      &digital.call.state.phase3.digital) &&
+	      analog.entered_mixed && digital.entered_mixed &&
+	      analog.entered_phase4 && digital.entered_phase4 &&
+	      v90_call_current_stage(&analog.call) == V90_CALL_PHASE4 &&
+	      v90_call_current_stage(&digital.call) == V90_CALL_PHASE4 &&
+	      v90_phase4_analog_station_is_valid(
+		      &analog.call.state.phase4.analog) &&
+	      v90_phase4_digital_station_is_valid(
+		      &digital.call.state.phase4.digital) &&
+	      ri_progress_is_exact(&analog) &&
+	      ri_progress_is_exact(&digital) &&
 	      !v90_call_has_failed(&analog.call) &&
 	      !v90_call_has_failed(&digital.call) &&
-	      phase3_boundary_is_transactional(&analog, law) &&
-	      phase3_boundary_is_transactional(&digital, law),
-	      "law %u V.90 call did not initialize Phase 3: "
-	      "ready=%d entered=%d/%d stages=%d/%d "
-	      "analog=%d/%d digital=%d/%d/%d",
+	      phase4_boundary_is_transactional(&analog, law) &&
+	      phase4_boundary_is_transactional(&digital, law),
+	      "law %u V.90 call did not initialize Phase 4: "
+	      "ready=%d entered=%d/%d/%d/%d/%d/%d stages=%d/%d "
+	      "Ri=%u/%zu,%u/%zu",
 	      (unsigned int)law, ready,
 	      analog.entered_phase3, digital.entered_phase3,
+	      analog.entered_mixed, digital.entered_mixed,
+	      analog.entered_phase4, digital.entered_phase4,
 	      analog.call.stage, digital.call.stage,
-	      analog.call.state.phase3.analog.transmit_stage,
-	      analog.call.state.phase3.analog.receive_stage,
-	      digital.call.state.phase3.digital.receive_stage,
-	      digital.call.state.phase3.digital.transmit_started,
-	      digital.call.state.phase3.digital.transmit.stage);
+	      analog.phase4_entry_ri_symbols, analog.mixed_octets,
+	      digital.phase4_entry_ri_symbols, digital.mixed_octets);
 	return true;
 }
 
@@ -310,6 +397,10 @@ static bool test_validation(void)
 	selected.phase3.analog.nominal_peak_amplitude = 0;
 	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
 	      "call accepted a zero Phase 3 amplitude");
+	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.analog_phase4.training_parameters.request_silence = true;
+	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	      "call accepted a non-initial Phase 4 training record");
 	selected = configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.law = G711_LAW_PCMA;
 	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT &&
@@ -319,7 +410,7 @@ static bool test_validation(void)
 	CHECK(v90_call_init(&call, &selected) == V90_CALL_OK &&
 	      v90_call_is_valid(&call) &&
 	      !v90_call_has_failed(&call) &&
-	      !v90_call_phase3_is_ready(&call),
+	      !v90_call_phase4_is_ready(&call),
 	      "valid call did not initialize");
 	saved = call;
 	memset(&observation, 0x5a, sizeof(observation));
@@ -346,7 +437,7 @@ static bool test_validation(void)
 		     sizeof(observation)) == 0 &&
 	      memcmp(&call, &saved, sizeof(call)) == 0 &&
 	      !v90_call_is_valid(NULL) && !v90_call_has_failed(NULL) &&
-	      !v90_call_phase3_is_ready(NULL) &&
+	      !v90_call_phase4_is_ready(NULL) &&
 	      v90_call_current_stage(NULL) == (enum v90_call_stage)-1,
 	      "invalid call operation changed state or output");
 	return true;
@@ -356,7 +447,7 @@ static bool test_result_names(void)
 {
 	static const char *const expected[] = {
 		"ok",
-		"phase 3 ready",
+		"phase 4 ready",
 		"failed",
 		"invalid argument",
 		"invalid state",
@@ -388,7 +479,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "generated PCMU and PCMA Phase 2 handoffs",
+		{ "generated PCMU and PCMA Phase 4 entries",
 		  test_generated_calls },
 		{ "validation and transactionality", test_validation },
 		{ "result names", test_result_names },
