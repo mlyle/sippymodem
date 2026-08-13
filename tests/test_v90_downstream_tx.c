@@ -15,7 +15,7 @@ enum {
 };
 
 static void add_ucode(
-	struct v90_cp_constellation *constellation, uint8_t ucode)
+	struct pcm_constellation *constellation, uint8_t ucode)
 {
 	constellation->ucode_mask[ucode / 8u] |=
 		(uint8_t)(1u << (ucode % 8u));

@@ -20,7 +20,7 @@ static bool law_is_valid(enum g711_law law)
 }
 
 static uint8_t constellation_count(
-	const struct v90_cp_constellation *constellation)
+	const struct pcm_constellation *constellation)
 {
 	unsigned int count = 0;
 
@@ -255,7 +255,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_ucode(
 	enum v90_pcm_mapping_plane plane, size_t interval,
 	uint8_t label, uint8_t *ucode)
 {
-	const struct v90_cp_constellation *constellation;
+	const struct pcm_constellation *constellation;
 	uint8_t ordinal = 0;
 
 	if (!v90_pcm_mapping_is_valid(mapping) || ucode == NULL ||
@@ -272,7 +272,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_ucode(
 	     candidate > 0; --candidate) {
 		uint8_t value = (uint8_t)(candidate - 1u);
 
-		if (!v90_cp_constellation_contains(constellation, value))
+		if (!pcm_constellation_contains(constellation, value))
 			continue;
 		if (ordinal++ == label) {
 			*ucode = value;
@@ -287,7 +287,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_label(
 	enum v90_pcm_mapping_plane plane, size_t interval,
 	uint8_t ucode, uint8_t *label)
 {
-	const struct v90_cp_constellation *constellation;
+	const struct pcm_constellation *constellation;
 	uint8_t ordinal = 0;
 
 	if (!v90_pcm_mapping_is_valid(mapping) || label == NULL ||
@@ -304,7 +304,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_label(
 	     candidate > 0; --candidate) {
 		uint8_t value = (uint8_t)(candidate - 1u);
 
-		if (!v90_cp_constellation_contains(constellation, value))
+		if (!pcm_constellation_contains(constellation, value))
 			continue;
 		if (value == ucode) {
 			*label = ordinal;

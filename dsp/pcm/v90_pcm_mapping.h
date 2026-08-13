@@ -29,9 +29,9 @@ enum v90_pcm_mapping_result {
  * remain packed because label lookup is infrequent during six-symbol frame
  * construction and this avoids a 768-byte expanded level table per plane. */
 struct v90_pcm_mapping {
-	struct v90_cp_constellation
+	struct pcm_constellation
 		transmit[V90_CP_FRAME_INTERVALS];
-	struct v90_cp_constellation
+	struct pcm_constellation
 		codec[V90_CP_FRAME_INTERVALS];
 	enum v90_cp_kind kind;
 	enum g711_law law;

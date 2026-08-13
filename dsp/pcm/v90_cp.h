@@ -4,6 +4,7 @@
 #define V90_CP_H
 
 #include "g711.h"
+#include "pcm_constellation.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -12,9 +13,9 @@
 enum {
 	V90_CP_FRAME_INTERVALS = 6,
 	V90_CP_MAX_CONSTELLATIONS = 6,
-	V90_CP_CONSTELLATION_UCODES = 128,
+	V90_CP_CONSTELLATION_UCODES = PCM_CONSTELLATION_UCODES,
 	V90_CP_CONSTELLATION_MASK_BYTES =
-		V90_CP_CONSTELLATION_UCODES / 8,
+		PCM_CONSTELLATION_MASK_BYTES,
 	V90_CP_HEADER_BITS = 136,
 	V90_CP_CONSTELLATION_BITS = 136,
 	V90_CP_TRAILER_BITS = 20,
@@ -44,20 +45,14 @@ enum v90_cp_result {
 	V90_CP_CRC_MISMATCH,
 };
 
-/* Bit n represents Ucode n. The transmitted order is Ucode 0 through 127;
- * this packed form avoids a 128-entry level table. */
-struct v90_cp_constellation {
-	uint8_t ucode_mask[V90_CP_CONSTELLATION_MASK_BYTES];
-};
-
 /* Exact Table 14 values. Fixed-point fields remain in their transmitted
  * integer representation so encode/decode does not introduce rounding.
  * A selected_rate_index of zero denotes cleardown; 1 through 22 select a
  * rate relative to the CPt or CP base. */
 struct v90_cp_parameters {
-	struct v90_cp_constellation
+	struct pcm_constellation
 		transmit_constellations[V90_CP_MAX_CONSTELLATIONS];
-	struct v90_cp_constellation
+	struct pcm_constellation
 		codec_constellations[V90_CP_MAX_CONSTELLATIONS];
 	enum v90_cp_kind kind;
 	enum g711_law law;
@@ -77,9 +72,6 @@ struct v90_cp_parameters {
 	bool codec_constellations_differ;
 };
 
-bool v90_cp_constellation_contains(
-	const struct v90_cp_constellation *constellation,
-	uint8_t ucode);
 bool v90_cp_parameters_are_valid(
 	const struct v90_cp_parameters *parameters);
 

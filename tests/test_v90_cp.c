@@ -22,7 +22,7 @@ enum {
 };
 
 static void add_ucode(
-	struct v90_cp_constellation *constellation, uint8_t ucode)
+	struct pcm_constellation *constellation, uint8_t ucode)
 {
 	constellation->ucode_mask[ucode / 8u] |=
 		(uint8_t)(1u << (ucode % 8u));
@@ -248,17 +248,17 @@ static bool test_dimensions_and_boundaries(void)
 
 static bool test_constellation_membership(void)
 {
-	struct v90_cp_constellation constellation = { 0 };
+	struct pcm_constellation constellation = { 0 };
 
 	add_ucode(&constellation, 0);
 	add_ucode(&constellation, 63);
 	add_ucode(&constellation, 127);
-	CHECK(v90_cp_constellation_contains(&constellation, 0) &&
-	      v90_cp_constellation_contains(&constellation, 63) &&
-	      v90_cp_constellation_contains(&constellation, 127) &&
-	      !v90_cp_constellation_contains(&constellation, 1) &&
-	      !v90_cp_constellation_contains(&constellation, 128) &&
-	      !v90_cp_constellation_contains(NULL, 0),
+	CHECK(pcm_constellation_contains(&constellation, 0) &&
+	      pcm_constellation_contains(&constellation, 63) &&
+	      pcm_constellation_contains(&constellation, 127) &&
+	      !pcm_constellation_contains(&constellation, 1) &&
+	      !pcm_constellation_contains(&constellation, 128) &&
+	      !pcm_constellation_contains(NULL, 0),
 	      "CP constellation membership changed");
 	return true;
 }

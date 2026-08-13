@@ -12,14 +12,14 @@ enum {
 };
 
 static void add_ucode(
-	struct v90_cp_constellation *constellation, uint8_t ucode)
+	struct pcm_constellation *constellation, uint8_t ucode)
 {
 	constellation->ucode_mask[ucode / 8u] |=
 		(uint8_t)(1u << (ucode % 8u));
 }
 
 static void fill_constellation(
-	struct v90_cp_constellation *constellation,
+	struct pcm_constellation *constellation,
 	uint8_t first, uint8_t count)
 {
 	for (unsigned int ordinal = 0; ordinal < count; ++ordinal)

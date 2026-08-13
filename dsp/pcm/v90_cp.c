@@ -44,18 +44,8 @@ static bool kind_is_valid(enum v90_cp_kind kind)
 	return kind == V90_CP_TRAINING || kind == V90_CP_DATA;
 }
 
-bool v90_cp_constellation_contains(
-	const struct v90_cp_constellation *constellation,
-	uint8_t ucode)
-{
-	return constellation != NULL &&
-	       ucode < V90_CP_CONSTELLATION_UCODES &&
-	       (constellation->ucode_mask[ucode / 8u] &
-		(uint8_t)(1u << (ucode % 8u))) != 0;
-}
-
 static bool constellation_is_empty(
-	const struct v90_cp_constellation *constellation)
+	const struct pcm_constellation *constellation)
 {
 	for (size_t index = 0;
 	     index < V90_CP_CONSTELLATION_MASK_BYTES; ++index) {
@@ -199,13 +189,13 @@ static uint16_t frame_crc(
 
 static void encode_constellation(
 	uint8_t *frame, size_t set_index,
-	const struct v90_cp_constellation *constellation)
+	const struct pcm_constellation *constellation)
 {
 	for (uint8_t ucode = 0;
 	     ucode < V90_CP_CONSTELLATION_UCODES; ++ucode) {
 		set_frame_bit(
 			frame, mask_bit(set_index, ucode),
-			v90_cp_constellation_contains(constellation, ucode));
+			pcm_constellation_contains(constellation, ucode));
 	}
 }
 
@@ -349,7 +339,7 @@ static int8_t decode_signed_q1_6(
 
 static void decode_constellation(
 	const uint8_t *frame, size_t set_index,
-	struct v90_cp_constellation *constellation)
+	struct pcm_constellation *constellation)
 {
 	for (uint8_t ucode = 0;
 	     ucode < V90_CP_CONSTELLATION_UCODES; ++ucode) {
