@@ -292,6 +292,26 @@ class ModemTerminal:
             raise LiveTerminalError("invalid online terminal transmission")
         self._write(data, time.monotonic() + timeout_seconds)
 
+    def return_online(
+        self, timeout_seconds: float, guard_seconds: float = 1.1
+    ) -> str:
+        if (
+            timeout_seconds <= 0
+            or guard_seconds < 0
+            or guard_seconds >= timeout_seconds
+            or not self._decoder.online
+        ):
+            raise LiveTerminalError("invalid return-online request")
+        deadline = time.monotonic() + timeout_seconds
+        time.sleep(guard_seconds)
+        self._decoder.begin_command_response()
+        self._write(b"+++", deadline)
+        if self._read_result(deadline) != "ok":
+            return "error"
+        self._write(b"ATO1\r", deadline)
+        result = self._read_result(deadline)
+        return self._read_result(deadline) if result == "ok" else result
+
     def probe_online_ping(self, timeout_seconds: float) -> tuple[bool, bytes]:
         return self._exchange_online(
             ONLINE_PING_REQUEST,

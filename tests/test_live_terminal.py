@@ -103,6 +103,27 @@ class LiveTerminalTests(unittest.TestCase):
                 with self.assertRaises(LiveTerminalError):
                     terminal.send_online(data, timeout)
 
+    def test_ato1_escapes_and_waits_for_a_new_connect(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 300\r\n")
+        with (
+            mock.patch("tools.live_terminal.time.sleep") as sleep,
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch.object(
+                terminal, "_read_result", side_effect=("ok", "ok", "connect")
+            ),
+        ):
+            self.assertEqual(terminal.return_online(2.0, 0.1), "connect")
+        sleep.assert_called_once_with(0.1)
+        self.assertEqual(
+            [call.args[0] for call in write.call_args_list],
+            [b"+++", b"ATO1\r"],
+        )
+
+        terminal = ModemTerminal(-1)
+        with self.assertRaises(LiveTerminalError):
+            terminal.return_online(2.0, 0.1)
+
     def test_response_decoder_handles_fragments_and_bounds(self) -> None:
         decoder = ResponseDecoder()
         decoder.feed(

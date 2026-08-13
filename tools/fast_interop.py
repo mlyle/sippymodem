@@ -54,11 +54,25 @@ else:
     )
 
 
-CaseRunner = Callable[[InteropConfig, bool], InteropResult]
+CaseRunner = Callable[
+    [InteropConfig, bool, str | None, tuple[bytes, bytes] | None],
+    InteropResult,
+]
 
 
-def _run_interop(config: InteropConfig, turn_taking: bool) -> InteropResult:
-    return run_interop(config, turn_taking=turn_taking)
+def _run_interop(
+    config: InteropConfig,
+    turn_taking: bool,
+    ato1_role: str | None,
+    post_ato1_payloads: tuple[bytes, bytes] | None,
+) -> InteropResult:
+    return run_interop(
+        config,
+        turn_taking=turn_taking,
+        ato1_role=ato1_role,
+        post_ato1_payloads=post_ato1_payloads,
+        escape_guard_seconds=1.1,
+    )
 
 
 @dataclass(frozen=True)
@@ -68,6 +82,7 @@ class FastCaseResult:
     duration_seconds: float
     candidate_rates_verified: bool
     baseline_rates_verified: bool
+    ato1_verified: bool | None
 
     def public_dict(self) -> dict[str, object]:
         return {
@@ -81,6 +96,7 @@ class FastCaseResult:
             "duration_seconds": round(self.duration_seconds, 3),
             "candidate_rates_verified": self.candidate_rates_verified,
             "baseline_rates_verified": self.baseline_rates_verified,
+            "ato1_verified": self.ato1_verified,
         }
 
 
@@ -150,9 +166,26 @@ def _rates_match(result: InteropResult, case: MatrixCase) -> tuple[bool, bool]:
 def run_case(
     base: InteropConfig,
     case: MatrixCase,
+    ato1: bool = False,
     runner: CaseRunner = _run_interop,
 ) -> FastCaseResult:
-    result = runner(case_config(base, case), case.exchange == TURN_TAKING)
+    configured = case_config(base, case)
+    ato1_role = None
+    post_ato1_payloads = None
+    if ato1:
+        ato1_role = "originator" if case.candidate_originates else "answerer"
+        payloads = payload_pair(case, "ato1")
+        post_ato1_payloads = (
+            (payloads.candidate, payloads.baseline)
+            if case.candidate_originates
+            else (payloads.baseline, payloads.candidate)
+        )
+    result = runner(
+        configured,
+        case.exchange == TURN_TAKING,
+        ato1_role,
+        post_ato1_payloads,
+    )
     candidate_rates, baseline_rates = _rates_match(result, case)
     outcome = result.outcome
     if outcome == "passed" and not candidate_rates:
@@ -165,6 +198,11 @@ def run_case(
         duration_seconds=result.duration_seconds,
         candidate_rates_verified=candidate_rates,
         baseline_rates_verified=baseline_rates,
+        ato1_verified=(
+            result.ato1_connected and result.post_ato1_exchange_verified
+            if ato1
+            else None
+        ),
     )
 
 
@@ -184,6 +222,11 @@ def _parser() -> argparse.ArgumentParser:
         help="run one public profile; may be repeated",
     )
     parser.add_argument("--stop-on-failure", action="store_true")
+    parser.add_argument(
+        "--ato1",
+        action="store_true",
+        help="return the candidate online with ATO1 and repeat the exchange",
+    )
     return parser
 
 
@@ -203,7 +246,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     failed = False
     try:
         for case in cases:
-            result = run_case(config, case)
+            result = run_case(config, case, ato1=options.ato1)
             print(json.dumps(result.public_dict(), sort_keys=True), flush=True)
             if result.outcome != "passed":
                 failed = True

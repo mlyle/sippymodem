@@ -124,7 +124,11 @@ class FastInteropTests(unittest.TestCase):
             base = base_config(Path(temporary))
             case = build_fast_matrix(("v21_300",))[0]
             passed = run_case(
-                base, case, lambda _config, _turn_taking: passed_result(case)
+                base,
+                case,
+                runner=lambda _config, _turn_taking, _role, _payloads: (
+                    passed_result(case)
+                ),
             )
             self.assertEqual(passed.outcome, "passed")
             self.assertTrue(passed.candidate_rates_verified)
@@ -135,14 +139,20 @@ class FastInteropTests(unittest.TestCase):
                 receive_bit_rate=1200,
                 transmit_bit_rate=1200,
             )
-            failed = run_case(base, case, lambda _config, _turn_taking: mismatch)
+            failed = run_case(
+                base,
+                case,
+                runner=lambda _config, _turn_taking, _role, _payloads: mismatch,
+            )
             self.assertEqual(failed.outcome, "baseline-rate-mismatch")
             self.assertFalse(failed.baseline_rates_verified)
 
             data_error = passed_result(case)
             data_error = replace(data_error, outcome="data-error")
             failed = run_case(
-                base, case, lambda _config, _turn_taking: data_error
+                base,
+                case,
+                runner=lambda _config, _turn_taking, _role, _payloads: data_error,
             )
             self.assertEqual(failed.outcome, "data-error")
 
@@ -152,12 +162,64 @@ class FastInteropTests(unittest.TestCase):
             case = build_fast_matrix(("baudot_45",))[0]
             observed: list[bool] = []
 
-            def runner(_config: InteropConfig, turn_taking: bool) -> InteropResult:
+            def runner(
+                _config: InteropConfig,
+                turn_taking: bool,
+                _role: str | None,
+                _payloads: tuple[bytes, bytes] | None,
+            ) -> InteropResult:
                 observed.append(turn_taking)
                 return passed_result(case)
 
-            self.assertEqual(run_case(base, case, runner).outcome, "passed")
+            self.assertEqual(
+                run_case(base, case, runner=runner).outcome, "passed"
+            )
             self.assertEqual(observed, [True])
+
+    def test_ato1_targets_the_candidate_and_uses_fresh_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = base_config(Path(temporary))
+            cases = {
+                case.originator_order: case
+                for case in build_fast_matrix(("v21_300",))
+                if case.media_codec == "PCMU"
+            }
+            observed = []
+
+            def runner(
+                _config: InteropConfig,
+                _turn_taking: bool,
+                role: str | None,
+                payloads: tuple[bytes, bytes] | None,
+            ) -> InteropResult:
+                observed.append((role, payloads))
+                case = cases[
+                    CANDIDATE_ORIGINATES
+                    if role == "originator"
+                    else BASELINE_ORIGINATES
+                ]
+                return replace(
+                    passed_result(case),
+                    ato1_requested=True,
+                    ato1_connected=True,
+                    post_ato1_exchange_verified=True,
+                )
+
+            for order in (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES):
+                result = run_case(base, cases[order], ato1=True, runner=runner)
+                self.assertEqual(result.outcome, "passed")
+                self.assertTrue(result.ato1_verified)
+
+            self.assertEqual(
+                [item[0] for item in observed], ["originator", "answerer"]
+            )
+            for order, (_, payloads) in zip(
+                (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES), observed
+            ):
+                assert payloads is not None
+                initial = payload_pair(cases[order], "initial")
+                self.assertNotIn(initial.candidate, payloads)
+                self.assertNotIn(initial.baseline, payloads)
 
     def test_disabled_example_skips_without_exposing_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

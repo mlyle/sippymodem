@@ -146,6 +146,13 @@ but its AT command lists are intentionally generic so the same runner can test
 LAPM and compression. A cross-implementation PCMU run has also connected at
 symmetric V.34 9600 bit/s and verified all 15 payload bytes in each direction.
 
+Use the same private configuration with `tools/fast_interop.py` to run every
+implemented rate, both call orientations, and both G.711 laws. These are
+ordinary SIP calls; accepted RTP packets clock the media loop immediately, so
+the local matrix runs faster than real time. Add `--ato1` to escape the
+candidate endpoint, issue ATO1, and verify a fresh byte exchange after it
+returns online.
+
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
 Baudot at both supported rates, V.32/V.32bis, the current symmetric V.34
 9600-bit/s baseline, and generated future matrices. The future matrices keep

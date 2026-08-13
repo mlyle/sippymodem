@@ -85,9 +85,12 @@ class InteropResult:
     answerer: EndpointState
     originator_expected_bytes: int
     answerer_expected_bytes: int
+    ato1_requested: bool = False
+    ato1_connected: bool = False
+    post_ato1_exchange_verified: bool = False
 
     def public_dict(self) -> dict[str, object]:
-        return {
+        public = {
             "schema": 1,
             "outcome": self.outcome,
             "duration_seconds": round(self.duration_seconds, 3),
@@ -96,6 +99,12 @@ class InteropResult:
             ),
             "answerer": self.answerer.public_dict(self.answerer_expected_bytes),
         }
+        if self.ato1_requested:
+            public["ato1"] = {
+                "connected": self.ato1_connected,
+                "exchange_verified": self.post_ato1_exchange_verified,
+            }
+        return public
 
 
 def _setup_endpoint(endpoint: EndpointProcess, deadline: float) -> None:
@@ -205,12 +214,27 @@ def _stop_endpoints(
 
 
 def run_interop(
-    config: InteropConfig, *, turn_taking: bool = False
+    config: InteropConfig,
+    *,
+    turn_taking: bool = False,
+    ato1_role: str | None = None,
+    post_ato1_payloads: tuple[bytes, bytes] | None = None,
+    escape_guard_seconds: float = 1.1,
 ) -> InteropResult:
     """Run the configured pair and retain private evidence for every outcome."""
 
     if not config.enabled:
         raise InteropRunError("interop configuration is disabled")
+    if (ato1_role is None) != (post_ato1_payloads is None):
+        raise InteropRunError("ATO1 role and payloads must be supplied together")
+    if ato1_role not in {None, "originator", "answerer"}:
+        raise InteropRunError("invalid ATO1 endpoint role")
+    if post_ato1_payloads is not None and (
+        not all(post_ato1_payloads)
+        or post_ato1_payloads[0] in post_ato1_payloads[1]
+        or post_ato1_payloads[1] in post_ato1_payloads[0]
+    ):
+        raise InteropRunError("ATO1 payloads must be distinct and non-containing")
     ports = config.ports
     if not any(ports.values()):
         ports = reserve_loopback_ports()
@@ -242,6 +266,8 @@ def run_interop(
     started = time.monotonic()
     stage = "startup"
     outcome = "infrastructure-error"
+    ato1_connected = False
+    post_ato1_exchange_verified = False
     try:
         answerer.start(config.startup_timeout_seconds)
         originator.start(config.startup_timeout_seconds)
@@ -296,6 +322,49 @@ def run_interop(
                 and answerer_state.exchange_verified
                 else "data-error"
             )
+            if outcome == "passed" and ato1_role is not None:
+                stage = "ato1"
+                ato1_endpoint = (
+                    originator if ato1_role == "originator" else answerer
+                )
+                assert ato1_endpoint.terminal is not None
+                ato1_connected = (
+                    ato1_endpoint.terminal.return_online(
+                        config.connect_timeout_seconds,
+                        escape_guard_seconds,
+                    )
+                    == "connect"
+                )
+                if not ato1_connected:
+                    outcome = "ato1-error"
+                else:
+                    assert post_ato1_payloads is not None
+                    stage = "post-ato1-data"
+                    data_deadline = (
+                        time.monotonic() + config.online_timeout_seconds
+                    )
+                    origin_exchange, answer_exchange = _exchange_endpoints(
+                        originator,
+                        answerer,
+                        post_ato1_payloads[0],
+                        post_ato1_payloads[1],
+                        data_deadline,
+                        turn_taking,
+                    )
+                    originator_state.transmitted += post_ato1_payloads[0]
+                    answerer_state.transmitted += post_ato1_payloads[1]
+                    originator_state.received += origin_exchange[1]
+                    answerer_state.received += answer_exchange[1]
+                    post_ato1_exchange_verified = (
+                        origin_exchange[0] and answer_exchange[0]
+                    )
+                    originator_state.exchange_verified &= origin_exchange[0]
+                    answerer_state.exchange_verified &= answer_exchange[0]
+                    outcome = (
+                        "passed"
+                        if post_ato1_exchange_verified
+                        else "post-ato1-data-error"
+                    )
     except (InteropRunError, LiveTerminalError, OSError, TimeoutError):
         outcome = f"{stage}-error"
     finally:
@@ -307,13 +376,21 @@ def run_interop(
         originator_state.log_truncated = originator.log_truncated
         answerer_state.log_truncated = answerer.log_truncated
 
+    originator_expected_bytes = len(config.answerer_payload)
+    answerer_expected_bytes = len(config.originator_payload)
+    if post_ato1_payloads is not None:
+        originator_expected_bytes += len(post_ato1_payloads[1])
+        answerer_expected_bytes += len(post_ato1_payloads[0])
     result = InteropResult(
         outcome=outcome,
         duration_seconds=time.monotonic() - started,
         originator=originator_state,
         answerer=answerer_state,
-        originator_expected_bytes=len(config.answerer_payload),
-        answerer_expected_bytes=len(config.originator_payload),
+        originator_expected_bytes=originator_expected_bytes,
+        answerer_expected_bytes=answerer_expected_bytes,
+        ato1_requested=ato1_role is not None,
+        ato1_connected=ato1_connected,
+        post_ato1_exchange_verified=post_ato1_exchange_verified,
     )
     artifacts.write_exchange(
         "originator", originator_state.transmitted, originator_state.received
