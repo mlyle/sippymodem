@@ -13,6 +13,7 @@
 enum {
 	TRAINING_UCODE = 91,
 	SAMPLE_LIMIT = 12000,
+	DOWNSTREAM_SYMBOL_LIMIT = 4096,
 };
 
 static struct v90_jd_parameters jd_parameters(
@@ -102,6 +103,26 @@ static bool mapping_matches(
 	       memcmp(mapping, &expected, sizeof(expected)) == 0;
 }
 
+static bool mp_records_match(
+	const struct v90_mp_record *left,
+	const struct v90_mp_record *right, uint8_t frame_bits)
+{
+	uint8_t left_sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
+	uint8_t right_sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
+	size_t left_bits = 0;
+	size_t right_bits = 0;
+
+	return v90_mp_encode(
+		       left, frame_bits, left_sequence,
+		       sizeof(left_sequence), &left_bits) == V90_MP_OK &&
+	       v90_mp_encode(
+		       right, frame_bits, right_sequence,
+		       sizeof(right_sequence), &right_bits) == V90_MP_OK &&
+	       left_bits == right_bits &&
+	       memcmp(left_sequence, right_sequence,
+		      (left_bits + 7u) / 8u) == 0;
+}
+
 static int16_t quantize(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
@@ -122,19 +143,24 @@ static bool trn2d_symbols_match(
 	       left->shaping_frame_start == right->shaping_frame_start;
 }
 
-static bool verify_trn2d_handoffs(
+static bool verify_downstream_handoffs(
 	struct v90_phase4_digital_transmit_handoff *digital,
 	struct v90_phase4_analog_receive_handoff *analog)
 {
 	struct v90_downstream_tx expected;
 	const struct v90_pcm_mapping *mapping =
 		&analog->receiver.stream.decoder.mapping;
+	size_t training_frames = 0;
+	size_t mp_records = 0;
+	size_t symbols = 0;
+	bool prime_requested = false;
+	bool prime_received = false;
 
 	CHECK(v90_downstream_tx_init(
 		      &expected, mapping) ==
 		      V90_DOWNSTREAM_TX_OK,
 	      "analogue mapping could not initialize TRN2d model");
-	for (size_t symbol = 0; symbol < 48; ++symbol) {
+	for (; symbols < 48; ++symbols) {
 		struct v90_downstream_symbol actual_symbol;
 		struct v90_downstream_symbol expected_symbol;
 		struct v90_downstream_event event;
@@ -151,34 +177,100 @@ static bool verify_trn2d_handoffs(
 			      V90_DOWNSTREAM_TX_OK &&
 		      trn2d_symbols_match(
 			      &actual_symbol, &expected_symbol),
-		      "paired TRN2d symbol %zu differed", symbol);
+		      "paired TRN2d symbol %zu differed", symbols);
 		receive_result = v90_downstream_rx_receive(
 			&analog->receiver, actual_symbol.pcm.octet, &event);
-		if ((symbol + 1u) % V90_CP_FRAME_INTERVALS != 0) {
+		if ((symbols + 1u) % V90_CP_FRAME_INTERVALS != 0) {
 			CHECK(receive_result == V90_DOWNSTREAM_RX_BUFFERING &&
 			      memcmp(&event, &untouched, sizeof(event)) == 0,
-			      "TRN2d frame advanced early at symbol %zu", symbol);
+			      "TRN2d frame advanced early at symbol %zu", symbols);
 			continue;
 		}
 		CHECK(receive_result == V90_DOWNSTREAM_RX_TRN2D_FRAME &&
 		      event.trn2d.bit_count == mapping->frame_bits &&
 		      event.trn2d.training_bit_errors == 0,
 		      "TRN2d frame %zu did not decode cleanly",
-		      symbol / V90_CP_FRAME_INTERVALS);
+		      symbols / V90_CP_FRAME_INTERVALS);
 		for (size_t bit = 0; bit < event.trn2d.bit_count; ++bit)
 			CHECK(event.trn2d.bits[bit] == 1,
 			      "TRN2d frame %zu bit %zu was not training data",
-			      symbol / V90_CP_FRAME_INTERVALS, bit);
+			      symbols / V90_CP_FRAME_INTERVALS, bit);
+		training_frames++;
 	}
-	CHECK(digital->transmitter.transmitted_symbols == 48 &&
+	CHECK(digital->transmitter.transmitted_symbols == symbols &&
 	      expected.transmitted_symbols == 48 &&
-	      analog->receiver.stream.received_symbols == 48 &&
-	      analog->receiver.stream.received_frames == 8 &&
-	      analog->receiver.stream.received_bits ==
-		      8u * mapping->frame_bits &&
+	      analog->receiver.stream.received_symbols == symbols &&
+	      training_frames == 8 &&
 	      analog->receiver.stream.training_bit_errors == 0 &&
 	      v90_downstream_rx_is_valid(&analog->receiver),
 	      "paired TRN2d handoff lost its exact Ri boundary");
+
+	while (!prime_received && symbols < DOWNSTREAM_SYMBOL_LIMIT) {
+		struct v90_downstream_symbol symbol;
+		struct v90_downstream_event event;
+		enum v90_downstream_rx_result result;
+
+		CHECK(v90_downstream_tx_next(
+			      &digital->transmitter, &symbol) ==
+			      V90_DOWNSTREAM_TX_OK,
+		      "paired downstream transmitter stopped at %zu", symbols);
+		symbols++;
+		result = v90_downstream_rx_receive(
+			&analog->receiver, symbol.pcm.octet, &event);
+		if (result == V90_DOWNSTREAM_RX_BUFFERING)
+			continue;
+		if (result == V90_DOWNSTREAM_RX_TRN2D_FRAME) {
+			CHECK(event.trn2d.bit_count == mapping->frame_bits &&
+			      event.trn2d.training_bit_errors == 0,
+			      "paired TRN2d frame %zu changed",
+			      training_frames);
+			for (size_t bit = 0;
+			     bit < event.trn2d.bit_count; ++bit)
+				CHECK(event.trn2d.bits[bit] == 1,
+				      "paired TRN2d frame %zu bit %zu changed",
+				      training_frames, bit);
+			training_frames++;
+			continue;
+		}
+		if (result == V90_DOWNSTREAM_RX_MP) {
+			CHECK(!prime_received &&
+			      mp_records_match(
+				      &event.mp.record,
+				      &digital->transmitter.mp_record,
+				      mapping->frame_bits),
+			      "paired MP record %zu changed", mp_records);
+			mp_records++;
+			if (!prime_requested) {
+				CHECK(v90_downstream_tx_request_mp_prime(
+					      &digital->transmitter) ==
+					      V90_DOWNSTREAM_TX_OK,
+				      "paired MP prime request failed");
+				prime_requested = true;
+			}
+			continue;
+		}
+		CHECK(result == V90_DOWNSTREAM_RX_MP_PRIME,
+		      "paired downstream receiver returned %s",
+		      v90_downstream_rx_result_name(result));
+		struct v90_mp_record expected_prime =
+			digital->transmitter.mp_record;
+
+		expected_prime.parameters.type0.acknowledges_cp = true;
+		CHECK(mp_records >= 1 &&
+		      mp_records_match(
+			      &event.mp.record, &expected_prime,
+			      mapping->frame_bits),
+		      "paired MP prime record changed");
+		prime_received = true;
+	}
+	CHECK(prime_received && prime_requested && mp_records >= 1 &&
+	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      digital->transmitter.transmitted_symbols == symbols &&
+	      analog->receiver.stream.received_symbols == symbols &&
+	      analog->receiver.stream.training_bit_errors == 0 &&
+	      v90_downstream_tx_is_valid(&digital->transmitter) &&
+	      v90_downstream_rx_is_valid(&analog->receiver),
+	      "paired handoffs did not reach MP prime continuously");
 	return true;
 }
 
@@ -363,8 +455,8 @@ static bool run_exchange(
 		      &digital_transmit.transmitter.encoder.mapping,
 		      &training),
 	      "paired owners disagreed about their Phase 4 handoffs");
-	CHECK(verify_trn2d_handoffs(&digital_transmit, &analog_receive),
-	      "paired owners disagreed after the Ri-to-TRN2d boundary");
+	CHECK(verify_downstream_handoffs(&digital_transmit, &analog_receive),
+	      "paired owners disagreed through MP prime");
 	CHECK(verify_cp_handoffs(
 		      law, &analog_transmit, &digital_receive, &training),
 	      "paired CP histories did not continue");
