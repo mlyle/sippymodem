@@ -2,6 +2,7 @@
 
 #include "v34_channel_frame_receiver.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -140,7 +141,7 @@ correct_receive_history(
 				&current->channel_output[symbol],
 				&mapper_output, &reconstructed);
 		enum v34_nonlinear_result nonlinear_result;
-		enum v34_symbol_power_result power_result;
+		struct qam_point target;
 
 		if (result != V34_PRECODER_OK)
 			return precoder_result(result);
@@ -153,18 +154,21 @@ correct_receive_history(
 				       V34_NONLINEAR_NUMERIC_FAILURE ?
 				V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE :
 				V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
-		power_result = v34_normalize_power(
-			normalizer, &projected, &decision_targets[symbol]);
-		switch (power_result) {
-		case V34_SYMBOL_POWER_OK:
-			break;
-		case V34_SYMBOL_POWER_OUT_OF_RANGE:
-			return V34_CHANNEL_FRAME_RECEIVER_OUT_OF_RANGE;
-		case V34_SYMBOL_POWER_NUMERIC_FAILURE:
+		/* The trellis slicer operates on the infinite odd lattice. During
+		 * traceback its best current decision can therefore lie outside the
+		 * finite shaped constellation even though a later modulo decision is
+		 * valid. Scale that decision for equalizer feedback without applying
+		 * the transmitter's finite-constellation peak check. */
+		target = (struct qam_point){
+			.in_phase = projected.in_phase *
+				normalizer->normalization_gain,
+			.quadrature = projected.quadrature *
+				normalizer->normalization_gain,
+		};
+		if (!isfinite(target.in_phase) ||
+		    !isfinite(target.quadrature))
 			return V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE;
-		case V34_SYMBOL_POWER_INVALID_ARGUMENT:
-			return V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
-		}
+		decision_targets[symbol] = target;
 	}
 	return V34_CHANNEL_FRAME_RECEIVER_OK;
 }

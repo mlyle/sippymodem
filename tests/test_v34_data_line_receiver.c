@@ -51,9 +51,7 @@ static struct v34_data_stream_configuration stream_configuration(void)
 		.nominal_peak_amplitude = 5000,
 		.trellis_selection = V34_TRELLIS_16_STATE,
 		.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO,
-		/* Start the raw-line boundary at the conservative 9.6 kbit/s
-		 * primary rate while retaining a higher negotiated ceiling. */
-		.primary_data_rate_2400_bps_units = 4,
+		.primary_data_rate_2400_bps_units = 7,
 	};
 }
 
@@ -549,7 +547,6 @@ static bool test_validation_and_failure_latch(void)
 	struct v34_phase3_profile profile = stream_configuration().profile;
 	struct v34_survivor_decision current;
 	struct v34_received_mapping_frame received;
-	bool terminal = false;
 
 	CHECK(prepare_handoff(&fixture),
 	      "V.34 line validation fixture did not initialize");
@@ -593,22 +590,24 @@ static bool test_validation_and_failure_latch(void)
 	      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
 	      "V.34 waveform accepted an occupied band beyond Nyquist");
 
-	for (size_t index = 0; index < 4096 && !terminal; ++index) {
+	for (size_t index = 0; index < 4096; ++index) {
 		enum v34_data_line_receiver_result result =
 			v34_data_line_receiver_sample(
 				&fixture.receiver,
 				(index & 1u) != 0 ? INT16_MAX : INT16_MIN,
 				&current, &received);
 
-		terminal = result == V34_DATA_LINE_RECEIVER_OUT_OF_RANGE ||
-			   result == V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE;
 		CHECK(result != V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
-			      result != V34_DATA_LINE_RECEIVER_FAILED,
-		      "V.34 line failure fixture entered an early invalid state");
+			      result != V34_DATA_LINE_RECEIVER_FAILED &&
+			      result != V34_DATA_LINE_RECEIVER_OUT_OF_RANGE &&
+			      result != V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE,
+		      "V.34 line receiver rejected bounded hostile sample %zu",
+		      index);
 	}
-	CHECK(terminal &&
-		      v34_data_line_receiver_has_failed(&fixture.receiver),
-	      "V.34 line receiver did not latch an impossible channel");
+	CHECK(v34_data_line_receiver_is_valid(&fixture.receiver) &&
+		      !v34_data_line_receiver_has_failed(&fixture.receiver),
+	      "V.34 line receiver did not survive a bounded hostile channel");
+	fixture.receiver.failed = true;
 	{
 		struct v34_data_line_receiver before = fixture.receiver;
 		struct v34_survivor_decision saved_current;
