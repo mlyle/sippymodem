@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "v90_trn2d_tx.h"
+#include "v90_downstream_tx.h"
 
 #include <string.h>
 
@@ -16,7 +16,7 @@ static bool pcm_symbol_is_valid(
 }
 
 static bool queued_symbol_is_zero(
-	const struct v90_trn2d_symbol *symbol)
+	const struct v90_downstream_symbol *symbol)
 {
 	return symbol->pcm.ucode == 0 && !symbol->pcm.positive &&
 	       symbol->pcm.octet == 0 && symbol->pcm.sample == 0 &&
@@ -25,7 +25,7 @@ static bool queued_symbol_is_zero(
 	       !symbol->shaping_frame_start;
 }
 
-static bool queue_is_valid(const struct v90_trn2d_tx *transmitter)
+static bool queue_is_valid(const struct v90_downstream_tx *transmitter)
 {
 	const struct v90_pcm_mapping *mapping =
 		&transmitter->encoder.mapping;
@@ -37,7 +37,7 @@ static bool queue_is_valid(const struct v90_trn2d_tx *transmitter)
 		return false;
 	for (size_t index = 0;
 	     index < V90_CP_FRAME_INTERVALS; ++index) {
-		const struct v90_trn2d_symbol *symbol =
+		const struct v90_downstream_symbol *symbol =
 			&transmitter->queue[index];
 
 		if (index >= transmitter->queue_count) {
@@ -71,7 +71,7 @@ static bool queue_is_valid(const struct v90_trn2d_tx *transmitter)
 }
 
 static bool symbol_accounting_is_valid(
-	const struct v90_trn2d_tx *transmitter)
+	const struct v90_downstream_tx *transmitter)
 {
 	const struct v90_pcm_mapping *mapping =
 		&transmitter->encoder.mapping;
@@ -100,7 +100,7 @@ static bool symbol_accounting_is_valid(
 		       accepted_symbols;
 }
 
-bool v90_trn2d_tx_is_valid(const struct v90_trn2d_tx *transmitter)
+bool v90_downstream_tx_is_valid(const struct v90_downstream_tx *transmitter)
 {
 	if (transmitter == NULL ||
 	    !v90_pcm_frame_encoder_is_valid(&transmitter->encoder) ||
@@ -121,56 +121,56 @@ bool v90_trn2d_tx_is_valid(const struct v90_trn2d_tx *transmitter)
 		transmitter->encoder.shaper.pending_count == 0);
 }
 
-enum v90_trn2d_tx_result v90_trn2d_tx_init(
-	struct v90_trn2d_tx *transmitter,
+enum v90_downstream_tx_result v90_downstream_tx_init(
+	struct v90_downstream_tx *transmitter,
 	const struct v90_pcm_mapping *training_mapping)
 {
-	struct v90_trn2d_tx initialized = { 0 };
+	struct v90_downstream_tx initialized = { 0 };
 
 	if (transmitter == NULL || training_mapping == NULL)
-		return V90_TRN2D_TX_INVALID_ARGUMENT;
+		return V90_DOWNSTREAM_TX_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(training_mapping) ||
 	    training_mapping->kind != V90_CP_TRAINING)
-		return V90_TRN2D_TX_INVALID_PARAMETERS;
+		return V90_DOWNSTREAM_TX_INVALID_PARAMETERS;
 	if (v90_pcm_frame_encoder_init(
 		    &initialized.encoder, training_mapping) !=
 		    V90_PCM_FRAME_ENCODER_OK ||
 	    v34_scrambler_init(
 		    &initialized.scrambler, V34_POLYNOMIAL_GPC) !=
 		    V34_FRAMING_OK)
-		return V90_TRN2D_TX_INVALID_PARAMETERS;
-	if (!v90_trn2d_tx_is_valid(&initialized))
-		return V90_TRN2D_TX_INTERNAL_ERROR;
+		return V90_DOWNSTREAM_TX_INVALID_PARAMETERS;
+	if (!v90_downstream_tx_is_valid(&initialized))
+		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = initialized;
-	return V90_TRN2D_TX_OK;
+	return V90_DOWNSTREAM_TX_OK;
 }
 
-bool v90_trn2d_tx_is_complete(const struct v90_trn2d_tx *transmitter)
+bool v90_downstream_tx_is_complete(const struct v90_downstream_tx *transmitter)
 {
-	return v90_trn2d_tx_is_valid(transmitter) && transmitter->complete;
+	return v90_downstream_tx_is_valid(transmitter) && transmitter->complete;
 }
 
-enum v90_trn2d_tx_result v90_trn2d_tx_request_finish(
-	struct v90_trn2d_tx *transmitter)
+enum v90_downstream_tx_result v90_downstream_tx_request_finish(
+	struct v90_downstream_tx *transmitter)
 {
-	struct v90_trn2d_tx next;
+	struct v90_downstream_tx next;
 
 	if (transmitter == NULL)
-		return V90_TRN2D_TX_INVALID_ARGUMENT;
-	if (!v90_trn2d_tx_is_valid(transmitter))
-		return V90_TRN2D_TX_INVALID_STATE;
+		return V90_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	if (!v90_downstream_tx_is_valid(transmitter))
+		return V90_DOWNSTREAM_TX_INVALID_STATE;
 	if (transmitter->complete)
-		return V90_TRN2D_TX_COMPLETE;
+		return V90_DOWNSTREAM_TX_COMPLETE;
 	next = *transmitter;
 	next.finish_requested = true;
-	if (!v90_trn2d_tx_is_valid(&next))
-		return V90_TRN2D_TX_INTERNAL_ERROR;
+	if (!v90_downstream_tx_is_valid(&next))
+		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;
-	return V90_TRN2D_TX_OK;
+	return V90_DOWNSTREAM_TX_OK;
 }
 
 static bool fill_queue(
-	struct v90_trn2d_tx *transmitter,
+	struct v90_downstream_tx *transmitter,
 	const struct v90_pcm_frame_output *output)
 {
 	const struct v90_pcm_mapping *mapping =
@@ -186,7 +186,7 @@ static bool fill_queue(
 		return false;
 	memset(transmitter->queue, 0, sizeof(transmitter->queue));
 	for (size_t index = 0; index < output->symbol_count; ++index) {
-		struct v90_trn2d_symbol queued = {
+		struct v90_downstream_symbol queued = {
 			.pcm = output->symbols[index],
 		};
 
@@ -217,8 +217,8 @@ static bool fill_queue(
 	return true;
 }
 
-static enum v90_trn2d_tx_result generate_frame(
-	struct v90_trn2d_tx *transmitter)
+static enum v90_downstream_tx_result generate_frame(
+	struct v90_downstream_tx *transmitter)
 {
 	struct v90_pcm_frame_output output;
 	uint8_t bits[V90_PCM_FRAME_MAX_BITS];
@@ -227,29 +227,29 @@ static enum v90_trn2d_tx_result generate_frame(
 
 	if (transmitter->accepted_frames >=
 	    UINT64_MAX / V90_CP_FRAME_INTERVALS)
-		return V90_TRN2D_TX_OUT_OF_RANGE;
+		return V90_DOWNSTREAM_TX_OUT_OF_RANGE;
 	for (size_t bit = 0; bit < bit_count; ++bit) {
 		if (v34_scramble_group(
 			    &transmitter->scrambler, 1, 1,
 			    &bits[bit]) != V34_FRAMING_OK)
-			return V90_TRN2D_TX_INTERNAL_ERROR;
+			return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 	}
 	result = v90_pcm_frame_encoder_process(
 		&transmitter->encoder, bits, bit_count, &output);
 	if (result == V90_PCM_FRAME_ENCODER_NUMERIC_FAILURE)
-		return V90_TRN2D_TX_NUMERIC_FAILURE;
+		return V90_DOWNSTREAM_TX_NUMERIC_FAILURE;
 	if (result != V90_PCM_FRAME_ENCODER_BUFFERING &&
 	    result != V90_PCM_FRAME_ENCODER_SYMBOLS_READY)
-		return V90_TRN2D_TX_INTERNAL_ERROR;
+		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 	transmitter->accepted_frames++;
 	if (result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
 	    !fill_queue(transmitter, &output))
-		return V90_TRN2D_TX_INTERNAL_ERROR;
-	return V90_TRN2D_TX_OK;
+		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
+	return V90_DOWNSTREAM_TX_OK;
 }
 
-static enum v90_trn2d_tx_result drain_encoder(
-	struct v90_trn2d_tx *transmitter)
+static enum v90_downstream_tx_result drain_encoder(
+	struct v90_downstream_tx *transmitter)
 {
 	struct v90_pcm_frame_output output;
 	enum v90_pcm_frame_encoder_result result =
@@ -258,20 +258,20 @@ static enum v90_trn2d_tx_result drain_encoder(
 
 	if (result == V90_PCM_FRAME_ENCODER_COMPLETE) {
 		transmitter->complete = true;
-		return V90_TRN2D_TX_COMPLETE;
+		return V90_DOWNSTREAM_TX_COMPLETE;
 	}
 	if (result == V90_PCM_FRAME_ENCODER_NUMERIC_FAILURE)
-		return V90_TRN2D_TX_NUMERIC_FAILURE;
+		return V90_DOWNSTREAM_TX_NUMERIC_FAILURE;
 	if (result != V90_PCM_FRAME_ENCODER_SYMBOLS_READY ||
 	    !fill_queue(transmitter, &output))
-		return V90_TRN2D_TX_INTERNAL_ERROR;
-	return V90_TRN2D_TX_OK;
+		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
+	return V90_DOWNSTREAM_TX_OK;
 }
 
-static struct v90_trn2d_symbol pop_symbol(
-	struct v90_trn2d_tx *transmitter)
+static struct v90_downstream_symbol pop_symbol(
+	struct v90_downstream_tx *transmitter)
 {
-	struct v90_trn2d_symbol symbol = transmitter->queue[0];
+	struct v90_downstream_symbol symbol = transmitter->queue[0];
 
 	transmitter->queue_count--;
 	memmove(&transmitter->queue[0], &transmitter->queue[1],
@@ -282,69 +282,69 @@ static struct v90_trn2d_symbol pop_symbol(
 	return symbol;
 }
 
-enum v90_trn2d_tx_result v90_trn2d_tx_next(
-	struct v90_trn2d_tx *transmitter,
-	struct v90_trn2d_symbol *symbol)
+enum v90_downstream_tx_result v90_downstream_tx_next(
+	struct v90_downstream_tx *transmitter,
+	struct v90_downstream_symbol *symbol)
 {
-	struct v90_trn2d_tx next;
-	struct v90_trn2d_symbol generated;
-	enum v90_trn2d_tx_result result = V90_TRN2D_TX_OK;
+	struct v90_downstream_tx next;
+	struct v90_downstream_symbol generated;
+	enum v90_downstream_tx_result result = V90_DOWNSTREAM_TX_OK;
 
 	if (transmitter == NULL || symbol == NULL)
-		return V90_TRN2D_TX_INVALID_ARGUMENT;
-	if (!v90_trn2d_tx_is_valid(transmitter))
-		return V90_TRN2D_TX_INVALID_STATE;
+		return V90_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	if (!v90_downstream_tx_is_valid(transmitter))
+		return V90_DOWNSTREAM_TX_INVALID_STATE;
 	if (transmitter->complete)
-		return V90_TRN2D_TX_COMPLETE;
+		return V90_DOWNSTREAM_TX_COMPLETE;
 	next = *transmitter;
 	if (next.queue_count == 0 && next.finish_requested) {
 		result = drain_encoder(&next);
-		if (result == V90_TRN2D_TX_COMPLETE) {
-			if (!v90_trn2d_tx_is_valid(&next))
-				return V90_TRN2D_TX_INTERNAL_ERROR;
+		if (result == V90_DOWNSTREAM_TX_COMPLETE) {
+			if (!v90_downstream_tx_is_valid(&next))
+				return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 			*transmitter = next;
-			return V90_TRN2D_TX_COMPLETE;
+			return V90_DOWNSTREAM_TX_COMPLETE;
 		}
 	} else if (next.queue_count == 0) {
 		for (size_t attempt = 0;
 		     attempt <= next.encoder.mapping.spectral_lookahead &&
 		     next.queue_count == 0; ++attempt) {
 			result = generate_frame(&next);
-			if (result != V90_TRN2D_TX_OK)
+			if (result != V90_DOWNSTREAM_TX_OK)
 				break;
 		}
-		if (result == V90_TRN2D_TX_OK && next.queue_count == 0)
-			result = V90_TRN2D_TX_INTERNAL_ERROR;
+		if (result == V90_DOWNSTREAM_TX_OK && next.queue_count == 0)
+			result = V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 	}
-	if (result != V90_TRN2D_TX_OK)
+	if (result != V90_DOWNSTREAM_TX_OK)
 		return result;
 	generated = pop_symbol(&next);
-	if (!v90_trn2d_tx_is_valid(&next))
-		return V90_TRN2D_TX_INTERNAL_ERROR;
+	if (!v90_downstream_tx_is_valid(&next))
+		return V90_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;
 	*symbol = generated;
-	return V90_TRN2D_TX_OK;
+	return V90_DOWNSTREAM_TX_OK;
 }
 
-const char *v90_trn2d_tx_result_name(
-	enum v90_trn2d_tx_result result)
+const char *v90_downstream_tx_result_name(
+	enum v90_downstream_tx_result result)
 {
 	switch (result) {
-	case V90_TRN2D_TX_OK:
+	case V90_DOWNSTREAM_TX_OK:
 		return "ok";
-	case V90_TRN2D_TX_COMPLETE:
+	case V90_DOWNSTREAM_TX_COMPLETE:
 		return "complete";
-	case V90_TRN2D_TX_INVALID_ARGUMENT:
+	case V90_DOWNSTREAM_TX_INVALID_ARGUMENT:
 		return "invalid argument";
-	case V90_TRN2D_TX_INVALID_PARAMETERS:
+	case V90_DOWNSTREAM_TX_INVALID_PARAMETERS:
 		return "invalid parameters";
-	case V90_TRN2D_TX_INVALID_STATE:
+	case V90_DOWNSTREAM_TX_INVALID_STATE:
 		return "invalid state";
-	case V90_TRN2D_TX_OUT_OF_RANGE:
+	case V90_DOWNSTREAM_TX_OUT_OF_RANGE:
 		return "out of range";
-	case V90_TRN2D_TX_NUMERIC_FAILURE:
+	case V90_DOWNSTREAM_TX_NUMERIC_FAILURE:
 		return "numeric failure";
-	case V90_TRN2D_TX_INTERNAL_ERROR:
+	case V90_DOWNSTREAM_TX_INTERNAL_ERROR:
 		return "internal error";
 	}
 	return "unknown";

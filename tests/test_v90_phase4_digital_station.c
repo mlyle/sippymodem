@@ -322,9 +322,9 @@ static bool test_contracts(void)
 		      V90_PCM_MAPPING_OK,
 	      "valid handoff mapping did not initialize");
 	memset(&transmit_handoff, 0, sizeof(transmit_handoff));
-	CHECK(v90_trn2d_tx_init(
+	CHECK(v90_downstream_tx_init(
 		      &transmit_handoff.transmitter,
-		      &training_mapping) == V90_TRN2D_TX_OK,
+		      &training_mapping) == V90_DOWNSTREAM_TX_OK,
 	      "valid handoff transmitter did not initialize");
 	CHECK(v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff),

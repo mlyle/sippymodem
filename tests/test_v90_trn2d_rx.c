@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_trn2d_rx.h>
-#include <v90_trn2d_tx.h>
+#include <v90_downstream_tx.h>
 
 #include "test.h"
 
@@ -49,7 +49,7 @@ static bool make_mapping(
 
 static bool make_plane_octet(
 	const struct v90_pcm_mapping *mapping,
-	const struct v90_trn2d_symbol *source,
+	const struct v90_downstream_symbol *source,
 	enum v90_pcm_mapping_plane plane, size_t interval,
 	uint8_t *octet)
 {
@@ -103,7 +103,7 @@ static bool run_sequence(
 	uint8_t lookahead, size_t symbol_limit)
 {
 	struct v90_pcm_mapping mapping;
-	struct v90_trn2d_tx transmitter;
+	struct v90_downstream_tx transmitter;
 	struct v90_trn2d_rx receivers[2];
 	enum v90_spectral_rule expected_rules[3] = { 0 };
 	size_t expected_rule_count = 0;
@@ -111,8 +111,8 @@ static bool run_sequence(
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, law,
 		      redundancy, lookahead) &&
-	      v90_trn2d_tx_init(&transmitter, &mapping) ==
-		      V90_TRN2D_TX_OK &&
+	      v90_downstream_tx_init(&transmitter, &mapping) ==
+		      V90_DOWNSTREAM_TX_OK &&
 	      v90_trn2d_rx_init(
 		      &receivers[0], &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == V90_TRN2D_RX_OK &&
@@ -121,15 +121,15 @@ static bool run_sequence(
 		      V90_PCM_MAPPING_CODEC) == V90_TRN2D_RX_OK,
 	      "sequence fixture did not initialize");
 	for (size_t index = 0; index < symbol_limit; ++index) {
-		struct v90_trn2d_symbol symbol;
+		struct v90_downstream_symbol symbol;
 		enum v90_trn2d_rx_result expected_result =
 			index % V90_CP_FRAME_INTERVALS ==
 				V90_CP_FRAME_INTERVALS - 1u ?
 				V90_TRN2D_RX_FRAME_READY :
 				V90_TRN2D_RX_BUFFERING;
 
-		CHECK(v90_trn2d_tx_next(&transmitter, &symbol) ==
-			      V90_TRN2D_TX_OK,
+		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
+			      V90_DOWNSTREAM_TX_OK,
 		      "transmitter stopped at symbol %zu", index);
 		if (symbol.shaping_frame_start) {
 			CHECK(expected_rule_count < ARRAY_LENGTH(expected_rules),
@@ -212,7 +212,7 @@ static bool test_generated_sequences(void)
 static bool test_minimum_and_errors(void)
 {
 	struct v90_pcm_mapping mapping;
-	struct v90_trn2d_tx transmitter;
+	struct v90_downstream_tx transmitter;
 	struct v90_trn2d_rx receiver;
 	struct v90_trn2d_frame frame;
 
@@ -221,19 +221,19 @@ static bool test_minimum_and_errors(void)
 	      "minimum-length sequence failed");
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMA, 0, 0) &&
-	      v90_trn2d_tx_init(&transmitter, &mapping) ==
-		      V90_TRN2D_TX_OK &&
+	      v90_downstream_tx_init(&transmitter, &mapping) ==
+		      V90_DOWNSTREAM_TX_OK &&
 	      v90_trn2d_rx_init(
 		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
 		      V90_TRN2D_RX_OK,
 	      "error fixture did not initialize");
 	for (size_t index = 0; index < V90_CP_FRAME_INTERVALS; ++index) {
-		struct v90_trn2d_symbol symbol;
+		struct v90_downstream_symbol symbol;
 		struct v90_pcm_symbol altered;
 		enum v90_trn2d_rx_result result;
 
-		CHECK(v90_trn2d_tx_next(&transmitter, &symbol) ==
-			      V90_TRN2D_TX_OK &&
+		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
+			      V90_DOWNSTREAM_TX_OK &&
 		      v90_pcm_symbol_make(
 			      &altered, mapping.law, symbol.pcm.ucode,
 			      index == 0 ? !symbol.pcm.positive :

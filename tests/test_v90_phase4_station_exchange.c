@@ -96,8 +96,8 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 }
 
 static bool trn2d_symbols_match(
-	const struct v90_trn2d_symbol *left,
-	const struct v90_trn2d_symbol *right)
+	const struct v90_downstream_symbol *left,
+	const struct v90_downstream_symbol *right)
 {
 	return left->pcm.ucode == right->pcm.ucode &&
 	       left->pcm.positive == right->pcm.positive &&
@@ -112,17 +112,17 @@ static bool verify_trn2d_handoffs(
 	struct v90_phase4_digital_transmit_handoff *digital,
 	struct v90_phase4_analog_receive_handoff *analog)
 {
-	struct v90_trn2d_tx expected;
+	struct v90_downstream_tx expected;
 	const struct v90_pcm_mapping *mapping =
 		&analog->receiver.stream.decoder.mapping;
 
-	CHECK(v90_trn2d_tx_init(
+	CHECK(v90_downstream_tx_init(
 		      &expected, mapping) ==
-		      V90_TRN2D_TX_OK,
+		      V90_DOWNSTREAM_TX_OK,
 	      "analogue mapping could not initialize TRN2d model");
 	for (size_t symbol = 0; symbol < 48; ++symbol) {
-		struct v90_trn2d_symbol actual_symbol;
-		struct v90_trn2d_symbol expected_symbol;
+		struct v90_downstream_symbol actual_symbol;
+		struct v90_downstream_symbol expected_symbol;
 		struct v90_downstream_event event;
 		struct v90_downstream_event untouched;
 		enum v90_downstream_rx_result receive_result;
@@ -130,11 +130,11 @@ static bool verify_trn2d_handoffs(
 		memset(&event, 0xa5, sizeof(event));
 		untouched = event;
 
-		CHECK(v90_trn2d_tx_next(
+		CHECK(v90_downstream_tx_next(
 			      &digital->transmitter, &actual_symbol) ==
-			      V90_TRN2D_TX_OK &&
-		      v90_trn2d_tx_next(&expected, &expected_symbol) ==
-			      V90_TRN2D_TX_OK &&
+			      V90_DOWNSTREAM_TX_OK &&
+		      v90_downstream_tx_next(&expected, &expected_symbol) ==
+			      V90_DOWNSTREAM_TX_OK &&
 		      trn2d_symbols_match(
 			      &actual_symbol, &expected_symbol),
 		      "paired TRN2d symbol %zu differed", symbol);
