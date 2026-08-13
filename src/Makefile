@@ -173,6 +173,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_ja.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_ja_sync.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_ja_decoder.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_j.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_rx.c \
