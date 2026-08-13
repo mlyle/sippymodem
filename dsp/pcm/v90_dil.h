@@ -3,11 +3,13 @@
 #ifndef V90_DIL_H
 #define V90_DIL_H
 
+#include "pcm_dil_descriptor.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
 enum {
-	V90_DIL_FRAME_SYNC_BITS = 17,
+	V90_DIL_FRAME_SYNC_BITS = PCM_DIL_FRAME_SYNC_BITS,
 	V90_DIL_ZERO_DESCRIPTOR_BITS = 240,
 	V90_DIL_ZERO_DESCRIPTOR_BYTES = V90_DIL_ZERO_DESCRIPTOR_BITS / 8,
 };
