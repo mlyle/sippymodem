@@ -62,6 +62,7 @@ CaseRunner = Callable[
 ASYNC_BITS_PER_OCTET = 10
 FAST_ONLINE_MINIMUM_SECONDS = 1.0
 FAST_ONLINE_MARGIN_SECONDS = 1.0
+FAST_JITTER_BUFFER_MS = 20
 
 
 def _run_interop(
@@ -112,7 +113,9 @@ def _matrix_endpoint(
         {
             "SIP_CODEC": case.media_codec,
             "SIP_FRAME_MS": "10",
-            "SIP_JB_MS": "0",
+            # A zero-depth buffer turns ordinary process-scheduling jitter
+            # into silence inside modem training sequences.
+            "SIP_JB_MS": str(FAST_JITTER_BUFFER_MS),
             "SIP_REMOTE_CLOCK": "1",
         }
     )
