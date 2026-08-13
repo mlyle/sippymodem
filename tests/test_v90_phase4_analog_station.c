@@ -205,32 +205,36 @@ static bool run_exchange(
 				      V90_PHASE4_ANALOG_STATION_OK &&
 			      v90_phase4_analog_receive_handoff_is_valid(
 				      &receive_handoff) &&
-			      v90_trn2d_rx_is_valid(
+			      v90_downstream_rx_is_valid(
 				      &receive_handoff.receiver) &&
-			      receive_handoff.receiver.decoder.decision_plane ==
+			      receive_handoff.receiver.stream.decoder
+				      .decision_plane ==
 				      V90_PCM_MAPPING_TRANSMIT &&
 			      mapping_matches(
-				      &receive_handoff.receiver.decoder.mapping,
+				      &receive_handoff.receiver.stream.decoder.mapping,
 				      &training) &&
-			      receive_handoff.receiver.received_symbols == 0 &&
-			      receive_handoff.receiver.received_frames == 0 &&
-			      !v90_trn2d_rx_minimum_received(
+			      v90_downstream_rx_is_fresh(
 				      &receive_handoff.receiver),
 			      "TRN2d handoff was not fresh at the Ri boundary");
 			{
 				struct v90_phase4_analog_receive_handoff corrupted =
 					receive_handoff;
 
-				corrupted.receiver.descrambler.history = 1;
+				corrupted.receiver.stream.descrambler.history = 1;
 				CHECK(!v90_phase4_analog_receive_handoff_is_valid(
 					      &corrupted),
 				      "handoff accepted a used descrambler epoch");
 				corrupted = receive_handoff;
-				corrupted.receiver.decoder.signs
+				corrupted.receiver.stream.decoder.signs
 					.previous_shaping_signs[0] = 1;
 				CHECK(!v90_phase4_analog_receive_handoff_is_valid(
 					      &corrupted),
 				      "handoff accepted used sign history");
+				corrupted = receive_handoff;
+				corrupted.receiver.mp.sync_one_count = 1;
+				CHECK(!v90_phase4_analog_receive_handoff_is_valid(
+					      &corrupted),
+				      "handoff accepted a used MP synchronizer");
 			}
 			receive_handoff_checked = true;
 		}

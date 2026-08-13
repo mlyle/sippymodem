@@ -1481,7 +1481,10 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
+	$(BUILD_DIR)/v90_downstream_rx.o \
 	$(BUILD_DIR)/v90_trn2d_rx.o \
+	$(BUILD_DIR)/v90_mp_receiver.o \
+	$(BUILD_DIR)/v90_mp.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
