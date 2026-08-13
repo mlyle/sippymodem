@@ -88,7 +88,8 @@ bool v90_trn2d_rx_minimum_received(
 	const struct v90_trn2d_rx *receiver)
 {
 	return v90_trn2d_rx_is_valid(receiver) &&
-	       receiver->received_symbols >= V90_TRN2D_MINIMUM_SYMBOLS;
+	       receiver->received_symbols >=
+		       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS;
 }
 
 static bool decision_is_valid(

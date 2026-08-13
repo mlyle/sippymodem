@@ -281,7 +281,7 @@ static bool run_continuous_stream(enum g711_law law)
 	      "continuous downstream fixture did not initialize");
 	CHECK(push_trn2d(
 		      &source,
-		      V90_TRN2D_MINIMUM_SYMBOLS /
+		      V90_PHASE4_TRN2D_MINIMUM_SYMBOLS /
 			      V90_CP_FRAME_INTERVALS,
 		      &receiver, &observer) &&
 	      push_trn2d(
@@ -289,7 +289,7 @@ static bool run_continuous_stream(enum g711_law law)
 		      &receiver, &observer),
 	      "continuous TRN2d stream stopped");
 	CHECK(observer.training_frames ==
-		      V90_TRN2D_MINIMUM_SYMBOLS /
+		      V90_PHASE4_TRN2D_MINIMUM_SYMBOLS /
 			      V90_CP_FRAME_INTERVALS &&
 	      observer.event_count == 0 &&
 	      receiver.stage == V90_DOWNSTREAM_RX_MP_SEARCH,
@@ -328,7 +328,7 @@ static bool run_continuous_stream(enum g711_law law)
 	      "continuous MP event order changed");
 	CHECK(receiver.stream.training_bit_errors == 0 &&
 	      receiver.stream.received_symbols >=
-		      V90_TRN2D_MINIMUM_SYMBOLS +
+		      V90_PHASE4_TRN2D_MINIMUM_SYMBOLS +
 			      EXTRA_TRN2D_FRAMES *
 				      V90_CP_FRAME_INTERVALS +
 			      mp_bits / FRAME_BITS *

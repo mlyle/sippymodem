@@ -5,14 +5,10 @@
 
 #include "v34_framing.h"
 #include "v90_pcm_frame_decoder.h"
+#include "v90_phase4.h"
 
 #include <stdbool.h>
 #include <stdint.h>
-
-enum {
-	/* V.90 clause 9.4.1.2 minimum before the first MP sequence. */
-	V90_TRN2D_MINIMUM_SYMBOLS = 2040,
-};
 
 enum v90_trn2d_rx_result {
 	V90_TRN2D_RX_OK,

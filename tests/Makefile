@@ -1408,6 +1408,7 @@ V90_DOWNSTREAM_TX_TEST_BINARY := $(BUILD_DIR)/test_v90_downstream_tx
 V90_DOWNSTREAM_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_downstream_tx.o \
 	$(BUILD_DIR)/v90_downstream_tx.o \
+	$(BUILD_DIR)/v90_mp.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
@@ -1421,6 +1422,7 @@ V90_TRN2D_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_trn2d_rx.o \
 	$(BUILD_DIR)/v90_trn2d_rx.o \
 	$(BUILD_DIR)/v90_downstream_tx.o \
+	$(BUILD_DIR)/v90_mp.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \

@@ -167,7 +167,8 @@ static bool run_sequence(
 				CHECK(memcmp(&frame, &sentinel, sizeof(frame)) == 0,
 				      "buffering changed frame output");
 			CHECK(v90_trn2d_rx_minimum_received(&receivers[plane]) ==
-				      (index + 1u >= V90_TRN2D_MINIMUM_SYMBOLS),
+				      (index + 1u >=
+				       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS),
 			      "plane %zu minimum changed at symbol %zu",
 			      plane, index);
 		}
@@ -217,7 +218,8 @@ static bool test_minimum_and_errors(void)
 	struct v90_trn2d_frame frame;
 
 	CHECK(run_sequence(
-		      G711_LAW_PCMU, 3, 3, V90_TRN2D_MINIMUM_SYMBOLS),
+		      G711_LAW_PCMU, 3, 3,
+		      V90_PHASE4_TRN2D_MINIMUM_SYMBOLS),
 	      "minimum-length sequence failed");
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMA, 0, 0) &&

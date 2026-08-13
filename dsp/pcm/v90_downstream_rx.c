@@ -29,10 +29,10 @@ bool v90_downstream_rx_is_valid(
 		return false;
 	if (receiver->stage == V90_DOWNSTREAM_RX_TRN2D)
 		return receiver->stream.received_symbols <
-			       V90_TRN2D_MINIMUM_SYMBOLS &&
+			       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS &&
 		       mp_is_fresh(&receiver->mp);
 	return receiver->stream.received_symbols >=
-	       V90_TRN2D_MINIMUM_SYMBOLS;
+	       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS;
 }
 
 enum v90_downstream_rx_result v90_downstream_rx_init(
@@ -188,7 +188,7 @@ enum v90_downstream_rx_result v90_downstream_rx_receive(
 	if (next.stage == V90_DOWNSTREAM_RX_TRN2D) {
 		generated.trn2d = frame;
 		if (next.stream.received_symbols ==
-		    V90_TRN2D_MINIMUM_SYMBOLS)
+		    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS)
 			next.stage = V90_DOWNSTREAM_RX_MP_SEARCH;
 		result = V90_DOWNSTREAM_RX_TRN2D_FRAME;
 	} else {
