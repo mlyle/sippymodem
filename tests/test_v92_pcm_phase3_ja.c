@@ -121,8 +121,8 @@ static bool check_stream(
 		      V92_PCM_PHASE3_JA_OK &&
 	      v92_pcm_phase3_ja_tx_is_valid(&tx) &&
 	      tx.emitted_symbols == 0u &&
-	      tx.differential_memory == history[trn1u_symbols - 1u] &&
-	      tx.scrambler.history == trn1u.scrambler.history &&
+	      tx.coding.previous_sign == history[trn1u_symbols - 1u] &&
+	      tx.coding.scrambler.history == trn1u.scrambler.history &&
 	      memcmp(tx.descriptor, descriptor, sizeof(descriptor)) == 0 &&
 	      !v92_pcm_phase3_ja_tx_can_stop(&tx),
 	      "Ja did not initialize for law %u LU %u mask 0x%05x",
@@ -150,7 +150,7 @@ static bool check_stream(
 		CHECK(v92_pcm_phase3_ja_tx_next(&tx, &symbol) ==
 			      V92_PCM_PHASE3_JA_OK &&
 		      tx.emitted_symbols == ja_index + 1u &&
-		      tx.differential_memory == differential_memory &&
+		      tx.coding.previous_sign == differential_memory &&
 		      symbol.ucode == lu_ucode &&
 		      symbol.positive == (differential_memory == 0u) &&
 		      symbol.octet == expected_octet(

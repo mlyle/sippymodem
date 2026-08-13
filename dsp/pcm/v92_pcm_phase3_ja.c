@@ -26,9 +26,8 @@ bool v92_pcm_phase3_ja_tx_is_valid(
 
 	return tx != NULL && law_is_valid(tx->law) &&
 	       tx->lu_ucode > 0u && tx->lu_ucode <= 127u &&
-	       tx->differential_memory <= 1u &&
-	       v34_scrambler_is_valid(&tx->scrambler) &&
-	       tx->scrambler.polynomial == V34_POLYNOMIAL_GPA &&
+	       pcm_binary_sign_is_valid(&tx->coding) &&
+	       tx->coding.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
 	       v92_pcm_dil_decode_zero(
 		       tx->descriptor, sizeof(tx->descriptor), &rate_mask) ==
 		       V92_PCM_DIL_OK;
@@ -44,12 +43,13 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init(
 	if (tx == NULL || !v92_pcm_phase3_trn1u_can_handoff(trn1u) ||
 	    !v92_pcm_dil_rate_mask_is_valid(upstream_rate_mask))
 		return V92_PCM_PHASE3_JA_INVALID_ARGUMENT;
-	initialized.scrambler = trn1u->scrambler;
 	initialized.law = trn1u->law;
 	initialized.lu_ucode = trn1u->lu_ucode;
-	initialized.differential_memory =
-		(uint8_t)(trn1u->scrambler.history & 1u);
-	if (v92_pcm_dil_encode_zero(
+	if (pcm_binary_sign_init_from_scrambler(
+		    &initialized.coding, &trn1u->scrambler,
+		    (uint8_t)(trn1u->scrambler.history & 1u)) !=
+		    PCM_BINARY_SIGN_OK ||
+	    v92_pcm_dil_encode_zero(
 		    upstream_rate_mask, initialized.descriptor,
 		    sizeof(initialized.descriptor)) != V92_PCM_DIL_OK ||
 	    !v92_pcm_phase3_ja_tx_is_valid(&initialized))
@@ -73,7 +73,7 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_next(
 	struct v90_pcm_symbol generated;
 	uint64_t descriptor_index;
 	uint8_t input_bit;
-	uint8_t scrambled;
+	uint8_t sign;
 
 	if (tx == NULL || symbol == NULL)
 		return V92_PCM_PHASE3_JA_INVALID_ARGUMENT;
@@ -90,14 +90,12 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_next(
 		input_bit = descriptor_bit(
 			next.descriptor, (size_t)descriptor_index);
 	}
-	if (v34_scramble_group(
-		    &next.scrambler, input_bit, 1u, &scrambled) !=
-	    V34_FRAMING_OK)
+	if (pcm_binary_sign_encode(&next.coding, input_bit, &sign) !=
+	    PCM_BINARY_SIGN_OK)
 		return V92_PCM_PHASE3_JA_INVALID_STATE;
-	next.differential_memory ^= scrambled;
 	if (!v90_pcm_symbol_make(
 		    &generated, next.law, next.lu_ucode,
-		    next.differential_memory == 0u))
+		    sign == 0u))
 		return V92_PCM_PHASE3_JA_INVALID_STATE;
 	next.emitted_symbols++;
 	if (!v92_pcm_phase3_ja_tx_is_valid(&next))

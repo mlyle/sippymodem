@@ -139,6 +139,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_dil_descriptor.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_binary_sign.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_call.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_datapump.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_4d_decoder.c \

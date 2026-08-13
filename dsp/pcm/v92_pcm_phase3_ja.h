@@ -3,6 +3,7 @@
 #ifndef V92_PCM_PHASE3_JA_H
 #define V92_PCM_PHASE3_JA_H
 
+#include "pcm_binary_sign.h"
 #include "v92_pcm_dil.h"
 #include "v92_pcm_phase3_trn1u.h"
 
@@ -27,11 +28,10 @@ enum v92_pcm_phase3_ja_result {
  * followed by the selected DIL descriptor repeatedly. The owning Phase 3
  * controller detects the peer response and chooses an aligned endpoint. */
 struct v92_pcm_phase3_ja_tx {
-	struct v34_scrambler scrambler;
+	struct pcm_binary_sign coding;
 	uint64_t emitted_symbols;
 	uint8_t descriptor[V92_PCM_DIL_ZERO_DESCRIPTOR_BYTES];
 	enum g711_law law;
-	uint8_t differential_memory;
 	uint8_t lu_ucode;
 };
 
