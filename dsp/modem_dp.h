@@ -44,6 +44,8 @@
 #include <g711.h>
 #include <modem_defs.h>
 
+#include <stdbool.h>
+
 
 /*
  *    type definitions
@@ -61,8 +63,13 @@ struct dp_operations {
 			     struct dp_operations *);
 	int (*delete)(struct dp *);
 	int (*process)(struct dp *, void *in, void *out, int cnt);
+	/* The caller initializes exact_output to false. An implementation may
+	 * set it only after producing every transmit codeword in this fragment;
+	 * otherwise the linear transmit samples remain authoritative. */
 	int (*process_g711)(struct dp *, enum g711_law law,
-			     const u8 *codewords, void *in, void *out, int cnt);
+			     const u8 *receive_codewords, void *receive_samples,
+			     u8 *transmit_codewords, void *transmit_samples,
+			     int cnt, bool *exact_output);
 	int (*hangup)(struct dp *);
 };
 

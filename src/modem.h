@@ -444,7 +444,11 @@ extern void modem_event  (struct modem *m);
 extern int modem_service_event(struct modem *m);
 extern void modem_process(struct modem *m,void *in,void *out,int cnt);
 extern void modem_process_g711(struct modem *m, enum g711_law law,
-			       const u8 *codewords, void *in, void *out, int cnt);
+			       const u8 *receive_codewords,
+			       void *receive_samples,
+			       u8 *transmit_codewords,
+			       void *transmit_samples, int cnt,
+			       bool *exact_output);
 
 /* packers && EC */ // FIXME: improve interface
 extern void modem_async_start(struct modem *m);

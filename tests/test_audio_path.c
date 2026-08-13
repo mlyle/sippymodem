@@ -18,10 +18,12 @@ struct sip_session {
 	uint8_t receive_codewords[TEST_FRAME_SAMPLES];
 	int16_t receive_samples[TEST_FRAME_SAMPLES];
 	int16_t sent_samples[TEST_FRAME_SAMPLES];
+	uint8_t sent_codewords[TEST_FRAME_SAMPLES];
 	enum media_result play_result;
 	enum rtp_endpoint_result send_result;
 	unsigned int play_calls;
 	unsigned int send_calls;
+	unsigned int send_g711_calls;
 };
 
 size_t sip_session_frame_samples(
@@ -61,14 +63,32 @@ enum rtp_endpoint_result sip_session_send(
 	return session->send_result;
 }
 
+enum rtp_endpoint_result sip_session_send_g711(
+	struct sip_session *session, const uint8_t *codewords,
+	const int16_t *decoded_samples, size_t count)
+{
+	if (session == NULL || codewords == NULL || decoded_samples == NULL ||
+	    count != session->frame_samples)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	session->send_g711_calls++;
+	if (session->send_result == RTP_ENDPOINT_OK) {
+		memcpy(session->sent_codewords, codewords, count);
+		memcpy(session->sent_samples, decoded_samples,
+		       count * sizeof(decoded_samples[0]));
+	}
+	return session->send_result;
+}
+
 struct core_capture {
 	int16_t expected_receive[TEST_FRAME_SAMPLES];
 	int16_t transmit[TEST_FRAME_SAMPLES];
+	uint8_t transmit_codewords[TEST_FRAME_SAMPLES];
 	enum modem_core_result result;
 	unsigned int calls;
 	unsigned int g711_calls;
 	bool receive_matched;
 	bool codewords_matched;
+	bool exact_output;
 	enum g711_law law;
 };
 
@@ -91,9 +111,11 @@ static enum modem_core_result process_core(
 static enum modem_core_result process_core_g711(
 	void *context, enum g711_law law,
 	const uint8_t *receive_codewords, int16_t *receive_samples,
-	int16_t *transmit_samples, size_t count)
+	uint8_t *transmit_codewords, int16_t *transmit_samples,
+	size_t count, bool *exact_output)
 {
 	struct core_capture *capture = context;
+	enum modem_core_result result;
 
 	capture->g711_calls++;
 	capture->law = law;
@@ -101,8 +123,12 @@ static enum modem_core_result process_core_g711(
 		count == TEST_FRAME_SAMPLES &&
 		memcmp(receive_codewords,
 		       (uint8_t[]){ 0x7f, 0xff, 0x55, 0xd5 }, count) == 0;
-	return process_core(
-		context, receive_samples, transmit_samples, count);
+	result = process_core(context, receive_samples, transmit_samples, count);
+	if (result == MODEM_CORE_OK && capture->exact_output) {
+		memcpy(transmit_codewords, capture->transmit_codewords, count);
+		*exact_output = true;
+	}
+	return result;
 }
 
 struct recording_capture {
@@ -242,6 +268,73 @@ static bool test_stops_at_each_failed_boundary(void)
 	return true;
 }
 
+static bool test_preserves_exact_transmit_codewords(void)
+{
+	static const uint8_t exact_codewords[] = { 0x7f, 0xff, 0x00, 0x80 };
+	const int16_t decoded[] = {
+		g711_decode_pcmu(exact_codewords[0]),
+		g711_decode_pcmu(exact_codewords[1]),
+		g711_decode_pcmu(exact_codewords[2]),
+		g711_decode_pcmu(exact_codewords[3]),
+	};
+	struct sip_session session = {
+		.frame_samples = TEST_FRAME_SAMPLES,
+		.receive_codewords = { 0xff, 0xff, 0xff, 0xff },
+		.play_result = MEDIA_OK,
+		.send_result = RTP_ENDPOINT_OK,
+	};
+	struct core_capture core = {
+		.transmit = { 1, 2, 3, 4 },
+		.result = MODEM_CORE_OK,
+		.exact_output = true,
+	};
+	struct recording_capture recordings = { 0 };
+	struct media_config config = {
+		.codec = MEDIA_CODEC_PCMU,
+		.receive_gain = 1.0,
+		.transmit_gain = 1.0,
+	};
+	const struct media_recorder recorder = {
+		.context = &recordings,
+		.write = capture_recording,
+	};
+	const struct modem_core modem_core = {
+		.context = &core,
+		.process = process_core,
+		.process_g711 = process_core_g711,
+	};
+	struct audio_path *path;
+
+	memcpy(core.transmit_codewords, exact_codewords,
+	       sizeof(exact_codewords));
+	path = audio_path_create(&session, &config, &recorder, &modem_core);
+	CHECK(path != NULL, "exact-output audio path creation failed");
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK &&
+		      session.send_calls == 0 && session.send_g711_calls == 1 &&
+		      memcmp(session.sent_codewords, exact_codewords,
+			     sizeof(exact_codewords)) == 0 &&
+		      memcmp(session.sent_samples, decoded, sizeof(decoded)) == 0,
+	      "audio path re-encoded or changed exact G.711 output");
+	CHECK(recordings.calls == 2 &&
+		      recordings.streams[1] == RECORD_TX_MODEM_PCM &&
+		      memcmp(recordings.samples[1], decoded, sizeof(decoded)) == 0,
+	      "exact G.711 output did not retain canonical PCM evidence");
+	audio_path_destroy(path);
+
+	config.transmit_gain = 2.0;
+	memset(&recordings, 0, sizeof(recordings));
+	path = audio_path_create(&session, &config, &recorder, &modem_core);
+	CHECK(path != NULL && audio_path_process_frame(path) ==
+				      AUDIO_PATH_EXACT_OUTPUT_CONFLICT &&
+		      recordings.calls == 1 && session.send_g711_calls == 1 &&
+		      strcmp(audio_path_result_name(
+				     AUDIO_PATH_EXACT_OUTPUT_CONFLICT),
+			     "exact G.711 output conflicts with transmit gain") == 0,
+	      "audio path silently applied gain to exact G.711 output");
+	audio_path_destroy(path);
+	return true;
+}
+
 static bool test_rejects_invalid_ownership_and_gain(void)
 {
 	struct sip_session session = {
@@ -290,6 +383,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "gained recorded frame", test_processes_gained_recorded_frame },
 		{ "failed boundaries", test_stops_at_each_failed_boundary },
+		{ "exact G.711 transmit", test_preserves_exact_transmit_codewords },
 		{ "ownership and gain validation",
 		  test_rejects_invalid_ownership_and_gain },
 	};

@@ -7,6 +7,7 @@
 #include "g711.h"
 #include "session.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -25,14 +26,19 @@ struct modem_core {
 		int16_t *transmit_samples,
 		size_t count);
 	/* Optional exact-codeword path. receive_samples include configured gain;
-	 * receive_codewords retain the original G.711 playout values. */
+	 * receive_codewords retain the original G.711 playout values. The caller
+	 * initializes exact_output to false. When set true, all transmit_codewords
+	 * are authoritative and transmit_samples are replaced by their canonical
+	 * decodes before recording and transmission. */
 	enum modem_core_result (*process_g711)(
 		void *context,
 		enum g711_law law,
 		const uint8_t *receive_codewords,
 		int16_t *receive_samples,
+		uint8_t *transmit_codewords,
 		int16_t *transmit_samples,
-		size_t count);
+		size_t count,
+		bool *exact_output);
 };
 
 enum audio_path_result {
@@ -41,6 +47,7 @@ enum audio_path_result {
 	AUDIO_PATH_INVALID_ARGUMENT,
 	AUDIO_PATH_PLAYOUT_ERROR,
 	AUDIO_PATH_MODEM_ERROR,
+	AUDIO_PATH_EXACT_OUTPUT_CONFLICT,
 	AUDIO_PATH_TRANSMIT_ERROR,
 };
 

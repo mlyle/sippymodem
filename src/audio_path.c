@@ -83,11 +83,11 @@ struct audio_path *audio_path_create(
 	if (frame_samples == 0 ||
 	    frame_samples >
 		    (SIZE_MAX - sizeof(*path)) /
-			    (2 * sizeof(int16_t) + sizeof(uint8_t)))
+			    (2 * sizeof(int16_t) + 2 * sizeof(uint8_t)))
 		return NULL;
 	allocation_size =
 		sizeof(*path) +
-		frame_samples * (2 * sizeof(int16_t) + sizeof(uint8_t));
+		frame_samples * (2 * sizeof(int16_t) + 2 * sizeof(uint8_t));
 	path = calloc(1, allocation_size);
 	if (path == NULL)
 		return NULL;
@@ -120,13 +120,16 @@ enum audio_path_result audio_path_process_frame(
 	int16_t *receive_samples;
 	int16_t *transmit_samples;
 	uint8_t *receive_codewords;
+	uint8_t *transmit_codewords;
 	enum modem_core_result core_result;
+	bool exact_output = false;
 
 	if (path == NULL)
 		return AUDIO_PATH_INVALID_ARGUMENT;
 	receive_samples = path->samples;
 	transmit_samples = path->samples + path->frame_samples;
 	receive_codewords = (uint8_t *)(transmit_samples + path->frame_samples);
+	transmit_codewords = receive_codewords + path->frame_samples;
 	path->last_media_result = sip_session_play(
 		path->session, receive_samples, receive_codewords,
 		path->frame_samples, NULL);
@@ -140,10 +143,15 @@ enum audio_path_result audio_path_process_frame(
 		receive_samples, path->frame_samples);
 	memset(transmit_samples, 0,
 	       path->frame_samples * sizeof(transmit_samples[0]));
+	memset(transmit_codewords,
+	       path->law == G711_LAW_PCMA ?
+		       g711_encode_pcma(0) : g711_encode_pcmu(0),
+	       path->frame_samples);
 	if (path->modem_core.process_g711 != NULL)
 		core_result = path->modem_core.process_g711(
 			path->modem_core.context, path->law, receive_codewords,
-			receive_samples, transmit_samples, path->frame_samples);
+			receive_samples, transmit_codewords, transmit_samples,
+			path->frame_samples, &exact_output);
 	else
 		core_result = path->modem_core.process(
 			path->modem_core.context, receive_samples, transmit_samples,
@@ -152,14 +160,30 @@ enum audio_path_result audio_path_process_frame(
 		return AUDIO_PATH_MODEM_STOPPED;
 	if (core_result != MODEM_CORE_OK)
 		return AUDIO_PATH_MODEM_ERROR;
+	if (exact_output) {
+		if (path->transmit_gain != 1.0)
+			return AUDIO_PATH_EXACT_OUTPUT_CONFLICT;
+		for (size_t index = 0; index < path->frame_samples; ++index) {
+			transmit_samples[index] = path->law == G711_LAW_PCMA ?
+				g711_decode_pcma(transmit_codewords[index]) :
+				g711_decode_pcmu(transmit_codewords[index]);
+		}
+	}
 
 	recording_emit(
 		&path->recorder, RECORD_TX_MODEM_PCM,
 		RECORD_S16_NATIVE, MEDIA_SAMPLE_RATE,
 		transmit_samples, path->frame_samples);
-	apply_gain(transmit_samples, path->frame_samples, path->transmit_gain);
-	path->last_rtp_result = sip_session_send(
-		path->session, transmit_samples, path->frame_samples);
+	if (exact_output)
+		path->last_rtp_result = sip_session_send_g711(
+			path->session, transmit_codewords, transmit_samples,
+			path->frame_samples);
+	else {
+		apply_gain(
+			transmit_samples, path->frame_samples, path->transmit_gain);
+		path->last_rtp_result = sip_session_send(
+			path->session, transmit_samples, path->frame_samples);
+	}
 	return path->last_rtp_result == RTP_ENDPOINT_OK ?
 		       AUDIO_PATH_OK :
 		       AUDIO_PATH_TRANSMIT_ERROR;
@@ -193,6 +217,8 @@ const char *audio_path_result_name(
 		return "RTP playout failed";
 	case AUDIO_PATH_MODEM_ERROR:
 		return "modem core failed";
+	case AUDIO_PATH_EXACT_OUTPUT_CONFLICT:
+		return "exact G.711 output conflicts with transmit gain";
 	case AUDIO_PATH_TRANSMIT_ERROR:
 		return "RTP transmit failed";
 	}

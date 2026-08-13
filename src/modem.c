@@ -694,22 +694,37 @@ static unsigned dpstat2status(unsigned dpstat)
 
 
 static void modem_dp_process_frame(struct modem *m, enum g711_law law,
-				   const u8 *codewords, void *in, void *out,
-				   int count)
+				   const u8 *receive_codewords,
+				   u8 *transmit_codewords,
+				   bool *exact_output,
+				   void *in, void *out, int count)
 {
 	int ret;
 	unsigned cnt;
+	bool all_exact = receive_codewords != NULL &&
+		transmit_codewords != NULL && exact_output != NULL;
+
+	if (exact_output != NULL)
+		*exact_output = false;
 	//MODEM_DBG("modem_process %d: %d...\n", m->count,count);
 	while(count && m->dp) {
+		bool fragment_exact = false;
+
 		cnt = count;
 		if (cnt > m->frag)
 			cnt = m->frag;
 		//MODEM_DBG("%d: running dp %s...\n", m->count,dp->name);
-		if (codewords != NULL && m->dp->op->process_g711 != NULL)
+		if (receive_codewords != NULL &&
+		    m->dp->op->process_g711 != NULL)
 			ret = m->dp->op->process_g711(
-				m->dp, law, codewords, in, out, cnt);
-		else
+				m->dp, law, receive_codewords, in,
+				transmit_codewords, out, cnt, &fragment_exact);
+		else {
 			ret = m->dp->op->process(m->dp,in,out,cnt);
+			fragment_exact = false;
+		}
+		if (!fragment_exact)
+			all_exact = false;
 		switch(ret) {
 		case DPSTAT_OK:
 			break;
@@ -723,6 +738,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			do_modem_change_dp(m);
 			break;
 		default: /* errors */
+			all_exact = false;
 			modem_update_status(m,dpstat2status(ret));
 			m->process = NULL;
 			break;
@@ -731,29 +747,41 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		count -= cnt;
 		out += cnt<<MFMT_SHIFT(m->format);
 		in  += cnt<<MFMT_SHIFT(m->format);
-		if (codewords != NULL)
-			codewords += cnt;
+		if (receive_codewords != NULL)
+			receive_codewords += cnt;
+		if (transmit_codewords != NULL)
+			transmit_codewords += cnt;
 	}
-	if(count)
+	if(count) {
 		memset(out,0,count<<MFMT_SHIFT(m->format));
+		all_exact = false;
+	}
+	if (exact_output != NULL)
+		*exact_output = all_exact;
 }
 
 static void modem_dp_process(struct modem *m,void *in,void *out,int count)
 {
-	modem_dp_process_frame(m, G711_LAW_PCMU, NULL, in, out, count);
+	modem_dp_process_frame(
+		m, G711_LAW_PCMU, NULL, NULL, NULL, in, out, count);
 }
 
 static void modem_process_frame(struct modem *m, enum g711_law law,
-				const u8 *codewords, void *in, void *out,
-				int count)
+				const u8 *receive_codewords,
+				u8 *transmit_codewords,
+				bool *exact_output,
+				void *in, void *out, int count)
 {
+	if (exact_output != NULL)
+		*exact_output = false;
 	/* clean DC */
 	(void)dc_filter_process(&m->dc_filter, in, (size_t)count);
 	modem_debug_log_data(m,MODEM_DBG_RX_SAMPLES,in,count<<MFMT_SHIFT(m->format));
 	if(m->process) {
-		if (codewords != NULL && m->process == modem_dp_process)
+		if (receive_codewords != NULL && m->process == modem_dp_process)
 			modem_dp_process_frame(
-				m, law, codewords, in, out, count);
+				m, law, receive_codewords, transmit_codewords,
+				exact_output, in, out, count);
 		else
 			m->process(m,in,out,count);
 	}
@@ -771,13 +799,18 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 
 void modem_process(struct modem *m,void *in,void *out,int count)
 {
-	modem_process_frame(m, G711_LAW_PCMU, NULL, in, out, count);
+	modem_process_frame(
+		m, G711_LAW_PCMU, NULL, NULL, NULL, in, out, count);
 }
 
 void modem_process_g711(struct modem *m, enum g711_law law,
-			 const u8 *codewords, void *in, void *out, int count)
+			 const u8 *receive_codewords, void *receive_samples,
+			 u8 *transmit_codewords, void *transmit_samples,
+			 int count, bool *exact_output)
 {
-	modem_process_frame(m, law, codewords, in, out, count);
+	modem_process_frame(
+		m, law, receive_codewords, transmit_codewords, exact_output,
+		receive_samples, transmit_samples, count);
 }
 
 

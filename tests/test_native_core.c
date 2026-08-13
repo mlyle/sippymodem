@@ -158,6 +158,7 @@ static struct {
 	enum g711_law law;
 	unsigned int linear_calls;
 	unsigned int g711_calls;
+	bool first_fragment_only;
 } g711_dp;
 
 static struct dp *create_g711_dp(
@@ -200,16 +201,22 @@ static int process_g711_dp(
 
 static int process_g711_codewords(
 	struct dp *datapump, enum g711_law law,
-	const uint8_t *codewords, void *receive, void *transmit, int count)
+	const uint8_t *receive_codewords, void *receive,
+	uint8_t *transmit_codewords, void *transmit,
+	int count, bool *exact_output)
 {
 	(void)receive;
-	if (datapump != &g711_dp.datapump || codewords == NULL ||
-	    transmit == NULL || count <= 0)
+	if (datapump != &g711_dp.datapump || receive_codewords == NULL ||
+	    transmit_codewords == NULL || transmit == NULL || count <= 0 ||
+	    exact_output == NULL)
 		return DPSTAT_ERROR;
 	g711_dp.g711_calls++;
 	g711_dp.law = law;
-	g711_dp.codewords = codewords;
+	g711_dp.codewords = receive_codewords;
+	for (int index = 0; index < count; ++index)
+		transmit_codewords[index] = (uint8_t)~receive_codewords[index];
 	memset(transmit, 0, (size_t)count * sizeof(int16_t));
+	*exact_output = !g711_dp.first_fragment_only || g711_dp.g711_calls == 1;
 	return DPSTAT_OK;
 }
 
@@ -228,10 +235,12 @@ static bool test_g711_datapump_input(void)
 		.process = process_g711_dp,
 		.process_g711 = process_g711_codewords,
 	};
-	uint8_t codewords[MODEM_FRAG];
-	int16_t receive[MODEM_FRAG] = { 0 };
-	int16_t transmit[MODEM_FRAG];
+	uint8_t codewords[MODEM_FRAG + 1];
+	uint8_t transmit_codewords[MODEM_FRAG + 1] = { 0 };
+	int16_t receive[MODEM_FRAG + 1] = { 0 };
+	int16_t transmit[MODEM_FRAG + 1];
 	struct modem *modem;
+	bool exact_output = false;
 
 	memset(&g711_dp, 0, sizeof(g711_dp));
 	memset(codewords, 0x7f, sizeof(codewords));
@@ -241,13 +250,27 @@ static bool test_g711_datapump_input(void)
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "G.711 test call did not start");
 	modem_process_g711(
-		modem, G711_LAW_PCMU, codewords, receive, transmit, MODEM_FRAG);
+		modem, G711_LAW_PCMU, codewords, receive,
+		transmit_codewords, transmit, MODEM_FRAG, &exact_output);
 	CHECK(g711_dp.g711_calls == 1 && g711_dp.linear_calls == 0 &&
 		      g711_dp.law == G711_LAW_PCMU &&
-		      g711_dp.codewords == codewords,
-	      "exact codewords did not reach the opt-in data pump");
+		      g711_dp.codewords == codewords && exact_output,
+	      "exact codewords did not traverse the opt-in data pump");
+	for (size_t index = 0; index < MODEM_FRAG; ++index) {
+		CHECK(transmit_codewords[index] == (uint8_t)~codewords[index],
+		      "exact transmit codeword changed at sample %zu", index);
+	}
+	g711_dp.g711_calls = 0;
+	g711_dp.first_fragment_only = true;
+	exact_output = true;
+	modem_process_g711(
+		modem, G711_LAW_PCMA, codewords, receive,
+		transmit_codewords, transmit, ARRAY_LENGTH(codewords),
+		&exact_output);
+	CHECK(g711_dp.g711_calls == 2 && !exact_output,
+	      "one exact fragment incorrectly made the whole frame exact");
 	modem_process(modem, receive, transmit, MODEM_FRAG);
-	CHECK(g711_dp.g711_calls == 1 && g711_dp.linear_calls == 1,
+	CHECK(g711_dp.g711_calls == 2 && g711_dp.linear_calls == 1,
 	      "linear processing did not retain its legacy path");
 	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
 	      "G.711 test data pump did not stop cleanly");

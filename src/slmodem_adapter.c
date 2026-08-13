@@ -32,23 +32,27 @@ static enum modem_core_result process_modem(
 static enum modem_core_result process_modem_g711(
 	void *context, enum g711_law law,
 	const uint8_t *receive_codewords, int16_t *receive_samples,
-	int16_t *transmit_samples, size_t count)
+	uint8_t *transmit_codewords, int16_t *transmit_samples,
+	size_t count, bool *exact_output)
 {
 	struct slmodem_adapter *adapter = context;
 	struct modem *modem;
 
+	if (exact_output != NULL)
+		*exact_output = false;
 	if (adapter == NULL || adapter->modem == NULL ||
 	    (law != G711_LAW_PCMU && law != G711_LAW_PCMA) ||
 	    receive_codewords == NULL || receive_samples == NULL ||
-	    transmit_samples == NULL || count == 0 || count > INT_MAX)
+	    transmit_codewords == NULL || transmit_samples == NULL ||
+	    exact_output == NULL || count == 0 || count > INT_MAX)
 		return MODEM_CORE_ERROR;
 	modem = adapter->modem;
 	if (!modem->started)
 		return MODEM_CORE_STOPPED;
 
 	modem_process_g711(
-		modem, law, receive_codewords, receive_samples, transmit_samples,
-		(int)count);
+		modem, law, receive_codewords, receive_samples,
+		transmit_codewords, transmit_samples, (int)count, exact_output);
 	return modem->started ? MODEM_CORE_OK : MODEM_CORE_STOPPED;
 }
 

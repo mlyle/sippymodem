@@ -18,6 +18,7 @@ struct modem_process_capture {
 	const uint8_t *codewords;
 	enum g711_law law;
 	unsigned int g711_calls;
+	bool exact_output;
 	bool stop_modem;
 };
 
@@ -41,11 +42,16 @@ void modem_process(struct modem *modem, void *receive, void *transmit,
 
 void modem_process_g711(
 	struct modem *modem, enum g711_law law,
-	const uint8_t *codewords, void *receive, void *transmit, int count)
+	const uint8_t *receive_codewords, void *receive,
+	uint8_t *transmit_codewords, void *transmit,
+	int count, bool *exact_output)
 {
 	capture.g711_calls++;
 	capture.law = law;
-	capture.codewords = codewords;
+	capture.codewords = receive_codewords;
+	for (int index = 0; index < count; ++index)
+		transmit_codewords[index] = (uint8_t)~receive_codewords[index];
+	*exact_output = capture.exact_output;
 	modem_process(modem, receive, transmit, count);
 }
 
@@ -69,6 +75,8 @@ static bool test_forwards_exact_host_frames(void)
 	struct slmodem_adapter adapter;
 	const struct modem_core *core;
 	int16_t transmit[ARRAY_LENGTH(receive)] = { 0 };
+	uint8_t transmit_codewords[ARRAY_LENGTH(receive)] = { 0 };
+	bool exact_output = false;
 
 	memset(&capture, 0, sizeof(capture));
 	CHECK(MODEM_RATE == MEDIA_SAMPLE_RATE &&
@@ -93,14 +101,20 @@ static bool test_forwards_exact_host_frames(void)
 		      memcmp(transmit, expected, sizeof(expected)) == 0,
 	      "adapter changed or truncated the modem frame");
 	memset(transmit, 0, sizeof(transmit));
+	capture.exact_output = true;
 	CHECK(core->process_g711(
 		      core->context, G711_LAW_PCMU, codewords,
-		      receive, transmit, ARRAY_LENGTH(receive)) == MODEM_CORE_OK &&
+		      receive, transmit_codewords, transmit,
+		      ARRAY_LENGTH(receive), &exact_output) == MODEM_CORE_OK &&
 		      capture.calls == 2 && capture.g711_calls == 1 &&
 		      capture.law == G711_LAW_PCMU &&
 		      capture.codewords == codewords &&
+		      exact_output &&
+		      memcmp(transmit_codewords,
+			     (uint8_t[]){ 0x80, 0x00, 0xaa, 0x2a },
+			     sizeof(transmit_codewords)) == 0 &&
 		      memcmp(transmit, expected, sizeof(expected)) == 0,
-	      "adapter did not preserve the exact G.711 frame");
+	      "adapter did not preserve both exact G.711 directions");
 	capture.stop_modem = true;
 	CHECK(core->process(core->context, receive, transmit,
 			    ARRAY_LENGTH(receive)) ==
@@ -120,6 +134,7 @@ static bool test_validation_is_transactional(void)
 	const struct modem_core *core;
 	uint8_t codeword = 0xff;
 	int16_t sample = 0;
+	bool exact_output = true;
 
 	modem.srate++;
 	CHECK(!slmodem_adapter_init(&adapter, &modem) &&
@@ -155,10 +170,17 @@ static bool test_validation_is_transactional(void)
 	      "adapter accepted an unsafe legacy frame");
 	CHECK(core->process_g711(
 		      core->context, (enum g711_law)99, &codeword,
-		      &sample, &sample, 1) == MODEM_CORE_ERROR &&
+		      &sample, &codeword, &sample, 1,
+		      &exact_output) == MODEM_CORE_ERROR &&
 		      core->process_g711(
 			      core->context, G711_LAW_PCMU, NULL,
-			      &sample, &sample, 1) == MODEM_CORE_ERROR,
+			      &sample, &codeword, &sample, 1,
+			      &exact_output) == MODEM_CORE_ERROR &&
+		      core->process_g711(
+			      core->context, G711_LAW_PCMU, &codeword,
+			      &sample, NULL, &sample, 1,
+			      &exact_output) == MODEM_CORE_ERROR &&
+		      !exact_output,
 	      "adapter accepted an unsafe G.711 frame");
 	return true;
 }
