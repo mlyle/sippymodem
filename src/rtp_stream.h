@@ -67,4 +67,16 @@ enum media_result rtp_stream_write(
 	size_t packet_capacity,
 	size_t *packet_size);
 
+/* Preserve exact G.711 codewords. decoded_samples must contain the canonical
+ * decode of each corresponding codeword and is validated before state,
+ * recordings, or packet storage change. */
+enum media_result rtp_stream_write_g711(
+	struct rtp_stream *stream,
+	const uint8_t *codewords,
+	const int16_t *decoded_samples,
+	size_t count,
+	uint8_t *packet,
+	size_t packet_capacity,
+	size_t *packet_size);
+
 #endif

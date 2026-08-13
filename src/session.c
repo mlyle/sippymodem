@@ -280,6 +280,16 @@ enum rtp_endpoint_result sip_session_send(
 		       RTP_ENDPOINT_INVALID_ARGUMENT;
 }
 
+enum rtp_endpoint_result sip_session_send_g711(
+	struct sip_session *session, const uint8_t *codewords,
+	const int16_t *decoded_samples, size_t count)
+{
+	return session != NULL ?
+		       rtp_runtime_send_g711(
+			       session->rtp, codewords, decoded_samples, count) :
+		       RTP_ENDPOINT_INVALID_ARGUMENT;
+}
+
 enum sip_rtp_result sip_session_last_media_binding(
 	const struct sip_session *session)
 {

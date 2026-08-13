@@ -2,6 +2,7 @@
 
 #include "rtp_stream.h"
 
+#include "g711.h"
 #include "rtp.h"
 
 #include <stdint.h>
@@ -85,34 +86,14 @@ enum media_result rtp_stream_play(
 	return result;
 }
 
-enum media_result rtp_stream_write(
-	struct rtp_stream *stream,
-	const int16_t *samples,
-	size_t count,
-	uint8_t *packet,
-	size_t packet_capacity,
+static enum media_result complete_write(
+	struct rtp_stream *stream, size_t count,
+	uint8_t *packet, size_t packet_capacity,
 	size_t *packet_size)
 {
-	enum media_result media_result;
 	enum rtp_result packet_result;
 	size_t written;
 
-	if (stream == NULL || samples == NULL || count == 0 || packet == NULL ||
-	    packet_size == NULL || count > UINT32_MAX ||
-	    stream->transmit_header.payload_type >
-		    RTP_MAX_PAYLOAD_TYPE)
-		return MEDIA_INVALID_ARGUMENT;
-	if (packet_capacity < RTP_HEADER_SIZE ||
-	    count > packet_capacity - RTP_HEADER_SIZE)
-		return MEDIA_OUTPUT_TOO_SMALL;
-
-	media_result = media_encode(
-		stream->codec, samples, count,
-		packet + RTP_HEADER_SIZE,
-		packet_capacity - RTP_HEADER_SIZE,
-		&stream->recorder);
-	if (media_result != MEDIA_OK)
-		return media_result;
 	packet_result = rtp_packet_write(
 		packet, packet_capacity, &stream->transmit_header,
 		packet + RTP_HEADER_SIZE, count, &written);
@@ -127,4 +108,86 @@ enum media_result rtp_stream_write(
 	stream->stats.transmit_packets++;
 	stream->stats.transmit_samples += count;
 	return MEDIA_OK;
+}
+
+static enum media_result validate_write(
+	const struct rtp_stream *stream, size_t count,
+	const uint8_t *packet, size_t packet_capacity,
+	const size_t *packet_size)
+{
+	if (stream == NULL || count == 0 || packet == NULL ||
+	    packet_size == NULL || count > UINT32_MAX ||
+	    (stream->codec != MEDIA_CODEC_PCMU &&
+	     stream->codec != MEDIA_CODEC_PCMA) ||
+	    stream->transmit_header.payload_type > RTP_MAX_PAYLOAD_TYPE)
+		return MEDIA_INVALID_ARGUMENT;
+	if (packet_capacity < RTP_HEADER_SIZE ||
+	    count > packet_capacity - RTP_HEADER_SIZE)
+		return MEDIA_OUTPUT_TOO_SMALL;
+	return MEDIA_OK;
+}
+
+enum media_result rtp_stream_write(
+	struct rtp_stream *stream,
+	const int16_t *samples,
+	size_t count,
+	uint8_t *packet,
+	size_t packet_capacity,
+	size_t *packet_size)
+{
+	enum media_result result = validate_write(
+		stream, count, packet, packet_capacity, packet_size);
+
+	if (samples == NULL)
+		return MEDIA_INVALID_ARGUMENT;
+	if (result != MEDIA_OK)
+		return result;
+	result = media_encode(
+		stream->codec, samples, count, packet + RTP_HEADER_SIZE,
+		packet_capacity - RTP_HEADER_SIZE, &stream->recorder);
+	return result == MEDIA_OK ?
+		complete_write(stream, count, packet, packet_capacity,
+			       packet_size) :
+		result;
+}
+
+static int16_t decode_codeword(enum media_codec codec, uint8_t codeword)
+{
+	return codec == MEDIA_CODEC_PCMA ?
+		g711_decode_pcma(codeword) : g711_decode_pcmu(codeword);
+}
+
+enum media_result rtp_stream_write_g711(
+	struct rtp_stream *stream,
+	const uint8_t *codewords,
+	const int16_t *decoded_samples,
+	size_t count,
+	uint8_t *packet,
+	size_t packet_capacity,
+	size_t *packet_size)
+{
+	enum media_result result = validate_write(
+		stream, count, packet, packet_capacity, packet_size);
+	uint8_t *payload;
+
+	if (codewords == NULL || decoded_samples == NULL)
+		return MEDIA_INVALID_ARGUMENT;
+	if (result != MEDIA_OK)
+		return result;
+	for (size_t index = 0; index < count; ++index) {
+		if (decoded_samples[index] !=
+		    decode_codeword(stream->codec, codewords[index]))
+			return MEDIA_INVALID_ARGUMENT;
+	}
+
+	payload = packet + RTP_HEADER_SIZE;
+	recording_emit(
+		&stream->recorder, RECORD_TX_LINE_PCM, RECORD_S16_NATIVE,
+		MEDIA_SAMPLE_RATE, decoded_samples, count);
+	memcpy(payload, codewords, count);
+	recording_emit(
+		&stream->recorder, RECORD_TX_RTP_PAYLOAD_PREPARED,
+		RECORD_OCTETS, MEDIA_SAMPLE_RATE, payload, count);
+	return complete_write(
+		stream, count, packet, packet_capacity, packet_size);
 }

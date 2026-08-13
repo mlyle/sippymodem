@@ -350,12 +350,10 @@ enum rtp_endpoint_result rtp_endpoint_drain(
 	return RTP_ENDPOINT_OK;
 }
 
-enum rtp_endpoint_result rtp_endpoint_send(
-	struct rtp_endpoint *endpoint,
-	const int16_t *samples,
-	size_t count,
-	uint8_t *packet_workspace,
-	size_t packet_capacity)
+static enum rtp_endpoint_result send_frame(
+	struct rtp_endpoint *endpoint, const int16_t *samples,
+	const uint8_t *codewords, size_t count,
+	uint8_t *packet_workspace, size_t packet_capacity)
 {
 	struct sockaddr_in remote_address;
 	size_t packet_size = 0;
@@ -372,9 +370,13 @@ enum rtp_endpoint_result rtp_endpoint_send(
 		return RTP_ENDPOINT_NO_REMOTE;
 	}
 
-	endpoint->last_media_error = rtp_stream_write(
-		endpoint->stream, samples, count, packet_workspace,
-		packet_capacity, &packet_size);
+	endpoint->last_media_error = codewords != NULL ?
+		rtp_stream_write_g711(
+			endpoint->stream, codewords, samples, count,
+			packet_workspace, packet_capacity, &packet_size) :
+		rtp_stream_write(
+			endpoint->stream, samples, count, packet_workspace,
+			packet_capacity, &packet_size);
 	if (endpoint->last_media_error != MEDIA_OK)
 		return RTP_ENDPOINT_MEDIA_ERROR;
 	endpoint->stats.transmit_attempts++;
@@ -397,6 +399,33 @@ enum rtp_endpoint_result rtp_endpoint_send(
 		RECORD_OCTETS, MEDIA_SAMPLE_RATE,
 		packet_workspace + RTP_HEADER_SIZE, count);
 	return RTP_ENDPOINT_OK;
+}
+
+enum rtp_endpoint_result rtp_endpoint_send(
+	struct rtp_endpoint *endpoint,
+	const int16_t *samples,
+	size_t count,
+	uint8_t *packet_workspace,
+	size_t packet_capacity)
+{
+	return send_frame(
+		endpoint, samples, NULL, count,
+		packet_workspace, packet_capacity);
+}
+
+enum rtp_endpoint_result rtp_endpoint_send_g711(
+	struct rtp_endpoint *endpoint,
+	const uint8_t *codewords,
+	const int16_t *decoded_samples,
+	size_t count,
+	uint8_t *packet_workspace,
+	size_t packet_capacity)
+{
+	if (codewords == NULL)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	return send_frame(
+		endpoint, decoded_samples, codewords, count,
+		packet_workspace, packet_capacity);
 }
 
 const char *rtp_endpoint_result_name(

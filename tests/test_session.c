@@ -2,6 +2,8 @@
 
 #include <session.h>
 
+#include <g711.h>
+
 #include "test.h"
 
 #include <stdbool.h>
@@ -188,7 +190,11 @@ static bool test_owns_transport_lifetimes(void)
 	struct sip_session *session;
 	struct rtp_playout_report report;
 	uint8_t source_octets[8];
+	uint8_t transmit_codewords[8] = {
+		0x7f, 0xff, 0x00, 0x80, 0xfe, 0x7e, 0x81, 0x01,
+	};
 	int16_t samples[8];
+	int16_t decoded[8];
 	size_t drained = 99;
 
 	memset(&fake, 0, sizeof(fake));
@@ -228,6 +234,8 @@ static bool test_owns_transport_lifetimes(void)
 	      "session did not preserve typed call control");
 	memset(samples, 1, sizeof(samples));
 	memset(source_octets, 0, sizeof(source_octets));
+	for (size_t index = 0; index < ARRAY_LENGTH(decoded); ++index)
+		decoded[index] = g711_decode_pcmu(transmit_codewords[index]);
 	CHECK(sip_session_play(session, samples, source_octets,
 				      ARRAY_LENGTH(samples),
 				      &report) == MEDIA_OK &&
@@ -238,8 +246,11 @@ static bool test_owns_transport_lifetimes(void)
 					   0xff, 0xff, 0xff, 0xff },
 			     sizeof(source_octets)) == 0 &&
 		      sip_session_send(session, samples,
-					       ARRAY_LENGTH(samples)) ==
-			      RTP_ENDPOINT_OK,
+				       ARRAY_LENGTH(samples)) ==
+			      RTP_ENDPOINT_OK &&
+		      sip_session_send_g711(
+			      session, transmit_codewords, decoded,
+			      ARRAY_LENGTH(decoded)) == RTP_ENDPOINT_OK,
 	      "session did not expose exact-frame RTP media");
 	fake.emit_media = true;
 	fake.emit_inactive = true;
@@ -257,8 +268,11 @@ static bool test_owns_transport_lifetimes(void)
 		      sip_session_close(session) ==
 			      SIP_SESSION_NOT_OPEN &&
 		      sip_session_send(session, samples,
-					       ARRAY_LENGTH(samples)) ==
-			      RTP_ENDPOINT_NOT_OPEN,
+				       ARRAY_LENGTH(samples)) ==
+			      RTP_ENDPOINT_NOT_OPEN &&
+		      sip_session_send_g711(
+			      session, transmit_codewords, decoded,
+			      ARRAY_LENGTH(decoded)) == RTP_ENDPOINT_NOT_OPEN,
 	      "closed session lifecycle is inconsistent");
 	sip_session_destroy(session);
 	return true;

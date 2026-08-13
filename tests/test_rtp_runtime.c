@@ -2,6 +2,8 @@
 
 #include <rtp_runtime.h>
 
+#include <g711.h>
+
 #include "test.h"
 
 #include <arpa/inet.h>
@@ -66,6 +68,10 @@ static bool test_owns_bounded_media_storage(void)
 	struct pollfd descriptor;
 	uint8_t packet[64];
 	int16_t samples[8] = { 0 };
+	const uint8_t codewords[8] = {
+		0x7f, 0xff, 0x00, 0x80, 0xfe, 0x7e, 0x81, 0x01,
+	};
+	int16_t decoded[ARRAY_LENGTH(codewords)];
 	enum rtp_endpoint_result open_result;
 	ssize_t received;
 	int peer_socket;
@@ -118,6 +124,29 @@ static bool test_owns_bounded_media_storage(void)
 		      capture.streams[2] ==
 			      RECORD_TX_RTP_PAYLOAD_SENT,
 	      "RTP runtime did not preserve the recording lifecycle");
+
+	for (size_t index = 0; index < ARRAY_LENGTH(codewords); ++index)
+		decoded[index] = g711_decode_pcmu(codewords[index]);
+	capture.calls = 0;
+	CHECK(rtp_runtime_send_g711(
+		      runtime, codewords, decoded, ARRAY_LENGTH(codewords) - 1) ==
+			      RTP_ENDPOINT_INVALID_ARGUMENT &&
+		      capture.calls == 0,
+	      "RTP runtime accepted a partial exact G.711 frame");
+	CHECK(rtp_runtime_send_g711(
+		      runtime, codewords, decoded, ARRAY_LENGTH(codewords)) ==
+			      RTP_ENDPOINT_OK &&
+		      poll(&descriptor, 1, 1000) == 1,
+	      "RTP runtime did not send an exact G.711 frame");
+	received = recv(peer_socket, packet, sizeof(packet), 0);
+	CHECK(received == RTP_HEADER_SIZE + (ssize_t)sizeof(codewords) &&
+		      memcmp(packet + RTP_HEADER_SIZE, codewords,
+			     sizeof(codewords)) == 0 &&
+		      capture.calls == 3 &&
+		      capture.streams[0] == RECORD_TX_LINE_PCM &&
+		      capture.streams[1] == RECORD_TX_RTP_PAYLOAD_PREPARED &&
+		      capture.streams[2] == RECORD_TX_RTP_PAYLOAD_SENT,
+	      "RTP runtime changed exact codewords or recording order");
 
 	close(peer_socket);
 	rtp_runtime_close(runtime);

@@ -2,6 +2,8 @@
 
 #include <rtp_stream.h>
 
+#include <g711.h>
+
 #include "test.h"
 
 #include <stdint.h>
@@ -39,15 +41,14 @@ static void capture_recording(
 	capture->calls++;
 }
 
-static bool init_stream(struct rtp_stream *stream,
-			struct rtp_jitter_slot *slots,
-			uint8_t *workspace,
-			struct recording_capture *capture,
-			size_t prefill_samples)
+static bool init_stream_codec(
+	struct rtp_stream *stream, struct rtp_jitter_slot *slots,
+	uint8_t *workspace, struct recording_capture *capture,
+	size_t prefill_samples, enum media_codec codec)
 {
 	const struct rtp_stream_config config = {
-		.codec = MEDIA_CODEC_PCMU,
-		.payload_type = 0,
+		.codec = codec,
+		.payload_type = (uint8_t)media_codec_default_payload_type(codec),
 		.prefill_samples = prefill_samples,
 		.transmit_sequence = 0x1234,
 		.transmit_timestamp = 0x56789abc,
@@ -60,6 +61,17 @@ static bool init_stream(struct rtp_stream *stream,
 
 	return rtp_stream_init(stream, &config, slots, TEST_SLOTS,
 					  workspace, TEST_WORKSPACE);
+}
+
+static bool init_stream(struct rtp_stream *stream,
+			struct rtp_jitter_slot *slots,
+			uint8_t *workspace,
+			struct recording_capture *capture,
+			size_t prefill_samples)
+{
+	return init_stream_codec(
+		stream, slots, workspace, capture,
+		prefill_samples, MEDIA_CODEC_PCMU);
 }
 
 static bool test_receive_playout_and_recording(void)
@@ -167,6 +179,82 @@ static bool test_transmit_timeline_and_recording(void)
 	return true;
 }
 
+static bool test_exact_g711_transmit(void)
+{
+	static const uint8_t codewords[] = { 0x7f, 0xff, 0x00, 0x80 };
+	static const uint8_t alaw_codewords[] = { 0x55, 0xd5, 0x00, 0x80 };
+	const int16_t decoded[] = {
+		g711_decode_pcmu(codewords[0]),
+		g711_decode_pcmu(codewords[1]),
+		g711_decode_pcmu(codewords[2]),
+		g711_decode_pcmu(codewords[3]),
+	};
+	int16_t mismatched[ARRAY_LENGTH(decoded)];
+	int16_t alaw_decoded[ARRAY_LENGTH(alaw_codewords)];
+	struct rtp_jitter_slot slots[TEST_SLOTS];
+	struct rtp_stream stream;
+	struct recording_capture capture = { 0 };
+	struct rtp_packet_view view;
+	uint8_t workspace[TEST_WORKSPACE];
+	uint8_t packet[32];
+	size_t packet_size = 0;
+	uint16_t sequence;
+	uint32_t timestamp;
+
+	CHECK(init_stream(&stream, slots, workspace, &capture, 0),
+	      "exact G.711 stream init failed");
+	CHECK(rtp_stream_write_g711(
+		      &stream, codewords, decoded, ARRAY_LENGTH(codewords),
+		      packet, sizeof(packet), &packet_size) == MEDIA_OK &&
+		      rtp_packet_parse(packet, packet_size, &view) == RTP_OK &&
+		      view.payload_size == sizeof(codewords) &&
+		      memcmp(view.payload, codewords, sizeof(codewords)) == 0,
+	      "exact G.711 codewords were canonicalized or changed");
+	CHECK(capture.calls == 2 &&
+		      capture.streams[0] == RECORD_TX_LINE_PCM &&
+		      capture.streams[1] == RECORD_TX_RTP_PAYLOAD_PREPARED &&
+		      memcmp(capture.data[0], decoded, sizeof(decoded)) == 0 &&
+		      memcmp(capture.data[1], codewords, sizeof(codewords)) == 0,
+	      "exact G.711 recording evidence disagrees with the packet");
+
+	memcpy(mismatched, decoded, sizeof(mismatched));
+	mismatched[0]++;
+	sequence = stream.transmit_header.sequence;
+	timestamp = stream.transmit_header.timestamp;
+	packet_size = 999;
+	CHECK(rtp_stream_write_g711(
+		      &stream, codewords, mismatched, ARRAY_LENGTH(codewords),
+		      packet, sizeof(packet), &packet_size) ==
+			      MEDIA_INVALID_ARGUMENT &&
+		      packet_size == 999 && capture.calls == 2 &&
+		      stream.transmit_header.sequence == sequence &&
+		      stream.transmit_header.timestamp == timestamp &&
+		      stream.stats.transmit_packets == 1 &&
+		      stream.stats.transmit_samples == ARRAY_LENGTH(codewords),
+	      "mismatched G.711 evidence changed transmit state");
+
+	for (size_t index = 0; index < ARRAY_LENGTH(alaw_codewords); ++index)
+		alaw_decoded[index] = g711_decode_pcma(alaw_codewords[index]);
+	capture = (struct recording_capture){ 0 };
+	CHECK(init_stream_codec(
+		      &stream, slots, workspace, &capture, 0,
+		      MEDIA_CODEC_PCMA) &&
+		      rtp_stream_write_g711(
+			      &stream, alaw_codewords, alaw_decoded,
+			      ARRAY_LENGTH(alaw_codewords), packet, sizeof(packet),
+			      &packet_size) == MEDIA_OK &&
+		      rtp_packet_parse(packet, packet_size, &view) == RTP_OK &&
+		      view.header.payload_type == 8 &&
+		      view.payload_size == sizeof(alaw_codewords) &&
+		      memcmp(view.payload, alaw_codewords,
+			     sizeof(alaw_codewords)) == 0 &&
+		      capture.calls == 2 &&
+		      memcmp(capture.data[0], alaw_decoded,
+			     sizeof(alaw_decoded)) == 0,
+	      "exact PCMA codewords or their evidence changed");
+	return true;
+}
+
 static bool test_validation_is_transactional(void)
 {
 	struct rtp_jitter_slot slots[TEST_SLOTS];
@@ -216,6 +304,7 @@ int main(void)
 		  test_receive_playout_and_recording },
 		{ "transmit timeline and recording",
 		  test_transmit_timeline_and_recording },
+		{ "exact G.711 transmit", test_exact_g711_transmit },
 		{ "validation is transactional",
 		  test_validation_is_transactional },
 	};

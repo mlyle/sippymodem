@@ -95,6 +95,13 @@ enum rtp_endpoint_result rtp_endpoint_send(
 	size_t count,
 	uint8_t *packet_workspace,
 	size_t packet_capacity);
+enum rtp_endpoint_result rtp_endpoint_send_g711(
+	struct rtp_endpoint *endpoint,
+	const uint8_t *codewords,
+	const int16_t *decoded_samples,
+	size_t count,
+	uint8_t *packet_workspace,
+	size_t packet_capacity);
 
 const char *rtp_endpoint_result_name(
 	enum rtp_endpoint_result result);

@@ -49,6 +49,11 @@ enum rtp_endpoint_result rtp_runtime_send(
 	struct rtp_runtime *runtime,
 	const int16_t *samples,
 	size_t count);
+enum rtp_endpoint_result rtp_runtime_send_g711(
+	struct rtp_runtime *runtime,
+	const uint8_t *codewords,
+	const int16_t *decoded_samples,
+	size_t count);
 
 /* Borrowed mutable endpoint for narrow protocol-composition layers. */
 struct rtp_endpoint *rtp_runtime_endpoint(

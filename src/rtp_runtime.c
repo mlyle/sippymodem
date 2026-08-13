@@ -246,6 +246,17 @@ enum rtp_endpoint_result rtp_runtime_send(
 		runtime->packet_capacity);
 }
 
+enum rtp_endpoint_result rtp_runtime_send_g711(
+	struct rtp_runtime *runtime, const uint8_t *codewords,
+	const int16_t *decoded_samples, size_t count)
+{
+	if (runtime == NULL || count != runtime->frame_samples)
+		return RTP_ENDPOINT_INVALID_ARGUMENT;
+	return rtp_endpoint_send_g711(
+		&runtime->endpoint, codewords, decoded_samples, count,
+		runtime->packet_workspace, runtime->packet_capacity);
+}
+
 struct rtp_endpoint *rtp_runtime_endpoint(
 	struct rtp_runtime *runtime)
 {

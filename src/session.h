@@ -68,6 +68,11 @@ enum rtp_endpoint_result sip_session_send(
 	struct sip_session *session,
 	const int16_t *samples,
 	size_t count);
+enum rtp_endpoint_result sip_session_send_g711(
+	struct sip_session *session,
+	const uint8_t *codewords,
+	const int16_t *decoded_samples,
+	size_t count);
 
 enum sip_rtp_result sip_session_last_media_binding(
 	const struct sip_session *session);
