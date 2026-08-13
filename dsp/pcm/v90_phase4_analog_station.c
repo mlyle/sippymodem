@@ -211,9 +211,27 @@ v90_phase4_analog_station_transmit_handoff(
 bool v90_phase4_analog_receive_handoff_is_valid(
 	const struct v90_phase4_analog_receive_handoff *handoff)
 {
-	return handoff != NULL &&
-	       v90_pcm_mapping_is_valid(&handoff->training_mapping) &&
-	       handoff->training_mapping.kind == V90_CP_TRAINING;
+	if (handoff == NULL ||
+	    !v90_trn2d_rx_is_valid(&handoff->receiver) ||
+	    handoff->receiver.decoder.decision_plane !=
+		    V90_PCM_MAPPING_TRANSMIT ||
+	    handoff->receiver.descrambler.history != 0 ||
+	    handoff->receiver.decoder.signs.previous_odd != 0 ||
+	    handoff->receiver.decoder.signs.previous_pcm_sign != 0 ||
+	    handoff->receiver.decoder.signs.trellis_state ||
+	    handoff->receiver.pending_count != 0 ||
+	    handoff->receiver.received_symbols != 0 ||
+	    handoff->receiver.received_frames != 0 ||
+	    handoff->receiver.received_bits != 0 ||
+	    handoff->receiver.training_bit_errors != 0)
+		return false;
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		if (handoff->receiver.decoder.signs
+			    .previous_shaping_signs[interval] != 0)
+			return false;
+	}
+	return true;
 }
 
 enum v90_phase4_analog_station_result
@@ -222,6 +240,7 @@ v90_phase4_analog_station_receive_handoff(
 	struct v90_phase4_analog_receive_handoff *handoff)
 {
 	struct v90_phase4_analog_receive_handoff generated;
+	struct v90_pcm_mapping mapping;
 
 	if (!v90_phase4_analog_station_is_valid(station) || handoff == NULL)
 		return V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
@@ -231,8 +250,11 @@ v90_phase4_analog_station_receive_handoff(
 		return V90_PHASE4_ANALOG_STATION_INVALID_STATE;
 	generated = (struct v90_phase4_analog_receive_handoff){ 0 };
 	if (v90_pcm_mapping_init(
-		    &generated.training_mapping,
-		    &station->training_parameters) != V90_PCM_MAPPING_OK)
+		    &mapping, &station->training_parameters) !=
+		    V90_PCM_MAPPING_OK ||
+	    v90_trn2d_rx_init(
+		    &generated.receiver, &mapping,
+		    V90_PCM_MAPPING_TRANSMIT) != V90_TRN2D_RX_OK)
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	if (!v90_phase4_analog_receive_handoff_is_valid(&generated))
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;

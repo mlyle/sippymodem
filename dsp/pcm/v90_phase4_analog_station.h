@@ -4,9 +4,9 @@
 #define V90_PHASE4_ANALOG_STATION_H
 
 #include "v90_jd.h"
-#include "v90_pcm_mapping.h"
 #include "v90_phase4_cp_line_tx.h"
 #include "v90_phase4_ri.h"
+#include "v90_trn2d_rx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,11 +24,12 @@ enum v90_phase4_analog_station_result {
 	V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE,
 };
 
-/* State needed to begin receiving TRN2d at the first character following
- * Ri-bar. TRN2d initializes its own coder, so no Phase 3 history crosses this
- * boundary. */
+/* Ready raw-network TRN2d receiver at the first character following Ri-bar.
+ * Authoritative G.711 characters use the transmit constellation plane. A
+ * future analogue slicer must initialize a separate codec-plane receiver at
+ * this same boundary. TRN2d starts a fresh coder epoch. */
 struct v90_phase4_analog_receive_handoff {
-	struct v90_pcm_mapping training_mapping;
+	struct v90_trn2d_rx receiver;
 };
 
 /* Own the analogue modem's initial Phase 4 exchange. CPt is repeated on the
