@@ -4,6 +4,15 @@
 
 #include <stddef.h>
 
+static bool initial_mp_is_valid(const struct v90_mp_record *record)
+{
+	if (!v90_mp_record_is_valid(record))
+		return false;
+	return record->type == V90_MP_RECORD_TYPE0 ?
+		       !record->parameters.type0.acknowledges_cp :
+		       !record->parameters.type1.common.acknowledges_cp;
+}
+
 static bool training_mapping_is_supported(
 	const struct v90_pcm_mapping *mapping, enum g711_law law,
 	uint8_t maximum_spectral_lookahead)
@@ -192,6 +201,9 @@ bool v90_phase4_digital_transmit_handoff_is_valid(
 {
 	return handoff != NULL &&
 	       v90_downstream_tx_is_valid(&handoff->transmitter) &&
+	       handoff->transmitter.mp_configured &&
+	       handoff->transmitter.stage == V90_DOWNSTREAM_TX_TRN2D &&
+	       !handoff->transmitter.mp_prime_requested &&
 	       handoff->transmitter.accepted_frames == 0 &&
 	       handoff->transmitter.transmitted_symbols == 0 &&
 	       !handoff->transmitter.finish_requested &&
@@ -201,11 +213,13 @@ bool v90_phase4_digital_transmit_handoff_is_valid(
 enum v90_phase4_digital_station_result
 v90_phase4_digital_station_transmit_handoff(
 	const struct v90_phase4_digital_station *station,
+	const struct v90_mp_record *mp,
 	struct v90_phase4_digital_transmit_handoff *handoff)
 {
 	struct v90_phase4_digital_transmit_handoff generated;
 
-	if (!v90_phase4_digital_station_is_valid(station) || handoff == NULL)
+	if (!v90_phase4_digital_station_is_valid(station) ||
+	    !initial_mp_is_valid(mp) || handoff == NULL)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE4_DIGITAL_STATION_FAILED;
@@ -214,7 +228,9 @@ v90_phase4_digital_station_transmit_handoff(
 	generated = (struct v90_phase4_digital_transmit_handoff){ 0 };
 	if (v90_downstream_tx_init(
 		    &generated.transmitter, &station->training_mapping) !=
-	    V90_DOWNSTREAM_TX_OK)
+		    V90_DOWNSTREAM_TX_OK ||
+	    v90_downstream_tx_start_mp(&generated.transmitter, mp) !=
+		    V90_DOWNSTREAM_TX_OK)
 		return V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE;
 	if (!v90_phase4_digital_transmit_handoff_is_valid(&generated))
 		return V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE;

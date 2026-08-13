@@ -59,6 +59,21 @@ static struct v90_cp_parameters parameters(enum g711_law law)
 	return selected;
 }
 
+static struct v90_mp_record mp_parameters(bool acknowledged)
+{
+	return (struct v90_mp_record){
+		.type = V90_MP_RECORD_TYPE0,
+		.parameters.type0 = {
+			.maximum_upstream_rate_2400_bps_units = 12,
+			.upstream_trellis = V34_TRELLIS_32_STATE,
+			.upstream_nonlinear_encoding = true,
+			.upstream_expanded_shaping = true,
+			.acknowledges_cp = acknowledged,
+			.upstream_rate_capability_mask = 0x1555u,
+		},
+	};
+}
+
 static bool mapping_matches(
 	const struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters)
@@ -81,6 +96,7 @@ static bool run_exchange(
 	enum g711_law law, enum v34_constellation_size constellation)
 {
 	struct v90_jd_parameters jd = jd_parameters(constellation);
+	struct v90_mp_record mp = mp_parameters(false);
 	struct v90_cp_parameters records[8];
 	struct v90_phase3_return_line_handoff phase3_receive;
 	struct v90_phase4_cp_line_tx analog_transmit;
@@ -198,7 +214,7 @@ static bool run_exchange(
 	CHECK(complete && cpt_seen && receive_handoff_checked &&
 	      v90_phase4_ri_tx_is_complete(&model_ri) &&
 	      v90_phase4_digital_station_transmit_handoff(
-		      &station, &transmit_handoff) ==
+		      &station, &mp, &transmit_handoff) ==
 		      V90_PHASE4_DIGITAL_STATION_OK &&
 	      v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff) &&
@@ -236,6 +252,8 @@ static bool test_contracts(void)
 	struct v90_jd_parameters jd =
 		jd_parameters(V34_CONSTELLATION_4_POINT);
 	struct v90_jd_parameters bad_jd = jd;
+	struct v90_mp_record mp = mp_parameters(false);
+	struct v90_mp_record acknowledged_mp = mp_parameters(true);
 	struct v90_cp_parameters training = parameters(G711_LAW_PCMU);
 	struct v90_phase3_return_line_handoff phase3_receive;
 	struct v90_phase3_return_line_handoff bad_receive;
@@ -308,7 +326,13 @@ static bool test_contracts(void)
 			      &station, &receive_handoff) ==
 			      V90_PHASE4_DIGITAL_STATION_INVALID_STATE &&
 		      v90_phase4_digital_station_transmit_handoff(
-			      &station, &transmit_handoff) ==
+			      &station, NULL, &transmit_handoff) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      v90_phase4_digital_station_transmit_handoff(
+			      &station, &mp, NULL) ==
+			      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      v90_phase4_digital_station_transmit_handoff(
+			      &station, &mp, &transmit_handoff) ==
 			      V90_PHASE4_DIGITAL_STATION_INVALID_STATE &&
 		      memcmp(&station, &saved, sizeof(station)) == 0 &&
 		      memcmp(&receive_handoff, &receive_saved,
@@ -324,17 +348,23 @@ static bool test_contracts(void)
 	memset(&transmit_handoff, 0, sizeof(transmit_handoff));
 	CHECK(v90_downstream_tx_init(
 		      &transmit_handoff.transmitter,
-		      &training_mapping) == V90_DOWNSTREAM_TX_OK,
+		      &training_mapping) == V90_DOWNSTREAM_TX_OK &&
+	      v90_downstream_tx_start_mp(
+		      &transmit_handoff.transmitter, &mp) ==
+		      V90_DOWNSTREAM_TX_OK,
 	      "valid handoff transmitter did not initialize");
 	CHECK(v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff),
-	      "valid TRN2d handoff was rejected");
+	      "valid TRN2d/MP handoff was rejected");
 	transmit_handoff.transmitter.encoder.mapping.modulus[0]--;
 	CHECK(!v90_phase4_digital_station_is_valid(NULL) &&
 	      !v90_phase4_digital_station_has_failed(NULL) &&
 	      !v90_phase4_digital_transmit_handoff_is_valid(NULL) &&
 	      !v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff) &&
+	      v90_phase4_digital_station_transmit_handoff(
+		      &station, &acknowledged_mp, &transmit_saved) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      strcmp(v90_phase4_digital_station_result_name(
 		     V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE),
 		     "numeric failure") == 0 &&

@@ -58,6 +58,20 @@ static struct v90_cp_parameters training_parameters(enum g711_law law)
 	return parameters;
 }
 
+static struct v90_mp_record mp_parameters(void)
+{
+	return (struct v90_mp_record){
+		.type = V90_MP_RECORD_TYPE0,
+		.parameters.type0 = {
+			.maximum_upstream_rate_2400_bps_units = 12,
+			.upstream_trellis = V34_TRELLIS_32_STATE,
+			.upstream_nonlinear_encoding = true,
+			.upstream_expanded_shaping = true,
+			.upstream_rate_capability_mask = 0x1555u,
+		},
+	};
+}
+
 static bool parameters_match(
 	const struct v90_cp_parameters *left,
 	const struct v90_cp_parameters *right)
@@ -231,6 +245,7 @@ static bool run_exchange(
 {
 	struct v90_jd_parameters jd = jd_parameters(constellation);
 	struct v90_cp_parameters training = training_parameters(law);
+	struct v90_mp_record mp = mp_parameters();
 	struct v90_phase3_return_line_handoff phase3_receive;
 	struct v90_phase4_analog_station analog;
 	struct v90_phase4_digital_station digital;
@@ -339,7 +354,7 @@ static bool run_exchange(
 		      &analog, &analog_receive) ==
 		      V90_PHASE4_ANALOG_STATION_OK &&
 	      v90_phase4_digital_station_transmit_handoff(
-		      &digital, &digital_transmit) ==
+		      &digital, &mp, &digital_transmit) ==
 		      V90_PHASE4_DIGITAL_STATION_OK &&
 	      mapping_matches(
 		      &analog_receive.receiver.stream.decoder.mapping,

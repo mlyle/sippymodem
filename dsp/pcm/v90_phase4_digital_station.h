@@ -21,7 +21,7 @@ enum v90_phase4_digital_station_result {
 	V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE,
 };
 
-/* Ready-to-run TRN2d owner with every coder history initialized to zero at
+/* Ready-to-run TRN2d/MP owner with every coder history initialized to zero at
  * the exact boundary following the final Ri-bar character. */
 struct v90_phase4_digital_transmit_handoff {
 	struct v90_downstream_tx transmitter;
@@ -69,6 +69,7 @@ bool v90_phase4_digital_station_receive_complete(
 enum v90_phase4_digital_station_result
 v90_phase4_digital_station_transmit_handoff(
 	const struct v90_phase4_digital_station *station,
+	const struct v90_mp_record *mp,
 	struct v90_phase4_digital_transmit_handoff *handoff);
 
 /* Preserve the equalizer and CP scrambler/differential histories so the next
