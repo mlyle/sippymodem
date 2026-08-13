@@ -8,7 +8,9 @@
 static bool stage_is_valid(enum v90_downstream_rx_stage stage)
 {
 	return stage == V90_DOWNSTREAM_RX_TRN2D ||
-	       stage == V90_DOWNSTREAM_RX_MP_SEARCH;
+	       stage == V90_DOWNSTREAM_RX_MP_SEARCH ||
+	       stage == V90_DOWNSTREAM_RX_ED_SEARCH ||
+	       stage == V90_DOWNSTREAM_RX_COMPLETE;
 }
 
 static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
@@ -21,18 +23,43 @@ static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
 bool v90_downstream_rx_is_valid(
 	const struct v90_downstream_rx *receiver)
 {
+	size_t ed_bits;
+
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    !v90_trn2d_rx_is_valid(&receiver->stream) ||
 	    !v90_mp_receiver_is_valid(&receiver->mp) ||
 	    receiver->mp.training_frame_bits !=
 		    receiver->stream.decoder.mapping.frame_bits)
 		return false;
-	if (receiver->stage == V90_DOWNSTREAM_RX_TRN2D)
+	ed_bits = receiver->ed_frames *
+		  (size_t)receiver->stream.decoder.mapping.frame_bits;
+	if (receiver->ed_bit_errors > ed_bits ||
+	    (receiver->mp_prime_boundary &&
+	     (receiver->stage != V90_DOWNSTREAM_RX_MP_SEARCH ||
+	      receiver->ed_requested || receiver->stream.pending_count != 0 ||
+	      !mp_is_fresh(&receiver->mp))))
+		return false;
+	if (receiver->stage == V90_DOWNSTREAM_RX_TRN2D) {
 		return receiver->stream.received_symbols <
 			       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS &&
-		       mp_is_fresh(&receiver->mp);
-	return receiver->stream.received_symbols >=
-	       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS;
+		       mp_is_fresh(&receiver->mp) &&
+		       receiver->ed_frames == 0 &&
+		       receiver->ed_bit_errors == 0 &&
+		       !receiver->ed_requested &&
+		       !receiver->mp_prime_boundary;
+	}
+	if (receiver->stream.received_symbols <
+	    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS)
+		return false;
+	if (receiver->stage == V90_DOWNSTREAM_RX_MP_SEARCH)
+		return receiver->ed_frames == 0 &&
+		       receiver->ed_bit_errors == 0;
+	if (!receiver->ed_requested || receiver->mp_prime_boundary ||
+	    receiver->mp.stage != V90_MP_SEARCH_SYNC)
+		return false;
+	if (receiver->stage == V90_DOWNSTREAM_RX_ED_SEARCH)
+		return receiver->ed_frames < V90_PHASE4_ED_FRAMES;
+	return receiver->ed_frames == V90_PHASE4_ED_FRAMES;
 }
 
 enum v90_downstream_rx_result v90_downstream_rx_init(
@@ -89,6 +116,53 @@ bool v90_downstream_rx_is_fresh(
 			return false;
 	}
 	return true;
+}
+
+static void begin_ed_search(struct v90_downstream_rx *receiver)
+{
+	receiver->stage = V90_DOWNSTREAM_RX_ED_SEARCH;
+	receiver->ed_frames = 0;
+	receiver->ed_bit_errors = 0;
+	receiver->mp_prime_boundary = false;
+}
+
+enum v90_downstream_rx_result v90_downstream_rx_expect_ed(
+	struct v90_downstream_rx *receiver)
+{
+	struct v90_downstream_rx next;
+
+	if (receiver == NULL)
+		return V90_DOWNSTREAM_RX_INVALID_ARGUMENT;
+	if (!v90_downstream_rx_is_valid(receiver) ||
+	    receiver->stage == V90_DOWNSTREAM_RX_TRN2D ||
+	    receiver->stage == V90_DOWNSTREAM_RX_COMPLETE)
+		return V90_DOWNSTREAM_RX_INVALID_STATE;
+	if (receiver->ed_requested)
+		return V90_DOWNSTREAM_RX_OK;
+	next = *receiver;
+	next.ed_requested = true;
+	if (next.mp_prime_boundary)
+		begin_ed_search(&next);
+	if (!v90_downstream_rx_is_valid(&next))
+		return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
+	*receiver = next;
+	return V90_DOWNSTREAM_RX_OK;
+}
+
+bool v90_downstream_rx_is_complete(
+	const struct v90_downstream_rx *receiver)
+{
+	return v90_downstream_rx_is_valid(receiver) &&
+	       receiver->stage == V90_DOWNSTREAM_RX_COMPLETE &&
+	       receiver->ed_bit_errors == 0;
+}
+
+bool v90_downstream_rx_has_failed(
+	const struct v90_downstream_rx *receiver)
+{
+	return v90_downstream_rx_is_valid(receiver) &&
+	       receiver->stage == V90_DOWNSTREAM_RX_COMPLETE &&
+	       receiver->ed_bit_errors != 0;
 }
 
 static bool record_acknowledges_cp(const struct v90_mp_record *record)
@@ -159,6 +233,68 @@ static enum v90_downstream_rx_result map_stream_failure(
 	return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
 }
 
+static uint8_t nonzero_bits(const struct v90_trn2d_frame *frame)
+{
+	uint8_t count = 0;
+
+	for (size_t bit = 0; bit < frame->bit_count; ++bit)
+		count += frame->bits[bit] != 0;
+	return count;
+}
+
+static enum v90_downstream_rx_result receive_mp_frame(
+	struct v90_downstream_rx *receiver,
+	const struct v90_trn2d_frame *frame,
+	struct v90_downstream_event *event)
+{
+	enum v90_downstream_rx_result result =
+		feed_mp_frame(receiver, frame, event);
+
+	if (result == V90_DOWNSTREAM_RX_MP_PRIME) {
+		if (receiver->ed_requested)
+			begin_ed_search(receiver);
+		else
+			receiver->mp_prime_boundary = true;
+	}
+	return result;
+}
+
+static enum v90_downstream_rx_result receive_ed_frame(
+	struct v90_downstream_rx *receiver,
+	const struct v90_trn2d_frame *frame,
+	struct v90_downstream_event *event)
+{
+	enum v90_downstream_rx_result result =
+		feed_mp_frame(receiver, frame, event);
+
+	/* A repeated MP-prime begins with the 17-one prefix and its following
+	 * zero within at most two training frames. Keep that candidate intact
+	 * and restart the Ed window; it may be the record already accepted by
+	 * the sender's spectral lookahead. */
+	if (result != V90_DOWNSTREAM_RX_BUFFERING ||
+	    receiver->mp.stage != V90_MP_SEARCH_SYNC) {
+		receiver->stage = V90_DOWNSTREAM_RX_MP_SEARCH;
+		receiver->ed_frames = 0;
+		receiver->ed_bit_errors = 0;
+		if (result == V90_DOWNSTREAM_RX_MP_PRIME)
+			begin_ed_search(receiver);
+		return result;
+	}
+	receiver->ed_frames++;
+	receiver->ed_bit_errors += nonzero_bits(frame);
+	if (receiver->ed_frames < V90_PHASE4_ED_FRAMES)
+		return V90_DOWNSTREAM_RX_BUFFERING;
+	receiver->stage = V90_DOWNSTREAM_RX_COMPLETE;
+	event->ed = (struct v90_downstream_ed_event){
+		.bit_count = (uint8_t)(V90_PHASE4_ED_FRAMES *
+				       frame->bit_count),
+		.bit_errors = receiver->ed_bit_errors,
+	};
+	return receiver->ed_bit_errors == 0 ?
+		       V90_DOWNSTREAM_RX_ED :
+		       V90_DOWNSTREAM_RX_ED_REJECTED;
+}
+
 enum v90_downstream_rx_result v90_downstream_rx_receive(
 	struct v90_downstream_rx *receiver, uint8_t network_octet,
 	struct v90_downstream_event *event)
@@ -173,7 +309,11 @@ enum v90_downstream_rx_result v90_downstream_rx_receive(
 		return V90_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (!v90_downstream_rx_is_valid(receiver))
 		return V90_DOWNSTREAM_RX_INVALID_STATE;
+	if (receiver->stage == V90_DOWNSTREAM_RX_COMPLETE)
+		return V90_DOWNSTREAM_RX_INVALID_STATE;
 	next = *receiver;
+	if (next.stage == V90_DOWNSTREAM_RX_MP_SEARCH)
+		next.mp_prime_boundary = false;
 	stream_result = v90_trn2d_rx_receive_octet(
 		&next.stream, network_octet, &frame);
 	if (stream_result == V90_TRN2D_RX_BUFFERING) {
@@ -200,7 +340,9 @@ enum v90_downstream_rx_result v90_downstream_rx_receive(
 			return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
 		next.stream.training_bit_errors -=
 			frame.training_bit_errors;
-		result = feed_mp_frame(&next, &frame, &generated);
+		result = next.stage == V90_DOWNSTREAM_RX_ED_SEARCH ?
+				 receive_ed_frame(&next, &frame, &generated) :
+				 receive_mp_frame(&next, &frame, &generated);
 		if (result == V90_DOWNSTREAM_RX_INTERNAL_ERROR)
 			return result;
 	}
@@ -228,6 +370,10 @@ const char *v90_downstream_rx_result_name(
 		return "MP prime";
 	case V90_DOWNSTREAM_RX_MP_REJECTED:
 		return "MP rejected";
+	case V90_DOWNSTREAM_RX_ED:
+		return "Ed";
+	case V90_DOWNSTREAM_RX_ED_REJECTED:
+		return "Ed rejected";
 	case V90_DOWNSTREAM_RX_INVALID_ARGUMENT:
 		return "invalid argument";
 	case V90_DOWNSTREAM_RX_INVALID_PARAMETERS:

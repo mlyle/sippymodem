@@ -19,6 +19,7 @@ enum {
 struct observed_event {
 	enum v90_downstream_rx_result result;
 	struct v90_mp_event mp;
+	struct v90_downstream_ed_event ed;
 };
 
 struct observer {
@@ -161,7 +162,9 @@ static bool observe_output(
 		}
 		CHECK(result == V90_DOWNSTREAM_RX_MP ||
 		      result == V90_DOWNSTREAM_RX_MP_PRIME ||
-		      result == V90_DOWNSTREAM_RX_MP_REJECTED,
+		      result == V90_DOWNSTREAM_RX_MP_REJECTED ||
+		      result == V90_DOWNSTREAM_RX_ED ||
+		      result == V90_DOWNSTREAM_RX_ED_REJECTED,
 		      "downstream receiver returned %s",
 		      v90_downstream_rx_result_name(result));
 		CHECK(observer->event_count < MAX_EVENTS,
@@ -170,6 +173,7 @@ static bool observe_output(
 			(struct observed_event){
 				.result = result,
 				.mp = event.mp,
+				.ed = event.ed,
 			};
 	}
 	return true;
@@ -213,6 +217,25 @@ static bool push_frame(
 	      "source encoder returned %s",
 	      v90_pcm_frame_encoder_result_name(result));
 	return observe_output(receiver, &output, observer);
+}
+
+static bool finish_source(
+	struct source *source, struct v90_downstream_rx *receiver,
+	struct observer *observer)
+{
+	for (;;) {
+		struct v90_pcm_frame_output output;
+		enum v90_pcm_frame_encoder_result result =
+			v90_pcm_frame_encoder_finish(&source->encoder, &output);
+
+		if (result == V90_PCM_FRAME_ENCODER_COMPLETE)
+			return true;
+		CHECK(result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY,
+		      "source finish returned %s",
+		      v90_pcm_frame_encoder_result_name(result));
+		CHECK(observe_output(receiver, &output, observer),
+		      "source finish output was rejected");
+	}
 }
 
 static bool push_trn2d(
@@ -349,6 +372,153 @@ static bool test_continuous_stream(void)
 	return true;
 }
 
+static bool run_ed_transition(
+	enum g711_law law, bool arm_before_mp, bool corrupt)
+{
+	struct v90_mp_record mp_prime = arm_before_mp ?
+					     type0_record(true) :
+					     type1_record(true);
+	struct v90_pcm_mapping mapping;
+	struct v90_downstream_rx receiver;
+	struct source source;
+	struct observer observer = { 0 };
+	uint8_t sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES];
+	uint8_t ed[FRAME_BITS] = { 0 };
+	size_t sequence_bits;
+	size_t expected_symbols;
+
+	CHECK(make_mapping(&mapping, law, 2, 2) &&
+	      source_init(&source, &mapping) &&
+	      v90_downstream_rx_init(
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RX_OK &&
+	      push_trn2d(
+		      &source, V90_PHASE4_TRN2D_MINIMUM_FRAMES +
+			       mapping.spectral_lookahead,
+		      &receiver, &observer) &&
+	      encode_record(&mp_prime, sequence, &sequence_bits),
+	      "Ed fixture did not reach MP search");
+	if (arm_before_mp) {
+		CHECK(v90_downstream_rx_expect_ed(&receiver) ==
+			      V90_DOWNSTREAM_RX_OK &&
+		      v90_downstream_rx_expect_ed(&receiver) ==
+			      V90_DOWNSTREAM_RX_OK,
+		      "early Ed request was not idempotent");
+	}
+	CHECK(push_sequence(
+		      &source, sequence, sequence_bits,
+		      &receiver, &observer) &&
+	      push_sequence(
+		      &source, sequence, sequence_bits,
+		      &receiver, &observer),
+	      "repeated MP-prime stream stopped");
+	if (!arm_before_mp) {
+		CHECK(v90_downstream_rx_expect_ed(&receiver) ==
+			      V90_DOWNSTREAM_RX_OK &&
+		      v90_downstream_rx_expect_ed(&receiver) ==
+			      V90_DOWNSTREAM_RX_OK,
+		      "mid-record Ed request was not idempotent");
+	}
+	if (corrupt)
+		ed[7] = 1;
+	CHECK(push_frame(&source, ed, &receiver, &observer) &&
+	      push_frame(&source, (uint8_t[FRAME_BITS]){ 0 },
+			 &receiver, &observer) &&
+	      finish_source(&source, &receiver, &observer),
+	      "Ed stream did not drain");
+
+	expected_symbols = V90_PHASE4_TRN2D_MINIMUM_SYMBOLS +
+			   mapping.spectral_lookahead *
+				   V90_CP_FRAME_INTERVALS +
+			   2u * sequence_bits / FRAME_BITS *
+				   V90_CP_FRAME_INTERVALS +
+			   V90_PHASE4_ED_FRAMES *
+				   V90_CP_FRAME_INTERVALS;
+	CHECK(observer.training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      observer.event_count == 3 &&
+	      observer.events[0].result == V90_DOWNSTREAM_RX_MP_PRIME &&
+	      observer.events[1].result == V90_DOWNSTREAM_RX_MP_PRIME &&
+	      records_match(&observer.events[0].mp.record, &mp_prime) &&
+	      records_match(&observer.events[1].mp.record, &mp_prime) &&
+	      observer.events[2].result ==
+		      (corrupt ? V90_DOWNSTREAM_RX_ED_REJECTED :
+				 V90_DOWNSTREAM_RX_ED) &&
+	      observer.events[2].ed.bit_count ==
+		      V90_PHASE4_ED_FRAMES * FRAME_BITS &&
+	      observer.events[2].ed.bit_errors == (corrupt ? 1u : 0u) &&
+	      receiver.stream.received_symbols == expected_symbols &&
+	      receiver.stream.training_bit_errors == 0 &&
+	      v90_downstream_rx_is_valid(&receiver) &&
+	      v90_downstream_rx_is_complete(&receiver) == !corrupt &&
+	      v90_downstream_rx_has_failed(&receiver) == corrupt,
+	      "Ed boundary, event, or accounting changed");
+	struct v90_downstream_rx saved = receiver;
+	struct v90_downstream_event terminal_event;
+	struct v90_downstream_event terminal_saved;
+
+	memset(&terminal_event, 0xa5, sizeof(terminal_event));
+	terminal_saved = terminal_event;
+	CHECK(v90_downstream_rx_expect_ed(&receiver) ==
+		      V90_DOWNSTREAM_RX_INVALID_STATE &&
+	      v90_downstream_rx_receive(
+		      &receiver, 0, &terminal_event) ==
+		      V90_DOWNSTREAM_RX_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      memcmp(&terminal_event, &terminal_saved,
+		     sizeof(terminal_event)) == 0,
+	      "terminal Ed receiver accepted more input");
+	return true;
+}
+
+static bool test_ed_transition(void)
+{
+	CHECK(run_ed_transition(G711_LAW_PCMU, true, false),
+	      "PCMU early Ed transition failed");
+	CHECK(run_ed_transition(G711_LAW_PCMA, false, false),
+	      "PCMA mid-record Ed transition failed");
+	CHECK(run_ed_transition(G711_LAW_PCMU, true, true),
+	      "corrupt Ed transition failed");
+	return true;
+}
+
+static bool test_ed_boundary_request(void)
+{
+	struct v90_mp_record mp_prime = type0_record(true);
+	struct v90_pcm_mapping mapping;
+	struct v90_downstream_rx receiver;
+	struct source source;
+	struct observer observer = { 0 };
+	uint8_t sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES];
+	uint8_t zeros[FRAME_BITS] = { 0 };
+	size_t sequence_bits;
+
+	CHECK(make_mapping(&mapping, G711_LAW_PCMA, 0, 0) &&
+	      source_init(&source, &mapping) &&
+	      v90_downstream_rx_init(
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RX_OK &&
+	      push_trn2d(
+		      &source, V90_PHASE4_TRN2D_MINIMUM_FRAMES,
+		      &receiver, &observer) &&
+	      encode_record(&mp_prime, sequence, &sequence_bits) &&
+	      push_sequence(
+		      &source, sequence, sequence_bits,
+		      &receiver, &observer) &&
+	      observer.event_count == 1 && receiver.mp_prime_boundary,
+	      "exact MP-prime boundary was not retained");
+	CHECK(v90_downstream_rx_expect_ed(&receiver) ==
+		      V90_DOWNSTREAM_RX_OK &&
+	      receiver.stage == V90_DOWNSTREAM_RX_ED_SEARCH &&
+	      !receiver.mp_prime_boundary &&
+	      push_frame(&source, zeros, &receiver, &observer) &&
+	      push_frame(&source, zeros, &receiver, &observer) &&
+	      observer.event_count == 2 &&
+	      observer.events[1].result == V90_DOWNSTREAM_RX_ED &&
+	      v90_downstream_rx_is_complete(&receiver),
+	      "boundary Ed request did not complete exactly two frames");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_pcm_mapping mapping;
@@ -401,6 +571,13 @@ static bool test_contracts(void)
 	      !v90_downstream_rx_is_valid(NULL) &&
 	      !v90_downstream_rx_is_fresh(NULL),
 	      "valid receiver did not initialize");
+	CHECK(v90_downstream_rx_expect_ed(NULL) ==
+		      V90_DOWNSTREAM_RX_INVALID_ARGUMENT &&
+	      v90_downstream_rx_expect_ed(&receiver) ==
+		      V90_DOWNSTREAM_RX_INVALID_STATE &&
+	      !v90_downstream_rx_is_complete(&receiver) &&
+	      !v90_downstream_rx_has_failed(&receiver),
+	      "fresh receiver accepted Ed or reported terminal state");
 	saved = receiver;
 	memset(&event, 0xa5, sizeof(event));
 	event_saved = event;
@@ -420,7 +597,7 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &event_saved, sizeof(event)) == 0,
 	      "invalid mapping symbol changed state or output");
-	receiver.stage = (enum v90_downstream_rx_stage)2;
+	receiver.stage = (enum v90_downstream_rx_stage)99;
 	CHECK(!v90_downstream_rx_is_valid(&receiver) &&
 	      v90_downstream_rx_receive(
 		      &receiver, invalid.octet, &event) ==
@@ -448,6 +625,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "continuous TRN2d and MP", test_continuous_stream },
+		{ "Ed transition", test_ed_transition },
+		{ "Ed boundary request", test_ed_boundary_request },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;
