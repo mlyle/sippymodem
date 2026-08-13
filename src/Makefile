@@ -136,6 +136,7 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/trellis_decoder.c \
 	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c
 PCM_SOURCES := \
+	$(DSP_PCM_SOURCE_DIR)/pcm_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_call.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_datapump.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_4d_decoder.c \
