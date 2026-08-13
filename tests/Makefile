@@ -2669,6 +2669,7 @@ all: $(TEST_BINARIES)
 test: $(TEST_BINARIES)
 	$(PYTHON) test_live_config.py
 	$(PYTHON) test_live_profiles.py
+	$(PYTHON) test_fast_matrix.py
 	$(PYTHON) test_live_terminal.py
 	$(PYTHON) test_live_calls.py
 	$(PYTHON) test_interop_config.py
