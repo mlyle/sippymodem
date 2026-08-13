@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_phase4_cp_line_tx.h>
+#include <v90_phase4_e_line_tx.h>
 
 #include <v90_phase3.h>
 
@@ -120,6 +121,32 @@ static bool model_sample(
 	       accepted == accepting;
 }
 
+static bool model_e_sample(
+	struct v34_training_line *line,
+	struct v34_phase4_e_sequence *sequence, int16_t *sample)
+{
+	struct qam_point point;
+	const struct qam_point *supplied = NULL;
+	bool accepting = v34_training_line_needs_point(line);
+	bool accepted;
+
+	if (accepting) {
+		uint8_t quarter_point;
+		uint8_t clockwise_quarter_turns;
+
+		if (v34_phase4_e_sequence_next(
+			    sequence, &point, &quarter_point,
+			    &clockwise_quarter_turns) !=
+		    V34_PHASE4_E_SEQUENCE_OK)
+			return false;
+		supplied = &point;
+	}
+	return v34_training_line_sample(
+		       line, supplied, sample, &accepted) ==
+		       V34_TRAINING_LINE_OK &&
+	       accepted == accepting;
+}
+
 static bool verify_continuation(
 	enum v34_constellation_size constellation)
 {
@@ -129,8 +156,11 @@ static bool verify_continuation(
 	struct v34_training_line source;
 	struct v34_training_line model_line;
 	struct v34_training_line handoff;
+	struct v34_training_line e_handoff;
 	struct v90_phase4_cp_tx model_symbols;
+	struct v34_phase4_e_sequence model_e;
 	struct v90_phase4_cp_line_tx tx;
+	struct v90_phase4_e_line_tx e;
 	bool started_data = false;
 	bool complete = false;
 
@@ -195,8 +225,39 @@ static bool verify_continuation(
 		      V90_PHASE4_CP_LINE_TX_OK &&
 	      memcmp(&handoff, &model_line, sizeof(handoff)) == 0,
 	      "CP line did not preserve its final handoff");
+	CHECK(v34_phase4_e_sequence_init(
+		      &model_e, &model_symbols.scrambler,
+		      model_symbols.role, model_symbols.constellation,
+		      model_symbols.previous_clockwise_quarter_turns) ==
+		      V34_PHASE4_E_SEQUENCE_OK &&
+	      v90_phase4_e_line_tx_init(&e, &tx) ==
+		      V90_PHASE4_E_LINE_TX_OK &&
+	      memcmp(&e.line, &model_line, sizeof(model_line)) == 0 &&
+	      memcmp(&e.sequence, &model_e, sizeof(model_e)) == 0,
+	      "E did not preserve the completed CP histories");
+	for (size_t sample_index = 0;
+	     sample_index < SAMPLE_LIMIT &&
+	     !v90_phase4_e_line_tx_is_complete(&e); ++sample_index) {
+		int16_t actual;
+		int16_t expected;
+
+		CHECK(model_e_sample(&model_line, &model_e, &expected) &&
+		      v90_phase4_e_line_tx_sample(&e, &actual) ==
+			      V90_PHASE4_E_LINE_TX_OK &&
+		      actual == expected &&
+		      memcmp(&e.line, &model_line, sizeof(model_line)) == 0 &&
+		      memcmp(&e.sequence, &model_e, sizeof(model_e)) == 0,
+		      "E waveform diverged at sample %zu", sample_index);
+	}
+	CHECK(v90_phase4_e_line_tx_is_complete(&e) &&
+	      v34_phase4_e_sequence_is_complete(&model_e) &&
+	      v90_phase4_e_line_tx_handoff(&e, &e_handoff) ==
+		      V90_PHASE4_E_LINE_TX_OK &&
+	      memcmp(&e_handoff, &model_line, sizeof(model_line)) == 0,
+	      "E did not preserve its final line handoff");
 	{
 		struct v90_phase4_cp_line_tx saved = tx;
+		struct v90_phase4_e_line_tx saved_e = e;
 		int16_t sample = 1234;
 
 		CHECK(v90_phase4_cp_line_tx_sample(&tx, &sample) ==
@@ -204,6 +265,11 @@ static bool verify_continuation(
 		      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
 		      sample == 1234,
 		      "completed CP line emitted an extra sample");
+		CHECK(v90_phase4_e_line_tx_sample(&e, &sample) ==
+			      V90_PHASE4_E_LINE_TX_COMPLETE &&
+		      memcmp(&e, &saved_e, sizeof(e)) == 0 &&
+		      sample == 1234,
+		      "completed E line emitted an extra sample");
 	}
 	return true;
 }
@@ -228,6 +294,8 @@ static bool test_transactional_contracts(void)
 	struct v90_phase4_cp_line_tx saved;
 	struct v90_phase4_cp_line_tx untouched;
 	struct v90_phase4_cp_line_tx untouched_saved;
+	struct v90_phase4_e_line_tx e_untouched;
+	struct v90_phase4_e_line_tx e_untouched_saved;
 	struct qam_point point = warmup_point(0);
 	bool accepted;
 	int16_t sample = 777;
@@ -238,6 +306,8 @@ static bool test_transactional_contracts(void)
 	      "CP line validation fixture did not initialize");
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_saved = untouched;
+	memset(&e_untouched, 0x5a, sizeof(e_untouched));
+	e_untouched_saved = e_untouched;
 	saved_line = line;
 	saved_line.profile.local_role = V34_CALLING_STATION;
 	CHECK(v90_phase4_cp_line_tx_init(
@@ -262,6 +332,15 @@ static bool test_transactional_contracts(void)
 		      &tx, &line, V34_CONSTELLATION_4_POINT,
 		      &training) == V90_PHASE4_CP_LINE_TX_OK,
 	      "valid CP line did not initialize");
+	CHECK(v90_phase4_e_line_tx_init(NULL, &tx) ==
+		      V90_PHASE4_E_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase4_e_line_tx_init(&e_untouched, NULL) ==
+		      V90_PHASE4_E_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase4_e_line_tx_init(&e_untouched, &tx) ==
+		      V90_PHASE4_E_LINE_TX_INVALID_STATE &&
+	      memcmp(&e_untouched, &e_untouched_saved,
+		     sizeof(e_untouched)) == 0,
+	      "rejected E initialization changed state");
 	saved = tx;
 	saved_line = line;
 	CHECK(v90_phase4_cp_line_tx_start_next_record(&tx, &data) ==

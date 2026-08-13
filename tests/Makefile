@@ -1496,6 +1496,7 @@ V90_PHASE4_CP_LINE_TX_TEST_BINARY := \
 V90_PHASE4_CP_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_tx.o \
 	$(BUILD_DIR)/v90_phase4_cp_line_tx.o \
+	$(BUILD_DIR)/v90_phase4_e_line_tx.o \
 	$(BUILD_DIR)/v90_phase4_cp_tx.o \
 	$(BUILD_DIR)/v90_cp.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
@@ -1507,7 +1508,9 @@ V90_PHASE4_CP_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_preemphasis.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
-	$(BUILD_DIR)/v34_training_line.o
+	$(BUILD_DIR)/v34_training_line.o \
+	$(filter-out $(BUILD_DIR)/test_v34_phase4_e_sequence.o, \
+		$(V34_PHASE4_E_SEQUENCE_TEST_OBJECTS))
 V90_PHASE4_ANALOG_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_analog_station
 V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
@@ -3821,6 +3824,10 @@ $(BUILD_DIR)/v90_phase4_cp_rx.o: \
 
 $(BUILD_DIR)/v90_phase4_cp_line_tx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_line_tx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase4_e_line_tx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase4_e_line_tx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase4_analog_station.o: \

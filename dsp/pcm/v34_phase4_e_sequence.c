@@ -43,26 +43,44 @@ bool v34_phase4_e_sequence_is_complete(
 }
 
 enum v34_phase4_e_sequence_result
-v34_phase4_e_sequence_init_from_mp(
+v34_phase4_e_sequence_init(
 	struct v34_phase4_e_sequence *sequence,
-	const struct v34_phase4_mp *mp)
+	const struct v34_scrambler *scrambler,
+	enum v34_station_role role,
+	enum v34_constellation_size constellation,
+	uint8_t previous_clockwise_quarter_turns)
 {
 	struct v34_phase4_e_sequence initialized;
 
-	if (sequence == NULL ||
-	    !v34_phase4_mp_record_is_complete(mp))
+	if (sequence == NULL || scrambler == NULL ||
+	    !v34_constellation_size_is_valid(constellation) ||
+	    previous_clockwise_quarter_turns > 3u ||
+	    !v34_transmit_scrambler_is_valid(scrambler, role))
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
 	initialized = (struct v34_phase4_e_sequence){
-		.scrambler = mp->scrambler,
-		.role = mp->role,
-		.constellation = mp->constellation,
+		.scrambler = *scrambler,
+		.role = role,
+		.constellation = constellation,
 		.previous_clockwise_quarter_turns =
-			mp->previous_clockwise_quarter_turns,
+			previous_clockwise_quarter_turns,
 	};
 	if (!v34_phase4_e_sequence_is_valid(&initialized))
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
 	*sequence = initialized;
 	return V34_PHASE4_E_SEQUENCE_OK;
+}
+
+enum v34_phase4_e_sequence_result
+v34_phase4_e_sequence_init_from_mp(
+	struct v34_phase4_e_sequence *sequence,
+	const struct v34_phase4_mp *mp)
+{
+	if (!v34_phase4_mp_record_is_complete(mp))
+		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
+	return v34_phase4_e_sequence_init(
+		sequence, &mp->scrambler, mp->role,
+		mp->constellation,
+		mp->previous_clockwise_quarter_turns);
 }
 
 enum v34_phase4_e_sequence_result

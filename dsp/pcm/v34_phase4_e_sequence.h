@@ -34,6 +34,16 @@ struct v34_phase4_e_sequence {
 	uint8_t emitted_bits;
 };
 
+/* Start E from an arbitrary completed Phase 4 parameter record. The caller
+ * supplies the continuous scrambler and differential histories at the exact
+ * next-symbol boundary. */
+enum v34_phase4_e_sequence_result v34_phase4_e_sequence_init(
+	struct v34_phase4_e_sequence *sequence,
+	const struct v34_scrambler *scrambler,
+	enum v34_station_role role,
+	enum v34_constellation_size constellation,
+	uint8_t previous_clockwise_quarter_turns);
+
 /* E follows a completed MP or MP-prime record without resetting the Phase 4
  * scrambler or differential encoder. */
 enum v34_phase4_e_sequence_result
