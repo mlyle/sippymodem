@@ -110,17 +110,25 @@ static bool trn2d_symbols_match(
 
 static bool verify_trn2d_handoffs(
 	struct v90_phase4_digital_transmit_handoff *digital,
-	const struct v90_phase4_analog_receive_handoff *analog)
+	struct v90_phase4_analog_receive_handoff *analog)
 {
 	struct v90_trn2d_tx expected;
+	const struct v90_pcm_mapping *mapping =
+		&analog->receiver.decoder.mapping;
 
 	CHECK(v90_trn2d_tx_init(
-		      &expected, &analog->training_mapping) ==
+		      &expected, mapping) ==
 		      V90_TRN2D_TX_OK,
 	      "analogue mapping could not initialize TRN2d model");
 	for (size_t symbol = 0; symbol < 48; ++symbol) {
 		struct v90_trn2d_symbol actual_symbol;
 		struct v90_trn2d_symbol expected_symbol;
+		struct v90_trn2d_frame frame;
+		struct v90_trn2d_frame untouched;
+		enum v90_trn2d_rx_result receive_result;
+
+		memset(&frame, 0xa5, sizeof(frame));
+		untouched = frame;
 
 		CHECK(v90_trn2d_tx_next(
 			      &digital->transmitter, &actual_symbol) ==
@@ -130,9 +138,32 @@ static bool verify_trn2d_handoffs(
 		      trn2d_symbols_match(
 			      &actual_symbol, &expected_symbol),
 		      "paired TRN2d symbol %zu differed", symbol);
+		receive_result = v90_trn2d_rx_receive_octet(
+			&analog->receiver, actual_symbol.pcm.octet, &frame);
+		if ((symbol + 1u) % V90_CP_FRAME_INTERVALS != 0) {
+			CHECK(receive_result == V90_TRN2D_RX_BUFFERING &&
+			      memcmp(&frame, &untouched, sizeof(frame)) == 0,
+			      "TRN2d frame advanced early at symbol %zu", symbol);
+			continue;
+		}
+		CHECK(receive_result == V90_TRN2D_RX_FRAME_READY &&
+		      frame.bit_count == mapping->frame_bits &&
+		      frame.training_bit_errors == 0,
+		      "TRN2d frame %zu did not decode cleanly",
+		      symbol / V90_CP_FRAME_INTERVALS);
+		for (size_t bit = 0; bit < frame.bit_count; ++bit)
+			CHECK(frame.bits[bit] == 1,
+			      "TRN2d frame %zu bit %zu was not training data",
+			      symbol / V90_CP_FRAME_INTERVALS, bit);
 	}
 	CHECK(digital->transmitter.transmitted_symbols == 48 &&
-	      expected.transmitted_symbols == 48,
+	      expected.transmitted_symbols == 48 &&
+	      analog->receiver.received_symbols == 48 &&
+	      analog->receiver.received_frames == 8 &&
+	      analog->receiver.received_bits ==
+		      8u * mapping->frame_bits &&
+	      analog->receiver.training_bit_errors == 0 &&
+	      v90_trn2d_rx_is_valid(&analog->receiver),
 	      "paired TRN2d handoff lost its exact Ri boundary");
 	return true;
 }
@@ -311,7 +342,7 @@ static bool run_exchange(
 		      &digital, &digital_transmit) ==
 		      V90_PHASE4_DIGITAL_STATION_OK &&
 	      mapping_matches(
-		      &analog_receive.training_mapping, &training) &&
+		      &analog_receive.receiver.decoder.mapping, &training) &&
 	      mapping_matches(
 		      &digital_transmit.transmitter.encoder.mapping,
 		      &training),
