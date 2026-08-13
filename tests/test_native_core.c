@@ -40,6 +40,40 @@ static int unused_control(
 	return 0;
 }
 
+static bool test_modem_events_are_instance_owned(void)
+{
+	struct modem_driver driver = {
+		.name = "event deadline test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *first = modem_create(&driver, "first event modem");
+	struct modem *second = modem_create(&driver, "second event modem");
+	const unsigned test_event = 1u << 31;
+
+	CHECK(first != NULL && second != NULL,
+	      "event deadline modems could not be created");
+	first->new_event = test_event;
+	first->event_deadline = get_time() + MODEM_HZ;
+	first->event_scheduled = 1;
+	CHECK(modem_service_event(first) == 0 &&
+		      first->new_event == test_event && first->event_scheduled == 1,
+	      "future modem event ran before its deadline");
+	CHECK(modem_service_event(second) == 0 && second->event == 0 &&
+		      second->new_event == 0 && second->event_scheduled == 0,
+	      "one modem's event altered another modem");
+	first->event_deadline = get_time();
+	CHECK(modem_service_event(first) == 1 && first->event == 0 &&
+		      first->new_event == 0 && first->event_scheduled == 0,
+	      "due modem event was not promoted and serviced");
+	CHECK(modem_service_event(NULL) == -1,
+	      "null modem event service was accepted");
+	modem_delete(second);
+	modem_delete(first);
+	return true;
+}
+
 static struct {
 	int result;
 	unsigned int calls;
@@ -1348,6 +1382,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "instance-owned modem events",
+		  test_modem_events_are_instance_owned },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 PCM handoff", test_v8_pcm_handoff },
 		{ "modulation report identity", test_modulation_report_identity },

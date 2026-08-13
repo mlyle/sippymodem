@@ -280,10 +280,11 @@ struct modem {
 	unsigned rx_rate;
 	unsigned tx_rate;
 	enum MODEM_MODE mode; /* data,fax,voice */
-        /* modem events (ring,escape,waiting for connect,etc) */
+	/* modem events (ring,escape,waiting for connect,etc) */
 	unsigned event;
 	unsigned new_event;
-        struct timer event_timer;
+	unsigned long event_deadline;
+	unsigned event_scheduled;
 	/* modem parameters */
 	unsigned min_rate;
 	unsigned max_rate;
@@ -437,6 +438,8 @@ extern void modem_update_termios(
 extern void modem_error  (struct modem *m);
 extern void modem_ring   (struct modem *m);
 extern void modem_event  (struct modem *m);
+/* Promote and service one due instance-owned modem event. */
+extern int modem_service_event(struct modem *m);
 extern void modem_process(struct modem *m,void *in,void *out,int cnt);
 extern void modem_process_g711(struct modem *m, enum g711_law law,
 			       const u8 *codewords, void *in, void *out, int cnt);

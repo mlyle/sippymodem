@@ -787,29 +787,16 @@ void modem_process_g711(struct modem *m, enum g711_law law,
  */
 
 
-static void timer_mark_event (void *data)
-{
-	struct modem *m = data;
-#ifdef DEBUG_TIMERS
-	MODEM_DBG("timer_mark_event: %x | %x : now = %lu...\n",
-		  m->event, m->new_event, get_time());
-#endif
-	m->event |= m->new_event;
-	m->new_event = 0;
-}
-
 static void schedule_event(struct modem *m, unsigned mask, unsigned long when)
 {
 	m->new_event |= mask;
-	m->event_timer.data = m;
-	m->event_timer.func = timer_mark_event;
-	m->event_timer.expires = get_time() + when;
+	m->event_deadline = get_time() + when;
+	m->event_scheduled = 1;
 #ifdef DEBUG_TIMERS
-	MODEM_DBG("schedule_event: %x | %x : now %lu + %lu = %u...\n",
+	MODEM_DBG("schedule_event: %x | %x : now %lu + %lu = %lu...\n",
 		  m->new_event, mask,
-		  get_time(), when, m->event_timer.expires);
+		  get_time(), when, m->event_deadline);
 #endif
-	timer_add(&m->event_timer);
 }
 
 
@@ -866,6 +853,22 @@ void modem_event(struct modem *m)
 		}
 		m->escape_count = 0;
 	}
+}
+
+int modem_service_event(struct modem *m)
+{
+	if (m == NULL)
+		return -1;
+	if (m->event_scheduled &&
+	    time_after(get_time(), m->event_deadline)) {
+		m->event |= m->new_event;
+		m->new_event = 0;
+		m->event_scheduled = 0;
+	}
+	if (m->event == 0)
+		return 0;
+	modem_event(m);
+	return 1;
 }
 
 void modem_ring(struct modem *m)
@@ -1269,7 +1272,7 @@ static int modem_start (struct modem *m)
 	TOTAL_RINGS_COUNT(m) = 0;
 	m->ring_count = 0;
 	m->event = m->new_event = 0;
-	timer_del(&m->event_timer);
+	m->event_scheduled = 0;
 
         ret = do_modem_start(m);
 	if (!ret)
@@ -2062,8 +2065,6 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 
 	m->ring_last = get_time();
 
-	timer_init(&m->event_timer);
-
 	/* setup config */
 	modem_setup_config(m);
 	/* packer initializations */
@@ -2108,6 +2109,5 @@ void modem_delete(struct modem *m)
 	free(m->xmit.buf);
 	m->xmit.buf = 0;
 
-	timer_del(&m->event_timer);
 	free(m);
 }

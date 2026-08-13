@@ -78,11 +78,15 @@ enum slmodem_terminal_result
 slmodem_terminal_service_event(
 	struct slmodem_terminal *terminal)
 {
+	int serviced;
+
 	if (terminal == NULL || terminal->modem == NULL)
 		return SLMODEM_TERMINAL_INVALID_ARGUMENT;
-	if (terminal->modem->event == 0)
+	serviced = modem_service_event(terminal->modem);
+	if (serviced < 0)
+		return SLMODEM_TERMINAL_INVALID_STATE;
+	if (serviced == 0)
 		return SLMODEM_TERMINAL_IDLE;
-	modem_event(terminal->modem);
 	return SLMODEM_TERMINAL_OK;
 }
 

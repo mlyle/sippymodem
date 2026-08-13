@@ -26,10 +26,13 @@ void modem_update_termios(
 	modem->termios = *attributes;
 }
 
-void modem_event(struct modem *modem)
+int modem_service_event(struct modem *modem)
 {
+	if (modem->event == 0)
+		return 0;
 	capture.events++;
 	modem->event = 0;
+	return 1;
 }
 
 void modem_hangup(struct modem *modem)
