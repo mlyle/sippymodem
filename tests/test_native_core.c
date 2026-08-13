@@ -550,6 +550,47 @@ static bool test_at_v42bis_compression_profile(void)
 	return true;
 }
 
+static bool test_at_v34_symbol_rate(void)
+{
+	static const unsigned int supported[] = {
+		2400, 2800, 3000, 3200, 3429,
+	};
+	struct modem_driver driver = {
+		.name = "AT V.34 symbol-rate test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, driver.name);
+	char command[64];
+
+	CHECK(modem != NULL && modem->v34_symbol_rate == 0,
+	      "V.34 symbol-rate control did not default to automatic");
+	for (size_t index = 0; index < ARRAY_LENGTH(supported); ++index) {
+		int length = snprintf(
+			command, sizeof(command), "AT+V34B=%u", supported[index]);
+
+		CHECK(length > 0 && (size_t)length < sizeof(command) &&
+			      process_at_command(modem, command) == 0 &&
+			      modem->v34_symbol_rate == supported[index],
+		      "AT+V34B rejected %u symbol/s", supported[index]);
+	}
+	strcpy(command, "AT+V34B=2743");
+	CHECK(process_at_command(modem, command) == -1 &&
+		      modem->v34_symbol_rate == 3429,
+	      "AT+V34B accepted an unsupported cadence or changed state");
+	strcpy(command, "AT+V34B=2400+V34B=2800");
+	CHECK(process_at_command(modem, command) == 0 &&
+		      modem->v34_symbol_rate == 2800,
+	      "AT+V34B did not preserve concatenated command parsing");
+	strcpy(command, "ATZ");
+	CHECK(process_at_command(modem, command) == 0 &&
+		      modem->v34_symbol_rate == 0,
+	      "modem reset retained a forced V.34 symbol rate");
+	modem_delete(modem);
+	return true;
+}
+
 static bool test_lapm_xid_envelopes(void)
 {
 	enum {
@@ -1284,14 +1325,14 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v32_operations->delete(v32) == 0 &&
 		      v32_operations->use_count == 0,
 	      "V.32 data pump did not release after line startup");
-	modem->min_rate = 10000;
-	modem->max_rate = 12000;
+	modem->min_rate = V34_MAX_BIT_RATE + 1;
+	modem->max_rate = V34_MAX_BIT_RATE + V34_RATE_STEP;
 	CHECK(v34_operations->create(
 		      modem, DP_V34, 1, MODEM_RATE, MODEM_FRAG,
 		      v34_operations) == NULL &&
 		      v34_operations->use_count == 0,
 	      "V.34 accepted a range above its implemented rates");
-	modem->min_rate = modem->max_rate = V34_INITIAL_MAX_BIT_RATE;
+	modem->min_rate = modem->max_rate = V34_MAX_BIT_RATE;
 	v34 = v34_operations->create(
 		modem, DP_V34, 1, MODEM_RATE, MODEM_FRAG, v34_operations);
 	memset(receive, 0, sizeof(receive));
@@ -1396,6 +1437,7 @@ int main(void)
 		  test_at_dial_destinations_are_bounded },
 		{ "AT V.42bis compression profile",
 		  test_at_v42bis_compression_profile },
+		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "V.21 brief answer mark",

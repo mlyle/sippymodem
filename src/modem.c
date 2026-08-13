@@ -1838,6 +1838,7 @@ int modem_reset(struct modem *m)
 	m->command = 1;
 	m->min_rate = MODEM_MIN_RATE;
 	m->max_rate = MODEM_MAX_RATE;
+	m->v34_symbol_rate = 0;
 	sregs_init(m->sregs);
 	modem_homolog_init(m,m->homolog->id,NULL);
 	modem_set_mode(m, MODEM_MODE_DATA);

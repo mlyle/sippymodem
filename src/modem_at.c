@@ -51,7 +51,7 @@
  *	AT&: C D E F H P R S F W
  *	AT\: A N
  * 	AT%: C E
- * 	AT+: DS MS FCLASS GCI GMI GMM GMR
+ * 	AT+: DS MS V34B FCLASS GCI GMI GMM GMR
  *      AT#: CID
  *	
  ********************************************************************
@@ -568,6 +568,59 @@ static int process_plus_MS(struct modem *m, char *p, int *len)
 		return -1;
 	}
 	return 0;
+}
+
+
+static int v34_symbol_rate_is_valid(unsigned long value)
+{
+	switch (value) {
+	case 0:
+	case 2400:
+	case 2800:
+	case 3000:
+	case 3200:
+	case 3429:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static int process_plus_V34B(struct modem *m, char *p, int *len)
+{
+	char response[16];
+	char *end;
+	unsigned long value;
+
+	switch (*p) {
+	case '=':
+		p++;
+		*len = 1;
+		if (*p == '?') {
+			const char capabilities[] = "(0,2400,2800,3000,3200,3429)";
+
+			modem_send_to_tty(
+				m, capabilities, (int)strlen(capabilities));
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			*len += 1;
+			return 0;
+		}
+		value = strtoul(p, &end, 10);
+		if (p == end || !v34_symbol_rate_is_valid(value))
+			return -1;
+		*len += (int)(end - p);
+		m->v34_symbol_rate = (unsigned)value;
+		return 0;
+	case '?':
+		*len = 1;
+		snprintf(response, sizeof(response), "%u", m->v34_symbol_rate);
+		modem_send_to_tty(m, response, (int)strlen(response));
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		return 0;
+	default:
+		*len = 0;
+		return -1;
+	}
 }
 
 
@@ -1210,6 +1263,11 @@ int process_at_command(struct modem *m, char *cmd)
 					ret = process_plus_MS(m,p,&len);
 				break;
 			case 'V':
+				if (!toupper_strncmp(p, "34B", 3)) {
+					p += 3;
+					ret = process_plus_V34B(m, p, &len);
+					break;
+				}
 				if(m->mode != MODEM_MODE_VOICE)
 					return -1;
 #ifdef MODEM_CONFIG_CID

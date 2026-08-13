@@ -10,6 +10,7 @@
 #include <datapump.h>
 #include <v8_datapump.h>
 #include <v34_datapump.h>
+#include <v34_frame_schedule.h>
 
 #include "channel_bench.h"
 #include "test.h"
@@ -604,6 +605,76 @@ static const char *codec_name(enum media_codec codec)
 	return codec == MEDIA_CODEC_PCMU ? "PCMU" : "PCMA";
 }
 
+static bool run_v34_rate_matrix(void)
+{
+	static const struct {
+		enum v34_symbol_rate selection;
+		unsigned int symbols_per_second;
+		unsigned int maximum_bit_rate;
+	} symbol_rates[] = {
+		{ V34_SYMBOL_RATE_2400, 2400, 12000 },
+		{ V34_SYMBOL_RATE_2800, 2800, 14400 },
+		{ V34_SYMBOL_RATE_3000, 3000, 14400 },
+		{ V34_SYMBOL_RATE_3200, 3200, 14400 },
+		{ V34_SYMBOL_RATE_3429, 3429, 14400 },
+	};
+	unsigned int cases = 0;
+
+	for (size_t symbol = 0; symbol < ARRAY_LENGTH(symbol_rates); ++symbol) {
+		for (unsigned int rate = V34_MIN_BIT_RATE;
+		     rate <= symbol_rates[symbol].maximum_bit_rate;
+		     rate += V34_RATE_STEP) {
+			struct v34_frame_geometry geometry;
+			struct modem_test_case test_case = {
+				.id = DP_V34,
+				.caller_tx_rate = rate,
+				.caller_rx_rate = rate,
+				.answerer_tx_rate = rate,
+				.answerer_rx_rate = rate,
+				.carrier_loss_samples = MODEM_RATE / 5,
+				.training_frame_limit = 1000,
+				.requires_v8 = true,
+				.pcmu_only = true,
+			};
+			char name[64];
+			char command[64];
+			int name_length;
+			int command_length;
+
+			if (v34_frame_geometry_init(
+				    &geometry, symbol_rates[symbol].selection,
+				    (uint8_t)(rate / V34_RATE_STEP), false) !=
+			    V34_FRAME_SCHEDULE_OK)
+				continue;
+			name_length = snprintf(
+				name, sizeof(name), "V.34 %u at %u symbol/s", rate,
+				symbol_rates[symbol].symbols_per_second);
+			command_length = snprintf(
+				command, sizeof(command),
+				"AT+MS=34,0,%u,%u+V34B=%u\r", rate, rate,
+				symbol_rates[symbol].symbols_per_second);
+			CHECK(name_length > 0 &&
+				      (size_t)name_length < sizeof(name) &&
+				      command_length > 0 &&
+				      (size_t)command_length < sizeof(command),
+			      "V.34 matrix command formatting overflowed");
+			test_case.name = name;
+			test_case.selection_command = command;
+			fprintf(stderr, "[ RUN      ] %s over PCMU SIP media\n", name);
+			if (!run_media_call(&test_case, MEDIA_CODEC_PCMU)) {
+				fprintf(stderr,
+					"[  FAILED  ] %s over PCMU SIP media\n",
+					name);
+				return false;
+			}
+			fprintf(stderr, "[       OK ] %s over PCMU SIP media\n", name);
+			cases++;
+		}
+	}
+	CHECK(cases == 25, "V.34 matrix covered %u instead of 25 cases", cases);
+	return true;
+}
+
 static bool configure_recording_replay(
 	struct integration_endpoint *endpoint)
 {
@@ -801,25 +872,12 @@ int main(void)
 		},
 		{
 			.id = DP_V34,
-			.name = "V.34 9600",
-			.selection_command = "AT+MS=34,0,9600,9600\r",
-			.caller_tx_rate = V34_INITIAL_MAX_BIT_RATE,
-			.caller_rx_rate = V34_INITIAL_MAX_BIT_RATE,
-			.answerer_tx_rate = V34_INITIAL_MAX_BIT_RATE,
-			.answerer_rx_rate = V34_INITIAL_MAX_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
-			.training_frame_limit = 1000,
-			.requires_v8 = true,
-			.pcmu_only = true,
-		},
-		{
-			.id = DP_V34,
 			.name = "V.34 9600 automode",
 			.selection_command = "AT+MS=34,1,9600,9600\r",
-			.caller_tx_rate = V34_INITIAL_MAX_BIT_RATE,
-			.caller_rx_rate = V34_INITIAL_MAX_BIT_RATE,
-			.answerer_tx_rate = V34_INITIAL_MAX_BIT_RATE,
-			.answerer_rx_rate = V34_INITIAL_MAX_BIT_RATE,
+			.caller_tx_rate = 9600,
+			.caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600,
+			.answerer_rx_rate = 9600,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.training_frame_limit = 1500,
 			.automode = true,
@@ -879,6 +937,8 @@ int main(void)
 				codec_name(codecs[codec]));
 		}
 	}
+	if (!run_v34_rate_matrix())
+		return 1;
 	for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
 		for (size_t rate = 0; rate < ARRAY_LENGTH(baudot_rates);
 		     ++rate) {

@@ -5,6 +5,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "v34_call.h"
+#include "v34_frame_schedule.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -12,9 +13,7 @@
 #include <string.h>
 
 enum {
-	V34_RATE_STEP = 2400,
-	V34_INITIAL_MAX_RATE_UNITS =
-		V34_INITIAL_MAX_BIT_RATE / V34_RATE_STEP,
+	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
 	V34_NOMINAL_AMPLITUDE = 7000,
 	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
 	V34_MIN_LINE_POWER = 1000000,
@@ -51,25 +50,110 @@ static enum v34_station_role station_role(bool caller)
 	return caller ? V34_CALLING_STATION : V34_ANSWERING_STATION;
 }
 
-static uint16_t enabled_rate_mask(
-	const struct modem *modem, uint8_t *highest_rate_units)
+static bool symbol_rate_from_number(
+	unsigned int number, enum v34_symbol_rate *symbol_rate)
+{
+	if (symbol_rate == NULL)
+		return false;
+	switch (number) {
+	case 2400:
+		*symbol_rate = V34_SYMBOL_RATE_2400;
+		return true;
+	case 2800:
+		*symbol_rate = V34_SYMBOL_RATE_2800;
+		return true;
+	case 3000:
+		*symbol_rate = V34_SYMBOL_RATE_3000;
+		return true;
+	case 3200:
+		*symbol_rate = V34_SYMBOL_RATE_3200;
+		return true;
+	case 3429:
+		*symbol_rate = V34_SYMBOL_RATE_3429;
+		return true;
+	default:
+		return false;
+	}
+}
+
+static uint16_t requested_rate_mask(const struct modem *modem)
 {
 	uint16_t mask = 0;
-	uint8_t highest = 0;
 
-	if (modem == NULL || highest_rate_units == NULL)
+	if (modem == NULL)
 		return 0;
-	for (uint8_t units = 1; units <= V34_INITIAL_MAX_RATE_UNITS;
+	for (uint8_t units = 1; units <= V34_MAX_RATE_UNITS;
 	     ++units) {
 		unsigned int bit_rate = (unsigned int)units * V34_RATE_STEP;
 
-		if (modem->min_rate <= bit_rate && modem->max_rate >= bit_rate) {
+		if (modem->min_rate <= bit_rate && modem->max_rate >= bit_rate)
 			mask |= (uint16_t)(1u << (units - 1u));
-			highest = units;
-		}
 	}
-	*highest_rate_units = highest;
 	return mask;
+}
+
+static uint8_t highest_rate(uint16_t mask)
+{
+	for (uint8_t units = V34_MAX_RATE_UNITS; units != 0; --units)
+		if ((mask & (uint16_t)(1u << (units - 1u))) != 0)
+			return units;
+	return 0;
+}
+
+static uint8_t maximum_enabled_rate(
+	enum v34_symbol_rate symbol_rate)
+{
+	/* Advertise only rate/cadence pairs that pass generated full-duplex
+	 * PCMU calls in both station roles. Denser standard geometries remain in
+	 * the scenario catalog while the line receiver matures. */
+	switch (symbol_rate) {
+	case V34_SYMBOL_RATE_2400:
+		return 5;
+	case V34_SYMBOL_RATE_2800:
+	case V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_3200:
+		return 6;
+	case V34_SYMBOL_RATE_3429:
+		return 6;
+	case V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_COUNT:
+		break;
+	}
+	return 0;
+}
+
+static uint16_t enabled_rate_mask(
+	const struct modem *modem, enum v34_symbol_rate *symbol_rate,
+	uint8_t *highest_rate_units)
+{
+	uint16_t requested = requested_rate_mask(modem);
+	uint16_t enabled = 0;
+	uint8_t highest = highest_rate(requested);
+	uint8_t enabled_maximum;
+	enum v34_symbol_rate selected;
+
+	if (symbol_rate == NULL || highest_rate_units == NULL || highest == 0)
+		return 0;
+	if (modem->v34_symbol_rate == 0) {
+		selected = highest == V34_MIN_BIT_RATE / V34_RATE_STEP ?
+				   V34_SYMBOL_RATE_2400 : V34_SYMBOL_RATE_3429;
+	} else if (!symbol_rate_from_number(
+			   modem->v34_symbol_rate, &selected)) {
+		return 0;
+	}
+	enabled_maximum = maximum_enabled_rate(selected);
+	for (uint8_t units = 1; units <= enabled_maximum; ++units) {
+		struct v34_frame_geometry geometry;
+
+		if ((requested & (uint16_t)(1u << (units - 1u))) != 0 &&
+		    v34_frame_geometry_init(
+			    &geometry, selected, units, false) ==
+			    V34_FRAME_SCHEDULE_OK)
+			enabled |= (uint16_t)(1u << (units - 1u));
+	}
+	*symbol_rate = selected;
+	*highest_rate_units = highest_rate(enabled);
+	return enabled;
 }
 
 static struct v34_info0 baseline_info0(void)
@@ -89,7 +173,8 @@ static struct v34_info0 baseline_info0(void)
 }
 
 static union v34_local_info1 baseline_info1(
-	bool caller, uint8_t projected_rate_units)
+	bool caller, enum v34_symbol_rate symbol_rate,
+	uint8_t projected_rate_units)
 {
 	union v34_local_info1 info1 = { 0 };
 
@@ -98,9 +183,9 @@ static union v34_local_info1 baseline_info1(
 	if (caller) {
 		info1.calling.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
-		info1.calling.answer_transmit[V34_SYMBOL_RATE_3429]
+		info1.calling.answer_transmit[symbol_rate]
 			.preemphasis_filter_index = 8;
-		info1.calling.answer_transmit[V34_SYMBOL_RATE_3429]
+		info1.calling.answer_transmit[symbol_rate]
 			.projected_data_rate_2400_bps_units = projected_rate_units;
 	} else {
 		info1.answering.common.frequency_offset_1_50_hz_units =
@@ -110,9 +195,9 @@ static union v34_local_info1 baseline_info1(
 		info1.answering.call_transmit
 			.projected_data_rate_2400_bps_units = projected_rate_units;
 		info1.answering.answer_to_call_symbol_rate =
-			V34_SYMBOL_RATE_3429;
+			symbol_rate;
 		info1.answering.call_to_answer_symbol_rate =
-			V34_SYMBOL_RATE_3429;
+			symbol_rate;
 	}
 	return info1;
 }
@@ -144,7 +229,9 @@ static bool call_configuration(
 		.tracking_equalizer_adaptation = 0.05,
 	};
 	uint8_t highest_rate_units = 0;
-	uint16_t rate_mask = enabled_rate_mask(modem, &highest_rate_units);
+	enum v34_symbol_rate symbol_rate;
+	uint16_t rate_mask = enabled_rate_mask(
+		modem, &symbol_rate, &highest_rate_units);
 
 	if (configuration == NULL || selected_rate_mask == NULL ||
 	    rate_mask == 0)
@@ -153,7 +240,8 @@ static bool call_configuration(
 		.local_role = station_role(caller),
 		.phase2_nominal_amplitude = V34_NOMINAL_AMPLITUDE,
 		.local_info0 = baseline_info0(),
-		.local_info1 = baseline_info1(caller, highest_rate_units),
+		.local_info1 = baseline_info1(
+			caller, symbol_rate, highest_rate_units),
 		.phase3 = {
 			.receive = receive,
 			.requested_remote_constellation =

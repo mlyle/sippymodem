@@ -288,6 +288,8 @@ struct modem {
 	/* modem parameters */
 	unsigned min_rate;
 	unsigned max_rate;
+	/* Zero selects the V.34 symbol rate automatically. */
+	unsigned v34_symbol_rate;
         unsigned char sregs[256];   /* s-registers */
         const struct homolog_set *homolog; /* homologation parameters */
         /* at processor */
