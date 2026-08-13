@@ -157,6 +157,8 @@ const char *v90_phase3_entry_result_name(
 		return "invalid argument";
 	case V90_PHASE3_ENTRY_INVALID_SELECTION:
 		return "invalid selection";
+	case V90_PHASE3_ENTRY_INVALID_STATE:
+		return "invalid state";
 	case V90_PHASE3_ENTRY_UNUSABLE_SELECTION:
 		return "unusable selection";
 	case V90_PHASE3_ENTRY_ROLE_MISMATCH:

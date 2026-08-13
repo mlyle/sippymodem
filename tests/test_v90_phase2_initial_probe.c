@@ -7,6 +7,7 @@
 #include <v90_phase2_info1_exchange.h>
 #include <v90_phase2_probe_turnaround.h>
 #include <v90_phase2_reciprocal_probe.h>
+#include <v90_phase3_handoff.h>
 
 #include "test.h"
 
@@ -585,6 +586,8 @@ static bool check_phase2_controller(enum test_codec codec)
 	struct v34_phase2_probe_receiver_measurement untouched_before;
 	struct pcm_info1_selection untouched_selection;
 	struct pcm_info1_selection untouched_selection_before;
+	struct v90_phase3_entry untouched_entry;
+	struct v90_phase3_entry untouched_entry_before;
 	bool analog_initial = false;
 	bool digital_initial = false;
 	bool digital_measured_initial = false;
@@ -626,6 +629,17 @@ static bool check_phase2_controller(enum test_codec codec)
 	      v90_phase2_info1_handoff(&analog, NULL) ==
 		      PCM_INFO1_INVALID_ARGUMENT,
 	      "rejected V.90 INFO1 handoff mutated its destination");
+	memset(&untouched_entry, 0xa5, sizeof(untouched_entry));
+	untouched_entry_before = untouched_entry;
+	CHECK(v90_phase3_entry_from_phase2(
+		      &untouched_entry, &analog,
+		      codec == TEST_CODEC_PCMU ? G711_LAW_PCMU :
+						 G711_LAW_PCMA) ==
+		      V90_PHASE3_ENTRY_INVALID_STATE &&
+	      memcmp(
+		      &untouched_entry, &untouched_entry_before,
+		      sizeof(untouched_entry)) == 0,
+	      "premature V.90 Phase 3 entry mutated its destination");
 	for (size_t index = 0; index < 4u * TEST_SAMPLE_LIMIT; ++index) {
 		struct v90_phase2_event analog_event;
 		struct v90_phase2_event digital_event;
@@ -756,6 +770,31 @@ static bool check_phase2_controller(enum test_codec codec)
 		      info1a_equal(
 			      &digital_selection.analog.conventional, &info1a),
 		      "V.90 Phase 2 did not hand off one common INFO1 decision");
+	}
+	{
+		struct v90_phase3_entry analog_entry;
+		struct v90_phase3_entry digital_entry;
+		enum g711_law law = codec == TEST_CODEC_PCMU ?
+					    G711_LAW_PCMU : G711_LAW_PCMA;
+
+		CHECK(v90_phase3_entry_from_phase2(
+			      &analog_entry, &analog, law) ==
+			      V90_PHASE3_ENTRY_OK &&
+		      v90_phase3_entry_from_phase2(
+			      &digital_entry, &digital, law) ==
+			      V90_PHASE3_ENTRY_OK &&
+		      v90_phase3_entry_is_valid(&analog_entry) &&
+		      v90_phase3_entry_is_valid(&digital_entry) &&
+		      analog_entry.local_role == V90_ANALOG_MODEM &&
+		      digital_entry.local_role == V90_DIGITAL_MODEM &&
+		      analog_entry.law == law && digital_entry.law == law &&
+		      analog_entry.training_ucode == info1a.training_ucode &&
+		      digital_entry.training_ucode == info1a.training_ucode &&
+		      analog_entry.analog_profile.symbol_rate ==
+			      info1a.upstream_symbol_rate &&
+		      digital_entry.analog_profile.symbol_rate ==
+			      info1a.upstream_symbol_rate,
+		      "completed Phase 2 did not form matching Phase 3 entries");
 	}
 	{
 		struct v90_phase2_event event = {

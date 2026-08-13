@@ -355,6 +355,7 @@ static bool test_result_names(void)
 		"ok",
 		"invalid argument",
 		"invalid selection",
+		"invalid state",
 		"unusable selection",
 		"role mismatch",
 		"media mismatch",
