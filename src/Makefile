@@ -156,6 +156,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_framing.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info0.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp_receiver.c \
