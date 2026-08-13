@@ -152,14 +152,28 @@ bool v34_phase3_profile_is_valid(
 	       profile_fields_match_rates(profile);
 }
 
-static enum v34_phase3_profile_result build_profile(
+enum v34_phase3_profile_result v34_phase3_profile_init(
 	struct v34_phase3_profile *profile,
 	enum v34_station_role local_role,
 	enum v34_symbol_rate symbol_rate,
 	const struct v34_info1_probe_result *probe_result,
 	uint8_t power_reduction_db, uint8_t md_length_35_ms_units)
 {
-	struct v34_phase3_profile selected = {
+	struct v34_phase3_profile selected;
+	struct exact_fraction rate;
+	struct exact_fraction ratio;
+	struct exact_fraction frequency;
+
+	if (profile == NULL || probe_result == NULL ||
+	    !role_is_valid(local_role) ||
+	    power_reduction_db > V34_INFO1_MAX_POWER_REDUCTION_DB ||
+	    probe_result->preemphasis_filter_index >
+		    V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX ||
+	    probe_result->projected_data_rate_2400_bps_units >
+		    V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS ||
+	    md_length_35_ms_units > V34_INFO1_MAX_MD_LENGTH_35_MS_UNITS)
+		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
+	selected = (struct v34_phase3_profile){
 		.symbol_rate = symbol_rate,
 		.local_role = local_role,
 		.transmit_power_reduction_db = power_reduction_db,
@@ -170,9 +184,6 @@ static enum v34_phase3_profile_result build_profile(
 		.md_length_35_ms_units = md_length_35_ms_units,
 		.high_carrier = probe_result->high_carrier,
 	};
-	struct exact_fraction rate;
-	struct exact_fraction ratio;
-	struct exact_fraction frequency;
 
 	if (probe_result->projected_data_rate_2400_bps_units == 0)
 		return V34_PHASE3_PROFILE_UNUSABLE_SELECTION;
@@ -201,7 +212,7 @@ v34_phase3_caller_profile(
 	if (profile == NULL || !v34_info1c_is_valid(local_info1c) ||
 	    !v34_info1a_is_valid(peer_info1a))
 		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
-	return build_profile(
+	return v34_phase3_profile_init(
 		profile, V34_CALLING_STATION,
 		peer_info1a->call_to_answer_symbol_rate,
 		&peer_info1a->call_transmit,
@@ -221,7 +232,7 @@ v34_phase3_answerer_profile(
 	    !v34_info1c_is_valid(peer_info1c))
 		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
 	symbol_rate = local_info1a->answer_to_call_symbol_rate;
-	return build_profile(
+	return v34_phase3_profile_init(
 		profile, V34_ANSWERING_STATION, symbol_rate,
 		&peer_info1c->answer_transmit[symbol_rate],
 		peer_info1c->common.minimum_peer_power_reduction_db,

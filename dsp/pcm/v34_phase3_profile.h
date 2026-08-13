@@ -36,6 +36,16 @@ struct v34_phase3_profile {
 bool v34_phase3_profile_is_valid(
 	const struct v34_phase3_profile *profile);
 
+/* Construct one exact transmit profile after the owning negotiation has
+ * selected the station role, symbol rate, probe result, power, and MD
+ * duration. Rejected calls leave profile unchanged. */
+enum v34_phase3_profile_result v34_phase3_profile_init(
+	struct v34_phase3_profile *profile,
+	enum v34_station_role local_role,
+	enum v34_symbol_rate symbol_rate,
+	const struct v34_info1_probe_result *probe_result,
+	uint8_t power_reduction_db, uint8_t md_length_35_ms_units);
+
 /* The caller's transmit settings are selected by the peer's INFO1a. Its MD
  * duration remains the value the caller sent in its own INFO1c. */
 enum v34_phase3_profile_result

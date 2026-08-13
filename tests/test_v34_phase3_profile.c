@@ -265,6 +265,58 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_initializer_validation(void)
+{
+	const struct v34_info1_probe_result valid_probe = {
+		.high_carrier = true,
+		.preemphasis_filter_index = 4,
+		.projected_data_rate_2400_bps_units = 8,
+	};
+	struct v34_info1_probe_result invalid_probe = valid_probe;
+	struct v34_phase3_profile profile;
+	unsigned char before[sizeof(profile)];
+
+	memset(&profile, 0xa5, sizeof(profile));
+	memcpy(before, &profile, sizeof(before));
+	CHECK(v34_phase3_profile_init(
+		      &profile, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_3200, &valid_probe, 3, 5) ==
+		      V34_PHASE3_PROFILE_OK &&
+	      v34_phase3_profile_is_valid(&profile),
+	      "valid direct profile initialization failed");
+	memset(&profile, 0xa5, sizeof(profile));
+	invalid_probe.preemphasis_filter_index =
+		V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX + 1u;
+	CHECK(v34_phase3_profile_init(
+		      &profile, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_3200, NULL, 3, 5) ==
+		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
+	      v34_phase3_profile_init(
+		      &profile, (enum v34_station_role)99,
+		      V34_SYMBOL_RATE_3200, &valid_probe, 3, 5) ==
+		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
+	      v34_phase3_profile_init(
+		      &profile, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_COUNT, &valid_probe, 3, 5) ==
+		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
+	      v34_phase3_profile_init(
+		      &profile, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_3200, &invalid_probe, 3, 5) ==
+		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
+	      v34_phase3_profile_init(
+		      &profile, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_3200, &valid_probe,
+		      V34_INFO1_MAX_POWER_REDUCTION_DB + 1u, 5) ==
+		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
+	      v34_phase3_profile_init(
+		      NULL, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_3200, &valid_probe, 3, 5) ==
+		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
+	      memcmp(&profile, before, sizeof(profile)) == 0,
+	      "invalid direct profile initialization changed output");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -275,6 +327,7 @@ int main(void)
 		  test_answerer_rates_and_carriers },
 		{ "caller field ownership", test_caller_field_ownership },
 		{ "validation", test_validation },
+		{ "initializer validation", test_initializer_validation },
 	};
 	unsigned int failures = 0;
 
