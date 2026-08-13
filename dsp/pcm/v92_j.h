@@ -17,6 +17,7 @@ enum {
 		(1u << V92_JD_RATE_CAPABILITY_BITS) - 1u,
 	V92_JD_MINIMUM_LOOKAHEAD = 1,
 	V92_JD_MAXIMUM_LOOKAHEAD = 3,
+	V92_PHASE3_JP_PRIME_BITS = 12,
 };
 
 enum v92_constellation_size {

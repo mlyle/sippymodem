@@ -9,10 +9,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum {
-	V92_PHASE3_JP_PRIME_BITS = 12,
-};
-
 enum v92_phase3_digital_tx_stage {
 	V92_PHASE3_DIGITAL_TX_PREFIX,
 	V92_PHASE3_DIGITAL_TX_JD,
