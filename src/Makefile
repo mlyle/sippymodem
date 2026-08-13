@@ -199,6 +199,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_analog_startup.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase4_digital_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_analog_station.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_line_tx.c \

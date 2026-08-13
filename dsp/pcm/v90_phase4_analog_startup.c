@@ -288,13 +288,12 @@ static enum v90_phase4_startup_result fail_startup(
 	uint8_t *transmit_octet)
 {
 	next->failed = true;
-	if (v90_phase4_analog_startup_is_valid(next)) {
+	if (v90_phase4_analog_startup_is_valid(next))
 		*startup = *next;
-		if (output_is_valid)
-			*transmit_octet = output;
-	} else {
+	else
 		startup->failed = true;
-	}
+	if (output_is_valid)
+		*transmit_octet = output;
 	return result;
 }
 
