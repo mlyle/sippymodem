@@ -419,6 +419,14 @@ int modem_runtime_terminal_poll_fd(
 	return pty_terminal_master_fd(runtime->terminal);
 }
 
+int modem_runtime_media_poll_fd(
+	const struct modem_runtime *runtime)
+{
+	return runtime != NULL ?
+		       modem_host_media_poll_fd(runtime->host) :
+		       -1;
+}
+
 const char *modem_runtime_device_path(
 	const struct modem_runtime *runtime)
 {

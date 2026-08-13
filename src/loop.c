@@ -53,19 +53,27 @@ static enum modem_loop_result wait_for_work(
 	struct modem_runtime *runtime, uint64_t wait_ns,
 	struct modem_loop_error *error)
 {
-	struct pollfd terminal = {
-		.fd = modem_runtime_terminal_poll_fd(runtime),
-		.events = POLLIN,
-	};
+	struct pollfd descriptors[2] = { 0 };
 	struct timespec timeout;
-	nfds_t descriptor_count = terminal.fd >= 0 ? 1 : 0;
+	nfds_t descriptor_count = 0;
 	int result;
+	int terminal_fd = modem_runtime_terminal_poll_fd(runtime);
+	int media_fd = modem_runtime_media_poll_fd(runtime);
+
+	if (terminal_fd >= 0) {
+		descriptors[descriptor_count].fd = terminal_fd;
+		descriptors[descriptor_count++].events = POLLIN;
+	}
+	if (media_fd >= 0 && media_fd != terminal_fd) {
+		descriptors[descriptor_count].fd = media_fd;
+		descriptors[descriptor_count++].events = POLLIN;
+	}
 
 	if (wait_ns > MODEM_LOOP_MAXIMUM_WAIT_NS)
 		wait_ns = MODEM_LOOP_MAXIMUM_WAIT_NS;
 	timeout.tv_sec = 0;
 	timeout.tv_nsec = (long)wait_ns;
-	result = ppoll(descriptor_count != 0 ? &terminal : NULL,
+	result = ppoll(descriptor_count != 0 ? descriptors : NULL,
 		       descriptor_count, &timeout, NULL);
 	if (result < 0) {
 		if (errno == EINTR)
@@ -74,11 +82,12 @@ static enum modem_loop_result wait_for_work(
 			error->system_error = errno;
 		return MODEM_LOOP_WAIT_ERROR;
 	}
-	if (descriptor_count != 0 && (terminal.revents & POLLNVAL) != 0) {
-		if (error != NULL)
-			error->system_error = EBADF;
-		return MODEM_LOOP_WAIT_ERROR;
-	}
+	for (nfds_t index = 0; index < descriptor_count; ++index)
+		if ((descriptors[index].revents & POLLNVAL) != 0) {
+			if (error != NULL)
+				error->system_error = EBADF;
+			return MODEM_LOOP_WAIT_ERROR;
+		}
 	return MODEM_LOOP_OK;
 }
 

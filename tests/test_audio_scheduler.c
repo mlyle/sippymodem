@@ -85,6 +85,29 @@ static bool test_activation_deadlines_and_catchup(void)
 	return true;
 }
 
+static bool test_remote_clock_processes_exact_batches(void)
+{
+	struct audio_path path = {
+		.frame_samples = 80,
+	};
+	struct audio_scheduler scheduler;
+	size_t frames = 99;
+
+	CHECK(audio_scheduler_init(&scheduler, &path, 8000, 3) &&
+		      audio_scheduler_set_active(&scheduler, true) &&
+		      audio_scheduler_step_remote(&scheduler, 0, &frames) ==
+			      AUDIO_SCHEDULER_IDLE &&
+		      frames == 0 && path.calls == 0,
+	      "remote scheduler ran without an RTP clock");
+	CHECK(audio_scheduler_step_remote(&scheduler, 3, &frames) ==
+		      AUDIO_SCHEDULER_OK &&
+		      frames == 3 && path.calls == 3 &&
+		      scheduler.stats.frames_processed == 3 &&
+		      !scheduler.clock.running,
+	      "remote scheduler did not process its exact RTP batch");
+	return true;
+}
+
 static bool test_failures_deactivate_the_path(void)
 {
 	struct audio_path path = {
@@ -154,6 +177,8 @@ static bool test_initialization_is_transactional(void)
 		      !audio_scheduler_set_active(NULL, true) &&
 		      audio_scheduler_step(NULL, 0, &frames) ==
 			      AUDIO_SCHEDULER_INVALID_ARGUMENT &&
+		      audio_scheduler_step_remote(NULL, 1, &frames) ==
+			      AUDIO_SCHEDULER_INVALID_ARGUMENT &&
 		      frames == 0,
 	      "scheduler null validation is inconsistent");
 	CHECK(strcmp(audio_scheduler_result_name(
@@ -172,6 +197,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "activation and catch-up", test_activation_deadlines_and_catchup },
+		{ "remote clock batches", test_remote_clock_processes_exact_batches },
 		{ "failure deactivation", test_failures_deactivate_the_path },
 		{ "transactional initialization",
 		  test_initialization_is_transactional },

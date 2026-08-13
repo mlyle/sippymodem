@@ -64,6 +64,8 @@ int modem_runtime_terminal_fd(
 /* Return the terminal descriptor only when polling it can make progress. */
 int modem_runtime_terminal_poll_fd(
 	const struct modem_runtime *runtime);
+int modem_runtime_media_poll_fd(
+	const struct modem_runtime *runtime);
 const char *modem_runtime_device_path(
 	const struct modem_runtime *runtime);
 enum modem_host_result modem_runtime_last_host_result(

@@ -29,6 +29,7 @@ struct rtp_runtime {
 	uint8_t *receive_workspace;
 	uint8_t *packet_workspace;
 	size_t frame_samples;
+	size_t remote_clock_frames;
 	size_t packet_capacity;
 	struct rtp_stream stream;
 	struct rtp_endpoint endpoint;
@@ -170,14 +171,22 @@ enum rtp_endpoint_result rtp_runtime_open(
 
 void rtp_runtime_close(struct rtp_runtime *runtime)
 {
-	if (runtime != NULL)
+	if (runtime != NULL) {
+		runtime->remote_clock_frames = 0;
 		rtp_endpoint_close(&runtime->endpoint);
+	}
 }
 
 size_t rtp_runtime_frame_samples(
 	const struct rtp_runtime *runtime)
 {
 	return runtime != NULL ? runtime->frame_samples : 0;
+}
+
+int rtp_runtime_fd(
+	const struct rtp_runtime *runtime)
+{
+	return runtime != NULL ? rtp_endpoint_fd(&runtime->endpoint) : -1;
 }
 
 uint16_t rtp_runtime_local_port(
@@ -191,10 +200,28 @@ uint16_t rtp_runtime_local_port(
 enum rtp_endpoint_result rtp_runtime_drain(
 	struct rtp_runtime *runtime, size_t *datagrams_received)
 {
+	uint64_t buffered_before;
+	uint64_t buffered_after;
+	enum rtp_endpoint_result result;
+
 	if (runtime == NULL)
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
-	return rtp_endpoint_drain(&runtime->endpoint,
-					     datagrams_received);
+	runtime->remote_clock_frames = 0;
+	buffered_before = runtime->stream.receiver.stats.samples_buffered;
+	result = rtp_endpoint_drain(
+		&runtime->endpoint, datagrams_received);
+	buffered_after = runtime->stream.receiver.stats.samples_buffered;
+	if (result == RTP_ENDPOINT_OK && buffered_after >= buffered_before)
+		runtime->remote_clock_frames =
+			(size_t)((buffered_after - buffered_before) /
+				 runtime->frame_samples);
+	return result;
+}
+
+size_t rtp_runtime_remote_clock_frames(
+	const struct rtp_runtime *runtime)
+{
+	return runtime != NULL ? runtime->remote_clock_frames : 0;
 }
 
 enum media_result rtp_runtime_play(

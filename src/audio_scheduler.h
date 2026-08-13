@@ -49,6 +49,11 @@ enum audio_scheduler_result audio_scheduler_step(
 	struct audio_scheduler *scheduler,
 	uint64_t now_ns,
 	size_t *frames_processed);
+/* Process an externally clocked batch without consulting wall time. */
+enum audio_scheduler_result audio_scheduler_step_remote(
+	struct audio_scheduler *scheduler,
+	size_t frames_due,
+	size_t *frames_processed);
 uint64_t audio_scheduler_wait_ns(
 	const struct audio_scheduler *scheduler,
 	uint64_t now_ns);

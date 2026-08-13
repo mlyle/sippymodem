@@ -16,6 +16,8 @@ struct modem_host {
 	enum audio_scheduler_result last_audio_scheduler_result;
 	bool media_was_configured;
 	bool audio_suspended;
+	bool remote_clock;
+	bool remote_seed_pending;
 };
 
 static void synchronize_audio(struct modem_host *host)
@@ -23,12 +25,19 @@ static void synchronize_audio(struct modem_host *host)
 	bool media_configured = sip_session_is_open(host->session) &&
 				sip_session_media_is_configured(
 					host->session);
+	bool was_active = audio_scheduler_is_active(
+		&host->audio_scheduler);
 
 	if (!media_configured || !host->media_was_configured)
 		host->audio_suspended = false;
 	audio_scheduler_set_active(
 		&host->audio_scheduler,
 		media_configured && !host->audio_suspended);
+	if (host->remote_clock && !was_active &&
+	    audio_scheduler_is_active(&host->audio_scheduler))
+		host->remote_seed_pending = true;
+	if (!audio_scheduler_is_active(&host->audio_scheduler))
+		host->remote_seed_pending = false;
 	host->media_was_configured = media_configured;
 }
 
@@ -45,6 +54,7 @@ struct modem_host *modem_host_create(
 	host = calloc(1, sizeof(*host));
 	if (host == NULL)
 		return NULL;
+	host->remote_clock = config->media.remote_clock;
 	host->session = sip_session_create(config, recorder, callbacks);
 	if (host->session == NULL)
 		goto fail;
@@ -97,6 +107,7 @@ enum sip_session_result modem_host_close(
 	audio_scheduler_set_active(&host->audio_scheduler, false);
 	host->media_was_configured = false;
 	host->audio_suspended = false;
+	host->remote_seed_pending = false;
 	host->last_session_result = sip_session_close(host->session);
 	return host->last_session_result;
 }
@@ -129,6 +140,7 @@ enum modem_host_result modem_host_step(
 {
 	size_t datagrams = 0;
 	size_t frames = 0;
+	size_t remote_frames;
 	bool binding_failed;
 
 	if (datagrams_received != NULL)
@@ -147,14 +159,25 @@ enum modem_host_result modem_host_step(
 	if (datagrams_received != NULL)
 		*datagrams_received = datagrams;
 	synchronize_audio(host);
+	remote_frames = sip_session_remote_clock_frames(host->session);
 	binding_failed = host->last_session_result ==
 			 SIP_SESSION_MEDIA_BINDING_ERROR;
 	if (host->last_session_result != SIP_SESSION_OK &&
 	    !binding_failed)
 		return MODEM_HOST_SESSION_ERROR;
 
-	host->last_audio_scheduler_result = audio_scheduler_step(
-		&host->audio_scheduler, now_ns, &frames);
+	if (host->remote_clock) {
+		if (host->remote_seed_pending) {
+			remote_frames++;
+			host->remote_seed_pending = false;
+		}
+		host->last_audio_scheduler_result =
+			audio_scheduler_step_remote(
+				&host->audio_scheduler, remote_frames, &frames);
+	} else {
+		host->last_audio_scheduler_result = audio_scheduler_step(
+			&host->audio_scheduler, now_ns, &frames);
+	}
 	if (frames_processed != NULL)
 		*frames_processed = frames;
 	if (host->last_audio_scheduler_result ==
@@ -181,11 +204,22 @@ uint64_t modem_host_wait_ns(
 
 	if (host == NULL || !sip_session_is_open(host->session))
 		return UINT64_MAX;
+	if (host->remote_clock) {
+		if (host->remote_seed_pending)
+			return 0;
+		return MODEM_HOST_SIGNALING_POLL_NS;
+	}
 	audio_wait = audio_scheduler_wait_ns(
 		&host->audio_scheduler, now_ns);
 	return audio_wait < MODEM_HOST_SIGNALING_POLL_NS ?
 		       audio_wait :
 		       MODEM_HOST_SIGNALING_POLL_NS;
+}
+
+int modem_host_media_poll_fd(
+	const struct modem_host *host)
+{
+	return host != NULL ? sip_session_media_fd(host->session) : -1;
 }
 
 enum sip_signaling_result modem_host_answer(

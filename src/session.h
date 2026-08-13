@@ -48,7 +48,11 @@ enum sip_signaling_result sip_session_hangup(
 
 size_t sip_session_frame_samples(
 	const struct sip_session *session);
+int sip_session_media_fd(
+	const struct sip_session *session);
 uint16_t sip_session_rtp_local_port(
+	const struct sip_session *session);
+size_t sip_session_remote_clock_frames(
 	const struct sip_session *session);
 bool sip_session_is_open(const struct sip_session *session);
 bool sip_session_media_is_configured(

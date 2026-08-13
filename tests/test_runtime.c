@@ -459,6 +459,13 @@ uint64_t modem_host_wait_ns(
 	return capture.wait_ns;
 }
 
+int modem_host_media_poll_fd(
+	const struct modem_host *host)
+{
+	(void)host;
+	return -1;
+}
+
 static struct app_config runtime_config(bool recording)
 {
 	struct app_config config;
@@ -680,6 +687,7 @@ static bool test_reports_lifecycle_failures(void)
 		      !modem_runtime_is_open(NULL) &&
 		      modem_runtime_terminal_fd(NULL) == -1 &&
 		      modem_runtime_terminal_poll_fd(NULL) == -1 &&
+		      modem_runtime_media_poll_fd(NULL) == -1 &&
 		      modem_runtime_device_path(NULL) == NULL &&
 		      modem_runtime_last_terminal_result(NULL) ==
 			      PTY_TERMINAL_INVALID_ARGUMENT,

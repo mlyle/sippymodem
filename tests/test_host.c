@@ -4,10 +4,13 @@
 
 #include "test.h"
 
+#include <arpa/inet.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 struct fake_signaling_control {
 	unsigned int creates;
@@ -21,6 +24,7 @@ struct fake_signaling_control {
 	bool emit_invalid_media_on_step;
 	bool emit_inactive_on_step;
 	bool defer_hangup_media;
+	uint16_t remote_port;
 };
 
 static struct fake_signaling_control fake;
@@ -118,7 +122,9 @@ static void emit_media(
 		.channels = 1,
 		.local_port = signaling->config.media.rtp_listen_port,
 		.remote_address = "127.0.0.1",
-		.remote_port = 42000,
+		.remote_port = fake.remote_port != 0 ?
+			       fake.remote_port :
+			       42000,
 	};
 
 	if (signaling->callbacks.media_changed != NULL)
@@ -220,7 +226,24 @@ static struct modem_host *create_host(
 	config_init(&config);
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 0;
+	config.media.remote_clock = false;
 	return modem_host_create(&config, recorder, NULL, &core);
+}
+
+static struct modem_host *create_remote_host(
+	struct core_capture *core_capture)
+{
+	struct app_config config;
+	const struct modem_core core = {
+		.context = core_capture,
+		.process = process_core,
+	};
+
+	config_init(&config);
+	config.media.frame_duration_ms = 1;
+	config.media.jitter_buffer_ms = 0;
+	config.media.remote_clock = true;
+	return modem_host_create(&config, NULL, NULL, &core);
 }
 
 static bool test_owns_lifecycle_and_call_control(void)
@@ -372,6 +395,78 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 	return true;
 }
 
+static bool test_remote_media_clocks_each_buffered_frame(void)
+{
+	struct core_capture core = { 0 };
+	struct modem_host *host;
+	struct sockaddr_in peer = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+	};
+	struct sockaddr_in host_address;
+	struct rtp_header rtp_header = {
+		.payload_type = 0,
+		.sequence = 7,
+		.timestamp = 800,
+		.ssrc = 1,
+	};
+	uint8_t packet[RTP_HEADER_SIZE + 8];
+	uint8_t payload[8];
+	socklen_t address_size = sizeof(peer);
+	size_t packet_size = 0;
+	size_t datagrams = 99;
+	size_t frames = 99;
+	int peer_fd;
+	int media_fd;
+
+	memset(&fake, 0, sizeof(fake));
+	memset(payload, 0xff, sizeof(payload));
+	peer_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	CHECK(peer_fd >= 0 && bind(peer_fd, (struct sockaddr *)&peer,
+					  sizeof(peer)) == 0 &&
+		      getsockname(peer_fd, (struct sockaddr *)&peer,
+				  &address_size) == 0,
+	      "remote clock peer socket did not open");
+	fake.remote_port = ntohs(peer.sin_port);
+	host = create_remote_host(&core);
+	CHECK(host != NULL && modem_host_open(host) == SIP_SESSION_OK &&
+		      modem_host_dial(host, "sip:peer@127.0.0.1") ==
+			      SIP_SIGNALING_OK &&
+		      modem_host_wait_ns(host, 1000000000) == 0,
+	      "remote-clock host did not arm its seed frame");
+	media_fd = modem_host_media_poll_fd(host);
+	address_size = sizeof(host_address);
+	CHECK(media_fd >= 0 &&
+		      getsockname(media_fd, (struct sockaddr *)&host_address,
+				  &address_size) == 0 &&
+		      modem_host_step(host, 1000000000, &datagrams, &frames) ==
+			      MODEM_HOST_OK &&
+		      datagrams == 0 && frames == 1 && core.calls == 1 &&
+		      modem_host_wait_ns(host, 1000000000) ==
+			      MODEM_HOST_SIGNALING_POLL_NS,
+	      "remote-clock host did not emit exactly one seed frame");
+	CHECK(rtp_packet_write(packet, sizeof(packet), &rtp_header,
+				       payload, sizeof(payload), &packet_size) ==
+		      RTP_OK &&
+		      sendto(peer_fd, packet, packet_size, 0,
+			     (struct sockaddr *)&host_address,
+			     sizeof(host_address)) == (ssize_t)packet_size,
+	      "remote clock RTP frame was not sent");
+	CHECK(modem_host_step(host, 1000000000, &datagrams, &frames) ==
+		      MODEM_HOST_OK &&
+		      datagrams == 1 && frames == 1 && core.calls == 2,
+	      "one received RTP frame did not clock one modem frame");
+	CHECK(modem_host_step(host, UINT64_MAX, &datagrams, &frames) ==
+		      MODEM_HOST_IDLE &&
+		      datagrams == 0 && frames == 0 && core.calls == 2,
+	      "remote-clock host advanced from wall time alone");
+	CHECK(modem_host_close(host) == SIP_SESSION_OK,
+	      "remote-clock host did not close");
+	modem_host_destroy(host);
+	close(peer_fd);
+	return true;
+}
+
 static bool test_audio_failure_waits_for_a_new_media_lifecycle(void)
 {
 	struct core_capture core = {
@@ -439,6 +534,7 @@ static bool test_destroy_closes_an_open_host(void)
 	CHECK(fake.closes == 1 && fake.destroys == 1,
 	      "destroy did not close and release an open host");
 	CHECK(modem_host_frame_samples(NULL) == 0 &&
+		      modem_host_media_poll_fd(NULL) == -1 &&
 		      !modem_host_is_open(NULL) &&
 		      !modem_host_media_is_configured(NULL) &&
 		      !modem_host_audio_is_active(NULL) &&
@@ -472,6 +568,7 @@ int main(void)
 		  test_creation_validation_is_transactional },
 		{ "recorded frame clock",
 		  test_steps_recorded_media_on_the_frame_clock },
+		{ "remote RTP clock", test_remote_media_clocks_each_buffered_frame },
 		{ "audio failure lifecycle",
 		  test_audio_failure_waits_for_a_new_media_lifecycle },
 		{ "open destroy", test_destroy_closes_an_open_host },

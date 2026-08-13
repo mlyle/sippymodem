@@ -28,12 +28,17 @@ void rtp_runtime_close(
 
 size_t rtp_runtime_frame_samples(
 	const struct rtp_runtime *runtime);
+int rtp_runtime_fd(
+	const struct rtp_runtime *runtime);
 uint16_t rtp_runtime_local_port(
 	const struct rtp_runtime *runtime);
 
 enum rtp_endpoint_result rtp_runtime_drain(
 	struct rtp_runtime *runtime,
 	size_t *datagrams_received);
+/* Complete media frames newly buffered by the most recent drain. */
+size_t rtp_runtime_remote_clock_frames(
+	const struct rtp_runtime *runtime);
 enum media_result rtp_runtime_play(
 	struct rtp_runtime *runtime,
 	int16_t *samples,

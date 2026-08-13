@@ -11,6 +11,7 @@
 
 struct modem_runtime {
 	int terminal_fd;
+	int media_fd;
 	uint64_t wait_ns;
 	unsigned int steps;
 	unsigned int stop_after_steps;
@@ -47,10 +48,17 @@ int modem_runtime_terminal_poll_fd(
 	return runtime->terminal_fd;
 }
 
+int modem_runtime_media_poll_fd(
+	const struct modem_runtime *runtime)
+{
+	return runtime->media_fd;
+}
+
 static bool test_stops_after_bounded_steps(void)
 {
 	struct modem_runtime runtime = {
 		.terminal_fd = -1,
+		.media_fd = -1,
 		.wait_ns = 0,
 		.stop_after_steps = 2,
 	};
@@ -69,6 +77,7 @@ static bool test_stops_after_bounded_steps(void)
 static bool test_wakes_for_terminal_input(void)
 {
 	struct modem_runtime runtime = {
+		.media_fd = -1,
 		.wait_ns = UINT64_MAX,
 		.stop_after_steps = 2,
 	};
@@ -90,11 +99,37 @@ static bool test_wakes_for_terminal_input(void)
 	return true;
 }
 
+static bool test_wakes_for_media_input(void)
+{
+	struct modem_runtime runtime = {
+		.terminal_fd = -1,
+		.wait_ns = UINT64_MAX,
+		.stop_after_steps = 2,
+	};
+	struct modem_loop_error error;
+	volatile sig_atomic_t running = 1;
+	int descriptors[2];
+	char byte = 'x';
+
+	CHECK(pipe(descriptors) == 0 && write(descriptors[1], &byte, 1) == 1,
+	      "media readiness fixture was not created");
+	runtime.media_fd = descriptors[0];
+	active_running = &running;
+	CHECK(modem_loop_run(&runtime, &running, &error) ==
+		      MODEM_LOOP_OK &&
+		      runtime.steps == 2,
+	      "media readiness did not wake the loop");
+	close(descriptors[0]);
+	close(descriptors[1]);
+	return true;
+}
+
 static bool test_reports_runtime_and_wait_errors(void)
 {
 	struct modem_loop_error error;
 	struct modem_runtime runtime = {
 		.terminal_fd = -1,
+		.media_fd = -1,
 		.wait_ns = 0,
 		.stop_after_steps = 2,
 		.step_result = MODEM_RUNTIME_HOST_ERROR,
@@ -152,6 +187,7 @@ int main(void)
 	} tests[] = {
 		{ "bounded steps", test_stops_after_bounded_steps },
 		{ "terminal wake", test_wakes_for_terminal_input },
+		{ "media wake", test_wakes_for_media_input },
 		{ "runtime and wait errors", test_reports_runtime_and_wait_errors },
 		{ "invalid arguments", test_rejects_invalid_arguments },
 	};

@@ -71,29 +71,11 @@ static enum audio_scheduler_result fail_scheduler(
 	return result;
 }
 
-enum audio_scheduler_result audio_scheduler_step(
-	struct audio_scheduler *scheduler, uint64_t now_ns,
+static enum audio_scheduler_result process_frames(
+	struct audio_scheduler *scheduler, size_t frames_due,
 	size_t *frames_processed)
 {
-	size_t frames_due;
 	size_t processed = 0;
-
-	if (frames_processed != NULL)
-		*frames_processed = 0;
-	if (scheduler == NULL || scheduler->path == NULL ||
-	    frames_processed == NULL)
-		return AUDIO_SCHEDULER_INVALID_ARGUMENT;
-	if (!scheduler->active)
-		return AUDIO_SCHEDULER_IDLE;
-	if (!scheduler->clock.running)
-		frame_clock_start(&scheduler->clock, now_ns);
-	scheduler->last_clock_result = frame_clock_take_due(
-		&scheduler->clock, now_ns, &frames_due);
-	if (scheduler->last_clock_result == FRAME_CLOCK_NOT_DUE)
-		return AUDIO_SCHEDULER_IDLE;
-	if (scheduler->last_clock_result != FRAME_CLOCK_OK)
-		return fail_scheduler(
-			scheduler, AUDIO_SCHEDULER_CLOCK_ERROR);
 
 	for (; processed < frames_due; ++processed) {
 		scheduler->last_path_result =
@@ -119,6 +101,47 @@ enum audio_scheduler_result audio_scheduler_step(
 	add_saturated(&scheduler->stats.frames_processed, processed);
 	*frames_processed = processed;
 	return AUDIO_SCHEDULER_OK;
+}
+
+enum audio_scheduler_result audio_scheduler_step(
+	struct audio_scheduler *scheduler, uint64_t now_ns,
+	size_t *frames_processed)
+{
+	size_t frames_due;
+
+	if (frames_processed != NULL)
+		*frames_processed = 0;
+	if (scheduler == NULL || scheduler->path == NULL ||
+	    frames_processed == NULL)
+		return AUDIO_SCHEDULER_INVALID_ARGUMENT;
+	if (!scheduler->active)
+		return AUDIO_SCHEDULER_IDLE;
+	if (!scheduler->clock.running)
+		frame_clock_start(&scheduler->clock, now_ns);
+	scheduler->last_clock_result = frame_clock_take_due(
+		&scheduler->clock, now_ns, &frames_due);
+	if (scheduler->last_clock_result == FRAME_CLOCK_NOT_DUE)
+		return AUDIO_SCHEDULER_IDLE;
+	if (scheduler->last_clock_result != FRAME_CLOCK_OK)
+		return fail_scheduler(
+			scheduler, AUDIO_SCHEDULER_CLOCK_ERROR);
+	return process_frames(scheduler, frames_due, frames_processed);
+}
+
+enum audio_scheduler_result audio_scheduler_step_remote(
+	struct audio_scheduler *scheduler, size_t frames_due,
+	size_t *frames_processed)
+{
+	if (frames_processed != NULL)
+		*frames_processed = 0;
+	if (scheduler == NULL || scheduler->path == NULL ||
+	    frames_processed == NULL)
+		return AUDIO_SCHEDULER_INVALID_ARGUMENT;
+	if (!scheduler->active || frames_due == 0)
+		return AUDIO_SCHEDULER_IDLE;
+	frame_clock_stop(&scheduler->clock);
+	scheduler->last_clock_result = FRAME_CLOCK_OK;
+	return process_frames(scheduler, frames_due, frames_processed);
 }
 
 uint64_t audio_scheduler_wait_ns(

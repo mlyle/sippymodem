@@ -227,11 +227,25 @@ size_t sip_session_frame_samples(
 		       0;
 }
 
+int sip_session_media_fd(
+	const struct sip_session *session)
+{
+	return session != NULL ? rtp_runtime_fd(session->rtp) : -1;
+}
+
 uint16_t sip_session_rtp_local_port(
 	const struct sip_session *session)
 {
 	return session != NULL ?
 		       rtp_runtime_local_port(session->rtp) :
+		       0;
+}
+
+size_t sip_session_remote_clock_frames(
+	const struct sip_session *session)
+{
+	return session != NULL ?
+		       rtp_runtime_remote_clock_frames(session->rtp) :
 		       0;
 }
 
