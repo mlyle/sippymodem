@@ -163,6 +163,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_info1d.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_info1a.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_ru.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_opening.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_rx.c \

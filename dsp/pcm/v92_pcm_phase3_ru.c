@@ -2,8 +2,6 @@
 
 #include "v92_pcm_phase3_ru.h"
 
-#include "v90_info1.h"
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -31,24 +29,22 @@ bool v92_pcm_phase3_ru_is_valid(
 {
 	return sequence != NULL && law_is_valid(sequence->law) &&
 	       kind_is_valid(sequence->kind) &&
-	       sequence->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
-	       sequence->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
+	       sequence->lu_ucode > 0u && sequence->lu_ucode <= 127u &&
 	       sequence->emitted_symbols <= total_symbols(sequence->kind);
 }
 
 enum v92_pcm_phase3_ru_result v92_pcm_phase3_ru_init(
 	struct v92_pcm_phase3_ru *sequence, enum g711_law law,
-	uint8_t training_ucode, enum v92_pcm_phase3_ru_kind kind)
+	uint8_t lu_ucode, enum v92_pcm_phase3_ru_kind kind)
 {
 	struct v92_pcm_phase3_ru initialized = {
 		.law = law,
 		.kind = kind,
-		.training_ucode = training_ucode,
+		.lu_ucode = lu_ucode,
 	};
 
 	if (sequence == NULL || !law_is_valid(law) || !kind_is_valid(kind) ||
-	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
-	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE)
+	    lu_ucode == 0u || lu_ucode > 127u)
 		return V92_PCM_PHASE3_RU_INVALID_ARGUMENT;
 	*sequence = initialized;
 	return V92_PCM_PHASE3_RU_OK;
@@ -72,7 +68,7 @@ enum v92_pcm_phase3_ru_result v92_pcm_phase3_ru_next(
 	positive = (phase < 3u) !=
 		   (sequence->kind == V92_PCM_PHASE3_RU_BAR);
 	if (!v90_pcm_symbol_make(
-		    &generated, sequence->law, sequence->training_ucode,
+		    &generated, sequence->law, sequence->lu_ucode,
 		    positive))
 		return V92_PCM_PHASE3_RU_INVALID_STATE;
 	sequence->emitted_symbols++;

@@ -71,7 +71,7 @@ static bool check_sequence(
 
 static bool test_all_sequences(void)
 {
-	static const uint8_t ucodes[] = { 67, 91, 127 };
+	static const uint8_t ucodes[] = { 1, 91, 127 };
 
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law) {
@@ -145,7 +145,7 @@ static bool test_contracts(void)
 		      &sequence, (enum g711_law)-1, 91,
 		      V92_PCM_PHASE3_RU) == V92_PCM_PHASE3_RU_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_ru_init(
-		      &sequence, G711_LAW_PCMU, 66,
+		      &sequence, G711_LAW_PCMU, 0,
 		      V92_PCM_PHASE3_RU) == V92_PCM_PHASE3_RU_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_ru_init(
 		      &sequence, G711_LAW_PCMU, 128,

@@ -27,18 +27,19 @@ enum v92_pcm_phase3_ru_result {
 	V92_PCM_PHASE3_RU_INVALID_STATE,
 };
 
-/* One bounded 8000-symbol/s Ru or Ru-bar span. The caller sends these raw
- * symbols without the upstream precoder or prefilter. */
+/* One bounded 8000-symbol/s Ru or Ru-bar span. lu_ucode is the local upstream
+ * magnitude, not INFO1a's downstream UINFO. The caller sends these raw symbols
+ * without the upstream precoder or prefilter. */
 struct v92_pcm_phase3_ru {
 	enum g711_law law;
 	enum v92_pcm_phase3_ru_kind kind;
 	uint16_t emitted_symbols;
-	uint8_t training_ucode;
+	uint8_t lu_ucode;
 };
 
 enum v92_pcm_phase3_ru_result v92_pcm_phase3_ru_init(
 	struct v92_pcm_phase3_ru *sequence, enum g711_law law,
-	uint8_t training_ucode, enum v92_pcm_phase3_ru_kind kind);
+	uint8_t lu_ucode, enum v92_pcm_phase3_ru_kind kind);
 bool v92_pcm_phase3_ru_is_valid(
 	const struct v92_pcm_phase3_ru *sequence);
 
