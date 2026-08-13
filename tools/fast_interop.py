@@ -59,6 +59,10 @@ CaseRunner = Callable[
     InteropResult,
 ]
 
+ASYNC_BITS_PER_OCTET = 10
+FAST_ONLINE_MINIMUM_SECONDS = 1.0
+FAST_ONLINE_MARGIN_SECONDS = 1.0
+
 
 def _run_interop(
     config: InteropConfig,
@@ -119,6 +123,38 @@ def _matrix_endpoint(
     )
 
 
+def _fast_online_timeout(
+    base: InteropConfig,
+    case: MatrixCase,
+    originator_payload: bytes,
+    answerer_payload: bytes,
+) -> float:
+    if case.candidate_originates:
+        originator_rates = case.candidate_rates
+        answerer_rates = case.baseline_rates
+    else:
+        originator_rates = case.baseline_rates
+        answerer_rates = case.candidate_rates
+    direction_times = (
+        len(originator_payload)
+        * ASYNC_BITS_PER_OCTET
+        / originator_rates.transmit,
+        len(answerer_payload)
+        * ASYNC_BITS_PER_OCTET
+        / answerer_rates.transmit,
+    )
+    wire_time = (
+        sum(direction_times)
+        if case.exchange == TURN_TAKING
+        else max(direction_times)
+    )
+    fast_timeout = max(
+        FAST_ONLINE_MINIMUM_SECONDS,
+        wire_time + FAST_ONLINE_MARGIN_SECONDS,
+    )
+    return min(base.online_timeout_seconds, fast_timeout)
+
+
 def case_config(base: InteropConfig, case: MatrixCase) -> InteropConfig:
     """Bind one public matrix case to a private pair of executables."""
 
@@ -140,6 +176,12 @@ def case_config(base: InteropConfig, case: MatrixCase) -> InteropConfig:
         answerer=answerer,
         originator_payload=originator_payload,
         answerer_payload=answerer_payload,
+        online_timeout_seconds=_fast_online_timeout(
+            base,
+            case,
+            originator_payload,
+            answerer_payload,
+        ),
     )
 
 

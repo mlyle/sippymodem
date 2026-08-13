@@ -47,7 +47,7 @@ def base_config(directory: Path, *, enabled: bool = True) -> InteropConfig:
         startup_timeout_seconds=1,
         setup_timeout_seconds=1,
         connect_timeout_seconds=1,
-        online_timeout_seconds=1,
+        online_timeout_seconds=7,
         cleanup_timeout_seconds=1,
         ports=InteropPorts(),
     )
@@ -99,6 +99,15 @@ class FastInteropTests(unittest.TestCase):
             )
             self.assertEqual(
                 baseline_call.originator.executable, Path("/baseline")
+            )
+            self.assertEqual(
+                sorted(
+                    (
+                        candidate_call.online_timeout_seconds,
+                        baseline_call.online_timeout_seconds,
+                    )
+                ),
+                [5.266666666666667, 5.4],
             )
             for config in (candidate_call, baseline_call):
                 for configured_endpoint in (config.originator, config.answerer):
