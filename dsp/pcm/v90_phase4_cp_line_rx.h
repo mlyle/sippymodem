@@ -29,6 +29,7 @@ struct v90_phase4_cp_line_rx {
 	struct qam_equalizer equalizer;
 	struct v90_phase4_cp_rx symbols;
 	struct v34_phase3_profile transmitting_profile;
+	struct v90_cp_parameters pending_parameters;
 	double adaptation;
 	bool record_pending;
 	bool pending_record_is_valid;
@@ -47,6 +48,13 @@ bool v90_phase4_cp_line_rx_has_pending_record(
 	const struct v90_phase4_cp_line_rx *rx);
 bool v90_phase4_cp_line_rx_pending_record_is_valid(
 	const struct v90_phase4_cp_line_rx *rx);
+
+/* Copy the validated parameters at the paused record boundary. The output
+ * changes only on success. */
+enum v90_phase4_cp_line_rx_result
+v90_phase4_cp_line_rx_pending_parameters(
+	const struct v90_phase4_cp_line_rx *rx,
+	struct v90_cp_parameters *parameters);
 
 /* A record event pauses input so a controller cannot consume the first symbol
  * of a different section. Continue after accepting or rejecting the record. */

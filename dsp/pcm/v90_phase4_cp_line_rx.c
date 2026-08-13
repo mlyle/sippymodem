@@ -52,7 +52,9 @@ bool v90_phase4_cp_line_rx_is_valid(
 		       rx->transmitting_profile.local_role &&
 	       isfinite(rx->adaptation) && rx->adaptation >= 0.0 &&
 	       rx->adaptation <= 1.0 &&
-	       (!rx->pending_record_is_valid || rx->record_pending);
+	       (!rx->pending_record_is_valid ||
+		(rx->record_pending &&
+		 v90_cp_parameters_are_valid(&rx->pending_parameters)));
 }
 
 bool v90_phase4_cp_line_rx_has_failed(
@@ -73,6 +75,21 @@ bool v90_phase4_cp_line_rx_pending_record_is_valid(
 {
 	return v90_phase4_cp_line_rx_has_pending_record(rx) &&
 	       rx->pending_record_is_valid;
+}
+
+enum v90_phase4_cp_line_rx_result
+v90_phase4_cp_line_rx_pending_parameters(
+	const struct v90_phase4_cp_line_rx *rx,
+	struct v90_cp_parameters *parameters)
+{
+	if (!v90_phase4_cp_line_rx_is_valid(rx) || parameters == NULL)
+		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
+	if (rx->failed)
+		return V90_PHASE4_CP_LINE_RX_FAILED;
+	if (!rx->record_pending || !rx->pending_record_is_valid)
+		return V90_PHASE4_CP_LINE_RX_INVALID_STATE;
+	*parameters = rx->pending_parameters;
+	return V90_PHASE4_CP_LINE_RX_OK;
 }
 
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
@@ -121,6 +138,7 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_continue(
 	next = *rx;
 	next.record_pending = false;
 	next.pending_record_is_valid = false;
+	next.pending_parameters = (struct v90_cp_parameters){ 0 };
 	if (!v90_phase4_cp_line_rx_is_valid(&next))
 		return V90_PHASE4_CP_LINE_RX_INVALID_STATE;
 	*rx = next;
@@ -194,6 +212,9 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		next.pending_record_is_valid =
 			emitted.type == V90_CP_RECEIVE_FRAME &&
 			emitted.frame_result == V90_CP_OK;
+		next.pending_parameters = (struct v90_cp_parameters){ 0 };
+		if (next.pending_record_is_valid)
+			next.pending_parameters = emitted.parameters;
 	}
 	if (!v90_phase4_cp_line_rx_is_valid(&next))
 		return fail_sample(rx, &next);
