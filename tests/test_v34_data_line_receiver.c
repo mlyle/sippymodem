@@ -2,6 +2,7 @@
 
 #include <v34_data_line_receiver.h>
 #include <v34_data_stream.h>
+#include <v34_datapump.h>
 
 #include "test.h"
 
@@ -19,8 +20,9 @@ enum {
 	HANDOFF_POINT_CAPACITY = 256,
 	HANDOFF_MATCH_POINTS = 64,
 	LINE_SAMPLE_LIMIT = 30000,
-	EXPECTED_FRAME_CAPACITY = 64,
+	EXPECTED_FRAME_CAPACITY = 256,
 	VERIFIED_DATA_FRAMES = 4,
+	VERIFIED_DRIFT_FRAMES = 192,
 };
 
 static const struct qam_point TRAINING_POINT = {
@@ -57,13 +59,14 @@ static struct v34_data_stream_configuration stream_configuration(void)
 
 static struct v34_data_line_receiver_configuration receiver_configuration(
 	const struct v34_data_stream *stream,
-	const struct v34_data_stream_configuration *configuration)
+	const struct v34_data_stream_configuration *configuration,
+	double equalizer_adaptation)
 {
 	struct v34_data_line_receiver_configuration receiver = {
 		.transmitting_profile = configuration->profile,
 		.geometry = stream->transmitter.points.schedule.geometry,
 		.normalizer = stream->transmitter.line.carrier.normalizer,
-		.equalizer_adaptation = 0.01,
+		.equalizer_adaptation = equalizer_adaptation,
 		.trellis_selection = configuration->trellis_selection,
 		.expanded_shaping = configuration->expanded_shaping,
 	};
@@ -368,7 +371,8 @@ struct handoff_fixture {
 	struct v34_data_stream_configuration configuration;
 };
 
-static bool prepare_handoff(struct handoff_fixture *fixture)
+static bool prepare_handoff(
+	struct handoff_fixture *fixture, double equalizer_adaptation)
 {
 	struct handoff_fixture prepared = {
 		.configuration = stream_configuration(),
@@ -397,7 +401,8 @@ static bool prepare_handoff(struct handoff_fixture *fixture)
 	if (!v34_equalizer_handoff_is_valid(&handoff))
 		return false;
 	receiver_config = receiver_configuration(
-		&prepared.stream, &prepared.configuration);
+		&prepared.stream, &prepared.configuration,
+		equalizer_adaptation);
 	if (v34_data_line_receiver_init(
 		    &prepared.receiver, &demodulator, &handoff,
 		    &receiver_config) != V34_DATA_LINE_RECEIVER_OK)
@@ -467,6 +472,96 @@ static bool frames_are_equal(
 		received->auxiliary_bit == expected->auxiliary_bit);
 }
 
+struct drifting_echo {
+	int16_t history[2];
+	size_t cursor;
+	uint32_t samples;
+};
+
+static int16_t apply_drifting_echo(
+	struct drifting_echo *channel, int16_t sample)
+{
+	enum {
+		RAMP_SAMPLES = 4096,
+		FINAL_ECHO_Q15 = 6000,
+	};
+	uint32_t progress = channel->samples < RAMP_SAMPLES ?
+		channel->samples : RAMP_SAMPLES;
+	int32_t gain_q15 = (int32_t)(
+		(uint64_t)progress * FINAL_ECHO_Q15 / RAMP_SAMPLES);
+	int16_t delayed = channel->history[channel->cursor];
+	int64_t mixed = (int64_t)sample +
+		(int64_t)delayed * gain_q15 / 32768;
+
+	channel->history[channel->cursor] = sample;
+	channel->cursor = (channel->cursor + 1u) % ARRAY_LENGTH(channel->history);
+	if (channel->samples != UINT32_MAX)
+		channel->samples++;
+	if (mixed > INT16_MAX)
+		return INT16_MAX;
+	if (mixed < INT16_MIN)
+		return INT16_MIN;
+	return (int16_t)mixed;
+}
+
+static bool test_generated_channel_drift(void)
+{
+	struct handoff_fixture fixture;
+	struct source_fixture source = { 0 };
+	struct drifting_echo channel = { 0 };
+	size_t expected_index = 0;
+	bool b1_complete = false;
+
+	CHECK(prepare_handoff(
+		      &fixture, V34_DATA_EQUALIZER_TRACKING_STEP),
+	      "V.34 tracking fixture did not initialize");
+	for (size_t sample_index = 0;
+	     sample_index < LINE_SAMPLE_LIMIT &&
+	     expected_index < VERIFIED_DRIFT_FRAMES;
+	     ++sample_index) {
+		struct v34_survivor_decision current;
+		struct v34_received_mapping_frame received;
+		enum v34_data_line_receiver_result result;
+		int16_t sample;
+		bool accepted;
+
+		CHECK(v34_data_stream_sample(
+			      &fixture.stream, generated_source, &source,
+			      &sample, &accepted) == V34_DATA_STREAM_OK,
+		      "V.34 drift transmitter failed at sample %zu", sample_index);
+		(void)accepted;
+		result = v34_data_line_receiver_sample(
+			&fixture.receiver,
+			apply_drifting_echo(&channel, sample),
+			&current, &received);
+		CHECK(result != V34_DATA_LINE_RECEIVER_FAILED &&
+			      result != V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE &&
+			      result != V34_DATA_LINE_RECEIVER_OUT_OF_RANGE &&
+			      result != V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT,
+		      "V.34 tracking receiver failed at sample %zu: %s",
+		      sample_index, v34_data_line_receiver_result_name(result));
+		if (result == V34_DATA_LINE_RECEIVER_B1_COMPLETE) {
+			CHECK(!b1_complete,
+			      "V.34 tracking receiver completed B1 twice");
+			b1_complete = true;
+		} else if (result == V34_DATA_LINE_RECEIVER_MAPPING_FRAME_READY) {
+			CHECK(b1_complete && expected_index < source.count &&
+				      frames_are_equal(
+					      &received,
+					      &source.frames[expected_index]),
+			      "V.34 tracking frame %zu changed",
+			      expected_index);
+			expected_index++;
+		}
+	}
+	CHECK(b1_complete && expected_index == VERIFIED_DRIFT_FRAMES &&
+		      source.count >= expected_index &&
+		      !v34_data_line_receiver_has_failed(&fixture.receiver),
+	      "V.34 tracking recovered %zu/%u drifted frames",
+	      expected_index, VERIFIED_DRIFT_FRAMES);
+	return true;
+}
+
 static bool test_generated_line_round_trip(void)
 {
 	struct handoff_fixture fixture;
@@ -474,7 +569,7 @@ static bool test_generated_line_round_trip(void)
 	size_t expected_index = 0;
 	bool b1_complete = false;
 
-	CHECK(prepare_handoff(&fixture),
+	CHECK(prepare_handoff(&fixture, 0.01),
 	      "V.34 line handoff fixture did not initialize");
 	for (size_t sample_index = 0;
 	     sample_index < LINE_SAMPLE_LIMIT &&
@@ -548,13 +643,13 @@ static bool test_validation_and_failure_latch(void)
 	struct v34_survivor_decision current;
 	struct v34_received_mapping_frame received;
 
-	CHECK(prepare_handoff(&fixture),
+	CHECK(prepare_handoff(&fixture, 0.01),
 	      "V.34 line validation fixture did not initialize");
 	handoff.equalizer = fixture.receiver.equalizer_receiver.equalizer;
 	CHECK(v34_equalizer_handoff_is_valid(&handoff),
 	      "V.34 line validation handoff is invalid");
 	configuration = receiver_configuration(
-		&fixture.stream, &fixture.configuration);
+		&fixture.stream, &fixture.configuration, 0.01);
 	CHECK(v34_data_carrier_channel(&profile, 8000, &channel) ==
 		      V34_DATA_CARRIER_OK &&
 	      qam_demodulator_init(&unlocked, &channel) == QAM_OK &&
@@ -635,6 +730,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated line round trip", test_generated_line_round_trip },
+		{ "generated channel drift", test_generated_channel_drift },
 		{ "validation and failure latch", test_validation_and_failure_latch },
 	};
 	unsigned int failures = 0;

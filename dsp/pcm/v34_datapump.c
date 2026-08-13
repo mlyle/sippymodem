@@ -257,7 +257,8 @@ static bool call_configuration(
 			},
 			.transmit_mp = baseline_mp(
 				rate_mask, highest_rate_units),
-			.data_equalizer_adaptation = 0.02,
+			.data_equalizer_adaptation =
+				V34_DATA_EQUALIZER_TRACKING_STEP,
 		},
 	};
 	*selected_rate_mask = rate_mask;
