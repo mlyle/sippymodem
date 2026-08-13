@@ -4,7 +4,8 @@
 #define V90_DOWNSTREAM_RX_H
 
 #include "v90_mp_receiver.h"
-#include "v90_trn2d_rx.h"
+#include "v90_pcm_stream_rx.h"
+#include "v90_phase4.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,6 +39,14 @@ struct v90_downstream_ed_event {
 	uint8_t bit_errors;
 };
 
+struct v90_trn2d_frame {
+	uint8_t bits[V90_PCM_FRAME_MAX_BITS];
+	enum v90_spectral_rule rules[3];
+	uint8_t bit_count;
+	uint8_t rule_count;
+	uint8_t training_bit_errors;
+};
+
 /* A successful event result writes exactly one corresponding member. MP and
  * MP_PRIME differ only in the decoded acknowledge bit. ED_REJECTED reports
  * the number of nonzero descrambled bits across its exact two-frame window. */
@@ -51,8 +60,9 @@ struct v90_downstream_event {
  * TRN2d without resetting the PCM decoder, GPC descrambler, differential
  * decoder, or spectral-shaping histories. */
 struct v90_downstream_rx {
-	struct v90_trn2d_rx stream;
+	struct v90_pcm_stream_rx stream;
 	struct v90_mp_receiver mp;
+	uint64_t trn2d_bit_errors;
 	enum v90_downstream_rx_stage stage;
 	uint8_t ed_frames;
 	uint8_t ed_bit_errors;

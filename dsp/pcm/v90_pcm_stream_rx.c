@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "v90_trn2d_rx.h"
+#include "v90_pcm_stream_rx.h"
 
 #include "v90_pcm_symbol.h"
 
 #include <string.h>
 
-static bool pending_is_valid(const struct v90_trn2d_rx *receiver)
+static bool pending_is_valid(const struct v90_pcm_stream_rx *receiver)
 {
 	const struct v90_pcm_frame_decoder *decoder = &receiver->decoder;
 
@@ -32,7 +32,7 @@ static bool pending_is_valid(const struct v90_trn2d_rx *receiver)
 	return true;
 }
 
-static bool accounting_is_valid(const struct v90_trn2d_rx *receiver)
+static bool accounting_is_valid(const struct v90_pcm_stream_rx *receiver)
 {
 	uint64_t frame_bits = receiver->decoder.mapping.frame_bits;
 
@@ -42,58 +42,47 @@ static bool accounting_is_valid(const struct v90_trn2d_rx *receiver)
 		       receiver->received_symbols % V90_CP_FRAME_INTERVALS &&
 	       receiver->received_frames <= UINT64_MAX / frame_bits &&
 	       receiver->received_bits ==
-		       receiver->received_frames * frame_bits &&
-	       receiver->training_bit_errors <= receiver->received_bits;
+		       receiver->received_frames * frame_bits;
 }
 
-bool v90_trn2d_rx_is_valid(const struct v90_trn2d_rx *receiver)
+bool v90_pcm_stream_rx_is_valid(const struct v90_pcm_stream_rx *receiver)
 {
 	return receiver != NULL &&
 	       v90_pcm_frame_decoder_is_valid(&receiver->decoder) &&
-	       receiver->decoder.mapping.kind == V90_CP_TRAINING &&
 	       v34_scrambler_is_valid(&receiver->descrambler) &&
 	       receiver->descrambler.polynomial == V34_POLYNOMIAL_GPC &&
 	       pending_is_valid(receiver) && accounting_is_valid(receiver);
 }
 
-enum v90_trn2d_rx_result v90_trn2d_rx_init(
-	struct v90_trn2d_rx *receiver,
-	const struct v90_pcm_mapping *training_mapping,
+enum v90_pcm_stream_rx_result v90_pcm_stream_rx_init(
+	struct v90_pcm_stream_rx *receiver,
+	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane decision_plane)
 {
-	struct v90_trn2d_rx initialized = { 0 };
+	struct v90_pcm_stream_rx initialized = { 0 };
 	enum v90_pcm_frame_decoder_result decoder_result;
 
-	if (receiver == NULL || training_mapping == NULL)
-		return V90_TRN2D_RX_INVALID_ARGUMENT;
-	if (!v90_pcm_mapping_is_valid(training_mapping) ||
-	    training_mapping->kind != V90_CP_TRAINING)
-		return V90_TRN2D_RX_INVALID_PARAMETERS;
+	if (receiver == NULL || mapping == NULL)
+		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
+	if (!v90_pcm_mapping_is_valid(mapping))
+		return V90_PCM_STREAM_RX_INVALID_PARAMETERS;
 	decoder_result = v90_pcm_frame_decoder_init(
-		&initialized.decoder, training_mapping, decision_plane);
+		&initialized.decoder, mapping, decision_plane);
 	if (decoder_result == V90_PCM_FRAME_DECODER_INVALID_ARGUMENT)
-		return V90_TRN2D_RX_INVALID_ARGUMENT;
+		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
 	if (decoder_result != V90_PCM_FRAME_DECODER_OK ||
 	    v34_scrambler_init(
 		    &initialized.descrambler, V34_POLYNOMIAL_GPC) !=
 		    V34_FRAMING_OK)
-		return V90_TRN2D_RX_INTERNAL_ERROR;
-	if (!v90_trn2d_rx_is_valid(&initialized))
-		return V90_TRN2D_RX_INTERNAL_ERROR;
+		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
+	if (!v90_pcm_stream_rx_is_valid(&initialized))
+		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
 	*receiver = initialized;
-	return V90_TRN2D_RX_OK;
-}
-
-bool v90_trn2d_rx_minimum_received(
-	const struct v90_trn2d_rx *receiver)
-{
-	return v90_trn2d_rx_is_valid(receiver) &&
-	       receiver->received_symbols >=
-		       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS;
+	return V90_PCM_STREAM_RX_OK;
 }
 
 static bool decision_is_valid(
-	const struct v90_trn2d_rx *receiver, uint8_t ucode)
+	const struct v90_pcm_stream_rx *receiver, uint8_t ucode)
 {
 	uint8_t label;
 
@@ -104,129 +93,124 @@ static bool decision_is_valid(
 	       V90_PCM_MAPPING_OK;
 }
 
-static enum v90_trn2d_rx_result decode_frame(
-	struct v90_trn2d_rx *receiver,
-	struct v90_trn2d_frame *generated)
+static enum v90_pcm_stream_rx_result decode_frame(
+	struct v90_pcm_stream_rx *receiver,
+	struct v90_pcm_stream_frame *generated)
 {
 	struct v90_pcm_frame_decode_output decoded;
-	struct v90_trn2d_frame decoded_frame = { 0 };
-	uint8_t errors = 0;
+	struct v90_pcm_stream_frame decoded_frame = { 0 };
 	enum v90_pcm_frame_decoder_result result;
 
 	if (receiver->received_bits >
 	    UINT64_MAX - receiver->decoder.mapping.frame_bits)
-		return V90_TRN2D_RX_OUT_OF_RANGE;
+		return V90_PCM_STREAM_RX_OUT_OF_RANGE;
 	result = v90_pcm_frame_decoder_decode(
 		&receiver->decoder, receiver->pending_ucodes,
 		receiver->pending_signs, receiver->pending_count, &decoded);
 	if (result == V90_PCM_FRAME_DECODER_INVALID_SYMBOLS)
-		return V90_TRN2D_RX_INVALID_SYMBOL;
+		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
 	if (result != V90_PCM_FRAME_DECODER_OK)
-		return V90_TRN2D_RX_INTERNAL_ERROR;
+		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
 	for (size_t bit = 0; bit < decoded.bit_count; ++bit) {
 		if (v34_descramble_group(
 			    &receiver->descrambler, decoded.bits[bit], 1,
 			    &decoded_frame.bits[bit]) != V34_FRAMING_OK)
-			return V90_TRN2D_RX_INTERNAL_ERROR;
-		if (decoded_frame.bits[bit] != 1)
-			errors++;
+			return V90_PCM_STREAM_RX_INTERNAL_ERROR;
 	}
 	memcpy(decoded_frame.rules, decoded.rules,
 	       decoded.rule_count * sizeof(decoded.rules[0]));
 	decoded_frame.bit_count = decoded.bit_count;
 	decoded_frame.rule_count = decoded.rule_count;
-	decoded_frame.training_bit_errors = errors;
 	receiver->received_frames++;
 	receiver->received_bits += decoded.bit_count;
-	receiver->training_bit_errors += errors;
 	receiver->pending_count = 0;
 	memset(receiver->pending_ucodes, 0,
 	       sizeof(receiver->pending_ucodes));
 	memset(receiver->pending_signs, 0,
 	       sizeof(receiver->pending_signs));
 	*generated = decoded_frame;
-	return V90_TRN2D_RX_FRAME_READY;
+	return V90_PCM_STREAM_RX_FRAME_READY;
 }
 
-static enum v90_trn2d_rx_result receive_valid_decision(
-	struct v90_trn2d_rx *receiver, uint8_t ucode, bool positive,
-	struct v90_trn2d_frame *frame)
+static enum v90_pcm_stream_rx_result receive_valid_decision(
+	struct v90_pcm_stream_rx *receiver, uint8_t ucode, bool positive,
+	struct v90_pcm_stream_frame *frame)
 {
-	struct v90_trn2d_rx next;
-	struct v90_trn2d_frame generated;
-	enum v90_trn2d_rx_result result;
+	struct v90_pcm_stream_rx next;
+	struct v90_pcm_stream_frame generated;
+	enum v90_pcm_stream_rx_result result;
 
 	if (!decision_is_valid(receiver, ucode))
-		return V90_TRN2D_RX_INVALID_SYMBOL;
+		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
 	next = *receiver;
 	next.pending_ucodes[next.pending_count] = ucode;
 	next.pending_signs[next.pending_count] = positive ? 1u : 0u;
 	next.pending_count++;
 	next.received_symbols++;
 	if (next.pending_count < V90_CP_FRAME_INTERVALS)
-		result = V90_TRN2D_RX_BUFFERING;
+		result = V90_PCM_STREAM_RX_BUFFERING;
 	else
 		result = decode_frame(&next, &generated);
-	if (result != V90_TRN2D_RX_BUFFERING &&
-	    result != V90_TRN2D_RX_FRAME_READY)
+	if (result != V90_PCM_STREAM_RX_BUFFERING &&
+	    result != V90_PCM_STREAM_RX_FRAME_READY)
 		return result;
-	if (!v90_trn2d_rx_is_valid(&next))
-		return V90_TRN2D_RX_INTERNAL_ERROR;
+	if (!v90_pcm_stream_rx_is_valid(&next))
+		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
 	*receiver = next;
-	if (result == V90_TRN2D_RX_FRAME_READY)
+	if (result == V90_PCM_STREAM_RX_FRAME_READY)
 		*frame = generated;
 	return result;
 }
 
-enum v90_trn2d_rx_result v90_trn2d_rx_receive_decision(
-	struct v90_trn2d_rx *receiver, uint8_t ucode, bool positive,
-	struct v90_trn2d_frame *frame)
+enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_decision(
+	struct v90_pcm_stream_rx *receiver, uint8_t ucode, bool positive,
+	struct v90_pcm_stream_frame *frame)
 {
 	if (receiver == NULL || frame == NULL)
-		return V90_TRN2D_RX_INVALID_ARGUMENT;
-	if (!v90_trn2d_rx_is_valid(receiver))
-		return V90_TRN2D_RX_INVALID_STATE;
+		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
+	if (!v90_pcm_stream_rx_is_valid(receiver))
+		return V90_PCM_STREAM_RX_INVALID_STATE;
 	return receive_valid_decision(receiver, ucode, positive, frame);
 }
 
-enum v90_trn2d_rx_result v90_trn2d_rx_receive_octet(
-	struct v90_trn2d_rx *receiver, uint8_t network_octet,
-	struct v90_trn2d_frame *frame)
+enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
+	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
+	struct v90_pcm_stream_frame *frame)
 {
 	struct v90_pcm_symbol symbol;
 
 	if (receiver == NULL || frame == NULL)
-		return V90_TRN2D_RX_INVALID_ARGUMENT;
-	if (!v90_trn2d_rx_is_valid(receiver))
-		return V90_TRN2D_RX_INVALID_STATE;
+		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
+	if (!v90_pcm_stream_rx_is_valid(receiver))
+		return V90_PCM_STREAM_RX_INVALID_STATE;
 	if (!v90_pcm_symbol_parse(
 		    &symbol, receiver->decoder.mapping.law, network_octet))
-		return V90_TRN2D_RX_INVALID_SYMBOL;
+		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
 	return receive_valid_decision(
 		receiver, symbol.ucode, symbol.positive, frame);
 }
 
-const char *v90_trn2d_rx_result_name(
-	enum v90_trn2d_rx_result result)
+const char *v90_pcm_stream_rx_result_name(
+	enum v90_pcm_stream_rx_result result)
 {
 	switch (result) {
-	case V90_TRN2D_RX_OK:
+	case V90_PCM_STREAM_RX_OK:
 		return "ok";
-	case V90_TRN2D_RX_BUFFERING:
+	case V90_PCM_STREAM_RX_BUFFERING:
 		return "buffering";
-	case V90_TRN2D_RX_FRAME_READY:
+	case V90_PCM_STREAM_RX_FRAME_READY:
 		return "frame ready";
-	case V90_TRN2D_RX_INVALID_ARGUMENT:
+	case V90_PCM_STREAM_RX_INVALID_ARGUMENT:
 		return "invalid argument";
-	case V90_TRN2D_RX_INVALID_PARAMETERS:
+	case V90_PCM_STREAM_RX_INVALID_PARAMETERS:
 		return "invalid parameters";
-	case V90_TRN2D_RX_INVALID_STATE:
+	case V90_PCM_STREAM_RX_INVALID_STATE:
 		return "invalid state";
-	case V90_TRN2D_RX_INVALID_SYMBOL:
+	case V90_PCM_STREAM_RX_INVALID_SYMBOL:
 		return "invalid symbol";
-	case V90_TRN2D_RX_OUT_OF_RANGE:
+	case V90_PCM_STREAM_RX_OUT_OF_RANGE:
 		return "out of range";
-	case V90_TRN2D_RX_INTERNAL_ERROR:
+	case V90_PCM_STREAM_RX_INTERNAL_ERROR:
 		return "internal error";
 	}
 	return "unknown";

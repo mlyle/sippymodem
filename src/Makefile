@@ -169,7 +169,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_sign_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_sign_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_spectral_shaper.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_trn2d_rx.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_pcm_stream_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_analog_station.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_cp_line_rx.c \

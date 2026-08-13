@@ -232,7 +232,7 @@ static bool run_stream(
 	      transmitter.stage == V90_DOWNSTREAM_TX_ED &&
 	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&
 	      transmitter.transmitted_symbols == symbols &&
-	      receiver.stream.training_bit_errors == 0 &&
+	      receiver.trn2d_bit_errors == 0 &&
 	      v90_downstream_tx_is_complete(&transmitter) &&
 	      v90_downstream_rx_is_complete(&receiver) &&
 	      v90_downstream_tx_is_valid(&transmitter) &&

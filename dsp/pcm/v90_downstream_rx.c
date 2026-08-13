@@ -24,16 +24,21 @@ bool v90_downstream_rx_is_valid(
 	const struct v90_downstream_rx *receiver)
 {
 	size_t ed_bits;
+	uint64_t training_bits;
 
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
-	    !v90_trn2d_rx_is_valid(&receiver->stream) ||
+	    !v90_pcm_stream_rx_is_valid(&receiver->stream) ||
+	    receiver->stream.decoder.mapping.kind != V90_CP_TRAINING ||
 	    !v90_mp_receiver_is_valid(&receiver->mp) ||
 	    receiver->mp.training_frame_bits !=
 		    receiver->stream.decoder.mapping.frame_bits)
 		return false;
+	training_bits = (uint64_t)V90_PHASE4_TRN2D_MINIMUM_FRAMES *
+			receiver->stream.decoder.mapping.frame_bits;
 	ed_bits = receiver->ed_frames *
 		  (size_t)receiver->stream.decoder.mapping.frame_bits;
-	if (receiver->ed_bit_errors > ed_bits ||
+	if (receiver->trn2d_bit_errors > training_bits ||
+	    receiver->ed_bit_errors > ed_bits ||
 	    (receiver->mp_prime_boundary &&
 	     (receiver->stage != V90_DOWNSTREAM_RX_MP_SEARCH ||
 	      receiver->ed_requested || receiver->stream.pending_count != 0 ||
@@ -68,18 +73,21 @@ enum v90_downstream_rx_result v90_downstream_rx_init(
 	enum v90_pcm_mapping_plane decision_plane)
 {
 	struct v90_downstream_rx initialized = { 0 };
-	enum v90_trn2d_rx_result stream_result;
+	enum v90_pcm_stream_rx_result stream_result;
 	enum v90_mp_receiver_result mp_result;
 
 	if (receiver == NULL || training_mapping == NULL)
 		return V90_DOWNSTREAM_RX_INVALID_ARGUMENT;
-	stream_result = v90_trn2d_rx_init(
-		&initialized.stream, training_mapping, decision_plane);
-	if (stream_result == V90_TRN2D_RX_INVALID_ARGUMENT)
-		return V90_DOWNSTREAM_RX_INVALID_ARGUMENT;
-	if (stream_result == V90_TRN2D_RX_INVALID_PARAMETERS)
+	if (!v90_pcm_mapping_is_valid(training_mapping) ||
+	    training_mapping->kind != V90_CP_TRAINING)
 		return V90_DOWNSTREAM_RX_INVALID_PARAMETERS;
-	if (stream_result != V90_TRN2D_RX_OK)
+	stream_result = v90_pcm_stream_rx_init(
+		&initialized.stream, training_mapping, decision_plane);
+	if (stream_result == V90_PCM_STREAM_RX_INVALID_ARGUMENT)
+		return V90_DOWNSTREAM_RX_INVALID_ARGUMENT;
+	if (stream_result == V90_PCM_STREAM_RX_INVALID_PARAMETERS)
+		return V90_DOWNSTREAM_RX_INVALID_PARAMETERS;
+	if (stream_result != V90_PCM_STREAM_RX_OK)
 		return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
 	mp_result = v90_mp_receiver_init(
 		&initialized.mp, training_mapping->frame_bits);
@@ -107,7 +115,7 @@ bool v90_downstream_rx_is_fresh(
 	    receiver->stream.received_symbols != 0 ||
 	    receiver->stream.received_frames != 0 ||
 	    receiver->stream.received_bits != 0 ||
-	    receiver->stream.training_bit_errors != 0)
+	    receiver->trn2d_bit_errors != 0)
 		return false;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
@@ -174,7 +182,7 @@ static bool record_acknowledges_cp(const struct v90_mp_record *record)
 
 static enum v90_downstream_rx_result feed_mp_frame(
 	struct v90_downstream_rx *receiver,
-	const struct v90_trn2d_frame *frame,
+	const struct v90_pcm_stream_frame *frame,
 	struct v90_downstream_event *event)
 {
 	struct v90_mp_event emitted = { 0 };
@@ -211,29 +219,29 @@ static enum v90_downstream_rx_result feed_mp_frame(
 }
 
 static enum v90_downstream_rx_result map_stream_failure(
-	enum v90_trn2d_rx_result result)
+	enum v90_pcm_stream_rx_result result)
 {
 	switch (result) {
-	case V90_TRN2D_RX_INVALID_ARGUMENT:
+	case V90_PCM_STREAM_RX_INVALID_ARGUMENT:
 		return V90_DOWNSTREAM_RX_INVALID_ARGUMENT;
-	case V90_TRN2D_RX_INVALID_PARAMETERS:
+	case V90_PCM_STREAM_RX_INVALID_PARAMETERS:
 		return V90_DOWNSTREAM_RX_INVALID_PARAMETERS;
-	case V90_TRN2D_RX_INVALID_STATE:
+	case V90_PCM_STREAM_RX_INVALID_STATE:
 		return V90_DOWNSTREAM_RX_INVALID_STATE;
-	case V90_TRN2D_RX_INVALID_SYMBOL:
+	case V90_PCM_STREAM_RX_INVALID_SYMBOL:
 		return V90_DOWNSTREAM_RX_INVALID_SYMBOL;
-	case V90_TRN2D_RX_OUT_OF_RANGE:
+	case V90_PCM_STREAM_RX_OUT_OF_RANGE:
 		return V90_DOWNSTREAM_RX_OUT_OF_RANGE;
-	case V90_TRN2D_RX_OK:
-	case V90_TRN2D_RX_BUFFERING:
-	case V90_TRN2D_RX_FRAME_READY:
-	case V90_TRN2D_RX_INTERNAL_ERROR:
+	case V90_PCM_STREAM_RX_OK:
+	case V90_PCM_STREAM_RX_BUFFERING:
+	case V90_PCM_STREAM_RX_FRAME_READY:
+	case V90_PCM_STREAM_RX_INTERNAL_ERROR:
 		return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
 	}
 	return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
 }
 
-static uint8_t nonzero_bits(const struct v90_trn2d_frame *frame)
+static uint8_t nonzero_bits(const struct v90_pcm_stream_frame *frame)
 {
 	uint8_t count = 0;
 
@@ -242,9 +250,33 @@ static uint8_t nonzero_bits(const struct v90_trn2d_frame *frame)
 	return count;
 }
 
+static uint8_t nonone_bits(const struct v90_pcm_stream_frame *frame)
+{
+	uint8_t count = 0;
+
+	for (size_t bit = 0; bit < frame->bit_count; ++bit)
+		count += frame->bits[bit] != 1;
+	return count;
+}
+
+static struct v90_trn2d_frame classify_trn2d(
+	const struct v90_pcm_stream_frame *frame)
+{
+	struct v90_trn2d_frame classified = {
+		.bit_count = frame->bit_count,
+		.rule_count = frame->rule_count,
+		.training_bit_errors = nonone_bits(frame),
+	};
+
+	memcpy(classified.bits, frame->bits, frame->bit_count);
+	memcpy(classified.rules, frame->rules,
+	       frame->rule_count * sizeof(frame->rules[0]));
+	return classified;
+}
+
 static enum v90_downstream_rx_result receive_mp_frame(
 	struct v90_downstream_rx *receiver,
-	const struct v90_trn2d_frame *frame,
+	const struct v90_pcm_stream_frame *frame,
 	struct v90_downstream_event *event)
 {
 	enum v90_downstream_rx_result result =
@@ -261,7 +293,7 @@ static enum v90_downstream_rx_result receive_mp_frame(
 
 static enum v90_downstream_rx_result receive_ed_frame(
 	struct v90_downstream_rx *receiver,
-	const struct v90_trn2d_frame *frame,
+	const struct v90_pcm_stream_frame *frame,
 	struct v90_downstream_event *event)
 {
 	enum v90_downstream_rx_result result =
@@ -301,9 +333,9 @@ enum v90_downstream_rx_result v90_downstream_rx_receive(
 {
 	struct v90_downstream_rx next;
 	struct v90_downstream_event generated = { 0 };
-	struct v90_trn2d_frame frame;
+	struct v90_pcm_stream_frame frame;
 	enum v90_downstream_rx_result result;
-	enum v90_trn2d_rx_result stream_result;
+	enum v90_pcm_stream_rx_result stream_result;
 
 	if (receiver == NULL || event == NULL)
 		return V90_DOWNSTREAM_RX_INVALID_ARGUMENT;
@@ -314,32 +346,26 @@ enum v90_downstream_rx_result v90_downstream_rx_receive(
 	next = *receiver;
 	if (next.stage == V90_DOWNSTREAM_RX_MP_SEARCH)
 		next.mp_prime_boundary = false;
-	stream_result = v90_trn2d_rx_receive_octet(
+	stream_result = v90_pcm_stream_rx_receive_octet(
 		&next.stream, network_octet, &frame);
-	if (stream_result == V90_TRN2D_RX_BUFFERING) {
+	if (stream_result == V90_PCM_STREAM_RX_BUFFERING) {
 		if (!v90_downstream_rx_is_valid(&next))
 			return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
 		*receiver = next;
 		return V90_DOWNSTREAM_RX_BUFFERING;
 	}
-	if (stream_result != V90_TRN2D_RX_FRAME_READY)
+	if (stream_result != V90_PCM_STREAM_RX_FRAME_READY)
 		return map_stream_failure(stream_result);
 
 	if (next.stage == V90_DOWNSTREAM_RX_TRN2D) {
-		generated.trn2d = frame;
+		generated.trn2d = classify_trn2d(&frame);
+		next.trn2d_bit_errors +=
+			generated.trn2d.training_bit_errors;
 		if (next.stream.received_symbols ==
 		    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS)
 			next.stage = V90_DOWNSTREAM_RX_MP_SEARCH;
 		result = V90_DOWNSTREAM_RX_TRN2D_FRAME;
 	} else {
-		/* The lower owner computes departures from TRN2d ones for every
-		 * decoded frame. Once MP search begins, remove that policy-only
-		 * classification while retaining its complete coding state. */
-		if (next.stream.training_bit_errors <
-		    frame.training_bit_errors)
-			return V90_DOWNSTREAM_RX_INTERNAL_ERROR;
-		next.stream.training_bit_errors -=
-			frame.training_bit_errors;
 		result = next.stage == V90_DOWNSTREAM_RX_ED_SEARCH ?
 				 receive_ed_frame(&next, &frame, &generated) :
 				 receive_mp_frame(&next, &frame, &generated);

@@ -201,7 +201,7 @@ static bool verify_downstream_handoffs(
 	      expected.transmitted_symbols == 48 &&
 	      analog->receiver.stream.received_symbols == symbols &&
 	      training_frames == 8 &&
-	      analog->receiver.stream.training_bit_errors == 0 &&
+	      analog->receiver.trn2d_bit_errors == 0 &&
 	      v90_downstream_rx_is_valid(&analog->receiver),
 	      "paired TRN2d handoff lost its exact Ri boundary");
 
@@ -267,7 +267,7 @@ static bool verify_downstream_handoffs(
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      digital->transmitter.transmitted_symbols == symbols &&
 	      analog->receiver.stream.received_symbols == symbols &&
-	      analog->receiver.stream.training_bit_errors == 0 &&
+	      analog->receiver.trn2d_bit_errors == 0 &&
 	      v90_downstream_tx_is_valid(&digital->transmitter) &&
 	      v90_downstream_rx_is_valid(&analog->receiver),
 	      "paired handoffs did not reach MP prime continuously");

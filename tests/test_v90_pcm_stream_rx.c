@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v90_trn2d_rx.h>
+#include <v90_pcm_stream_rx.h>
 #include <v90_downstream_tx.h>
 
 #include "test.h"
@@ -71,13 +71,12 @@ static bool make_plane_octet(
 }
 
 static bool frame_is_expected(
-	const struct v90_trn2d_frame *frame,
+	const struct v90_pcm_stream_frame *frame,
 	const struct v90_pcm_mapping *mapping,
 	const enum v90_spectral_rule expected_rules[3])
 {
 	if (frame->bit_count != mapping->frame_bits ||
 	    frame->rule_count != mapping->sign_redundancy ||
-	    frame->training_bit_errors != 0 ||
 	    memcmp(frame->rules, expected_rules,
 		   frame->rule_count * sizeof(frame->rules[0])) != 0)
 		return false;
@@ -104,7 +103,7 @@ static bool run_sequence(
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_downstream_tx transmitter;
-	struct v90_trn2d_rx receivers[2];
+	struct v90_pcm_stream_rx receivers[2];
 	enum v90_spectral_rule expected_rules[3] = { 0 };
 	size_t expected_rule_count = 0;
 
@@ -113,20 +112,20 @@ static bool run_sequence(
 		      redundancy, lookahead) &&
 	      v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK &&
-	      v90_trn2d_rx_init(
+	      v90_pcm_stream_rx_init(
 		      &receivers[0], &mapping,
-		      V90_PCM_MAPPING_TRANSMIT) == V90_TRN2D_RX_OK &&
-	      v90_trn2d_rx_init(
+		      V90_PCM_MAPPING_TRANSMIT) == V90_PCM_STREAM_RX_OK &&
+	      v90_pcm_stream_rx_init(
 		      &receivers[1], &mapping,
-		      V90_PCM_MAPPING_CODEC) == V90_TRN2D_RX_OK,
+		      V90_PCM_MAPPING_CODEC) == V90_PCM_STREAM_RX_OK,
 	      "sequence fixture did not initialize");
 	for (size_t index = 0; index < symbol_limit; ++index) {
 		struct v90_downstream_symbol symbol;
-		enum v90_trn2d_rx_result expected_result =
+		enum v90_pcm_stream_rx_result expected_result =
 			index % V90_CP_FRAME_INTERVALS ==
 				V90_CP_FRAME_INTERVALS - 1u ?
-				V90_TRN2D_RX_FRAME_READY :
-				V90_TRN2D_RX_BUFFERING;
+				V90_PCM_STREAM_RX_FRAME_READY :
+				V90_PCM_STREAM_RX_BUFFERING;
 
 		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
 			      V90_DOWNSTREAM_TX_OK,
@@ -138,10 +137,10 @@ static bool run_sequence(
 				symbol.shaping_rule;
 		}
 		for (size_t plane = 0; plane < ARRAY_LENGTH(receivers); ++plane) {
-			struct v90_trn2d_frame frame;
-			struct v90_trn2d_frame sentinel;
+			struct v90_pcm_stream_frame frame;
+			struct v90_pcm_stream_frame sentinel;
 			uint8_t octet;
-			enum v90_trn2d_rx_result result;
+			enum v90_pcm_stream_rx_result result;
 
 			CHECK(make_plane_octet(
 				      &mapping, &symbol,
@@ -151,12 +150,12 @@ static bool run_sequence(
 			      "plane %zu symbol %zu did not map", plane, index);
 			memset(&frame, 0xa5, sizeof(frame));
 			sentinel = frame;
-			result = v90_trn2d_rx_receive_octet(
+			result = v90_pcm_stream_rx_receive_octet(
 				&receivers[plane], octet, &frame);
 			CHECK(result == expected_result,
 			      "plane %zu symbol %zu returned %s", plane, index,
-			      v90_trn2d_rx_result_name(result));
-			if (result == V90_TRN2D_RX_FRAME_READY)
+			      v90_pcm_stream_rx_result_name(result));
+			if (result == V90_PCM_STREAM_RX_FRAME_READY)
 				CHECK(frame_is_expected(
 					      &frame, &mapping, expected_rules),
 				      "plane %zu frame %llu did not decode",
@@ -166,13 +165,8 @@ static bool run_sequence(
 			else
 				CHECK(memcmp(&frame, &sentinel, sizeof(frame)) == 0,
 				      "buffering changed frame output");
-			CHECK(v90_trn2d_rx_minimum_received(&receivers[plane]) ==
-				      (index + 1u >=
-				       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS),
-			      "plane %zu minimum changed at symbol %zu",
-			      plane, index);
 		}
-		if (expected_result == V90_TRN2D_RX_FRAME_READY) {
+		if (expected_result == V90_PCM_STREAM_RX_FRAME_READY) {
 			CHECK(expected_rule_count == redundancy,
 			      "frame reported %zu rules instead of %u",
 			      expected_rule_count, redundancy);
@@ -184,8 +178,7 @@ static bool run_sequence(
 		CHECK(receivers[plane].received_symbols == symbol_limit &&
 		      receivers[plane].received_frames ==
 			      symbol_limit / V90_CP_FRAME_INTERVALS &&
-		      receivers[plane].training_bit_errors == 0 &&
-		      v90_trn2d_rx_is_valid(&receivers[plane]),
+		      v90_pcm_stream_rx_is_valid(&receivers[plane]),
 		      "plane %zu accounting changed", plane);
 	}
 	return true;
@@ -210,29 +203,25 @@ static bool test_generated_sequences(void)
 	return true;
 }
 
-static bool test_minimum_and_errors(void)
+static bool test_descrambled_bits(void)
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_downstream_tx transmitter;
-	struct v90_trn2d_rx receiver;
-	struct v90_trn2d_frame frame;
+	struct v90_pcm_stream_rx receiver;
+	struct v90_pcm_stream_frame frame;
 
-	CHECK(run_sequence(
-		      G711_LAW_PCMU, 3, 3,
-		      V90_PHASE4_TRN2D_MINIMUM_SYMBOLS),
-	      "minimum-length sequence failed");
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMA, 0, 0) &&
 	      v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK &&
-	      v90_trn2d_rx_init(
+	      v90_pcm_stream_rx_init(
 		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
-		      V90_TRN2D_RX_OK,
+		      V90_PCM_STREAM_RX_OK,
 	      "error fixture did not initialize");
 	for (size_t index = 0; index < V90_CP_FRAME_INTERVALS; ++index) {
 		struct v90_downstream_symbol symbol;
 		struct v90_pcm_symbol altered;
-		enum v90_trn2d_rx_result result;
+		enum v90_pcm_stream_rx_result result;
 
 		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
 			      V90_DOWNSTREAM_TX_OK &&
@@ -241,19 +230,18 @@ static bool test_minimum_and_errors(void)
 			      index == 0 ? !symbol.pcm.positive :
 					   symbol.pcm.positive),
 		      "error symbol %zu was not generated", index);
-		result = v90_trn2d_rx_receive_octet(
+		result = v90_pcm_stream_rx_receive_octet(
 			&receiver, altered.octet, &frame);
 		CHECK(result == (index == V90_CP_FRAME_INTERVALS - 1u ?
-					 V90_TRN2D_RX_FRAME_READY :
-					 V90_TRN2D_RX_BUFFERING),
+					 V90_PCM_STREAM_RX_FRAME_READY :
+					 V90_PCM_STREAM_RX_BUFFERING),
 		      "error symbol %zu returned %s", index,
-		      v90_trn2d_rx_result_name(result));
+		      v90_pcm_stream_rx_result_name(result));
 	}
-	CHECK(frame.training_bit_errors > 0 &&
-	      receiver.training_bit_errors == frame.training_bit_errors &&
-	      !v90_trn2d_rx_minimum_received(&receiver) &&
-	      !v90_trn2d_rx_minimum_received(NULL),
-	      "training error accounting changed");
+	bool changed = false;
+	for (size_t bit = 0; bit < frame.bit_count; ++bit)
+		changed = changed || frame.bits[bit] != 1;
+	CHECK(changed, "altered stream did not change decoded bits");
 	return true;
 }
 
@@ -276,12 +264,12 @@ static bool labels_to_ucodes(
 static bool test_contracts(void)
 {
 	struct v90_pcm_mapping mapping;
-	struct v90_trn2d_rx receiver;
-	struct v90_trn2d_rx saved_receiver;
-	struct v90_trn2d_rx untouched;
-	struct v90_trn2d_rx saved_untouched;
-	struct v90_trn2d_frame frame;
-	struct v90_trn2d_frame saved_frame;
+	struct v90_pcm_stream_rx receiver;
+	struct v90_pcm_stream_rx saved_receiver;
+	struct v90_pcm_stream_rx untouched;
+	struct v90_pcm_stream_rx saved_untouched;
+	struct v90_pcm_stream_frame frame;
+	struct v90_pcm_stream_frame saved_frame;
 	uint8_t labels[V90_CP_FRAME_INTERVALS];
 	uint8_t ucodes[V90_CP_FRAME_INTERVALS];
 
@@ -290,33 +278,32 @@ static bool test_contracts(void)
 	      "contract mapping did not initialize");
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved_untouched = untouched;
-	CHECK(v90_trn2d_rx_init(
+	CHECK(v90_pcm_stream_rx_init(
 		      &untouched, &mapping,
 		      (enum v90_pcm_mapping_plane)99) ==
-		      V90_TRN2D_RX_INVALID_ARGUMENT &&
+		      V90_PCM_STREAM_RX_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &saved_untouched,
 		     sizeof(untouched)) == 0,
 	      "rejected plane changed its destination");
 	CHECK(make_mapping(
 		      &mapping, V90_CP_DATA, G711_LAW_PCMU, 0, 0) &&
-	      v90_trn2d_rx_init(
-		      &untouched, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
-		      V90_TRN2D_RX_INVALID_PARAMETERS &&
-	      memcmp(&untouched, &saved_untouched,
-		     sizeof(untouched)) == 0,
-	      "data mapping was accepted for TRN2d");
+	      v90_pcm_stream_rx_init(
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_PCM_STREAM_RX_OK &&
+	      receiver.decoder.mapping.kind == V90_CP_DATA,
+	      "data mapping was not accepted");
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMU, 0, 0) &&
-	      v90_trn2d_rx_init(
+	      v90_pcm_stream_rx_init(
 		      &receiver, &mapping, V90_PCM_MAPPING_CODEC) ==
-		      V90_TRN2D_RX_OK,
+		      V90_PCM_STREAM_RX_OK,
 	      "contract receiver did not initialize");
 	memset(&frame, 0x5a, sizeof(frame));
 	saved_frame = frame;
 	saved_receiver = receiver;
-	CHECK(v90_trn2d_rx_receive_decision(
+	CHECK(v90_pcm_stream_rx_receive_decision(
 		      &receiver, 0, false, &frame) ==
-		      V90_TRN2D_RX_INVALID_SYMBOL &&
+		      V90_PCM_STREAM_RX_INVALID_SYMBOL &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "absent decision was not transactional");
@@ -326,34 +313,34 @@ static bool test_contracts(void)
 	      "unused tuple did not map to valid decisions");
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS - 1u; ++interval) {
-		CHECK(v90_trn2d_rx_receive_decision(
+		CHECK(v90_pcm_stream_rx_receive_decision(
 			      &receiver, ucodes[interval], false, &frame) ==
-			      V90_TRN2D_RX_BUFFERING &&
+			      V90_PCM_STREAM_RX_BUFFERING &&
 		      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 		      "partial frame %zu changed output", interval);
 	}
 	saved_receiver = receiver;
-	CHECK(v90_trn2d_rx_receive_decision(
+	CHECK(v90_pcm_stream_rx_receive_decision(
 		      &receiver, ucodes[V90_CP_FRAME_INTERVALS - 1u],
-		      false, &frame) == V90_TRN2D_RX_INVALID_SYMBOL &&
+		      false, &frame) == V90_PCM_STREAM_RX_INVALID_SYMBOL &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "unused tuple was not rejected transactionally");
-	CHECK(v90_trn2d_rx_receive_decision(
+	CHECK(v90_pcm_stream_rx_receive_decision(
 		      NULL, ucodes[0], false, &frame) ==
-		      V90_TRN2D_RX_INVALID_ARGUMENT &&
-	      v90_trn2d_rx_receive_decision(
+		      V90_PCM_STREAM_RX_INVALID_ARGUMENT &&
+	      v90_pcm_stream_rx_receive_decision(
 		      &receiver, ucodes[0], false, NULL) ==
-		      V90_TRN2D_RX_INVALID_ARGUMENT &&
-	      v90_trn2d_rx_receive_octet(NULL, 0, &frame) ==
-		      V90_TRN2D_RX_INVALID_ARGUMENT &&
-	      v90_trn2d_rx_init(
+		      V90_PCM_STREAM_RX_INVALID_ARGUMENT &&
+	      v90_pcm_stream_rx_receive_octet(NULL, 0, &frame) ==
+		      V90_PCM_STREAM_RX_INVALID_ARGUMENT &&
+	      v90_pcm_stream_rx_init(
 		      NULL, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
-		      V90_TRN2D_RX_INVALID_ARGUMENT,
+		      V90_PCM_STREAM_RX_INVALID_ARGUMENT,
 	      "null argument was accepted");
-	CHECK(v90_trn2d_rx_init(
+	CHECK(v90_pcm_stream_rx_init(
 		      &receiver, &mapping, V90_PCM_MAPPING_CODEC) ==
-		      V90_TRN2D_RX_OK,
+		      V90_PCM_STREAM_RX_OK,
 	      "counter-limit receiver did not initialize");
 	receiver.received_frames = UINT64_MAX / mapping.frame_bits;
 	receiver.received_symbols =
@@ -361,33 +348,33 @@ static bool test_contracts(void)
 	receiver.received_bits =
 		receiver.received_frames * mapping.frame_bits;
 	memset(labels, 0, sizeof(labels));
-	CHECK(v90_trn2d_rx_is_valid(&receiver) &&
+	CHECK(v90_pcm_stream_rx_is_valid(&receiver) &&
 	      labels_to_ucodes(
 		      &mapping, V90_PCM_MAPPING_CODEC, labels, ucodes),
 	      "counter-limit state was not representable");
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS - 1u; ++interval) {
-		CHECK(v90_trn2d_rx_receive_decision(
+		CHECK(v90_pcm_stream_rx_receive_decision(
 			      &receiver, ucodes[interval], false, &frame) ==
-			      V90_TRN2D_RX_BUFFERING,
+			      V90_PCM_STREAM_RX_BUFFERING,
 		      "counter-limit prefix %zu failed", interval);
 	}
 	saved_receiver = receiver;
-	CHECK(v90_trn2d_rx_receive_decision(
+	CHECK(v90_pcm_stream_rx_receive_decision(
 		      &receiver, ucodes[V90_CP_FRAME_INTERVALS - 1u],
-		      false, &frame) == V90_TRN2D_RX_OUT_OF_RANGE &&
+		      false, &frame) == V90_PCM_STREAM_RX_OUT_OF_RANGE &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "counter overflow was not rejected transactionally");
 	receiver.pending_count = V90_CP_FRAME_INTERVALS;
-	CHECK(!v90_trn2d_rx_is_valid(&receiver) &&
-	      !v90_trn2d_rx_is_valid(NULL) &&
-	      v90_trn2d_rx_receive_octet(&receiver, 0, &frame) ==
-		      V90_TRN2D_RX_INVALID_STATE &&
-	      strcmp(v90_trn2d_rx_result_name(V90_TRN2D_RX_FRAME_READY),
+	CHECK(!v90_pcm_stream_rx_is_valid(&receiver) &&
+	      !v90_pcm_stream_rx_is_valid(NULL) &&
+	      v90_pcm_stream_rx_receive_octet(&receiver, 0, &frame) ==
+		      V90_PCM_STREAM_RX_INVALID_STATE &&
+	      strcmp(v90_pcm_stream_rx_result_name(V90_PCM_STREAM_RX_FRAME_READY),
 		     "frame ready") == 0 &&
-	      strcmp(v90_trn2d_rx_result_name(
-		     (enum v90_trn2d_rx_result)99),
+	      strcmp(v90_pcm_stream_rx_result_name(
+		     (enum v90_pcm_stream_rx_result)99),
 		     "unknown") == 0,
 	      "state or result-name contract changed");
 	return true;
@@ -402,7 +389,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "generated sequences", test_generated_sequences },
-		{ "minimum and errors", test_minimum_and_errors },
+		{ "descrambled bits", test_descrambled_bits },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

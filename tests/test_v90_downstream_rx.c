@@ -349,7 +349,7 @@ static bool run_continuous_stream(enum g711_law law)
 	      records_match(
 		      &observer.events[2].mp.record, &mp_prime),
 	      "continuous MP event order changed");
-	CHECK(receiver.stream.training_bit_errors == 0 &&
+	CHECK(receiver.trn2d_bit_errors == 0 &&
 	      receiver.stream.received_symbols >=
 		      V90_PHASE4_TRN2D_MINIMUM_SYMBOLS +
 			      EXTRA_TRN2D_FRAMES *
@@ -369,6 +369,61 @@ static bool test_continuous_stream(void)
 	      "PCMU downstream stream failed");
 	CHECK(run_continuous_stream(G711_LAW_PCMA),
 	      "PCMA downstream stream failed");
+	return true;
+}
+
+static bool test_trn2d_error_accounting(void)
+{
+	struct v90_pcm_mapping mapping;
+	struct v90_downstream_rx receiver;
+	struct source source;
+	struct v90_pcm_frame_output output;
+	struct v90_downstream_event event;
+	uint8_t ones[FRAME_BITS];
+	uint8_t scrambled[FRAME_BITS];
+
+	memset(ones, 1, sizeof(ones));
+	CHECK(make_mapping(&mapping, G711_LAW_PCMA, 0, 0) &&
+	      source_init(&source, &mapping) &&
+	      v90_downstream_rx_init(
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RX_OK,
+	      "TRN2d error fixture did not initialize");
+	for (size_t bit = 0; bit < FRAME_BITS; ++bit) {
+		CHECK(v34_scramble_group(
+			      &source.scrambler, ones[bit], 1,
+			      &scrambled[bit]) == V34_FRAMING_OK,
+		      "TRN2d error source did not scramble bit %zu", bit);
+	}
+	CHECK(v90_pcm_frame_encoder_process(
+		      &source.encoder, scrambled, FRAME_BITS, &output) ==
+		      V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
+	      output.symbol_count == V90_CP_FRAME_INTERVALS,
+	      "TRN2d error source did not emit one frame");
+	for (size_t symbol = 0; symbol < output.symbol_count; ++symbol) {
+		struct v90_pcm_symbol altered = output.symbols[symbol];
+		enum v90_downstream_rx_result result;
+
+		if (symbol == 0) {
+			CHECK(v90_pcm_symbol_make(
+				      &altered, mapping.law, altered.ucode,
+				      !altered.positive),
+			      "TRN2d error symbol did not invert");
+		}
+		result = v90_downstream_rx_receive(
+			&receiver, altered.octet, &event);
+		CHECK(result == (symbol + 1u == output.symbol_count ?
+					 V90_DOWNSTREAM_RX_TRN2D_FRAME :
+					 V90_DOWNSTREAM_RX_BUFFERING),
+		      "TRN2d error symbol %zu returned %s", symbol,
+		      v90_downstream_rx_result_name(result));
+	}
+	CHECK(event.trn2d.training_bit_errors > 0 &&
+	      receiver.trn2d_bit_errors ==
+		      event.trn2d.training_bit_errors &&
+	      receiver.stage == V90_DOWNSTREAM_RX_TRN2D &&
+	      v90_downstream_rx_is_valid(&receiver),
+	      "TRN2d error accounting escaped the Phase 4 owner");
 	return true;
 }
 
@@ -447,7 +502,7 @@ static bool run_ed_transition(
 		      V90_PHASE4_ED_FRAMES * FRAME_BITS &&
 	      observer.events[2].ed.bit_errors == (corrupt ? 1u : 0u) &&
 	      receiver.stream.received_symbols == expected_symbols &&
-	      receiver.stream.training_bit_errors == 0 &&
+	      receiver.trn2d_bit_errors == 0 &&
 	      v90_downstream_rx_is_valid(&receiver) &&
 	      v90_downstream_rx_is_complete(&receiver) == !corrupt &&
 	      v90_downstream_rx_has_failed(&receiver) == corrupt,
@@ -625,6 +680,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "continuous TRN2d and MP", test_continuous_stream },
+		{ "TRN2d error accounting", test_trn2d_error_accounting },
 		{ "Ed transition", test_ed_transition },
 		{ "Ed boundary request", test_ed_boundary_request },
 		{ "contracts", test_contracts },
