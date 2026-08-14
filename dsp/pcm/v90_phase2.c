@@ -418,7 +418,7 @@ static void fail_internal(
 static bool enter_initial_probe(
 	struct v90_phase2 *phase2, struct v90_phase2_event *event)
 {
-	const struct v90_phase2_info0_exchange *exchange =
+	const struct pcm_phase2_info0_exchange *exchange =
 		&phase2->state.ranging.info0_exchange;
 	struct v90_phase2_initial_probe next;
 
@@ -479,7 +479,7 @@ static bool sample_ranging(
 		    &phase2->state.ranging, received_sample,
 		    transmit_sample, &child) != V90_PHASE2_RANGING_OK)
 		return false;
-	if (child.exchange_event.peer_info0_event == V90_PEER_INFO0_RECEIVED) {
+	if (child.exchange_event.peer_info0_event == PCM_PEER_INFO0_RECEIVED) {
 		phase2->peer_info0 = child.exchange_event.peer_info0;
 		phase2->peer_info0_stored = true;
 	}

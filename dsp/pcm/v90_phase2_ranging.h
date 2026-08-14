@@ -4,7 +4,7 @@
 #define V90_PHASE2_RANGING_H
 
 #include "phase2_ranging.h"
-#include "v90_phase2_info0_exchange.h"
+#include "pcm_phase2_info0_exchange.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -15,13 +15,13 @@ enum v90_phase2_ranging_result {
 };
 
 struct v90_phase2_ranging_event {
-	struct v90_phase2_info0_exchange_event exchange_event;
+	struct pcm_phase2_info0_exchange_event exchange_event;
 	enum phase2_ranging_event_kind kind;
 	uint16_t round_trip_delay_samples;
 };
 
 struct v90_phase2_ranging {
-	struct v90_phase2_info0_exchange info0_exchange;
+	struct pcm_phase2_info0_exchange info0_exchange;
 	struct phase2_ranging_control control;
 };
 

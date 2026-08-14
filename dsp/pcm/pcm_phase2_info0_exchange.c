@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "v90_phase2_info0_exchange.h"
+#include "pcm_phase2_info0_exchange.h"
 
 static bool role_is_valid(enum v90_modem_role role)
 {
@@ -25,7 +25,7 @@ static size_t peer_payload_bits(enum v90_modem_role role)
 }
 
 static bool peer_info0_is_valid(
-	const struct v90_phase2_info0_exchange *exchange)
+	const struct pcm_phase2_info0_exchange *exchange)
 {
 	if (!exchange->peer_info0_received)
 		return true;
@@ -34,8 +34,8 @@ static bool peer_info0_is_valid(
 		       v90_info0_is_valid(&exchange->peer_info0.analog);
 }
 
-bool v90_phase2_info0_exchange_is_valid(
-	const struct v90_phase2_info0_exchange *exchange)
+bool pcm_phase2_info0_exchange_is_valid(
+	const struct pcm_phase2_info0_exchange *exchange)
 {
 	return exchange != NULL && role_is_valid(exchange->local_role) &&
 	       phase2_info0_exchange_is_valid(&exchange->transport) &&
@@ -49,12 +49,12 @@ bool v90_phase2_info0_exchange_is_valid(
 	       peer_info0_is_valid(exchange);
 }
 
-static enum v90_phase2_info0_exchange_result initialize(
-	struct v90_phase2_info0_exchange *exchange,
+static enum pcm_phase2_info0_exchange_result initialize(
+	struct pcm_phase2_info0_exchange *exchange,
 	enum v90_modem_role role, int16_t nominal_amplitude,
 	const uint8_t *payload)
 {
-	struct v90_phase2_info0_exchange initialized = {
+	struct pcm_phase2_info0_exchange initialized = {
 		.local_role = role,
 	};
 
@@ -63,15 +63,15 @@ static enum v90_phase2_info0_exchange_result initialize(
 		    &initialized.transport, signal_for_role(role),
 		    nominal_amplitude, payload, local_payload_bits(role),
 		    peer_payload_bits(role)) != PHASE2_INFO0_EXCHANGE_OK ||
-	    !v90_phase2_info0_exchange_is_valid(&initialized))
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	    !pcm_phase2_info0_exchange_is_valid(&initialized))
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	*exchange = initialized;
-	return V90_PHASE2_INFO0_EXCHANGE_OK;
+	return PCM_PHASE2_INFO0_EXCHANGE_OK;
 }
 
-enum v90_phase2_info0_exchange_result
-v90_phase2_info0_exchange_init_analog(
-	struct v90_phase2_info0_exchange *exchange,
+enum pcm_phase2_info0_exchange_result
+pcm_phase2_info0_exchange_init_analog(
+	struct pcm_phase2_info0_exchange *exchange,
 	int16_t nominal_amplitude,
 	const struct v90_info0 *local_info0a)
 {
@@ -79,19 +79,19 @@ v90_phase2_info0_exchange_init_analog(
 	uint8_t payload[V90_INFO0A_PAYLOAD_BYTES];
 
 	if (!v90_info0_is_valid(local_info0a))
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	initial = *local_info0a;
 	initial.acknowledges_peer_info0 = false;
 	if (v90_info0a_encode(&initial, payload, sizeof(payload)) !=
 	    V90_INFO0_OK)
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	return initialize(
 		exchange, V90_ANALOG_MODEM, nominal_amplitude, payload);
 }
 
-enum v90_phase2_info0_exchange_result
-v90_phase2_info0_exchange_init_digital(
-	struct v90_phase2_info0_exchange *exchange,
+enum pcm_phase2_info0_exchange_result
+pcm_phase2_info0_exchange_init_digital(
+	struct pcm_phase2_info0_exchange *exchange,
 	int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d)
 {
@@ -99,33 +99,33 @@ v90_phase2_info0_exchange_init_digital(
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES];
 
 	if (!v90_info0d_is_valid(local_info0d))
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	initial = *local_info0d;
 	initial.common.acknowledges_peer_info0 = false;
 	if (v90_info0d_encode(&initial, payload, sizeof(payload)) !=
 	    V90_INFO0_OK)
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	return initialize(
 		exchange, V90_DIGITAL_MODEM, nominal_amplitude, payload);
 }
 
 static void decode_event(
-	struct v90_phase2_info0_exchange *exchange,
+	struct pcm_phase2_info0_exchange *exchange,
 	const struct phase2_info0_exchange_event *raw,
-	struct v90_phase2_info0_exchange_event *event)
+	struct pcm_phase2_info0_exchange_event *event)
 {
-	union v90_info0_record decoded = { 0 };
+	union pcm_info0_record decoded = { 0 };
 	enum v90_info0_result result;
 
 	event->tone_event = raw->tone_event;
 	if (raw->info_event.type == V34_PHASE2_INFO_NO_EVENT)
 		return;
 	if (raw->info_event.type == V34_PHASE2_INFO_FRAME_REJECTED) {
-		event->peer_info0_event = V90_PEER_INFO0_REJECTED;
+		event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
 		return;
 	}
 	if (raw->info_event.type != V34_PHASE2_INFO_FRAME_RECEIVED) {
-		event->peer_info0_event = V90_PEER_INFO0_REJECTED;
+		event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
 		return;
 	}
 	if (exchange->local_role == V90_ANALOG_MODEM)
@@ -137,50 +137,50 @@ static void decode_event(
 			raw->info_event.payload, sizeof(raw->info_event.payload),
 			raw->info_event.payload_bit_count, &decoded.analog);
 	if (result != V90_INFO0_OK) {
-		event->peer_info0_event = V90_PEER_INFO0_REJECTED;
+		event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
 		return;
 	}
 	exchange->peer_info0 = decoded;
 	exchange->peer_info0_received = true;
-	event->peer_info0_event = V90_PEER_INFO0_RECEIVED;
+	event->peer_info0_event = PCM_PEER_INFO0_RECEIVED;
 	event->peer_info0 = decoded;
 }
 
-enum v90_phase2_info0_exchange_result
-v90_phase2_info0_exchange_sample(
-	struct v90_phase2_info0_exchange *exchange,
+enum pcm_phase2_info0_exchange_result
+pcm_phase2_info0_exchange_sample(
+	struct pcm_phase2_info0_exchange *exchange,
 	int16_t received_sample, int16_t *transmit_sample,
-	struct v90_phase2_info0_exchange_event *event)
+	struct pcm_phase2_info0_exchange_event *event)
 {
-	struct v90_phase2_info0_exchange next;
+	struct pcm_phase2_info0_exchange next;
 	struct phase2_info0_exchange_event raw_event;
-	struct v90_phase2_info0_exchange_event emitted = { 0 };
+	struct pcm_phase2_info0_exchange_event emitted = { 0 };
 	int16_t generated;
 
-	if (!v90_phase2_info0_exchange_is_valid(exchange) ||
+	if (!pcm_phase2_info0_exchange_is_valid(exchange) ||
 	    transmit_sample == NULL || event == NULL)
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	next = *exchange;
 	if (phase2_info0_exchange_sample(
 		    &next.transport, received_sample, &generated, &raw_event) !=
 	    PHASE2_INFO0_EXCHANGE_OK)
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	decode_event(&next, &raw_event, &emitted);
-	if (!v90_phase2_info0_exchange_is_valid(&next))
-		return V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	if (!pcm_phase2_info0_exchange_is_valid(&next))
+		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	*exchange = next;
 	*transmit_sample = generated;
 	*event = emitted;
-	return V90_PHASE2_INFO0_EXCHANGE_OK;
+	return PCM_PHASE2_INFO0_EXCHANGE_OK;
 }
 
-const char *v90_phase2_info0_exchange_result_name(
-	enum v90_phase2_info0_exchange_result result)
+const char *pcm_phase2_info0_exchange_result_name(
+	enum pcm_phase2_info0_exchange_result result)
 {
 	switch (result) {
-	case V90_PHASE2_INFO0_EXCHANGE_OK:
+	case PCM_PHASE2_INFO0_EXCHANGE_OK:
 		return "ok";
-	case V90_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT:
+	case PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

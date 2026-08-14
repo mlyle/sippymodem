@@ -137,14 +137,14 @@ static bool check_ranging(enum test_codec codec)
 			codec_round_trip(digital_transmit, codec));
 
 		if (analog_event.exchange_event.peer_info0_event ==
-		    V90_PEER_INFO0_RECEIVED) {
+		    PCM_PEER_INFO0_RECEIVED) {
 			analog_received_info =
 				analog_event.exchange_event.peer_info0.digital
 					.nominal_transmit_power ==
 				digital.nominal_transmit_power;
 		}
 		if (digital_event.exchange_event.peer_info0_event ==
-		    V90_PEER_INFO0_RECEIVED) {
+		    PCM_PEER_INFO0_RECEIVED) {
 			digital_received_info =
 				digital_event.exchange_event.peer_info0.analog
 					.transmit_power_reduction_supported ==

@@ -6,7 +6,7 @@
 #include "g711.h"
 #include "pcm_phase3_profile.h"
 #include "v90_info0.h"
-#include "v90_phase2_info0_exchange.h"
+#include "pcm_phase2_info0_exchange.h"
 
 #include <stdbool.h>
 #include <stdint.h>

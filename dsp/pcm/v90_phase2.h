@@ -71,8 +71,8 @@ union v90_phase2_state {
  * instance; separate instances share no mutable state. */
 struct v90_phase2 {
 	union v90_phase2_state state;
-	union v90_info0_record local_info0;
-	union v90_info0_record peer_info0;
+	union pcm_info0_record local_info0;
+	union pcm_info0_record peer_info0;
 	struct v34_phase2_probe_receiver_measurement remote_probe;
 	union v90_info1_record local_info1;
 	enum v90_phase2_stage stage;

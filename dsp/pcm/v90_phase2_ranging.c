@@ -8,7 +8,7 @@ bool v90_phase2_ranging_is_valid(
 	const struct v90_phase2_ranging *ranging)
 {
 	return ranging != NULL &&
-	       v90_phase2_info0_exchange_is_valid(
+	       pcm_phase2_info0_exchange_is_valid(
 		       &ranging->info0_exchange) &&
 	       phase2_ranging_control_is_valid(
 		       &ranging->control,
@@ -19,10 +19,10 @@ bool v90_phase2_ranging_is_valid(
 static enum v90_phase2_ranging_result finish_initialization(
 	struct v90_phase2_ranging *ranging,
 	struct v90_phase2_ranging *initialized,
-	enum v90_phase2_info0_exchange_result exchange_result)
+	enum pcm_phase2_info0_exchange_result exchange_result)
 {
 	if (ranging == NULL ||
-	    exchange_result != V90_PHASE2_INFO0_EXCHANGE_OK ||
+	    exchange_result != PCM_PHASE2_INFO0_EXCHANGE_OK ||
 	    phase2_ranging_control_init(
 		    &initialized->control,
 		    &initialized->info0_exchange.transport) !=
@@ -39,11 +39,11 @@ enum v90_phase2_ranging_result v90_phase2_ranging_init_analog(
 	const struct v90_info0 *local_info0a)
 {
 	struct v90_phase2_ranging initialized;
-	enum v90_phase2_info0_exchange_result result;
+	enum pcm_phase2_info0_exchange_result result;
 
 	if (ranging == NULL)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
-	result = v90_phase2_info0_exchange_init_analog(
+	result = pcm_phase2_info0_exchange_init_analog(
 		&initialized.info0_exchange, nominal_amplitude, local_info0a);
 	return finish_initialization(ranging, &initialized, result);
 }
@@ -54,11 +54,11 @@ enum v90_phase2_ranging_result v90_phase2_ranging_init_digital(
 	const struct v90_info0d *local_info0d)
 {
 	struct v90_phase2_ranging initialized;
-	enum v90_phase2_info0_exchange_result result;
+	enum pcm_phase2_info0_exchange_result result;
 
 	if (ranging == NULL)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
-	result = v90_phase2_info0_exchange_init_digital(
+	result = pcm_phase2_info0_exchange_init_digital(
 		&initialized.info0_exchange, nominal_amplitude, local_info0d);
 	return finish_initialization(ranging, &initialized, result);
 }
@@ -69,7 +69,7 @@ enum v90_phase2_ranging_result v90_phase2_ranging_sample(
 	struct v90_phase2_ranging_event *event)
 {
 	struct v90_phase2_ranging next;
-	struct v90_phase2_info0_exchange_event exchange_event;
+	struct pcm_phase2_info0_exchange_event exchange_event;
 	struct phase2_ranging_event ranging_event;
 	struct v90_phase2_ranging_event emitted;
 	enum phase2_info0_transmit_phase transmit_phase_before;
@@ -85,9 +85,9 @@ enum v90_phase2_ranging_result v90_phase2_ranging_sample(
 	    PHASE2_RANGING_OK)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
 	transmit_phase_before = next.info0_exchange.transport.transmit_phase;
-	if (v90_phase2_info0_exchange_sample(
+	if (pcm_phase2_info0_exchange_sample(
 		    &next.info0_exchange, received_sample, &generated,
-		    &exchange_event) != V90_PHASE2_INFO0_EXCHANGE_OK ||
+		    &exchange_event) != PCM_PHASE2_INFO0_EXCHANGE_OK ||
 	    phase2_ranging_finish_sample(
 		    &next.control, &next.info0_exchange.transport,
 		    next.info0_exchange.peer_info0_received,

@@ -36,7 +36,8 @@ V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 V90_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
-	pcm_phase3_digital_prefix.c pcm_phase3_profile.c pcm_startup.c \
+	pcm_phase2_info0_exchange.c pcm_phase3_digital_prefix.c \
+	pcm_phase3_profile.c pcm_startup.c \
 	v92_info0.c v92_info1d.c v92_pcm_info1a.c v92_status_update.c \
 	v92_control_rx.c v92_cpd.c v92_suvd.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c))
@@ -2197,10 +2198,10 @@ V90_PHASE4_RI_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_phase4_ri.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/g711.o
-V90_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
-	$(BUILD_DIR)/test_v90_phase2_info0_exchange
-V90_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v90_phase2_info0_exchange.o \
+PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
+	$(BUILD_DIR)/test_pcm_phase2_info0_exchange
+PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_pcm_phase2_info0_exchange.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v90_info0.o \
@@ -2209,7 +2210,7 @@ V90_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_info.o \
 	$(BUILD_DIR)/v34_phase2_info_audio.o \
 	$(BUILD_DIR)/phase2_info0_exchange.o \
-	$(BUILD_DIR)/v90_phase2_info0_exchange.o \
+	$(BUILD_DIR)/pcm_phase2_info0_exchange.o \
 	$(BUILD_DIR)/v34_phase2_tone.o
 V90_PHASE2_RANGING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase2_ranging
@@ -2224,7 +2225,7 @@ V90_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_info_audio.o \
 	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/phase2_ranging.o \
-	$(BUILD_DIR)/v90_phase2_info0_exchange.o \
+	$(BUILD_DIR)/pcm_phase2_info0_exchange.o \
 	$(BUILD_DIR)/v90_phase2_ranging.o \
 	$(BUILD_DIR)/v34_phase2_tone.o
 V90_PHASE2_INITIAL_PROBE_TEST_BINARY := \
@@ -2247,7 +2248,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_info_audio.o \
 	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/phase2_ranging.o \
-	$(BUILD_DIR)/v90_phase2_info0_exchange.o \
+	$(BUILD_DIR)/pcm_phase2_info0_exchange.o \
 	$(BUILD_DIR)/v90_phase2_ranging.o \
 	$(BUILD_DIR)/phase2_initial_probe.o \
 	$(BUILD_DIR)/v90_phase2_initial_probe.o \
@@ -2729,7 +2730,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_LINE_TX_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_RX_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_TX_TEST_BINARY) \
-	$(V90_PHASE2_INFO0_EXCHANGE_TEST_BINARY) \
+	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY) \
 	$(V90_PHASE2_RANGING_TEST_BINARY) \
 	$(V90_PHASE2_INITIAL_PROBE_TEST_BINARY) \
 	$(V90_CALL_TEST_BINARY) \
@@ -2983,7 +2984,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_RETURN_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_RETURN_TX_TEST_OBJECTS:.o=.d) \
-	$(V90_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS:.o=.d) \
+	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE2_RANGING_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS:.o=.d) \
 	$(V90_CALL_TEST_OBJECTS:.o=.d) \
@@ -3262,7 +3263,7 @@ test: $(TEST_BINARIES)
 	./$(V90_PHASE3_RETURN_LINE_TX_TEST_BINARY)
 	./$(V90_PHASE3_RETURN_RX_TEST_BINARY)
 	./$(V90_PHASE3_RETURN_TX_TEST_BINARY)
-	./$(V90_PHASE2_INFO0_EXCHANGE_TEST_BINARY)
+	./$(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY)
 	./$(V90_PHASE2_RANGING_TEST_BINARY)
 	./$(V90_PHASE2_INITIAL_PROBE_TEST_BINARY)
 	./$(V90_CALL_TEST_BINARY)
@@ -4081,8 +4082,8 @@ $(V90_PHASE3_RETURN_TX_TEST_BINARY): \
 	$(V90_PHASE3_RETURN_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V90_PHASE2_INFO0_EXCHANGE_TEST_BINARY): \
-	$(V90_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS)
+$(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY): \
+	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_PHASE2_RANGING_TEST_BINARY): $(V90_PHASE2_RANGING_TEST_OBJECTS)
@@ -4999,8 +5000,8 @@ $(BUILD_DIR)/v90_phase3_return_tx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_tx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_phase2_info0_exchange.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2_info0_exchange.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_phase2_info0_exchange.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_info0_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase2_ranging.o: \
