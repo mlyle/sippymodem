@@ -156,7 +156,7 @@ static bool train_point_equalizer(
 static bool equalizer_has_dispersion(
 	const struct qam_equalizer *equalizer)
 {
-	for (size_t tap = 0; tap < QAM_EQUALIZER_TAP_COUNT; ++tap) {
+	for (size_t tap = 0; tap < QAM_EQUALIZER_MAX_TAP_COUNT; ++tap) {
 		double power;
 
 		if (tap == QAM_EQUALIZER_DELAY)

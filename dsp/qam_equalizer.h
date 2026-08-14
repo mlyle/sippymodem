@@ -8,7 +8,8 @@
 #include <stdbool.h>
 
 enum {
-	QAM_EQUALIZER_TAP_COUNT = 7,
+	QAM_EQUALIZER_DEFAULT_TAP_COUNT = 7,
+	QAM_EQUALIZER_MAX_TAP_COUNT = 15,
 	QAM_EQUALIZER_DELAY = 3,
 };
 
@@ -18,14 +19,18 @@ enum qam_equalizer_result {
 	QAM_EQUALIZER_INVALID_STATE,
 };
 
-/* A symbol-spaced, complex normalized-LMS equalizer.  The fixed seven-tap
- * span is deliberately small and gives a three-symbol decision delay. */
+/* A symbol-spaced, complex normalized-LMS equalizer. Storage is bounded at
+ * QAM_EQUALIZER_MAX_TAP_COUNT, while each instance owns the active span
+ * selected at initialization. The decision delay remains three symbols for
+ * every span so family-specific channel memory does not alter framing
+ * latency. */
 struct qam_equalizer {
 	struct qam_point coefficients[
-		QAM_EQUALIZER_TAP_COUNT];
+		QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point history[
-		QAM_EQUALIZER_TAP_COUNT];
+		QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point last_output;
+	unsigned int tap_count;
 	unsigned int fill;
 	bool can_adapt;
 };
@@ -35,8 +40,9 @@ struct qam_equalizer {
  * receiver state, but must be adapted only along the same equalizer lineage. */
 struct qam_equalizer_observation {
 	struct qam_point history[
-		QAM_EQUALIZER_TAP_COUNT];
+		QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point output;
+	unsigned int tap_count;
 	bool pending;
 };
 
@@ -44,6 +50,14 @@ enum qam_equalizer_result qam_equalizer_init(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received_reference,
 	const struct qam_point *transmitted_reference);
+
+/* Select a longer bounded span without changing the fixed decision delay.
+ * tap_count must exceed QAM_EQUALIZER_DELAY and fit the owned storage. */
+enum qam_equalizer_result qam_equalizer_init_span(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *received_reference,
+	const struct qam_point *transmitted_reference,
+	unsigned int tap_count);
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer);
 

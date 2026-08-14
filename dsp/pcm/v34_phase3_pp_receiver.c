@@ -80,8 +80,9 @@ static bool seed_equalizer(
 	struct v34_phase3_pp_receiver *receiver,
 	const struct qam_point *received, const struct qam_point *target)
 {
-	if (qam_equalizer_init(&receiver->equalizer, received, target) !=
-	    QAM_EQUALIZER_OK)
+	if (qam_equalizer_init_span(
+		    &receiver->equalizer, received, target,
+		    QAM_EQUALIZER_MAX_TAP_COUNT) != QAM_EQUALIZER_OK)
 		return false;
 	receiver->seeded = true;
 	return true;

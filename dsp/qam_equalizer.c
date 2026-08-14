@@ -19,13 +19,20 @@ static double point_power(const struct qam_point *point)
 	       point->quadrature * point->quadrature;
 }
 
+static bool tap_count_is_valid(unsigned int tap_count)
+{
+	return tap_count > QAM_EQUALIZER_DELAY &&
+	       tap_count <= QAM_EQUALIZER_MAX_TAP_COUNT;
+}
+
 bool qam_equalizer_observation_is_pending(
 	const struct qam_equalizer_observation *observation)
 {
 	if (observation == NULL || !observation->pending ||
+	    !tap_count_is_valid(observation->tap_count) ||
 	    !point_is_finite(&observation->output))
 		return false;
-	for (size_t index = 0; index < QAM_EQUALIZER_TAP_COUNT;
+	for (size_t index = 0; index < QAM_EQUALIZER_MAX_TAP_COUNT;
 	     ++index) {
 		if (!point_is_finite(&observation->history[index]))
 			return false;
@@ -77,17 +84,20 @@ bool qam_equalizer_is_valid(
 	double coefficient_power = 0.0;
 
 	if (equalizer == NULL ||
+	    !tap_count_is_valid(equalizer->tap_count) ||
 	    equalizer->fill > QAM_EQUALIZER_DELAY + 1u ||
 	    (equalizer->can_adapt &&
 	     equalizer->fill <= QAM_EQUALIZER_DELAY) ||
 	    !point_is_finite(&equalizer->last_output))
 		return false;
-	for (size_t index = 0; index < QAM_EQUALIZER_TAP_COUNT;
+	for (size_t index = 0; index < QAM_EQUALIZER_MAX_TAP_COUNT;
 	     ++index) {
 		if (!point_is_finite(&equalizer->coefficients[index]) ||
 		    !point_is_finite(&equalizer->history[index]))
 			return false;
-		coefficient_power += point_power(&equalizer->coefficients[index]);
+		if (index < equalizer->tap_count)
+			coefficient_power +=
+				point_power(&equalizer->coefficients[index]);
 	}
 	return isfinite(coefficient_power) &&
 	       coefficient_power > QAM_EQUALIZER_MINIMUM_POWER;
@@ -98,9 +108,22 @@ enum qam_equalizer_result qam_equalizer_init(
 	const struct qam_point *received_reference,
 	const struct qam_point *transmitted_reference)
 {
-	struct qam_equalizer initialized = { 0 };
+	return qam_equalizer_init_span(
+		equalizer, received_reference, transmitted_reference,
+		QAM_EQUALIZER_DEFAULT_TAP_COUNT);
+}
 
-	if (equalizer == NULL ||
+enum qam_equalizer_result qam_equalizer_init_span(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *received_reference,
+	const struct qam_point *transmitted_reference,
+	unsigned int tap_count)
+{
+	struct qam_equalizer initialized = {
+		.tap_count = tap_count,
+	};
+
+	if (equalizer == NULL || !tap_count_is_valid(tap_count) ||
 	    !inverse_channel(received_reference, transmitted_reference,
 			     &initialized.coefficients[
 				     QAM_EQUALIZER_DELAY]) ||
@@ -123,11 +146,11 @@ enum qam_equalizer_result qam_equalizer_push(
 	    !point_is_finite(received) || output == NULL || ready == NULL)
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	next = *equalizer;
-	for (size_t index = QAM_EQUALIZER_TAP_COUNT - 1;
+	for (size_t index = next.tap_count - 1u;
 	     index != 0; --index)
 		next.history[index] = next.history[index - 1];
 	next.history[0] = *received;
-	for (size_t index = 0; index < QAM_EQUALIZER_TAP_COUNT;
+	for (size_t index = 0; index < next.tap_count;
 	     ++index) {
 		struct qam_point term = multiply(
 			&next.coefficients[index], &next.history[index]);
@@ -178,13 +201,15 @@ enum qam_equalizer_result qam_equalizer_observe(
 	*equalizer = next;
 	*ready = generated_ready;
 	if (generated_ready) {
-		*observation = (struct qam_equalizer_observation){
+		struct qam_equalizer_observation generated = {
 			.output = output,
+			.tap_count = next.tap_count,
 			.pending = true,
 		};
 		for (size_t index = 0;
-		     index < QAM_EQUALIZER_TAP_COUNT; ++index)
-			observation->history[index] = next.history[index];
+		     index < next.tap_count; ++index)
+			generated.history[index] = next.history[index];
+		*observation = generated;
 	}
 	return QAM_EQUALIZER_OK;
 }
@@ -192,9 +217,10 @@ enum qam_equalizer_result qam_equalizer_observe(
 static bool apply_adaptation(
 	struct qam_equalizer *equalizer,
 	const struct qam_point history[
-		QAM_EQUALIZER_TAP_COUNT],
+		QAM_EQUALIZER_MAX_TAP_COUNT],
 	const struct qam_point *output,
-	const struct qam_point *target, double adaptation)
+	const struct qam_point *target, double adaptation,
+	unsigned int tap_count)
 {
 	struct qam_point error = {
 		.in_phase = target->in_phase - output->in_phase,
@@ -202,12 +228,12 @@ static bool apply_adaptation(
 	};
 	double power = QAM_EQUALIZER_MINIMUM_POWER;
 
-	for (size_t index = 0; index < QAM_EQUALIZER_TAP_COUNT;
+	for (size_t index = 0; index < tap_count;
 	     ++index)
 		power += point_power(&history[index]);
 	if (!isfinite(power))
 		return false;
-	for (size_t index = 0; index < QAM_EQUALIZER_TAP_COUNT;
+	for (size_t index = 0; index < tap_count;
 	     ++index) {
 		struct qam_point conjugate = {
 			.in_phase = history[index].in_phase,
@@ -237,7 +263,8 @@ enum qam_equalizer_result qam_equalizer_adapt(
 		return QAM_EQUALIZER_INVALID_STATE;
 	next = *equalizer;
 	if (!apply_adaptation(
-		    &next, next.history, &next.last_output, target, adaptation))
+		    &next, next.history, &next.last_output, target, adaptation,
+		    next.tap_count))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	next.can_adapt = false;
 	if (!qam_equalizer_is_valid(&next))
@@ -261,11 +288,13 @@ qam_equalizer_adapt_observation(
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!qam_equalizer_observation_is_pending(observation))
 		return QAM_EQUALIZER_INVALID_STATE;
+	if (observation->tap_count != equalizer->tap_count)
+		return QAM_EQUALIZER_INVALID_STATE;
 	next = *equalizer;
 	consumed = *observation;
 	if (!apply_adaptation(
 		    &next, consumed.history, &consumed.output, target,
-		    adaptation))
+		    adaptation, consumed.tap_count))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	consumed.pending = false;
 	*equalizer = next;

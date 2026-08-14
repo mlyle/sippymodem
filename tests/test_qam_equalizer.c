@@ -12,6 +12,9 @@ enum {
 	TRAINING_SYMBOLS = 1024,
 	PAYLOAD_SYMBOLS = 576,
 	CHANNEL_TAPS = 4,
+	LONG_ECHO_DELAY = 8,
+	LONG_TRAINING_SYMBOLS = 4096,
+	LONG_PAYLOAD_SYMBOLS = 1024,
 };
 
 static struct qam_point multiply(
@@ -128,7 +131,7 @@ static bool test_generated_isi_channel(void)
 	};
 	const struct qam_point reference = { 1.0, 1.0 };
 	struct qam_point transmitted[
-		QAM_EQUALIZER_TAP_COUNT] = { 0 };
+		QAM_EQUALIZER_MAX_TAP_COUNT] = { 0 };
 	struct qam_point received_reference =
 		multiply(channel[0], reference);
 	struct qam_equalizer baseline;
@@ -215,6 +218,100 @@ static bool test_generated_isi_channel(void)
 	CHECK(baseline_errors > PAYLOAD_SYMBOLS / 5 && trained_errors == 0,
 	      "adaptive equalizer errors were %u versus %u without adaptation",
 	      trained_errors, baseline_errors);
+	return true;
+}
+
+static bool test_instance_selected_span(void)
+{
+	const struct qam_point reference = { 1.0, 1.0 };
+	struct qam_point transmitted[QAM_EQUALIZER_MAX_TAP_COUNT] = { 0 };
+	struct qam_equalizer short_span;
+	struct qam_equalizer long_span;
+	uint32_t random = UINT32_C(0x5350414e);
+	unsigned int short_errors = 0;
+	unsigned int long_errors = 0;
+
+	CHECK(qam_equalizer_init(
+		      &short_span, &reference, &reference) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_init_span(
+		      &long_span, &reference, &reference,
+		      QAM_EQUALIZER_MAX_TAP_COUNT) == QAM_EQUALIZER_OK &&
+	      short_span.tap_count == QAM_EQUALIZER_DEFAULT_TAP_COUNT &&
+	      long_span.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT,
+	      "equalizer spans did not initialize independently");
+	for (unsigned int symbol = 0;
+	     symbol < LONG_TRAINING_SYMBOLS + LONG_PAYLOAD_SYMBOLS;
+	     ++symbol) {
+		struct qam_point short_output = { 0 };
+		struct qam_point long_output = { 0 };
+		struct qam_point received;
+		bool short_ready;
+		bool long_ready;
+
+		for (size_t index = ARRAY_LENGTH(transmitted) - 1u;
+		     index != 0; --index)
+			transmitted[index] = transmitted[index - 1u];
+		transmitted[0] = (struct qam_point){
+			.in_phase = random_level(&random),
+			.quadrature = random_level(&random),
+		};
+		received = transmitted[0];
+		received.in_phase +=
+			0.35 * transmitted[LONG_ECHO_DELAY].in_phase;
+		received.quadrature +=
+			0.35 * transmitted[LONG_ECHO_DELAY].quadrature;
+		CHECK(qam_equalizer_push(
+			      &short_span, &received, &short_output,
+			      &short_ready) == QAM_EQUALIZER_OK &&
+		      qam_equalizer_push(
+			      &long_span, &received, &long_output,
+			      &long_ready) == QAM_EQUALIZER_OK &&
+		      short_ready == long_ready,
+		      "span readiness diverged at symbol %u", symbol);
+		if (!long_ready)
+			continue;
+		if (symbol < LONG_TRAINING_SYMBOLS) {
+			CHECK(qam_equalizer_adapt(
+				      &short_span,
+				      &transmitted[QAM_EQUALIZER_DELAY],
+				      0.3) == QAM_EQUALIZER_OK &&
+			      qam_equalizer_adapt(
+				      &long_span,
+				      &transmitted[QAM_EQUALIZER_DELAY],
+				      0.3) == QAM_EQUALIZER_OK,
+			      "span training failed at symbol %u", symbol);
+			continue;
+		}
+		short_errors += !same_decision(
+			&short_output, &transmitted[QAM_EQUALIZER_DELAY]);
+		long_errors += !same_decision(
+			&long_output, &transmitted[QAM_EQUALIZER_DELAY]);
+	}
+	CHECK(short_errors > LONG_PAYLOAD_SYMBOLS / 8u && long_errors == 0,
+	      "long echo produced %u errors with the selected span versus %u "
+	      "with the default",
+	      long_errors, short_errors);
+	{
+		struct qam_equalizer_observation observation = { 0 };
+		struct qam_equalizer saved_long = long_span;
+		struct qam_equalizer_observation saved_observation;
+		bool ready;
+
+		CHECK(qam_equalizer_observe(
+			      &short_span, &transmitted[0], &observation,
+			      &ready) == QAM_EQUALIZER_OK && ready,
+		      "short-span observation was not retained");
+		saved_observation = observation;
+		CHECK(qam_equalizer_adapt_observation(
+			      &long_span, &observation,
+			      &transmitted[QAM_EQUALIZER_DELAY], 0.1) ==
+			      QAM_EQUALIZER_INVALID_STATE &&
+		      memcmp(&long_span, &saved_long, sizeof(long_span)) == 0 &&
+		      memcmp(&observation, &saved_observation,
+			     sizeof(observation)) == 0,
+		      "cross-span observation rejection was not transactional");
+	}
 	return true;
 }
 
@@ -334,6 +431,13 @@ static bool test_validation(void)
 	saved = equalizer;
 	CHECK(qam_equalizer_init(NULL, &reference, &reference) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_init_span(
+		      &equalizer, &reference, &reference,
+		      QAM_EQUALIZER_DELAY) == QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_init_span(
+		      &equalizer, &reference, &reference,
+		      QAM_EQUALIZER_MAX_TAP_COUNT + 1u) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      qam_equalizer_init(&equalizer, &zero, &reference) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      qam_equalizer_init(&equalizer, &invalid, &reference) ==
@@ -377,6 +481,7 @@ int main(void)
 	} tests[] = {
 		{ "decision delay and flat channel", test_delay_and_flat_channel },
 		{ "generated ISI channel", test_generated_isi_channel },
+		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
 		{ "validation", test_validation },
 	};

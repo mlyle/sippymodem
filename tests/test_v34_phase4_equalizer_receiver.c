@@ -191,7 +191,7 @@ static bool run_stream(
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence e;
 	struct qam_equalizer equalizer;
-	struct qam_point target_history[QAM_EQUALIZER_TAP_COUNT] = { 0 };
+	struct qam_point target_history[QAM_EQUALIZER_MAX_TAP_COUNT] = { 0 };
 	struct qam_point transmitted;
 	struct qam_point received;
 	struct qam_point lookahead[QAM_EQUALIZER_DELAY];
