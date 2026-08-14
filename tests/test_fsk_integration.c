@@ -4,6 +4,7 @@
 #include <baudot.h>
 #include <datapumps.h>
 #include <fsk300_datapump.h>
+#include <g711.h>
 #include <media.h>
 #include <v22_datapump.h>
 #include <v23_datapump.h>
@@ -11,6 +12,7 @@
 #include <v8_datapump.h>
 #include <v34_datapump.h>
 #include <v34_frame_schedule.h>
+#include <v90_profile.h>
 
 #include "channel_bench.h"
 #include "test.h"
@@ -40,8 +42,11 @@ struct integration_endpoint {
 	int client_fd;
 	int16_t receive[SIP_FRAME_SAMPLES];
 	int16_t transmit[SIP_FRAME_SAMPLES];
+	uint8_t receive_codewords[SIP_FRAME_SAMPLES];
+	uint8_t transmit_codewords[SIP_FRAME_SAMPLES];
 	uint8_t output[ENDPOINT_OUTPUT_CAPACITY];
 	size_t output_count;
+	size_t exact_frames;
 };
 
 struct recording_capture {
@@ -62,6 +67,7 @@ struct modem_test_case {
 	unsigned int training_frame_limit;
 	bool automode;
 	bool requires_v8;
+	bool requires_exact_g711;
 	bool test_prelink;
 };
 
@@ -199,21 +205,100 @@ static void capture_recording(
 	capture->units[block->stream] += block->count;
 }
 
-static bool transcode(
-	enum media_codec codec,
-	const int16_t transmit[SIP_FRAME_SAMPLES],
-	int16_t receive[SIP_FRAME_SAMPLES],
+static bool codec_law(enum media_codec codec, enum g711_law *law)
+{
+	if (law == NULL)
+		return false;
+	if (codec == MEDIA_CODEC_PCMU)
+		*law = G711_LAW_PCMU;
+	else if (codec == MEDIA_CODEC_PCMA)
+		*law = G711_LAW_PCMA;
+	else
+		return false;
+	return true;
+}
+
+static int16_t decode_codeword(enum g711_law law, uint8_t codeword)
+{
+	return law == G711_LAW_PCMA ?
+		       g711_decode_pcma(codeword) :
+		       g711_decode_pcmu(codeword);
+}
+
+static bool endpoint_prepare_media(
+	struct integration_endpoint *endpoint, enum media_codec codec)
+{
+	enum g711_law law;
+	int silence;
+
+	if (endpoint == NULL || !codec_law(codec, &law))
+		return false;
+	silence = media_codec_silence_octet(codec);
+	if (silence < 0 || silence > UINT8_MAX)
+		return false;
+	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
+		endpoint->receive_codewords[index] = (uint8_t)silence;
+		endpoint->receive[index] =
+			decode_codeword(law, (uint8_t)silence);
+	}
+	return true;
+}
+
+static bool process_transmit_frame(
+	struct integration_endpoint *endpoint, enum media_codec codec,
 	const struct media_recorder *recorder)
 {
-	uint8_t payload[SIP_FRAME_SAMPLES];
+	enum g711_law law;
+	bool exact_output = false;
+	int silence;
 
-	return media_encode(
-		       codec, transmit, SIP_FRAME_SAMPLES,
-		       payload, ARRAY_LENGTH(payload), recorder) ==
-		       MEDIA_OK &&
-	       media_decode(
-		       codec, payload, ARRAY_LENGTH(payload), receive,
-		       SIP_FRAME_SAMPLES, recorder) == MEDIA_OK;
+	if (endpoint == NULL || endpoint->modem == NULL ||
+	    !codec_law(codec, &law))
+		return false;
+	silence = media_codec_silence_octet(codec);
+	if (silence < 0 || silence > UINT8_MAX)
+		return false;
+	memset(endpoint->transmit, 0, sizeof(endpoint->transmit));
+	memset(endpoint->transmit_codewords, silence,
+	       sizeof(endpoint->transmit_codewords));
+	modem_process_g711(
+		endpoint->modem, law, endpoint->receive_codewords,
+		endpoint->receive, endpoint->transmit_codewords,
+		endpoint->transmit, SIP_FRAME_SAMPLES, &exact_output);
+	if (!exact_output)
+		return media_encode(
+			       codec, endpoint->transmit, SIP_FRAME_SAMPLES,
+			       endpoint->transmit_codewords,
+			       ARRAY_LENGTH(endpoint->transmit_codewords),
+			       recorder) == MEDIA_OK;
+	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index)
+		if (endpoint->transmit[index] != decode_codeword(
+				law, endpoint->transmit_codewords[index]))
+			return false;
+	endpoint->exact_frames++;
+	return recording_emit(
+		       recorder, RECORD_TX_LINE_PCM, RECORD_S16_NATIVE,
+		       MEDIA_SAMPLE_RATE, endpoint->transmit,
+		       SIP_FRAME_SAMPLES) &&
+	       recording_emit(
+		       recorder, RECORD_TX_RTP_PAYLOAD_PREPARED,
+		       RECORD_OCTETS, MEDIA_SAMPLE_RATE,
+		       endpoint->transmit_codewords, SIP_FRAME_SAMPLES);
+}
+
+static bool deliver_media_frame(
+	const struct integration_endpoint *source,
+	struct integration_endpoint *destination,
+	enum media_codec codec,
+	const struct media_recorder *recorder)
+{
+	memcpy(destination->receive_codewords, source->transmit_codewords,
+	       sizeof(destination->receive_codewords));
+
+	return media_decode(
+		       codec, source->transmit_codewords, SIP_FRAME_SAMPLES,
+		       destination->receive, SIP_FRAME_SAMPLES, recorder) ==
+	       MEDIA_OK;
 }
 
 static bool process_sip_frame(
@@ -222,14 +307,10 @@ static bool process_sip_frame(
 	enum media_codec codec,
 	const struct media_recorder *recorder)
 {
-	modem_process(caller->modem, caller->receive, caller->transmit,
-		      SIP_FRAME_SAMPLES);
-	modem_process(answerer->modem, answerer->receive, answerer->transmit,
-		      SIP_FRAME_SAMPLES);
-	return transcode(
-		       codec, caller->transmit, answerer->receive, recorder) &&
-	       transcode(
-		       codec, answerer->transmit, caller->receive, recorder);
+	return process_transmit_frame(caller, codec, recorder) &&
+	       process_transmit_frame(answerer, codec, recorder) &&
+	       deliver_media_frame(caller, answerer, codec, recorder) &&
+	       deliver_media_frame(answerer, caller, codec, recorder);
 }
 
 static bool modem_is_online(const struct modem *modem, enum DP_ID id)
@@ -281,7 +362,9 @@ static bool run_media_call(
 		      DATAPUMPS_OK,
 	      "%s integration registrations did not start", test_case->name);
 	CHECK(endpoint_init(&caller, "FSK caller") &&
-		      endpoint_init(&answerer, "FSK answerer"),
+		      endpoint_init(&answerer, "FSK answerer") &&
+		      endpoint_prepare_media(&caller, codec) &&
+		      endpoint_prepare_media(&answerer, codec),
 	      "%s integration endpoints did not initialize", test_case->name);
 	CHECK(MODEM_DP(caller.modem) == DP_V21 &&
 		      MODEM_DP(answerer.modem) == DP_V21 &&
@@ -431,19 +514,26 @@ static bool run_media_call(
 		      capture.blocks[RECORD_RX_LINE_PCM] != 0,
 	      "%s SIP call did not retain recording boundaries",
 	      test_case->name);
+	CHECK(!test_case->requires_exact_g711 ||
+		      (caller.exact_frames != 0 && answerer.exact_frames != 0),
+	      "%s did not exercise exact G.711 media in both directions",
+	      test_case->name);
 	CHECK(datapumps_stop(&datapumps) ==
 		      DATAPUMPS_BUSY,
 	      "live %s calls did not protect their process-global registration",
 	      test_case->name);
-	memset(caller.receive, 0, sizeof(caller.receive));
-	for (unsigned int frame = 0;
-	     frame * SIP_FRAME_SAMPLES <= test_case->carrier_loss_samples;
-	     ++frame)
-		modem_process(caller.modem, caller.receive, caller.transmit,
-			      SIP_FRAME_SAMPLES);
-	CHECK(caller.modem->process == NULL,
-	      "%s carrier loss did not stop the modem data path",
-	      test_case->name);
+	if (test_case->carrier_loss_samples != 0) {
+		memset(caller.receive, 0, sizeof(caller.receive));
+		for (unsigned int frame = 0;
+		     frame * SIP_FRAME_SAMPLES <=
+			     test_case->carrier_loss_samples;
+		     ++frame)
+			modem_process(caller.modem, caller.receive, caller.transmit,
+				      SIP_FRAME_SAMPLES);
+		CHECK(caller.modem->process == NULL,
+		      "%s carrier loss did not stop the modem data path",
+		      test_case->name);
+	}
 
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
@@ -493,7 +583,9 @@ static bool run_baudot_media_call(
 	CHECK(datapumps_start(&datapumps) ==
 		      DATAPUMPS_OK &&
 		      endpoint_init(&caller, "Baudot caller") &&
-		      endpoint_init(&answerer, "Baudot answerer"),
+		      endpoint_init(&answerer, "Baudot answerer") &&
+		      endpoint_prepare_media(&caller, codec) &&
+		      endpoint_prepare_media(&answerer, codec),
 	      "Baudot SIP integration did not initialize");
 	CHECK(modem_write(
 		      caller.modem, selection_command, selection_length) ==
@@ -901,6 +993,18 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.training_frame_limit = 1500,
 			.automode = true,
+		},
+		{
+			.id = DP_V90,
+			.name = "V.90 28000 downstream",
+			.selection_command = "AT+MS=90,0,28000,28000\r",
+			.caller_tx_rate = 19200,
+			.caller_rx_rate = V90_PROFILE_DOWNSTREAM_BIT_RATE,
+			.answerer_tx_rate = V90_PROFILE_DOWNSTREAM_BIT_RATE,
+			.answerer_rx_rate = 19200,
+			.training_frame_limit = 1500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
 		},
 		{
 			.id = DP_B212,

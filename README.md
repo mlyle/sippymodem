@@ -72,7 +72,8 @@ integration check trains two real modem cores through the PCMU and PCMA media
 and recording boundaries, then verifies exact binary terminal data in both
 directions through V.32bis at 14400 bit/s, including bounded carrier-loss
 handling. The same boundary check exchanges Baudot text in both directions
-without overlapping the half-duplex turns.
+without overlapping the half-duplex turns and preserves exact G.711 codewords
+for PCM datapumps.
 
 The SIP adapter owns one validated incoming or outgoing call, supports ringing,
 answer, and hangup, and reports bounded call-progress events. Offers and answers
@@ -164,8 +165,12 @@ matrix runs all 55 V.34 pairs through both G.711 laws and both station roles:
 through 21600 bit/s at 2400 symbol/s, through 26400 bit/s at 2800 symbol/s,
 through 28800 bit/s at 3000 symbol/s, through 31200 bit/s at 3200 symbol/s,
 and through 33600 bit/s at 3429 symbol/s. The optional 2743-symbol/s cadence
-is excluded because the control does not accept it. The
-catalog independently sweeps V.90/V.92
+is excluded because the control does not accept it. The native boundary also
+trains the initial V.90 profile through V.8 over both G.711 laws, confirms exact
+codeword output at both endpoints, reports 28000 bit/s downstream with a 19200
+bit/s conventional upstream, and passes distinct binary payloads in both
+directions. This is generated in-process coverage, not external modem
+interoperability. The catalog independently sweeps V.90/V.92
 downstream, conventional upstream, PCM-upstream, quick-connect, head-end, and
 analogue-fallback cases without a Cartesian explosion. Plans select individual
 `profiles`, reusable `profile_groups`, `lapm` and/or `raw` link modes, and a
