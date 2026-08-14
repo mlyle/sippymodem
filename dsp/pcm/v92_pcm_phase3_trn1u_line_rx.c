@@ -8,7 +8,6 @@
 #include <string.h>
 
 enum {
-	MINIMUM_SIGNAL_LEVEL = 512,
 	MINIMUM_CORRELATION_SCORE = 40,
 };
 
@@ -54,7 +53,8 @@ static bool aligned_state_is_valid(
 		       V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS &&
 	       (receiver->polarity == -1 || receiver->polarity == 1) &&
 	       isfinite(receiver->signal_level) &&
-	       receiver->signal_level >= MINIMUM_SIGNAL_LEVEL &&
+		       receiver->signal_level >=
+			       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
 	       receiver->signal_level <= 32768.0 &&
 	       receiver->equalizer.fill ==
 		       receiver->equalizer.decision_delay + 1u &&
@@ -195,7 +195,8 @@ static bool window_matches(
 		(uint64_t)-correlation : (uint64_t)correlation;
 	if (energy <
 		    (uint64_t)V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS *
-			    MINIMUM_SIGNAL_LEVEL * MINIMUM_SIGNAL_LEVEL ||
+			    V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL *
+			    V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL ||
 	    absolute_correlation * absolute_correlation <
 		    (uint64_t)MINIMUM_CORRELATION_SCORE * energy)
 		return false;
@@ -366,7 +367,8 @@ bool v92_pcm_phase3_trn1u_line_handoff_is_valid(
 	       handoff->training_errors <=
 		       V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS &&
 	       isfinite(handoff->signal_level) &&
-	       handoff->signal_level >= MINIMUM_SIGNAL_LEVEL &&
+	       handoff->signal_level >=
+		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
 	       handoff->signal_level <= 32768.0 &&
 	       isfinite(handoff->adaptation) && handoff->adaptation >= 0.0 &&
 	       handoff->adaptation <= 1.0 &&
