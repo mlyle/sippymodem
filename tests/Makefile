@@ -3848,7 +3848,7 @@ $(BUILD_DIR)/sdp_pjsip.o: \
 	$(CC) $(CPPFLAGS) -D_DEFAULT_SOURCE $(CFLAGS) $(PJSIP_CFLAGS) \
 		-MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/g711.o: ../src/g711.c | $(BUILD_DIR)
+$(BUILD_DIR)/g711.o: ../dsp/g711.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v42_xid.o: \

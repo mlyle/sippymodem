@@ -55,7 +55,6 @@ APP_SOURCES := \
 	audio_scheduler.c \
 	config.c \
 	frame_clock.c \
-	g711.c \
 	host.c \
 	lapm_v44_session.c \
 	loop.c \
@@ -99,6 +98,7 @@ SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/differential_qpsk.c \
 	$(DSP_SOURCE_DIR)/fsk.c \
 	$(DSP_SOURCE_DIR)/fractional_delay.c \
+	$(DSP_SOURCE_DIR)/g711.c \
 	$(DSP_SOURCE_DIR)/qam_equalizer.c \
 	$(DSP_SOURCE_DIR)/qam.c \
 	$(DSP_SOURCE_DIR)/qam_gain.c \
