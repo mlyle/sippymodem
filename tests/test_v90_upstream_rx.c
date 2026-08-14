@@ -28,12 +28,13 @@ static void add_ucode(
 }
 
 static struct v90_cp_parameters cp_parameters(
-	enum v90_cp_kind kind, enum g711_law law, bool acknowledged)
+	enum v90_cp_kind kind, enum g711_law law, bool acknowledged,
+	uint8_t rate_2400_bps_units)
 {
 	struct v90_cp_parameters parameters = {
 		.kind = kind,
 		.law = law,
-		.upstream_rate_mask = rate_bit(4),
+		.upstream_rate_mask = rate_bit(rate_2400_bps_units),
 		.trn1d_ratio_q3_13 = 0x2000,
 		.shaping_a1_q1_6 = -12,
 		.shaping_a2_q1_6 = 6,
@@ -53,14 +54,16 @@ static struct v90_cp_parameters cp_parameters(
 	return parameters;
 }
 
-static struct v90_mp_record local_mp(void)
+static struct v90_mp_record local_mp(uint8_t rate_2400_bps_units)
 {
 	return (struct v90_mp_record){
 		.type = V90_MP_RECORD_TYPE0,
 		.parameters.type0 = {
-			.maximum_upstream_rate_2400_bps_units = 4,
+			.maximum_upstream_rate_2400_bps_units =
+				rate_2400_bps_units,
 			.upstream_trellis = V34_TRELLIS_16_STATE,
-			.upstream_rate_capability_mask = rate_bit(4),
+			.upstream_rate_capability_mask =
+				rate_bit(rate_2400_bps_units),
 		},
 	};
 }
@@ -93,14 +96,19 @@ static bool parameters_match(
 }
 
 static bool run_line(
-	enum g711_law law, enum v34_constellation_size constellation)
+	enum g711_law law, enum v34_constellation_size constellation,
+	uint8_t rate_2400_bps_units)
 {
 	struct v90_cp_parameters training =
-		cp_parameters(V90_CP_TRAINING, law, false);
+		cp_parameters(
+			V90_CP_TRAINING, law, false,
+			rate_2400_bps_units);
 	struct v90_cp_parameters data =
-		cp_parameters(V90_CP_DATA, law, false);
+		cp_parameters(
+			V90_CP_DATA, law, false,
+			rate_2400_bps_units);
 	struct v90_cp_parameters prime = data;
-	struct v90_mp_record mp = local_mp();
+	struct v90_mp_record mp = local_mp(rate_2400_bps_units);
 	struct v90_pcm_mapping training_mapping;
 	struct v90_phase3_return_line_handoff phase3;
 	struct v90_phase4_cp_line_tx cp_tx;
@@ -263,12 +271,14 @@ static bool run_line(
 		      !v90_upstream_rx_has_failed(&receiver) && handoff_valid &&
 		      !v34_data_line_receiver_is_receiving_b1(&data_handoff) &&
 		      data_handoff.geometry
-			      .primary_data_rate_2400_bps_units == 4 &&
+			      .primary_data_rate_2400_bps_units ==
+			      rate_2400_bps_units &&
 		      data_handoff.equalizer_receiver.data_receiver.data_receiver
 			      .b1_error_bits == 0,
-		      "upstream entry stopped: source=%d/%d/%d/%d/%d "
+		      "upstream entry at rate %u stopped: source=%d/%d/%d/%d/%d "
 		      "events=%d/%d/%d/%d stage=%d failed=%d handoff=%s "
 		      "valid=%d rate=%u errors=%u",
+		      rate_2400_bps_units,
 		      data_started, prime_started, cp_finished, e_started,
 		      b1_started, mp_prime_requested, ed_requested, e_received,
 		      b1_received,
@@ -301,8 +311,8 @@ static bool run_line(
 static bool test_contracts(void)
 {
 	struct v90_cp_parameters training =
-		cp_parameters(V90_CP_TRAINING, G711_LAW_PCMU, false);
-	struct v90_mp_record mp = local_mp();
+		cp_parameters(V90_CP_TRAINING, G711_LAW_PCMU, false, 4);
+	struct v90_mp_record mp = local_mp(4);
 	struct v90_mp_record acknowledged = mp;
 	struct v90_pcm_mapping mapping;
 	struct v90_pcm_mapping wrong_mapping;
@@ -369,10 +379,22 @@ static bool test_contracts(void)
 
 int main(void)
 {
+	static const struct {
+		enum g711_law law;
+		enum v34_constellation_size constellation;
+	} paths[] = {
+		{ G711_LAW_PCMU, V34_CONSTELLATION_4_POINT },
+		{ G711_LAW_PCMA, V34_CONSTELLATION_16_POINT },
+	};
+
 	fprintf(stderr, "[ RUN      ] generated upstream entry\n");
-	if (!run_line(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT) ||
-	    !run_line(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT))
-		return 1;
+	for (size_t path = 0; path < ARRAY_LENGTH(paths); ++path)
+		for (uint8_t rate = V90_MP_MINIMUM_RATE_2400_BPS_UNITS;
+		     rate <= 8; ++rate)
+			if (!run_line(
+				    paths[path].law,
+				    paths[path].constellation, rate))
+				return 1;
 	fprintf(stderr, "[       OK ] generated upstream entry\n");
 	fprintf(stderr, "[ RUN      ] contracts\n");
 	if (!test_contracts())
