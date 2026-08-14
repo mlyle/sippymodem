@@ -24,27 +24,6 @@ static size_t bits_per_symbol(
 	return constellation == V34_CONSTELLATION_16_POINT ? 4u : 2u;
 }
 
-static bool unused_frame_storage_is_zero(
-	const uint8_t *frame, size_t bit_count)
-{
-	size_t byte_index = bit_count / 8u;
-	size_t used_bits = bit_count % 8u;
-
-	if (used_bits != 0) {
-		uint8_t unused_mask =
-			(uint8_t)((1u << (8u - used_bits)) - 1u);
-
-		if ((frame[byte_index] & unused_mask) != 0)
-			return false;
-		++byte_index;
-	}
-	for (; byte_index < V90_CP_MAX_FRAME_BYTES; ++byte_index) {
-		if (frame[byte_index] != 0)
-			return false;
-	}
-	return true;
-}
-
 static bool frame_is_valid(
 	const uint8_t *frame, size_t bit_count)
 {
@@ -54,7 +33,8 @@ static bool frame_is_valid(
 	if (bit_count < V90_CP_MIN_FRAME_BITS ||
 	    bit_count > V90_CP_MAX_FRAME_BITS ||
 	    bit_count % 4u != 0 ||
-	    !unused_frame_storage_is_zero(frame, bit_count))
+	    !packed_msb_tail_is_zero(
+		    frame, bit_count, V90_CP_MAX_FRAME_BYTES))
 		return false;
 	byte_count = (bit_count + 7u) / 8u;
 	return v90_cp_decode(frame, byte_count, bit_count, &parameters) ==

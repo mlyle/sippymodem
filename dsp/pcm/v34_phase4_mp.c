@@ -18,34 +18,13 @@ static size_t bits_per_symbol(
 								    2u;
 }
 
-static bool unused_frame_storage_is_zero(
-	const uint8_t *frame, size_t bit_count)
-{
-	size_t byte_index = bit_count / 8u;
-	size_t used_bits = bit_count % 8u;
-
-	if (used_bits != 0) {
-		uint8_t unused_mask =
-			(uint8_t)((1u << (8u - used_bits)) - 1u);
-
-		if ((frame[byte_index] & unused_mask) != 0)
-			return false;
-		++byte_index;
-	}
-	for (; byte_index < V34_MP_TYPE1_FRAME_BYTES;
-	     ++byte_index) {
-		if (frame[byte_index] != 0)
-			return false;
-	}
-	return true;
-}
-
 static bool frame_is_valid(const uint8_t *frame, size_t bit_count)
 {
 	if (bit_count != V34_MP_TYPE0_FRAME_BITS &&
 	    bit_count != V34_MP_TYPE1_FRAME_BITS)
 		return false;
-	if (!unused_frame_storage_is_zero(frame, bit_count))
+	if (!packed_msb_tail_is_zero(
+		    frame, bit_count, V34_MP_TYPE1_FRAME_BYTES))
 		return false;
 	if (bit_count == V34_MP_TYPE0_FRAME_BITS) {
 		struct v34_mp_parameters parameters;

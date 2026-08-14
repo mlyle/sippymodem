@@ -179,21 +179,6 @@ enum v34_info1_result v34_info1c_encode(
 	return V34_INFO1_OK;
 }
 
-static bool payload_padding_is_zero(
-	const uint8_t *payload, size_t payload_bit_count)
-{
-	uint8_t used_bits = (uint8_t)(payload_bit_count % 8u);
-	uint8_t unused_bits;
-	uint8_t padding_mask;
-
-	if (used_bits == 0)
-		return true;
-	unused_bits = (uint8_t)(8u - used_bits);
-	padding_mask = (uint8_t)((1u << unused_bits) - 1u);
-	return (payload[(payload_bit_count + 7u) / 8u - 1u] &
-		padding_mask) == 0;
-}
-
 static int16_t decode_frequency_offset(
 	const uint8_t *payload, size_t first_bit)
 {
@@ -254,7 +239,8 @@ enum v34_info1_result v34_info1c_decode(
 	    payload_capacity < V34_INFO1C_PAYLOAD_BYTES)
 		return V34_INFO1_INVALID_ARGUMENT;
 	if (payload_bit_count != V34_INFO1C_PAYLOAD_BITS ||
-	    !payload_padding_is_zero(payload, payload_bit_count))
+	    !packed_msb_tail_is_zero(
+		    payload, payload_bit_count, V34_INFO1C_PAYLOAD_BYTES))
 		return V34_INFO1_INVALID_PAYLOAD;
 	decoded.common = decode_common(
 		payload, V34_INFO1C_FREQUENCY_OFFSET_FIRST_BIT);
@@ -309,7 +295,8 @@ enum v34_info1_result v34_info1a_decode(
 	    payload_capacity < V34_INFO1A_PAYLOAD_BYTES)
 		return V34_INFO1_INVALID_ARGUMENT;
 	if (payload_bit_count != V34_INFO1A_PAYLOAD_BITS ||
-	    !payload_padding_is_zero(payload, payload_bit_count))
+	    !packed_msb_tail_is_zero(
+		    payload, payload_bit_count, V34_INFO1A_PAYLOAD_BYTES))
 		return V34_INFO1_INVALID_PAYLOAD;
 	decoded.common = decode_common(
 		payload, V34_INFO1A_FREQUENCY_OFFSET_FIRST_BIT);

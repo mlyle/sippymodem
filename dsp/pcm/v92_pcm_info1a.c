@@ -137,12 +137,6 @@ enum v92_pcm_info1a_result v92_pcm_info1a_encode(
 	return V92_PCM_INFO1A_OK;
 }
 
-static bool padding_is_zero(const uint8_t *payload)
-{
-	return (payload[V92_PCM_INFO1A_PAYLOAD_BYTES - 1u] &
-		UINT8_C(0x03)) == 0;
-}
-
 enum v92_pcm_info1a_result v92_pcm_info1a_decode(
 	const uint8_t *payload, size_t payload_capacity,
 	size_t payload_bit_count, struct v92_pcm_info1a *info1a)
@@ -153,7 +147,9 @@ enum v92_pcm_info1a_result v92_pcm_info1a_decode(
 	    payload_capacity < V92_PCM_INFO1A_PAYLOAD_BYTES)
 		return V92_PCM_INFO1A_INVALID_ARGUMENT;
 	if (payload_bit_count != V92_PCM_INFO1A_PAYLOAD_BITS ||
-	    !padding_is_zero(payload) ||
+	    !packed_msb_tail_is_zero(
+		    payload, payload_bit_count,
+		    V92_PCM_INFO1A_PAYLOAD_BYTES) ||
 	    decode_field(
 		    payload, ANALOG_SYMBOL_RATE_FIRST_BIT,
 		    SYMBOL_RATE_BITS) != PCM_SYMBOL_RATE_CODE ||

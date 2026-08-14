@@ -48,12 +48,6 @@ static void encode_field(
 			(value & (uint16_t)(1u << index)) != 0);
 }
 
-static bool padding_is_zero(const uint8_t *payload)
-{
-	return (payload[V90_INFO1A_PAYLOAD_BYTES - 1u] &
-		UINT8_C(0x03)) == 0;
-}
-
 bool v90_info1a_is_valid(const struct v90_info1a *info1a)
 {
 	return info1a != NULL &&
@@ -125,7 +119,8 @@ enum v90_info1_result v90_info1a_decode(
 	    payload_capacity < V90_INFO1A_PAYLOAD_BYTES)
 		return V90_INFO1_INVALID_ARGUMENT;
 	if (payload_bit_count != V90_INFO1A_PAYLOAD_BITS ||
-	    !padding_is_zero(payload) ||
+	    !packed_msb_tail_is_zero(
+		    payload, payload_bit_count, V90_INFO1A_PAYLOAD_BYTES) ||
 	    decode_field(
 		    payload, DOWNSTREAM_SYMBOL_RATE_FIRST_BIT,
 		    SYMBOL_RATE_BITS) != DOWNSTREAM_SYMBOL_RATE_CODE)

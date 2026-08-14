@@ -17,27 +17,6 @@ static void set_sequence_bit(
 		sequence[bit_index / 8u] &= (uint8_t)~mask;
 }
 
-static bool packed_tail_is_zero(
-	const uint8_t *sequence, size_t used_bits)
-{
-	size_t byte = used_bits / 8u;
-	size_t partial = used_bits % 8u;
-
-	if (partial != 0) {
-		uint8_t unused_mask =
-			(uint8_t)((1u << (8u - partial)) - 1u);
-
-		if ((sequence[byte] & unused_mask) != 0)
-			return false;
-		++byte;
-	}
-	for (; byte < V90_MP_MAXIMUM_SEQUENCE_BYTES; ++byte) {
-		if (sequence[byte] != 0)
-			return false;
-	}
-	return true;
-}
-
 static bool prefix_is_valid(const uint8_t *sequence)
 {
 	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit) {
@@ -77,7 +56,9 @@ bool v90_mp_receiver_is_valid(
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    receiver->sync_one_count > V90_MP_FRAME_SYNC_BITS ||
 	    receiver->bit_index > V90_MP_MAXIMUM_SEQUENCE_BITS ||
-	    !packed_tail_is_zero(receiver->sequence, receiver->bit_index) ||
+	    !packed_msb_tail_is_zero(
+		    receiver->sequence, receiver->bit_index,
+		    sizeof(receiver->sequence)) ||
 	    v90_mp_sequence_size(
 		    V90_MP_RECORD_TYPE0, receiver->training_frame_bits,
 		    &expected) != V90_MP_OK)

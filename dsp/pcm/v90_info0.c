@@ -142,16 +142,6 @@ static void decode_common(
 	};
 }
 
-static bool padding_is_zero(
-	const uint8_t *payload, size_t payload_bit_count)
-{
-	size_t remainder = payload_bit_count % 8u;
-
-	return remainder == 0 ||
-	       (payload[payload_bit_count / 8u] &
-		(uint8_t)((1u << (8u - remainder)) - 1u)) == 0;
-}
-
 enum v90_info0_result v90_info0a_encode(
 	const struct v90_info0 *info0a, uint8_t *payload,
 	size_t payload_capacity)
@@ -178,7 +168,8 @@ enum v90_info0_result v90_info0a_decode(
 	    payload_capacity < V90_INFO0A_PAYLOAD_BYTES)
 		return V90_INFO0_INVALID_ARGUMENT;
 	if (payload_bit_count != V90_INFO0A_PAYLOAD_BITS ||
-	    !padding_is_zero(payload, payload_bit_count))
+	    !packed_msb_tail_is_zero(
+		    payload, payload_bit_count, V90_INFO0A_PAYLOAD_BYTES))
 		return V90_INFO0_INVALID_PAYLOAD;
 	decode_common(payload, &decoded);
 	if (!v90_info0_is_valid(&decoded))
@@ -225,7 +216,8 @@ enum v90_info0_result v90_info0d_decode(
 	    payload_capacity < V90_INFO0D_PAYLOAD_BYTES)
 		return V90_INFO0_INVALID_ARGUMENT;
 	if (payload_bit_count != V90_INFO0D_PAYLOAD_BITS ||
-	    !padding_is_zero(payload, payload_bit_count))
+	    !packed_msb_tail_is_zero(
+		    payload, payload_bit_count, V90_INFO0D_PAYLOAD_BYTES))
 		return V90_INFO0_INVALID_PAYLOAD;
 	decode_common(payload, &decoded.common);
 	decoded.nominal_transmit_power = decode_field(

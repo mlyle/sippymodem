@@ -59,25 +59,6 @@ enum v34_phase2_info_result v34_phase2_info_crc(
 	return V34_PHASE2_INFO_OK;
 }
 
-static bool packed_tail_is_zero(
-	const uint8_t *packed, size_t used_bit_count, size_t capacity)
-{
-	size_t used_bytes = (used_bit_count + 7u) / 8u;
-
-	if (used_bit_count % 8u != 0) {
-		uint8_t padding_mask = (uint8_t)(
-			(1u << (8u - used_bit_count % 8u)) - 1u);
-
-		if ((packed[used_bytes - 1u] & padding_mask) != 0)
-			return false;
-	}
-	for (size_t index = used_bytes; index < capacity; ++index) {
-		if (packed[index] != 0)
-			return false;
-	}
-	return true;
-}
-
 bool v34_phase2_info_generator_is_valid(
 	const struct v34_phase2_info_generator *generator)
 {
@@ -90,7 +71,7 @@ bool v34_phase2_info_generator_is_valid(
 	frame_bit_count = v34_phase2_info_frame_bit_count(
 		generator->payload_bit_count);
 	return generator->bit_index <= frame_bit_count &&
-	       packed_tail_is_zero(
+	       packed_msb_tail_is_zero(
 		       generator->payload, generator->payload_bit_count,
 		       sizeof(generator->payload)) &&
 	       generator->crc == payload_crc(
@@ -203,7 +184,7 @@ bool v34_phase2_info_receiver_is_valid(
 	    receiver->tail_bit_count >=
 		    V34_PHASE2_INFO_TRAILING_FILL_BITS ||
 	    receiver->sync_window > V34_PHASE2_INFO_PREFIX_MASK ||
-	    !packed_tail_is_zero(
+	    !packed_msb_tail_is_zero(
 		    receiver->payload, receiver->payload_bit_index,
 		    sizeof(receiver->payload)))
 		return false;

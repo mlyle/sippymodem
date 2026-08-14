@@ -16,17 +16,6 @@ static void store_bit(
 			(uint8_t)(1u << (7u - bit_index % 8u));
 }
 
-static bool unused_bits_are_zero(
-	const struct v92_ja_decoder *decoder)
-{
-	for (size_t bit = decoder->bit_index;
-	     bit < sizeof(decoder->descriptor) * 8u; ++bit) {
-		if (packed_msb_bit(decoder->descriptor, bit) != 0u)
-			return false;
-	}
-	return true;
-}
-
 bool v92_ja_decoder_is_valid(const struct v92_ja_decoder *decoder)
 {
 	uint32_t decoded_mask;
@@ -35,7 +24,9 @@ bool v92_ja_decoder_is_valid(const struct v92_ja_decoder *decoder)
 	    !pcm_binary_sign_is_valid(&decoder->coding) ||
 	    decoder->coding.scrambler.polynomial != V34_POLYNOMIAL_GPA ||
 	    decoder->bit_index > V92_PCM_DIL_ZERO_DESCRIPTOR_BITS ||
-	    !unused_bits_are_zero(decoder))
+	    !packed_msb_tail_is_zero(
+		    decoder->descriptor, decoder->bit_index,
+		    sizeof(decoder->descriptor)))
 		return false;
 	if (!decoder->complete)
 		return decoder->bit_index < V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&

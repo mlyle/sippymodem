@@ -486,28 +486,6 @@ enum v34_mp_result v34_mp_type1_decode(
 	return V34_MP_OK;
 }
 
-static bool packed_tail_is_zero(
-	const uint8_t *frame, size_t used_bit_count)
-{
-	size_t byte_index = used_bit_count / 8u;
-	size_t used_bits = used_bit_count % 8u;
-
-	if (used_bits != 0) {
-		uint8_t unused_mask =
-			(uint8_t)((1u << (8u - used_bits)) - 1u);
-
-		if ((frame[byte_index] & unused_mask) != 0)
-			return false;
-		++byte_index;
-	}
-	for (; byte_index < V34_MP_TYPE1_FRAME_BYTES;
-	     ++byte_index) {
-		if (frame[byte_index] != 0)
-			return false;
-	}
-	return true;
-}
-
 static bool receive_prefix_is_valid(const uint8_t *frame)
 {
 	return frame_sync_is_valid(frame) &&
@@ -528,7 +506,9 @@ bool v34_mp_receiver_is_valid(
 	    receiver->sync_one_count > V34_MP_TYPE0_FRAME_SYNC_BITS ||
 	    receiver->bit_index > V34_MP_TYPE1_FRAME_BITS ||
 	    !receive_stage_is_valid(receiver->stage) ||
-	    !packed_tail_is_zero(receiver->frame, receiver->bit_index))
+	    !packed_msb_tail_is_zero(
+		    receiver->frame, receiver->bit_index,
+		    sizeof(receiver->frame)))
 		return false;
 	switch (receiver->stage) {
 	case V34_MP_SEARCH_SYNC:

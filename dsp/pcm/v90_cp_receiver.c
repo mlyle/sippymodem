@@ -74,26 +74,6 @@ static bool stage_is_valid(enum v90_cp_receive_stage stage)
 	       stage == V90_CP_RECEIVER_READ_FRAME;
 }
 
-static bool packed_tail_is_zero(
-	const uint8_t *frame, size_t used_bits)
-{
-	size_t byte_index = used_bits / 8u;
-	size_t partial_bits = used_bits % 8u;
-
-	if (partial_bits != 0) {
-		uint8_t unused = (uint8_t)((1u << (8u - partial_bits)) - 1u);
-
-		if ((frame[byte_index] & unused) != 0)
-			return false;
-		++byte_index;
-	}
-	for (; byte_index < V90_CP_MAX_FRAME_BYTES; ++byte_index) {
-		if (frame[byte_index] != 0)
-			return false;
-	}
-	return true;
-}
-
 static bool prefix_is_valid(const uint8_t *frame)
 {
 	for (size_t index = 0; index < CP_SYNC_BITS; ++index) {
@@ -133,7 +113,9 @@ bool v90_cp_receiver_is_valid(
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    receiver->sync_one_count > CP_SYNC_BITS ||
 	    receiver->bit_index > V90_CP_MAX_FRAME_BITS ||
-	    !packed_tail_is_zero(receiver->frame, receiver->bit_index))
+	    !packed_msb_tail_is_zero(
+		    receiver->frame, receiver->bit_index,
+		    sizeof(receiver->frame)))
 		return false;
 	switch (receiver->stage) {
 	case V90_CP_RECEIVER_SEARCH_SYNC:

@@ -120,12 +120,6 @@ enum v34_info0_result v34_info0_encode(
 	return V34_INFO0_OK;
 }
 
-static bool payload_padding_is_zero(const uint8_t *payload)
-{
-	return (payload[V34_INFO0_PAYLOAD_BYTES - 1u] &
-		UINT8_C(0x7f)) == 0;
-}
-
 enum v34_info0_result v34_info0_decode(
 	const uint8_t *payload, size_t payload_capacity,
 	size_t payload_bit_count, struct v34_info0 *info0)
@@ -136,7 +130,8 @@ enum v34_info0_result v34_info0_decode(
 	    payload_capacity < V34_INFO0_PAYLOAD_BYTES)
 		return V34_INFO0_INVALID_ARGUMENT;
 	if (payload_bit_count != V34_INFO0_PAYLOAD_BITS ||
-	    !payload_padding_is_zero(payload))
+	    !packed_msb_tail_is_zero(
+		    payload, payload_bit_count, V34_INFO0_PAYLOAD_BYTES))
 		return V34_INFO0_INVALID_PAYLOAD;
 
 	decoded.symbol_rate_2743_supported =
