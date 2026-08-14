@@ -10,6 +10,7 @@
 #include "v23_datapump.h"
 #include "datapump.h"
 #include "v34_datapump.h"
+#include "v90_datapump.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -101,12 +102,14 @@ enum datapumps_result datapumps_start(
 	    datapumps->v8_registered && datapumps->v23_registered &&
 	    datapumps->v22_registered &&
 	    datapumps->v32_registered && datapumps->v34_registered &&
+	    datapumps->v90_registered &&
 	    datapumps->baudot_registered)
 		return DATAPUMPS_ALREADY_STARTED;
 	if (datapumps->call_progress_registered || datapumps->fsk300_registered ||
 	    datapumps->v8_registered || datapumps->v23_registered ||
 	    datapumps->v22_registered ||
 	    datapumps->v32_registered || datapumps->v34_registered ||
+	    datapumps->v90_registered ||
 	    datapumps->baudot_registered ||
 	    modem_dp_get_registered_ops(DP_CALLPROG) != NULL ||
 	    modem_dp_get_registered_ops(DP_V8) != NULL ||
@@ -118,6 +121,7 @@ enum datapumps_result datapumps_start(
 	    modem_dp_get_registered_ops(DP_B212) != NULL ||
 	    modem_dp_get_registered_ops(DP_V32) != NULL ||
 	    modem_dp_get_registered_ops(DP_V34) != NULL ||
+	    modem_dp_get_registered_ops(DP_V90) != NULL ||
 	    modem_dp_get_registered_ops(DP_BAUDOT) != NULL ||
 	    modem_dp_register(DP_CALLPROG, &call_progress_operations) != 0)
 		return DATAPUMPS_REGISTRATION_CONFLICT;
@@ -166,7 +170,19 @@ enum datapumps_result datapumps_start(
 			DP_CALLPROG, &call_progress_operations);
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	}
+	if (v90_datapump_register() != 0) {
+		(void)v34_datapump_unregister();
+		(void)v32_datapump_unregister();
+		(void)v22_datapump_unregister();
+		(void)v23_datapump_unregister();
+		(void)v8_datapump_unregister();
+		(void)fsk300_datapump_unregister();
+		(void)modem_dp_deregister(
+			DP_CALLPROG, &call_progress_operations);
+		return DATAPUMPS_REGISTRATION_CONFLICT;
+	}
 	if (baudot_datapump_register() != 0) {
+		(void)v90_datapump_unregister();
 		(void)v34_datapump_unregister();
 		(void)v32_datapump_unregister();
 		(void)v22_datapump_unregister();
@@ -184,6 +200,7 @@ enum datapumps_result datapumps_start(
 	datapumps->v22_registered = true;
 	datapumps->v32_registered = true;
 	datapumps->v34_registered = true;
+	datapumps->v90_registered = true;
 	datapumps->baudot_registered = true;
 	return DATAPUMPS_OK;
 }
@@ -197,12 +214,14 @@ enum datapumps_result datapumps_stop(
 	    !datapumps->v8_registered && !datapumps->v23_registered &&
 	    !datapumps->v22_registered &&
 	    !datapumps->v32_registered && !datapumps->v34_registered &&
+	    !datapumps->v90_registered &&
 	    !datapumps->baudot_registered)
 		return DATAPUMPS_NOT_STARTED;
 	if (!datapumps->call_progress_registered || !datapumps->fsk300_registered ||
 	    !datapumps->v8_registered || !datapumps->v23_registered ||
 	    !datapumps->v22_registered ||
 	    !datapumps->v32_registered || !datapumps->v34_registered ||
+	    !datapumps->v90_registered ||
 	    !datapumps->baudot_registered)
 		return DATAPUMPS_REGISTRATION_CONFLICT;
 	if (call_progress_operations.use_count != 0 ||
@@ -212,12 +231,15 @@ enum datapumps_result datapumps_stop(
 	    v22_datapump_is_busy() ||
 	    v32_datapump_is_busy() ||
 	    v34_datapump_is_busy() ||
+	    v90_datapump_is_busy() ||
 	    baudot_datapump_is_busy())
 		return DATAPUMPS_BUSY;
 	if (baudot_datapump_unregister() != 0)
 		return DATAPUMPS_REGISTRATION_CONFLICT;
-	if (v34_datapump_unregister() != 0)
+	if (v90_datapump_unregister() != 0)
 		goto restore_baudot;
+	if (v34_datapump_unregister() != 0)
+		goto restore_v90;
 	if (v32_datapump_unregister() != 0)
 		goto restore_v34;
 	if (v22_datapump_unregister() != 0)
@@ -247,6 +269,7 @@ enum datapumps_result datapumps_stop(
 	datapumps->v22_registered = false;
 	datapumps->v32_registered = false;
 	datapumps->v34_registered = false;
+	datapumps->v90_registered = false;
 	datapumps->baudot_registered = false;
 	return DATAPUMPS_OK;
 restore_v22:
@@ -255,6 +278,8 @@ restore_v32:
 	(void)v32_datapump_register();
 restore_v34:
 	(void)v34_datapump_register();
+restore_v90:
+	(void)v90_datapump_register();
 restore_baudot:
 	(void)baudot_datapump_register();
 	return DATAPUMPS_REGISTRATION_CONFLICT;
@@ -267,6 +292,7 @@ bool datapumps_are_started(
 	       datapumps->fsk300_registered && datapumps->v8_registered &&
 	       datapumps->v23_registered && datapumps->v22_registered &&
 	       datapumps->v32_registered && datapumps->v34_registered &&
+	       datapumps->v90_registered &&
 	       datapumps->baudot_registered;
 }
 

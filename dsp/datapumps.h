@@ -22,6 +22,7 @@ struct datapumps {
 	bool v22_registered;
 	bool v32_registered;
 	bool v34_registered;
+	bool v90_registered;
 	bool baudot_registered;
 };
 

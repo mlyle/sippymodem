@@ -93,9 +93,10 @@ media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
-103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, and the current
-V.34 baseline are registered. V.90/V.92 datapumps and their AT controls remain
-unavailable until they arrive as complete reviewable slices.
+103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, and the
+initial exact-G.711 V.90 profile are registered. The V.90 profile currently
+selects 28000 bit/s downstream and a conventional V.34 upstream; broader V.90
+rate controls and the V.92 datapump remain unavailable.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 

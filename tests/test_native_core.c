@@ -10,6 +10,8 @@
 #include <line_startup.h>
 #include <v8_datapump.h>
 #include <v34_datapump.h>
+#include <v90_datapump.h>
+#include <v90_profile.h>
 
 #include "test.h"
 
@@ -1095,6 +1097,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *bell212_operations;
 	struct dp_operations *v32_operations;
 	struct dp_operations *v34_operations;
+	struct dp_operations *v90_operations;
 	struct dp_operations *baudot_operations;
 	struct dp *call_progress;
 	struct dp *v8;
@@ -1104,6 +1107,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp *bell212;
 	struct dp *v32;
 	struct dp *v34;
+	struct dp *v90;
 	struct single_tone_transmitter v32_line_artifact;
 	struct single_tone_transmitter v32_answer_tone;
 	int16_t receive[MODEM_FRAG];
@@ -1120,13 +1124,13 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
+		      modem_dp_get_registered_ops(DP_V90) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
-		      modem_dp_register(DP_V8, &conflict_operations) == 0 &&
+		      modem_dp_register(DP_V90, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
 			      DATAPUMPS_REGISTRATION_CONFLICT &&
 		      modem_dp_get_registered_ops(DP_CALLPROG) == NULL &&
-		      modem_dp_get_registered_ops(DP_V8) ==
-			      &conflict_operations &&
+		      modem_dp_get_registered_ops(DP_V8) == NULL &&
 		      modem_dp_get_registered_ops(DP_V21) == NULL &&
 		      modem_dp_get_registered_ops(DP_B103) == NULL &&
 		      modem_dp_get_registered_ops(DP_V23) == NULL &&
@@ -1135,8 +1139,10 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
+		      modem_dp_get_registered_ops(DP_V90) ==
+			      &conflict_operations &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
-		      modem_dp_deregister(DP_V8, &conflict_operations) == 0 &&
+		      modem_dp_deregister(DP_V90, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
 			      DATAPUMPS_OK &&
 		      datapumps_are_started(&datapumps),
@@ -1151,6 +1157,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	bell212_operations = modem_dp_get_registered_ops(DP_B212);
 	v32_operations = modem_dp_get_registered_ops(DP_V32);
 	v34_operations = modem_dp_get_registered_ops(DP_V34);
+	v90_operations = modem_dp_get_registered_ops(DP_V90);
 	baudot_operations = modem_dp_get_registered_ops(DP_BAUDOT);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
@@ -1198,6 +1205,13 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v34_operations->delete != NULL &&
 		      v34_operations->process != NULL &&
 		      v34_operations->use_count == 0 &&
+		      v90_operations != NULL &&
+		      v90_operations != v34_operations &&
+		      v90_operations->create != NULL &&
+		      v90_operations->delete != NULL &&
+		      v90_operations->process != NULL &&
+		      v90_operations->process_g711 != NULL &&
+		      v90_operations->use_count == 0 &&
 		      baudot_operations != NULL &&
 		      baudot_operations != v21_operations &&
 		      baudot_operations != v23_operations &&
@@ -1375,6 +1389,25 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v34_operations->delete(v34) == 0 &&
 		      v34_operations->use_count == 0,
 	      "V.34 data pump did not retain and release its call state");
+	{
+		char command[] = "AT+MS=90,0,28000,28000";
+
+		CHECK(process_at_command(modem, command) == 0 &&
+			      MODEM_DP(modem) == DP_V90 &&
+			      modem->min_rate == V90_PROFILE_DOWNSTREAM_BIT_RATE &&
+			      modem->max_rate == V90_PROFILE_DOWNSTREAM_BIT_RATE,
+		      "AT+MS did not expose the registered V.90 profile");
+	}
+	modem->dsp_info.pcm_role = MODEM_PCM_ROLE_ANALOG;
+	v90 = v90_operations->create(
+		modem, DP_V90, 1, MODEM_RATE, MODEM_FRAG, v90_operations);
+	CHECK(v90 != NULL && v90->id == DP_V90 &&
+		      v90_operations->use_count == 1 &&
+		      datapumps_stop(&datapumps) == DATAPUMPS_BUSY &&
+		      v90_operations->delete(v90) == 0 &&
+		      v90_operations->use_count == 0,
+	      "V.90 data pump did not retain and release its call state");
+	modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
 	modem->min_rate = 46;
 	modem->max_rate = 49;
 	CHECK(baudot_operations->create(
@@ -1436,6 +1469,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
+		      modem_dp_get_registered_ops(DP_V90) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      !datapumps_are_started(&datapumps) &&
 		      datapumps_stop(&datapumps) ==
