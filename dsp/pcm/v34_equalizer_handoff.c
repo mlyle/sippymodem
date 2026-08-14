@@ -9,6 +9,10 @@ bool v34_equalizer_handoff_is_valid(
 {
 	return handoff != NULL &&
 	       qam_equalizer_is_valid(&handoff->equalizer) &&
-	       handoff->equalizer.fill == QAM_EQUALIZER_DELAY + 1u &&
+	       handoff->equalizer.tap_count == V34_EQUALIZER_TAP_COUNT &&
+	       handoff->equalizer.decision_delay ==
+		       V34_EQUALIZER_DECISION_DELAY &&
+	       handoff->equalizer.fill ==
+		       handoff->equalizer.decision_delay + 1u &&
 	       !handoff->equalizer.can_adapt;
 }

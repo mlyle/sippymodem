@@ -83,7 +83,8 @@ static bool prepare_fixture(
 		    V34_PHASE3_PP_RECEIVER_OK)
 			return false;
 	}
-	for (unsigned int symbol = 0; symbol < QAM_EQUALIZER_DELAY; ++symbol) {
+	for (unsigned int symbol = 0;
+	     symbol < V34_EQUALIZER_DECISION_DELAY; ++symbol) {
 		struct qam_point received;
 
 		if (v34_phase3_trn_next(
@@ -122,7 +123,7 @@ static bool run_stream(
 	struct v34_phase3_j_sequence j;
 	struct v34_phase3_j_sequence detection_boundary;
 	struct v34_phase3_j_handoff handoff;
-	struct qam_point retained[QAM_EQUALIZER_DELAY];
+	struct qam_point retained[V34_EQUALIZER_DECISION_DELAY];
 	struct qam_point transmitted;
 	uint8_t rotation;
 
@@ -131,7 +132,7 @@ static bool run_stream(
 		      &receiver, &fixture.pp_handoff, role, 0.05) ==
 		      V34_PHASE3_J_EQUALIZER_RECEIVER_OK,
 	      "role %d Phase 3 equalizer fixture did not initialize", role);
-	for (unsigned int symbol = QAM_EQUALIZER_DELAY;
+	for (unsigned int symbol = V34_EQUALIZER_DECISION_DELAY;
 	     symbol < trn_symbols; ++symbol) {
 		CHECK(v34_phase3_trn_next(
 			      &fixture.trn, &transmitted, &rotation) ==
@@ -147,12 +148,12 @@ static bool run_stream(
 	      "role %d J source did not initialize", role);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
-			      QAM_EQUALIZER_DELAY;
+			      V34_EQUALIZER_DECISION_DELAY;
 	     ++symbol) {
 		enum v34_phase3_j_equalizer_receiver_result expected =
 			symbol + 1u ==
 				V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
-					QAM_EQUALIZER_DELAY ?
+					V34_EQUALIZER_DECISION_DELAY ?
 				V34_PHASE3_J_EQUALIZER_RECEIVER_DETECTED :
 				V34_PHASE3_J_EQUALIZER_RECEIVER_OK;
 

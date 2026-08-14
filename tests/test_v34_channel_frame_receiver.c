@@ -617,11 +617,16 @@ static bool test_generated_equalizer_round_trip(void)
 static bool test_buffered_equalizer_handoff(void)
 {
 	static const struct qam_point reference = { 1.0, 0.0 };
-	static const struct qam_point lookahead[QAM_EQUALIZER_DELAY + 1] = {
+	static const struct qam_point
+		lookahead[V34_EQUALIZER_DECISION_DELAY + 1] = {
 		{ 0.25, -0.50 },
 		{ -0.75, 0.25 },
 		{ 0.50, 0.75 },
 		{ -0.25, -0.75 },
+		{ 0.75, -0.50 },
+		{ -0.50, -0.25 },
+		{ 0.25, 0.50 },
+		{ -0.75, 0.75 },
 	};
 	struct v34_data_equalizer_receiver receiver;
 	struct v34_data_equalizer_receiver saved_receiver;
@@ -635,18 +640,22 @@ static bool test_buffered_equalizer_handoff(void)
 	struct v34_received_mapping_frame saved_received;
 
 	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
-	      qam_equalizer_init(&equalizer, &reference, &reference) ==
+	      qam_equalizer_init_geometry(
+		      &equalizer, &reference, &reference,
+		      V34_EQUALIZER_TAP_COUNT,
+		      V34_EQUALIZER_DECISION_DELAY) ==
 		      QAM_EQUALIZER_OK,
 	      "buffered handoff fixture did not initialize");
 	for (size_t index = 0;
-	     index < QAM_EQUALIZER_DELAY + 1u + QAM_EQUALIZER_DELAY;
+	     index < V34_EQUALIZER_DECISION_DELAY + 1u +
+			     V34_EQUALIZER_DECISION_DELAY;
 	     ++index) {
 		struct qam_equalizer_observation observation = { 0 };
 		const struct qam_point *point =
-			index < QAM_EQUALIZER_DELAY + 1u ?
+			index < V34_EQUALIZER_DECISION_DELAY + 1u ?
 				&reference :
 				&lookahead[index -
-					   (QAM_EQUALIZER_DELAY + 1u)];
+					   (V34_EQUALIZER_DECISION_DELAY + 1u)];
 		bool ready;
 
 		CHECK(qam_equalizer_observe(
@@ -673,7 +682,7 @@ static bool test_buffered_equalizer_handoff(void)
 	memset(&received, 0x5a, sizeof(received));
 	saved_received = received;
 	CHECK(v34_data_equalizer_receive_point(
-		      &receiver, &lookahead[QAM_EQUALIZER_DELAY],
+		      &receiver, &lookahead[V34_EQUALIZER_DECISION_DELAY],
 		      &current, &received) == V34_DATA_EQUALIZER_RECEIVER_OK &&
 	      receiver.has_first_symbol &&
 	      point_matches(&receiver.first_symbol, &lookahead[0]) &&
@@ -682,7 +691,8 @@ static bool test_buffered_equalizer_handoff(void)
 	      "buffered handoff did not make the first B1 point next");
 	saved_receiver = receiver;
 	invalid_handoff = handoff;
-	invalid_handoff.equalizer.fill = QAM_EQUALIZER_DELAY;
+	invalid_handoff.equalizer.fill =
+		handoff.equalizer.decision_delay;
 	CHECK(!v34_equalizer_handoff_is_valid(NULL) &&
 	      !v34_equalizer_handoff_is_valid(&invalid_handoff) &&
 	      v34_data_equalizer_receiver_init_from_handoff(

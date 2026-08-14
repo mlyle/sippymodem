@@ -194,7 +194,7 @@ static bool run_stream(
 	struct qam_point target_history[QAM_EQUALIZER_MAX_TAP_COUNT] = { 0 };
 	struct qam_point transmitted;
 	struct qam_point received;
-	struct qam_point lookahead[QAM_EQUALIZER_DELAY];
+	struct qam_point lookahead[V34_EQUALIZER_DECISION_DELAY];
 	enum v34_phase4_equalizer_receiver_result result;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
@@ -209,8 +209,10 @@ static bool run_stream(
 		      &clockwise_quarter_turns) == V34_PHASE4_TRN_OK,
 	      "Phase 4 equalizer fixture did not start TRN");
 	received = channel_point(&fixture.channel, &transmitted);
-	CHECK(qam_equalizer_init(
-		      &equalizer, &received, &transmitted) ==
+	CHECK(qam_equalizer_init_geometry(
+		      &equalizer, &received, &transmitted,
+		      V34_EQUALIZER_TAP_COUNT,
+		      V34_EQUALIZER_DECISION_DELAY) ==
 		      QAM_EQUALIZER_OK,
 	      "Phase 4 equalizer fixture did not seed its equalizer");
 	for (size_t symbol = 0; symbol < PRETRAINING_SYMBOLS; ++symbol) {
@@ -235,7 +237,7 @@ static bool run_stream(
 		      (!equalized_ready ||
 		       qam_equalizer_adapt(
 			       &equalizer,
-			       &target_history[QAM_EQUALIZER_DELAY],
+			       &target_history[V34_EQUALIZER_DECISION_DELAY],
 			       0.2) == QAM_EQUALIZER_OK),
 		      "known-symbol equalizer training failed at %zu", symbol);
 	}
@@ -347,11 +349,13 @@ static bool run_stream(
 		      "E sequence receive failed with %s",
 		      v34_phase4_equalizer_receiver_result_name(result));
 	}
-	CHECK(fixture.accepted_records == 2 &&
-	      fixture.receiver.stage ==
-		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E,
-	      "Phase 4 accepted %u MP records before E",
-	      fixture.accepted_records);
+	CHECK(fixture.accepted_records >= 1 &&
+	      fixture.accepted_records <= 2 &&
+	      (fixture.receiver.stage ==
+		       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP ||
+	       fixture.receiver.stage ==
+		       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E),
+	      "Phase 4 left MP/E before retiring its delayed input");
 	{
 		struct v34_equalizer_handoff rejected;
 		struct v34_equalizer_handoff saved;
@@ -373,29 +377,30 @@ static bool run_stream(
 			      &fixture, &transmitted, &result,
 			      &lookahead[index]),
 		      "E lookahead point %zu failed", index);
-		CHECK(result ==
-			      (index + 1 == ARRAY_LENGTH(lookahead) ?
-				       V34_PHASE4_EQUALIZER_RECEIVER_E_COMPLETE :
-				       V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL),
+		CHECK(index + 1 == ARRAY_LENGTH(lookahead) ?
+			      result ==
+				      V34_PHASE4_EQUALIZER_RECEIVER_E_COMPLETE :
+			      (result ==
+				       V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL ||
+			       result ==
+				       V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY),
 		      "E lookahead point %zu returned %s", index,
 		      v34_phase4_equalizer_receiver_result_name(result));
 	}
-	CHECK(v34_phase4_equalizer_receiver_is_valid(&fixture.receiver) &&
+	CHECK(fixture.accepted_records == 2 &&
+	      v34_phase4_equalizer_receiver_is_valid(&fixture.receiver) &&
 	      fixture.receiver.stage ==
-		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE &&
-	      fixture.receiver.equalizer.history[0].in_phase ==
-		      lookahead[2].in_phase &&
-	      fixture.receiver.equalizer.history[0].quadrature ==
-		      lookahead[2].quadrature &&
-	      fixture.receiver.equalizer.history[1].in_phase ==
-		      lookahead[1].in_phase &&
-	      fixture.receiver.equalizer.history[1].quadrature ==
-		      lookahead[1].quadrature &&
-	      fixture.receiver.equalizer.history[2].in_phase ==
-		      lookahead[0].in_phase &&
-	      fixture.receiver.equalizer.history[2].quadrature ==
-		      lookahead[0].quadrature,
-	      "E completion did not preserve ordered B1 lookahead");
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE,
+	      "E completion accepted %u MP records",
+	      fixture.accepted_records);
+	for (size_t index = 0; index < ARRAY_LENGTH(lookahead); ++index)
+		CHECK(fixture.receiver.equalizer.history[index].in_phase ==
+			      lookahead[ARRAY_LENGTH(lookahead) - 1u - index]
+				      .in_phase &&
+		      fixture.receiver.equalizer.history[index].quadrature ==
+			      lookahead[ARRAY_LENGTH(lookahead) - 1u - index]
+				      .quadrature,
+		      "E completion reordered B1 lookahead point %zu", index);
 	{
 		struct v34_equalizer_handoff handoff;
 

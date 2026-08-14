@@ -44,8 +44,8 @@ enum v34_phase3_pp_receiver_result v34_phase3_pp_receive_point(
 	const struct qam_point *received);
 
 /* Export the trained equalizer after the final delayed PP decision. Its input
- * history already contains the first QAM_EQUALIZER_DELAY TRN points, so the
- * next push produces the first TRN decision without replaying input. */
+ * history already contains the first V34_EQUALIZER_DECISION_DELAY TRN points,
+ * so the next push produces the first TRN decision without replaying input. */
 enum v34_phase3_pp_receiver_result v34_phase3_pp_receiver_handoff(
 	const struct v34_phase3_pp_receiver *receiver,
 	struct v34_equalizer_handoff *handoff);

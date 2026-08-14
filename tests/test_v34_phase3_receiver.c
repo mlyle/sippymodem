@@ -191,7 +191,7 @@ static bool run_timeline(
 	}
 	for (unsigned int symbol = 0; symbol < trn_symbols; ++symbol) {
 		enum v34_phase3_receiver_result expected =
-			symbol + 1u == QAM_EQUALIZER_DELAY ?
+			symbol + 1u == V34_EQUALIZER_DECISION_DELAY ?
 				V34_PHASE3_RECEIVER_PP_COMPLETE :
 				V34_PHASE3_RECEIVER_OK;
 
@@ -201,7 +201,7 @@ static bool run_timeline(
 		      receive_point(&receiver, &channel, &transmitted) ==
 			      expected,
 		      "role %d TRN point %u failed", role, symbol);
-		if (symbol + 1u == QAM_EQUALIZER_DELAY) {
+		if (symbol + 1u == V34_EQUALIZER_DECISION_DELAY) {
 			CHECK(receiver.stage ==
 				      V34_PHASE3_RECEIVER_STAGE_J &&
 			      v34_phase3_receiver_prefix_handoff(
@@ -215,7 +215,8 @@ static bool run_timeline(
 				     &receiver.state.j.equalizer,
 				     sizeof(receiver.state.j.equalizer)) == 0,
 			      "role %d did not enter J search", role);
-		} else if (symbol + 1u == QAM_EQUALIZER_DELAY + 1u) {
+		} else if (symbol + 1u ==
+				   V34_EQUALIZER_DECISION_DELAY + 1u) {
 			struct v34_phase3_prefix_handoff unchanged =
 				prefix_handoff;
 
@@ -233,12 +234,12 @@ static bool run_timeline(
 	      "role %d J source did not initialize", role);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
-			      QAM_EQUALIZER_DELAY;
+			      V34_EQUALIZER_DECISION_DELAY;
 	     ++symbol) {
 		enum v34_phase3_receiver_result expected =
 			symbol + 1u ==
 				V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
-					QAM_EQUALIZER_DELAY ?
+					V34_EQUALIZER_DECISION_DELAY ?
 				V34_PHASE3_RECEIVER_J_DETECTED :
 				V34_PHASE3_RECEIVER_OK;
 

@@ -183,7 +183,10 @@ static bool train_front_end(
 	}
 	return settled == REFERENCE_SETTLE_SYMBOLS &&
 	       qam_demodulator_measure(demodulator).timing_locked &&
-	       qam_equalizer_init(equalizer, &reference, &TRAINING_POINT) ==
+	       qam_equalizer_init_geometry(
+		       equalizer, &reference, &TRAINING_POINT,
+		       V34_EQUALIZER_TAP_COUNT,
+		       V34_EQUALIZER_DECISION_DELAY) ==
 		       QAM_EQUALIZER_OK &&
 	       qam_equalizer_is_valid(equalizer) &&
 	       v34_data_stream_is_valid(stream);
@@ -251,15 +254,16 @@ static bool find_handoff_sample(
 				return false;
 			ready_sample[ready_count] = index;
 			if (equalized_ready) {
-				if (ready_count < QAM_EQUALIZER_DELAY)
+				if (ready_count < probe_equalizer.decision_delay)
 					return false;
 				if (output_count == HANDOFF_POINT_CAPACITY)
 					return false;
 				output[output_count++] = (struct timed_point){
 					.point = equalized,
 					.sample_index =
-						ready_sample[ready_count -
-							     QAM_EQUALIZER_DELAY],
+						ready_sample[
+							ready_count -
+							probe_equalizer.decision_delay],
 				};
 			}
 			ready_count++;
@@ -337,7 +341,7 @@ static bool retain_b1_lookahead(
 
 	for (size_t index = 0;
 	     index < HANDOFF_SEARCH_SAMPLES &&
-	     retained < QAM_EQUALIZER_DELAY;
+	     retained < equalizer->decision_delay;
 	     ++index) {
 		struct qam_point received;
 		struct qam_point output;
@@ -364,7 +368,7 @@ static bool retain_b1_lookahead(
 			return false;
 		retained++;
 	}
-	return retained == QAM_EQUALIZER_DELAY;
+	return retained == equalizer->decision_delay;
 }
 
 struct handoff_fixture {
@@ -690,7 +694,8 @@ static bool test_validation_and_failure_latch(void)
 	configuration = receiver_configuration(
 		&fixture.stream, &fixture.configuration, 0.01);
 	invalid_handoff = handoff;
-	invalid_handoff.equalizer.fill = QAM_EQUALIZER_DELAY;
+	invalid_handoff.equalizer.fill =
+		handoff.equalizer.decision_delay;
 	CHECK(v34_data_line_receiver_init(
 		      &rejected, &fixture.receiver.demodulator,
 		      &invalid_handoff, &configuration) ==

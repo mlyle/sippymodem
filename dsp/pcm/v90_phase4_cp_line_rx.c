@@ -34,7 +34,7 @@ static bool equalizer_is_at_handoff(
 	const struct qam_equalizer *equalizer)
 {
 	return qam_equalizer_is_valid(equalizer) &&
-	       equalizer->fill == QAM_EQUALIZER_DELAY + 1u &&
+	       equalizer->fill == equalizer->decision_delay + 1u &&
 	       !equalizer->can_adapt;
 }
 

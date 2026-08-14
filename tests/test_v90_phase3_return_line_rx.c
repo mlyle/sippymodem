@@ -17,7 +17,7 @@ enum {
 	RETURN_S_FINISH_SYMBOL = V34_PHASE3_S_SYMBOLS + 17,
 	POST_POINT_LIMIT =
 		2 * V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS +
-		QAM_EQUALIZER_DELAY,
+		V34_EQUALIZER_DECISION_DELAY,
 	SAMPLE_LIMIT = 40000,
 	NOMINAL_AMPLITUDE = 6000,
 };
@@ -221,7 +221,8 @@ static bool run_line(enum g711_law law)
 			      "law %d Phase 4 boundary reported %s", law,
 			      v90_phase3_return_line_rx_result_name(result));
 	}
-	CHECK(s_bar_events == 1 && post_points >= QAM_EQUALIZER_DELAY &&
+	CHECK(s_bar_events == 1 &&
+	      post_points >= V34_EQUALIZER_DECISION_DELAY &&
 	      !v90_phase3_return_line_rx_has_failed(&return_rx) &&
 	      v90_phase3_return_line_rx_handoff(
 		      &return_rx, &return_handoff) ==

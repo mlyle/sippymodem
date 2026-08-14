@@ -47,12 +47,14 @@ static bool seed_handoff(
 	struct qam_point reference = v34_rotated_point_zero(0);
 	struct qam_point received = channel_point(reference, quarter_turns);
 
-	if (qam_equalizer_init(
-		    &handoff->equalizer, &received, &reference) !=
+	if (qam_equalizer_init_geometry(
+		    &handoff->equalizer, &received, &reference,
+		    V34_EQUALIZER_TAP_COUNT,
+		    V34_EQUALIZER_DECISION_DELAY) !=
 	    QAM_EQUALIZER_OK)
 		return false;
 	for (unsigned int index = 0;
-	     index <= QAM_EQUALIZER_DELAY; ++index) {
+	     index <= V34_EQUALIZER_DECISION_DELAY; ++index) {
 		struct qam_equalizer_observation observation = { 0 };
 		struct qam_point point = v34_rotated_point_zero((int)index);
 		bool ready;
@@ -61,7 +63,7 @@ static bool seed_handoff(
 		if (qam_equalizer_observe(
 			    &handoff->equalizer, &point,
 			    &observation, &ready) != QAM_EQUALIZER_OK ||
-		    ready != (index == QAM_EQUALIZER_DELAY))
+		    ready != (index == V34_EQUALIZER_DECISION_DELAY))
 			return false;
 	}
 	return v34_equalizer_handoff_is_valid(handoff);
@@ -88,12 +90,15 @@ static bool start_ja(struct v90_phase3_analog_tx *tx)
 
 static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 {
-	static const unsigned int post_rotations[] = { 0, 2, 1, 3 };
+	static const unsigned int post_rotations[] = {
+		0, 2, 1, 3, 3, 1, 2, 0,
+	};
 	struct v34_equalizer_handoff initial;
 	struct v90_phase3_analog_tx ja;
 	struct v90_phase3_return_tx tx;
 	struct v90_phase3_return_rx rx;
 	struct v90_phase3_return_handoff handoff;
+	enum v90_phase3_return_rx_result handoff_result;
 	unsigned int s_events = 0;
 	unsigned int s_bar_events = 0;
 	unsigned int post_consumed = 0;
@@ -177,14 +182,18 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 			      "phase %u boundary returned %s", quarter_turns,
 			      v90_phase3_return_rx_result_name(result));
 	}
+	handoff_result = v90_phase3_return_rx_handoff(&rx, &handoff);
 	CHECK(s_events == 1 && s_bar_events == 1 &&
-	      s_at_detection >= V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
-	      s_at_detection <= V90_PHASE3_RETURN_RX_ONSET_SYMBOLS + 5u &&
-	      post_consumed == QAM_EQUALIZER_DELAY &&
-	      v90_phase3_return_rx_handoff(&rx, &handoff) ==
-		      V90_PHASE3_RETURN_RX_OK &&
+	      s_at_detection == V90_PHASE3_RETURN_RX_ONSET_SYMBOLS +
+					V34_EQUALIZER_DECISION_DELAY &&
+	      post_consumed == V34_EQUALIZER_DECISION_DELAY &&
+	      handoff_result == V90_PHASE3_RETURN_RX_OK &&
 	      v90_phase3_return_handoff_is_valid(&handoff),
-	      "phase %u did not recover both return boundaries", quarter_turns);
+	      "phase %u boundaries: S=%u Sbar=%u onset=%u post=%u "
+	      "stage=%d handoff=%s",
+	      quarter_turns, s_events, s_bar_events, s_at_detection,
+	      post_consumed, rx.stage,
+	      v90_phase3_return_rx_result_name(handoff_result));
 	{
 		struct qam_point point = v34_rotated_point_zero(
 			(int)post_rotations[post_consumed]);

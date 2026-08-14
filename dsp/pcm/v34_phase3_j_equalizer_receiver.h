@@ -20,8 +20,9 @@ enum v34_phase3_j_equalizer_receiver_result {
 
 /* Atomic point-domain handoff after J detection. The detector state is at the
  * end of its qualified J window. The equalizer has additionally retained the
- * following QAM_EQUALIZER_DELAY raw inputs, which have not produced decisions
- * yet; the next push therefore produces the first unprocessed J decision. */
+ * following equalizer-decision-delay raw inputs, which have not produced
+ * decisions yet; the next push therefore produces the first unprocessed J
+ * decision. */
 struct v34_phase3_j_handoff {
 	struct v34_equalizer_handoff equalizer;
 	struct v34_phase3_j_detection detection;

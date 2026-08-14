@@ -36,8 +36,8 @@ enum v34_phase4_equalizer_receiver_result {
 
 /* Own the symbol-spaced equalizer and Phase 4 control parser after carrier
  * and timing recovery. The equalizer's decision delay naturally retains the
- * first QAM_EQUALIZER_DELAY symbols following E; those are the first B1
- * inputs and must carry into the data receiver with this equalizer. */
+ * first decision-delay symbols following E; those are the first B1 inputs and
+ * must carry into the data receiver with this equalizer. */
 struct v34_phase4_equalizer_receiver {
 	struct qam_equalizer equalizer;
 	struct v34_phase3_s_receiver answer_s;

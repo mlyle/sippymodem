@@ -66,7 +66,7 @@ static bool test_training_and_delayed_handoff(void)
 	struct v34_phase3_trn trn;
 	struct v34_equalizer_handoff handoff;
 	struct test_channel channel = { 0 };
-	struct qam_point lookahead[QAM_EQUALIZER_DELAY];
+	struct qam_point lookahead[V34_EQUALIZER_DECISION_DELAY];
 	struct qam_point first_trn;
 	struct qam_point transmitted;
 	struct qam_point received;
@@ -82,8 +82,8 @@ static bool test_training_and_delayed_handoff(void)
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_PP_SEQUENCE_SYMBOLS; ++symbol) {
 		unsigned int accepted = symbol + 1u;
-		unsigned int adapted = accepted > QAM_EQUALIZER_DELAY ?
-				       accepted - QAM_EQUALIZER_DELAY :
+		unsigned int adapted = accepted > V34_EQUALIZER_DECISION_DELAY ?
+				       accepted - V34_EQUALIZER_DECISION_DELAY :
 				       0;
 
 		CHECK(v34_phase3_pp_sequence_next(&pp, &transmitted) ==
@@ -123,7 +123,7 @@ static bool test_training_and_delayed_handoff(void)
 			      V34_PHASE3_PP_RECEIVER_OK &&
 		      receiver.adaptation_targets.emitted_symbols ==
 			      V34_PHASE3_PP_SEQUENCE_SYMBOLS -
-				      QAM_EQUALIZER_DELAY + index + 1u &&
+				      V34_EQUALIZER_DECISION_DELAY + index + 1u &&
 		      v34_phase3_pp_receiver_is_complete(&receiver) ==
 			      (index + 1u == ARRAY_LENGTH(lookahead)),
 		      "TRN lookahead %zu did not retire one PP target", index);
@@ -150,8 +150,8 @@ static bool test_training_and_delayed_handoff(void)
 			      V34_PHASE3_PP_RECEIVER_COMPLETE &&
 		      memcmp(&receiver, &complete, sizeof(receiver)) == 0,
 		      "completed PP receiver consumed another point");
-		/* The next input produces the first TRN output because the three
-		 * retained points above belong to TRN, not PP. */
+		/* The next input produces the first TRN output because the retained
+		 * points above belong to TRN, not PP. */
 		CHECK(v34_phase3_trn_next(&trn, &transmitted, &rotation) ==
 			      V34_PHASE3_TRN_OK,
 		      "TRN continuation did not generate");

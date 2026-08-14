@@ -311,8 +311,10 @@ static bool train_frontend(
 	}
 	if (settled != FRONTEND_SETTLE_SYMBOLS ||
 	    !qam_demodulator_measure(demodulator).timing_locked ||
-	    qam_equalizer_init(
-		    equalizer, &reference, &source->point) != QAM_EQUALIZER_OK ||
+	    qam_equalizer_init_geometry(
+		    equalizer, &reference, &source->point,
+		    V34_EQUALIZER_TAP_COUNT,
+		    V34_EQUALIZER_DECISION_DELAY) != QAM_EQUALIZER_OK ||
 	    !source_start_trn(source, profile->local_role, constellation))
 		return false;
 	for (size_t index = 0;

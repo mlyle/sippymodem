@@ -12,16 +12,18 @@ static bool sequence_counts_are_valid(
 	unsigned int adapted = receiver->adaptation_targets.emitted_symbols;
 	unsigned int expected_adapted;
 
-	if (adapted > received || received - adapted > QAM_EQUALIZER_DELAY)
+	if (adapted > received ||
+	    received - adapted > V34_EQUALIZER_DECISION_DELAY)
 		return false;
 	if (received < V34_PHASE3_PP_SEQUENCE_SYMBOLS) {
-		expected_adapted = received > QAM_EQUALIZER_DELAY ?
-				   received - QAM_EQUALIZER_DELAY :
+		expected_adapted = received > V34_EQUALIZER_DECISION_DELAY ?
+				   received - V34_EQUALIZER_DECISION_DELAY :
 				   0;
 		return adapted == expected_adapted;
 	}
 	return adapted >=
-	       V34_PHASE3_PP_SEQUENCE_SYMBOLS - QAM_EQUALIZER_DELAY;
+	       V34_PHASE3_PP_SEQUENCE_SYMBOLS -
+		       V34_EQUALIZER_DECISION_DELAY;
 }
 
 bool v34_phase3_pp_receiver_is_valid(
@@ -74,9 +76,10 @@ static bool seed_equalizer(
 	struct v34_phase3_pp_receiver *receiver,
 	const struct qam_point *received, const struct qam_point *target)
 {
-	if (qam_equalizer_init_span(
+	if (qam_equalizer_init_geometry(
 		    &receiver->equalizer, received, target,
-		    QAM_EQUALIZER_MAX_TAP_COUNT) != QAM_EQUALIZER_OK)
+		    V34_EQUALIZER_TAP_COUNT,
+		    V34_EQUALIZER_DECISION_DELAY) != QAM_EQUALIZER_OK)
 		return false;
 	receiver->seeded = true;
 	return true;

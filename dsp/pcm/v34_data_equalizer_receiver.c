@@ -18,7 +18,7 @@ bool v34_data_equalizer_receiver_is_valid(
 	    !isfinite(receiver->adaptation) || receiver->adaptation < 0.0 ||
 	    receiver->adaptation > 1.0 ||
 	    receiver->training_outputs_remaining >
-		    QAM_EQUALIZER_DELAY ||
+		    receiver->equalizer.decision_delay ||
 	    (receiver->training_outputs_remaining != 0 &&
 	     receiver->has_first_symbol))
 		return false;
@@ -52,7 +52,7 @@ static enum v34_data_equalizer_receiver_result initialize_receiver(
 
 	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
 	    adaptation > 1.0 || !qam_equalizer_is_valid(equalizer) ||
-	    training_outputs_remaining > QAM_EQUALIZER_DELAY ||
+	    training_outputs_remaining > equalizer->decision_delay ||
 	    v34_data_channel_receiver_init(
 		    &initialized.data_receiver, normalizer, geometry,
 		    expanded_shaping, coefficients, selection,
@@ -87,9 +87,9 @@ v34_data_equalizer_receiver_init(
 
 	if (!qam_equalizer_is_valid(equalizer))
 		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
-	remaining = equalizer->fill < QAM_EQUALIZER_DELAY ?
+	remaining = equalizer->fill < equalizer->decision_delay ?
 			    (uint8_t)equalizer->fill :
-			    QAM_EQUALIZER_DELAY;
+			    (uint8_t)equalizer->decision_delay;
 	return initialize_receiver(
 		receiver, equalizer, normalizer, geometry, expanded_shaping,
 		coefficients, selection, transmitting_role, adaptation,

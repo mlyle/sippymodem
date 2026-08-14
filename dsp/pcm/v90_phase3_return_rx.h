@@ -51,9 +51,9 @@ struct v90_phase3_return_rx {
 	enum v90_phase3_return_rx_stage stage;
 };
 
-/* The equalizer has already accepted QAM_EQUALIZER_DELAY points following
- * the final S-bar decision. Its next input therefore yields the first
- * undelivered Phase 4 decision without replay. */
+/* The equalizer has already accepted its decision-delay points following the
+ * final S-bar decision. Its next input therefore yields the first undelivered
+ * Phase 4 decision without replay. */
 struct v90_phase3_return_handoff {
 	struct v34_phase3_s_detection marker;
 	struct v34_equalizer_handoff equalizer;

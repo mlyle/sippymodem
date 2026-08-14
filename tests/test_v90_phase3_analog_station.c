@@ -14,7 +14,7 @@ enum {
 	NOMINAL_AMPLITUDE = 6000,
 	POST_POINT_LIMIT =
 		2 * V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS +
-		QAM_EQUALIZER_DELAY,
+		V34_EQUALIZER_DECISION_DELAY,
 };
 
 static struct v34_phase3_profile profile(void)
@@ -178,7 +178,7 @@ static bool run_exchange(enum g711_law law)
 	      phase4_line_active &&
 	      v90_phase3_digital_station_receive_complete(&digital) &&
 	      v90_phase3_digital_station_transmit_complete(&digital) &&
-	      phase4_points >= QAM_EQUALIZER_DELAY &&
+	      phase4_points >= V34_EQUALIZER_DECISION_DELAY &&
 	      v90_phase3_analog_station_receive_handoff(
 		      &analog, &receive_handoff) ==
 		      V90_PHASE3_ANALOG_STATION_OK &&

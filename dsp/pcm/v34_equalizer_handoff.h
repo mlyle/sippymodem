@@ -7,9 +7,15 @@
 
 #include <stdbool.h>
 
+enum {
+	V34_EQUALIZER_TAP_COUNT = QAM_EQUALIZER_MAX_TAP_COUNT,
+	V34_EQUALIZER_DECISION_DELAY = V34_EQUALIZER_TAP_COUNT / 2,
+};
+
 /* Transfer an equalizer across a delayed training boundary. The source has
- * already accepted QAM_EQUALIZER_DELAY inputs from the following interval;
- * the next input therefore produces its first output without replay. */
+ * already accepted V34_EQUALIZER_DECISION_DELAY inputs from the following
+ * interval; the next input therefore produces its first output without
+ * replay. */
 struct v34_equalizer_handoff {
 	struct qam_equalizer equalizer;
 };
