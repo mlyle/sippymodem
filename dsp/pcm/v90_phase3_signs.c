@@ -9,18 +9,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 bool v90_phase3_signs_is_valid(
 	const struct v90_phase3_signs *signs)
 {
 	if (signs == NULL ||
 	    !v34_scrambler_is_valid(&signs->scrambler) ||
 	    signs->scrambler.polynomial != V34_POLYNOMIAL_GPC ||
-	    !law_is_valid(signs->law) || signs->last_sign > 1 ||
+	    !g711_law_is_valid(signs->law) || signs->last_sign > 1 ||
 	    signs->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    signs->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
 	    (signs->phase != V90_PHASE3_SIGNS_TRN1D &&
@@ -47,7 +42,7 @@ enum v90_phase3_sign_result v90_phase3_signs_init(
 		.training_ucode = training_ucode,
 	};
 
-	if (signs == NULL || !law_is_valid(law) ||
+	if (signs == NULL || !g711_law_is_valid(law) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
 	    v34_scrambler_init(

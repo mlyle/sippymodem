@@ -104,11 +104,6 @@ int16_t g711_decode_pcma(uint8_t octet)
 	return (int16_t)(((code & 0x80) != 0) ? magnitude : -magnitude);
 }
 
-static bool g711_law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 bool g711_ucode_octet(
 	enum g711_law law, uint8_t ucode, bool positive,
 	uint8_t *octet)

@@ -16,11 +16,6 @@ struct spectral_filter_state {
 	double v;
 };
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool coefficient_is_valid(int8_t coefficient)
 {
 	return coefficient >= -SHAPING_COEFFICIENT_LIMIT_Q1_6 &&
@@ -56,7 +51,7 @@ bool v90_spectral_shaper_is_valid(
 {
 	size_t frame_length;
 
-	if (shaper == NULL || !law_is_valid(shaper->law) ||
+	if (shaper == NULL || !g711_law_is_valid(shaper->law) ||
 	    shaper->sign_redundancy < 1 ||
 	    shaper->sign_redundancy > 3 ||
 	    shaper->lookahead > V90_SPECTRAL_MAX_LOOKAHEAD ||

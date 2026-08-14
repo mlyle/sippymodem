@@ -15,7 +15,7 @@ enum v90_phase3_entry_result v90_phase3_entry_from_phase2(
 	struct v90_info0d digital_info0;
 
 	if (entry == NULL || !v90_phase2_is_valid(phase2) ||
-	    (media_law != G711_LAW_PCMU && media_law != G711_LAW_PCMA))
+	    !g711_law_is_valid(media_law))
 		return V90_PHASE3_ENTRY_INVALID_ARGUMENT;
 	if (!v90_phase2_is_ready_for_phase3(phase2))
 		return V90_PHASE3_ENTRY_INVALID_STATE;

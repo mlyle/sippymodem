@@ -6,11 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static size_t md_symbols(const struct v92_pcm_phase3_opening *opening)
 {
 	return (size_t)opening->md_length_276_symbol_units *
@@ -31,7 +26,7 @@ static bool ru_state_is_valid(
 bool v92_pcm_phase3_opening_is_valid(
 	const struct v92_pcm_phase3_opening *opening)
 {
-	if (opening == NULL || !law_is_valid(opening->law) ||
+	if (opening == NULL || !g711_law_is_valid(opening->law) ||
 	    opening->lu_ucode == 0u || opening->lu_ucode > 127u ||
 	    opening->md_length_276_symbol_units >
 		    V92_PCM_INFO1A_MAX_MD_LENGTH_UNITS)
@@ -75,7 +70,7 @@ enum v92_pcm_phase3_opening_result v92_pcm_phase3_opening_init(
 		.law = law,
 	};
 
-	if (opening == NULL || !law_is_valid(law) || lu_ucode == 0u ||
+	if (opening == NULL || !g711_law_is_valid(law) || lu_ucode == 0u ||
 	    lu_ucode > 127u ||
 	    !v92_pcm_info1a_is_valid(info1a))
 		return V92_PCM_PHASE3_OPENING_INVALID_ARGUMENT;

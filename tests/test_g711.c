@@ -13,6 +13,17 @@ struct codec_sample {
 	int16_t decoded;
 };
 
+static bool test_law_validation(void)
+{
+	CHECK(g711_law_is_valid(G711_LAW_PCMU), "PCMU law was rejected");
+	CHECK(g711_law_is_valid(G711_LAW_PCMA), "PCMA law was rejected");
+	CHECK(!g711_law_is_valid((enum g711_law)-1),
+	      "negative law was accepted");
+	CHECK(!g711_law_is_valid((enum g711_law)2),
+	      "out-of-range law was accepted");
+	return true;
+}
+
 static bool test_pcmu_known_values(void)
 {
 	static const struct codec_sample samples[] = {
@@ -218,6 +229,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "law validation", test_law_validation },
 		{ "PCMU known values", test_pcmu_known_values },
 		{ "PCMA known values", test_pcma_known_values },
 		{ "PCMU code space", test_pcmu_code_space },

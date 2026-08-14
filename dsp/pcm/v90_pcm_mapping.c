@@ -14,11 +14,6 @@ enum {
 	V90_SHAPING_COEFFICIENT_LIMIT_Q1_6 = 64,
 };
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static uint8_t constellation_count(
 	const struct pcm_constellation *constellation)
 {
@@ -92,7 +87,7 @@ bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
 {
 	uint8_t base;
 
-	if (mapping == NULL || !law_is_valid(mapping->law) ||
+	if (mapping == NULL || !g711_law_is_valid(mapping->law) ||
 	    (mapping->kind != V90_CP_TRAINING &&
 	     mapping->kind != V90_CP_DATA) ||
 	    mapping->sign_redundancy > 3 ||

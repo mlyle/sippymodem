@@ -6,15 +6,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 bool v92_pcm_phase3_trn1u_is_valid(
 	const struct v92_pcm_phase3_trn1u *trn1u)
 {
-	return trn1u != NULL && law_is_valid(trn1u->law) &&
+	return trn1u != NULL && g711_law_is_valid(trn1u->law) &&
 	       trn1u->lu_ucode > 0u && trn1u->lu_ucode <= 127u &&
 	       v34_scrambler_is_valid(&trn1u->scrambler) &&
 	       trn1u->scrambler.polynomial == V34_POLYNOMIAL_GPA;

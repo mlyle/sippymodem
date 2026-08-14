@@ -31,11 +31,6 @@ enum {
 	CPT_CRC_BITS = 16,
 };
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool constellation_is_empty(
 	const struct pcm_constellation *constellation)
 {
@@ -85,7 +80,7 @@ static bool constellations_are_canonical(
 bool v92_cpt_parameters_are_valid(
 	const struct v92_cpt_parameters *parameters)
 {
-	return parameters != NULL && law_is_valid(parameters->law) &&
+	return parameters != NULL && g711_law_is_valid(parameters->law) &&
 	       parameters->selected_rate_index <= V92_CPT_RATE_INDEX_MAX &&
 	       parameters->sign_redundancy <= 3 &&
 	       parameters->spectral_lookahead <= 3 &&

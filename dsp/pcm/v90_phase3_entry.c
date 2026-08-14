@@ -13,11 +13,6 @@ static bool role_is_valid(enum v90_modem_role role)
 	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
 }
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static enum g711_law selected_law(
 	const struct v90_info0d *digital_info0)
 {
@@ -29,7 +24,7 @@ bool v90_phase3_entry_is_valid(
 	const struct v90_phase3_entry *entry)
 {
 	return entry != NULL && role_is_valid(entry->local_role) &&
-	       law_is_valid(entry->law) &&
+	       g711_law_is_valid(entry->law) &&
 	       entry->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
 	       entry->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
 	       v34_phase3_profile_is_valid(&entry->analog_profile) &&
@@ -51,7 +46,7 @@ enum v90_phase3_entry_result v90_phase3_entry_init(
 	enum v34_phase3_profile_result profile_result;
 
 	if (entry == NULL || !role_is_valid(local_role) ||
-	    !law_is_valid(media_law) || !v90_info0d_is_valid(digital_info0) ||
+	    !g711_law_is_valid(media_law) || !v90_info0d_is_valid(digital_info0) ||
 	    !pcm_info1_selection_is_valid(selection))
 		return V90_PHASE3_ENTRY_INVALID_ARGUMENT;
 	if (selection->startup.protocol != PCM_PROTOCOL_V90 ||

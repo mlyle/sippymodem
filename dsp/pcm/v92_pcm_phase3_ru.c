@@ -6,11 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool kind_is_valid(enum v92_pcm_phase3_ru_kind kind)
 {
 	return kind == V92_PCM_PHASE3_RU ||
@@ -27,7 +22,7 @@ static uint16_t total_symbols(enum v92_pcm_phase3_ru_kind kind)
 bool v92_pcm_phase3_ru_is_valid(
 	const struct v92_pcm_phase3_ru *sequence)
 {
-	return sequence != NULL && law_is_valid(sequence->law) &&
+	return sequence != NULL && g711_law_is_valid(sequence->law) &&
 	       kind_is_valid(sequence->kind) &&
 	       sequence->lu_ucode > 0u && sequence->lu_ucode <= 127u &&
 	       sequence->emitted_symbols <= total_symbols(sequence->kind);
@@ -43,7 +38,7 @@ enum v92_pcm_phase3_ru_result v92_pcm_phase3_ru_init(
 		.lu_ucode = lu_ucode,
 	};
 
-	if (sequence == NULL || !law_is_valid(law) || !kind_is_valid(kind) ||
+	if (sequence == NULL || !g711_law_is_valid(law) || !kind_is_valid(kind) ||
 	    lu_ucode == 0u || lu_ucode > 127u)
 		return V92_PCM_PHASE3_RU_INVALID_ARGUMENT;
 	*sequence = initialized;

@@ -34,11 +34,6 @@ enum {
 	CP_CRC_BITS = 16,
 };
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool kind_is_valid(enum v90_cp_kind kind)
 {
 	return kind == V90_CP_TRAINING || kind == V90_CP_DATA;
@@ -94,7 +89,7 @@ bool v90_cp_parameters_are_valid(
 	const struct v90_cp_parameters *parameters)
 {
 	return parameters != NULL && kind_is_valid(parameters->kind) &&
-	       law_is_valid(parameters->law) &&
+	       g711_law_is_valid(parameters->law) &&
 	       parameters->selected_rate_index <= V90_CP_RATE_INDEX_MAX &&
 	       parameters->sign_redundancy <= 3 &&
 	       parameters->spectral_lookahead <= 3 &&

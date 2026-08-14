@@ -7,11 +7,6 @@
 
 #include <stddef.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool receive_is_valid(
 	const struct v90_phase3_digital_station *station)
 {
@@ -51,7 +46,7 @@ bool v90_phase3_digital_station_is_valid(
 {
 	if (station == NULL || !receive_is_valid(station) ||
 	    !v90_jd_parameters_are_valid(&station->jd) ||
-	    !law_is_valid(station->law) ||
+	    !g711_law_is_valid(station->law) ||
 	    station->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    station->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
 	    !finish_request_is_causal(station) ||
@@ -83,7 +78,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 	};
 	enum v90_phase3_analog_line_rx_result result;
 
-	if (station == NULL || jd == NULL || !law_is_valid(law) ||
+	if (station == NULL || jd == NULL || !g711_law_is_valid(law) ||
 	    !v90_jd_parameters_are_valid(jd) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE)
@@ -290,7 +285,7 @@ bool v90_phase3_digital_transmit_handoff_is_valid(
 	       v34_scrambler_is_valid(&handoff->scrambler) &&
 	       handoff->scrambler.polynomial == V34_POLYNOMIAL_GPC &&
 	       v90_jd_parameters_are_valid(&handoff->jd) &&
-	       law_is_valid(handoff->law) &&
+	       g711_law_is_valid(handoff->law) &&
 	       handoff->trn1d_symbols >= V90_PHASE3_TRN1D_MIN_SYMBOLS &&
 	       handoff->trn1d_symbols % V90_PHASE3_TRN1D_ALIGNMENT == 0 &&
 	       handoff->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&

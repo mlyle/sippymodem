@@ -6,11 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static uint8_t descriptor_bit(
 	const uint8_t *descriptor, size_t bit_index)
 {
@@ -24,7 +19,7 @@ bool v92_pcm_phase3_ja_tx_is_valid(
 {
 	uint32_t rate_mask;
 
-	return tx != NULL && law_is_valid(tx->law) &&
+	return tx != NULL && g711_law_is_valid(tx->law) &&
 	       tx->lu_ucode > 0u && tx->lu_ucode <= 127u &&
 	       pcm_binary_sign_is_valid(&tx->coding) &&
 	       tx->coding.scrambler.polynomial == V34_POLYNOMIAL_GPA &&

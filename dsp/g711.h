@@ -11,6 +11,11 @@ enum g711_law {
 	G711_LAW_PCMA,
 };
 
+static inline bool g711_law_is_valid(enum g711_law law)
+{
+	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
+}
+
 uint8_t g711_encode_pcmu(int16_t sample);
 int16_t g711_decode_pcmu(uint8_t octet);
 

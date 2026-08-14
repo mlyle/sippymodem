@@ -12,11 +12,6 @@ static bool role_is_valid(enum v90_modem_role role)
 	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
 }
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static enum g711_law info0_law(const struct v90_info0d *info0)
 {
 	return info0->pcm_law == V90_PCM_A_LAW ?
@@ -63,7 +58,7 @@ static bool configuration_is_valid(
 {
 	if (configuration == NULL ||
 	    !role_is_valid(configuration->local_role) ||
-	    !law_is_valid(configuration->law) ||
+	    !g711_law_is_valid(configuration->law) ||
 	    configuration->phase2_nominal_amplitude <= 0)
 		return false;
 	if (configuration->local_role == V90_ANALOG_MODEM)
@@ -86,7 +81,7 @@ static bool configuration_is_valid(
 
 static bool stored_configuration_is_valid(const struct v90_call *call)
 {
-	if (!role_is_valid(call->local_role) || !law_is_valid(call->law))
+	if (!role_is_valid(call->local_role) || !g711_law_is_valid(call->law))
 		return false;
 	return call->local_role == V90_ANALOG_MODEM ?
 		       analog_configuration_is_valid(

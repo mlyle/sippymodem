@@ -9,11 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool stage_is_valid(enum v90_phase3_sd_receiver_stage stage)
 {
 	return stage >= V90_PHASE3_SD_RECEIVER_SEARCH &&
@@ -23,7 +18,7 @@ static bool stage_is_valid(enum v90_phase3_sd_receiver_stage stage)
 bool v90_phase3_sd_receiver_is_valid(
 	const struct v90_phase3_sd_receiver *receiver)
 {
-	if (receiver == NULL || !law_is_valid(receiver->law) ||
+	if (receiver == NULL || !g711_law_is_valid(receiver->law) ||
 	    !stage_is_valid(receiver->stage) ||
 	    receiver->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    receiver->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
@@ -81,7 +76,7 @@ enum v90_phase3_sd_receiver_result v90_phase3_sd_receiver_init(
 		.training_ucode = training_ucode,
 	};
 
-	if (receiver == NULL || !law_is_valid(law) ||
+	if (receiver == NULL || !g711_law_is_valid(law) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE)
 		return V90_PHASE3_SD_RECEIVER_INVALID_ARGUMENT;

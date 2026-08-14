@@ -9,11 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool stage_is_valid(enum v92_phase3_j_receiver_stage stage)
 {
 	return stage >= V92_PHASE3_J_RECEIVER_TRN1D &&
@@ -25,7 +20,7 @@ static bool base_state_is_valid(
 {
 	return v34_scrambler_is_valid(&receiver->descrambler) &&
 	       receiver->descrambler.polynomial == V34_POLYNOMIAL_GPC &&
-	       law_is_valid(receiver->law) && stage_is_valid(receiver->stage) &&
+	       g711_law_is_valid(receiver->law) && stage_is_valid(receiver->stage) &&
 	       receiver->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
 	       receiver->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
 	       receiver->last_sign <= 1 &&
@@ -100,7 +95,7 @@ enum v92_phase3_j_receiver_result v92_phase3_j_receiver_init(
 		.training_ucode = training_ucode,
 	};
 
-	if (receiver == NULL || !law_is_valid(law) ||
+	if (receiver == NULL || !g711_law_is_valid(law) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
 	    v34_scrambler_init(

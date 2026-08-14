@@ -7,11 +7,6 @@
 
 #include <stddef.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool ucode_is_valid(uint8_t ucode)
 {
 	return ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
@@ -23,7 +18,7 @@ static bool common_state_is_valid(
 	uint16_t ri_symbols, uint8_t ri_bar_symbols,
 	uint8_t phase, uint8_t training_ucode)
 {
-	if (!law_is_valid(law) || !ucode_is_valid(training_ucode) ||
+	if (!g711_law_is_valid(law) || !ucode_is_valid(training_ucode) ||
 	    stage < V90_PHASE4_RI || stage > V90_PHASE4_RI_COMPLETE ||
 	    ri_symbols > V90_PHASE4_RI_MIN_SYMBOLS ||
 	    ri_bar_symbols > V90_PHASE4_RI_BAR_SYMBOLS ||

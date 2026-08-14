@@ -8,11 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool kind_is_valid(enum v90_phase3_sd_kind kind)
 {
 	return kind == V90_PHASE3_SD || kind == V90_PHASE3_SD_BAR;
@@ -22,7 +17,7 @@ bool v90_phase3_sd_is_valid(const struct v90_phase3_sd *sequence)
 {
 	uint16_t expected_total;
 
-	if (sequence == NULL || !law_is_valid(sequence->law) ||
+	if (sequence == NULL || !g711_law_is_valid(sequence->law) ||
 	    !kind_is_valid(sequence->kind) ||
 	    sequence->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    sequence->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE)
@@ -40,7 +35,7 @@ enum v90_phase3_sd_result v90_phase3_sd_init(
 {
 	struct v90_phase3_sd initialized;
 
-	if (sequence == NULL || !law_is_valid(law) ||
+	if (sequence == NULL || !g711_law_is_valid(law) ||
 	    !kind_is_valid(kind) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE)

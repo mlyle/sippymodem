@@ -41,7 +41,7 @@ static enum modem_core_result process_modem_g711(
 	if (exact_output != NULL)
 		*exact_output = false;
 	if (adapter == NULL || adapter->modem == NULL ||
-	    (law != G711_LAW_PCMU && law != G711_LAW_PCMA) ||
+	    !g711_law_is_valid(law) ||
 	    receive_codewords == NULL || receive_samples == NULL ||
 	    transmit_codewords == NULL || transmit_samples == NULL ||
 	    exact_output == NULL || count == 0 || count > INT_MAX)

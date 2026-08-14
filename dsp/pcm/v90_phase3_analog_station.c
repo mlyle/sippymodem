@@ -8,11 +8,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool law_is_valid(enum g711_law law)
-{
-	return law == G711_LAW_PCMU || law == G711_LAW_PCMA;
-}
-
 static bool transmit_is_valid(
 	const struct v90_phase3_analog_station *station)
 {
@@ -79,7 +74,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_init(
 	struct v90_phase3_analog_station initialized = { 0 };
 	enum v90_phase3_analog_line_tx_result transmit_result;
 
-	if (station == NULL || !law_is_valid(law) ||
+	if (station == NULL || !g711_law_is_valid(law) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE)
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
@@ -363,7 +358,7 @@ bool v90_phase3_analog_receive_handoff_is_valid(
 	       v34_scrambler_is_valid(&handoff->descrambler) &&
 	       handoff->descrambler.polynomial == V34_POLYNOMIAL_GPC &&
 	       v90_jd_parameters_are_valid(&handoff->jd) &&
-	       law_is_valid(handoff->law) &&
+	       g711_law_is_valid(handoff->law) &&
 	       handoff->trn1d_symbols >= V90_PHASE3_TRN1D_MIN_SYMBOLS &&
 	       handoff->trn1d_symbols % V90_PHASE3_TRN1D_ALIGNMENT == 0 &&
 	       handoff->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
