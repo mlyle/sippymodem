@@ -615,11 +615,11 @@ static bool run_v34_rate_matrix(void)
 		unsigned int symbols_per_second;
 		unsigned int maximum_bit_rate;
 	} symbol_rates[] = {
-		{ V34_SYMBOL_RATE_2400, 2400, 14400 },
-		{ V34_SYMBOL_RATE_2800, 2800, 16800 },
-		{ V34_SYMBOL_RATE_3000, 3000, 16800 },
-		{ V34_SYMBOL_RATE_3200, 3200, 16800 },
-		{ V34_SYMBOL_RATE_3429, 3429, 16800 },
+		{ V34_SYMBOL_RATE_2400, 2400, 16800 },
+		{ V34_SYMBOL_RATE_2800, 2800, 19200 },
+		{ V34_SYMBOL_RATE_3000, 3000, 19200 },
+		{ V34_SYMBOL_RATE_3200, 3200, 19200 },
+		{ V34_SYMBOL_RATE_3429, 3429, 19200 },
 	};
 	unsigned int profiles = 0;
 	unsigned int cases = 0;
@@ -679,8 +679,8 @@ static bool run_v34_rate_matrix(void)
 			}
 		}
 	}
-	CHECK(profiles == 30 && cases == 60,
-	      "V.34 matrix covered %u profiles/%u cases instead of 30/60",
+	CHECK(profiles == 35 && cases == 70,
+	      "V.34 matrix covered %u profiles/%u cases instead of 35/70",
 	      profiles, cases);
 	return true;
 }
