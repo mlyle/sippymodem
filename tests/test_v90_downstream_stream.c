@@ -311,7 +311,7 @@ static bool run_stream(
 	      v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_rx_init(
-		      &receiver, &mapping,
+		      &receiver, PCM_PROTOCOL_V90, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_OK &&
 	      v90_downstream_tx_start_mp(&transmitter, &record) ==

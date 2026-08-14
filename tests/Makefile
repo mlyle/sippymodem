@@ -37,7 +37,8 @@ V34_NATIVE_OBJECTS := \
 V90_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_profile.c pcm_startup.c \
-	v92_info0.c v92_info1d.c v92_pcm_info1a.c \
+	v92_info0.c v92_info1d.c v92_pcm_info1a.c v92_status_update.c \
+	v92_suvd.c v92_suvd_receiver.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c))
 V90_RUNTIME_OBJECTS := \
 	$(V90_RUNTIME_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
@@ -1673,6 +1674,9 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
+	$(BUILD_DIR)/v92_suvd_receiver.o \
+	$(BUILD_DIR)/v92_suvd.o \
+	$(BUILD_DIR)/v92_status_update.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
@@ -1870,6 +1874,9 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
+	$(BUILD_DIR)/v92_suvd_receiver.o \
+	$(BUILD_DIR)/v92_suvd.o \
+	$(BUILD_DIR)/v92_status_update.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \

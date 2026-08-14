@@ -9,8 +9,14 @@ static bool stage_is_valid(enum pcm_downstream_rx_stage stage)
 {
 	return stage == PCM_DOWNSTREAM_RX_TRN2D ||
 	       stage == PCM_DOWNSTREAM_RX_MP_SEARCH ||
+	       stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH ||
 	       stage == PCM_DOWNSTREAM_RX_ED_SEARCH ||
 	       stage == PCM_DOWNSTREAM_RX_COMPLETE;
+}
+
+static bool protocol_is_valid(enum pcm_protocol protocol)
+{
+	return protocol == PCM_PROTOCOL_V90 || protocol == PCM_PROTOCOL_V92;
 }
 
 static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
@@ -20,34 +26,65 @@ static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
 	       receiver->sync_one_count == 0;
 }
 
+static bool suvd_is_fresh(const struct v92_suvd_receiver *receiver)
+{
+	return v92_suvd_receiver_is_valid(receiver) &&
+	       receiver->stage == V92_SUVD_SEARCH_SYNC &&
+	       receiver->bit_index == 0u && receiver->sync_one_count == 0u;
+}
+
+static bool control_is_valid(const struct pcm_downstream_rx *receiver)
+{
+	uint8_t frame_bits = receiver->stream.decoder.mapping.frame_bits;
+
+	if (receiver->protocol == PCM_PROTOCOL_V90)
+		return v90_mp_receiver_is_valid(&receiver->control.mp) &&
+		       receiver->control.mp.training_frame_bits == frame_bits;
+	return v92_suvd_receiver_is_valid(&receiver->control.suvd) &&
+	       receiver->control.suvd.training_frame_bits == frame_bits;
+}
+
+static bool control_is_fresh(const struct pcm_downstream_rx *receiver)
+{
+	return receiver->protocol == PCM_PROTOCOL_V90 ?
+		       mp_is_fresh(&receiver->control.mp) :
+		       suvd_is_fresh(&receiver->control.suvd);
+}
+
+static bool stage_matches_protocol(const struct pcm_downstream_rx *receiver)
+{
+	if (receiver->stage == PCM_DOWNSTREAM_RX_TRN2D)
+		return true;
+	if (receiver->protocol == PCM_PROTOCOL_V92)
+		return receiver->stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH;
+	return receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH ||
+	       receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH ||
+	       receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE;
+}
+
 bool pcm_downstream_rx_is_valid(
 	const struct pcm_downstream_rx *receiver)
 {
 	size_t ed_bits;
 	uint64_t training_bits;
 
-	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
+	if (receiver == NULL || !protocol_is_valid(receiver->protocol) ||
+	    !stage_is_valid(receiver->stage) ||
+	    !stage_matches_protocol(receiver) ||
 	    !v90_pcm_stream_rx_is_valid(&receiver->stream) ||
 	    receiver->stream.decoder.mapping.kind != V90_CP_TRAINING ||
-	    !v90_mp_receiver_is_valid(&receiver->mp) ||
-	    receiver->mp.training_frame_bits !=
-		    receiver->stream.decoder.mapping.frame_bits)
+	    !control_is_valid(receiver))
 		return false;
 	training_bits = (uint64_t)V90_PHASE4_TRN2D_MINIMUM_FRAMES *
 			receiver->stream.decoder.mapping.frame_bits;
 	ed_bits = receiver->ed_frames *
 		  (size_t)receiver->stream.decoder.mapping.frame_bits;
-	if (receiver->trn2d_bit_errors > training_bits ||
-	    receiver->ed_bit_errors > ed_bits ||
-	    (receiver->mp_prime_boundary &&
-	     (receiver->stage != PCM_DOWNSTREAM_RX_MP_SEARCH ||
-	      receiver->ed_requested || receiver->stream.pending_count != 0 ||
-	      !mp_is_fresh(&receiver->mp))))
+	if (receiver->trn2d_bit_errors > training_bits)
 		return false;
 	if (receiver->stage == PCM_DOWNSTREAM_RX_TRN2D) {
 		return receiver->stream.received_symbols <
 			       V90_PHASE4_TRN2D_MINIMUM_SYMBOLS &&
-		       mp_is_fresh(&receiver->mp) &&
+		       control_is_fresh(receiver) &&
 		       receiver->ed_frames == 0 &&
 		       receiver->ed_bit_errors == 0 &&
 		       !receiver->ed_requested &&
@@ -56,11 +93,22 @@ bool pcm_downstream_rx_is_valid(
 	if (receiver->stream.received_symbols <
 	    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS)
 		return false;
+	if (receiver->protocol == PCM_PROTOCOL_V92)
+		return receiver->ed_frames == 0 &&
+		       receiver->ed_bit_errors == 0 &&
+		       !receiver->ed_requested &&
+		       !receiver->mp_prime_boundary;
+	if (receiver->ed_bit_errors > ed_bits ||
+	    (receiver->mp_prime_boundary &&
+	     (receiver->stage != PCM_DOWNSTREAM_RX_MP_SEARCH ||
+	      receiver->ed_requested || receiver->stream.pending_count != 0 ||
+	      !mp_is_fresh(&receiver->control.mp))))
+		return false;
 	if (receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH)
 		return receiver->ed_frames == 0 &&
 		       receiver->ed_bit_errors == 0;
 	if (!receiver->ed_requested || receiver->mp_prime_boundary ||
-	    receiver->mp.stage != V90_MP_SEARCH_SYNC)
+	    receiver->control.mp.stage != V90_MP_SEARCH_SYNC)
 		return false;
 	if (receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
 		return receiver->ed_frames < V90_PHASE4_ED_FRAMES;
@@ -69,14 +117,16 @@ bool pcm_downstream_rx_is_valid(
 
 enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	struct pcm_downstream_rx *receiver,
+	enum pcm_protocol protocol,
 	const struct v90_pcm_mapping *training_mapping,
 	enum v90_pcm_mapping_plane decision_plane)
 {
 	struct pcm_downstream_rx initialized = { 0 };
 	enum v90_pcm_stream_rx_result stream_result;
-	enum v90_mp_receiver_result mp_result;
+	bool control_initialized;
 
-	if (receiver == NULL || training_mapping == NULL)
+	if (receiver == NULL || training_mapping == NULL ||
+	    !protocol_is_valid(protocol))
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(training_mapping) ||
 	    training_mapping->kind != V90_CP_TRAINING)
@@ -89,11 +139,17 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 		return PCM_DOWNSTREAM_RX_INVALID_PARAMETERS;
 	if (stream_result != V90_PCM_STREAM_RX_OK)
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-	mp_result = v90_mp_receiver_init(
-		&initialized.mp, training_mapping->frame_bits);
-	if (mp_result == V90_MP_RECEIVER_INVALID_PARAMETERS)
-		return PCM_DOWNSTREAM_RX_INVALID_PARAMETERS;
-	if (mp_result != V90_MP_RECEIVER_OK)
+	initialized.protocol = protocol;
+	if (protocol == PCM_PROTOCOL_V90) {
+		control_initialized = v90_mp_receiver_init(
+			&initialized.control.mp,
+			training_mapping->frame_bits) == V90_MP_RECEIVER_OK;
+	} else {
+		control_initialized = v92_suvd_receiver_init(
+			&initialized.control.suvd,
+			training_mapping->frame_bits) == V92_SUVD_RECEIVER_OK;
+	}
+	if (!control_initialized)
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	initialized.stage = PCM_DOWNSTREAM_RX_TRN2D;
 	if (!pcm_downstream_rx_is_valid(&initialized))
@@ -123,7 +179,7 @@ bool pcm_downstream_rx_is_fresh(
 			    .previous_shaping_signs[interval] != 0)
 			return false;
 	}
-	return true;
+	return control_is_fresh(receiver);
 }
 
 static void begin_ed_search(struct pcm_downstream_rx *receiver)
@@ -142,6 +198,7 @@ enum pcm_downstream_rx_result pcm_downstream_rx_expect_ed(
 	if (receiver == NULL)
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (!pcm_downstream_rx_is_valid(receiver) ||
+	    receiver->protocol != PCM_PROTOCOL_V90 ||
 	    receiver->stage == PCM_DOWNSTREAM_RX_TRN2D ||
 	    receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE)
 		return PCM_DOWNSTREAM_RX_INVALID_STATE;
@@ -185,7 +242,7 @@ static enum pcm_downstream_rx_result feed_mp_frame(
 		struct v90_mp_event current;
 
 		if (v90_mp_receive_bit(
-			    &receiver->mp, frame->bits[bit], &current) !=
+			    &receiver->control.mp, frame->bits[bit], &current) !=
 		    V90_MP_RECEIVER_OK)
 			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 		if (current.type == V90_MP_EVENT_NONE)
@@ -209,6 +266,42 @@ static enum pcm_downstream_rx_result feed_mp_frame(
 	return v90_mp_record_acknowledges_cp(&emitted.record) ?
 		       PCM_DOWNSTREAM_RX_MP_PRIME :
 		       PCM_DOWNSTREAM_RX_MP;
+}
+
+static enum pcm_downstream_rx_result feed_suvd_frame(
+	struct pcm_downstream_rx *receiver,
+	const struct v90_pcm_stream_frame *frame,
+	struct pcm_downstream_event *event)
+{
+	struct v92_suvd_event emitted = { 0 };
+	bool aligned = false;
+
+	for (size_t bit = 0u; bit < frame->bit_count; ++bit) {
+		struct v92_suvd_event current;
+
+		if (v92_suvd_receiver_receive_bit(
+			    &receiver->control.suvd, frame->bits[bit],
+			    &current) != V92_SUVD_RECEIVER_OK)
+			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
+		if (current.type == V92_SUVD_EVENT_NONE)
+			continue;
+		if (emitted.type != V92_SUVD_EVENT_NONE)
+			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
+		emitted = current;
+		aligned = bit + 1u == frame->bit_count;
+	}
+	if (emitted.type == V92_SUVD_EVENT_NONE)
+		return PCM_DOWNSTREAM_RX_BUFFERING;
+	if (emitted.type == V92_SUVD_EVENT_RECORD && !aligned) {
+		emitted = (struct v92_suvd_event){
+			.type = V92_SUVD_EVENT_REJECTED,
+			.frame_result = V92_SUVD_INVALID_FRAME,
+		};
+	}
+	event->suvd = emitted;
+	return emitted.type == V92_SUVD_EVENT_RECORD ?
+		       PCM_DOWNSTREAM_RX_SUVD :
+		       PCM_DOWNSTREAM_RX_SUVD_REJECTED;
 }
 
 static enum pcm_downstream_rx_result map_stream_failure(
@@ -297,7 +390,7 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 	 * and restart the Ed window; it may be the record already accepted by
 	 * the sender's spectral lookahead. */
 	if (result != PCM_DOWNSTREAM_RX_BUFFERING ||
-	    receiver->mp.stage != V90_MP_SEARCH_SYNC) {
+	    receiver->control.mp.stage != V90_MP_SEARCH_SYNC) {
 		receiver->stage = PCM_DOWNSTREAM_RX_MP_SEARCH;
 		receiver->ed_frames = 0;
 		receiver->ed_bit_errors = 0;
@@ -355,13 +448,19 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 		next.trn2d_bit_errors +=
 			generated.trn2d.training_bit_errors;
 		if (next.stream.received_symbols ==
-		    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS)
-			next.stage = PCM_DOWNSTREAM_RX_MP_SEARCH;
+		    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS) {
+			next.stage = next.protocol == PCM_PROTOCOL_V90 ?
+				PCM_DOWNSTREAM_RX_MP_SEARCH :
+				PCM_DOWNSTREAM_RX_SUVD_SEARCH;
+		}
 		result = PCM_DOWNSTREAM_RX_TRN2D_FRAME;
 	} else {
-		result = next.stage == PCM_DOWNSTREAM_RX_ED_SEARCH ?
-				 receive_ed_frame(&next, &frame, &generated) :
-				 receive_mp_frame(&next, &frame, &generated);
+		if (next.stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
+			result = receive_ed_frame(&next, &frame, &generated);
+		else if (next.stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH)
+			result = feed_suvd_frame(&next, &frame, &generated);
+		else
+			result = receive_mp_frame(&next, &frame, &generated);
 		if (result == PCM_DOWNSTREAM_RX_INTERNAL_ERROR)
 			return result;
 	}
@@ -389,6 +488,10 @@ const char *pcm_downstream_rx_result_name(
 		return "MP prime";
 	case PCM_DOWNSTREAM_RX_MP_REJECTED:
 		return "MP rejected";
+	case PCM_DOWNSTREAM_RX_SUVD:
+		return "SUVd";
+	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
+		return "SUVd rejected";
 	case PCM_DOWNSTREAM_RX_ED:
 		return "Ed";
 	case PCM_DOWNSTREAM_RX_ED_REJECTED:

@@ -3,9 +3,11 @@
 #ifndef PCM_DOWNSTREAM_RX_H
 #define PCM_DOWNSTREAM_RX_H
 
+#include "pcm_startup.h"
 #include "v90_mp_receiver.h"
 #include "v90_pcm_stream_rx.h"
 #include "v90_phase4.h"
+#include "v92_suvd_receiver.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -17,6 +19,8 @@ enum pcm_downstream_rx_result {
 	PCM_DOWNSTREAM_RX_MP,
 	PCM_DOWNSTREAM_RX_MP_PRIME,
 	PCM_DOWNSTREAM_RX_MP_REJECTED,
+	PCM_DOWNSTREAM_RX_SUVD,
+	PCM_DOWNSTREAM_RX_SUVD_REJECTED,
 	PCM_DOWNSTREAM_RX_ED,
 	PCM_DOWNSTREAM_RX_ED_REJECTED,
 	PCM_DOWNSTREAM_RX_INVALID_ARGUMENT,
@@ -30,6 +34,7 @@ enum pcm_downstream_rx_result {
 enum pcm_downstream_rx_stage {
 	PCM_DOWNSTREAM_RX_TRN2D,
 	PCM_DOWNSTREAM_RX_MP_SEARCH,
+	PCM_DOWNSTREAM_RX_SUVD_SEARCH,
 	PCM_DOWNSTREAM_RX_ED_SEARCH,
 	PCM_DOWNSTREAM_RX_COMPLETE,
 };
@@ -53,16 +58,24 @@ struct pcm_trn2d_frame {
 struct pcm_downstream_event {
 	struct pcm_trn2d_frame trn2d;
 	struct v90_mp_event mp;
+	struct v92_suvd_event suvd;
 	struct pcm_downstream_ed_event ed;
 };
 
-/* Own the continuous digital-to-analogue Phase 4 decoding epoch. MP follows
- * TRN2d without resetting the PCM decoder, GPC descrambler, differential
- * decoder, or spectral-shaping histories. */
+union pcm_downstream_control_rx {
+	struct v90_mp_receiver mp;
+	struct v92_suvd_receiver suvd;
+};
+
+/* Own the continuous digital-to-analogue Phase 4 decoding epoch. The selected
+ * protocol routes the shared TRN2d suffix into MP or SUVd without resetting
+ * the PCM decoder, GPC descrambler, differential decoder, or spectral-shaping
+ * histories. */
 struct pcm_downstream_rx {
 	struct v90_pcm_stream_rx stream;
-	struct v90_mp_receiver mp;
+	union pcm_downstream_control_rx control;
 	uint64_t trn2d_bit_errors;
+	enum pcm_protocol protocol;
 	enum pcm_downstream_rx_stage stage;
 	uint8_t ed_frames;
 	uint8_t ed_bit_errors;
@@ -72,6 +85,7 @@ struct pcm_downstream_rx {
 
 enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	struct pcm_downstream_rx *receiver,
+	enum pcm_protocol protocol,
 	const struct v90_pcm_mapping *training_mapping,
 	enum v90_pcm_mapping_plane decision_plane);
 bool pcm_downstream_rx_is_valid(
@@ -96,10 +110,10 @@ bool pcm_downstream_rx_has_failed(
 
 /* Consume one authoritative G.711 network character. The first 2040 symbols
  * remain TRN2d and produce one event per six-symbol frame. Later TRN2d bits
- * feed the saturated MP synchronizer until a complete record is accepted or
- * rejected. Once armed, two frames that contain no newer MP prefix form Ed.
- * BUFFERING accepts the character but leaves event unchanged; rejected calls
- * change neither receiver nor event. */
+ * feed the selected protocol's saturated control synchronizer. V.90 accepts
+ * MP and can then be armed for Ed; V.92 accepts the initial SUVd. BUFFERING
+ * accepts the character but leaves event unchanged; rejected calls change
+ * neither receiver nor event. */
 enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	struct pcm_downstream_rx *receiver, uint8_t network_octet,
 	struct pcm_downstream_event *event);

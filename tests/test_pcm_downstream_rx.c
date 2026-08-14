@@ -28,6 +28,14 @@ struct observer {
 	size_t training_frames;
 };
 
+struct v92_observer {
+	struct v92_suvd_parameters last_parameters;
+	size_t training_frames;
+	size_t records;
+	size_t invalid_frames;
+	size_t crc_mismatches;
+};
+
 struct source {
 	struct v90_pcm_frame_encoder encoder;
 	struct v34_scrambler scrambler;
@@ -63,6 +71,41 @@ static bool make_mapping(
 		add_ucode(
 			&parameters.transmit_constellations[0],
 			(uint8_t)(24u + 12u * ordinal));
+	return v90_pcm_mapping_init(mapping, &parameters) ==
+	       V90_PCM_MAPPING_OK;
+}
+
+static bool make_width_mapping(
+	struct v90_pcm_mapping *mapping, enum g711_law law,
+	uint8_t frame_bits)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_TRAINING,
+		.law = law,
+		.selected_rate_index = (uint8_t)(frame_bits - 8u),
+		.constellation_count = V90_CP_MAX_CONSTELLATIONS,
+	};
+	uint8_t sign_bits = frame_bits > 27u ?
+				    (uint8_t)(frame_bits - 24u) : 3u;
+	uint8_t modulus_bits = (uint8_t)(frame_bits - sign_bits);
+
+	parameters.sign_redundancy =
+		(uint8_t)(V90_CP_FRAME_INTERVALS - sign_bits);
+
+	for (size_t interval = 0u;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		uint8_t exponent = (uint8_t)(
+			modulus_bits / V90_CP_FRAME_INTERVALS +
+			(interval < modulus_bits % V90_CP_FRAME_INTERVALS));
+		uint8_t count = (uint8_t)(1u << exponent);
+
+		parameters.frame_constellation[interval] = (uint8_t)interval;
+		for (uint8_t ordinal = 0u; ordinal < count; ++ordinal) {
+			add_ucode(
+				&parameters.transmit_constellations[interval],
+				(uint8_t)(4u + interval * 20u + ordinal));
+		}
+	}
 	return v90_pcm_mapping_init(mapping, &parameters) ==
 	       V90_PCM_MAPPING_OK;
 }
@@ -195,6 +238,155 @@ static bool source_init(
 	return true;
 }
 
+static bool observe_v92_output(
+	struct pcm_downstream_rx *receiver,
+	const struct v90_pcm_frame_output *output,
+	struct v92_observer *observer)
+{
+	for (size_t symbol = 0u; symbol < output->symbol_count; ++symbol) {
+		struct pcm_downstream_event event;
+		struct pcm_downstream_event untouched;
+		enum pcm_downstream_rx_result result;
+
+		memset(&event, 0xa5, sizeof(event));
+		untouched = event;
+		result = pcm_downstream_rx_receive(
+			receiver, output->symbols[symbol].octet, &event);
+		if (result == PCM_DOWNSTREAM_RX_BUFFERING) {
+			CHECK(memcmp(&event, &untouched, sizeof(event)) == 0,
+			      "V.92 buffering changed the downstream event");
+			continue;
+		}
+		if (result == PCM_DOWNSTREAM_RX_TRN2D_FRAME) {
+			CHECK(event.trn2d.bit_count ==
+				      receiver->stream.decoder.mapping.frame_bits &&
+			      event.trn2d.training_bit_errors == 0u,
+			      "V.92 TRN2d frame did not decode cleanly");
+			observer->training_frames++;
+			continue;
+		}
+		if (result == PCM_DOWNSTREAM_RX_SUVD) {
+			CHECK(event.suvd.type == V92_SUVD_EVENT_RECORD &&
+			      event.suvd.frame_result == V92_SUVD_OK,
+			      "V.92 SUVd result and event disagreed");
+			observer->last_parameters = event.suvd.parameters;
+			observer->records++;
+			continue;
+		}
+		CHECK(result == PCM_DOWNSTREAM_RX_SUVD_REJECTED &&
+		      event.suvd.type == V92_SUVD_EVENT_REJECTED,
+		      "V.92 downstream receiver returned %s",
+		      pcm_downstream_rx_result_name(result));
+		if (event.suvd.frame_result == V92_SUVD_INVALID_FRAME)
+			observer->invalid_frames++;
+		else if (event.suvd.frame_result == V92_SUVD_CRC_MISMATCH)
+			observer->crc_mismatches++;
+		else
+			CHECK(false, "V.92 SUVd rejection had result %s",
+			      v92_suvd_result_name(event.suvd.frame_result));
+	}
+	return true;
+}
+
+static bool push_v92_frame(
+	struct source *source, const uint8_t *bits,
+	struct pcm_downstream_rx *receiver,
+	struct v92_observer *observer)
+{
+	struct v90_pcm_frame_output output;
+	uint8_t scrambled[V90_PCM_FRAME_MAX_BITS];
+	size_t frame_bits = source->encoder.mapping.frame_bits;
+	enum v90_pcm_frame_encoder_result result;
+
+	for (size_t bit = 0u; bit < frame_bits; ++bit) {
+		if (v34_scramble_group(
+			    &source->scrambler, bits[bit], 1u,
+			    &scrambled[bit]) != V34_FRAMING_OK)
+			return false;
+	}
+	result = v90_pcm_frame_encoder_process(
+		&source->encoder, scrambled, frame_bits, &output);
+	if (result == V90_PCM_FRAME_ENCODER_BUFFERING)
+		return true;
+	CHECK(result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY,
+	      "V.92 source encoder returned %s",
+	      v90_pcm_frame_encoder_result_name(result));
+	return observe_v92_output(receiver, &output, observer);
+}
+
+static bool finish_v92_source(
+	struct source *source, struct pcm_downstream_rx *receiver,
+	struct v92_observer *observer)
+{
+	for (;;) {
+		struct v90_pcm_frame_output output;
+		enum v90_pcm_frame_encoder_result result =
+			v90_pcm_frame_encoder_finish(&source->encoder, &output);
+
+		if (result == V90_PCM_FRAME_ENCODER_COMPLETE)
+			return true;
+		CHECK(result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
+		      observe_v92_output(receiver, &output, observer),
+		      "V.92 source finish failed");
+	}
+}
+
+static bool push_v92_trn2d(
+	struct source *source, size_t frame_count,
+	struct pcm_downstream_rx *receiver,
+	struct v92_observer *observer)
+{
+	uint8_t ones[V90_PCM_FRAME_MAX_BITS];
+
+	memset(ones, 1, sizeof(ones));
+	for (size_t frame = 0u; frame < frame_count; ++frame) {
+		CHECK(push_v92_frame(source, ones, receiver, observer),
+		      "V.92 TRN2d source stopped at frame %zu", frame);
+	}
+	return true;
+}
+
+static bool push_v92_sequence(
+	struct source *source, const uint8_t *sequence, size_t bit_count,
+	struct pcm_downstream_rx *receiver,
+	struct v92_observer *observer)
+{
+	uint8_t frame[V90_PCM_FRAME_MAX_BITS];
+	size_t frame_bits = source->encoder.mapping.frame_bits;
+
+	CHECK(bit_count % frame_bits == 0u,
+	      "V.92 sequence was not mapping-frame aligned");
+	for (size_t first = 0u; first < bit_count; first += frame_bits) {
+		for (size_t bit = 0u; bit < frame_bits; ++bit)
+			frame[bit] = packed_bit(sequence, first + bit);
+		CHECK(push_v92_frame(source, frame, receiver, observer),
+		      "V.92 source stopped at bit %zu", first);
+	}
+	return true;
+}
+
+static bool push_misaligned_v92_sequence(
+	struct source *source, const uint8_t *sequence, size_t bit_count,
+	struct pcm_downstream_rx *receiver,
+	struct v92_observer *observer)
+{
+	uint8_t shifted[V92_SUVD_MAX_FRAME_BITS + V90_PCM_FRAME_MAX_BITS];
+	size_t frame_bits = source->encoder.mapping.frame_bits;
+	size_t shifted_bits = bit_count + 1u;
+	size_t padded_bits =
+		(shifted_bits + frame_bits - 1u) / frame_bits * frame_bits;
+
+	memset(shifted, 0, sizeof(shifted));
+	for (size_t bit = 0u; bit < bit_count; ++bit)
+		shifted[bit + 1u] = packed_bit(sequence, bit);
+	for (size_t first = 0u; first < padded_bits; first += frame_bits) {
+		CHECK(push_v92_frame(
+			      source, shifted + first, receiver, observer),
+		      "misaligned V.92 source stopped at bit %zu", first);
+	}
+	return true;
+}
+
 static bool push_frame(
 	struct source *source, const uint8_t bits[FRAME_BITS],
 	struct pcm_downstream_rx *receiver, struct observer *observer)
@@ -298,7 +490,8 @@ static bool run_continuous_stream(enum g711_law law)
 	      mapping.frame_bits == FRAME_BITS &&
 	      source_init(&source, &mapping) &&
 	      pcm_downstream_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_OK &&
 	      pcm_downstream_rx_is_fresh(&receiver),
 	      "continuous downstream fixture did not initialize");
@@ -386,7 +579,8 @@ static bool test_trn2d_error_accounting(void)
 	CHECK(make_mapping(&mapping, G711_LAW_PCMA, 0, 0) &&
 	      source_init(&source, &mapping) &&
 	      pcm_downstream_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_OK,
 	      "TRN2d error fixture did not initialize");
 	for (size_t bit = 0; bit < FRAME_BITS; ++bit) {
@@ -445,7 +639,8 @@ static bool run_ed_transition(
 	CHECK(make_mapping(&mapping, law, 2, 2) &&
 	      source_init(&source, &mapping) &&
 	      pcm_downstream_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_OK &&
 	      push_trn2d(
 		      &source, V90_PHASE4_TRN2D_MINIMUM_FRAMES +
@@ -550,7 +745,8 @@ static bool test_ed_boundary_request(void)
 	CHECK(make_mapping(&mapping, G711_LAW_PCMA, 0, 0) &&
 	      source_init(&source, &mapping) &&
 	      pcm_downstream_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_OK &&
 	      push_trn2d(
 		      &source, V90_PHASE4_TRN2D_MINIMUM_FRAMES,
@@ -571,6 +767,136 @@ static bool test_ed_boundary_request(void)
 	      observer.events[1].result == PCM_DOWNSTREAM_RX_ED &&
 	      pcm_downstream_rx_is_complete(&receiver),
 	      "boundary Ed request did not complete exactly two frames");
+	return true;
+}
+
+static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
+{
+	const struct v92_suvd_parameters parameters = {
+		.request_silence = (frame_bits & 1u) != 0u,
+		.acknowledges_cpu = law == G711_LAW_PCMA,
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_rx receiver;
+	struct pcm_downstream_rx saved;
+	struct source source;
+	struct v92_observer observer = { 0 };
+	uint8_t sequence[V92_SUVD_MAX_FRAME_BYTES];
+	size_t sequence_bits = 0u;
+	size_t expected_frames;
+
+	CHECK(make_width_mapping(&mapping, law, frame_bits) &&
+	      mapping.frame_bits == frame_bits &&
+	      source_init(&source, &mapping) &&
+	      pcm_downstream_rx_init(
+		      &receiver, PCM_PROTOCOL_V92, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      receiver.protocol == PCM_PROTOCOL_V92 &&
+	      pcm_downstream_rx_is_fresh(&receiver),
+	      "V.92 width %u law %u fixture did not initialize",
+	      frame_bits, law);
+	CHECK(push_v92_trn2d(
+		      &source,
+		      V90_PHASE4_TRN2D_MINIMUM_FRAMES +
+			      EXTRA_TRN2D_FRAMES,
+		      &receiver, &observer) &&
+	      v92_suvd_encode(
+		      &parameters, frame_bits, sequence, sizeof(sequence),
+		      &sequence_bits) == V92_SUVD_OK &&
+	      push_v92_sequence(
+		      &source, sequence, sequence_bits,
+		      &receiver, &observer) &&
+	      finish_v92_source(&source, &receiver, &observer),
+	      "V.92 width %u law %u line stream stopped", frame_bits, law);
+	expected_frames = V90_PHASE4_TRN2D_MINIMUM_FRAMES +
+			  EXTRA_TRN2D_FRAMES + sequence_bits / frame_bits;
+	CHECK(observer.training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      observer.records == 1u && observer.invalid_frames == 0u &&
+	      observer.crc_mismatches == 0u &&
+	      observer.last_parameters.request_silence ==
+		      parameters.request_silence &&
+	      observer.last_parameters.acknowledges_cpu ==
+		      parameters.acknowledges_cpu &&
+	      receiver.stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH &&
+	      receiver.stream.received_frames == expected_frames &&
+	      receiver.stream.received_symbols ==
+		      expected_frames * V90_CP_FRAME_INTERVALS &&
+	      receiver.trn2d_bit_errors == 0u &&
+	      pcm_downstream_rx_is_valid(&receiver),
+	      "V.92 width %u law %u status result changed", frame_bits, law);
+	saved = receiver;
+	CHECK(pcm_downstream_rx_expect_ed(&receiver) ==
+		      PCM_DOWNSTREAM_RX_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "V.92 width %u accepted the V.90 Ed branch", frame_bits);
+	return true;
+}
+
+static bool test_v92_suvd_widths(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t frame_bits =
+			     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS;
+		     frame_bits <=
+			     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS;
+		     ++frame_bits) {
+			CHECK(run_v92_width((enum g711_law)law, frame_bits),
+			      "V.92 downstream width matrix stopped");
+		}
+	}
+	return true;
+}
+
+static bool test_v92_suvd_recovery(void)
+{
+	const struct v92_suvd_parameters parameters = {
+		.request_silence = true,
+		.acknowledges_cpu = true,
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_rx receiver;
+	struct source source;
+	struct v92_observer observer = { 0 };
+	uint8_t sequence[V92_SUVD_MAX_FRAME_BYTES];
+	uint8_t corrupt[V92_SUVD_MAX_FRAME_BYTES];
+	size_t sequence_bits = 0u;
+
+	CHECK(make_mapping(&mapping, G711_LAW_PCMA, 2u, 2u) &&
+	      source_init(&source, &mapping) &&
+	      pcm_downstream_rx_init(
+		      &receiver, PCM_PROTOCOL_V92, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_suvd_encode(
+		      &parameters, FRAME_BITS, sequence, sizeof(sequence),
+		      &sequence_bits) == V92_SUVD_OK,
+	      "V.92 recovery fixture did not initialize");
+	memcpy(corrupt, sequence, sizeof(corrupt));
+	corrupt[35u / 8u] ^= (uint8_t)(1u << (7u - 35u % 8u));
+	CHECK(push_v92_trn2d(
+		      &source,
+		      V90_PHASE4_TRN2D_MINIMUM_FRAMES +
+			      EXTRA_TRN2D_FRAMES,
+		      &receiver, &observer) &&
+	      push_misaligned_v92_sequence(
+		      &source, sequence, sequence_bits,
+		      &receiver, &observer) &&
+	      push_v92_sequence(
+		      &source, corrupt, sequence_bits,
+		      &receiver, &observer) &&
+	      push_v92_sequence(
+		      &source, sequence, sequence_bits,
+		      &receiver, &observer) &&
+	      finish_v92_source(&source, &receiver, &observer),
+	      "V.92 recovery stream stopped");
+	CHECK(observer.training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      observer.invalid_frames == 1u &&
+	      observer.crc_mismatches == 1u && observer.records == 1u &&
+	      observer.last_parameters.request_silence &&
+	      observer.last_parameters.acknowledges_cpu &&
+	      receiver.stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH &&
+	      receiver.trn2d_bit_errors == 0u &&
+	      pcm_downstream_rx_is_valid(&receiver),
+	      "V.92 receiver did not recover on a mapping-frame boundary");
 	return true;
 }
 
@@ -603,23 +929,30 @@ static bool test_contracts(void)
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_saved = untouched;
 	CHECK(pcm_downstream_rx_init(
-		      NULL, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      NULL, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_INVALID_ARGUMENT &&
 	      pcm_downstream_rx_init(
-		      &untouched, NULL, V90_PCM_MAPPING_TRANSMIT) ==
+		      &untouched, (enum pcm_protocol)99, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_INVALID_ARGUMENT &&
 	      pcm_downstream_rx_init(
-		      &untouched, &mapping,
+		      &untouched, PCM_PROTOCOL_V90, NULL,
+		      V90_PCM_MAPPING_TRANSMIT) ==
+		      PCM_DOWNSTREAM_RX_INVALID_ARGUMENT &&
+	      pcm_downstream_rx_init(
+		      &untouched, PCM_PROTOCOL_V90, &mapping,
 		      (enum v90_pcm_mapping_plane)2) ==
 		      PCM_DOWNSTREAM_RX_INVALID_ARGUMENT &&
 	      pcm_downstream_rx_init(
-		      &untouched, &data_mapping,
+		      &untouched, PCM_PROTOCOL_V90, &data_mapping,
 		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_INVALID_PARAMETERS &&
 	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
 	      "rejected initialization changed its destination");
 	CHECK(pcm_downstream_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_OK &&
 	      pcm_downstream_rx_is_valid(&receiver) &&
 	      pcm_downstream_rx_is_fresh(&receiver) &&
@@ -667,6 +1000,12 @@ static bool test_contracts(void)
 		     PCM_DOWNSTREAM_RX_MP_PRIME),
 		     "MP prime") == 0 &&
 	      strcmp(pcm_downstream_rx_result_name(
+		     PCM_DOWNSTREAM_RX_SUVD),
+		     "SUVd") == 0 &&
+	      strcmp(pcm_downstream_rx_result_name(
+		     PCM_DOWNSTREAM_RX_SUVD_REJECTED),
+		     "SUVd rejected") == 0 &&
+	      strcmp(pcm_downstream_rx_result_name(
 		     (enum pcm_downstream_rx_result)99),
 		     "unknown") == 0,
 	      "downstream result names changed");
@@ -683,6 +1022,8 @@ int main(void)
 		{ "TRN2d error accounting", test_trn2d_error_accounting },
 		{ "Ed transition", test_ed_transition },
 		{ "Ed boundary request", test_ed_boundary_request },
+		{ "V.92 SUVd width matrix", test_v92_suvd_widths },
+		{ "V.92 SUVd recovery", test_v92_suvd_recovery },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

@@ -251,7 +251,7 @@ v90_phase4_analog_station_receive_handoff(
 		    &mapping, &station->training_parameters) !=
 		    V90_PCM_MAPPING_OK ||
 	    pcm_downstream_rx_init(
-		    &generated.receiver, &mapping,
+		    &generated.receiver, PCM_PROTOCOL_V90, &mapping,
 		    V90_PCM_MAPPING_TRANSMIT) != PCM_DOWNSTREAM_RX_OK)
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	if (!v90_phase4_analog_receive_handoff_is_valid(&generated))

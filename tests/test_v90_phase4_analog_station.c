@@ -245,7 +245,7 @@ static bool run_exchange(
 					      &corrupted),
 				      "handoff accepted used sign history");
 				corrupted = receive_handoff;
-				corrupted.receiver.mp.sync_one_count = 1;
+				corrupted.receiver.control.mp.sync_one_count = 1;
 				CHECK(!v90_phase4_analog_receive_handoff_is_valid(
 					      &corrupted),
 				      "handoff accepted a used MP synchronizer");
