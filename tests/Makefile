@@ -1958,7 +1958,9 @@ V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase4_station_fixture.o \
 	$(BUILD_DIR)/v90_downstream_data_handoff.o \
 	$(BUILD_DIR)/v90_downstream_data_rx.o \
+	$(BUILD_DIR)/v90_downstream_data_stream.o \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
+	$(BUILD_DIR)/v90_digital_path.o \
 	$(BUILD_DIR)/v90_phase4_e_line_tx.o \
 	$(BUILD_DIR)/v90_upstream_data.o \
 	$(BUILD_DIR)/v90_upstream_mode.o \
@@ -1969,7 +1971,9 @@ V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_analog_station.o, \
 		$(V90_PHASE4_ANALOG_STATION_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_digital_station.o, \
-		$(V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS)))
+		$(V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS)) \
+	$(filter-out $(BUILD_DIR)/test_v90_upstream_rx.o, \
+		$(V90_UPSTREAM_RX_TEST_OBJECTS)))
 V90_PHASE4_ANALOG_STARTUP_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_analog_startup
 V90_PHASE4_ANALOG_STARTUP_TEST_OBJECTS := $(sort \
@@ -4387,6 +4391,10 @@ $(BUILD_DIR)/v90_downstream_data_handoff.o: \
 
 $(BUILD_DIR)/v90_downstream_data_stream.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_stream.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_digital_path.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_digital_path.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_sign_decoder.o: \
