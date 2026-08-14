@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v92_suvu.h>
+#include <v92_status_update.h>
 
 #include "test.h"
 
@@ -108,8 +109,39 @@ static bool test_dimensions(void)
 	      v92_suvu_frame_bytes(V92_CONSTELLATION_4_POINT) == 9 &&
 	      v92_suvu_frame_bytes(V92_CONSTELLATION_8_POINT) == 9 &&
 	      v92_suvu_frame_bits((enum v92_constellation_size)6) == 0 &&
-	      v92_suvu_frame_bytes((enum v92_constellation_size)6) == 0,
+	      v92_suvu_frame_bytes((enum v92_constellation_size)6) == 0 &&
+	      v92_status_update_frame_bits(
+		      V92_STATUS_UPDATE_DIGITAL_ALIGNMENT) == 54 &&
+	      v92_status_update_frame_bytes(
+		      V92_STATUS_UPDATE_DIGITAL_ALIGNMENT) == 7 &&
+	      v92_status_update_frame_bits(
+		      V92_STATUS_UPDATE_4_POINT_ALIGNMENT) == 72 &&
+	      v92_status_update_frame_bits(
+		      V92_STATUS_UPDATE_8_POINT_ALIGNMENT) == 72 &&
+	      v92_status_update_frame_bits(0u) == 0u,
 	      "SUVu training dimensions changed");
+	return true;
+}
+
+static bool test_shared_framing(void)
+{
+	uint8_t frame[V92_STATUS_UPDATE_MAX_FRAME_BYTES + 1u];
+	uint16_t decoded = 0u;
+	size_t frame_bits = 0u;
+	const uint16_t payload = UINT16_C(0x5a5a);
+
+	memset(frame, 0xa5, sizeof(frame));
+	CHECK(v92_status_update_encode(
+		      payload, V92_STATUS_UPDATE_DIGITAL_ALIGNMENT,
+		      frame, 7u, &frame_bits) == V92_STATUS_UPDATE_OK &&
+	      frame_bits == 54u && frame[7] == 0xa5 &&
+	      bit_at(frame, 54u) == 0u && bit_at(frame, 55u) == 0u &&
+	      v92_status_update_decode(
+		      frame, 7u, frame_bits,
+		      V92_STATUS_UPDATE_DIGITAL_ALIGNMENT, &decoded) ==
+		      V92_STATUS_UPDATE_OK &&
+	      decoded == payload,
+	      "shared status-update framing did not round-trip");
 	return true;
 }
 
@@ -372,6 +404,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "dimensions", test_dimensions },
+		{ "shared framing", test_shared_framing },
 		{ "wire fields", test_wire_fields },
 		{ "all values round trip", test_all_values_round_trip },
 		{ "decode corruption", test_decode_corruption },

@@ -2,55 +2,38 @@
 
 #include "v92_suvu.h"
 
-#include "crc16_ccitt_false.h"
-#include "packed_bits.h"
-
-#include <string.h>
+#include "v92_status_update.h"
 
 enum {
-	SUVU_INFORMATION_FIRST_BIT = 18,
-	SUVU_KIND_BIT = 18,
-	SUVU_WAIT_FOR_CPU_BIT = 26,
-	SUVU_LEVEL_FIRST_BIT = 27,
+	SUVU_WAIT_FOR_CPU_PAYLOAD_BIT = 7,
+	SUVU_LEVEL_FIRST_PAYLOAD_BIT = 8,
 	SUVU_LEVEL_BITS = 5,
-	SUVU_REQUEST_SILENCE_BIT = 32,
-	SUVU_ACKNOWLEDGMENT_BIT = 33,
-	SUVU_CRC_START_BIT = 34,
-	SUVU_CRC_FIRST_BIT = 35,
-	SUVU_CRC_BITS = 16,
-	SUVU_FILL_FIRST_BIT = 51,
+	SUVU_REQUEST_SILENCE_PAYLOAD_BIT = 13,
+	SUVU_ACKNOWLEDGMENT_PAYLOAD_BIT = 14,
 };
 
-static unsigned int bits_per_symbol(
+static unsigned int alignment_bits(
 	enum v92_constellation_size constellation)
 {
 	switch (constellation) {
 	case V92_CONSTELLATION_4_POINT:
-		return 2;
+		return V92_STATUS_UPDATE_4_POINT_ALIGNMENT;
 	case V92_CONSTELLATION_8_POINT:
-		return 3;
+		return V92_STATUS_UPDATE_8_POINT_ALIGNMENT;
 	}
-	return 0;
+	return 0u;
 }
 
 size_t v92_suvu_frame_bits(enum v92_constellation_size constellation)
 {
-	unsigned int bits = bits_per_symbol(constellation);
-	size_t multiple;
-	size_t unfilled;
-
-	if (bits == 0)
-		return 0;
-	multiple = (size_t)bits * V92_SUVU_SYMBOLS_PER_FRAME;
-	unfilled = V92_SUVU_INFORMATION_BITS + V92_SUVU_TRAILER_BITS;
-	return (unfilled + multiple - 1u) / multiple * multiple;
+	return v92_status_update_frame_bits(alignment_bits(constellation));
 }
 
 size_t v92_suvu_frame_bytes(enum v92_constellation_size constellation)
 {
 	size_t bits = v92_suvu_frame_bits(constellation);
 
-	return bits == 0 ? 0 : (bits + 7u) / 8u;
+	return bits == 0u ? 0u : (bits + 7u) / 8u;
 }
 
 bool v92_suvu_parameters_are_valid(
@@ -61,26 +44,23 @@ bool v92_suvu_parameters_are_valid(
 	       parameters->prefilter_level_db_q2_2 <= 15;
 }
 
-static uint16_t frame_crc(const uint8_t *frame)
+static enum v92_suvu_result encode_result(
+	enum v92_status_update_result result)
 {
-	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t bit = SUVU_INFORMATION_FIRST_BIT;
-	     bit < SUVU_CRC_START_BIT; ++bit) {
-		remainder = crc16_ccitt_false_step(
-			remainder, packed_msb_bit(frame, bit) != 0);
+	switch (result) {
+	case V92_STATUS_UPDATE_OK:
+		return V92_SUVU_OK;
+	case V92_STATUS_UPDATE_INVALID_ARGUMENT:
+		return V92_SUVU_INVALID_ARGUMENT;
+	case V92_STATUS_UPDATE_INVALID_ALIGNMENT:
+		return V92_SUVU_INVALID_PARAMETERS;
+	case V92_STATUS_UPDATE_OUTPUT_TOO_SMALL:
+		return V92_SUVU_OUTPUT_TOO_SMALL;
+	case V92_STATUS_UPDATE_INVALID_FRAME:
+	case V92_STATUS_UPDATE_CRC_MISMATCH:
+		break;
 	}
-	return remainder;
-}
-
-static bool bits_are(
-	const uint8_t *frame, size_t first_bit, size_t bit_count, uint8_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index) {
-		if (packed_msb_bit(frame, first_bit + index) != value)
-			return false;
-	}
-	return true;
+	return V92_SUVU_INVALID_PARAMETERS;
 }
 
 enum v92_suvu_result v92_suvu_encode(
@@ -88,59 +68,50 @@ enum v92_suvu_result v92_suvu_encode(
 	enum v92_constellation_size constellation,
 	uint8_t *frame, size_t frame_capacity, size_t *frame_bit_count)
 {
-	uint8_t encoded[V92_SUVU_FRAME_BYTES] = { 0 };
-	size_t bit_count = v92_suvu_frame_bits(constellation);
+	unsigned int alignment = alignment_bits(constellation);
 	uint8_t raw_level;
-	uint16_t crc;
+	uint16_t payload;
 
 	if (parameters == NULL || frame == NULL || frame_bit_count == NULL)
 		return V92_SUVU_INVALID_ARGUMENT;
 	if (!v92_suvu_parameters_are_valid(parameters) ||
-	    bit_count != V92_SUVU_FRAME_BITS)
+	    alignment == 0u)
 		return V92_SUVU_INVALID_PARAMETERS;
-	if (frame_capacity < sizeof(encoded))
-		return V92_SUVU_OUTPUT_TOO_SMALL;
-
-	for (size_t bit = 0; bit < 17u; ++bit)
-		packed_msb_set_bit(encoded, bit, true);
-	packed_msb_set_bit(encoded, SUVU_KIND_BIT, true);
-	packed_msb_set_bit(
-		encoded, SUVU_WAIT_FOR_CPU_BIT, parameters->wait_for_cpu);
 	raw_level = parameters->prefilter_level_db_q2_2 < 0 ?
 		(uint8_t)(parameters->prefilter_level_db_q2_2 + 32) :
 		(uint8_t)parameters->prefilter_level_db_q2_2;
-	packed_msb_write_lsb_field(
-		encoded, SUVU_LEVEL_FIRST_BIT, SUVU_LEVEL_BITS, raw_level);
-	packed_msb_set_bit(
-		encoded, SUVU_REQUEST_SILENCE_BIT,
-		parameters->request_silence);
-	packed_msb_set_bit(
-		encoded, SUVU_ACKNOWLEDGMENT_BIT,
-		parameters->acknowledges_cpd);
-	crc = frame_crc(encoded);
-	packed_msb_write_msb_field(
-		encoded, SUVU_CRC_FIRST_BIT, SUVU_CRC_BITS, crc);
-	memcpy(frame, encoded, sizeof(encoded));
-	*frame_bit_count = bit_count;
-	return V92_SUVU_OK;
+	payload = (uint16_t)(
+		(uint16_t)raw_level << SUVU_LEVEL_FIRST_PAYLOAD_BIT);
+	payload |= (uint16_t)(
+		(uint16_t)parameters->wait_for_cpu <<
+		SUVU_WAIT_FOR_CPU_PAYLOAD_BIT);
+	payload |= (uint16_t)(
+		(uint16_t)parameters->request_silence <<
+		SUVU_REQUEST_SILENCE_PAYLOAD_BIT);
+	payload |= (uint16_t)(
+		(uint16_t)parameters->acknowledges_cpd <<
+		SUVU_ACKNOWLEDGMENT_PAYLOAD_BIT);
+	return encode_result(v92_status_update_encode(
+		payload, alignment, frame, frame_capacity, frame_bit_count));
 }
 
-static bool framing_is_valid(
-	const uint8_t *frame, size_t frame_bit_count)
+static enum v92_suvu_result decode_result(
+	enum v92_status_update_result result)
 {
-	return bits_are(frame, 0, 17, 1) &&
-	       packed_msb_bit(frame, 17) == 0 &&
-	       packed_msb_bit(frame, SUVU_KIND_BIT) == 1 &&
-	       packed_msb_bit(frame, SUVU_CRC_START_BIT) == 0 &&
-	       bits_are(
-		       frame, SUVU_FILL_FIRST_BIT,
-		       frame_bit_count - SUVU_FILL_FIRST_BIT, 0);
-}
-
-static uint16_t decode_crc(const uint8_t *frame)
-{
-	return (uint16_t)packed_msb_read_msb_field(
-		frame, SUVU_CRC_FIRST_BIT, SUVU_CRC_BITS);
+	switch (result) {
+	case V92_STATUS_UPDATE_OK:
+		return V92_SUVU_OK;
+	case V92_STATUS_UPDATE_INVALID_ARGUMENT:
+		return V92_SUVU_INVALID_ARGUMENT;
+	case V92_STATUS_UPDATE_INVALID_ALIGNMENT:
+	case V92_STATUS_UPDATE_INVALID_FRAME:
+		return V92_SUVU_INVALID_FRAME;
+	case V92_STATUS_UPDATE_CRC_MISMATCH:
+		return V92_SUVU_CRC_MISMATCH;
+	case V92_STATUS_UPDATE_OUTPUT_TOO_SMALL:
+		break;
+	}
+	return V92_SUVU_INVALID_FRAME;
 }
 
 enum v92_suvu_result v92_suvu_decode(
@@ -149,33 +120,30 @@ enum v92_suvu_result v92_suvu_decode(
 	struct v92_suvu_parameters *parameters)
 {
 	struct v92_suvu_parameters decoded;
+	enum v92_status_update_result result;
+	unsigned int alignment = alignment_bits(constellation);
+	uint16_t payload = 0u;
 	uint8_t raw_level;
-	size_t expected_bits = v92_suvu_frame_bits(constellation);
-	size_t expected_bytes = v92_suvu_frame_bytes(constellation);
 
 	if (frame == NULL || parameters == NULL)
 		return V92_SUVU_INVALID_ARGUMENT;
-	if (expected_bits != V92_SUVU_FRAME_BITS ||
-	    frame_bit_count != expected_bits)
-		return V92_SUVU_INVALID_FRAME;
-	if (frame_capacity < expected_bytes)
-		return V92_SUVU_INVALID_ARGUMENT;
-	if (!framing_is_valid(frame, frame_bit_count))
-		return V92_SUVU_INVALID_FRAME;
-	if (decode_crc(frame) != frame_crc(frame))
-		return V92_SUVU_CRC_MISMATCH;
-
-	raw_level = (uint8_t)packed_msb_read_lsb_field(
-		frame, SUVU_LEVEL_FIRST_BIT, SUVU_LEVEL_BITS);
+	result = v92_status_update_decode(
+		frame, frame_capacity, frame_bit_count,
+		alignment, &payload);
+	if (result != V92_STATUS_UPDATE_OK)
+		return decode_result(result);
+	raw_level = (uint8_t)(
+		(payload >> SUVU_LEVEL_FIRST_PAYLOAD_BIT) &
+		((1u << SUVU_LEVEL_BITS) - 1u));
 	decoded = (struct v92_suvu_parameters){
 		.prefilter_level_db_q2_2 = raw_level < 16u ?
 			(int8_t)raw_level : (int8_t)((int)raw_level - 32),
 		.wait_for_cpu =
-			packed_msb_bit(frame, SUVU_WAIT_FOR_CPU_BIT) != 0,
+			((payload >> SUVU_WAIT_FOR_CPU_PAYLOAD_BIT) & 1u) != 0u,
 		.request_silence =
-			packed_msb_bit(frame, SUVU_REQUEST_SILENCE_BIT) != 0,
+			((payload >> SUVU_REQUEST_SILENCE_PAYLOAD_BIT) & 1u) != 0u,
 		.acknowledges_cpd =
-			packed_msb_bit(frame, SUVU_ACKNOWLEDGMENT_BIT) != 0,
+			((payload >> SUVU_ACKNOWLEDGMENT_PAYLOAD_BIT) & 1u) != 0u,
 	};
 	if (!v92_suvu_parameters_are_valid(&decoded))
 		return V92_SUVU_INVALID_FRAME;
