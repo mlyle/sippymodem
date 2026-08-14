@@ -108,6 +108,97 @@ static bool test_symbol_round_trip(void)
 	return true;
 }
 
+static bool test_600_symbol_mapping(void)
+{
+	for (uint8_t previous = 0; previous < QPSK_QUADRANT_COUNT;
+	     ++previous) {
+		for (uint8_t bit = 0; bit < 2; ++bit) {
+			struct v22_symbol_encoder encoder;
+			struct v22_symbol_decoder decoder;
+			uint8_t decoded = UINT8_MAX;
+			uint8_t quadrant = UINT8_MAX;
+			uint8_t expected = (uint8_t)(
+				(previous + (bit == 0 ? 1u : 3u)) & 3u);
+
+			CHECK(v22_symbol_encoder_init(&encoder, previous) ==
+				      V22_FRAMING_OK &&
+			      v22_symbol_decoder_init(&decoder, previous) ==
+				      V22_FRAMING_OK &&
+			      v22_600_symbol_encode(
+				      &encoder, bit, &quadrant) ==
+				      V22_FRAMING_OK &&
+			      quadrant == expected &&
+			      v22_600_symbol_decode(
+				      &decoder, quadrant, &decoded) ==
+				      V22_FRAMING_OK &&
+			      decoded == bit,
+			      "V.22 600 mapping changed at %u/%u",
+			      previous, bit);
+		}
+	}
+	return true;
+}
+
+static bool test_600_symbol_round_trip(void)
+{
+	struct v22_symbol_encoder encoder;
+	struct v22_symbol_decoder decoder;
+	uint32_t random = UINT32_C(0x60022b17);
+
+	CHECK(v22_symbol_encoder_init(&encoder, 2) == V22_FRAMING_OK &&
+		      v22_symbol_decoder_init(&decoder, 2) ==
+			      V22_FRAMING_OK,
+	      "V.22 600 framing endpoints did not initialize");
+	for (size_t index = 0; index < TEST_STREAM_BITS; ++index) {
+		uint8_t bit = (uint8_t)(fixture_random(&random) >> 31);
+		uint8_t decoded = UINT8_MAX;
+		uint8_t quadrant = UINT8_MAX;
+
+		CHECK(v22_600_symbol_encode(
+			      &encoder, bit, &quadrant) == V22_FRAMING_OK &&
+			      v22_600_symbol_decode(
+				      &decoder, quadrant, &decoded) ==
+				      V22_FRAMING_OK &&
+			      decoded == bit,
+		      "V.22 600 round trip changed bit %zu", index);
+	}
+	CHECK(encoder.phase_quadrant == decoder.phase_quadrant &&
+		      memcmp(&encoder.scrambler, &decoder.descrambler,
+			     sizeof(encoder.scrambler)) == 0,
+	      "V.22 600 framing endpoints diverged");
+	return true;
+}
+
+static bool test_600_validation(void)
+{
+	struct v22_symbol_encoder encoder;
+	struct v22_symbol_decoder decoder;
+	struct v22_symbol_encoder saved_encoder;
+	struct v22_symbol_decoder saved_decoder;
+	uint8_t value = UINT8_MAX;
+
+	CHECK(v22_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK &&
+		      v22_symbol_decoder_init(&decoder, 0) ==
+			      V22_FRAMING_OK,
+	      "V.22 600 validation endpoints did not initialize");
+	saved_encoder = encoder;
+	saved_decoder = decoder;
+	CHECK(v22_600_symbol_encode(&encoder, 2, &value) ==
+		      V22_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      value == UINT8_MAX &&
+		      v22_600_symbol_decode(&decoder, 0, &value) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+		      value == UINT8_MAX &&
+		      v22_600_symbol_decode(&decoder, 2, &value) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+		      value == UINT8_MAX,
+	      "V.22 600 framing accepted invalid input or mutated state");
+	return true;
+}
+
 static void bits_from_nibble(uint8_t nibble, uint8_t bits[4])
 {
 	for (size_t index = 0; index < 4; ++index)
@@ -343,6 +434,9 @@ int main(void)
 		{ "scrambler polynomial", test_scrambler_polynomial },
 		{ "scrambler lockup escape", test_scrambler_lockup_escape },
 		{ "symbol round trip", test_symbol_round_trip },
+		{ "V.22 600 symbol mapping", test_600_symbol_mapping },
+		{ "V.22 600 symbol round trip", test_600_symbol_round_trip },
+		{ "V.22 600 validation", test_600_validation },
 		{ "V.22bis symbol mapping", test_v22bis_symbol_mapping },
 		{ "V.22bis generated constellation", test_v22bis_constellation },
 		{ "V.22bis symbol round trip", test_v22bis_symbol_round_trip },

@@ -50,12 +50,18 @@ enum v22_framing_result v22_symbol_encoder_init(
 enum v22_framing_result v22_symbol_encode(
 	struct v22_symbol_encoder *encoder, uint8_t first_bit,
 	uint8_t second_bit, uint8_t *quadrant);
+enum v22_framing_result v22_600_symbol_encode(
+	struct v22_symbol_encoder *encoder, uint8_t bit,
+	uint8_t *quadrant);
 enum v22_framing_result v22_symbol_decoder_init(
 	struct v22_symbol_decoder *decoder,
 	uint8_t initial_quadrant);
 enum v22_framing_result v22_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *first_bit, uint8_t *second_bit);
+enum v22_framing_result v22_600_symbol_decode(
+	struct v22_symbol_decoder *decoder, uint8_t quadrant,
+	uint8_t *bit);
 
 const char *v22_framing_result_name(
 	enum v22_framing_result result);

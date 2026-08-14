@@ -6,7 +6,8 @@
 #include <stdbool.h>
 
 enum {
-	V22_BIT_RATE = 1200,
+	V22_600_BIT_RATE = 600,
+	V22_1200_BIT_RATE = 1200,
 	V22BIS_BIT_RATE = 2400,
 };
 

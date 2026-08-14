@@ -1230,11 +1230,18 @@ static bool test_owns_source_built_datapump_registrations(void)
 		CHECK(transmit[index] == 0,
 		      "V.8 caller emitted audio before the answer signal");
 	modem->min_rate = modem->max_rate = 600;
-	CHECK(v22_operations->create(
-		      modem, DP_V22, 1, MODEM_RATE, MODEM_FRAG,
-		      v22_operations) == NULL &&
+	v22 = v22_operations->create(
+		modem, DP_V22, 1, MODEM_RATE, MODEM_FRAG,
+		v22_operations);
+	memset(receive, 0, sizeof(receive));
+	memset(transmit, 1, sizeof(transmit));
+	CHECK(v22 != NULL &&
+		      v22_operations->process(
+			      v22, receive, transmit, MODEM_FRAG) == DPSTAT_OK &&
+		      samples_are_silent(transmit, MODEM_FRAG) &&
+		      v22_operations->delete(v22) == 0 &&
 		      v22_operations->use_count == 0,
-	      "V.22 accepted a range that excludes 1200 bit/s");
+	      "V.22 600 data pump did not wait silently and release cleanly");
 	modem->min_rate = modem->max_rate = 1200;
 	v22 = v22_operations->create(
 		modem, DP_V22, 1, MODEM_RATE, MODEM_FRAG, v22_operations);

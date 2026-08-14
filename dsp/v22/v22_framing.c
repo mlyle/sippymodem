@@ -134,6 +134,29 @@ enum v22_framing_result v22_symbol_encode(
 	return V22_FRAMING_OK;
 }
 
+enum v22_framing_result v22_600_symbol_encode(
+	struct v22_symbol_encoder *encoder, uint8_t bit,
+	uint8_t *quadrant)
+{
+	struct v22_symbol_encoder next;
+	uint8_t scrambled;
+
+	if (encoder == NULL || bit > 1 || quadrant == NULL ||
+	    encoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
+	    !v22_scrambler_is_valid(&encoder->scrambler))
+		return V22_FRAMING_INVALID_ARGUMENT;
+	next = *encoder;
+	if (v22_scramble_bit(&next.scrambler, bit, &scrambled) !=
+	    V22_FRAMING_OK)
+		return V22_FRAMING_INVALID_ARGUMENT;
+	/* V.22 Table 1: zero advances 90 degrees and one advances 270. */
+	next.phase_quadrant = (uint8_t)(
+		(next.phase_quadrant + (scrambled == 0 ? 1u : 3u)) & 3u);
+	*encoder = next;
+	*quadrant = next.phase_quadrant;
+	return V22_FRAMING_OK;
+}
+
 enum v22_framing_result v22_symbol_decoder_init(
 	struct v22_symbol_decoder *decoder,
 	uint8_t initial_quadrant)
@@ -173,6 +196,36 @@ enum v22_framing_result v22_symbol_decode(
 	decoder->phase_quadrant = quadrant;
 	*first_bit = first_decoded;
 	*second_bit = second_decoded;
+	return V22_FRAMING_OK;
+}
+
+enum v22_framing_result v22_600_symbol_decode(
+	struct v22_symbol_decoder *decoder, uint8_t quadrant,
+	uint8_t *bit)
+{
+	struct v22_symbol_decoder next;
+	uint8_t decoded;
+	uint8_t quarter_turns;
+	uint8_t scrambled;
+
+	if (decoder == NULL || quadrant >= QPSK_QUADRANT_COUNT ||
+	    bit == NULL ||
+	    decoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
+	    !v22_scrambler_is_valid(&decoder->descrambler))
+		return V22_FRAMING_INVALID_ARGUMENT;
+	quarter_turns = (uint8_t)(
+		(quadrant - decoder->phase_quadrant) & 3u);
+	if (quarter_turns != 1u && quarter_turns != 3u)
+		return V22_FRAMING_INVALID_ARGUMENT;
+	scrambled = quarter_turns == 3u ? 1u : 0u;
+	next = *decoder;
+	if (v22_descramble_bit(
+		    &next.descrambler, scrambled, &decoded) !=
+	    V22_FRAMING_OK)
+		return V22_FRAMING_INVALID_ARGUMENT;
+	next.phase_quadrant = quadrant;
+	*decoder = next;
+	*bit = decoded;
 	return V22_FRAMING_OK;
 }
 

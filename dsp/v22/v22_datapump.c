@@ -77,7 +77,7 @@ struct v22_datapump {
 	struct qam_modulator modulator;
 	struct qam_demodulator demodulator;
 	struct v22_symbol_encoder encoder;
-	struct v22_scrambler descrambler;
+	struct v22_symbol_decoder decoder;
 	struct v22bis_symbol_encoder v22bis_encoder;
 	struct v22bis_receiver v22bis_receiver;
 	enum v22_training_state training_state;
@@ -89,6 +89,7 @@ struct v22_datapump {
 	uint32_t scrambled_mark_bits;
 	uint32_t v22bis_confirm_bits;
 	uint32_t missing_carrier_samples;
+	unsigned int bit_rate;
 	uint8_t transmit_quadrant;
 	uint8_t transmit_symbol;
 	struct qam_point previous_receive_point;
@@ -120,6 +121,23 @@ static bool id_uses_v22_carrier(enum DP_ID id)
 	return id == DP_V22 || id == DP_V22BIS || id == DP_B212;
 }
 
+static bool bit_rate_matches_id(enum DP_ID id, unsigned int bit_rate)
+{
+	if (id == DP_V22)
+		return bit_rate == V22_600_BIT_RATE ||
+		       bit_rate == V22_1200_BIT_RATE;
+	if (id == DP_V22BIS)
+		return bit_rate == V22BIS_BIT_RATE;
+	return id == DP_B212 && bit_rate == V22_1200_BIT_RATE;
+}
+
+static bool datapump_uses_600(
+	const struct v22_datapump *datapump)
+{
+	return datapump != NULL &&
+	       datapump->bit_rate == V22_600_BIT_RATE;
+}
+
 static bool datapump_uses_v22bis(
 	const struct v22_datapump *datapump)
 {
@@ -145,6 +163,7 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp ||
+	    !bit_rate_matches_id(datapump->dp.id, datapump->bit_rate) ||
 	    datapump->training_state > V22_TRAINING_ONLINE ||
 	    datapump->transmit_mode > V22_TRANSMIT_DATA ||
 	    datapump->transmit_quadrant > 3 ||
@@ -157,6 +176,10 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->v22bis_confirm_bits > V22BIS_CONFIRM_BITS ||
 	    datapump->missing_carrier_samples > V22_CARRIER_LOSS_SAMPLES ||
 	    datapump->transmit_symbol >= V22BIS_SYMBOL_COUNT ||
+	    datapump->encoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
+	    !v22_scrambler_is_valid(&datapump->encoder.scrambler) ||
+	    datapump->decoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
+	    !v22_scrambler_is_valid(&datapump->decoder.descrambler) ||
 	    (datapump->has_previous_receive_point &&
 	     (!isfinite(datapump->previous_receive_point.in_phase) ||
 	      !isfinite(datapump->previous_receive_point.quadrature))) ||
@@ -189,18 +212,27 @@ static uint64_t training_timeout(struct modem *modem)
 	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
 }
 
-static unsigned int selected_bit_rate(enum DP_ID id)
+static unsigned int selected_bit_rate(
+	const struct modem *modem, enum DP_ID id)
 {
-	return id == DP_V22BIS ? V22BIS_BIT_RATE :
-			       V22_BIT_RATE;
-}
-
-static bool rate_is_selected(const struct modem *modem, enum DP_ID id)
-{
-	unsigned int bit_rate = selected_bit_rate(id);
-
-	return modem != NULL && modem->min_rate <= bit_rate &&
-	       modem->max_rate >= bit_rate;
+	if (modem == NULL)
+		return 0;
+	if (id == DP_V22BIS)
+		return modem->min_rate <= V22BIS_BIT_RATE &&
+		       modem->max_rate >= V22BIS_BIT_RATE ?
+			       V22BIS_BIT_RATE : 0;
+	if (id == DP_B212)
+		return modem->min_rate <= V22_1200_BIT_RATE &&
+		       modem->max_rate >= V22_1200_BIT_RATE ?
+			       V22_1200_BIT_RATE : 0;
+	if (id != DP_V22)
+		return 0;
+	if (modem->min_rate <= V22_1200_BIT_RATE &&
+	    modem->max_rate >= V22_1200_BIT_RATE)
+		return V22_1200_BIT_RATE;
+	return modem->min_rate <= V22_600_BIT_RATE &&
+	       modem->max_rate >= V22_600_BIT_RATE ?
+		       V22_600_BIT_RATE : 0;
 }
 
 static struct dp *create_v22(
@@ -210,12 +242,13 @@ static struct dp *create_v22(
 	struct v22_datapump *datapump;
 	const struct qam_channel *transmit_channel;
 	const struct qam_channel *receive_channel;
+	unsigned int bit_rate = selected_bit_rate(modem, id);
 
 	if (modem == NULL || !id_uses_v22_carrier(id) ||
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v22_operations || operations->use_count == INT_MAX ||
-	    !rate_is_selected(modem, id))
+	    bit_rate == 0)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
@@ -232,11 +265,13 @@ static struct dp *create_v22(
 		    &datapump->demodulator, receive_channel) !=
 		    QAM_OK ||
 	    v22_symbol_encoder_init(&datapump->encoder, 0) !=
+		    V22_FRAMING_OK ||
+	    v22_symbol_decoder_init(&datapump->decoder, 0) !=
 		    V22_FRAMING_OK) {
 		free(datapump);
 		return NULL;
 	}
-	v22_scrambler_reset(&datapump->descrambler);
+	datapump->bit_rate = bit_rate;
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -284,6 +319,7 @@ static int next_transmit_quadrant(
 	struct v22_datapump *datapump)
 {
 	uint8_t bits[2] = { 1, 1 };
+	size_t bit_count = datapump_uses_600(datapump) ? 1u : 2u;
 	uint8_t quadrant;
 
 	if (datapump->transmit_mode == V22_TRANSMIT_UNSCRAMBLED_MARK) {
@@ -292,13 +328,20 @@ static int next_transmit_quadrant(
 		return 0;
 	}
 	if (datapump->transmit_mode == V22_TRANSMIT_DATA &&
-	    modem_get_bits(datapump->dp.modem, 1, bits, 2) != 2)
+	    modem_get_bits(
+		    datapump->dp.modem, 1, bits, (int)bit_count) !=
+		    (int)bit_count)
 		bits[0] = bits[1] = 1;
 	bits[0] &= 1u;
 	bits[1] &= 1u;
-	if (v22_symbol_encode(
-		    &datapump->encoder, bits[0], bits[1], &quadrant) !=
-	    V22_FRAMING_OK)
+	if ((datapump_uses_600(datapump) &&
+	     v22_600_symbol_encode(
+		     &datapump->encoder, bits[0], &quadrant) !=
+		     V22_FRAMING_OK) ||
+	    (!datapump_uses_600(datapump) &&
+	     v22_symbol_encode(
+		     &datapump->encoder, bits[0], bits[1], &quadrant) !=
+		     V22_FRAMING_OK))
 		return -1;
 	datapump->transmit_quadrant = quadrant;
 	return 0;
@@ -370,24 +413,39 @@ static int decode_phase_change(
 	struct v22_datapump *datapump, uint8_t quarter_turns,
 	uint8_t bits[2])
 {
-	uint8_t dibit;
-	uint8_t first_scrambled;
-	uint8_t second_scrambled;
+	uint8_t quadrant = (uint8_t)(
+		(datapump->decoder.phase_quadrant + quarter_turns) & 3u);
 
-	if (differential_qpsk_decode(
-		    0, quarter_turns, &dibit) !=
-		    DIFFERENTIAL_QPSK_OK)
+	return v22_symbol_decode(
+		       &datapump->decoder, quadrant, &bits[0], &bits[1]) ==
+		       V22_FRAMING_OK ?
+		       0 : -1;
+}
+
+static int decode_600_phase_change(
+	struct v22_datapump *datapump,
+	const struct qam_point *previous,
+	const struct qam_point *current, uint8_t *bit)
+{
+	double cross;
+	uint8_t quadrant;
+	uint8_t quarter_turns;
+
+	if (!point_is_finite(previous) || !point_is_finite(current) ||
+	    bit == NULL)
 		return -1;
-	first_scrambled = (uint8_t)(dibit >> 1);
-	second_scrambled = (uint8_t)(dibit & 1u);
-	if (v22_descramble_bit(
-		    &datapump->descrambler, first_scrambled, &bits[0]) !=
-		    V22_FRAMING_OK ||
-	    v22_descramble_bit(
-		    &datapump->descrambler, second_scrambled, &bits[1]) !=
-		    V22_FRAMING_OK)
+	cross = previous->in_phase * current->quadrature -
+		previous->quadrature * current->in_phase;
+	if (!isfinite(cross))
 		return -1;
-	return 0;
+	/* Choose between the two Table 1 rotations before quarter-turn
+	 * quantization discards which side of a tie the observation occupied. */
+	quarter_turns = cross < 0.0 ? 3u : 1u;
+	quadrant = (uint8_t)(
+		(datapump->decoder.phase_quadrant + quarter_turns) & 3u);
+	return v22_600_symbol_decode(
+		       &datapump->decoder, quadrant, bit) == V22_FRAMING_OK ?
+		       0 : -1;
 }
 
 static uint32_t scrambled_confirmation_target(
@@ -423,11 +481,9 @@ static int start_v22bis_transmit(
 	return 0;
 }
 
-static int observe_phase_change(
+static void observe_answer_mark(
 	struct v22_datapump *datapump, uint8_t quarter_turns)
 {
-	uint8_t bits[2];
-
 	if (datapump->training_state ==
 	    V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK) {
 		if (quarter_turns == 3)
@@ -441,10 +497,14 @@ static int observe_phase_change(
 			datapump->phase_samples = 0;
 		}
 	}
-	if (decode_phase_change(datapump, quarter_turns, bits) != 0)
-		return -1;
+}
+
+static int observe_bits(
+	struct v22_datapump *datapump, uint8_t *bits,
+	size_t bit_count)
+{
 	if (datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK) {
-		for (size_t index = 0; index < sizeof(bits); ++index) {
+		for (size_t index = 0; index < bit_count; ++index) {
 			if (bits[index] == 1)
 				datapump->scrambled_mark_bits++;
 			else
@@ -455,9 +515,34 @@ static int observe_phase_change(
 		}
 	} else if (datapump->training_state == V22_TRAINING_ONLINE &&
 		   datapump->dp.modem->put_bits != NULL) {
-		(void)modem_put_bits(datapump->dp.modem, 1, bits, 2);
+		(void)modem_put_bits(
+			datapump->dp.modem, 1, bits, (int)bit_count);
 	}
 	return 0;
+}
+
+static int observe_phase_change(
+	struct v22_datapump *datapump, uint8_t quarter_turns)
+{
+	uint8_t bits[2];
+
+	observe_answer_mark(datapump, quarter_turns);
+	if (decode_phase_change(datapump, quarter_turns, bits) != 0)
+		return -1;
+	return observe_bits(datapump, bits, sizeof(bits));
+}
+
+static int observe_600_phase_change(
+	struct v22_datapump *datapump,
+	const struct qam_point *previous,
+	const struct qam_point *current, uint8_t quarter_turns)
+{
+	uint8_t bit;
+
+	observe_answer_mark(datapump, quarter_turns);
+	if (decode_600_phase_change(datapump, previous, current, &bit) != 0)
+		return -1;
+	return observe_bits(datapump, &bit, 1);
 }
 
 static bool v22bis_is_ready_to_link(
@@ -548,10 +633,18 @@ static int receive_sample(
 		if (receive_v22bis_point(datapump, &point, linked) != 0)
 			return -1;
 	} else if (datapump->has_previous_receive_point &&
-		   (qam_nearest_quarter_turn(
-			    &datapump->previous_receive_point, &point,
-			    &quarter_turns) != QAM_OK ||
-		    observe_phase_change(datapump, quarter_turns) != 0)) {
+		   qam_nearest_quarter_turn(
+			   &datapump->previous_receive_point, &point,
+			   &quarter_turns) == QAM_OK) {
+		if ((datapump_uses_600(datapump) &&
+		     observe_600_phase_change(
+			     datapump,
+			     &datapump->previous_receive_point,
+			     &point, quarter_turns) != 0) ||
+		    (!datapump_uses_600(datapump) &&
+		     observe_phase_change(datapump, quarter_turns) != 0))
+			return -1;
+	} else if (datapump->has_previous_receive_point) {
 		return -1;
 	}
 	if (datapump_uses_v22bis(datapump) &&
@@ -570,12 +663,12 @@ static int receive_sample(
 
 static int enter_link(struct v22_datapump *datapump)
 {
-	unsigned int bit_rate = selected_bit_rate(datapump->dp.id);
-
 	if (modem_set_param(
-		    datapump->dp.modem, MDMPRM_TX_RATE, (int)bit_rate) != 0 ||
+		    datapump->dp.modem, MDMPRM_TX_RATE,
+		    (int)datapump->bit_rate) != 0 ||
 	    modem_set_param(
-		    datapump->dp.modem, MDMPRM_RX_RATE, (int)bit_rate) != 0)
+		    datapump->dp.modem, MDMPRM_RX_RATE,
+		    (int)datapump->bit_rate) != 0)
 		return -1;
 	datapump->training_state = V22_TRAINING_ONLINE;
 	datapump->transmit_mode = V22_TRANSMIT_DATA;
