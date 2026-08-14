@@ -265,6 +265,8 @@ static bool check_line(enum g711_law law, bool impaired)
 		      (impaired ? 7u : 0u));
 	{
 		struct v92_cpt_parameters received;
+		struct v92_pcm_phase3_cpt_line_handoff handoff;
+		struct v92_pcm_phase3_cpt_line_handoff invalid;
 		uint8_t previous_sign = 2u;
 		struct v92_pcm_phase3_cpt_line_rx before = receiver;
 		struct v92_pcm_phase3_cpt_rx_event event;
@@ -284,6 +286,27 @@ static bool check_line(enum g711_law law, bool impaired)
 		      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
 		      memcmp(&event, &before_event, sizeof(event)) == 0,
 		      "complete CPt line receiver was not stable");
+		CHECK(v92_pcm_phase3_cpt_line_rx_handoff(
+			      &receiver, &handoff) ==
+			      V92_PCM_PHASE3_CPT_LINE_RX_OK &&
+		      v92_pcm_phase3_cpt_line_handoff_is_valid(&handoff) &&
+		      memcmp(
+			      &handoff.equalizer, &receiver.equalizer,
+			      sizeof(handoff.equalizer)) == 0 &&
+		      parameters_match(&handoff.parameters, &parameters) &&
+		      handoff.input_samples == receiver.input_samples &&
+		      handoff.signal_level == receiver.signal_level &&
+		      handoff.adaptation == receiver.adaptation &&
+		      handoff.input_advance_symbols ==
+			      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
+		      handoff.previous_sign == transmitter.coding.previous_sign &&
+		      handoff.polarity == receiver.polarity,
+		      "CPt line handoff did not preserve the E1u boundary");
+		invalid = handoff;
+		invalid.previous_sign = 2u;
+		CHECK(!v92_pcm_phase3_cpt_line_handoff_is_valid(NULL) &&
+		      !v92_pcm_phase3_cpt_line_handoff_is_valid(&invalid),
+		      "invalid CPt line handoff was accepted");
 	}
 	channel_bench_destroy(&channel);
 	return true;
@@ -329,6 +352,8 @@ static bool test_contracts(void)
 	struct v92_pcm_phase3_cpt_line_rx before;
 	struct v92_pcm_phase3_cpt_rx_event event;
 	struct v92_pcm_phase3_cpt_rx_event before_event;
+	struct v92_pcm_phase3_cpt_line_handoff output;
+	struct v92_pcm_phase3_cpt_line_handoff before_output;
 	static const char *const names[] = {
 		"ok", "sign", "event", "done", "failed",
 		"invalid argument", "invalid state", "numeric failure",
@@ -352,6 +377,23 @@ static bool test_contracts(void)
 	      !v92_pcm_phase3_cpt_line_rx_is_complete(&receiver) &&
 	      !v92_pcm_phase3_cpt_line_rx_has_failed(&receiver),
 	      "CPt line initialization contracts failed");
+	memset(&output, 0xa5, sizeof(output));
+	before_output = output;
+	CHECK(v92_pcm_phase3_cpt_line_rx_handoff(NULL, &output) ==
+			      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase3_cpt_line_rx_handoff(&receiver, NULL) ==
+			      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase3_cpt_line_rx_handoff(&receiver, &output) ==
+			      V92_PCM_PHASE3_CPT_LINE_RX_INVALID_STATE &&
+	      memcmp(&output, &before_output, sizeof(output)) == 0,
+	      "rejected CPt line handoff changed its output");
+	receiver.failed = true;
+	CHECK(v92_pcm_phase3_cpt_line_rx_is_valid(&receiver) &&
+	      v92_pcm_phase3_cpt_line_rx_handoff(&receiver, &output) ==
+		      V92_PCM_PHASE3_CPT_LINE_RX_FAILED &&
+	      memcmp(&output, &before_output, sizeof(output)) == 0,
+	      "failed CPt line receiver produced a handoff");
+	receiver.failed = false;
 	memset(&event, 0xa5, sizeof(event));
 	before_event = event;
 	before = receiver;

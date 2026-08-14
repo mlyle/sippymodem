@@ -36,6 +36,21 @@ struct v92_pcm_phase3_cpt_line_rx {
 	bool failed;
 };
 
+/* E1u decisions trail the physical line by the equalizer decision delay.
+ * Preserve those already-accepted TRN2u symbols with the trained line state.
+ * TRN2u starts a fresh GPA scrambler, but its differential sign begins with
+ * previous_sign from the final E1u symbol. */
+struct v92_pcm_phase3_cpt_line_handoff {
+	struct qam_equalizer equalizer;
+	struct v92_cpt_parameters parameters;
+	uint64_t input_samples;
+	double signal_level;
+	double adaptation;
+	uint8_t input_advance_symbols;
+	uint8_t previous_sign;
+	int8_t polarity;
+};
+
 enum v92_pcm_phase3_cpt_line_rx_result
 v92_pcm_phase3_cpt_line_rx_init(
 	struct v92_pcm_phase3_cpt_line_rx *receiver,
@@ -62,6 +77,13 @@ bool v92_pcm_phase3_cpt_line_rx_parameters(
 bool v92_pcm_phase3_cpt_line_rx_previous_sign(
 	const struct v92_pcm_phase3_cpt_line_rx *receiver,
 	uint8_t *previous_sign);
+
+bool v92_pcm_phase3_cpt_line_handoff_is_valid(
+	const struct v92_pcm_phase3_cpt_line_handoff *handoff);
+enum v92_pcm_phase3_cpt_line_rx_result
+v92_pcm_phase3_cpt_line_rx_handoff(
+	const struct v92_pcm_phase3_cpt_line_rx *receiver,
+	struct v92_pcm_phase3_cpt_line_handoff *handoff);
 
 const char *v92_pcm_phase3_cpt_line_rx_result_name(
 	enum v92_pcm_phase3_cpt_line_rx_result result);

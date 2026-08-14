@@ -10,6 +10,10 @@ static bool equalizer_is_continuous(
 	const struct qam_equalizer *equalizer)
 {
 	return qam_equalizer_is_valid(equalizer) &&
+	       equalizer->tap_count ==
+		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
+	       equalizer->decision_delay ==
+		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	       equalizer->fill == equalizer->decision_delay + 1u &&
 	       !equalizer->can_adapt;
 }
@@ -157,6 +161,55 @@ bool v92_pcm_phase3_cpt_line_rx_previous_sign(
 	return v92_pcm_phase3_cpt_line_rx_is_complete(receiver) &&
 	       v92_pcm_phase3_cpt_rx_previous_sign(
 		       &receiver->signs, previous_sign);
+}
+
+bool v92_pcm_phase3_cpt_line_handoff_is_valid(
+	const struct v92_pcm_phase3_cpt_line_handoff *handoff)
+{
+	return handoff != NULL &&
+	       equalizer_is_continuous(&handoff->equalizer) &&
+	       v92_cpt_parameters_are_valid(&handoff->parameters) &&
+	       handoff->input_advance_symbols ==
+		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
+	       handoff->input_samples >= handoff->input_advance_symbols &&
+	       isfinite(handoff->signal_level) &&
+	       handoff->signal_level >=
+		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
+	       handoff->signal_level <= 32768.0 &&
+	       isfinite(handoff->adaptation) && handoff->adaptation >= 0.0 &&
+	       handoff->adaptation <= 1.0 && handoff->previous_sign <= 1u &&
+	       (handoff->polarity == -1 || handoff->polarity == 1);
+}
+
+enum v92_pcm_phase3_cpt_line_rx_result
+v92_pcm_phase3_cpt_line_rx_handoff(
+	const struct v92_pcm_phase3_cpt_line_rx *receiver,
+	struct v92_pcm_phase3_cpt_line_handoff *handoff)
+{
+	struct v92_pcm_phase3_cpt_line_handoff generated;
+
+	if (!v92_pcm_phase3_cpt_line_rx_is_valid(receiver) || handoff == NULL)
+		return V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT;
+	if (receiver->failed)
+		return V92_PCM_PHASE3_CPT_LINE_RX_FAILED;
+	if (!v92_pcm_phase3_cpt_rx_is_complete(&receiver->signs))
+		return V92_PCM_PHASE3_CPT_LINE_RX_INVALID_STATE;
+	generated = (struct v92_pcm_phase3_cpt_line_handoff){
+		.equalizer = receiver->equalizer,
+		.input_samples = receiver->input_samples,
+		.signal_level = receiver->signal_level,
+		.adaptation = receiver->adaptation,
+		.input_advance_symbols = receiver->input_advance_symbols,
+		.polarity = receiver->polarity,
+	};
+	if (!v92_pcm_phase3_cpt_rx_parameters(
+		    &receiver->signs, &generated.parameters) ||
+	    !v92_pcm_phase3_cpt_rx_previous_sign(
+		    &receiver->signs, &generated.previous_sign) ||
+	    !v92_pcm_phase3_cpt_line_handoff_is_valid(&generated))
+		return V92_PCM_PHASE3_CPT_LINE_RX_NUMERIC_FAILURE;
+	*handoff = generated;
+	return V92_PCM_PHASE3_CPT_LINE_RX_OK;
 }
 
 const char *v92_pcm_phase3_cpt_line_rx_result_name(
