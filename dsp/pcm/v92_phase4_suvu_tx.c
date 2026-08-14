@@ -2,8 +2,6 @@
 
 #include "v92_phase4_suvu_tx.h"
 
-#include "packed_bits.h"
-
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -15,34 +13,33 @@ static bool frame_is_valid(const struct v92_phase4_suvu_tx *tx)
 	size_t bit_count = 0;
 
 	return v92_suvu_decode(
-		       tx->frame, sizeof(tx->frame), V92_SUVU_FRAME_BITS,
-		       tx->modulator.constellation, &parameters) == V92_SUVU_OK &&
+		       tx->record.frame, V92_SUVU_FRAME_BYTES,
+		       V92_SUVU_FRAME_BITS,
+		       tx->record.modulator.constellation,
+		       &parameters) == V92_SUVU_OK &&
 	       v92_suvu_encode(
-		       &parameters, tx->modulator.constellation, canonical,
+		       &parameters, tx->record.modulator.constellation, canonical,
 		       sizeof(canonical), &bit_count) == V92_SUVU_OK &&
 	       bit_count == V92_SUVU_FRAME_BITS &&
-	       memcmp(tx->frame, canonical, sizeof(canonical)) == 0;
+	       memcmp(
+		       tx->record.frame, canonical,
+		       sizeof(canonical)) == 0;
 }
 
 bool v92_phase4_suvu_tx_is_valid(
 	const struct v92_phase4_suvu_tx *tx)
 {
-	unsigned int bits;
-
-	if (tx == NULL ||
-	    !v92_phase4_modulator_is_valid(&tx->modulator))
-		return false;
-	bits = v92_phase4_modulator_bits_per_symbol(
-		tx->modulator.constellation);
-	return bits != 0u && tx->bit_index <= V92_SUVU_FRAME_BITS &&
-	       tx->bit_index % bits == 0u && frame_is_valid(tx);
+	return tx != NULL &&
+	       v92_phase4_record_tx_is_valid(&tx->record) &&
+	       tx->record.frame_bit_count == V92_SUVU_FRAME_BITS &&
+	       frame_is_valid(tx);
 }
 
 bool v92_phase4_suvu_tx_record_is_complete(
 	const struct v92_phase4_suvu_tx *tx)
 {
 	return v92_phase4_suvu_tx_is_valid(tx) &&
-	       tx->bit_index == V92_SUVU_FRAME_BITS;
+	       v92_phase4_record_tx_is_complete(&tx->record);
 }
 
 static enum v92_phase4_suvu_tx_result encode_record(
@@ -75,6 +72,7 @@ enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_init(
 	const struct v92_suvu_parameters *parameters)
 {
 	struct v92_phase4_suvu_tx initialized = { 0 };
+	uint8_t frame[V92_SUVU_FRAME_BYTES];
 	enum v92_phase4_suvu_tx_result result;
 
 	if (tx == NULL || completed_trn2u == NULL || parameters == NULL)
@@ -82,12 +80,15 @@ enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_init(
 	if (!v92_pcm_phase4_trn2u_is_valid(completed_trn2u) ||
 	    !v92_pcm_phase4_trn2u_can_handoff(completed_trn2u))
 		return V92_PHASE4_SUVU_TX_INVALID_STATE;
-	initialized.modulator = completed_trn2u->modulator;
 	result = encode_record(
-		parameters, initialized.modulator.constellation,
-		initialized.frame);
+		parameters, completed_trn2u->modulator.constellation, frame);
 	if (result != V92_PHASE4_SUVU_TX_OK)
 		return result;
+	if (v92_phase4_record_tx_init(
+		    &initialized.record, &completed_trn2u->modulator,
+		    frame, sizeof(frame), V92_SUVU_FRAME_BITS) !=
+	    V92_PHASE4_RECORD_TX_OK)
+		return V92_PHASE4_SUVU_TX_INTERNAL_ERROR;
 	if (!v92_phase4_suvu_tx_is_valid(&initialized))
 		return V92_PHASE4_SUVU_TX_INTERNAL_ERROR;
 	*tx = initialized;
@@ -98,7 +99,7 @@ enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_start_next_record(
 	struct v92_phase4_suvu_tx *tx,
 	const struct v92_suvu_parameters *parameters)
 {
-	struct v92_phase4_suvu_tx next;
+	uint8_t frame[V92_SUVU_FRAME_BYTES];
 	enum v92_phase4_suvu_tx_result result;
 
 	if (tx == NULL || parameters == NULL)
@@ -107,36 +108,22 @@ enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_start_next_record(
 		return V92_PHASE4_SUVU_TX_INVALID_STATE;
 	if (!v92_phase4_suvu_tx_record_is_complete(tx))
 		return V92_PHASE4_SUVU_TX_RECORD_IN_PROGRESS;
-	next = *tx;
 	result = encode_record(
-		parameters, next.modulator.constellation, next.frame);
+		parameters, tx->record.modulator.constellation, frame);
 	if (result != V92_PHASE4_SUVU_TX_OK)
 		return result;
-	next.bit_index = 0;
-	if (!v92_phase4_suvu_tx_is_valid(&next))
+	if (v92_phase4_record_tx_start_next(
+		    &tx->record, frame, sizeof(frame),
+		    V92_SUVU_FRAME_BITS) != V92_PHASE4_RECORD_TX_OK ||
+	    !v92_phase4_suvu_tx_is_valid(tx))
 		return V92_PHASE4_SUVU_TX_INTERNAL_ERROR;
-	*tx = next;
 	return V92_PHASE4_SUVU_TX_OK;
-}
-
-static uint8_t input_group(
-	const struct v92_phase4_suvu_tx *tx, unsigned int bits)
-{
-	uint8_t group = 0;
-
-	for (unsigned int bit = 0; bit < bits; ++bit) {
-		group |= (uint8_t)(
-			packed_msb_bit(tx->frame, tx->bit_index + bit) << bit);
-	}
-	return group;
 }
 
 enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_next(
 	struct v92_phase4_suvu_tx *tx, int16_t *sample)
 {
-	struct v92_phase4_suvu_tx next;
-	unsigned int bits;
-	int16_t generated;
+	enum v92_phase4_record_tx_result result;
 
 	if (tx == NULL || sample == NULL)
 		return V92_PHASE4_SUVU_TX_INVALID_ARGUMENT;
@@ -144,18 +131,12 @@ enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_next(
 		return V92_PHASE4_SUVU_TX_INVALID_STATE;
 	if (v92_phase4_suvu_tx_record_is_complete(tx))
 		return V92_PHASE4_SUVU_TX_RECORD_COMPLETE;
-	next = *tx;
-	bits = v92_phase4_modulator_bits_per_symbol(
-		next.modulator.constellation);
-	if (v92_phase4_modulator_next(
-		    &next.modulator, input_group(&next, bits), &generated) !=
-	    V92_PHASE4_MODULATOR_OK)
+	result = v92_phase4_record_tx_next(&tx->record, sample);
+	if (result == V92_PHASE4_RECORD_TX_COMPLETE)
+		return V92_PHASE4_SUVU_TX_RECORD_COMPLETE;
+	if (result != V92_PHASE4_RECORD_TX_OK ||
+	    !v92_phase4_suvu_tx_is_valid(tx))
 		return V92_PHASE4_SUVU_TX_INTERNAL_ERROR;
-	next.bit_index += bits;
-	if (!v92_phase4_suvu_tx_is_valid(&next))
-		return V92_PHASE4_SUVU_TX_INTERNAL_ERROR;
-	*tx = next;
-	*sample = generated;
 	return V92_PHASE4_SUVU_TX_OK;
 }
 
@@ -169,8 +150,9 @@ enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_handoff(
 		return V92_PHASE4_SUVU_TX_INVALID_STATE;
 	if (!v92_phase4_suvu_tx_record_is_complete(tx))
 		return V92_PHASE4_SUVU_TX_RECORD_IN_PROGRESS;
-	*modulator = tx->modulator;
-	return V92_PHASE4_SUVU_TX_OK;
+	return v92_phase4_record_tx_handoff(&tx->record, modulator) ==
+		       V92_PHASE4_RECORD_TX_OK ?
+		V92_PHASE4_SUVU_TX_OK : V92_PHASE4_SUVU_TX_INTERNAL_ERROR;
 }
 
 const char *v92_phase4_suvu_tx_result_name(

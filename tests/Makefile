@@ -1597,6 +1597,7 @@ V92_PHASE4_SUVU_TX_TEST_BINARY := \
 V92_PHASE4_SUVU_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase4_suvu_tx.o \
 	$(BUILD_DIR)/v92_phase4_suvu_tx.o \
+	$(BUILD_DIR)/v92_phase4_record_tx.o \
 	$(BUILD_DIR)/v92_pcm_phase4_trn2u.o \
 	$(BUILD_DIR)/v92_phase4_modulator.o \
 	$(BUILD_DIR)/v92_suvu.o \
@@ -4626,6 +4627,10 @@ $(BUILD_DIR)/v92_pcm_phase3_cpt_line_rx.o: \
 
 $(BUILD_DIR)/v92_phase4_modulator.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_modulator.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_phase4_record_tx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase4_record_tx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_pcm_phase4_trn2u.o: \

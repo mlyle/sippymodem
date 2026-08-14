@@ -66,7 +66,7 @@ static bool drive_record(
 		      parameters, oracle->constellation, frame, sizeof(frame),
 		      &bit_count) == V92_SUVU_OK &&
 	      bit_count == V92_SUVU_FRAME_BITS &&
-	      memcmp(frame, tx->frame, sizeof(frame)) == 0,
+	      memcmp(frame, tx->record.frame, sizeof(frame)) == 0,
 	      "SUVu transmitter did not retain the canonical record");
 	for (size_t symbol = 0; symbol < symbol_count; ++symbol) {
 		uint8_t group = 0;
@@ -82,8 +82,8 @@ static bool drive_record(
 		      v92_phase4_suvu_tx_next(tx, &actual) ==
 			      V92_PHASE4_SUVU_TX_OK &&
 		      actual == expected &&
-		      tx->bit_index == (symbol + 1u) * bits &&
-		      modulators_are_equal(&tx->modulator, oracle),
+		      tx->record.bit_index == (symbol + 1u) * bits &&
+		      modulators_are_equal(&tx->record.modulator, oracle),
 		      "SUVu modulation differed at symbol %zu/%zu", symbol,
 		      symbol_count);
 	}
@@ -135,17 +135,19 @@ static bool test_continuous_records(void)
 			      v92_phase4_suvu_tx_init(
 				      &tx, &trn2u, &records[0]) ==
 				      V92_PHASE4_SUVU_TX_OK &&
-			      tx.bit_index == 0u &&
+			      tx.record.bit_index == 0u &&
 			      modulators_are_equal(
-				      &tx.modulator, &trn2u.modulator),
+				      &tx.record.modulator,
+				      &trn2u.modulator),
 			      "initial SUVu record did not preserve TRN2u");
 			oracle = trn2u.modulator;
 			CHECK(drive_record(&tx, &records[0], &oracle) &&
 			      v92_phase4_suvu_tx_start_next_record(
 				      &tx, &records[1]) ==
 				      V92_PHASE4_SUVU_TX_OK &&
-			      tx.bit_index == 0u &&
-			      modulators_are_equal(&tx.modulator, &oracle) &&
+			      tx.record.bit_index == 0u &&
+			      modulators_are_equal(
+				      &tx.record.modulator, &oracle) &&
 			      drive_record(&tx, &records[1], &oracle),
 			      "repeated SUVu record lost coding continuity");
 		}
@@ -213,7 +215,7 @@ static bool test_contracts(void)
 	      memcmp(&handoff, &handoff_before, sizeof(handoff)) == 0 &&
 	      sample == 1234,
 	      "in-progress SUVu operations were not transactional");
-	tx.frame[0] ^= UINT8_C(0x80);
+	tx.record.frame[0] ^= UINT8_C(0x80);
 	before = tx;
 	CHECK(!v92_phase4_suvu_tx_is_valid(&tx) &&
 	      v92_phase4_suvu_tx_next(&tx, &sample) ==
@@ -244,10 +246,99 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_record_boundary(void)
+{
+	uint8_t maximum[V92_PHASE4_RECORD_MAX_BYTES] = { 0 };
+	uint8_t short_record[1] = { 0 };
+	uint8_t bad_padding[1] = { 1 };
+	struct v92_phase4_modulator modulator;
+	struct v92_phase4_modulator oracle;
+	struct v92_phase4_modulator handoff;
+	struct v92_phase4_record_tx tx;
+	struct v92_phase4_record_tx before;
+	int16_t expected = 0;
+	int16_t actual = 1234;
+
+	CHECK(v92_phase4_modulator_init(
+		      &modulator, V92_CONSTELLATION_4_POINT,
+		      0u, TEST_LU) == V92_PHASE4_MODULATOR_OK,
+	      "packed-record modulator did not initialize");
+	memset(&tx, 0xa5, sizeof(tx));
+	before = tx;
+	CHECK(v92_phase4_record_tx_init(
+		      NULL, &modulator, maximum, sizeof(maximum),
+		      V92_PHASE4_RECORD_MAX_BITS) ==
+		      V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
+	      v92_phase4_record_tx_init(
+		      &tx, NULL, maximum, sizeof(maximum),
+		      V92_PHASE4_RECORD_MAX_BITS) ==
+		      V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
+	      v92_phase4_record_tx_init(
+		      &tx, &modulator, NULL, sizeof(maximum),
+		      V92_PHASE4_RECORD_MAX_BITS) ==
+		      V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
+	      memcmp(&tx, &before, sizeof(tx)) == 0,
+	      "null packed-record initialization changed state");
+	CHECK(v92_phase4_record_tx_init(
+		      &tx, &modulator, maximum, sizeof(maximum),
+		      V92_PHASE4_RECORD_MAX_BITS + 1u) ==
+		      V92_PHASE4_RECORD_TX_INVALID_RECORD &&
+	      v92_phase4_record_tx_init(
+		      &tx, &modulator, short_record, sizeof(short_record), 1u) ==
+		      V92_PHASE4_RECORD_TX_INVALID_RECORD &&
+	      v92_phase4_record_tx_init(
+		      &tx, &modulator, short_record, 0u, 2u) ==
+		      V92_PHASE4_RECORD_TX_INVALID_RECORD &&
+	      v92_phase4_record_tx_init(
+		      &tx, &modulator, bad_padding, sizeof(bad_padding), 2u) ==
+		      V92_PHASE4_RECORD_TX_INVALID_RECORD &&
+	      memcmp(&tx, &before, sizeof(tx)) == 0,
+	      "invalid packed-record initialization changed state");
+	CHECK(v92_phase4_record_tx_init(
+		      &tx, &modulator, maximum, sizeof(maximum),
+		      V92_PHASE4_RECORD_MAX_BITS) == V92_PHASE4_RECORD_TX_OK &&
+	      v92_phase4_record_tx_is_valid(&tx) &&
+	      !v92_phase4_record_tx_is_complete(&tx),
+	      "maximum packed record was rejected");
+	before = tx;
+	CHECK(v92_phase4_record_tx_start_next(
+		      &tx, short_record, sizeof(short_record), 2u) ==
+		      V92_PHASE4_RECORD_TX_IN_PROGRESS &&
+	      memcmp(&tx, &before, sizeof(tx)) == 0,
+	      "in-progress packed record was replaced");
+
+	tx.bit_index = tx.frame_bit_count;
+	CHECK(v92_phase4_record_tx_is_complete(&tx) &&
+	      v92_phase4_record_tx_start_next(
+		      &tx, short_record, sizeof(short_record), 2u) ==
+		      V92_PHASE4_RECORD_TX_OK,
+	      "complete packed record was not replaced");
+	oracle = tx.modulator;
+	CHECK(v92_phase4_modulator_next(&oracle, 0u, &expected) ==
+		      V92_PHASE4_MODULATOR_OK &&
+	      v92_phase4_record_tx_next(&tx, &actual) ==
+		      V92_PHASE4_RECORD_TX_OK &&
+	      actual == expected && v92_phase4_record_tx_is_complete(&tx) &&
+	      v92_phase4_record_tx_handoff(&tx, &handoff) ==
+		      V92_PHASE4_RECORD_TX_OK &&
+	      modulators_are_equal(&handoff, &oracle),
+	      "short packed record lost modulation continuity");
+	tx.frame[1] = 1u;
+	before = tx;
+	actual = 1234;
+	CHECK(!v92_phase4_record_tx_is_valid(&tx) &&
+	      v92_phase4_record_tx_next(&tx, &actual) ==
+		      V92_PHASE4_RECORD_TX_INVALID_STATE &&
+	      memcmp(&tx, &before, sizeof(tx)) == 0 && actual == 1234,
+	      "corrupt packed-record state was not transactional");
+	return true;
+}
+
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 Phase 4 SUVu transmitter\n");
-	if (!test_continuous_records() || !test_contracts()) {
+	if (!test_continuous_records() || !test_contracts() ||
+	    !test_record_boundary()) {
 		fprintf(stderr, "[  FAILED  ] V.92 Phase 4 SUVu transmitter\n");
 		return 1;
 	}

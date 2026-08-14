@@ -4,6 +4,7 @@
 #define V92_PHASE4_SUVU_TX_H
 
 #include "v92_pcm_phase4_trn2u.h"
+#include "v92_phase4_record_tx.h"
 #include "v92_suvu.h"
 
 #include <stdbool.h>
@@ -24,9 +25,7 @@ enum v92_phase4_suvu_tx_result {
  * The first record begins only at an aligned initial-TRN2u handoff. Repeated
  * records preserve GPA scrambler and differential-sign history. */
 struct v92_phase4_suvu_tx {
-	struct v92_phase4_modulator modulator;
-	uint8_t frame[V92_SUVU_FRAME_BYTES];
-	size_t bit_index;
+	struct v92_phase4_record_tx record;
 };
 
 enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_init(
