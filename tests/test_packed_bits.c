@@ -34,6 +34,34 @@ static bool test_byte_boundaries(void)
 	return true;
 }
 
+static bool test_assignment(void)
+{
+	uint8_t packed[] = { 0xff, 0x00 };
+
+	for (size_t bit = 0; bit < sizeof(packed) * 8u; ++bit)
+		packed_msb_set_bit(packed, bit, (bit % 3u) == 1u);
+	for (size_t bit = 0; bit < sizeof(packed) * 8u; ++bit)
+		CHECK(packed_msb_bit(packed, bit) == ((bit % 3u) == 1u),
+		      "assigned bit %zu has the wrong value", bit);
+	return true;
+}
+
+static bool test_unpacked_validation(void)
+{
+	uint8_t bits[] = { 0, 1, 0, 1 };
+
+	CHECK(unpacked_bits_are_binary(bits, ARRAY_LENGTH(bits)),
+	      "binary span was rejected");
+	CHECK(unpacked_bits_are_binary(bits, 0),
+	      "empty nonnull span was rejected");
+	bits[2] = 2;
+	CHECK(!unpacked_bits_are_binary(bits, ARRAY_LENGTH(bits)),
+	      "nonbinary span was accepted");
+	CHECK(!unpacked_bits_are_binary(NULL, 0),
+	      "null span was accepted");
+	return true;
+}
+
 static bool test_zero_tail(void)
 {
 	uint8_t packed[3];
@@ -68,6 +96,8 @@ int main(void)
 	} tests[] = {
 		{ "wire order", test_wire_order },
 		{ "byte boundaries", test_byte_boundaries },
+		{ "assignment", test_assignment },
+		{ "unpacked validation", test_unpacked_validation },
 		{ "zero tail", test_zero_tail },
 	};
 	unsigned int failures = 0;

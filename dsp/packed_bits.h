@@ -16,6 +16,31 @@ static inline uint8_t packed_msb_bit(
 			 1u);
 }
 
+/* Assign one bit using the same most-significant-bit-first numbering. */
+static inline void packed_msb_set_bit(
+	uint8_t *bytes, size_t bit_index, bool value)
+{
+	uint8_t mask = (uint8_t)(1u << (7u - bit_index % 8u));
+
+	if (value)
+		bytes[bit_index / 8u] |= mask;
+	else
+		bytes[bit_index / 8u] &= (uint8_t)~mask;
+}
+
+/* Unpacked bits occupy one octet each and must be exactly zero or one. */
+static inline bool unpacked_bits_are_binary(
+	const uint8_t *bits, size_t count)
+{
+	if (bits == NULL)
+		return false;
+	for (size_t index = 0; index < count; ++index) {
+		if (bits[index] > 1u)
+			return false;
+	}
+	return true;
+}
+
 /* Return true when every bit after used_bit_count is zero. */
 static inline bool packed_msb_tail_is_zero(
 	const uint8_t *bytes, size_t used_bit_count, size_t capacity)

@@ -2,23 +2,14 @@
 
 #include "v90_downstream_data_tx.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 static bool stage_is_valid(enum v90_downstream_data_tx_stage stage)
 {
 	return stage >= V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
 	       stage <= V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE;
-}
-
-static bool bits_are_binary(const uint8_t *bits, size_t bit_count)
-{
-	if (bits == NULL)
-		return false;
-	for (size_t bit = 0; bit < bit_count; ++bit) {
-		if (bits[bit] > 1)
-			return false;
-	}
-	return true;
 }
 
 bool v90_downstream_data_tx_is_valid(
@@ -166,7 +157,7 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_process(
 	    transmitter->stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA)
 		return V90_DOWNSTREAM_DATA_TX_INVALID_STATE;
 	if (bit_count != transmitter->encoder.mapping.frame_bits ||
-	    !bits_are_binary(bits, bit_count))
+	    !unpacked_bits_are_binary(bits, bit_count))
 		return V90_DOWNSTREAM_DATA_TX_INVALID_BITS;
 	next = *transmitter;
 	result = encode_frame(&next, bits, bit_count, &generated);

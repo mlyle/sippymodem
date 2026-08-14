@@ -79,13 +79,6 @@ bool v34_info1a_is_valid(
 	       symbol_rate_is_valid(info1a->call_to_answer_symbol_rate);
 }
 
-static void set_payload_bit(uint8_t *payload, size_t bit_index, bool value)
-{
-	if (value)
-		payload[bit_index / 8u] |=
-			(uint8_t)(1u << (7u - bit_index % 8u));
-}
-
 static uint16_t decode_lsb_first_field(
 	const uint8_t *payload, size_t first_bit, size_t bit_count)
 {
@@ -101,7 +94,7 @@ static void encode_lsb_first_field(
 	uint8_t *payload, size_t first_bit, size_t bit_count, uint16_t value)
 {
 	for (size_t index = 0; index < bit_count; ++index)
-		set_payload_bit(
+		packed_msb_set_bit(
 			payload, first_bit + index,
 			(value & (uint16_t)(1u << index)) != 0);
 }
@@ -141,7 +134,7 @@ static void encode_probe_result(
 	uint8_t *payload, size_t first_bit,
 	const struct v34_info1_probe_result *result)
 {
-	set_payload_bit(
+	packed_msb_set_bit(
 		payload, first_bit + V34_INFO1_HIGH_CARRIER_BIT,
 		result->high_carrier);
 	encode_lsb_first_field(

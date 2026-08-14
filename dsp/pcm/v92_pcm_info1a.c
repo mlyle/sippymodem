@@ -59,13 +59,6 @@ bool v92_pcm_info1a_is_valid(const struct v92_pcm_info1a *info1a)
 	       info1a->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE;
 }
 
-static void set_payload_bit(uint8_t *payload, size_t bit, bool value)
-{
-	if (value)
-		payload[bit / 8u] |=
-			(uint8_t)(1u << (7u - bit % 8u));
-}
-
 static uint16_t decode_field(
 	const uint8_t *payload, size_t first_bit, size_t bit_count)
 {
@@ -81,7 +74,7 @@ static void encode_field(
 	uint16_t value)
 {
 	for (size_t bit = 0; bit < bit_count; ++bit)
-		set_payload_bit(
+		packed_msb_set_bit(
 			payload, first_bit + bit,
 			(value & (uint16_t)(1u << bit)) != 0);
 }
@@ -132,7 +125,7 @@ enum v92_pcm_info1a_result v92_pcm_info1a_encode(
 		PCM_SYMBOL_RATE_CODE);
 	for (size_t bit = RESERVED_ONES_FIRST_BIT;
 	     bit < RESERVED_ONES_FIRST_BIT + RESERVED_ONES_BITS; ++bit)
-		set_payload_bit(encoded, bit, true);
+		packed_msb_set_bit(encoded, bit, true);
 	memcpy(payload, encoded, sizeof(encoded));
 	return V92_PCM_INFO1A_OK;
 }

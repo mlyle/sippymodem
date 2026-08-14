@@ -2,18 +2,9 @@
 
 #include "v90_pcm_frame_encoder.h"
 
-#include <string.h>
+#include "packed_bits.h"
 
-static bool bits_are_binary(const uint8_t *bits, size_t count)
-{
-	if (bits == NULL)
-		return false;
-	for (size_t index = 0; index < count; ++index) {
-		if (bits[index] > 1)
-			return false;
-	}
-	return true;
-}
+#include <string.h>
 
 static bool shaper_matches_mapping(
 	const struct v90_spectral_shaper *shaper,
@@ -166,7 +157,7 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_process(
 	if (!v90_pcm_frame_encoder_is_valid(encoder) || encoder->finishing)
 		return V90_PCM_FRAME_ENCODER_INVALID_STATE;
 	if (bit_count != encoder->mapping.frame_bits ||
-	    !bits_are_binary(bits, bit_count))
+	    !unpacked_bits_are_binary(bits, bit_count))
 		return V90_PCM_FRAME_ENCODER_INVALID_BITS;
 	next = *encoder;
 	if (v90_sign_encoder_encode(

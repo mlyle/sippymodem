@@ -2,18 +2,9 @@
 
 #include "v90_sign_encoder.h"
 
-#include <string.h>
+#include "packed_bits.h"
 
-static bool bits_are_binary(const uint8_t *bits, size_t count)
-{
-	if (bits == NULL)
-		return false;
-	for (size_t index = 0; index < count; ++index) {
-		if (bits[index] > 1)
-			return false;
-	}
-	return true;
-}
+#include <string.h>
 
 bool v90_sign_encoder_is_valid(
 	const struct v90_sign_encoder *encoder)
@@ -116,7 +107,8 @@ enum v90_sign_encoder_result v90_sign_encoder_encode(
 	if (!v90_sign_encoder_is_valid(encoder))
 		return V90_SIGN_ENCODER_INVALID_STATE;
 	required = V90_CP_FRAME_INTERVALS - encoder->sign_redundancy;
-	if (bit_count != required || !bits_are_binary(bits, bit_count))
+	if (bit_count != required ||
+	    !unpacked_bits_are_binary(bits, bit_count))
 		return V90_SIGN_ENCODER_INVALID_BITS;
 	next = *encoder;
 	if (next.sign_redundancy == 0)

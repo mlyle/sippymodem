@@ -2,6 +2,7 @@
 
 #include "v34_data_stream.h"
 
+#include "packed_bits.h"
 #include "v34_data_mapping.h"
 
 #include <stddef.h>
@@ -214,17 +215,6 @@ bool v34_data_stream_is_transmitting_b1(
 	       stream->b1_active;
 }
 
-static bool bits_are_binary(const uint8_t *bits, size_t count)
-{
-	if (bits == NULL)
-		return false;
-	for (size_t index = 0; index < count; ++index) {
-		if (bits[index] > 1u)
-			return false;
-	}
-	return true;
-}
-
 static bool acquire_mapping_frame(
 	const struct v34_data_stream *stream,
 	v34_mapping_frame_source source, void *source_context,
@@ -246,7 +236,8 @@ static bool acquire_mapping_frame(
 		*auxiliary = 2;
 	return source(
 		       source_context, request, primary_bits, auxiliary) &&
-	       bits_are_binary(primary_bits, request->primary_bits) &&
+	       unpacked_bits_are_binary(
+		       primary_bits, request->primary_bits) &&
 	       (auxiliary == NULL || *auxiliary <= 1u);
 }
 

@@ -20,13 +20,6 @@ enum {
 	FREQUENCY_OFFSET_MODULUS = 1024,
 };
 
-static void set_payload_bit(uint8_t *payload, size_t index, bool value)
-{
-	if (value)
-		payload[index / 8u] |=
-			(uint8_t)(1u << (7u - index % 8u));
-}
-
 static uint16_t decode_field(
 	const uint8_t *payload, size_t first_bit, size_t bit_count)
 {
@@ -43,7 +36,7 @@ static void encode_field(
 	uint16_t value)
 {
 	for (size_t index = 0; index < bit_count; ++index)
-		set_payload_bit(
+		packed_msb_set_bit(
 			payload, first_bit + index,
 			(value & (uint16_t)(1u << index)) != 0);
 }

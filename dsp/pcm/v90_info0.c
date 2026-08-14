@@ -32,13 +32,6 @@ enum {
 	MAXIMUM_TRANSMIT_POWER_MAX = 31,
 };
 
-static void set_payload_bit(uint8_t *payload, size_t index, bool value)
-{
-	if (value)
-		payload[index / 8u] |=
-			(uint8_t)(1u << (7u - index % 8u));
-}
-
 static uint8_t decode_field(
 	const uint8_t *payload, size_t first_bit, size_t bit_count)
 {
@@ -54,7 +47,7 @@ static void encode_field(
 	uint8_t *payload, size_t first_bit, size_t bit_count, uint8_t value)
 {
 	for (size_t index = 0; index < bit_count; ++index)
-		set_payload_bit(
+		packed_msb_set_bit(
 			payload, first_bit + index,
 			(value & (uint8_t)(1u << index)) != 0);
 }
@@ -80,32 +73,32 @@ bool v90_info0d_is_valid(const struct v90_info0d *info0d)
 static void encode_common(
 	const struct v90_info0 *info0, uint8_t *payload)
 {
-	set_payload_bit(payload, SYMBOL_RATE_2743_BIT,
+	packed_msb_set_bit(payload, SYMBOL_RATE_2743_BIT,
 			info0->symbol_rate_2743_supported);
-	set_payload_bit(payload, SYMBOL_RATE_2800_BIT,
+	packed_msb_set_bit(payload, SYMBOL_RATE_2800_BIT,
 			info0->symbol_rate_2800_supported);
-	set_payload_bit(payload, SYMBOL_RATE_3429_BIT,
+	packed_msb_set_bit(payload, SYMBOL_RATE_3429_BIT,
 			info0->symbol_rate_3429_supported);
-	set_payload_bit(payload, LOW_CARRIER_3000_BIT,
+	packed_msb_set_bit(payload, LOW_CARRIER_3000_BIT,
 			info0->low_carrier_3000_supported);
-	set_payload_bit(payload, HIGH_CARRIER_3000_BIT,
+	packed_msb_set_bit(payload, HIGH_CARRIER_3000_BIT,
 			info0->high_carrier_3000_supported);
-	set_payload_bit(payload, LOW_CARRIER_3200_BIT,
+	packed_msb_set_bit(payload, LOW_CARRIER_3200_BIT,
 			info0->low_carrier_3200_supported);
-	set_payload_bit(payload, HIGH_CARRIER_3200_BIT,
+	packed_msb_set_bit(payload, HIGH_CARRIER_3200_BIT,
 			info0->high_carrier_3200_supported);
-	set_payload_bit(payload, SYMBOL_RATE_3429_PERMITTED_BIT,
+	packed_msb_set_bit(payload, SYMBOL_RATE_3429_PERMITTED_BIT,
 			info0->symbol_rate_3429_transmit_permitted);
-	set_payload_bit(payload, POWER_REDUCTION_BIT,
+	packed_msb_set_bit(payload, POWER_REDUCTION_BIT,
 			info0->transmit_power_reduction_supported);
 	encode_field(
 		payload, MAXIMUM_SYMBOL_RATE_DIFFERENCE_FIRST_BIT,
 		MAXIMUM_SYMBOL_RATE_DIFFERENCE_BITS,
 		info0->maximum_symbol_rate_difference_steps);
-	set_payload_bit(payload, CME_MODEM_BIT, info0->cme_modem);
-	set_payload_bit(payload, CONSTELLATION_1664_BIT,
+	packed_msb_set_bit(payload, CME_MODEM_BIT, info0->cme_modem);
+	packed_msb_set_bit(payload, CONSTELLATION_1664_BIT,
 			info0->constellation_1664_supported);
-	set_payload_bit(payload, ACKNOWLEDGMENT_BIT,
+	packed_msb_set_bit(payload, ACKNOWLEDGMENT_BIT,
 			info0->acknowledges_peer_info0);
 }
 
@@ -196,11 +189,11 @@ enum v90_info0_result v90_info0d_encode(
 	encode_field(
 		encoded, MAXIMUM_TRANSMIT_POWER_FIRST_BIT,
 		MAXIMUM_TRANSMIT_POWER_BITS, info0d->maximum_transmit_power);
-	set_payload_bit(encoded, MEASURE_AT_CODEC_BIT,
+	packed_msb_set_bit(encoded, MEASURE_AT_CODEC_BIT,
 			info0d->measure_power_at_codec_output);
-	set_payload_bit(encoded, PCM_LAW_BIT,
+	packed_msb_set_bit(encoded, PCM_LAW_BIT,
 			info0d->pcm_law == V90_PCM_A_LAW);
-	set_payload_bit(encoded, UPSTREAM_SYMBOL_RATE_3429_BIT,
+	packed_msb_set_bit(encoded, UPSTREAM_SYMBOL_RATE_3429_BIT,
 			info0d->upstream_symbol_rate_3429_supported);
 	memcpy(payload, encoded, sizeof(encoded));
 	return V90_INFO0_OK;

@@ -31,16 +31,6 @@ bool v92_info0d_is_valid(const struct v92_info0d *info0d)
 		       info0d->v92_capable, info0d->short_phase2_requested);
 }
 
-static void set_payload_bit(uint8_t *payload, size_t bit, bool value)
-{
-	uint8_t mask = (uint8_t)(1u << (7u - bit % 8u));
-
-	if (value)
-		payload[bit / 8u] |= mask;
-	else
-		payload[bit / 8u] &= (uint8_t)~mask;
-}
-
 static enum v92_info0_result map_v90_result(enum v90_info0_result result)
 {
 	switch (result) {
@@ -71,8 +61,9 @@ enum v92_info0_result v92_info0a_encode(
 	result = v90_info0a_encode(&info0a->v90, encoded, sizeof(encoded));
 	if (result != V90_INFO0_OK)
 		return map_v90_result(result);
-	set_payload_bit(encoded, INFO0_WIRE_BIT_26, info0a->v92_capable);
-	set_payload_bit(
+	packed_msb_set_bit(
+		encoded, INFO0_WIRE_BIT_26, info0a->v92_capable);
+	packed_msb_set_bit(
 		encoded, INFO0_WIRE_BIT_27, info0a->short_phase2_requested);
 	memcpy(payload, encoded, sizeof(encoded));
 	return V92_INFO0_OK;
@@ -115,9 +106,10 @@ enum v92_info0_result v92_info0d_encode(
 	result = v90_info0d_encode(&info0d->v90, encoded, sizeof(encoded));
 	if (result != V90_INFO0_OK)
 		return map_v90_result(result);
-	set_payload_bit(
+	packed_msb_set_bit(
 		encoded, INFO0_WIRE_BIT_26, info0d->short_phase2_requested);
-	set_payload_bit(encoded, INFO0_WIRE_BIT_27, info0d->v92_capable);
+	packed_msb_set_bit(
+		encoded, INFO0_WIRE_BIT_27, info0d->v92_capable);
 	memcpy(payload, encoded, sizeof(encoded));
 	return V92_INFO0_OK;
 }
