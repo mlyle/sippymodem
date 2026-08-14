@@ -62,6 +62,13 @@ struct v92_pcm_phase3_cpt_rx {
 
 enum v92_pcm_phase3_cpt_rx_result v92_pcm_phase3_cpt_rx_init(
 	struct v92_pcm_phase3_cpt_rx *receiver);
+
+/* Start marker search from an owned second-TRN1u synchronizer snapshot. The
+ * snapshot must still be in training and contain enough signs for search. */
+enum v92_pcm_phase3_cpt_rx_result
+v92_pcm_phase3_cpt_rx_init_from_training(
+	struct v92_pcm_phase3_cpt_rx *receiver,
+	const struct v92_phase3_sync *training);
 bool v92_pcm_phase3_cpt_rx_is_valid(
 	const struct v92_pcm_phase3_cpt_rx *receiver);
 bool v92_pcm_phase3_cpt_rx_is_complete(

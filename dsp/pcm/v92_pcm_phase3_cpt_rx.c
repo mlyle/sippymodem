@@ -124,6 +124,29 @@ enum v92_pcm_phase3_cpt_rx_result v92_pcm_phase3_cpt_rx_init(
 	return V92_PCM_PHASE3_CPT_RX_OK;
 }
 
+enum v92_pcm_phase3_cpt_rx_result
+v92_pcm_phase3_cpt_rx_init_from_training(
+	struct v92_pcm_phase3_cpt_rx *receiver,
+	const struct v92_phase3_sync *training)
+{
+	struct v92_pcm_phase3_cpt_rx initialized;
+
+	if (receiver == NULL || !v92_phase3_sync_is_valid(training) ||
+	    training->stage != V92_PHASE3_SYNC_TRAINING ||
+	    training->trained_symbols < V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS)
+		return V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT;
+	if (v92_pcm_phase3_cpt_rx_init(&initialized) !=
+	    V92_PCM_PHASE3_CPT_RX_OK)
+		return V92_PCM_PHASE3_CPT_RX_INTERNAL_ERROR;
+	initialized.sync = *training;
+	if (v92_pcm_phase3_cpt_rx_begin(&initialized) !=
+			V92_PCM_PHASE3_CPT_RX_OK ||
+	    !v92_pcm_phase3_cpt_rx_is_valid(&initialized))
+		return V92_PCM_PHASE3_CPT_RX_INTERNAL_ERROR;
+	*receiver = initialized;
+	return V92_PCM_PHASE3_CPT_RX_OK;
+}
+
 bool v92_pcm_phase3_cpt_rx_is_complete(
 	const struct v92_pcm_phase3_cpt_rx *receiver)
 {

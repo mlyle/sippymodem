@@ -363,6 +363,7 @@ static bool test_contracts(void)
 {
 	struct v92_pcm_phase3_cpt_rx receiver;
 	struct v92_pcm_phase3_cpt_rx before;
+	struct v92_phase3_sync training;
 	struct v92_pcm_phase3_cpt_rx_event event;
 	struct v92_pcm_phase3_cpt_rx_event before_event;
 	struct v92_cpt_parameters parameters;
@@ -374,12 +375,43 @@ static bool test_contracts(void)
 	};
 
 	CHECK(v92_pcm_phase3_cpt_rx_init(NULL) ==
-		      V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT &&
+			      V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_cpt_rx_init(&receiver) ==
 		      V92_PCM_PHASE3_CPT_RX_OK &&
 	      v92_pcm_phase3_cpt_rx_is_valid(&receiver) &&
 	      !v92_pcm_phase3_cpt_rx_is_complete(&receiver),
-	      "CPt receiver did not initialize");
+		      "CPt receiver did not initialize");
+	CHECK(v92_phase3_sync_init(&training) == V92_PHASE3_SYNC_OK,
+	      "CPt training snapshot did not initialize");
+	before = receiver;
+	CHECK(v92_pcm_phase3_cpt_rx_init_from_training(NULL, &training) ==
+			      V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase3_cpt_rx_init_from_training(&receiver, NULL) ==
+			      V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase3_cpt_rx_init_from_training(
+		      &receiver, &training) ==
+			      V92_PCM_PHASE3_CPT_RX_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      "short CPt training snapshot changed receiver state");
+	for (size_t index = 0;
+	     index < V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS; ++index)
+		CHECK(v92_phase3_sync_train(&training, index & 1u) ==
+			      V92_PHASE3_SYNC_OK,
+		      "CPt training snapshot failed at %zu", index);
+	CHECK(v92_pcm_phase3_cpt_rx_init_from_training(
+		      &receiver, &training) == V92_PCM_PHASE3_CPT_RX_OK &&
+	      v92_pcm_phase3_cpt_rx_is_valid(&receiver) &&
+	      receiver.stage == V92_PCM_PHASE3_CPT_RX_SEARCHING &&
+	      receiver.sync.stage == V92_PHASE3_SYNC_SEARCHING &&
+	      receiver.sync.trained_symbols == training.trained_symbols &&
+	      receiver.sync.training.scrambler.history ==
+		      training.training.scrambler.history &&
+	      receiver.sync.training.previous_sign ==
+		      training.training.previous_sign,
+	      "trained CPt initialization lost synchronizer state");
+	CHECK(v92_pcm_phase3_cpt_rx_init(&receiver) ==
+		      V92_PCM_PHASE3_CPT_RX_OK,
+	      "CPt receiver did not reset after trained initialization");
 	memset(&event, 0xa5, sizeof(event));
 	before_event = event;
 	before = receiver;
