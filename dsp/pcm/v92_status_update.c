@@ -19,8 +19,10 @@ enum {
 
 static bool alignment_is_valid(unsigned int alignment_bits)
 {
-	return alignment_bits == V92_STATUS_UPDATE_DIGITAL_ALIGNMENT ||
-	       alignment_bits == V92_STATUS_UPDATE_4_POINT_ALIGNMENT ||
+	return (alignment_bits >=
+			V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS &&
+		alignment_bits <=
+			V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS) ||
 	       alignment_bits == V92_STATUS_UPDATE_8_POINT_ALIGNMENT;
 }
 

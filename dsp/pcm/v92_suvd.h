@@ -13,11 +13,8 @@ enum {
 	V92_SUVD_INFORMATION_BITS = V92_STATUS_UPDATE_INFORMATION_BITS,
 	V92_SUVD_TRAILER_BITS = V92_STATUS_UPDATE_TRAILER_BITS,
 	V92_SUVD_SYMBOLS_PER_FRAME = 6,
-	V92_SUVD_FRAME_BITS =
-		(V92_SUVD_INFORMATION_BITS + V92_SUVD_TRAILER_BITS +
-		 V92_SUVD_SYMBOLS_PER_FRAME - 1) /
-		V92_SUVD_SYMBOLS_PER_FRAME * V92_SUVD_SYMBOLS_PER_FRAME,
-	V92_SUVD_FRAME_BYTES = (V92_SUVD_FRAME_BITS + 7) / 8,
+	V92_SUVD_MAX_FRAME_BITS = V92_STATUS_UPDATE_MAX_FRAME_BITS,
+	V92_SUVD_MAX_FRAME_BYTES = V92_STATUS_UPDATE_MAX_FRAME_BYTES,
 };
 
 enum v92_suvd_result {
@@ -36,10 +33,16 @@ struct v92_suvd_parameters {
 bool v92_suvd_parameters_are_valid(
 	const struct v92_suvd_parameters *parameters);
 
+/* Downstream records end on a complete six-symbol PCM mapping frame. The
+ * negotiated training_frame_bits is D, not the number of carrier symbols. */
+size_t v92_suvd_frame_bits(uint8_t training_frame_bits);
+size_t v92_suvd_frame_bytes(uint8_t training_frame_bits);
+
 /* Pack the Table 31 record in transmission order. Rejected calls leave every
  * output unchanged. */
 enum v92_suvd_result v92_suvd_encode(
 	const struct v92_suvd_parameters *parameters,
+	uint8_t training_frame_bits,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count);
 
@@ -48,7 +51,7 @@ enum v92_suvd_result v92_suvd_encode(
  * unchanged. */
 enum v92_suvd_result v92_suvd_decode(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t frame_bit_count,
+	size_t frame_bit_count, uint8_t training_frame_bits,
 	struct v92_suvd_parameters *parameters);
 
 const char *v92_suvd_result_name(enum v92_suvd_result result);

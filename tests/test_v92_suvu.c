@@ -111,9 +111,9 @@ static bool test_dimensions(void)
 	      v92_suvu_frame_bits((enum v92_constellation_size)6) == 0 &&
 	      v92_suvu_frame_bytes((enum v92_constellation_size)6) == 0 &&
 	      v92_status_update_frame_bits(
-		      V92_STATUS_UPDATE_DIGITAL_ALIGNMENT) == 54 &&
+		      V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS) == 54 &&
 	      v92_status_update_frame_bytes(
-		      V92_STATUS_UPDATE_DIGITAL_ALIGNMENT) == 7 &&
+		      V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS) == 7 &&
 	      v92_status_update_frame_bits(
 		      V92_STATUS_UPDATE_4_POINT_ALIGNMENT) == 72 &&
 	      v92_status_update_frame_bits(
@@ -132,13 +132,13 @@ static bool test_shared_framing(void)
 
 	memset(frame, 0xa5, sizeof(frame));
 	CHECK(v92_status_update_encode(
-		      payload, V92_STATUS_UPDATE_DIGITAL_ALIGNMENT,
+		      payload, V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS,
 		      frame, 7u, &frame_bits) == V92_STATUS_UPDATE_OK &&
 	      frame_bits == 54u && frame[7] == 0xa5 &&
 	      bit_at(frame, 54u) == 0u && bit_at(frame, 55u) == 0u &&
 	      v92_status_update_decode(
 		      frame, 7u, frame_bits,
-		      V92_STATUS_UPDATE_DIGITAL_ALIGNMENT, &decoded) ==
+		      V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS, &decoded) ==
 		      V92_STATUS_UPDATE_OK &&
 	      decoded == payload,
 	      "shared status-update framing did not round-trip");

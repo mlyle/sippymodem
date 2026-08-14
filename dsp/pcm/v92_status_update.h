@@ -10,12 +10,14 @@ enum {
 	V92_STATUS_UPDATE_PAYLOAD_BITS = 15,
 	V92_STATUS_UPDATE_INFORMATION_BITS = 34,
 	V92_STATUS_UPDATE_TRAILER_BITS = 18,
-	V92_STATUS_UPDATE_DIGITAL_ALIGNMENT = 6,
+	V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS = 9,
+	V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS = 30,
 	V92_STATUS_UPDATE_4_POINT_ALIGNMENT = 24,
 	V92_STATUS_UPDATE_8_POINT_ALIGNMENT = 36,
-	V92_STATUS_UPDATE_MAX_FRAME_BITS = 72,
+	/* A 52-bit record rounded to a 25-bit downstream frame is 75 bits. */
+	V92_STATUS_UPDATE_MAX_FRAME_BITS = 75,
 	V92_STATUS_UPDATE_MAX_FRAME_BYTES =
-		V92_STATUS_UPDATE_MAX_FRAME_BITS / 8,
+		(V92_STATUS_UPDATE_MAX_FRAME_BITS + 7) / 8,
 };
 
 enum v92_status_update_result {
@@ -27,8 +29,8 @@ enum v92_status_update_result {
 	V92_STATUS_UPDATE_CRC_MISMATCH,
 };
 
-/* Return the exact wire extent for one of the three defined carrier frame
- * alignments, or zero for another value. */
+/* Return the exact wire extent for a legal six-symbol downstream PCM mapping
+ * frame, or one upstream 12-symbol 4/8-point frame. */
 size_t v92_status_update_frame_bits(unsigned int alignment_bits);
 size_t v92_status_update_frame_bytes(unsigned int alignment_bits);
 
