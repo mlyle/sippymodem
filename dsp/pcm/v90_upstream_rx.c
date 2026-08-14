@@ -143,15 +143,18 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 		       (receiver->failed ||
 			!v90_phase4_e_line_rx_is_complete(
 				&receiver->state.e));
+	case V90_UPSTREAM_RX_STAGE_B1:
+		return v34_data_line_receiver_is_valid(&receiver->state.data) &&
+		       (receiver->failed ||
+			v34_data_line_receiver_is_receiving_b1(
+				&receiver->state.data));
 	case V90_UPSTREAM_RX_STAGE_COMPLETE:
 		return !receiver->failed &&
-		       v90_phase4_e_line_rx_is_valid(&receiver->state.e) &&
-		       data_parameters_are_equal(
-			       &receiver->data_parameters,
-			       &receiver->state.e.cp) &&
-		       receiver->state.e.cp.acknowledges_peer &&
-		       v90_phase4_e_line_rx_is_complete(&receiver->state.e) &&
-		       !v90_phase4_e_line_rx_has_failed(&receiver->state.e);
+		       v34_data_line_receiver_is_valid(&receiver->state.data) &&
+		       !v34_data_line_receiver_has_failed(
+			       &receiver->state.data) &&
+		       !v34_data_line_receiver_is_receiving_b1(
+			       &receiver->state.data);
 	}
 	return false;
 }
@@ -317,10 +320,18 @@ static enum v90_upstream_rx_result receive_e_sample(
 	case V90_PHASE4_E_LINE_RX_SYMBOL:
 		receiver->state.e = e;
 		return V90_UPSTREAM_RX_OK;
-	case V90_PHASE4_E_LINE_RX_E_COMPLETE:
-		receiver->state.e = e;
-		receiver->stage = V90_UPSTREAM_RX_STAGE_COMPLETE;
+	case V90_PHASE4_E_LINE_RX_E_COMPLETE: {
+		struct v34_data_line_receiver data;
+
+		if (v90_upstream_rx_start_after_e(
+			    &data, &e, &receiver->local_mp) !=
+		    V90_UPSTREAM_DATA_OK)
+			return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+		receiver->state = (union v90_upstream_rx_state){ 0 };
+		receiver->state.data = data;
+		receiver->stage = V90_UPSTREAM_RX_STAGE_B1;
 		return V90_UPSTREAM_RX_E_COMPLETE;
+	}
 	case V90_PHASE4_E_LINE_RX_FAILED:
 		return V90_UPSTREAM_RX_FAILED;
 	case V90_PHASE4_E_LINE_RX_SEQUENCE_MISMATCH:
@@ -329,6 +340,35 @@ static enum v90_upstream_rx_result receive_e_sample(
 	case V90_PHASE4_E_LINE_RX_INVALID_STATE:
 	case V90_PHASE4_E_LINE_RX_NUMERIC_FAILURE:
 	case V90_PHASE4_E_LINE_RX_COMPLETE:
+		break;
+	}
+	return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+}
+
+static enum v90_upstream_rx_result receive_b1_sample(
+	struct v90_upstream_rx *receiver, int16_t sample)
+{
+	struct v34_survivor_decision current = { 0 };
+	struct v34_received_mapping_frame received = { 0 };
+	enum v34_data_line_receiver_result result =
+		v34_data_line_receiver_sample(
+			&receiver->state.data, sample, &current, &received);
+
+	switch (result) {
+	case V34_DATA_LINE_RECEIVER_OK:
+	case V34_DATA_LINE_RECEIVER_INTERVAL_READY:
+	case V34_DATA_LINE_RECEIVER_B1_IN_PROGRESS:
+		return V90_UPSTREAM_RX_OK;
+	case V34_DATA_LINE_RECEIVER_B1_COMPLETE:
+		receiver->stage = V90_UPSTREAM_RX_STAGE_COMPLETE;
+		return V90_UPSTREAM_RX_B1_COMPLETE;
+	case V34_DATA_LINE_RECEIVER_FAILED:
+		return V90_UPSTREAM_RX_FAILED;
+	case V34_DATA_LINE_RECEIVER_OUT_OF_RANGE:
+		return V90_UPSTREAM_RX_OUT_OF_RANGE;
+	case V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT:
+	case V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE:
+	case V34_DATA_LINE_RECEIVER_MAPPING_FRAME_READY:
 		break;
 	}
 	return V90_UPSTREAM_RX_NUMERIC_FAILURE;
@@ -372,6 +412,9 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 	case V90_UPSTREAM_RX_STAGE_E:
 		result = receive_e_sample(&next, sample);
 		break;
+	case V90_UPSTREAM_RX_STAGE_B1:
+		result = receive_b1_sample(&next, sample);
+		break;
 	case V90_UPSTREAM_RX_STAGE_COMPLETE:
 		return V90_UPSTREAM_RX_COMPLETE;
 	default:
@@ -381,6 +424,7 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 	    result == V90_UPSTREAM_RX_SEQUENCE_MISMATCH ||
 	    result == V90_UPSTREAM_RX_INVALID_PARAMETERS ||
 	    result == V90_UPSTREAM_RX_NO_COMMON_RATE ||
+	    result == V90_UPSTREAM_RX_OUT_OF_RANGE ||
 	    result == V90_UPSTREAM_RX_NUMERIC_FAILURE)
 		return fail_receiver(receiver, &next, result);
 	if (!v90_upstream_rx_is_valid(&next))
@@ -394,18 +438,18 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 
 enum v90_upstream_rx_result v90_upstream_rx_handoff(
 	const struct v90_upstream_rx *receiver,
-	struct v90_phase4_e_line_rx *completed_e)
+	struct v34_data_line_receiver *data_receiver)
 {
-	if (!v90_upstream_rx_is_valid(receiver) || completed_e == NULL ||
+	if (!v90_upstream_rx_is_valid(receiver) || data_receiver == NULL ||
 	    ranges_overlap(
-		    receiver, sizeof(*receiver), completed_e,
-		    sizeof(*completed_e)))
+		    receiver, sizeof(*receiver), data_receiver,
+		    sizeof(*data_receiver)))
 		return V90_UPSTREAM_RX_INVALID_ARGUMENT;
 	if (receiver->failed)
 		return V90_UPSTREAM_RX_FAILED;
 	if (receiver->stage != V90_UPSTREAM_RX_STAGE_COMPLETE)
 		return V90_UPSTREAM_RX_INVALID_STATE;
-	*completed_e = receiver->state.e;
+	*data_receiver = receiver->state.data;
 	return V90_UPSTREAM_RX_OK;
 }
 
@@ -494,6 +538,8 @@ const char *v90_upstream_rx_result_name(
 		return "request Ed";
 	case V90_UPSTREAM_RX_E_COMPLETE:
 		return "E complete";
+	case V90_UPSTREAM_RX_B1_COMPLETE:
+		return "B1 complete";
 	case V90_UPSTREAM_RX_COMPLETE:
 		return "complete";
 	case V90_UPSTREAM_RX_FAILED:
@@ -508,6 +554,8 @@ const char *v90_upstream_rx_result_name(
 		return "invalid parameters";
 	case V90_UPSTREAM_RX_NO_COMMON_RATE:
 		return "no common rate";
+	case V90_UPSTREAM_RX_OUT_OF_RANGE:
+		return "out of range";
 	case V90_UPSTREAM_RX_NUMERIC_FAILURE:
 		return "numeric failure";
 	}

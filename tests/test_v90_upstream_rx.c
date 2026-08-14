@@ -108,7 +108,6 @@ static bool run_line(
 	struct v90_phase4_e_line_tx e_tx;
 	struct v34_data_stream data_tx;
 	struct v90_upstream_rx receiver;
-	struct v90_phase4_e_line_rx e_handoff;
 	struct v34_data_line_receiver data_handoff;
 	bool data_started = false;
 	bool prime_started = false;
@@ -118,6 +117,7 @@ static bool run_line(
 	bool mp_prime_requested = false;
 	bool ed_requested = false;
 	bool e_received = false;
+	bool b1_received = false;
 
 	prime.acknowledges_peer = true;
 	CHECK(v90_phase4_line_fixture_init(
@@ -224,7 +224,8 @@ static bool run_line(
 			CHECK(result == V90_UPSTREAM_RX_OK ||
 			      result == V90_UPSTREAM_RX_REQUEST_MP_PRIME ||
 			      result == V90_UPSTREAM_RX_REQUEST_ED ||
-			      result == V90_UPSTREAM_RX_E_COMPLETE,
+			      result == V90_UPSTREAM_RX_E_COMPLETE ||
+			      result == V90_UPSTREAM_RX_B1_COMPLETE,
 			      "upstream owner stopped at clock %zu: %s", clock,
 			      v90_upstream_rx_result_name(result));
 			if (result == V90_UPSTREAM_RX_OK) {
@@ -241,40 +242,44 @@ static bool run_line(
 				      parameters_match(&event, &prime),
 				      "CP-prime event changed or arrived early");
 				ed_requested = true;
-			} else {
+			} else if (result == V90_UPSTREAM_RX_E_COMPLETE) {
 				e_received = true;
+			} else {
+				b1_received = true;
 			}
 		}
 	}
 
 	{
 		enum v90_upstream_rx_result handoff_result =
-			v90_upstream_rx_handoff(&receiver, &e_handoff);
+			v90_upstream_rx_handoff(&receiver, &data_handoff);
 		bool handoff_valid = handoff_result == V90_UPSTREAM_RX_OK &&
-			v90_phase4_e_line_rx_is_complete(&e_handoff) &&
-			v90_upstream_rx_start_after_e(
-				&data_handoff, &e_handoff, &mp) ==
-				V90_UPSTREAM_DATA_OK &&
 			v34_data_line_receiver_is_valid(&data_handoff);
 
 		CHECK(data_started && prime_started && cp_finished && e_started &&
 		      b1_started && mp_prime_requested && ed_requested &&
-		      e_received &&
+		      e_received && b1_received &&
 		      v90_upstream_rx_is_complete(&receiver) &&
 		      !v90_upstream_rx_has_failed(&receiver) && handoff_valid &&
-		      v34_data_line_receiver_is_receiving_b1(&data_handoff) &&
+		      !v34_data_line_receiver_is_receiving_b1(&data_handoff) &&
 		      data_handoff.geometry
-			      .primary_data_rate_2400_bps_units == 4,
+			      .primary_data_rate_2400_bps_units == 4 &&
+		      data_handoff.equalizer_receiver.data_receiver.data_receiver
+			      .b1_error_bits == 0,
 		      "upstream entry stopped: source=%d/%d/%d/%d/%d "
-		      "events=%d/%d/%d stage=%d failed=%d handoff=%s "
-		      "valid=%d rate=%u",
+		      "events=%d/%d/%d/%d stage=%d failed=%d handoff=%s "
+		      "valid=%d rate=%u errors=%u",
 		      data_started, prime_started, cp_finished, e_started,
 		      b1_started, mp_prime_requested, ed_requested, e_received,
+		      b1_received,
 		      receiver.stage, v90_upstream_rx_has_failed(&receiver),
 		      v90_upstream_rx_result_name(handoff_result), handoff_valid,
 		      handoff_valid ?
 			      data_handoff.geometry
-				      .primary_data_rate_2400_bps_units : 0);
+				      .primary_data_rate_2400_bps_units : 0,
+		      handoff_valid ?
+			      (unsigned int)data_handoff.equalizer_receiver
+				      .data_receiver.data_receiver.b1_error_bits : 0);
 	}
 	{
 		struct v90_upstream_rx saved_receiver = receiver;
@@ -307,8 +312,8 @@ static bool test_contracts(void)
 	struct v90_upstream_rx receiver;
 	struct v90_upstream_rx untouched;
 	struct v90_upstream_rx saved;
-	struct v90_phase4_e_line_rx e;
-	struct v90_phase4_e_line_rx saved_e;
+	struct v34_data_line_receiver data;
+	struct v34_data_line_receiver saved_data;
 
 	acknowledged.parameters.type0.acknowledges_cp = true;
 	CHECK(v90_phase4_line_fixture_init(
@@ -343,15 +348,15 @@ static bool test_contracts(void)
 	CHECK(v90_upstream_rx_init(&receiver, &cp_rx, &mapping, &mp) ==
 		      V90_UPSTREAM_RX_OK,
 	      "valid contract owner did not initialize");
-	memset(&e, 0xa5, sizeof(e));
-	saved_e = e;
-	CHECK(v90_upstream_rx_handoff(NULL, &e) ==
+	memset(&data, 0xa5, sizeof(data));
+	saved_data = data;
+	CHECK(v90_upstream_rx_handoff(NULL, &data) ==
 		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
 	      v90_upstream_rx_handoff(&receiver, NULL) ==
 		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
-	      v90_upstream_rx_handoff(&receiver, &e) ==
+	      v90_upstream_rx_handoff(&receiver, &data) ==
 		      V90_UPSTREAM_RX_INVALID_STATE &&
-	      memcmp(&e, &saved_e, sizeof(e)) == 0 &&
+	      memcmp(&data, &saved_data, sizeof(data)) == 0 &&
 	      strcmp(v90_upstream_rx_result_name(
 		     V90_UPSTREAM_RX_REQUEST_MP_PRIME),
 		     "request MP prime") == 0 &&
