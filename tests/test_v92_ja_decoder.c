@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v92_ja_decoder.h>
+#include <v92_pcm_phase3_trn1u.h>
 
 #include "test.h"
 
@@ -60,38 +61,38 @@ static uint8_t descriptor_bit(
 static bool prepare_decoder(
 	struct v92_ja_decoder *decoder, struct sign_source *source)
 {
-	struct v92_ja_sync sync;
+	struct v92_phase3_sync sync;
 
 	if (!source_init(source) ||
-	    v92_ja_sync_init(&sync) != V92_JA_SYNC_OK)
+	    v92_phase3_sync_init(&sync) != V92_PHASE3_SYNC_OK)
 		return false;
 	for (size_t index = 0;
 	     index < V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS; ++index) {
 		uint8_t sign;
-		enum v92_ja_sync_result result;
+		enum v92_phase3_sync_result result;
 
 		if (!source_trn1u(source, &sign))
 			return false;
-		if (index < V92_JA_SYNC_MIN_TRAINING_SYMBOLS) {
-			result = v92_ja_sync_train(&sync, sign);
+		if (index < V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS) {
+			result = v92_phase3_sync_train(&sync, sign);
 		} else {
-			if (index == V92_JA_SYNC_MIN_TRAINING_SYMBOLS &&
-			    v92_ja_sync_begin(&sync) != V92_JA_SYNC_OK)
+			if (index == V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS &&
+			    v92_phase3_sync_begin(&sync) != V92_PHASE3_SYNC_OK)
 				return false;
-			result = v92_ja_sync_receive(&sync, sign);
+			result = v92_phase3_sync_receive(&sync, sign);
 		}
-		if (result != V92_JA_SYNC_OK)
+		if (result != V92_PHASE3_SYNC_OK)
 			return false;
 	}
-	for (size_t index = 0; index < V92_JA_MARKER_BITS; ++index) {
-		uint8_t bit = index + 1u < V92_JA_MARKER_BITS;
+	for (size_t index = 0; index < V92_PHASE3_MARKER_BITS; ++index) {
+		uint8_t bit = index + 1u < V92_PHASE3_MARKER_BITS;
 		uint8_t sign;
-		enum v92_ja_sync_result expected =
-			index + 1u == V92_JA_MARKER_BITS ?
-				V92_JA_SYNC_SYNCHRONIZED : V92_JA_SYNC_OK;
+		enum v92_phase3_sync_result expected =
+			index + 1u == V92_PHASE3_MARKER_BITS ?
+				V92_PHASE3_SYNC_SYNCHRONIZED : V92_PHASE3_SYNC_OK;
 
 		if (!source_ja(source, bit, &sign) ||
-		    v92_ja_sync_receive(&sync, sign) != expected)
+		    v92_phase3_sync_receive(&sync, sign) != expected)
 			return false;
 	}
 	return v92_ja_decoder_init(decoder, &sync) == V92_JA_DECODER_OK;
@@ -132,7 +133,7 @@ static bool check_mask(uint32_t expected_mask)
 		      V92_PCM_DIL_OK &&
 	      feed_descriptor(
 		      &decoder, &source, descriptor,
-		      V92_JA_FRAME_SYNC_BITS + 1u, SIZE_MAX) ==
+		      V92_PHASE3_FRAME_SYNC_BITS + 1u, SIZE_MAX) ==
 		      V92_JA_DECODER_DETECTED,
 	      "Ja descriptor fixture failed for mask 0x%05x",
 	      (unsigned int)expected_mask);
@@ -176,7 +177,7 @@ static bool test_repetition_recovery(void)
 	      "Ja repetition fixture did not initialize");
 	CHECK(feed_descriptor(
 		      &decoder, &source, descriptor,
-		      V92_JA_FRAME_SYNC_BITS + 1u, 80u) ==
+		      V92_PHASE3_FRAME_SYNC_BITS + 1u, 80u) ==
 		      V92_JA_DECODER_REJECTED &&
 	      !v92_ja_decoder_is_complete(&decoder) &&
 	      decoder.bit_index == 0u,
@@ -194,7 +195,7 @@ static bool test_contracts(void)
 {
 	struct v92_ja_decoder decoder;
 	struct v92_ja_decoder before;
-	struct v92_ja_sync sync;
+	struct v92_phase3_sync sync;
 	uint32_t rate_mask = UINT32_C(0xa5a5a5a5);
 	static const char *const names[] = {
 		"ok", "detected", "rejected", "complete", "invalid argument",
@@ -205,7 +206,7 @@ static bool test_contracts(void)
 	before = decoder;
 	CHECK(v92_ja_decoder_init(NULL, NULL) ==
 		      V92_JA_DECODER_INVALID_ARGUMENT &&
-	      v92_ja_sync_init(&sync) == V92_JA_SYNC_OK &&
+	      v92_phase3_sync_init(&sync) == V92_PHASE3_SYNC_OK &&
 	      v92_ja_decoder_init(&decoder, &sync) ==
 		      V92_JA_DECODER_INVALID_ARGUMENT &&
 	      memcmp(&decoder, &before, sizeof(decoder)) == 0 &&

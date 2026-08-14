@@ -3,7 +3,8 @@
 #ifndef V92_JA_DECODER_H
 #define V92_JA_DECODER_H
 
-#include "v92_ja_sync.h"
+#include "v92_phase3_sync.h"
+#include "v92_pcm_dil.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -32,7 +33,7 @@ struct v92_ja_decoder {
 
 enum v92_ja_decoder_result v92_ja_decoder_init(
 	struct v92_ja_decoder *decoder,
-	const struct v92_ja_sync *sync);
+	const struct v92_phase3_sync *sync);
 bool v92_ja_decoder_is_valid(
 	const struct v92_ja_decoder *decoder);
 bool v92_ja_decoder_is_complete(

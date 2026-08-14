@@ -176,7 +176,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_opening.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_trn1u.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_ja.c \
-	$(DSP_PCM_SOURCE_DIR)/v92_ja_sync.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase3_sync.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_ja_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_j.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase3_digital_tx.c \

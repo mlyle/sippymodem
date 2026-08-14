@@ -40,16 +40,16 @@ bool v92_ja_decoder_is_valid(const struct v92_ja_decoder *decoder)
 
 enum v92_ja_decoder_result v92_ja_decoder_init(
 	struct v92_ja_decoder *decoder,
-	const struct v92_ja_sync *sync)
+	const struct v92_phase3_sync *sync)
 {
 	struct v92_ja_decoder initialized = { 0 };
 
 	if (decoder == NULL ||
-	    !v92_ja_sync_handoff(sync, &initialized.coding))
+	    !v92_phase3_sync_handoff(sync, &initialized.coding))
 		return V92_JA_DECODER_INVALID_ARGUMENT;
-	for (size_t bit = 0; bit < V92_JA_FRAME_SYNC_BITS; ++bit)
+	for (size_t bit = 0; bit < V92_PHASE3_FRAME_SYNC_BITS; ++bit)
 		store_bit(initialized.descriptor, bit, 1u);
-	initialized.bit_index = V92_JA_FRAME_SYNC_BITS + 1u;
+	initialized.bit_index = V92_PHASE3_FRAME_SYNC_BITS + 1u;
 	if (!v92_ja_decoder_is_valid(&initialized))
 		return V92_JA_DECODER_INVALID_ARGUMENT;
 	*decoder = initialized;
