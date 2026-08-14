@@ -165,6 +165,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_call.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_profile.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_datapump.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
