@@ -2,7 +2,10 @@
 
 #include "v90_phase4_analog_startup.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
+
 static bool handoff_mappings_match(
 	const struct v90_phase4_analog_handoff *handoff)
 {
@@ -246,11 +249,8 @@ static bool output_overlaps_startup(
 	const struct v90_phase4_analog_startup *startup,
 	const uint8_t *output)
 {
-	uintptr_t state = (uintptr_t)startup;
-	uintptr_t destination = (uintptr_t)output;
-
-	return destination >= state &&
-	       destination - state < sizeof(*startup);
+	return memory_regions_overlap(
+		startup, sizeof(*startup), output, sizeof(*output));
 }
 
 static enum v90_phase4_startup_result fail_startup(

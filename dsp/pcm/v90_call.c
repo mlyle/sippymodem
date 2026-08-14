@@ -2,6 +2,7 @@
 
 #include "v90_call.h"
 
+#include "memory_region.h"
 #include "v90_phase3_entry.h"
 #include "v90_phase3_handoff.h"
 
@@ -857,29 +858,17 @@ enum v90_call_result v90_call_start_data_path(struct v90_call *call)
 	return V90_CALL_OK;
 }
 
-static bool regions_overlap(
-	const void *left, size_t left_size,
-	const void *right, size_t right_size)
-{
-	uintptr_t left_address = (uintptr_t)left;
-	uintptr_t right_address = (uintptr_t)right;
-
-	return left_address <= right_address ?
-		       right_address - left_address < left_size :
-		       left_address - right_address < right_size;
-}
-
 static bool outputs_overlap(
 	const struct v90_call *call, const uint8_t *transmit_octet,
 	const struct v90_call_observation *observation)
 {
-	return regions_overlap(
+	return memory_regions_overlap(
 		       call, sizeof(*call),
 		       transmit_octet, sizeof(*transmit_octet)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       call, sizeof(*call),
 		       observation, sizeof(*observation)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       transmit_octet, sizeof(*transmit_octet),
 		       observation, sizeof(*observation));
 }
@@ -888,12 +877,12 @@ static bool data_outputs_overlap(
 	const struct v90_call *call, const uint8_t *transmit_octet,
 	const struct v90_call_data_event *event)
 {
-	return regions_overlap(
+	return memory_regions_overlap(
 		       call, sizeof(*call),
 		       transmit_octet, sizeof(*transmit_octet)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       call, sizeof(*call), event, sizeof(*event)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       transmit_octet, sizeof(*transmit_octet),
 		       event, sizeof(*event));
 }
@@ -929,16 +918,16 @@ bool v90_call_get_data_rates(
 
 	if (!v90_call_is_online(call) || transmit_bits_per_second == NULL ||
 	    receive_bits_per_second == NULL ||
-	    regions_overlap(
+	    memory_regions_overlap(
 		    transmit_bits_per_second,
 		    sizeof(*transmit_bits_per_second),
 		    receive_bits_per_second,
 		    sizeof(*receive_bits_per_second)) ||
-	    regions_overlap(
+	    memory_regions_overlap(
 		    call, sizeof(*call),
 		    transmit_bits_per_second,
 		    sizeof(*transmit_bits_per_second)) ||
-	    regions_overlap(
+	    memory_regions_overlap(
 		    call, sizeof(*call),
 		    receive_bits_per_second,
 		    sizeof(*receive_bits_per_second)))

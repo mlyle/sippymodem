@@ -2,6 +2,7 @@
 
 #include "v90_upstream_rx.h"
 
+#include "memory_region.h"
 #include "v34_data_mapping.h"
 #include "v90_upstream_mode.h"
 
@@ -344,18 +345,6 @@ static enum v90_upstream_rx_result receive_b1_sample(
 	return V90_UPSTREAM_RX_NUMERIC_FAILURE;
 }
 
-static bool ranges_overlap(
-	const void *left, size_t left_size,
-	const void *right, size_t right_size)
-{
-	uintptr_t left_address = (uintptr_t)left;
-	uintptr_t right_address = (uintptr_t)right;
-
-	return left_address <= right_address ?
-		       right_address - left_address < left_size :
-		       left_address - right_address < right_size;
-}
-
 enum v90_upstream_rx_result v90_upstream_rx_sample(
 	struct v90_upstream_rx *receiver, int16_t sample,
 	struct v90_cp_parameters *event)
@@ -366,7 +355,7 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 	enum v90_upstream_rx_result result;
 
 	if (!v90_upstream_rx_is_valid(receiver) || event == NULL ||
-	    ranges_overlap(
+	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), event, sizeof(*event)))
 		return V90_UPSTREAM_RX_INVALID_ARGUMENT;
 	if (receiver->failed)
@@ -411,7 +400,7 @@ enum v90_upstream_rx_result v90_upstream_rx_handoff(
 	struct v34_data_line_receiver *data_receiver)
 {
 	if (!v90_upstream_rx_is_valid(receiver) || data_receiver == NULL ||
-	    ranges_overlap(
+	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), data_receiver,
 		    sizeof(*data_receiver)))
 		return V90_UPSTREAM_RX_INVALID_ARGUMENT;

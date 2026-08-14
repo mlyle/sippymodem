@@ -3,6 +3,7 @@
 #include "v90_digital_path.h"
 
 #include "g711.h"
+#include "memory_region.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -344,30 +345,18 @@ static enum v90_digital_path_result receive_upstream(
 	return V90_DIGITAL_PATH_INTERNAL_ERROR;
 }
 
-static bool regions_overlap(
-	const void *left, size_t left_size,
-	const void *right, size_t right_size)
-{
-	uintptr_t left_address = (uintptr_t)left;
-	uintptr_t right_address = (uintptr_t)right;
-
-	return left_address <= right_address ?
-		       right_address - left_address < left_size :
-		       left_address - right_address < right_size;
-}
-
 static bool outputs_overlap(
 	const struct v90_digital_path *path,
 	const uint8_t *transmit_octet,
 	const struct v34_received_mapping_frame *received)
 {
-	return regions_overlap(
+	return memory_regions_overlap(
 		       path, sizeof(*path),
 		       transmit_octet, sizeof(*transmit_octet)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       path, sizeof(*path),
 		       received, sizeof(*received)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       transmit_octet, sizeof(*transmit_octet),
 		       received, sizeof(*received));
 }

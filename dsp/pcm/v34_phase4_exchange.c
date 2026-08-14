@@ -2,6 +2,8 @@
 
 #include "v34_phase4_exchange.h"
 
+#include "memory_region.h"
+
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
@@ -73,34 +75,22 @@ static bool records_match(
 	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
 }
 
-static bool regions_overlap(
-	const void *left, size_t left_size,
-	const void *right, size_t right_size)
-{
-	uintptr_t left_address = (uintptr_t)left;
-	uintptr_t right_address = (uintptr_t)right;
-
-	return left_address <= right_address ?
-		       right_address - left_address < left_size :
-		       left_address - right_address < right_size;
-}
-
 static bool outputs_overlap(
 	const struct v34_phase4_exchange *exchange,
 	const int16_t *sample, const uint32_t *events,
 	const struct v34_received_mapping_frame *received)
 {
-	return regions_overlap(
+	return memory_regions_overlap(
 		       exchange, sizeof(*exchange), sample, sizeof(*sample)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       exchange, sizeof(*exchange), events, sizeof(*events)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       exchange, sizeof(*exchange), received, sizeof(*received)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       sample, sizeof(*sample), events, sizeof(*events)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       sample, sizeof(*sample), received, sizeof(*received)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       events, sizeof(*events), received, sizeof(*received));
 }
 
@@ -692,7 +682,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	uint32_t emitted = 0;
 
 	if (!v34_phase4_exchange_is_valid(exchange) || events == NULL ||
-	    regions_overlap(
+	    memory_regions_overlap(
 		    exchange, sizeof(*exchange), events, sizeof(*events)))
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	if (exchange->failed)

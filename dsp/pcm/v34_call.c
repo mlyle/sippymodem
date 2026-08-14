@@ -2,13 +2,11 @@
 
 #include "v34_call.h"
 
+#include "memory_region.h"
+
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
-
-static bool regions_overlap(
-	const void *left, size_t left_size,
-	const void *right, size_t right_size);
 
 static bool role_is_valid(enum v34_station_role role)
 {
@@ -175,21 +173,10 @@ bool v34_call_get_data_startup(
 {
 	return v34_call_is_valid(call) && !call->failed &&
 	       call->stage == V34_CALL_PHASE4 && startup != NULL &&
-	       !regions_overlap(call, sizeof(*call), startup, sizeof(*startup)) &&
+	       !memory_regions_overlap(
+		       call, sizeof(*call), startup, sizeof(*startup)) &&
 	       v34_phase4_exchange_get_data_startup(
 		       &call->state.phase4, startup);
-}
-
-static bool regions_overlap(
-	const void *left, size_t left_size,
-	const void *right, size_t right_size)
-{
-	uintptr_t left_address = (uintptr_t)left;
-	uintptr_t right_address = (uintptr_t)right;
-
-	return left_address <= right_address ?
-		       right_address - left_address < left_size :
-		       left_address - right_address < right_size;
 }
 
 static bool outputs_overlap(
@@ -197,17 +184,18 @@ static bool outputs_overlap(
 	const struct v34_call_observation *observation,
 	const struct v34_received_mapping_frame *received)
 {
-	return regions_overlap(call, sizeof(*call), sample, sizeof(*sample)) ||
-	       regions_overlap(
+	return memory_regions_overlap(
+		       call, sizeof(*call), sample, sizeof(*sample)) ||
+	       memory_regions_overlap(
 		       call, sizeof(*call), observation, sizeof(*observation)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       call, sizeof(*call), received, sizeof(*received)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       sample, sizeof(*sample), observation,
 		       sizeof(*observation)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       sample, sizeof(*sample), received, sizeof(*received)) ||
-	       regions_overlap(
+	       memory_regions_overlap(
 		       observation, sizeof(*observation), received,
 		       sizeof(*received));
 }

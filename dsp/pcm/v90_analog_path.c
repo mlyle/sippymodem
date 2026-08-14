@@ -3,6 +3,7 @@
 #include "v90_analog_path.h"
 
 #include "g711.h"
+#include "memory_region.h"
 #include "v90_downstream_data_handoff.h"
 #include "v90_upstream_data.h"
 
@@ -342,23 +343,11 @@ static uint8_t encode_sample(enum g711_law law, int16_t sample)
 		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
 }
 
-static bool region_overlaps(
-	const void *left, size_t left_size,
-	const void *right, size_t right_size)
-{
-	uintptr_t left_address = (uintptr_t)left;
-	uintptr_t right_address = (uintptr_t)right;
-
-	return left_address <= right_address ?
-		       right_address - left_address < left_size :
-		       left_address - right_address < right_size;
-}
-
 static bool output_overlaps_path(
 	const struct v90_analog_path *path,
 	const void *output, size_t output_size)
 {
-	return region_overlaps(
+	return memory_regions_overlap(
 		path, sizeof(*path), output, output_size);
 }
 

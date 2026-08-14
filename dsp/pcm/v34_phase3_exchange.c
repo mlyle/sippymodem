@@ -2,6 +2,8 @@
 
 #include "v34_phase3_exchange.h"
 
+#include "memory_region.h"
+
 #include <limits.h>
 #include <stddef.h>
 
@@ -40,12 +42,8 @@ static bool receiver_complete(
 static bool outputs_overlap(
 	const int16_t *sample, const uint32_t *events)
 {
-	uintptr_t sample_address = (uintptr_t)(const void *)sample;
-	uintptr_t event_address = (uintptr_t)(const void *)events;
-
-	return sample_address <= event_address ?
-		event_address - sample_address < sizeof(*sample) :
-		sample_address - event_address < sizeof(*events);
+	return memory_regions_overlap(
+		sample, sizeof(*sample), events, sizeof(*events));
 }
 
 static bool handoff_ready(const struct v34_phase3_exchange *exchange)
