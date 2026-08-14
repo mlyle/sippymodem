@@ -35,6 +35,13 @@ enum {
 	V92_CPU_MAX_DATA_RATE_NUMBER = 22,
 };
 
+enum v92_cpu_result {
+	V92_CPU_OK,
+	V92_CPU_INVALID_ARGUMENT,
+	V92_CPU_INVALID_PARAMETERS,
+	V92_CPU_OUTPUT_TOO_SMALL,
+};
+
 /* Long CPu fields from Table 23. Fixed-point values remain in their wire
  * representation. A data_rate_number of zero requests cleardown; 1 through
  * 22 select (data_rate_number + 20) * 8000/6 bit/s. */
@@ -69,5 +76,16 @@ size_t v92_cpu_frame_bits(
 size_t v92_cpu_frame_bytes(
 	const struct v92_cpu_parameters *parameters,
 	unsigned int bits_per_symbol);
+
+/* Pack bits in transmission order, most-significant bit first within each
+ * storage octet. Start, reserved, fill, and storage-padding bits are zero.
+ * Rejected calls leave every output unchanged. */
+enum v92_cpu_result v92_cpu_encode(
+	const struct v92_cpu_parameters *parameters,
+	unsigned int bits_per_symbol,
+	uint8_t *frame, size_t frame_capacity,
+	size_t *frame_bit_count);
+
+const char *v92_cpu_result_name(enum v92_cpu_result result);
 
 #endif /* V92_CPU_H */

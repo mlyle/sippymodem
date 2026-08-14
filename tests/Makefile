@@ -1515,7 +1515,8 @@ V92_CPT_TEST_OBJECTS := \
 V92_CPU_TEST_BINARY := $(BUILD_DIR)/test_v92_cpu
 V92_CPU_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_cpu.o \
-	$(BUILD_DIR)/v92_cpu.o
+	$(BUILD_DIR)/v92_cpu.o \
+	$(CRC16_CCITT_FALSE_OBJECT)
 V92_SUVU_TEST_BINARY := $(BUILD_DIR)/test_v92_suvu
 V92_SUVU_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_suvu.o \
