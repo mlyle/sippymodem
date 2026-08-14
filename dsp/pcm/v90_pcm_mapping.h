@@ -52,6 +52,9 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters);
 bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping);
+bool v90_pcm_mapping_equal(
+	const struct v90_pcm_mapping *left,
+	const struct v90_pcm_mapping *right);
 
 /* Map K LSB-first modulus bits into labels K0..K5. Rejected calls leave the
  * destination unchanged. */

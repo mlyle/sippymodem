@@ -544,8 +544,17 @@ static bool test_contracts(void)
 	CHECK(!v90_pcm_mapping_is_valid(&changed),
 	      "mapping accepted an inconsistent codec-plane flag");
 	changed = mapping;
+	CHECK(v90_pcm_mapping_equal(&mapping, &changed),
+	      "identical mappings did not compare equal");
+	changed.law = G711_LAW_PCMU;
+	CHECK(v90_pcm_mapping_is_valid(&changed) &&
+	      !v90_pcm_mapping_equal(&mapping, &changed) &&
+	      !v90_pcm_mapping_equal(NULL, &mapping),
+	      "mapping equality ignored media law or invalid input");
+	changed = mapping;
 	changed.frame_bits++;
 	CHECK(!v90_pcm_mapping_is_valid(&changed) &&
+	      !v90_pcm_mapping_equal(&mapping, &changed) &&
 	      !v90_pcm_mapping_is_valid(NULL),
 	      "mapping accepted inconsistent derived state");
 

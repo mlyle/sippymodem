@@ -118,6 +118,31 @@ bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
 	       mapping_capacity_is_valid(mapping);
 }
 
+bool v90_pcm_mapping_equal(
+	const struct v90_pcm_mapping *left,
+	const struct v90_pcm_mapping *right)
+{
+	return v90_pcm_mapping_is_valid(left) &&
+	       v90_pcm_mapping_is_valid(right) &&
+	       left->kind == right->kind && left->law == right->law &&
+	       left->frame_bits == right->frame_bits &&
+	       left->modulus_bits == right->modulus_bits &&
+	       left->sign_bits == right->sign_bits &&
+	       left->sign_redundancy == right->sign_redundancy &&
+	       left->spectral_lookahead == right->spectral_lookahead &&
+	       left->shaping_a1_q1_6 == right->shaping_a1_q1_6 &&
+	       left->shaping_a2_q1_6 == right->shaping_a2_q1_6 &&
+	       left->shaping_b1_q1_6 == right->shaping_b1_q1_6 &&
+	       left->shaping_b2_q1_6 == right->shaping_b2_q1_6 &&
+	       left->codec_plane_differs == right->codec_plane_differs &&
+	       memcmp(left->transmit, right->transmit,
+		      sizeof(left->transmit)) == 0 &&
+	       memcmp(left->codec, right->codec,
+		      sizeof(left->codec)) == 0 &&
+	       memcmp(left->modulus, right->modulus,
+		      sizeof(left->modulus)) == 0;
+}
+
 enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters)

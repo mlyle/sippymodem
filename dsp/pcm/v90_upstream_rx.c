@@ -23,28 +23,6 @@ static bool initial_mp_is_valid(const struct v90_mp_record *record)
 	       !mp_common(record)->acknowledges_cp;
 }
 
-static bool mappings_are_equal(
-	const struct v90_pcm_mapping *left,
-	const struct v90_pcm_mapping *right)
-{
-	return left->kind == right->kind && left->law == right->law &&
-	       left->frame_bits == right->frame_bits &&
-	       left->modulus_bits == right->modulus_bits &&
-	       left->sign_bits == right->sign_bits &&
-	       left->sign_redundancy == right->sign_redundancy &&
-	       left->spectral_lookahead == right->spectral_lookahead &&
-	       left->shaping_a1_q1_6 == right->shaping_a1_q1_6 &&
-	       left->shaping_a2_q1_6 == right->shaping_a2_q1_6 &&
-	       left->shaping_b1_q1_6 == right->shaping_b1_q1_6 &&
-	       left->shaping_b2_q1_6 == right->shaping_b2_q1_6 &&
-	       left->codec_plane_differs == right->codec_plane_differs &&
-	       memcmp(left->transmit, right->transmit,
-		      sizeof(left->transmit)) == 0 &&
-	       memcmp(left->codec, right->codec, sizeof(left->codec)) == 0 &&
-	       memcmp(left->modulus, right->modulus,
-		      sizeof(left->modulus)) == 0;
-}
-
 static bool parameters_are_equal(
 	const struct v90_cp_parameters *left,
 	const struct v90_cp_parameters *right)
@@ -241,7 +219,7 @@ static enum v90_upstream_rx_result accept_cp_record(
 		if (receiver->data_cp_received ||
 		    v90_pcm_mapping_init(&mapping, &parameters) !=
 			    V90_PCM_MAPPING_OK ||
-		    !mappings_are_equal(
+		    !v90_pcm_mapping_equal(
 			    &mapping, &receiver->training_mapping))
 			return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
 		return continue_cp(receiver);

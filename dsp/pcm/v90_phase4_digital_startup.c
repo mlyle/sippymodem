@@ -158,24 +158,7 @@ static bool mapping_matches(
 
 	return v90_pcm_mapping_init(&expected, parameters) ==
 		       V90_PCM_MAPPING_OK &&
-	       mapping->kind == expected.kind &&
-	       mapping->law == expected.law &&
-	       mapping->frame_bits == expected.frame_bits &&
-	       mapping->modulus_bits == expected.modulus_bits &&
-	       mapping->sign_bits == expected.sign_bits &&
-	       mapping->sign_redundancy == expected.sign_redundancy &&
-	       mapping->spectral_lookahead == expected.spectral_lookahead &&
-	       mapping->shaping_a1_q1_6 == expected.shaping_a1_q1_6 &&
-	       mapping->shaping_a2_q1_6 == expected.shaping_a2_q1_6 &&
-	       mapping->shaping_b1_q1_6 == expected.shaping_b1_q1_6 &&
-	       mapping->shaping_b2_q1_6 == expected.shaping_b2_q1_6 &&
-	       mapping->codec_plane_differs == expected.codec_plane_differs &&
-	       memcmp(mapping->transmit, expected.transmit,
-		      sizeof(mapping->transmit)) == 0 &&
-	       memcmp(mapping->codec, expected.codec,
-		      sizeof(mapping->codec)) == 0 &&
-	       memcmp(mapping->modulus, expected.modulus,
-		      sizeof(mapping->modulus)) == 0;
+	       v90_pcm_mapping_equal(mapping, &expected);
 }
 
 static enum v90_phase4_startup_result receive_continued(

@@ -3,33 +3,6 @@
 #include "v90_phase4_analog_startup.h"
 
 #include <stddef.h>
-#include <string.h>
-
-static bool mapping_matches(
-	const struct v90_pcm_mapping *left,
-	const struct v90_pcm_mapping *right)
-{
-	return v90_pcm_mapping_is_valid(left) &&
-	       v90_pcm_mapping_is_valid(right) &&
-	       memcmp(left->transmit, right->transmit,
-		      sizeof(left->transmit)) == 0 &&
-	       memcmp(left->codec, right->codec,
-		      sizeof(left->codec)) == 0 &&
-	       left->kind == right->kind && left->law == right->law &&
-	       memcmp(left->modulus, right->modulus,
-		      sizeof(left->modulus)) == 0 &&
-	       left->frame_bits == right->frame_bits &&
-	       left->modulus_bits == right->modulus_bits &&
-	       left->sign_bits == right->sign_bits &&
-	       left->sign_redundancy == right->sign_redundancy &&
-	       left->spectral_lookahead == right->spectral_lookahead &&
-	       left->shaping_a1_q1_6 == right->shaping_a1_q1_6 &&
-	       left->shaping_a2_q1_6 == right->shaping_a2_q1_6 &&
-	       left->shaping_b1_q1_6 == right->shaping_b1_q1_6 &&
-	       left->shaping_b2_q1_6 == right->shaping_b2_q1_6 &&
-	       left->codec_plane_differs == right->codec_plane_differs;
-}
-
 static bool handoff_mappings_match(
 	const struct v90_phase4_analog_handoff *handoff)
 {
@@ -42,7 +15,7 @@ static bool handoff_mappings_match(
 		       symbols->frame_bit_count, &parameters) == V90_CP_OK &&
 	       v90_pcm_mapping_init(&expected, &parameters) ==
 		       V90_PCM_MAPPING_OK &&
-	       mapping_matches(
+	       v90_pcm_mapping_equal(
 		       &handoff->receive.stream.decoder.mapping, &expected);
 }
 
@@ -81,7 +54,7 @@ bool v90_phase4_analog_startup_is_valid(
 			       &expected,
 			       &state->station.training_parameters) ==
 			       V90_PCM_MAPPING_OK &&
-		       mapping_matches(
+		       v90_pcm_mapping_equal(
 			       &state->receive.stream.decoder.mapping,
 			       &expected) &&
 		       (startup->failed ||
