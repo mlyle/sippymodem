@@ -14,36 +14,6 @@ enum {
 		       V92_PCM_PHASE3_TRN1U_ALIGNMENT,
 };
 
-static struct v92_pcm_info1a info1a(void)
-{
-	return (struct v92_pcm_info1a){
-		.filter_sections = V92_PCM_FILTER_P1_Z2,
-		.maximum_total_coefficients = 192,
-		.maximum_section_coefficients = 128,
-		.training_ucode = 103,
-	};
-}
-
-static bool complete_opening(
-	struct v92_pcm_phase3_opening *opening,
-	enum g711_law law, uint8_t lu_ucode)
-{
-	struct v92_pcm_info1a selection = info1a();
-
-	if (v92_pcm_phase3_opening_init(
-		    opening, law, lu_ucode, &selection) !=
-	    V92_PCM_PHASE3_OPENING_OK)
-		return false;
-	while (!v92_pcm_phase3_opening_is_complete(opening)) {
-		struct v90_pcm_symbol symbol;
-
-		if (v92_pcm_phase3_opening_next(opening, NULL, &symbol) !=
-		    V92_PCM_PHASE3_OPENING_OK)
-			return false;
-	}
-	return true;
-}
-
 static uint8_t expected_octet(
 	enum g711_law law, uint8_t ucode, bool positive)
 {
@@ -56,12 +26,10 @@ static uint8_t expected_octet(
 
 static bool check_sequence(enum g711_law law, uint8_t lu_ucode)
 {
-	struct v92_pcm_phase3_opening opening;
 	struct v92_pcm_phase3_trn1u trn1u;
 	uint8_t bits[TEST_SYMBOLS] = { 0 };
 
-	CHECK(complete_opening(&opening, law, lu_ucode) &&
-	      v92_pcm_phase3_trn1u_init(&trn1u, &opening) ==
+	CHECK(v92_pcm_phase3_trn1u_init(&trn1u, law, lu_ucode) ==
 		      V92_PCM_PHASE3_TRN1U_OK &&
 	      v92_pcm_phase3_trn1u_is_valid(&trn1u) &&
 	      trn1u.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
@@ -111,7 +79,6 @@ static bool test_sequences(void)
 
 static bool test_contracts(void)
 {
-	struct v92_pcm_phase3_opening opening;
 	struct v92_pcm_phase3_trn1u trn1u;
 	struct v90_pcm_symbol symbol;
 	uint8_t trn1u_before[sizeof(trn1u)];
@@ -122,19 +89,19 @@ static bool test_contracts(void)
 
 	memset(&trn1u, 0xa5, sizeof(trn1u));
 	memcpy(trn1u_before, &trn1u, sizeof(trn1u));
-	CHECK(v92_pcm_phase3_trn1u_init(NULL, NULL) ==
+	CHECK(v92_pcm_phase3_trn1u_init(NULL, G711_LAW_PCMU, 91u) ==
 		      V92_PCM_PHASE3_TRN1U_INVALID_ARGUMENT &&
-	      v92_pcm_phase3_trn1u_init(&trn1u, NULL) ==
+	      v92_pcm_phase3_trn1u_init(
+		      &trn1u, (enum g711_law)-1, 91u) ==
 		      V92_PCM_PHASE3_TRN1U_INVALID_ARGUMENT &&
-	      complete_opening(&opening, G711_LAW_PCMU, 91u),
-	      "TRN1u contract setup failed");
-	opening.stage = V92_PCM_PHASE3_OPENING_SILENCE;
-	CHECK(v92_pcm_phase3_trn1u_init(&trn1u, &opening) ==
+	      v92_pcm_phase3_trn1u_init(&trn1u, G711_LAW_PCMU, 0u) ==
+		      V92_PCM_PHASE3_TRN1U_INVALID_ARGUMENT &&
+	      v92_pcm_phase3_trn1u_init(&trn1u, G711_LAW_PCMU, 128u) ==
 		      V92_PCM_PHASE3_TRN1U_INVALID_ARGUMENT &&
 	      memcmp(&trn1u, trn1u_before, sizeof(trn1u)) == 0,
 	      "invalid TRN1u initialization changed its destination");
-	CHECK(complete_opening(&opening, G711_LAW_PCMU, 91u) &&
-	      v92_pcm_phase3_trn1u_init(&trn1u, &opening) ==
+	CHECK(v92_pcm_phase3_trn1u_init(
+		      &trn1u, G711_LAW_PCMU, 91u) ==
 		      V92_PCM_PHASE3_TRN1U_OK,
 	      "TRN1u contract instance did not initialize");
 	trn1u.emitted_symbols = UINT32_MAX;

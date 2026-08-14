@@ -4,7 +4,7 @@
 #define V92_PCM_PHASE3_TRN1U_H
 
 #include "v34_framing.h"
-#include "v92_pcm_phase3_opening.h"
+#include "v90_pcm_symbol.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -32,7 +32,7 @@ struct v92_pcm_phase3_trn1u {
 
 enum v92_pcm_phase3_trn1u_result v92_pcm_phase3_trn1u_init(
 	struct v92_pcm_phase3_trn1u *trn1u,
-	const struct v92_pcm_phase3_opening *opening);
+	enum g711_law law, uint8_t lu_ucode);
 bool v92_pcm_phase3_trn1u_is_valid(
 	const struct v92_pcm_phase3_trn1u *trn1u);
 bool v92_pcm_phase3_trn1u_can_handoff(

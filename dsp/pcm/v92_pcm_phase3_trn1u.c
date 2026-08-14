@@ -17,18 +17,18 @@ bool v92_pcm_phase3_trn1u_is_valid(
 
 enum v92_pcm_phase3_trn1u_result v92_pcm_phase3_trn1u_init(
 	struct v92_pcm_phase3_trn1u *trn1u,
-	const struct v92_pcm_phase3_opening *opening)
+	enum g711_law law, uint8_t lu_ucode)
 {
 	struct v92_pcm_phase3_trn1u initialized = { 0 };
 
-	if (trn1u == NULL ||
-	    !v92_pcm_phase3_opening_is_complete(opening) ||
+	if (trn1u == NULL || !g711_law_is_valid(law) ||
+	    lu_ucode == 0u || lu_ucode > 127u ||
 	    v34_scrambler_init(
 		    &initialized.scrambler, V34_POLYNOMIAL_GPA) !=
 		    V34_FRAMING_OK)
 		return V92_PCM_PHASE3_TRN1U_INVALID_ARGUMENT;
-	initialized.law = opening->law;
-	initialized.lu_ucode = opening->lu_ucode;
+	initialized.law = law;
+	initialized.lu_ucode = lu_ucode;
 	if (!v92_pcm_phase3_trn1u_is_valid(&initialized))
 		return V92_PCM_PHASE3_TRN1U_INVALID_ARGUMENT;
 	*trn1u = initialized;

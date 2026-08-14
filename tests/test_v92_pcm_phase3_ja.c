@@ -17,36 +17,6 @@ enum {
 			    TRN1U_EXTRA_SYMBOLS + JA_TEST_SYMBOLS,
 };
 
-static struct v92_pcm_info1a info1a(void)
-{
-	return (struct v92_pcm_info1a){
-		.filter_sections = V92_PCM_FILTER_P1_Z2,
-		.maximum_total_coefficients = 192,
-		.maximum_section_coefficients = 128,
-		.training_ucode = 103,
-	};
-}
-
-static bool complete_opening(
-	struct v92_pcm_phase3_opening *opening,
-	enum g711_law law, uint8_t lu_ucode)
-{
-	struct v92_pcm_info1a selection = info1a();
-
-	if (v92_pcm_phase3_opening_init(
-		    opening, law, lu_ucode, &selection) !=
-	    V92_PCM_PHASE3_OPENING_OK)
-		return false;
-	while (!v92_pcm_phase3_opening_is_complete(opening)) {
-		struct v90_pcm_symbol symbol;
-
-		if (v92_pcm_phase3_opening_next(opening, NULL, &symbol) !=
-		    V92_PCM_PHASE3_OPENING_OK)
-			return false;
-	}
-	return true;
-}
-
 static uint8_t reference_scramble(
 	uint8_t input, size_t index, const uint8_t *history)
 {
@@ -81,10 +51,7 @@ static bool prepare_trn1u(
 	enum g711_law law, uint8_t lu_ucode, size_t symbols,
 	uint8_t *scrambled_history)
 {
-	struct v92_pcm_phase3_opening opening;
-
-	if (!complete_opening(&opening, law, lu_ucode) ||
-	    v92_pcm_phase3_trn1u_init(trn1u, &opening) !=
+	if (v92_pcm_phase3_trn1u_init(trn1u, law, lu_ucode) !=
 		    V92_PCM_PHASE3_TRN1U_OK)
 		return false;
 	for (size_t index = 0; index < symbols; ++index) {

@@ -1417,9 +1417,6 @@ V92_PCM_PHASE3_TRN1U_TEST_BINARY := \
 V92_PCM_PHASE3_TRN1U_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_trn1u.o \
 	$(BUILD_DIR)/v92_pcm_phase3_trn1u.o \
-	$(BUILD_DIR)/v92_pcm_phase3_opening.o \
-	$(BUILD_DIR)/v92_pcm_phase3_ru.o \
-	$(BUILD_DIR)/v92_pcm_info1a.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/self_sync_scrambler.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
@@ -1431,9 +1428,6 @@ V92_PCM_PHASE3_JA_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_pcm_phase3_ja.o \
 	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v92_pcm_phase3_trn1u.o \
-	$(BUILD_DIR)/v92_pcm_phase3_opening.o \
-	$(BUILD_DIR)/v92_pcm_phase3_ru.o \
-	$(BUILD_DIR)/v92_pcm_info1a.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o \
 	$(BUILD_DIR)/v34_framing.o \
