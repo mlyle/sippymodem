@@ -17,6 +17,15 @@ bool v90_phase4_line_fixture_init(
 	struct v90_phase4_cp_line_tx *transmit,
 	struct v90_phase3_return_line_handoff *receive);
 
+/* The explicit-profile form lets rate/cadence matrix tests generate the same
+ * continuous boundary without duplicating its Phase 3 setup. */
+bool v90_phase4_line_fixture_init_for_profile(
+	const struct v34_phase3_profile *profile,
+	enum g711_law law, enum v34_constellation_size constellation,
+	const struct v90_cp_parameters *training,
+	struct v90_phase4_cp_line_tx *transmit,
+	struct v90_phase3_return_line_handoff *receive);
+
 /* Shared construction seam for a fixture that owns the Phase 4 transmitter. */
 bool v90_phase4_fixture_prepare_boundary(
 	enum g711_law law, struct v34_training_line *line,

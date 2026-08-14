@@ -68,6 +68,20 @@ static struct v90_mp_record local_mp(uint8_t rate_2400_bps_units)
 	};
 }
 
+static bool line_profile(
+	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
+	struct v34_phase3_profile *profile)
+{
+	const struct v34_info1_probe_result probe = {
+		.projected_data_rate_2400_bps_units = rate_2400_bps_units,
+		.high_carrier = true,
+	};
+
+	return v34_phase3_profile_init(
+		       profile, V34_ANSWERING_STATION, symbol_rate, &probe,
+		       0, 0) == V34_PHASE3_PROFILE_OK;
+}
+
 static int16_t quantize(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
@@ -97,7 +111,7 @@ static bool parameters_match(
 
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
-	uint8_t rate_2400_bps_units)
+	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units)
 {
 	struct v90_cp_parameters training =
 		cp_parameters(
@@ -110,6 +124,7 @@ static bool run_line(
 	struct v90_cp_parameters prime = data;
 	struct v90_mp_record mp = local_mp(rate_2400_bps_units);
 	struct v90_pcm_mapping training_mapping;
+	struct v34_phase3_profile profile;
 	struct v90_phase3_return_line_handoff phase3;
 	struct v90_phase4_cp_line_tx cp_tx;
 	struct v90_phase4_cp_line_rx cp_rx;
@@ -128,10 +143,13 @@ static bool run_line(
 	bool b1_received = false;
 
 	prime.acknowledges_peer = true;
-	CHECK(v90_phase4_line_fixture_init(
-		      law, constellation, &training, &cp_tx, &phase3),
-	      "line fixture did not initialize law=%d constellation=%d",
-	      law, constellation);
+	CHECK(line_profile(symbol_rate, rate_2400_bps_units, &profile) &&
+	      v90_phase4_line_fixture_init_for_profile(
+		      &profile, law, constellation, &training, &cp_tx,
+		      &phase3),
+	      "line fixture did not initialize law=%d constellation=%d "
+	      "symbol_rate=%d rate=%u",
+	      law, constellation, symbol_rate, rate_2400_bps_units);
 	CHECK(v90_phase4_cp_line_rx_init(
 		      &cp_rx, &phase3, constellation, 0.05) ==
 		      V90_PHASE4_CP_LINE_RX_OK,
@@ -234,8 +252,10 @@ static bool run_line(
 			      result == V90_UPSTREAM_RX_REQUEST_ED ||
 			      result == V90_UPSTREAM_RX_E_COMPLETE ||
 			      result == V90_UPSTREAM_RX_B1_COMPLETE,
-			      "upstream owner stopped at clock %zu: %s", clock,
-			      v90_upstream_rx_result_name(result));
+			      "upstream owner stopped at clock %zu: %s "
+			      "symbol_rate=%d rate=%u",
+			      clock, v90_upstream_rx_result_name(result),
+			      symbol_rate, rate_2400_bps_units);
 			if (result == V90_UPSTREAM_RX_OK) {
 				CHECK(memcmp(&event, &saved, sizeof(event)) == 0,
 				      "quiet sample changed its event");
@@ -386,15 +406,30 @@ int main(void)
 		{ G711_LAW_PCMU, V34_CONSTELLATION_4_POINT },
 		{ G711_LAW_PCMA, V34_CONSTELLATION_16_POINT },
 	};
+	static const struct {
+		enum v34_symbol_rate symbol_rate;
+		uint8_t maximum_rate_2400_bps_units;
+	} profiles[] = {
+		{ V34_SYMBOL_RATE_3000, 9 },
+		{ V34_SYMBOL_RATE_3200, 9 },
+		{ V34_SYMBOL_RATE_3429, 10 },
+	};
 
 	fprintf(stderr, "[ RUN      ] generated upstream entry\n");
 	for (size_t path = 0; path < ARRAY_LENGTH(paths); ++path)
-		for (uint8_t rate = V90_MP_MINIMUM_RATE_2400_BPS_UNITS;
-		     rate <= 8; ++rate)
-			if (!run_line(
-				    paths[path].law,
-				    paths[path].constellation, rate))
-				return 1;
+		for (size_t profile = 0;
+		     profile < ARRAY_LENGTH(profiles); ++profile)
+			for (uint8_t rate =
+				     V90_MP_MINIMUM_RATE_2400_BPS_UNITS;
+			     rate <= profiles[profile]
+					     .maximum_rate_2400_bps_units;
+			     ++rate)
+				if (!run_line(
+					    paths[path].law,
+					    paths[path].constellation,
+					    profiles[profile].symbol_rate,
+					    rate))
+					return 1;
 	fprintf(stderr, "[       OK ] generated upstream entry\n");
 	fprintf(stderr, "[ RUN      ] contracts\n");
 	if (!test_contracts())

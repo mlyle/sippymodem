@@ -15,7 +15,7 @@ enum {
 	NOMINAL_AMPLITUDE = 6000,
 };
 
-static struct v34_phase3_profile profile(void)
+static struct v34_phase3_profile default_profile(void)
 {
 	return (struct v34_phase3_profile){
 		.symbol_rate_numerator = 3000,
@@ -47,19 +47,19 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 }
 
 static bool establish_ja(
-	enum g711_law law, struct v90_phase3_analog_line_tx *transmit,
+	const struct v34_phase3_profile *profile, enum g711_law law,
+	struct v90_phase3_analog_line_tx *transmit,
 	struct v90_phase3_analog_line_handoff *handoff)
 {
-	struct v34_phase3_profile selected = profile();
 	struct v90_phase3_analog_rx_configuration config = configuration();
 	struct v90_phase3_analog_line_rx receive;
 	bool started_ja = false;
 
 	if (v90_phase3_analog_line_tx_init(
-		    transmit, &selected, NOMINAL_AMPLITUDE) !=
+		    transmit, profile, NOMINAL_AMPLITUDE) !=
 		    V90_PHASE3_ANALOG_LINE_TX_OK ||
 	    v90_phase3_analog_line_rx_init(
-		    &receive, &selected, &config) !=
+		    &receive, profile, &config) !=
 		    V90_PHASE3_ANALOG_LINE_RX_OK)
 		return false;
 	for (uint32_t index = 0;
@@ -180,17 +180,20 @@ static bool finish_return_s(
 	return false;
 }
 
-bool v90_phase4_fixture_prepare_boundary(
-	enum g711_law law, struct v34_training_line *line,
+static bool prepare_boundary(
+	const struct v34_phase3_profile *profile, enum g711_law law,
+	struct v34_training_line *line,
 	struct v90_phase3_return_line_rx *receive)
 {
 	struct v90_phase3_analog_line_tx prefix_transmit;
 	struct v90_phase3_analog_line_handoff prefix_handoff;
 	struct v90_phase3_return_line_tx return_transmit;
 
-	if (line == NULL || receive == NULL)
+	if (!v34_phase3_profile_is_valid(profile) || line == NULL ||
+	    receive == NULL)
 		return false;
-	return establish_ja(law, &prefix_transmit, &prefix_handoff) &&
+	return establish_ja(
+		       profile, law, &prefix_transmit, &prefix_handoff) &&
 	       v90_phase3_return_line_rx_init(
 		       receive, &prefix_handoff, 0.05) ==
 		       V90_PHASE3_RETURN_LINE_RX_OK &&
@@ -200,7 +203,17 @@ bool v90_phase4_fixture_prepare_boundary(
 	       finish_return_s(law, &return_transmit, receive, line);
 }
 
-bool v90_phase4_line_fixture_init(
+bool v90_phase4_fixture_prepare_boundary(
+	enum g711_law law, struct v34_training_line *line,
+	struct v90_phase3_return_line_rx *receive)
+{
+	struct v34_phase3_profile profile = default_profile();
+
+	return prepare_boundary(&profile, law, line, receive);
+}
+
+bool v90_phase4_line_fixture_init_for_profile(
+	const struct v34_phase3_profile *profile,
 	enum g711_law law, enum v34_constellation_size constellation,
 	const struct v90_cp_parameters *training,
 	struct v90_phase4_cp_line_tx *transmit,
@@ -212,8 +225,7 @@ bool v90_phase4_line_fixture_init(
 	struct v34_training_line line;
 
 	if (transmit == NULL || receive == NULL ||
-	    !v90_phase4_fixture_prepare_boundary(
-		    law, &line, &return_receive) ||
+	    !prepare_boundary(profile, law, &line, &return_receive) ||
 	    v90_phase4_cp_line_tx_init(
 		    &generated_transmit, &line, constellation, training) !=
 		    V90_PHASE4_CP_LINE_TX_OK)
@@ -245,4 +257,16 @@ bool v90_phase4_line_fixture_init(
 			return false;
 	}
 	return false;
+}
+
+bool v90_phase4_line_fixture_init(
+	enum g711_law law, enum v34_constellation_size constellation,
+	const struct v90_cp_parameters *training,
+	struct v90_phase4_cp_line_tx *transmit,
+	struct v90_phase3_return_line_handoff *receive)
+{
+	struct v34_phase3_profile profile = default_profile();
+
+	return v90_phase4_line_fixture_init_for_profile(
+		&profile, law, constellation, training, transmit, receive);
 }
