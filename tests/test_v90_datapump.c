@@ -169,7 +169,7 @@ static int16_t decode(enum g711_law law, uint8_t octet)
 		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
 }
 
-static bool run_pair(enum g711_law law)
+static bool run_pair(enum g711_law law, uint32_t downstream_rate)
 {
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
@@ -191,6 +191,11 @@ static bool run_pair(enum g711_law law)
 					     g711_encode_pcma(0) :
 					     g711_encode_pcmu(0);
 	bool data_enabled = false;
+
+	analog.min_rate = downstream_rate;
+	analog.max_rate = downstream_rate;
+	digital.min_rate = downstream_rate;
+	digital.max_rate = downstream_rate;
 
 	CHECK(operations != NULL && operations->process_g711 != NULL,
 	      "V.90 exact-codeword operation was not registered");
@@ -241,8 +246,8 @@ static bool run_pair(enum g711_law law)
 	}
 	CHECK(data_enabled && analog_dp->status == DPSTAT_CONNECT &&
 	      digital_dp->status == DPSTAT_CONNECT &&
-	      analog.rx_rate == V90_PROFILE_DOWNSTREAM_BIT_RATE &&
-	      digital.tx_rate == V90_PROFILE_DOWNSTREAM_BIT_RATE &&
+	      analog.rx_rate == downstream_rate &&
+	      digital.tx_rate == downstream_rate &&
 	      analog.tx_rate != 0 && analog.tx_rate == digital.rx_rate,
 	      "V.90 pair did not report complementary online rates");
 	CHECK(analog_bits.supplied_bits >= MINIMUM_RECEIVED_BITS &&
@@ -269,8 +274,15 @@ static bool test_generated_pairs(void)
 	CHECK(v90_datapump_register() == 0 &&
 	      v90_datapump_register() != 0,
 	      "V.90 registration did not reject a duplicate owner");
-	CHECK(run_pair(G711_LAW_PCMU) && run_pair(G711_LAW_PCMA),
-	      "generated V.90 data-pump pair failed");
+	for (uint8_t rate_index = 1;
+	     rate_index <= V90_PROFILE_DOWNSTREAM_RATE_COUNT; ++rate_index) {
+		uint32_t bit_rate =
+			v90_profile_downstream_bit_rate(rate_index);
+
+		CHECK(run_pair(G711_LAW_PCMU, bit_rate) &&
+		      run_pair(G711_LAW_PCMA, bit_rate),
+		      "generated V.90 pair failed at %u bit/s", bit_rate);
+	}
 	CHECK(v90_datapump_unregister() == 0 &&
 	      modem_dp_get_registered_ops(DP_V90) == NULL,
 	      "V.90 registration did not stop cleanly");
@@ -302,12 +314,14 @@ static bool test_validation(void)
 		      operations) == NULL,
 	      "V.90 accepted a missing PCM role");
 	modem.dsp_info.pcm_role = MODEM_PCM_ROLE_ANALOG;
-	modem.min_rate = V90_PROFILE_DOWNSTREAM_BIT_RATE + 1u;
+	modem.min_rate = V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE + 1u;
+	modem.max_rate = 29332;
 	CHECK(operations->create(
 		      &modem, DP_V90, 1, MODEM_RATE, MODEM_FRAG,
 		      operations) == NULL,
-	      "V.90 advertised an unverified downstream rate");
+	      "V.90 accepted a range containing no downstream rate");
 	modem.min_rate = MODEM_MIN_RATE;
+	modem.max_rate = MODEM_MAX_RATE;
 	datapump = operations->create(
 		&modem, DP_V90, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(datapump != NULL && operations->use_count == 1 &&

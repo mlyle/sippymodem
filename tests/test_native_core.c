@@ -1394,8 +1394,10 @@ static bool test_owns_source_built_datapump_registrations(void)
 
 		CHECK(process_at_command(modem, command) == 0 &&
 			      MODEM_DP(modem) == DP_V90 &&
-			      modem->min_rate == V90_PROFILE_DOWNSTREAM_BIT_RATE &&
-			      modem->max_rate == V90_PROFILE_DOWNSTREAM_BIT_RATE,
+			      modem->min_rate ==
+				      V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE &&
+			      modem->max_rate ==
+				      V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE,
 		      "AT+MS did not expose the registered V.90 profile");
 	}
 	modem->dsp_info.pcm_role = MODEM_PCM_ROLE_ANALOG;

@@ -48,14 +48,18 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 {
 	if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP) {
 		const struct v90_upstream_rx *startup = &path->upstream.startup;
+		bool mapping_state_is_valid =
+			(startup->data_cp_received == path->data_mapping_ready &&
+			 (!startup->data_cp_received ||
+			  data_mapping_matches(
+				  &path->data_mapping,
+				  &startup->data_parameters))) ||
+			(path->failed && startup->data_cp_received &&
+			 !path->data_mapping_ready);
 
 		return v90_upstream_rx_is_valid(startup) &&
 		       startup->training_mapping.law == path->law &&
-		       startup->data_cp_received == path->data_mapping_ready &&
-		       (!startup->data_cp_received ||
-			data_mapping_matches(
-				&path->data_mapping,
-				&startup->data_parameters)) &&
+		       mapping_state_is_valid &&
 		       (path->failed || !v90_upstream_rx_is_complete(startup));
 	}
 	if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA)
@@ -70,6 +74,9 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 {
 	if (path == NULL || !g711_law_is_valid(path->law) ||
+	    path->enabled_downstream_rate_mask == 0 ||
+	    (path->enabled_downstream_rate_mask &
+	     ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) != 0 ||
 	    (path->data_mapping_ready &&
 	     (!v90_pcm_mapping_is_valid(&path->data_mapping) ||
 	      path->data_mapping.kind != V90_CP_DATA ||
@@ -80,7 +87,8 @@ bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 
 enum v90_digital_path_result v90_digital_path_init(
 	struct v90_digital_path *path,
-	const struct v90_phase4_digital_handoff *handoff)
+	const struct v90_phase4_digital_handoff *handoff,
+	uint32_t enabled_downstream_rate_mask)
 {
 	struct v90_digital_path initialized = {
 		.downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_TRAINING,
@@ -89,6 +97,9 @@ enum v90_digital_path_result v90_digital_path_init(
 	const struct v90_pcm_mapping *training;
 
 	if (path == NULL || handoff == NULL ||
+	    enabled_downstream_rate_mask == 0 ||
+	    (enabled_downstream_rate_mask &
+	     ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) != 0 ||
 	    !v90_phase4_digital_transmit_handoff_is_valid(
 		    &handoff->transmit) ||
 	    !v90_phase4_cp_line_rx_is_valid(&handoff->receive) ||
@@ -96,6 +107,8 @@ enum v90_digital_path_result v90_digital_path_init(
 	    v90_phase4_cp_line_rx_has_pending_record(&handoff->receive))
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	initialized.downstream.training = handoff->transmit.transmitter;
+	initialized.enabled_downstream_rate_mask =
+		enabled_downstream_rate_mask;
 	training = &initialized.downstream.training.encoder.mapping;
 	initialized.law = training->law;
 	if (v90_upstream_rx_init(
@@ -232,6 +245,9 @@ static enum v90_digital_path_result request_mp_prime(
 	if (v90_pcm_mapping_init(&mapping, parameters) !=
 	    V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
+	if ((path->enabled_downstream_rate_mask &
+	     (UINT32_C(1) << (parameters->selected_rate_index - 1u))) == 0)
+		return V90_DIGITAL_PATH_NO_COMMON_RATE;
 	/* The upstream owner has already committed the accepted CP. Publish its
 	 * derived mapping before making the fallible downstream request so even
 	 * an internal failure leaves one valid, diagnosable owner. */

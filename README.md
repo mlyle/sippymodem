@@ -13,8 +13,8 @@ builds only that implementation and no longer builds or installs Linux kernel
 drivers. Reusable filters, modulation primitives, framing support, datapump
 registration, and multi-mode V.8 negotiation live directly under `dsp/`.
 Mode-family implementations are grouped under `dsp/v21_202/`, `dsp/v22/`,
-`dsp/v32/`, and `dsp/pcm/`; the PCM family contains V.34 now and is the home
-for V.90/V.92 work as it arrives. Existing Smart Link copyright notices are
+`dsp/v32/`, and `dsp/pcm/`; the PCM family contains V.34 and V.90 and is the
+home for V.92 work as it arrives. Existing Smart Link copyright notices are
 preserved in the source.
 
 This branch is reconstructing that suite in small, reviewable steps. The
@@ -95,9 +95,10 @@ sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
 103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, and the
-initial exact-G.711 V.90 profile are registered. The V.90 profile currently
-selects 28000 bit/s downstream and a conventional V.34 upstream; broader V.90
-rate controls and the V.92 datapump remain unavailable.
+exact-G.711 V.90 profile are registered. V.90 can select every standard PCM
+downstream rate from 28000 through 56000 bit/s and uses a conventional V.34
+upstream, currently fixed at 19200 bit/s. Broader upstream controls and the
+V.92 datapump remain unavailable.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 
@@ -170,7 +171,10 @@ trains the initial V.90 profile through V.8 over both G.711 laws, confirms exact
 codeword output at both endpoints, reports 28000 bit/s downstream with a 19200
 bit/s conventional upstream, and passes distinct binary payloads in both
 directions. This is generated in-process coverage, not external modem
-interoperability. The catalog independently sweeps V.90/V.92
+interoperability. A faster focused datapump matrix separately completes all 22
+standard V.90 downstream rates over both PCMU and PCMA, negotiates the highest
+mutually enabled rate, and passes independent bit streams in both directions.
+The catalog independently sweeps V.90/V.92
 downstream, conventional upstream, PCM-upstream, quick-connect, head-end, and
 analogue-fallback cases without a Cartesian explosion. Plans select individual
 `profiles`, reusable `profile_groups`, `lapm` and/or `raw` link modes, and a

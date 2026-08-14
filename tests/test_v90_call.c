@@ -206,6 +206,8 @@ static struct v90_call_configuration configuration(
 	struct v90_call_configuration configuration = {
 		.local_role = role,
 		.law = law,
+		.enabled_downstream_rate_mask = role == V90_ANALOG_MODEM ?
+			UINT32_C(1) : V90_JD_RATE_CAPABILITY_MASK,
 		.phase2_nominal_amplitude = PHASE2_NOMINAL_AMPLITUDE,
 	};
 
@@ -338,11 +340,19 @@ static void channel_transmit(
 
 static bool endpoint_init(
 	struct endpoint *endpoint, enum v90_modem_role role,
-	enum g711_law law)
+	enum g711_law law, uint32_t enabled_downstream_rate_mask,
+	uint8_t selected_downstream_rate_index)
 {
 	struct v90_call_configuration selected = configuration(role, law);
 	struct endpoint initialized = { 0 };
 
+	selected.enabled_downstream_rate_mask = enabled_downstream_rate_mask;
+	if (role == V90_ANALOG_MODEM)
+		selected.analog_phase4.data_parameters.selected_rate_index =
+			selected_downstream_rate_index;
+	else
+		selected.phase3.digital.jd.data_rate_capability_mask =
+			enabled_downstream_rate_mask;
 	if (endpoint == NULL ||
 	    v90_call_init(&initialized.call, &selected) != V90_CALL_OK)
 		return false;
@@ -535,8 +545,10 @@ static bool goal_is_reached(
 		digital->source_failure_checked);
 }
 
-static bool run_call(
-	enum g711_law law, size_t delay, enum call_goal goal)
+static bool run_configured_call(
+	enum g711_law law, size_t delay, enum call_goal goal,
+	uint32_t analog_rate_mask, uint8_t analog_selected_rate_index,
+	uint32_t digital_rate_mask, uint32_t expected_downstream_rate)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -544,8 +556,11 @@ static bool run_call(
 	bool milestone_reached = false;
 
 	CHECK(channel_init(&channel, law, delay) &&
-	      endpoint_init(&analog, V90_ANALOG_MODEM, law) &&
-	      endpoint_init(&digital, V90_DIGITAL_MODEM, law),
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, analog_rate_mask,
+		      analog_selected_rate_index) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law, digital_rate_mask, 0),
 	      "law %u delay %zu V.90 endpoints did not initialize",
 	      (unsigned int)law, delay);
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
@@ -642,7 +657,7 @@ static bool run_call(
 			      &digital_receive_rate) &&
 		      analog_transmit_rate == digital_receive_rate &&
 		      analog_receive_rate == digital_transmit_rate &&
-		      analog_receive_rate == DATA_DOWNSTREAM_RATE,
+		      analog_receive_rate == expected_downstream_rate,
 		      "law %u V.90 role-local rates did not agree: "
 		      "%u/%u and %u/%u",
 		      (unsigned int)law, analog_transmit_rate,
@@ -653,6 +668,23 @@ static bool run_call(
 		      aliased_rate == UINT32_C(0xa5a55a5a),
 		      "overlapping V.90 rate outputs were changed");
 	}
+	return true;
+}
+
+static bool run_call(
+	enum g711_law law, size_t delay, enum call_goal goal)
+{
+	return run_configured_call(
+		law, delay, goal, UINT32_C(1), 1,
+		V90_JD_RATE_CAPABILITY_MASK, DATA_DOWNSTREAM_RATE);
+}
+
+static bool test_downstream_rate_negotiation(void)
+{
+	CHECK(run_configured_call(
+		      G711_LAW_PCMU, 1, CALL_GOAL_ONLINE_DATA,
+		      UINT32_C(3), 2, UINT32_C(1), DATA_DOWNSTREAM_RATE),
+	      "call did not select the highest mutually enabled rate");
 	return true;
 }
 
@@ -704,6 +736,22 @@ static bool test_validation(void)
 	selected.local_role = (enum v90_modem_role)99;
 	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
 	      "call accepted an invalid role");
+	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.enabled_downstream_rate_mask = 0;
+	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	      "call accepted an empty downstream rate set");
+	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.enabled_downstream_rate_mask = UINT32_C(2);
+	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	      "analogue call accepted a disabled selected rate");
+	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.enabled_downstream_rate_mask |= UINT32_C(1) << 21u;
+	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	      "analogue call enabled a rate its CP cannot represent");
+	selected = configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.enabled_downstream_rate_mask = UINT32_C(1);
+	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	      "digital call advertised rates outside its enabled set");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.phase3.analog.nominal_peak_amplitude = 0;
 	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
@@ -819,6 +867,8 @@ int main(void)
 	} tests[] = {
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
+		{ "downstream rate negotiation",
+		  test_downstream_rate_negotiation },
 		{ "validation and transactionality", test_validation },
 		{ "result names", test_result_names },
 	};

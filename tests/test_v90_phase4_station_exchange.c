@@ -207,7 +207,9 @@ static bool verify_final_downstream_exchange(
 	struct v90_phase4_cp_line_rx *cp_receive,
 	struct v90_phase4_digital_transmit_handoff *digital,
 	struct v90_phase4_analog_receive_handoff *analog,
-	const struct v90_cp_parameters *training)
+	const struct v90_cp_parameters *training,
+	uint32_t enabled_downstream_rate_mask,
+	bool expect_rate_rejection)
 {
 	struct v90_cp_parameters data_cp = *training;
 	struct v90_phase4_analog_handoff analog_handoff = {
@@ -236,7 +238,9 @@ static bool verify_final_downstream_exchange(
 	CHECK(v90_analog_path_init(
 		      &analog_path, &analog_handoff, &data_cp) ==
 		      V90_ANALOG_PATH_OK &&
-	      v90_digital_path_init(&digital_path, &digital_handoff) ==
+	      v90_digital_path_init(
+		      &digital_path, &digital_handoff,
+		      enabled_downstream_rate_mask) ==
 		      V90_DIGITAL_PATH_OK,
 	      "online paths did not start at the CPt/Ri boundary");
 	{
@@ -328,6 +332,13 @@ static bool verify_final_downstream_exchange(
 		digital_result = v90_digital_path_octet(
 			&digital_path, analog_octet, source_downstream_frame,
 			&downstream_source, &digital_octet, &upstream_frame);
+		if (expect_rate_rejection &&
+		    digital_result == V90_DIGITAL_PATH_NO_COMMON_RATE) {
+			CHECK(v90_digital_path_has_failed(&digital_path) &&
+			      !digital_path.data_mapping_ready,
+			      "rejected CP published an unsupported mapping");
+			return true;
+		}
 		if (digital_result == V90_DIGITAL_PATH_SOURCE_FAILURE) {
 			CHECK(downstream_source.reject_next &&
 			      memcmp(&digital_path, &saved_digital,
@@ -397,6 +408,7 @@ static bool verify_final_downstream_exchange(
 	}
 
 	CHECK(analog_path.peer_mp_received &&
+	      !expect_rate_rejection &&
 	      analog_path.peer_mp_prime_received &&
 	      analog_path.cp_prime_sent && analog_path.finishing_cp &&
 	      analog_path.ed_armed && trn2d_complete &&
@@ -557,7 +569,12 @@ static bool run_exchange(
 	      "paired owners disagreed about their Phase 4 handoffs");
 	CHECK(verify_final_downstream_exchange(
 		      &analog_transmit, &digital_receive,
-		      &digital_transmit, &analog_receive, &training),
+		      &digital_transmit, &analog_receive, &training,
+		      V90_JD_RATE_CAPABILITY_MASK, false) &&
+	      verify_final_downstream_exchange(
+		      &analog_transmit, &digital_receive,
+		      &digital_transmit, &analog_receive, &training,
+		      UINT32_C(2), true),
 	      "paired owners disagreed through downstream data");
 	return true;
 }
@@ -617,11 +634,16 @@ static bool test_path_contracts(void)
 	      strcmp(v90_analog_path_result_name(
 		     (enum v90_analog_path_result)99),
 		     "unknown") == 0 &&
-	      v90_digital_path_init(NULL, &handoff) ==
+	      v90_digital_path_init(
+		      NULL, &handoff, V90_JD_RATE_CAPABILITY_MASK) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
-	      v90_digital_path_init(&path, NULL) ==
+	      v90_digital_path_init(
+		      &path, NULL, V90_JD_RATE_CAPABILITY_MASK) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
-	      v90_digital_path_init(&path, &handoff) ==
+	      v90_digital_path_init(&path, &handoff, 0) ==
+		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
+	      v90_digital_path_init(
+		      &path, &handoff, V90_JD_RATE_CAPABILITY_MASK) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
 	      memcmp(&path, &saved, sizeof(path)) == 0 &&
 	      v90_digital_path_octet(

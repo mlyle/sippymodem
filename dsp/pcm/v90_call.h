@@ -75,6 +75,10 @@ struct v90_call_digital_phase4_configuration {
 struct v90_call_configuration {
 	enum v90_modem_role local_role;
 	enum g711_law law;
+	/* Rates locally enabled for the PCM downstream. The digital station
+	 * advertises this mask in Jd; the analogue station intersects it with
+	 * the received Jd before sending data CP. */
+	uint32_t enabled_downstream_rate_mask;
 	int16_t phase2_nominal_amplitude;
 	union v90_call_local_info0 local_info0;
 	union v90_call_local_info1 local_info1;
@@ -169,6 +173,7 @@ struct v90_call {
 		analog_phase4_configuration;
 	struct v90_call_digital_phase4_configuration
 		digital_phase4_configuration;
+	uint32_t enabled_downstream_rate_mask;
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum v90_call_stage stage;

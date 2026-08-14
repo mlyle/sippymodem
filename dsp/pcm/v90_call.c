@@ -18,6 +18,39 @@ static bool role_is_valid(enum v90_modem_role role)
 	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
 }
 
+static bool downstream_rate_mask_is_valid(uint32_t mask)
+{
+	return mask != 0 &&
+	       (mask & ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) == 0;
+}
+
+static bool downstream_rate_is_enabled(
+	uint32_t mask, uint8_t rate_index)
+{
+	return rate_index != 0 && rate_index <= V90_CP_RATE_INDEX_MAX &&
+	       (mask & (UINT32_C(1) << (rate_index - 1u))) != 0;
+}
+
+static uint8_t highest_downstream_rate(uint32_t mask)
+{
+	for (uint8_t index = V90_CP_RATE_INDEX_MAX; index > 0; --index) {
+		if (downstream_rate_is_enabled(mask, index))
+			return index;
+	}
+	return 0;
+}
+
+static bool cp_supports_rate_mask(
+	const struct v90_cp_parameters *parameters, uint32_t mask)
+{
+	struct v90_cp_parameters selected = *parameters;
+	struct v90_pcm_mapping mapping;
+
+	selected.selected_rate_index = highest_downstream_rate(mask);
+	return selected.selected_rate_index != 0 &&
+	       v90_pcm_mapping_init(&mapping, &selected) == V90_PCM_MAPPING_OK;
+}
+
 static enum g711_law info0_law(const struct v90_info0d *info0)
 {
 	return info0->pcm_law == V90_PCM_A_LAW ?
@@ -67,11 +100,20 @@ static bool configuration_is_valid(
 	if (configuration == NULL ||
 	    !role_is_valid(configuration->local_role) ||
 	    !g711_law_is_valid(configuration->law) ||
+	    !downstream_rate_mask_is_valid(
+		    configuration->enabled_downstream_rate_mask) ||
 	    configuration->phase2_nominal_amplitude <= 0)
 		return false;
 	if (configuration->local_role == V90_ANALOG_MODEM)
 		return v90_info0_is_valid(
 			       &configuration->local_info0.analog) &&
+		       downstream_rate_is_enabled(
+			       configuration->enabled_downstream_rate_mask,
+			       configuration->analog_phase4.data_parameters
+				       .selected_rate_index) &&
+		       cp_supports_rate_mask(
+			       &configuration->analog_phase4.data_parameters,
+			       configuration->enabled_downstream_rate_mask) &&
 		       analog_configuration_is_valid(
 			       &configuration->local_info1,
 			       &configuration->phase3,
@@ -81,6 +123,9 @@ static bool configuration_is_valid(
 		       &configuration->local_info0.digital) &&
 	       info0_law(&configuration->local_info0.digital) ==
 		       configuration->law &&
+	       configuration->phase3.digital.jd
+		       .data_rate_capability_mask ==
+		       configuration->enabled_downstream_rate_mask &&
 	       digital_configuration_is_valid(
 		       &configuration->local_info1,
 		       &configuration->phase3,
@@ -89,14 +134,26 @@ static bool configuration_is_valid(
 
 static bool stored_configuration_is_valid(const struct v90_call *call)
 {
-	if (!role_is_valid(call->local_role) || !g711_law_is_valid(call->law))
+	if (!role_is_valid(call->local_role) || !g711_law_is_valid(call->law) ||
+	    !downstream_rate_mask_is_valid(
+		    call->enabled_downstream_rate_mask))
 		return false;
 	return call->local_role == V90_ANALOG_MODEM ?
+		       downstream_rate_is_enabled(
+			       call->enabled_downstream_rate_mask,
+			       call->analog_phase4_configuration.data_parameters
+				       .selected_rate_index) &&
+		       cp_supports_rate_mask(
+			       &call->analog_phase4_configuration.data_parameters,
+			       call->enabled_downstream_rate_mask) &&
 		       analog_configuration_is_valid(
 			       &call->local_info1,
 			       &call->phase3_configuration,
 			       &call->analog_phase4_configuration,
 			       call->law) :
+		       call->phase3_configuration.digital.jd
+			       .data_rate_capability_mask ==
+			       call->enabled_downstream_rate_mask &&
 		       digital_configuration_is_valid(
 			       &call->local_info1,
 			       &call->phase3_configuration,
@@ -255,6 +312,8 @@ enum v90_call_result v90_call_init(
 	}
 	initialized.local_role = configuration->local_role;
 	initialized.law = configuration->law;
+	initialized.enabled_downstream_rate_mask =
+		configuration->enabled_downstream_rate_mask;
 	initialized.stage = V90_CALL_PHASE2;
 	if (!v90_call_is_valid(&initialized))
 		return V90_CALL_NUMERIC_FAILURE;
@@ -548,6 +607,7 @@ static enum v90_call_result enter_phase4(struct v90_call *call)
 		struct v34_training_line transmit_handoff;
 		struct v90_phase4_analog_station station;
 		struct v90_phase4_analog_startup startup;
+		uint8_t selected_rate_index;
 		enum v90_call_result result;
 
 		if (v90_phase3_analog_station_transmit_handoff(
@@ -557,10 +617,17 @@ static enum v90_call_result enter_phase4(struct v90_call *call)
 			    &mixed->phase3, &receive_handoff) !=
 			    V90_PHASE3_ANALOG_STATION_OK)
 			return V90_CALL_INVALID_STATE;
+		selected_rate_index = highest_downstream_rate(
+			call->enabled_downstream_rate_mask &
+			receive_handoff.jd.data_rate_capability_mask);
+		if (selected_rate_index == 0)
+			return V90_CALL_UNUSABLE_SELECTION;
+		next.analog_phase4_configuration.data_parameters
+			.selected_rate_index = selected_rate_index;
 		result = analog_phase4_result(v90_phase4_analog_station_resume(
 			&station, &transmit_handoff, &mixed->receive,
 			&receive_handoff.jd,
-			&call->analog_phase4_configuration
+			&next.analog_phase4_configuration
 				.training_parameters));
 		if (result != V90_CALL_OK)
 			return result;
@@ -846,7 +913,9 @@ enum v90_call_result v90_call_start_data_path(struct v90_call *call)
 		    V90_PHASE4_STARTUP_OK)
 			return V90_CALL_NUMERIC_FAILURE;
 		result = digital_path_result(
-			v90_digital_path_init(&path, &handoff));
+			v90_digital_path_init(
+				&path, &handoff,
+				call->enabled_downstream_rate_mask));
 		if (result != V90_CALL_OK)
 			return result;
 		next.state.data_path.digital = path;

@@ -92,14 +92,16 @@ static struct dp *create_v90(
 	int max_fragment, struct dp_operations *operations)
 {
 	struct v90_datapump *datapump;
+	struct v90_downstream_selection downstream;
 	enum v90_modem_role role;
 
 	if (modem == NULL || id != DP_V90 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v90_operations || operations->use_count == INT_MAX ||
 	    !role_from_modem(modem, &role) ||
-	    modem->min_rate > V90_PROFILE_DOWNSTREAM_BIT_RATE ||
-	    modem->max_rate < V90_PROFILE_DOWNSTREAM_BIT_RATE)
+	    v90_profile_select_downstream(
+		    &downstream, modem->min_rate, modem->max_rate) !=
+		    V90_PROFILE_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
