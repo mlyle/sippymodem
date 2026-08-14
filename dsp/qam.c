@@ -3,6 +3,7 @@
 #include "qam.h"
 
 #include "integer_math.h"
+#include "phase.h"
 
 #include <limits.h>
 #include <math.h>
@@ -16,8 +17,6 @@ enum {
 };
 
 static const double QAM_PI = 3.1415926535897932384626433832795;
-static const double QAM_TWO_PI = 6.283185307179586476925286766559;
-static const double QAM_PHASE_SCALE = 4294967296.0;
 static const double QAM_SINGULARITY_EPSILON = 1e-10;
 static const double QAM_POINT_EPSILON = 1e-12;
 /* Unit-average-power square training constellations reach 9/5 at a corner. */
@@ -38,27 +37,6 @@ static bool transmit_point_is_valid(
 	return isfinite(power) &&
 	       (power <= maximum_point_power ||
 		power / maximum_point_power <= 1.0 + QAM_POINT_EPSILON);
-}
-
-static uint32_t phase_step(
-	uint32_t sample_rate, uint32_t frequency_numerator,
-	uint32_t frequency_denominator)
-{
-	uint64_t numerator;
-	uint64_t denominator;
-	uint64_t quotient;
-	uint64_t remainder;
-
-	if (sample_rate == 0 || frequency_numerator == 0 ||
-	    frequency_denominator == 0)
-		return 0;
-	numerator = (uint64_t)frequency_numerator << 32;
-	denominator = (uint64_t)sample_rate * frequency_denominator;
-	quotient = numerator / denominator;
-	remainder = numerator % denominator;
-	if (remainder >= (denominator + 1u) / 2u)
-		quotient++;
-	return (uint32_t)quotient;
 }
 
 enum qam_result qam_nearest_quarter_turn(
@@ -106,9 +84,9 @@ static bool channel_is_valid(
 		channel->carrier_frequency_denominator;
 	if ((uint64_t)channel->carrier_frequency_numerator * 2u >=
 			carrier_denominator ||
-	    phase_step(channel->sample_rate,
-		       channel->carrier_frequency_numerator,
-		       channel->carrier_frequency_denominator) == 0)
+	    phase_step_u32(channel->sample_rate,
+			  channel->carrier_frequency_numerator,
+			  channel->carrier_frequency_denominator) == 0)
 		return false;
 	period = (uint64_t)channel->sample_rate *
 		 channel->symbol_rate_denominator;
@@ -194,9 +172,10 @@ bool qam_modulator_is_valid(
 	    modulator->symbol_period_units != period ||
 	    modulator->symbol_phase_units >= period ||
 	    modulator->carrier_phase_step !=
-		    phase_step(modulator->channel.sample_rate,
-			       modulator->channel.carrier_frequency_numerator,
-			       modulator->channel.carrier_frequency_denominator) ||
+		    phase_step_u32(
+			    modulator->channel.sample_rate,
+			    modulator->channel.carrier_frequency_numerator,
+			    modulator->channel.carrier_frequency_denominator) ||
 	    modulator->amplitude <= 0 ||
 	    !isfinite(modulator->pulse_normalization) ||
 	    modulator->pulse_normalization <= 0.0 ||
@@ -243,7 +222,7 @@ qam_modulator_init_with_point_power_limit(
 	memset(modulator, 0, sizeof(*modulator));
 	modulator->channel = *channel;
 	modulator->symbol_period_units = period;
-	modulator->carrier_phase_step = phase_step(
+	modulator->carrier_phase_step = phase_step_u32(
 		channel->sample_rate, channel->carrier_frequency_numerator,
 		channel->carrier_frequency_denominator);
 	modulator->pulse_normalization = normalization;
@@ -346,8 +325,7 @@ enum qam_result qam_modulator_sample_f64(
 	if (modulator->needs_symbol)
 		append_symbol(modulator, point);
 	baseband_sample(modulator, &in_phase, &quadrature);
-	carrier_phase = (double)modulator->carrier_phase *
-			(QAM_TWO_PI / QAM_PHASE_SCALE);
+	carrier_phase = phase_radians_u32(modulator->carrier_phase);
 	waveform = (in_phase * cos(carrier_phase) -
 		    quadrature * sin(carrier_phase)) /
 		   modulator->pulse_normalization;
@@ -524,9 +502,10 @@ bool qam_demodulator_is_valid(
 	    demodulator->history_index >= filter_count ||
 	    demodulator->history_count > filter_count ||
 	    demodulator->carrier_phase_step !=
-		    phase_step(demodulator->channel.sample_rate,
-			       demodulator->channel.carrier_frequency_numerator,
-			       demodulator->channel.carrier_frequency_denominator) ||
+		    phase_step_u32(
+			    demodulator->channel.sample_rate,
+			    demodulator->channel.carrier_frequency_numerator,
+			    demodulator->channel.carrier_frequency_denominator) ||
 	    !isfinite(demodulator->line_power) ||
 	    demodulator->line_power < 0.0 ||
 	    !isfinite(demodulator->symbol_power) ||
@@ -601,7 +580,7 @@ enum qam_result qam_demodulator_init_with_timing_windows(
 	demodulator->symbol_period_units = period;
 	demodulator->timing_step_units = timing_step;
 	demodulator->recovery_step_units = channel->symbol_rate_numerator;
-	demodulator->carrier_phase_step = phase_step(
+	demodulator->carrier_phase_step = phase_step_u32(
 		channel->sample_rate, channel->carrier_frequency_numerator,
 		channel->carrier_frequency_denominator);
 	demodulator->matched_filter_count = filter_count;
@@ -633,8 +612,7 @@ enum qam_result qam_demodulator_reset(
 static void mix_sample(
 	struct qam_demodulator *demodulator, int16_t sample)
 {
-	double radians = (double)demodulator->carrier_phase *
-			 (QAM_TWO_PI / QAM_PHASE_SCALE);
+	double radians = phase_radians_u32(demodulator->carrier_phase);
 	double in_phase = sample * cos(radians);
 	double quadrature = -sample * sin(radians);
 

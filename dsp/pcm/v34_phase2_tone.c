@@ -2,13 +2,12 @@
 
 #include "v34_phase2_tone.h"
 
+#include "phase.h"
+
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
 
-static const double V34_PHASE2_TONE_TWO_PI =
-	6.283185307179586476925286766559;
-static const double V34_PHASE2_TONE_PHASE_SCALE = 4294967296.0;
 static const double V34_PHASE2_TONE_ANSWERING_CARRIER_GAIN =
 	0.8912509381337456; /* -1 dB. */
 static const double V34_PHASE2_TONE_MIN_LINE_POWER = 256.0 * 256.0;
@@ -35,22 +34,6 @@ static bool role_is_valid(enum v34_station_role role)
 	       role == V34_ANSWERING_STATION;
 }
 
-static uint32_t phase_step(uint32_t frequency_hz)
-{
-	uint64_t scaled =
-		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
-
-	return (uint32_t)(
-		(scaled + V34_PHASE2_SAMPLE_RATE / 2u) /
-		V34_PHASE2_SAMPLE_RATE);
-}
-
-static double phase_radians(uint32_t phase)
-{
-	return (double)phase *
-	       (V34_PHASE2_TONE_TWO_PI / V34_PHASE2_TONE_PHASE_SCALE);
-}
-
 static uint32_t local_carrier_hz(
 	enum v34_station_role role)
 {
@@ -73,7 +56,9 @@ bool v34_phase2_tone_transmitter_is_valid(
 	if (transmitter == NULL || !role_is_valid(transmitter->local_role) ||
 	    transmitter->carrier_amplitude <= 0 ||
 	    transmitter->carrier_phase_step !=
-		    phase_step(local_carrier_hz(transmitter->local_role)))
+		    phase_step_u32(
+			    V34_PHASE2_SAMPLE_RATE,
+			    local_carrier_hz(transmitter->local_role), 1))
 		return false;
 	if (transmitter->local_role ==
 	    V34_CALLING_STATION)
@@ -81,7 +66,9 @@ bool v34_phase2_tone_transmitter_is_valid(
 		       transmitter->guard_phase_step == 0;
 	return transmitter->guard_amplitude > 0 &&
 	       transmitter->guard_phase_step ==
-		       phase_step(V34_PHASE2_ANSWERING_GUARD_HZ) &&
+		       phase_step_u32(
+			       V34_PHASE2_SAMPLE_RATE,
+			       V34_PHASE2_ANSWERING_GUARD_HZ, 1) &&
 	       transmitter->carrier_amplitude <=
 		       INT16_MAX - transmitter->guard_amplitude;
 }
@@ -106,14 +93,16 @@ v34_phase2_tone_transmitter_init(
 			(double)nominal_amplitude *
 			V34_PHASE2_TONE_ANSWERING_CARRIER_GAIN);
 		guard_amplitude = nominal_amplitude;
-		initialized.guard_phase_step = phase_step(
-			V34_PHASE2_ANSWERING_GUARD_HZ);
+		initialized.guard_phase_step = phase_step_u32(
+			V34_PHASE2_SAMPLE_RATE,
+			V34_PHASE2_ANSWERING_GUARD_HZ, 1);
 	}
 	if (carrier_amplitude <= 0 || guard_amplitude < 0 ||
 	    carrier_amplitude + guard_amplitude > INT16_MAX)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	initialized.carrier_phase_step = phase_step(
-		local_carrier_hz(local_role));
+	initialized.carrier_phase_step = phase_step_u32(
+		V34_PHASE2_SAMPLE_RATE,
+		local_carrier_hz(local_role), 1);
 	initialized.carrier_amplitude = (int16_t)carrier_amplitude;
 	initialized.guard_amplitude = (int16_t)guard_amplitude;
 	if (!v34_phase2_tone_transmitter_is_valid(&initialized))
@@ -144,12 +133,12 @@ v34_phase2_tone_transmitter_sample(
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	mixed = lround(
 		(double)transmitter->carrier_amplitude *
-		sin(phase_radians(transmitter->carrier_phase)));
+		sin(phase_radians_u32(transmitter->carrier_phase)));
 	transmitter->carrier_phase += transmitter->carrier_phase_step;
 	if (transmitter->guard_amplitude != 0) {
 		mixed += lround(
 			(double)transmitter->guard_amplitude *
-			sin(phase_radians(transmitter->guard_phase)));
+			sin(phase_radians_u32(transmitter->guard_phase)));
 		transmitter->guard_phase += transmitter->guard_phase_step;
 	}
 	*sample = (int16_t)mixed;
@@ -186,7 +175,9 @@ bool v34_phase2_tone_detector_is_valid(
 
 	if (detector == NULL || !role_is_valid(detector->local_role) ||
 	    detector->carrier_phase_step !=
-		    phase_step(remote_carrier_hz(detector->local_role)) ||
+		    phase_step_u32(
+			    V34_PHASE2_SAMPLE_RATE,
+			    remote_carrier_hz(detector->local_role), 1) ||
 	    !history_is_valid(detector) || !isfinite(detector->in_phase) ||
 	    fabs(detector->in_phase) > V34_PHASE2_TONE_MAX_PROJECTION ||
 	    !isfinite(detector->quadrature) ||
@@ -247,7 +238,9 @@ v34_phase2_tone_detector_init(
 	enum v34_station_role local_role)
 {
 	struct v34_phase2_tone_detector initialized = {
-		.carrier_phase_step = phase_step(remote_carrier_hz(local_role)),
+		.carrier_phase_step = phase_step_u32(
+			V34_PHASE2_SAMPLE_RATE,
+			remote_carrier_hz(local_role), 1),
 		.local_role = local_role,
 	};
 
@@ -275,7 +268,7 @@ static void add_observation(
 {
 	struct v34_phase2_tone_observation *old =
 		&detector->history[detector->history_index];
-	double radians = phase_radians(detector->carrier_phase);
+	double radians = phase_radians_u32(detector->carrier_phase);
 	struct v34_phase2_tone_observation current = {
 		.in_phase = (double)sample * cos(radians),
 		.quadrature = (double)sample * sin(radians),

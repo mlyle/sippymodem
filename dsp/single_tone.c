@@ -2,12 +2,11 @@
 
 #include "single_tone.h"
 
+#include "phase.h"
+
 #include <limits.h>
 #include <math.h>
 
-static const double SINGLE_TONE_TWO_PI =
-	6.283185307179586476925286766559;
-static const double SINGLE_TONE_PHASE_SCALE = 4294967296.0;
 static const double SINGLE_TONE_MIN_LINE_POWER = 256.0 * 256.0;
 static const double SINGLE_TONE_DEFAULT_MIN_CARRIER_SHARE = 0.70;
 static const double SINGLE_TONE_MAX_CARRIER_SHARE = 1.20;
@@ -27,28 +26,14 @@ static bool frequency_is_valid(unsigned int frequency_hz)
 	       frequency_hz < SINGLE_TONE_SAMPLE_RATE / 2;
 }
 
-static uint32_t phase_step(unsigned int frequency_hz)
-{
-	uint64_t scaled =
-		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
-
-	return (uint32_t)(
-		(scaled + SINGLE_TONE_SAMPLE_RATE / 2u) /
-		SINGLE_TONE_SAMPLE_RATE);
-}
-
-static double phase_radians(uint32_t phase)
-{
-	return (double)phase *
-	       (SINGLE_TONE_TWO_PI / SINGLE_TONE_PHASE_SCALE);
-}
-
 bool single_tone_transmitter_is_valid(
 	const struct single_tone_transmitter *transmitter)
 {
 	return transmitter != NULL &&
 	       frequency_is_valid(transmitter->frequency_hz) &&
-	       transmitter->phase_step == phase_step(transmitter->frequency_hz) &&
+	       transmitter->phase_step == phase_step_u32(
+		       SINGLE_TONE_SAMPLE_RATE,
+		       transmitter->frequency_hz, 1) &&
 	       transmitter->amplitude > 0;
 }
 
@@ -58,7 +43,8 @@ single_tone_transmitter_init(
 	unsigned int frequency_hz, int16_t amplitude)
 {
 	struct single_tone_transmitter initialized = {
-		.phase_step = phase_step(frequency_hz),
+		.phase_step = phase_step_u32(
+			SINGLE_TONE_SAMPLE_RATE, frequency_hz, 1),
 		.frequency_hz = (uint16_t)frequency_hz,
 		.amplitude = amplitude,
 	};
@@ -90,7 +76,7 @@ single_tone_transmitter_sample(
 		return SINGLE_TONE_INVALID_ARGUMENT;
 	*sample = (int16_t)lround(
 		(double)transmitter->amplitude *
-		sin(phase_radians(transmitter->phase)));
+		sin(phase_radians_u32(transmitter->phase)));
 	transmitter->phase += transmitter->phase_step;
 	return SINGLE_TONE_OK;
 }
@@ -101,7 +87,8 @@ bool single_tone_detector_is_valid(
 	double reference_power;
 
 	if (detector == NULL || !frequency_is_valid(detector->frequency_hz) ||
-	    detector->phase_step != phase_step(detector->frequency_hz) ||
+	    detector->phase_step != phase_step_u32(
+		    SINGLE_TONE_SAMPLE_RATE, detector->frequency_hz, 1) ||
 	    detector->history_index >=
 		    SINGLE_TONE_WINDOW_SAMPLES ||
 	    detector->history_count > SINGLE_TONE_WINDOW_SAMPLES ||
@@ -170,7 +157,8 @@ single_tone_detector_init_with_minimum_carrier_share(
 {
 	struct single_tone_detector initialized = {
 		.minimum_carrier_share = minimum_carrier_share,
-		.phase_step = phase_step(frequency_hz),
+		.phase_step = phase_step_u32(
+			SINGLE_TONE_SAMPLE_RATE, frequency_hz, 1),
 		.frequency_hz = (uint16_t)frequency_hz,
 	};
 
@@ -201,7 +189,7 @@ static void add_observation(
 {
 	struct single_tone_observation *old =
 		&detector->history[detector->history_index];
-	double radians = phase_radians(detector->phase);
+	double radians = phase_radians_u32(detector->phase);
 	struct single_tone_observation current = {
 		.in_phase = (double)sample * cos(radians),
 		.quadrature = (double)sample * sin(radians),

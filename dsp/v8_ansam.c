@@ -2,11 +2,10 @@
 
 #include "v8_ansam.h"
 
+#include "phase.h"
+
 #include <math.h>
 
-static const double V8_ANSAM_TWO_PI =
-	6.283185307179586476925286766559;
-static const double V8_ANSAM_PHASE_SCALE = 4294967296.0;
 static const double V8_ANSAM_MODULATION_DEPTH = 0.2;
 static const double V8_ANSAM_MIN_MEAN_SQUARE = 256.0 * 256.0;
 static const double V8_ANSAM_MIN_CARRIER_SHARE = 0.75;
@@ -15,20 +14,6 @@ static const double V8_ANSAM_MAX_CARRIER_SHARE = 1.10;
 static const double V8_ANSAM_MIN_MODULATION_RATIO = 0.008;
 static const double V8_ANSAM_MAX_MODULATION_RATIO = 0.050;
 
-static uint32_t phase_step(unsigned int frequency_hz)
-{
-	uint64_t scaled =
-		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
-
-	return (uint32_t)((scaled + V8_ANSAM_SAMPLE_RATE / 2u) /
-			  V8_ANSAM_SAMPLE_RATE);
-}
-
-static double phase_radians(uint32_t phase)
-{
-	return (double)phase * (V8_ANSAM_TWO_PI / V8_ANSAM_PHASE_SCALE);
-}
-
 static bool generator_is_valid(
 	const struct v8_ansam_generator *generator)
 {
@@ -36,9 +21,13 @@ static bool generator_is_valid(
 	       generator->average_amplitude <=
 		       V8_ANSAM_MAX_AVERAGE_AMPLITUDE &&
 	       generator->carrier_phase_step ==
-		       phase_step(V8_ANSAM_CARRIER_HZ) &&
+		       phase_step_u32(
+			       V8_ANSAM_SAMPLE_RATE,
+			       V8_ANSAM_CARRIER_HZ, 1) &&
 	       generator->modulation_phase_step ==
-		       phase_step(V8_ANSAM_MODULATION_HZ) &&
+		       phase_step_u32(
+			       V8_ANSAM_SAMPLE_RATE,
+			       V8_ANSAM_MODULATION_HZ, 1) &&
 	       ((!generator->phase_reversals &&
 		 generator->samples_until_reversal == 0) ||
 		(generator->phase_reversals &&
@@ -53,9 +42,13 @@ enum v8_ansam_result v8_ansam_generator_init(
 {
 	struct v8_ansam_generator initialized = {
 		.carrier_phase_step =
-			phase_step(V8_ANSAM_CARRIER_HZ),
+			phase_step_u32(
+				V8_ANSAM_SAMPLE_RATE,
+				V8_ANSAM_CARRIER_HZ, 1),
 		.modulation_phase_step =
-			phase_step(V8_ANSAM_MODULATION_HZ),
+			phase_step_u32(
+				V8_ANSAM_SAMPLE_RATE,
+				V8_ANSAM_MODULATION_HZ, 1),
 		.samples_until_reversal =
 			phase_reversals ?
 				V8_ANSAM_REVERSAL_SAMPLES : 0,
@@ -79,10 +72,11 @@ enum v8_ansam_result v8_ansam_generate(
 		return V8_ANSAM_INVALID_ARGUMENT;
 	next = *generator;
 	for (size_t index = 0; index < count; ++index) {
-		double carrier = sin(phase_radians(next.carrier_phase));
+		double carrier = sin(phase_radians_u32(next.carrier_phase));
 		double envelope =
 			1.0 + V8_ANSAM_MODULATION_DEPTH *
-				      cos(phase_radians(next.modulation_phase));
+				      cos(phase_radians_u32(
+					      next.modulation_phase));
 
 		samples[index] = (int16_t)lround(
 			(double)next.average_amplitude * envelope * carrier);
@@ -102,7 +96,8 @@ enum v8_ansam_result v8_ansam_generate(
 static struct v8_ansam_projection projection(unsigned int frequency)
 {
 	return (struct v8_ansam_projection){
-		.phase_step = phase_step(frequency),
+		.phase_step = phase_step_u32(
+			V8_ANSAM_SAMPLE_RATE, frequency, 1),
 	};
 }
 
@@ -112,7 +107,8 @@ static bool projection_is_valid(
 {
 	return projection != NULL && isfinite(projection->in_phase) &&
 	       isfinite(projection->quadrature) &&
-	       projection->phase_step == phase_step(frequency);
+	       projection->phase_step == phase_step_u32(
+		       V8_ANSAM_SAMPLE_RATE, frequency, 1);
 }
 
 static bool detector_is_valid(
@@ -180,7 +176,7 @@ void v8_ansam_detector_reset(
 static void project_sample(
 	struct v8_ansam_projection *projection, int16_t sample)
 {
-	double radians = phase_radians(projection->phase);
+	double radians = phase_radians_u32(projection->phase);
 
 	projection->in_phase += (double)sample * cos(radians);
 	projection->quadrature += (double)sample * sin(radians);

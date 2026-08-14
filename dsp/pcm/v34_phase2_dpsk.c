@@ -2,6 +2,8 @@
 
 #include "v34_phase2_dpsk.h"
 
+#include "phase.h"
+
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
@@ -9,7 +11,6 @@
 static const double V34_PHASE2_DPSK_ROLLOFF = 0.75;
 static const double V34_PHASE2_DPSK_TWO_PI =
 	6.283185307179586476925286766559;
-static const double V34_PHASE2_DPSK_PHASE_SCALE = 4294967296.0;
 static const double V34_PHASE2_ANSWERING_CARRIER_GAIN =
 	0.8912509381337456; /* -1 dB. */
 static const double V34_PHASE2_ANSWERING_GUARD_GAIN =
@@ -48,16 +49,6 @@ static struct qam_channel phase2_channel(uint32_t carrier_hz)
 	};
 }
 
-static uint32_t phase_step(uint32_t frequency_hz)
-{
-	uint64_t scaled =
-		(uint64_t)frequency_hz * (UINT64_C(1) << 32);
-
-	return (uint32_t)(
-		(scaled + V34_PHASE2_SAMPLE_RATE / 2u) /
-		V34_PHASE2_SAMPLE_RATE);
-}
-
 static bool channel_matches(
 	const struct qam_channel *channel, uint32_t carrier_hz)
 {
@@ -87,7 +78,9 @@ static bool transmitter_metadata_is_valid(
 		       transmitter->guard_phase_step == 0;
 	return transmitter->guard_amplitude > 0 &&
 	       transmitter->guard_phase_step ==
-		       phase_step(V34_PHASE2_ANSWERING_GUARD_HZ) &&
+		       phase_step_u32(
+			       V34_PHASE2_SAMPLE_RATE,
+			       V34_PHASE2_ANSWERING_GUARD_HZ, 1) &&
 	       transmitter->carrier.amplitude <=
 		       INT16_MAX - transmitter->guard_amplitude;
 }
@@ -133,8 +126,9 @@ v34_phase2_dpsk_transmitter_init(
 		guard_amplitude = lround(
 			(double)nominal_amplitude *
 			V34_PHASE2_ANSWERING_GUARD_GAIN);
-		initialized.guard_phase_step = phase_step(
-			V34_PHASE2_ANSWERING_GUARD_HZ);
+		initialized.guard_phase_step = phase_step_u32(
+			V34_PHASE2_SAMPLE_RATE,
+			V34_PHASE2_ANSWERING_GUARD_HZ, 1);
 	}
 	if (carrier_amplitude <= 0 || guard_amplitude < 0 ||
 	    carrier_amplitude + guard_amplitude > INT16_MAX)
@@ -148,12 +142,6 @@ v34_phase2_dpsk_transmitter_init(
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	*transmitter = initialized;
 	return V34_PHASE2_DPSK_OK;
-}
-
-static double phase_radians(uint32_t phase)
-{
-	return (double)phase *
-	       (V34_PHASE2_DPSK_TWO_PI / V34_PHASE2_DPSK_PHASE_SCALE);
 }
 
 enum v34_phase2_dpsk_result
@@ -197,7 +185,7 @@ v34_phase2_dpsk_transmitter_sample(
 	if (transmitter->guard_amplitude != 0) {
 		mixed += lround(
 			(double)transmitter->guard_amplitude *
-			sin(phase_radians(transmitter->guard_phase)));
+			sin(phase_radians_u32(transmitter->guard_phase)));
 		transmitter->guard_phase += transmitter->guard_phase_step;
 	}
 	*sample = (int16_t)mixed;
