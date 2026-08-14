@@ -2,6 +2,8 @@
 
 #include "pcm_dil_descriptor.h"
 
+#include "packed_bits.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -43,14 +45,6 @@ static bool span_is_valid(
 	return descriptor != NULL && bytes != 0u && capacity >= bytes;
 }
 
-static uint8_t descriptor_bit(
-	const uint8_t *descriptor, size_t index)
-{
-	return (uint8_t)((descriptor[index / 8u] >>
-			  (7u - index % 8u)) &
-			  1u);
-}
-
 static void assign_descriptor_bit(
 	uint8_t *descriptor, size_t index, bool value)
 {
@@ -85,7 +79,7 @@ bool pcm_dil_descriptor_read_lsb_field(
 		    descriptor, capacity, layout, first_bit, field_bits))
 		return false;
 	for (unsigned int bit = 0; bit < field_bits; ++bit)
-		decoded |= (uint32_t)descriptor_bit(
+		decoded |= (uint32_t)packed_msb_bit(
 				   descriptor, first_bit + bit) << bit;
 	*value = decoded;
 	return true;
@@ -121,18 +115,18 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_framing(
 	if (!span_is_valid(descriptor, capacity, layout))
 		return PCM_DIL_DESCRIPTOR_INVALID_ARGUMENT;
 	for (size_t bit = 0; bit < PCM_DIL_FRAME_SYNC_BITS; ++bit) {
-		if (descriptor_bit(descriptor, bit) == 0u)
+		if (packed_msb_bit(descriptor, bit) == 0u)
 			return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
 	}
 	for (size_t bit = FRAME_START_FIRST_BIT;
 	     bit <= layout->crc_start_bit;
 	     bit += PCM_DIL_FIELD_STRIDE_BITS) {
-		if (descriptor_bit(descriptor, bit) != 0u)
+		if (packed_msb_bit(descriptor, bit) != 0u)
 			return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
 	}
 	for (size_t bit = layout->crc_start_bit + PCM_DIL_CRC_BITS + 1u;
 	     bit < layout->bit_count; ++bit) {
-		if (descriptor_bit(descriptor, bit) != 0u)
+		if (packed_msb_bit(descriptor, bit) != 0u)
 			return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
 	}
 	return PCM_DIL_DESCRIPTOR_OK;
@@ -157,7 +151,7 @@ static uint16_t descriptor_crc(
 	     bit < layout->crc_start_bit; ++bit) {
 		if (!is_start_bit(bit))
 			remainder = crc_step(
-				remainder, descriptor_bit(descriptor, bit) != 0u);
+				remainder, packed_msb_bit(descriptor, bit) != 0u);
 	}
 	return remainder;
 }
@@ -169,7 +163,7 @@ static uint16_t encoded_crc(
 	uint16_t encoded = 0u;
 
 	for (size_t bit = 0; bit < PCM_DIL_CRC_BITS; ++bit)
-		encoded |= (uint16_t)descriptor_bit(
+		encoded |= (uint16_t)packed_msb_bit(
 				   descriptor,
 				   layout->crc_start_bit + 1u + bit) << bit;
 	return encoded;

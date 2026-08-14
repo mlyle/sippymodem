@@ -4,6 +4,7 @@
 
 #include "v34_constellation.h"
 #include "v34_phase3_trn.h"
+#include "packed_bits.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -44,7 +45,7 @@ static bool unread_bits_are_zero(
 {
 	for (uint16_t bit = first_bit; bit < V90_DIL_ZERO_DESCRIPTOR_BITS;
 	     ++bit) {
-		if (((descriptor[bit / 8u] >> (7u - bit % 8u)) & 1u) != 0)
+		if (packed_msb_bit(descriptor, bit) != 0)
 			return false;
 	}
 	return true;

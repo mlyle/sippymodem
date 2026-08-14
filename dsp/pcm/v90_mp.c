@@ -3,6 +3,7 @@
 #include "v90_mp.h"
 
 #include "crc16_ccitt_false.h"
+#include "packed_bits.h"
 
 #include <string.h>
 
@@ -113,13 +114,6 @@ enum v90_mp_result v90_mp_sequence_size(
 	return V90_MP_OK;
 }
 
-static uint8_t sequence_bit(const uint8_t *sequence, size_t bit_index)
-{
-	return (uint8_t)((sequence[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
-
 static void set_sequence_bit(
 	uint8_t *sequence, size_t bit_index, bool value)
 {
@@ -144,7 +138,7 @@ static uint16_t decode_lsb_first_field(
 	uint16_t value = 0;
 
 	for (size_t bit = 0; bit < bit_count; ++bit)
-		value |= (uint16_t)sequence_bit(sequence, first_bit + bit)
+		value |= (uint16_t)packed_msb_bit(sequence, first_bit + bit)
 			 << bit;
 	return value;
 }
@@ -167,7 +161,7 @@ static uint16_t decode_msb_first_field(
 
 	for (size_t bit = 0; bit < bit_count; ++bit)
 		value = (uint16_t)((value << 1) |
-				   sequence_bit(sequence, first_bit + bit));
+				   packed_msb_bit(sequence, first_bit + bit));
 	return value;
 }
 
@@ -186,7 +180,7 @@ static uint16_t sequence_crc(
 	for (size_t bit = V90_MP_TYPE_BIT; bit < crc_start_bit; ++bit) {
 		if (!is_start_bit(bit))
 			remainder = crc16_ccitt_false_step(
-				remainder, sequence_bit(sequence, bit) != 0);
+				remainder, packed_msb_bit(sequence, bit) != 0);
 	}
 	return remainder;
 }
@@ -291,7 +285,7 @@ enum v90_mp_result v90_mp_encode(
 static bool frame_sync_is_valid(const uint8_t *sequence)
 {
 	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit) {
-		if (sequence_bit(sequence, bit) == 0)
+		if (packed_msb_bit(sequence, bit) == 0)
 			return false;
 	}
 	return true;
@@ -305,12 +299,12 @@ static bool framing_bits_are_valid(
 		return false;
 	for (size_t bit = V90_MP_START0_BIT; bit <= crc_start_bit;
 	     bit += V90_MP_FIELD_STRIDE_BITS) {
-		if (sequence_bit(sequence, bit) != 0)
+		if (packed_msb_bit(sequence, bit) != 0)
 			return false;
 	}
 	for (size_t bit = crc_start_bit + 1u + V90_MP_CRC_BITS;
 	     bit < sequence_bit_count; ++bit) {
-		if (sequence_bit(sequence, bit) != 0)
+		if (packed_msb_bit(sequence, bit) != 0)
 			return false;
 	}
 	return true;
@@ -334,11 +328,11 @@ static void decode_common(
 			sequence, V90_MP_TRELLIS_FIRST_BIT,
 			V90_MP_TRELLIS_BITS);
 	parameters->upstream_nonlinear_encoding =
-		sequence_bit(sequence, V90_MP_NONLINEAR_ENCODING_BIT) != 0;
+		packed_msb_bit(sequence, V90_MP_NONLINEAR_ENCODING_BIT) != 0;
 	parameters->upstream_expanded_shaping =
-		sequence_bit(sequence, V90_MP_EXPANDED_SHAPING_BIT) != 0;
+		packed_msb_bit(sequence, V90_MP_EXPANDED_SHAPING_BIT) != 0;
 	parameters->acknowledges_cp =
-		sequence_bit(sequence, V90_MP_ACKNOWLEDGMENT_BIT) != 0;
+		packed_msb_bit(sequence, V90_MP_ACKNOWLEDGMENT_BIT) != 0;
 	parameters->upstream_rate_capability_mask =
 		decode_lsb_first_field(
 			sequence, V90_MP_RATE_CAPABILITY_FIRST_BIT,
@@ -360,7 +354,7 @@ enum v90_mp_result v90_mp_decode(
 		return V90_MP_INVALID_PARAMETERS;
 	if (sequence_bit_count <= V90_MP_TYPE_BIT)
 		return V90_MP_INVALID_FRAME;
-	decoded.type = sequence_bit(sequence, V90_MP_TYPE_BIT) != 0 ?
+	decoded.type = packed_msb_bit(sequence, V90_MP_TYPE_BIT) != 0 ?
 			       V90_MP_RECORD_TYPE1 :
 			       V90_MP_RECORD_TYPE0;
 	if (v90_mp_sequence_size(

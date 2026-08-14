@@ -2,6 +2,8 @@
 
 #include "v90_phase3_digital_tx.h"
 
+#include "packed_bits.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -126,10 +128,8 @@ static enum v90_phase3_digital_tx_result next_prefix(
 static uint8_t jd_bit(
 	const struct v90_phase3_digital_tx *transmitter)
 {
-	return (uint8_t)(
-		(transmitter->jd_frame[transmitter->bit_index / 8u] >>
-		 (7u - transmitter->bit_index % 8u)) &
-		1u);
+	return packed_msb_bit(
+		transmitter->jd_frame, transmitter->bit_index);
 }
 
 static enum v90_phase3_digital_tx_result next_jd(

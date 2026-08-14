@@ -2,6 +2,8 @@
 
 #include "v90_phase4_cp_tx.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 struct encoded_cp_record {
@@ -183,19 +185,11 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_start_next_record(
 	return V90_PHASE4_CP_TX_OK;
 }
 
-static uint8_t frame_bit(
-	const uint8_t *frame, size_t bit_index)
-{
-	return (uint8_t)((frame[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
-
 static uint8_t frame_dibit(
 	const uint8_t *frame, size_t first_bit)
 {
-	return (uint8_t)((frame_bit(frame, first_bit) << 1) |
-			 frame_bit(frame, first_bit + 1u));
+	return (uint8_t)((packed_msb_bit(frame, first_bit) << 1) |
+			 packed_msb_bit(frame, first_bit + 1u));
 }
 
 enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(

@@ -2,6 +2,8 @@
 
 #include "v90_info1.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 enum {
@@ -18,13 +20,6 @@ enum {
 	FREQUENCY_OFFSET_MODULUS = 1024,
 };
 
-static uint8_t payload_bit(const uint8_t *payload, size_t index)
-{
-	return (uint8_t)((payload[index / 8u] >>
-			  (7u - index % 8u)) &
-			 1u);
-}
-
 static void set_payload_bit(uint8_t *payload, size_t index, bool value)
 {
 	if (value)
@@ -38,7 +33,7 @@ static uint16_t decode_field(
 	uint16_t value = 0;
 
 	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint16_t)(payload_bit(payload, first_bit + index)
+		value |= (uint16_t)(packed_msb_bit(payload, first_bit + index)
 				    << index);
 	return value;
 }

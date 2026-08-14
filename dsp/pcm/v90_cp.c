@@ -3,6 +3,7 @@
 #include "v90_cp.h"
 
 #include "crc16_ccitt_false.h"
+#include "packed_bits.h"
 
 #include <string.h>
 
@@ -121,13 +122,6 @@ size_t v90_cp_frame_bytes(const struct v90_cp_parameters *parameters)
 	return bits == 0 ? 0 : (bits + 7u) / 8u;
 }
 
-static uint8_t frame_bit(const uint8_t *frame, size_t bit_index)
-{
-	return (uint8_t)((frame[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
-
 static void set_frame_bit(
 	uint8_t *frame, size_t bit_index, bool value)
 {
@@ -142,7 +136,7 @@ static uint32_t decode_lsb_first(
 	uint32_t value = 0;
 
 	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint32_t)frame_bit(frame, first_bit + index) << index;
+		value |= (uint32_t)packed_msb_bit(frame, first_bit + index) << index;
 	return value;
 }
 
@@ -177,7 +171,7 @@ static uint16_t frame_crc(
 	     index < payload_end; ++index) {
 		if (index % 17u != 0)
 			remainder = crc16_ccitt_false_step(
-				remainder, frame_bit(frame, index) != 0);
+				remainder, packed_msb_bit(frame, index) != 0);
 	}
 	return remainder;
 }
@@ -294,7 +288,7 @@ static bool bits_are_zero(
 	const uint8_t *frame, size_t first_bit, size_t bit_count)
 {
 	for (size_t index = 0; index < bit_count; ++index) {
-		if (frame_bit(frame, first_bit + index) != 0)
+		if (packed_msb_bit(frame, first_bit + index) != 0)
 			return false;
 	}
 	return true;
@@ -305,15 +299,15 @@ static bool framing_is_valid(
 	size_t frame_bit_count)
 {
 	for (size_t index = 0; index < 17u; ++index) {
-		if (frame_bit(frame, index) == 0)
+		if (packed_msb_bit(frame, index) == 0)
 			return false;
 	}
 	for (size_t index = CP_START_FIRST_BIT;
 	     index <= payload_end; index += 17u) {
-		if (frame_bit(frame, index) != 0)
+		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
-	return frame_bit(frame, 18) == 0 &&
+	return packed_msb_bit(frame, 18) == 0 &&
 	       bits_are_zero(frame, 25, 5) &&
 	       bits_are_zero(frame, 129, 7) &&
 	       bits_are_zero(frame, payload_end + 17u, 3) &&
@@ -338,7 +332,7 @@ static void decode_constellation(
 {
 	for (uint8_t ucode = 0;
 	     ucode < V90_CP_CONSTELLATION_UCODES; ++ucode) {
-		if (frame_bit(frame, mask_bit(set_index, ucode)) != 0)
+		if (packed_msb_bit(frame, mask_bit(set_index, ucode)) != 0)
 			constellation->ucode_mask[ucode / 8u] |=
 				(uint8_t)(1u << (ucode % 8u));
 	}
@@ -347,19 +341,19 @@ static void decode_constellation(
 static void decode_header(
 	const uint8_t *frame, struct v90_cp_parameters *parameters)
 {
-	parameters->kind = frame_bit(frame, CP_KIND_BIT) != 0 ?
+	parameters->kind = packed_msb_bit(frame, CP_KIND_BIT) != 0 ?
 				   V90_CP_DATA : V90_CP_TRAINING;
-	parameters->law = frame_bit(frame, CP_LAW_BIT) != 0 ?
+	parameters->law = packed_msb_bit(frame, CP_LAW_BIT) != 0 ?
 				  G711_LAW_PCMA : G711_LAW_PCMU;
 	parameters->selected_rate_index = (uint8_t)decode_lsb_first(
 		frame, CP_RATE_FIRST_BIT, CP_RATE_BITS);
 	parameters->request_silence =
-		frame_bit(frame, CP_SILENCE_BIT) != 0;
+		packed_msb_bit(frame, CP_SILENCE_BIT) != 0;
 	parameters->sign_redundancy = (uint8_t)decode_lsb_first(
 		frame, CP_SIGN_REDUNDANCY_FIRST_BIT,
 		CP_SIGN_REDUNDANCY_BITS);
 	parameters->acknowledges_peer =
-		frame_bit(frame, CP_ACKNOWLEDGMENT_BIT) != 0;
+		packed_msb_bit(frame, CP_ACKNOWLEDGMENT_BIT) != 0;
 	parameters->upstream_rate_mask = (uint16_t)decode_lsb_first(
 		frame, CP_UPSTREAM_RATE_FIRST_BIT,
 		V90_CP_UPSTREAM_RATE_BITS);
@@ -407,7 +401,7 @@ enum v90_cp_result v90_cp_decode(
 			constellation_count = (size_t)index + 1u;
 	}
 	decoded.codec_constellations_differ =
-		frame_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0;
+		packed_msb_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0;
 	set_count = constellation_count *
 		    (decoded.codec_constellations_differ ? 2u : 1u);
 	expected_bits = V90_CP_HEADER_BITS +
@@ -422,7 +416,7 @@ enum v90_cp_result v90_cp_decode(
 	for (size_t index = 0; index < CP_CRC_BITS; ++index)
 		received_crc = (uint16_t)(
 			(received_crc << 1) |
-			frame_bit(frame, payload_end + 1u + index));
+			packed_msb_bit(frame, payload_end + 1u + index));
 	if (received_crc != frame_crc(frame, payload_end))
 		return V90_CP_CRC_MISMATCH;
 

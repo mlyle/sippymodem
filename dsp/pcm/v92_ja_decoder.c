@@ -2,17 +2,11 @@
 
 #include "v92_ja_decoder.h"
 
+#include "packed_bits.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
-static uint8_t descriptor_bit(
-	const uint8_t *descriptor, size_t bit_index)
-{
-	return (uint8_t)((descriptor[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			  1u);
-}
 
 static void store_bit(
 	uint8_t *descriptor, size_t bit_index, uint8_t bit)
@@ -27,7 +21,7 @@ static bool unused_bits_are_zero(
 {
 	for (size_t bit = decoder->bit_index;
 	     bit < sizeof(decoder->descriptor) * 8u; ++bit) {
-		if (descriptor_bit(decoder->descriptor, bit) != 0u)
+		if (packed_msb_bit(decoder->descriptor, bit) != 0u)
 			return false;
 	}
 	return true;

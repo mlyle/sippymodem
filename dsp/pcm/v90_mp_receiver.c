@@ -2,15 +2,9 @@
 
 #include "v90_mp_receiver.h"
 
-#include <string.h>
+#include "packed_bits.h"
 
-static uint8_t sequence_bit(
-	const uint8_t *sequence, size_t bit_index)
-{
-	return (uint8_t)((sequence[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
+#include <string.h>
 
 static void set_sequence_bit(
 	uint8_t *sequence, size_t bit_index, bool value)
@@ -47,10 +41,10 @@ static bool packed_tail_is_zero(
 static bool prefix_is_valid(const uint8_t *sequence)
 {
 	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit) {
-		if (sequence_bit(sequence, bit) == 0)
+		if (packed_msb_bit(sequence, bit) == 0)
 			return false;
 	}
-	return sequence_bit(sequence, V90_MP_FRAME_SYNC_BITS) == 0;
+	return packed_msb_bit(sequence, V90_MP_FRAME_SYNC_BITS) == 0;
 }
 
 static uint8_t trailing_one_count(
@@ -59,7 +53,7 @@ static uint8_t trailing_one_count(
 	uint8_t count = 0;
 
 	while (bit_count != 0 && count < V90_MP_FRAME_SYNC_BITS) {
-		if (sequence_bit(sequence, bit_count - 1u) == 0)
+		if (packed_msb_bit(sequence, bit_count - 1u) == 0)
 			break;
 		count++;
 		bit_count--;
@@ -99,7 +93,7 @@ bool v90_mp_receiver_is_valid(
 		return receiver->sequence_bit_count == 0 &&
 		       receiver->bit_index == V90_MP_FRAME_SYNC_BITS + 1u &&
 		       receiver->sync_one_count == 0;
-	type = sequence_bit(receiver->sequence, V90_MP_FRAME_SYNC_BITS + 1u) !=
+	type = packed_msb_bit(receiver->sequence, V90_MP_FRAME_SYNC_BITS + 1u) !=
 		       0 ?
 		       V90_MP_RECORD_TYPE1 :
 		       V90_MP_RECORD_TYPE0;

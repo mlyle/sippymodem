@@ -2,6 +2,8 @@
 
 #include "v34_info0.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 enum {
@@ -40,13 +42,6 @@ bool v34_info0_is_valid(
 	       clock_source_is_valid(info0->transmit_clock_source);
 }
 
-static uint8_t payload_bit(const uint8_t *payload, size_t bit_index)
-{
-	return (uint8_t)((payload[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
-
 static void set_payload_bit(
 	uint8_t *payload, size_t bit_index, bool value)
 {
@@ -61,7 +56,7 @@ static uint8_t decode_lsb_first_field(
 	uint8_t value = 0;
 
 	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint8_t)(payload_bit(payload, first_bit + index)
+		value |= (uint8_t)(packed_msb_bit(payload, first_bit + index)
 				   << index);
 	return value;
 }
@@ -145,25 +140,25 @@ enum v34_info0_result v34_info0_decode(
 		return V34_INFO0_INVALID_PAYLOAD;
 
 	decoded.symbol_rate_2743_supported =
-		payload_bit(payload, V34_INFO0_SYMBOL_RATE_2743_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_SYMBOL_RATE_2743_BIT) != 0;
 	decoded.symbol_rate_2800_supported =
-		payload_bit(payload, V34_INFO0_SYMBOL_RATE_2800_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_SYMBOL_RATE_2800_BIT) != 0;
 	decoded.symbol_rate_3429_supported =
-		payload_bit(payload, V34_INFO0_SYMBOL_RATE_3429_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_SYMBOL_RATE_3429_BIT) != 0;
 	decoded.low_carrier_3000_supported =
-		payload_bit(payload, V34_INFO0_LOW_CARRIER_3000_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_LOW_CARRIER_3000_BIT) != 0;
 	decoded.high_carrier_3000_supported =
-		payload_bit(payload, V34_INFO0_HIGH_CARRIER_3000_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_HIGH_CARRIER_3000_BIT) != 0;
 	decoded.low_carrier_3200_supported =
-		payload_bit(payload, V34_INFO0_LOW_CARRIER_3200_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_LOW_CARRIER_3200_BIT) != 0;
 	decoded.high_carrier_3200_supported =
-		payload_bit(payload, V34_INFO0_HIGH_CARRIER_3200_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_HIGH_CARRIER_3200_BIT) != 0;
 	decoded.symbol_rate_3429_transmit_permitted =
-		payload_bit(
+		packed_msb_bit(
 			payload,
 			V34_INFO0_SYMBOL_RATE_3429_TRANSMIT_PERMITTED_BIT) != 0;
 	decoded.transmit_power_reduction_supported =
-		payload_bit(payload, V34_INFO0_TRANSMIT_POWER_REDUCTION_BIT) !=
+		packed_msb_bit(payload, V34_INFO0_TRANSMIT_POWER_REDUCTION_BIT) !=
 		0;
 	decoded.maximum_symbol_rate_difference_steps =
 		decode_lsb_first_field(
@@ -171,16 +166,16 @@ enum v34_info0_result v34_info0_decode(
 			V34_INFO0_MAXIMUM_SYMBOL_RATE_DIFFERENCE_STEPS_FIRST_BIT,
 			V34_INFO0_MAXIMUM_SYMBOL_RATE_DIFFERENCE_STEPS_BITS);
 	decoded.cme_modem =
-		payload_bit(payload, V34_INFO0_CME_MODEM_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_CME_MODEM_BIT) != 0;
 	decoded.constellation_1664_supported =
-		payload_bit(payload, V34_INFO0_CONSTELLATION_1664_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_CONSTELLATION_1664_BIT) != 0;
 	decoded.transmit_clock_source =
 		(enum v34_info0_clock_source)
 			decode_lsb_first_field(
 				payload, V34_INFO0_TRANSMIT_CLOCK_FIRST_BIT,
 				V34_INFO0_TRANSMIT_CLOCK_BITS);
 	decoded.acknowledges_peer_info0 =
-		payload_bit(payload, V34_INFO0_ACKNOWLEDGMENT_BIT) != 0;
+		packed_msb_bit(payload, V34_INFO0_ACKNOWLEDGMENT_BIT) != 0;
 
 	if (!v34_info0_is_valid(&decoded))
 		return V34_INFO0_INVALID_PAYLOAD;

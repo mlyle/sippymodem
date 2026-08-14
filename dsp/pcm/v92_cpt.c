@@ -3,6 +3,7 @@
 #include "v92_cpt.h"
 
 #include "crc16_ccitt_false.h"
+#include "packed_bits.h"
 
 #include <limits.h>
 #include <string.h>
@@ -119,13 +120,6 @@ size_t v92_cpt_frame_bytes(
 	return bits == 0 ? 0 : (bits + 7u) / 8u;
 }
 
-static uint8_t frame_bit(const uint8_t *frame, size_t bit_index)
-{
-	return (uint8_t)((frame[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
-
 static void set_frame_bit(
 	uint8_t *frame, size_t bit_index, bool value)
 {
@@ -165,7 +159,7 @@ static uint16_t frame_crc(const uint8_t *frame, size_t payload_end)
 	     index < payload_end; ++index) {
 		if (index % 17u != 0)
 			remainder = crc16_ccitt_false_step(
-				remainder, frame_bit(frame, index) != 0);
+				remainder, packed_msb_bit(frame, index) != 0);
 	}
 	return remainder;
 }
@@ -187,7 +181,7 @@ static uint32_t decode_lsb_first(
 	uint32_t value = 0;
 
 	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint32_t)frame_bit(frame, first_bit + index) << index;
+		value |= (uint32_t)packed_msb_bit(frame, first_bit + index) << index;
 	return value;
 }
 
@@ -288,7 +282,7 @@ static bool bits_are_zero(
 	const uint8_t *frame, size_t first_bit, size_t bit_count)
 {
 	for (size_t index = 0; index < bit_count; ++index) {
-		if (frame_bit(frame, first_bit + index) != 0)
+		if (packed_msb_bit(frame, first_bit + index) != 0)
 			return false;
 	}
 	return true;
@@ -299,11 +293,11 @@ static bool framing_is_valid(
 	size_t frame_bit_count)
 {
 	for (size_t index = 0; index < 17u; ++index) {
-		if (frame_bit(frame, index) == 0)
+		if (packed_msb_bit(frame, index) == 0)
 			return false;
 	}
 	for (size_t index = 17u; index <= payload_end; index += 17u) {
-		if (frame_bit(frame, index) != 0)
+		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
 	return bits_are_zero(frame, 18u, 3u) &&
@@ -330,7 +324,7 @@ static void decode_constellation(
 	struct pcm_constellation *constellation)
 {
 	for (uint8_t ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode) {
-		if (frame_bit(frame, mask_bit(set_index, ucode)) != 0)
+		if (packed_msb_bit(frame, mask_bit(set_index, ucode)) != 0)
 			constellation->ucode_mask[ucode / 8u] |=
 				(uint8_t)(1u << (ucode % 8u));
 	}
@@ -339,7 +333,7 @@ static void decode_constellation(
 static void decode_header(
 	const uint8_t *frame, struct v92_cpt_parameters *parameters)
 {
-	parameters->law = frame_bit(frame, CPT_LAW_BIT) != 0 ?
+	parameters->law = packed_msb_bit(frame, CPT_LAW_BIT) != 0 ?
 				  G711_LAW_PCMA : G711_LAW_PCMU;
 	parameters->selected_rate_index = (uint8_t)decode_lsb_first(
 		frame, CPT_RATE_FIRST_BIT, CPT_RATE_BITS);
@@ -347,7 +341,7 @@ static void decode_header(
 		frame, CPT_SIGN_REDUNDANCY_FIRST_BIT,
 		CPT_SIGN_REDUNDANCY_BITS);
 	parameters->acknowledges_peer =
-		frame_bit(frame, CPT_ACKNOWLEDGMENT_BIT) != 0;
+		packed_msb_bit(frame, CPT_ACKNOWLEDGMENT_BIT) != 0;
 	parameters->spectral_lookahead = (uint8_t)decode_lsb_first(
 		frame, CPT_LOOKAHEAD_FIRST_BIT, CPT_LOOKAHEAD_BITS);
 	parameters->trn1d_ratio_q3_13 = (uint16_t)decode_lsb_first(
@@ -394,7 +388,7 @@ enum v92_cpt_result v92_cpt_decode(
 			constellation_count = (size_t)index + 1u;
 	}
 	decoded.codec_constellations_differ =
-		frame_bit(frame, CPT_CODEC_DIFFERENCE_BIT) != 0;
+		packed_msb_bit(frame, CPT_CODEC_DIFFERENCE_BIT) != 0;
 	set_count = constellation_count *
 		(decoded.codec_constellations_differ ? 2u : 1u);
 	payload_end = V92_CPT_HEADER_BITS +
@@ -407,7 +401,7 @@ enum v92_cpt_result v92_cpt_decode(
 	for (size_t index = 0; index < CPT_CRC_BITS; ++index)
 		received_crc = (uint16_t)(
 			(received_crc << 1) |
-			frame_bit(frame, payload_end + 1u + index));
+			packed_msb_bit(frame, payload_end + 1u + index));
 	if (received_crc != frame_crc(frame, payload_end))
 		return V92_CPT_CRC_MISMATCH;
 

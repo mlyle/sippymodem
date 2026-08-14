@@ -2,6 +2,8 @@
 
 #include "crc16_ccitt_false.h"
 
+#include "packed_bits.h"
+
 enum {
 	CRC16_CCITT_FALSE_POLYNOMIAL = 0x1021,
 };
@@ -26,9 +28,7 @@ crc16_ccitt_false_packed_bits(
 	if ((packed == NULL && bit_count != 0) || remainder == NULL)
 		return CRC16_CCITT_FALSE_INVALID_ARGUMENT;
 	for (size_t index = 0; index < bit_count; ++index) {
-		bool bit = ((packed[index / 8u] >>
-			      (7u - index % 8u)) &
-			     1u) != 0;
+		bool bit = packed_msb_bit(packed, index) != 0;
 
 		calculated = crc16_ccitt_false_step(
 			calculated, bit);

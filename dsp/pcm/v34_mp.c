@@ -3,6 +3,7 @@
 #include "v34_mp.h"
 
 #include "crc16_ccitt_false.h"
+#include "packed_bits.h"
 
 #include <string.h>
 
@@ -177,13 +178,6 @@ const char *v34_mp_rate_result_name(enum v34_mp_rate_result result)
 	return "unknown";
 }
 
-static uint8_t frame_bit(const uint8_t *frame, size_t bit_index)
-{
-	return (uint8_t)((frame[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
-
 static void set_frame_bit(uint8_t *frame, size_t bit_index, bool value)
 {
 	if (value)
@@ -197,7 +191,7 @@ static uint16_t decode_lsb_first_field(
 	uint16_t value = 0;
 
 	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint16_t)frame_bit(frame, first_bit + index) << index;
+		value |= (uint16_t)packed_msb_bit(frame, first_bit + index) << index;
 	return value;
 }
 
@@ -217,7 +211,7 @@ static uint16_t decode_msb_first_field(
 
 	for (size_t index = 0; index < bit_count; ++index)
 		value = (uint16_t)((value << 1) |
-				   frame_bit(frame, first_bit + index));
+				   packed_msb_bit(frame, first_bit + index));
 	return value;
 }
 
@@ -246,7 +240,7 @@ static uint16_t frame_crc(const uint8_t *frame, size_t crc_first_bit)
 	for (size_t index = V34_MP_TYPE_BIT; index < crc_first_bit; ++index) {
 		if (!is_start_bit(index))
 			remainder = crc16_ccitt_false_step(
-				remainder, frame_bit(frame, index) != 0);
+				remainder, packed_msb_bit(frame, index) != 0);
 	}
 	return remainder;
 }
@@ -305,21 +299,21 @@ static void decode_common_parameters(
 			V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
 			V34_MP_RATE_FIELD_BITS);
 	parameters->auxiliary_channel_enabled =
-		frame_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
+		packed_msb_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
 	parameters->remote_transmitter_trellis =
 		(enum v34_trellis_selection)decode_lsb_first_field(
 			frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS);
 	parameters->remote_transmitter_nonlinear_encoding =
-		frame_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
+		packed_msb_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
 	parameters->remote_transmitter_expanded_shaping =
-		frame_bit(frame, V34_MP_EXPANDED_SHAPING_BIT) != 0;
+		packed_msb_bit(frame, V34_MP_EXPANDED_SHAPING_BIT) != 0;
 	parameters->acknowledges_peer_mp =
-		frame_bit(frame, V34_MP_ACKNOWLEDGMENT_BIT) != 0;
+		packed_msb_bit(frame, V34_MP_ACKNOWLEDGMENT_BIT) != 0;
 	parameters->data_rate_capability_mask = decode_lsb_first_field(
 		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
 		V34_MP_RATE_CAPABILITY_BITS);
 	parameters->asymmetric_rates_enabled =
-		frame_bit(frame, V34_MP_ASYMMETRIC_RATES_BIT) != 0;
+		packed_msb_bit(frame, V34_MP_ASYMMETRIC_RATES_BIT) != 0;
 }
 
 enum v34_mp_result v34_mp_type0_encode(
@@ -351,7 +345,7 @@ static bool frame_sync_is_valid(const uint8_t *frame)
 {
 	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
 	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index) {
-		if (frame_bit(frame, index) == 0)
+		if (packed_msb_bit(frame, index) == 0)
 			return false;
 	}
 	return true;
@@ -362,16 +356,16 @@ static bool framing_bits_are_valid(
 	size_t fill_first_bit, size_t fill_bit_count)
 {
 	if (!frame_sync_is_valid(frame) ||
-	    frame_bit(frame, V34_MP_TYPE_BIT) != (uint8_t)type1)
+	    packed_msb_bit(frame, V34_MP_TYPE_BIT) != (uint8_t)type1)
 		return false;
 	for (size_t index = V34_MP_START0_BIT; index < crc_first_bit;
 	     index += V34_MP_FIELD_STRIDE_BITS) {
-		if (frame_bit(frame, index) != 0)
+		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
 	for (size_t index = fill_first_bit;
 	     index < fill_first_bit + fill_bit_count; ++index) {
-		if (frame_bit(frame, index) != 0)
+		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
 	return true;
@@ -517,7 +511,7 @@ static bool packed_tail_is_zero(
 static bool receive_prefix_is_valid(const uint8_t *frame)
 {
 	return frame_sync_is_valid(frame) &&
-	       frame_bit(frame, V34_MP_START0_BIT) == 0;
+	       packed_msb_bit(frame, V34_MP_START0_BIT) == 0;
 }
 
 static bool receive_stage_is_valid(enum v34_mp_receive_stage stage)
@@ -554,7 +548,7 @@ bool v34_mp_receiver_is_valid(
 		       receiver->bit_index < receiver->frame_bit_count &&
 		       receiver->sync_one_count == 0 &&
 		       receive_prefix_is_valid(receiver->frame) &&
-		       frame_bit(receiver->frame, V34_MP_TYPE_BIT) ==
+		       packed_msb_bit(receiver->frame, V34_MP_TYPE_BIT) ==
 			       (uint8_t)(receiver->frame_bit_count ==
 					 V34_MP_TYPE1_FRAME_BITS);
 	}

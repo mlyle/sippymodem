@@ -2,6 +2,8 @@
 
 #include "v90_cp_receiver.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 enum {
@@ -13,14 +15,6 @@ enum {
 	CP_CODEC_DIFFERENCE_BIT = 128,
 	CP_HEADER_LAST_BIT = CP_CODEC_DIFFERENCE_BIT,
 };
-
-static uint8_t frame_bit(
-	const uint8_t *frame, size_t bit_index)
-{
-	return (uint8_t)((frame[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
 
 static void set_frame_bit(
 	uint8_t *frame, size_t bit_index, bool value)
@@ -39,7 +33,7 @@ static uint8_t decode_lsb_first(
 	uint8_t value = 0;
 
 	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint8_t)(frame_bit(frame, first_bit + index) << index);
+		value |= (uint8_t)(packed_msb_bit(frame, first_bit + index) << index);
 	return value;
 }
 
@@ -66,7 +60,7 @@ static bool infer_frame_bit_count(
 			constellation_count = (size_t)index + 1u;
 	}
 	set_count = constellation_count *
-		    (frame_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0 ? 2u : 1u);
+		    (packed_msb_bit(frame, CP_CODEC_DIFFERENCE_BIT) != 0 ? 2u : 1u);
 	*frame_bit_count = V90_CP_HEADER_BITS +
 			   set_count * V90_CP_CONSTELLATION_BITS +
 			   V90_CP_TRAILER_BITS;
@@ -103,10 +97,10 @@ static bool packed_tail_is_zero(
 static bool prefix_is_valid(const uint8_t *frame)
 {
 	for (size_t index = 0; index < CP_SYNC_BITS; ++index) {
-		if (frame_bit(frame, index) == 0)
+		if (packed_msb_bit(frame, index) == 0)
 			return false;
 	}
-	return frame_bit(frame, CP_START_BIT) == 0;
+	return packed_msb_bit(frame, CP_START_BIT) == 0;
 }
 
 static bool bit_must_be_zero(
@@ -125,7 +119,7 @@ static bool received_bits_are_valid(
 	for (size_t index = CP_INFORMATION_FIRST_BIT;
 	     index < receiver->bit_index; ++index) {
 		if (bit_must_be_zero(index, receiver->frame_bit_count) &&
-		    frame_bit(receiver->frame, index) != 0)
+		    packed_msb_bit(receiver->frame, index) != 0)
 			return false;
 	}
 	return true;
@@ -204,7 +198,7 @@ static uint8_t trailing_ones(
 
 	for (size_t index = receiver->bit_index;
 	     index > 0 && count < CP_SYNC_BITS; --index) {
-		if (frame_bit(receiver->frame, index - 1u) == 0)
+		if (packed_msb_bit(receiver->frame, index - 1u) == 0)
 			break;
 		++count;
 	}

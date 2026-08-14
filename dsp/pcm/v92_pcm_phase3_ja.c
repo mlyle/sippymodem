@@ -2,17 +2,11 @@
 
 #include "v92_pcm_phase3_ja.h"
 
+#include "packed_bits.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-static uint8_t descriptor_bit(
-	const uint8_t *descriptor, size_t bit_index)
-{
-	return (uint8_t)((descriptor[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			  1u);
-}
 
 bool v92_pcm_phase3_ja_tx_is_valid(
 	const struct v92_pcm_phase3_ja_tx *tx)
@@ -82,7 +76,7 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_next(
 		descriptor_index =
 			(next.emitted_symbols - V92_PCM_PHASE3_JA_PREAMBLE_BITS) %
 			V92_PCM_DIL_ZERO_DESCRIPTOR_BITS;
-		input_bit = descriptor_bit(
+		input_bit = packed_msb_bit(
 			next.descriptor, (size_t)descriptor_index);
 	}
 	if (pcm_binary_sign_encode(&next.coding, input_bit, &sign) !=

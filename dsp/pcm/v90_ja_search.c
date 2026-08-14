@@ -2,6 +2,8 @@
 
 #include "v90_ja_search.h"
 
+#include "packed_bits.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -12,14 +14,6 @@ static bool bytes_are_zero(const uint8_t *bytes, size_t count)
 			return false;
 	}
 	return true;
-}
-
-static uint8_t descriptor_bit(
-	const uint8_t *descriptor, size_t index)
-{
-	return (uint8_t)((descriptor[index / 8u] >>
-			  (7u - index % 8u)) &
-			 1u);
 }
 
 static bool collected_bits_are_valid(
@@ -34,15 +28,15 @@ static bool collected_bits_are_valid(
 	    search->bit_index > V90_DIL_ZERO_DESCRIPTOR_BITS)
 		return false;
 	for (size_t bit = 0; bit < V90_DIL_FRAME_SYNC_BITS; ++bit) {
-		if (descriptor_bit(search->descriptor, bit) == 0)
+		if (packed_msb_bit(search->descriptor, bit) == 0)
 			return false;
 	}
-	if (descriptor_bit(
+	if (packed_msb_bit(
 		    search->descriptor, V90_DIL_FRAME_SYNC_BITS) != 0)
 		return false;
 	for (size_t bit = search->bit_index;
 	     bit < V90_DIL_ZERO_DESCRIPTOR_BITS; ++bit) {
-		if (descriptor_bit(search->descriptor, bit) != 0)
+		if (packed_msb_bit(search->descriptor, bit) != 0)
 			return false;
 	}
 	return true;

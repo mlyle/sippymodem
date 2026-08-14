@@ -2,6 +2,8 @@
 
 #include "v34_phase4_mp.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 struct encoded_mp_record {
@@ -262,17 +264,10 @@ v34_phase4_mp_start_next_type1_record(
 	return replace_record(transmitter, &record);
 }
 
-static uint8_t frame_bit(const uint8_t *frame, size_t bit_index)
-{
-	return (uint8_t)((frame[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
-
 static uint8_t frame_dibit(const uint8_t *frame, size_t first_bit)
 {
-	return (uint8_t)((frame_bit(frame, first_bit) << 1) |
-			 frame_bit(frame, first_bit + 1u));
+	return (uint8_t)((packed_msb_bit(frame, first_bit) << 1) |
+			 packed_msb_bit(frame, first_bit + 1u));
 }
 
 enum v34_phase4_mp_result v34_phase4_mp_next(

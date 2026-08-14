@@ -2,6 +2,8 @@
 
 #include "v90_downstream_tx.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 static bool stage_is_valid(enum v90_downstream_tx_stage stage)
@@ -26,13 +28,6 @@ static const struct v90_mp_parameters *const_record_common(
 	return record->type == V90_MP_RECORD_TYPE0 ?
 		       &record->parameters.type0 :
 		       &record->parameters.type1.common;
-}
-
-static uint8_t packed_bit(const uint8_t *sequence, size_t bit_index)
-{
-	return (uint8_t)((sequence[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
 }
 
 static bool encode_mp_sequence(
@@ -484,7 +479,7 @@ static enum v90_downstream_tx_result generate_frame(
 		else if (transmitter->stage == V90_DOWNSTREAM_TX_ED)
 			source = 0;
 		else
-			source = packed_bit(
+			source = packed_msb_bit(
 				transmitter->mp_sequence,
 				transmitter->mp_bit_index + bit);
 

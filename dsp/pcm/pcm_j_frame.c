@@ -3,6 +3,7 @@
 #include "pcm_j_frame.h"
 
 #include "crc16_ccitt_false.h"
+#include "packed_bits.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -23,13 +24,6 @@ enum {
 	FILL_FIRST_BIT = 68,
 	FILL_BITS = 4,
 };
-
-static uint8_t frame_bit(const uint8_t *frame, size_t bit_index)
-{
-	return (uint8_t)((frame[bit_index / 8u] >>
-			  (7u - bit_index % 8u)) &
-			 1u);
-}
 
 static void set_frame_bit(uint8_t *frame, size_t bit_index, bool value)
 {
@@ -91,16 +85,16 @@ static bool framing_is_valid(const uint8_t *frame)
 {
 	for (size_t index = FRAME_SYNC_FIRST_BIT;
 	     index < PCM_J_FRAME_SYNC_BITS; ++index) {
-		if (frame_bit(frame, index) == 0)
+		if (packed_msb_bit(frame, index) == 0)
 			return false;
 	}
-	if (frame_bit(frame, START0_BIT) != 0 ||
-	    frame_bit(frame, START1_BIT) != 0 ||
-	    frame_bit(frame, START2_BIT) != 0)
+	if (packed_msb_bit(frame, START0_BIT) != 0 ||
+	    packed_msb_bit(frame, START1_BIT) != 0 ||
+	    packed_msb_bit(frame, START2_BIT) != 0)
 		return false;
 	for (size_t index = FILL_FIRST_BIT;
 	     index < FILL_FIRST_BIT + FILL_BITS; ++index) {
-		if (frame_bit(frame, index) != 0)
+		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
 	return true;
@@ -111,11 +105,11 @@ static uint32_t decode_payload(const uint8_t *frame)
 	uint32_t payload = 0;
 
 	for (size_t index = 0; index < FIRST_PAYLOAD_BITS; ++index)
-		payload |= (uint32_t)frame_bit(
+		payload |= (uint32_t)packed_msb_bit(
 				   frame, FIRST_PAYLOAD_BIT + index)
 			   << index;
 	for (size_t index = 0; index < SECOND_PAYLOAD_BITS; ++index)
-		payload |= (uint32_t)frame_bit(
+		payload |= (uint32_t)packed_msb_bit(
 				   frame, SECOND_PAYLOAD_BIT + index)
 			   << (FIRST_PAYLOAD_BITS + index);
 	return payload;
@@ -127,7 +121,7 @@ static uint16_t decode_crc(const uint8_t *frame)
 
 	for (size_t index = 0; index < CRC_BITS; ++index)
 		crc = (uint16_t)((crc << 1) |
-				 frame_bit(frame, CRC_FIRST_BIT + index));
+				 packed_msb_bit(frame, CRC_FIRST_BIT + index));
 	return crc;
 }
 

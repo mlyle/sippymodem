@@ -2,6 +2,8 @@
 
 #include "v92_info0.h"
 
+#include "packed_bits.h"
+
 #include <string.h>
 
 enum {
@@ -37,11 +39,6 @@ static void set_payload_bit(uint8_t *payload, size_t bit, bool value)
 		payload[bit / 8u] |= mask;
 	else
 		payload[bit / 8u] &= (uint8_t)~mask;
-}
-
-static bool payload_bit(const uint8_t *payload, size_t bit)
-{
-	return ((payload[bit / 8u] >> (7u - bit % 8u)) & 1u) != 0;
 }
 
 static enum v92_info0_result map_v90_result(enum v90_info0_result result)
@@ -94,9 +91,9 @@ enum v92_info0_result v92_info0a_decode(
 		payload, payload_capacity, payload_bit_count, &decoded.v90);
 	if (result != V90_INFO0_OK)
 		return map_v90_result(result);
-	decoded.v92_capable = payload_bit(payload, INFO0_WIRE_BIT_26);
+	decoded.v92_capable = packed_msb_bit(payload, INFO0_WIRE_BIT_26);
 	decoded.short_phase2_requested =
-		payload_bit(payload, INFO0_WIRE_BIT_27);
+		packed_msb_bit(payload, INFO0_WIRE_BIT_27);
 	if (!v92_info0a_is_valid(&decoded))
 		return V92_INFO0_INVALID_PAYLOAD;
 	*info0a = decoded;
@@ -139,8 +136,8 @@ enum v92_info0_result v92_info0d_decode(
 	if (result != V90_INFO0_OK)
 		return map_v90_result(result);
 	decoded.short_phase2_requested =
-		payload_bit(payload, INFO0_WIRE_BIT_26);
-	decoded.v92_capable = payload_bit(payload, INFO0_WIRE_BIT_27);
+		packed_msb_bit(payload, INFO0_WIRE_BIT_26);
+	decoded.v92_capable = packed_msb_bit(payload, INFO0_WIRE_BIT_27);
 	if (!v92_info0d_is_valid(&decoded))
 		return V92_INFO0_INVALID_PAYLOAD;
 	*info0d = decoded;

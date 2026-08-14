@@ -2,6 +2,8 @@
 
 #include "v92_phase3_digital_tx.h"
 
+#include "packed_bits.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -140,9 +142,7 @@ static uint8_t record_bit(
 		transmitter->stage == V92_PHASE3_DIGITAL_TX_JD ?
 			transmitter->jd_frame : transmitter->jp_frame;
 
-	return (uint8_t)((frame[transmitter->bit_index / 8u] >>
-			  (7u - transmitter->bit_index % 8u)) &
-			 1u);
+	return packed_msb_bit(frame, transmitter->bit_index);
 }
 
 static enum v92_phase3_digital_tx_result next_record(
