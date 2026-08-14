@@ -9,7 +9,7 @@ static bool stage_is_valid(enum pcm_downstream_rx_stage stage)
 {
 	return stage == PCM_DOWNSTREAM_RX_TRN2D ||
 	       stage == PCM_DOWNSTREAM_RX_MP_SEARCH ||
-	       stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH ||
+	       stage == PCM_DOWNSTREAM_RX_V92_CONTROL ||
 	       stage == PCM_DOWNSTREAM_RX_ED_SEARCH ||
 	       stage == PCM_DOWNSTREAM_RX_COMPLETE;
 }
@@ -26,7 +26,7 @@ static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
 	       receiver->sync_one_count == 0;
 }
 
-static bool suvd_is_fresh(const struct v92_control_rx *receiver)
+static bool v92_control_is_fresh(const struct v92_control_rx *receiver)
 {
 	return v92_control_rx_is_valid(receiver) &&
 	       receiver->stage == V92_CONTROL_RX_SEARCH_SYNC &&
@@ -48,7 +48,7 @@ static bool control_is_fresh(const struct pcm_downstream_rx *receiver)
 {
 	return receiver->protocol == PCM_PROTOCOL_V90 ?
 		       mp_is_fresh(&receiver->control.mp) :
-		       suvd_is_fresh(&receiver->control.v92);
+		       v92_control_is_fresh(&receiver->control.v92);
 }
 
 static bool stage_matches_protocol(const struct pcm_downstream_rx *receiver)
@@ -56,7 +56,7 @@ static bool stage_matches_protocol(const struct pcm_downstream_rx *receiver)
 	if (receiver->stage == PCM_DOWNSTREAM_RX_TRN2D)
 		return true;
 	if (receiver->protocol == PCM_PROTOCOL_V92)
-		return receiver->stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH;
+		return receiver->stage == PCM_DOWNSTREAM_RX_V92_CONTROL;
 	return receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH ||
 	       receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH ||
 	       receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE;
@@ -268,7 +268,7 @@ static enum pcm_downstream_rx_result feed_mp_frame(
 		       PCM_DOWNSTREAM_RX_MP;
 }
 
-static enum pcm_downstream_rx_result feed_suvd_frame(
+static enum pcm_downstream_rx_result feed_v92_control_frame(
 	struct pcm_downstream_rx *receiver,
 	const struct v90_pcm_stream_frame *frame,
 	struct pcm_downstream_event *event)
@@ -292,16 +292,27 @@ static enum pcm_downstream_rx_result feed_suvd_frame(
 	}
 	if (emitted.type == V92_CONTROL_EVENT_NONE)
 		return PCM_DOWNSTREAM_RX_BUFFERING;
-	if (emitted.type == V92_CONTROL_EVENT_SUVD && !aligned) {
-		emitted = (struct v92_control_event){
-			.type = V92_CONTROL_EVENT_REJECTED,
-			.frame_result = V92_SUVD_INVALID_FRAME,
-		};
+	if (!aligned && emitted.type == V92_CONTROL_EVENT_SUVD) {
+		emitted.type = V92_CONTROL_EVENT_SUVD_REJECTED;
+		emitted.record.suvd.frame_result = V92_SUVD_INVALID_FRAME;
+	} else if (!aligned && emitted.type == V92_CONTROL_EVENT_CPD) {
+		emitted.type = V92_CONTROL_EVENT_CPD_REJECTED;
+		emitted.record.cpd.frame_result = V92_CPD_INVALID_FRAME;
 	}
-	event->suvd = emitted;
-	return emitted.type == V92_CONTROL_EVENT_SUVD ?
-		       PCM_DOWNSTREAM_RX_SUVD :
-		       PCM_DOWNSTREAM_RX_SUVD_REJECTED;
+	event->control = emitted;
+	switch (emitted.type) {
+	case V92_CONTROL_EVENT_SUVD:
+		return PCM_DOWNSTREAM_RX_SUVD;
+	case V92_CONTROL_EVENT_CPD:
+		return PCM_DOWNSTREAM_RX_CPD;
+	case V92_CONTROL_EVENT_SUVD_REJECTED:
+		return PCM_DOWNSTREAM_RX_SUVD_REJECTED;
+	case V92_CONTROL_EVENT_CPD_REJECTED:
+		return PCM_DOWNSTREAM_RX_CPD_REJECTED;
+	case V92_CONTROL_EVENT_NONE:
+		break;
+	}
+	return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 }
 
 static enum pcm_downstream_rx_result map_stream_failure(
@@ -451,14 +462,14 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 		    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS) {
 			next.stage = next.protocol == PCM_PROTOCOL_V90 ?
 				PCM_DOWNSTREAM_RX_MP_SEARCH :
-				PCM_DOWNSTREAM_RX_SUVD_SEARCH;
+				PCM_DOWNSTREAM_RX_V92_CONTROL;
 		}
 		result = PCM_DOWNSTREAM_RX_TRN2D_FRAME;
 	} else {
 		if (next.stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
 			result = receive_ed_frame(&next, &frame, &generated);
-		else if (next.stage == PCM_DOWNSTREAM_RX_SUVD_SEARCH)
-			result = feed_suvd_frame(&next, &frame, &generated);
+		else if (next.stage == PCM_DOWNSTREAM_RX_V92_CONTROL)
+			result = feed_v92_control_frame(&next, &frame, &generated);
 		else
 			result = receive_mp_frame(&next, &frame, &generated);
 		if (result == PCM_DOWNSTREAM_RX_INTERNAL_ERROR)
@@ -492,6 +503,10 @@ const char *pcm_downstream_rx_result_name(
 		return "SUVd";
 	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
 		return "SUVd rejected";
+	case PCM_DOWNSTREAM_RX_CPD:
+		return "CPd";
+	case PCM_DOWNSTREAM_RX_CPD_REJECTED:
+		return "CPd rejected";
 	case PCM_DOWNSTREAM_RX_ED:
 		return "Ed";
 	case PCM_DOWNSTREAM_RX_ED_REJECTED:

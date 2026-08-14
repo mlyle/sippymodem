@@ -21,6 +21,8 @@ enum pcm_downstream_rx_result {
 	PCM_DOWNSTREAM_RX_MP_REJECTED,
 	PCM_DOWNSTREAM_RX_SUVD,
 	PCM_DOWNSTREAM_RX_SUVD_REJECTED,
+	PCM_DOWNSTREAM_RX_CPD,
+	PCM_DOWNSTREAM_RX_CPD_REJECTED,
 	PCM_DOWNSTREAM_RX_ED,
 	PCM_DOWNSTREAM_RX_ED_REJECTED,
 	PCM_DOWNSTREAM_RX_INVALID_ARGUMENT,
@@ -34,7 +36,7 @@ enum pcm_downstream_rx_result {
 enum pcm_downstream_rx_stage {
 	PCM_DOWNSTREAM_RX_TRN2D,
 	PCM_DOWNSTREAM_RX_MP_SEARCH,
-	PCM_DOWNSTREAM_RX_SUVD_SEARCH,
+	PCM_DOWNSTREAM_RX_V92_CONTROL,
 	PCM_DOWNSTREAM_RX_ED_SEARCH,
 	PCM_DOWNSTREAM_RX_COMPLETE,
 };
@@ -53,12 +55,13 @@ struct pcm_trn2d_frame {
 };
 
 /* A successful event result writes exactly one corresponding member. MP and
- * MP_PRIME differ only in the decoded acknowledge bit. ED_REJECTED reports
- * the number of nonzero descrambled bits across its exact two-frame window. */
+ * MP_PRIME differ only in the decoded acknowledge bit. The V.92 control
+ * member identifies either SUVd or CPd. ED_REJECTED reports the number of
+ * nonzero descrambled bits across its exact two-frame window. */
 struct pcm_downstream_event {
 	struct pcm_trn2d_frame trn2d;
 	struct v90_mp_event mp;
-	struct v92_control_event suvd;
+	struct v92_control_event control;
 	struct pcm_downstream_ed_event ed;
 };
 
@@ -68,7 +71,7 @@ union pcm_downstream_control_rx {
 };
 
 /* Own the continuous digital-to-analogue Phase 4 decoding epoch. The selected
- * protocol routes the shared TRN2d suffix into MP or SUVd without resetting
+ * protocol routes the shared TRN2d suffix into MP or V.92 control without resetting
  * the PCM decoder, GPC descrambler, differential decoder, or spectral-shaping
  * histories. */
 struct pcm_downstream_rx {
@@ -111,7 +114,7 @@ bool pcm_downstream_rx_has_failed(
 /* Consume one authoritative G.711 network character. The first 2040 symbols
  * remain TRN2d and produce one event per six-symbol frame. Later TRN2d bits
  * feed the selected protocol's saturated control synchronizer. V.90 accepts
- * MP and can then be armed for Ed; V.92 accepts the initial SUVd. BUFFERING
+ * MP and can then be armed for Ed; V.92 accepts continuous SUVd and CPd. BUFFERING
  * accepts the character but leaves event unchanged; rejected calls change
  * neither receiver nor event. */
 enum pcm_downstream_rx_result pcm_downstream_rx_receive(

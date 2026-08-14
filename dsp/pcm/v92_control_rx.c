@@ -7,24 +7,26 @@
 #include <string.h>
 
 enum {
-	SUVD_SYNC_BITS = 17,
-	SUVD_START_BIT = 17,
-	SUVD_MARKER_BIT = 18,
+	CONTROL_SYNC_BITS = 17,
+	CONTROL_START_BIT = 17,
+	CONTROL_MARKER_BIT = 18,
 };
 
 static bool stage_is_valid(enum v92_control_rx_stage stage)
 {
 	return stage == V92_CONTROL_RX_SEARCH_SYNC ||
-	       stage == V92_CONTROL_RX_RECEIVE_SUVD;
+	       stage == V92_CONTROL_RX_READ_MARKER ||
+	       stage == V92_CONTROL_RX_RECEIVE_SUVD ||
+	       stage == V92_CONTROL_RX_RECEIVE_CPD;
 }
 
 static bool prefix_is_valid(const uint8_t *frame)
 {
-	for (size_t bit = 0u; bit < SUVD_SYNC_BITS; ++bit) {
+	for (size_t bit = 0u; bit < CONTROL_SYNC_BITS; ++bit) {
 		if (packed_msb_bit(frame, bit) == 0u)
 			return false;
 	}
-	return packed_msb_bit(frame, SUVD_START_BIT) == 0u;
+	return packed_msb_bit(frame, CONTROL_START_BIT) == 0u;
 }
 
 static uint8_t trailing_one_count(
@@ -32,7 +34,7 @@ static uint8_t trailing_one_count(
 {
 	uint8_t count = 0u;
 
-	while (bit_count != 0u && count < SUVD_SYNC_BITS) {
+	while (bit_count != 0u && count < CONTROL_SYNC_BITS) {
 		if (packed_msb_bit(frame, bit_count - 1u) == 0u)
 			break;
 		count++;
@@ -44,41 +46,64 @@ static uint8_t trailing_one_count(
 bool v92_control_rx_is_valid(
 	const struct v92_control_rx *receiver)
 {
-	size_t expected;
+	size_t inferred = 0u;
+	size_t suvd_bits;
+	enum v92_cpd_result probe;
 
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
-	    receiver->sync_one_count > SUVD_SYNC_BITS)
-		return false;
-	expected = v92_suvd_frame_bits(receiver->training_frame_bits);
-	if (expected == 0u || receiver->frame_bit_count != expected ||
-	    receiver->bit_index > expected ||
+	    receiver->training_frame_bits <
+		    V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
+	    receiver->training_frame_bits >
+		    V92_CPD_DOWNSTREAM_FRAME_MAX_BITS ||
+	    receiver->sync_one_count > CONTROL_SYNC_BITS ||
+	    receiver->bit_index > V92_CPD_MAX_FRAME_BITS ||
 	    !packed_msb_tail_is_zero(
 		    receiver->frame, receiver->bit_index,
 		    sizeof(receiver->frame)))
 		return false;
 	if (receiver->stage == V92_CONTROL_RX_SEARCH_SYNC)
-		return receiver->bit_index == 0u;
-	return receiver->bit_index >= SUVD_MARKER_BIT &&
-	       receiver->bit_index < receiver->frame_bit_count &&
-	       prefix_is_valid(receiver->frame) &&
-	       (receiver->bit_index == SUVD_MARKER_BIT ||
-		packed_msb_bit(receiver->frame, SUVD_MARKER_BIT) != 0u) &&
-	       receiver->sync_one_count == trailing_one_count(
-		       receiver->frame, receiver->bit_index);
+		return receiver->frame_bit_count == 0u &&
+		       receiver->bit_index == 0u;
+	if (!prefix_is_valid(receiver->frame) ||
+	    receiver->sync_one_count != trailing_one_count(
+		    receiver->frame, receiver->bit_index))
+		return false;
+	if (receiver->stage == V92_CONTROL_RX_READ_MARKER)
+		return receiver->frame_bit_count == 0u &&
+		       receiver->bit_index == CONTROL_MARKER_BIT;
+	if (receiver->bit_index <= CONTROL_MARKER_BIT)
+		return false;
+	if (receiver->stage == V92_CONTROL_RX_RECEIVE_SUVD) {
+		suvd_bits = v92_suvd_frame_bits(receiver->training_frame_bits);
+		return receiver->frame_bit_count == suvd_bits &&
+		       receiver->bit_index < suvd_bits &&
+		       packed_msb_bit(
+			       receiver->frame, CONTROL_MARKER_BIT) != 0u;
+	}
+	if (packed_msb_bit(receiver->frame, CONTROL_MARKER_BIT) != 0u)
+		return false;
+	probe = v92_cpd_probe_frame_bits(
+		receiver->frame, sizeof(receiver->frame), receiver->bit_index,
+		receiver->training_frame_bits, &inferred);
+	if (receiver->frame_bit_count == 0u)
+		return probe == V92_CPD_INCOMPLETE;
+	return probe == V92_CPD_OK &&
+	       inferred == receiver->frame_bit_count &&
+	       receiver->bit_index < receiver->frame_bit_count;
 }
 
 enum v92_control_rx_result v92_control_rx_init(
 	struct v92_control_rx *receiver, uint8_t training_frame_bits)
 {
 	struct v92_control_rx initialized = {
-		.frame_bit_count = v92_suvd_frame_bits(training_frame_bits),
 		.training_frame_bits = training_frame_bits,
 		.stage = V92_CONTROL_RX_SEARCH_SYNC,
 	};
 
 	if (receiver == NULL)
 		return V92_CONTROL_RX_INVALID_ARGUMENT;
-	if (initialized.frame_bit_count == 0u)
+	if (training_frame_bits < V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
+	    training_frame_bits > V92_CPD_DOWNSTREAM_FRAME_MAX_BITS)
 		return V92_CONTROL_RX_INVALID_PARAMETERS;
 	if (!v92_control_rx_is_valid(&initialized))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
@@ -89,6 +114,7 @@ enum v92_control_rx_result v92_control_rx_init(
 static void clear_candidate(struct v92_control_rx *receiver)
 {
 	memset(receiver->frame, 0, sizeof(receiver->frame));
+	receiver->frame_bit_count = 0u;
 	receiver->bit_index = 0u;
 	receiver->sync_one_count = 0u;
 	receiver->stage = V92_CONTROL_RX_SEARCH_SYNC;
@@ -97,21 +123,21 @@ static void clear_candidate(struct v92_control_rx *receiver)
 static void begin_candidate(struct v92_control_rx *receiver)
 {
 	clear_candidate(receiver);
-	for (size_t bit = 0u; bit < SUVD_SYNC_BITS; ++bit)
+	for (size_t bit = 0u; bit < CONTROL_SYNC_BITS; ++bit)
 		packed_msb_set_bit(receiver->frame, bit, true);
-	receiver->bit_index = SUVD_MARKER_BIT;
-	receiver->stage = V92_CONTROL_RX_RECEIVE_SUVD;
+	receiver->bit_index = CONTROL_MARKER_BIT;
+	receiver->stage = V92_CONTROL_RX_READ_MARKER;
 }
 
 static bool advance_sync_run(
 	struct v92_control_rx *receiver, uint8_t bit)
 {
 	if (bit != 0u) {
-		if (receiver->sync_one_count < SUVD_SYNC_BITS)
+		if (receiver->sync_one_count < CONTROL_SYNC_BITS)
 			receiver->sync_one_count++;
 		return false;
 	}
-	if (receiver->sync_one_count == SUVD_SYNC_BITS) {
+	if (receiver->sync_one_count == CONTROL_SYNC_BITS) {
 		receiver->sync_one_count = 0u;
 		return true;
 	}
@@ -119,17 +145,17 @@ static bool advance_sync_run(
 	return false;
 }
 
-static void reject_candidate(
+static void reject_cpd(
 	struct v92_control_rx *receiver,
 	struct v92_control_event *event,
-	enum v92_suvd_result result)
+	enum v92_cpd_result result)
 {
-	event->type = V92_CONTROL_EVENT_REJECTED;
-	event->frame_result = result;
+	event->type = V92_CONTROL_EVENT_CPD_REJECTED;
+	event->record.cpd.frame_result = result;
 	clear_candidate(receiver);
 }
 
-static void finish_candidate(
+static void finish_suvd(
 	struct v92_control_rx *receiver,
 	struct v92_control_event *event)
 {
@@ -139,34 +165,85 @@ static void finish_candidate(
 		receiver->frame_bit_count, receiver->training_frame_bits,
 		&parameters);
 
-	event->frame_result = result;
+	event->record.suvd.frame_result = result;
 	if (result == V92_SUVD_OK) {
 		event->type = V92_CONTROL_EVENT_SUVD;
-		event->parameters = parameters;
+		event->record.suvd.parameters = parameters;
 	} else {
-		event->type = V92_CONTROL_EVENT_REJECTED;
+		event->type = V92_CONTROL_EVENT_SUVD_REJECTED;
 	}
 	clear_candidate(receiver);
 }
 
-static void receive_valid_bit(
+static void finish_cpd(
+	struct v92_control_rx *receiver,
+	struct v92_control_event *event)
+{
+	struct v92_cpd_parameters parameters;
+	enum v92_cpd_result result = v92_cpd_decode(
+		receiver->frame, sizeof(receiver->frame),
+		receiver->frame_bit_count, receiver->training_frame_bits,
+		&parameters);
+
+	event->record.cpd.frame_result = result;
+	if (result == V92_CPD_OK) {
+		event->type = V92_CONTROL_EVENT_CPD;
+		event->record.cpd.parameters = parameters;
+	} else {
+		event->type = V92_CONTROL_EVENT_CPD_REJECTED;
+	}
+	clear_candidate(receiver);
+}
+
+static bool receive_valid_bit(
 	struct v92_control_rx *receiver, uint8_t bit,
 	struct v92_control_event *event)
 {
+	size_t frame_bits = 0u;
+	enum v92_cpd_result probe;
+
 	if (advance_sync_run(receiver, bit)) {
 		begin_candidate(receiver);
-		return;
+		return true;
 	}
 	if (receiver->stage == V92_CONTROL_RX_SEARCH_SYNC)
-		return;
+		return true;
 	packed_msb_set_bit(receiver->frame, receiver->bit_index, bit != 0u);
 	receiver->bit_index++;
-	if (receiver->bit_index == SUVD_MARKER_BIT + 1u && bit == 0u) {
-		reject_candidate(receiver, event, V92_SUVD_INVALID_FRAME);
-		return;
+	if (receiver->stage == V92_CONTROL_RX_READ_MARKER) {
+		if (bit != 0u) {
+			receiver->frame_bit_count = v92_suvd_frame_bits(
+				receiver->training_frame_bits);
+			receiver->stage = V92_CONTROL_RX_RECEIVE_SUVD;
+		} else {
+			receiver->stage = V92_CONTROL_RX_RECEIVE_CPD;
+		}
+		return true;
 	}
-	if (receiver->bit_index == receiver->frame_bit_count)
-		finish_candidate(receiver, event);
+	if (receiver->stage == V92_CONTROL_RX_RECEIVE_CPD &&
+	    receiver->frame_bit_count == 0u) {
+		probe = v92_cpd_probe_frame_bits(
+			receiver->frame, sizeof(receiver->frame),
+			receiver->bit_index, receiver->training_frame_bits,
+			&frame_bits);
+		if (probe == V92_CPD_OK)
+			receiver->frame_bit_count = frame_bits;
+		else if (probe != V92_CPD_INCOMPLETE) {
+			if (probe != V92_CPD_INVALID_FRAME)
+				return false;
+			reject_cpd(receiver, event, probe);
+			return true;
+		}
+	}
+	if (receiver->frame_bit_count == 0u)
+		return receiver->bit_index < V92_CPD_MAX_FRAME_BITS;
+	if (receiver->bit_index == receiver->frame_bit_count) {
+		if (receiver->stage == V92_CONTROL_RX_RECEIVE_SUVD)
+			finish_suvd(receiver, event);
+		else
+			finish_cpd(receiver, event);
+	}
+	return true;
 }
 
 enum v92_control_rx_result v92_control_rx_receive_bit(
@@ -181,7 +258,8 @@ enum v92_control_rx_result v92_control_rx_receive_bit(
 	if (!v92_control_rx_is_valid(receiver))
 		return V92_CONTROL_RX_INVALID_STATE;
 	next = *receiver;
-	receive_valid_bit(&next, bit, &emitted);
+	if (!receive_valid_bit(&next, bit, &emitted))
+		return V92_CONTROL_RX_INTERNAL_ERROR;
 	if (!v92_control_rx_is_valid(&next))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
 	*receiver = next;
