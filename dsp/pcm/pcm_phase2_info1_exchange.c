@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "v90_phase2_info1_exchange.h"
+#include "pcm_phase2_info1_exchange.h"
 
 #include <stddef.h>
 
@@ -44,7 +44,7 @@ static uint16_t probe_round_trip_delay(
 }
 
 static bool phase_has_peer_record(
-	const struct v90_phase2_info1_exchange *exchange)
+	const struct pcm_phase2_info1_exchange *exchange)
 {
 	const struct phase2_info1_exchange *control = &exchange->control;
 
@@ -56,8 +56,8 @@ static bool phase_has_peer_record(
 	       control->phase == PHASE2_INFO1_COMPLETE;
 }
 
-bool v90_phase2_info1_is_valid(
-	const struct v90_phase2_info1_exchange *exchange)
+bool pcm_phase2_info1_is_valid(
+	const struct pcm_phase2_info1_exchange *exchange)
 {
 	bool expected;
 
@@ -74,12 +74,12 @@ bool v90_phase2_info1_is_valid(
 		       v34_info1c_is_valid(&exchange->peer_record.info1d);
 }
 
-enum phase2_info1_result v90_phase2_info1_init_digital(
-	struct v90_phase2_info1_exchange *exchange,
+enum phase2_info1_result pcm_phase2_info1_init_digital(
+	struct pcm_phase2_info1_exchange *exchange,
 	const struct v90_phase2_reciprocal_probe *completed_probe,
 	const struct v34_info1c *local_info1d)
 {
-	struct v90_phase2_info1_exchange initialized = { 0 };
+	struct pcm_phase2_info1_exchange initialized = { 0 };
 	uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
 
 	if (exchange == NULL ||
@@ -94,17 +94,17 @@ enum phase2_info1_result v90_phase2_info1_init_digital(
 		    probe_round_trip_delay(completed_probe), payload,
 		    V34_INFO1C_PAYLOAD_BITS, V90_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
-	    !v90_phase2_info1_is_valid(&initialized))
+	    !pcm_phase2_info1_is_valid(&initialized))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = initialized;
 	return PHASE2_INFO1_OK;
 }
 
-enum phase2_info1_result v90_phase2_info1_init_analog(
-	struct v90_phase2_info1_exchange *exchange,
+enum phase2_info1_result pcm_phase2_info1_init_analog(
+	struct pcm_phase2_info1_exchange *exchange,
 	const struct v90_phase2_reciprocal_probe *completed_probe)
 {
-	struct v90_phase2_info1_exchange initialized = { 0 };
+	struct pcm_phase2_info1_exchange initialized = { 0 };
 
 	if (exchange == NULL ||
 	    !v90_phase2_reciprocal_probe_is_valid(completed_probe) ||
@@ -117,20 +117,20 @@ enum phase2_info1_result v90_phase2_info1_init_analog(
 		    completed_probe->control.signal_a_reversal_elapsed_samples,
 		    V34_INFO1C_PAYLOAD_BITS, V90_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
-	    !v90_phase2_info1_is_valid(&initialized))
+	    !pcm_phase2_info1_is_valid(&initialized))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = initialized;
 	return PHASE2_INFO1_OK;
 }
 
-enum phase2_info1_result v90_phase2_info1_reply_analog(
-	struct v90_phase2_info1_exchange *exchange,
+enum phase2_info1_result pcm_phase2_info1_reply_analog(
+	struct pcm_phase2_info1_exchange *exchange,
 	const struct v90_info1a *local_info1a)
 {
-	struct v90_phase2_info1_exchange next;
+	struct pcm_phase2_info1_exchange next;
 	uint8_t payload[V90_INFO1A_PAYLOAD_BYTES];
 
-	if (!v90_phase2_info1_is_valid(exchange) ||
+	if (!pcm_phase2_info1_is_valid(exchange) ||
 	    exchange->control.signal_role != PHASE2_SIGNAL_A ||
 	    v90_info1a_encode(local_info1a, payload, sizeof(payload)) !=
 		    V90_INFO1_OK)
@@ -139,33 +139,33 @@ enum phase2_info1_result v90_phase2_info1_reply_analog(
 	if (phase2_info1_reply_signal_a(
 		    &next.control, payload, V90_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
-	    !v90_phase2_info1_is_valid(&next))
+	    !pcm_phase2_info1_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;
 	return PHASE2_INFO1_OK;
 }
 
 static bool reject_peer_frame(
-	struct v90_phase2_info1_exchange *exchange,
-	struct v90_phase2_info1_event *event)
+	struct pcm_phase2_info1_exchange *exchange,
+	struct pcm_phase2_info1_event *event)
 {
 	if (phase2_info1_reject_peer(&exchange->control) != PHASE2_INFO1_OK)
 		return false;
 	if (exchange->control.phase == PHASE2_INFO1_FAILED) {
-		event->kind = V90_PHASE2_INFO1_EVENT_FAILED;
+		event->kind = PCM_PHASE2_INFO1_EVENT_FAILED;
 		event->failure = exchange->control.failure;
 	} else {
-		event->kind = V90_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
+		event->kind = PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
 	}
 	return true;
 }
 
 static bool resolve_peer_frame(
-	struct v90_phase2_info1_exchange *exchange,
+	struct pcm_phase2_info1_exchange *exchange,
 	const struct v34_phase2_info_event *frame,
-	struct v90_phase2_info1_event *event)
+	struct pcm_phase2_info1_event *event)
 {
-	union v90_info1_record decoded = { 0 };
+	union pcm_info1_record decoded = { 0 };
 	bool valid;
 
 	if (exchange->control.signal_role == PHASE2_SIGNAL_B)
@@ -186,50 +186,50 @@ static bool resolve_peer_frame(
 	exchange->peer_record_received = true;
 	event->peer_record = decoded;
 	event->kind = exchange->control.signal_role == PHASE2_SIGNAL_B ?
-			      V90_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED :
-			      V90_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED;
+			      PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED :
+			      PCM_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED;
 	return true;
 }
 
 static bool map_common_event(
-	struct v90_phase2_info1_exchange *exchange,
+	struct pcm_phase2_info1_exchange *exchange,
 	const struct phase2_info1_event *common,
-	struct v90_phase2_info1_event *event)
+	struct pcm_phase2_info1_event *event)
 {
 	event->frame_event = common->frame_event;
 	switch (common->kind) {
 	case PHASE2_INFO1_EVENT_NONE:
 		return true;
 	case PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT:
-		event->kind = V90_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT;
+		event->kind = PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT;
 		return true;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
 		return resolve_peer_frame(exchange, &common->frame_event, event);
 	case PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT:
-		event->kind = V90_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT;
+		event->kind = PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT;
 		return true;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
-		event->kind = V90_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
+		event->kind = PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
 		return true;
 	case PHASE2_INFO1_EVENT_FAILED:
-		event->kind = V90_PHASE2_INFO1_EVENT_FAILED;
+		event->kind = PCM_PHASE2_INFO1_EVENT_FAILED;
 		event->failure = common->failure;
 		return true;
 	}
 	return false;
 }
 
-enum phase2_info1_result v90_phase2_info1_sample(
-	struct v90_phase2_info1_exchange *exchange,
+enum phase2_info1_result pcm_phase2_info1_sample(
+	struct pcm_phase2_info1_exchange *exchange,
 	int16_t received_sample, int16_t *transmit_sample,
-	struct v90_phase2_info1_event *event)
+	struct pcm_phase2_info1_event *event)
 {
-	struct v90_phase2_info1_exchange next;
-	struct v90_phase2_info1_event emitted = { 0 };
+	struct pcm_phase2_info1_exchange next;
+	struct pcm_phase2_info1_event emitted = { 0 };
 	struct phase2_info1_event common;
 	int16_t generated;
 
-	if (!v90_phase2_info1_is_valid(exchange) ||
+	if (!pcm_phase2_info1_is_valid(exchange) ||
 	    transmit_sample == NULL || event == NULL)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
@@ -237,7 +237,7 @@ enum phase2_info1_result v90_phase2_info1_sample(
 		    &next.control, received_sample, &generated, &common) !=
 		    PHASE2_INFO1_OK ||
 	    !map_common_event(&next, &common, &emitted) ||
-	    !v90_phase2_info1_is_valid(&next))
+	    !pcm_phase2_info1_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;
 	*transmit_sample = generated;

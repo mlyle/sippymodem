@@ -36,7 +36,8 @@ V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 V90_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
-	pcm_phase2_info0_exchange.c pcm_phase3_digital_prefix.c \
+	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
+	pcm_phase3_digital_prefix.c \
 	pcm_phase3_profile.c pcm_startup.c \
 	v92_info0.c v92_info1d.c v92_pcm_info1a.c v92_status_update.c \
 	v92_control_rx.c v92_cpd.c v92_suvd.c \
@@ -2259,7 +2260,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/phase2_reciprocal_probe.o \
 	$(BUILD_DIR)/v90_phase2_reciprocal_probe.o \
 	$(BUILD_DIR)/phase2_info1_exchange.o \
-	$(BUILD_DIR)/v90_phase2_info1_exchange.o \
+	$(BUILD_DIR)/pcm_phase2_info1_exchange.o \
 	$(BUILD_DIR)/v90_phase2.o \
 	$(BUILD_DIR)/v90_phase2_info1_handoff.o \
 	$(BUILD_DIR)/v90_phase3_handoff.o \
@@ -5022,8 +5023,8 @@ $(BUILD_DIR)/v90_phase2_reciprocal_probe.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_reciprocal_probe.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_phase2_info1_exchange.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2_info1_exchange.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_phase2_info1_exchange.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_info1_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase2.o: \

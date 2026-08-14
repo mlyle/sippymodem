@@ -3,7 +3,7 @@
 #ifndef V90_PHASE2_H
 #define V90_PHASE2_H
 
-#include "v90_phase2_info1_exchange.h"
+#include "pcm_phase2_info1_exchange.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -62,7 +62,7 @@ union v90_phase2_state {
 	struct v90_phase2_initial_probe initial_probe;
 	struct v90_phase2_probe_turnaround turnaround;
 	struct v90_phase2_reciprocal_probe reciprocal_probe;
-	struct v90_phase2_info1_exchange info1;
+	struct pcm_phase2_info1_exchange info1;
 };
 
 /* Own one analog or digital modem's continuous INFO0, probing, and INFO1
@@ -74,7 +74,7 @@ struct v90_phase2 {
 	union pcm_info0_record local_info0;
 	union pcm_info0_record peer_info0;
 	struct v34_phase2_probe_receiver_measurement remote_probe;
-	union v90_info1_record local_info1;
+	union pcm_info1_record local_info1;
 	enum v90_phase2_stage stage;
 	enum v90_phase2_failure failure;
 	enum v90_modem_role local_role;
