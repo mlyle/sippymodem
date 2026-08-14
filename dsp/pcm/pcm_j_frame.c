@@ -25,13 +25,6 @@ enum {
 	FILL_BITS = 4,
 };
 
-static void set_frame_bit(uint8_t *frame, size_t bit_index, bool value)
-{
-	if (value)
-		frame[bit_index / 8u] |=
-			(uint8_t)(1u << (7u - bit_index % 8u));
-}
-
 static uint16_t payload_crc(uint32_t payload)
 {
 	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
@@ -45,24 +38,17 @@ static uint16_t payload_crc(uint32_t payload)
 
 static void encode_payload(uint8_t *frame, uint32_t payload)
 {
-	for (size_t index = 0; index < FIRST_PAYLOAD_BITS; ++index)
-		set_frame_bit(
-			frame, FIRST_PAYLOAD_BIT + index,
-			(payload & (UINT32_C(1) << index)) != 0);
-	for (size_t index = 0; index < SECOND_PAYLOAD_BITS; ++index)
-		set_frame_bit(
-			frame, SECOND_PAYLOAD_BIT + index,
-			(payload & (UINT32_C(1) <<
-				    (FIRST_PAYLOAD_BITS + index))) != 0);
+	packed_msb_write_lsb_field(
+		frame, FIRST_PAYLOAD_BIT, FIRST_PAYLOAD_BITS, payload);
+	packed_msb_write_lsb_field(
+		frame, SECOND_PAYLOAD_BIT, SECOND_PAYLOAD_BITS,
+		payload >> FIRST_PAYLOAD_BITS);
 }
 
 static void encode_crc(uint8_t *frame, uint16_t crc)
 {
-	for (size_t index = 0; index < CRC_BITS; ++index)
-		set_frame_bit(
-			frame, CRC_FIRST_BIT + index,
-			(crc & (uint16_t)(1u <<
-					     (CRC_BITS - index - 1u))) != 0);
+	packed_msb_write_msb_field(
+		frame, CRC_FIRST_BIT, CRC_BITS, crc);
 }
 
 enum pcm_j_frame_result pcm_j_frame_encode(
@@ -74,7 +60,7 @@ enum pcm_j_frame_result pcm_j_frame_encode(
 		return PCM_J_FRAME_INVALID_ARGUMENT;
 	for (size_t index = FRAME_SYNC_FIRST_BIT;
 	     index < PCM_J_FRAME_SYNC_BITS; ++index)
-		set_frame_bit(encoded, index, true);
+		packed_msb_set_bit(encoded, index, true);
 	encode_payload(encoded, payload);
 	encode_crc(encoded, payload_crc(payload));
 	memcpy(frame, encoded, sizeof(encoded));
@@ -102,27 +88,17 @@ static bool framing_is_valid(const uint8_t *frame)
 
 static uint32_t decode_payload(const uint8_t *frame)
 {
-	uint32_t payload = 0;
-
-	for (size_t index = 0; index < FIRST_PAYLOAD_BITS; ++index)
-		payload |= (uint32_t)packed_msb_bit(
-				   frame, FIRST_PAYLOAD_BIT + index)
-			   << index;
-	for (size_t index = 0; index < SECOND_PAYLOAD_BITS; ++index)
-		payload |= (uint32_t)packed_msb_bit(
-				   frame, SECOND_PAYLOAD_BIT + index)
-			   << (FIRST_PAYLOAD_BITS + index);
-	return payload;
+	return packed_msb_read_lsb_field(
+		       frame, FIRST_PAYLOAD_BIT, FIRST_PAYLOAD_BITS) |
+	       packed_msb_read_lsb_field(
+		       frame, SECOND_PAYLOAD_BIT, SECOND_PAYLOAD_BITS)
+		       << FIRST_PAYLOAD_BITS;
 }
 
 static uint16_t decode_crc(const uint8_t *frame)
 {
-	uint16_t crc = 0;
-
-	for (size_t index = 0; index < CRC_BITS; ++index)
-		crc = (uint16_t)((crc << 1) |
-				 packed_msb_bit(frame, CRC_FIRST_BIT + index));
-	return crc;
+	return (uint16_t)packed_msb_read_msb_field(
+		frame, CRC_FIRST_BIT, CRC_BITS);
 }
 
 enum pcm_j_frame_result pcm_j_frame_decode(

@@ -19,17 +19,6 @@ enum {
 	CPT_HEADER_LAST_BIT = CPT_CODEC_DIFFERENCE_BIT,
 };
 
-static uint8_t decode_lsb_first(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	uint8_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint8_t)(
-			packed_msb_bit(frame, first_bit + index) << index);
-	return value;
-}
-
 static size_t map_first_bit(size_t interval)
 {
 	return CPT_MAP_FIRST_BIT + interval * CPT_MAP_BITS +
@@ -53,7 +42,7 @@ static bool infer_frame_bit_count(
 		return false;
 	for (size_t interval = 0;
 	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
-		uint8_t index = decode_lsb_first(
+		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
 			frame, map_first_bit(interval), CPT_MAP_BITS);
 
 		if (index >= V92_CPT_MAX_CONSTELLATIONS)

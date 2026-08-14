@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <stdint.h>
 #include <string.h>
 
 static bool test_wire_order(void)
@@ -43,6 +44,63 @@ static bool test_assignment(void)
 	for (size_t bit = 0; bit < sizeof(packed) * 8u; ++bit)
 		CHECK(packed_msb_bit(packed, bit) == ((bit % 3u) == 1u),
 		      "assigned bit %zu has the wrong value", bit);
+	return true;
+}
+
+static uint32_t field_mask(size_t bit_count)
+{
+	return bit_count == 32u ? UINT32_MAX :
+	       (UINT32_C(1) << bit_count) - 1u;
+}
+
+static bool test_fields(void)
+{
+	static const uint32_t values[] = {
+		0, UINT32_MAX, UINT32_C(0xa5c31e79),
+	};
+
+	for (size_t first_bit = 0; first_bit < 16u; ++first_bit) {
+		for (size_t bit_count = 0; bit_count <= 32u; ++bit_count) {
+			for (size_t selection = 0;
+			     selection < ARRAY_LENGTH(values); ++selection) {
+				uint8_t lsb[8];
+				uint8_t msb[8];
+				uint8_t expected[8];
+				uint32_t value = values[selection] &
+					field_mask(bit_count);
+
+				memset(lsb, 0xa5, sizeof(lsb));
+				memcpy(msb, lsb, sizeof(msb));
+				memcpy(expected, lsb, sizeof(expected));
+				for (size_t bit = 0; bit < bit_count; ++bit) {
+					packed_msb_set_bit(
+						expected, first_bit + bit,
+						(value & (UINT32_C(1) << bit)) != 0);
+				}
+				packed_msb_write_lsb_field(
+					lsb, first_bit, bit_count, values[selection]);
+				CHECK(memcmp(lsb, expected, sizeof(lsb)) == 0 &&
+				      packed_msb_read_lsb_field(
+					      lsb, first_bit, bit_count) == value,
+				      "LSB field differed at %zu/%zu/%zu",
+				      first_bit, bit_count, selection);
+				memcpy(expected, msb, sizeof(expected));
+				for (size_t bit = 0; bit < bit_count; ++bit) {
+					packed_msb_set_bit(
+						expected, first_bit + bit,
+						(value & (UINT32_C(1) <<
+							  (bit_count - bit - 1u))) != 0);
+				}
+				packed_msb_write_msb_field(
+					msb, first_bit, bit_count, values[selection]);
+				CHECK(memcmp(msb, expected, sizeof(msb)) == 0 &&
+				      packed_msb_read_msb_field(
+					      msb, first_bit, bit_count) == value,
+				      "MSB field differed at %zu/%zu/%zu",
+				      first_bit, bit_count, selection);
+			}
+		}
+	}
 	return true;
 }
 
@@ -97,6 +155,7 @@ int main(void)
 		{ "wire order", test_wire_order },
 		{ "byte boundaries", test_byte_boundaries },
 		{ "assignment", test_assignment },
+		{ "field order and boundaries", test_fields },
 		{ "unpacked validation", test_unpacked_validation },
 		{ "zero tail", test_zero_tail },
 	};

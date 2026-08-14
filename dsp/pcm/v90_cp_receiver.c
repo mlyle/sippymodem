@@ -16,27 +16,6 @@ enum {
 	CP_HEADER_LAST_BIT = CP_CODEC_DIFFERENCE_BIT,
 };
 
-static void set_frame_bit(
-	uint8_t *frame, size_t bit_index, bool value)
-{
-	uint8_t mask = (uint8_t)(1u << (7u - bit_index % 8u));
-
-	if (value)
-		frame[bit_index / 8u] |= mask;
-	else
-		frame[bit_index / 8u] &= (uint8_t)~mask;
-}
-
-static uint8_t decode_lsb_first(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	uint8_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint8_t)(packed_msb_bit(frame, first_bit + index) << index);
-	return value;
-}
-
 static size_t map_first_bit(size_t interval)
 {
 	return CP_MAP_FIRST_BIT + interval * CP_MAP_BITS +
@@ -51,7 +30,7 @@ static bool infer_frame_bit_count(
 
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		uint8_t index = decode_lsb_first(
+		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
 			frame, map_first_bit(interval), CP_MAP_BITS);
 
 		if (index >= V90_CP_MAX_CONSTELLATIONS)
@@ -168,7 +147,7 @@ static void begin_frame(struct v90_cp_receiver *receiver)
 {
 	clear_frame(receiver);
 	for (size_t index = 0; index < CP_SYNC_BITS; ++index)
-		set_frame_bit(receiver->frame, index, true);
+		packed_msb_set_bit(receiver->frame, index, true);
 	receiver->bit_index = CP_INFORMATION_FIRST_BIT;
 	receiver->stage = V90_CP_RECEIVER_READ_HEADER;
 }
@@ -239,7 +218,8 @@ static void receive_bit(
 		return;
 	}
 
-	set_frame_bit(receiver->frame, receiver->bit_index, bit != 0);
+	packed_msb_set_bit(
+		receiver->frame, receiver->bit_index, bit != 0);
 	receiver->bit_index++;
 	if (bit != 0 && bit_must_be_zero(
 			       receiver->bit_index - 1u,

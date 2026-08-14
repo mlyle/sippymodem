@@ -120,24 +120,6 @@ size_t v92_cpt_frame_bytes(
 	return bits == 0 ? 0 : (bits + 7u) / 8u;
 }
 
-static void set_frame_bit(
-	uint8_t *frame, size_t bit_index, bool value)
-{
-	if (value)
-		frame[bit_index / 8u] |=
-			(uint8_t)(1u << (7u - bit_index % 8u));
-}
-
-static void encode_lsb_first(
-	uint8_t *frame, size_t first_bit, size_t bit_count,
-	uint32_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index)
-		set_frame_bit(
-			frame, first_bit + index,
-			(value & (UINT32_C(1) << index)) != 0);
-}
-
 static size_t map_first_bit(size_t interval)
 {
 	return CPT_MAP_FIRST_BIT + interval * CPT_MAP_BITS +
@@ -169,62 +151,53 @@ static void encode_constellation(
 	const struct pcm_constellation *constellation)
 {
 	for (uint8_t ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode) {
-		set_frame_bit(
+		packed_msb_set_bit(
 			frame, mask_bit(set_index, ucode),
 			pcm_constellation_contains(constellation, ucode));
 	}
-}
-
-static uint32_t decode_lsb_first(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	uint32_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint32_t)packed_msb_bit(frame, first_bit + index) << index;
-	return value;
 }
 
 static void encode_header(
 	uint8_t *frame, const struct v92_cpt_parameters *parameters)
 {
 	for (size_t index = 0; index < 17u; ++index)
-		set_frame_bit(frame, index, true);
-	encode_lsb_first(
+		packed_msb_set_bit(frame, index, true);
+	packed_msb_write_lsb_field(
 		frame, CPT_RATE_FIRST_BIT, CPT_RATE_BITS,
 		parameters->selected_rate_index);
-	encode_lsb_first(
+	packed_msb_write_lsb_field(
 		frame, CPT_SIGN_REDUNDANCY_FIRST_BIT,
 		CPT_SIGN_REDUNDANCY_BITS, parameters->sign_redundancy);
-	set_frame_bit(
+	packed_msb_set_bit(
 		frame, CPT_ACKNOWLEDGMENT_BIT,
 		parameters->acknowledges_peer);
-	set_frame_bit(frame, CPT_LAW_BIT, parameters->law == G711_LAW_PCMA);
-	encode_lsb_first(
+	packed_msb_set_bit(
+		frame, CPT_LAW_BIT, parameters->law == G711_LAW_PCMA);
+	packed_msb_write_lsb_field(
 		frame, CPT_LOOKAHEAD_FIRST_BIT, CPT_LOOKAHEAD_BITS,
 		parameters->spectral_lookahead);
-	encode_lsb_first(
+	packed_msb_write_lsb_field(
 		frame, CPT_RATIO_FIRST_BIT, CPT_RATIO_BITS,
 		parameters->trn1d_ratio_q3_13);
-	encode_lsb_first(
+	packed_msb_write_lsb_field(
 		frame, CPT_A1_FIRST_BIT, CPT_COEFFICIENT_BITS,
 		(uint8_t)parameters->shaping_a1_q1_6);
-	encode_lsb_first(
+	packed_msb_write_lsb_field(
 		frame, CPT_A2_FIRST_BIT, CPT_COEFFICIENT_BITS,
 		(uint8_t)parameters->shaping_a2_q1_6);
-	encode_lsb_first(
+	packed_msb_write_lsb_field(
 		frame, CPT_B1_FIRST_BIT, CPT_COEFFICIENT_BITS,
 		(uint8_t)parameters->shaping_b1_q1_6);
-	encode_lsb_first(
+	packed_msb_write_lsb_field(
 		frame, CPT_B2_FIRST_BIT, CPT_COEFFICIENT_BITS,
 		(uint8_t)parameters->shaping_b2_q1_6);
 	for (size_t interval = 0;
 	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
-		encode_lsb_first(
+		packed_msb_write_lsb_field(
 			frame, map_first_bit(interval), CPT_MAP_BITS,
 			parameters->frame_constellation[interval]);
 	}
-	set_frame_bit(
+	packed_msb_set_bit(
 		frame, CPT_CODEC_DIFFERENCE_BIT,
 		parameters->codec_constellations_differ);
 }
@@ -267,12 +240,8 @@ enum v92_cpt_result v92_cpt_encode(
 	payload_end = V92_CPT_HEADER_BITS +
 		      set_count * V92_CPT_CONSTELLATION_BITS;
 	crc = frame_crc(encoded, payload_end);
-	for (size_t index = 0; index < CPT_CRC_BITS; ++index) {
-		set_frame_bit(
-			encoded, payload_end + 1u + index,
-			(crc & (uint16_t)(1u <<
-				(CPT_CRC_BITS - index - 1u))) != 0);
-	}
+	packed_msb_write_msb_field(
+		encoded, payload_end + 1u, CPT_CRC_BITS, crc);
 	memcpy(frame, encoded, byte_count);
 	*frame_bit_count = bit_count;
 	return V92_CPT_OK;
@@ -312,7 +281,7 @@ static bool framing_is_valid(
 static int8_t decode_signed_q1_6(
 	const uint8_t *frame, size_t first_bit)
 {
-	uint8_t raw = (uint8_t)decode_lsb_first(
+	uint8_t raw = (uint8_t)packed_msb_read_lsb_field(
 		frame, first_bit, CPT_COEFFICIENT_BITS);
 
 	return raw <= INT8_MAX ? (int8_t)raw :
@@ -335,17 +304,21 @@ static void decode_header(
 {
 	parameters->law = packed_msb_bit(frame, CPT_LAW_BIT) != 0 ?
 				  G711_LAW_PCMA : G711_LAW_PCMU;
-	parameters->selected_rate_index = (uint8_t)decode_lsb_first(
-		frame, CPT_RATE_FIRST_BIT, CPT_RATE_BITS);
-	parameters->sign_redundancy = (uint8_t)decode_lsb_first(
-		frame, CPT_SIGN_REDUNDANCY_FIRST_BIT,
-		CPT_SIGN_REDUNDANCY_BITS);
+	parameters->selected_rate_index =
+		(uint8_t)packed_msb_read_lsb_field(
+			frame, CPT_RATE_FIRST_BIT, CPT_RATE_BITS);
+	parameters->sign_redundancy =
+		(uint8_t)packed_msb_read_lsb_field(
+			frame, CPT_SIGN_REDUNDANCY_FIRST_BIT,
+			CPT_SIGN_REDUNDANCY_BITS);
 	parameters->acknowledges_peer =
 		packed_msb_bit(frame, CPT_ACKNOWLEDGMENT_BIT) != 0;
-	parameters->spectral_lookahead = (uint8_t)decode_lsb_first(
-		frame, CPT_LOOKAHEAD_FIRST_BIT, CPT_LOOKAHEAD_BITS);
-	parameters->trn1d_ratio_q3_13 = (uint16_t)decode_lsb_first(
-		frame, CPT_RATIO_FIRST_BIT, CPT_RATIO_BITS);
+	parameters->spectral_lookahead =
+		(uint8_t)packed_msb_read_lsb_field(
+			frame, CPT_LOOKAHEAD_FIRST_BIT, CPT_LOOKAHEAD_BITS);
+	parameters->trn1d_ratio_q3_13 =
+		(uint16_t)packed_msb_read_lsb_field(
+			frame, CPT_RATIO_FIRST_BIT, CPT_RATIO_BITS);
 	parameters->shaping_a1_q1_6 =
 		decode_signed_q1_6(frame, CPT_A1_FIRST_BIT);
 	parameters->shaping_a2_q1_6 =
@@ -378,7 +351,7 @@ enum v92_cpt_result v92_cpt_decode(
 		return V92_CPT_INVALID_ARGUMENT;
 	for (size_t interval = 0;
 	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
-		uint8_t index = (uint8_t)decode_lsb_first(
+		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
 			frame, map_first_bit(interval), CPT_MAP_BITS);
 
 		if (index >= V92_CPT_MAX_CONSTELLATIONS)
@@ -398,10 +371,8 @@ enum v92_cpt_result v92_cpt_decode(
 	if (frame_bit_count != expected_bits ||
 	    !framing_is_valid(frame, payload_end, frame_bit_count))
 		return V92_CPT_INVALID_FRAME;
-	for (size_t index = 0; index < CPT_CRC_BITS; ++index)
-		received_crc = (uint16_t)(
-			(received_crc << 1) |
-			packed_msb_bit(frame, payload_end + 1u + index));
+	received_crc = (uint16_t)packed_msb_read_msb_field(
+		frame, payload_end + 1u, CPT_CRC_BITS);
 	if (received_crc != frame_crc(frame, payload_end))
 		return V92_CPT_CRC_MISMATCH;
 

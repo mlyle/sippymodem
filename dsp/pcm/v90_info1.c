@@ -20,27 +20,6 @@ enum {
 	FREQUENCY_OFFSET_MODULUS = 1024,
 };
 
-static uint16_t decode_field(
-	const uint8_t *payload, size_t first_bit, size_t bit_count)
-{
-	uint16_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint16_t)(packed_msb_bit(payload, first_bit + index)
-				    << index);
-	return value;
-}
-
-static void encode_field(
-	uint8_t *payload, size_t first_bit, size_t bit_count,
-	uint16_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index)
-		packed_msb_set_bit(
-			payload, first_bit + index,
-			(value & (uint16_t)(1u << index)) != 0);
-}
-
 bool v90_info1a_is_valid(const struct v90_info1a *info1a)
 {
 	return info1a != NULL &&
@@ -73,19 +52,19 @@ enum v90_info1_result v90_info1a_encode(
 			info1a->frequency_offset_1_50_hz_units +
 				FREQUENCY_OFFSET_MODULUS :
 			info1a->frequency_offset_1_50_hz_units);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, MD_LENGTH_FIRST_BIT, MD_LENGTH_BITS,
 		info1a->local_md_length_35_ms_units);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, TRAINING_UCODE_FIRST_BIT, TRAINING_UCODE_BITS,
 		info1a->training_ucode);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, UPSTREAM_SYMBOL_RATE_FIRST_BIT, SYMBOL_RATE_BITS,
 		(uint16_t)info1a->upstream_symbol_rate);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, DOWNSTREAM_SYMBOL_RATE_FIRST_BIT, SYMBOL_RATE_BITS,
 		DOWNSTREAM_SYMBOL_RATE_CODE);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, FREQUENCY_OFFSET_FIRST_BIT, FREQUENCY_OFFSET_BITS,
 		frequency_offset);
 	memcpy(payload, encoded, sizeof(encoded));
@@ -94,7 +73,7 @@ enum v90_info1_result v90_info1a_encode(
 
 static int16_t decode_frequency_offset(const uint8_t *payload)
 {
-	uint16_t encoded = decode_field(
+	uint16_t encoded = (uint16_t)packed_msb_read_lsb_field(
 		payload, FREQUENCY_OFFSET_FIRST_BIT, FREQUENCY_OFFSET_BITS);
 
 	return encoded >= FREQUENCY_OFFSET_MODULUS / 2 ?
@@ -114,19 +93,21 @@ enum v90_info1_result v90_info1a_decode(
 	if (payload_bit_count != V90_INFO1A_PAYLOAD_BITS ||
 	    !packed_msb_tail_is_zero(
 		    payload, payload_bit_count, V90_INFO1A_PAYLOAD_BYTES) ||
-	    decode_field(
+	    packed_msb_read_lsb_field(
 		    payload, DOWNSTREAM_SYMBOL_RATE_FIRST_BIT,
 		    SYMBOL_RATE_BITS) != DOWNSTREAM_SYMBOL_RATE_CODE)
 		return V90_INFO1_INVALID_PAYLOAD;
 	decoded = (struct v90_info1a){
-		.local_md_length_35_ms_units = (uint8_t)decode_field(
-			payload, MD_LENGTH_FIRST_BIT, MD_LENGTH_BITS),
-		.training_ucode = (uint8_t)decode_field(
+		.local_md_length_35_ms_units =
+			(uint8_t)packed_msb_read_lsb_field(
+				payload, MD_LENGTH_FIRST_BIT, MD_LENGTH_BITS),
+		.training_ucode = (uint8_t)packed_msb_read_lsb_field(
 			payload, TRAINING_UCODE_FIRST_BIT,
 			TRAINING_UCODE_BITS),
-		.upstream_symbol_rate = (enum v34_symbol_rate)decode_field(
-			payload, UPSTREAM_SYMBOL_RATE_FIRST_BIT,
-			SYMBOL_RATE_BITS),
+		.upstream_symbol_rate =
+			(enum v34_symbol_rate)packed_msb_read_lsb_field(
+				payload, UPSTREAM_SYMBOL_RATE_FIRST_BIT,
+				SYMBOL_RATE_BITS),
 		.frequency_offset_1_50_hz_units =
 			decode_frequency_offset(payload),
 	};

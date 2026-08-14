@@ -6,17 +6,6 @@
 
 #include <string.h>
 
-static void set_sequence_bit(
-	uint8_t *sequence, size_t bit_index, bool value)
-{
-	uint8_t mask = (uint8_t)(1u << (7u - bit_index % 8u));
-
-	if (value)
-		sequence[bit_index / 8u] |= mask;
-	else
-		sequence[bit_index / 8u] &= (uint8_t)~mask;
-}
-
 static bool prefix_is_valid(const uint8_t *sequence)
 {
 	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit) {
@@ -120,7 +109,7 @@ static void begin_candidate(struct v90_mp_receiver *receiver)
 {
 	clear_candidate(receiver);
 	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit)
-		set_sequence_bit(receiver->sequence, bit, true);
+		packed_msb_set_bit(receiver->sequence, bit, true);
 	receiver->bit_index = V90_MP_FRAME_SYNC_BITS + 1u;
 	receiver->stage = V90_MP_RECEIVE_TYPE;
 }
@@ -176,7 +165,8 @@ static void receive_valid_bit(
 		begin_candidate(receiver);
 		return;
 	}
-	set_sequence_bit(receiver->sequence, receiver->bit_index, bit != 0);
+	packed_msb_set_bit(
+		receiver->sequence, receiver->bit_index, bit != 0);
 	receiver->bit_index++;
 	if (receiver->stage == V90_MP_RECEIVE_TYPE) {
 		enum v90_mp_record_type type = bit != 0 ?

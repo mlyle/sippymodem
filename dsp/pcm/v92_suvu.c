@@ -61,28 +61,6 @@ bool v92_suvu_parameters_are_valid(
 	       parameters->prefilter_level_db_q2_2 <= 15;
 }
 
-static void encode_lsb_first(
-	uint8_t *frame, size_t first_bit, size_t bit_count, uint32_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index) {
-		packed_msb_set_bit(
-			frame, first_bit + index,
-			(value & (UINT32_C(1) << index)) != 0);
-	}
-}
-
-static uint32_t decode_lsb_first(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	uint32_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index) {
-		value |= (uint32_t)packed_msb_bit(frame, first_bit + index) <<
-			 index;
-	}
-	return value;
-}
-
 static uint16_t frame_crc(const uint8_t *frame)
 {
 	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
@@ -131,7 +109,7 @@ enum v92_suvu_result v92_suvu_encode(
 	raw_level = parameters->prefilter_level_db_q2_2 < 0 ?
 		(uint8_t)(parameters->prefilter_level_db_q2_2 + 32) :
 		(uint8_t)parameters->prefilter_level_db_q2_2;
-	encode_lsb_first(
+	packed_msb_write_lsb_field(
 		encoded, SUVU_LEVEL_FIRST_BIT, SUVU_LEVEL_BITS, raw_level);
 	packed_msb_set_bit(
 		encoded, SUVU_REQUEST_SILENCE_BIT,
@@ -140,12 +118,8 @@ enum v92_suvu_result v92_suvu_encode(
 		encoded, SUVU_ACKNOWLEDGMENT_BIT,
 		parameters->acknowledges_cpd);
 	crc = frame_crc(encoded);
-	for (size_t bit = 0; bit < SUVU_CRC_BITS; ++bit) {
-		packed_msb_set_bit(
-			encoded, SUVU_CRC_FIRST_BIT + bit,
-			(crc & (uint16_t)(1u <<
-				(SUVU_CRC_BITS - bit - 1u))) != 0);
-	}
+	packed_msb_write_msb_field(
+		encoded, SUVU_CRC_FIRST_BIT, SUVU_CRC_BITS, crc);
 	memcpy(frame, encoded, sizeof(encoded));
 	*frame_bit_count = bit_count;
 	return V92_SUVU_OK;
@@ -165,13 +139,8 @@ static bool framing_is_valid(
 
 static uint16_t decode_crc(const uint8_t *frame)
 {
-	uint16_t crc = 0;
-
-	for (size_t bit = 0; bit < SUVU_CRC_BITS; ++bit) {
-		crc = (uint16_t)((crc << 1) |
-			packed_msb_bit(frame, SUVU_CRC_FIRST_BIT + bit));
-	}
-	return crc;
+	return (uint16_t)packed_msb_read_msb_field(
+		frame, SUVU_CRC_FIRST_BIT, SUVU_CRC_BITS);
 }
 
 enum v92_suvu_result v92_suvu_decode(
@@ -196,7 +165,7 @@ enum v92_suvu_result v92_suvu_decode(
 	if (decode_crc(frame) != frame_crc(frame))
 		return V92_SUVU_CRC_MISMATCH;
 
-	raw_level = (uint8_t)decode_lsb_first(
+	raw_level = (uint8_t)packed_msb_read_lsb_field(
 		frame, SUVU_LEVEL_FIRST_BIT, SUVU_LEVEL_BITS);
 	decoded = (struct v92_suvu_parameters){
 		.prefilter_level_db_q2_2 = raw_level < 16u ?

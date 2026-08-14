@@ -194,57 +194,6 @@ enum v90_mp_result v90_mp_sequence_size(
 	return V90_MP_OK;
 }
 
-static void set_sequence_bit(
-	uint8_t *sequence, size_t bit_index, bool value)
-{
-	if (value)
-		sequence[bit_index / 8u] |=
-			(uint8_t)(1u << (7u - bit_index % 8u));
-}
-
-static void encode_lsb_first_field(
-	uint8_t *sequence, size_t first_bit, size_t bit_count,
-	uint16_t value)
-{
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		set_sequence_bit(
-			sequence, first_bit + bit,
-			(value & (uint16_t)(1u << bit)) != 0);
-}
-
-static uint16_t decode_lsb_first_field(
-	const uint8_t *sequence, size_t first_bit, size_t bit_count)
-{
-	uint16_t value = 0;
-
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		value |= (uint16_t)packed_msb_bit(sequence, first_bit + bit)
-			 << bit;
-	return value;
-}
-
-static void encode_msb_first_field(
-	uint8_t *sequence, size_t first_bit, size_t bit_count,
-	uint16_t value)
-{
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		set_sequence_bit(
-			sequence, first_bit + bit,
-			(value & (uint16_t)(1u <<
-						 (bit_count - bit - 1u))) != 0);
-}
-
-static uint16_t decode_msb_first_field(
-	const uint8_t *sequence, size_t first_bit, size_t bit_count)
-{
-	uint16_t value = 0;
-
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		value = (uint16_t)((value << 1) |
-				   packed_msb_bit(sequence, first_bit + bit));
-	return value;
-}
-
 static bool is_start_bit(size_t bit_index)
 {
 	return bit_index >= V90_MP_START0_BIT &&
@@ -278,24 +227,24 @@ static void encode_common(
 	bool type1)
 {
 	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit)
-		set_sequence_bit(sequence, bit, true);
-	set_sequence_bit(sequence, V90_MP_TYPE_BIT, type1);
-	encode_lsb_first_field(
+		packed_msb_set_bit(sequence, bit, true);
+	packed_msb_set_bit(sequence, V90_MP_TYPE_BIT, type1);
+	packed_msb_write_lsb_field(
 		sequence, V90_MP_RATE_FIRST_BIT, V90_MP_RATE_BITS,
 		parameters->maximum_upstream_rate_2400_bps_units);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		sequence, V90_MP_TRELLIS_FIRST_BIT, V90_MP_TRELLIS_BITS,
 		(uint16_t)parameters->upstream_trellis);
-	set_sequence_bit(
+	packed_msb_set_bit(
 		sequence, V90_MP_NONLINEAR_ENCODING_BIT,
 		parameters->upstream_nonlinear_encoding);
-	set_sequence_bit(
+	packed_msb_set_bit(
 		sequence, V90_MP_EXPANDED_SHAPING_BIT,
 		parameters->upstream_expanded_shaping);
-	set_sequence_bit(
+	packed_msb_set_bit(
 		sequence, V90_MP_ACKNOWLEDGMENT_BIT,
 		parameters->acknowledges_cp);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		sequence, V90_MP_RATE_CAPABILITY_FIRST_BIT,
 		V90_MP_RATE_CAPABILITY_BITS,
 		parameters->upstream_rate_capability_mask);
@@ -337,13 +286,13 @@ enum v90_mp_result v90_mp_encode(
 		record->type == V90_MP_RECORD_TYPE1);
 	if (record->type == V90_MP_RECORD_TYPE1) {
 		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-			encode_lsb_first_field(
+			packed_msb_write_lsb_field(
 				encoded,
 				coefficient_component_first_bit(tap, false),
 				V90_MP_COEFFICIENT_COMPONENT_BITS,
 				(uint16_t)record->parameters.type1
 					.precoder_coefficients[tap].real);
-			encode_lsb_first_field(
+			packed_msb_write_lsb_field(
 				encoded,
 				coefficient_component_first_bit(tap, true),
 				V90_MP_COEFFICIENT_COMPONENT_BITS,
@@ -355,7 +304,7 @@ enum v90_mp_result v90_mp_encode(
 		crc_start_bit = V90_MP_TYPE0_CRC_START_BIT;
 	}
 	crc = sequence_crc(encoded, crc_start_bit);
-	encode_msb_first_field(
+	packed_msb_write_msb_field(
 		encoded, crc_start_bit + 1u, V90_MP_CRC_BITS, crc);
 	memcpy(sequence, encoded, byte_count);
 	*sequence_bit_count = bit_count;
@@ -401,10 +350,10 @@ static void decode_common(
 	const uint8_t *sequence, struct v90_mp_parameters *parameters)
 {
 	parameters->maximum_upstream_rate_2400_bps_units =
-		(uint8_t)decode_lsb_first_field(
+		(uint8_t)packed_msb_read_lsb_field(
 			sequence, V90_MP_RATE_FIRST_BIT, V90_MP_RATE_BITS);
 	parameters->upstream_trellis =
-		(enum v34_trellis_selection)decode_lsb_first_field(
+		(enum v34_trellis_selection)packed_msb_read_lsb_field(
 			sequence, V90_MP_TRELLIS_FIRST_BIT,
 			V90_MP_TRELLIS_BITS);
 	parameters->upstream_nonlinear_encoding =
@@ -414,7 +363,7 @@ static void decode_common(
 	parameters->acknowledges_cp =
 		packed_msb_bit(sequence, V90_MP_ACKNOWLEDGMENT_BIT) != 0;
 	parameters->upstream_rate_capability_mask =
-		decode_lsb_first_field(
+		(uint16_t)packed_msb_read_lsb_field(
 			sequence, V90_MP_RATE_CAPABILITY_FIRST_BIT,
 			V90_MP_RATE_CAPABILITY_BITS);
 }
@@ -448,7 +397,7 @@ enum v90_mp_result v90_mp_decode(
 	if (!framing_bits_are_valid(
 		    sequence, sequence_bit_count, crc_start_bit))
 		return V90_MP_INVALID_FRAME;
-	received_crc = decode_msb_first_field(
+	received_crc = (uint16_t)packed_msb_read_msb_field(
 		sequence, crc_start_bit + 1u, V90_MP_CRC_BITS);
 	if (received_crc != sequence_crc(sequence, crc_start_bit))
 		return V90_MP_CRC_MISMATCH;
@@ -459,18 +408,20 @@ enum v90_mp_result v90_mp_decode(
 		decode_common(sequence, &decoded.parameters.type1.common);
 		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
 			decoded.parameters.type1.precoder_coefficients[tap].real =
-				decode_twos_complement(decode_lsb_first_field(
-					sequence,
-					coefficient_component_first_bit(
-						tap, false),
-					V90_MP_COEFFICIENT_COMPONENT_BITS));
+				decode_twos_complement(
+					(uint16_t)packed_msb_read_lsb_field(
+						sequence,
+						coefficient_component_first_bit(
+							tap, false),
+						V90_MP_COEFFICIENT_COMPONENT_BITS));
 			decoded.parameters.type1.precoder_coefficients[tap]
 				.imaginary =
-				decode_twos_complement(decode_lsb_first_field(
-					sequence,
-					coefficient_component_first_bit(
-						tap, true),
-					V90_MP_COEFFICIENT_COMPONENT_BITS));
+				decode_twos_complement(
+					(uint16_t)packed_msb_read_lsb_field(
+						sequence,
+						coefficient_component_first_bit(
+							tap, true),
+						V90_MP_COEFFICIENT_COMPONENT_BITS));
 		}
 	}
 	if (!v90_mp_record_is_valid(&decoded))

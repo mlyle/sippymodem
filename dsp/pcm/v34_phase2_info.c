@@ -20,12 +20,6 @@ static bool payload_arguments_are_valid(
 	       (payload != NULL || payload_bit_count == 0);
 }
 
-static void set_packed_bit(uint8_t *packed, size_t bit_index, uint8_t bit)
-{
-	packed[bit_index / 8u] |=
-		(uint8_t)(bit << (7u - bit_index % 8u));
-}
-
 static uint16_t payload_crc(
 	const uint8_t *payload, size_t payload_bit_count)
 {
@@ -92,8 +86,9 @@ v34_phase2_info_generator_init(
 	    !payload_arguments_are_valid(payload, payload_bit_count))
 		return V34_PHASE2_INFO_INVALID_ARGUMENT;
 	for (size_t index = 0; index < payload_bit_count; ++index)
-		set_packed_bit(initialized.payload, index,
-			       packed_msb_bit(payload, index));
+		packed_msb_set_bit(
+			initialized.payload, index,
+			packed_msb_bit(payload, index) != 0u);
 	initialized.crc = payload_crc(initialized.payload, payload_bit_count);
 	if (!v34_phase2_info_generator_is_valid(&initialized))
 		return V34_PHASE2_INFO_INVALID_ARGUMENT;
@@ -339,7 +334,8 @@ v34_phase2_info_receive_bit(
 			begin_receive_frame(&next);
 		break;
 	case V34_PHASE2_INFO_RECEIVE_PAYLOAD:
-		set_packed_bit(next.payload, next.payload_bit_index, bit);
+		packed_msb_set_bit(
+			next.payload, next.payload_bit_index, bit != 0u);
 		next.payload_bit_index++;
 		next.crc = crc16_ccitt_false_step(
 			next.crc, bit != 0);

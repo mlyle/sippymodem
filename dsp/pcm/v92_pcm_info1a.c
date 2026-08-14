@@ -59,26 +59,6 @@ bool v92_pcm_info1a_is_valid(const struct v92_pcm_info1a *info1a)
 	       info1a->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE;
 }
 
-static uint16_t decode_field(
-	const uint8_t *payload, size_t first_bit, size_t bit_count)
-{
-	uint16_t value = 0;
-
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		value |= (uint16_t)packed_msb_bit(payload, first_bit + bit) << bit;
-	return value;
-}
-
-static void encode_field(
-	uint8_t *payload, size_t first_bit, size_t bit_count,
-	uint16_t value)
-{
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		packed_msb_set_bit(
-			payload, first_bit + bit,
-			(value & (uint16_t)(1u << bit)) != 0);
-}
-
 static uint16_t coefficient_code(uint16_t count, uint16_t minimum)
 {
 	return (uint16_t)(
@@ -96,31 +76,31 @@ enum v92_pcm_info1a_result v92_pcm_info1a_encode(
 		return V92_PCM_INFO1A_INVALID_ARGUMENT;
 	if (!v92_pcm_info1a_is_valid(info1a))
 		return V92_PCM_INFO1A_INVALID_SELECTION;
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, FILTER_SECTIONS_FIRST_BIT, FILTER_SECTIONS_BITS,
 		(uint16_t)info1a->filter_sections);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, TOTAL_COEFFICIENTS_FIRST_BIT,
 		TOTAL_COEFFICIENTS_BITS,
 		coefficient_code(
 			info1a->maximum_total_coefficients,
 			V92_PCM_INFO1A_MIN_TOTAL_COEFFICIENTS));
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, SECTION_COEFFICIENTS_FIRST_BIT,
 		SECTION_COEFFICIENTS_BITS,
 		coefficient_code(
 			info1a->maximum_section_coefficients,
 			V92_PCM_INFO1A_MIN_SECTION_COEFFICIENTS));
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, MD_LENGTH_FIRST_BIT, MD_LENGTH_BITS,
 		info1a->local_md_length_276_symbol_units);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, TRAINING_UCODE_FIRST_BIT, TRAINING_UCODE_BITS,
 		info1a->training_ucode);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, ANALOG_SYMBOL_RATE_FIRST_BIT, SYMBOL_RATE_BITS,
 		PCM_SYMBOL_RATE_CODE);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, DIGITAL_SYMBOL_RATE_FIRST_BIT, SYMBOL_RATE_BITS,
 		PCM_SYMBOL_RATE_CODE);
 	for (size_t bit = RESERVED_ONES_FIRST_BIT;
@@ -143,33 +123,35 @@ enum v92_pcm_info1a_result v92_pcm_info1a_decode(
 	    !packed_msb_tail_is_zero(
 		    payload, payload_bit_count,
 		    V92_PCM_INFO1A_PAYLOAD_BYTES) ||
-	    decode_field(
+	    packed_msb_read_lsb_field(
 		    payload, ANALOG_SYMBOL_RATE_FIRST_BIT,
 		    SYMBOL_RATE_BITS) != PCM_SYMBOL_RATE_CODE ||
-	    decode_field(
+	    packed_msb_read_lsb_field(
 		    payload, DIGITAL_SYMBOL_RATE_FIRST_BIT,
 		    SYMBOL_RATE_BITS) != PCM_SYMBOL_RATE_CODE)
 		return V92_PCM_INFO1A_INVALID_PAYLOAD;
 	decoded = (struct v92_pcm_info1a){
 		.filter_sections =
-			(enum v92_pcm_filter_sections)decode_field(
+			(enum v92_pcm_filter_sections)packed_msb_read_lsb_field(
 				payload, FILTER_SECTIONS_FIRST_BIT,
 				FILTER_SECTIONS_BITS),
 		.maximum_total_coefficients = (uint16_t)(
 			V92_PCM_INFO1A_MIN_TOTAL_COEFFICIENTS +
 			V92_PCM_INFO1A_COEFFICIENT_STEP *
-				decode_field(
+				packed_msb_read_lsb_field(
 					payload, TOTAL_COEFFICIENTS_FIRST_BIT,
 					TOTAL_COEFFICIENTS_BITS)),
 		.maximum_section_coefficients = (uint16_t)(
 			V92_PCM_INFO1A_MIN_SECTION_COEFFICIENTS +
 			V92_PCM_INFO1A_COEFFICIENT_STEP *
-				decode_field(
+				packed_msb_read_lsb_field(
 					payload, SECTION_COEFFICIENTS_FIRST_BIT,
 					SECTION_COEFFICIENTS_BITS)),
-		.local_md_length_276_symbol_units = (uint8_t)decode_field(
-			payload, MD_LENGTH_FIRST_BIT, MD_LENGTH_BITS),
-		.training_ucode = (uint8_t)decode_field(
+		.local_md_length_276_symbol_units =
+			(uint8_t)packed_msb_read_lsb_field(
+				payload, MD_LENGTH_FIRST_BIT,
+				MD_LENGTH_BITS),
+		.training_ucode = (uint8_t)packed_msb_read_lsb_field(
 			payload, TRAINING_UCODE_FIRST_BIT,
 			TRAINING_UCODE_BITS),
 	};

@@ -83,19 +83,11 @@ bool v90_ja_search_is_complete(const struct v90_ja_search *search)
 	return v90_ja_search_is_valid(search) && search->complete;
 }
 
-static void store_bit(
-	uint8_t *descriptor, uint16_t index, uint8_t bit)
-{
-	if (bit != 0)
-		descriptor[index / 8u] |=
-			(uint8_t)(1u << (7u - index % 8u));
-}
-
 static void start_descriptor(struct v90_ja_search *search)
 {
 	memset(search->descriptor, 0, sizeof(search->descriptor));
 	for (size_t bit = 0; bit < V90_DIL_FRAME_SYNC_BITS; ++bit)
-		store_bit(search->descriptor, (uint16_t)bit, 1);
+		packed_msb_set_bit(search->descriptor, bit, true);
 	search->bit_index = V90_DIL_FRAME_SYNC_BITS + 1u;
 	search->consecutive_ones = 0;
 	search->collecting = true;
@@ -130,7 +122,8 @@ static enum v90_ja_search_result receive_bit(
 		}
 		return V90_JA_SEARCH_OK;
 	}
-	store_bit(search->descriptor, search->bit_index, bit);
+	packed_msb_set_bit(
+		search->descriptor, search->bit_index, bit != 0u);
 	search->bit_index++;
 	if (search->bit_index < V90_DIL_ZERO_DESCRIPTOR_BITS)
 		return V90_JA_SEARCH_OK;

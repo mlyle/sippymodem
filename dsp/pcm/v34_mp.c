@@ -178,53 +178,6 @@ const char *v34_mp_rate_result_name(enum v34_mp_rate_result result)
 	return "unknown";
 }
 
-static void set_frame_bit(uint8_t *frame, size_t bit_index, bool value)
-{
-	if (value)
-		frame[bit_index / 8u] |=
-			(uint8_t)(1u << (7u - bit_index % 8u));
-}
-
-static uint16_t decode_lsb_first_field(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	uint16_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint16_t)packed_msb_bit(frame, first_bit + index) << index;
-	return value;
-}
-
-static void encode_lsb_first_field(
-	uint8_t *frame, size_t first_bit, size_t bit_count, uint16_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index)
-		set_frame_bit(
-			frame, first_bit + index,
-			(value & (uint16_t)(1u << index)) != 0);
-}
-
-static uint16_t decode_msb_first_field(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	uint16_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value = (uint16_t)((value << 1) |
-				   packed_msb_bit(frame, first_bit + index));
-	return value;
-}
-
-static void encode_msb_first_field(
-	uint8_t *frame, size_t first_bit, size_t bit_count, uint16_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index)
-		set_frame_bit(
-			frame, first_bit + index,
-			(value & (uint16_t)(1u << (bit_count - index - 1u))) !=
-				0);
-}
-
 static bool is_start_bit(size_t bit_index)
 {
 	return bit_index >= V34_MP_START0_BIT &&
@@ -251,36 +204,36 @@ static void encode_common_parameters(
 {
 	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
 	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
-		set_frame_bit(frame, index, true);
-	set_frame_bit(frame, V34_MP_TYPE_BIT, type1);
-	encode_lsb_first_field(
+		packed_msb_set_bit(frame, index, true);
+	packed_msb_set_bit(frame, V34_MP_TYPE_BIT, type1);
+	packed_msb_write_lsb_field(
 		frame, V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
 		V34_MP_RATE_FIELD_BITS,
 		parameters->maximum_call_to_answer_rate_2400_bps_units);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		frame, V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
 		V34_MP_RATE_FIELD_BITS,
 		parameters->maximum_answer_to_call_rate_2400_bps_units);
-	set_frame_bit(
+	packed_msb_set_bit(
 		frame, V34_MP_AUXILIARY_CHANNEL_BIT,
 		parameters->auxiliary_channel_enabled);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS,
 		(uint16_t)parameters->remote_transmitter_trellis);
-	set_frame_bit(
+	packed_msb_set_bit(
 		frame, V34_MP_NONLINEAR_ENCODING_BIT,
 		parameters->remote_transmitter_nonlinear_encoding);
-	set_frame_bit(
+	packed_msb_set_bit(
 		frame, V34_MP_EXPANDED_SHAPING_BIT,
 		parameters->remote_transmitter_expanded_shaping);
-	set_frame_bit(
+	packed_msb_set_bit(
 		frame, V34_MP_ACKNOWLEDGMENT_BIT,
 		parameters->acknowledges_peer_mp);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
 		V34_MP_RATE_CAPABILITY_BITS,
 		parameters->data_rate_capability_mask);
-	set_frame_bit(
+	packed_msb_set_bit(
 		frame, V34_MP_ASYMMETRIC_RATES_BIT,
 		parameters->asymmetric_rates_enabled);
 }
@@ -289,19 +242,19 @@ static void decode_common_parameters(
 	const uint8_t *frame, struct v34_mp_parameters *parameters)
 {
 	parameters->maximum_call_to_answer_rate_2400_bps_units =
-		(uint8_t)decode_lsb_first_field(
+		(uint8_t)packed_msb_read_lsb_field(
 			frame,
 			V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
 			V34_MP_RATE_FIELD_BITS);
 	parameters->maximum_answer_to_call_rate_2400_bps_units =
-		(uint8_t)decode_lsb_first_field(
+		(uint8_t)packed_msb_read_lsb_field(
 			frame,
 			V34_MP_MAXIMUM_ANSWER_TO_CALL_RATE_FIRST_BIT,
 			V34_MP_RATE_FIELD_BITS);
 	parameters->auxiliary_channel_enabled =
 		packed_msb_bit(frame, V34_MP_AUXILIARY_CHANNEL_BIT) != 0;
 	parameters->remote_transmitter_trellis =
-		(enum v34_trellis_selection)decode_lsb_first_field(
+		(enum v34_trellis_selection)packed_msb_read_lsb_field(
 			frame, V34_MP_TRELLIS_FIRST_BIT, V34_MP_TRELLIS_BITS);
 	parameters->remote_transmitter_nonlinear_encoding =
 		packed_msb_bit(frame, V34_MP_NONLINEAR_ENCODING_BIT) != 0;
@@ -309,9 +262,10 @@ static void decode_common_parameters(
 		packed_msb_bit(frame, V34_MP_EXPANDED_SHAPING_BIT) != 0;
 	parameters->acknowledges_peer_mp =
 		packed_msb_bit(frame, V34_MP_ACKNOWLEDGMENT_BIT) != 0;
-	parameters->data_rate_capability_mask = decode_lsb_first_field(
-		frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
-		V34_MP_RATE_CAPABILITY_BITS);
+	parameters->data_rate_capability_mask =
+		(uint16_t)packed_msb_read_lsb_field(
+			frame, V34_MP_RATE_CAPABILITY_FIRST_BIT,
+			V34_MP_RATE_CAPABILITY_BITS);
 	parameters->asymmetric_rates_enabled =
 		packed_msb_bit(frame, V34_MP_ASYMMETRIC_RATES_BIT) != 0;
 }
@@ -334,7 +288,7 @@ enum v34_mp_result v34_mp_type0_encode(
 	crc = frame_crc(encoded, V34_MP_TYPE0_CRC_FIRST_BIT);
 	/* The CCITT-FALSE numeric representation holds the first V.34 CRC
 	 * output in its most-significant bit. */
-	encode_msb_first_field(
+	packed_msb_write_msb_field(
 		encoded, V34_MP_TYPE0_CRC_FIRST_BIT,
 		V34_MP_CRC_BITS, crc);
 	memcpy(frame, encoded, sizeof(encoded));
@@ -385,7 +339,7 @@ enum v34_mp_result v34_mp_type0_decode(
 		    frame, false, V34_MP_TYPE0_CRC_FIRST_BIT,
 		    V34_MP_TYPE0_FILL_FIRST_BIT, V34_MP_TYPE0_FILL_BITS))
 		return V34_MP_INVALID_FRAME;
-	received_crc = decode_msb_first_field(
+	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, V34_MP_TYPE0_CRC_FIRST_BIT,
 		V34_MP_CRC_BITS);
 	if (received_crc != frame_crc(frame, V34_MP_TYPE0_CRC_FIRST_BIT))
@@ -429,17 +383,17 @@ enum v34_mp_result v34_mp_type1_encode(
 	encode_common_parameters(encoded, &parameters->common, true);
 	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
 	     ++index) {
-		encode_lsb_first_field(
+		packed_msb_write_lsb_field(
 			encoded, coefficient_component_first_bit(index, false),
 			V34_MP_COEFFICIENT_COMPONENT_BITS,
 			(uint16_t)parameters->precoder_coefficients[index].real);
-		encode_lsb_first_field(
+		packed_msb_write_lsb_field(
 			encoded, coefficient_component_first_bit(index, true),
 			V34_MP_COEFFICIENT_COMPONENT_BITS,
 			(uint16_t)parameters->precoder_coefficients[index].imaginary);
 	}
 	crc = frame_crc(encoded, V34_MP_TYPE1_CRC_FIRST_BIT);
-	encode_msb_first_field(
+	packed_msb_write_msb_field(
 		encoded, V34_MP_TYPE1_CRC_FIRST_BIT,
 		V34_MP_CRC_BITS, crc);
 	memcpy(frame, encoded, sizeof(encoded));
@@ -460,7 +414,7 @@ enum v34_mp_result v34_mp_type1_decode(
 		    frame, true, V34_MP_TYPE1_CRC_FIRST_BIT,
 		    V34_MP_TYPE1_FILL_FIRST_BIT, V34_MP_TYPE1_FILL_BITS))
 		return V34_MP_INVALID_FRAME;
-	received_crc = decode_msb_first_field(
+	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, V34_MP_TYPE1_CRC_FIRST_BIT,
 		V34_MP_CRC_BITS);
 	if (received_crc != frame_crc(frame, V34_MP_TYPE1_CRC_FIRST_BIT))
@@ -470,12 +424,12 @@ enum v34_mp_result v34_mp_type1_decode(
 	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
 	     ++index) {
 		decoded.precoder_coefficients[index].real =
-			decode_twos_complement(decode_lsb_first_field(
+			decode_twos_complement((uint16_t)packed_msb_read_lsb_field(
 				frame,
 				coefficient_component_first_bit(index, false),
 				V34_MP_COEFFICIENT_COMPONENT_BITS));
 		decoded.precoder_coefficients[index].imaginary =
-			decode_twos_complement(decode_lsb_first_field(
+			decode_twos_complement((uint16_t)packed_msb_read_lsb_field(
 				frame,
 				coefficient_component_first_bit(index, true),
 				V34_MP_COEFFICIENT_COMPONENT_BITS));
@@ -563,7 +517,7 @@ static void begin_receive_frame(struct v34_mp_receiver *receiver)
 	clear_receive_frame(receiver);
 	for (size_t index = 0;
 	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
-		set_frame_bit(receiver->frame, index, true);
+		packed_msb_set_bit(receiver->frame, index, true);
 	receiver->bit_index = V34_MP_TYPE_BIT;
 	receiver->stage = V34_MP_RECEIVE_TYPE;
 }
@@ -617,7 +571,7 @@ static void receive_frame_bit(
 		return;
 	}
 
-	set_frame_bit(receiver->frame, receiver->bit_index, bit != 0);
+	packed_msb_set_bit(receiver->frame, receiver->bit_index, bit != 0);
 	receiver->bit_index++;
 	if (receiver->stage == V34_MP_RECEIVE_TYPE) {
 		receiver->frame_bit_count = bit != 0 ?

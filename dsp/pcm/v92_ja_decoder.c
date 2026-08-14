@@ -8,14 +8,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static void store_bit(
-	uint8_t *descriptor, size_t bit_index, uint8_t bit)
-{
-	if (bit != 0u)
-		descriptor[bit_index / 8u] |=
-			(uint8_t)(1u << (7u - bit_index % 8u));
-}
-
 bool v92_ja_decoder_is_valid(const struct v92_ja_decoder *decoder)
 {
 	uint32_t decoded_mask;
@@ -48,7 +40,7 @@ enum v92_ja_decoder_result v92_ja_decoder_init(
 	    !v92_phase3_sync_handoff(sync, &initialized.coding))
 		return V92_JA_DECODER_INVALID_ARGUMENT;
 	for (size_t bit = 0; bit < V92_PHASE3_FRAME_SYNC_BITS; ++bit)
-		store_bit(initialized.descriptor, bit, 1u);
+		packed_msb_set_bit(initialized.descriptor, bit, true);
 	initialized.bit_index = V92_PHASE3_FRAME_SYNC_BITS + 1u;
 	if (!v92_ja_decoder_is_valid(&initialized))
 		return V92_JA_DECODER_INVALID_ARGUMENT;
@@ -79,7 +71,8 @@ enum v92_ja_decoder_result v92_ja_decoder_receive(
 	if (pcm_binary_sign_decode(&next.coding, sign, &bit) !=
 	    PCM_BINARY_SIGN_OK)
 		return V92_JA_DECODER_INVALID_STATE;
-	store_bit(next.descriptor, next.bit_index, bit);
+	packed_msb_set_bit(
+		next.descriptor, next.bit_index, bit != 0u);
 	next.bit_index++;
 	if (next.bit_index < V92_PCM_DIL_ZERO_DESCRIPTOR_BITS) {
 		if (!v92_ja_decoder_is_valid(&next))

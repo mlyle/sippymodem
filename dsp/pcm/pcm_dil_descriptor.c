@@ -45,17 +45,6 @@ static bool span_is_valid(
 	return descriptor != NULL && bytes != 0u && capacity >= bytes;
 }
 
-static void assign_descriptor_bit(
-	uint8_t *descriptor, size_t index, bool value)
-{
-	uint8_t mask = (uint8_t)(1u << (7u - index % 8u));
-
-	if (value)
-		descriptor[index / 8u] |= mask;
-	else
-		descriptor[index / 8u] &= (uint8_t)~mask;
-}
-
 static bool field_is_valid(
 	const void *descriptor, size_t capacity,
 	const struct pcm_dil_descriptor_layout *layout,
@@ -72,16 +61,12 @@ bool pcm_dil_descriptor_read_lsb_field(
 	const struct pcm_dil_descriptor_layout *layout,
 	size_t first_bit, unsigned int field_bits, uint32_t *value)
 {
-	uint32_t decoded = 0u;
-
 	if (value == NULL ||
 	    !field_is_valid(
 		    descriptor, capacity, layout, first_bit, field_bits))
 		return false;
-	for (unsigned int bit = 0; bit < field_bits; ++bit)
-		decoded |= (uint32_t)packed_msb_bit(
-				   descriptor, first_bit + bit) << bit;
-	*value = decoded;
+	*value = packed_msb_read_lsb_field(
+		descriptor, first_bit, field_bits);
 	return true;
 }
 
@@ -94,10 +79,8 @@ bool pcm_dil_descriptor_write_lsb_field(
 		    descriptor, capacity, layout, first_bit, field_bits) ||
 	    (field_bits < 32u && (value >> field_bits) != 0u))
 		return false;
-	for (unsigned int bit = 0; bit < field_bits; ++bit)
-		assign_descriptor_bit(
-			descriptor, first_bit + bit,
-			(value & (UINT32_C(1) << bit)) != 0u);
+	packed_msb_write_lsb_field(
+		descriptor, first_bit, field_bits, value);
 	return true;
 }
 
@@ -160,13 +143,9 @@ static uint16_t encoded_crc(
 	const uint8_t *descriptor,
 	const struct pcm_dil_descriptor_layout *layout)
 {
-	uint16_t encoded = 0u;
-
-	for (size_t bit = 0; bit < PCM_DIL_CRC_BITS; ++bit)
-		encoded |= (uint16_t)packed_msb_bit(
-				   descriptor,
-				   layout->crc_start_bit + 1u + bit) << bit;
-	return encoded;
+	return (uint16_t)packed_msb_read_lsb_field(
+		descriptor, layout->crc_start_bit + 1u,
+		PCM_DIL_CRC_BITS);
 }
 
 enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_crc(
@@ -196,7 +175,7 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_initialize(
 	bytes = pcm_dil_descriptor_storage_bytes(layout);
 	memset(descriptor, 0, bytes);
 	for (size_t bit = 0; bit < PCM_DIL_FRAME_SYNC_BITS; ++bit)
-		assign_descriptor_bit(descriptor, bit, true);
+		packed_msb_set_bit(descriptor, bit, true);
 	return PCM_DIL_DESCRIPTOR_OK;
 }
 
@@ -212,10 +191,9 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_finalize(
 	if (framing != PCM_DIL_DESCRIPTOR_OK)
 		return framing;
 	remainder = descriptor_crc(descriptor, layout);
-	for (size_t bit = 0; bit < PCM_DIL_CRC_BITS; ++bit)
-		assign_descriptor_bit(
-			descriptor, layout->crc_start_bit + 1u + bit,
-			(remainder & (UINT16_C(1) << bit)) != 0u);
+	packed_msb_write_lsb_field(
+		descriptor, layout->crc_start_bit + 1u,
+		PCM_DIL_CRC_BITS, remainder);
 	return PCM_DIL_DESCRIPTOR_OK;
 }
 

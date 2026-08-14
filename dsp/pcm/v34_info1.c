@@ -79,38 +79,18 @@ bool v34_info1a_is_valid(
 	       symbol_rate_is_valid(info1a->call_to_answer_symbol_rate);
 }
 
-static uint16_t decode_lsb_first_field(
-	const uint8_t *payload, size_t first_bit, size_t bit_count)
-{
-	uint16_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint16_t)(packed_msb_bit(payload, first_bit + index)
-				    << index);
-	return value;
-}
-
-static void encode_lsb_first_field(
-	uint8_t *payload, size_t first_bit, size_t bit_count, uint16_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index)
-		packed_msb_set_bit(
-			payload, first_bit + index,
-			(value & (uint16_t)(1u << index)) != 0);
-}
-
 static void encode_common_prefix(
 	uint8_t *payload, const struct v34_info1_common *common)
 {
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		payload, V34_INFO1_POWER_REDUCTION_FIRST_BIT,
 		V34_INFO1_POWER_REDUCTION_BITS,
 		common->minimum_peer_power_reduction_db);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		payload, V34_INFO1_ADDITIONAL_REDUCTION_FIRST_BIT,
 		V34_INFO1_ADDITIONAL_REDUCTION_BITS,
 		common->additional_peer_power_reduction_db);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		payload, V34_INFO1_MD_LENGTH_FIRST_BIT,
 		V34_INFO1_MD_LENGTH_BITS, common->local_md_length_35_ms_units);
 }
@@ -125,7 +105,7 @@ static void encode_frequency_offset(
 					   V34_INFO1_FREQUENCY_OFFSET_MODULUS :
 				   common->frequency_offset_1_50_hz_units);
 
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		payload, first_bit,
 		V34_INFO1_FREQUENCY_OFFSET_BITS, frequency_offset);
 }
@@ -137,10 +117,10 @@ static void encode_probe_result(
 	packed_msb_set_bit(
 		payload, first_bit + V34_INFO1_HIGH_CARRIER_BIT,
 		result->high_carrier);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		payload, first_bit + V34_INFO1_PREEMPHASIS_FIRST_BIT,
 		V34_INFO1_PREEMPHASIS_BITS, result->preemphasis_filter_index);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		payload, first_bit + V34_INFO1_DATA_RATE_FIRST_BIT,
 		V34_INFO1_DATA_RATE_BITS,
 		result->projected_data_rate_2400_bps_units);
@@ -175,7 +155,7 @@ enum v34_info1_result v34_info1c_encode(
 static int16_t decode_frequency_offset(
 	const uint8_t *payload, size_t first_bit)
 {
-	uint16_t encoded = decode_lsb_first_field(
+	uint16_t encoded = (uint16_t)packed_msb_read_lsb_field(
 		payload, first_bit, V34_INFO1_FREQUENCY_OFFSET_BITS);
 
 	return encoded >= V34_INFO1_FREQUENCY_OFFSET_MODULUS / 2 ?
@@ -188,17 +168,17 @@ static struct v34_info1_common decode_common(
 	const uint8_t *payload, size_t frequency_offset_first_bit)
 {
 	return (struct v34_info1_common){
-		.minimum_peer_power_reduction_db = (uint8_t)
-			decode_lsb_first_field(
+		.minimum_peer_power_reduction_db =
+			(uint8_t)packed_msb_read_lsb_field(
 				payload, V34_INFO1_POWER_REDUCTION_FIRST_BIT,
 				V34_INFO1_POWER_REDUCTION_BITS),
-		.additional_peer_power_reduction_db = (uint8_t)
-			decode_lsb_first_field(
+		.additional_peer_power_reduction_db =
+			(uint8_t)packed_msb_read_lsb_field(
 				payload,
 				V34_INFO1_ADDITIONAL_REDUCTION_FIRST_BIT,
 				V34_INFO1_ADDITIONAL_REDUCTION_BITS),
-		.local_md_length_35_ms_units = (uint8_t)
-			decode_lsb_first_field(
+		.local_md_length_35_ms_units =
+			(uint8_t)packed_msb_read_lsb_field(
 				payload, V34_INFO1_MD_LENGTH_FIRST_BIT,
 				V34_INFO1_MD_LENGTH_BITS),
 		.frequency_offset_1_50_hz_units = decode_frequency_offset(
@@ -212,11 +192,13 @@ static struct v34_info1_probe_result decode_probe_result(
 	return (struct v34_info1_probe_result){
 		.high_carrier = packed_msb_bit(
 			payload, first_bit + V34_INFO1_HIGH_CARRIER_BIT) != 0,
-		.preemphasis_filter_index = (uint8_t)decode_lsb_first_field(
-			payload, first_bit + V34_INFO1_PREEMPHASIS_FIRST_BIT,
-			V34_INFO1_PREEMPHASIS_BITS),
+		.preemphasis_filter_index =
+			(uint8_t)packed_msb_read_lsb_field(
+				payload,
+				first_bit + V34_INFO1_PREEMPHASIS_FIRST_BIT,
+				V34_INFO1_PREEMPHASIS_BITS),
 		.projected_data_rate_2400_bps_units =
-			(uint8_t)decode_lsb_first_field(
+			(uint8_t)packed_msb_read_lsb_field(
 				payload, first_bit + V34_INFO1_DATA_RATE_FIRST_BIT,
 				V34_INFO1_DATA_RATE_BITS),
 	};
@@ -263,11 +245,11 @@ enum v34_info1_result v34_info1a_encode(
 	encode_probe_result(
 		encoded, V34_INFO1_PROBE_RESULT_FIRST_BIT,
 		&info1a->call_transmit);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		encoded, V34_INFO1A_ANSWER_SYMBOL_RATE_FIRST_BIT,
 		V34_INFO1_SYMBOL_RATE_BITS,
 		(uint16_t)info1a->answer_to_call_symbol_rate);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		encoded, V34_INFO1A_CALL_SYMBOL_RATE_FIRST_BIT,
 		V34_INFO1_SYMBOL_RATE_BITS,
 		(uint16_t)info1a->call_to_answer_symbol_rate);
@@ -296,11 +278,11 @@ enum v34_info1_result v34_info1a_decode(
 	decoded.call_transmit = decode_probe_result(
 		payload, V34_INFO1_PROBE_RESULT_FIRST_BIT);
 	decoded.answer_to_call_symbol_rate =
-		(enum v34_symbol_rate)decode_lsb_first_field(
+		(enum v34_symbol_rate)packed_msb_read_lsb_field(
 			payload, V34_INFO1A_ANSWER_SYMBOL_RATE_FIRST_BIT,
 			V34_INFO1_SYMBOL_RATE_BITS);
 	decoded.call_to_answer_symbol_rate =
-		(enum v34_symbol_rate)decode_lsb_first_field(
+		(enum v34_symbol_rate)packed_msb_read_lsb_field(
 			payload, V34_INFO1A_CALL_SYMBOL_RATE_FIRST_BIT,
 			V34_INFO1_SYMBOL_RATE_BITS);
 	if (!v34_info1a_is_valid(&decoded))

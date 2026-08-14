@@ -28,6 +28,55 @@ static inline void packed_msb_set_bit(
 		bytes[bit_index / 8u] &= (uint8_t)~mask;
 }
 
+/* Read or write a field whose first transmitted bit is the value's least
+ * significant bit. Storage bit numbering remains most-significant-bit first.
+ * The caller supplies valid storage and a field width no greater than 32. */
+static inline uint32_t packed_msb_read_lsb_field(
+	const uint8_t *bytes, size_t first_bit, size_t bit_count)
+{
+	uint32_t value = 0;
+
+	for (size_t bit = 0; bit < bit_count; ++bit) {
+		value |= (uint32_t)packed_msb_bit(bytes, first_bit + bit) << bit;
+	}
+	return value;
+}
+
+static inline void packed_msb_write_lsb_field(
+	uint8_t *bytes, size_t first_bit, size_t bit_count, uint32_t value)
+{
+	for (size_t bit = 0; bit < bit_count; ++bit) {
+		packed_msb_set_bit(
+			bytes, first_bit + bit,
+			(value & (UINT32_C(1) << bit)) != 0);
+	}
+}
+
+/* Read or write the conventional most-significant-bit-first field form. The
+ * same storage and width preconditions as the LSB-field helpers apply. */
+static inline uint32_t packed_msb_read_msb_field(
+	const uint8_t *bytes, size_t first_bit, size_t bit_count)
+{
+	uint32_t value = 0;
+
+	for (size_t bit = 0; bit < bit_count; ++bit) {
+		value = (value << 1) |
+			packed_msb_bit(bytes, first_bit + bit);
+	}
+	return value;
+}
+
+static inline void packed_msb_write_msb_field(
+	uint8_t *bytes, size_t first_bit, size_t bit_count, uint32_t value)
+{
+	for (size_t bit = 0; bit < bit_count; ++bit) {
+		packed_msb_set_bit(
+			bytes, first_bit + bit,
+			(value & (UINT32_C(1) <<
+				  (bit_count - bit - 1u))) != 0);
+	}
+}
+
 /* Unpacked bits occupy one octet each and must be exactly zero or one. */
 static inline bool unpacked_bits_are_binary(
 	const uint8_t *bits, size_t count)

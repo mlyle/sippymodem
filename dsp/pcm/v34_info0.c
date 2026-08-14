@@ -42,25 +42,6 @@ bool v34_info0_is_valid(
 	       clock_source_is_valid(info0->transmit_clock_source);
 }
 
-static uint8_t decode_lsb_first_field(
-	const uint8_t *payload, size_t first_bit, size_t bit_count)
-{
-	uint8_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint8_t)(packed_msb_bit(payload, first_bit + index)
-				   << index);
-	return value;
-}
-
-static void encode_lsb_first_field(
-	uint8_t *payload, size_t first_bit, size_t bit_count, uint8_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index)
-		packed_msb_set_bit(payload, first_bit + index,
-				   (value & (uint8_t)(1u << index)) != 0);
-}
-
 enum v34_info0_result v34_info0_encode(
 	const struct v34_info0 *info0, uint8_t *payload,
 	size_t payload_capacity)
@@ -92,7 +73,7 @@ enum v34_info0_result v34_info0_encode(
 		info0->symbol_rate_3429_transmit_permitted);
 	packed_msb_set_bit(encoded, V34_INFO0_TRANSMIT_POWER_REDUCTION_BIT,
 			info0->transmit_power_reduction_supported);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		encoded,
 		V34_INFO0_MAXIMUM_SYMBOL_RATE_DIFFERENCE_STEPS_FIRST_BIT,
 		V34_INFO0_MAXIMUM_SYMBOL_RATE_DIFFERENCE_STEPS_BITS,
@@ -101,7 +82,7 @@ enum v34_info0_result v34_info0_encode(
 		encoded, V34_INFO0_CME_MODEM_BIT, info0->cme_modem);
 	packed_msb_set_bit(encoded, V34_INFO0_CONSTELLATION_1664_BIT,
 			info0->constellation_1664_supported);
-	encode_lsb_first_field(
+	packed_msb_write_lsb_field(
 		encoded, V34_INFO0_TRANSMIT_CLOCK_FIRST_BIT,
 		V34_INFO0_TRANSMIT_CLOCK_BITS,
 		(uint8_t)info0->transmit_clock_source);
@@ -148,7 +129,7 @@ enum v34_info0_result v34_info0_decode(
 		packed_msb_bit(payload, V34_INFO0_TRANSMIT_POWER_REDUCTION_BIT) !=
 		0;
 	decoded.maximum_symbol_rate_difference_steps =
-		decode_lsb_first_field(
+		(uint8_t)packed_msb_read_lsb_field(
 			payload,
 			V34_INFO0_MAXIMUM_SYMBOL_RATE_DIFFERENCE_STEPS_FIRST_BIT,
 			V34_INFO0_MAXIMUM_SYMBOL_RATE_DIFFERENCE_STEPS_BITS);
@@ -158,7 +139,7 @@ enum v34_info0_result v34_info0_decode(
 		packed_msb_bit(payload, V34_INFO0_CONSTELLATION_1664_BIT) != 0;
 	decoded.transmit_clock_source =
 		(enum v34_info0_clock_source)
-			decode_lsb_first_field(
+			(uint8_t)packed_msb_read_lsb_field(
 				payload, V34_INFO0_TRANSMIT_CLOCK_FIRST_BIT,
 				V34_INFO0_TRANSMIT_CLOCK_BITS);
 	decoded.acknowledges_peer_info0 =

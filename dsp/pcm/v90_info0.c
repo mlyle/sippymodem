@@ -32,26 +32,6 @@ enum {
 	MAXIMUM_TRANSMIT_POWER_MAX = 31,
 };
 
-static uint8_t decode_field(
-	const uint8_t *payload, size_t first_bit, size_t bit_count)
-{
-	uint8_t value = 0;
-
-	for (size_t index = 0; index < bit_count; ++index)
-		value |= (uint8_t)(packed_msb_bit(payload, first_bit + index) <<
-				   index);
-	return value;
-}
-
-static void encode_field(
-	uint8_t *payload, size_t first_bit, size_t bit_count, uint8_t value)
-{
-	for (size_t index = 0; index < bit_count; ++index)
-		packed_msb_set_bit(
-			payload, first_bit + index,
-			(value & (uint8_t)(1u << index)) != 0);
-}
-
 bool v90_info0_is_valid(const struct v90_info0 *info0)
 {
 	return info0 != NULL &&
@@ -91,7 +71,7 @@ static void encode_common(
 			info0->symbol_rate_3429_transmit_permitted);
 	packed_msb_set_bit(payload, POWER_REDUCTION_BIT,
 			info0->transmit_power_reduction_supported);
-	encode_field(
+	packed_msb_write_lsb_field(
 		payload, MAXIMUM_SYMBOL_RATE_DIFFERENCE_FIRST_BIT,
 		MAXIMUM_SYMBOL_RATE_DIFFERENCE_BITS,
 		info0->maximum_symbol_rate_difference_steps);
@@ -124,9 +104,11 @@ static void decode_common(
 			packed_msb_bit(payload, SYMBOL_RATE_3429_PERMITTED_BIT) != 0,
 		.transmit_power_reduction_supported =
 			packed_msb_bit(payload, POWER_REDUCTION_BIT) != 0,
-		.maximum_symbol_rate_difference_steps = decode_field(
-			payload, MAXIMUM_SYMBOL_RATE_DIFFERENCE_FIRST_BIT,
-			MAXIMUM_SYMBOL_RATE_DIFFERENCE_BITS),
+		.maximum_symbol_rate_difference_steps =
+			(uint8_t)packed_msb_read_lsb_field(
+				payload,
+				MAXIMUM_SYMBOL_RATE_DIFFERENCE_FIRST_BIT,
+				MAXIMUM_SYMBOL_RATE_DIFFERENCE_BITS),
 		.cme_modem = packed_msb_bit(payload, CME_MODEM_BIT) != 0,
 		.constellation_1664_supported =
 			packed_msb_bit(payload, CONSTELLATION_1664_BIT) != 0,
@@ -183,10 +165,10 @@ enum v90_info0_result v90_info0d_encode(
 	if (!v90_info0d_is_valid(info0d))
 		return V90_INFO0_INVALID_CAPABILITIES;
 	encode_common(&info0d->common, encoded);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, NOMINAL_TRANSMIT_POWER_FIRST_BIT,
 		NOMINAL_TRANSMIT_POWER_BITS, info0d->nominal_transmit_power);
-	encode_field(
+	packed_msb_write_lsb_field(
 		encoded, MAXIMUM_TRANSMIT_POWER_FIRST_BIT,
 		MAXIMUM_TRANSMIT_POWER_BITS, info0d->maximum_transmit_power);
 	packed_msb_set_bit(encoded, MEASURE_AT_CODEC_BIT,
@@ -213,10 +195,12 @@ enum v90_info0_result v90_info0d_decode(
 		    payload, payload_bit_count, V90_INFO0D_PAYLOAD_BYTES))
 		return V90_INFO0_INVALID_PAYLOAD;
 	decode_common(payload, &decoded.common);
-	decoded.nominal_transmit_power = decode_field(
+	decoded.nominal_transmit_power =
+		(uint8_t)packed_msb_read_lsb_field(
 		payload, NOMINAL_TRANSMIT_POWER_FIRST_BIT,
 		NOMINAL_TRANSMIT_POWER_BITS);
-	decoded.maximum_transmit_power = decode_field(
+	decoded.maximum_transmit_power =
+		(uint8_t)packed_msb_read_lsb_field(
 		payload, MAXIMUM_TRANSMIT_POWER_FIRST_BIT,
 		MAXIMUM_TRANSMIT_POWER_BITS);
 	decoded.measure_power_at_codec_output =
