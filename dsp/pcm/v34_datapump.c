@@ -104,17 +104,17 @@ static uint8_t maximum_enabled_rate(
 	enum v34_symbol_rate symbol_rate)
 {
 	/* Advertise only rate/cadence pairs that pass generated full-duplex
-	 * PCMU calls in both station roles. Denser standard geometries remain in
-	 * the scenario catalog while the line receiver matures. */
+	 * calls through both G.711 laws and in both station roles. Denser
+	 * standard geometries remain in the scenario catalog while the line
+	 * receiver matures. */
 	switch (symbol_rate) {
 	case V34_SYMBOL_RATE_2400:
-		return 5;
+		return 6;
 	case V34_SYMBOL_RATE_2800:
 	case V34_SYMBOL_RATE_3000:
 	case V34_SYMBOL_RATE_3200:
-		return 6;
 	case V34_SYMBOL_RATE_3429:
-		return 6;
+		return 7;
 	case V34_SYMBOL_RATE_2743:
 	case V34_SYMBOL_RATE_COUNT:
 		break;

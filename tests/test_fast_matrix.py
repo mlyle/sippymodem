@@ -32,8 +32,8 @@ class FastMatrixTests(unittest.TestCase):
     def test_matrix_covers_every_supported_rate_codec_and_role(self) -> None:
         matrix = build_fast_matrix()
 
-        self.assertEqual(len(FAST_PROFILE_NAMES), 39)
-        self.assertEqual(len(matrix), 106)
+        self.assertEqual(len(FAST_PROFILE_NAMES), 44)
+        self.assertEqual(len(matrix), 176)
         self.assertIn("v22_600", FAST_PROFILE_NAMES)
         self.assertEqual(
             {case.profile.name for case in matrix}, set(FAST_PROFILE_NAMES)
@@ -53,12 +53,12 @@ class FastMatrixTests(unittest.TestCase):
         )
         self.assertEqual(len({case.name for case in matrix}), len(matrix))
 
-    def test_v34_uses_only_its_proven_media_path(self) -> None:
+    def test_v34_uses_its_proven_media_paths(self) -> None:
         matrix = build_fast_matrix()
         v34 = [case for case in matrix if case.profile.family == "v34"]
 
-        self.assertEqual(len(v34), 50)
-        self.assertEqual({case.media_codec for case in v34}, {"PCMU"})
+        self.assertEqual(len(v34), 120)
+        self.assertEqual({case.media_codec for case in v34}, set(MEDIA_CODECS))
         self.assertEqual(
             {
                 (case.profile.symbol_rate, case.profile.receive_rate)
@@ -76,7 +76,6 @@ class FastMatrixTests(unittest.TestCase):
             all(
                 supported_media_codecs(PROFILES[name]) == MEDIA_CODECS
                 for name in FAST_PROFILE_NAMES
-                if PROFILES[name].family != "v34"
             )
         )
 

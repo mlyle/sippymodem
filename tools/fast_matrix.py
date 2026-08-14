@@ -69,7 +69,7 @@ class PayloadPair:
 def supported_media_codecs(profile: ModemProfile) -> tuple[str, ...]:
     """Return media paths already exercised by the native integration gate."""
 
-    return ("PCMU",) if profile.family == "v34" else MEDIA_CODECS
+    return MEDIA_CODECS
 
 
 def exchange_kind(profile: ModemProfile) -> str:

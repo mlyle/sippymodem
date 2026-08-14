@@ -63,7 +63,6 @@ struct modem_test_case {
 	bool automode;
 	bool requires_v8;
 	bool test_prelink;
-	bool pcmu_only;
 };
 
 static int start_modem(struct modem *modem)
@@ -607,17 +606,22 @@ static const char *codec_name(enum media_codec codec)
 
 static bool run_v34_rate_matrix(void)
 {
+	static const enum media_codec codecs[] = {
+		MEDIA_CODEC_PCMU,
+		MEDIA_CODEC_PCMA,
+	};
 	static const struct {
 		enum v34_symbol_rate selection;
 		unsigned int symbols_per_second;
 		unsigned int maximum_bit_rate;
 	} symbol_rates[] = {
-		{ V34_SYMBOL_RATE_2400, 2400, 12000 },
-		{ V34_SYMBOL_RATE_2800, 2800, 14400 },
-		{ V34_SYMBOL_RATE_3000, 3000, 14400 },
-		{ V34_SYMBOL_RATE_3200, 3200, 14400 },
-		{ V34_SYMBOL_RATE_3429, 3429, 14400 },
+		{ V34_SYMBOL_RATE_2400, 2400, 14400 },
+		{ V34_SYMBOL_RATE_2800, 2800, 16800 },
+		{ V34_SYMBOL_RATE_3000, 3000, 16800 },
+		{ V34_SYMBOL_RATE_3200, 3200, 16800 },
+		{ V34_SYMBOL_RATE_3429, 3429, 16800 },
 	};
+	unsigned int profiles = 0;
 	unsigned int cases = 0;
 
 	for (size_t symbol = 0; symbol < ARRAY_LENGTH(symbol_rates); ++symbol) {
@@ -634,7 +638,6 @@ static bool run_v34_rate_matrix(void)
 				.carrier_loss_samples = MODEM_RATE / 5,
 				.training_frame_limit = 1000,
 				.requires_v8 = true,
-				.pcmu_only = true,
 			};
 			char name[64];
 			char command[64];
@@ -660,18 +663,25 @@ static bool run_v34_rate_matrix(void)
 			      "V.34 matrix command formatting overflowed");
 			test_case.name = name;
 			test_case.selection_command = command;
-			fprintf(stderr, "[ RUN      ] %s over PCMU SIP media\n", name);
-			if (!run_media_call(&test_case, MEDIA_CODEC_PCMU)) {
-				fprintf(stderr,
-					"[  FAILED  ] %s over PCMU SIP media\n",
-					name);
-				return false;
+			profiles++;
+			for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
+				fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
+					name, codec_name(codecs[codec]));
+				if (!run_media_call(&test_case, codecs[codec])) {
+					fprintf(stderr,
+						"[  FAILED  ] %s over %s SIP media\n",
+						name, codec_name(codecs[codec]));
+					return false;
+				}
+				fprintf(stderr, "[       OK ] %s over %s SIP media\n",
+					name, codec_name(codecs[codec]));
+				cases++;
 			}
-			fprintf(stderr, "[       OK ] %s over PCMU SIP media\n", name);
-			cases++;
 		}
 	}
-	CHECK(cases == 25, "V.34 matrix covered %u instead of 25 cases", cases);
+	CHECK(profiles == 30 && cases == 60,
+	      "V.34 matrix covered %u profiles/%u cases instead of 30/60",
+	      profiles, cases);
 	return true;
 }
 
@@ -891,7 +901,6 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.training_frame_limit = 1500,
 			.automode = true,
-			.pcmu_only = true,
 		},
 		{
 			.id = DP_B212,
@@ -929,9 +938,6 @@ int main(void)
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
 	     ++standard) {
 		for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
-			if (test_cases[standard].pcmu_only &&
-			    codecs[codec] != MEDIA_CODEC_PCMU)
-				continue;
 			fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
 				test_cases[standard].name,
 				codec_name(codecs[codec]));

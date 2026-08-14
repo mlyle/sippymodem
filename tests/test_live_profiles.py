@@ -25,7 +25,7 @@ from tools.live_profiles import (
 class LiveProfileTests(unittest.TestCase):
     def test_current_profiles_use_registered_controls(self) -> None:
         self.assertEqual(len(PROFILES), 321)
-        self.assertEqual(len(PROFILE_GROUPS["implemented"]), 38)
+        self.assertEqual(len(PROFILE_GROUPS["implemented"]), 43)
         self.assertEqual(len(PROFILE_GROUPS["analog-fallback"]), 5)
         self.assertEqual(
             LINK_MODE_AT_COMMANDS["raw"],
@@ -60,7 +60,7 @@ class LiveProfileTests(unittest.TestCase):
             if profile.readiness == READINESS_RUNNABLE
         )
 
-        self.assertEqual(len(runnable), 39)
+        self.assertEqual(len(runnable), 44)
         for profile in runnable:
             self.assertTrue(profile.at_commands)
             self.assertTrue(
@@ -120,7 +120,23 @@ class LiveProfileTests(unittest.TestCase):
         self.assertEqual(len(PROFILE_GROUPS["v34-rx"]), 55)
         self.assertEqual(len(PROFILE_GROUPS["v34-tx"]), 54)
         self.assertEqual(len(PROFILE_GROUPS["v34-matched"]), 55)
-        self.assertEqual(len(PROFILE_GROUPS["v34-current"]), 25)
+        self.assertEqual(len(PROFILE_GROUPS["v34-current"]), 30)
+        self.assertEqual(
+            PROFILES["v34_14400_b2400"].readiness,
+            READINESS_RUNNABLE,
+        )
+        self.assertEqual(
+            PROFILES["v34_16800_b3429"].readiness,
+            READINESS_RUNNABLE,
+        )
+        self.assertEqual(
+            PROFILES["v34_16800_b2400"].readiness,
+            READINESS_PREREQUISITE,
+        )
+        self.assertEqual(
+            PROFILES["v34_19200_b3429"].readiness,
+            READINESS_PREREQUISITE,
+        )
         self.assertEqual(
             PROFILES["v34_33600_b3429"].readiness,
             READINESS_PREREQUISITE,
