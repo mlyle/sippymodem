@@ -74,13 +74,11 @@ struct v90_phase2 {
 	union pcm_info0_record local_info0;
 	union pcm_info0_record peer_info0;
 	struct v34_phase2_probe_receiver_measurement remote_probe;
-	union pcm_info1_record local_info1;
 	enum v90_phase2_stage stage;
 	enum v90_phase2_failure failure;
 	enum v90_modem_role local_role;
 	bool peer_info0_stored;
 	bool remote_probe_stored;
-	bool local_info1_stored;
 };
 
 enum v90_phase2_result v90_phase2_init_analog(

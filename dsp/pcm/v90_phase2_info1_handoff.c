@@ -7,17 +7,13 @@
 static const struct v34_info1c *digital_info1(
 	const struct v90_phase2 *phase2)
 {
-	return phase2->local_role == V90_DIGITAL_MODEM ?
-		       &phase2->local_info1.info1d :
-		       &phase2->state.info1.peer_record.info1d;
+	return &phase2->state.info1.digital.record.v90;
 }
 
 static const struct v90_info1a *analog_info1(
 	const struct v90_phase2 *phase2)
 {
-	return phase2->local_role == V90_ANALOG_MODEM ?
-		       &phase2->local_info1.info1a :
-		       &phase2->state.info1.peer_record.info1a;
+	return &phase2->state.info1.analog.record.conventional;
 }
 
 enum pcm_info1_result v90_phase2_info1_handoff(

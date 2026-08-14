@@ -26,6 +26,12 @@ enum test_codec {
 	TEST_CODEC_PCMA,
 };
 
+enum test_info1_mode {
+	TEST_INFO1_V90,
+	TEST_INFO1_V92_CONVENTIONAL,
+	TEST_INFO1_V92_PCM,
+};
+
 struct test_delay_line {
 	int16_t samples[TEST_LINE_DELAY_SAMPLES];
 	size_t cursor;
@@ -123,6 +129,28 @@ static struct v90_info1a analog_info1(void)
 	};
 }
 
+static struct v92_info1d v92_digital_info1(enum test_info1_mode mode)
+{
+	struct v92_info1d info1d = {
+		.v34 = digital_info1(),
+		.pcm_upstream_supported = mode == TEST_INFO1_V92_PCM,
+	};
+
+	info1d.v34.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
+	return info1d;
+}
+
+static struct v92_pcm_info1a pcm_analog_info1(void)
+{
+	return (struct v92_pcm_info1a){
+		.filter_sections = V92_PCM_FILTER_Z1_P1_Z2,
+		.maximum_total_coefficients = 320,
+		.maximum_section_coefficients = 192,
+		.local_md_length_276_symbol_units = 4,
+		.training_ucode = 91,
+	};
+}
+
 static bool info1d_equal(
 	const struct v34_info1c *left, const struct v34_info1c *right)
 {
@@ -149,39 +177,117 @@ static bool info1a_equal(
 	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
 }
 
+static bool v92_info1d_equal(
+	const struct v92_info1d *left, const struct v92_info1d *right)
+{
+	uint8_t left_payload[V92_INFO1D_PAYLOAD_BYTES];
+	uint8_t right_payload[V92_INFO1D_PAYLOAD_BYTES];
+
+	return v92_info1d_encode(left, left_payload, sizeof(left_payload)) ==
+		       V92_INFO1D_OK &&
+	       v92_info1d_encode(right, right_payload, sizeof(right_payload)) ==
+		       V92_INFO1D_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+}
+
+static bool pcm_info1a_equal(
+	const struct v92_pcm_info1a *left,
+	const struct v92_pcm_info1a *right)
+{
+	uint8_t left_payload[V92_PCM_INFO1A_PAYLOAD_BYTES];
+	uint8_t right_payload[V92_PCM_INFO1A_PAYLOAD_BYTES];
+
+	return v92_pcm_info1a_encode(
+		       left, left_payload, sizeof(left_payload)) ==
+		       V92_PCM_INFO1A_OK &&
+	       v92_pcm_info1a_encode(
+		       right, right_payload, sizeof(right_payload)) ==
+		       V92_PCM_INFO1A_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+}
+
 static bool check_info1_exchange(
 	enum test_codec codec, struct test_delay_line *analog_to_digital,
 	struct test_delay_line *digital_to_analog,
 	const struct v90_phase2_reciprocal_probe *analog_probe,
-	const struct v90_phase2_reciprocal_probe *digital_probe)
+	const struct v90_phase2_reciprocal_probe *digital_probe,
+	enum test_info1_mode mode)
 {
-	struct v34_info1c info1d = digital_info1();
-	struct v90_info1a info1a = analog_info1();
+	struct v34_info1c v90_info1d = digital_info1();
+	struct v92_info1d v92_info1d = v92_digital_info1(mode);
+	struct v90_info1a conventional = analog_info1();
+	struct v92_pcm_info1a pcm = pcm_analog_info1();
 	struct pcm_phase2_info1_exchange analog;
 	struct pcm_phase2_info1_exchange digital;
 	struct pcm_phase2_info1_exchange untouched;
 	struct pcm_phase2_info1_exchange untouched_before;
+	uint8_t expected_digital[V92_INFO1D_PAYLOAD_BYTES];
+	uint8_t expected_analog[V92_PCM_INFO1A_PAYLOAD_BYTES];
+	enum pcm_protocol protocol = mode == TEST_INFO1_V90 ?
+					 PCM_PROTOCOL_V90 : PCM_PROTOCOL_V92;
+	enum pcm_upstream_mode upstream = mode == TEST_INFO1_V92_PCM ?
+					 PCM_UPSTREAM_PCM : PCM_UPSTREAM_V34;
 	size_t digital_sent = SIZE_MAX;
 	size_t analog_received = SIZE_MAX;
 	size_t analog_sent = SIZE_MAX;
 	size_t digital_received = SIZE_MAX;
+	bool initialized;
+	bool wrong_role_rejected;
 
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_before = untouched;
-	CHECK(pcm_phase2_info1_init_analog(&untouched, digital_probe) ==
-		      PHASE2_INFO1_INVALID_ARGUMENT &&
-	      pcm_phase2_info1_init_digital(
-		      &untouched, analog_probe, &info1d) ==
-		      PHASE2_INFO1_INVALID_ARGUMENT &&
+	if (mode == TEST_INFO1_V90) {
+		wrong_role_rejected = pcm_phase2_info1_init_v90_analog(
+			&untouched, digital_probe) ==
+			PHASE2_INFO1_INVALID_ARGUMENT &&
+			pcm_phase2_info1_init_v90_digital(
+				&untouched, analog_probe, &v90_info1d) ==
+				PHASE2_INFO1_INVALID_ARGUMENT;
+		initialized = pcm_phase2_info1_init_v90_analog(
+			&analog, analog_probe) == PHASE2_INFO1_OK &&
+			pcm_phase2_info1_init_v90_digital(
+				&digital, digital_probe, &v90_info1d) ==
+				PHASE2_INFO1_OK &&
+			v34_info1c_encode(
+				&v90_info1d, expected_digital,
+				sizeof(expected_digital)) == V34_INFO1_OK;
+	} else {
+		wrong_role_rejected = pcm_phase2_info1_init_v92_analog(
+			&untouched, digital_probe) ==
+			PHASE2_INFO1_INVALID_ARGUMENT &&
+			pcm_phase2_info1_init_v92_digital(
+				&untouched, analog_probe, &v92_info1d) ==
+				PHASE2_INFO1_INVALID_ARGUMENT;
+		initialized = pcm_phase2_info1_init_v92_analog(
+			&analog, analog_probe) == PHASE2_INFO1_OK &&
+			pcm_phase2_info1_init_v92_digital(
+				&digital, digital_probe, &v92_info1d) ==
+				PHASE2_INFO1_OK &&
+			v92_info1d_encode(
+				&v92_info1d, expected_digital,
+				sizeof(expected_digital)) == V92_INFO1D_OK;
+	}
+	initialized = initialized &&
+		(mode == TEST_INFO1_V92_PCM ?
+			 v92_pcm_info1a_encode(
+				 &pcm, expected_analog,
+				 sizeof(expected_analog)) == V92_PCM_INFO1A_OK :
+			 v90_info1a_encode(
+				 &conventional, expected_analog,
+				 sizeof(expected_analog)) == V90_INFO1_OK);
+	CHECK(wrong_role_rejected &&
 	      memcmp(&untouched, &untouched_before, sizeof(untouched)) == 0,
-	      "wrong-role V.90 INFO1 handoff mutated output state");
-	CHECK(pcm_phase2_info1_init_analog(&analog, analog_probe) ==
-		      PHASE2_INFO1_OK &&
-	      pcm_phase2_info1_init_digital(
-		      &digital, digital_probe, &info1d) == PHASE2_INFO1_OK &&
+	      "wrong-role PCM INFO1 mode %d mutated output state", mode);
+	CHECK(initialized && analog.protocol == protocol &&
+	      digital.protocol == protocol &&
 	      analog.control.nominal_amplitude == TEST_AMPLITUDE &&
-	      digital.control.nominal_amplitude == TEST_AMPLITUDE,
-	      "V.90 INFO1 endpoints did not preserve their handoff");
+	      digital.control.nominal_amplitude == TEST_AMPLITUDE &&
+	      digital.control.transmitter.frame.payload_bit_count ==
+		      V34_INFO1C_PAYLOAD_BITS &&
+	      memcmp(
+		      digital.control.transmitter.frame.payload,
+		      expected_digital, sizeof(expected_digital)) == 0,
+	      "PCM INFO1 mode %d did not preserve its exact handoff", mode);
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct pcm_phase2_info1_event analog_event;
 		struct pcm_phase2_info1_event digital_event;
@@ -194,8 +300,11 @@ static bool check_info1_exchange(
 		      pcm_phase2_info1_sample(
 			      &digital, delay_line_receive(analog_to_digital),
 			      &digital_transmit, &digital_event) == PHASE2_INFO1_OK,
-		      "V.90 INFO1 exchange failed for codec %d at sample %zu",
-		      codec, index);
+		      "PCM INFO1 mode %d failed for codec %d at sample %zu",
+		      mode, codec, index);
+		CHECK(analog_event.protocol == protocol &&
+		      digital_event.protocol == protocol,
+		      "PCM INFO1 event lost protocol %d", protocol);
 		delay_line_transmit(
 			analog_to_digital,
 			codec_round_trip(analog_transmit, codec));
@@ -208,24 +317,68 @@ static bool check_info1_exchange(
 		if (analog_event.kind ==
 		    PCM_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED) {
 			struct pcm_phase2_info1_exchange before = analog;
-			struct v90_info1a invalid = info1a;
+			bool peer_matches =
+				analog_event.peer_record.digital.protocol == protocol &&
+				(mode == TEST_INFO1_V90 ?
+					 info1d_equal(
+						 &analog_event.peer_record.digital
+							  .record.v90,
+						 &v90_info1d) :
+					 v92_info1d_equal(
+						 &analog_event.peer_record.digital
+							  .record.v92,
+						 &v92_info1d));
+			bool replied;
 
 			analog_received = index;
-			invalid.training_ucode = V90_INFO1A_MIN_TRAINING_UCODE - 1;
-			CHECK(info1d_equal(
-				      &analog_event.peer_record.info1d, &info1d) &&
-			      pcm_phase2_info1_reply_analog(&analog, &invalid) ==
-				      PHASE2_INFO1_INVALID_ARGUMENT &&
-			      memcmp(&analog, &before, sizeof(analog)) == 0 &&
-			      pcm_phase2_info1_reply_analog(&analog, &info1a) ==
-				      PHASE2_INFO1_OK &&
+			if (mode == TEST_INFO1_V92_PCM) {
+				struct v92_pcm_info1a invalid = pcm;
+
+				invalid.maximum_total_coefficients =
+					V92_PCM_INFO1A_MIN_TOTAL_COEFFICIENTS - 1;
+				replied = pcm_phase2_info1_reply_pcm(
+						  &analog, &invalid) ==
+						  PHASE2_INFO1_INVALID_ARGUMENT &&
+					  memcmp(
+						  &analog, &before,
+						  sizeof(analog)) == 0 &&
+					  pcm_phase2_info1_reply_pcm(
+						  &analog, &pcm) == PHASE2_INFO1_OK;
+			} else {
+				struct v90_info1a invalid = conventional;
+
+				invalid.training_ucode =
+					V90_INFO1A_MIN_TRAINING_UCODE - 1;
+				replied = pcm_phase2_info1_reply_conventional(
+						  &analog, &invalid) ==
+						  PHASE2_INFO1_INVALID_ARGUMENT &&
+					  memcmp(
+						  &analog, &before,
+						  sizeof(analog)) == 0 &&
+					  pcm_phase2_info1_reply_pcm(
+						  &analog, &pcm) ==
+						  PHASE2_INFO1_INVALID_ARGUMENT &&
+					  memcmp(
+						  &analog, &before,
+						  sizeof(analog)) == 0 &&
+					  pcm_phase2_info1_reply_conventional(
+						  &analog, &conventional) ==
+						  PHASE2_INFO1_OK;
+			}
+			CHECK(peer_matches && replied &&
+			      analog.analog.upstream == upstream &&
+			      memcmp(
+				      analog.control.transmitter.frame.payload,
+				      expected_analog,
+				      sizeof(expected_analog)) == 0 &&
 			      analog.control.transmitter.modulation.carrier
 					      .carrier_phase +
 					      UINT32_C(0x40000000) ==
 				      analog.control.signal_a_tone.carrier_phase &&
 			      analog.control.transmitter.modulation.guard_phase ==
 				      analog.control.signal_a_tone.guard_phase,
-			      "analog modem did not accept INFO1d phase-continuously");
+			      "analog modem did not select INFO1 mode %d phase-continuously",
+			      mode);
 		}
 		if (analog_event.kind ==
 		    PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT)
@@ -233,9 +386,18 @@ static bool check_info1_exchange(
 		if (digital_event.kind ==
 		    PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
 			digital_received = index;
-			CHECK(info1a_equal(
-				      &digital_event.peer_record.info1a, &info1a),
-			      "digital modem decoded a different V.90 selection");
+			CHECK(digital_event.peer_record.analog.upstream == upstream &&
+			      (upstream == PCM_UPSTREAM_V34 ?
+				       info1a_equal(
+					       &digital_event.peer_record.analog
+							.record.conventional,
+					       &conventional) :
+				       pcm_info1a_equal(
+					       &digital_event.peer_record.analog
+							.record.pcm,
+					       &pcm)),
+			      "digital modem decoded a different INFO1 mode %d selection",
+			      mode);
 		}
 		if (analog.control.phase == PHASE2_INFO1_COMPLETE &&
 		    digital.control.phase == PHASE2_INFO1_COMPLETE)
@@ -243,12 +405,32 @@ static bool check_info1_exchange(
 	}
 	CHECK(digital_sent < analog_received && analog_received < analog_sent &&
 	      analog_sent < digital_received &&
-	      analog.peer_record_received && digital.peer_record_received &&
-	      info1d_equal(&analog.peer_record.info1d, &info1d) &&
-	      info1a_equal(&digital.peer_record.info1a, &info1a) &&
+	      analog.digital_record_stored && digital.digital_record_stored &&
+	      analog.analog_record_stored && digital.analog_record_stored &&
+	      analog.protocol == protocol && digital.protocol == protocol &&
+	      analog.analog.upstream == upstream &&
+	      digital.analog.upstream == upstream &&
+	      (protocol == PCM_PROTOCOL_V90 ?
+		       info1d_equal(
+			       &analog.digital.record.v90, &v90_info1d) &&
+		       info1d_equal(
+			       &digital.digital.record.v90, &v90_info1d) :
+		       v92_info1d_equal(
+			       &analog.digital.record.v92, &v92_info1d) &&
+		       v92_info1d_equal(
+			       &digital.digital.record.v92, &v92_info1d)) &&
+	      (upstream == PCM_UPSTREAM_V34 ?
+		       info1a_equal(
+			       &analog.analog.record.conventional,
+			       &conventional) &&
+		       info1a_equal(
+			       &digital.analog.record.conventional,
+			       &conventional) :
+		       pcm_info1a_equal(&analog.analog.record.pcm, &pcm) &&
+		       pcm_info1a_equal(&digital.analog.record.pcm, &pcm)) &&
 	      pcm_phase2_info1_is_valid(&analog) &&
 	      pcm_phase2_info1_is_valid(&digital),
-	      "V.90 INFO1 order or retained selections changed");
+	      "PCM INFO1 mode %d order or retained selection changed", mode);
 	return true;
 }
 
@@ -521,10 +703,23 @@ static bool check_initial_probe(enum test_codec codec)
 		      &digital_reciprocal, &measurement) ==
 		      PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT,
 		      "V.90 analog reciprocal-probe measurement was unavailable");
-	CHECK(check_info1_exchange(
-		      codec, &analog_to_digital, &digital_to_analog,
-		      &analog_reciprocal, &digital_reciprocal),
-	      "V.90 INFO1 exchange failed for codec %d", codec);
+	{
+		struct test_delay_line analog_start = analog_to_digital;
+		struct test_delay_line digital_start = digital_to_analog;
+
+		for (enum test_info1_mode mode = TEST_INFO1_V90;
+		     mode <= TEST_INFO1_V92_PCM; ++mode) {
+			struct test_delay_line analog_line = analog_start;
+			struct test_delay_line digital_line = digital_start;
+
+			CHECK(check_info1_exchange(
+				      codec, &analog_line, &digital_line,
+				      &analog_reciprocal, &digital_reciprocal,
+				      mode),
+			      "PCM INFO1 mode %d failed for codec %d",
+			      mode, codec);
+		}
+	}
 
 	{
 		struct v90_phase2_probe_turnaround before;
@@ -842,11 +1037,13 @@ static bool test_pcm_initial_probe(void)
 
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] PCMU and PCMA Phase 2 through INFO1\n");
+	const char *name = "PCM protocol and codec matrix through INFO1";
+
+	fprintf(stderr, "[ RUN      ] %s\n", name);
 	if (!test_pcm_initial_probe()) {
-		fprintf(stderr, "[  FAILED  ] PCMU and PCMA Phase 2 through INFO1\n");
+		fprintf(stderr, "[  FAILED  ] %s\n", name);
 		return 1;
 	}
-	fprintf(stderr, "[       OK ] PCMU and PCMA Phase 2 through INFO1\n");
+	fprintf(stderr, "[       OK ] %s\n", name);
 	return 0;
 }
