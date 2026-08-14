@@ -54,18 +54,24 @@ v34_decode_mapping_frame(
 	struct v34_parsed_mapping_frame parsed = { 0 };
 	struct v34_ring_indices rings = { 0 };
 	uint8_t *auxiliary_bit;
+	uint8_t shell_bits;
+	bool exact_shell_decision;
 
 	if (!v34_4d_decoder_is_valid(decoder) ||
 	    !mapping_frame_is_bounded(mapping_frame) || decided == NULL ||
 	    recovered == NULL)
 		return V34_MAPPING_FRAME_DECODER_INVALID_ARGUMENT;
 	next = *decoder;
+	shell_bits = next.parameters.shell_mapper_bits;
+	if (!mapping_frame->high_frame && shell_bits != 0)
+		shell_bits--;
 	if (!decode_intervals(&next, decided, &parsed, &rings) ||
-	    v34_shell_unmap(
-		    &next.parameters, &rings, &parsed.shell_label) !=
-		    V34_SHELL_MAPPER_OK)
+	    v34_shell_unmap_decision(
+		    &next.parameters, &rings, shell_bits, &parsed.shell_label,
+		    &exact_shell_decision) != V34_SHELL_MAPPER_OK)
 		return V34_MAPPING_FRAME_DECODER_INVALID_ARGUMENT;
 	generated.primary_bit_count = mapping_frame->primary_bits;
+	generated.shell_decision_exact = exact_shell_decision;
 	generated.auxiliary_bit_count =
 		(uint8_t)mapping_frame->carries_auxiliary_bit;
 	auxiliary_bit = mapping_frame->carries_auxiliary_bit ?

@@ -7,6 +7,8 @@
 #include <math.h>
 #include <stddef.h>
 
+static const double V34_TIMING_POWER_HYSTERESIS = 1.01;
+
 static bool adaptation_is_valid(double adaptation)
 {
 	return isfinite(adaptation) && adaptation >= 0.0 &&
@@ -109,6 +111,9 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_init(
 		    &initialized.demodulator, &channel,
 		    V34_PHASE3_LINE_ACQUISITION_SYMBOLS,
 		    V34_PHASE3_LINE_TRACKING_SYMBOLS) != QAM_OK ||
+	    qam_demodulator_set_timing_power_hysteresis(
+		    &initialized.demodulator,
+		    V34_TIMING_POWER_HYSTERESIS) != QAM_OK ||
 	    v34_phase3_receiver_init_suffix(
 		    &initialized.points, &point_configuration,
 		    V34_PHASE3_LINE_S_SUFFIX_SYMBOLS) !=

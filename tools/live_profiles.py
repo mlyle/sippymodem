@@ -12,7 +12,6 @@ READINESS_RUNNABLE = "runnable"
 READINESS_PREREQUISITE = "prerequisite"
 V34_RECEIVE_PREREQUISITE = "directional V.34 receive-rate control"
 V34_TRANSMIT_PREREQUISITE = "AT+V90U directional transmit control"
-V34_HIGH_DENSITY_PREREQUISITE = "higher-density V.34 line receiver"
 V90_PREREQUISITE = "V.90 datapump and AT+V90U control"
 V92_PREREQUISITE = "V.92 datapump and AT+V92Q/AT+V92U controls"
 
@@ -49,13 +48,7 @@ V34_RATES_BY_SYMBOL_RATE: dict[int, tuple[int, ...]] = {
     3200: tuple(range(4800, 31200 + 1, 2400)),
     3429: tuple(range(4800, 33600 + 1, 2400)),
 }
-V34_RUNNABLE_RATES_BY_SYMBOL_RATE: dict[int, tuple[int, ...]] = {
-    2400: tuple(range(2400, 21600 + 1, 2400)),
-    2800: tuple(range(4800, 26400 + 1, 2400)),
-    3000: tuple(range(4800, 28800 + 1, 2400)),
-    3200: tuple(range(4800, 28800 + 1, 2400)),
-    3429: tuple(range(4800, 28800 + 1, 2400)),
-}
+V34_RUNNABLE_RATES_BY_SYMBOL_RATE = V34_RATES_BY_SYMBOL_RATE
 
 # V.90 conventional upstream excludes the lower V.34 symbol rates. Keeping
 # the receive and transmit sweeps separate avoids a low-value Cartesian matrix.
@@ -272,7 +265,6 @@ def _build_profiles() -> dict[str, ModemProfile]:
 
     for symbol_rate, rates in V34_RATES_BY_SYMBOL_RATE.items():
         for rate in rates:
-            runnable = rate in V34_RUNNABLE_RATES_BY_SYMBOL_RATE[symbol_rate]
             _add(
                 profiles,
                 ModemProfile(
@@ -286,14 +278,6 @@ def _build_profiles() -> dict[str, ModemProfile]:
                     receive_rate=rate,
                     transmit_rate=rate,
                     symbol_rate=symbol_rate,
-                    readiness=(
-                        READINESS_RUNNABLE
-                        if runnable
-                        else READINESS_PREREQUISITE
-                    ),
-                    prerequisite=(
-                        "" if runnable else V34_HIGH_DENSITY_PREREQUISITE
-                    ),
                 ),
             )
             _add(

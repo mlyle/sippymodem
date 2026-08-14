@@ -74,6 +74,40 @@ static void decisions_from_encoded(
 	}
 }
 
+static bool generate_decision(
+	const struct v34_mapping_parameters *parameters,
+	uint8_t previous_differential_output,
+	const struct v34_4d_mapping_input *mapping,
+	const uint8_t ring_index[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	uint8_t trellis_output, struct v34_decided_4d_interval *decided)
+{
+	uint8_t differential_output = (uint8_t)(
+		(previous_differential_output + mapping->differential_input) & 3u);
+	uint8_t rotations[V34_2D_SYMBOLS_PER_4D_INTERVAL] = {
+		differential_output,
+		(uint8_t)((differential_output + 2u * mapping->rotation_bit +
+			   trellis_output) &
+			  3u),
+	};
+
+	decided->trellis_output = trellis_output;
+	for (uint8_t symbol = 0;
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		const struct v34_2d_mapping_input input = {
+			.ring_index = ring_index[symbol],
+			.point_index = mapping->point_index[symbol],
+			.clockwise_quarter_turns = rotations[symbol],
+		};
+		struct v34_2d_mapping_output output;
+
+		if (v34_map_2d_symbol(parameters, &input, &output) !=
+		    V34_MAPPER_OK)
+			return false;
+		decided->mapper_output[symbol] = output.mapper_output;
+	}
+	return true;
+}
+
 static bool mapping_frames_are_equal(
 	const struct v34_mapping_frame *left,
 	const struct v34_mapping_frame *right)
@@ -215,6 +249,75 @@ static bool test_generated_round_trip(void)
 	      polynomial_seen[1] && auxiliary_seen[0] && auxiliary_seen[1] &&
 	      high_frame_seen[0] && high_frame_seen[1],
 	      "generated coverage changed at %zu frames", mapping_frame_count);
+	return true;
+}
+
+static bool test_noncodebook_decision_is_erased(void)
+{
+	struct v34_frame_geometry geometry;
+	struct modem_pair pair;
+	struct v34_frame_schedule expected_schedule;
+	struct v34_scrambler expected_descrambler;
+	struct v34_4d_decoder expected_decoder;
+	struct v34_mapping_frame frame;
+	struct v34_recovered_mapping_frame recovered;
+	struct v34_received_mapping_frame received;
+	struct v34_decided_4d_interval
+		decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+	const struct v34_4d_mapping_input mapping = { 0 };
+	uint8_t ring_index[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	uint8_t ignored;
+
+	CHECK(initialize_pair(&pair, &CONFIGURATIONS[3], &geometry),
+	      "non-codebook receiver fixture did not initialize");
+	expected_schedule = pair.receive_schedule;
+	CHECK(v34_frame_schedule_next(&expected_schedule, &frame) ==
+		      V34_FRAME_SCHEDULE_OK,
+	      "non-codebook receiver schedule did not advance");
+	for (uint8_t symbol = 0;
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol)
+		ring_index[symbol] = (uint8_t)(pair.decoder.parameters.ring_count - 1u);
+	for (uint8_t interval = 0;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME; ++interval) {
+		CHECK(generate_decision(
+			      &pair.decoder.parameters,
+			      pair.decoder.previous_differential_output, &mapping,
+			      ring_index, 0, &decided[interval]),
+		      "non-codebook interval %u was not generated", interval);
+	}
+
+	expected_decoder = pair.decoder;
+	CHECK(v34_decode_mapping_frame(
+		      &expected_decoder, &frame, decided, &recovered) ==
+		      V34_MAPPING_FRAME_DECODER_OK &&
+	      !recovered.shell_decision_exact,
+	      "outside shell sequence was not recognized as a channel error");
+	expected_descrambler = pair.descrambler;
+	for (uint8_t index = 0; index < recovered.primary_bit_count; ++index) {
+		CHECK(v34_descramble_group(
+			      &expected_descrambler, recovered.primary_bits[index], 1,
+			      &ignored) == V34_FRAMING_OK,
+		      "expected descrambler did not advance at bit %u", index);
+	}
+	CHECK(v34_receive_mapping_frame(
+		      &pair.receive_schedule, &pair.descrambler, &pair.decoder,
+		      decided, &received) == V34_MAPPING_FRAME_RECEIVER_OK &&
+	      memcmp(&pair.receive_schedule, &expected_schedule,
+		     sizeof(expected_schedule)) == 0 &&
+	      memcmp(&pair.descrambler, &expected_descrambler,
+		     sizeof(expected_descrambler)) == 0 &&
+	      memcmp(&pair.decoder, &expected_decoder,
+		     sizeof(expected_decoder)) == 0 &&
+	      received.primary_bit_count == frame.primary_bits &&
+	      received.auxiliary_bit_count ==
+		      (uint8_t)frame.carries_auxiliary_bit,
+	      "non-codebook decision did not advance receiver state");
+	for (uint8_t index = 0; index < received.primary_bit_count; ++index)
+		CHECK(received.primary_bits[index] == 1,
+		      "non-codebook decision exposed primary bit %u", index);
+	if (received.auxiliary_bit_count != 0)
+		CHECK(received.auxiliary_bit == 1,
+		      "non-codebook decision exposed its auxiliary bit");
 	return true;
 }
 
@@ -403,6 +506,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated round trip", test_generated_round_trip },
+		{ "non-codebook decision erasure",
+		  test_noncodebook_decision_is_erased },
 		{ "transactional boundaries", test_transactional_boundaries },
 	};
 	unsigned int failures = 0;

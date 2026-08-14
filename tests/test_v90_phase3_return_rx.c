@@ -167,9 +167,11 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 			      v90_phase3_return_rx_result_name(result));
 		}
 	}
-	while (s_bar_events == 0 && post_consumed < ARRAY_LENGTH(post_rotations)) {
+	while (s_bar_events == 0 &&
+	       post_consumed < V34_EQUALIZER_DECISION_DELAY) {
 		struct qam_point point = v34_rotated_point_zero(
-			(int)post_rotations[post_consumed]);
+			(int)post_rotations[
+				post_consumed % ARRAY_LENGTH(post_rotations)]);
 		enum v90_phase3_return_rx_result result;
 
 		point = channel_point(point, quarter_turns);
@@ -196,7 +198,8 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 	      v90_phase3_return_rx_result_name(handoff_result));
 	{
 		struct qam_point point = v34_rotated_point_zero(
-			(int)post_rotations[post_consumed]);
+			(int)post_rotations[
+				post_consumed % ARRAY_LENGTH(post_rotations)]);
 		struct qam_point output;
 		uint8_t quarter_point;
 		uint8_t rotation;

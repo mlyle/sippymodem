@@ -105,18 +105,18 @@ static uint8_t maximum_enabled_rate(
 	enum v34_symbol_rate symbol_rate)
 {
 	/* Advertise only rate/cadence pairs that pass generated full-duplex
-	 * calls through both G.711 laws and in both station roles. Denser
-	 * standard geometries remain in the scenario catalog while the line
-	 * receiver matures. */
+	 * calls through both G.711 laws and in both station roles. */
 	switch (symbol_rate) {
 	case V34_SYMBOL_RATE_2400:
 		return 9;
 	case V34_SYMBOL_RATE_2800:
 		return 11;
 	case V34_SYMBOL_RATE_3000:
-	case V34_SYMBOL_RATE_3200:
-	case V34_SYMBOL_RATE_3429:
 		return 12;
+	case V34_SYMBOL_RATE_3200:
+		return 13;
+	case V34_SYMBOL_RATE_3429:
+		return 14;
 	case V34_SYMBOL_RATE_2743:
 	case V34_SYMBOL_RATE_COUNT:
 		break;

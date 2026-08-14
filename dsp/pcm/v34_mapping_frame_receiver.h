@@ -24,9 +24,11 @@ struct v34_received_mapping_frame {
 	uint8_t auxiliary_bit;
 };
 
-/* Receive one complete scheduled mapping frame from exact 4D decisions.
+/* Receive one complete scheduled mapping frame from hard 4D decisions.
  * Equalization, inverse precoding, and trellis survivor selection precede
- * this boundary. The auxiliary bit does not pass through the descrambler.
+ * this boundary. An out-of-codebook shell decision still advances decoder
+ * and descrambler state, but its delivered bits are replaced with idle marks.
+ * The auxiliary bit does not pass through the descrambler.
  * Schedule, descrambler, decoder, and destination are unchanged unless the
  * complete frame succeeds. */
 enum v34_mapping_frame_receiver_result

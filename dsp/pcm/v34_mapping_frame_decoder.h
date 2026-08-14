@@ -5,6 +5,7 @@
 
 #include "v34_4d_decoder.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
 enum v34_mapping_frame_decoder_result {
@@ -16,6 +17,8 @@ struct v34_recovered_mapping_frame {
 	/* Primary bits remain scrambled at this mapping boundary. */
 	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t primary_bit_count;
+	/* False when a hard ring decision fell outside this frame's codebook. */
+	bool shell_decision_exact;
 	/* Zero or one; auxiliary_bit is meaningful only when this is one. */
 	uint8_t auxiliary_bit_count;
 	uint8_t auxiliary_bit;

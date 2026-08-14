@@ -24,7 +24,7 @@ static const double QAM_POINT_EPSILON = 1e-12;
 /* Unit-average-power square training constellations reach 9/5 at a corner. */
 static const double QAM_MAX_POINT_POWER = 9.0 / 5.0;
 static const double QAM_MIN_ACQUISITION_POWER = 64.0;
-static const double QAM_TIMING_POWER_HYSTERESIS = 1.005;
+static const double QAM_DEFAULT_TIMING_POWER_HYSTERESIS = 1.005;
 
 static bool transmit_point_is_valid(
 	const struct qam_point *point, double maximum_point_power)
@@ -523,6 +523,8 @@ bool qam_demodulator_is_valid(
 	    demodulator->line_power < 0.0 ||
 	    !isfinite(demodulator->symbol_power) ||
 	    demodulator->symbol_power < 0.0 ||
+	    !isfinite(demodulator->timing_power_hysteresis) ||
+	    demodulator->timing_power_hysteresis < 1.0 ||
 	    !matched_history_is_valid(demodulator) ||
 	    !isfinite(demodulator->recovery_fraction) ||
 	    (demodulator->recovery_pending &&
@@ -606,8 +608,20 @@ enum qam_result qam_demodulator_init_with_timing_windows(
 	demodulator->timing_sample_target = acquisition_samples;
 	demodulator->acquisition_window_symbols = acquisition_symbols;
 	demodulator->tracking_window_symbols = tracking_symbols;
+	demodulator->timing_power_hysteresis =
+		QAM_DEFAULT_TIMING_POWER_HYSTERESIS;
 	build_matched_filter(demodulator);
 	initialize_timing_candidates(demodulator);
+	return QAM_OK;
+}
+
+enum qam_result qam_demodulator_set_timing_power_hysteresis(
+	struct qam_demodulator *demodulator, double ratio)
+{
+	if (!qam_demodulator_is_valid(demodulator) || !isfinite(ratio) ||
+	    ratio < 1.0)
+		return QAM_INVALID_ARGUMENT;
+	demodulator->timing_power_hysteresis = ratio;
 	return QAM_OK;
 }
 
@@ -617,14 +631,21 @@ enum qam_result qam_demodulator_reset(
 	struct qam_channel channel;
 	uint32_t acquisition_symbols;
 	uint32_t tracking_symbols;
+	double timing_power_hysteresis;
+	enum qam_result result;
 
 	if (!qam_demodulator_is_valid(demodulator))
 		return QAM_INVALID_ARGUMENT;
 	channel = demodulator->channel;
 	acquisition_symbols = demodulator->acquisition_window_symbols;
 	tracking_symbols = demodulator->tracking_window_symbols;
-	return qam_demodulator_init_with_timing_windows(
+	timing_power_hysteresis = demodulator->timing_power_hysteresis;
+	result = qam_demodulator_init_with_timing_windows(
 		demodulator, &channel, acquisition_symbols, tracking_symbols);
+	if (result != QAM_OK)
+		return result;
+	return qam_demodulator_set_timing_power_hysteresis(
+		demodulator, timing_power_hysteresis);
 }
 
 static void mix_sample(
@@ -827,7 +848,8 @@ static void select_timing_candidate(
 		return;
 	}
 	if (reference != NULL && best != reference &&
-	    best_power <= reference_power * QAM_TIMING_POWER_HYSTERESIS) {
+	    best_power <=
+		    reference_power * demodulator->timing_power_hysteresis) {
 		best = reference;
 		best_power = reference_power;
 		best_index = demodulator->timing_reference_index;

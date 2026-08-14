@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 enum {
-	QAM_MAX_PULSE_SPAN_SYMBOLS = 12,
+	QAM_MAX_PULSE_SPAN_SYMBOLS = 14,
 	QAM_MAX_ACTIVE_SYMBOLS =
 		QAM_MAX_PULSE_SPAN_SYMBOLS + 1,
 	QAM_MAX_MATCHED_FILTER_SAMPLES = 256,
@@ -102,6 +102,7 @@ struct qam_demodulator {
 	size_t timing_reference_index;
 	double line_power;
 	double symbol_power;
+	double timing_power_hysteresis;
 	struct qam_point matched_history[QAM_INTERPOLATION_HISTORY];
 	double recovery_fraction;
 	uint8_t matched_history_count;
@@ -162,6 +163,10 @@ enum qam_result qam_demodulator_init_with_timing_windows(
 	struct qam_demodulator *demodulator,
 	const struct qam_channel *channel,
 	uint32_t acquisition_symbols, uint32_t tracking_symbols);
+/* Require this power ratio before tracking moves to a neighboring timing
+ * candidate. Values must be finite and at least one. */
+enum qam_result qam_demodulator_set_timing_power_hysteresis(
+	struct qam_demodulator *demodulator, double ratio);
 bool qam_demodulator_is_valid(
 	const struct qam_demodulator *demodulator);
 enum qam_result qam_demodulator_reset(

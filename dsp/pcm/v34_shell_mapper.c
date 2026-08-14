@@ -323,6 +323,28 @@ enum v34_shell_mapper_result v34_shell_unmap(
 	return V34_SHELL_MAPPER_OK;
 }
 
+enum v34_shell_mapper_result v34_shell_unmap_decision(
+	const struct v34_mapping_parameters *parameters,
+	const struct v34_ring_indices *indices,
+	uint8_t shell_bits, uint32_t *shell_label, bool *exact)
+{
+	struct shell_coefficients coefficients;
+	uint64_t recovered;
+	uint32_t label_limit;
+
+	if (!v34_ring_indices_are_valid(indices, parameters) ||
+	    shell_bits > parameters->shell_mapper_bits || shell_label == NULL ||
+	    exact == NULL ||
+	    !generate_coefficients(parameters->ring_count, &coefficients) ||
+	    !recover_shell_label(
+		    &coefficients, parameters->ring_count, indices, &recovered))
+		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
+	label_limit = shell_bits == 0 ? 1u : UINT32_C(1) << shell_bits;
+	*shell_label = (uint32_t)(recovered % label_limit);
+	*exact = recovered < label_limit;
+	return V34_SHELL_MAPPER_OK;
+}
+
 const char *v34_shell_mapper_result_name(
 	enum v34_shell_mapper_result result)
 {

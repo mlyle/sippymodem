@@ -788,12 +788,16 @@ static bool test_timing_windows(void)
 	      demodulator.acquisition_window_symbols == 64 &&
 	      demodulator.tracking_window_symbols == 384,
 	      "QAM did not measure a carrier-relative acquisition window");
-	CHECK(qam_demodulator_reset(&demodulator) == QAM_OK &&
+	CHECK(qam_demodulator_set_timing_power_hysteresis(
+		      &demodulator, 1.01) == QAM_OK &&
+	      demodulator.timing_power_hysteresis == 1.01 &&
+	      qam_demodulator_reset(&demodulator) == QAM_OK &&
 	      !qam_demodulator_measure(&demodulator).timing_locked &&
 	      !demodulator.acquisition_started &&
 	      demodulator.timing_sample_target == acquisition_samples &&
 	      demodulator.acquisition_window_symbols == 64 &&
-	      demodulator.tracking_window_symbols == 384,
+	      demodulator.tracking_window_symbols == 384 &&
+	      demodulator.timing_power_hysteresis == 1.01,
 	      "QAM reset did not preserve its timing-window policy");
 	saved = demodulator;
 	CHECK(qam_demodulator_init_with_timing_windows(
@@ -804,8 +808,12 @@ static bool test_timing_windows(void)
 		      &demodulator, &channel, 64,
 		      QAM_MAX_TIMING_WINDOW_SYMBOLS + 1u) ==
 		      QAM_INVALID_ARGUMENT &&
+	      qam_demodulator_set_timing_power_hysteresis(
+		      &demodulator, 0.99) == QAM_INVALID_ARGUMENT &&
+	      qam_demodulator_set_timing_power_hysteresis(
+		      &demodulator, NAN) == QAM_INVALID_ARGUMENT &&
 	      memcmp(&demodulator, &saved, sizeof(saved)) == 0,
-	      "invalid QAM timing windows changed the receiver");
+	      "invalid QAM timing policy changed the receiver");
 	return true;
 }
 
