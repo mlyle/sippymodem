@@ -77,6 +77,19 @@ struct v90_mp_record {
 
 bool v90_mp_record_is_valid(const struct v90_mp_record *record);
 
+/* MP-prime repeats the selected MP record with only the CP acknowledgement
+ * changed. These helpers keep that comparison independent of structure
+ * padding and make the shared field explicit for both record layouts. Invalid
+ * records never compare equal and never report an acknowledgement. */
+bool v90_mp_record_acknowledges_cp(
+	const struct v90_mp_record *record);
+bool v90_mp_record_equal(
+	const struct v90_mp_record *left,
+	const struct v90_mp_record *right);
+bool v90_mp_record_parameters_equal(
+	const struct v90_mp_record *left,
+	const struct v90_mp_record *right);
+
 /* Return the exact sequence length after the mandatory zero fill extends the
  * record to a whole six-symbol mapping frame. Rejected calls leave bit_count
  * unchanged. */

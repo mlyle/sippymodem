@@ -52,44 +52,11 @@ static struct v90_mp_record type1_record(void)
 	};
 }
 
-static bool common_parameters_are_equal(
-	const struct v90_mp_parameters *left,
-	const struct v90_mp_parameters *right)
-{
-	return left->maximum_upstream_rate_2400_bps_units ==
-		       right->maximum_upstream_rate_2400_bps_units &&
-	       left->upstream_trellis == right->upstream_trellis &&
-	       left->upstream_nonlinear_encoding ==
-		       right->upstream_nonlinear_encoding &&
-	       left->upstream_expanded_shaping ==
-		       right->upstream_expanded_shaping &&
-	       left->acknowledges_cp == right->acknowledges_cp &&
-	       left->upstream_rate_capability_mask ==
-		       right->upstream_rate_capability_mask;
-}
-
 static bool records_are_equal(
 	const struct v90_mp_record *left,
 	const struct v90_mp_record *right)
 {
-	if (left->type != right->type)
-		return false;
-	if (left->type == V90_MP_RECORD_TYPE0)
-		return common_parameters_are_equal(
-			&left->parameters.type0, &right->parameters.type0);
-	if (!common_parameters_are_equal(
-		    &left->parameters.type1.common,
-		    &right->parameters.type1.common))
-		return false;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		if (left->parameters.type1.precoder_coefficients[tap].real !=
-			    right->parameters.type1.precoder_coefficients[tap].real ||
-		    left->parameters.type1.precoder_coefficients[tap].imaginary !=
-			    right->parameters.type1.precoder_coefficients[tap]
-				    .imaginary)
-			return false;
-	}
-	return true;
+	return v90_mp_record_equal(left, right);
 }
 
 static uint8_t packed_bit(const uint8_t *sequence, size_t bit_index)
@@ -319,6 +286,39 @@ static bool test_frame_rejection(void)
 	return true;
 }
 
+static bool test_record_comparison(void)
+{
+	struct v90_mp_record type0 = type0_record(false);
+	struct v90_mp_record type0_prime = type0_record(true);
+	struct v90_mp_record type1 = type1_record();
+	struct v90_mp_record type1_base = type1;
+	struct v90_mp_record changed = type1;
+	struct v90_mp_record invalid = type0_prime;
+
+	type1_base.parameters.type1.common.acknowledges_cp = false;
+	changed.parameters.type1.precoder_coefficients[1].imaginary--;
+	invalid.parameters.type0.maximum_upstream_rate_2400_bps_units = 1;
+	CHECK(!v90_mp_record_acknowledges_cp(&type0) &&
+	      v90_mp_record_acknowledges_cp(&type0_prime) &&
+	      !v90_mp_record_equal(&type0, &type0_prime) &&
+	      v90_mp_record_parameters_equal(&type0, &type0_prime) &&
+	      !v90_mp_record_acknowledges_cp(&type1_base) &&
+	      v90_mp_record_acknowledges_cp(&type1) &&
+	      !v90_mp_record_equal(&type1_base, &type1) &&
+	      v90_mp_record_parameters_equal(&type1_base, &type1) &&
+	      !v90_mp_record_equal(&type1, &changed) &&
+	      !v90_mp_record_parameters_equal(&type1, &changed) &&
+	      !v90_mp_record_parameters_equal(&type0, &type1) &&
+	      !v90_mp_record_acknowledges_cp(&invalid) &&
+	      !v90_mp_record_equal(&invalid, &invalid) &&
+	      !v90_mp_record_parameters_equal(&invalid, &invalid) &&
+	      !v90_mp_record_acknowledges_cp(NULL) &&
+	      !v90_mp_record_equal(NULL, &type0) &&
+	      !v90_mp_record_parameters_equal(&type0, NULL),
+	      "MP record comparison changed field or validation semantics");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
 	struct v90_mp_record valid = type0_record(false);
@@ -402,6 +402,7 @@ int main(void)
 		{ "known wire images", test_known_wire_images },
 		{ "all training frame widths", test_all_training_frame_widths },
 		{ "frame rejection", test_frame_rejection },
+		{ "record comparison", test_record_comparison },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

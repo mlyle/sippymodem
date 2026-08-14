@@ -6,11 +6,8 @@
 
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
-	if (!v90_mp_record_is_valid(record))
-		return false;
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       !record->parameters.type0.acknowledges_cp :
-		       !record->parameters.type1.common.acknowledges_cp;
+	return v90_mp_record_is_valid(record) &&
+	       !v90_mp_record_acknowledges_cp(record);
 }
 
 static bool training_mapping_is_supported(

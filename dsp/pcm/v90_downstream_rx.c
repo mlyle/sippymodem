@@ -173,13 +173,6 @@ bool v90_downstream_rx_has_failed(
 	       receiver->ed_bit_errors != 0;
 }
 
-static bool record_acknowledges_cp(const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       record->parameters.type0.acknowledges_cp :
-		       record->parameters.type1.common.acknowledges_cp;
-}
-
 static enum v90_downstream_rx_result feed_mp_frame(
 	struct v90_downstream_rx *receiver,
 	const struct v90_pcm_stream_frame *frame,
@@ -213,7 +206,7 @@ static enum v90_downstream_rx_result feed_mp_frame(
 	event->mp = emitted;
 	if (emitted.type == V90_MP_EVENT_REJECTED)
 		return V90_DOWNSTREAM_RX_MP_REJECTED;
-	return record_acknowledges_cp(&emitted.record) ?
+	return v90_mp_record_acknowledges_cp(&emitted.record) ?
 		       V90_DOWNSTREAM_RX_MP_PRIME :
 		       V90_DOWNSTREAM_RX_MP;
 }

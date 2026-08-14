@@ -22,14 +22,6 @@ static struct v90_mp_parameters *record_common(
 		       &record->parameters.type1.common;
 }
 
-static const struct v90_mp_parameters *const_record_common(
-	const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static bool encode_mp_sequence(
 	const struct v90_mp_record *base, uint8_t frame_bits,
 	bool acknowledges_cp, uint8_t *sequence, size_t *sequence_bits)
@@ -72,7 +64,7 @@ static bool mp_state_is_valid(const struct v90_downstream_tx *transmitter)
 		       memcmp(transmitter->mp_sequence, empty_sequence,
 			      sizeof(empty_sequence)) == 0;
 	if (!v90_mp_record_is_valid(&transmitter->mp_record) ||
-	    const_record_common(&transmitter->mp_record)->acknowledges_cp ||
+	    v90_mp_record_acknowledges_cp(&transmitter->mp_record) ||
 	    transmitter->mp_sequence_bits == 0 ||
 	    transmitter->mp_bit_index >= transmitter->mp_sequence_bits ||
 	    transmitter->mp_bit_index %
@@ -263,21 +255,8 @@ static bool same_mp_record(
 	const struct v90_downstream_tx *transmitter,
 	const struct v90_mp_record *record)
 {
-	uint8_t requested[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
-	uint8_t configured[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
-	size_t requested_bits = 0;
-	size_t configured_bits = 0;
-
-	return encode_mp_sequence(
-		       record, transmitter->encoder.mapping.frame_bits, false,
-		       requested, &requested_bits) &&
-	       encode_mp_sequence(
-		       &transmitter->mp_record,
-		       transmitter->encoder.mapping.frame_bits, false,
-		       configured, &configured_bits) &&
-	       requested_bits == configured_bits &&
-	       memcmp(requested, configured,
-		      (requested_bits + 7u) / 8u) == 0;
+	return v90_mp_record_parameters_equal(
+		&transmitter->mp_record, record);
 }
 
 enum v90_downstream_tx_result v90_downstream_tx_start_mp(
@@ -295,7 +274,7 @@ enum v90_downstream_tx_result v90_downstream_tx_start_mp(
 	    transmitter->finish_requested)
 		return V90_DOWNSTREAM_TX_INVALID_STATE;
 	if (!v90_mp_record_is_valid(record) ||
-	    const_record_common(record)->acknowledges_cp)
+	    v90_mp_record_acknowledges_cp(record))
 		return V90_DOWNSTREAM_TX_INVALID_PARAMETERS;
 	if (transmitter->mp_configured)
 		return same_mp_record(transmitter, record) ?

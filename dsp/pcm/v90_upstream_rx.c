@@ -9,18 +9,10 @@
 #include <stdint.h>
 #include <string.h>
 
-static const struct v90_mp_parameters *mp_common(
-	const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
-	       !mp_common(record)->acknowledges_cp;
+	       !v90_mp_record_acknowledges_cp(record);
 }
 
 static bool parameters_are_equal(

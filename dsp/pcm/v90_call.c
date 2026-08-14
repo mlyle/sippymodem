@@ -39,18 +39,14 @@ static bool digital_configuration_is_valid(
 	const struct v90_call_digital_phase4_configuration *phase4)
 {
 	const struct v90_mp_record *mp = &phase4->initial_mp;
-	bool acknowledges_cp;
 
 	if (!v90_mp_record_is_valid(mp))
 		return false;
-	acknowledges_cp = mp->type == V90_MP_RECORD_TYPE0 ?
-			  mp->parameters.type0.acknowledges_cp :
-			  mp->parameters.type1.common.acknowledges_cp;
 	return v34_info1c_is_valid(&info1->digital) &&
 	       v90_phase3_analog_rx_configuration_is_valid(
 		       &phase3->digital.receive) &&
 	       v90_jd_parameters_are_valid(&phase3->digital.jd) &&
-	       !acknowledges_cp;
+	       !v90_mp_record_acknowledges_cp(mp);
 }
 
 static bool configuration_is_valid(

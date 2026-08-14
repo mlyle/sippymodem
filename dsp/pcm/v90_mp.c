@@ -76,6 +76,86 @@ bool v90_mp_record_is_valid(const struct v90_mp_record *record)
 	       v90_mp_type1_parameters_are_valid(&record->parameters.type1);
 }
 
+static const struct v90_mp_parameters *record_parameters(
+	const struct v90_mp_record *record)
+{
+	return record->type == V90_MP_RECORD_TYPE0 ?
+		       &record->parameters.type0 :
+		       &record->parameters.type1.common;
+}
+
+bool v90_mp_record_acknowledges_cp(
+	const struct v90_mp_record *record)
+{
+	return v90_mp_record_is_valid(record) &&
+	       record_parameters(record)->acknowledges_cp;
+}
+
+static bool common_parameters_equal(
+	const struct v90_mp_parameters *left,
+	const struct v90_mp_parameters *right,
+	bool compare_acknowledgement)
+{
+	return left->maximum_upstream_rate_2400_bps_units ==
+		       right->maximum_upstream_rate_2400_bps_units &&
+	       left->upstream_trellis == right->upstream_trellis &&
+	       left->upstream_nonlinear_encoding ==
+		       right->upstream_nonlinear_encoding &&
+	       left->upstream_expanded_shaping ==
+		       right->upstream_expanded_shaping &&
+	       (!compare_acknowledgement ||
+		left->acknowledges_cp == right->acknowledges_cp) &&
+	       left->upstream_rate_capability_mask ==
+		       right->upstream_rate_capability_mask;
+}
+
+static bool record_coefficients_equal(
+	const struct v90_mp_record *left,
+	const struct v90_mp_record *right)
+{
+	if (left->type == V90_MP_RECORD_TYPE0)
+		return true;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		const struct v34_q14_coefficient *left_coefficient =
+			&left->parameters.type1.precoder_coefficients[tap];
+		const struct v34_q14_coefficient *right_coefficient =
+			&right->parameters.type1.precoder_coefficients[tap];
+
+		if (left_coefficient->real != right_coefficient->real ||
+		    left_coefficient->imaginary !=
+			    right_coefficient->imaginary)
+			return false;
+	}
+	return true;
+}
+
+static bool records_equal(
+	const struct v90_mp_record *left,
+	const struct v90_mp_record *right,
+	bool compare_acknowledgement)
+{
+	return v90_mp_record_is_valid(left) &&
+	       v90_mp_record_is_valid(right) && left->type == right->type &&
+	       common_parameters_equal(
+		       record_parameters(left), record_parameters(right),
+		       compare_acknowledgement) &&
+	       record_coefficients_equal(left, right);
+}
+
+bool v90_mp_record_equal(
+	const struct v90_mp_record *left,
+	const struct v90_mp_record *right)
+{
+	return records_equal(left, right, true);
+}
+
+bool v90_mp_record_parameters_equal(
+	const struct v90_mp_record *left,
+	const struct v90_mp_record *right)
+{
+	return records_equal(left, right, false);
+}
+
 static bool training_frame_bits_are_valid(uint8_t training_frame_bits)
 {
 	return training_frame_bits >=
