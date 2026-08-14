@@ -3,8 +3,7 @@
 #ifndef V92_PCM_PHASE4_TRN2U_H
 #define V92_PCM_PHASE4_TRN2U_H
 
-#include "v34_framing.h"
-#include "v92_j.h"
+#include "v92_phase4_modulator.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,23 +24,9 @@ enum v92_pcm_phase4_trn2u_result {
  * Rate-renegotiation epochs have different initialization and are intentionally
  * outside this owner. */
 struct v92_pcm_phase4_trn2u {
-	struct v34_scrambler scrambler;
-	enum v92_constellation_size constellation;
+	struct v92_phase4_modulator modulator;
 	uint32_t emitted_symbols;
-	int16_t lu;
-	uint8_t previous_encoded_sign;
 };
-
-unsigned int v92_pcm_phase4_trn2u_bits_per_symbol(
-	enum v92_constellation_size constellation);
-
-/* Generate one of Tables 28 and 29's normalized signed levels. The formula
- * uses sqrt((M*M - 1)/3), where M is four or eight, instead of a level table.
- * LU must keep every level in the selected constellation within int16_t.
- * Rejected calls leave sample unchanged. */
-enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_level(
-	enum v92_constellation_size constellation, int16_t lu,
-	uint8_t magnitude_index, uint8_t encoded_sign, int16_t *sample);
 
 enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_init(
 	struct v92_pcm_phase4_trn2u *trn2u,

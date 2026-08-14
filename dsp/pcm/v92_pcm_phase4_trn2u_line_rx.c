@@ -35,7 +35,7 @@ static bool levels_are_valid(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver)
 {
 	unsigned int expected_count =
-		(unsigned int)receiver->reference.constellation;
+		(unsigned int)receiver->reference.modulator.constellation;
 	unsigned int magnitudes = expected_count / 2u;
 
 	if (receiver->level_count != expected_count ||
@@ -136,8 +136,8 @@ static bool initialize_targets(
 static bool initialize_levels(
 	struct v92_pcm_phase4_trn2u_line_rx *receiver)
 {
-	unsigned int bits = v92_pcm_phase4_trn2u_bits_per_symbol(
-		receiver->reference.constellation);
+	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
+		receiver->reference.modulator.constellation);
 	unsigned int magnitudes = 1u << (bits - 1u);
 	size_t index = 0;
 
@@ -146,10 +146,11 @@ static bool initialize_levels(
 		     magnitude < magnitudes; ++magnitude) {
 			int16_t level;
 
-			if (v92_pcm_phase4_trn2u_level(
-				    receiver->reference.constellation,
-				    receiver->reference.lu, magnitude, sign,
-				    &level) != V92_PCM_PHASE4_TRN2U_OK)
+			if (v92_phase4_modulator_level(
+				    receiver->reference.modulator.constellation,
+				    receiver->reference.modulator.lu,
+				    magnitude, sign, &level) !=
+			    V92_PHASE4_MODULATOR_OK)
 				return false;
 			receiver->levels[index++] = quantize(receiver->law, level);
 		}
@@ -173,12 +174,12 @@ v92_pcm_phase4_trn2u_line_rx_init(
 	    !v92_pcm_phase3_cpt_line_handoff_is_valid(handoff))
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
 	rounded_level = lround(handoff->signal_level);
-	bits = v92_pcm_phase4_trn2u_bits_per_symbol(constellation);
+	bits = v92_phase4_modulator_bits_per_symbol(constellation);
 	if (rounded_level <= 0 || rounded_level > INT16_MAX || bits == 0 ||
-	    v92_pcm_phase4_trn2u_level(
+	    v92_phase4_modulator_level(
 		    constellation, (int16_t)rounded_level,
 		    (uint8_t)((1u << (bits - 1u)) - 1u), 0u,
-		    &outer_level) != V92_PCM_PHASE4_TRN2U_OK)
+		    &outer_level) != V92_PHASE4_MODULATOR_OK)
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
 	initialized = (struct v92_pcm_phase4_trn2u_line_rx){
 		.equalizer = handoff->equalizer,

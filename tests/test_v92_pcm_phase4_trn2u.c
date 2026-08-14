@@ -32,42 +32,6 @@ static const int16_t *magnitudes(
 	return EIGHT_POINT_MAGNITUDES;
 }
 
-static bool test_normalized_levels(void)
-{
-	static const enum v92_constellation_size constellations[] = {
-		V92_CONSTELLATION_4_POINT,
-		V92_CONSTELLATION_8_POINT,
-	};
-
-	for (size_t selection = 0;
-	     selection < ARRAY_LENGTH(constellations); ++selection) {
-		size_t count;
-		const int16_t *expected = magnitudes(
-			constellations[selection], &count);
-
-		CHECK(v92_pcm_phase4_trn2u_bits_per_symbol(
-			      constellations[selection]) == selection + 2u,
-		      "TRN2u bit width differed");
-		for (size_t magnitude = 0; magnitude < count; ++magnitude) {
-			for (uint8_t sign = 0; sign <= 1u; ++sign) {
-				int16_t sample = 0;
-
-				CHECK(v92_pcm_phase4_trn2u_level(
-					      constellations[selection], TEST_LU,
-					      (uint8_t)magnitude, sign, &sample) ==
-					      V92_PCM_PHASE4_TRN2U_OK &&
-				      sample == (sign != 0u ?
-						 -expected[magnitude] :
-						 expected[magnitude]),
-				      "TRN2u level differed for %u points, %zu/%u",
-				      (unsigned int)constellations[selection],
-				      magnitude, sign);
-			}
-		}
-	}
-	return true;
-}
-
 static uint8_t expected_scrambled_bit(
 	const uint8_t *bits, size_t index)
 {
@@ -90,7 +54,7 @@ static bool check_sequence(
 	uint32_t expected_history = 0;
 	uint8_t previous_sign = initial_previous_sign;
 	unsigned int bit_count =
-		v92_pcm_phase4_trn2u_bits_per_symbol(constellation);
+		v92_phase4_modulator_bits_per_symbol(constellation);
 	size_t magnitude_count;
 	const int16_t *levels = magnitudes(constellation, &magnitude_count);
 
@@ -99,9 +63,10 @@ static bool check_sequence(
 		      TEST_LU) == V92_PCM_PHASE4_TRN2U_OK &&
 	      v34_scrambler_init(&descrambler, V34_POLYNOMIAL_GPA) ==
 		      V34_FRAMING_OK &&
-	      trn2u.scrambler.history == 0u &&
-	      trn2u.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
-	      trn2u.previous_encoded_sign == initial_previous_sign &&
+	      trn2u.modulator.scrambler.history == 0u &&
+	      trn2u.modulator.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
+	      trn2u.modulator.previous_encoded_sign ==
+		      initial_previous_sign &&
 	      trn2u.emitted_symbols == 0u,
 	      "TRN2u sequence did not initialize");
 	for (size_t symbol_index = 0;
@@ -138,8 +103,8 @@ static bool check_sequence(
 		      v92_pcm_phase4_trn2u_next(&trn2u, &sample) ==
 			      V92_PCM_PHASE4_TRN2U_OK &&
 		      sample == expected &&
-		      trn2u.previous_encoded_sign == encoded_sign &&
-		      trn2u.scrambler.history == expected_history &&
+		      trn2u.modulator.previous_encoded_sign == encoded_sign &&
+		      trn2u.modulator.scrambler.history == expected_history &&
 		      trn2u.emitted_symbols == symbol_index + 1u &&
 		      v92_pcm_phase4_trn2u_is_valid(&trn2u),
 		      "TRN2u sequence differed at symbol %zu", symbol_index);
@@ -209,9 +174,7 @@ static bool test_contracts(void)
 
 	memset(&trn2u, 0xa5, sizeof(trn2u));
 	before = trn2u;
-	CHECK(v92_pcm_phase4_trn2u_bits_per_symbol(
-		      (enum v92_constellation_size)6) == 0u &&
-	      v92_pcm_phase4_trn2u_init(NULL, V92_CONSTELLATION_4_POINT,
+	CHECK(v92_pcm_phase4_trn2u_init(NULL, V92_CONSTELLATION_4_POINT,
 		      0u, TEST_LU) == V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
 	      v92_pcm_phase4_trn2u_init(
 		      &trn2u, (enum v92_constellation_size)6, 0u,
@@ -224,20 +187,6 @@ static bool test_contracts(void)
 		      INT16_MAX) == V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
 	      memcmp(&trn2u, &before, sizeof(trn2u)) == 0,
 	      "invalid TRN2u initialization changed its destination");
-	CHECK(v92_pcm_phase4_trn2u_level(
-		      V92_CONSTELLATION_4_POINT, TEST_LU, 2u, 0u,
-		      &sample) == V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
-	      v92_pcm_phase4_trn2u_level(
-		      V92_CONSTELLATION_8_POINT, TEST_LU, 0u, 2u,
-		      &sample) == V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
-	      v92_pcm_phase4_trn2u_level(
-		      V92_CONSTELLATION_8_POINT, INT16_MAX, 0u, 0u,
-		      &sample) == V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
-	      v92_pcm_phase4_trn2u_level(
-		      V92_CONSTELLATION_4_POINT, TEST_LU, 0u, 0u,
-		      NULL) == V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
-	      sample == 1234,
-	      "invalid TRN2u level request changed its output");
 	CHECK(v92_pcm_phase4_trn2u_init(
 		      &trn2u, V92_CONSTELLATION_4_POINT, 0u,
 		      TEST_LU) == V92_PCM_PHASE4_TRN2U_OK,
@@ -271,8 +220,8 @@ static bool test_contracts(void)
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 initial TRN2u\n");
-	if (!test_normalized_levels() || !test_sequences() ||
-	    !test_initial_boundary() || !test_contracts()) {
+	if (!test_sequences() || !test_initial_boundary() ||
+	    !test_contracts()) {
 		fprintf(stderr, "[  FAILED  ] V.92 initial TRN2u\n");
 		return 1;
 	}

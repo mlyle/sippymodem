@@ -188,6 +188,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_line_rx.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase4_modulator.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase4_trn2u.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase4_trn2u_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_suvu.c \
