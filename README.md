@@ -139,9 +139,12 @@ python3 tools/local_interop.py \
 
 The runner starts both modems, constructs loopback-only SIP and RTP routing,
 waits for RING before issuing ATA, and verifies distinct terminal payloads in
-both directions under shared deadlines. Raw daemon logs, terminal traffic, and
-media recordings remain in owner-only artifacts; stdout contains only bounded,
-redacted status fields. The checked-in example is an inert raw V.21 baseline,
+both directions under shared deadlines. It lets the RTP path run for 100 ms
+after CONNECT before injecting terminal data, because some peers announce the
+connection before their datapump can safely accept its first character. Raw
+daemon logs, terminal traffic, and media recordings remain in owner-only
+artifacts; stdout contains only bounded, redacted status fields. The checked-in
+example is an inert raw V.21 baseline,
 but its AT command lists are intentionally generic so the same runner can test
 LAPM and compression. A cross-implementation PCMU run has also connected at
 symmetric V.34 9600 bit/s and verified all 15 payload bytes in each direction.

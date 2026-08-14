@@ -37,6 +37,7 @@ ring_delay = float(sys.argv[4])
 announcement = sys.argv[5]
 barrier = Path(sys.argv[6])
 origin_connect_delay = float(sys.argv[7])
+media_ready_delay = float(sys.argv[8])
 peer_role = "answerer" if role == "originator" else "originator"
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
@@ -57,6 +58,7 @@ ring_sent = False
 dial_pending = False
 origin_connect_at = None
 online = False
+media_ready_at = None
 replied = False
 pending_reply = False
 connect_response = (
@@ -86,6 +88,7 @@ while True:
             dial_pending = False
             origin_connect_at = None
             online = True
+            media_ready_at = now + media_ready_delay
     if pending_reply and (barrier / peer_role).exists():
         os.write(master, incoming)
         replied = True
@@ -96,7 +99,7 @@ while True:
     if not data:
         break
     if online:
-        if not replied:
+        if not replied and now >= media_ready_at:
             (barrier / role).touch(exist_ok=True)
             pending_reply = True
         continue
@@ -115,6 +118,7 @@ while True:
                 (barrier / "ata").touch(exist_ok=True)
                 (barrier / "answered").touch(exist_ok=True)
                 online = True
+                media_ready_at = now + media_ready_delay
         else:
             commands += 1
             os.write(master, b"\r\nOK\r\n")
@@ -147,6 +151,7 @@ class LocalInteropTests(unittest.TestCase):
         enabled: bool = True,
         answer_delay: float = 0.2,
         origin_connect_delay: float = 0.2,
+        media_ready_delay: float = 0.05,
         connect_timeout: float = 2,
     ) -> Path:
         barrier = directory / "barrier"
@@ -165,6 +170,7 @@ class LocalInteropTests(unittest.TestCase):
                     "bare",
                     str(barrier),
                     str(origin_connect_delay),
+                    str(media_ready_delay),
                 ],
                 "environment": {"SIP_CODEC": "PCMU"},
                 "at_commands": ORIGINATOR_RAW_COMMANDS,
@@ -180,6 +186,7 @@ class LocalInteropTests(unittest.TestCase):
                     "labeled",
                     str(barrier),
                     str(origin_connect_delay),
+                    str(media_ready_delay),
                 ],
                 "environment": {"SIP_LOG_LEVEL": "0"},
                 "at_commands": ANSWERER_RAW_COMMANDS,

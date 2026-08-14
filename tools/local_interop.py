@@ -48,6 +48,7 @@ else:
 
 
 SKIPPED_EXIT_CODE = 77
+ONLINE_SETTLE_SECONDS = 0.1
 
 
 @dataclass
@@ -299,6 +300,10 @@ def run_interop(
             outcome = "connect-error"
         else:
             stage = "data"
+            # Some peers report CONNECT before their media datapump can safely
+            # accept the first terminal character.  RTP continues to clock
+            # during this short, bounded settling interval.
+            time.sleep(ONLINE_SETTLE_SECONDS)
             originator_state.transmitted = config.originator_payload
             answerer_state.transmitted = config.answerer_payload
             data_deadline = time.monotonic() + config.online_timeout_seconds
@@ -340,6 +345,7 @@ def run_interop(
                 else:
                     assert post_ato1_payloads is not None
                     stage = "post-ato1-data"
+                    time.sleep(ONLINE_SETTLE_SECONDS)
                     data_deadline = (
                         time.monotonic() + config.online_timeout_seconds
                     )
