@@ -159,8 +159,8 @@ returns online.
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
 Baudot at both supported rates, V.32/V.32bis, and every valid fixed V.34
 bit-rate/symbol-rate pair selectable through `+MS` and `+V34B`. The fast
-matrix runs 35 V.34 pairs through both G.711 laws and both station roles:
-through 16800 bit/s at 2400 symbol/s, and through 19200 bit/s at the higher
+matrix runs 39 V.34 pairs through both G.711 laws and both station roles:
+through 16800 bit/s at 2400 symbol/s, and through 21600 bit/s at the higher
 implemented cadences. Denser pairs remain explicit prerequisite cases as the
 receiver matures. The optional 2743-symbol/s cadence is excluded because the
 control does not accept it. The catalog independently sweeps V.90/V.92

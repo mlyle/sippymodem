@@ -14,7 +14,8 @@
 
 enum {
 	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
-	V34_NOMINAL_AMPLITUDE = 7000,
+	V34_HIGH_DENSITY_RATE_UNITS = 9,
+	V34_NOMINAL_AMPLITUDE = 9000,
 	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
 	V34_MIN_LINE_POWER = 1000000,
 };
@@ -114,7 +115,7 @@ static uint8_t maximum_enabled_rate(
 	case V34_SYMBOL_RATE_3000:
 	case V34_SYMBOL_RATE_3200:
 	case V34_SYMBOL_RATE_3429:
-		return 8;
+		return 9;
 	case V34_SYMBOL_RATE_2743:
 	case V34_SYMBOL_RATE_COUNT:
 		break;
@@ -212,7 +213,10 @@ static struct v34_mp_record baseline_mp(
 				highest_rate_units,
 			.maximum_answer_to_call_rate_2400_bps_units =
 				highest_rate_units,
-			.remote_transmitter_trellis = V34_TRELLIS_16_STATE,
+			.remote_transmitter_trellis =
+				highest_rate_units >= V34_HIGH_DENSITY_RATE_UNITS ?
+					V34_TRELLIS_64_STATE :
+					V34_TRELLIS_16_STATE,
 			.data_rate_capability_mask = rate_mask,
 		},
 	};

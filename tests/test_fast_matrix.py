@@ -32,8 +32,8 @@ class FastMatrixTests(unittest.TestCase):
     def test_matrix_covers_every_supported_rate_codec_and_role(self) -> None:
         matrix = build_fast_matrix()
 
-        self.assertEqual(len(FAST_PROFILE_NAMES), 49)
-        self.assertEqual(len(matrix), 196)
+        self.assertEqual(len(FAST_PROFILE_NAMES), 53)
+        self.assertEqual(len(matrix), 212)
         self.assertIn("v22_600", FAST_PROFILE_NAMES)
         self.assertEqual(
             {case.profile.name for case in matrix}, set(FAST_PROFILE_NAMES)
@@ -57,7 +57,7 @@ class FastMatrixTests(unittest.TestCase):
         matrix = build_fast_matrix()
         v34 = [case for case in matrix if case.profile.family == "v34"]
 
-        self.assertEqual(len(v34), 140)
+        self.assertEqual(len(v34), 156)
         self.assertEqual({case.media_codec for case in v34}, set(MEDIA_CODECS))
         self.assertEqual(
             {
