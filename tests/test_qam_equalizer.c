@@ -468,6 +468,87 @@ static bool test_delayed_observations(void)
 	return true;
 }
 
+static bool test_span_extension(void)
+{
+	const struct qam_point reference = { 1.0, -1.0 };
+	const struct qam_point next_input = { -3.0, 1.0 };
+	struct qam_equalizer baseline;
+	struct qam_equalizer extended;
+	struct qam_equalizer saved;
+	struct qam_point baseline_output = { 0 };
+	struct qam_point extended_output = { 0 };
+	bool baseline_ready = false;
+	bool extended_ready = false;
+
+	CHECK(qam_equalizer_init(
+		      &baseline, &reference, &reference) == QAM_EQUALIZER_OK,
+	      "extension fixture did not initialize");
+	for (unsigned int index = 0; index <= QAM_EQUALIZER_DELAY; ++index) {
+		struct qam_point output = { 0 };
+		bool ready;
+
+		CHECK(qam_equalizer_push(
+			      &baseline, &reference, &output, &ready) ==
+			      QAM_EQUALIZER_OK,
+		      "extension fixture did not fill at %u", index);
+		if (ready)
+			CHECK(qam_equalizer_adapt(
+				      &baseline, &reference, 0.0) ==
+				      QAM_EQUALIZER_OK,
+			      "extension fixture did not become idle");
+	}
+	extended = baseline;
+	CHECK(qam_equalizer_extend_span(
+		      &extended, QAM_EQUALIZER_MAX_TAP_COUNT) ==
+		      QAM_EQUALIZER_OK &&
+	      extended.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT &&
+	      extended.decision_delay == baseline.decision_delay &&
+	      extended.fill == baseline.fill && !extended.can_adapt,
+	      "equalizer span did not extend in place");
+	for (size_t index = 0; index < baseline.tap_count; ++index) {
+		CHECK(points_are_close(
+			      &extended.coefficients[index],
+			      &baseline.coefficients[index]) &&
+		      points_are_close(
+			      &extended.history[index],
+			      &baseline.history[index]),
+		      "extension changed active tap %zu", index);
+	}
+	for (size_t index = baseline.tap_count;
+	     index < extended.tap_count; ++index) {
+		CHECK(points_are_close(
+			      &extended.coefficients[index],
+			      &(struct qam_point){ 0 }) &&
+		      points_are_close(
+			      &extended.history[index],
+			      &(struct qam_point){ 0 }),
+		      "extension exposed nonzero tap %zu", index);
+	}
+	CHECK(qam_equalizer_push(
+		      &baseline, &next_input, &baseline_output,
+		      &baseline_ready) == QAM_EQUALIZER_OK &&
+	      qam_equalizer_push(
+		      &extended, &next_input, &extended_output,
+		      &extended_ready) == QAM_EQUALIZER_OK &&
+	      baseline_ready && extended_ready &&
+	      points_are_close(&baseline_output, &extended_output),
+	      "zero-extended span changed the next output");
+	saved = extended;
+	CHECK(qam_equalizer_extend_span(
+		      &extended, extended.tap_count - 1u) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_extend_span(
+		      &extended, QAM_EQUALIZER_MAX_TAP_COUNT + 1u) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_extend_span(&extended, extended.tap_count) ==
+		      QAM_EQUALIZER_INVALID_STATE &&
+	      qam_equalizer_extend_span(NULL, QAM_EQUALIZER_MAX_TAP_COUNT) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&extended, &saved, sizeof(extended)) == 0,
+	      "invalid span extension was not transactional");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	const struct qam_point reference = { 1.0, -1.0 };
@@ -548,6 +629,7 @@ int main(void)
 		{ "generated ISI channel", test_generated_isi_channel },
 		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
+		{ "span extension", test_span_extension },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

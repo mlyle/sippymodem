@@ -143,6 +143,31 @@ enum qam_equalizer_result qam_equalizer_init_geometry(
 	return QAM_EQUALIZER_OK;
 }
 
+enum qam_equalizer_result qam_equalizer_extend_span(
+	struct qam_equalizer *equalizer, unsigned int tap_count)
+{
+	struct qam_equalizer extended;
+
+	if (!qam_equalizer_is_valid(equalizer) ||
+	    tap_count < equalizer->tap_count ||
+	    tap_count > QAM_EQUALIZER_MAX_TAP_COUNT)
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	if (equalizer->can_adapt)
+		return QAM_EQUALIZER_INVALID_STATE;
+	if (tap_count == equalizer->tap_count)
+		return QAM_EQUALIZER_OK;
+	extended = *equalizer;
+	for (size_t index = extended.tap_count; index < tap_count; ++index) {
+		extended.coefficients[index] = (struct qam_point){ 0 };
+		extended.history[index] = (struct qam_point){ 0 };
+	}
+	extended.tap_count = tap_count;
+	if (!qam_equalizer_is_valid(&extended))
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	*equalizer = extended;
+	return QAM_EQUALIZER_OK;
+}
+
 enum qam_equalizer_result qam_equalizer_push(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received,

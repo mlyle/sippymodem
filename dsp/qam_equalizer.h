@@ -9,7 +9,7 @@
 
 enum {
 	QAM_EQUALIZER_DEFAULT_TAP_COUNT = 7,
-	QAM_EQUALIZER_MAX_TAP_COUNT = 31,
+	QAM_EQUALIZER_MAX_TAP_COUNT = 61,
 	QAM_EQUALIZER_DELAY = 3,
 };
 
@@ -68,6 +68,13 @@ enum qam_equalizer_result qam_equalizer_init_geometry(
 	const struct qam_point *received_reference,
 	const struct qam_point *transmitted_reference,
 	unsigned int tap_count, unsigned int decision_delay);
+
+/* Extend an idle equalizer without moving its decision point or disturbing
+ * learned coefficients and sample history. Newly exposed taps start at zero.
+ * The caller must own any retained observations; their old geometry cannot be
+ * applied after a successful extension. */
+enum qam_equalizer_result qam_equalizer_extend_span(
+	struct qam_equalizer *equalizer, unsigned int tap_count);
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer);
 
