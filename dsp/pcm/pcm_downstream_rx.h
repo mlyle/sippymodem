@@ -7,7 +7,7 @@
 #include "v90_mp_receiver.h"
 #include "v90_pcm_stream_rx.h"
 #include "v90_phase4.h"
-#include "v92_suvd_receiver.h"
+#include "v92_control_rx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -58,13 +58,13 @@ struct pcm_trn2d_frame {
 struct pcm_downstream_event {
 	struct pcm_trn2d_frame trn2d;
 	struct v90_mp_event mp;
-	struct v92_suvd_event suvd;
+	struct v92_control_event suvd;
 	struct pcm_downstream_ed_event ed;
 };
 
 union pcm_downstream_control_rx {
 	struct v90_mp_receiver mp;
-	struct v92_suvd_receiver suvd;
+	struct v92_control_rx v92;
 };
 
 /* Own the continuous digital-to-analogue Phase 4 decoding epoch. The selected

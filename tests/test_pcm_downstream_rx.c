@@ -266,7 +266,7 @@ static bool observe_v92_output(
 			continue;
 		}
 		if (result == PCM_DOWNSTREAM_RX_SUVD) {
-			CHECK(event.suvd.type == V92_SUVD_EVENT_RECORD &&
+			CHECK(event.suvd.type == V92_CONTROL_EVENT_SUVD &&
 			      event.suvd.frame_result == V92_SUVD_OK,
 			      "V.92 SUVd result and event disagreed");
 			observer->last_parameters = event.suvd.parameters;
@@ -274,7 +274,7 @@ static bool observe_v92_output(
 			continue;
 		}
 		CHECK(result == PCM_DOWNSTREAM_RX_SUVD_REJECTED &&
-		      event.suvd.type == V92_SUVD_EVENT_REJECTED,
+		      event.suvd.type == V92_CONTROL_EVENT_REJECTED,
 		      "V.92 downstream receiver returned %s",
 		      pcm_downstream_rx_result_name(result));
 		if (event.suvd.frame_result == V92_SUVD_INVALID_FRAME)

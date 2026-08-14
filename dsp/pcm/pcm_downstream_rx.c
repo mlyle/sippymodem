@@ -26,10 +26,10 @@ static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
 	       receiver->sync_one_count == 0;
 }
 
-static bool suvd_is_fresh(const struct v92_suvd_receiver *receiver)
+static bool suvd_is_fresh(const struct v92_control_rx *receiver)
 {
-	return v92_suvd_receiver_is_valid(receiver) &&
-	       receiver->stage == V92_SUVD_SEARCH_SYNC &&
+	return v92_control_rx_is_valid(receiver) &&
+	       receiver->stage == V92_CONTROL_RX_SEARCH_SYNC &&
 	       receiver->bit_index == 0u && receiver->sync_one_count == 0u;
 }
 
@@ -40,15 +40,15 @@ static bool control_is_valid(const struct pcm_downstream_rx *receiver)
 	if (receiver->protocol == PCM_PROTOCOL_V90)
 		return v90_mp_receiver_is_valid(&receiver->control.mp) &&
 		       receiver->control.mp.training_frame_bits == frame_bits;
-	return v92_suvd_receiver_is_valid(&receiver->control.suvd) &&
-	       receiver->control.suvd.training_frame_bits == frame_bits;
+	return v92_control_rx_is_valid(&receiver->control.v92) &&
+	       receiver->control.v92.training_frame_bits == frame_bits;
 }
 
 static bool control_is_fresh(const struct pcm_downstream_rx *receiver)
 {
 	return receiver->protocol == PCM_PROTOCOL_V90 ?
 		       mp_is_fresh(&receiver->control.mp) :
-		       suvd_is_fresh(&receiver->control.suvd);
+		       suvd_is_fresh(&receiver->control.v92);
 }
 
 static bool stage_matches_protocol(const struct pcm_downstream_rx *receiver)
@@ -145,9 +145,9 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 			&initialized.control.mp,
 			training_mapping->frame_bits) == V90_MP_RECEIVER_OK;
 	} else {
-		control_initialized = v92_suvd_receiver_init(
-			&initialized.control.suvd,
-			training_mapping->frame_bits) == V92_SUVD_RECEIVER_OK;
+		control_initialized = v92_control_rx_init(
+			&initialized.control.v92,
+			training_mapping->frame_bits) == V92_CONTROL_RX_OK;
 	}
 	if (!control_initialized)
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
@@ -273,33 +273,33 @@ static enum pcm_downstream_rx_result feed_suvd_frame(
 	const struct v90_pcm_stream_frame *frame,
 	struct pcm_downstream_event *event)
 {
-	struct v92_suvd_event emitted = { 0 };
+	struct v92_control_event emitted = { 0 };
 	bool aligned = false;
 
 	for (size_t bit = 0u; bit < frame->bit_count; ++bit) {
-		struct v92_suvd_event current;
+		struct v92_control_event current;
 
-		if (v92_suvd_receiver_receive_bit(
-			    &receiver->control.suvd, frame->bits[bit],
-			    &current) != V92_SUVD_RECEIVER_OK)
+		if (v92_control_rx_receive_bit(
+			    &receiver->control.v92, frame->bits[bit],
+			    &current) != V92_CONTROL_RX_OK)
 			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-		if (current.type == V92_SUVD_EVENT_NONE)
+		if (current.type == V92_CONTROL_EVENT_NONE)
 			continue;
-		if (emitted.type != V92_SUVD_EVENT_NONE)
+		if (emitted.type != V92_CONTROL_EVENT_NONE)
 			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 		emitted = current;
 		aligned = bit + 1u == frame->bit_count;
 	}
-	if (emitted.type == V92_SUVD_EVENT_NONE)
+	if (emitted.type == V92_CONTROL_EVENT_NONE)
 		return PCM_DOWNSTREAM_RX_BUFFERING;
-	if (emitted.type == V92_SUVD_EVENT_RECORD && !aligned) {
-		emitted = (struct v92_suvd_event){
-			.type = V92_SUVD_EVENT_REJECTED,
+	if (emitted.type == V92_CONTROL_EVENT_SUVD && !aligned) {
+		emitted = (struct v92_control_event){
+			.type = V92_CONTROL_EVENT_REJECTED,
 			.frame_result = V92_SUVD_INVALID_FRAME,
 		};
 	}
 	event->suvd = emitted;
-	return emitted.type == V92_SUVD_EVENT_RECORD ?
+	return emitted.type == V92_CONTROL_EVENT_SUVD ?
 		       PCM_DOWNSTREAM_RX_SUVD :
 		       PCM_DOWNSTREAM_RX_SUVD_REJECTED;
 }

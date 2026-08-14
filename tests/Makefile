@@ -38,7 +38,7 @@ V90_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_profile.c pcm_startup.c \
 	v92_info0.c v92_info1d.c v92_pcm_info1a.c v92_status_update.c \
-	v92_suvd.c v92_suvd_receiver.c \
+	v92_control_rx.c v92_suvd.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c))
 V90_RUNTIME_OBJECTS := \
 	$(V90_RUNTIME_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
@@ -1535,10 +1535,10 @@ V92_SUVD_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_suvd.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
-V92_SUVD_RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_v92_suvd_receiver
-V92_SUVD_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v92_suvd_receiver.o \
-	$(BUILD_DIR)/v92_suvd_receiver.o \
+V92_CONTROL_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_control_rx
+V92_CONTROL_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v92_control_rx.o \
+	$(BUILD_DIR)/v92_control_rx.o \
 	$(BUILD_DIR)/v92_suvd.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
@@ -1679,7 +1679,7 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
-	$(BUILD_DIR)/v92_suvd_receiver.o \
+	$(BUILD_DIR)/v92_control_rx.o \
 	$(BUILD_DIR)/v92_suvd.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
@@ -1879,7 +1879,7 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
-	$(BUILD_DIR)/v92_suvd_receiver.o \
+	$(BUILD_DIR)/v92_control_rx.o \
 	$(BUILD_DIR)/v92_suvd.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
@@ -2665,7 +2665,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V92_CPD_TEST_BINARY) \
 	$(V92_SUVU_TEST_BINARY) \
 	$(V92_SUVD_TEST_BINARY) \
-	$(V92_SUVD_RECEIVER_TEST_BINARY) \
+	$(V92_CONTROL_RX_TEST_BINARY) \
 	$(V92_CPT_RECEIVER_TEST_BINARY) \
 	$(V92_PCM_PHASE3_CPT_TX_TEST_BINARY) \
 	$(V92_PCM_PHASE3_CPT_RX_TEST_BINARY) \
@@ -2919,7 +2919,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V92_CPD_TEST_OBJECTS:.o=.d) \
 	$(V92_SUVU_TEST_OBJECTS:.o=.d) \
 	$(V92_SUVD_TEST_OBJECTS:.o=.d) \
-	$(V92_SUVD_RECEIVER_TEST_OBJECTS:.o=.d) \
+	$(V92_CONTROL_RX_TEST_OBJECTS:.o=.d) \
 	$(V92_CPT_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE3_CPT_TX_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE3_CPT_RX_TEST_OBJECTS:.o=.d) \
@@ -3198,7 +3198,7 @@ test: $(TEST_BINARIES)
 	./$(V92_CPD_TEST_BINARY)
 	./$(V92_SUVU_TEST_BINARY)
 	./$(V92_SUVD_TEST_BINARY)
-	./$(V92_SUVD_RECEIVER_TEST_BINARY)
+	./$(V92_CONTROL_RX_TEST_BINARY)
 	./$(V92_CPT_RECEIVER_TEST_BINARY)
 	./$(V92_PCM_PHASE3_CPT_TX_TEST_BINARY)
 	./$(V92_PCM_PHASE3_CPT_RX_TEST_BINARY)
@@ -3861,7 +3861,7 @@ $(V92_SUVU_TEST_BINARY): $(V92_SUVU_TEST_OBJECTS)
 $(V92_SUVD_TEST_BINARY): $(V92_SUVD_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
-$(V92_SUVD_RECEIVER_TEST_BINARY): $(V92_SUVD_RECEIVER_TEST_OBJECTS)
+$(V92_CONTROL_RX_TEST_BINARY): $(V92_CONTROL_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V92_CPT_RECEIVER_TEST_BINARY): $(V92_CPT_RECEIVER_TEST_OBJECTS)
@@ -4729,8 +4729,8 @@ $(BUILD_DIR)/v92_suvd.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_suvd.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v92_suvd_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v92_suvd_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/v92_control_rx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_control_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase4_cpu_tx.o: \
