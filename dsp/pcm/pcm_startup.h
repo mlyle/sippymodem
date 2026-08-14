@@ -3,14 +3,10 @@
 #ifndef PCM_STARTUP_H
 #define PCM_STARTUP_H
 
+#include "pcm_protocol.h"
 #include "v92_info0.h"
 
 #include <stdbool.h>
-
-enum pcm_protocol {
-	PCM_PROTOCOL_V90,
-	PCM_PROTOCOL_V92,
-};
 
 enum pcm_phase2_mode {
 	PCM_PHASE2_FULL,

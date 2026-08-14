@@ -43,7 +43,7 @@ enum v90_phase2_ranging_result v90_phase2_ranging_init_analog(
 
 	if (ranging == NULL)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
-	result = pcm_phase2_info0_exchange_init_analog(
+	result = pcm_phase2_info0_exchange_init_v90_analog(
 		&initialized.info0_exchange, nominal_amplitude, local_info0a);
 	return finish_initialization(ranging, &initialized, result);
 }
@@ -58,7 +58,7 @@ enum v90_phase2_ranging_result v90_phase2_ranging_init_digital(
 
 	if (ranging == NULL)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
-	result = pcm_phase2_info0_exchange_init_digital(
+	result = pcm_phase2_info0_exchange_init_v90_digital(
 		&initialized.info0_exchange, nominal_amplitude, local_info0d);
 	return finish_initialization(ranging, &initialized, result);
 }

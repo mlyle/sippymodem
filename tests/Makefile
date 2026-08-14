@@ -2205,6 +2205,7 @@ PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v90_info0.o \
+	$(BUILD_DIR)/v92_info0.o \
 	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o \
@@ -2219,6 +2220,7 @@ V90_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v90_info0.o \
+	$(BUILD_DIR)/v92_info0.o \
 	$(BUILD_DIR)/v34_phase2_dpsk.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o \

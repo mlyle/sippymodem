@@ -18,6 +18,12 @@ enum test_codec {
 	TEST_CODEC_PCMA,
 };
 
+enum test_info0_mode {
+	TEST_INFO0_V90,
+	TEST_INFO0_V92_FULL,
+	TEST_INFO0_V92_SHORT,
+};
+
 struct exchange_observation {
 	size_t info_received;
 	size_t info_rejected;
@@ -96,6 +102,37 @@ static bool digital_equal(
 	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
 }
 
+static bool v92_analog_equal(
+	const struct v92_info0a *left, const struct v92_info0a *right)
+{
+	uint8_t left_payload[V90_INFO0A_PAYLOAD_BYTES];
+	uint8_t right_payload[V90_INFO0A_PAYLOAD_BYTES];
+
+	return v92_info0a_encode(left, left_payload, sizeof(left_payload)) ==
+		       V92_INFO0_OK &&
+	       v92_info0a_encode(right, right_payload, sizeof(right_payload)) ==
+		       V92_INFO0_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+}
+
+static bool v92_digital_equal(
+	const struct v92_info0d *left, const struct v92_info0d *right)
+{
+	uint8_t left_payload[V90_INFO0D_PAYLOAD_BYTES];
+	uint8_t right_payload[V90_INFO0D_PAYLOAD_BYTES];
+
+	return v92_info0d_encode(left, left_payload, sizeof(left_payload)) ==
+		       V92_INFO0_OK &&
+	       v92_info0d_encode(right, right_payload, sizeof(right_payload)) ==
+		       V92_INFO0_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+}
+
+static enum pcm_protocol protocol_for_mode(enum test_info0_mode mode)
+{
+	return mode == TEST_INFO0_V90 ? PCM_PROTOCOL_V90 : PCM_PROTOCOL_V92;
+}
+
 static void observe(
 	const struct pcm_phase2_info0_exchange_event *event,
 	struct exchange_observation *observation)
@@ -110,29 +147,69 @@ static void observe(
 		observation->tone_started++;
 }
 
-static bool check_exchange(enum test_codec codec)
+static bool check_exchange(
+	enum test_codec codec, enum test_info0_mode analog_mode,
+	enum test_info0_mode digital_mode)
 {
-	struct v90_info0 analog = analog_capabilities();
-	struct v90_info0 expected_analog = analog;
-	struct v90_info0d digital = digital_capabilities(codec);
-	struct v90_info0d expected_digital = digital;
+	struct v92_info0a analog = {
+		.v90 = analog_capabilities(),
+		.v92_capable = analog_mode != TEST_INFO0_V90,
+		.short_phase2_requested = analog_mode == TEST_INFO0_V92_SHORT,
+	};
+	struct v92_info0d digital = {
+		.v90 = digital_capabilities(codec),
+		.v92_capable = digital_mode != TEST_INFO0_V90,
+		.short_phase2_requested = digital_mode == TEST_INFO0_V92_SHORT,
+	};
+	struct v92_info0a expected_analog = analog;
+	struct v92_info0d expected_digital = digital;
 	struct pcm_phase2_info0_exchange analog_end;
 	struct pcm_phase2_info0_exchange digital_end;
 	struct exchange_observation analog_observation = { 0 };
 	struct exchange_observation digital_observation = { 0 };
+	uint8_t analog_payload[V90_INFO0A_PAYLOAD_BYTES];
+	uint8_t digital_payload[V90_INFO0D_PAYLOAD_BYTES];
 	int16_t analog_line = 0;
 	int16_t digital_line = 0;
 	size_t analog_tone_start = SIZE_MAX;
 	size_t digital_tone_start = SIZE_MAX;
+	bool initialized;
 
-	expected_analog.acknowledges_peer_info0 = false;
-	expected_digital.common.acknowledges_peer_info0 = false;
-	CHECK(pcm_phase2_info0_exchange_init_analog(
-		      &analog_end, TEST_AMPLITUDE, &analog) ==
-		      PCM_PHASE2_INFO0_EXCHANGE_OK &&
-	      pcm_phase2_info0_exchange_init_digital(
-		      &digital_end, TEST_AMPLITUDE, &digital) ==
-		      PCM_PHASE2_INFO0_EXCHANGE_OK &&
+	expected_analog.v90.acknowledges_peer_info0 = false;
+	expected_digital.v90.common.acknowledges_peer_info0 = false;
+	if (analog_mode == TEST_INFO0_V90)
+		initialized = pcm_phase2_info0_exchange_init_v90_analog(
+			&analog_end, TEST_AMPLITUDE, &analog.v90) ==
+			PCM_PHASE2_INFO0_EXCHANGE_OK &&
+			v90_info0a_encode(
+				&expected_analog.v90, analog_payload,
+				sizeof(analog_payload)) == V90_INFO0_OK;
+	else
+		initialized = pcm_phase2_info0_exchange_init_v92_analog(
+			&analog_end, TEST_AMPLITUDE, &analog) ==
+			PCM_PHASE2_INFO0_EXCHANGE_OK &&
+			v92_info0a_encode(
+				&expected_analog, analog_payload,
+				sizeof(analog_payload)) == V92_INFO0_OK;
+	if (digital_mode == TEST_INFO0_V90)
+		initialized = initialized &&
+			pcm_phase2_info0_exchange_init_v90_digital(
+				&digital_end, TEST_AMPLITUDE, &digital.v90) ==
+				PCM_PHASE2_INFO0_EXCHANGE_OK &&
+			v90_info0d_encode(
+				&expected_digital.v90, digital_payload,
+				sizeof(digital_payload)) == V90_INFO0_OK;
+	else
+		initialized = initialized &&
+			pcm_phase2_info0_exchange_init_v92_digital(
+				&digital_end, TEST_AMPLITUDE, &digital) ==
+				PCM_PHASE2_INFO0_EXCHANGE_OK &&
+			v92_info0d_encode(
+				&expected_digital, digital_payload,
+				sizeof(digital_payload)) == V92_INFO0_OK;
+	CHECK(initialized &&
+	      analog_end.protocol == protocol_for_mode(analog_mode) &&
+	      digital_end.protocol == protocol_for_mode(digital_mode) &&
 	      analog_end.transport.signal_role == PHASE2_SIGNAL_A &&
 	      digital_end.transport.signal_role == PHASE2_SIGNAL_B &&
 	      analog_end.transport.info_transmitter.frame.payload_bit_count ==
@@ -142,8 +219,13 @@ static bool check_exchange(enum test_codec codec)
 	      digital_end.transport.info_transmitter.frame.payload_bit_count ==
 		      V90_INFO0D_PAYLOAD_BITS &&
 	      digital_end.transport.info_receiver.frame
-		      .expected_payload_bit_count == V90_INFO0A_PAYLOAD_BITS,
-	      "V.90 INFO0 endpoints did not initialize with complementary roles");
+		      .expected_payload_bit_count == V90_INFO0A_PAYLOAD_BITS &&
+	      memcmp(analog_end.transport.info_transmitter.frame.payload,
+		     analog_payload, sizeof(analog_payload)) == 0 &&
+	      memcmp(digital_end.transport.info_transmitter.frame.payload,
+		     digital_payload, sizeof(digital_payload)) == 0,
+	      "PCM INFO0 endpoints %d/%d did not initialize exactly",
+	      analog_mode, digital_mode);
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct pcm_phase2_info0_exchange_event analog_event;
@@ -165,7 +247,11 @@ static bool check_exchange(enum test_codec codec)
 			      codec_round_trip(analog_line, codec),
 			      &next_digital, &digital_event) ==
 			      PCM_PHASE2_INFO0_EXCHANGE_OK,
-		      "V.90 INFO0 exchange failed at sample %zu", index);
+		      "PCM INFO0 exchange %d/%d failed at sample %zu",
+		      analog_mode, digital_mode, index);
+		CHECK(analog_event.protocol == protocol_for_mode(analog_mode) &&
+		      digital_event.protocol == protocol_for_mode(digital_mode),
+		      "PCM INFO0 event lost its protocol tag");
 		observe(&analog_event, &analog_observation);
 		observe(&digital_event, &digital_observation);
 		if (index < PHASE2_INFO0_POST_V8_SILENCE_SAMPLES)
@@ -196,23 +282,45 @@ static bool check_exchange(enum test_codec codec)
 	      digital_observation.info_received == 1 &&
 	      digital_observation.info_rejected == 0 &&
 	      analog_observation.tone_started == 1 &&
-	      digital_observation.tone_started == 1 &&
-	      digital_equal(
-		      &analog_observation.peer_info0.digital,
-		      &expected_digital) &&
-	      analog_equal(
-		      &digital_observation.peer_info0.analog,
-		      &expected_analog),
-	      "V.90 INFO0 records changed across codec %d", codec);
+	      digital_observation.tone_started == 1,
+	      "PCM INFO0 record counts changed for %d/%d over codec %d",
+	      analog_mode, digital_mode, codec);
+	if (analog_mode == TEST_INFO0_V90)
+		CHECK(digital_equal(
+			      &analog_observation.peer_info0.digital,
+			      &expected_digital.v90),
+		      "V.90 analog endpoint changed the digital base record");
+	else
+		CHECK(v92_digital_equal(
+			      &analog_observation.peer_info0.v92_digital,
+			      &expected_digital),
+		      "V.92 analog endpoint changed the digital extension");
+	if (digital_mode == TEST_INFO0_V90)
+		CHECK(analog_equal(
+			      &digital_observation.peer_info0.analog,
+			      &expected_analog.v90),
+		      "V.90 digital endpoint changed the analog base record");
+	else
+		CHECK(v92_analog_equal(
+			      &digital_observation.peer_info0.v92_analog,
+			      &expected_analog),
+		      "V.92 digital endpoint changed the analog extension");
 	return true;
 }
 
 static bool test_pcm_exchange(void)
 {
 	for (enum test_codec codec = TEST_CODEC_PCMU;
-	     codec <= TEST_CODEC_PCMA; ++codec)
-		CHECK(check_exchange(codec),
-		      "V.90 INFO0 exchange failed for codec %d", codec);
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		for (enum test_info0_mode analog = TEST_INFO0_V90;
+		     analog <= TEST_INFO0_V92_SHORT; ++analog) {
+			for (enum test_info0_mode digital = TEST_INFO0_V90;
+			     digital <= TEST_INFO0_V92_SHORT; ++digital)
+				CHECK(check_exchange(codec, analog, digital),
+				      "PCM INFO0 matrix failed for %d/%d/%d",
+				      codec, analog, digital);
+		}
+	}
 	return true;
 }
 
@@ -220,6 +328,9 @@ static bool test_validation(void)
 {
 	struct v90_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(TEST_CODEC_PCMU);
+	struct v92_info0a v92_analog = {
+		.v90 = analog,
+	};
 	struct pcm_phase2_info0_exchange exchange;
 	struct pcm_phase2_info0_exchange before;
 	struct pcm_phase2_info0_exchange_event event = {
@@ -228,17 +339,36 @@ static bool test_validation(void)
 	int16_t sample = 1234;
 
 	analog.maximum_symbol_rate_difference_steps = 6;
-	CHECK(pcm_phase2_info0_exchange_init_analog(
+	CHECK(pcm_phase2_info0_exchange_init_v90_analog(
 		      &exchange, TEST_AMPLITUDE, &analog) ==
 		      PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT,
 	      "V.90 INFO0 exchange accepted invalid analog capabilities");
 	digital.pcm_law = (enum v90_pcm_law)2;
-	CHECK(pcm_phase2_info0_exchange_init_digital(
+	CHECK(pcm_phase2_info0_exchange_init_v90_digital(
 		      &exchange, TEST_AMPLITUDE, &digital) ==
 		      PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT,
 	      "V.90 INFO0 exchange accepted an invalid PCM law");
 	analog = analog_capabilities();
-	CHECK(pcm_phase2_info0_exchange_init_analog(
+	v92_analog.v90 = analog;
+	CHECK(pcm_phase2_info0_exchange_init_v92_analog(
+		      &exchange, TEST_AMPLITUDE, &v92_analog) ==
+		      PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT,
+	      "V.92 exchange accepted a local record without capability");
+	v92_analog.v92_capable = true;
+	CHECK(pcm_phase2_info0_exchange_init_v92_analog(
+		      &exchange, TEST_AMPLITUDE, &v92_analog) ==
+		      PCM_PHASE2_INFO0_EXCHANGE_OK,
+	      "V.92 validation fixture did not initialize");
+	exchange.protocol = (enum pcm_protocol)9;
+	before = exchange;
+	CHECK(pcm_phase2_info0_exchange_sample(
+		      &exchange, 0, &sample, &event) ==
+		      PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT &&
+	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
+	      sample == 1234 &&
+	      event.peer_info0_event == PCM_PEER_INFO0_REJECTED,
+	      "invalid PCM protocol tag mutated caller state");
+	CHECK(pcm_phase2_info0_exchange_init_v90_analog(
 		      &exchange, TEST_AMPLITUDE, &analog) ==
 		      PCM_PHASE2_INFO0_EXCHANGE_OK,
 	      "V.90 validation fixture did not initialize");
@@ -264,7 +394,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "PCMU and PCMA exchange", test_pcm_exchange },
+		{ "protocol, codec, and capability matrix", test_pcm_exchange },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
