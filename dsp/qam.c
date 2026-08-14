@@ -2,6 +2,8 @@
 
 #include "qam.h"
 
+#include "integer_math.h"
+
 #include <limits.h>
 #include <math.h>
 #include <string.h>
@@ -386,17 +388,6 @@ enum qam_result qam_modulator_sample(
 	return QAM_OK;
 }
 
-static uint64_t greatest_common_divisor(uint64_t left, uint64_t right)
-{
-	while (right != 0) {
-		uint64_t remainder = left % right;
-
-		left = right;
-		right = remainder;
-	}
-	return left;
-}
-
 static bool demodulator_shape_is_valid(
 	const struct qam_channel *channel, uint64_t period,
 	size_t *filter_count, size_t *candidate_count,
@@ -405,7 +396,7 @@ static bool demodulator_shape_is_valid(
 	uint64_t step = channel->symbol_rate_numerator;
 	uint64_t support = period * channel->pulse_span_symbols;
 	uint64_t count = support / step + (support % step != 0 ? 1u : 0u) + 1u;
-	uint64_t timing_gcd = greatest_common_divisor(period, step);
+	uint64_t timing_gcd = gcd_u64(period, step);
 	uint64_t candidates = period / timing_gcd;
 
 	if (count < 2 || count > QAM_MAX_MATCHED_FILTER_SAMPLES ||

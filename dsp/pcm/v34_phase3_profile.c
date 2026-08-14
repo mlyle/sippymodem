@@ -2,6 +2,8 @@
 
 #include "v34_phase3_profile.h"
 
+#include "integer_math.h"
+
 #include <stddef.h>
 
 struct exact_fraction {
@@ -74,17 +76,6 @@ static bool carrier_ratio(
 	return false;
 }
 
-static uint32_t greatest_common_divisor(uint32_t left, uint32_t right)
-{
-	while (right != 0) {
-		uint32_t remainder = left % right;
-
-		left = right;
-		right = remainder;
-	}
-	return left;
-}
-
 static struct exact_fraction carrier_frequency(
 	struct exact_fraction symbol_rate, struct exact_fraction ratio)
 {
@@ -92,7 +83,7 @@ static struct exact_fraction carrier_frequency(
 		.numerator = symbol_rate.numerator * ratio.numerator,
 		.denominator = symbol_rate.denominator * ratio.denominator,
 	};
-	uint32_t divisor = greatest_common_divisor(
+	uint32_t divisor = (uint32_t)gcd_u64(
 		frequency.numerator, frequency.denominator);
 
 	frequency.numerator /= divisor;

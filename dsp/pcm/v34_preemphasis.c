@@ -2,6 +2,8 @@
 
 #include "v34_preemphasis.h"
 
+#include "integer_math.h"
+
 #include <float.h>
 #include <math.h>
 #include <string.h>
@@ -72,17 +74,6 @@ v34_preemphasis_template_db(
 	*magnitude_db = template_magnitude_db(
 		filter_index, normalized_frequency, constrained);
 	return V34_PREEMPHASIS_OK;
-}
-
-static uint32_t greatest_common_divisor(uint32_t left, uint32_t right)
-{
-	while (right != 0) {
-		uint32_t remainder = left % right;
-
-		left = right;
-		right = remainder;
-	}
-	return left;
 }
 
 static bool rates_are_valid(
@@ -184,7 +175,7 @@ v34_preemphasis_init(
 	    !rates_are_valid(sample_rate, symbol_rate_numerator,
 			    symbol_rate_denominator))
 		return V34_PREEMPHASIS_INVALID_ARGUMENT;
-	divisor = greatest_common_divisor(
+	divisor = (uint32_t)gcd_u64(
 		symbol_rate_numerator, symbol_rate_denominator);
 	initialized.sample_rate = sample_rate;
 	initialized.symbol_rate_numerator = symbol_rate_numerator / divisor;
@@ -206,8 +197,8 @@ bool v34_preemphasis_is_valid(
 	    !rates_are_valid(filter->sample_rate,
 			    filter->symbol_rate_numerator,
 			    filter->symbol_rate_denominator) ||
-	    greatest_common_divisor(filter->symbol_rate_numerator,
-				    filter->symbol_rate_denominator) != 1 ||
+	    gcd_u64(filter->symbol_rate_numerator,
+		    filter->symbol_rate_denominator) != 1 ||
 	    filter->next_history >= V34_PREEMPHASIS_TAPS)
 		return false;
 	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS;
