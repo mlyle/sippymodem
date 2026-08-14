@@ -35,7 +35,7 @@ V34_NATIVE_SOURCE_NAMES := \
 V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 V90_RUNTIME_SOURCE_NAMES := \
-	pcm_dil_descriptor.c pcm_info1.c pcm_j_frame.c \
+	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_profile.c pcm_startup.c \
 	v92_info0.c v92_info1d.c v92_pcm_info1a.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c))
@@ -1666,10 +1666,10 @@ V90_MP_RECEIVER_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v90_mp.o \
 	$(BUILD_DIR)/v90_mp_receiver.o
-V90_DOWNSTREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_v90_downstream_rx
-V90_DOWNSTREAM_RX_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v90_downstream_rx.o \
-	$(BUILD_DIR)/v90_downstream_rx.o \
+PCM_DOWNSTREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_rx
+PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_pcm_downstream_rx.o \
+	$(BUILD_DIR)/pcm_downstream_rx.o \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
@@ -1782,8 +1782,8 @@ V90_DOWNSTREAM_STREAM_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
 	$(filter-out $(BUILD_DIR)/test_v90_downstream_tx.o, \
 		$(V90_DOWNSTREAM_TX_TEST_OBJECTS)) \
-	$(filter-out $(BUILD_DIR)/test_v90_downstream_rx.o, \
-		$(V90_DOWNSTREAM_RX_TEST_OBJECTS)))
+	$(filter-out $(BUILD_DIR)/test_pcm_downstream_rx.o, \
+		$(PCM_DOWNSTREAM_RX_TEST_OBJECTS)))
 V90_PCM_STREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_v90_pcm_stream_rx
 V90_PCM_STREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_pcm_stream_rx.o \
@@ -1866,7 +1866,7 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
-	$(BUILD_DIR)/v90_downstream_rx.o \
+	$(BUILD_DIR)/pcm_downstream_rx.o \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
@@ -2665,7 +2665,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_BINARY) \
 	$(V90_MP_TEST_BINARY) \
 	$(V90_MP_RECEIVER_TEST_BINARY) \
-	$(V90_DOWNSTREAM_RX_TEST_BINARY) \
+	$(PCM_DOWNSTREAM_RX_TEST_BINARY) \
 	$(V90_CP_TEST_BINARY) \
 	$(V90_PCM_MAPPING_TEST_BINARY) \
 	$(V90_PCM_FRAME_ENCODER_TEST_BINARY) \
@@ -2918,7 +2918,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_MP_TEST_OBJECTS:.o=.d) \
 	$(V90_MP_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V90_DOWNSTREAM_RX_TEST_OBJECTS:.o=.d) \
+	$(PCM_DOWNSTREAM_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_CP_TEST_OBJECTS:.o=.d) \
 	$(V90_PCM_MAPPING_TEST_OBJECTS:.o=.d) \
 	$(V90_PCM_FRAME_ENCODER_TEST_OBJECTS:.o=.d) \
@@ -3196,7 +3196,7 @@ test: $(TEST_BINARIES)
 	./$(V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_BINARY)
 	./$(V90_MP_TEST_BINARY)
 	./$(V90_MP_RECEIVER_TEST_BINARY)
-	./$(V90_DOWNSTREAM_RX_TEST_BINARY)
+	./$(PCM_DOWNSTREAM_RX_TEST_BINARY)
 	./$(V90_CP_TEST_BINARY)
 	./$(V90_PCM_MAPPING_TEST_BINARY)
 	./$(V90_PCM_FRAME_ENCODER_TEST_BINARY)
@@ -3933,7 +3933,7 @@ $(V90_DOWNSTREAM_STREAM_TEST_BINARY): \
 $(V90_PCM_STREAM_RX_TEST_BINARY): $(V90_PCM_STREAM_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V90_DOWNSTREAM_RX_TEST_BINARY): $(V90_DOWNSTREAM_RX_TEST_OBJECTS)
+$(PCM_DOWNSTREAM_RX_TEST_BINARY): $(PCM_DOWNSTREAM_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_CP_RECEIVER_TEST_BINARY): $(V90_CP_RECEIVER_TEST_OBJECTS)
@@ -4795,8 +4795,8 @@ $(BUILD_DIR)/v90_pcm_stream_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_pcm_stream_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_downstream_rx.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_downstream_rx.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_downstream_rx.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_downstream_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_cp_receiver.o: \

@@ -219,7 +219,7 @@ static bool run_exchange(
 				      V90_PHASE4_ANALOG_STATION_OK &&
 			      v90_phase4_analog_receive_handoff_is_valid(
 				      &receive_handoff) &&
-			      v90_downstream_rx_is_valid(
+			      pcm_downstream_rx_is_valid(
 				      &receive_handoff.receiver) &&
 			      receive_handoff.receiver.stream.decoder
 				      .decision_plane ==
@@ -227,7 +227,7 @@ static bool run_exchange(
 			      mapping_matches(
 				      &receive_handoff.receiver.stream.decoder.mapping,
 				      &training) &&
-			      v90_downstream_rx_is_fresh(
+			      pcm_downstream_rx_is_fresh(
 				      &receive_handoff.receiver),
 			      "TRN2d handoff was not fresh at the Ri boundary");
 			{

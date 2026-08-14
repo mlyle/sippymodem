@@ -199,7 +199,7 @@ static bool run_exchange(enum g711_law law)
 		      continued_octets &&
 	      v90_phase4_cp_line_tx_is_handoff_ready(
 		      &analog_handoff.transmit) &&
-	      v90_downstream_rx_is_valid(&analog_handoff.receive),
+	      pcm_downstream_rx_is_valid(&analog_handoff.receive),
 	      "law %u analogue startup lost a character: %zu/%llu",
 	      (unsigned int)law, continued_octets,
 	      (unsigned long long)
@@ -209,7 +209,7 @@ static bool run_exchange(enum g711_law law)
 
 		mismatched.state.complete.receive.stream.decoder.mapping
 			.shaping_a1_q1_6++;
-		CHECK(v90_downstream_rx_is_valid(
+		CHECK(pcm_downstream_rx_is_valid(
 			      &mismatched.state.complete.receive) &&
 		      !v90_phase4_analog_startup_is_valid(&mismatched),
 		      "law %u mismatched handoff mapping was accepted",

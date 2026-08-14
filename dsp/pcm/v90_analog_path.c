@@ -31,8 +31,8 @@ static bool handoff_is_valid(
 
 	if (handoff == NULL ||
 	    !v90_phase4_cp_line_tx_is_handoff_ready(&handoff->transmit) ||
-	    !v90_downstream_rx_is_valid(&handoff->receive) ||
-	    handoff->receive.stage != V90_DOWNSTREAM_RX_TRN2D)
+	    !pcm_downstream_rx_is_valid(&handoff->receive) ||
+	    handoff->receive.stage != PCM_DOWNSTREAM_RX_TRN2D)
 		return false;
 	symbols = &handoff->transmit.symbols;
 	return v90_cp_decode(
@@ -76,11 +76,11 @@ static bool downstream_is_valid(const struct v90_analog_path *path)
 {
 	if (path->downstream_stage ==
 	    V90_ANALOG_PATH_DOWNSTREAM_TRAINING)
-		return v90_downstream_rx_is_valid(&path->downstream.training) &&
+		return pcm_downstream_rx_is_valid(&path->downstream.training) &&
 		       path->downstream.training.stream.decoder.mapping.law ==
 			       path->law &&
 		       (path->failed ||
-			!v90_downstream_rx_is_complete(
+			!pcm_downstream_rx_is_complete(
 				&path->downstream.training));
 	if (path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA)
 		return path->ed_armed &&
@@ -434,33 +434,33 @@ static enum v90_analog_path_result start_downstream_data(
 static enum v90_analog_path_result receive_training(
 	struct v90_analog_path *path, uint8_t octet)
 {
-	struct v90_downstream_event event;
-	enum v90_downstream_rx_result result =
-		v90_downstream_rx_receive(
+	struct pcm_downstream_event event;
+	enum pcm_downstream_rx_result result =
+		pcm_downstream_rx_receive(
 			&path->downstream.training, octet, &event);
 
 	switch (result) {
-	case V90_DOWNSTREAM_RX_OK:
-	case V90_DOWNSTREAM_RX_BUFFERING:
-	case V90_DOWNSTREAM_RX_TRN2D_FRAME:
+	case PCM_DOWNSTREAM_RX_OK:
+	case PCM_DOWNSTREAM_RX_BUFFERING:
+	case PCM_DOWNSTREAM_RX_TRN2D_FRAME:
 		return V90_ANALOG_PATH_OK;
-	case V90_DOWNSTREAM_RX_MP:
+	case PCM_DOWNSTREAM_RX_MP:
 		return accept_mp(path, &event.mp.record, false);
-	case V90_DOWNSTREAM_RX_MP_PRIME:
+	case PCM_DOWNSTREAM_RX_MP_PRIME:
 		return accept_mp(path, &event.mp.record, true);
-	case V90_DOWNSTREAM_RX_ED:
+	case PCM_DOWNSTREAM_RX_ED:
 		return start_downstream_data(path);
-	case V90_DOWNSTREAM_RX_MP_REJECTED:
-	case V90_DOWNSTREAM_RX_ED_REJECTED:
-	case V90_DOWNSTREAM_RX_INVALID_SYMBOL:
+	case PCM_DOWNSTREAM_RX_MP_REJECTED:
+	case PCM_DOWNSTREAM_RX_ED_REJECTED:
+	case PCM_DOWNSTREAM_RX_INVALID_SYMBOL:
 		return V90_ANALOG_PATH_FAILED;
-	case V90_DOWNSTREAM_RX_INVALID_PARAMETERS:
+	case PCM_DOWNSTREAM_RX_INVALID_PARAMETERS:
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
-	case V90_DOWNSTREAM_RX_OUT_OF_RANGE:
+	case PCM_DOWNSTREAM_RX_OUT_OF_RANGE:
 		return V90_ANALOG_PATH_OUT_OF_RANGE;
-	case V90_DOWNSTREAM_RX_INVALID_ARGUMENT:
-	case V90_DOWNSTREAM_RX_INVALID_STATE:
-	case V90_DOWNSTREAM_RX_INTERNAL_ERROR:
+	case PCM_DOWNSTREAM_RX_INVALID_ARGUMENT:
+	case PCM_DOWNSTREAM_RX_INVALID_STATE:
+	case PCM_DOWNSTREAM_RX_INTERNAL_ERROR:
 		break;
 	}
 	return V90_ANALOG_PATH_INTERNAL_ERROR;
@@ -507,8 +507,8 @@ static enum v90_analog_path_result arm_ed(struct v90_analog_path *path)
 	if (path->downstream_stage !=
 	    V90_ANALOG_PATH_DOWNSTREAM_TRAINING)
 		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
-	if (v90_downstream_rx_expect_ed(&path->downstream.training) !=
-	    V90_DOWNSTREAM_RX_OK)
+	if (pcm_downstream_rx_expect_ed(&path->downstream.training) !=
+	    PCM_DOWNSTREAM_RX_OK)
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
 	path->ed_armed = true;
 	return V90_ANALOG_PATH_OK;

@@ -3,7 +3,7 @@
 #ifndef V90_PHASE4_ANALOG_STATION_H
 #define V90_PHASE4_ANALOG_STATION_H
 
-#include "v90_downstream_rx.h"
+#include "pcm_downstream_rx.h"
 #include "v90_jd.h"
 #include "v90_phase4_cp_line_tx.h"
 #include "v90_phase4_ri.h"
@@ -30,7 +30,7 @@ enum v90_phase4_analog_station_result {
  * receiver at this same boundary. TRN2d starts a fresh coder epoch, which
  * continues unchanged through MP, MP-prime, and Ed. */
 struct v90_phase4_analog_receive_handoff {
-	struct v90_downstream_rx receiver;
+	struct pcm_downstream_rx receiver;
 };
 
 /* Own the analogue modem's initial Phase 4 exchange. CPt is repeated on the

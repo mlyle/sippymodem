@@ -45,7 +45,7 @@ union v90_analog_path_upstream {
 };
 
 union v90_analog_path_downstream {
-	struct v90_downstream_rx training;
+	struct pcm_downstream_rx training;
 	struct v90_downstream_data_rx data;
 };
 

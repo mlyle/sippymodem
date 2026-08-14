@@ -23,13 +23,13 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_start_after_ed(
 
 enum v90_downstream_data_rx_result v90_downstream_data_rx_start_after_ed(
 	struct v90_downstream_data_rx *receiver,
-	const struct v90_downstream_rx *completed_training,
+	const struct pcm_downstream_rx *completed_training,
 	const struct v90_pcm_mapping *data_mapping)
 {
 	if (receiver == NULL || completed_training == NULL ||
 	    data_mapping == NULL)
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
-	if (!v90_downstream_rx_is_complete(completed_training))
+	if (!pcm_downstream_rx_is_complete(completed_training))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;
 	if (!v90_pcm_mapping_is_valid(data_mapping) ||
 	    data_mapping->kind != V90_CP_DATA ||

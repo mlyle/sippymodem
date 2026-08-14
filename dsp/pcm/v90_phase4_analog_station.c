@@ -227,7 +227,7 @@ bool v90_phase4_analog_receive_handoff_is_valid(
 	const struct v90_phase4_analog_receive_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_downstream_rx_is_fresh(&handoff->receiver) &&
+	       pcm_downstream_rx_is_fresh(&handoff->receiver) &&
 	       handoff->receiver.stream.decoder.decision_plane ==
 		       V90_PCM_MAPPING_TRANSMIT;
 }
@@ -250,9 +250,9 @@ v90_phase4_analog_station_receive_handoff(
 	if (v90_pcm_mapping_init(
 		    &mapping, &station->training_parameters) !=
 		    V90_PCM_MAPPING_OK ||
-	    v90_downstream_rx_init(
+	    pcm_downstream_rx_init(
 		    &generated.receiver, &mapping,
-		    V90_PCM_MAPPING_TRANSMIT) != V90_DOWNSTREAM_RX_OK)
+		    V90_PCM_MAPPING_TRANSMIT) != PCM_DOWNSTREAM_RX_OK)
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	if (!v90_phase4_analog_receive_handoff_is_valid(&generated))
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;

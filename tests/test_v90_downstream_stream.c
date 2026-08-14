@@ -2,7 +2,7 @@
 
 #include <v90_downstream_data_handoff.h>
 #include <v90_downstream_data_stream.h>
-#include <v90_downstream_rx.h>
+#include <pcm_downstream_rx.h>
 #include <v90_downstream_tx.h>
 
 #include "test.h"
@@ -127,7 +127,7 @@ static bool records_match(
 		      (left_bits + 7u) / 8u) == 0;
 }
 
-static bool check_training_frame(const struct v90_trn2d_frame *frame)
+static bool check_training_frame(const struct pcm_trn2d_frame *frame)
 {
 	if (frame->bit_count != FRAME_BITS ||
 	    frame->training_bit_errors != 0)
@@ -181,7 +181,7 @@ static bool leave_data_frame_invalid(
 
 static bool verify_data_stream(
 	const struct v90_downstream_tx *completed_transmit,
-	const struct v90_downstream_rx *completed_receive,
+	const struct pcm_downstream_rx *completed_receive,
 	const struct v90_pcm_mapping *data_mapping)
 {
 	struct v90_downstream_data_stream transmit;
@@ -297,7 +297,7 @@ static bool run_stream(
 	struct v90_pcm_mapping mapping;
 	struct v90_mp_record record = make_record(type1);
 	struct v90_downstream_tx transmitter;
-	struct v90_downstream_rx receiver;
+	struct pcm_downstream_rx receiver;
 	size_t training_frames = 0;
 	size_t mp_records = 0;
 	size_t prime_records = 0;
@@ -310,10 +310,10 @@ static bool run_stream(
 	      mapping.frame_bits == FRAME_BITS &&
 	      v90_downstream_tx_init(&transmitter, &mapping) ==
 		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_rx_init(
+	      pcm_downstream_rx_init(
 		      &receiver, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) ==
-		      V90_DOWNSTREAM_RX_OK &&
+		      PCM_DOWNSTREAM_RX_OK &&
 	      v90_downstream_tx_start_mp(&transmitter, &record) ==
 		      V90_DOWNSTREAM_TX_OK &&
 	      v90_downstream_tx_start_mp(&transmitter, &record) ==
@@ -329,9 +329,9 @@ static bool run_stream(
 	while (!v90_downstream_tx_is_complete(&transmitter) &&
 	       symbols < MAXIMUM_STREAM_SYMBOLS) {
 		struct v90_downstream_symbol symbol;
-		struct v90_downstream_event event;
+		struct pcm_downstream_event event;
 		enum v90_downstream_tx_result transmit_result;
-		enum v90_downstream_rx_result result;
+		enum pcm_downstream_rx_result result;
 
 		transmit_result =
 			v90_downstream_tx_next(&transmitter, &symbol);
@@ -350,17 +350,17 @@ static bool run_stream(
 			      "mid-record MP prime request failed");
 			prime_requested = true;
 		}
-		result = v90_downstream_rx_receive(
+		result = pcm_downstream_rx_receive(
 			&receiver, symbol.pcm.octet, &event);
-		if (result == V90_DOWNSTREAM_RX_BUFFERING)
+		if (result == PCM_DOWNSTREAM_RX_BUFFERING)
 			continue;
-		if (result == V90_DOWNSTREAM_RX_TRN2D_FRAME) {
+		if (result == PCM_DOWNSTREAM_RX_TRN2D_FRAME) {
 			CHECK(check_training_frame(&event.trn2d),
 			      "TRN2d frame %zu changed", training_frames);
 			training_frames++;
 			continue;
 		}
-		if (result == V90_DOWNSTREAM_RX_MP) {
+		if (result == PCM_DOWNSTREAM_RX_MP) {
 			CHECK(prime_records == 0 &&
 			      records_match(&event.mp.record, &record),
 			      "MP record %zu changed or followed MP prime",
@@ -368,7 +368,7 @@ static bool run_stream(
 			mp_records++;
 			continue;
 		}
-		if (result == V90_DOWNSTREAM_RX_ED) {
+		if (result == PCM_DOWNSTREAM_RX_ED) {
 			CHECK(ed_requested && !ed_received &&
 			      event.ed.bit_count ==
 				      V90_PHASE4_ED_FRAMES * FRAME_BITS &&
@@ -377,9 +377,9 @@ static bool run_stream(
 			ed_received = true;
 			continue;
 		}
-		CHECK(result == V90_DOWNSTREAM_RX_MP_PRIME,
+		CHECK(result == PCM_DOWNSTREAM_RX_MP_PRIME,
 		      "stream receiver returned %s",
-		      v90_downstream_rx_result_name(result));
+		      pcm_downstream_rx_result_name(result));
 		struct v90_mp_record expected = record;
 
 		set_acknowledgment(&expected, true);
@@ -388,10 +388,10 @@ static bool run_stream(
 		      "MP prime record %zu changed", prime_records);
 		prime_records++;
 		if (prime_records == 2) {
-			CHECK(v90_downstream_rx_expect_ed(&receiver) ==
-				      V90_DOWNSTREAM_RX_OK &&
-			      v90_downstream_rx_expect_ed(&receiver) ==
-				      V90_DOWNSTREAM_RX_OK &&
+			CHECK(pcm_downstream_rx_expect_ed(&receiver) ==
+				      PCM_DOWNSTREAM_RX_OK &&
+			      pcm_downstream_rx_expect_ed(&receiver) ==
+				      PCM_DOWNSTREAM_RX_OK &&
 			      v90_downstream_tx_request_ed(&transmitter) ==
 				      V90_DOWNSTREAM_TX_OK &&
 			      v90_downstream_tx_request_ed(&transmitter) ==
@@ -409,9 +409,9 @@ static bool run_stream(
 	      transmitter.transmitted_symbols == symbols &&
 	      receiver.trn2d_bit_errors == 0 &&
 	      v90_downstream_tx_is_complete(&transmitter) &&
-	      v90_downstream_rx_is_complete(&receiver) &&
+	      pcm_downstream_rx_is_complete(&receiver) &&
 	      v90_downstream_tx_is_valid(&transmitter) &&
-	      v90_downstream_rx_is_valid(&receiver),
+	      pcm_downstream_rx_is_valid(&receiver),
 	      "continuous Ed boundary or accounting changed");
 	struct v90_downstream_tx completed = transmitter;
 	struct v90_downstream_symbol untouched;
@@ -428,7 +428,7 @@ static bool run_stream(
 	struct v90_downstream_data_stream rejected_stream;
 	struct v90_downstream_data_stream saved_stream;
 	struct v90_downstream_tx incomplete_transmit = transmitter;
-	struct v90_downstream_rx incomplete_receive = receiver;
+	struct pcm_downstream_rx incomplete_receive = receiver;
 
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;
@@ -440,7 +440,7 @@ static bool run_stream(
 	      memcmp(&untouched, &saved, sizeof(untouched)) == 0,
 	      "completed Ed transmitter changed state or output");
 	incomplete_transmit.complete = false;
-	incomplete_receive.stage = V90_DOWNSTREAM_RX_ED_SEARCH;
+	incomplete_receive.stage = PCM_DOWNSTREAM_RX_ED_SEARCH;
 	incomplete_receive.ed_frames--;
 	memset(&rejected_transmit, 0xa5, sizeof(rejected_transmit));
 	memset(&rejected_receive, 0x5a, sizeof(rejected_receive));
@@ -459,8 +459,8 @@ static bool run_stream(
 	CHECK(v90_downstream_tx_is_valid(&incomplete_transmit) &&
 	      !v90_downstream_tx_is_complete(&incomplete_transmit),
 	      "post-Ed incomplete transmitter was invalid");
-	CHECK(v90_downstream_rx_is_valid(&incomplete_receive) &&
-	      !v90_downstream_rx_is_complete(&incomplete_receive),
+	CHECK(pcm_downstream_rx_is_valid(&incomplete_receive) &&
+	      !pcm_downstream_rx_is_complete(&incomplete_receive),
 	      "post-Ed incomplete receiver was invalid");
 	CHECK(v90_downstream_data_tx_start_after_ed(
 		      &data_transmit, &transmitter, &data_mapping) ==

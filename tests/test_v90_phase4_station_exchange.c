@@ -278,7 +278,7 @@ static bool verify_final_downstream_exchange(
 				analog_path.downstream.training.trn2d_bit_errors;
 			trn2d_complete = trn2d_complete ||
 				analog_path.downstream.training.stage !=
-					V90_DOWNSTREAM_RX_TRN2D;
+					PCM_DOWNSTREAM_RX_TRN2D;
 		}
 		if (!upstream_source_failure_checked &&
 		    !upstream_source.reject_next &&
@@ -396,7 +396,7 @@ static bool verify_final_downstream_exchange(
 				analog_path.downstream.training.trn2d_bit_errors;
 			trn2d_complete = trn2d_complete ||
 				analog_path.downstream.training.stage !=
-					V90_DOWNSTREAM_RX_TRN2D;
+					PCM_DOWNSTREAM_RX_TRN2D;
 		}
 		if (v90_analog_path_is_online(&analog_path) &&
 		    v90_digital_path_is_online(&digital_path) &&

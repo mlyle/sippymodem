@@ -50,9 +50,9 @@ bool v90_phase4_analog_startup_is_valid(
 		       (startup->failed ||
 			!v90_phase4_analog_station_transmit_complete(
 				&state->station)) &&
-		       v90_downstream_rx_is_valid(&state->receive) &&
+		       pcm_downstream_rx_is_valid(&state->receive) &&
 		       (startup->failed ||
-			state->receive.stage == V90_DOWNSTREAM_RX_TRN2D) &&
+			state->receive.stage == PCM_DOWNSTREAM_RX_TRN2D) &&
 		       v90_pcm_mapping_init(
 			       &expected,
 			       &state->station.training_parameters) ==
@@ -68,10 +68,10 @@ bool v90_phase4_analog_startup_is_valid(
 		return !startup->failed &&
 		       v90_phase4_cp_line_tx_is_handoff_ready(
 			       &startup->state.complete.transmit) &&
-		       v90_downstream_rx_is_valid(
+		       pcm_downstream_rx_is_valid(
 			       &startup->state.complete.receive) &&
 		       startup->state.complete.receive.stage ==
-			       V90_DOWNSTREAM_RX_TRN2D &&
+			       PCM_DOWNSTREAM_RX_TRN2D &&
 		       handoff_mappings_match(&startup->state.complete);
 	}
 	return false;
@@ -164,33 +164,33 @@ static enum v90_phase4_startup_result transmit_character(
 }
 
 static enum v90_phase4_startup_result receive_downstream(
-	struct v90_downstream_rx *receiver, uint8_t octet)
+	struct pcm_downstream_rx *receiver, uint8_t octet)
 {
-	struct v90_downstream_event event;
-	enum v90_downstream_rx_result result =
-		v90_downstream_rx_receive(receiver, octet, &event);
+	struct pcm_downstream_event event;
+	enum pcm_downstream_rx_result result =
+		pcm_downstream_rx_receive(receiver, octet, &event);
 
 	switch (result) {
-	case V90_DOWNSTREAM_RX_OK:
-	case V90_DOWNSTREAM_RX_BUFFERING:
-	case V90_DOWNSTREAM_RX_TRN2D_FRAME:
-		return receiver->stage == V90_DOWNSTREAM_RX_TRN2D ?
+	case PCM_DOWNSTREAM_RX_OK:
+	case PCM_DOWNSTREAM_RX_BUFFERING:
+	case PCM_DOWNSTREAM_RX_TRN2D_FRAME:
+		return receiver->stage == PCM_DOWNSTREAM_RX_TRN2D ?
 			       V90_PHASE4_STARTUP_OK :
 			       V90_PHASE4_STARTUP_SEQUENCE_MISMATCH;
-	case V90_DOWNSTREAM_RX_INVALID_SYMBOL:
-	case V90_DOWNSTREAM_RX_MP:
-	case V90_DOWNSTREAM_RX_MP_PRIME:
-	case V90_DOWNSTREAM_RX_MP_REJECTED:
-	case V90_DOWNSTREAM_RX_ED:
-	case V90_DOWNSTREAM_RX_ED_REJECTED:
+	case PCM_DOWNSTREAM_RX_INVALID_SYMBOL:
+	case PCM_DOWNSTREAM_RX_MP:
+	case PCM_DOWNSTREAM_RX_MP_PRIME:
+	case PCM_DOWNSTREAM_RX_MP_REJECTED:
+	case PCM_DOWNSTREAM_RX_ED:
+	case PCM_DOWNSTREAM_RX_ED_REJECTED:
 		return V90_PHASE4_STARTUP_SEQUENCE_MISMATCH;
-	case V90_DOWNSTREAM_RX_INVALID_PARAMETERS:
+	case PCM_DOWNSTREAM_RX_INVALID_PARAMETERS:
 		return V90_PHASE4_STARTUP_INVALID_PARAMETERS;
-	case V90_DOWNSTREAM_RX_OUT_OF_RANGE:
+	case PCM_DOWNSTREAM_RX_OUT_OF_RANGE:
 		return V90_PHASE4_STARTUP_OUT_OF_RANGE;
-	case V90_DOWNSTREAM_RX_INVALID_ARGUMENT:
-	case V90_DOWNSTREAM_RX_INVALID_STATE:
-	case V90_DOWNSTREAM_RX_INTERNAL_ERROR:
+	case PCM_DOWNSTREAM_RX_INVALID_ARGUMENT:
+	case PCM_DOWNSTREAM_RX_INVALID_STATE:
+	case PCM_DOWNSTREAM_RX_INTERNAL_ERROR:
 		break;
 	}
 	return V90_PHASE4_STARTUP_NUMERIC_FAILURE;
