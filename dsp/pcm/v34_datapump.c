@@ -110,9 +110,8 @@ static uint8_t maximum_enabled_rate(
 	 * receiver matures. */
 	switch (symbol_rate) {
 	case V34_SYMBOL_RATE_2400:
-		return 7;
-	case V34_SYMBOL_RATE_2800:
 		return 9;
+	case V34_SYMBOL_RATE_2800:
 	case V34_SYMBOL_RATE_3000:
 	case V34_SYMBOL_RATE_3200:
 	case V34_SYMBOL_RATE_3429:

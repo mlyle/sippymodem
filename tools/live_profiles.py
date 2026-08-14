@@ -50,8 +50,8 @@ V34_RATES_BY_SYMBOL_RATE: dict[int, tuple[int, ...]] = {
     3429: tuple(range(4800, 33600 + 1, 2400)),
 }
 V34_RUNNABLE_RATES_BY_SYMBOL_RATE: dict[int, tuple[int, ...]] = {
-    2400: tuple(range(2400, 16800 + 1, 2400)),
-    2800: tuple(range(4800, 21600 + 1, 2400)),
+    2400: tuple(range(2400, 21600 + 1, 2400)),
+    2800: tuple(range(4800, 24000 + 1, 2400)),
     3000: tuple(range(4800, 24000 + 1, 2400)),
     3200: tuple(range(4800, 24000 + 1, 2400)),
     3429: tuple(range(4800, 24000 + 1, 2400)),
