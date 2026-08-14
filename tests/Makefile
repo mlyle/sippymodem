@@ -1613,6 +1613,7 @@ V90_DOWNSTREAM_STREAM_TEST_BINARY := \
 V90_DOWNSTREAM_STREAM_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_downstream_stream.o \
 	$(BUILD_DIR)/v90_downstream_data_handoff.o \
+	$(BUILD_DIR)/v90_downstream_data_stream.o \
 	$(BUILD_DIR)/v90_downstream_data_rx.o \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
 	$(filter-out $(BUILD_DIR)/test_v90_downstream_tx.o, \
@@ -4382,6 +4383,10 @@ $(BUILD_DIR)/v90_downstream_data_rx.o: \
 
 $(BUILD_DIR)/v90_downstream_data_handoff.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_handoff.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_downstream_data_stream.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_stream.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_sign_decoder.o: \

@@ -27,4 +27,9 @@ bool v90_pcm_symbol_parse(
 	struct v90_pcm_symbol *symbol, enum g711_law law,
 	uint8_t octet);
 
+/* Verify that all redundant representations describe one exact network
+ * character. */
+bool v90_pcm_symbol_is_valid(
+	const struct v90_pcm_symbol *symbol, enum g711_law law);
+
 #endif

@@ -123,17 +123,6 @@ static bool mp_state_is_valid(const struct v90_downstream_tx *transmitter)
 		      sizeof(expected)) == 0;
 }
 
-static bool pcm_symbol_is_valid(
-	const struct v90_pcm_symbol *symbol, enum g711_law law)
-{
-	struct v90_pcm_symbol parsed;
-
-	return v90_pcm_symbol_parse(&parsed, law, symbol->octet) &&
-	       parsed.ucode == symbol->ucode &&
-	       parsed.positive == symbol->positive &&
-	       parsed.sample == symbol->sample;
-}
-
 static bool queued_symbol_is_zero(
 	const struct v90_downstream_symbol *symbol)
 {
@@ -164,7 +153,7 @@ static bool queue_is_valid(const struct v90_downstream_tx *transmitter)
 				return false;
 			continue;
 		}
-		if (!pcm_symbol_is_valid(&symbol->pcm, mapping->law))
+		if (!v90_pcm_symbol_is_valid(&symbol->pcm, mapping->law))
 			return false;
 		if (mapping->sign_redundancy == 0) {
 			if (symbol->shaping_rule_valid ||
@@ -428,7 +417,7 @@ static bool fill_queue(
 			.pcm = output->symbols[index],
 		};
 
-		if (!pcm_symbol_is_valid(&queued.pcm, mapping->law))
+		if (!v90_pcm_symbol_is_valid(&queued.pcm, mapping->law))
 			return false;
 
 		if (mapping->sign_redundancy != 0) {

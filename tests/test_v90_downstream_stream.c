@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_downstream_data_handoff.h>
+#include <v90_downstream_data_stream.h>
 #include <v90_downstream_rx.h>
 #include <v90_downstream_tx.h>
 
@@ -11,6 +12,17 @@
 enum {
 	FRAME_BITS = 17,
 	MAXIMUM_STREAM_SYMBOLS = 4096,
+	DATA_FRAMES = 8,
+	MAXIMUM_DATA_FRAMES = 16,
+	MAXIMUM_DATA_SYMBOLS =
+		(V90_PHASE4_B1D_FRAMES + MAXIMUM_DATA_FRAMES) *
+		V90_CP_FRAME_INTERVALS,
+};
+
+struct data_source {
+	uint8_t frames[MAXIMUM_DATA_FRAMES][V90_PCM_FRAME_MAX_BITS];
+	size_t frame_count;
+	size_t bit_count;
 };
 
 static void add_ucode(
@@ -20,9 +32,10 @@ static void add_ucode(
 		(uint8_t)(1u << (ucode % 8u));
 }
 
-static bool make_mapping(
+static bool make_mapping_with_shaping(
 	struct v90_pcm_mapping *mapping, enum g711_law law,
-	enum v90_cp_kind kind)
+	enum v90_cp_kind kind, uint8_t sign_redundancy,
+	uint8_t spectral_lookahead)
 {
 	struct v90_cp_parameters parameters = {
 		.kind = kind,
@@ -33,8 +46,8 @@ static bool make_mapping(
 		.shaping_b2_q1_6 = -5,
 		.selected_rate_index = kind == V90_CP_TRAINING ?
 			FRAME_BITS - 8 : 1,
-		.sign_redundancy = 2,
-		.spectral_lookahead = 2,
+		.sign_redundancy = sign_redundancy,
+		.spectral_lookahead = spectral_lookahead,
 		.constellation_count = 1,
 	};
 
@@ -44,6 +57,13 @@ static bool make_mapping(
 			(uint8_t)(24u + 12u * ordinal));
 	return v90_pcm_mapping_init(mapping, &parameters) ==
 	       V90_PCM_MAPPING_OK;
+}
+
+static bool make_mapping(
+	struct v90_pcm_mapping *mapping, enum g711_law law,
+	enum v90_cp_kind kind)
+{
+	return make_mapping_with_shaping(mapping, law, kind, 2, 2);
 }
 
 static struct v90_mp_record make_record(bool type1)
@@ -115,6 +135,158 @@ static bool check_training_frame(const struct v90_trn2d_frame *frame)
 	for (size_t bit = 0; bit < frame->bit_count; ++bit) {
 		if (frame->bits[bit] != 1)
 			return false;
+	}
+	return true;
+}
+
+static void make_data_bits(
+	uint8_t *bits, size_t bit_count, size_t frame)
+{
+	for (size_t bit = 0; bit < bit_count; ++bit)
+		bits[bit] = (uint8_t)(
+			(frame * 13u + bit * 7u + (frame >> (bit % 3u))) & 1u);
+}
+
+static bool source_data_frame(
+	void *context, uint8_t *bits, size_t bit_count)
+{
+	struct data_source *source = context;
+
+	if (source == NULL || bits == NULL || bit_count != source->bit_count ||
+	    source->frame_count >= MAXIMUM_DATA_FRAMES)
+		return false;
+	make_data_bits(bits, bit_count, source->frame_count + 1u);
+	memcpy(source->frames[source->frame_count], bits, bit_count);
+	source->frame_count++;
+	return true;
+}
+
+static bool reject_data_frame(
+	void *context, uint8_t *bits, size_t bit_count)
+{
+	(void)context;
+	(void)bits;
+	(void)bit_count;
+	return false;
+}
+
+static bool leave_data_frame_invalid(
+	void *context, uint8_t *bits, size_t bit_count)
+{
+	(void)context;
+	(void)bits;
+	(void)bit_count;
+	return true;
+}
+
+static bool verify_data_stream(
+	const struct v90_downstream_tx *completed_transmit,
+	const struct v90_downstream_rx *completed_receive,
+	const struct v90_pcm_mapping *data_mapping)
+{
+	struct v90_downstream_data_stream transmit;
+	struct v90_downstream_data_rx receive;
+	struct data_source source = {
+		.bit_count = data_mapping->frame_bits,
+	};
+	size_t b1d_frames = 0;
+	size_t data_frames = 0;
+	size_t symbols = 0;
+
+	CHECK(v90_downstream_data_stream_start_after_ed(
+		      &transmit, completed_transmit, data_mapping) ==
+		      V90_DOWNSTREAM_DATA_STREAM_OK &&
+	      v90_downstream_data_rx_start_after_ed(
+		      &receive, completed_receive, data_mapping) ==
+		      V90_DOWNSTREAM_DATA_RX_OK &&
+	      !v90_downstream_data_stream_is_online(&transmit),
+	      "post-Ed character stream did not start at B1d");
+	while (data_frames < DATA_FRAMES && symbols < MAXIMUM_DATA_SYMBOLS) {
+		struct v90_pcm_symbol symbol;
+		struct v90_pcm_stream_frame frame;
+		size_t source_count = source.frame_count;
+		enum v90_downstream_data_rx_result result;
+
+		CHECK(v90_downstream_data_stream_next(
+			      &transmit, source_data_frame, &source, &symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_OK &&
+		      v90_pcm_symbol_is_valid(&symbol, data_mapping->law),
+		      "data stream stopped at network symbol %zu", symbols);
+		CHECK(source.frame_count - source_count <= 1,
+		      "one network symbol acquired multiple data frames");
+		symbols++;
+		CHECK(v90_downstream_data_stream_is_online(&transmit) ==
+		      (symbols >= V90_PHASE4_B1D_FRAMES *
+				  V90_CP_FRAME_INTERVALS),
+		      "B1d network boundary moved to symbol %zu", symbols);
+		result = v90_downstream_data_rx_receive_octet(
+			&receive, symbol.octet, &frame);
+		if (result == V90_DOWNSTREAM_DATA_RX_BUFFERING)
+			continue;
+		if (result == V90_DOWNSTREAM_DATA_RX_B1D_FRAME ||
+		    result == V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) {
+			for (size_t bit = 0; bit < frame.bit_count; ++bit)
+				CHECK(frame.bits[bit] == 1,
+				      "B1d frame %zu bit %zu changed",
+				      b1d_frames, bit);
+			b1d_frames++;
+			CHECK((result ==
+			       V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) ==
+			      (b1d_frames == V90_PHASE4_B1D_FRAMES),
+			      "B1d receive boundary moved to frame %zu",
+			      b1d_frames);
+			continue;
+		}
+		CHECK(result == V90_DOWNSTREAM_DATA_RX_DATA_FRAME &&
+		      data_frames < source.frame_count &&
+		      frame.bit_count == data_mapping->frame_bits &&
+		      memcmp(frame.bits, source.frames[data_frames],
+			     frame.bit_count) == 0,
+		      "data frame %zu changed: %s", data_frames,
+		      v90_downstream_data_rx_result_name(result));
+		data_frames++;
+	}
+	CHECK(symbols < MAXIMUM_DATA_SYMBOLS &&
+	      b1d_frames == V90_PHASE4_B1D_FRAMES &&
+	      data_frames == DATA_FRAMES &&
+	      source.frame_count >= data_frames &&
+	      source.frame_count <= MAXIMUM_DATA_FRAMES &&
+	      receive.b1d_bit_errors == 0,
+	      "data stream stopped at %zu B1d/%zu data frames from %zu sources",
+	      b1d_frames, data_frames, source.frame_count);
+
+	while (transmit.queue_count != 0) {
+		struct v90_pcm_symbol discarded;
+
+		CHECK(v90_downstream_data_stream_next(
+			      &transmit, source_data_frame, &source,
+			      &discarded) == V90_DOWNSTREAM_DATA_STREAM_OK,
+		      "data stream queue did not drain");
+	}
+	{
+		struct v90_downstream_data_stream saved = transmit;
+		struct v90_pcm_symbol output;
+		struct v90_pcm_symbol untouched;
+
+		memset(&untouched, 0xa5, sizeof(untouched));
+		output = untouched;
+		CHECK(v90_downstream_data_stream_next(
+			      &transmit, reject_data_frame, NULL, &output) ==
+			      V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE &&
+		      memcmp(&transmit, &saved, sizeof(transmit)) == 0 &&
+		      memcmp(&output, &untouched, sizeof(output)) == 0 &&
+		      v90_downstream_data_stream_next(
+			      &transmit, leave_data_frame_invalid, NULL,
+			      &output) ==
+			      V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE &&
+		      memcmp(&transmit, &saved, sizeof(transmit)) == 0 &&
+		      memcmp(&output, &untouched, sizeof(output)) == 0,
+		      "rejected frame source changed stream state or output");
+		CHECK(v90_downstream_data_stream_next(
+			      &transmit, NULL, NULL, &output) ==
+			      V90_DOWNSTREAM_DATA_STREAM_OK &&
+		      v90_pcm_symbol_is_valid(&output, data_mapping->law),
+		      "idle frame source did not resume the stream");
 	}
 	return true;
 }
@@ -245,6 +417,7 @@ static bool run_stream(
 	struct v90_downstream_symbol untouched;
 	struct v90_downstream_symbol saved;
 	struct v90_pcm_mapping data_mapping;
+	struct v90_pcm_mapping unshaped_data_mapping;
 	struct v90_pcm_mapping other_law_mapping;
 	struct v90_downstream_data_tx data_transmit;
 	struct v90_downstream_data_rx data_receive;
@@ -252,6 +425,8 @@ static bool run_stream(
 	struct v90_downstream_data_rx expected_receive;
 	struct v90_downstream_data_tx rejected_transmit;
 	struct v90_downstream_data_rx rejected_receive;
+	struct v90_downstream_data_stream rejected_stream;
+	struct v90_downstream_data_stream saved_stream;
 	struct v90_downstream_tx incomplete_transmit = transmitter;
 	struct v90_downstream_rx incomplete_receive = receiver;
 
@@ -269,8 +444,13 @@ static bool run_stream(
 	incomplete_receive.ed_frames--;
 	memset(&rejected_transmit, 0xa5, sizeof(rejected_transmit));
 	memset(&rejected_receive, 0x5a, sizeof(rejected_receive));
+	memset(&rejected_stream, 0x3c, sizeof(rejected_stream));
+	saved_stream = rejected_stream;
 	CHECK(make_mapping(&data_mapping, law, V90_CP_DATA),
 	      "post-Ed data mapping was invalid");
+	CHECK(make_mapping_with_shaping(
+		      &unshaped_data_mapping, law, V90_CP_DATA, 0, 0),
+	      "post-Ed unshaped data mapping was invalid");
 	CHECK(make_mapping(
 		      &other_law_mapping,
 		      law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU,
@@ -300,6 +480,11 @@ static bool run_stream(
 	      memcmp(&data_receive, &expected_receive,
 		     sizeof(data_receive)) == 0,
 	      "Ed did not start a fresh B1d epoch");
+	CHECK(verify_data_stream(&transmitter, &receiver, &data_mapping),
+	      "Ed did not continue through one-character B1d/data");
+	CHECK(verify_data_stream(
+		      &transmitter, &receiver, &unshaped_data_mapping),
+	      "unshaped B1d/data character stream failed");
 	CHECK(v90_downstream_data_tx_start_after_ed(
 		      NULL, &transmitter, &data_mapping) ==
 		      V90_DOWNSTREAM_DATA_TX_INVALID_ARGUMENT &&
@@ -319,7 +504,20 @@ static bool run_stream(
 	      v90_downstream_data_rx_start_after_ed(
 		      &rejected_receive, &receiver,
 		      &other_law_mapping) ==
-		      V90_DOWNSTREAM_DATA_RX_INVALID_PARAMETERS,
+		      V90_DOWNSTREAM_DATA_RX_INVALID_PARAMETERS &&
+	      v90_downstream_data_stream_start_after_ed(
+		      NULL, &transmitter, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT &&
+	      v90_downstream_data_stream_start_after_ed(
+		      &rejected_stream, &incomplete_transmit,
+		      &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE &&
+	      v90_downstream_data_stream_start_after_ed(
+		      &rejected_stream, &transmitter,
+		      &other_law_mapping) ==
+		      V90_DOWNSTREAM_DATA_STREAM_INVALID_PARAMETERS &&
+	      memcmp(&rejected_stream, &saved_stream,
+		     sizeof(rejected_stream)) == 0,
 	      "post-Ed handoff accepted an invalid boundary");
 	for (size_t byte = 0; byte < sizeof(rejected_transmit); ++byte)
 		CHECK(((const uint8_t *)&rejected_transmit)[byte] == 0xa5,
