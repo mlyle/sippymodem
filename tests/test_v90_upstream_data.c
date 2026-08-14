@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_upstream_data.h>
+#include <v90_upstream_mode.h>
 #include <v90_phase3.h>
 
 #include "test.h"
@@ -196,6 +197,7 @@ static bool test_selected_type1_stream(void)
 	struct v34_data_stream actual;
 	struct v34_data_stream expected;
 	struct v34_data_stream_configuration configuration = { 0 };
+	struct v34_data_direction_parameters direction;
 	size_t samples = 0;
 
 	CHECK(completed_e_fixture(&e, 10, cp_rates),
@@ -213,12 +215,20 @@ static bool test_selected_type1_stream(void)
 	       sizeof(configuration.precoder_coefficients));
 	CHECK(v90_upstream_data_start_after_e(&actual, &e, &mp) ==
 		      V90_UPSTREAM_DATA_OK &&
+	      v90_upstream_mode_select(
+		      &e.cp, &mp, &e.line.profile, &direction) ==
+		      V90_UPSTREAM_MODE_OK &&
 	      v34_data_stream_continue_b1(
 		      &expected, &e.line, &configuration) ==
 		      V34_DATA_STREAM_OK &&
 	      actual.transmitter.points.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 10 &&
 	      actual.transmitter.points.encoder.parameters.expanded_shaping &&
+	      direction.primary_data_rate_2400_bps_units == 10 &&
+	      direction.trellis_selection == V34_TRELLIS_64_STATE &&
+	      direction.nonlinear_parameter ==
+		      V34_NONLINEAR_THETA_5_OVER_16 &&
+	      direction.expanded_shaping &&
 	      actual.transmitter.points.encoder.convolutional_encoder
 			      .selection == V34_TRELLIS_64_STATE &&
 	      memcmp(actual.transmitter.points.encoder.precoder.coefficients,
@@ -270,6 +280,10 @@ static bool test_contracts(void)
 	struct v90_mp_record malformed = mp;
 	struct v34_data_stream untouched;
 	struct v34_data_stream saved;
+	struct v34_data_direction_parameters untouched_direction;
+	struct v34_data_direction_parameters saved_direction;
+	struct v34_phase3_profile wrong_role;
+	struct v34_phase3_profile active_md;
 
 	CHECK(completed_e_fixture(&complete, 8, cp_rates),
 	      "contract fixture did not complete E");
@@ -277,6 +291,13 @@ static bool test_contracts(void)
 	incomplete.sequence.emitted_bits -= 2u;
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;
+	memset(&untouched_direction, 0xa5, sizeof(untouched_direction));
+	saved_direction = untouched_direction;
+	wrong_role = complete.line.profile;
+	wrong_role.local_role = V34_CALLING_STATION;
+	active_md = complete.line.profile;
+	active_md.md_length_35_ms_units = 1;
+	active_md.md_symbol_count = 105;
 	malformed.parameters.type0.maximum_upstream_rate_2400_bps_units = 1;
 	CHECK(v90_upstream_data_start_after_e(NULL, &complete, &mp) ==
 		      V90_UPSTREAM_DATA_INVALID_ARGUMENT &&
@@ -293,10 +314,48 @@ static bool test_contracts(void)
 		      V90_UPSTREAM_DATA_INVALID_PARAMETERS &&
 	      memcmp(&untouched, &saved, sizeof(untouched)) == 0,
 	      "rejected upstream initialization changed its destination");
+	CHECK(v90_upstream_mode_select(
+		      NULL, &mp, &complete.line.profile,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_INVALID_ARGUMENT &&
+	      v90_upstream_mode_select(
+		      &complete.cp, NULL, &complete.line.profile,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_INVALID_ARGUMENT &&
+	      v90_upstream_mode_select(
+		      &complete.cp, &mp, NULL,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_INVALID_ARGUMENT &&
+	      v90_upstream_mode_select(
+		      &complete.cp, &mp, &complete.line.profile, NULL) ==
+		      V90_UPSTREAM_MODE_INVALID_ARGUMENT &&
+	      v90_upstream_mode_select(
+		      &unacknowledged, &mp, &complete.line.profile,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_INVALID_PARAMETERS &&
+	      v90_upstream_mode_select(
+		      &complete.cp, &malformed, &complete.line.profile,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_INVALID_PARAMETERS &&
+	      v90_upstream_mode_select(
+		      &complete.cp, &mp, &wrong_role,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_INVALID_PARAMETERS &&
+	      v90_upstream_mode_select(
+		      &complete.cp, &mp, &active_md,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_INVALID_PARAMETERS &&
+	      memcmp(&untouched_direction, &saved_direction,
+		     sizeof(untouched_direction)) == 0,
+	      "rejected upstream selection changed its output");
 	mp.parameters.type0.maximum_upstream_rate_2400_bps_units = 0;
 	CHECK(v90_upstream_data_start_after_e(
 		      &untouched, &complete, &mp) ==
 		      V90_UPSTREAM_DATA_NO_COMMON_RATE &&
+	      v90_upstream_mode_select(
+		      &complete.cp, &mp, &complete.line.profile,
+		      &untouched_direction) ==
+		      V90_UPSTREAM_MODE_NO_COMMON_RATE &&
 	      memcmp(&untouched, &saved, sizeof(untouched)) == 0,
 	      "cleardown changed the upstream destination");
 	mp = type0_mp(7, rate_bit(7));

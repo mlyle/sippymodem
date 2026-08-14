@@ -4,6 +4,7 @@
 #include <v90_phase4_e_line_rx.h>
 #include <v90_phase4_e_line_tx.h>
 #include <v90_upstream_data.h>
+#include <v90_upstream_rx.h>
 
 #include "test.h"
 #include "v90_phase4_line_fixture.h"
@@ -84,31 +85,6 @@ static bool parameters_match(
 		       V90_CP_OK &&
 	       left_bits == right_bits &&
 	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
-}
-
-static struct v34_data_line_receiver_configuration data_configuration(
-	const struct v34_data_stream *stream,
-	const struct v34_phase3_profile *profile,
-	const struct v90_mp_record *mp)
-{
-	const struct v90_mp_parameters *parameters =
-		mp->type == V90_MP_RECORD_TYPE0 ?
-			&mp->parameters.type0 :
-			&mp->parameters.type1.common;
-	struct v34_data_line_receiver_configuration configuration = {
-		.transmitting_profile = *profile,
-		.geometry = stream->transmitter.points.schedule.geometry,
-		.normalizer = stream->transmitter.line.carrier.normalizer,
-		.equalizer_adaptation = 0.05,
-		.trellis_selection = parameters->upstream_trellis,
-		.expanded_shaping = parameters->upstream_expanded_shaping,
-	};
-
-	if (mp->type == V90_MP_RECORD_TYPE1)
-		memcpy(configuration.precoder_coefficients,
-		       mp->parameters.type1.precoder_coefficients,
-		       sizeof(configuration.precoder_coefficients));
-	return configuration;
 }
 
 static bool run_line(
@@ -278,14 +254,10 @@ static bool run_line(
 			      "E receiver stopped at sample %zu: %s", clock,
 			      v90_phase4_e_line_rx_result_name(result));
 			if (result == V90_PHASE4_E_LINE_RX_E_COMPLETE) {
-				struct v34_data_line_receiver_configuration config =
-					data_configuration(
-						&data_tx, &e_tx.line.profile, &mp);
-
 				CHECK(data_tx_started &&
-				      v90_phase4_e_line_rx_start_data(
-					      &e_rx, &data_rx, &config) ==
-					      V90_PHASE4_E_LINE_RX_OK,
+				      v90_upstream_rx_start_after_e(
+					      &data_rx, &e_rx, &mp) ==
+					      V90_UPSTREAM_DATA_OK,
 				      "E receiver did not hand off to B1");
 				data_rx_started = true;
 			}
@@ -325,11 +297,36 @@ static bool run_line(
 		      0));
 	{
 		struct v90_phase4_e_line_rx saved = e_rx;
+		struct v90_phase4_e_line_rx incomplete = e_rx;
+		struct v90_mp_record cleardown = mp;
+		struct v34_data_line_receiver rejected;
+		struct v34_data_line_receiver saved_rejected;
 
+		incomplete.symbols.received_bits--;
+		cleardown.parameters.type0
+			.maximum_upstream_rate_2400_bps_units = 0;
+		memset(&rejected, 0xa5, sizeof(rejected));
+		saved_rejected = rejected;
 		CHECK(v90_phase4_e_line_rx_sample(&e_rx, 1234) ==
 			      V90_PHASE4_E_LINE_RX_COMPLETE &&
-		      memcmp(&e_rx, &saved, sizeof(e_rx)) == 0,
-		      "completed E receiver consumed another sample");
+		      memcmp(&e_rx, &saved, sizeof(e_rx)) == 0 &&
+		      v90_upstream_rx_start_after_e(NULL, &e_rx, &mp) ==
+			      V90_UPSTREAM_DATA_INVALID_ARGUMENT &&
+		      v90_upstream_rx_start_after_e(
+			      &rejected, NULL, &mp) ==
+			      V90_UPSTREAM_DATA_INVALID_ARGUMENT &&
+		      v90_upstream_rx_start_after_e(
+			      &rejected, &e_rx, NULL) ==
+			      V90_UPSTREAM_DATA_INVALID_ARGUMENT &&
+		      v90_upstream_rx_start_after_e(
+			      &rejected, &incomplete, &mp) ==
+			      V90_UPSTREAM_DATA_INVALID_STATE &&
+		      v90_upstream_rx_start_after_e(
+			      &rejected, &e_rx, &cleardown) ==
+			      V90_UPSTREAM_DATA_NO_COMMON_RATE &&
+		      memcmp(&rejected, &saved_rejected,
+			     sizeof(rejected)) == 0,
+		      "completed-E handoff contracts changed state");
 	}
 	return true;
 }
