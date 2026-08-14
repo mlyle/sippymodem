@@ -7,6 +7,11 @@
 
 #include <stddef.h>
 
+enum {
+	V90_NETWORK_CHARACTERS_PER_SECOND = 8000,
+	V90_UPSTREAM_RATE_UNIT = 2400,
+};
+
 static bool role_is_valid(enum v90_modem_role role)
 {
 	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
@@ -891,6 +896,74 @@ static bool data_outputs_overlap(
 	       regions_overlap(
 		       transmit_octet, sizeof(*transmit_octet),
 		       event, sizeof(*event));
+}
+
+static const struct v90_pcm_mapping *online_downstream_mapping(
+	const struct v90_call *call)
+{
+	return call->local_role == V90_ANALOG_MODEM ?
+		       &call->state.data_path.analog.data_mapping :
+		       &call->state.data_path.digital.data_mapping;
+}
+
+static uint8_t online_upstream_rate_units(
+	const struct v90_call *call)
+{
+	if (call->local_role == V90_ANALOG_MODEM)
+		return call->state.data_path.analog.upstream.data.transmitter
+			.points.schedule.geometry
+			.primary_data_rate_2400_bps_units;
+	return call->state.data_path.digital.upstream.data.geometry
+		.primary_data_rate_2400_bps_units;
+}
+
+bool v90_call_get_data_rates(
+	const struct v90_call *call,
+	uint32_t *transmit_bits_per_second,
+	uint32_t *receive_bits_per_second)
+{
+	const struct v90_pcm_mapping *downstream;
+	uint8_t upstream_units;
+	uint32_t downstream_rate;
+	uint32_t upstream_rate;
+
+	if (!v90_call_is_online(call) || transmit_bits_per_second == NULL ||
+	    receive_bits_per_second == NULL ||
+	    regions_overlap(
+		    transmit_bits_per_second,
+		    sizeof(*transmit_bits_per_second),
+		    receive_bits_per_second,
+		    sizeof(*receive_bits_per_second)) ||
+	    regions_overlap(
+		    call, sizeof(*call),
+		    transmit_bits_per_second,
+		    sizeof(*transmit_bits_per_second)) ||
+	    regions_overlap(
+		    call, sizeof(*call),
+		    receive_bits_per_second,
+		    sizeof(*receive_bits_per_second)))
+		return false;
+	downstream = online_downstream_mapping(call);
+	upstream_units = online_upstream_rate_units(call);
+	if (upstream_units == 0 ||
+	    !v90_pcm_mapping_is_valid(downstream) ||
+	    downstream->kind != V90_CP_DATA)
+		return false;
+	upstream_rate =
+		(uint32_t)upstream_units * V90_UPSTREAM_RATE_UNIT;
+	downstream_rate =
+		((uint32_t)downstream->frame_bits *
+		 V90_NETWORK_CHARACTERS_PER_SECOND +
+		 V90_CP_FRAME_INTERVALS / 2u) /
+		V90_CP_FRAME_INTERVALS;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		*transmit_bits_per_second = upstream_rate;
+		*receive_bits_per_second = downstream_rate;
+	} else {
+		*transmit_bits_per_second = downstream_rate;
+		*receive_bits_per_second = upstream_rate;
+	}
+	return true;
 }
 
 enum v90_call_result v90_call_data_octet(

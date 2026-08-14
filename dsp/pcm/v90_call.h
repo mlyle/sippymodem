@@ -201,6 +201,14 @@ enum v90_call_result v90_call_octet(
  * transactional. */
 enum v90_call_result v90_call_start_data_path(struct v90_call *call);
 
+/* Report role-local transmit and receive rates after both directions are
+ * online. PCM rates round the exact six-character frame rate to the nearest
+ * integer bit/s. Rejected calls leave both outputs unchanged. */
+bool v90_call_get_data_rates(
+	const struct v90_call *call,
+	uint32_t *transmit_bits_per_second,
+	uint32_t *receive_bits_per_second);
+
 /* Consume and produce one character after start_data_path. A NULL source, or
  * a NULL sources object, transmits idle ones in that direction. SOURCE_FAILURE
  * consumes neither the received character nor the clock interval and leaves

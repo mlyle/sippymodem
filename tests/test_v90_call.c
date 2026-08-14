@@ -14,6 +14,7 @@ enum {
 	PHASE2_NOMINAL_AMPLITUDE = 12000,
 	PHASE3_NOMINAL_AMPLITUDE = 6000,
 	DATA_FRAMES_TO_RECEIVE = 2,
+	DATA_DOWNSTREAM_RATE = 28000,
 };
 
 struct channel {
@@ -609,7 +610,13 @@ static bool run_call(
 			      V90_CALL_DATA_PATH,
 		      "law %u delay %zu did not preserve Phase 4 handoffs",
 		      (unsigned int)law, delay);
-	if (goal == CALL_GOAL_ONLINE_DATA)
+	if (goal == CALL_GOAL_ONLINE_DATA) {
+		uint32_t analog_transmit_rate = 0;
+		uint32_t analog_receive_rate = 0;
+		uint32_t digital_transmit_rate = 0;
+		uint32_t digital_receive_rate = 0;
+		uint32_t aliased_rate = UINT32_C(0xa5a55a5a);
+
 		CHECK(v90_call_is_online(&analog.call) &&
 		      v90_call_is_online(&digital.call) &&
 		      analog.downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
@@ -627,6 +634,25 @@ static bool run_call(
 		      analog.upstream_source.frames,
 		      analog.source_failure_checked,
 		      digital.source_failure_checked);
+		CHECK(v90_call_get_data_rates(
+			      &analog.call, &analog_transmit_rate,
+			      &analog_receive_rate) &&
+		      v90_call_get_data_rates(
+			      &digital.call, &digital_transmit_rate,
+			      &digital_receive_rate) &&
+		      analog_transmit_rate == digital_receive_rate &&
+		      analog_receive_rate == digital_transmit_rate &&
+		      analog_receive_rate == DATA_DOWNSTREAM_RATE,
+		      "law %u V.90 role-local rates did not agree: "
+		      "%u/%u and %u/%u",
+		      (unsigned int)law, analog_transmit_rate,
+		      analog_receive_rate, digital_transmit_rate,
+		      digital_receive_rate);
+		CHECK(!v90_call_get_data_rates(
+			       &analog.call, &aliased_rate, &aliased_rate) &&
+		      aliased_rate == UINT32_C(0xa5a55a5a),
+		      "overlapping V.90 rate outputs were changed");
+	}
 	return true;
 }
 
@@ -666,6 +692,8 @@ static bool test_validation(void)
 	struct v90_call_observation saved_observation;
 	struct v90_call_data_event data_event;
 	struct v90_call_data_event saved_data_event;
+	uint32_t transmit_rate = UINT32_C(0xa5a55a5a);
+	uint32_t receive_rate = UINT32_C(0x5a5aa5a5);
 	uint8_t output = 0xa5;
 
 	memset(&call, 0xa5, sizeof(call));
@@ -729,6 +757,12 @@ static bool test_validation(void)
 		      V90_CALL_INVALID_ARGUMENT &&
 	      v90_call_start_data_path(NULL) == V90_CALL_INVALID_ARGUMENT &&
 	      v90_call_start_data_path(&call) == V90_CALL_INVALID_STATE &&
+	      !v90_call_get_data_rates(
+		      NULL, &transmit_rate, &receive_rate) &&
+	      !v90_call_get_data_rates(
+		      &call, &transmit_rate, &receive_rate) &&
+	      transmit_rate == UINT32_C(0xa5a55a5a) &&
+	      receive_rate == UINT32_C(0x5a5aa5a5) &&
 	      v90_call_data_octet(
 		      &call, silence_octet(G711_LAW_PCMU), NULL,
 		      &output, &data_event) == V90_CALL_INVALID_STATE &&
