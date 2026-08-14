@@ -2,6 +2,8 @@
 
 #include "qam.h"
 
+#include "fractional_delay.h"
+
 #include "integer_math.h"
 #include "phase.h"
 
@@ -465,6 +467,17 @@ static bool recovery_step_is_valid(
 	       demodulator->recovery_step_units <= maximum;
 }
 
+static bool matched_history_is_valid(
+	const struct qam_demodulator *demodulator)
+{
+	if (demodulator->matched_history_count > QAM_INTERPOLATION_HISTORY)
+		return false;
+	for (size_t index = 0; index < QAM_INTERPOLATION_HISTORY; ++index)
+		if (!point_is_finite(&demodulator->matched_history[index]))
+			return false;
+	return true;
+}
+
 bool qam_demodulator_is_valid(
 	const struct qam_demodulator *demodulator)
 {
@@ -510,15 +523,20 @@ bool qam_demodulator_is_valid(
 	    demodulator->line_power < 0.0 ||
 	    !isfinite(demodulator->symbol_power) ||
 	    demodulator->symbol_power < 0.0 ||
-	    !isfinite(demodulator->previous_in_phase) ||
-	    !isfinite(demodulator->previous_quadrature) ||
+	    !matched_history_is_valid(demodulator) ||
+	    !isfinite(demodulator->recovery_fraction) ||
+	    (demodulator->recovery_pending &&
+	     (!demodulator->timing_locked ||
+	      demodulator->matched_history_count < QAM_INTERPOLATION_HISTORY ||
+	      demodulator->recovery_fraction < 0.0 ||
+	      demodulator->recovery_fraction > 1.0)) ||
 	    (demodulator->timing_locked &&
 	     !demodulator->acquisition_started) ||
 	    (!demodulator->acquisition_started &&
 	     demodulator->timing_sample_count != 0) ||
 	    (demodulator->timing_locked &&
 	     (demodulator->locked_phase_units >= period ||
-	      !demodulator->has_previous_matched_sample)))
+	      demodulator->matched_history_count == 0u)))
 		return false;
 	expected_samples = demodulator->timing_locked ?
 			   tracking_samples : acquisition_samples;
@@ -837,6 +855,10 @@ static void acquire_symbol_timing(
 {
 	bool observe = demodulator->timing_locked ||
 		       demodulator->acquisition_started;
+	const struct qam_point *previous =
+		demodulator->matched_history_count == 0u ? NULL :
+		&demodulator->matched_history[
+			demodulator->matched_history_count - 1u];
 
 	if (!observe && in_phase * in_phase + quadrature * quadrature >
 			QAM_MIN_ACQUISITION_POWER) {
@@ -854,14 +876,14 @@ static void acquire_symbol_timing(
 			    demodulator->symbol_period_units,
 			    demodulator->channel.symbol_rate_numerator,
 			    &fraction) &&
-		    demodulator->has_previous_matched_sample && observe)
+		    previous != NULL && observe)
 			observe_timing_candidate(
 				candidate,
 				interpolate(
-					demodulator->previous_in_phase, in_phase,
+					previous->in_phase, in_phase,
 					fraction),
 				interpolate(
-					demodulator->previous_quadrature,
+					previous->quadrature,
 					quadrature, fraction));
 	}
 	if (!observe)
@@ -874,38 +896,74 @@ static void acquire_symbol_timing(
 			in_phase * in_phase + quadrature * quadrature);
 }
 
-static bool recover_symbol(
+static enum qam_result recover_symbol(
 	struct qam_demodulator *demodulator,
-	double in_phase, double quadrature, struct qam_point *point)
+	double in_phase, double quadrature, struct qam_point *point,
+	bool *symbol_ready)
 {
 	double fraction = 0.0;
+	bool ready = demodulator->recovery_pending;
 
-	if (!advance_symbol_phase(
+	if (ready) {
+		double in_phase_samples[4] = {
+			demodulator->matched_history[0].in_phase,
+			demodulator->matched_history[1].in_phase,
+			demodulator->matched_history[2].in_phase,
+			in_phase,
+		};
+		double quadrature_samples[4] = {
+			demodulator->matched_history[0].quadrature,
+			demodulator->matched_history[1].quadrature,
+			demodulator->matched_history[2].quadrature,
+			quadrature,
+		};
+		struct qam_point recovered;
+
+		if (fractional_delay_interpolate_cubic(
+			    in_phase_samples, demodulator->recovery_fraction,
+			    &recovered.in_phase) != FRACTIONAL_DELAY_OK ||
+		    fractional_delay_interpolate_cubic(
+			    quadrature_samples, demodulator->recovery_fraction,
+			    &recovered.quadrature) != FRACTIONAL_DELAY_OK)
+			return QAM_INVALID_ARGUMENT;
+		*point = recovered;
+		demodulator->symbol_power +=
+			(point->in_phase * point->in_phase +
+			 point->quadrature * point->quadrature -
+			 demodulator->symbol_power) /
+			64.0;
+		demodulator->recovery_pending = false;
+	}
+	if (advance_symbol_phase(
 		    &demodulator->locked_phase_units,
 		    demodulator->symbol_period_units,
-		    demodulator->recovery_step_units, &fraction))
-		return false;
-	*point = (struct qam_point){
-		.in_phase = interpolate(
-			demodulator->previous_in_phase, in_phase, fraction),
-		.quadrature = interpolate(
-			demodulator->previous_quadrature, quadrature, fraction),
-	};
-	demodulator->symbol_power +=
-		(point->in_phase * point->in_phase +
-		 point->quadrature * point->quadrature -
-		 demodulator->symbol_power) /
-		64.0;
-	return true;
+		    demodulator->recovery_step_units, &fraction)) {
+		demodulator->recovery_fraction = fraction;
+		demodulator->recovery_pending = true;
+	}
+	*symbol_ready = ready;
+	return QAM_OK;
 }
 
 static void remember_matched_sample(
 	struct qam_demodulator *demodulator,
 	double in_phase, double quadrature)
 {
-	demodulator->previous_in_phase = in_phase;
-	demodulator->previous_quadrature = quadrature;
-	demodulator->has_previous_matched_sample = true;
+	struct qam_point matched = {
+		.in_phase = in_phase,
+		.quadrature = quadrature,
+	};
+
+	if (demodulator->matched_history_count < QAM_INTERPOLATION_HISTORY) {
+		demodulator->matched_history[
+			demodulator->matched_history_count++] = matched;
+		return;
+	}
+	for (size_t index = 1; index < QAM_INTERPOLATION_HISTORY; ++index)
+		demodulator->matched_history[index - 1u] =
+			demodulator->matched_history[index];
+	demodulator->matched_history[
+		QAM_INTERPOLATION_HISTORY - 1u] = matched;
 }
 
 enum qam_result qam_demodulator_sample(
@@ -929,8 +987,10 @@ enum qam_result qam_demodulator_sample(
 		remember_matched_sample(demodulator, in_phase, quadrature);
 		return QAM_OK;
 	}
-	*symbol_ready = recover_symbol(
-		demodulator, in_phase, quadrature, point);
+	if (recover_symbol(
+		    demodulator, in_phase, quadrature, point,
+		    symbol_ready) != QAM_OK)
+		return QAM_INVALID_ARGUMENT;
 	acquire_symbol_timing(demodulator, in_phase, quadrature);
 	remember_matched_sample(demodulator, in_phase, quadrature);
 	return QAM_OK;

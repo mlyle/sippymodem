@@ -14,6 +14,7 @@ enum {
 		QAM_MAX_PULSE_SPAN_SYMBOLS + 1,
 	QAM_MAX_MATCHED_FILTER_SAMPLES = 256,
 	QAM_MAX_TIMING_CANDIDATES = 64,
+	QAM_INTERPOLATION_HISTORY = 3,
 	QAM_DEFAULT_TIMING_WINDOW_SYMBOLS = 256,
 	QAM_MIN_TIMING_WINDOW_SYMBOLS = 32,
 	QAM_MAX_TIMING_WINDOW_SYMBOLS = 4096,
@@ -101,12 +102,13 @@ struct qam_demodulator {
 	size_t timing_reference_index;
 	double line_power;
 	double symbol_power;
-	double previous_in_phase;
-	double previous_quadrature;
+	struct qam_point matched_history[QAM_INTERPOLATION_HISTORY];
+	double recovery_fraction;
+	uint8_t matched_history_count;
 	bool timing_locked;
 	/* The initial timing window begins with carrier energy, not silence. */
 	bool acquisition_started;
-	bool has_previous_matched_sample;
+	bool recovery_pending;
 };
 
 struct qam_measurement {
