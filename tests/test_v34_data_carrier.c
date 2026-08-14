@@ -527,7 +527,9 @@ static bool test_line_power_reduction(void)
 		      1e-12,
 	      "power reduction changed calibration or gain");
 	points = fixture.points;
-	while (!v34_data_points_needs_mapping_frame(&points)) {
+	/* Repeat a generated frame so integer quantization is measured over the
+	 * steady waveform rather than only the pulse shaper's startup. */
+	for (samples = 0; samples < 512u; ++samples) {
 		struct qam_point point;
 		const struct qam_point *point_pointer = NULL;
 		int16_t full_sample;
@@ -539,25 +541,25 @@ static bool test_line_power_reduction(void)
 			      v34_data_line_transmitter_needs_point(&reduced),
 		      "reduced line clock diverged");
 		if (v34_data_line_transmitter_needs_point(&full)) {
+			if (v34_data_points_needs_mapping_frame(&points))
+				points = fixture.points;
 			CHECK(v34_data_points_next(&points, &point) ==
 				      V34_DATA_POINTS_OK,
 			      "power-reduction point stream failed");
 			point_pointer = &point;
 		}
-		CHECK(samples++ < 64u &&
-		      v34_data_line_transmitter_sample(
+		CHECK(v34_data_line_transmitter_sample(
 			      &full, point_pointer, &full_sample,
 			      &full_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
 		      v34_data_line_transmitter_sample(
 			      &reduced, point_pointer, &reduced_sample,
 			      &reduced_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
 		      full_accepted == reduced_accepted,
-		      "reduced line output diverged at sample %zu", samples - 1u);
+		      "reduced line output diverged at sample %zu", samples);
 		full_squares += (long double)full_sample * full_sample;
 		reduced_squares += (long double)reduced_sample * reduced_sample;
 	}
-	CHECK(samples != 0 &&
-	      fabsl(sqrtl(reduced_squares / samples) /
+	CHECK(fabsl(sqrtl(reduced_squares / samples) /
 			    sqrtl(full_squares / samples) -
 		    expected_ratio) < 0.001L,
 	      "rendered data did not honor negotiated power reduction");

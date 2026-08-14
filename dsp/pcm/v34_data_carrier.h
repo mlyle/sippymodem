@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 enum {
-	V34_DATA_PULSE_SPAN_SYMBOLS = 8,
+	V34_DATA_PULSE_SPAN_SYMBOLS = 12,
 };
 
 enum v34_data_carrier_result {
