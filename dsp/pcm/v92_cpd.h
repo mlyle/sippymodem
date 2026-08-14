@@ -58,6 +58,7 @@ enum v92_cpd_result {
 	V92_CPD_OUTPUT_TOO_SMALL,
 	V92_CPD_INVALID_FRAME,
 	V92_CPD_CRC_MISMATCH,
+	V92_CPD_INCOMPLETE,
 };
 
 struct v92_cpd_filter {
@@ -104,6 +105,14 @@ size_t v92_cpd_frame_bits(
 size_t v92_cpd_frame_bytes(
 	const struct v92_cpd_parameters *parameters,
 	unsigned int training_frame_bits);
+
+/* Infer the exact frame extent once all variable-length counts have arrived.
+ * INCOMPLETE is not a wire failure: more packed input is needed to reach a
+ * count field. Rejected calls leave frame_bit_count unchanged. */
+enum v92_cpd_result v92_cpd_probe_frame_bits(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t received_bit_count, unsigned int training_frame_bits,
+	size_t *frame_bit_count);
 
 /* Bits are packed in transmission order, most-significant bit first in each
  * octet. Rejected calls leave frame and frame_bit_count unchanged. */

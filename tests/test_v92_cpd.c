@@ -162,6 +162,22 @@ static size_t expected_payload_bits(unsigned int sections)
 	return bits;
 }
 
+static size_t expected_probe_bits(unsigned int sections)
+{
+	size_t bits = V92_CPD_FIXED_BITS;
+
+	if ((sections & 1u) != 0u)
+		bits += V92_CPD_MODULUS_BITS;
+	if ((sections & 2u) != 0u) {
+		bits += V92_CPD_FILTER_HEADER_BITS;
+		if ((sections & 4u) != 0u)
+			bits += 7u * V92_CPD_WORD_BITS;
+	}
+	if ((sections & 4u) != 0u)
+		bits += V92_CPD_CONSTELLATION_HEADER_BITS;
+	return bits;
+}
+
 static bool test_optional_section_matrix(void)
 {
 	unsigned int cases = 0u;
@@ -179,6 +195,7 @@ static bool test_optional_section_matrix(void)
 			size_t frame_bits = 0u;
 			size_t reencoded_bits = 0u;
 			size_t expected_payload = expected_payload_bits(sections);
+			size_t probe_ready = expected_probe_bits(sections);
 			size_t expected_frame =
 				(expected_payload + V92_CPD_TRAILER_BITS +
 				 alignment - 1u) /
@@ -202,6 +219,23 @@ static bool test_optional_section_matrix(void)
 				     (frame_bits + 7u) / 8u) == 0,
 			      "optional section case 0x%x alignment %u failed",
 			      sections, alignment);
+			for (size_t received = 0u; received <= frame_bits;
+			     ++received) {
+				size_t probed = SIZE_MAX;
+				enum v92_cpd_result probe =
+					v92_cpd_probe_frame_bits(
+						frame, (received + 7u) / 8u,
+						received, alignment, &probed);
+
+				CHECK(probe == (received < probe_ready ?
+						      V92_CPD_INCOMPLETE :
+						      V92_CPD_OK) &&
+				      (probe != V92_CPD_OK ||
+				       probed == frame_bits) &&
+				      (probe == V92_CPD_OK || probed == SIZE_MAX),
+				      "CPd probe sections 0x%x alignment %u bit %zu failed",
+				      sections, alignment, received);
+			}
 			cases++;
 		}
 	}
@@ -437,7 +471,12 @@ static bool test_wire_rejection_and_contracts(void)
 	packed_msb_write_lsb_field(
 		optional, V92_CPD_FIXED_BITS + 1u, 9u,
 		V92_CPD_MAX_SECTION_COEFFICIENTS + 1u);
-	CHECK(v92_cpd_decode(
+	CHECK(v92_cpd_probe_frame_bits(
+		      optional, sizeof(optional),
+		      V92_CPD_FIXED_BITS + V92_CPD_FILTER_HEADER_BITS,
+		      FIXTURE_ALIGNMENT_BITS, &untouched_bits) ==
+		      V92_CPD_INVALID_FRAME &&
+	      v92_cpd_decode(
 		      optional, sizeof(optional), frame_bits,
 		      FIXTURE_ALIGNMENT_BITS, &decoded) == V92_CPD_INVALID_FRAME,
 	      "oversized wire filter count was accepted");
@@ -450,7 +489,12 @@ static bool test_wire_rejection_and_contracts(void)
 	packed_msb_write_lsb_field(
 		optional, V92_CPD_FIXED_BITS + 2u * V92_CPD_WORD_BITS + 1u,
 		8u, V92_CPD_MAX_CONSTELLATION_POINTS + 1u);
-	CHECK(v92_cpd_decode(
+	CHECK(v92_cpd_probe_frame_bits(
+		      optional, sizeof(optional),
+		      V92_CPD_FIXED_BITS + V92_CPD_CONSTELLATION_HEADER_BITS,
+		      FIXTURE_ALIGNMENT_BITS, &untouched_bits) ==
+		      V92_CPD_INVALID_FRAME &&
+	      v92_cpd_decode(
 		      optional, sizeof(optional), frame_bits,
 		      FIXTURE_ALIGNMENT_BITS, &decoded) == V92_CPD_INVALID_FRAME,
 	      "oversized wire constellation count was accepted");
@@ -481,7 +525,27 @@ static bool test_wire_rejection_and_contracts(void)
 	      memcmp(untouched, untouched_saved, sizeof(untouched)) == 0,
 	      "rejected CPd encoding changed output");
 
-	for (int result = V92_CPD_OK; result <= V92_CPD_CRC_MISMATCH;
+	untouched_bits = SIZE_MAX;
+	CHECK(v92_cpd_probe_frame_bits(
+		      NULL, 0u, 0u, FIXTURE_ALIGNMENT_BITS,
+		      &untouched_bits) == V92_CPD_INVALID_ARGUMENT &&
+	      v92_cpd_probe_frame_bits(
+		      frame, sizeof(frame), 0u, FIXTURE_ALIGNMENT_BITS,
+		      NULL) == V92_CPD_INVALID_ARGUMENT &&
+	      v92_cpd_probe_frame_bits(
+		      frame, 0u, 1u, FIXTURE_ALIGNMENT_BITS,
+		      &untouched_bits) == V92_CPD_INVALID_ARGUMENT &&
+	      v92_cpd_probe_frame_bits(
+		      frame, sizeof(frame), 0u, 8u,
+		      &untouched_bits) == V92_CPD_INVALID_ALIGNMENT &&
+	      v92_cpd_probe_frame_bits(
+		      frame, sizeof(frame), V92_CPD_MAX_FRAME_BITS + 1u,
+		      FIXTURE_ALIGNMENT_BITS, &untouched_bits) ==
+		      V92_CPD_INVALID_FRAME &&
+	      untouched_bits == SIZE_MAX,
+	      "rejected CPd probe changed its output");
+
+	for (int result = V92_CPD_OK; result <= V92_CPD_INCOMPLETE;
 	     ++result) {
 		CHECK(strcmp(
 			      v92_cpd_result_name((enum v92_cpd_result)result),

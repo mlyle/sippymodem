@@ -10,6 +10,15 @@
 
 enum {
 	CPD_INFORMATION_FIRST_BIT = 18,
+	CPD_MODULUS_PRESENT_BIT = 19,
+	CPD_FILTERS_PRESENT_BIT = 20,
+	CPD_CONSTELLATIONS_PRESENT_BIT = 21,
+	CPD_RATE_FIRST_BIT = 22,
+	CPD_RATE_BITS = 5,
+	CPD_TRELLIS_FIRST_BIT = 27,
+	CPD_TRELLIS_BITS = 2,
+	CPD_GAIN_FIRST_BIT = 35,
+	CPD_GAIN_BITS = 16,
 	CPD_CRC_BITS = 16,
 };
 
@@ -25,6 +34,17 @@ static bool alignment_is_valid(unsigned int training_frame_bits)
 {
 	return training_frame_bits >= V92_CPD_DOWNSTREAM_FRAME_MIN_BITS &&
 	       training_frame_bits <= V92_CPD_DOWNSTREAM_FRAME_MAX_BITS;
+}
+
+static bool bits_are(
+	const uint8_t *frame, size_t first_bit,
+	size_t bit_count, uint8_t value)
+{
+	for (size_t bit = 0u; bit < bit_count; ++bit) {
+		if (packed_msb_bit(frame, first_bit + bit) != value)
+			return false;
+	}
+	return true;
 }
 
 static bool filter_is_canonical(const struct v92_cpd_filter *filter)
@@ -190,6 +210,179 @@ size_t v92_cpd_frame_bytes(
 	size_t bits = v92_cpd_frame_bits(parameters, training_frame_bits);
 
 	return bits == 0u ? 0u : (bits + 7u) / 8u;
+}
+
+static bool rows_start_with_zero(
+	const uint8_t *frame, size_t first_bit, size_t row_count)
+{
+	for (size_t row = 0u; row < row_count; ++row) {
+		if (packed_msb_bit(
+			    frame, first_bit + row * V92_CPD_WORD_BITS) != 0u)
+			return false;
+	}
+	return true;
+}
+
+static bool received_contains(
+	size_t received_bit_count, size_t first_bit, size_t bit_count)
+{
+	return first_bit <= received_bit_count &&
+	       bit_count <= received_bit_count - first_bit;
+}
+
+static enum v92_cpd_result probe_constellation_extent(
+	const uint8_t *frame, size_t received_bit_count,
+	size_t *payload_bits)
+{
+	size_t first_bit = *payload_bits;
+	size_t point_count = 0u;
+	uint8_t referenced = 0u;
+	uint8_t populated = 0u;
+	bool saw_empty = false;
+
+	if (!received_contains(
+		    received_bit_count, first_bit,
+		    V92_CPD_CONSTELLATION_HEADER_BITS))
+		return V92_CPD_INCOMPLETE;
+	if (!rows_start_with_zero(frame, first_bit, 5u))
+		return V92_CPD_INVALID_FRAME;
+	for (size_t interval = 0u;
+	     interval < V92_CPD_FRAME_INTERVALS; ++interval) {
+		size_t row = interval < 4u ? 0u : 1u;
+		size_t within_row = interval < 4u ? interval : interval - 4u;
+		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
+			frame, first_bit + row * V92_CPD_WORD_BITS + 1u +
+				within_row * 4u,
+			4u);
+
+		if (index >= V92_CPD_MAX_CONSTELLATIONS)
+			return V92_CPD_INVALID_FRAME;
+		referenced |= (uint8_t)(1u << index);
+	}
+	for (size_t index = 0u;
+	     index < V92_CPD_MAX_CONSTELLATIONS; ++index) {
+		size_t row = index / 2u;
+		size_t within_row = index % 2u;
+		uint32_t count = packed_msb_read_lsb_field(
+			frame, first_bit + 2u * V92_CPD_WORD_BITS +
+				row * V92_CPD_WORD_BITS + 1u + within_row * 8u,
+			8u);
+
+		if (count > V92_CPD_MAX_CONSTELLATION_POINTS)
+			return V92_CPD_INVALID_FRAME;
+		if (count == 0u) {
+			saw_empty = true;
+		} else {
+			if (saw_empty)
+				return V92_CPD_INVALID_FRAME;
+			populated |= (uint8_t)(1u << index);
+		}
+		point_count += count;
+	}
+	if (populated == 0u || referenced != populated)
+		return V92_CPD_INVALID_FRAME;
+	*payload_bits += V92_CPD_CONSTELLATION_HEADER_BITS +
+		point_count * V92_CPD_WORD_BITS;
+	return V92_CPD_OK;
+}
+
+enum v92_cpd_result v92_cpd_probe_frame_bits(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t received_bit_count, unsigned int training_frame_bits,
+	size_t *frame_bit_count)
+{
+	size_t payload_bits = V92_CPD_FIXED_BITS;
+	size_t expected_bits;
+	bool filters_present;
+	bool constellations_present;
+
+	if (frame == NULL || frame_bit_count == NULL)
+		return V92_CPD_INVALID_ARGUMENT;
+	if (!alignment_is_valid(training_frame_bits))
+		return V92_CPD_INVALID_ALIGNMENT;
+	if (received_bit_count > V92_CPD_MAX_FRAME_BITS)
+		return V92_CPD_INVALID_FRAME;
+	if (frame_capacity < (received_bit_count + 7u) / 8u)
+		return V92_CPD_INVALID_ARGUMENT;
+	if (received_bit_count < V92_CPD_FIXED_BITS)
+		return V92_CPD_INCOMPLETE;
+	if (!bits_are(frame, 0u, 17u, 1u) ||
+	    packed_msb_bit(frame, 17u) != 0u ||
+	    packed_msb_bit(frame, 34u) != 0u ||
+	    packed_msb_read_lsb_field(
+		    frame, CPD_RATE_FIRST_BIT, CPD_RATE_BITS) >
+		    V92_CPD_MAX_DATA_RATE_NUMBER ||
+	    packed_msb_read_lsb_field(
+		    frame, CPD_TRELLIS_FIRST_BIT, CPD_TRELLIS_BITS) >
+		    V92_CPD_TRELLIS_64_STATE ||
+	    packed_msb_read_lsb_field(
+		    frame, CPD_GAIN_FIRST_BIT, CPD_GAIN_BITS) == 0u)
+		return V92_CPD_INVALID_FRAME;
+	filters_present =
+		packed_msb_bit(frame, CPD_FILTERS_PRESENT_BIT) != 0u;
+	constellations_present =
+		packed_msb_bit(frame, CPD_CONSTELLATIONS_PRESENT_BIT) != 0u;
+	if (packed_msb_bit(frame, CPD_MODULUS_PRESENT_BIT) != 0u) {
+		if (!received_contains(
+			    received_bit_count, payload_bits,
+			    V92_CPD_MODULUS_BITS))
+			return V92_CPD_INCOMPLETE;
+		if (!rows_start_with_zero(
+			    frame, payload_bits, V92_CPD_MODULUS_COUNT / 2u))
+			return V92_CPD_INVALID_FRAME;
+		payload_bits += V92_CPD_MODULUS_BITS;
+	}
+	if (filters_present) {
+		size_t coefficient_count = 0u;
+
+		if (!received_contains(
+			    received_bit_count, payload_bits,
+			    V92_CPD_FILTER_HEADER_BITS))
+			return V92_CPD_INCOMPLETE;
+		if (!rows_start_with_zero(
+			    frame, payload_bits,
+			    V92_CPD_FILTER_SECTION_COUNT))
+			return V92_CPD_INVALID_FRAME;
+		for (size_t section = 0u;
+		     section < V92_CPD_FILTER_SECTION_COUNT; ++section) {
+			uint32_t count = packed_msb_read_lsb_field(
+				frame, payload_bits +
+					section * V92_CPD_WORD_BITS + 1u,
+				9u);
+
+			if (count > V92_CPD_MAX_SECTION_COEFFICIENTS)
+				return V92_CPD_INVALID_FRAME;
+			coefficient_count += count;
+		}
+		if (coefficient_count > V92_CPD_MAX_TOTAL_COEFFICIENTS)
+			return V92_CPD_INVALID_FRAME;
+		payload_bits += V92_CPD_FILTER_HEADER_BITS;
+		if (constellations_present &&
+		    !received_contains(
+			    received_bit_count, payload_bits,
+			    coefficient_count * V92_CPD_WORD_BITS))
+			return V92_CPD_INCOMPLETE;
+		if (constellations_present &&
+		    !rows_start_with_zero(
+			    frame, payload_bits, coefficient_count))
+			return V92_CPD_INVALID_FRAME;
+		payload_bits += coefficient_count * V92_CPD_WORD_BITS;
+	}
+	if (constellations_present) {
+		enum v92_cpd_result result = probe_constellation_extent(
+			frame, received_bit_count, &payload_bits);
+
+		if (result != V92_CPD_OK)
+			return result;
+	}
+	expected_bits = (payload_bits + V92_CPD_TRAILER_BITS +
+			 training_frame_bits - 1u) /
+		training_frame_bits * training_frame_bits;
+	if (expected_bits > V92_CPD_MAX_FRAME_BITS ||
+	    received_bit_count > expected_bits)
+		return V92_CPD_INVALID_FRAME;
+	*frame_bit_count = expected_bits;
+	return V92_CPD_OK;
 }
 
 static uint32_t wire_field(
@@ -365,17 +558,6 @@ static bool wire_payload(
 	return wire->valid;
 }
 
-static bool bits_are(
-	const uint8_t *frame, size_t first_bit,
-	size_t bit_count, uint8_t value)
-{
-	for (size_t bit = 0u; bit < bit_count; ++bit) {
-		if (packed_msb_bit(frame, first_bit + bit) != value)
-			return false;
-	}
-	return true;
-}
-
 static uint16_t frame_crc(const uint8_t *frame, size_t payload_end)
 {
 	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
@@ -498,6 +680,8 @@ const char *v92_cpd_result_name(enum v92_cpd_result result)
 		return "invalid frame";
 	case V92_CPD_CRC_MISMATCH:
 		return "CRC mismatch";
+	case V92_CPD_INCOMPLETE:
+		return "incomplete";
 	}
 	return "unknown";
 }
