@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_phase4_analog_station.h>
+#include <v90_analog_path.h>
 #include <v90_digital_path.h>
 #include <v90_phase4_digital_station.h>
-#include <v90_phase4_e_line_tx.h>
-#include <v90_upstream_data.h>
-#include <v90_downstream_data_handoff.h>
-#include <v90_downstream_data_rx.h>
 
 #include <g711.h>
 
@@ -18,7 +15,7 @@
 enum {
 	TRAINING_UCODE = 91,
 	SAMPLE_LIMIT = 24000,
-	DOWNSTREAM_SYMBOL_LIMIT = 4096,
+	DOWNSTREAM_TRAINING_CHARACTER_LIMIT = 4096,
 	DATA_FRAMES_TO_RECEIVE = 4,
 	UPSTREAM_FRAMES_TO_RECEIVE = 4,
 };
@@ -117,19 +114,6 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
-static uint8_t encode_sample(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
-}
-
-static bool mp_acknowledges_cp(const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       record->parameters.type0.acknowledges_cp :
-		       record->parameters.type1.common.acknowledges_cp;
-}
-
 static void generate_data_bits(
 	uint8_t *bits, size_t bit_count, size_t frame)
 {
@@ -158,6 +142,7 @@ static bool source_downstream_frame(
 
 struct upstream_source {
 	size_t frames;
+	bool reject_next;
 };
 
 static bool source_upstream_frame(
@@ -168,7 +153,8 @@ static bool source_upstream_frame(
 
 	if (source == NULL || request == NULL || primary_bits == NULL ||
 	    request->primary_bits == 0 ||
-	    request->primary_bits > V34_MAX_MAPPING_FRAME_BITS)
+	    request->primary_bits > V34_MAX_MAPPING_FRAME_BITS ||
+	    source->reject_next)
 		return false;
 	generate_data_bits(
 		primary_bits, request->primary_bits, source->frames + 97u);
@@ -201,297 +187,248 @@ static bool upstream_frame_matches(
 		received->auxiliary_bit == expected_auxiliary);
 }
 
-static bool receive_downstream_octet(
-	struct v90_downstream_data_rx *receiver, uint8_t octet,
-	const struct downstream_source *source, size_t *b1d_frames,
-	size_t *data_frames)
+static bool downstream_frame_matches(
+	const struct v90_pcm_stream_frame *received,
+	const struct downstream_source *source, size_t frame_index)
 {
-	struct v90_pcm_stream_frame frame;
 	uint8_t expected[V90_PCM_FRAME_MAX_BITS];
-	enum v90_downstream_data_rx_result result =
-		v90_downstream_data_rx_receive_octet(
-			receiver, octet, &frame);
 
-	if (result == V90_DOWNSTREAM_DATA_RX_BUFFERING)
-		return true;
-	if (result == V90_DOWNSTREAM_DATA_RX_B1D_FRAME ||
-	    result == V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) {
-		for (size_t bit = 0; bit < frame.bit_count; ++bit)
-			CHECK(frame.bits[bit] == 1,
-			      "B1d frame %zu bit %zu changed",
-			      *b1d_frames, bit);
-		(*b1d_frames)++;
-		CHECK((result == V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) ==
-			      (*b1d_frames == V90_PHASE4_B1D_FRAMES),
-		      "B1d completion moved to frame %zu", *b1d_frames);
-		return true;
-	}
-	generate_data_bits(expected, frame.bit_count, *data_frames + 1u);
-	CHECK(result == V90_DOWNSTREAM_DATA_RX_DATA_FRAME &&
-	      *data_frames < source->frames &&
-	      memcmp(frame.bits, expected, frame.bit_count) == 0,
-	      "post-B1d data frame %zu changed (%s)", *data_frames,
-	      v90_downstream_data_rx_result_name(result));
-	(*data_frames)++;
-	return true;
+	if (received->bit_count == 0 ||
+	    received->bit_count > V90_PCM_FRAME_MAX_BITS ||
+	    frame_index >= source->frames)
+		return false;
+	generate_data_bits(expected, received->bit_count, frame_index + 1u);
+	return memcmp(
+		       received->bits, expected, received->bit_count) == 0;
 }
 
 static bool verify_final_downstream_exchange(
-	enum g711_law law, struct v90_phase4_cp_line_tx *cp_transmit,
+	struct v90_phase4_cp_line_tx *cp_transmit,
 	struct v90_phase4_cp_line_rx *cp_receive,
 	struct v90_phase4_digital_transmit_handoff *digital,
 	struct v90_phase4_analog_receive_handoff *analog,
 	const struct v90_cp_parameters *training)
 {
-	struct v90_cp_parameters active_cp = *training;
-	struct v90_pcm_mapping data_mapping;
-	struct v90_phase4_digital_handoff handoff = {
+	struct v90_cp_parameters data_cp = *training;
+	struct v90_phase4_analog_handoff analog_handoff = {
+		.transmit = *cp_transmit,
+		.receive = analog->receiver,
+	};
+	struct v90_phase4_digital_handoff digital_handoff = {
 		.transmit = *digital,
 		.receive = *cp_receive,
 	};
-	struct v90_digital_path path;
-	struct v90_downstream_data_rx downstream_receive;
-	struct v90_phase4_e_line_tx e_transmit;
-	struct v34_data_stream upstream_data;
+	struct v90_analog_path analog_path;
+	struct v90_digital_path digital_path;
 	struct downstream_source downstream_source = { 0 };
 	struct upstream_source upstream_source = { 0 };
-	struct v90_mp_record initial_mp = digital->transmitter.mp_record;
-	size_t training_frames = 0;
-	size_t downstream_symbols = 0;
-	size_t b1d_frames = 0;
+	size_t downstream_training_characters = 0;
 	size_t downstream_data_frames = 0;
 	size_t upstream_data_frames = 0;
-	bool cp_received = false;
-	bool cp_prime_received = false;
-	bool cp_prime_sent = false;
-	bool cp_finishing = false;
-	bool cp_stopped = false;
-	bool e_started = false;
-	bool e_complete = false;
-	bool upstream_started = false;
-	bool upstream_b1_complete = false;
-	bool mp_received = false;
-	bool mp_prime_received = false;
-	bool ed_armed = false;
-	bool ed_received = false;
-	bool downstream_data_started = false;
-	bool source_failure_checked = false;
+	uint64_t training_bit_errors = 0;
+	bool trn2d_complete = false;
+	bool downstream_source_failure_checked = false;
+	bool upstream_source_failure_checked = false;
 
-	active_cp.kind = V90_CP_DATA;
-	active_cp.selected_rate_index = 1;
-	active_cp.acknowledges_peer = false;
-	CHECK(v90_pcm_mapping_init(&data_mapping, &active_cp) ==
-		      V90_PCM_MAPPING_OK &&
-	      v90_phase4_cp_line_tx_start_next_record(
-		      cp_transmit, &active_cp) ==
-		      V90_PHASE4_CP_LINE_TX_OK &&
-	      v90_digital_path_init(&path, &handoff) ==
+	data_cp.kind = V90_CP_DATA;
+	data_cp.selected_rate_index = 1;
+	data_cp.acknowledges_peer = false;
+	CHECK(v90_analog_path_init(
+		      &analog_path, &analog_handoff, &data_cp) ==
+		      V90_ANALOG_PATH_OK &&
+	      v90_digital_path_init(&digital_path, &digital_handoff) ==
 		      V90_DIGITAL_PATH_OK,
-	      "data CP did not start at the CPt boundary");
+	      "online paths did not start at the CPt/Ri boundary");
+	{
+		struct v90_analog_path saved = analog_path;
+		struct v90_pcm_stream_frame frame;
+		struct v90_pcm_stream_frame saved_frame;
+
+		memset(&frame, 0xa5, sizeof(frame));
+		saved_frame = frame;
+		CHECK(v90_analog_path_receive(
+			      &analog_path, 0, &frame) ==
+			      V90_ANALOG_PATH_INVALID_STATE &&
+		      memcmp(&analog_path, &saved, sizeof(analog_path)) == 0 &&
+		      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
+		      "receive accepted an interval with no transmitted sample");
+	}
 
 	for (size_t clock = 0; clock < SAMPLE_LIMIT; ++clock) {
-		struct v34_received_mapping_frame received;
-		struct v90_digital_path saved_path;
-		uint8_t transmitted_octet = 0x5a;
-		uint8_t saved_octet = transmitted_octet;
-		uint8_t received_octet;
-		int16_t sample = 0;
-		bool sample_ready = false;
-		enum v90_digital_path_result path_result;
+		struct v34_received_mapping_frame upstream_frame;
+		struct v34_received_mapping_frame saved_upstream_frame;
+		struct v90_pcm_stream_frame downstream_frame;
+		struct v90_pcm_stream_frame saved_downstream_frame;
+		struct v90_analog_path saved_analog;
+		struct v90_digital_path saved_digital;
+		uint8_t analog_octet = 0x5a;
+		uint8_t digital_octet = 0xa5;
+		uint8_t saved_octet = 0;
+		enum v90_analog_path_result analog_result;
+		enum v90_digital_path_result digital_result;
+		bool training_active = analog_path.downstream_stage ==
+			V90_ANALOG_PATH_DOWNSTREAM_TRAINING;
 
-		if (!cp_stopped && !cp_finishing &&
-		    v90_phase4_cp_line_tx_record_is_complete(cp_transmit)) {
-			if (active_cp.acknowledges_peer)
-				cp_prime_sent = true;
-			if (cp_prime_sent && mp_prime_received) {
-				cp_finishing = true;
-			} else {
-				active_cp.acknowledges_peer = mp_received;
-				CHECK(v90_phase4_cp_line_tx_start_next_record(
-					      cp_transmit, &active_cp) ==
-					      V90_PHASE4_CP_LINE_TX_OK,
-				      "CP repetition failed at clock %zu", clock);
-			}
+		if (training_active) {
+			training_bit_errors =
+				analog_path.downstream.training.trn2d_bit_errors;
+			trn2d_complete = trn2d_complete ||
+				analog_path.downstream.training.stage !=
+					V90_DOWNSTREAM_RX_TRN2D;
+		}
+		if (!upstream_source_failure_checked &&
+		    !upstream_source.reject_next &&
+		    v90_analog_path_upstream_is_online(&analog_path))
+			upstream_source.reject_next = true;
+		if (upstream_source.reject_next) {
+			saved_analog = analog_path;
+			saved_octet = analog_octet;
+		}
+		analog_result = v90_analog_path_transmit(
+			&analog_path, source_upstream_frame,
+			&upstream_source, &analog_octet);
+		if (analog_result == V90_ANALOG_PATH_SOURCE_FAILURE) {
+			CHECK(upstream_source.reject_next &&
+			      memcmp(&analog_path, &saved_analog,
+				     sizeof(analog_path)) == 0 &&
+			      analog_octet == saved_octet,
+			      "upstream source failure consumed clock %zu", clock);
+			upstream_source.reject_next = false;
+			analog_result = v90_analog_path_transmit(
+				&analog_path, source_upstream_frame,
+				&upstream_source, &analog_octet);
+			upstream_source_failure_checked = true;
+		}
+		CHECK(analog_result == V90_ANALOG_PATH_OK,
+		      "analogue transmit failed at clock %zu: %s", clock,
+		      v90_analog_path_result_name(analog_result));
+		if (clock == 0) {
+			struct v90_analog_path saved = analog_path;
+			uint8_t extra = 0x3c;
+
+			CHECK(v90_analog_path_transmit(
+				      &analog_path, NULL, NULL, &extra) ==
+				      V90_ANALOG_PATH_INVALID_STATE &&
+			      extra == 0x3c &&
+			      memcmp(&analog_path, &saved,
+				     sizeof(analog_path)) == 0,
+			      "transmit accepted two samples in one interval");
 		}
 
-		if (!cp_stopped) {
-			enum v90_phase4_cp_line_tx_result result =
-				v90_phase4_cp_line_tx_sample(
-					cp_transmit, &sample);
-
-			CHECK(result == V90_PHASE4_CP_LINE_TX_OK ||
-			      result == V90_PHASE4_CP_LINE_TX_COMPLETE,
-			      "CP line stopped at clock %zu", clock);
-			if (result == V90_PHASE4_CP_LINE_TX_OK) {
-				sample_ready = true;
-			} else {
-				CHECK(v90_phase4_e_line_tx_init(
-					      &e_transmit, cp_transmit) ==
-					      V90_PHASE4_E_LINE_TX_OK,
-				      "CP prime did not hand off to E");
-				cp_stopped = true;
-				e_started = true;
-			}
-		}
-		if (!sample_ready && e_started && !e_complete) {
-			enum v90_phase4_e_line_tx_result result =
-				v90_phase4_e_line_tx_sample(&e_transmit, &sample);
-
-			CHECK(result == V90_PHASE4_E_LINE_TX_OK ||
-			      result == V90_PHASE4_E_LINE_TX_COMPLETE,
-			      "E line stopped at clock %zu", clock);
-			if (result == V90_PHASE4_E_LINE_TX_OK) {
-				sample_ready = true;
-			} else {
-				e_complete = true;
-				CHECK(v90_upstream_data_start_after_e(
-					      &upstream_data, &e_transmit,
-					      &initial_mp) == V90_UPSTREAM_DATA_OK,
-				      "E did not hand off to upstream B1");
-				upstream_started = true;
-			}
-		}
-		if (!sample_ready && upstream_started) {
-			bool accepted;
-
-			CHECK(v34_data_stream_sample(
-				      &upstream_data, source_upstream_frame,
-				      &upstream_source, &sample, &accepted) ==
-				      V34_DATA_STREAM_OK,
-			      "upstream data failed at clock %zu", clock);
-			sample_ready = true;
-			upstream_b1_complete =
-				!v34_data_stream_is_transmitting_b1(
-					&upstream_data);
-		}
-		CHECK(sample_ready, "analogue path emitted no sample at clock %zu",
-		      clock);
-
-		if (!source_failure_checked && !downstream_source.reject_next &&
-		    v90_digital_path_downstream_is_online(&path))
+		if (!downstream_source_failure_checked &&
+		    !downstream_source.reject_next &&
+		    v90_digital_path_downstream_is_online(&digital_path))
 			downstream_source.reject_next = true;
-		memset(&received, 0xa5, sizeof(received));
-		{
-			struct v34_received_mapping_frame saved_received = received;
-
-			if (downstream_source.reject_next)
-				saved_path = path;
-			received_octet = encode_sample(law, sample);
-			path_result = v90_digital_path_octet(
-				&path, received_octet, source_downstream_frame,
-				&downstream_source, &transmitted_octet, &received);
-			if (path_result == V90_DIGITAL_PATH_SOURCE_FAILURE) {
-				CHECK(downstream_source.reject_next &&
-				      memcmp(&path, &saved_path, sizeof(path)) == 0 &&
-				      transmitted_octet == saved_octet &&
-				      memcmp(&received, &saved_received,
-					     sizeof(received)) == 0,
-				      "source failure consumed a clock character");
-				downstream_source.reject_next = false;
-				path_result = v90_digital_path_octet(
-					&path, received_octet,
-					source_downstream_frame,
-					&downstream_source, &transmitted_octet,
-					&received);
-				source_failure_checked = true;
-			}
+		memset(&upstream_frame, 0xa5, sizeof(upstream_frame));
+		saved_upstream_frame = upstream_frame;
+		if (downstream_source.reject_next) {
+			saved_digital = digital_path;
+			saved_octet = digital_octet;
 		}
-		CHECK(path_result == V90_DIGITAL_PATH_OK ||
-		      path_result == V90_DIGITAL_PATH_UPSTREAM_FRAME,
+		digital_result = v90_digital_path_octet(
+			&digital_path, analog_octet, source_downstream_frame,
+			&downstream_source, &digital_octet, &upstream_frame);
+		if (digital_result == V90_DIGITAL_PATH_SOURCE_FAILURE) {
+			CHECK(downstream_source.reject_next &&
+			      memcmp(&digital_path, &saved_digital,
+				     sizeof(digital_path)) == 0 &&
+			      digital_octet == saved_octet &&
+			      memcmp(&upstream_frame, &saved_upstream_frame,
+				     sizeof(upstream_frame)) == 0,
+			      "downstream source failure consumed clock %zu", clock);
+			downstream_source.reject_next = false;
+			digital_result = v90_digital_path_octet(
+				&digital_path, analog_octet,
+				source_downstream_frame, &downstream_source,
+				&digital_octet, &upstream_frame);
+			downstream_source_failure_checked = true;
+		}
+		CHECK(digital_result == V90_DIGITAL_PATH_OK ||
+		      digital_result == V90_DIGITAL_PATH_UPSTREAM_FRAME,
 		      "digital path failed at clock %zu: %s", clock,
-		      v90_digital_path_result_name(path_result));
-		cp_received = cp_received || path.data_mapping_ready;
-		cp_prime_received = cp_prime_received ||
-			path.upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA ||
-			(path.upstream_stage ==
-				 V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
-			 path.upstream.startup.stage != V90_UPSTREAM_RX_STAGE_CP);
-		if (path_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
+		      v90_digital_path_result_name(digital_result));
+		if (digital_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
 			CHECK(upstream_data_frames < upstream_source.frames &&
 			      upstream_frame_matches(
-				      &received, upstream_data_frames),
+				      &upstream_frame, upstream_data_frames),
 			      "upstream data frame %zu changed",
 			      upstream_data_frames);
 			upstream_data_frames++;
 		}
 
-		if (!downstream_data_started) {
-			struct v90_downstream_event event;
-			enum v90_downstream_rx_result result =
-				v90_downstream_rx_receive(
-					&analog->receiver, transmitted_octet,
-					&event);
-
-			downstream_symbols++;
-			if (result == V90_DOWNSTREAM_RX_TRN2D_FRAME) {
-				CHECK(event.trn2d.training_bit_errors == 0,
-				      "TRN2d frame %zu changed", training_frames);
-				training_frames++;
-			} else if (result == V90_DOWNSTREAM_RX_MP) {
-				CHECK(!mp_acknowledges_cp(&event.mp.record),
-				      "ordinary MP acknowledged CP");
-				mp_received = true;
-			} else if (result == V90_DOWNSTREAM_RX_MP_PRIME) {
-				CHECK(mp_received &&
-				      mp_acknowledges_cp(&event.mp.record),
-				      "MP prime preceded MP");
-				mp_prime_received = true;
-			} else if (result == V90_DOWNSTREAM_RX_ED) {
-				CHECK(ed_armed && event.ed.bit_errors == 0 &&
-				      v90_downstream_data_rx_start_after_ed(
-					      &downstream_receive,
-					      &analog->receiver, &data_mapping) ==
-					      V90_DOWNSTREAM_DATA_RX_OK,
-				      "Ed was early, corrupt, or did not start B1d");
-				ed_received = true;
-				downstream_data_started = true;
-			} else {
-				CHECK(result == V90_DOWNSTREAM_RX_BUFFERING,
-				      "downstream receive returned %s",
-				      v90_downstream_rx_result_name(result));
-			}
+		memset(&downstream_frame, 0x5a, sizeof(downstream_frame));
+		saved_downstream_frame = downstream_frame;
+		analog_result = v90_analog_path_receive(
+			&analog_path, digital_octet, &downstream_frame);
+		CHECK(analog_result == V90_ANALOG_PATH_OK ||
+		      analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME,
+		      "analogue receive failed at clock %zu: %s", clock,
+		      v90_analog_path_result_name(analog_result));
+		if (training_active)
+			downstream_training_characters++;
+		if (analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
+			CHECK(downstream_frame_matches(
+				      &downstream_frame, &downstream_source,
+				      downstream_data_frames),
+			      "downstream data frame %zu changed",
+			      downstream_data_frames);
+			downstream_data_frames++;
 		} else {
-			CHECK(receive_downstream_octet(
-				      &downstream_receive, transmitted_octet,
-				      &downstream_source, &b1d_frames,
-				      &downstream_data_frames),
-			      "downstream data failed at clock %zu", clock);
+			CHECK(memcmp(
+				      &downstream_frame, &saved_downstream_frame,
+				      sizeof(downstream_frame)) == 0,
+			      "non-data event changed downstream output");
 		}
-
-		if (!ed_armed && cp_prime_sent && mp_prime_received) {
-			CHECK(v90_downstream_rx_expect_ed(&analog->receiver) ==
-				      V90_DOWNSTREAM_RX_OK,
-			      "reciprocal acknowledgements did not arm Ed");
-			ed_armed = true;
+		if (analog_path.downstream_stage ==
+		    V90_ANALOG_PATH_DOWNSTREAM_TRAINING) {
+			training_bit_errors =
+				analog_path.downstream.training.trn2d_bit_errors;
+			trn2d_complete = trn2d_complete ||
+				analog_path.downstream.training.stage !=
+					V90_DOWNSTREAM_RX_TRN2D;
 		}
-		if (v90_digital_path_is_online(&path) &&
+		if (v90_analog_path_is_online(&analog_path) &&
+		    v90_digital_path_is_online(&digital_path) &&
 		    downstream_data_frames >= DATA_FRAMES_TO_RECEIVE &&
 		    upstream_data_frames >= UPSTREAM_FRAMES_TO_RECEIVE &&
-		    source_failure_checked)
+		    downstream_source_failure_checked &&
+		    upstream_source_failure_checked)
 			break;
 	}
 
-	CHECK(cp_received && cp_prime_received && cp_prime_sent &&
-	      mp_received && mp_prime_received && ed_armed && ed_received &&
-	      e_started && e_complete && upstream_started &&
-	      upstream_b1_complete && downstream_data_started &&
-	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
-	      downstream_symbols < DOWNSTREAM_SYMBOL_LIMIT &&
-	      b1d_frames == V90_PHASE4_B1D_FRAMES &&
-	      downstream_receive.b1d_bit_errors == 0 &&
+	CHECK(analog_path.peer_mp_received &&
+	      analog_path.peer_mp_prime_received &&
+	      analog_path.cp_prime_sent && analog_path.finishing_cp &&
+	      analog_path.ed_armed && trn2d_complete &&
+	      training_bit_errors == 0 &&
+	      downstream_training_characters <
+		      DOWNSTREAM_TRAINING_CHARACTER_LIMIT &&
+	      analog_path.downstream_stage ==
+		      V90_ANALOG_PATH_DOWNSTREAM_DATA &&
+	      analog_path.downstream.data.b1d_frames ==
+		      V90_PHASE4_B1D_FRAMES &&
+	      analog_path.downstream.data.b1d_bit_errors == 0 &&
 	      downstream_data_frames >= DATA_FRAMES_TO_RECEIVE &&
 	      upstream_data_frames >= UPSTREAM_FRAMES_TO_RECEIVE &&
-	      source_failure_checked && v90_digital_path_is_online(&path) &&
-	      v90_pcm_mapping_equal(&path.data_mapping, &data_mapping),
-	      "paired path stopped: CP=%d/%d/%d MP=%d/%d Ed=%d/%d "
-	      "E/B1=%d/%d/%d/%d data=%zu/%zu B1d=%zu source=%d "
-	      "online=%d",
-	      cp_received, cp_prime_received, cp_prime_sent,
-	      mp_received, mp_prime_received, ed_armed, ed_received,
-	      e_started, e_complete, upstream_started,
-	      upstream_b1_complete,
-	      downstream_data_frames, upstream_data_frames, b1d_frames,
-	      source_failure_checked, v90_digital_path_is_online(&path));
+	      downstream_source_failure_checked &&
+	      upstream_source_failure_checked &&
+	      v90_analog_path_is_online(&analog_path) &&
+	      v90_digital_path_is_online(&digital_path) &&
+	      digital_path.data_mapping_ready &&
+	      v90_pcm_mapping_equal(
+		      &digital_path.data_mapping, &analog_path.data_mapping),
+	      "paired path stopped: CP/MP=%d/%d/%d Ed=%d TRN=%d/%llu "
+	      "data=%zu/%zu B1d=%u source=%d/%d online=%d/%d",
+	      analog_path.peer_mp_received,
+	      analog_path.peer_mp_prime_received,
+	      analog_path.cp_prime_sent, analog_path.ed_armed,
+	      trn2d_complete, (unsigned long long)training_bit_errors,
+	      downstream_data_frames, upstream_data_frames,
+	      analog_path.downstream.data.b1d_frames,
+	      downstream_source_failure_checked,
+	      upstream_source_failure_checked,
+	      v90_analog_path_is_online(&analog_path),
+	      v90_digital_path_is_online(&digital_path));
 	return true;
 }
 
@@ -619,7 +556,7 @@ static bool run_exchange(
 		      &training),
 	      "paired owners disagreed about their Phase 4 handoffs");
 	CHECK(verify_final_downstream_exchange(
-		      law, &analog_transmit, &digital_receive,
+		      &analog_transmit, &digital_receive,
 		      &digital_transmit, &analog_receive, &training),
 	      "paired owners disagreed through downstream data");
 	return true;
@@ -634,20 +571,53 @@ static bool test_paired_exchange(void)
 	return true;
 }
 
-static bool test_digital_path_contracts(void)
+static bool test_path_contracts(void)
 {
+	struct v90_phase4_analog_handoff analog_handoff = { 0 };
 	struct v90_phase4_digital_handoff handoff = { 0 };
+	struct v90_cp_parameters data = { 0 };
+	struct v90_analog_path analog;
+	struct v90_analog_path saved_analog;
 	struct v90_digital_path path;
 	struct v90_digital_path saved;
+	struct v90_pcm_stream_frame downstream;
+	struct v90_pcm_stream_frame saved_downstream;
 	struct v34_received_mapping_frame received;
 	struct v34_received_mapping_frame saved_received;
 	uint8_t octet = 0x5a;
 
+	memset(&analog, 0xa5, sizeof(analog));
+	saved_analog = analog;
 	memset(&path, 0xa5, sizeof(path));
 	saved = path;
+	memset(&downstream, 0xa5, sizeof(downstream));
+	saved_downstream = downstream;
 	memset(&received, 0xa5, sizeof(received));
 	saved_received = received;
-	CHECK(v90_digital_path_init(NULL, &handoff) ==
+	CHECK(v90_analog_path_init(NULL, &analog_handoff, &data) ==
+		      V90_ANALOG_PATH_INVALID_ARGUMENT &&
+	      v90_analog_path_init(&analog, NULL, &data) ==
+		      V90_ANALOG_PATH_INVALID_ARGUMENT &&
+	      v90_analog_path_init(&analog, &analog_handoff, &data) ==
+		      V90_ANALOG_PATH_INVALID_PARAMETERS &&
+	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0 &&
+	      v90_analog_path_transmit(NULL, NULL, NULL, &octet) ==
+		      V90_ANALOG_PATH_INVALID_ARGUMENT &&
+	      v90_analog_path_receive(NULL, 0, &downstream) ==
+		      V90_ANALOG_PATH_INVALID_ARGUMENT &&
+	      octet == 0x5a &&
+	      memcmp(&downstream, &saved_downstream,
+		     sizeof(downstream)) == 0 &&
+	      !v90_analog_path_is_valid(NULL) &&
+	      !v90_analog_path_has_failed(NULL) &&
+	      !v90_analog_path_is_online(NULL) &&
+	      strcmp(v90_analog_path_result_name(
+		     V90_ANALOG_PATH_DOWNSTREAM_FRAME),
+		     "downstream frame") == 0 &&
+	      strcmp(v90_analog_path_result_name(
+		     (enum v90_analog_path_result)99),
+		     "unknown") == 0 &&
+	      v90_digital_path_init(NULL, &handoff) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
 	      v90_digital_path_init(&path, NULL) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
@@ -668,7 +638,7 @@ static bool test_digital_path_contracts(void)
 	      strcmp(v90_digital_path_result_name(
 		     (enum v90_digital_path_result)99),
 		     "unknown") == 0,
-	      "digital path contracts changed rejected state or outputs");
+	      "path contracts changed rejected state or outputs");
 	return true;
 }
 
@@ -680,9 +650,9 @@ int main(void)
 		return 1;
 	}
 	fprintf(stderr, "[       OK ] paired station exchange\n");
-	fprintf(stderr, "[ RUN      ] digital path contracts\n");
-	if (!test_digital_path_contracts())
+	fprintf(stderr, "[ RUN      ] online path contracts\n");
+	if (!test_path_contracts())
 		return 1;
-	fprintf(stderr, "[       OK ] digital path contracts\n");
+	fprintf(stderr, "[       OK ] online path contracts\n");
 	return 0;
 }

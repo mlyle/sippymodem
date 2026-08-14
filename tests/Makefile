@@ -1960,6 +1960,7 @@ V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_downstream_data_rx.o \
 	$(BUILD_DIR)/v90_downstream_data_stream.o \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
+	$(BUILD_DIR)/v90_analog_path.o \
 	$(BUILD_DIR)/v90_digital_path.o \
 	$(BUILD_DIR)/v90_phase4_e_line_tx.o \
 	$(BUILD_DIR)/v90_upstream_data.o \
@@ -4391,6 +4392,10 @@ $(BUILD_DIR)/v90_downstream_data_handoff.o: \
 
 $(BUILD_DIR)/v90_downstream_data_stream.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_stream.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_analog_path.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_analog_path.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_digital_path.o: \
