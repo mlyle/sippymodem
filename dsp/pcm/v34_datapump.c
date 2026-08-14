@@ -2,6 +2,7 @@
 
 #include "v34_datapump.h"
 
+#include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "v34_call.h"
@@ -270,15 +271,6 @@ static bool call_configuration(
 	return true;
 }
 
-static uint64_t training_timeout(struct modem *modem)
-{
-	int seconds = modem_get_sreg(modem, SREG_WAIT_CARRIER_AFTER_DIAL);
-
-	if (seconds <= 0)
-		seconds = 60;
-	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
-}
-
 static struct v34_datapump *v34_from_dp(struct dp *dp)
 {
 	struct v34_datapump *datapump;
@@ -325,7 +317,8 @@ static struct dp *create_v34(
 	}
 	datapump->caller = caller != 0;
 	datapump->rate_mask = rate_mask;
-	datapump->training_timeout_samples = training_timeout(modem);
+	datapump->training_timeout_samples =
+		datapump_carrier_wait_ticks(modem);
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,

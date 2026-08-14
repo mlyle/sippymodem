@@ -2,6 +2,7 @@
 
 #include "datapump.h"
 
+#include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "qam.h"
@@ -421,15 +422,6 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	return datapump;
 }
 
-static uint64_t training_timeout(struct modem *modem)
-{
-	int seconds = modem_get_sreg(modem, SREG_WAIT_CARRIER_AFTER_DIAL);
-
-	if (seconds <= 0)
-		seconds = 60;
-	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
-}
-
 static struct dp *create_v32(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
@@ -481,7 +473,8 @@ static struct dp *create_v32(
 	datapump->line_entry = is_caller ?
 				 V32_LINE_ENTRY_CALLER_STARTUP :
 				 V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY;
-	datapump->training_timeout_samples = training_timeout(modem);
+	datapump->training_timeout_samples =
+		datapump_carrier_wait_ticks(modem);
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,

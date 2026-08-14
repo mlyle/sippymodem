@@ -2,6 +2,7 @@
 
 #include "v22_datapump.h"
 
+#include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "qam.h"
@@ -203,15 +204,6 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	return datapump;
 }
 
-static uint64_t training_timeout(struct modem *modem)
-{
-	int seconds = modem_get_sreg(modem, SREG_WAIT_CARRIER_AFTER_DIAL);
-
-	if (seconds <= 0)
-		seconds = 60;
-	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
-}
-
 static unsigned int selected_bit_rate(
 	const struct modem *modem, enum DP_ID id)
 {
@@ -279,7 +271,8 @@ static struct dp *create_v22(
 		.op = operations,
 		.dp_data = datapump,
 	};
-	datapump->training_timeout_samples = training_timeout(modem);
+	datapump->training_timeout_samples =
+		datapump_carrier_wait_ticks(modem);
 	if (datapump->originator) {
 		datapump->training_state =
 			V22_TRAINING_ORIGINATE_WAIT_ANSWER_MARK;

@@ -2,6 +2,7 @@
 
 #include "fsk300_datapump.h"
 
+#include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "fsk.h"
@@ -142,15 +143,6 @@ static struct fsk300_datapump *fsk300_from_dp(struct dp *dp)
 	return datapump;
 }
 
-static uint64_t training_timeout(struct modem *modem)
-{
-	int seconds = modem_get_sreg(modem, SREG_WAIT_CARRIER_AFTER_DIAL);
-
-	if (seconds <= 0)
-		seconds = 60;
-	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
-}
-
 static struct dp *create_fsk300(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
@@ -191,7 +183,8 @@ static struct dp *create_fsk300(
 		.dp_data = datapump,
 	};
 	datapump->training_state = FSK300_TRAINING_WAIT_MARK;
-	datapump->training_timeout_samples = training_timeout(modem);
+	datapump->training_timeout_samples =
+		datapump_carrier_wait_ticks(modem);
 	operations->use_count++;
 	return &datapump->dp;
 }

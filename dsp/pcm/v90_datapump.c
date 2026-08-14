@@ -2,6 +2,7 @@
 
 #include "v90_datapump.h"
 
+#include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "v90_call.h"
@@ -86,15 +87,6 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	return datapump;
 }
 
-static uint64_t training_timeout(struct modem *modem)
-{
-	int seconds = modem_get_sreg(modem, SREG_WAIT_CARRIER_AFTER_DIAL);
-
-	if (seconds <= 0)
-		seconds = 60;
-	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
-}
-
 static struct dp *create_v90(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
@@ -113,7 +105,8 @@ static struct dp *create_v90(
 	if (datapump == NULL)
 		return NULL;
 	datapump->role = role;
-	datapump->training_timeout_octets = training_timeout(modem);
+	datapump->training_timeout_octets =
+		datapump_carrier_wait_ticks(modem);
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,

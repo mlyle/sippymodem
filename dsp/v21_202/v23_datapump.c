@@ -2,6 +2,7 @@
 
 #include "v23_datapump.h"
 
+#include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "fsk.h"
@@ -111,15 +112,6 @@ static struct v23_datapump *v23_from_dp(struct dp *dp)
 	return &datapump->dp == dp ? datapump : NULL;
 }
 
-static uint64_t training_timeout(struct modem *modem)
-{
-	int seconds = modem_get_sreg(modem, SREG_WAIT_CARRIER_AFTER_DIAL);
-
-	if (seconds <= 0)
-		seconds = 60;
-	return (uint64_t)(unsigned int)seconds * MODEM_RATE;
-}
-
 static uint32_t presentation_limit(struct modem *modem)
 {
 	int deciseconds =
@@ -173,7 +165,8 @@ static struct dp *create_v23(
 	};
 	datapump->phase = datapump->answerer ? V23_PHASE_ANSWER_TONE :
 						 V23_PHASE_WAIT_MARK;
-	datapump->training_timeout_samples = training_timeout(modem);
+	datapump->training_timeout_samples =
+		datapump_carrier_wait_ticks(modem);
 	datapump->presentation_limit_samples = presentation_limit(modem);
 	operations->use_count++;
 	return &datapump->dp;
