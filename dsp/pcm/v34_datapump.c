@@ -112,10 +112,11 @@ static uint8_t maximum_enabled_rate(
 	case V34_SYMBOL_RATE_2400:
 		return 9;
 	case V34_SYMBOL_RATE_2800:
+		return 11;
 	case V34_SYMBOL_RATE_3000:
 	case V34_SYMBOL_RATE_3200:
 	case V34_SYMBOL_RATE_3429:
-		return 10;
+		return 12;
 	case V34_SYMBOL_RATE_2743:
 	case V34_SYMBOL_RATE_COUNT:
 		break;
