@@ -284,12 +284,12 @@ enum v90_call_result v90_call_init(
 	if (call == NULL || !configuration_is_valid(configuration))
 		return V90_CALL_INVALID_ARGUMENT;
 	if (configuration->local_role == V90_ANALOG_MODEM)
-		result = pcm_phase2_init_analog(
+		result = pcm_phase2_init_v90_analog(
 			&initialized.state.phase2,
 			configuration->phase2_nominal_amplitude,
 			&configuration->local_info0.analog);
 	else
-		result = pcm_phase2_init_digital(
+		result = pcm_phase2_init_v90_digital(
 			&initialized.state.phase2,
 			configuration->phase2_nominal_amplitude,
 			&configuration->local_info0.digital);
@@ -446,7 +446,7 @@ static enum v90_call_result advance_phase2(
 	if (pcm_phase2_is_ready_for_info1(&call->state.phase2)) {
 		result = call->local_role == V90_ANALOG_MODEM ?
 			pcm_phase2_start_analog_info1(&call->state.phase2) :
-			pcm_phase2_start_digital_info1(
+			pcm_phase2_start_v90_digital_info1(
 				&call->state.phase2,
 				&call->local_info1.digital);
 		if (result != PCM_PHASE2_OK)
@@ -454,7 +454,7 @@ static enum v90_call_result advance_phase2(
 	}
 	if (call->local_role == V90_ANALOG_MODEM &&
 	    event->kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED &&
-	    pcm_phase2_reply_analog(
+	    pcm_phase2_reply_conventional(
 		    &call->state.phase2, &call->local_info1.analog) !=
 		    PCM_PHASE2_OK)
 		return V90_CALL_SEQUENCE_MISMATCH;

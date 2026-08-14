@@ -22,7 +22,9 @@ enum v90_phase3_entry_result v90_phase3_entry_from_phase2(
 	if (pcm_phase2_info1_handoff(phase2, &selection) != PCM_INFO1_OK)
 		return V90_PHASE3_ENTRY_INTERNAL_ERROR;
 	if (phase2->local_role == V90_DIGITAL_MODEM)
-		digital_info0 = phase2->local_info0.digital;
+		digital_info0 = phase2->info0_protocol == PCM_PROTOCOL_V90 ?
+				phase2->local_info0.digital :
+				phase2->local_info0.v92_digital.v90;
 	else if (pcm_phase2_peer_info0d(phase2, &digital_info0) !=
 		 PCM_PHASE2_OK)
 		return V90_PHASE3_ENTRY_INTERNAL_ERROR;

@@ -74,19 +74,30 @@ struct pcm_phase2 {
 	union pcm_info0_record local_info0;
 	union pcm_info0_record peer_info0;
 	struct v34_phase2_probe_receiver_measurement remote_probe;
+	struct pcm_startup_selection startup;
 	enum pcm_phase2_stage stage;
 	enum pcm_phase2_failure failure;
 	enum v90_modem_role local_role;
+	enum pcm_protocol info0_protocol;
 	bool peer_info0_stored;
 	bool remote_probe_stored;
 };
 
-enum pcm_phase2_result pcm_phase2_init_analog(
+/* The local INFO0 offer codec is immutable. V.92 initialization currently
+ * admits the full Phase 2 branch only; short Phase 2 will be added as another
+ * branch of this same owner. A V.92 offer may still negotiate down to V.90. */
+enum pcm_phase2_result pcm_phase2_init_v90_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0 *local_info0a);
-enum pcm_phase2_result pcm_phase2_init_digital(
+enum pcm_phase2_result pcm_phase2_init_v90_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d);
+enum pcm_phase2_result pcm_phase2_init_v92_analog(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v92_info0a *local_info0a);
+enum pcm_phase2_result pcm_phase2_init_v92_digital(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v92_info0d *local_info0d);
 
 bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2);
 bool pcm_phase2_has_failed(const struct pcm_phase2 *phase2);
@@ -99,21 +110,38 @@ enum pcm_phase2_result pcm_phase2_peer_info0a(
 	const struct pcm_phase2 *phase2, struct v90_info0 *peer_info0a);
 enum pcm_phase2_result pcm_phase2_peer_info0d(
 	const struct pcm_phase2 *phase2, struct v90_info0d *peer_info0d);
+enum pcm_phase2_result pcm_phase2_peer_v92_info0a(
+	const struct pcm_phase2 *phase2, struct v92_info0a *peer_info0a);
+enum pcm_phase2_result pcm_phase2_peer_v92_info0d(
+	const struct pcm_phase2 *phase2, struct v92_info0d *peer_info0d);
+
+/* Copy the negotiated protocol and Phase 2 mode after peer INFO0 arrives. */
+enum pcm_phase2_result pcm_phase2_startup_selection(
+	const struct pcm_phase2 *phase2,
+	struct pcm_startup_selection *selection);
 
 /* The caller supplies mode policy only at the two explicit INFO1 boundaries.
  * The digital modem sends INFO1d immediately; the analog modem continues
- * Tone A until peer_info1d() succeeds and reply_analog() supplies INFO1a. */
-enum pcm_phase2_result pcm_phase2_start_digital_info1(
+ * Tone A until peer_info1d() succeeds and one reply function supplies INFO1a. */
+enum pcm_phase2_result pcm_phase2_start_v90_digital_info1(
 	struct pcm_phase2 *phase2, const struct v34_info1c *local_info1d);
+enum pcm_phase2_result pcm_phase2_start_v92_digital_info1(
+	struct pcm_phase2 *phase2, const struct v92_info1d *local_info1d);
 enum pcm_phase2_result pcm_phase2_start_analog_info1(
 	struct pcm_phase2 *phase2);
-enum pcm_phase2_result pcm_phase2_reply_analog(
+enum pcm_phase2_result pcm_phase2_reply_conventional(
 	struct pcm_phase2 *phase2, const struct v90_info1a *local_info1a);
+enum pcm_phase2_result pcm_phase2_reply_pcm(
+	struct pcm_phase2 *phase2, const struct v92_pcm_info1a *local_info1a);
 
 enum pcm_phase2_result pcm_phase2_peer_info1d(
 	const struct pcm_phase2 *phase2, struct v34_info1c *peer_info1d);
 enum pcm_phase2_result pcm_phase2_peer_info1a(
 	const struct pcm_phase2 *phase2, struct v90_info1a *peer_info1a);
+enum pcm_phase2_result pcm_phase2_peer_v92_info1d(
+	const struct pcm_phase2 *phase2, struct v92_info1d *peer_info1d);
+enum pcm_phase2_result pcm_phase2_peer_pcm_info1a(
+	const struct pcm_phase2 *phase2, struct v92_pcm_info1a *peer_info1a);
 
 /* Consume and produce exactly one 8 kHz line-terminal sample. A stage change
  * applies after the current sample, so the next call belongs to the new owner.

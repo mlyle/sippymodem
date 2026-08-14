@@ -9,6 +9,11 @@ static bool role_is_valid(enum v90_modem_role role)
 	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
 }
 
+static bool protocol_is_valid(enum pcm_protocol protocol)
+{
+	return protocol == PCM_PROTOCOL_V90 || protocol == PCM_PROTOCOL_V92;
+}
+
 static bool failure_is_valid(enum pcm_phase2_failure failure)
 {
 	return failure >= PCM_PHASE2_FAILURE_NONE &&
@@ -17,6 +22,21 @@ static bool failure_is_valid(enum pcm_phase2_failure failure)
 
 static bool local_info0_is_valid(const struct pcm_phase2 *phase2)
 {
+	if (phase2->info0_protocol == PCM_PROTOCOL_V92) {
+		if (phase2->local_role == V90_ANALOG_MODEM)
+			return v92_info0a_is_valid(
+				       &phase2->local_info0.v92_analog) &&
+			       phase2->local_info0.v92_analog.v92_capable &&
+			       !phase2->local_info0.v92_analog
+					.short_phase2_requested &&
+			       !phase2->local_info0.v92_analog.v90
+					.acknowledges_peer_info0;
+		return v92_info0d_is_valid(&phase2->local_info0.v92_digital) &&
+		       phase2->local_info0.v92_digital.v92_capable &&
+		       !phase2->local_info0.v92_digital.short_phase2_requested &&
+		       !phase2->local_info0.v92_digital.v90.common
+				.acknowledges_peer_info0;
+	}
 	if (phase2->local_role == V90_ANALOG_MODEM)
 		return v90_info0_is_valid(&phase2->local_info0.analog) &&
 		       !phase2->local_info0.analog.acknowledges_peer_info0;
@@ -28,9 +48,53 @@ static bool peer_info0_is_valid(const struct pcm_phase2 *phase2)
 {
 	if (!phase2->peer_info0_stored)
 		return true;
+	if (phase2->info0_protocol == PCM_PROTOCOL_V92)
+		return phase2->local_role == V90_ANALOG_MODEM ?
+			       v92_info0d_is_valid(
+				       &phase2->peer_info0.v92_digital) :
+			       v92_info0a_is_valid(
+				       &phase2->peer_info0.v92_analog);
 	return phase2->local_role == V90_ANALOG_MODEM ?
 		       v90_info0d_is_valid(&phase2->peer_info0.digital) :
 		       v90_info0_is_valid(&phase2->peer_info0.analog);
+}
+
+static bool derive_startup(
+	const struct pcm_phase2 *phase2,
+	struct pcm_startup_selection *selection)
+{
+	if (phase2->info0_protocol == PCM_PROTOCOL_V90) {
+		*selection = (struct pcm_startup_selection){
+			.protocol = PCM_PROTOCOL_V90,
+			.phase2 = PCM_PHASE2_FULL,
+		};
+		return true;
+	}
+	{
+		const struct v92_info0a *analog =
+			phase2->local_role == V90_ANALOG_MODEM ?
+				&phase2->local_info0.v92_analog :
+				&phase2->peer_info0.v92_analog;
+		const struct v92_info0d *digital =
+			phase2->local_role == V90_DIGITAL_MODEM ?
+				&phase2->local_info0.v92_digital :
+				&phase2->peer_info0.v92_digital;
+
+		return pcm_startup_select(analog, digital, selection) ==
+			       PCM_STARTUP_OK &&
+		       selection->phase2 == PCM_PHASE2_FULL;
+	}
+}
+
+static bool startup_is_valid(const struct pcm_phase2 *phase2)
+{
+	struct pcm_startup_selection expected;
+
+	if (!phase2->peer_info0_stored)
+		return phase2->stage == PCM_PHASE2_RANGING;
+	return derive_startup(phase2, &expected) &&
+	       phase2->startup.protocol == expected.protocol &&
+	       phase2->startup.phase2 == expected.phase2;
 }
 
 static bool remote_probe_state_is_valid(const struct pcm_phase2 *phase2)
@@ -69,6 +133,26 @@ static enum v90_modem_role child_role(const struct pcm_phase2 *phase2)
 			       V90_ANALOG_MODEM : V90_DIGITAL_MODEM;
 	}
 	return (enum v90_modem_role)-1;
+}
+
+static enum pcm_protocol child_protocol(const struct pcm_phase2 *phase2)
+{
+	switch (phase2->stage) {
+	case PCM_PHASE2_RANGING:
+		return phase2->state.ranging.info0_exchange.protocol;
+	case PCM_PHASE2_INITIAL_PROBE:
+		return phase2->state.initial_probe.ranging.info0_exchange
+			.protocol;
+	case PCM_PHASE2_PROBE_TURNAROUND:
+		return phase2->state.turnaround.initial_probe.ranging
+			.info0_exchange.protocol;
+	case PCM_PHASE2_RECIPROCAL_PROBE:
+		return phase2->state.reciprocal_probe.turnaround.initial_probe
+			.ranging.info0_exchange.protocol;
+	case PCM_PHASE2_INFO1:
+		return phase2->state.info1.protocol;
+	}
+	return (enum pcm_protocol)-1;
 }
 
 static enum pcm_phase2_failure initial_probe_failure(
@@ -129,9 +213,10 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 	bool child_valid;
 
 	if (phase2 == NULL || !role_is_valid(phase2->local_role) ||
+	    !protocol_is_valid(phase2->info0_protocol) ||
 	    !failure_is_valid(phase2->failure) ||
 	    !local_info0_is_valid(phase2) || !peer_info0_is_valid(phase2) ||
-	    !remote_probe_state_is_valid(phase2) ||
+	    !startup_is_valid(phase2) || !remote_probe_state_is_valid(phase2) ||
 	    (phase2->stage != PCM_PHASE2_RANGING &&
 	     !phase2->peer_info0_stored))
 		return false;
@@ -156,13 +241,16 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 		child_valid = phase2->peer_info0_stored &&
 			      phase2->remote_probe_stored &&
 			      phase2->state.info1.protocol ==
-				      PCM_PROTOCOL_V90 &&
+				      phase2->startup.protocol &&
 			      pcm_phase2_info1_is_valid(&phase2->state.info1);
 		break;
 	default:
 		return false;
 	}
-	if (!child_valid || child_role(phase2) != phase2->local_role)
+	if (!child_valid || child_role(phase2) != phase2->local_role ||
+	    child_protocol(phase2) !=
+		    (phase2->stage == PCM_PHASE2_INFO1 ?
+			    phase2->startup.protocol : phase2->info0_protocol))
 		return false;
 	child_failure = active_failure(phase2);
 	return phase2->failure == PCM_PHASE2_FAILURE_INTERNAL ?
@@ -206,49 +294,96 @@ bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2)
 	return pcm_phase2_is_valid(phase2) && ready_for_phase3(phase2);
 }
 
-enum pcm_phase2_result pcm_phase2_init_analog(
-	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
-	const struct v90_info0 *local_info0a)
+static enum pcm_phase2_result initialize(
+	struct pcm_phase2 *phase2, const union pcm_info0_record *local_info0,
+	const struct pcm_phase2_info0_exchange *exchange)
 {
 	struct pcm_phase2 initialized = {
-		.local_role = V90_ANALOG_MODEM,
+		.state.ranging.info0_exchange = *exchange,
+		.local_info0 = *local_info0,
 		.stage = PCM_PHASE2_RANGING,
+		.local_role = exchange->local_role,
+		.info0_protocol = exchange->protocol,
 	};
 
-	if (phase2 == NULL || !v90_info0_is_valid(local_info0a))
-		return PCM_PHASE2_INVALID_ARGUMENT;
-	initialized.local_info0.analog = *local_info0a;
-	initialized.local_info0.analog.acknowledges_peer_info0 = false;
-	if (v90_phase2_ranging_init_analog(
-		    &initialized.state.ranging, nominal_amplitude,
-		    &initialized.local_info0.analog) != V90_PHASE2_RANGING_OK ||
+	if (phase2_ranging_control_init(
+		    &initialized.state.ranging.control,
+		    &initialized.state.ranging.info0_exchange.transport) !=
+		    PHASE2_RANGING_OK ||
 	    !pcm_phase2_is_valid(&initialized))
 		return PCM_PHASE2_INVALID_ARGUMENT;
 	*phase2 = initialized;
 	return PCM_PHASE2_OK;
 }
 
-enum pcm_phase2_result pcm_phase2_init_digital(
+enum pcm_phase2_result pcm_phase2_init_v90_analog(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v90_info0 *local_info0a)
+{
+	struct pcm_phase2_info0_exchange exchange;
+	union pcm_info0_record local = { 0 };
+
+	if (phase2 == NULL || !v90_info0_is_valid(local_info0a) ||
+	    pcm_phase2_info0_exchange_init_v90_analog(
+		    &exchange, nominal_amplitude, local_info0a) !=
+		    PCM_PHASE2_INFO0_EXCHANGE_OK)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	local.analog = *local_info0a;
+	local.analog.acknowledges_peer_info0 = false;
+	return initialize(phase2, &local, &exchange);
+}
+
+enum pcm_phase2_result pcm_phase2_init_v90_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d)
 {
-	struct pcm_phase2 initialized = {
-		.local_role = V90_DIGITAL_MODEM,
-		.stage = PCM_PHASE2_RANGING,
-	};
+	struct pcm_phase2_info0_exchange exchange;
+	union pcm_info0_record local = { 0 };
 
-	if (phase2 == NULL || !v90_info0d_is_valid(local_info0d))
+	if (phase2 == NULL || !v90_info0d_is_valid(local_info0d) ||
+	    pcm_phase2_info0_exchange_init_v90_digital(
+		    &exchange, nominal_amplitude, local_info0d) !=
+		    PCM_PHASE2_INFO0_EXCHANGE_OK)
 		return PCM_PHASE2_INVALID_ARGUMENT;
-	initialized.local_info0.digital = *local_info0d;
-	initialized.local_info0.digital.common.acknowledges_peer_info0 = false;
-	if (v90_phase2_ranging_init_digital(
-		    &initialized.state.ranging, nominal_amplitude,
-		    &initialized.local_info0.digital) !=
-		    V90_PHASE2_RANGING_OK ||
-	    !pcm_phase2_is_valid(&initialized))
+	local.digital = *local_info0d;
+	local.digital.common.acknowledges_peer_info0 = false;
+	return initialize(phase2, &local, &exchange);
+}
+
+enum pcm_phase2_result pcm_phase2_init_v92_analog(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v92_info0a *local_info0a)
+{
+	struct pcm_phase2_info0_exchange exchange;
+	union pcm_info0_record local = { 0 };
+
+	if (phase2 == NULL || !v92_info0a_is_valid(local_info0a) ||
+	    local_info0a->short_phase2_requested ||
+	    pcm_phase2_info0_exchange_init_v92_analog(
+		    &exchange, nominal_amplitude, local_info0a) !=
+		    PCM_PHASE2_INFO0_EXCHANGE_OK)
 		return PCM_PHASE2_INVALID_ARGUMENT;
-	*phase2 = initialized;
-	return PCM_PHASE2_OK;
+	local.v92_analog = *local_info0a;
+	local.v92_analog.v90.acknowledges_peer_info0 = false;
+	return initialize(phase2, &local, &exchange);
+}
+
+enum pcm_phase2_result pcm_phase2_init_v92_digital(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v92_info0d *local_info0d)
+{
+	struct pcm_phase2_info0_exchange exchange;
+	union pcm_info0_record local = { 0 };
+
+	if (phase2 == NULL || !v92_info0d_is_valid(local_info0d) ||
+	    local_info0d->short_phase2_requested ||
+	    pcm_phase2_info0_exchange_init_v92_digital(
+		    &exchange, nominal_amplitude, local_info0d) !=
+		    PCM_PHASE2_INFO0_EXCHANGE_OK)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	local.v92_digital = *local_info0d;
+	local.v92_digital.v90.common.acknowledges_peer_info0 = false;
+	return initialize(phase2, &local, &exchange);
 }
 
 enum pcm_phase2_result pcm_phase2_peer_info0a(
@@ -259,7 +394,9 @@ enum pcm_phase2_result pcm_phase2_peer_info0a(
 	if (phase2->local_role != V90_DIGITAL_MODEM ||
 	    !phase2->peer_info0_stored)
 		return PCM_PHASE2_INVALID_STATE;
-	*peer_info0a = phase2->peer_info0.analog;
+	*peer_info0a = phase2->info0_protocol == PCM_PROTOCOL_V90 ?
+			       phase2->peer_info0.analog :
+			       phase2->peer_info0.v92_analog.v90;
 	return PCM_PHASE2_OK;
 }
 
@@ -271,60 +408,126 @@ enum pcm_phase2_result pcm_phase2_peer_info0d(
 	if (phase2->local_role != V90_ANALOG_MODEM ||
 	    !phase2->peer_info0_stored)
 		return PCM_PHASE2_INVALID_STATE;
-	*peer_info0d = phase2->peer_info0.digital;
+	*peer_info0d = phase2->info0_protocol == PCM_PROTOCOL_V90 ?
+			       phase2->peer_info0.digital :
+			       phase2->peer_info0.v92_digital.v90;
 	return PCM_PHASE2_OK;
 }
 
-enum pcm_phase2_result pcm_phase2_start_digital_info1(
+enum pcm_phase2_result pcm_phase2_peer_v92_info0a(
+	const struct pcm_phase2 *phase2, struct v92_info0a *peer_info0a)
+{
+	if (!pcm_phase2_is_valid(phase2) || peer_info0a == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->info0_protocol != PCM_PROTOCOL_V92 ||
+	    phase2->local_role != V90_DIGITAL_MODEM ||
+	    !phase2->peer_info0_stored)
+		return PCM_PHASE2_INVALID_STATE;
+	*peer_info0a = phase2->peer_info0.v92_analog;
+	return PCM_PHASE2_OK;
+}
+
+enum pcm_phase2_result pcm_phase2_peer_v92_info0d(
+	const struct pcm_phase2 *phase2, struct v92_info0d *peer_info0d)
+{
+	if (!pcm_phase2_is_valid(phase2) || peer_info0d == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->info0_protocol != PCM_PROTOCOL_V92 ||
+	    phase2->local_role != V90_ANALOG_MODEM ||
+	    !phase2->peer_info0_stored)
+		return PCM_PHASE2_INVALID_STATE;
+	*peer_info0d = phase2->peer_info0.v92_digital;
+	return PCM_PHASE2_OK;
+}
+
+enum pcm_phase2_result pcm_phase2_startup_selection(
+	const struct pcm_phase2 *phase2,
+	struct pcm_startup_selection *selection)
+{
+	if (!pcm_phase2_is_valid(phase2) || selection == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (!phase2->peer_info0_stored)
+		return PCM_PHASE2_INVALID_STATE;
+	*selection = phase2->startup;
+	return PCM_PHASE2_OK;
+}
+
+static enum pcm_phase2_result enter_info1(
+	struct pcm_phase2 *phase2,
+	const struct pcm_phase2_info1_exchange *exchange)
+{
+	struct pcm_phase2 next;
+
+	next = *phase2;
+	next.state.info1 = *exchange;
+	next.stage = PCM_PHASE2_INFO1;
+	if (!pcm_phase2_is_valid(&next))
+		return PCM_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return PCM_PHASE2_OK;
+}
+
+enum pcm_phase2_result pcm_phase2_start_v90_digital_info1(
 	struct pcm_phase2 *phase2, const struct v34_info1c *local_info1d)
 {
 	struct pcm_phase2_info1_exchange exchange;
-	struct pcm_phase2 next;
 
 	if (!pcm_phase2_is_valid(phase2) ||
 	    !v34_info1c_is_valid(local_info1d))
 		return PCM_PHASE2_INVALID_ARGUMENT;
-	if (phase2->local_role != V90_DIGITAL_MODEM ||
+	if (phase2->startup.protocol != PCM_PROTOCOL_V90 ||
+	    phase2->local_role != V90_DIGITAL_MODEM ||
 	    !ready_for_info1(phase2))
 		return PCM_PHASE2_INVALID_STATE;
 	if (pcm_phase2_info1_init_v90_digital(
 		    &exchange, &phase2->state.reciprocal_probe,
 		    local_info1d) != PHASE2_INFO1_OK)
 		return PCM_PHASE2_INVALID_STATE;
-	next = *phase2;
-	next.state.info1 = exchange;
-	next.stage = PCM_PHASE2_INFO1;
-	if (!pcm_phase2_is_valid(&next))
+	return enter_info1(phase2, &exchange);
+}
+
+enum pcm_phase2_result pcm_phase2_start_v92_digital_info1(
+	struct pcm_phase2 *phase2, const struct v92_info1d *local_info1d)
+{
+	struct pcm_phase2_info1_exchange exchange;
+
+	if (!pcm_phase2_is_valid(phase2) ||
+	    !v92_info1d_is_valid(local_info1d))
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->startup.protocol != PCM_PROTOCOL_V92 ||
+	    phase2->local_role != V90_DIGITAL_MODEM ||
+	    !ready_for_info1(phase2))
 		return PCM_PHASE2_INVALID_STATE;
-	*phase2 = next;
-	return PCM_PHASE2_OK;
+	if (pcm_phase2_info1_init_v92_digital(
+		    &exchange, &phase2->state.reciprocal_probe,
+		    local_info1d) != PHASE2_INFO1_OK)
+		return PCM_PHASE2_INVALID_STATE;
+	return enter_info1(phase2, &exchange);
 }
 
 enum pcm_phase2_result pcm_phase2_start_analog_info1(
 	struct pcm_phase2 *phase2)
 {
 	struct pcm_phase2_info1_exchange exchange;
-	struct pcm_phase2 next;
 
 	if (!pcm_phase2_is_valid(phase2))
 		return PCM_PHASE2_INVALID_ARGUMENT;
 	if (phase2->local_role != V90_ANALOG_MODEM ||
 	    !ready_for_info1(phase2))
 		return PCM_PHASE2_INVALID_STATE;
-	if (pcm_phase2_info1_init_v90_analog(
-		    &exchange, &phase2->state.reciprocal_probe) !=
+	if ((phase2->startup.protocol == PCM_PROTOCOL_V90 ?
+		     pcm_phase2_info1_init_v90_analog(
+			     &exchange,
+			     &phase2->state.reciprocal_probe) :
+		     pcm_phase2_info1_init_v92_analog(
+			     &exchange,
+			     &phase2->state.reciprocal_probe)) !=
 	    PHASE2_INFO1_OK)
 		return PCM_PHASE2_INVALID_STATE;
-	next = *phase2;
-	next.state.info1 = exchange;
-	next.stage = PCM_PHASE2_INFO1;
-	if (!pcm_phase2_is_valid(&next))
-		return PCM_PHASE2_INVALID_STATE;
-	*phase2 = next;
-	return PCM_PHASE2_OK;
+	return enter_info1(phase2, &exchange);
 }
 
-enum pcm_phase2_result pcm_phase2_reply_analog(
+enum pcm_phase2_result pcm_phase2_reply_conventional(
 	struct pcm_phase2 *phase2, const struct v90_info1a *local_info1a)
 {
 	struct pcm_phase2 next;
@@ -348,6 +551,30 @@ enum pcm_phase2_result pcm_phase2_reply_analog(
 	return PCM_PHASE2_OK;
 }
 
+enum pcm_phase2_result pcm_phase2_reply_pcm(
+	struct pcm_phase2 *phase2, const struct v92_pcm_info1a *local_info1a)
+{
+	struct pcm_phase2 next;
+
+	if (!pcm_phase2_is_valid(phase2) ||
+	    !v92_pcm_info1a_is_valid(local_info1a))
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->startup.protocol != PCM_PROTOCOL_V92 ||
+	    phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_INFO1 ||
+	    phase2->local_role != V90_ANALOG_MODEM ||
+	    phase2->state.info1.control.phase !=
+		    PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED)
+		return PCM_PHASE2_INVALID_STATE;
+	next = *phase2;
+	if (pcm_phase2_info1_reply_pcm(
+		    &next.state.info1, local_info1a) != PHASE2_INFO1_OK ||
+	    !pcm_phase2_is_valid(&next))
+		return PCM_PHASE2_INVALID_STATE;
+	*phase2 = next;
+	return PCM_PHASE2_OK;
+}
+
 enum pcm_phase2_result pcm_phase2_peer_info1d(
 	const struct pcm_phase2 *phase2, struct v34_info1c *peer_info1d)
 {
@@ -358,7 +585,9 @@ enum pcm_phase2_result pcm_phase2_peer_info1d(
 	    phase2->local_role != V90_ANALOG_MODEM ||
 	    !phase2->state.info1.digital_record_stored)
 		return PCM_PHASE2_INVALID_STATE;
-	*peer_info1d = phase2->state.info1.digital.record.v90;
+	*peer_info1d = phase2->state.info1.protocol == PCM_PROTOCOL_V90 ?
+			       phase2->state.info1.digital.record.v90 :
+			       phase2->state.info1.digital.record.v92.v34;
 	return PCM_PHASE2_OK;
 }
 
@@ -370,9 +599,40 @@ enum pcm_phase2_result pcm_phase2_peer_info1a(
 	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
 	    phase2->stage != PCM_PHASE2_INFO1 ||
 	    phase2->local_role != V90_DIGITAL_MODEM ||
-	    !phase2->state.info1.analog_record_stored)
+	    !phase2->state.info1.analog_record_stored ||
+	    phase2->state.info1.analog.upstream != PCM_UPSTREAM_V34)
 		return PCM_PHASE2_INVALID_STATE;
 	*peer_info1a = phase2->state.info1.analog.record.conventional;
+	return PCM_PHASE2_OK;
+}
+
+enum pcm_phase2_result pcm_phase2_peer_v92_info1d(
+	const struct pcm_phase2 *phase2, struct v92_info1d *peer_info1d)
+{
+	if (!pcm_phase2_is_valid(phase2) || peer_info1d == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_INFO1 ||
+	    phase2->local_role != V90_ANALOG_MODEM ||
+	    phase2->state.info1.protocol != PCM_PROTOCOL_V92 ||
+	    !phase2->state.info1.digital_record_stored)
+		return PCM_PHASE2_INVALID_STATE;
+	*peer_info1d = phase2->state.info1.digital.record.v92;
+	return PCM_PHASE2_OK;
+}
+
+enum pcm_phase2_result pcm_phase2_peer_pcm_info1a(
+	const struct pcm_phase2 *phase2, struct v92_pcm_info1a *peer_info1a)
+{
+	if (!pcm_phase2_is_valid(phase2) || peer_info1a == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_INFO1 ||
+	    phase2->local_role != V90_DIGITAL_MODEM ||
+	    !phase2->state.info1.analog_record_stored ||
+	    phase2->state.info1.analog.upstream != PCM_UPSTREAM_PCM)
+		return PCM_PHASE2_INVALID_STATE;
+	*peer_info1a = phase2->state.info1.analog.record.pcm;
 	return PCM_PHASE2_OK;
 }
 
@@ -382,6 +642,16 @@ static void fail_internal(
 	phase2->failure = PCM_PHASE2_FAILURE_INTERNAL;
 	event->kind = PCM_PHASE2_EVENT_FAILED;
 	event->failure = phase2->failure;
+}
+
+static bool select_startup(struct pcm_phase2 *phase2)
+{
+	struct pcm_startup_selection selected;
+
+	if (!derive_startup(phase2, &selected))
+		return false;
+	phase2->startup = selected;
+	return true;
 }
 
 static bool enter_initial_probe(
@@ -451,6 +721,8 @@ static bool sample_ranging(
 	if (child.exchange_event.peer_info0_event == PCM_PEER_INFO0_RECEIVED) {
 		phase2->peer_info0 = child.exchange_event.peer_info0;
 		phase2->peer_info0_stored = true;
+		if (!select_startup(phase2))
+			return false;
 	}
 	switch (child.kind) {
 	case PHASE2_RANGING_NO_EVENT:
