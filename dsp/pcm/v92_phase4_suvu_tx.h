@@ -22,8 +22,9 @@ enum v92_phase4_suvu_tx_result {
 };
 
 /* Own a canonical SUVu record and the continuous Phase 4 modulation state.
- * The first record begins only at an aligned initial-TRN2u handoff. Repeated
- * records preserve GPA scrambler and differential-sign history. */
+ * The first record begins only at a procedure-valid aligned initial-TRN2u
+ * handoff. Repeated records preserve GPA scrambler and differential-sign
+ * history. */
 struct v92_phase4_suvu_tx {
 	struct v92_phase4_record_tx record;
 };
@@ -31,7 +32,8 @@ struct v92_phase4_suvu_tx {
 enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_init(
 	struct v92_phase4_suvu_tx *tx,
 	const struct v92_pcm_phase4_trn2u *completed_trn2u,
-	const struct v92_suvu_parameters *parameters);
+	/* A complete peer status permits handoff before 12000 symbols. */
+	bool received_suvd, const struct v92_suvu_parameters *parameters);
 bool v92_phase4_suvu_tx_is_valid(
 	const struct v92_phase4_suvu_tx *tx);
 bool v92_phase4_suvu_tx_record_is_complete(

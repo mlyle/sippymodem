@@ -69,7 +69,7 @@ static enum v92_phase4_suvu_tx_result encode_record(
 enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_init(
 	struct v92_phase4_suvu_tx *tx,
 	const struct v92_pcm_phase4_trn2u *completed_trn2u,
-	const struct v92_suvu_parameters *parameters)
+	bool received_suvd, const struct v92_suvu_parameters *parameters)
 {
 	struct v92_phase4_suvu_tx initialized = { 0 };
 	uint8_t frame[V92_SUVU_FRAME_BYTES];
@@ -78,7 +78,8 @@ enum v92_phase4_suvu_tx_result v92_phase4_suvu_tx_init(
 	if (tx == NULL || completed_trn2u == NULL || parameters == NULL)
 		return V92_PHASE4_SUVU_TX_INVALID_ARGUMENT;
 	if (!v92_pcm_phase4_trn2u_is_valid(completed_trn2u) ||
-	    !v92_pcm_phase4_trn2u_can_handoff(completed_trn2u))
+	    !v92_pcm_phase4_trn2u_can_handoff(
+		    completed_trn2u, received_suvd))
 		return V92_PHASE4_SUVU_TX_INVALID_STATE;
 	result = encode_record(
 		parameters, completed_trn2u->modulator.constellation, frame);

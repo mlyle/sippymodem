@@ -46,7 +46,7 @@ static bool finish_training(
 			      V92_PCM_PHASE4_TRN2U_OK,
 		      "SUVu predecessor failed at symbol %u", symbol);
 	}
-	CHECK(v92_pcm_phase4_trn2u_can_handoff(trn2u),
+	CHECK(v92_pcm_phase4_trn2u_can_handoff(trn2u, false),
 	      "SUVu predecessor did not reach its aligned handoff");
 	return true;
 }
@@ -133,7 +133,7 @@ static bool test_continuous_records(void)
 				      &trn2u, constellations[selection],
 				      previous_sign) &&
 			      v92_phase4_suvu_tx_init(
-				      &tx, &trn2u, &records[0]) ==
+				      &tx, &trn2u, false, &records[0]) ==
 				      V92_PHASE4_SUVU_TX_OK &&
 			      tx.record.bit_index == 0u &&
 			      modulators_are_equal(
@@ -164,6 +164,8 @@ static bool test_contracts(void)
 		.prefilter_level_db_q2_2 = 16,
 	};
 	struct v92_pcm_phase4_trn2u trn2u;
+	struct v92_phase4_suvu_tx early_tx;
+	struct v92_phase4_suvu_tx early_before;
 	struct v92_phase4_suvu_tx tx;
 	struct v92_phase4_suvu_tx before;
 	struct v92_phase4_modulator handoff;
@@ -177,26 +179,44 @@ static bool test_contracts(void)
 
 	memset(&tx, 0xa5, sizeof(tx));
 	before = tx;
-	CHECK(v92_phase4_suvu_tx_init(NULL, NULL, NULL) ==
+	CHECK(v92_phase4_suvu_tx_init(NULL, NULL, false, NULL) ==
 		      V92_PHASE4_SUVU_TX_INVALID_ARGUMENT &&
-	      v92_phase4_suvu_tx_init(&tx, NULL, &valid) ==
+	      v92_phase4_suvu_tx_init(&tx, NULL, false, &valid) ==
 		      V92_PHASE4_SUVU_TX_INVALID_ARGUMENT &&
 	      memcmp(&tx, &before, sizeof(tx)) == 0,
 	      "invalid SUVu initialization changed its destination");
 	CHECK(v92_pcm_phase4_trn2u_init(
 		      &trn2u, V92_CONSTELLATION_4_POINT, 0u, TEST_LU) ==
 		      V92_PCM_PHASE4_TRN2U_OK &&
-	      v92_phase4_suvu_tx_init(&tx, &trn2u, &valid) ==
+	      v92_phase4_suvu_tx_init(&tx, &trn2u, false, &valid) ==
 		      V92_PHASE4_SUVU_TX_INVALID_STATE &&
 	      memcmp(&tx, &before, sizeof(tx)) == 0,
 	      "premature SUVu handoff changed its destination");
+	for (uint32_t symbol = 0;
+	     symbol < V92_PCM_PHASE4_TRN2U_ALIGNMENT; ++symbol) {
+		int16_t generated;
+
+		CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &generated) ==
+			      V92_PCM_PHASE4_TRN2U_OK,
+		      "early SUVd predecessor failed at symbol %u", symbol);
+	}
+	memset(&early_tx, 0xa5, sizeof(early_tx));
+	early_before = early_tx;
+	CHECK(v92_phase4_suvu_tx_init(
+		      &early_tx, &trn2u, false, &valid) ==
+		      V92_PHASE4_SUVU_TX_INVALID_STATE &&
+	      memcmp(&early_tx, &early_before, sizeof(early_tx)) == 0 &&
+	      v92_phase4_suvu_tx_init(
+		      &early_tx, &trn2u, true, &valid) ==
+		      V92_PHASE4_SUVU_TX_OK,
+	      "peer SUVd did not permit an aligned early handoff");
 	CHECK(finish_training(
 		      &trn2u, V92_CONSTELLATION_4_POINT, 0u),
 	      "SUVu contract predecessor failed");
-	CHECK(v92_phase4_suvu_tx_init(&tx, &trn2u, &invalid) ==
+	CHECK(v92_phase4_suvu_tx_init(&tx, &trn2u, false, &invalid) ==
 		      V92_PHASE4_SUVU_TX_INVALID_PARAMETERS &&
 	      memcmp(&tx, &before, sizeof(tx)) == 0 &&
-	      v92_phase4_suvu_tx_init(&tx, &trn2u, &valid) ==
+	      v92_phase4_suvu_tx_init(&tx, &trn2u, false, &valid) ==
 		      V92_PHASE4_SUVU_TX_OK,
 	      "SUVu parameter validation was not transactional");
 	before = tx;

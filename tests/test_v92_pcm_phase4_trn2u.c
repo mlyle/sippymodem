@@ -144,19 +144,25 @@ static bool test_initial_boundary(void)
 			      &trn2u, constellations[selection], 1u,
 			      TEST_LU) == V92_PCM_PHASE4_TRN2U_OK,
 		      "TRN2u boundary did not initialize");
+		CHECK(!v92_pcm_phase4_trn2u_can_handoff(&trn2u, true),
+		      "zero-length TRN2u allowed a peer-triggered handoff");
 		for (uint32_t count = 1;
 		     count <= V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS +
 			      V92_PCM_PHASE4_TRN2U_ALIGNMENT;
 		     ++count) {
 			int16_t sample;
-			bool expected =
+			bool timeout_expected =
 				count >= V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
+				count % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
+			bool peer_expected =
 				count % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
 
 			CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &sample) ==
 				      V92_PCM_PHASE4_TRN2U_OK &&
-			      v92_pcm_phase4_trn2u_can_handoff(&trn2u) ==
-				      expected,
+			      v92_pcm_phase4_trn2u_can_handoff(
+				      &trn2u, false) == timeout_expected &&
+			      v92_pcm_phase4_trn2u_can_handoff(
+				      &trn2u, true) == peer_expected,
 			      "TRN2u handoff boundary differed at %u", count);
 		}
 	}
@@ -194,7 +200,7 @@ static bool test_contracts(void)
 	trn2u.emitted_symbols = UINT32_MAX;
 	before = trn2u;
 	CHECK(!v92_pcm_phase4_trn2u_is_valid(NULL) &&
-	      !v92_pcm_phase4_trn2u_can_handoff(NULL) &&
+	      !v92_pcm_phase4_trn2u_can_handoff(NULL, false) &&
 	      v92_pcm_phase4_trn2u_next(NULL, &sample) ==
 		      V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
 	      v92_pcm_phase4_trn2u_next(&trn2u, NULL) ==
