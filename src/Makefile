@@ -263,8 +263,8 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_probe_turnaround.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_reciprocal_probe.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_info1_exchange.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2_info1_handoff.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase2.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_info1_handoff.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_encoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_transmitter.c \

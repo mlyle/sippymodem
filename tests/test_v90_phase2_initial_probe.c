@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
-#include <v90_phase2.h>
-#include <v90_phase2_info1_handoff.h>
+#include <pcm_phase2.h>
+#include <pcm_phase2_info1_handoff.h>
 #include <v90_phase2_initial_probe.h>
 #include <pcm_phase2_info1_exchange.h>
 #include <v90_phase2_probe_turnaround.h>
@@ -767,8 +767,8 @@ static bool check_phase2_controller(enum test_codec codec)
 	struct v90_info0d digital_info = digital_capabilities(codec);
 	struct v34_info1c info1d = digital_info1();
 	struct v90_info1a info1a = analog_info1();
-	struct v90_phase2 analog;
-	struct v90_phase2 digital;
+	struct pcm_phase2 analog;
+	struct pcm_phase2 digital;
 	struct test_delay_line analog_to_digital = { 0 };
 	struct test_delay_line digital_to_analog = { 0 };
 	struct v34_phase2_probe_receiver_measurement analog_measurement;
@@ -797,31 +797,31 @@ static bool check_phase2_controller(enum test_codec codec)
 	size_t analog_sent = SIZE_MAX;
 	size_t digital_received = SIZE_MAX;
 
-	CHECK(v90_phase2_init_analog(
-		      &analog, TEST_AMPLITUDE, &analog_info) == V90_PHASE2_OK &&
-	      v90_phase2_init_digital(
-		      &digital, TEST_AMPLITUDE, &digital_info) == V90_PHASE2_OK,
+	CHECK(pcm_phase2_init_analog(
+		      &analog, TEST_AMPLITUDE, &analog_info) == PCM_PHASE2_OK &&
+	      pcm_phase2_init_digital(
+		      &digital, TEST_AMPLITUDE, &digital_info) == PCM_PHASE2_OK,
 	      "V.90 Phase 2 probe controllers did not initialize");
 	memset(&untouched_measurement, 0xa5, sizeof(untouched_measurement));
 	untouched_before = untouched_measurement;
-	CHECK(v90_phase2_measure_remote_probe(
+	CHECK(pcm_phase2_measure_remote_probe(
 		      &analog, &untouched_measurement) ==
-		      V90_PHASE2_INVALID_STATE &&
+		      PCM_PHASE2_INVALID_STATE &&
 	      memcmp(
 		      &untouched_measurement, &untouched_before,
 		      sizeof(untouched_measurement)) == 0,
 	      "premature V.90 probe access mutated its destination");
 	memset(&untouched_selection, 0xa5, sizeof(untouched_selection));
 	untouched_selection_before = untouched_selection;
-	CHECK(v90_phase2_info1_handoff(
+	CHECK(pcm_phase2_info1_handoff(
 		      &analog, &untouched_selection) ==
 		      PCM_INFO1_INVALID_RECORD &&
 	      memcmp(
 		      &untouched_selection, &untouched_selection_before,
 		      sizeof(untouched_selection)) == 0 &&
-	      v90_phase2_info1_handoff(NULL, &untouched_selection) ==
+	      pcm_phase2_info1_handoff(NULL, &untouched_selection) ==
 		      PCM_INFO1_INVALID_ARGUMENT &&
-	      v90_phase2_info1_handoff(&analog, NULL) ==
+	      pcm_phase2_info1_handoff(&analog, NULL) ==
 		      PCM_INFO1_INVALID_ARGUMENT,
 	      "rejected V.90 INFO1 handoff mutated its destination");
 	memset(&untouched_entry, 0xa5, sizeof(untouched_entry));
@@ -836,17 +836,17 @@ static bool check_phase2_controller(enum test_codec codec)
 		      sizeof(untouched_entry)) == 0,
 	      "premature V.90 Phase 3 entry mutated its destination");
 	for (size_t index = 0; index < 4u * TEST_SAMPLE_LIMIT; ++index) {
-		struct v90_phase2_event analog_event;
-		struct v90_phase2_event digital_event;
+		struct pcm_phase2_event analog_event;
+		struct pcm_phase2_event digital_event;
 		int16_t analog_transmit;
 		int16_t digital_transmit;
 
-		CHECK(v90_phase2_sample(
+		CHECK(pcm_phase2_sample(
 			      &analog, delay_line_receive(&digital_to_analog),
-			      &analog_transmit, &analog_event) == V90_PHASE2_OK &&
-		      v90_phase2_sample(
+			      &analog_transmit, &analog_event) == PCM_PHASE2_OK &&
+		      pcm_phase2_sample(
 			      &digital, delay_line_receive(&analog_to_digital),
-			      &digital_transmit, &digital_event) == V90_PHASE2_OK,
+			      &digital_transmit, &digital_event) == PCM_PHASE2_OK,
 		      "V.90 Phase 2 controller failed for codec %d at sample %zu",
 		      codec, index);
 		delay_line_transmit(
@@ -856,25 +856,25 @@ static bool check_phase2_controller(enum test_codec codec)
 			&digital_to_analog,
 			codec_round_trip(digital_transmit, codec));
 		analog_initial |= analog_event.kind ==
-			V90_PHASE2_EVENT_INITIAL_PROBE_STARTED;
+			PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED;
 		digital_initial |= digital_event.kind ==
-			V90_PHASE2_EVENT_INITIAL_PROBE_STARTED;
+			PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED;
 		digital_measured_initial |= digital_event.kind ==
-			V90_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
+			PCM_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 		analog_turnaround |= analog_event.kind ==
-			V90_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
+			PCM_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
 		digital_turnaround |= digital_event.kind ==
-			V90_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
+			PCM_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
 		analog_reciprocal |= analog_event.kind ==
-			V90_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
+			PCM_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
 		digital_reciprocal |= digital_event.kind ==
-			V90_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
+			PCM_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
 		analog_ready |= analog_event.kind ==
-			V90_PHASE2_EVENT_READY_FOR_INFO1;
+			PCM_PHASE2_EVENT_READY_FOR_INFO1;
 		digital_ready |= digital_event.kind ==
-			V90_PHASE2_EVENT_READY_FOR_INFO1;
-		CHECK(analog_event.kind != V90_PHASE2_EVENT_FAILED &&
-		      digital_event.kind != V90_PHASE2_EVENT_FAILED,
+			PCM_PHASE2_EVENT_READY_FOR_INFO1;
+		CHECK(analog_event.kind != PCM_PHASE2_EVENT_FAILED &&
+		      digital_event.kind != PCM_PHASE2_EVENT_FAILED,
 		      "V.90 Phase 2 controller reported a protocol failure");
 		if (analog_ready && digital_ready)
 			break;
@@ -882,27 +882,27 @@ static bool check_phase2_controller(enum test_codec codec)
 	CHECK(analog_initial && digital_initial && digital_measured_initial &&
 	      analog_turnaround && digital_turnaround && analog_reciprocal &&
 	      digital_reciprocal && analog_ready && digital_ready &&
-	      v90_phase2_is_ready_for_info1(&analog) &&
-	      v90_phase2_is_ready_for_info1(&digital) &&
-	      !v90_phase2_has_failed(&analog) &&
-	      !v90_phase2_has_failed(&digital),
+	      pcm_phase2_is_ready_for_info1(&analog) &&
+	      pcm_phase2_is_ready_for_info1(&digital) &&
+	      !pcm_phase2_has_failed(&analog) &&
+	      !pcm_phase2_has_failed(&digital),
 	      "V.90 Phase 2 controller did not retain every probe handoff");
-	CHECK(v90_phase2_start_analog_info1(&analog) == V90_PHASE2_OK &&
-	      v90_phase2_start_digital_info1(&digital, &info1d) ==
-		      V90_PHASE2_OK,
+	CHECK(pcm_phase2_start_analog_info1(&analog) == PCM_PHASE2_OK &&
+	      pcm_phase2_start_digital_info1(&digital, &info1d) ==
+		      PCM_PHASE2_OK,
 	      "V.90 Phase 2 controller did not enter INFO1");
 	for (size_t index = 0; index < 4u * TEST_SAMPLE_LIMIT; ++index) {
-		struct v90_phase2_event analog_event;
-		struct v90_phase2_event digital_event;
+		struct pcm_phase2_event analog_event;
+		struct pcm_phase2_event digital_event;
 		int16_t analog_transmit;
 		int16_t digital_transmit;
 
-		CHECK(v90_phase2_sample(
+		CHECK(pcm_phase2_sample(
 			      &analog, delay_line_receive(&digital_to_analog),
-			      &analog_transmit, &analog_event) == V90_PHASE2_OK &&
-		      v90_phase2_sample(
+			      &analog_transmit, &analog_event) == PCM_PHASE2_OK &&
+		      pcm_phase2_sample(
 			      &digital, delay_line_receive(&analog_to_digital),
-			      &digital_transmit, &digital_event) == V90_PHASE2_OK,
+			      &digital_transmit, &digital_event) == PCM_PHASE2_OK,
 		      "owned V.90 INFO1 failed for codec %d at sample %zu",
 		      codec, index);
 		delay_line_transmit(
@@ -911,42 +911,42 @@ static bool check_phase2_controller(enum test_codec codec)
 		delay_line_transmit(
 			&digital_to_analog,
 			codec_round_trip(digital_transmit, codec));
-		if (digital_event.kind == V90_PHASE2_EVENT_LOCAL_INFO1D_SENT)
+		if (digital_event.kind == PCM_PHASE2_EVENT_LOCAL_INFO1D_SENT)
 			digital_sent = index;
-		if (analog_event.kind == V90_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
+		if (analog_event.kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
 			analog_received = index;
-			CHECK(v90_phase2_peer_info1d(&analog, &peer_info1d) ==
-				      V90_PHASE2_OK &&
+			CHECK(pcm_phase2_peer_info1d(&analog, &peer_info1d) ==
+				      PCM_PHASE2_OK &&
 			      info1d_equal(&peer_info1d, &info1d) &&
-			      v90_phase2_reply_analog(&analog, &info1a) ==
-				      V90_PHASE2_OK,
+			      pcm_phase2_reply_analog(&analog, &info1a) ==
+				      PCM_PHASE2_OK,
 			      "analog controller did not retain and answer INFO1d");
 		}
-		if (analog_event.kind == V90_PHASE2_EVENT_LOCAL_INFO1A_SENT)
+		if (analog_event.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT)
 			analog_sent = index;
-		if (digital_event.kind == V90_PHASE2_EVENT_PEER_INFO1A_RECEIVED)
+		if (digital_event.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED)
 			digital_received = index;
-		CHECK(analog_event.kind != V90_PHASE2_EVENT_FAILED &&
-		      digital_event.kind != V90_PHASE2_EVENT_FAILED,
+		CHECK(analog_event.kind != PCM_PHASE2_EVENT_FAILED &&
+		      digital_event.kind != PCM_PHASE2_EVENT_FAILED,
 		      "owned V.90 INFO1 reported a protocol failure");
-		if (v90_phase2_is_ready_for_phase3(&analog) &&
-		    v90_phase2_is_ready_for_phase3(&digital))
+		if (pcm_phase2_is_ready_for_phase3(&analog) &&
+		    pcm_phase2_is_ready_for_phase3(&digital))
 			break;
 	}
 	CHECK(digital_sent < analog_received && analog_received < analog_sent &&
 	      analog_sent < digital_received &&
-	      v90_phase2_is_ready_for_phase3(&analog) &&
-	      v90_phase2_is_ready_for_phase3(&digital) &&
-	      v90_phase2_peer_info1a(&digital, &peer_info1a) == V90_PHASE2_OK &&
+	      pcm_phase2_is_ready_for_phase3(&analog) &&
+	      pcm_phase2_is_ready_for_phase3(&digital) &&
+	      pcm_phase2_peer_info1a(&digital, &peer_info1a) == PCM_PHASE2_OK &&
 	      info1a_equal(&peer_info1a, &info1a),
 	      "V.90 Phase 2 controller did not complete INFO1 in order");
 	{
 		struct pcm_info1_selection analog_selection;
 		struct pcm_info1_selection digital_selection;
 
-		CHECK(v90_phase2_info1_handoff(
+		CHECK(pcm_phase2_info1_handoff(
 			      &analog, &analog_selection) == PCM_INFO1_OK &&
-		      v90_phase2_info1_handoff(
+		      pcm_phase2_info1_handoff(
 			      &digital, &digital_selection) == PCM_INFO1_OK &&
 		      pcm_info1_selection_is_valid(&analog_selection) &&
 		      pcm_info1_selection_is_valid(&digital_selection) &&
@@ -992,19 +992,19 @@ static bool check_phase2_controller(enum test_codec codec)
 		      "completed Phase 2 did not form matching Phase 3 entries");
 	}
 	{
-		struct v90_phase2_event event = {
-			.kind = V90_PHASE2_EVENT_FAILED,
+		struct pcm_phase2_event event = {
+			.kind = PCM_PHASE2_EVENT_FAILED,
 		};
 		int16_t output = 1234;
 
-		CHECK(v90_phase2_sample(&analog, 0, &output, &event) ==
-			      V90_PHASE2_OK &&
-		      output == 0 && event.kind == V90_PHASE2_EVENT_NONE &&
-		      v90_phase2_is_ready_for_phase3(&analog),
+		CHECK(pcm_phase2_sample(&analog, 0, &output, &event) ==
+			      PCM_PHASE2_OK &&
+		      output == 0 && event.kind == PCM_PHASE2_EVENT_NONE &&
+		      pcm_phase2_is_ready_for_phase3(&analog),
 		      "completed V.90 Phase 2 state was not silent and stable");
 	}
-	CHECK(v90_phase2_peer_info0d(&analog, &peer_info0d) == V90_PHASE2_OK &&
-	      v90_phase2_peer_info0a(&digital, &peer_info0a) == V90_PHASE2_OK &&
+	CHECK(pcm_phase2_peer_info0d(&analog, &peer_info0d) == PCM_PHASE2_OK &&
+	      pcm_phase2_peer_info0a(&digital, &peer_info0a) == PCM_PHASE2_OK &&
 	      peer_info0d.pcm_law == digital_info.pcm_law &&
 	      peer_info0d.nominal_transmit_power ==
 		      digital_info.nominal_transmit_power &&
@@ -1013,10 +1013,10 @@ static bool check_phase2_controller(enum test_codec codec)
 	      peer_info0a.maximum_symbol_rate_difference_steps ==
 		      analog_info.maximum_symbol_rate_difference_steps,
 	      "V.90 Phase 2 controller lost a typed INFO0 record");
-	CHECK(v90_phase2_measure_remote_probe(
-		      &analog, &analog_measurement) == V90_PHASE2_OK &&
-	      v90_phase2_measure_remote_probe(
-		      &digital, &digital_measurement) == V90_PHASE2_OK &&
+	CHECK(pcm_phase2_measure_remote_probe(
+		      &analog, &analog_measurement) == PCM_PHASE2_OK &&
+	      pcm_phase2_measure_remote_probe(
+		      &digital, &digital_measurement) == PCM_PHASE2_OK &&
 	      v34_phase2_probe_measurement_is_valid(&analog_measurement) &&
 	      v34_phase2_probe_measurement_is_valid(&digital_measurement) &&
 	      analog_measurement.l1.harmonics[0].mean_square > 0.0 &&

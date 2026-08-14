@@ -5,7 +5,7 @@
 
 #include "v90_analog_path.h"
 #include "v90_digital_path.h"
-#include "v90_phase2.h"
+#include "pcm_phase2.h"
 #include "v90_phase3_analog_station.h"
 #include "v90_phase3_digital_station.h"
 
@@ -121,7 +121,7 @@ union v90_call_data_path_state {
 };
 
 union v90_call_state {
-	struct v90_phase2 phase2;
+	struct pcm_phase2 phase2;
 	union v90_call_phase3_state phase3;
 	union v90_call_mixed_state mixed;
 	union v90_call_phase4_state phase4;
@@ -133,7 +133,7 @@ union v90_call_state {
 struct v90_call_observation {
 	enum v90_call_stage processed;
 	enum v90_call_stage next;
-	struct v90_phase2_event phase2;
+	struct pcm_phase2_event phase2;
 };
 
 struct v90_call_data_sources {

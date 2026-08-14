@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "v90_phase2.h"
+#include "pcm_phase2.h"
 
 #include <stddef.h>
 
@@ -9,13 +9,13 @@ static bool role_is_valid(enum v90_modem_role role)
 	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
 }
 
-static bool failure_is_valid(enum v90_phase2_failure failure)
+static bool failure_is_valid(enum pcm_phase2_failure failure)
 {
-	return failure >= V90_PHASE2_FAILURE_NONE &&
-	       failure <= V90_PHASE2_FAILURE_INTERNAL;
+	return failure >= PCM_PHASE2_FAILURE_NONE &&
+	       failure <= PCM_PHASE2_FAILURE_INTERNAL;
 }
 
-static bool local_info0_is_valid(const struct v90_phase2 *phase2)
+static bool local_info0_is_valid(const struct pcm_phase2 *phase2)
 {
 	if (phase2->local_role == V90_ANALOG_MODEM)
 		return v90_info0_is_valid(&phase2->local_info0.analog) &&
@@ -24,7 +24,7 @@ static bool local_info0_is_valid(const struct v90_phase2 *phase2)
 	       !phase2->local_info0.digital.common.acknowledges_peer_info0;
 }
 
-static bool peer_info0_is_valid(const struct v90_phase2 *phase2)
+static bool peer_info0_is_valid(const struct pcm_phase2 *phase2)
 {
 	if (!phase2->peer_info0_stored)
 		return true;
@@ -33,37 +33,37 @@ static bool peer_info0_is_valid(const struct v90_phase2 *phase2)
 		       v90_info0_is_valid(&phase2->peer_info0.analog);
 }
 
-static bool remote_probe_state_is_valid(const struct v90_phase2 *phase2)
+static bool remote_probe_state_is_valid(const struct pcm_phase2 *phase2)
 {
 	if (phase2->remote_probe_stored &&
 	    !v34_phase2_probe_measurement_is_valid(&phase2->remote_probe))
 		return false;
-	if (phase2->stage == V90_PHASE2_RANGING)
+	if (phase2->stage == PCM_PHASE2_RANGING)
 		return !phase2->remote_probe_stored;
-	if (phase2->stage == V90_PHASE2_INFO1)
+	if (phase2->stage == PCM_PHASE2_INFO1)
 		return phase2->remote_probe_stored;
 	if (phase2->local_role == V90_ANALOG_MODEM)
-		return phase2->stage == V90_PHASE2_RECIPROCAL_PROBE ||
+		return phase2->stage == PCM_PHASE2_RECIPROCAL_PROBE ||
 		       !phase2->remote_probe_stored;
-	return phase2->stage == V90_PHASE2_INITIAL_PROBE ||
+	return phase2->stage == PCM_PHASE2_INITIAL_PROBE ||
 	       phase2->remote_probe_stored;
 }
 
-static enum v90_modem_role child_role(const struct v90_phase2 *phase2)
+static enum v90_modem_role child_role(const struct pcm_phase2 *phase2)
 {
 	switch (phase2->stage) {
-	case V90_PHASE2_RANGING:
+	case PCM_PHASE2_RANGING:
 		return phase2->state.ranging.info0_exchange.local_role;
-	case V90_PHASE2_INITIAL_PROBE:
+	case PCM_PHASE2_INITIAL_PROBE:
 		return phase2->state.initial_probe.ranging.info0_exchange
 			.local_role;
-	case V90_PHASE2_PROBE_TURNAROUND:
+	case PCM_PHASE2_PROBE_TURNAROUND:
 		return phase2->state.turnaround.initial_probe.ranging
 			.info0_exchange.local_role;
-	case V90_PHASE2_RECIPROCAL_PROBE:
+	case PCM_PHASE2_RECIPROCAL_PROBE:
 		return phase2->state.reciprocal_probe.turnaround.initial_probe
 			.ranging.info0_exchange.local_role;
-	case V90_PHASE2_INFO1:
+	case PCM_PHASE2_INFO1:
 		return phase2->state.info1.control.signal_role ==
 			       PHASE2_SIGNAL_A ?
 			       V90_ANALOG_MODEM : V90_DIGITAL_MODEM;
@@ -71,88 +71,88 @@ static enum v90_modem_role child_role(const struct v90_phase2 *phase2)
 	return (enum v90_modem_role)-1;
 }
 
-static enum v90_phase2_failure initial_probe_failure(
+static enum pcm_phase2_failure initial_probe_failure(
 	enum phase2_initial_probe_failure failure)
 {
 	switch (failure) {
 	case PHASE2_INITIAL_PROBE_NO_FAILURE:
-		return V90_PHASE2_FAILURE_NONE;
+		return PCM_PHASE2_FAILURE_NONE;
 	case PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND:
-		return V90_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
+		return PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
 	case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
-		return V90_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
+		return PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 	case PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT:
-		return V90_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT;
+		return PCM_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT;
 	}
-	return V90_PHASE2_FAILURE_INTERNAL;
+	return PCM_PHASE2_FAILURE_INTERNAL;
 }
 
-static enum v90_phase2_failure active_failure(
-	const struct v90_phase2 *phase2)
+static enum pcm_phase2_failure active_failure(
+	const struct pcm_phase2 *phase2)
 {
 	switch (phase2->stage) {
-	case V90_PHASE2_RANGING:
+	case PCM_PHASE2_RANGING:
 		return phase2->state.ranging.control.phase ==
 			       PHASE2_RANGING_TIMED_OUT ?
-			       V90_PHASE2_FAILURE_RANGING_TIMEOUT :
-			       V90_PHASE2_FAILURE_NONE;
-	case V90_PHASE2_INITIAL_PROBE:
+			       PCM_PHASE2_FAILURE_RANGING_TIMEOUT :
+			       PCM_PHASE2_FAILURE_NONE;
+	case PCM_PHASE2_INITIAL_PROBE:
 		return initial_probe_failure(
 			phase2->state.initial_probe.control.failure);
-	case V90_PHASE2_PROBE_TURNAROUND:
+	case PCM_PHASE2_PROBE_TURNAROUND:
 		return phase2->state.turnaround.control.failure ==
 			       PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT ?
-			       V90_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT :
-			       V90_PHASE2_FAILURE_NONE;
-	case V90_PHASE2_RECIPROCAL_PROBE:
+			       PCM_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT :
+			       PCM_PHASE2_FAILURE_NONE;
+	case PCM_PHASE2_RECIPROCAL_PROBE:
 		switch (phase2->state.reciprocal_probe.control.failure) {
 		case PHASE2_RECIPROCAL_PROBE_NO_FAILURE:
-			return V90_PHASE2_FAILURE_NONE;
+			return PCM_PHASE2_FAILURE_NONE;
 		case PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND:
-			return V90_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
+			return PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
 		case PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT:
-			return V90_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
+			return PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 		}
 		break;
-	case V90_PHASE2_INFO1:
+	case PCM_PHASE2_INFO1:
 		return phase2->state.info1.control.failure ==
 			       PHASE2_INFO1_PEER_TIMEOUT ?
-			       V90_PHASE2_FAILURE_INFO1_TIMEOUT :
-			       V90_PHASE2_FAILURE_NONE;
+			       PCM_PHASE2_FAILURE_INFO1_TIMEOUT :
+			       PCM_PHASE2_FAILURE_NONE;
 	}
-	return V90_PHASE2_FAILURE_INTERNAL;
+	return PCM_PHASE2_FAILURE_INTERNAL;
 }
 
-bool v90_phase2_is_valid(const struct v90_phase2 *phase2)
+bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 {
-	enum v90_phase2_failure child_failure;
+	enum pcm_phase2_failure child_failure;
 	bool child_valid;
 
 	if (phase2 == NULL || !role_is_valid(phase2->local_role) ||
 	    !failure_is_valid(phase2->failure) ||
 	    !local_info0_is_valid(phase2) || !peer_info0_is_valid(phase2) ||
 	    !remote_probe_state_is_valid(phase2) ||
-	    (phase2->stage != V90_PHASE2_RANGING &&
+	    (phase2->stage != PCM_PHASE2_RANGING &&
 	     !phase2->peer_info0_stored))
 		return false;
 	switch (phase2->stage) {
-	case V90_PHASE2_RANGING:
+	case PCM_PHASE2_RANGING:
 		child_valid = v90_phase2_ranging_is_valid(
 			&phase2->state.ranging);
 		break;
-	case V90_PHASE2_INITIAL_PROBE:
+	case PCM_PHASE2_INITIAL_PROBE:
 		child_valid = v90_phase2_initial_probe_is_valid(
 			&phase2->state.initial_probe);
 		break;
-	case V90_PHASE2_PROBE_TURNAROUND:
+	case PCM_PHASE2_PROBE_TURNAROUND:
 		child_valid = v90_phase2_probe_turnaround_is_valid(
 			&phase2->state.turnaround);
 		break;
-	case V90_PHASE2_RECIPROCAL_PROBE:
+	case PCM_PHASE2_RECIPROCAL_PROBE:
 		child_valid = v90_phase2_reciprocal_probe_is_valid(
 			&phase2->state.reciprocal_probe);
 		break;
-	case V90_PHASE2_INFO1:
+	case PCM_PHASE2_INFO1:
 		child_valid = phase2->peer_info0_stored &&
 			      phase2->remote_probe_stored &&
 			      phase2->state.info1.protocol ==
@@ -165,21 +165,21 @@ bool v90_phase2_is_valid(const struct v90_phase2 *phase2)
 	if (!child_valid || child_role(phase2) != phase2->local_role)
 		return false;
 	child_failure = active_failure(phase2);
-	return phase2->failure == V90_PHASE2_FAILURE_INTERNAL ?
-		       child_failure == V90_PHASE2_FAILURE_NONE :
+	return phase2->failure == PCM_PHASE2_FAILURE_INTERNAL ?
+		       child_failure == PCM_PHASE2_FAILURE_NONE :
 		       phase2->failure == child_failure;
 }
 
-bool v90_phase2_has_failed(const struct v90_phase2 *phase2)
+bool pcm_phase2_has_failed(const struct pcm_phase2 *phase2)
 {
-	return v90_phase2_is_valid(phase2) &&
-	       phase2->failure != V90_PHASE2_FAILURE_NONE;
+	return pcm_phase2_is_valid(phase2) &&
+	       phase2->failure != PCM_PHASE2_FAILURE_NONE;
 }
 
-static bool ready_for_info1(const struct v90_phase2 *phase2)
+static bool ready_for_info1(const struct pcm_phase2 *phase2)
 {
-	if (phase2->failure != V90_PHASE2_FAILURE_NONE ||
-	    phase2->stage != V90_PHASE2_RECIPROCAL_PROBE ||
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_RECIPROCAL_PROBE ||
 	    !phase2->remote_probe_stored)
 		return false;
 	return phase2->local_role == V90_DIGITAL_MODEM ?
@@ -189,203 +189,203 @@ static bool ready_for_info1(const struct v90_phase2 *phase2)
 			       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
 }
 
-bool v90_phase2_is_ready_for_info1(const struct v90_phase2 *phase2)
+bool pcm_phase2_is_ready_for_info1(const struct pcm_phase2 *phase2)
 {
-	return v90_phase2_is_valid(phase2) && ready_for_info1(phase2);
+	return pcm_phase2_is_valid(phase2) && ready_for_info1(phase2);
 }
 
-static bool ready_for_phase3(const struct v90_phase2 *phase2)
+static bool ready_for_phase3(const struct pcm_phase2 *phase2)
 {
-	return phase2->failure == V90_PHASE2_FAILURE_NONE &&
-	       phase2->stage == V90_PHASE2_INFO1 &&
+	return phase2->failure == PCM_PHASE2_FAILURE_NONE &&
+	       phase2->stage == PCM_PHASE2_INFO1 &&
 	       phase2->state.info1.control.phase == PHASE2_INFO1_COMPLETE;
 }
 
-bool v90_phase2_is_ready_for_phase3(const struct v90_phase2 *phase2)
+bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2)
 {
-	return v90_phase2_is_valid(phase2) && ready_for_phase3(phase2);
+	return pcm_phase2_is_valid(phase2) && ready_for_phase3(phase2);
 }
 
-enum v90_phase2_result v90_phase2_init_analog(
-	struct v90_phase2 *phase2, int16_t nominal_amplitude,
+enum pcm_phase2_result pcm_phase2_init_analog(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0 *local_info0a)
 {
-	struct v90_phase2 initialized = {
+	struct pcm_phase2 initialized = {
 		.local_role = V90_ANALOG_MODEM,
-		.stage = V90_PHASE2_RANGING,
+		.stage = PCM_PHASE2_RANGING,
 	};
 
 	if (phase2 == NULL || !v90_info0_is_valid(local_info0a))
-		return V90_PHASE2_INVALID_ARGUMENT;
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	initialized.local_info0.analog = *local_info0a;
 	initialized.local_info0.analog.acknowledges_peer_info0 = false;
 	if (v90_phase2_ranging_init_analog(
 		    &initialized.state.ranging, nominal_amplitude,
 		    &initialized.local_info0.analog) != V90_PHASE2_RANGING_OK ||
-	    !v90_phase2_is_valid(&initialized))
-		return V90_PHASE2_INVALID_ARGUMENT;
+	    !pcm_phase2_is_valid(&initialized))
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	*phase2 = initialized;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_init_digital(
-	struct v90_phase2 *phase2, int16_t nominal_amplitude,
+enum pcm_phase2_result pcm_phase2_init_digital(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d)
 {
-	struct v90_phase2 initialized = {
+	struct pcm_phase2 initialized = {
 		.local_role = V90_DIGITAL_MODEM,
-		.stage = V90_PHASE2_RANGING,
+		.stage = PCM_PHASE2_RANGING,
 	};
 
 	if (phase2 == NULL || !v90_info0d_is_valid(local_info0d))
-		return V90_PHASE2_INVALID_ARGUMENT;
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	initialized.local_info0.digital = *local_info0d;
 	initialized.local_info0.digital.common.acknowledges_peer_info0 = false;
 	if (v90_phase2_ranging_init_digital(
 		    &initialized.state.ranging, nominal_amplitude,
 		    &initialized.local_info0.digital) !=
 		    V90_PHASE2_RANGING_OK ||
-	    !v90_phase2_is_valid(&initialized))
-		return V90_PHASE2_INVALID_ARGUMENT;
+	    !pcm_phase2_is_valid(&initialized))
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	*phase2 = initialized;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_peer_info0a(
-	const struct v90_phase2 *phase2, struct v90_info0 *peer_info0a)
+enum pcm_phase2_result pcm_phase2_peer_info0a(
+	const struct pcm_phase2 *phase2, struct v90_info0 *peer_info0a)
 {
-	if (!v90_phase2_is_valid(phase2) || peer_info0a == NULL)
-		return V90_PHASE2_INVALID_ARGUMENT;
+	if (!pcm_phase2_is_valid(phase2) || peer_info0a == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	if (phase2->local_role != V90_DIGITAL_MODEM ||
 	    !phase2->peer_info0_stored)
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	*peer_info0a = phase2->peer_info0.analog;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_peer_info0d(
-	const struct v90_phase2 *phase2, struct v90_info0d *peer_info0d)
+enum pcm_phase2_result pcm_phase2_peer_info0d(
+	const struct pcm_phase2 *phase2, struct v90_info0d *peer_info0d)
 {
-	if (!v90_phase2_is_valid(phase2) || peer_info0d == NULL)
-		return V90_PHASE2_INVALID_ARGUMENT;
+	if (!pcm_phase2_is_valid(phase2) || peer_info0d == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	if (phase2->local_role != V90_ANALOG_MODEM ||
 	    !phase2->peer_info0_stored)
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	*peer_info0d = phase2->peer_info0.digital;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_start_digital_info1(
-	struct v90_phase2 *phase2, const struct v34_info1c *local_info1d)
+enum pcm_phase2_result pcm_phase2_start_digital_info1(
+	struct pcm_phase2 *phase2, const struct v34_info1c *local_info1d)
 {
 	struct pcm_phase2_info1_exchange exchange;
-	struct v90_phase2 next;
+	struct pcm_phase2 next;
 
-	if (!v90_phase2_is_valid(phase2) ||
+	if (!pcm_phase2_is_valid(phase2) ||
 	    !v34_info1c_is_valid(local_info1d))
-		return V90_PHASE2_INVALID_ARGUMENT;
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	if (phase2->local_role != V90_DIGITAL_MODEM ||
 	    !ready_for_info1(phase2))
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	if (pcm_phase2_info1_init_v90_digital(
 		    &exchange, &phase2->state.reciprocal_probe,
 		    local_info1d) != PHASE2_INFO1_OK)
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	next = *phase2;
 	next.state.info1 = exchange;
-	next.stage = V90_PHASE2_INFO1;
-	if (!v90_phase2_is_valid(&next))
-		return V90_PHASE2_INVALID_STATE;
+	next.stage = PCM_PHASE2_INFO1;
+	if (!pcm_phase2_is_valid(&next))
+		return PCM_PHASE2_INVALID_STATE;
 	*phase2 = next;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_start_analog_info1(
-	struct v90_phase2 *phase2)
+enum pcm_phase2_result pcm_phase2_start_analog_info1(
+	struct pcm_phase2 *phase2)
 {
 	struct pcm_phase2_info1_exchange exchange;
-	struct v90_phase2 next;
+	struct pcm_phase2 next;
 
-	if (!v90_phase2_is_valid(phase2))
-		return V90_PHASE2_INVALID_ARGUMENT;
+	if (!pcm_phase2_is_valid(phase2))
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	if (phase2->local_role != V90_ANALOG_MODEM ||
 	    !ready_for_info1(phase2))
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	if (pcm_phase2_info1_init_v90_analog(
 		    &exchange, &phase2->state.reciprocal_probe) !=
 	    PHASE2_INFO1_OK)
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	next = *phase2;
 	next.state.info1 = exchange;
-	next.stage = V90_PHASE2_INFO1;
-	if (!v90_phase2_is_valid(&next))
-		return V90_PHASE2_INVALID_STATE;
+	next.stage = PCM_PHASE2_INFO1;
+	if (!pcm_phase2_is_valid(&next))
+		return PCM_PHASE2_INVALID_STATE;
 	*phase2 = next;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_reply_analog(
-	struct v90_phase2 *phase2, const struct v90_info1a *local_info1a)
+enum pcm_phase2_result pcm_phase2_reply_analog(
+	struct pcm_phase2 *phase2, const struct v90_info1a *local_info1a)
 {
-	struct v90_phase2 next;
+	struct pcm_phase2 next;
 
-	if (!v90_phase2_is_valid(phase2) ||
+	if (!pcm_phase2_is_valid(phase2) ||
 	    !v90_info1a_is_valid(local_info1a))
-		return V90_PHASE2_INVALID_ARGUMENT;
-	if (phase2->failure != V90_PHASE2_FAILURE_NONE ||
-	    phase2->stage != V90_PHASE2_INFO1 ||
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_INFO1 ||
 	    phase2->local_role != V90_ANALOG_MODEM ||
 	    phase2->state.info1.control.phase !=
 		    PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED)
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	next = *phase2;
 	if (pcm_phase2_info1_reply_conventional(
 		    &next.state.info1, local_info1a) != PHASE2_INFO1_OK)
-		return V90_PHASE2_INVALID_STATE;
-	if (!v90_phase2_is_valid(&next))
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
+	if (!pcm_phase2_is_valid(&next))
+		return PCM_PHASE2_INVALID_STATE;
 	*phase2 = next;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_peer_info1d(
-	const struct v90_phase2 *phase2, struct v34_info1c *peer_info1d)
+enum pcm_phase2_result pcm_phase2_peer_info1d(
+	const struct pcm_phase2 *phase2, struct v34_info1c *peer_info1d)
 {
-	if (!v90_phase2_is_valid(phase2) || peer_info1d == NULL)
-		return V90_PHASE2_INVALID_ARGUMENT;
-	if (phase2->failure != V90_PHASE2_FAILURE_NONE ||
-	    phase2->stage != V90_PHASE2_INFO1 ||
+	if (!pcm_phase2_is_valid(phase2) || peer_info1d == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_INFO1 ||
 	    phase2->local_role != V90_ANALOG_MODEM ||
 	    !phase2->state.info1.digital_record_stored)
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	*peer_info1d = phase2->state.info1.digital.record.v90;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_peer_info1a(
-	const struct v90_phase2 *phase2, struct v90_info1a *peer_info1a)
+enum pcm_phase2_result pcm_phase2_peer_info1a(
+	const struct pcm_phase2 *phase2, struct v90_info1a *peer_info1a)
 {
-	if (!v90_phase2_is_valid(phase2) || peer_info1a == NULL)
-		return V90_PHASE2_INVALID_ARGUMENT;
-	if (phase2->failure != V90_PHASE2_FAILURE_NONE ||
-	    phase2->stage != V90_PHASE2_INFO1 ||
+	if (!pcm_phase2_is_valid(phase2) || peer_info1a == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_INFO1 ||
 	    phase2->local_role != V90_DIGITAL_MODEM ||
 	    !phase2->state.info1.analog_record_stored)
-		return V90_PHASE2_INVALID_STATE;
+		return PCM_PHASE2_INVALID_STATE;
 	*peer_info1a = phase2->state.info1.analog.record.conventional;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
 static void fail_internal(
-	struct v90_phase2 *phase2, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, struct pcm_phase2_event *event)
 {
-	phase2->failure = V90_PHASE2_FAILURE_INTERNAL;
-	event->kind = V90_PHASE2_EVENT_FAILED;
+	phase2->failure = PCM_PHASE2_FAILURE_INTERNAL;
+	event->kind = PCM_PHASE2_EVENT_FAILED;
 	event->failure = phase2->failure;
 }
 
 static bool enter_initial_probe(
-	struct v90_phase2 *phase2, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, struct pcm_phase2_event *event)
 {
 	const struct pcm_phase2_info0_exchange *exchange =
 		&phase2->state.ranging.info0_exchange;
@@ -399,13 +399,13 @@ static bool enter_initial_probe(
 	phase2->peer_info0 = exchange->peer_info0;
 	phase2->peer_info0_stored = true;
 	phase2->state.initial_probe = next;
-	phase2->stage = V90_PHASE2_INITIAL_PROBE;
-	event->kind = V90_PHASE2_EVENT_INITIAL_PROBE_STARTED;
+	phase2->stage = PCM_PHASE2_INITIAL_PROBE;
+	event->kind = PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED;
 	return true;
 }
 
 static bool enter_turnaround(
-	struct v90_phase2 *phase2, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, struct pcm_phase2_event *event)
 {
 	struct v90_phase2_probe_turnaround next;
 
@@ -414,13 +414,13 @@ static bool enter_turnaround(
 	    PHASE2_PROBE_TURNAROUND_OK)
 		return false;
 	phase2->state.turnaround = next;
-	phase2->stage = V90_PHASE2_PROBE_TURNAROUND;
-	event->kind = V90_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
+	phase2->stage = PCM_PHASE2_PROBE_TURNAROUND;
+	event->kind = PCM_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
 	return true;
 }
 
 static bool enter_reciprocal_probe(
-	struct v90_phase2 *phase2, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, struct pcm_phase2_event *event)
 {
 	struct v90_phase2_reciprocal_probe next;
 
@@ -429,14 +429,14 @@ static bool enter_reciprocal_probe(
 	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
 	phase2->state.reciprocal_probe = next;
-	phase2->stage = V90_PHASE2_RECIPROCAL_PROBE;
-	event->kind = V90_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
+	phase2->stage = PCM_PHASE2_RECIPROCAL_PROBE;
+	event->kind = PCM_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
 	return true;
 }
 
 static bool sample_ranging(
-	struct v90_phase2 *phase2, int16_t received_sample,
-	int16_t *transmit_sample, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
 	struct v90_phase2_ranging_event child;
 	enum phase2_ranging_event_kind ready =
@@ -456,7 +456,7 @@ static bool sample_ranging(
 	case PHASE2_RANGING_NO_EVENT:
 		return true;
 	case PHASE2_ROUND_TRIP_DELAY_MEASURED:
-		event->kind = V90_PHASE2_EVENT_ROUND_TRIP_DELAY;
+		event->kind = PCM_PHASE2_EVENT_ROUND_TRIP_DELAY;
 		event->round_trip_delay_samples =
 			child.round_trip_delay_samples;
 		return true;
@@ -464,8 +464,8 @@ static bool sample_ranging(
 	case PHASE2_PROBE_TRANSMIT_READY:
 		return child.kind == ready && enter_initial_probe(phase2, event);
 	case PHASE2_RANGING_TIMEOUT:
-		phase2->failure = V90_PHASE2_FAILURE_RANGING_TIMEOUT;
-		event->kind = V90_PHASE2_EVENT_FAILED;
+		phase2->failure = PCM_PHASE2_FAILURE_RANGING_TIMEOUT;
+		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		return true;
 	}
@@ -473,8 +473,8 @@ static bool sample_ranging(
 }
 
 static bool sample_initial_probe(
-	struct v90_phase2 *phase2, int16_t received_sample,
-	int16_t *transmit_sample, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
 	struct phase2_initial_probe_event child;
 	enum phase2_initial_probe_event_kind ready =
@@ -498,14 +498,14 @@ static bool sample_initial_probe(
 			    &phase2->remote_probe))
 			return false;
 		phase2->remote_probe_stored = true;
-		event->kind = V90_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
+		event->kind = PCM_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 		return true;
 	case PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE:
 	case PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE:
 		return child.kind == ready && enter_turnaround(phase2, event);
 	case PHASE2_INITIAL_PROBE_EVENT_FAILED:
 		phase2->failure = initial_probe_failure(child.failure);
-		event->kind = V90_PHASE2_EVENT_FAILED;
+		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		return true;
 	}
@@ -513,8 +513,8 @@ static bool sample_initial_probe(
 }
 
 static bool sample_turnaround(
-	struct v90_phase2 *phase2, int16_t received_sample,
-	int16_t *transmit_sample, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
 	struct phase2_probe_turnaround_event child;
 	enum phase2_probe_turnaround_event_kind ready =
@@ -534,8 +534,8 @@ static bool sample_turnaround(
 		return child.kind == ready &&
 		       enter_reciprocal_probe(phase2, event);
 	case PHASE2_PROBE_TURNAROUND_EVENT_FAILED:
-		phase2->failure = V90_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT;
-		event->kind = V90_PHASE2_EVENT_FAILED;
+		phase2->failure = PCM_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT;
+		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		return true;
 	}
@@ -543,8 +543,8 @@ static bool sample_turnaround(
 }
 
 static bool sample_reciprocal_probe(
-	struct v90_phase2 *phase2, int16_t received_sample,
-	int16_t *transmit_sample, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
 	struct phase2_reciprocal_probe_event child;
 
@@ -564,20 +564,20 @@ static bool sample_reciprocal_probe(
 			    &phase2->remote_probe))
 			return false;
 		phase2->remote_probe_stored = true;
-		event->kind = V90_PHASE2_EVENT_READY_FOR_INFO1;
+		event->kind = PCM_PHASE2_EVENT_READY_FOR_INFO1;
 		return true;
 	case PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED:
 		if (phase2->local_role != V90_DIGITAL_MODEM ||
 		    !phase2->remote_probe_stored)
 			return false;
-		event->kind = V90_PHASE2_EVENT_READY_FOR_INFO1;
+		event->kind = PCM_PHASE2_EVENT_READY_FOR_INFO1;
 		return true;
 	case PHASE2_RECIPROCAL_PROBE_EVENT_FAILED:
 		phase2->failure = child.failure ==
 					  PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND ?
-				  V90_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND :
-				  V90_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
-		event->kind = V90_PHASE2_EVENT_FAILED;
+				  PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND :
+				  PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
+		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		return true;
 	}
@@ -585,8 +585,8 @@ static bool sample_reciprocal_probe(
 }
 
 static bool sample_info1(
-	struct v90_phase2 *phase2, int16_t received_sample,
-	int16_t *transmit_sample, struct v90_phase2_event *event)
+	struct pcm_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
 	struct pcm_phase2_info1_event child;
 
@@ -598,122 +598,122 @@ static bool sample_info1(
 	case PCM_PHASE2_INFO1_EVENT_NONE:
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT:
-		event->kind = V90_PHASE2_EVENT_LOCAL_INFO1D_SENT;
+		event->kind = PCM_PHASE2_EVENT_LOCAL_INFO1D_SENT;
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_PEER_INFO1D_RECEIVED:
-		event->kind = V90_PHASE2_EVENT_PEER_INFO1D_RECEIVED;
+		event->kind = PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED;
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT:
-		event->kind = V90_PHASE2_EVENT_LOCAL_INFO1A_SENT;
+		event->kind = PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT;
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED:
-		event->kind = V90_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
+		event->kind = PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED:
-		event->kind = V90_PHASE2_EVENT_PEER_INFO1_REJECTED;
+		event->kind = PCM_PHASE2_EVENT_PEER_INFO1_REJECTED;
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_FAILED:
-		phase2->failure = V90_PHASE2_FAILURE_INFO1_TIMEOUT;
-		event->kind = V90_PHASE2_EVENT_FAILED;
+		phase2->failure = PCM_PHASE2_FAILURE_INFO1_TIMEOUT;
+		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		return true;
 	}
 	return false;
 }
 
-enum v90_phase2_result v90_phase2_sample(
-	struct v90_phase2 *phase2, int16_t received_sample,
-	int16_t *transmit_sample, struct v90_phase2_event *event)
+enum pcm_phase2_result pcm_phase2_sample(
+	struct pcm_phase2 *phase2, int16_t received_sample,
+	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
-	struct v90_phase2_event emitted = { 0 };
+	struct pcm_phase2_event emitted = { 0 };
 	int16_t generated = 0;
 	bool accepted;
 
-	if (!v90_phase2_is_valid(phase2) || transmit_sample == NULL ||
+	if (!pcm_phase2_is_valid(phase2) || transmit_sample == NULL ||
 	    event == NULL)
-		return V90_PHASE2_INVALID_ARGUMENT;
-	if (phase2->failure != V90_PHASE2_FAILURE_NONE) {
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE) {
 		*transmit_sample = 0;
 		*event = emitted;
-		return V90_PHASE2_OK;
+		return PCM_PHASE2_OK;
 	}
 	switch (phase2->stage) {
-	case V90_PHASE2_RANGING:
+	case PCM_PHASE2_RANGING:
 		accepted = sample_ranging(
 			phase2, received_sample, &generated, &emitted);
 		break;
-	case V90_PHASE2_INITIAL_PROBE:
+	case PCM_PHASE2_INITIAL_PROBE:
 		accepted = sample_initial_probe(
 			phase2, received_sample, &generated, &emitted);
 		break;
-	case V90_PHASE2_PROBE_TURNAROUND:
+	case PCM_PHASE2_PROBE_TURNAROUND:
 		accepted = sample_turnaround(
 			phase2, received_sample, &generated, &emitted);
 		break;
-	case V90_PHASE2_RECIPROCAL_PROBE:
+	case PCM_PHASE2_RECIPROCAL_PROBE:
 		accepted = sample_reciprocal_probe(
 			phase2, received_sample, &generated, &emitted);
 		break;
-	case V90_PHASE2_INFO1:
+	case PCM_PHASE2_INFO1:
 		accepted = sample_info1(
 			phase2, received_sample, &generated, &emitted);
 		break;
 	default:
-		return V90_PHASE2_INVALID_ARGUMENT;
+		return PCM_PHASE2_INVALID_ARGUMENT;
 	}
-	if (!accepted || !v90_phase2_is_valid(phase2)) {
+	if (!accepted || !pcm_phase2_is_valid(phase2)) {
 		fail_internal(phase2, &emitted);
-		if (!v90_phase2_is_valid(phase2))
-			return V90_PHASE2_INVALID_STATE;
+		if (!pcm_phase2_is_valid(phase2))
+			return PCM_PHASE2_INVALID_STATE;
 	}
 	*transmit_sample = generated;
 	*event = emitted;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-enum v90_phase2_result v90_phase2_measure_remote_probe(
-	const struct v90_phase2 *phase2,
+enum pcm_phase2_result pcm_phase2_measure_remote_probe(
+	const struct pcm_phase2 *phase2,
 	struct v34_phase2_probe_receiver_measurement *measurement)
 {
-	if (!v90_phase2_is_valid(phase2) || measurement == NULL)
-		return V90_PHASE2_INVALID_ARGUMENT;
-	if (!ready_for_info1(phase2) && phase2->stage != V90_PHASE2_INFO1)
-		return V90_PHASE2_INVALID_STATE;
+	if (!pcm_phase2_is_valid(phase2) || measurement == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (!ready_for_info1(phase2) && phase2->stage != PCM_PHASE2_INFO1)
+		return PCM_PHASE2_INVALID_STATE;
 	*measurement = phase2->remote_probe;
-	return V90_PHASE2_OK;
+	return PCM_PHASE2_OK;
 }
 
-const char *v90_phase2_result_name(enum v90_phase2_result result)
+const char *pcm_phase2_result_name(enum pcm_phase2_result result)
 {
 	switch (result) {
-	case V90_PHASE2_OK:
+	case PCM_PHASE2_OK:
 		return "ok";
-	case V90_PHASE2_INVALID_ARGUMENT:
+	case PCM_PHASE2_INVALID_ARGUMENT:
 		return "invalid argument";
-	case V90_PHASE2_INVALID_STATE:
+	case PCM_PHASE2_INVALID_STATE:
 		return "invalid state";
 	}
 	return "unknown";
 }
 
-const char *v90_phase2_failure_name(enum v90_phase2_failure failure)
+const char *pcm_phase2_failure_name(enum pcm_phase2_failure failure)
 {
 	switch (failure) {
-	case V90_PHASE2_FAILURE_NONE:
+	case PCM_PHASE2_FAILURE_NONE:
 		return "none";
-	case V90_PHASE2_FAILURE_RANGING_TIMEOUT:
+	case PCM_PHASE2_FAILURE_RANGING_TIMEOUT:
 		return "ranging timeout";
-	case V90_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND:
+	case PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND:
 		return "remote probe not found";
-	case V90_PHASE2_FAILURE_LOCAL_PROBE_LIMIT:
+	case PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT:
 		return "local probe limit";
-	case V90_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT:
+	case PCM_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT:
 		return "remote tone timeout";
-	case V90_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT:
+	case PCM_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT:
 		return "remote reversal timeout";
-	case V90_PHASE2_FAILURE_INFO1_TIMEOUT:
+	case PCM_PHASE2_FAILURE_INFO1_TIMEOUT:
 		return "INFO1 timeout";
-	case V90_PHASE2_FAILURE_INTERNAL:
+	case PCM_PHASE2_FAILURE_INTERNAL:
 		return "internal failure";
 	}
 	return "unknown";

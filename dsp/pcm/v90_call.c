@@ -215,9 +215,9 @@ bool v90_call_is_valid(const struct v90_call *call)
 		return false;
 	switch (call->stage) {
 	case V90_CALL_PHASE2:
-		child_valid = v90_phase2_is_valid(&call->state.phase2) &&
+		child_valid = pcm_phase2_is_valid(&call->state.phase2) &&
 			      call->state.phase2.local_role == call->local_role;
-		child_failed = v90_phase2_has_failed(&call->state.phase2);
+		child_failed = pcm_phase2_has_failed(&call->state.phase2);
 		break;
 	case V90_CALL_PHASE3:
 		if (call->local_role == V90_ANALOG_MODEM) {
@@ -279,21 +279,21 @@ enum v90_call_result v90_call_init(
 	const struct v90_call_configuration *configuration)
 {
 	struct v90_call initialized = { 0 };
-	enum v90_phase2_result result;
+	enum pcm_phase2_result result;
 
 	if (call == NULL || !configuration_is_valid(configuration))
 		return V90_CALL_INVALID_ARGUMENT;
 	if (configuration->local_role == V90_ANALOG_MODEM)
-		result = v90_phase2_init_analog(
+		result = pcm_phase2_init_analog(
 			&initialized.state.phase2,
 			configuration->phase2_nominal_amplitude,
 			&configuration->local_info0.analog);
 	else
-		result = v90_phase2_init_digital(
+		result = pcm_phase2_init_digital(
 			&initialized.state.phase2,
 			configuration->phase2_nominal_amplitude,
 			&configuration->local_info0.digital);
-	if (result != V90_PHASE2_OK)
+	if (result != PCM_PHASE2_OK)
 		return V90_CALL_INVALID_ARGUMENT;
 	if (configuration->local_role == V90_ANALOG_MODEM) {
 		initialized.local_info1.analog =
@@ -437,28 +437,28 @@ static enum v90_call_result enter_phase3(struct v90_call *call)
 }
 
 static enum v90_call_result advance_phase2(
-	struct v90_call *call, const struct v90_phase2_event *event)
+	struct v90_call *call, const struct pcm_phase2_event *event)
 {
-	enum v90_phase2_result result;
+	enum pcm_phase2_result result;
 
-	if (event->kind == V90_PHASE2_EVENT_FAILED)
+	if (event->kind == PCM_PHASE2_EVENT_FAILED)
 		return V90_CALL_FAILED;
-	if (v90_phase2_is_ready_for_info1(&call->state.phase2)) {
+	if (pcm_phase2_is_ready_for_info1(&call->state.phase2)) {
 		result = call->local_role == V90_ANALOG_MODEM ?
-			v90_phase2_start_analog_info1(&call->state.phase2) :
-			v90_phase2_start_digital_info1(
+			pcm_phase2_start_analog_info1(&call->state.phase2) :
+			pcm_phase2_start_digital_info1(
 				&call->state.phase2,
 				&call->local_info1.digital);
-		if (result != V90_PHASE2_OK)
+		if (result != PCM_PHASE2_OK)
 			return V90_CALL_SEQUENCE_MISMATCH;
 	}
 	if (call->local_role == V90_ANALOG_MODEM &&
-	    event->kind == V90_PHASE2_EVENT_PEER_INFO1D_RECEIVED &&
-	    v90_phase2_reply_analog(
+	    event->kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED &&
+	    pcm_phase2_reply_analog(
 		    &call->state.phase2, &call->local_info1.analog) !=
-		    V90_PHASE2_OK)
+		    PCM_PHASE2_OK)
 		return V90_CALL_SEQUENCE_MISMATCH;
-	return v90_phase2_is_ready_for_phase3(&call->state.phase2) ?
+	return pcm_phase2_is_ready_for_phase3(&call->state.phase2) ?
 		       enter_phase3(call) : V90_CALL_OK;
 }
 
@@ -467,12 +467,12 @@ static enum v90_call_result sample_phase2(
 	uint8_t *transmit_octet, struct v90_call_observation *observation)
 {
 	int16_t transmitted_sample;
-	enum v90_phase2_result result = v90_phase2_sample(
+	enum pcm_phase2_result result = pcm_phase2_sample(
 		&call->state.phase2,
 		decode_octet(call->law, received_octet),
 		&transmitted_sample, &observation->phase2);
 
-	if (result != V90_PHASE2_OK)
+	if (result != PCM_PHASE2_OK)
 		return V90_CALL_NUMERIC_FAILURE;
 	*transmit_octet = encode_sample(call->law, transmitted_sample);
 	return advance_phase2(call, &observation->phase2);
