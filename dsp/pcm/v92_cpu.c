@@ -99,24 +99,32 @@ static bool bits_per_symbol_is_valid(unsigned int bits_per_symbol)
 	       bits_per_symbol <= V92_CPU_MAX_BITS_PER_SYMBOL;
 }
 
+static size_t frame_bits_for_shape(
+	size_t constellation_count, bool codec_constellations_differ,
+	unsigned int bits_per_symbol)
+{
+	size_t sets = codec_constellations_differ ? 2u : 1u;
+	size_t unfilled = V92_CPU_HEADER_BITS +
+		sets * constellation_count *
+		V92_CPU_CONSTELLATION_BITS +
+		V92_CPU_MIN_TRAILER_BITS;
+	size_t multiple =
+		(size_t)bits_per_symbol * V92_CPU_SYMBOLS_PER_FRAME;
+
+	return (unfilled + multiple - 1u) / multiple * multiple;
+}
+
 size_t v92_cpu_frame_bits(
 	const struct v92_cpu_parameters *parameters,
 	unsigned int bits_per_symbol)
 {
-	size_t constellation_sets;
-	size_t unfilled;
-	size_t multiple;
-
 	if (!v92_cpu_parameters_are_valid(parameters) ||
 	    !bits_per_symbol_is_valid(bits_per_symbol))
 		return 0u;
-	constellation_sets = parameters->codec_constellations_differ ? 2u : 1u;
-	unfilled = V92_CPU_HEADER_BITS +
-		   constellation_sets * parameters->constellation_count *
-			   V92_CPU_CONSTELLATION_BITS +
-		   V92_CPU_MIN_TRAILER_BITS;
-	multiple = (size_t)bits_per_symbol * V92_CPU_SYMBOLS_PER_FRAME;
-	return (unfilled + multiple - 1u) / multiple * multiple;
+	return frame_bits_for_shape(
+		parameters->constellation_count,
+		parameters->codec_constellations_differ,
+		bits_per_symbol);
 }
 
 size_t v92_cpu_frame_bytes(
@@ -265,6 +273,196 @@ enum v92_cpu_result v92_cpu_encode(
 	return V92_CPU_OK;
 }
 
+static bool bits_are(
+	const uint8_t *frame, size_t first_bit,
+	size_t bit_count, uint8_t value)
+{
+	for (size_t bit = 0u; bit < bit_count; ++bit) {
+		if (packed_msb_bit(frame, first_bit + bit) != value)
+			return false;
+	}
+	return true;
+}
+
+static bool header_framing_is_valid(const uint8_t *frame)
+{
+	return bits_are(frame, 0u, 17u, 1u) &&
+	       packed_msb_bit(frame, 17u) == 0u &&
+	       packed_msb_bit(frame, 18u) == 0u &&
+	       packed_msb_read_lsb_field(
+		       frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS) == 1u &&
+	       packed_msb_bit(frame, 34u) == 0u &&
+	       packed_msb_bit(frame, 51u) == 0u &&
+	       packed_msb_bit(frame, 68u) == 0u &&
+	       packed_msb_bit(frame, 85u) == 0u &&
+	       packed_msb_bit(frame, 102u) == 0u &&
+	       packed_msb_bit(frame, 119u) == 0u;
+}
+
+static bool decode_maps(
+	const uint8_t *frame, struct v92_cpu_parameters *decoded)
+{
+	uint8_t used = 0u;
+	uint8_t greatest = 0u;
+
+	for (size_t interval = 0u;
+	     interval < V92_CPU_FRAME_INTERVALS; ++interval) {
+		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
+			frame, map_first_bit(interval), CPU_MAP_BITS);
+
+		if (index >= V92_CPU_MAX_CONSTELLATIONS)
+			return false;
+		decoded->frame_constellation[interval] = index;
+		used |= (uint8_t)(1u << index);
+		if (index > greatest)
+			greatest = index;
+	}
+	decoded->constellation_count = (uint8_t)(greatest + 1u);
+	return used == (uint8_t)((1u << decoded->constellation_count) - 1u);
+}
+
+static int8_t decode_signed_octet(uint8_t value)
+{
+	return value <= INT8_MAX ?
+		(int8_t)value : (int8_t)((int)value - 256);
+}
+
+static bool decode_header(
+	const uint8_t *frame, struct v92_cpu_parameters *decoded)
+{
+	*decoded = (struct v92_cpu_parameters){
+		.law = packed_msb_bit(frame, CPU_LAW_BIT) != 0u ?
+			G711_LAW_PCMA : G711_LAW_PCMU,
+		.trn1d_ratio_q3_13 =
+			(uint16_t)packed_msb_read_lsb_field(
+				frame, CPU_RATIO_FIRST_BIT, CPU_RATIO_BITS),
+		.shaping_a1_q1_6 = decode_signed_octet(
+			(uint8_t)packed_msb_read_lsb_field(
+				frame, CPU_A1_FIRST_BIT, CPU_COEFFICIENT_BITS)),
+		.shaping_a2_q1_6 = decode_signed_octet(
+			(uint8_t)packed_msb_read_lsb_field(
+				frame, CPU_A2_FIRST_BIT, CPU_COEFFICIENT_BITS)),
+		.shaping_b1_q1_6 = decode_signed_octet(
+			(uint8_t)packed_msb_read_lsb_field(
+				frame, CPU_B1_FIRST_BIT, CPU_COEFFICIENT_BITS)),
+		.shaping_b2_q1_6 = decode_signed_octet(
+			(uint8_t)packed_msb_read_lsb_field(
+				frame, CPU_B2_FIRST_BIT, CPU_COEFFICIENT_BITS)),
+		.data_rate_number =
+			(uint8_t)packed_msb_read_lsb_field(
+				frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS),
+		.sign_redundancy =
+			(uint8_t)packed_msb_read_lsb_field(
+				frame, CPU_SIGN_REDUNDANCY_FIRST_BIT,
+				CPU_SIGN_REDUNDANCY_BITS),
+		.spectral_lookahead_frames =
+			(uint8_t)packed_msb_read_lsb_field(
+				frame, CPU_LOOKAHEAD_FIRST_BIT,
+				CPU_LOOKAHEAD_BITS),
+		.acknowledges_cpd =
+			packed_msb_bit(frame, CPU_ACKNOWLEDGMENT_BIT) != 0u,
+		.codec_constellations_differ =
+			packed_msb_bit(frame, CPU_CODEC_DIFFERENCE_BIT) != 0u,
+	};
+	return decode_maps(frame, decoded);
+}
+
+static bool row_starts_are_zero(
+	const uint8_t *frame, size_t row_count)
+{
+	for (size_t row = 0u; row < row_count; ++row) {
+		size_t first = CPU_MASKS_FIRST_BIT +
+			row * V92_CPU_CONSTELLATION_BITS;
+
+		for (size_t group = 0u; group < 8u; ++group) {
+			if (packed_msb_bit(frame, first + group * 17u) != 0u)
+				return false;
+		}
+	}
+	return true;
+}
+
+static void decode_constellation_set(
+	const uint8_t *frame, size_t first_row,
+	struct pcm_constellation *constellations, size_t count)
+{
+	for (size_t index = 0u; index < count; ++index) {
+		for (uint8_t ucode = 0u;
+		     ucode < PCM_CONSTELLATION_UCODES; ++ucode) {
+			if (packed_msb_bit(
+				    frame, mask_bit(first_row + index, ucode)) != 0u) {
+				constellations[index].ucode_mask[ucode / 8u] |=
+					(uint8_t)(1u << (ucode % 8u));
+			}
+		}
+	}
+}
+
+enum v92_cpu_result v92_cpu_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t frame_bit_count, unsigned int bits_per_symbol,
+	struct v92_cpu_parameters *parameters)
+{
+	struct v92_cpu_parameters decoded;
+	size_t multiple;
+	size_t frame_bytes;
+	size_t sets;
+	size_t row_count;
+	size_t payload_end;
+	uint16_t received_crc;
+
+	if (frame == NULL || parameters == NULL)
+		return V92_CPU_INVALID_ARGUMENT;
+	if (!bits_per_symbol_is_valid(bits_per_symbol) ||
+	    frame_bit_count < V92_CPU_MIN_FRAME_BITS ||
+	    frame_bit_count > V92_CPU_MAX_FRAME_BITS)
+		return V92_CPU_INVALID_FRAME;
+	multiple = (size_t)bits_per_symbol * V92_CPU_SYMBOLS_PER_FRAME;
+	if (frame_bit_count % multiple != 0u)
+		return V92_CPU_INVALID_FRAME;
+	frame_bytes = (frame_bit_count + 7u) / 8u;
+	if (frame_capacity < frame_bytes)
+		return V92_CPU_INVALID_ARGUMENT;
+	if (!header_framing_is_valid(frame) || !decode_header(frame, &decoded))
+		return V92_CPU_INVALID_FRAME;
+	if (frame_bit_count != frame_bits_for_shape(
+		    decoded.constellation_count,
+		    decoded.codec_constellations_differ,
+		    bits_per_symbol))
+		return V92_CPU_INVALID_FRAME;
+
+	sets = decoded.codec_constellations_differ ? 2u : 1u;
+	row_count = sets * decoded.constellation_count;
+	payload_end = CPU_MASKS_FIRST_BIT +
+		row_count * V92_CPU_CONSTELLATION_BITS;
+	if (!row_starts_are_zero(frame, row_count) ||
+	    packed_msb_bit(frame, payload_end) != 0u ||
+	    !bits_are(
+		    frame, payload_end + 1u + CPU_CRC_BITS,
+		    frame_bit_count - payload_end - 1u - CPU_CRC_BITS, 0u) ||
+	    !packed_msb_tail_is_zero(
+		    frame, frame_bit_count, frame_bytes))
+		return V92_CPU_INVALID_FRAME;
+	received_crc = (uint16_t)packed_msb_read_msb_field(
+		frame, payload_end + 1u, CPU_CRC_BITS);
+	if (received_crc != frame_crc(frame, payload_end))
+		return V92_CPU_CRC_MISMATCH;
+
+	decode_constellation_set(
+		frame, 0u, decoded.transmit_constellations,
+		decoded.constellation_count);
+	if (sets == 2u) {
+		decode_constellation_set(
+			frame, decoded.constellation_count,
+			decoded.codec_constellations,
+			decoded.constellation_count);
+	}
+	if (!v92_cpu_parameters_are_valid(&decoded))
+		return V92_CPU_INVALID_FRAME;
+	*parameters = decoded;
+	return V92_CPU_OK;
+}
+
 const char *v92_cpu_result_name(enum v92_cpu_result result)
 {
 	switch (result) {
@@ -276,6 +474,10 @@ const char *v92_cpu_result_name(enum v92_cpu_result result)
 		return "invalid parameters";
 	case V92_CPU_OUTPUT_TOO_SMALL:
 		return "output too small";
+	case V92_CPU_INVALID_FRAME:
+		return "invalid frame";
+	case V92_CPU_CRC_MISMATCH:
+		return "CRC mismatch";
 	}
 	return "unknown";
 }

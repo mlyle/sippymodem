@@ -40,6 +40,8 @@ enum v92_cpu_result {
 	V92_CPU_INVALID_ARGUMENT,
 	V92_CPU_INVALID_PARAMETERS,
 	V92_CPU_OUTPUT_TOO_SMALL,
+	V92_CPU_INVALID_FRAME,
+	V92_CPU_CRC_MISMATCH,
 };
 
 /* Long CPu fields from Table 23. Fixed-point values remain in their wire
@@ -85,6 +87,14 @@ enum v92_cpu_result v92_cpu_encode(
 	unsigned int bits_per_symbol,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count);
+
+/* frame_bit_count is the exact wire length. Reserved information bits are
+ * covered by the CRC but otherwise ignored. Fixed, start, fill, and storage-
+ * padding bits are strict. Rejected calls leave parameters unchanged. */
+enum v92_cpu_result v92_cpu_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t frame_bit_count, unsigned int bits_per_symbol,
+	struct v92_cpu_parameters *parameters);
 
 const char *v92_cpu_result_name(enum v92_cpu_result result);
 

@@ -27,6 +27,37 @@ static uint8_t bit_at(const uint8_t *packed, size_t bit)
 	return (uint8_t)((packed[bit / 8u] >> (7u - bit % 8u)) & 1u);
 }
 
+static void set_bit(uint8_t *packed, size_t bit, uint8_t value)
+{
+	uint8_t mask = (uint8_t)(1u << (7u - bit % 8u));
+
+	if (value != 0u)
+		packed[bit / 8u] |= mask;
+	else
+		packed[bit / 8u] &= (uint8_t)~mask;
+}
+
+static void write_lsb_field(
+	uint8_t *packed, size_t first_bit, size_t width, uint32_t value)
+{
+	for (size_t bit = 0u; bit < width; ++bit)
+		set_bit(
+			packed, first_bit + bit,
+			(uint8_t)((value >> bit) & 1u));
+}
+
+static void write_msb_field(
+	uint8_t *packed, size_t first_bit, size_t width, uint32_t value)
+{
+	for (size_t bit = 0u; bit < width; ++bit) {
+		size_t shift = width - bit - 1u;
+
+		set_bit(
+			packed, first_bit + bit,
+			(uint8_t)((value >> shift) & 1u));
+	}
+}
+
 static uint32_t lsb_field(
 	const uint8_t *packed, size_t first_bit, size_t width)
 {
@@ -84,6 +115,19 @@ static size_t map_first_bit(size_t interval)
 	       (interval >= 4u ? 1u : 0u);
 }
 
+static size_t row_mask_bit(size_t row, uint8_t ucode)
+{
+	return V92_CPU_HEADER_BITS + row * V92_CPU_CONSTELLATION_BITS +
+	       (size_t)(ucode / 16u) * 17u + 1u + ucode % 16u;
+}
+
+static void rewrite_crc(uint8_t *frame, size_t payload_end)
+{
+	write_msb_field(
+		frame, payload_end + 1u, 16u,
+		reference_crc(frame, payload_end));
+}
+
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
 {
@@ -128,6 +172,38 @@ static struct v92_cpu_parameters parameters(
 	return value;
 }
 
+static bool parameters_are_equal(
+	const struct v92_cpu_parameters *left,
+	const struct v92_cpu_parameters *right)
+{
+	return left->law == right->law &&
+	       left->trn1d_ratio_q3_13 == right->trn1d_ratio_q3_13 &&
+	       left->shaping_a1_q1_6 == right->shaping_a1_q1_6 &&
+	       left->shaping_a2_q1_6 == right->shaping_a2_q1_6 &&
+	       left->shaping_b1_q1_6 == right->shaping_b1_q1_6 &&
+	       left->shaping_b2_q1_6 == right->shaping_b2_q1_6 &&
+	       left->data_rate_number == right->data_rate_number &&
+	       left->sign_redundancy == right->sign_redundancy &&
+	       left->spectral_lookahead_frames ==
+		       right->spectral_lookahead_frames &&
+	       left->constellation_count == right->constellation_count &&
+	       left->acknowledges_cpd == right->acknowledges_cpd &&
+	       left->codec_constellations_differ ==
+		       right->codec_constellations_differ &&
+	       memcmp(
+		       left->frame_constellation,
+		       right->frame_constellation,
+		       sizeof(left->frame_constellation)) == 0 &&
+	       memcmp(
+		       left->transmit_constellations,
+		       right->transmit_constellations,
+		       sizeof(left->transmit_constellations)) == 0 &&
+	       memcmp(
+		       left->codec_constellations,
+		       right->codec_constellations,
+		       sizeof(left->codec_constellations)) == 0;
+}
+
 static bool test_dimensions(void)
 {
 	CHECK(V92_CPU_MIN_FRAME_BITS == 312 &&
@@ -147,6 +223,7 @@ static bool test_dimensions(void)
 
 			for (unsigned int bits = V92_CPU_MIN_BITS_PER_SYMBOL;
 			     bits <= V92_CPU_MAX_BITS_PER_SYMBOL; ++bits) {
+				struct v92_cpu_parameters decoded;
 				size_t encoded_bits = 0u;
 				size_t multiple =
 					bits * V92_CPU_SYMBOLS_PER_FRAME;
@@ -160,7 +237,11 @@ static bool test_dimensions(void)
 				      v92_cpu_encode(
 					      &value, bits, frame, sizeof(frame),
 					      &encoded_bits) == V92_CPU_OK &&
-				      encoded_bits == expected,
+				      encoded_bits == expected &&
+				      v92_cpu_decode(
+					      frame, (expected + 7u) / 8u,
+					      expected, bits, &decoded) == V92_CPU_OK &&
+				      parameters_are_equal(&decoded, &value),
 				      "CPu %u/%u/%u has the wrong extent",
 				      count, differs, bits);
 			}
@@ -432,6 +513,135 @@ static bool test_transactionality(void)
 	return true;
 }
 
+static bool decode_is_transactional(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t frame_bits, unsigned int bits_per_symbol,
+	enum v92_cpu_result expected)
+{
+	struct v92_cpu_parameters decoded;
+	struct v92_cpu_parameters unchanged;
+
+	memset(&decoded, 0x5a, sizeof(decoded));
+	memcpy(&unchanged, &decoded, sizeof(decoded));
+	return v92_cpu_decode(
+		       frame, frame_capacity, frame_bits,
+		       bits_per_symbol, &decoded) == expected &&
+	       memcmp(&decoded, &unchanged, sizeof(decoded)) == 0;
+}
+
+static bool test_decoder_failures(void)
+{
+	struct v92_cpu_parameters value = parameters(2u, true);
+	struct v92_cpu_parameters decoded;
+	uint8_t encoded[V92_CPU_MAX_FRAME_BYTES];
+	uint8_t changed[V92_CPU_MAX_FRAME_BYTES];
+	size_t frame_bits = 0u;
+	size_t frame_bytes;
+	size_t payload_end = V92_CPU_HEADER_BITS +
+		2u * value.constellation_count *
+		V92_CPU_CONSTELLATION_BITS;
+
+	CHECK(v92_cpu_encode(
+		      &value, 3u, encoded, sizeof(encoded), &frame_bits) ==
+		      V92_CPU_OK,
+	      "decoder fixture encoding failed");
+	frame_bytes = (frame_bits + 7u) / 8u;
+	CHECK(v92_cpu_decode(
+		      NULL, frame_bytes, frame_bits, 3u, &decoded) ==
+		      V92_CPU_INVALID_ARGUMENT &&
+	      v92_cpu_decode(
+		      encoded, frame_bytes, frame_bits, 3u, NULL) ==
+		      V92_CPU_INVALID_ARGUMENT,
+	      "CPu decoder accepted null arguments");
+	CHECK(decode_is_transactional(
+		      encoded, frame_bytes - 1u, frame_bits, 3u,
+		      V92_CPU_INVALID_ARGUMENT) &&
+	      decode_is_transactional(
+		      encoded, frame_bytes, frame_bits, 1u,
+		      V92_CPU_INVALID_FRAME) &&
+	      decode_is_transactional(
+		      encoded, frame_bytes, frame_bits - 1u, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted an invalid extent");
+
+	memcpy(changed, encoded, frame_bytes);
+	set_bit(changed, 0u, 0u);
+	CHECK(decode_is_transactional(
+		      changed, frame_bytes, frame_bits, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted a broken preamble");
+	memcpy(changed, encoded, frame_bytes);
+	set_bit(changed, V92_CPU_HEADER_BITS, 1u);
+	CHECK(decode_is_transactional(
+		      changed, frame_bytes, frame_bits, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted a row start bit");
+	memcpy(changed, encoded, frame_bytes);
+	set_bit(changed, payload_end + 17u, 1u);
+	CHECK(decode_is_transactional(
+		      changed, frame_bytes, frame_bits, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted a nonzero fill bit");
+
+	memcpy(changed, encoded, frame_bytes);
+	set_bit(changed, 26u, 1u);
+	CHECK(decode_is_transactional(
+		      changed, frame_bytes, frame_bits, 3u,
+		      V92_CPU_CRC_MISMATCH),
+	      "CPu decoder missed a CRC error");
+	rewrite_crc(changed, payload_end);
+	CHECK(v92_cpu_decode(
+		      changed, frame_bytes, frame_bits, 3u, &decoded) ==
+		      V92_CPU_OK && parameters_are_equal(&decoded, &value),
+	      "CPu decoder did not ignore a covered reserved bit");
+
+	memcpy(changed, encoded, frame_bytes);
+	write_lsb_field(changed, CPU_RATE_FIRST_BIT, 5u, 31u);
+	rewrite_crc(changed, payload_end);
+	CHECK(decode_is_transactional(
+		      changed, frame_bytes, frame_bits, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted an invalid data rate");
+	memcpy(changed, encoded, frame_bytes);
+	for (size_t interval = 0u;
+	     interval < V92_CPU_FRAME_INTERVALS; ++interval)
+		write_lsb_field(changed, map_first_bit(interval), 4u, 1u);
+	CHECK(decode_is_transactional(
+		      changed, frame_bytes, frame_bits, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted a gapped interval map");
+	memcpy(changed, encoded, frame_bytes);
+	for (uint8_t ucode = 0u;
+	     ucode < PCM_CONSTELLATION_UCODES; ++ucode)
+		set_bit(changed, row_mask_bit(0u, ucode), 0u);
+	rewrite_crc(changed, payload_end);
+	CHECK(decode_is_transactional(
+		      changed, frame_bytes, frame_bits, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted an empty active constellation");
+	return true;
+}
+
+static bool test_decoder_storage_padding(void)
+{
+	struct v92_cpu_parameters value = parameters(1u, false);
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES] = { 0 };
+	size_t frame_bits = 0u;
+	size_t frame_bytes;
+
+	CHECK(v92_cpu_encode(
+		      &value, 3u, frame, sizeof(frame), &frame_bits) ==
+		      V92_CPU_OK && frame_bits % 8u != 0u,
+	      "storage-padding fixture encoding failed");
+	frame_bytes = (frame_bits + 7u) / 8u;
+	set_bit(frame, frame_bits, 1u);
+	CHECK(decode_is_transactional(
+		      frame, frame_bytes, frame_bits, 3u,
+		      V92_CPU_INVALID_FRAME),
+	      "CPu decoder accepted nonzero storage padding");
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	CHECK(strcmp(v92_cpu_result_name(V92_CPU_OK), "ok") == 0 &&
@@ -441,6 +651,10 @@ static bool test_result_names(void)
 		     "invalid parameters") == 0 &&
 	      strcmp(v92_cpu_result_name(V92_CPU_OUTPUT_TOO_SMALL),
 		     "output too small") == 0 &&
+	      strcmp(v92_cpu_result_name(V92_CPU_INVALID_FRAME),
+		     "invalid frame") == 0 &&
+	      strcmp(v92_cpu_result_name(V92_CPU_CRC_MISMATCH),
+		     "CRC mismatch") == 0 &&
 	      strcmp(v92_cpu_result_name((enum v92_cpu_result)99),
 		     "unknown") == 0,
 	      "CPu result names changed");
@@ -459,6 +673,8 @@ int main(void)
 		{ "wire fields", test_wire_fields },
 		{ "compact row layout", test_compact_row_layout },
 		{ "transactionality", test_transactionality },
+		{ "decoder failures", test_decoder_failures },
+		{ "decoder storage padding", test_decoder_storage_padding },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0u;
