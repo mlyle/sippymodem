@@ -30,7 +30,13 @@ static bool analog_configuration_is_valid(
 	       phase4->training_parameters.law == law &&
 	       !phase4->training_parameters.request_silence &&
 	       !phase4->training_parameters.acknowledges_peer &&
-	       v90_cp_parameters_are_valid(&phase4->training_parameters);
+	       v90_cp_parameters_are_valid(&phase4->training_parameters) &&
+	       phase4->data_parameters.kind == V90_CP_DATA &&
+	       phase4->data_parameters.law == law &&
+	       phase4->data_parameters.selected_rate_index != 0 &&
+	       !phase4->data_parameters.request_silence &&
+	       !phase4->data_parameters.acknowledges_peer &&
+	       v90_cp_parameters_are_valid(&phase4->data_parameters);
 }
 
 static bool digital_configuration_is_valid(
@@ -186,6 +192,19 @@ bool v90_call_is_valid(const struct v90_call *call)
 				&call->state.phase4.digital);
 		}
 		break;
+	case V90_CALL_DATA_PATH:
+		if (call->local_role == V90_ANALOG_MODEM) {
+			child_valid = v90_analog_path_is_valid(
+				&call->state.data_path.analog);
+			child_failed = v90_analog_path_has_failed(
+				&call->state.data_path.analog);
+		} else {
+			child_valid = v90_digital_path_is_valid(
+				&call->state.data_path.digital);
+			child_failed = v90_digital_path_has_failed(
+				&call->state.data_path.digital);
+		}
+		break;
 	default:
 		return false;
 	}
@@ -252,6 +271,18 @@ bool v90_call_phase4_is_ready(const struct v90_call *call)
 			       &call->state.phase4.analog) :
 		       v90_phase4_digital_startup_is_complete(
 			       &call->state.phase4.digital);
+}
+
+bool v90_call_is_online(const struct v90_call *call)
+{
+	if (!v90_call_is_valid(call) || call->failed ||
+	    call->stage != V90_CALL_DATA_PATH)
+		return false;
+	return call->local_role == V90_ANALOG_MODEM ?
+		       v90_analog_path_is_online(
+			       &call->state.data_path.analog) :
+		       v90_digital_path_is_online(
+			       &call->state.data_path.digital);
 }
 
 enum v90_call_stage v90_call_current_stage(const struct v90_call *call)
@@ -718,6 +749,109 @@ static enum v90_call_result sample_phase4(
 	return phase4_startup_result(result);
 }
 
+static enum v90_call_result analog_path_result(
+	enum v90_analog_path_result result)
+{
+	switch (result) {
+	case V90_ANALOG_PATH_OK:
+	case V90_ANALOG_PATH_DOWNSTREAM_FRAME:
+		return V90_CALL_OK;
+	case V90_ANALOG_PATH_SOURCE_FAILURE:
+		return V90_CALL_SOURCE_FAILURE;
+	case V90_ANALOG_PATH_FAILED:
+		return V90_CALL_FAILED;
+	case V90_ANALOG_PATH_SEQUENCE_MISMATCH:
+		return V90_CALL_SEQUENCE_MISMATCH;
+	case V90_ANALOG_PATH_INVALID_PARAMETERS:
+	case V90_ANALOG_PATH_NO_COMMON_RATE:
+		return V90_CALL_UNUSABLE_SELECTION;
+	case V90_ANALOG_PATH_OUT_OF_RANGE:
+		return V90_CALL_OUT_OF_RANGE;
+	case V90_ANALOG_PATH_CLIPPING_RISK:
+		return V90_CALL_CLIPPING_RISK;
+	case V90_ANALOG_PATH_INVALID_ARGUMENT:
+	case V90_ANALOG_PATH_INVALID_STATE:
+	case V90_ANALOG_PATH_NUMERIC_FAILURE:
+	case V90_ANALOG_PATH_INTERNAL_ERROR:
+		break;
+	}
+	return V90_CALL_NUMERIC_FAILURE;
+}
+
+static enum v90_call_result digital_path_result(
+	enum v90_digital_path_result result)
+{
+	switch (result) {
+	case V90_DIGITAL_PATH_OK:
+	case V90_DIGITAL_PATH_UPSTREAM_FRAME:
+		return V90_CALL_OK;
+	case V90_DIGITAL_PATH_SOURCE_FAILURE:
+		return V90_CALL_SOURCE_FAILURE;
+	case V90_DIGITAL_PATH_FAILED:
+		return V90_CALL_FAILED;
+	case V90_DIGITAL_PATH_SEQUENCE_MISMATCH:
+		return V90_CALL_SEQUENCE_MISMATCH;
+	case V90_DIGITAL_PATH_INVALID_PARAMETERS:
+	case V90_DIGITAL_PATH_NO_COMMON_RATE:
+		return V90_CALL_UNUSABLE_SELECTION;
+	case V90_DIGITAL_PATH_OUT_OF_RANGE:
+		return V90_CALL_OUT_OF_RANGE;
+	case V90_DIGITAL_PATH_INVALID_ARGUMENT:
+	case V90_DIGITAL_PATH_NUMERIC_FAILURE:
+	case V90_DIGITAL_PATH_INTERNAL_ERROR:
+		break;
+	}
+	return V90_CALL_NUMERIC_FAILURE;
+}
+
+enum v90_call_result v90_call_start_data_path(struct v90_call *call)
+{
+	struct v90_call next;
+	enum v90_call_result result;
+
+	if (!v90_call_is_valid(call))
+		return V90_CALL_INVALID_ARGUMENT;
+	if (call->failed)
+		return V90_CALL_FAILED;
+	if (!v90_call_phase4_is_ready(call))
+		return V90_CALL_INVALID_STATE;
+	next = *call;
+	next.state = (union v90_call_state){ 0 };
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct v90_phase4_analog_handoff handoff;
+		struct v90_analog_path path;
+
+		if (v90_phase4_analog_startup_handoff(
+			    &call->state.phase4.analog, &handoff) !=
+		    V90_PHASE4_STARTUP_OK)
+			return V90_CALL_NUMERIC_FAILURE;
+		result = analog_path_result(v90_analog_path_init(
+			&path, &handoff,
+			&call->analog_phase4_configuration.data_parameters));
+		if (result != V90_CALL_OK)
+			return result;
+		next.state.data_path.analog = path;
+	} else {
+		struct v90_phase4_digital_handoff handoff;
+		struct v90_digital_path path;
+
+		if (v90_phase4_digital_startup_handoff(
+			    &call->state.phase4.digital, &handoff) !=
+		    V90_PHASE4_STARTUP_OK)
+			return V90_CALL_NUMERIC_FAILURE;
+		result = digital_path_result(
+			v90_digital_path_init(&path, &handoff));
+		if (result != V90_CALL_OK)
+			return result;
+		next.state.data_path.digital = path;
+	}
+	next.stage = V90_CALL_DATA_PATH;
+	if (!v90_call_is_valid(&next))
+		return V90_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return V90_CALL_OK;
+}
+
 static bool regions_overlap(
 	const void *left, size_t left_size,
 	const void *right, size_t right_size)
@@ -745,6 +879,96 @@ static bool outputs_overlap(
 		       observation, sizeof(*observation));
 }
 
+static bool data_outputs_overlap(
+	const struct v90_call *call, const uint8_t *transmit_octet,
+	const struct v90_call_data_event *event)
+{
+	return regions_overlap(
+		       call, sizeof(*call),
+		       transmit_octet, sizeof(*transmit_octet)) ||
+	       regions_overlap(
+		       call, sizeof(*call), event, sizeof(*event)) ||
+	       regions_overlap(
+		       transmit_octet, sizeof(*transmit_octet),
+		       event, sizeof(*event));
+}
+
+enum v90_call_result v90_call_data_octet(
+	struct v90_call *call, uint8_t received_octet,
+	const struct v90_call_data_sources *sources,
+	uint8_t *transmit_octet,
+	struct v90_call_data_event *event)
+{
+	const struct v90_call_data_sources idle = { 0 };
+	struct v90_call_data_event emitted = { 0 };
+	uint8_t generated;
+	enum v90_call_result result;
+
+	if (!v90_call_is_valid(call) || transmit_octet == NULL ||
+	    event == NULL || data_outputs_overlap(call, transmit_octet, event))
+		return V90_CALL_INVALID_ARGUMENT;
+	if (call->failed)
+		return V90_CALL_FAILED;
+	if (call->stage != V90_CALL_DATA_PATH)
+		return V90_CALL_INVALID_STATE;
+	if (sources == NULL)
+		sources = &idle;
+	generated = encode_sample(call->law, 0);
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct v90_pcm_stream_frame frame = { 0 };
+		enum v90_analog_path_result path_result =
+			v90_analog_path_transmit(
+				&call->state.data_path.analog,
+				sources->upstream, sources->upstream_context,
+				&generated);
+
+		result = analog_path_result(path_result);
+		if (result == V90_CALL_SOURCE_FAILURE)
+			return result;
+		if (result != V90_CALL_OK) {
+			call->failed = true;
+			return v90_call_is_valid(call) ?
+				       result : V90_CALL_NUMERIC_FAILURE;
+		}
+		path_result = v90_analog_path_receive(
+			&call->state.data_path.analog, received_octet, &frame);
+		result = analog_path_result(path_result);
+		if (path_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
+			emitted.frame.downstream = frame;
+			emitted.kind = V90_CALL_DOWNSTREAM_FRAME;
+		}
+	} else {
+		struct v34_received_mapping_frame frame = { 0 };
+		enum v90_digital_path_result path_result =
+			v90_digital_path_octet(
+				&call->state.data_path.digital, received_octet,
+				sources->downstream,
+				sources->downstream_context,
+				&generated, &frame);
+
+		result = digital_path_result(path_result);
+		if (result == V90_CALL_SOURCE_FAILURE)
+			return result;
+		if (path_result == V90_DIGITAL_PATH_INVALID_ARGUMENT) {
+			call->failed = true;
+			return V90_CALL_NUMERIC_FAILURE;
+		}
+		if (path_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
+			emitted.frame.upstream = frame;
+			emitted.kind = V90_CALL_UPSTREAM_FRAME;
+		}
+	}
+	if (result != V90_CALL_OK)
+		call->failed = true;
+	if (!v90_call_is_valid(call)) {
+		call->failed = true;
+		return V90_CALL_NUMERIC_FAILURE;
+	}
+	*transmit_octet = generated;
+	*event = emitted;
+	return result;
+}
+
 enum v90_call_result v90_call_octet(
 	struct v90_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet,
@@ -760,6 +984,8 @@ enum v90_call_result v90_call_octet(
 		return V90_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return V90_CALL_FAILED;
+	if (call->stage == V90_CALL_DATA_PATH)
+		return V90_CALL_INVALID_STATE;
 	if (v90_call_phase4_is_ready(call))
 		return V90_CALL_PHASE4_READY;
 	generated = encode_sample(call->law, 0);
@@ -803,6 +1029,8 @@ const char *v90_call_result_name(enum v90_call_result result)
 		return "ok";
 	case V90_CALL_PHASE4_READY:
 		return "phase 4 ready";
+	case V90_CALL_SOURCE_FAILURE:
+		return "frame source failure";
 	case V90_CALL_FAILED:
 		return "failed";
 	case V90_CALL_INVALID_ARGUMENT:

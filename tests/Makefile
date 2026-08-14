@@ -2099,6 +2099,9 @@ V90_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase4_digital_startup.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase2_initial_probe.o, \
 		$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS)) \
+	$(filter-out $(BUILD_DIR)/test_v90_phase4_station_exchange.o \
+		$(BUILD_DIR)/v90_phase4_station_fixture.o, \
+		$(V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_analog_station.o, \
 		$(V90_PHASE4_ANALOG_STATION_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_digital_station.o \

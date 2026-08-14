@@ -13,6 +13,7 @@ enum {
 	MAX_LINE_DELAY_CHARACTERS = 13,
 	PHASE2_NOMINAL_AMPLITUDE = 12000,
 	PHASE3_NOMINAL_AMPLITUDE = 6000,
+	DATA_FRAMES_TO_RECEIVE = 2,
 };
 
 struct channel {
@@ -22,19 +23,32 @@ struct channel {
 	size_t cursor;
 };
 
+struct downstream_source {
+	size_t frames;
+	bool reject_next;
+};
+
+struct upstream_source {
+	size_t frames;
+	bool reject_next;
+};
+
 struct endpoint {
 	struct v90_call call;
-	union {
-		struct v90_phase4_analog_handoff analog;
-		struct v90_phase4_digital_handoff digital;
-	} handoff;
+	struct downstream_source downstream_source;
+	struct upstream_source upstream_source;
 	size_t mixed_octets;
 	size_t phase4_octets;
+	size_t downstream_frames;
+	size_t upstream_frames;
 	uint16_t phase4_entry_ri_symbols;
 	bool entered_phase3;
 	bool entered_mixed;
 	bool entered_phase4;
-	bool handoff_captured;
+	bool phase4_boundary_checked;
+	bool data_path_started;
+	bool idle_source_checked;
+	bool source_failure_checked;
 };
 
 static uint8_t silence_octet(enum g711_law law)
@@ -162,6 +176,15 @@ static struct v90_cp_parameters training_parameters(enum g711_law law)
 	return parameters;
 }
 
+static struct v90_cp_parameters data_parameters(enum g711_law law)
+{
+	struct v90_cp_parameters parameters = training_parameters(law);
+
+	parameters.kind = V90_CP_DATA;
+	parameters.selected_rate_index = 1;
+	return parameters;
+}
+
 static struct v90_mp_record initial_mp(void)
 {
 	return (struct v90_mp_record){
@@ -192,6 +215,8 @@ static struct v90_call_configuration configuration(
 			PHASE3_NOMINAL_AMPLITUDE;
 		configuration.analog_phase4.training_parameters =
 			training_parameters(law);
+		configuration.analog_phase4.data_parameters =
+			data_parameters(law);
 	} else {
 		configuration.local_info0.digital = digital_info0(law);
 		configuration.local_info1.digital = digital_info1();
@@ -200,6 +225,82 @@ static struct v90_call_configuration configuration(
 		configuration.digital_phase4.initial_mp = initial_mp();
 	}
 	return configuration;
+}
+
+static void generate_data_bits(
+	uint8_t *bits, size_t bit_count, size_t frame)
+{
+	for (size_t bit = 0; bit < bit_count; ++bit)
+		bits[bit] = (uint8_t)(
+			(frame * 13u + bit * 7u + (frame >> (bit % 3u))) & 1u);
+}
+
+static bool source_downstream_frame(
+	void *context, uint8_t *bits, size_t bit_count)
+{
+	struct downstream_source *source = context;
+
+	if (source == NULL || bits == NULL || bit_count == 0 ||
+	    bit_count > V90_PCM_FRAME_MAX_BITS || source->reject_next)
+		return false;
+	generate_data_bits(bits, bit_count, source->frames + 1u);
+	source->frames++;
+	return true;
+}
+
+static bool source_upstream_frame(
+	void *context, const struct v34_mapping_frame *request,
+	uint8_t *primary_bits, uint8_t *auxiliary_bit)
+{
+	struct upstream_source *source = context;
+
+	if (source == NULL || request == NULL || primary_bits == NULL ||
+	    request->primary_bits == 0 ||
+	    request->primary_bits > V34_MAX_MAPPING_FRAME_BITS ||
+	    source->reject_next)
+		return false;
+	generate_data_bits(
+		primary_bits, request->primary_bits, source->frames + 97u);
+	if (auxiliary_bit != NULL)
+		*auxiliary_bit = (uint8_t)(
+			(source->frames + request->index) & 1u);
+	source->frames++;
+	return true;
+}
+
+static bool downstream_frame_matches(
+	const struct v90_pcm_stream_frame *received, size_t frame_index)
+{
+	uint8_t expected[V90_PCM_FRAME_MAX_BITS];
+
+	if (received->bit_count == 0 ||
+	    received->bit_count > V90_PCM_FRAME_MAX_BITS)
+		return false;
+	generate_data_bits(expected, received->bit_count, frame_index + 1u);
+	return memcmp(
+		       received->bits, expected, received->bit_count) == 0;
+}
+
+static bool upstream_frame_matches(
+	const struct v34_received_mapping_frame *received, size_t frame_index)
+{
+	uint8_t expected[V34_MAX_MAPPING_FRAME_BITS];
+	uint8_t expected_auxiliary = (uint8_t)(
+		(frame_index + received->mapping_frame.index) & 1u);
+
+	if (received->primary_bit_count == 0 ||
+	    received->primary_bit_count !=
+		    received->mapping_frame.primary_bits ||
+	    received->auxiliary_bit_count !=
+		    (uint8_t)received->mapping_frame.carries_auxiliary_bit)
+		return false;
+	generate_data_bits(
+		expected, received->primary_bit_count, frame_index + 97u);
+	return memcmp(
+		       received->primary_bits, expected,
+		       received->primary_bit_count) == 0 &&
+	       (received->auxiliary_bit_count == 0 ||
+		received->auxiliary_bit == expected_auxiliary);
 }
 
 static bool channel_init(
@@ -248,6 +349,99 @@ static bool endpoint_init(
 	return true;
 }
 
+static bool phase4_boundary_is_transactional(
+	struct endpoint *endpoint, enum g711_law law);
+
+static bool source_direction_is_online(const struct endpoint *endpoint)
+{
+	return endpoint->call.local_role == V90_ANALOG_MODEM ?
+		       v90_analog_path_upstream_is_online(
+			       &endpoint->call.state.data_path.analog) :
+		       v90_digital_path_downstream_is_online(
+			       &endpoint->call.state.data_path.digital);
+}
+
+static bool source_is_rejecting(const struct endpoint *endpoint)
+{
+	return endpoint->call.local_role == V90_ANALOG_MODEM ?
+		       endpoint->upstream_source.reject_next :
+		       endpoint->downstream_source.reject_next;
+}
+
+static void set_source_rejection(struct endpoint *endpoint, bool reject)
+{
+	if (endpoint->call.local_role == V90_ANALOG_MODEM)
+		endpoint->upstream_source.reject_next = reject;
+	else
+		endpoint->downstream_source.reject_next = reject;
+}
+
+static bool endpoint_data_octet(
+	struct endpoint *endpoint, uint8_t received, uint8_t *transmitted)
+{
+	struct v90_call_data_sources sources = {
+		.upstream = source_upstream_frame,
+		.upstream_context = &endpoint->upstream_source,
+		.downstream = source_downstream_frame,
+		.downstream_context = &endpoint->downstream_source,
+	};
+	struct v90_call_data_event event;
+	struct v90_call_data_event event_before;
+	struct v90_call call_before;
+	uint8_t generated = 0xa5;
+	bool expecting_source_failure;
+	const struct v90_call_data_sources *selected_sources;
+	enum v90_call_result result;
+
+	if (!endpoint->source_failure_checked &&
+	    !source_is_rejecting(endpoint) &&
+	    source_direction_is_online(endpoint))
+		set_source_rejection(endpoint, true);
+	expecting_source_failure = source_is_rejecting(endpoint);
+	call_before = endpoint->call;
+	memset(&event, 0x5a, sizeof(event));
+	event_before = event;
+	selected_sources = endpoint->idle_source_checked ? &sources : NULL;
+	result = v90_call_data_octet(
+		&endpoint->call, received, selected_sources, &generated, &event);
+	if (result == V90_CALL_SOURCE_FAILURE) {
+		if (!expecting_source_failure || generated != 0xa5 ||
+		    memcmp(&event, &event_before, sizeof(event)) != 0 ||
+		    memcmp(&endpoint->call, &call_before,
+			   sizeof(call_before)) != 0)
+			return false;
+		set_source_rejection(endpoint, false);
+		endpoint->source_failure_checked = true;
+		generated = 0xa5;
+		memset(&event, 0x5a, sizeof(event));
+		result = v90_call_data_octet(
+			&endpoint->call, received, &sources,
+			&generated, &event);
+	}
+	if (result != V90_CALL_OK)
+		return false;
+	endpoint->idle_source_checked = true;
+	if (event.kind == V90_CALL_DOWNSTREAM_FRAME) {
+		if (endpoint->call.local_role != V90_ANALOG_MODEM ||
+		    !downstream_frame_matches(
+			    &event.frame.downstream,
+			    endpoint->downstream_frames))
+			return false;
+		endpoint->downstream_frames++;
+	} else if (event.kind == V90_CALL_UPSTREAM_FRAME) {
+		if (endpoint->call.local_role != V90_DIGITAL_MODEM ||
+		    !upstream_frame_matches(
+			    &event.frame.upstream,
+			    endpoint->upstream_frames))
+			return false;
+		endpoint->upstream_frames++;
+	} else if (event.kind != V90_CALL_DATA_NONE) {
+		return false;
+	}
+	*transmitted = generated;
+	return true;
+}
+
 static bool endpoint_octet(
 	struct endpoint *endpoint, uint8_t received,
 	enum g711_law law, uint8_t *transmitted)
@@ -255,77 +449,14 @@ static bool endpoint_octet(
 	struct v90_call_observation observation;
 
 	if (v90_call_phase4_is_ready(&endpoint->call)) {
-		if (endpoint->call.local_role == V90_ANALOG_MODEM) {
-			struct v90_phase4_analog_handoff *handoff =
-				&endpoint->handoff.analog;
-			struct v90_downstream_event event;
-			enum v90_downstream_rx_result receive_result;
-			int16_t sample;
-
-			if (!endpoint->handoff_captured &&
-			    v90_phase4_analog_startup_handoff(
-				    &endpoint->call.state.phase4.analog,
-				    handoff) != V90_PHASE4_STARTUP_OK)
-				return false;
-			endpoint->handoff_captured = true;
-			if (v90_phase4_cp_line_tx_record_is_complete(
-				    &handoff->transmit) &&
-			    v90_phase4_cp_line_tx_start_next_record(
-				    &handoff->transmit,
-				    &endpoint->call.analog_phase4_configuration
-					     .training_parameters) !=
-				    V90_PHASE4_CP_LINE_TX_OK)
-				return false;
-			if (v90_phase4_cp_line_tx_sample(
-				    &handoff->transmit, &sample) !=
-			    V90_PHASE4_CP_LINE_TX_OK)
-				return false;
-			receive_result = v90_downstream_rx_receive(
-				&handoff->receive, received, &event);
-			if (receive_result != V90_DOWNSTREAM_RX_BUFFERING &&
-			    receive_result != V90_DOWNSTREAM_RX_TRN2D_FRAME)
-				return false;
-			*transmitted = law == G711_LAW_PCMA ?
-				g711_encode_pcma(sample) :
-				g711_encode_pcmu(sample);
-		} else {
-			struct v90_phase4_digital_handoff *handoff =
-				&endpoint->handoff.digital;
-			struct v90_downstream_symbol symbol;
-			struct v90_cp_receive_event event = { 0 };
-			enum v90_phase4_cp_line_rx_result receive_result;
-
-			if (!endpoint->handoff_captured &&
-			    v90_phase4_digital_startup_handoff(
-				    &endpoint->call.state.phase4.digital,
-				    handoff) != V90_PHASE4_STARTUP_OK)
-				return false;
-			endpoint->handoff_captured = true;
-			if (v90_downstream_tx_next(
-				    &handoff->transmit.transmitter, &symbol) !=
-			    V90_DOWNSTREAM_TX_OK)
-				return false;
-			*transmitted = symbol.pcm.octet;
-			receive_result = v90_phase4_cp_line_rx_sample(
-				&handoff->receive,
-				law == G711_LAW_PCMA ?
-					g711_decode_pcma(received) :
-					g711_decode_pcmu(received),
-				&event);
-			if (receive_result == V90_PHASE4_CP_LINE_RX_RECORD_READY) {
-				if (!v90_phase4_cp_line_rx_pending_record_is_valid(
-					    &handoff->receive) ||
-				    v90_phase4_cp_line_rx_continue(
-					    &handoff->receive) !=
-					    V90_PHASE4_CP_LINE_RX_OK)
-					return false;
-			} else if (receive_result != V90_PHASE4_CP_LINE_RX_OK &&
-				   receive_result != V90_PHASE4_CP_LINE_RX_SYMBOL) {
-				return false;
-			}
-		}
-		return true;
+		if (!phase4_boundary_is_transactional(endpoint, law) ||
+		    v90_call_start_data_path(&endpoint->call) != V90_CALL_OK)
+			return false;
+		endpoint->phase4_boundary_checked = true;
+		endpoint->data_path_started = true;
 	}
+	if (v90_call_current_stage(&endpoint->call) == V90_CALL_DATA_PATH)
+		return endpoint_data_octet(endpoint, received, transmitted);
 	if (v90_call_octet(
 		    &endpoint->call, received, transmitted,
 		    &observation) != V90_CALL_OK)
@@ -380,8 +511,31 @@ static bool phase4_boundary_is_transactional(
 	       memcmp(&endpoint->call, &before, sizeof(before)) == 0;
 }
 
+enum call_goal {
+	CALL_GOAL_PHASE4_ENTRY,
+	CALL_GOAL_DATA_PATH,
+	CALL_GOAL_ONLINE_DATA,
+};
+
+static bool goal_is_reached(
+	enum call_goal goal, const struct endpoint *analog,
+	const struct endpoint *digital)
+{
+	if (goal == CALL_GOAL_PHASE4_ENTRY)
+		return analog->entered_phase4 && digital->entered_phase4;
+	if (!analog->data_path_started || !digital->data_path_started)
+		return false;
+	return goal == CALL_GOAL_DATA_PATH ||
+	       (v90_call_is_online(&analog->call) &&
+		v90_call_is_online(&digital->call) &&
+		analog->downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
+		digital->upstream_frames >= DATA_FRAMES_TO_RECEIVE &&
+		analog->source_failure_checked &&
+		digital->source_failure_checked);
+}
+
 static bool run_call(
-	enum g711_law law, size_t delay, bool require_complete_startup)
+	enum g711_law law, size_t delay, enum call_goal goal)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -411,10 +565,7 @@ static bool run_call(
 		      (unsigned int)law, delay, clock);
 		channel_transmit(
 			&channel, analog_transmitted, digital_transmitted);
-		if (require_complete_startup ?
-			    v90_call_phase4_is_ready(&analog.call) &&
-				    v90_call_phase4_is_ready(&digital.call) :
-			    analog.entered_phase4 && digital.entered_phase4) {
+		if (goal_is_reached(goal, &analog, &digital)) {
 			milestone_reached = true;
 			break;
 		}
@@ -423,12 +574,6 @@ static bool run_call(
 	      analog.entered_phase3 && digital.entered_phase3 &&
 	      analog.entered_mixed && digital.entered_mixed &&
 	      analog.entered_phase4 && digital.entered_phase4 &&
-	      v90_call_current_stage(&analog.call) == V90_CALL_PHASE4 &&
-	      v90_call_current_stage(&digital.call) == V90_CALL_PHASE4 &&
-	      v90_phase4_analog_startup_is_valid(
-		      &analog.call.state.phase4.analog) &&
-	      v90_phase4_digital_startup_is_valid(
-		      &digital.call.state.phase4.digital) &&
 	      ri_progress_is_exact(&analog) &&
 	      ri_progress_is_exact(&digital) &&
 	      !v90_call_has_failed(&analog.call) &&
@@ -443,16 +588,45 @@ static bool run_call(
 	      analog.call.stage, digital.call.stage,
 	      analog.phase4_entry_ri_symbols, analog.mixed_octets,
 	      digital.phase4_entry_ri_symbols, digital.mixed_octets);
-	if (require_complete_startup)
-		CHECK(analog.phase4_octets > 0 && digital.phase4_octets > 0 &&
-		      v90_phase4_analog_startup_is_complete(
+	if (goal == CALL_GOAL_PHASE4_ENTRY)
+		CHECK(v90_call_current_stage(&analog.call) == V90_CALL_PHASE4 &&
+		      v90_call_current_stage(&digital.call) == V90_CALL_PHASE4 &&
+		      v90_phase4_analog_startup_is_valid(
 			      &analog.call.state.phase4.analog) &&
-		      v90_phase4_digital_startup_is_complete(
-			      &digital.call.state.phase4.digital) &&
-		      phase4_boundary_is_transactional(&analog, law) &&
-		      phase4_boundary_is_transactional(&digital, law),
+		      v90_phase4_digital_startup_is_valid(
+			      &digital.call.state.phase4.digital),
+		      "law %u delay %zu did not retain Phase 4 entry",
+		      (unsigned int)law, delay);
+	if (goal != CALL_GOAL_PHASE4_ENTRY)
+		CHECK(analog.phase4_octets > 0 && digital.phase4_octets > 0 &&
+		      analog.phase4_boundary_checked &&
+		      digital.phase4_boundary_checked &&
+		      analog.data_path_started && digital.data_path_started &&
+		      analog.idle_source_checked && digital.idle_source_checked &&
+		      v90_call_current_stage(&analog.call) ==
+			      V90_CALL_DATA_PATH &&
+		      v90_call_current_stage(&digital.call) ==
+			      V90_CALL_DATA_PATH,
 		      "law %u delay %zu did not preserve Phase 4 handoffs",
 		      (unsigned int)law, delay);
+	if (goal == CALL_GOAL_ONLINE_DATA)
+		CHECK(v90_call_is_online(&analog.call) &&
+		      v90_call_is_online(&digital.call) &&
+		      analog.downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
+		      digital.upstream_frames >= DATA_FRAMES_TO_RECEIVE &&
+		      analog.source_failure_checked &&
+		      digital.source_failure_checked &&
+		      digital.downstream_source.frames >=
+			      analog.downstream_frames &&
+		      analog.upstream_source.frames >= digital.upstream_frames,
+		      "law %u V.90 data path stopped at frames %zu/%zu "
+		      "sources %zu/%zu failures %d/%d",
+		      (unsigned int)law, analog.downstream_frames,
+		      digital.upstream_frames,
+		      digital.downstream_source.frames,
+		      analog.upstream_source.frames,
+		      analog.source_failure_checked,
+		      digital.source_failure_checked);
 	return true;
 }
 
@@ -464,15 +638,20 @@ static bool test_generated_calls(void)
 
 	for (size_t index = 0; index < ARRAY_LENGTH(complete_delays); ++index)
 		CHECK(run_call(
-			      G711_LAW_PCMU, complete_delays[index], true) &&
+			      G711_LAW_PCMU, complete_delays[index],
+			      CALL_GOAL_DATA_PATH) &&
 		      run_call(
-			      G711_LAW_PCMA, complete_delays[index], true),
+			      G711_LAW_PCMA, complete_delays[index],
+			      CALL_GOAL_DATA_PATH),
 		      "delay %zu generated V.90 handoffs failed",
 		      complete_delays[index]);
+	CHECK(run_call(G711_LAW_PCMU, 1, CALL_GOAL_ONLINE_DATA) &&
+	      run_call(G711_LAW_PCMA, 1, CALL_GOAL_ONLINE_DATA),
+	      "generated V.90 online data calls failed");
 	/* Retain the longer-delay pre-Phase-4 handoff regression separately
 	 * from the carrier-phase combinations covered through CPt/Ri above. */
-	CHECK(run_call(G711_LAW_PCMU, 13, false) &&
-	      run_call(G711_LAW_PCMA, 13, false),
+	CHECK(run_call(G711_LAW_PCMU, 13, CALL_GOAL_PHASE4_ENTRY) &&
+	      run_call(G711_LAW_PCMA, 13, CALL_GOAL_PHASE4_ENTRY),
 	      "generated V.90 calls failed");
 	return true;
 }
@@ -485,6 +664,8 @@ static bool test_validation(void)
 	struct v90_call saved;
 	struct v90_call_observation observation;
 	struct v90_call_observation saved_observation;
+	struct v90_call_data_event data_event;
+	struct v90_call_data_event saved_data_event;
 	uint8_t output = 0xa5;
 
 	memset(&call, 0xa5, sizeof(call));
@@ -503,6 +684,10 @@ static bool test_validation(void)
 	selected.analog_phase4.training_parameters.request_silence = true;
 	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
 	      "call accepted a non-initial Phase 4 training record");
+	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.analog_phase4.data_parameters.kind = V90_CP_TRAINING;
+	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	      "call accepted non-data online CP parameters");
 	selected = configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.digital_phase4.initial_mp.parameters.type0.acknowledges_cp =
 		true;
@@ -517,11 +702,14 @@ static bool test_validation(void)
 	CHECK(v90_call_init(&call, &selected) == V90_CALL_OK &&
 	      v90_call_is_valid(&call) &&
 	      !v90_call_has_failed(&call) &&
-	      !v90_call_phase4_is_ready(&call),
+	      !v90_call_phase4_is_ready(&call) &&
+	      !v90_call_is_online(&call),
 	      "valid call did not initialize");
 	saved = call;
 	memset(&observation, 0x5a, sizeof(observation));
 	saved_observation = observation;
+	memset(&data_event, 0x3c, sizeof(data_event));
+	saved_data_event = data_event;
 	CHECK(v90_call_octet(
 		      NULL, silence_octet(G711_LAW_PCMU),
 		      &output, &observation) == V90_CALL_INVALID_ARGUMENT &&
@@ -539,12 +727,20 @@ static bool test_validation(void)
 		      &call, silence_octet(G711_LAW_PCMU),
 		      &output, (struct v90_call_observation *)&call) ==
 		      V90_CALL_INVALID_ARGUMENT &&
+	      v90_call_start_data_path(NULL) == V90_CALL_INVALID_ARGUMENT &&
+	      v90_call_start_data_path(&call) == V90_CALL_INVALID_STATE &&
+	      v90_call_data_octet(
+		      &call, silence_octet(G711_LAW_PCMU), NULL,
+		      &output, &data_event) == V90_CALL_INVALID_STATE &&
 	      output == 0xa5 &&
 	      memcmp(&observation, &saved_observation,
 		     sizeof(observation)) == 0 &&
+	      memcmp(&data_event, &saved_data_event,
+		     sizeof(data_event)) == 0 &&
 	      memcmp(&call, &saved, sizeof(call)) == 0 &&
 	      !v90_call_is_valid(NULL) && !v90_call_has_failed(NULL) &&
 	      !v90_call_phase4_is_ready(NULL) &&
+	      !v90_call_is_online(NULL) &&
 	      v90_call_current_stage(NULL) == (enum v90_call_stage)-1,
 	      "invalid call operation changed state or output");
 	return true;
@@ -555,6 +751,7 @@ static bool test_result_names(void)
 	static const char *const expected[] = {
 		"ok",
 		"phase 4 ready",
+		"frame source failure",
 		"failed",
 		"invalid argument",
 		"invalid state",
@@ -586,7 +783,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "generated PCMU and PCMA Phase 4 handoffs",
+		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
 		{ "validation and transactionality", test_validation },
 		{ "result names", test_result_names },
