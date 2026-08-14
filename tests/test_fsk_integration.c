@@ -617,9 +617,9 @@ static bool run_v34_rate_matrix(void)
 	} symbol_rates[] = {
 		{ V34_SYMBOL_RATE_2400, 2400, 16800 },
 		{ V34_SYMBOL_RATE_2800, 2800, 21600 },
-		{ V34_SYMBOL_RATE_3000, 3000, 21600 },
-		{ V34_SYMBOL_RATE_3200, 3200, 21600 },
-		{ V34_SYMBOL_RATE_3429, 3429, 21600 },
+		{ V34_SYMBOL_RATE_3000, 3000, 24000 },
+		{ V34_SYMBOL_RATE_3200, 3200, 24000 },
+		{ V34_SYMBOL_RATE_3429, 3429, 24000 },
 	};
 	unsigned int profiles = 0;
 	unsigned int cases = 0;
@@ -679,8 +679,8 @@ static bool run_v34_rate_matrix(void)
 			}
 		}
 	}
-	CHECK(profiles == 39 && cases == 78,
-	      "V.34 matrix covered %u profiles/%u cases instead of 39/78",
+	CHECK(profiles == 42 && cases == 84,
+	      "V.34 matrix covered %u profiles/%u cases instead of 42/84",
 	      profiles, cases);
 	return true;
 }
