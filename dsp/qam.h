@@ -3,6 +3,7 @@
 #ifndef QAM_H
 #define QAM_H
 
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -38,6 +39,12 @@ struct qam_point {
 	double in_phase;
 	double quadrature;
 };
+
+static inline bool point_is_finite(const struct qam_point *point)
+{
+	return point != NULL && isfinite(point->in_phase) &&
+	       isfinite(point->quadrature);
+}
 
 struct qam_active_symbol {
 	uint64_t age_units;

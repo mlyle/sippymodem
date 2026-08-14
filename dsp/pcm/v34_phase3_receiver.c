@@ -174,12 +174,6 @@ enum v34_phase3_receiver_result v34_phase3_receiver_init_suffix(
 	return V34_PHASE3_RECEIVER_OK;
 }
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static enum v34_phase3_receiver_result receive_s(
 	struct v34_phase3_receiver *receiver,
 	const struct qam_point *received)

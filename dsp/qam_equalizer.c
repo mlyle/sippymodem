@@ -7,12 +7,6 @@
 
 static const double QAM_EQUALIZER_MINIMUM_POWER = 1e-12;
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static double point_power(const struct qam_point *point)
 {
 	return point->in_phase * point->in_phase +

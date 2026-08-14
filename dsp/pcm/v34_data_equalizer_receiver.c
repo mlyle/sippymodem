@@ -5,12 +5,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 bool v34_data_equalizer_receiver_is_valid(
 	const struct v34_data_equalizer_receiver *receiver)
 {

@@ -6,12 +6,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static bool stage_is_valid(
 	enum v34_phase4_equalizer_receiver_stage stage)
 {

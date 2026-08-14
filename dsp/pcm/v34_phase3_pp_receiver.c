@@ -5,12 +5,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static bool sequence_counts_are_valid(
 	const struct v34_phase3_pp_receiver *receiver)
 {

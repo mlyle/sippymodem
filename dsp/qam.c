@@ -25,12 +25,6 @@ static const double QAM_MAX_POINT_POWER = 9.0 / 5.0;
 static const double QAM_MIN_ACQUISITION_POWER = 64.0;
 static const double QAM_TIMING_POWER_HYSTERESIS = 1.005;
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static bool transmit_point_is_valid(
 	const struct qam_point *point, double maximum_point_power)
 {

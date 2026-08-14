@@ -35,12 +35,6 @@ static bool decoder_is_valid(
 	       v32_scrambler_is_valid(&decoder->descrambler);
 }
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 bool v32_9600_receiver_is_valid(
 	const struct v32_9600_receiver *receiver)
 {

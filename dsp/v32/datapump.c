@@ -156,12 +156,6 @@ static bool caller_turnaround_s_symbols(
 	return true;
 }
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static bool line_entry_is_valid(
 	const struct v32_datapump *datapump)
 {

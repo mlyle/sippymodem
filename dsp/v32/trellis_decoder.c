@@ -16,12 +16,6 @@ static const uint8_t decoded_high_dibit[4][4] = {
 	{ 2, 3, 1, 0 },
 };
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static bool data_bits_are_valid(uint8_t data_bits_per_symbol)
 {
 	return data_bits_per_symbol >= V32_TRELLIS_MIN_DATA_BITS &&

@@ -72,6 +72,20 @@ static bool points_are_close(
 	       fabs(left->quadrature - right->quadrature) < 1e-12;
 }
 
+static bool test_point_validation(void)
+{
+	const struct qam_point finite = { 1.0, -2.0 };
+	const struct qam_point bad_in_phase = { NAN, 0.0 };
+	const struct qam_point bad_quadrature = { 0.0, INFINITY };
+
+	CHECK(point_is_finite(&finite) &&
+	      !point_is_finite(NULL) &&
+	      !point_is_finite(&bad_in_phase) &&
+	      !point_is_finite(&bad_quadrature),
+	      "QAM point finiteness accepted a non-finite coordinate");
+	return true;
+}
+
 static bool test_flat_gain_round_trip(void)
 {
 	static const struct qam_point gains[] = {
@@ -985,6 +999,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "point validation", test_point_validation },
 		{ "flat gain round trip", test_flat_gain_round_trip },
 		{ "flat gain adaptation", test_flat_gain_adaptation },
 		{ "flat gain validation", test_flat_gain_validation },

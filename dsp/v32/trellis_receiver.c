@@ -13,12 +13,6 @@ static const double V32_TRELLIS_TRAINING_ADAPTATION = 0.5;
 static const double V32_TRELLIS_DECISION_ADAPTATION = 0.05;
 static const double V32_TRELLIS_MINIMUM_POINT_POWER = 1e-12;
 
-static bool point_is_finite(const struct qam_point *point)
-{
-	return point != NULL && isfinite(point->in_phase) &&
-	       isfinite(point->quadrature);
-}
-
 static bool point_has_power(const struct qam_point *point)
 {
 	double power;
