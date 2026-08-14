@@ -65,21 +65,17 @@ static const u8 _ordered[] = {
  *
  */
 
-#define START_BIT   0
-#define STOP_BIT    1
-#if 0
-#define STOP_BITS(p)    ((p)->stop_bits)
-#define DATA_SIZE(p)    ((p)->data_bits)
-#define CHAR_SIZE(p)    ((p)->char_size)
-#define CHAR_DATA(p,ch) ( ( ~(0x1<<(CHAR_SIZE(p)-1)) & \
-                            ((ch)<<(p)->stop_bits) ) | \
-                          ((0x1<<(p)->stop_bits)-1) )
-#else
-#define STOP_BITS(p)    1
-#define DATA_SIZE(p)    8
-#define CHAR_SIZE(p)    10
-#define CHAR_DATA(p,ch) (((ch)<<1)|0x1)
-#endif
+enum {
+	ASYNC_DATA_BITS = 8,
+	ASYNC_FRAME_BITS = 10,
+};
+
+enum async_receive_state {
+	ASYNC_RECEIVE_HUNT_START,
+	ASYNC_RECEIVE_DATA,
+	ASYNC_RECEIVE_STOP,
+	ASYNC_RECEIVE_HUNT_MARK,
+};
 
 int modem_async_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 {
@@ -100,9 +96,9 @@ int modem_async_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 		if (!m->get_chars || m->get_chars(m, (char*)&ch, 1) != 1)
 			break;
 		REVERSE_BITS(ch);
-		s->data <<= CHAR_SIZE(m);
-		s->data |=  CHAR_DATA(m,ch);
-		s->bit  +=  CHAR_SIZE(m);
+		s->data <<= ASYNC_FRAME_BITS;
+		s->data |= ((u32)ch << 1) | 1u;
+		s->bit += ASYNC_FRAME_BITS;
 	} while (1);
 	if (s->bit && bit_cnt > 0) {
 		/* left data + stops */
@@ -128,24 +124,63 @@ int modem_async_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 
 int modem_async_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 {
-	struct bits_state *s = &m->unpack;
+	struct async_state *async = &m->packer.async;
 	int ret = 0;
-	u8 ch;
 	while(bit_cnt > 0) {
-		s->data<<= nbits;
-		s->data |= *bit_buf++ & ((0x1<<nbits)-1);
-		s->bit += nbits;
-		bit_cnt --;
+		u8 bits = *bit_buf++ & ((0x1<<nbits)-1);
+
+		bit_cnt--;
 		ret++;
-		while(s->bit && s->data&(0x1<<(s->bit-1))) /* stop bit */
-			s->bit--;
-		while (s->bit >= CHAR_SIZE(m)) {
-			ch = s->data >>
-				(s->bit-(CHAR_SIZE(m)-STOP_BITS(m))); 
-			s->bit-= CHAR_SIZE(m);
-			REVERSE_BITS(ch);
-			if (m->put_chars)
-				m->put_chars(m,(const char*)&ch,1);
+
+		for (int index = nbits - 1; index >= 0; --index) {
+			unsigned int bit = (bits >> index) & 1u;
+
+			switch (async->receive_state) {
+			case ASYNC_RECEIVE_HUNT_MARK:
+				if (bit != 0)
+					async->receive_state =
+						ASYNC_RECEIVE_HUNT_START;
+				break;
+			case ASYNC_RECEIVE_HUNT_START:
+				if (bit == 0) {
+					async->receive_state = ASYNC_RECEIVE_DATA;
+					async->receive_bit_count = 0;
+					async->receive_data = 0;
+				}
+				break;
+			case ASYNC_RECEIVE_DATA:
+				if (bit != 0)
+					async->receive_data |= (u8)(
+						1u << async->receive_bit_count);
+				async->receive_bit_count++;
+				if (async->receive_bit_count == ASYNC_DATA_BITS)
+					async->receive_state = ASYNC_RECEIVE_STOP;
+				break;
+			case ASYNC_RECEIVE_STOP:
+				if (bit != 0) {
+					u8 ch = async->receive_data;
+
+					if (m->put_chars != NULL)
+						(void)m->put_chars(
+							m, (const char *)&ch, 1);
+					async->receive_state =
+						ASYNC_RECEIVE_HUNT_START;
+				} else {
+					/* Do not reinterpret a bad stop bit as the
+					 * next start bit.  A mark must re-establish
+					 * the asynchronous framing boundary first. */
+					async->receive_state =
+						ASYNC_RECEIVE_HUNT_MARK;
+				}
+				async->receive_bit_count = 0;
+				async->receive_data = 0;
+				break;
+			default:
+				async->receive_state = ASYNC_RECEIVE_HUNT_START;
+				async->receive_bit_count = 0;
+				async->receive_data = 0;
+				break;
+			}
 		}
 	}
 	return ret;
@@ -155,6 +190,9 @@ void modem_async_start(struct modem *m)
 {
 	m->pack.bit  = m->unpack.bit  = 0;
 	m->pack.data = m->unpack.data = 0;
+	m->packer.async.receive_state = ASYNC_RECEIVE_HUNT_START;
+	m->packer.async.receive_bit_count = 0;
+	m->packer.async.receive_data = 0;
         m->bit_timer_func = NULL;
 	m->bit_timer = 0;
 }
@@ -630,5 +668,3 @@ void tmp_init(struct modem *m)
 	m->packer.hdlc.framer = m;
 }
 #endif
-
-

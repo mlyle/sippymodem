@@ -94,6 +94,55 @@ static bool test_async_round_trip(void)
 	return true;
 }
 
+static bool append_async_character(
+	uint8_t *bits, size_t capacity, size_t *length,
+	uint8_t character, bool valid_stop)
+{
+	if (*length + 10 > capacity)
+		return false;
+	bits[(*length)++] = 0;
+	for (unsigned int bit = 0; bit < 8; ++bit)
+		bits[(*length)++] = (uint8_t)((character >> bit) & 1u);
+	bits[(*length)++] = valid_stop ? 1u : 0u;
+	return true;
+}
+
+static bool test_async_resynchronizes_after_bad_stop(void)
+{
+	uint8_t bits[64] = { 0 };
+	uint8_t decoded[3] = { 0 };
+	size_t bit_count = 0;
+	struct byte_stream sink = {
+		.output = decoded,
+		.output_capacity = ARRAY_LENGTH(decoded),
+	};
+	struct modem receiver = {
+		.name = "async-resynchronization-receiver",
+		.dev_data = &sink,
+		.put_chars = write_chars,
+	};
+
+	CHECK(append_async_character(
+		      bits, ARRAY_LENGTH(bits), &bit_count, 'A', true) &&
+		      append_async_character(
+			      bits, ARRAY_LENGTH(bits), &bit_count, 0x55, false) &&
+		      append_async_character(
+			      bits, ARRAY_LENGTH(bits), &bit_count, 0xff, true) &&
+		      append_async_character(
+			      bits, ARRAY_LENGTH(bits), &bit_count, 'B', true),
+	      "async resynchronization fixture overflowed");
+
+	modem_async_start(&receiver);
+	CHECK(modem_async_put_bits(
+		      &receiver, 1, bits, (int)bit_count) == (int)bit_count,
+	      "async decoder did not consume the malformed stream");
+	CHECK(!sink.output_overflow,
+	      "async resynchronization overflowed its output");
+	CHECK(sink.output_length == 2 && decoded[0] == 'A' && decoded[1] == 'B',
+	      "async decoder retained malformed framing or missed recovery");
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -198,6 +247,8 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "async round trip", test_async_round_trip },
+		{ "async bad-stop resynchronization",
+		  test_async_resynchronizes_after_bad_stop },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
 	unsigned int failures = 0;

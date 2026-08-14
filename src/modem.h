@@ -351,11 +351,9 @@ struct modem {
         int (*put_bits)(struct modem *m, int nbits, u8 *buf, int n);
 	union packer_union {
 		struct async_state {
-			struct packer *packer;
-			int data_bits;
-			int stop_bits;
-			int parity;
-			int char_size;
+			unsigned int receive_state;
+			unsigned int receive_bit_count;
+			u8 receive_data;
 		} async;
 		struct detect_state {
 			int tx_count;
