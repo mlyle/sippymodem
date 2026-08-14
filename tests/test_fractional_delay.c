@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
@@ -166,6 +167,62 @@ static bool test_reconfiguration_is_continuous_and_transactional(void)
 	return true;
 }
 
+static bool test_cubic_interpolation(void)
+{
+	static const double polynomial_samples[] = { 4.0, 3.0, 2.0, 7.0 };
+	static const double constant_samples[] = { 6.25, 6.25, 6.25, 6.25 };
+	double invalid_samples[] = { 1.0, 2.0, NAN, 4.0 };
+	double overflowing_samples[] = {
+		-DBL_MAX, DBL_MAX, DBL_MAX, -DBL_MAX,
+	};
+	double output = 123.0;
+
+	CHECK(fractional_delay_interpolate_cubic(
+		      polynomial_samples, 0.0, &output) ==
+		      FRACTIONAL_DELAY_OK &&
+	      output == polynomial_samples[1] &&
+	      fractional_delay_interpolate_cubic(
+		      polynomial_samples, 1.0, &output) ==
+		      FRACTIONAL_DELAY_OK &&
+	      output == polynomial_samples[2],
+	      "cubic interpolation changed an endpoint");
+	CHECK(fractional_delay_interpolate_cubic(
+		      polynomial_samples, 0.25, &output) ==
+		      FRACTIONAL_DELAY_OK &&
+	      output == 2.515625,
+	      "cubic interpolation did not reproduce a cubic polynomial");
+	CHECK(fractional_delay_interpolate_cubic(
+		      constant_samples, 0.375, &output) ==
+		      FRACTIONAL_DELAY_OK &&
+	      output == constant_samples[0],
+	      "cubic interpolation changed a constant signal");
+	output = 123.0;
+	CHECK(fractional_delay_interpolate_cubic(
+		      NULL, 0.5, &output) ==
+		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
+	      fractional_delay_interpolate_cubic(
+		      polynomial_samples, 0.5, NULL) ==
+		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
+	      fractional_delay_interpolate_cubic(
+		      invalid_samples, 0.5, &output) ==
+		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
+	      fractional_delay_interpolate_cubic(
+		      polynomial_samples, NAN, &output) ==
+		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
+	      fractional_delay_interpolate_cubic(
+		      polynomial_samples, -0.01, &output) ==
+		      FRACTIONAL_DELAY_OUT_OF_RANGE &&
+	      fractional_delay_interpolate_cubic(
+		      polynomial_samples, 1.01, &output) ==
+		      FRACTIONAL_DELAY_OUT_OF_RANGE &&
+	      fractional_delay_interpolate_cubic(
+		      overflowing_samples, 0.5, &output) ==
+		      FRACTIONAL_DELAY_NUMERIC_FAILURE &&
+	      output == 123.0,
+	      "cubic interpolation failure changed its output");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -177,6 +234,7 @@ int main(void)
 		{ "voice-band energy", test_half_sample_preserves_voice_band_energy },
 		{ "continuous reconfiguration",
 		  test_reconfiguration_is_continuous_and_transactional },
+		{ "cubic interpolation", test_cubic_interpolation },
 	};
 	unsigned int failures = 0;
 

@@ -4,6 +4,8 @@
 #define FRACTIONAL_DELAY_H
 
 #include <stdbool.h>
+#include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -43,6 +45,50 @@ enum fractional_delay_result fractional_delay_process(
 	struct fractional_delay *delay,
 	int16_t input,
 	int16_t *output);
+
+/* Interpolate between samples[1] and samples[2] with one finite neighbor on
+ * either side. A fraction of zero or one returns the corresponding endpoint
+ * exactly. Rejected calls leave output unchanged. Keeping this small primitive
+ * inline lets DSP owners use it without acquiring the streaming delay filter. */
+static inline enum fractional_delay_result
+fractional_delay_interpolate_cubic(
+	const double samples[4], double fraction, double *output)
+{
+	double plus_one;
+	double minus_one;
+	double minus_two;
+	double interpolated;
+
+	if (samples == NULL || output == NULL || !isfinite(fraction))
+		return FRACTIONAL_DELAY_INVALID_ARGUMENT;
+	if (fraction < 0.0 || fraction > 1.0)
+		return FRACTIONAL_DELAY_OUT_OF_RANGE;
+	for (size_t index = 0; index < 4; ++index)
+		if (!isfinite(samples[index]))
+			return FRACTIONAL_DELAY_INVALID_ARGUMENT;
+	if (fraction == 0.0) {
+		*output = samples[1];
+		return FRACTIONAL_DELAY_OK;
+	}
+	if (fraction == 1.0) {
+		*output = samples[2];
+		return FRACTIONAL_DELAY_OK;
+	}
+	plus_one = fraction + 1.0;
+	minus_one = fraction - 1.0;
+	minus_two = fraction - 2.0;
+	/* Four-point Lagrange interpolation at nodes -1, 0, 1, and 2. */
+	interpolated =
+		samples[0] * (-fraction * minus_one * minus_two / 6.0) +
+		samples[1] * (plus_one * minus_one * minus_two / 2.0) +
+		samples[2] * (-plus_one * fraction * minus_two / 2.0) +
+		samples[3] * (plus_one * fraction * minus_one / 6.0);
+	if (!isfinite(interpolated))
+		return FRACTIONAL_DELAY_NUMERIC_FAILURE;
+	*output = interpolated;
+	return FRACTIONAL_DELAY_OK;
+}
+
 const char *fractional_delay_result_name(
 	enum fractional_delay_result result);
 
