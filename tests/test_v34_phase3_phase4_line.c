@@ -173,6 +173,7 @@ static bool data_configuration(
 	struct v34_mapping_parameters parameters;
 	struct v34_data_line_receiver_configuration configured = {
 		.transmitting_profile = *transmitting_profile,
+		.transmit_point_gain = 1.0,
 		.equalizer_adaptation = 0.01,
 		.trellis_selection = V34_TRELLIS_16_STATE,
 	};

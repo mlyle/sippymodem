@@ -711,6 +711,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	startup_result = v34_data_startup_prepare(
 		&startup, &mode, &exchange->transmit.training.line.profile,
 		&exchange->receive.training.state.phase4.transmitting_profile,
+		exchange->receive.training.state.phase4.demodulator.channel
+			.sample_rate,
 		exchange->data_equalizer_adaptation);
 	if (startup_result != V34_DATA_STARTUP_OK) {
 		result = startup_result == V34_DATA_STARTUP_OUT_OF_RANGE ?

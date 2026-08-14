@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_data_mapping.h>
+#include <v34_data_line_transmitter.h>
+#include <v34_training_line.h>
 
 #include "test.h"
 #include "v34_encoder_test_helpers.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -74,6 +77,10 @@ static bool test_prepared_b1_mapping(void)
 	struct v34_data_mapping first;
 	struct v34_data_mapping repeated;
 	struct v34_data_mapping reverse;
+	struct v34_training_line training;
+	struct v34_data_line_transmitter continued;
+	double point_gain;
+	double repeated_gain;
 
 	CHECK(v34_data_mapping_prepare(
 		      &first, &caller, &parameters, true) ==
@@ -110,6 +117,20 @@ static bool test_prepared_b1_mapping(void)
 	      v34_test_encoders_are_equal(&first.encoder, &repeated.encoder) &&
 	      normalizers_are_equal(&first.normalizer, &repeated.normalizer),
 	      "directional mapping state or deterministic calibration changed");
+	CHECK(v34_data_mapping_line_point_gain(
+		      &first, 8000, &point_gain) == V34_DATA_MAPPING_OK &&
+	      v34_data_mapping_line_point_gain(
+		      &first, 8000, &repeated_gain) == V34_DATA_MAPPING_OK &&
+	      v34_training_line_init(&training, &caller, 8000, 5000) ==
+		      V34_TRAINING_LINE_OK &&
+	      v34_data_line_transmitter_continue(
+		      &continued, &training, &first.schedule,
+		      &first.scrambler, &first.encoder, &first.normalizer) ==
+		      V34_DATA_LINE_TRANSMITTER_OK &&
+	      point_gain == repeated_gain && point_gain > 0.0 &&
+	      fabs(point_gain - continued.carrier.point_gain) <=
+		      1e-12 * fmax(1.0, point_gain),
+	      "generated line point gain did not match the transmitter");
 	return true;
 }
 
@@ -120,6 +141,7 @@ static bool test_validation_and_transactionality(void)
 	struct v34_data_direction_parameters parameters = parameters_fixture();
 	struct v34_data_mapping destination;
 	struct v34_data_mapping prepared;
+	double point_gain = 123.0;
 	unsigned char saved[sizeof(destination)];
 
 	memset(&destination, 0xa5, sizeof(destination));
@@ -164,9 +186,24 @@ static bool test_validation_and_transactionality(void)
 		      &prepared, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_OK,
 	      "validation fixture did not reinitialize");
+	CHECK(v34_data_mapping_line_point_gain(
+		      &prepared, 0, &point_gain) ==
+		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
+	      v34_data_mapping_line_point_gain(
+		      NULL, 8000, &point_gain) ==
+		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
+	      v34_data_mapping_line_point_gain(
+		      &prepared, 8000, NULL) ==
+		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
+	      point_gain == 123.0,
+	      "invalid line point-gain input changed its output");
 	prepared.encoder.previous_differential_output = 1;
-	CHECK(!v34_data_mapping_is_valid(&prepared),
-	      "advanced encoder was accepted as a fresh B1 mapping");
+	CHECK(!v34_data_mapping_is_valid(&prepared) &&
+	      v34_data_mapping_line_point_gain(
+		      &prepared, 8000, &point_gain) ==
+		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
+	      point_gain == 123.0,
+	      "advanced encoder was accepted by line point calibration");
 	CHECK(strcmp(v34_data_mapping_result_name(V34_DATA_MAPPING_OK), "ok") ==
 		      0 &&
 	      strcmp(v34_data_mapping_result_name(

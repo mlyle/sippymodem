@@ -4,7 +4,9 @@
 
 #include "v34_mapping_parameters.h"
 #include "v34_power_calibration.h"
+#include "v34_training_line.h"
 
+#include <math.h>
 #include <stddef.h>
 
 static bool mapping_parameters_are_equal(
@@ -140,6 +142,43 @@ enum v34_data_mapping_result v34_data_mapping_prepare(
 	if (!v34_data_mapping_is_valid(&prepared))
 		return V34_DATA_MAPPING_NUMERIC_FAILURE;
 	*mapping = prepared;
+	return V34_DATA_MAPPING_OK;
+}
+
+enum v34_data_mapping_result v34_data_mapping_line_point_gain(
+	const struct v34_data_mapping *mapping, uint32_t sample_rate,
+	double *point_gain)
+{
+	struct v34_line_power_measurement data_power;
+	struct v34_training_line training;
+	double gain;
+	enum v34_power_calibration_result calibration;
+	enum v34_training_line_result training_result;
+
+	if (!v34_data_mapping_is_valid(mapping) || sample_rate == 0 ||
+	    point_gain == NULL)
+		return V34_DATA_MAPPING_INVALID_ARGUMENT;
+	calibration = v34_calibrate_line_power(
+		&mapping->schedule, &mapping->scrambler, &mapping->encoder,
+		&mapping->normalizer, &mapping->transmitting_profile,
+		sample_rate, &data_power);
+	if (calibration != V34_POWER_CALIBRATION_OK)
+		return calibration_result(calibration);
+	/* raw_rms is independent of the requested line amplitude. A unit
+	 * nominal peak keeps this metadata-only calibration clear of clipping. */
+	training_result = v34_training_line_init(
+		&training, &mapping->transmitting_profile, sample_rate, 1);
+	if (training_result == V34_TRAINING_LINE_OUT_OF_RANGE)
+		return V34_DATA_MAPPING_OUT_OF_RANGE;
+	if (training_result == V34_TRAINING_LINE_INVALID_ARGUMENT)
+		return V34_DATA_MAPPING_INVALID_ARGUMENT;
+	if (training_result != V34_TRAINING_LINE_OK)
+		return V34_DATA_MAPPING_NUMERIC_FAILURE;
+	gain = training.raw_rms /
+		sqrt(data_power.mean_squared_amplitude);
+	if (!isfinite(gain) || gain <= 0.0)
+		return V34_DATA_MAPPING_NUMERIC_FAILURE;
+	*point_gain = gain;
 	return V34_DATA_MAPPING_OK;
 }
 

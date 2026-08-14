@@ -83,6 +83,8 @@ static bool receive_matches_direction(
 	       memcmp(receive->precoder_coefficients,
 		      direction->precoder_coefficients,
 		      sizeof(direction->precoder_coefficients)) == 0 &&
+	       isfinite(receive->transmit_point_gain) &&
+	       receive->transmit_point_gain > 0.0 &&
 	       isfinite(receive->equalizer_adaptation) &&
 	       receive->equalizer_adaptation >= 0.0 &&
 	       receive->equalizer_adaptation <= 1.0;
@@ -124,7 +126,7 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	const struct v34_data_mode *mode,
 	const struct v34_phase3_profile *transmit_profile,
 	const struct v34_phase3_profile *receive_profile,
-	double equalizer_adaptation)
+	uint32_t sample_rate, double equalizer_adaptation)
 {
 	struct v34_data_startup prepared = { 0 };
 	struct v34_data_mapping receive_mapping;
@@ -135,6 +137,7 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	    !v34_phase3_profile_is_valid(receive_profile) ||
 	    !roles_are_complementary(
 		    transmit_profile->local_role, receive_profile->local_role) ||
+	    sample_rate == 0 ||
 	    !isfinite(equalizer_adaptation) || equalizer_adaptation < 0.0 ||
 	    equalizer_adaptation > 1.0)
 		return V34_DATA_STARTUP_INVALID_ARGUMENT;
@@ -152,6 +155,11 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	prepared.receive.transmitting_profile = *receive_profile;
 	prepared.receive.geometry = receive_mapping.schedule.geometry;
 	prepared.receive.normalizer = receive_mapping.normalizer;
+	result = v34_data_mapping_line_point_gain(
+		&receive_mapping, sample_rate,
+		&prepared.receive.transmit_point_gain);
+	if (result != V34_DATA_MAPPING_OK)
+		return mapping_result(result);
 	memcpy(prepared.receive.precoder_coefficients,
 	       mode->receive.precoder_coefficients,
 	       sizeof(prepared.receive.precoder_coefficients));

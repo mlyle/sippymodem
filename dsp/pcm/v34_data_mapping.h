@@ -11,6 +11,7 @@
 #include "v34_symbol_power.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 enum v34_data_mapping_result {
 	V34_DATA_MAPPING_OK,
@@ -38,6 +39,15 @@ enum v34_data_mapping_result v34_data_mapping_prepare(
 	const struct v34_phase3_profile *transmitting_profile,
 	const struct v34_data_direction_parameters *parameters,
 	bool auxiliary_channel_enabled);
+
+/* Determine the data-point scale used when a continuous Phase 3/4 training
+ * waveform changes to this mapping at the same line level. The ratio is
+ * generated from the two bounded power calibrations; no sample vector or
+ * mutable calibration state is retained. Rejected calls leave the output
+ * unchanged. */
+enum v34_data_mapping_result v34_data_mapping_line_point_gain(
+	const struct v34_data_mapping *mapping, uint32_t sample_rate,
+	double *point_gain);
 
 const char *v34_data_mapping_result_name(
 	enum v34_data_mapping_result result);

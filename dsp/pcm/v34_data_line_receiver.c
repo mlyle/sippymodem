@@ -41,6 +41,30 @@ static bool waveform_matches_profile(
 		       profile, &demodulator->channel);
 }
 
+static bool correct_training_gain(
+	const struct v34_equalizer_handoff *handoff,
+	double transmit_point_gain,
+	struct v34_equalizer_handoff *corrected)
+{
+	double reciprocal;
+
+	if (!v34_equalizer_handoff_is_valid(handoff) ||
+	    !isfinite(transmit_point_gain) || transmit_point_gain <= 0.0 ||
+	    corrected == NULL)
+		return false;
+	*corrected = *handoff;
+	reciprocal = 1.0 / transmit_point_gain;
+	if (!isfinite(reciprocal) || reciprocal <= 0.0)
+		return false;
+	for (size_t tap = 0; tap < corrected->equalizer.tap_count; ++tap) {
+		corrected->equalizer.coefficients[tap].in_phase *= reciprocal;
+		corrected->equalizer.coefficients[tap].quadrature *= reciprocal;
+	}
+	corrected->equalizer.last_output.in_phase *= reciprocal;
+	corrected->equalizer.last_output.quadrature *= reciprocal;
+	return v34_equalizer_handoff_is_valid(corrected);
+}
+
 bool v34_data_line_receiver_is_valid(
 	const struct v34_data_line_receiver *receiver)
 {
@@ -50,6 +74,8 @@ bool v34_data_line_receiver_is_valid(
 	       v34_frame_geometry_is_valid(&receiver->geometry) &&
 	       receiver->transmitting_profile.symbol_rate ==
 		       receiver->geometry.symbol_rate &&
+	       isfinite(receiver->transmit_point_gain) &&
+	       receiver->transmit_point_gain > 0.0 &&
 	       waveform_matches_profile(
 		       &receiver->demodulator,
 		       &receiver->transmitting_profile) &&
@@ -68,6 +94,7 @@ enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	const struct v34_data_line_receiver_configuration *configuration)
 {
 	struct v34_data_line_receiver initialized = { 0 };
+	struct v34_equalizer_handoff corrected_handoff;
 
 	if (receiver == NULL || configuration == NULL ||
 	    !v34_phase3_profile_is_valid(
@@ -75,20 +102,25 @@ enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	    !v34_frame_geometry_is_valid(&configuration->geometry) ||
 	    configuration->transmitting_profile.symbol_rate !=
 		    configuration->geometry.symbol_rate ||
+	    !isfinite(configuration->transmit_point_gain) ||
+	    configuration->transmit_point_gain <= 0.0 ||
 	    !isfinite(configuration->equalizer_adaptation) ||
 	    configuration->equalizer_adaptation < 0.0 ||
 	    configuration->equalizer_adaptation > 1.0 ||
 	    !waveform_matches_profile(
 		    demodulator, &configuration->transmitting_profile) ||
 	    !qam_demodulator_measure(demodulator).timing_locked ||
-	    !v34_equalizer_handoff_is_valid(handoff))
+	    !correct_training_gain(
+		    handoff, configuration->transmit_point_gain,
+		    &corrected_handoff))
 		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
 	initialized.demodulator = *demodulator;
 	initialized.transmitting_profile =
 		configuration->transmitting_profile;
 	initialized.geometry = configuration->geometry;
+	initialized.transmit_point_gain = configuration->transmit_point_gain;
 	if (v34_data_equalizer_receiver_init_from_handoff(
-		    &initialized.equalizer_receiver, handoff,
+		    &initialized.equalizer_receiver, &corrected_handoff,
 		    &configuration->normalizer, &configuration->geometry,
 		    configuration->expanded_shaping,
 		    configuration->precoder_coefficients,

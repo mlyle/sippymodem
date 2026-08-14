@@ -29,6 +29,8 @@ struct v34_data_line_receiver_configuration {
 	struct v34_power_normalizer normalizer;
 	struct v34_q14_coefficient
 		precoder_coefficients[V34_PRECODER_TAP_COUNT];
+	/* Peer data-point scale relative to its continuous training waveform. */
+	double transmit_point_gain;
 	double equalizer_adaptation;
 	enum v34_trellis_selection trellis_selection;
 	bool expanded_shaping;
@@ -43,6 +45,7 @@ struct v34_data_line_receiver {
 	struct v34_data_equalizer_receiver equalizer_receiver;
 	struct v34_phase3_profile transmitting_profile;
 	struct v34_frame_geometry geometry;
+	double transmit_point_gain;
 	bool failed;
 };
 
