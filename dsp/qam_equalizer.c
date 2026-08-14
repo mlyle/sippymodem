@@ -13,9 +13,10 @@ static double point_power(const struct qam_point *point)
 	       point->quadrature * point->quadrature;
 }
 
-static bool tap_count_is_valid(unsigned int tap_count)
+static bool geometry_is_valid(
+	unsigned int tap_count, unsigned int decision_delay)
 {
-	return tap_count > QAM_EQUALIZER_DELAY &&
+	return tap_count != 0 && decision_delay < tap_count &&
 	       tap_count <= QAM_EQUALIZER_MAX_TAP_COUNT;
 }
 
@@ -23,7 +24,8 @@ bool qam_equalizer_observation_is_pending(
 	const struct qam_equalizer_observation *observation)
 {
 	if (observation == NULL || !observation->pending ||
-	    !tap_count_is_valid(observation->tap_count) ||
+	    !geometry_is_valid(
+		    observation->tap_count, observation->decision_delay) ||
 	    !point_is_finite(&observation->output))
 		return false;
 	for (size_t index = 0; index < QAM_EQUALIZER_MAX_TAP_COUNT;
@@ -78,10 +80,11 @@ bool qam_equalizer_is_valid(
 	double coefficient_power = 0.0;
 
 	if (equalizer == NULL ||
-	    !tap_count_is_valid(equalizer->tap_count) ||
-	    equalizer->fill > QAM_EQUALIZER_DELAY + 1u ||
+	    !geometry_is_valid(
+		    equalizer->tap_count, equalizer->decision_delay) ||
+	    equalizer->fill > equalizer->decision_delay + 1u ||
 	    (equalizer->can_adapt &&
-	     equalizer->fill <= QAM_EQUALIZER_DELAY) ||
+	     equalizer->fill <= equalizer->decision_delay) ||
 	    !point_is_finite(&equalizer->last_output))
 		return false;
 	for (size_t index = 0; index < QAM_EQUALIZER_MAX_TAP_COUNT;
@@ -113,14 +116,27 @@ enum qam_equalizer_result qam_equalizer_init_span(
 	const struct qam_point *transmitted_reference,
 	unsigned int tap_count)
 {
+	return qam_equalizer_init_geometry(
+		equalizer, received_reference, transmitted_reference, tap_count,
+		QAM_EQUALIZER_DELAY);
+}
+
+enum qam_equalizer_result qam_equalizer_init_geometry(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *received_reference,
+	const struct qam_point *transmitted_reference,
+	unsigned int tap_count, unsigned int decision_delay)
+{
 	struct qam_equalizer initialized = {
 		.tap_count = tap_count,
+		.decision_delay = decision_delay,
 	};
 
-	if (equalizer == NULL || !tap_count_is_valid(tap_count) ||
+	if (equalizer == NULL ||
+	    !geometry_is_valid(tap_count, decision_delay) ||
 	    !inverse_channel(received_reference, transmitted_reference,
 			     &initialized.coefficients[
-				     QAM_EQUALIZER_DELAY]) ||
+				     decision_delay]) ||
 	    !qam_equalizer_is_valid(&initialized))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	*equalizer = initialized;
@@ -154,9 +170,9 @@ enum qam_equalizer_result qam_equalizer_push(
 	}
 	if (!point_is_finite(&filtered))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	if (next.fill <= QAM_EQUALIZER_DELAY)
+	if (next.fill <= next.decision_delay)
 		next.fill++;
-	next_ready = next.fill > QAM_EQUALIZER_DELAY;
+	next_ready = next.fill > next.decision_delay;
 	next.last_output = filtered;
 	next.can_adapt = next_ready;
 	if (!qam_equalizer_is_valid(&next))
@@ -198,6 +214,7 @@ enum qam_equalizer_result qam_equalizer_observe(
 		struct qam_equalizer_observation generated = {
 			.output = output,
 			.tap_count = next.tap_count,
+			.decision_delay = next.decision_delay,
 			.pending = true,
 		};
 		for (size_t index = 0;
@@ -282,7 +299,8 @@ qam_equalizer_adapt_observation(
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!qam_equalizer_observation_is_pending(observation))
 		return QAM_EQUALIZER_INVALID_STATE;
-	if (observation->tap_count != equalizer->tap_count)
+	if (observation->tap_count != equalizer->tap_count ||
+	    observation->decision_delay != equalizer->decision_delay)
 		return QAM_EQUALIZER_INVALID_STATE;
 	next = *equalizer;
 	consumed = *observation;

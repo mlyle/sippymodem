@@ -20,10 +20,9 @@ enum qam_equalizer_result {
 };
 
 /* A symbol-spaced, complex normalized-LMS equalizer. Storage is bounded at
- * QAM_EQUALIZER_MAX_TAP_COUNT, while each instance owns the active span
- * selected at initialization. The decision delay remains three symbols for
- * every span so family-specific channel memory does not alter framing
- * latency. */
+ * QAM_EQUALIZER_MAX_TAP_COUNT, while each instance owns its active span and
+ * decision delay. Ordinary and span-only initialization retain the historic
+ * three-symbol delay. */
 struct qam_equalizer {
 	struct qam_point coefficients[
 		QAM_EQUALIZER_MAX_TAP_COUNT];
@@ -31,6 +30,7 @@ struct qam_equalizer {
 		QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point last_output;
 	unsigned int tap_count;
+	unsigned int decision_delay;
 	unsigned int fill;
 	bool can_adapt;
 };
@@ -43,6 +43,7 @@ struct qam_equalizer_observation {
 		QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point output;
 	unsigned int tap_count;
+	unsigned int decision_delay;
 	bool pending;
 };
 
@@ -58,6 +59,15 @@ enum qam_equalizer_result qam_equalizer_init_span(
 	const struct qam_point *received_reference,
 	const struct qam_point *transmitted_reference,
 	unsigned int tap_count);
+
+/* Select both bounded FIR span and decision delay. decision_delay identifies
+ * the tap seeded with the inverse of the initial flat-channel observation and
+ * must be less than tap_count. */
+enum qam_equalizer_result qam_equalizer_init_geometry(
+	struct qam_equalizer *equalizer,
+	const struct qam_point *received_reference,
+	const struct qam_point *transmitted_reference,
+	unsigned int tap_count, unsigned int decision_delay);
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer);
 

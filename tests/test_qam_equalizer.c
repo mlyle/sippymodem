@@ -121,6 +121,62 @@ static bool test_delay_and_flat_channel(void)
 	return true;
 }
 
+static bool test_instance_selected_delay(void)
+{
+	const struct qam_point reference = { 1.0, -1.0 };
+	const unsigned int centered_delay =
+		QAM_EQUALIZER_MAX_TAP_COUNT / 2u;
+	struct qam_equalizer centered;
+	struct qam_point output = { 0 };
+	bool ready = true;
+
+	CHECK(qam_equalizer_init_geometry(
+		      &centered, &reference, &reference,
+		      QAM_EQUALIZER_MAX_TAP_COUNT, centered_delay) ==
+		      QAM_EQUALIZER_OK &&
+	      centered.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT &&
+	      centered.decision_delay == centered_delay,
+	      "centered equalizer geometry did not initialize");
+	for (unsigned int index = 0; index <= centered_delay; ++index) {
+		const struct qam_point input =
+			index == 0 ? reference : (struct qam_point){ 0 };
+
+		CHECK(qam_equalizer_push(
+			      &centered, &input, &output, &ready) ==
+			      QAM_EQUALIZER_OK &&
+		      ready == (index == centered_delay),
+		      "centered equalizer changed readiness at input %u", index);
+	}
+	CHECK(points_are_close(&output, &reference),
+	      "centered equalizer did not emit its delayed reference");
+	{
+		struct qam_equalizer default_delay;
+		struct qam_equalizer_observation observation = { 0 };
+		struct qam_equalizer saved_default;
+		struct qam_equalizer_observation saved_observation;
+
+		CHECK(qam_equalizer_observe(
+			      &centered, &reference, &observation, &ready) ==
+			      QAM_EQUALIZER_OK && ready &&
+		      qam_equalizer_init_geometry(
+			      &default_delay, &reference, &reference,
+			      QAM_EQUALIZER_MAX_TAP_COUNT,
+			      QAM_EQUALIZER_DELAY) == QAM_EQUALIZER_OK,
+		      "decision-delay observation fixture did not initialize");
+		saved_default = default_delay;
+		saved_observation = observation;
+		CHECK(qam_equalizer_adapt_observation(
+			      &default_delay, &observation, &reference, 0.1) ==
+			      QAM_EQUALIZER_INVALID_STATE &&
+		      memcmp(&default_delay, &saved_default,
+			     sizeof(default_delay)) == 0 &&
+		      memcmp(&observation, &saved_observation,
+			     sizeof(observation)) == 0,
+		      "cross-delay observation rejection was not transactional");
+	}
+	return true;
+}
+
 static bool test_generated_isi_channel(void)
 {
 	static const struct qam_point channel[CHANNEL_TAPS] = {
@@ -438,6 +494,14 @@ static bool test_validation(void)
 		      &equalizer, &reference, &reference,
 		      QAM_EQUALIZER_MAX_TAP_COUNT + 1u) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_init_geometry(
+		      &equalizer, &reference, &reference, 0, 0) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_init_geometry(
+		      &equalizer, &reference, &reference,
+		      QAM_EQUALIZER_MAX_TAP_COUNT,
+		      QAM_EQUALIZER_MAX_TAP_COUNT) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      qam_equalizer_init(&equalizer, &zero, &reference) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      qam_equalizer_init(&equalizer, &invalid, &reference) ==
@@ -480,6 +544,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "decision delay and flat channel", test_delay_and_flat_channel },
+		{ "instance-selected decision delay", test_instance_selected_delay },
 		{ "generated ISI channel", test_generated_isi_channel },
 		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
