@@ -1678,6 +1678,52 @@ V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/channel_bench.o \
 	$(BUILD_DIR)/g711.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
+V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
+	$(BUILD_DIR)/test_v92_phase3_digital_station
+V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
+	$(BUILD_DIR)/v92_phase3_digital_station.o \
+	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
+	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
+	$(BUILD_DIR)/v90_phase3_sd.o \
+	$(BUILD_DIR)/v90_phase3_sd_receiver.o \
+	$(BUILD_DIR)/v90_phase3_signs.o \
+	$(BUILD_DIR)/v90_phase4_ri.o \
+	$(BUILD_DIR)/v90_jd.o \
+	$(BUILD_DIR)/v92_j.o \
+	$(BUILD_DIR)/pcm_j_frame.o \
+	$(BUILD_DIR)/v92_phase3_j_receiver.o \
+	$(BUILD_DIR)/v92_pcm_phase3_initial_rx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_initial_tx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_opening.o \
+	$(BUILD_DIR)/v92_pcm_phase3_ru.o \
+	$(BUILD_DIR)/v92_pcm_info1a.o \
+	$(BUILD_DIR)/v92_pcm_phase3_ja_line_rx.o \
+	$(BUILD_DIR)/binary_equalizer.o \
+	$(BUILD_DIR)/v92_pcm_phase3_trn1u_line_rx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_trn1u.o \
+	$(BUILD_DIR)/v92_pcm_phase3_ja.o \
+	$(BUILD_DIR)/v92_ja_decoder.o \
+	$(BUILD_DIR)/v92_phase3_sync.o \
+	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/pcm_dil_descriptor.o \
+	$(BUILD_DIR)/pcm_binary_sign.o \
+	$(BUILD_DIR)/v92_su_rx.o \
+	$(BUILD_DIR)/v92_su.o \
+	$(BUILD_DIR)/fractional_delay.o \
+	$(BUILD_DIR)/v92_pcm_phase3_cpt_line_rx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_cpt_rx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_cpt_tx.o \
+	$(BUILD_DIR)/v92_cpt_receiver.o \
+	$(BUILD_DIR)/v92_cpt.o \
+	$(BUILD_DIR)/v92_pcm_phase4_trn2u.o \
+	$(BUILD_DIR)/v92_phase4_modulator.o \
+	$(BUILD_DIR)/v90_pcm_symbol.o \
+	$(BUILD_DIR)/qam_equalizer.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(CRC16_CCITT_FALSE_OBJECT) \
+	$(BUILD_DIR)/g711.o
 V92_PHASE4_MODULATOR_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase4_modulator
 V92_PHASE4_MODULATOR_TEST_OBJECTS := \
@@ -2764,6 +2810,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V92_PCM_PHASE3_CPT_TX_TEST_BINARY) \
 	$(V92_PCM_PHASE3_CPT_RX_TEST_BINARY) \
 	$(V92_PCM_PHASE3_CPT_LINE_RX_TEST_BINARY) \
+	$(V92_PHASE3_DIGITAL_STATION_TEST_BINARY) \
 	$(V92_PHASE4_MODULATOR_TEST_BINARY) \
 	$(V92_PCM_PHASE4_TRN2U_TEST_BINARY) \
 	$(V92_PHASE4_SUVU_TX_TEST_BINARY) \
@@ -3023,6 +3070,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V92_PCM_PHASE3_CPT_TX_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE3_CPT_RX_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS:.o=.d) \
+	$(V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS:.o=.d) \
 	$(V92_PHASE4_MODULATOR_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE4_TRN2U_TEST_OBJECTS:.o=.d) \
 	$(V92_PHASE4_SUVU_TX_TEST_OBJECTS:.o=.d) \
@@ -3307,6 +3355,7 @@ test: $(TEST_BINARIES)
 	./$(V92_PCM_PHASE3_CPT_TX_TEST_BINARY)
 	./$(V92_PCM_PHASE3_CPT_RX_TEST_BINARY)
 	./$(V92_PCM_PHASE3_CPT_LINE_RX_TEST_BINARY)
+	./$(V92_PHASE3_DIGITAL_STATION_TEST_BINARY)
 	./$(V92_PHASE4_MODULATOR_TEST_BINARY)
 	./$(V92_PCM_PHASE4_TRN2U_TEST_BINARY)
 	./$(V92_PHASE4_SUVU_TX_TEST_BINARY)
@@ -3997,6 +4046,10 @@ $(V92_PCM_PHASE3_CPT_RX_TEST_BINARY): \
 
 $(V92_PCM_PHASE3_CPT_LINE_RX_TEST_BINARY): \
 	$(V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V92_PHASE3_DIGITAL_STATION_TEST_BINARY): \
+	$(V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_PHASE4_MODULATOR_TEST_BINARY): \
@@ -4850,6 +4903,10 @@ $(BUILD_DIR)/v92_pcm_phase3_cpt_rx.o: \
 
 $(BUILD_DIR)/v92_pcm_phase3_cpt_line_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_line_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_phase3_digital_station.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase3_digital_station.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase4_modulator.o: \
