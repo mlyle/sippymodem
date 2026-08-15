@@ -180,7 +180,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase3_sync.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_ja_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_j.c \
-	$(DSP_PCM_SOURCE_DIR)/v92_phase3_digital_tx.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_digital_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase3_j_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_su.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpt.c \
@@ -245,7 +245,6 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_station.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_digital_station.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase3_digital_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_entry.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_handoff.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_line_rx.c \

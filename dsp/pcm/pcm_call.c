@@ -196,7 +196,7 @@ static bool digital_mixed_is_valid(const struct pcm_call *call)
 	return v90_phase3_digital_station_is_valid(&mixed->phase3) &&
 	       mixed->phase3.transmit_started &&
 	       mixed->phase3.transmit.stage ==
-		       V90_PHASE3_DIGITAL_TX_COMPLETE &&
+		       PCM_PHASE3_DIGITAL_TX_COMPLETE &&
 	       v90_phase4_ri_tx_is_valid(&mixed->transmit) &&
 	       mixed->transmit.stage == V90_PHASE4_RI &&
 	       !mixed->transmit.finish_requested &&

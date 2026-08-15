@@ -4,7 +4,7 @@
 #define V90_PHASE3_DIGITAL_STATION_H
 
 #include "v90_phase3_analog_line_rx.h"
-#include "v90_phase3_digital_tx.h"
+#include "pcm_phase3_digital_tx.h"
 #include "v90_phase3_return_line_rx.h"
 
 #include <stdbool.h>
@@ -49,7 +49,7 @@ struct v90_phase3_digital_transmit_handoff {
  * reach their independent Phase 4 boundaries at different times. */
 struct v90_phase3_digital_station {
 	union v90_phase3_digital_station_receive receive;
-	struct v90_phase3_digital_tx transmit;
+	struct pcm_phase3_digital_tx transmit;
 	struct v90_jd_parameters jd;
 	enum v90_phase3_digital_receive_stage receive_stage;
 	enum g711_law law;

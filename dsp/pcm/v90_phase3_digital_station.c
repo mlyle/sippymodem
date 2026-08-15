@@ -56,7 +56,7 @@ bool v90_phase3_digital_station_is_valid(
 		return station->receive_stage ==
 		       V90_PHASE3_DIGITAL_RECEIVE_INITIAL;
 	return station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
-	       v90_phase3_digital_tx_is_valid(&station->transmit);
+	       pcm_phase3_digital_tx_is_valid(&station->transmit);
 }
 
 bool v90_phase3_digital_station_has_failed(
@@ -102,7 +102,7 @@ bool v90_phase3_digital_station_transmit_complete(
 {
 	return v90_phase3_digital_station_is_valid(station) &&
 	       !station->failed && station->transmit_started &&
-	       station->transmit.stage == V90_PHASE3_DIGITAL_TX_COMPLETE;
+	       station->transmit.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE;
 }
 
 static uint8_t silence_octet(enum g711_law law)
@@ -129,8 +129,8 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	}
 	next = *station;
-	if (v90_phase3_digital_tx_next(&next.transmit, &symbol) !=
-		    V90_PHASE3_DIGITAL_TX_OK ||
+	if (pcm_phase3_digital_tx_next(&next.transmit, &symbol) !=
+		    PCM_PHASE3_DIGITAL_TX_OK ||
 	    !v90_phase3_digital_station_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
@@ -159,7 +159,7 @@ static enum v90_phase3_digital_station_result receive_initial(
 	case V90_PHASE3_ANALOG_LINE_RX_JA_DETECTED: {
 		struct v90_phase3_analog_line_handoff handoff;
 		struct v90_phase3_return_line_rx returning;
-		struct v90_phase3_digital_tx transmit;
+		struct pcm_phase3_digital_tx transmit;
 		double adaptation = station->receive.initial.points.configuration
 					    .tracking_equalizer_adaptation;
 
@@ -169,9 +169,9 @@ static enum v90_phase3_digital_station_result receive_initial(
 		    v90_phase3_return_line_rx_init(
 			    &returning, &handoff, adaptation) !=
 			    V90_PHASE3_RETURN_LINE_RX_OK ||
-		    v90_phase3_digital_tx_init(
+		    pcm_phase3_digital_tx_init_v90(
 			    &transmit, station->law, station->training_ucode,
-			    &station->jd) != V90_PHASE3_DIGITAL_TX_OK)
+			    &station->jd) != PCM_PHASE3_DIGITAL_TX_OK)
 			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 		station->receive =
 			(union v90_phase3_digital_station_receive){ 0 };
@@ -206,12 +206,12 @@ static enum v90_phase3_digital_station_result receive_return(
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	case V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED:
 		return station->transmit.stage ==
-			       V90_PHASE3_DIGITAL_TX_COMPLETE ?
+			       PCM_PHASE3_DIGITAL_TX_COMPLETE ?
 			       V90_PHASE3_DIGITAL_STATION_OK :
 			       V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 	case V90_PHASE3_RETURN_LINE_RX_S_DETECTED:
-		return v90_phase3_digital_tx_finish_jd(&station->transmit) ==
-			       V90_PHASE3_DIGITAL_TX_OK ?
+		return pcm_phase3_digital_tx_finish_jd(&station->transmit) ==
+			       PCM_PHASE3_DIGITAL_TX_OK ?
 			       V90_PHASE3_DIGITAL_STATION_OK :
 			       V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 	case V90_PHASE3_RETURN_LINE_RX_FAILED:
