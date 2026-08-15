@@ -1,0 +1,53 @@
+{
+  "enabled": false,
+  "artifact_directory": "live-call-artifacts/campaigns",
+  "build_cache": "live-call-artifacts/frozen-builds",
+  "candidate": {
+    "repository": ".",
+    "revision": "HEAD",
+    "command": [
+      "make",
+      "slmodemd"
+    ],
+    "executable": "src/slmodemd",
+    "arguments": []
+  },
+  "outbound_environment": {
+    "SIP_TARGET": "sip:private@example.invalid",
+    "SIP_CODEC": "PCMU",
+    "SIP_FRAME_MS": "10",
+    "SIP_PORT": "0",
+    "SIP_RTP_PORT": "0"
+  },
+  "callback_request_environment": {
+    "SIP_TARGET": "sip:private@example.invalid",
+    "SIP_CODEC": "PCMU",
+    "SIP_FRAME_MS": "10",
+    "SIP_PORT": "0",
+    "SIP_RTP_PORT": "0"
+  },
+  "callback_answer_environment": {
+    "SIP_BOUND_ADDR": "192.0.2.10",
+    "SIP_PUBLIC_ADDR": "192.0.2.10",
+    "SIP_CODEC": "PCMU",
+    "SIP_FRAME_MS": "10",
+    "SIP_PORT": "5060",
+    "SIP_RTP_PORT": "4000",
+    "SIP_AUTO_ANSWER": "0",
+    "SIP_REGISTER": "0"
+  },
+  "startup_timeout_seconds": 15,
+  "setup_timeout_seconds": 5,
+  "connect_timeout_seconds": 90,
+  "callback_request_timeout_seconds": 90,
+  "callback_marker_timeout_seconds": 35,
+  "callback_return_timeout_seconds": 180,
+  "callback_release_seconds": 2,
+  "online_timeout_seconds": 15,
+  "online_settle_seconds": 1,
+  "retrain_timeout_seconds": 90,
+  "cleanup_timeout_seconds": 5,
+  "inter_call_seconds": 3,
+  "busy_retry_seconds": 10,
+  "busy_retry_limit": 3
+}

@@ -3194,12 +3194,15 @@ endif
 all: $(TEST_BINARIES)
 
 test: $(TEST_BINARIES)
-	$(PYTHON) test_live_config.py
 	$(PYTHON) test_live_profiles.py
 	$(PYTHON) test_fast_matrix.py
 	$(PYTHON) test_fast_interop.py
 	$(PYTHON) test_live_terminal.py
-	$(PYTHON) test_live_calls.py
+	$(PYTHON) test_revision_build.py
+	$(PYTHON) test_live_campaign_profiles.py
+	$(PYTHON) test_live_campaign_config.py
+	$(PYTHON) test_live_campaign_report.py
+	$(PYTHON) test_live_campaign.py
 	$(PYTHON) test_interop_config.py
 	$(PYTHON) test_interop_endpoint.py
 	$(PYTHON) test_local_interop.py

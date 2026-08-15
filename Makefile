@@ -16,7 +16,7 @@ test: pjsip
 	$(MAKE) -C tests $(PJSIP_SUBMAKE_OPTIONS) test
 
 live-call:
-	python3 tools/live_calls.py
+	python3 tools/live_campaign.py
 
 install-hooks:
 	git config core.hooksPath .githooks

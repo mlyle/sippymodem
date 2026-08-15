@@ -281,6 +281,25 @@ class ModemTerminal:
             send, lambda received: expected in received, timeout_seconds
         )
 
+    def exchange_online_pattern(
+        self,
+        send: bytes,
+        pattern: re.Pattern[bytes],
+        timeout_seconds: float,
+    ) -> tuple[bool, bytes]:
+        expression = getattr(pattern, "pattern", None)
+        if (
+            not isinstance(expression, bytes)
+            or not expression
+            or len(expression) > ONLINE_PATTERN_MAX
+        ):
+            raise LiveTerminalError("invalid online terminal pattern")
+        return self._exchange_online(
+            send,
+            lambda received: pattern.search(received) is not None,
+            timeout_seconds,
+        )
+
     def send_online(self, data: bytes, timeout_seconds: float) -> None:
         if (
             not isinstance(data, bytes)

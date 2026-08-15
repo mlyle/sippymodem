@@ -3,6 +3,7 @@
 
 import os
 from pathlib import Path
+import re
 import sys
 import unittest
 from unittest import mock
@@ -102,6 +103,31 @@ class LiveTerminalTests(unittest.TestCase):
             with self.subTest(size=len(data), timeout=timeout):
                 with self.assertRaises(LiveTerminalError):
                     terminal.send_online(data, timeout)
+
+    def test_online_pattern_waits_for_a_complete_fragmented_marker(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 2400\r\n")
+        marker = re.compile(
+            rb"GETTY:CALLBACK:START:(?P<nonce>[0-9a-f]{32}):"
+        )
+        response = b"GETTY:CALLBACK:START:" + b"a" * 32 + b":ready\r\n"
+        with (
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch("tools.live_terminal._wait_for_descriptor"),
+            mock.patch(
+                "tools.live_terminal.os.read",
+                side_effect=(response[:30], response[30:]),
+            ),
+        ):
+            verified, received = terminal.exchange_online_pattern(
+                b"\r\nDIAL\r\n", marker, 1.0
+            )
+        self.assertTrue(verified)
+        self.assertEqual(received, response)
+        self.assertEqual(write.call_args.args[0], b"\r\nDIAL\r\n")
+
+        with self.assertRaises(LiveTerminalError):
+            terminal.exchange_online_pattern(b"", re.compile("text"), 1.0)
 
     def test_ato1_escapes_and_waits_for_a_new_connect(self) -> None:
         terminal = ModemTerminal(-1)

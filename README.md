@@ -120,15 +120,57 @@ run `./src/slmodemd` without a hardware-device argument or helper process. Set
 `SIP_RECORD_PREFIX` to enable the bounded recording interface; the prefix must
 identify files that do not already exist.
 
-Live interoperability calls are deliberately opt-in. Copy
-`tools/live-call.example.json` to the ignored `.live-call.json`, make it
-owner-readable only, add `SIP_TARGET` to its `environment` object, and enable
-only the plans that are safe to call. That ignored value is the single direct
-SIP target used by every scenario; targets and dial strings do not appear in
-tracked plans. `make live-call` expands every enabled plan and runs each
-profile, link mode, and repetition in a fresh daemon process. Use repeated
-`--plan NAME` options with `python3 tools/live_calls.py` to select enabled plan
-groups. `--list` emits only a redacted manifest and performs no calls.
+Live interoperability campaigns are deliberately opt-in. Copy
+`tools/live-campaign.example.json` to the ignored `.live-campaign.json`, make
+it owner-only, fill in the three private SIP environments, and enable it. The
+ordinary command needs no further arguments:
+
+```
+cp tools/live-campaign.example.json .live-campaign.json
+chmod 600 .live-campaign.json
+python3 tools/live_campaign.py
+```
+
+The runner resolves `HEAD` (or `--revision`) to an exact commit, exports that
+tree and its pinned submodules into a private temporary directory, builds it
+there, and caches only the resulting executable, build log, checksum, and
+revision manifest. Active development therefore cannot replace a binary while
+a campaign is using it. `--prepare` performs only this frozen build.
+
+The default standard campaign has 53 curated call configurations rather than
+a Cartesian matrix; three breadth-first, seed-shuffled attempts produce 159
+base calls. A case with any non-green result gets one additional attempt. The
+12-case smoke and 76-case extended suites are available with `--suite smoke`
+and `--all`. Selection options intersect: for example,
+
+```
+python3 tools/live_campaign.py --modulation v34 --attempts 3
+python3 tools/live_campaign.py --modulation v92 --feature pcm-upstream --callbacks
+python3 tools/live_campaign.py --rate 9600 --role callback
+python3 tools/live_campaign.py --list --suite smoke
+```
+
+The matrix varies modem family, receive/transmit rate, V.34 symbol rate,
+ordinary and digital-head-end operation, conventional and PCM upstream, and
+both outbound and callback-answer roles. Callback cases start the frozen
+answerer first, place a bounded V.22bis request call, verify its random callback
+nonce, wait for RING, issue ATA, and require the same nonce on the returned
+data connection. Direct and callback calls both require a structured PING/PONG
+exchange, then issue ATO1 and require another exchange after retraining.
+
+The TTY summary clears and repaints every two seconds, names the active call
+stage and seconds spent there, and places originator and callback results next
+to each other on each modulation row. Both roles use mutually exclusive `full`,
+`rtrn`, `data`, `conn`, and `none` maturity buckets. Setup and local
+infrastructure failures remain separate. BUSY calls are recorded but do not
+consume a logical attempt: the runner waits the configured busy cooldown and
+retries up to its bound. `NO CARRIER` is always reported as a failed modem
+attempt; the runner does not infer a SIP status that the modem interface did
+not provide. Every other call receives the ordinary inter-call cooldown.
+The seed, complete schedule, detailed results, daemon logs, terminal traffic,
+and bounded media recordings remain in an owner-only ignored campaign
+directory. No endpoint, credential, bind address, or recording path is printed
+in the dashboard.
 
 For a faster cross-implementation check without an external SIP endpoint,
 copy `tools/local-interop.example.json` to an owner-only file beneath the
@@ -174,35 +216,6 @@ directions. This is generated in-process coverage, not external modem
 interoperability. A faster focused datapump matrix separately completes all 22
 standard V.90 downstream rates over both PCMU and PCMA, negotiates the highest
 mutually enabled rate, and passes independent bit streams in both directions.
-The catalog independently sweeps V.90/V.92
-downstream, conventional upstream, PCM-upstream, quick-connect, head-end, and
-analogue-fallback cases without a Cartesian explosion. Plans select individual
-`profiles`, reusable `profile_groups`, `lapm` and/or `raw` link modes, and a
-bounded attempt count. Plan names are printed verbatim as public diagnostic
-labels, so they must not contain endpoints, credentials, or other site-specific
-values.
-
-Every expanded case has an explicit `readiness` and optional `prerequisite` in
-the redacted `--list` output and result. Current cases are `runnable`; profiles
-which need AT controls or datapumps not yet present are `prerequisite`. Even if
-a future plan is enabled locally, the runner reports each prerequisite case
-without starting the daemon or making a call. The inert example keeps the
-implemented-mode matrix, current and future V.34 coverage, directional digital
-sweeps, V.92 head-end/originator and quick-connect cases, V.90/V.92 analogue
-fallback, and matched-peer V.22 600-bit/s coverage separately disabled. A plan
-can append extra AT commands without changing the reviewed base profile
-sequence. The example also includes a short placeholder online-data marker in
-`online_expect_hex`. Replace it with the bytes emitted by the private peer.
-An optional `online_send_hex` can drive an echo or request/response check;
-outbound data is rejected unless an expected response is also configured.
-Both patterns are limited to 512 bytes, and `online_timeout_seconds` bounds the
-wait. When an expectation is present, a plan reports `connected` only after
-the terminal receives that exact byte sequence. Alternatively,
-`"round_trip_probe": "ping"` waits for that initial sequence, sends one fixed
-PING command, and requires a complete nonce-and-timestamp PONG response. This
-probe is mutually exclusive with custom transmitted bytes and exposes only its
-name, byte count, and pass/fail result outside the private artifacts.
-
 The current physical interoperability baseline has transferred an exact,
 bounded 54-byte pattern over direct SIP at V.21 300 bit/s and at every
 implemented V.32/V.32bis rate from 4800 through 14400 bit/s. These milestone
@@ -221,23 +234,6 @@ the test loads at most three minutes, reproduces the raw V.34 call setup, and
 requires carrier acquisition. The ordinary test run reports a skip when no
 recording is supplied, so large and private call evidence stays outside this
 repository.
-
-The runner clears inherited SIP settings before applying the private file,
-uses ephemeral local ports unless the file explicitly selects ports, and never
-prints endpoints, credentials, terminal paths, or artifact paths. Each attempt
-gets a private ignored directory under `live-call-artifacts/` containing its
-redacted result, daemon diagnostics, and bounded media recordings. Enabled
-plans, credentials, and the direct target require the private configuration
-file to have no group or other permissions. Timeouts, repetition counts, and
-the total expanded scenario count are bounded. A failed scenario does not stop
-later scenarios, and every result identifies only its public plan, profile,
-link mode, repetition, and readiness. Data-verifying plans also retain bounded
-`terminal-tx.bin` and `terminal-rx.bin` evidence there with owner-only access;
-the public result represents terminal payload only as expected and verified
-byte counts. The runner also requests CONNECT diagnostics and records the
-negotiated modulation, protocol, compression method, and transmit and receive
-rates; it accepts only known labels and bounded numeric rates, discarding
-arbitrary modem text.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
