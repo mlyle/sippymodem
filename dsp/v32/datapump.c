@@ -613,19 +613,14 @@ static int encode_trellis_transmit_point(
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 	uint8_t scrambled;
 	uint8_t signal_symbol;
-	uint8_t previous_differential_output;
 
 	if (data_bits == 0)
 		return -1;
 	if (datapump->trellis_encoder_initialized) {
 		next_encoder = datapump->trellis_encoder;
-	} else if (v32_phase_to_differential_output(
-			   datapump->encoder.phase_quadrant,
-			   &previous_differential_output) !=
-			   V32_FRAMING_OK ||
-		   v32_trellis_encoder_init(
+	} else if (v32_trellis_encoder_init(
 			   &next_encoder, data_bits,
-			   previous_differential_output) !=
+			   V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) !=
 		   V32_TRELLIS_OK) {
 		return -1;
 	}

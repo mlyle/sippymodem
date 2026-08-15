@@ -52,7 +52,6 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 	struct v32_trellis_acquirer acquirer;
 	struct qam_point reference;
 	uint8_t payload[PAYLOAD_SYMBOLS];
-	uint8_t previous_output;
 	uint8_t mask = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
 
 	CHECK(v32_symbol_encoder_init(
@@ -61,10 +60,9 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 	      v32_symbol_decoder_init(
 		      &framing_decoder, V32_ANSWERING_TRANSMITTER,
 		      0) == V32_FRAMING_OK &&
-	      v32_phase_to_differential_output(
-		      phase, &previous_output) == V32_FRAMING_OK &&
 	      v32_trellis_encoder_init(
-		      &trellis_encoder, data_bits, previous_output) ==
+		      &trellis_encoder, data_bits,
+		      V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) ==
 		      V32_TRELLIS_OK &&
 	      v32_4800_constellation_point(phase, &reference) ==
 		      V32_CONSTELLATION_OK,

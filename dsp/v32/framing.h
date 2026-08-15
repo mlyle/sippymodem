@@ -41,12 +41,6 @@ struct v32_symbol_decoder {
 	uint8_t phase_quadrant;
 };
 
-/* Map a counterclockwise signal-phase quadrant to the corresponding Y1/Y2
- * differential-encoder output. */
-enum v32_framing_result
-v32_phase_to_differential_output(
-	uint8_t phase_quadrant, uint8_t *differential_output);
-
 enum v32_framing_result v32_scrambler_init(
 	struct v32_scrambler *scrambler,
 	enum v32_transmitter_role transmitter_role);

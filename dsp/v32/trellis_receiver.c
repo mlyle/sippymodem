@@ -10,7 +10,7 @@
 /* The post-E confirmation contributes only 128 known symbols. */
 static const double V32_TRELLIS_TRAINING_ADAPTATION = 0.5;
 /* Follow residual carrier rotation without chasing individual noisy points. */
-static const double V32_TRELLIS_DECISION_ADAPTATION = 0.05;
+static const double V32_TRELLIS_DECISION_ADAPTATION = 0.08;
 static const double V32_TRELLIS_MINIMUM_POINT_POWER = 1e-12;
 
 static bool point_has_power(const struct qam_point *point)
@@ -78,25 +78,21 @@ v32_trellis_receiver_init(
 {
 	struct v32_trellis_receiver initialized = { 0 };
 	struct qam_point ideal;
-	uint8_t previous_differential_output;
 
 	if (receiver == NULL || !framing_is_valid(framing) ||
 	    v32_4800_constellation_point(
 		    reference_phase_quadrant, &ideal) !=
 		    V32_CONSTELLATION_OK ||
-	    v32_phase_to_differential_output(
-		    reference_phase_quadrant,
-		    &previous_differential_output) != V32_FRAMING_OK ||
 	    qam_equalizer_init(
 		    &initialized.equalizer, reference_point, &ideal) !=
 		    QAM_EQUALIZER_OK ||
 	    v32_trellis_encoder_init(
 		    &initialized.known_encoder, data_bits_per_symbol,
-		    previous_differential_output) !=
+		    V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) !=
 		    V32_TRELLIS_OK ||
 	    v32_trellis_decoder_init(
 		    &initialized.decoder, data_bits_per_symbol,
-		    previous_differential_output) !=
+		    V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) !=
 		    V32_TRELLIS_OK)
 		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	initialized.known_scrambler = framing->descrambler;

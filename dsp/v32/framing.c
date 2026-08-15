@@ -165,17 +165,6 @@ static uint8_t gray_dibit(uint8_t dibit)
 	return (uint8_t)(dibit ^ (dibit >> 1));
 }
 
-enum v32_framing_result
-v32_phase_to_differential_output(
-	uint8_t phase_quadrant, uint8_t *differential_output)
-{
-	if (phase_quadrant >= QPSK_QUADRANT_COUNT ||
-	    differential_output == NULL)
-		return V32_FRAMING_INVALID_ARGUMENT;
-	*differential_output = gray_dibit(phase_quadrant);
-	return V32_FRAMING_OK;
-}
-
 enum v32_framing_result v32_trn_symbol_encode(
 	struct v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant)

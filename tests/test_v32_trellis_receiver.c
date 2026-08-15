@@ -108,7 +108,6 @@ static bool check_transition(
 			  (uint32_t)role * 97u + initial_quadrant * 11u +
 			  data_bits;
 	uint8_t previous_quadrant = initial_quadrant;
-	uint8_t previous_differential_output;
 	uint8_t mask = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
 	unsigned int confirmed_symbols = 0;
 	unsigned int delivered = 0;
@@ -148,13 +147,9 @@ static bool check_transition(
 			apply_channel(channel_history, transmitted, channel);
 		previous_quadrant = quadrant;
 	}
-	CHECK(v32_phase_to_differential_output(
-		      framing_encoder.phase_quadrant,
-		      &previous_differential_output) ==
-		      V32_FRAMING_OK &&
-	      v32_trellis_encoder_init(
+	CHECK(v32_trellis_encoder_init(
 		      &trellis_encoder, data_bits,
-		      previous_differential_output) ==
+		      V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) ==
 		      V32_TRELLIS_OK &&
 	      v32_trellis_receiver_init(
 		      &receiver, &framing_decoder, &received_reference,
