@@ -1,0 +1,189 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "v92_phase4_digital_rx.h"
+
+#include "memory_region.h"
+
+#include <stddef.h>
+
+static bool stage_is_valid(enum v92_phase4_digital_rx_stage stage)
+{
+	return stage == V92_PHASE4_DIGITAL_RX_TRN2U ||
+	       stage == V92_PHASE4_DIGITAL_RX_CONTROL;
+}
+
+bool v92_phase4_digital_rx_is_valid(
+	const struct v92_phase4_digital_rx *receiver)
+{
+	if (receiver == NULL || !stage_is_valid(receiver->stage))
+		return false;
+	return receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+		       v92_pcm_phase4_trn2u_line_rx_is_valid(
+			       &receiver->signal.trn2u) :
+		       v92_upstream_control_line_rx_is_valid(
+			       &receiver->signal.control);
+}
+
+bool v92_phase4_digital_rx_has_failed(
+	const struct v92_phase4_digital_rx *receiver)
+{
+	if (!v92_phase4_digital_rx_is_valid(receiver))
+		return false;
+	return receiver->failed ||
+	       (receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+			v92_pcm_phase4_trn2u_line_rx_has_failed(
+				&receiver->signal.trn2u) :
+			v92_upstream_control_line_rx_has_failed(
+				&receiver->signal.control));
+}
+
+bool v92_phase4_digital_rx_is_receiving_control(
+	const struct v92_phase4_digital_rx *receiver)
+{
+	return v92_phase4_digital_rx_is_valid(receiver) &&
+	       !v92_phase4_digital_rx_has_failed(receiver) &&
+	       receiver->stage == V92_PHASE4_DIGITAL_RX_CONTROL;
+}
+
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
+	struct v92_phase4_digital_rx *receiver,
+	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
+	enum v92_constellation_size constellation)
+{
+	struct v92_phase4_digital_rx initialized = { 0 };
+	enum v92_pcm_phase4_trn2u_line_rx_result result;
+
+	if (receiver == NULL ||
+	    !v92_pcm_phase3_cpt_line_handoff_is_valid(handoff) ||
+	    v92_phase4_modulator_bits_per_symbol(constellation) == 0u)
+		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
+	result = v92_pcm_phase4_trn2u_line_rx_init(
+		&initialized.signal.trn2u, handoff, constellation);
+	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT)
+		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
+	if (result != V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
+		return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
+	initialized.stage = V92_PHASE4_DIGITAL_RX_TRN2U;
+	if (!v92_phase4_digital_rx_is_valid(&initialized))
+		return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
+	*receiver = initialized;
+	return V92_PHASE4_DIGITAL_RX_OK;
+}
+
+static enum v92_phase4_digital_rx_result fail(
+	struct v92_phase4_digital_rx *receiver)
+{
+	receiver->failed = true;
+	return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
+}
+
+static enum v92_phase4_digital_rx_result receive_training(
+	struct v92_phase4_digital_rx *receiver,
+	struct v92_phase4_digital_rx *next, int16_t sample)
+{
+	enum v92_pcm_phase4_trn2u_line_rx_result result =
+		v92_pcm_phase4_trn2u_line_rx_sample(
+			&next->signal.trn2u, sample);
+
+	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
+		return V92_PHASE4_DIGITAL_RX_OK;
+	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) {
+		struct v92_pcm_phase4_trn2u_line_handoff handoff;
+		struct v92_upstream_control_line_rx control;
+
+		if (v92_pcm_phase4_trn2u_line_rx_handoff(
+			    &next->signal.trn2u, &handoff) !=
+			    V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
+		    v92_upstream_control_line_rx_init(
+			    &control, &handoff) !=
+			    V92_UPSTREAM_CONTROL_LINE_RX_OK)
+			return fail(receiver);
+		next->signal =
+			(union v92_phase4_digital_receive){ .control = control };
+		next->stage = V92_PHASE4_DIGITAL_RX_CONTROL;
+		return V92_PHASE4_DIGITAL_RX_ALIGNED;
+	}
+	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE)
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_FAILED)
+		return V92_PHASE4_DIGITAL_RX_FAILED;
+	return fail(receiver);
+}
+
+static enum v92_phase4_digital_rx_result receive_control(
+	struct v92_phase4_digital_rx *receiver,
+	struct v92_phase4_digital_rx *next, int16_t sample,
+	struct v92_control_event *event)
+{
+	enum v92_upstream_control_line_rx_result result =
+		v92_upstream_control_line_rx_sample(
+			&next->signal.control, sample, event);
+
+	switch (result) {
+	case V92_UPSTREAM_CONTROL_LINE_RX_OK:
+		return V92_PHASE4_DIGITAL_RX_OK;
+	case V92_UPSTREAM_CONTROL_LINE_RX_EVENT:
+		return V92_PHASE4_DIGITAL_RX_EVENT;
+	case V92_UPSTREAM_CONTROL_LINE_RX_FAILED:
+		return V92_PHASE4_DIGITAL_RX_FAILED;
+	case V92_UPSTREAM_CONTROL_LINE_RX_INVALID_STATE:
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	case V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT:
+	case V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR:
+		break;
+	}
+	return fail(receiver);
+}
+
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
+	struct v92_phase4_digital_rx *receiver, int16_t sample,
+	struct v92_control_event *event)
+{
+	struct v92_phase4_digital_rx next;
+	struct v92_control_event emitted = { 0 };
+	enum v92_phase4_digital_rx_result result;
+
+	if (receiver == NULL || event == NULL ||
+	    memory_regions_overlap(
+		    receiver, sizeof(*receiver), event, sizeof(*event)))
+		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
+	if (!v92_phase4_digital_rx_is_valid(receiver))
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	if (v92_phase4_digital_rx_has_failed(receiver))
+		return V92_PHASE4_DIGITAL_RX_FAILED;
+	next = *receiver;
+	result = next.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+			 receive_training(receiver, &next, sample) :
+			 receive_control(receiver, &next, sample, &emitted);
+	if (result != V92_PHASE4_DIGITAL_RX_OK &&
+	    result != V92_PHASE4_DIGITAL_RX_ALIGNED &&
+	    result != V92_PHASE4_DIGITAL_RX_EVENT)
+		return result;
+	if (!v92_phase4_digital_rx_is_valid(&next))
+		return fail(receiver);
+	*receiver = next;
+	*event = emitted;
+	return result;
+}
+
+const char *v92_phase4_digital_rx_result_name(
+	enum v92_phase4_digital_rx_result result)
+{
+	switch (result) {
+	case V92_PHASE4_DIGITAL_RX_OK:
+		return "ok";
+	case V92_PHASE4_DIGITAL_RX_ALIGNED:
+		return "aligned";
+	case V92_PHASE4_DIGITAL_RX_EVENT:
+		return "event";
+	case V92_PHASE4_DIGITAL_RX_FAILED:
+		return "failed";
+	case V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT:
+		return "invalid argument";
+	case V92_PHASE4_DIGITAL_RX_INVALID_STATE:
+		return "invalid state";
+	case V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE:
+		return "numeric failure";
+	}
+	return "unknown";
+}

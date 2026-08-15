@@ -1802,6 +1802,7 @@ V92_UPSTREAM_CONTROL_LINE_RX_TEST_BINARY := \
 V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_upstream_control_line_rx.o \
 	$(BUILD_DIR)/v92_upstream_control_line_rx.o \
+	$(BUILD_DIR)/v92_phase4_digital_rx.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v92_pcm_phase4_trn2u_line_rx.o \
 		$(BUILD_DIR)/test_v92_phase4_suvu_tx.o \
@@ -4983,6 +4984,10 @@ $(BUILD_DIR)/v92_pcm_phase4_trn2u_line_rx.o: \
 
 $(BUILD_DIR)/v92_upstream_control_line_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_control_line_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_phase4_digital_rx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase4_digital_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase4_suvu_tx.o: \
