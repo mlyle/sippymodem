@@ -42,6 +42,7 @@ enum v92_cpu_result {
 	V92_CPU_OUTPUT_TOO_SMALL,
 	V92_CPU_INVALID_FRAME,
 	V92_CPU_CRC_MISMATCH,
+	V92_CPU_INCOMPLETE,
 };
 
 /* Long CPu fields from Table 23. Fixed-point values remain in their wire
@@ -78,6 +79,15 @@ size_t v92_cpu_frame_bits(
 size_t v92_cpu_frame_bytes(
 	const struct v92_cpu_parameters *parameters,
 	unsigned int bits_per_symbol);
+
+/* Infer the exact record extent once the bounded 136-bit header has arrived.
+ * INCOMPLETE requests more header bits; a successful probe does not imply
+ * that the remaining constellation rows or CRC have arrived or are valid.
+ * Rejected calls leave frame_bit_count unchanged. */
+enum v92_cpu_result v92_cpu_probe_frame_bits(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t received_bit_count, unsigned int bits_per_symbol,
+	size_t *frame_bit_count);
 
 /* Pack bits in transmission order, most-significant bit first within each
  * storage octet. Start, reserved, fill, and storage-padding bits are zero.

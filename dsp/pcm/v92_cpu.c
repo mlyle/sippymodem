@@ -367,6 +367,36 @@ static bool decode_header(
 	return decode_maps(frame, decoded);
 }
 
+enum v92_cpu_result v92_cpu_probe_frame_bits(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t received_bit_count, unsigned int bits_per_symbol,
+	size_t *frame_bit_count)
+{
+	struct v92_cpu_parameters decoded;
+	size_t inferred;
+
+	if (frame == NULL || frame_bit_count == NULL)
+		return V92_CPU_INVALID_ARGUMENT;
+	if (!bits_per_symbol_is_valid(bits_per_symbol) ||
+	    received_bit_count > V92_CPU_MAX_FRAME_BITS)
+		return V92_CPU_INVALID_FRAME;
+	if (frame_capacity < (received_bit_count + 7u) / 8u)
+		return V92_CPU_INVALID_ARGUMENT;
+	if (received_bit_count < V92_CPU_HEADER_BITS)
+		return V92_CPU_INCOMPLETE;
+	if (!header_framing_is_valid(frame) ||
+	    !decode_header(frame, &decoded) ||
+	    decoded.data_rate_number > V92_CPU_MAX_DATA_RATE_NUMBER)
+		return V92_CPU_INVALID_FRAME;
+	inferred = frame_bits_for_shape(
+		decoded.constellation_count,
+		decoded.codec_constellations_differ, bits_per_symbol);
+	if (inferred < received_bit_count || inferred > V92_CPU_MAX_FRAME_BITS)
+		return V92_CPU_INVALID_FRAME;
+	*frame_bit_count = inferred;
+	return V92_CPU_OK;
+}
+
 static bool row_starts_are_zero(
 	const uint8_t *frame, size_t row_count)
 {
@@ -478,6 +508,8 @@ const char *v92_cpu_result_name(enum v92_cpu_result result)
 		return "invalid frame";
 	case V92_CPU_CRC_MISMATCH:
 		return "CRC mismatch";
+	case V92_CPU_INCOMPLETE:
+		return "incomplete";
 	}
 	return "unknown";
 }

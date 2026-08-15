@@ -225,6 +225,7 @@ static bool test_dimensions(void)
 			     bits <= V92_CPU_MAX_BITS_PER_SYMBOL; ++bits) {
 				struct v92_cpu_parameters decoded;
 				size_t encoded_bits = 0u;
+				size_t probed_bits = 0u;
 				size_t multiple =
 					bits * V92_CPU_SYMBOLS_PER_FRAME;
 				size_t expected =
@@ -238,6 +239,12 @@ static bool test_dimensions(void)
 					      &value, bits, frame, sizeof(frame),
 					      &encoded_bits) == V92_CPU_OK &&
 				      encoded_bits == expected &&
+				      v92_cpu_probe_frame_bits(
+					      frame,
+					      V92_CPU_HEADER_BITS / 8u,
+					      V92_CPU_HEADER_BITS, bits,
+					      &probed_bits) == V92_CPU_OK &&
+				      probed_bits == expected &&
 				      v92_cpu_decode(
 					      frame, (expected + 7u) / 8u,
 					      expected, bits, &decoded) == V92_CPU_OK &&
@@ -247,6 +254,84 @@ static bool test_dimensions(void)
 			}
 		}
 	}
+	return true;
+}
+
+static bool probe_is_transactional(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t received_bits, unsigned int bits_per_symbol,
+	enum v92_cpu_result expected)
+{
+	size_t extent = 123u;
+
+	return v92_cpu_probe_frame_bits(
+		       frame, frame_capacity, received_bits,
+		       bits_per_symbol, &extent) == expected &&
+	       extent == 123u;
+}
+
+static bool test_extent_probe_failures(void)
+{
+	struct v92_cpu_parameters value = parameters(1u, false);
+	uint8_t encoded[V92_CPU_MAX_FRAME_BYTES] = { 0 };
+	uint8_t changed[V92_CPU_MAX_FRAME_BYTES];
+	size_t frame_bits = 0u;
+	size_t inferred = 0u;
+
+	CHECK(v92_cpu_encode(
+		      &value, 3u, encoded, sizeof(encoded), &frame_bits) ==
+		      V92_CPU_OK &&
+	      v92_cpu_probe_frame_bits(
+		      encoded, V92_CPU_HEADER_BITS / 8u,
+		      V92_CPU_HEADER_BITS, 3u, &inferred) == V92_CPU_OK &&
+	      inferred == frame_bits,
+	      "CPu extent probe did not infer a complete header");
+	for (size_t received = 0u;
+	     received < V92_CPU_HEADER_BITS; ++received) {
+		CHECK(probe_is_transactional(
+			      encoded, (received + 7u) / 8u, received,
+			      3u, V92_CPU_INCOMPLETE),
+		      "CPu extent probe mishandled split %zu", received);
+	}
+	CHECK(probe_is_transactional(
+		      encoded, V92_CPU_HEADER_BITS / 8u - 1u,
+		      V92_CPU_HEADER_BITS, 3u, V92_CPU_INVALID_ARGUMENT) &&
+	      probe_is_transactional(
+		      encoded, sizeof(encoded), V92_CPU_MAX_FRAME_BITS + 1u,
+		      3u, V92_CPU_INVALID_FRAME) &&
+	      probe_is_transactional(
+		      encoded, sizeof(encoded), V92_CPU_HEADER_BITS,
+		      1u, V92_CPU_INVALID_FRAME) &&
+	      v92_cpu_probe_frame_bits(
+		      NULL, 0u, 0u, 3u, &inferred) ==
+		      V92_CPU_INVALID_ARGUMENT &&
+	      v92_cpu_probe_frame_bits(
+		      encoded, sizeof(encoded), V92_CPU_HEADER_BITS,
+		      3u, NULL) == V92_CPU_INVALID_ARGUMENT,
+	      "CPu extent probe accepted an invalid boundary");
+
+	memcpy(changed, encoded, sizeof(changed));
+	set_bit(changed, 0u, 0u);
+	CHECK(probe_is_transactional(
+		      changed, sizeof(changed), V92_CPU_HEADER_BITS,
+		      3u, V92_CPU_INVALID_FRAME),
+	      "CPu extent probe accepted a broken prefix");
+	memcpy(changed, encoded, sizeof(changed));
+	write_lsb_field(changed, CPU_RATE_FIRST_BIT, 5u, 31u);
+	CHECK(probe_is_transactional(
+		      changed, sizeof(changed), V92_CPU_HEADER_BITS,
+		      3u, V92_CPU_INVALID_FRAME),
+	      "CPu extent probe accepted an invalid rate");
+	memcpy(changed, encoded, sizeof(changed));
+	write_lsb_field(changed, map_first_bit(0u), 4u, 6u);
+	CHECK(probe_is_transactional(
+		      changed, sizeof(changed), V92_CPU_HEADER_BITS,
+		      3u, V92_CPU_INVALID_FRAME),
+	      "CPu extent probe accepted an invalid map");
+	CHECK(probe_is_transactional(
+		      encoded, sizeof(encoded), frame_bits + 1u,
+		      3u, V92_CPU_INVALID_FRAME),
+	      "CPu extent probe accepted input past its inferred end");
 	return true;
 }
 
@@ -655,6 +740,8 @@ static bool test_result_names(void)
 		     "invalid frame") == 0 &&
 	      strcmp(v92_cpu_result_name(V92_CPU_CRC_MISMATCH),
 		     "CRC mismatch") == 0 &&
+	      strcmp(v92_cpu_result_name(V92_CPU_INCOMPLETE),
+		     "incomplete") == 0 &&
 	      strcmp(v92_cpu_result_name((enum v92_cpu_result)99),
 		     "unknown") == 0,
 	      "CPu result names changed");
@@ -668,6 +755,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "dimensions", test_dimensions },
+		{ "extent probe failures", test_extent_probe_failures },
 		{ "scalar validation", test_scalar_validation },
 		{ "constellation validation", test_constellation_validation },
 		{ "wire fields", test_wire_fields },
