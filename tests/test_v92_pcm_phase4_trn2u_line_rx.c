@@ -163,6 +163,7 @@ static bool run_line(
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u transmitter;
 	struct v92_pcm_phase4_trn2u_line_rx receiver;
+	struct v92_phase4_modulator decoded_oracle;
 	struct line_channel channel;
 	double first_half_error = 0.0;
 	uint64_t starting_samples;
@@ -175,6 +176,10 @@ static bool run_line(
 		      &receiver, &handoff, constellation) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_OK,
 	      "TRN2u line fixture did not initialize");
+	CHECK(v92_phase4_modulator_init(
+		      &decoded_oracle, constellation, previous_sign,
+		      TEST_LU) == V92_PHASE4_MODULATOR_OK,
+	      "TRN2u coding oracle did not initialize");
 	starting_samples = receiver.input_samples;
 	CHECK(v92_pcm_phase4_trn2u_line_rx_is_valid(&receiver) &&
 	      !v92_pcm_phase4_trn2u_line_rx_can_handoff(&receiver) &&
@@ -210,6 +215,7 @@ static bool run_line(
 			      EXTRA_ALIGNED_SYMBOLS;
 	     ++symbol) {
 		int16_t raw;
+		int16_t decoded_raw;
 		int16_t line;
 		enum v92_pcm_phase4_trn2u_line_rx_result result;
 		uint32_t trained = (uint32_t)symbol + 1u;
@@ -223,6 +229,19 @@ static bool run_line(
 		line = channel_sample(&channel, law, raw);
 		result = v92_pcm_phase4_trn2u_line_rx_sample(
 			&receiver, line);
+		CHECK(v92_phase4_modulator_next(
+			      &decoded_oracle,
+			      (uint8_t)((1u <<
+				       v92_phase4_modulator_bits_per_symbol(
+					       constellation)) - 1u),
+			      &decoded_raw) == V92_PHASE4_MODULATOR_OK,
+		      "TRN2u coding oracle failed at %zu", symbol);
+		CHECK(echo_gain_q15 != 0 ||
+		      (receiver.demodulator.descrambler.history ==
+			       decoded_oracle.scrambler.history &&
+		       receiver.demodulator.previous_encoded_sign ==
+			       decoded_oracle.previous_encoded_sign),
+		      "TRN2u coding continuity changed at %zu", symbol);
 		CHECK(result ==
 			      (aligned ?
 				       V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED :
@@ -246,13 +265,19 @@ static bool run_line(
 	      receiver.expected_index ==
 		      receiver.trained_symbols %
 			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+	      receiver.demodulator.descrambler.history ==
+		      decoded_oracle.scrambler.history &&
+	      receiver.demodulator.previous_encoded_sign ==
+		      decoded_oracle.previous_encoded_sign &&
 	      v92_pcm_phase4_trn2u_line_rx_can_handoff(&receiver),
 	      "TRN2u line counters lost chronology");
 	if (echo_gain_q15 == 0) {
 		CHECK(receiver.symbol_errors == 0u &&
+		      receiver.coding_errors == 0u &&
 		      receiver.squared_error_sum == 0.0,
-		      "exact TRN2u line accumulated %u errors and %.0f energy",
-		      receiver.symbol_errors, receiver.squared_error_sum);
+		      "exact TRN2u line accumulated %u/%u errors and %.0f energy",
+		      receiver.symbol_errors, receiver.coding_errors,
+		      receiver.squared_error_sum);
 	} else {
 		double second_half_error =
 			receiver.squared_error_sum - first_half_error;
@@ -260,11 +285,13 @@ static bool run_line(
 		CHECK(first_half_error > 0.0 && second_half_error >= 0.0 &&
 		      second_half_error < first_half_error * 0.75 &&
 		      receiver.symbol_errors < receiver.trained_symbols / 50u &&
+		      receiver.coding_errors < receiver.trained_symbols / 25u &&
 		      fabs(receiver.equalizer.coefficients[ECHO_DELAY + 10u]
 				   .in_phase) > 0.01,
 		      "extended TRN2u equalizer did not converge: %.0f then %.0f, "
-		      "%u decisions",
-		      first_half_error, second_half_error, receiver.symbol_errors);
+		      "%u/%u decisions",
+		      first_half_error, second_half_error, receiver.symbol_errors,
+		      receiver.coding_errors);
 	}
 	return true;
 }
@@ -349,6 +376,14 @@ static bool test_contracts(void)
 	      "failed TRN2u line receiver was not stable");
 	receiver = before;
 	receiver.failed = false;
+	receiver.demodulator.previous_encoded_sign = 2u;
+	before = receiver;
+	CHECK(!v92_pcm_phase4_trn2u_line_rx_is_valid(&receiver) &&
+	      v92_pcm_phase4_trn2u_line_rx_sample(&receiver, line) ==
+		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      "invalid TRN2u decoder state was not transactional");
+	receiver.demodulator.previous_encoded_sign = 0u;
 	receiver.trained_symbols =
 		UINT32_MAX - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 	receiver.reference.emitted_symbols = UINT32_MAX;

@@ -24,33 +24,26 @@ static bool target_is_member(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver,
 	int16_t target)
 {
-	for (size_t index = 0; index < receiver->level_count; ++index) {
-		if (receiver->levels[index] == target)
-			return true;
+	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
+		receiver->reference.modulator.constellation);
+	unsigned int magnitudes = bits == 0u ? 0u : 1u << (bits - 1u);
+
+	for (uint8_t sign = 0u; sign <= 1u; ++sign) {
+		for (unsigned int magnitude = 0u;
+		     magnitude < magnitudes; ++magnitude) {
+			int16_t level;
+
+			if (v92_phase4_modulator_level(
+				    receiver->reference.modulator.constellation,
+				    receiver->reference.modulator.lu,
+				    (uint8_t)magnitude, sign, &level) !=
+			    V92_PHASE4_MODULATOR_OK)
+				return false;
+			if (quantize(receiver->law, level) == target)
+				return true;
+		}
 	}
 	return false;
-}
-
-static bool levels_are_valid(
-	const struct v92_pcm_phase4_trn2u_line_rx *receiver)
-{
-	unsigned int expected_count =
-		(unsigned int)receiver->reference.modulator.constellation;
-	unsigned int magnitudes = expected_count / 2u;
-
-	if (receiver->level_count != expected_count ||
-	    receiver->level_count > V92_PCM_PHASE4_TRN2U_LINE_MAX_LEVELS)
-		return false;
-	for (size_t index = 0; index < magnitudes; ++index) {
-		if (receiver->levels[index] <= 0 ||
-		    receiver->levels[magnitudes + index] >= 0 ||
-		    (index != 0u &&
-		     (receiver->levels[index] <= receiver->levels[index - 1u] ||
-		      receiver->levels[magnitudes + index] >=
-			      receiver->levels[magnitudes + index - 1u])))
-			return false;
-	}
-	return true;
 }
 
 static bool targets_are_valid(
@@ -77,6 +70,10 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 		       receiver->equalizer.decision_delay + 1u &&
 	       !receiver->equalizer.can_adapt &&
 	       v92_pcm_phase4_trn2u_is_valid(&receiver->reference) &&
+	       v92_phase4_demodulator_is_valid(&receiver->demodulator) &&
+	       receiver->demodulator.constellation ==
+		       receiver->reference.modulator.constellation &&
+	       receiver->demodulator.lu == receiver->reference.modulator.lu &&
 	       receiver->trained_symbols <=
 		       UINT32_MAX -
 			       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
@@ -84,6 +81,7 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 		       receiver->trained_symbols +
 			       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
 	       receiver->symbol_errors <= receiver->trained_symbols &&
+	       receiver->coding_errors <= receiver->trained_symbols &&
 	       receiver->starting_input_samples <= receiver->input_samples &&
 	       receiver->input_samples - receiver->starting_input_samples ==
 		       receiver->trained_symbols &&
@@ -95,7 +93,6 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 	       receiver->expected_index <
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
 	       (receiver->polarity == -1 || receiver->polarity == 1) &&
-	       levels_are_valid(receiver) &&
 	       targets_are_valid(receiver);
 }
 
@@ -131,32 +128,6 @@ static bool initialize_targets(
 		receiver->expected[index] = quantize(receiver->law, level);
 	}
 	return true;
-}
-
-static bool initialize_levels(
-	struct v92_pcm_phase4_trn2u_line_rx *receiver)
-{
-	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
-		receiver->reference.modulator.constellation);
-	unsigned int magnitudes = 1u << (bits - 1u);
-	size_t index = 0;
-
-	for (uint8_t sign = 0; sign <= 1u; ++sign) {
-		for (uint8_t magnitude = 0;
-		     magnitude < magnitudes; ++magnitude) {
-			int16_t level;
-
-			if (v92_phase4_modulator_level(
-				    receiver->reference.modulator.constellation,
-				    receiver->reference.modulator.lu,
-				    magnitude, sign, &level) !=
-			    V92_PHASE4_MODULATOR_OK)
-				return false;
-			receiver->levels[index++] = quantize(receiver->law, level);
-		}
-	}
-	receiver->level_count = (uint8_t)index;
-	return levels_are_valid(receiver);
 }
 
 enum v92_pcm_phase4_trn2u_line_rx_result
@@ -197,33 +168,15 @@ v92_pcm_phase4_trn2u_line_rx_init(
 		    &initialized.reference, constellation,
 		    handoff->previous_sign, (int16_t)rounded_level) !=
 		    V92_PCM_PHASE4_TRN2U_OK ||
-	    !initialize_levels(&initialized) ||
+	    v92_phase4_demodulator_init(
+		    &initialized.demodulator, constellation,
+		    handoff->previous_sign, (int16_t)rounded_level) !=
+		    V92_PHASE4_MODULATOR_OK ||
 	    !initialize_targets(&initialized) ||
 	    !v92_pcm_phase4_trn2u_line_rx_is_valid(&initialized))
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_NUMERIC_FAILURE;
 	*receiver = initialized;
 	return V92_PCM_PHASE4_TRN2U_LINE_RX_OK;
-}
-
-static bool nearest_target(
-	const struct v92_pcm_phase4_trn2u_line_rx *receiver,
-	double value, int16_t *nearest)
-{
-	double best_error = INFINITY;
-	int16_t best = 0;
-
-	if (!isfinite(value) || nearest == NULL || receiver->level_count == 0)
-		return false;
-	for (size_t index = 0; index < receiver->level_count; ++index) {
-		double error = fabs(value - receiver->levels[index]);
-
-		if (error < best_error) {
-			best_error = error;
-			best = receiver->levels[index];
-		}
-	}
-	*nearest = best;
-	return true;
 }
 
 static enum v92_pcm_phase4_trn2u_line_rx_result fail(
@@ -242,8 +195,12 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	struct qam_point input;
 	struct qam_point target;
 	double error;
+	unsigned int bits;
+	uint8_t decoded_group;
+	uint8_t training_group;
 	int16_t next_expected;
 	int16_t selected;
+	int16_t selected_level;
 	int16_t raw_expected;
 	bool ready;
 
@@ -271,9 +228,17 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	if (qam_equalizer_observe(
 		    &next.equalizer, &input, &observation, &ready) !=
 		    QAM_EQUALIZER_OK ||
-	    !ready ||
-	    !nearest_target(&next, observation.output.in_phase, &selected))
+	    !ready || v92_phase4_demodulator_next(
+			      &next.demodulator, observation.output.in_phase,
+			      &decoded_group, &selected_level) !=
+			      V92_PHASE4_MODULATOR_OK)
 		return fail(receiver);
+	selected = quantize(next.law, selected_level);
+	bits = v92_phase4_modulator_bits_per_symbol(
+		next.demodulator.constellation);
+	if (bits == 0u)
+		return fail(receiver);
+	training_group = (uint8_t)((1u << bits) - 1u);
 	target = (struct qam_point){ .in_phase = next_expected };
 	error = observation.output.in_phase - target.in_phase;
 	if (!isfinite(error) ||
@@ -287,6 +252,8 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	} else {
 		next.symbol_errors++;
 	}
+	if (decoded_group != training_group)
+		next.coding_errors++;
 	next.squared_error_sum += error * error;
 	next.input_samples++;
 	next.trained_symbols++;

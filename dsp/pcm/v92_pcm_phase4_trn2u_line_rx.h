@@ -11,7 +11,6 @@
 
 enum {
 	V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS = 61,
-	V92_PCM_PHASE4_TRN2U_LINE_MAX_LEVELS = 8,
 	V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY =
 		V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY,
 };
@@ -32,18 +31,19 @@ enum v92_pcm_phase4_trn2u_line_rx_result {
 struct v92_pcm_phase4_trn2u_line_rx {
 	struct qam_equalizer equalizer;
 	struct v92_pcm_phase4_trn2u reference;
+	struct v92_phase4_demodulator demodulator;
 	int16_t expected[
 		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY];
-	int16_t levels[V92_PCM_PHASE4_TRN2U_LINE_MAX_LEVELS];
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
 	uint32_t trained_symbols;
+	/* Keep physical decisions distinct from temporary descrambler fallout. */
 	uint32_t symbol_errors;
+	uint32_t coding_errors;
 	double squared_error_sum;
 	double adaptation;
 	enum g711_law law;
 	uint8_t expected_index;
-	uint8_t level_count;
 	int8_t polarity;
 	bool failed;
 };
