@@ -1,0 +1,539 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "v92_phase3_analog_station.h"
+
+#include <stddef.h>
+
+static bool receive_stage_is_valid(
+	enum v92_phase3_analog_receive_stage stage)
+{
+	return stage >= V92_PHASE3_ANALOG_RECEIVE_SD &&
+	       stage <= V92_PHASE3_ANALOG_RECEIVE_COMPLETE;
+}
+
+static bool transmit_stage_is_valid(
+	enum v92_phase3_analog_transmit_stage stage)
+{
+	return stage >= V92_PHASE3_ANALOG_TRANSMIT_INITIAL &&
+	       stage <= V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+}
+
+static bool receive_is_valid(
+	const struct v92_phase3_analog_station *station)
+{
+	switch (station->receive_stage) {
+	case V92_PHASE3_ANALOG_RECEIVE_SD:
+		return v90_phase3_sd_receiver_is_valid(&station->receive.sd) &&
+		       !v90_phase3_sd_receiver_is_complete(&station->receive.sd);
+	case V92_PHASE3_ANALOG_RECEIVE_J:
+		return v92_phase3_j_receiver_is_valid(&station->receive.j) &&
+		       !v92_phase3_j_receiver_is_complete(&station->receive.j);
+	case V92_PHASE3_ANALOG_RECEIVE_RI:
+		return v90_phase4_ri_search_is_valid(&station->receive.ri) &&
+		       !v90_phase4_ri_search_is_complete(&station->receive.ri);
+	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
+		return v90_phase4_ri_search_is_complete(&station->receive.ri);
+	}
+	return false;
+}
+
+static bool transmit_is_valid(
+	const struct v92_phase3_analog_station *station)
+{
+	switch (station->transmit_stage) {
+	case V92_PHASE3_ANALOG_TRANSMIT_INITIAL:
+		return v92_pcm_phase3_initial_tx_is_valid(
+			&station->transmit.initial) &&
+		       station->transmit.initial.law == station->law &&
+		       station->transmit.initial.lu_ucode ==
+			       station->upstream_lu_ucode &&
+		       station->transmit.initial.upstream_rate_mask ==
+			       station->upstream_rate_mask;
+	case V92_PHASE3_ANALOG_TRANSMIT_SU:
+		return v92_su_is_valid(&station->transmit.su) &&
+		       !v92_su_is_complete(&station->transmit.su) &&
+		       station->transmit_delay.phase_q16 ==
+			       station->transmit.su.phase_q16;
+	case V92_PHASE3_ANALOG_TRANSMIT_CPT:
+		return v92_pcm_phase3_cpt_tx_is_valid(&station->transmit.cpt) &&
+		       !v92_pcm_phase3_cpt_tx_is_complete(
+			       &station->transmit.cpt);
+	case V92_PHASE3_ANALOG_TRANSMIT_COMPLETE:
+		return v92_pcm_phase3_cpt_tx_is_complete(
+			&station->transmit.cpt);
+	}
+	return false;
+}
+
+static bool coordination_is_valid(
+	const struct v92_phase3_analog_station *station)
+{
+	switch (station->receive_stage) {
+	case V92_PHASE3_ANALOG_RECEIVE_SD:
+		return station->transmit_stage ==
+		       V92_PHASE3_ANALOG_TRANSMIT_INITIAL;
+	case V92_PHASE3_ANALOG_RECEIVE_J:
+		switch (station->receive.j.stage) {
+		case V92_PHASE3_J_RECEIVER_TRN1D:
+		case V92_PHASE3_J_RECEIVER_JD_SEARCH:
+			return station->transmit_stage ==
+			       V92_PHASE3_ANALOG_TRANSMIT_INITIAL;
+		case V92_PHASE3_J_RECEIVER_JD:
+		case V92_PHASE3_J_RECEIVER_JP:
+			return station->transmit_stage ==
+			       V92_PHASE3_ANALOG_TRANSMIT_SU;
+		case V92_PHASE3_J_RECEIVER_DONE:
+			return false;
+		}
+		return false;
+	case V92_PHASE3_ANALOG_RECEIVE_RI:
+		return station->transmit_stage ==
+			       V92_PHASE3_ANALOG_TRANSMIT_CPT ||
+		       station->transmit_stage ==
+			       V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
+		return station->transmit_stage ==
+			       V92_PHASE3_ANALOG_TRANSMIT_CPT ||
+		       station->transmit_stage ==
+			       V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+	}
+	return false;
+}
+
+bool v92_phase3_analog_station_is_valid(
+	const struct v92_phase3_analog_station *station)
+{
+	return station != NULL &&
+	       receive_stage_is_valid(station->receive_stage) &&
+	       transmit_stage_is_valid(station->transmit_stage) &&
+	       g711_law_is_valid(station->law) &&
+	       station->upstream_lu_ucode != 0u &&
+	       station->upstream_lu_ucode <= 127u &&
+	       station->downstream_training_ucode >=
+		       V90_INFO1A_MIN_TRAINING_UCODE &&
+	       station->downstream_training_ucode <=
+		       V90_INFO1A_MAX_TRAINING_UCODE &&
+	       station->upstream_lu > 0 &&
+	       station->upstream_rate_mask != 0u &&
+	       v92_pcm_dil_rate_mask_is_valid(station->upstream_rate_mask) &&
+	       v92_cpt_parameters_are_valid(&station->cpt_parameters) &&
+	       station->cpt_parameters.law == station->law &&
+	       fractional_delay_is_valid(&station->transmit_delay) &&
+	       receive_is_valid(station) && transmit_is_valid(station) &&
+	       coordination_is_valid(station);
+}
+
+bool v92_phase3_analog_station_has_failed(
+	const struct v92_phase3_analog_station *station)
+{
+	return v92_phase3_analog_station_is_valid(station) && station->failed;
+}
+
+enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
+	struct v92_phase3_analog_station *station,
+	const struct v92_phase3_analog_station_configuration *configuration)
+{
+	struct v92_phase3_analog_station initialized = { 0 };
+	struct v90_pcm_symbol lu;
+
+	if (station == NULL || configuration == NULL ||
+	    !g711_law_is_valid(configuration->law) ||
+	    configuration->upstream_lu_ucode == 0u ||
+	    configuration->upstream_lu_ucode > 127u ||
+	    configuration->upstream_rate_mask == 0u ||
+	    !v92_pcm_dil_rate_mask_is_valid(
+		    configuration->upstream_rate_mask) ||
+	    !v92_pcm_info1a_is_valid(&configuration->local_info1a) ||
+	    !v92_cpt_parameters_are_valid(&configuration->cpt) ||
+	    configuration->cpt.law != configuration->law ||
+	    !v90_pcm_symbol_make(
+		    &lu, configuration->law,
+		    configuration->upstream_lu_ucode, true))
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (v92_pcm_phase3_initial_tx_init(
+		    &initialized.transmit.initial, configuration->law,
+		    configuration->upstream_lu_ucode,
+		    &configuration->local_info1a,
+		    configuration->upstream_rate_mask,
+		    configuration->initial_trn1u_symbols) !=
+		    V92_PCM_PHASE3_INITIAL_TX_OK ||
+	    v90_phase3_sd_receiver_init(
+		    &initialized.receive.sd, configuration->law,
+		    configuration->local_info1a.training_ucode) !=
+		    V90_PHASE3_SD_RECEIVER_OK)
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	fractional_delay_init(&initialized.transmit_delay);
+	initialized.cpt_parameters = configuration->cpt;
+	initialized.upstream_rate_mask = configuration->upstream_rate_mask;
+	initialized.receive_stage = V92_PHASE3_ANALOG_RECEIVE_SD;
+	initialized.transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_INITIAL;
+	initialized.law = configuration->law;
+	initialized.upstream_lu = lu.sample;
+	initialized.upstream_lu_ucode = configuration->upstream_lu_ucode;
+	initialized.downstream_training_ucode =
+		configuration->local_info1a.training_ucode;
+	if (!v92_phase3_analog_station_is_valid(&initialized))
+		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+	*station = initialized;
+	return V92_PHASE3_ANALOG_STATION_OK;
+}
+
+bool v92_phase3_analog_station_transmit_complete(
+	const struct v92_phase3_analog_station *station)
+{
+	return v92_phase3_analog_station_is_valid(station) &&
+	       !station->failed &&
+	       station->transmit_stage ==
+		       V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+}
+
+bool v92_phase3_analog_station_receive_complete(
+	const struct v92_phase3_analog_station *station)
+{
+	return v92_phase3_analog_station_is_valid(station) &&
+	       !station->failed &&
+	       station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_COMPLETE;
+}
+
+static enum v92_phase3_analog_station_result transmit_initial(
+	struct v92_phase3_analog_station *station,
+	const struct v90_pcm_symbol *md_symbol, int16_t *sample)
+{
+	struct v90_pcm_symbol symbol;
+	enum v92_pcm_phase3_initial_tx_result result =
+		v92_pcm_phase3_initial_tx_next(
+			&station->transmit.initial, md_symbol, &symbol);
+
+	if (result == V92_PCM_PHASE3_INITIAL_TX_NEED_MD_SYMBOL)
+		return V92_PHASE3_ANALOG_STATION_NEED_MD_SYMBOL;
+	if (result == V92_PCM_PHASE3_INITIAL_TX_DONE) {
+		*sample = 0;
+		return V92_PHASE3_ANALOG_STATION_OK;
+	}
+	if (result == V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT)
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (result != V92_PCM_PHASE3_INITIAL_TX_OK)
+		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+	*sample = symbol.sample;
+	return V92_PHASE3_ANALOG_STATION_OK;
+}
+
+static enum v92_phase3_analog_station_result transmit_su(
+	struct v92_phase3_analog_station *station, int16_t *sample)
+{
+	enum v92_su_result result = v92_su_next(
+		&station->transmit.su, &station->transmit_delay, sample);
+
+	return result == V92_SU_OK || result == V92_SU_REACHED_JP_WAIT ||
+		       result == V92_SU_REACHED_JP_PRIME_WAIT ?
+		       V92_PHASE3_ANALOG_STATION_OK :
+		       V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+}
+
+static enum v92_phase3_analog_station_result transmit_cpt(
+	struct v92_phase3_analog_station *station, int16_t *sample)
+{
+	struct v90_pcm_symbol symbol;
+
+	if (v92_pcm_phase3_cpt_tx_next(
+		    &station->transmit.cpt, &symbol) !=
+	    V92_PCM_PHASE3_CPT_TX_OK)
+		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+	*sample = symbol.sample;
+	if (station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+	    v92_pcm_phase3_trn1u_can_handoff(
+		    &station->transmit.cpt.trn1u) &&
+	    v92_pcm_phase3_cpt_tx_start(&station->transmit.cpt) !=
+		    V92_PCM_PHASE3_CPT_TX_OK)
+		return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	if (v92_pcm_phase3_cpt_tx_is_complete(&station->transmit.cpt))
+		station->transmit_stage =
+			V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+	return V92_PHASE3_ANALOG_STATION_OK;
+}
+
+static bool result_is_terminal(
+	enum v92_phase3_analog_station_result result)
+{
+	return result == V92_PHASE3_ANALOG_STATION_FAILED ||
+	       result == V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH ||
+	       result == V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+}
+
+enum v92_phase3_analog_station_result v92_phase3_analog_station_transmit(
+	struct v92_phase3_analog_station *station,
+	const struct v90_pcm_symbol *md_symbol, int16_t *sample)
+{
+	struct v92_phase3_analog_station next;
+	enum v92_phase3_analog_station_result result;
+	int16_t generated;
+
+	if (!v92_phase3_analog_station_is_valid(station) || sample == NULL)
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V92_PHASE3_ANALOG_STATION_FAILED;
+	if (v92_phase3_analog_station_transmit_complete(station))
+		return V92_PHASE3_ANALOG_STATION_COMPLETE;
+	if (md_symbol != NULL &&
+	    (station->transmit_stage !=
+		     V92_PHASE3_ANALOG_TRANSMIT_INITIAL ||
+	     station->transmit.initial.stage !=
+		     V92_PCM_PHASE3_INITIAL_TX_OPENING ||
+	     station->transmit.initial.sequence.opening.stage !=
+		     V92_PCM_PHASE3_OPENING_MD))
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	next = *station;
+	switch (next.transmit_stage) {
+	case V92_PHASE3_ANALOG_TRANSMIT_INITIAL:
+		result = transmit_initial(&next, md_symbol, &generated);
+		break;
+	case V92_PHASE3_ANALOG_TRANSMIT_SU:
+		result = transmit_su(&next, &generated);
+		break;
+	case V92_PHASE3_ANALOG_TRANSMIT_CPT:
+		result = transmit_cpt(&next, &generated);
+		break;
+	case V92_PHASE3_ANALOG_TRANSMIT_COMPLETE:
+		return V92_PHASE3_ANALOG_STATION_COMPLETE;
+	default:
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	}
+	if (result == V92_PHASE3_ANALOG_STATION_NEED_MD_SYMBOL ||
+	    result == V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT)
+		return result;
+	if (result_is_terminal(result)) {
+		next.failed = true;
+		if (v92_phase3_analog_station_is_valid(&next))
+			*station = next;
+		else
+			station->failed = true;
+		return result;
+	}
+	if (result != V92_PHASE3_ANALOG_STATION_OK ||
+	    !v92_phase3_analog_station_is_valid(&next)) {
+		station->failed = true;
+		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+	}
+	*station = next;
+	*sample = generated;
+	return V92_PHASE3_ANALOG_STATION_OK;
+}
+
+static enum v92_phase3_analog_station_result receive_sd(
+	struct v92_phase3_analog_station *station, uint8_t network_octet)
+{
+	enum v90_phase3_sd_receiver_result result =
+		v90_phase3_sd_receiver_receive(
+			&station->receive.sd, network_octet);
+
+	if (result == V90_PHASE3_SD_RECEIVER_OK ||
+	    result == V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED)
+		return V92_PHASE3_ANALOG_STATION_OK;
+	if (result == V90_PHASE3_SD_RECEIVER_SD_DETECTED)
+		return v92_pcm_phase3_initial_tx_request_finish(
+			       &station->transmit.initial) ==
+			       V92_PCM_PHASE3_INITIAL_TX_OK ?
+			       V92_PHASE3_ANALOG_STATION_OK :
+			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	if (result == V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE) {
+		struct v92_phase3_j_receiver j;
+
+		if (v92_phase3_j_receiver_init(
+			    &j, station->law,
+			    station->downstream_training_ucode) !=
+		    V92_PHASE3_J_RECEIVER_OK)
+			return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+		station->receive =
+			(union v92_phase3_analog_receive){ .j = j };
+		station->receive_stage = V92_PHASE3_ANALOG_RECEIVE_J;
+		return V92_PHASE3_ANALOG_STATION_OK;
+	}
+	return result == V90_PHASE3_SD_RECEIVER_INVALID_SEQUENCE ?
+		       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH :
+		       V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+}
+
+static enum v92_phase3_analog_station_result receive_j(
+	struct v92_phase3_analog_station *station, uint8_t network_octet)
+{
+	enum v92_phase3_j_receiver_result result =
+		v92_phase3_j_receiver_receive(
+			&station->receive.j, network_octet);
+
+	if (result == V92_PHASE3_J_RECEIVER_OK ||
+	    result == V92_PHASE3_J_RECEIVER_JD_REPEATED ||
+	    result == V92_PHASE3_J_RECEIVER_JP_REPEATED)
+		return V92_PHASE3_ANALOG_STATION_OK;
+	if (result == V92_PHASE3_J_RECEIVER_TRN1D_READY)
+		return v92_phase3_j_receiver_begin_jd_search(
+			       &station->receive.j) ==
+			       V92_PHASE3_J_RECEIVER_OK ?
+			       V92_PHASE3_ANALOG_STATION_OK :
+			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	if (result == V92_PHASE3_J_RECEIVER_JD_DETECTED) {
+		struct v92_su su;
+
+		if (!v92_pcm_phase3_initial_tx_is_complete(
+			    &station->transmit.initial))
+			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+		if (v92_su_init(&su, station->upstream_lu) != V92_SU_OK)
+			return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+		station->transmit =
+			(union v92_phase3_analog_transmit){ .su = su };
+		station->transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_SU;
+		return V92_PHASE3_ANALOG_STATION_OK;
+	}
+	if (result == V92_PHASE3_J_RECEIVER_JP_DETECTED) {
+		struct v92_jp jp;
+
+		if (!v92_phase3_j_receiver_jp(&station->receive.j, &jp) ||
+		    v92_su_accept_jp(&station->transmit.su, &jp) != V92_SU_OK)
+			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+		return V92_PHASE3_ANALOG_STATION_OK;
+	}
+	if (result == V92_PHASE3_J_RECEIVER_COMPLETE) {
+		struct v92_pcm_phase3_cpt_tx cpt;
+		struct v90_phase4_ri_search ri;
+
+		if (v92_su_accept_jp_prime(
+			    &station->transmit.su,
+			    &station->transmit_delay, true) != V92_SU_COMPLETE ||
+		    v92_pcm_phase3_cpt_tx_init(
+			    &cpt, station->law,
+			    station->upstream_lu_ucode,
+			    &station->cpt_parameters) !=
+			    V92_PCM_PHASE3_CPT_TX_OK ||
+		    v90_phase4_ri_search_init(
+			    &ri, station->law,
+			    station->downstream_training_ucode) !=
+			    V90_PHASE4_RI_SEARCH_OK)
+			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+		station->transmit =
+			(union v92_phase3_analog_transmit){ .cpt = cpt };
+		station->receive =
+			(union v92_phase3_analog_receive){ .ri = ri };
+		station->transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_CPT;
+		station->receive_stage = V92_PHASE3_ANALOG_RECEIVE_RI;
+		return V92_PHASE3_ANALOG_STATION_OK;
+	}
+	return result == V92_PHASE3_J_RECEIVER_INVALID_SEQUENCE ?
+		       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH :
+		       V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+}
+
+static enum v92_phase3_analog_station_result receive_ri(
+	struct v92_phase3_analog_station *station, uint8_t network_octet)
+{
+	enum v90_phase4_ri_search_result result =
+		v90_phase4_ri_search_receive(
+			&station->receive.ri, network_octet);
+
+	if (result == V90_PHASE4_RI_SEARCH_OK ||
+	    result == V90_PHASE4_RI_SEARCH_ACQUIRED)
+		return V92_PHASE3_ANALOG_STATION_OK;
+	if (result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED)
+		return v92_pcm_phase3_cpt_tx_request_finish(
+			       &station->transmit.cpt) ==
+			       V92_PCM_PHASE3_CPT_TX_OK ?
+			       V92_PHASE3_ANALOG_STATION_OK :
+			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	if (result == V90_PHASE4_RI_SEARCH_DONE) {
+		station->receive_stage = V92_PHASE3_ANALOG_RECEIVE_COMPLETE;
+		return V92_PHASE3_ANALOG_STATION_COMPLETE;
+	}
+	return result == V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE ?
+		       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH :
+		       V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+}
+
+enum v92_phase3_analog_station_result v92_phase3_analog_station_receive(
+	struct v92_phase3_analog_station *station, uint8_t network_octet)
+{
+	struct v92_phase3_analog_station next;
+	enum v92_phase3_analog_station_result result;
+
+	if (!v92_phase3_analog_station_is_valid(station))
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V92_PHASE3_ANALOG_STATION_FAILED;
+	if (v92_phase3_analog_station_receive_complete(station))
+		return V92_PHASE3_ANALOG_STATION_COMPLETE;
+	next = *station;
+	switch (next.receive_stage) {
+	case V92_PHASE3_ANALOG_RECEIVE_SD:
+		result = receive_sd(&next, network_octet);
+		break;
+	case V92_PHASE3_ANALOG_RECEIVE_J:
+		result = receive_j(&next, network_octet);
+		break;
+	case V92_PHASE3_ANALOG_RECEIVE_RI:
+		result = receive_ri(&next, network_octet);
+		break;
+	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
+		return V92_PHASE3_ANALOG_STATION_COMPLETE;
+	default:
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	}
+	if (result_is_terminal(result)) {
+		next.failed = true;
+		if (v92_phase3_analog_station_is_valid(&next))
+			*station = next;
+		else
+			station->failed = true;
+		return result;
+	}
+	if ((result != V92_PHASE3_ANALOG_STATION_OK &&
+	     result != V92_PHASE3_ANALOG_STATION_COMPLETE) ||
+	    !v92_phase3_analog_station_is_valid(&next)) {
+		station->failed = true;
+		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+	}
+	*station = next;
+	return result;
+}
+
+enum v92_phase3_analog_station_result
+v92_phase3_analog_station_transmit_handoff(
+	const struct v92_phase3_analog_station *station,
+	struct v92_phase3_analog_transmit_handoff *handoff)
+{
+	struct v92_phase3_analog_transmit_handoff generated;
+
+	if (!v92_phase3_analog_station_is_valid(station) || handoff == NULL)
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V92_PHASE3_ANALOG_STATION_FAILED;
+	if (!v92_phase3_analog_station_transmit_complete(station))
+		return V92_PHASE3_ANALOG_STATION_INVALID_STATE;
+	generated = (struct v92_phase3_analog_transmit_handoff){
+		.lu = station->upstream_lu,
+		.previous_encoded_sign =
+			station->transmit.cpt.coding.previous_sign,
+	};
+	*handoff = generated;
+	return V92_PHASE3_ANALOG_STATION_OK;
+}
+
+const char *v92_phase3_analog_station_result_name(
+	enum v92_phase3_analog_station_result result)
+{
+	switch (result) {
+	case V92_PHASE3_ANALOG_STATION_OK:
+		return "ok";
+	case V92_PHASE3_ANALOG_STATION_COMPLETE:
+		return "complete";
+	case V92_PHASE3_ANALOG_STATION_NEED_MD_SYMBOL:
+		return "need MD symbol";
+	case V92_PHASE3_ANALOG_STATION_FAILED:
+		return "failed";
+	case V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT:
+		return "invalid argument";
+	case V92_PHASE3_ANALOG_STATION_INVALID_STATE:
+		return "invalid state";
+	case V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH:
+		return "sequence mismatch";
+	case V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE:
+		return "numeric failure";
+	}
+	return "unknown";
+}

@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <pcm_phase3_digital_tx.h>
-#include <v90_phase3_sd_receiver.h>
-#include <v92_pcm_phase3_cpt_tx.h>
-#include <v92_pcm_phase3_initial_tx.h>
 #include <v92_pcm_phase4_trn2u.h>
+#include <v92_phase3_analog_station.h>
 #include <v92_phase3_digital_station.h>
-#include <v92_phase3_j_receiver.h>
-#include <v92_su.h>
 
 #include "test.h"
 
@@ -15,48 +10,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 enum {
 	TEST_UCODE = 91,
-	TEST_SU_LEVEL = 4096,
 	TEST_SU_THRESHOLD = 256,
 	SAMPLE_LIMIT = 20000,
-};
-
-enum peer_source_stage {
-	PEER_SOURCE_INITIAL,
-	PEER_SOURCE_SU,
-	PEER_SOURCE_CPT,
-	PEER_SOURCE_TRN2U,
-};
-
-enum peer_receive_stage {
-	PEER_RECEIVE_SD,
-	PEER_RECEIVE_J,
-	PEER_RECEIVE_RI,
-	PEER_RECEIVE_COMPLETE,
-};
-
-struct peer {
-	struct v92_pcm_phase3_initial_tx initial;
-	struct fractional_delay delay;
-	struct v92_su su;
-	struct v92_pcm_phase3_cpt_tx cpt;
-	struct v92_pcm_phase4_trn2u trn2u;
-	struct v90_phase3_sd_receiver sd;
-	struct v92_phase3_j_receiver j;
-	struct v90_phase4_ri_rx ri;
-	struct v92_pcm_info1a info1a;
-	struct v92_cpt_parameters cpt_parameters;
-	enum peer_source_stage source_stage;
-	enum peer_receive_stage receive_stage;
-	enum g711_law law;
-	uint32_t rate_mask;
-	uint8_t initial_finish_requests;
-	uint8_t cpt_start_requests;
-	uint8_t cpt_finish_requests;
 };
 
 static void add_ucode(
@@ -87,6 +46,26 @@ static struct v92_cpt_parameters cpt_parameters(enum g711_law law)
 	return parameters;
 }
 
+static struct v92_phase3_analog_station_configuration analog_configuration(
+	enum g711_law law, uint32_t rate_mask)
+{
+	return (struct v92_phase3_analog_station_configuration){
+		.local_info1a = {
+			.filter_sections = V92_PCM_FILTER_P1_Z2,
+			.maximum_total_coefficients = 192,
+			.maximum_section_coefficients = 128,
+			.local_md_length_276_symbol_units = 0,
+			.training_ucode = TEST_UCODE,
+		},
+		.cpt = cpt_parameters(law),
+		.upstream_rate_mask = rate_mask,
+		.initial_trn1u_symbols =
+			V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS,
+		.law = law,
+		.upstream_lu_ucode = TEST_UCODE,
+	};
+}
+
 static bool parameters_match(
 	const struct v92_cpt_parameters *left,
 	const struct v92_cpt_parameters *right)
@@ -113,201 +92,6 @@ static int16_t media_sample(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
-static bool peer_init(
-	struct peer *peer, enum g711_law law, uint32_t rate_mask)
-{
-	struct peer initialized = {
-		.info1a = {
-			.filter_sections = V92_PCM_FILTER_P1_Z2,
-			.maximum_total_coefficients = 192,
-			.maximum_section_coefficients = 128,
-			.training_ucode = 103,
-		},
-		.cpt_parameters = cpt_parameters(law),
-		.law = law,
-		.rate_mask = rate_mask,
-	};
-
-	fractional_delay_init(&initialized.delay);
-	if (!v92_cpt_parameters_are_valid(&initialized.cpt_parameters) ||
-	    v92_pcm_phase3_initial_tx_init(
-		    &initialized.initial, law, TEST_UCODE,
-		    &initialized.info1a, rate_mask,
-		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) !=
-		    V92_PCM_PHASE3_INITIAL_TX_OK ||
-	    v90_phase3_sd_receiver_init(
-		    &initialized.sd, law, TEST_UCODE) !=
-		    V90_PHASE3_SD_RECEIVER_OK)
-		return false;
-	*peer = initialized;
-	return true;
-}
-
-static bool peer_receive_j(struct peer *peer, uint8_t octet)
-{
-	enum v92_phase3_j_receiver_result result =
-		v92_phase3_j_receiver_receive(&peer->j, octet);
-
-	switch (result) {
-	case V92_PHASE3_J_RECEIVER_OK:
-	case V92_PHASE3_J_RECEIVER_JD_REPEATED:
-	case V92_PHASE3_J_RECEIVER_JP_REPEATED:
-		return true;
-	case V92_PHASE3_J_RECEIVER_TRN1D_READY:
-		return v92_phase3_j_receiver_begin_jd_search(&peer->j) ==
-		       V92_PHASE3_J_RECEIVER_OK;
-	case V92_PHASE3_J_RECEIVER_JD_DETECTED:
-		if (peer->source_stage != PEER_SOURCE_INITIAL ||
-		    !v92_pcm_phase3_initial_tx_is_complete(&peer->initial) ||
-		    v92_su_init(&peer->su, TEST_SU_LEVEL) != V92_SU_OK)
-			return false;
-		peer->source_stage = PEER_SOURCE_SU;
-		return true;
-	case V92_PHASE3_J_RECEIVER_JP_DETECTED: {
-		struct v92_jp jp;
-
-		return v92_phase3_j_receiver_jp(&peer->j, &jp) &&
-		       v92_su_accept_jp(&peer->su, &jp) == V92_SU_OK;
-	}
-	case V92_PHASE3_J_RECEIVER_COMPLETE:
-		if (v92_su_accept_jp_prime(
-			    &peer->su, &peer->delay, true) != V92_SU_COMPLETE)
-			return false;
-		if (v92_pcm_phase3_cpt_tx_init(
-			    &peer->cpt, peer->law, TEST_UCODE,
-			    &peer->cpt_parameters) != V92_PCM_PHASE3_CPT_TX_OK)
-			return false;
-		peer->source_stage = PEER_SOURCE_CPT;
-		peer->receive_stage = PEER_RECEIVE_RI;
-		return v90_phase4_ri_rx_init(
-			       &peer->ri, peer->law, TEST_UCODE) ==
-		       V90_PHASE4_RI_OK;
-	case V92_PHASE3_J_RECEIVER_INVALID_ARGUMENT:
-	case V92_PHASE3_J_RECEIVER_INVALID_STATE:
-	case V92_PHASE3_J_RECEIVER_INVALID_SEQUENCE:
-		return false;
-	}
-	return false;
-}
-
-static bool peer_receive(
-	struct peer *peer, uint8_t octet,
-	enum v92_phase3_digital_transmit_stage emitted_stage)
-{
-	if (peer->receive_stage == PEER_RECEIVE_SD) {
-		enum v90_phase3_sd_receiver_result result =
-			v90_phase3_sd_receiver_receive(&peer->sd, octet);
-
-		if (result == V90_PHASE3_SD_RECEIVER_SD_DETECTED) {
-			if (v92_pcm_phase3_initial_tx_request_finish(
-				    &peer->initial) !=
-				    V92_PCM_PHASE3_INITIAL_TX_OK)
-				return false;
-			peer->initial_finish_requests++;
-		}
-		if (result == V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE) {
-			if (v92_phase3_j_receiver_init(
-				    &peer->j, peer->law, TEST_UCODE) !=
-				    V92_PHASE3_J_RECEIVER_OK)
-				return false;
-			peer->receive_stage = PEER_RECEIVE_J;
-			return true;
-		}
-		return result == V90_PHASE3_SD_RECEIVER_OK ||
-		       result == V90_PHASE3_SD_RECEIVER_SD_DETECTED ||
-		       result == V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED;
-	}
-	if (peer->receive_stage == PEER_RECEIVE_J)
-		return peer_receive_j(peer, octet);
-	if (peer->receive_stage == PEER_RECEIVE_RI) {
-		enum v90_phase4_ri_result result;
-
-		/* The character which changes the station's stage to RI is the
-		 * final SCR character; only characters emitted from an already-RI
-		 * state belong to the R detector. */
-		if (emitted_stage != V92_PHASE3_DIGITAL_TRANSMIT_RI)
-			return true;
-		result = v90_phase4_ri_rx_receive(&peer->ri, octet);
-		if (peer->cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
-		    v92_pcm_phase3_trn1u_can_handoff(&peer->cpt.trn1u) &&
-		    result == V90_PHASE4_RI_OK) {
-			if (v92_pcm_phase3_cpt_tx_start(&peer->cpt) !=
-			    V92_PCM_PHASE3_CPT_TX_OK)
-				return false;
-			peer->cpt_start_requests++;
-		}
-		if (result == V90_PHASE4_RI_TRANSITION_DETECTED) {
-			if (v92_pcm_phase3_cpt_tx_request_finish(&peer->cpt) !=
-			    V92_PCM_PHASE3_CPT_TX_OK)
-				return false;
-			peer->cpt_finish_requests++;
-		}
-		if (result == V90_PHASE4_RI_DONE) {
-			peer->receive_stage = PEER_RECEIVE_COMPLETE;
-			return true;
-		}
-		return result == V90_PHASE4_RI_OK ||
-		       result == V90_PHASE4_RI_TRANSITION_DETECTED;
-	}
-	return true;
-}
-
-static bool peer_next_sample(struct peer *peer, int16_t *sample)
-{
-	struct v90_pcm_symbol symbol;
-
-	switch (peer->source_stage) {
-	case PEER_SOURCE_INITIAL:
-		if (v92_pcm_phase3_initial_tx_is_complete(&peer->initial)) {
-			*sample = 0;
-			return true;
-		}
-		if (v92_pcm_phase3_initial_tx_next(
-			    &peer->initial, NULL, &symbol) !=
-		    V92_PCM_PHASE3_INITIAL_TX_OK)
-			return false;
-		*sample = symbol.sample;
-		return true;
-	case PEER_SOURCE_SU: {
-		enum v92_su_result result =
-			v92_su_next(&peer->su, &peer->delay, sample);
-
-		return result == V92_SU_OK ||
-		       result == V92_SU_REACHED_JP_WAIT ||
-		       result == V92_SU_REACHED_JP_PRIME_WAIT;
-	}
-	case PEER_SOURCE_CPT:
-		if (!v92_pcm_phase3_cpt_tx_is_complete(&peer->cpt)) {
-			if (v92_pcm_phase3_cpt_tx_next(&peer->cpt, &symbol) !=
-			    V92_PCM_PHASE3_CPT_TX_OK)
-				return false;
-			*sample = symbol.sample;
-			return true;
-		}
-		{
-			struct v90_pcm_symbol lu;
-
-			if (!v90_pcm_symbol_make(
-				    &lu, peer->law, TEST_UCODE, true) ||
-			    v92_pcm_phase4_trn2u_init(
-				    &peer->trn2u,
-				    V92_CONSTELLATION_8_POINT,
-				    peer->cpt.coding.previous_sign,
-				    (int16_t)abs(lu.sample)) !=
-				    V92_PCM_PHASE4_TRN2U_OK)
-				return false;
-			peer->source_stage = PEER_SOURCE_TRN2U;
-		}
-		/* The equalizer owns delayed E1u samples in the Phase 4 tail. */
-		return v92_pcm_phase4_trn2u_next(&peer->trn2u, sample) ==
-		       V92_PCM_PHASE4_TRN2U_OK;
-	case PEER_SOURCE_TRN2U:
-		return v92_pcm_phase4_trn2u_next(&peer->trn2u, sample) ==
-		       V92_PCM_PHASE4_TRN2U_OK;
-	}
-	return false;
-}
-
 static bool run_exchange(enum g711_law law)
 {
 	struct v92_jd jd = {
@@ -319,95 +103,250 @@ static bool run_exchange(enum g711_law law)
 		.rate_renegotiation_constellation =
 			V92_CONSTELLATION_4_POINT,
 	};
-	struct v92_phase3_digital_station station;
-	struct v92_pcm_phase3_cpt_line_handoff handoff;
-	struct peer peer;
-	uint32_t rate_mask = UINT32_C(0x52491);
+	const uint32_t rate_mask = UINT32_C(0x52491);
+	const struct v92_phase3_analog_station_configuration configuration =
+		analog_configuration(law, rate_mask);
+	struct v92_phase3_analog_station analog;
+	struct v92_phase3_digital_station digital;
+	struct v92_pcm_phase4_trn2u trn2u;
+	struct v92_pcm_phase3_cpt_line_handoff receive_handoff;
+	struct v92_phase3_analog_transmit_handoff transmit_handoff;
 	uint32_t received_mask = 0u;
+	bool trn2u_started = false;
 	bool finished = false;
 
-	CHECK(peer_init(&peer, law, rate_mask) &&
+	CHECK(v92_phase3_analog_station_init(&analog, &configuration) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
 	      v92_phase3_digital_station_init(
-		      &station, law, TEST_UCODE, 0.0,
+		      &digital, law, TEST_UCODE, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_OK,
-	      "V.92 station fixture did not initialize for law %u",
+	      "V.92 station pair did not initialize for law %u",
 	      (unsigned int)law);
 	for (size_t index = 0; index < SAMPLE_LIMIT && !finished; ++index) {
-		enum v92_phase3_digital_transmit_stage emitted_stage =
-			station.transmit_stage;
 		uint8_t octet;
 		int16_t sample;
 
-		if (!v92_phase3_digital_station_transmit_complete(&station)) {
+		if (!v92_phase3_digital_station_transmit_complete(&digital)) {
 			enum v92_phase3_digital_station_result tx_result =
 				v92_phase3_digital_station_transmit(
-					&station, &octet);
-			bool accepted = tx_result ==
-					V92_PHASE3_DIGITAL_STATION_OK &&
-				peer_receive(&peer, octet, emitted_stage);
+					&digital, &octet);
+			enum v92_phase3_analog_station_result rx_result =
+				V92_PHASE3_ANALOG_STATION_COMPLETE;
 
-			CHECK(accepted,
-			      "digital transmit/peer receive failed at %zu: "
-			      "result=%s station=%u->%u peer=%u/%u J=%u Su=%u "
-			      "CPt=%u Ri=%u",
+			if (tx_result == V92_PHASE3_DIGITAL_STATION_OK &&
+			    !v92_phase3_analog_station_receive_complete(&analog))
+				rx_result = v92_phase3_analog_station_receive(
+					&analog, octet);
+			CHECK(tx_result == V92_PHASE3_DIGITAL_STATION_OK &&
+			      (rx_result == V92_PHASE3_ANALOG_STATION_OK ||
+			       rx_result ==
+				       V92_PHASE3_ANALOG_STATION_COMPLETE),
+			      "downstream exchange failed at %zu: %s/%s",
 			      index,
 			      v92_phase3_digital_station_result_name(tx_result),
-			      (unsigned int)emitted_stage,
-			      (unsigned int)station.transmit_stage,
-			      (unsigned int)peer.receive_stage,
-			      (unsigned int)peer.source_stage,
-			      (unsigned int)peer.j.stage,
-			      (unsigned int)peer.su.stage,
-			      (unsigned int)peer.cpt.stage,
-			      (unsigned int)peer.ri.stage);
+			      v92_phase3_analog_station_result_name(rx_result));
 		}
-		CHECK(peer_next_sample(&peer, &sample),
-		      "peer source failed at %zu", index);
+
+		if (!v92_phase3_analog_station_transmit_complete(&analog)) {
+			enum v92_phase3_analog_station_result result =
+				v92_phase3_analog_station_transmit(
+					&analog, NULL, &sample);
+
+			CHECK(result == V92_PHASE3_ANALOG_STATION_OK,
+			      "analogue transmitter returned %s at %zu",
+			      v92_phase3_analog_station_result_name(result),
+			      index);
+		} else {
+			if (!trn2u_started) {
+				CHECK(v92_phase3_analog_station_transmit_handoff(
+					      &analog, &transmit_handoff) ==
+					      V92_PHASE3_ANALOG_STATION_OK &&
+				      v92_pcm_phase4_trn2u_init(
+					      &trn2u,
+					      V92_CONSTELLATION_8_POINT,
+					      transmit_handoff
+						      .previous_encoded_sign,
+					      transmit_handoff.lu) ==
+					      V92_PCM_PHASE4_TRN2U_OK,
+				      "analogue Phase 4 handoff failed");
+				trn2u_started = true;
+			}
+			CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &sample) ==
+				      V92_PCM_PHASE4_TRN2U_OK,
+			      "TRN2u generation failed at %zu", index);
+		}
 		sample = media_sample(law, sample);
-		if (!v92_phase3_digital_station_receive_complete(&station)) {
+		if (!v92_phase3_digital_station_receive_complete(&digital)) {
 			enum v92_phase3_digital_station_result result =
 				v92_phase3_digital_station_receive(
-					&station, sample);
+					&digital, sample);
 
 			CHECK(result == V92_PHASE3_DIGITAL_STATION_OK ||
 			      result == V92_PHASE3_DIGITAL_STATION_COMPLETE,
-			      "digital receiver returned %s at %zu stage %u/%u",
+			      "digital receiver returned %s at %zu",
 			      v92_phase3_digital_station_result_name(result),
-			      index, (unsigned int)station.receive_stage,
-			      (unsigned int)station.transmit_stage);
+			      index);
 		}
 		finished =
-			v92_phase3_digital_station_receive_complete(&station) &&
-			v92_phase3_digital_station_transmit_complete(&station);
+			v92_phase3_analog_station_transmit_complete(&analog) &&
+			v92_phase3_analog_station_receive_complete(&analog) &&
+			v92_phase3_digital_station_transmit_complete(&digital) &&
+			v92_phase3_digital_station_receive_complete(&digital);
 	}
-	CHECK(finished && !v92_phase3_digital_station_has_failed(&station) &&
-	      peer.initial_finish_requests == 1u &&
-	      peer.cpt_start_requests == 1u &&
-	      peer.cpt_finish_requests == 1u &&
-	      peer.receive_stage == PEER_RECEIVE_COMPLETE &&
-	      peer.source_stage == PEER_SOURCE_TRN2U &&
-	      station.downstream.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
-	      station.downstream.scr_symbols >= 6u &&
-	      station.downstream.scr_symbols % 6u == 0u &&
-	      station.ri.finish_requested &&
-	      station.ri.stage == V90_PHASE4_RI_COMPLETE &&
-	      peer.j.jp.su_phase_extension_q16 ==
-		      station.jp.su_phase_extension_q16 &&
-	      station.jp.su_phase_extension_q16 != 0u,
-	      "V.92 station exchange did not reach both boundaries");
+	CHECK(finished && trn2u_started &&
+	      !v92_phase3_analog_station_has_failed(&analog) &&
+	      !v92_phase3_digital_station_has_failed(&digital) &&
+	      analog.transmit.cpt.finish_requested &&
+	      analog.transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_COMPLETE &&
+	      analog.receive.ri.stage == V90_PHASE4_RI_SEARCH_COMPLETE &&
+	      digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
+	      digital.downstream.scr_symbols >= 6u &&
+	      digital.downstream.scr_symbols % 6u == 0u &&
+	      digital.ri.finish_requested &&
+	      digital.ri.stage == V90_PHASE4_RI_COMPLETE &&
+	      digital.jp.su_phase_extension_q16 != 0u,
+	      "V.92 station pair did not reach both Phase 4 boundaries");
 	CHECK(v92_phase3_digital_station_upstream_rate_mask(
-		      &station, &received_mask) &&
+		      &digital, &received_mask) &&
 	      received_mask == rate_mask &&
 	      v92_phase3_digital_station_receive_handoff(
-		      &station, &handoff) == V92_PHASE3_DIGITAL_STATION_OK &&
-	      v92_pcm_phase3_cpt_line_handoff_is_valid(&handoff) &&
-	      parameters_match(&handoff.parameters, &peer.cpt_parameters),
-	      "V.92 station handoff changed negotiated parameters");
+		      &digital, &receive_handoff) ==
+		      V92_PHASE3_DIGITAL_STATION_OK &&
+	      v92_pcm_phase3_cpt_line_handoff_is_valid(&receive_handoff) &&
+	      parameters_match(
+		      &receive_handoff.parameters, &configuration.cpt) &&
+	      v92_phase3_analog_station_transmit_handoff(
+		      &analog, &transmit_handoff) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      transmit_handoff.lu > 0 &&
+	      transmit_handoff.previous_encoded_sign ==
+		      analog.transmit.cpt.coding.previous_sign,
+	      "V.92 Phase 4 handoff changed negotiated state");
 	return true;
 }
 
-static bool test_contracts(void)
+static bool test_analog_contracts(void)
+{
+	struct v92_phase3_analog_station_configuration configuration =
+		analog_configuration(G711_LAW_PCMU, 1u);
+	struct v92_phase3_analog_station station;
+	struct v92_phase3_analog_station before;
+	struct v92_phase3_analog_transmit_handoff handoff = {
+		.lu = 123,
+		.previous_encoded_sign = 1,
+	};
+	int16_t sample = 1234;
+	static const char *const names[] = {
+		"ok", "complete", "need MD symbol", "failed",
+		"invalid argument", "invalid state", "sequence mismatch",
+		"numeric failure",
+	};
+
+	memset(&station, 0xa5, sizeof(station));
+	before = station;
+	CHECK(v92_phase3_analog_station_init(NULL, &configuration) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_analog_station_init(&station, NULL) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT,
+	      "null analogue initialization returned the wrong result");
+	configuration.upstream_lu_ucode = 0u;
+	CHECK(v92_phase3_analog_station_init(&station, &configuration) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      memcmp(&station, &before, sizeof(station)) == 0,
+	      "invalid analogue initialization changed its destination");
+	configuration = analog_configuration(G711_LAW_PCMU, 1u);
+	CHECK(v92_phase3_analog_station_init(&station, &configuration) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      v92_phase3_analog_station_is_valid(&station) &&
+	      !v92_phase3_analog_station_has_failed(&station) &&
+	      !v92_phase3_analog_station_transmit_complete(&station) &&
+	      !v92_phase3_analog_station_receive_complete(&station),
+	      "fresh analogue station contracts differed");
+	before = station;
+	CHECK(v92_phase3_analog_station_transmit_handoff(
+		      &station, &handoff) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_STATE &&
+	      handoff.lu == 123 && handoff.previous_encoded_sign == 1u &&
+	      v92_phase3_analog_station_transmit(&station, NULL, &sample) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      sample == 0,
+	      "fresh analogue transmission contracts differed");
+	before = station;
+	CHECK(v92_phase3_analog_station_transmit(NULL, NULL, &sample) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_analog_station_transmit(&station, NULL, NULL) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_analog_station_receive(NULL, 0u) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_analog_station_transmit_handoff(
+		      &station, NULL) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      memcmp(&station, &before, sizeof(station)) == 0,
+	      "invalid analogue calls returned the wrong result");
+	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
+		CHECK(strcmp(
+			      v92_phase3_analog_station_result_name(
+				      (enum v92_phase3_analog_station_result)
+					      index),
+			      names[index]) == 0,
+		      "analogue result name %zu differed", index);
+	CHECK(strcmp(
+		      v92_phase3_analog_station_result_name(
+			      (enum v92_phase3_analog_station_result)99),
+		      "unknown") == 0,
+	      "unknown analogue result name differed");
+	return true;
+}
+
+static bool test_md_backpressure(void)
+{
+	struct v92_phase3_analog_station_configuration configuration =
+		analog_configuration(G711_LAW_PCMU, 1u);
+	struct v92_phase3_analog_station station;
+	struct v92_phase3_analog_station before;
+	struct v90_pcm_symbol md_symbol;
+	int16_t sample = 0;
+	bool reached_md = false;
+
+	configuration.local_info1a.local_md_length_276_symbol_units = 1u;
+	CHECK(v92_phase3_analog_station_init(&station, &configuration) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      v90_pcm_symbol_make(
+		      &md_symbol, G711_LAW_PCMU, 47u, true),
+	      "MD station fixture did not initialize");
+	before = station;
+	CHECK(v92_phase3_analog_station_transmit(
+		      &station, &md_symbol, &sample) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      memcmp(&station, &before, sizeof(station)) == 0,
+	      "early MD symbol changed analogue state");
+	for (size_t index = 0; index < 5000u && !reached_md; ++index) {
+		sample = 1234;
+		before = station;
+		enum v92_phase3_analog_station_result result =
+			v92_phase3_analog_station_transmit(
+				&station, NULL, &sample);
+
+		if (result == V92_PHASE3_ANALOG_STATION_NEED_MD_SYMBOL) {
+			reached_md = sample == 1234 &&
+				     memcmp(&station, &before, sizeof(station)) == 0;
+			break;
+		}
+		CHECK(result == V92_PHASE3_ANALOG_STATION_OK,
+		      "MD opening returned %s",
+		      v92_phase3_analog_station_result_name(result));
+	}
+	CHECK(reached_md &&
+	      v92_phase3_analog_station_transmit(
+		      &station, &md_symbol, &sample) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      v92_phase3_analog_station_is_valid(&station),
+	      "MD backpressure did not resume transactionally");
+	return true;
+}
+
+static bool test_digital_contracts(void)
 {
 	struct v92_jd jd = {
 		.data_rate_capability_mask = 1u,
@@ -438,30 +377,24 @@ static bool test_contracts(void)
 		      &station, G711_LAW_PCMU, TEST_UCODE, NAN,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
-	      v92_phase3_digital_station_init(
-		      &station, G711_LAW_PCMU, TEST_UCODE, 0.0, 0u,
-		      &jd, &jp) ==
-		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      memcmp(&station, &before, sizeof(station)) == 0,
-	      "invalid station initialization changed its destination");
+	      "invalid digital initialization changed its destination");
 	CHECK(v92_phase3_digital_station_init(
 		      &station, G711_LAW_PCMU, TEST_UCODE, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_OK &&
 	      v92_phase3_digital_station_is_valid(&station) &&
 	      !v92_phase3_digital_station_has_failed(&station) &&
-	      !v92_phase3_digital_station_transmit_complete(&station) &&
-	      !v92_phase3_digital_station_receive_complete(&station) &&
 	      !v92_phase3_digital_station_upstream_rate_mask(
 		      &station, &mask) &&
 	      mask == UINT32_C(0xa5a5a5a5),
-	      "fresh station contracts differed");
+	      "fresh digital station contracts differed");
 	before = station;
 	CHECK(v92_phase3_digital_station_transmit(&station, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_OK &&
 	      memcmp(&station, &before, sizeof(station)) == 0 &&
 	      octet == g711_encode_pcmu(0),
-	      "pre-Ja silence changed station state");
+	      "pre-Ja silence changed digital state");
 	CHECK(v92_phase3_digital_station_transmit(NULL, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_digital_station_receive(NULL, 0) ==
@@ -469,18 +402,19 @@ static bool test_contracts(void)
 	      v92_phase3_digital_station_receive_handoff(
 		      &station, NULL) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT,
-	      "invalid station calls returned the wrong result");
+	      "invalid digital calls returned the wrong result");
 	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
 		CHECK(strcmp(
 			      v92_phase3_digital_station_result_name(
-				      (enum v92_phase3_digital_station_result)index),
+				      (enum v92_phase3_digital_station_result)
+					      index),
 			      names[index]) == 0,
-		      "station result name %zu differed", index);
+		      "digital result name %zu differed", index);
 	CHECK(strcmp(
 		      v92_phase3_digital_station_result_name(
 			      (enum v92_phase3_digital_station_result)99),
 		      "unknown") == 0,
-	      "unknown station result name differed");
+	      "unknown digital result name differed");
 	return true;
 }
 
@@ -490,9 +424,11 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "PCMU zero-DIL exchange", NULL },
-		{ "PCMA zero-DIL exchange", NULL },
-		{ "contracts", test_contracts },
+		{ "PCMU zero-DIL station exchange", NULL },
+		{ "PCMA zero-DIL station exchange", NULL },
+		{ "analogue station contracts", test_analog_contracts },
+		{ "manufacturer interval backpressure", test_md_backpressure },
+		{ "digital station contracts", test_digital_contracts },
 	};
 	unsigned int failures = 0u;
 

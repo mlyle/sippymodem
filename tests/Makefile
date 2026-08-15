@@ -1683,6 +1683,7 @@ V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
+	$(BUILD_DIR)/v92_phase3_analog_station.o \
 	$(BUILD_DIR)/v92_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
@@ -1690,6 +1691,7 @@ V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_phase3_sd_receiver.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
+	$(BUILD_DIR)/v90_phase4_ri_search.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/pcm_j_frame.o \
@@ -4905,6 +4907,10 @@ $(BUILD_DIR)/v92_pcm_phase3_cpt_rx.o: \
 
 $(BUILD_DIR)/v92_pcm_phase3_cpt_line_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_line_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_phase3_analog_station.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase3_analog_station.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase3_digital_station.o: \

@@ -195,6 +195,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_line_rx.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase3_analog_station.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase3_digital_station.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_ri_search.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_modulator.c \
