@@ -306,6 +306,32 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_next(
 	return PCM_PHASE3_DIGITAL_TX_OK;
 }
 
+enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_set_v92_su_phase(
+	struct pcm_phase3_digital_tx *transmitter,
+	uint16_t phase_extension_q16)
+{
+	struct pcm_phase3_digital_tx next;
+	struct v92_jp jp;
+
+	if (!pcm_phase3_digital_tx_is_valid(transmitter))
+		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
+	if (transmitter->protocol != PCM_PROTOCOL_V92 ||
+	    transmitter->stage != PCM_PHASE3_DIGITAL_TX_JD ||
+	    transmitter->finish_jd_requested)
+		return PCM_PHASE3_DIGITAL_TX_INVALID_STATE;
+	next = *transmitter;
+	if (v92_jp_decode(
+		    next.jp_frame, sizeof(next.jp_frame), &jp) != V92_J_OK)
+		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
+	jp.su_phase_extension_q16 = phase_extension_q16;
+	if (v92_jp_encode(
+		    &jp, next.jp_frame, sizeof(next.jp_frame)) != V92_J_OK ||
+	    !pcm_phase3_digital_tx_is_valid(&next))
+		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
+	*transmitter = next;
+	return PCM_PHASE3_DIGITAL_TX_OK;
+}
+
 static enum pcm_phase3_digital_tx_result request_finish(
 	struct pcm_phase3_digital_tx *transmitter,
 	enum pcm_phase3_digital_tx_stage required_stage)

@@ -66,6 +66,14 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_next(
 	struct pcm_phase3_digital_tx *transmitter,
 	struct v90_pcm_symbol *symbol);
 
+/* Replace only the V.92 Jp Su phase measurement while Jd is active. The
+ * constellation selections remain those supplied at initialization. This
+ * late binding is required because the digital modem learns the phase from
+ * the peer's Su signal after it has already started transmitting Jd. */
+enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_set_v92_su_phase(
+	struct pcm_phase3_digital_tx *transmitter,
+	uint16_t phase_extension_q16);
+
 /* Latch completion of Jd. At least one complete record is emitted, and a
  * partial record is completed. V.90 advances to the prime suffix; V.92
  * advances to Jp. */

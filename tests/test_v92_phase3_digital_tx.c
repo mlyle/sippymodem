@@ -135,6 +135,7 @@ static bool run_timeline(enum g711_law law)
 {
 	struct v92_jd jd = jd_parameters();
 	struct v92_jp jp = jp_parameters();
+	struct v92_jp jp_template = jp;
 	struct pcm_phase3_digital_tx transmitter;
 	struct reference_scrambler scrambler = { 0 };
 	uint8_t jd_frame[V92_J_FRAME_BYTES];
@@ -142,14 +143,20 @@ static bool run_timeline(enum g711_law law)
 	uint8_t last_sign = 0;
 	const uint8_t training_ucode = 78;
 
+	jp_template.su_phase_extension_q16 = 0;
 	CHECK(v92_jd_encode(&jd, jd_frame, sizeof(jd_frame)) == V92_J_OK &&
 	      v92_jp_encode(&jp, jp_frame, sizeof(jp_frame)) == V92_J_OK &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, law, training_ucode, &jd, &jp) ==
+		      &transmitter, law, training_ucode, &jd,
+		      &jp_template) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      advance_exact_prefix(
 		      &transmitter, &scrambler, &last_sign, law,
-		      training_ucode),
+		      training_ucode) &&
+	      pcm_phase3_digital_tx_set_v92_su_phase(
+		      &transmitter, jp.su_phase_extension_q16) ==
+		      PCM_PHASE3_DIGITAL_TX_OK &&
+	      memcmp(transmitter.jp_frame, jp_frame, sizeof(jp_frame)) == 0,
 	      "V.92 digital Phase 3 initialization failed for law %u",
 	      (unsigned int)law);
 	for (size_t index = 0; index < 13; ++index)
@@ -162,7 +169,10 @@ static bool run_timeline(enum g711_law law)
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      transmitter.stage == PCM_PHASE3_DIGITAL_TX_JD &&
 	      transmitter.finish_jd_requested &&
-	      transmitter.bit_index == 13,
+	      transmitter.bit_index == 13 &&
+	      pcm_phase3_digital_tx_set_v92_su_phase(
+		      &transmitter, UINT16_C(0x1234)) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE,
 	      "mid-record Jd completion did not latch");
 	{
 		struct pcm_phase3_digital_tx saved = transmitter;
@@ -347,6 +357,10 @@ static bool test_validation(void)
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_next(&transmitter, NULL) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+	      pcm_phase3_digital_tx_set_v92_su_phase(NULL, 0) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+	      pcm_phase3_digital_tx_set_v92_su_phase(&transmitter, 0) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
 	      pcm_phase3_digital_tx_finish_jd(NULL) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_finish_jp(NULL) ==

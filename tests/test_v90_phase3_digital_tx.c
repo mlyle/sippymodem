@@ -222,6 +222,9 @@ static bool test_record_boundary_finish(void)
 	      "record-boundary fixture did not reach Jd");
 	saved = transmitter;
 	CHECK(transmitter.protocol == PCM_PROTOCOL_V90 &&
+	      pcm_phase3_digital_tx_set_v92_su_phase(
+		      &transmitter, UINT16_C(0x1234)) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
 	      pcm_phase3_digital_tx_finish_jp(&transmitter) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
