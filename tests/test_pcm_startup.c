@@ -120,6 +120,20 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_identity_validation(void)
+{
+	for (int value = -2; value <= 3; ++value) {
+		bool expected = value == 0 || value == 1;
+
+		CHECK(pcm_protocol_is_valid((enum pcm_protocol)value) == expected,
+		      "protocol validity changed for %d", value);
+		CHECK(pcm_modem_role_is_valid((enum v90_modem_role)value) ==
+			      expected,
+		      "modem-role validity changed for %d", value);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -128,6 +142,7 @@ int main(void)
 	} tests[] = {
 		{ "selection matrix", test_selection_matrix },
 		{ "validation", test_validation },
+		{ "identity validation", test_identity_validation },
 	};
 	unsigned int failures = 0;
 

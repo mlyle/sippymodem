@@ -10,11 +10,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum v90_modem_role {
-	V90_ANALOG_MODEM,
-	V90_DIGITAL_MODEM,
-};
-
 enum pcm_phase2_info0_exchange_result {
 	PCM_PHASE2_INFO0_EXCHANGE_OK,
 	PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT,

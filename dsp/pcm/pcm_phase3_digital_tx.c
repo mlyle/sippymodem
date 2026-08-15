@@ -16,11 +16,6 @@ _Static_assert((int)V90_PHASE3_JD_PRIME_BITS == PCM_PHASE3_PRIME_BITS,
 _Static_assert((int)V92_PHASE3_JP_PRIME_BITS == PCM_PHASE3_PRIME_BITS,
 	"V.92 prime suffix must use the common Phase 3 length");
 
-static bool protocol_is_valid(enum pcm_protocol protocol)
-{
-	return protocol == PCM_PROTOCOL_V90 || protocol == PCM_PROTOCOL_V92;
-}
-
 static bool stage_is_valid(enum pcm_phase3_digital_tx_stage stage)
 {
 	return stage >= PCM_PHASE3_DIGITAL_TX_PREFIX &&
@@ -148,7 +143,8 @@ static bool counters_are_valid(
 bool pcm_phase3_digital_tx_is_valid(
 	const struct pcm_phase3_digital_tx *transmitter)
 {
-	if (transmitter == NULL || !protocol_is_valid(transmitter->protocol) ||
+	if (transmitter == NULL ||
+	    !pcm_protocol_is_valid(transmitter->protocol) ||
 	    !stage_is_valid(transmitter->stage) ||
 	    !frames_are_valid(transmitter) ||
 	    !counters_are_valid(transmitter))

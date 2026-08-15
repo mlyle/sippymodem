@@ -14,11 +14,6 @@ static bool stage_is_valid(enum pcm_downstream_rx_stage stage)
 	       stage == PCM_DOWNSTREAM_RX_COMPLETE;
 }
 
-static bool protocol_is_valid(enum pcm_protocol protocol)
-{
-	return protocol == PCM_PROTOCOL_V90 || protocol == PCM_PROTOCOL_V92;
-}
-
 static bool mp_is_fresh(const struct v90_mp_receiver *receiver)
 {
 	return v90_mp_receiver_is_valid(receiver) &&
@@ -68,7 +63,7 @@ bool pcm_downstream_rx_is_valid(
 	size_t ed_bits;
 	uint64_t training_bits;
 
-	if (receiver == NULL || !protocol_is_valid(receiver->protocol) ||
+	if (receiver == NULL || !pcm_protocol_is_valid(receiver->protocol) ||
 	    !stage_is_valid(receiver->stage) ||
 	    !stage_matches_protocol(receiver) ||
 	    !v90_pcm_stream_rx_is_valid(&receiver->stream) ||
@@ -126,7 +121,7 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	bool control_initialized;
 
 	if (receiver == NULL || training_mapping == NULL ||
-	    !protocol_is_valid(protocol))
+	    !pcm_protocol_is_valid(protocol))
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_mapping_is_valid(training_mapping) ||
 	    training_mapping->kind != V90_CP_TRAINING)

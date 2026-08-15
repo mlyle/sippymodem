@@ -2,16 +2,6 @@
 
 #include "pcm_phase2_info0_exchange.h"
 
-static bool role_is_valid(enum v90_modem_role role)
-{
-	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
-}
-
-static bool protocol_is_valid(enum pcm_protocol protocol)
-{
-	return protocol == PCM_PROTOCOL_V90 || protocol == PCM_PROTOCOL_V92;
-}
-
 static enum phase2_signal_role signal_for_role(enum v90_modem_role role)
 {
 	return role == V90_ANALOG_MODEM ? PHASE2_SIGNAL_A : PHASE2_SIGNAL_B;
@@ -48,8 +38,9 @@ static bool peer_info0_is_valid(
 bool pcm_phase2_info0_exchange_is_valid(
 	const struct pcm_phase2_info0_exchange *exchange)
 {
-	return exchange != NULL && role_is_valid(exchange->local_role) &&
-	       protocol_is_valid(exchange->protocol) &&
+	return exchange != NULL &&
+	       pcm_modem_role_is_valid(exchange->local_role) &&
+	       pcm_protocol_is_valid(exchange->protocol) &&
 	       phase2_info0_exchange_is_valid(&exchange->transport) &&
 	       exchange->transport.signal_role ==
 		       signal_for_role(exchange->local_role) &&
@@ -73,7 +64,8 @@ static enum pcm_phase2_info0_exchange_result initialize(
 	};
 
 	if (exchange == NULL || payload == NULL ||
-	    !protocol_is_valid(protocol) || !role_is_valid(role) ||
+	    !pcm_protocol_is_valid(protocol) ||
+	    !pcm_modem_role_is_valid(role) ||
 	    phase2_info0_exchange_init(
 		    &initialized.transport, signal_for_role(role),
 		    nominal_amplitude, payload, local_payload_bits(role),

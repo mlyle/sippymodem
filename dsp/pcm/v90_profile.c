@@ -16,11 +16,6 @@ enum {
 	V90_INITIAL_CONSTELLATION_SIZE = 8,
 };
 
-static bool role_is_valid(enum v90_modem_role role)
-{
-	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
-}
-
 static struct v90_info0 analog_info0(void)
 {
 	return (struct v90_info0){
@@ -238,7 +233,7 @@ enum v90_profile_result v90_profile_init(
 		.phase2_nominal_amplitude = V90_PHASE2_NOMINAL_AMPLITUDE,
 	};
 
-	if (configuration == NULL || !role_is_valid(role) ||
+	if (configuration == NULL || !pcm_modem_role_is_valid(role) ||
 	    !g711_law_is_valid(law) || minimum_rate > maximum_rate)
 		return V90_PROFILE_INVALID_ARGUMENT;
 	if (v90_profile_select_downstream(

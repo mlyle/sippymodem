@@ -13,11 +13,6 @@ enum {
 	V90_UPSTREAM_RATE_UNIT = 2400,
 };
 
-static bool role_is_valid(enum v90_modem_role role)
-{
-	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
-}
-
 static bool downstream_rate_mask_is_valid(uint32_t mask)
 {
 	return mask != 0 &&
@@ -98,7 +93,7 @@ static bool configuration_is_valid(
 	const struct pcm_call_configuration *configuration)
 {
 	if (configuration == NULL ||
-	    !role_is_valid(configuration->local_role) ||
+	    !pcm_modem_role_is_valid(configuration->local_role) ||
 	    !g711_law_is_valid(configuration->law) ||
 	    !downstream_rate_mask_is_valid(
 		    configuration->enabled_downstream_rate_mask) ||
@@ -134,7 +129,8 @@ static bool configuration_is_valid(
 
 static bool stored_configuration_is_valid(const struct pcm_call *call)
 {
-	if (!role_is_valid(call->local_role) || !g711_law_is_valid(call->law) ||
+	if (!pcm_modem_role_is_valid(call->local_role) ||
+	    !g711_law_is_valid(call->law) ||
 	    !downstream_rate_mask_is_valid(
 		    call->enabled_downstream_rate_mask))
 		return false;

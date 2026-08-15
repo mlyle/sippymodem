@@ -4,16 +4,6 @@
 
 #include <stddef.h>
 
-static bool role_is_valid(enum v90_modem_role role)
-{
-	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
-}
-
-static bool protocol_is_valid(enum pcm_protocol protocol)
-{
-	return protocol == PCM_PROTOCOL_V90 || protocol == PCM_PROTOCOL_V92;
-}
-
 static bool failure_is_valid(enum pcm_phase2_failure failure)
 {
 	return failure >= PCM_PHASE2_FAILURE_NONE &&
@@ -212,8 +202,9 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 	enum pcm_phase2_failure child_failure;
 	bool child_valid;
 
-	if (phase2 == NULL || !role_is_valid(phase2->local_role) ||
-	    !protocol_is_valid(phase2->info0_protocol) ||
+	if (phase2 == NULL ||
+	    !pcm_modem_role_is_valid(phase2->local_role) ||
+	    !pcm_protocol_is_valid(phase2->info0_protocol) ||
 	    !failure_is_valid(phase2->failure) ||
 	    !local_info0_is_valid(phase2) || !peer_info0_is_valid(phase2) ||
 	    !startup_is_valid(phase2) || !remote_probe_state_is_valid(phase2) ||

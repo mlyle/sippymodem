@@ -10,11 +10,6 @@ _Static_assert(
 	(int)V92_PCM_INFO1A_PAYLOAD_BITS == (int)V90_INFO1A_PAYLOAD_BITS,
 	"PCM INFO1a records must share one transport width");
 
-static bool protocol_is_valid(enum pcm_protocol protocol)
-{
-	return protocol == PCM_PROTOCOL_V90 || protocol == PCM_PROTOCOL_V92;
-}
-
 static enum v90_modem_role probe_role(
 	const struct v90_phase2_reciprocal_probe *probe)
 {
@@ -101,7 +96,8 @@ bool pcm_phase2_info1_is_valid(
 	bool expect_digital;
 	bool expect_analog;
 
-	if (exchange == NULL || !protocol_is_valid(exchange->protocol) ||
+	if (exchange == NULL ||
+	    !pcm_protocol_is_valid(exchange->protocol) ||
 	    !phase2_info1_is_valid(&exchange->control) ||
 	    exchange->control.phase == PHASE2_INFO1_PEER_FRAME_PENDING ||
 	    exchange->control.first_payload_bit_count !=
@@ -193,7 +189,7 @@ static enum phase2_info1_result initialize_analog(
 		.protocol = protocol,
 	};
 
-	if (exchange == NULL || !protocol_is_valid(protocol) ||
+	if (exchange == NULL || !pcm_protocol_is_valid(protocol) ||
 	    !v90_phase2_reciprocal_probe_is_valid(completed_probe) ||
 	    !completed_probe_matches_role(completed_probe) ||
 	    probe_role(completed_probe) != V90_ANALOG_MODEM ||

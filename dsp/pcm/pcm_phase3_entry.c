@@ -7,11 +7,6 @@
 
 #include <stddef.h>
 
-static bool role_is_valid(enum v90_modem_role role)
-{
-	return role == V90_ANALOG_MODEM || role == V90_DIGITAL_MODEM;
-}
-
 static enum g711_law selected_law(
 	const struct v90_info0d *digital_info0)
 {
@@ -22,7 +17,8 @@ static enum g711_law selected_law(
 bool pcm_phase3_entry_is_valid(
 	const struct pcm_phase3_entry *entry)
 {
-	if (entry == NULL || !role_is_valid(entry->local_role) ||
+	if (entry == NULL ||
+	    !pcm_modem_role_is_valid(entry->local_role) ||
 	    !g711_law_is_valid(entry->law) ||
 	    !pcm_info1_selection_is_valid(&entry->selection) ||
 	    entry->selection.startup.phase2 != PCM_PHASE2_FULL)
@@ -49,7 +45,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
 	};
 	enum v34_phase3_profile_result profile_result;
 
-	if (entry == NULL || !role_is_valid(local_role) ||
+	if (entry == NULL || !pcm_modem_role_is_valid(local_role) ||
 	    !g711_law_is_valid(media_law) || !v90_info0d_is_valid(digital_info0) ||
 	    !pcm_info1_selection_is_valid(selection))
 		return PCM_PHASE3_ENTRY_INVALID_ARGUMENT;
