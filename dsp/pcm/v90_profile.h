@@ -3,7 +3,7 @@
 #ifndef V90_PROFILE_H
 #define V90_PROFILE_H
 
-#include "v90_call.h"
+#include "pcm_call.h"
 
 enum {
 	V90_PROFILE_DOWNSTREAM_RATE_COUNT = V90_CP_RATE_INDEX_MAX,
@@ -37,7 +37,7 @@ enum v90_profile_result v90_profile_select_downstream(
  * PCM downstream; the conventional upstream is selected during MP/CP
  * exchange. */
 enum v90_profile_result v90_profile_init(
-	struct v90_call_configuration *configuration,
+	struct pcm_call_configuration *configuration,
 	enum v90_modem_role role, enum g711_law law,
 	unsigned int minimum_rate, unsigned int maximum_rate);
 

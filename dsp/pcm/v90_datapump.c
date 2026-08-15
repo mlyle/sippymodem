@@ -5,7 +5,7 @@
 #include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
-#include "v90_call.h"
+#include "pcm_call.h"
 #include "v90_profile.h"
 
 #include <limits.h>
@@ -15,7 +15,7 @@
 
 struct v90_datapump {
 	struct dp dp;
-	struct v90_call call;
+	struct pcm_call call;
 	uint64_t training_octets;
 	uint64_t training_timeout_octets;
 	enum v90_modem_role role;
@@ -74,13 +74,13 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	    datapump->training_octets > datapump->training_timeout_octets ||
 	    (datapump->call_started &&
 	     (!g711_law_is_valid(datapump->law) ||
-	      !v90_call_is_valid(&datapump->call) ||
+	      !pcm_call_is_valid(&datapump->call) ||
 	      datapump->call.local_role != datapump->role ||
 	      datapump->call.law != datapump->law ||
-	      (v90_call_has_failed(&datapump->call) && !datapump->failed))) ||
+	      (pcm_call_has_failed(&datapump->call) && !datapump->failed))) ||
 	    (!datapump->call_started && (datapump->linked || datapump->failed)) ||
 	    (!datapump->failed && datapump->linked !=
-				       v90_call_is_online(&datapump->call)) ||
+				       pcm_call_is_online(&datapump->call)) ||
 	    (datapump->linked && dp->status != DPSTAT_CONNECT) ||
 	    (!datapump->linked && dp->status == DPSTAT_CONNECT))
 		return NULL;
@@ -212,21 +212,21 @@ static bool deliver_bits(
 
 static bool deliver_event(
 	struct v90_datapump *datapump,
-	const struct v90_call_data_event *event)
+	const struct pcm_call_data_event *event)
 {
 	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS + 1];
 	size_t bit_count;
 
-	if (event->kind == V90_CALL_DATA_NONE)
+	if (event->kind == PCM_CALL_DATA_NONE)
 		return true;
-	if (event->kind == V90_CALL_DOWNSTREAM_FRAME) {
+	if (event->kind == PCM_CALL_DOWNSTREAM_FRAME) {
 		if (datapump->role != V90_ANALOG_MODEM)
 			return false;
 		return deliver_bits(
 			datapump, event->frame.downstream.bits,
 			event->frame.downstream.bit_count);
 	}
-	if (event->kind != V90_CALL_UPSTREAM_FRAME ||
+	if (event->kind != PCM_CALL_UPSTREAM_FRAME ||
 	    datapump->role != V90_DIGITAL_MODEM ||
 	    event->frame.upstream.primary_bit_count >
 		    V34_MAX_MAPPING_FRAME_BITS ||
@@ -244,7 +244,7 @@ static bool enter_link(struct v90_datapump *datapump)
 	uint32_t transmit_rate;
 	uint32_t receive_rate;
 
-	if (!v90_call_get_data_rates(
+	if (!pcm_call_get_data_rates(
 		    &datapump->call, &transmit_rate, &receive_rate) ||
 	    transmit_rate > INT_MAX || receive_rate > INT_MAX ||
 	    modem_set_param(
@@ -262,7 +262,7 @@ static bool enter_link(struct v90_datapump *datapump)
 static bool start_call(
 	struct v90_datapump *datapump, enum g711_law law)
 {
-	struct v90_call_configuration configuration;
+	struct pcm_call_configuration configuration;
 
 	if (datapump->call_started)
 		return datapump->law == law;
@@ -270,7 +270,7 @@ static bool start_call(
 		    &configuration, datapump->role, law,
 		    datapump->dp.modem->min_rate,
 		    datapump->dp.modem->max_rate) != V90_PROFILE_OK ||
-	    v90_call_init(&datapump->call, &configuration) != V90_CALL_OK)
+	    pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
 		return false;
 	datapump->law = law;
 	datapump->call_started = true;
@@ -281,31 +281,31 @@ static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
 	uint8_t *transmitted, bool *connected)
 {
-	struct v90_call_data_sources sources = {
+	struct pcm_call_data_sources sources = {
 		.upstream = source_upstream_frame,
 		.upstream_context = datapump,
 		.downstream = source_downstream_frame,
 		.downstream_context = datapump,
 	};
-	struct v90_call_data_event event = { 0 };
-	enum v90_call_result result;
+	struct pcm_call_data_event event = { 0 };
+	enum pcm_call_result result;
 
-	if (v90_call_phase4_is_ready(&datapump->call) &&
-	    v90_call_start_data_path(&datapump->call) != V90_CALL_OK)
+	if (pcm_call_phase4_is_ready(&datapump->call) &&
+	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
 		return false;
-	if (v90_call_current_stage(&datapump->call) == V90_CALL_DATA_PATH) {
-		result = v90_call_data_octet(
+	if (pcm_call_current_stage(&datapump->call) == PCM_CALL_DATA_PATH) {
+		result = pcm_call_data_octet(
 			&datapump->call, received, &sources,
 			transmitted, &event);
 	} else {
-		struct v90_call_observation observation;
+		struct pcm_call_observation observation;
 
-		result = v90_call_octet(
+		result = pcm_call_octet(
 			&datapump->call, received, transmitted, &observation);
 	}
-	if (result != V90_CALL_OK)
+	if (result != PCM_CALL_OK)
 		return false;
-	if (!datapump->linked && v90_call_is_online(&datapump->call)) {
+	if (!datapump->linked && pcm_call_is_online(&datapump->call)) {
 		if (!enter_link(datapump))
 			return false;
 		*connected = true;

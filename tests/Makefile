@@ -38,7 +38,7 @@ V90_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
-	pcm_phase3_digital_prefix.c \
+	pcm_phase3_digital_prefix.c pcm_call.c \
 	pcm_phase3_profile.c pcm_startup.c \
 	v92_info0.c v92_info1d.c v92_pcm_info1a.c v92_status_update.c \
 	v92_control_rx.c v92_cpd.c v92_suvd.c \
@@ -2274,10 +2274,10 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_probe_synchronizer.o \
 	$(BUILD_DIR)/v34_phase2_probe_sequence.o \
 	$(BUILD_DIR)/v34_phase2_tone.o
-V90_CALL_TEST_BINARY := $(BUILD_DIR)/test_v90_call
-V90_CALL_TEST_OBJECTS := $(sort \
-	$(BUILD_DIR)/test_v90_call.o \
-	$(BUILD_DIR)/v90_call.o \
+PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
+PCM_CALL_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/test_pcm_call.o \
+	$(BUILD_DIR)/pcm_call.o \
 	$(BUILD_DIR)/v90_phase4_startup.o \
 	$(BUILD_DIR)/v90_phase4_analog_startup.o \
 	$(BUILD_DIR)/v90_phase4_digital_startup.o \
@@ -2295,15 +2295,15 @@ V90_PROFILE_TEST_BINARY := $(BUILD_DIR)/test_v90_profile
 V90_PROFILE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_profile.o \
 	$(BUILD_DIR)/v90_profile.o \
-	$(filter-out $(BUILD_DIR)/test_v90_call.o, \
-		$(V90_CALL_TEST_OBJECTS)))
+	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
+		$(PCM_CALL_TEST_OBJECTS)))
 V90_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_v90_datapump
 V90_DATAPUMP_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_datapump.o \
 	$(BUILD_DIR)/v90_datapump.o \
 	$(BUILD_DIR)/v90_profile.o \
-	$(filter-out $(BUILD_DIR)/test_v90_call.o, \
-		$(V90_CALL_TEST_OBJECTS)))
+	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
+		$(PCM_CALL_TEST_OBJECTS)))
 V34_PHASE2_DPSK_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_dpsk
 V34_PHASE2_DPSK_TEST_OBJECTS := \
@@ -2737,7 +2737,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY) \
 	$(V90_PHASE2_RANGING_TEST_BINARY) \
 	$(V90_PHASE2_INITIAL_PROBE_TEST_BINARY) \
-	$(V90_CALL_TEST_BINARY) \
+	$(PCM_CALL_TEST_BINARY) \
 	$(V90_PROFILE_TEST_BINARY) \
 	$(V90_DATAPUMP_TEST_BINARY) \
 	$(V34_PHASE2_DPSK_TEST_BINARY) \
@@ -2991,7 +2991,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE2_RANGING_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS:.o=.d) \
-	$(V90_CALL_TEST_OBJECTS:.o=.d) \
+	$(PCM_CALL_TEST_OBJECTS:.o=.d) \
 	$(V90_PROFILE_TEST_OBJECTS:.o=.d) \
 	$(V90_DATAPUMP_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_DPSK_TEST_OBJECTS:.o=.d) \
@@ -3270,7 +3270,7 @@ test: $(TEST_BINARIES)
 	./$(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY)
 	./$(V90_PHASE2_RANGING_TEST_BINARY)
 	./$(V90_PHASE2_INITIAL_PROBE_TEST_BINARY)
-	./$(V90_CALL_TEST_BINARY)
+	./$(PCM_CALL_TEST_BINARY)
 	./$(V90_PROFILE_TEST_BINARY)
 	./$(V90_DATAPUMP_TEST_BINARY)
 	./$(V34_PHASE2_DPSK_TEST_BINARY)
@@ -4097,7 +4097,7 @@ $(V90_PHASE2_INITIAL_PROBE_TEST_BINARY): \
 	$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V90_CALL_TEST_BINARY): $(V90_CALL_TEST_OBJECTS)
+$(PCM_CALL_TEST_BINARY): $(PCM_CALL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_PROFILE_TEST_BINARY): $(V90_PROFILE_TEST_OBJECTS)
@@ -4977,7 +4977,7 @@ $(BUILD_DIR)/v90_phase3_handoff.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_handoff.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_call.o: $(DSP_PCM_SOURCE_DIR)/v90_call.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_call.o: $(DSP_PCM_SOURCE_DIR)/pcm_call.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_profile.o: \

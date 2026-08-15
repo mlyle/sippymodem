@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v90_call.h>
+#include <pcm_call.h>
 
 #include <g711.h>
 
@@ -35,7 +35,7 @@ struct upstream_source {
 };
 
 struct endpoint {
-	struct v90_call call;
+	struct pcm_call call;
 	struct downstream_source downstream_source;
 	struct upstream_source upstream_source;
 	size_t mixed_octets;
@@ -200,10 +200,10 @@ static struct v90_mp_record initial_mp(void)
 	};
 }
 
-static struct v90_call_configuration configuration(
+static struct pcm_call_configuration configuration(
 	enum v90_modem_role role, enum g711_law law)
 {
-	struct v90_call_configuration configuration = {
+	struct pcm_call_configuration configuration = {
 		.local_role = role,
 		.law = law,
 		.enabled_downstream_rate_mask = role == V90_ANALOG_MODEM ?
@@ -343,7 +343,7 @@ static bool endpoint_init(
 	enum g711_law law, uint32_t enabled_downstream_rate_mask,
 	uint8_t selected_downstream_rate_index)
 {
-	struct v90_call_configuration selected = configuration(role, law);
+	struct pcm_call_configuration selected = configuration(role, law);
 	struct endpoint initialized = { 0 };
 
 	selected.enabled_downstream_rate_mask = enabled_downstream_rate_mask;
@@ -354,7 +354,7 @@ static bool endpoint_init(
 		selected.phase3.digital.jd.data_rate_capability_mask =
 			enabled_downstream_rate_mask;
 	if (endpoint == NULL ||
-	    v90_call_init(&initialized.call, &selected) != V90_CALL_OK)
+	    pcm_call_init(&initialized.call, &selected) != PCM_CALL_OK)
 		return false;
 	*endpoint = initialized;
 	return true;
@@ -390,19 +390,19 @@ static void set_source_rejection(struct endpoint *endpoint, bool reject)
 static bool endpoint_data_octet(
 	struct endpoint *endpoint, uint8_t received, uint8_t *transmitted)
 {
-	struct v90_call_data_sources sources = {
+	struct pcm_call_data_sources sources = {
 		.upstream = source_upstream_frame,
 		.upstream_context = &endpoint->upstream_source,
 		.downstream = source_downstream_frame,
 		.downstream_context = &endpoint->downstream_source,
 	};
-	struct v90_call_data_event event;
-	struct v90_call_data_event event_before;
-	struct v90_call call_before;
+	struct pcm_call_data_event event;
+	struct pcm_call_data_event event_before;
+	struct pcm_call call_before;
 	uint8_t generated = 0xa5;
 	bool expecting_source_failure;
-	const struct v90_call_data_sources *selected_sources;
-	enum v90_call_result result;
+	const struct pcm_call_data_sources *selected_sources;
+	enum pcm_call_result result;
 
 	if (!endpoint->source_failure_checked &&
 	    !source_is_rejecting(endpoint) &&
@@ -413,9 +413,9 @@ static bool endpoint_data_octet(
 	memset(&event, 0x5a, sizeof(event));
 	event_before = event;
 	selected_sources = endpoint->idle_source_checked ? &sources : NULL;
-	result = v90_call_data_octet(
+	result = pcm_call_data_octet(
 		&endpoint->call, received, selected_sources, &generated, &event);
-	if (result == V90_CALL_SOURCE_FAILURE) {
+	if (result == PCM_CALL_SOURCE_FAILURE) {
 		if (!expecting_source_failure || generated != 0xa5 ||
 		    memcmp(&event, &event_before, sizeof(event)) != 0 ||
 		    memcmp(&endpoint->call, &call_before,
@@ -425,28 +425,28 @@ static bool endpoint_data_octet(
 		endpoint->source_failure_checked = true;
 		generated = 0xa5;
 		memset(&event, 0x5a, sizeof(event));
-		result = v90_call_data_octet(
+		result = pcm_call_data_octet(
 			&endpoint->call, received, &sources,
 			&generated, &event);
 	}
-	if (result != V90_CALL_OK)
+	if (result != PCM_CALL_OK)
 		return false;
 	endpoint->idle_source_checked = true;
-	if (event.kind == V90_CALL_DOWNSTREAM_FRAME) {
+	if (event.kind == PCM_CALL_DOWNSTREAM_FRAME) {
 		if (endpoint->call.local_role != V90_ANALOG_MODEM ||
 		    !downstream_frame_matches(
 			    &event.frame.downstream,
 			    endpoint->downstream_frames))
 			return false;
 		endpoint->downstream_frames++;
-	} else if (event.kind == V90_CALL_UPSTREAM_FRAME) {
+	} else if (event.kind == PCM_CALL_UPSTREAM_FRAME) {
 		if (endpoint->call.local_role != V90_DIGITAL_MODEM ||
 		    !upstream_frame_matches(
 			    &event.frame.upstream,
 			    endpoint->upstream_frames))
 			return false;
 		endpoint->upstream_frames++;
-	} else if (event.kind != V90_CALL_DATA_NONE) {
+	} else if (event.kind != PCM_CALL_DATA_NONE) {
 		return false;
 	}
 	*transmitted = generated;
@@ -457,31 +457,31 @@ static bool endpoint_octet(
 	struct endpoint *endpoint, uint8_t received,
 	enum g711_law law, uint8_t *transmitted)
 {
-	struct v90_call_observation observation;
+	struct pcm_call_observation observation;
 
-	if (v90_call_phase4_is_ready(&endpoint->call)) {
+	if (pcm_call_phase4_is_ready(&endpoint->call)) {
 		if (!phase4_boundary_is_transactional(endpoint, law) ||
-		    v90_call_start_data_path(&endpoint->call) != V90_CALL_OK)
+		    pcm_call_start_data_path(&endpoint->call) != PCM_CALL_OK)
 			return false;
 		endpoint->phase4_boundary_checked = true;
 		endpoint->data_path_started = true;
 	}
-	if (v90_call_current_stage(&endpoint->call) == V90_CALL_DATA_PATH)
+	if (pcm_call_current_stage(&endpoint->call) == PCM_CALL_DATA_PATH)
 		return endpoint_data_octet(endpoint, received, transmitted);
-	if (v90_call_octet(
+	if (pcm_call_octet(
 		    &endpoint->call, received, transmitted,
-		    &observation) != V90_CALL_OK)
+		    &observation) != PCM_CALL_OK)
 		return false;
 	endpoint->mixed_octets +=
-		observation.processed == V90_CALL_PHASE3_MIXED;
+		observation.processed == PCM_CALL_PHASE3_MIXED;
 	endpoint->phase4_octets +=
-		observation.processed == V90_CALL_PHASE4;
-	endpoint->entered_phase3 |= observation.next == V90_CALL_PHASE3;
+		observation.processed == PCM_CALL_PHASE4;
+	endpoint->entered_phase3 |= observation.next == PCM_CALL_PHASE3;
 	endpoint->entered_mixed |=
-		observation.next == V90_CALL_PHASE3_MIXED;
-	endpoint->entered_phase4 |= observation.next == V90_CALL_PHASE4;
-	if (observation.processed != V90_CALL_PHASE4 &&
-	    observation.next == V90_CALL_PHASE4) {
+		observation.next == PCM_CALL_PHASE3_MIXED;
+	endpoint->entered_phase4 |= observation.next == PCM_CALL_PHASE4;
+	if (observation.processed != PCM_CALL_PHASE4 &&
+	    observation.next == PCM_CALL_PHASE4) {
 		endpoint->phase4_entry_ri_symbols =
 			endpoint->call.local_role == V90_ANALOG_MODEM ?
 				endpoint->call.state.phase4.analog.state.initial
@@ -506,16 +506,16 @@ static bool ri_progress_is_exact(const struct endpoint *endpoint)
 static bool phase4_boundary_is_transactional(
 	struct endpoint *endpoint, enum g711_law law)
 {
-	struct v90_call before = endpoint->call;
-	struct v90_call_observation observation;
-	struct v90_call_observation observation_before;
+	struct pcm_call before = endpoint->call;
+	struct pcm_call_observation observation;
+	struct pcm_call_observation observation_before;
 	uint8_t output = 0xa5;
 
 	memset(&observation, 0x5a, sizeof(observation));
 	observation_before = observation;
-	return v90_call_octet(
+	return pcm_call_octet(
 		       &endpoint->call, silence_octet(law),
-		       &output, &observation) == V90_CALL_PHASE4_READY &&
+		       &output, &observation) == PCM_CALL_PHASE4_READY &&
 	       output == 0xa5 &&
 	       memcmp(&observation, &observation_before,
 		      sizeof(observation)) == 0 &&
@@ -537,8 +537,8 @@ static bool goal_is_reached(
 	if (!analog->data_path_started || !digital->data_path_started)
 		return false;
 	return goal == CALL_GOAL_DATA_PATH ||
-	       (v90_call_is_online(&analog->call) &&
-		v90_call_is_online(&digital->call) &&
+	       (pcm_call_is_online(&analog->call) &&
+		pcm_call_is_online(&digital->call) &&
 		analog->downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
 		digital->upstream_frames >= DATA_FRAMES_TO_RECEIVE &&
 		analog->source_failure_checked &&
@@ -592,8 +592,8 @@ static bool run_configured_call(
 	      analog.entered_phase4 && digital.entered_phase4 &&
 	      ri_progress_is_exact(&analog) &&
 	      ri_progress_is_exact(&digital) &&
-	      !v90_call_has_failed(&analog.call) &&
-	      !v90_call_has_failed(&digital.call),
+	      !pcm_call_has_failed(&analog.call) &&
+	      !pcm_call_has_failed(&digital.call),
 	      "law %u delay %zu V.90 call missed Phase 4: "
 	      "reached=%d entered=%d/%d/%d/%d/%d/%d stages=%d/%d "
 	      "Ri=%u/%zu,%u/%zu",
@@ -605,8 +605,8 @@ static bool run_configured_call(
 	      analog.phase4_entry_ri_symbols, analog.mixed_octets,
 	      digital.phase4_entry_ri_symbols, digital.mixed_octets);
 	if (goal == CALL_GOAL_PHASE4_ENTRY)
-		CHECK(v90_call_current_stage(&analog.call) == V90_CALL_PHASE4 &&
-		      v90_call_current_stage(&digital.call) == V90_CALL_PHASE4 &&
+		CHECK(pcm_call_current_stage(&analog.call) == PCM_CALL_PHASE4 &&
+		      pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE4 &&
 		      v90_phase4_analog_startup_is_valid(
 			      &analog.call.state.phase4.analog) &&
 		      v90_phase4_digital_startup_is_valid(
@@ -619,10 +619,10 @@ static bool run_configured_call(
 		      digital.phase4_boundary_checked &&
 		      analog.data_path_started && digital.data_path_started &&
 		      analog.idle_source_checked && digital.idle_source_checked &&
-		      v90_call_current_stage(&analog.call) ==
-			      V90_CALL_DATA_PATH &&
-		      v90_call_current_stage(&digital.call) ==
-			      V90_CALL_DATA_PATH,
+		      pcm_call_current_stage(&analog.call) ==
+			      PCM_CALL_DATA_PATH &&
+		      pcm_call_current_stage(&digital.call) ==
+			      PCM_CALL_DATA_PATH,
 		      "law %u delay %zu did not preserve Phase 4 handoffs",
 		      (unsigned int)law, delay);
 	if (goal == CALL_GOAL_ONLINE_DATA) {
@@ -632,8 +632,8 @@ static bool run_configured_call(
 		uint32_t digital_receive_rate = 0;
 		uint32_t aliased_rate = UINT32_C(0xa5a55a5a);
 
-		CHECK(v90_call_is_online(&analog.call) &&
-		      v90_call_is_online(&digital.call) &&
+		CHECK(pcm_call_is_online(&analog.call) &&
+		      pcm_call_is_online(&digital.call) &&
 		      analog.downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
 		      digital.upstream_frames >= DATA_FRAMES_TO_RECEIVE &&
 		      analog.source_failure_checked &&
@@ -649,10 +649,10 @@ static bool run_configured_call(
 		      analog.upstream_source.frames,
 		      analog.source_failure_checked,
 		      digital.source_failure_checked);
-		CHECK(v90_call_get_data_rates(
+		CHECK(pcm_call_get_data_rates(
 			      &analog.call, &analog_transmit_rate,
 			      &analog_receive_rate) &&
-		      v90_call_get_data_rates(
+		      pcm_call_get_data_rates(
 			      &digital.call, &digital_transmit_rate,
 			      &digital_receive_rate) &&
 		      analog_transmit_rate == digital_receive_rate &&
@@ -663,7 +663,7 @@ static bool run_configured_call(
 		      (unsigned int)law, analog_transmit_rate,
 		      analog_receive_rate, digital_transmit_rate,
 		      digital_receive_rate);
-		CHECK(!v90_call_get_data_rates(
+		CHECK(!pcm_call_get_data_rates(
 			       &analog.call, &aliased_rate, &aliased_rate) &&
 		      aliased_rate == UINT32_C(0xa5a55a5a),
 		      "overlapping V.90 rate outputs were changed");
@@ -716,114 +716,114 @@ static bool test_generated_calls(void)
 
 static bool test_validation(void)
 {
-	struct v90_call_configuration selected =
+	struct pcm_call_configuration selected =
 		configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
-	struct v90_call call;
-	struct v90_call saved;
-	struct v90_call_observation observation;
-	struct v90_call_observation saved_observation;
-	struct v90_call_data_event data_event;
-	struct v90_call_data_event saved_data_event;
+	struct pcm_call call;
+	struct pcm_call saved;
+	struct pcm_call_observation observation;
+	struct pcm_call_observation saved_observation;
+	struct pcm_call_data_event data_event;
+	struct pcm_call_data_event saved_data_event;
 	uint32_t transmit_rate = UINT32_C(0xa5a55a5a);
 	uint32_t receive_rate = UINT32_C(0x5a5aa5a5);
 	uint8_t output = 0xa5;
 
 	memset(&call, 0xa5, sizeof(call));
 	saved = call;
-	CHECK(v90_call_init(NULL, &selected) == V90_CALL_INVALID_ARGUMENT &&
-	      v90_call_init(&call, NULL) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(NULL, &selected) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_init(&call, NULL) == PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted a null initializer argument");
 	selected.local_role = (enum v90_modem_role)99;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted an invalid role");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.enabled_downstream_rate_mask = 0;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted an empty downstream rate set");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.enabled_downstream_rate_mask = UINT32_C(2);
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "analogue call accepted a disabled selected rate");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.enabled_downstream_rate_mask |= UINT32_C(1) << 21u;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "analogue call enabled a rate its CP cannot represent");
 	selected = configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.enabled_downstream_rate_mask = UINT32_C(1);
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "digital call advertised rates outside its enabled set");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.phase3.analog.nominal_peak_amplitude = 0;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted a zero Phase 3 amplitude");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.analog_phase4.training_parameters.request_silence = true;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted a non-initial Phase 4 training record");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.analog_phase4.data_parameters.kind = V90_CP_TRAINING;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted non-data online CP parameters");
 	selected = configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.digital_phase4.initial_mp.parameters.type0.acknowledges_cp =
 		true;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT,
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted an acknowledging initial MP");
 	selected = configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.law = G711_LAW_PCMA;
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_INVALID_ARGUMENT &&
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT &&
 	      memcmp(&call, &saved, sizeof(call)) == 0,
 	      "invalid configurations changed the call");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
-	CHECK(v90_call_init(&call, &selected) == V90_CALL_OK &&
-	      v90_call_is_valid(&call) &&
-	      !v90_call_has_failed(&call) &&
-	      !v90_call_phase4_is_ready(&call) &&
-	      !v90_call_is_online(&call),
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_OK &&
+	      pcm_call_is_valid(&call) &&
+	      !pcm_call_has_failed(&call) &&
+	      !pcm_call_phase4_is_ready(&call) &&
+	      !pcm_call_is_online(&call),
 	      "valid call did not initialize");
 	saved = call;
 	memset(&observation, 0x5a, sizeof(observation));
 	saved_observation = observation;
 	memset(&data_event, 0x3c, sizeof(data_event));
 	saved_data_event = data_event;
-	CHECK(v90_call_octet(
+	CHECK(pcm_call_octet(
 		      NULL, silence_octet(G711_LAW_PCMU),
-		      &output, &observation) == V90_CALL_INVALID_ARGUMENT &&
-	      v90_call_octet(
+		      &output, &observation) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_octet(
 		      &call, silence_octet(G711_LAW_PCMU),
-		      NULL, &observation) == V90_CALL_INVALID_ARGUMENT &&
-	      v90_call_octet(
+		      NULL, &observation) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_octet(
 		      &call, silence_octet(G711_LAW_PCMU),
-		      &output, NULL) == V90_CALL_INVALID_ARGUMENT &&
-	      v90_call_octet(
+		      &output, NULL) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_octet(
 		      &call, silence_octet(G711_LAW_PCMU),
 		      (uint8_t *)&call, &observation) ==
-		      V90_CALL_INVALID_ARGUMENT &&
-	      v90_call_octet(
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_octet(
 		      &call, silence_octet(G711_LAW_PCMU),
-		      &output, (struct v90_call_observation *)&call) ==
-		      V90_CALL_INVALID_ARGUMENT &&
-	      v90_call_start_data_path(NULL) == V90_CALL_INVALID_ARGUMENT &&
-	      v90_call_start_data_path(&call) == V90_CALL_INVALID_STATE &&
-	      !v90_call_get_data_rates(
+		      &output, (struct pcm_call_observation *)&call) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_start_data_path(NULL) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_start_data_path(&call) == PCM_CALL_INVALID_STATE &&
+	      !pcm_call_get_data_rates(
 		      NULL, &transmit_rate, &receive_rate) &&
-	      !v90_call_get_data_rates(
+	      !pcm_call_get_data_rates(
 		      &call, &transmit_rate, &receive_rate) &&
 	      transmit_rate == UINT32_C(0xa5a55a5a) &&
 	      receive_rate == UINT32_C(0x5a5aa5a5) &&
-	      v90_call_data_octet(
+	      pcm_call_data_octet(
 		      &call, silence_octet(G711_LAW_PCMU), NULL,
-		      &output, &data_event) == V90_CALL_INVALID_STATE &&
+		      &output, &data_event) == PCM_CALL_INVALID_STATE &&
 	      output == 0xa5 &&
 	      memcmp(&observation, &saved_observation,
 		     sizeof(observation)) == 0 &&
 	      memcmp(&data_event, &saved_data_event,
 		     sizeof(data_event)) == 0 &&
 	      memcmp(&call, &saved, sizeof(call)) == 0 &&
-	      !v90_call_is_valid(NULL) && !v90_call_has_failed(NULL) &&
-	      !v90_call_phase4_is_ready(NULL) &&
-	      !v90_call_is_online(NULL) &&
-	      v90_call_current_stage(NULL) == (enum v90_call_stage)-1,
+	      !pcm_call_is_valid(NULL) && !pcm_call_has_failed(NULL) &&
+	      !pcm_call_phase4_is_ready(NULL) &&
+	      !pcm_call_is_online(NULL) &&
+	      pcm_call_current_stage(NULL) == (enum pcm_call_stage)-1,
 	      "invalid call operation changed state or output");
 	return true;
 }
@@ -848,12 +848,12 @@ static bool test_result_names(void)
 
 	for (size_t index = 0; index < ARRAY_LENGTH(expected); ++index)
 		CHECK(strcmp(
-			      v90_call_result_name(
-				      (enum v90_call_result)index),
+			      pcm_call_result_name(
+				      (enum pcm_call_result)index),
 			      expected[index]) == 0,
 		      "call result name %zu changed", index);
 	CHECK(strcmp(
-		      v90_call_result_name((enum v90_call_result)99),
+		      pcm_call_result_name((enum pcm_call_result)99),
 		      "unknown") == 0,
 	      "unknown call result name changed");
 	return true;

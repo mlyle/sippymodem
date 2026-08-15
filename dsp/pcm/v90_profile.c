@@ -227,12 +227,12 @@ static struct v90_mp_record initial_mp(void)
 }
 
 enum v90_profile_result v90_profile_init(
-	struct v90_call_configuration *configuration,
+	struct pcm_call_configuration *configuration,
 	enum v90_modem_role role, enum g711_law law,
 	unsigned int minimum_rate, unsigned int maximum_rate)
 {
 	struct v90_downstream_selection downstream;
-	struct v90_call_configuration selected = {
+	struct pcm_call_configuration selected = {
 		.local_role = role,
 		.law = law,
 		.phase2_nominal_amplitude = V90_PHASE2_NOMINAL_AMPLITUDE,

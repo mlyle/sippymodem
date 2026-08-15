@@ -96,15 +96,15 @@ static bool test_generated_profiles(void)
 			     role_index <= V90_DIGITAL_MODEM; ++role_index) {
 				enum v90_modem_role role =
 					(enum v90_modem_role)role_index;
-				struct v90_call_configuration configuration;
-				struct v90_call call;
+				struct pcm_call_configuration configuration;
+				struct pcm_call call;
 
 				CHECK(v90_profile_init(
 					      &configuration, role, law,
 					      bit_rate, bit_rate) == V90_PROFILE_OK &&
-				      v90_call_init(&call, &configuration) ==
-					      V90_CALL_OK &&
-				      v90_call_is_valid(&call) &&
+				      pcm_call_init(&call, &configuration) ==
+					      PCM_CALL_OK &&
+				      pcm_call_is_valid(&call) &&
 				      call.local_role == role && call.law == law,
 				      "role %u law %u rate %u profile did not initialize",
 				      role_index, law_index, bit_rate);
@@ -169,8 +169,8 @@ static bool test_generated_profiles(void)
 
 static bool test_transactionality(void)
 {
-	struct v90_call_configuration configuration;
-	struct v90_call_configuration saved;
+	struct pcm_call_configuration configuration;
+	struct pcm_call_configuration saved;
 	struct v90_downstream_selection selection;
 	struct v90_downstream_selection saved_selection;
 
