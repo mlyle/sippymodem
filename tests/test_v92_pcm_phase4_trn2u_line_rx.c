@@ -325,6 +325,8 @@ static bool test_contracts(void)
 	struct v92_pcm_phase4_trn2u_line_rx before;
 	struct v92_pcm_phase4_trn2u_line_rx untouched;
 	struct v92_pcm_phase4_trn2u_line_rx saved_untouched;
+	struct v92_pcm_phase4_trn2u_line_handoff line_handoff;
+	struct v92_pcm_phase4_trn2u_line_handoff saved_line_handoff;
 	struct line_channel channel;
 	int16_t raw;
 	int16_t line;
@@ -363,6 +365,21 @@ static bool test_contracts(void)
 	      v92_pcm_phase4_trn2u_next(&transmitter, &raw) ==
 		      V92_PCM_PHASE4_TRN2U_OK,
 	      "contract receiver did not initialize");
+	memset(&line_handoff, 0xa5, sizeof(line_handoff));
+	saved_line_handoff = line_handoff;
+	CHECK(v92_pcm_phase4_trn2u_line_rx_handoff(
+		      NULL, &line_handoff) ==
+		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase4_trn2u_line_rx_handoff(
+		      &receiver, NULL) ==
+		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase4_trn2u_line_rx_handoff(
+		      &receiver, &line_handoff) ==
+		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE &&
+	      memcmp(
+		      &line_handoff, &saved_line_handoff,
+		      sizeof(line_handoff)) == 0,
+	      "premature TRN2u line handoff changed output");
 	line = channel_sample(&channel, G711_LAW_PCMU, raw);
 	before = receiver;
 	CHECK(v92_pcm_phase4_trn2u_line_rx_sample(NULL, line) ==
@@ -373,9 +390,15 @@ static bool test_contracts(void)
 	before = receiver;
 	CHECK(v92_pcm_phase4_trn2u_line_rx_has_failed(&receiver) &&
 	      !v92_pcm_phase4_trn2u_line_rx_can_handoff(&receiver) &&
+	      v92_pcm_phase4_trn2u_line_rx_handoff(
+		      &receiver, &line_handoff) ==
+		      V92_PCM_PHASE4_TRN2U_LINE_RX_FAILED &&
 	      v92_pcm_phase4_trn2u_line_rx_sample(&receiver, line) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_FAILED &&
-	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      memcmp(&receiver, &before, sizeof(receiver)) == 0 &&
+	      memcmp(
+		      &line_handoff, &saved_line_handoff,
+		      sizeof(line_handoff)) == 0,
 	      "failed TRN2u line receiver was not stable");
 	receiver = before;
 	receiver.failed = false;
@@ -412,7 +435,8 @@ static bool test_contracts(void)
 		      "unknown") == 0 &&
 	      !v92_pcm_phase4_trn2u_line_rx_is_valid(NULL) &&
 	      !v92_pcm_phase4_trn2u_line_rx_can_handoff(NULL) &&
-	      !v92_pcm_phase4_trn2u_line_rx_has_failed(NULL),
+	      !v92_pcm_phase4_trn2u_line_rx_has_failed(NULL) &&
+	      !v92_pcm_phase4_trn2u_line_handoff_is_valid(NULL),
 	      "TRN2u line validation contracts changed");
 	return true;
 }

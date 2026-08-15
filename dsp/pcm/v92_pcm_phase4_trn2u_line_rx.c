@@ -21,11 +21,11 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 }
 
 static bool target_is_member(
-	const struct v92_pcm_phase4_trn2u_line_rx *receiver,
-	int16_t target)
+	const struct v92_phase4_demodulator *demodulator,
+	enum g711_law law, int16_t target)
 {
 	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
-		receiver->reference.modulator.constellation);
+		demodulator->constellation);
 	unsigned int magnitudes = bits == 0u ? 0u : 1u << (bits - 1u);
 
 	for (uint8_t sign = 0u; sign <= 1u; ++sign) {
@@ -34,12 +34,12 @@ static bool target_is_member(
 			int16_t level;
 
 			if (v92_phase4_modulator_level(
-				    receiver->reference.modulator.constellation,
-				    receiver->reference.modulator.lu,
+				    demodulator->constellation,
+				    demodulator->lu,
 				    (uint8_t)magnitude, sign, &level) !=
 			    V92_PHASE4_MODULATOR_OK)
 				return false;
-			if (quantize(receiver->law, level) == target)
+			if (quantize(law, level) == target)
 				return true;
 		}
 	}
@@ -47,11 +47,12 @@ static bool target_is_member(
 }
 
 static bool targets_are_valid(
-	const struct v92_pcm_phase4_trn2u_line_rx *receiver)
+	const struct v92_phase4_demodulator *demodulator,
+	enum g711_law law, const int16_t *targets)
 {
 	for (size_t index = 0;
 	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
-		if (!target_is_member(receiver, receiver->expected[index]))
+		if (!target_is_member(demodulator, law, targets[index]))
 			return false;
 	}
 	return true;
@@ -93,7 +94,9 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 	       receiver->expected_index <
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
 	       (receiver->polarity == -1 || receiver->polarity == 1) &&
-	       targets_are_valid(receiver);
+	       targets_are_valid(
+		       &receiver->demodulator, receiver->law,
+		       receiver->expected);
 }
 
 bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
@@ -112,6 +115,68 @@ bool v92_pcm_phase4_trn2u_line_rx_has_failed(
 {
 	return v92_pcm_phase4_trn2u_line_rx_is_valid(receiver) &&
 	       receiver->failed;
+}
+
+bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
+	const struct v92_pcm_phase4_trn2u_line_handoff *handoff)
+{
+	return handoff != NULL &&
+	       qam_equalizer_is_valid(&handoff->equalizer) &&
+	       handoff->equalizer.tap_count ==
+		       V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS &&
+	       handoff->equalizer.decision_delay ==
+		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+	       handoff->equalizer.fill ==
+		       handoff->equalizer.decision_delay + 1u &&
+	       !handoff->equalizer.can_adapt &&
+	       v92_phase4_demodulator_is_valid(&handoff->demodulator) &&
+	       handoff->training_symbols >=
+		       V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
+	       handoff->training_symbols %
+		       V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
+	       handoff->input_samples >= handoff->training_symbols &&
+	       isfinite(handoff->adaptation) && handoff->adaptation >= 0.0 &&
+	       handoff->adaptation <= 1.0 &&
+	       g711_law_is_valid(handoff->law) &&
+	       (handoff->polarity == -1 || handoff->polarity == 1) &&
+	       targets_are_valid(
+		       &handoff->demodulator, handoff->law,
+		       handoff->pending_training_targets);
+}
+
+enum v92_pcm_phase4_trn2u_line_rx_result
+v92_pcm_phase4_trn2u_line_rx_handoff(
+	const struct v92_pcm_phase4_trn2u_line_rx *receiver,
+	struct v92_pcm_phase4_trn2u_line_handoff *handoff)
+{
+	struct v92_pcm_phase4_trn2u_line_handoff generated;
+
+	if (!v92_pcm_phase4_trn2u_line_rx_is_valid(receiver) ||
+	    handoff == NULL)
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
+	if (receiver->failed)
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_FAILED;
+	if (!v92_pcm_phase4_trn2u_line_rx_can_handoff(receiver))
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE;
+	generated = (struct v92_pcm_phase4_trn2u_line_handoff){
+		.equalizer = receiver->equalizer,
+		.demodulator = receiver->demodulator,
+		.input_samples = receiver->input_samples,
+		.training_symbols = receiver->reference.emitted_symbols,
+		.adaptation = receiver->adaptation,
+		.law = receiver->law,
+		.polarity = receiver->polarity,
+	};
+	for (size_t index = 0;
+	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
+		generated.pending_training_targets[index] = receiver->expected[
+			(receiver->expected_index + index) %
+			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY];
+	}
+	if (!v92_pcm_phase4_trn2u_line_handoff_is_valid(&generated))
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_NUMERIC_FAILURE;
+	*handoff = generated;
+	return V92_PCM_PHASE4_TRN2U_LINE_RX_OK;
 }
 
 static bool initialize_targets(

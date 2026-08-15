@@ -48,6 +48,22 @@ struct v92_pcm_phase4_trn2u_line_rx {
 	bool failed;
 };
 
+/* Exact physical-boundary continuation into upstream control records. The
+ * equalizer still owns decision_delay accepted TRN2u symbols; their known
+ * targets are linearized here so a successor can finish training adaptation
+ * before switching to decision-directed control reception. */
+struct v92_pcm_phase4_trn2u_line_handoff {
+	struct qam_equalizer equalizer;
+	struct v92_phase4_demodulator demodulator;
+	int16_t pending_training_targets[
+		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY];
+	uint64_t input_samples;
+	uint32_t training_symbols;
+	double adaptation;
+	enum g711_law law;
+	int8_t polarity;
+};
+
 /* The receive-side LU scale is the measured TRN1u level retained by handoff.
  * constellation is the initial training choice from Jp. */
 enum v92_pcm_phase4_trn2u_line_rx_result
@@ -61,6 +77,13 @@ bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver);
 bool v92_pcm_phase4_trn2u_line_rx_has_failed(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver);
+
+bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
+	const struct v92_pcm_phase4_trn2u_line_handoff *handoff);
+enum v92_pcm_phase4_trn2u_line_rx_result
+v92_pcm_phase4_trn2u_line_rx_handoff(
+	const struct v92_pcm_phase4_trn2u_line_rx *receiver,
+	struct v92_pcm_phase4_trn2u_line_handoff *handoff);
 
 /* Consume one signed 8 kHz sample. ALIGNED marks each physical twelve-symbol
  * boundary at or after the 12000-symbol initial minimum. The equalizer's
