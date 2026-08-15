@@ -92,6 +92,7 @@ APP_SOURCES := \
 	v44_tx_monitor.c \
 	v44_xid.c
 SHARED_DSP_SOURCES := \
+	$(DSP_SOURCE_DIR)/binary_equalizer.c \
 	$(DSP_SOURCE_DIR)/crc16_ccitt_false.c \
 	$(DSP_SOURCE_DIR)/datapumps.c \
 	$(DSP_SOURCE_DIR)/dc_filter.c \

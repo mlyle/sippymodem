@@ -245,7 +245,7 @@ static bool check_line(enum g711_law law, bool impaired)
 			      V92_CPT_SYMBOLS_PER_FRAME &&
 	      receiver.input_advance_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
-	      receiver.polarity == (impaired ? -1 : 1) &&
+	      receiver.line.polarity == (impaired ? -1 : 1) &&
 	      tail_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY +
 			      (impaired ? 7u : 0u),
@@ -259,7 +259,7 @@ static bool check_line(enum g711_law law, bool impaired)
 	      (unsigned long long)receiver.processed_samples,
 	      V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS + 2u * frame_bits +
 		      V92_CPT_SYMBOLS_PER_FRAME,
-	      receiver.input_advance_symbols, receiver.polarity,
+	      receiver.input_advance_symbols, receiver.line.polarity,
 	      impaired ? -1 : 1, (unsigned long long)tail_symbols,
 	      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY +
 		      (impaired ? 7u : 0u));
@@ -291,16 +291,16 @@ static bool check_line(enum g711_law law, bool impaired)
 			      V92_PCM_PHASE3_CPT_LINE_RX_OK &&
 		      v92_pcm_phase3_cpt_line_handoff_is_valid(&handoff) &&
 		      memcmp(
-			      &handoff.equalizer, &receiver.equalizer,
+			      &handoff.equalizer, &receiver.line.equalizer,
 			      sizeof(handoff.equalizer)) == 0 &&
 		      parameters_match(&handoff.parameters, &parameters) &&
 		      handoff.input_samples == receiver.input_samples &&
-		      handoff.signal_level == receiver.signal_level &&
-		      handoff.adaptation == receiver.adaptation &&
+		      handoff.signal_level == receiver.line.magnitude &&
+		      handoff.adaptation == receiver.line.adaptation &&
 		      handoff.input_advance_symbols ==
 			      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 		      handoff.previous_sign == transmitter.coding.previous_sign &&
-		      handoff.polarity == receiver.polarity,
+		      handoff.polarity == receiver.line.polarity,
 		      "CPt line handoff did not preserve the E1u boundary");
 		invalid = handoff;
 		invalid.previous_sign = 2u;

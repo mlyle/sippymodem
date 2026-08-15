@@ -18,25 +18,30 @@ static bool equalizer_is_continuous(
 	       !equalizer->can_adapt;
 }
 
+static bool line_geometry_is_valid(
+	const struct binary_equalizer *line)
+{
+	return binary_equalizer_is_valid(line) &&
+	       line->equalizer.tap_count ==
+		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
+	       line->equalizer.decision_delay ==
+		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
+	       line->magnitude >=
+		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL;
+}
+
 bool v92_pcm_phase3_cpt_line_rx_is_valid(
 	const struct v92_pcm_phase3_cpt_line_rx *receiver)
 {
 	return receiver != NULL &&
-	       equalizer_is_continuous(&receiver->equalizer) &&
+	       line_geometry_is_valid(&receiver->line) &&
 	       v92_pcm_phase3_cpt_rx_is_valid(&receiver->signs) &&
 	       receiver->signs.stage != V92_PCM_PHASE3_CPT_RX_TRAINING &&
 	       receiver->starting_input_samples <= receiver->input_samples &&
 	       receiver->input_samples - receiver->starting_input_samples ==
 		       receiver->processed_samples &&
-	       isfinite(receiver->signal_level) &&
-	       receiver->signal_level >=
-		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
-	       receiver->signal_level <= 32768.0 &&
-	       isfinite(receiver->adaptation) && receiver->adaptation >= 0.0 &&
-	       receiver->adaptation <= 1.0 &&
 	       receiver->input_advance_symbols ==
-		       receiver->equalizer.decision_delay &&
-	       (receiver->polarity == -1 || receiver->polarity == 1);
+		       receiver->line.equalizer.decision_delay;
 }
 
 bool v92_pcm_phase3_cpt_line_rx_is_complete(
@@ -65,15 +70,15 @@ v92_pcm_phase3_cpt_line_rx_init(
 	    !v92_pcm_phase3_trn1u_line_handoff_is_valid(handoff))
 		return V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT;
 	initialized = (struct v92_pcm_phase3_cpt_line_rx){
-		.equalizer = handoff->equalizer,
 		.starting_input_samples = handoff->input_samples,
 		.input_samples = handoff->input_samples,
-		.signal_level = handoff->signal_level,
-		.adaptation = handoff->adaptation,
 		.input_advance_symbols = handoff->input_advance_symbols,
-		.polarity = handoff->polarity,
 	};
-	if (v92_pcm_phase3_cpt_rx_init_from_training(
+	if (binary_equalizer_init(
+		    &initialized.line, &handoff->equalizer,
+		    handoff->signal_level, handoff->adaptation,
+		    handoff->polarity) != BINARY_EQUALIZER_OK ||
+	    v92_pcm_phase3_cpt_rx_init_from_training(
 		    &initialized.signs, &handoff->sync) !=
 		    V92_PCM_PHASE3_CPT_RX_OK ||
 	    !v92_pcm_phase3_cpt_line_rx_is_valid(&initialized))
@@ -100,12 +105,8 @@ v92_pcm_phase3_cpt_line_rx_sample(
 	struct v92_pcm_phase3_cpt_rx_event *event)
 {
 	struct v92_pcm_phase3_cpt_line_rx next;
-	struct qam_equalizer_observation observation = { 0 };
 	struct v92_pcm_phase3_cpt_rx_event emitted = { 0 };
-	struct qam_point input;
-	struct qam_point target;
 	uint8_t sign;
-	bool ready;
 
 	if (!v92_pcm_phase3_cpt_line_rx_is_valid(receiver) || event == NULL)
 		return V92_PCM_PHASE3_CPT_LINE_RX_INVALID_ARGUMENT;
@@ -119,23 +120,11 @@ v92_pcm_phase3_cpt_line_rx_sample(
 	next = *receiver;
 	next.input_samples++;
 	next.processed_samples++;
-	input = (struct qam_point){
-		.in_phase = next.polarity > 0 ? sample : -(double)sample,
-	};
-	if (qam_equalizer_observe(
-		    &next.equalizer, &input, &observation, &ready) !=
-		    QAM_EQUALIZER_OK ||
-	    !ready)
+	if (binary_equalizer_receive(&next.line, sample, &sign) !=
+	    BINARY_EQUALIZER_OK)
 		return fail_sample(receiver, &next);
-	sign = observation.output.in_phase < 0.0 ? 1u : 0u;
-	target = (struct qam_point){
-		.in_phase = sign != 0u ? -next.signal_level : next.signal_level,
-	};
 	if (v92_pcm_phase3_cpt_rx_receive(
 		    &next.signs, sign, &emitted) != V92_PCM_PHASE3_CPT_RX_OK ||
-	    qam_equalizer_adapt_observation(
-		    &next.equalizer, &observation, &target,
-		    next.adaptation) != QAM_EQUALIZER_OK ||
 	    !v92_pcm_phase3_cpt_line_rx_is_valid(&next))
 		return fail_sample(receiver, &next);
 	*receiver = next;
@@ -195,12 +184,12 @@ v92_pcm_phase3_cpt_line_rx_handoff(
 	if (!v92_pcm_phase3_cpt_rx_is_complete(&receiver->signs))
 		return V92_PCM_PHASE3_CPT_LINE_RX_INVALID_STATE;
 	generated = (struct v92_pcm_phase3_cpt_line_handoff){
-		.equalizer = receiver->equalizer,
+		.equalizer = receiver->line.equalizer,
 		.input_samples = receiver->input_samples,
-		.signal_level = receiver->signal_level,
-		.adaptation = receiver->adaptation,
+		.signal_level = receiver->line.magnitude,
+		.adaptation = receiver->line.adaptation,
 		.input_advance_symbols = receiver->input_advance_symbols,
-		.polarity = receiver->polarity,
+		.polarity = receiver->line.polarity,
 	};
 	if (!v92_pcm_phase3_cpt_rx_parameters(
 		    &receiver->signs, &generated.parameters) ||

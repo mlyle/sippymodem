@@ -3,6 +3,7 @@
 #ifndef V92_PCM_PHASE3_CPT_LINE_RX_H
 #define V92_PCM_PHASE3_CPT_LINE_RX_H
 
+#include "binary_equalizer.h"
 #include "v92_pcm_phase3_cpt_rx.h"
 #include "v92_pcm_phase3_trn1u_line_rx.h"
 
@@ -24,15 +25,12 @@ enum v92_pcm_phase3_cpt_line_rx_result {
  * records and E1u. The inherited equalizer owns its delayed samples, so the
  * first new input produces the first sign not delivered by the handoff. */
 struct v92_pcm_phase3_cpt_line_rx {
-	struct qam_equalizer equalizer;
+	struct binary_equalizer line;
 	struct v92_pcm_phase3_cpt_rx signs;
 	uint64_t starting_input_samples;
 	uint64_t input_samples;
 	uint64_t processed_samples;
-	double signal_level;
-	double adaptation;
 	uint8_t input_advance_symbols;
-	int8_t polarity;
 	bool failed;
 };
 

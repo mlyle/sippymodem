@@ -1606,6 +1606,7 @@ V92_PCM_PHASE3_CPT_LINE_RX_TEST_BINARY := \
 V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_line_rx.o \
+	$(BUILD_DIR)/binary_equalizer.o \
 	$(BUILD_DIR)/v92_pcm_phase3_trn1u_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_cpt_tx.o \
@@ -2494,6 +2495,10 @@ QAM_TEST_OBJECTS := $(BUILD_DIR)/test_qam.o \
 QAM_EQUALIZER_TEST_BINARY := $(BUILD_DIR)/test_qam_equalizer
 QAM_EQUALIZER_TEST_OBJECTS := $(BUILD_DIR)/test_qam_equalizer.o \
 	$(BUILD_DIR)/qam_equalizer.o
+BINARY_EQUALIZER_TEST_BINARY := $(BUILD_DIR)/test_binary_equalizer
+BINARY_EQUALIZER_TEST_OBJECTS := $(BUILD_DIR)/test_binary_equalizer.o \
+	$(BUILD_DIR)/binary_equalizer.o \
+	$(BUILD_DIR)/qam_equalizer.o
 FSK_INTEGRATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_fsk_integration
 FSK_INTEGRATION_TEST_OBJECTS := \
@@ -2779,6 +2784,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE2_TONE_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
 	$(QAM_EQUALIZER_TEST_BINARY) \
+	$(BINARY_EQUALIZER_TEST_BINARY) \
 	$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 TEST_BINARIES += $(PJSIP_TEST_BINARY)
@@ -3034,6 +3040,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE2_TONE_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
 	$(QAM_EQUALIZER_TEST_OBJECTS:.o=.d) \
+	$(BINARY_EQUALIZER_TEST_OBJECTS:.o=.d) \
 	$(FSK_INTEGRATION_TEST_OBJECTS:.o=.d)
 ifeq ($(PJSIP_AVAILABLE),yes)
 DEPENDENCIES += $(PJSIP_TEST_OBJECTS:.o=.d)
@@ -3314,6 +3321,7 @@ test: $(TEST_BINARIES)
 	./$(V34_PHASE2_TONE_TEST_BINARY)
 	./$(QAM_TEST_BINARY)
 	./$(QAM_EQUALIZER_TEST_BINARY)
+	./$(BINARY_EQUALIZER_TEST_BINARY)
 	./$(FSK_INTEGRATION_TEST_BINARY)
 ifeq ($(PJSIP_AVAILABLE),yes)
 	./$(PJSIP_TEST_BINARY)
@@ -4193,6 +4201,9 @@ $(QAM_TEST_BINARY): $(QAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(QAM_EQUALIZER_TEST_BINARY): $(QAM_EQUALIZER_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(BINARY_EQUALIZER_TEST_BINARY): $(BINARY_EQUALIZER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(FSK_INTEGRATION_TEST_BINARY): $(FSK_INTEGRATION_TEST_OBJECTS)
@@ -5358,6 +5369,10 @@ $(BUILD_DIR)/qam_gain.o: \
 
 $(BUILD_DIR)/qam_equalizer.o: \
 	$(DSP_SOURCE_DIR)/qam_equalizer.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/binary_equalizer.o: \
+	$(DSP_SOURCE_DIR)/binary_equalizer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v8_ansam.o: \
