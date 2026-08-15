@@ -104,6 +104,7 @@ struct v32_datapump {
 	bool receiver_9600_initialized;
 	bool second_conditioning_complete;
 	bool conditioning_carrier_detected;
+	bool answerer_s_detected;
 	bool linked;
 	bool caller;
 };
@@ -254,6 +255,9 @@ static bool line_entry_is_valid(
 		    V32_CONDITIONING_SILENCE_SAMPLES ||
 	    (datapump->conditioning_carrier_detected &&
 	     !receives_conditioning(datapump->line_entry)) ||
+	    (datapump->answerer_s_detected &&
+	     (datapump->caller ||
+	      datapump->startup.phase != V32_ANSWERER_SEND_OFFER)) ||
 	    (datapump->conditioning_silence_samples != 0 &&
 	     !receives_conditioning(datapump->line_entry)) ||
 	    datapump->direct_retrain_dibits > V32_DIRECT_RETRAIN_DIBITS ||
@@ -782,6 +786,24 @@ static int generate_conditioning_sample(
 	return 0;
 }
 
+static int generate_silence_sample(
+	struct v32_datapump *datapump, int16_t *sample)
+{
+	static const struct qam_point silence = { 0 };
+	bool can_accept = qam_modulator_can_accept_symbol(
+		&datapump->modulator);
+	bool accepted;
+
+	if (can_accept)
+		datapump->transmit_point = silence;
+	if (qam_modulator_sample(
+		    &datapump->modulator, &datapump->transmit_point, sample,
+		    &accepted) != QAM_OK ||
+	    accepted != can_accept)
+		return -1;
+	return 0;
+}
+
 static int generate_sample(
 	struct v32_datapump *datapump, int16_t *sample,
 	bool *linked)
@@ -796,6 +818,14 @@ static int generate_sample(
 	    (datapump->startup.phase == V32_ANSWERER_TRAIN ||
 	     datapump->startup.phase == V32_ANSWERER_RETRAIN))
 		return generate_conditioning_sample(datapump, sample);
+	/* V.32 5.4.2 requires the answerer to cease transmission once it
+	 * recognizes the caller's S sequence.  Continue clocking zero symbols so
+	 * the pulse shaper and carrier resume the second conditioning interval on
+	 * their natural sample phase. */
+	if (!datapump->caller &&
+	    datapump->startup.phase == V32_ANSWERER_SEND_OFFER &&
+	    datapump->answerer_s_detected)
+		return generate_silence_sample(datapump, sample);
 
 	if (datapump->caller &&
 	    (datapump->line_entry ==
@@ -1055,13 +1085,15 @@ static int observe_dibit(
 			return -1;
 		if (!datapump->caller &&
 		    previous_phase == V32_ANSWERER_SEND_OFFER &&
-		    datapump->startup.phase == V32_ANSWERER_RETRAIN &&
-		    v32_conditioning_transmitter_init(
-			    &datapump->conditioning_transmitter,
-			    V32_ANSWERING_TRANSMITTER,
-			    V32_CONDITIONING_TRN_MIN_SYMBOLS) !=
-			    V32_CONDITIONING_OK)
-			return -1;
+		    datapump->startup.phase == V32_ANSWERER_RETRAIN) {
+			if (v32_conditioning_transmitter_init(
+				    &datapump->conditioning_transmitter,
+				    V32_ANSWERING_TRANSMITTER,
+				    V32_CONDITIONING_TRN_MIN_SYMBOLS) !=
+				    V32_CONDITIONING_OK)
+				return -1;
+			datapump->answerer_s_detected = false;
+		}
 		if (update_direct_selection_wait(datapump) != 0)
 			return -1;
 		if (datapump->line_entry ==
@@ -1247,6 +1279,11 @@ static int receive_sample(
 			    &conditioning_ready) !=
 			    V32_CONDITIONING_RECEIVER_OK)
 			return -1;
+		if (!datapump->caller &&
+		    datapump->startup.phase == V32_ANSWERER_SEND_OFFER &&
+		    datapump->conditioning_receiver.phase !=
+			    V32_CONDITIONING_SEARCH_S_BAR)
+			datapump->answerer_s_detected = true;
 		if (conditioning_ready) {
 			if (second_conditioning &&
 			    v32_startup_expect_selection(

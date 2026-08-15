@@ -33,6 +33,7 @@ enum {
 	NEGOTIATED_TRAINING_FRAME_LIMIT = 500,
 	LINK_DRAIN_FRAME_LIMIT = 50,
 	DATA_FRAME_LIMIT = 400,
+	V32_MIN_HALF_DUPLEX_GAP_FRAMES = 16,
 	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
 };
 
@@ -350,6 +351,9 @@ static bool run_media_call(
 	bool prelink_queued = false;
 	bool prelink_delivered = false;
 	bool transferred = false;
+	bool answerer_signal_seen = false;
+	unsigned int answerer_silence_frames = 0;
+	unsigned int answerer_silence_max = 0;
 	enum DP_ID initial_datapump = uses_v8 ? DP_V8 : test_case->id;
 	unsigned int training_frame_limit =
 		test_case->training_frame_limit != 0 ?
@@ -407,6 +411,26 @@ static bool run_media_call(
 		      "%s training failed at the SIP media boundary",
 		      test_case->name);
 		if (answerer.modem->dp != NULL &&
+		    answerer.modem->dp->id == DP_V32) {
+			bool answerer_silent = true;
+
+			for (size_t sample = 0;
+			     sample < ARRAY_LENGTH(answerer.transmit); ++sample)
+				if (answerer.transmit[sample] != 0) {
+					answerer_silent = false;
+					break;
+				}
+			if (answerer_silent && answerer_signal_seen) {
+				answerer_silence_frames++;
+			} else if (!answerer_silent) {
+				answerer_signal_seen = true;
+				if (answerer_silence_frames > answerer_silence_max)
+					answerer_silence_max =
+						answerer_silence_frames;
+				answerer_silence_frames = 0;
+			}
+		}
+		if (answerer.modem->dp != NULL &&
 		    answerer.modem->dp->id == DP_V8)
 			answerer_used_v8 = true;
 		if (test_case->test_prelink && !prelink_queued &&
@@ -426,6 +450,8 @@ static bool run_media_call(
 			break;
 		}
 	}
+	if (answerer_silence_frames > answerer_silence_max)
+		answerer_silence_max = answerer_silence_frames;
 	CHECK(online && answerer_used_v8 &&
 		      caller.modem->tx_rate == test_case->caller_tx_rate &&
 		      caller.modem->rx_rate == test_case->caller_rx_rate &&
@@ -438,6 +464,12 @@ static bool run_media_call(
 	      caller.modem->tx_rate, caller.modem->rx_rate,
 	      modem_is_online(answerer.modem, test_case->id),
 	      answerer.modem->tx_rate, answerer.modem->rx_rate);
+	CHECK(test_case->id != DP_V32 ||
+		      answerer_silence_max >=
+			      V32_MIN_HALF_DUPLEX_GAP_FRAMES,
+	      "%s answerer did not cease transmission while conditioning its "
+	      "receiver (longest gap=%u frames)",
+	      test_case->name, answerer_silence_max);
 	CHECK(!test_case->test_prelink || prelink_queued,
 	      "%s did not expose its asymmetric pre-link interval",
 	      test_case->name);
