@@ -11,6 +11,9 @@
 enum {
 	V22_SCRAMBLER_BITS = 17,
 	V22_SCRAMBLER_ONES_LIMIT = 64,
+	/* V.22bis sends 100 ms at 600 symbols/s; latch after a stable 20 ms. */
+	V22BIS_RATE_SIGNAL_SYMBOLS = 60,
+	V22BIS_RATE_SIGNAL_MIN_SYMBOLS = 12,
 };
 
 enum v22_framing_result {
@@ -31,6 +34,18 @@ struct v22_symbol_encoder {
 struct v22_symbol_decoder {
 	struct v22_scrambler descrambler;
 	uint8_t phase_quadrant;
+};
+
+enum v22bis_rate_signal_event {
+	V22BIS_RATE_SIGNAL_NONE,
+	V22BIS_RATE_SIGNAL_STARTED,
+	V22BIS_RATE_SIGNAL_ENDED,
+};
+
+struct v22bis_rate_signal_detector {
+	uint8_t alternating_symbols;
+	uint8_t previous_turn;
+	bool present;
 };
 
 void v22_scrambler_reset(
@@ -62,6 +77,17 @@ enum v22_framing_result v22_symbol_decode(
 enum v22_framing_result v22_600_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *bit);
+
+enum v22_framing_result v22bis_rate_signal_turn(
+	uint32_t symbol_index, uint8_t *quarter_turns);
+void v22bis_rate_signal_detector_reset(
+	struct v22bis_rate_signal_detector *detector);
+bool v22bis_rate_signal_detector_is_valid(
+	const struct v22bis_rate_signal_detector *detector);
+enum v22_framing_result v22bis_rate_signal_observe(
+	struct v22bis_rate_signal_detector *detector,
+	uint8_t quarter_turns,
+	enum v22bis_rate_signal_event *event);
 
 const char *v22_framing_result_name(
 	enum v22_framing_result result);

@@ -229,6 +229,83 @@ enum v22_framing_result v22_600_symbol_decode(
 	return V22_FRAMING_OK;
 }
 
+void v22bis_rate_signal_detector_reset(
+	struct v22bis_rate_signal_detector *detector)
+{
+	if (detector != NULL)
+		memset(detector, 0, sizeof(*detector));
+}
+
+bool v22bis_rate_signal_detector_is_valid(
+	const struct v22bis_rate_signal_detector *detector)
+{
+	return detector != NULL &&
+	       detector->alternating_symbols <=
+		       V22BIS_RATE_SIGNAL_MIN_SYMBOLS &&
+	       detector->previous_turn < QPSK_QUADRANT_COUNT &&
+	       (!detector->present ||
+		detector->alternating_symbols ==
+			V22BIS_RATE_SIGNAL_MIN_SYMBOLS);
+}
+
+enum v22_framing_result v22bis_rate_signal_turn(
+	uint32_t symbol_index, uint8_t *quarter_turns)
+{
+	if (symbol_index >= V22BIS_RATE_SIGNAL_SYMBOLS ||
+	    quarter_turns == NULL)
+		return V22_FRAMING_INVALID_ARGUMENT;
+	/* Unscrambled dibits 00 and 11 rotate by 90 and 270 degrees. */
+	*quarter_turns = (symbol_index & 1u) == 0 ? 1u : 3u;
+	return V22_FRAMING_OK;
+}
+
+static bool is_rate_signal_turn(uint8_t quarter_turns)
+{
+	return quarter_turns == 1u || quarter_turns == 3u;
+}
+
+enum v22_framing_result v22bis_rate_signal_observe(
+	struct v22bis_rate_signal_detector *detector,
+	uint8_t quarter_turns,
+	enum v22bis_rate_signal_event *event)
+{
+	struct v22bis_rate_signal_detector next;
+	enum v22bis_rate_signal_event next_event =
+		V22BIS_RATE_SIGNAL_NONE;
+	bool alternating;
+
+	if (!v22bis_rate_signal_detector_is_valid(detector) ||
+	    quarter_turns >= QPSK_QUADRANT_COUNT || event == NULL)
+		return V22_FRAMING_INVALID_ARGUMENT;
+	next = *detector;
+	alternating = is_rate_signal_turn(quarter_turns) &&
+		(next.alternating_symbols == 0 ||
+		 quarter_turns != next.previous_turn);
+	if (next.present && !alternating) {
+		next_event = V22BIS_RATE_SIGNAL_ENDED;
+		next.present = false;
+		next.alternating_symbols =
+			is_rate_signal_turn(quarter_turns) ? 1u : 0u;
+	} else if (!alternating) {
+		next.alternating_symbols =
+			is_rate_signal_turn(quarter_turns) ? 1u : 0u;
+	} else if (next.alternating_symbols <
+		   V22BIS_RATE_SIGNAL_MIN_SYMBOLS) {
+		next.alternating_symbols++;
+		if (next.alternating_symbols ==
+		    V22BIS_RATE_SIGNAL_MIN_SYMBOLS) {
+			next.present = true;
+			next_event = V22BIS_RATE_SIGNAL_STARTED;
+		}
+	}
+	next.previous_turn = quarter_turns;
+	if (!v22bis_rate_signal_detector_is_valid(&next))
+		return V22_FRAMING_INVALID_ARGUMENT;
+	*detector = next;
+	*event = next_event;
+	return V22_FRAMING_OK;
+}
+
 const char *v22_framing_result_name(
 	enum v22_framing_result result)
 {

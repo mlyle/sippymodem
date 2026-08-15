@@ -8,6 +8,8 @@
 
 static const double V22BIS_COORDINATE_SCALE =
 	0.23570226039551584146694812070162; /* 1 / sqrt(18) */
+static const double V22BIS_1200_POINT_SCALE =
+	1.3416407864998738178455042012388; /* sqrt(18 / 10) */
 
 static bool bits_are_valid(
 	const uint8_t bits[V22BIS_BITS_PER_SYMBOL])
@@ -160,5 +162,24 @@ enum v22_framing_result v22bis_constellation_point(
 		.in_phase = in_phase * V22BIS_COORDINATE_SCALE,
 		.quadrature = quadrature * V22BIS_COORDINATE_SCALE,
 	};
+	return V22_FRAMING_OK;
+}
+
+enum v22_framing_result v22bis_1200_constellation_point(
+	uint8_t quadrant, struct qam_point *point)
+{
+	struct qam_point next;
+
+	if (quadrant >= QPSK_QUADRANT_COUNT || point == NULL ||
+	    v22bis_constellation_point(
+		    (uint8_t)((quadrant << 2) | 1u), &next) !=
+		    V22_FRAMING_OK)
+		return V22_FRAMING_INVALID_ARGUMENT;
+	/* V.22bis 2.5.2.2 selects the 01 point at constant unit power. */
+	next.in_phase *= V22BIS_1200_POINT_SCALE;
+	next.quadrature *= V22BIS_1200_POINT_SCALE;
+	if (!point_is_finite(&next))
+		return V22_FRAMING_INVALID_ARGUMENT;
+	*point = next;
 	return V22_FRAMING_OK;
 }

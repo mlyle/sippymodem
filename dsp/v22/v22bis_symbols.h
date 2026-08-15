@@ -40,5 +40,7 @@ enum v22_framing_result v22bis_symbol_decode(
 
 enum v22_framing_result v22bis_constellation_point(
 	uint8_t symbol, struct qam_point *point);
+enum v22_framing_result v22bis_1200_constellation_point(
+	uint8_t quadrant, struct qam_point *point);
 
 #endif /* V22BIS_SYMBOLS_H */

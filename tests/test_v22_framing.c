@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <math.h>
 #include <string.h>
 
 enum {
@@ -286,6 +287,44 @@ static bool test_v22bis_constellation(void)
 	return true;
 }
 
+static bool test_v22bis_1200_constellation(void)
+{
+	struct qam_point points[QPSK_QUADRANT_COUNT];
+	struct qam_point invalid = { 7.0, 9.0 };
+
+	for (uint8_t quadrant = 0; quadrant < QPSK_QUADRANT_COUNT;
+	     ++quadrant) {
+		double power;
+
+		CHECK(v22bis_1200_constellation_point(
+			      quadrant,
+			      &points[quadrant]) == V22_FRAMING_OK,
+		      "V.22bis 1200-bit/s point %u was unavailable", quadrant);
+		power = points[quadrant].in_phase *
+				points[quadrant].in_phase +
+			points[quadrant].quadrature *
+				points[quadrant].quadrature;
+		CHECK(fabs(power - 1.0) <= 1e-12,
+		      "V.22bis 1200-bit/s point %u changed power", quadrant);
+	}
+	CHECK(fabs(points[0].in_phase - 3.0 * points[0].quadrature) <=
+		      1e-12 &&
+		      points[1].in_phase == -points[0].quadrature &&
+		      points[1].quadrature == points[0].in_phase &&
+		      points[2].in_phase == -points[0].in_phase &&
+		      points[2].quadrature == -points[0].quadrature &&
+		      points[3].in_phase == points[0].quadrature &&
+		      points[3].quadrature == -points[0].in_phase,
+	      "V.22bis 1200-bit/s 01 points changed orientation");
+	CHECK(v22bis_1200_constellation_point(4, &invalid) ==
+		      V22_FRAMING_INVALID_ARGUMENT &&
+		      invalid.in_phase == 7.0 && invalid.quadrature == 9.0 &&
+		      v22bis_1200_constellation_point(0, NULL) ==
+			      V22_FRAMING_INVALID_ARGUMENT,
+	      "V.22bis 1200-bit/s points accepted invalid input");
+	return true;
+}
+
 static bool test_v22bis_symbol_round_trip(void)
 {
 	struct v22bis_symbol_encoder encoder;
@@ -355,6 +394,81 @@ static bool test_v22bis_validation(void)
 		      v22bis_constellation_point(0, NULL) ==
 			      V22_FRAMING_INVALID_ARGUMENT,
 	      "V.22bis constellation accepted invalid input");
+	return true;
+}
+
+static bool test_v22bis_rate_signal_detection(void)
+{
+	struct v22bis_rate_signal_detector detector;
+	struct v22bis_rate_signal_detector saved;
+	enum v22bis_rate_signal_event event = V22BIS_RATE_SIGNAL_ENDED;
+	unsigned int starts = 0;
+
+	v22bis_rate_signal_detector_reset(&detector);
+	CHECK(v22bis_rate_signal_detector_is_valid(&detector),
+	      "V.22bis rate-signal detector did not initialize");
+	for (size_t index = 0;
+	     index < V22BIS_RATE_SIGNAL_MIN_SYMBOLS - 1u; ++index) {
+		uint8_t turn = (index & 1u) == 0 ? 1u : 3u;
+
+		CHECK(v22bis_rate_signal_observe(
+			      &detector, turn, &event) == V22_FRAMING_OK &&
+			      event == V22BIS_RATE_SIGNAL_NONE &&
+			      !detector.present,
+		      "V.22bis rate signal started on a short run at %zu",
+		      index);
+	}
+	CHECK(v22bis_rate_signal_observe(&detector, 0, &event) ==
+		      V22_FRAMING_OK &&
+		      event == V22BIS_RATE_SIGNAL_NONE && !detector.present,
+	      "V.22bis rate signal accepted an interrupted run");
+
+	v22bis_rate_signal_detector_reset(&detector);
+	for (size_t index = 0; index < V22BIS_RATE_SIGNAL_SYMBOLS;
+	     ++index) {
+		uint8_t turn;
+
+		CHECK(v22bis_rate_signal_turn(
+			      (uint32_t)index, &turn) == V22_FRAMING_OK &&
+			      turn == ((index & 1u) == 0 ? 1u : 3u) &&
+			      v22bis_rate_signal_observe(
+				      &detector, turn, &event) ==
+				      V22_FRAMING_OK,
+		      "V.22bis rate signal rejected generated symbol %zu",
+		      index);
+		if (event == V22BIS_RATE_SIGNAL_STARTED)
+			starts++;
+		CHECK(event == V22BIS_RATE_SIGNAL_NONE ||
+			      (event == V22BIS_RATE_SIGNAL_STARTED &&
+			       index + 1u == V22BIS_RATE_SIGNAL_MIN_SYMBOLS),
+		      "V.22bis rate signal changed state at symbol %zu", index);
+	}
+	CHECK(starts == 1 && detector.present &&
+		      v22bis_rate_signal_observe(&detector, 3, &event) ==
+			      V22_FRAMING_OK &&
+		      event == V22BIS_RATE_SIGNAL_ENDED && !detector.present,
+	      "V.22bis rate signal did not end on the following mark");
+
+	saved = detector;
+	event = V22BIS_RATE_SIGNAL_STARTED;
+	{
+		uint8_t turn = 7;
+
+		CHECK(v22bis_rate_signal_turn(
+			      V22BIS_RATE_SIGNAL_SYMBOLS, &turn) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+			      turn == 7 &&
+			      v22bis_rate_signal_turn(0, NULL) ==
+				      V22_FRAMING_INVALID_ARGUMENT,
+		      "V.22bis rate-signal generation accepted invalid bounds");
+	}
+	CHECK(v22bis_rate_signal_observe(&detector, 4, &event) ==
+		      V22_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&detector, &saved, sizeof(detector)) == 0 &&
+		      event == V22BIS_RATE_SIGNAL_STARTED &&
+		      v22bis_rate_signal_observe(&detector, 1, NULL) ==
+			      V22_FRAMING_INVALID_ARGUMENT,
+	      "V.22bis rate-signal validation was not transactional");
 	return true;
 }
 
@@ -439,8 +553,12 @@ int main(void)
 		{ "V.22 600 validation", test_600_validation },
 		{ "V.22bis symbol mapping", test_v22bis_symbol_mapping },
 		{ "V.22bis generated constellation", test_v22bis_constellation },
+		{ "V.22bis 1200-bit/s constellation",
+		  test_v22bis_1200_constellation },
 		{ "V.22bis symbol round trip", test_v22bis_symbol_round_trip },
 		{ "V.22bis validation", test_v22bis_validation },
+		{ "V.22bis rate-signal generation and detection",
+		  test_v22bis_rate_signal_detection },
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
 		{ "validation", test_validation },
