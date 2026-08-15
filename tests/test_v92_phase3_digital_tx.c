@@ -131,6 +131,23 @@ static bool emit_checked_bit(
 	return true;
 }
 
+static bool emit_checked_scr(
+	struct pcm_phase3_digital_tx *transmitter,
+	struct reference_scrambler *scrambler, enum g711_law law,
+	uint8_t training_ucode, size_t index)
+{
+	struct v90_pcm_symbol symbol;
+	uint8_t sign = reference_scramble(scrambler, 1);
+
+	CHECK(pcm_phase3_digital_tx_next(transmitter, &symbol) ==
+		      PCM_PHASE3_DIGITAL_TX_OK &&
+	      symbol_matches(
+		      &symbol, law, training_ucode, sign != 0),
+	      "SCR mismatch for law %u at symbol %zu",
+	      (unsigned int)law, index);
+	return true;
+}
+
 static bool run_timeline(enum g711_law law)
 {
 	struct v92_jd jd = jd_parameters();
@@ -221,8 +238,29 @@ static bool run_timeline(enum g711_law law)
 			      &transmitter, &scrambler, &last_sign, 0, law,
 			      training_ucode, "Jp-prime", index),
 		      "could not emit Jp-prime");
-	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE,
-	      "Jp-prime did not complete Phase 3 transmission");
+	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_SCR &&
+	      transmitter.scr_symbols == 0,
+	      "Jp-prime did not enter zero-DIL SCR");
+	for (size_t index = 0; index < 8; ++index)
+		CHECK(emit_checked_scr(
+			      &transmitter, &scrambler, law,
+			      training_ucode, index),
+		      "could not emit SCR");
+	CHECK(pcm_phase3_digital_tx_finish_scr(&transmitter) ==
+		      PCM_PHASE3_DIGITAL_TX_OK &&
+	      transmitter.stage == PCM_PHASE3_DIGITAL_TX_SCR,
+	      "mid-interval SCR completion did not latch");
+	for (size_t index = 8; index < 12; ++index)
+		CHECK(emit_checked_scr(
+			      &transmitter, &scrambler, law,
+			      training_ucode, index),
+		      "could not complete SCR");
+	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
+	      transmitter.scr_symbols == 12 &&
+	      transmitter.sequence.signs.last_sign == last_sign &&
+	      pcm_phase3_digital_tx_finish_scr(&transmitter) ==
+		      PCM_PHASE3_DIGITAL_TX_OK,
+	      "SCR did not finish on a six-symbol boundary");
 	{
 		struct pcm_phase3_digital_tx saved = transmitter;
 		struct v90_pcm_symbol symbol = { .octet = 0xa5 };
@@ -362,6 +400,8 @@ static bool test_validation(void)
 	      pcm_phase3_digital_tx_set_v92_su_phase(&transmitter, 0) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
 	      pcm_phase3_digital_tx_finish_jd(NULL) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+	      pcm_phase3_digital_tx_finish_scr(NULL) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_finish_jp(NULL) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&

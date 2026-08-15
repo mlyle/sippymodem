@@ -16,6 +16,7 @@ enum pcm_phase3_digital_tx_stage {
 	PCM_PHASE3_DIGITAL_TX_JD,
 	PCM_PHASE3_DIGITAL_TX_JP,
 	PCM_PHASE3_DIGITAL_TX_PRIME,
+	PCM_PHASE3_DIGITAL_TX_SCR,
 	PCM_PHASE3_DIGITAL_TX_COMPLETE,
 };
 
@@ -34,8 +35,9 @@ union pcm_phase3_digital_tx_sequence {
 
 /* Own the common digital-modem Phase 3 network-character stream after Ja.
  * Both protocols emit Sd, Sd-bar, TRN1d, and Jd. A V.90 selection advances
- * directly from Jd to the prime suffix; only V.92 can enter Jp. The call
- * controller owns remote signal detection and the following DIL/SCR stage. */
+ * directly from Jd to the prime suffix; only V.92 can enter Jp and the
+ * zero-DIL SCR continuation. The call controller owns remote signal detection
+ * and decides when the aligned SCR interval is complete. */
 struct pcm_phase3_digital_tx {
 	union pcm_phase3_digital_tx_sequence sequence;
 	uint8_t jd_frame[PCM_J_FRAME_BYTES];
@@ -44,9 +46,11 @@ struct pcm_phase3_digital_tx {
 	enum pcm_phase3_digital_tx_stage stage;
 	uint32_t jd_records;
 	uint32_t jp_records;
+	uint32_t scr_symbols;
 	uint8_t bit_index;
 	bool finish_jd_requested;
 	bool finish_jp_requested;
+	bool finish_scr_requested;
 };
 
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
@@ -83,6 +87,12 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_jd(
 /* Latch completion of V.92 Jp. V.90 transmitters reject this operation and
  * cannot enter the Jp branch. */
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_jp(
+	struct pcm_phase3_digital_tx *transmitter);
+
+/* End V.92 zero-DIL SCR on a six-symbol boundary. A request at the start of
+ * SCR still emits one complete six-symbol interval. V.90 cannot enter this
+ * branch. */
+enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_scr(
 	struct pcm_phase3_digital_tx *transmitter);
 
 const char *pcm_phase3_digital_tx_result_name(

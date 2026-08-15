@@ -227,6 +227,8 @@ static bool test_record_boundary_finish(void)
 		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
 	      pcm_phase3_digital_tx_finish_jp(&transmitter) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
+	      pcm_phase3_digital_tx_finish_scr(&transmitter) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
 	      "V.90 transmitter entered the V.92-only Jp branch");
 	for (size_t index = 0; index < V90_JD_FRAME_BITS; ++index)
