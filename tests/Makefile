@@ -1617,13 +1617,17 @@ V92_SUVD_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_suvd.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
+V92_CONTROL_RX_OBJECTS := \
+	$(BUILD_DIR)/v92_control_rx.o \
+	$(BUILD_DIR)/v92_cpd.o \
+	$(BUILD_DIR)/v92_cpu.o \
+	$(BUILD_DIR)/v92_suvd.o \
+	$(BUILD_DIR)/v92_suvu.o \
+	$(BUILD_DIR)/v92_status_update.o
 V92_CONTROL_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_control_rx
 V92_CONTROL_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_control_rx.o \
-	$(BUILD_DIR)/v92_control_rx.o \
-	$(BUILD_DIR)/v92_cpd.o \
-	$(BUILD_DIR)/v92_suvd.o \
-	$(BUILD_DIR)/v92_status_update.o \
+	$(V92_CONTROL_RX_OBJECTS) \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_CPT_RECEIVER_TEST_BINARY := $(BUILD_DIR)/test_v92_cpt_receiver
 V92_CPT_RECEIVER_TEST_OBJECTS := \
@@ -1811,10 +1815,7 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
-	$(BUILD_DIR)/v92_control_rx.o \
-	$(BUILD_DIR)/v92_cpd.o \
-	$(BUILD_DIR)/v92_suvd.o \
-	$(BUILD_DIR)/v92_status_update.o \
+	$(V92_CONTROL_RX_OBJECTS) \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
@@ -1908,10 +1909,7 @@ PCM_DOWNSTREAM_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_downstream_rx.o \
 	$(BUILD_DIR)/v90_mp.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
-	$(BUILD_DIR)/v92_suvd.o \
-	$(BUILD_DIR)/v92_status_update.o \
-	$(BUILD_DIR)/v92_control_rx.o \
-	$(BUILD_DIR)/v92_cpd.o \
+	$(V92_CONTROL_RX_OBJECTS) \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
@@ -2023,10 +2021,7 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \
 	$(BUILD_DIR)/v90_mp.o \
-	$(BUILD_DIR)/v92_control_rx.o \
-	$(BUILD_DIR)/v92_cpd.o \
-	$(BUILD_DIR)/v92_suvd.o \
-	$(BUILD_DIR)/v92_status_update.o \
+	$(V92_CONTROL_RX_OBJECTS) \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \

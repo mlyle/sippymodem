@@ -36,7 +36,7 @@ static bool control_is_valid(const struct pcm_downstream_rx *receiver)
 		return v90_mp_receiver_is_valid(&receiver->control.mp) &&
 		       receiver->control.mp.training_frame_bits == frame_bits;
 	return v92_control_rx_is_valid(&receiver->control.v92) &&
-	       receiver->control.v92.training_frame_bits == frame_bits;
+	       receiver->control.v92.alignment_bits == frame_bits;
 }
 
 static bool control_is_fresh(const struct pcm_downstream_rx *receiver)
@@ -140,7 +140,7 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 			&initialized.control.mp,
 			training_mapping->frame_bits) == V90_MP_RECEIVER_OK;
 	} else {
-		control_initialized = v92_control_rx_init(
+		control_initialized = v92_control_rx_init_downstream(
 			&initialized.control.v92,
 			training_mapping->frame_bits) == V92_CONTROL_RX_OK;
 	}
@@ -304,6 +304,10 @@ static enum pcm_downstream_rx_result feed_v92_control_frame(
 		return PCM_DOWNSTREAM_RX_SUVD_REJECTED;
 	case V92_CONTROL_EVENT_CPD_REJECTED:
 		return PCM_DOWNSTREAM_RX_CPD_REJECTED;
+	case V92_CONTROL_EVENT_SUVU:
+	case V92_CONTROL_EVENT_CPU:
+	case V92_CONTROL_EVENT_SUVU_REJECTED:
+	case V92_CONTROL_EVENT_CPU_REJECTED:
 	case V92_CONTROL_EVENT_NONE:
 		break;
 	}

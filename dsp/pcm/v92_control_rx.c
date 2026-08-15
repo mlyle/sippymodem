@@ -12,12 +12,62 @@ enum {
 	CONTROL_MARKER_BIT = 18,
 };
 
+_Static_assert(
+	(size_t)V92_CPD_MAX_FRAME_BYTES >= (size_t)V92_CPU_MAX_FRAME_BYTES,
+	"shared control receiver buffer must hold either parameter record");
+
 static bool stage_is_valid(enum v92_control_rx_stage stage)
 {
 	return stage == V92_CONTROL_RX_SEARCH_SYNC ||
 	       stage == V92_CONTROL_RX_READ_MARKER ||
-	       stage == V92_CONTROL_RX_RECEIVE_SUVD ||
-	       stage == V92_CONTROL_RX_RECEIVE_CPD;
+	       stage == V92_CONTROL_RX_RECEIVE_STATUS ||
+	       stage == V92_CONTROL_RX_RECEIVE_PARAMETERS;
+}
+
+static bool configuration_is_valid(
+	const struct v92_control_rx *receiver)
+{
+	if (receiver->direction == V92_CONTROL_DOWNSTREAM) {
+		return receiver->alignment_bits >=
+			       V92_CPD_DOWNSTREAM_FRAME_MIN_BITS &&
+		       receiver->alignment_bits <=
+			       V92_CPD_DOWNSTREAM_FRAME_MAX_BITS;
+	}
+	return receiver->direction == V92_CONTROL_UPSTREAM &&
+	       (receiver->alignment_bits ==
+			V92_STATUS_UPDATE_4_POINT_ALIGNMENT ||
+		receiver->alignment_bits ==
+			V92_STATUS_UPDATE_8_POINT_ALIGNMENT);
+}
+
+static enum v92_constellation_size upstream_constellation(
+	const struct v92_control_rx *receiver)
+{
+	return receiver->alignment_bits ==
+		       V92_STATUS_UPDATE_4_POINT_ALIGNMENT ?
+		       V92_CONSTELLATION_4_POINT :
+		       V92_CONSTELLATION_8_POINT;
+}
+
+static unsigned int upstream_bits_per_symbol(
+	const struct v92_control_rx *receiver)
+{
+	return receiver->alignment_bits / V92_CPU_SYMBOLS_PER_FRAME;
+}
+
+static size_t maximum_frame_bits(
+	const struct v92_control_rx *receiver)
+{
+	return receiver->direction == V92_CONTROL_DOWNSTREAM ?
+		       V92_CPD_MAX_FRAME_BITS : V92_CPU_MAX_FRAME_BITS;
+}
+
+static size_t status_frame_bits(
+	const struct v92_control_rx *receiver)
+{
+	if (receiver->direction == V92_CONTROL_DOWNSTREAM)
+		return v92_suvd_frame_bits(receiver->alignment_bits);
+	return v92_suvu_frame_bits(upstream_constellation(receiver));
 }
 
 static bool prefix_is_valid(const uint8_t *frame)
@@ -47,16 +97,12 @@ bool v92_control_rx_is_valid(
 	const struct v92_control_rx *receiver)
 {
 	size_t inferred = 0u;
-	size_t suvd_bits;
-	enum v92_cpd_result probe;
+	size_t status_bits;
 
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
-	    receiver->training_frame_bits <
-		    V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
-	    receiver->training_frame_bits >
-		    V92_CPD_DOWNSTREAM_FRAME_MAX_BITS ||
+	    !configuration_is_valid(receiver) ||
 	    receiver->sync_one_count > CONTROL_SYNC_BITS ||
-	    receiver->bit_index > V92_CPD_MAX_FRAME_BITS ||
+	    receiver->bit_index > maximum_frame_bits(receiver) ||
 	    !packed_msb_tail_is_zero(
 		    receiver->frame, receiver->bit_index,
 		    sizeof(receiver->frame)))
@@ -73,30 +119,46 @@ bool v92_control_rx_is_valid(
 		       receiver->bit_index == CONTROL_MARKER_BIT;
 	if (receiver->bit_index <= CONTROL_MARKER_BIT)
 		return false;
-	if (receiver->stage == V92_CONTROL_RX_RECEIVE_SUVD) {
-		suvd_bits = v92_suvd_frame_bits(receiver->training_frame_bits);
-		return receiver->frame_bit_count == suvd_bits &&
-		       receiver->bit_index < suvd_bits &&
+	if (receiver->stage == V92_CONTROL_RX_RECEIVE_STATUS) {
+		status_bits = status_frame_bits(receiver);
+		return receiver->frame_bit_count == status_bits &&
+		       receiver->bit_index < status_bits &&
 		       packed_msb_bit(
 			       receiver->frame, CONTROL_MARKER_BIT) != 0u;
 	}
 	if (packed_msb_bit(receiver->frame, CONTROL_MARKER_BIT) != 0u)
 		return false;
-	probe = v92_cpd_probe_frame_bits(
-		receiver->frame, sizeof(receiver->frame), receiver->bit_index,
-		receiver->training_frame_bits, &inferred);
-	if (receiver->frame_bit_count == 0u)
-		return probe == V92_CPD_INCOMPLETE;
-	return probe == V92_CPD_OK &&
-	       inferred == receiver->frame_bit_count &&
-	       receiver->bit_index < receiver->frame_bit_count;
+	if (receiver->direction == V92_CONTROL_DOWNSTREAM) {
+		enum v92_cpd_result probe = v92_cpd_probe_frame_bits(
+			receiver->frame, sizeof(receiver->frame),
+			receiver->bit_index, receiver->alignment_bits,
+			&inferred);
+
+		if (receiver->frame_bit_count == 0u)
+			return probe == V92_CPD_INCOMPLETE;
+		return probe == V92_CPD_OK &&
+		       inferred == receiver->frame_bit_count &&
+		       receiver->bit_index < receiver->frame_bit_count;
+	} else {
+		enum v92_cpu_result probe = v92_cpu_probe_frame_bits(
+			receiver->frame, sizeof(receiver->frame),
+			receiver->bit_index,
+			upstream_bits_per_symbol(receiver), &inferred);
+
+		if (receiver->frame_bit_count == 0u)
+			return probe == V92_CPU_INCOMPLETE;
+		return probe == V92_CPU_OK &&
+		       inferred == receiver->frame_bit_count &&
+		       receiver->bit_index < receiver->frame_bit_count;
+	}
 }
 
-enum v92_control_rx_result v92_control_rx_init(
+enum v92_control_rx_result v92_control_rx_init_downstream(
 	struct v92_control_rx *receiver, uint8_t training_frame_bits)
 {
 	struct v92_control_rx initialized = {
-		.training_frame_bits = training_frame_bits,
+		.alignment_bits = training_frame_bits,
+		.direction = V92_CONTROL_DOWNSTREAM,
 		.stage = V92_CONTROL_RX_SEARCH_SYNC,
 	};
 
@@ -104,6 +166,29 @@ enum v92_control_rx_result v92_control_rx_init(
 		return V92_CONTROL_RX_INVALID_ARGUMENT;
 	if (training_frame_bits < V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
 	    training_frame_bits > V92_CPD_DOWNSTREAM_FRAME_MAX_BITS)
+		return V92_CONTROL_RX_INVALID_PARAMETERS;
+	if (!v92_control_rx_is_valid(&initialized))
+		return V92_CONTROL_RX_INTERNAL_ERROR;
+	*receiver = initialized;
+	return V92_CONTROL_RX_OK;
+}
+
+enum v92_control_rx_result v92_control_rx_init_upstream(
+	struct v92_control_rx *receiver,
+	enum v92_constellation_size constellation)
+{
+	struct v92_control_rx initialized = {
+		.alignment_bits = constellation == V92_CONSTELLATION_4_POINT ?
+			V92_STATUS_UPDATE_4_POINT_ALIGNMENT :
+			V92_STATUS_UPDATE_8_POINT_ALIGNMENT,
+		.direction = V92_CONTROL_UPSTREAM,
+		.stage = V92_CONTROL_RX_SEARCH_SYNC,
+	};
+
+	if (receiver == NULL)
+		return V92_CONTROL_RX_INVALID_ARGUMENT;
+	if (constellation != V92_CONSTELLATION_4_POINT &&
+	    constellation != V92_CONSTELLATION_8_POINT)
 		return V92_CONTROL_RX_INVALID_PARAMETERS;
 	if (!v92_control_rx_is_valid(&initialized))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
@@ -155,6 +240,16 @@ static void reject_cpd(
 	clear_candidate(receiver);
 }
 
+static void reject_cpu(
+	struct v92_control_rx *receiver,
+	struct v92_control_event *event,
+	enum v92_cpu_result result)
+{
+	event->type = V92_CONTROL_EVENT_CPU_REJECTED;
+	event->record.cpu.frame_result = result;
+	clear_candidate(receiver);
+}
+
 static void finish_suvd(
 	struct v92_control_rx *receiver,
 	struct v92_control_event *event)
@@ -162,7 +257,7 @@ static void finish_suvd(
 	struct v92_suvd_parameters parameters;
 	enum v92_suvd_result result = v92_suvd_decode(
 		receiver->frame, sizeof(receiver->frame),
-		receiver->frame_bit_count, receiver->training_frame_bits,
+		receiver->frame_bit_count, receiver->alignment_bits,
 		&parameters);
 
 	event->record.suvd.frame_result = result;
@@ -175,6 +270,26 @@ static void finish_suvd(
 	clear_candidate(receiver);
 }
 
+static void finish_suvu(
+	struct v92_control_rx *receiver,
+	struct v92_control_event *event)
+{
+	struct v92_suvu_parameters parameters;
+	enum v92_suvu_result result = v92_suvu_decode(
+		receiver->frame, sizeof(receiver->frame),
+		receiver->frame_bit_count, upstream_constellation(receiver),
+		&parameters);
+
+	event->record.suvu.frame_result = result;
+	if (result == V92_SUVU_OK) {
+		event->type = V92_CONTROL_EVENT_SUVU;
+		event->record.suvu.parameters = parameters;
+	} else {
+		event->type = V92_CONTROL_EVENT_SUVU_REJECTED;
+	}
+	clear_candidate(receiver);
+}
+
 static void finish_cpd(
 	struct v92_control_rx *receiver,
 	struct v92_control_event *event)
@@ -182,7 +297,7 @@ static void finish_cpd(
 	struct v92_cpd_parameters parameters;
 	enum v92_cpd_result result = v92_cpd_decode(
 		receiver->frame, sizeof(receiver->frame),
-		receiver->frame_bit_count, receiver->training_frame_bits,
+		receiver->frame_bit_count, receiver->alignment_bits,
 		&parameters);
 
 	event->record.cpd.frame_result = result;
@@ -193,6 +308,46 @@ static void finish_cpd(
 		event->type = V92_CONTROL_EVENT_CPD_REJECTED;
 	}
 	clear_candidate(receiver);
+}
+
+static void finish_cpu(
+	struct v92_control_rx *receiver,
+	struct v92_control_event *event)
+{
+	struct v92_cpu_parameters parameters;
+	enum v92_cpu_result result = v92_cpu_decode(
+		receiver->frame, sizeof(receiver->frame),
+		receiver->frame_bit_count,
+		upstream_bits_per_symbol(receiver), &parameters);
+
+	event->record.cpu.frame_result = result;
+	if (result == V92_CPU_OK) {
+		event->type = V92_CONTROL_EVENT_CPU;
+		event->record.cpu.parameters = parameters;
+	} else {
+		event->type = V92_CONTROL_EVENT_CPU_REJECTED;
+	}
+	clear_candidate(receiver);
+}
+
+static void finish_status(
+	struct v92_control_rx *receiver,
+	struct v92_control_event *event)
+{
+	if (receiver->direction == V92_CONTROL_DOWNSTREAM)
+		finish_suvd(receiver, event);
+	else
+		finish_suvu(receiver, event);
+}
+
+static void finish_parameters(
+	struct v92_control_rx *receiver,
+	struct v92_control_event *event)
+{
+	if (receiver->direction == V92_CONTROL_DOWNSTREAM)
+		finish_cpd(receiver, event);
+	else
+		finish_cpu(receiver, event);
 }
 
 static bool receive_valid_bit(
@@ -212,36 +367,53 @@ static bool receive_valid_bit(
 	receiver->bit_index++;
 	if (receiver->stage == V92_CONTROL_RX_READ_MARKER) {
 		if (bit != 0u) {
-			receiver->frame_bit_count = v92_suvd_frame_bits(
-				receiver->training_frame_bits);
-			receiver->stage = V92_CONTROL_RX_RECEIVE_SUVD;
+			receiver->frame_bit_count = status_frame_bits(receiver);
+			receiver->stage = V92_CONTROL_RX_RECEIVE_STATUS;
 		} else {
-			receiver->stage = V92_CONTROL_RX_RECEIVE_CPD;
+			receiver->stage = V92_CONTROL_RX_RECEIVE_PARAMETERS;
 		}
 		return true;
 	}
-	if (receiver->stage == V92_CONTROL_RX_RECEIVE_CPD &&
+	if (receiver->stage == V92_CONTROL_RX_RECEIVE_PARAMETERS &&
 	    receiver->frame_bit_count == 0u) {
-		probe = v92_cpd_probe_frame_bits(
-			receiver->frame, sizeof(receiver->frame),
-			receiver->bit_index, receiver->training_frame_bits,
-			&frame_bits);
-		if (probe == V92_CPD_OK)
-			receiver->frame_bit_count = frame_bits;
-		else if (probe != V92_CPD_INCOMPLETE) {
-			if (probe != V92_CPD_INVALID_FRAME)
-				return false;
-			reject_cpd(receiver, event, probe);
-			return true;
+		if (receiver->direction == V92_CONTROL_DOWNSTREAM) {
+			probe = v92_cpd_probe_frame_bits(
+				receiver->frame, sizeof(receiver->frame),
+				receiver->bit_index, receiver->alignment_bits,
+				&frame_bits);
+			if (probe == V92_CPD_OK)
+				receiver->frame_bit_count = frame_bits;
+			else if (probe != V92_CPD_INCOMPLETE) {
+				if (probe != V92_CPD_INVALID_FRAME)
+					return false;
+				reject_cpd(receiver, event, probe);
+				return true;
+			}
+		} else {
+			enum v92_cpu_result cpu_probe =
+				v92_cpu_probe_frame_bits(
+					receiver->frame, sizeof(receiver->frame),
+					receiver->bit_index,
+					upstream_bits_per_symbol(receiver),
+					&frame_bits);
+
+			if (cpu_probe == V92_CPU_OK)
+				receiver->frame_bit_count = frame_bits;
+			else if (cpu_probe != V92_CPU_INCOMPLETE) {
+				if (cpu_probe != V92_CPU_INVALID_FRAME)
+					return false;
+				reject_cpu(receiver, event, cpu_probe);
+				return true;
+			}
 		}
 	}
 	if (receiver->frame_bit_count == 0u)
-		return receiver->bit_index < V92_CPD_MAX_FRAME_BITS;
+		return receiver->bit_index < maximum_frame_bits(receiver);
 	if (receiver->bit_index == receiver->frame_bit_count) {
-		if (receiver->stage == V92_CONTROL_RX_RECEIVE_SUVD)
-			finish_suvd(receiver, event);
+		if (receiver->stage == V92_CONTROL_RX_RECEIVE_STATUS)
+			finish_status(receiver, event);
 		else
-			finish_cpd(receiver, event);
+			finish_parameters(receiver, event);
 	}
 	return true;
 }
