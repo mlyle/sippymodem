@@ -39,11 +39,15 @@ enum pcm_call_result {
 union pcm_call_local_info0 {
 	struct v90_info0 analog;
 	struct v90_info0d digital;
+	struct v92_info0a v92_analog;
+	struct v92_info0d v92_digital;
 };
 
 union pcm_call_local_info1 {
 	struct v90_info1a analog;
 	struct v34_info1c digital;
+	struct v92_pcm_info1a v92_analog;
+	struct v92_info1d v92_digital;
 };
 
 struct pcm_call_analog_phase3_configuration {
@@ -163,9 +167,10 @@ struct pcm_call_data_event {
 	enum pcm_call_data_event_kind kind;
 };
 
-/* Own one post-V.8 V.90 startup and its continuous role-specific data path.
- * Calls on one instance must be serialized; separate instances share no
- * state. */
+/* Own one post-V.8 PCM startup. V.90 continues through its role-specific data
+ * path. V.92 owns its full common Phase 2 and stops explicitly before the
+ * Phase 3 station branch. Calls on one instance must be serialized; separate
+ * instances share no state. */
 struct pcm_call {
 	union pcm_call_state state;
 	union pcm_call_local_info1 local_info1;

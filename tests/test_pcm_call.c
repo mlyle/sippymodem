@@ -200,6 +200,71 @@ static struct v90_mp_record initial_mp(void)
 	};
 }
 
+static struct v92_pcm_info1a v92_analog_info1(void)
+{
+	return (struct v92_pcm_info1a){
+		.filter_sections = V92_PCM_FILTER_P1_Z2,
+		.maximum_total_coefficients = 192,
+		.maximum_section_coefficients = 128,
+		.training_ucode = 91,
+	};
+}
+
+static struct v92_info1d v92_digital_info1(void)
+{
+	struct v92_info1d info1 = {
+		.v34 = digital_info1(),
+		.pcm_upstream_supported = true,
+	};
+
+	info1.v34.answer_transmit[
+		V34_SYMBOL_RATE_3429].high_carrier = false;
+	return info1;
+}
+
+static bool v92_digital_info1_equal(
+	const struct v92_info1d *left, const struct v92_info1d *right)
+{
+	uint8_t left_payload[V92_INFO1D_PAYLOAD_BYTES];
+	uint8_t right_payload[V92_INFO1D_PAYLOAD_BYTES];
+
+	return v92_info1d_encode(
+		       left, left_payload, sizeof(left_payload)) ==
+		       V92_INFO1D_OK &&
+	       v92_info1d_encode(
+		       right, right_payload, sizeof(right_payload)) ==
+		       V92_INFO1D_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
+}
+
+static struct pcm_call_configuration v92_configuration(
+	enum v90_modem_role role, enum g711_law law)
+{
+	struct pcm_call_configuration configuration = {
+		.protocol = PCM_PROTOCOL_V92,
+		.local_role = role,
+		.law = law,
+		.enabled_downstream_rate_mask = role == V90_ANALOG_MODEM ?
+			UINT32_C(1) : V92_JD_RATE_CAPABILITY_MASK,
+		.phase2_nominal_amplitude = PHASE2_NOMINAL_AMPLITUDE,
+	};
+
+	if (role == V90_ANALOG_MODEM) {
+		configuration.local_info0.v92_analog = (struct v92_info0a){
+			.v90 = analog_info0(),
+			.v92_capable = true,
+		};
+		configuration.local_info1.v92_analog = v92_analog_info1();
+	} else {
+		configuration.local_info0.v92_digital = (struct v92_info0d){
+			.v90 = digital_info0(law),
+			.v92_capable = true,
+		};
+		configuration.local_info1.v92_digital = v92_digital_info1();
+	}
+	return configuration;
+}
+
 static struct pcm_call_configuration configuration(
 	enum v90_modem_role role, enum g711_law law)
 {
@@ -715,6 +780,98 @@ static bool test_generated_calls(void)
 	return true;
 }
 
+static bool run_v92_phase2_boundary(enum g711_law law, size_t delay)
+{
+	struct pcm_call_configuration analog_configuration =
+		v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration digital_configuration =
+		v92_configuration(V90_DIGITAL_MODEM, law);
+	struct v92_pcm_info1a peer_analog_info1;
+	struct v92_info1d peer_digital_info1;
+	struct pcm_call analog;
+	struct pcm_call digital;
+	struct channel channel;
+	bool analog_complete = false;
+	bool digital_complete = false;
+
+	CHECK(channel_init(&channel, law, delay) &&
+	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
+	      "law %u delay %zu V.92 Phase 2 did not initialize",
+	      (unsigned int)law, delay);
+	for (size_t clock = 0;
+	     clock < CALL_SAMPLE_LIMIT &&
+	     (!analog_complete || !digital_complete);
+	     ++clock) {
+		struct pcm_call_observation observation;
+		uint8_t analog_received;
+		uint8_t digital_received;
+		uint8_t analog_transmitted = silence_octet(law);
+		uint8_t digital_transmitted = silence_octet(law);
+		enum pcm_call_result result;
+
+		channel_receive(
+			&channel, &analog_received, &digital_received);
+		if (!analog_complete) {
+			result = pcm_call_octet(
+				&analog, analog_received, &analog_transmitted,
+				&observation);
+			CHECK(result == PCM_CALL_OK ||
+			      result == PCM_CALL_UNUSABLE_SELECTION,
+			      "law %u delay %zu analogue V.92 Phase 2 stopped: %s",
+			      (unsigned int)law, delay,
+			      pcm_call_result_name(result));
+			analog_complete = result == PCM_CALL_UNUSABLE_SELECTION;
+		}
+		if (!digital_complete) {
+			result = pcm_call_octet(
+				&digital, digital_received, &digital_transmitted,
+				&observation);
+			CHECK(result == PCM_CALL_OK ||
+			      result == PCM_CALL_UNUSABLE_SELECTION,
+			      "law %u delay %zu digital V.92 Phase 2 stopped: %s",
+			      (unsigned int)law, delay,
+			      pcm_call_result_name(result));
+			digital_complete = result == PCM_CALL_UNUSABLE_SELECTION;
+		}
+		channel_transmit(
+			&channel, analog_transmitted, digital_transmitted);
+	}
+	CHECK(analog_complete && digital_complete &&
+	      pcm_call_is_valid(&analog) && pcm_call_is_valid(&digital) &&
+	      pcm_call_has_failed(&analog) && pcm_call_has_failed(&digital) &&
+	      pcm_call_current_stage(&analog) == PCM_CALL_PHASE2 &&
+	      pcm_call_current_stage(&digital) == PCM_CALL_PHASE2 &&
+	      pcm_phase2_is_ready_for_phase3(&analog.state.phase2) &&
+	      pcm_phase2_is_ready_for_phase3(&digital.state.phase2),
+	      "law %u delay %zu V.92 call missed the Phase 3 boundary",
+	      (unsigned int)law, delay);
+	CHECK(pcm_phase2_peer_v92_info1d(
+		      &analog.state.phase2, &peer_digital_info1) ==
+		      PCM_PHASE2_OK &&
+	      pcm_phase2_peer_pcm_info1a(
+		      &digital.state.phase2, &peer_analog_info1) ==
+		      PCM_PHASE2_OK &&
+	      v92_digital_info1_equal(
+		      &peer_digital_info1,
+		      &digital_configuration.local_info1.v92_digital) &&
+	      v92_pcm_info1a_equal(
+		      &peer_analog_info1,
+		      &analog_configuration.local_info1.v92_analog),
+	      "law %u delay %zu V.92 INFO1 exchange changed a record",
+	      (unsigned int)law, delay);
+	return true;
+}
+
+static bool test_v92_phase2_boundary(void)
+{
+	for (size_t delay = 1; delay <= 3; ++delay)
+		CHECK(run_v92_phase2_boundary(G711_LAW_PCMU, delay) &&
+		      run_v92_phase2_boundary(G711_LAW_PCMA, delay),
+		      "delay %zu generated V.92 Phase 2 failed", delay);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct pcm_call_configuration selected =
@@ -838,6 +995,57 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_v92_validation(void)
+{
+	struct pcm_call_configuration selected =
+		v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	struct pcm_call analog;
+	struct pcm_call digital;
+	struct pcm_call untouched;
+	struct pcm_call before;
+
+	memset(&untouched, 0xa5, sizeof(untouched));
+	before = untouched;
+	CHECK(pcm_call_init(&analog, &selected) == PCM_CALL_OK,
+	      "valid analogue V.92 configuration was rejected");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	CHECK(pcm_call_init(&digital, &selected) == PCM_CALL_OK,
+	      "valid digital V.92 configuration was rejected");
+	selected.protocol = (enum pcm_protocol)99;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted an invalid PCM protocol");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.local_info1.v92_analog.maximum_total_coefficients--;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted invalid V.92 INFO1a state");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.local_info1.v92_analog
+		.local_md_length_276_symbol_units = 1u;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted an unowned manufacturer interval");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.local_info0.v92_analog.short_phase2_requested = true;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted unsupported short Phase 2");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.local_info1.v92_digital.pcm_upstream_supported = false;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a V.92 configuration without PCM upstream");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.local_info1.v92_digital.v34.common
+		.frequency_offset_1_50_hz_units = INT16_MAX;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      memcmp(&untouched, &before, sizeof(untouched)) == 0,
+	      "invalid V.92 configuration changed the call");
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -879,7 +1087,10 @@ int main(void)
 		  test_generated_calls },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
+		{ "generated V.92 calls through the Phase 2 boundary",
+		  test_v92_phase2_boundary },
 		{ "validation and transactionality", test_validation },
+		{ "V.92 validation", test_v92_validation },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;
