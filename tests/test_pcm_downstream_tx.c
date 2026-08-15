@@ -50,12 +50,13 @@ static bool make_mapping(
 
 static bool make_width_mapping(
 	struct v90_pcm_mapping *mapping, enum g711_law law,
-	uint8_t frame_bits)
+	uint8_t frame_bits, uint8_t lookahead)
 {
 	struct v90_cp_parameters parameters = {
 		.kind = V90_CP_TRAINING,
 		.law = law,
 		.selected_rate_index = (uint8_t)(frame_bits - 8u),
+		.spectral_lookahead = lookahead,
 		.constellation_count = V90_CP_MAX_CONSTELLATIONS,
 	};
 	uint8_t sign_bits = frame_bits > 27u ?
@@ -179,6 +180,33 @@ static bool make_reference(
 	return produced == frame_count * V90_CP_FRAME_INTERVALS;
 }
 
+static struct v92_cpd_parameters cpd_parameters(void)
+{
+	return (struct v92_cpd_parameters){
+		.four_times_gain_q0_16 = UINT16_C(0x4321),
+		.data_rate_number = 4u,
+		.trellis = V92_CPD_TRELLIS_16_STATE,
+		.acknowledges_cpu = true,
+	};
+}
+
+static bool cpd_parameters_equal(
+	const struct v92_cpd_parameters *left,
+	const struct v92_cpd_parameters *right)
+{
+	return v92_cpd_parameters_are_valid(left) &&
+	       v92_cpd_parameters_are_valid(right) &&
+	       left->four_times_gain_q0_16 == right->four_times_gain_q0_16 &&
+	       left->data_rate_number == right->data_rate_number &&
+	       left->trellis == right->trellis &&
+	       left->extend_e2u == right->extend_e2u &&
+	       left->acknowledges_cpu == right->acknowledges_cpu &&
+	       !left->modulus_present && !right->modulus_present &&
+	       !left->filters_present && !right->filters_present &&
+	       !left->constellations_present &&
+	       !right->constellations_present;
+}
+
 static bool symbols_equal(
 	const struct pcm_downstream_symbol *left,
 	const struct pcm_downstream_symbol *right)
@@ -292,22 +320,36 @@ static bool test_generated_sequences(void)
 	return true;
 }
 
-static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
+static bool run_v92_width(
+	enum g711_law law, uint8_t frame_bits, uint8_t lookahead)
 {
-	const struct v92_suvd_parameters parameters = {
+	const struct v92_suvd_parameters initial_suvd = {
 		.request_silence = (frame_bits & 1u) != 0u,
-		.acknowledges_cpu = law == G711_LAW_PCMA,
 	};
+	const struct v92_suvd_parameters acknowledged_suvd = {
+		.request_silence = (frame_bits & 1u) != 0u,
+		.acknowledges_cpu = true,
+	};
+	const struct v92_cpd_parameters cpd = cpd_parameters();
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_rx receiver;
 	size_t training_frames = 0u;
-	size_t records = 0u;
+	size_t suvd_records = 0u;
+	size_t cpd_records = 0u;
 	size_t symbol_count = 0u;
 	size_t maximum_symbols =
-		V90_PHASE4_TRN2D_MINIMUM_SYMBOLS + 512u;
+		V90_PHASE4_TRN2D_MINIMUM_SYMBOLS + 2048u;
+	enum {
+		WAIT_INITIAL_SUVD,
+		WAIT_CPD,
+		WAIT_ACKNOWLEDGED_SUVD,
+		CONTROL_COMPLETE,
+	} stage = WAIT_INITIAL_SUVD;
+	bool cpd_pending = false;
+	bool suvd_pending = false;
 
-	CHECK(make_width_mapping(&mapping, law, frame_bits) &&
+	CHECK(make_width_mapping(&mapping, law, frame_bits, lookahead) &&
 	      pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -315,16 +357,40 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 		      &receiver, PCM_PROTOCOL_V92, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      pcm_downstream_tx_start_suvd(
-		      &transmitter, &parameters) == PCM_DOWNSTREAM_TX_OK &&
+		      &transmitter, &initial_suvd) == PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_suvd(
-		      &transmitter, &parameters) == PCM_DOWNSTREAM_TX_OK,
+		      &transmitter, &initial_suvd) == PCM_DOWNSTREAM_TX_OK &&
+	      !pcm_downstream_tx_is_v92_control_boundary(&transmitter),
 	      "V.92 width %u law %u fixture did not initialize",
 	      frame_bits, law);
-	while (records < 2u && symbol_count < maximum_symbols) {
+	while (stage != CONTROL_COMPLETE && symbol_count < maximum_symbols) {
 		struct pcm_downstream_symbol symbol;
 		struct pcm_downstream_event event;
 		struct pcm_downstream_event untouched;
 		enum pcm_downstream_rx_result result;
+
+		if (cpd_pending &&
+		    pcm_downstream_tx_is_v92_control_boundary(&transmitter)) {
+			CHECK(pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+				      PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+				      PCM_DOWNSTREAM_TX_OK,
+			      "V.92 width %u law %u did not switch to CPd",
+			      frame_bits, law);
+			cpd_pending = false;
+		}
+		if (suvd_pending &&
+		    pcm_downstream_tx_is_v92_control_boundary(&transmitter)) {
+			CHECK(pcm_downstream_tx_start_suvd(
+				      &transmitter, &acknowledged_suvd) ==
+				      PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_tx_start_suvd(
+				      &transmitter, &acknowledged_suvd) ==
+				      PCM_DOWNSTREAM_TX_OK,
+			      "V.92 width %u law %u did not return to SUVd",
+			      frame_bits, law);
+			suvd_pending = false;
+		}
 
 		CHECK(pcm_downstream_tx_next(&transmitter, &symbol) ==
 			      PCM_DOWNSTREAM_TX_OK,
@@ -349,22 +415,63 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 			training_frames++;
 			continue;
 		}
-		CHECK(result == PCM_DOWNSTREAM_RX_SUVD &&
-		      event.control.type == V92_CONTROL_EVENT_SUVD &&
-		      event.control.record.suvd.frame_result == V92_SUVD_OK &&
-		      event.control.record.suvd.parameters.request_silence ==
-			      parameters.request_silence &&
-		      event.control.record.suvd.parameters.acknowledges_cpu ==
-			      parameters.acknowledges_cpu,
+		if (result == PCM_DOWNSTREAM_RX_SUVD) {
+			const struct v92_suvd_parameters *received =
+				&event.control.record.suvd.parameters;
+
+			CHECK(event.control.type == V92_CONTROL_EVENT_SUVD &&
+			      event.control.record.suvd.frame_result == V92_SUVD_OK &&
+			      received->request_silence ==
+				      initial_suvd.request_silence,
+			      "V.92 width %u law %u returned malformed SUVd",
+			      frame_bits, law);
+			suvd_records++;
+			if (stage == WAIT_INITIAL_SUVD) {
+				CHECK(!received->acknowledges_cpu,
+				      "V.92 width %u law %u changed SUVd early",
+				      frame_bits, law);
+				cpd_pending = true;
+				stage = WAIT_CPD;
+			} else if (stage == WAIT_CPD) {
+				CHECK(!received->acknowledges_cpu,
+				      "V.92 width %u law %u changed SUVd early",
+				      frame_bits, law);
+			} else {
+				CHECK(received->acknowledges_cpu,
+				      "V.92 width %u law %u lost SUVd acknowledgement",
+				      frame_bits, law);
+				stage = CONTROL_COMPLETE;
+			}
+			continue;
+		}
+		if (result == PCM_DOWNSTREAM_RX_CPD) {
+			CHECK((stage == WAIT_CPD ||
+			       stage == WAIT_ACKNOWLEDGED_SUVD) &&
+			      event.control.type == V92_CONTROL_EVENT_CPD &&
+			      event.control.record.cpd.frame_result == V92_CPD_OK &&
+			      cpd_parameters_equal(
+				      &event.control.record.cpd.parameters, &cpd),
+			      "V.92 width %u law %u returned malformed CPd",
+			      frame_bits, law);
+			cpd_records++;
+			if (stage == WAIT_CPD) {
+				suvd_pending = true;
+				stage = WAIT_ACKNOWLEDGED_SUVD;
+			}
+			continue;
+		}
+		CHECK(false,
 		      "V.92 width %u law %u receiver returned %s",
 		      frame_bits, law,
 		      pcm_downstream_rx_result_name(result));
-		records++;
 	}
-	CHECK(records == 2u &&
+	CHECK(stage == CONTROL_COMPLETE && suvd_records >= 2u &&
+	      cpd_records >= 1u && !cpd_pending && !suvd_pending &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      transmitter.protocol == PCM_PROTOCOL_V92 &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	      transmitter.v92_control_kind ==
+		      PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
 	      transmitter.control_configured &&
 	      receiver.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
 	      receiver.trn2d_bit_errors == 0u &&
@@ -379,16 +486,165 @@ static bool test_v92_sequences(void)
 {
 	for (unsigned int law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law) {
-		for (uint8_t frame_bits =
-			     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS;
-		     frame_bits <=
-			     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS;
-		     ++frame_bits) {
-			CHECK(run_v92_width(
-				      (enum g711_law)law, frame_bits),
-			      "V.92 downstream transmitter matrix stopped");
+		for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead) {
+			for (uint8_t frame_bits =
+				     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS;
+			     frame_bits <=
+				     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS;
+			     ++frame_bits) {
+				CHECK(run_v92_width(
+					      (enum g711_law)law, frame_bits,
+					      lookahead),
+				      "V.92 downstream transmitter matrix stopped");
+			}
 		}
 	}
+	return true;
+}
+
+static bool advance_to_v92_position(
+	struct pcm_downstream_tx *transmitter, bool boundary)
+{
+	for (size_t symbol_count = 0u; symbol_count < 4096u;
+	     ++symbol_count) {
+		struct pcm_downstream_symbol symbol;
+
+		if (transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+		    (transmitter->control_bit_index == 0u) == boundary)
+			return true;
+		if (pcm_downstream_tx_next(transmitter, &symbol) !=
+		    PCM_DOWNSTREAM_TX_OK)
+			return false;
+	}
+	return false;
+}
+
+static void flip_sequence_bit(uint8_t *sequence, size_t bit)
+{
+	sequence[bit / 8u] ^=
+		(uint8_t)(1u << (7u - bit % 8u));
+}
+
+static bool invalid_transmitter_is_rejected(
+	struct pcm_downstream_tx corrupted)
+{
+	struct pcm_downstream_tx saved;
+	struct pcm_downstream_symbol symbol;
+	struct pcm_downstream_symbol saved_symbol;
+
+	saved = corrupted;
+	memset(&symbol, 0xa5, sizeof(symbol));
+	saved_symbol = symbol;
+	return !pcm_downstream_tx_is_valid(&corrupted) &&
+	       pcm_downstream_tx_next(&corrupted, &symbol) ==
+		       PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	       memcmp(&corrupted, &saved, sizeof(corrupted)) == 0 &&
+	       memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0;
+}
+
+static bool corrupted_cpd_is_rejected(
+	const struct pcm_downstream_tx *valid, size_t corrupt_bit)
+{
+	struct pcm_downstream_tx corrupted = *valid;
+
+	if (corrupt_bit >= sizeof(corrupted.control_sequence) * 8u)
+		return false;
+	flip_sequence_bit(corrupted.control_sequence, corrupt_bit);
+	return invalid_transmitter_is_rejected(corrupted);
+}
+
+static bool test_v92_switch_contracts(void)
+{
+	const struct v92_suvd_parameters initial_suvd = { 0 };
+	const struct v92_suvd_parameters acknowledged_suvd = {
+		.acknowledges_cpu = true,
+	};
+	const struct v92_cpd_parameters cpd = cpd_parameters();
+	struct v92_cpd_parameters different_cpd = cpd;
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx transmitter;
+	struct pcm_downstream_tx saved;
+	struct pcm_downstream_tx corrupted;
+	size_t first_unused_bit;
+
+	different_cpd.four_times_gain_q0_16++;
+	CHECK(make_width_mapping(&mapping, G711_LAW_PCMU, 17u, 3u) &&
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V92, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(
+		      &transmitter, &initial_suvd) == PCM_DOWNSTREAM_TX_OK &&
+	      advance_to_v92_position(&transmitter, false),
+	      "V.92 switch fixture did not reach a partial SUVd");
+	saved = transmitter;
+	CHECK(pcm_downstream_tx_start_suvd(
+		      &transmitter, &initial_suvd) == PCM_DOWNSTREAM_TX_OK &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      pcm_downstream_tx_start_suvd(
+		      &transmitter, &acknowledged_suvd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
+	      "V.92 transmitter replaced a partial SUVd");
+	CHECK(advance_to_v92_position(&transmitter, true) &&
+	      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      advance_to_v92_position(&transmitter, false),
+	      "V.92 transmitter did not enter a partial CPd");
+	saved = transmitter;
+	CHECK(pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      pcm_downstream_tx_start_cpd(&transmitter, &different_cpd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_start_suvd(
+		      &transmitter, &acknowledged_suvd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
+	      "V.92 transmitter replaced a partial CPd");
+	CHECK(advance_to_v92_position(&transmitter, true) &&
+	      pcm_downstream_tx_start_cpd(
+		      &transmitter, &different_cpd) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_is_valid(&transmitter),
+	      "V.92 transmitter did not replace CPd at a boundary");
+	first_unused_bit =
+		((transmitter.control_sequence_bits + 7u) / 8u) * 8u;
+	CHECK(corrupted_cpd_is_rejected(&transmitter, 35u) &&
+	      corrupted_cpd_is_rejected(
+		      &transmitter, V92_CPD_FIXED_BITS + 1u) &&
+	      corrupted_cpd_is_rejected(
+		      &transmitter,
+		      V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS) &&
+	      corrupted_cpd_is_rejected(
+		      &transmitter, transmitter.control_sequence_bits) &&
+	      corrupted_cpd_is_rejected(
+		      &transmitter, first_unused_bit),
+	      "V.92 transmitter accepted corrupted CPd storage");
+	corrupted = transmitter;
+	corrupted.control.cpd.four_times_gain_q0_16++;
+	CHECK(invalid_transmitter_is_rejected(corrupted),
+	      "V.92 transmitter accepted changed CPd gain");
+	corrupted = transmitter;
+	corrupted.control.cpd.data_rate_number++;
+	CHECK(invalid_transmitter_is_rejected(corrupted),
+	      "V.92 transmitter accepted changed CPd rate");
+	corrupted = transmitter;
+	corrupted.control.cpd.trellis = V92_CPD_TRELLIS_32_STATE;
+	CHECK(invalid_transmitter_is_rejected(corrupted),
+	      "V.92 transmitter accepted changed CPd trellis");
+	corrupted = transmitter;
+	corrupted.control.cpd.extend_e2u =
+		!corrupted.control.cpd.extend_e2u;
+	CHECK(invalid_transmitter_is_rejected(corrupted),
+	      "V.92 transmitter accepted changed CPd E2U selection");
+	corrupted = transmitter;
+	corrupted.control.cpd.acknowledges_cpu =
+		!corrupted.control.cpd.acknowledges_cpu;
+	CHECK(invalid_transmitter_is_rejected(corrupted),
+	      "V.92 transmitter accepted changed CPd acknowledgement");
 	return true;
 }
 
@@ -422,6 +678,9 @@ static bool test_empty_finish(void)
 
 static bool test_contracts(void)
 {
+	const struct v92_cpd_parameters cpd = cpd_parameters();
+	struct v92_cpd_parameters invalid_cpd = cpd;
+	struct v92_cpd_parameters table_cpd = cpd;
 	const struct v92_suvd_parameters suvd = {
 		.request_silence = true,
 	};
@@ -460,6 +719,8 @@ static bool test_contracts(void)
 	      pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_start_mp(&transmitter, &empty_mp) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_request_mp_prime(&transmitter) ==
@@ -468,12 +729,32 @@ static bool test_contracts(void)
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_start_suvd(&transmitter, &suvd) ==
 		      PCM_DOWNSTREAM_TX_OK &&
+	      !pcm_downstream_tx_is_v92_control_boundary(&transmitter) &&
+	      pcm_downstream_tx_start_cpd(&transmitter, NULL) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_start_cpd(NULL, &cpd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
 	      pcm_downstream_tx_start_suvd(
 		      &transmitter, &different_suvd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_request_finish(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE,
 	      "protocol-specific control branch was not isolated");
+	invalid_cpd.four_times_gain_q0_16 = 0u;
+	table_cpd.modulus_present = true;
+	saved_transmitter = transmitter;
+	CHECK(pcm_downstream_tx_start_cpd(
+		      &transmitter, &invalid_cpd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
+	      v92_cpd_parameters_are_valid(&table_cpd) &&
+	      pcm_downstream_tx_start_cpd(&transmitter, &table_cpd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
+	      memcmp(&transmitter, &saved_transmitter,
+		     sizeof(transmitter)) == 0 &&
+	      !pcm_downstream_tx_is_v92_control_boundary(NULL),
+	      "invalid or table-bearing CPd control was accepted");
 	CHECK(pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -547,6 +828,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "generated sequences", test_generated_sequences },
 		{ "V.92 sequences", test_v92_sequences },
+		{ "V.92 switch contracts", test_v92_switch_contracts },
 		{ "empty finish", test_empty_finish },
 		{ "contracts", test_contracts },
 	};

@@ -49,7 +49,7 @@ static bool encode_mp_sequence(
 		    &bit_count) != V90_MP_OK ||
 	    bit_count == 0 || bit_count % frame_bits != 0)
 		return false;
-	memset(sequence, 0, PCM_DOWNSTREAM_TX_CONTROL_BYTES);
+	memset(sequence, 0, V90_MP_MAXIMUM_SEQUENCE_BYTES);
 	memcpy(sequence, encoded, sizeof(encoded));
 	*sequence_bits = bit_count;
 	return true;
@@ -67,9 +67,70 @@ static bool encode_suvd_sequence(
 		    &bit_count) != V92_SUVD_OK ||
 	    bit_count == 0u || bit_count % frame_bits != 0u)
 		return false;
-	memset(sequence, 0, PCM_DOWNSTREAM_TX_CONTROL_BYTES);
+	memset(sequence, 0, V92_SUVD_MAX_FRAME_BYTES);
 	memcpy(sequence, encoded, sizeof(encoded));
 	*sequence_bits = bit_count;
+	return true;
+}
+
+static bool encode_cpd_sequence(
+	const struct v92_cpd_base_parameters *parameters, uint8_t frame_bits,
+	uint8_t *sequence, size_t *sequence_bits)
+{
+	size_t bit_count = 0u;
+
+	memset(sequence, 0, V92_CPD_BASE_MAX_FRAME_BYTES);
+	if (v92_cpd_encode_base(
+		    parameters, frame_bits, sequence,
+		    V92_CPD_BASE_MAX_FRAME_BYTES, &bit_count) != V92_CPD_OK ||
+	    bit_count == 0u || bit_count % frame_bits != 0u)
+		return false;
+	*sequence_bits = bit_count;
+	return true;
+}
+
+static bool bytes_are_zero(const uint8_t *bytes, size_t count)
+{
+	for (size_t index = 0u; index < count; ++index) {
+		if (bytes[index] != 0u)
+			return false;
+	}
+	return true;
+}
+
+static bool stored_sequence_matches(
+	const struct pcm_downstream_tx *transmitter,
+	const uint8_t *expected, size_t expected_capacity,
+	size_t expected_bits)
+{
+	size_t expected_bytes = (expected_bits + 7u) / 8u;
+
+	return expected_bytes <= expected_capacity &&
+	       expected_bytes <= sizeof(transmitter->control_sequence) &&
+	       transmitter->control_sequence_bits == expected_bits &&
+	       memcmp(
+		       transmitter->control_sequence, expected,
+		       expected_bytes) == 0 &&
+	       bytes_are_zero(
+		       transmitter->control_sequence + expected_bytes,
+		       PCM_DOWNSTREAM_TX_CONTROL_BYTES - expected_bytes);
+}
+
+static bool store_sequence(
+	struct pcm_downstream_tx *transmitter,
+	const uint8_t *sequence, size_t sequence_capacity,
+	size_t sequence_bits)
+{
+	size_t sequence_bytes = (sequence_bits + 7u) / 8u;
+
+	if (sequence_bits == 0u || sequence_bytes > sequence_capacity ||
+	    sequence_bytes > sizeof(transmitter->control_sequence))
+		return false;
+	memset(
+		transmitter->control_sequence, 0,
+		sizeof(transmitter->control_sequence));
+	memcpy(transmitter->control_sequence, sequence, sequence_bytes);
+	transmitter->control_sequence_bits = sequence_bits;
 	return true;
 }
 
@@ -80,6 +141,8 @@ static bool unconfigured_control_is_valid(
 	static const uint8_t empty_sequence[PCM_DOWNSTREAM_TX_CONTROL_BYTES];
 
 	return transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
+	       transmitter->v92_control_kind ==
+		       PCM_DOWNSTREAM_V92_CONTROL_NONE &&
 	       !transmitter->mp_prime_requested &&
 	       !transmitter->mp_prime_record_accepted &&
 	       !transmitter->ed_requested && transmitter->ed_frames == 0 &&
@@ -94,11 +157,13 @@ static bool unconfigured_control_is_valid(
 static bool v90_control_is_valid(
 	const struct pcm_downstream_tx *transmitter)
 {
-	uint8_t expected[PCM_DOWNSTREAM_TX_CONTROL_BYTES] = { 0 };
+	uint8_t expected[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
 	size_t expected_bits = 0;
 	bool prime;
 
-	if (!v90_mp_record_is_valid(&transmitter->control.mp) ||
+	if (transmitter->v92_control_kind !=
+		    PCM_DOWNSTREAM_V92_CONTROL_NONE ||
+	    !v90_mp_record_is_valid(&transmitter->control.mp) ||
 	    v90_mp_record_acknowledges_cp(&transmitter->control.mp) ||
 	    transmitter->control_sequence_bits == 0 ||
 	    transmitter->control_bit_index >=
@@ -146,22 +211,25 @@ static bool v90_control_is_valid(
 		       &transmitter->control.mp,
 		       transmitter->encoder.mapping.frame_bits, prime,
 		       expected, &expected_bits) &&
-	       expected_bits == transmitter->control_sequence_bits &&
-	       memcmp(expected, transmitter->control_sequence,
-		      sizeof(expected)) == 0;
+	       stored_sequence_matches(
+		       transmitter, expected, sizeof(expected), expected_bits);
 }
 
 static bool v92_control_is_valid(
 	const struct pcm_downstream_tx *transmitter)
 {
-	uint8_t expected[PCM_DOWNSTREAM_TX_CONTROL_BYTES] = { 0 };
+	uint8_t expected[V92_CPD_BASE_MAX_FRAME_BYTES] = { 0 };
 	size_t expected_bits = 0u;
 
 	if (transmitter->stage != PCM_DOWNSTREAM_TX_TRN2D &&
 	    transmitter->stage != PCM_DOWNSTREAM_TX_V92_CONTROL)
 		return false;
-	if (!v92_suvd_parameters_are_valid(&transmitter->control.suvd) ||
-	    transmitter->control_sequence_bits == 0u ||
+	if (transmitter->v92_control_kind !=
+		    PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+	    transmitter->v92_control_kind !=
+		    PCM_DOWNSTREAM_V92_CONTROL_CPD)
+		return false;
+	if (transmitter->control_sequence_bits == 0u ||
 	    transmitter->control_bit_index >=
 		    transmitter->control_sequence_bits ||
 	    transmitter->control_bit_index %
@@ -176,13 +244,26 @@ static bool v92_control_is_valid(
 	    transmitter->ed_requested || transmitter->ed_frames != 0u ||
 	    transmitter->finish_requested || transmitter->complete)
 		return false;
-	return encode_suvd_sequence(
-		       &transmitter->control.suvd,
+	if (transmitter->v92_control_kind ==
+	    PCM_DOWNSTREAM_V92_CONTROL_SUVD) {
+		return v92_suvd_parameters_are_valid(
+			       &transmitter->control.suvd) &&
+		       encode_suvd_sequence(
+			       &transmitter->control.suvd,
+			       transmitter->encoder.mapping.frame_bits,
+			       expected, &expected_bits) &&
+		       stored_sequence_matches(
+			       transmitter, expected, sizeof(expected),
+			       expected_bits);
+	}
+	return v92_cpd_base_parameters_are_valid(
+		       &transmitter->control.cpd) &&
+	       encode_cpd_sequence(
+		       &transmitter->control.cpd,
 		       transmitter->encoder.mapping.frame_bits,
 		       expected, &expected_bits) &&
-	       expected_bits == transmitter->control_sequence_bits &&
-	       memcmp(expected, transmitter->control_sequence,
-		      sizeof(expected)) == 0;
+	       stored_sequence_matches(
+		       transmitter, expected, sizeof(expected), expected_bits);
 }
 
 static bool control_state_is_valid(
@@ -351,7 +432,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	const struct v90_mp_record *record)
 {
 	struct pcm_downstream_tx next;
-	uint8_t sequence[PCM_DOWNSTREAM_TX_CONTROL_BYTES] = { 0 };
+	uint8_t sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
 	size_t sequence_bits = 0;
 	struct v90_mp_record canonical = { 0 };
 
@@ -378,8 +459,9 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	next = *transmitter;
 	next.control.mp = canonical;
-	memcpy(next.control_sequence, sequence, sizeof(sequence));
-	next.control_sequence_bits = sequence_bits;
+	if (!store_sequence(
+		    &next, sequence, sizeof(sequence), sequence_bits))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	next.control_configured = true;
 	if (!pcm_downstream_tx_is_valid(&next))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
@@ -387,14 +469,25 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	return PCM_DOWNSTREAM_TX_OK;
 }
 
-static bool same_suvd_parameters(
+static bool same_v92_control(
 	const struct pcm_downstream_tx *transmitter,
-	const struct v92_suvd_parameters *parameters)
+	enum pcm_downstream_v92_control_kind kind,
+	const uint8_t *sequence, size_t sequence_capacity,
+	size_t sequence_bits)
 {
-	return transmitter->control.suvd.request_silence ==
-		       parameters->request_silence &&
-	       transmitter->control.suvd.acknowledges_cpu ==
-		       parameters->acknowledges_cpu;
+	return transmitter->v92_control_kind == kind &&
+	       stored_sequence_matches(
+		       transmitter, sequence, sequence_capacity, sequence_bits);
+}
+
+bool pcm_downstream_tx_is_v92_control_boundary(
+	const struct pcm_downstream_tx *transmitter)
+{
+	return pcm_downstream_tx_is_valid(transmitter) &&
+	       transmitter->protocol == PCM_PROTOCOL_V92 &&
+	       transmitter->control_configured &&
+	       transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	       transmitter->control_bit_index == 0u;
 }
 
 enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
@@ -403,7 +496,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
 {
 	struct pcm_downstream_tx next;
 	struct v92_suvd_parameters canonical = { 0 };
-	uint8_t sequence[PCM_DOWNSTREAM_TX_CONTROL_BYTES] = { 0 };
+	uint8_t sequence[V92_SUVD_MAX_FRAME_BYTES] = { 0 };
 	size_t sequence_bits = 0u;
 
 	if (transmitter == NULL || parameters == NULL)
@@ -414,10 +507,6 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
 	if (!v92_suvd_parameters_are_valid(parameters))
 		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
-	if (transmitter->control_configured)
-		return same_suvd_parameters(transmitter, parameters) ?
-			       PCM_DOWNSTREAM_TX_OK :
-			       PCM_DOWNSTREAM_TX_INVALID_STATE;
 	if (!encode_suvd_sequence(
 		    parameters, transmitter->encoder.mapping.frame_bits,
 		    sequence, &sequence_bits) ||
@@ -426,11 +515,75 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
 		    transmitter->encoder.mapping.frame_bits,
 		    &canonical) != V92_SUVD_OK)
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	if (transmitter->control_configured) {
+		if (same_v92_control(
+			    transmitter, PCM_DOWNSTREAM_V92_CONTROL_SUVD,
+			    sequence, sizeof(sequence), sequence_bits))
+			return PCM_DOWNSTREAM_TX_OK;
+		if (!pcm_downstream_tx_is_v92_control_boundary(transmitter))
+			return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	}
 	next = *transmitter;
+	next.control = (union pcm_downstream_control_tx){ 0 };
 	next.control.suvd = canonical;
-	memcpy(next.control_sequence, sequence, sizeof(sequence));
-	next.control_sequence_bits = sequence_bits;
+	if (!store_sequence(
+		    &next, sequence, sizeof(sequence), sequence_bits))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	next.control_bit_index = 0u;
 	next.control_configured = true;
+	next.v92_control_kind = PCM_DOWNSTREAM_V92_CONTROL_SUVD;
+	if (!pcm_downstream_tx_is_valid(&next))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	*transmitter = next;
+	return PCM_DOWNSTREAM_TX_OK;
+}
+
+enum pcm_downstream_tx_result pcm_downstream_tx_start_cpd(
+	struct pcm_downstream_tx *transmitter,
+	const struct v92_cpd_parameters *parameters)
+{
+	struct pcm_downstream_tx next;
+	struct v92_cpd_base_parameters base;
+	uint8_t sequence[PCM_DOWNSTREAM_TX_CONTROL_BYTES] = { 0 };
+	size_t sequence_bits = 0u;
+
+	if (transmitter == NULL || parameters == NULL)
+		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	if (!pcm_downstream_tx_is_valid(transmitter) ||
+	    transmitter->protocol != PCM_PROTOCOL_V92 ||
+	    transmitter->finish_requested ||
+	    !transmitter->control_configured)
+		return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	if (!v92_cpd_parameters_are_valid(parameters))
+		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
+	if (parameters->modulus_present || parameters->filters_present ||
+	    parameters->constellations_present)
+		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
+	base = (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = parameters->four_times_gain_q0_16,
+		.data_rate_number = parameters->data_rate_number,
+		.trellis = parameters->trellis,
+		.extend_e2u = parameters->extend_e2u,
+		.acknowledges_cpu = parameters->acknowledges_cpu,
+	};
+	if (!encode_cpd_sequence(
+		    &base, transmitter->encoder.mapping.frame_bits,
+		    sequence, &sequence_bits))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	if (same_v92_control(
+		    transmitter, PCM_DOWNSTREAM_V92_CONTROL_CPD,
+		    sequence, sizeof(sequence), sequence_bits))
+		return PCM_DOWNSTREAM_TX_OK;
+	if (!pcm_downstream_tx_is_v92_control_boundary(transmitter))
+		return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	next = *transmitter;
+	next.control = (union pcm_downstream_control_tx){ 0 };
+	if (!store_sequence(
+		    &next, sequence, sizeof(sequence), sequence_bits))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	next.control.cpd = base;
+	next.control_bit_index = 0u;
+	next.v92_control_kind = PCM_DOWNSTREAM_V92_CONTROL_CPD;
 	if (!pcm_downstream_tx_is_valid(&next))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;

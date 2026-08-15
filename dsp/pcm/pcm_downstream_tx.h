@@ -8,6 +8,7 @@
 #include "v90_mp.h"
 #include "v90_pcm_frame_encoder.h"
 #include "v90_phase4.h"
+#include "v92_cpd.h"
 #include "v92_suvd.h"
 
 #include <stdbool.h>
@@ -43,23 +44,35 @@ enum pcm_downstream_tx_stage {
 };
 
 enum {
+	PCM_DOWNSTREAM_TX_V92_CONTROL_BYTES =
+		(int)V92_SUVD_MAX_FRAME_BYTES >
+			(int)V92_CPD_BASE_MAX_FRAME_BYTES ?
+			V92_SUVD_MAX_FRAME_BYTES :
+			V92_CPD_BASE_MAX_FRAME_BYTES,
 	PCM_DOWNSTREAM_TX_CONTROL_BYTES =
 		(int)V90_MP_MAXIMUM_SEQUENCE_BYTES >
-			(int)V92_SUVD_MAX_FRAME_BYTES ?
+			(int)PCM_DOWNSTREAM_TX_V92_CONTROL_BYTES ?
 			V90_MP_MAXIMUM_SEQUENCE_BYTES :
-			V92_SUVD_MAX_FRAME_BYTES,
+			PCM_DOWNSTREAM_TX_V92_CONTROL_BYTES,
+};
+
+enum pcm_downstream_v92_control_kind {
+	PCM_DOWNSTREAM_V92_CONTROL_NONE,
+	PCM_DOWNSTREAM_V92_CONTROL_SUVD,
+	PCM_DOWNSTREAM_V92_CONTROL_CPD,
 };
 
 union pcm_downstream_control_tx {
 	struct v90_mp_record mp;
 	struct v92_suvd_parameters suvd;
+	struct v92_cpd_base_parameters cpd;
 };
 
 /* Own continuous TRN2d and protocol-selected control transmission with
  * zero-initialized GPC scrambling, PCM coding, and one bounded six-symbol
  * output queue. V.90 continues through MP/MP-prime/Ed; V.92 continues through
- * SUVd. Source generation—and therefore stage—may lead network output by the
- * negotiated shaping look-ahead. */
+ * SUVd or compact CPd. Source generation—and therefore stage—may lead network
+ * output by the negotiated shaping look-ahead. */
 struct pcm_downstream_tx {
 	struct v90_pcm_frame_encoder encoder;
 	struct v34_scrambler scrambler;
@@ -72,6 +85,7 @@ struct pcm_downstream_tx {
 	size_t control_bit_index;
 	enum pcm_protocol protocol;
 	enum pcm_downstream_tx_stage stage;
+	enum pcm_downstream_v92_control_kind v92_control_kind;
 	uint8_t queue_count;
 	uint8_t ed_frames;
 	bool control_configured;
@@ -102,6 +116,20 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
 	struct pcm_downstream_tx *transmitter,
 	const struct v92_suvd_parameters *parameters);
+
+/* Replace the repeated V.92 status record with a table-free CPd, or replace
+ * CPd with a new status record, at an exact source-record boundary. Optional
+ * CPd modulus, filter, and constellation tables are deliberately unsupported
+ * here so the hot transmitter state remains small; they need a later streamed
+ * source. An identical record is idempotent at any point. A different record
+ * is rejected until
+ * pcm_downstream_tx_is_v92_control_boundary() reports true, preserving the
+ * complete current record and all already accepted spectral look-ahead. */
+enum pcm_downstream_tx_result pcm_downstream_tx_start_cpd(
+	struct pcm_downstream_tx *transmitter,
+	const struct v92_cpd_parameters *parameters);
+bool pcm_downstream_tx_is_v92_control_boundary(
+	const struct pcm_downstream_tx *transmitter);
 
 /* Request MP prime. A request during TRN2d preserves one complete MP record;
  * a request during MP takes effect at its next padded record boundary. */

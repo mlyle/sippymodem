@@ -1954,6 +1954,7 @@ V90_PCM_STREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/pcm_downstream_tx.o \
 	$(BUILD_DIR)/v90_mp.o \
+	$(BUILD_DIR)/v92_cpd.o \
 	$(BUILD_DIR)/v92_suvd.o \
 	$(BUILD_DIR)/v92_status_update.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
