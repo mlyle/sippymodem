@@ -308,7 +308,8 @@ static bool run_stream(
 
 	CHECK(make_mapping(&mapping, law, V90_CP_TRAINING) &&
 	      mapping.frame_bits == FRAME_BITS &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_rx_init(
 		      &receiver, PCM_PROTOCOL_V90, &mapping,
@@ -342,7 +343,7 @@ static bool run_stream(
 		symbols++;
 		if (!prime_requested &&
 		    transmitter.stage == PCM_DOWNSTREAM_TX_MP &&
-		    transmitter.mp_bit_index != 0) {
+		    transmitter.control_bit_index != 0) {
 			CHECK(pcm_downstream_tx_request_mp_prime(&transmitter) ==
 				      PCM_DOWNSTREAM_TX_OK &&
 			      pcm_downstream_tx_request_mp_prime(&transmitter) ==
@@ -548,7 +549,8 @@ static bool test_contracts(void)
 
 	CHECK(make_mapping(
 		      &mapping, G711_LAW_PCMU, V90_CP_TRAINING) &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "contract fixture did not initialize");
 	saved = transmitter;
@@ -602,7 +604,8 @@ static bool test_contracts(void)
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "repeated Ed request changed state");
 
-	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+	CHECK(pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_request_finish(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_OK,
@@ -613,12 +616,13 @@ static bool test_contracts(void)
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "MP started after finish request");
 
-	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+	CHECK(pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "corruption fixture did not initialize");
-	transmitter.mp_sequence[0] ^= 1u;
+	transmitter.control_sequence[0] ^= 1u;
 	saved = transmitter;
 	CHECK(!pcm_downstream_tx_is_valid(&transmitter) &&
 	      pcm_downstream_tx_request_mp_prime(&transmitter) ==
@@ -642,13 +646,14 @@ static bool test_boundary_request(void)
 
 	CHECK(make_mapping(
 		      &mapping, G711_LAW_PCMU, V90_CP_TRAINING) &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "boundary fixture did not initialize");
 	while ((transmitter.stage != PCM_DOWNSTREAM_TX_MP ||
-		transmitter.mp_bit_index != 0) &&
+		transmitter.control_bit_index != 0) &&
 	       symbols < MAXIMUM_STREAM_SYMBOLS) {
 		CHECK(pcm_downstream_tx_next(&transmitter, &symbol) ==
 			      PCM_DOWNSTREAM_TX_OK,
@@ -657,15 +662,15 @@ static bool test_boundary_request(void)
 	}
 	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_MP &&
-	      transmitter.mp_bit_index == 0 &&
+	      transmitter.control_bit_index == 0 &&
 	      pcm_downstream_tx_request_mp_prime(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_MP_PRIME &&
-	      transmitter.mp_bit_index == 0 &&
+	      transmitter.control_bit_index == 0 &&
 	      pcm_downstream_tx_is_valid(&transmitter),
 	      "record-boundary request did not switch immediately");
 	while ((!transmitter.mp_prime_record_accepted ||
-		transmitter.mp_bit_index != 0) &&
+		transmitter.control_bit_index != 0) &&
 	       symbols < MAXIMUM_STREAM_SYMBOLS) {
 		CHECK(pcm_downstream_tx_next(&transmitter, &symbol) ==
 			      PCM_DOWNSTREAM_TX_OK,
@@ -676,7 +681,7 @@ static bool test_boundary_request(void)
 	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_MP_PRIME &&
 	      transmitter.mp_prime_record_accepted &&
-	      transmitter.mp_bit_index == 0 &&
+	      transmitter.control_bit_index == 0 &&
 	      pcm_downstream_tx_request_ed(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&

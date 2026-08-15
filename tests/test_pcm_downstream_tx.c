@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <pcm_downstream_rx.h>
 #include <pcm_downstream_tx.h>
 
 #include "test.h"
@@ -43,6 +44,40 @@ static bool make_mapping(
 		add_ucode(
 			&parameters.transmit_constellations[0],
 			(uint8_t)(12 + ordinal));
+	return v90_pcm_mapping_init(mapping, &parameters) ==
+	       V90_PCM_MAPPING_OK;
+}
+
+static bool make_width_mapping(
+	struct v90_pcm_mapping *mapping, enum g711_law law,
+	uint8_t frame_bits)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_TRAINING,
+		.law = law,
+		.selected_rate_index = (uint8_t)(frame_bits - 8u),
+		.constellation_count = V90_CP_MAX_CONSTELLATIONS,
+	};
+	uint8_t sign_bits = frame_bits > 27u ?
+				    (uint8_t)(frame_bits - 24u) : 3u;
+	uint8_t modulus_bits = (uint8_t)(frame_bits - sign_bits);
+
+	parameters.sign_redundancy =
+		(uint8_t)(V90_CP_FRAME_INTERVALS - sign_bits);
+	for (size_t interval = 0u;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		uint8_t exponent = (uint8_t)(
+			modulus_bits / V90_CP_FRAME_INTERVALS +
+			(interval < modulus_bits % V90_CP_FRAME_INTERVALS));
+		uint8_t count = (uint8_t)(1u << exponent);
+
+		parameters.frame_constellation[interval] = (uint8_t)interval;
+		for (uint8_t ordinal = 0u; ordinal < count; ++ordinal) {
+			add_ucode(
+				&parameters.transmit_constellations[interval],
+				(uint8_t)(4u + interval * 20u + ordinal));
+		}
+	}
 	return v90_pcm_mapping_init(mapping, &parameters) ==
 	       V90_PCM_MAPPING_OK;
 }
@@ -179,7 +214,8 @@ static bool test_generated_sequences(void)
 					      &mapping, V90_CP_TRAINING, law,
 					      redundancy, lookahead) &&
 				      pcm_downstream_tx_init(
-					      &transmitter, &mapping) ==
+					      &transmitter, PCM_PROTOCOL_V90,
+					      &mapping) ==
 					      PCM_DOWNSTREAM_TX_OK,
 				      "sequence %u/%u/%u did not initialize",
 				      law_index, redundancy, lookahead);
@@ -256,6 +292,106 @@ static bool test_generated_sequences(void)
 	return true;
 }
 
+static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
+{
+	const struct v92_suvd_parameters parameters = {
+		.request_silence = (frame_bits & 1u) != 0u,
+		.acknowledges_cpu = law == G711_LAW_PCMA,
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx transmitter;
+	struct pcm_downstream_rx receiver;
+	size_t training_frames = 0u;
+	size_t records = 0u;
+	size_t symbol_count = 0u;
+	size_t maximum_symbols =
+		V90_PHASE4_TRN2D_MINIMUM_SYMBOLS + 512u;
+
+	CHECK(make_width_mapping(&mapping, law, frame_bits) &&
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V92, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(
+		      &receiver, PCM_PROTOCOL_V92, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      pcm_downstream_tx_start_suvd(
+		      &transmitter, &parameters) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(
+		      &transmitter, &parameters) == PCM_DOWNSTREAM_TX_OK,
+	      "V.92 width %u law %u fixture did not initialize",
+	      frame_bits, law);
+	while (records < 2u && symbol_count < maximum_symbols) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		struct pcm_downstream_event untouched;
+		enum pcm_downstream_rx_result result;
+
+		CHECK(pcm_downstream_tx_next(&transmitter, &symbol) ==
+			      PCM_DOWNSTREAM_TX_OK,
+		      "V.92 width %u law %u transmitter stopped",
+		      frame_bits, law);
+		symbol_count++;
+		memset(&event, 0xa5, sizeof(event));
+		untouched = event;
+		result = pcm_downstream_rx_receive(
+			&receiver, symbol.pcm.octet, &event);
+		if (result == PCM_DOWNSTREAM_RX_BUFFERING) {
+			CHECK(memcmp(&event, &untouched, sizeof(event)) == 0,
+			      "V.92 width %u law %u buffering changed event",
+			      frame_bits, law);
+			continue;
+		}
+		if (result == PCM_DOWNSTREAM_RX_TRN2D_FRAME) {
+			CHECK(event.trn2d.bit_count == frame_bits &&
+			      event.trn2d.training_bit_errors == 0u,
+			      "V.92 width %u law %u corrupted TRN2d",
+			      frame_bits, law);
+			training_frames++;
+			continue;
+		}
+		CHECK(result == PCM_DOWNSTREAM_RX_SUVD &&
+		      event.control.type == V92_CONTROL_EVENT_SUVD &&
+		      event.control.record.suvd.frame_result == V92_SUVD_OK &&
+		      event.control.record.suvd.parameters.request_silence ==
+			      parameters.request_silence &&
+		      event.control.record.suvd.parameters.acknowledges_cpu ==
+			      parameters.acknowledges_cpu,
+		      "V.92 width %u law %u receiver returned %s",
+		      frame_bits, law,
+		      pcm_downstream_rx_result_name(result));
+		records++;
+	}
+	CHECK(records == 2u &&
+	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      transmitter.protocol == PCM_PROTOCOL_V92 &&
+	      transmitter.stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	      transmitter.control_configured &&
+	      receiver.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
+	      receiver.trn2d_bit_errors == 0u &&
+	      pcm_downstream_tx_is_valid(&transmitter) &&
+	      pcm_downstream_rx_is_valid(&receiver),
+	      "V.92 width %u law %u lost its continuous control epoch",
+	      frame_bits, law);
+	return true;
+}
+
+static bool test_v92_sequences(void)
+{
+	for (unsigned int law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t frame_bits =
+			     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS;
+		     frame_bits <=
+			     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS;
+		     ++frame_bits) {
+			CHECK(run_v92_width(
+				      (enum g711_law)law, frame_bits),
+			      "V.92 downstream transmitter matrix stopped");
+		}
+	}
+	return true;
+}
+
 static bool test_empty_finish(void)
 {
 	struct v90_pcm_mapping mapping;
@@ -265,7 +401,8 @@ static bool test_empty_finish(void)
 
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMU, 2, 3) &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "empty finish fixture did not initialize");
 	memset(&symbol, 0xa5, sizeof(symbol));
@@ -285,6 +422,13 @@ static bool test_empty_finish(void)
 
 static bool test_contracts(void)
 {
+	const struct v92_suvd_parameters suvd = {
+		.request_silence = true,
+	};
+	const struct v92_suvd_parameters different_suvd = {
+		.acknowledges_cpu = true,
+	};
+	const struct v90_mp_record empty_mp = { 0 };
 	struct v90_pcm_mapping mapping;
 	struct v90_pcm_mapping data_mapping;
 	struct pcm_downstream_tx transmitter;
@@ -296,14 +440,42 @@ static bool test_contracts(void)
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMU, 1, 0) &&
 	      make_mapping(
 		      &data_mapping, V90_CP_DATA, G711_LAW_PCMU, 1, 0) &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
-	      pcm_downstream_tx_init(&transmitter, &data_mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &data_mapping) ==
 		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
-	      pcm_downstream_tx_init(NULL, &mapping) ==
+	      pcm_downstream_tx_init(NULL, PCM_PROTOCOL_V90, &mapping) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_init(
+		      &transmitter, (enum pcm_protocol)99, &mapping) ==
 		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT,
 	      "initialization contract changed");
-	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+	CHECK(pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(&transmitter, &suvd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V92, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&transmitter, &empty_mp) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_mp_prime(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_start_suvd(&transmitter, &suvd) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(
+		      &transmitter, &different_suvd) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_finish(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE,
+	      "protocol-specific control branch was not isolated");
+	CHECK(pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_next(&transmitter, &symbol) ==
 		      PCM_DOWNSTREAM_TX_OK,
@@ -322,7 +494,8 @@ static bool test_contracts(void)
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
 	      "corrupt queue was accepted or changed");
 
-	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+	CHECK(pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "numeric fixture did not initialize");
 	transmitter.encoder.mapping.shaping_a2_q1_6 = 64;
@@ -339,7 +512,8 @@ static bool test_contracts(void)
 
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMU, 0, 0) &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "overflow fixture did not initialize");
 	transmitter.accepted_frames =
@@ -372,6 +546,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "generated sequences", test_generated_sequences },
+		{ "V.92 sequences", test_v92_sequences },
 		{ "empty finish", test_empty_finish },
 		{ "contracts", test_contracts },
 	};

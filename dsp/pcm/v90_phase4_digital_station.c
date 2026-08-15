@@ -215,7 +215,8 @@ bool v90_phase4_digital_transmit_handoff_is_valid(
 {
 	return handoff != NULL &&
 	       pcm_downstream_tx_is_valid(&handoff->transmitter) &&
-	       handoff->transmitter.mp_configured &&
+	       handoff->transmitter.protocol == PCM_PROTOCOL_V90 &&
+	       handoff->transmitter.control_configured &&
 	       handoff->transmitter.stage == PCM_DOWNSTREAM_TX_TRN2D &&
 	       !handoff->transmitter.mp_prime_requested &&
 	       handoff->transmitter.accepted_frames == 0 &&
@@ -241,7 +242,8 @@ v90_phase4_digital_station_transmit_handoff(
 		return V90_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	generated = (struct v90_phase4_digital_transmit_handoff){ 0 };
 	if (pcm_downstream_tx_init(
-		    &generated.transmitter, &station->training_mapping) !=
+		    &generated.transmitter, PCM_PROTOCOL_V90,
+		    &station->training_mapping) !=
 		    PCM_DOWNSTREAM_TX_OK ||
 	    pcm_downstream_tx_start_mp(&generated.transmitter, mp) !=
 		    PCM_DOWNSTREAM_TX_OK)

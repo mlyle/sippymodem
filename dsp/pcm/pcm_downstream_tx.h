@@ -3,10 +3,12 @@
 #ifndef PCM_DOWNSTREAM_TX_H
 #define PCM_DOWNSTREAM_TX_H
 
+#include "pcm_protocol.h"
 #include "v34_framing.h"
 #include "v90_mp.h"
 #include "v90_pcm_frame_encoder.h"
 #include "v90_phase4.h"
+#include "v92_suvd.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -37,26 +39,42 @@ enum pcm_downstream_tx_stage {
 	PCM_DOWNSTREAM_TX_MP,
 	PCM_DOWNSTREAM_TX_MP_PRIME,
 	PCM_DOWNSTREAM_TX_ED,
+	PCM_DOWNSTREAM_TX_V92_CONTROL,
 };
 
-/* Own continuous TRN2d, MP, and Ed transmission with zero-initialized GPC
- * scrambling, PCM coding, and a bounded six-symbol output queue. Source
- * generation—and therefore stage—may lead network output by the negotiated
- * shaping look-ahead. */
+enum {
+	PCM_DOWNSTREAM_TX_CONTROL_BYTES =
+		(int)V90_MP_MAXIMUM_SEQUENCE_BYTES >
+			(int)V92_SUVD_MAX_FRAME_BYTES ?
+			V90_MP_MAXIMUM_SEQUENCE_BYTES :
+			V92_SUVD_MAX_FRAME_BYTES,
+};
+
+union pcm_downstream_control_tx {
+	struct v90_mp_record mp;
+	struct v92_suvd_parameters suvd;
+};
+
+/* Own continuous TRN2d and protocol-selected control transmission with
+ * zero-initialized GPC scrambling, PCM coding, and one bounded six-symbol
+ * output queue. V.90 continues through MP/MP-prime/Ed; V.92 continues through
+ * SUVd. Source generation—and therefore stage—may lead network output by the
+ * negotiated shaping look-ahead. */
 struct pcm_downstream_tx {
 	struct v90_pcm_frame_encoder encoder;
 	struct v34_scrambler scrambler;
 	struct pcm_downstream_symbol queue[V90_CP_FRAME_INTERVALS];
-	struct v90_mp_record mp_record;
-	uint8_t mp_sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES];
+	union pcm_downstream_control_tx control;
+	uint8_t control_sequence[PCM_DOWNSTREAM_TX_CONTROL_BYTES];
 	uint64_t accepted_frames;
 	uint64_t transmitted_symbols;
-	size_t mp_sequence_bits;
-	size_t mp_bit_index;
+	size_t control_sequence_bits;
+	size_t control_bit_index;
+	enum pcm_protocol protocol;
 	enum pcm_downstream_tx_stage stage;
 	uint8_t queue_count;
 	uint8_t ed_frames;
-	bool mp_configured;
+	bool control_configured;
 	bool mp_prime_requested;
 	bool mp_prime_record_accepted;
 	bool ed_requested;
@@ -66,6 +84,7 @@ struct pcm_downstream_tx {
 
 enum pcm_downstream_tx_result pcm_downstream_tx_init(
 	struct pcm_downstream_tx *transmitter,
+	enum pcm_protocol protocol,
 	const struct v90_pcm_mapping *training_mapping);
 bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter);
 bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
@@ -76,6 +95,13 @@ bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
 enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	struct pcm_downstream_tx *transmitter,
 	const struct v90_mp_record *record);
+
+/* Queue immutable SUVd parameters. SUVd begins at the first source-frame
+ * boundary after at least 2040 TRN2d symbols have been accepted, then repeats
+ * on complete six-symbol mapping-frame boundaries. */
+enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
+	struct pcm_downstream_tx *transmitter,
+	const struct v92_suvd_parameters *parameters);
 
 /* Request MP prime. A request during TRN2d preserves one complete MP record;
  * a request during MP takes effect at its next padded record boundary. */

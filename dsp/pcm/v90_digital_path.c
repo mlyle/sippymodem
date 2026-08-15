@@ -114,7 +114,7 @@ enum v90_digital_path_result v90_digital_path_init(
 	if (v90_upstream_rx_init(
 		    &initialized.upstream.startup, &handoff->receive,
 		    training,
-		    &initialized.downstream.training.mp_record) !=
+		    &initialized.downstream.training.control.mp) !=
 	    V90_UPSTREAM_RX_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
 	if (!v90_digital_path_is_valid(&initialized))

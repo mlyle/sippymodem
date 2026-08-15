@@ -1905,9 +1905,18 @@ PCM_DOWNSTREAM_TX_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_tx
 PCM_DOWNSTREAM_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_downstream_tx.o \
 	$(BUILD_DIR)/pcm_downstream_tx.o \
+	$(BUILD_DIR)/pcm_downstream_rx.o \
 	$(BUILD_DIR)/v90_mp.o \
+	$(BUILD_DIR)/v90_mp_receiver.o \
+	$(BUILD_DIR)/v92_suvd.o \
+	$(BUILD_DIR)/v92_status_update.o \
+	$(BUILD_DIR)/v92_control_rx.o \
+	$(BUILD_DIR)/v92_cpd.o \
+	$(BUILD_DIR)/v90_pcm_stream_rx.o \
+	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
@@ -1932,6 +1941,8 @@ V90_PCM_STREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/pcm_downstream_tx.o \
 	$(BUILD_DIR)/v90_mp.o \
+	$(BUILD_DIR)/v92_suvd.o \
+	$(BUILD_DIR)/v92_status_update.o \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \

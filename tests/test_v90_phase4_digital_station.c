@@ -446,6 +446,7 @@ static bool test_contracts(void)
 	memset(&transmit_handoff, 0, sizeof(transmit_handoff));
 	CHECK(pcm_downstream_tx_init(
 		      &transmit_handoff.transmitter,
+		      PCM_PROTOCOL_V90,
 		      &training_mapping) == PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_mp(
 		      &transmit_handoff.transmitter, &mp) ==

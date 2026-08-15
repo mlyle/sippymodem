@@ -110,7 +110,8 @@ static bool run_sequence(
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, law,
 		      redundancy, lookahead) &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      v90_pcm_stream_rx_init(
 		      &receivers[0], &mapping,
@@ -212,7 +213,8 @@ static bool test_descrambled_bits(void)
 
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMA, 0, 0) &&
-	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+	      pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      v90_pcm_stream_rx_init(
 		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
