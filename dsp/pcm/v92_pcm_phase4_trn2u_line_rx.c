@@ -101,9 +101,9 @@ bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
 {
 	return v92_pcm_phase4_trn2u_line_rx_is_valid(receiver) &&
 	       !receiver->failed &&
-	       receiver->trained_symbols >=
+	       receiver->reference.emitted_symbols >=
 		       V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
-	       receiver->trained_symbols %
+	       receiver->reference.emitted_symbols %
 		       V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
 }
 

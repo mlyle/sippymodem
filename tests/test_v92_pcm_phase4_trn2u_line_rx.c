@@ -16,6 +16,10 @@ enum {
 	ECHO_DELAY = 40,
 	ECHO_GAIN_Q15 = 8192,
 	EXTRA_ALIGNED_SYMBOLS = 12,
+	RECEIVED_TRAINING_SYMBOLS =
+		V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS -
+		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY +
+		EXTRA_ALIGNED_SYMBOLS,
 };
 
 struct line_channel {
@@ -211,17 +215,18 @@ static bool run_line(
 		      "TRN2u line exposed nonzero extension tap %zu", tap);
 	}
 	for (size_t symbol = 0;
-	     symbol < V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS +
-			      EXTRA_ALIGNED_SYMBOLS;
+	     symbol < RECEIVED_TRAINING_SYMBOLS;
 	     ++symbol) {
 		int16_t raw;
 		int16_t decoded_raw;
 		int16_t line;
 		enum v92_pcm_phase4_trn2u_line_rx_result result;
 		uint32_t trained = (uint32_t)symbol + 1u;
+		uint32_t physical = trained +
+			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 		bool aligned =
-			trained >= V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
-			trained % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
+			physical >= V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
+			physical % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
 
 		CHECK(v92_pcm_phase4_trn2u_next(&transmitter, &raw) ==
 			      V92_PCM_PHASE4_TRN2U_OK,
@@ -254,14 +259,12 @@ static bool run_line(
 		    V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS / 2u)
 			first_half_error = receiver.squared_error_sum;
 	}
-	CHECK(receiver.trained_symbols ==
-		      V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS +
-			      EXTRA_ALIGNED_SYMBOLS &&
+	CHECK(receiver.trained_symbols == RECEIVED_TRAINING_SYMBOLS &&
 	      receiver.input_samples ==
 		      starting_samples + receiver.trained_symbols &&
 	      receiver.reference.emitted_symbols ==
-		      receiver.trained_symbols +
-			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+		      V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS +
+			      EXTRA_ALIGNED_SYMBOLS &&
 	      receiver.expected_index ==
 		      receiver.trained_symbols %
 			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&

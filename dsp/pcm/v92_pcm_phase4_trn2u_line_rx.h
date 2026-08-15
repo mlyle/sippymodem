@@ -62,8 +62,10 @@ bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
 bool v92_pcm_phase4_trn2u_line_rx_has_failed(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver);
 
-/* Consume one signed 8 kHz sample. ALIGNED marks each twelve-symbol boundary
- * at or after the 12000-symbol initial minimum. Internal DSP failure latches
+/* Consume one signed 8 kHz sample. ALIGNED marks each physical twelve-symbol
+ * boundary at or after the 12000-symbol initial minimum. The equalizer's
+ * delayed outputs have not yet exposed the last decision_delay symbols at
+ * that boundary; a successor must retain them. Internal DSP failure latches
  * without consuming the sample; all rejected calls are transactional. */
 enum v92_pcm_phase4_trn2u_line_rx_result
 v92_pcm_phase4_trn2u_line_rx_sample(
