@@ -204,6 +204,7 @@ static struct pcm_call_configuration configuration(
 	enum v90_modem_role role, enum g711_law law)
 {
 	struct pcm_call_configuration configuration = {
+		.protocol = PCM_PROTOCOL_V90,
 		.local_role = role,
 		.law = law,
 		.enabled_downstream_rate_mask = role == V90_ANALOG_MODEM ?
@@ -774,6 +775,15 @@ static bool test_validation(void)
 	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT &&
 	      memcmp(&call, &saved, sizeof(call)) == 0,
 	      "invalid configurations changed the call");
+	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.protocol = PCM_PROTOCOL_V92;
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT &&
+	      memcmp(&call, &saved, sizeof(call)) == 0,
+	      "call accepted an unimplemented PCM protocol");
+	selected.protocol = (enum pcm_protocol)99;
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_INVALID_ARGUMENT &&
+	      memcmp(&call, &saved, sizeof(call)) == 0,
+	      "call accepted an invalid PCM protocol");
 	selected = configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_OK &&
 	      pcm_call_is_valid(&call) &&

@@ -13,6 +13,9 @@ enum {
 	V90_UPSTREAM_RATE_UNIT = 2400,
 };
 
+_Static_assert(PCM_PROTOCOL_V90 == 0,
+	"zero-initialized PCM call configurations must select V.90");
+
 static bool downstream_rate_mask_is_valid(uint32_t mask)
 {
 	return mask != 0 &&
@@ -93,6 +96,7 @@ static bool configuration_is_valid(
 	const struct pcm_call_configuration *configuration)
 {
 	if (configuration == NULL ||
+	    configuration->protocol != PCM_PROTOCOL_V90 ||
 	    !pcm_modem_role_is_valid(configuration->local_role) ||
 	    !g711_law_is_valid(configuration->law) ||
 	    !downstream_rate_mask_is_valid(
@@ -129,7 +133,8 @@ static bool configuration_is_valid(
 
 static bool stored_configuration_is_valid(const struct pcm_call *call)
 {
-	if (!pcm_modem_role_is_valid(call->local_role) ||
+	if (call->protocol != PCM_PROTOCOL_V90 ||
+	    !pcm_modem_role_is_valid(call->local_role) ||
 	    !g711_law_is_valid(call->law) ||
 	    !downstream_rate_mask_is_valid(
 		    call->enabled_downstream_rate_mask))
@@ -212,7 +217,8 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 	switch (call->stage) {
 	case PCM_CALL_PHASE2:
 		child_valid = pcm_phase2_is_valid(&call->state.phase2) &&
-			      call->state.phase2.local_role == call->local_role;
+			      call->state.phase2.local_role == call->local_role &&
+			      call->state.phase2.info0_protocol == call->protocol;
 		child_failed = pcm_phase2_has_failed(&call->state.phase2);
 		break;
 	case PCM_CALL_PHASE3:
@@ -306,6 +312,7 @@ enum pcm_call_result pcm_call_init(
 		initialized.digital_phase4_configuration =
 			configuration->digital_phase4;
 	}
+	initialized.protocol = configuration->protocol;
 	initialized.local_role = configuration->local_role;
 	initialized.law = configuration->law;
 	initialized.enabled_downstream_rate_mask =
@@ -401,6 +408,8 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 
 	if (result != PCM_PHASE3_ENTRY_OK)
 		return entry_result(result);
+	if (entry.selection.startup.protocol != call->protocol)
+		return PCM_CALL_UNUSABLE_SELECTION;
 	next = *call;
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct v90_phase3_analog_station station;

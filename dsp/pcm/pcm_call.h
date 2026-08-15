@@ -73,6 +73,7 @@ struct pcm_call_digital_phase4_configuration {
 };
 
 struct pcm_call_configuration {
+	enum pcm_protocol protocol;
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	/* Rates locally enabled for the PCM downstream. The digital station
@@ -174,6 +175,7 @@ struct pcm_call {
 	struct pcm_call_digital_phase4_configuration
 		digital_phase4_configuration;
 	uint32_t enabled_downstream_rate_mask;
+	enum pcm_protocol protocol;
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum pcm_call_stage stage;
