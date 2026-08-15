@@ -36,7 +36,7 @@ enum v90_digital_path_result {
 };
 
 union v90_digital_path_downstream {
-	struct v90_downstream_tx training;
+	struct pcm_downstream_tx training;
 	struct v90_downstream_data_stream data;
 };
 

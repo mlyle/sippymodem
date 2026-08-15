@@ -3,7 +3,7 @@
 #include <v90_downstream_data_handoff.h>
 #include <v90_downstream_data_stream.h>
 #include <pcm_downstream_rx.h>
-#include <v90_downstream_tx.h>
+#include <pcm_downstream_tx.h>
 
 #include "test.h"
 
@@ -180,7 +180,7 @@ static bool leave_data_frame_invalid(
 }
 
 static bool verify_data_stream(
-	const struct v90_downstream_tx *completed_transmit,
+	const struct pcm_downstream_tx *completed_transmit,
 	const struct pcm_downstream_rx *completed_receive,
 	const struct v90_pcm_mapping *data_mapping)
 {
@@ -296,7 +296,7 @@ static bool run_stream(
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_mp_record record = make_record(type1);
-	struct v90_downstream_tx transmitter;
+	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_rx receiver;
 	size_t training_frames = 0;
 	size_t mp_records = 0;
@@ -308,45 +308,45 @@ static bool run_stream(
 
 	CHECK(make_mapping(&mapping, law, V90_CP_TRAINING) &&
 	      mapping.frame_bits == FRAME_BITS &&
-	      v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_rx_init(
 		      &receiver, PCM_PROTOCOL_V90, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) ==
 		      PCM_DOWNSTREAM_RX_OK &&
-	      v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_OK,
+	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "stream fixture did not initialize");
 	if (request_during_trn2d) {
-		CHECK(v90_downstream_tx_request_mp_prime(&transmitter) ==
-			      V90_DOWNSTREAM_TX_OK,
+		CHECK(pcm_downstream_tx_request_mp_prime(&transmitter) ==
+			      PCM_DOWNSTREAM_TX_OK,
 		      "early MP prime request failed");
 		prime_requested = true;
 	}
 
-	while (!v90_downstream_tx_is_complete(&transmitter) &&
+	while (!pcm_downstream_tx_is_complete(&transmitter) &&
 	       symbols < MAXIMUM_STREAM_SYMBOLS) {
-		struct v90_downstream_symbol symbol;
+		struct pcm_downstream_symbol symbol;
 		struct pcm_downstream_event event;
-		enum v90_downstream_tx_result transmit_result;
+		enum pcm_downstream_tx_result transmit_result;
 		enum pcm_downstream_rx_result result;
 
 		transmit_result =
-			v90_downstream_tx_next(&transmitter, &symbol);
-		if (transmit_result == V90_DOWNSTREAM_TX_COMPLETE)
+			pcm_downstream_tx_next(&transmitter, &symbol);
+		if (transmit_result == PCM_DOWNSTREAM_TX_COMPLETE)
 			break;
-		CHECK(transmit_result == V90_DOWNSTREAM_TX_OK,
+		CHECK(transmit_result == PCM_DOWNSTREAM_TX_OK,
 		      "stream transmitter stopped at symbol %zu", symbols);
 		symbols++;
 		if (!prime_requested &&
-		    transmitter.stage == V90_DOWNSTREAM_TX_MP &&
+		    transmitter.stage == PCM_DOWNSTREAM_TX_MP &&
 		    transmitter.mp_bit_index != 0) {
-			CHECK(v90_downstream_tx_request_mp_prime(&transmitter) ==
-				      V90_DOWNSTREAM_TX_OK &&
-			      v90_downstream_tx_request_mp_prime(&transmitter) ==
-				      V90_DOWNSTREAM_TX_OK,
+			CHECK(pcm_downstream_tx_request_mp_prime(&transmitter) ==
+				      PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_tx_request_mp_prime(&transmitter) ==
+				      PCM_DOWNSTREAM_TX_OK,
 			      "mid-record MP prime request failed");
 			prime_requested = true;
 		}
@@ -392,10 +392,10 @@ static bool run_stream(
 				      PCM_DOWNSTREAM_RX_OK &&
 			      pcm_downstream_rx_expect_ed(&receiver) ==
 				      PCM_DOWNSTREAM_RX_OK &&
-			      v90_downstream_tx_request_ed(&transmitter) ==
-				      V90_DOWNSTREAM_TX_OK &&
-			      v90_downstream_tx_request_ed(&transmitter) ==
-				      V90_DOWNSTREAM_TX_OK,
+			      pcm_downstream_tx_request_ed(&transmitter) ==
+				      PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_tx_request_ed(&transmitter) ==
+				      PCM_DOWNSTREAM_TX_OK,
 			      "Ed requests were not idempotent");
 			ed_requested = true;
 		}
@@ -404,18 +404,18 @@ static bool run_stream(
 	      ed_requested && ed_received &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      mp_records == 1 && prime_records == 3 &&
-	      transmitter.stage == V90_DOWNSTREAM_TX_ED &&
+	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&
 	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&
 	      transmitter.transmitted_symbols == symbols &&
 	      receiver.trn2d_bit_errors == 0 &&
-	      v90_downstream_tx_is_complete(&transmitter) &&
+	      pcm_downstream_tx_is_complete(&transmitter) &&
 	      pcm_downstream_rx_is_complete(&receiver) &&
-	      v90_downstream_tx_is_valid(&transmitter) &&
+	      pcm_downstream_tx_is_valid(&transmitter) &&
 	      pcm_downstream_rx_is_valid(&receiver),
 	      "continuous Ed boundary or accounting changed");
-	struct v90_downstream_tx completed = transmitter;
-	struct v90_downstream_symbol untouched;
-	struct v90_downstream_symbol saved;
+	struct pcm_downstream_tx completed = transmitter;
+	struct pcm_downstream_symbol untouched;
+	struct pcm_downstream_symbol saved;
 	struct v90_pcm_mapping data_mapping;
 	struct v90_pcm_mapping unshaped_data_mapping;
 	struct v90_pcm_mapping other_law_mapping;
@@ -427,15 +427,15 @@ static bool run_stream(
 	struct v90_downstream_data_rx rejected_receive;
 	struct v90_downstream_data_stream rejected_stream;
 	struct v90_downstream_data_stream saved_stream;
-	struct v90_downstream_tx incomplete_transmit = transmitter;
+	struct pcm_downstream_tx incomplete_transmit = transmitter;
 	struct pcm_downstream_rx incomplete_receive = receiver;
 
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;
-	CHECK(v90_downstream_tx_request_ed(&transmitter) ==
-		      V90_DOWNSTREAM_TX_COMPLETE &&
-	      v90_downstream_tx_next(&transmitter, &untouched) ==
-		      V90_DOWNSTREAM_TX_COMPLETE &&
+	CHECK(pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_COMPLETE &&
+	      pcm_downstream_tx_next(&transmitter, &untouched) ==
+		      PCM_DOWNSTREAM_TX_COMPLETE &&
 	      memcmp(&transmitter, &completed, sizeof(transmitter)) == 0 &&
 	      memcmp(&untouched, &saved, sizeof(untouched)) == 0,
 	      "completed Ed transmitter changed state or output");
@@ -456,8 +456,8 @@ static bool run_stream(
 		      law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU,
 		      V90_CP_DATA),
 	      "post-Ed alternate-law mapping was invalid");
-	CHECK(v90_downstream_tx_is_valid(&incomplete_transmit) &&
-	      !v90_downstream_tx_is_complete(&incomplete_transmit),
+	CHECK(pcm_downstream_tx_is_valid(&incomplete_transmit) &&
+	      !pcm_downstream_tx_is_complete(&incomplete_transmit),
 	      "post-Ed incomplete transmitter was invalid");
 	CHECK(pcm_downstream_rx_is_valid(&incomplete_receive) &&
 	      !pcm_downstream_rx_is_complete(&incomplete_receive),
@@ -543,90 +543,90 @@ static bool test_contracts(void)
 	struct v90_mp_record record = make_record(false);
 	struct v90_mp_record changed = record;
 	struct v90_mp_record acknowledged = record;
-	struct v90_downstream_tx transmitter;
-	struct v90_downstream_tx saved;
+	struct pcm_downstream_tx transmitter;
+	struct pcm_downstream_tx saved;
 
 	CHECK(make_mapping(
 		      &mapping, G711_LAW_PCMU, V90_CP_TRAINING) &&
-	      v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK,
+	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "contract fixture did not initialize");
 	saved = transmitter;
 	set_acknowledgment(&acknowledged, true);
-	CHECK(v90_downstream_tx_start_mp(NULL, &record) ==
-		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT &&
-	      v90_downstream_tx_start_mp(&transmitter, NULL) ==
-		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT &&
-	      v90_downstream_tx_request_mp_prime(NULL) ==
-		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT &&
-	      v90_downstream_tx_request_ed(NULL) ==
-		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT &&
-	      v90_downstream_tx_request_mp_prime(&transmitter) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
-	      v90_downstream_tx_request_ed(&transmitter) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
-	      v90_downstream_tx_start_mp(&transmitter, &acknowledged) ==
-		      V90_DOWNSTREAM_TX_INVALID_PARAMETERS &&
+	CHECK(pcm_downstream_tx_start_mp(NULL, &record) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_start_mp(&transmitter, NULL) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_request_mp_prime(NULL) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_request_ed(NULL) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_request_mp_prime(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_start_mp(&transmitter, &acknowledged) ==
+		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "rejected MP setup changed state");
 
-	CHECK(v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_OK,
+	CHECK(pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "valid MP setup failed");
 	saved = transmitter;
 	changed.parameters.type0.maximum_upstream_rate_2400_bps_units = 10;
-	CHECK(v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_start_mp(&transmitter, &changed) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
-	      v90_downstream_tx_request_ed(&transmitter) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
-	      v90_downstream_tx_request_finish(&transmitter) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
+	CHECK(pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&transmitter, &changed) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_finish(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "configured MP transaction changed");
-	CHECK(v90_downstream_tx_request_mp_prime(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK,
+	CHECK(pcm_downstream_tx_request_mp_prime(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "valid MP prime request failed");
 	saved = transmitter;
-	CHECK(v90_downstream_tx_request_mp_prime(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK &&
+	CHECK(pcm_downstream_tx_request_mp_prime(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "repeated MP prime request changed state");
-	CHECK(v90_downstream_tx_request_ed(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK,
+	CHECK(pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "early Ed request failed");
 	saved = transmitter;
-	CHECK(v90_downstream_tx_request_ed(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK &&
+	CHECK(pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "repeated Ed request changed state");
 
-	CHECK(v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_request_finish(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK,
+	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_request_finish(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "finished setup fixture failed");
 	saved = transmitter;
-	CHECK(v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
+	CHECK(pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "MP started after finish request");
 
-	CHECK(v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_OK,
+	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "corruption fixture did not initialize");
 	transmitter.mp_sequence[0] ^= 1u;
 	saved = transmitter;
-	CHECK(!v90_downstream_tx_is_valid(&transmitter) &&
-	      v90_downstream_tx_request_mp_prime(&transmitter) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
-	      v90_downstream_tx_request_ed(&transmitter) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
-	      v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
+	CHECK(!pcm_downstream_tx_is_valid(&transmitter) &&
+	      pcm_downstream_tx_request_mp_prime(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 	      "corrupt MP sequence was accepted or changed");
 	return true;
@@ -636,52 +636,52 @@ static bool test_boundary_request(void)
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_mp_record record = make_record(false);
-	struct v90_downstream_tx transmitter;
-	struct v90_downstream_symbol symbol;
+	struct pcm_downstream_tx transmitter;
+	struct pcm_downstream_symbol symbol;
 	size_t symbols = 0;
 
 	CHECK(make_mapping(
 		      &mapping, G711_LAW_PCMU, V90_CP_TRAINING) &&
-	      v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_start_mp(&transmitter, &record) ==
-		      V90_DOWNSTREAM_TX_OK,
+	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "boundary fixture did not initialize");
-	while ((transmitter.stage != V90_DOWNSTREAM_TX_MP ||
+	while ((transmitter.stage != PCM_DOWNSTREAM_TX_MP ||
 		transmitter.mp_bit_index != 0) &&
 	       symbols < MAXIMUM_STREAM_SYMBOLS) {
-		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
-			      V90_DOWNSTREAM_TX_OK,
+		CHECK(pcm_downstream_tx_next(&transmitter, &symbol) ==
+			      PCM_DOWNSTREAM_TX_OK,
 		      "boundary fixture stopped at symbol %zu", symbols);
 		symbols++;
 	}
 	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS &&
-	      transmitter.stage == V90_DOWNSTREAM_TX_MP &&
+	      transmitter.stage == PCM_DOWNSTREAM_TX_MP &&
 	      transmitter.mp_bit_index == 0 &&
-	      v90_downstream_tx_request_mp_prime(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      transmitter.stage == V90_DOWNSTREAM_TX_MP_PRIME &&
+	      pcm_downstream_tx_request_mp_prime(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      transmitter.stage == PCM_DOWNSTREAM_TX_MP_PRIME &&
 	      transmitter.mp_bit_index == 0 &&
-	      v90_downstream_tx_is_valid(&transmitter),
+	      pcm_downstream_tx_is_valid(&transmitter),
 	      "record-boundary request did not switch immediately");
 	while ((!transmitter.mp_prime_record_accepted ||
 		transmitter.mp_bit_index != 0) &&
 	       symbols < MAXIMUM_STREAM_SYMBOLS) {
-		CHECK(v90_downstream_tx_next(&transmitter, &symbol) ==
-			      V90_DOWNSTREAM_TX_OK,
+		CHECK(pcm_downstream_tx_next(&transmitter, &symbol) ==
+			      PCM_DOWNSTREAM_TX_OK,
 		      "MP-prime boundary fixture stopped at symbol %zu",
 		      symbols);
 		symbols++;
 	}
 	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS &&
-	      transmitter.stage == V90_DOWNSTREAM_TX_MP_PRIME &&
+	      transmitter.stage == PCM_DOWNSTREAM_TX_MP_PRIME &&
 	      transmitter.mp_prime_record_accepted &&
 	      transmitter.mp_bit_index == 0 &&
-	      v90_downstream_tx_request_ed(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      transmitter.stage == V90_DOWNSTREAM_TX_ED &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&
 	      transmitter.ed_frames == 0 &&
-	      v90_downstream_tx_is_valid(&transmitter),
+	      pcm_downstream_tx_is_valid(&transmitter),
 	      "record-boundary Ed request did not switch immediately");
 	return true;
 }

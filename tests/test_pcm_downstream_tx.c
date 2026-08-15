@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v90_downstream_tx.h>
+#include <pcm_downstream_tx.h>
 
 #include "test.h"
 
@@ -62,7 +62,7 @@ static uint8_t reference_scrambled_one(uint32_t *history)
 static bool append_output(
 	const struct v90_pcm_mapping *mapping,
 	const struct v90_pcm_frame_output *output,
-	struct v90_downstream_symbol *symbols, size_t *symbol_count)
+	struct pcm_downstream_symbol *symbols, size_t *symbol_count)
 {
 	size_t shaping_length = mapping->sign_redundancy == 0 ?
 				0 : V90_CP_FRAME_INTERVALS /
@@ -74,7 +74,7 @@ static bool append_output(
 	    REFERENCE_MAX_SYMBOLS)
 		return false;
 	for (size_t index = 0; index < output->symbol_count; ++index) {
-		struct v90_downstream_symbol symbol = {
+		struct pcm_downstream_symbol symbol = {
 			.pcm = output->symbols[index],
 		};
 
@@ -101,7 +101,7 @@ static bool append_output(
 
 static bool make_reference(
 	const struct v90_pcm_mapping *mapping, uint64_t frame_count,
-	struct v90_downstream_symbol *symbols, size_t *symbol_count)
+	struct pcm_downstream_symbol *symbols, size_t *symbol_count)
 {
 	struct v90_pcm_frame_encoder encoder;
 	uint32_t scrambler_history = 0;
@@ -145,8 +145,8 @@ static bool make_reference(
 }
 
 static bool symbols_equal(
-	const struct v90_downstream_symbol *left,
-	const struct v90_downstream_symbol *right)
+	const struct pcm_downstream_symbol *left,
+	const struct pcm_downstream_symbol *right)
 {
 	return left->pcm.ucode == right->pcm.ucode &&
 	       left->pcm.positive == right->pcm.positive &&
@@ -168,9 +168,9 @@ static bool test_generated_sequences(void)
 		for (uint8_t redundancy = 0; redundancy <= 3; ++redundancy) {
 			for (uint8_t lookahead = 0; lookahead <= 3; ++lookahead) {
 				struct v90_pcm_mapping mapping;
-				struct v90_downstream_tx transmitter;
-				struct v90_downstream_symbol actual[REFERENCE_MAX_SYMBOLS];
-				struct v90_downstream_symbol expected[REFERENCE_MAX_SYMBOLS];
+				struct pcm_downstream_tx transmitter;
+				struct pcm_downstream_symbol actual[REFERENCE_MAX_SYMBOLS];
+				struct pcm_downstream_symbol expected[REFERENCE_MAX_SYMBOLS];
 				size_t actual_count = 0;
 				size_t expected_count = 0;
 				uint64_t accepted_at_finish;
@@ -178,39 +178,39 @@ static bool test_generated_sequences(void)
 				CHECK(make_mapping(
 					      &mapping, V90_CP_TRAINING, law,
 					      redundancy, lookahead) &&
-				      v90_downstream_tx_init(
+				      pcm_downstream_tx_init(
 					      &transmitter, &mapping) ==
-					      V90_DOWNSTREAM_TX_OK,
+					      PCM_DOWNSTREAM_TX_OK,
 				      "sequence %u/%u/%u did not initialize",
 				      law_index, redundancy, lookahead);
 				while (actual_count < 13) {
-					CHECK(v90_downstream_tx_next(
+					CHECK(pcm_downstream_tx_next(
 						      &transmitter,
 						      &actual[actual_count]) ==
-						      V90_DOWNSTREAM_TX_OK,
+						      PCM_DOWNSTREAM_TX_OK,
 					      "sequence %u/%u/%u stopped early",
 					      law_index, redundancy, lookahead);
 					actual_count++;
 				}
 				accepted_at_finish = transmitter.accepted_frames;
-				CHECK(v90_downstream_tx_request_finish(&transmitter) ==
-					      V90_DOWNSTREAM_TX_OK &&
-				      v90_downstream_tx_request_finish(&transmitter) ==
-					      V90_DOWNSTREAM_TX_OK,
+				CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
+					      PCM_DOWNSTREAM_TX_OK &&
+				      pcm_downstream_tx_request_finish(&transmitter) ==
+					      PCM_DOWNSTREAM_TX_OK,
 				      "sequence %u/%u/%u finish was not idempotent",
 				      law_index, redundancy, lookahead);
-				while (!v90_downstream_tx_is_complete(&transmitter)) {
+				while (!pcm_downstream_tx_is_complete(&transmitter)) {
 					CHECK(actual_count < REFERENCE_MAX_SYMBOLS,
 					      "sequence %u/%u/%u exceeded its bounded output",
 					      law_index, redundancy, lookahead);
-					enum v90_downstream_tx_result result =
-						v90_downstream_tx_next(
+					enum pcm_downstream_tx_result result =
+						pcm_downstream_tx_next(
 							&transmitter,
 							&actual[actual_count]);
 
-					if (result == V90_DOWNSTREAM_TX_COMPLETE)
+					if (result == PCM_DOWNSTREAM_TX_COMPLETE)
 						break;
-					CHECK(result == V90_DOWNSTREAM_TX_OK &&
+					CHECK(result == PCM_DOWNSTREAM_TX_OK &&
 					      actual_count < REFERENCE_MAX_SYMBOLS,
 					      "sequence %u/%u/%u failed while draining",
 					      law_index, redundancy, lookahead);
@@ -259,23 +259,23 @@ static bool test_generated_sequences(void)
 static bool test_empty_finish(void)
 {
 	struct v90_pcm_mapping mapping;
-	struct v90_downstream_tx transmitter;
-	struct v90_downstream_symbol symbol;
-	struct v90_downstream_symbol saved;
+	struct pcm_downstream_tx transmitter;
+	struct pcm_downstream_symbol symbol;
+	struct pcm_downstream_symbol saved;
 
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMU, 2, 3) &&
-	      v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK,
+	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "empty finish fixture did not initialize");
 	memset(&symbol, 0xa5, sizeof(symbol));
 	saved = symbol;
-	CHECK(v90_downstream_tx_request_finish(&transmitter) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_next(&transmitter, &symbol) ==
-		      V90_DOWNSTREAM_TX_COMPLETE &&
-	      v90_downstream_tx_next(&transmitter, &symbol) ==
-		      V90_DOWNSTREAM_TX_COMPLETE &&
+	CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_next(&transmitter, &symbol) ==
+		      PCM_DOWNSTREAM_TX_COMPLETE &&
+	      pcm_downstream_tx_next(&transmitter, &symbol) ==
+		      PCM_DOWNSTREAM_TX_COMPLETE &&
 	      memcmp(&symbol, &saved, sizeof(symbol)) == 0 &&
 	      transmitter.accepted_frames == 0 &&
 	      transmitter.transmitted_symbols == 0,
@@ -287,51 +287,51 @@ static bool test_contracts(void)
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_pcm_mapping data_mapping;
-	struct v90_downstream_tx transmitter;
-	struct v90_downstream_tx saved_transmitter;
-	struct v90_downstream_symbol symbol;
-	struct v90_downstream_symbol saved_symbol;
+	struct pcm_downstream_tx transmitter;
+	struct pcm_downstream_tx saved_transmitter;
+	struct pcm_downstream_symbol symbol;
+	struct pcm_downstream_symbol saved_symbol;
 
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMU, 1, 0) &&
 	      make_mapping(
 		      &data_mapping, V90_CP_DATA, G711_LAW_PCMU, 1, 0) &&
-	      v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_init(&transmitter, &data_mapping) ==
-		      V90_DOWNSTREAM_TX_INVALID_PARAMETERS &&
-	      v90_downstream_tx_init(NULL, &mapping) ==
-		      V90_DOWNSTREAM_TX_INVALID_ARGUMENT,
+	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_init(&transmitter, &data_mapping) ==
+		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
+	      pcm_downstream_tx_init(NULL, &mapping) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT,
 	      "initialization contract changed");
-	CHECK(v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_next(&transmitter, &symbol) ==
-		      V90_DOWNSTREAM_TX_OK,
+	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_next(&transmitter, &symbol) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "corruption fixture did not generate");
 	transmitter.queue[0].pcm.octet ^= 1u;
 	saved_transmitter = transmitter;
 	memset(&symbol, 0xa5, sizeof(symbol));
 	saved_symbol = symbol;
-	CHECK(!v90_downstream_tx_is_valid(&transmitter) &&
-	      v90_downstream_tx_next(&transmitter, &symbol) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
-	      v90_downstream_tx_request_finish(&transmitter) ==
-		      V90_DOWNSTREAM_TX_INVALID_STATE &&
+	CHECK(!pcm_downstream_tx_is_valid(&transmitter) &&
+	      pcm_downstream_tx_next(&transmitter, &symbol) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_tx_request_finish(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      memcmp(&transmitter, &saved_transmitter,
 		     sizeof(transmitter)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
 	      "corrupt queue was accepted or changed");
 
-	CHECK(v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK,
+	CHECK(pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "numeric fixture did not initialize");
 	transmitter.encoder.mapping.shaping_a2_q1_6 = 64;
 	transmitter.encoder.shaper.shaping_a2_q1_6 = 64;
 	transmitter.encoder.shaper.previous_v = DBL_MAX;
 	saved_transmitter = transmitter;
-	CHECK(v90_downstream_tx_is_valid(&transmitter) &&
-	      v90_downstream_tx_next(&transmitter, &symbol) ==
-		      V90_DOWNSTREAM_TX_NUMERIC_FAILURE &&
+	CHECK(pcm_downstream_tx_is_valid(&transmitter) &&
+	      pcm_downstream_tx_next(&transmitter, &symbol) ==
+		      PCM_DOWNSTREAM_TX_NUMERIC_FAILURE &&
 	      memcmp(&transmitter, &saved_transmitter,
 		     sizeof(transmitter)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
@@ -339,25 +339,25 @@ static bool test_contracts(void)
 
 	CHECK(make_mapping(
 		      &mapping, V90_CP_TRAINING, G711_LAW_PCMU, 0, 0) &&
-	      v90_downstream_tx_init(&transmitter, &mapping) ==
-		      V90_DOWNSTREAM_TX_OK,
+	      pcm_downstream_tx_init(&transmitter, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK,
 	      "overflow fixture did not initialize");
 	transmitter.accepted_frames =
 		UINT64_MAX / V90_CP_FRAME_INTERVALS;
 	transmitter.transmitted_symbols = transmitter.accepted_frames *
 					  V90_CP_FRAME_INTERVALS;
 	saved_transmitter = transmitter;
-	CHECK(v90_downstream_tx_is_valid(&transmitter) &&
-	      v90_downstream_tx_next(&transmitter, &symbol) ==
-		      V90_DOWNSTREAM_TX_OUT_OF_RANGE &&
+	CHECK(pcm_downstream_tx_is_valid(&transmitter) &&
+	      pcm_downstream_tx_next(&transmitter, &symbol) ==
+		      PCM_DOWNSTREAM_TX_OUT_OF_RANGE &&
 	      memcmp(&transmitter, &saved_transmitter,
 		     sizeof(transmitter)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0 &&
-	      !v90_downstream_tx_is_valid(NULL) &&
-	      strcmp(v90_downstream_tx_result_name(V90_DOWNSTREAM_TX_OK),
+	      !pcm_downstream_tx_is_valid(NULL) &&
+	      strcmp(pcm_downstream_tx_result_name(PCM_DOWNSTREAM_TX_OK),
 		     "ok") == 0 &&
-	      strcmp(v90_downstream_tx_result_name(
-			     (enum v90_downstream_tx_result)99),
+	      strcmp(pcm_downstream_tx_result_name(
+			     (enum pcm_downstream_tx_result)99),
 		     "unknown") == 0,
 	      "overflow or result-name contract changed");
 	return true;

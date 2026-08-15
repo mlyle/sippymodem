@@ -214,9 +214,9 @@ bool v90_phase4_digital_transmit_handoff_is_valid(
 	const struct v90_phase4_digital_transmit_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_downstream_tx_is_valid(&handoff->transmitter) &&
+	       pcm_downstream_tx_is_valid(&handoff->transmitter) &&
 	       handoff->transmitter.mp_configured &&
-	       handoff->transmitter.stage == V90_DOWNSTREAM_TX_TRN2D &&
+	       handoff->transmitter.stage == PCM_DOWNSTREAM_TX_TRN2D &&
 	       !handoff->transmitter.mp_prime_requested &&
 	       handoff->transmitter.accepted_frames == 0 &&
 	       handoff->transmitter.transmitted_symbols == 0 &&
@@ -240,11 +240,11 @@ v90_phase4_digital_station_transmit_handoff(
 	if (!v90_phase4_digital_station_transmit_complete(station))
 		return V90_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	generated = (struct v90_phase4_digital_transmit_handoff){ 0 };
-	if (v90_downstream_tx_init(
+	if (pcm_downstream_tx_init(
 		    &generated.transmitter, &station->training_mapping) !=
-		    V90_DOWNSTREAM_TX_OK ||
-	    v90_downstream_tx_start_mp(&generated.transmitter, mp) !=
-		    V90_DOWNSTREAM_TX_OK)
+		    PCM_DOWNSTREAM_TX_OK ||
+	    pcm_downstream_tx_start_mp(&generated.transmitter, mp) !=
+		    PCM_DOWNSTREAM_TX_OK)
 		return V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE;
 	if (!v90_phase4_digital_transmit_handoff_is_valid(&generated))
 		return V90_PHASE4_DIGITAL_STATION_NUMERIC_FAILURE;

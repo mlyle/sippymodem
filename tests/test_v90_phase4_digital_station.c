@@ -444,12 +444,12 @@ static bool test_contracts(void)
 		      V90_PCM_MAPPING_OK,
 	      "valid handoff mapping did not initialize");
 	memset(&transmit_handoff, 0, sizeof(transmit_handoff));
-	CHECK(v90_downstream_tx_init(
+	CHECK(pcm_downstream_tx_init(
 		      &transmit_handoff.transmitter,
-		      &training_mapping) == V90_DOWNSTREAM_TX_OK &&
-	      v90_downstream_tx_start_mp(
+		      &training_mapping) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(
 		      &transmit_handoff.transmitter, &mp) ==
-		      V90_DOWNSTREAM_TX_OK,
+		      PCM_DOWNSTREAM_TX_OK,
 	      "valid handoff transmitter did not initialize");
 	CHECK(v90_phase4_digital_transmit_handoff_is_valid(
 		      &transmit_handoff),

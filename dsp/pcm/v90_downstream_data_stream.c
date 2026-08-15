@@ -92,7 +92,7 @@ bool v90_downstream_data_stream_is_valid(
 enum v90_downstream_data_stream_result
 v90_downstream_data_stream_start_after_ed(
 	struct v90_downstream_data_stream *stream,
-	const struct v90_downstream_tx *completed_training,
+	const struct pcm_downstream_tx *completed_training,
 	const struct v90_pcm_mapping *data_mapping)
 {
 	struct v90_downstream_data_stream initialized = { 0 };

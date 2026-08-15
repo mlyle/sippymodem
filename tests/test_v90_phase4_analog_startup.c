@@ -174,11 +174,11 @@ static bool run_exchange(enum g711_law law)
 				digital_handed_off = true;
 			}
 		} else {
-			struct v90_downstream_symbol symbol;
+			struct pcm_downstream_symbol symbol;
 
-			CHECK(v90_downstream_tx_next(
+			CHECK(pcm_downstream_tx_next(
 				      &digital_handoff.transmitter, &symbol) ==
-				      V90_DOWNSTREAM_TX_OK,
+				      PCM_DOWNSTREAM_TX_OK,
 			      "law %u TRN2d stopped at %zu",
 			      (unsigned int)law, clock);
 			next_to_analog = symbol.pcm.octet;

@@ -23,13 +23,13 @@ static bool downstream_is_valid(const struct v90_digital_path *path)
 {
 	if (path->downstream_stage ==
 	    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING) {
-		const struct v90_downstream_tx *training =
+		const struct pcm_downstream_tx *training =
 			&path->downstream.training;
 
-		return v90_downstream_tx_is_valid(training) &&
+		return pcm_downstream_tx_is_valid(training) &&
 		       training->encoder.mapping.kind == V90_CP_TRAINING &&
 		       training->encoder.mapping.law == path->law &&
-		       (path->failed || !v90_downstream_tx_is_complete(training));
+		       (path->failed || !pcm_downstream_tx_is_complete(training));
 	}
 	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_DATA) {
 		const struct v90_downstream_data_stream *data =
@@ -178,20 +178,20 @@ static enum v90_digital_path_result emit_downstream(
 {
 	if (path->downstream_stage ==
 	    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING) {
-		struct v90_downstream_tx training = path->downstream.training;
-		struct v90_downstream_symbol symbol;
-		enum v90_downstream_tx_result result =
-			v90_downstream_tx_next(&training, &symbol);
+		struct pcm_downstream_tx training = path->downstream.training;
+		struct pcm_downstream_symbol symbol;
+		enum pcm_downstream_tx_result result =
+			pcm_downstream_tx_next(&training, &symbol);
 
-		if (result == V90_DOWNSTREAM_TX_OK) {
+		if (result == PCM_DOWNSTREAM_TX_OK) {
 			path->downstream.training = training;
 			*octet = symbol.pcm.octet;
 			return V90_DIGITAL_PATH_OK;
 		}
-		if (result != V90_DOWNSTREAM_TX_COMPLETE)
-			return result == V90_DOWNSTREAM_TX_OUT_OF_RANGE ?
+		if (result != PCM_DOWNSTREAM_TX_COMPLETE)
+			return result == PCM_DOWNSTREAM_TX_OUT_OF_RANGE ?
 				       V90_DIGITAL_PATH_OUT_OF_RANGE :
-			       result == V90_DOWNSTREAM_TX_NUMERIC_FAILURE ?
+			       result == PCM_DOWNSTREAM_TX_NUMERIC_FAILURE ?
 				       V90_DIGITAL_PATH_NUMERIC_FAILURE :
 				       V90_DIGITAL_PATH_INTERNAL_ERROR;
 		if (!path->data_mapping_ready)
@@ -253,8 +253,8 @@ static enum v90_digital_path_result request_mp_prime(
 	 * an internal failure leaves one valid, diagnosable owner. */
 	path->data_mapping = mapping;
 	path->data_mapping_ready = true;
-	if (v90_downstream_tx_request_mp_prime(
-		    &path->downstream.training) != V90_DOWNSTREAM_TX_OK)
+	if (pcm_downstream_tx_request_mp_prime(
+		    &path->downstream.training) != PCM_DOWNSTREAM_TX_OK)
 		return V90_DIGITAL_PATH_INTERNAL_ERROR;
 	return V90_DIGITAL_PATH_OK;
 }
@@ -268,8 +268,8 @@ static enum v90_digital_path_result request_ed(
 	    !path->data_mapping_ready ||
 	    !data_mapping_matches(&path->data_mapping, parameters))
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
-	return v90_downstream_tx_request_ed(
-		       &path->downstream.training) == V90_DOWNSTREAM_TX_OK ?
+	return pcm_downstream_tx_request_ed(
+		       &path->downstream.training) == PCM_DOWNSTREAM_TX_OK ?
 		       V90_DIGITAL_PATH_OK : V90_DIGITAL_PATH_INTERNAL_ERROR;
 }
 

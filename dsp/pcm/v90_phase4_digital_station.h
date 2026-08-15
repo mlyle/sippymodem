@@ -7,7 +7,7 @@
 #include "v90_pcm_mapping.h"
 #include "v90_phase4_cp_line_rx.h"
 #include "v90_phase4_ri.h"
-#include "v90_downstream_tx.h"
+#include "pcm_downstream_tx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,7 +24,7 @@ enum v90_phase4_digital_station_result {
 /* Ready-to-run TRN2d/MP/Ed owner with every coder history initialized to zero
  * at the exact boundary following the final Ri-bar character. */
 struct v90_phase4_digital_transmit_handoff {
-	struct v90_downstream_tx transmitter;
+	struct pcm_downstream_tx transmitter;
 };
 
 /* Own the digital modem's initial Phase 4 exchange. Ri begins immediately;

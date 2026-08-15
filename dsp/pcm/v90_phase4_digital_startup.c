@@ -18,10 +18,10 @@ static bool configured_mp_matches(
 	const struct v90_phase4_digital_handoff *handoff,
 	const struct v90_mp_record *record)
 {
-	struct v90_downstream_tx transmitter = handoff->transmit.transmitter;
+	struct pcm_downstream_tx transmitter = handoff->transmit.transmitter;
 
-	return v90_downstream_tx_start_mp(&transmitter, record) ==
-	       V90_DOWNSTREAM_TX_OK;
+	return pcm_downstream_tx_start_mp(&transmitter, record) ==
+	       PCM_DOWNSTREAM_TX_OK;
 }
 
 bool v90_phase4_digital_startup_is_valid(
