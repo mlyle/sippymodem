@@ -92,7 +92,7 @@ static int16_t media_sample(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
-static bool run_exchange(enum g711_law law)
+static bool run_exchange(enum g711_law law, bool delayed)
 {
 	struct v92_jd jd = {
 		.data_rate_capability_mask = UINT32_C(0x002a1555),
@@ -112,6 +112,9 @@ static bool run_exchange(enum g711_law law)
 	struct v92_pcm_phase3_cpt_line_handoff receive_handoff;
 	struct v92_phase3_analog_transmit_handoff transmit_handoff;
 	uint32_t received_mask = 0u;
+	uint8_t downstream_delay = law == G711_LAW_PCMA ?
+		g711_encode_pcma(0) : g711_encode_pcmu(0);
+	int16_t upstream_delay = 0;
 	bool trn2u_started = false;
 	bool finished = false;
 
@@ -124,28 +127,31 @@ static bool run_exchange(enum g711_law law)
 	      "V.92 station pair did not initialize for law %u",
 	      (unsigned int)law);
 	for (size_t index = 0; index < SAMPLE_LIMIT && !finished; ++index) {
-		uint8_t octet;
+		uint8_t octet = law == G711_LAW_PCMA ?
+			g711_encode_pcma(0) : g711_encode_pcmu(0);
 		int16_t sample;
 
 		if (!v92_phase3_digital_station_transmit_complete(&digital)) {
 			enum v92_phase3_digital_station_result tx_result =
 				v92_phase3_digital_station_transmit(
 					&digital, &octet);
-			enum v92_phase3_analog_station_result rx_result =
-				V92_PHASE3_ANALOG_STATION_COMPLETE;
 
-			if (tx_result == V92_PHASE3_DIGITAL_STATION_OK &&
-			    !v92_phase3_analog_station_receive_complete(&analog))
-				rx_result = v92_phase3_analog_station_receive(
-					&analog, octet);
-			CHECK(tx_result == V92_PHASE3_DIGITAL_STATION_OK &&
-			      (rx_result == V92_PHASE3_ANALOG_STATION_OK ||
-			       rx_result ==
-				       V92_PHASE3_ANALOG_STATION_COMPLETE),
-			      "downstream exchange failed at %zu: %s/%s",
+			CHECK(tx_result == V92_PHASE3_DIGITAL_STATION_OK,
+			      "downstream transmit failed at %zu: %s",
 			      index,
-			      v92_phase3_digital_station_result_name(tx_result),
-			      v92_phase3_analog_station_result_name(rx_result));
+			      v92_phase3_digital_station_result_name(tx_result));
+		}
+		if (!v92_phase3_analog_station_receive_complete(&analog)) {
+			uint8_t delivered = delayed ? downstream_delay : octet;
+			enum v92_phase3_analog_station_result result;
+
+			downstream_delay = octet;
+			result = v92_phase3_analog_station_receive(
+				&analog, delivered);
+			CHECK(result == V92_PHASE3_ANALOG_STATION_OK ||
+			      result == V92_PHASE3_ANALOG_STATION_COMPLETE,
+			      "downstream receive failed at %zu: %s", index,
+			      v92_phase3_analog_station_result_name(result));
 		}
 
 		if (!v92_phase3_analog_station_transmit_complete(&analog)) {
@@ -178,10 +184,12 @@ static bool run_exchange(enum g711_law law)
 		}
 		sample = media_sample(law, sample);
 		if (!v92_phase3_digital_station_receive_complete(&digital)) {
+			int16_t delivered = delayed ? upstream_delay : sample;
 			enum v92_phase3_digital_station_result result =
 				v92_phase3_digital_station_receive(
-					&digital, sample);
+					&digital, delivered);
 
+			upstream_delay = sample;
 			CHECK(result == V92_PHASE3_DIGITAL_STATION_OK ||
 			      result == V92_PHASE3_DIGITAL_STATION_COMPLETE,
 			      "digital receiver returned %s at %zu",
@@ -251,12 +259,17 @@ static bool test_analog_contracts(void)
 		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT,
 	      "null analogue initialization returned the wrong result");
 	configuration.upstream_lu_ucode = 0u;
-	CHECK(v92_phase3_analog_station_init(&station, &configuration) ==
+	CHECK(!v92_phase3_analog_station_configuration_is_valid(
+		      &configuration) &&
+	      v92_phase3_analog_station_init(&station, &configuration) ==
 		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      memcmp(&station, &before, sizeof(station)) == 0,
 	      "invalid analogue initialization changed its destination");
 	configuration = analog_configuration(G711_LAW_PCMU, 1u);
-	CHECK(v92_phase3_analog_station_init(&station, &configuration) ==
+	CHECK(v92_phase3_analog_station_configuration_is_valid(
+		      &configuration) &&
+	      !v92_phase3_analog_station_configuration_is_valid(NULL) &&
+	      v92_phase3_analog_station_init(&station, &configuration) ==
 		      V92_PHASE3_ANALOG_STATION_OK &&
 	      v92_phase3_analog_station_is_valid(&station) &&
 	      !v92_phase3_analog_station_has_failed(&station) &&
@@ -369,7 +382,13 @@ static bool test_digital_contracts(void)
 
 	memset(&station, 0xa5, sizeof(station));
 	before = station;
-	CHECK(v92_phase3_digital_station_init(
+	CHECK(v92_phase3_digital_station_parameters_are_valid(
+		      G711_LAW_PCMU, TEST_UCODE, 0.0,
+		      TEST_SU_THRESHOLD, &jd, &jp) &&
+	      !v92_phase3_digital_station_parameters_are_valid(
+		      G711_LAW_PCMU, TEST_UCODE, NAN,
+		      TEST_SU_THRESHOLD, &jd, &jp) &&
+	      v92_phase3_digital_station_init(
 		      NULL, G711_LAW_PCMU, TEST_UCODE, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
@@ -426,6 +445,8 @@ int main(void)
 	} tests[] = {
 		{ "PCMU zero-DIL station exchange", NULL },
 		{ "PCMA zero-DIL station exchange", NULL },
+		{ "PCMU delayed station exchange", NULL },
+		{ "PCMA delayed station exchange", NULL },
 		{ "analogue station contracts", test_analog_contracts },
 		{ "manufacturer interval backpressure", test_md_backpressure },
 		{ "digital station contracts", test_digital_contracts },
@@ -437,9 +458,13 @@ int main(void)
 
 		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
 		if (index == 0u)
-			passed = run_exchange(G711_LAW_PCMU);
+			passed = run_exchange(G711_LAW_PCMU, false);
 		else if (index == 1u)
-			passed = run_exchange(G711_LAW_PCMA);
+			passed = run_exchange(G711_LAW_PCMA, false);
+		else if (index == 2u)
+			passed = run_exchange(G711_LAW_PCMU, true);
+		else if (index == 3u)
+			passed = run_exchange(G711_LAW_PCMA, true);
 		else
 			passed = tests[index].run();
 		if (passed)

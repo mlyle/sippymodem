@@ -18,20 +18,6 @@ static struct v92_pcm_info1a selection(void)
 	};
 }
 
-static bool selections_equal(
-	const struct v92_pcm_info1a *left,
-	const struct v92_pcm_info1a *right)
-{
-	return left->filter_sections == right->filter_sections &&
-	       left->maximum_total_coefficients ==
-		       right->maximum_total_coefficients &&
-	       left->maximum_section_coefficients ==
-		       right->maximum_section_coefficients &&
-	       left->local_md_length_276_symbol_units ==
-		       right->local_md_length_276_symbol_units &&
-	       left->training_ucode == right->training_ucode;
-}
-
 static void replace_field(
 	uint8_t *payload, size_t first_bit, size_t bit_count, uint16_t value)
 {
@@ -64,7 +50,7 @@ static bool test_wire_image(void)
 	      v92_pcm_info1a_decode(
 		      payload, sizeof(payload), V92_PCM_INFO1A_PAYLOAD_BITS,
 		      &decoded) == V92_PCM_INFO1A_OK &&
-	      selections_equal(&selected, &decoded),
+	      v92_pcm_info1a_equal(&selected, &decoded),
 	      "V.92 PCM-upstream INFO1a wire image changed");
 	CHECK(v90_info1a_decode(
 		      payload, sizeof(payload), V90_INFO1A_PAYLOAD_BITS,
@@ -118,7 +104,8 @@ static bool test_generated_round_trips(void)
 						      V92_PCM_INFO1A_PAYLOAD_BITS,
 						      &decoded) ==
 						      V92_PCM_INFO1A_OK &&
-					      selections_equal(&selected, &decoded) &&
+					      v92_pcm_info1a_equal(
+						      &selected, &decoded) &&
 					      v92_pcm_info1a_encode(
 						      &decoded, reencoded,
 						      sizeof(reencoded)) ==
@@ -150,7 +137,7 @@ static bool test_reserved_bits(void)
 	CHECK(v92_pcm_info1a_decode(
 		      payload, sizeof(payload), V92_PCM_INFO1A_PAYLOAD_BITS,
 		      &decoded) == V92_PCM_INFO1A_OK &&
-	      selections_equal(&selected, &decoded),
+	      v92_pcm_info1a_equal(&selected, &decoded),
 	      "reserved INFO1a bits were interpreted");
 	CHECK(v92_pcm_info1a_encode(&decoded, payload, sizeof(payload)) ==
 		      V92_PCM_INFO1A_OK,
@@ -274,7 +261,9 @@ static bool test_validation(void)
 		      payload, V92_PCM_INFO1A_PAYLOAD_BYTES - 1u,
 		      V92_PCM_INFO1A_PAYLOAD_BITS, &decoded) ==
 		      V92_PCM_INFO1A_INVALID_ARGUMENT &&
-	      selections_equal(&decoded, &saved_decoded) &&
+	      v92_pcm_info1a_equal(&decoded, &saved_decoded) &&
+	      !v92_pcm_info1a_equal(NULL, &valid) &&
+	      !v92_pcm_info1a_equal(&valid, NULL) &&
 	      !v92_pcm_info1a_is_valid(NULL) &&
 	      strcmp(v92_pcm_info1a_result_name(
 		     V92_PCM_INFO1A_INVALID_PAYLOAD), "invalid payload") == 0 &&

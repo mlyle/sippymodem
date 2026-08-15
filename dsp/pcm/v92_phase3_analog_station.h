@@ -83,6 +83,8 @@ struct v92_phase3_analog_station {
 	bool failed;
 };
 
+bool v92_phase3_analog_station_configuration_is_valid(
+	const struct v92_phase3_analog_station_configuration *configuration);
 enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 	struct v92_phase3_analog_station *station,
 	const struct v92_phase3_analog_station_configuration *configuration);

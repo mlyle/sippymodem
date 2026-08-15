@@ -129,6 +129,21 @@ bool v92_phase3_analog_station_has_failed(
 	return v92_phase3_analog_station_is_valid(station) && station->failed;
 }
 
+bool v92_phase3_analog_station_configuration_is_valid(
+	const struct v92_phase3_analog_station_configuration *configuration)
+{
+	return configuration != NULL &&
+	       g711_law_is_valid(configuration->law) &&
+	       configuration->upstream_lu_ucode != 0u &&
+	       configuration->upstream_lu_ucode <= 127u &&
+	       configuration->upstream_rate_mask != 0u &&
+	       v92_pcm_dil_rate_mask_is_valid(
+		       configuration->upstream_rate_mask) &&
+	       v92_pcm_info1a_is_valid(&configuration->local_info1a) &&
+	       v92_cpt_parameters_are_valid(&configuration->cpt) &&
+	       configuration->cpt.law == configuration->law;
+}
+
 enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 	struct v92_phase3_analog_station *station,
 	const struct v92_phase3_analog_station_configuration *configuration)
@@ -136,16 +151,8 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 	struct v92_phase3_analog_station initialized = { 0 };
 	struct v90_pcm_symbol lu;
 
-	if (station == NULL || configuration == NULL ||
-	    !g711_law_is_valid(configuration->law) ||
-	    configuration->upstream_lu_ucode == 0u ||
-	    configuration->upstream_lu_ucode > 127u ||
-	    configuration->upstream_rate_mask == 0u ||
-	    !v92_pcm_dil_rate_mask_is_valid(
-		    configuration->upstream_rate_mask) ||
-	    !v92_pcm_info1a_is_valid(&configuration->local_info1a) ||
-	    !v92_cpt_parameters_are_valid(&configuration->cpt) ||
-	    configuration->cpt.law != configuration->law ||
+	if (station == NULL ||
+	    !v92_phase3_analog_station_configuration_is_valid(configuration) ||
 	    !v90_pcm_symbol_make(
 		    &lu, configuration->law,
 		    configuration->upstream_lu_ucode, true))

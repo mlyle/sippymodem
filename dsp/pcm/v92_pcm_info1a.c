@@ -59,6 +59,22 @@ bool v92_pcm_info1a_is_valid(const struct v92_pcm_info1a *info1a)
 	       info1a->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE;
 }
 
+bool v92_pcm_info1a_equal(
+	const struct v92_pcm_info1a *left,
+	const struct v92_pcm_info1a *right)
+{
+	return v92_pcm_info1a_is_valid(left) &&
+	       v92_pcm_info1a_is_valid(right) &&
+	       left->filter_sections == right->filter_sections &&
+	       left->maximum_total_coefficients ==
+		       right->maximum_total_coefficients &&
+	       left->maximum_section_coefficients ==
+		       right->maximum_section_coefficients &&
+	       left->local_md_length_276_symbol_units ==
+		       right->local_md_length_276_symbol_units &&
+	       left->training_ucode == right->training_ucode;
+}
+
 static uint16_t coefficient_code(uint16_t count, uint16_t minimum)
 {
 	return (uint16_t)(

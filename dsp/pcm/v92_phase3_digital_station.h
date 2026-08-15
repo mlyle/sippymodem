@@ -67,6 +67,10 @@ struct v92_phase3_digital_station {
 	bool failed;
 };
 
+bool v92_phase3_digital_station_parameters_are_valid(
+	enum g711_law law, uint8_t training_ucode,
+	double equalizer_adaptation, uint16_t su_minimum_magnitude,
+	const struct v92_jd *jd, const struct v92_jp *jp);
 enum v92_phase3_digital_station_result v92_phase3_digital_station_init(
 	struct v92_phase3_digital_station *station, enum g711_law law,
 	uint8_t training_ucode, double equalizer_adaptation,

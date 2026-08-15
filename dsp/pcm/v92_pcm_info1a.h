@@ -47,6 +47,9 @@ struct v92_pcm_info1a {
 };
 
 bool v92_pcm_info1a_is_valid(const struct v92_pcm_info1a *info1a);
+bool v92_pcm_info1a_equal(
+	const struct v92_pcm_info1a *left,
+	const struct v92_pcm_info1a *right);
 
 enum v92_pcm_info1a_result v92_pcm_info1a_encode(
 	const struct v92_pcm_info1a *info1a, uint8_t *payload,

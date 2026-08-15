@@ -7,20 +7,6 @@
 
 #include <stddef.h>
 
-static bool pcm_info1a_equal(
-	const struct v92_pcm_info1a *left,
-	const struct v92_pcm_info1a *right)
-{
-	return left->filter_sections == right->filter_sections &&
-	       left->maximum_total_coefficients ==
-		       right->maximum_total_coefficients &&
-	       left->maximum_section_coefficients ==
-		       right->maximum_section_coefficients &&
-	       left->local_md_length_276_symbol_units ==
-		       right->local_md_length_276_symbol_units &&
-	       left->training_ucode == right->training_ucode;
-}
-
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 	const struct pcm_phase3_entry *entry,
 	const struct v92_phase3_analog_station_configuration *configuration,
@@ -37,7 +23,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 	    entry->selection.upstream != PCM_UPSTREAM_PCM)
 		return PCM_PHASE3_ENTRY_INVALID_SELECTION;
 	if (configuration->law != entry->law ||
-	    !pcm_info1a_equal(
+	    !v92_pcm_info1a_equal(
 		    &configuration->local_info1a,
 		    &entry->selection.analog.pcm))
 		return PCM_PHASE3_ENTRY_INVALID_SELECTION;

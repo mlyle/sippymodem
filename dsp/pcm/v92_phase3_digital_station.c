@@ -166,6 +166,21 @@ bool v92_phase3_digital_station_has_failed(
 	return v92_phase3_digital_station_is_valid(station) && station->failed;
 }
 
+bool v92_phase3_digital_station_parameters_are_valid(
+	enum g711_law law, uint8_t training_ucode,
+	double equalizer_adaptation, uint16_t su_minimum_magnitude,
+	const struct v92_jd *jd, const struct v92_jp *jp)
+{
+	return g711_law_is_valid(law) &&
+	       training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
+	       training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
+	       isfinite(equalizer_adaptation) &&
+	       equalizer_adaptation >= 0.0 &&
+	       equalizer_adaptation <= 1.0 &&
+	       su_minimum_magnitude != 0u &&
+	       v92_jd_is_valid(jd) && v92_jp_is_valid(jp);
+}
+
 enum v92_phase3_digital_station_result v92_phase3_digital_station_init(
 	struct v92_phase3_digital_station *station, enum g711_law law,
 	uint8_t training_ucode, double equalizer_adaptation,
@@ -183,13 +198,10 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_init(
 		.training_ucode = training_ucode,
 	};
 
-	if (station == NULL || jd == NULL || jp == NULL ||
-	    !g711_law_is_valid(law) ||
-	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
-	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
-	    !isfinite(equalizer_adaptation) || equalizer_adaptation < 0.0 ||
-	    equalizer_adaptation > 1.0 || su_minimum_magnitude == 0u ||
-	    !v92_jd_is_valid(jd) || !v92_jp_is_valid(jp) ||
+	if (station == NULL ||
+	    !v92_phase3_digital_station_parameters_are_valid(
+		    law, training_ucode, equalizer_adaptation,
+		    su_minimum_magnitude, jd, jp) ||
 	    v92_pcm_phase3_initial_rx_init(
 		    &initialized.receive.initial, equalizer_adaptation) !=
 		    V92_PCM_PHASE3_INITIAL_RX_OK ||
@@ -212,6 +224,22 @@ static uint8_t silence_octet(enum g711_law law)
 {
 	return law == G711_LAW_PCMA ?
 		       g711_encode_pcma(0) : g711_encode_pcmu(0);
+}
+
+static bool begin_ri_if_downstream_complete(
+	struct v92_phase3_digital_station *station)
+{
+	if (station->downstream.stage != PCM_PHASE3_DIGITAL_TX_COMPLETE)
+		return true;
+	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_RI)
+		return true;
+	if (station->transmit_stage != V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM ||
+	    v90_phase4_ri_tx_init(
+		    &station->ri, station->law,
+		    station->training_ucode) != V90_PHASE4_RI_OK)
+		return false;
+	station->transmit_stage = V92_PHASE3_DIGITAL_TRANSMIT_RI;
+	return true;
 }
 
 enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
@@ -238,13 +266,8 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 		    PCM_PHASE3_DIGITAL_TX_OK)
 			goto fail;
 		generated = symbol.octet;
-		if (next.downstream.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE) {
-			if (v90_phase4_ri_tx_init(
-				    &next.ri, next.law,
-				    next.training_ucode) != V90_PHASE4_RI_OK)
-				goto fail;
-			next.transmit_stage = V92_PHASE3_DIGITAL_TRANSMIT_RI;
-		}
+		if (!begin_ri_if_downstream_complete(&next))
+			goto fail;
 	} else {
 		if (v90_phase4_ri_tx_next(&next.ri, &generated) !=
 		    V90_PHASE4_RI_OK)
@@ -392,7 +415,8 @@ static enum v92_phase3_digital_station_result receive_second_trn1u(
 		    v92_pcm_phase3_cpt_line_rx_init(&cpt, &handoff) !=
 			    V92_PCM_PHASE3_CPT_LINE_RX_OK ||
 		    pcm_phase3_digital_tx_finish_scr(&station->downstream) !=
-			    PCM_PHASE3_DIGITAL_TX_OK)
+			    PCM_PHASE3_DIGITAL_TX_OK ||
+		    !begin_ri_if_downstream_complete(station))
 			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 		station->receive =
 			(union v92_phase3_digital_receive){ .cpt = cpt };
