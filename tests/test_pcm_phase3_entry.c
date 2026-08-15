@@ -3,10 +3,13 @@
 #include <pcm_phase3_entry.h>
 #include <v90_phase3_analog_station.h>
 #include <v90_phase3_digital_station.h>
+#include <v92_phase3_analog_station.h>
+#include <v92_phase3_digital_station.h>
 
 #include "test.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 enum {
@@ -140,6 +143,66 @@ static struct v90_jd_parameters jd_parameters(void)
 	};
 }
 
+static void add_ucode(
+	struct pcm_constellation *constellation, uint8_t ucode)
+{
+	constellation->ucode_mask[ucode / 8u] |=
+		(uint8_t)(1u << (ucode % 8u));
+}
+
+static struct v92_cpt_parameters v92_cpt_parameters(enum g711_law law)
+{
+	struct v92_cpt_parameters parameters = {
+		.law = law,
+		.trn1d_ratio_q3_13 = UINT16_C(0x4a35),
+		.shaping_a1_q1_6 = 12,
+		.shaping_a2_q1_6 = -7,
+		.shaping_b1_q1_6 = 3,
+		.shaping_b2_q1_6 = -2,
+		.selected_rate_index = 9,
+		.sign_redundancy = 1,
+		.spectral_lookahead = 2,
+		.constellation_count = 1,
+		.acknowledges_peer = true,
+	};
+
+	add_ucode(&parameters.transmit_constellations[0], 24u);
+	add_ucode(&parameters.transmit_constellations[0], 80u);
+	return parameters;
+}
+
+static struct v92_phase3_analog_station_configuration
+v92_analog_configuration(
+	enum g711_law law, const struct pcm_info1_selection *selection)
+{
+	return (struct v92_phase3_analog_station_configuration){
+		.local_info1a = selection->analog.pcm,
+		.cpt = v92_cpt_parameters(law),
+		.upstream_rate_mask = 1u,
+		.initial_trn1u_symbols =
+			V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS,
+		.law = law,
+		.upstream_lu_ucode = 91u,
+	};
+}
+
+static struct v92_jd v92_jd_parameters(void)
+{
+	return (struct v92_jd){
+		.data_rate_capability_mask = UINT32_C(0x002a1555),
+		.maximum_spectral_shaping_lookahead = 3,
+	};
+}
+
+static struct v92_jp v92_jp_parameters(void)
+{
+	return (struct v92_jp){
+		.training_constellation = V92_CONSTELLATION_8_POINT,
+		.rate_renegotiation_constellation =
+			V92_CONSTELLATION_4_POINT,
+	};
+}
+
 static bool profiles_equal(
 	const struct v34_phase3_profile *left,
 	const struct v34_phase3_profile *right)
@@ -215,7 +278,7 @@ static bool test_generated_entries(void)
 						      PCM_UPSTREAM_V34,
 					      "law %u role %u rate %u carrier %u entry changed",
 					      law_index, role_index,
-					      symbol_rates[rate_index], high);
+					      (unsigned int)symbol_rates[rate_index], high);
 
 					memset(&analog, 0xa5, sizeof(analog));
 					saved_analog = analog;
@@ -451,6 +514,95 @@ static bool test_v90_branch_guards(void)
 	return true;
 }
 
+static bool test_v92_pcm_starts(void)
+{
+	struct pcm_info1_selection selected = pcm_upstream_selection();
+	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
+	struct v92_phase3_analog_station_configuration configuration =
+		v92_analog_configuration(G711_LAW_PCMU, &selected);
+	struct v92_jd jd = v92_jd_parameters();
+	struct v92_jp jp = v92_jp_parameters();
+	struct pcm_phase3_entry analog_entry;
+	struct pcm_phase3_entry digital_entry;
+	struct v92_phase3_analog_station analog;
+	struct v92_phase3_analog_station saved_analog;
+	struct v92_phase3_analog_station untouched_analog;
+	struct v92_phase3_digital_station digital;
+	struct v92_phase3_digital_station saved_digital;
+	struct v92_phase3_digital_station untouched_digital;
+
+	CHECK(pcm_phase3_entry_init(
+		      &analog_entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      &info0, &selected) == PCM_PHASE3_ENTRY_OK &&
+	      pcm_phase3_entry_init(
+		      &digital_entry, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+		      &info0, &selected) == PCM_PHASE3_ENTRY_OK,
+	      "V.92 PCM entries did not initialize");
+	memset(&analog, 0xa5, sizeof(analog));
+	saved_analog = analog;
+	untouched_analog = saved_analog;
+	memset(&digital, 0x5a, sizeof(digital));
+	saved_digital = digital;
+	untouched_digital = saved_digital;
+	CHECK(pcm_phase3_entry_start_v92_analog(
+		      &analog_entry, &configuration, &analog) ==
+		      PCM_PHASE3_ENTRY_OK &&
+	      v92_phase3_analog_station_is_valid(&analog) &&
+	      analog.law == analog_entry.law &&
+	      analog.downstream_training_ucode ==
+		      selected.analog.pcm.training_ucode &&
+	      pcm_phase3_entry_start_v92_analog(
+		      &digital_entry, &configuration, &saved_analog) ==
+		      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
+	      memcmp(&saved_analog, &untouched_analog,
+		     sizeof(saved_analog)) == 0,
+	      "V.92 analogue entry selected the wrong owner");
+	CHECK(pcm_phase3_entry_start_v92_digital(
+		      &digital_entry, 0.0, 256u, &jd, &jp, &digital) ==
+		      PCM_PHASE3_ENTRY_OK &&
+	      v92_phase3_digital_station_is_valid(&digital) &&
+	      digital.law == digital_entry.law &&
+	      digital.training_ucode == selected.analog.pcm.training_ucode &&
+	      pcm_phase3_entry_start_v92_digital(
+		      &analog_entry, 0.0, 256u, &jd, &jp,
+		      &saved_digital) == PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
+	      memcmp(&saved_digital, &untouched_digital,
+		     sizeof(saved_digital)) == 0,
+	      "V.92 digital entry selected the wrong owner");
+
+	memset(&analog, 0xa5, sizeof(analog));
+	saved_analog = analog;
+	memset(&digital, 0x5a, sizeof(digital));
+	saved_digital = digital;
+	configuration.law = G711_LAW_PCMA;
+	CHECK(pcm_phase3_entry_start_v92_analog(
+		      NULL, &configuration, &analog) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_v92_analog(
+		      &analog_entry, NULL, &analog) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_v92_analog(
+		      &analog_entry, &configuration, &analog) ==
+		      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
+	      "invalid V.92 analogue entry changed state");
+	CHECK(pcm_phase3_entry_start_v92_digital(
+		      NULL, 0.0, 256u, &jd, &jp, &digital) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_v92_digital(
+		      &digital_entry, NAN, 256u, &jd, &jp, &digital) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_v92_digital(
+		      &digital_entry, 0.0, 0u, &jd, &jp, &digital) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_v92_digital(
+		      &digital_entry, 0.0, 256u, NULL, &jp, &digital) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
+	      "invalid V.92 digital entry changed state");
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -490,6 +642,7 @@ int main(void)
 		{ "selection rejection", test_selection_rejection },
 		{ "station validation", test_station_validation },
 		{ "V.90 branch guards", test_v90_branch_guards },
+		{ "V.92 PCM station starts", test_v92_pcm_starts },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;

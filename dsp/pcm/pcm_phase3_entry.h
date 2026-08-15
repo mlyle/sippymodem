@@ -15,6 +15,11 @@ struct v90_jd_parameters;
 struct v90_phase3_analog_rx_configuration;
 struct v90_phase3_analog_station;
 struct v90_phase3_digital_station;
+struct v92_phase3_analog_station;
+struct v92_phase3_analog_station_configuration;
+struct v92_phase3_digital_station;
+struct v92_jd;
+struct v92_jp;
 
 enum pcm_phase3_entry_result {
 	PCM_PHASE3_ENTRY_OK,
@@ -66,6 +71,21 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(
 	const struct v90_phase3_analog_rx_configuration *receive_configuration,
 	const struct v90_jd_parameters *jd,
 	struct v90_phase3_digital_station *station);
+
+/* Start the V.92 PCM-upstream children. The analogue configuration supplies
+ * local policy, but its negotiated INFO1a and media law must match entry.
+ * The digital child's law and training code are derived from entry directly.
+ * Rejected calls leave station unchanged. */
+enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
+	const struct pcm_phase3_entry *entry,
+	const struct v92_phase3_analog_station_configuration *configuration,
+	struct v92_phase3_analog_station *station);
+
+enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_digital(
+	const struct pcm_phase3_entry *entry, double equalizer_adaptation,
+	uint16_t su_minimum_magnitude, const struct v92_jd *jd,
+	const struct v92_jp *jp,
+	struct v92_phase3_digital_station *station);
 
 const char *pcm_phase3_entry_result_name(
 	enum pcm_phase3_entry_result result);

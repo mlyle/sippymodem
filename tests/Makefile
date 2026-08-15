@@ -2317,6 +2317,9 @@ PCM_PHASE3_ENTRY_TEST_BINARY := \
 PCM_PHASE3_ENTRY_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_pcm_phase3_entry.o \
 	$(BUILD_DIR)/pcm_phase3_entry.o \
+	$(BUILD_DIR)/v92_phase3_entry.o \
+	$(filter-out $(BUILD_DIR)/test_v92_phase3_digital_station.o, \
+		$(V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_station.o, \
 		$(V90_PHASE3_ANALOG_STATION_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_pcm_phase3_profile.o, \
@@ -5167,6 +5170,10 @@ $(BUILD_DIR)/v90_phase3_digital_station.o: \
 
 $(BUILD_DIR)/pcm_phase3_entry.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_entry.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_phase3_entry.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase3_entry.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_phase3_handoff.o: \
