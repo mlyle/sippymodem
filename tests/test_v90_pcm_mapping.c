@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_pcm_mapping.h>
+#include <v92_cpt.h>
 
 #include "test.h"
 
@@ -183,6 +184,86 @@ static bool test_training_mapping(void)
 		      V90_PCM_MAPPING_OK &&
 	      memcmp(decoded, bits, sizeof(bits)) == 0,
 	      "mixed-radix mapping changed for 0xa55a");
+	return true;
+}
+
+static struct v92_cpt_parameters v92_parameters(
+	const struct v90_cp_parameters *source)
+{
+	struct v92_cpt_parameters parameters = {
+		.law = source->law,
+		.trn1d_ratio_q3_13 = source->trn1d_ratio_q3_13,
+		.shaping_a1_q1_6 = source->shaping_a1_q1_6,
+		.shaping_a2_q1_6 = source->shaping_a2_q1_6,
+		.shaping_b1_q1_6 = source->shaping_b1_q1_6,
+		.shaping_b2_q1_6 = source->shaping_b2_q1_6,
+		.selected_rate_index = source->selected_rate_index,
+		.sign_redundancy = source->sign_redundancy,
+		.spectral_lookahead = source->spectral_lookahead,
+		.constellation_count = source->constellation_count,
+		.acknowledges_peer = true,
+		.codec_constellations_differ =
+			source->codec_constellations_differ,
+	};
+
+	memcpy(parameters.transmit_constellations,
+	       source->transmit_constellations,
+	       sizeof(parameters.transmit_constellations));
+	memcpy(parameters.codec_constellations,
+	       source->codec_constellations,
+	       sizeof(parameters.codec_constellations));
+	memcpy(parameters.frame_constellation, source->frame_constellation,
+	       sizeof(parameters.frame_constellation));
+	return parameters;
+}
+
+static bool test_v92_cpt_mapping(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t rate = 1u; rate <= V92_CPT_RATE_INDEX_MAX; ++rate) {
+			uint8_t constellation_size = rate <= 4u ? 4u :
+						  rate <= 13u ? 8u : 16u;
+			uint8_t sign_redundancy = rate < 4u ?
+				(uint8_t)(4u - rate) :
+				rate > 19u ? (uint8_t)(22u - rate) :
+					     (uint8_t)(rate % 4u);
+			struct v90_cp_parameters source = parameters(
+				V90_CP_TRAINING, rate, sign_redundancy,
+				constellation_size, (rate & 1u) != 0u);
+			struct v92_cpt_parameters cpt;
+			struct v90_pcm_mapping from_v90;
+			struct v90_pcm_mapping from_v92;
+
+			source.law = (enum g711_law)law;
+			cpt = v92_parameters(&source);
+			CHECK(v90_pcm_mapping_init(&from_v90, &source) ==
+				      V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_init_from_v92_cpt(
+				      &from_v92, &cpt) == V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_equal(&from_v90, &from_v92),
+			      "V.92 CPt map differs at law %u rate %u",
+			      law, rate);
+		}
+	}
+	{
+		struct v90_cp_parameters source = parameters(
+			V90_CP_TRAINING, 13u, 1u, 8u, false);
+		struct v92_cpt_parameters invalid = v92_parameters(&source);
+		struct v90_pcm_mapping mapping;
+		struct v90_pcm_mapping before;
+
+		memset(&mapping, 0xa5, sizeof(mapping));
+		before = mapping;
+		invalid.selected_rate_index = 0u;
+		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &invalid) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+		      memcmp(&mapping, &before, sizeof(mapping)) == 0 &&
+		      v90_pcm_mapping_init_from_v92_cpt(NULL, &invalid) ==
+			      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+		      v90_pcm_mapping_init_from_v92_cpt(&mapping, NULL) ==
+			      V90_PCM_MAPPING_INVALID_ARGUMENT,
+		      "rejected V.92 CPt changed the mapping");
+	}
 	return true;
 }
 
@@ -580,6 +661,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "training mapping", test_training_mapping },
+		{ "V.92 CPt mapping", test_v92_cpt_mapping },
 		{ "generated inverse mapping",
 		  test_generated_inverse_mapping },
 		{ "inverse rate boundaries",

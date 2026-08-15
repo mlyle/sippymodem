@@ -2,6 +2,8 @@
 
 #include "v90_pcm_mapping.h"
 
+#include "v92_cpt.h"
+
 #include <string.h>
 
 enum {
@@ -200,6 +202,40 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	*mapping = initialized;
 	return V90_PCM_MAPPING_OK;
+}
+
+enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
+	struct v90_pcm_mapping *mapping,
+	const struct v92_cpt_parameters *parameters)
+{
+	struct v90_cp_parameters common = { 0 };
+
+	if (mapping == NULL || parameters == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	common = (struct v90_cp_parameters){
+		.kind = V90_CP_TRAINING,
+		.law = parameters->law,
+		.trn1d_ratio_q3_13 = parameters->trn1d_ratio_q3_13,
+		.shaping_a1_q1_6 = parameters->shaping_a1_q1_6,
+		.shaping_a2_q1_6 = parameters->shaping_a2_q1_6,
+		.shaping_b1_q1_6 = parameters->shaping_b1_q1_6,
+		.shaping_b2_q1_6 = parameters->shaping_b2_q1_6,
+		.selected_rate_index = parameters->selected_rate_index,
+		.sign_redundancy = parameters->sign_redundancy,
+		.spectral_lookahead = parameters->spectral_lookahead,
+		.constellation_count = parameters->constellation_count,
+		.codec_constellations_differ =
+			parameters->codec_constellations_differ,
+	};
+	memcpy(common.transmit_constellations,
+	       parameters->transmit_constellations,
+	       sizeof(common.transmit_constellations));
+	memcpy(common.codec_constellations,
+	       parameters->codec_constellations,
+	       sizeof(common.codec_constellations));
+	memcpy(common.frame_constellation, parameters->frame_constellation,
+	       sizeof(common.frame_constellation));
+	return v90_pcm_mapping_init(mapping, &common);
 }
 
 enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(

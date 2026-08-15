@@ -9,6 +9,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+struct v92_cpt_parameters;
+
 enum {
 	V90_PCM_FRAME_MAX_BITS = 42,
 };
@@ -51,6 +53,12 @@ struct v90_pcm_mapping {
 enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters);
+
+/* Derive the shared Phase 4 training map from the common fields carried by
+ * V.92 CPt. Rejected calls leave mapping unchanged. */
+enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
+	struct v90_pcm_mapping *mapping,
+	const struct v92_cpt_parameters *parameters);
 bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping);
 bool v90_pcm_mapping_equal(
 	const struct v90_pcm_mapping *left,
