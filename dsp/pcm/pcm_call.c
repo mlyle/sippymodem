@@ -409,7 +409,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct v90_phase3_analog_station station;
 
-		result = pcm_phase3_entry_start_analog(
+		result = pcm_phase3_entry_start_v90_analog(
 			&entry,
 			call->phase3_configuration.analog
 				.nominal_peak_amplitude,
@@ -420,7 +420,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 	} else {
 		struct v90_phase3_digital_station station;
 
-		result = pcm_phase3_entry_start_digital(
+		result = pcm_phase3_entry_start_v90_digital(
 			&entry,
 			&call->phase3_configuration.digital.receive,
 			&call->phase3_configuration.digital.jd,

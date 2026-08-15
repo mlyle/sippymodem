@@ -42,16 +42,17 @@ static struct v34_info1c digital_info1(void)
 	return info1;
 }
 
-static struct pcm_info1_selection selection(
-	enum v34_symbol_rate symbol_rate, bool high_carrier)
+static struct pcm_info1_selection conventional_selection(
+	enum pcm_protocol protocol, enum v34_symbol_rate symbol_rate,
+	bool high_carrier)
 {
 	struct v34_info1c digital = digital_info1();
 	struct pcm_info1_selection selected = {
 		.startup = {
-			.protocol = PCM_PROTOCOL_V90,
+			.protocol = protocol,
 			.phase2 = PCM_PHASE2_FULL,
 		},
-		.digital = { .protocol = PCM_PROTOCOL_V90 },
+		.digital = { .protocol = protocol },
 		.analog.conventional = {
 			.local_md_length_35_ms_units = 7,
 			.training_ucode = 91,
@@ -62,8 +63,45 @@ static struct pcm_info1_selection selection(
 	};
 
 	digital.answer_transmit[symbol_rate].high_carrier = high_carrier;
-	selected.digital.record.v90 = digital;
+	if (protocol == PCM_PROTOCOL_V90) {
+		selected.digital.record.v90 = digital;
+	} else {
+		/* V.92 owns the otherwise-unused 3429-symbol/s carrier bit. */
+		digital.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
+		selected.digital.record.v92 = (struct v92_info1d){
+			.v34 = digital,
+			.pcm_upstream_supported = true,
+		};
+	}
 	return selected;
+}
+
+static struct pcm_info1_selection pcm_upstream_selection(void)
+{
+	struct v34_info1c digital = digital_info1();
+
+	digital.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
+	return (struct pcm_info1_selection){
+		.startup = {
+			.protocol = PCM_PROTOCOL_V92,
+			.phase2 = PCM_PHASE2_FULL,
+		},
+		.digital = {
+			.record.v92 = {
+				.v34 = digital,
+				.pcm_upstream_supported = true,
+			},
+			.protocol = PCM_PROTOCOL_V92,
+		},
+		.analog.pcm = {
+			.filter_sections = V92_PCM_FILTER_Z1_P1_Z2,
+			.maximum_total_coefficients = 320,
+			.maximum_section_coefficients = 192,
+			.local_md_length_276_symbol_units = 7,
+			.training_ucode = 91,
+		},
+		.upstream = PCM_UPSTREAM_PCM,
+	};
 }
 
 static struct v90_info0d digital_info0(enum g711_law law)
@@ -144,8 +182,10 @@ static bool test_generated_entries(void)
 			for (size_t rate_index = 0;
 			     rate_index < ARRAY_LENGTH(symbol_rates); ++rate_index) {
 				for (unsigned int high = 0; high < 2; ++high) {
-					struct pcm_info1_selection selected = selection(
-						symbol_rates[rate_index], high != 0);
+					struct pcm_info1_selection selected =
+						conventional_selection(
+							PCM_PROTOCOL_V90,
+							symbol_rates[rate_index], high != 0);
 					struct v34_phase3_profile expected;
 					struct pcm_phase3_entry entry;
 					struct v90_phase3_analog_station analog;
@@ -164,12 +204,15 @@ static bool test_generated_entries(void)
 						      &selected) == PCM_PHASE3_ENTRY_OK &&
 					      pcm_phase3_entry_is_valid(&entry) &&
 					      profiles_equal(
-						      &entry.analog_profile, &expected) &&
-					      entry.law == law &&
-					      entry.local_role == role &&
-					      entry.training_ucode ==
-						      selected.analog.conventional
-							      .training_ucode,
+						      &entry.conventional_profile,
+						      &expected) &&
+					      entry.law == law && entry.local_role == role &&
+					      entry.selection.startup.protocol ==
+						      PCM_PROTOCOL_V90 &&
+					      entry.selection.startup.phase2 ==
+						      PCM_PHASE2_FULL &&
+					      entry.selection.upstream ==
+						      PCM_UPSTREAM_V34,
 					      "law %u role %u rate %u carrier %u entry changed",
 					      law_index, role_index,
 					      symbol_rates[rate_index], high);
@@ -179,12 +222,12 @@ static bool test_generated_entries(void)
 					memset(&digital, 0x5a, sizeof(digital));
 					saved_digital = digital;
 					if (role == V90_ANALOG_MODEM) {
-						CHECK(pcm_phase3_entry_start_analog(
+						CHECK(pcm_phase3_entry_start_v90_analog(
 							      &entry, NOMINAL_AMPLITUDE,
 							      &analog) == PCM_PHASE3_ENTRY_OK &&
 						      v90_phase3_analog_station_is_valid(
 							      &analog) &&
-						      pcm_phase3_entry_start_digital(
+						      pcm_phase3_entry_start_v90_digital(
 							      &entry, &configuration, &jd,
 							      &digital) ==
 							      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
@@ -192,12 +235,12 @@ static bool test_generated_entries(void)
 							     sizeof(digital)) == 0,
 						      "analogue entry selected the wrong owner");
 					} else {
-						CHECK(pcm_phase3_entry_start_digital(
+						CHECK(pcm_phase3_entry_start_v90_digital(
 							      &entry, &configuration, &jd,
 							      &digital) == PCM_PHASE3_ENTRY_OK &&
 						      v90_phase3_digital_station_is_valid(
 							      &digital) &&
-						      pcm_phase3_entry_start_analog(
+						      pcm_phase3_entry_start_v90_analog(
 							      &entry, NOMINAL_AMPLITUDE,
 							      &analog) ==
 							      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
@@ -214,12 +257,11 @@ static bool test_generated_entries(void)
 
 static bool test_selection_rejection(void)
 {
-	struct pcm_info1_selection selected = selection(
-		V34_SYMBOL_RATE_3200, true);
+	struct pcm_info1_selection selected = conventional_selection(
+		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3200, true);
 	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
 	struct pcm_phase3_entry entry;
 	struct pcm_phase3_entry saved;
-	struct v34_info1c common;
 
 	memset(&entry, 0xa5, sizeof(entry));
 	saved = entry;
@@ -246,24 +288,18 @@ static bool test_selection_rejection(void)
 		      &info0, &selected) == PCM_PHASE3_ENTRY_MEDIA_MISMATCH &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
 	      "media-law mismatch changed the entry");
-	common = selected.digital.record.v90;
-	/* V.92 assigns the otherwise unused 3429-symbol/s carrier bit to its
-	 * PCM-upstream capability. */
-	common.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
-	selected.startup.protocol = PCM_PROTOCOL_V92;
-	selected.digital.protocol = PCM_PROTOCOL_V92;
-	selected.digital.record.v92 = (struct v92_info1d){
-		.v34 = common,
-		.pcm_upstream_supported = true,
-	};
+	selected = conventional_selection(
+		PCM_PROTOCOL_V92, V34_SYMBOL_RATE_3200, true);
+	selected.startup.phase2 = PCM_PHASE2_SHORT;
 	CHECK(pcm_info1_selection_is_valid(&selected) &&
 	      pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
 		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
-	      "V.92 selection entered the V.90 owner");
+	      "unimplemented short Phase 2 entered Phase 3");
 
-	selected = selection(V34_SYMBOL_RATE_3200, true);
+	selected = conventional_selection(
+		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3200, true);
 	selected.digital.record.v90
 		.answer_transmit[V34_SYMBOL_RATE_3200]
 		.projected_data_rate_2400_bps_units = 0;
@@ -286,8 +322,8 @@ static bool test_selection_rejection(void)
 
 static bool test_station_validation(void)
 {
-	struct pcm_info1_selection selected = selection(
-		V34_SYMBOL_RATE_3000, false);
+	struct pcm_info1_selection selected = conventional_selection(
+		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3000, false);
 	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
 	struct v90_phase3_analog_rx_configuration configuration =
 		receive_configuration();
@@ -310,42 +346,108 @@ static bool test_station_validation(void)
 	saved_analog = analog;
 	memset(&digital, 0x5a, sizeof(digital));
 	saved_digital = digital;
-	CHECK(pcm_phase3_entry_start_analog(
+	CHECK(pcm_phase3_entry_start_v90_analog(
 		      NULL, NOMINAL_AMPLITUDE, &analog) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      pcm_phase3_entry_start_analog(
+	      pcm_phase3_entry_start_v90_analog(
 		      &analog_entry, 0, &analog) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      pcm_phase3_entry_start_analog(
+	      pcm_phase3_entry_start_v90_analog(
 		      &analog_entry, NOMINAL_AMPLITUDE, NULL) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      pcm_phase3_entry_start_analog(
+	      pcm_phase3_entry_start_v90_analog(
 		      &analog_entry, INT16_MAX, &analog) ==
 		      PCM_PHASE3_ENTRY_CLIPPING_RISK &&
 	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
 	      "invalid or clipping analogue start changed state");
-	CHECK(pcm_phase3_entry_start_digital(
+	CHECK(pcm_phase3_entry_start_v90_digital(
 		      NULL, &configuration, &jd, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      pcm_phase3_entry_start_digital(
+	      pcm_phase3_entry_start_v90_digital(
 		      &digital_entry, NULL, &jd, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      pcm_phase3_entry_start_digital(
+	      pcm_phase3_entry_start_v90_digital(
 		      &digital_entry, &configuration, NULL, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      pcm_phase3_entry_start_digital(
+	      pcm_phase3_entry_start_v90_digital(
 		      &digital_entry, &configuration, &jd, NULL) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
 	      "invalid digital start changed state");
-	analog_entry.analog_profile.md_length_35_ms_units = 1;
-	analog_entry.analog_profile.md_symbol_count = 105;
-	CHECK(v34_phase3_profile_is_valid(&analog_entry.analog_profile) &&
+	analog_entry.conventional_profile.md_length_35_ms_units = 1;
+	analog_entry.conventional_profile.md_symbol_count = 105;
+	CHECK(v34_phase3_profile_is_valid(&analog_entry.conventional_profile) &&
 	      !pcm_phase3_entry_is_valid(&analog_entry) &&
-	      pcm_phase3_entry_start_analog(
+	      pcm_phase3_entry_start_v90_analog(
 		      &analog_entry, NOMINAL_AMPLITUDE, &analog) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT,
 	      "entry accepted a conventional MD interval");
+	return true;
+}
+
+static bool test_v90_branch_guards(void)
+{
+	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
+	struct v90_phase3_analog_rx_configuration configuration =
+		receive_configuration();
+	struct v90_jd_parameters jd = jd_parameters();
+
+	for (unsigned int upstream_index = PCM_UPSTREAM_V34;
+	     upstream_index <= PCM_UPSTREAM_PCM; ++upstream_index) {
+		struct pcm_info1_selection selected =
+			upstream_index == PCM_UPSTREAM_V34 ?
+				conventional_selection(
+					PCM_PROTOCOL_V92,
+					V34_SYMBOL_RATE_3200, true) :
+				pcm_upstream_selection();
+
+		for (unsigned int role_index = V90_ANALOG_MODEM;
+		     role_index <= V90_DIGITAL_MODEM; ++role_index) {
+			enum v90_modem_role role =
+				(enum v90_modem_role)role_index;
+			struct pcm_phase3_entry entry;
+			struct v90_phase3_analog_station analog;
+			struct v90_phase3_analog_station saved_analog;
+			struct v90_phase3_digital_station digital;
+			struct v90_phase3_digital_station saved_digital;
+
+			CHECK(pcm_phase3_entry_init(
+				      &entry, role, G711_LAW_PCMU,
+				      &info0, &selected) == PCM_PHASE3_ENTRY_OK &&
+			      pcm_phase3_entry_is_valid(&entry) &&
+			      entry.selection.startup.protocol == PCM_PROTOCOL_V92 &&
+			      entry.selection.upstream ==
+				      (enum pcm_upstream_mode)upstream_index &&
+			      (upstream_index != PCM_UPSTREAM_PCM ||
+			       entry.selection.analog.pcm.maximum_total_coefficients ==
+				       selected.analog.pcm.maximum_total_coefficients),
+			      "V.92 upstream %u role %u entry changed",
+			      upstream_index, role_index);
+			memset(&analog, 0xa5, sizeof(analog));
+			saved_analog = analog;
+			memset(&digital, 0x5a, sizeof(digital));
+			saved_digital = digital;
+			if (role == V90_ANALOG_MODEM) {
+				CHECK(pcm_phase3_entry_start_v90_analog(
+					      &entry, NOMINAL_AMPLITUDE,
+					      &analog) ==
+					      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+				      memcmp(&analog, &saved_analog,
+					     sizeof(analog)) == 0,
+				      "V.92 upstream %u entered the V.90 analogue branch",
+				      upstream_index);
+			} else {
+				CHECK(pcm_phase3_entry_start_v90_digital(
+					      &entry, &configuration, &jd,
+					      &digital) ==
+					      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+				      memcmp(&digital, &saved_digital,
+					     sizeof(digital)) == 0,
+				      "V.92 upstream %u entered the V.90 digital branch",
+				      upstream_index);
+			}
+		}
+	}
 	return true;
 }
 
@@ -387,6 +489,7 @@ int main(void)
 		{ "generated role and media entries", test_generated_entries },
 		{ "selection rejection", test_selection_rejection },
 		{ "station validation", test_station_validation },
+		{ "V.90 branch guards", test_v90_branch_guards },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;

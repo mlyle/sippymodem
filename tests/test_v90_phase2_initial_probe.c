@@ -841,7 +841,7 @@ static bool check_phase2_controller(
 	      memcmp(
 		      &untouched_measurement, &untouched_before,
 		      sizeof(untouched_measurement)) == 0,
-	      "premature V.90 probe access mutated its destination");
+	      "premature PCM probe access mutated its destination");
 	memset(&untouched_selection, 0xa5, sizeof(untouched_selection));
 	untouched_selection_before = untouched_selection;
 	CHECK(pcm_phase2_info1_handoff(
@@ -854,7 +854,7 @@ static bool check_phase2_controller(
 		      PCM_INFO1_INVALID_ARGUMENT &&
 	      pcm_phase2_info1_handoff(&analog, NULL) ==
 		      PCM_INFO1_INVALID_ARGUMENT,
-	      "rejected V.90 INFO1 handoff mutated its destination");
+	      "rejected PCM INFO1 handoff mutated its destination");
 	memset(&untouched_entry, 0xa5, sizeof(untouched_entry));
 	untouched_entry_before = untouched_entry;
 	CHECK(pcm_phase3_entry_from_phase2(
@@ -865,7 +865,7 @@ static bool check_phase2_controller(
 	      memcmp(
 		      &untouched_entry, &untouched_entry_before,
 		      sizeof(untouched_entry)) == 0,
-	      "premature V.90 Phase 3 entry mutated its destination");
+	      "premature PCM Phase 3 entry mutated its destination");
 	for (size_t index = 0; index < 4u * TEST_SAMPLE_LIMIT; ++index) {
 		struct pcm_phase2_event analog_event;
 		struct pcm_phase2_event digital_event;
@@ -1082,37 +1082,42 @@ static bool check_phase2_controller(
 		struct pcm_phase3_entry digital_entry;
 		enum g711_law law = codec == TEST_CODEC_PCMU ?
 					    G711_LAW_PCMU : G711_LAW_PCMA;
+		bool parameters_match;
 
-		if (mode == TEST_INFO1_V90) {
-			CHECK(pcm_phase3_entry_from_phase2(
-				      &analog_entry, &analog, law) ==
-				      PCM_PHASE3_ENTRY_OK &&
-			      pcm_phase3_entry_from_phase2(
-				      &digital_entry, &digital, law) ==
-				      PCM_PHASE3_ENTRY_OK &&
-			      pcm_phase3_entry_is_valid(&analog_entry) &&
-			      pcm_phase3_entry_is_valid(&digital_entry) &&
-			      analog_entry.local_role == V90_ANALOG_MODEM &&
-			      digital_entry.local_role == V90_DIGITAL_MODEM &&
-			      analog_entry.law == law && digital_entry.law == law &&
-			      analog_entry.training_ucode ==
-				      conventional_info1a.training_ucode &&
-			      digital_entry.training_ucode ==
-				      conventional_info1a.training_ucode &&
-			      analog_entry.analog_profile.symbol_rate ==
-				      conventional_info1a.upstream_symbol_rate &&
-			      digital_entry.analog_profile.symbol_rate ==
-				      conventional_info1a.upstream_symbol_rate,
-			      "V.90 Phase 2 did not form matching Phase 3 entries");
-		} else {
-			CHECK(pcm_phase3_entry_from_phase2(
-				      &analog_entry, &analog, law) ==
-				      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
-			      pcm_phase3_entry_from_phase2(
-				      &digital_entry, &digital, law) ==
-				      PCM_PHASE3_ENTRY_INVALID_SELECTION,
-			      "V.92 mode %d entered the nailed V.90 Phase 3", mode);
-		}
+		CHECK(pcm_phase3_entry_from_phase2(
+			      &analog_entry, &analog, law) ==
+			      PCM_PHASE3_ENTRY_OK &&
+		      pcm_phase3_entry_from_phase2(
+			      &digital_entry, &digital, law) ==
+			      PCM_PHASE3_ENTRY_OK &&
+		      pcm_phase3_entry_is_valid(&analog_entry) &&
+		      pcm_phase3_entry_is_valid(&digital_entry),
+		      "PCM Phase 2 mode %d did not form Phase 3 entries", mode);
+		parameters_match = upstream == PCM_UPSTREAM_PCM ?
+			pcm_info1a_equal(
+				&analog_entry.selection.analog.pcm,
+				&pcm_info1a) &&
+				pcm_info1a_equal(
+					&digital_entry.selection.analog.pcm,
+					&pcm_info1a) :
+			analog_entry.selection.analog.conventional.training_ucode ==
+				conventional_info1a.training_ucode &&
+				digital_entry.selection.analog.conventional
+					.training_ucode ==
+					conventional_info1a.training_ucode &&
+				analog_entry.conventional_profile.symbol_rate ==
+					conventional_info1a.upstream_symbol_rate &&
+				digital_entry.conventional_profile.symbol_rate ==
+					conventional_info1a.upstream_symbol_rate;
+		CHECK(analog_entry.local_role == V90_ANALOG_MODEM &&
+		      digital_entry.local_role == V90_DIGITAL_MODEM &&
+		      analog_entry.law == law && digital_entry.law == law &&
+		      analog_entry.selection.startup.protocol == protocol &&
+		      digital_entry.selection.startup.protocol == protocol &&
+		      analog_entry.selection.upstream == upstream &&
+		      digital_entry.selection.upstream == upstream &&
+		      parameters_match,
+		      "PCM Phase 3 entry lost mode %d branch selection", mode);
 	}
 	{
 		struct pcm_phase2_event event = {
