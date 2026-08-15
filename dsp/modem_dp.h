@@ -70,6 +70,8 @@ struct dp_operations {
 			     const u8 *receive_codewords, void *receive_samples,
 			     u8 *transmit_codewords, void *transmit_samples,
 			     int cnt, bool *exact_output);
+	/* Start an in-band retrain without releasing the data-link state. */
+	int (*retrain)(struct dp *);
 	int (*hangup)(struct dp *);
 };
 

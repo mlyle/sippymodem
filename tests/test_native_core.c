@@ -157,6 +157,140 @@ static int unused_dp_process(
 
 static struct {
 	struct dp datapump;
+	unsigned int retrain_calls;
+	int retrain_result;
+	int process_result;
+} retrain_dp;
+
+static struct dp *create_retrain_dp(
+	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
+	int max_fragment, struct dp_operations *operations)
+{
+	if (modem == NULL || id != DP_CALLPROG || caller != 1 ||
+	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
+	    operations == NULL || operations->use_count != 0)
+		return NULL;
+	retrain_dp.datapump = (struct dp){
+		.id = id,
+		.modem = modem,
+		.status = DPSTAT_CONNECT,
+		.op = operations,
+	};
+	operations->use_count++;
+	return &retrain_dp.datapump;
+}
+
+static int delete_retrain_dp(struct dp *datapump)
+{
+	if (datapump != &retrain_dp.datapump || datapump->op == NULL ||
+	    datapump->op->use_count != 1)
+		return -1;
+	datapump->op->use_count--;
+	memset(&retrain_dp.datapump, 0, sizeof(retrain_dp.datapump));
+	return 0;
+}
+
+static int process_retrain_dp(
+	struct dp *datapump, void *receive, void *transmit, int count)
+{
+	(void)receive;
+	if (datapump != &retrain_dp.datapump || transmit == NULL || count <= 0)
+		return DPSTAT_ERROR;
+	memset(transmit, 0, (size_t)count * sizeof(int16_t));
+	datapump->status = (unsigned int)retrain_dp.process_result;
+	return retrain_dp.process_result;
+}
+
+static int request_retrain_dp(struct dp *datapump)
+{
+	if (datapump != &retrain_dp.datapump)
+		return -1;
+	retrain_dp.retrain_calls++;
+	if (retrain_dp.retrain_result == 0)
+		datapump->status = DPSTAT_OK;
+	return retrain_dp.retrain_result;
+}
+
+static bool test_ato1_waits_for_datapump_retrain(void)
+{
+	enum {
+		TEST_STATE_MODEM_ONLINE = 5,
+		TEST_STATE_COMMAND_ONLINE = 6,
+	};
+	struct modem_driver driver = {
+		.name = "ATO1 lifecycle test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct dp_operations operations = {
+		.name = "ATO1 lifecycle test",
+		.create = create_retrain_dp,
+		.delete = delete_retrain_dp,
+		.process = process_retrain_dp,
+	};
+	int16_t receive[MODEM_FRAG] = { 0 };
+	int16_t transmit[MODEM_FRAG];
+	struct modem *modem;
+	char unsupported[] = "ATO1";
+	char invalid[] = "ATO2";
+	char retrain[] = "ATO1";
+	char resume[] = "ATO0";
+
+	memset(&retrain_dp, 0, sizeof(retrain_dp));
+	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
+	      "ATO1 test data pump did not register");
+	modem = modem_create(&driver, "ATO1 lifecycle test");
+	CHECK(modem != NULL && modem_dial(modem) == 0,
+	      "ATO1 test call did not start");
+	modem->state = TEST_STATE_COMMAND_ONLINE;
+	modem->command = 1;
+	CHECK(process_at_command(modem, unsupported) == -1 &&
+		      modem->state == TEST_STATE_COMMAND_ONLINE &&
+		      modem->command == 1 && modem->retrain_pending == 0 &&
+		      retrain_dp.retrain_calls == 0,
+	      "ATO1 without data-pump support changed the link");
+	operations.retrain = request_retrain_dp;
+	retrain_dp.retrain_result = -1;
+	CHECK(process_at_command(modem, retrain) == -1 &&
+		      modem->state == TEST_STATE_COMMAND_ONLINE &&
+		      modem->command == 1 && modem->retrain_pending == 0 &&
+		      retrain_dp.retrain_calls == 1,
+	      "rejected ATO1 was not transactional");
+	CHECK(process_at_command(modem, invalid) == -1 &&
+		      retrain_dp.retrain_calls == 1 &&
+		      modem->state == TEST_STATE_COMMAND_ONLINE,
+	      "invalid ATO mode reached the data pump");
+	retrain_dp.retrain_result = 0;
+	retrain_dp.process_result = DPSTAT_CONNECT;
+	CHECK(process_at_command(modem, retrain) == 1 &&
+		      retrain_dp.retrain_calls == 2 &&
+		      modem->state == TEST_STATE_MODEM_ONLINE &&
+		      modem->command == 0 && modem->retrain_pending == 1 &&
+		      retrain_dp.datapump.status == DPSTAT_OK,
+	      "accepted ATO1 reported completion before retraining");
+	modem_process(modem, receive, transmit, MODEM_FRAG);
+	CHECK(modem->state == TEST_STATE_MODEM_ONLINE &&
+		      modem->retrain_pending == 0 &&
+		      retrain_dp.datapump.status == DPSTAT_CONNECT,
+	      "data-pump CONNECT did not complete ATO1");
+	modem->state = TEST_STATE_COMMAND_ONLINE;
+	modem->command = 1;
+	CHECK(process_at_command(modem, resume) == 1 &&
+		      retrain_dp.retrain_calls == 2 &&
+		      modem->state == TEST_STATE_MODEM_ONLINE &&
+		      modem->retrain_pending == 0,
+	      "ATO0 incorrectly invoked retraining");
+	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
+	      "ATO1 test data pump did not stop");
+	modem_delete(modem);
+	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
+	      "ATO1 test data pump did not deregister");
+	return true;
+}
+
+static struct {
+	struct dp datapump;
 	const uint8_t *codewords;
 	enum g711_law law;
 	unsigned int linear_calls;
@@ -1629,6 +1763,8 @@ int main(void)
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
 		{ "G.711 data-pump input", test_g711_datapump_input },
+		{ "truthful ATO1 lifecycle",
+		  test_ato1_waits_for_datapump_retrain },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },

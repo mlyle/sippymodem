@@ -481,6 +481,7 @@ static int run_pending_modem_stop(struct modem *m)
 static void modem_hup(struct modem *m, unsigned local)
 {
 	MODEM_DBG("modem_hup...\n");
+	m->retrain_pending = 0;
 	switch(m->state) {
 	case STATE_MODEM_IDLE:
 		return;
@@ -587,6 +588,12 @@ void modem_update_status(struct modem *m, unsigned status)
 		modem_report_result(m,RESULT_CONNECT); // fixme
 		if(SPEAKER_CONTROL(m) == 1)
 			m->driver.ioctl(m,MDMCTL_SPEAKERVOL,0);
+		break;
+	case STATUS_RETRAIN_COMPLETE:
+		if (!m->retrain_pending || !IS_STATE_ONLINE(m->state))
+			break;
+		m->retrain_pending = 0;
+		modem_report_result(m, RESULT_CONNECT);
 		break;
 	case STATUS_EC_RELEASE:
 	case STATUS_EC_ERROR:
@@ -739,7 +746,9 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		case DPSTAT_OK:
 			break;
 		case DPSTAT_CONNECT:
-			if(!IS_STATE_LINKED(m->state) &&
+			if (m->retrain_pending && IS_STATE_ONLINE(m->state)) {
+				modem_update_status(m, STATUS_RETRAIN_COMPLETE);
+			} else if(!IS_STATE_LINKED(m->state) &&
 			   !IS_STATE_DISC(m->state)) {
 				modem_update_status(m,STATUS_DP_LINK);
 			}
@@ -1291,6 +1300,7 @@ static int modem_start (struct modem *m)
 		return -1;
 
 	m->result_code = 0;
+	m->retrain_pending = 0;
 	modem_setup_config(m);
         modem_set_state(m, STATE_ESTAB);
 
@@ -1337,6 +1347,7 @@ static int modem_stop (struct modem *m)
         MODEM_DBG("modem_stop..\n");
 
 	m->process = NULL;
+	m->retrain_pending = 0;
 
 	if(m->started) {
 		ret = m->driver.stop(m);
@@ -1803,14 +1814,23 @@ int modem_hook(struct modem *m, unsigned hook_state)
         return modem_set_hook(m,hook_state);
 }
 
-int modem_online(struct modem *m)
+int modem_online(struct modem *m, int retrain)
 {
 	MODEM_DBG("modem online...\n");
-        if (m->state != STATE_COMMAND_ONLINE)
+	if (m == NULL || (retrain != 0 && retrain != 1) ||
+	    m->state != STATE_COMMAND_ONLINE)
                 return -1;
+	if (retrain != 0) {
+		if (m->dp == NULL || m->dp->op == NULL ||
+		    m->dp->op->retrain == NULL ||
+		    m->dp->op->retrain(m->dp) != 0)
+			return -1;
+		m->retrain_pending = 1;
+	}
 	m->command = 0;
         modem_set_state(m, STATE_MODEM_ONLINE);
-	modem_report_result(m,RESULT_CONNECT); // fixme
+	if (retrain == 0)
+		modem_report_result(m,RESULT_CONNECT); // fixme
         return 0;
 }
 

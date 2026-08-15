@@ -78,6 +78,7 @@ enum MODEM_MODE {
 #define STATUS_EC_LINK    0x1000 // 17
 #define STATUS_EC_RELEASE 0x2000 // 18
 #define STATUS_EC_ERROR   0x4000 // 19
+#define STATUS_RETRAIN_COMPLETE 0x8000
 
 enum modem_ec_compression {
 	MODEM_EC_COMPRESSION_NONE = 0,
@@ -283,6 +284,7 @@ struct modem {
         unsigned state;
 	unsigned started;
 	unsigned command;
+	unsigned retrain_pending;
 	unsigned result_code;
         unsigned hook;
         unsigned caller;
@@ -443,6 +445,7 @@ extern int modem_write(struct modem *m, const char *buf, int n);
 extern void modem_hangup(struct modem *m);
 extern int modem_stop_now(struct modem *m);
 extern int modem_answer(struct modem *m);
+extern int modem_online(struct modem *m, int retrain);
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);

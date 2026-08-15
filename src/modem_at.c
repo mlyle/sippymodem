@@ -95,7 +95,6 @@ extern int  modem_send_to_tty(struct modem *m, const char *buf, int n);
 extern int  modem_answer(struct modem *m);
 extern int  modem_dial(struct modem *m);
 extern int  modem_hook(struct modem *m,unsigned hook_state);
-extern int  modem_online(struct modem *m);
 extern int  modem_reset(struct modem *m);
 extern void modem_update_speaker(struct modem *m);
 extern int  modem_homolog_init(struct modem *m, int id, const char *name);
@@ -390,10 +389,18 @@ static int process_I(struct modem *m, char *p, int *len)
 
 static int process_O(struct modem *m, char *p, int *len)
 {
-	int ret;
+	int retrain = 0;
+
 	AT_DBG("AT O command...\n");
-	ret = modem_online(m);
-	if (ret)
+	if (isdigit(*p)) {
+		if (*p != '0' && *p != '1')
+			return -1;
+		retrain = *p - '0';
+		*len = 1;
+	} else {
+		*len = 0;
+	}
+	if (modem_online(m, retrain) != 0)
 		return -1;
 	return 1;
 }
