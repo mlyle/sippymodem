@@ -17,6 +17,13 @@ struct v90_downstream_selection {
 	uint8_t selected_rate_index;
 };
 
+/* Zero fields select the generated conventional-upstream defaults. */
+struct v90_upstream_policy {
+	unsigned int minimum_bit_rate;
+	unsigned int maximum_bit_rate;
+	unsigned int maximum_symbol_rate;
+};
+
 enum v90_profile_result {
 	V90_PROFILE_OK,
 	V90_PROFILE_INVALID_ARGUMENT,
@@ -39,7 +46,8 @@ enum v90_profile_result v90_profile_select_downstream(
 enum v90_profile_result v90_profile_init(
 	struct pcm_call_configuration *configuration,
 	enum v90_modem_role role, enum g711_law law,
-	unsigned int minimum_rate, unsigned int maximum_rate);
+	unsigned int minimum_rate, unsigned int maximum_rate,
+	const struct v90_upstream_policy *upstream);
 
 const char *v90_profile_result_name(enum v90_profile_result result);
 

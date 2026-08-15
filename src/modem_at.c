@@ -51,14 +51,14 @@
  *	AT&: C D E F H P R S F W
  *	AT\: A N
  * 	AT%: C E
- * 	AT+: DS MS V34B FCLASS GCI GMI GMM GMR
+ * 	AT+: DS DSC MS V34B V90D V90U V92Q V92U FCLASS GCI GMI GMM GMR
  *      AT#: CID
  *	
  ********************************************************************
  *
  * 	2. Not implemented yet:
  *
- * 	AT+: DSC DS44 DR
+ * 	AT+: DS44 DR
  *           FAE FTS FRS FTM FRM FRH FTH
  * 	AT&: A K V Z
  * 	AT\: B K
@@ -77,6 +77,7 @@
 
 #include <modem.h>
 #include <modem_debug.h>
+#include <modem_param.h>
 
 #define AT_DBG(fmt...) // dprintf("at: " fmt)
 
@@ -131,19 +132,18 @@ static int set_sreg(struct modem *m, int num, char c, int low, int hi, int *len)
 
 /* ------------------------------------------------------------ */
 
-static int process_plus_DS(struct modem *m, char *p, int *len)
+static int process_plus_DSC(struct modem *m, char *p, int *len)
 {
 	char response[16];
 	char *end;
-	unsigned long direction;
-	unsigned long compression_type;
+	unsigned long mask;
 
 	switch (*p) {
 	case '=':
 		p++;
 		*len = 1;
 		if (*p == '?') {
-			const char capabilities[] = "(0-3),(1)";
+			const char capabilities[] = "(0-3)";
 
 			modem_send_to_tty(m, capabilities,
 					  (int)strlen(capabilities));
@@ -151,28 +151,70 @@ static int process_plus_DS(struct modem *m, char *p, int *len)
 			*len += 1;
 			return 0;
 		}
-		if (!isdigit((unsigned char)*p))
+		mask = strtoul(p, &end, 0);
+		if (p == end || mask > MODEM_COMP_TYPE_ALL)
 			return -1;
-		direction = strtoul(p, &end, 10);
-		if (direction > 3)
+		*len += (int)(end - p);
+		return modem_set_sreg(m, SREG_COMP_TYPES, (int)mask);
+	case '?':
+		*len = 1;
+		snprintf(response, sizeof(response), "%d",
+			 modem_get_sreg(m, SREG_COMP_TYPES) &
+				 MODEM_COMP_TYPE_ALL);
+		modem_send_to_tty(m, response, (int)strlen(response));
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		return 0;
+	default:
+		*len = 0;
+		return -1;
+	}
+}
+
+static int process_plus_DS(struct modem *m, char *p, int *len)
+{
+	char response[24];
+	char *end;
+	unsigned long direction;
+	unsigned long mask;
+
+	switch (*p) {
+	case '=':
+		p++;
+		*len = 1;
+		if (*p == '?') {
+			const char capabilities[] = "(0-3),(0-3)";
+
+			modem_send_to_tty(m, capabilities,
+					  (int)strlen(capabilities));
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			*len += 1;
+			return 0;
+		}
+		direction = strtoul(p, &end, 0);
+		if (p == end || direction > 3)
 			return -1;
 		*len += (int)(end - p);
 		p = end;
+		mask = (unsigned long)modem_get_sreg(m, SREG_COMP_TYPES) &
+		       MODEM_COMP_TYPE_ALL;
 		if (*p == ',') {
 			p++;
 			*len += 1;
-			if (!isdigit((unsigned char)*p))
-				return -1;
-			compression_type = strtoul(p, &end, 10);
-			if (compression_type != 1 || *end == ',')
+			mask = strtoul(p, &end, 0);
+			if (p == end || mask > MODEM_COMP_TYPE_ALL || *end == ',')
 				return -1;
 			*len += (int)(end - p);
 		}
-		return modem_set_sreg(m, SREG_COMP, (int)direction);
+		if (modem_set_sreg(m, SREG_COMP, (int)direction) < 0 ||
+		    modem_set_sreg(m, SREG_COMP_TYPES, (int)mask) < 0)
+			return -1;
+		return 0;
 	case '?':
 		*len = 1;
-		snprintf(response, sizeof(response), "%d,1",
-			 modem_get_sreg(m, SREG_COMP));
+		snprintf(response, sizeof(response), "%d,%d",
+			 modem_get_sreg(m, SREG_COMP),
+			 modem_get_sreg(m, SREG_COMP_TYPES) &
+				 MODEM_COMP_TYPE_ALL);
 		modem_send_to_tty(m, response, (int)strlen(response));
 		modem_send_to_tty(m, CRLF_CHARS(m), 2);
 		return 0;
@@ -614,6 +656,214 @@ static int process_plus_V34B(struct modem *m, char *p, int *len)
 	case '?':
 		*len = 1;
 		snprintf(response, sizeof(response), "%u", m->v34_symbol_rate);
+		modem_send_to_tty(m, response, (int)strlen(response));
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		return 0;
+	default:
+		*len = 0;
+		return -1;
+	}
+}
+
+static int process_plus_boolean_param(
+	struct modem *m, char *p, int *len, unsigned int parameter)
+{
+	char response[8];
+	char *end;
+	unsigned long value;
+
+	switch (*p) {
+	case '=':
+		p++;
+		*len = 1;
+		if (*p == '?') {
+			const char capabilities[] = "(0,1)";
+
+			modem_send_to_tty(m, capabilities,
+					  (int)strlen(capabilities));
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			*len += 1;
+			return 0;
+		}
+		value = strtoul(p, &end, 0);
+		if (p == end || value > 1 || *end == ',')
+			return -1;
+		*len += (int)(end - p);
+		return (int)modem_set_param(m, parameter, (int)value);
+	case '?':
+		*len = 1;
+		snprintf(response, sizeof(response), "%ld",
+			 modem_get_param(m, parameter));
+		modem_send_to_tty(m, response, (int)strlen(response));
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		return 0;
+	default:
+		*len = 0;
+		return -1;
+	}
+}
+
+static int v90_upstream_rate_is_valid(unsigned long value)
+{
+	return value == 0 ||
+	       (value >= MODEM_V90_UPSTREAM_MIN_RATE &&
+		value <= MODEM_V90_UPSTREAM_MAX_RATE);
+}
+
+static int v90_upstream_baud_is_valid(unsigned long value)
+{
+	switch (value) {
+	case 0:
+	case 2400:
+	case 2743:
+	case 2800:
+	case 3000:
+	case 3200:
+	case 3429:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static int parse_unsigned(char **p, int *len, unsigned long *value)
+{
+	char *end;
+
+	*value = strtoul(*p, &end, 0);
+	if (end == *p)
+		return -1;
+	*len += (int)(end - *p);
+	*p = end;
+	return 0;
+}
+
+static int process_plus_V90U(struct modem *m, char *p, int *len)
+{
+	char response[96];
+	unsigned long min_rate;
+	unsigned long max_rate;
+	unsigned long max_baud;
+
+	switch (*p) {
+	case '=':
+		p++;
+		*len = 1;
+		if (*p == '?') {
+			snprintf(response, sizeof(response),
+				 "(0,%d-%d),(0,%d-%d),"
+				 "(0,2400,2743,2800,3000,3200,3429)",
+				 MODEM_V90_UPSTREAM_MIN_RATE,
+				 MODEM_V90_UPSTREAM_MAX_RATE,
+				 MODEM_V90_UPSTREAM_MIN_RATE,
+				 MODEM_V90_UPSTREAM_MAX_RATE);
+			modem_send_to_tty(m, response, (int)strlen(response));
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			*len += 1;
+			return 0;
+		}
+		if (parse_unsigned(&p, len, &min_rate) < 0 || *p != ',')
+			return -1;
+		p++;
+		*len += 1;
+		if (parse_unsigned(&p, len, &max_rate) < 0)
+			return -1;
+		max_baud = (unsigned long)modem_get_param(
+			m, MDMPRM_V90_UPSTREAM_MAX_BAUD);
+		if (*p == ',') {
+			p++;
+			*len += 1;
+			if (parse_unsigned(&p, len, &max_baud) < 0 || *p == ',')
+				return -1;
+		}
+		if (!v90_upstream_rate_is_valid(min_rate) ||
+		    !v90_upstream_rate_is_valid(max_rate) ||
+		    !v90_upstream_baud_is_valid(max_baud) ||
+		    (min_rate != 0 && max_rate != 0 && min_rate > max_rate))
+			return -1;
+		m->v90_upstream_min_rate = (unsigned)min_rate;
+		m->v90_upstream_max_rate = (unsigned)max_rate;
+		m->v90_upstream_max_baud = (unsigned)max_baud;
+		return 0;
+	case '?':
+		*len = 1;
+		snprintf(response, sizeof(response), "%u,%u,%u",
+			 m->v90_upstream_min_rate, m->v90_upstream_max_rate,
+			 m->v90_upstream_max_baud);
+		modem_send_to_tty(m, response, (int)strlen(response));
+		modem_send_to_tty(m, CRLF_CHARS(m), 2);
+		return 0;
+	default:
+		*len = 0;
+		return -1;
+	}
+}
+
+static unsigned int v92_pcm_upstream_drn(unsigned long rate)
+{
+	for (unsigned int drn = 1; drn <= 19; ++drn) {
+		unsigned int candidate = ((drn + 17u) * 8000u + 3u) / 6u;
+
+		if (rate == candidate)
+			return drn;
+	}
+	return 0;
+}
+
+static int process_plus_V92U(struct modem *m, char *p, int *len)
+{
+	char response[24];
+	char *end;
+	unsigned long enabled;
+	unsigned long rate;
+	unsigned int max_drn = 0;
+
+	switch (*p) {
+	case '=':
+		p++;
+		*len = 1;
+		if (*p == '?') {
+			const char capabilities[] = "(0,1),(0,24000-48000)";
+
+			modem_send_to_tty(m, capabilities,
+					  (int)strlen(capabilities));
+			modem_send_to_tty(m, CRLF_CHARS(m), 2);
+			*len += 1;
+			return 0;
+		}
+		enabled = strtoul(p, &end, 0);
+		if (p == end || enabled > 1)
+			return -1;
+		*len += (int)(end - p);
+		p = end;
+		if (*p == ',') {
+			p++;
+			*len += 1;
+			rate = strtoul(p, &end, 0);
+			if (p == end || enabled == 0 || *end == ',')
+				return -1;
+			*len += (int)(end - p);
+			max_drn = v92_pcm_upstream_drn(rate);
+			if (max_drn == 0)
+				return -1;
+		}
+		if (modem_set_param(
+			    m, MDMPRM_V92_PCM_UPSTREAM, (int)enabled) < 0)
+			return -1;
+		return modem_set_sreg(
+			m, SREG_V92_PCM_UPSTREAM_MAX_DRN, (int)max_drn);
+	case '?':
+		*len = 1;
+		max_drn = (unsigned int)modem_get_sreg(
+			m, SREG_V92_PCM_UPSTREAM_MAX_DRN);
+		if (max_drn == 0) {
+			snprintf(response, sizeof(response), "%ld",
+				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM));
+		} else {
+			rate = ((max_drn + 17u) * 8000u + 3u) / 6u;
+			snprintf(response, sizeof(response), "%ld,%lu",
+				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM), rate);
+		}
 		modem_send_to_tty(m, response, (int)strlen(response));
 		modem_send_to_tty(m, CRLF_CHARS(m), 2);
 		return 0;
@@ -1197,8 +1447,13 @@ int process_at_command(struct modem *m, char *cmd)
 			case 'D': /* AT+D */
 				c = toupper(*p++);
 				switch (c) {
-				case 'S': /* AT+DS */
-					ret = process_plus_DS(m, p, &len);
+				case 'S': /* AT+DS, AT+DSC */
+					if (toupper(*p) == 'C') {
+						p++;
+						ret = process_plus_DSC(m, p, &len);
+					} else {
+						ret = process_plus_DS(m, p, &len);
+					}
 					break;
 				default:
 					return -1;
@@ -1266,6 +1521,30 @@ int process_at_command(struct modem *m, char *cmd)
 				if (!toupper_strncmp(p, "34B", 3)) {
 					p += 3;
 					ret = process_plus_V34B(m, p, &len);
+					break;
+				}
+				if (!toupper_strncmp(p, "90D", 3)) {
+					p += 3;
+					ret = process_plus_boolean_param(
+						m, p, &len,
+						MDMPRM_V90_DIGITAL_INDICATION);
+					break;
+				}
+				if (!toupper_strncmp(p, "90U", 3)) {
+					p += 3;
+					ret = process_plus_V90U(m, p, &len);
+					break;
+				}
+				if (!toupper_strncmp(p, "92Q", 3)) {
+					p += 3;
+					ret = process_plus_boolean_param(
+						m, p, &len,
+						MDMPRM_V92_QUICK_CONNECT);
+					break;
+				}
+				if (!toupper_strncmp(p, "92U", 3)) {
+					p += 3;
+					ret = process_plus_V92U(m, p, &len);
 					break;
 				}
 				if(m->mode != MODEM_MODE_VOICE)

@@ -263,13 +263,21 @@ static bool start_call(
 	struct v90_datapump *datapump, enum g711_law law)
 {
 	struct pcm_call_configuration configuration;
+	const struct v90_upstream_policy upstream = {
+		.minimum_bit_rate =
+			datapump->dp.modem->v90_upstream_min_rate,
+		.maximum_bit_rate =
+			datapump->dp.modem->v90_upstream_max_rate,
+		.maximum_symbol_rate =
+			datapump->dp.modem->v90_upstream_max_baud,
+	};
 
 	if (datapump->call_started)
 		return datapump->law == law;
 	if (v90_profile_init(
 		    &configuration, datapump->role, law,
 		    datapump->dp.modem->min_rate,
-		    datapump->dp.modem->max_rate) != V90_PROFILE_OK ||
+		    datapump->dp.modem->max_rate, &upstream) != V90_PROFILE_OK ||
 	    pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
 		return false;
 	datapump->law = law;

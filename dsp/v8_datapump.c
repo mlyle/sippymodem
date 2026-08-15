@@ -65,22 +65,30 @@ static struct dp *create_v8(
 	enum v8_modulation modulation =
 		v8_datapump_modulation(id);
 	enum v8_menu_result menu_result;
+	bool digital;
+
+	if (modem == NULL || (caller != 0 && caller != 1) ||
+	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
+	    operations != &v8_operations || operations->use_count == INT_MAX ||
+	    modulation == V8_MODULATION_NONE)
+		return NULL;
 
 	/*
 	 * The current source-built handoffs expose raw asynchronous bits, so do
 	 * not negotiate LAPM until their downstream paths implement it.
 	 */
-	if (v8_datapump_uses_pcm(id))
+	if (v8_datapump_uses_pcm(id)) {
+		digital = modem_get_param(
+			modem, MDMPRM_V90_DIGITAL_INDICATION) != 0;
 		menu_result = v8_pcm_call_menu_init(
-			&local_menu, V8_PCM_ANALOG | V8_PCM_DIGITAL,
-			V8_PSTN_DIGITAL, false);
-	else
+			&local_menu,
+			digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
+			digital ? V8_PSTN_DIGITAL : 0, false);
+	} else {
 		menu_result = v8_call_menu_init(
 			&local_menu, modulation, false);
-	if (modem == NULL || (caller != 0 && caller != 1) ||
-	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v8_operations || operations->use_count == INT_MAX ||
-	    modulation == V8_MODULATION_NONE || menu_result != V8_MENU_OK)
+	}
+	if (menu_result != V8_MENU_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)

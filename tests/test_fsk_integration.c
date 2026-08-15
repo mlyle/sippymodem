@@ -31,7 +31,7 @@ enum {
 	ENDPOINT_OUTPUT_CAPACITY = 1024,
 	TRAINING_FRAME_LIMIT = 250,
 	NEGOTIATED_TRAINING_FRAME_LIMIT = 500,
-	LINK_DRAIN_FRAME_LIMIT = 50,
+	LINK_DRAIN_FRAME_LIMIT = 400,
 	DATA_FRAME_LIMIT = 400,
 	V32_MIN_HALF_DUPLEX_GAP_FRAMES = 16,
 	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
@@ -370,6 +370,15 @@ static bool run_media_call(
 		      endpoint_prepare_media(&caller, codec) &&
 		      endpoint_prepare_media(&answerer, codec),
 	      "%s integration endpoints did not initialize", test_case->name);
+	if (v8_datapump_uses_pcm(test_case->id)) {
+		CHECK(modem_set_sreg(
+			      caller.modem, SREG_V90_DIGITAL_INDICATION, 0) == 0 &&
+		      modem_set_sreg(
+			      answerer.modem,
+			      SREG_V90_DIGITAL_INDICATION, 1) == 0,
+		      "%s integration endpoints did not accept PCM roles",
+		      test_case->name);
+	}
 	CHECK(MODEM_DP(caller.modem) == DP_V21 &&
 		      MODEM_DP(answerer.modem) == DP_V21 &&
 		      MODEM_AUTOMODE(caller.modem) == 0 &&
@@ -495,8 +504,17 @@ static bool run_media_call(
 			      &caller, test_case->caller_rx_rate) &&
 		      output_contains_connect(
 			      &answerer, test_case->answerer_rx_rate),
-	      "%s connection did not reach both terminal interfaces",
-	      test_case->name);
+	      "%s connection did not reach both terminal interfaces "
+	      "(caller state=%u ec=%u lapm=%d/%d ctrl=%d timer=%d; "
+	      "answerer state=%u ec=%u lapm=%d/%d ctrl=%d timer=%d)",
+	      test_case->name, caller.modem->state, caller.modem->cfg.ec,
+	      caller.modem->ec.lapm.state, caller.modem->ec.lapm.config,
+	      caller.modem->ec.lapm.ctrl_count, caller.modem->bit_timer,
+	      answerer.modem->state, answerer.modem->cfg.ec,
+	      answerer.modem->ec.lapm.state,
+	      answerer.modem->ec.lapm.config,
+	      answerer.modem->ec.lapm.ctrl_count,
+	      answerer.modem->bit_timer);
 	caller.output_count = 0;
 	answerer.output_count = 0;
 	CHECK(process_sip_frame(&caller, &answerer, codec, &recorder) &&

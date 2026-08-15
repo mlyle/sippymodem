@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
+#include <modem_param.h>
 #include <datapumps.h>
 #include <fsk.h>
 #include <single_tone.h>
@@ -282,34 +283,65 @@ static bool test_g711_datapump_input(void)
 	return true;
 }
 
-static bool test_v32_preserves_error_control_detection(void)
+static bool test_datapump_error_control_policy(void)
 {
 	struct modem_driver driver = {
-		.name = "V.32 error-control test",
+		.name = "data-pump error-control test",
 		.start = unused_start,
 		.stop = unused_stop,
 		.ioctl = unused_control,
 	};
-	struct modem *modem = modem_create(&driver, "V.32 error-control test");
-	struct dp datapump = {
-		.id = DP_V32,
-		.modem = modem,
-		.status = DPSTAT_CONNECT,
+	static const struct {
+		enum DP_ID id;
+		bool lapm;
+	} cases[] = {
+		{ DP_B103, false },
+		{ DP_V21, false },
+		{ DP_V23, false },
+		{ DP_BAUDOT, false },
+		{ DP_B212, true },
+		{ DP_V22, true },
+		{ DP_V22BIS, true },
+		{ DP_V32, true },
+		{ DP_V34, true },
+		{ DP_V90, true },
+		{ DP_V92, true },
 	};
 
-	CHECK(modem != NULL, "V.32 error-control modem could not be created");
-	modem->dp = &datapump;
-	modem->caller = 1;
-	modem->cfg.ec = 1;
-	modem->cfg.ec_detector = 1;
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct modem *modem = modem_create(
+			&driver, "data-pump error-control test");
+		struct dp datapump = {
+			.id = cases[index].id,
+			.modem = modem,
+			.status = DPSTAT_CONNECT,
+		};
 
-	modem_update_status(modem, STATUS_DP_LINK);
-	CHECK(modem->cfg.ec == 1 && modem->get_bits == modem_detector_get_bits &&
-		      modem->put_bits == modem_detector_put_bits,
-	      "V.32 link discarded its configured V.42 detector");
+		CHECK(modem != NULL,
+		      "error-control modem %zu could not be created", index);
+		modem->dp = &datapump;
+		modem->caller = 1;
+		modem->cfg.ec = 1;
+		modem->cfg.ec_detector = 1;
 
-	modem->dp = NULL;
-	modem_delete(modem);
+		modem_update_status(modem, STATUS_DP_LINK);
+		if (cases[index].lapm) {
+			CHECK(modem->cfg.ec == 1 &&
+				      modem->get_bits == modem_detector_get_bits &&
+				      modem->put_bits == modem_detector_put_bits,
+			      "data pump %u discarded its V.42 detector",
+			      cases[index].id);
+		} else {
+			CHECK(modem->cfg.ec == 0 &&
+				      modem->get_bits == modem_async_get_bits &&
+				      modem->put_bits == modem_async_put_bits,
+			      "data pump %u did not select raw transport",
+			      cases[index].id);
+		}
+
+		modem->dp = NULL;
+		modem_delete(modem);
+	}
 	return true;
 }
 
@@ -403,6 +435,9 @@ static bool test_v8_pcm_handoff(void)
 	answerer = modem_create(&driver, "V.8 PCM answerer");
 	CHECK(operations != NULL && caller != NULL && answerer != NULL,
 	      "V.8 PCM handoff endpoints did not initialize");
+	CHECK(process_at_command(caller, "AT+V90D=0") == 0 &&
+		      process_at_command(answerer, "AT+V90D=1") == 0,
+	      "V.8 PCM endpoints did not accept complementary roles");
 	calling_dp = operations->create(
 		caller, DP_V90, 1, MODEM_RATE, MODEM_FRAG, operations);
 	answering_dp = operations->create(
@@ -527,7 +562,7 @@ static bool test_at_dial_destinations_are_bounded(void)
 	return true;
 }
 
-static bool test_at_v42bis_compression_profile(void)
+static bool test_at_compression_profile(void)
 {
 	struct modem_driver driver = {
 		.name = "AT compression test",
@@ -537,29 +572,48 @@ static bool test_at_v42bis_compression_profile(void)
 	};
 	struct modem *modem = modem_create(&driver, "AT compression test");
 	char enable[] = "AT+DS=3,1";
-	char disable[] = "AT+DS=0,1";
+	char disable[] = "AT+DS=0,0";
 	char disable_ec[] = "AT\\N0";
+	char require_lapm[] = "AT\\N4";
 	char chained[] = "AT+DS=2,1%C0";
-	char unsupported[] = "AT+DS=3,2";
+	char select_v44[] = "AT+DSC=2";
+	char unsupported[] = "AT+DS=3,4";
 
-	CHECK(modem != NULL, "AT compression modem could not be created");
+	CHECK(modem != NULL &&
+		      modem_get_sreg(modem, SREG_COMP_TYPES) ==
+			      MODEM_COMP_TYPE_DEFAULT,
+	      "AT compression modem did not have safe defaults");
 	CHECK(modem_set_sreg(modem, SREG_COMP, 0) == 0 &&
 		      process_at_command(modem, enable) == 0 &&
-		      modem_get_sreg(modem, SREG_COMP) == 3,
+		      modem_get_sreg(modem, SREG_COMP) == 3 &&
+		      modem_get_sreg(modem, SREG_COMP_TYPES) ==
+			      MODEM_COMP_TYPE_V42BIS,
 	      "AT+DS did not enable bidirectional V.42bis compression");
 	CHECK(process_at_command(modem, chained) == 0 &&
-		      modem_get_sreg(modem, SREG_COMP) == 0,
+		      modem_get_sreg(modem, SREG_COMP) == 0 &&
+		      modem_get_sreg(modem, SREG_COMP_TYPES) ==
+			      MODEM_COMP_TYPE_V42BIS,
 	      "AT+DS did not preserve concatenated command parsing");
 	CHECK(modem_set_sreg(modem, SREG_COMP, 3) == 0 &&
 		      process_at_command(modem, disable) == 0 &&
-		      modem_get_sreg(modem, SREG_COMP) == 0,
+		      modem_get_sreg(modem, SREG_COMP) == 0 &&
+		      modem_get_sreg(modem, SREG_COMP_TYPES) ==
+			      MODEM_COMP_TYPE_NONE,
 	      "AT+DS did not accept the raw-mode compression setting");
+	CHECK(process_at_command(modem, select_v44) == 0 &&
+		      modem_get_sreg(modem, SREG_COMP_TYPES) ==
+			      MODEM_COMP_TYPE_V44,
+	      "AT+DSC did not select V.44 compression");
 	CHECK(modem_set_sreg(modem, SREG_EC, 3) == 0 &&
 		      process_at_command(modem, disable_ec) == 0 &&
 		      modem_get_sreg(modem, SREG_EC) == 0,
 	      "AT\\N did not accept the raw-mode error-correction setting");
+	CHECK(process_at_command(modem, require_lapm) == 0 &&
+		      modem_get_sreg(modem, SREG_EC) == 4,
+	      "AT\\N did not accept the LAPM-only setting");
 	modem->cfg.ec = 1;
 	modem->cfg.comp = 3;
+	modem->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
 	CHECK(modem_ec_active_compression(modem) ==
 		      MODEM_EC_COMPRESSION_V42BIS,
 	      "legacy compression state was not reported explicitly");
@@ -568,9 +622,85 @@ static bool test_at_v42bis_compression_profile(void)
 		      MODEM_EC_COMPRESSION_NONE,
 	      "disabled error correction reported active compression");
 	CHECK(modem_set_sreg(modem, SREG_COMP, 2) == 0 &&
+		      modem_set_sreg(
+			      modem, SREG_COMP_TYPES, MODEM_COMP_TYPE_V44) == 0 &&
 		      process_at_command(modem, unsupported) == -1 &&
-		      modem_get_sreg(modem, SREG_COMP) == 2,
+		      modem_get_sreg(modem, SREG_COMP) == 2 &&
+		      modem_get_sreg(modem, SREG_COMP_TYPES) ==
+			      MODEM_COMP_TYPE_V44,
 	      "AT+DS accepted an unsupported compression type or changed state");
+	modem_delete(modem);
+	return true;
+}
+
+static bool test_at_pcm_profile_controls(void)
+{
+	struct modem_driver driver = {
+		.name = "AT PCM profile test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, driver.name);
+
+	CHECK(modem != NULL &&
+		      modem_get_param(modem, MDMPRM_V90_DIGITAL_INDICATION) == 0 &&
+		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
+		      modem->v90_upstream_min_rate == 0 &&
+		      modem->v90_upstream_max_rate == 0 &&
+		      modem->v90_upstream_max_baud == 0,
+	      "PCM profile controls did not have deterministic defaults");
+	CHECK(process_at_command(modem, "AT+V90D=1") == 0 &&
+		      modem_get_param(
+			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 1 &&
+		      process_at_command(modem, "AT+V90D=2") == -1 &&
+		      modem_get_param(
+			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 1,
+	      "AT+V90D was not transactional");
+	CHECK(process_at_command(
+		      modem, "AT+V90U=14400,31200,3429") == 0 &&
+		      modem->v90_upstream_min_rate == 14400 &&
+		      modem->v90_upstream_max_rate == 31200 &&
+		      modem->v90_upstream_max_baud == 3429,
+	      "AT+V90U did not retain its rate policy");
+	CHECK(process_at_command(
+		      modem, "AT+V90U=33600,14400,3200") == -1 &&
+		      modem->v90_upstream_min_rate == 14400 &&
+		      modem->v90_upstream_max_rate == 31200 &&
+		      modem->v90_upstream_max_baud == 3429 &&
+		      process_at_command(
+			      modem, "AT+V90U=14400,31200,3360") == -1 &&
+		      modem->v90_upstream_max_baud == 3429,
+	      "invalid AT+V90U changed its retained policy");
+	CHECK(process_at_command(modem, "AT+V92Q=0") == 0 &&
+		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0 &&
+		      process_at_command(modem, "AT+V92Q=2") == -1 &&
+		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 0,
+	      "AT+V92Q was not transactional");
+	CHECK(process_at_command(modem, "AT+V92U=1,28000") == 0 &&
+		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+		      modem_get_sreg(
+			      modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 4,
+	      "AT+V92U did not retain its exact PCM-upstream rate");
+	CHECK(process_at_command(modem, "AT+V92U=1,28100") == -1 &&
+		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+		      modem_get_sreg(
+			      modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 4 &&
+		      process_at_command(modem, "AT+V92U=0") == 0 &&
+		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
+		      modem_get_sreg(
+			      modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 0,
+	      "AT+V92U did not reject invalid rates or reset cleanly");
+	CHECK(process_at_command(modem, "ATZ") == 0 &&
+		      modem_get_param(
+			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 0 &&
+		      modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) == 1 &&
+		      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 0 &&
+		      modem->v90_upstream_min_rate == 0 &&
+		      modem->v90_upstream_max_rate == 0 &&
+		      modem->v90_upstream_max_baud == 0,
+	      "modem reset retained a forced PCM profile");
 	modem_delete(modem);
 	return true;
 }
@@ -1494,15 +1624,15 @@ int main(void)
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 PCM handoff", test_v8_pcm_handoff },
 		{ "modulation report identity", test_modulation_report_identity },
-		{ "V.32 error-control detection",
-		  test_v32_preserves_error_control_detection },
+		{ "data-pump error-control policy",
+		  test_datapump_error_control_policy },
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
 		{ "G.711 data-pump input", test_g711_datapump_input },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
-		{ "AT V.42bis compression profile",
-		  test_at_v42bis_compression_profile },
+		{ "AT compression profile", test_at_compression_profile },
+		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },

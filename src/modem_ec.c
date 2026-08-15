@@ -57,12 +57,22 @@
 
 #define LAPM_MAX_RTX          5  /* max num of retransmissions (N400) */
 
-/* timeouts */
-// fixme: speed is parameter
-#define _TMP_SPEED 28800
-// fixme: what is timeout vals should be (2sec?)???
-#define T401_TIMEOUT        _TMP_SPEED*2  /* noacks timeout (in ???) */
-#define T403_TIMEOUT        _TMP_SPEED*2  /* no frames timeout */
+enum {
+	LAPM_TIMER_SECONDS = 2,
+	LAPM_TIMER_FALLBACK_BIT_RATE = 28800,
+};
+
+static int lapm_timer_bits(const struct lapm_state *l)
+{
+	unsigned int bit_rate;
+
+	if (l == NULL || l->modem == NULL)
+		return LAPM_TIMER_FALLBACK_BIT_RATE * LAPM_TIMER_SECONDS;
+	bit_rate = l->modem->tx_rate;
+	if (bit_rate == 0 || bit_rate > INT_MAX / LAPM_TIMER_SECONDS)
+		bit_rate = LAPM_TIMER_FALLBACK_BIT_RATE;
+	return (int)(bit_rate * LAPM_TIMER_SECONDS);
+}
 
 /* LAPM definitions */
 
@@ -111,18 +121,18 @@
 /* timers */
 #define T401_START(l) 	{ EC_DBG("T401 start.\n");\
                           (l)->rtx_count = 0; \
-			  (l)->modem->bit_timer = T401_TIMEOUT; \
+			  (l)->modem->bit_timer = lapm_timer_bits(l); \
 			  (l)->modem->bit_timer_func = t401_timeout; }
 #define T401_STOP(l) 	{ EC_DBG("T401 stop.\n"); \
                           (l)->modem->bit_timer = 0; (l)->rtx_count = 0; }
 #if T403_IMPLEMENTED
 #define TIMER_START(l)  { EC_DBG("T403 stop, T401 start.\n"); \
                           (l)->rtx_count = 0; \
-                          (l)->modem->bit_timer = T401_TIMEOUT; \
+                          (l)->modem->bit_timer = lapm_timer_bits(l); \
                           (l)->modem->bit_timer_func = t401_timeout; }
 #define TIMER_STOP(l)   { EC_DBG("T401 stop, T403 start.\n"); \
                           (l)->rtx_count = 0; \
-                          (l)->modem->bit_timer = T403_TIMEOUT; \
+                          (l)->modem->bit_timer = lapm_timer_bits(l); \
                           (l)->modem->bit_timer_func = t403_timeout; }
 #else /* !T403 */
 #define TIMER_START(l) T401_START(l)
@@ -503,7 +513,18 @@ static int tx_super(struct lapm_state *l, u8 addr, u8 ctrl, u8 pf_mask)
                  ((value)>=(default) && (param)>(value))) \
                 (param) = (value); }
 
-#define DEFAULT_MODEM_EC_CONFIG {1,1,15,15,128,128,0,512,6}
+#define DEFAULT_MODEM_EC_CONFIG { \
+	.ec = 1, \
+	.ec_detector = 1, \
+	.ec_tx_win_size = 15, \
+	.ec_rx_win_size = 15, \
+	.ec_tx_info_size = 128, \
+	.ec_rx_info_size = 128, \
+	.comp = 0, \
+	.comp_types = MODEM_COMP_TYPE_NONE, \
+	.comp_dict_size = 512, \
+	.comp_max_string = 6, \
+}
 
 enum {
 	XID_PARAMETER_LENGTH = 19,
@@ -576,6 +597,7 @@ static void parse_xid_private_params(
 			break;
 		case PI_V42BIS_REQUEST:
 			cfg->comp = lapm_get_le_val(buf,plen);
+			cfg->comp_types |= MODEM_COMP_TYPE_V42BIS;
 			break;
 		case PI_V42BIS_CW_NUMBER:
 			cfg->comp_dict_size = lapm_get_be_val(buf,plen);
@@ -689,7 +711,8 @@ static void build_xid_fields(
 	parameters[12] = pval&0xff;
 	parameters[15] = config->tx_win_size;
 	parameters[18] = config->rx_win_size;
-	if(config->modem.comp) {
+	if (config->modem.comp &&
+	    (config->modem.comp_types & MODEM_COMP_TYPE_V42BIS) != 0) {
 		private_parameters[7] = config->modem.comp;
 		pval = config->modem.comp_dict_size;
 		private_parameters[10] = (pval>>8)&0xff;
@@ -866,7 +889,7 @@ static void t401_timeout(struct modem *m)
 			break;
 		}
 	}
-	m->bit_timer      = T401_TIMEOUT;
+	m->bit_timer      = lapm_timer_bits(l);
 	m->bit_timer_func = t401_timeout;
 }
 
@@ -1268,6 +1291,9 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 	//LAPM_PRINT_FRAME("rx unnum:",1,f);
 	switch(FRAME_CTRL(f)&0xef) {
 	case FRAME_U_SABME:
+	{
+		bool already_linked = l->state == LAPM_DATA;
+
 		EC_DBG("sabme received.\n");
 		/* discard unacked I frames,
 		   reset vs,vr,va, clear exceptions */
@@ -1284,8 +1310,10 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		/* going to connected state */
 		l->state = LAPM_DATA;
 		TIMER_STOP(l);
-		modem_update_status(l->modem,STATUS_EC_LINK);
+		if (!already_linked)
+			modem_update_status(l->modem, STATUS_EC_LINK);
 		break;
+	}
 	case FRAME_U_UI:
 		/* break signal */
 		/* pf = 0 */
@@ -1658,8 +1686,12 @@ static int lapm_init(struct lapm_state *l, struct modem *m)
 	l->tx_info_size = m->cfg.ec_tx_info_size;
 	l->rx_info_size = m->cfg.ec_rx_info_size;
 	local_offer = v44_default_offer();
-	local_offer.transmit.enabled = (m->cfg.comp & 0x2U) != 0;
-	local_offer.receive.enabled = (m->cfg.comp & 0x1U) != 0;
+	local_offer.transmit.enabled =
+		(m->cfg.comp_types & MODEM_COMP_TYPE_V44) != 0 &&
+		(m->cfg.comp & 0x2U) != 0;
+	local_offer.receive.enabled =
+		(m->cfg.comp_types & MODEM_COMP_TYPE_V44) != 0 &&
+		(m->cfg.comp & 0x1U) != 0;
 	v44_config = (struct lapm_v44_config) {
 		.enabled = v44_offer_has_direction(&local_offer),
 		.native_v44_ready = true,
@@ -1748,6 +1780,8 @@ modem_ec_active_compression(const struct modem *m)
 		return MODEM_EC_COMPRESSION_NONE;
 	if (m->ec.lapm.v44_path != NULL)
 		return MODEM_EC_COMPRESSION_V44;
-	return m->cfg.comp ? MODEM_EC_COMPRESSION_V42BIS :
-			     MODEM_EC_COMPRESSION_NONE;
+	return m->cfg.comp &&
+	       (m->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0 ?
+		       MODEM_EC_COMPRESSION_V42BIS :
+		       MODEM_EC_COMPRESSION_NONE;
 }

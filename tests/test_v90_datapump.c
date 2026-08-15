@@ -169,7 +169,9 @@ static int16_t decode(enum g711_law law, uint8_t octet)
 		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
 }
 
-static bool run_pair(enum g711_law law, uint32_t downstream_rate)
+static bool run_pair(
+	enum g711_law law, uint32_t downstream_rate,
+	uint32_t upstream_rate, uint32_t upstream_symbol_rate)
 {
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
@@ -196,6 +198,12 @@ static bool run_pair(enum g711_law law, uint32_t downstream_rate)
 	analog.max_rate = downstream_rate;
 	digital.min_rate = downstream_rate;
 	digital.max_rate = downstream_rate;
+	analog.v90_upstream_min_rate = upstream_rate;
+	analog.v90_upstream_max_rate = upstream_rate;
+	analog.v90_upstream_max_baud = upstream_symbol_rate;
+	digital.v90_upstream_min_rate = upstream_rate;
+	digital.v90_upstream_max_rate = upstream_rate;
+	digital.v90_upstream_max_baud = upstream_symbol_rate;
 
 	CHECK(operations != NULL && operations->process_g711 != NULL,
 	      "V.90 exact-codeword operation was not registered");
@@ -248,8 +256,13 @@ static bool run_pair(enum g711_law law, uint32_t downstream_rate)
 	      digital_dp->status == DPSTAT_CONNECT &&
 	      analog.rx_rate == downstream_rate &&
 	      digital.tx_rate == downstream_rate &&
-	      analog.tx_rate != 0 && analog.tx_rate == digital.rx_rate,
-	      "V.90 pair did not report complementary online rates");
+	      analog.tx_rate != 0 && analog.tx_rate == digital.rx_rate &&
+	      (upstream_rate == 0 || analog.tx_rate == upstream_rate),
+	      "V.90 pair did not report complementary online rates "
+	      "(expected down/up %u/%u, analogue %u/%u, digital %u/%u)",
+	      downstream_rate, upstream_rate,
+	      analog.rx_rate, analog.tx_rate,
+	      digital.tx_rate, digital.rx_rate);
 	CHECK(analog_bits.supplied_bits >= MINIMUM_RECEIVED_BITS &&
 	      digital_bits.supplied_bits >= MINIMUM_RECEIVED_BITS &&
 	      analog_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
@@ -279,13 +292,25 @@ static bool test_generated_pairs(void)
 		uint32_t bit_rate =
 			v90_profile_downstream_bit_rate(rate_index);
 
-		CHECK(run_pair(G711_LAW_PCMU, bit_rate) &&
-		      run_pair(G711_LAW_PCMA, bit_rate),
+		CHECK(run_pair(G711_LAW_PCMU, bit_rate, 0, 0) &&
+		      run_pair(G711_LAW_PCMA, bit_rate, 0, 0),
 		      "generated V.90 pair failed at %u bit/s", bit_rate);
 	}
 	CHECK(v90_datapump_unregister() == 0 &&
 	      modem_dp_get_registered_ops(DP_V90) == NULL,
 	      "V.90 registration did not stop cleanly");
+	return true;
+}
+
+static bool test_forced_upstream_pairs(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "forced-upstream V.90 registration failed");
+	CHECK(run_pair(G711_LAW_PCMU, 42667, 26400, 3200) &&
+		      run_pair(G711_LAW_PCMA, 42667, 26400, 3200),
+	      "V.90 data pump did not honor a forced upstream profile");
+	CHECK(v90_datapump_unregister() == 0,
+	      "forced-upstream V.90 registration remained busy");
 	return true;
 }
 
@@ -347,6 +372,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "forced upstream pairs", test_forced_upstream_pairs },
 		{ "generated PCMU and PCMA data-pump pairs",
 		  test_generated_pairs },
 		{ "registration and media validation", test_validation },

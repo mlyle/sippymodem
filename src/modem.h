@@ -85,6 +85,13 @@ enum modem_ec_compression {
 	MODEM_EC_COMPRESSION_V44,
 };
 
+#define MODEM_COMP_TYPE_NONE   0x00
+#define MODEM_COMP_TYPE_V42BIS 0x01
+#define MODEM_COMP_TYPE_V44    0x02
+#define MODEM_COMP_TYPE_ALL \
+	(MODEM_COMP_TYPE_V42BIS | MODEM_COMP_TYPE_V44)
+#define MODEM_COMP_TYPE_DEFAULT MODEM_COMP_TYPE_ALL
+
 
 /*
  *    parameters
@@ -98,6 +105,8 @@ enum modem_ec_compression {
 
 #define MODEM_MIN_RATE 45
 #define MODEM_MAX_RATE 56000
+#define MODEM_V90_UPSTREAM_MIN_RATE 4800
+#define MODEM_V90_UPSTREAM_MAX_RATE 33600
 
 #define MODEM_DEFAULT_COUNTRY_CODE 0xb5 /* USA */
 
@@ -288,6 +297,9 @@ struct modem {
 	/* modem parameters */
 	unsigned min_rate;
 	unsigned max_rate;
+	unsigned v90_upstream_min_rate;
+	unsigned v90_upstream_max_rate;
+	unsigned v90_upstream_max_baud;
 	/* Zero selects the V.34 symbol rate automatically. */
 	unsigned v34_symbol_rate;
         unsigned char sregs[256];   /* s-registers */
@@ -332,6 +344,7 @@ struct modem {
 		u16 ec_rx_info_size;
 		/* compressor params */
 		u8  comp;
+		u8  comp_types;
 		int comp_dict_size;
 		int comp_max_string;
 	} cfg;

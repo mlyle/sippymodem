@@ -169,8 +169,13 @@ enum S_REGISTER {
 	/* new sgregs */
 	SREG_EC                           = 103,
 	SREG_COMP                         = 104,
+	SREG_COMP_TYPES                   = 105,
 
         SREG_DEFAULT_SETTING              = 161, // AT used
+	SREG_V90_DIGITAL_INDICATION       = 222,
+	SREG_V92_QUICK_CONNECT            = 224,
+	SREG_V92_PCM_UPSTREAM             = 225,
+	SREG_V92_PCM_UPSTREAM_MAX_DRN     = 226,
 #else
         SREG_REQUESTED_DP                 = SREG_DP,
         SREG_REQUESTED_MIN_SPEED          = 33,

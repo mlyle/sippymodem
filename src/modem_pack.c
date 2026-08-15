@@ -353,7 +353,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 
 void modem_detector_start(struct modem *m) {
 	struct detect_state *d = &m->packer.detector;
-	int rate = 28800 ; // fixme: use real bit rate from modem
+	int rate = m->tx_rate > 0 ? (int)m->tx_rate : 28800;
 	d->tx_count = 0; /* mute transmitter */
 	d->rx_count = 0;
 	d->ec_enable = 0;
@@ -361,13 +361,16 @@ void modem_detector_start(struct modem *m) {
 		FILL_PATTERN_ODP(d->tx_pattern);
 		FILL_PATTERN_ADP(d->rx_pattern);
 		m->bit_timer_func = detector_start;
-		m->bit_timer = 64*8 ;
+		/* Preserve the short initial mark interval at every bit rate. */
+		m->bit_timer = (rate + 49) / 50;
 	}
 	else {
 		FILL_PATTERN_ADP(d->tx_pattern);
 		FILL_PATTERN_ODP(d->rx_pattern);
 		m->bit_timer_func = detector_finish;
-		m->bit_timer = rate*3/4; /* T400 timeout */
+		/* Allow the peer's physical data mode to finish entering before
+		 * applying the packet-protocol fallback. */
+		m->bit_timer = rate * 2;
 	}
 	m->pack.bit  = m->unpack.bit  = 0;
 	m->pack.data = m->unpack.data = 0;

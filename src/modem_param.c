@@ -83,6 +83,18 @@ long modem_get_param(struct modem *m, unsigned param_name)
 #endif
 	case MDMPRM_DP_ADDR:
 		return (long)(m->dp);
+	case MDMPRM_V90_DIGITAL_INDICATION:
+		return m->sregs[SREG_V90_DIGITAL_INDICATION] != 0;
+	case MDMPRM_V92_QUICK_CONNECT:
+		return m->sregs[SREG_V92_QUICK_CONNECT] != 0;
+	case MDMPRM_V92_PCM_UPSTREAM:
+		return m->sregs[SREG_V92_PCM_UPSTREAM] != 0;
+	case MDMPRM_V90_UPSTREAM_MIN_RATE:
+		return m->v90_upstream_min_rate;
+	case MDMPRM_V90_UPSTREAM_MAX_RATE:
+		return m->v90_upstream_max_rate;
+	case MDMPRM_V90_UPSTREAM_MAX_BAUD:
+		return m->v90_upstream_max_baud;
 	case GetPulseDialMakeTime:
 		return m->homolog->params->PulseDialMakeTime;
 	case GetPulseDialBreakTime:
@@ -198,6 +210,24 @@ long modem_set_param(struct modem *m, unsigned name, int val)
 	case MDMPRM_PULSE_DIAL:
 		// bla-bla
 		return m->driver.ioctl(m, MDMCTL_PULSEDIAL, val);
+	case MDMPRM_V90_DIGITAL_INDICATION:
+		m->sregs[SREG_V90_DIGITAL_INDICATION] = val != 0;
+		break;
+	case MDMPRM_V92_QUICK_CONNECT:
+		m->sregs[SREG_V92_QUICK_CONNECT] = val != 0;
+		break;
+	case MDMPRM_V92_PCM_UPSTREAM:
+		m->sregs[SREG_V92_PCM_UPSTREAM] = val != 0;
+		break;
+	case MDMPRM_V90_UPSTREAM_MIN_RATE:
+		m->v90_upstream_min_rate = (unsigned)val;
+		break;
+	case MDMPRM_V90_UPSTREAM_MAX_RATE:
+		m->v90_upstream_max_rate = (unsigned)val;
+		break;
+	case MDMPRM_V90_UPSTREAM_MAX_BAUD:
+		m->v90_upstream_max_baud = (unsigned)val;
+		break;
 	default:
 		return -1;
 	}

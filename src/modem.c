@@ -151,6 +151,8 @@ const char modem_date[]   = MODEM_DATE;
 #define MODEM_EC_ENABLE(m)    ((m)->sregs[SREG_EC])
 #define MODEM_EC_DETECTOR(m)  ((m)->sregs[SREG_EC])
 #define MODEM_COMP_ENABLE(m)  ((m)->sregs[SREG_COMP]&&MODEM_EC_ENABLE(m))
+#define MODEM_COMP_TYPES(m) \
+	((m)->sregs[SREG_COMP_TYPES] & MODEM_COMP_TYPE_ALL)
 #define ESCAPE_TIMEOUT(m)     (MODEM_HZ/2)
 #define ANSWER_DELAY(m)       ((m)->sregs[SREG_ANS_DELAY])
 #define SPEAKER_CONTROL(m)    ((m)->sregs[SREG_SPEAKER_CONTROL])
@@ -526,13 +528,18 @@ static void modem_hup(struct modem *m, unsigned local)
 }
 
 
-/* FIXME: find better place */
-#define NONEC_DP(id) \
-	((id) == DP_V23 || (id) == DP_V22 || (id) == DP_V22BIS || \
-	 (id) == DP_B212 || \
-	 (id) == DP_B103 || \
-	 (id) == DP_V21 || \
-	 (id) == DP_BAUDOT)
+static bool datapump_requires_raw_transport(enum DP_ID id)
+{
+	switch (id) {
+	case DP_B103:
+	case DP_V21:
+	case DP_V23:
+	case DP_BAUDOT:
+		return true;
+	default:
+		return false;
+	}
+}
 
 void modem_update_status(struct modem *m, unsigned status)
 {
@@ -542,7 +549,7 @@ void modem_update_status(struct modem *m, unsigned status)
 		break;
 	case STATUS_DP_LINK:
 		MODEM_DBG("--> DP LINK\n");
-		if(NONEC_DP(m->dp->id))
+		if (datapump_requires_raw_transport(m->dp->id))
 			m->cfg.ec = 0;
 		modem_set_state(m,STATE_EC_ESTAB);
 		/* start packer */
@@ -622,6 +629,7 @@ void modem_update_config(struct modem *m, struct modem_config *cfg)
 	PRINT_CONFIG(ec_tx_info_size);
 	PRINT_CONFIG(ec_rx_info_size);
 	PRINT_CONFIG(comp);
+	PRINT_CONFIG(comp_types);
 	PRINT_CONFIG(comp_dict_size);
 	PRINT_CONFIG(comp_max_string);
 #endif
@@ -629,7 +637,9 @@ void modem_update_config(struct modem *m, struct modem_config *cfg)
 #if 0	
 	if(cfg->ec) ; /* TBD: now ec reconfig is handled internally in EC */
 #endif
-	if(cfg->comp && m->cfg.comp) {
+	if (cfg->comp && m->cfg.comp &&
+	    (cfg->comp_types & MODEM_COMP_TYPE_V42BIS) != 0 &&
+	    (m->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0) {
 		m->cfg.comp = cfg->comp;
 		if(!modem_comp_config(m,cfg->comp_dict_size,
 				      cfg->comp_max_string)) {
@@ -1246,8 +1256,9 @@ static void modem_setup_config(struct modem *m)
 	m->cfg.ec_rx_win_size  = LAPM_MAX_WIN_SIZE;
 	m->cfg.ec_tx_info_size = LAPM_MAX_INFO_SIZE;
 	m->cfg.ec_rx_info_size = LAPM_MAX_INFO_SIZE;
-	if(m->cfg.ec && MODEM_COMP_ENABLE(m))
-		m->cfg.comp = 0x3; /* bi-directional v42bis */
+	m->cfg.comp_types = MODEM_COMP_TYPES(m);
+	if(m->cfg.ec && MODEM_COMP_ENABLE(m) && m->cfg.comp_types != 0)
+		m->cfg.comp = 0x3; /* bidirectional compression */
 	else
 		m->cfg.comp = 0;
 	m->cfg.comp_dict_size  = COMP_MAX_CODEWORDS;
@@ -1294,7 +1305,8 @@ static int modem_start (struct modem *m)
 
 	dc_filter_init(&m->dc_filter);
 
-	if ( m->cfg.ec && m->cfg.comp &&
+	if (m->cfg.ec && m->cfg.comp &&
+	    (m->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0 &&
 	     (ret = modem_comp_init(m)) )
 		goto error;
 	if ( m->cfg.ec &&
@@ -1871,6 +1883,9 @@ int modem_reset(struct modem *m)
 	m->command = 1;
 	m->min_rate = MODEM_MIN_RATE;
 	m->max_rate = MODEM_MAX_RATE;
+	m->v90_upstream_min_rate = 0;
+	m->v90_upstream_max_rate = 0;
+	m->v90_upstream_max_baud = 0;
 	m->v34_symbol_rate = 0;
 	sregs_init(m->sregs);
 	modem_homolog_init(m,m->homolog->id,NULL);
@@ -1922,6 +1937,11 @@ static int sregs_init(unsigned char sregs[])
 	/* new sregs */
 	sregs[SREG_EC]   = 1;
 	sregs[SREG_COMP] = 0x3;
+	sregs[SREG_COMP_TYPES] = MODEM_COMP_TYPE_DEFAULT;
+	sregs[SREG_V90_DIGITAL_INDICATION] = 0;
+	sregs[SREG_V92_QUICK_CONNECT] = 1;
+	sregs[SREG_V92_PCM_UPSTREAM] = 0;
+	sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 0;
 
         return 0;
 }

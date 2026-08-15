@@ -101,7 +101,7 @@ static bool test_generated_profiles(void)
 
 				CHECK(v90_profile_init(
 					      &configuration, role, law,
-					      bit_rate, bit_rate) == V90_PROFILE_OK &&
+					      bit_rate, bit_rate, NULL) == V90_PROFILE_OK &&
 				      pcm_call_init(&call, &configuration) ==
 					      PCM_CALL_OK &&
 				      pcm_call_is_valid(&call) &&
@@ -167,6 +167,61 @@ static bool test_generated_profiles(void)
 	return true;
 }
 
+static bool test_upstream_policy(void)
+{
+	const struct v90_upstream_policy policy = {
+		.minimum_bit_rate = 26400,
+		.maximum_bit_rate = 26400,
+		.maximum_symbol_rate = 3200,
+	};
+	const uint16_t expected_mask = UINT16_C(1) << (11u - 2u);
+	struct pcm_call_configuration analog;
+	struct pcm_call_configuration digital;
+	struct pcm_call_configuration rejected;
+	struct pcm_call_configuration saved;
+	const struct v90_upstream_policy impossible = {
+		.minimum_bit_rate = 31200,
+		.maximum_bit_rate = 31200,
+		.maximum_symbol_rate = 3000,
+	};
+
+	CHECK(v90_profile_init(
+		      &analog, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      28000, 28000, &policy) == V90_PROFILE_OK &&
+		      analog.local_info1.analog.upstream_symbol_rate ==
+			      V34_SYMBOL_RATE_3200 &&
+		      analog.analog_phase4.training_parameters
+			      .upstream_rate_mask == expected_mask &&
+		      analog.analog_phase4.data_parameters
+			      .upstream_rate_mask == expected_mask,
+	      "analogue profile did not apply its upstream policy");
+	CHECK(v90_profile_init(
+		      &digital, V90_DIGITAL_MODEM, G711_LAW_PCMA,
+		      28000, 28000, &policy) == V90_PROFILE_OK &&
+		      digital.local_info1.digital
+			      .answer_transmit[V34_SYMBOL_RATE_3200]
+			      .projected_data_rate_2400_bps_units == 11 &&
+		      digital.local_info1.digital
+			      .answer_transmit[V34_SYMBOL_RATE_3429]
+			      .projected_data_rate_2400_bps_units == 0 &&
+		      digital.digital_phase4.initial_mp.type ==
+			      V90_MP_RECORD_TYPE0 &&
+		      digital.digital_phase4.initial_mp.parameters.type0
+			      .maximum_upstream_rate_2400_bps_units == 11 &&
+		      digital.digital_phase4.initial_mp.parameters.type0
+			      .upstream_rate_capability_mask == expected_mask,
+	      "digital profile did not apply its upstream policy");
+	memset(&rejected, 0xa5, sizeof(rejected));
+	saved = rejected;
+	CHECK(v90_profile_init(
+		      &rejected, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+		      28000, 28000, &impossible) ==
+			      V90_PROFILE_UNSUPPORTED_RATE &&
+		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+	      "impossible upstream policy changed its destination");
+	return true;
+}
+
 static bool test_transactionality(void)
 {
 	struct pcm_call_configuration configuration;
@@ -179,34 +234,34 @@ static bool test_transactionality(void)
 	memset(&selection, 0x5a, sizeof(selection));
 	saved_selection = selection;
 	CHECK(v90_profile_init(
-		      NULL, V90_ANALOG_MODEM, G711_LAW_PCMU, 45, 56000) ==
+		      NULL, V90_ANALOG_MODEM, G711_LAW_PCMU, 45, 56000, NULL) ==
 		      V90_PROFILE_INVALID_ARGUMENT &&
 	      v90_profile_init(
 		      &configuration, (enum v90_modem_role)-1,
-		      G711_LAW_PCMU, 45, 56000) ==
+		      G711_LAW_PCMU, 45, 56000, NULL) ==
 		      V90_PROFILE_INVALID_ARGUMENT &&
 	      v90_profile_init(
 		      &configuration, V90_ANALOG_MODEM,
-		      (enum g711_law)-1, 45, 56000) ==
+		      (enum g711_law)-1, 45, 56000, NULL) ==
 		      V90_PROFILE_INVALID_ARGUMENT &&
 	      v90_profile_init(
 		      &configuration, V90_ANALOG_MODEM,
-		      G711_LAW_PCMU, 56000, 45) ==
+		      G711_LAW_PCMU, 56000, 45, NULL) ==
 		      V90_PROFILE_INVALID_ARGUMENT &&
 	      v90_profile_init(
 		      &configuration, V90_ANALOG_MODEM,
 		      G711_LAW_PCMU, 45,
-		      V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE - 1u) ==
+		      V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE - 1u, NULL) ==
 		      V90_PROFILE_UNSUPPORTED_RATE &&
 	      v90_profile_init(
 		      &configuration, V90_ANALOG_MODEM,
 		      G711_LAW_PCMU,
 		      V90_PROFILE_MAX_DOWNSTREAM_BIT_RATE + 1u,
-		      V90_PROFILE_MAX_DOWNSTREAM_BIT_RATE + 1000u) ==
+		      V90_PROFILE_MAX_DOWNSTREAM_BIT_RATE + 1000u, NULL) ==
 		      V90_PROFILE_UNSUPPORTED_RATE &&
 	      v90_profile_init(
 		      &configuration, V90_ANALOG_MODEM,
-		      G711_LAW_PCMU, 28001, 29332) ==
+		      G711_LAW_PCMU, 28001, 29332, NULL) ==
 		      V90_PROFILE_UNSUPPORTED_RATE &&
 	      v90_profile_select_downstream(NULL, 28000, 56000) ==
 		      V90_PROFILE_INVALID_ARGUMENT &&
@@ -249,6 +304,7 @@ int main(void)
 	} tests[] = {
 		{ "downstream rate selection", test_downstream_rate_selection },
 		{ "generated role and media profiles", test_generated_profiles },
+		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
 		{ "result names", test_result_names },
 	};

@@ -186,6 +186,13 @@ enum MODEM_PARAMETER_NAMES {
 	//GetCallWaitingIntegrationTimeMiliSec,
 	//GetCallWaitingThresholdPercentage,
 	//GetDialStringAfterFlash(char *dialString);
+	/* Source-owned controls follow the legacy parameter numbers. */
+	MDMPRM_V90_DIGITAL_INDICATION,
+	MDMPRM_V92_QUICK_CONNECT,
+	MDMPRM_V92_PCM_UPSTREAM,
+	MDMPRM_V90_UPSTREAM_MIN_RATE,
+	MDMPRM_V90_UPSTREAM_MAX_RATE,
+	MDMPRM_V90_UPSTREAM_MAX_BAUD,
 	MDMPRM_LAST
 };
 

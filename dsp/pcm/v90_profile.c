@@ -8,12 +8,20 @@
 enum {
 	V90_PHASE2_NOMINAL_AMPLITUDE = 12000,
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
-	V90_UPSTREAM_RATE_MASK = 0x1555,
+	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
+	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
 	V90_DATA_RATE_BASE = 20,
 	V90_SIGN_REDUNDANCY = 1,
 	V90_CONSTELLATION_FIRST_UCODE = 24,
 	V90_CONSTELLATION_LAST_UCODE = 108,
 	V90_INITIAL_CONSTELLATION_SIZE = 8,
+};
+
+struct v90_upstream_selection {
+	uint16_t rate_mask;
+	uint8_t maximum_rate_2400_bps_units;
+	enum v34_symbol_rate symbol_rate;
+	bool custom;
 };
 
 static struct v90_info0 analog_info0(void)
@@ -52,7 +60,8 @@ static struct v90_info0d digital_info0(enum g711_law law)
 	};
 }
 
-static struct v34_info1c digital_info1(void)
+static struct v34_info1c digital_info1(
+	const struct v90_upstream_selection *upstream)
 {
 	struct v34_info1c info1 = {
 		.common = {
@@ -65,27 +74,113 @@ static struct v34_info1c digital_info1(void)
 	};
 
 	for (size_t rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		uint8_t projected = (uint8_t)(rate + 6u);
+
+		if (upstream->custom) {
+			projected = (uint8_t)(rate + 9u);
+			if (rate > (size_t)upstream->symbol_rate)
+				projected = 0;
+			else if (projected >
+				 upstream->maximum_rate_2400_bps_units)
+				projected =
+					upstream->maximum_rate_2400_bps_units;
+		}
 		info1.answer_transmit[rate] =
 			(struct v34_info1_probe_result){
 				.high_carrier = (rate & 1u) != 0,
 				.preemphasis_filter_index = (uint8_t)(rate + 2u),
-				.projected_data_rate_2400_bps_units =
-					(uint8_t)(rate + 6u),
+				.projected_data_rate_2400_bps_units = projected,
 			};
 	}
 	info1.answer_transmit[V34_SYMBOL_RATE_3000].high_carrier = true;
 	return info1;
 }
 
-static struct v90_info1a analog_info1(void)
+static struct v90_info1a analog_info1(
+	const struct v90_upstream_selection *upstream)
 {
 	return (struct v90_info1a){
 		.local_md_length_35_ms_units = 5,
 		.training_ucode = 91,
-		.upstream_symbol_rate = V34_SYMBOL_RATE_3000,
+		.upstream_symbol_rate = upstream->symbol_rate,
 		.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE,
 	};
+}
+
+static bool upstream_symbol_rate(
+	unsigned int symbols_per_second, enum v34_symbol_rate *rate)
+{
+	switch (symbols_per_second) {
+	case 3000:
+		*rate = V34_SYMBOL_RATE_3000;
+		return true;
+	case 3200:
+		*rate = V34_SYMBOL_RATE_3200;
+		return true;
+	case 3429:
+		*rate = V34_SYMBOL_RATE_3429;
+		return true;
+	default:
+		return false;
+	}
+}
+
+static enum v90_profile_result select_upstream(
+	const struct v90_upstream_policy *policy,
+	struct v90_upstream_selection *selection)
+{
+	struct v90_upstream_selection selected = {
+		.rate_mask = V90_DEFAULT_UPSTREAM_RATE_MASK,
+		.maximum_rate_2400_bps_units =
+			V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS,
+		.symbol_rate = V34_SYMBOL_RATE_3000,
+	};
+	unsigned int minimum;
+	unsigned int maximum;
+	unsigned int symbol_rate;
+	unsigned int maximum_units;
+
+	if (selection == NULL)
+		return V90_PROFILE_INVALID_ARGUMENT;
+	if (policy == NULL ||
+	    (policy->minimum_bit_rate == 0 &&
+	     policy->maximum_bit_rate == 0 &&
+	     policy->maximum_symbol_rate == 0)) {
+		*selection = selected;
+		return V90_PROFILE_OK;
+	}
+	minimum = policy->minimum_bit_rate == 0 ?
+			  4800u : policy->minimum_bit_rate;
+	maximum = policy->maximum_bit_rate == 0 ?
+			  33600u : policy->maximum_bit_rate;
+	if (minimum > maximum || minimum < 4800u || maximum > 33600u)
+		return V90_PROFILE_UNSUPPORTED_RATE;
+	symbol_rate = policy->maximum_symbol_rate;
+	if (symbol_rate == 0)
+		symbol_rate = maximum <= 28800u ? 3000u :
+			      maximum <= 31200u ? 3200u : 3429u;
+	if (!upstream_symbol_rate(symbol_rate, &selected.symbol_rate))
+		return V90_PROFILE_UNSUPPORTED_RATE;
+	maximum_units = selected.symbol_rate == V34_SYMBOL_RATE_3000 ? 12u :
+			selected.symbol_rate == V34_SYMBOL_RATE_3200 ? 13u : 14u;
+	selected.rate_mask = 0;
+	selected.maximum_rate_2400_bps_units = 0;
+	selected.custom = true;
+	for (unsigned int units = V90_MP_MINIMUM_RATE_2400_BPS_UNITS;
+	     units <= maximum_units; ++units) {
+		unsigned int bit_rate = units * 2400u;
+
+		if (bit_rate < minimum || bit_rate > maximum)
+			continue;
+		selected.rate_mask |= (uint16_t)(
+			1u << (units - V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
+		selected.maximum_rate_2400_bps_units = (uint8_t)units;
+	}
+	if (selected.rate_mask == 0)
+		return V90_PROFILE_UNSUPPORTED_RATE;
+	*selection = selected;
+	return V90_PROFILE_OK;
 }
 
 uint32_t v90_profile_downstream_bit_rate(uint8_t rate_index)
@@ -181,12 +276,12 @@ static void generate_constellation(
 
 static struct v90_cp_parameters cp_parameters(
 	enum g711_law law, enum v90_cp_kind kind,
-	uint8_t data_rate_index)
+	uint8_t data_rate_index, uint16_t upstream_rate_mask)
 {
 	struct v90_cp_parameters parameters = {
 		.kind = kind,
 		.law = law,
-		.upstream_rate_mask = V90_UPSTREAM_RATE_MASK,
+		.upstream_rate_mask = upstream_rate_mask,
 		.trn1d_ratio_q3_13 = 0x2000u,
 		.shaping_a1_q1_6 = -16,
 		.shaping_a2_q1_6 = 8,
@@ -206,17 +301,18 @@ static struct v90_cp_parameters cp_parameters(
 	return parameters;
 }
 
-static struct v90_mp_record initial_mp(void)
+static struct v90_mp_record initial_mp(
+	const struct v90_upstream_selection *upstream)
 {
 	return (struct v90_mp_record){
 		.type = V90_MP_RECORD_TYPE0,
 		.parameters.type0 = {
-			.maximum_upstream_rate_2400_bps_units = 12,
+			.maximum_upstream_rate_2400_bps_units =
+				upstream->maximum_rate_2400_bps_units,
 			.upstream_trellis = V34_TRELLIS_32_STATE,
 			.upstream_nonlinear_encoding = true,
 			.upstream_expanded_shaping = true,
-			.upstream_rate_capability_mask =
-				V90_UPSTREAM_RATE_MASK,
+			.upstream_rate_capability_mask = upstream->rate_mask,
 		},
 	};
 }
@@ -224,9 +320,11 @@ static struct v90_mp_record initial_mp(void)
 enum v90_profile_result v90_profile_init(
 	struct pcm_call_configuration *configuration,
 	enum v90_modem_role role, enum g711_law law,
-	unsigned int minimum_rate, unsigned int maximum_rate)
+	unsigned int minimum_rate, unsigned int maximum_rate,
+	const struct v90_upstream_policy *upstream_policy)
 {
 	struct v90_downstream_selection downstream;
+	struct v90_upstream_selection upstream;
 	struct pcm_call_configuration selected = {
 		.local_role = role,
 		.law = law,
@@ -236,6 +334,8 @@ enum v90_profile_result v90_profile_init(
 	if (configuration == NULL || !pcm_modem_role_is_valid(role) ||
 	    !g711_law_is_valid(law) || minimum_rate > maximum_rate)
 		return V90_PROFILE_INVALID_ARGUMENT;
+	if (select_upstream(upstream_policy, &upstream) != V90_PROFILE_OK)
+		return V90_PROFILE_UNSUPPORTED_RATE;
 	if (v90_profile_select_downstream(
 		    &downstream, minimum_rate, maximum_rate) != V90_PROFILE_OK)
 		return V90_PROFILE_UNSUPPORTED_RATE;
@@ -243,20 +343,22 @@ enum v90_profile_result v90_profile_init(
 		downstream.enabled_rate_mask;
 	if (role == V90_ANALOG_MODEM) {
 		selected.local_info0.analog = analog_info0();
-		selected.local_info1.analog = analog_info1();
+		selected.local_info1.analog = analog_info1(&upstream);
 		selected.phase3.analog.nominal_peak_amplitude =
 			V90_PHASE3_NOMINAL_AMPLITUDE;
 		selected.analog_phase4.training_parameters =
 			cp_parameters(
 				law, V90_CP_TRAINING,
-				downstream.selected_rate_index);
+				downstream.selected_rate_index,
+				upstream.rate_mask);
 		selected.analog_phase4.data_parameters =
 			cp_parameters(
 				law, V90_CP_DATA,
-				downstream.selected_rate_index);
+				downstream.selected_rate_index,
+				upstream.rate_mask);
 	} else {
 		selected.local_info0.digital = digital_info0(law);
-		selected.local_info1.digital = digital_info1();
+		selected.local_info1.digital = digital_info1(&upstream);
 		selected.phase3.digital.receive =
 			(struct v90_phase3_analog_rx_configuration){
 				.s_gain_adaptation = 0.15,
@@ -265,7 +367,7 @@ enum v90_profile_result v90_profile_init(
 			};
 		selected.phase3.digital.jd =
 			jd_parameters(downstream.enabled_rate_mask);
-		selected.digital_phase4.initial_mp = initial_mp();
+		selected.digital_phase4.initial_mp = initial_mp(&upstream);
 	}
 	*configuration = selected;
 	return V90_PROFILE_OK;
