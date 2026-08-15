@@ -30,6 +30,12 @@ struct cpd_wire {
 	bool valid;
 };
 
+struct cpd_presence {
+	bool modulus;
+	bool filters;
+	bool constellations;
+};
+
 static bool alignment_is_valid(unsigned int training_frame_bits)
 {
 	return training_frame_bits >= V92_CPD_DOWNSTREAM_FRAME_MIN_BITS &&
@@ -153,14 +159,32 @@ static bool constellations_are_valid(
 bool v92_cpd_parameters_are_valid(
 	const struct v92_cpd_parameters *parameters)
 {
+	struct v92_cpd_base_parameters base;
+
+	if (parameters == NULL)
+		return false;
+	base = (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 =
+			parameters->four_times_gain_q0_16,
+		.data_rate_number = parameters->data_rate_number,
+		.trellis = parameters->trellis,
+		.extend_e2u = parameters->extend_e2u,
+		.acknowledges_cpu = parameters->acknowledges_cpu,
+	};
+	return v92_cpd_base_parameters_are_valid(&base) &&
+	       modulus_is_valid(parameters) && filters_are_valid(parameters) &&
+	       constellations_are_valid(parameters);
+}
+
+bool v92_cpd_base_parameters_are_valid(
+	const struct v92_cpd_base_parameters *parameters)
+{
 	return parameters != NULL &&
 	       parameters->data_rate_number <=
 		       V92_CPD_MAX_DATA_RATE_NUMBER &&
 	       (unsigned int)parameters->trellis <=
 		       (unsigned int)V92_CPD_TRELLIS_64_STATE &&
-	       parameters->four_times_gain_q0_16 != 0u &&
-	       modulus_is_valid(parameters) && filters_are_valid(parameters) &&
-	       constellations_are_valid(parameters);
+	       parameters->four_times_gain_q0_16 != 0u;
 }
 
 size_t v92_cpd_payload_bits(
@@ -513,18 +537,20 @@ static bool wire_constellations(
 	return wire->valid;
 }
 
-static bool wire_payload(
-	struct cpd_wire *wire, struct v92_cpd_parameters *parameters)
+static bool wire_base_fields(
+	struct cpd_wire *wire,
+	struct v92_cpd_base_parameters *parameters,
+	struct cpd_presence *presence)
 {
 	wire_fixed(wire, UINT32_C(0x1ffff), 17u);
 	wire_fixed(wire, 0u, 1u);
 	wire_reserved(wire, 1u);
-	parameters->modulus_present =
-		wire_field(wire, parameters->modulus_present, 1u) != 0u;
-	parameters->filters_present =
-		wire_field(wire, parameters->filters_present, 1u) != 0u;
-	parameters->constellations_present =
-		wire_field(wire, parameters->constellations_present, 1u) != 0u;
+	presence->modulus =
+		wire_field(wire, presence->modulus, 1u) != 0u;
+	presence->filters =
+		wire_field(wire, presence->filters, 1u) != 0u;
+	presence->constellations =
+		wire_field(wire, presence->constellations, 1u) != 0u;
 	parameters->data_rate_number = (uint8_t)wire_field(
 		wire, parameters->data_rate_number, 5u);
 	parameters->trellis = (enum v92_cpd_trellis)wire_field(
@@ -537,6 +563,36 @@ static bool wire_payload(
 	wire_fixed(wire, 0u, 1u);
 	parameters->four_times_gain_q0_16 = (uint16_t)wire_field(
 		wire, parameters->four_times_gain_q0_16, 16u);
+	return wire->valid;
+}
+
+static bool wire_payload(
+	struct cpd_wire *wire, struct v92_cpd_parameters *parameters)
+{
+	struct v92_cpd_base_parameters base = {
+		.four_times_gain_q0_16 =
+			parameters->four_times_gain_q0_16,
+		.data_rate_number = parameters->data_rate_number,
+		.trellis = parameters->trellis,
+		.extend_e2u = parameters->extend_e2u,
+		.acknowledges_cpu = parameters->acknowledges_cpu,
+	};
+	struct cpd_presence presence = {
+		.modulus = parameters->modulus_present,
+		.filters = parameters->filters_present,
+		.constellations = parameters->constellations_present,
+	};
+
+	if (!wire_base_fields(wire, &base, &presence))
+		return false;
+	parameters->four_times_gain_q0_16 = base.four_times_gain_q0_16;
+	parameters->data_rate_number = base.data_rate_number;
+	parameters->trellis = base.trellis;
+	parameters->extend_e2u = base.extend_e2u;
+	parameters->acknowledges_cpu = base.acknowledges_cpu;
+	parameters->modulus_present = presence.modulus;
+	parameters->filters_present = presence.filters;
+	parameters->constellations_present = presence.constellations;
 
 	if (parameters->modulus_present) {
 		for (size_t index = 0u;
@@ -570,6 +626,50 @@ static uint16_t frame_crc(const uint8_t *frame, size_t payload_end)
 			remainder, packed_msb_bit(frame, bit) != 0u);
 	}
 	return remainder;
+}
+
+enum v92_cpd_result v92_cpd_encode_base(
+	const struct v92_cpd_base_parameters *parameters,
+	unsigned int training_frame_bits,
+	uint8_t *frame, size_t frame_capacity,
+	size_t *frame_bit_count)
+{
+	struct v92_cpd_base_parameters encoded_parameters;
+	struct cpd_presence presence = { 0 };
+	uint8_t encoded[V92_CPD_BASE_MAX_FRAME_BYTES] = { 0 };
+	struct cpd_wire wire;
+	size_t bit_count;
+	size_t byte_count;
+
+	if (parameters == NULL || frame == NULL || frame_bit_count == NULL)
+		return V92_CPD_INVALID_ARGUMENT;
+	if (!v92_cpd_base_parameters_are_valid(parameters))
+		return V92_CPD_INVALID_PARAMETERS;
+	if (!alignment_is_valid(training_frame_bits))
+		return V92_CPD_INVALID_ALIGNMENT;
+	bit_count = (V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS +
+		     training_frame_bits - 1u) /
+		    training_frame_bits * training_frame_bits;
+	byte_count = (bit_count + 7u) / 8u;
+	if (frame_capacity < byte_count)
+		return V92_CPD_OUTPUT_TOO_SMALL;
+
+	encoded_parameters = *parameters;
+	wire = (struct cpd_wire){
+		.output = encoded,
+		.limit = V92_CPD_FIXED_BITS,
+		.valid = true,
+	};
+	if (!wire_base_fields(&wire, &encoded_parameters, &presence) ||
+	    wire.cursor != V92_CPD_FIXED_BITS || presence.modulus ||
+	    presence.filters || presence.constellations)
+		return V92_CPD_INVALID_PARAMETERS;
+	packed_msb_write_msb_field(
+		encoded, V92_CPD_FIXED_BITS + 1u, CPD_CRC_BITS,
+		frame_crc(encoded, V92_CPD_FIXED_BITS));
+	memcpy(frame, encoded, byte_count);
+	*frame_bit_count = bit_count;
+	return V92_CPD_OK;
 }
 
 enum v92_cpd_result v92_cpd_encode(

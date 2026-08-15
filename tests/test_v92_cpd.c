@@ -103,6 +103,19 @@ static struct v92_cpd_parameters selection(unsigned int sections)
 	return parameters;
 }
 
+static struct v92_cpd_base_parameters base_parameters(
+	const struct v92_cpd_parameters *parameters)
+{
+	return (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 =
+			parameters->four_times_gain_q0_16,
+		.data_rate_number = parameters->data_rate_number,
+		.trellis = parameters->trellis,
+		.extend_e2u = parameters->extend_e2u,
+		.acknowledges_cpu = parameters->acknowledges_cpu,
+	};
+}
+
 static uint16_t test_crc(const uint8_t *frame, size_t payload_end)
 {
 	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
@@ -145,6 +158,82 @@ static bool test_cleardown_wire_image(void)
 		      FIXTURE_ALIGNMENT_BITS, &decoded) == V92_CPD_OK &&
 	      parameters_equal(&decoded, &parameters),
 	      "cleardown CPd did not round-trip");
+	return true;
+}
+
+static bool test_base_encoding(void)
+{
+	struct v92_cpd_parameters full = selection(0u);
+	struct v92_cpd_base_parameters base = base_parameters(&full);
+	struct v92_cpd_base_parameters invalid;
+	uint8_t expected[V92_CPD_BASE_MAX_FRAME_BYTES];
+	uint8_t actual[V92_CPD_BASE_MAX_FRAME_BYTES];
+	uint8_t untouched[V92_CPD_BASE_MAX_FRAME_BYTES];
+	uint8_t saved[sizeof(untouched)];
+	size_t expected_bits;
+	size_t actual_bits;
+	size_t untouched_bits;
+
+	CHECK(V92_CPD_BASE_MAX_FRAME_BITS == 98u &&
+	      V92_CPD_BASE_MAX_FRAME_BYTES == 13u &&
+	      v92_cpd_base_parameters_are_valid(&base),
+	      "base CPd dimensions or parameters changed");
+	for (unsigned int alignment = V92_CPD_DOWNSTREAM_FRAME_MIN_BITS;
+	     alignment <= V92_CPD_DOWNSTREAM_FRAME_MAX_BITS; ++alignment) {
+		CHECK(v92_cpd_encode(
+			      &full, alignment, expected, sizeof(expected),
+			      &expected_bits) == V92_CPD_OK &&
+		      v92_cpd_encode_base(
+			      &base, alignment, actual, sizeof(actual),
+			      &actual_bits) == V92_CPD_OK &&
+		      actual_bits == expected_bits &&
+		      memcmp(actual, expected, (actual_bits + 7u) / 8u) == 0,
+		      "base CPd differed at alignment %u", alignment);
+	}
+
+	memset(untouched, 0xa5, sizeof(untouched));
+	memcpy(saved, untouched, sizeof(saved));
+	untouched_bits = SIZE_MAX;
+	invalid = base;
+	invalid.four_times_gain_q0_16 = 0u;
+	CHECK(!v92_cpd_base_parameters_are_valid(NULL) &&
+	      !v92_cpd_base_parameters_are_valid(&invalid),
+	      "invalid base CPd gain was accepted");
+	invalid = base;
+	invalid.data_rate_number = V92_CPD_MAX_DATA_RATE_NUMBER + 1u;
+	CHECK(!v92_cpd_base_parameters_are_valid(&invalid),
+	      "invalid base CPd rate was accepted");
+	invalid = base;
+	invalid.trellis = (enum v92_cpd_trellis)3;
+	CHECK(!v92_cpd_base_parameters_are_valid(&invalid),
+	      "invalid base CPd trellis was accepted");
+	invalid = base;
+	invalid.four_times_gain_q0_16 = 0u;
+	CHECK(
+	      v92_cpd_encode_base(
+		      &invalid, FIXTURE_ALIGNMENT_BITS, untouched,
+		      sizeof(untouched), &untouched_bits) ==
+		      V92_CPD_INVALID_PARAMETERS &&
+	      v92_cpd_encode_base(
+		      &base, 8u, untouched, sizeof(untouched),
+		      &untouched_bits) == V92_CPD_INVALID_ALIGNMENT &&
+	      v92_cpd_encode_base(
+		      &base, FIXTURE_ALIGNMENT_BITS, untouched, 1u,
+		      &untouched_bits) == V92_CPD_OUTPUT_TOO_SMALL &&
+	      v92_cpd_encode_base(
+		      NULL, FIXTURE_ALIGNMENT_BITS, untouched,
+		      sizeof(untouched), &untouched_bits) ==
+		      V92_CPD_INVALID_ARGUMENT &&
+	      v92_cpd_encode_base(
+		      &base, FIXTURE_ALIGNMENT_BITS, NULL,
+		      sizeof(untouched), &untouched_bits) ==
+		      V92_CPD_INVALID_ARGUMENT &&
+	      v92_cpd_encode_base(
+		      &base, FIXTURE_ALIGNMENT_BITS, untouched,
+		      sizeof(untouched), NULL) == V92_CPD_INVALID_ARGUMENT &&
+	      untouched_bits == SIZE_MAX &&
+	      memcmp(untouched, saved, sizeof(untouched)) == 0,
+	      "rejected base CPd encoding changed output");
 	return true;
 }
 
@@ -566,6 +655,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "cleardown wire image", test_cleardown_wire_image },
+		{ "base encoding", test_base_encoding },
 		{ "optional section matrix", test_optional_section_matrix },
 		{ "maximum extent", test_maximum_extent },
 		{ "parameter validation", test_parameter_validation },

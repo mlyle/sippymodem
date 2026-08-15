@@ -33,6 +33,11 @@ enum {
 		V92_CPD_MAX_PAYLOAD_BITS + V92_CPD_TRAILER_BITS +
 		V92_CPD_DOWNSTREAM_FRAME_MAX_BITS - 1,
 	V92_CPD_MAX_FRAME_BYTES = (V92_CPD_MAX_FRAME_BITS + 7) / 8,
+	V92_CPD_BASE_MAX_FRAME_BITS =
+		V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS +
+		V92_CPD_DOWNSTREAM_FRAME_MAX_BITS - 1,
+	V92_CPD_BASE_MAX_FRAME_BYTES =
+		(V92_CPD_BASE_MAX_FRAME_BITS + 7) / 8,
 	V92_CPD_MAX_DATA_RATE_NUMBER = 19,
 };
 
@@ -60,6 +65,29 @@ enum v92_cpd_result {
 	V92_CPD_CRC_MISMATCH,
 	V92_CPD_INCOMPLETE,
 };
+
+/* The fixed Table 30 selection fields with all three optional table-presence
+ * bits clear. This compact form is enough to acknowledge CPU and select the
+ * negotiated rate, trellis, gain, and E2U behavior without retaining large
+ * modulus, filter, or constellation tables. */
+struct v92_cpd_base_parameters {
+	uint16_t four_times_gain_q0_16;
+	uint8_t data_rate_number;
+	enum v92_cpd_trellis trellis;
+	bool extend_e2u;
+	bool acknowledges_cpu;
+};
+
+bool v92_cpd_base_parameters_are_valid(
+	const struct v92_cpd_base_parameters *parameters);
+
+/* Encode the table-free form into one integral downstream mapping frame.
+ * Rejected calls leave frame and frame_bit_count unchanged. */
+enum v92_cpd_result v92_cpd_encode_base(
+	const struct v92_cpd_base_parameters *parameters,
+	unsigned int training_frame_bits,
+	uint8_t *frame, size_t frame_capacity,
+	size_t *frame_bit_count);
 
 struct v92_cpd_filter {
 	int16_t coefficient[V92_CPD_MAX_SECTION_COEFFICIENTS];
