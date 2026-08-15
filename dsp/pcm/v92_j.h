@@ -47,6 +47,8 @@ struct v92_jp {
 	enum v92_constellation_size rate_renegotiation_constellation;
 };
 
+bool v92_constellation_size_is_valid(
+	enum v92_constellation_size constellation);
 bool v92_jd_is_valid(const struct v92_jd *jd);
 bool v92_jp_is_valid(const struct v92_jp *jp);
 

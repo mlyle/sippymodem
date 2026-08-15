@@ -94,12 +94,14 @@ static int16_t media_sample(enum g711_law law, int16_t sample)
 
 static bool run_exchange(enum g711_law law, bool delayed)
 {
+	const enum v92_constellation_size training_constellation = delayed ?
+		V92_CONSTELLATION_4_POINT : V92_CONSTELLATION_8_POINT;
 	struct v92_jd jd = {
 		.data_rate_capability_mask = UINT32_C(0x002a1555),
 		.maximum_spectral_shaping_lookahead = 3,
 	};
 	struct v92_jp jp = {
-		.training_constellation = V92_CONSTELLATION_8_POINT,
+		.training_constellation = training_constellation,
 		.rate_renegotiation_constellation =
 			V92_CONSTELLATION_4_POINT,
 	};
@@ -170,7 +172,8 @@ static bool run_exchange(enum g711_law law, bool delayed)
 					      V92_PHASE3_ANALOG_STATION_OK &&
 				      v92_pcm_phase4_trn2u_init(
 					      &trn2u,
-					      V92_CONSTELLATION_8_POINT,
+					      transmit_handoff
+						      .training_constellation,
 					      transmit_handoff
 						      .previous_encoded_sign,
 					      transmit_handoff.lu) ==
@@ -228,6 +231,8 @@ static bool run_exchange(enum g711_law law, bool delayed)
 		      &analog, &transmit_handoff) ==
 		      V92_PHASE3_ANALOG_STATION_OK &&
 	      transmit_handoff.lu > 0 &&
+	      transmit_handoff.training_constellation ==
+		      training_constellation &&
 	      transmit_handoff.previous_encoded_sign ==
 		      analog.transmit.cpt.coding.previous_sign,
 	      "V.92 Phase 4 handoff changed negotiated state");
@@ -242,6 +247,7 @@ static bool test_analog_contracts(void)
 	struct v92_phase3_analog_station before;
 	struct v92_phase3_analog_transmit_handoff handoff = {
 		.lu = 123,
+		.training_constellation = (enum v92_constellation_size)16,
 		.previous_encoded_sign = 1,
 	};
 	int16_t sample = 1234;
@@ -280,7 +286,10 @@ static bool test_analog_contracts(void)
 	CHECK(v92_phase3_analog_station_transmit_handoff(
 		      &station, &handoff) ==
 		      V92_PHASE3_ANALOG_STATION_INVALID_STATE &&
-	      handoff.lu == 123 && handoff.previous_encoded_sign == 1u &&
+	      handoff.lu == 123 &&
+	      handoff.training_constellation ==
+		      (enum v92_constellation_size)16 &&
+	      handoff.previous_encoded_sign == 1u &&
 	      v92_phase3_analog_station_transmit(&station, NULL, &sample) ==
 		      V92_PHASE3_ANALOG_STATION_OK &&
 	      sample == 0,

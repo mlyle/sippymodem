@@ -235,7 +235,12 @@ static bool test_rejection_and_contracts(void)
 		      V92_J_INVALID_PARAMETERS,
 	      "V.92 Jd accepted excessive lookahead");
 	jp.training_constellation = (enum v92_constellation_size)16;
-	CHECK(!v92_jp_is_valid(&jp) &&
+	CHECK(v92_constellation_size_is_valid(V92_CONSTELLATION_4_POINT) &&
+	      v92_constellation_size_is_valid(V92_CONSTELLATION_8_POINT) &&
+	      !v92_constellation_size_is_valid(
+		      (enum v92_constellation_size)0) &&
+	      !v92_constellation_size_is_valid(jp.training_constellation) &&
+	      !v92_jp_is_valid(&jp) &&
 	      v92_jp_encode(&jp, frame, sizeof(frame)) ==
 		      V92_J_INVALID_PARAMETERS &&
 	      memcmp(frame, saved_frame, sizeof(frame)) == 0,

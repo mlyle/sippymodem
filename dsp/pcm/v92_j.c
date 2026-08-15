@@ -13,7 +13,8 @@ enum {
 	LOOKAHEAD_FIRST_BIT = 30,
 };
 
-static bool constellation_is_valid(enum v92_constellation_size constellation)
+bool v92_constellation_size_is_valid(
+	enum v92_constellation_size constellation)
 {
 	return constellation == V92_CONSTELLATION_4_POINT ||
 	       constellation == V92_CONSTELLATION_8_POINT;
@@ -33,8 +34,9 @@ bool v92_jd_is_valid(const struct v92_jd *jd)
 bool v92_jp_is_valid(const struct v92_jp *jp)
 {
 	return jp != NULL &&
-	       constellation_is_valid(jp->training_constellation) &&
-	       constellation_is_valid(jp->rate_renegotiation_constellation);
+	       v92_constellation_size_is_valid(jp->training_constellation) &&
+	       v92_constellation_size_is_valid(
+		       jp->rate_renegotiation_constellation);
 }
 
 static enum v92_j_result frame_result(enum pcm_j_frame_result result)

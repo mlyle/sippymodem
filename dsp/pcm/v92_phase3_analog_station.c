@@ -100,6 +100,35 @@ static bool coordination_is_valid(
 	return false;
 }
 
+static bool phase4_constellation_is_valid(
+	const struct v92_phase3_analog_station *station)
+{
+	switch (station->receive_stage) {
+	case V92_PHASE3_ANALOG_RECEIVE_SD:
+		return station->phase4_training_constellation == 0;
+	case V92_PHASE3_ANALOG_RECEIVE_J:
+		switch (station->receive.j.stage) {
+		case V92_PHASE3_J_RECEIVER_TRN1D:
+		case V92_PHASE3_J_RECEIVER_JD_SEARCH:
+		case V92_PHASE3_J_RECEIVER_JD:
+			return station->phase4_training_constellation == 0;
+		case V92_PHASE3_J_RECEIVER_JP:
+			return v92_constellation_size_is_valid(
+				       station->phase4_training_constellation) &&
+			       station->phase4_training_constellation ==
+				       station->receive.j.jp.training_constellation;
+		case V92_PHASE3_J_RECEIVER_DONE:
+			return false;
+		}
+		return false;
+	case V92_PHASE3_ANALOG_RECEIVE_RI:
+	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
+		return v92_constellation_size_is_valid(
+			station->phase4_training_constellation);
+	}
+	return false;
+}
+
 bool v92_phase3_analog_station_is_valid(
 	const struct v92_phase3_analog_station *station)
 {
@@ -119,6 +148,7 @@ bool v92_phase3_analog_station_is_valid(
 	       v92_cpt_parameters_are_valid(&station->cpt_parameters) &&
 	       station->cpt_parameters.law == station->law &&
 	       fractional_delay_is_valid(&station->transmit_delay) &&
+	       phase4_constellation_is_valid(station) &&
 	       receive_is_valid(station) && transmit_is_valid(station) &&
 	       coordination_is_valid(station);
 }
@@ -396,6 +426,8 @@ static enum v92_phase3_analog_station_result receive_j(
 		if (!v92_phase3_j_receiver_jp(&station->receive.j, &jp) ||
 		    v92_su_accept_jp(&station->transmit.su, &jp) != V92_SU_OK)
 			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+		station->phase4_training_constellation =
+			jp.training_constellation;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
 	if (result == V92_PHASE3_J_RECEIVER_COMPLETE) {
@@ -514,6 +546,8 @@ v92_phase3_analog_station_transmit_handoff(
 		return V92_PHASE3_ANALOG_STATION_INVALID_STATE;
 	generated = (struct v92_phase3_analog_transmit_handoff){
 		.lu = station->upstream_lu,
+		.training_constellation =
+			station->phase4_training_constellation,
 		.previous_encoded_sign =
 			station->transmit.cpt.coding.previous_sign,
 	};

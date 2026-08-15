@@ -61,6 +61,7 @@ union v92_phase3_analog_transmit {
 
 struct v92_phase3_analog_transmit_handoff {
 	int16_t lu;
+	enum v92_constellation_size training_constellation;
 	uint8_t previous_encoded_sign;
 };
 
@@ -74,6 +75,7 @@ struct v92_phase3_analog_station {
 	struct fractional_delay transmit_delay;
 	struct v92_cpt_parameters cpt_parameters;
 	uint32_t upstream_rate_mask;
+	enum v92_constellation_size phase4_training_constellation;
 	enum v92_phase3_analog_receive_stage receive_stage;
 	enum v92_phase3_analog_transmit_stage transmit_stage;
 	enum g711_law law;
@@ -110,8 +112,9 @@ bool v92_phase3_analog_station_transmit_complete(
 bool v92_phase3_analog_station_receive_complete(
 	const struct v92_phase3_analog_station *station);
 
-/* Export the exact differential-sign continuity for initial Phase 4 TRN2u.
- * Rejected calls leave handoff unchanged. */
+/* Export the exact level, Jp-selected constellation, and differential-sign
+ * continuity for initial Phase 4 TRN2u. Rejected calls leave handoff
+ * unchanged. */
 enum v92_phase3_analog_station_result
 v92_phase3_analog_station_transmit_handoff(
 	const struct v92_phase3_analog_station *station,
