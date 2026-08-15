@@ -171,19 +171,21 @@ Both then send
 `RETRAIN` and require matching START/END nonce markers, issue local `ATO1` and
 require a fresh CONNECT, and finally send PING and require a structured PONG
 response. The START nonce is reported as soon as it arrives; the matching END
-must arrive within the same total 60-second retrain deadline. Every completed
-callback-request dial is also reported as an
-auxiliary V.22bis originator connect/no-connect observation, independently of
-the requested modulation on the returning call. Once that request leg is
-online, the runner verifies the peer's initial data before sending the callback
-request; both that greeting and the callback START marker have seven-second
-default deadlines.
+must arrive within the same total 60-second retrain deadline. The dashboard
+keeps raw and LAPM results on separate rows. Each callback-request leg is
+attributed to the V.22bis/LAPM originator row as an auxiliary attempt: `Q`
+means the greeting, request, and START acknowledgement all completed, while an
+incomplete leg remains visible as connect or no-connect. Once that request leg
+is online, the runner verifies the peer's initial data before sending the
+callback request; both that greeting and the callback START marker have
+seven-second default deadlines.
 
 The TTY summary clears and repaints every two seconds, names the active call
 stage and seconds spent there, and places originator and callback results next
-to each other on each modulation row. Both roles use mutually exclusive `full`,
-`rtrn`, `data`, `conn`, and `none` maturity buckets. Setup and local
-infrastructure failures remain separate. BUSY calls are recorded but do not
+to each other on each modulation/transport row. Both roles use mutually
+exclusive full, retrain, data, connect, and no-connect maturity buckets; the
+separate request count covers successful auxiliary request legs. Setup and
+local infrastructure failures remain separate. BUSY calls are recorded but do not
 consume a logical attempt: the runner waits the configured busy cooldown and
 retries up to its bound. `NO CARRIER` is always reported as a failed modem
 attempt; the runner does not infer a SIP status that the modem interface did

@@ -43,6 +43,7 @@ if __package__:
         AttemptResult,
         MATURITY_CONNECT,
         MATURITY_NO_CONNECT,
+        MATURITY_REQUEST,
         OUTCOME_BUSY,
         OUTCOME_COMPLETE,
         OUTCOME_INFRASTRUCTURE_ERROR,
@@ -86,6 +87,7 @@ else:
         AttemptResult,
         MATURITY_CONNECT,
         MATURITY_NO_CONNECT,
+        MATURITY_REQUEST,
         OUTCOME_BUSY,
         OUTCOME_COMPLETE,
         OUTCOME_INFRASTRUCTURE_ERROR,
@@ -744,6 +746,7 @@ def _callback_body(
         state.detail = "callback START marker was not verified"
         return None
     nonce = match.group("nonce").lower()
+    state.callback_request_maturity = MATURITY_REQUEST
     progress.set("releasing request call")
     if not request.stop(config.cleanup_timeout_seconds):
         state.detail = "callback request leg did not stop cleanly"
@@ -856,6 +859,7 @@ def run_physical_attempt(
         extra=scheduled.extra,
         physical_try=physical_try,
         outcome=state.outcome,
+        link_mode=scheduled.case.link_mode,
         line_attempted=state.line_attempted,
         connected=state.connected,
         initial_data=state.initial_data,

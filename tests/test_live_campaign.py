@@ -37,8 +37,8 @@ from tools.live_campaign_config import (  # noqa: E402
 from tools.live_campaign_profiles import CASES_BY_NAME  # noqa: E402
 from tools.live_campaign_report import (  # noqa: E402
     AttemptResult,
-    MATURITY_CONNECT,
     MATURITY_FULL,
+    MATURITY_REQUEST,
     OUTCOME_BUSY,
     OUTCOME_SETUP_ERROR,
     ScheduledAttempt,
@@ -576,7 +576,7 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertEqual(result.maturity, MATURITY_FULL)
             self.assertEqual(
                 result.callback_request_maturity,
-                MATURITY_CONNECT,
+                MATURITY_REQUEST,
             )
             self.assertEqual(
                 result.remote_retrain_nonce,

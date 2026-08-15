@@ -12,9 +12,21 @@ from typing import Iterable, Sequence
 
 
 if __package__:
-    from .live_campaign_profiles import CampaignCase, FAMILY_ORDER
+    from .live_campaign_profiles import (
+        CampaignCase,
+        FAMILY_ORDER,
+        LINK_LAPM,
+        LINK_MODES,
+        LINK_RAW,
+    )
 else:
-    from live_campaign_profiles import CampaignCase, FAMILY_ORDER
+    from live_campaign_profiles import (
+        CampaignCase,
+        FAMILY_ORDER,
+        LINK_LAPM,
+        LINK_MODES,
+        LINK_RAW,
+    )
 
 
 MATURITY_FULL = "full"
@@ -22,6 +34,7 @@ MATURITY_RETRAIN = "retrain"
 MATURITY_DATA = "data"
 MATURITY_CONNECT = "connect"
 MATURITY_NO_CONNECT = "no-connect"
+MATURITY_REQUEST = "request"
 MATURITY_ORDER = (
     MATURITY_FULL,
     MATURITY_RETRAIN,
@@ -70,6 +83,7 @@ class AttemptResult:
     extra: bool
     physical_try: int
     outcome: str
+    link_mode: str | None = None
     line_attempted: bool = False
     connected: bool = False
     initial_data: bool = False
@@ -211,14 +225,19 @@ def extra_schedule(
     return tuple(schedule)
 
 
-def _families(
+def _summary_groups(
     cases: Sequence[CampaignCase],
     results: Sequence[AttemptResult] = (),
-) -> tuple[str, ...]:
-    present = {case.family for case in cases}
+) -> tuple[tuple[str, str], ...]:
+    present = {(case.family, case.link_mode) for case in cases}
     if any(result.callback_request_maturity is not None for result in results):
-        present.add("v22bis")
-    ordered = [family for family in FAMILY_ORDER if family in present]
+        present.add(("v22bis", LINK_LAPM))
+    ordered = [
+        (family, link_mode)
+        for family in FAMILY_ORDER
+        for link_mode in LINK_MODES
+        if (family, link_mode) in present
+    ]
     ordered.extend(sorted(present - set(ordered)))
     return tuple(ordered)
 
@@ -236,13 +255,30 @@ def render_dashboard(
     recent_limit: int = 0,
 ) -> str:
     roles = ("originator", "callback")
-    families = _families(cases, results)
+    groups = _summary_groups(cases, results)
+    cases_by_name = {case.name: case for case in cases}
+    family_modes: dict[str, set[str]] = {}
+    for case in cases:
+        family_modes.setdefault(case.family, set()).add(case.link_mode)
+
+    def result_link_mode(result: AttemptResult) -> str:
+        if result.link_mode in LINK_MODES:
+            return result.link_mode
+        case = cases_by_name.get(result.case_name)
+        if case is not None:
+            return case.link_mode
+        modes = family_modes.get(result.family, set())
+        return next(iter(modes)) if len(modes) == 1 else LINK_RAW
+
     base_expected = {
-        (family, role): sum(
-            case.family == family and case.role == role for case in cases
+        (family, link_mode, role): sum(
+            case.family == family
+            and case.link_mode == link_mode
+            and case.role == role
+            for case in cases
         )
         * attempts
-        for family in families
+        for family, link_mode in groups
         for role in roles
     }
     rows: list[str] = []
@@ -254,11 +290,11 @@ def render_dashboard(
     if current:
         active = "" if current_seconds is None else f" for={current_seconds:.0f}s"
         rows.append(f"current={current}{active}")
-    rows.append("F=full R=retrain D=data C=connect N=no-connect E=error")
     rows.append(
-        "+ includes failure extras and V.22bis callback-request observations"
+        "F=full R=retrain D=data C=connect Q=request N=no-connect E=error"
     )
-    role_columns = "done/exp+x   F  R  D  C  N  E"
+    rows.append("r=raw l=LAPM; + includes failure extras and request legs")
+    role_columns = "done/exp+x   F  R  D  C  Q  N  E"
     role_width = len(role_columns)
     rows.append(
         f"{'':13}{'Originator':^{role_width}} | "
@@ -274,16 +310,18 @@ def render_dashboard(
             "expected": 0,
             "extra": 0,
             **{maturity: 0 for maturity in MATURITY_ORDER},
+            MATURITY_REQUEST: 0,
             "error": 0,
         }
         for role in roles
     }
 
-    def role_fields(family: str, role: str) -> str:
+    def role_fields(family: str, link_mode: str, role: str) -> str:
         role_results = [
             result
             for result in results
             if result.family == family
+            and result_link_mode(result) == link_mode
             and result.role == role
             and result.counts_as_attempt
         ]
@@ -297,36 +335,46 @@ def render_dashboard(
                 for result in results
                 if result.callback_request_maturity is not None
             ]
-            if family == "v22bis" and role == "originator"
+            if family == "v22bis"
+            and link_mode == LINK_LAPM
+            and role == "originator"
             else []
         )
         for maturity in request_observations:
-            counts[maturity] += 1
+            if maturity in counts:
+                counts[maturity] += 1
+        requests = sum(
+            maturity == MATURITY_REQUEST for maturity in request_observations
+        )
         errors = sum(result.outcome in ERROR_OUTCOMES for result in role_results)
         done = sum(not result.extra for result in role_results)
         extras = sum(result.extra for result in role_results) + len(
             request_observations
         )
-        expected = base_expected[(family, role)]
+        expected = base_expected[(family, link_mode, role)]
         total = totals[role]
         total["done"] += done
         total["expected"] += expected
         total["extra"] += extras
         total["error"] += errors
+        total[MATURITY_REQUEST] += requests
         for maturity in MATURITY_ORDER:
             total[maturity] += counts[maturity]
         return (
             f" {done:>3}/{expected:<3}+{extras:<2} "
             f"{counts[MATURITY_FULL]:>2} {counts[MATURITY_RETRAIN]:>2} "
             f"{counts[MATURITY_DATA]:>2} {counts[MATURITY_CONNECT]:>2} "
+            f"{requests:>2} "
             f"{counts[MATURITY_NO_CONNECT]:>2} {errors:>2}"
         )
 
-    for family in families:
+    for family, link_mode in groups:
+        mode_label = "l" if link_mode == LINK_LAPM else "r"
+        label = f"{FAMILY_LABELS.get(family, family)}/{mode_label}"
         rows.append(
-            f"{FAMILY_LABELS.get(family, family):<12} "
-            f"{role_fields(family, 'originator')} | "
-            f"{role_fields(family, 'callback')}"
+            f"{label:<12} "
+            f"{role_fields(family, link_mode, 'originator')} | "
+            f"{role_fields(family, link_mode, 'callback')}"
         )
 
     def total_fields(role: str) -> str:
@@ -335,6 +383,7 @@ def render_dashboard(
             f" {total['done']:>3}/{total['expected']:<3}+{total['extra']:<2} "
             f"{total[MATURITY_FULL]:>2} {total[MATURITY_RETRAIN]:>2} "
             f"{total[MATURITY_DATA]:>2} {total[MATURITY_CONNECT]:>2} "
+            f"{total[MATURITY_REQUEST]:>2} "
             f"{total[MATURITY_NO_CONNECT]:>2} {total['error']:>2}"
         )
 
@@ -343,7 +392,6 @@ def render_dashboard(
         f"{total_fields('callback')}"
     )
     if recent_limit > 0 and results:
-        cases_by_name = {case.name: case for case in cases}
         rows.extend(
             (
                 "Recent calls (newest first): o=originator c=callback l=LAPM r=raw",
@@ -356,7 +404,7 @@ def render_dashboard(
             case = cases_by_name.get(result.case_name)
             family = FAMILY_LABELS.get(result.family, result.family)[:7]
             role = "o" if result.role == "originator" else "c"
-            mode = "l" if case is not None and case.link_mode == "lapm" else "r"
+            mode = "l" if result_link_mode(result) == LINK_LAPM else "r"
             receive_rate = result.receive_rate
             transmit_rate = result.transmit_rate
             if case is not None:
@@ -374,7 +422,7 @@ def render_dashboard(
             rows.append(
                 f"{sequence} {role} {family:<7} {rates:<17} {mode} "
                 f"p{result.physical_try:<2} "
-                f"Q{int(result.callback_request_maturity is not None)} "
+                f"Q{int(result.callback_request_maturity == MATURITY_REQUEST)} "
                 f"C{int(result.connected)} D{int(result.initial_data)} "
                 f"R{int(result.remote_retrain)} "
                 f"L{int(result.retrain_connected)} "

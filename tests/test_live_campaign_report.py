@@ -20,6 +20,7 @@ from tools.live_campaign_report import (  # noqa: E402
     MATURITY_DATA,
     MATURITY_FULL,
     MATURITY_NO_CONNECT,
+    MATURITY_REQUEST,
     MATURITY_RETRAIN,
     OUTCOME_BUSY,
     OUTCOME_COMPLETE,
@@ -196,17 +197,23 @@ class LiveCampaignReportTests(unittest.TestCase):
         role_header = next(line for line in lines if "Originator" in line)
         column_header = next(line for line in lines if line.startswith("Modulation"))
         first_row = next(line for line in lines if line.startswith("V.21"))
-        self.assertEqual(role_header[13:42].strip(), "Originator")
-        self.assertEqual(role_header[45:74].strip(), "Callback")
-        self.assertEqual(column_header[13:42], "done/exp+x   F  R  D  C  N  E")
-        self.assertEqual(column_header[45:74], "done/exp+x   F  R  D  C  N  E")
+        self.assertEqual(role_header[13:45].strip(), "Originator")
+        self.assertEqual(role_header[48:80].strip(), "Callback")
+        self.assertEqual(
+            column_header[13:45], "done/exp+x   F  R  D  C  Q  N  E"
+        )
+        self.assertEqual(
+            column_header[48:80], "done/exp+x   F  R  D  C  Q  N  E"
+        )
         table_lines = (role_header, column_header, first_row)
-        self.assertEqual({line.index("|") for line in table_lines}, {43})
-        self.assertTrue(all(len(line) == 74 for line in table_lines))
-        self.assertLessEqual(len(lines), 17)
+        self.assertEqual({line.index("|") for line in table_lines}, {46})
+        self.assertTrue(all(len(line) == 80 for line in table_lines))
+        self.assertTrue(any(line.startswith("V.22bis/r") for line in lines))
+        self.assertTrue(any(line.startswith("V.22bis/l") for line in lines))
+        self.assertLessEqual(len(lines), 22)
         self.assertLessEqual(max(map(len, dashboard.splitlines())), 100)
 
-    def test_callback_request_connect_is_a_v22bis_observation(self) -> None:
+    def test_callback_request_has_a_separate_v22bis_lapm_bucket(self) -> None:
         case = next(
             case
             for case in cases_for_suite("smoke")
@@ -216,7 +223,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             case_name=case.name,
             family=case.family,
             role=case.role,
-            callback_request_maturity=MATURITY_CONNECT,
+            callback_request_maturity=MATURITY_REQUEST,
         )
         dashboard = render_dashboard(
             (case,),
@@ -227,13 +234,72 @@ class LiveCampaignReportTests(unittest.TestCase):
             elapsed_seconds=1,
         )
         v22bis = next(
-            line for line in dashboard.splitlines() if line.startswith("V.22bis")
+            line
+            for line in dashboard.splitlines()
+            if line.startswith("V.22bis/l")
         )
-        originator = v22bis[13:43].split()
-        self.assertEqual(originator, ["0/0", "+1", "0", "0", "0", "1", "0", "0"])
+        originator = v22bis[13:46].split()
+        self.assertEqual(
+            originator,
+            ["0/0", "+1", "0", "0", "0", "0", "1", "0", "0"],
+        )
         self.assertIn(
-            "+ includes failure extras and V.22bis callback-request observations",
+            "r=raw l=LAPM; + includes failure extras and request legs",
             dashboard,
+        )
+
+    def test_raw_and_lapm_results_have_independent_rows(self) -> None:
+        raw = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.family == "v22bis"
+            and case.role == "originator"
+            and case.link_mode == "raw"
+        )
+        lapm = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.family == "v22bis"
+            and case.role == "originator"
+            and case.link_mode == "lapm"
+        )
+        results = (
+            self.result(
+                case_name=raw.name,
+                family=raw.family,
+                link_mode=raw.link_mode,
+                connected=True,
+                initial_data=True,
+            ),
+            self.result(
+                case_name=lapm.name,
+                family=lapm.family,
+                link_mode=lapm.link_mode,
+                connected=True,
+            ),
+        )
+        dashboard = render_dashboard(
+            (raw, lapm),
+            1,
+            results,
+            revision="d" * 40,
+            seed=13,
+            elapsed_seconds=2,
+        )
+        rows = dashboard.splitlines()
+        raw_fields = next(
+            line for line in rows if line.startswith("V.22bis/r")
+        )[13:46].split()
+        lapm_fields = next(
+            line for line in rows if line.startswith("V.22bis/l")
+        )[13:46].split()
+        self.assertEqual(
+            raw_fields,
+            ["1/1", "+0", "0", "0", "1", "0", "0", "0", "0"],
+        )
+        self.assertEqual(
+            lapm_fields,
+            ["1/1", "+0", "0", "0", "0", "1", "0", "0", "0"],
         )
 
     def test_dashboard_recent_calls_are_bounded_and_nonce_free(self) -> None:
