@@ -3,16 +3,20 @@
 #include <g711.h>
 #include <line_startup.h>
 
+#include "channel_bench.h"
 #include "test.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 
 enum {
 	TEST_AMPLITUDE = 12000,
 	TEST_TURNAROUND_PRIMARY_AMPLITUDE = 9000,
-	TEST_TURNAROUND_SECONDARY_AMPLITUDE = 6000,
+	TEST_TURNAROUND_SECONDARY_AMPLITUDE = 8000,
 	TEST_TRANSITION_LIMIT = 800,
+	TEST_RECORDING_SAMPLE_LIMIT = 120 * SINGLE_TONE_SAMPLE_RATE,
 };
 
 enum test_codec {
@@ -174,20 +178,18 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 		      "caller rejected the answer-to-turnaround gap");
 		calling_power += (uint64_t)((int32_t)transmit * transmit);
 	}
-	for (size_t count = 0; count < 400; ++count) {
+	while (startup.state ==
+	       V32_LINE_SEND_CALLING_CARRIER) {
 		int16_t transmit;
 
 		CHECK(process_turnaround(
 			      &startup, &turnaround, codec, &transmit, &complete) &&
-		      startup.state ==
-			      V32_LINE_SEND_CALLING_CARRIER,
-		      "calling carrier generation failed");
+		      !complete,
+		      "caller did not acquire the turnaround signal");
 		calling_power += (uint64_t)((int32_t)transmit * transmit);
 	}
 	CHECK(calling_power > UINT64_C(1000000000),
 	      "caller omitted its 1800 Hz response carrier");
-	CHECK(reverse_turnaround(&turnaround),
-	      "turnaround tone did not reverse");
 	while (startup.state !=
 		       V32_LINE_SEND_REVERSED_CALLING_CARRIER &&
 	       reversal_response_samples < TEST_TRANSITION_LIMIT) {
@@ -208,7 +210,7 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 		      reversal_response_samples <=
 			      V32_REVERSAL_RESPONSE_SAMPLES +
 				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES,
-	      "caller did not answer the first reversal after 64 symbols (%zu)",
+	      "caller did not answer the turnaround marker after 64 symbols (%zu)",
 	      reversal_response_samples);
 	{
 		struct v32_line_startup lost = startup;
@@ -356,6 +358,51 @@ static bool test_validation_is_transactional(void)
 	return true;
 }
 
+static bool test_optional_recording_acquisition(void)
+{
+	const char *path = getenv("MODEM_TEST_V32_ANSWERER_PCM");
+	struct v32_line_startup startup;
+	struct channel_bench_recording recording = { 0 };
+	enum channel_bench_result load_result;
+	bool acquired = false;
+	bool processed = true;
+
+	CHECK(path != NULL &&
+		      v32_line_startup_init(&startup, TEST_AMPLITUDE) ==
+			      V32_LINE_STARTUP_OK,
+	      "optional V.32 recording fixture did not initialize");
+	load_result = channel_bench_recording_load(
+		path, TEST_RECORDING_SAMPLE_LIMIT, &recording);
+	CHECK(load_result == CHANNEL_BENCH_OK,
+	      "optional V.32 recording could not be loaded: %s",
+	      channel_bench_result_name(load_result));
+	for (size_t index = 0; index < recording.count; ++index) {
+		int16_t transmit;
+		bool complete;
+
+		if (v32_line_startup_process(
+			    &startup, recording.samples[index], &transmit,
+			    &complete) != V32_LINE_STARTUP_OK) {
+			processed = false;
+			break;
+		}
+		if (startup.state ==
+			    V32_LINE_DELAY_CALLING_CARRIER_REVERSAL ||
+		    startup.state ==
+			    V32_LINE_SEND_REVERSED_CALLING_CARRIER ||
+		    startup.state == V32_LINE_STARTUP_COMPLETE) {
+			acquired = true;
+			break;
+		}
+	}
+	channel_bench_recording_release(&recording);
+	CHECK(processed,
+	      "optional V.32 recording caused a startup error");
+	CHECK(acquired,
+	      "caller did not acquire the recorded answerer turnaround marker");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -375,6 +422,22 @@ int main(void)
 			failures++;
 		} else {
 			fprintf(stderr, "[       OK ] %s\n", tests[index].name);
+		}
+	}
+	if (getenv("MODEM_TEST_V32_ANSWERER_PCM") == NULL) {
+		fprintf(stderr,
+			"[  SKIPPED ] optional answerer recording acquisition "
+			"(MODEM_TEST_V32_ANSWERER_PCM unset)\n");
+	} else {
+		fprintf(stderr,
+			"[ RUN      ] optional answerer recording acquisition\n");
+		if (!test_optional_recording_acquisition()) {
+			fprintf(stderr,
+				"[  FAILED  ] optional answerer recording acquisition\n");
+			failures++;
+		} else {
+			fprintf(stderr,
+				"[       OK ] optional answerer recording acquisition\n");
 		}
 	}
 	return failures == 0 ? 0 : 1;

@@ -4,10 +4,10 @@
 
 #include <limits.h>
 
-/* The alternating answerer states may divide their energy between the 600
- * and 3000 Hz projections. At least one projection still carries most of the
- * signal, but it is not a pure sinusoid. */
-static const double V32_TURNAROUND_MINIMUM_CARRIER_SHARE = 0.60;
+/* The alternating answerer states divide their energy between the 600 and
+ * 3000 Hz projections. Either projection may carry only half of the line
+ * power on a clean channel. */
+static const double V32_TURNAROUND_MINIMUM_CARRIER_SHARE = 0.40;
 
 static bool state_is_valid(enum v32_line_startup_state state)
 {
@@ -52,6 +52,15 @@ static struct single_tone_detector *selected_detector_mutable(
 	    V32_HIGH_TURNAROUND_TONE_HZ)
 		return &startup->high_turnaround_tone;
 	return NULL;
+}
+
+static bool turnaround_marker(const struct single_tone_event *event)
+{
+	/* The answerer introduces S by starting its 600/3000 Hz projection.
+	 * A phase reversal is also accepted when acquisition overlaps the
+	 * transition. */
+	return event->kind == SINGLE_TONE_STARTED ||
+	       event->kind == SINGLE_TONE_PHASE_REVERSED;
 }
 
 bool v32_line_startup_is_valid(
@@ -274,24 +283,31 @@ v32_line_startup_process(
 			    &high_event) != SINGLE_TONE_OK)
 			return V32_LINE_STARTUP_INVALID_ARGUMENT;
 		advance_state_clock(&next);
-		if (low_event.kind == SINGLE_TONE_PHASE_REVERSED ||
-		    high_event.kind == SINGLE_TONE_PHASE_REVERSED) {
-			bool low_reversed =
-				low_event.kind ==
-				SINGLE_TONE_PHASE_REVERSED;
+		if (turnaround_marker(&low_event) ||
+		    turnaround_marker(&high_event)) {
+			bool low_marked = turnaround_marker(&low_event);
+			bool high_marked = turnaround_marker(&high_event);
+			bool low_selected = low_marked;
 
-			if (low_reversed &&
-			    high_event.kind ==
-				    SINGLE_TONE_PHASE_REVERSED)
-				return fail_startup(
-					&next, startup, transmit_sample, complete);
+			if (low_marked && high_marked) {
+				struct single_tone_measurement low =
+					single_tone_detector_measure(
+						&next.low_turnaround_tone);
+				struct single_tone_measurement high =
+					single_tone_detector_measure(
+						&next.high_turnaround_tone);
+
+				low_selected =
+					low.carrier_power >= high.carrier_power;
+			}
 			next.selected_turnaround_tone_hz =
-				low_reversed ?
+				low_selected ?
 					V32_LOW_TURNAROUND_TONE_HZ :
 					V32_HIGH_TURNAROUND_TONE_HZ;
-			turnaround_event = low_reversed ? low_event : high_event;
+			turnaround_event =
+				low_selected ? low_event : high_event;
 			if (single_tone_detector_reset(
-				    low_reversed ? &next.high_turnaround_tone :
+				    low_selected ? &next.high_turnaround_tone :
 						   &next.low_turnaround_tone) !=
 			    SINGLE_TONE_OK)
 				return V32_LINE_STARTUP_INVALID_ARGUMENT;
@@ -299,7 +315,8 @@ v32_line_startup_process(
 				&next,
 				V32_LINE_DELAY_CALLING_CARRIER_REVERSAL);
 			next.state_samples =
-				turnaround_event.reversal_delay_samples;
+				turnaround_event.reversal_delay_samples != 0 ?
+					turnaround_event.reversal_delay_samples : 1;
 		}
 		break;
 	case V32_LINE_DELAY_CALLING_CARRIER_REVERSAL:

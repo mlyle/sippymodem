@@ -16,8 +16,8 @@ enum {
 	V32_STARTUP_SYMBOL_RATE = 2400,
 	V32_ANSWER_GUARD_SAMPLES =
 		SINGLE_TONE_SAMPLE_RATE,
-	/* The caller changes carrier state 64 +/- 2 symbols after the first
-	 * received turnaround-tone phase reversal. */
+	/* The caller changes carrier state 64 +/- 2 symbols after acquiring the
+	 * answerer's turnaround marker. */
 	V32_REVERSAL_RESPONSE_SAMPLES =
 		(SINGLE_TONE_SAMPLE_RATE * 64 +
 		 V32_STARTUP_SYMBOL_RATE / 2) /
