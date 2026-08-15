@@ -101,7 +101,7 @@ v34_data_channel_receiver_advance(
 		decision_targets[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	struct v34_received_mapping_frame *received)
 {
-	struct v34_data_channel_receiver next;
+	struct v34_channel_frame_receiver saved_channel_receiver;
 	struct v34_survivor_decision generated_current;
 	struct qam_point generated_targets
 		[V34_2D_SYMBOLS_PER_4D_INTERVAL];
@@ -117,29 +117,26 @@ v34_data_channel_receiver_advance(
 	    normalized == NULL || current == NULL || decision_targets == NULL ||
 	    received == NULL)
 		return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
-	next = *receiver;
+	/* Retain only the child that commits before frame decoding can fail. */
+	saved_channel_receiver = receiver->channel_receiver;
 	channel_status = v34_channel_frame_receiver_advance(
-		&next.channel_receiver, normalized, &generated_current,
+		&receiver->channel_receiver, normalized, &generated_current,
 		generated_targets, decided, &frame_ready);
 	if (channel_status != V34_CHANNEL_FRAME_RECEIVER_OK)
 		return channel_result(channel_status);
 	if (!frame_ready) {
-		if (!v34_data_channel_receiver_is_valid(&next))
-			return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
-		*receiver = next;
 		*current = generated_current;
 		memcpy(decision_targets, generated_targets,
 		       sizeof(generated_targets));
 		return V34_DATA_CHANNEL_RECEIVER_OK;
 	}
 	data_status = v34_data_receiver_receive_mapping_frame(
-		&next.data_receiver, decided, &generated_received);
+		&receiver->data_receiver, decided, &generated_received);
 	emitted_status = data_result(data_status);
-	if (emitted_status ==
-		    V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT ||
-	    !v34_data_channel_receiver_is_valid(&next))
+	if (emitted_status == V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT) {
+		receiver->channel_receiver = saved_channel_receiver;
 		return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
-	*receiver = next;
+	}
 	*current = generated_current;
 	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
 	*received = generated_received;
