@@ -58,6 +58,8 @@ static const struct qam_channel v32_channel = {
 	.pulse_span_symbols = V32_PULSE_SPAN_SYMBOLS,
 };
 
+static const double v32_min_conditioning_point_power = 1e-12;
+
 enum v32_line_entry {
 	V32_LINE_ENTRY_CALLER_STARTUP,
 	V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING,
@@ -136,6 +138,12 @@ static enum v32_transmitter_role remote_role(bool caller)
 static enum v32_endpoint_role endpoint_role(bool caller)
 {
 	return caller ? V32_CALLER : V32_ANSWERER;
+}
+
+static bool receives_conditioning(enum v32_line_entry entry)
+{
+	return entry == V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING ||
+	       entry == V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
 }
 
 static bool caller_awaits_second_conditioning(
@@ -245,13 +253,9 @@ static bool line_entry_is_valid(
 	    datapump->conditioning_silence_samples >
 		    V32_CONDITIONING_SILENCE_SAMPLES ||
 	    (datapump->conditioning_carrier_detected &&
-	     datapump->line_entry !=
-		     V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING &&
-	     datapump->line_entry !=
-		     V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING) ||
+	     !receives_conditioning(datapump->line_entry)) ||
 	    (datapump->conditioning_silence_samples != 0 &&
-	     datapump->line_entry !=
-		     V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING) ||
+	     !receives_conditioning(datapump->line_entry)) ||
 	    datapump->direct_retrain_dibits > V32_DIRECT_RETRAIN_DIBITS ||
 	    (datapump->direct_retrain_dibits != 0 &&
 	     (datapump->line_entry != V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
@@ -962,8 +966,8 @@ static int initialize_trellis_receiver(
 	return 0;
 }
 
-static int reset_second_conditioning_receiver(
-	struct v32_datapump *datapump)
+static int reset_conditioning_receiver(
+	struct v32_datapump *datapump, bool carrier_detected)
 {
 	struct v32_conditioning_receiver receiver;
 	struct qam_demodulator demodulator = datapump->demodulator;
@@ -977,14 +981,15 @@ static int reset_second_conditioning_receiver(
 	datapump->conditioning_receiver = receiver;
 	datapump->demodulator = demodulator;
 	datapump->has_previous_receive_point = false;
-	datapump->conditioning_carrier_detected = true;
+	datapump->conditioning_carrier_detected = carrier_detected;
+	datapump->conditioning_silence_samples = 0;
 	return 0;
 }
 
 static int begin_second_conditioning(
 	struct v32_datapump *datapump)
 {
-	if (reset_second_conditioning_receiver(datapump) != 0)
+	if (reset_conditioning_receiver(datapump, true) != 0)
 		return -1;
 	datapump->line_entry =
 		V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
@@ -1178,8 +1183,7 @@ static int receive_sample(
 	struct qam_measurement measurement;
 	bool ready;
 
-	if (datapump->line_entry ==
-		    V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING &&
+	if (receives_conditioning(datapump->line_entry) &&
 	    !datapump->conditioning_carrier_detected) {
 		int32_t magnitude = sample < 0 ? -(int32_t)sample : sample;
 
@@ -1208,10 +1212,7 @@ static int receive_sample(
 		return -1;
 	if (!ready)
 		return 0;
-	if (datapump->line_entry ==
-		    V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING ||
-	    datapump->line_entry ==
-		    V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING ||
+	if (receives_conditioning(datapump->line_entry) ||
 	    (!datapump->caller &&
 	     datapump->line_entry == V32_LINE_ENTRY_ANSWERER_PROTOCOL &&
 	     !v32_conditioning_receiver_is_complete(
@@ -1227,6 +1228,19 @@ static int receive_sample(
 		bool second_conditioning =
 			datapump->line_entry ==
 			V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
+		double point_power = point.in_phase * point.in_phase +
+				     point.quadrature * point.quadrature;
+
+		/* A weak carrier tail can acquire timing and then yield an empty
+		 * recovered point in the following gap.  Restart at the next real
+		 * conditioning carrier instead of treating loss of signal as corrupt
+		 * detector input. */
+		if (receives_conditioning(datapump->line_entry) &&
+		    point_power <= v32_min_conditioning_point_power) {
+			if (reset_conditioning_receiver(datapump, false) != 0)
+				return -1;
+			return 0;
+		}
 
 		if (v32_conditioning_receiver_observe(
 			    &datapump->conditioning_receiver, &point,

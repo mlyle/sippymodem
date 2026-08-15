@@ -27,7 +27,9 @@ enum {
 	TEST_REVERSAL_SAMPLES = 800,
 	TEST_SILENCE_RUN = 24,
 	TEST_RATE_WORDS_BEFORE_RESPONSE = 2,
-	TEST_SECOND_CONDITIONING_SILENCE = 800,
+	TEST_SECOND_CONDITIONING_TAIL_SAMPLES = 1200,
+	TEST_SECOND_CONDITIONING_TAIL_AMPLITUDE = 200,
+	TEST_SECOND_CONDITIONING_SILENCE = 8000,
 	TEST_QAM_SAMPLE_LIMIT = 14000,
 };
 
@@ -407,6 +409,7 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 	};
 	struct test_peer_qam peer;
 	struct test_caller_qam_receiver caller_receiver;
+	struct single_tone_transmitter residual_carrier;
 	struct dp_operations *operations;
 	struct modem *modem;
 	struct dp *datapump;
@@ -459,17 +462,30 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
 		      V32_CONDITIONING_OK,
 	      "V.32 peer receiver-training restart failed");
+	CHECK(single_tone_transmitter_init(
+		      &residual_carrier, V32_CALLING_CARRIER_HZ,
+		      TEST_SECOND_CONDITIONING_TAIL_AMPLITUDE) == SINGLE_TONE_OK,
+	      "V.32 residual carrier fixture did not initialize");
 	peer.rate_started = false;
 	peer.rate_dibit = 0;
 	peer.rate_symbols = 0;
 	peer.end_dibit = 0;
 	peer.selection = true;
 	caller_receiver.rate_detected = false;
+	/* A weak tail can lock the QAM clock after the old carrier has been
+	 * declared absent.  The second acquisition must wait through it and the
+	 * following gap before accepting the restarted conditioning carrier. */
 	for (unsigned int count = 0;
 	     count < TEST_SECOND_CONDITIONING_SILENCE; ++count) {
+		int16_t receive = 0;
 		int16_t transmit;
+
+		if (count < TEST_SECOND_CONDITIONING_TAIL_SAMPLES)
+			CHECK(single_tone_transmitter_sample(
+				      &residual_carrier, &receive) == SINGLE_TONE_OK,
+			      "V.32 residual carrier fixture stopped");
 		bool processed = process_sample(
-			operations, datapump, 0, &transmit);
+			operations, datapump, receive, &transmit);
 		bool observed = processed && caller_qam_receiver_observe(
 			&caller_receiver, transmit);
 
