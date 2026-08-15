@@ -38,8 +38,8 @@ V90_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
-	pcm_phase3_digital_prefix.c pcm_call.c \
-	pcm_phase3_profile.c pcm_startup.c \
+	pcm_phase3_digital_prefix.c pcm_phase3_entry.c \
+	pcm_phase3_handoff.c pcm_call.c pcm_phase3_profile.c pcm_startup.c \
 	v92_info0.c v92_info1d.c v92_pcm_info1a.c v92_status_update.c \
 	v92_control_rx.c v92_cpd.c v92_suvd.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c))
@@ -2185,11 +2185,11 @@ V90_PHASE3_ANALOG_STATION_TEST_OBJECTS := $(sort \
 		$(V90_PHASE3_DIGITAL_TX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_line_rx.o, \
 		$(V90_PHASE3_RETURN_LINE_RX_TEST_OBJECTS)))
-V90_PHASE3_ENTRY_TEST_BINARY := \
-	$(BUILD_DIR)/test_v90_phase3_entry
-V90_PHASE3_ENTRY_TEST_OBJECTS := $(sort \
-	$(BUILD_DIR)/test_v90_phase3_entry.o \
-	$(BUILD_DIR)/v90_phase3_entry.o \
+PCM_PHASE3_ENTRY_TEST_BINARY := \
+	$(BUILD_DIR)/test_pcm_phase3_entry
+PCM_PHASE3_ENTRY_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/test_pcm_phase3_entry.o \
+	$(BUILD_DIR)/pcm_phase3_entry.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_station.o, \
 		$(V90_PHASE3_ANALOG_STATION_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_pcm_phase3_profile.o, \
@@ -2264,9 +2264,9 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_phase2_info1_exchange.o \
 	$(BUILD_DIR)/pcm_phase2.o \
 	$(BUILD_DIR)/pcm_phase2_info1_handoff.o \
-	$(BUILD_DIR)/v90_phase3_handoff.o \
-	$(filter-out $(BUILD_DIR)/test_v90_phase3_entry.o, \
-		$(V90_PHASE3_ENTRY_TEST_OBJECTS)) \
+	$(BUILD_DIR)/pcm_phase3_handoff.o \
+	$(filter-out $(BUILD_DIR)/test_pcm_phase3_entry.o, \
+		$(PCM_PHASE3_ENTRY_TEST_OBJECTS)) \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
@@ -2726,7 +2726,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_PHASE3_ANALOG_LINE_RX_TEST_BINARY) \
 	$(V90_PHASE3_DIGITAL_TX_TEST_BINARY) \
 	$(V90_PHASE3_ANALOG_STATION_TEST_BINARY) \
-	$(V90_PHASE3_ENTRY_TEST_BINARY) \
+	$(PCM_PHASE3_ENTRY_TEST_BINARY) \
 	$(V90_PHASE4_RI_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_LINE_RX_TEST_BINARY) \
 	$(V90_PHASE4_CP_LINE_RX_TEST_BINARY) \
@@ -2980,7 +2980,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_PHASE3_ANALOG_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_DIGITAL_TX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_ANALOG_STATION_TEST_OBJECTS:.o=.d) \
-	$(V90_PHASE3_ENTRY_TEST_OBJECTS:.o=.d) \
+	$(PCM_PHASE3_ENTRY_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE4_RI_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_RETURN_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE4_CP_LINE_RX_TEST_OBJECTS:.o=.d) \
@@ -3259,7 +3259,7 @@ test: $(TEST_BINARIES)
 	./$(V90_PHASE3_ANALOG_LINE_RX_TEST_BINARY)
 	./$(V90_PHASE3_DIGITAL_TX_TEST_BINARY)
 	./$(V90_PHASE3_ANALOG_STATION_TEST_BINARY)
-	./$(V90_PHASE3_ENTRY_TEST_BINARY)
+	./$(PCM_PHASE3_ENTRY_TEST_BINARY)
 	./$(V90_PHASE4_RI_TEST_BINARY)
 	./$(V90_PHASE3_RETURN_LINE_RX_TEST_BINARY)
 	./$(V90_PHASE4_CP_LINE_RX_TEST_BINARY)
@@ -4036,7 +4036,7 @@ $(V90_PHASE3_ANALOG_STATION_TEST_BINARY): \
 	$(V90_PHASE3_ANALOG_STATION_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V90_PHASE3_ENTRY_TEST_BINARY): $(V90_PHASE3_ENTRY_TEST_OBJECTS)
+$(PCM_PHASE3_ENTRY_TEST_BINARY): $(PCM_PHASE3_ENTRY_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_PHASE4_ANALOG_STATION_TEST_BINARY): \
@@ -4969,12 +4969,12 @@ $(BUILD_DIR)/v90_phase3_digital_station.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_digital_station.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_phase3_entry.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase3_entry.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_phase3_entry.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_entry.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_phase3_handoff.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase3_handoff.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_phase3_handoff.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_handoff.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_call.o: $(DSP_PCM_SOURCE_DIR)/pcm_call.c | $(BUILD_DIR)

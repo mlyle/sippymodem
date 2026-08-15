@@ -3,8 +3,8 @@
 #include "pcm_call.h"
 
 #include "memory_region.h"
-#include "v90_phase3_entry.h"
-#include "v90_phase3_handoff.h"
+#include "pcm_phase3_entry.h"
+#include "pcm_phase3_handoff.h"
 
 #include <stddef.h>
 
@@ -369,27 +369,27 @@ static int16_t decode_octet(enum g711_law law, uint8_t octet)
 }
 
 static enum pcm_call_result entry_result(
-	enum v90_phase3_entry_result result)
+	enum pcm_phase3_entry_result result)
 {
 	switch (result) {
-	case V90_PHASE3_ENTRY_OK:
+	case PCM_PHASE3_ENTRY_OK:
 		return PCM_CALL_OK;
-	case V90_PHASE3_ENTRY_INVALID_STATE:
+	case PCM_PHASE3_ENTRY_INVALID_STATE:
 		return PCM_CALL_INVALID_STATE;
-	case V90_PHASE3_ENTRY_INVALID_SELECTION:
+	case PCM_PHASE3_ENTRY_INVALID_SELECTION:
 		return PCM_CALL_INVALID_SELECTION;
-	case V90_PHASE3_ENTRY_UNUSABLE_SELECTION:
+	case PCM_PHASE3_ENTRY_UNUSABLE_SELECTION:
 		return PCM_CALL_UNUSABLE_SELECTION;
-	case V90_PHASE3_ENTRY_MEDIA_MISMATCH:
+	case PCM_PHASE3_ENTRY_MEDIA_MISMATCH:
 		return PCM_CALL_MEDIA_MISMATCH;
-	case V90_PHASE3_ENTRY_OUT_OF_RANGE:
+	case PCM_PHASE3_ENTRY_OUT_OF_RANGE:
 		return PCM_CALL_OUT_OF_RANGE;
-	case V90_PHASE3_ENTRY_CLIPPING_RISK:
+	case PCM_PHASE3_ENTRY_CLIPPING_RISK:
 		return PCM_CALL_CLIPPING_RISK;
-	case V90_PHASE3_ENTRY_ROLE_MISMATCH:
+	case PCM_PHASE3_ENTRY_ROLE_MISMATCH:
 		return PCM_CALL_SEQUENCE_MISMATCH;
-	case V90_PHASE3_ENTRY_INVALID_ARGUMENT:
-	case V90_PHASE3_ENTRY_INTERNAL_ERROR:
+	case PCM_PHASE3_ENTRY_INVALID_ARGUMENT:
+	case PCM_PHASE3_ENTRY_INTERNAL_ERROR:
 		break;
 	}
 	return PCM_CALL_NUMERIC_FAILURE;
@@ -397,35 +397,35 @@ static enum pcm_call_result entry_result(
 
 static enum pcm_call_result enter_phase3(struct pcm_call *call)
 {
-	struct v90_phase3_entry entry;
+	struct pcm_phase3_entry entry;
 	struct pcm_call next;
-	enum v90_phase3_entry_result result =
-		v90_phase3_entry_from_phase2(
+	enum pcm_phase3_entry_result result =
+		pcm_phase3_entry_from_phase2(
 			&entry, &call->state.phase2, call->law);
 
-	if (result != V90_PHASE3_ENTRY_OK)
+	if (result != PCM_PHASE3_ENTRY_OK)
 		return entry_result(result);
 	next = *call;
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct v90_phase3_analog_station station;
 
-		result = v90_phase3_entry_start_analog(
+		result = pcm_phase3_entry_start_analog(
 			&entry,
 			call->phase3_configuration.analog
 				.nominal_peak_amplitude,
 			&station);
-		if (result != V90_PHASE3_ENTRY_OK)
+		if (result != PCM_PHASE3_ENTRY_OK)
 			return entry_result(result);
 		next.state.phase3.analog = station;
 	} else {
 		struct v90_phase3_digital_station station;
 
-		result = v90_phase3_entry_start_digital(
+		result = pcm_phase3_entry_start_digital(
 			&entry,
 			&call->phase3_configuration.digital.receive,
 			&call->phase3_configuration.digital.jd,
 			&station);
-		if (result != V90_PHASE3_ENTRY_OK)
+		if (result != PCM_PHASE3_ENTRY_OK)
 			return entry_result(result);
 		next.state.phase3.digital = station;
 	}

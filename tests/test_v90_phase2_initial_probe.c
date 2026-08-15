@@ -7,7 +7,7 @@
 #include <pcm_phase2_info1_exchange.h>
 #include <v90_phase2_probe_turnaround.h>
 #include <v90_phase2_reciprocal_probe.h>
-#include <v90_phase3_handoff.h>
+#include <pcm_phase3_handoff.h>
 
 #include "test.h"
 
@@ -796,8 +796,8 @@ static bool check_phase2_controller(
 	struct v34_phase2_probe_receiver_measurement untouched_before;
 	struct pcm_info1_selection untouched_selection;
 	struct pcm_info1_selection untouched_selection_before;
-	struct v90_phase3_entry untouched_entry;
-	struct v90_phase3_entry untouched_entry_before;
+	struct pcm_phase3_entry untouched_entry;
+	struct pcm_phase3_entry untouched_entry_before;
 	bool analog_initial = false;
 	bool digital_initial = false;
 	bool digital_measured_initial = false;
@@ -857,11 +857,11 @@ static bool check_phase2_controller(
 	      "rejected V.90 INFO1 handoff mutated its destination");
 	memset(&untouched_entry, 0xa5, sizeof(untouched_entry));
 	untouched_entry_before = untouched_entry;
-	CHECK(v90_phase3_entry_from_phase2(
+	CHECK(pcm_phase3_entry_from_phase2(
 		      &untouched_entry, &analog,
 		      codec == TEST_CODEC_PCMU ? G711_LAW_PCMU :
 						 G711_LAW_PCMA) ==
-		      V90_PHASE3_ENTRY_INVALID_STATE &&
+		      PCM_PHASE3_ENTRY_INVALID_STATE &&
 	      memcmp(
 		      &untouched_entry, &untouched_entry_before,
 		      sizeof(untouched_entry)) == 0,
@@ -1078,20 +1078,20 @@ static bool check_phase2_controller(
 		      "PCM Phase 2 mode %d lost its INFO1 decision", mode);
 	}
 	{
-		struct v90_phase3_entry analog_entry;
-		struct v90_phase3_entry digital_entry;
+		struct pcm_phase3_entry analog_entry;
+		struct pcm_phase3_entry digital_entry;
 		enum g711_law law = codec == TEST_CODEC_PCMU ?
 					    G711_LAW_PCMU : G711_LAW_PCMA;
 
 		if (mode == TEST_INFO1_V90) {
-			CHECK(v90_phase3_entry_from_phase2(
+			CHECK(pcm_phase3_entry_from_phase2(
 				      &analog_entry, &analog, law) ==
-				      V90_PHASE3_ENTRY_OK &&
-			      v90_phase3_entry_from_phase2(
+				      PCM_PHASE3_ENTRY_OK &&
+			      pcm_phase3_entry_from_phase2(
 				      &digital_entry, &digital, law) ==
-				      V90_PHASE3_ENTRY_OK &&
-			      v90_phase3_entry_is_valid(&analog_entry) &&
-			      v90_phase3_entry_is_valid(&digital_entry) &&
+				      PCM_PHASE3_ENTRY_OK &&
+			      pcm_phase3_entry_is_valid(&analog_entry) &&
+			      pcm_phase3_entry_is_valid(&digital_entry) &&
 			      analog_entry.local_role == V90_ANALOG_MODEM &&
 			      digital_entry.local_role == V90_DIGITAL_MODEM &&
 			      analog_entry.law == law && digital_entry.law == law &&
@@ -1105,12 +1105,12 @@ static bool check_phase2_controller(
 				      conventional_info1a.upstream_symbol_rate,
 			      "V.90 Phase 2 did not form matching Phase 3 entries");
 		} else {
-			CHECK(v90_phase3_entry_from_phase2(
+			CHECK(pcm_phase3_entry_from_phase2(
 				      &analog_entry, &analog, law) ==
-				      V90_PHASE3_ENTRY_INVALID_SELECTION &&
-			      v90_phase3_entry_from_phase2(
+				      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+			      pcm_phase3_entry_from_phase2(
 				      &digital_entry, &digital, law) ==
-				      V90_PHASE3_ENTRY_INVALID_SELECTION,
+				      PCM_PHASE3_ENTRY_INVALID_SELECTION,
 			      "V.92 mode %d entered the nailed V.90 Phase 3", mode);
 		}
 	}

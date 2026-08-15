@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v90_phase3_entry.h>
+#include <pcm_phase3_entry.h>
 #include <v90_phase3_analog_station.h>
 #include <v90_phase3_digital_station.h>
 
@@ -147,7 +147,7 @@ static bool test_generated_entries(void)
 					struct pcm_info1_selection selected = selection(
 						symbol_rates[rate_index], high != 0);
 					struct v34_phase3_profile expected;
-					struct v90_phase3_entry entry;
+					struct pcm_phase3_entry entry;
 					struct v90_phase3_analog_station analog;
 					struct v90_phase3_analog_station saved_analog;
 					struct v90_phase3_digital_station digital;
@@ -159,10 +159,10 @@ static bool test_generated_entries(void)
 					      "entry fixture profile failed");
 					expected.md_length_35_ms_units = 0;
 					expected.md_symbol_count = 0;
-					CHECK(v90_phase3_entry_init(
+					CHECK(pcm_phase3_entry_init(
 						      &entry, role, law, &info0,
-						      &selected) == V90_PHASE3_ENTRY_OK &&
-					      v90_phase3_entry_is_valid(&entry) &&
+						      &selected) == PCM_PHASE3_ENTRY_OK &&
+					      pcm_phase3_entry_is_valid(&entry) &&
 					      profiles_equal(
 						      &entry.analog_profile, &expected) &&
 					      entry.law == law &&
@@ -179,28 +179,28 @@ static bool test_generated_entries(void)
 					memset(&digital, 0x5a, sizeof(digital));
 					saved_digital = digital;
 					if (role == V90_ANALOG_MODEM) {
-						CHECK(v90_phase3_entry_start_analog(
+						CHECK(pcm_phase3_entry_start_analog(
 							      &entry, NOMINAL_AMPLITUDE,
-							      &analog) == V90_PHASE3_ENTRY_OK &&
+							      &analog) == PCM_PHASE3_ENTRY_OK &&
 						      v90_phase3_analog_station_is_valid(
 							      &analog) &&
-						      v90_phase3_entry_start_digital(
+						      pcm_phase3_entry_start_digital(
 							      &entry, &configuration, &jd,
 							      &digital) ==
-							      V90_PHASE3_ENTRY_ROLE_MISMATCH &&
+							      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
 						      memcmp(&digital, &saved_digital,
 							     sizeof(digital)) == 0,
 						      "analogue entry selected the wrong owner");
 					} else {
-						CHECK(v90_phase3_entry_start_digital(
+						CHECK(pcm_phase3_entry_start_digital(
 							      &entry, &configuration, &jd,
-							      &digital) == V90_PHASE3_ENTRY_OK &&
+							      &digital) == PCM_PHASE3_ENTRY_OK &&
 						      v90_phase3_digital_station_is_valid(
 							      &digital) &&
-						      v90_phase3_entry_start_analog(
+						      pcm_phase3_entry_start_analog(
 							      &entry, NOMINAL_AMPLITUDE,
 							      &analog) ==
-							      V90_PHASE3_ENTRY_ROLE_MISMATCH &&
+							      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
 						      memcmp(&analog, &saved_analog,
 							     sizeof(analog)) == 0,
 						      "digital entry selected the wrong owner");
@@ -217,33 +217,33 @@ static bool test_selection_rejection(void)
 	struct pcm_info1_selection selected = selection(
 		V34_SYMBOL_RATE_3200, true);
 	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
-	struct v90_phase3_entry entry;
-	struct v90_phase3_entry saved;
+	struct pcm_phase3_entry entry;
+	struct pcm_phase3_entry saved;
 	struct v34_info1c common;
 
 	memset(&entry, 0xa5, sizeof(entry));
 	saved = entry;
-	CHECK(v90_phase3_entry_init(
+	CHECK(pcm_phase3_entry_init(
 		      NULL, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      &info0, &selected) == V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_init(
+		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_init(
 		      &entry, (enum v90_modem_role)99, G711_LAW_PCMU,
-		      &info0, &selected) == V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_init(
+		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, (enum g711_law)99,
-		      &info0, &selected) == V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_init(
+		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      NULL, &selected) == V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_init(
+		      NULL, &selected) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      &info0, NULL) == V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
+		      &info0, NULL) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
 	      "invalid entry arguments changed the destination");
 
-	CHECK(v90_phase3_entry_init(
+	CHECK(pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMA,
-		      &info0, &selected) == V90_PHASE3_ENTRY_MEDIA_MISMATCH &&
+		      &info0, &selected) == PCM_PHASE3_ENTRY_MEDIA_MISMATCH &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
 	      "media-law mismatch changed the entry");
 	common = selected.digital.record.v90;
@@ -257,9 +257,9 @@ static bool test_selection_rejection(void)
 		.pcm_upstream_supported = true,
 	};
 	CHECK(pcm_info1_selection_is_valid(&selected) &&
-	      v90_phase3_entry_init(
+	      pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      &info0, &selected) == V90_PHASE3_ENTRY_INVALID_SELECTION &&
+		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
 	      "V.92 selection entered the V.90 owner");
 
@@ -268,17 +268,17 @@ static bool test_selection_rejection(void)
 		.answer_transmit[V34_SYMBOL_RATE_3200]
 		.projected_data_rate_2400_bps_units = 0;
 	CHECK(pcm_info1_selection_is_valid(&selected) &&
-	      v90_phase3_entry_init(
+	      pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
 		      &info0, &selected) ==
-		      V90_PHASE3_ENTRY_UNUSABLE_SELECTION &&
+		      PCM_PHASE3_ENTRY_UNUSABLE_SELECTION &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
 	      "unusable line selection changed the entry");
 	info0.pcm_law = (enum v90_pcm_law)99;
-	CHECK(v90_phase3_entry_init(
+	CHECK(pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      &info0, &selected) == V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      !v90_phase3_entry_is_valid(NULL) &&
+		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      !pcm_phase3_entry_is_valid(NULL) &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
 	      "invalid INFO0 changed the entry");
 	return true;
@@ -292,59 +292,59 @@ static bool test_station_validation(void)
 	struct v90_phase3_analog_rx_configuration configuration =
 		receive_configuration();
 	struct v90_jd_parameters jd = jd_parameters();
-	struct v90_phase3_entry analog_entry;
-	struct v90_phase3_entry digital_entry;
+	struct pcm_phase3_entry analog_entry;
+	struct pcm_phase3_entry digital_entry;
 	struct v90_phase3_analog_station analog;
 	struct v90_phase3_analog_station saved_analog;
 	struct v90_phase3_digital_station digital;
 	struct v90_phase3_digital_station saved_digital;
 
-	CHECK(v90_phase3_entry_init(
+	CHECK(pcm_phase3_entry_init(
 		      &analog_entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      &info0, &selected) == V90_PHASE3_ENTRY_OK &&
-	      v90_phase3_entry_init(
+		      &info0, &selected) == PCM_PHASE3_ENTRY_OK &&
+	      pcm_phase3_entry_init(
 		      &digital_entry, V90_DIGITAL_MODEM, G711_LAW_PCMU,
-		      &info0, &selected) == V90_PHASE3_ENTRY_OK,
+		      &info0, &selected) == PCM_PHASE3_ENTRY_OK,
 	      "station validation entries did not initialize");
 	memset(&analog, 0xa5, sizeof(analog));
 	saved_analog = analog;
 	memset(&digital, 0x5a, sizeof(digital));
 	saved_digital = digital;
-	CHECK(v90_phase3_entry_start_analog(
+	CHECK(pcm_phase3_entry_start_analog(
 		      NULL, NOMINAL_AMPLITUDE, &analog) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_start_analog(
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_analog(
 		      &analog_entry, 0, &analog) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_start_analog(
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_analog(
 		      &analog_entry, NOMINAL_AMPLITUDE, NULL) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_start_analog(
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_analog(
 		      &analog_entry, INT16_MAX, &analog) ==
-		      V90_PHASE3_ENTRY_CLIPPING_RISK &&
+		      PCM_PHASE3_ENTRY_CLIPPING_RISK &&
 	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
 	      "invalid or clipping analogue start changed state");
-	CHECK(v90_phase3_entry_start_digital(
+	CHECK(pcm_phase3_entry_start_digital(
 		      NULL, &configuration, &jd, &digital) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_start_digital(
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_digital(
 		      &digital_entry, NULL, &jd, &digital) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_start_digital(
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_digital(
 		      &digital_entry, &configuration, NULL, &digital) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      v90_phase3_entry_start_digital(
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_digital(
 		      &digital_entry, &configuration, &jd, NULL) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT &&
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
 	      "invalid digital start changed state");
 	analog_entry.analog_profile.md_length_35_ms_units = 1;
 	analog_entry.analog_profile.md_symbol_count = 105;
 	CHECK(v34_phase3_profile_is_valid(&analog_entry.analog_profile) &&
-	      !v90_phase3_entry_is_valid(&analog_entry) &&
-	      v90_phase3_entry_start_analog(
+	      !pcm_phase3_entry_is_valid(&analog_entry) &&
+	      pcm_phase3_entry_start_analog(
 		      &analog_entry, NOMINAL_AMPLITUDE, &analog) ==
-		      V90_PHASE3_ENTRY_INVALID_ARGUMENT,
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT,
 	      "entry accepted a conventional MD interval");
 	return true;
 }
@@ -366,13 +366,13 @@ static bool test_result_names(void)
 
 	for (size_t index = 0; index < ARRAY_LENGTH(expected); ++index) {
 		CHECK(strcmp(
-			      v90_phase3_entry_result_name(
-				      (enum v90_phase3_entry_result)index),
+			      pcm_phase3_entry_result_name(
+				      (enum pcm_phase3_entry_result)index),
 			      expected[index]) == 0,
 		      "entry result name %zu changed", index);
 	}
-	CHECK(strcmp(v90_phase3_entry_result_name(
-		     (enum v90_phase3_entry_result)99),
+	CHECK(strcmp(pcm_phase3_entry_result_name(
+		     (enum pcm_phase3_entry_result)99),
 	     "unknown") == 0,
 	      "unknown entry result name changed");
 	return true;
