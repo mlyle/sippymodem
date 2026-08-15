@@ -12,6 +12,9 @@ from typing import Iterable
 ROLE_ORIGINATOR = "originator"
 ROLE_CALLBACK = "callback"
 ROLES = (ROLE_ORIGINATOR, ROLE_CALLBACK)
+LINK_RAW = "raw"
+LINK_LAPM = "lapm"
+LINK_MODES = (LINK_RAW, LINK_LAPM)
 SUITE_LEVEL = {"smoke": 0, "standard": 1, "extended": 2}
 FAMILY_ORDER = (
     "bell103",
@@ -27,8 +30,17 @@ FAMILY_ORDER = (
     "v92",
 )
 
-LINK_PREFIX = ("ATZ", "ATE0", "AT&A7", "ATX3", "AT+DS=3,1")
+LAPM_LINK_PREFIX = ("ATZ", "ATE0", "AT&A7", "ATX3", "AT+DS=3,1")
+RAW_LINK_PREFIX = (
+    "ATZ",
+    "ATE0",
+    "AT&A7",
+    "ATX3",
+    "AT\\N0",
+    "AT+DS=0,0",
+)
 LINK_SUFFIX = ("ATE0V1Q0", "ATS95=7")
+RAW_ONLY_FAMILIES = frozenset({"bell103", "v21", "v23", "baudot"})
 
 
 @dataclass(frozen=True)
@@ -43,11 +55,12 @@ class CampaignCase:
     symbol_rate: int | None
     at_commands: tuple[str, ...]
     callback_features: tuple[str, ...]
+    link_mode: str
     level: int
 
 
 def _commands(*specific: str) -> tuple[str, ...]:
-    return LINK_PREFIX + tuple(specific) + LINK_SUFFIX
+    return LAPM_LINK_PREFIX + tuple(specific) + LINK_SUFFIX
 
 
 def _case(
@@ -75,7 +88,39 @@ def _case(
         symbol_rate=symbol_rate,
         at_commands=commands,
         callback_features=callback_features,
+        link_mode=LINK_LAPM,
         level=level,
+    )
+
+
+def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
+    if (
+        link_mode not in LINK_MODES
+        or case.at_commands[: len(LAPM_LINK_PREFIX)] != LAPM_LINK_PREFIX
+    ):
+        raise RuntimeError("invalid live campaign link variant")
+    stem = case.name[: -(len(case.role) + 1)]
+    specific = case.at_commands[len(LAPM_LINK_PREFIX) : -len(LINK_SUFFIX)]
+    callback_features = case.callback_features
+    if link_mode == LINK_RAW:
+        specific = tuple(
+            command for command in specific if not command.startswith("AT+DSC=")
+        )
+        callback_features = tuple(
+            feature
+            for feature in callback_features
+            if feature not in {"V42", "V44"}
+        )
+    return replace(
+        case,
+        name=f"{stem}-{link_mode}-{case.role}",
+        at_commands=(
+            RAW_LINK_PREFIX if link_mode == LINK_RAW else LAPM_LINK_PREFIX
+        )
+        + specific
+        + LINK_SUFFIX,
+        callback_features=callback_features,
+        link_mode=link_mode,
     )
 
 
@@ -325,6 +370,13 @@ def _build_cases() -> tuple[CampaignCase, ...]:
 
     add(_fixed("v22-600", "v22", 22, 600, 600, level=2))
 
+    templates = tuple(cases)
+    cases = []
+    for template in templates:
+        cases.append(_link_variant(template, LINK_RAW))
+        if template.family not in RAW_ONLY_FAMILIES:
+            cases.append(_link_variant(template, LINK_LAPM))
+
     names = [case.name for case in cases]
     if len(names) != len(set(names)):
         raise RuntimeError("duplicate live campaign case")
@@ -333,6 +385,13 @@ def _build_cases() -> tuple[CampaignCase, ...]:
 
 CASES = _build_cases()
 CASES_BY_NAME = {case.name: case for case in CASES}
+for case in CASES:
+    if case.link_mode == LINK_LAPM or case.family in RAW_ONLY_FAMILIES:
+        legacy_name = case.name.replace(f"-{LINK_RAW}-{case.role}", f"-{case.role}")
+        legacy_name = legacy_name.replace(
+            f"-{LINK_LAPM}-{case.role}", f"-{case.role}"
+        )
+        CASES_BY_NAME[legacy_name] = case
 
 
 def cases_for_suite(name: str) -> tuple[CampaignCase, ...]:

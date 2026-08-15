@@ -73,9 +73,11 @@ class LiveCampaignConfigTests(unittest.TestCase):
                 config.environment("callback-answer")["SIP_PORT"], "5060"
             )
             self.assertEqual(config.callback_request_timeout_seconds, 90)
-            self.assertEqual(config.callback_marker_timeout_seconds, 35)
+            self.assertEqual(config.callback_marker_timeout_seconds, 7)
             self.assertEqual(config.callback_return_timeout_seconds, 180)
-            self.assertEqual(config.inter_call_seconds, 3)
+            self.assertEqual(config.retrain_timeout_seconds, 60)
+            self.assertEqual(config.inter_call_seconds, 7)
+            self.assertEqual(config.busy_retry_seconds, 90)
             self.assertEqual(config.busy_retry_limit, 3)
 
     def test_enabled_config_must_be_private_and_have_leg_targets(self) -> None:
@@ -103,6 +105,17 @@ class LiveCampaignConfigTests(unittest.TestCase):
 
         example = load_campaign_config(ROOT / "tools/live-campaign.example.json")
         self.assertFalse(example.enabled)
+        self.assertEqual(example.candidate.command, ("make", "-j8", "slmodemd"))
+
+    def test_retrain_deadline_cannot_exceed_one_minute(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "campaign.json"
+            value = self.value(root)
+            value["retrain_timeout_seconds"] = 61
+            self.write(path, value)
+            with self.assertRaisesRegex(CampaignConfigError, "retrain_timeout"):
+                load_campaign_config(path)
 
     def test_child_environment_scrubs_inherited_private_values(self) -> None:
         environment = child_environment(

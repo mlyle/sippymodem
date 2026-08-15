@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from fractions import Fraction
 from pathlib import Path
 import sys
 import unittest
@@ -21,6 +23,7 @@ from tools.live_campaign_report import (  # noqa: E402
     MATURITY_RETRAIN,
     OUTCOME_BUSY,
     OUTCOME_COMPLETE,
+    OUTCOME_SETUP_ERROR,
     base_schedule,
     extra_schedule,
     render_dashboard,
@@ -47,6 +50,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             self.result(
                 connected=True,
                 initial_data=True,
+                remote_retrain=True,
                 retrain_connected=True,
                 retrain_data=True,
             ).maturity,
@@ -54,7 +58,10 @@ class LiveCampaignReportTests(unittest.TestCase):
         )
         self.assertEqual(
             self.result(
-                connected=True, initial_data=True, retrain_connected=True
+                connected=True,
+                initial_data=True,
+                remote_retrain=True,
+                retrain_connected=True,
             ).maturity,
             MATURITY_RETRAIN,
         )
@@ -82,6 +89,43 @@ class LiveCampaignReportTests(unittest.TestCase):
                 {case.name for case in cases},
             )
 
+    def test_schedule_randomizes_only_among_least_complete_groups(self) -> None:
+        cases = cases_for_suite("smoke")
+        attempts = 3
+        schedule = base_schedule(cases, attempts, 1234)
+        expected = Counter((case.family, case.role) for case in cases)
+        expected = Counter(
+            {group: count * attempts for group, count in expected.items()}
+        )
+        completed: Counter[tuple[str, str]] = Counter()
+        case_completed: Counter[str] = Counter()
+
+        for item in schedule:
+            group = (item.case.family, item.case.role)
+            active = [
+                candidate
+                for candidate in expected
+                if completed[candidate] < expected[candidate]
+            ]
+            least_complete = min(
+                Fraction(completed[candidate], expected[candidate])
+                for candidate in active
+            )
+            self.assertEqual(
+                Fraction(completed[group], expected[group]), least_complete
+            )
+            group_case_counts = [
+                case_completed[case.name]
+                for case in cases
+                if (case.family, case.role) == group
+                and case_completed[case.name] < attempts
+            ]
+            self.assertEqual(
+                case_completed[item.case.name], min(group_case_counts)
+            )
+            completed[group] += 1
+            case_completed[item.case.name] += 1
+
     def test_one_extra_round_only_contains_failed_cases(self) -> None:
         cases = cases_for_suite("smoke")[:3]
         results = [
@@ -90,6 +134,7 @@ class LiveCampaignReportTests(unittest.TestCase):
                 family=cases[0].family,
                 connected=True,
                 initial_data=True,
+                remote_retrain=True,
                 retrain_connected=True,
                 retrain_data=True,
             ),
@@ -104,6 +149,17 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertEqual([item.case.name for item in extra], [cases[1].name])
         self.assertTrue(extra[0].extra)
         self.assertEqual(extra[0].ordinal, 4)
+
+    def test_local_setup_failures_do_not_get_live_failure_extras(self) -> None:
+        case = cases_for_suite("smoke")[0]
+        results = [
+            self.result(
+                case_name=case.name,
+                family=case.family,
+                outcome=OUTCOME_SETUP_ERROR,
+            )
+        ]
+        self.assertEqual(extra_schedule((case,), results, 3, 1, 99), ())
 
     def test_dashboard_is_compact_and_excludes_busy_from_done(self) -> None:
         cases = cases_for_suite("smoke")
@@ -136,8 +192,49 @@ class LiveCampaignReportTests(unittest.TestCase):
             "current=v21-300-originator / waiting for CONNECT for=13s",
             dashboard,
         )
-        self.assertLessEqual(len(dashboard.splitlines()), 16)
+        lines = dashboard.splitlines()
+        role_header = next(line for line in lines if "Originator" in line)
+        column_header = next(line for line in lines if line.startswith("Modulation"))
+        first_row = next(line for line in lines if line.startswith("V.21"))
+        self.assertEqual(role_header[13:42].strip(), "Originator")
+        self.assertEqual(role_header[45:74].strip(), "Callback")
+        self.assertEqual(column_header[13:42], "done/exp+x   F  R  D  C  N  E")
+        self.assertEqual(column_header[45:74], "done/exp+x   F  R  D  C  N  E")
+        table_lines = (role_header, column_header, first_row)
+        self.assertEqual({line.index("|") for line in table_lines}, {43})
+        self.assertTrue(all(len(line) == 74 for line in table_lines))
+        self.assertLessEqual(len(lines), 17)
         self.assertLessEqual(max(map(len, dashboard.splitlines())), 100)
+
+    def test_callback_request_connect_is_a_v22bis_observation(self) -> None:
+        case = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.family == "v34" and case.role == "callback"
+        )
+        result = self.result(
+            case_name=case.name,
+            family=case.family,
+            role=case.role,
+            callback_request_maturity=MATURITY_CONNECT,
+        )
+        dashboard = render_dashboard(
+            (case,),
+            1,
+            (result,),
+            revision="b" * 40,
+            seed=9,
+            elapsed_seconds=1,
+        )
+        v22bis = next(
+            line for line in dashboard.splitlines() if line.startswith("V.22bis")
+        )
+        originator = v22bis[13:43].split()
+        self.assertEqual(originator, ["0/0", "+1", "0", "0", "0", "1", "0", "0"])
+        self.assertIn(
+            "+ includes failure extras and V.22bis callback-request observations",
+            dashboard,
+        )
 
 
 if __name__ == "__main__":

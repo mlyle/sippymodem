@@ -34,7 +34,7 @@ class ModemProfile:
 # the bounded CONNECT report used by the runner.
 LINK_MODE_AT_COMMANDS = {
     "lapm": ("ATZ", "ATE0", "AT&A7", "ATX3", "AT+DS=3,1"),
-    "raw": ("ATZ", "ATE0", "AT&A7", "ATX3", "AT\\N0", "AT+DS=0,1"),
+    "raw": ("ATZ", "ATE0", "AT&A7", "ATX3", "AT\\N0", "AT+DS=0,0"),
 }
 
 V34_UPSTREAM_MIN_RATE = 4800

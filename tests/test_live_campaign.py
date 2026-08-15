@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import io
 import json
 import os
@@ -25,6 +26,8 @@ from tools.live_campaign import (  # noqa: E402
     _LiveTicker,
     _callback_command,
     _display,
+    _freeze_with_status,
+    _run_schedule,
     run_physical_attempt,
 )
 from tools.live_campaign_config import (  # noqa: E402
@@ -33,11 +36,15 @@ from tools.live_campaign_config import (  # noqa: E402
 )
 from tools.live_campaign_profiles import CASES_BY_NAME  # noqa: E402
 from tools.live_campaign_report import (  # noqa: E402
+    AttemptResult,
+    MATURITY_CONNECT,
     MATURITY_FULL,
     OUTCOME_BUSY,
+    OUTCOME_SETUP_ERROR,
     ScheduledAttempt,
 )
-from tools.revision_build import FrozenBinary  # noqa: E402
+from tools.live_terminal import ONLINE_INITIAL_RESPONSE  # noqa: E402
+from tools.revision_build import FrozenBinary, RevisionBuild  # noqa: E402
 
 
 FAKE_MODEM = r"""
@@ -62,6 +69,11 @@ connect = (
     b"\r\nModulation: V21\r\nProtocol: LAPM\r\n"
     b"Compression: NONE\r\nTxRate: 300\r\nCONNECT 300\r\n"
 )
+request_connect = (
+    b"\r\nModulation: V22BIS\r\nProtocol: LAPM\r\n"
+    b"Compression: NONE\r\nTxRate: 2400\r\nCONNECT 2400\r\n"
+)
+initial_payload = b"DMODEM-PATTERN-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n"
 pong = (
     b"\r\nGETTY:PONG:0123456789abcdef0123456789abcdef:"
     b"1783737600123\r\n"
@@ -103,6 +115,13 @@ while True:
         elif b"PING" in buffer:
             buffer.clear()
             os.write(master, pong)
+        elif b"RETRAIN" in buffer:
+            buffer.clear()
+            os.write(
+                master,
+                b"GETTY:RETRAIN:START:" + callback_nonce + b"\r\n"
+                b"GETTY:RETRAIN:END:" + callback_nonce + b":1834\r\n",
+            )
         continue
     while b"\r" in buffer:
         command, _, remainder = buffer.partition(b"\r")
@@ -115,8 +134,11 @@ while True:
                 os.write(master, b"\r\nBUSY\r\n")
             elif mode == "early-no-carrier":
                 os.write(master, b"\r\nNO CARRIER\r\n")
+            elif mode == "callback" and role == "request":
+                os.write(master, request_connect + initial_payload)
+                online = True
             else:
-                os.write(master, connect)
+                os.write(master, connect + initial_payload)
                 online = True
         elif command == b"ATA" and mode == "callback" and role == "answer":
             os.write(
@@ -165,6 +187,40 @@ class LiveCampaignTests(unittest.TestCase):
         time.sleep(0.025)
         self.assertEqual(len(refreshes), completed)
 
+    def test_revision_build_status_repaints_while_compiling(self) -> None:
+        output = io.StringIO()
+        frozen = FrozenBinary(
+            Path("/private/cache"),
+            Path("/private/cache/slmodemd"),
+            "a" * 40,
+            "b" * 64,
+            False,
+        )
+
+        def freeze(_build: object, _cache: object, progress: object) -> FrozenBinary:
+            assert callable(progress)
+            progress("compiling revision-frozen executable")
+            time.sleep(0.03)
+            return frozen
+
+        build = RevisionBuild(
+            "candidate", Path("."), "HEAD", ("make",), Path("src/slmodemd")
+        )
+        with (
+            mock.patch("tools.live_campaign.sys.stdout", output),
+            mock.patch("tools.live_campaign.DASHBOARD_REFRESH_SECONDS", 0.005),
+            mock.patch("tools.live_campaign.freeze_revision_build", side_effect=freeze),
+        ):
+            self.assertIs(
+                _freeze_with_status(build, Path("/private/cache"), live_display=True),
+                frozen,
+            )
+        display = output.getvalue()
+        self.assertIn("\x1b[2J\x1b[H", display)
+        self.assertIn("compiling revision-frozen executable", display)
+        self.assertIn("for=", display)
+        self.assertTrue(display.endswith("\x1b[?25h\n"))
+
     def test_attempt_progress_restarts_the_active_stage_clock(self) -> None:
         with mock.patch(
             "tools.live_campaign.time.monotonic",
@@ -175,6 +231,59 @@ class LiveCampaignTests(unittest.TestCase):
             label, seconds = progress.snapshot()
         self.assertEqual(label, "v34-case / waiting for CONNECT")
         self.assertEqual(seconds, 3.5)
+
+    def test_local_setup_error_does_not_consume_line_cooldown(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "unused.py"
+            config = replace(
+                self.config(root, script, "pass"),
+                inter_call_seconds=90,
+            )
+            case = CASES_BY_NAME["v21-300-originator"]
+            scheduled = ScheduledAttempt(case, 1)
+            frozen = FrozenBinary(
+                root,
+                Path(sys.executable),
+                "a" * 40,
+                "b" * 64,
+                False,
+            )
+            result = AttemptResult(
+                case_name=case.name,
+                family=case.family,
+                role=case.role,
+                ordinal=1,
+                extra=False,
+                physical_try=1,
+                outcome=OUTCOME_SETUP_ERROR,
+            )
+            store = mock.Mock()
+            store.new_attempt.return_value = mock.sentinel.artifacts
+            results: list[AttemptResult] = []
+            with (
+                mock.patch(
+                    "tools.live_campaign.run_physical_attempt",
+                    return_value=result,
+                ),
+                mock.patch("tools.live_campaign.time.sleep") as sleep,
+                mock.patch("tools.live_campaign.sys.stdout", io.StringIO()),
+            ):
+                _run_schedule(
+                    (scheduled,),
+                    config,
+                    frozen,
+                    store,
+                    (case,),
+                    1,
+                    7,
+                    True,
+                    results,
+                    time.monotonic(),
+                    False,
+                )
+            sleep.assert_not_called()
+            self.assertEqual(results, [result])
 
     def config(
         self,
@@ -253,7 +362,9 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertEqual(result.receive_rate, 300)
             self.assertEqual(result.transmit_rate, 300)
             transmitted = (artifacts.legs["modem"] / "terminal-tx.bin").read_bytes()
-            self.assertEqual(transmitted.count(b"PING"), 2)
+            self.assertNotIn(b"0123456789", transmitted)
+            self.assertEqual(transmitted.count(b"RETRAIN"), 1)
+            self.assertEqual(transmitted.count(b"PING"), 1)
             detail = json.loads(
                 (artifacts.directory / "result.json").read_text(encoding="utf-8")
             )
@@ -285,6 +396,7 @@ class LiveCampaignTests(unittest.TestCase):
                 True,
             )
             self.assertEqual(result.outcome, OUTCOME_BUSY)
+            self.assertTrue(result.line_attempted)
             self.assertIsNone(result.maturity)
             self.assertFalse(result.counts_as_attempt)
 
@@ -311,14 +423,19 @@ class LiveCampaignTests(unittest.TestCase):
                 True,
             )
             self.assertEqual(result.outcome, "complete")
+            self.assertTrue(result.line_attempted)
             self.assertEqual(result.maturity, "no-connect")
             self.assertIn("no-carrier", result.detail)
             self.assertTrue(result.counts_as_attempt)
 
     def test_callback_request_features_are_case_owned(self) -> None:
         plain = _callback_command(CASES_BY_NAME["v21-300-callback"])
+        v22bis = _callback_command(
+            CASES_BY_NAME["v22bis-2400-lapm-callback"]
+        )
         pcm = _callback_command(CASES_BY_NAME["v92-pcmup-36000-callback"])
         self.assertEqual(plain, b"\r\n\r\nDIAL\r\n")
+        self.assertEqual(v22bis, b"\r\n\r\nDIAL V42\r\n")
         self.assertEqual(pcm, b"\r\n\r\nDIAL V42 V44 PCM\r\n")
 
     def test_callback_real_ptys_bind_nonce_and_retrain(self) -> None:
@@ -347,10 +464,22 @@ class LiveCampaignTests(unittest.TestCase):
                     True,
                 )
             self.assertEqual(result.maturity, MATURITY_FULL)
+            self.assertEqual(
+                result.callback_request_maturity,
+                MATURITY_CONNECT,
+            )
+            self.assertEqual(
+                result.remote_retrain_nonce,
+                "0123456789abcdef0123456789abcdef",
+            )
             self.assertTrue(barrier.exists())
+            request_rx = (
+                artifacts.legs["request"] / "terminal-rx.bin"
+            ).read_bytes()
+            self.assertIn(ONLINE_INITIAL_RESPONSE, request_rx)
             self.assertIn(
                 b"GETTY:CALLBACK:START:",
-                (artifacts.legs["request"] / "terminal-rx.bin").read_bytes(),
+                request_rx,
             )
             self.assertIn(
                 b"GETTY:CALLBACK:CONNECT:",

@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.live_terminal import (  # noqa: E402
     LiveTerminalError,
     ModemTerminal,
+    ONLINE_INITIAL_RESPONSE,
     ONLINE_PING_REQUEST,
+    REMOTE_RETRAIN_REQUEST,
     ResponseDecoder,
     read_published_device,
 )
@@ -71,7 +73,7 @@ class LiveTerminalTests(unittest.TestCase):
         terminal._decoder.feed(b"CONNECT 300\r\n")
         malformed = (
             b"GETTY:PONG:0123456789abcdef0123456789abcdef:"
-            b"178373760012\r\n"
+            b"not-a-time\r\n"
         )
         with (
             mock.patch.object(terminal, "_write"),
@@ -88,6 +90,69 @@ class LiveTerminalTests(unittest.TestCase):
 
         self.assertFalse(verified)
         self.assertEqual(received, malformed)
+
+    def test_initial_probe_uses_the_established_fixed_payload(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 300\r\n")
+        with (
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch("tools.live_terminal._wait_for_descriptor"),
+            mock.patch(
+                "tools.live_terminal.os.read",
+                side_effect=(
+                    ONLINE_INITIAL_RESPONSE[:17],
+                    ONLINE_INITIAL_RESPONSE[17:],
+                ),
+            ),
+        ):
+            verified, received = terminal.probe_initial_data(1.0)
+        self.assertTrue(verified)
+        self.assertEqual(received, ONLINE_INITIAL_RESPONSE)
+        write.assert_not_called()
+
+    def test_remote_retrain_requires_matching_complete_markers(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 14400\r\n")
+        nonce = b"0123456789abcdef0123456789abcdef"
+        start = b"GETTY:RETRAIN:START:" + nonce + b"\r\n"
+        end = b"GETTY:RETRAIN:END:" + nonce + b":1834\r\n"
+        with (
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch("tools.live_terminal._wait_for_descriptor"),
+            mock.patch(
+                "tools.live_terminal.os.read",
+                side_effect=(start, end),
+            ),
+        ):
+            observed, received = terminal.start_remote_retrain(1.0)
+            complete, continuation = terminal.complete_remote_retrain(
+                observed, received, 1.0
+            )
+        self.assertEqual(observed, nonce)
+        self.assertEqual(received, start)
+        self.assertTrue(complete)
+        self.assertEqual(continuation, end)
+        self.assertEqual(write.call_args.args[0], REMOTE_RETRAIN_REQUEST)
+
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 14400\r\n")
+        mismatch = start.replace(nonce, b"f" * 32) + end
+        with (
+            mock.patch.object(terminal, "_write"),
+            mock.patch(
+                "tools.live_terminal._wait_for_descriptor",
+                side_effect=(None, TimeoutError),
+            ),
+            mock.patch("tools.live_terminal.os.read", return_value=mismatch),
+        ):
+            observed, received = terminal.start_remote_retrain(1.0)
+            complete, continuation = terminal.complete_remote_retrain(
+                observed, received, 1.0
+            )
+        self.assertEqual(observed, b"f" * 32)
+        self.assertEqual(received, mismatch)
+        self.assertFalse(complete)
+        self.assertEqual(continuation, b"")
 
     def test_online_send_requires_connected_bounded_data(self) -> None:
         terminal = ModemTerminal(-1)

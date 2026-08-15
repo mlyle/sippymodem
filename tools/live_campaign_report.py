@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 import random
 from typing import Iterable, Sequence
 
@@ -69,8 +70,12 @@ class AttemptResult:
     extra: bool
     physical_try: int
     outcome: str
+    line_attempted: bool = False
     connected: bool = False
     initial_data: bool = False
+    callback_request_maturity: str | None = None
+    remote_retrain_nonce: str | None = None
+    remote_retrain: bool = False
     retrain_connected: bool = False
     retrain_data: bool = False
     retrain_requested: bool = True
@@ -88,6 +93,7 @@ class AttemptResult:
         if (
             self.initial_data
             and self.retrain_requested
+            and self.remote_retrain
             and self.retrain_connected
             and self.retrain_data
         ):
@@ -95,6 +101,7 @@ class AttemptResult:
         if (
             self.initial_data
             and self.retrain_requested
+            and self.remote_retrain
             and self.retrain_connected
         ):
             return MATURITY_RETRAIN
@@ -122,15 +129,55 @@ def base_schedule(
 ) -> tuple[ScheduledAttempt, ...]:
     if not cases or not 1 <= attempts <= 20:
         raise ValueError("invalid campaign schedule")
-    generator = random.Random(seed)
-    schedule: list[ScheduledAttempt] = []
-    for ordinal in range(1, attempts + 1):
-        round_cases = list(cases)
-        if randomize:
-            generator.shuffle(round_cases)
-        schedule.extend(
-            ScheduledAttempt(case, ordinal, False) for case in round_cases
+    if not randomize:
+        return tuple(
+            ScheduledAttempt(case, ordinal, False)
+            for ordinal in range(1, attempts + 1)
+            for case in cases
         )
+
+    generator = random.Random(seed)
+    groups: dict[tuple[str, str], list[CampaignCase]] = {}
+    for case in cases:
+        groups.setdefault((case.family, case.role), []).append(case)
+
+    group_done = {group: 0 for group in groups}
+    group_expected = {
+        group: len(group_cases) * attempts
+        for group, group_cases in groups.items()
+    }
+    case_done = {case.name: 0 for case in cases}
+    schedule: list[ScheduledAttempt] = []
+    while len(schedule) < len(cases) * attempts:
+        available_groups = [
+            group
+            for group in groups
+            if group_done[group] < group_expected[group]
+        ]
+        minimum = min(
+            Fraction(group_done[group], group_expected[group])
+            for group in available_groups
+        )
+        least_complete_groups = [
+            group
+            for group in available_groups
+            if Fraction(group_done[group], group_expected[group]) == minimum
+        ]
+        group = generator.choice(least_complete_groups)
+        minimum_case_count = min(
+            case_done[case.name]
+            for case in groups[group]
+            if case_done[case.name] < attempts
+        )
+        least_complete_cases = [
+            case
+            for case in groups[group]
+            if case_done[case.name] == minimum_case_count
+        ]
+        case = generator.choice(least_complete_cases)
+        case_done[case.name] += 1
+        group_done[group] += 1
+        schedule.append(ScheduledAttempt(case, case_done[case.name], False))
     return tuple(schedule)
 
 
@@ -146,7 +193,10 @@ def extra_schedule(
     failed = {
         result.case_name
         for result in results
-        if not result.extra and result.counts_as_attempt and not result.successful()
+        if not result.extra
+        and result.counts_as_attempt
+        and result.outcome not in ERROR_OUTCOMES
+        and not result.successful()
     }
     selected = [case for case in cases if case.name in failed]
     generator = random.Random(seed ^ 0xC6A4A7935BD1E995)
@@ -161,8 +211,13 @@ def extra_schedule(
     return tuple(schedule)
 
 
-def _families(cases: Sequence[CampaignCase]) -> tuple[str, ...]:
+def _families(
+    cases: Sequence[CampaignCase],
+    results: Sequence[AttemptResult] = (),
+) -> tuple[str, ...]:
     present = {case.family for case in cases}
+    if any(result.callback_request_maturity is not None for result in results):
+        present.add("v22bis")
     ordered = [family for family in FAMILY_ORDER if family in present]
     ordered.extend(sorted(present - set(ordered)))
     return tuple(ordered)
@@ -180,12 +235,13 @@ def render_dashboard(
     current_seconds: float | None = None,
 ) -> str:
     roles = ("originator", "callback")
+    families = _families(cases, results)
     base_expected = {
         (family, role): sum(
             case.family == family and case.role == role for case in cases
         )
         * attempts
-        for family in _families(cases)
+        for family in families
         for role in roles
     }
     rows: list[str] = []
@@ -199,8 +255,16 @@ def render_dashboard(
         rows.append(f"current={current}{active}")
     rows.append("F=full R=retrain D=data C=connect N=no-connect E=error")
     rows.append(
-        "Modulation   Originator done/exp+x F  R  D  C  N  E | "
-        "Callback done/exp+x F  R  D  C  N  E"
+        "+ includes failure extras and V.22bis callback-request observations"
+    )
+    role_columns = "done/exp+x   F  R  D  C  N  E"
+    role_width = len(role_columns)
+    rows.append(
+        f"{'':13}{'Originator':^{role_width}} | "
+        f"{'Callback':^{role_width}}"
+    )
+    rows.append(
+        f"{'Modulation':<12} {role_columns} | {role_columns}"
     )
 
     totals = {
@@ -226,9 +290,22 @@ def render_dashboard(
             maturity: sum(result.maturity == maturity for result in role_results)
             for maturity in MATURITY_ORDER
         }
+        request_observations = (
+            [
+                result.callback_request_maturity
+                for result in results
+                if result.callback_request_maturity is not None
+            ]
+            if family == "v22bis" and role == "originator"
+            else []
+        )
+        for maturity in request_observations:
+            counts[maturity] += 1
         errors = sum(result.outcome in ERROR_OUTCOMES for result in role_results)
         done = sum(not result.extra for result in role_results)
-        extras = sum(result.extra for result in role_results)
+        extras = sum(result.extra for result in role_results) + len(
+            request_observations
+        )
         expected = base_expected[(family, role)]
         total = totals[role]
         total["done"] += done
@@ -238,13 +315,13 @@ def render_dashboard(
         for maturity in MATURITY_ORDER:
             total[maturity] += counts[maturity]
         return (
-            f"{done:>3}/{expected:<3}+{extras:<2} "
+            f" {done:>3}/{expected:<3}+{extras:<2} "
             f"{counts[MATURITY_FULL]:>2} {counts[MATURITY_RETRAIN]:>2} "
             f"{counts[MATURITY_DATA]:>2} {counts[MATURITY_CONNECT]:>2} "
             f"{counts[MATURITY_NO_CONNECT]:>2} {errors:>2}"
         )
 
-    for family in _families(cases):
+    for family in families:
         rows.append(
             f"{FAMILY_LABELS.get(family, family):<12} "
             f"{role_fields(family, 'originator')} | "
@@ -254,7 +331,7 @@ def render_dashboard(
     def total_fields(role: str) -> str:
         total = totals[role]
         return (
-            f"{total['done']:>3}/{total['expected']:<3}+{total['extra']:<2} "
+            f" {total['done']:>3}/{total['expected']:<3}+{total['extra']:<2} "
             f"{total[MATURITY_FULL]:>2} {total[MATURITY_RETRAIN]:>2} "
             f"{total[MATURITY_DATA]:>2} {total[MATURITY_CONNECT]:>2} "
             f"{total[MATURITY_NO_CONNECT]:>2} {total['error']:>2}"

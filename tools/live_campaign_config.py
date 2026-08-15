@@ -395,7 +395,7 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             300,
         ),
         callback_marker_timeout_seconds=_number(
-            value.get("callback_marker_timeout_seconds", 35),
+            value.get("callback_marker_timeout_seconds", 7),
             "callback_marker_timeout_seconds",
             5,
             300,
@@ -425,10 +425,10 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             10,
         ),
         retrain_timeout_seconds=_number(
-            value.get("retrain_timeout_seconds", 90),
+            value.get("retrain_timeout_seconds", 60),
             "retrain_timeout_seconds",
             5,
-            300,
+            60,
         ),
         cleanup_timeout_seconds=_number(
             value.get("cleanup_timeout_seconds", 5),
@@ -437,13 +437,13 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             30,
         ),
         inter_call_seconds=_number(
-            value.get("inter_call_seconds", 3),
+            value.get("inter_call_seconds", 7),
             "inter_call_seconds",
             0,
             120,
         ),
         busy_retry_seconds=_number(
-            value.get("busy_retry_seconds", 10),
+            value.get("busy_retry_seconds", 90),
             "busy_retry_seconds",
             0,
             300,

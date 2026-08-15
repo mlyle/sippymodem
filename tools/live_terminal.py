@@ -58,10 +58,18 @@ CONNECT_COMPRESSIONS = {
     b"NONE": "none",
 }
 CONNECT_RATE_MAX = 1_000_000
+ONLINE_INITIAL_RESPONSE = (
+    b"DMODEM-PATTERN-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n"
+)
+REMOTE_RETRAIN_REQUEST = b"\r\n\r\nRETRAIN\r\n"
+REMOTE_RETRAIN_START_RE = re.compile(
+    rb"(?:^|[\r\n])GETTY:RETRAIN:START:"
+    rb"(?P<nonce>[0-9a-fA-F]{32})(?::[^\r\n]*)?(?:\r\n|\r|\n)"
+)
 ONLINE_PING_REQUEST = b"\r\n\r\nPING\r\n"
 ONLINE_PONG_RE = re.compile(
-    rb"(?:^|[\r\n])GETTY:PONG:[0-9a-fA-F]{32}:"
-    rb"[0-9]{10}(?:[0-9]{3}){0,2}\r\n"
+    rb"(?:^|[\r\n])GETTY:PONG:[0-9a-fA-F]{1,64}:"
+    rb"[0-9]{1,20}(?:\r\n|\r|\n)"
 )
 
 
@@ -331,6 +339,49 @@ class ModemTerminal:
         result = self._read_result(deadline)
         return self._read_result(deadline) if result == "ok" else result
 
+    def probe_initial_data(self, timeout_seconds: float) -> tuple[bool, bytes]:
+        return self.exchange_online(
+            b"",
+            ONLINE_INITIAL_RESPONSE,
+            timeout_seconds,
+        )
+
+    def start_remote_retrain(
+        self, timeout_seconds: float
+    ) -> tuple[bytes | None, bytes]:
+        verified, received = self.exchange_online_pattern(
+            REMOTE_RETRAIN_REQUEST,
+            REMOTE_RETRAIN_START_RE,
+            timeout_seconds,
+        )
+        match = REMOTE_RETRAIN_START_RE.search(received) if verified else None
+        return (match.group("nonce").lower() if match is not None else None), received
+
+    def complete_remote_retrain(
+        self,
+        nonce: bytes,
+        received: bytes,
+        timeout_seconds: float,
+    ) -> tuple[bool, bytes]:
+        if (
+            not re.fullmatch(rb"[0-9a-f]{32}", nonce)
+            or not isinstance(received, bytes)
+            or len(received) > ONLINE_CAPTURE_MAX
+        ):
+            raise LiveTerminalError("invalid remote retrain completion")
+        pattern = re.compile(
+            rb"(?:^|[\r\n])GETTY:RETRAIN:END:"
+            + re.escape(nonce)
+            + rb":[0-9]{1,20}(?:\r\n|\r|\n)"
+        )
+        verified, combined = self._exchange_online(
+            b"",
+            lambda data: pattern.search(data) is not None,
+            timeout_seconds,
+            initial=received,
+        )
+        return verified, combined[len(received):]
+
     def probe_online_ping(self, timeout_seconds: float) -> tuple[bool, bytes]:
         return self._exchange_online(
             ONLINE_PING_REQUEST,
@@ -343,10 +394,14 @@ class ModemTerminal:
         send: bytes,
         complete: Callable[[bytearray], bool],
         timeout_seconds: float,
+        *,
+        initial: bytes = b"",
     ) -> tuple[bool, bytes]:
         if (
             not isinstance(send, bytes)
             or len(send) > ONLINE_PATTERN_MAX
+            or not isinstance(initial, bytes)
+            or len(initial) > ONLINE_CAPTURE_MAX
             or timeout_seconds <= 0
             or not self._decoder.online
         ):
@@ -354,7 +409,8 @@ class ModemTerminal:
         deadline = time.monotonic() + timeout_seconds
         if send:
             self._write(send, deadline)
-        received = bytearray(self._decoder.take_online_data())
+        received = bytearray(initial)
+        received.extend(self._decoder.take_online_data())
         while not complete(received):
             if len(received) >= ONLINE_CAPTURE_MAX:
                 raise LiveTerminalError("online terminal data is too long")

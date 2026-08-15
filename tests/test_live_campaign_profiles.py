@@ -14,6 +14,10 @@ sys.path.insert(0, str(ROOT))
 from tools.live_campaign_profiles import (  # noqa: E402
     CASES,
     FAMILY_ORDER,
+    LINK_LAPM,
+    LINK_MODES,
+    LINK_RAW,
+    RAW_ONLY_FAMILIES,
     ROLES,
     cases_for_suite,
     select_cases,
@@ -22,19 +26,49 @@ from tools.live_campaign_profiles import (  # noqa: E402
 
 class LiveCampaignProfileTests(unittest.TestCase):
     def test_curated_suite_sizes_are_bounded(self) -> None:
-        self.assertEqual(len(cases_for_suite("smoke")), 12)
-        self.assertEqual(len(cases_for_suite("standard")), 53)
-        self.assertEqual(len(cases_for_suite("extended")), 76)
+        self.assertEqual(len(cases_for_suite("smoke")), 22)
+        self.assertEqual(len(cases_for_suite("standard")), 100)
+        self.assertEqual(len(cases_for_suite("extended")), 146)
 
     def test_cases_have_safe_unique_generated_commands(self) -> None:
         self.assertEqual(len(CASES), len({case.name for case in CASES}))
         self.assertTrue({case.family for case in CASES} <= set(FAMILY_ORDER))
         for case in CASES:
             self.assertIn(case.role, ROLES)
+            self.assertIn(case.link_mode, LINK_MODES)
             self.assertTrue(case.at_commands)
             for command in case.at_commands:
                 self.assertTrue(command.startswith("AT"), case.name)
                 command.encode("ascii")
+
+            if case.link_mode == LINK_RAW:
+                self.assertIn("AT\\N0", case.at_commands)
+                self.assertIn("AT+DS=0,0", case.at_commands)
+                self.assertFalse(
+                    any(command.startswith("AT+DSC=") for command in case.at_commands)
+                )
+                self.assertTrue(
+                    {"V42", "V44"}.isdisjoint(case.callback_features)
+                )
+            else:
+                self.assertIn("AT+DS=3,1", case.at_commands)
+
+    def test_only_slowest_modes_omit_lapm_variants(self) -> None:
+        modes_by_profile: dict[tuple[object, ...], set[str]] = {}
+        for case in CASES:
+            identity = (
+                case.family,
+                case.role,
+                case.feature,
+                case.receive_rate,
+                case.transmit_rate,
+                case.symbol_rate,
+                case.level,
+            )
+            modes_by_profile.setdefault(identity, set()).add(case.link_mode)
+        for identity, modes in modes_by_profile.items():
+            expected = {LINK_RAW} if identity[0] in RAW_ONLY_FAMILIES else set(LINK_MODES)
+            self.assertEqual(modes, expected, identity)
 
     def test_standard_crosses_v34_cadence_boundaries_in_both_roles(self) -> None:
         v34 = [case for case in cases_for_suite("standard") if case.family == "v34"]
@@ -70,7 +104,10 @@ class LiveCampaignProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             tuple(case.name for case in selected),
-            ("v34-9600-b2400-callback",),
+            (
+                "v34-9600-b2400-raw-callback",
+                "v34-9600-b2400-lapm-callback",
+            ),
         )
 
         explicit = select_cases(
@@ -78,7 +115,7 @@ class LiveCampaignProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             tuple(case.name for case in explicit),
-            ("v22-600-callback",),
+            ("v22-600-lapm-callback",),
         )
 
 

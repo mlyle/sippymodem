@@ -40,6 +40,8 @@ if __package__:
     )
     from .live_campaign_report import (
         AttemptResult,
+        MATURITY_CONNECT,
+        MATURITY_NO_CONNECT,
         OUTCOME_BUSY,
         OUTCOME_COMPLETE,
         OUTCOME_INFRASTRUCTURE_ERROR,
@@ -55,6 +57,7 @@ if __package__:
         LiveTerminalError,
         ModemTerminal,
         ONLINE_PING_REQUEST,
+        REMOTE_RETRAIN_REQUEST,
     )
     from .revision_build import (
         FrozenBinary,
@@ -80,6 +83,8 @@ else:
     )
     from live_campaign_report import (
         AttemptResult,
+        MATURITY_CONNECT,
+        MATURITY_NO_CONNECT,
         OUTCOME_BUSY,
         OUTCOME_COMPLETE,
         OUTCOME_INFRASTRUCTURE_ERROR,
@@ -95,6 +100,7 @@ else:
         LiveTerminalError,
         ModemTerminal,
         ONLINE_PING_REQUEST,
+        REMOTE_RETRAIN_REQUEST,
     )
     from revision_build import (
         FrozenBinary,
@@ -107,6 +113,7 @@ else:
 SKIPPED_EXIT_CODE = 77
 CALLBACK_START_RE = re.compile(
     rb"GETTY:CALLBACK:START:(?P<nonce>[0-9a-fA-F]{32}):"
+    rb"[^\r\n]*(?:\r\n|\r|\n)"
 )
 CALLBACK_REQUEST_COMMANDS = (
     "ATZ",
@@ -394,8 +401,12 @@ class CampaignStore:
 @dataclass
 class _AttemptState:
     outcome: str = OUTCOME_COMPLETE
+    line_attempted: bool = False
     connected: bool = False
     initial_data: bool = False
+    callback_request_maturity: str | None = None
+    remote_retrain_nonce: str | None = None
+    remote_retrain: bool = False
     retrain_connected: bool = False
     retrain_data: bool = False
     report: ConnectReport = field(default_factory=ConnectReport)
@@ -463,24 +474,66 @@ def _exercise_online(
     retrain: bool,
     progress: _AttemptProgress,
     *,
-    prerequisite_verified: bool = True,
+    initial_verified: bool | None = None,
 ) -> None:
-    progress.set("checking initial data")
-    try:
-        time.sleep(config.online_settle_seconds)
-        verified, received = terminal.probe_online_ping(
-            config.online_timeout_seconds
-        )
-        state.capture(leg, ONLINE_PING_REQUEST, received)
-    except (LiveTerminalError, OSError, TimeoutError):
-        state.detail = "initial online exchange failed"
-        return
-    state.initial_data = prerequisite_verified and verified
-    if not state.initial_data or not retrain:
-        if not state.initial_data:
+    if initial_verified is None:
+        progress.set("checking initial data")
+        try:
+            time.sleep(config.online_settle_seconds)
+            verified, received = terminal.probe_initial_data(
+                config.online_timeout_seconds
+            )
+            state.capture(leg, b"", received)
+        except (LiveTerminalError, OSError, TimeoutError):
+            state.detail = "initial online exchange failed"
+            return
+        state.initial_data = verified
+    else:
+        state.initial_data = initial_verified
+    if not state.initial_data:
+        if not state.detail:
             state.detail = "initial online data was not verified"
         return
-    progress.set("waiting for retrain")
+    if not retrain:
+        return
+    remote_deadline = time.monotonic() + config.retrain_timeout_seconds
+    progress.set("waiting for remote retrain START")
+    try:
+        nonce, received = terminal.start_remote_retrain(
+            min(
+                config.online_timeout_seconds,
+                max(0.001, remote_deadline - time.monotonic()),
+            )
+        )
+        state.capture(leg, REMOTE_RETRAIN_REQUEST, received)
+    except (LiveTerminalError, OSError, TimeoutError):
+        state.detail = "remote retrain START exchange failed"
+        return
+    if nonce is None:
+        state.detail = "remote retrain START marker was not verified"
+        return
+    state.remote_retrain_nonce = nonce.decode("ascii")
+    progress.set(
+        f"waiting for remote retrain END nonce={state.remote_retrain_nonce}"
+    )
+    remaining = remote_deadline - time.monotonic()
+    if remaining <= 0:
+        state.detail = "remote retrain exceeded its total deadline"
+        return
+    try:
+        state.remote_retrain, continuation = terminal.complete_remote_retrain(
+            nonce,
+            received,
+            remaining,
+        )
+        state.capture(leg, b"", continuation)
+    except (LiveTerminalError, OSError, TimeoutError):
+        state.detail = "remote retrain END exchange failed"
+        return
+    if not state.remote_retrain:
+        state.detail = "remote retrain END marker was not verified"
+        return
+    progress.set("waiting for local retrain")
     try:
         state.capture(leg, b"+++ATO1\r", b"")
         state.retrain_connected = (
@@ -538,6 +591,7 @@ def _outbound_body(
     )
     assert endpoint.terminal is not None
     progress.set("waiting for CONNECT")
+    state.line_attempted = True
     try:
         response = endpoint.terminal.dial_until(
             time.monotonic() + config.connect_timeout_seconds
@@ -634,11 +688,13 @@ def _callback_body(
     )
     assert request.terminal is not None
     progress.set("waiting for request CONNECT")
+    state.line_attempted = True
     try:
         response = request.terminal.dial_until(
             time.monotonic() + config.callback_request_timeout_seconds
         )
     except TimeoutError:
+        state.callback_request_maturity = MATURITY_NO_CONNECT
         state.detail = "callback request CONNECT timed out"
         return None
     if response == "busy":
@@ -646,20 +702,44 @@ def _callback_body(
         state.detail = "external line was busy"
         return None
     if response != "connect":
+        state.callback_request_maturity = MATURITY_NO_CONNECT
         state.detail = f"callback request ended with {response}"
         return None
+    state.callback_request_maturity = MATURITY_CONNECT
     callback_command = _callback_command(scheduled.case)
-    progress.set("requesting callback")
+    progress.set("waiting for callback request greeting")
+    try:
+        greeting_verified, received = request.terminal.probe_initial_data(
+            config.callback_marker_timeout_seconds
+        )
+    except (LiveTerminalError, OSError, TimeoutError):
+        state.detail = "callback request greeting was not received"
+        return None
+    state.capture("request", b"", received)
+    if not greeting_verified:
+        state.detail = "callback request greeting was not verified"
+        return None
+    progress.set("sending callback request")
+    try:
+        request.terminal.send_online(
+            callback_command,
+            config.setup_timeout_seconds,
+        )
+    except (LiveTerminalError, OSError, TimeoutError):
+        state.detail = "callback request could not be sent"
+        return None
+    state.capture("request", callback_command, b"")
+    progress.set("waiting for callback START")
     try:
         verified, received = request.terminal.exchange_online_pattern(
-            callback_command,
+            b"",
             CALLBACK_START_RE,
             config.callback_marker_timeout_seconds,
         )
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "callback START marker was not received"
         return None
-    state.capture("request", callback_command, received)
+    state.capture("request", b"", received)
     match = CALLBACK_START_RE.search(received) if verified else None
     if match is None:
         state.detail = "callback START marker was not verified"
@@ -686,7 +766,9 @@ def _callback_body(
     state.connected = True
     state.report = answer.terminal.connect_report
     connect_pattern = re.compile(
-        rb"GETTY:CALLBACK:CONNECT:" + re.escape(nonce) + rb":"
+        rb"GETTY:CALLBACK:CONNECT:"
+        + re.escape(nonce)
+        + rb":[^\r\n]*(?:\r\n|\r|\n)"
     )
     progress.set("verifying callback nonce")
     try:
@@ -704,7 +786,7 @@ def _callback_body(
         config,
         retrain,
         progress,
-        prerequisite_verified=marker_verified,
+        initial_verified=marker_verified,
     )
     return answer
 
@@ -775,8 +857,12 @@ def run_physical_attempt(
         extra=scheduled.extra,
         physical_try=physical_try,
         outcome=state.outcome,
+        line_attempted=state.line_attempted,
         connected=state.connected,
         initial_data=state.initial_data,
+        callback_request_maturity=state.callback_request_maturity,
+        remote_retrain_nonce=state.remote_retrain_nonce,
+        remote_retrain=state.remote_retrain,
         retrain_connected=state.retrain_connected,
         retrain_data=state.retrain_data,
         retrain_requested=retrain,
@@ -911,7 +997,10 @@ def _run_schedule(
     results: list[AttemptResult],
     started: float,
     live_display: bool,
+    *,
+    initial_cooldown: bool = False,
 ) -> None:
+    first_physical_attempt = True
     for scheduled in schedule:
         physical_try = 1
         while True:
@@ -939,6 +1028,12 @@ def _run_schedule(
                 with ticker:
                     time.sleep(seconds)
 
+            if first_physical_attempt and initial_cooldown:
+                wait_with_status(
+                    config.inter_call_seconds,
+                    "initial inter-call cooldown",
+                )
+            first_physical_attempt = False
             artifacts = store.new_attempt(scheduled, physical_try)
             ticker = _LiveTicker(refresh) if live_display else nullcontext()
             with ticker:
@@ -976,10 +1071,11 @@ def _run_schedule(
             )
             store.summary(dashboard, results, complete=False)
             if result.outcome != OUTCOME_BUSY:
-                wait_with_status(
-                    config.inter_call_seconds,
-                    "inter-call cooldown",
-                )
+                if result.line_attempted:
+                    wait_with_status(
+                        config.inter_call_seconds,
+                        "inter-call cooldown",
+                    )
                 break
             if physical_try > config.busy_retry_limit:
                 unavailable = replace(
@@ -1040,6 +1136,7 @@ def run_campaign(
                 results,
                 started,
                 live_display,
+                initial_cooldown=True,
             )
             extras = extra_schedule(
                 cases, results, attempts, failure_extra, seed
@@ -1121,7 +1218,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--failure-extra", type=int, default=1)
     parser.add_argument("--seed", type=int)
-    parser.add_argument("--ordered", action="store_true")
+    parser.add_argument(
+        "--ordered",
+        action="store_true",
+        help="preserve profile order instead of balancing completion",
+    )
     parser.add_argument("--no-retrain", action="store_true")
     parser.add_argument("--revision")
     parser.add_argument("--list", action="store_true", help="list selected cases only")

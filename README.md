@@ -136,15 +136,22 @@ python3 tools/live_campaign.py
 
 The runner resolves `HEAD` (or `--revision`) to an exact commit, exports that
 tree and its pinned submodules into a private temporary directory, builds it
-there, and caches only the resulting executable, build log, checksum, and
-revision manifest. Active development therefore cannot replace a binary while
-a campaign is using it. `--prepare` performs only this frozen build.
+there with a bounded parallel build, and caches only the resulting executable,
+build log, checksum, and revision manifest. Active development therefore cannot
+replace a binary while a campaign is using it. Preparation has its own 0.5 Hz
+elapsed-time display because the first build includes the pinned SIP stack;
+`--prepare` performs only this frozen build.
 
-The default standard campaign has 53 curated call configurations rather than
-a Cartesian matrix; three breadth-first, seed-shuffled attempts produce 159
-base calls. A case with any non-green result gets one additional attempt. The
-12-case smoke and 76-case extended suites are available with `--suite smoke`
-and `--all`. Selection options intersect: for example,
+The default standard campaign has 100 curated call configurations rather than
+a Cartesian matrix: 53 raw datapump baselines plus 47 LAPM variants. LAPM is
+omitted only for the 300-bit/s modes, V.23 1200/75, and Baudot. Three
+seeded attempts produce 300 base calls. Each next call is chosen randomly from
+the modulation/role cells with the lowest completed-call percentage, then from
+the least-run cases in that cell. A case with a non-green modem result gets one
+additional attempt; deterministic setup and local infrastructure errors do not.
+The 22-case smoke and 146-case extended suites are
+available with `--suite smoke` and `--all`. Selection options intersect: for
+example,
 
 ```
 python3 tools/live_campaign.py --modulation v34 --attempts 3
@@ -158,8 +165,19 @@ ordinary and digital-head-end operation, conventional and PCM upstream, and
 both outbound and callback-answer roles. Callback cases start the frozen
 answerer first, place a bounded V.22bis request call, verify its random callback
 nonce, wait for RING, issue ATA, and require the same nonce on the returned
-data connection. Direct and callback calls both require a structured PING/PONG
-exchange, then issue ATO1 and require another exchange after retraining.
+data connection. Direct calls wait for the peer's fixed compatibility payload;
+callback calls use the nonce-matched return marker as their initial data proof.
+Both then send
+`RETRAIN` and require matching START/END nonce markers, issue local `ATO1` and
+require a fresh CONNECT, and finally send PING and require a structured PONG
+response. The START nonce is reported as soon as it arrives; the matching END
+must arrive within the same total 60-second retrain deadline. Every completed
+callback-request dial is also reported as an
+auxiliary V.22bis originator connect/no-connect observation, independently of
+the requested modulation on the returning call. Once that request leg is
+online, the runner verifies the peer's initial data before sending the callback
+request; both that greeting and the callback START marker have seven-second
+default deadlines.
 
 The TTY summary clears and repaints every two seconds, names the active call
 stage and seconds spent there, and places originator and callback results next
@@ -169,7 +187,10 @@ infrastructure failures remain separate. BUSY calls are recorded but do not
 consume a logical attempt: the runner waits the configured busy cooldown and
 retries up to its bound. `NO CARRIER` is always reported as a failed modem
 attempt; the runner does not infer a SIP status that the modem interface did
-not provide. Every other call receives the ordinary inter-call cooldown.
+not provide. A seven-second inter-call cooldown applies before the first
+attempt and after every non-BUSY attempt. BUSY retries remain separately
+configurable and default to 90 seconds. A failure before any SIP call is placed
+does not consume a line cooldown.
 The seed, complete schedule, detailed results, daemon logs, terminal traffic,
 and bounded media recordings remain in an owner-only ignored campaign
 directory. No endpoint, credential, bind address, or recording path is printed
