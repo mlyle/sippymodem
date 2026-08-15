@@ -285,25 +285,76 @@ static bool phase3_entry_matches_call(const struct pcm_call *call)
 	       call->phase3_entry.selection.startup.protocol == call->protocol;
 }
 
-static bool v92_phase4_entry_boundary_is_valid(
-	const struct pcm_call *call)
+static bool v92_analog_mixed_is_valid(
+	const struct pcm_call *call, bool trailing_complete)
 {
-	if (call->local_role == V90_ANALOG_MODEM) {
-		const struct v92_phase3_analog_station *station =
-			&call->state.phase3.v92_analog;
+	const struct pcm_call_v92_analog_mixed_state *mixed =
+		&call->state.mixed.v92_analog;
+	struct v92_cpt_parameters parameters;
+	struct v90_pcm_mapping mapping;
 
-		return v92_phase3_analog_station_is_valid(station) &&
-		       (v92_phase3_analog_station_transmit_complete(station) ||
-			v92_phase3_analog_station_receive_complete(station));
-	}
-	{
-		const struct v92_phase3_digital_station *station =
-			&call->state.phase3.v92_digital;
+	if (!v92_phase3_analog_station_is_valid(&mixed->phase3) ||
+	    mixed->phase3.law != call->law ||
+	    !pcm_downstream_rx_is_valid(&mixed->receive) ||
+	    mixed->receive.protocol != PCM_PROTOCOL_V92 ||
+	    mixed->receive.stage != PCM_DOWNSTREAM_RX_TRN2D ||
+	    mixed->receive.stream.decoder.decision_plane !=
+		    V90_PCM_MAPPING_TRANSMIT)
+		return false;
+	if (call->failed)
+		return true;
+	if (v92_phase3_analog_station_downstream_handoff(
+		    &mixed->phase3, &parameters) !=
+		    V92_PHASE3_ANALOG_STATION_OK ||
+	    v90_pcm_mapping_init_from_v92_cpt(&mapping, &parameters) !=
+		    V90_PCM_MAPPING_OK)
+		return false;
+	return v92_phase3_analog_station_receive_complete(&mixed->phase3) &&
+	       v92_phase3_analog_station_transmit_complete(&mixed->phase3) ==
+		       trailing_complete &&
+	       v90_pcm_mapping_equal(
+		       &mixed->receive.stream.decoder.mapping, &mapping) &&
+	       !pcm_downstream_rx_has_failed(&mixed->receive);
+}
 
-		return v92_phase3_digital_station_is_valid(station) &&
-		       (v92_phase3_digital_station_transmit_complete(station) ||
-			v92_phase3_digital_station_receive_complete(station));
-	}
+static bool v92_digital_mixed_is_valid(
+	const struct pcm_call *call, bool trailing_complete)
+{
+	const struct pcm_call_v92_digital_mixed_state *mixed =
+		&call->state.mixed.v92_digital;
+	struct v92_cpt_parameters parameters;
+	struct v90_pcm_mapping mapping;
+
+	if (!v92_phase3_digital_station_is_valid(&mixed->phase3) ||
+	    mixed->phase3.law != call->law ||
+	    !pcm_downstream_tx_is_valid(&mixed->transmit) ||
+	    mixed->transmit.protocol != PCM_PROTOCOL_V92 ||
+	    mixed->transmit.stage != PCM_DOWNSTREAM_TX_TRN2D ||
+	    !mixed->transmit.control_configured ||
+	    mixed->transmit.control.suvd.request_silence ||
+	    mixed->transmit.control.suvd.acknowledges_cpu ||
+	    mixed->transmit.finish_requested || mixed->transmit.complete)
+		return false;
+	if (call->failed)
+		return true;
+	if (v92_phase3_digital_station_downstream_handoff(
+		    &mixed->phase3, &parameters) !=
+		    V92_PHASE3_DIGITAL_STATION_OK ||
+	    v90_pcm_mapping_init_from_v92_cpt(&mapping, &parameters) !=
+		    V90_PCM_MAPPING_OK)
+		return false;
+	return v92_phase3_digital_station_transmit_complete(&mixed->phase3) &&
+	       v92_phase3_digital_station_receive_complete(&mixed->phase3) ==
+		       trailing_complete &&
+	       v90_pcm_mapping_equal(&mixed->transmit.encoder.mapping, &mapping);
+}
+
+static bool v92_mixed_is_valid(
+	const struct pcm_call *call, bool phase3_complete)
+{
+	return call->local_role == V90_ANALOG_MODEM ?
+		       v92_analog_mixed_is_valid(call, phase3_complete) :
+		       v92_digital_mixed_is_valid(call, phase3_complete);
 }
 
 bool pcm_call_is_valid(const struct pcm_call *call)
@@ -348,27 +399,34 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 		}
 		break;
 	case PCM_CALL_PHASE3_MIXED:
-		if (call->protocol != PCM_PROTOCOL_V90)
-			return false;
-		child_valid = call->local_role == V90_ANALOG_MODEM ?
-			      analog_mixed_is_valid(call) :
-			      digital_mixed_is_valid(call);
-		child_failed = call->local_role == V90_ANALOG_MODEM ?
-			       v90_phase3_analog_station_has_failed(
-				       &call->state.mixed.analog.phase3) :
-			       v90_phase3_digital_station_has_failed(
-				       &call->state.mixed.digital.phase3);
+		if (call->protocol == PCM_PROTOCOL_V92) {
+			child_valid = v92_mixed_is_valid(call, false);
+			child_failed = call->local_role == V90_ANALOG_MODEM ?
+				v92_phase3_analog_station_has_failed(
+					&call->state.mixed.v92_analog.phase3) :
+				v92_phase3_digital_station_has_failed(
+					&call->state.mixed.v92_digital.phase3);
+		} else {
+			child_valid = call->local_role == V90_ANALOG_MODEM ?
+				      analog_mixed_is_valid(call) :
+				      digital_mixed_is_valid(call);
+			child_failed = call->local_role == V90_ANALOG_MODEM ?
+				       v90_phase3_analog_station_has_failed(
+					       &call->state.mixed.analog.phase3) :
+				       v90_phase3_digital_station_has_failed(
+					       &call->state.mixed.digital.phase3);
+		}
 		break;
 	case PCM_CALL_PHASE4_ENTRY:
 		if (call->protocol != PCM_PROTOCOL_V92 ||
 		    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM)
 			return false;
-		child_valid = v92_phase4_entry_boundary_is_valid(call);
+		child_valid = v92_mixed_is_valid(call, true);
 		child_failed = call->local_role == V90_ANALOG_MODEM ?
 			       v92_phase3_analog_station_has_failed(
-				       &call->state.phase3.v92_analog) :
+				       &call->state.mixed.v92_analog.phase3) :
 			       v92_phase3_digital_station_has_failed(
-				       &call->state.phase3.v92_digital);
+				       &call->state.mixed.v92_digital.phase3);
 		break;
 	case PCM_CALL_PHASE4:
 		if (call->protocol != PCM_PROTOCOL_V90)
@@ -741,6 +799,7 @@ static enum pcm_call_result v92_analog_phase3_result(
 {
 	switch (result) {
 	case V92_PHASE3_ANALOG_STATION_OK:
+	case V92_PHASE3_ANALOG_STATION_COMPLETE:
 		return PCM_CALL_OK;
 	case V92_PHASE3_ANALOG_STATION_FAILED:
 		return PCM_CALL_FAILED;
@@ -748,7 +807,6 @@ static enum pcm_call_result v92_analog_phase3_result(
 		return PCM_CALL_UNUSABLE_SELECTION;
 	case V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH:
 		return PCM_CALL_SEQUENCE_MISMATCH;
-	case V92_PHASE3_ANALOG_STATION_COMPLETE:
 	case V92_PHASE3_ANALOG_STATION_INVALID_STATE:
 		return PCM_CALL_INVALID_STATE;
 	case V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT:
@@ -763,6 +821,7 @@ static enum pcm_call_result v92_digital_phase3_result(
 {
 	switch (result) {
 	case V92_PHASE3_DIGITAL_STATION_OK:
+	case V92_PHASE3_DIGITAL_STATION_COMPLETE:
 		return PCM_CALL_OK;
 	case V92_PHASE3_DIGITAL_STATION_FAILED:
 		return PCM_CALL_FAILED;
@@ -770,7 +829,6 @@ static enum pcm_call_result v92_digital_phase3_result(
 		return PCM_CALL_SEQUENCE_MISMATCH;
 	case V92_PHASE3_DIGITAL_STATION_UNSUPPORTED:
 		return PCM_CALL_UNUSABLE_SELECTION;
-	case V92_PHASE3_DIGITAL_STATION_COMPLETE:
 	case V92_PHASE3_DIGITAL_STATION_INVALID_STATE:
 		return PCM_CALL_INVALID_STATE;
 	case V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT:
@@ -817,6 +875,68 @@ static enum pcm_call_result enter_mixed_phase3(struct pcm_call *call)
 		next.state.mixed.digital = mixed;
 	}
 	next.stage = PCM_CALL_PHASE3_MIXED;
+	if (!pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
+}
+
+static bool v92_trailing_phase3_is_complete(const struct pcm_call *call)
+{
+	return call->local_role == V90_ANALOG_MODEM ?
+		       v92_phase3_analog_station_transmit_complete(
+			       &call->state.mixed.v92_analog.phase3) :
+		       v92_phase3_digital_station_receive_complete(
+			       &call->state.mixed.v92_digital.phase3);
+}
+
+static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
+{
+	struct pcm_call next = *call;
+	struct v92_cpt_parameters parameters;
+	struct v90_pcm_mapping mapping;
+
+	next.state.mixed = (union pcm_call_mixed_state){ 0 };
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct pcm_call_v92_analog_mixed_state mixed = {
+			.phase3 = call->state.phase3.v92_analog,
+		};
+
+		if (v92_phase3_analog_station_downstream_handoff(
+			    &mixed.phase3, &parameters) !=
+			    V92_PHASE3_ANALOG_STATION_OK)
+			return PCM_CALL_INVALID_STATE;
+		if (v90_pcm_mapping_init_from_v92_cpt(
+			    &mapping, &parameters) != V90_PCM_MAPPING_OK)
+			return PCM_CALL_UNUSABLE_SELECTION;
+		if (pcm_downstream_rx_init(
+			    &mixed.receive, PCM_PROTOCOL_V92, &mapping,
+			    V90_PCM_MAPPING_TRANSMIT) != PCM_DOWNSTREAM_RX_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		next.state.mixed.v92_analog = mixed;
+	} else {
+		const struct v92_suvd_parameters suvd = { 0 };
+		struct pcm_call_v92_digital_mixed_state mixed = {
+			.phase3 = call->state.phase3.v92_digital,
+		};
+
+		if (v92_phase3_digital_station_downstream_handoff(
+			    &mixed.phase3, &parameters) !=
+			    V92_PHASE3_DIGITAL_STATION_OK)
+			return PCM_CALL_INVALID_STATE;
+		if (v90_pcm_mapping_init_from_v92_cpt(
+			    &mapping, &parameters) != V90_PCM_MAPPING_OK)
+			return PCM_CALL_UNUSABLE_SELECTION;
+		if (pcm_downstream_tx_init(
+			    &mixed.transmit, PCM_PROTOCOL_V92, &mapping) !=
+			    PCM_DOWNSTREAM_TX_OK ||
+		    pcm_downstream_tx_start_suvd(
+			    &mixed.transmit, &suvd) != PCM_DOWNSTREAM_TX_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		next.state.mixed.v92_digital = mixed;
+	}
+	next.stage = v92_trailing_phase3_is_complete(&next) ?
+			     PCM_CALL_PHASE4_ENTRY : PCM_CALL_PHASE3_MIXED;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = next;
@@ -927,9 +1047,24 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 	enum pcm_call_result result;
 
 	if (call->protocol == PCM_PROTOCOL_V92) {
-		struct pcm_call next;
+		struct pcm_call next = *call;
 
-		if (!v92_phase4_entry_boundary_is_valid(call))
+		if (call->stage == PCM_CALL_PHASE3) {
+			bool leading_direction_complete =
+				call->local_role == V90_ANALOG_MODEM ?
+					v92_phase3_analog_station_receive_complete(
+						&call->state.phase3.v92_analog) :
+					v92_phase3_digital_station_transmit_complete(
+						&call->state.phase3.v92_digital);
+
+			if (!leading_direction_complete)
+				return PCM_CALL_OK;
+			result = enter_v92_mixed_phase3(call);
+			if (result != PCM_CALL_OK ||
+			    call->stage == PCM_CALL_PHASE4_ENTRY)
+				return result;
+		}
+		if (!v92_trailing_phase3_is_complete(call))
 			return PCM_CALL_OK;
 		next = *call;
 		next.stage = PCM_CALL_PHASE4_ENTRY;
@@ -1020,6 +1155,98 @@ static enum pcm_call_result sample_phase3(
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
 
+static enum pcm_call_result v92_downstream_receive_result(
+	enum pcm_downstream_rx_result result)
+{
+	switch (result) {
+	case PCM_DOWNSTREAM_RX_OK:
+	case PCM_DOWNSTREAM_RX_BUFFERING:
+	case PCM_DOWNSTREAM_RX_TRN2D_FRAME:
+		return PCM_CALL_OK;
+	case PCM_DOWNSTREAM_RX_MP:
+	case PCM_DOWNSTREAM_RX_MP_PRIME:
+	case PCM_DOWNSTREAM_RX_MP_REJECTED:
+	case PCM_DOWNSTREAM_RX_SUVD:
+	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
+	case PCM_DOWNSTREAM_RX_CPD:
+	case PCM_DOWNSTREAM_RX_CPD_REJECTED:
+	case PCM_DOWNSTREAM_RX_ED:
+	case PCM_DOWNSTREAM_RX_ED_REJECTED:
+	case PCM_DOWNSTREAM_RX_INVALID_SYMBOL:
+		return PCM_CALL_SEQUENCE_MISMATCH;
+	case PCM_DOWNSTREAM_RX_INVALID_PARAMETERS:
+		return PCM_CALL_UNUSABLE_SELECTION;
+	case PCM_DOWNSTREAM_RX_INVALID_STATE:
+		return PCM_CALL_INVALID_STATE;
+	case PCM_DOWNSTREAM_RX_OUT_OF_RANGE:
+		return PCM_CALL_OUT_OF_RANGE;
+	case PCM_DOWNSTREAM_RX_INVALID_ARGUMENT:
+	case PCM_DOWNSTREAM_RX_INTERNAL_ERROR:
+		break;
+	}
+	return PCM_CALL_NUMERIC_FAILURE;
+}
+
+static enum pcm_call_result v92_downstream_transmit_result(
+	enum pcm_downstream_tx_result result)
+{
+	switch (result) {
+	case PCM_DOWNSTREAM_TX_OK:
+		return PCM_CALL_OK;
+	case PCM_DOWNSTREAM_TX_COMPLETE:
+	case PCM_DOWNSTREAM_TX_INVALID_STATE:
+		return PCM_CALL_INVALID_STATE;
+	case PCM_DOWNSTREAM_TX_INVALID_PARAMETERS:
+		return PCM_CALL_UNUSABLE_SELECTION;
+	case PCM_DOWNSTREAM_TX_OUT_OF_RANGE:
+		return PCM_CALL_OUT_OF_RANGE;
+	case PCM_DOWNSTREAM_TX_INVALID_ARGUMENT:
+	case PCM_DOWNSTREAM_TX_NUMERIC_FAILURE:
+	case PCM_DOWNSTREAM_TX_INTERNAL_ERROR:
+		break;
+	}
+	return PCM_CALL_NUMERIC_FAILURE;
+}
+
+static enum pcm_call_result sample_v92_mixed_phase3(
+	struct pcm_call *call, uint8_t received_octet,
+	uint8_t *transmit_octet)
+{
+	enum pcm_call_result result;
+
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct pcm_call_v92_analog_mixed_state *mixed =
+			&call->state.mixed.v92_analog;
+		struct pcm_downstream_event event;
+		int16_t sample;
+
+		result = v92_analog_phase3_result(
+			v92_phase3_analog_station_transmit(
+				&mixed->phase3, NULL, &sample));
+		if (result != PCM_CALL_OK)
+			return result;
+		*transmit_octet = encode_sample(call->law, sample);
+		result = v92_downstream_receive_result(
+			pcm_downstream_rx_receive(
+				&mixed->receive, received_octet, &event));
+	} else {
+		struct pcm_call_v92_digital_mixed_state *mixed =
+			&call->state.mixed.v92_digital;
+		struct pcm_downstream_symbol symbol;
+
+		result = v92_downstream_transmit_result(
+			pcm_downstream_tx_next(&mixed->transmit, &symbol));
+		if (result != PCM_CALL_OK)
+			return result;
+		*transmit_octet = symbol.pcm.octet;
+		result = v92_digital_phase3_result(
+			v92_phase3_digital_station_receive(
+				&mixed->phase3,
+				decode_octet(call->law, received_octet)));
+	}
+	return result == PCM_CALL_OK ? advance_phase3(call) : result;
+}
+
 static enum pcm_call_result receive_mixed_ri(
 	struct v90_phase4_ri_rx *receive, uint8_t network_octet)
 {
@@ -1043,6 +1270,10 @@ static enum pcm_call_result sample_mixed_phase3(
 	uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
+
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return sample_v92_mixed_phase3(
+			call, received_octet, transmit_octet);
 
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct pcm_call_analog_mixed_state *mixed =

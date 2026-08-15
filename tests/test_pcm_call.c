@@ -254,8 +254,10 @@ static struct v92_cpt_parameters v92_cpt_parameters(enum g711_law law)
 		.acknowledges_peer = true,
 	};
 
-	add_ucode(&parameters.transmit_constellations[0], 24u);
-	add_ucode(&parameters.transmit_constellations[0], 80u);
+	for (uint8_t index = 0; index < 8u; ++index)
+		add_ucode(
+			&parameters.transmit_constellations[0],
+			(uint8_t)(24u + 12u * index));
 	return parameters;
 }
 
@@ -826,6 +828,8 @@ static bool run_v92_to_phase4_entry(
 	struct pcm_call digital;
 	bool analog_entered_phase3 = false;
 	bool digital_entered_phase3 = false;
+	bool analog_entered_mixed = false;
+	bool digital_entered_mixed = false;
 	bool reached = false;
 
 	CHECK(channel_init(&channel, law, delay) &&
@@ -866,6 +870,10 @@ static bool run_v92_to_phase4_entry(
 			analog_observation.next == PCM_CALL_PHASE3;
 		digital_entered_phase3 |=
 			digital_observation.next == PCM_CALL_PHASE3;
+		analog_entered_mixed |=
+			analog_observation.next == PCM_CALL_PHASE3_MIXED;
+		digital_entered_mixed |=
+			digital_observation.next == PCM_CALL_PHASE3_MIXED;
 		if (pcm_call_phase4_entry_is_ready(&analog) ||
 		    pcm_call_phase4_entry_is_ready(&digital)) {
 			reached = true;
@@ -873,6 +881,7 @@ static bool run_v92_to_phase4_entry(
 		}
 	}
 	CHECK(reached && analog_entered_phase3 && digital_entered_phase3 &&
+	      analog_entered_mixed && digital_entered_mixed &&
 	      pcm_call_is_valid(&analog) && pcm_call_is_valid(&digital) &&
 	      !pcm_call_has_failed(&analog) && !pcm_call_has_failed(&digital) &&
 	      analog.phase3_entry_stored && digital.phase3_entry_stored &&
@@ -893,7 +902,30 @@ static bool run_v92_to_phase4_entry(
 		      &analog_configuration.local_info1.v92_analog) &&
 	      v92_pcm_info1a_equal(
 		      &digital.phase3_entry.selection.analog.pcm,
-		      &analog_configuration.local_info1.v92_analog),
+		      &analog_configuration.local_info1.v92_analog) &&
+	      (analog.stage == PCM_CALL_PHASE3_MIXED ||
+	       analog.stage == PCM_CALL_PHASE4_ENTRY) &&
+	      (digital.stage == PCM_CALL_PHASE3_MIXED ||
+	       digital.stage == PCM_CALL_PHASE4_ENTRY) &&
+	      pcm_downstream_rx_is_valid(
+		      &analog.state.mixed.v92_analog.receive) &&
+	      analog.state.mixed.v92_analog.receive.protocol ==
+		      PCM_PROTOCOL_V92 &&
+	      analog.state.mixed.v92_analog.receive.stage ==
+		      PCM_DOWNSTREAM_RX_TRN2D &&
+	      analog.state.mixed.v92_analog.receive.stream.received_symbols > 0 &&
+	      analog.state.mixed.v92_analog.receive.trn2d_bit_errors == 0 &&
+	      pcm_downstream_tx_is_valid(
+		      &digital.state.mixed.v92_digital.transmit) &&
+	      digital.state.mixed.v92_digital.transmit.protocol ==
+		      PCM_PROTOCOL_V92 &&
+	      digital.state.mixed.v92_digital.transmit.stage ==
+		      PCM_DOWNSTREAM_TX_TRN2D &&
+	      digital.state.mixed.v92_digital.transmit.control_configured &&
+	      digital.state.mixed.v92_digital.transmit.transmitted_symbols > 0 &&
+	      v90_pcm_mapping_equal(
+		      &analog.state.mixed.v92_analog.receive.stream.decoder.mapping,
+		      &digital.state.mixed.v92_digital.transmit.encoder.mapping),
 	      "law %u delay %zu V.92 call lost its Phase 3 selection",
 	      (unsigned int)law, delay);
 	if (pcm_call_phase4_entry_is_ready(&analog))

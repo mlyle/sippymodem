@@ -4,6 +4,8 @@
 #define PCM_CALL_H
 
 #include "pcm_phase3_entry.h"
+#include "pcm_downstream_rx.h"
+#include "pcm_downstream_tx.h"
 #include "v90_analog_path.h"
 #include "v90_digital_path.h"
 #include "pcm_phase2.h"
@@ -126,9 +128,23 @@ struct pcm_call_digital_mixed_state {
 	struct v90_phase4_ri_tx transmit;
 };
 
+/* V.92 starts the shared downstream Phase 4 epoch as soon as Ri-bar ends,
+ * while the independent CPt/E1u direction finishes in its Phase 3 child. */
+struct pcm_call_v92_analog_mixed_state {
+	struct v92_phase3_analog_station phase3;
+	struct pcm_downstream_rx receive;
+};
+
+struct pcm_call_v92_digital_mixed_state {
+	struct v92_phase3_digital_station phase3;
+	struct pcm_downstream_tx transmit;
+};
+
 union pcm_call_mixed_state {
 	struct pcm_call_analog_mixed_state analog;
 	struct pcm_call_digital_mixed_state digital;
+	struct pcm_call_v92_analog_mixed_state v92_analog;
+	struct pcm_call_v92_digital_mixed_state v92_digital;
 };
 
 union pcm_call_phase4_state {
@@ -184,9 +200,9 @@ struct pcm_call_data_event {
 };
 
 /* Own one post-V.8 PCM startup. V.90 continues through its role-specific data
- * path. V.92 currently stops transactionally when either direction reaches
- * the Phase 4 entry boundary, retaining the exact Phase 3 child for the next
- * shared branch. Calls on one instance must be serialized. */
+ * path. V.92 starts the shared downstream Phase 4 epoch during the split
+ * CPt/E1u handoff, then stops transactionally when both Phase 3 directions
+ * are complete. Calls on one instance must be serialized. */
 struct pcm_call {
 	union pcm_call_state state;
 	struct pcm_phase3_entry phase3_entry;
@@ -217,11 +233,12 @@ bool pcm_call_is_online(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
 /* Consume and produce one simultaneous 8 ksymbol/s G.711 character. A phase
- * change takes effect on the following call. PHASE4_ENTRY_READY stops V.92 at
- * its first split-direction handoff; PHASE4_READY stops V.90 after its initial
- * Phase 4 exchange. Both results consume no character, change no output, and
- * leave continuous state available to the next owner. Terminal protocol
- * failures consume the character and expose generated output and observation. */
+ * change takes effect on the following call. PHASE4_ENTRY_READY stops V.92
+ * after its overlapping TRN2d/E1u handoff; PHASE4_READY stops V.90 after its
+ * initial Phase 4 exchange. Both results consume no character, change no
+ * output, and leave continuous state available to the next owner. Terminal
+ * protocol failures consume the character and expose generated output and
+ * observation. */
 enum pcm_call_result pcm_call_octet(
 	struct pcm_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet,
