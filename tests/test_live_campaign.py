@@ -38,6 +38,7 @@ from tools.live_campaign_profiles import CASES_BY_NAME  # noqa: E402
 from tools.live_campaign_report import (  # noqa: E402
     AttemptResult,
     MATURITY_FULL,
+    MATURITY_NO_CONNECT,
     MATURITY_REQUEST,
     OUTCOME_BUSY,
     OUTCOME_SETUP_ERROR,
@@ -564,7 +565,13 @@ class LiveCampaignTests(unittest.TestCase):
                 "b" * 64,
                 False,
             )
-            with mock.patch("tools.live_terminal.time.sleep"):
+            progress = _AttemptProgress(case.name)
+            with (
+                mock.patch("tools.live_terminal.time.sleep"),
+                mock.patch.object(
+                    progress, "set", wraps=progress.set
+                ) as set_stage,
+            ):
                 result = run_physical_attempt(
                     self.config(root, script, "callback", barrier),
                     frozen,
@@ -572,12 +579,15 @@ class LiveCampaignTests(unittest.TestCase):
                     1,
                     artifacts,
                     True,
+                    progress,
                 )
             self.assertEqual(result.maturity, MATURITY_FULL)
+            self.assertTrue(result.callback_request_attempted)
             self.assertEqual(
                 result.callback_request_maturity,
                 MATURITY_REQUEST,
             )
+            self.assertTrue(result.callback_return_attempted)
             self.assertEqual(
                 result.remote_retrain_nonce,
                 "0123456789abcdef0123456789abcdef",
@@ -595,6 +605,82 @@ class LiveCampaignTests(unittest.TestCase):
                 b"GETTY:CALLBACK:CONNECT:",
                 (artifacts.legs["answer"] / "terminal-rx.bin").read_bytes(),
             )
+            stages = [call.args[0] for call in set_stage.call_args_list]
+            ring = stages.index("waiting for callback RING")
+            answering = stages.index("answering callback")
+            training = stages.index("waiting for callback CONNECT")
+            self.assertLess(ring, answering)
+            self.assertLess(answering, training)
+
+    def test_callback_request_failure_does_not_score_requested_modulation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            case = CASES_BY_NAME["v21-300-raw-callback"]
+            scheduled = ScheduledAttempt(case, 1)
+            frozen = FrozenBinary(
+                root,
+                Path(sys.executable),
+                "a" * 40,
+                "b" * 64,
+                False,
+            )
+            result = run_physical_attempt(
+                self.config(root, script, "early-no-carrier"),
+                frozen,
+                scheduled,
+                1,
+                self.artifacts(root, scheduled),
+                True,
+            )
+            self.assertEqual(
+                result.callback_request_maturity,
+                MATURITY_NO_CONNECT,
+            )
+            self.assertTrue(result.callback_request_attempted)
+            self.assertFalse(result.callback_return_attempted)
+            self.assertTrue(result.callback_request_only)
+            self.assertIsNone(result.maturity)
+            self.assertFalse(result.counts_as_attempt)
+
+    def test_callback_answer_write_failure_remains_request_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            barrier = root / "callback-ready"
+            case = CASES_BY_NAME["v21-300-raw-callback"]
+            scheduled = ScheduledAttempt(case, 1)
+            frozen = FrozenBinary(
+                root,
+                Path(sys.executable),
+                "a" * 40,
+                "b" * 64,
+                False,
+            )
+            with mock.patch(
+                "tools.interop_endpoint.InteropTerminal.start_answer",
+                side_effect=TimeoutError,
+            ):
+                result = run_physical_attempt(
+                    self.config(root, script, "callback", barrier),
+                    frozen,
+                    scheduled,
+                    1,
+                    self.artifacts(root, scheduled),
+                    True,
+                )
+            self.assertEqual(
+                result.callback_request_maturity,
+                MATURITY_REQUEST,
+            )
+            self.assertFalse(result.callback_return_attempted)
+            self.assertTrue(result.callback_request_only)
+            self.assertIsNone(result.maturity)
+            self.assertFalse(result.counts_as_attempt)
 
 
 if __name__ == "__main__":

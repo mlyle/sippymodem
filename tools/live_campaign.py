@@ -407,7 +407,9 @@ class _AttemptState:
     line_attempted: bool = False
     connected: bool = False
     initial_data: bool = False
+    callback_request_attempted: bool = False
     callback_request_maturity: str | None = None
+    callback_return_attempted: bool = False
     remote_retrain_nonce: str | None = None
     remote_retrain: bool = False
     retrain_connected: bool = False
@@ -678,6 +680,7 @@ def _callback_body(
         config.setup_timeout_seconds,
         state.setup_trace,
     )
+    state.callback_request_attempted = True
     progress.set("starting callback request")
     request.start(config.startup_timeout_seconds)
     progress.set("configuring callback request")
@@ -754,16 +757,33 @@ def _callback_body(
     stopped.add(id(request))
     time.sleep(config.callback_release_seconds)
     assert answer.terminal is not None
+    callback_deadline = (
+        time.monotonic() + config.callback_return_timeout_seconds
+    )
     progress.set("waiting for callback RING")
     try:
-        response = answer.terminal.answer_until(
-            time.monotonic() + config.callback_return_timeout_seconds
-        )
+        response = answer.terminal.wait_ring_until(callback_deadline)
     except TimeoutError:
-        state.detail = "returning callback timed out"
+        state.detail = "returning callback RING timed out"
+        return None
+    if response != "ring":
+        state.detail = f"returning callback ended before RING with {response}"
+        return None
+    progress.set("answering callback")
+    try:
+        answer.terminal.start_answer(callback_deadline)
+    except TimeoutError:
+        state.detail = "callback answer command timed out"
+        return None
+    state.callback_return_attempted = True
+    progress.set("waiting for callback CONNECT")
+    try:
+        response = answer.terminal.wait_connect_until(callback_deadline)
+    except TimeoutError:
+        state.detail = "returning callback CONNECT timed out"
         return None
     if response != "connect":
-        state.detail = f"returning callback ended with {response}"
+        state.detail = f"returning callback training ended with {response}"
         return None
     state.connected = True
     state.report = answer.terminal.connect_report
@@ -863,7 +883,9 @@ def run_physical_attempt(
         line_attempted=state.line_attempted,
         connected=state.connected,
         initial_data=state.initial_data,
+        callback_request_attempted=state.callback_request_attempted,
         callback_request_maturity=state.callback_request_maturity,
+        callback_return_attempted=state.callback_return_attempted,
         remote_retrain_nonce=state.remote_retrain_nonce,
         remote_retrain=state.remote_retrain,
         retrain_connected=state.retrain_connected,
@@ -1065,7 +1087,13 @@ def _run_schedule(
             results.append(result)
             store.append(result)
             if not live_display:
-                status = result.maturity or result.outcome
+                if result.callback_request_only:
+                    request_status = (
+                        result.callback_request_maturity or result.outcome
+                    )
+                    status = f"request-{request_status}"
+                else:
+                    status = result.maturity or result.outcome
                 print(
                     f"{scheduled.case.name} attempt={scheduled.ordinal} "
                     f"physical={physical_try} status={status} "

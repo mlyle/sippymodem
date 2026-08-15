@@ -175,10 +175,18 @@ must arrive within the same total 60-second retrain deadline. The dashboard
 keeps raw and LAPM results on separate rows. Each callback-request leg is
 attributed to the V.22bis/LAPM originator row as an auxiliary attempt: `Q`
 means the greeting, request, and START acknowledgement all completed, while an
-incomplete leg remains visible as connect or no-connect. Once that request leg
-is online, the runner verifies the peer's initial data before sending the
-callback request; both that greeting and the callback START marker have
-seven-second default deadlines.
+incomplete leg remains visible as connect, no-connect, or error. A request-only
+failure does not consume or lower the requested callback modulation's maturity;
+that case is counted only after the returning call reaches RING and the runner
+issues ATA. Once the request leg is online, the runner verifies the peer's
+initial data before sending the callback request; both that greeting and the
+callback START marker have seven-second default deadlines.
+
+An unattended peer service must treat a failed retrain or callback dial as a
+call-local result, clean up, and rearm for the next call. If that service exits
+on one failed call, later request legs can reach SIP while receiving no modem
+answer; those request-only failures remain auxiliary evidence rather than
+failures of each requested callback modulation.
 
 The TTY summary clears and repaints every two seconds, names the active call
 stage and seconds spent there, and places originator and callback results next

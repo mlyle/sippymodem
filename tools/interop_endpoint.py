@@ -212,11 +212,15 @@ class InteropTerminal(ModemTerminal):
         result = self.command("ATD", remaining(deadline))
         return self.wait_connect_until(deadline) if result == "ok" else result
 
+    def start_answer(self, deadline: float) -> None:
+        self._write(b"ATA\r", deadline)
+
     def answer_until(self, deadline: float) -> str:
-        if self.wait_ring_until(deadline) != "ring":
-            return "error"
-        result = self.command("ATA", remaining(deadline))
-        return self.wait_connect_until(deadline) if result == "ok" else result
+        ring = self.wait_ring_until(deadline)
+        if ring != "ring":
+            return ring
+        self.start_answer(deadline)
+        return self.wait_connect_until(deadline)
 
 
 def published_device(line: bytes) -> str | None:

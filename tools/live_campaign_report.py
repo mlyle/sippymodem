@@ -87,7 +87,9 @@ class AttemptResult:
     line_attempted: bool = False
     connected: bool = False
     initial_data: bool = False
+    callback_request_attempted: bool = False
     callback_request_maturity: str | None = None
+    callback_return_attempted: bool = False
     remote_retrain_nonce: str | None = None
     remote_retrain: bool = False
     retrain_connected: bool = False
@@ -102,7 +104,7 @@ class AttemptResult:
 
     @property
     def maturity(self) -> str | None:
-        if self.outcome != OUTCOME_COMPLETE:
+        if self.outcome != OUTCOME_COMPLETE or self.callback_request_only:
             return None
         if (
             self.initial_data
@@ -127,7 +129,15 @@ class AttemptResult:
 
     @property
     def counts_as_attempt(self) -> bool:
-        return self.outcome != OUTCOME_BUSY
+        return self.outcome != OUTCOME_BUSY and not self.callback_request_only
+
+    @property
+    def callback_request_only(self) -> bool:
+        return (
+            self.role == "callback"
+            and self.callback_request_attempted
+            and not self.callback_return_attempted
+        )
 
     def successful(self) -> bool:
         expected = MATURITY_FULL if self.retrain_requested else MATURITY_DATA
@@ -230,7 +240,7 @@ def _summary_groups(
     results: Sequence[AttemptResult] = (),
 ) -> tuple[tuple[str, str], ...]:
     present = {(case.family, case.link_mode) for case in cases}
-    if any(result.callback_request_maturity is not None for result in results):
+    if any(result.callback_request_attempted for result in results):
         present.add(("v22bis", LINK_LAPM))
     ordered = [
         (family, link_mode)
@@ -329,17 +339,23 @@ def render_dashboard(
             maturity: sum(result.maturity == maturity for result in role_results)
             for maturity in MATURITY_ORDER
         }
-        request_observations = (
+        request_results = (
             [
-                result.callback_request_maturity
+                result
                 for result in results
-                if result.callback_request_maturity is not None
+                if result.callback_request_attempted
+                and result.outcome != OUTCOME_BUSY
             ]
             if family == "v22bis"
             and link_mode == LINK_LAPM
             and role == "originator"
             else []
         )
+        request_observations = [
+            result.callback_request_maturity
+            for result in request_results
+            if result.callback_request_maturity is not None
+        ]
         for maturity in request_observations:
             if maturity in counts:
                 counts[maturity] += 1
@@ -347,9 +363,15 @@ def render_dashboard(
             maturity == MATURITY_REQUEST for maturity in request_observations
         )
         errors = sum(result.outcome in ERROR_OUTCOMES for result in role_results)
+        errors += sum(
+            result.callback_request_only
+            and result.callback_request_maturity is None
+            and result.outcome in ERROR_OUTCOMES
+            for result in request_results
+        )
         done = sum(not result.extra for result in role_results)
         extras = sum(result.extra for result in role_results) + len(
-            request_observations
+            request_results
         )
         expected = base_expected[(family, link_mode, role)]
         total = totals[role]
@@ -414,10 +436,16 @@ def render_dashboard(
             else:
                 symbol_rate = None
             rates = f"{receive_rate or '-'}/{transmit_rate or '-'}@{symbol_rate or '-'}"
-            status = result.maturity or {
-                OUTCOME_INFRASTRUCTURE_ERROR: "infra-error",
-                OUTCOME_UNAVAILABLE: "unavailable",
-            }.get(result.outcome, result.outcome)
+            if result.callback_request_only:
+                request_status = (
+                    result.callback_request_maturity or result.outcome
+                )
+                status = f"request-{request_status}"
+            else:
+                status = result.maturity or {
+                    OUTCOME_INFRASTRUCTURE_ERROR: "infra-error",
+                    OUTCOME_UNAVAILABLE: "unavailable",
+                }.get(result.outcome, result.outcome)
             sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"
             rows.append(
                 f"{sequence} {role} {family:<7} {rates:<17} {mode} "

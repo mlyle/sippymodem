@@ -24,6 +24,7 @@ from tools.live_campaign_report import (  # noqa: E402
     MATURITY_RETRAIN,
     OUTCOME_BUSY,
     OUTCOME_COMPLETE,
+    OUTCOME_INFRASTRUCTURE_ERROR,
     OUTCOME_SETUP_ERROR,
     base_schedule,
     extra_schedule,
@@ -223,6 +224,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             case_name=case.name,
             family=case.family,
             role=case.role,
+            callback_request_attempted=True,
             callback_request_maturity=MATURITY_REQUEST,
         )
         dashboard = render_dashboard(
@@ -243,9 +245,96 @@ class LiveCampaignReportTests(unittest.TestCase):
             originator,
             ["0/0", "+1", "0", "0", "0", "0", "1", "0", "0"],
         )
+        callback_label = "V.34/l" if case.link_mode == "lapm" else "V.34/r"
+        callback = next(
+            line
+            for line in dashboard.splitlines()
+            if line.startswith(callback_label)
+        )[48:80].split()
+        self.assertEqual(
+            callback,
+            ["0/1", "+0", "0", "0", "0", "0", "0", "0", "0"],
+        )
+        self.assertEqual(extra_schedule((case,), (result,), 1, 1, 9), ())
         self.assertIn(
             "r=raw l=LAPM; + includes failure extras and request legs",
             dashboard,
+        )
+
+    def test_callback_counts_after_returning_ring_reaches_answerer(self) -> None:
+        case = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.family == "v34" and case.role == "callback"
+        )
+        result = self.result(
+            case_name=case.name,
+            family=case.family,
+            role=case.role,
+            callback_request_attempted=True,
+            callback_request_maturity=MATURITY_REQUEST,
+            callback_return_attempted=True,
+        )
+        dashboard = render_dashboard(
+            (case,),
+            1,
+            (result,),
+            revision="b" * 40,
+            seed=9,
+            elapsed_seconds=1,
+        )
+        callback_label = "V.34/l" if case.link_mode == "lapm" else "V.34/r"
+        callback = next(
+            line
+            for line in dashboard.splitlines()
+            if line.startswith(callback_label)
+        )[48:80].split()
+        self.assertEqual(
+            callback,
+            ["1/1", "+0", "0", "0", "0", "0", "0", "1", "0"],
+        )
+
+    def test_return_error_does_not_also_become_request_error(self) -> None:
+        case = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.family == "v34" and case.role == "callback"
+        )
+        result = self.result(
+            case_name=case.name,
+            family=case.family,
+            role=case.role,
+            outcome=OUTCOME_INFRASTRUCTURE_ERROR,
+            callback_request_attempted=True,
+            callback_request_maturity=MATURITY_REQUEST,
+            callback_return_attempted=True,
+        )
+        dashboard = render_dashboard(
+            (case,),
+            1,
+            (result,),
+            revision="b" * 40,
+            seed=9,
+            elapsed_seconds=1,
+        )
+        request = next(
+            line
+            for line in dashboard.splitlines()
+            if line.startswith("V.22bis/l")
+        )[13:46].split()
+        self.assertEqual(
+            request,
+            ["0/0", "+1", "0", "0", "0", "0", "1", "0", "0"],
+        )
+        callback_label = "V.34/l" if case.link_mode == "lapm" else "V.34/r"
+        callback = next(
+            line
+            for line in dashboard.splitlines()
+            if line.startswith(callback_label)
+        )[48:80].split()
+        self.assertEqual(
+            callback,
+            ["1/1", "+0", "0", "0", "0", "0", "0", "0", "1"],
         )
 
     def test_raw_and_lapm_results_have_independent_rows(self) -> None:
