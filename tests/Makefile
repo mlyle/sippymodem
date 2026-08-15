@@ -2322,6 +2322,7 @@ V90_PHASE4_RI_TEST_BINARY := $(BUILD_DIR)/test_v90_phase4_ri
 V90_PHASE4_RI_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase4_ri.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
+	$(BUILD_DIR)/v90_phase4_ri_search.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/g711.o
 PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
@@ -5127,6 +5128,10 @@ $(BUILD_DIR)/v90_phase3_sign_receiver.o: \
 
 $(BUILD_DIR)/v90_phase4_ri.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_ri.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase4_ri_search.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase4_ri_search.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase3_analog_tx.o: \
