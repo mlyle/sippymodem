@@ -856,6 +856,49 @@ def _display(
     return dashboard
 
 
+def _freeze_with_status(
+    build: RevisionBuild,
+    cache: Path,
+    *,
+    live_display: bool,
+) -> FrozenBinary:
+    progress = _AttemptProgress("revision build")
+    requested = build.revision
+    if len(requested) > 48:
+        requested = requested[:45] + "..."
+
+    def refresh() -> None:
+        current, seconds = progress.snapshot()
+        dashboard = "\n".join(
+            (
+                "Live modem campaign",
+                f"requested revision: {requested}",
+                f"current: {current} for={seconds:.0f}s",
+                "First use may compile the pinned SIP stack; exact-revision "
+                "builds are cached.",
+            )
+        )
+        sys.stdout.write("\x1b[2J\x1b[H" + dashboard + "\n")
+        sys.stdout.flush()
+
+    def report(stage: str) -> None:
+        progress.set(stage)
+        if not live_display:
+            print(f"revision build: {stage}", flush=True)
+
+    if live_display:
+        sys.stdout.write("\x1b[?25l")
+        sys.stdout.flush()
+    try:
+        ticker = _LiveTicker(refresh) if live_display else nullcontext()
+        with ticker:
+            return freeze_revision_build(build, cache, progress=report)
+    finally:
+        if live_display:
+            sys.stdout.write("\x1b[?25h\n")
+            sys.stdout.flush()
+
+
 def _run_schedule(
     schedule: Sequence[ScheduledAttempt],
     config: CampaignConfig,
@@ -1115,7 +1158,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         candidate = config.candidate
         if arguments.revision is not None:
             candidate = replace(candidate, revision=arguments.revision)
-        frozen = freeze_revision_build(
+        live_display = sys.stdout.isatty() and not arguments.plain
+        frozen = _freeze_with_status(
             RevisionBuild(
                 label="candidate",
                 repository=candidate.repository,
@@ -1124,6 +1168,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 executable=candidate.executable,
             ),
             config.build_cache,
+            live_display=live_display,
         )
         seed = arguments.seed
         if seed is None:
@@ -1149,7 +1194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             seed=seed,
             randomize=not arguments.ordered,
             retrain=not arguments.no_retrain,
-            live_display=sys.stdout.isatty() and not arguments.plain,
+            live_display=live_display,
         )
         print(f"campaign={store.directory.name}")
         return 0

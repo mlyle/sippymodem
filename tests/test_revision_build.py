@@ -19,11 +19,29 @@ sys.path.insert(0, str(ROOT))
 from tools.revision_build import (  # noqa: E402
     RevisionBuild,
     RevisionBuildError,
+    _publish_staging,
     freeze_revision_build,
 )
 
 
 class RevisionBuildTests(unittest.TestCase):
+    def test_concurrent_cache_publish_preserves_the_winner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            destination = root / "destination"
+            staging.mkdir()
+            destination.mkdir()
+            (staging / "value").write_text("loser", encoding="utf-8")
+            (destination / "value").write_text("winner", encoding="utf-8")
+
+            self.assertFalse(_publish_staging(staging, destination))
+            self.assertFalse(staging.exists())
+            self.assertEqual(
+                (destination / "value").read_text(encoding="utf-8"),
+                "winner",
+            )
+
     def make_repository(self, root: Path) -> tuple[Path, str]:
         repository = root / "repository"
         repository.mkdir()
@@ -90,8 +108,10 @@ class RevisionBuildTests(unittest.TestCase):
                 executable=Path("modem"),
             )
 
-            first = freeze_revision_build(config, cache)
-            second = freeze_revision_build(config, cache)
+            first_stages: list[str] = []
+            second_stages: list[str] = []
+            first = freeze_revision_build(config, cache, first_stages.append)
+            second = freeze_revision_build(config, cache, second_stages.append)
 
             self.assertFalse(first.reused)
             self.assertTrue(second.reused)
@@ -106,6 +126,10 @@ class RevisionBuildTests(unittest.TestCase):
             self.assertEqual(manifest["revision"], revision)
             self.assertEqual(manifest["sha256"], first.sha256)
             self.assertEqual(manifest["command"], ["make"])
+            self.assertIn("compiling revision-frozen executable", first_stages)
+            self.assertNotIn("compiling revision-frozen executable", second_stages)
+            self.assertEqual(first_stages[-1], "frozen executable ready")
+            self.assertEqual(second_stages[-1], "frozen executable ready")
             self.assertEqual(
                 stat.S_IMODE(cache.stat().st_mode) & 0o077,
                 0,

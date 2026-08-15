@@ -8,6 +8,7 @@ from __future__ import annotations
 from configparser import ConfigParser
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 import os
@@ -19,7 +20,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
-from typing import IO, Mapping, Sequence
+from typing import Callable, IO, Mapping, Sequence
 
 
 MANIFEST_SCHEMA = 1
@@ -367,18 +368,43 @@ def _retain_failed_build(
     return failed
 
 
-def freeze_revision_build(config: RevisionBuild, root: Path) -> FrozenBinary:
+def _publish_staging(staging: Path, destination: Path) -> bool:
+    try:
+        staging.rename(destination)
+        return True
+    except OSError as error:
+        if error.errno not in (errno.EEXIST, errno.ENOTEMPTY):
+            raise
+        shutil.rmtree(staging)
+        return False
+
+
+def freeze_revision_build(
+    config: RevisionBuild,
+    root: Path,
+    progress: Callable[[str], None] | None = None,
+) -> FrozenBinary:
     """Return an immutable-by-convention cached binary for one Git commit."""
 
+    def report(stage: str) -> None:
+        if progress is not None:
+            progress(stage)
+
+    report("validating build configuration")
     config = _validated(config)
+    report("inspecting source repository")
     _repository_root(config.repository)
+    report("resolving exact revision")
     revision = _resolve_revision(config.repository, config.revision)
     root = root.expanduser().resolve()
     _private_directory(root)
     key = _recipe_key(config, revision)
     destination = root / f"{config.label}-{revision[:12]}-{key}"
     if destination.exists():
-        return _load_cached(destination, config, revision)
+        report("verifying cached executable")
+        frozen = _load_cached(destination, config, revision)
+        report("frozen executable ready")
+        return frozen
 
     staging = Path(tempfile.mkdtemp(prefix=".build-", dir=root))
     os.chmod(staging, 0o700)
@@ -387,10 +413,12 @@ def freeze_revision_build(config: RevisionBuild, root: Path) -> FrozenBinary:
     build_log = staging / "build.log"
     submodules: list[dict[str, str]] = []
     try:
+        report("exporting revision and submodules")
         _export_tree(config.repository, revision, source, submodules)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(build_log, flags, 0o600)
+        report("compiling revision-frozen executable")
         with os.fdopen(descriptor, "wb") as stream:
             try:
                 completed = subprocess.run(
@@ -431,6 +459,7 @@ def freeze_revision_build(config: RevisionBuild, root: Path) -> FrozenBinary:
         )
         digest = _sha256(frozen_executable)
         shutil.rmtree(source)
+        report("finalizing frozen-build cache")
         _write_private_json(
             staging / "manifest.json",
             {
@@ -445,15 +474,17 @@ def freeze_revision_build(config: RevisionBuild, root: Path) -> FrozenBinary:
                 "built_at": datetime.now(timezone.utc).isoformat(),
             },
         )
-        try:
-            staging.rename(destination)
-        except FileExistsError:
-            shutil.rmtree(staging)
-            return _load_cached(destination, config, revision)
-        return FrozenBinary(
+        if not _publish_staging(staging, destination):
+            report("verifying concurrent cached executable")
+            frozen = _load_cached(destination, config, revision)
+            report("frozen executable ready")
+            return frozen
+        frozen = FrozenBinary(
             destination, destination / "bin" / config.executable.name,
             revision, digest, False
         )
+        report("frozen executable ready")
+        return frozen
     except BaseException:
         if staging.exists():
             shutil.rmtree(staging)
