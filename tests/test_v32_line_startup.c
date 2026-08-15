@@ -16,6 +16,8 @@ enum {
 	TEST_TURNAROUND_PRIMARY_AMPLITUDE = 9000,
 	TEST_TURNAROUND_SECONDARY_AMPLITUDE = 8000,
 	TEST_TRANSITION_LIMIT = 800,
+	TEST_ROUND_TRIP_SAMPLES = 320,
+	TEST_LINE_EXCHANGE_LIMIT = 6 * SINGLE_TONE_SAMPLE_RATE,
 	TEST_RECORDING_SAMPLE_LIMIT = 120 * SINGLE_TONE_SAMPLE_RATE,
 };
 
@@ -321,11 +323,201 @@ static bool test_early_answer_loss_fails(void)
 	return true;
 }
 
+static bool answerer_process_tone(
+	struct v32_answerer_line_startup *startup,
+	struct single_tone_transmitter *caller,
+	enum test_codec codec, int16_t *transmit, bool *complete)
+{
+	int16_t caller_sample;
+
+	return single_tone_transmitter_sample(
+		       caller, &caller_sample) == SINGLE_TONE_OK &&
+	       v32_answerer_line_startup_process(
+		       startup, codec_round_trip(caller_sample, codec),
+		       transmit, complete) == V32_LINE_STARTUP_OK;
+}
+
+static bool run_answerer_standard_exchange(enum test_codec codec)
+{
+	struct v32_answerer_line_startup startup;
+	struct single_tone_transmitter caller;
+	uint64_t answer_power = 0;
+	uint64_t turnaround_power = 0;
+	size_t response_samples = 0;
+	size_t quiet_samples = 0;
+	bool complete = false;
+
+	CHECK(v32_answerer_line_startup_init(
+		      &startup, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      single_tone_transmitter_init(
+			      &caller, V32_CALLING_CARRIER_HZ,
+			      TEST_AMPLITUDE) == SINGLE_TONE_OK,
+	      "answerer line-startup fixture did not initialize");
+	for (size_t count = 0; count < V32_ANSWERER_TONE_SAMPLES; ++count) {
+		int16_t transmit;
+
+		CHECK(v32_answerer_line_startup_process(
+			      &startup, 0, &transmit, &complete) ==
+			      V32_LINE_STARTUP_OK && !complete,
+		      "answerer rejected its answer-tone interval");
+		answer_power += (uint64_t)((int32_t)transmit * transmit);
+	}
+	CHECK(startup.state == V32_ANSWERER_LINE_SILENCE &&
+		      answer_power > UINT64_C(1000000000000),
+	      "answerer omitted or mistimed its answer tone");
+	for (size_t count = 0; count < V32_ANSWERER_SILENCE_SAMPLES;
+	     ++count) {
+		int16_t transmit = 1;
+
+		CHECK(v32_answerer_line_startup_process(
+			      &startup, 0, &transmit, &complete) ==
+			      V32_LINE_STARTUP_OK && transmit == 0 && !complete,
+		      "answerer did not preserve the answer-to-AC gap");
+	}
+	CHECK(startup.state == V32_ANSWERER_LINE_SEND_AC,
+	      "answerer did not enter the AC interval");
+	for (size_t count = 0; count < V32_ANSWERER_AC_SAMPLES; ++count) {
+		int16_t transmit;
+
+		CHECK(answerer_process_tone(
+			      &startup, &caller, codec, &transmit, &complete) &&
+			      !complete,
+		      "answerer rejected the calling carrier");
+		turnaround_power +=
+			(uint64_t)((int32_t)transmit * transmit);
+	}
+	CHECK(startup.state == V32_ANSWERER_LINE_WAIT_CALLER_REVERSAL &&
+		      turnaround_power > UINT64_C(10000000000),
+	      "answerer did not send the minimum AC interval");
+	for (size_t count = 0; count < TEST_ROUND_TRIP_SAMPLES; ++count) {
+		int16_t transmit;
+
+		CHECK(answerer_process_tone(
+			      &startup, &caller, codec, &transmit, &complete) &&
+			      startup.state ==
+				      V32_ANSWERER_LINE_WAIT_CALLER_REVERSAL,
+		      "answerer left CA before the caller reversal");
+	}
+	CHECK(single_tone_transmitter_reverse(&caller) == SINGLE_TONE_OK,
+	      "calling carrier did not reverse");
+	while (startup.state != V32_ANSWERER_LINE_HOLD_RESPONSE &&
+	       response_samples < TEST_TRANSITION_LIMIT) {
+		int16_t transmit;
+
+		CHECK(answerer_process_tone(
+			      &startup, &caller, codec, &transmit, &complete),
+		      "answerer rejected the caller reversal");
+		response_samples++;
+	}
+	CHECK(startup.state == V32_ANSWERER_LINE_HOLD_RESPONSE &&
+		      response_samples >=
+			      V32_REVERSAL_RESPONSE_SAMPLES -
+				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
+		      response_samples <=
+			      V32_REVERSAL_RESPONSE_SAMPLES +
+				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
+		      startup.round_trip_samples >=
+			      TEST_ROUND_TRIP_SAMPLES -
+				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
+		      startup.round_trip_samples <=
+			      TEST_ROUND_TRIP_SAMPLES +
+				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
+		      !startup.caller_reversed_early,
+	      "answerer response timing changed (%zu samples, MT=%u)",
+	      response_samples, startup.round_trip_samples);
+	for (size_t count = 0; count < SINGLE_TONE_WINDOW_SAMPLES; ++count) {
+		int16_t transmit;
+
+		CHECK(answerer_process_tone(
+			      &startup, &caller, codec, &transmit, &complete),
+		      "answerer did not hold its response");
+	}
+	for (size_t count = 0; count < TEST_TRANSITION_LIMIT && !complete;
+	     ++count) {
+		enum v32_answerer_line_state before = startup.state;
+		int16_t transmit = 1;
+
+		CHECK(v32_answerer_line_startup_process(
+			      &startup, 0, &transmit, &complete) ==
+			      V32_LINE_STARTUP_OK,
+		      "answerer rejected the calling-carrier drop");
+		if (before == V32_ANSWERER_LINE_POST_DROP_SILENCE) {
+			CHECK(transmit == 0,
+			      "answerer transmitted during its post-drop gap");
+			quiet_samples++;
+		}
+	}
+	CHECK(complete && v32_answerer_line_startup_is_complete(&startup) &&
+		      quiet_samples == V32_ANSWERER_DROP_SILENCE_SAMPLES &&
+		      v32_answerer_line_startup_round_trip_samples(&startup) ==
+			      startup.round_trip_samples,
+	      "answerer did not finish after the exact 16-symbol gap");
+	return true;
+}
+
+static bool run_paired_line_exchange(enum test_codec codec)
+{
+	struct v32_line_startup caller;
+	struct v32_answerer_line_startup answerer;
+	int16_t caller_transmit = 0;
+	int16_t answerer_transmit = 0;
+	bool caller_complete = false;
+	bool answerer_complete = false;
+
+	CHECK(v32_line_startup_init(&caller, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_startup_init(
+			      &answerer, TEST_AMPLITUDE) ==
+			      V32_LINE_STARTUP_OK,
+	      "paired line-startup fixture did not initialize");
+	for (size_t count = 0;
+	     count < TEST_LINE_EXCHANGE_LIMIT && !answerer_complete;
+	     ++count) {
+		int16_t next_caller;
+		int16_t next_answerer;
+
+		CHECK(v32_line_startup_process(
+			      &caller,
+			      codec_round_trip(answerer_transmit, codec),
+			      &next_caller, &caller_complete) ==
+			      V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_startup_process(
+			      &answerer,
+			      codec_round_trip(caller_transmit, codec),
+			      &next_answerer, &answerer_complete) ==
+			      V32_LINE_STARTUP_OK,
+		      "paired caller and answerer did not interoperate");
+		caller_transmit = next_caller;
+		answerer_transmit = next_answerer;
+	}
+	CHECK(caller_complete && answerer_complete &&
+		      answerer.caller_reversed_early &&
+		      v32_line_startup_round_trip_samples(&caller) != 0 &&
+		      v32_answerer_line_startup_round_trip_samples(&answerer) == 0,
+	      "paired line startup did not exercise the early marker path");
+	return true;
+}
+
+static bool test_generated_answerer_exchange(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		CHECK(run_answerer_standard_exchange(codec),
+		      "standard answerer exchange failed codec %d", codec);
+		CHECK(run_paired_line_exchange(codec),
+		      "paired answerer exchange failed codec %d", codec);
+	}
+	return true;
+}
+
 static bool test_validation_is_transactional(void)
 {
 	struct v32_line_startup startup;
 	struct v32_line_startup initialized;
 	struct v32_line_startup before;
+	struct v32_answerer_line_startup answerer;
+	struct v32_answerer_line_startup answerer_before;
 	int16_t transmit = 123;
 	bool complete = true;
 
@@ -355,6 +547,18 @@ static bool test_validation_is_transactional(void)
 		      v32_line_startup_round_trip_samples(&startup) ==
 			      0,
 	      "V.32 line startup exposed an incomplete turnaround interval");
+	CHECK(v32_answerer_line_startup_init(
+		      &answerer, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK,
+	      "V.32 answerer validation fixture did not initialize");
+	answerer.calling_carrier.phase_step++;
+	answerer_before = answerer;
+	CHECK(v32_answerer_line_startup_process(
+		      &answerer, 0, &transmit, &complete) ==
+		      V32_LINE_STARTUP_INVALID_ARGUMENT &&
+		      memcmp(&answerer, &answerer_before, sizeof(answerer)) == 0 &&
+		      transmit == 123 && complete,
+	      "invalid V.32 answerer mutation was not transactional");
 	return true;
 }
 
@@ -410,6 +614,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated exchange", test_generated_exchange },
+		{ "generated answerer exchange", test_generated_answerer_exchange },
 		{ "early answer loss", test_early_answer_loss_fails },
 		{ "transactional validation", test_validation_is_transactional },
 	};

@@ -26,6 +26,24 @@ enum {
 		(SINGLE_TONE_SAMPLE_RATE * 2 +
 		 V32_STARTUP_SYMBOL_RATE - 1) /
 		V32_STARTUP_SYMBOL_RATE,
+	/* The V.25 answer sequence used by the interoperable answer path. */
+	V32_ANSWERER_TONE_SAMPLES =
+		SINGLE_TONE_SAMPLE_RATE * 33 / 10,
+	V32_ANSWERER_SILENCE_SAMPLES =
+		SINGLE_TONE_SAMPLE_RATE * 3 / 40,
+	/* Use an even AC span above the 128-symbol minimum so the calling
+	 * carrier detector is settled before the first reversal. */
+	V32_ANSWERER_AC_SYMBOLS = 160,
+	V32_ANSWERER_AC_SAMPLES =
+		(SINGLE_TONE_SAMPLE_RATE * V32_ANSWERER_AC_SYMBOLS +
+		 V32_STARTUP_SYMBOL_RATE - 1) /
+		V32_STARTUP_SYMBOL_RATE,
+	V32_ANSWERER_DROP_SILENCE_SAMPLES =
+		(SINGLE_TONE_SAMPLE_RATE * 16 +
+		 V32_STARTUP_SYMBOL_RATE - 1) /
+		V32_STARTUP_SYMBOL_RATE,
+	V32_ANSWERER_CARRIER_WAIT_SAMPLES =
+		SINGLE_TONE_SAMPLE_RATE * 3,
 };
 
 enum v32_line_startup_state {
@@ -55,6 +73,29 @@ struct v32_line_startup {
 	enum v32_line_startup_state state;
 };
 
+enum v32_answerer_line_state {
+	V32_ANSWERER_LINE_ANSWER_TONE,
+	V32_ANSWERER_LINE_SILENCE,
+	V32_ANSWERER_LINE_SEND_AC,
+	V32_ANSWERER_LINE_WAIT_CALLER_REVERSAL,
+	V32_ANSWERER_LINE_DELAY_RESPONSE,
+	V32_ANSWERER_LINE_HOLD_RESPONSE,
+	V32_ANSWERER_LINE_POST_DROP_SILENCE,
+	V32_ANSWERER_LINE_COMPLETE,
+	V32_ANSWERER_LINE_FAILED,
+};
+
+struct v32_answerer_line_startup {
+	struct single_tone_transmitter answer_tone;
+	struct single_tone_transmitter low_turnaround_tone;
+	struct single_tone_transmitter high_turnaround_tone;
+	struct single_tone_detector calling_carrier;
+	uint32_t state_samples;
+	uint32_t round_trip_samples;
+	enum v32_answerer_line_state state;
+	bool caller_reversed_early;
+};
+
 enum v32_line_startup_result v32_line_startup_init(
 	struct v32_line_startup *startup,
 	int16_t transmit_amplitude);
@@ -69,6 +110,20 @@ enum v32_line_startup_result
 v32_line_startup_process(
 	struct v32_line_startup *startup, int16_t receive_sample,
 	int16_t *transmit_sample, bool *complete);
+
+enum v32_line_startup_result v32_answerer_line_startup_init(
+	struct v32_answerer_line_startup *startup,
+	int16_t transmit_amplitude);
+bool v32_answerer_line_startup_is_valid(
+	const struct v32_answerer_line_startup *startup);
+bool v32_answerer_line_startup_is_complete(
+	const struct v32_answerer_line_startup *startup);
+uint32_t v32_answerer_line_startup_round_trip_samples(
+	const struct v32_answerer_line_startup *startup);
+enum v32_line_startup_result v32_answerer_line_startup_process(
+	struct v32_answerer_line_startup *startup,
+	int16_t receive_sample, int16_t *transmit_sample,
+	bool *complete);
 
 const char *v32_line_startup_state_name(
 	enum v32_line_startup_state state);

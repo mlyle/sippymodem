@@ -170,6 +170,287 @@ uint32_t v32_line_startup_round_trip_samples(
 		       startup->round_trip_samples : 0;
 }
 
+static bool answerer_state_is_valid(enum v32_answerer_line_state state)
+{
+	return state >= V32_ANSWERER_LINE_ANSWER_TONE &&
+	       state <= V32_ANSWERER_LINE_FAILED;
+}
+
+bool v32_answerer_line_startup_is_valid(
+	const struct v32_answerer_line_startup *startup)
+{
+	bool measured;
+
+	if (startup == NULL || !answerer_state_is_valid(startup->state) ||
+	    !single_tone_transmitter_is_valid(&startup->answer_tone) ||
+	    startup->answer_tone.frequency_hz != V32_ANSWER_TONE_HZ ||
+	    !single_tone_transmitter_is_valid(
+		    &startup->low_turnaround_tone) ||
+	    startup->low_turnaround_tone.frequency_hz !=
+		    V32_LOW_TURNAROUND_TONE_HZ ||
+	    !single_tone_transmitter_is_valid(
+		    &startup->high_turnaround_tone) ||
+	    startup->high_turnaround_tone.frequency_hz !=
+		    V32_HIGH_TURNAROUND_TONE_HZ ||
+	    startup->low_turnaround_tone.amplitude !=
+		    startup->high_turnaround_tone.amplitude ||
+	    !single_tone_detector_is_valid(&startup->calling_carrier) ||
+	    startup->calling_carrier.frequency_hz !=
+		    V32_CALLING_CARRIER_HZ)
+		return false;
+	measured = startup->round_trip_samples != 0;
+	if (startup->state == V32_ANSWERER_LINE_ANSWER_TONE)
+		return startup->state_samples < V32_ANSWERER_TONE_SAMPLES &&
+		       !measured && !startup->caller_reversed_early;
+	if (startup->state == V32_ANSWERER_LINE_SILENCE)
+		return startup->state_samples < V32_ANSWERER_SILENCE_SAMPLES &&
+		       !measured && !startup->caller_reversed_early;
+	if (startup->state == V32_ANSWERER_LINE_SEND_AC)
+		return startup->state_samples <
+			       V32_ANSWERER_CARRIER_WAIT_SAMPLES &&
+		       !measured && !startup->caller_reversed_early;
+	if (startup->state == V32_ANSWERER_LINE_WAIT_CALLER_REVERSAL)
+		return startup->state_samples <
+			       V32_ANSWERER_CARRIER_WAIT_SAMPLES &&
+		       !measured && !startup->caller_reversed_early;
+	if (startup->state == V32_ANSWERER_LINE_DELAY_RESPONSE)
+		return startup->state_samples > 0 &&
+		       startup->state_samples < V32_REVERSAL_RESPONSE_SAMPLES &&
+		       (measured || startup->caller_reversed_early);
+	if (startup->state == V32_ANSWERER_LINE_HOLD_RESPONSE)
+		return startup->state_samples <
+			       V32_ANSWERER_CARRIER_WAIT_SAMPLES &&
+		       (measured || startup->caller_reversed_early);
+	if (startup->state == V32_ANSWERER_LINE_POST_DROP_SILENCE)
+		return startup->state_samples <
+			       V32_ANSWERER_DROP_SILENCE_SAMPLES &&
+		       (measured || startup->caller_reversed_early);
+	return startup->state_samples == 0 &&
+	       (startup->state != V32_ANSWERER_LINE_COMPLETE ||
+		measured || startup->caller_reversed_early);
+}
+
+enum v32_line_startup_result v32_answerer_line_startup_init(
+	struct v32_answerer_line_startup *startup,
+	int16_t transmit_amplitude)
+{
+	struct v32_answerer_line_startup initialized = { 0 };
+	int16_t turnaround_amplitude;
+
+	if (startup == NULL || transmit_amplitude < 2)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	turnaround_amplitude = transmit_amplitude / 2;
+	if (single_tone_transmitter_init(
+		    &initialized.answer_tone, V32_ANSWER_TONE_HZ,
+		    transmit_amplitude) != SINGLE_TONE_OK ||
+	    single_tone_transmitter_init(
+		    &initialized.low_turnaround_tone,
+		    V32_LOW_TURNAROUND_TONE_HZ,
+		    turnaround_amplitude) != SINGLE_TONE_OK ||
+	    single_tone_transmitter_init(
+		    &initialized.high_turnaround_tone,
+		    V32_HIGH_TURNAROUND_TONE_HZ,
+		    turnaround_amplitude) != SINGLE_TONE_OK ||
+	    single_tone_detector_init(
+		    &initialized.calling_carrier,
+		    V32_CALLING_CARRIER_HZ) != SINGLE_TONE_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	initialized.state = V32_ANSWERER_LINE_ANSWER_TONE;
+	if (!v32_answerer_line_startup_is_valid(&initialized))
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	*startup = initialized;
+	return V32_LINE_STARTUP_OK;
+}
+
+bool v32_answerer_line_startup_is_complete(
+	const struct v32_answerer_line_startup *startup)
+{
+	return v32_answerer_line_startup_is_valid(startup) &&
+	       startup->state == V32_ANSWERER_LINE_COMPLETE;
+}
+
+uint32_t v32_answerer_line_startup_round_trip_samples(
+	const struct v32_answerer_line_startup *startup)
+{
+	return v32_answerer_line_startup_is_complete(startup) ?
+		       startup->round_trip_samples : 0;
+}
+
+static void answerer_enter_state(
+	struct v32_answerer_line_startup *startup,
+	enum v32_answerer_line_state state)
+{
+	startup->state = state;
+	startup->state_samples = 0;
+}
+
+static bool answerer_reverse_turnaround(
+	struct v32_answerer_line_startup *startup)
+{
+	return single_tone_transmitter_reverse(
+		       &startup->low_turnaround_tone) == SINGLE_TONE_OK &&
+	       single_tone_transmitter_reverse(
+		       &startup->high_turnaround_tone) == SINGLE_TONE_OK;
+}
+
+static enum v32_line_startup_result answerer_fail(
+	struct v32_answerer_line_startup *next,
+	struct v32_answerer_line_startup *startup,
+	int16_t *transmit_sample, bool *complete)
+{
+	answerer_enter_state(next, V32_ANSWERER_LINE_FAILED);
+	next->round_trip_samples = 0;
+	next->caller_reversed_early = false;
+	if (!v32_answerer_line_startup_is_valid(next))
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	*startup = *next;
+	*transmit_sample = 0;
+	*complete = false;
+	return V32_LINE_STARTUP_PROTOCOL_ERROR;
+}
+
+static bool answerer_turnaround_sample(
+	struct v32_answerer_line_startup *startup, int16_t *sample)
+{
+	int16_t low;
+	int16_t high;
+
+	if (single_tone_transmitter_sample(
+		    &startup->low_turnaround_tone, &low) != SINGLE_TONE_OK ||
+	    single_tone_transmitter_sample(
+		    &startup->high_turnaround_tone, &high) != SINGLE_TONE_OK)
+		return false;
+	*sample = (int16_t)((int32_t)low + high);
+	return true;
+}
+
+enum v32_line_startup_result v32_answerer_line_startup_process(
+	struct v32_answerer_line_startup *startup,
+	int16_t receive_sample, int16_t *transmit_sample,
+	bool *complete)
+{
+	struct v32_answerer_line_startup next;
+	struct single_tone_event carrier_event = { 0 };
+	int16_t generated = 0;
+
+	if (!v32_answerer_line_startup_is_valid(startup) ||
+	    transmit_sample == NULL || complete == NULL)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	if (startup->state == V32_ANSWERER_LINE_FAILED) {
+		*transmit_sample = 0;
+		*complete = false;
+		return V32_LINE_STARTUP_PROTOCOL_ERROR;
+	}
+	if (startup->state == V32_ANSWERER_LINE_COMPLETE) {
+		*transmit_sample = 0;
+		*complete = true;
+		return V32_LINE_STARTUP_OK;
+	}
+	next = *startup;
+	if (next.state >= V32_ANSWERER_LINE_SEND_AC &&
+	    next.state <= V32_ANSWERER_LINE_HOLD_RESPONSE &&
+	    single_tone_detector_sample(
+		    &next.calling_carrier, receive_sample,
+		    &carrier_event) != SINGLE_TONE_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	switch (next.state) {
+	case V32_ANSWERER_LINE_ANSWER_TONE:
+		if (single_tone_transmitter_sample(
+			    &next.answer_tone, &generated) != SINGLE_TONE_OK)
+			return V32_LINE_STARTUP_INVALID_ARGUMENT;
+		next.state_samples++;
+		if (next.state_samples == V32_ANSWERER_TONE_SAMPLES)
+			answerer_enter_state(&next, V32_ANSWERER_LINE_SILENCE);
+		break;
+	case V32_ANSWERER_LINE_SILENCE:
+		next.state_samples++;
+		if (next.state_samples == V32_ANSWERER_SILENCE_SAMPLES)
+			answerer_enter_state(&next, V32_ANSWERER_LINE_SEND_AC);
+		break;
+	case V32_ANSWERER_LINE_SEND_AC:
+		next.state_samples++;
+		if (carrier_event.kind == SINGLE_TONE_PHASE_REVERSED) {
+			next.caller_reversed_early = true;
+			next.state_samples = carrier_event.reversal_delay_samples;
+			next.state = V32_ANSWERER_LINE_DELAY_RESPONSE;
+		} else if (next.state_samples >= V32_ANSWERER_AC_SAMPLES &&
+			   next.calling_carrier.tone_present) {
+			if (!answerer_reverse_turnaround(&next))
+				return V32_LINE_STARTUP_INVALID_ARGUMENT;
+			answerer_enter_state(
+				&next,
+				V32_ANSWERER_LINE_WAIT_CALLER_REVERSAL);
+		} else if (next.state_samples ==
+			   V32_ANSWERER_CARRIER_WAIT_SAMPLES) {
+			return answerer_fail(
+				&next, startup, transmit_sample, complete);
+		}
+		break;
+	case V32_ANSWERER_LINE_WAIT_CALLER_REVERSAL:
+		next.state_samples++;
+		if (carrier_event.kind == SINGLE_TONE_PHASE_REVERSED) {
+			uint32_t measured = next.state_samples;
+
+			if (measured <= carrier_event.reversal_delay_samples)
+				return answerer_fail(
+					&next, startup, transmit_sample, complete);
+			next.round_trip_samples =
+				measured - carrier_event.reversal_delay_samples;
+			next.state_samples = carrier_event.reversal_delay_samples;
+			next.state = V32_ANSWERER_LINE_DELAY_RESPONSE;
+		} else if (carrier_event.kind == SINGLE_TONE_ENDED ||
+			   next.state_samples ==
+				   V32_ANSWERER_CARRIER_WAIT_SAMPLES) {
+			return answerer_fail(
+				&next, startup, transmit_sample, complete);
+		}
+		break;
+	case V32_ANSWERER_LINE_DELAY_RESPONSE:
+		if (carrier_event.kind == SINGLE_TONE_ENDED)
+			return answerer_fail(
+				&next, startup, transmit_sample, complete);
+		next.state_samples++;
+		if (next.state_samples == V32_REVERSAL_RESPONSE_SAMPLES) {
+			if (!answerer_reverse_turnaround(&next))
+				return V32_LINE_STARTUP_INVALID_ARGUMENT;
+			answerer_enter_state(
+				&next, V32_ANSWERER_LINE_HOLD_RESPONSE);
+		}
+		break;
+	case V32_ANSWERER_LINE_HOLD_RESPONSE:
+		next.state_samples++;
+		if (carrier_event.kind == SINGLE_TONE_ENDED)
+			answerer_enter_state(
+				&next,
+				V32_ANSWERER_LINE_POST_DROP_SILENCE);
+		else if (next.state_samples ==
+			 V32_ANSWERER_CARRIER_WAIT_SAMPLES)
+			return answerer_fail(
+				&next, startup, transmit_sample, complete);
+		break;
+	case V32_ANSWERER_LINE_POST_DROP_SILENCE:
+		next.state_samples++;
+		if (next.state_samples ==
+		    V32_ANSWERER_DROP_SILENCE_SAMPLES)
+			answerer_enter_state(
+				&next, V32_ANSWERER_LINE_COMPLETE);
+		break;
+	case V32_ANSWERER_LINE_COMPLETE:
+	case V32_ANSWERER_LINE_FAILED:
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	}
+	if (startup->state >= V32_ANSWERER_LINE_SEND_AC &&
+	    startup->state <= V32_ANSWERER_LINE_HOLD_RESPONSE &&
+	    !answerer_turnaround_sample(&next, &generated))
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	if (!v32_answerer_line_startup_is_valid(&next))
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	*startup = next;
+	*transmit_sample = generated;
+	*complete = next.state == V32_ANSWERER_LINE_COMPLETE;
+	return V32_LINE_STARTUP_OK;
+}
+
 static void enter_state(
 	struct v32_line_startup *startup,
 	enum v32_line_startup_state state)
