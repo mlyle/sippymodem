@@ -217,6 +217,11 @@ static bool drive_line_startup(
 	}
 	CHECK(silent_samples == TEST_SILENCE_RUN,
 	      "V.32 caller did not become silent for peer conditioning");
+	for (unsigned int count = 0;
+	     count < V32_ANSWERER_DROP_SILENCE_SAMPLES; ++count)
+		CHECK(process_sample(operations, datapump, 0, &transmit) &&
+			      transmit == 0,
+		      "V.32 caller rejected the post-turnaround gap");
 	return true;
 }
 

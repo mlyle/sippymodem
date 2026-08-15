@@ -4,8 +4,9 @@
 
 #include <stddef.h>
 
-/* This controller starts at TRN. The preceding two-wire tone, turnaround and
- * echo-canceller training phases remain outside this source-built media path. */
+/* This controller starts at TRN. The datapump owns the preceding answer-tone,
+ * line-turnaround and conditioning exchange; two-wire echo-canceller training
+ * remains follow-up work. */
 
 enum {
 	V32_IMPLEMENTED_RATES = V32_RATE_CAPABILITY_4800 |
