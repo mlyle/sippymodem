@@ -6,6 +6,11 @@
 
 #include <string.h>
 
+enum {
+	SIP_STATUS_BUSY_HERE = 486,
+	SIP_STATUS_BUSY_EVERYWHERE = 600,
+};
+
 static void capture_call(
 	void *context, const struct sip_call_event *event)
 {
@@ -26,7 +31,16 @@ static void capture_call(
 	       SLMODEM_CALL_EVENT_CAPACITY;
 	calls->pending[tail].direction = event->direction;
 	calls->pending[tail].state = event->state;
+	calls->pending[tail].status_code = event->status_code;
 	calls->pending_count++;
+}
+
+static bool is_outgoing_busy(const struct slmodem_call_transition *transition)
+{
+	return transition->direction == SIP_CALL_DIRECTION_OUTGOING &&
+	       transition->state == SIP_CALL_IDLE &&
+	       (transition->status_code == SIP_STATUS_BUSY_HERE ||
+		transition->status_code == SIP_STATUS_BUSY_EVERYWHERE);
 }
 
 bool slmodem_calls_init(
@@ -77,6 +91,8 @@ enum slmodem_calls_result slmodem_calls_drain(
 		return SLMODEM_CALLS_INVALID_EVENT;
 	switch (transition.state) {
 	case SIP_CALL_IDLE:
+		if (is_outgoing_busy(&transition))
+			modem_update_status(calls->modem, STATUS_BUSY);
 		result = modem_report_remote_call_end(calls->modem);
 		break;
 	case SIP_CALL_INCOMING_PENDING:

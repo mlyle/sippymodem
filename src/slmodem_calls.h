@@ -25,6 +25,7 @@ enum {
 struct slmodem_call_transition {
 	enum sip_call_direction direction;
 	enum sip_call_state state;
+	unsigned int status_code;
 };
 
 struct slmodem_calls {

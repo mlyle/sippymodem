@@ -13,6 +13,8 @@ struct transition_capture {
 	unsigned int outgoing_connected_calls;
 	unsigned int remote_end_calls;
 	unsigned int answers;
+	unsigned int status_updates;
+	unsigned int last_status;
 	int incoming_result;
 	int outgoing_connected_result;
 	int remote_end_result;
@@ -30,6 +32,22 @@ static void emit_call(
 	const struct sip_call_event event = {
 		.direction = direction,
 		.state = state,
+	};
+	const struct sip_signaling_callbacks *callbacks =
+		slmodem_calls_callbacks(calls);
+
+	callbacks->call_changed(callbacks->context, &event);
+}
+
+static void emit_call_status(
+	struct slmodem_calls *calls,
+	enum sip_call_direction direction,
+	enum sip_call_state state, unsigned int status_code)
+{
+	const struct sip_call_event event = {
+		.direction = direction,
+		.state = state,
+		.status_code = status_code,
 	};
 	const struct sip_signaling_callbacks *callbacks =
 		slmodem_calls_callbacks(calls);
@@ -60,6 +78,13 @@ int modem_report_remote_call_end(struct modem *modem)
 	(void)modem;
 	capture.remote_end_calls++;
 	return capture.remote_end_result;
+}
+
+void modem_update_status(struct modem *modem, unsigned int status)
+{
+	(void)modem;
+	capture.status_updates++;
+	capture.last_status = status;
 }
 
 int modem_answer(struct modem *modem)
@@ -138,6 +163,42 @@ static bool test_maps_incoming_lifecycle(void)
 		      SLMODEM_CALLS_OK &&
 		      capture.answers == 1,
 	      "connected modem was answered twice");
+	return true;
+}
+
+static bool test_maps_outgoing_busy_responses(void)
+{
+	struct modem modem;
+	struct slmodem_calls calls;
+
+	memset(&modem, 0, sizeof(modem));
+	memset(&capture, 0, sizeof(capture));
+	CHECK(slmodem_calls_init(&calls, &modem),
+	      "busy response fixture failed");
+	emit_call_status(&calls, SIP_CALL_DIRECTION_OUTGOING,
+			 SIP_CALL_IDLE, 486);
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK &&
+		      capture.status_updates == 1 &&
+		      capture.last_status == STATUS_BUSY &&
+		      capture.remote_end_calls == 1,
+	      "486 Busy Here did not reach the modem result state");
+	emit_call_status(&calls, SIP_CALL_DIRECTION_OUTGOING,
+			 SIP_CALL_IDLE, 600);
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK &&
+		      capture.status_updates == 2 &&
+		      capture.last_status == STATUS_BUSY &&
+		      capture.remote_end_calls == 2,
+	      "600 Busy Everywhere did not reach the modem result state");
+
+	emit_call_status(&calls, SIP_CALL_DIRECTION_OUTGOING,
+			 SIP_CALL_IDLE, 603);
+	emit_call_status(&calls, SIP_CALL_DIRECTION_INCOMING,
+			 SIP_CALL_IDLE, 486);
+	CHECK(slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK &&
+		      slmodem_calls_drain(&calls) == SLMODEM_CALLS_OK &&
+		      capture.status_updates == 2 &&
+		      capture.remote_end_calls == 4,
+	      "a non-busy or incoming response was reported as BUSY");
 	return true;
 }
 
@@ -230,18 +291,21 @@ static bool test_reports_bounded_queue_overflow(void)
 	     index < SLMODEM_CALL_EVENT_CAPACITY; ++index)
 		emit_call(&calls, SIP_CALL_DIRECTION_OUTGOING,
 			  SIP_CALL_EARLY);
-	emit_call(&calls, SIP_CALL_DIRECTION_OUTGOING,
-		  SIP_CALL_IDLE);
+	emit_call_status(&calls, SIP_CALL_DIRECTION_OUTGOING,
+			 SIP_CALL_IDLE, 486);
 	CHECK(slmodem_calls_drain(&calls) ==
 		      SLMODEM_CALLS_EVENT_OVERFLOW &&
-		      capture.remote_end_calls == 0,
+		      capture.remote_end_calls == 0 &&
+		      capture.status_updates == 0,
 	      "event queue overflow was silent");
 	CHECK(slmodem_calls_drain(&calls) ==
 		      SLMODEM_CALLS_OK &&
 		      capture.remote_end_calls == 1 &&
+		      capture.status_updates == 1 &&
+		      capture.last_status == STATUS_BUSY &&
 		      slmodem_calls_drain(&calls) ==
 			      SLMODEM_CALLS_IDLE,
-	      "event overflow hid the terminal call state");
+	      "event overflow hid the terminal call state or status");
 	return true;
 }
 
@@ -255,6 +319,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "event order", test_preserves_event_order },
 		{ "incoming lifecycle", test_maps_incoming_lifecycle },
+		{ "outgoing busy responses", test_maps_outgoing_busy_responses },
 		{ "drain event preservation",
 		  test_preserves_events_raised_while_draining },
 		{ "invalid transitions",
