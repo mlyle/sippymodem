@@ -113,6 +113,8 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	struct v92_pcm_phase4_trn2u trn2u;
 	struct v92_pcm_phase3_cpt_line_handoff receive_handoff;
 	struct v92_phase3_analog_transmit_handoff transmit_handoff;
+	struct v92_cpt_parameters analog_downstream;
+	struct v92_cpt_parameters digital_downstream;
 	uint32_t received_mask = 0u;
 	uint8_t downstream_delay = law == G711_LAW_PCMA ?
 		g711_encode_pcma(0) : g711_encode_pcmu(0);
@@ -221,6 +223,14 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	CHECK(v92_phase3_digital_station_upstream_rate_mask(
 		      &digital, &received_mask) &&
 	      received_mask == rate_mask &&
+	      v92_phase3_analog_station_downstream_handoff(
+		      &analog, &analog_downstream) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      v92_phase3_digital_station_downstream_handoff(
+		      &digital, &digital_downstream) ==
+		      V92_PHASE3_DIGITAL_STATION_OK &&
+	      parameters_match(&analog_downstream, &configuration.cpt) &&
+	      parameters_match(&digital_downstream, &configuration.cpt) &&
 	      v92_phase3_digital_station_receive_handoff(
 		      &digital, &receive_handoff) ==
 		      V92_PHASE3_DIGITAL_STATION_OK &&
@@ -250,6 +260,8 @@ static bool test_analog_contracts(void)
 		.training_constellation = (enum v92_constellation_size)16,
 		.previous_encoded_sign = 1,
 	};
+	struct v92_cpt_parameters downstream;
+	struct v92_cpt_parameters downstream_before;
 	int16_t sample = 1234;
 	static const char *const names[] = {
 		"ok", "complete", "need MD symbol", "failed",
@@ -283,9 +295,16 @@ static bool test_analog_contracts(void)
 	      !v92_phase3_analog_station_receive_complete(&station),
 	      "fresh analogue station contracts differed");
 	before = station;
+	memset(&downstream, 0xa5, sizeof(downstream));
+	downstream_before = downstream;
 	CHECK(v92_phase3_analog_station_transmit_handoff(
 		      &station, &handoff) ==
 		      V92_PHASE3_ANALOG_STATION_INVALID_STATE &&
+	      v92_phase3_analog_station_downstream_handoff(
+		      &station, &downstream) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_STATE &&
+	      memcmp(&downstream, &downstream_before,
+		     sizeof(downstream)) == 0 &&
 	      handoff.lu == 123 &&
 	      handoff.training_constellation ==
 		      (enum v92_constellation_size)16 &&
@@ -302,6 +321,9 @@ static bool test_analog_contracts(void)
 	      v92_phase3_analog_station_receive(NULL, 0u) ==
 		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_analog_station_transmit_handoff(
+		      &station, NULL) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_analog_station_downstream_handoff(
 		      &station, NULL) ==
 		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      memcmp(&station, &before, sizeof(station)) == 0,
@@ -381,6 +403,8 @@ static bool test_digital_contracts(void)
 	};
 	struct v92_phase3_digital_station station;
 	struct v92_phase3_digital_station before;
+	struct v92_cpt_parameters downstream;
+	struct v92_cpt_parameters downstream_before;
 	uint8_t octet = 0u;
 	uint32_t mask = UINT32_C(0xa5a5a5a5);
 	static const char *const names[] = {
@@ -418,16 +442,26 @@ static bool test_digital_contracts(void)
 	      mask == UINT32_C(0xa5a5a5a5),
 	      "fresh digital station contracts differed");
 	before = station;
+	memset(&downstream, 0xa5, sizeof(downstream));
+	downstream_before = downstream;
 	CHECK(v92_phase3_digital_station_transmit(&station, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_OK &&
 	      memcmp(&station, &before, sizeof(station)) == 0 &&
-	      octet == g711_encode_pcmu(0),
+	      octet == g711_encode_pcmu(0) &&
+	      v92_phase3_digital_station_downstream_handoff(
+		      &station, &downstream) ==
+		      V92_PHASE3_DIGITAL_STATION_INVALID_STATE &&
+	      memcmp(&downstream, &downstream_before,
+		     sizeof(downstream)) == 0,
 	      "pre-Ja silence changed digital state");
 	CHECK(v92_phase3_digital_station_transmit(NULL, &octet) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_digital_station_receive(NULL, 0) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_digital_station_receive_handoff(
+		      &station, NULL) ==
+		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v92_phase3_digital_station_downstream_handoff(
 		      &station, NULL) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT,
 	      "invalid digital calls returned the wrong result");

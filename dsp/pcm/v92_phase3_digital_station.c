@@ -566,6 +566,22 @@ bool v92_phase3_digital_station_upstream_rate_mask(
 }
 
 enum v92_phase3_digital_station_result
+v92_phase3_digital_station_downstream_handoff(
+	const struct v92_phase3_digital_station *station,
+	struct v92_cpt_parameters *parameters)
+{
+	if (!v92_phase3_digital_station_is_valid(station) || parameters == NULL)
+		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V92_PHASE3_DIGITAL_STATION_FAILED;
+	if (!v92_phase3_digital_station_transmit_complete(station) ||
+	    !v92_pcm_phase3_cpt_line_rx_parameters(
+		    &station->receive.cpt, parameters))
+		return V92_PHASE3_DIGITAL_STATION_INVALID_STATE;
+	return V92_PHASE3_DIGITAL_STATION_OK;
+}
+
+enum v92_phase3_digital_station_result
 v92_phase3_digital_station_receive_handoff(
 	const struct v92_phase3_digital_station *station,
 	struct v92_pcm_phase3_cpt_line_handoff *handoff)

@@ -532,6 +532,21 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_receive(
 }
 
 enum v92_phase3_analog_station_result
+v92_phase3_analog_station_downstream_handoff(
+	const struct v92_phase3_analog_station *station,
+	struct v92_cpt_parameters *parameters)
+{
+	if (!v92_phase3_analog_station_is_valid(station) || parameters == NULL)
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V92_PHASE3_ANALOG_STATION_FAILED;
+	if (!v92_phase3_analog_station_receive_complete(station))
+		return V92_PHASE3_ANALOG_STATION_INVALID_STATE;
+	*parameters = station->cpt_parameters;
+	return V92_PHASE3_ANALOG_STATION_OK;
+}
+
+enum v92_phase3_analog_station_result
 v92_phase3_analog_station_transmit_handoff(
 	const struct v92_phase3_analog_station *station,
 	struct v92_phase3_analog_transmit_handoff *handoff)

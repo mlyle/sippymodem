@@ -112,6 +112,13 @@ bool v92_phase3_analog_station_transmit_complete(
 bool v92_phase3_analog_station_receive_complete(
 	const struct v92_phase3_analog_station *station);
 
+/* Export the CPt-selected downstream training map after Ri-bar. The upstream
+ * CPt/E1u transmitter may still be finishing independently. */
+enum v92_phase3_analog_station_result
+v92_phase3_analog_station_downstream_handoff(
+	const struct v92_phase3_analog_station *station,
+	struct v92_cpt_parameters *parameters);
+
 /* Export the exact level, Jp-selected constellation, and differential-sign
  * continuity for initial Phase 4 TRN2u. Rejected calls leave handoff
  * unchanged. */

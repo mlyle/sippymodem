@@ -99,6 +99,13 @@ bool v92_phase3_digital_station_receive_complete(
 bool v92_phase3_digital_station_upstream_rate_mask(
 	const struct v92_phase3_digital_station *station,
 	uint32_t *rate_mask);
+
+/* Export the accepted CPt downstream training map after Ri-bar. E1u may
+ * still be traversing the independent upstream receiver. */
+enum v92_phase3_digital_station_result
+v92_phase3_digital_station_downstream_handoff(
+	const struct v92_phase3_digital_station *station,
+	struct v92_cpt_parameters *parameters);
 enum v92_phase3_digital_station_result
 v92_phase3_digital_station_receive_handoff(
 	const struct v92_phase3_digital_station *station,
