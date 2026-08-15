@@ -66,6 +66,12 @@ class LiveCampaignConfigTests(unittest.TestCase):
                 "sip:private@example.invalid",
             )
             self.assertNotIn("SIP_TARGET", config.environment("callback-answer"))
+            self.assertEqual(
+                config.environment("callback-request")["SIP_PORT"], "0"
+            )
+            self.assertEqual(
+                config.environment("callback-answer")["SIP_PORT"], "5060"
+            )
             self.assertEqual(config.callback_request_timeout_seconds, 90)
             self.assertEqual(config.callback_marker_timeout_seconds, 35)
             self.assertEqual(config.callback_return_timeout_seconds, 180)
@@ -126,6 +132,34 @@ class LiveCampaignConfigTests(unittest.TestCase):
             value["candidate"]["executable"] = "../slmodemd"  # type: ignore[index]
             self.write(path, value)
             with self.assertRaisesRegex(CampaignConfigError, "safe relative"):
+                load_campaign_config(path)
+
+    def test_callback_sip_ports_are_role_specific(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "campaign.json"
+            value = self.value(root)
+            request = value["callback_request_environment"]
+            assert isinstance(request, dict)
+            request["SIP_PORT"] = "5060"
+            self.write(path, value)
+            with self.assertRaisesRegex(CampaignConfigError, "nonstandard"):
+                load_campaign_config(path)
+
+            value = self.value(root)
+            answer = value["callback_answer_environment"]
+            assert isinstance(answer, dict)
+            answer["SIP_PORT"] = "5061"
+            self.write(path, value)
+            with self.assertRaisesRegex(CampaignConfigError, "standard port 5060"):
+                load_campaign_config(path)
+
+            value = self.value(root)
+            request = value["callback_request_environment"]
+            assert isinstance(request, dict)
+            request["SIP_PORT"] = "auto"
+            self.write(path, value)
+            with self.assertRaisesRegex(CampaignConfigError, "decimal port"):
                 load_campaign_config(path)
 
 

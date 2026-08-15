@@ -429,7 +429,9 @@ def _environment(
 ) -> dict[str, str]:
     values = config.environment(purpose)
     values["SIP_AUTO_ANSWER"] = "0"
-    if purpose != "callback-answer":
+    if purpose == "callback-answer":
+        values.setdefault("SIP_PORT", "5060")
+    else:
         values.setdefault("SIP_PORT", "0")
         values.setdefault("SIP_RTP_PORT", "0")
     return child_environment(values, recording_prefix)

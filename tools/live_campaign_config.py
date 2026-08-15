@@ -88,6 +88,7 @@ ROOT_KEYS = frozenset(
 BUILD_KEYS = frozenset(
     {"repository", "revision", "command", "executable", "arguments"}
 )
+SIP_STANDARD_PORT = 5060
 
 
 class CampaignConfigError(ValueError):
@@ -210,6 +211,26 @@ def _environment(value: Any, field: str) -> tuple[tuple[str, str], ...]:
     )
 
 
+def _environment_default(
+    environment: tuple[tuple[str, str], ...], key: str, value: str
+) -> tuple[tuple[str, str], ...]:
+    result = dict(environment)
+    result.setdefault(key, value)
+    return tuple(sorted(result.items()))
+
+
+def _sip_port(
+    environment: tuple[tuple[str, str], ...], field: str
+) -> int:
+    value = dict(environment)["SIP_PORT"]
+    if not value.isascii() or not value.isdecimal():
+        raise CampaignConfigError(f"{field}.SIP_PORT must be a decimal port")
+    port = int(value, 10)
+    if port > 65535:
+        raise CampaignConfigError(f"{field}.SIP_PORT is outside its allowed range")
+    return port
+
+
 def _number(value: Any, field: str, minimum: float, maximum: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise CampaignConfigError(f"{field} must be a number")
@@ -304,14 +325,30 @@ def load_campaign_config(path: Path) -> CampaignConfig:
     outbound = _environment(
         value.get("outbound_environment"), "outbound_environment"
     )
-    request = _environment(
-        value.get("callback_request_environment"),
-        "callback_request_environment",
+    request = _environment_default(
+        _environment(
+            value.get("callback_request_environment"),
+            "callback_request_environment",
+        ),
+        "SIP_PORT",
+        "0",
     )
-    answer = _environment(
-        value.get("callback_answer_environment"),
-        "callback_answer_environment",
+    answer = _environment_default(
+        _environment(
+            value.get("callback_answer_environment"),
+            "callback_answer_environment",
+        ),
+        "SIP_PORT",
+        str(SIP_STANDARD_PORT),
     )
+    if _sip_port(request, "callback_request_environment") == SIP_STANDARD_PORT:
+        raise CampaignConfigError(
+            "callback request SIP_PORT must be nonstandard or zero"
+        )
+    if _sip_port(answer, "callback_answer_environment") != SIP_STANDARD_PORT:
+        raise CampaignConfigError(
+            "callback answer SIP_PORT must be the standard port 5060"
+        )
     if enabled:
         if "SIP_TARGET" not in dict(outbound):
             raise CampaignConfigError("outbound environment requires SIP_TARGET")
