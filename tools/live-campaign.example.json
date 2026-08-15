@@ -49,6 +49,6 @@
   "retrain_timeout_seconds": 60,
   "cleanup_timeout_seconds": 5,
   "inter_call_seconds": 7,
-  "busy_retry_seconds": 90,
-  "busy_retry_limit": 3
+  "busy_retry_seconds": 10,
+  "busy_retry_limit": 9
 }

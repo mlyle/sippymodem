@@ -188,9 +188,12 @@ consume a logical attempt: the runner waits the configured busy cooldown and
 retries up to its bound. `NO CARRIER` is always reported as a failed modem
 attempt; the runner does not infer a SIP status that the modem interface did
 not provide. A seven-second inter-call cooldown applies before the first
-attempt and after every non-BUSY attempt. BUSY retries remain separately
-configurable and default to 90 seconds. A failure before any SIP call is placed
-does not consume a line cooldown.
+attempt and after every non-BUSY attempt. BUSY retries use a separate ten-second
+cooldown and make up to nine retries, allowing the line about 90 seconds to
+clear. A failure before any SIP call is placed does not consume a line
+cooldown. The live dashboard uses otherwise unused terminal rows for a compact
+newest-first call ledger; its flags show callback-request, connect, initial
+data, remote retrain, local retrain, and post-retrain data milestones.
 The seed, complete schedule, detailed results, daemon logs, terminal traffic,
 and bounded media recordings remain in an owner-only ignored campaign
 directory. No endpoint, credential, bind address, or recording path is printed

@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import stat
 import sys
 import tempfile
@@ -513,9 +514,7 @@ def _exercise_online(
         state.detail = "remote retrain START marker was not verified"
         return
     state.remote_retrain_nonce = nonce.decode("ascii")
-    progress.set(
-        f"waiting for remote retrain END nonce={state.remote_retrain_nonce}"
-    )
+    progress.set("waiting for remote retrain END")
     remaining = remote_deadline - time.monotonic()
     if remaining <= 0:
         state.detail = "remote retrain exceeded its total deadline"
@@ -926,16 +925,29 @@ def _display(
     current_seconds: float | None = None,
     live: bool,
 ) -> str:
-    dashboard = render_dashboard(
-        cases,
-        attempts,
-        results,
+    arguments = dict(
         revision=revision,
         seed=seed,
         elapsed_seconds=time.monotonic() - started,
         current=current,
         current_seconds=current_seconds,
     )
+    dashboard = render_dashboard(
+        cases,
+        attempts,
+        results,
+        **arguments,
+    )
+    terminal_lines = shutil.get_terminal_size(fallback=(80, 24)).lines
+    recent_limit = max(0, terminal_lines - len(dashboard.splitlines()) - 3)
+    if recent_limit > 0:
+        dashboard = render_dashboard(
+            cases,
+            attempts,
+            results,
+            recent_limit=recent_limit,
+            **arguments,
+        )
     if live:
         sys.stdout.write("\x1b[2J\x1b[H" + dashboard + "\n")
         sys.stdout.flush()

@@ -236,6 +236,40 @@ class LiveCampaignReportTests(unittest.TestCase):
             dashboard,
         )
 
+    def test_dashboard_recent_calls_are_bounded_and_nonce_free(self) -> None:
+        cases = cases_for_suite("smoke")[:3]
+        results = tuple(
+            self.result(
+                case_name=case.name,
+                family=case.family,
+                role=case.role,
+                physical_try=index,
+                connected=True,
+                initial_data=index > 1,
+                remote_retrain_nonce="0123456789abcdef0123456789abcdef",
+                duration_seconds=10.0 + index,
+            )
+            for index, case in enumerate(cases, 1)
+        )
+        dashboard = render_dashboard(
+            cases,
+            1,
+            results,
+            revision="c" * 40,
+            seed=11,
+            elapsed_seconds=33,
+            recent_limit=2,
+        )
+        lines = dashboard.splitlines()
+        recent = lines[lines.index(
+            "Recent calls (newest first): o=originator c=callback l=LAPM r=raw"
+        ) + 2 :]
+        self.assertEqual(len(recent), 2)
+        self.assertTrue(recent[0].startswith("003"))
+        self.assertTrue(recent[1].startswith("002"))
+        self.assertNotIn("0123456789abcdef", dashboard)
+        self.assertLessEqual(max(map(len, recent)), 74)
+
 
 if __name__ == "__main__":
     unittest.main()

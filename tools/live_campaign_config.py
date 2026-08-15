@@ -443,13 +443,13 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             120,
         ),
         busy_retry_seconds=_number(
-            value.get("busy_retry_seconds", 90),
+            value.get("busy_retry_seconds", 10),
             "busy_retry_seconds",
             0,
             300,
         ),
         busy_retry_limit=_integer(
-            value.get("busy_retry_limit", 3),
+            value.get("busy_retry_limit", 9),
             "busy_retry_limit",
             0,
             20,

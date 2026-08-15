@@ -175,6 +175,41 @@ class LiveCampaignTests(unittest.TestCase):
         self.assertTrue(output.getvalue().startswith("\x1b[2J\x1b[H"))
         self.assertIn("for=4s", output.getvalue())
 
+    def test_display_fills_only_spare_terminal_rows_with_recent_calls(self) -> None:
+        case = CASES_BY_NAME["v21-300-originator"]
+        results = tuple(
+            AttemptResult(
+                case_name=case.name,
+                family=case.family,
+                role=case.role,
+                ordinal=index,
+                extra=False,
+                physical_try=1,
+                outcome="complete",
+                connected=True,
+                duration_seconds=float(index),
+            )
+            for index in range(1, 6)
+        )
+        with mock.patch(
+            "tools.live_campaign.shutil.get_terminal_size",
+            return_value=os.terminal_size((80, 14)),
+        ):
+            dashboard = _display(
+                (case,),
+                5,
+                results,
+                revision="a" * 40,
+                seed=1,
+                started=time.monotonic(),
+                current="complete",
+                live=False,
+            )
+        recent = [line for line in dashboard.splitlines() if line[:3].isdigit()]
+        self.assertEqual(len(recent), 3)
+        self.assertLessEqual(len(dashboard.splitlines()), 13)
+        self.assertTrue(recent[0].startswith("005"))
+
     def test_live_ticker_refreshes_until_its_context_exits(self) -> None:
         refreshes: list[float] = []
         with mock.patch("tools.live_campaign.DASHBOARD_REFRESH_SECONDS", 0.01):
@@ -285,6 +320,73 @@ class LiveCampaignTests(unittest.TestCase):
             sleep.assert_not_called()
             self.assertEqual(results, [result])
 
+    def test_busy_retries_every_ten_seconds_for_ninety_seconds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "unused.py"
+            config = replace(
+                self.config(root, script, "pass"),
+                busy_retry_seconds=10,
+                busy_retry_limit=9,
+            )
+            case = CASES_BY_NAME["v21-300-originator"]
+            scheduled = ScheduledAttempt(case, 1)
+            frozen = FrozenBinary(
+                root,
+                Path(sys.executable),
+                "a" * 40,
+                "b" * 64,
+                False,
+            )
+
+            def busy_result(
+                _config: object,
+                _frozen: object,
+                item: ScheduledAttempt,
+                physical_try: int,
+                _artifacts: object,
+                _retrain: bool,
+                _progress: object,
+            ) -> AttemptResult:
+                return AttemptResult(
+                    case_name=item.case.name,
+                    family=item.case.family,
+                    role=item.case.role,
+                    ordinal=item.ordinal,
+                    extra=item.extra,
+                    physical_try=physical_try,
+                    outcome=OUTCOME_BUSY,
+                    line_attempted=True,
+                )
+
+            store = mock.Mock()
+            store.new_attempt.return_value = mock.sentinel.artifacts
+            results: list[AttemptResult] = []
+            with (
+                mock.patch(
+                    "tools.live_campaign.run_physical_attempt",
+                    side_effect=busy_result,
+                ),
+                mock.patch("tools.live_campaign.time.sleep") as sleep,
+                mock.patch("tools.live_campaign.sys.stdout", io.StringIO()),
+            ):
+                _run_schedule(
+                    (scheduled,),
+                    config,
+                    frozen,
+                    store,
+                    (case,),
+                    1,
+                    7,
+                    True,
+                    results,
+                    time.monotonic(),
+                    False,
+                )
+            self.assertEqual(sleep.call_args_list, [mock.call(10)] * 9)
+            self.assertEqual(sum(r.outcome == OUTCOME_BUSY for r in results), 10)
+            self.assertEqual(results[-1].outcome, "unavailable")
+
     def config(
         self,
         root: Path,
@@ -347,15 +449,20 @@ class LiveCampaignTests(unittest.TestCase):
                 "b" * 64,
                 False,
             )
+            progress = _AttemptProgress(case.name)
             with mock.patch("tools.live_terminal.time.sleep"):
-                result = run_physical_attempt(
-                    self.config(root, script, "pass"),
-                    frozen,
-                    scheduled,
-                    1,
-                    artifacts,
-                    True,
-                )
+                with mock.patch.object(
+                    progress, "set", wraps=progress.set
+                ) as set_stage:
+                    result = run_physical_attempt(
+                        self.config(root, script, "pass"),
+                        frozen,
+                        scheduled,
+                        1,
+                        artifacts,
+                        True,
+                        progress,
+                    )
 
             self.assertEqual(result.maturity, MATURITY_FULL)
             self.assertEqual(result.modulation, "V.21")
@@ -365,6 +472,9 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertNotIn(b"0123456789", transmitted)
             self.assertEqual(transmitted.count(b"RETRAIN"), 1)
             self.assertEqual(transmitted.count(b"PING"), 1)
+            stages = [call.args[0] for call in set_stage.call_args_list]
+            self.assertIn("waiting for remote retrain END", stages)
+            self.assertFalse(any("nonce=" in stage for stage in stages))
             detail = json.loads(
                 (artifacts.directory / "result.json").read_text(encoding="utf-8")
             )

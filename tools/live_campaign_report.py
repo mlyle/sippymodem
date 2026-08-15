@@ -233,6 +233,7 @@ def render_dashboard(
     elapsed_seconds: float,
     current: str = "",
     current_seconds: float | None = None,
+    recent_limit: int = 0,
 ) -> str:
     roles = ("originator", "callback")
     families = _families(cases, results)
@@ -341,4 +342,43 @@ def render_dashboard(
         f"{'TOTAL':<12} {total_fields('originator')} | "
         f"{total_fields('callback')}"
     )
+    if recent_limit > 0 and results:
+        cases_by_name = {case.name: case for case in cases}
+        rows.extend(
+            (
+                "Recent calls (newest first): o=originator c=callback l=LAPM r=raw",
+                "Q=request C=connect D=initial R=remote L=local P=post",
+            )
+        )
+        first = max(0, len(results) - recent_limit)
+        for index in range(len(results) - 1, first - 1, -1):
+            result = results[index]
+            case = cases_by_name.get(result.case_name)
+            family = FAMILY_LABELS.get(result.family, result.family)[:7]
+            role = "o" if result.role == "originator" else "c"
+            mode = "l" if case is not None and case.link_mode == "lapm" else "r"
+            receive_rate = result.receive_rate
+            transmit_rate = result.transmit_rate
+            if case is not None:
+                receive_rate = receive_rate or case.receive_rate
+                transmit_rate = transmit_rate or case.transmit_rate
+                symbol_rate = case.symbol_rate
+            else:
+                symbol_rate = None
+            rates = f"{receive_rate or '-'}/{transmit_rate or '-'}@{symbol_rate or '-'}"
+            status = result.maturity or {
+                OUTCOME_INFRASTRUCTURE_ERROR: "infra-error",
+                OUTCOME_UNAVAILABLE: "unavailable",
+            }.get(result.outcome, result.outcome)
+            sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"
+            rows.append(
+                f"{sequence} {role} {family:<7} {rates:<17} {mode} "
+                f"p{result.physical_try:<2} "
+                f"Q{int(result.callback_request_maturity is not None)} "
+                f"C{int(result.connected)} D{int(result.initial_data)} "
+                f"R{int(result.remote_retrain)} "
+                f"L{int(result.retrain_connected)} "
+                f"P{int(result.retrain_data)} "
+                f"{result.duration_seconds:>4.0f}s {status}"
+            )
     return "\n".join(rows)
