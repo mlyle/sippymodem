@@ -38,8 +38,8 @@ v32_7200_constellation_point(
 
 /*
  * Generate a set-partitioned trellis signal point.  The data group contains
- * three through six bits for 7200 through 14400 bit/s respectively; the
- * trellis encoder adds one signal-label bit.
+ * three through six bits for 7200 through 14400 bit/s respectively, including
+ * four bits at 9600 bit/s; the trellis encoder adds one signal-label bit.
  */
 enum v32_constellation_result
 v32_trellis_constellation_point(

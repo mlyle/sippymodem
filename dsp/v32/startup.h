@@ -66,7 +66,7 @@ struct v32_startup {
 	bool selection_expected;
 };
 
-/* Supported rates may contain the uncoded 4800 and 9600 capability bits. */
+/* 4800 is uncoded; enabled rates above 4800 use trellis coding. */
 enum v32_startup_result v32_startup_init(
 	struct v32_startup *startup,
 	enum v32_endpoint_role role, uint8_t supported_rates);

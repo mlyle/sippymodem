@@ -52,6 +52,7 @@ static bool check_role_exchange(
 		.rates = expected_rate,
 		.trellis_at_highest_rate =
 			expected_rate == V32_RATE_CAPABILITY_7200 ||
+			expected_rate == V32_RATE_CAPABILITY_9600 ||
 			expected_rate == V32_RATE_CAPABILITY_12000 ||
 			expected_rate == V32_RATE_CAPABILITY_14400,
 	};
@@ -59,6 +60,7 @@ static bool check_role_exchange(
 		.rates = caller_rates & answerer_rates,
 		.trellis_at_highest_rate =
 			expected_rate == V32_RATE_CAPABILITY_7200 ||
+			expected_rate == V32_RATE_CAPABILITY_9600 ||
 			expected_rate == V32_RATE_CAPABILITY_12000 ||
 			expected_rate == V32_RATE_CAPABILITY_14400,
 	};
@@ -236,12 +238,12 @@ static bool test_rate_selection(void)
 				   V32_RATE_CAPABILITY_9600);
 }
 
-static bool test_uncoded_fallback(void)
+static bool test_uncoded_9600_fallback(void)
 {
-	struct v32_rate_offer trellis_offer = {
+	struct v32_rate_offer uncoded_offer = {
 		.rates = V32_RATE_CAPABILITY_4800 |
 			 V32_RATE_CAPABILITY_9600,
-		.trellis_at_highest_rate = true,
+		.trellis_at_highest_rate = false,
 	};
 	struct v32_startup caller;
 	uint16_t word;
@@ -252,7 +254,7 @@ static bool test_uncoded_fallback(void)
 			      V32_RATE_CAPABILITY_9600) ==
 		      V32_STARTUP_OK &&
 		      v32_rate_signal_encode(
-			      V32_RATE_SIGNAL, &trellis_offer,
+			      V32_RATE_SIGNAL, &uncoded_offer,
 			      &word) == V32_RATE_SIGNAL_OK &&
 		      observe_word(&caller, word) && observe_word(&caller, word) &&
 		      caller.phase == V32_CALLER_SEND_RESPONSE &&
@@ -260,7 +262,7 @@ static bool test_uncoded_fallback(void)
 			      V32_RATE_CAPABILITY_4800 &&
 		      caller.selected_rate == 0 && caller.rate_word == 0x0511 &&
 		      caller.end_word == 0,
-	      "V.32 startup did not fall back from trellis-only 9600");
+	      "V.32 startup did not fall back from uncoded 9600");
 	return true;
 }
 
@@ -291,7 +293,7 @@ static bool test_higher_rate_offer_fallback(void)
 		      (V32_RATE_CAPABILITY_4800 |
 		       V32_RATE_CAPABILITY_7200 |
 		       V32_RATE_CAPABILITY_9600) &&
-	      caller.selected_rate == 0 && caller.rate_word == 0x0f51 &&
+	      caller.selected_rate == 0 && caller.rate_word == 0x0fd1 &&
 	      caller.end_word == 0,
 	      "V.32 startup did not select its highest supported fallback");
 	return true;
@@ -598,7 +600,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "highest common rate", test_rate_selection },
-		{ "uncoded fallback", test_uncoded_fallback },
+		{ "uncoded 9600 fallback", test_uncoded_9600_fallback },
 		{ "higher-rate offer fallback", test_higher_rate_offer_fallback },
 		{ "training boundary", test_training_boundary },
 		{ "selection readiness and rate boundary",

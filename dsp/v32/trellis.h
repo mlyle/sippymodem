@@ -53,8 +53,9 @@ bool v32_trellis_encoder_is_valid(
 	const struct v32_trellis_encoder *encoder);
 
 /*
- * Map one already-scrambled data group to a signal-point label.  V.32bis
- * adds one coded bit, so an n-bit input produces a label below 2^(n + 1).
+ * Map one already-scrambled data group to a signal-point label.  Coded V.32
+ * and V.32bis modes add one bit, so an n-bit input produces a label below
+ * 2^(n + 1).
  */
 enum v32_trellis_result v32_trellis_encode(
 	struct v32_trellis_encoder *encoder, uint8_t data,

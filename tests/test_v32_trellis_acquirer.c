@@ -132,6 +132,7 @@ static bool test_generated_phase_acquisition(void)
 {
 	static const uint8_t widths[] = {
 		V32_7200_DATA_BITS,
+		V32_9600_TRELLIS_DATA_BITS,
 		V32_12000_DATA_BITS,
 		V32_14400_DATA_BITS,
 	};

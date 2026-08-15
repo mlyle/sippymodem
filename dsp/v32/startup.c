@@ -20,6 +20,7 @@ static uint8_t highest_rate(uint8_t rates);
 static bool rate_requires_trellis(uint8_t rate)
 {
 	return rate == V32_RATE_CAPABILITY_7200 ||
+	       rate == V32_RATE_CAPABILITY_9600 ||
 	       rate == V32_RATE_CAPABILITY_12000 ||
 	       rate == V32_RATE_CAPABILITY_14400;
 }
@@ -385,7 +386,7 @@ static uint8_t compatible_rates(
 {
 	uint8_t common = startup->supported_rates & offer->rates;
 
-	if (offer->trellis_at_highest_rate &&
+	if (!offer->trellis_at_highest_rate &&
 	    highest_rate(offer->rates) == V32_RATE_CAPABILITY_9600)
 		common &= (uint8_t)~highest_rate(offer->rates);
 	return common;

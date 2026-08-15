@@ -331,6 +331,8 @@ static uint8_t selected_trellis_data_bits(
 	switch (datapump->startup.selected_rate) {
 	case V32_RATE_CAPABILITY_7200:
 		return V32_7200_DATA_BITS;
+	case V32_RATE_CAPABILITY_9600:
+		return V32_9600_TRELLIS_DATA_BITS;
 	case V32_RATE_CAPABILITY_12000:
 		return V32_12000_DATA_BITS;
 	case V32_RATE_CAPABILITY_14400:
@@ -345,10 +347,10 @@ static bool uses_trellis(const struct v32_datapump *datapump)
 	return selected_trellis_data_bits(datapump) != 0;
 }
 
-static bool uses_9600(const struct v32_datapump *datapump)
+static bool uses_uncoded_9600(const struct v32_datapump *datapump)
 {
-	return datapump->startup.selected_rate ==
-	       V32_RATE_CAPABILITY_9600;
+	return datapump->startup.selected_rate == V32_RATE_CAPABILITY_9600 &&
+	       !uses_trellis(datapump);
 }
 
 static bool trellis_receiver_is_valid(
@@ -396,7 +398,8 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	      datapump->trellis_encoder.data_bits_per_symbol !=
 		      trellis_data_bits)) ||
 	    datapump->receiver_9600_initialized !=
-		    (uses_9600(datapump) && datapump->startup.end_received) ||
+		    (uses_uncoded_9600(datapump) &&
+		     datapump->startup.end_received) ||
 	    (datapump->receiver_9600_initialized &&
 	     !v32_9600_receiver_is_valid(
 		     &datapump->receiver_9600)) ||
@@ -591,7 +594,7 @@ static int next_transmit_point(
 				return -1;
 			*linked = true;
 		}
-		if (uses_9600(datapump))
+		if (uses_uncoded_9600(datapump))
 			bit_count = V32_9600_BITS_PER_SYMBOL;
 		else if (trellis_data_bits != 0)
 			bit_count = trellis_data_bits;
@@ -603,7 +606,7 @@ static int next_transmit_point(
 		input = pack_bits(bits, bit_count);
 	}
 	if (output == V32_STARTUP_SELECTED_RATE_MARK &&
-	    uses_9600(datapump))
+	    uses_uncoded_9600(datapump))
 		input = 15;
 	if (output == V32_STARTUP_SELECTED_RATE_MARK &&
 	    trellis_data_bits != 0)
@@ -613,7 +616,7 @@ static int next_transmit_point(
 	     output == V32_STARTUP_DATA)) {
 		if (encode_trellis_transmit_point(datapump, input) != 0)
 			return -1;
-	} else if (uses_9600(datapump) &&
+	} else if (uses_uncoded_9600(datapump) &&
 	    (output == V32_STARTUP_SELECTED_RATE_MARK ||
 	     output == V32_STARTUP_DATA)) {
 		framing_result = v32_9600_symbol_encode(
@@ -794,7 +797,8 @@ static int enter_link(struct v32_datapump *datapump)
 	    (uses_trellis(datapump) &&
 	     (!datapump->trellis_receiver_initialized ||
 	      !datapump->trellis_encoder_initialized)) ||
-	    (uses_9600(datapump) && !datapump->receiver_9600_initialized))
+	    (uses_uncoded_9600(datapump) &&
+	     !datapump->receiver_9600_initialized))
 		return -1;
 	if (uses_trellis(datapump)) {
 		if (v32_trellis_acquirer_select(
@@ -913,7 +917,7 @@ static int observe_dibit(
 	const struct qam_point *point, bool *linked)
 {
 	if (datapump->linked) {
-		if (uses_9600(datapump) || uses_trellis(datapump))
+		if (uses_uncoded_9600(datapump) || uses_trellis(datapump))
 			return -1;
 		deliver_bits(
 			datapump, dibit, V32_4800_BITS_PER_SYMBOL);
@@ -948,7 +952,7 @@ static int observe_dibit(
 		    datapump->startup.end_received) {
 			if (initialize_trellis_receiver(datapump, point) != 0)
 				return -1;
-		} else if (uses_9600(datapump) && !end_was_received &&
+		} else if (uses_uncoded_9600(datapump) && !end_was_received &&
 			   datapump->startup.end_received) {
 			if (v32_9600_receiver_init(
 				    &datapump->receiver_9600, &datapump->decoder,
