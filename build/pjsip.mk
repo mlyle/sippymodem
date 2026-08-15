@@ -73,16 +73,16 @@ pjsip: $(PJSIP_PC_FILE)
 
 pjsip-required: pjsip
 
-$(PJSIP_CONFIGURE_STAMP): build/pjsip.mk \
+$(PJSIP_CONFIGURE_STAMP): build/compiler.mk build/pjsip.mk \
 	$(PJSIP_SOURCE_DIR)/aconfigure | $(PJSIP_BUILD_DIR)
-	cd $(PJSIP_SOURCE_DIR) && ./configure \
+	cd $(PJSIP_SOURCE_DIR) && CC="$(CC)" CXX="$(CXX)" ./configure \
 		--prefix="$(PJSIP_PREFIX)" $(PJSIP_CONFIGURE_OPTIONS)
 	touch "$@"
 
 $(PJSIP_PC_FILE): $(PJSIP_CONFIGURE_STAMP)
-	$(MAKE) -C $(PJSIP_SOURCE_DIR) dep
-	$(MAKE) -C $(PJSIP_SOURCE_DIR) lib
-	$(MAKE) -C $(PJSIP_SOURCE_DIR) install
+	$(MAKE) -C $(PJSIP_SOURCE_DIR) CC="$(CC)" CXX="$(CXX)" dep
+	$(MAKE) -C $(PJSIP_SOURCE_DIR) CC="$(CC)" CXX="$(CXX)" lib
+	$(MAKE) -C $(PJSIP_SOURCE_DIR) CC="$(CC)" CXX="$(CXX)" install
 	test -f "$@"
 else
 pjsip:

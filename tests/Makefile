@@ -1,4 +1,5 @@
-CC ?= cc
+include ../build/compiler.mk
+
 PYTHON ?= python3
 CPPFLAGS ?=
 CFLAGS ?= -O2 -g
@@ -3198,6 +3199,7 @@ test: $(TEST_BINARIES)
 	$(PYTHON) test_fast_matrix.py
 	$(PYTHON) test_fast_interop.py
 	$(PYTHON) test_live_terminal.py
+	$(PYTHON) test_build_compiler.py
 	$(PYTHON) test_revision_build.py
 	$(PYTHON) test_live_campaign_profiles.py
 	$(PYTHON) test_live_campaign_config.py

@@ -11,7 +11,8 @@
 #
 ###########################################################################
 
-CC ?= cc
+include ../build/compiler.mk
+
 CPPFLAGS ?=
 CFLAGS ?= -O2 -g
 LDFLAGS ?=

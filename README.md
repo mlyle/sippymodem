@@ -114,6 +114,9 @@ a system `libpjproject` discovered through `pkg-config`. Set
 `PJSIP_PROVIDER=submodule`, `system`, or `none` to make that choice explicit;
 the default is `auto`. `make test` continues to run the dependency-free native
 suite and reports a clear SIP signaling skip when neither provider is present.
+When `ccache` is installed, all normal, test, and bundled-library compiles use
+it automatically with a repository-local cache under `.build/ccache`. Set
+`CCACHE=` to disable it or `CCACHE_DIR` to select another cache location.
 
 Configure the daemon through the validated `SIP_*` environment variables, and
 run `./src/slmodemd` without a hardware-device argument or helper process. Set

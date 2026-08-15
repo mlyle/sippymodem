@@ -1,19 +1,23 @@
+include build/compiler.mk
 include build/pjsip.mk
 
 .PHONY: all clean install-hooks live-call slmodemd test
 
 all: pjsip-required
-	$(MAKE) -C src $(PJSIP_SUBMAKE_OPTIONS) all
+	$(MAKE) -C src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \
+		$(PJSIP_SUBMAKE_OPTIONS) all
 
 slmodemd: pjsip-required
-	$(MAKE) -C src $(PJSIP_SUBMAKE_OPTIONS) $@
+	$(MAKE) -C src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \
+		$(PJSIP_SUBMAKE_OPTIONS) $@
 
 clean:
-	$(MAKE) -C src clean
-	$(MAKE) -C tests clean
+	$(MAKE) -C src CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" clean
+	$(MAKE) -C tests CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" clean
 
 test: pjsip
-	$(MAKE) -C tests $(PJSIP_SUBMAKE_OPTIONS) test
+	$(MAKE) -C tests CC="$(CC)" CXX="$(CXX)" CCACHE="$(CCACHE)" \
+		$(PJSIP_SUBMAKE_OPTIONS) test
 
 live-call:
 	python3 tools/live_campaign.py
