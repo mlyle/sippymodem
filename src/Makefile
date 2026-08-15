@@ -187,6 +187,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_digital_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase3_j_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_su.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_su_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpt.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpu.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd.c \
