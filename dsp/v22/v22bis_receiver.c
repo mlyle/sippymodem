@@ -39,20 +39,6 @@ bool v22bis_receiver_is_valid(
 	       qam_gain_is_valid(&receiver->gain);
 }
 
-static struct qam_point quadrant_point(uint8_t quadrant)
-{
-	switch (quadrant) {
-	case 0:
-		return (struct qam_point){ 1.0, 0.0 };
-	case 1:
-		return (struct qam_point){ 0.0, 1.0 };
-	case 2:
-		return (struct qam_point){ -1.0, 0.0 };
-	default:
-		return (struct qam_point){ 0.0, -1.0 };
-	}
-}
-
 static double squared_error(
 	const struct qam_point *left,
 	const struct qam_point *right)
@@ -68,10 +54,13 @@ enum v22bis_receiver_result v22bis_receiver_init(
 	const struct qam_point *reference_point)
 {
 	struct v22bis_receiver next = { 0 };
+	struct qam_point ideal;
 
 	if (receiver == NULL ||
-	    qam_gain_init(
-		    &next.gain, reference_point,
+	    v22bis_1200_constellation_point(0, &ideal) !=
+		    V22_FRAMING_OK ||
+	    qam_gain_init_from_reference(
+		    &next.gain, reference_point, &ideal,
 		    V22BIS_CHANNEL_ADAPTATION) != QAM_GAIN_OK ||
 	    v22bis_symbol_decoder_init(&next.decoder, 0) !=
 		    V22_FRAMING_OK)
@@ -95,11 +84,13 @@ v22bis_receiver_matches_v22(
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	for (uint8_t quadrant = 0;
 	     quadrant < QPSK_QUADRANT_COUNT; ++quadrant) {
-		struct qam_point ideal = quadrant_point(quadrant);
+		struct qam_point ideal;
 		struct qam_point predicted;
 		double error;
 
-		if (qam_gain_predict(
+		if (v22bis_1200_constellation_point(quadrant, &ideal) !=
+			    V22_FRAMING_OK ||
+		    qam_gain_predict(
 			    &receiver->gain, &ideal, &predicted) !=
 		    QAM_GAIN_OK)
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
@@ -129,7 +120,9 @@ v22bis_receiver_track_v22(
 	next = *receiver;
 	next.decoder.phase_quadrant =
 		(uint8_t)((next.decoder.phase_quadrant + quarter_turns) & 3u);
-	ideal = quadrant_point(next.decoder.phase_quadrant);
+	if (v22bis_1200_constellation_point(
+		    next.decoder.phase_quadrant, &ideal) != V22_FRAMING_OK)
+		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	if (qam_gain_init_from_reference(
 		    &next.gain, point, &ideal, V22BIS_CHANNEL_ADAPTATION) !=
 	    QAM_GAIN_OK)

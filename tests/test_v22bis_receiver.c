@@ -29,20 +29,6 @@ static struct qam_point complex_multiply(
 	};
 }
 
-static struct qam_point quadrant_point(uint8_t quadrant)
-{
-	switch (quadrant) {
-	case 0:
-		return (struct qam_point){ 1.0, 0.0 };
-	case 1:
-		return (struct qam_point){ 0.0, 1.0 };
-	case 2:
-		return (struct qam_point){ -1.0, 0.0 };
-	default:
-		return (struct qam_point){ 0.0, -1.0 };
-	}
-}
-
 static double fixture_noise(uint32_t *random)
 {
 	double unit = (double)(fixture_random(random) & UINT32_C(0xffff)) /
@@ -60,16 +46,18 @@ static bool check_rotation(uint8_t initial_quadrant)
 	struct v22bis_symbol_encoder encoder;
 	struct v22bis_receiver receiver;
 	struct qam_point channel = { 0.72, -0.31 };
-	struct qam_point reference =
-		quadrant_point(initial_quadrant);
-	struct qam_point received_reference =
-		complex_multiply(&channel, &reference);
+	struct qam_point reference;
+	struct qam_point received_reference;
 	uint32_t random = UINT32_C(0x2400a11f) + initial_quadrant;
 
-	CHECK(v22bis_symbol_encoder_init(
-		      &encoder, initial_quadrant) ==
-		      V22_FRAMING_OK &&
-		      v22bis_receiver_init(
+	CHECK(v22bis_1200_constellation_point(
+		      initial_quadrant, &reference) == V22_FRAMING_OK &&
+		      v22bis_symbol_encoder_init(
+			      &encoder, initial_quadrant) == V22_FRAMING_OK,
+	      "V.22bis receiver rotation %u reference was not generated",
+	      initial_quadrant);
+	received_reference = complex_multiply(&channel, &reference);
+	CHECK(v22bis_receiver_init(
 			      &receiver, &received_reference) ==
 			      V22BIS_RECEIVER_OK,
 	      "V.22bis receiver rotation %u did not initialize",
@@ -117,6 +105,51 @@ static bool test_channel_tracking(void)
 	return true;
 }
 
+static struct qam_point add_relative_error(
+	const struct qam_point *point, double error_amplitude)
+{
+	return (struct qam_point){
+		.in_phase =
+			point->in_phase - point->quadrature * error_amplitude,
+		.quadrature =
+			point->quadrature + point->in_phase * error_amplitude,
+	};
+}
+
+static bool test_v22_match_threshold(void)
+{
+	struct v22bis_receiver receiver;
+	struct qam_point channel = { 0.61, 0.27 };
+	struct qam_point ideal;
+	struct qam_point received;
+	struct qam_point near;
+	struct qam_point far;
+	bool matches = false;
+
+	CHECK(v22bis_1200_constellation_point(0, &ideal) ==
+		      V22_FRAMING_OK,
+	      "V.22bis match reference was not generated");
+	received = complex_multiply(&channel, &ideal);
+	near = add_relative_error(&received, 0.28);
+	far = add_relative_error(&received, 0.29);
+	CHECK(v22bis_receiver_init(&receiver, &received) ==
+		      V22BIS_RECEIVER_OK &&
+		      fabs(receiver.gain.channel_gain.in_phase -
+			   channel.in_phase) <= 1e-12 &&
+		      fabs(receiver.gain.channel_gain.quadrature -
+			   channel.quadrature) <= 1e-12 &&
+		      v22bis_receiver_matches_v22(
+			      &receiver, &near, &matches) ==
+			      V22BIS_RECEIVER_OK &&
+		      matches,
+	      "V.22bis receiver did not normalize the 01 reference ray");
+	CHECK(v22bis_receiver_matches_v22(
+		      &receiver, &far, &matches) == V22BIS_RECEIVER_OK &&
+		      !matches,
+	      "V.22bis receiver accepted excessive V.22 reference error");
+	return true;
+}
+
 static bool test_v22_transition_tracking(void)
 {
 	static const uint8_t turns[] = { 1, 3, 0, 2, 3, 1, 1, 0 };
@@ -124,17 +157,23 @@ static bool test_v22_transition_tracking(void)
 	struct v22bis_receiver receiver;
 	struct qam_point channel = { 0.61, 0.27 };
 	uint8_t quadrant = 2;
-	struct qam_point ideal = quadrant_point(quadrant);
-	struct qam_point received =
-		complex_multiply(&channel, &ideal);
+	struct qam_point ideal;
+	struct qam_point received;
 	bool matches = false;
 
+	CHECK(v22bis_1200_constellation_point(quadrant, &ideal) ==
+		      V22_FRAMING_OK,
+	      "V.22bis transition reference was not generated");
+	received = complex_multiply(&channel, &ideal);
 	CHECK(v22bis_receiver_init(&receiver, &received) ==
 		      V22BIS_RECEIVER_OK,
 	      "V.22bis transition receiver did not initialize");
 	for (size_t index = 0; index < ARRAY_LENGTH(turns); ++index) {
 		quadrant = (uint8_t)((quadrant + turns[index]) & 3u);
-		ideal = quadrant_point(quadrant);
+		CHECK(v22bis_1200_constellation_point(
+			      quadrant, &ideal) == V22_FRAMING_OK,
+		      "V.22bis transition point was not generated at %zu",
+		      index);
 		received = complex_multiply(&channel, &ideal);
 		CHECK(v22bis_receiver_matches_v22(
 			      &receiver, &received, &matches) ==
@@ -145,15 +184,15 @@ static bool test_v22_transition_tracking(void)
 				      V22BIS_RECEIVER_OK,
 		      "V.22 reference tracking failed at symbol %zu", index);
 	}
-	{
+	CHECK(v22bis_symbol_encoder_init(&encoder, quadrant) ==
+		      V22_FRAMING_OK,
+	      "V.22bis transition encoder did not initialize");
+	for (size_t index = 0; index < 64; ++index) {
 		uint8_t bits[4] = { 1, 1, 1, 1 };
 		uint8_t decoded[4];
 		uint8_t symbol;
 
-		CHECK(v22bis_symbol_encoder_init(
-			      &encoder, quadrant) ==
-			      V22_FRAMING_OK &&
-			      v22bis_symbol_encode(
+		CHECK(v22bis_symbol_encode(
 				      &encoder, bits, &symbol) ==
 				      V22_FRAMING_OK &&
 			      v22bis_constellation_point(
@@ -161,19 +200,22 @@ static bool test_v22_transition_tracking(void)
 				      V22_FRAMING_OK,
 		      "V.22bis transition symbol was not generated");
 		received = complex_multiply(&channel, &ideal);
-		CHECK(v22bis_receiver_matches_v22(
-			      &receiver, &received, &matches) ==
-			      V22BIS_RECEIVER_OK &&
-			      !matches &&
-			      v22bis_receiver_decode(
+		if (index == 0)
+			CHECK(v22bis_receiver_matches_v22(
+				      &receiver, &received, &matches) ==
+				      V22BIS_RECEIVER_OK &&
+				      !matches,
+			      "V.22bis transition was not detected");
+		CHECK(v22bis_receiver_decode(
 				      &receiver, &received, decoded) ==
 				      V22BIS_RECEIVER_OK &&
-			      memcmp(bits, decoded, sizeof(bits)) == 0 &&
-			      v22bis_receiver_track_v22(
-				      &receiver, 0, &received) ==
-				      V22BIS_RECEIVER_INVALID_ARGUMENT,
-		      "V.22bis transition was not detected cleanly");
+			      memcmp(bits, decoded, sizeof(bits)) == 0,
+		      "V.22bis confirmation failed at symbol %zu", index);
 	}
+	CHECK(v22bis_receiver_track_v22(
+		      &receiver, 0, &received) ==
+		      V22BIS_RECEIVER_INVALID_ARGUMENT,
+	      "V.22bis receiver resumed V.22 tracking after transition");
 	return true;
 }
 
@@ -234,6 +276,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "adaptive channel tracking", test_channel_tracking },
+		{ "V.22 reference threshold", test_v22_match_threshold },
 		{ "V.22 transition tracking", test_v22_transition_tracking },
 		{ "validation", test_validation },
 	};
