@@ -186,13 +186,20 @@ int modem_async_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 	return ret;
 }
 
+void modem_async_reframe(struct modem *m)
+{
+	m->pack.bit = 0;
+	m->pack.data = 0;
+	m->packer.async.receive_state = ASYNC_RECEIVE_HUNT_START;
+	m->packer.async.receive_bit_count = 0;
+	m->packer.async.receive_data = 0;
+}
+
 void modem_async_start(struct modem *m)
 {
 	m->pack.bit  = m->unpack.bit  = 0;
 	m->pack.data = m->unpack.data = 0;
-	m->packer.async.receive_state = ASYNC_RECEIVE_HUNT_START;
-	m->packer.async.receive_bit_count = 0;
-	m->packer.async.receive_data = 0;
+	modem_async_reframe(m);
         m->bit_timer_func = NULL;
 	m->bit_timer = 0;
 }

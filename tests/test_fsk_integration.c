@@ -33,6 +33,8 @@ enum {
 	NEGOTIATED_TRAINING_FRAME_LIMIT = 500,
 	LINK_DRAIN_FRAME_LIMIT = 400,
 	DATA_FRAME_LIMIT = 400,
+	RETRAIN_FRAME_LIMIT = 500,
+	RETRAIN_RESPONSE_LOSS_FRAMES = 70,
 	V32_MIN_HALF_DUPLEX_GAP_FRAMES = 16,
 	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
 };
@@ -70,7 +72,11 @@ struct modem_test_case {
 	bool requires_v8;
 	bool requires_exact_g711;
 	bool test_prelink;
+	bool test_retrain;
+	bool raw_transport;
 };
+
+extern int process_at_command(struct modem *modem, char *command);
 
 static int start_modem(struct modem *modem)
 {
@@ -314,11 +320,161 @@ static bool process_sip_frame(
 	       deliver_media_frame(answerer, caller, codec, recorder);
 }
 
+static bool process_sip_frame_with_loss(
+	struct integration_endpoint *caller,
+	struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder,
+	bool block_caller_to_answerer, bool block_answerer_to_caller)
+{
+	return process_transmit_frame(caller, codec, recorder) &&
+	       process_transmit_frame(answerer, codec, recorder) &&
+	       (block_caller_to_answerer ?
+			endpoint_prepare_media(answerer, codec) :
+			deliver_media_frame(
+				caller, answerer, codec, recorder)) &&
+	       (block_answerer_to_caller ?
+			endpoint_prepare_media(caller, codec) :
+			deliver_media_frame(
+				answerer, caller, codec, recorder));
+}
+
 static bool modem_is_online(const struct modem *modem, enum DP_ID id)
 {
 	return modem != NULL && modem->started && modem->dp != NULL &&
 	       modem->dp->id == id && modem->dp->status == DPSTAT_CONNECT &&
 	       modem->get_bits != NULL && modem->put_bits != NULL;
+}
+
+static bool exercise_retrain(
+	struct integration_endpoint *caller,
+	struct integration_endpoint *answerer,
+	struct integration_endpoint *initiator,
+	enum DP_ID id, unsigned int bit_rate,
+	enum media_codec codec,
+	const struct media_recorder *recorder,
+	unsigned int sequence, bool raw_transport, bool lose_first_response)
+{
+	enum { TEST_STATE_COMMAND_ONLINE = 6 };
+	static const uint8_t caller_payloads[][8] = {
+		{ 'c', 'a', 'l', 'l', '-', 'r', '1', 0x81 },
+		{ 'c', 'a', 'l', 'l', '-', 'r', '2', 0x82 },
+	};
+	static const uint8_t answerer_payloads[][8] = {
+		{ 'a', 'n', 's', '-', 'r', '1', 0x00, 0xfe },
+		{ 'a', 'n', 's', '-', 'r', '2', 0x01, 0xff },
+	};
+	bool completed = false;
+	bool transferred = false;
+	char command[] = "ATO1";
+	uint8_t partial_payload[5] = { 'p', 'a', 'r', 't', '!' };
+	size_t partial_length;
+
+	if (caller == NULL || answerer == NULL || initiator == NULL ||
+	    sequence >= ARRAY_LENGTH(caller_payloads))
+		return false;
+	caller->output_count = 0;
+	answerer->output_count = 0;
+	partial_length = (bit_rate / 50u + 9u) / 10u;
+	if (raw_transport &&
+	    (partial_length == 0 || partial_length > sizeof(partial_payload) ||
+	     modem_write(
+		     caller->modem, (const char *)partial_payload,
+		     (int)partial_length) != (int)partial_length ||
+	     modem_write(
+		     answerer->modem, (const char *)partial_payload,
+		     (int)partial_length) != (int)partial_length ||
+	     !process_sip_frame(caller, answerer, codec, recorder) ||
+	     !endpoint_drain(caller) || !endpoint_drain(answerer))) {
+		fprintf(stderr, "partial-character retrain setup failed\n");
+		return false;
+	}
+	caller->output_count = 0;
+	answerer->output_count = 0;
+	initiator->modem->state = TEST_STATE_COMMAND_ONLINE;
+	initiator->modem->command = 1;
+	if (process_at_command(initiator->modem, command) != 1 ||
+	    initiator->modem->retrain_pending == 0 ||
+	    !endpoint_drain(caller) || !endpoint_drain(answerer) ||
+	    caller->output_count != 0 || answerer->output_count != 0) {
+		fprintf(stderr,
+			"retrain request failed (pending=%u outputs=%zu/%zu)\n",
+			initiator->modem->retrain_pending,
+			caller->output_count, answerer->output_count);
+		return false;
+	}
+	for (unsigned int frame = 0; frame < RETRAIN_FRAME_LIMIT; ++frame) {
+		bool losing_response = lose_first_response &&
+			frame < RETRAIN_RESPONSE_LOSS_FRAMES;
+		bool block_caller_to_answerer = losing_response &&
+			initiator == answerer;
+		bool block_answerer_to_caller = losing_response &&
+			initiator == caller;
+
+		if (!process_sip_frame_with_loss(
+			    caller, answerer, codec, recorder,
+			    block_caller_to_answerer,
+			    block_answerer_to_caller) ||
+		    !endpoint_drain(caller) || !endpoint_drain(answerer))
+			return false;
+		if (initiator->modem->retrain_pending == 0 &&
+		    modem_is_online(caller->modem, id) &&
+		    modem_is_online(answerer->modem, id)) {
+			completed = true;
+			break;
+		}
+	}
+	if (!completed ||
+	    !output_contains_connect(initiator, bit_rate)) {
+		fprintf(stderr,
+			"retrain carrier failed (completed=%d pending=%u "
+			"status=%u/%u state=%u/%u outputs=%zu/%zu)\n",
+			completed, initiator->modem->retrain_pending,
+			caller->modem->dp != NULL ? caller->modem->dp->status : 0,
+			answerer->modem->dp != NULL ? answerer->modem->dp->status : 0,
+			caller->modem->state, answerer->modem->state,
+			caller->output_count, answerer->output_count);
+		return false;
+	}
+	caller->output_count = 0;
+	answerer->output_count = 0;
+	if (modem_write(
+		    caller->modem,
+		    (const char *)caller_payloads[sequence],
+		    (int)sizeof(caller_payloads[sequence])) !=
+		    (int)sizeof(caller_payloads[sequence]) ||
+	    modem_write(
+		    answerer->modem,
+		    (const char *)answerer_payloads[sequence],
+		    (int)sizeof(answerer_payloads[sequence])) !=
+		    (int)sizeof(answerer_payloads[sequence]))
+		return false;
+	for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
+		if (!process_sip_frame(caller, answerer, codec, recorder) ||
+		    !endpoint_drain(caller) || !endpoint_drain(answerer))
+			return false;
+		if (caller->output_count >= sizeof(answerer_payloads[sequence]) &&
+		    answerer->output_count >= sizeof(caller_payloads[sequence])) {
+			transferred = true;
+			break;
+		}
+	}
+	if (!transferred ||
+	    caller->output_count != sizeof(answerer_payloads[sequence]) ||
+	    answerer->output_count != sizeof(caller_payloads[sequence]) ||
+	    memcmp(caller->output, answerer_payloads[sequence],
+		   sizeof(answerer_payloads[sequence])) != 0 ||
+	    memcmp(answerer->output, caller_payloads[sequence],
+		   sizeof(caller_payloads[sequence])) != 0) {
+		fprintf(stderr,
+			"post-retrain data failed (transferred=%d outputs=%zu/%zu "
+			"status=%u/%u state=%u/%u)\n",
+			transferred, caller->output_count, answerer->output_count,
+			caller->modem->dp != NULL ? caller->modem->dp->status : 0,
+			answerer->modem->dp != NULL ? answerer->modem->dp->status : 0,
+			caller->modem->state, answerer->modem->state);
+		return false;
+	}
+	return true;
 }
 
 static bool run_media_call(
@@ -361,6 +517,8 @@ static bool run_media_call(
 			(uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT :
 				   TRAINING_FRAME_LIMIT);
 	int selection_length = (int)strlen(test_case->selection_command);
+	static const char raw_command[] = "AT\\N0\r";
+	static const char no_compression_command[] = "AT+DS=0,0\r";
 
 	CHECK(datapumps_start(&datapumps) ==
 		      DATAPUMPS_OK,
@@ -384,6 +542,39 @@ static bool run_media_call(
 		      MODEM_AUTOMODE(caller.modem) == 0 &&
 		      MODEM_AUTOMODE(answerer.modem) == 0,
 	      "source-built modem did not default to its available capability");
+	if (test_case->raw_transport) {
+		CHECK(modem_write(
+			      caller.modem, raw_command,
+			      (int)(sizeof(raw_command) - 1u)) ==
+			      (int)(sizeof(raw_command) - 1u) &&
+		      modem_write(
+			      answerer.modem, raw_command,
+			      (int)(sizeof(raw_command) - 1u)) ==
+			      (int)(sizeof(raw_command) - 1u) &&
+		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
+		      output_contains(&caller, "OK") &&
+		      output_contains(&answerer, "OK"),
+		      "%s did not accept raw transport", test_case->name);
+		caller.output_count = 0;
+		answerer.output_count = 0;
+	}
+	if (test_case->test_retrain) {
+		CHECK(modem_write(
+			      caller.modem, no_compression_command,
+			      (int)(sizeof(no_compression_command) - 1u)) ==
+			      (int)(sizeof(no_compression_command) - 1u) &&
+		      modem_write(
+			      answerer.modem, no_compression_command,
+			      (int)(sizeof(no_compression_command) - 1u)) ==
+			      (int)(sizeof(no_compression_command) - 1u) &&
+		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
+		      output_contains(&caller, "OK") &&
+		      output_contains(&answerer, "OK"),
+		      "%s did not disable compression for the retrain test",
+		      test_case->name);
+		caller.output_count = 0;
+		answerer.output_count = 0;
+	}
 	CHECK(modem_write(
 		      caller.modem, test_case->selection_command,
 		      selection_length) == selection_length &&
@@ -555,6 +746,26 @@ static bool run_media_call(
 	      caller.output_count != 0 ? caller.output[0] : 0,
 	      answerer.output_count,
 	      answerer.output_count != 0 ? answerer.output[0] : 0);
+	if (test_case->test_retrain) {
+		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
+		      answerer.modem->cfg.ec == !test_case->raw_transport,
+		      "%s did not retain its requested transport", test_case->name);
+		CHECK(exercise_retrain(
+			      &caller, &answerer, &caller, test_case->id,
+			      test_case->caller_rx_rate, codec, &recorder, 0,
+			      test_case->raw_transport,
+			      test_case->id == DP_V22BIS &&
+				      test_case->raw_transport &&
+				      codec == MEDIA_CODEC_PCMU),
+		      "%s caller retrain did not reconnect and pass data",
+		      test_case->name);
+		CHECK(exercise_retrain(
+			      &caller, &answerer, &answerer, test_case->id,
+			      test_case->answerer_rx_rate, codec, &recorder, 1,
+			      test_case->raw_transport, false),
+		      "%s answerer retrain did not reconnect and pass data",
+		      test_case->name);
+	}
 	CHECK(!capture.invalid &&
 		      capture.blocks[RECORD_TX_LINE_PCM] != 0 &&
 		      capture.blocks[
@@ -947,17 +1158,19 @@ int main(void)
 		},
 		{
 			.id = DP_V22,
-			.name = "V.22 600",
+			.name = "V.22 600 raw retrain",
 			.selection_command = "AT+MS=22,0,600,600\r",
 			.caller_tx_rate = V22_600_BIT_RATE,
 			.caller_rx_rate = V22_600_BIT_RATE,
 			.answerer_tx_rate = V22_600_BIT_RATE,
 			.answerer_rx_rate = V22_600_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.test_retrain = true,
+			.raw_transport = true,
 		},
 		{
 			.id = DP_V22,
-			.name = "V.22",
+			.name = "V.22 raw retrain",
 			.selection_command = "AT+MS=22,1,1200,1200\r",
 			.caller_tx_rate = V22_1200_BIT_RATE,
 			.caller_rx_rate = V22_1200_BIT_RATE,
@@ -965,10 +1178,12 @@ int main(void)
 			.answerer_rx_rate = V22_1200_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
+			.test_retrain = true,
+			.raw_transport = true,
 		},
 		{
 			.id = DP_V22BIS,
-			.name = "V.22bis",
+			.name = "V.22bis raw retrain",
 			.selection_command = "AT+MS=122,1,2400,2400\r",
 			.caller_tx_rate = V22BIS_BIT_RATE,
 			.caller_rx_rate = V22BIS_BIT_RATE,
@@ -976,6 +1191,41 @@ int main(void)
 			.answerer_rx_rate = V22BIS_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
+			.test_retrain = true,
+			.raw_transport = true,
+		},
+		{
+			.id = DP_V22,
+			.name = "V.22 600 LAPM retrain",
+			.selection_command = "AT+MS=22,0,600,600\r",
+			.caller_tx_rate = V22_600_BIT_RATE,
+			.caller_rx_rate = V22_600_BIT_RATE,
+			.answerer_tx_rate = V22_600_BIT_RATE,
+			.answerer_rx_rate = V22_600_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.test_retrain = true,
+		},
+		{
+			.id = DP_V22,
+			.name = "V.22 LAPM retrain",
+			.selection_command = "AT+MS=22,0,1200,1200\r",
+			.caller_tx_rate = V22_1200_BIT_RATE,
+			.caller_rx_rate = V22_1200_BIT_RATE,
+			.answerer_tx_rate = V22_1200_BIT_RATE,
+			.answerer_rx_rate = V22_1200_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.test_retrain = true,
+		},
+		{
+			.id = DP_V22BIS,
+			.name = "V.22bis LAPM retrain",
+			.selection_command = "AT+MS=122,0,2400,2400\r",
+			.caller_tx_rate = V22BIS_BIT_RATE,
+			.caller_rx_rate = V22BIS_BIT_RATE,
+			.answerer_tx_rate = V22BIS_BIT_RATE,
+			.answerer_rx_rate = V22BIS_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.test_retrain = true,
 		},
 		{
 			.id = DP_V32,

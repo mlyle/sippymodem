@@ -143,6 +143,43 @@ static bool test_async_resynchronizes_after_bad_stop(void)
 	return true;
 }
 
+static bool test_async_reframe_discards_partial_characters(void)
+{
+	static const uint8_t partial[] = { 0, 1, 0, 1, 0 };
+	uint8_t complete[10] = { 0 };
+	uint8_t decoded = 0;
+	size_t bit_count = 0;
+	struct byte_stream sink = {
+		.output = &decoded,
+		.output_capacity = 1,
+	};
+	struct modem receiver = {
+		.name = "async-reset-receiver",
+		.dev_data = &sink,
+		.put_chars = write_chars,
+	};
+
+	modem_async_start(&receiver);
+	CHECK(modem_async_put_bits(
+		      &receiver, 1, (uint8_t *)partial,
+		      (int)ARRAY_LENGTH(partial)) == (int)ARRAY_LENGTH(partial),
+	      "async decoder did not consume the partial character");
+	receiver.pack.bit = 7;
+	receiver.pack.data = 0x1234;
+	modem_async_reframe(&receiver);
+	CHECK(receiver.pack.bit == 0 && receiver.pack.data == 0,
+	      "async reframe retained queued transmit framing");
+	CHECK(append_async_character(
+		      complete, ARRAY_LENGTH(complete), &bit_count, 'R', true),
+	      "async reset fixture overflowed");
+	CHECK(modem_async_put_bits(
+		      &receiver, 1, complete, (int)bit_count) == (int)bit_count,
+	      "async decoder did not consume the post-reset character");
+	CHECK(!sink.output_overflow && sink.output_length == 1 && decoded == 'R',
+	      "async reframe retained a partial receive character");
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -249,6 +286,8 @@ int main(void)
 		{ "async round trip", test_async_round_trip },
 		{ "async bad-stop resynchronization",
 		  test_async_resynchronizes_after_bad_stop },
+		{ "async reframe",
+		  test_async_reframe_discards_partial_characters },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
 	unsigned int failures = 0;
