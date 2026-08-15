@@ -2,6 +2,8 @@
 
 #include "v92_phase4_modulator.h"
 
+#include "memory_region.h"
+
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
@@ -152,6 +154,127 @@ enum v92_phase4_modulator_result v92_phase4_modulator_next(
 		return V92_PHASE4_MODULATOR_INVALID_STATE;
 	*modulator = next;
 	*sample = generated;
+	return V92_PHASE4_MODULATOR_OK;
+}
+
+bool v92_phase4_demodulator_is_valid(
+	const struct v92_phase4_demodulator *demodulator)
+{
+	return demodulator != NULL &&
+	       parameters_are_valid(
+		       demodulator->constellation, demodulator->lu) &&
+	       demodulator->previous_encoded_sign <= 1u &&
+	       v34_scrambler_is_valid(&demodulator->descrambler) &&
+	       demodulator->descrambler.polynomial == V34_POLYNOMIAL_GPA;
+}
+
+enum v92_phase4_modulator_result v92_phase4_demodulator_init(
+	struct v92_phase4_demodulator *demodulator,
+	enum v92_constellation_size constellation,
+	uint8_t previous_encoded_sign, int16_t lu)
+{
+	struct v92_phase4_demodulator initialized = {
+		.constellation = constellation,
+		.lu = lu,
+		.previous_encoded_sign = previous_encoded_sign,
+	};
+
+	if (demodulator == NULL || previous_encoded_sign > 1u ||
+	    !parameters_are_valid(constellation, lu) ||
+	    v34_scrambler_init(
+		    &initialized.descrambler, V34_POLYNOMIAL_GPA) !=
+		    V34_FRAMING_OK ||
+	    !v92_phase4_demodulator_is_valid(&initialized))
+		return V92_PHASE4_MODULATOR_INVALID_ARGUMENT;
+	*demodulator = initialized;
+	return V92_PHASE4_MODULATOR_OK;
+}
+
+static bool nearest_magnitude(
+	enum v92_constellation_size constellation, int16_t lu,
+	double observed_level, uint8_t *magnitude_index,
+	int16_t *nearest_level)
+{
+	double magnitude = fabs(observed_level);
+	double best_error = INFINITY;
+	uint8_t best_index = 0u;
+	int16_t best_level = 0;
+	unsigned int count = magnitude_count(constellation);
+
+	if (!isfinite(observed_level) || magnitude_index == NULL ||
+	    nearest_level == NULL || count == 0u)
+		return false;
+	for (unsigned int index = 0; index < count; ++index) {
+		int16_t level;
+		double error;
+
+		if (!raw_level(
+			    constellation, lu, (uint8_t)index, 0u, &level))
+			return false;
+		error = fabs(magnitude - level);
+		if (error >= best_error)
+			continue;
+		best_error = error;
+		best_index = (uint8_t)index;
+		best_level = observed_level < 0.0 ? (int16_t)-level : level;
+	}
+	*magnitude_index = best_index;
+	*nearest_level = best_level;
+	return true;
+}
+
+enum v92_phase4_modulator_result v92_phase4_demodulator_next(
+	struct v92_phase4_demodulator *demodulator, double observed_level,
+	uint8_t *input_group, int16_t *nearest_level)
+{
+	struct v92_phase4_demodulator next;
+	unsigned int bits;
+	uint8_t magnitude_index;
+	uint8_t encoded_sign;
+	uint8_t scrambled_group;
+	uint8_t recovered_group = 0u;
+	int16_t selected;
+
+	if (demodulator == NULL || input_group == NULL || nearest_level == NULL ||
+	    !isfinite(observed_level) ||
+	    memory_regions_overlap(
+		    demodulator, sizeof(*demodulator),
+		    input_group, sizeof(*input_group)) ||
+	    memory_regions_overlap(
+		    demodulator, sizeof(*demodulator),
+		    nearest_level, sizeof(*nearest_level)) ||
+	    memory_regions_overlap(
+		    input_group, sizeof(*input_group),
+		    nearest_level, sizeof(*nearest_level)))
+		return V92_PHASE4_MODULATOR_INVALID_ARGUMENT;
+	if (!v92_phase4_demodulator_is_valid(demodulator))
+		return V92_PHASE4_MODULATOR_INVALID_STATE;
+	next = *demodulator;
+	bits = v92_phase4_modulator_bits_per_symbol(next.constellation);
+	if (!nearest_magnitude(
+		    next.constellation, next.lu, observed_level,
+		    &magnitude_index, &selected))
+		return V92_PHASE4_MODULATOR_INVALID_STATE;
+	encoded_sign = observed_level < 0.0 ? 1u : 0u;
+	scrambled_group = (uint8_t)(
+		magnitude_index |
+		((encoded_sign ^ next.previous_encoded_sign) << (bits - 1u)));
+	for (unsigned int bit = 0; bit < bits; ++bit) {
+		uint8_t recovered_bit;
+
+		if (v34_descramble_group(
+			    &next.descrambler,
+			    (uint8_t)((scrambled_group >> bit) & 1u),
+			    1u, &recovered_bit) != V34_FRAMING_OK)
+			return V92_PHASE4_MODULATOR_INVALID_STATE;
+		recovered_group |= (uint8_t)(recovered_bit << bit);
+	}
+	next.previous_encoded_sign = encoded_sign;
+	if (!v92_phase4_demodulator_is_valid(&next))
+		return V92_PHASE4_MODULATOR_INVALID_STATE;
+	*demodulator = next;
+	*input_group = recovered_group;
+	*nearest_level = selected;
 	return V92_PHASE4_MODULATOR_OK;
 }
 

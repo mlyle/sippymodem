@@ -5,6 +5,7 @@
 #include "test.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -34,27 +35,6 @@ static const int16_t *magnitudes(
 		return EIGHT_POINT_MAGNITUDES;
 	}
 	return NULL;
-}
-
-static bool sample_components(
-	enum v92_constellation_size constellation, int16_t sample,
-	uint8_t *magnitude_index, uint8_t *encoded_sign)
-{
-	size_t count = 0;
-	const int16_t *expected = magnitudes(constellation, &count);
-	int32_t magnitude = sample < 0 ? -(int32_t)sample : sample;
-
-	if (expected == NULL || sample == 0 || magnitude_index == NULL ||
-	    encoded_sign == NULL)
-		return false;
-	for (size_t index = 0; index < count; ++index) {
-		if (magnitude != expected[index])
-			continue;
-		*magnitude_index = (uint8_t)index;
-		*encoded_sign = sample < 0 ? 1u : 0u;
-		return true;
-	}
-	return false;
 }
 
 static bool test_generated_levels(void)
@@ -100,56 +80,47 @@ static bool check_groups(
 	uint8_t initial_previous_sign)
 {
 	struct v92_phase4_modulator modulator;
-	struct v34_scrambler descrambler;
+	struct v92_phase4_demodulator demodulator;
 	unsigned int bits =
 		v92_phase4_modulator_bits_per_symbol(constellation);
 	uint8_t group_count = (uint8_t)(1u << bits);
-	uint8_t previous_sign = initial_previous_sign;
 
 	CHECK(v92_phase4_modulator_init(
 		      &modulator, constellation, initial_previous_sign,
 		      TEST_LU) == V92_PHASE4_MODULATOR_OK &&
-	      v34_scrambler_init(&descrambler, V34_POLYNOMIAL_GPA) ==
-		      V34_FRAMING_OK &&
-	      v92_phase4_modulator_is_valid(&modulator),
+	      v92_phase4_demodulator_init(
+		      &demodulator, constellation, initial_previous_sign,
+		      TEST_LU) == V92_PHASE4_MODULATOR_OK &&
+	      v92_phase4_modulator_is_valid(&modulator) &&
+	      v92_phase4_demodulator_is_valid(&demodulator),
 	      "V.92 Phase 4 group state did not initialize");
 	for (unsigned int cycle = 0; cycle < GROUP_CYCLES; ++cycle) {
 		for (uint8_t input_group = 0;
 		     input_group < group_count; ++input_group) {
-			uint8_t magnitude_index;
-			uint8_t encoded_sign;
-			uint8_t scrambled_group;
-			uint8_t recovered_group = 0;
+			uint8_t recovered_group = 0xa5u;
+			int16_t nearest_level = 1234;
 			int16_t sample = 0;
+			double noise = (cycle & 1u) != 0u ? 100.0 : -100.0;
 
 			CHECK(v92_phase4_modulator_next(
 				      &modulator, input_group, &sample) ==
 				      V92_PHASE4_MODULATOR_OK &&
-			      sample_components(
-				      constellation, sample, &magnitude_index,
-				      &encoded_sign),
+			      v92_phase4_demodulator_next(
+				      &demodulator, sample + noise,
+				      &recovered_group, &nearest_level) ==
+				      V92_PHASE4_MODULATOR_OK,
 			      "V.92 Phase 4 group %u/%u did not modulate",
 			      cycle, input_group);
-			scrambled_group = (uint8_t)(
-				magnitude_index |
-				((encoded_sign ^ previous_sign) << (bits - 1u)));
-			for (unsigned int bit = 0; bit < bits; ++bit) {
-				uint8_t recovered_bit = 0;
-
-				CHECK(v34_descramble_group(
-					      &descrambler,
-					      (uint8_t)((scrambled_group >> bit) & 1u),
-					      1u, &recovered_bit) == V34_FRAMING_OK,
-				      "V.92 Phase 4 group bit did not descramble");
-				recovered_group |= (uint8_t)(recovered_bit << bit);
-			}
 			CHECK(recovered_group == input_group &&
-			      modulator.previous_encoded_sign == encoded_sign &&
-			      modulator.scrambler.history == descrambler.history &&
-			      v92_phase4_modulator_is_valid(&modulator),
+			      nearest_level == sample &&
+			      modulator.previous_encoded_sign ==
+				      demodulator.previous_encoded_sign &&
+			      modulator.scrambler.history ==
+				      demodulator.descrambler.history &&
+			      v92_phase4_modulator_is_valid(&modulator) &&
+			      v92_phase4_demodulator_is_valid(&demodulator),
 			      "V.92 Phase 4 continuity differed at %u/%u",
 			      cycle, input_group);
-			previous_sign = encoded_sign;
 		}
 	}
 	return true;
@@ -177,6 +148,10 @@ static bool test_contracts(void)
 {
 	struct v92_phase4_modulator modulator;
 	struct v92_phase4_modulator before;
+	struct v92_phase4_demodulator demodulator;
+	struct v92_phase4_demodulator demodulator_before;
+	uint8_t group = 0xa5u;
+	int16_t nearest = 4321;
 	int16_t sample = 1234;
 	static const char *const names[] = {
 		"ok", "invalid argument", "invalid state",
@@ -237,6 +212,58 @@ static bool test_contracts(void)
 	      memcmp(&modulator, &before, sizeof(modulator)) == 0 &&
 	      sample == 1234,
 	      "invalid V.92 Phase 4 state was not transactional");
+	memset(&demodulator, 0xa5, sizeof(demodulator));
+	demodulator_before = demodulator;
+	CHECK(v92_phase4_demodulator_init(
+		      NULL, V92_CONSTELLATION_4_POINT, 0u, TEST_LU) ==
+		      V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      v92_phase4_demodulator_init(
+		      &demodulator, V92_CONSTELLATION_4_POINT, 2u,
+		      TEST_LU) == V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      memcmp(
+		      &demodulator, &demodulator_before,
+		      sizeof(demodulator)) == 0 &&
+	      v92_phase4_demodulator_init(
+		      &demodulator, V92_CONSTELLATION_4_POINT, 0u,
+		      TEST_LU) == V92_PHASE4_MODULATOR_OK,
+	      "invalid V.92 Phase 4 demodulator initialization changed state");
+	demodulator_before = demodulator;
+	CHECK(!v92_phase4_demodulator_is_valid(NULL) &&
+	      v92_phase4_demodulator_next(
+		      NULL, 1.0, &group, &nearest) ==
+		      V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      v92_phase4_demodulator_next(
+		      &demodulator, 1.0, NULL, &nearest) ==
+		      V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      v92_phase4_demodulator_next(
+		      &demodulator, 1.0, &group, NULL) ==
+		      V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      v92_phase4_demodulator_next(
+		      &demodulator, NAN, &group, &nearest) ==
+		      V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      v92_phase4_demodulator_next(
+		      &demodulator, 1.0, (uint8_t *)(void *)&demodulator,
+		      &nearest) == V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      v92_phase4_demodulator_next(
+		      &demodulator, 1.0, (uint8_t *)(void *)&nearest,
+		      &nearest) ==
+		      V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+	      memcmp(
+		      &demodulator, &demodulator_before,
+		      sizeof(demodulator)) == 0 &&
+	      group == 0xa5u && nearest == 4321,
+	      "invalid V.92 Phase 4 demodulation changed state or output");
+	demodulator.descrambler.polynomial =
+		(enum v34_scrambler_polynomial)2;
+	demodulator_before = demodulator;
+	CHECK(v92_phase4_demodulator_next(
+		      &demodulator, 1.0, &group, &nearest) ==
+		      V92_PHASE4_MODULATOR_INVALID_STATE &&
+	      memcmp(
+		      &demodulator, &demodulator_before,
+		      sizeof(demodulator)) == 0 &&
+	      group == 0xa5u && nearest == 4321,
+	      "invalid V.92 Phase 4 demodulator state was not transactional");
 	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
 		CHECK(strcmp(
 			      v92_phase4_modulator_result_name(

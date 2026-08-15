@@ -26,6 +26,16 @@ struct v92_phase4_modulator {
 	uint8_t previous_encoded_sign;
 };
 
+/* Invert the same normalized levels while preserving GPA descrambling and
+ * differential-sign continuity. The observed level may be an equalizer's
+ * floating-point output; the nearest valid level is returned for adaptation. */
+struct v92_phase4_demodulator {
+	struct v34_scrambler descrambler;
+	enum v92_constellation_size constellation;
+	int16_t lu;
+	uint8_t previous_encoded_sign;
+};
+
 unsigned int v92_phase4_modulator_bits_per_symbol(
 	enum v92_constellation_size constellation);
 
@@ -49,6 +59,19 @@ bool v92_phase4_modulator_is_valid(
 enum v92_phase4_modulator_result v92_phase4_modulator_next(
 	struct v92_phase4_modulator *modulator,
 	uint8_t input_group, int16_t *sample);
+
+enum v92_phase4_modulator_result v92_phase4_demodulator_init(
+	struct v92_phase4_demodulator *demodulator,
+	enum v92_constellation_size constellation,
+	uint8_t previous_encoded_sign, int16_t lu);
+bool v92_phase4_demodulator_is_valid(
+	const struct v92_phase4_demodulator *demodulator);
+
+/* Recover one earliest-bit-first input group. Rejected calls leave the state,
+ * group, and nearest_level unchanged. */
+enum v92_phase4_modulator_result v92_phase4_demodulator_next(
+	struct v92_phase4_demodulator *demodulator, double observed_level,
+	uint8_t *input_group, int16_t *nearest_level);
 
 const char *v92_phase4_modulator_result_name(
 	enum v92_phase4_modulator_result result);
