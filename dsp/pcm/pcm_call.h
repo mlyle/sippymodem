@@ -3,11 +3,14 @@
 #ifndef PCM_CALL_H
 #define PCM_CALL_H
 
+#include "pcm_phase3_entry.h"
 #include "v90_analog_path.h"
 #include "v90_digital_path.h"
 #include "pcm_phase2.h"
 #include "v90_phase3_analog_station.h"
 #include "v90_phase3_digital_station.h"
+#include "v92_phase3_analog_station.h"
+#include "v92_phase3_digital_station.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,12 +19,14 @@ enum pcm_call_stage {
 	PCM_CALL_PHASE2,
 	PCM_CALL_PHASE3,
 	PCM_CALL_PHASE3_MIXED,
+	PCM_CALL_PHASE4_ENTRY,
 	PCM_CALL_PHASE4,
 	PCM_CALL_DATA_PATH,
 };
 
 enum pcm_call_result {
 	PCM_CALL_OK,
+	PCM_CALL_PHASE4_ENTRY_READY,
 	PCM_CALL_PHASE4_READY,
 	PCM_CALL_SOURCE_FAILURE,
 	PCM_CALL_FAILED,
@@ -59,9 +64,18 @@ struct pcm_call_digital_phase3_configuration {
 	struct v90_jd_parameters jd;
 };
 
+struct pcm_call_v92_digital_phase3_configuration {
+	struct v92_jd jd;
+	struct v92_jp jp;
+	double equalizer_adaptation;
+	uint16_t su_minimum_magnitude;
+};
+
 union pcm_call_phase3_configuration {
 	struct pcm_call_analog_phase3_configuration analog;
 	struct pcm_call_digital_phase3_configuration digital;
+	struct v92_phase3_analog_station_configuration v92_analog;
+	struct pcm_call_v92_digital_phase3_configuration v92_digital;
 };
 
 struct pcm_call_analog_phase4_configuration {
@@ -95,6 +109,8 @@ struct pcm_call_configuration {
 union pcm_call_phase3_state {
 	struct v90_phase3_analog_station analog;
 	struct v90_phase3_digital_station digital;
+	struct v92_phase3_analog_station v92_analog;
+	struct v92_phase3_digital_station v92_digital;
 };
 
 /* Ri starts as soon as the raw digital-character direction completes Phase 3.
@@ -168,11 +184,12 @@ struct pcm_call_data_event {
 };
 
 /* Own one post-V.8 PCM startup. V.90 continues through its role-specific data
- * path. V.92 owns its full common Phase 2 and stops explicitly before the
- * Phase 3 station branch. Calls on one instance must be serialized; separate
- * instances share no state. */
+ * path. V.92 currently stops transactionally when either direction reaches
+ * the Phase 4 entry boundary, retaining the exact Phase 3 child for the next
+ * shared branch. Calls on one instance must be serialized. */
 struct pcm_call {
 	union pcm_call_state state;
+	struct pcm_phase3_entry phase3_entry;
 	union pcm_call_local_info1 local_info1;
 	union pcm_call_phase3_configuration phase3_configuration;
 	struct pcm_call_analog_phase4_configuration
@@ -184,6 +201,7 @@ struct pcm_call {
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum pcm_call_stage stage;
+	bool phase3_entry_stored;
 	bool failed;
 };
 
@@ -193,16 +211,17 @@ enum pcm_call_result pcm_call_init(
 
 bool pcm_call_is_valid(const struct pcm_call *call);
 bool pcm_call_has_failed(const struct pcm_call *call);
+bool pcm_call_phase4_entry_is_ready(const struct pcm_call *call);
 bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
-/* Consume and produce one simultaneous 8 ksymbol/s G.711 character through
- * the initial Phase 4 CPt/Ri exchange. A phase change takes effect on the
- * following call. PHASE4_READY consumes no character, changes no output, and
- * leaves both continuous directions available to the next owner. Terminal
- * protocol failures consume the character and expose the generated output and
- * observation. */
+/* Consume and produce one simultaneous 8 ksymbol/s G.711 character. A phase
+ * change takes effect on the following call. PHASE4_ENTRY_READY stops V.92 at
+ * its first split-direction handoff; PHASE4_READY stops V.90 after its initial
+ * Phase 4 exchange. Both results consume no character, change no output, and
+ * leave continuous state available to the next owner. Terminal protocol
+ * failures consume the character and expose generated output and observation. */
 enum pcm_call_result pcm_call_octet(
 	struct pcm_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet,

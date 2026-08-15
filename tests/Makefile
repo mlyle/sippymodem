@@ -34,19 +34,20 @@ V34_NATIVE_SOURCE_NAMES := \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v34_*.c))
 V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
-V90_RUNTIME_SOURCE_NAMES := \
+PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_info1.c pcm_j_frame.c \
+	pcm_binary_sign.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_digital_tx.c \
 	pcm_phase3_entry.c \
 	pcm_phase3_handoff.c pcm_call.c pcm_phase3_profile.c pcm_startup.c \
-	v92_info0.c v92_info1d.c v92_j.c v92_pcm_info1a.c \
-	v92_status_update.c \
-	v92_control_rx.c v92_cpd.c v92_suvd.c \
-	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c))
-V90_RUNTIME_OBJECTS := \
-	$(V90_RUNTIME_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
+	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c)) \
+	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v92_*.c))
+PCM_RUNTIME_OBJECTS := \
+	$(PCM_RUNTIME_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o) \
+	$(BUILD_DIR)/binary_equalizer.o \
+	$(BUILD_DIR)/fractional_delay.o
 PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
 PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
 PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
@@ -395,7 +396,7 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(V34_NATIVE_OBJECTS) \
-	$(V90_RUNTIME_OBJECTS) \
+	$(PCM_RUNTIME_OBJECTS) \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam_equalizer.o \
@@ -2614,7 +2615,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_fsk_integration.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(V34_NATIVE_OBJECTS) \
-	$(V90_RUNTIME_OBJECTS) \
+	$(PCM_RUNTIME_OBJECTS) \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/datapumps.o \

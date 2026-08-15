@@ -92,16 +92,38 @@ static bool digital_configuration_is_valid(
 	       !v90_mp_record_acknowledges_cp(mp);
 }
 
-static bool v92_analog_info1_is_supported(
-	const struct v92_pcm_info1a *info1)
+static bool v92_analog_configuration_is_valid(
+	const union pcm_call_local_info1 *info1,
+	const union pcm_call_phase3_configuration *phase3,
+	enum g711_law law)
 {
-	return v92_pcm_info1a_is_valid(info1) &&
-	       info1->local_md_length_276_symbol_units == 0u;
+	const struct v92_phase3_analog_station_configuration *selected =
+		&phase3->v92_analog;
+
+	return selected->law == law &&
+	       selected->local_info1a.local_md_length_276_symbol_units == 0u &&
+	       v92_pcm_info1a_equal(
+		       &info1->v92_analog, &selected->local_info1a) &&
+	       v92_phase3_analog_station_configuration_is_valid(selected);
 }
 
-static bool v92_digital_info1_is_supported(const struct v92_info1d *info1)
+static bool v92_digital_configuration_is_valid(
+	const union pcm_call_local_info1 *info1,
+	const union pcm_call_phase3_configuration *phase3,
+	uint32_t enabled_downstream_rate_mask, enum g711_law law)
 {
-	return v92_info1d_is_valid(info1) && info1->pcm_upstream_supported;
+	const struct pcm_call_v92_digital_phase3_configuration *selected =
+		&phase3->v92_digital;
+
+	return v92_info1d_is_valid(&info1->v92_digital) &&
+	       info1->v92_digital.pcm_upstream_supported &&
+	       selected->jd.data_rate_capability_mask ==
+		       enabled_downstream_rate_mask &&
+	       v92_phase3_digital_station_parameters_are_valid(
+		       law, V90_INFO1A_MIN_TRAINING_UCODE,
+		       selected->equalizer_adaptation,
+		       selected->su_minimum_magnitude,
+		       &selected->jd, &selected->jp);
 }
 
 static bool configuration_is_valid(
@@ -122,8 +144,10 @@ static bool configuration_is_valid(
 			       configuration->local_info0.v92_analog.v92_capable &&
 			       !configuration->local_info0.v92_analog
 				       .short_phase2_requested &&
-			       v92_analog_info1_is_supported(
-				       &configuration->local_info1.v92_analog);
+			       v92_analog_configuration_is_valid(
+				       &configuration->local_info1,
+				       &configuration->phase3,
+				       configuration->law);
 		return v92_info0d_is_valid(
 			       &configuration->local_info0.v92_digital) &&
 		       configuration->local_info0.v92_digital.v92_capable &&
@@ -132,8 +156,11 @@ static bool configuration_is_valid(
 		       info0_law(
 			       &configuration->local_info0.v92_digital.v90) ==
 			       configuration->law &&
-		       v92_digital_info1_is_supported(
-			       &configuration->local_info1.v92_digital);
+		       v92_digital_configuration_is_valid(
+			       &configuration->local_info1,
+			       &configuration->phase3,
+			       configuration->enabled_downstream_rate_mask,
+			       configuration->law);
 	}
 	if (configuration->local_role == V90_ANALOG_MODEM)
 		return v90_info0_is_valid(
@@ -173,10 +200,15 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 		return false;
 	if (call->protocol == PCM_PROTOCOL_V92)
 		return call->local_role == V90_ANALOG_MODEM ?
-		       v92_analog_info1_is_supported(
-			       &call->local_info1.v92_analog) :
-		       v92_digital_info1_is_supported(
-			       &call->local_info1.v92_digital);
+		       v92_analog_configuration_is_valid(
+			       &call->local_info1,
+			       &call->phase3_configuration,
+			       call->law) :
+		       v92_digital_configuration_is_valid(
+			       &call->local_info1,
+			       &call->phase3_configuration,
+			       call->enabled_downstream_rate_mask,
+			       call->law);
 	return call->local_role == V90_ANALOG_MODEM ?
 		       downstream_rate_is_enabled(
 			       call->enabled_downstream_rate_mask,
@@ -245,14 +277,44 @@ static bool digital_mixed_is_valid(const struct pcm_call *call)
 	       (call->failed || !receive_complete);
 }
 
+static bool phase3_entry_matches_call(const struct pcm_call *call)
+{
+	return pcm_phase3_entry_is_valid(&call->phase3_entry) &&
+	       call->phase3_entry.local_role == call->local_role &&
+	       call->phase3_entry.law == call->law &&
+	       call->phase3_entry.selection.startup.protocol == call->protocol;
+}
+
+static bool v92_phase4_entry_boundary_is_valid(
+	const struct pcm_call *call)
+{
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct v92_phase3_analog_station *station =
+			&call->state.phase3.v92_analog;
+
+		return v92_phase3_analog_station_is_valid(station) &&
+		       (v92_phase3_analog_station_transmit_complete(station) ||
+			v92_phase3_analog_station_receive_complete(station));
+	}
+	{
+		const struct v92_phase3_digital_station *station =
+			&call->state.phase3.v92_digital;
+
+		return v92_phase3_digital_station_is_valid(station) &&
+		       (v92_phase3_digital_station_transmit_complete(station) ||
+			v92_phase3_digital_station_receive_complete(station));
+	}
+}
+
 bool pcm_call_is_valid(const struct pcm_call *call)
 {
 	bool child_valid;
 	bool child_failed;
 
 	if (call == NULL || !stored_configuration_is_valid(call) ||
-	    (call->protocol == PCM_PROTOCOL_V92 &&
-	     call->stage != PCM_CALL_PHASE2))
+	    (call->stage == PCM_CALL_PHASE2 ? call->phase3_entry_stored :
+				       !call->phase3_entry_stored) ||
+	    (call->phase3_entry_stored && !phase3_entry_matches_call(call)))
 		return false;
 	switch (call->stage) {
 	case PCM_CALL_PHASE2:
@@ -262,7 +324,18 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 		child_failed = pcm_phase2_has_failed(&call->state.phase2);
 		break;
 	case PCM_CALL_PHASE3:
-		if (call->local_role == V90_ANALOG_MODEM) {
+		if (call->protocol == PCM_PROTOCOL_V92 &&
+		    call->local_role == V90_ANALOG_MODEM) {
+			child_valid = v92_phase3_analog_station_is_valid(
+				&call->state.phase3.v92_analog);
+			child_failed = v92_phase3_analog_station_has_failed(
+				&call->state.phase3.v92_analog);
+		} else if (call->protocol == PCM_PROTOCOL_V92) {
+			child_valid = v92_phase3_digital_station_is_valid(
+				&call->state.phase3.v92_digital);
+			child_failed = v92_phase3_digital_station_has_failed(
+				&call->state.phase3.v92_digital);
+		} else if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v90_phase3_analog_station_is_valid(
 				&call->state.phase3.analog);
 			child_failed = v90_phase3_analog_station_has_failed(
@@ -275,6 +348,8 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 		}
 		break;
 	case PCM_CALL_PHASE3_MIXED:
+		if (call->protocol != PCM_PROTOCOL_V90)
+			return false;
 		child_valid = call->local_role == V90_ANALOG_MODEM ?
 			      analog_mixed_is_valid(call) :
 			      digital_mixed_is_valid(call);
@@ -284,7 +359,20 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 			       v90_phase3_digital_station_has_failed(
 				       &call->state.mixed.digital.phase3);
 		break;
+	case PCM_CALL_PHASE4_ENTRY:
+		if (call->protocol != PCM_PROTOCOL_V92 ||
+		    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM)
+			return false;
+		child_valid = v92_phase4_entry_boundary_is_valid(call);
+		child_failed = call->local_role == V90_ANALOG_MODEM ?
+			       v92_phase3_analog_station_has_failed(
+				       &call->state.phase3.v92_analog) :
+			       v92_phase3_digital_station_has_failed(
+				       &call->state.phase3.v92_digital);
+		break;
 	case PCM_CALL_PHASE4:
+		if (call->protocol != PCM_PROTOCOL_V90)
+			return false;
 		if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v90_phase4_analog_startup_is_valid(
 				&call->state.phase4.analog);
@@ -298,6 +386,8 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 		}
 		break;
 	case PCM_CALL_DATA_PATH:
+		if (call->protocol != PCM_PROTOCOL_V90)
+			return false;
 		if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v90_analog_path_is_valid(
 				&call->state.data_path.analog);
@@ -352,9 +442,13 @@ enum pcm_call_result pcm_call_init(
 	    configuration->local_role == V90_ANALOG_MODEM) {
 		initialized.local_info1.v92_analog =
 			configuration->local_info1.v92_analog;
+		initialized.phase3_configuration.v92_analog =
+			configuration->phase3.v92_analog;
 	} else if (configuration->protocol == PCM_PROTOCOL_V92) {
 		initialized.local_info1.v92_digital =
 			configuration->local_info1.v92_digital;
+		initialized.phase3_configuration.v92_digital =
+			configuration->phase3.v92_digital;
 	} else if (configuration->local_role == V90_ANALOG_MODEM) {
 		initialized.local_info1.analog =
 			configuration->local_info1.analog;
@@ -385,6 +479,12 @@ enum pcm_call_result pcm_call_init(
 bool pcm_call_has_failed(const struct pcm_call *call)
 {
 	return pcm_call_is_valid(call) && call->failed;
+}
+
+bool pcm_call_phase4_entry_is_ready(const struct pcm_call *call)
+{
+	return pcm_call_is_valid(call) && !call->failed &&
+	       call->stage == PCM_CALL_PHASE4_ENTRY;
 }
 
 bool pcm_call_phase4_is_ready(const struct pcm_call *call)
@@ -468,10 +568,34 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		return entry_result(result);
 	if (entry.selection.startup.protocol != call->protocol)
 		return PCM_CALL_UNUSABLE_SELECTION;
-	if (call->protocol == PCM_PROTOCOL_V92)
-		return PCM_CALL_UNUSABLE_SELECTION;
 	next = *call;
-	if (call->local_role == V90_ANALOG_MODEM) {
+	next.state.phase3 = (union pcm_call_phase3_state){ 0 };
+	if (call->protocol == PCM_PROTOCOL_V92 &&
+	    entry.selection.upstream != PCM_UPSTREAM_PCM)
+		return PCM_CALL_UNUSABLE_SELECTION;
+	if (call->protocol == PCM_PROTOCOL_V92 &&
+	    call->local_role == V90_ANALOG_MODEM) {
+		struct v92_phase3_analog_station station;
+
+		result = pcm_phase3_entry_start_v92_analog(
+			&entry, &call->phase3_configuration.v92_analog,
+			&station);
+		if (result != PCM_PHASE3_ENTRY_OK)
+			return entry_result(result);
+		next.state.phase3.v92_analog = station;
+	} else if (call->protocol == PCM_PROTOCOL_V92) {
+		const struct pcm_call_v92_digital_phase3_configuration *config =
+			&call->phase3_configuration.v92_digital;
+		struct v92_phase3_digital_station station;
+
+		result = pcm_phase3_entry_start_v92_digital(
+			&entry, config->equalizer_adaptation,
+			config->su_minimum_magnitude, &config->jd, &config->jp,
+			&station);
+		if (result != PCM_PHASE3_ENTRY_OK)
+			return entry_result(result);
+		next.state.phase3.v92_digital = station;
+	} else if (call->local_role == V90_ANALOG_MODEM) {
 		struct v90_phase3_analog_station station;
 
 		result = pcm_phase3_entry_start_v90_analog(
@@ -494,6 +618,8 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 			return entry_result(result);
 		next.state.phase3.digital = station;
 	}
+	next.phase3_entry = entry;
+	next.phase3_entry_stored = true;
 	next.stage = PCM_CALL_PHASE3;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -605,6 +731,50 @@ static enum pcm_call_result digital_phase3_result(
 		return PCM_CALL_INVALID_STATE;
 	case V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT:
 	case V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE:
+		break;
+	}
+	return PCM_CALL_NUMERIC_FAILURE;
+}
+
+static enum pcm_call_result v92_analog_phase3_result(
+	enum v92_phase3_analog_station_result result)
+{
+	switch (result) {
+	case V92_PHASE3_ANALOG_STATION_OK:
+		return PCM_CALL_OK;
+	case V92_PHASE3_ANALOG_STATION_FAILED:
+		return PCM_CALL_FAILED;
+	case V92_PHASE3_ANALOG_STATION_NEED_MD_SYMBOL:
+		return PCM_CALL_UNUSABLE_SELECTION;
+	case V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH:
+		return PCM_CALL_SEQUENCE_MISMATCH;
+	case V92_PHASE3_ANALOG_STATION_COMPLETE:
+	case V92_PHASE3_ANALOG_STATION_INVALID_STATE:
+		return PCM_CALL_INVALID_STATE;
+	case V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT:
+	case V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE:
+		break;
+	}
+	return PCM_CALL_NUMERIC_FAILURE;
+}
+
+static enum pcm_call_result v92_digital_phase3_result(
+	enum v92_phase3_digital_station_result result)
+{
+	switch (result) {
+	case V92_PHASE3_DIGITAL_STATION_OK:
+		return PCM_CALL_OK;
+	case V92_PHASE3_DIGITAL_STATION_FAILED:
+		return PCM_CALL_FAILED;
+	case V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH:
+		return PCM_CALL_SEQUENCE_MISMATCH;
+	case V92_PHASE3_DIGITAL_STATION_UNSUPPORTED:
+		return PCM_CALL_UNUSABLE_SELECTION;
+	case V92_PHASE3_DIGITAL_STATION_COMPLETE:
+	case V92_PHASE3_DIGITAL_STATION_INVALID_STATE:
+		return PCM_CALL_INVALID_STATE;
+	case V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT:
+	case V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE:
 		break;
 	}
 	return PCM_CALL_NUMERIC_FAILURE;
@@ -756,6 +926,18 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 {
 	enum pcm_call_result result;
 
+	if (call->protocol == PCM_PROTOCOL_V92) {
+		struct pcm_call next;
+
+		if (!v92_phase4_entry_boundary_is_valid(call))
+			return PCM_CALL_OK;
+		next = *call;
+		next.stage = PCM_CALL_PHASE4_ENTRY;
+		if (!pcm_call_is_valid(&next))
+			return PCM_CALL_NUMERIC_FAILURE;
+		*call = next;
+		return PCM_CALL_OK;
+	}
 	if (call->stage == PCM_CALL_PHASE3) {
 		bool leading_direction_complete =
 			call->local_role == V90_ANALOG_MODEM ?
@@ -787,7 +969,32 @@ static enum pcm_call_result sample_phase3(
 {
 	enum pcm_call_result result;
 
-	if (call->local_role == V90_ANALOG_MODEM) {
+	if (call->protocol == PCM_PROTOCOL_V92 &&
+	    call->local_role == V90_ANALOG_MODEM) {
+		int16_t sample;
+
+		result = v92_analog_phase3_result(
+			v92_phase3_analog_station_transmit(
+				&call->state.phase3.v92_analog, NULL, &sample));
+		if (result != PCM_CALL_OK)
+			return result;
+		*transmit_octet = encode_sample(call->law, sample);
+		result = v92_analog_phase3_result(
+			v92_phase3_analog_station_receive(
+				&call->state.phase3.v92_analog,
+				received_octet));
+	} else if (call->protocol == PCM_PROTOCOL_V92) {
+		result = v92_digital_phase3_result(
+			v92_phase3_digital_station_transmit(
+				&call->state.phase3.v92_digital,
+				transmit_octet));
+		if (result != PCM_CALL_OK)
+			return result;
+		result = v92_digital_phase3_result(
+			v92_phase3_digital_station_receive(
+				&call->state.phase3.v92_digital,
+				decode_octet(call->law, received_octet)));
+	} else if (call->local_role == V90_ANALOG_MODEM) {
 		int16_t sample;
 
 		result = analog_phase3_result(
@@ -1201,6 +1408,8 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_FAILED;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return PCM_CALL_INVALID_STATE;
+	if (pcm_call_phase4_entry_is_ready(call))
+		return PCM_CALL_PHASE4_ENTRY_READY;
 	if (pcm_call_phase4_is_ready(call))
 		return PCM_CALL_PHASE4_READY;
 	generated = encode_sample(call->law, 0);
@@ -1242,6 +1451,8 @@ const char *pcm_call_result_name(enum pcm_call_result result)
 	switch (result) {
 	case PCM_CALL_OK:
 		return "ok";
+	case PCM_CALL_PHASE4_ENTRY_READY:
+		return "phase 4 entry ready";
 	case PCM_CALL_PHASE4_READY:
 		return "phase 4 ready";
 	case PCM_CALL_SOURCE_FAILURE:
