@@ -13,19 +13,6 @@ static bool role_is_valid(enum v34_station_role role)
 	       role == V34_ANSWERING_STATION;
 }
 
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool point_fits(
 	const struct qam_point *point, double maximum_power)
 {
@@ -52,7 +39,7 @@ bool v34_data_points_is_valid(
 	    !v34_power_normalizer_is_valid(&points->normalizer) ||
 	    points->schedule.geometry.high_mapping_frame_bits !=
 		    points->encoder.parameters.mapping_frame_bits ||
-	    !mapping_parameters_are_equal(
+	    !v34_mapping_parameters_are_equal(
 		    &points->encoder.parameters,
 		    &points->normalizer.parameters) ||
 	    points->next_point > V34_SYMBOLS_PER_MAPPING_FRAME)

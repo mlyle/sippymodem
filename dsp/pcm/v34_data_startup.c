@@ -17,19 +17,6 @@ static bool roles_are_complementary(
 		peer == V34_CALLING_STATION);
 }
 
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool mapping_matches_direction(
 	const struct v34_data_mapping *mapping,
 	const struct v34_data_direction_parameters *direction,
@@ -76,7 +63,7 @@ static bool receive_matches_direction(
 		       &expected, &receive->geometry,
 		       direction->expanded_shaping) ==
 		       V34_MAPPING_PARAMETERS_OK &&
-	       mapping_parameters_are_equal(
+	       v34_mapping_parameters_are_equal(
 		       &receive->normalizer.parameters, &expected) &&
 	       receive->trellis_selection == direction->trellis_selection &&
 	       receive->expanded_shaping == direction->expanded_shaping &&

@@ -74,30 +74,11 @@ static struct v34_data_mode answerer_mode(void)
 	return answerer;
 }
 
-static bool geometries_are_equal(
-	const struct v34_frame_geometry *left,
-	const struct v34_frame_geometry *right)
-{
-	return left->symbol_rate == right->symbol_rate &&
-	       left->data_bits_per_frame == right->data_bits_per_frame &&
-	       left->primary_data_rate_2400_bps_units ==
-		       right->primary_data_rate_2400_bps_units &&
-	       left->data_frames_per_superframe ==
-		       right->data_frames_per_superframe &&
-	       left->mapping_frames_per_data_frame ==
-		       right->mapping_frames_per_data_frame &&
-	       left->high_mapping_frame_bits == right->high_mapping_frame_bits &&
-	       left->high_mapping_frame_count == right->high_mapping_frame_count &&
-	       left->auxiliary_bits_per_frame == right->auxiliary_bits_per_frame &&
-	       left->auxiliary_channel_enabled ==
-		       right->auxiliary_channel_enabled;
-}
-
 static bool normalizers_are_equal(
 	const struct v34_power_normalizer *left,
 	const struct v34_power_normalizer *right)
 {
-	return v34_test_mapping_parameters_are_equal(
+	return v34_mapping_parameters_are_equal(
 		       &left->parameters, &right->parameters) &&
 	       left->precoded_mean_squared_magnitude ==
 		       right->precoded_mean_squared_magnitude &&
@@ -123,7 +104,7 @@ static bool mapping_matches_receiver(
 		       receiver->transmitting_profile.local_role &&
 	       mapping->transmitting_profile.symbol_rate ==
 		       receiver->transmitting_profile.symbol_rate &&
-	       geometries_are_equal(
+	       v34_frame_geometry_is_equal(
 		       &mapping->schedule.geometry, &receiver->geometry) &&
 	       normalizers_are_equal(&mapping->normalizer, &receiver->normalizer) &&
 	       mapping->encoder.convolutional_encoder.selection ==

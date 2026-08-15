@@ -41,6 +41,10 @@ v34_frame_geometry_init(
 	bool auxiliary_channel_enabled);
 bool v34_frame_geometry_is_valid(
 	const struct v34_frame_geometry *geometry);
+/* Compare every derived geometry field; NULL never compares equal. */
+bool v34_frame_geometry_is_equal(
+	const struct v34_frame_geometry *left,
+	const struct v34_frame_geometry *right);
 
 struct v34_frame_schedule {
 	struct v34_frame_geometry geometry;

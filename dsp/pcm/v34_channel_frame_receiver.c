@@ -6,19 +6,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool precoders_match_configuration(
 	const struct v34_precoder *left,
 	const struct v34_precoder *right)
@@ -53,7 +40,7 @@ bool v34_channel_frame_receiver_is_valid(
 		    &receiver->frame_decoder))
 		return false;
 	decoder = &receiver->frame_decoder.channel_decoder;
-	return mapping_parameters_are_equal(
+	return v34_mapping_parameters_are_equal(
 		       &receiver->conditioner.normalizer.parameters,
 		       &decoder->parameters) &&
 	       precoders_match_configuration(

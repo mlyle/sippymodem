@@ -26,23 +26,8 @@ static bool schedules_are_equal(
 	const struct v34_frame_schedule *left,
 	const struct v34_frame_schedule *right)
 {
-	return left->geometry.symbol_rate == right->geometry.symbol_rate &&
-	       left->geometry.data_bits_per_frame ==
-		       right->geometry.data_bits_per_frame &&
-	       left->geometry.primary_data_rate_2400_bps_units ==
-		       right->geometry.primary_data_rate_2400_bps_units &&
-	       left->geometry.data_frames_per_superframe ==
-		       right->geometry.data_frames_per_superframe &&
-	       left->geometry.mapping_frames_per_data_frame ==
-		       right->geometry.mapping_frames_per_data_frame &&
-	       left->geometry.high_mapping_frame_bits ==
-		       right->geometry.high_mapping_frame_bits &&
-	       left->geometry.high_mapping_frame_count ==
-		       right->geometry.high_mapping_frame_count &&
-	       left->geometry.auxiliary_bits_per_frame ==
-		       right->geometry.auxiliary_bits_per_frame &&
-	       left->geometry.auxiliary_channel_enabled ==
-		       right->geometry.auxiliary_channel_enabled &&
+	return v34_frame_geometry_is_equal(
+		       &left->geometry, &right->geometry) &&
 	       left->data_frame_in_superframe ==
 		       right->data_frame_in_superframe &&
 	       left->next_mapping_frame == right->next_mapping_frame;
@@ -60,7 +45,7 @@ static bool normalizers_are_equal(
 	const struct v34_power_normalizer *left,
 	const struct v34_power_normalizer *right)
 {
-	return v34_test_mapping_parameters_are_equal(
+	return v34_mapping_parameters_are_equal(
 		       &left->parameters, &right->parameters) &&
 	       left->precoded_mean_squared_magnitude ==
 		       right->precoded_mean_squared_magnitude &&

@@ -6,19 +6,6 @@
 
 #include <stddef.h>
 
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool b1_progress_is_valid(
 	const struct v34_data_receiver *receiver)
 {
@@ -58,7 +45,7 @@ bool v34_data_receiver_is_valid(
 		       &expected, &receiver->schedule.geometry,
 		       receiver->mapping_decoder.parameters.expanded_shaping) ==
 		       V34_MAPPING_PARAMETERS_OK &&
-	       mapping_parameters_are_equal(
+	       v34_mapping_parameters_are_equal(
 		       &receiver->mapping_decoder.parameters, &expected) &&
 	       receiver->b1_error_bits <= receiver->b1_received_bits &&
 	       b1_progress_is_valid(receiver);

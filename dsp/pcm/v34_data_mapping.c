@@ -9,19 +9,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool encoder_is_at_b1_start(const struct v34_4d_encoder *encoder)
 {
 	if (!v34_4d_encoder_is_valid(encoder) ||
@@ -56,7 +43,7 @@ bool v34_data_mapping_is_valid(
 	       mapping->scrambler.history == 0 &&
 	       encoder_is_at_b1_start(&mapping->encoder) &&
 	       v34_power_normalizer_is_valid(&mapping->normalizer) &&
-	       mapping_parameters_are_equal(
+	       v34_mapping_parameters_are_equal(
 		       &mapping->encoder.parameters,
 		       &mapping->normalizer.parameters) &&
 	       mapping->encoder.parameters.mapping_frame_bits ==

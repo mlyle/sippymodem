@@ -5,26 +5,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static bool geometries_are_equal(
-	const struct v34_frame_geometry *left,
-	const struct v34_frame_geometry *right)
-{
-	return left->symbol_rate == right->symbol_rate &&
-	       left->data_bits_per_frame == right->data_bits_per_frame &&
-	       left->primary_data_rate_2400_bps_units ==
-		       right->primary_data_rate_2400_bps_units &&
-	       left->data_frames_per_superframe ==
-		       right->data_frames_per_superframe &&
-	       left->mapping_frames_per_data_frame ==
-		       right->mapping_frames_per_data_frame &&
-	       left->high_mapping_frame_bits == right->high_mapping_frame_bits &&
-	       left->high_mapping_frame_count == right->high_mapping_frame_count &&
-	       left->auxiliary_bits_per_frame ==
-		       right->auxiliary_bits_per_frame &&
-	       left->auxiliary_channel_enabled ==
-		       right->auxiliary_channel_enabled;
-}
-
 static const struct v34_frame_geometry *data_geometry(
 	const struct v34_data_line_receiver *receiver)
 {
@@ -83,7 +63,7 @@ bool v34_data_line_receiver_is_valid(
 	       v34_data_equalizer_receiver_is_valid(
 		       &receiver->equalizer_receiver) &&
 	       receiver->equalizer_receiver.training_outputs_remaining == 0 &&
-	       geometries_are_equal(
+	       v34_frame_geometry_is_equal(
 		       &receiver->geometry, data_geometry(receiver));
 }
 

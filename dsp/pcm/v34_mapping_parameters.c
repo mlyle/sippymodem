@@ -88,11 +88,12 @@ static bool derive_parameters(
 	return true;
 }
 
-static bool parameters_are_equal(
+bool v34_mapping_parameters_are_equal(
 	const struct v34_mapping_parameters *left,
 	const struct v34_mapping_parameters *right)
 {
-	return left->constellation_points == right->constellation_points &&
+	return left != NULL && right != NULL &&
+	       left->constellation_points == right->constellation_points &&
 	       left->mapping_frame_bits == right->mapping_frame_bits &&
 	       left->shell_mapper_bits == right->shell_mapper_bits &&
 	       left->point_index_bits_per_2d_symbol ==
@@ -128,7 +129,7 @@ bool v34_mapping_parameters_is_valid(
 	       derive_parameters(
 		       parameters->mapping_frame_bits,
 		       parameters->expanded_shaping, &derived) &&
-	       parameters_are_equal(parameters, &derived);
+	       v34_mapping_parameters_are_equal(parameters, &derived);
 }
 
 const char *v34_mapping_parameters_result_name(

@@ -25,19 +25,6 @@ static inline bool v34_test_q7_points_are_equal(
 	       left->quadrature == right->quadrature;
 }
 
-static inline bool v34_test_mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static inline bool v34_test_interval_outputs_are_equal(
 	const struct v34_4d_encoder_output *left,
 	const struct v34_4d_encoder_output *right)
@@ -119,7 +106,7 @@ static inline bool v34_test_encoders_are_equal(
 	const struct v34_4d_encoder *left,
 	const struct v34_4d_encoder *right)
 {
-	if (!v34_test_mapping_parameters_are_equal(
+	if (!v34_mapping_parameters_are_equal(
 		    &left->parameters, &right->parameters) ||
 	    left->precoder.grid_step != right->precoder.grid_step ||
 	    left->convolutional_encoder.state !=

@@ -22,19 +22,6 @@ static uint8_t next_generated_bit(uint32_t *state)
 	return (uint8_t)(*state >> 31);
 }
 
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static enum v34_power_calibration_result
 mapping_transmitter_result(
 	enum v34_mapping_frame_transmitter_result result)
@@ -337,7 +324,7 @@ v34_calibrate_line_power(
 		    initial_scrambler, profile->local_role) ||
 	    !v34_4d_encoder_is_valid(initial_encoder) ||
 	    !v34_power_normalizer_is_valid(normalizer) ||
-	    !mapping_parameters_are_equal(
+	    !v34_mapping_parameters_are_equal(
 		    &initial_encoder->parameters, &normalizer->parameters) ||
 	    measurement == NULL)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;

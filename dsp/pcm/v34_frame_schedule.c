@@ -100,11 +100,12 @@ static enum v34_frame_schedule_result derive_geometry(
 	return V34_FRAME_SCHEDULE_OK;
 }
 
-static bool geometries_are_equal(
+bool v34_frame_geometry_is_equal(
 	const struct v34_frame_geometry *left,
 	const struct v34_frame_geometry *right)
 {
-	return left->symbol_rate == right->symbol_rate &&
+	return left != NULL && right != NULL &&
+	       left->symbol_rate == right->symbol_rate &&
 	       left->data_bits_per_frame == right->data_bits_per_frame &&
 	       left->primary_data_rate_2400_bps_units ==
 		       right->primary_data_rate_2400_bps_units &&
@@ -154,7 +155,7 @@ bool v34_frame_geometry_is_valid(
 		       geometry->primary_data_rate_2400_bps_units,
 		       geometry->auxiliary_channel_enabled, &derived) ==
 		       V34_FRAME_SCHEDULE_OK &&
-	       geometries_are_equal(geometry, &derived);
+	       v34_frame_geometry_is_equal(geometry, &derived);
 }
 
 enum v34_frame_schedule_result

@@ -5,40 +5,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool geometries_are_equal(
-	const struct v34_frame_geometry *left,
-	const struct v34_frame_geometry *right)
-{
-	return left->symbol_rate == right->symbol_rate &&
-	       left->data_bits_per_frame == right->data_bits_per_frame &&
-	       left->primary_data_rate_2400_bps_units ==
-		       right->primary_data_rate_2400_bps_units &&
-	       left->data_frames_per_superframe ==
-		       right->data_frames_per_superframe &&
-	       left->mapping_frames_per_data_frame ==
-		       right->mapping_frames_per_data_frame &&
-	       left->high_mapping_frame_bits == right->high_mapping_frame_bits &&
-	       left->high_mapping_frame_count ==
-		       right->high_mapping_frame_count &&
-	       left->auxiliary_bits_per_frame ==
-		       right->auxiliary_bits_per_frame &&
-	       left->auxiliary_channel_enabled ==
-		       right->auxiliary_channel_enabled;
-}
-
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 bool v34_data_channel_receiver_is_valid(
 	const struct v34_data_channel_receiver *receiver)
 {
@@ -51,10 +17,10 @@ bool v34_data_channel_receiver_is_valid(
 		    &receiver->data_receiver))
 		return false;
 	channel_decoder = &receiver->channel_receiver.frame_decoder;
-	return geometries_are_equal(
+	return v34_frame_geometry_is_equal(
 		       &channel_decoder->channel_schedule.geometry,
 		       &receiver->data_receiver.schedule.geometry) &&
-	       mapping_parameters_are_equal(
+	       v34_mapping_parameters_are_equal(
 		       &channel_decoder->channel_decoder.parameters,
 		       &receiver->data_receiver.mapping_decoder.parameters);
 }

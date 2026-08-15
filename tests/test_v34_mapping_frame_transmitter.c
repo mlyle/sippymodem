@@ -17,33 +17,12 @@ static const struct v34_q14_coefficient COEFFICIENTS[] = {
 	{ 1024, -2048 },
 };
 
-static bool geometries_are_equal(
-	const struct v34_frame_geometry *left,
-	const struct v34_frame_geometry *right)
-{
-	return left->symbol_rate == right->symbol_rate &&
-	       left->data_bits_per_frame == right->data_bits_per_frame &&
-	       left->primary_data_rate_2400_bps_units ==
-		       right->primary_data_rate_2400_bps_units &&
-	       left->data_frames_per_superframe ==
-		       right->data_frames_per_superframe &&
-	       left->mapping_frames_per_data_frame ==
-		       right->mapping_frames_per_data_frame &&
-	       left->high_mapping_frame_bits ==
-		       right->high_mapping_frame_bits &&
-	       left->high_mapping_frame_count ==
-		       right->high_mapping_frame_count &&
-	       left->auxiliary_bits_per_frame ==
-		       right->auxiliary_bits_per_frame &&
-	       left->auxiliary_channel_enabled ==
-		       right->auxiliary_channel_enabled;
-}
-
 static bool schedules_are_equal(
 	const struct v34_frame_schedule *left,
 	const struct v34_frame_schedule *right)
 {
-	return geometries_are_equal(&left->geometry, &right->geometry) &&
+	return v34_frame_geometry_is_equal(
+		       &left->geometry, &right->geometry) &&
 	       left->data_frame_in_superframe ==
 		       right->data_frame_in_superframe &&
 	       left->next_mapping_frame == right->next_mapping_frame;

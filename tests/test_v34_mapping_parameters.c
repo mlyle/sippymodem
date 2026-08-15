@@ -22,19 +22,6 @@ static const struct symbol_rate_fixture SYMBOL_RATES[] = {
 	{ V34_SYMBOL_RATE_3429, 2, 14 },
 };
 
-static bool parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool test_normative_parameters(void)
 {
 	static const struct {
@@ -221,14 +208,14 @@ static bool test_validation(void)
 	      v34_mapping_parameters_init(
 		      &parameters, NULL, false) ==
 		      V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
-	      parameters_are_equal(&parameters, &saved),
+	      v34_mapping_parameters_are_equal(&parameters, &saved),
 	      "invalid mapping initialization changed its destination");
 
 	geometry.high_mapping_frame_bits++;
 	CHECK(v34_mapping_parameters_init(
 		      &parameters, &geometry, false) ==
 		      V34_MAPPING_PARAMETERS_INVALID_ARGUMENT &&
-	      parameters_are_equal(&parameters, &saved),
+	      v34_mapping_parameters_are_equal(&parameters, &saved),
 	      "corrupt geometry changed mapping parameters");
 
 	parameters = saved;
@@ -274,6 +261,51 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_equality(void)
+{
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+
+	CHECK(v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_3000, 8, true) ==
+		      V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(
+		      &parameters, &geometry, true) ==
+		      V34_MAPPING_PARAMETERS_OK &&
+	      v34_mapping_parameters_are_equal(&parameters, &parameters) &&
+	      !v34_mapping_parameters_are_equal(NULL, &parameters) &&
+	      !v34_mapping_parameters_are_equal(&parameters, NULL),
+	      "mapping-parameter equality rejected its base contract");
+	for (unsigned int field = 0; field < 6; ++field) {
+		struct v34_mapping_parameters changed = parameters;
+
+		switch (field) {
+		case 0:
+			changed.constellation_points++;
+			break;
+		case 1:
+			changed.mapping_frame_bits++;
+			break;
+		case 2:
+			changed.shell_mapper_bits++;
+			break;
+		case 3:
+			changed.point_index_bits_per_2d_symbol++;
+			break;
+		case 4:
+			changed.ring_count++;
+			break;
+		case 5:
+			changed.expanded_shaping = !changed.expanded_shaping;
+			break;
+		}
+		CHECK(!v34_mapping_parameters_are_equal(&parameters, &changed) &&
+		      !v34_mapping_parameters_are_equal(&changed, &parameters),
+		      "mapping-parameter field %u did not affect equality", field);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -283,6 +315,7 @@ int main(void)
 		{ "normative parameters", test_normative_parameters },
 		{ "all supported geometries", test_all_supported_geometries },
 		{ "validation", test_validation },
+		{ "equality", test_equality },
 	};
 	unsigned int failures = 0;
 

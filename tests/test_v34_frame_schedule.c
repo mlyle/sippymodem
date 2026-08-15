@@ -34,33 +34,12 @@ struct collected_frame {
 	uint8_t inversion_masks[16];
 };
 
-static bool geometries_are_equal(
-	const struct v34_frame_geometry *left,
-	const struct v34_frame_geometry *right)
-{
-	return left->symbol_rate == right->symbol_rate &&
-	       left->data_bits_per_frame == right->data_bits_per_frame &&
-	       left->primary_data_rate_2400_bps_units ==
-		       right->primary_data_rate_2400_bps_units &&
-	       left->data_frames_per_superframe ==
-		       right->data_frames_per_superframe &&
-	       left->mapping_frames_per_data_frame ==
-		       right->mapping_frames_per_data_frame &&
-	       left->high_mapping_frame_bits ==
-		       right->high_mapping_frame_bits &&
-	       left->high_mapping_frame_count ==
-		       right->high_mapping_frame_count &&
-	       left->auxiliary_bits_per_frame ==
-		       right->auxiliary_bits_per_frame &&
-	       left->auxiliary_channel_enabled ==
-		       right->auxiliary_channel_enabled;
-}
-
 static bool schedules_are_equal(
 	const struct v34_frame_schedule *left,
 	const struct v34_frame_schedule *right)
 {
-	return geometries_are_equal(&left->geometry, &right->geometry) &&
+	return v34_frame_geometry_is_equal(
+		       &left->geometry, &right->geometry) &&
 	       left->data_frame_in_superframe ==
 		       right->data_frame_in_superframe &&
 	       left->next_mapping_frame == right->next_mapping_frame;
@@ -449,7 +428,7 @@ static bool test_validation(void)
 	      v34_frame_geometry_init(
 		      &geometry, V34_SYMBOL_RATE_2400, 10, true) ==
 		      V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION &&
-	      geometries_are_equal(&geometry, &saved_geometry),
+	      v34_frame_geometry_is_equal(&geometry, &saved_geometry),
 	      "invalid geometry selection changed its destination");
 
 	geometry = saved_geometry;
@@ -523,6 +502,57 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_geometry_equality(void)
+{
+	struct v34_frame_geometry geometry;
+
+	CHECK(v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_3000, 8, true) ==
+		      V34_FRAME_SCHEDULE_OK &&
+	      v34_frame_geometry_is_equal(&geometry, &geometry) &&
+	      !v34_frame_geometry_is_equal(NULL, &geometry) &&
+	      !v34_frame_geometry_is_equal(&geometry, NULL),
+	      "frame-geometry equality rejected its base contract");
+	for (unsigned int field = 0; field < 9; ++field) {
+		struct v34_frame_geometry changed = geometry;
+
+		switch (field) {
+		case 0:
+			changed.symbol_rate = V34_SYMBOL_RATE_3200;
+			break;
+		case 1:
+			changed.data_bits_per_frame++;
+			break;
+		case 2:
+			changed.primary_data_rate_2400_bps_units++;
+			break;
+		case 3:
+			changed.data_frames_per_superframe++;
+			break;
+		case 4:
+			changed.mapping_frames_per_data_frame++;
+			break;
+		case 5:
+			changed.high_mapping_frame_bits++;
+			break;
+		case 6:
+			changed.high_mapping_frame_count++;
+			break;
+		case 7:
+			changed.auxiliary_bits_per_frame++;
+			break;
+		case 8:
+			changed.auxiliary_channel_enabled =
+				!changed.auxiliary_channel_enabled;
+			break;
+		}
+		CHECK(!v34_frame_geometry_is_equal(&geometry, &changed) &&
+		      !v34_frame_geometry_is_equal(&changed, &geometry),
+		      "frame-geometry field %u did not affect equality", field);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -534,6 +564,7 @@ int main(void)
 		{ "inversion and B1", test_inversion_and_b1 },
 		{ "data frame rollover", test_data_frame_rollover },
 		{ "validation", test_validation },
+		{ "geometry equality", test_geometry_equality },
 	};
 	unsigned int failures = 0;
 

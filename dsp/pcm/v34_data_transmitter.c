@@ -4,43 +4,11 @@
 
 #include <stddef.h>
 
-static bool geometries_are_equal(
-	const struct v34_frame_geometry *left,
-	const struct v34_frame_geometry *right)
-{
-	return left->symbol_rate == right->symbol_rate &&
-	       left->data_bits_per_frame == right->data_bits_per_frame &&
-	       left->primary_data_rate_2400_bps_units ==
-		       right->primary_data_rate_2400_bps_units &&
-	       left->data_frames_per_superframe ==
-		       right->data_frames_per_superframe &&
-	       left->mapping_frames_per_data_frame ==
-		       right->mapping_frames_per_data_frame &&
-	       left->high_mapping_frame_bits == right->high_mapping_frame_bits &&
-	       left->high_mapping_frame_count ==
-		       right->high_mapping_frame_count &&
-	       left->auxiliary_bits_per_frame == right->auxiliary_bits_per_frame &&
-	       left->auxiliary_channel_enabled == right->auxiliary_channel_enabled;
-}
-
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool normalizers_are_equal(
 	const struct v34_power_normalizer *left,
 	const struct v34_power_normalizer *right)
 {
-	return mapping_parameters_are_equal(
+	return v34_mapping_parameters_are_equal(
 		       &left->parameters, &right->parameters) &&
 	       left->precoded_mean_squared_magnitude ==
 		       right->precoded_mean_squared_magnitude &&
@@ -104,7 +72,7 @@ bool v34_data_transmitter_is_valid(
 	       v34_data_line_transmitter_is_valid(&transmitter->line) &&
 	       transmitter->points.local_role ==
 		       transmitter->line.carrier.profile.local_role &&
-	       geometries_are_equal(
+	       v34_frame_geometry_is_equal(
 		       &transmitter->points.schedule.geometry,
 		       &transmitter->line.carrier.geometry) &&
 	       normalizers_are_equal(

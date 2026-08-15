@@ -49,7 +49,7 @@ static bool normalizers_are_equal(
 	const struct v34_power_normalizer *left,
 	const struct v34_power_normalizer *right)
 {
-	return v34_test_mapping_parameters_are_equal(
+	return v34_mapping_parameters_are_equal(
 		       &left->parameters, &right->parameters) &&
 	       left->precoded_mean_squared_magnitude ==
 		       right->precoded_mean_squared_magnitude &&

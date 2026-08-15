@@ -7,19 +7,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool mapping_parameters_are_equal(
-	const struct v34_mapping_parameters *left,
-	const struct v34_mapping_parameters *right)
-{
-	return left->constellation_points == right->constellation_points &&
-	       left->mapping_frame_bits == right->mapping_frame_bits &&
-	       left->shell_mapper_bits == right->shell_mapper_bits &&
-	       left->point_index_bits_per_2d_symbol ==
-		       right->point_index_bits_per_2d_symbol &&
-	       left->ring_count == right->ring_count &&
-	       left->expanded_shaping == right->expanded_shaping;
-}
-
 static bool mapping_frames_are_equal(
 	const struct v34_mapping_frame *left,
 	const struct v34_mapping_frame *right)
@@ -108,7 +95,7 @@ bool v34_channel_frame_decoder_is_valid(
 		    &expected, &decoder->channel_schedule.geometry,
 		    decoder->channel_decoder.parameters.expanded_shaping) !=
 		    V34_MAPPING_PARAMETERS_OK ||
-	    !mapping_parameters_are_equal(
+	    !v34_mapping_parameters_are_equal(
 		    &decoder->channel_decoder.parameters, &expected) ||
 	    !cursors_are_aligned(decoder))
 		return false;
