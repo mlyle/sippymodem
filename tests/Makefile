@@ -1471,6 +1471,31 @@ V92_PCM_PHASE3_INITIAL_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/self_sync_scrambler.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/g711.o
+V92_PCM_PHASE3_INITIAL_RX_TEST_BINARY := \
+	$(BUILD_DIR)/test_v92_pcm_phase3_initial_rx
+V92_PCM_PHASE3_INITIAL_RX_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v92_pcm_phase3_initial_rx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_initial_rx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_initial_tx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_opening.o \
+	$(BUILD_DIR)/v92_pcm_phase3_ru.o \
+	$(BUILD_DIR)/v92_pcm_info1a.o \
+	$(BUILD_DIR)/v92_pcm_phase3_ja_line_rx.o \
+	$(BUILD_DIR)/binary_equalizer.o \
+	$(BUILD_DIR)/v92_pcm_phase3_trn1u_line_rx.o \
+	$(BUILD_DIR)/v92_pcm_phase3_trn1u.o \
+	$(BUILD_DIR)/v92_pcm_phase3_ja.o \
+	$(BUILD_DIR)/v92_ja_decoder.o \
+	$(BUILD_DIR)/v92_phase3_sync.o \
+	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/pcm_dil_descriptor.o \
+	$(BUILD_DIR)/pcm_binary_sign.o \
+	$(BUILD_DIR)/v34_framing.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/v90_pcm_symbol.o \
+	$(BUILD_DIR)/qam_equalizer.o \
+	$(BUILD_DIR)/channel_bench.o \
+	$(BUILD_DIR)/g711.o
 V92_PHASE3_SYNC_TEST_BINARY := $(BUILD_DIR)/test_v92_phase3_sync
 V92_PHASE3_SYNC_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase3_sync.o \
@@ -2709,6 +2734,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V92_PCM_PHASE3_TRN1U_LINE_RX_TEST_BINARY) \
 	$(V92_PCM_PHASE3_JA_TEST_BINARY) \
 	$(V92_PCM_PHASE3_INITIAL_TX_TEST_BINARY) \
+	$(V92_PCM_PHASE3_INITIAL_RX_TEST_BINARY) \
 	$(V92_PHASE3_SYNC_TEST_BINARY) \
 	$(V92_JA_DECODER_TEST_BINARY) \
 	$(V92_PCM_PHASE3_JA_LINE_RX_TEST_BINARY) \
@@ -2966,6 +2992,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V92_PCM_PHASE3_TRN1U_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE3_JA_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE3_INITIAL_TX_TEST_OBJECTS:.o=.d) \
+	$(V92_PCM_PHASE3_INITIAL_RX_TEST_OBJECTS:.o=.d) \
 	$(V92_PHASE3_SYNC_TEST_OBJECTS:.o=.d) \
 	$(V92_JA_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE3_JA_LINE_RX_TEST_OBJECTS:.o=.d) \
@@ -3248,6 +3275,7 @@ test: $(TEST_BINARIES)
 	./$(V92_PCM_PHASE3_TRN1U_LINE_RX_TEST_BINARY)
 	./$(V92_PCM_PHASE3_JA_TEST_BINARY)
 	./$(V92_PCM_PHASE3_INITIAL_TX_TEST_BINARY)
+	./$(V92_PCM_PHASE3_INITIAL_RX_TEST_BINARY)
 	./$(V92_PHASE3_SYNC_TEST_BINARY)
 	./$(V92_JA_DECODER_TEST_BINARY)
 	./$(V92_PCM_PHASE3_JA_LINE_RX_TEST_BINARY)
@@ -3892,6 +3920,10 @@ $(V92_PCM_PHASE3_JA_TEST_BINARY): \
 $(V92_PCM_PHASE3_INITIAL_TX_TEST_BINARY): \
 	$(V92_PCM_PHASE3_INITIAL_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V92_PCM_PHASE3_INITIAL_RX_TEST_BINARY): \
+	$(V92_PCM_PHASE3_INITIAL_RX_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_PHASE3_SYNC_TEST_BINARY): $(V92_PHASE3_SYNC_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
@@ -4733,6 +4765,10 @@ $(BUILD_DIR)/v92_pcm_phase3_ja.o: \
 
 $(BUILD_DIR)/v92_pcm_phase3_initial_tx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_initial_tx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_pcm_phase3_initial_rx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_initial_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase3_sync.o: \
