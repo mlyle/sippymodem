@@ -1941,6 +1941,8 @@ V92_PHASE4_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase4_digital_station
 V92_PHASE4_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase4_digital_station.o \
+	$(BUILD_DIR)/v92_phase4_analog_tx.o \
+	$(BUILD_DIR)/v92_phase4_analog_station.o \
 	$(BUILD_DIR)/v92_phase4_digital_station.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v92_upstream_control_line_rx.o \
@@ -5015,6 +5017,10 @@ $(BUILD_DIR)/v92_phase4_digital_rx.o: \
 
 $(BUILD_DIR)/v92_phase4_digital_station.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_digital_station.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_phase4_analog_station.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_phase4_analog_station.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase4_suvu_tx.o: \

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <pcm_downstream_rx.h>
+#include <v92_phase4_analog_station.h>
 #include <v92_phase4_cpu_tx.h>
 #include <v92_phase4_digital_station.h>
 #include <v92_phase4_suvu_tx.h>
@@ -533,6 +534,218 @@ static bool test_generated_exchange(void)
 	return true;
 }
 
+static bool base_cpd_equal(
+	const struct v92_cpd_base_parameters *left,
+	const struct v92_cpd_base_parameters *right)
+{
+	return left->four_times_gain_q0_16 == right->four_times_gain_q0_16 &&
+	       left->data_rate_number == right->data_rate_number &&
+	       left->trellis == right->trellis &&
+	       left->extend_e2u == right->extend_e2u &&
+	       left->acknowledges_cpu == right->acknowledges_cpu;
+}
+
+static bool run_paired_station_exchange(
+	enum g711_law law, enum v92_constellation_size constellation,
+	uint8_t previous_sign, int8_t polarity)
+{
+	const struct v92_suvu_parameters suvu = {
+		.prefilter_level_db_q2_2 = -7,
+		.wait_for_cpu = true,
+	};
+	const struct v92_suvd_parameters suvd = {
+		.request_silence = law == G711_LAW_PCMA,
+	};
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_pcm_phase3_cpt_line_handoff digital_handoff;
+	struct v92_phase3_analog_transmit_handoff analog_handoff = {
+		.lu = TEST_LU,
+		.training_constellation = constellation,
+		.previous_encoded_sign = previous_sign,
+	};
+	struct v92_pcm_phase4_trn2u upstream;
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx downstream_tx;
+	struct pcm_downstream_rx downstream_rx;
+	struct v92_phase4_analog_station analog;
+	struct v92_phase4_digital_station digital;
+	struct v92_cpu_parameters retained_cpu;
+	struct v92_cpu_parameters expected_cpu;
+	struct v92_cpd_base_parameters retained_cpd;
+	struct v92_phase4_modulator handoff;
+	size_t cpu_repeat_wait = 0u;
+	bool ready = false;
+
+	CHECK(build_predecessor(
+		      law, constellation, previous_sign, polarity,
+		      &upstream, &digital_handoff) &&
+	      v90_pcm_mapping_init_from_v92_cpt(
+		      &mapping, &digital_handoff.parameters) ==
+		      V90_PCM_MAPPING_OK &&
+	      pcm_downstream_tx_init(
+		      &downstream_tx, PCM_PROTOCOL_V92, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(&downstream_tx, &suvd) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(
+		      &downstream_rx, PCM_PROTOCOL_V92, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_phase4_analog_station_init(
+		      &analog, &analog_handoff, &downstream_rx,
+		      &suvu, &cpu, NULL, NULL) ==
+		      V92_PHASE4_ANALOG_STATION_OK &&
+	      v92_phase4_digital_station_init(
+		      &digital, &digital_handoff, constellation,
+		      &downstream_tx, &cpd) ==
+		      V92_PHASE4_DIGITAL_STATION_OK,
+	      "paired station initialization failed law=%u constellation=%u",
+	      (unsigned int)law, (unsigned int)constellation);
+
+	/* The warm receive handoff already owns these delayed input symbols. */
+	for (size_t symbol = 0u;
+	     symbol < digital_handoff.input_advance_symbols; ++symbol) {
+		int16_t ignored;
+
+		CHECK(v92_phase4_analog_station_transmit(&analog, &ignored) ==
+			      V92_PHASE4_ANALOG_STATION_OK,
+		      "paired station alignment stopped at %zu", symbol);
+	}
+	for (size_t symbol = 0u; symbol < DOWNSTREAM_LIMIT * 8u; ++symbol) {
+		int16_t upstream_sample;
+		uint8_t downstream_octet;
+		enum v92_phase4_analog_station_result analog_result;
+		enum v92_phase4_digital_station_result digital_result;
+
+		analog_result = v92_phase4_analog_station_transmit(
+			&analog, &upstream_sample);
+		if (analog_result == V92_PHASE4_ANALOG_STATION_E2U_READY) {
+			ready = true;
+			break;
+		}
+		CHECK(analog_result == V92_PHASE4_ANALOG_STATION_OK,
+		      "paired analogue transmit stopped at %zu: %s", symbol,
+		      v92_phase4_analog_station_result_name(analog_result));
+		CHECK(v92_phase4_digital_station_transmit(
+			      &digital, &downstream_octet) ==
+			      V92_PHASE4_DIGITAL_STATION_OK,
+		      "paired digital transmit stopped at %zu", symbol);
+		digital_result = v92_phase4_digital_station_receive(
+			&digital,
+			line_sample(law, polarity, upstream_sample));
+		CHECK(digital_result == V92_PHASE4_DIGITAL_STATION_OK ||
+		      digital_result == V92_PHASE4_DIGITAL_STATION_EVENT,
+		      "paired digital receive stopped at %zu: %s", symbol,
+		      v92_phase4_digital_station_result_name(digital_result));
+		analog_result = v92_phase4_analog_station_receive(
+			&analog, downstream_octet);
+		CHECK(analog_result == V92_PHASE4_ANALOG_STATION_OK ||
+		      analog_result == V92_PHASE4_ANALOG_STATION_EVENT,
+		      "paired analogue receive stopped at %zu: %s", symbol,
+		      v92_phase4_analog_station_result_name(analog_result));
+		if (analog.transmit.cpu_sent && !digital.cpu_received &&
+		    !analog.transmit.cpu_pending) {
+			if (cpu_repeat_wait == 0u)
+				cpu_repeat_wait = 800u;
+			else if (--cpu_repeat_wait == 0u)
+				CHECK(v92_phase4_analog_station_repeat_cpu(&analog) ==
+					      V92_PHASE4_ANALOG_STATION_OK,
+				      "paired CPu repeat was rejected at %zu",
+				      symbol);
+		}
+	}
+	expected_cpu = cpu;
+	expected_cpu.acknowledges_cpd = true;
+	CHECK(ready && v92_phase4_analog_station_is_e2u_ready(&analog) &&
+	      v92_phase4_analog_station_cpd_parameters(
+		      &analog, &retained_cpd) &&
+	      base_cpd_equal(&retained_cpd, &cpd) &&
+	      v92_phase4_digital_station_cpu_parameters(
+		      &digital, &retained_cpu) &&
+	      cpu_equal(&retained_cpu, &expected_cpu) &&
+	      v92_phase4_digital_station_peer_acknowledged_cpd(&digital) &&
+	      analog.suvd.request_silence == suvd.request_silence &&
+	      v92_phase4_analog_station_handoff(&analog, &handoff) ==
+		      V92_PHASE4_ANALOG_STATION_OK &&
+	      v92_phase4_modulator_is_valid(&handoff),
+	      "paired station exchange did not reach E2u law=%u constellation=%u "
+	      "ready=%u a=%u/%u/%u/%u/%u tx=%u/%u/%u/%u d=%u/%u/%u/%u",
+	      (unsigned int)law, (unsigned int)constellation, ready,
+	      analog.suvd_received, analog.cpd_received,
+	      analog.transmit.cpu_sent, analog.transmit.acknowledgment_sent,
+	      analog.transmit.peer_confirmation_received,
+	      analog.transmit.stage, analog.receive.stage,
+	      analog.transmit.received_suvd, analog.transmit.received_cpd,
+	      digital.suvu_received, digital.cpu_received,
+	      digital.peer_acknowledged_cpd,
+	      digital.transmit_acknowledges_cpu);
+	return true;
+}
+
+static bool test_paired_station_matrix(void)
+{
+	static const enum v92_constellation_size constellations[] = {
+		V92_CONSTELLATION_4_POINT,
+		V92_CONSTELLATION_8_POINT,
+	};
+
+	for (unsigned int law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		for (size_t index = 0u;
+		     index < ARRAY_LENGTH(constellations); ++index) {
+			CHECK(run_paired_station_exchange(
+				      (enum g711_law)law,
+				      constellations[index],
+				      (uint8_t)((law + index) & 1u),
+				      index == 0u ? 1 : -1),
+			      "paired station matrix stopped");
+		}
+	}
+	return true;
+}
+
+static bool test_analog_early_control(void)
+{
+	const struct v92_suvu_parameters suvu = {
+		.prefilter_level_db_q2_2 = -7,
+		.wait_for_cpu = true,
+	};
+	const struct v92_suvd_parameters early_suvd = {
+		.request_silence = true,
+	};
+	struct v92_cpu_parameters cpu = cpu_parameters(G711_LAW_PCMU);
+	struct v92_cpd_base_parameters early_cpd = cpd_parameters();
+	struct v92_phase3_analog_transmit_handoff handoff = {
+		.lu = TEST_LU,
+		.training_constellation = V92_CONSTELLATION_4_POINT,
+		.previous_encoded_sign = 1u,
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_rx downstream;
+	struct v92_phase4_analog_station station;
+
+	{
+		struct v92_cpt_parameters cpt = cpt_parameters(G711_LAW_PCMU);
+
+		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt) ==
+			      V90_PCM_MAPPING_OK,
+		      "early-control mapping differed");
+	}
+	CHECK(pcm_downstream_rx_init(
+		      &downstream, PCM_PROTOCOL_V92, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_phase4_analog_station_init(
+		      &station, &handoff, &downstream, &suvu, &cpu,
+		      &early_suvd, &early_cpd) ==
+		      V92_PHASE4_ANALOG_STATION_OK &&
+	      station.suvd_received && station.cpd_received &&
+	      station.transmit.received_suvd &&
+	      station.transmit.received_cpd &&
+	      v92_phase4_analog_tx_silence_requested(&station.transmit),
+	      "early downstream controls were not retained");
+	return true;
+}
+
 static bool test_compact_boundary(void)
 {
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
@@ -660,6 +873,9 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated digital station exchange", test_generated_exchange },
+		{ "paired analogue/digital station matrix",
+		  test_paired_station_matrix },
+		{ "analogue early control handoff", test_analog_early_control },
 		{ "compact station boundary", test_compact_boundary },
 		{ "early CPu acknowledgement", test_early_cpu_acknowledgement },
 	};
