@@ -646,7 +646,9 @@ static bool exercise_retrain(
 	caller->output_count = 0;
 	answerer->output_count = 0;
 	pre_retrain_length = raw_transport ? bit_rate / 50u / 10u : 0;
-	preserved_length = raw_transport ? pre_retrain_length + 2u : 5u;
+	/* Leave a clean character queued behind any asynchronous character or
+	 * mapping-frame input already owned by the datapump. */
+	preserved_length = raw_transport ? pre_retrain_length + 8u : 5u;
 	if (preserved_length > PRESERVED_CAPACITY ||
 	    pre_retrain_length + 1u >= preserved_length) {
 		fprintf(stderr, "invalid retrain preservation fixture\n");
@@ -656,10 +658,10 @@ static bool exercise_retrain(
 		/* The interrupted character is deliberately unrecoverable at the
 		 * receiver.  Its all-mark tail lets the next queued character regain
 		 * a clean asynchronous framing boundary. */
-		caller_preserved[pre_retrain_length] = 0xff;
-		answerer_preserved[pre_retrain_length] = 0xff;
-		caller_preserved[pre_retrain_length + 1u] = 0x9f;
-		answerer_preserved[pre_retrain_length + 1u] = 0xaf;
+		caller_preserved[preserved_length - 2u] = 0xff;
+		answerer_preserved[preserved_length - 2u] = 0xff;
+		caller_preserved[preserved_length - 1u] = 0x9f;
+		answerer_preserved[preserved_length - 1u] = 0xaf;
 	}
 	if (modem_write(
 		    caller->modem, (const char *)caller_preserved,
@@ -752,9 +754,9 @@ static bool exercise_retrain(
 	}
 	if (raw_transport) {
 		caller_preserved_delivered = output_contains_bytes(
-			caller, answerer_preserved + pre_retrain_length + 1u, 1);
+			caller, answerer_preserved + preserved_length - 1u, 1);
 		answerer_preserved_delivered = output_contains_bytes(
-			answerer, caller_preserved + pre_retrain_length + 1u, 1);
+			answerer, caller_preserved + preserved_length - 1u, 1);
 		/* The peer can consume raw data before it observes S1, so only the
 		 * initiator's paused transmit queue is losslessly owned here.  The
 		 * second exercise reverses roles and proves the other direction. */
@@ -791,15 +793,66 @@ static bool exercise_retrain(
 		if (!process_sip_frame(caller, answerer, codec, recorder) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
-		if (caller->output_count >=
-			    preserved_length - caller_preserved_offset +
-				    sizeof(answerer_payloads[sequence]) &&
-		    answerer->output_count >=
-			    preserved_length - answerer_preserved_offset +
-				    sizeof(caller_payloads[sequence])) {
+		if ((raw_transport &&
+		     output_contains_bytes(
+			     caller, answerer_payloads[sequence],
+			     sizeof(answerer_payloads[sequence])) &&
+		     output_contains_bytes(
+			     answerer, caller_payloads[sequence],
+			     sizeof(caller_payloads[sequence]))) ||
+		    (!raw_transport &&
+		     caller->output_count >=
+			     preserved_length - caller_preserved_offset +
+				     sizeof(answerer_payloads[sequence]) &&
+		     answerer->output_count >=
+			     preserved_length - answerer_preserved_offset +
+				     sizeof(caller_payloads[sequence]))) {
 			transferred = true;
 			break;
 		}
+	}
+	if (raw_transport) {
+		size_t caller_tail = preserved_length - caller_preserved_offset +
+				     sizeof(answerer_payloads[sequence]);
+		size_t answerer_tail = preserved_length - answerer_preserved_offset +
+				       sizeof(caller_payloads[sequence]);
+
+		/* The receiver abandons a partial asynchronous character at retrain.
+		 * Any hunt bytes therefore precede the clean queued suffix. */
+		if (!transferred || caller->output_count < caller_tail ||
+		    answerer->output_count < answerer_tail ||
+		    caller->output_count > preserved_length +
+					   sizeof(answerer_payloads[sequence]) ||
+		    answerer->output_count > preserved_length +
+					     sizeof(caller_payloads[sequence]) ||
+		    memcmp(caller->output + caller->output_count - caller_tail,
+			   answerer_preserved + caller_preserved_offset,
+			   preserved_length - caller_preserved_offset) != 0 ||
+		    memcmp(caller->output + caller->output_count -
+					   sizeof(answerer_payloads[sequence]),
+			   answerer_payloads[sequence],
+			   sizeof(answerer_payloads[sequence])) != 0 ||
+		    memcmp(answerer->output + answerer->output_count - answerer_tail,
+			   caller_preserved + answerer_preserved_offset,
+			   preserved_length - answerer_preserved_offset) != 0 ||
+		    memcmp(answerer->output + answerer->output_count -
+					     sizeof(caller_payloads[sequence]),
+			   caller_payloads[sequence],
+			   sizeof(caller_payloads[sequence])) != 0) {
+			fprintf(stderr,
+				"raw preserved/post-retrain data failed "
+				"(transferred=%d outputs=%zu/%zu tails=%zu/%zu "
+				"status=%u/%u state=%u/%u)\n",
+				transferred, caller->output_count,
+				answerer->output_count, caller_tail, answerer_tail,
+				caller->modem->dp != NULL ?
+					caller->modem->dp->status : 0,
+				answerer->modem->dp != NULL ?
+					answerer->modem->dp->status : 0,
+				caller->modem->state, answerer->modem->state);
+			return false;
+		}
+		return true;
 	}
 	if (!transferred ||
 	    caller->output_count != preserved_length - caller_preserved_offset +
