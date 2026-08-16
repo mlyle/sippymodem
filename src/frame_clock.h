@@ -40,7 +40,8 @@ void frame_clock_start(
 void frame_clock_stop(struct frame_clock *clock);
 
 /* On OK, frames_due is between one and maximum_catchup_frames and the
- * deadline advances transactionally. An overrun stops the clock. */
+ * deadline advances transactionally. Backlogs larger than that bound remain
+ * due for later calls; only an unrepresentable deadline stops the clock. */
 enum frame_clock_result frame_clock_take_due(
 	struct frame_clock *clock,
 	uint64_t now_ns,

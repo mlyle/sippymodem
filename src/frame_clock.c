@@ -80,8 +80,11 @@ enum frame_clock_result frame_clock_take_due(
 	if (elapsed_frames == UINT64_MAX)
 		goto overrun;
 	due = elapsed_frames + 1;
-	if (due > clock->maximum_catchup_frames ||
-	    due > (UINT64_MAX - clock->next_deadline_ns) /
+	if (due > clock->maximum_catchup_frames) {
+		due = clock->maximum_catchup_frames;
+		add_saturated(&clock->stats.overruns, 1);
+	}
+	if (due > (UINT64_MAX - clock->next_deadline_ns) /
 			  clock->interval_ns)
 		goto overrun;
 	clock->next_deadline_ns += due * clock->interval_ns;
@@ -120,7 +123,7 @@ const char *frame_clock_result_name(
 	case FRAME_CLOCK_INEXACT_INTERVAL:
 		return "frame interval is not exactly representable";
 	case FRAME_CLOCK_OVERRUN:
-		return "frame clock catch-up limit exceeded";
+		return "frame clock deadline overflow";
 	}
 	return "unknown frame clock result";
 }

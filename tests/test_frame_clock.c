@@ -39,30 +39,28 @@ static bool test_exact_deadlines_and_catchup(void)
 	return true;
 }
 
-static bool test_overrun_stops_transactionally(void)
+static bool test_large_backlog_is_drained_in_bounded_batches(void)
 {
 	struct frame_clock clock;
 	size_t frames = 99;
 
 	CHECK(frame_clock_init(&clock, 8, 8000, 4) ==
 		      FRAME_CLOCK_OK,
-	      "overrun clock initialization failed");
+	      "backlog clock initialization failed");
 	frame_clock_start(&clock, 1000000);
 	CHECK(frame_clock_take_due(&clock, 5000001, &frames) ==
-		      FRAME_CLOCK_OVERRUN &&
-		      frames == 0 && !clock.running &&
-		      clock.stats.frames_due == 0 && clock.stats.overruns == 1 &&
-		      frame_clock_wait_ns(&clock, 5000001) ==
-			      UINT64_MAX,
-	      "frame overrun advanced or left the clock running");
-	CHECK(frame_clock_take_due(&clock, 5000001, &frames) ==
-		      FRAME_CLOCK_NOT_RUNNING,
-	      "stopped overrun clock still produced frames");
-	frame_clock_start(&clock, 9000000);
-	CHECK(frame_clock_take_due(&clock, 9000000, &frames) ==
 		      FRAME_CLOCK_OK &&
-		      frames == 1 && clock.stats.frames_due == 1,
-	      "frame clock could not restart after an overrun");
+		      frames == 4 && clock.running &&
+		      clock.next_deadline_ns == 5000000 &&
+		      clock.stats.frames_due == 4 && clock.stats.overruns == 1 &&
+		      frame_clock_wait_ns(&clock, 5000001) == 0,
+	      "large backlog was not bounded while remaining immediately due");
+	CHECK(frame_clock_take_due(&clock, 5000001, &frames) ==
+		      FRAME_CLOCK_OK &&
+		      frames == 1 && clock.running &&
+		      clock.next_deadline_ns == 6000000 &&
+		      clock.stats.frames_due == 5 && clock.stats.overruns == 1,
+	      "frame clock did not drain the remaining backlog");
 	return true;
 }
 
@@ -100,7 +98,7 @@ static bool test_validation_and_integer_overflow(void)
 	      "deadline arithmetic wrapped instead of reporting overrun");
 	CHECK(strcmp(frame_clock_result_name(
 			     FRAME_CLOCK_OVERRUN),
-		     "frame clock catch-up limit exceeded") == 0,
+		     "frame clock deadline overflow") == 0,
 	      "frame clock result name is wrong");
 	return true;
 }
@@ -114,7 +112,8 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "exact deadlines and catch-up", test_exact_deadlines_and_catchup },
-		{ "transactional overrun", test_overrun_stops_transactionally },
+		{ "bounded backlog",
+		  test_large_backlog_is_drained_in_bounded_batches },
 		{ "validation and overflow", test_validation_and_integer_overflow },
 	};
 	unsigned int failures = 0;

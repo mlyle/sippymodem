@@ -120,13 +120,19 @@ static bool test_failures_deactivate_the_path(void)
 		      audio_scheduler_set_active(&scheduler, true) &&
 		      audio_scheduler_step(&scheduler, 0, &frames) ==
 			      AUDIO_SCHEDULER_OK,
-	      "overrun fixture did not process its first frame");
+	      "backlog fixture did not process its first frame");
 	CHECK(audio_scheduler_step(
 		      &scheduler, 30000000, &frames) ==
-		      AUDIO_SCHEDULER_CLOCK_ERROR &&
-		      frames == 0 && !scheduler.active && path.calls == 1 &&
-		      scheduler.stats.failures == 1,
-	      "clock overrun did not deactivate before audio processing");
+		      AUDIO_SCHEDULER_OK &&
+		      frames == 2 && scheduler.active && path.calls == 3 &&
+		      scheduler.clock.stats.overruns == 1 &&
+		      audio_scheduler_wait_ns(&scheduler, 30000000) == 0 &&
+		      audio_scheduler_step(
+			      &scheduler, 30000000, &frames) ==
+			      AUDIO_SCHEDULER_OK &&
+		      frames == 1 && scheduler.active && path.calls == 4 &&
+		      scheduler.stats.failures == 0,
+	      "scheduler did not drain a large backlog in bounded batches");
 
 	memset(&scheduler, 0, sizeof(scheduler));
 	memset(&path, 0, sizeof(path));
