@@ -67,6 +67,11 @@ v34_phase2_ranging_sample(
 	if (v34_phase2_info0_exchange_sample(
 		    &next.info0_exchange, received_sample, &generated,
 		    &exchange_event) != V34_PHASE2_INFO0_EXCHANGE_OK ||
+	    (exchange_event.recovery_started &&
+	     phase2_ranging_control_init(
+		     &next.control,
+		     &next.info0_exchange.transport) !=
+		     PHASE2_RANGING_OK) ||
 	    phase2_ranging_finish_sample(
 		    &next.control, &next.info0_exchange.transport,
 		    next.info0_exchange.peer_info0_received,

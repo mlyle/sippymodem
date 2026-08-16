@@ -117,6 +117,49 @@ enum phase2_info0_exchange_result phase2_info0_exchange_init(
 	return PHASE2_INFO0_EXCHANGE_OK;
 }
 
+enum phase2_info0_exchange_result phase2_info0_exchange_restart_info(
+	struct phase2_info0_exchange *exchange,
+	const uint8_t *local_payload, size_t local_payload_bit_count)
+{
+	struct phase2_info0_exchange restarted;
+	struct v34_phase2_info_audio_transmitter transmitter;
+	int16_t nominal_amplitude;
+
+	if (!phase2_info0_exchange_is_valid(exchange) ||
+	    exchange->transmit_phase != PHASE2_INFO0_TONE ||
+	    local_payload == NULL || local_payload_bit_count == 0)
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	if (local_payload_bit_count !=
+	    exchange->info_transmitter.frame.payload_bit_count)
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	nominal_amplitude = exchange->signal_role == PHASE2_SIGNAL_A ?
+				exchange->tone_transmitter.guard_amplitude :
+				exchange->tone_transmitter.carrier_amplitude;
+	if (v34_phase2_info_audio_transmitter_init(
+		    &transmitter,
+		    station_role_for_signal(exchange->signal_role),
+		    nominal_amplitude, local_payload,
+		    local_payload_bit_count) != V34_PHASE2_INFO_AUDIO_OK)
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+
+	/* Tone uses sine and QAM uses cosine.  Both stored phases already point
+	 * at the next line sample, so removing one quarter turn preserves the
+	 * carrier reference while the new pulse shaper starts its fill. */
+	transmitter.modulation.carrier.carrier_phase =
+		exchange->tone_transmitter.carrier_phase -
+		UINT32_C(0x40000000);
+	transmitter.modulation.guard_phase =
+		exchange->tone_transmitter.guard_phase;
+	restarted = *exchange;
+	restarted.info_transmitter = transmitter;
+	restarted.filter_tail_symbols = 0;
+	restarted.transmit_phase = PHASE2_INFO0_SEQUENCE;
+	if (!phase2_info0_exchange_is_valid(&restarted))
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	*exchange = restarted;
+	return PHASE2_INFO0_EXCHANGE_OK;
+}
+
 static bool receive_sample(
 	struct phase2_info0_exchange *exchange, int16_t sample,
 	struct phase2_info0_exchange_event *event)

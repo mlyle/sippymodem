@@ -53,6 +53,13 @@ enum phase2_info0_exchange_result phase2_info0_exchange_init(
 bool phase2_info0_exchange_is_valid(
 	const struct phase2_info0_exchange *exchange);
 
+/* Restart INFO immediately from the following-tone state.  The new arbitrary
+ * reference point inherits the carrier and guard phases for a continuous
+ * recovery handoff; no post-V.8 silence is inserted. */
+enum phase2_info0_exchange_result phase2_info0_exchange_restart_info(
+	struct phase2_info0_exchange *exchange,
+	const uint8_t *local_payload, size_t local_payload_bit_count);
+
 /* One call consumes and produces one 8 kHz line sample.  Reception is active
  * throughout the post-V.8 transmit silence so an early peer INFO0 is retained.
  * The INFO frame and tone events are independent and may both be populated by

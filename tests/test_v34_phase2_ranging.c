@@ -369,6 +369,102 @@ static bool test_missing_second_reversal_times_out(void)
 	return true;
 }
 
+static bool check_info0_recovery(enum test_codec codec)
+{
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging caller;
+	struct v34_phase2_ranging answerer;
+	int16_t caller_line_sample = 0;
+	int16_t answer_line_sample = 0;
+	size_t caller_recovery_started = 0;
+	size_t caller_recovery_completed = 0;
+	size_t answer_recovery_started = 0;
+	size_t answer_recovery_completed = 0;
+	bool answer_initial_info_complete = false;
+
+	CHECK(v34_phase2_ranging_init(
+		      &caller, V34_CALLING_STATION,
+		      TEST_AMPLITUDE, &calling) ==
+		      V34_PHASE2_RANGING_OK &&
+	      v34_phase2_ranging_init(
+		      &answerer, V34_ANSWERING_STATION,
+		      TEST_AMPLITUDE, &answering) ==
+		      V34_PHASE2_RANGING_OK,
+	      "INFO0 recovery endpoints did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT * 2u; ++index) {
+		struct v34_phase2_ranging_event caller_event;
+		struct v34_phase2_ranging_event answer_event;
+		enum phase2_info0_transmit_phase answer_before =
+			answerer.info0_exchange.transport.transmit_phase;
+		int16_t next_caller;
+		int16_t next_answer;
+
+		CHECK(v34_phase2_ranging_sample(
+			      &caller, answer_line_sample,
+			      &next_caller, &caller_event) ==
+			      V34_PHASE2_RANGING_OK &&
+		      v34_phase2_ranging_sample(
+			      &answerer, caller_line_sample,
+			      &next_answer, &answer_event) ==
+			      V34_PHASE2_RANGING_OK,
+		      "INFO0 recovery failed for codec %d at sample %zu",
+		      codec, index);
+		caller_recovery_started +=
+			caller_event.exchange_event.recovery_started;
+		caller_recovery_completed +=
+			caller_event.exchange_event.recovery_completed;
+		answer_recovery_started +=
+			answer_event.exchange_event.recovery_started;
+		answer_recovery_completed +=
+			answer_event.exchange_event.recovery_completed;
+
+		/* Erase only the answerer's first INFO0.  Its following Tone A
+		 * must make the caller repeat INFO0c; all recovery traffic then
+		 * crosses the same companded line normally. */
+		if (!answer_initial_info_complete) {
+			next_answer = 0;
+			if (answer_before != PHASE2_INFO0_TONE &&
+			    answerer.info0_exchange.transport.transmit_phase ==
+				    PHASE2_INFO0_TONE)
+				answer_initial_info_complete = true;
+		}
+		caller_line_sample = codec_round_trip(next_caller, codec);
+		answer_line_sample = codec_round_trip(next_answer, codec);
+		if (caller.control.phase == PHASE2_RANGING_PROBE_READY &&
+		    answerer.control.phase == PHASE2_RANGING_PROBE_READY)
+			break;
+	}
+	CHECK(answer_initial_info_complete &&
+	      caller_recovery_started == 1 &&
+	      caller_recovery_completed == 1 &&
+	      answer_recovery_started == 1 &&
+	      answer_recovery_completed == 1,
+	      "INFO0 recovery lifecycle changed for codec %d: caller %zu/%zu answer %zu/%zu",
+	      codec, caller_recovery_started, caller_recovery_completed,
+	      answer_recovery_started, answer_recovery_completed);
+	CHECK(caller.info0_exchange.peer_info0_received &&
+	      caller.info0_exchange.peer_info0.acknowledges_peer_info0 &&
+	      answerer.info0_exchange.peer_info0_received &&
+	      answerer.info0_exchange.peer_info0.acknowledges_peer_info0,
+	      "INFO0 recovery did not establish mutual acknowledgement for codec %d",
+	      codec);
+	CHECK(caller.control.phase == PHASE2_RANGING_PROBE_READY &&
+	      answerer.control.phase == PHASE2_RANGING_PROBE_READY,
+	      "INFO0 recovery did not resume ranging for codec %d (phases %d/%d)",
+	      codec, caller.control.phase, answerer.control.phase);
+	return true;
+}
+
+static bool test_info0_recovery(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		CHECK(check_info0_recovery(codec),
+		      "INFO0 recovery failed for codec %d", codec);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_info0 capabilities = calling_capabilities();
@@ -413,6 +509,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bidirectional ranging", test_bidirectional_ranging },
+		{ "INFO0 recovery", test_info0_recovery },
 		{ "missing second reversal", test_missing_second_reversal_times_out },
 		{ "validation", test_validation },
 	};
