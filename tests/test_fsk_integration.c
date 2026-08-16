@@ -6,7 +6,9 @@
 #include <fsk300_datapump.h>
 #include <g711.h>
 #include <media.h>
+#include <qam.h>
 #include <v22_datapump.h>
+#include <v22_framing.h>
 #include <v23_datapump.h>
 #include <datapump.h>
 #include <v8_datapump.h>
@@ -35,6 +37,7 @@ enum {
 	DATA_FRAME_LIMIT = 400,
 	RETRAIN_FRAME_LIMIT = 500,
 	RETRAIN_RESPONSE_LOSS_FRAMES = 70,
+	V22BIS_INITIAL_DELAY_FRAMES = 70,
 	V32_MIN_HALF_DUPLEX_GAP_FRAMES = 16,
 	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
 	V22_REPLAY_CONNECT_SAMPLES = MODEM_RATE * 15,
@@ -59,6 +62,22 @@ struct recording_capture {
 	bool invalid;
 };
 
+struct media_frame_delay {
+	uint8_t codewords[V22BIS_INITIAL_DELAY_FRAMES][SIP_FRAME_SAMPLES];
+	size_t head;
+	size_t count;
+};
+
+struct v22_rate_monitor {
+	struct qam_demodulator demodulator;
+	struct v22bis_rate_signal_detector detector;
+	struct qam_point previous;
+	size_t samples;
+	size_t minimum_sample;
+	unsigned int starts;
+	bool has_previous;
+};
+
 struct modem_test_case {
 	enum DP_ID id;
 	const char *name;
@@ -69,6 +88,9 @@ struct modem_test_case {
 	unsigned int answerer_rx_rate;
 	unsigned int carrier_loss_samples;
 	unsigned int training_frame_limit;
+	unsigned int initial_caller_delay_frames;
+	unsigned int minimum_caller_rate_signals;
+	unsigned int minimum_caller_rate_signal_sample;
 	bool automode;
 	bool requires_v8;
 	bool requires_exact_g711;
@@ -321,6 +343,108 @@ static bool process_sip_frame(
 	       deliver_media_frame(answerer, caller, codec, recorder);
 }
 
+static bool process_sip_frame_with_caller_delay(
+	struct integration_endpoint *caller,
+	struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder,
+	struct media_frame_delay *delay, size_t delay_frames)
+{
+	size_t slot;
+
+	if (delay == NULL || delay_frames == 0 ||
+	    delay_frames > ARRAY_LENGTH(delay->codewords) ||
+	    !process_transmit_frame(caller, codec, recorder) ||
+	    !process_transmit_frame(answerer, codec, recorder))
+		return false;
+	if (delay->count < delay_frames) {
+		slot = (delay->head + delay->count) % delay_frames;
+		delay->count++;
+		if (!endpoint_prepare_media(answerer, codec))
+			return false;
+	} else {
+		slot = delay->head;
+		memcpy(answerer->receive_codewords, delay->codewords[slot],
+		       sizeof(answerer->receive_codewords));
+		if (media_decode(
+			    codec, answerer->receive_codewords,
+			    SIP_FRAME_SAMPLES, answerer->receive,
+			    SIP_FRAME_SAMPLES, recorder) != MEDIA_OK)
+			return false;
+		delay->head = (delay->head + 1u) % delay_frames;
+	}
+	memcpy(delay->codewords[slot], caller->transmit_codewords,
+	       sizeof(delay->codewords[slot]));
+	return deliver_media_frame(answerer, caller, codec, recorder);
+}
+
+static bool process_test_frame(
+	struct integration_endpoint *caller,
+	struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder,
+	struct media_frame_delay *delay, size_t delay_frames)
+{
+	return delay_frames != 0 ?
+		process_sip_frame_with_caller_delay(
+			caller, answerer, codec, recorder, delay, delay_frames) :
+		process_sip_frame(caller, answerer, codec, recorder);
+}
+
+static bool v22_rate_monitor_init(
+	struct v22_rate_monitor *monitor, size_t minimum_sample)
+{
+	static const struct qam_channel channel = {
+		.sample_rate = MODEM_RATE,
+		.symbol_rate_numerator = 600,
+		.symbol_rate_denominator = 1,
+		.carrier_frequency_numerator = 1200,
+		.carrier_frequency_denominator = 1,
+		.rolloff = 0.75,
+		.pulse_span_symbols = 6,
+	};
+
+	if (monitor == NULL)
+		return false;
+	memset(monitor, 0, sizeof(*monitor));
+	monitor->minimum_sample = minimum_sample;
+	v22bis_rate_signal_detector_reset(&monitor->detector);
+	return qam_demodulator_init(&monitor->demodulator, &channel) == QAM_OK;
+}
+
+static bool v22_rate_monitor_observe(
+	struct v22_rate_monitor *monitor,
+	const int16_t samples[SIP_FRAME_SAMPLES])
+{
+	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
+		struct qam_point point;
+		size_t sample_offset = monitor->samples++;
+		bool ready;
+
+		if (qam_demodulator_sample(
+			    &monitor->demodulator, samples[index], &point,
+			    &ready) != QAM_OK)
+			return false;
+		if (!ready)
+			continue;
+		if (monitor->has_previous) {
+			enum v22bis_rate_signal_event event;
+			uint8_t turn;
+
+			if (qam_nearest_quarter_turn(
+				    &monitor->previous, &point, &turn) != QAM_OK ||
+			    v22bis_rate_signal_observe(
+				    &monitor->detector, turn, &event) !=
+				    V22_FRAMING_OK)
+				return false;
+			if (event == V22BIS_RATE_SIGNAL_FULLY_ENDED &&
+			    sample_offset >= monitor->minimum_sample)
+				monitor->starts++;
+		}
+		monitor->previous = point;
+		monitor->has_previous = true;
+	}
+	return true;
+}
+
 static bool process_sip_frame_with_loss(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
@@ -495,7 +619,9 @@ static bool run_media_call(
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
+	struct media_frame_delay caller_delay = { 0 };
 	struct recording_capture capture = { 0 };
+	struct v22_rate_monitor caller_rate_monitor;
 	const struct media_recorder recorder = {
 		.context = &capture,
 		.write = capture_recording,
@@ -520,6 +646,8 @@ static bool run_media_call(
 	int selection_length = (int)strlen(test_case->selection_command);
 	static const char raw_command[] = "AT\\N0\r";
 	static const char no_compression_command[] = "AT+DS=0,0\r";
+	bool monitor_caller_rate =
+		test_case->minimum_caller_rate_signals != 0;
 
 	CHECK(datapumps_start(&datapumps) ==
 		      DATAPUMPS_OK,
@@ -527,7 +655,11 @@ static bool run_media_call(
 	CHECK(endpoint_init(&caller, "FSK caller") &&
 		      endpoint_init(&answerer, "FSK answerer") &&
 		      endpoint_prepare_media(&caller, codec) &&
-		      endpoint_prepare_media(&answerer, codec),
+		      endpoint_prepare_media(&answerer, codec) &&
+		      (!monitor_caller_rate ||
+		       v22_rate_monitor_init(
+			       &caller_rate_monitor,
+			       test_case->minimum_caller_rate_signal_sample)),
 	      "%s integration endpoints did not initialize", test_case->name);
 	if (v8_datapump_uses_pcm(test_case->id)) {
 		CHECK(modem_set_sreg(
@@ -607,8 +739,13 @@ static bool run_media_call(
 	      "connected SIP call did not select %s roles", test_case->name);
 
 	for (unsigned int frame = 0; frame < training_frame_limit; ++frame) {
-		CHECK(process_sip_frame(
-		      &caller, &answerer, codec, &recorder),
+		CHECK(process_test_frame(
+			      &caller, &answerer, codec, &recorder,
+			      &caller_delay,
+			      test_case->initial_caller_delay_frames) &&
+		      (!monitor_caller_rate ||
+		       v22_rate_monitor_observe(
+			       &caller_rate_monitor, caller.transmit)),
 		      "%s training failed at the SIP media boundary",
 		      test_case->name);
 		if (answerer.modem->dp != NULL &&
@@ -665,6 +802,11 @@ static bool run_media_call(
 	      caller.modem->tx_rate, caller.modem->rx_rate,
 	      modem_is_online(answerer.modem, test_case->id),
 	      answerer.modem->tx_rate, answerer.modem->rx_rate);
+	CHECK(!monitor_caller_rate ||
+		      caller_rate_monitor.starts >=
+			      test_case->minimum_caller_rate_signals,
+	      "%s caller emitted only %u late V.22bis rate signal(s)",
+	      test_case->name, caller_rate_monitor.starts);
 	CHECK(test_case->id != DP_V32 ||
 		      answerer_silence_max >=
 			      V32_MIN_HALF_DUPLEX_GAP_FRAMES,
@@ -686,8 +828,10 @@ static bool run_media_call(
 		    output_contains_connect(
 			    &answerer, test_case->answerer_rx_rate))
 			break;
-		CHECK(process_sip_frame(
-			      &caller, &answerer, codec, &recorder),
+		CHECK(process_test_frame(
+			      &caller, &answerer, codec, &recorder,
+			      &caller_delay,
+			      test_case->initial_caller_delay_frames),
 		      "%s pre-link delivery failed at the SIP media boundary",
 		      test_case->name);
 	}
@@ -709,7 +853,9 @@ static bool run_media_call(
 	      answerer.modem->bit_timer);
 	caller.output_count = 0;
 	answerer.output_count = 0;
-	CHECK(process_sip_frame(&caller, &answerer, codec, &recorder) &&
+	CHECK(process_test_frame(
+		      &caller, &answerer, codec, &recorder, &caller_delay,
+		      test_case->initial_caller_delay_frames) &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      caller.output_count == 0 && answerer.output_count == 0,
 	      "%s idle link emitted terminal data (caller=%zu answerer=%zu)",
@@ -724,8 +870,10 @@ static bool run_media_call(
 	      "%s terminals did not accept full-duplex payloads",
 	      test_case->name);
 	for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
-		CHECK(process_sip_frame(
-		      &caller, &answerer, codec, &recorder) &&
+		CHECK(process_test_frame(
+			      &caller, &answerer, codec, &recorder,
+			      &caller_delay,
+			      test_case->initial_caller_delay_frames) &&
 			      endpoint_drain(&caller) && endpoint_drain(&answerer),
 		      "%s data failed at the SIP media boundary",
 		      test_case->name);
@@ -1259,6 +1407,24 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
 			.test_retrain = true,
+			.raw_transport = true,
+		},
+		{
+			.id = DP_V22BIS,
+			.name = "V.22bis delayed rate response",
+			.selection_command = "AT+MS=122,0,2400,2400\r",
+			.caller_tx_rate = V22BIS_BIT_RATE,
+			.caller_rx_rate = V22BIS_BIT_RATE,
+			.answerer_tx_rate = V22BIS_BIT_RATE,
+			.answerer_rx_rate = V22BIS_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = 400,
+			/* Force the answer S1 beyond the 1.2 s retry boundary. */
+			.initial_caller_delay_frames =
+				V22BIS_INITIAL_DELAY_FRAMES,
+			.minimum_caller_rate_signals = 1,
+			.minimum_caller_rate_signal_sample =
+				V22BIS_INITIAL_DELAY_FRAMES * SIP_FRAME_SAMPLES,
 			.raw_transport = true,
 		},
 		{

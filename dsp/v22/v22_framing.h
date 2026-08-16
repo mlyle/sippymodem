@@ -11,7 +11,7 @@
 enum {
 	V22_SCRAMBLER_BITS = 17,
 	V22_SCRAMBLER_ONES_LIMIT = 64,
-	/* V.22bis sends 100 ms at 600 symbols/s; latch after a stable 20 ms. */
+	/* V.22bis sends 100 ms at 600 symbols/s; report a stable 20 ms prefix. */
 	V22BIS_RATE_SIGNAL_SYMBOLS = 60,
 	V22BIS_RATE_SIGNAL_MIN_SYMBOLS = 12,
 };
@@ -40,6 +40,7 @@ enum v22bis_rate_signal_event {
 	V22BIS_RATE_SIGNAL_NONE,
 	V22BIS_RATE_SIGNAL_STARTED,
 	V22BIS_RATE_SIGNAL_ENDED,
+	V22BIS_RATE_SIGNAL_FULLY_ENDED,
 };
 
 struct v22bis_rate_signal_detector {

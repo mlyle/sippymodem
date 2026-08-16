@@ -112,6 +112,7 @@ struct v22_datapump {
 	uint32_t scrambled_mark_bits;
 	uint32_t v22bis_confirm_bits;
 	uint32_t rate_signal_tx_symbols;
+	uint32_t rate_signal_wait_samples;
 	uint32_t missing_carrier_samples;
 	uint32_t retrain_peer_samples;
 	uint32_t retrain_retry_samples;
@@ -134,6 +135,8 @@ struct v22_datapump {
 	bool retrain_peer_signal_received;
 	bool retrain_receive_ready;
 	bool retrain_candidate_deliver;
+	bool rate_signal_late_candidate;
+	bool rate_signal_reply_sent;
 	bool originator;
 };
 
@@ -219,6 +222,8 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->v22bis_confirm_bits > V22BIS_CONFIRM_BITS ||
 	    datapump->rate_signal_tx_symbols >
 		    V22BIS_RATE_SIGNAL_SYMBOLS ||
+	    datapump->rate_signal_wait_samples >
+		    V22_RETRAIN_RETRY_SAMPLES ||
 	    datapump->retrain_detect_symbols >
 		    V22_RETRAIN_MAX_SYMBOLS ||
 	    datapump->retrain_valid_symbols >
@@ -255,7 +260,17 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	      !datapump->v22bis_receiver.v22bis_started)) ||
 	    (datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK &&
 	     (datapump->rate_signal_detector.present ||
-	      datapump->rate_signal_detector.alternating_symbols != 0)) ||
+	      datapump->rate_signal_detector.alternating_symbols != 0 ||
+	      datapump->rate_signal_wait_samples != 0 ||
+	      datapump->rate_signal_late_candidate ||
+	      datapump->rate_signal_reply_sent)) ||
+	    (datapump->rate_signal_late_candidate &&
+	     (!datapump->originator ||
+	      !datapump->rate_signal_detector.present ||
+	      datapump->rate_signal_wait_samples <
+		      V22_RETRAIN_RETRY_SAMPLES)) ||
+	    (datapump->rate_signal_reply_sent &&
+	     !datapump->rate_signal_late_candidate) ||
 	    (!datapump_uses_v22bis(datapump) &&
 	     (datapump->v22bis_receiver_initialized ||
 	      datapump->receiving_v22bis || datapump->v22bis_confirm_bits != 0 ||
@@ -704,14 +719,24 @@ static int observe_600_phase_change(
 }
 
 static int begin_v22bis_transition(
-	struct v22_datapump *datapump)
+	struct v22_datapump *datapump, bool reciprocal_rate_signal)
 {
 	if (!datapump_uses_v22bis(datapump) ||
 	    datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK ||
 	    datapump->v22bis_receiver_initialized ||
-	    datapump->receiving_v22bis)
+	    datapump->receiving_v22bis ||
+	    (reciprocal_rate_signal &&
+	     (!datapump->originator ||
+	      datapump->rate_signal_tx_symbols <
+		      V22BIS_RATE_SIGNAL_MIN_SYMBOLS ||
+	      (datapump->transmit_mode !=
+		       V22_TRANSMIT_V22BIS_RATE_SIGNAL &&
+	       (datapump->transmit_mode != V22_TRANSMIT_SCRAMBLED_MARK ||
+		datapump->rate_signal_tx_symbols !=
+			V22BIS_RATE_SIGNAL_SYMBOLS)))))
 		return -1;
 	if (datapump->originator &&
+	    !reciprocal_rate_signal &&
 	    datapump->transmit_mode != V22_TRANSMIT_SCRAMBLED_MARK)
 		return -1;
 	/* The periodic answer mark can favor a half-symbol timing phase.  Use the
@@ -725,6 +750,9 @@ static int begin_v22bis_transition(
 	datapump->training_state = V22_TRAINING_CONNECT_HOLD;
 	datapump->phase_samples = 0;
 	datapump->v22bis_confirm_bits = 0;
+	datapump->rate_signal_wait_samples = 0;
+	datapump->rate_signal_late_candidate = false;
+	datapump->rate_signal_reply_sent = false;
 	v22bis_rate_signal_detector_reset(
 		&datapump->rate_signal_detector);
 	return 0;
@@ -738,17 +766,45 @@ static int observe_v22bis_rate_signal(
 	uint8_t phase;
 
 	if (!datapump_uses_v22bis(datapump) || handled == NULL ||
-	    datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK ||
-	    v22bis_rate_signal_observe(
+	    datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK)
+		return -1;
+	if (v22bis_rate_signal_observe(
 		    &datapump->rate_signal_detector, quarter_turns,
 		    &event) != V22_FRAMING_OK)
 		return -1;
 	*handled = false;
-	if (event == V22BIS_RATE_SIGNAL_ENDED) {
+	if (event == V22BIS_RATE_SIGNAL_STARTED) {
+		/* A retrying peer decides at its S1 boundary whether we replied.
+		 * Start after the stable prefix, then require the complete S1 before
+		 * advancing our own transition clocks. */
+		datapump->rate_signal_late_candidate =
+			datapump->originator &&
+			datapump->rate_signal_wait_samples >=
+				V22_RETRAIN_RETRY_SAMPLES;
+		datapump->rate_signal_reply_sent = false;
+		if (datapump->rate_signal_late_candidate &&
+		    datapump->transmit_mode ==
+			    V22_TRANSMIT_SCRAMBLED_MARK) {
+			if (start_v22bis_rate_signal(datapump) != 0)
+				return -1;
+			datapump->rate_signal_reply_sent = true;
+		}
+	}
+	if (event == V22BIS_RATE_SIGNAL_ENDED ||
+	    event == V22BIS_RATE_SIGNAL_FULLY_ENDED) {
+		bool accept = !datapump->rate_signal_late_candidate ||
+			(datapump->rate_signal_reply_sent &&
+			 event == V22BIS_RATE_SIGNAL_FULLY_ENDED);
+		bool reciprocal = datapump->rate_signal_reply_sent;
+
+		datapump->rate_signal_late_candidate = false;
+		datapump->rate_signal_reply_sent = false;
+		if (!accept)
+			return 0;
 		phase = datapump->decoder.phase_quadrant;
 		if (v22_symbol_decoder_init(
 			    &datapump->decoder, phase) != V22_FRAMING_OK ||
-		    begin_v22bis_transition(datapump) != 0)
+		    begin_v22bis_transition(datapump, reciprocal) != 0)
 			return -1;
 		return 0;
 	}
@@ -1376,6 +1432,7 @@ static int enter_link(struct v22_datapump *datapump)
 	datapump->scrambled_mark_bits = 0;
 	datapump->v22bis_confirm_bits = 0;
 	datapump->rate_signal_tx_symbols = 0;
+	datapump->rate_signal_wait_samples = 0;
 	datapump->missing_carrier_samples = 0;
 	datapump->retrain_peer_samples = 0;
 	datapump->retrain_retry_samples = 0;
@@ -1384,6 +1441,8 @@ static int enter_link(struct v22_datapump *datapump)
 	datapump->retrain_gain_valid = false;
 	datapump->retrain_peer_signal_received = false;
 	datapump->retrain_receive_ready = false;
+	datapump->rate_signal_late_candidate = false;
+	datapump->rate_signal_reply_sent = false;
 	v22bis_rate_signal_detector_reset(
 		&datapump->rate_signal_detector);
 	datapump->dp.status = DPSTAT_CONNECT;
@@ -1409,9 +1468,15 @@ static int advance_training_timer(
 					V22_TRAINING_RETRAIN_MARK :
 					V22_TRAINING_RETRAIN_WAIT_PEER;
 		} else if (datapump->training_state ==
-		    V22_TRAINING_V22BIS_RATE_SIGNAL)
+		    V22_TRAINING_V22BIS_RATE_SIGNAL) {
 			datapump->training_state =
 				V22_TRAINING_WAIT_SCRAMBLED_MARK;
+			datapump->rate_signal_wait_samples = 0;
+			datapump->rate_signal_late_candidate = false;
+			datapump->rate_signal_reply_sent = false;
+			v22bis_rate_signal_detector_reset(
+				&datapump->rate_signal_detector);
+		}
 	}
 	if (datapump->retraining) {
 		if (datapump->retrain_peer_signal_received)
@@ -1456,6 +1521,11 @@ static int advance_training_timer(
 			       V22_RETRAIN_MIN_SYMBOLS ?
 			       restart_retrain(datapump) : 0;
 	}
+	if (datapump_uses_v22bis(datapump) && datapump->originator &&
+	    datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK)
+		add_bounded(
+			&datapump->rate_signal_wait_samples, 1,
+			V22_RETRAIN_RETRY_SAMPLES);
 	if (datapump->training_state == V22_TRAINING_ORIGINATE_SILENCE) {
 		datapump->phase_samples++;
 		if (datapump->phase_samples >= V22_ORIGINATE_SILENCE_SAMPLES) {
