@@ -17,7 +17,6 @@ enum v90_ja_search_result {
 	V90_JA_SEARCH_OK,
 	V90_JA_SEARCH_DETECTED,
 	V90_JA_SEARCH_REJECTED,
-	V90_JA_SEARCH_UNSUPPORTED,
 	V90_JA_SEARCH_COMPLETE,
 	V90_JA_SEARCH_INVALID_ARGUMENT,
 };
@@ -43,6 +42,12 @@ enum v90_ja_search_result v90_ja_search_init(
 	struct v90_ja_search *search);
 bool v90_ja_search_is_valid(const struct v90_ja_search *search);
 bool v90_ja_search_is_complete(const struct v90_ja_search *search);
+
+/* Recover the owned request after detection. Rejected calls leave parameters
+ * unchanged. */
+bool v90_ja_search_parameters(
+	const struct v90_ja_search *search,
+	struct v90_dil_parameters *parameters);
 
 /* Consume one symbol's absolute clockwise quarter-turn decision. Rejected
  * descriptors are discarded while the synchronized descrambler continues,

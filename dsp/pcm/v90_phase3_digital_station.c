@@ -154,8 +154,6 @@ static enum v90_phase3_digital_station_result receive_initial(
 	case V90_PHASE3_ANALOG_LINE_RX_PP_COMPLETE:
 	case V90_PHASE3_ANALOG_LINE_RX_JA_REJECTED:
 		return V90_PHASE3_DIGITAL_STATION_OK;
-	case V90_PHASE3_ANALOG_LINE_RX_JA_UNSUPPORTED:
-		return V90_PHASE3_DIGITAL_STATION_UNSUPPORTED;
 	case V90_PHASE3_ANALOG_LINE_RX_JA_DETECTED: {
 		struct v90_phase3_analog_line_handoff handoff;
 		struct v90_phase3_return_line_rx returning;
@@ -231,7 +229,6 @@ static bool result_is_terminal(
 	return result == V90_PHASE3_DIGITAL_STATION_FAILED ||
 	       result == V90_PHASE3_DIGITAL_STATION_OUT_OF_RANGE ||
 	       result == V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH ||
-	       result == V90_PHASE3_DIGITAL_STATION_UNSUPPORTED ||
 	       result == V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 }
 
@@ -358,8 +355,6 @@ const char *v90_phase3_digital_station_result_name(
 		return "out of range";
 	case V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH:
 		return "sequence mismatch";
-	case V90_PHASE3_DIGITAL_STATION_UNSUPPORTED:
-		return "unsupported";
 	case V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE:
 		return "numeric failure";
 	}

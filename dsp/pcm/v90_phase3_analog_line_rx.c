@@ -93,8 +93,6 @@ static enum v90_phase3_analog_line_rx_result point_result(
 		return V90_PHASE3_ANALOG_LINE_RX_PP_COMPLETE;
 	case V90_PHASE3_ANALOG_RX_JA_REJECTED:
 		return V90_PHASE3_ANALOG_LINE_RX_JA_REJECTED;
-	case V90_PHASE3_ANALOG_RX_JA_UNSUPPORTED:
-		return V90_PHASE3_ANALOG_LINE_RX_JA_UNSUPPORTED;
 	case V90_PHASE3_ANALOG_RX_JA_DETECTED:
 		return V90_PHASE3_ANALOG_LINE_RX_JA_DETECTED;
 	case V90_PHASE3_ANALOG_RX_OUT_OF_RANGE:
@@ -216,8 +214,6 @@ const char *v90_phase3_analog_line_rx_result_name(
 		return "PP complete";
 	case V90_PHASE3_ANALOG_LINE_RX_JA_REJECTED:
 		return "Ja rejected";
-	case V90_PHASE3_ANALOG_LINE_RX_JA_UNSUPPORTED:
-		return "Ja unsupported";
 	case V90_PHASE3_ANALOG_LINE_RX_JA_DETECTED:
 		return "Ja detected";
 	case V90_PHASE3_ANALOG_LINE_RX_COMPLETE:

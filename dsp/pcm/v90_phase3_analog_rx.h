@@ -20,7 +20,6 @@ enum v90_phase3_analog_rx_result {
 	V90_PHASE3_ANALOG_RX_S_DETECTED,
 	V90_PHASE3_ANALOG_RX_PP_COMPLETE,
 	V90_PHASE3_ANALOG_RX_JA_REJECTED,
-	V90_PHASE3_ANALOG_RX_JA_UNSUPPORTED,
 	V90_PHASE3_ANALOG_RX_JA_DETECTED,
 	V90_PHASE3_ANALOG_RX_COMPLETE,
 	V90_PHASE3_ANALOG_RX_INVALID_ARGUMENT,
@@ -60,6 +59,7 @@ struct v90_phase3_analog_rx {
 struct v90_phase3_analog_handoff {
 	struct v34_phase3_s_detection s;
 	struct v34_equalizer_handoff equalizer;
+	struct v90_dil_parameters dil;
 };
 
 bool v90_phase3_analog_rx_configuration_is_valid(

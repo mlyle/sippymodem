@@ -129,7 +129,8 @@ static bool run_timeline(
 	      rx.state.ja.decisions > V34_PHASE3_TRN_MIN_SYMBOLS &&
 	      v90_phase3_analog_rx_handoff(&rx, &handoff) ==
 		      V90_PHASE3_ANALOG_RX_OK &&
-	      v90_phase3_analog_handoff_is_valid(&handoff),
+	      v90_phase3_analog_handoff_is_valid(&handoff) &&
+	      handoff.dil.segment_count == 0u,
 	      "TRN %u phase %u did not recover the complete Ja boundary",
 	      trn_symbols, quarter_turns);
 	{

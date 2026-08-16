@@ -178,8 +178,6 @@ static enum v90_phase3_analog_rx_result search_result(
 		return V90_PHASE3_ANALOG_RX_JA_DETECTED;
 	case V90_JA_SEARCH_REJECTED:
 		return V90_PHASE3_ANALOG_RX_JA_REJECTED;
-	case V90_JA_SEARCH_UNSUPPORTED:
-		return V90_PHASE3_ANALOG_RX_JA_UNSUPPORTED;
 	case V90_JA_SEARCH_COMPLETE:
 	case V90_JA_SEARCH_INVALID_ARGUMENT:
 		break;
@@ -225,7 +223,6 @@ static bool result_commits(enum v90_phase3_analog_rx_result result)
 	       result == V90_PHASE3_ANALOG_RX_S_DETECTED ||
 	       result == V90_PHASE3_ANALOG_RX_PP_COMPLETE ||
 	       result == V90_PHASE3_ANALOG_RX_JA_REJECTED ||
-	       result == V90_PHASE3_ANALOG_RX_JA_UNSUPPORTED ||
 	       result == V90_PHASE3_ANALOG_RX_JA_DETECTED;
 }
 
@@ -261,7 +258,8 @@ bool v90_phase3_analog_handoff_is_valid(
 {
 	return handoff != NULL &&
 	       v34_phase3_s_detection_is_valid(&handoff->s) &&
-	       v34_equalizer_handoff_is_valid(&handoff->equalizer);
+	       v34_equalizer_handoff_is_valid(&handoff->equalizer) &&
+	       v90_dil_parameters_are_valid(&handoff->dil);
 }
 
 enum v90_phase3_analog_rx_result v90_phase3_analog_rx_handoff(
@@ -276,7 +274,9 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_handoff(
 		return V90_PHASE3_ANALOG_RX_INVALID_STATE;
 	generated.s = rx->s_detection;
 	generated.equalizer.equalizer = rx->state.ja.equalizer;
-	if (!v90_phase3_analog_handoff_is_valid(&generated))
+	if (!v90_ja_search_parameters(
+		    &rx->state.ja.search, &generated.dil) ||
+	    !v90_phase3_analog_handoff_is_valid(&generated))
 		return V90_PHASE3_ANALOG_RX_INVALID_STATE;
 	*handoff = generated;
 	return V90_PHASE3_ANALOG_RX_OK;
@@ -294,8 +294,6 @@ const char *v90_phase3_analog_rx_result_name(
 		return "PP complete";
 	case V90_PHASE3_ANALOG_RX_JA_REJECTED:
 		return "Ja rejected";
-	case V90_PHASE3_ANALOG_RX_JA_UNSUPPORTED:
-		return "Ja unsupported";
 	case V90_PHASE3_ANALOG_RX_JA_DETECTED:
 		return "Ja detected";
 	case V90_PHASE3_ANALOG_RX_COMPLETE:

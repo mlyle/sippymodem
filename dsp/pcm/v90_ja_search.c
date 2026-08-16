@@ -62,8 +62,7 @@ static bool collected_bits_are_valid(
 	       search->bit_index == search->descriptor_bits &&
 	       v90_dil_decode(
 		       search->descriptor, sizeof(search->descriptor),
-		       search->descriptor_bits, &parameters) == V90_DIL_OK &&
-	       parameters.segment_count == 0u;
+		       search->descriptor_bits, &parameters) == V90_DIL_OK;
 }
 
 bool v90_ja_search_is_valid(const struct v90_ja_search *search)
@@ -99,6 +98,21 @@ enum v90_ja_search_result v90_ja_search_init(
 bool v90_ja_search_is_complete(const struct v90_ja_search *search)
 {
 	return v90_ja_search_is_valid(search) && search->complete;
+}
+
+bool v90_ja_search_parameters(
+	const struct v90_ja_search *search,
+	struct v90_dil_parameters *parameters)
+{
+	struct v90_dil_parameters decoded;
+
+	if (!v90_ja_search_is_complete(search) || parameters == NULL ||
+	    v90_dil_decode(
+		    search->descriptor, sizeof(search->descriptor),
+		    search->descriptor_bits, &decoded) != V90_DIL_OK)
+		return false;
+	*parameters = decoded;
+	return true;
 }
 
 static void start_descriptor(struct v90_ja_search *search)
@@ -163,12 +177,8 @@ static enum v90_ja_search_result receive_bit(
 		search->descriptor, sizeof(search->descriptor),
 		search->descriptor_bits, &parameters);
 	if (descriptor_result == V90_DIL_OK) {
-		if (parameters.segment_count == 0u) {
-			search->complete = true;
-			return V90_JA_SEARCH_DETECTED;
-		}
-		discard_descriptor(search);
-		return V90_JA_SEARCH_UNSUPPORTED;
+		search->complete = true;
+		return V90_JA_SEARCH_DETECTED;
 	}
 	discard_descriptor(search);
 	return V90_JA_SEARCH_REJECTED;
@@ -225,8 +235,6 @@ const char *v90_ja_search_result_name(
 		return "detected";
 	case V90_JA_SEARCH_REJECTED:
 		return "rejected";
-	case V90_JA_SEARCH_UNSUPPORTED:
-		return "unsupported";
 	case V90_JA_SEARCH_COMPLETE:
 		return "complete";
 	case V90_JA_SEARCH_INVALID_ARGUMENT:

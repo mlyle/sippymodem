@@ -23,7 +23,6 @@ static bool feed_rotation(
 		search, (uint8_t)((rotation + phase_offset) & 3u));
 
 	if (result == V90_JA_SEARCH_REJECTED ||
-	    result == V90_JA_SEARCH_UNSUPPORTED ||
 	    result == V90_JA_SEARCH_DETECTED)
 		*event = result;
 	return result != V90_JA_SEARCH_INVALID_ARGUMENT &&
@@ -175,56 +174,50 @@ static bool feed_descriptor(
 	return true;
 }
 
-static bool test_unsupported_repetition_recovers(void)
+static bool test_variable_descriptor(void)
 {
 	struct v34_phase3_trn trn;
 	struct v90_ja_search search;
-	const struct v90_dil_parameters parameters = {
+	const struct v90_dil_parameters expected = {
 		.segment_count = 144,
 		.sign_pattern_bits = 120,
 		.training_pattern_bits = 120,
 	};
-	uint8_t unsupported[V90_DIL_MAX_DESCRIPTOR_BYTES];
-	uint8_t canonical[V90_DIL_ZERO_DESCRIPTOR_BYTES];
-	size_t unsupported_bits;
+	struct v90_dil_parameters decoded;
+	uint8_t descriptor[V90_DIL_MAX_DESCRIPTOR_BYTES];
+	size_t descriptor_bits;
 	uint8_t previous_rotation;
 	enum v90_ja_search_result event = V90_JA_SEARCH_OK;
 
 	CHECK(v34_phase3_trn_init(
 		      &trn, V34_ANSWERING_STATION) == V34_PHASE3_TRN_OK &&
 	      v90_ja_search_init(&search) == V90_JA_SEARCH_OK &&
-	      feed_trn(
+		      feed_trn(
 		      &trn, &search, 0, JA_START_TRN_SYMBOL,
 		      0, &event) &&
 	      v90_dil_encode(
-		      &parameters, unsupported, sizeof(unsupported),
-		      &unsupported_bits) == V90_DIL_OK &&
-	      unsupported_bits == 1702u &&
-	      v90_dil_encode_zero(canonical, sizeof(canonical)) == V90_DIL_OK,
-	      "unsupported Ja fixture did not initialize");
+		      &expected, descriptor, sizeof(descriptor),
+		      &descriptor_bits) == V90_DIL_OK &&
+	      descriptor_bits == 1702u,
+	      "variable Ja fixture did not initialize");
 	previous_rotation = trn.last_clockwise_quarter_turns;
 	CHECK(feed_descriptor(
-		      &trn.scrambler, &previous_rotation, unsupported,
-		      unsupported_bits,
+		      &trn.scrambler, &previous_rotation, descriptor,
+		      descriptor_bits,
 		      &search, &event) &&
 	      !v90_ja_search_is_complete(&search),
 	      "Ja search did not consume its synchronization repetition");
 	event = V90_JA_SEARCH_OK;
 	CHECK(feed_descriptor(
-		      &trn.scrambler, &previous_rotation, unsupported,
-		      unsupported_bits,
-		      &search, &event) &&
-	      event == V90_JA_SEARCH_UNSUPPORTED &&
-	      !v90_ja_search_is_complete(&search),
-	      "Ja search did not classify a nonzero descriptor");
-	event = V90_JA_SEARCH_OK;
-	CHECK(feed_descriptor(
-		      &trn.scrambler, &previous_rotation, canonical,
-		      V90_DIL_ZERO_DESCRIPTOR_BITS,
+		      &trn.scrambler, &previous_rotation, descriptor,
+		      descriptor_bits,
 		      &search, &event) &&
 	      event == V90_JA_SEARCH_DETECTED &&
-	      v90_ja_search_is_complete(&search),
-	      "Ja search did not recover after an unsupported repetition");
+	      v90_ja_search_is_complete(&search) &&
+	      v90_ja_search_parameters(&search, &decoded) &&
+	      memcmp(&decoded, &expected, sizeof(decoded)) == 0 &&
+	      v90_ja_search_receive(&search, 0) == V90_JA_SEARCH_COMPLETE,
+	      "Ja search did not retain a variable descriptor");
 	return true;
 }
 
@@ -232,6 +225,8 @@ static bool test_api_and_validation(void)
 {
 	struct v90_ja_search search;
 	struct v90_ja_search saved;
+	struct v90_dil_parameters parameters;
+	struct v90_dil_parameters saved_parameters;
 
 	memset(&search, 0xa5, sizeof(search));
 	saved = search;
@@ -242,11 +237,17 @@ static bool test_api_and_validation(void)
 	      !v90_ja_search_is_complete(&search),
 	      "Ja search initialization changed");
 	saved = search;
+	memset(&parameters, 0xa5, sizeof(parameters));
+	saved_parameters = parameters;
 	CHECK(v90_ja_search_receive(NULL, 0) ==
 		      V90_JA_SEARCH_INVALID_ARGUMENT &&
 	      v90_ja_search_receive(&search, 4) ==
 		      V90_JA_SEARCH_INVALID_ARGUMENT &&
-	      memcmp(&search, &saved, sizeof(search)) == 0,
+	      memcmp(&search, &saved, sizeof(search)) == 0 &&
+	      !v90_ja_search_parameters(NULL, &parameters) &&
+	      !v90_ja_search_parameters(&search, NULL) &&
+	      !v90_ja_search_parameters(&search, &parameters) &&
+	      memcmp(&parameters, &saved_parameters, sizeof(parameters)) == 0,
 	      "Ja search invalid call changed state");
 	CHECK(v90_ja_search_receive(&search, 3) == V90_JA_SEARCH_OK &&
 	      search.has_previous_rotation && search.warmup_bits == 0,
@@ -271,7 +272,7 @@ int main(void)
 	} tests[] = {
 		{ "boundary-free acquisition", test_boundary_free_acquisition },
 		{ "damaged repetition recovery", test_damaged_repetition_recovers },
-		{ "unsupported repetition recovery", test_unsupported_repetition_recovers },
+		{ "variable descriptor retention", test_variable_descriptor },
 		{ "API and validation", test_api_and_validation },
 	};
 	unsigned int failures = 0;

@@ -358,9 +358,6 @@ static bool test_validation(void)
 		     sizeof(return_handoff)) == 0 &&
 	      !v90_phase3_digital_transmit_handoff_is_valid(NULL) &&
 	      strcmp(v90_phase3_digital_station_result_name(
-		     V90_PHASE3_DIGITAL_STATION_UNSUPPORTED),
-		     "unsupported") == 0 &&
-	      strcmp(v90_phase3_digital_station_result_name(
 		     (enum v90_phase3_digital_station_result)99),
 		     "unknown") == 0,
 	      "invalid digital calls or result names changed");
