@@ -44,7 +44,6 @@ from tools.live_campaign_report import (  # noqa: E402
     MATURITY_NO_CONNECT,
     MATURITY_REQUEST,
     OUTCOME_BUSY,
-    OUTCOME_INFRASTRUCTURE_ERROR,
     OUTCOME_SETUP_ERROR,
     ScheduledAttempt,
 )
@@ -596,7 +595,7 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertEqual(result.maturity, "connect")
             self.assertIn("V.22", result.detail)
 
-    def test_peer_escape_failure_is_infrastructure_not_modem_maturity(
+    def test_peer_escape_bytes_do_not_become_infrastructure_failure(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -626,12 +625,12 @@ class LiveCampaignTests(unittest.TestCase):
                 True,
             )
 
-            self.assertEqual(result.outcome, OUTCOME_INFRASTRUCTURE_ERROR)
+            self.assertEqual(result.outcome, "complete")
             self.assertTrue(result.connected)
             self.assertTrue(result.initial_data)
             self.assertFalse(result.remote_retrain)
-            self.assertIsNone(result.maturity)
-            self.assertIn("peer retrain helper", result.detail)
+            self.assertEqual(result.maturity, MATURITY_DATA)
+            self.assertIn("END marker", result.detail)
 
     def test_raw_outbound_wakes_peer_before_initial_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

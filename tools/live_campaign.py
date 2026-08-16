@@ -621,11 +621,7 @@ def _exercise_online(
         state.detail = "remote retrain END exchange failed"
         return
     if not state.remote_retrain:
-        if report.peer_escape_guard_failed:
-            state.outcome = OUTCOME_INFRASTRUCTURE_ERROR
-            state.detail = "peer retrain helper violated the escape guard"
-        else:
-            state.detail = "remote retrain END marker was not verified"
+        state.detail = "remote retrain END marker was not verified"
         return
     progress.set("waiting for local retrain")
     try:
