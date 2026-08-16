@@ -88,6 +88,28 @@ class ConnectReport:
     transmit_bit_rate: int | None = None
 
 
+@dataclass(frozen=True)
+class ReturnOnlineReport:
+    """Results from the escape guard and the following ATO1 command."""
+
+    escape_result: str
+    command_result: str | None = None
+    retrain_result: str | None = None
+
+    @property
+    def connected(self) -> bool:
+        return (
+            self.escape_result == "ok"
+            and (
+                self.command_result == "connect"
+                or (
+                    self.command_result == "ok"
+                    and self.retrain_result == "connect"
+                )
+            )
+        )
+
+
 class ResponseDecoder:
     """Own bounded line assembly for a single modem terminal."""
 
@@ -321,7 +343,7 @@ class ModemTerminal:
 
     def return_online(
         self, timeout_seconds: float, guard_seconds: float = 1.1
-    ) -> str:
+    ) -> ReturnOnlineReport:
         if (
             timeout_seconds <= 0
             or guard_seconds < 0
@@ -333,11 +355,17 @@ class ModemTerminal:
         time.sleep(guard_seconds)
         self._decoder.begin_command_response()
         self._write(b"+++", deadline)
-        if self._read_result(deadline) != "ok":
-            return "error"
+        escape_result = self._read_result(deadline)
+        if escape_result != "ok":
+            return ReturnOnlineReport(escape_result)
         self._write(b"ATO1\r", deadline)
-        result = self._read_result(deadline)
-        return self._read_result(deadline) if result == "ok" else result
+        command_result = self._read_result(deadline)
+        retrain_result = (
+            self._read_result(deadline) if command_result == "ok" else None
+        )
+        return ReturnOnlineReport(
+            escape_result, command_result, retrain_result
+        )
 
     def probe_initial_data(self, timeout_seconds: float) -> tuple[bool, bytes]:
         return self.exchange_online(

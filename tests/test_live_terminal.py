@@ -204,11 +204,33 @@ class LiveTerminalTests(unittest.TestCase):
                 terminal, "_read_result", side_effect=("ok", "ok", "connect")
             ),
         ):
-            self.assertEqual(terminal.return_online(2.0, 0.1), "connect")
+            report = terminal.return_online(2.0, 0.1)
+        self.assertTrue(report.connected)
+        self.assertEqual(report.escape_result, "ok")
+        self.assertEqual(report.command_result, "ok")
+        self.assertEqual(report.retrain_result, "connect")
         sleep.assert_called_once_with(0.1)
         self.assertEqual(
             [call.args[0] for call in write.call_args_list],
             [b"+++", b"ATO1\r"],
+        )
+
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 300\r\n")
+        with (
+            mock.patch("tools.live_terminal.time.sleep"),
+            mock.patch.object(terminal, "_write") as write,
+            mock.patch.object(
+                terminal, "_read_result", return_value="no-carrier"
+            ),
+        ):
+            report = terminal.return_online(2.0, 0.1)
+        self.assertFalse(report.connected)
+        self.assertEqual(report.escape_result, "no-carrier")
+        self.assertIsNone(report.command_result)
+        self.assertIsNone(report.retrain_result)
+        self.assertEqual(
+            [call.args[0] for call in write.call_args_list], [b"+++"]
         )
 
         terminal = ModemTerminal(-1)

@@ -539,14 +539,20 @@ def _exercise_online(
     progress.set("waiting for local retrain")
     try:
         state.capture(leg, b"+++ATO1\r", b"")
-        state.retrain_connected = (
-            terminal.return_online(config.retrain_timeout_seconds) == "connect"
-        )
+        report = terminal.return_online(config.retrain_timeout_seconds)
+        state.retrain_connected = report.connected
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "retrain did not return online"
         return
     if not state.retrain_connected:
-        state.detail = "retrain did not return CONNECT"
+        if report.escape_result != "ok":
+            state.detail = (
+                "escape sequence returned " + report.escape_result
+            )
+        elif report.command_result != "ok":
+            state.detail = "ATO1 returned " + str(report.command_result)
+        else:
+            state.detail = "retrain returned " + str(report.retrain_result)
         return
     progress.set("checking post-retrain data")
     try:

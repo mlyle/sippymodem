@@ -333,13 +333,10 @@ def run_interop(
                     originator if ato1_role == "originator" else answerer
                 )
                 assert ato1_endpoint.terminal is not None
-                ato1_connected = (
-                    ato1_endpoint.terminal.return_online(
-                        config.connect_timeout_seconds,
-                        escape_guard_seconds,
-                    )
-                    == "connect"
-                )
+                ato1_connected = ato1_endpoint.terminal.return_online(
+                    config.connect_timeout_seconds,
+                    escape_guard_seconds,
+                ).connected
                 if not ato1_connected:
                     outcome = "ato1-error"
                 else:
