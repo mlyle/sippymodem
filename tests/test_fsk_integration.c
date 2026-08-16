@@ -449,11 +449,23 @@ static bool process_sip_frame_with_loss(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
 	enum media_codec codec, const struct media_recorder *recorder,
-	bool block_caller_to_answerer, bool block_answerer_to_caller)
+	bool block_caller_to_answerer, bool block_answerer_to_caller,
+	bool reduce_caller_to_answerer, bool reduce_answerer_to_caller)
 {
-	return process_transmit_frame(caller, codec, recorder) &&
-	       process_transmit_frame(answerer, codec, recorder) &&
-	       (block_caller_to_answerer ?
+	if (!process_transmit_frame(caller, codec, recorder) ||
+	    !process_transmit_frame(answerer, codec, recorder))
+		return false;
+	if (reduce_caller_to_answerer)
+		for (size_t sample = 0; sample < ARRAY_LENGTH(caller->transmit);
+		     ++sample)
+			caller->transmit[sample] =
+				(int16_t)(caller->transmit[sample] * 4 / 5);
+	if (reduce_answerer_to_caller)
+		for (size_t sample = 0; sample < ARRAY_LENGTH(answerer->transmit);
+		     ++sample)
+			answerer->transmit[sample] =
+				(int16_t)(answerer->transmit[sample] * 4 / 5);
+	return (block_caller_to_answerer ?
 			endpoint_prepare_media(answerer, codec) :
 			deliver_media_frame(
 				caller, answerer, codec, recorder)) &&
@@ -477,7 +489,8 @@ static bool exercise_retrain(
 	enum DP_ID id, unsigned int bit_rate,
 	enum media_codec codec,
 	const struct media_recorder *recorder,
-	unsigned int sequence, bool raw_transport, bool lose_first_response)
+	unsigned int sequence, bool raw_transport, bool lose_first_response,
+	bool reduce_peer_response)
 {
 	enum { TEST_STATE_COMMAND_ONLINE = 6 };
 	static const uint8_t caller_payloads[][8] = {
@@ -534,11 +547,17 @@ static bool exercise_retrain(
 			initiator == answerer;
 		bool block_answerer_to_caller = losing_response &&
 			initiator == caller;
+		bool reduce_caller_to_answerer = reduce_peer_response &&
+			initiator == answerer;
+		bool reduce_answerer_to_caller = reduce_peer_response &&
+			initiator == caller;
 
 		if (!process_sip_frame_with_loss(
 			    caller, answerer, codec, recorder,
 			    block_caller_to_answerer,
-			    block_answerer_to_caller) ||
+			    block_answerer_to_caller,
+			    reduce_caller_to_answerer,
+			    reduce_answerer_to_caller) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
 		if (initiator->modem->retrain_pending == 0 &&
@@ -900,19 +919,21 @@ static bool run_media_call(
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
 		      "%s did not retain its requested transport", test_case->name);
 		CHECK(exercise_retrain(
-			      &caller, &answerer, &caller, test_case->id,
-			      test_case->caller_rx_rate, codec, &recorder, 0,
+			      &caller, &answerer, &answerer, test_case->id,
+			      test_case->answerer_rx_rate, codec, &recorder, 0,
 			      test_case->raw_transport,
 			      test_case->id == DP_V22BIS &&
 				      test_case->raw_transport &&
-				      codec == MEDIA_CODEC_PCMU),
-		      "%s caller retrain did not reconnect and pass data",
+				      codec == MEDIA_CODEC_PCMU,
+			      false),
+		      "%s answerer retrain did not reconnect and pass data",
 		      test_case->name);
 		CHECK(exercise_retrain(
-			      &caller, &answerer, &answerer, test_case->id,
-			      test_case->answerer_rx_rate, codec, &recorder, 1,
-			      test_case->raw_transport, false),
-		      "%s answerer retrain did not reconnect and pass data",
+			      &caller, &answerer, &caller, test_case->id,
+			      test_case->caller_rx_rate, codec, &recorder, 1,
+			      test_case->raw_transport, false,
+			      test_case->id == DP_V22BIS),
+		      "%s caller retrain did not reconnect and pass data",
 		      test_case->name);
 	}
 	CHECK(!capture.invalid &&

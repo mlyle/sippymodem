@@ -1073,11 +1073,14 @@ static int observe_retrain_signal(
 		datapump->retrain_detect_symbols = 0;
 		datapump->retrain_valid_symbols = 0;
 		if (valid_turn) {
-			/* Freeze the online gain before 16-way decoding adapts to S1. */
-			if ((online && !capture_retrain_gain(datapump)) ||
-			    retrain_point_matches(
-				    datapump, point, quadrant,
-				    &marker_point) != 0)
+			/* Freeze and validate gain only for unsolicited online S1.
+			 * After a local request, the complete alternating response is
+			 * authoritative even if an earlier retrain left stale gain. */
+			if (online &&
+			    (!capture_retrain_gain(datapump) ||
+			     retrain_point_matches(
+				     datapump, point, quadrant,
+				     &marker_point) != 0))
 				return -1;
 			datapump->retrain_detect_symbols = 1;
 			datapump->retrain_valid_symbols = marker_point ? 1 : 0;
@@ -1092,7 +1095,8 @@ static int observe_retrain_signal(
 			datapump->retrain_candidate_deliver =
 				online || datapump->retrain_receive_ready;
 		}
-		if (retrain_point_matches(
+		if (online &&
+		    retrain_point_matches(
 			    datapump, point, quadrant, &marker_point) != 0)
 			return -1;
 		if (datapump->retrain_detect_symbols <
