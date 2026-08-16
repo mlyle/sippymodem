@@ -152,6 +152,9 @@ static bool test_generated_profiles(void)
 							       V90_PCM_A_LAW :
 							       V90_PCM_MU_LAW) &&
 					      configuration.phase3.digital.jd
+						      .training_constellation ==
+						      V34_CONSTELLATION_4_POINT &&
+					      configuration.phase3.digital.jd
 						      .data_rate_capability_mask ==
 						      (UINT32_C(1) <<
 						       (rate_index - 1u)) &&

@@ -223,7 +223,9 @@ static struct v90_jd_parameters jd_parameters(uint32_t rate_mask)
 {
 	return (struct v90_jd_parameters){
 		.data_rate_capability_mask = rate_mask,
-		.training_constellation = V34_CONSTELLATION_16_POINT,
+		/* Four-point CP signaling is slower but leaves substantially more
+		 * acquisition margin and does not constrain the selected data rate. */
+		.training_constellation = V34_CONSTELLATION_4_POINT,
 		.rate_renegotiation_constellation = V34_CONSTELLATION_4_POINT,
 		.maximum_spectral_shaping_lookahead = 2,
 	};
