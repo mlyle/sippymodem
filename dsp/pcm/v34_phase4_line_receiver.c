@@ -216,6 +216,15 @@ static bool refinement_result_is_valid(
 	       result == V34_PHASE4_LINE_RECEIVER_SYMBOL;
 }
 
+static uint64_t phase_distance(
+	uint64_t left, uint64_t right, uint64_t period)
+{
+	uint64_t forward = left >= right ? left - right : period - (right - left);
+	uint64_t backward = right >= left ? right - left : period - (left - right);
+
+	return forward < backward ? forward : backward;
+}
+
 static bool score_timing_phase(
 	const struct v34_phase4_line_receiver *source, uint64_t phase,
 	struct v34_phase4_line_receiver *candidate, double *average_error)
@@ -258,15 +267,28 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 	double reference_error;
 	double best_error;
 	uint64_t reference_phase = receiver->demodulator.locked_phase_units;
+	uint64_t timing_reference_phase =
+		receiver->demodulator.timing[
+			receiver->demodulator.timing_reference_index].phase_units;
 	uint64_t best_phase = reference_phase;
 	uint64_t fine_step;
+	bool gross_timing_error;
 
 	if (!score_timing_phase(
 		    receiver, reference_phase, &reference, &reference_error))
 		return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
 	best = reference;
 	best_error = reference_error;
+	/* The energy tracker remains the better clock when its recovered phase is
+	 * already within one coarse bin. Searching every TRN phase in that case
+	 * can overfit the four-point training sequence and damage dense B1 data.
+	 * Use TRN to repair only a gross S/S-bar timing lock. */
+	gross_timing_error = phase_distance(
+		reference_phase, timing_reference_phase,
+		receiver->demodulator.symbol_period_units) >
+		receiver->demodulator.timing_step_units;
 	for (size_t index = 0;
+	     gross_timing_error &&
 	     index < receiver->demodulator.timing_candidate_count; ++index) {
 		struct v34_phase4_line_receiver candidate;
 		double error;
@@ -283,7 +305,8 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 	}
 	/* Known TRN supplies an exact error metric. Refine one half of a coarse
 	 * timing bin on either side of the best candidate. */
-	fine_step = receiver->demodulator.timing_step_units / 8u;
+	fine_step = gross_timing_error ?
+		receiver->demodulator.timing_step_units / 8u : 0;
 	if (fine_step != 0) {
 		for (int step = -4; step <= 4; ++step) {
 			struct v34_phase4_line_receiver candidate;
