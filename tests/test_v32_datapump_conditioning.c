@@ -533,8 +533,64 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 	return true;
 }
 
+static bool test_training_deadline(void)
+{
+	struct modem_driver driver = {
+		.name = "V.32 training deadline test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct dp_operations *operations;
+	struct modem *modem;
+	struct dp *datapump;
+	int16_t receive[MODEM_FRAG] = { 0 };
+	int16_t transmit[MODEM_FRAG];
+
+	CHECK(v32_datapump_register() == 0,
+	      "V.32 deadline registration failed");
+	operations = modem_dp_get_registered_ops(DP_V32);
+	modem = modem_create(&driver, "V.32 training deadline test");
+	CHECK(operations != NULL && modem != NULL,
+	      "V.32 deadline fixture did not initialize");
+	modem->min_rate = modem->max_rate = V32_4800_BIT_RATE;
+	modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 1;
+	datapump = operations->create(
+		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(datapump != NULL,
+	      "V.32 deadline data pump did not initialize");
+	for (unsigned int frame = 0;
+	     frame < MODEM_RATE / MODEM_FRAG; ++frame)
+		CHECK(operations->process(
+			      datapump, receive, transmit, MODEM_FRAG) ==
+			      DPSTAT_OK,
+		      "V.32 training expired before its inclusive deadline");
+	transmit[0] = INT16_MAX;
+	CHECK(operations->process(datapump, receive, transmit, 1) ==
+		      DPSTAT_ERROR &&
+	      transmit[0] == 0,
+	      "V.32 training did not fail closed after its deadline");
+	transmit[0] = INT16_MAX;
+	CHECK(operations->process(datapump, receive, transmit, 1) ==
+		      DPSTAT_ERROR &&
+	      transmit[0] == 0,
+	      "V.32 training failure was not latched");
+	CHECK(operations->delete(datapump) == 0,
+	      "failed V.32 training retained ownership");
+	modem_delete(modem);
+	CHECK(v32_datapump_unregister() == 0,
+	      "V.32 deadline deregistration failed");
+	return true;
+}
+
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] training deadline\n");
+	if (!test_training_deadline()) {
+		fprintf(stderr, "[  FAILED  ] training deadline\n");
+		return 1;
+	}
+	fprintf(stderr, "[       OK ] training deadline\n");
 	fprintf(stderr, "[ RUN      ] bidirectional conditioning and rate handoff\n");
 	if (!test_bidirectional_conditioning_rate_handoff()) {
 		fprintf(stderr,

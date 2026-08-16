@@ -578,6 +578,7 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/single_tone.o \
+	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/conditioning.o \

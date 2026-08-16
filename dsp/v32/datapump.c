@@ -14,6 +14,7 @@
 #include "framing.h"
 #include "line_startup.h"
 #include "startup.h"
+#include "training_session.h"
 #include "trellis.h"
 #include "trellis_acquirer.h"
 
@@ -90,8 +91,7 @@ struct v32_datapump {
 	struct qam_point transmit_point;
 	struct qam_point previous_receive_point;
 	struct qam_gain conditioning_gain;
-	uint64_t training_samples;
-	uint64_t training_timeout_samples;
+	struct training_session training;
 	uint32_t missing_carrier_samples;
 	uint32_t turnaround_s_symbols_remaining;
 	uint16_t direct_retrain_dibits;
@@ -105,7 +105,6 @@ struct v32_datapump {
 	bool second_conditioning_complete;
 	bool conditioning_carrier_detected;
 	bool answerer_s_detected;
-	bool linked;
 	bool caller;
 };
 
@@ -459,15 +458,15 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	datapump = dp->dp_data;
 	trellis_data_bits = selected_trellis_data_bits(datapump);
 	if (&datapump->dp != dp ||
-	    datapump->training_timeout_samples == 0 ||
-	    datapump->training_samples > datapump->training_timeout_samples ||
+	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V32_CARRIER_LOSS_SAMPLES ||
 	    !line_entry_is_valid(datapump) ||
 	    !v32_startup_is_valid(&datapump->startup) ||
 	    datapump->startup.role != endpoint_role(datapump->caller) ||
 	    datapump->startup.supported_rates != rate_capabilities(dp->modem) ||
-	    datapump->linked !=
-		    v32_startup_is_complete(&datapump->startup) ||
+	    (!training_session_has_failed(&datapump->training) &&
+	     training_session_is_online(&datapump->training) !=
+		     v32_startup_is_complete(&datapump->startup)) ||
 	    datapump->trellis_receiver_initialized !=
 		    (trellis_data_bits != 0 && datapump->startup.end_received) ||
 	    (datapump->trellis_receiver_initialized &&
@@ -498,10 +497,12 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	    !point_is_finite(&datapump->transmit_point) ||
 	    (datapump->has_previous_receive_point &&
 	     !point_is_finite(&datapump->previous_receive_point)) ||
-	    (datapump->linked && dp->status != DPSTAT_CONNECT) ||
-	    (datapump->linked && trellis_data_bits != 0 &&
-	     !datapump->trellis_encoder_initialized) ||
-	    (!datapump->linked && dp->status == DPSTAT_CONNECT))
+	    (!training_session_has_failed(&datapump->training) &&
+	     training_session_is_online(&datapump->training) !=
+		     (dp->status == DPSTAT_CONNECT)) ||
+	    (training_session_is_online(&datapump->training) &&
+	     trellis_data_bits != 0 &&
+	     !datapump->trellis_encoder_initialized))
 		return NULL;
 	return datapump;
 }
@@ -552,7 +553,11 @@ static struct dp *create_v32(
 		    V32_CONDITIONING_RECEIVER_OK ||
 	    v32_4800_constellation_point(
 		    0, &datapump->transmit_point) !=
-		    V32_CONSTELLATION_OK) {
+		    V32_CONSTELLATION_OK ||
+	    training_session_init(
+		    &datapump->training,
+		    datapump_carrier_wait_ticks(modem)) !=
+		    TRAINING_SESSION_OK) {
 		free(datapump);
 		return NULL;
 	}
@@ -560,8 +565,6 @@ static struct dp *create_v32(
 	datapump->line_entry = is_caller ?
 				 V32_LINE_ENTRY_CALLER_STARTUP :
 				 V32_LINE_ENTRY_ANSWERER_STARTUP;
-	datapump->training_timeout_samples =
-		datapump_carrier_wait_ticks(modem);
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -668,7 +671,7 @@ static int next_transmit_point(
 			1, 1, 1, 1, 1, 1
 		};
 
-		if (!datapump->linked) {
+		if (!training_session_is_online(&datapump->training)) {
 			if (enter_link(datapump) != 0)
 				return -1;
 			*linked = true;
@@ -714,7 +717,7 @@ static int next_transmit_point(
 			    V32_CONSTELLATION_OK)
 			return -1;
 	}
-	if (!datapump->linked &&
+	if (!training_session_is_online(&datapump->training) &&
 	    v32_startup_is_complete(&datapump->startup)) {
 		if (enter_link(datapump) != 0)
 			return -1;
@@ -960,7 +963,9 @@ static int enter_link(struct v32_datapump *datapump)
 	    modem_set_param(
 		    datapump->dp.modem, MDMPRM_RX_RATE, (int)bit_rate) != 0)
 		return -1;
-	datapump->linked = true;
+	if (training_session_connect(&datapump->training) !=
+	    TRAINING_SESSION_OK)
+		return -1;
 	datapump->missing_carrier_samples = 0;
 	datapump->dp.status = DPSTAT_CONNECT;
 	return 0;
@@ -1066,7 +1071,7 @@ static int observe_dibit(
 	struct v32_datapump *datapump, uint8_t dibit,
 	const struct qam_point *point, bool *linked)
 {
-	if (datapump->linked) {
+	if (training_session_is_online(&datapump->training)) {
 		if (uses_uncoded_9600(datapump) || uses_trellis(datapump))
 			return -1;
 		deliver_bits(
@@ -1139,7 +1144,7 @@ static int observe_trellis_point(
 
 	if (!datapump->trellis_receiver_initialized || data_bits == 0)
 		return -1;
-	if (datapump->linked) {
+	if (training_session_is_online(&datapump->training)) {
 		uint8_t bits;
 		bool ready;
 
@@ -1176,7 +1181,7 @@ static int observe_9600_point(
 {
 	if (!datapump->receiver_9600_initialized)
 		return -1;
-	if (datapump->linked) {
+	if (training_session_is_online(&datapump->training)) {
 		uint8_t bits;
 		bool ready;
 
@@ -1383,41 +1388,36 @@ static int process_v32(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	if (!datapump->linked) {
-		if ((uint64_t)(unsigned int)count >
-		    datapump->training_timeout_samples -
-			    datapump->training_samples)
-			return DPSTAT_ERROR;
-		datapump->training_samples += (unsigned int)count;
+	if (training_session_has_failed(&datapump->training)) {
+		memset(transmit, 0, (size_t)count * sizeof(*transmit));
+		return DPSTAT_ERROR;
 	}
+	if (!training_session_is_online(&datapump->training) &&
+	    training_session_advance(
+		    &datapump->training,
+		    (uint64_t)(unsigned int)count) !=
+		    TRAINING_SESSION_OK)
+		goto failure;
 	for (int index = 0; index < count; ++index) {
 		if (datapump->line_entry == V32_LINE_ENTRY_CALLER_STARTUP) {
 			if (process_caller_line_startup(
-				    datapump, receive[index], &transmit[index]) != 0) {
-				memset(transmit, 0,
-				       (size_t)count * sizeof(*transmit));
-				return DPSTAT_ERROR;
-			}
+				    datapump, receive[index], &transmit[index]) != 0)
+				goto failure;
 			continue;
 		}
 		if (datapump->line_entry == V32_LINE_ENTRY_ANSWERER_STARTUP) {
 			if (process_answerer_line_startup(
-				    datapump, receive[index], &transmit[index]) != 0) {
-				memset(transmit, 0,
-				       (size_t)count * sizeof(*transmit));
-				return DPSTAT_ERROR;
-			}
+				    datapump, receive[index], &transmit[index]) != 0)
+				goto failure;
 			continue;
 		}
 		if (generate_sample(datapump, &transmit[index], &linked) != 0 ||
-		    receive_sample(datapump, receive[index], &linked) != 0) {
-			memset(transmit, 0, (size_t)count * sizeof(*transmit));
-			return DPSTAT_ERROR;
-		}
+		    receive_sample(datapump, receive[index], &linked) != 0)
+			goto failure;
 	}
 	if (linked)
 		return DPSTAT_CONNECT;
-	if (!datapump->linked)
+	if (!training_session_is_online(&datapump->training))
 		return DPSTAT_OK;
 	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
@@ -1429,10 +1429,13 @@ static int process_v32(
 			(uint32_t)(unsigned int)count,
 			V32_CARRIER_LOSS_SAMPLES);
 	}
-	return datapump->missing_carrier_samples >=
-			       V32_CARRIER_LOSS_SAMPLES ?
-		       DPSTAT_ERROR :
-		       DPSTAT_OK;
+	if (datapump->missing_carrier_samples < V32_CARRIER_LOSS_SAMPLES)
+		return DPSTAT_OK;
+
+failure:
+	(void)training_session_fail(&datapump->training);
+	memset(transmit, 0, (size_t)count * sizeof(*transmit));
+	return DPSTAT_ERROR;
 }
 
 int v32_datapump_register(void)
