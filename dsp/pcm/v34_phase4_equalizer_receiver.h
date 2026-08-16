@@ -47,7 +47,9 @@ struct v34_phase4_equalizer_receiver {
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver e_receiver;
 	double adaptation;
+	double trn_squared_error;
 	uint16_t trn_symbols;
+	uint16_t trn_error_symbols;
 	enum v34_phase4_equalizer_receiver_stage stage;
 	bool record_pending;
 	bool pending_record_is_valid;

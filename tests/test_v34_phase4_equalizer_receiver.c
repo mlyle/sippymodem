@@ -206,6 +206,7 @@ static bool run_stream(
 	enum v34_phase3_s_section answer_s_section;
 	bool record_complete;
 	bool equalized_ready;
+	bool trn_handoff_checked = role != V34_ANSWERING_STATION;
 
 	CHECK(v34_phase4_trn_init(&trn, role, constellation) ==
 		      V34_PHASE4_TRN_OK &&
@@ -299,6 +300,9 @@ static bool run_stream(
 		      V34_PHASE4_TRN_OK,
 	      "fresh Phase 4 TRN did not initialize");
 	for (size_t symbol = 0; symbol < TRAINING_SYMBOLS; ++symbol) {
+		enum v34_phase4_equalizer_receiver_stage stage_before =
+			fixture.receiver.stage;
+
 		CHECK(v34_phase4_trn_next(
 			      &trn, &transmitted, &quarter_point,
 			      &clockwise_quarter_turns) ==
@@ -312,8 +316,30 @@ static bool run_stream(
 			       V34_PHASE4_EQUALIZER_RECEIVER_RECORD_READY),
 		      "TRN receive failed at symbol %zu with %s", symbol,
 		      v34_phase4_equalizer_receiver_result_name(result));
+		if (stage_before ==
+			    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN &&
+		    fixture.receiver.stage ==
+			    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP) {
+			CHECK(memcmp(
+				      &fixture.receiver.mp_receiver.descrambler,
+				      &fixture.receiver.expected_trn.scrambler,
+				      sizeof(fixture.receiver.expected_trn.scrambler)) ==
+				      0 &&
+			      fixture.receiver.mp_receiver.has_previous_symbol &&
+			      fixture.receiver.mp_receiver
+					      .previous_clockwise_quarter_turns ==
+				      clockwise_quarter_turns &&
+			      fixture.receiver.trn_error_symbols ==
+				      fixture.receiver.trn_symbols -
+					      fixture.receiver.answer_s
+						      .post_marker_symbols &&
+			      isfinite(fixture.receiver.trn_squared_error) &&
+			      fixture.receiver.trn_squared_error >= 0.0,
+			      "TRN state did not initialize MP decoding");
+			trn_handoff_checked = true;
+		}
 	}
-	CHECK(fixture.answer_s_events ==
+	CHECK(trn_handoff_checked && fixture.answer_s_events ==
 		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
 	      fixture.receiver.stage ==
 		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP,

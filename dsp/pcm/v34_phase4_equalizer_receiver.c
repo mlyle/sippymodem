@@ -35,6 +35,7 @@ static bool trn_state_is_valid(
 {
 	bool answering_peer =
 		receiver->mp_receiver.transmitting_role == V34_ANSWERING_STATION;
+	uint16_t expected_errors;
 
 	if (!v34_phase4_trn_is_valid(&receiver->expected_trn) ||
 	    receiver->expected_trn.role !=
@@ -42,16 +43,28 @@ static bool trn_state_is_valid(
 	    receiver->expected_trn.constellation !=
 		    receiver->mp_receiver.constellation ||
 	    receiver->trn_symbols > V34_PHASE4_TRN_MIN_SYMBOLS ||
+	    !isfinite(receiver->trn_squared_error) ||
+	    receiver->trn_squared_error < 0.0 ||
 	    receiver->expected_trn.has_last_symbol !=
 		    (receiver->trn_symbols != 0))
 		return false;
 	if (!answering_peer)
 		return receiver->stage !=
 			       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN &&
-		       receiver->trn_symbols == 0;
+		       receiver->trn_symbols == 0 &&
+		       receiver->trn_error_symbols == 0 &&
+		       receiver->trn_squared_error == 0.0;
 	if (receiver->stage ==
 	    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S)
-		return receiver->trn_symbols == 0;
+		return receiver->trn_symbols == 0 &&
+		       receiver->trn_error_symbols == 0 &&
+		       receiver->trn_squared_error == 0.0;
+	if (receiver->trn_symbols < receiver->answer_s.post_marker_symbols)
+		return false;
+	expected_errors = receiver->trn_symbols -
+		receiver->answer_s.post_marker_symbols;
+	if (receiver->trn_error_symbols != expected_errors)
+		return false;
 	if (receiver->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN)
 		return receiver->trn_symbols < V34_PHASE4_TRN_MIN_SYMBOLS;
 	return receiver->trn_symbols == V34_PHASE4_TRN_MIN_SYMBOLS;
@@ -269,14 +282,21 @@ static enum v34_phase4_equalizer_receiver_result receive_trn(
 	struct v34_phase4_equalizer_receiver *receiver,
 	struct qam_equalizer_observation *observation)
 {
-	struct v34_mp_receive_event ignored_event = { 0 };
 	struct qam_point target;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
 
 	if (v34_phase4_trn_next(
 		    &receiver->expected_trn, &target, &quarter_point,
-		    &clockwise_quarter_turns) != V34_PHASE4_TRN_OK ||
+		    &clockwise_quarter_turns) != V34_PHASE4_TRN_OK)
+		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+	receiver->trn_squared_error +=
+		(observation->output.in_phase - target.in_phase) *
+			(observation->output.in_phase - target.in_phase) +
+		(observation->output.quadrature - target.quadrature) *
+			(observation->output.quadrature - target.quadrature);
+	receiver->trn_error_symbols++;
+	if (!isfinite(receiver->trn_squared_error) ||
 	    qam_equalizer_adapt_observation(
 		    &receiver->equalizer, observation, &target,
 		    receiver->adaptation) != QAM_EQUALIZER_OK)
@@ -284,14 +304,14 @@ static enum v34_phase4_equalizer_receiver_result receive_trn(
 	receiver->trn_symbols++;
 	if (receiver->trn_symbols != V34_PHASE4_TRN_MIN_SYMBOLS)
 		return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
-	/* The last known TRN decision initializes MP differential phase. The
-	 * self-synchronizing descrambler then converges while any excess TRN is
-	 * still arriving, before a complete repeated MP record is required. */
-	if (v34_phase4_mp_receive_decision(
-		    &receiver->mp_receiver, quarter_point,
-		    clockwise_quarter_turns, &ignored_event) !=
-		    V34_PHASE4_MP_RECEIVER_OK ||
-	    ignored_event.type != V34_MP_RECEIVE_NO_EVENT)
+	/* TRN and MP use one continuous scrambler sequence.  The known TRN input
+	 * gives us its exact state; the final TRN point initializes differential
+	 * decoding as required at the MP boundary. */
+	receiver->mp_receiver.descrambler = receiver->expected_trn.scrambler;
+	receiver->mp_receiver.previous_clockwise_quarter_turns =
+		clockwise_quarter_turns;
+	receiver->mp_receiver.has_previous_symbol = true;
+	if (!v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver))
 		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
 	receiver->stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP;
 	return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
