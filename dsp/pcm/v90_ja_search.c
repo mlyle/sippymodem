@@ -19,13 +19,17 @@ static bool bytes_are_zero(const uint8_t *bytes, size_t count)
 static bool collected_bits_are_valid(
 	const struct v90_ja_search *search)
 {
+	struct pcm_dil_descriptor_layout layout;
+	struct v90_dil_parameters parameters;
+	enum v90_dil_result layout_result;
+
 	if (!search->collecting)
-		return search->bit_index == 0 &&
+		return search->bit_index == 0 && search->descriptor_bits == 0 &&
 		       bytes_are_zero(
 			       search->descriptor,
 			       sizeof(search->descriptor));
 	if (search->bit_index < V90_DIL_FRAME_SYNC_BITS + 1u ||
-	    search->bit_index > V90_DIL_ZERO_DESCRIPTOR_BITS)
+	    search->bit_index > V90_DIL_MAX_DESCRIPTOR_BITS)
 		return false;
 	for (size_t bit = 0; bit < V90_DIL_FRAME_SYNC_BITS; ++bit) {
 		if (packed_msb_bit(search->descriptor, bit) == 0)
@@ -34,12 +38,32 @@ static bool collected_bits_are_valid(
 	if (packed_msb_bit(
 		    search->descriptor, V90_DIL_FRAME_SYNC_BITS) != 0)
 		return false;
+	if (search->bit_index < V90_DIL_HEADER_BITS) {
+		if (search->descriptor_bits != 0u)
+			return false;
+	} else {
+		layout_result = v90_dil_descriptor_layout(
+			search->descriptor, sizeof(search->descriptor),
+			search->bit_index, &layout);
+		if (layout_result != V90_DIL_OK ||
+		    layout.bit_count != search->descriptor_bits ||
+		    search->bit_index > search->descriptor_bits)
+			return false;
+	}
 	for (size_t bit = search->bit_index;
-	     bit < V90_DIL_ZERO_DESCRIPTOR_BITS; ++bit) {
+	     bit < V90_DIL_MAX_DESCRIPTOR_BITS; ++bit) {
 		if (packed_msb_bit(search->descriptor, bit) != 0)
 			return false;
 	}
-	return true;
+	if (!search->complete)
+		return search->descriptor_bits == 0u ||
+		       search->bit_index < search->descriptor_bits;
+	return search->descriptor_bits != 0u &&
+	       search->bit_index == search->descriptor_bits &&
+	       v90_dil_decode(
+		       search->descriptor, sizeof(search->descriptor),
+		       search->descriptor_bits, &parameters) == V90_DIL_OK &&
+	       parameters.segment_count == 0u;
 }
 
 bool v90_ja_search_is_valid(const struct v90_ja_search *search)
@@ -54,13 +78,7 @@ bool v90_ja_search_is_valid(const struct v90_ja_search *search)
 	     search->previous_clockwise_quarter_turns != 0) ||
 	    !collected_bits_are_valid(search))
 		return false;
-	if (!search->complete)
-		return search->bit_index < V90_DIL_ZERO_DESCRIPTOR_BITS;
-	return search->collecting &&
-	       search->bit_index == V90_DIL_ZERO_DESCRIPTOR_BITS &&
-	       v90_dil_decode_zero(
-		       search->descriptor, sizeof(search->descriptor)) ==
-		       V90_DIL_OK;
+	return true;
 }
 
 enum v90_ja_search_result v90_ja_search_init(
@@ -89,6 +107,7 @@ static void start_descriptor(struct v90_ja_search *search)
 	for (size_t bit = 0; bit < V90_DIL_FRAME_SYNC_BITS; ++bit)
 		packed_msb_set_bit(search->descriptor, bit, true);
 	search->bit_index = V90_DIL_FRAME_SYNC_BITS + 1u;
+	search->descriptor_bits = 0;
 	search->consecutive_ones = 0;
 	search->collecting = true;
 }
@@ -97,6 +116,7 @@ static void discard_descriptor(struct v90_ja_search *search)
 {
 	memset(search->descriptor, 0, sizeof(search->descriptor));
 	search->bit_index = 0;
+	search->descriptor_bits = 0;
 	search->consecutive_ones = 0;
 	search->collecting = false;
 }
@@ -104,6 +124,8 @@ static void discard_descriptor(struct v90_ja_search *search)
 static enum v90_ja_search_result receive_bit(
 	struct v90_ja_search *search, uint8_t bit)
 {
+	struct pcm_dil_descriptor_layout layout;
+	struct v90_dil_parameters parameters;
 	enum v90_dil_result descriptor_result;
 
 	if (search->warmup_bits < V90_JA_SEARCH_WARMUP_BITS) {
@@ -125,18 +147,31 @@ static enum v90_ja_search_result receive_bit(
 	packed_msb_set_bit(
 		search->descriptor, search->bit_index, bit != 0u);
 	search->bit_index++;
-	if (search->bit_index < V90_DIL_ZERO_DESCRIPTOR_BITS)
+	if (search->bit_index == V90_DIL_HEADER_BITS) {
+		if (v90_dil_descriptor_layout(
+			    search->descriptor, sizeof(search->descriptor),
+			    search->bit_index, &layout) != V90_DIL_OK) {
+			discard_descriptor(search);
+			return V90_JA_SEARCH_REJECTED;
+		}
+		search->descriptor_bits = (uint16_t)layout.bit_count;
+	}
+	if (search->descriptor_bits == 0u ||
+	    search->bit_index < search->descriptor_bits)
 		return V90_JA_SEARCH_OK;
-	descriptor_result = v90_dil_decode_zero(
-		search->descriptor, sizeof(search->descriptor));
+	descriptor_result = v90_dil_decode(
+		search->descriptor, sizeof(search->descriptor),
+		search->descriptor_bits, &parameters);
 	if (descriptor_result == V90_DIL_OK) {
-		search->complete = true;
-		return V90_JA_SEARCH_DETECTED;
+		if (parameters.segment_count == 0u) {
+			search->complete = true;
+			return V90_JA_SEARCH_DETECTED;
+		}
+		discard_descriptor(search);
+		return V90_JA_SEARCH_UNSUPPORTED;
 	}
 	discard_descriptor(search);
-	return descriptor_result == V90_DIL_NONZERO_DESCRIPTOR ?
-		       V90_JA_SEARCH_UNSUPPORTED :
-		       V90_JA_SEARCH_REJECTED;
+	return V90_JA_SEARCH_REJECTED;
 }
 
 enum v90_ja_search_result v90_ja_search_receive(

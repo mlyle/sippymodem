@@ -28,8 +28,9 @@ enum v90_ja_search_result {
  * differential decoding begins and the first 23 Ja bits self-synchronize. */
 struct v90_ja_search {
 	struct v34_scrambler descrambler;
-	uint8_t descriptor[V90_DIL_ZERO_DESCRIPTOR_BYTES];
+	uint8_t descriptor[V90_DIL_MAX_DESCRIPTOR_BYTES];
 	uint16_t bit_index;
+	uint16_t descriptor_bits;
 	uint8_t previous_clockwise_quarter_turns;
 	uint8_t warmup_bits;
 	uint8_t consecutive_ones;

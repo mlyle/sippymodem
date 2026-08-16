@@ -156,10 +156,13 @@ static uint8_t descriptor_dibit(
 
 static bool feed_descriptor(
 	struct v34_scrambler *scrambler, uint8_t *previous_rotation,
-	const uint8_t *descriptor, struct v90_ja_search *search,
+	const uint8_t *descriptor, size_t descriptor_bits,
+	struct v90_ja_search *search,
 	enum v90_ja_search_result *event)
 {
-	for (size_t symbol = 0; symbol < JA_SYMBOLS; ++symbol) {
+	if (descriptor_bits == 0u || descriptor_bits % 2u != 0u)
+		return false;
+	for (size_t symbol = 0; symbol < descriptor_bits / 2u; ++symbol) {
 		uint8_t rotation;
 
 		if (v34_scramble_differential_dibit(
@@ -176,8 +179,14 @@ static bool test_unsupported_repetition_recovers(void)
 {
 	struct v34_phase3_trn trn;
 	struct v90_ja_search search;
-	uint8_t unsupported[V90_DIL_ZERO_DESCRIPTOR_BYTES];
+	const struct v90_dil_parameters parameters = {
+		.segment_count = 144,
+		.sign_pattern_bits = 120,
+		.training_pattern_bits = 120,
+	};
+	uint8_t unsupported[V90_DIL_MAX_DESCRIPTOR_BYTES];
 	uint8_t canonical[V90_DIL_ZERO_DESCRIPTOR_BYTES];
+	size_t unsupported_bits;
 	uint8_t previous_rotation;
 	enum v90_ja_search_result event = V90_JA_SEARCH_OK;
 
@@ -187,19 +196,23 @@ static bool test_unsupported_repetition_recovers(void)
 	      feed_trn(
 		      &trn, &search, 0, JA_START_TRN_SYMBOL,
 		      0, &event) &&
+	      v90_dil_encode(
+		      &parameters, unsupported, sizeof(unsupported),
+		      &unsupported_bits) == V90_DIL_OK &&
+	      unsupported_bits == 1702u &&
 	      v90_dil_encode_zero(canonical, sizeof(canonical)) == V90_DIL_OK,
 	      "unsupported Ja fixture did not initialize");
-	memcpy(unsupported, canonical, sizeof(unsupported));
-	unsupported[2] |= 0x20u;
 	previous_rotation = trn.last_clockwise_quarter_turns;
 	CHECK(feed_descriptor(
 		      &trn.scrambler, &previous_rotation, unsupported,
+		      unsupported_bits,
 		      &search, &event) &&
 	      !v90_ja_search_is_complete(&search),
 	      "Ja search did not consume its synchronization repetition");
 	event = V90_JA_SEARCH_OK;
 	CHECK(feed_descriptor(
 		      &trn.scrambler, &previous_rotation, unsupported,
+		      unsupported_bits,
 		      &search, &event) &&
 	      event == V90_JA_SEARCH_UNSUPPORTED &&
 	      !v90_ja_search_is_complete(&search),
@@ -207,6 +220,7 @@ static bool test_unsupported_repetition_recovers(void)
 	event = V90_JA_SEARCH_OK;
 	CHECK(feed_descriptor(
 		      &trn.scrambler, &previous_rotation, canonical,
+		      V90_DIL_ZERO_DESCRIPTOR_BITS,
 		      &search, &event) &&
 	      event == V90_JA_SEARCH_DETECTED &&
 	      v90_ja_search_is_complete(&search),
