@@ -102,6 +102,95 @@ static bool establish_ja(
 	return false;
 }
 
+static bool receive_return(
+	enum g711_law law, struct v90_phase3_return_line_tx *tx,
+	struct v90_phase3_return_line_rx *rx, struct v34_training_line *line,
+	struct v90_phase3_return_line_handoff *handoff)
+{
+	unsigned int s_events = 0;
+	unsigned int s_bar_events = 0;
+	unsigned int post_points = 0;
+	bool started_s = false;
+	bool finished_s = false;
+
+	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		int16_t sample;
+		enum v90_phase3_return_line_rx_result result;
+
+		if (!started_s &&
+		    tx->points.silence_symbols == RETURN_SILENCE_SYMBOLS) {
+			CHECK(v90_phase3_return_line_tx_start_s(tx) ==
+				      V90_PHASE3_RETURN_LINE_TX_OK,
+			      "law %d could not start return S", law);
+			started_s = true;
+		}
+		if (started_s && !finished_s &&
+		    tx->points.s_symbols == RETURN_S_FINISH_SYMBOL) {
+			CHECK(v90_phase3_return_line_tx_finish_s(tx) ==
+				      V90_PHASE3_RETURN_LINE_TX_OK,
+			      "law %d could not finish return S", law);
+			finished_s = true;
+		}
+		if (v90_phase3_return_line_tx_is_handoff_ready(tx))
+			break;
+		CHECK(v90_phase3_return_line_tx_sample(tx, &sample) ==
+			      V90_PHASE3_RETURN_LINE_TX_OK,
+		      "law %d return line stopped", law);
+		result = v90_phase3_return_line_rx_sample(
+			rx, quantize(law, sample));
+		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
+			s_events++;
+		else
+			CHECK(result == V90_PHASE3_RETURN_LINE_RX_OK,
+			      "law %d return line reported %s early", law,
+			      v90_phase3_return_line_rx_result_name(result));
+	}
+	CHECK(started_s && finished_s && s_events == 1 &&
+	      v90_phase3_return_line_tx_handoff(tx, line) ==
+		      V90_PHASE3_RETURN_LINE_TX_OK,
+	      "law %d did not preserve the S-bar line boundary", law);
+	for (uint32_t sample_index = 0;
+	     sample_index < SAMPLE_LIMIT && s_bar_events == 0; ++sample_index) {
+		struct qam_point point;
+		const struct qam_point *supplied = NULL;
+		int16_t sample;
+		bool accepting = v34_training_line_needs_point(line);
+		bool accepted;
+		enum v90_phase3_return_line_rx_result result;
+
+		if (accepting) {
+			CHECK(post_points < POST_POINT_LIMIT,
+			      "law %d required too many Phase 4 points", law);
+			point = v34_rotated_point_zero(
+				(int)((post_points * 3u) & 3u));
+			supplied = &point;
+		}
+		CHECK(v34_training_line_sample(
+			      line, supplied, &sample, &accepted) ==
+			      V34_TRAINING_LINE_OK &&
+		      accepted == accepting,
+		      "law %d could not continue the Phase 4 line", law);
+		if (accepted)
+			post_points++;
+		result = v90_phase3_return_line_rx_sample(
+			rx, quantize(law, sample));
+		if (result == V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED)
+			s_bar_events++;
+		else
+			CHECK(result == V90_PHASE3_RETURN_LINE_RX_OK,
+			      "law %d Phase 4 boundary reported %s", law,
+			      v90_phase3_return_line_rx_result_name(result));
+	}
+	CHECK(s_bar_events == 1 &&
+	      post_points >= V34_EQUALIZER_DECISION_DELAY &&
+	      !v90_phase3_return_line_rx_has_failed(rx) &&
+	      v90_phase3_return_line_rx_handoff(rx, handoff) ==
+		      V90_PHASE3_RETURN_LINE_RX_OK &&
+	      v90_phase3_return_line_handoff_is_valid(handoff),
+	      "law %d did not recover the complete return line", law);
+	return true;
+}
+
 static bool run_line(enum g711_law law)
 {
 	struct v90_phase3_analog_line_tx prefix_tx;
@@ -111,12 +200,7 @@ static bool run_line(enum g711_law law)
 	struct v90_phase3_return_line_handoff return_handoff;
 	struct v34_training_line line;
 	uint32_t finish_ja_at;
-	unsigned int s_events = 0;
-	unsigned int s_bar_events = 0;
-	unsigned int post_points = 0;
 	bool finish_ja_requested = false;
-	bool started_s = false;
-	bool finished_s = false;
 
 	CHECK(establish_ja(law, &prefix_tx, &prefix_handoff) &&
 	      v90_phase3_return_line_rx_init(
@@ -153,82 +237,9 @@ static bool run_line(enum g711_law law)
 	      v90_phase3_return_line_tx_init(&return_tx, &line) ==
 		      V90_PHASE3_RETURN_LINE_TX_OK,
 	      "law %d did not preserve the Ja line boundary", law);
-	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
-		int16_t sample;
-		enum v90_phase3_return_line_rx_result result;
-
-		if (!started_s &&
-		    return_tx.points.silence_symbols == RETURN_SILENCE_SYMBOLS) {
-			CHECK(v90_phase3_return_line_tx_start_s(&return_tx) ==
-				      V90_PHASE3_RETURN_LINE_TX_OK,
-			      "law %d could not start return S", law);
-			started_s = true;
-		}
-		if (started_s && !finished_s &&
-		    return_tx.points.s_symbols == RETURN_S_FINISH_SYMBOL) {
-			CHECK(v90_phase3_return_line_tx_finish_s(&return_tx) ==
-				      V90_PHASE3_RETURN_LINE_TX_OK,
-			      "law %d could not finish return S", law);
-			finished_s = true;
-		}
-		if (v90_phase3_return_line_tx_is_handoff_ready(&return_tx))
-			break;
-		CHECK(v90_phase3_return_line_tx_sample(&return_tx, &sample) ==
-			      V90_PHASE3_RETURN_LINE_TX_OK,
-		      "law %d return line stopped", law);
-		result = v90_phase3_return_line_rx_sample(
-			&return_rx, quantize(law, sample));
-		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
-			s_events++;
-		else
-			CHECK(result == V90_PHASE3_RETURN_LINE_RX_OK,
-			      "law %d return line reported %s early", law,
-			      v90_phase3_return_line_rx_result_name(result));
-	}
-	CHECK(started_s && finished_s && s_events == 1 &&
-	      v90_phase3_return_line_tx_handoff(&return_tx, &line) ==
-		      V90_PHASE3_RETURN_LINE_TX_OK,
-	      "law %d did not preserve the S-bar line boundary", law);
-	for (uint32_t sample_index = 0;
-	     sample_index < SAMPLE_LIMIT && s_bar_events == 0; ++sample_index) {
-		struct qam_point point;
-		const struct qam_point *supplied = NULL;
-		int16_t sample;
-		bool accepting = v34_training_line_needs_point(&line);
-		bool accepted;
-		enum v90_phase3_return_line_rx_result result;
-
-		if (accepting) {
-			CHECK(post_points < POST_POINT_LIMIT,
-			      "law %d required too many Phase 4 points", law);
-			point = v34_rotated_point_zero(
-				(int)((post_points * 3u) & 3u));
-			supplied = &point;
-		}
-		CHECK(v34_training_line_sample(
-			      &line, supplied, &sample, &accepted) ==
-			      V34_TRAINING_LINE_OK &&
-		      accepted == accepting,
-		      "law %d could not continue the Phase 4 line", law);
-		if (accepted)
-			post_points++;
-		result = v90_phase3_return_line_rx_sample(
-			&return_rx, quantize(law, sample));
-		if (result == V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED)
-			s_bar_events++;
-		else
-			CHECK(result == V90_PHASE3_RETURN_LINE_RX_OK,
-			      "law %d Phase 4 boundary reported %s", law,
-			      v90_phase3_return_line_rx_result_name(result));
-	}
-	CHECK(s_bar_events == 1 &&
-	      post_points >= V34_EQUALIZER_DECISION_DELAY &&
-	      !v90_phase3_return_line_rx_has_failed(&return_rx) &&
-	      v90_phase3_return_line_rx_handoff(
-		      &return_rx, &return_handoff) ==
-		      V90_PHASE3_RETURN_LINE_RX_OK &&
-	      v90_phase3_return_line_handoff_is_valid(&return_handoff),
-	      "law %d did not recover the complete return line", law);
+	CHECK(receive_return(
+		      law, &return_tx, &return_rx, &line, &return_handoff),
+	      "law %d first return failed", law);
 	{
 		struct v90_phase3_return_line_rx saved = return_rx;
 
@@ -237,6 +248,32 @@ static bool run_line(enum g711_law law)
 		      memcmp(&return_rx, &saved, sizeof(return_rx)) == 0,
 		      "law %d complete receiver consumed a sample", law);
 	}
+	CHECK(v90_phase3_return_line_rx_restart(&return_rx) ==
+		      V90_PHASE3_RETURN_LINE_RX_OK &&
+	      v90_phase3_return_line_rx_is_valid(&return_rx) &&
+	      !v90_phase3_return_rx_is_complete(&return_rx.points),
+	      "law %d receiver did not restart", law);
+	for (uint32_t index = 0;
+	     index < SAMPLE_LIMIT && !v34_training_line_needs_point(&line);
+	     ++index) {
+		int16_t sample;
+		bool accepted;
+
+		CHECK(v34_training_line_sample(
+			      &line, NULL, &sample, &accepted) ==
+			      V34_TRAINING_LINE_OK &&
+		      !accepted &&
+		      v90_phase3_return_line_rx_sample(
+			      &return_rx, quantize(law, sample)) ==
+			      V90_PHASE3_RETURN_LINE_RX_OK,
+		      "law %d could not preserve the inter-return boundary", law);
+	}
+	CHECK(v34_training_line_needs_point(&line) &&
+	      v90_phase3_return_line_tx_init(&return_tx, &line) ==
+		      V90_PHASE3_RETURN_LINE_TX_OK &&
+	      receive_return(
+		      law, &return_tx, &return_rx, &line, &return_handoff),
+	      "law %d second return failed", law);
 	return true;
 }
 
@@ -267,6 +304,13 @@ static bool test_validation(void)
 	CHECK(v90_phase3_return_line_rx_init(&rx, &source, 0.05) ==
 		      V90_PHASE3_RETURN_LINE_RX_OK,
 	      "valid return line receiver did not initialize");
+	saved = rx;
+	CHECK(v90_phase3_return_line_rx_restart(NULL) ==
+		      V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_line_rx_restart(&rx) ==
+		      V90_PHASE3_RETURN_LINE_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "invalid restart changed receiver state");
 	memset(&handoff, 0x5a, sizeof(handoff));
 	saved_handoff = handoff;
 	CHECK(v90_phase3_return_line_rx_sample(NULL, 0) ==

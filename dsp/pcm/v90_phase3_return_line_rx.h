@@ -39,6 +39,12 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 	struct v90_phase3_return_line_rx *rx,
 	const struct v90_phase3_analog_line_handoff *handoff,
 	double adaptation);
+
+/* Rearm S/S-bar detection after one complete return while preserving the
+ * continuous demodulator, trained equalizer, and exact next-sample boundary.
+ * This is the V.90 nonzero-DIL transition between its two return signals. */
+enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
+	struct v90_phase3_return_line_rx *rx);
 bool v90_phase3_return_line_rx_is_valid(
 	const struct v90_phase3_return_line_rx *rx);
 bool v90_phase3_return_line_rx_has_failed(

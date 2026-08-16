@@ -15,6 +15,7 @@ static bool receive_is_valid(
 		return v90_phase3_analog_line_rx_is_valid(
 			&station->receive.initial);
 	case V90_PHASE3_DIGITAL_RECEIVE_RETURN:
+	case V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN:
 		return v90_phase3_return_line_rx_is_valid(
 			&station->receive.returning);
 	}
@@ -34,9 +35,18 @@ static bool receive_has_failed(
 static bool finish_request_is_causal(
 	const struct v90_phase3_digital_station *station)
 {
-	return !station->transmit_started ||
-	       !station->transmit.finish_jd_requested ||
-	       (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
+	if (!station->transmit_started ||
+	    !station->transmit.finish_jd_requested)
+		return true;
+	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL)
+		return false;
+	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
+	    station->receive.returning.points.stage <
+		    V90_PHASE3_RETURN_RX_STAGE_S)
+		return false;
+	return !station->transmit.dil.finish_requested ||
+	       (station->receive_stage ==
+			V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN &&
 		station->receive.returning.points.stage >=
 			V90_PHASE3_RETURN_RX_STAGE_S);
 }
@@ -55,8 +65,13 @@ bool v90_phase3_digital_station_is_valid(
 	if (!station->transmit_started)
 		return station->receive_stage ==
 		       V90_PHASE3_DIGITAL_RECEIVE_INITIAL;
-	return station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
-	       pcm_phase3_digital_tx_is_valid(&station->transmit);
+	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL ||
+	    !pcm_phase3_digital_tx_is_valid(&station->transmit))
+		return false;
+	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN)
+		return station->transmit.dil.parameters.segment_count != 0u &&
+		       station->transmit.finish_jd_requested;
+	return !station->transmit.dil.finish_requested;
 }
 
 bool v90_phase3_digital_station_has_failed(
@@ -204,12 +219,31 @@ static enum v90_phase3_digital_station_result receive_return(
 	case V90_PHASE3_RETURN_LINE_RX_OK:
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	case V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED:
+		if (station->receive_stage ==
+			    V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
+		    station->transmit.dil.parameters.segment_count != 0u) {
+			if (station->transmit.stage !=
+			    PCM_PHASE3_DIGITAL_TX_DIL)
+				return V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
+			if (v90_phase3_return_line_rx_restart(
+				    &station->receive.returning) !=
+			    V90_PHASE3_RETURN_LINE_RX_OK)
+				return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+			station->receive_stage =
+				V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN;
+			return V90_PHASE3_DIGITAL_STATION_OK;
+		}
 		return station->transmit.stage ==
 			       PCM_PHASE3_DIGITAL_TX_COMPLETE ?
 			       V90_PHASE3_DIGITAL_STATION_OK :
 			       V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 	case V90_PHASE3_RETURN_LINE_RX_S_DETECTED:
-		return pcm_phase3_digital_tx_finish_jd(&station->transmit) ==
+		return (station->receive_stage ==
+				V90_PHASE3_DIGITAL_RECEIVE_RETURN ?
+				pcm_phase3_digital_tx_finish_jd(
+					&station->transmit) :
+				pcm_phase3_digital_tx_finish_dil(
+					&station->transmit)) ==
 			       PCM_PHASE3_DIGITAL_TX_OK ?
 			       V90_PHASE3_DIGITAL_STATION_OK :
 			       V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;

@@ -66,6 +66,32 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 	return V90_PHASE3_RETURN_LINE_RX_OK;
 }
 
+enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
+	struct v90_phase3_return_line_rx *rx)
+{
+	struct v90_phase3_return_line_rx restarted;
+	struct v90_phase3_return_handoff handoff;
+	double adaptation;
+
+	if (!v90_phase3_return_line_rx_is_valid(rx))
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
+	if (rx->failed)
+		return V90_PHASE3_RETURN_LINE_RX_FAILED;
+	if (!v90_phase3_return_rx_is_complete(&rx->points))
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
+	restarted = *rx;
+	adaptation = restarted.points.adaptation;
+	if (v90_phase3_return_rx_handoff(&restarted.points, &handoff) !=
+		    V90_PHASE3_RETURN_RX_OK ||
+	    v90_phase3_return_rx_init(
+		    &restarted.points, &handoff.equalizer, adaptation) !=
+		    V90_PHASE3_RETURN_RX_OK ||
+	    !v90_phase3_return_line_rx_is_valid(&restarted))
+		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+	*rx = restarted;
+	return V90_PHASE3_RETURN_LINE_RX_OK;
+}
+
 static enum v90_phase3_return_line_rx_result point_result(
 	enum v90_phase3_return_rx_result result)
 {

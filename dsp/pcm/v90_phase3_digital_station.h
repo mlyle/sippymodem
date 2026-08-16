@@ -13,6 +13,7 @@
 enum v90_phase3_digital_receive_stage {
 	V90_PHASE3_DIGITAL_RECEIVE_INITIAL,
 	V90_PHASE3_DIGITAL_RECEIVE_RETURN,
+	V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN,
 };
 
 enum v90_phase3_digital_station_result {
@@ -42,10 +43,11 @@ struct v90_phase3_digital_transmit_handoff {
 	uint8_t last_sign;
 };
 
-/* Owns both directions of the digital modem's zero-DIL Phase 3 exchange.
- * Network transmission remains silent until a valid Ja descriptor is
- * received. Calls on one instance must be serialized; transmit and receive
- * reach their independent Phase 4 boundaries at different times. */
+/* Owns both directions of the digital modem's Phase 3 exchange. Network
+ * transmission remains silent until a valid Ja descriptor is received. A
+ * nonzero DIL rearms the same trained line receiver for the second S/S-bar.
+ * Calls on one instance must be serialized; transmit and receive reach their
+ * independent Phase 4 boundaries at different times. */
 struct v90_phase3_digital_station {
 	union v90_phase3_digital_station_receive receive;
 	struct pcm_phase3_digital_tx transmit;
@@ -73,8 +75,9 @@ bool v90_phase3_digital_station_has_failed(
 enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 	struct v90_phase3_digital_station *station, uint8_t *network_octet);
 
-/* Consume one signed 8 kHz sample. S detection terminates the current Jd
- * record; complete S-bar reception exposes the Phase 4 line handoff. */
+/* Consume one signed 8 kHz sample. The first S terminates the current Jd
+ * record. With nonzero DIL, the second S requests a segment-boundary stop;
+ * its complete S-bar exposes the Phase 4 line handoff. */
 enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 	struct v90_phase3_digital_station *station, int16_t sample);
 
