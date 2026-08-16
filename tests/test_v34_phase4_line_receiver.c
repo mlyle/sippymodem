@@ -430,7 +430,7 @@ static bool handle_record(
 static bool run_line_case(
 	enum v34_station_role role,
 	enum v34_constellation_size constellation,
-	bool shift_timing_after_s)
+	bool shift_timing_after_s, bool skip_trn_after_s)
 {
 	struct v34_phase3_profile profile = profile_for(role);
 	struct line_source source = {
@@ -520,6 +520,10 @@ static bool run_line_case(
 		}
 		if (result == V34_PHASE4_LINE_RECEIVER_S_DETECTED) {
 			answer_s_events++;
+			if (skip_trn_after_s)
+				CHECK(source.stage == SOURCE_TRN &&
+				      source_next_trn(&source),
+				      "Phase 4 TRN boundary did not advance");
 			if (shift_timing_after_s)
 				receiver.demodulator.locked_phase_units =
 					(receiver.demodulator.locked_phase_units +
@@ -537,7 +541,11 @@ static bool run_line_case(
 	      v34_phase4_line_receiver_is_valid(&receiver) &&
 	      !v34_phase4_line_receiver_has_failed(&receiver) &&
 	      receiver.control.stage ==
-		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE,
+		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE &&
+	      (unsigned int)receiver.control.trn_symbols -
+		      receiver.control.answer_s.post_marker_symbols -
+		      receiver.control.trn_error_symbols ==
+		      (skip_trn_after_s ? 1u : 0u),
 	      "Phase 4 line did not complete MP/E role=%d constellation=%d",
 	      role, constellation);
 	CHECK(v34_phase4_line_receiver_start_data(
@@ -582,7 +590,7 @@ static bool test_generated_line_sequences(void)
 		     ++constellation)
 			if (!run_line_case(
 				    ROLES[role], CONSTELLATIONS[constellation],
-				    false))
+				    false, false))
 				return false;
 	return true;
 }
@@ -590,7 +598,15 @@ static bool test_generated_line_sequences(void)
 static bool test_known_trn_timing_refinement(void)
 {
 	return run_line_case(
-		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, true);
+		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, true,
+		false);
+}
+
+static bool test_known_trn_boundary_refinement(void)
+{
+	return run_line_case(
+		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, false,
+		true);
 }
 
 static bool test_result_names(void)
@@ -624,6 +640,8 @@ int main(void)
 		{ "generated line sequences", test_generated_line_sequences },
 		{ "known TRN timing refinement",
 		  test_known_trn_timing_refinement },
+		{ "known TRN boundary refinement",
+		  test_known_trn_boundary_refinement },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;

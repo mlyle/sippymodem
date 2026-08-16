@@ -230,8 +230,13 @@ static bool score_timing_phase(
 	struct v34_phase4_line_receiver *candidate, double *average_error)
 {
 	struct v34_mp_receive_event ignored = { 0 };
+	double initial_squared_error;
+	uint16_t initial_error_symbols;
+	uint16_t scored_symbols;
 
 	*candidate = *source;
+	initial_squared_error = candidate->control.trn_squared_error;
+	initial_error_symbols = candidate->control.trn_error_symbols;
 	candidate->timing_refining = false;
 	candidate->timing_refinement_sample_count = 0;
 	candidate->demodulator.locked_phase_units =
@@ -249,13 +254,37 @@ static bool score_timing_phase(
 		if (!refinement_result_is_valid(result))
 			return false;
 	}
-	if (candidate->control.trn_error_symbols <
-	    V34_PHASE4_TIMING_REFINEMENT_MIN_SYMBOLS)
+	if (candidate->control.trn_error_symbols < initial_error_symbols ||
+	    candidate->control.trn_squared_error < initial_squared_error)
 		return false;
-	*average_error = candidate->control.trn_squared_error /
-		candidate->control.trn_error_symbols;
+	scored_symbols = candidate->control.trn_error_symbols -
+		initial_error_symbols;
+	if (scored_symbols < V34_PHASE4_TIMING_REFINEMENT_MIN_SYMBOLS)
+		return false;
+	*average_error =
+		(candidate->control.trn_squared_error - initial_squared_error) /
+		scored_symbols;
 	return isfinite(*average_error) &&
 	       v34_phase4_line_receiver_is_valid(candidate);
+}
+
+static bool advance_trn_alignment(
+	struct v34_phase4_line_receiver *receiver)
+{
+	struct qam_point ignored_point;
+	uint8_t ignored_quarter_point;
+	uint8_t ignored_quarter_turns;
+
+	if (receiver->control.stage !=
+		    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN ||
+	    receiver->control.trn_symbols >= V34_PHASE4_TRN_MIN_SYMBOLS ||
+	    v34_phase4_trn_next(
+		    &receiver->control.expected_trn, &ignored_point,
+		    &ignored_quarter_point, &ignored_quarter_turns) !=
+		    V34_PHASE4_TRN_OK)
+		return false;
+	receiver->control.trn_symbols++;
+	return v34_phase4_equalizer_receiver_is_valid(&receiver->control);
 }
 
 static enum v34_phase4_line_receiver_result refine_symbol_timing(
@@ -264,6 +293,7 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 	static const double REQUIRED_IMPROVEMENT = 0.98;
 	struct v34_phase4_line_receiver reference;
 	struct v34_phase4_line_receiver best;
+	struct v34_phase4_line_receiver aligned;
 	double reference_error;
 	double best_error;
 	uint64_t reference_phase = receiver->demodulator.locked_phase_units;
@@ -272,6 +302,7 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 			receiver->demodulator.timing_reference_index].phase_units;
 	uint64_t best_phase = reference_phase;
 	uint64_t fine_step;
+	unsigned int best_alignment = 0;
 	bool gross_timing_error;
 
 	if (!score_timing_phase(
@@ -287,27 +318,42 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 		reference_phase, timing_reference_phase,
 		receiver->demodulator.symbol_period_units) >
 		receiver->demodulator.timing_step_units;
-	for (size_t index = 0;
-	     gross_timing_error &&
-	     index < receiver->demodulator.timing_candidate_count; ++index) {
-		struct v34_phase4_line_receiver candidate;
-		double error;
-		uint64_t phase =
-			index * receiver->demodulator.timing_step_units;
+	aligned = *receiver;
+	for (unsigned int alignment = 0;
+	     alignment <= V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
+	     ++alignment) {
+		if (alignment != 0 && !advance_trn_alignment(&aligned))
+			return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
+		if (!gross_timing_error && alignment == 0)
+			continue;
+		for (size_t index = 0;
+		     index < receiver->demodulator.timing_candidate_count;
+		     ++index) {
+			struct v34_phase4_line_receiver candidate;
+			double error;
+			uint64_t phase =
+				index * receiver->demodulator.timing_step_units;
 
-		if (score_timing_phase(
-			    receiver, phase, &candidate, &error) &&
-		    error < best_error) {
-			best = candidate;
-			best_error = error;
-			best_phase = phase;
+			if (score_timing_phase(
+				    &aligned, phase, &candidate, &error) &&
+			    error < best_error) {
+				best = candidate;
+				best_error = error;
+				best_phase = phase;
+				best_alignment = alignment;
+			}
 		}
 	}
 	/* Known TRN supplies an exact error metric. Refine one half of a coarse
 	 * timing bin on either side of the best candidate. */
-	fine_step = gross_timing_error ?
+	fine_step = (gross_timing_error || best_alignment != 0) ?
 		receiver->demodulator.timing_step_units / 8u : 0;
 	if (fine_step != 0) {
+		aligned = *receiver;
+		for (unsigned int alignment = 0;
+		     alignment < best_alignment; ++alignment)
+			if (!advance_trn_alignment(&aligned))
+				return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
 		for (int step = -4; step <= 4; ++step) {
 			struct v34_phase4_line_receiver candidate;
 			double error;
@@ -321,7 +367,7 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 			phase = (uint64_t)shifted %
 				receiver->demodulator.symbol_period_units;
 			if (score_timing_phase(
-				    receiver, phase, &candidate, &error) &&
+				    &aligned, phase, &candidate, &error) &&
 			    error < best_error) {
 				best = candidate;
 				best_error = error;

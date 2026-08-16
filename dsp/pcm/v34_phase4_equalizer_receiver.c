@@ -35,7 +35,7 @@ static bool trn_state_is_valid(
 {
 	bool answering_peer =
 		receiver->mp_receiver.transmitting_role == V34_ANSWERING_STATION;
-	uint16_t expected_errors;
+	uint16_t represented_symbols;
 
 	if (!v34_phase4_trn_is_valid(&receiver->expected_trn) ||
 	    receiver->expected_trn.role !=
@@ -61,9 +61,14 @@ static bool trn_state_is_valid(
 		       receiver->trn_squared_error == 0.0;
 	if (receiver->trn_symbols < receiver->answer_s.post_marker_symbols)
 		return false;
-	expected_errors = receiver->trn_symbols -
+	represented_symbols = receiver->trn_symbols -
 		receiver->answer_s.post_marker_symbols;
-	if (receiver->trn_error_symbols != expected_errors)
+	/* A sample-domain timing correction may discover that the hard-decision
+	 * S/S-bar boundary consumed one or two additional TRN symbols. Those
+	 * symbols advance the known sequence but have no retained error sample. */
+	if (receiver->trn_error_symbols > represented_symbols ||
+	    represented_symbols - receiver->trn_error_symbols >
+		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS)
 		return false;
 	if (receiver->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN)
 		return receiver->trn_symbols < V34_PHASE4_TRN_MIN_SYMBOLS;
