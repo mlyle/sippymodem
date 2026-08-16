@@ -1554,9 +1554,31 @@ static bool v34_replay_symbol_rate_parse(
 	}
 }
 
-static bool run_v34_recording_replay(
-	const char *path, const char *symbol_rate_value, bool answerer)
+static bool v34_replay_sample_parse(const char *value, size_t *sample)
 {
+	char *end;
+	unsigned long long parsed;
+
+	if (sample == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0') {
+		*sample = SIZE_MAX;
+		return true;
+	}
+	errno = 0;
+	parsed = strtoull(value, &end, 10);
+	if (errno != 0 || end == value || *end != '\0' || parsed == 0 ||
+	    parsed > REPLAY_MAX_SAMPLES)
+		return false;
+	*sample = (size_t)parsed;
+	return true;
+}
+
+static bool run_v34_recording_replay(
+	const char *path, const char *symbol_rate_value,
+	const char *retrain_sample_value, bool answerer)
+{
+	enum { TEST_STATE_COMMAND_ONLINE = 6 };
 	static const char dial_command[] = "ATDrecording\r";
 	static const char *const commands[] = {
 		"ATZ\r",
@@ -1576,10 +1598,18 @@ static bool run_v34_recording_replay(
 	unsigned int symbol_rate;
 	size_t connected_at = SIZE_MAX;
 	size_t handoff_at = SIZE_MAX;
+	size_t retrain_sample;
+	size_t retrained_at = SIZE_MAX;
 	bool v8_seen = false;
+	bool retrain_requested = false;
+	char retrain_command[] = "ATO1";
 
-	CHECK(v34_replay_symbol_rate_parse(symbol_rate_value, &symbol_rate),
-	      "optional V.34 recording symbol rate is invalid");
+	CHECK(v34_replay_symbol_rate_parse(symbol_rate_value, &symbol_rate) &&
+		      v34_replay_sample_parse(
+			      retrain_sample_value, &retrain_sample),
+	      "optional V.34 recording replay parameter is invalid");
+	CHECK(!answerer || retrain_sample == SIZE_MAX,
+	      "V.34 answer recording does not accept an originator retrain sample");
 	CHECK(channel_bench_recording_load(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
@@ -1635,6 +1665,20 @@ static bool run_v34_recording_replay(
 
 		if (count > SIP_FRAME_SAMPLES)
 			count = SIP_FRAME_SAMPLES;
+		if (!retrain_requested && retrain_sample != SIZE_MAX &&
+		    offset < retrain_sample && count > retrain_sample - offset)
+			count = retrain_sample - offset;
+		if (!retrain_requested && offset == retrain_sample) {
+			CHECK(connected_at != SIZE_MAX,
+			      "V.34 recording retrain preceded initial CONNECT");
+			endpoint.output_count = 0;
+			endpoint.modem->state = TEST_STATE_COMMAND_ONLINE;
+			CHECK(process_at_command(
+				      endpoint.modem, retrain_command) == 1 &&
+				      endpoint.modem->retrain_pending != 0,
+			      "V.34 recording replay rejected ATO1");
+			retrain_requested = true;
+		}
 		memcpy(endpoint.receive, recording.samples + offset,
 		       count * sizeof(*endpoint.receive));
 		v8_before = endpoint.modem->dp != NULL &&
@@ -1653,16 +1697,33 @@ static bool run_v34_recording_replay(
 		if (connected_at == SIZE_MAX &&
 		    modem_is_online(endpoint.modem, DP_V34))
 			connected_at = offset;
+		if (retrain_requested && retrained_at == SIZE_MAX &&
+		    endpoint.modem->retrain_pending == 0 &&
+		    output_contains(&endpoint, "CONNECT"))
+			retrained_at = offset;
+		/* A recording can contain arbitrarily much online data, while this
+		 * optional replay has no DTE consuming it. Retain terminal output only
+		 * while it can still establish the CONNECT boundary. */
+		if (modem_is_online(endpoint.modem, DP_V34) &&
+		    (!retrain_requested || retrained_at != SIZE_MAX))
+			endpoint.output_count = 0;
 	}
 	CHECK(connected_at != SIZE_MAX,
 	      "V.34 %s recording did not acquire carrier (V.8 seen %d, handoff %zu, final DP %d/status %d)",
 	      role, v8_seen, handoff_at,
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
+	CHECK(retrain_sample == SIZE_MAX ||
+		      (retrain_requested && retrained_at != SIZE_MAX),
+	      "V.34 %s recording did not complete ATO1 (requested %d, sample %zu, pending %u, final DP %d/status %d)",
+	      role, retrain_requested, retrain_sample,
+	      endpoint.modem->retrain_pending,
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
 	fprintf(stderr,
-		"[       OK ] V.34 %s recording replay (%s, %zu samples, carrier at %zu, terminal bytes %zu)\n",
+		"[       OK ] V.34 %s recording replay (%s, %zu samples, carrier at %zu, retrain at %zu, terminal bytes %zu)\n",
 		role, symbol_rate_description, recording.count, connected_at,
-		endpoint.output_count);
+		retrained_at, endpoint.output_count);
 
 	endpoint_destroy(&endpoint);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
@@ -1742,6 +1803,8 @@ int main(void)
 		getenv("V34_ANSWER_REPLAY_RX_PCM");
 	const char *v34_recording_symbol_rate =
 		getenv("V34_REPLAY_SYMBOL_RATE");
+	const char *v34_recording_retrain_sample =
+		getenv("V34_REPLAY_RETRAIN_SAMPLE");
 	const char *v34_answer_recording_symbol_rate =
 		getenv("V34_ANSWER_REPLAY_SYMBOL_RATE");
 	const char *v34_matrix_filter = getenv("V34_MATRIX_FILTER");
@@ -2025,7 +2088,7 @@ int main(void)
 			"[  SKIPPED ] V.34 recording replay (V34_REPLAY_RX_PCM unset)\n");
 	} else if (!run_v34_recording_replay(
 			   v34_recording_path, v34_recording_symbol_rate,
-			   false)) {
+			   v34_recording_retrain_sample, false)) {
 		return 1;
 	}
 	if (v34_answer_recording_path == NULL ||
@@ -2034,7 +2097,7 @@ int main(void)
 			"[  SKIPPED ] V.34 answer recording replay (V34_ANSWER_REPLAY_RX_PCM unset)\n");
 	} else if (!run_v34_recording_replay(
 			   v34_answer_recording_path,
-			   v34_answer_recording_symbol_rate, true)) {
+			   v34_answer_recording_symbol_rate, NULL, true)) {
 		return 1;
 	}
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
