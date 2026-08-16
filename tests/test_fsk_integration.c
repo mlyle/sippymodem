@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 enum {
@@ -1795,6 +1796,155 @@ static bool run_v22bis_recording_replay(const char *path)
 	return true;
 }
 
+static bool load_octet_recording(
+	const char *path, uint8_t **octets, size_t *count)
+{
+	struct stat status;
+	uint8_t *loaded;
+	size_t offset = 0;
+	int descriptor;
+
+	if (path == NULL || path[0] == '\0' || octets == NULL || count == NULL)
+		return false;
+	descriptor = open(path, O_RDONLY | O_CLOEXEC);
+	if (descriptor < 0 || fstat(descriptor, &status) != 0 ||
+	    !S_ISREG(status.st_mode) || status.st_size <= 0 ||
+	    (uintmax_t)status.st_size > REPLAY_MAX_SAMPLES) {
+		if (descriptor >= 0)
+			close(descriptor);
+		return false;
+	}
+	loaded = malloc((size_t)status.st_size);
+	if (loaded == NULL) {
+		close(descriptor);
+		return false;
+	}
+	while (offset < (size_t)status.st_size) {
+		ssize_t received = read(
+			descriptor, loaded + offset,
+			(size_t)status.st_size - offset);
+
+		if (received < 0 && errno == EINTR)
+			continue;
+		if (received <= 0) {
+			free(loaded);
+			close(descriptor);
+			return false;
+		}
+		offset += (size_t)received;
+	}
+	if (close(descriptor) != 0) {
+		free(loaded);
+		return false;
+	}
+	*octets = loaded;
+	*count = offset;
+	return true;
+}
+
+static bool v90_replay_codec_parse(
+	const char *value, enum media_codec *codec)
+{
+	if (codec == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0' || strcmp(value, "PCMU") == 0) {
+		*codec = MEDIA_CODEC_PCMU;
+		return true;
+	}
+	if (strcmp(value, "PCMA") == 0) {
+		*codec = MEDIA_CODEC_PCMA;
+		return true;
+	}
+	return false;
+}
+
+static bool run_v90_recording_replay(
+	const char *path, enum media_codec codec)
+{
+	static const char *const commands[] = {
+		"ATZ\r",
+		"ATE0\r",
+		"ATX3\r",
+		"AT\\N0\r",
+		"AT+DS=0,0\r",
+		"AT+V90D=1\r",
+		"AT+MS=90,0,28000,28000\r",
+		"AT+V90U=19200,19200,3000\r",
+	};
+	struct datapumps datapumps = { 0 };
+	struct integration_endpoint endpoint;
+	enum g711_law law;
+	uint8_t *recording = NULL;
+	size_t recording_count = 0;
+	size_t handoff_at = SIZE_MAX;
+	size_t connected_at = SIZE_MAX;
+	bool v8_seen = false;
+
+	CHECK(codec_law(codec, &law) &&
+		      load_octet_recording(
+			      path, &recording, &recording_count),
+	      "optional V.90 G.711 recording could not be loaded");
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
+		      endpoint_init(&endpoint, "V.90 recording replay") &&
+		      configure_recording_replay(
+			      &endpoint, commands, ARRAY_LENGTH(commands)),
+	      "V.90 recording replay did not initialize");
+	CHECK(modem_report_incoming_call(endpoint.modem) == 0 &&
+		      endpoint_drain(&endpoint) &&
+		      output_contains(&endpoint, "RING") &&
+		      modem_answer(endpoint.modem) == 0,
+	      "V.90 recording replay did not answer the call");
+	endpoint.output_count = 0;
+	for (size_t offset = 0; offset < recording_count;) {
+		size_t frame_count = recording_count - offset;
+		bool exact_output = false;
+		bool v8_before;
+
+		if (frame_count > SIP_FRAME_SAMPLES)
+			frame_count = SIP_FRAME_SAMPLES;
+		memcpy(endpoint.receive_codewords, recording + offset,
+		       frame_count);
+		for (size_t index = 0; index < frame_count; ++index)
+			endpoint.receive[index] = decode_codeword(
+				law, endpoint.receive_codewords[index]);
+		v8_before = endpoint.modem->dp != NULL &&
+			endpoint.modem->dp->id == DP_V8;
+		modem_process_g711(
+			endpoint.modem, law, endpoint.receive_codewords,
+			endpoint.receive, endpoint.transmit_codewords,
+			endpoint.transmit, (int)frame_count, &exact_output);
+		offset += frame_count;
+		CHECK(endpoint_drain(&endpoint),
+		      "V.90 recording replay terminal output overflowed");
+		v8_seen = v8_seen || v8_before;
+		if (handoff_at == SIZE_MAX && v8_before &&
+		    endpoint.modem->dp != NULL &&
+		    endpoint.modem->dp->id == DP_V90)
+			handoff_at = offset;
+		if (modem_is_online(endpoint.modem, DP_V90)) {
+			if (connected_at == SIZE_MAX)
+				connected_at = offset;
+			/* The external recording may continue with arbitrary data,
+			 * while this replay has no terminal consumer. */
+			endpoint.output_count = 0;
+		}
+	}
+	CHECK(connected_at != SIZE_MAX,
+	      "V.90 recording did not acquire carrier (V.8 seen %d, handoff %zu, final DP %d/status %d)",
+	      v8_seen, handoff_at,
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
+	fprintf(stderr,
+		"[       OK ] V.90 recording replay over %s (%zu octets, carrier at %zu)\n",
+		codec_name(codec), recording_count, connected_at);
+
+	endpoint_destroy(&endpoint);
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "V.90 recording replay registrations remained busy");
+	free(recording);
+	return true;
+}
+
 int main(void)
 {
 	const char *v34_recording_path =
@@ -1811,6 +1961,11 @@ int main(void)
 	const char *integration_filter = getenv("MODEM_INTEGRATION_FILTER");
 	const char *v22_recording_path =
 		getenv("V22_REPLAY_RX_PCM");
+	const char *v90_recording_path =
+		getenv("V90_REPLAY_RX_G711");
+	const char *v90_recording_law =
+		getenv("V90_REPLAY_LAW");
+	enum media_codec v90_replay_codec;
 	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
 		{
@@ -2098,6 +2253,17 @@ int main(void)
 	} else if (!run_v34_recording_replay(
 			   v34_answer_recording_path,
 			   v34_answer_recording_symbol_rate, NULL, true)) {
+		return 1;
+	}
+	if (v90_recording_path == NULL || v90_recording_path[0] == '\0') {
+		fprintf(stderr,
+			"[  SKIPPED ] V.90 recording replay (V90_REPLAY_RX_G711 unset)\n");
+	} else if (!v90_replay_codec_parse(
+			   v90_recording_law, &v90_replay_codec)) {
+		fprintf(stderr, "invalid V.90 recording replay law\n");
+		return 1;
+	} else if (!run_v90_recording_replay(
+			   v90_recording_path, v90_replay_codec)) {
 		return 1;
 	}
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
