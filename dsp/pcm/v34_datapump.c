@@ -5,6 +5,7 @@
 #include "datapump_timing.h"
 #include "modem.h"
 #include "modem_param.h"
+#include "training_session.h"
 #include "v34_call.h"
 #include "v34_frame_schedule.h"
 
@@ -24,12 +25,9 @@ enum {
 struct v34_datapump {
 	struct dp dp;
 	struct v34_call call;
-	uint64_t training_samples;
-	uint64_t training_timeout_samples;
+	struct training_session training;
 	uint32_t missing_carrier_samples;
 	uint16_t rate_mask;
-	bool failed;
-	bool linked;
 	bool caller;
 };
 
@@ -46,6 +44,16 @@ static struct dp_operations v34_operations = {
 	.delete = delete_v34,
 	.process = process_v34,
 };
+
+static bool training_is_online(const struct v34_datapump *datapump)
+{
+	return datapump->training.state == TRAINING_SESSION_ONLINE;
+}
+
+static bool training_has_failed(const struct v34_datapump *datapump)
+{
+	return datapump->training.state == TRAINING_SESSION_FAILED;
+}
 
 static enum v34_station_role station_role(bool caller)
 {
@@ -280,16 +288,21 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->rate_mask == 0 ||
-	    datapump->training_timeout_samples == 0 ||
-	    datapump->training_samples > datapump->training_timeout_samples ||
+	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V34_CARRIER_LOSS_SAMPLES ||
 	    !v34_call_is_valid(&datapump->call) ||
 	    datapump->call.local_role != station_role(datapump->caller) ||
-	    (v34_call_has_failed(&datapump->call) && !datapump->failed) ||
-	    (!datapump->failed &&
-	     datapump->linked != v34_call_is_online(&datapump->call)) ||
-	    (datapump->linked && dp->status != DPSTAT_CONNECT) ||
-	    (!datapump->linked && dp->status == DPSTAT_CONNECT))
+	    (v34_call_has_failed(&datapump->call) &&
+	     !training_has_failed(datapump)) ||
+	    (!training_has_failed(datapump) &&
+	     training_is_online(datapump) !=
+		     v34_call_is_online(&datapump->call)) ||
+	    (!training_has_failed(datapump) &&
+	     v34_call_is_online(&datapump->call) &&
+	     dp->status != DPSTAT_CONNECT) ||
+	    (!training_has_failed(datapump) &&
+	     !v34_call_is_online(&datapump->call) &&
+	     dp->status == DPSTAT_CONNECT))
 		return NULL;
 	return datapump;
 }
@@ -317,8 +330,13 @@ static struct dp *create_v34(
 	}
 	datapump->caller = caller != 0;
 	datapump->rate_mask = rate_mask;
-	datapump->training_timeout_samples =
-		datapump_carrier_wait_ticks(modem);
+	if (training_session_init(
+		    &datapump->training,
+		    datapump_carrier_wait_ticks(modem)) !=
+	    TRAINING_SESSION_OK) {
+		free(datapump);
+		return NULL;
+	}
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -356,7 +374,8 @@ static bool source_mapping_frame(
 		return false;
 	bit_count = request->primary_bits + (auxiliary_bit != NULL ? 1u : 0u);
 	memset(bits, 1, bit_count);
-	if (datapump->linked && datapump->dp.modem->get_bits != NULL)
+	if (training_is_online(datapump) &&
+	    datapump->dp.modem->get_bits != NULL)
 		supplied = modem_get_bits(
 			datapump->dp.modem, 1, bits, (int)bit_count);
 	if (supplied < 0)
@@ -382,7 +401,8 @@ static bool deliver_mapping_frame(
 	if (received == NULL ||
 	    received->primary_bit_count > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
-	if (!datapump->linked || datapump->dp.modem->put_bits == NULL)
+	if (!training_is_online(datapump) ||
+	    datapump->dp.modem->put_bits == NULL)
 		return true;
 	memcpy(bits, received->primary_bits, received->primary_bit_count);
 	return modem_put_bits(
@@ -412,10 +432,34 @@ static bool enter_link(struct v34_datapump *datapump)
 		    datapump->dp.modem, MDMPRM_RX_RATE,
 		    (int)receive_rate) != 0)
 		return false;
-	datapump->linked = true;
+	if (training_session_connect(&datapump->training) !=
+	    TRAINING_SESSION_OK)
+		return false;
 	datapump->missing_carrier_samples = 0;
 	datapump->dp.status = DPSTAT_CONNECT;
 	return true;
+}
+
+static bool observation_has_progress(
+	const struct v34_call_observation *observation)
+{
+	if (observation->processed != observation->next)
+		return true;
+	switch (observation->processed) {
+	case V34_CALL_PHASE2:
+		return observation->events.phase2.kind !=
+		       V34_PHASE2_EVENT_NONE;
+	case V34_CALL_PHASE3:
+		return observation->events.phase3 != 0;
+	case V34_CALL_PHASE4:
+		return observation->events.phase4 != 0;
+	}
+	return false;
+}
+
+static void fail_training(struct v34_datapump *datapump)
+{
+	(void)training_session_fail(&datapump->training);
 }
 
 static void update_carrier(
@@ -453,19 +497,18 @@ static int process_v34(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	if (datapump->failed) {
+	if (training_has_failed(datapump)) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	if (!datapump->linked) {
-		if ((uint64_t)(unsigned int)count >
-		    datapump->training_timeout_samples -
-			    datapump->training_samples) {
-			datapump->failed = true;
+	if (!training_is_online(datapump)) {
+		if (training_session_advance(
+			    &datapump->training,
+			    (uint64_t)(unsigned int)count) !=
+		    TRAINING_SESSION_OK) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
-		datapump->training_samples += (unsigned int)count;
 	}
 	for (int index = 0; index < count; ++index) {
 		struct v34_call_observation observation;
@@ -475,14 +518,22 @@ static int process_v34(
 			datapump, &transmit[index], &observation, &received);
 
 		if (result != V34_CALL_OK) {
-			datapump->failed = true;
+			fail_training(datapump);
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
-		if (!datapump->linked &&
+		if (!training_is_online(datapump) &&
+		    observation_has_progress(&observation) &&
+		    training_session_note_progress(&datapump->training) !=
+			    TRAINING_SESSION_OK) {
+			fail_training(datapump);
+			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+			return DPSTAT_ERROR;
+		}
+		if (!training_is_online(datapump) &&
 		    v34_call_is_online(&datapump->call)) {
 			if (!enter_link(datapump)) {
-				datapump->failed = true;
+				fail_training(datapump);
 				memset(transmit, 0,
 				       (size_t)count * sizeof(*transmit));
 				return DPSTAT_ERROR;
@@ -493,17 +544,17 @@ static int process_v34(
 		    (observation.events.phase4 &
 		     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) != 0 &&
 		    !deliver_mapping_frame(datapump, &received)) {
-			datapump->failed = true;
+			fail_training(datapump);
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
 	}
-	if (datapump->linked)
+	if (training_is_online(datapump))
 		update_carrier(datapump, receive, count);
 	if (connected)
 		return DPSTAT_CONNECT;
 	if (datapump->missing_carrier_samples >= V34_CARRIER_LOSS_SAMPLES) {
-		datapump->failed = true;
+		fail_training(datapump);
 		return DPSTAT_ERROR;
 	}
 	return DPSTAT_OK;
