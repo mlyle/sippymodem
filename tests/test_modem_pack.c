@@ -180,6 +180,43 @@ static bool test_async_reframe_discards_partial_characters(void)
 	return true;
 }
 
+static bool test_async_retrain_preserves_transmit_framing(void)
+{
+	static const uint8_t partial[] = { 0, 1, 0, 1, 0 };
+	uint8_t complete[10] = { 0 };
+	uint8_t decoded = 0;
+	size_t bit_count = 0;
+	struct byte_stream sink = {
+		.output = &decoded,
+		.output_capacity = 1,
+	};
+	struct modem modem = {
+		.name = "async-retrain-modem",
+		.dev_data = &sink,
+		.put_chars = write_chars,
+	};
+
+	modem_async_start(&modem);
+	CHECK(modem_async_put_bits(
+		      &modem, 1, (uint8_t *)partial,
+		      (int)ARRAY_LENGTH(partial)) == (int)ARRAY_LENGTH(partial),
+	      "async decoder did not consume the pre-retrain partial character");
+	modem.pack.bit = 7;
+	modem.pack.data = 0x1234;
+	modem_async_retrain(&modem);
+	CHECK(modem.pack.bit == 7 && modem.pack.data == 0x1234,
+	      "async retrain discarded pending transmit framing");
+	CHECK(append_async_character(
+		      complete, ARRAY_LENGTH(complete), &bit_count, 'T', true),
+	      "async retrain fixture overflowed");
+	CHECK(modem_async_put_bits(
+		      &modem, 1, complete, (int)bit_count) == (int)bit_count,
+	      "async decoder did not consume the post-retrain character");
+	CHECK(!sink.output_overflow && sink.output_length == 1 && decoded == 'T',
+	      "async retrain retained a partial receive character");
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -288,6 +325,8 @@ int main(void)
 		  test_async_resynchronizes_after_bad_stop },
 		{ "async reframe",
 		  test_async_reframe_discards_partial_characters },
+		{ "async retrain framing",
+		  test_async_retrain_preserves_transmit_framing },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
 	unsigned int failures = 0;
