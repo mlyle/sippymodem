@@ -35,6 +35,13 @@ v34_phase2_ranging_init(
 	enum v34_station_role local_role,
 	int16_t nominal_amplitude,
 	const struct v34_info0 *local_info0);
+
+enum v34_phase2_ranging_result
+v34_phase2_ranging_init_retrain(
+	struct v34_phase2_ranging *ranging,
+	enum v34_station_role local_role, int16_t nominal_amplitude,
+	const struct v34_info0 *local_info0,
+	const struct v34_info0 *peer_info0);
 bool v34_phase2_ranging_is_valid(
 	const struct v34_phase2_ranging *ranging);
 

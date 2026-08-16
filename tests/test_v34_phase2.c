@@ -460,6 +460,55 @@ static bool test_generated_timelines(void)
 	return true;
 }
 
+static bool test_retrain_timeline(void)
+{
+	struct v34_info0 caller_info0 = test_v34_phase2_capabilities(
+		V34_CALLING_STATION);
+	struct v34_info0 answerer_info0 = test_v34_phase2_capabilities(
+		V34_ANSWERING_STATION);
+	struct v34_info0 caller_peer_info0;
+	struct v34_info0 answerer_peer_info0;
+	struct owned_pair pair;
+	bool ready = false;
+
+	memset(&pair, 0, sizeof(pair));
+	CHECK(test_v34_phase2_pair_init(
+		      &pair.channel, TEST_CODEC_PCMA, 47) &&
+	      v34_phase2_init_retrain(
+		      &pair.caller, V34_CALLING_STATION, TEST_AMPLITUDE,
+		      &caller_info0, &answerer_info0) == V34_PHASE2_OK &&
+	      v34_phase2_init_retrain(
+		      &pair.answerer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+		      &answerer_info0, &caller_info0) == V34_PHASE2_OK,
+	      "Phase 2 retrain pair did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_event caller_event;
+		struct v34_phase2_event answerer_event;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		CHECK(pair_sample(
+			      &pair, &caller_event, &answerer_event,
+			      &caller_transmit, &answerer_transmit),
+		      "Phase 2 retrain pair failed at sample %zu", index);
+		if (v34_phase2_is_ready_for_info1(&pair.caller) &&
+		    v34_phase2_is_ready_for_info1(&pair.answerer)) {
+			ready = true;
+			break;
+		}
+	}
+	CHECK(ready && !v34_phase2_has_failed(&pair.caller) &&
+	      !v34_phase2_has_failed(&pair.answerer) &&
+	      v34_phase2_peer_info0(
+		      &pair.caller, &caller_peer_info0) == V34_PHASE2_OK &&
+	      v34_phase2_peer_info0(
+		      &pair.answerer, &answerer_peer_info0) == V34_PHASE2_OK &&
+	      info0_equal(&caller_peer_info0, &answerer_info0) &&
+	      info0_equal(&answerer_peer_info0, &caller_info0),
+	      "Phase 2 retrain did not preserve INFO0 through ranging");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_info0 info0 = test_v34_phase2_capabilities(
@@ -604,6 +653,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated probe timelines", test_generated_timelines },
+		{ "generated retrain timeline", test_retrain_timeline },
 		{ "validation", test_validation },
 		{ "INFO1 recovery", test_info1_recovery },
 	};

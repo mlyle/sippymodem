@@ -41,6 +41,30 @@ v34_phase2_ranging_init(
 }
 
 enum v34_phase2_ranging_result
+v34_phase2_ranging_init_retrain(
+	struct v34_phase2_ranging *ranging,
+	enum v34_station_role local_role, int16_t nominal_amplitude,
+	const struct v34_info0 *local_info0,
+	const struct v34_info0 *peer_info0)
+{
+	struct v34_phase2_ranging initialized;
+
+	if (ranging == NULL ||
+	    v34_phase2_info0_exchange_init_retrain(
+		    &initialized.info0_exchange, local_role,
+		    nominal_amplitude, local_info0, peer_info0) !=
+		    V34_PHASE2_INFO0_EXCHANGE_OK ||
+	    phase2_ranging_control_init(
+		    &initialized.control,
+		    &initialized.info0_exchange.transport) !=
+		    PHASE2_RANGING_OK ||
+	    !v34_phase2_ranging_is_valid(&initialized))
+		return V34_PHASE2_RANGING_INVALID_ARGUMENT;
+	*ranging = initialized;
+	return V34_PHASE2_RANGING_OK;
+}
+
+enum v34_phase2_ranging_result
 v34_phase2_ranging_sample(
 	struct v34_phase2_ranging *ranging,
 	int16_t received_sample, int16_t *transmit_sample,

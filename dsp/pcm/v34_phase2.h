@@ -90,6 +90,11 @@ enum v34_phase2_result v34_phase2_init(
 	struct v34_phase2 *phase2, enum v34_station_role local_role,
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0);
 
+enum v34_phase2_result v34_phase2_init_retrain(
+	struct v34_phase2 *phase2, enum v34_station_role local_role,
+	int16_t nominal_amplitude, const struct v34_info0 *local_info0,
+	const struct v34_info0 *peer_info0);
+
 bool v34_phase2_is_valid(const struct v34_phase2 *phase2);
 bool v34_phase2_has_failed(const struct v34_phase2 *phase2);
 bool v34_phase2_is_ready_for_info1(const struct v34_phase2 *phase2);

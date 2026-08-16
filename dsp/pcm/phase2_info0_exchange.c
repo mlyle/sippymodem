@@ -160,6 +160,40 @@ enum phase2_info0_exchange_result phase2_info0_exchange_restart_info(
 	return PHASE2_INFO0_EXCHANGE_OK;
 }
 
+enum phase2_info0_exchange_result phase2_info0_exchange_start_tone(
+	struct phase2_info0_exchange *exchange)
+{
+	struct phase2_info0_exchange next;
+	size_t frame_bits;
+
+	if (!phase2_info0_exchange_is_valid(exchange) ||
+	    exchange->transmit_phase != PHASE2_INFO0_POST_V8_SILENCE ||
+	    exchange->post_v8_silence_samples != 0)
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	next = *exchange;
+	frame_bits = v34_phase2_info_frame_bit_count(
+		next.info_transmitter.frame.payload_bit_count);
+	while (next.info_transmitter.frame.bit_index < frame_bits) {
+		uint8_t bit;
+		bool complete;
+
+		if (v34_phase2_info_next_bit(
+			    &next.info_transmitter.frame, &bit, &complete) !=
+			    V34_PHASE2_INFO_OK)
+			return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		(void)bit;
+		if (complete)
+			next.info_transmitter.frame_complete = true;
+	}
+	next.post_v8_silence_samples = PHASE2_INFO0_POST_V8_SILENCE_SAMPLES;
+	next.filter_tail_symbols = V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS;
+	next.transmit_phase = PHASE2_INFO0_TONE;
+	if (!phase2_info0_exchange_is_valid(&next))
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	*exchange = next;
+	return PHASE2_INFO0_EXCHANGE_OK;
+}
+
 static bool receive_sample(
 	struct phase2_info0_exchange *exchange, int16_t sample,
 	struct phase2_info0_exchange_event *event)

@@ -78,6 +78,33 @@ v34_phase2_info0_exchange_init(
 	return V34_PHASE2_INFO0_EXCHANGE_OK;
 }
 
+enum v34_phase2_info0_exchange_result
+v34_phase2_info0_exchange_init_retrain(
+	struct v34_phase2_info0_exchange *exchange,
+	enum v34_station_role local_role, int16_t nominal_amplitude,
+	const struct v34_info0 *local_info0,
+	const struct v34_info0 *peer_info0)
+{
+	struct v34_phase2_info0_exchange initialized;
+
+	if (exchange == NULL || !v34_info0_is_valid(peer_info0) ||
+	    v34_phase2_info0_exchange_init(
+		    &initialized, local_role, nominal_amplitude,
+		    local_info0) != V34_PHASE2_INFO0_EXCHANGE_OK ||
+	    phase2_info0_exchange_start_tone(
+		    &initialized.transport) != PHASE2_INFO0_EXCHANGE_OK)
+		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	initialized.local_info0.acknowledges_peer_info0 = true;
+	initialized.peer_info0 = *peer_info0;
+	initialized.peer_info0_received = true;
+	initialized.acknowledgements_complete = true;
+	initialized.completion_tone_seen = true;
+	if (!v34_phase2_info0_exchange_is_valid(&initialized))
+		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	*exchange = initialized;
+	return V34_PHASE2_INFO0_EXCHANGE_OK;
+}
+
 static bool info0_semantics_match(
 	const struct v34_info0 *left, const struct v34_info0 *right)
 {

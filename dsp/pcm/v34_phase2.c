@@ -266,6 +266,33 @@ enum v34_phase2_result v34_phase2_init(
 	return V34_PHASE2_OK;
 }
 
+enum v34_phase2_result v34_phase2_init_retrain(
+	struct v34_phase2 *phase2, enum v34_station_role role,
+	int16_t nominal_amplitude, const struct v34_info0 *local_info0,
+	const struct v34_info0 *peer_info0)
+{
+	struct v34_phase2 initialized = {
+		.local_role = role,
+		.stage = V34_PHASE2_RANGING,
+		.peer_info0_stored = true,
+	};
+
+	if (phase2 == NULL || !v34_info0_is_valid(local_info0) ||
+	    !v34_info0_is_valid(peer_info0))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	initialized.local_info0 = *local_info0;
+	initialized.local_info0.acknowledges_peer_info0 = true;
+	initialized.peer_info0 = *peer_info0;
+	if (v34_phase2_ranging_init_retrain(
+		    &initialized.state.ranging, role, nominal_amplitude,
+		    &initialized.local_info0, &initialized.peer_info0) !=
+		    V34_PHASE2_RANGING_OK ||
+	    !v34_phase2_is_valid(&initialized))
+		return V34_PHASE2_INVALID_ARGUMENT;
+	*phase2 = initialized;
+	return V34_PHASE2_OK;
+}
+
 enum v34_phase2_result v34_phase2_peer_info0(
 	const struct v34_phase2 *phase2, struct v34_info0 *peer_info0)
 {

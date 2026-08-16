@@ -55,6 +55,15 @@ v34_phase2_info0_exchange_init(
 	enum v34_station_role local_role,
 	int16_t nominal_amplitude,
 	const struct v34_info0 *local_info0);
+
+/* Full retrain preserves the completed INFO0 agreement and begins directly
+ * with the role tone after the caller-owned silence interval. */
+enum v34_phase2_info0_exchange_result
+v34_phase2_info0_exchange_init_retrain(
+	struct v34_phase2_info0_exchange *exchange,
+	enum v34_station_role local_role, int16_t nominal_amplitude,
+	const struct v34_info0 *local_info0,
+	const struct v34_info0 *peer_info0);
 bool v34_phase2_info0_exchange_is_valid(
 	const struct v34_phase2_info0_exchange *exchange);
 

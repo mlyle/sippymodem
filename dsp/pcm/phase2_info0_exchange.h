@@ -60,6 +60,12 @@ enum phase2_info0_exchange_result phase2_info0_exchange_restart_info(
 	struct phase2_info0_exchange *exchange,
 	const uint8_t *local_payload, size_t local_payload_bit_count);
 
+/* Enter the following-tone state without transmitting the prepared INFO0.
+ * Full retrain uses this after its externally owned 70 ms silence because
+ * the previously negotiated INFO0 records remain in force. */
+enum phase2_info0_exchange_result phase2_info0_exchange_start_tone(
+	struct phase2_info0_exchange *exchange);
+
 /* One call consumes and produces one 8 kHz line sample.  Reception is active
  * throughout the post-V.8 transmit silence so an early peer INFO0 is retained.
  * The INFO frame and tone events are independent and may both be populated by
