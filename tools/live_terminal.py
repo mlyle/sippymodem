@@ -110,6 +110,15 @@ class ReturnOnlineReport:
         )
 
 
+@dataclass(frozen=True)
+class RemoteRetrainReport:
+    """Bounded evidence returned by the peer retrain protocol."""
+
+    complete: bool
+    continuation: bytes
+    peer_escape_guard_failed: bool = False
+
+
 class ResponseDecoder:
     """Own bounded line assembly for a single modem terminal."""
 
@@ -390,7 +399,7 @@ class ModemTerminal:
         nonce: bytes,
         received: bytes,
         timeout_seconds: float,
-    ) -> tuple[bool, bytes]:
+    ) -> RemoteRetrainReport:
         if (
             not re.fullmatch(rb"[0-9a-f]{32}", nonce)
             or not isinstance(received, bytes)
@@ -402,13 +411,24 @@ class ModemTerminal:
             + re.escape(nonce)
             + rb":[0-9]{1,20}(?:\r\n|\r|\n)"
         )
-        verified, combined = self._exchange_online(
+        guard_failure = re.compile(
+            rb"(?:^|[\r\n])GETTY:RETRAIN:START:"
+            + re.escape(nonce)
+            + rb"(?::[^\r\n]*)?(?:\r\n|\r|\n)\+\+\+"
+        )
+        _, combined = self._exchange_online(
             b"",
-            lambda data: pattern.search(data) is not None,
+            lambda data: pattern.search(data) is not None
+            or guard_failure.search(data) is not None,
             timeout_seconds,
             initial=received,
         )
-        return verified, combined[len(received):]
+        complete = pattern.search(combined) is not None
+        return RemoteRetrainReport(
+            complete,
+            combined[len(received):],
+            not complete and guard_failure.search(combined) is not None,
+        )
 
     def probe_online_ping(self, timeout_seconds: float) -> tuple[bool, bytes]:
         return self._exchange_online(

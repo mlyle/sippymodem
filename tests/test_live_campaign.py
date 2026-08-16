@@ -42,6 +42,7 @@ from tools.live_campaign_report import (  # noqa: E402
     MATURITY_NO_CONNECT,
     MATURITY_REQUEST,
     OUTCOME_BUSY,
+    OUTCOME_INFRASTRUCTURE_ERROR,
     OUTCOME_SETUP_ERROR,
     ScheduledAttempt,
 )
@@ -122,11 +123,19 @@ while True:
             os.write(master, pong)
         elif b"RETRAIN" in buffer:
             buffer.clear()
-            os.write(
-                master,
-                b"GETTY:RETRAIN:START:" + callback_nonce + b"\r\n"
-                b"GETTY:RETRAIN:END:" + callback_nonce + b":1834\r\n",
-            )
+            if mode == "stale-retrain-helper":
+                os.write(
+                    master,
+                    b"GETTY:RETRAIN:START:"
+                    + callback_nonce
+                    + b"\r\n+++",
+                )
+            else:
+                os.write(
+                    master,
+                    b"GETTY:RETRAIN:START:" + callback_nonce + b"\r\n"
+                    b"GETTY:RETRAIN:END:" + callback_nonce + b":1834\r\n",
+                )
         continue
     while b"\r" in buffer:
         command, _, remainder = buffer.partition(b"\r")
@@ -490,6 +499,43 @@ class LiveCampaignTests(unittest.TestCase):
             for path in artifacts.directory.rglob("*"):
                 if path.is_file():
                     self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_peer_escape_failure_is_infrastructure_not_modem_maturity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            case = CASES_BY_NAME["v21-300-originator"]
+            scheduled = ScheduledAttempt(case, 1)
+            artifacts = self.artifacts(root, scheduled)
+            frozen = FrozenBinary(
+                root,
+                Path(sys.executable),
+                "a" * 40,
+                "b" * 64,
+                False,
+            )
+            config = replace(
+                self.config(root, script, "stale-retrain-helper"),
+                retrain_timeout_seconds=0.1,
+            )
+            result = run_physical_attempt(
+                config,
+                frozen,
+                scheduled,
+                1,
+                artifacts,
+                True,
+            )
+
+            self.assertEqual(result.outcome, OUTCOME_INFRASTRUCTURE_ERROR)
+            self.assertTrue(result.connected)
+            self.assertTrue(result.initial_data)
+            self.assertFalse(result.remote_retrain)
+            self.assertIsNone(result.maturity)
+            self.assertIn("peer retrain helper", result.detail)
 
     def test_raw_outbound_wakes_peer_before_initial_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

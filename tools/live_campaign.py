@@ -547,17 +547,22 @@ def _exercise_online(
         state.detail = "remote retrain exceeded its total deadline"
         return
     try:
-        state.remote_retrain, continuation = terminal.complete_remote_retrain(
+        report = terminal.complete_remote_retrain(
             nonce,
             received,
             remaining,
         )
-        state.capture(leg, b"", continuation)
+        state.remote_retrain = report.complete
+        state.capture(leg, b"", report.continuation)
     except (LiveTerminalError, OSError, TimeoutError):
         state.detail = "remote retrain END exchange failed"
         return
     if not state.remote_retrain:
-        state.detail = "remote retrain END marker was not verified"
+        if report.peer_escape_guard_failed:
+            state.outcome = OUTCOME_INFRASTRUCTURE_ERROR
+            state.detail = "peer retrain helper violated the escape guard"
+        else:
+            state.detail = "remote retrain END marker was not verified"
         return
     progress.set("waiting for local retrain")
     try:

@@ -125,18 +125,19 @@ class LiveTerminalTests(unittest.TestCase):
             ),
         ):
             observed, received = terminal.start_remote_retrain(1.0)
-            complete, continuation = terminal.complete_remote_retrain(
+            report = terminal.complete_remote_retrain(
                 observed, received, 1.0
             )
         self.assertEqual(observed, nonce)
         self.assertEqual(received, start)
-        self.assertTrue(complete)
-        self.assertEqual(continuation, end)
+        self.assertTrue(report.complete)
+        self.assertFalse(report.peer_escape_guard_failed)
+        self.assertEqual(report.continuation, end)
         self.assertEqual(write.call_args.args[0], REMOTE_RETRAIN_REQUEST)
 
         terminal = ModemTerminal(-1)
         terminal._decoder.feed(b"CONNECT 14400\r\n")
-        mismatch = start.replace(nonce, b"f" * 32) + end
+        mismatch = start.replace(nonce, b"f" * 32) + end[3:]
         with (
             mock.patch.object(terminal, "_write"),
             mock.patch(
@@ -146,13 +147,37 @@ class LiveTerminalTests(unittest.TestCase):
             mock.patch("tools.live_terminal.os.read", return_value=mismatch),
         ):
             observed, received = terminal.start_remote_retrain(1.0)
-            complete, continuation = terminal.complete_remote_retrain(
+            report = terminal.complete_remote_retrain(
                 observed, received, 1.0
             )
         self.assertEqual(observed, b"f" * 32)
         self.assertEqual(received, mismatch)
-        self.assertFalse(complete)
-        self.assertEqual(continuation, b"")
+        self.assertFalse(report.complete)
+        self.assertFalse(report.peer_escape_guard_failed)
+        self.assertEqual(report.continuation, b"")
+
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 14400\r\n")
+        with (
+            mock.patch.object(terminal, "_write"),
+            mock.patch(
+                "tools.live_terminal._wait_for_descriptor",
+                side_effect=(None, None, TimeoutError),
+            ) as wait,
+            mock.patch(
+                "tools.live_terminal.os.read",
+                side_effect=(start, b"+++"),
+            ),
+        ):
+            observed, received = terminal.start_remote_retrain(1.0)
+            report = terminal.complete_remote_retrain(
+                observed, received, 1.0
+            )
+        self.assertEqual(observed, nonce)
+        self.assertFalse(report.complete)
+        self.assertTrue(report.peer_escape_guard_failed)
+        self.assertEqual(report.continuation, b"+++")
+        self.assertEqual(wait.call_count, 2)
 
     def test_online_send_requires_connected_bounded_data(self) -> None:
         terminal = ModemTerminal(-1)

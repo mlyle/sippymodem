@@ -186,7 +186,10 @@ An unattended peer service must treat a failed retrain or callback dial as a
 call-local result, clean up, and rearm for the next call. If that service exits
 on one failed call, later request legs can reach SIP while receiving no modem
 answer; those request-only failures remain auxiliary evidence rather than
-failures of each requested callback modulation.
+failures of each requested callback modulation. A retrain START immediately
+followed by the peer's literal escape sequence without the matching END is the
+known helper guard failure; it is classified as peer infrastructure as soon as
+it arrives, rather than as modem maturity or another full retrain timeout.
 
 The TTY summary clears and repaints every two seconds, names the active call
 stage and seconds spent there, and places originator and callback results next
