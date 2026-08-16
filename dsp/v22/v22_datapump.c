@@ -999,7 +999,7 @@ static int retrain_point_matches(
 {
 	struct qam_point expected;
 	struct qam_point predicted;
-	double power;
+	double power = 0.0;
 	double observed_power;
 	double best_error = HUGE_VAL;
 
@@ -1023,10 +1023,11 @@ static int retrain_point_matches(
 			    &predicted) != QAM_GAIN_OK)
 			return -1;
 		error = point_squared_error(point, &predicted);
-		if (error < best_error)
+		if (error < best_error) {
 			best_error = error;
+			power = point_squared_power(&predicted);
+		}
 	}
-	power = point_squared_power(&datapump->retrain_gain.channel_gain);
 	observed_power = point_squared_power(point);
 	if (!isfinite(power) || !isfinite(observed_power) ||
 	    !isfinite(best_error) || power <= 0.0)

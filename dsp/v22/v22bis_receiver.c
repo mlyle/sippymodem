@@ -74,19 +74,19 @@ v22bis_receiver_matches_v22(
 	const struct v22bis_receiver *receiver,
 	const struct qam_point *point, bool *matches)
 {
-	double gain_power;
 	double best_error = DBL_MAX;
+	double best_power = 0.0;
 
 	if (!v22bis_receiver_is_valid(receiver) ||
 	    receiver->v22bis_started || !point_power(point, NULL) ||
-	    matches == NULL ||
-	    !point_power(&receiver->gain.channel_gain, &gain_power))
+	    matches == NULL)
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	for (uint8_t quadrant = 0;
 	     quadrant < QPSK_QUADRANT_COUNT; ++quadrant) {
 		struct qam_point ideal;
 		struct qam_point predicted;
 		double error;
+		double predicted_power;
 
 		if (v22bis_1200_constellation_point(quadrant, &ideal) !=
 			    V22_FRAMING_OK ||
@@ -95,12 +95,16 @@ v22bis_receiver_matches_v22(
 		    QAM_GAIN_OK)
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 		error = squared_error(point, &predicted);
+		if (!point_power(&predicted, &predicted_power))
+			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 
-		if (error < best_error)
+		if (error < best_error) {
 			best_error = error;
+			best_power = predicted_power;
+		}
 	}
 	*matches = best_error <=
-		   gain_power * V22BIS_V22_REFERENCE_ERROR_RATIO;
+		   best_power * V22BIS_V22_REFERENCE_ERROR_RATIO;
 	return V22BIS_RECEIVER_OK;
 }
 

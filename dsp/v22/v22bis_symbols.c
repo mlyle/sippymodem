@@ -175,7 +175,7 @@ enum v22_framing_result v22bis_1200_constellation_point(
 		    (uint8_t)((quadrant << 2) | 1u), &next) !=
 		    V22_FRAMING_OK)
 		return V22_FRAMING_INVALID_ARGUMENT;
-	/* The 1200-bit/s output gain keeps the selected 01 ray at unit power. */
+	/* Keep the four 1200-bit/s 01 rays at the unit peak of the 16-way set. */
 	next.in_phase *= V22BIS_1200_POINT_SCALE;
 	next.quadrature *= V22BIS_1200_POINT_SCALE;
 	if (!point_is_finite(&next))

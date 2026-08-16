@@ -291,22 +291,54 @@ static bool test_v22bis_1200_constellation(void)
 {
 	struct qam_point points[QPSK_QUADRANT_COUNT];
 	struct qam_point invalid = { 7.0, 9.0 };
+	double online_power = 0.0;
+	double signalling_power = 0.0;
+
+	for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT; ++symbol) {
+		struct qam_point online;
+
+		CHECK(v22bis_constellation_point(symbol, &online) ==
+			      V22_FRAMING_OK,
+		      "V.22bis online point %u was unavailable", symbol);
+		online_power += online.in_phase * online.in_phase +
+				online.quadrature * online.quadrature;
+	}
+	online_power /= V22BIS_SYMBOL_COUNT;
 
 	for (uint8_t quadrant = 0; quadrant < QPSK_QUADRANT_COUNT;
 	     ++quadrant) {
+		struct qam_point expected;
 		double power;
+		double cross;
+		double dot;
 
 		CHECK(v22bis_1200_constellation_point(
 			      quadrant,
-			      &points[quadrant]) == V22_FRAMING_OK,
+			      &points[quadrant]) == V22_FRAMING_OK &&
+			      v22bis_constellation_point(
+				      (uint8_t)((quadrant << 2) | 1u),
+				      &expected) == V22_FRAMING_OK,
 		      "V.22bis 1200-bit/s point %u was unavailable", quadrant);
+		cross = points[quadrant].in_phase * expected.quadrature -
+			points[quadrant].quadrature * expected.in_phase;
+		dot = points[quadrant].in_phase * expected.in_phase +
+		      points[quadrant].quadrature * expected.quadrature;
+		CHECK(fabs(cross) <= 1e-12 && dot > 0.0,
+		      "V.22bis 1200-bit/s point %u left its 01 ray", quadrant);
 		power = points[quadrant].in_phase *
 				points[quadrant].in_phase +
 			points[quadrant].quadrature *
 				points[quadrant].quadrature;
 		CHECK(fabs(power - 1.0) <= 1e-12,
 		      "V.22bis 1200-bit/s point %u changed power", quadrant);
+		signalling_power += power;
 	}
+	signalling_power /= QPSK_QUADRANT_COUNT;
+	CHECK(fabs(online_power - 10.0 / 18.0) <= 1e-12 &&
+		      fabs(signalling_power - 1.0) <= 1e-12 &&
+		      fabs(signalling_power / online_power - 18.0 / 10.0) <=
+			      1e-12,
+	      "V.22bis 1200-to-2400 transition power changed");
 	CHECK(fabs(points[0].in_phase - 3.0 * points[0].quadrature) <=
 		      1e-12 &&
 		      points[1].in_phase == -points[0].quadrature &&
