@@ -1,0 +1,233 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "test.h"
+
+#include "v90_dil_sequence.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+static struct v90_dil_parameters parameters(void)
+{
+	struct v90_dil_parameters generated = {
+		.sign_pattern = { 0x05 },
+		.training_pattern = { 0x06 },
+		.segment_count = 2,
+		.sign_pattern_bits = 3,
+		.training_pattern_bits = 4,
+	};
+
+	generated.training_ucodes[0] = 17;
+	generated.training_ucodes[1] = 112;
+	generated.reference_ucodes[1] = 16;
+	generated.reference_ucodes[7] = 120;
+	generated.segment_length_codes[7] = 1;
+	return generated;
+}
+
+static bool packed_bit(const uint8_t *pattern, size_t length, size_t index)
+{
+	index %= length;
+	return ((pattern[index / 8u] >> (index % 8u)) & 1u) != 0u;
+}
+
+static bool symbols_are_equal(
+	const struct v90_pcm_symbol *left,
+	const struct v90_pcm_symbol *right)
+{
+	return left->ucode == right->ucode &&
+	       left->positive == right->positive &&
+	       left->octet == right->octet &&
+	       left->sample == right->sample;
+}
+
+static bool expected_symbol(
+	const struct v90_dil_parameters *dil, enum g711_law law,
+	size_t cycle_symbol, struct v90_pcm_symbol *symbol)
+{
+	size_t segment = 0;
+	size_t within = cycle_symbol;
+	uint8_t training;
+	uint8_t chord;
+	size_t length;
+
+	for (;;) {
+		training = dil->training_ucodes[segment];
+		chord = training >> 4;
+		length = (size_t)(dil->segment_length_codes[chord] + 1u) * 6u;
+		if (within < length)
+			break;
+		within -= length;
+		segment++;
+	}
+	return v90_pcm_symbol_make(
+		symbol, law,
+		packed_bit(
+			dil->training_pattern, dil->training_pattern_bits,
+			within) ? training : dil->reference_ucodes[chord],
+		packed_bit(dil->sign_pattern, dil->sign_pattern_bits, within));
+}
+
+static bool test_exact_cycles(void)
+{
+	struct v90_dil_parameters dil = parameters();
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v90_dil_sequence sequence = { 0 };
+
+		CHECK(v90_dil_sequence_init(&sequence, &dil, law) ==
+			      V90_DIL_SEQUENCE_OK &&
+		      v90_dil_sequence_is_valid(&sequence) &&
+		      v90_dil_sequence_at_segment_boundary(&sequence),
+		      "DIL sequence did not initialize for law %d", law);
+		for (size_t index = 0; index < 36u; ++index) {
+			struct v90_pcm_symbol expected;
+			struct v90_pcm_symbol actual = { 0 };
+
+			CHECK(expected_symbol(&dil, law, index % 18u, &expected) &&
+			      v90_dil_sequence_next(&sequence, &actual) ==
+				      V90_DIL_SEQUENCE_OK &&
+			      symbols_are_equal(&actual, &expected) &&
+			      v90_dil_sequence_is_valid(&sequence),
+			      "DIL symbol %zu differed for law %d", index, law);
+			CHECK(v90_dil_sequence_at_segment_boundary(&sequence) ==
+				      (index == 5u || index == 17u ||
+				       index == 23u || index == 35u),
+			      "DIL boundary %zu differed for law %d", index, law);
+		}
+	}
+	return true;
+}
+
+static bool test_bounded_finish(void)
+{
+	struct v90_dil_parameters dil = parameters();
+	struct v90_dil_sequence sequence = { 0 };
+	struct v90_pcm_symbol symbol = { 0 };
+	struct v90_pcm_symbol saved;
+
+	CHECK(v90_dil_sequence_init(&sequence, &dil, G711_LAW_PCMU) ==
+		      V90_DIL_SEQUENCE_OK,
+	      "finish fixture did not initialize");
+	for (size_t index = 0; index < 8u; ++index)
+		CHECK(v90_dil_sequence_next(&sequence, &symbol) ==
+			      V90_DIL_SEQUENCE_OK,
+		      "finish fixture stopped at %zu", index);
+	CHECK(v90_dil_sequence_request_finish(&sequence) ==
+		      V90_DIL_SEQUENCE_OK,
+	      "finish request was rejected");
+	for (size_t index = 0; index < 10u; ++index)
+		CHECK(v90_dil_sequence_next(&sequence, &symbol) ==
+			      V90_DIL_SEQUENCE_OK,
+		      "finish segment stopped at %zu", index);
+	saved = symbol;
+	CHECK(v90_dil_sequence_is_complete(&sequence) &&
+	      v90_dil_sequence_at_segment_boundary(&sequence) &&
+	      v90_dil_sequence_next(&sequence, &symbol) ==
+		      V90_DIL_SEQUENCE_COMPLETE &&
+	      symbols_are_equal(&symbol, &saved) &&
+	      v90_dil_sequence_request_finish(&sequence) ==
+		      V90_DIL_SEQUENCE_COMPLETE,
+	      "DIL did not stop transactionally at the segment boundary");
+
+	CHECK(v90_dil_sequence_init(&sequence, &dil, G711_LAW_PCMU) ==
+		      V90_DIL_SEQUENCE_OK &&
+	      v90_dil_sequence_request_finish(&sequence) ==
+		      V90_DIL_SEQUENCE_OK &&
+	      v90_dil_sequence_is_complete(&sequence),
+	      "boundary finish emitted an unnecessary segment");
+	return true;
+}
+
+static bool test_maximum_segment(void)
+{
+	struct v90_dil_parameters dil = parameters();
+	struct v90_dil_sequence sequence = { 0 };
+	struct v90_pcm_symbol symbol;
+
+	dil.segment_count = 1;
+	dil.training_ucodes[0] = 127;
+	dil.training_ucodes[1] = 0;
+	dil.segment_length_codes[7] = 127;
+	CHECK(v90_dil_sequence_init(&sequence, &dil, G711_LAW_PCMA) ==
+		      V90_DIL_SEQUENCE_OK,
+	      "maximum-segment fixture did not initialize");
+	for (size_t index = 0; index < V90_DIL_MAX_SEGMENT_SYMBOLS; ++index)
+		CHECK(v90_dil_sequence_next(&sequence, &symbol) ==
+			      V90_DIL_SEQUENCE_OK,
+		      "maximum segment stopped at %zu", index);
+	CHECK(v90_dil_sequence_at_segment_boundary(&sequence) &&
+	      !v90_dil_sequence_is_complete(&sequence),
+	      "maximum segment did not wrap exactly");
+	return true;
+}
+
+static bool test_contracts(void)
+{
+	struct v90_dil_parameters dil = parameters();
+	struct v90_dil_parameters zero = {
+		.sign_pattern_bits = 1,
+		.training_pattern_bits = 1,
+	};
+	struct v90_dil_sequence sequence;
+	struct v90_dil_sequence saved;
+	struct v90_pcm_symbol symbol = { 0 };
+
+	memset(&sequence, 0xa5, sizeof(sequence));
+	saved = sequence;
+	CHECK(v90_dil_sequence_init(NULL, &dil, G711_LAW_PCMU) ==
+		      V90_DIL_SEQUENCE_INVALID_ARGUMENT &&
+	      v90_dil_sequence_init(&sequence, NULL, G711_LAW_PCMU) ==
+		      V90_DIL_SEQUENCE_INVALID_ARGUMENT &&
+	      v90_dil_sequence_init(&sequence, &zero, G711_LAW_PCMU) ==
+		      V90_DIL_SEQUENCE_INVALID_ARGUMENT &&
+	      v90_dil_sequence_init(
+		      &sequence, &dil, (enum g711_law)99) ==
+		      V90_DIL_SEQUENCE_INVALID_ARGUMENT &&
+	      memcmp(&sequence, &saved, sizeof(sequence)) == 0,
+	      "invalid initialization changed the DIL sequence");
+	memset(&sequence, 0, sizeof(sequence));
+	CHECK(v90_dil_sequence_next(&sequence, &symbol) ==
+		      V90_DIL_SEQUENCE_INVALID_STATE &&
+	      v90_dil_sequence_next(NULL, &symbol) ==
+		      V90_DIL_SEQUENCE_INVALID_ARGUMENT &&
+	      v90_dil_sequence_next(&sequence, NULL) ==
+		      V90_DIL_SEQUENCE_INVALID_ARGUMENT &&
+	      v90_dil_sequence_request_finish(NULL) ==
+		      V90_DIL_SEQUENCE_INVALID_ARGUMENT &&
+	      strcmp(v90_dil_sequence_result_name(V90_DIL_SEQUENCE_OK), "ok") ==
+		      0 &&
+	      strcmp(v90_dil_sequence_result_name(
+			     (enum v90_dil_sequence_result)99), "unknown") == 0,
+	      "DIL sequence contracts changed");
+	return true;
+}
+
+struct test_case {
+	const char *name;
+	bool (*run)(void);
+};
+
+int main(void)
+{
+	static const struct test_case tests[] = {
+		{ "exact repeated cycles", test_exact_cycles },
+		{ "bounded segment finish", test_bounded_finish },
+		{ "maximum segment", test_maximum_segment },
+		{ "contracts", test_contracts },
+	};
+	unsigned int failures = 0;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
+		printf("[ RUN      ] %s\n", tests[index].name);
+		if (tests[index].run())
+			printf("[       OK ] %s\n", tests[index].name);
+		else {
+			printf("[  FAILED  ] %s\n", tests[index].name);
+			failures++;
+		}
+	}
+	return failures == 0 ? 0 : 1;
+}
