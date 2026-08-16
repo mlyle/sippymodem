@@ -157,6 +157,7 @@ static bool test_early_peer_sequence(void)
 	      tx.stage == V92_PHASE4_ANALOG_TX_CPU &&
 	      !tx.cpu_pending && current_cpu_acknowledges_cpd(&tx, false) &&
 	      finish_record(&tx) && tx.cpu_sent &&
+	      tx.completed_cpu_records == 1u &&
 	      v92_phase4_record_tx_is_complete(&tx.signal.record),
 	      "first CPu was not sent after downstream status");
 	CHECK(emit_symbols(&tx, 1u) &&
@@ -208,6 +209,7 @@ static bool test_timeout_and_retry(void)
 	      finish_record(&tx) && emit_symbols(&tx, 1u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_CPU &&
 	      finish_record(&tx) && tx.cpu_sent &&
+	      tx.completed_cpu_records == 1u &&
 	      emit_symbols(&tx, 1u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_SUVU,
 	      "timeout path did not send its first CPu");
@@ -218,6 +220,7 @@ static bool test_timeout_and_retry(void)
 	      finish_record(&tx) && emit_symbols(&tx, 1u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_CPU &&
 	      finish_record(&tx) && tx.cpu_sent &&
+	      tx.completed_cpu_records == 2u &&
 	      !v92_phase4_analog_tx_is_e2u_ready(&tx),
 	      "timer-requested CPu retry was not exactly one record");
 	CHECK(emit_symbols(&tx, 1u) &&
@@ -240,6 +243,7 @@ static bool test_contracts(void)
 	struct v92_cpu_parameters cpu = cpu_parameters();
 	struct v92_phase4_analog_tx tx;
 	struct v92_phase4_analog_tx ed_tx;
+	struct v92_phase4_analog_tx cancel_tx;
 	struct v92_phase4_analog_tx before;
 	struct v92_phase4_modulator handoff;
 	struct v92_phase4_modulator handoff_before;
@@ -285,6 +289,19 @@ static bool test_contracts(void)
 		      V92_PHASE4_ANALOG_TX_OK &&
 	      ed_tx.peer_confirmation_received && !ed_tx.received_cpd,
 	      "Ed was confused with receipt of CPd");
+	CHECK(initialize(&cancel_tx, V92_CONSTELLATION_4_POINT) &&
+	      v92_phase4_analog_tx_note_suvd(&cancel_tx, &suvd) ==
+		      V92_PHASE4_ANALOG_TX_OK &&
+	      emit_symbols(&cancel_tx, 25u) && finish_record(&cancel_tx) &&
+	      emit_symbols(&cancel_tx, 1u) && finish_record(&cancel_tx) &&
+	      emit_symbols(&cancel_tx, 1u) &&
+	      v92_phase4_analog_tx_repeat_cpu(&cancel_tx) ==
+		      V92_PHASE4_ANALOG_TX_OK &&
+	      cancel_tx.cpu_pending &&
+	      v92_phase4_analog_tx_note_ed(&cancel_tx) ==
+		      V92_PHASE4_ANALOG_TX_OK &&
+	      !cancel_tx.cpu_pending,
+	      "peer confirmation did not cancel a queued CPu retry");
 	before = tx;
 	memset(&handoff, 0xa5, sizeof(handoff));
 	handoff_before = handoff;

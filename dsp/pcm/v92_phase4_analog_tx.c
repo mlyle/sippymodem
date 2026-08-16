@@ -28,6 +28,7 @@ bool v92_phase4_analog_tx_is_valid(
 {
 	if (tx == NULL || !stage_is_valid(tx->stage) ||
 	    !templates_are_valid(tx) ||
+	    tx->cpu_sent != (tx->completed_cpu_records != 0u) ||
 	    (tx->received_suvd == false && tx->cpu_pending) ||
 	    (tx->received_cpd == false && tx->acknowledgment_sent) ||
 	    (tx->stage == V92_PHASE4_ANALOG_TX_CPU && tx->cpu_pending))
@@ -120,6 +121,8 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_note_suvd(
 		next.cpu_pending = true;
 	next.received_suvd = true;
 	next.peer_confirmation_received |= suvd->acknowledges_cpu;
+	if (next.cpu_sent && next.peer_confirmation_received)
+		next.cpu_pending = false;
 	next.peer_requests_silence |= suvd->request_silence;
 	finish_if_ready(&next);
 	if (!v92_phase4_analog_tx_is_valid(&next))
@@ -141,6 +144,8 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_note_cpd(
 	next = *tx;
 	next.received_cpd = true;
 	next.peer_confirmation_received |= acknowledges_cpu;
+	if (next.cpu_sent && next.peer_confirmation_received)
+		next.cpu_pending = false;
 	finish_if_ready(&next);
 	if (!v92_phase4_analog_tx_is_valid(&next))
 		return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;
@@ -160,6 +165,8 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_note_ed(
 		return V92_PHASE4_ANALOG_TX_INVALID_STATE;
 	next = *tx;
 	next.peer_confirmation_received = true;
+	if (next.cpu_sent)
+		next.cpu_pending = false;
 	finish_if_ready(&next);
 	if (!v92_phase4_analog_tx_is_valid(&next))
 		return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;
@@ -250,13 +257,18 @@ static enum v92_phase4_analog_tx_result begin_next_record(
 	return start_suvu(tx, false);
 }
 
-static void record_completed(struct v92_phase4_analog_tx *tx)
+static bool record_completed(struct v92_phase4_analog_tx *tx)
 {
-	if (tx->stage == V92_PHASE4_ANALOG_TX_CPU)
+	if (tx->stage == V92_PHASE4_ANALOG_TX_CPU) {
+		if (tx->completed_cpu_records == UINT64_MAX)
+			return false;
+		tx->completed_cpu_records++;
 		tx->cpu_sent = true;
+	}
 	if (tx->current_record_acknowledges_cpd)
 		tx->acknowledgment_sent = true;
 	finish_if_ready(tx);
+	return true;
 }
 
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_next(
@@ -296,8 +308,9 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_next(
 			    &next.signal.record, &generated) !=
 		    V92_PHASE4_RECORD_TX_OK)
 			return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;
-		if (v92_phase4_record_tx_is_complete(&next.signal.record))
-			record_completed(&next);
+		if (v92_phase4_record_tx_is_complete(&next.signal.record) &&
+		    !record_completed(&next))
+			return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;
 	}
 	if (!v92_phase4_analog_tx_is_valid(&next))
 		return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;

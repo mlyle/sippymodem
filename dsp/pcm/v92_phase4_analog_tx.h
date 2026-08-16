@@ -39,6 +39,7 @@ struct v92_phase4_analog_tx {
 	} signal;
 	struct v92_suvu_parameters suvu;
 	struct v92_cpu_parameters cpu;
+	uint64_t completed_cpu_records;
 	enum v92_phase4_analog_tx_stage stage;
 	bool received_suvd;
 	bool received_cpd;
