@@ -198,10 +198,15 @@ void modem_async_retrain(struct modem *m)
 	modem_async_reset_receive(m);
 }
 
-void modem_async_reframe(struct modem *m)
+void modem_async_discard_transmit(struct modem *m)
 {
 	m->pack.bit = 0;
 	m->pack.data = 0;
+}
+
+void modem_async_reframe(struct modem *m)
+{
+	modem_async_discard_transmit(m);
 	modem_async_reset_receive(m);
 }
 

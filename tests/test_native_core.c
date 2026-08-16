@@ -77,6 +77,48 @@ static bool test_modem_events_are_instance_owned(void)
 	return true;
 }
 
+static bool test_escape_discards_async_transmit_fragment(void)
+{
+	enum { TEST_STATE_MODEM_ONLINE = 5 };
+	struct modem_driver driver = {
+		.name = "escape framing test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "escape framing test");
+	static const char escape[] = "+++";
+
+	CHECK(modem != NULL, "escape framing modem could not be created");
+	modem->state = TEST_STATE_MODEM_ONLINE;
+	modem->cfg.ec = 0;
+	modem->command = 0;
+	modem->last_esc_check = get_time();
+	CHECK(modem_write(modem, escape, 3) == 3 &&
+		      modem->escape_count == 0 && modem->event_scheduled == 0 &&
+		      modem->xmit.count == 3,
+	      "unguarded escape characters were withheld from line data");
+	modem->xmit.head = modem->xmit.tail = modem->xmit.count = 0;
+	modem->last_esc_check = 0;
+	CHECK(modem_write(modem, escape, 3) == 3 &&
+		      modem->escape_count == 3 && modem->event_scheduled != 0 &&
+		      modem->xmit.count == 3,
+	      "guarded escape did not schedule command mode");
+	CHECK(modem_service_event(modem) == 0 && modem->command == 0,
+	      "guarded escape entered command mode before its postguard");
+	/* Model a fragment already removed from xmit by the asynchronous packer. */
+	modem->xmit.head = modem->xmit.tail = modem->xmit.count = 0;
+	modem->pack.bit = 7;
+	modem->pack.data = 0x1234;
+	modem->event_deadline = get_time() - 1;
+	CHECK(modem_service_event(modem) == 1 && modem->command == 1 &&
+		      modem->pack.bit == 0 && modem->pack.data == 0 &&
+		      modem->xmit.count == 0,
+	      "confirmed escape remained queued as asynchronous line data");
+	modem_delete(modem);
+	return true;
+}
+
 static struct {
 	int result;
 	unsigned int calls;
@@ -1755,6 +1797,8 @@ int main(void)
 	} tests[] = {
 		{ "instance-owned modem events",
 		  test_modem_events_are_instance_owned },
+		{ "escape discards async transmit fragment",
+		  test_escape_discards_async_transmit_fragment },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 PCM handoff", test_v8_pcm_handoff },
 		{ "modulation report identity", test_modulation_report_identity },

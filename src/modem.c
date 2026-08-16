@@ -897,6 +897,10 @@ void modem_event(struct modem *m)
 	if(event&MDMEVENT_ESCAPE) {
 		MODEM_DBG("modem_escape (count %d)...\n", m->escape_count);
 		if (m->state == STATE_MODEM_ONLINE && m->escape_count == 3) {
+			/* Async framing may already contain confirmed escape
+			 * characters.  They are command syntax, not line data. */
+			if (!m->cfg.ec)
+				modem_async_discard_transmit(m);
 			modem_set_state(m, STATE_COMMAND_ONLINE);
 			m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 			modem_put_chars(m,CRLF_CHARS(m),2);

@@ -467,6 +467,7 @@ extern void modem_process_g711(struct modem *m, enum g711_law law,
 /* packers && EC */ // FIXME: improve interface
 extern void modem_async_start(struct modem *m);
 extern void modem_async_reframe(struct modem *m);
+extern void modem_async_discard_transmit(struct modem *m);
 /* Preserve pending transmit bits while abandoning a partial receive byte. */
 extern void modem_async_retrain(struct modem *m);
 extern int  modem_async_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
