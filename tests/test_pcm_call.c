@@ -261,6 +261,48 @@ static struct v92_cpt_parameters v92_cpt_parameters(enum g711_law law)
 	return parameters;
 }
 
+static struct v92_cpu_parameters v92_cpu_parameters(enum g711_law law)
+{
+	struct v92_cpu_parameters parameters = {
+		.law = law,
+		.trn1d_ratio_q3_13 = UINT16_C(0x7654),
+		.shaping_a1_q1_6 = 7,
+		.shaping_a2_q1_6 = -9,
+		.shaping_b1_q1_6 = 3,
+		.shaping_b2_q1_6 = -5,
+		.data_rate_number = 11,
+		.sign_redundancy = 1,
+		.spectral_lookahead_frames = 2,
+		.constellation_count = V92_CPU_MAX_CONSTELLATIONS,
+		.codec_constellations_differ = true,
+	};
+
+	for (uint8_t index = 0u;
+	     index < V92_CPU_MAX_CONSTELLATIONS; ++index) {
+		add_ucode(
+			&parameters.transmit_constellations[index],
+			(uint8_t)(16u + index));
+		add_ucode(
+			&parameters.transmit_constellations[index],
+			(uint8_t)(72u + index));
+		add_ucode(
+			&parameters.codec_constellations[index],
+			(uint8_t)(96u - 3u * index));
+		parameters.frame_constellation[index] = index;
+	}
+	return parameters;
+}
+
+static struct v92_cpd_base_parameters v92_cpd_parameters(void)
+{
+	return (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = UINT16_C(0x4321),
+		.data_rate_number = 14u,
+		.trellis = V92_CPD_TRELLIS_64_STATE,
+		.extend_e2u = true,
+	};
+}
+
 static struct pcm_call_configuration v92_configuration(
 	enum v90_modem_role role, enum g711_law law)
 {
@@ -269,8 +311,7 @@ static struct pcm_call_configuration v92_configuration(
 		.protocol = PCM_PROTOCOL_V92,
 		.local_role = role,
 		.law = law,
-		.enabled_downstream_rate_mask = role == V90_ANALOG_MODEM ?
-			UINT32_C(1) : V92_JD_RATE_CAPABILITY_MASK,
+		.enabled_downstream_rate_mask = V92_JD_RATE_CAPABILITY_MASK,
 		.phase2_nominal_amplitude = PHASE2_NOMINAL_AMPLITUDE,
 	};
 
@@ -290,6 +331,13 @@ static struct pcm_call_configuration v92_configuration(
 				.law = law,
 				.upstream_lu_ucode = 91u,
 			};
+		configuration.v92_analog_phase4.suvu =
+			(struct v92_suvu_parameters){
+				.prefilter_level_db_q2_2 = -7,
+				.wait_for_cpu = true,
+			};
+		configuration.v92_analog_phase4.cpu =
+			v92_cpu_parameters(law);
 	} else {
 		configuration.local_info0.v92_digital = (struct v92_info0d){
 			.v90 = digital_info0(law),
@@ -305,7 +353,7 @@ static struct pcm_call_configuration v92_configuration(
 				},
 				.jp = {
 					.training_constellation =
-						V92_CONSTELLATION_8_POINT,
+						V92_CONSTELLATION_4_POINT,
 					.rate_renegotiation_constellation =
 						V92_CONSTELLATION_4_POINT,
 				},
@@ -313,6 +361,12 @@ static struct pcm_call_configuration v92_configuration(
 				.su_minimum_magnitude =
 					V92_SU_MINIMUM_MAGNITUDE,
 			};
+		configuration.v92_digital_phase4.suvd =
+			(struct v92_suvd_parameters){
+				.request_silence = law == G711_LAW_PCMA,
+			};
+		configuration.v92_digital_phase4.cpd =
+			v92_cpd_parameters();
 	}
 	return configuration;
 }
@@ -479,7 +533,7 @@ static bool endpoint_init(
 }
 
 static bool phase4_boundary_is_transactional(
-	struct endpoint *endpoint, enum g711_law law);
+	struct pcm_call *call, enum g711_law law);
 
 static bool source_direction_is_online(const struct endpoint *endpoint)
 {
@@ -578,7 +632,7 @@ static bool endpoint_octet(
 	struct pcm_call_observation observation;
 
 	if (pcm_call_phase4_is_ready(&endpoint->call)) {
-		if (!phase4_boundary_is_transactional(endpoint, law) ||
+		if (!phase4_boundary_is_transactional(&endpoint->call, law) ||
 		    pcm_call_start_data_path(&endpoint->call) != PCM_CALL_OK)
 			return false;
 		endpoint->phase4_boundary_checked = true;
@@ -622,9 +676,9 @@ static bool ri_progress_is_exact(const struct endpoint *endpoint)
 }
 
 static bool phase4_boundary_is_transactional(
-	struct endpoint *endpoint, enum g711_law law)
+	struct pcm_call *call, enum g711_law law)
 {
-	struct pcm_call before = endpoint->call;
+	struct pcm_call before = *call;
 	struct pcm_call_observation observation;
 	struct pcm_call_observation observation_before;
 	uint8_t output = 0xa5;
@@ -632,12 +686,12 @@ static bool phase4_boundary_is_transactional(
 	memset(&observation, 0x5a, sizeof(observation));
 	observation_before = observation;
 	return pcm_call_octet(
-		       &endpoint->call, silence_octet(law),
+		       call, silence_octet(law),
 		       &output, &observation) == PCM_CALL_PHASE4_READY &&
 	       output == 0xa5 &&
 	       memcmp(&observation, &observation_before,
 		      sizeof(observation)) == 0 &&
-	       memcmp(&endpoint->call, &before, sizeof(before)) == 0;
+	       memcmp(call, &before, sizeof(before)) == 0;
 }
 
 enum call_goal {
@@ -797,26 +851,7 @@ static bool run_call(
 		V90_JD_RATE_CAPABILITY_MASK, DATA_DOWNSTREAM_RATE);
 }
 
-static bool phase4_entry_boundary_is_transactional(
-	struct pcm_call *call, enum g711_law law)
-{
-	struct pcm_call before = *call;
-	struct pcm_call_observation observation;
-	struct pcm_call_observation observation_before;
-	uint8_t output = 0xa5;
-
-	memset(&observation, 0x5a, sizeof(observation));
-	observation_before = observation;
-	return pcm_call_octet(
-		       call, silence_octet(law), &output, &observation) ==
-		       PCM_CALL_PHASE4_ENTRY_READY &&
-	       output == 0xa5 &&
-	       memcmp(&observation, &observation_before,
-		      sizeof(observation)) == 0 &&
-	       memcmp(call, &before, sizeof(before)) == 0;
-}
-
-static bool run_v92_to_phase4_entry(
+static bool run_v92_phase4_control(
 	enum g711_law law, size_t delay)
 {
 	struct pcm_call_configuration analog_configuration =
@@ -826,11 +861,16 @@ static bool run_v92_to_phase4_entry(
 	struct channel channel;
 	struct pcm_call analog;
 	struct pcm_call digital;
+	struct v92_phase4_digital_station digital_peer_tail;
 	bool analog_entered_phase3 = false;
 	bool digital_entered_phase3 = false;
-	bool analog_entered_mixed = false;
-	bool digital_entered_mixed = false;
-	bool reached = false;
+	bool analog_entered_phase4 = false;
+	bool digital_entered_phase4 = false;
+	bool analog_handoff_reached = false;
+	bool digital_handoff_reached = false;
+	bool completion_failure_checked = false;
+	size_t first_cpu_sent = SIZE_MAX;
+	size_t first_cpu_received = SIZE_MAX;
 
 	CHECK(channel_init(&channel, law, delay) &&
 	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
@@ -842,21 +882,93 @@ static bool run_v92_to_phase4_entry(
 		struct pcm_call_observation digital_observation;
 		uint8_t analog_received;
 		uint8_t digital_received;
-		uint8_t analog_transmitted;
-		uint8_t digital_transmitted;
+		uint8_t analog_transmitted = silence_octet(law);
+		uint8_t digital_transmitted = silence_octet(law);
 		enum pcm_call_result analog_result;
 		enum pcm_call_result digital_result;
+		bool analog_ready = pcm_call_phase4_is_ready(&analog);
+		bool digital_ready = pcm_call_phase4_is_ready(&digital);
 
+		if (analog_ready && !analog_handoff_reached) {
+			CHECK(phase4_boundary_is_transactional(&analog, law),
+			      "law %u analogue V.92 handoff consumed input",
+			      (unsigned int)law);
+			analog_handoff_reached = true;
+		}
+		if (digital_ready && !digital_handoff_reached) {
+			CHECK(phase4_boundary_is_transactional(&digital, law),
+			      "law %u digital V.92 handoff consumed input",
+			      (unsigned int)law);
+			/* The public call has handed this continuous transmitter to
+			 * the future Ed owner. This private copy supplies only that
+			 * peer continuation while the analogue handoff is tested. */
+			digital_peer_tail = digital.state.phase4.v92_digital;
+			digital_handoff_reached = true;
+		}
 		channel_receive(
 			&channel, &analog_received, &digital_received);
-		analog_result = pcm_call_octet(
-			&analog, analog_received, &analog_transmitted,
-			&analog_observation);
-		digital_result = pcm_call_octet(
-			&digital, digital_received, &digital_transmitted,
-			&digital_observation);
-		CHECK(analog_result == PCM_CALL_OK &&
-		      digital_result == PCM_CALL_OK,
+		if (!completion_failure_checked && law == G711_LAW_PCMU &&
+		    delay == 1u && !analog_ready &&
+		    analog.stage == PCM_CALL_PHASE4 &&
+		    analog.state.phase4.v92_analog.station.cpd_received) {
+			struct v92_phase4_analog_station predicted =
+				analog.state.phase4.v92_analog.station;
+			uint64_t completed =
+				predicted.transmit.completed_cpu_records;
+			int16_t predicted_sample;
+
+			if (v92_phase4_analog_station_transmit(
+				    &predicted, &predicted_sample) ==
+				    V92_PHASE4_ANALOG_STATION_OK &&
+			    predicted.transmit.completed_cpu_records ==
+				    completed + 1u) {
+				struct pcm_call collision = analog;
+				struct pcm_call_observation collision_observation;
+				uint8_t collision_output;
+				uint8_t rate = collision.state.phase4.v92_analog
+					.station.cpd.data_rate_number;
+
+				collision.phase3_configuration.v92_analog
+					.upstream_rate_mask &=
+					~(UINT32_C(1) << (rate - 1u));
+				CHECK(pcm_call_octet(
+					      &collision, analog_received,
+					      &collision_output,
+					      &collision_observation) ==
+					      PCM_CALL_UNUSABLE_SELECTION &&
+				      pcm_call_is_valid(&collision) &&
+				      pcm_call_has_failed(&collision) &&
+				      collision.state.phase4.v92_analog
+					      .observed_cpu_records ==
+					      collision.state.phase4.v92_analog
+						      .station.transmit
+						      .completed_cpu_records,
+				      "V.92 CPu completion hid a receive failure");
+				completion_failure_checked = true;
+			}
+		}
+		analog_observation = (struct pcm_call_observation){ 0 };
+		digital_observation = (struct pcm_call_observation){ 0 };
+		analog_result = analog_ready ? PCM_CALL_PHASE4_READY :
+			pcm_call_octet(
+				&analog, analog_received, &analog_transmitted,
+				&analog_observation);
+		if (digital_ready) {
+			CHECK(v92_phase4_digital_station_transmit(
+				      &digital_peer_tail, &digital_transmitted) ==
+				      V92_PHASE4_DIGITAL_STATION_OK,
+			      "law %u delay %zu V.92 status tail stopped",
+			      (unsigned int)law, delay);
+			digital_result = PCM_CALL_PHASE4_READY;
+		} else {
+			digital_result = pcm_call_octet(
+				&digital, digital_received, &digital_transmitted,
+				&digital_observation);
+		}
+		CHECK(analog_result == (analog_ready ? PCM_CALL_PHASE4_READY :
+						       PCM_CALL_OK) &&
+		      digital_result == (digital_ready ? PCM_CALL_PHASE4_READY :
+						         PCM_CALL_OK),
 		      "law %u delay %zu V.92 call stopped at character %zu: "
 		      "%s/%s stages %u/%u",
 		      (unsigned int)law, delay, clock,
@@ -870,21 +982,40 @@ static bool run_v92_to_phase4_entry(
 			analog_observation.next == PCM_CALL_PHASE3;
 		digital_entered_phase3 |=
 			digital_observation.next == PCM_CALL_PHASE3;
-		analog_entered_mixed |=
-			analog_observation.next == PCM_CALL_PHASE3_MIXED;
-		digital_entered_mixed |=
-			digital_observation.next == PCM_CALL_PHASE3_MIXED;
-		if (pcm_call_phase4_entry_is_ready(&analog) ||
-		    pcm_call_phase4_entry_is_ready(&digital)) {
-			reached = true;
+		analog_entered_phase4 |=
+			analog_observation.next == PCM_CALL_PHASE4;
+		digital_entered_phase4 |=
+			digital_observation.next == PCM_CALL_PHASE4;
+		if (analog.stage == PCM_CALL_PHASE4 &&
+		    analog.state.phase4.v92_analog.station.transmit.cpu_sent &&
+		    first_cpu_sent == SIZE_MAX)
+			first_cpu_sent = clock;
+		if (digital.stage == PCM_CALL_PHASE4 &&
+		    digital.state.phase4.v92_digital.cpu_received &&
+		    first_cpu_received == SIZE_MAX)
+			first_cpu_received = clock;
+		if (analog_handoff_reached && digital_handoff_reached)
 			break;
-		}
 	}
-	CHECK(reached && analog_entered_phase3 && digital_entered_phase3 &&
-	      analog_entered_mixed && digital_entered_mixed &&
+	CHECK(analog_handoff_reached && digital_handoff_reached &&
+	      (law != G711_LAW_PCMU || delay != 1u ||
+	       completion_failure_checked) &&
+	      analog_entered_phase3 && digital_entered_phase3 &&
+	      analog_entered_phase4 && digital_entered_phase4 &&
+	      first_cpu_sent != SIZE_MAX && first_cpu_received != SIZE_MAX &&
+	      first_cpu_received >= first_cpu_sent &&
+	      first_cpu_received - first_cpu_sent >=
+		      analog.state.phase4.v92_analog
+			      .cpu_repeat_interval_samples &&
 	      pcm_call_is_valid(&analog) && pcm_call_is_valid(&digital) &&
 	      !pcm_call_has_failed(&analog) && !pcm_call_has_failed(&digital) &&
 	      analog.phase3_entry_stored && digital.phase3_entry_stored &&
+	      analog.v92_peer_downstream_rate_stored &&
+	      analog.v92_peer_downstream_rate_mask ==
+		      digital_configuration.phase3.v92_digital.jd
+			      .data_rate_capability_mask &&
+	      !digital.v92_peer_downstream_rate_stored &&
+	      digital.v92_peer_downstream_rate_mask == 0u &&
 	      analog.phase3_entry.selection.startup.protocol ==
 		      PCM_PROTOCOL_V92 &&
 	      digital.phase3_entry.selection.startup.protocol ==
@@ -903,56 +1034,160 @@ static bool run_v92_to_phase4_entry(
 	      v92_pcm_info1a_equal(
 		      &digital.phase3_entry.selection.analog.pcm,
 		      &analog_configuration.local_info1.v92_analog) &&
-	      (analog.stage == PCM_CALL_PHASE3_MIXED ||
-	       analog.stage == PCM_CALL_PHASE4_ENTRY) &&
-	      (digital.stage == PCM_CALL_PHASE3_MIXED ||
-	       digital.stage == PCM_CALL_PHASE4_ENTRY) &&
-	      pcm_downstream_rx_is_valid(
-		      &analog.state.mixed.v92_analog.receive) &&
-	      analog.state.mixed.v92_analog.receive.protocol ==
-		      PCM_PROTOCOL_V92 &&
-	      analog.state.mixed.v92_analog.receive.stage ==
-		      PCM_DOWNSTREAM_RX_TRN2D &&
-	      analog.state.mixed.v92_analog.receive.stream.received_symbols > 0 &&
-	      analog.state.mixed.v92_analog.receive.trn2d_bit_errors == 0 &&
-	      pcm_downstream_tx_is_valid(
-		      &digital.state.mixed.v92_digital.transmit) &&
-	      digital.state.mixed.v92_digital.transmit.protocol ==
-		      PCM_PROTOCOL_V92 &&
-	      digital.state.mixed.v92_digital.transmit.stage ==
-		      PCM_DOWNSTREAM_TX_TRN2D &&
-	      digital.state.mixed.v92_digital.transmit.control_configured &&
-	      digital.state.mixed.v92_digital.transmit.transmitted_symbols > 0 &&
+	      analog.stage == PCM_CALL_PHASE4 &&
+	      digital.stage == PCM_CALL_PHASE4 &&
+	      analog.round_trip_delay_stored &&
+	      analog.round_trip_delay_samples != 0u &&
+	      !digital.round_trip_delay_stored &&
+	      digital.round_trip_delay_samples == 0u &&
+	      analog.state.phase4.v92_analog.cpu_repeat_interval_samples ==
+		      800u + analog.round_trip_delay_samples &&
+	      analog.state.phase4.v92_analog.cpu_repeat_remaining_samples ==
+		      0u &&
+	      !analog.state.phase4.v92_analog.awaiting_cpu_completion &&
+	      analog.state.phase4.v92_analog.observed_cpu_records ==
+		      analog.state.phase4.v92_analog.station.transmit
+			      .completed_cpu_records &&
+	      analog.state.phase4.v92_analog.observed_cpu_records >= 2u &&
+	      v92_cpu_frame_bits(
+		      &analog_configuration.v92_analog_phase4.cpu, 2u) /
+		      2u >
+		      analog.state.phase4.v92_analog
+			      .cpu_repeat_interval_samples &&
+	      v92_phase4_analog_station_is_e2u_ready(
+		      &analog.state.phase4.v92_analog.station) &&
+	      v92_phase4_digital_station_is_ed_ready(
+		      &digital.state.phase4.v92_digital) &&
+	      analog.state.phase4.v92_analog.station.cpd_received &&
+	      digital.state.phase4.v92_digital.cpu_received &&
+	      analog.state.phase4.v92_analog.station.suvd.request_silence ==
+		      digital_configuration.v92_digital_phase4.suvd
+			      .request_silence &&
+	      analog.state.phase4.v92_analog.station.cpd.data_rate_number ==
+		      digital_configuration.v92_digital_phase4.cpd
+			      .data_rate_number &&
+	      digital.state.phase4.v92_digital.cpu.data_rate_number ==
+		      analog_configuration.v92_analog_phase4.cpu
+			      .data_rate_number &&
+	      digital.state.phase4.v92_digital.cpu.acknowledges_cpd &&
+	      digital.state.phase4.v92_digital.peer_acknowledged_cpd &&
 	      v90_pcm_mapping_equal(
-		      &analog.state.mixed.v92_analog.receive.stream.decoder.mapping,
-		      &digital.state.mixed.v92_digital.transmit.encoder.mapping),
-	      "law %u delay %zu V.92 call lost its Phase 3 selection",
-	      (unsigned int)law, delay);
-	if (pcm_call_phase4_entry_is_ready(&analog))
-		CHECK(phase4_entry_boundary_is_transactional(&analog, law),
-		      "law %u analogue Phase 4 boundary consumed input",
-		      (unsigned int)law);
-	if (pcm_call_phase4_entry_is_ready(&digital))
-		CHECK(phase4_entry_boundary_is_transactional(&digital, law),
-		      "law %u digital Phase 4 boundary consumed input",
-		      (unsigned int)law);
-	CHECK(!pcm_call_phase4_is_ready(&analog) &&
-	      !pcm_call_phase4_is_ready(&digital) &&
+		      &analog.state.phase4.v92_analog.station.receive.stream.decoder.mapping,
+		      &digital.state.phase4.v92_digital.transmit.encoder.mapping),
+	      "law %u delay %zu V.92 handoff failed: "
+	      "handoff=%u/%u phase=%u/%u stage=%u/%u ready=%u/%u "
+	      "cpu=%zu/%zu records=%llu timer=%u/%u rtd=%u",
+	      (unsigned int)law, delay,
+	      analog_handoff_reached, digital_handoff_reached,
+	      analog_entered_phase4, digital_entered_phase4,
+	      (unsigned int)analog.stage, (unsigned int)digital.stage,
+	      v92_phase4_analog_station_is_e2u_ready(
+		      &analog.state.phase4.v92_analog.station),
+	      v92_phase4_digital_station_is_ed_ready(
+		      &digital.state.phase4.v92_digital),
+	      first_cpu_sent, first_cpu_received,
+	      (unsigned long long)analog.state.phase4.v92_analog
+		      .observed_cpu_records,
+	      analog.state.phase4.v92_analog.cpu_repeat_interval_samples,
+	      analog.state.phase4.v92_analog.cpu_repeat_remaining_samples,
+	      analog.round_trip_delay_samples);
+	CHECK(phase4_boundary_is_transactional(&analog, law) &&
+	      phase4_boundary_is_transactional(&digital, law) &&
 	      !pcm_call_is_online(&analog) && !pcm_call_is_online(&digital) &&
 	      pcm_call_start_data_path(&analog) == PCM_CALL_INVALID_STATE &&
 	      pcm_call_start_data_path(&digital) == PCM_CALL_INVALID_STATE,
-	      "law %u V.92 Phase 3 was misreported as online",
+	      "law %u V.92 control was misreported as online",
 	      (unsigned int)law);
 	return true;
 }
 
-static bool test_v92_phase4_entry(void)
+static bool run_v92_unavailable_selection(bool downstream)
+{
+	const enum g711_law law = G711_LAW_PCMU;
+	struct pcm_call_configuration analog_configuration =
+		v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration digital_configuration =
+		v92_configuration(V90_DIGITAL_MODEM, law);
+	struct channel channel;
+	struct pcm_call analog;
+	struct pcm_call digital;
+
+	if (downstream) {
+		uint32_t selected = UINT32_C(1) <<
+			(analog_configuration.v92_analog_phase4.cpu
+				 .data_rate_number - 1u);
+
+		digital_configuration.enabled_downstream_rate_mask &= ~selected;
+		digital_configuration.phase3.v92_digital.jd
+			.data_rate_capability_mask &= ~selected;
+	} else {
+		uint32_t selected = UINT32_C(1) <<
+			(digital_configuration.v92_digital_phase4.cpd
+				 .data_rate_number - 1u);
+
+		analog_configuration.phase3.v92_analog.upstream_rate_mask &=
+			~selected;
+	}
+	CHECK(channel_init(&channel, law, 1u) &&
+	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
+	      "V.92 unavailable-rate calls did not initialize");
+	for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_call_observation analog_observation;
+		struct pcm_call_observation digital_observation;
+		uint8_t analog_received;
+		uint8_t digital_received;
+		uint8_t analog_transmitted;
+		uint8_t digital_transmitted;
+		enum pcm_call_result analog_result;
+		enum pcm_call_result digital_result;
+
+		channel_receive(
+			&channel, &analog_received, &digital_received);
+		analog_result = pcm_call_octet(
+			&analog, analog_received, &analog_transmitted,
+			&analog_observation);
+		digital_result = pcm_call_octet(
+			&digital, digital_received, &digital_transmitted,
+			&digital_observation);
+		if (analog_result != PCM_CALL_OK ||
+		    digital_result != PCM_CALL_OK) {
+			enum pcm_call_result expected_analog = downstream ?
+				PCM_CALL_UNUSABLE_SELECTION : PCM_CALL_OK;
+			enum pcm_call_result expected_digital = downstream ?
+				PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
+
+			CHECK(analog_result == expected_analog &&
+			      digital_result == expected_digital &&
+			      pcm_call_is_valid(&analog) &&
+			      pcm_call_is_valid(&digital) &&
+			      pcm_call_has_failed(
+				      downstream ? &analog : &digital) &&
+			      !pcm_call_has_failed(
+				      downstream ? &digital : &analog),
+			      "V.92 accepted an unadvertised %s rate: %s/%s",
+			      downstream ? "downstream" : "upstream",
+			      pcm_call_result_name(analog_result),
+			      pcm_call_result_name(digital_result));
+			return true;
+		}
+		channel_transmit(
+			&channel, analog_transmitted, digital_transmitted);
+	}
+	CHECK(false, "V.92 unadvertised %s rate did not terminate",
+	      downstream ? "downstream" : "upstream");
+	return false;
+}
+
+static bool test_v92_phase4_control(void)
 {
 	for (size_t delay = 1; delay <= 3; ++delay)
-		CHECK(run_v92_to_phase4_entry(G711_LAW_PCMU, delay) &&
-		      run_v92_to_phase4_entry(G711_LAW_PCMA, delay),
-		      "delay %zu V.92 Phase 4 entry failed", delay);
-	return true;
+		CHECK(run_v92_phase4_control(G711_LAW_PCMU, delay) &&
+		      run_v92_phase4_control(G711_LAW_PCMA, delay),
+		      "delay %zu V.92 role-local Phase 4 handoff failed",
+		      delay);
+	return run_v92_unavailable_selection(true) &&
+	       run_v92_unavailable_selection(false);
 }
 
 static bool test_downstream_rate_negotiation(void)
@@ -1054,7 +1289,6 @@ static bool test_validation(void)
 	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_OK &&
 	      pcm_call_is_valid(&call) &&
 	      !pcm_call_has_failed(&call) &&
-	      !pcm_call_phase4_entry_is_ready(&call) &&
 	      !pcm_call_phase4_is_ready(&call) &&
 	      !pcm_call_is_online(&call),
 	      "valid call did not initialize");
@@ -1098,7 +1332,6 @@ static bool test_validation(void)
 		     sizeof(data_event)) == 0 &&
 	      memcmp(&call, &saved, sizeof(call)) == 0 &&
 	      !pcm_call_is_valid(NULL) && !pcm_call_has_failed(NULL) &&
-	      !pcm_call_phase4_entry_is_ready(NULL) &&
 	      !pcm_call_phase4_is_ready(NULL) &&
 	      !pcm_call_is_online(NULL) &&
 	      pcm_call_current_stage(NULL) == (enum pcm_call_stage)-1,
@@ -1126,6 +1359,33 @@ static bool test_v92_validation(void)
 	CHECK(pcm_call_init(&untouched, &selected) ==
 		      PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted an invalid PCM protocol");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.v92_analog_phase4.cpu.law = G711_LAW_PCMA;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a mismatched V.92 CPu law");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.v92_analog_phase4.cpu.data_rate_number = 0u;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a V.92 CPu cleardown as startup");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.enabled_downstream_rate_mask &=
+		~(UINT32_C(1) <<
+		  (selected.v92_analog_phase4.cpu.data_rate_number - 1u));
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a locally disabled V.92 CPu rate");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.v92_digital_phase4.cpd.acknowledges_cpu = true;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted an acknowledging initial V.92 CPd");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.v92_digital_phase4.cpd.data_rate_number = 0u;
+	CHECK(pcm_call_init(&untouched, &selected) ==
+		      PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a V.92 CPd cleardown as startup");
 	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.local_info1.v92_analog.maximum_total_coefficients--;
 	CHECK(pcm_call_init(&untouched, &selected) ==
@@ -1172,7 +1432,6 @@ static bool test_result_names(void)
 {
 	static const char *const expected[] = {
 		"ok",
-		"phase 4 entry ready",
 		"phase 4 ready",
 		"frame source failure",
 		"failed",
@@ -1210,7 +1469,8 @@ int main(void)
 		  test_generated_calls },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
-		{ "V.92 Phase 4 entry", test_v92_phase4_entry },
+		{ "V.92 role-local Phase 4 handoffs",
+		  test_v92_phase4_control },
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },
 		{ "result names", test_result_names },

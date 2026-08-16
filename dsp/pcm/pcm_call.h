@@ -13,6 +13,8 @@
 #include "v90_phase3_digital_station.h"
 #include "v92_phase3_analog_station.h"
 #include "v92_phase3_digital_station.h"
+#include "v92_phase4_analog_station.h"
+#include "v92_phase4_digital_station.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,14 +23,12 @@ enum pcm_call_stage {
 	PCM_CALL_PHASE2,
 	PCM_CALL_PHASE3,
 	PCM_CALL_PHASE3_MIXED,
-	PCM_CALL_PHASE4_ENTRY,
 	PCM_CALL_PHASE4,
 	PCM_CALL_DATA_PATH,
 };
 
 enum pcm_call_result {
 	PCM_CALL_OK,
-	PCM_CALL_PHASE4_ENTRY_READY,
 	PCM_CALL_PHASE4_READY,
 	PCM_CALL_SOURCE_FAILURE,
 	PCM_CALL_FAILED,
@@ -92,6 +92,16 @@ struct pcm_call_digital_phase4_configuration {
 	struct v90_mp_record initial_mp;
 };
 
+struct pcm_call_v92_analog_phase4_configuration {
+	struct v92_suvu_parameters suvu;
+	struct v92_cpu_parameters cpu;
+};
+
+struct pcm_call_v92_digital_phase4_configuration {
+	struct v92_suvd_parameters suvd;
+	struct v92_cpd_base_parameters cpd;
+};
+
 struct pcm_call_configuration {
 	enum pcm_protocol protocol;
 	enum v90_modem_role local_role;
@@ -106,6 +116,8 @@ struct pcm_call_configuration {
 	union pcm_call_phase3_configuration phase3;
 	struct pcm_call_analog_phase4_configuration analog_phase4;
 	struct pcm_call_digital_phase4_configuration digital_phase4;
+	struct pcm_call_v92_analog_phase4_configuration v92_analog_phase4;
+	struct pcm_call_v92_digital_phase4_configuration v92_digital_phase4;
 };
 
 union pcm_call_phase3_state {
@@ -133,6 +145,8 @@ struct pcm_call_digital_mixed_state {
 struct pcm_call_v92_analog_mixed_state {
 	struct v92_phase3_analog_station phase3;
 	struct pcm_downstream_rx receive;
+	struct v92_suvd_parameters early_suvd;
+	bool early_suvd_received;
 };
 
 struct pcm_call_v92_digital_mixed_state {
@@ -147,9 +161,19 @@ union pcm_call_mixed_state {
 	struct pcm_call_v92_digital_mixed_state v92_digital;
 };
 
+struct pcm_call_v92_analog_phase4_state {
+	struct v92_phase4_analog_station station;
+	uint64_t observed_cpu_records;
+	uint32_t cpu_repeat_interval_samples;
+	uint32_t cpu_repeat_remaining_samples;
+	bool awaiting_cpu_completion;
+};
+
 union pcm_call_phase4_state {
 	struct v90_phase4_analog_startup analog;
 	struct v90_phase4_digital_startup digital;
+	struct pcm_call_v92_analog_phase4_state v92_analog;
+	struct v92_phase4_digital_station v92_digital;
 };
 
 union pcm_call_data_path_state {
@@ -201,8 +225,8 @@ struct pcm_call_data_event {
 
 /* Own one post-V.8 PCM startup. V.90 continues through its role-specific data
  * path. V.92 starts the shared downstream Phase 4 epoch during the split
- * CPt/E1u handoff, then stops transactionally when both Phase 3 directions
- * are complete. Calls on one instance must be serialized. */
+ * CPt/E1u handoff and continues through the CP/SUV control exchange. Calls on
+ * one instance must be serialized. */
 struct pcm_call {
 	union pcm_call_state state;
 	struct pcm_phase3_entry phase3_entry;
@@ -212,12 +236,20 @@ struct pcm_call {
 		analog_phase4_configuration;
 	struct pcm_call_digital_phase4_configuration
 		digital_phase4_configuration;
+	struct pcm_call_v92_analog_phase4_configuration
+		v92_analog_phase4_configuration;
+	struct pcm_call_v92_digital_phase4_configuration
+		v92_digital_phase4_configuration;
 	uint32_t enabled_downstream_rate_mask;
+	uint32_t v92_peer_downstream_rate_mask;
+	uint16_t round_trip_delay_samples;
 	enum pcm_protocol protocol;
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum pcm_call_stage stage;
 	bool phase3_entry_stored;
+	bool v92_peer_downstream_rate_stored;
+	bool round_trip_delay_stored;
 	bool failed;
 };
 
@@ -227,26 +259,25 @@ enum pcm_call_result pcm_call_init(
 
 bool pcm_call_is_valid(const struct pcm_call *call);
 bool pcm_call_has_failed(const struct pcm_call *call);
-bool pcm_call_phase4_entry_is_ready(const struct pcm_call *call);
 bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
 /* Consume and produce one simultaneous 8 ksymbol/s G.711 character. A phase
- * change takes effect on the following call. PHASE4_ENTRY_READY stops V.92
- * after its overlapping TRN2d/E1u handoff; PHASE4_READY stops V.90 after its
- * initial Phase 4 exchange. Both results consume no character, change no
- * output, and leave continuous state available to the next owner. Terminal
- * protocol failures consume the character and expose generated output and
- * observation. */
+ * change takes effect on the following call. PHASE4_READY stops V.90 after its
+ * initial Phase 4 exchange and V.92 at its role-local E2u or Ed handoff. The
+ * peer may still need continuous media before reaching its own handoff. This
+ * result consumes no character, changes no output, and leaves that continuous
+ * state available to the next owner. Terminal protocol failures consume the
+ * character and expose generated output and observation. */
 enum pcm_call_result pcm_call_octet(
 	struct pcm_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation);
 
-/* Transfer the exact completed Phase 4 handoff into the role-specific data
- * path without consuming a network character. Rejected calls are
- * transactional. */
+/* Transfer an exact completed V.90 Phase 4 handoff into its role-specific data
+ * path without consuming a network character. V.92 Ed/E2u continuation is a
+ * later owner and is rejected transactionally here. */
 enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call);
 
 /* Report role-local transmit and receive rates after both directions are

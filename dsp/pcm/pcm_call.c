@@ -5,12 +5,15 @@
 #include "memory_region.h"
 #include "pcm_phase3_entry.h"
 #include "pcm_phase3_handoff.h"
+#include "v92_pcm_dil.h"
 
 #include <stddef.h>
+#include <string.h>
 
 enum {
 	V90_NETWORK_CHARACTERS_PER_SECOND = 8000,
 	V90_UPSTREAM_RATE_UNIT = 2400,
+	V92_CPU_REPEAT_BASE_SAMPLES = 800,
 };
 
 _Static_assert(PCM_PROTOCOL_V90 == 0,
@@ -126,6 +129,32 @@ static bool v92_digital_configuration_is_valid(
 		       &selected->jd, &selected->jp);
 }
 
+static bool v92_analog_phase4_configuration_is_valid(
+	const struct pcm_call_v92_analog_phase4_configuration *configuration,
+	uint32_t enabled_downstream_rate_mask, enum g711_law law)
+{
+	return v92_suvu_parameters_are_valid(&configuration->suvu) &&
+	       !configuration->suvu.acknowledges_cpd &&
+	       v92_cpu_parameters_are_valid(&configuration->cpu) &&
+	       configuration->cpu.law == law &&
+	       !configuration->cpu.acknowledges_cpd &&
+	       downstream_rate_is_enabled(
+		       enabled_downstream_rate_mask,
+		       configuration->cpu.data_rate_number);
+}
+
+static bool v92_digital_phase4_configuration_is_valid(
+	const struct pcm_call_v92_digital_phase4_configuration *configuration)
+{
+	return v92_suvd_parameters_are_valid(&configuration->suvd) &&
+	       !configuration->suvd.acknowledges_cpu &&
+	       v92_cpd_base_parameters_are_valid(&configuration->cpd) &&
+	       !configuration->cpd.acknowledges_cpu &&
+	       v92_pcm_dil_rate_is_enabled(
+		       V92_PCM_DIL_RATE_MASK_ALL,
+		       configuration->cpd.data_rate_number);
+}
+
 static bool configuration_is_valid(
 	const struct pcm_call_configuration *configuration)
 {
@@ -147,6 +176,10 @@ static bool configuration_is_valid(
 			       v92_analog_configuration_is_valid(
 				       &configuration->local_info1,
 				       &configuration->phase3,
+				       configuration->law) &&
+			       v92_analog_phase4_configuration_is_valid(
+				       &configuration->v92_analog_phase4,
+				       configuration->enabled_downstream_rate_mask,
 				       configuration->law);
 		return v92_info0d_is_valid(
 			       &configuration->local_info0.v92_digital) &&
@@ -160,7 +193,9 @@ static bool configuration_is_valid(
 			       &configuration->local_info1,
 			       &configuration->phase3,
 			       configuration->enabled_downstream_rate_mask,
-			       configuration->law);
+			       configuration->law) &&
+		       v92_digital_phase4_configuration_is_valid(
+			       &configuration->v92_digital_phase4);
 	}
 	if (configuration->local_role == V90_ANALOG_MODEM)
 		return v90_info0_is_valid(
@@ -203,12 +238,18 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 		       v92_analog_configuration_is_valid(
 			       &call->local_info1,
 			       &call->phase3_configuration,
+			       call->law) &&
+		       v92_analog_phase4_configuration_is_valid(
+			       &call->v92_analog_phase4_configuration,
+			       call->enabled_downstream_rate_mask,
 			       call->law) :
 		       v92_digital_configuration_is_valid(
 			       &call->local_info1,
 			       &call->phase3_configuration,
 			       call->enabled_downstream_rate_mask,
-			       call->law);
+			       call->law) &&
+		       v92_digital_phase4_configuration_is_valid(
+			       &call->v92_digital_phase4_configuration);
 	return call->local_role == V90_ANALOG_MODEM ?
 		       downstream_rate_is_enabled(
 			       call->enabled_downstream_rate_mask,
@@ -285,6 +326,13 @@ static bool phase3_entry_matches_call(const struct pcm_call *call)
 	       call->phase3_entry.selection.startup.protocol == call->protocol;
 }
 
+static bool suvd_is_empty(const struct v92_suvd_parameters *parameters)
+{
+	static const struct v92_suvd_parameters empty;
+
+	return memcmp(parameters, &empty, sizeof(empty)) == 0;
+}
+
 static bool v92_analog_mixed_is_valid(
 	const struct pcm_call *call, bool trailing_complete)
 {
@@ -297,9 +345,13 @@ static bool v92_analog_mixed_is_valid(
 	    mixed->phase3.law != call->law ||
 	    !pcm_downstream_rx_is_valid(&mixed->receive) ||
 	    mixed->receive.protocol != PCM_PROTOCOL_V92 ||
-	    mixed->receive.stage != PCM_DOWNSTREAM_RX_TRN2D ||
+	    (mixed->receive.stage != PCM_DOWNSTREAM_RX_TRN2D &&
+	     mixed->receive.stage != PCM_DOWNSTREAM_RX_V92_CONTROL) ||
 	    mixed->receive.stream.decoder.decision_plane !=
-		    V90_PCM_MAPPING_TRANSMIT)
+		    V90_PCM_MAPPING_TRANSMIT ||
+	    (mixed->early_suvd_received ?
+		     !v92_suvd_parameters_are_valid(&mixed->early_suvd) :
+		     !suvd_is_empty(&mixed->early_suvd)))
 		return false;
 	if (call->failed)
 		return true;
@@ -329,9 +381,13 @@ static bool v92_digital_mixed_is_valid(
 	    mixed->phase3.law != call->law ||
 	    !pcm_downstream_tx_is_valid(&mixed->transmit) ||
 	    mixed->transmit.protocol != PCM_PROTOCOL_V92 ||
-	    mixed->transmit.stage != PCM_DOWNSTREAM_TX_TRN2D ||
+	    (mixed->transmit.stage != PCM_DOWNSTREAM_TX_TRN2D &&
+	     mixed->transmit.stage != PCM_DOWNSTREAM_TX_V92_CONTROL) ||
 	    !mixed->transmit.control_configured ||
-	    mixed->transmit.control.suvd.request_silence ||
+	    mixed->transmit.v92_control_kind !=
+		    PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
+	    mixed->transmit.control.suvd.request_silence !=
+		    call->v92_digital_phase4_configuration.suvd.request_silence ||
 	    mixed->transmit.control.suvd.acknowledges_cpu ||
 	    mixed->transmit.finish_requested || mixed->transmit.complete)
 		return false;
@@ -357,12 +413,55 @@ static bool v92_mixed_is_valid(
 		       v92_digital_mixed_is_valid(call, phase3_complete);
 }
 
+static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
+{
+	const struct pcm_call_v92_analog_phase4_state *state =
+		&call->state.phase4.v92_analog;
+	uint32_t expected_interval = V92_CPU_REPEAT_BASE_SAMPLES +
+		call->round_trip_delay_samples;
+	bool confirmed = state->station.transmit.peer_confirmation_received;
+	bool timer_valid;
+
+	if (state->observed_cpu_records !=
+	    state->station.transmit.completed_cpu_records)
+		return false;
+	if (confirmed)
+		timer_valid = !state->awaiting_cpu_completion &&
+			state->cpu_repeat_remaining_samples == 0u;
+	else if (state->observed_cpu_records == 0u)
+		timer_valid = !state->awaiting_cpu_completion &&
+			state->cpu_repeat_remaining_samples == 0u;
+	else if (state->awaiting_cpu_completion)
+		timer_valid = state->cpu_repeat_remaining_samples == 0u;
+	else
+		timer_valid = state->cpu_repeat_remaining_samples != 0u &&
+			state->cpu_repeat_remaining_samples <= expected_interval;
+
+	return v92_phase4_analog_station_is_valid(&state->station) &&
+	       state->cpu_repeat_interval_samples == expected_interval &&
+	       timer_valid;
+}
+
 bool pcm_call_is_valid(const struct pcm_call *call)
 {
 	bool child_valid;
 	bool child_failed;
 
 	if (call == NULL || !stored_configuration_is_valid(call) ||
+	    (!call->v92_peer_downstream_rate_stored &&
+	     call->v92_peer_downstream_rate_mask != 0u) ||
+	    (call->v92_peer_downstream_rate_stored &&
+	     (call->protocol != PCM_PROTOCOL_V92 ||
+	      call->local_role != V90_ANALOG_MODEM ||
+	      (call->v92_peer_downstream_rate_mask &
+	       ~(uint32_t)V92_JD_RATE_CAPABILITY_MASK) != 0u)) ||
+	    (call->protocol == PCM_PROTOCOL_V92 &&
+	     call->local_role == V90_ANALOG_MODEM &&
+	     call->stage != PCM_CALL_PHASE2 &&
+	     call->stage != PCM_CALL_PHASE3 &&
+	     !call->v92_peer_downstream_rate_stored) ||
+	    (!call->round_trip_delay_stored &&
+	     call->round_trip_delay_samples != 0u) ||
 	    (call->stage == PCM_CALL_PHASE2 ? call->phase3_entry_stored :
 				       !call->phase3_entry_stored) ||
 	    (call->phase3_entry_stored && !phase3_entry_matches_call(call)))
@@ -400,7 +499,14 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 		break;
 	case PCM_CALL_PHASE3_MIXED:
 		if (call->protocol == PCM_PROTOCOL_V92) {
-			child_valid = v92_mixed_is_valid(call, false);
+			bool trailing_complete =
+				call->local_role == V90_ANALOG_MODEM ?
+					v92_phase3_analog_station_transmit_complete(
+						&call->state.mixed.v92_analog.phase3) :
+					v92_phase3_digital_station_receive_complete(
+						&call->state.mixed.v92_digital.phase3);
+
+			child_valid = v92_mixed_is_valid(call, trailing_complete);
 			child_failed = call->local_role == V90_ANALOG_MODEM ?
 				v92_phase3_analog_station_has_failed(
 					&call->state.mixed.v92_analog.phase3) :
@@ -417,21 +523,18 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 					       &call->state.mixed.digital.phase3);
 		}
 		break;
-	case PCM_CALL_PHASE4_ENTRY:
-		if (call->protocol != PCM_PROTOCOL_V92 ||
-		    call->phase3_entry.selection.upstream != PCM_UPSTREAM_PCM)
-			return false;
-		child_valid = v92_mixed_is_valid(call, true);
-		child_failed = call->local_role == V90_ANALOG_MODEM ?
-			       v92_phase3_analog_station_has_failed(
-				       &call->state.mixed.v92_analog.phase3) :
-			       v92_phase3_digital_station_has_failed(
-				       &call->state.mixed.v92_digital.phase3);
-		break;
 	case PCM_CALL_PHASE4:
-		if (call->protocol != PCM_PROTOCOL_V90)
-			return false;
-		if (call->local_role == V90_ANALOG_MODEM) {
+		if (call->protocol == PCM_PROTOCOL_V92 &&
+		    call->local_role == V90_ANALOG_MODEM) {
+			child_valid = v92_analog_phase4_state_is_valid(call);
+			child_failed = v92_phase4_analog_station_has_failed(
+				&call->state.phase4.v92_analog.station);
+		} else if (call->protocol == PCM_PROTOCOL_V92) {
+			child_valid = v92_phase4_digital_station_is_valid(
+				&call->state.phase4.v92_digital);
+			child_failed = v92_phase4_digital_station_has_failed(
+				&call->state.phase4.v92_digital);
+		} else if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v90_phase4_analog_startup_is_valid(
 				&call->state.phase4.analog);
 			child_failed = v90_phase4_analog_startup_has_failed(
@@ -502,11 +605,15 @@ enum pcm_call_result pcm_call_init(
 			configuration->local_info1.v92_analog;
 		initialized.phase3_configuration.v92_analog =
 			configuration->phase3.v92_analog;
+		initialized.v92_analog_phase4_configuration =
+			configuration->v92_analog_phase4;
 	} else if (configuration->protocol == PCM_PROTOCOL_V92) {
 		initialized.local_info1.v92_digital =
 			configuration->local_info1.v92_digital;
 		initialized.phase3_configuration.v92_digital =
 			configuration->phase3.v92_digital;
+		initialized.v92_digital_phase4_configuration =
+			configuration->v92_digital_phase4;
 	} else if (configuration->local_role == V90_ANALOG_MODEM) {
 		initialized.local_info1.analog =
 			configuration->local_info1.analog;
@@ -539,17 +646,17 @@ bool pcm_call_has_failed(const struct pcm_call *call)
 	return pcm_call_is_valid(call) && call->failed;
 }
 
-bool pcm_call_phase4_entry_is_ready(const struct pcm_call *call)
-{
-	return pcm_call_is_valid(call) && !call->failed &&
-	       call->stage == PCM_CALL_PHASE4_ENTRY;
-}
-
 bool pcm_call_phase4_is_ready(const struct pcm_call *call)
 {
 	if (!pcm_call_is_valid(call) || call->failed ||
 	    call->stage != PCM_CALL_PHASE4)
 		return false;
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return call->local_role == V90_ANALOG_MODEM ?
+		       v92_phase4_analog_station_is_e2u_ready(
+			       &call->state.phase4.v92_analog.station) :
+		       v92_phase4_digital_station_is_ed_ready(
+			       &call->state.phase4.v92_digital);
 	return call->local_role == V90_ANALOG_MODEM ?
 		       v90_phase4_analog_startup_is_complete(
 			       &call->state.phase4.analog) :
@@ -743,6 +850,15 @@ static enum pcm_call_result sample_phase2(
 	if (result != PCM_PHASE2_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	*transmit_octet = encode_sample(call->law, transmitted_sample);
+	if (observation->phase2.kind == PCM_PHASE2_EVENT_ROUND_TRIP_DELAY) {
+		if (call->round_trip_delay_stored &&
+		    call->round_trip_delay_samples !=
+			    observation->phase2.round_trip_delay_samples)
+			return PCM_CALL_SEQUENCE_MISMATCH;
+		call->round_trip_delay_samples =
+			observation->phase2.round_trip_delay_samples;
+		call->round_trip_delay_stored = true;
+	}
 	return advance_phase2(call, &observation->phase2);
 }
 
@@ -915,7 +1031,6 @@ static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
 			return PCM_CALL_NUMERIC_FAILURE;
 		next.state.mixed.v92_analog = mixed;
 	} else {
-		const struct v92_suvd_parameters suvd = { 0 };
 		struct pcm_call_v92_digital_mixed_state mixed = {
 			.phase3 = call->state.phase3.v92_digital,
 		};
@@ -931,12 +1046,13 @@ static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
 			    &mixed.transmit, PCM_PROTOCOL_V92, &mapping) !=
 			    PCM_DOWNSTREAM_TX_OK ||
 		    pcm_downstream_tx_start_suvd(
-			    &mixed.transmit, &suvd) != PCM_DOWNSTREAM_TX_OK)
+			    &mixed.transmit,
+			    &call->v92_digital_phase4_configuration.suvd) !=
+			    PCM_DOWNSTREAM_TX_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		next.state.mixed.v92_digital = mixed;
 	}
-	next.stage = v92_trailing_phase3_is_complete(&next) ?
-			     PCM_CALL_PHASE4_ENTRY : PCM_CALL_PHASE3_MIXED;
+	next.stage = PCM_CALL_PHASE3_MIXED;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = next;
@@ -1042,13 +1158,86 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 	return PCM_CALL_OK;
 }
 
+static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
+{
+	struct pcm_call next = *call;
+
+	next.state.phase4 = (union pcm_call_phase4_state){ 0 };
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct pcm_call_v92_analog_mixed_state *mixed =
+			&call->state.mixed.v92_analog;
+		const struct v92_suvd_parameters *early_suvd =
+			mixed->early_suvd_received ? &mixed->early_suvd : NULL;
+		struct v92_phase3_analog_transmit_handoff handoff;
+		struct v92_phase4_analog_station station;
+
+		if (!call->v92_peer_downstream_rate_stored ||
+		    !call->round_trip_delay_stored)
+			return PCM_CALL_INVALID_STATE;
+		if (!downstream_rate_is_enabled(
+			    call->enabled_downstream_rate_mask &
+				    call->v92_peer_downstream_rate_mask,
+			    call->v92_analog_phase4_configuration.cpu
+				    .data_rate_number))
+			return PCM_CALL_UNUSABLE_SELECTION;
+		if (v92_phase3_analog_station_transmit_handoff(
+			    &mixed->phase3, &handoff) !=
+		    V92_PHASE3_ANALOG_STATION_OK)
+			return PCM_CALL_INVALID_STATE;
+		if (v92_phase4_analog_station_init(
+			    &station, &handoff, &mixed->receive,
+			    &call->v92_analog_phase4_configuration.suvu,
+			    &call->v92_analog_phase4_configuration.cpu,
+			    early_suvd, NULL) != V92_PHASE4_ANALOG_STATION_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		next.state.phase4.v92_analog =
+			(struct pcm_call_v92_analog_phase4_state){
+				.station = station,
+				.cpu_repeat_interval_samples =
+					V92_CPU_REPEAT_BASE_SAMPLES +
+					call->round_trip_delay_samples,
+			};
+	} else {
+		const struct pcm_call_v92_digital_mixed_state *mixed =
+			&call->state.mixed.v92_digital;
+		struct v92_pcm_phase3_cpt_line_handoff handoff;
+		struct v92_phase4_digital_station station;
+		uint32_t upstream_rate_mask;
+
+		if (!v92_phase3_digital_station_upstream_rate_mask(
+			    &mixed->phase3, &upstream_rate_mask))
+			return PCM_CALL_INVALID_STATE;
+		if (!v92_pcm_dil_rate_is_enabled(
+			    upstream_rate_mask,
+			    call->v92_digital_phase4_configuration.cpd
+				    .data_rate_number))
+			return PCM_CALL_UNUSABLE_SELECTION;
+		if (v92_phase3_digital_station_receive_handoff(
+			    &mixed->phase3, &handoff) !=
+		    V92_PHASE3_DIGITAL_STATION_OK)
+			return PCM_CALL_INVALID_STATE;
+		if (v92_phase4_digital_station_init(
+			    &station, &handoff,
+			    call->phase3_configuration.v92_digital.jp
+				    .training_constellation,
+			    &mixed->transmit,
+			    &call->v92_digital_phase4_configuration.cpd) !=
+		    V92_PHASE4_DIGITAL_STATION_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		next.state.phase4.v92_digital = station;
+	}
+	next.stage = PCM_CALL_PHASE4;
+	if (!pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
+}
+
 static enum pcm_call_result advance_phase3(struct pcm_call *call)
 {
 	enum pcm_call_result result;
 
 	if (call->protocol == PCM_PROTOCOL_V92) {
-		struct pcm_call next = *call;
-
 		if (call->stage == PCM_CALL_PHASE3) {
 			bool leading_direction_complete =
 				call->local_role == V90_ANALOG_MODEM ?
@@ -1060,18 +1249,12 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 			if (!leading_direction_complete)
 				return PCM_CALL_OK;
 			result = enter_v92_mixed_phase3(call);
-			if (result != PCM_CALL_OK ||
-			    call->stage == PCM_CALL_PHASE4_ENTRY)
+			if (result != PCM_CALL_OK)
 				return result;
 		}
 		if (!v92_trailing_phase3_is_complete(call))
 			return PCM_CALL_OK;
-		next = *call;
-		next.stage = PCM_CALL_PHASE4_ENTRY;
-		if (!pcm_call_is_valid(&next))
-			return PCM_CALL_NUMERIC_FAILURE;
-		*call = next;
-		return PCM_CALL_OK;
+		return enter_v92_phase4(call);
 	}
 	if (call->stage == PCM_CALL_PHASE3) {
 		bool leading_direction_complete =
@@ -1098,6 +1281,28 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 	return enter_phase4(call);
 }
 
+static enum pcm_call_result retain_v92_peer_downstream_rates(
+	struct pcm_call *call)
+{
+	const struct v92_phase3_analog_station *station =
+		&call->state.phase3.v92_analog;
+	struct v92_jd jd;
+
+	if (station->receive_stage != V92_PHASE3_ANALOG_RECEIVE_J ||
+	    !v92_phase3_j_receiver_jd(&station->receive.j, &jd))
+		return PCM_CALL_OK;
+	if (call->v92_peer_downstream_rate_stored) {
+		return call->v92_peer_downstream_rate_mask ==
+			       jd.data_rate_capability_mask ?
+			       PCM_CALL_OK : PCM_CALL_SEQUENCE_MISMATCH;
+	}
+	call->v92_peer_downstream_rate_mask =
+		jd.data_rate_capability_mask;
+	call->v92_peer_downstream_rate_stored = true;
+	return jd.data_rate_capability_mask != 0u ?
+		       PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
+}
+
 static enum pcm_call_result sample_phase3(
 	struct pcm_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet)
@@ -1118,6 +1323,8 @@ static enum pcm_call_result sample_phase3(
 			v92_phase3_analog_station_receive(
 				&call->state.phase3.v92_analog,
 				received_octet));
+		if (result == PCM_CALL_OK)
+			result = retain_v92_peer_downstream_rates(call);
 	} else if (call->protocol == PCM_PROTOCOL_V92) {
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_transmit(
@@ -1155,19 +1362,48 @@ static enum pcm_call_result sample_phase3(
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
 
-static enum pcm_call_result v92_downstream_receive_result(
-	enum pcm_downstream_rx_result result)
+static bool retain_early_suvd(
+	struct pcm_call_v92_analog_mixed_state *mixed,
+	const struct v92_suvd_parameters *parameters)
 {
+	if (!v92_suvd_parameters_are_valid(parameters))
+		return false;
+	if (!mixed->early_suvd_received) {
+		mixed->early_suvd = *parameters;
+		mixed->early_suvd_received = true;
+		return true;
+	}
+	if (mixed->early_suvd.request_silence != parameters->request_silence ||
+	    (mixed->early_suvd.acknowledges_cpu &&
+	     !parameters->acknowledges_cpu))
+		return false;
+	mixed->early_suvd.acknowledges_cpu |= parameters->acknowledges_cpu;
+	return true;
+}
+
+static enum pcm_call_result receive_v92_mixed_downstream(
+	struct pcm_call_v92_analog_mixed_state *mixed, uint8_t received_octet)
+{
+	struct pcm_downstream_event event = { 0 };
+	enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(
+		&mixed->receive, received_octet, &event);
+
 	switch (result) {
 	case PCM_DOWNSTREAM_RX_OK:
 	case PCM_DOWNSTREAM_RX_BUFFERING:
 	case PCM_DOWNSTREAM_RX_TRN2D_FRAME:
 		return PCM_CALL_OK;
+	case PCM_DOWNSTREAM_RX_SUVD:
+		return event.control.type == V92_CONTROL_EVENT_SUVD &&
+		       event.control.record.suvd.frame_result == V92_SUVD_OK &&
+		       retain_early_suvd(
+			       mixed, &event.control.record.suvd.parameters) ?
+		       PCM_CALL_OK : PCM_CALL_SEQUENCE_MISMATCH;
+	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
+		return PCM_CALL_OK;
 	case PCM_DOWNSTREAM_RX_MP:
 	case PCM_DOWNSTREAM_RX_MP_PRIME:
 	case PCM_DOWNSTREAM_RX_MP_REJECTED:
-	case PCM_DOWNSTREAM_RX_SUVD:
-	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
 	case PCM_DOWNSTREAM_RX_CPD:
 	case PCM_DOWNSTREAM_RX_CPD_REJECTED:
 	case PCM_DOWNSTREAM_RX_ED:
@@ -1217,7 +1453,6 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct pcm_call_v92_analog_mixed_state *mixed =
 			&call->state.mixed.v92_analog;
-		struct pcm_downstream_event event;
 		int16_t sample;
 
 		result = v92_analog_phase3_result(
@@ -1226,9 +1461,7 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 		if (result != PCM_CALL_OK)
 			return result;
 		*transmit_octet = encode_sample(call->law, sample);
-		result = v92_downstream_receive_result(
-			pcm_downstream_rx_receive(
-				&mixed->receive, received_octet, &event));
+		result = receive_v92_mixed_downstream(mixed, received_octet);
 	} else {
 		struct pcm_call_v92_digital_mixed_state *mixed =
 			&call->state.mixed.v92_digital;
@@ -1328,10 +1561,168 @@ static enum pcm_call_result phase4_startup_result(
 	return PCM_CALL_NUMERIC_FAILURE;
 }
 
+static enum pcm_call_result v92_analog_phase4_result(
+	enum v92_phase4_analog_station_result result)
+{
+	switch (result) {
+	case V92_PHASE4_ANALOG_STATION_OK:
+	case V92_PHASE4_ANALOG_STATION_EVENT:
+		return PCM_CALL_OK;
+	case V92_PHASE4_ANALOG_STATION_FAILED:
+		return PCM_CALL_FAILED;
+	case V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS:
+		return PCM_CALL_UNUSABLE_SELECTION;
+	case V92_PHASE4_ANALOG_STATION_INVALID_STATE:
+	case V92_PHASE4_ANALOG_STATION_E2U_READY:
+		return PCM_CALL_INVALID_STATE;
+	case V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT:
+	case V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR:
+		break;
+	}
+	return PCM_CALL_NUMERIC_FAILURE;
+}
+
+static enum pcm_call_result v92_digital_phase4_result(
+	enum v92_phase4_digital_station_result result)
+{
+	switch (result) {
+	case V92_PHASE4_DIGITAL_STATION_OK:
+	case V92_PHASE4_DIGITAL_STATION_EVENT:
+		return PCM_CALL_OK;
+	case V92_PHASE4_DIGITAL_STATION_FAILED:
+		return PCM_CALL_FAILED;
+	case V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS:
+		return PCM_CALL_UNUSABLE_SELECTION;
+	case V92_PHASE4_DIGITAL_STATION_INVALID_STATE:
+		return PCM_CALL_INVALID_STATE;
+	case V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT:
+	case V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR:
+		break;
+	}
+	return PCM_CALL_NUMERIC_FAILURE;
+}
+
+static enum pcm_call_result observe_v92_cpu_completion(
+	struct pcm_call_v92_analog_phase4_state *state,
+	bool *completed_this_sample)
+{
+	uint64_t completed =
+		state->station.transmit.completed_cpu_records;
+
+	*completed_this_sample = false;
+	if (completed == state->observed_cpu_records)
+		return PCM_CALL_OK;
+	if (state->observed_cpu_records == UINT64_MAX ||
+	    completed != state->observed_cpu_records + 1u)
+		return PCM_CALL_NUMERIC_FAILURE;
+	state->observed_cpu_records = completed;
+	state->awaiting_cpu_completion = false;
+	state->cpu_repeat_remaining_samples =
+		state->station.transmit.peer_confirmation_received ?
+			0u : state->cpu_repeat_interval_samples;
+	*completed_this_sample = true;
+	return PCM_CALL_OK;
+}
+
+static enum pcm_call_result advance_v92_cpu_repeat(
+	struct pcm_call_v92_analog_phase4_state *state,
+	bool completed_this_sample)
+{
+	if (state->station.transmit.peer_confirmation_received) {
+		state->cpu_repeat_remaining_samples = 0u;
+		state->awaiting_cpu_completion = false;
+		return PCM_CALL_OK;
+	}
+	if (completed_this_sample || state->observed_cpu_records == 0u ||
+	    state->awaiting_cpu_completion)
+		return PCM_CALL_OK;
+	if (state->cpu_repeat_remaining_samples == 0u)
+		return PCM_CALL_NUMERIC_FAILURE;
+	if (--state->cpu_repeat_remaining_samples != 0u)
+		return PCM_CALL_OK;
+	if (v92_phase4_analog_station_repeat_cpu(&state->station) !=
+	    V92_PHASE4_ANALOG_STATION_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	state->awaiting_cpu_completion = true;
+	return PCM_CALL_OK;
+}
+
+static void cancel_v92_cpu_repeat_if_confirmed(
+	struct pcm_call_v92_analog_phase4_state *state)
+{
+	if (!state->station.transmit.peer_confirmation_received)
+		return;
+	state->cpu_repeat_remaining_samples = 0u;
+	state->awaiting_cpu_completion = false;
+}
+
+static enum pcm_call_result sample_v92_phase4(
+	struct pcm_call *call, uint8_t received_octet,
+	uint8_t *transmit_octet)
+{
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct pcm_call_v92_analog_phase4_state *state =
+			&call->state.phase4.v92_analog;
+		bool completed_this_sample;
+		int16_t sample;
+		enum pcm_call_result result = v92_analog_phase4_result(
+			v92_phase4_analog_station_transmit(
+				&state->station, &sample));
+
+		if (result != PCM_CALL_OK)
+			return result;
+		*transmit_octet = encode_sample(call->law, sample);
+		result = observe_v92_cpu_completion(
+			state, &completed_this_sample);
+		if (result != PCM_CALL_OK)
+			return result;
+		result = v92_analog_phase4_result(
+			v92_phase4_analog_station_receive(
+				&state->station, received_octet));
+		cancel_v92_cpu_repeat_if_confirmed(state);
+		if (result != PCM_CALL_OK)
+			return result;
+		if (state->station.cpd_received &&
+		    !v92_pcm_dil_rate_is_enabled(
+			    call->phase3_configuration.v92_analog
+				    .upstream_rate_mask,
+			    state->station.cpd.data_rate_number))
+			return PCM_CALL_UNUSABLE_SELECTION;
+		return advance_v92_cpu_repeat(
+			state, completed_this_sample);
+	}
+	{
+		enum pcm_call_result result = v92_digital_phase4_result(
+			v92_phase4_digital_station_transmit(
+				&call->state.phase4.v92_digital,
+				transmit_octet));
+
+		if (result != PCM_CALL_OK)
+			return result;
+		result = v92_digital_phase4_result(
+			v92_phase4_digital_station_receive(
+				&call->state.phase4.v92_digital,
+				decode_octet(call->law, received_octet)));
+		if (result != PCM_CALL_OK)
+			return result;
+		if (call->state.phase4.v92_digital.cpu_received &&
+		    !downstream_rate_is_enabled(
+			    call->phase3_configuration.v92_digital.jd
+				    .data_rate_capability_mask,
+			    call->state.phase4.v92_digital.cpu
+				    .data_rate_number))
+			return PCM_CALL_UNUSABLE_SELECTION;
+		return PCM_CALL_OK;
+	}
+}
+
 static enum pcm_call_result sample_phase4(
 	struct pcm_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet)
 {
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return sample_v92_phase4(
+			call, received_octet, transmit_octet);
 	enum v90_phase4_startup_result result =
 		call->local_role == V90_ANALOG_MODEM ?
 			v90_phase4_analog_startup_octet(
@@ -1408,6 +1799,8 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return PCM_CALL_FAILED;
+	if (call->protocol != PCM_PROTOCOL_V90)
+		return PCM_CALL_INVALID_STATE;
 	if (!pcm_call_phase4_is_ready(call))
 		return PCM_CALL_INVALID_STATE;
 	next = *call;
@@ -1639,8 +2032,6 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_FAILED;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return PCM_CALL_INVALID_STATE;
-	if (pcm_call_phase4_entry_is_ready(call))
-		return PCM_CALL_PHASE4_ENTRY_READY;
 	if (pcm_call_phase4_is_ready(call))
 		return PCM_CALL_PHASE4_READY;
 	generated = encode_sample(call->law, 0);
@@ -1682,8 +2073,6 @@ const char *pcm_call_result_name(enum pcm_call_result result)
 	switch (result) {
 	case PCM_CALL_OK:
 		return "ok";
-	case PCM_CALL_PHASE4_ENTRY_READY:
-		return "phase 4 entry ready";
 	case PCM_CALL_PHASE4_READY:
 		return "phase 4 ready";
 	case PCM_CALL_SOURCE_FAILURE:
