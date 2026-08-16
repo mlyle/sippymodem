@@ -18,7 +18,9 @@ enum {
 	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
 	V34_HIGH_DENSITY_RATE_UNITS = 9,
 	V34_NOMINAL_AMPLITUDE = 9000,
-	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
+	/* A local full retrain does not receive the peer's response until both
+	 * stations have observed their 70 ms silence and 50 ms tone guards. */
+	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 2,
 	V34_MIN_LINE_POWER = 1000000,
 };
 
@@ -29,6 +31,7 @@ struct v34_datapump {
 	uint32_t missing_carrier_samples;
 	uint16_t rate_mask;
 	bool caller;
+	bool retrain_carrier_acquired;
 };
 
 static struct dp *create_v34(
@@ -37,12 +40,14 @@ static struct dp *create_v34(
 static int delete_v34(struct dp *dp);
 static int process_v34(
 	struct dp *dp, void *receive, void *transmit, int count);
+static int retrain_v34(struct dp *dp);
 
 static struct dp_operations v34_operations = {
 	.name = "V.34",
 	.create = create_v34,
 	.delete = delete_v34,
 	.process = process_v34,
+	.retrain = retrain_v34,
 };
 
 static bool training_is_online(const struct v34_datapump *datapump)
@@ -53,6 +58,12 @@ static bool training_is_online(const struct v34_datapump *datapump)
 static bool training_has_failed(const struct v34_datapump *datapump)
 {
 	return datapump->training.state == TRAINING_SESSION_FAILED;
+}
+
+static bool training_is_retraining(const struct v34_datapump *datapump)
+{
+	return datapump->training.state == TRAINING_SESSION_ACTIVE &&
+	       datapump->training.generation > 1;
 }
 
 static enum v34_station_role station_role(bool caller)
@@ -296,13 +307,16 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 	     !training_has_failed(datapump)) ||
 	    (!training_has_failed(datapump) &&
 	     training_is_online(datapump) !=
-		     v34_call_is_online(&datapump->call)) ||
+		     v34_call_is_online(&datapump->call) &&
+	     !(training_is_retraining(datapump) &&
+	       !v34_call_is_online(&datapump->call))) ||
 	    (!training_has_failed(datapump) &&
 	     v34_call_is_online(&datapump->call) &&
 	     dp->status != DPSTAT_CONNECT) ||
 	    (!training_has_failed(datapump) &&
 	     !v34_call_is_online(&datapump->call) &&
-	     dp->status == DPSTAT_CONNECT))
+	     dp->status == DPSTAT_CONNECT &&
+	     !training_is_retraining(datapump)))
 		return NULL;
 	return datapump;
 }
@@ -357,6 +371,35 @@ static int delete_v34(struct dp *dp)
 	v34_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
+	return 0;
+}
+
+static int retrain_v34(struct dp *dp)
+{
+	struct v34_datapump *datapump = v34_from_dp(dp);
+	struct training_session training;
+	struct v34_call call;
+
+	if (datapump == NULL)
+		return -1;
+	/* A remote or quality-triggered full retrain may begin during the guard
+	 * interval before ATO1 reaches the datapump. Join that same transaction;
+	 * the modem wrapper will report CONNECT when this generation completes. */
+	if (training_is_retraining(datapump))
+		return 0;
+	if (!training_is_online(datapump))
+		return -1;
+	training = datapump->training;
+	call = datapump->call;
+	if (v34_call_start_retrain(&call) != V34_CALL_OK ||
+	    training_session_start_retrain(
+		    &training, TRAINING_LOCAL_RETRAIN) !=
+		    TRAINING_SESSION_OK)
+		return -1;
+	datapump->call = call;
+	datapump->training = training;
+	datapump->missing_carrier_samples = 0;
+	datapump->retrain_carrier_acquired = false;
 	return 0;
 }
 
@@ -453,6 +496,8 @@ static bool observation_has_progress(
 		return observation->events.phase3 != 0;
 	case V34_CALL_PHASE4:
 		return observation->events.phase4 != 0;
+	case V34_CALL_RETRAIN_SILENCE:
+		return false;
 	}
 	return false;
 }
@@ -462,7 +507,7 @@ static void fail_training(struct v34_datapump *datapump)
 	(void)training_session_fail(&datapump->training);
 }
 
-static void update_carrier(
+static bool update_carrier(
 	struct v34_datapump *datapump, const int16_t *samples, int count)
 {
 	uint64_t power = 0;
@@ -474,6 +519,7 @@ static void update_carrier(
 	}
 	if (power / (unsigned int)count >= V34_MIN_LINE_POWER) {
 		datapump->missing_carrier_samples = 0;
+		return true;
 	} else if ((uint32_t)(unsigned int)count >=
 		   V34_CARRIER_LOSS_SAMPLES -
 			   datapump->missing_carrier_samples) {
@@ -481,6 +527,7 @@ static void update_carrier(
 	} else {
 		datapump->missing_carrier_samples += (uint32_t)(unsigned int)count;
 	}
+	return false;
 }
 
 static int process_v34(
@@ -522,6 +569,20 @@ static int process_v34(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
+		if (training_is_online(datapump) &&
+		    observation.processed != V34_CALL_RETRAIN_SILENCE &&
+		    observation.next == V34_CALL_RETRAIN_SILENCE) {
+			if (training_session_start_retrain(
+				    &datapump->training,
+				    TRAINING_REMOTE_RETRAIN) !=
+			    TRAINING_SESSION_OK) {
+				fail_training(datapump);
+				memset(transmit, 0,
+				       (size_t)count * sizeof(*transmit));
+				return DPSTAT_ERROR;
+			}
+			datapump->retrain_carrier_acquired = false;
+		}
 		if (!training_is_online(datapump) &&
 		    observation_has_progress(&observation) &&
 		    training_session_note_progress(&datapump->training) !=
@@ -549,8 +610,16 @@ static int process_v34(
 			return DPSTAT_ERROR;
 		}
 	}
-	if (training_is_online(datapump))
-		update_carrier(datapump, receive, count);
+	if (training_is_online(datapump)) {
+		(void)update_carrier(datapump, receive, count);
+	} else if (training_is_retraining(datapump) &&
+		   !datapump->retrain_carrier_acquired &&
+		   update_carrier(datapump, receive, count)) {
+		/* Once the peer has answered a full retrain, later half-duplex
+		 * training gaps are not carrier loss.  The training-session deadline
+		 * still bounds a peer that responds but never completes. */
+		datapump->retrain_carrier_acquired = true;
+	}
 	if (connected)
 		return DPSTAT_CONNECT;
 	if (datapump->missing_carrier_samples >= V34_CARRIER_LOSS_SAMPLES) {

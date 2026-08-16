@@ -611,7 +611,7 @@ static bool exercise_retrain(
 {
 	enum {
 		TEST_STATE_COMMAND_ONLINE = 6,
-		PRESERVED_CAPACITY = 8,
+		PRESERVED_CAPACITY = 32,
 	};
 	static const uint8_t caller_payloads[][8] = {
 		{ 'c', 'a', 'l', 'l', '-', 'r', '1', 0x81 },
@@ -877,6 +877,7 @@ static bool run_media_call(
 				   TRAINING_FRAME_LIMIT);
 	int selection_length = (int)strlen(test_case->selection_command);
 	static const char raw_command[] = "AT\\N0\r";
+	static const char lapm_command[] = "AT\\N4\r";
 	static const char no_compression_command[] = "AT+DS=0,0\r";
 	bool monitor_caller_rate =
 		test_case->minimum_caller_rate_signals != 0;
@@ -926,6 +927,23 @@ static bool run_media_call(
 		      output_contains(&caller, "OK") &&
 		      output_contains(&answerer, "OK"),
 		      "%s did not accept raw transport", test_case->name);
+		caller.output_count = 0;
+		answerer.output_count = 0;
+	}
+	if (test_case->test_retrain && !test_case->raw_transport) {
+		CHECK(modem_write(
+			      caller.modem, lapm_command,
+			      (int)(sizeof(lapm_command) - 1u)) ==
+			      (int)(sizeof(lapm_command) - 1u) &&
+			      modem_write(
+				      answerer.modem, lapm_command,
+				      (int)(sizeof(lapm_command) - 1u)) ==
+				      (int)(sizeof(lapm_command) - 1u) &&
+			      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
+			      output_contains(&caller, "OK") &&
+			      output_contains(&answerer, "OK"),
+		      "%s did not require LAPM for the retrain test",
+		      test_case->name);
 		caller.output_count = 0;
 		answerer.output_count = 0;
 	}
@@ -1381,7 +1399,7 @@ static bool run_v34_rate_matrix(const char *filter)
 				.caller_rx_rate = rate,
 				.answerer_tx_rate = rate,
 				.answerer_rx_rate = rate,
-				.carrier_loss_samples = MODEM_RATE / 5,
+				.carrier_loss_samples = MODEM_RATE / 2,
 				.training_frame_limit = 1000,
 				.requires_v8 = true,
 			};
@@ -1857,15 +1875,30 @@ int main(void)
 		},
 		{
 			.id = DP_V34,
-			.name = "V.34 9600 automode",
+			.name = "V.34 9600 raw retrain",
 			.selection_command = "AT+MS=34,1,9600,9600\r",
 			.caller_tx_rate = 9600,
 			.caller_rx_rate = 9600,
 			.answerer_tx_rate = 9600,
 			.answerer_rx_rate = 9600,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE / 2,
 			.training_frame_limit = 1500,
 			.automode = true,
+			.test_retrain = true,
+			.raw_transport = true,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 9600 LAPM retrain",
+			.selection_command = "AT+MS=34,1,9600,9600\r",
+			.caller_tx_rate = 9600,
+			.caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600,
+			.answerer_rx_rate = 9600,
+			.carrier_loss_samples = MODEM_RATE / 2,
+			.training_frame_limit = 1500,
+			.automode = true,
+			.test_retrain = true,
 		},
 		{
 			.id = DP_V34,
@@ -1875,7 +1908,7 @@ int main(void)
 			.caller_rx_rate = 9600,
 			.answerer_tx_rate = 9600,
 			.answerer_rx_rate = 9600,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE / 2,
 			.training_frame_limit = 1500,
 			.automode = true,
 			.impairment = INTEGRATION_IMPAIRMENT_COMPOSITE,
