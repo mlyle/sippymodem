@@ -7,11 +7,13 @@
 #include "v34_equalizer_handoff.h"
 #include "v34_phase3_s_receiver.h"
 #include "v34_phase4_e_receiver.h"
+#include "v34_phase4_trn.h"
 
 #include <stdbool.h>
 
 enum v34_phase4_equalizer_receiver_stage {
 	V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S,
+	V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN,
 	V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP,
 	V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E,
 	V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE,
@@ -41,19 +43,22 @@ enum v34_phase4_equalizer_receiver_result {
 struct v34_phase4_equalizer_receiver {
 	struct qam_equalizer equalizer;
 	struct v34_phase3_s_receiver answer_s;
+	struct v34_phase4_trn expected_trn;
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver e_receiver;
 	double adaptation;
+	uint16_t trn_symbols;
 	enum v34_phase4_equalizer_receiver_stage stage;
 	bool record_pending;
 	bool pending_record_is_valid;
 };
 
 /* Begin at the Phase 3-to-Phase 4 boundary. For an answering peer, recognize
- * its finite S/S-bar marker before searching for MP. A calling peer has no
- * such marker, so its self-synchronizing MP search begins immediately while
- * it finishes J/J-prime and TRN. The trained equalizer is copied and any
- * immediate, unowned adaptation opportunity is closed. */
+ * its finite S/S-bar marker, adapt against the following known TRN, then
+ * search for MP. A calling peer has no such marker, so its self-synchronizing
+ * MP search begins immediately while it finishes J/J-prime and TRN. The
+ * trained equalizer is copied and any immediate, unowned adaptation
+ * opportunity is closed. */
 enum v34_phase4_equalizer_receiver_result
 v34_phase4_equalizer_receiver_init(
 	struct v34_phase4_equalizer_receiver *receiver,

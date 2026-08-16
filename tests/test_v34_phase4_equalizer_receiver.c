@@ -21,6 +21,7 @@ enum {
 
 struct fixture_channel {
 	struct qam_point history[CHANNEL_TAPS];
+	struct qam_point rotation;
 };
 
 struct receive_fixture {
@@ -54,6 +55,7 @@ static struct qam_point channel_point(
 	struct fixture_channel *channel, const struct qam_point *transmitted)
 {
 	struct qam_point received = { 0 };
+	struct qam_point rotated;
 
 	for (size_t index = CHANNEL_TAPS - 1; index != 0; --index)
 		channel->history[index] = channel->history[index - 1];
@@ -65,7 +67,8 @@ static struct qam_point channel_point(
 		received.in_phase += term.in_phase;
 		received.quadrature += term.quadrature;
 	}
-	return received;
+	rotated = multiply(&received, &channel->rotation);
+	return rotated;
 }
 
 static struct v34_mp_parameters parameters(bool acknowledges_peer)
@@ -180,9 +183,11 @@ static bool transmit_point(
 
 static bool run_stream(
 	enum v34_station_role role,
-	enum v34_constellation_size constellation)
+	enum v34_constellation_size constellation, double phase4_rotation,
+	bool corrupt_s_bar_transition)
 {
 	struct receive_fixture fixture = {
+		.channel.rotation = { 1.0, 0.0 },
 		.first_parameters = parameters(false),
 		.second_parameters = parameters(true),
 	};
@@ -245,6 +250,10 @@ static bool run_stream(
 		      &fixture.receiver, &equalizer, role, constellation,
 		      0.05) == V34_PHASE4_EQUALIZER_RECEIVER_OK,
 	      "Phase 4 equalizer fixture did not transfer trained state");
+	fixture.channel.rotation = (struct qam_point){
+		.in_phase = cos(phase4_rotation),
+		.quadrature = sin(phase4_rotation),
+	};
 	if (role == V34_ANSWERING_STATION) {
 		static const struct qam_point zero;
 
@@ -265,7 +274,20 @@ static bool run_stream(
 			CHECK(v34_phase3_s_sequence_next(
 				      &answer_s, &transmitted,
 				      &answer_s_section) ==
-				      V34_PHASE3_S_SEQUENCE_OK &&
+				      V34_PHASE3_S_SEQUENCE_OK,
+			      "Phase 4 answer marker generation failed");
+			if (corrupt_s_bar_transition &&
+			    answer_s_section == V34_PHASE3_S_BAR_SECTION &&
+			    answer_s.emitted_symbols <=
+				    V34_PHASE3_S_SYMBOLS + 2u)
+				CHECK(v34_training_constellation_point(
+					      V34_CONSTELLATION_4_POINT, 0,
+					      (uint8_t)((answer_s.emitted_symbols - 1u) &
+							1u),
+					      &transmitted) ==
+					      V34_CONSTELLATION_OK,
+				      "Phase 4 answer marker corruption failed");
+			CHECK(
 			      transmit_point(
 				      &fixture, &transmitted, &result,
 				      &received) &&
@@ -446,9 +468,19 @@ static bool test_generated_channels(void)
 		     ++constellation)
 			if (!run_stream(
 				    roles[role],
-				    constellations[constellation]))
+				    constellations[constellation], 0.0, false))
 				return false;
 	return true;
+}
+
+static bool test_known_trn_impairment(void)
+{
+	/* The Phase 3 equalizer may retain a bounded channel-phase error at the
+	 * S/S-bar boundary. The known Phase 4 TRN sequence must remove it before
+	 * the receiver trusts the denser 16-point MP constellation. */
+	return run_stream(
+		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, 0.52,
+		true);
 }
 
 static bool test_validation(void)
@@ -546,6 +578,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated multipath streams", test_generated_channels },
+		{ "known TRN phase impairment", test_known_trn_impairment },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

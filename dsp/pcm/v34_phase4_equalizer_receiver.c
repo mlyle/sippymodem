@@ -30,6 +30,33 @@ static bool answer_s_state_is_valid(
 	       !complete && receiver->answer_s.buffered_decisions == 0;
 }
 
+static bool trn_state_is_valid(
+	const struct v34_phase4_equalizer_receiver *receiver)
+{
+	bool answering_peer =
+		receiver->mp_receiver.transmitting_role == V34_ANSWERING_STATION;
+
+	if (!v34_phase4_trn_is_valid(&receiver->expected_trn) ||
+	    receiver->expected_trn.role !=
+		    receiver->mp_receiver.transmitting_role ||
+	    receiver->expected_trn.constellation !=
+		    receiver->mp_receiver.constellation ||
+	    receiver->trn_symbols > V34_PHASE4_TRN_MIN_SYMBOLS ||
+	    receiver->expected_trn.has_last_symbol !=
+		    (receiver->trn_symbols != 0))
+		return false;
+	if (!answering_peer)
+		return receiver->stage !=
+			       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN &&
+		       receiver->trn_symbols == 0;
+	if (receiver->stage ==
+	    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S)
+		return receiver->trn_symbols == 0;
+	if (receiver->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN)
+		return receiver->trn_symbols < V34_PHASE4_TRN_MIN_SYMBOLS;
+	return receiver->trn_symbols == V34_PHASE4_TRN_MIN_SYMBOLS;
+}
+
 bool v34_phase4_equalizer_receiver_is_valid(
 	const struct v34_phase4_equalizer_receiver *receiver)
 {
@@ -39,12 +66,14 @@ bool v34_phase4_equalizer_receiver_is_valid(
 	    !stage_is_valid(receiver->stage) ||
 	    !v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver) ||
 	    !answer_s_state_is_valid(receiver) ||
+	    !trn_state_is_valid(receiver) ||
 	    (receiver->pending_record_is_valid && !receiver->record_pending) ||
 	    (receiver->stage != V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP &&
 	     receiver->record_pending))
 		return false;
 	if (receiver->stage ==
 		    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S ||
+	    receiver->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN ||
 	    receiver->stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP)
 		return true;
 	if (!v34_phase4_e_receiver_is_valid(&receiver->e_receiver))
@@ -97,6 +126,9 @@ v34_phase4_equalizer_receiver_init(
 	    !isfinite(adaptation) || adaptation < 0.0 || adaptation > 1.0 ||
 	    v34_phase3_s_receiver_init(&initialized.answer_s) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
+	    v34_phase4_trn_init(
+		    &initialized.expected_trn, transmitting_role,
+		    constellation) != V34_PHASE4_TRN_OK ||
 	    v34_phase4_mp_receiver_init(
 		    &initialized.mp_receiver, transmitting_role,
 		    constellation) != V34_PHASE4_MP_RECEIVER_OK)
@@ -212,11 +244,56 @@ static enum v34_phase4_equalizer_receiver_result receive_answer_s(
 			clockwise_quarter_turns);
 
 	if (result == V34_PHASE3_S_RECEIVER_DETECTED) {
-		receiver->stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP;
+		struct qam_point ignored_point;
+		uint8_t ignored_quarter_point;
+		uint8_t ignored_quarter_turns;
+
+		for (uint8_t symbol = 0;
+		     symbol < receiver->answer_s.post_marker_symbols; ++symbol)
+			if (v34_phase4_trn_next(
+				    &receiver->expected_trn, &ignored_point,
+				    &ignored_quarter_point,
+				    &ignored_quarter_turns) != V34_PHASE4_TRN_OK)
+				return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+		receiver->trn_symbols =
+			receiver->answer_s.post_marker_symbols;
+		receiver->stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN;
 		return V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED;
 	}
 	if (result != V34_PHASE3_S_RECEIVER_OK)
 		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+	return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
+}
+
+static enum v34_phase4_equalizer_receiver_result receive_trn(
+	struct v34_phase4_equalizer_receiver *receiver,
+	struct qam_equalizer_observation *observation)
+{
+	struct v34_mp_receive_event ignored_event = { 0 };
+	struct qam_point target;
+	uint8_t quarter_point;
+	uint8_t clockwise_quarter_turns;
+
+	if (v34_phase4_trn_next(
+		    &receiver->expected_trn, &target, &quarter_point,
+		    &clockwise_quarter_turns) != V34_PHASE4_TRN_OK ||
+	    qam_equalizer_adapt_observation(
+		    &receiver->equalizer, observation, &target,
+		    receiver->adaptation) != QAM_EQUALIZER_OK)
+		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+	receiver->trn_symbols++;
+	if (receiver->trn_symbols != V34_PHASE4_TRN_MIN_SYMBOLS)
+		return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
+	/* The last known TRN decision initializes MP differential phase. The
+	 * self-synchronizing descrambler then converges while any excess TRN is
+	 * still arriving, before a complete repeated MP record is required. */
+	if (v34_phase4_mp_receive_decision(
+		    &receiver->mp_receiver, quarter_point,
+		    clockwise_quarter_turns, &ignored_event) !=
+		    V34_PHASE4_MP_RECEIVER_OK ||
+	    ignored_event.type != V34_MP_RECEIVE_NO_EVENT)
+		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+	receiver->stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP;
 	return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
 }
 
@@ -275,6 +352,14 @@ v34_phase4_equalizer_receive_point(
 			return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
 		*receiver = next;
 		return V34_PHASE4_EQUALIZER_RECEIVER_WARMING;
+	}
+	if (next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN) {
+		result = receive_trn(&next, &observation);
+		if (result == V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE ||
+		    !v34_phase4_equalizer_receiver_is_valid(&next))
+			return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+		*receiver = next;
+		return result;
 	}
 	constellation = next.stage ==
 				V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S ?
