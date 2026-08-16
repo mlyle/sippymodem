@@ -43,7 +43,8 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_digital_tx.c \
 	pcm_phase3_entry.c \
-	pcm_phase3_handoff.c pcm_call.c pcm_phase3_profile.c pcm_startup.c \
+	pcm_phase3_handoff.c pcm_call.c pcm_phase3_profile.c pcm_rate.c \
+	pcm_startup.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c)) \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v92_*.c))
 PCM_RUNTIME_OBJECTS := \
@@ -2485,6 +2486,7 @@ PCM_CALL_TEST_OBJECTS := $(sort \
 V90_PROFILE_TEST_BINARY := $(BUILD_DIR)/test_v90_profile
 V90_PROFILE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_profile.o \
+	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v90_profile.o \
 	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
 		$(PCM_CALL_TEST_OBJECTS)))
@@ -2493,6 +2495,7 @@ V90_DATAPUMP_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_datapump.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v90_datapump.o \
+	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v90_profile.o \
 	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
 		$(PCM_CALL_TEST_OBJECTS)))
@@ -5291,6 +5294,9 @@ $(BUILD_DIR)/pcm_phase3_handoff.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_call.o: $(DSP_PCM_SOURCE_DIR)/pcm_call.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/pcm_rate.o: $(DSP_PCM_SOURCE_DIR)/pcm_rate.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_profile.o: \

@@ -287,10 +287,10 @@ static bool test_generated_pairs(void)
 	CHECK(v90_datapump_register() == 0 &&
 	      v90_datapump_register() != 0,
 	      "V.90 registration did not reject a duplicate owner");
-	for (uint8_t rate_index = 1;
-	     rate_index <= V90_PROFILE_DOWNSTREAM_RATE_COUNT; ++rate_index) {
+	for (uint8_t rate_index = PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER;
+	     rate_index <= PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER; ++rate_index) {
 		uint32_t bit_rate =
-			v90_profile_downstream_bit_rate(rate_index);
+			pcm_downstream_bit_rate(rate_index);
 
 		CHECK(run_pair(G711_LAW_PCMU, bit_rate, 0, 0) &&
 		      run_pair(G711_LAW_PCMA, bit_rate, 0, 0),

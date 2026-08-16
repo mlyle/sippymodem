@@ -10,7 +10,6 @@ enum {
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
 	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
 	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
-	V90_DATA_RATE_BASE = 20,
 	V90_SIGN_REDUNDANCY = 1,
 	V90_CONSTELLATION_FIRST_UCODE = 24,
 	V90_CONSTELLATION_LAST_UCODE = 108,
@@ -183,42 +182,6 @@ static enum v90_profile_result select_upstream(
 	return V90_PROFILE_OK;
 }
 
-uint32_t v90_profile_downstream_bit_rate(uint8_t rate_index)
-{
-	uint32_t frame_bits;
-
-	if (rate_index == 0 ||
-	    rate_index > V90_PROFILE_DOWNSTREAM_RATE_COUNT)
-		return 0;
-	frame_bits = V90_DATA_RATE_BASE + rate_index;
-	return (frame_bits * 8000u + V90_CP_FRAME_INTERVALS / 2u) /
-	       V90_CP_FRAME_INTERVALS;
-}
-
-enum v90_profile_result v90_profile_select_downstream(
-	struct v90_downstream_selection *selection,
-	unsigned int minimum_rate, unsigned int maximum_rate)
-{
-	struct v90_downstream_selection selected = { 0 };
-
-	if (selection == NULL || minimum_rate > maximum_rate)
-		return V90_PROFILE_INVALID_ARGUMENT;
-	for (uint8_t index = 1;
-	     index <= V90_PROFILE_DOWNSTREAM_RATE_COUNT; ++index) {
-		uint32_t bit_rate = v90_profile_downstream_bit_rate(index);
-
-		if (bit_rate < minimum_rate || bit_rate > maximum_rate)
-			continue;
-		selected.enabled_rate_mask |= UINT32_C(1) << (index - 1u);
-		selected.selected_rate_index = index;
-		selected.selected_bit_rate = bit_rate;
-	}
-	if (selected.enabled_rate_mask == 0)
-		return V90_PROFILE_UNSUPPORTED_RATE;
-	*selection = selected;
-	return V90_PROFILE_OK;
-}
-
 static struct v90_jd_parameters jd_parameters(uint32_t rate_mask)
 {
 	return (struct v90_jd_parameters){
@@ -243,7 +206,7 @@ static uint8_t data_constellation_size(uint8_t rate_index)
 	uint8_t sign_bits =
 		V90_CP_FRAME_INTERVALS - V90_SIGN_REDUNDANCY;
 	uint8_t modulus_bits =
-		(uint8_t)(V90_DATA_RATE_BASE + rate_index -
+		(uint8_t)(PCM_DOWNSTREAM_BASE_FRAME_BITS + rate_index -
 			  sign_bits);
 	uint64_t required = UINT64_C(1) << modulus_bits;
 
@@ -325,7 +288,7 @@ enum v90_profile_result v90_profile_init(
 	unsigned int minimum_rate, unsigned int maximum_rate,
 	const struct v90_upstream_policy *upstream_policy)
 {
-	struct v90_downstream_selection downstream;
+	struct pcm_downstream_rate_selection downstream;
 	struct v90_upstream_selection upstream;
 	struct pcm_call_configuration selected = {
 		.local_role = role,
@@ -338,11 +301,11 @@ enum v90_profile_result v90_profile_init(
 		return V90_PROFILE_INVALID_ARGUMENT;
 	if (select_upstream(upstream_policy, &upstream) != V90_PROFILE_OK)
 		return V90_PROFILE_UNSUPPORTED_RATE;
-	if (v90_profile_select_downstream(
-		    &downstream, minimum_rate, maximum_rate) != V90_PROFILE_OK)
+	if (!pcm_downstream_rates_select(
+		    &downstream, minimum_rate, maximum_rate))
 		return V90_PROFILE_UNSUPPORTED_RATE;
 	selected.enabled_downstream_rate_mask =
-		downstream.enabled_rate_mask;
+		downstream.enabled_mask;
 	if (role == V90_ANALOG_MODEM) {
 		selected.local_info0.analog = analog_info0();
 		selected.local_info1.analog = analog_info1(&upstream);
@@ -351,12 +314,12 @@ enum v90_profile_result v90_profile_init(
 		selected.analog_phase4.training_parameters =
 			cp_parameters(
 				law, V90_CP_TRAINING,
-				downstream.selected_rate_index,
+				downstream.selected_data_rate_number,
 				upstream.rate_mask);
 		selected.analog_phase4.data_parameters =
 			cp_parameters(
 				law, V90_CP_DATA,
-				downstream.selected_rate_index,
+				downstream.selected_data_rate_number,
 				upstream.rate_mask);
 	} else {
 		selected.local_info0.digital = digital_info0(law);
@@ -368,7 +331,7 @@ enum v90_profile_result v90_profile_init(
 				.tracking_equalizer_adaptation = 0.05,
 			};
 		selected.phase3.digital.jd =
-			jd_parameters(downstream.enabled_rate_mask);
+			jd_parameters(downstream.enabled_mask);
 		selected.digital_phase4.initial_mp = initial_mp(&upstream);
 	}
 	*configuration = selected;
