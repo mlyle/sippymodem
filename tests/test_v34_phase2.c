@@ -544,14 +544,14 @@ static bool test_validation(void)
 	return true;
 }
 
-static bool test_info1_timeout(void)
+static bool test_info1_recovery(void)
 {
 	struct v34_info1c local_info1c = caller_info1c(false);
 	struct owned_pair pair;
 	struct v34_phase2_event event;
 	int16_t transmit;
 	bool ready = false;
-	bool failed = false;
+	bool recovering = false;
 
 	CHECK(pair_init(&pair, TEST_CODEC_LINEAR, 1),
 	      "INFO1 timeout pair did not initialize");
@@ -578,18 +578,22 @@ static bool test_info1_timeout(void)
 			      &pair.caller, 0, &transmit, &event) ==
 			      V34_PHASE2_OK,
 		      "isolated INFO1 failed at %zu", index);
-		if (event.kind == V34_PHASE2_EVENT_FAILED) {
-			failed = true;
+		if (event.kind == V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED) {
+			recovering = true;
 			break;
 		}
 	}
-	CHECK(failed && v34_phase2_has_failed(&pair.caller) &&
-	      event.failure == V34_PHASE2_FAILURE_INFO1_TIMEOUT,
-	      "Phase 2 did not retain the INFO1 peer timeout");
-	CHECK(v34_phase2_sample(&pair.caller, INT16_MAX, &transmit, &event) ==
-		      V34_PHASE2_OK &&
-	      transmit == 0 && event.kind == V34_PHASE2_EVENT_NONE,
-	      "failed INFO1 owner was not silent and stable");
+	CHECK(recovering && !v34_phase2_has_failed(&pair.caller) &&
+	      pair.caller.state.info1.control.phase ==
+		      PHASE2_INFO1_RECOVERING,
+	      "Phase 2 did not enter INFO1 recovery at the peer deadline");
+	for (size_t index = 0; index < V34_PHASE2_SAMPLE_RATE; ++index)
+		CHECK(v34_phase2_sample(
+			      &pair.caller, 0, &transmit, &event) ==
+			      V34_PHASE2_OK &&
+		      transmit == 0 && event.kind == V34_PHASE2_EVENT_NONE &&
+		      !v34_phase2_has_failed(&pair.caller),
+		      "INFO1 recovery was not silent and stable at %zu", index);
 	return true;
 }
 
@@ -601,7 +605,7 @@ int main(void)
 	} tests[] = {
 		{ "generated probe timelines", test_generated_timelines },
 		{ "validation", test_validation },
-		{ "INFO1 timeout", test_info1_timeout },
+		{ "INFO1 recovery", test_info1_recovery },
 	};
 	unsigned int failures = 0;
 

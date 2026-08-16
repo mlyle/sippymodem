@@ -71,7 +71,12 @@ static bool signal_b_state_is_valid(
 	case PHASE2_INFO1_WAITING_FOR_PEER:
 	case PHASE2_INFO1_PEER_FRAME_PENDING:
 	case PHASE2_INFO1_COMPLETE:
-		return exchange->peer_deadline_elapsed_samples < deadline &&
+		return exchange->peer_deadline_elapsed_samples <= deadline &&
+		       exchange->carrier_tail_symbols ==
+			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
+		       transmitter_matches(exchange, true);
+	case PHASE2_INFO1_RECOVERING:
+		return exchange->peer_deadline_elapsed_samples == deadline &&
 		       exchange->carrier_tail_symbols ==
 			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       transmitter_matches(exchange, true);
@@ -93,19 +98,22 @@ static bool signal_a_state_is_valid(
 	case PHASE2_INFO1_WAITING_FOR_PEER:
 	case PHASE2_INFO1_PEER_FRAME_PENDING:
 	case PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED:
-		return exchange->peer_deadline_elapsed_samples < deadline &&
+		return exchange->peer_deadline_elapsed_samples <= deadline &&
+		       exchange->carrier_tail_symbols == 0;
+	case PHASE2_INFO1_RECOVERING:
+		return exchange->peer_deadline_elapsed_samples == deadline &&
 		       exchange->carrier_tail_symbols == 0;
 	case PHASE2_INFO1_TRANSMITTING:
-		return exchange->peer_deadline_elapsed_samples < deadline &&
+		return exchange->peer_deadline_elapsed_samples <= deadline &&
 		       exchange->carrier_tail_symbols == 0 &&
 		       transmitter_matches(exchange, false);
 	case PHASE2_INFO1_CARRIER_TAIL:
-		return exchange->peer_deadline_elapsed_samples < deadline &&
+		return exchange->peer_deadline_elapsed_samples <= deadline &&
 		       exchange->carrier_tail_symbols <
 			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       transmitter_matches(exchange, true);
 	case PHASE2_INFO1_COMPLETE:
-		return exchange->peer_deadline_elapsed_samples < deadline &&
+		return exchange->peer_deadline_elapsed_samples <= deadline &&
 		       exchange->carrier_tail_symbols ==
 			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       transmitter_matches(exchange, true);
@@ -257,6 +265,24 @@ enum phase2_info1_result phase2_info1_reject_peer(
 	return PHASE2_INFO1_OK;
 }
 
+enum phase2_info1_result phase2_info1_recover(
+	struct phase2_info1_exchange *exchange)
+{
+	struct phase2_info1_exchange next;
+
+	if (!phase2_info1_is_valid(exchange) ||
+	    exchange->phase != PHASE2_INFO1_FAILED ||
+	    exchange->failure != PHASE2_INFO1_PEER_TIMEOUT)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	next = *exchange;
+	next.phase = PHASE2_INFO1_RECOVERING;
+	next.failure = PHASE2_INFO1_NO_FAILURE;
+	if (!phase2_info1_is_valid(&next))
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	*exchange = next;
+	return PHASE2_INFO1_OK;
+}
+
 static void align_signal_a_info_with_tone(
 	struct phase2_info1_exchange *exchange)
 {
@@ -364,6 +390,7 @@ static bool generate_transmit_sample(
 	case PHASE2_INFO1_CARRIER_TAIL:
 		return generate_carrier_tail(exchange, sample, event);
 	case PHASE2_INFO1_WAITING_FOR_PEER:
+	case PHASE2_INFO1_RECOVERING:
 	case PHASE2_INFO1_PEER_FRAME_PENDING:
 	case PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED:
 		if (exchange->signal_role == PHASE2_SIGNAL_A)
@@ -394,12 +421,13 @@ enum phase2_info1_result phase2_info1_sample(
 	    event == NULL || exchange->phase == PHASE2_INFO1_PEER_FRAME_PENDING)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
-	waited_for_peer = next.phase == PHASE2_INFO1_WAITING_FOR_PEER;
+	waited_for_peer = next.phase == PHASE2_INFO1_WAITING_FOR_PEER ||
+			  next.phase == PHASE2_INFO1_RECOVERING;
 	if ((waited_for_peer &&
 	     !receive_peer_frame(&next, received_sample, &emitted)) ||
 	    !generate_transmit_sample(&next, &generated, &emitted))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
-	if (waited_for_peer &&
+	if (waited_for_peer && exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER &&
 	    next.phase == PHASE2_INFO1_WAITING_FOR_PEER) {
 		advance_peer_deadline(&next);
 		if (next.phase == PHASE2_INFO1_FAILED) {

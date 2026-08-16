@@ -657,9 +657,11 @@ static bool sample_info1(
 		event->kind = V34_PHASE2_EVENT_PEER_INFO1_REJECTED;
 		break;
 	case V34_PHASE2_INFO1_EVENT_FAILED:
-		phase2->failure = V34_PHASE2_FAILURE_INFO1_TIMEOUT;
-		event->kind = V34_PHASE2_EVENT_FAILED;
-		event->failure = phase2->failure;
+		if (child.failure != PHASE2_INFO1_PEER_TIMEOUT ||
+		    phase2_info1_recover(&phase2->state.info1.control) !=
+			    PHASE2_INFO1_OK)
+			return false;
+		event->kind = V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED;
 		break;
 	}
 	if ((child.kind == V34_PHASE2_INFO1_EVENT_PEER_INFO1C_RECEIVED ||

@@ -29,6 +29,7 @@ enum phase2_info1_phase {
 	PHASE2_INFO1_WAITING_FOR_PEER,
 	PHASE2_INFO1_PEER_FRAME_PENDING,
 	PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED,
+	PHASE2_INFO1_RECOVERING,
 	PHASE2_INFO1_COMPLETE,
 	PHASE2_INFO1_FAILED,
 };
@@ -95,6 +96,13 @@ bool phase2_info1_is_valid(const struct phase2_info1_exchange *exchange);
 enum phase2_info1_result phase2_info1_accept_peer(
 	struct phase2_info1_exchange *exchange);
 enum phase2_info1_result phase2_info1_reject_peer(
+	struct phase2_info1_exchange *exchange);
+
+/* A mode owner may replace the role-specific peer deadline with a recovery
+ * procedure. Recovery preserves the INFO receiver and local waveform: Signal
+ * B remains silent while Signal A retains Tone A. A late peer INFO frame can
+ * therefore complete the same exchange without reconstructing Phase 2. */
+enum phase2_info1_result phase2_info1_recover(
 	struct phase2_info1_exchange *exchange);
 
 /* Supply Signal A's selected response after its first peer record is accepted.
