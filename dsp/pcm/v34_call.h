@@ -14,6 +14,14 @@ enum v34_call_stage {
 	V34_CALL_PHASE2,
 	V34_CALL_PHASE3,
 	V34_CALL_PHASE4,
+	V34_CALL_RETRAIN_SILENCE,
+};
+
+enum {
+	V34_CALL_RETRAIN_SILENCE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 70 / 1000,
+	V34_CALL_RETRAIN_TONE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 50 / 1000,
 };
 
 enum v34_call_result {
@@ -50,6 +58,9 @@ union v34_call_state {
 	struct v34_phase2 phase2;
 	struct v34_phase3_exchange phase3;
 	struct v34_phase4_exchange phase4;
+	struct {
+		uint16_t samples_remaining;
+	} retrain_silence;
 };
 
 /* One observation describes the owner that consumed the sample and the owner
@@ -71,16 +82,26 @@ struct v34_call_observation {
 struct v34_call {
 	union v34_call_state state;
 	union v34_local_info1 local_info1;
+	struct v34_info0 local_info0;
+	struct v34_info0 peer_info0;
 	struct v34_phase3_exchange_configuration phase3_configuration;
 	struct v34_phase4_exchange_configuration phase4_configuration;
+	struct v34_phase2_tone_detector retrain_tone_detector;
+	int16_t phase2_nominal_amplitude;
+	uint16_t retrain_tone_samples;
 	enum v34_station_role local_role;
 	enum v34_call_stage stage;
+	bool peer_info0_stored;
 	bool failed;
 };
 
 enum v34_call_result v34_call_init(
 	struct v34_call *call,
 	const struct v34_call_configuration *configuration);
+
+/* Begin the role-specific full retrain with 70 ms of line silence. The
+ * negotiated INFO0 capability records remain owned by the call. */
+enum v34_call_result v34_call_start_retrain(struct v34_call *call);
 
 bool v34_call_is_valid(const struct v34_call *call);
 bool v34_call_has_failed(const struct v34_call *call);

@@ -19,6 +19,7 @@ struct channel {
 	int16_t call_to_answer[LINE_DELAY_SAMPLES];
 	int16_t answer_to_call[LINE_DELAY_SAMPLES];
 	size_t cursor;
+	bool pcma;
 };
 
 struct endpoint {
@@ -26,6 +27,7 @@ struct endpoint {
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
 	uint8_t transmit_bit;
+	bool verify_mapping_frames;
 	bool entered_phase3;
 	bool entered_phase4;
 };
@@ -167,6 +169,8 @@ static bool accept_mapping_frame(
 {
 	uint8_t expected = (uint8_t)(endpoint->transmit_bit ^ 1u);
 
+	if (!endpoint->verify_mapping_frames)
+		return true;
 	for (uint8_t index = 0; index < received->primary_bit_count; ++index)
 		if (received->primary_bits[index] != expected)
 			return false;
@@ -183,6 +187,7 @@ static bool endpoint_init(
 	struct v34_call_configuration config = configuration(role);
 	struct endpoint initialized = {
 		.transmit_bit = role == V34_ANSWERING_STATION,
+		.verify_mapping_frames = true,
 	};
 
 	if (endpoint == NULL ||
@@ -217,6 +222,12 @@ static bool endpoint_sample(
 		&endpoint->call, received_sample, source, endpoint,
 		transmit_sample, observation, &received);
 
+	if (result != V34_CALL_OK)
+		fprintf(stderr,
+			"V.34 endpoint role=%d stage=%d tone=%u failed: %s\n",
+			endpoint->call.local_role, endpoint->call.stage,
+			endpoint->call.retrain_tone_samples,
+			v34_call_result_name(result));
 	return result == V34_CALL_OK &&
 	       endpoint_accept_observation(endpoint, observation, &received);
 }
@@ -228,21 +239,27 @@ static void channel_receive(
 	*answerer = channel->call_to_answer[channel->cursor];
 }
 
+static int16_t codec_round_trip(int16_t sample, bool pcma)
+{
+	return pcma ? g711_decode_pcma(g711_encode_pcma(sample)) :
+		      g711_decode_pcmu(g711_encode_pcmu(sample));
+}
+
 static void channel_transmit(
 	struct channel *channel, int16_t caller, int16_t answerer)
 {
 	channel->call_to_answer[channel->cursor] =
-		g711_decode_pcmu(g711_encode_pcmu(caller));
+		codec_round_trip(caller, channel->pcma);
 	channel->answer_to_call[channel->cursor] =
-		g711_decode_pcmu(g711_encode_pcmu(answerer));
+		codec_round_trip(answerer, channel->pcma);
 	channel->cursor = (channel->cursor + 1u) % LINE_DELAY_SAMPLES;
 }
 
 static bool run_online_pair(
 	struct endpoint *caller, struct endpoint *answerer,
-	struct channel *connected_channel)
+	struct channel *connected_channel, bool pcma)
 {
-	struct channel channel = { 0 };
+	struct channel channel = { .pcma = pcma };
 	struct endpoint calling;
 	struct endpoint answering;
 	int16_t next_caller_receive = 0;
@@ -290,7 +307,7 @@ static bool test_pcmu_call(void)
 	struct v34_data_startup caller_startup;
 	struct v34_data_startup answerer_startup;
 
-	CHECK(run_online_pair(&caller, &answerer, NULL),
+	CHECK(run_online_pair(&caller, &answerer, NULL, false),
 	      "PCMU call failed");
 	CHECK(caller.entered_phase3 && answerer.entered_phase3 &&
 	      caller.entered_phase4 && answerer.entered_phase4 &&
@@ -322,7 +339,7 @@ static bool test_source_backpressure(void)
 	struct endpoint answerer;
 	struct channel channel;
 
-	CHECK(run_online_pair(&caller, &answerer, &channel),
+	CHECK(run_online_pair(&caller, &answerer, &channel, false),
 	      "backpressure pair failed");
 	for (size_t index = 0; index < 1000u; ++index) {
 		struct v34_call before = caller.call;
@@ -369,6 +386,136 @@ static bool test_source_backpressure(void)
 	CHECK(false, "mapping source was not consulted");
 }
 
+static bool exercise_full_retrain(
+	enum v34_station_role initiator_role, bool pcma)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct channel channel;
+	bool caller_retrained = false;
+	bool answerer_retrained = false;
+	bool verifying_resumed_data = false;
+
+	CHECK(run_online_pair(&caller, &answerer, &channel, pcma),
+	      "retrain pair failed to connect");
+	caller.mapping_frames_received = 0;
+	answerer.mapping_frames_received = 0;
+	caller.verify_mapping_frames = false;
+	answerer.verify_mapping_frames = false;
+	CHECK(v34_call_start_retrain(
+		      initiator_role == V34_CALLING_STATION ?
+			      &caller.call : &answerer.call) == V34_CALL_OK,
+	      "local full retrain was rejected");
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_call_observation caller_observation;
+		struct v34_call_observation answerer_observation;
+		int16_t caller_receive;
+		int16_t answerer_receive;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		channel_receive(&channel, &caller_receive, &answerer_receive);
+		CHECK(endpoint_sample(
+			      &caller, caller_receive, supply_mapping_frame,
+			      &caller_transmit, &caller_observation) &&
+		      endpoint_sample(
+			      &answerer, answerer_receive,
+			      supply_mapping_frame, &answerer_transmit,
+			      &answerer_observation),
+		      "full retrain stopped at sample %zu", index);
+		channel_transmit(&channel, caller_transmit, answerer_transmit);
+		caller_retrained |=
+			caller_observation.next == V34_CALL_RETRAIN_SILENCE;
+		answerer_retrained |=
+			answerer_observation.next == V34_CALL_RETRAIN_SILENCE;
+		if (!verifying_resumed_data && caller_retrained &&
+		    answerer_retrained &&
+		    v34_call_is_online(&caller.call) &&
+		    v34_call_is_online(&answerer.call)) {
+			caller.mapping_frames_received = 0;
+			answerer.mapping_frames_received = 0;
+			caller.verify_mapping_frames = true;
+			answerer.verify_mapping_frames = true;
+			verifying_resumed_data = true;
+		}
+		if (verifying_resumed_data &&
+		    caller.mapping_frames_received >= 4u &&
+		    answerer.mapping_frames_received >= 4u)
+			return true;
+	}
+	CHECK(false,
+	      "full retrain did not reconnect both roles and resume data");
+}
+
+static bool test_full_retrain(void)
+{
+	CHECK(exercise_full_retrain(V34_CALLING_STATION, false),
+	      "PCMU calling-station retrain failed");
+	CHECK(exercise_full_retrain(V34_ANSWERING_STATION, false),
+	      "PCMU answering-station retrain failed");
+	CHECK(exercise_full_retrain(V34_CALLING_STATION, true),
+	      "PCMA calling-station retrain failed");
+	CHECK(exercise_full_retrain(V34_ANSWERING_STATION, true),
+	      "PCMA answering-station retrain failed");
+	return true;
+}
+
+static bool check_retrain_tone_deadline(
+	enum v34_station_role local_role, bool pcma)
+{
+	enum v34_station_role remote_role =
+		local_role == V34_CALLING_STATION ?
+			V34_ANSWERING_STATION : V34_CALLING_STATION;
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct endpoint *endpoint;
+	struct v34_phase2_tone_transmitter remote_tone;
+	struct v34_call_observation observation;
+	int16_t transmitted;
+	size_t samples;
+
+	CHECK(run_online_pair(&caller, &answerer, NULL, pcma) &&
+	      v34_phase2_tone_transmitter_init(
+		      &remote_tone, remote_role, NOMINAL_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK,
+	      "retrain tone deadline fixture did not initialize");
+	endpoint = local_role == V34_CALLING_STATION ? &caller : &answerer;
+	endpoint->verify_mapping_frames = false;
+	for (samples = 0;
+	     samples < V34_PHASE2_TONE_WINDOW_SAMPLES +
+			       V34_CALL_RETRAIN_TONE_SAMPLES;
+	     ++samples) {
+		int16_t remote_sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &remote_tone, &remote_sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      endpoint_sample(
+			      endpoint,
+			      codec_round_trip(remote_sample, pcma),
+			      supply_mapping_frame, &transmitted,
+			      &observation),
+		      "retrain tone deadline failed at sample %zu", samples);
+		if (endpoint->call.stage == V34_CALL_RETRAIN_SILENCE)
+			break;
+	}
+	CHECK(endpoint->call.stage == V34_CALL_RETRAIN_SILENCE &&
+	      samples < V34_PHASE2_TONE_WINDOW_SAMPLES +
+			V34_CALL_RETRAIN_TONE_SAMPLES,
+	      "retrain tone required more than 50 ms after acquisition");
+	return true;
+}
+
+static bool test_retrain_tone_deadline(void)
+{
+	for (enum v34_station_role role = V34_CALLING_STATION;
+	     role <= V34_ANSWERING_STATION; ++role)
+		CHECK(check_retrain_tone_deadline(role, false) &&
+		      check_retrain_tone_deadline(role, true),
+		      "retrain tone deadline failed role=%d", role);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_call_configuration config =
@@ -409,6 +556,7 @@ static bool test_validation(void)
 	      !v34_call_get_data_startup(NULL, NULL) &&
 	      !v34_call_get_data_startup(
 		      &call, (struct v34_data_startup *)&call) &&
+	      v34_call_start_retrain(&call) == V34_CALL_INVALID_STATE &&
 	      v34_call_current_stage(NULL) == (enum v34_call_stage)-1 &&
 	      strcmp(v34_call_result_name(V34_CALL_SOURCE_FAILURE),
 		     "mapping-frame source failure") == 0 &&
@@ -425,6 +573,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated PCMU call", test_pcmu_call },
+		{ "local and remote full retrain", test_full_retrain },
+		{ "retrain tone deadline", test_retrain_tone_deadline },
 		{ "mapping source backpressure", test_source_backpressure },
 		{ "validation", test_validation },
 	};
