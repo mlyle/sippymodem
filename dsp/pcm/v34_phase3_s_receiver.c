@@ -56,8 +56,25 @@ bool v34_phase3_s_receiver_is_valid(
 	window = receive_window(receiver);
 	if (receiver->next_decision >= window ||
 	    receiver->buffered_decisions > window ||
+	    receiver->pending_symbols >
+		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ||
+	    receiver->post_marker_symbols >
+		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ||
 	    (receiver->buffered_decisions < window &&
 	     receiver->next_decision != receiver->buffered_decisions) ||
+	    (receiver->detection_pending &&
+	     (receiver->complete || receiver->buffered_decisions != window ||
+	      receiver->pending_symbols >=
+		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ||
+	      !v34_phase3_s_detection_is_valid(
+		      &receiver->pending_detection) ||
+	      receiver->pending_detection.s_bar_errors == 0)) ||
+	    (!receiver->detection_pending &&
+	     (receiver->pending_symbols != 0 ||
+	      receiver->pending_detection.clockwise_quarter_turn_offset != 0 ||
+	      receiver->pending_detection.s_errors != 0 ||
+	      receiver->pending_detection.s_bar_errors != 0)) ||
+	    (!receiver->complete && receiver->post_marker_symbols != 0) ||
 	    (receiver->complete &&
 	     (receiver->buffered_decisions != window ||
 	      !v34_phase3_s_detection_is_valid(&receiver->detection) ||
@@ -137,6 +154,19 @@ static bool boundary_matches(
 	return true;
 }
 
+static bool s_tail_matches(
+	const struct v34_phase3_s_receiver *receiver, uint8_t offset)
+{
+	const size_t first =
+		receiver->s_symbols - V34_PHASE3_S_BOUNDARY_ANCHOR_SYMBOLS;
+
+	for (size_t symbol = first; symbol < receiver->s_symbols; ++symbol)
+		if (buffered_decision(receiver, symbol) !=
+		    expected_rotation(receiver, symbol, offset))
+			return false;
+	return true;
+}
+
 static bool correlate(
 	const struct v34_phase3_s_receiver *receiver,
 	struct v34_phase3_s_detection *detection)
@@ -151,7 +181,7 @@ static bool correlate(
 			.clockwise_quarter_turn_offset = offset,
 		};
 
-		if (!boundary_matches(receiver, offset))
+		if (!s_tail_matches(receiver, offset))
 			continue;
 
 		for (size_t symbol = 0; symbol < window; ++symbol) {
@@ -180,6 +210,26 @@ static bool correlate(
 	return found;
 }
 
+static unsigned int detection_errors(
+	const struct v34_phase3_s_detection *detection)
+{
+	return detection->s_errors + detection->s_bar_errors;
+}
+
+static void complete_detection(
+	struct v34_phase3_s_receiver *receiver,
+	const struct v34_phase3_s_detection *detection,
+	uint8_t post_marker_symbols)
+{
+	receiver->detection = *detection;
+	receiver->pending_detection =
+		(struct v34_phase3_s_detection){ 0 };
+	receiver->pending_symbols = 0;
+	receiver->post_marker_symbols = post_marker_symbols;
+	receiver->detection_pending = false;
+	receiver->complete = true;
+}
+
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns)
@@ -203,11 +253,27 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 		next.next_decision = 0;
 	if (next.buffered_decisions < window)
 		next.buffered_decisions++;
-	if (next.buffered_decisions == window &&
-	    correlate(&next, &detection)) {
-		next.detection = detection;
-		next.complete = true;
+	if (next.detection_pending)
+		next.pending_symbols++;
+	if (next.buffered_decisions == window && correlate(&next, &detection)) {
+		if (boundary_matches(
+			    &next,
+			    detection.clockwise_quarter_turn_offset)) {
+			complete_detection(&next, &detection, 0);
+		} else if (!next.detection_pending) {
+			next.pending_detection = detection;
+			next.pending_symbols = 0;
+			next.detection_pending = true;
+		} else if (detection_errors(&detection) <
+			   detection_errors(&next.pending_detection)) {
+			next.pending_detection = detection;
+		}
 	}
+	if (next.detection_pending &&
+	    next.pending_symbols >=
+		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS)
+		complete_detection(
+			&next, &next.pending_detection, next.pending_symbols);
 	if (!v34_phase3_s_receiver_is_valid(&next))
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;

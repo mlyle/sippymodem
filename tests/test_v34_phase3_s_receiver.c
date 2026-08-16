@@ -248,6 +248,54 @@ static bool test_exact_transition_anchor(void)
 	return true;
 }
 
+static bool test_transition_error_confirmation(void)
+{
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	struct v34_phase3_s_receiver receiver;
+	struct v34_phase3_s_detection detection;
+
+	CHECK(generate_marker(rotations),
+	      "transition-error marker did not generate");
+	for (size_t error = 0;
+	     error < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++error) {
+		size_t symbol = V34_PHASE3_S_SYMBOLS + error;
+
+		rotations[symbol] =
+			(uint8_t)((rotations[symbol] + 1u) & 3u);
+	}
+	CHECK(v34_phase3_s_receiver_init(&receiver) ==
+		      V34_PHASE3_S_RECEIVER_OK,
+	      "transition-error receiver did not initialize");
+	for (size_t symbol = 0;
+	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol)
+		CHECK(v34_phase3_s_receiver_receive(
+			      &receiver, 0, rotations[symbol]) ==
+			      V34_PHASE3_S_RECEIVER_OK,
+		      "transition-error marker completed early at %zu", symbol);
+	for (unsigned int confirmation = 0;
+	     confirmation < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
+	     ++confirmation) {
+		enum v34_phase3_s_receiver_result expected =
+			confirmation + 1u ==
+				V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ?
+				V34_PHASE3_S_RECEIVER_DETECTED :
+				V34_PHASE3_S_RECEIVER_OK;
+
+		CHECK(v34_phase3_s_receiver_receive(
+			      &receiver, 1, (uint8_t)confirmation) == expected,
+		      "transition-error confirmation %u had wrong result",
+		      confirmation);
+	}
+	CHECK(v34_phase3_s_receiver_get_detection(&receiver, &detection) &&
+	      detection.s_errors == 0 &&
+	      detection.s_bar_errors ==
+		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS &&
+	      receiver.post_marker_symbols ==
+		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
+	      "transition-error counts were not retained");
+	return true;
+}
+
 static bool receive_suffix(
 	struct v34_phase3_s_receiver *receiver,
 	const uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS],
@@ -411,6 +459,8 @@ int main(void)
 		{ "rejection thresholds", test_rejection_thresholds },
 		{ "point-zero requirement", test_point_zero_requirement },
 		{ "exact transition anchor", test_exact_transition_anchor },
+		{ "transition error confirmation",
+		  test_transition_error_confirmation },
 		{ "suffix acquisition", test_suffix_acquisition },
 		{ "completion and validation", test_completion_and_validation },
 	};
