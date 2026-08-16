@@ -36,7 +36,6 @@ static bool test_call_negotiation(void)
 	enum v8_modulation calling_modulation;
 	enum v8_modulation answering_modulation;
 	int16_t calling_transmit = 0;
-	size_t silence_started = 0;
 	size_t completed = 0;
 
 	CHECK(endpoints_init(
@@ -58,24 +57,17 @@ static bool test_call_negotiation(void)
 			      &calling_transmit, 1) ==
 			      V8_CALLING_OK,
 		      "V.8 endpoints failed at sample %zu", sample_index);
-		if (before == V8_ANSWERING_POST_CJ_SILENCE ||
-		    before == V8_ANSWERING_COMPLETE)
+		if (before == V8_ANSWERING_COMPLETE)
 			CHECK(answering_transmit == 0,
 			      "V.8 answerer emitted audio after CJ");
 		if (before != answering.state &&
-		    answering.state ==
-			    V8_ANSWERING_POST_CJ_SILENCE)
-			silence_started = sample_index + 1u;
-		else if (before != answering.state &&
 			 answering.state == V8_ANSWERING_COMPLETE)
 			completed = sample_index + 1u;
 		if (v8_calling_is_complete(&calling) &&
 		    v8_answering_is_complete(&answering))
 			break;
 	}
-	CHECK(silence_started != 0 &&
-	      completed - silence_started ==
-		      V8_ANSWERING_POST_CJ_SILENCE_SAMPLES &&
+	CHECK(completed != 0 &&
 	      v8_calling_is_complete(&calling) &&
 	      v8_answering_is_complete(&answering),
 	      "V.8 endpoints did not complete the timed handshake");
@@ -270,7 +262,7 @@ static bool drive_damaged_cj(
 				return false;
 			saw_guard_boundary = true;
 		}
-		if (answering->state == V8_ANSWERING_POST_CJ_SILENCE)
+		if (answering->state == V8_ANSWERING_COMPLETE)
 			return expect_fallback && saw_guard_boundary;
 		if (!expect_fallback && next_bit > V8_CJ_BITS +
 							 2u * V8_FRAMED_OCTET_BITS)

@@ -138,7 +138,6 @@ static bool test_call_negotiation(void)
 	enum v8_modulation modulation;
 	size_t dwell_started = 0;
 	size_t exchange_started = 0;
-	size_t post_cj_started = 0;
 	size_t completed = 0;
 
 	CHECK(v8_call_menu_init(
@@ -165,7 +164,6 @@ static bool test_call_negotiation(void)
 		      "V.8 answering station failed at sample %zu", sample_index);
 		if (before == V8_CALLING_WAIT_ANSWER_SIGNAL ||
 		    before == V8_CALLING_ECHO_CONTROL_DWELL ||
-		    before == V8_CALLING_POST_CJ_SILENCE ||
 		    before == V8_CALLING_COMPLETE)
 			CHECK(transmit == 0,
 			      "V.8 silent state emitted audio at sample %zu",
@@ -178,21 +176,17 @@ static bool test_call_negotiation(void)
 				 V8_CALLING_EXCHANGE_MENUS)
 				exchange_started = sample_index + 1u;
 			else if (calling.state ==
-				 V8_CALLING_POST_CJ_SILENCE)
-				post_cj_started = sample_index + 1u;
-			else if (calling.state ==
 				 V8_CALLING_COMPLETE)
 				completed = sample_index + 1u;
 		}
-		if (v8_calling_is_complete(&calling))
+		if (v8_calling_is_complete(&calling) &&
+		    answerer.cj_detected)
 			break;
 	}
 	CHECK(dwell_started != 0 &&
 	      exchange_started - dwell_started ==
 		      V8_ECHO_CONTROL_DWELL_SAMPLES &&
-	      post_cj_started != 0 &&
-	      completed - post_cj_started ==
-		      V8_CALLING_POST_CJ_SILENCE_SAMPLES &&
+	      completed != 0 &&
 	      v8_calling_is_complete(&calling) &&
 	      answerer.call_menu_confirmed && answerer.cj_detected,
 	      "V.8 calling station did not complete the timed exchange");

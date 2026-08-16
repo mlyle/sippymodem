@@ -67,11 +67,6 @@ static bool calling_is_valid(const struct v8_calling *calling)
 		       V8_CALLING_MENU_TIMEOUT_SAMPLES;
 	case V8_CALLING_SEND_CJ:
 		return calling->negotiated && calling->state_samples == 0;
-	case V8_CALLING_POST_CJ_SILENCE:
-		return calling->negotiated &&
-		       calling->cj_bit_index == V8_CJ_BITS &&
-		       calling->state_samples <
-			       V8_CALLING_POST_CJ_SILENCE_SAMPLES;
 	case V8_CALLING_COMPLETE:
 		return calling->negotiated &&
 		       calling->cj_bit_index == V8_CJ_BITS &&
@@ -220,7 +215,7 @@ static enum v8_calling_result send_cj_sample(
 		return V8_CALLING_INVALID_ARGUMENT;
 	if (bit_consumed &&
 	    calling->cj_bit_index == V8_CJ_BITS)
-		enter_state(calling, V8_CALLING_POST_CJ_SILENCE);
+		enter_state(calling, V8_CALLING_COMPLETE);
 	return V8_CALLING_OK;
 }
 
@@ -260,13 +255,6 @@ static enum v8_calling_result process_one(
 		return exchange_menu_sample(calling, receive, transmit);
 	if (calling->state == V8_CALLING_SEND_CJ)
 		return send_cj_sample(calling, transmit);
-	if (calling->state == V8_CALLING_POST_CJ_SILENCE) {
-		calling->state_samples++;
-		if (calling->state_samples ==
-		    V8_CALLING_POST_CJ_SILENCE_SAMPLES)
-			enter_state(calling, V8_CALLING_COMPLETE);
-		return V8_CALLING_OK;
-	}
 	if (calling->state == V8_CALLING_COMPLETE)
 		return V8_CALLING_OK;
 	if (calling->state == V8_CALLING_FAILED)

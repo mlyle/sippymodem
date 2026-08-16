@@ -53,8 +53,10 @@ enum phase2_info0_exchange_result phase2_info0_exchange_init(
 bool phase2_info0_exchange_is_valid(
 	const struct phase2_info0_exchange *exchange);
 
-/* One call consumes and produces one 8 kHz line sample. The INFO frame and
- * tone events are independent and may both be populated by the same sample. */
+/* One call consumes and produces one 8 kHz line sample.  Reception is active
+ * throughout the post-V.8 transmit silence so an early peer INFO0 is retained.
+ * The INFO frame and tone events are independent and may both be populated by
+ * the same sample. */
 enum phase2_info0_exchange_result phase2_info0_exchange_sample(
 	struct phase2_info0_exchange *exchange,
 	int16_t received_sample, int16_t *transmit_sample,

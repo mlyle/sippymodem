@@ -84,9 +84,6 @@ static bool answering_is_valid(
 	case V8_ANSWERING_SEND_JOINT_MENU:
 		return answering->negotiated && answering->state_samples <
 		       V8_ANSWERING_CJ_TIMEOUT_SAMPLES;
-	case V8_ANSWERING_POST_CJ_SILENCE:
-		return answering->negotiated && answering->state_samples <
-		       V8_ANSWERING_POST_CJ_SILENCE_SAMPLES;
 	case V8_ANSWERING_COMPLETE:
 		return answering->negotiated && answering->state_samples == 0;
 	case V8_ANSWERING_FAILED:
@@ -250,7 +247,7 @@ static enum v8_answering_result send_joint_menu_sample(
 		if (cj_detected) {
 			enter_state(
 				answering,
-				V8_ANSWERING_POST_CJ_SILENCE);
+				V8_ANSWERING_COMPLETE);
 			return V8_ANSWERING_OK;
 		}
 		if (!answering->cj_fallback_armed &&
@@ -262,7 +259,7 @@ static enum v8_answering_result send_joint_menu_sample(
 				   V8_ANSWERING_CJ_FALLBACK_BITS) {
 			enter_state(
 				answering,
-				V8_ANSWERING_POST_CJ_SILENCE);
+				V8_ANSWERING_COMPLETE);
 			return V8_ANSWERING_OK;
 		}
 	}
@@ -281,13 +278,6 @@ static enum v8_answering_result process_one(
 		return wait_call_menu_sample(answering, receive, transmit);
 	if (answering->state == V8_ANSWERING_SEND_JOINT_MENU)
 		return send_joint_menu_sample(answering, receive, transmit);
-	if (answering->state == V8_ANSWERING_POST_CJ_SILENCE) {
-		answering->state_samples++;
-		if (answering->state_samples ==
-		    V8_ANSWERING_POST_CJ_SILENCE_SAMPLES)
-			enter_state(answering, V8_ANSWERING_COMPLETE);
-		return V8_ANSWERING_OK;
-	}
 	if (answering->state == V8_ANSWERING_COMPLETE)
 		return V8_ANSWERING_OK;
 	if (answering->state == V8_ANSWERING_FAILED)

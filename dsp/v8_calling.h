@@ -19,8 +19,6 @@ enum {
 		V8_ANSAM_SAMPLE_RATE,
 	V8_CALLING_MENU_TIMEOUT_SAMPLES =
 		7 * V8_ANSAM_SAMPLE_RATE,
-	V8_CALLING_POST_CJ_SILENCE_SAMPLES =
-		V8_ANSAM_SAMPLE_RATE * 75 / 1000,
 };
 
 enum v8_calling_state {
@@ -28,7 +26,6 @@ enum v8_calling_state {
 	V8_CALLING_ECHO_CONTROL_DWELL,
 	V8_CALLING_EXCHANGE_MENUS,
 	V8_CALLING_SEND_CJ,
-	V8_CALLING_POST_CJ_SILENCE,
 	V8_CALLING_COMPLETE,
 	V8_CALLING_FAILED,
 };
@@ -61,6 +58,8 @@ struct v8_calling {
 enum v8_calling_result v8_calling_init(
 	struct v8_calling *calling,
 	const struct v8_menu *local_menu);
+/* COMPLETE transfers the next sample to the selected datapump.  That owner
+ * emits the post-CJ silence while already listening for its peer. */
 enum v8_calling_result v8_calling_process(
 	struct v8_calling *calling, const int16_t *receive,
 	int16_t *transmit, size_t count);

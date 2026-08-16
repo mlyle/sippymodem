@@ -17,8 +17,6 @@ enum {
 		12 * V8_ANSAM_SAMPLE_RATE,
 	V8_ANSWERING_CJ_TIMEOUT_SAMPLES =
 		7 * V8_ANSAM_SAMPLE_RATE,
-	V8_ANSWERING_POST_CJ_SILENCE_SAMPLES =
-		V8_ANSAM_SAMPLE_RATE * 75 / 1000,
 	/* V.8 permits another termination criterion when CJ is damaged.  After
 	 * two framed zero octets, wait through the remaining octet and one
 	 * guard bit before accepting that bounded fallback. */
@@ -29,7 +27,6 @@ enum {
 enum v8_answering_state {
 	V8_ANSWERING_WAIT_CALL_MENU,
 	V8_ANSWERING_SEND_JOINT_MENU,
-	V8_ANSWERING_POST_CJ_SILENCE,
 	V8_ANSWERING_COMPLETE,
 	V8_ANSWERING_FAILED,
 };
@@ -65,6 +62,8 @@ struct v8_answering {
 enum v8_answering_result v8_answering_init(
 	struct v8_answering *answering,
 	const struct v8_menu *local_menu);
+/* COMPLETE transfers the next sample to the selected datapump.  That owner
+ * emits the post-CJ silence while already listening for its peer. */
 enum v8_answering_result v8_answering_process(
 	struct v8_answering *answering, const int16_t *receive,
 	int16_t *transmit, size_t count);
