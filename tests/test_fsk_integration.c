@@ -38,6 +38,7 @@ enum {
 	RETRAIN_FRAME_LIMIT = 500,
 	RETRAIN_RESPONSE_LOSS_FRAMES = 70,
 	V22BIS_INITIAL_DELAY_FRAMES = 70,
+	DIGITAL_MEDIA_DELAY_SAMPLES = 1200,
 	V32_MIN_HALF_DUPLEX_GAP_FRAMES = 16,
 	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
 	V22_REPLAY_CONNECT_SAMPLES = MODEM_RATE * 15,
@@ -45,15 +46,19 @@ enum {
 
 struct integration_endpoint {
 	struct modem *modem;
+	struct channel_bench receive_bench;
 	int modem_fd;
 	int client_fd;
 	int16_t receive[SIP_FRAME_SAMPLES];
 	int16_t transmit[SIP_FRAME_SAMPLES];
 	uint8_t receive_codewords[SIP_FRAME_SAMPLES];
 	uint8_t transmit_codewords[SIP_FRAME_SAMPLES];
+	uint8_t delayed_codewords[DIGITAL_MEDIA_DELAY_SAMPLES];
 	uint8_t output[ENDPOINT_OUTPUT_CAPACITY];
 	size_t output_count;
 	size_t exact_frames;
+	size_t delayed_codeword_cursor;
+	bool delay_codewords;
 };
 
 struct recording_capture {
@@ -78,6 +83,12 @@ struct v22_rate_monitor {
 	bool has_previous;
 };
 
+enum integration_impairment {
+	INTEGRATION_IMPAIRMENT_NONE,
+	INTEGRATION_IMPAIRMENT_COMPOSITE,
+	INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
+};
+
 struct modem_test_case {
 	enum DP_ID id;
 	const char *name;
@@ -97,6 +108,7 @@ struct modem_test_case {
 	bool test_prelink;
 	bool test_retrain;
 	bool raw_transport;
+	enum integration_impairment impairment;
 };
 
 extern int process_at_command(struct modem *modem, char *command);
@@ -162,6 +174,7 @@ static void endpoint_destroy(struct integration_endpoint *endpoint)
 {
 	if (endpoint == NULL)
 		return;
+	channel_bench_destroy(&endpoint->receive_bench);
 	modem_delete(endpoint->modem);
 	if (endpoint->client_fd >= 0)
 		close(endpoint->client_fd);
@@ -255,6 +268,13 @@ static int16_t decode_codeword(enum g711_law law, uint8_t codeword)
 		       g711_decode_pcmu(codeword);
 }
 
+static uint8_t encode_codeword(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMA ?
+		       g711_encode_pcma(sample) :
+		       g711_encode_pcmu(sample);
+}
+
 static bool endpoint_prepare_media(
 	struct integration_endpoint *endpoint, enum media_codec codec)
 {
@@ -322,13 +342,96 @@ static bool deliver_media_frame(
 	enum media_codec codec,
 	const struct media_recorder *recorder)
 {
+	enum g711_law law;
+
 	memcpy(destination->receive_codewords, source->transmit_codewords,
 	       sizeof(destination->receive_codewords));
+	if (destination->delay_codewords) {
+		for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
+			uint8_t delayed = destination->delayed_codewords[
+				destination->delayed_codeword_cursor];
 
+			destination->delayed_codewords[
+				destination->delayed_codeword_cursor] =
+				destination->receive_codewords[index];
+			destination->receive_codewords[index] = delayed;
+			destination->delayed_codeword_cursor =
+				(destination->delayed_codeword_cursor + 1u) %
+				DIGITAL_MEDIA_DELAY_SAMPLES;
+		}
+	}
+	if (destination->receive_bench.effect_count != 0) {
+		if (!codec_law(codec, &law))
+			return false;
+		for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index)
+			destination->receive[index] = decode_codeword(
+				law, destination->receive_codewords[index]);
+		if (channel_bench_process(
+			    &destination->receive_bench, destination->receive,
+			    SIP_FRAME_SAMPLES) != CHANNEL_BENCH_OK)
+			return false;
+		for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index)
+			destination->receive_codewords[index] =
+				encode_codeword(law, destination->receive[index]);
+	}
 	return media_decode(
-		       codec, source->transmit_codewords, SIP_FRAME_SAMPLES,
-		       destination->receive, SIP_FRAME_SAMPLES, recorder) ==
-	       MEDIA_OK;
+		       codec, destination->receive_codewords,
+		       SIP_FRAME_SAMPLES, destination->receive,
+		       SIP_FRAME_SAMPLES, recorder) == MEDIA_OK;
+}
+
+static bool endpoint_add_impairment(
+	struct integration_endpoint *endpoint,
+	enum integration_impairment impairment, enum media_codec codec,
+	uint32_t seed)
+{
+	struct channel_bench_effect_spec composite[] = {
+		{
+			.kind = CHANNEL_BENCH_GAIN,
+			.parameters.gain.scale_q15 = 32000,
+		},
+		{
+			.kind = CHANNEL_BENCH_DELAY,
+			.parameters.delay.samples = 2,
+		},
+		{
+			.kind = CHANNEL_BENCH_ECHO,
+			.parameters.echo = {
+				.delay_samples = 8,
+				.gain_q15 = 256,
+			},
+		},
+		{
+			.kind = CHANNEL_BENCH_NOISE,
+			.parameters.noise = {
+				.peak = 4,
+				.seed = seed,
+			},
+		},
+	};
+
+	if (endpoint == NULL)
+		return false;
+	switch (impairment) {
+	case INTEGRATION_IMPAIRMENT_NONE:
+		return true;
+	case INTEGRATION_IMPAIRMENT_COMPOSITE:
+		return channel_bench_init(
+			       &endpoint->receive_bench, composite,
+			       ARRAY_LENGTH(composite)) == CHANNEL_BENCH_OK;
+	case INTEGRATION_IMPAIRMENT_DIGITAL_DELAY: {
+		int silence = media_codec_silence_octet(codec);
+
+		if (silence < 0 || silence > UINT8_MAX)
+			return false;
+		memset(endpoint->delayed_codewords, (uint8_t)silence,
+		       sizeof(endpoint->delayed_codewords));
+		endpoint->delay_codewords = true;
+		return true;
+	}
+	default:
+		return false;
+	}
 }
 
 static bool process_sip_frame(
@@ -675,6 +778,12 @@ static bool run_media_call(
 		      endpoint_init(&answerer, "FSK answerer") &&
 		      endpoint_prepare_media(&caller, codec) &&
 		      endpoint_prepare_media(&answerer, codec) &&
+		      endpoint_add_impairment(
+			      &caller, test_case->impairment, codec,
+			      UINT32_C(0x243f6a88)) &&
+		      endpoint_add_impairment(
+			      &answerer, test_case->impairment, codec,
+			      UINT32_C(0x85a308d3)) &&
 		      (!monitor_caller_rate ||
 		       v22_rate_monitor_init(
 			       &caller_rate_monitor,
@@ -877,8 +986,12 @@ static bool run_media_call(
 		      test_case->initial_caller_delay_frames) &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      caller.output_count == 0 && answerer.output_count == 0,
-	      "%s idle link emitted terminal data (caller=%zu answerer=%zu)",
-	      test_case->name, caller.output_count, answerer.output_count);
+	      "%s idle link emitted terminal data "
+	      "(caller=%zu:%02x answerer=%zu:%02x)",
+	      test_case->name, caller.output_count,
+	      caller.output_count != 0 ? caller.output[0] : 0,
+	      answerer.output_count,
+	      answerer.output_count != 0 ? answerer.output[0] : 0);
 
 	CHECK(modem_write(caller.modem, (const char *)caller_payload,
 			  (int)sizeof(caller_payload)) ==
@@ -1127,7 +1240,7 @@ static const char *codec_name(enum media_codec codec)
 	return codec == MEDIA_CODEC_PCMU ? "PCMU" : "PCMA";
 }
 
-static bool run_v34_rate_matrix(void)
+static bool run_v34_rate_matrix(const char *filter)
 {
 	static const enum media_codec codecs[] = {
 		MEDIA_CODEC_PCMU,
@@ -1175,6 +1288,9 @@ static bool run_v34_rate_matrix(void)
 			name_length = snprintf(
 				name, sizeof(name), "V.34 %u at %u symbol/s", rate,
 				symbol_rates[symbol].symbols_per_second);
+			if (filter != NULL && filter[0] != '\0' &&
+			    strstr(name, filter) == NULL)
+				continue;
 			command_length = snprintf(
 				command, sizeof(command),
 				"AT+MS=34,0,%u,%u+V34B=%u\r", rate, rate,
@@ -1202,8 +1318,10 @@ static bool run_v34_rate_matrix(void)
 			}
 		}
 	}
-	CHECK(profiles == 55 && cases == 110,
-	      "V.34 matrix covered %u profiles/%u cases instead of 55/110",
+	CHECK((filter == NULL || filter[0] == '\0') ?
+		      profiles == 55 && cases == 110 :
+		      profiles != 0 && cases == profiles * 2u,
+	      "V.34 matrix covered an unexpected %u profiles/%u cases",
 	      profiles, cases);
 	return true;
 }
@@ -1226,7 +1344,37 @@ static bool configure_recording_replay(
 	return true;
 }
 
-static bool run_v34_recording_replay(const char *path, bool answerer)
+static bool v34_replay_symbol_rate_parse(
+	const char *value, unsigned int *symbol_rate)
+{
+	char *end;
+	unsigned long parsed;
+
+	if (symbol_rate == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0') {
+		*symbol_rate = 0;
+		return true;
+	}
+	errno = 0;
+	parsed = strtoul(value, &end, 10);
+	if (errno != 0 || end == value || *end != '\0')
+		return false;
+	switch (parsed) {
+	case 2400:
+	case 2800:
+	case 3000:
+	case 3200:
+	case 3429:
+		*symbol_rate = (unsigned int)parsed;
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool run_v34_recording_replay(
+	const char *path, const char *symbol_rate_value, bool answerer)
 {
 	static const char dial_command[] = "ATDrecording\r";
 	static const char *const commands[] = {
@@ -1241,10 +1389,16 @@ static bool run_v34_recording_replay(const char *path, bool answerer)
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	const char *role = answerer ? "answer" : "originator";
+	char symbol_rate_command[32];
+	char symbol_rate_description[32];
+	const char *symbol_rate_commands[] = { symbol_rate_command };
+	unsigned int symbol_rate;
 	size_t connected_at = SIZE_MAX;
 	size_t handoff_at = SIZE_MAX;
 	bool v8_seen = false;
 
+	CHECK(v34_replay_symbol_rate_parse(symbol_rate_value, &symbol_rate),
+	      "optional V.34 recording symbol rate is invalid");
 	CHECK(channel_bench_recording_load(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
@@ -1255,6 +1409,30 @@ static bool run_v34_recording_replay(const char *path, bool answerer)
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)),
 	      "V.34 recording replay setup was rejected");
+	if (symbol_rate != 0) {
+		int length = snprintf(
+			symbol_rate_command, sizeof(symbol_rate_command),
+			"AT+V34B=%u\r", symbol_rate);
+
+		CHECK(length > 0 && (size_t)length < sizeof(symbol_rate_command) &&
+			      configure_recording_replay(
+				      &endpoint, symbol_rate_commands,
+				      ARRAY_LENGTH(symbol_rate_commands)),
+		      "V.34 recording replay symbol rate was rejected");
+	}
+	if (symbol_rate == 0) {
+		memcpy(symbol_rate_description, "automatic",
+		       sizeof("automatic"));
+	} else {
+		int length = snprintf(
+			symbol_rate_description,
+			sizeof(symbol_rate_description), "%u symbol/s",
+			symbol_rate);
+
+		CHECK(length > 0 &&
+			      (size_t)length < sizeof(symbol_rate_description),
+		      "V.34 recording symbol rate description overflowed");
+	}
 	if (answerer) {
 		CHECK(modem_report_incoming_call(endpoint.modem) == 0 &&
 			      endpoint_drain(&endpoint) &&
@@ -1301,8 +1479,9 @@ static bool run_v34_recording_replay(const char *path, bool answerer)
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
 	fprintf(stderr,
-		"[       OK ] V.34 %s recording replay (%zu samples, carrier at %zu, terminal bytes %zu)\n",
-		role, recording.count, connected_at, endpoint.output_count);
+		"[       OK ] V.34 %s recording replay (%s, %zu samples, carrier at %zu, terminal bytes %zu)\n",
+		role, symbol_rate_description, recording.count, connected_at,
+		endpoint.output_count);
 
 	endpoint_destroy(&endpoint);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
@@ -1380,8 +1559,15 @@ int main(void)
 		getenv("V34_REPLAY_RX_PCM");
 	const char *v34_answer_recording_path =
 		getenv("V34_ANSWER_REPLAY_RX_PCM");
+	const char *v34_recording_symbol_rate =
+		getenv("V34_REPLAY_SYMBOL_RATE");
+	const char *v34_answer_recording_symbol_rate =
+		getenv("V34_ANSWER_REPLAY_SYMBOL_RATE");
+	const char *v34_matrix_filter = getenv("V34_MATRIX_FILTER");
+	const char *integration_filter = getenv("MODEM_INTEGRATION_FILTER");
 	const char *v22_recording_path =
 		getenv("V22_REPLAY_RX_PCM");
+	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
 		{
 			.id = DP_V21,
@@ -1572,6 +1758,19 @@ int main(void)
 			.automode = true,
 		},
 		{
+			.id = DP_V34,
+			.name = "V.34 9600 generated impairment",
+			.selection_command = "AT+MS=34,1,9600,9600\r",
+			.caller_tx_rate = 9600,
+			.caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600,
+			.answerer_rx_rate = 9600,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = 1500,
+			.automode = true,
+			.impairment = INTEGRATION_IMPAIRMENT_COMPOSITE,
+		},
+		{
 			.id = DP_V90,
 			.name = "V.90 28000 downstream",
 			.selection_command = "AT+MS=90,0,28000,28000\r",
@@ -1582,6 +1781,7 @@ int main(void)
 			.training_frame_limit = 1500,
 			.requires_v8 = true,
 			.requires_exact_g711 = true,
+			.impairment = INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
 		},
 		{
 			.id = DP_B212,
@@ -1616,6 +1816,8 @@ int main(void)
 		BAUDOT_RATE_50,
 	};
 
+	if (v34_matrix_filter != NULL && v34_matrix_filter[0] != '\0')
+		return run_v34_rate_matrix(v34_matrix_filter) ? 0 : 1;
 	if (v22_recording_path == NULL || v22_recording_path[0] == '\0') {
 		fprintf(stderr,
 			"[  SKIPPED ] V.22bis recording replay (V22_REPLAY_RX_PCM unset)\n");
@@ -1625,7 +1827,9 @@ int main(void)
 	if (v34_recording_path == NULL || v34_recording_path[0] == '\0') {
 		fprintf(stderr,
 			"[  SKIPPED ] V.34 recording replay (V34_REPLAY_RX_PCM unset)\n");
-	} else if (!run_v34_recording_replay(v34_recording_path, false)) {
+	} else if (!run_v34_recording_replay(
+			   v34_recording_path, v34_recording_symbol_rate,
+			   false)) {
 		return 1;
 	}
 	if (v34_answer_recording_path == NULL ||
@@ -1633,11 +1837,16 @@ int main(void)
 		fprintf(stderr,
 			"[  SKIPPED ] V.34 answer recording replay (V34_ANSWER_REPLAY_RX_PCM unset)\n");
 	} else if (!run_v34_recording_replay(
-			   v34_answer_recording_path, true)) {
+			   v34_answer_recording_path,
+			   v34_answer_recording_symbol_rate, true)) {
 		return 1;
 	}
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
 	     ++standard) {
+		if (integration_filter != NULL && integration_filter[0] != '\0' &&
+		    strstr(test_cases[standard].name, integration_filter) == NULL)
+			continue;
+		integration_case_selected = true;
 		for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
 			fprintf(stderr, "[ RUN      ] %s over %s SIP media\n",
 				test_cases[standard].name,
@@ -1654,7 +1863,16 @@ int main(void)
 				codec_name(codecs[codec]));
 		}
 	}
-	if (!run_v34_rate_matrix())
+	if (integration_filter != NULL && integration_filter[0] != '\0') {
+		if (!integration_case_selected) {
+			fprintf(stderr,
+				"[  FAILED  ] no integration case matched '%s'\n",
+				integration_filter);
+			return 1;
+		}
+		return 0;
+	}
+	if (!run_v34_rate_matrix(NULL))
 		return 1;
 	for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
 		for (size_t rate = 0; rate < ARRAY_LENGTH(baudot_rates);

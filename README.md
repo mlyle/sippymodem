@@ -273,11 +273,18 @@ V.21 and 9600-bit/s V.32 calls.
 The native media integration test can also replay optional V.34 receive
 recordings through the ordinary modem and datapump boundary. Set
 `V34_REPLAY_RX_PCM` for an originating call or `V34_ANSWER_REPLAY_RX_PCM` for
-an answered call. Each input is 8 kHz signed 16-bit little-endian PCM; the test
-loads at most three minutes, reproduces the raw V.34 setup and call role, and
-requires carrier acquisition. The ordinary test run reports a skip when no
-recording is supplied, so large and private call evidence stays outside this
-repository.
+an answered call. Set the corresponding `V34_REPLAY_SYMBOL_RATE` or
+`V34_ANSWER_REPLAY_SYMBOL_RATE` to 2400, 2800, 3000, 3200, or 3429 when the
+recorded call forced that symbol rate; omitting it preserves automatic
+selection. Each input is 8 kHz signed 16-bit little-endian PCM; the test loads
+at most three minutes, reproduces the raw V.34 setup and call role, and requires
+carrier acquisition. The ordinary test run reports a skip when no recording is
+supplied, so large and private call evidence stays outside this repository.
+
+For short local iterations, `MODEM_INTEGRATION_FILTER` selects ordinary cases
+by name and `V34_MATRIX_FILTER` selects V.34 rate-matrix cases by name. Both
+filters fail when they match nothing, so a stale case name cannot produce a
+false pass.
 
 Run `make install-hooks` once per checkout to enable the repository's pre-commit
 gate. It rejects staged whitespace errors and commits that fail the native test
