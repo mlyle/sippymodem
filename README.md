@@ -270,10 +270,11 @@ bit/s with LAPM and V.42bis; each again transferred all 54 expected bytes. The
 structured PING/PONG probe also proved terminal data in both directions on the
 V.21 and 9600-bit/s V.32 calls.
 
-The native media integration test can also replay an optional V.34 receive
-recording through the ordinary modem and datapump boundary. Set
-`V34_REPLAY_RX_PCM` to an 8 kHz signed 16-bit little-endian receive recording;
-the test loads at most three minutes, reproduces the raw V.34 call setup, and
+The native media integration test can also replay optional V.34 receive
+recordings through the ordinary modem and datapump boundary. Set
+`V34_REPLAY_RX_PCM` for an originating call or `V34_ANSWER_REPLAY_RX_PCM` for
+an answered call. Each input is 8 kHz signed 16-bit little-endian PCM; the test
+loads at most three minutes, reproduces the raw V.34 setup and call role, and
 requires carrier acquisition. The ordinary test run reports a skip when no
 recording is supplied, so large and private call evidence stays outside this
 repository.

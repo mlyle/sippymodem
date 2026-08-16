@@ -205,6 +205,103 @@ static bool test_cj_timeout(void)
 	return true;
 }
 
+static bool reach_cj_exchange(
+	struct v8_calling *calling, struct v8_answering *answering)
+{
+	int16_t calling_transmit = 0;
+
+	for (size_t sample = 0;
+	     sample < 4u * V8_ANSAM_SAMPLE_RATE; ++sample) {
+		int16_t answering_transmit;
+
+		if (v8_answering_process(
+			    answering, &calling_transmit,
+			    &answering_transmit, 1) !=
+			    V8_ANSWERING_OK ||
+		    v8_calling_process(
+			    calling, &answering_transmit,
+			    &calling_transmit, 1) != V8_CALLING_OK)
+			return false;
+		if (calling->state == V8_CALLING_SEND_CJ &&
+		    answering->state == V8_ANSWERING_SEND_JOINT_MENU)
+			return true;
+	}
+	return false;
+}
+
+static bool drive_damaged_cj(
+	struct v8_calling *calling, struct v8_answering *answering,
+	size_t damaged_bit, bool expect_fallback)
+{
+	uint8_t transmit_bit = 1;
+	size_t next_bit = 0;
+	bool saw_guard_boundary = false;
+
+	for (size_t sample = 0;
+	     sample < 2u * V8_ANSAM_SAMPLE_RATE; ++sample) {
+		bool consumed;
+		int16_t receive;
+		int16_t transmit;
+
+		if (v8_fsk_can_accept_bit(&calling->fsk)) {
+			if (next_bit < V8_CJ_BITS) {
+				if (v8_cj_bit(next_bit, &transmit_bit) !=
+				    V8_FRAMING_OK)
+					return false;
+				if (next_bit == damaged_bit)
+					transmit_bit ^= 1u;
+			} else {
+				transmit_bit = 1;
+			}
+			next_bit++;
+		}
+		if (v8_fsk_transmit_sample(
+			    &calling->fsk, transmit_bit, &receive,
+			    &consumed) != V8_FSK_OK ||
+		    v8_answering_process(
+			    answering, &receive, &transmit, 1) !=
+			    V8_ANSWERING_OK)
+			return false;
+		if (answering->cj_fallback_armed &&
+		    answering->cj_fallback_bits ==
+			    V8_ANSWERING_CJ_FALLBACK_BITS - 1u) {
+			if (answering->state !=
+			    V8_ANSWERING_SEND_JOINT_MENU)
+				return false;
+			saw_guard_boundary = true;
+		}
+		if (answering->state == V8_ANSWERING_POST_CJ_SILENCE)
+			return expect_fallback && saw_guard_boundary;
+		if (!expect_fallback && next_bit > V8_CJ_BITS +
+							 2u * V8_FRAMED_OCTET_BITS)
+			return !answering->cj_fallback_armed;
+	}
+	return false;
+}
+
+static bool test_cj_completion_fallback(void)
+{
+	struct v8_answering answering;
+	struct v8_calling calling;
+
+	CHECK(endpoints_init(
+		      &calling, &answering, V8_MODULATION_V34_DUPLEX,
+		      V8_MODULATION_V34_DUPLEX) &&
+	      reach_cj_exchange(&calling, &answering) &&
+	      drive_damaged_cj(
+		      &calling, &answering, V8_CJ_BITS - 1u, true),
+	      "V.8 answerer did not bound a damaged final CJ stop bit");
+	CHECK(endpoints_init(
+		      &calling, &answering, V8_MODULATION_V34_DUPLEX,
+		      V8_MODULATION_V34_DUPLEX) &&
+	      reach_cj_exchange(&calling, &answering) &&
+	      drive_damaged_cj(
+		      &calling, &answering,
+		      2u * V8_FRAMED_OCTET_BITS - 1u, false),
+	      "V.8 answerer accepted fewer than two complete CJ octets");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v8_answering answering;
@@ -245,6 +342,13 @@ static bool test_validation(void)
 			     V8_ANSWERING_CJ_TIMEOUT),
 		     "CJ timeout") == 0,
 	      "V.8 answering API accepted invalid arguments");
+	answering.cj_fallback_armed = true;
+	saved = answering;
+	CHECK(v8_answering_process(
+		      &answering, &receive, &transmit, 1) ==
+		      V8_ANSWERING_INVALID_ARGUMENT &&
+	      memcmp(&answering, &saved, sizeof(answering)) == 0,
+	      "V.8 answering accepted a fallback outside the CJ wait");
 	return true;
 }
 
@@ -258,6 +362,7 @@ int main(void)
 		{ "no common modulation", test_no_common_modulation },
 		{ "call menu timeout", test_call_menu_timeout },
 		{ "CJ timeout", test_cj_timeout },
+		{ "CJ completion fallback", test_cj_completion_fallback },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

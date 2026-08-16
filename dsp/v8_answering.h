@@ -19,6 +19,11 @@ enum {
 		7 * V8_ANSAM_SAMPLE_RATE,
 	V8_ANSWERING_POST_CJ_SILENCE_SAMPLES =
 		V8_ANSAM_SAMPLE_RATE * 75 / 1000,
+	/* V.8 permits another termination criterion when CJ is damaged.  After
+	 * two framed zero octets, wait through the remaining octet and one
+	 * guard bit before accepting that bounded fallback. */
+	V8_ANSWERING_CJ_FALLBACK_BITS =
+		V8_FRAMED_OCTET_BITS + 1,
 };
 
 enum v8_answering_state {
@@ -52,6 +57,8 @@ struct v8_answering {
 	enum v8_answering_result terminal_result;
 	uint32_t state_samples;
 	uint8_t transmit_bit;
+	uint8_t cj_fallback_bits;
+	bool cj_fallback_armed;
 	bool negotiated;
 };
 

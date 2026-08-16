@@ -1226,7 +1226,7 @@ static bool configure_recording_replay(
 	return true;
 }
 
-static bool run_v34_recording_replay(const char *path)
+static bool run_v34_recording_replay(const char *path, bool answerer)
 {
 	static const char dial_command[] = "ATDrecording\r";
 	static const char *const commands[] = {
@@ -1240,8 +1240,10 @@ static bool run_v34_recording_replay(const char *path)
 	struct channel_bench_recording recording = { 0 };
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
+	const char *role = answerer ? "answer" : "originator";
 	size_t connected_at = SIZE_MAX;
-	bool passed = false;
+	size_t handoff_at = SIZE_MAX;
+	bool v8_seen = false;
 
 	CHECK(channel_bench_recording_load(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
@@ -1253,35 +1255,54 @@ static bool run_v34_recording_replay(const char *path)
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)),
 	      "V.34 recording replay setup was rejected");
-	CHECK(modem_write(
-		      endpoint.modem, dial_command,
-		      (int)(sizeof(dial_command) - 1u)) ==
-		      (int)(sizeof(dial_command) - 1u) &&
-		      modem_report_outgoing_call_connected(endpoint.modem) == 0,
-	      "V.34 recording replay did not start the call");
+	if (answerer) {
+		CHECK(modem_report_incoming_call(endpoint.modem) == 0 &&
+			      endpoint_drain(&endpoint) &&
+			      output_contains(&endpoint, "RING") &&
+			      modem_answer(endpoint.modem) == 0,
+		      "V.34 answer recording replay did not start the call");
+		endpoint.output_count = 0;
+	} else {
+		CHECK(modem_write(
+			      endpoint.modem, dial_command,
+			      (int)(sizeof(dial_command) - 1u)) ==
+			      (int)(sizeof(dial_command) - 1u) &&
+			      modem_report_outgoing_call_connected(endpoint.modem) == 0,
+		      "V.34 originator recording replay did not start the call");
+	}
 	for (size_t offset = 0; offset < recording.count;) {
 		size_t count = recording.count - offset;
+		bool v8_before;
 
 		if (count > SIP_FRAME_SAMPLES)
 			count = SIP_FRAME_SAMPLES;
 		memcpy(endpoint.receive, recording.samples + offset,
 		       count * sizeof(*endpoint.receive));
+		v8_before = endpoint.modem->dp != NULL &&
+			endpoint.modem->dp->id == DP_V8;
 		modem_process(
 			endpoint.modem, endpoint.receive, endpoint.transmit,
 			(int)count);
 		offset += count;
 		CHECK(endpoint_drain(&endpoint),
 		      "V.34 recording replay terminal output overflowed");
+		v8_seen = v8_seen || v8_before;
+		if (handoff_at == SIZE_MAX && v8_before &&
+		    endpoint.modem->dp != NULL &&
+		    endpoint.modem->dp->id == DP_V34)
+			handoff_at = offset;
 		if (connected_at == SIZE_MAX &&
 		    modem_is_online(endpoint.modem, DP_V34))
 			connected_at = offset;
 	}
-	passed = connected_at != SIZE_MAX;
-	CHECK(passed,
-	      "V.34 recording did not reproduce carrier acquisition");
+	CHECK(connected_at != SIZE_MAX,
+	      "V.34 %s recording did not acquire carrier (V.8 seen %d, handoff %zu, final DP %d/status %d)",
+	      role, v8_seen, handoff_at,
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
 	fprintf(stderr,
-		"[       OK ] V.34 recording replay (%zu samples, carrier at %zu, terminal bytes %zu)\n",
-		recording.count, connected_at, endpoint.output_count);
+		"[       OK ] V.34 %s recording replay (%zu samples, carrier at %zu, terminal bytes %zu)\n",
+		role, recording.count, connected_at, endpoint.output_count);
 
 	endpoint_destroy(&endpoint);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
@@ -1357,6 +1378,8 @@ int main(void)
 {
 	const char *v34_recording_path =
 		getenv("V34_REPLAY_RX_PCM");
+	const char *v34_answer_recording_path =
+		getenv("V34_ANSWER_REPLAY_RX_PCM");
 	const char *v22_recording_path =
 		getenv("V22_REPLAY_RX_PCM");
 	static const struct modem_test_case test_cases[] = {
@@ -1599,6 +1622,20 @@ int main(void)
 	} else if (!run_v22bis_recording_replay(v22_recording_path)) {
 		return 1;
 	}
+	if (v34_recording_path == NULL || v34_recording_path[0] == '\0') {
+		fprintf(stderr,
+			"[  SKIPPED ] V.34 recording replay (V34_REPLAY_RX_PCM unset)\n");
+	} else if (!run_v34_recording_replay(v34_recording_path, false)) {
+		return 1;
+	}
+	if (v34_answer_recording_path == NULL ||
+	    v34_answer_recording_path[0] == '\0') {
+		fprintf(stderr,
+			"[  SKIPPED ] V.34 answer recording replay (V34_ANSWER_REPLAY_RX_PCM unset)\n");
+	} else if (!run_v34_recording_replay(
+			   v34_answer_recording_path, true)) {
+		return 1;
+	}
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
 	     ++standard) {
 		for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
@@ -1640,12 +1677,6 @@ int main(void)
 				"[       OK ] Baudot %s over %s SIP media\n",
 				rate_name, codec_name(codecs[codec]));
 		}
-	}
-	if (v34_recording_path == NULL || v34_recording_path[0] == '\0') {
-		fprintf(stderr,
-			"[  SKIPPED ] V.34 recording replay (V34_REPLAY_RX_PCM unset)\n");
-	} else if (!run_v34_recording_replay(v34_recording_path)) {
-		return 1;
 	}
 	return 0;
 }

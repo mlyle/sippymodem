@@ -45,6 +45,13 @@ static bool answering_is_valid(
 	    (unsigned int)answering->terminal_result >
 		    V8_ANSWERING_NO_COMMON_MODULATION ||
 	    answering->transmit_bit > 1 ||
+	    answering->cj_fallback_bits >=
+		    V8_ANSWERING_CJ_FALLBACK_BITS ||
+	    (!answering->cj_fallback_armed &&
+	     answering->cj_fallback_bits != 0) ||
+	    (answering->state != V8_ANSWERING_SEND_JOINT_MENU &&
+	     (answering->cj_fallback_armed ||
+	      answering->cj_fallback_bits != 0)) ||
 	    (answering->state == V8_ANSWERING_FAILED) !=
 		    (answering->terminal_result != V8_ANSWERING_OK))
 		return false;
@@ -102,15 +109,18 @@ static void enter_state(
 {
 	answering->state = state;
 	answering->state_samples = 0;
+	if (state != V8_ANSWERING_SEND_JOINT_MENU) {
+		answering->cj_fallback_armed = false;
+		answering->cj_fallback_bits = 0;
+	}
 }
 
 static enum v8_answering_result fail(
 	struct v8_answering *answering,
 	enum v8_answering_result result)
 {
-	answering->state = V8_ANSWERING_FAILED;
+	enter_state(answering, V8_ANSWERING_FAILED);
 	answering->terminal_result = result;
-	answering->state_samples = 0;
 	return result;
 }
 
@@ -232,14 +242,29 @@ static enum v8_answering_result send_joint_menu_sample(
 		    &answering->fsk, receive, &bit, &bit_ready) !=
 		    V8_FSK_OK)
 		return V8_ANSWERING_INVALID_ARGUMENT;
-	if (bit_ready &&
-	    v8_cj_detect_bit(
-		    &answering->cj_detector, bit, &cj_detected) !=
+	if (bit_ready) {
+		if (v8_cj_detect_bit(
+			    &answering->cj_detector, bit, &cj_detected) !=
 		    V8_FRAMING_OK)
-		return V8_ANSWERING_INVALID_ARGUMENT;
-	if (cj_detected) {
-		enter_state(answering, V8_ANSWERING_POST_CJ_SILENCE);
-		return V8_ANSWERING_OK;
+			return V8_ANSWERING_INVALID_ARGUMENT;
+		if (cj_detected) {
+			enter_state(
+				answering,
+				V8_ANSWERING_POST_CJ_SILENCE);
+			return V8_ANSWERING_OK;
+		}
+		if (!answering->cj_fallback_armed &&
+		    answering->cj_detector.matched_octets ==
+			    V8_CJ_OCTETS - 1u) {
+			answering->cj_fallback_armed = true;
+		} else if (answering->cj_fallback_armed &&
+			   ++answering->cj_fallback_bits ==
+				   V8_ANSWERING_CJ_FALLBACK_BITS) {
+			enter_state(
+				answering,
+				V8_ANSWERING_POST_CJ_SILENCE);
+			return V8_ANSWERING_OK;
+		}
 	}
 	answering->state_samples++;
 	if (answering->state_samples ==
