@@ -425,6 +425,99 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertNotIn("0123456789abcdef", dashboard)
         self.assertLessEqual(max(map(len, recent)), 74)
 
+    def test_recent_call_shows_actual_connected_profile(self) -> None:
+        case = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.family == "v22bis"
+            and case.role == "originator"
+            and case.link_mode == "lapm"
+        )
+        result = self.result(
+            case_name=case.name,
+            family=case.family,
+            role=case.role,
+            link_mode=case.link_mode,
+            connected=True,
+            modulation="V.22",
+            protocol="none",
+            receive_rate=1200,
+            transmit_rate=1200,
+            detail="CONNECT selected V.22 instead of V.22bis",
+        )
+        dashboard = render_dashboard(
+            (case,),
+            1,
+            (result,),
+            revision="e" * 40,
+            seed=17,
+            elapsed_seconds=3,
+            recent_limit=1,
+        )
+        recent = dashboard.splitlines()[-1]
+        self.assertIn("1200/1200@600", recent)
+        self.assertIn(" r ", recent)
+        self.assertTrue(recent.endswith("profile-mismatch"))
+
+    def test_recent_unconnected_call_shows_requested_profile(self) -> None:
+        case = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.family == "v22bis"
+            and case.role == "originator"
+            and case.link_mode == "lapm"
+        )
+        dashboard = render_dashboard(
+            (case,),
+            1,
+            (
+                self.result(
+                    case_name=case.name,
+                    family=case.family,
+                    role=case.role,
+                    link_mode=case.link_mode,
+                ),
+            ),
+            revision="f" * 40,
+            seed=19,
+            elapsed_seconds=3,
+            recent_limit=1,
+        )
+        recent = dashboard.splitlines()[-1]
+        self.assertIn("2400/2400@600", recent)
+        self.assertIn(" l ", recent)
+
+    def test_recent_callback_request_profile_mismatch_is_explicit(self) -> None:
+        case = next(
+            case
+            for case in cases_for_suite("smoke")
+            if case.role == "callback"
+        )
+        dashboard = render_dashboard(
+            (case,),
+            1,
+            (
+                self.result(
+                    case_name=case.name,
+                    family=case.family,
+                    role=case.role,
+                    callback_request_attempted=True,
+                    callback_request_maturity=MATURITY_CONNECT,
+                    detail=(
+                        "callback request CONNECT selected V.21 instead of "
+                        "V.22bis"
+                    ),
+                ),
+            ),
+            revision="1" * 40,
+            seed=23,
+            elapsed_seconds=3,
+            recent_limit=1,
+        )
+        self.assertTrue(
+            dashboard.splitlines()[-1].endswith("profile-mismatch")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

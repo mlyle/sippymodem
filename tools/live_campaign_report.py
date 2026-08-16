@@ -97,6 +97,8 @@ class AttemptResult:
     retrain_requested: bool = True
     duration_seconds: float = 0.0
     modulation: str | None = None
+    protocol: str | None = None
+    compression: str | None = None
     receive_rate: int | None = None
     transmit_rate: int | None = None
     detail: str = ""
@@ -426,17 +428,32 @@ def render_dashboard(
             case = cases_by_name.get(result.case_name)
             family = FAMILY_LABELS.get(result.family, result.family)[:7]
             role = "o" if result.role == "originator" else "c"
-            mode = "l" if result_link_mode(result) == LINK_LAPM else "r"
-            receive_rate = result.receive_rate
-            transmit_rate = result.transmit_rate
+            if result.connected:
+                mode = {"LAPM": "l", "none": "r"}.get(
+                    result.protocol, "?"
+                )
+                receive_rate = result.receive_rate
+                transmit_rate = result.transmit_rate
+            else:
+                mode = (
+                    "l" if result_link_mode(result) == LINK_LAPM else "r"
+                )
+                receive_rate = case.receive_rate if case is not None else None
+                transmit_rate = case.transmit_rate if case is not None else None
             if case is not None:
-                receive_rate = receive_rate or case.receive_rate
-                transmit_rate = transmit_rate or case.transmit_rate
                 symbol_rate = case.symbol_rate
             else:
                 symbol_rate = None
             rates = f"{receive_rate or '-'}/{transmit_rate or '-'}@{symbol_rate or '-'}"
-            if result.callback_request_only:
+            profile_mismatch = (
+                result.detail.startswith("CONNECT selected")
+                or result.detail.startswith(
+                    "callback request CONNECT selected"
+                )
+            )
+            if profile_mismatch:
+                status = "profile-mismatch"
+            elif result.callback_request_only:
                 request_status = (
                     result.callback_request_maturity or result.outcome
                 )

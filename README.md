@@ -167,6 +167,9 @@ answerer first, place a bounded V.22bis request call, verify its random callback
 nonce, wait for RING, issue ATA, and require the same nonce on the returned
 data connection. Direct calls wait for the peer's fixed compatibility payload;
 callback calls use the nonce-matched return marker as their initial data proof.
+Before either data check, CONNECT must report the requested modulation, local
+receive/transmit rates, and raw or LAPM protocol; a fallback cannot make a
+forced-rate matrix cell green.
 Both then send
 `RETRAIN` and require matching START/END nonce markers, issue local `ATO1` and
 require a fresh CONNECT, and finally send PING and require a structured PONG

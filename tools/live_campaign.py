@@ -134,6 +134,20 @@ FILE_MODE = 0o600
 DIRECTORY_MODE = 0o700
 DASHBOARD_REFRESH_SECONDS = 2.0
 RAW_LINK_WAKE = b"\r\r"
+FAMILY_CONNECT_MODULATIONS = {
+    "bell103": ("Bell 103",),
+    "v21": ("V.21",),
+    "bell212": ("Bell 212A",),
+    "v22": ("V.22",),
+    "v22bis": ("V.22bis",),
+    "v23": ("V.23",),
+    "v32": ("V.32",),
+    "v32bis": ("V.32bis",),
+    "v34": ("V.34",),
+    "v90": ("V.90",),
+    "v92": ("V.92",),
+}
+ANALOGUE_FALLBACK_MODULATIONS = ("V.34", "V.90", "V.92")
 
 
 class CampaignRunError(RuntimeError):
@@ -494,6 +508,55 @@ def _wake_raw_link(
     return True
 
 
+def _connect_error(
+    report: ConnectReport,
+    modulations: Sequence[str],
+    protocol: str,
+    receive_rate: int | None,
+    transmit_rate: int | None,
+) -> str | None:
+    if report.modulation not in modulations:
+        expected = "/".join(modulations)
+        actual = report.modulation or "unreported"
+        return f"CONNECT selected {actual} instead of {expected}"
+    if report.protocol != protocol:
+        actual = report.protocol or "unreported"
+        return f"CONNECT selected {actual} protocol instead of {protocol}"
+    if receive_rate is not None and report.receive_bit_rate != receive_rate:
+        actual = (
+            str(report.receive_bit_rate)
+            if report.receive_bit_rate is not None
+            else "unreported"
+        )
+        return f"CONNECT selected RX {actual} instead of {receive_rate}"
+    if transmit_rate is not None and report.transmit_bit_rate != transmit_rate:
+        actual = (
+            str(report.transmit_bit_rate)
+            if report.transmit_bit_rate is not None
+            else "unreported"
+        )
+        return f"CONNECT selected TX {actual} instead of {transmit_rate}"
+    return None
+
+
+def _case_connect_error(
+    case: CampaignCase, report: ConnectReport
+) -> str | None:
+    modulations = (
+        ANALOGUE_FALLBACK_MODULATIONS
+        if case.feature == "analogue-fallback"
+        else FAMILY_CONNECT_MODULATIONS[case.family]
+    )
+    protocol = "none" if case.link_mode == LINK_RAW else "LAPM"
+    return _connect_error(
+        report,
+        modulations,
+        protocol,
+        case.receive_rate,
+        case.transmit_rate,
+    )
+
+
 def _exercise_online(
     terminal: ModemTerminal,
     state: _AttemptState,
@@ -645,6 +708,9 @@ def _outbound_body(
         return None
     state.connected = True
     state.report = endpoint.terminal.connect_report
+    state.detail = _case_connect_error(scheduled.case, state.report) or ""
+    if state.detail:
+        return endpoint
     if not _wake_raw_link(
         endpoint.terminal,
         scheduled.case,
@@ -753,6 +819,16 @@ def _callback_body(
         state.detail = f"callback request ended with {response}"
         return None
     state.callback_request_maturity = MATURITY_CONNECT
+    request_error = _connect_error(
+        request.terminal.connect_report,
+        ("V.22bis",),
+        "LAPM",
+        2400,
+        2400,
+    )
+    if request_error is not None:
+        state.detail = "callback request " + request_error
+        return None
     callback_command = _callback_command(scheduled.case)
     progress.set("waiting for callback request greeting")
     try:
@@ -830,6 +906,9 @@ def _callback_body(
         return None
     state.connected = True
     state.report = answer.terminal.connect_report
+    state.detail = _case_connect_error(scheduled.case, state.report) or ""
+    if state.detail:
+        return answer
     if not _wake_raw_link(
         answer.terminal,
         scheduled.case,
@@ -945,6 +1024,8 @@ def run_physical_attempt(
         retrain_requested=retrain,
         duration_seconds=round(time.monotonic() - started, 3),
         modulation=state.report.modulation,
+        protocol=state.report.protocol,
+        compression=state.report.compression,
         receive_rate=state.report.receive_bit_rate,
         transmit_rate=state.report.transmit_bit_rate,
         detail=state.detail,

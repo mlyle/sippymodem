@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT))
 
 from tools.live_campaign_profiles import (  # noqa: E402
     CASES,
+    CASES_BY_NAME,
     FAMILY_ORDER,
     LINK_LAPM,
     LINK_MODES,
@@ -87,12 +88,40 @@ class LiveCampaignProfileTests(unittest.TestCase):
             <= features
         )
         pcm = [case for case in standard if case.feature == "pcm-upstream"]
-        self.assertEqual({case.transmit_rate for case in pcm}, {24000, 36000, 48000})
+        self.assertEqual({case.receive_rate for case in pcm}, {24000, 36000, 48000})
         for rate in {24000, 36000, 48000}:
             self.assertEqual(
-                {case.role for case in pcm if case.transmit_rate == rate},
+                {case.role for case in pcm if case.receive_rate == rate},
                 set(ROLES),
             )
+
+    def test_asymmetric_rates_use_the_local_modem_perspective(self) -> None:
+        self.assertEqual(
+            (
+                CASES_BY_NAME["v23-1200-75-originator"].receive_rate,
+                CASES_BY_NAME["v23-1200-75-originator"].transmit_rate,
+            ),
+            (1200, 75),
+        )
+        self.assertEqual(
+            (
+                CASES_BY_NAME["v23-1200-75-callback"].receive_rate,
+                CASES_BY_NAME["v23-1200-75-callback"].transmit_rate,
+            ),
+            (75, 1200),
+        )
+        digital = CASES_BY_NAME[
+            "v90-d28000-u14400-b3000-lapm-originator"
+        ]
+        pcm_upstream = CASES_BY_NAME["v92-pcmup-36000-lapm-callback"]
+        self.assertEqual(
+            (digital.receive_rate, digital.transmit_rate),
+            (14400, 28000),
+        )
+        self.assertEqual(
+            (pcm_upstream.receive_rate, pcm_upstream.transmit_rate),
+            (36000, 56000),
+        )
 
     def test_filters_intersect_without_expanding_the_suite(self) -> None:
         selected = select_cases(

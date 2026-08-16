@@ -207,8 +207,8 @@ def _digital(
         stem,
         family,
         _commands(*specific),
-        receive_rate=downstream,
-        transmit_rate=upstream,
+        receive_rate=upstream,
+        transmit_rate=downstream,
         symbol_rate=symbol_rate,
         feature="quick-connect" if quick_connect else "digital-headend",
         line_role="digital-headend",
@@ -230,8 +230,8 @@ def _pcm_upstream(
             "AT+V90D=1",
             "AT+MS=92,0,25000,56000",
         ),
-        receive_rate=56000,
-        transmit_rate=upstream,
+        receive_rate=upstream,
+        transmit_rate=56000,
         symbol_rate=8000,
         feature="pcm-upstream",
         line_role="digital-headend",
@@ -273,16 +273,20 @@ def _build_cases() -> tuple[CampaignCase, ...]:
     add(_fixed("bell212-1200", "bell212", 212, 1200, 600))
     add(_fixed("v22-1200", "v22", 22, 1200, 600))
     add(_fixed("v22bis-2400", "v22bis", 122, 2400, 600, level=0))
+    v23 = _both_roles(
+        "v23-1200-75",
+        "v23",
+        _commands("AT+MS=23,0,300,1200"),
+        receive_rate=1200,
+        transmit_rate=75,
+        symbol_rate=1200,
+        callback_features=(),
+        level=1,
+    )
     add(
-        _both_roles(
-            "v23-1200-75",
-            "v23",
-            _commands("AT+MS=23,0,300,1200"),
-            receive_rate=1200,
-            transmit_rate=75,
-            symbol_rate=1200,
-            callback_features=(),
-            level=1,
+        (
+            v23[0],
+            replace(v23[1], receive_rate=75, transmit_rate=1200),
         )
     )
     add(_fixed("v32-4800", "v32", 32, 4800, 2400))
