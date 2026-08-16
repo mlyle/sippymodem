@@ -329,6 +329,26 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 	return V34_CALL_OK;
 }
 
+static enum v34_call_result answer_info1c(struct v34_call *call)
+{
+	const struct v34_info1a *selection =
+		&call->local_info1.answering;
+	struct v34_info1c peer;
+
+	if (v34_phase2_peer_info1c(&call->state.phase2, &peer) !=
+	    V34_PHASE2_OK)
+		return V34_CALL_SEQUENCE_MISMATCH;
+	/* A zero projected rate is a valid INFO1c value meaning that the
+	 * measured line cannot use this symbol rate.  Restart full training
+	 * rather than misclassifying the peer's measurement as corrupt state. */
+	if (peer.answer_transmit[selection->answer_to_call_symbol_rate]
+		    .projected_data_rate_2400_bps_units == 0)
+		return begin_retrain(call);
+	return v34_phase2_answerer_reply(
+		       &call->state.phase2, selection) == V34_PHASE2_OK ?
+		       V34_CALL_OK : V34_CALL_SEQUENCE_MISMATCH;
+}
+
 static enum v34_call_result advance_phase2(
 	struct v34_call *call, const struct v34_phase2_event *event)
 {
@@ -346,11 +366,8 @@ static enum v34_call_result advance_phase2(
 			return V34_CALL_SEQUENCE_MISMATCH;
 	}
 	if (call->local_role == V34_ANSWERING_STATION &&
-	    event->kind == V34_PHASE2_EVENT_PEER_INFO1C_RECEIVED &&
-	    v34_phase2_answerer_reply(
-		    &call->state.phase2, &call->local_info1.answering) !=
-		    V34_PHASE2_OK)
-		return V34_CALL_SEQUENCE_MISMATCH;
+	    event->kind == V34_PHASE2_EVENT_PEER_INFO1C_RECEIVED)
+		return answer_info1c(call);
 	return v34_phase2_is_ready_for_phase3(&call->state.phase2) ?
 		       enter_phase3(call) : V34_CALL_OK;
 }

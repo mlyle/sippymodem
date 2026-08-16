@@ -516,6 +516,82 @@ static bool test_retrain_tone_deadline(void)
 	return true;
 }
 
+static bool check_unusable_info1_retrains(bool pcma)
+{
+	struct v34_call_configuration caller_config =
+		configuration(V34_CALLING_STATION);
+	struct v34_call_configuration answerer_config =
+		configuration(V34_ANSWERING_STATION);
+	struct channel channel = { .pcma = pcma };
+	struct endpoint caller = {
+		.transmit_bit = 0,
+		.verify_mapping_frames = true,
+	};
+	struct endpoint answerer = {
+		.transmit_bit = 1,
+		.verify_mapping_frames = true,
+	};
+	int16_t next_caller_receive = 0;
+	int16_t next_answerer_receive = 0;
+	bool restarted = false;
+
+	/* Zero is a valid projected-rate report meaning that none of the
+	 * measured answerer symbol rates can be used. */
+	caller_config.local_info1.calling = (struct v34_info1c){ 0 };
+	CHECK(v34_call_init(&caller.call, &caller_config) == V34_CALL_OK &&
+	      v34_call_init(&answerer.call, &answerer_config) == V34_CALL_OK,
+	      "unusable INFO1 endpoints did not initialize");
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_call_observation caller_observation;
+		struct v34_call_observation answerer_observation;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		channel_receive(
+			&channel, &next_caller_receive, &next_answerer_receive);
+		CHECK(endpoint_sample(
+			      &caller, next_caller_receive, supply_mapping_frame,
+			      &caller_transmit, &caller_observation) &&
+		      endpoint_sample(
+			      &answerer, next_answerer_receive,
+			      supply_mapping_frame, &answerer_transmit,
+			      &answerer_observation),
+		      "unusable INFO1 call stopped at sample %zu", index);
+		channel_transmit(&channel, caller_transmit, answerer_transmit);
+		if (answerer_observation.processed == V34_CALL_PHASE2 &&
+		    answerer_observation.next == V34_CALL_RETRAIN_SILENCE) {
+			restarted = true;
+			break;
+		}
+	}
+	CHECK(restarted && v34_call_is_valid(&answerer.call) &&
+	      !v34_call_has_failed(&answerer.call),
+	      "unusable INFO1 did not start a valid full retrain");
+	for (size_t index = 0; index < V34_CALL_RETRAIN_SILENCE_SAMPLES;
+	     ++index) {
+		struct v34_call_observation observation;
+		int16_t transmit;
+
+		CHECK(endpoint_sample(
+			      &answerer, 0, supply_mapping_frame, &transmit,
+			      &observation) && transmit == 0,
+		      "INFO1 retrain silence failed at sample %zu", index);
+	}
+	CHECK(v34_call_current_stage(&answerer.call) == V34_CALL_PHASE2 &&
+	      !v34_call_has_failed(&answerer.call),
+	      "INFO1 retrain did not restart Phase 2 after 70 ms");
+	return true;
+}
+
+static bool test_unusable_info1_retrains(void)
+{
+	CHECK(check_unusable_info1_retrains(false),
+	      "PCMU unusable INFO1 recovery failed");
+	CHECK(check_unusable_info1_retrains(true),
+	      "PCMA unusable INFO1 recovery failed");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_call_configuration config =
@@ -575,6 +651,8 @@ int main(void)
 		{ "generated PCMU call", test_pcmu_call },
 		{ "local and remote full retrain", test_full_retrain },
 		{ "retrain tone deadline", test_retrain_tone_deadline },
+		{ "unusable INFO1 starts full retrain",
+		  test_unusable_info1_retrains },
 		{ "mapping source backpressure", test_source_backpressure },
 		{ "validation", test_validation },
 	};
