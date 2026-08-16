@@ -16,17 +16,23 @@ enum {
 		V90_PHASE3_RETURN_RX_ONSET_SYMBOLS *
 		V34_PHASE3_S_RECEIVER_MAX_S_ERRORS /
 		V34_PHASE3_S_SYMBOLS,
+	V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS = 96,
+	V90_PHASE3_RETURN_RX_EXIT_SYMBOLS = 16,
+	V90_PHASE3_RETURN_RX_MIN_EXIT_ERRORS = 8,
 };
 
 enum v90_phase3_return_rx_stage {
 	V90_PHASE3_RETURN_RX_STAGE_SEARCH_S,
 	V90_PHASE3_RETURN_RX_STAGE_S,
+	V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END,
 	V90_PHASE3_RETURN_RX_STAGE_COMPLETE,
 };
 
 enum v90_phase3_return_rx_result {
 	V90_PHASE3_RETURN_RX_OK,
 	V90_PHASE3_RETURN_RX_S_DETECTED,
+	/* A permitted first return ended without its distinct S-bar. */
+	V90_PHASE3_RETURN_RX_S_ENDED,
 	V90_PHASE3_RETURN_RX_S_BAR_DETECTED,
 	V90_PHASE3_RETURN_RX_COMPLETE,
 	V90_PHASE3_RETURN_RX_INVALID_ARGUMENT,
@@ -48,7 +54,11 @@ struct v90_phase3_return_rx {
 	uint8_t buffered_onset_decisions;
 	uint8_t onset_offset;
 	uint8_t onset_errors;
+	uint16_t confirmed_s_symbols;
+	uint8_t exit_symbols;
+	uint8_t exit_errors;
 	enum v90_phase3_return_rx_stage stage;
+	bool allow_implicit_s_end;
 };
 
 /* The equalizer has already accepted its decision-delay points following the
@@ -63,6 +73,14 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_init(
 	struct v90_phase3_return_rx *rx,
 	const struct v34_equalizer_handoff *equalizer,
 	double adaptation);
+/* Permit a single interoperability fallback for the first V.90 return. The
+ * fallback requires a qualified long S followed by a 16-symbol departure and
+ * is distinct from a standards-visible S-bar. Restarting clears permission. */
+enum v90_phase3_return_rx_result
+v90_phase3_return_rx_allow_implicit_s_end(
+	struct v90_phase3_return_rx *rx);
+enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
+	struct v90_phase3_return_rx *rx);
 bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx);
 bool v90_phase3_return_rx_is_complete(

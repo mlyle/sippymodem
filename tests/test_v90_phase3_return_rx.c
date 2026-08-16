@@ -240,6 +240,84 @@ static bool test_generated_timelines(void)
 	return true;
 }
 
+static bool feed_implicit_return(
+	struct v90_phase3_return_rx *rx, unsigned int quarter_turns,
+	bool expect_implicit_end)
+{
+	unsigned int s_events = 0;
+	unsigned int end_events = 0;
+
+	for (size_t symbol = 0; symbol < 192u; ++symbol) {
+		struct qam_point point = v34_rotated_point_zero((int)(symbol & 1u));
+		enum v90_phase3_return_rx_result result;
+
+		point = channel_point(point, quarter_turns);
+		result = v90_phase3_return_rx_point(rx, &point);
+		if (result == V90_PHASE3_RETURN_RX_S_DETECTED)
+			s_events++;
+		else
+			CHECK(result == V90_PHASE3_RETURN_RX_OK,
+			      "implicit-return S reported %s",
+			      v90_phase3_return_rx_result_name(result));
+	}
+	for (size_t symbol = 0; symbol < 64u && end_events == 0; ++symbol) {
+		struct qam_point point = v34_rotated_point_zero(2);
+		enum v90_phase3_return_rx_result result;
+
+		point = channel_point(point, quarter_turns);
+		result = v90_phase3_return_rx_point(rx, &point);
+		if (result == V90_PHASE3_RETURN_RX_S_ENDED)
+			end_events++;
+		else
+			CHECK(result == V90_PHASE3_RETURN_RX_OK,
+			      "implicit-return exit reported %s",
+			      v90_phase3_return_rx_result_name(result));
+	}
+	CHECK(s_events == 1 && end_events == (expect_implicit_end ? 1u : 0u),
+	      "implicit-return events changed: S=%u end=%u expected=%u",
+	      s_events, end_events, expect_implicit_end ? 1u : 0u);
+	return true;
+}
+
+static bool test_implicit_first_return_end(void)
+{
+	struct v34_equalizer_handoff equalizer;
+	struct v90_phase3_return_rx rx;
+	struct v90_phase3_return_rx saved;
+	struct v90_phase3_return_handoff handoff;
+	struct v90_phase3_return_handoff saved_handoff;
+	struct qam_point point = v34_rotated_point_zero(0);
+
+	CHECK(seed_handoff(1, &equalizer) &&
+	      v90_phase3_return_rx_init(&rx, &equalizer, 0.05) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      v90_phase3_return_rx_allow_implicit_s_end(&rx) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      feed_implicit_return(&rx, 1, true),
+	      "implicit first return did not initialize or finish");
+	CHECK(rx.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END &&
+	      !rx.allow_implicit_s_end && !v90_phase3_return_rx_is_complete(&rx),
+	      "implicit first return exposed the wrong terminal state");
+	saved = rx;
+	memset(&handoff, 0x5a, sizeof(handoff));
+	saved_handoff = handoff;
+	point = channel_point(point, 1);
+	CHECK(v90_phase3_return_rx_point(&rx, &point) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      v90_phase3_return_rx_handoff(&rx, &handoff) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
+	      "implicit boundary consumed input or exposed an S-bar handoff");
+	CHECK(v90_phase3_return_rx_restart(&rx) == V90_PHASE3_RETURN_RX_OK &&
+	      v90_phase3_return_rx_is_valid(&rx) &&
+	      !rx.allow_implicit_s_end &&
+	      feed_implicit_return(&rx, 1, false) &&
+	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_S,
+	      "restart did not restore strict second-return detection");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_equalizer_handoff equalizer;
@@ -294,9 +372,10 @@ int main(void)
 	static const struct {
 		const char *name;
 		bool (*run)(void);
-	} tests[] = {
-		{ "generated timelines", test_generated_timelines },
-		{ "validation", test_validation },
+		} tests[] = {
+			{ "generated timelines", test_generated_timelines },
+			{ "implicit first-return end", test_implicit_first_return_end },
+			{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
 

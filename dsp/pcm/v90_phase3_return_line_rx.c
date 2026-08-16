@@ -66,26 +66,37 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 	return V90_PHASE3_RETURN_LINE_RX_OK;
 }
 
+enum v90_phase3_return_line_rx_result
+v90_phase3_return_line_rx_allow_implicit_s_end(
+	struct v90_phase3_return_line_rx *rx)
+{
+	enum v90_phase3_return_rx_result result;
+
+	if (!v90_phase3_return_line_rx_is_valid(rx))
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
+	result = v90_phase3_return_rx_allow_implicit_s_end(&rx->points);
+	if (result == V90_PHASE3_RETURN_RX_OK)
+		return V90_PHASE3_RETURN_LINE_RX_OK;
+	if (result == V90_PHASE3_RETURN_RX_INVALID_STATE)
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
+	return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+}
+
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
 	struct v90_phase3_return_line_rx *rx)
 {
 	struct v90_phase3_return_line_rx restarted;
-	struct v90_phase3_return_handoff handoff;
-	double adaptation;
+	enum v90_phase3_return_rx_result result;
 
 	if (!v90_phase3_return_line_rx_is_valid(rx))
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
 	if (rx->failed)
 		return V90_PHASE3_RETURN_LINE_RX_FAILED;
-	if (!v90_phase3_return_rx_is_complete(&rx->points))
-		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	restarted = *rx;
-	adaptation = restarted.points.adaptation;
-	if (v90_phase3_return_rx_handoff(&restarted.points, &handoff) !=
-		    V90_PHASE3_RETURN_RX_OK ||
-	    v90_phase3_return_rx_init(
-		    &restarted.points, &handoff.equalizer, adaptation) !=
-		    V90_PHASE3_RETURN_RX_OK ||
+	result = v90_phase3_return_rx_restart(&restarted.points);
+	if (result == V90_PHASE3_RETURN_RX_INVALID_STATE)
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
+	if (result != V90_PHASE3_RETURN_RX_OK ||
 	    !v90_phase3_return_line_rx_is_valid(&restarted))
 		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	*rx = restarted;
@@ -100,6 +111,8 @@ static enum v90_phase3_return_line_rx_result point_result(
 		return V90_PHASE3_RETURN_LINE_RX_OK;
 	case V90_PHASE3_RETURN_RX_S_DETECTED:
 		return V90_PHASE3_RETURN_LINE_RX_S_DETECTED;
+	case V90_PHASE3_RETURN_RX_S_ENDED:
+		return V90_PHASE3_RETURN_LINE_RX_S_ENDED;
 	case V90_PHASE3_RETURN_RX_S_BAR_DETECTED:
 		return V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED;
 	case V90_PHASE3_RETURN_RX_COMPLETE:
@@ -125,6 +138,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 		return V90_PHASE3_RETURN_LINE_RX_FAILED;
 	if (v90_phase3_return_rx_is_complete(&rx->points))
 		return V90_PHASE3_RETURN_LINE_RX_COMPLETE;
+	if (rx->points.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	next = *rx;
 	if (qam_demodulator_sample(
 		    &next.demodulator, sample, &point, &ready) != QAM_OK) {
@@ -197,6 +212,8 @@ const char *v90_phase3_return_line_rx_result_name(
 		return "ok";
 	case V90_PHASE3_RETURN_LINE_RX_S_DETECTED:
 		return "S detected";
+	case V90_PHASE3_RETURN_LINE_RX_S_ENDED:
+		return "S ended without S-bar";
 	case V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED:
 		return "S-bar detected";
 	case V90_PHASE3_RETURN_LINE_RX_COMPLETE:

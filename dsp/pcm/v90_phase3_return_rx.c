@@ -42,6 +42,18 @@ static bool onset_history_is_valid(
 	return true;
 }
 
+static bool s_exit_is_valid(const struct v90_phase3_return_rx *rx)
+{
+	if (rx->exit_symbols > V90_PHASE3_RETURN_RX_EXIT_SYMBOLS ||
+	    rx->exit_errors > rx->exit_symbols)
+		return false;
+	if (rx->exit_symbols != 0 &&
+	    rx->confirmed_s_symbols <
+		    V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS)
+		return false;
+	return true;
+}
+
 bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx)
 {
@@ -49,21 +61,34 @@ bool v90_phase3_return_rx_is_valid(
 	    !equalizer_is_at_handoff(&rx->equalizer) ||
 	    !v34_phase3_s_receiver_is_valid(&rx->marker) ||
 	    rx->marker.s_symbols != V90_PHASE3_RETURN_RX_ONSET_SYMBOLS ||
-	    !onset_history_is_valid(rx))
+	    !onset_history_is_valid(rx) || !s_exit_is_valid(rx))
 		return false;
 	switch (rx->stage) {
 	case V90_PHASE3_RETURN_RX_STAGE_SEARCH_S:
 		return rx->onset_offset == 0 && rx->onset_errors == 0 &&
+		       rx->confirmed_s_symbols == 0 &&
+		       rx->exit_symbols == 0 && rx->exit_errors == 0 &&
 		       rx->marker.buffered_decisions == 0 &&
 		       !v34_phase3_s_receiver_is_complete(&rx->marker);
 	case V90_PHASE3_RETURN_RX_STAGE_S:
 		return rx->buffered_onset_decisions ==
 			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
+		       rx->confirmed_s_symbols >=
+			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
+		       rx->exit_symbols < V90_PHASE3_RETURN_RX_EXIT_SYMBOLS &&
 		       rx->onset_offset < 4u &&
 		       rx->onset_errors <=
 			       V90_PHASE3_RETURN_RX_MAX_ONSET_ERRORS &&
 		       rx->marker.buffered_decisions >=
 			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
+		       !v34_phase3_s_receiver_is_complete(&rx->marker);
+	case V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END:
+		return !rx->allow_implicit_s_end &&
+		       rx->confirmed_s_symbols >=
+			       V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS &&
+		       rx->exit_symbols == V90_PHASE3_RETURN_RX_EXIT_SYMBOLS &&
+		       rx->exit_errors >=
+			       V90_PHASE3_RETURN_RX_MIN_EXIT_ERRORS &&
 		       !v34_phase3_s_receiver_is_complete(&rx->marker);
 	case V90_PHASE3_RETURN_RX_STAGE_COMPLETE:
 		return rx->buffered_onset_decisions ==
@@ -105,6 +130,40 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_init(
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	*rx = initialized;
 	return V90_PHASE3_RETURN_RX_OK;
+}
+
+enum v90_phase3_return_rx_result
+v90_phase3_return_rx_allow_implicit_s_end(
+	struct v90_phase3_return_rx *rx)
+{
+	struct v90_phase3_return_rx next;
+
+	if (!v90_phase3_return_rx_is_valid(rx))
+		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
+	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_SEARCH_S)
+		return V90_PHASE3_RETURN_RX_INVALID_STATE;
+	next = *rx;
+	next.allow_implicit_s_end = true;
+	if (!v90_phase3_return_rx_is_valid(&next))
+		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+	*rx = next;
+	return V90_PHASE3_RETURN_RX_OK;
+}
+
+enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
+	struct v90_phase3_return_rx *rx)
+{
+	struct v34_equalizer_handoff equalizer;
+	double adaptation;
+
+	if (!v90_phase3_return_rx_is_valid(rx))
+		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
+	if (rx->stage != V90_PHASE3_RETURN_RX_STAGE_COMPLETE &&
+	    rx->stage != V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+		return V90_PHASE3_RETURN_RX_INVALID_STATE;
+	equalizer.equalizer = rx->equalizer;
+	adaptation = rx->adaptation;
+	return v90_phase3_return_rx_init(rx, &equalizer, adaptation);
 }
 
 static uint8_t onset_decision(
@@ -191,6 +250,47 @@ static bool adapt_decision(
 		       rx->adaptation) == QAM_EQUALIZER_OK;
 }
 
+static bool expected_s_decision(
+	const struct v90_phase3_return_rx *rx, uint8_t rotation)
+{
+	size_t symbol = (size_t)rx->confirmed_s_symbols + rx->exit_symbols;
+
+	return rotation == expected_s_rotation(symbol, rx->onset_offset);
+}
+
+static enum v90_phase3_return_rx_result observe_s_exit(
+	struct v90_phase3_return_rx *rx, uint8_t rotation)
+{
+	bool matches = expected_s_decision(rx, rotation);
+
+	if (rx->exit_symbols == 0 &&
+	    (rx->confirmed_s_symbols <
+		     V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS ||
+	     matches)) {
+		if (rx->confirmed_s_symbols != UINT16_MAX)
+			rx->confirmed_s_symbols++;
+		return V90_PHASE3_RETURN_RX_OK;
+	}
+	rx->exit_symbols++;
+	if (!matches)
+		rx->exit_errors++;
+	if (rx->exit_symbols < V90_PHASE3_RETURN_RX_EXIT_SYMBOLS)
+		return V90_PHASE3_RETURN_RX_OK;
+	if (rx->allow_implicit_s_end &&
+	    rx->exit_errors >= V90_PHASE3_RETURN_RX_MIN_EXIT_ERRORS) {
+		rx->allow_implicit_s_end = false;
+		rx->stage = V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END;
+		return V90_PHASE3_RETURN_RX_S_ENDED;
+	}
+	if (UINT16_MAX - rx->confirmed_s_symbols < rx->exit_symbols)
+		rx->confirmed_s_symbols = UINT16_MAX;
+	else
+		rx->confirmed_s_symbols += rx->exit_symbols;
+	rx->exit_symbols = 0;
+	rx->exit_errors = 0;
+	return V90_PHASE3_RETURN_RX_OK;
+}
+
 static enum v90_phase3_return_rx_result receive_decision(
 	struct v90_phase3_return_rx *rx,
 	struct qam_equalizer_observation *observation,
@@ -202,6 +302,8 @@ static enum v90_phase3_return_rx_result receive_decision(
 		if (!seed_marker(rx) ||
 		    !adapt_decision(rx, observation, rotation))
 			return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+		rx->confirmed_s_symbols =
+			V90_PHASE3_RETURN_RX_ONSET_SYMBOLS;
 		rx->stage = V90_PHASE3_RETURN_RX_STAGE_S;
 		return V90_PHASE3_RETURN_RX_S_DETECTED;
 	}
@@ -210,7 +312,7 @@ static enum v90_phase3_return_rx_result receive_decision(
 	switch (v34_phase3_s_receiver_receive(
 		&rx->marker, 0, rotation)) {
 	case V34_PHASE3_S_RECEIVER_OK:
-		return V90_PHASE3_RETURN_RX_OK;
+		return observe_s_exit(rx, rotation);
 	case V34_PHASE3_S_RECEIVER_DETECTED:
 		rx->stage = V90_PHASE3_RETURN_RX_STAGE_COMPLETE;
 		return V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
@@ -225,6 +327,7 @@ static bool result_commits(enum v90_phase3_return_rx_result result)
 {
 	return result == V90_PHASE3_RETURN_RX_OK ||
 	       result == V90_PHASE3_RETURN_RX_S_DETECTED ||
+	       result == V90_PHASE3_RETURN_RX_S_ENDED ||
 	       result == V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
 }
 
@@ -245,6 +348,8 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_point(
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_COMPLETE)
 		return V90_PHASE3_RETURN_RX_COMPLETE;
+	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	next = *rx;
 	if (qam_equalizer_observe(
 		    &next.equalizer, received, &observation, &ready) !=
@@ -299,6 +404,8 @@ const char *v90_phase3_return_rx_result_name(
 		return "ok";
 	case V90_PHASE3_RETURN_RX_S_DETECTED:
 		return "S detected";
+	case V90_PHASE3_RETURN_RX_S_ENDED:
+		return "S ended without S-bar";
 	case V90_PHASE3_RETURN_RX_S_BAR_DETECTED:
 		return "S-bar detected";
 	case V90_PHASE3_RETURN_RX_COMPLETE:

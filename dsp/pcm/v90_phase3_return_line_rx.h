@@ -12,6 +12,7 @@
 enum v90_phase3_return_line_rx_result {
 	V90_PHASE3_RETURN_LINE_RX_OK,
 	V90_PHASE3_RETURN_LINE_RX_S_DETECTED,
+	V90_PHASE3_RETURN_LINE_RX_S_ENDED,
 	V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED,
 	V90_PHASE3_RETURN_LINE_RX_COMPLETE,
 	V90_PHASE3_RETURN_LINE_RX_FAILED,
@@ -39,6 +40,9 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 	struct v90_phase3_return_line_rx *rx,
 	const struct v90_phase3_analog_line_handoff *handoff,
 	double adaptation);
+enum v90_phase3_return_line_rx_result
+v90_phase3_return_line_rx_allow_implicit_s_end(
+	struct v90_phase3_return_line_rx *rx);
 
 /* Rearm S/S-bar detection after one complete return while preserving the
  * continuous demodulator, trained equalizer, and exact next-sample boundary.
