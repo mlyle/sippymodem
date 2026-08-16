@@ -110,6 +110,7 @@ static bool run_line(
 	bool e_rx_started = false;
 	bool data_rx_started = false;
 	bool b1_complete = false;
+	unsigned int final_records = 0;
 
 	CHECK(v90_phase4_line_fixture_init(
 		      law, constellation, &training, &cp_tx, &phase3) &&
@@ -129,10 +130,21 @@ static bool run_line(
 				      V90_PHASE4_CP_LINE_TX_OK,
 			      "final CP did not start at sample %zu", clock);
 			final_started = true;
+			final_records = 1;
 		}
 		if (final_started &&
-		    v90_phase4_cp_line_tx_record_is_complete(&cp_tx))
-			cp_tx_finishing = true;
+		    v90_phase4_cp_line_tx_record_is_complete(&cp_tx)) {
+			if (final_records == 1) {
+				CHECK(v90_phase4_cp_line_tx_start_next_record(
+					      &cp_tx, &final) ==
+					      V90_PHASE4_CP_LINE_TX_OK,
+				      "repeated final CP did not start at sample %zu",
+				      clock);
+				final_records++;
+			} else {
+				cp_tx_finishing = true;
+			}
+		}
 		if (!e_tx_started) {
 			enum v90_phase4_cp_line_tx_result result =
 				v90_phase4_cp_line_tx_sample(&cp_tx, &sample);
@@ -278,7 +290,7 @@ static bool run_line(
 				result == V34_DATA_LINE_RECEIVER_B1_COMPLETE;
 		}
 	}
-	CHECK(final_started && e_tx_started && data_tx_started &&
+	CHECK(final_started && final_records == 2 && e_tx_started && data_tx_started &&
 	      training_received && e_rx_started && data_rx_started &&
 	      b1_complete && v90_phase4_e_line_rx_is_complete(&e_rx) &&
 	      !v90_phase4_e_line_rx_has_failed(&e_rx) &&
