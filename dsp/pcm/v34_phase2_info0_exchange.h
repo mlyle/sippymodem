@@ -43,6 +43,7 @@ struct v34_phase2_info0_exchange {
 	bool recovery_active;
 	bool transmit_acknowledges_peer;
 	bool acknowledgements_complete;
+	bool completion_tone_seen;
 };
 
 /* Initial INFO0 always clears its acknowledgment bit.  Correct peer INFO0 is

@@ -36,9 +36,14 @@ bool v34_phase2_info0_exchange_is_valid(
 		exchange->transport.transmit_phase != PHASE2_INFO0_TONE) &&
 	       (!exchange->transmit_acknowledges_peer ||
 		exchange->recovery_active) &&
+	       (!exchange->completion_tone_seen ||
+		(exchange->acknowledgements_complete &&
+		 exchange->peer_info0_received &&
+		 exchange->local_info0.acknowledges_peer_info0)) &&
 	       (!exchange->acknowledgements_complete ||
 		(exchange->peer_info0_received &&
-		 exchange->peer_info0.acknowledges_peer_info0 &&
+		 (exchange->peer_info0.acknowledges_peer_info0 ||
+		  exchange->completion_tone_seen) &&
 		 exchange->local_info0.acknowledges_peer_info0));
 }
 
@@ -166,13 +171,19 @@ static bool advance_recovery(
 		exchange->recovery_requested = true;
 	if (exchange->transport.transmit_phase != PHASE2_INFO0_TONE)
 		return true;
-	if (exchange->recovery_active &&
-	    exchange->peer_info0_received &&
-	    exchange->peer_info0.acknowledges_peer_info0 &&
+	/* A peer acknowledgment or its following tone completes recovery.  The
+	 * latter is the normative alternative when the final acknowledged INFO0
+	 * frame is missed: finish the current local acknowledgment, then proceed
+	 * with ranging instead of retransmitting forever. */
+	if (exchange->recovery_active && exchange->peer_info0_received &&
+	    (exchange->peer_info0.acknowledges_peer_info0 ||
+	     exchange->transport.tone_detector.tone_present) &&
 	    exchange->transmit_acknowledges_peer) {
 		exchange->recovery_active = false;
 		exchange->transmit_acknowledges_peer = false;
 		exchange->acknowledgements_complete = true;
+		exchange->completion_tone_seen =
+			!exchange->peer_info0.acknowledges_peer_info0;
 		event->recovery_completed = true;
 		return true;
 	}

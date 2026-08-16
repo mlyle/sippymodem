@@ -465,6 +465,89 @@ static bool test_info0_recovery(void)
 	return true;
 }
 
+static bool check_info0_tone_completion(enum test_codec codec)
+{
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging caller;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+	unsigned int peer_sequences = 1;
+	size_t recovery_started = 0;
+	size_t recovery_completed = 0;
+
+	CHECK(v34_info0_encode(&answering, payload, sizeof(payload)) ==
+		      V34_INFO0_OK &&
+	      v34_phase2_ranging_init(
+		      &caller, V34_CALLING_STATION, TEST_AMPLITUDE,
+		      &calling) == V34_PHASE2_RANGING_OK &&
+	      phase2_info0_exchange_init(
+		      &peer, PHASE2_SIGNAL_A, TEST_AMPLITUDE, payload,
+		      V34_INFO0_PAYLOAD_BITS, V34_INFO0_PAYLOAD_BITS) ==
+		      PHASE2_INFO0_EXCHANGE_OK,
+	      "tone-completion fixture did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v34_phase2_ranging_event caller_event;
+		int16_t peer_sample;
+		int16_t caller_sample;
+
+		if (peer.transmit_phase == PHASE2_INFO0_TONE &&
+		    peer_sequences < 4) {
+			CHECK(phase2_info0_exchange_restart_info(
+				      &peer, payload,
+				      V34_INFO0_PAYLOAD_BITS) ==
+				      PHASE2_INFO0_EXCHANGE_OK,
+			      "peer INFO0 repetition %u failed",
+			      peer_sequences);
+			peer_sequences++;
+		}
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_sample, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_phase2_ranging_sample(
+			      &caller, codec_round_trip(peer_sample, codec),
+			      &caller_sample, &caller_event) ==
+			      V34_PHASE2_RANGING_OK,
+		      "tone completion failed for codec %d at sample %zu",
+		      codec, index);
+		recovery_started +=
+			caller_event.exchange_event.recovery_started;
+		recovery_completed +=
+			caller_event.exchange_event.recovery_completed;
+		if (caller.control.phase != PHASE2_RANGING_INFO0_EXCHANGE)
+			break;
+	}
+	CHECK(peer_sequences == 4 && recovery_started == 1 &&
+	      recovery_completed == 1 &&
+	      caller.info0_exchange.acknowledgements_complete &&
+	      caller.info0_exchange.peer_info0_received &&
+	      !caller.info0_exchange.peer_info0.acknowledges_peer_info0 &&
+	      caller.info0_exchange.completion_tone_seen &&
+	      caller.info0_exchange.transport.tone_detector.tone_present &&
+	      caller.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL,
+	      "peer tone did not complete INFO0 recovery for codec %d (sequences %u recovery %zu/%zu phase %d)",
+	      codec, peer_sequences, recovery_started, recovery_completed,
+	      caller.control.phase);
+	CHECK(v34_phase2_tone_detector_reset(
+		      &caller.info0_exchange.transport.tone_detector) ==
+		      V34_PHASE2_TONE_OK &&
+	      !caller.info0_exchange.transport.tone_detector.tone_present &&
+	      v34_phase2_ranging_is_valid(&caller),
+	      "later tone-detector reuse invalidated completed INFO0 for codec %d",
+	      codec);
+	return true;
+}
+
+static bool test_info0_tone_completion(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		CHECK(check_info0_tone_completion(codec),
+		      "INFO0 tone completion failed for codec %d", codec);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_info0 capabilities = calling_capabilities();
@@ -510,6 +593,7 @@ int main(void)
 	} tests[] = {
 		{ "bidirectional ranging", test_bidirectional_ranging },
 		{ "INFO0 recovery", test_info0_recovery },
+		{ "INFO0 recovery by tone", test_info0_tone_completion },
 		{ "missing second reversal", test_missing_second_reversal_times_out },
 		{ "validation", test_validation },
 	};
