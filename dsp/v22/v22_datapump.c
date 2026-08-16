@@ -1151,8 +1151,10 @@ static int begin_retrain(
 	datapump->retrain_peer_signal_received = peer_signal_received;
 	datapump->retrain_receive_ready = false;
 	v22bis_rate_signal_detector_reset(&datapump->rate_signal_detector);
+	/* Keep queued transmit framing, but discard a partial receive character
+	 * across the physical-layer discontinuity.  LAPM owns its own state. */
 	if (!datapump->dp.modem->cfg.ec)
-		modem_async_reframe(datapump->dp.modem);
+		modem_async_retrain(datapump->dp.modem);
 	if (start_retrain_signal(datapump) != 0)
 		return -1;
 	datapump->dp.status = DPSTAT_OK;
@@ -1177,7 +1179,7 @@ static int restart_retrain(struct v22_datapump *datapump)
 	datapump->retrain_peer_signal_received = false;
 	datapump->retrain_receive_ready = false;
 	if (!datapump->dp.modem->cfg.ec)
-		modem_async_reframe(datapump->dp.modem);
+		modem_async_retrain(datapump->dp.modem);
 	return start_retrain_signal(datapump);
 }
 
@@ -1222,7 +1224,7 @@ static int repeat_peer_retrain_signal(
 	datapump->receiving_v22bis = false;
 	datapump->retrain_receive_ready = false;
 	if (!datapump->dp.modem->cfg.ec)
-		modem_async_reframe(datapump->dp.modem);
+		modem_async_retrain(datapump->dp.modem);
 	return start_retrain_signal(datapump);
 }
 
