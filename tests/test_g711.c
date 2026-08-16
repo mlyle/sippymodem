@@ -60,7 +60,8 @@ static bool test_pcma_known_values(void)
 		{ 8, 0xd5, 8 },
 		{ -8, 0x55, -8 },
 		{ 16, 0xd4, 24 },
-		{ -17, 0x54, -24 },
+		{ -17, 0x55, -8 },
+		{ -24, 0x54, -24 },
 		{ 1000, 0xfa, 1008 },
 		{ -1000, 0x7a, -1008 },
 		{ INT16_MAX, 0xaa, 32256 },
@@ -111,6 +112,43 @@ static bool test_pcma_code_space(void)
 	return true;
 }
 
+static unsigned int pcma_specification_segment(unsigned int magnitude)
+{
+	unsigned int segment = 0;
+	unsigned int segment_end = 0xff;
+
+	while (magnitude > segment_end && segment < 8) {
+		segment_end = (segment_end << 1) | 1;
+		segment++;
+	}
+	return segment;
+}
+
+static uint8_t pcma_specification_encode(int sample)
+{
+	unsigned int magnitude;
+	unsigned int segment;
+	uint8_t mask;
+	uint8_t code;
+
+	if (sample >= 0) {
+		magnitude = (unsigned int)sample;
+		mask = 0xd5;
+	} else {
+		int biased = -sample - 8;
+
+		magnitude = biased > 0 ? (unsigned int)biased : 0;
+		mask = 0x55;
+	}
+	segment = pcma_specification_segment(magnitude);
+	if (segment >= 8)
+		return (uint8_t)(0x7f ^ mask);
+	code = (uint8_t)(segment << 4);
+	code |= (uint8_t)((magnitude >>
+			      (segment < 2 ? 4 : segment + 3)) & 0x0f);
+	return (uint8_t)(code ^ mask);
+}
+
 static bool test_all_linear_samples(void)
 {
 	for (int32_t sample = INT16_MIN; sample <= INT16_MAX; ++sample) {
@@ -128,6 +166,8 @@ static bool test_all_linear_samples(void)
 		      "PCMU encoding is unstable at %d", (int)sample);
 		CHECK(g711_encode_pcma(pcma_linear) == pcma,
 		      "PCMA encoding is unstable at %d", (int)sample);
+		CHECK(pcma == pcma_specification_encode((int)sample),
+		      "PCMA encoding disagrees with G.711 at %d", (int)sample);
 	}
 	return true;
 }

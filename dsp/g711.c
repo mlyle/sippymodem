@@ -65,11 +65,13 @@ uint8_t g711_encode_pcma(int16_t sample)
 	uint32_t magnitude;
 	uint8_t mask;
 
-	/* A-law quantizes the input in units of eight.  Subtracting one before
-	 * scaling keeps the negative intervals symmetric without right-shifting
-	 * a negative integer, whose result is implementation-defined in C. */
+	/* A-law shifts the negative half of every quantization interval by
+	 * eight linear units.  Apply that bias before scaling so segment-edge
+	 * samples remain in the interval prescribed by G.711. */
 	if (sample < 0) {
-		magnitude = ((uint32_t)(-(int32_t)sample) - 1) >> 3;
+		int32_t biased = -(int32_t)sample - 8;
+
+		magnitude = biased > 0 ? (uint32_t)biased >> 3 : 0;
 		mask = G711_PCMA_NEGATIVE_MASK;
 	} else {
 		magnitude = (uint32_t)sample >> 3;
