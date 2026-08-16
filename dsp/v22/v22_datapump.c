@@ -711,11 +711,15 @@ static int begin_v22bis_transition(
 	    datapump->v22bis_receiver_initialized ||
 	    datapump->receiving_v22bis)
 		return -1;
-	if (datapump->originator) {
-		if (datapump->transmit_mode !=
-		    V22_TRANSMIT_SCRAMBLED_MARK)
-			return -1;
-	} else if (start_v22bis_rate_signal(datapump) != 0) {
+	if (datapump->originator &&
+	    datapump->transmit_mode != V22_TRANSMIT_SCRAMBLED_MARK)
+		return -1;
+	/* The periodic answer mark can favor a half-symbol timing phase.  Use the
+	 * finite rate-signal boundary to reacquire on the scrambled transition. */
+	if (qam_demodulator_reset(&datapump->demodulator) != QAM_OK)
+		return -1;
+	if (!datapump->originator &&
+	    start_v22bis_rate_signal(datapump) != 0) {
 		return -1;
 	}
 	datapump->training_state = V22_TRAINING_CONNECT_HOLD;
@@ -1311,9 +1315,15 @@ static int receive_sample(
 			    &datapump->previous_receive_point, &point,
 			    &quarter_turns) != QAM_OK ||
 		    observe_v22bis_rate_signal(
-			    datapump, quarter_turns, &handled) != 0 ||
-		    (!handled &&
-		     observe_phase_change(datapump, quarter_turns) != 0))
+			    datapump, quarter_turns, &handled) != 0)
+			return -1;
+		if (datapump->training_state !=
+		    V22_TRAINING_WAIT_SCRAMBLED_MARK) {
+			datapump->has_previous_receive_point = false;
+			return 0;
+		}
+		if (!handled &&
+		    observe_phase_change(datapump, quarter_turns) != 0)
 			return -1;
 	} else if (datapump_uses_v22bis(datapump) &&
 	    datapump->v22bis_receiver_initialized &&
