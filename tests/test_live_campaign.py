@@ -37,6 +37,7 @@ from tools.live_campaign_config import (  # noqa: E402
 from tools.live_campaign_profiles import CASES_BY_NAME  # noqa: E402
 from tools.live_campaign_report import (  # noqa: E402
     AttemptResult,
+    MATURITY_DATA,
     MATURITY_FULL,
     MATURITY_NO_CONNECT,
     MATURITY_REQUEST,
@@ -100,7 +101,10 @@ while True:
         break
     buffer.extend(data)
     if online:
-        if mode == "callback" and role == "request" and b"DIAL" in buffer:
+        if mode == "raw-wakeup" and b"\r\r" in buffer:
+            buffer.clear()
+            os.write(master, initial_payload)
+        elif mode == "callback" and role == "request" and b"DIAL" in buffer:
             buffer.clear()
             os.write(
                 master,
@@ -137,6 +141,9 @@ while True:
                 os.write(master, b"\r\nNO CARRIER\r\n")
             elif mode == "callback" and role == "request":
                 os.write(master, request_connect + initial_payload)
+                online = True
+            elif mode == "raw-wakeup":
+                os.write(master, connect)
                 online = True
             else:
                 os.write(master, connect + initial_payload)
@@ -483,6 +490,37 @@ class LiveCampaignTests(unittest.TestCase):
             for path in artifacts.directory.rglob("*"):
                 if path.is_file():
                     self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_raw_outbound_wakes_peer_before_initial_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            case = CASES_BY_NAME["v21-300-originator"]
+            scheduled = ScheduledAttempt(case, 1)
+            artifacts = self.artifacts(root, scheduled)
+            frozen = FrozenBinary(
+                root,
+                Path(sys.executable),
+                "a" * 40,
+                "b" * 64,
+                False,
+            )
+            result = run_physical_attempt(
+                self.config(root, script, "raw-wakeup"),
+                frozen,
+                scheduled,
+                1,
+                artifacts,
+                False,
+            )
+
+            self.assertEqual(result.maturity, MATURITY_DATA)
+            self.assertTrue(result.initial_data)
+            transmitted = (
+                artifacts.legs["modem"] / "terminal-tx.bin"
+            ).read_bytes()
+            self.assertIn(b"\r\r", transmitted)
 
     def test_busy_is_not_a_maturity_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

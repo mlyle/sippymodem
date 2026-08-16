@@ -35,6 +35,7 @@ if __package__:
     from .live_campaign_profiles import (
         CASES_BY_NAME,
         FAMILY_ORDER,
+        LINK_RAW,
         ROLES,
         CampaignCase,
         select_cases,
@@ -79,6 +80,7 @@ else:
     from live_campaign_profiles import (
         CASES_BY_NAME,
         FAMILY_ORDER,
+        LINK_RAW,
         ROLES,
         CampaignCase,
         select_cases,
@@ -131,6 +133,7 @@ CALLBACK_REQUEST_COMMANDS = (
 FILE_MODE = 0o600
 DIRECTORY_MODE = 0o700
 DASHBOARD_REFRESH_SECONDS = 2.0
+RAW_LINK_WAKE = b"\r\r"
 
 
 class CampaignRunError(RuntimeError):
@@ -471,6 +474,26 @@ def _setup(
             raise SetupRejected(f"{leg} rejected {command}")
 
 
+def _wake_raw_link(
+    terminal: ModemTerminal,
+    case: CampaignCase,
+    leg: str,
+    config: CampaignConfig,
+    state: _AttemptState,
+    progress: _AttemptProgress,
+) -> bool:
+    if case.link_mode != LINK_RAW:
+        return True
+    progress.set("waking raw peer")
+    try:
+        terminal.send_online(RAW_LINK_WAKE, config.setup_timeout_seconds)
+    except (LiveTerminalError, OSError, TimeoutError):
+        state.detail = "raw peer wake-up could not be sent"
+        return False
+    state.capture(leg, RAW_LINK_WAKE, b"")
+    return True
+
+
 def _exercise_online(
     terminal: ModemTerminal,
     state: _AttemptState,
@@ -617,6 +640,15 @@ def _outbound_body(
         return None
     state.connected = True
     state.report = endpoint.terminal.connect_report
+    if not _wake_raw_link(
+        endpoint.terminal,
+        scheduled.case,
+        "modem",
+        config,
+        state,
+        progress,
+    ):
+        return endpoint
     _exercise_online(
         endpoint.terminal,
         state,
@@ -793,6 +825,15 @@ def _callback_body(
         return None
     state.connected = True
     state.report = answer.terminal.connect_report
+    if not _wake_raw_link(
+        answer.terminal,
+        scheduled.case,
+        "answer",
+        config,
+        state,
+        progress,
+    ):
+        return answer
     connect_pattern = re.compile(
         rb"GETTY:CALLBACK:CONNECT:"
         + re.escape(nonce)
