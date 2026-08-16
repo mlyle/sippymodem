@@ -106,6 +106,7 @@ SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/qam_gain.c \
 	$(DSP_SOURCE_DIR)/self_sync_scrambler.c \
 	$(DSP_SOURCE_DIR)/single_tone.c \
+	$(DSP_SOURCE_DIR)/training_session.c \
 	$(DSP_SOURCE_DIR)/v8_ansam.c \
 	$(DSP_SOURCE_DIR)/v8_answering.c \
 	$(DSP_SOURCE_DIR)/v8_calling.c \

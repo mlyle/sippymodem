@@ -6,6 +6,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "fsk.h"
+#include "training_session.h"
 #include "v21.h"
 
 #include <limits.h>
@@ -94,9 +95,8 @@ struct fsk300_datapump {
 	const struct fsk300_profile *profile;
 	struct fsk_transmitter transmitter;
 	struct fsk_receiver receiver;
+	struct training_session training;
 	enum fsk300_training_state training_state;
-	uint64_t training_samples;
-	uint64_t training_timeout_samples;
 	uint64_t training_state_samples;
 	uint32_t remote_mark_samples;
 	uint32_t missing_carrier_samples;
@@ -138,7 +138,10 @@ static struct fsk300_datapump *fsk300_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->profile == NULL ||
-	    datapump->profile->id != dp->id)
+	    datapump->profile->id != dp->id ||
+	    !training_session_is_valid(&datapump->training) ||
+	    ((datapump->training_state == FSK300_TRAINING_ONLINE) !=
+	     (datapump->training.state == TRAINING_SESSION_ONLINE)))
 		return NULL;
 	return datapump;
 }
@@ -183,8 +186,12 @@ static struct dp *create_fsk300(
 		.dp_data = datapump,
 	};
 	datapump->training_state = FSK300_TRAINING_WAIT_MARK;
-	datapump->training_timeout_samples =
-		datapump_carrier_wait_ticks(modem);
+	if (training_session_init(
+		    &datapump->training,
+		    datapump_carrier_wait_ticks(modem)) != TRAINING_SESSION_OK) {
+		free(datapump);
+		return NULL;
+	}
 	operations->use_count++;
 	return &datapump->dp;
 }
@@ -282,10 +289,9 @@ static int advance_training(
 	const struct fsk_measurement *measurement,
 	unsigned int count)
 {
-	if (datapump->training_samples + count >
-	    datapump->training_timeout_samples)
+	if (training_session_advance(&datapump->training, count) !=
+	    TRAINING_SESSION_OK)
 		return DPSTAT_ERROR;
-	datapump->training_samples += count;
 
 	if (datapump->training_state == FSK300_TRAINING_WAIT_MARK) {
 		if (mark_is_present(measurement)) {
@@ -298,7 +304,9 @@ static int advance_training(
 		datapump->training_state = datapump->originator ?
 			FSK300_TRAINING_GUARD : FSK300_TRAINING_SEND_MARK;
 		datapump->training_state_samples = 0;
-		return DPSTAT_OK;
+		return training_session_note_progress(&datapump->training) ==
+			       TRAINING_SESSION_OK ?
+			       DPSTAT_OK : DPSTAT_ERROR;
 	}
 	if (datapump->training_state == FSK300_TRAINING_GUARD) {
 		datapump->training_state_samples += count;
@@ -306,7 +314,9 @@ static int advance_training(
 			return DPSTAT_OK;
 		datapump->training_state = FSK300_TRAINING_SEND_MARK;
 		datapump->training_state_samples = 0;
-		return DPSTAT_OK;
+		return training_session_note_progress(&datapump->training) ==
+			       TRAINING_SESSION_OK ?
+			       DPSTAT_OK : DPSTAT_ERROR;
 	}
 	if (datapump->training_state == FSK300_TRAINING_SEND_MARK) {
 		uint64_t required = datapump->originator ?
@@ -321,6 +331,9 @@ static int advance_training(
 		    modem_set_param(
 			    datapump->dp.modem, MDMPRM_RX_RATE,
 			    FSK300_BIT_RATE) != 0)
+			return DPSTAT_ERROR;
+		if (training_session_connect(&datapump->training) !=
+		    TRAINING_SESSION_OK)
 			return DPSTAT_ERROR;
 		datapump->training_state = FSK300_TRAINING_ONLINE;
 		datapump->missing_carrier_samples = 0;

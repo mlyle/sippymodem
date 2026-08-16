@@ -6,6 +6,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "fsk.h"
+#include "training_session.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -72,9 +73,8 @@ struct v23_datapump {
 	struct dp dp;
 	struct fsk_transmitter transmitter;
 	struct fsk_receiver receiver;
+	struct training_session training;
 	enum v23_phase phase;
-	uint64_t training_samples;
-	uint64_t training_timeout_samples;
 	uint32_t phase_samples;
 	uint32_t acquisition_samples;
 	uint32_t presentation_samples;
@@ -109,7 +109,12 @@ static struct v23_datapump *v23_from_dp(struct dp *dp)
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
-	return &datapump->dp == dp ? datapump : NULL;
+	if (&datapump->dp != dp ||
+	    !training_session_is_valid(&datapump->training) ||
+	    ((datapump->phase == V23_PHASE_ONLINE) !=
+	     (datapump->training.state == TRAINING_SESSION_ONLINE)))
+		return NULL;
+	return datapump;
 }
 
 static uint32_t presentation_limit(struct modem *modem)
@@ -165,8 +170,12 @@ static struct dp *create_v23(
 	};
 	datapump->phase = datapump->answerer ? V23_PHASE_ANSWER_TONE :
 						 V23_PHASE_WAIT_MARK;
-	datapump->training_timeout_samples =
-		datapump_carrier_wait_ticks(modem);
+	if (training_session_init(
+		    &datapump->training,
+		    datapump_carrier_wait_ticks(modem)) != TRAINING_SESSION_OK) {
+		free(datapump);
+		return NULL;
+	}
 	datapump->presentation_limit_samples = presentation_limit(modem);
 	operations->use_count++;
 	return &datapump->dp;
@@ -237,6 +246,9 @@ static enum fsk_result generate_output_sample(
 		if (datapump->phase_samples == V23_ANSWER_TONE_SAMPLES) {
 			datapump->phase = V23_PHASE_ANSWER_SILENCE;
 			datapump->phase_samples = 0;
+			if (training_session_note_progress(&datapump->training) !=
+			    TRAINING_SESSION_OK)
+				return FSK_INVALID_ARGUMENT;
 		}
 		return FSK_OK;
 	case V23_PHASE_ANSWER_SILENCE:
@@ -246,6 +258,9 @@ static enum fsk_result generate_output_sample(
 			datapump->phase = V23_PHASE_WAIT_MARK;
 			datapump->phase_samples = 0;
 			fsk_receiver_reset(&datapump->receiver);
+			if (training_session_note_progress(&datapump->training) !=
+			    TRAINING_SESSION_OK)
+				return FSK_INVALID_ARGUMENT;
 		}
 		return FSK_OK;
 	case V23_PHASE_WAIT_MARK:
@@ -319,6 +334,9 @@ static int enter_online(struct v23_datapump *datapump)
 	    modem_set_param(
 		    datapump->dp.modem, MDMPRM_RX_RATE, receive_rate) != 0)
 		return DPSTAT_ERROR;
+	if (training_session_connect(&datapump->training) !=
+	    TRAINING_SESSION_OK)
+		return DPSTAT_ERROR;
 	datapump->phase = V23_PHASE_ONLINE;
 	datapump->missing_carrier_samples = 0;
 	datapump->dp.status = DPSTAT_CONNECT;
@@ -349,7 +367,9 @@ static int advance_training(
 		datapump->phase = V23_PHASE_PRESENTATION;
 		datapump->presentation_samples = 0;
 		datapump->prelink_count = 0;
-		return DPSTAT_OK;
+		return training_session_note_progress(&datapump->training) ==
+			       TRAINING_SESSION_OK ?
+			       DPSTAT_OK : DPSTAT_ERROR;
 	}
 	if (datapump->phase == V23_PHASE_PRESENTATION) {
 		if (!measurement->ready ||
@@ -412,13 +432,10 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 			received_samples++;
 	}
 	if (datapump->phase != V23_PHASE_ONLINE) {
-		if (datapump->training_samples >
-			    datapump->training_timeout_samples ||
-		    (uint32_t)count >
-		    datapump->training_timeout_samples -
-			    datapump->training_samples)
+		if (training_session_advance(
+			    &datapump->training, (uint32_t)count) !=
+		    TRAINING_SESSION_OK)
 			return DPSTAT_ERROR;
-		datapump->training_samples += (uint32_t)count;
 	}
 	measurement = fsk_receiver_measure(&datapump->receiver);
 	if (datapump->phase != V23_PHASE_ONLINE)

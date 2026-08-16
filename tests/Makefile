@@ -365,7 +365,8 @@ CRC16_CCITT_FALSE_TEST_OBJECTS := \
 INTEGER_MATH_TEST_BINARY := $(BUILD_DIR)/test_integer_math
 INTEGER_MATH_TEST_OBJECTS := $(BUILD_DIR)/test_integer_math.o
 DATAPUMP_TIMING_TEST_BINARY := $(BUILD_DIR)/test_datapump_timing
-DATAPUMP_TIMING_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_timing.o
+DATAPUMP_TIMING_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_timing.o \
+	$(BUILD_DIR)/training_session.o
 MEMORY_REGION_TEST_BINARY := $(BUILD_DIR)/test_memory_region
 MEMORY_REGION_TEST_OBJECTS := $(BUILD_DIR)/test_memory_region.o
 PACKED_BITS_TEST_BINARY := $(BUILD_DIR)/test_packed_bits
@@ -420,6 +421,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/single_tone.o \
+	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v22_datapump.o \
 	$(BUILD_DIR)/v22_framing.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
@@ -489,6 +491,7 @@ V23_TEST_OBJECTS := $(BUILD_DIR)/test_v23.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/dc_filter.o \
 	$(BUILD_DIR)/fsk.o \
+	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v23_datapump.o
 V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v22_framing
 V22_FRAMING_TEST_OBJECTS := \
@@ -2691,6 +2694,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/single_tone.o \
+	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v22_datapump.o \
 	$(BUILD_DIR)/v22_framing.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
@@ -4622,6 +4626,10 @@ $(CRC16_CCITT_FALSE_OBJECT): \
 
 $(BUILD_DIR)/datapumps.o: \
 	$(DSP_SOURCE_DIR)/datapumps.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/training_session.o: \
+	$(DSP_SOURCE_DIR)/training_session.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/fsk.o: \
