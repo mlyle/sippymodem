@@ -169,7 +169,8 @@ static enum v90_phase3_digital_station_result receive_initial(
 			    V90_PHASE3_RETURN_LINE_RX_OK ||
 		    pcm_phase3_digital_tx_init_v90(
 			    &transmit, station->law, station->training_ucode,
-			    &station->jd) != PCM_PHASE3_DIGITAL_TX_OK)
+			    &station->jd, &handoff.phase3.dil) !=
+			    PCM_PHASE3_DIGITAL_TX_OK)
 			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 		station->receive =
 			(union v90_phase3_digital_station_receive){ 0 };

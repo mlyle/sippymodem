@@ -1549,6 +1549,9 @@ V92_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
+	$(BUILD_DIR)/v90_dil_sequence.o \
+	$(BUILD_DIR)/v90_dil.o \
+	$(BUILD_DIR)/pcm_dil_descriptor.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/pcm_j_frame.o \
@@ -1694,6 +1697,8 @@ V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
+	$(BUILD_DIR)/v90_dil_sequence.o \
+	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/v90_phase3_sd.o \
 	$(BUILD_DIR)/v90_phase3_sd_receiver.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
@@ -2156,6 +2161,9 @@ V90_PHASE3_DIGITAL_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
+	$(BUILD_DIR)/v90_dil_sequence.o \
+	$(BUILD_DIR)/v90_dil.o \
+	$(PCM_DIL_DESCRIPTOR_OBJECT) \
 	$(BUILD_DIR)/v90_phase3_sd.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \

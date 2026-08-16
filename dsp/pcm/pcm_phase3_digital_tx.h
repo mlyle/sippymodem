@@ -5,6 +5,7 @@
 
 #include "pcm_phase3_digital_prefix.h"
 #include "pcm_protocol.h"
+#include "v90_dil_sequence.h"
 #include "v90_jd.h"
 #include "v92_j.h"
 
@@ -16,6 +17,7 @@ enum pcm_phase3_digital_tx_stage {
 	PCM_PHASE3_DIGITAL_TX_JD,
 	PCM_PHASE3_DIGITAL_TX_JP,
 	PCM_PHASE3_DIGITAL_TX_PRIME,
+	PCM_PHASE3_DIGITAL_TX_DIL,
 	PCM_PHASE3_DIGITAL_TX_SCR,
 	PCM_PHASE3_DIGITAL_TX_COMPLETE,
 };
@@ -34,12 +36,13 @@ union pcm_phase3_digital_tx_sequence {
 };
 
 /* Own the common digital-modem Phase 3 network-character stream after Ja.
- * Both protocols emit Sd, Sd-bar, TRN1d, and Jd. A V.90 selection advances
- * directly from Jd to the prime suffix; only V.92 can enter Jp and the
- * zero-DIL SCR continuation. The call controller owns remote signal detection
- * and decides when the aligned SCR interval is complete. */
+ * Both protocols emit Sd, Sd-bar, TRN1d, and Jd. V.90 can continue with an
+ * exact descriptor-selected DIL after Jd-prime; V.92 alone can enter Jp and
+ * the zero-DIL SCR continuation. The call controller owns remote signal
+ * detection and decides when either continuation is complete. */
 struct pcm_phase3_digital_tx {
 	union pcm_phase3_digital_tx_sequence sequence;
+	struct v90_dil_sequence dil;
 	uint8_t jd_frame[PCM_J_FRAME_BYTES];
 	uint8_t jp_frame[PCM_J_FRAME_BYTES];
 	enum pcm_protocol protocol;
@@ -56,7 +59,8 @@ struct pcm_phase3_digital_tx {
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 	struct pcm_phase3_digital_tx *transmitter, enum g711_law law,
 	uint8_t training_ucode,
-	const struct v90_jd_parameters *jd_parameters);
+	const struct v90_jd_parameters *jd_parameters,
+	const struct v90_dil_parameters *dil_parameters);
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 	struct pcm_phase3_digital_tx *transmitter, enum g711_law law,
 	uint8_t training_ucode, const struct v92_jd *jd,
@@ -87,6 +91,11 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_jd(
 /* Latch completion of V.92 Jp. V.90 transmitters reject this operation and
  * cannot enter the Jp branch. */
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_jp(
+	struct pcm_phase3_digital_tx *transmitter);
+
+/* End a nonzero V.90 DIL on its next segment boundary. A request made at a
+ * boundary completes immediately. Zero-DIL V.90 and V.92 reject it. */
+enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_dil(
 	struct pcm_phase3_digital_tx *transmitter);
 
 /* End V.92 zero-DIL SCR on a six-symbol boundary. A request at the start of

@@ -75,6 +75,29 @@ static bool frames_are_valid(
 	       v92_jp_frame_is_valid(transmitter->jp_frame);
 }
 
+static bool dil_is_unstarted(const struct v90_dil_sequence *dil)
+{
+	return dil->segment == 0u && dil->segment_symbol == 0u &&
+	       !dil->finish_requested && !dil->complete;
+}
+
+static bool dil_is_valid(
+	const struct pcm_phase3_digital_tx *transmitter,
+	enum g711_law law)
+{
+	const struct v90_dil_sequence *dil = &transmitter->dil;
+
+	if (transmitter->protocol == PCM_PROTOCOL_V92)
+		return bytes_are_zero(
+			(const uint8_t *)dil, sizeof(*dil));
+	if (!v90_dil_parameters_are_valid(&dil->parameters) ||
+	    dil->law != law)
+		return false;
+	if (dil->parameters.segment_count != 0u)
+		return v90_dil_sequence_is_valid(dil);
+	return dil_is_unstarted(dil);
+}
+
 static bool counters_are_valid(
 	const struct pcm_phase3_digital_tx *transmitter)
 {
@@ -83,6 +106,7 @@ static bool counters_are_valid(
 		       transmitter->jp_records == 0 &&
 		       transmitter->scr_symbols == 0 &&
 		       transmitter->bit_index == 0 &&
+		       dil_is_unstarted(&transmitter->dil) &&
 		       !transmitter->finish_jd_requested &&
 		       !transmitter->finish_jp_requested &&
 		       !transmitter->finish_scr_requested;
@@ -94,6 +118,7 @@ static bool counters_are_valid(
 		return transmitter->jp_records == 0 &&
 		       transmitter->scr_symbols == 0 &&
 		       transmitter->bit_index < PCM_J_FRAME_BITS &&
+		       dil_is_unstarted(&transmitter->dil) &&
 		       !transmitter->finish_jp_requested &&
 		       !transmitter->finish_scr_requested &&
 		       !(transmitter->finish_jd_requested &&
@@ -123,11 +148,22 @@ static bool counters_are_valid(
 	}
 	if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_PRIME)
 		return transmitter->scr_symbols == 0 &&
+		       dil_is_unstarted(&transmitter->dil) &&
 		       !transmitter->finish_scr_requested &&
 		       transmitter->bit_index < PCM_PHASE3_PRIME_BITS;
-	if (transmitter->protocol == PCM_PROTOCOL_V90)
+	if (transmitter->protocol == PCM_PROTOCOL_V90) {
+		if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_DIL)
+			return transmitter->bit_index == PCM_PHASE3_PRIME_BITS &&
+			       transmitter->dil.parameters.segment_count != 0u &&
+			       !transmitter->dil.complete &&
+			       (!transmitter->dil.finish_requested ||
+				transmitter->dil.segment_symbol != 0u);
 		return transmitter->stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
-		       transmitter->bit_index == PCM_PHASE3_PRIME_BITS;
+		       transmitter->bit_index == PCM_PHASE3_PRIME_BITS &&
+		       (transmitter->dil.parameters.segment_count == 0u ?
+				dil_is_unstarted(&transmitter->dil) :
+				transmitter->dil.complete);
+	}
 	if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_SCR)
 		return transmitter->bit_index == PCM_PHASE3_PRIME_BITS &&
 		       !(transmitter->finish_scr_requested &&
@@ -143,25 +179,55 @@ static bool counters_are_valid(
 bool pcm_phase3_digital_tx_is_valid(
 	const struct pcm_phase3_digital_tx *transmitter)
 {
+	enum g711_law law;
+
 	if (transmitter == NULL ||
 	    !pcm_protocol_is_valid(transmitter->protocol) ||
 	    !stage_is_valid(transmitter->stage) ||
 	    !frames_are_valid(transmitter) ||
 	    !counters_are_valid(transmitter))
 		return false;
-	if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_PREFIX)
-		return pcm_phase3_digital_prefix_is_valid(
-			&transmitter->sequence.prefix);
-	return v90_phase3_signs_is_valid(&transmitter->sequence.signs) &&
-	       transmitter->sequence.signs.phase == V90_PHASE3_SIGNS_JD &&
-	       transmitter->sequence.signs.trn1d_symbols ==
-		       V90_PHASE3_TRN1D_MIN_SYMBOLS;
+	if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_PREFIX) {
+		if (!pcm_phase3_digital_prefix_is_valid(
+			    &transmitter->sequence.prefix))
+			return false;
+		law = transmitter->sequence.prefix.stage <=
+				PCM_PHASE3_DIGITAL_PREFIX_SD_BAR ?
+			      transmitter->sequence.prefix.sequence.sd.law :
+			      transmitter->sequence.prefix.sequence.signs.law;
+	} else {
+		if (!v90_phase3_signs_is_valid(&transmitter->sequence.signs) ||
+		    transmitter->sequence.signs.phase != V90_PHASE3_SIGNS_JD ||
+		    transmitter->sequence.signs.trn1d_symbols !=
+			    V90_PHASE3_TRN1D_MIN_SYMBOLS)
+			return false;
+		law = transmitter->sequence.signs.law;
+	}
+	return dil_is_valid(transmitter, law);
+}
+
+static bool initialize_v90_dil(
+	struct v90_dil_sequence *sequence,
+	const struct v90_dil_parameters *parameters,
+	enum g711_law law)
+{
+	if (!v90_dil_parameters_are_valid(parameters))
+		return false;
+	if (parameters->segment_count != 0u)
+		return v90_dil_sequence_init(sequence, parameters, law) ==
+		       V90_DIL_SEQUENCE_OK;
+	*sequence = (struct v90_dil_sequence){
+		.parameters = *parameters,
+		.law = law,
+	};
+	return true;
 }
 
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 	struct pcm_phase3_digital_tx *transmitter, enum g711_law law,
 	uint8_t training_ucode,
-	const struct v90_jd_parameters *jd_parameters)
+	const struct v90_jd_parameters *jd_parameters,
+	const struct v90_dil_parameters *dil_parameters)
 {
 	struct pcm_phase3_digital_tx initialized = {
 		.protocol = PCM_PROTOCOL_V90,
@@ -169,9 +235,12 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 	};
 
 	if (transmitter == NULL || jd_parameters == NULL ||
+	    dil_parameters == NULL ||
 	    v90_jd_encode(
 		    jd_parameters, initialized.jd_frame,
 		    sizeof(initialized.jd_frame)) != V90_JD_OK ||
+	    !initialize_v90_dil(
+		    &initialized.dil, dil_parameters, law) ||
 	    pcm_phase3_digital_prefix_init(
 		    &initialized.sequence.prefix, law, training_ucode) !=
 		    PCM_PHASE3_DIGITAL_PREFIX_OK ||
@@ -281,11 +350,26 @@ static enum pcm_phase3_digital_tx_result next_prime(
 	    V90_PHASE3_SIGNS_OK)
 		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
 	transmitter->bit_index++;
-	if (transmitter->bit_index == PCM_PHASE3_PRIME_BITS)
-		transmitter->stage =
-			transmitter->protocol == PCM_PROTOCOL_V92 ?
-				PCM_PHASE3_DIGITAL_TX_SCR :
-				PCM_PHASE3_DIGITAL_TX_COMPLETE;
+	if (transmitter->bit_index == PCM_PHASE3_PRIME_BITS) {
+		if (transmitter->protocol == PCM_PROTOCOL_V92)
+			transmitter->stage = PCM_PHASE3_DIGITAL_TX_SCR;
+		else if (transmitter->dil.parameters.segment_count != 0u)
+			transmitter->stage = PCM_PHASE3_DIGITAL_TX_DIL;
+		else
+			transmitter->stage = PCM_PHASE3_DIGITAL_TX_COMPLETE;
+	}
+	return PCM_PHASE3_DIGITAL_TX_OK;
+}
+
+static enum pcm_phase3_digital_tx_result next_dil(
+	struct pcm_phase3_digital_tx *transmitter,
+	struct v90_pcm_symbol *symbol)
+{
+	if (v90_dil_sequence_next(&transmitter->dil, symbol) !=
+	    V90_DIL_SEQUENCE_OK)
+		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
+	if (v90_dil_sequence_is_complete(&transmitter->dil))
+		transmitter->stage = PCM_PHASE3_DIGITAL_TX_COMPLETE;
 	return PCM_PHASE3_DIGITAL_TX_OK;
 }
 
@@ -333,6 +417,9 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_next(
 		break;
 	case PCM_PHASE3_DIGITAL_TX_PRIME:
 		result = next_prime(&next, &generated);
+		break;
+	case PCM_PHASE3_DIGITAL_TX_DIL:
+		result = next_dil(&next, &generated);
 		break;
 	case PCM_PHASE3_DIGITAL_TX_SCR:
 		result = next_scr(&next, &generated);
@@ -418,6 +505,33 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_jp(
 	struct pcm_phase3_digital_tx *transmitter)
 {
 	return request_finish(transmitter, PCM_PHASE3_DIGITAL_TX_JP);
+}
+
+enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_dil(
+	struct pcm_phase3_digital_tx *transmitter)
+{
+	struct pcm_phase3_digital_tx next;
+
+	if (!pcm_phase3_digital_tx_is_valid(transmitter))
+		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
+	if (transmitter->protocol != PCM_PROTOCOL_V90 ||
+	    transmitter->dil.parameters.segment_count == 0u ||
+	    (transmitter->stage != PCM_PHASE3_DIGITAL_TX_DIL &&
+	     !(transmitter->stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
+	       transmitter->dil.complete)))
+		return PCM_PHASE3_DIGITAL_TX_INVALID_STATE;
+	if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_COMPLETE)
+		return PCM_PHASE3_DIGITAL_TX_OK;
+	next = *transmitter;
+	if (v90_dil_sequence_request_finish(&next.dil) !=
+	    V90_DIL_SEQUENCE_OK)
+		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
+	if (v90_dil_sequence_is_complete(&next.dil))
+		next.stage = PCM_PHASE3_DIGITAL_TX_COMPLETE;
+	if (!pcm_phase3_digital_tx_is_valid(&next))
+		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
+	*transmitter = next;
+	return PCM_PHASE3_DIGITAL_TX_OK;
 }
 
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_scr(
