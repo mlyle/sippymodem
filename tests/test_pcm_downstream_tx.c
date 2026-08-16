@@ -180,9 +180,9 @@ static bool make_reference(
 	return produced == frame_count * V90_CP_FRAME_INTERVALS;
 }
 
-static struct v92_cpd_parameters cpd_parameters(void)
+static struct v92_cpd_base_parameters cpd_parameters(void)
 {
-	return (struct v92_cpd_parameters){
+	return (struct v92_cpd_base_parameters){
 		.four_times_gain_q0_16 = UINT16_C(0x4321),
 		.data_rate_number = 4u,
 		.trellis = V92_CPD_TRELLIS_16_STATE,
@@ -192,19 +192,17 @@ static struct v92_cpd_parameters cpd_parameters(void)
 
 static bool cpd_parameters_equal(
 	const struct v92_cpd_parameters *left,
-	const struct v92_cpd_parameters *right)
+	const struct v92_cpd_base_parameters *right)
 {
 	return v92_cpd_parameters_are_valid(left) &&
-	       v92_cpd_parameters_are_valid(right) &&
+	       v92_cpd_base_parameters_are_valid(right) &&
 	       left->four_times_gain_q0_16 == right->four_times_gain_q0_16 &&
 	       left->data_rate_number == right->data_rate_number &&
 	       left->trellis == right->trellis &&
 	       left->extend_e2u == right->extend_e2u &&
 	       left->acknowledges_cpu == right->acknowledges_cpu &&
-	       !left->modulus_present && !right->modulus_present &&
-	       !left->filters_present && !right->filters_present &&
-	       !left->constellations_present &&
-	       !right->constellations_present;
+	       !left->modulus_present && !left->filters_present &&
+	       !left->constellations_present;
 }
 
 static bool symbols_equal(
@@ -330,7 +328,7 @@ static bool run_v92_width(
 		.request_silence = (frame_bits & 1u) != 0u,
 		.acknowledges_cpu = true,
 	};
-	const struct v92_cpd_parameters cpd = cpd_parameters();
+	const struct v92_cpd_base_parameters cpd = cpd_parameters();
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_rx receiver;
@@ -559,8 +557,8 @@ static bool test_v92_switch_contracts(void)
 	const struct v92_suvd_parameters acknowledged_suvd = {
 		.acknowledges_cpu = true,
 	};
-	const struct v92_cpd_parameters cpd = cpd_parameters();
-	struct v92_cpd_parameters different_cpd = cpd;
+	const struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_cpd_base_parameters different_cpd = cpd;
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_tx saved;
@@ -678,9 +676,8 @@ static bool test_empty_finish(void)
 
 static bool test_contracts(void)
 {
-	const struct v92_cpd_parameters cpd = cpd_parameters();
-	struct v92_cpd_parameters invalid_cpd = cpd;
-	struct v92_cpd_parameters table_cpd = cpd;
+	const struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_cpd_base_parameters invalid_cpd = cpd;
 	const struct v92_suvd_parameters suvd = {
 		.request_silence = true,
 	};
@@ -743,18 +740,14 @@ static bool test_contracts(void)
 		      PCM_DOWNSTREAM_TX_INVALID_STATE,
 	      "protocol-specific control branch was not isolated");
 	invalid_cpd.four_times_gain_q0_16 = 0u;
-	table_cpd.modulus_present = true;
 	saved_transmitter = transmitter;
 	CHECK(pcm_downstream_tx_start_cpd(
 		      &transmitter, &invalid_cpd) ==
 		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
-	      v92_cpd_parameters_are_valid(&table_cpd) &&
-	      pcm_downstream_tx_start_cpd(&transmitter, &table_cpd) ==
-		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
 	      memcmp(&transmitter, &saved_transmitter,
 		     sizeof(transmitter)) == 0 &&
 	      !pcm_downstream_tx_is_v92_control_boundary(NULL),
-	      "invalid or table-bearing CPd control was accepted");
+	      "invalid CPd control was accepted");
 	CHECK(pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&

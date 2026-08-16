@@ -117,17 +117,16 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
 	struct pcm_downstream_tx *transmitter,
 	const struct v92_suvd_parameters *parameters);
 
-/* Replace the repeated V.92 status record with a table-free CPd, or replace
- * CPd with a new status record, at an exact source-record boundary. Optional
- * CPd modulus, filter, and constellation tables are deliberately unsupported
- * here so the hot transmitter state remains small; they need a later streamed
- * source. An identical record is idempotent at any point. A different record
- * is rejected until
+/* Replace the repeated V.92 status record with a compact, table-free CPd, or
+ * replace CPd with a new status record, at an exact source-record boundary.
+ * Optional CPd tables are outside this hot transmitter's bounded state and
+ * therefore outside its parameter type. An identical record is idempotent at
+ * any point. A different record is rejected until
  * pcm_downstream_tx_is_v92_control_boundary() reports true, preserving the
  * complete current record and all already accepted spectral look-ahead. */
 enum pcm_downstream_tx_result pcm_downstream_tx_start_cpd(
 	struct pcm_downstream_tx *transmitter,
-	const struct v92_cpd_parameters *parameters);
+	const struct v92_cpd_base_parameters *parameters);
 bool pcm_downstream_tx_is_v92_control_boundary(
 	const struct pcm_downstream_tx *transmitter);
 

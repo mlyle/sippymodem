@@ -540,10 +540,9 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
 
 enum pcm_downstream_tx_result pcm_downstream_tx_start_cpd(
 	struct pcm_downstream_tx *transmitter,
-	const struct v92_cpd_parameters *parameters)
+	const struct v92_cpd_base_parameters *parameters)
 {
 	struct pcm_downstream_tx next;
-	struct v92_cpd_base_parameters base;
 	uint8_t sequence[PCM_DOWNSTREAM_TX_CONTROL_BYTES] = { 0 };
 	size_t sequence_bits = 0u;
 
@@ -554,20 +553,10 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_cpd(
 	    transmitter->finish_requested ||
 	    !transmitter->control_configured)
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
-	if (!v92_cpd_parameters_are_valid(parameters))
+	if (!v92_cpd_base_parameters_are_valid(parameters))
 		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
-	if (parameters->modulus_present || parameters->filters_present ||
-	    parameters->constellations_present)
-		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
-	base = (struct v92_cpd_base_parameters){
-		.four_times_gain_q0_16 = parameters->four_times_gain_q0_16,
-		.data_rate_number = parameters->data_rate_number,
-		.trellis = parameters->trellis,
-		.extend_e2u = parameters->extend_e2u,
-		.acknowledges_cpu = parameters->acknowledges_cpu,
-	};
 	if (!encode_cpd_sequence(
-		    &base, transmitter->encoder.mapping.frame_bits,
+		    parameters, transmitter->encoder.mapping.frame_bits,
 		    sequence, &sequence_bits))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	if (same_v92_control(
@@ -581,7 +570,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_cpd(
 	if (!store_sequence(
 		    &next, sequence, sizeof(sequence), sequence_bits))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
-	next.control.cpd = base;
+	next.control.cpd = *parameters;
 	next.control_bit_index = 0u;
 	next.v92_control_kind = PCM_DOWNSTREAM_V92_CONTROL_CPD;
 	if (!pcm_downstream_tx_is_valid(&next))
