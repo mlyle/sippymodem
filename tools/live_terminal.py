@@ -370,7 +370,7 @@ class ModemTerminal:
         ):
             raise LiveTerminalError("invalid remote retrain completion")
         pattern = re.compile(
-            rb"(?:^|[\r\n])GETTY:RETRAIN:END:"
+            rb"GETTY:RETRAIN:END:"
             + re.escape(nonce)
             + rb":[0-9]{1,20}(?:\r\n|\r|\n)"
         )

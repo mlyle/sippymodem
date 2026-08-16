@@ -115,7 +115,7 @@ class LiveTerminalTests(unittest.TestCase):
         terminal._decoder.feed(b"CONNECT 14400\r\n")
         nonce = b"0123456789abcdef0123456789abcdef"
         start = b"GETTY:RETRAIN:START:" + nonce + b"\r\n"
-        end = b"GETTY:RETRAIN:END:" + nonce + b":1834\r\n"
+        end = b"+++GETTY:RETRAIN:END:" + nonce + b":1834\r\n"
         with (
             mock.patch.object(terminal, "_write") as write,
             mock.patch("tools.live_terminal._wait_for_descriptor"),
