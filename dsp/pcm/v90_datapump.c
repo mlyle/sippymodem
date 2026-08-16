@@ -6,6 +6,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "pcm_call.h"
+#include "training_session.h"
 #include "v90_profile.h"
 
 #include <limits.h>
@@ -16,13 +17,10 @@
 struct v90_datapump {
 	struct dp dp;
 	struct pcm_call call;
-	uint64_t training_octets;
-	uint64_t training_timeout_octets;
+	struct training_session training;
 	enum v90_modem_role role;
 	enum g711_law law;
 	bool call_started;
-	bool linked;
-	bool failed;
 };
 
 static struct dp *create_v90(
@@ -70,19 +68,21 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->role != role ||
-	    datapump->training_timeout_octets == 0 ||
-	    datapump->training_octets > datapump->training_timeout_octets ||
+	    !training_session_is_valid(&datapump->training) ||
 	    (datapump->call_started &&
 	     (!g711_law_is_valid(datapump->law) ||
 	      !pcm_call_is_valid(&datapump->call) ||
 	      datapump->call.local_role != datapump->role ||
 	      datapump->call.law != datapump->law ||
-	      (pcm_call_has_failed(&datapump->call) && !datapump->failed))) ||
-	    (!datapump->call_started && (datapump->linked || datapump->failed)) ||
-	    (!datapump->failed && datapump->linked !=
-				       pcm_call_is_online(&datapump->call)) ||
-	    (datapump->linked && dp->status != DPSTAT_CONNECT) ||
-	    (!datapump->linked && dp->status == DPSTAT_CONNECT))
+	      (pcm_call_has_failed(&datapump->call) &&
+	       !training_session_has_failed(&datapump->training)))) ||
+	    (!training_session_has_failed(&datapump->training) &&
+	     training_session_is_online(&datapump->training) !=
+		     (datapump->call_started &&
+		      pcm_call_is_online(&datapump->call))) ||
+	    (!training_session_has_failed(&datapump->training) &&
+	     training_session_is_online(&datapump->training) !=
+		     (dp->status == DPSTAT_CONNECT)))
 		return NULL;
 	return datapump;
 }
@@ -107,8 +107,13 @@ static struct dp *create_v90(
 	if (datapump == NULL)
 		return NULL;
 	datapump->role = role;
-	datapump->training_timeout_octets =
-		datapump_carrier_wait_ticks(modem);
+	if (training_session_init(
+		    &datapump->training,
+		    datapump_carrier_wait_ticks(modem)) !=
+	    TRAINING_SESSION_OK) {
+		free(datapump);
+		return NULL;
+	}
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -150,7 +155,8 @@ static bool fill_source_bits(
 	if (datapump == NULL || bits == NULL || bit_count > INT_MAX)
 		return false;
 	memset(bits, 1, bit_count);
-	if (datapump->linked && datapump->dp.modem->get_bits != NULL)
+	if (training_session_is_online(&datapump->training) &&
+	    datapump->dp.modem->get_bits != NULL)
 		supplied = modem_get_bits(
 			datapump->dp.modem, 1, bits, (int)bit_count);
 	if (supplied < 0)
@@ -203,7 +209,8 @@ static bool deliver_bits(
 			return false;
 		copied[index] = bits[index];
 	}
-	if (!datapump->linked || datapump->dp.modem->put_bits == NULL)
+	if (!training_session_is_online(&datapump->training) ||
+	    datapump->dp.modem->put_bits == NULL)
 		return true;
 	return modem_put_bits(
 		       datapump->dp.modem, 1, copied, (int)bit_count) ==
@@ -254,7 +261,9 @@ static bool enter_link(struct v90_datapump *datapump)
 		    datapump->dp.modem, MDMPRM_RX_RATE,
 		    (int)receive_rate) != 0)
 		return false;
-	datapump->linked = true;
+	if (training_session_connect(&datapump->training) !=
+	    TRAINING_SESSION_OK)
+		return false;
 	datapump->dp.status = DPSTAT_CONNECT;
 	return true;
 }
@@ -313,7 +322,8 @@ static bool process_octet(
 	}
 	if (result != PCM_CALL_OK)
 		return false;
-	if (!datapump->linked && pcm_call_is_online(&datapump->call)) {
+	if (!training_session_is_online(&datapump->training) &&
+	    pcm_call_is_online(&datapump->call)) {
 		if (!enter_link(datapump))
 			return false;
 		*connected = true;
@@ -352,18 +362,21 @@ static int process_v90_g711(
 	if (datapump == NULL || !g711_law_is_valid(law) ||
 	    receive_codewords == NULL || receive_samples == NULL ||
 	    transmit_codewords == NULL || transmit_samples == NULL ||
-	    exact_output == NULL || count <= 0 || count > MODEM_FRAG ||
-	    datapump->failed || !start_call(datapump, law)) {
+	    exact_output == NULL || count <= 0 || count > MODEM_FRAG) {
 		mute_output(law, transmit_codewords, transmit_samples, count);
 		return DPSTAT_ERROR;
 	}
+	if (training_session_has_failed(&datapump->training)) {
+		mute_output(law, transmit_codewords, transmit_samples, count);
+		return DPSTAT_ERROR;
+	}
+	if (!start_call(datapump, law))
+		goto failure;
 	for (int index = 0; index < count; ++index) {
-		if (!datapump->linked) {
-			if (datapump->training_octets >=
-			    datapump->training_timeout_octets)
-				goto failure;
-			datapump->training_octets++;
-		}
+		if (!training_session_is_online(&datapump->training) &&
+		    training_session_advance(&datapump->training, 1) !=
+			    TRAINING_SESSION_OK)
+			goto failure;
 		if (!process_octet(
 			    datapump, receive_codewords[index],
 			    &transmit_codewords[index], &connected))
@@ -376,7 +389,7 @@ static int process_v90_g711(
 	return connected ? DPSTAT_CONNECT : DPSTAT_OK;
 
 failure:
-	datapump->failed = true;
+	(void)training_session_fail(&datapump->training);
 	mute_output(law, transmit_codewords, transmit_samples, count);
 	return DPSTAT_ERROR;
 }

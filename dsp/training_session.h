@@ -42,6 +42,9 @@ struct training_session {
 };
 
 bool training_session_is_valid(const struct training_session *session);
+bool training_session_is_online(const struct training_session *session);
+bool training_session_has_failed(const struct training_session *session);
+bool training_session_is_retraining(const struct training_session *session);
 
 enum training_session_result training_session_init(
 	struct training_session *session, uint64_t deadline_ticks);

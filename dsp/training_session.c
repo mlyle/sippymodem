@@ -32,6 +32,25 @@ bool training_session_is_valid(const struct training_session *session)
 		       session->origin != TRAINING_INITIAL;
 }
 
+bool training_session_is_online(const struct training_session *session)
+{
+	return training_session_is_valid(session) &&
+	       session->state == TRAINING_SESSION_ONLINE;
+}
+
+bool training_session_has_failed(const struct training_session *session)
+{
+	return training_session_is_valid(session) &&
+	       session->state == TRAINING_SESSION_FAILED;
+}
+
+bool training_session_is_retraining(const struct training_session *session)
+{
+	return training_session_is_valid(session) &&
+	       session->state == TRAINING_SESSION_ACTIVE &&
+	       session->generation > 1;
+}
+
 enum training_session_result training_session_init(
 	struct training_session *session, uint64_t deadline_ticks)
 {

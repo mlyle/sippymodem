@@ -50,22 +50,6 @@ static struct dp_operations v34_operations = {
 	.retrain = retrain_v34,
 };
 
-static bool training_is_online(const struct v34_datapump *datapump)
-{
-	return datapump->training.state == TRAINING_SESSION_ONLINE;
-}
-
-static bool training_has_failed(const struct v34_datapump *datapump)
-{
-	return datapump->training.state == TRAINING_SESSION_FAILED;
-}
-
-static bool training_is_retraining(const struct v34_datapump *datapump)
-{
-	return datapump->training.state == TRAINING_SESSION_ACTIVE &&
-	       datapump->training.generation > 1;
-}
-
 static enum v34_station_role station_role(bool caller)
 {
 	return caller ? V34_CALLING_STATION : V34_ANSWERING_STATION;
@@ -304,19 +288,19 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 	    !v34_call_is_valid(&datapump->call) ||
 	    datapump->call.local_role != station_role(datapump->caller) ||
 	    (v34_call_has_failed(&datapump->call) &&
-	     !training_has_failed(datapump)) ||
-	    (!training_has_failed(datapump) &&
-	     training_is_online(datapump) !=
+	     !training_session_has_failed(&datapump->training)) ||
+	    (!training_session_has_failed(&datapump->training) &&
+	     training_session_is_online(&datapump->training) !=
 		     v34_call_is_online(&datapump->call) &&
-	     !(training_is_retraining(datapump) &&
+	     !(training_session_is_retraining(&datapump->training) &&
 	       !v34_call_is_online(&datapump->call))) ||
-	    (!training_has_failed(datapump) &&
+	    (!training_session_has_failed(&datapump->training) &&
 	     v34_call_is_online(&datapump->call) &&
 	     dp->status != DPSTAT_CONNECT) ||
-	    (!training_has_failed(datapump) &&
+	    (!training_session_has_failed(&datapump->training) &&
 	     !v34_call_is_online(&datapump->call) &&
 	     dp->status == DPSTAT_CONNECT &&
-	     !training_is_retraining(datapump)))
+	     !training_session_is_retraining(&datapump->training)))
 		return NULL;
 	return datapump;
 }
@@ -385,9 +369,9 @@ static int retrain_v34(struct dp *dp)
 	/* A remote or quality-triggered full retrain may begin during the guard
 	 * interval before ATO1 reaches the datapump. Join that same transaction;
 	 * the modem wrapper will report CONNECT when this generation completes. */
-	if (training_is_retraining(datapump))
+	if (training_session_is_retraining(&datapump->training))
 		return 0;
-	if (!training_is_online(datapump))
+	if (!training_session_is_online(&datapump->training))
 		return -1;
 	training = datapump->training;
 	call = datapump->call;
@@ -417,7 +401,7 @@ static bool source_mapping_frame(
 		return false;
 	bit_count = request->primary_bits + (auxiliary_bit != NULL ? 1u : 0u);
 	memset(bits, 1, bit_count);
-	if (training_is_online(datapump) &&
+	if (training_session_is_online(&datapump->training) &&
 	    datapump->dp.modem->get_bits != NULL)
 		supplied = modem_get_bits(
 			datapump->dp.modem, 1, bits, (int)bit_count);
@@ -444,7 +428,7 @@ static bool deliver_mapping_frame(
 	if (received == NULL ||
 	    received->primary_bit_count > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
-	if (!training_is_online(datapump) ||
+	if (!training_session_is_online(&datapump->training) ||
 	    datapump->dp.modem->put_bits == NULL)
 		return true;
 	memcpy(bits, received->primary_bits, received->primary_bit_count);
@@ -544,11 +528,11 @@ static int process_v34(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	if (training_has_failed(datapump)) {
+	if (training_session_has_failed(&datapump->training)) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	if (!training_is_online(datapump)) {
+	if (!training_session_is_online(&datapump->training)) {
 		if (training_session_advance(
 			    &datapump->training,
 			    (uint64_t)(unsigned int)count) !=
@@ -569,7 +553,7 @@ static int process_v34(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
-		if (training_is_online(datapump) &&
+		if (training_session_is_online(&datapump->training) &&
 		    observation.processed != V34_CALL_RETRAIN_SILENCE &&
 		    observation.next == V34_CALL_RETRAIN_SILENCE) {
 			if (training_session_start_retrain(
@@ -583,7 +567,7 @@ static int process_v34(
 			}
 			datapump->retrain_carrier_acquired = false;
 		}
-		if (!training_is_online(datapump) &&
+		if (!training_session_is_online(&datapump->training) &&
 		    observation_has_progress(&observation) &&
 		    training_session_note_progress(&datapump->training) !=
 			    TRAINING_SESSION_OK) {
@@ -591,7 +575,7 @@ static int process_v34(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
-		if (!training_is_online(datapump) &&
+		if (!training_session_is_online(&datapump->training) &&
 		    v34_call_is_online(&datapump->call)) {
 			if (!enter_link(datapump)) {
 				fail_training(datapump);
@@ -610,9 +594,9 @@ static int process_v34(
 			return DPSTAT_ERROR;
 		}
 	}
-	if (training_is_online(datapump)) {
+	if (training_session_is_online(&datapump->training)) {
 		(void)update_carrier(datapump, receive, count);
-	} else if (training_is_retraining(datapump) &&
+	} else if (training_session_is_retraining(&datapump->training) &&
 		   !datapump->retrain_carrier_acquired &&
 		   update_carrier(datapump, receive, count)) {
 		/* Once the peer has answered a full retrain, later half-duplex

@@ -48,6 +48,10 @@ static bool test_initial_training_lifecycle(void)
 	CHECK(session.state == TRAINING_SESSION_ACTIVE &&
 	      session.origin == TRAINING_INITIAL && session.generation == 1,
 	      "initial training session selected the wrong lifecycle");
+	CHECK(!training_session_is_online(&session) &&
+	      !training_session_has_failed(&session) &&
+	      !training_session_is_retraining(&session),
+	      "initial training session reported a terminal state");
 	CHECK(training_session_advance(&session, 40) == TRAINING_SESSION_OK &&
 	      session.elapsed_ticks == 40 && session.stalled_ticks == 40,
 	      "initial training clock did not advance");
@@ -63,7 +67,9 @@ static bool test_initial_training_lifecycle(void)
 		      TRAINING_SESSION_DEADLINE &&
 	      session.elapsed_ticks == 100 && session.stalled_ticks == 60 &&
 	      session.state == TRAINING_SESSION_FAILED &&
-	      training_session_is_valid(&session),
+	      training_session_is_valid(&session) &&
+	      training_session_has_failed(&session) &&
+	      !training_session_is_online(&session),
 	      "training deadline did not fail closed");
 	return true;
 }
@@ -75,7 +81,8 @@ static bool test_retraining_lifecycle(void)
 
 	CHECK(training_session_init(&session, 200) == TRAINING_SESSION_OK &&
 	      training_session_connect(&session) == TRAINING_SESSION_OK &&
-	      session.state == TRAINING_SESSION_ONLINE,
+	      session.state == TRAINING_SESSION_ONLINE &&
+	      training_session_is_online(&session),
 	      "initial training did not enter online state");
 	unchanged = session;
 	CHECK(training_session_start_retrain(&session, TRAINING_INITIAL) ==
@@ -86,7 +93,8 @@ static bool test_retraining_lifecycle(void)
 		      &session, TRAINING_LOCAL_RETRAIN) == TRAINING_SESSION_OK &&
 	      session.state == TRAINING_SESSION_ACTIVE &&
 	      session.origin == TRAINING_LOCAL_RETRAIN &&
-	      session.generation == 2 && session.elapsed_ticks == 0,
+	      session.generation == 2 && session.elapsed_ticks == 0 &&
+	      training_session_is_retraining(&session),
 	      "local retrain did not start a fresh generation");
 	CHECK(training_session_advance(&session, 25) == TRAINING_SESSION_OK &&
 	      training_session_note_progress(&session) ==
@@ -100,7 +108,9 @@ static bool test_retraining_lifecycle(void)
 	      "remote retrain did not reset transaction state");
 	CHECK(training_session_fail(&session) == TRAINING_SESSION_OK &&
 	      training_session_fail(&session) == TRAINING_SESSION_OK &&
-	      session.state == TRAINING_SESSION_FAILED,
+	      session.state == TRAINING_SESSION_FAILED &&
+	      training_session_has_failed(&session) &&
+	      !training_session_is_retraining(&session),
 	      "training failure was not idempotent");
 	return true;
 }
@@ -127,7 +137,10 @@ static bool test_invalid_and_full_width_sessions(void)
 	      "expired full-width session became invalid");
 	CHECK(training_session_init(NULL, 1) ==
 		      TRAINING_SESSION_INVALID_ARGUMENT &&
-	      !training_session_is_valid(NULL),
+	      !training_session_is_valid(NULL) &&
+	      !training_session_is_online(NULL) &&
+	      !training_session_has_failed(NULL) &&
+	      !training_session_is_retraining(NULL),
 	      "missing session was accepted");
 	return true;
 }

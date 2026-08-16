@@ -2490,6 +2490,7 @@ V90_PROFILE_TEST_OBJECTS := $(sort \
 V90_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_v90_datapump
 V90_DATAPUMP_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_datapump.o \
+	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v90_datapump.o \
 	$(BUILD_DIR)/v90_profile.o \
 	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \

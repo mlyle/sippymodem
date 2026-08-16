@@ -314,6 +314,64 @@ static bool test_forced_upstream_pairs(void)
 	return true;
 }
 
+static bool test_training_deadline(void)
+{
+	struct bit_endpoint bits = { 0 };
+	struct modem modem = endpoint_modem(MODEM_PCM_ROLE_DIGITAL, &bits);
+	struct dp_operations *operations;
+	struct dp *datapump;
+	uint8_t receive_octets[MODEM_FRAG];
+	uint8_t transmit_octets[MODEM_FRAG];
+	int16_t receive_samples[MODEM_FRAG];
+	int16_t transmit_samples[MODEM_FRAG];
+	uint8_t silence = g711_encode_pcmu(0);
+
+	modem.sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 1;
+	memset(receive_octets, silence, sizeof(receive_octets));
+	for (size_t index = 0; index < ARRAY_LENGTH(receive_samples); ++index)
+		receive_samples[index] = g711_decode_pcmu(silence);
+	CHECK(v90_datapump_register() == 0,
+	      "V.90 deadline registration failed");
+	operations = modem_dp_get_registered_ops(DP_V90);
+	datapump = operations != NULL ? operations->create(
+		&modem, DP_V90, 0, MODEM_RATE, MODEM_FRAG, operations) : NULL;
+	CHECK(datapump != NULL,
+	      "V.90 deadline data pump did not initialize");
+	for (unsigned int frame = 0;
+	     frame < MODEM_RATE / MODEM_FRAG; ++frame) {
+		bool exact = false;
+
+		CHECK(operations->process_g711(
+			      datapump, G711_LAW_PCMU,
+			      receive_octets, receive_samples,
+			      transmit_octets, transmit_samples,
+			      MODEM_FRAG, &exact) == DPSTAT_OK && exact,
+		      "V.90 training expired before its inclusive deadline");
+	}
+	{
+		bool exact = true;
+
+		CHECK(operations->process_g711(
+			      datapump, G711_LAW_PCMU,
+			      receive_octets, receive_samples,
+			      transmit_octets, transmit_samples,
+			      1, &exact) == DPSTAT_ERROR && !exact &&
+		      transmit_octets[0] == silence && transmit_samples[0] == 0,
+		      "V.90 training did not fail closed after its deadline");
+		exact = true;
+		CHECK(operations->process_g711(
+			      datapump, G711_LAW_PCMU,
+			      receive_octets, receive_samples,
+			      transmit_octets, transmit_samples,
+			      1, &exact) == DPSTAT_ERROR && !exact,
+		      "V.90 training failure was not latched");
+	}
+	CHECK(operations->delete(datapump) == 0 &&
+	      v90_datapump_unregister() == 0,
+	      "failed V.90 training retained ownership");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct bit_endpoint bits = { 0 };
@@ -375,6 +433,7 @@ int main(void)
 		{ "forced upstream pairs", test_forced_upstream_pairs },
 		{ "generated PCMU and PCMA data-pump pairs",
 		  test_generated_pairs },
+		{ "training deadline", test_training_deadline },
 		{ "registration and media validation", test_validation },
 	};
 	int failed = 0;
