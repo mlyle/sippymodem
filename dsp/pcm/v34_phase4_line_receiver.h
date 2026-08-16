@@ -9,6 +9,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+enum {
+	/* At least 300 known TRN symbols at the slowest V.34 symbol rate. */
+	V34_PHASE4_TIMING_REFINEMENT_SAMPLES = 1000,
+	V34_PHASE4_TIMING_REFINEMENT_MIN_SYMBOLS = 256,
+};
+
 enum v34_phase4_line_receiver_result {
 	/* A line sample was accepted without producing a control symbol. */
 	V34_PHASE4_LINE_RECEIVER_OK,
@@ -32,6 +38,10 @@ struct v34_phase4_line_receiver {
 	struct qam_demodulator demodulator;
 	struct v34_phase4_equalizer_receiver control;
 	struct v34_phase3_profile transmitting_profile;
+	int16_t timing_refinement_samples[
+		V34_PHASE4_TIMING_REFINEMENT_SAMPLES];
+	uint16_t timing_refinement_sample_count;
+	bool timing_refining;
 	bool failed;
 };
 

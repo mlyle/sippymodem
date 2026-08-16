@@ -2,7 +2,12 @@
 
 #include "v34_phase4_line_receiver.h"
 
+#include <math.h>
 #include <stddef.h>
+
+_Static_assert(
+	V34_PHASE4_TIMING_REFINEMENT_SAMPLES <= UINT16_MAX,
+	"Phase 4 timing-refinement count must fit its state field");
 
 static enum v34_station_role transmitting_role(
 	const struct v34_phase4_equalizer_receiver *control)
@@ -14,6 +19,13 @@ bool v34_phase4_line_receiver_is_valid(
 	const struct v34_phase4_line_receiver *receiver)
 {
 	return receiver != NULL &&
+	       (receiver->timing_refining ?
+		(receiver->timing_refinement_sample_count <
+			 V34_PHASE4_TIMING_REFINEMENT_SAMPLES &&
+		 !receiver->failed &&
+		 receiver->control.stage ==
+			 V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN) :
+		receiver->timing_refinement_sample_count == 0) &&
 	       v34_phase3_profile_is_valid(
 		       &receiver->transmitting_profile) &&
 	       qam_demodulator_is_valid(&receiver->demodulator) &&
@@ -143,8 +155,7 @@ v34_phase4_line_receiver_expect_e(
 		receiver, v34_phase4_equalizer_receiver_expect_e);
 }
 
-enum v34_phase4_line_receiver_result
-v34_phase4_line_receiver_sample(
+static enum v34_phase4_line_receiver_result receive_sample_direct(
 	struct v34_phase4_line_receiver *receiver, int16_t sample,
 	struct v34_mp_receive_event *event)
 {
@@ -195,6 +206,160 @@ v34_phase4_line_receiver_sample(
 	*receiver = next;
 	if (result == V34_PHASE4_LINE_RECEIVER_RECORD_READY)
 		*event = emitted;
+	return result;
+}
+
+static bool refinement_result_is_valid(
+	enum v34_phase4_line_receiver_result result)
+{
+	return result == V34_PHASE4_LINE_RECEIVER_OK ||
+	       result == V34_PHASE4_LINE_RECEIVER_SYMBOL;
+}
+
+static bool score_timing_phase(
+	const struct v34_phase4_line_receiver *source, uint64_t phase,
+	struct v34_phase4_line_receiver *candidate, double *average_error)
+{
+	struct v34_mp_receive_event ignored = { 0 };
+
+	*candidate = *source;
+	candidate->timing_refining = false;
+	candidate->timing_refinement_sample_count = 0;
+	candidate->demodulator.locked_phase_units =
+		phase % candidate->demodulator.symbol_period_units;
+	candidate->demodulator.recovery_pending = false;
+	candidate->demodulator.recovery_fraction = 0.0;
+	for (size_t index = 0;
+	     index < source->timing_refinement_sample_count; ++index) {
+		enum v34_phase4_line_receiver_result result =
+			receive_sample_direct(
+				candidate,
+				source->timing_refinement_samples[index],
+				&ignored);
+
+		if (!refinement_result_is_valid(result))
+			return false;
+	}
+	if (candidate->control.trn_error_symbols <
+	    V34_PHASE4_TIMING_REFINEMENT_MIN_SYMBOLS)
+		return false;
+	*average_error = candidate->control.trn_squared_error /
+		candidate->control.trn_error_symbols;
+	return isfinite(*average_error) &&
+	       v34_phase4_line_receiver_is_valid(candidate);
+}
+
+static enum v34_phase4_line_receiver_result refine_symbol_timing(
+	struct v34_phase4_line_receiver *receiver)
+{
+	static const double REQUIRED_IMPROVEMENT = 0.98;
+	struct v34_phase4_line_receiver reference;
+	struct v34_phase4_line_receiver best;
+	double reference_error;
+	double best_error;
+	uint64_t reference_phase = receiver->demodulator.locked_phase_units;
+	uint64_t best_phase = reference_phase;
+	uint64_t fine_step;
+
+	if (!score_timing_phase(
+		    receiver, reference_phase, &reference, &reference_error))
+		return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
+	best = reference;
+	best_error = reference_error;
+	for (size_t index = 0;
+	     index < receiver->demodulator.timing_candidate_count; ++index) {
+		struct v34_phase4_line_receiver candidate;
+		double error;
+		uint64_t phase =
+			index * receiver->demodulator.timing_step_units;
+
+		if (score_timing_phase(
+			    receiver, phase, &candidate, &error) &&
+		    error < best_error) {
+			best = candidate;
+			best_error = error;
+			best_phase = phase;
+		}
+	}
+	/* Known TRN supplies an exact error metric. Refine one half of a coarse
+	 * timing bin on either side of the best candidate. */
+	fine_step = receiver->demodulator.timing_step_units / 8u;
+	if (fine_step != 0) {
+		for (int step = -4; step <= 4; ++step) {
+			struct v34_phase4_line_receiver candidate;
+			double error;
+			int64_t shifted = (int64_t)best_phase +
+				(int64_t)step * (int64_t)fine_step;
+			uint64_t phase;
+
+			while (shifted < 0)
+				shifted += (int64_t)receiver->demodulator
+					.symbol_period_units;
+			phase = (uint64_t)shifted %
+				receiver->demodulator.symbol_period_units;
+			if (score_timing_phase(
+				    receiver, phase, &candidate, &error) &&
+			    error < best_error) {
+				best = candidate;
+				best_error = error;
+			}
+		}
+	}
+	if (best_error >= reference_error * REQUIRED_IMPROVEMENT)
+		best = reference;
+	if (!v34_phase4_line_receiver_is_valid(&best))
+		return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
+	*receiver = best;
+	return V34_PHASE4_LINE_RECEIVER_SYMBOL;
+}
+
+enum v34_phase4_line_receiver_result
+v34_phase4_line_receiver_sample(
+	struct v34_phase4_line_receiver *receiver, int16_t sample,
+	struct v34_mp_receive_event *event)
+{
+	struct v34_phase4_line_receiver next;
+	enum v34_phase4_line_receiver_result result;
+
+	if (!v34_phase4_line_receiver_is_valid(receiver) || event == NULL)
+		return V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT;
+	if (!receiver->timing_refining) {
+		result = receive_sample_direct(receiver, sample, event);
+		if (result != V34_PHASE4_LINE_RECEIVER_S_DETECTED)
+			return result;
+		next = *receiver;
+		next.timing_refining = true;
+		if (!v34_phase4_line_receiver_is_valid(&next)) {
+			receiver->failed = true;
+			return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
+		}
+		*receiver = next;
+		return result;
+	}
+	next = *receiver;
+	next.timing_refinement_samples[
+		next.timing_refinement_sample_count++] = sample;
+	if (next.timing_refinement_sample_count <
+	    V34_PHASE4_TIMING_REFINEMENT_SAMPLES) {
+		if (!v34_phase4_line_receiver_is_valid(&next)) {
+			receiver->failed = true;
+			return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
+		}
+		*receiver = next;
+		return V34_PHASE4_LINE_RECEIVER_OK;
+	}
+	result = refine_symbol_timing(&next);
+	if (result != V34_PHASE4_LINE_RECEIVER_SYMBOL) {
+		next.timing_refining = false;
+		next.timing_refinement_sample_count = 0;
+		next.failed = true;
+		if (v34_phase4_line_receiver_is_valid(&next))
+			*receiver = next;
+		else
+			receiver->failed = true;
+		return result;
+	}
+	*receiver = next;
 	return result;
 }
 

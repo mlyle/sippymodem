@@ -429,7 +429,8 @@ static bool handle_record(
 
 static bool run_line_case(
 	enum v34_station_role role,
-	enum v34_constellation_size constellation)
+	enum v34_constellation_size constellation,
+	bool shift_timing_after_s)
 {
 	struct v34_phase3_profile profile = profile_for(role);
 	struct line_source source = {
@@ -517,8 +518,15 @@ static bool run_line_case(
 			CHECK(memcmp(&event, &saved_event, sizeof(event)) == 0,
 			      "non-record line result changed the MP event");
 		}
-		if (result == V34_PHASE4_LINE_RECEIVER_S_DETECTED)
+		if (result == V34_PHASE4_LINE_RECEIVER_S_DETECTED) {
 			answer_s_events++;
+			if (shift_timing_after_s)
+				receiver.demodulator.locked_phase_units =
+					(receiver.demodulator.locked_phase_units +
+					 receiver.demodulator.symbol_period_units /
+						 2u) %
+					receiver.demodulator.symbol_period_units;
+		}
 		e_complete =
 			result == V34_PHASE4_LINE_RECEIVER_E_COMPLETE;
 	}
@@ -573,9 +581,16 @@ static bool test_generated_line_sequences(void)
 		     constellation < ARRAY_LENGTH(CONSTELLATIONS);
 		     ++constellation)
 			if (!run_line_case(
-				    ROLES[role], CONSTELLATIONS[constellation]))
+				    ROLES[role], CONSTELLATIONS[constellation],
+				    false))
 				return false;
 	return true;
+}
+
+static bool test_known_trn_timing_refinement(void)
+{
+	return run_line_case(
+		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, true);
 }
 
 static bool test_result_names(void)
@@ -607,6 +622,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated line sequences", test_generated_line_sequences },
+		{ "known TRN timing refinement",
+		  test_known_trn_timing_refinement },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;
