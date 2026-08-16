@@ -383,7 +383,8 @@ static bool run_exchange(
 	CHECK(counts.cpd == 1u && counts.status_suvd >= 1u &&
 	      station.transmit_stage ==
 		      V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
-	      !station.transmit_acknowledges_cpu,
+	      !station.transmit_acknowledges_cpu &&
+	      !v92_phase4_digital_station_is_ed_ready(&station),
 	      "station did not send one CPd followed by SUVd: %zu/%zu/%zu "
 	      "events=%zu suvu=%u stage=%u child=%u/%u frame=%llu bit=%zu "
 	      "rx=%u errors=%llu",
@@ -436,7 +437,9 @@ static bool run_exchange(
 		}
 	}
 	for (size_t symbol = 0u;
-	     counts.acknowledged_suvd == 0u && symbol < DOWNSTREAM_LIMIT;
+	     (counts.acknowledged_suvd == 0u ||
+	      !v92_phase4_digital_station_is_ed_ready(&station)) &&
+		     symbol < DOWNSTREAM_LIMIT;
 	     ++symbol)
 		CHECK(clock_downstream(
 			      &station, &downstream_rx, &counts, &cpd,
@@ -454,6 +457,7 @@ static bool run_exchange(
 	      v92_phase4_digital_station_cpu_parameters(
 		      &station, &retained) &&
 	      v92_phase4_digital_station_peer_acknowledged_cpd(&station) &&
+	      v92_phase4_digital_station_is_ed_ready(&station) &&
 	      cpu_equal(&retained, &cpu) &&
 	      v92_phase4_digital_station_is_valid(&station) &&
 	      !v92_phase4_digital_station_has_failed(&station),
@@ -654,6 +658,16 @@ static bool run_paired_station_exchange(
 				      symbol);
 		}
 	}
+	for (size_t symbol = 0u;
+	     ready && !v92_phase4_digital_station_is_ed_ready(&digital) &&
+		     symbol < DOWNSTREAM_LIMIT;
+	     ++symbol) {
+		uint8_t ignored;
+
+		CHECK(v92_phase4_digital_station_transmit(&digital, &ignored) ==
+			      V92_PHASE4_DIGITAL_STATION_OK,
+		      "paired digital handoff stopped at %zu", symbol);
+	}
 	expected_cpu = cpu;
 	expected_cpu.acknowledges_cpd = true;
 	CHECK(ready && v92_phase4_analog_station_is_e2u_ready(&analog) &&
@@ -664,6 +678,7 @@ static bool run_paired_station_exchange(
 		      &digital, &retained_cpu) &&
 	      cpu_equal(&retained_cpu, &expected_cpu) &&
 	      v92_phase4_digital_station_peer_acknowledged_cpd(&digital) &&
+	      v92_phase4_digital_station_is_ed_ready(&digital) &&
 	      analog.suvd.request_silence == suvd.request_silence &&
 	      v92_phase4_analog_station_handoff(&analog, &handoff) ==
 		      V92_PHASE4_ANALOG_STATION_OK &&

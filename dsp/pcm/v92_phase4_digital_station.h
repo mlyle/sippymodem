@@ -41,6 +41,7 @@ struct v92_phase4_digital_station {
 	struct v92_cpd_base_parameters cpd;
 	struct v92_suvu_parameters suvu;
 	uint64_t cpd_start_frame;
+	uint64_t status_start_frame;
 	enum v92_phase4_digital_station_tx_stage transmit_stage;
 	bool request_silence;
 	bool suvu_received;
@@ -84,6 +85,12 @@ bool v92_phase4_digital_station_cpu_parameters(
 
 /* Report whether a valid SUVu or CPu has acknowledged the selected CPd. */
 bool v92_phase4_digital_station_peer_acknowledged_cpd(
+	const struct v92_phase4_digital_station *station);
+
+/* Ed may replace the repeated downstream status once a complete CPu has been
+ * accepted, its selected CPd has been acknowledged, and the downstream status
+ * has been changed to acknowledge CPu. */
+bool v92_phase4_digital_station_is_ed_ready(
 	const struct v92_phase4_digital_station *station);
 
 const char *v92_phase4_digital_station_result_name(
