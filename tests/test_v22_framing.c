@@ -323,21 +323,23 @@ static bool test_v22bis_1200_constellation(void)
 			points[quadrant].quadrature * expected.in_phase;
 		dot = points[quadrant].in_phase * expected.in_phase +
 		      points[quadrant].quadrature * expected.quadrature;
-		CHECK(fabs(cross) <= 1e-12 && dot > 0.0,
-		      "V.22bis 1200-bit/s point %u left its 01 ray", quadrant);
+		CHECK(fabs(cross) <= 1e-12 && dot > 0.0 &&
+			      points[quadrant].in_phase == expected.in_phase &&
+			      points[quadrant].quadrature == expected.quadrature,
+		      "V.22bis 1200-bit/s point %u left its Figure 2 01 element",
+		      quadrant);
 		power = points[quadrant].in_phase *
 				points[quadrant].in_phase +
 			points[quadrant].quadrature *
 				points[quadrant].quadrature;
-		CHECK(fabs(power - 1.0) <= 1e-12,
+		CHECK(fabs(power - 10.0 / 18.0) <= 1e-12,
 		      "V.22bis 1200-bit/s point %u changed power", quadrant);
 		signalling_power += power;
 	}
 	signalling_power /= QPSK_QUADRANT_COUNT;
 	CHECK(fabs(online_power - 10.0 / 18.0) <= 1e-12 &&
-		      fabs(signalling_power - 1.0) <= 1e-12 &&
-		      fabs(signalling_power / online_power - 18.0 / 10.0) <=
-			      1e-12,
+		      fabs(signalling_power - 10.0 / 18.0) <= 1e-12 &&
+		      fabs(signalling_power / online_power - 1.0) <= 1e-12,
 	      "V.22bis 1200-to-2400 transition power changed");
 	CHECK(fabs(points[0].in_phase - 3.0 * points[0].quadrature) <=
 		      1e-12 &&

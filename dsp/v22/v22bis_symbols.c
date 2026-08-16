@@ -8,8 +8,6 @@
 
 static const double V22BIS_COORDINATE_SCALE =
 	0.23570226039551584146694812070162; /* 1 / sqrt(18) */
-static const double V22BIS_1200_POINT_SCALE =
-	1.3416407864998738178455042012388; /* sqrt(18 / 10) */
 
 static bool bits_are_valid(
 	const uint8_t bits[V22BIS_BITS_PER_SYMBOL])
@@ -175,9 +173,7 @@ enum v22_framing_result v22bis_1200_constellation_point(
 		    (uint8_t)((quadrant << 2) | 1u), &next) !=
 		    V22_FRAMING_OK)
 		return V22_FRAMING_INVALID_ARGUMENT;
-	/* Keep the four 1200-bit/s 01 rays at the unit peak of the 16-way set. */
-	next.in_phase *= V22BIS_1200_POINT_SCALE;
-	next.quadrature *= V22BIS_1200_POINT_SCALE;
+	/* V.22bis 2.5.2.2 selects the unscaled Figure 2 element labelled 01. */
 	if (!point_is_finite(&next))
 		return V22_FRAMING_INVALID_ARGUMENT;
 	*point = next;
