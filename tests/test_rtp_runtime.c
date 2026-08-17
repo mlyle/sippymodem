@@ -79,6 +79,7 @@ static bool test_owns_bounded_media_storage(void)
 	config_init(&config);
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 2;
+	config.media.remote_clock = false;
 	runtime = rtp_runtime_create(&config.media, &recorder);
 	CHECK(runtime != NULL, "RTP runtime creation failed");
 	endpoint = rtp_runtime_endpoint(runtime);
@@ -171,6 +172,7 @@ static bool test_buffers_scheduler_catchup_burst(void)
 	config_init(&config);
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 2;
+	config.media.remote_clock = false;
 	runtime = rtp_runtime_create(&config.media, NULL);
 	CHECK(runtime != NULL, "catch-up RTP runtime creation failed");
 	endpoint = rtp_runtime_endpoint(runtime);
@@ -235,6 +237,66 @@ static bool test_buffers_scheduler_catchup_burst(void)
 	return true;
 }
 
+static bool test_buffers_remote_clock_backlog(void)
+{
+	enum {
+		FRAME_SAMPLES = 8,
+		FRAME_COUNT = 64,
+	};
+	struct app_config config;
+	struct rtp_runtime *runtime;
+	struct rtp_endpoint *endpoint;
+	struct rtp_receiver *receiver;
+	uint8_t payload[FRAME_SAMPLES];
+	uint8_t played[FRAME_SAMPLES];
+
+	config_init(&config);
+	config.media.frame_duration_ms = 1;
+	config.media.jitter_buffer_ms = 2;
+	config.media.remote_clock = true;
+	runtime = rtp_runtime_create(&config.media, NULL);
+	CHECK(runtime != NULL, "remote-clock RTP runtime creation failed");
+	endpoint = rtp_runtime_endpoint(runtime);
+	receiver = &endpoint->stream->receiver;
+
+	for (size_t frame = 0; frame < FRAME_COUNT; ++frame) {
+		struct rtp_packet_view packet = {
+			.header = {
+				.payload_type = 0,
+				.sequence = (uint16_t)frame,
+				.timestamp = 1000 +
+					(uint32_t)(frame * FRAME_SAMPLES),
+				.ssrc = 1,
+			},
+			.payload = payload,
+			.payload_size = sizeof(payload),
+		};
+
+		memset(payload, (int)(frame + 1u), sizeof(payload));
+		CHECK(rtp_receiver_push(receiver, &packet) ==
+			      RTP_RECEIVE_ACCEPTED,
+		      "remote-clock frame %zu exceeded its backlog", frame);
+	}
+	CHECK(receiver->stats.early_samples == 0,
+	      "remote-clock backlog discarded future media");
+	for (size_t prefill = 0; prefill < 2; ++prefill)
+		CHECK(rtp_receiver_play(
+			      receiver, played, sizeof(played), NULL),
+		      "remote-clock prefill did not play");
+	for (size_t frame = 0; frame < FRAME_COUNT; ++frame) {
+		CHECK(rtp_receiver_play(
+			      receiver, played, sizeof(played), NULL),
+		      "remote-clock backlog frame %zu did not play", frame);
+		for (size_t sample = 0; sample < sizeof(played); ++sample)
+			CHECK(played[sample] == (uint8_t)(frame + 1u),
+			      "remote-clock frame %zu sample %zu changed",
+			      frame, sample);
+	}
+
+	rtp_runtime_destroy(runtime);
+	return true;
+}
+
 static bool test_rejects_unusable_media_config(void)
 {
 	struct app_config config;
@@ -263,6 +325,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "bounded media storage", test_owns_bounded_media_storage },
 		{ "scheduler catch-up burst", test_buffers_scheduler_catchup_burst },
+		{ "remote-clock backlog", test_buffers_remote_clock_backlog },
 		{ "unusable media config", test_rejects_unusable_media_config },
 	};
 	unsigned int failures = 0;

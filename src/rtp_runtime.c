@@ -16,6 +16,7 @@
 
 enum {
 	SAMPLES_PER_MILLISECOND = MEDIA_SAMPLE_RATE / 1000,
+	REMOTE_CLOCK_BACKLOG_MILLISECONDS = 2000,
 };
 
 struct rtp_identity {
@@ -83,6 +84,19 @@ static bool calculate_storage(const struct media_config *config,
 	 * Reserve those frames beyond the normal prefill window so an in-order
 	 * burst is not rejected before the scheduler catches up. */
 	playout_window = frame * (MEDIA_MAX_CATCHUP_FRAMES + 1);
+	if (config->remote_clock) {
+		size_t remote_backlog =
+			REMOTE_CLOCK_BACKLOG_MILLISECONDS *
+			SAMPLES_PER_MILLISECOND;
+
+		/* A remote-clocked host consumes every accepted packet immediately,
+		 * without adding this reserve to playout latency.  Keep enough future
+		 * timestamps to survive an ordinary process-scheduling pause; otherwise
+		 * the first packet beyond the small wall-clock catch-up window is rejected
+		 * and can no longer provide the clock event needed to catch up. */
+		if (playout_window < remote_backlog)
+			playout_window = remote_backlog;
+	}
 	if (prefill > (size_t)INT32_MAX - playout_window)
 		return false;
 	*frame_samples = frame;
