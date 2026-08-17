@@ -146,6 +146,10 @@ static bool test_pcm_categories(void)
 		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x0d),
 		UINT8_C(0x27),
 	};
+	static const uint8_t repeated_analog_access[] = {
+		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x0d),
+		UINT8_C(0x0d), UINT8_C(0x27),
+	};
 	struct v8_menu menu;
 	struct v8_menu decoded;
 	uint8_t encoded[V8_MAX_INFORMATION_OCTETS];
@@ -182,6 +186,15 @@ static bool test_pcm_categories(void)
 	      decoded.pstn_access == 0 && decoded.pcm_present &&
 	      decoded.pstn_access_present && !decoded.lapm,
 	      "V.8 analog PSTN access presence was lost");
+	CHECK(v8_menu_decode(
+		      repeated_analog_access,
+		      ARRAY_LENGTH(repeated_analog_access), &decoded) ==
+		      V8_MENU_OK &&
+	      decoded.modulations == V8_MODULATION_V34_DUPLEX &&
+	      decoded.pcm_availability == V8_PCM_ANALOG &&
+	      decoded.pstn_access == 0 && decoded.pcm_present &&
+	      decoded.pstn_access_present,
+	      "V.8 repeated identical PSTN access was not tolerated");
 	return true;
 }
 
@@ -203,9 +216,9 @@ static bool test_pcm_category_rejection(void)
 		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x0d),
 		UINT8_C(0x27), UINT8_C(0x27),
 	};
-	static const uint8_t duplicate_access[] = {
+	static const uint8_t conflicting_access[] = {
 		UINT8_C(0xc1), UINT8_C(0x65), UINT8_C(0x0d),
-		UINT8_C(0x0d), UINT8_C(0x27),
+		UINT8_C(0x8d), UINT8_C(0x27),
 	};
 	struct v8_menu unchanged = {
 		.modulations = UINT16_MAX,
@@ -228,7 +241,7 @@ static bool test_pcm_category_rejection(void)
 		      duplicate_pcm, ARRAY_LENGTH(duplicate_pcm),
 		      V8_MENU_MALFORMED) &&
 	      decode_has_result(
-		      duplicate_access, ARRAY_LENGTH(duplicate_access),
+		      conflicting_access, ARRAY_LENGTH(conflicting_access),
 		      V8_MENU_MALFORMED) &&
 	      v8_pcm_call_menu_init(
 		      &unchanged, 0, 0, false) == V8_MENU_INVALID_ARGUMENT &&

@@ -303,9 +303,15 @@ enum v8_menu_result v8_menu_decode(
 			decoded.pcm_availability = category >> 5;
 			decoded.pcm_present = true;
 		} else if (tag == V8_PSTN_ACCESS_TAG) {
-			if (decoded.pstn_access_present)
+			uint8_t access = category >> 5;
+
+			/* Some deployed peers repeat the unchanged access category.
+			 * It carries no new information; conflicting repetitions are
+			 * still malformed. */
+			if (decoded.pstn_access_present &&
+			    decoded.pstn_access != access)
 				return V8_MENU_MALFORMED;
-			decoded.pstn_access = category >> 5;
+			decoded.pstn_access = access;
 			decoded.pstn_access_present = true;
 		}
 	}
