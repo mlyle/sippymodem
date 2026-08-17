@@ -545,10 +545,12 @@ static bool test_initialization_failures(void)
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
 	      "null initialization input changed the stream");
 	configuration.primary_data_rate_2400_bps_units = 9;
-	CHECK(initialization_is_rejected(
-		      &configuration,
-		      V34_DATA_STREAM_INVALID_ARGUMENT),
-	      "rate above the Phase 3 projection was accepted");
+	CHECK(v34_data_stream_init(&rejected, &configuration) ==
+		      V34_DATA_STREAM_OK &&
+	      v34_data_stream_is_valid(&rejected) &&
+	      rejected.transmitter.line.carrier.geometry
+			      .primary_data_rate_2400_bps_units == 9,
+	      "Phase 2 projection incorrectly limited the Phase 4 stream");
 	configuration = configuration_fixture();
 	configuration.primary_data_rate_2400_bps_units = 1;
 	CHECK(initialization_is_rejected(

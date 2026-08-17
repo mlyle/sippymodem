@@ -51,9 +51,6 @@ static bool receive_matches_direction(
 		       receive->transmitting_profile.symbol_rate &&
 	       receive->geometry.primary_data_rate_2400_bps_units ==
 		       direction->primary_data_rate_2400_bps_units &&
-	       receive->geometry.primary_data_rate_2400_bps_units <=
-		       receive->transmitting_profile
-			       .projected_data_rate_2400_bps_units &&
 	       receive->geometry.auxiliary_channel_enabled ==
 		       auxiliary_channel_enabled &&
 	       v34_power_normalizer_is_valid(&receive->normalizer) &&

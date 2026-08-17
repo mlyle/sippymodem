@@ -183,6 +183,19 @@ static bool test_validation_and_transactionality(void)
 	struct v34_data_startup destination;
 	struct v34_data_startup prepared;
 
+	caller.projected_data_rate_2400_bps_units = 4;
+	answerer.projected_data_rate_2400_bps_units = 5;
+	CHECK(v34_data_startup_prepare(
+		      &prepared, &mode, &caller, &answerer, 8000, 0.01) ==
+		      V34_DATA_STARTUP_OK &&
+	      v34_data_startup_is_valid(&prepared) &&
+	      prepared.transmit.schedule.geometry
+			      .primary_data_rate_2400_bps_units == 8 &&
+	      prepared.receive.geometry
+			      .primary_data_rate_2400_bps_units == 9,
+	      "Phase 2 projections incorrectly limited Phase 4 startup");
+	caller = caller_profile();
+	answerer = answerer_profile();
 	memset(&destination, 0xa5, sizeof(destination));
 	CHECK(v34_data_startup_prepare(
 		      NULL, &mode, &caller, &answerer, 8000, 0.01) ==

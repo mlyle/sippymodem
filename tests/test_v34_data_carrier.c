@@ -649,6 +649,11 @@ static bool test_transactional_validation(void)
 		      &other_geometry, V34_SYMBOL_RATE_3000, 7, true) ==
 		      V34_FRAME_SCHEDULE_OK,
 	      "other geometry did not initialize");
+	CHECK(v34_data_carrier_init(
+		      &carrier, &limited_profile, &fixture.geometry,
+		      &fixture.normalizer, 8000) == V34_DATA_CARRIER_OK &&
+	      v34_data_carrier_is_valid(&carrier),
+	      "Phase 2 projection incorrectly limited Phase 4 carrier");
 	memset(&carrier, 0xa5, sizeof(carrier));
 	CHECK(v34_data_carrier_init(
 		      NULL, &fixture.profile, &fixture.geometry,
@@ -657,10 +662,6 @@ static bool test_transactional_validation(void)
 	      v34_data_carrier_init(
 		      &carrier, NULL, &fixture.geometry, &fixture.normalizer,
 		      8000) == V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      v34_data_carrier_init(
-		      &carrier, &limited_profile, &fixture.geometry,
-		      &fixture.normalizer, 8000) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
 	      v34_data_carrier_init(
 		      &carrier, &fixture.profile, &other_geometry,
 		      &fixture.normalizer, 8000) ==

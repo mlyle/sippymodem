@@ -134,8 +134,6 @@ static bool data_configuration_is_valid(
 	       v34_frame_geometry_is_valid(geometry) &&
 	       v34_power_normalizer_is_valid(normalizer) &&
 	       geometry->symbol_rate == profile->symbol_rate &&
-	       geometry->primary_data_rate_2400_bps_units <=
-		       profile->projected_data_rate_2400_bps_units &&
 	       geometry->high_mapping_frame_bits ==
 		       normalizer->parameters.mapping_frame_bits;
 }

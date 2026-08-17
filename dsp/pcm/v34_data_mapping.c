@@ -31,9 +31,6 @@ bool v34_data_mapping_is_valid(
 	       v34_frame_schedule_is_valid(&mapping->schedule) &&
 	       mapping->schedule.geometry.symbol_rate ==
 		       mapping->transmitting_profile.symbol_rate &&
-	       mapping->schedule.geometry.primary_data_rate_2400_bps_units <=
-		       mapping->transmitting_profile
-			       .projected_data_rate_2400_bps_units &&
 	       mapping->schedule.data_frame_in_superframe + 1u ==
 		       mapping->schedule.geometry.data_frames_per_superframe &&
 	       mapping->schedule.next_mapping_frame == 0 &&
@@ -95,9 +92,7 @@ enum v34_data_mapping_result v34_data_mapping_prepare(
 
 	if (mapping == NULL ||
 	    !v34_phase3_profile_is_valid(transmitting_profile) ||
-	    !v34_data_direction_parameters_are_valid(parameters) ||
-	    parameters->primary_data_rate_2400_bps_units >
-		    transmitting_profile->projected_data_rate_2400_bps_units)
+	    !v34_data_direction_parameters_are_valid(parameters))
 		return V34_DATA_MAPPING_INVALID_ARGUMENT;
 	result = geometry_result(v34_frame_geometry_init(
 		&geometry, transmitting_profile->symbol_rate,

@@ -170,6 +170,16 @@ static bool test_validation_and_transactionality(void)
 		      V34_DATA_MAPPING_OUT_OF_RANGE &&
 	      memcmp(&destination, saved, sizeof(destination)) == 0,
 	      "unsupported symbol-rate geometry changed the destination");
+	parameters = parameters_fixture();
+	profile = profile_fixture(V34_CALLING_STATION);
+	profile.projected_data_rate_2400_bps_units = 4;
+	CHECK(v34_data_mapping_prepare(
+		      &prepared, &profile, &parameters, false) ==
+		      V34_DATA_MAPPING_OK &&
+	      v34_data_mapping_is_valid(&prepared) &&
+	      prepared.schedule.geometry
+			      .primary_data_rate_2400_bps_units == 8,
+	      "Phase 2 projection incorrectly limited Phase 4 mapping");
 
 	parameters = parameters_fixture();
 	profile = profile_fixture(V34_CALLING_STATION);

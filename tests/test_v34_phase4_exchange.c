@@ -146,6 +146,19 @@ static struct v34_mp_record mp_record(enum v34_station_role role)
 	return record;
 }
 
+static struct v34_mp_parameters *mp_common(struct v34_mp_record *record)
+{
+	return record->type == V34_MP_RECORD_TYPE0 ?
+		&record->parameters.type0 : &record->parameters.type1.common;
+}
+
+static const struct v34_mp_parameters *mp_common_const(
+	const struct v34_mp_record *record)
+{
+	return record->type == V34_MP_RECORD_TYPE0 ?
+		&record->parameters.type0 : &record->parameters.type1.common;
+}
+
 static bool mp_records_are_equal(
 	const struct v34_mp_record *left,
 	const struct v34_mp_record *right)
@@ -195,8 +208,10 @@ phase4_configuration(enum v34_station_role role)
 	};
 }
 
-static bool endpoint_init(
-	struct endpoint *endpoint, enum v34_station_role role)
+static bool endpoint_init_with_rates(
+	struct endpoint *endpoint, enum v34_station_role role,
+	uint8_t local_projected_rate, uint8_t peer_projected_rate,
+	uint8_t mp_rate_limit)
 {
 	struct v34_phase3_profile local = profile(role);
 	struct v34_phase3_profile peer = profile(
@@ -211,6 +226,15 @@ static bool endpoint_init(
 		.phase4_configuration = phase4_configuration(role),
 		.transmit_bit = role == V34_ANSWERING_STATION,
 	};
+	struct v34_mp_parameters *parameters = mp_common(
+		&initialized.phase4_configuration.transmit_mp);
+
+	local.projected_data_rate_2400_bps_units = local_projected_rate;
+	peer.projected_data_rate_2400_bps_units = peer_projected_rate;
+	parameters->maximum_call_to_answer_rate_2400_bps_units =
+		mp_rate_limit;
+	parameters->maximum_answer_to_call_rate_2400_bps_units =
+		mp_rate_limit;
 
 	if (endpoint == NULL ||
 	    v34_phase3_exchange_init(
@@ -219,6 +243,12 @@ static bool endpoint_init(
 		return false;
 	*endpoint = initialized;
 	return true;
+}
+
+static bool endpoint_init(
+	struct endpoint *endpoint, enum v34_station_role role)
+{
+	return endpoint_init_with_rates(endpoint, role, 8, 8, 4);
 }
 
 static bool endpoint_sample(
@@ -307,20 +337,15 @@ static bool add_events(uint32_t events, uint32_t *seen)
 	return true;
 }
 
-static bool run_pair(
-	struct endpoint *caller, struct endpoint *answerer,
+static bool run_initialized_pair(
+	struct endpoint *calling, struct endpoint *answering,
 	uint32_t *caller_seen, uint32_t *answerer_seen)
 {
-	struct endpoint calling;
-	struct endpoint answering;
 	int16_t caller_receive = 0;
 	int16_t answerer_receive = 0;
 	uint32_t caller_events_seen = 0;
 	uint32_t answerer_events_seen = 0;
 
-	CHECK(endpoint_init(&calling, V34_CALLING_STATION) &&
-	      endpoint_init(&answering, V34_ANSWERING_STATION),
-	      "continuous Phase 3/4 endpoints did not initialize");
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t caller_transmit;
 		int16_t answerer_transmit;
@@ -328,10 +353,10 @@ static bool run_pair(
 		uint32_t answerer_events;
 
 		CHECK(endpoint_sample(
-			      &calling, caller_receive,
+			      calling, caller_receive,
 			      &caller_transmit, &caller_events) &&
 		      endpoint_sample(
-			      &answering, answerer_receive,
+			      answering, answerer_receive,
 			      &answerer_transmit, &answerer_events),
 		      "continuous Phase 3/4 exchange stopped at sample %zu",
 		      index);
@@ -341,15 +366,13 @@ static bool run_pair(
 		      index, caller_events, answerer_events);
 		caller_receive = answerer_transmit;
 		answerer_receive = caller_transmit;
-		if (calling.phase4_active && answering.phase4_active &&
-		    v34_phase4_exchange_is_online(&calling.phase4) &&
-		    v34_phase4_exchange_is_online(&answering.phase4) &&
-		    calling.mapping_frames_received >= 4u &&
-		    answering.mapping_frames_received >= 4u) {
-			calling.next_received = caller_receive;
-			answering.next_received = answerer_receive;
-			*caller = calling;
-			*answerer = answering;
+		if (calling->phase4_active && answering->phase4_active &&
+		    v34_phase4_exchange_is_online(&calling->phase4) &&
+		    v34_phase4_exchange_is_online(&answering->phase4) &&
+		    calling->mapping_frames_received >= 4u &&
+		    answering->mapping_frames_received >= 4u) {
+			calling->next_received = caller_receive;
+			answering->next_received = answerer_receive;
 			*caller_seen = caller_events_seen;
 			*answerer_seen = answerer_events_seen;
 			return true;
@@ -358,10 +381,21 @@ static bool run_pair(
 	CHECK(false,
 	      "Phase 4 did not reach reciprocal data: active=%d/%d "
 	      "events=0x%x/0x%x frames=%u/%u",
-	      calling.phase4_active, answering.phase4_active,
+	      calling->phase4_active, answering->phase4_active,
 	      caller_events_seen, answerer_events_seen,
-	      calling.mapping_frames_received,
-	      answering.mapping_frames_received);
+	      calling->mapping_frames_received,
+	      answering->mapping_frames_received);
+}
+
+static bool run_pair(
+	struct endpoint *caller, struct endpoint *answerer,
+	uint32_t *caller_seen, uint32_t *answerer_seen)
+{
+	CHECK(endpoint_init(caller, V34_CALLING_STATION) &&
+	      endpoint_init(answerer, V34_ANSWERING_STATION),
+	      "continuous Phase 3/4 endpoints did not initialize");
+	return run_initialized_pair(
+		caller, answerer, caller_seen, answerer_seen);
 }
 
 static bool directions_are_equal(
@@ -470,6 +504,69 @@ static bool test_generated_online_exchange(void)
 	      mp_records_are_equal(
 		      &answerer_peer, &expected_answerer_peer),
 	      "Phase 4 owners did not retain normalized peer records");
+	return true;
+}
+
+static bool test_phase4_owns_selected_rates(void)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct v34_data_startup caller_startup;
+	struct v34_data_startup answerer_startup;
+	const struct v34_mp_parameters *caller_mp;
+	const struct v34_mp_parameters *answerer_mp;
+	const struct v34_mp_parameters *caller_configuration;
+	const struct v34_mp_parameters *answerer_configuration;
+	uint32_t caller_seen;
+	uint32_t answerer_seen;
+
+	CHECK(endpoint_init_with_rates(
+		      &caller, V34_CALLING_STATION, 4, 6, 8) &&
+	      endpoint_init_with_rates(
+		      &answerer, V34_ANSWERING_STATION, 6, 4, 8),
+	      "asymmetric projected-rate endpoints did not initialize");
+	caller_configuration = mp_common_const(
+		&caller.phase4_configuration.transmit_mp);
+	answerer_configuration = mp_common_const(
+		&answerer.phase4_configuration.transmit_mp);
+	CHECK(caller_configuration
+		      ->maximum_call_to_answer_rate_2400_bps_units == 8 &&
+	      caller_configuration
+		      ->maximum_answer_to_call_rate_2400_bps_units == 8 &&
+	      answerer_configuration
+		      ->maximum_call_to_answer_rate_2400_bps_units == 8 &&
+	      answerer_configuration
+		      ->maximum_answer_to_call_rate_2400_bps_units == 8,
+	      "projected-rate setup changed its MP configurations");
+	CHECK(run_initialized_pair(
+		      &caller, &answerer, &caller_seen, &answerer_seen),
+	      "asymmetric projected-rate exchange failed");
+	caller_mp = mp_common_const(&caller.phase4.transmit_mp);
+	answerer_mp = mp_common_const(&answerer.phase4.transmit_mp);
+	CHECK(caller_mp->maximum_call_to_answer_rate_2400_bps_units == 8 &&
+	      caller_mp->maximum_answer_to_call_rate_2400_bps_units == 8 &&
+	      answerer_mp->maximum_call_to_answer_rate_2400_bps_units == 8 &&
+	      answerer_mp->maximum_answer_to_call_rate_2400_bps_units == 8,
+	      "Phase 2 projections changed Phase 4 MP rates");
+	CHECK(v34_phase4_exchange_get_data_startup(
+		      &caller.phase4, &caller_startup) &&
+	      v34_phase4_exchange_get_data_startup(
+		      &answerer.phase4, &answerer_startup) &&
+	      caller_startup.mode.transmit
+		      .primary_data_rate_2400_bps_units == 8 &&
+	      caller_startup.mode.receive
+		      .primary_data_rate_2400_bps_units == 8 &&
+	      answerer_startup.mode.transmit
+		      .primary_data_rate_2400_bps_units == 8 &&
+	      answerer_startup.mode.receive
+		      .primary_data_rate_2400_bps_units == 8 &&
+	      directions_are_equal(
+		      &caller_startup.mode.transmit,
+		      &answerer_startup.mode.receive) &&
+	      directions_are_equal(
+		      &caller_startup.mode.receive,
+		      &answerer_startup.mode.transmit),
+	      "Phase 4 did not own the negotiated data rates");
 	return true;
 }
 
@@ -735,6 +832,8 @@ int main(void)
 	} tests[] = {
 		{ "generated online exchange",
 		  test_generated_online_exchange },
+		{ "Phase 4 owns selected data rates",
+		  test_phase4_owns_selected_rates },
 		{ "mapping source backpressure",
 		  test_source_backpressure },
 		{ "acknowledged first MP record",
