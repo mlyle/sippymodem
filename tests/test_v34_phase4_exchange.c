@@ -418,6 +418,10 @@ static bool test_generated_online_exchange(void)
 	      caller_seen, answerer_seen);
 	CHECK(caller.phase4.transmit_data_active &&
 	      answerer.phase4.transmit_data_active &&
+	      caller.phase4.transmit_mp_prime_records_completed ==
+		      V34_PHASE4_MIN_MP_PRIME_RECORDS &&
+	      answerer.phase4.transmit_mp_prime_records_completed ==
+		      V34_PHASE4_MIN_MP_PRIME_RECORDS &&
 	      caller.phase4.receive_data_active &&
 	      answerer.phase4.receive_data_active &&
 	      caller.phase4.transmit_b1_complete &&
@@ -578,10 +582,10 @@ static bool test_acknowledged_first_record(void)
 		      &pending, &events) == V34_PHASE4_EXCHANGE_OK &&
 	      v34_phase4_exchange_is_valid(&pending) &&
 	      !v34_phase4_exchange_needs_data_preparation(&pending) &&
-	      v34_phase4_exchange_is_ready_for_e(&pending) &&
-	      events == (UINT32_C(0x40000000) |
-			 V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E),
-	      "acknowledged first record lost the ready-for-E boundary");
+	      !v34_phase4_exchange_is_ready_for_e(&pending) &&
+	      pending.transmit_mp_prime_records_completed == 0 &&
+	      events == UINT32_C(0x40000000),
+	      "acknowledged first record bypassed the MP-prime repeat boundary");
 	return true;
 }
 
@@ -610,6 +614,15 @@ static bool test_validation_and_transactionality(void)
 	CHECK(run_pair(
 		      &caller, &answerer, &caller_seen, &answerer_seen),
 	      "validation Phase 4 pair failed");
+	exchange = caller.phase4;
+	exchange.transmit_mp_prime_records_completed =
+		V34_PHASE4_MIN_MP_PRIME_RECORDS + 1;
+	CHECK(!v34_phase4_exchange_is_valid(&exchange),
+	      "Phase 4 accepted too many completed MP-prime records");
+	exchange = caller.phase4;
+	exchange.transmit_mp_prime_started = false;
+	CHECK(!v34_phase4_exchange_is_valid(&exchange),
+	      "Phase 4 accepted MP-prime completions without MP-prime");
 	memset(&exchange, 0xa5, sizeof(exchange));
 	saved = exchange;
 	invalid.receive.phase4_equalizer_adaptation = NAN;

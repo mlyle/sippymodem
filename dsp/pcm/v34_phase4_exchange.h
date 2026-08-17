@@ -46,6 +46,12 @@ enum v34_phase4_exchange_event {
 	V34_PHASE4_EXCHANGE_EVENT_ONLINE = 1u << 15,
 };
 
+enum {
+	/* Repeat the acknowledged record long enough for a peer which acquired
+	 * MP near a record boundary to validate more than one complete MP'. */
+	V34_PHASE4_MIN_MP_PRIME_RECORDS = 4,
+};
+
 struct v34_phase4_exchange_configuration {
 	struct v34_training_receiver_configuration receive;
 	/* Supply an ordinary MP. The exchange sets the acknowledgment bit only
@@ -87,6 +93,7 @@ struct v34_phase4_exchange {
 	bool transmit_trn_ready_announced;
 	bool transmit_mp_started;
 	bool transmit_mp_prime_started;
+	uint8_t transmit_mp_prime_records_completed;
 	bool peer_mp_received;
 	bool peer_mp_prime_received;
 	bool data_preparation_required;
