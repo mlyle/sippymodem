@@ -780,6 +780,25 @@ static void reset_clock_tracking_filter(
 	demodulator->timing_error_windows = 0;
 }
 
+enum qam_result qam_demodulator_rebase_timing(
+	struct qam_demodulator *demodulator, uint64_t phase_units)
+{
+	struct qam_demodulator next;
+
+	if (!qam_demodulator_is_valid(demodulator) ||
+	    !demodulator->timing_locked ||
+	    phase_units >= demodulator->symbol_period_units)
+		return QAM_INVALID_ARGUMENT;
+	next = *demodulator;
+	next.locked_phase_units = phase_units;
+	next.recovery_pending = false;
+	next.recovery_fraction = 0.0;
+	if (!qam_demodulator_is_valid(&next))
+		return QAM_INVALID_ARGUMENT;
+	*demodulator = next;
+	return QAM_OK;
+}
+
 static void track_recovery_step(
 	struct qam_demodulator *demodulator,
 	uint64_t reference_phase, uint64_t target_phase)

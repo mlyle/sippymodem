@@ -174,6 +174,11 @@ bool qam_demodulator_is_valid(
 	const struct qam_demodulator *demodulator);
 enum qam_result qam_demodulator_reset(
 	struct qam_demodulator *demodulator);
+/* Adopt a mode-specific symbol phase and cancel any pending interpolated
+ * crossing. Preserve the continuous recovered clock rate, timing evidence,
+ * and matched-filter sample history owned by this stream. */
+enum qam_result qam_demodulator_rebase_timing(
+	struct qam_demodulator *demodulator, uint64_t phase_units);
 /* Ready points are unnormalized matched-filter coordinates interpolated at
  * the exact rational symbol-clock crossing. */
 enum qam_result qam_demodulator_sample(
