@@ -61,6 +61,10 @@ CaseRunner = Callable[
 
 ASYNC_BITS_PER_OCTET = 10
 FAST_ONLINE_MINIMUM_SECONDS = 1.0
+# Digital PCM calls may report CONNECT before their upstream transmitter has
+# consumed fresh DTE bytes. Keep the evidence window long enough to observe
+# that direction without restoring the ordinary live-call timeout.
+FAST_PCM_ONLINE_MINIMUM_SECONDS = 3.0
 FAST_ONLINE_MARGIN_SECONDS = 1.0
 FAST_JITTER_BUFFER_MS = 60
 
@@ -152,8 +156,13 @@ def _fast_online_timeout(
         if case.exchange == TURN_TAKING
         else max(direction_times)
     )
+    minimum_seconds = (
+        FAST_PCM_ONLINE_MINIMUM_SECONDS
+        if case.profile.family in {"v90", "v92"}
+        else FAST_ONLINE_MINIMUM_SECONDS
+    )
     fast_timeout = max(
-        FAST_ONLINE_MINIMUM_SECONDS,
+        minimum_seconds,
         wire_time + FAST_ONLINE_MARGIN_SECONDS,
     )
     return min(base.online_timeout_seconds, fast_timeout)

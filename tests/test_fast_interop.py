@@ -15,6 +15,9 @@ from tools.fast_interop import case_config, main, run_case  # noqa: E402
 from tools.fast_matrix import (  # noqa: E402
     BASELINE_ORIGINATES,
     CANDIDATE_ORIGINATES,
+    FULL_DUPLEX,
+    EndpointRates,
+    MatrixCase,
     build_fast_matrix,
     payload_pair,
 )
@@ -24,6 +27,7 @@ from tools.interop_config import (  # noqa: E402
     InteropPorts,
 )
 from tools.live_terminal import ConnectReport  # noqa: E402
+from tools.live_profiles import ModemProfile  # noqa: E402
 from tools.local_interop import EndpointState, InteropResult  # noqa: E402
 
 
@@ -127,6 +131,32 @@ class FastInteropTests(unittest.TestCase):
             payloads = payload_pair(cases[BASELINE_ORIGINATES], "initial")
             self.assertEqual(baseline_call.originator_payload, payloads.baseline)
             self.assertEqual(baseline_call.answerer_payload, payloads.candidate)
+
+    def test_pcm_families_get_a_bounded_online_evidence_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = base_config(Path(temporary))
+            for family in ("v90", "v92"):
+                profile = ModemProfile(
+                    name=f"{family}_evidence",
+                    family=family,
+                    description="focused PCM evidence profile",
+                    at_commands=("ATZ",),
+                    receive_rate=56000,
+                    transmit_rate=14400,
+                )
+                case = MatrixCase(
+                    name=f"{family}-evidence",
+                    profile=profile,
+                    media_codec="PCMU",
+                    originator_order=CANDIDATE_ORIGINATES,
+                    candidate_rates=EndpointRates(56000, 14400),
+                    baseline_rates=EndpointRates(14400, 56000),
+                    exchange=FULL_DUPLEX,
+                )
+                self.assertEqual(
+                    case_config(base, case).online_timeout_seconds,
+                    3.0,
+                )
 
     def test_run_case_requires_data_and_both_reported_rates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
