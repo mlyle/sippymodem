@@ -199,6 +199,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_mapping.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_frame.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpd_direct.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_b1u_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_cpt_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_cpt_rx.c \
