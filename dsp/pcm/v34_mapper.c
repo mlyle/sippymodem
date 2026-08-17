@@ -4,6 +4,7 @@
 
 #include <limits.h>
 #include <stddef.h>
+#include <stdint.h>
 
 bool v34_2d_mapping_input_is_valid(
 	const struct v34_2d_mapping_input *input,
@@ -114,6 +115,57 @@ static bool recover_label_and_rotation(
 		       &quarter_point, label) == V34_CONSTELLATION_OK;
 }
 
+static bool grid_point_is_bounded(const struct v34_grid_point *point)
+{
+	return point->in_phase >= -V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->in_phase <= V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->quadrature >= -V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->quadrature <= V34_CHANNEL_COORDINATE_LIMIT;
+}
+
+static bool recover_nearest_label_and_rotation(
+	const struct v34_grid_point *mapper_output, size_t *label,
+	uint8_t *clockwise_quarter_turns)
+{
+	struct v34_grid_point points[
+		V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT];
+	struct v34_grid_point quarter_point;
+	int64_t best_distance = INT64_MAX;
+	size_t best_label = 0;
+
+	if (mapper_output == NULL || label == NULL ||
+	    clockwise_quarter_turns == NULL ||
+	    !grid_point_is_bounded(mapper_output) ||
+	    !recover_clockwise_quarter_turns(
+		    mapper_output, clockwise_quarter_turns) ||
+	    !rotate_clockwise(
+		    mapper_output,
+		    (uint8_t)((4u - *clockwise_quarter_turns) & 3u),
+		    &quarter_point) ||
+	    v34_quarter_superconstellation_generate(
+		    points, V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT) !=
+		    V34_CONSTELLATION_OK)
+		return false;
+	for (size_t candidate = 0;
+	     candidate < V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT;
+	     ++candidate) {
+		int64_t in_phase_error =
+			(int64_t)quarter_point.in_phase - points[candidate].in_phase;
+		int64_t quadrature_error =
+			(int64_t)quarter_point.quadrature -
+			points[candidate].quadrature;
+		int64_t distance = in_phase_error * in_phase_error +
+			quadrature_error * quadrature_error;
+
+		if (distance < best_distance) {
+			best_distance = distance;
+			best_label = candidate;
+		}
+	}
+	*label = best_label;
+	return true;
+}
+
 static struct v34_2d_mapping_input recovered_input(
 	const struct v34_mapping_parameters *parameters, size_t label,
 	uint8_t clockwise_quarter_turns)
@@ -164,8 +216,10 @@ enum v34_mapper_result v34_unmap_2d_decision(
 
 	if (!v34_mapping_parameters_is_valid(parameters) ||
 	    mapper_output == NULL || input == NULL ||
-	    !recover_label_and_rotation(
-		    mapper_output, &label, &clockwise_quarter_turns))
+	    (!recover_label_and_rotation(
+		     mapper_output, &label, &clockwise_quarter_turns) &&
+	     !recover_nearest_label_and_rotation(
+		     mapper_output, &label, &clockwise_quarter_turns)))
 		return V34_MAPPER_INVALID_ARGUMENT;
 	label_count = parameters->constellation_points / 4u;
 	recovered = recovered_input(

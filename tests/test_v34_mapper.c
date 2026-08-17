@@ -301,14 +301,28 @@ static bool test_hard_decision_folding(void)
 		.point_index = 0x5a,
 		.clockwise_quarter_turns = 0xa5,
 	};
-	saved = recovered;
 	CHECK(v34_unmap_2d_decision(
 		      &parameters,
 		      &(const struct v34_grid_point){ 2, 1 },
-		      &recovered) == V34_MAPPER_INVALID_ARGUMENT &&
-	      v34_unmap_2d_decision(
+		      &recovered) == V34_MAPPER_INVALID_ARGUMENT,
+	      "off-grid hard decision was accepted");
+	CHECK(v34_unmap_2d_decision(
 		      &parameters,
 		      &(const struct v34_grid_point){ 47, 1 },
+		      &recovered) == V34_MAPPER_OK &&
+	      recovered.ring_index == 0u &&
+	      recovered.point_index == 0u &&
+	      recovered.clockwise_quarter_turns == 3u,
+	      "bounded hard decision did not choose a nearest label");
+	recovered = (struct v34_2d_mapping_input){
+		.ring_index = 0xa5,
+		.point_index = 0x5a,
+		.clockwise_quarter_turns = 0xa5,
+	};
+	saved = recovered;
+	CHECK(v34_unmap_2d_decision(
+		      &parameters,
+		      &(const struct v34_grid_point){ 257, 1 },
 		      &recovered) == V34_MAPPER_INVALID_ARGUMENT &&
 	      v34_unmap_2d_decision(NULL, &outside, &recovered) ==
 		      V34_MAPPER_INVALID_ARGUMENT &&

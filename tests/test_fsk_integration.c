@@ -1881,6 +1881,7 @@ static bool v90_replay_role_parse(const char *value, bool *originator)
 static bool run_v90_recording_replay(
 	const char *path, enum media_codec codec, bool originator)
 {
+	enum { MINIMUM_ONLINE_SAMPLES = 3200 };
 	static const char *const answerer_commands[] = {
 		"ATZ\r",
 		"ATE0\r",
@@ -1992,9 +1993,13 @@ static bool run_v90_recording_replay(
 			"[       OK ] outgoing V.90 V.8 recording replay over %s (%zu octets, handoff at %zu)\n",
 			codec_name(codec), recording_count, handoff_at);
 	} else {
-		CHECK(connected_at != SIZE_MAX,
-		      "V.90 recording did not acquire carrier (V.8 seen %d, handoff %zu, final DP %d/status %d)",
+		CHECK(connected_at != SIZE_MAX &&
+			      recording_count - connected_at >=
+				      MINIMUM_ONLINE_SAMPLES &&
+			      modem_is_online(endpoint.modem, DP_V90),
+		      "V.90 recording did not sustain carrier (V.8 seen %d, handoff %zu, carrier %zu, final DP %d/status %d)",
 		      v8_seen, handoff_at,
+		      connected_at,
 		      endpoint.modem->dp != NULL ?
 			      (int)endpoint.modem->dp->id : -1,
 		      endpoint.modem->dp != NULL ?

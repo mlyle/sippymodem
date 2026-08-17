@@ -48,9 +48,10 @@ enum v34_mapper_result v34_unmap_2d_symbol(
 	struct v34_2d_mapping_input *input);
 
 /* Recover a hard receiver decision. A noisy trellis path can produce a valid
- * Figure 5 point outside the negotiated constellation prefix. Fold its label
- * over that prefix so one bad decision corrupts data instead of terminating
- * the stream. Off-grid and out-of-superconstellation points remain errors. */
+ * odd-lattice point outside either the negotiated prefix or the complete
+ * Figure 5 superconstellation. Fold an in-superconstellation label over the
+ * prefix; otherwise select the nearest complete-superconstellation label
+ * before folding. Off-grid and unbounded points remain errors. */
 enum v34_mapper_result v34_unmap_2d_decision(
 	const struct v34_mapping_parameters *parameters,
 	const struct v34_grid_point *mapper_output,
