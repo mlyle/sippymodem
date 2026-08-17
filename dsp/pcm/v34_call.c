@@ -74,10 +74,8 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 	    !v34_info0_is_valid(&call->local_info0) ||
 	    (call->peer_info0_stored &&
 	     !v34_info0_is_valid(&call->peer_info0)) ||
-	    !v34_phase2_tone_detector_is_valid(
-		    &call->retrain_tone_detector) ||
-	    call->retrain_tone_detector.local_role != call->local_role ||
-	    call->retrain_tone_samples > V34_CALL_RETRAIN_TONE_SAMPLES ||
+	    !v34_retrain_detector_is_valid(&call->retrain_detector) ||
+	    call->retrain_detector.tone.local_role != call->local_role ||
 	    call->phase3_configuration.sample_rate !=
 		    V34_PHASE2_SAMPLE_RATE ||
 	    call->phase3_configuration.nominal_peak_amplitude <= 0 ||
@@ -129,7 +127,9 @@ bool v34_call_is_valid(const struct v34_call *call)
 		break;
 	case V34_CALL_RETRAIN_SILENCE:
 		child_valid = call->peer_info0_stored &&
-			      call->retrain_tone_samples == 0 &&
+			      call->retrain_detector.silence_samples == 0 &&
+			      call->retrain_detector.tone_samples == 0 &&
+			      call->retrain_detector.edge_samples == 0 &&
 			      call->state.retrain_silence.samples_remaining > 0 &&
 			      call->state.retrain_silence.samples_remaining <=
 				      V34_CALL_RETRAIN_SILENCE_SAMPLES;
@@ -164,8 +164,8 @@ enum v34_call_result v34_call_init(
 		configuration->phase2_nominal_amplitude;
 	initialized.local_role = configuration->local_role;
 	initialized.stage = V34_CALL_PHASE2;
-	if (v34_phase2_tone_detector_init(
-		    &initialized.retrain_tone_detector,
+	if (v34_retrain_detector_init(
+		    &initialized.retrain_detector,
 		    configuration->local_role) != V34_PHASE2_TONE_OK)
 		return V34_CALL_INVALID_ARGUMENT;
 	if (!v34_call_is_valid(&initialized))
@@ -186,10 +186,9 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 			return V34_CALL_INVALID_STATE;
 		next.peer_info0_stored = true;
 	}
-	if (v34_phase2_tone_detector_reset(
-		    &next.retrain_tone_detector) != V34_PHASE2_TONE_OK)
+	if (v34_retrain_detector_reset(
+		    &next.retrain_detector) != V34_PHASE2_TONE_OK)
 		return V34_CALL_NUMERIC_FAILURE;
-	next.retrain_tone_samples = 0;
 	next.state.retrain_silence.samples_remaining =
 		V34_CALL_RETRAIN_SILENCE_SAMPLES;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
@@ -482,39 +481,20 @@ static bool retrain_detection_is_active(const struct v34_call *call)
 static enum v34_call_result observe_retrain_tone(
 	struct v34_call *call, int16_t received_sample)
 {
-	struct v34_phase2_tone_event event;
-	struct v34_phase2_tone_measurement measurement;
+	bool detected;
 
-	if (v34_phase2_tone_detector_sample(
-		    &call->retrain_tone_detector, received_sample,
-		    &event) != V34_PHASE2_TONE_OK)
+	if (v34_retrain_detector_sample(
+		    &call->retrain_detector, received_sample,
+		    &detected) != V34_PHASE2_TONE_OK)
 		return V34_CALL_NUMERIC_FAILURE;
-	(void)event;
-	measurement = v34_phase2_tone_detector_measure(
-		&call->retrain_tone_detector);
-	if (!measurement.tone_present) {
-		call->retrain_tone_samples = 0;
-		return V34_CALL_OK;
-	}
-	/* The detector's acquisition run is already qualified carrier time.
-	 * Credit it toward the required 50 ms instead of imposing a second full
-	 * 50 ms hold after acquisition. */
-	if (event.kind == V34_PHASE2_TONE_STARTED)
-		call->retrain_tone_samples =
-			V34_PHASE2_TONE_ACQUIRE_SAMPLES;
-	else if (call->retrain_tone_samples <
-		 V34_CALL_RETRAIN_TONE_SAMPLES)
-		call->retrain_tone_samples++;
-	return call->retrain_tone_samples == V34_CALL_RETRAIN_TONE_SAMPLES ?
-		       begin_retrain(call) : V34_CALL_OK;
+	return detected ? begin_retrain(call) : V34_CALL_OK;
 }
 
 static enum v34_call_result reset_retrain_detector(struct v34_call *call)
 {
-	if (v34_phase2_tone_detector_reset(
-		    &call->retrain_tone_detector) != V34_PHASE2_TONE_OK)
+	if (v34_retrain_detector_reset(
+		    &call->retrain_detector) != V34_PHASE2_TONE_OK)
 		return V34_CALL_NUMERIC_FAILURE;
-	call->retrain_tone_samples = 0;
 	return V34_CALL_OK;
 }
 

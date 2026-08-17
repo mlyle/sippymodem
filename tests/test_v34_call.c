@@ -226,7 +226,7 @@ static bool endpoint_sample(
 		fprintf(stderr,
 			"V.34 endpoint role=%d stage=%d tone=%u failed: %s\n",
 			endpoint->call.local_role, endpoint->call.stage,
-			endpoint->call.retrain_tone_samples,
+			endpoint->call.retrain_detector.tone_samples,
 			v34_call_result_name(result));
 	return result == V34_CALL_OK &&
 	       endpoint_accept_observation(endpoint, observation, &received);
@@ -460,7 +460,7 @@ static bool test_full_retrain(void)
 	return true;
 }
 
-static bool check_retrain_tone_deadline(
+static bool check_retrain_tone_guard(
 	enum v34_station_role local_role, bool pcma)
 {
 	enum v34_station_role remote_role =
@@ -481,9 +481,11 @@ static bool check_retrain_tone_deadline(
 	      "retrain tone deadline fixture did not initialize");
 	endpoint = local_role == V34_CALLING_STATION ? &caller : &answerer;
 	endpoint->verify_mapping_frames = false;
+	/* An unmodulated carrier without the mandatory preceding silence is
+	 * ordinary line content, not a full-retrain request. */
 	for (samples = 0;
 	     samples < V34_PHASE2_TONE_WINDOW_SAMPLES +
-			       V34_CALL_RETRAIN_TONE_SAMPLES;
+			       V34_RETRAIN_TONE_SAMPLES;
 	     ++samples) {
 		int16_t remote_sample;
 
@@ -495,24 +497,21 @@ static bool check_retrain_tone_deadline(
 			      codec_round_trip(remote_sample, pcma),
 			      supply_mapping_frame, &transmitted,
 			      &observation),
-		      "retrain tone deadline failed at sample %zu", samples);
-		if (endpoint->call.stage == V34_CALL_RETRAIN_SILENCE)
-			break;
+		      "retrain tone guard failed at sample %zu", samples);
 	}
-	CHECK(endpoint->call.stage == V34_CALL_RETRAIN_SILENCE &&
-	      samples < V34_PHASE2_TONE_WINDOW_SAMPLES +
-			V34_CALL_RETRAIN_TONE_SAMPLES,
-	      "retrain tone required more than 50 ms after acquisition");
+	CHECK(endpoint->call.stage == V34_CALL_PHASE4 &&
+	      endpoint->call.retrain_detector.silence_samples == 0,
+	      "carrier without retrain silence restarted Phase 2");
 	return true;
 }
 
-static bool test_retrain_tone_deadline(void)
+static bool test_retrain_tone_guard(void)
 {
 	for (enum v34_station_role role = V34_CALLING_STATION;
 	     role <= V34_ANSWERING_STATION; ++role)
-		CHECK(check_retrain_tone_deadline(role, false) &&
-		      check_retrain_tone_deadline(role, true),
-		      "retrain tone deadline failed role=%d", role);
+		CHECK(check_retrain_tone_guard(role, false) &&
+		      check_retrain_tone_guard(role, true),
+		      "retrain tone guard failed role=%d", role);
 	return true;
 }
 
@@ -650,7 +649,7 @@ int main(void)
 	} tests[] = {
 		{ "generated PCMU call", test_pcmu_call },
 		{ "local and remote full retrain", test_full_retrain },
-		{ "retrain tone deadline", test_retrain_tone_deadline },
+		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "unusable INFO1 starts full retrain",
 		  test_unusable_info1_retrains },
 		{ "mapping source backpressure", test_source_backpressure },

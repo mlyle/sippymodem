@@ -20,8 +20,6 @@ enum v34_call_stage {
 enum {
 	V34_CALL_RETRAIN_SILENCE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 70 / 1000,
-	V34_CALL_RETRAIN_TONE_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 50 / 1000,
 };
 
 enum v34_call_result {
@@ -86,9 +84,8 @@ struct v34_call {
 	struct v34_info0 peer_info0;
 	struct v34_phase3_exchange_configuration phase3_configuration;
 	struct v34_phase4_exchange_configuration phase4_configuration;
-	struct v34_phase2_tone_detector retrain_tone_detector;
+	struct v34_retrain_detector retrain_detector;
 	int16_t phase2_nominal_amplitude;
-	uint16_t retrain_tone_samples;
 	enum v34_station_role local_role;
 	enum v34_call_stage stage;
 	bool peer_info0_stored;

@@ -440,12 +440,136 @@ static bool test_frequency_tolerance(void)
 	return true;
 }
 
+static bool feed_retrain_sample(
+	struct v34_retrain_detector *detector, int16_t sample,
+	enum test_codec codec, bool *seen)
+{
+	bool detected;
+
+	CHECK(v34_retrain_detector_sample(
+		      detector, codec_round_trip(sample, codec),
+		      &detected) == V34_PHASE2_TONE_OK,
+	      "full-retrain detector rejected a sample");
+	*seen |= detected;
+	return true;
+}
+
+static bool arm_retrain_silence(
+	struct v34_retrain_detector *detector, enum test_codec codec)
+{
+	bool seen = false;
+
+	for (size_t index = 0;
+	     index < V34_PHASE2_TONE_WINDOW_SAMPLES +
+			     V34_RETRAIN_MIN_SILENCE_SAMPLES;
+	     ++index)
+		CHECK(feed_retrain_sample(detector, 0, codec, &seen),
+		      "full-retrain silence failed at %zu", index);
+	return !seen && detector->silence_samples ==
+			V34_RETRAIN_MIN_SILENCE_SAMPLES;
+}
+
+static bool check_full_retrain_request(
+	enum v34_station_role local_role, enum test_codec codec)
+{
+	enum v34_station_role remote_role =
+		local_role == V34_CALLING_STATION ?
+			V34_ANSWERING_STATION : V34_CALLING_STATION;
+	struct v34_phase2_tone_transmitter tone;
+	struct v34_retrain_detector detector;
+	bool seen = false;
+
+	CHECK(v34_retrain_detector_init(&detector, local_role) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &tone, remote_role, TEST_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK,
+	      "full-retrain fixture did not initialize");
+	for (size_t index = 0;
+	     index < V34_RETRAIN_TONE_SAMPLES +
+			     V34_RETRAIN_EDGE_SAMPLES;
+	     ++index) {
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      feed_retrain_sample(&detector, sample, codec, &seen),
+		      "unarmed retrain tone failed at %zu", index);
+	}
+	CHECK(!seen && detector.silence_samples == 0,
+	      "tone without preceding silence requested retraining");
+
+	CHECK(v34_retrain_detector_reset(&detector) ==
+		      V34_PHASE2_TONE_OK &&
+	      arm_retrain_silence(&detector, codec),
+	      "full-retrain silence did not arm the detector");
+	if (local_role == V34_CALLING_STATION) {
+		/* A bare 2400 Hz carrier omits Tone A's continuous answer guard. */
+		for (size_t index = 0;
+		     index < V34_RETRAIN_TONE_SAMPLES +
+				     V34_RETRAIN_EDGE_SAMPLES;
+		     ++index) {
+			double angle = 2.0 * TEST_PI *
+				       V34_PHASE2_ANSWERING_CARRIER_HZ *
+				       (double)index /
+				       V34_PHASE2_SAMPLE_RATE;
+			int16_t sample = (int16_t)lround(
+				(double)TEST_AMPLITUDE * 0.8912509381337456 *
+				sin(angle));
+
+			CHECK(feed_retrain_sample(
+				      &detector, sample, codec, &seen),
+			      "unguarded Tone A failed at %zu", index);
+		}
+		CHECK(!seen,
+		      "Tone A without its answer guard requested retraining");
+	}
+
+	seen = false;
+	CHECK(v34_retrain_detector_reset(&detector) ==
+		      V34_PHASE2_TONE_OK &&
+	      arm_retrain_silence(&detector, codec) &&
+	      v34_phase2_tone_transmitter_init(
+		      &tone, remote_role, TEST_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK,
+	      "qualified retrain request did not reinitialize");
+	for (size_t index = 0;
+	     index < V34_RETRAIN_TONE_SAMPLES +
+			     V34_RETRAIN_EDGE_SAMPLES && !seen;
+	     ++index) {
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      feed_retrain_sample(&detector, sample, codec, &seen),
+		      "qualified retrain tone failed at %zu", index);
+	}
+	CHECK(seen && detector.silence_samples == 0 &&
+	      detector.tone_samples == 0 && detector.edge_samples == 0,
+	      "standards-shaped retrain request was not emitted once");
+	return true;
+}
+
+static bool test_full_retrain_request(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		CHECK(check_full_retrain_request(
+			      V34_CALLING_STATION, codec) &&
+		      check_full_retrain_request(
+			      V34_ANSWERING_STATION, codec),
+		      "full-retrain request failed for codec %d", codec);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase2_tone_transmitter transmitter;
 	struct v34_phase2_tone_transmitter before;
 	struct v34_phase2_tone_detector detector;
 	struct v34_phase2_tone_detector detector_before;
+	struct v34_retrain_detector retrain;
+	struct v34_retrain_detector retrain_before;
 	struct v34_phase2_tone_event event = {
 		.kind = V34_PHASE2_TONE_ENDED,
 		.reversal_delay_samples = 99,
@@ -495,6 +619,22 @@ static bool test_validation(void)
 		      !v34_phase2_tone_detector_measure(&detector)
 			       .ready,
 	      "tone detector reset retained observations");
+	CHECK(v34_retrain_detector_init(
+		      &retrain, V34_CALLING_STATION) ==
+		      V34_PHASE2_TONE_OK,
+	      "full-retrain validation fixture did not initialize");
+	retrain.silence_samples = V34_RETRAIN_MIN_SILENCE_SAMPLES + 1u;
+	retrain_before = retrain;
+	{
+		bool detected = true;
+
+		CHECK(v34_retrain_detector_sample(
+			      &retrain, 0, &detected) ==
+			      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      memcmp(&retrain, &retrain_before, sizeof(retrain)) == 0 &&
+		      detected,
+		      "corrupt full-retrain state was not transactional");
+	}
 	CHECK(strcmp(
 		      v34_phase2_tone_result_name(
 			      V34_PHASE2_TONE_OK),
@@ -518,6 +658,7 @@ int main(void)
 		{ "detection and reversal", test_detection_and_reversal },
 		{ "wrong tone rejection", test_wrong_tone_rejection },
 		{ "frequency tolerance", test_frequency_tolerance },
+		{ "full-retrain request", test_full_retrain_request },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

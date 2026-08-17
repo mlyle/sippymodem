@@ -18,6 +18,17 @@ enum {
 		V34_PHASE2_TONE_WINDOW_SAMPLES * 2,
 	V34_PHASE2_TONE_LOSS_SAMPLES =
 		V34_PHASE2_TONE_WINDOW_SAMPLES * 2,
+	/* V.34 full retrain begins with 70 +/- 5 ms of silence and more than
+	 * 50 ms of the role-selected Tone A/B.  Use the lower silence edge and
+	 * an 80 ms tone guard so ordinary QAM training cannot look like a
+	 * retrain request. */
+	V34_RETRAIN_MIN_SILENCE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 65 / 1000 - 1,
+	V34_RETRAIN_TONE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 80 / 1000,
+	V34_RETRAIN_EDGE_SAMPLES =
+		V34_PHASE2_TONE_WINDOW_SAMPLES +
+		V34_PHASE2_TONE_ACQUIRE_SAMPLES,
 };
 
 enum v34_phase2_tone_result {
@@ -88,6 +99,17 @@ struct v34_phase2_tone_measurement {
 	bool tone_present;
 };
 
+/* Qualify the complete silence-to-Tone-A/B full-retrain request.  Tone A
+ * additionally needs the answer-guard energy implied by its carrier share.
+ * The detector is instance-owned and reusable by V.34, V.90, and V.92 call
+ * controllers, whose full-retrain preamble is the same. */
+struct v34_retrain_detector {
+	struct v34_phase2_tone_detector tone;
+	uint16_t silence_samples;
+	uint16_t tone_samples;
+	uint16_t edge_samples;
+};
+
 /* Tone B is the calling station's 1200 Hz carrier. Tone A is the answering
  * station's 2400 Hz carrier at -1 dB plus a continuous 1800 Hz guard at the
  * nominal level. nominal_amplitude is the peak level before those gains. */
@@ -126,6 +148,18 @@ v34_phase2_tone_detector_sample(
 struct v34_phase2_tone_measurement
 v34_phase2_tone_detector_measure(
 	const struct v34_phase2_tone_detector *detector);
+
+enum v34_phase2_tone_result v34_retrain_detector_init(
+	struct v34_retrain_detector *detector,
+	enum v34_station_role local_role);
+bool v34_retrain_detector_is_valid(
+	const struct v34_retrain_detector *detector);
+enum v34_phase2_tone_result v34_retrain_detector_reset(
+	struct v34_retrain_detector *detector);
+/* detected is true for exactly the sample that completes a request. */
+enum v34_phase2_tone_result v34_retrain_detector_sample(
+	struct v34_retrain_detector *detector, int16_t sample,
+	bool *detected);
 
 const char *v34_phase2_tone_result_name(
 	enum v34_phase2_tone_result result);

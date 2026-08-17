@@ -16,6 +16,8 @@ static const double V34_PHASE2_TONE_MIN_ANSWERING_CARRIER_SHARE = 0.30;
 static const double V34_PHASE2_TONE_MAX_CARRIER_SHARE = 1.20;
 static const double V34_PHASE2_TONE_REVERSAL_CONFIRM_COSINE = -0.80;
 static const double V34_PHASE2_TONE_REFERENCE_TRACKING = 1.0 / 64.0;
+static const double V34_RETRAIN_SILENCE_MAX_LINE_POWER = 150000.0;
+static const double V34_RETRAIN_TONE_A_MAX_CARRIER_SHARE = 0.60;
 static const double V34_PHASE2_TONE_MAX_SAMPLE_MAGNITUDE =
 	-(double)INT16_MIN;
 static const double V34_PHASE2_TONE_MAX_SAMPLE_POWER =
@@ -27,6 +29,11 @@ static const double V34_PHASE2_TONE_MAX_PROJECTION =
 static const double V34_PHASE2_TONE_MAX_WINDOW_ENERGY =
 	V34_PHASE2_TONE_MAX_SAMPLE_POWER *
 	V34_PHASE2_TONE_WINDOW_SAMPLES;
+
+_Static_assert(
+	V34_RETRAIN_MIN_SILENCE_SAMPLES == 519 &&
+	V34_RETRAIN_TONE_SAMPLES == 640,
+	"V.34 retrain guards must retain their 8 kHz durations");
 
 static bool role_is_valid(enum v34_station_role role)
 {
@@ -457,6 +464,129 @@ v34_phase2_tone_detector_measure(
 		.ready = detector->measurement_ready,
 		.tone_present = detector->tone_present,
 	};
+}
+
+bool v34_retrain_detector_is_valid(
+	const struct v34_retrain_detector *detector)
+{
+	if (detector == NULL ||
+	    !v34_phase2_tone_detector_is_valid(&detector->tone) ||
+	    detector->silence_samples >
+		    V34_RETRAIN_MIN_SILENCE_SAMPLES ||
+	    detector->tone_samples > V34_RETRAIN_TONE_SAMPLES ||
+	    detector->edge_samples > V34_RETRAIN_EDGE_SAMPLES)
+		return false;
+	if (detector->silence_samples <
+	    V34_RETRAIN_MIN_SILENCE_SAMPLES)
+		return detector->tone_samples == 0 &&
+		       detector->edge_samples == 0;
+	return detector->tone_samples == 0 ||
+	       detector->edge_samples == 0;
+}
+
+enum v34_phase2_tone_result v34_retrain_detector_init(
+	struct v34_retrain_detector *detector,
+	enum v34_station_role local_role)
+{
+	struct v34_retrain_detector initialized = { 0 };
+
+	if (detector == NULL ||
+	    v34_phase2_tone_detector_init(
+		    &initialized.tone, local_role) != V34_PHASE2_TONE_OK ||
+	    !v34_retrain_detector_is_valid(&initialized))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	*detector = initialized;
+	return V34_PHASE2_TONE_OK;
+}
+
+enum v34_phase2_tone_result v34_retrain_detector_reset(
+	struct v34_retrain_detector *detector)
+{
+	enum v34_station_role local_role;
+
+	if (!v34_retrain_detector_is_valid(detector))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	local_role = detector->tone.local_role;
+	return v34_retrain_detector_init(detector, local_role);
+}
+
+static bool retrain_tone_matches(
+	const struct v34_retrain_detector *detector,
+	const struct v34_phase2_tone_measurement *measurement)
+{
+	if (!measurement->tone_present)
+		return false;
+	/* Tone A is the -1 dB 2400 Hz carrier plus the continuous 1800 Hz
+	 * answer guard.  A bare 2400 Hz carrier has a share near one and must
+	 * not initiate retraining.  The underlying detector already enforces
+	 * the complementary lower carrier-share bounds for both roles. */
+	return detector->tone.local_role != V34_CALLING_STATION ||
+	       measurement->carrier_share <=
+		       V34_RETRAIN_TONE_A_MAX_CARRIER_SHARE;
+}
+
+static enum v34_phase2_tone_result reset_retrain_candidate(
+	struct v34_retrain_detector *detector)
+{
+	enum v34_station_role local_role = detector->tone.local_role;
+
+	return v34_retrain_detector_init(detector, local_role);
+}
+
+enum v34_phase2_tone_result v34_retrain_detector_sample(
+	struct v34_retrain_detector *detector, int16_t sample,
+	bool *detected)
+{
+	struct v34_retrain_detector next;
+	struct v34_phase2_tone_measurement measurement;
+	struct v34_phase2_tone_event event;
+	bool emitted = false;
+
+	if (!v34_retrain_detector_is_valid(detector) || detected == NULL)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	next = *detector;
+	if (v34_phase2_tone_detector_sample(
+		    &next.tone, sample, &event) != V34_PHASE2_TONE_OK)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	measurement = v34_phase2_tone_detector_measure(&next.tone);
+	if (next.silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
+		if (measurement.ready &&
+		    measurement.line_power <=
+			    V34_RETRAIN_SILENCE_MAX_LINE_POWER)
+			next.silence_samples++;
+		else
+			next.silence_samples = 0;
+	} else if (retrain_tone_matches(&next, &measurement)) {
+		next.edge_samples = 0;
+		if (event.kind == V34_PHASE2_TONE_STARTED)
+			next.tone_samples =
+				V34_PHASE2_TONE_ACQUIRE_SAMPLES;
+		else if (next.tone_samples < V34_RETRAIN_TONE_SAMPLES)
+			next.tone_samples++;
+		if (next.tone_samples == V34_RETRAIN_TONE_SAMPLES) {
+			emitted = true;
+			if (reset_retrain_candidate(&next) !=
+			    V34_PHASE2_TONE_OK)
+				return V34_PHASE2_TONE_INVALID_ARGUMENT;
+		}
+	} else if (next.tone_samples != 0) {
+		/* A qualified request is continuous.  Once its tone breaks, a new
+		 * silence preamble is required. */
+		if (reset_retrain_candidate(&next) != V34_PHASE2_TONE_OK)
+			return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	} else if (measurement.ready &&
+		   measurement.line_power <=
+			   V34_RETRAIN_SILENCE_MAX_LINE_POWER) {
+		next.edge_samples = 0;
+	} else if (++next.edge_samples >= V34_RETRAIN_EDGE_SAMPLES) {
+		if (reset_retrain_candidate(&next) != V34_PHASE2_TONE_OK)
+			return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	}
+	if (!v34_retrain_detector_is_valid(&next))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	*detector = next;
+	*detected = emitted;
+	return V34_PHASE2_TONE_OK;
 }
 
 const char *v34_phase2_tone_result_name(
