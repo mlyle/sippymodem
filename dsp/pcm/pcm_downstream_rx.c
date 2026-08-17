@@ -51,7 +51,9 @@ static bool stage_matches_protocol(const struct pcm_downstream_rx *receiver)
 	if (receiver->stage == PCM_DOWNSTREAM_RX_TRN2D)
 		return true;
 	if (receiver->protocol == PCM_PROTOCOL_V92)
-		return receiver->stage == PCM_DOWNSTREAM_RX_V92_CONTROL;
+		return receiver->stage == PCM_DOWNSTREAM_RX_V92_CONTROL ||
+		       receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH ||
+		       receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE;
 	return receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH ||
 	       receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH ||
 	       receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE;
@@ -88,10 +90,10 @@ bool pcm_downstream_rx_is_valid(
 	if (receiver->stream.received_symbols <
 	    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS)
 		return false;
-	if (receiver->protocol == PCM_PROTOCOL_V92)
+	if (receiver->protocol == PCM_PROTOCOL_V92 &&
+	    receiver->stage == PCM_DOWNSTREAM_RX_V92_CONTROL)
 		return receiver->ed_frames == 0 &&
 		       receiver->ed_bit_errors == 0 &&
-		       !receiver->ed_requested &&
 		       !receiver->mp_prime_boundary;
 	if (receiver->ed_bit_errors > ed_bits ||
 	    (receiver->mp_prime_boundary &&
@@ -103,7 +105,9 @@ bool pcm_downstream_rx_is_valid(
 		return receiver->ed_frames == 0 &&
 		       receiver->ed_bit_errors == 0;
 	if (!receiver->ed_requested || receiver->mp_prime_boundary ||
-	    receiver->control.mp.stage != V90_MP_SEARCH_SYNC)
+	    (receiver->protocol == PCM_PROTOCOL_V90 ?
+		     receiver->control.mp.stage != V90_MP_SEARCH_SYNC :
+		     !control_is_fresh(receiver)))
 		return false;
 	if (receiver->stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
 		return receiver->ed_frames < V90_PHASE4_ED_FRAMES;
@@ -193,15 +197,18 @@ enum pcm_downstream_rx_result pcm_downstream_rx_expect_ed(
 	if (receiver == NULL)
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (!pcm_downstream_rx_is_valid(receiver) ||
-	    receiver->protocol != PCM_PROTOCOL_V90 ||
 	    receiver->stage == PCM_DOWNSTREAM_RX_TRN2D ||
 	    receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE)
 		return PCM_DOWNSTREAM_RX_INVALID_STATE;
 	if (receiver->ed_requested)
 		return PCM_DOWNSTREAM_RX_OK;
+	if (receiver->protocol == PCM_PROTOCOL_V92 &&
+	    (receiver->stage != PCM_DOWNSTREAM_RX_V92_CONTROL ||
+	     !v92_control_is_fresh(&receiver->control.v92)))
+		return PCM_DOWNSTREAM_RX_INVALID_STATE;
 	next = *receiver;
 	next.ed_requested = true;
-	if (next.mp_prime_boundary)
+	if (next.protocol == PCM_PROTOCOL_V92 || next.mp_prime_boundary)
 		begin_ed_search(&next);
 	if (!pcm_downstream_rx_is_valid(&next))
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
@@ -392,21 +399,35 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 	const struct v90_pcm_stream_frame *frame,
 	struct pcm_downstream_event *event)
 {
-	enum pcm_downstream_rx_result result =
-		feed_mp_frame(receiver, frame, event);
+	enum pcm_downstream_rx_result result;
 
-	/* A repeated MP-prime begins with the 17-one prefix and its following
-	 * zero within at most two training frames. Keep that candidate intact
-	 * and restart the Ed window; it may be the record already accepted by
-	 * the sender's spectral lookahead. */
-	if (result != PCM_DOWNSTREAM_RX_BUFFERING ||
-	    receiver->control.mp.stage != V90_MP_SEARCH_SYNC) {
-		receiver->stage = PCM_DOWNSTREAM_RX_MP_SEARCH;
-		receiver->ed_frames = 0;
-		receiver->ed_bit_errors = 0;
-		if (result == PCM_DOWNSTREAM_RX_MP_PRIME)
-			begin_ed_search(receiver);
-		return result;
+	if (receiver->protocol == PCM_PROTOCOL_V92) {
+		result = feed_v92_control_frame(receiver, frame, event);
+		if (result != PCM_DOWNSTREAM_RX_BUFFERING ||
+		    !v92_control_is_fresh(&receiver->control.v92)) {
+			receiver->stage = PCM_DOWNSTREAM_RX_V92_CONTROL;
+			receiver->ed_frames = 0u;
+			receiver->ed_bit_errors = 0u;
+			if (result != PCM_DOWNSTREAM_RX_BUFFERING)
+				begin_ed_search(receiver);
+			return result;
+		}
+	} else {
+		result = feed_mp_frame(receiver, frame, event);
+
+		/* A repeated MP-prime begins with the 17-one prefix and its
+		 * following zero within at most two training frames. Keep that
+		 * candidate intact and restart the Ed window; it may be the record
+		 * already accepted by the sender's spectral lookahead. */
+		if (result != PCM_DOWNSTREAM_RX_BUFFERING ||
+		    receiver->control.mp.stage != V90_MP_SEARCH_SYNC) {
+			receiver->stage = PCM_DOWNSTREAM_RX_MP_SEARCH;
+			receiver->ed_frames = 0;
+			receiver->ed_bit_errors = 0;
+			if (result == PCM_DOWNSTREAM_RX_MP_PRIME)
+				begin_ed_search(receiver);
+			return result;
+		}
 	}
 	receiver->ed_frames++;
 	receiver->ed_bit_errors += nonzero_bits(frame);
@@ -467,9 +488,12 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	} else {
 		if (next.stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
 			result = receive_ed_frame(&next, &frame, &generated);
-		else if (next.stage == PCM_DOWNSTREAM_RX_V92_CONTROL)
+		else if (next.stage == PCM_DOWNSTREAM_RX_V92_CONTROL) {
 			result = feed_v92_control_frame(&next, &frame, &generated);
-		else
+			if (next.ed_requested &&
+			    result != PCM_DOWNSTREAM_RX_BUFFERING)
+				begin_ed_search(&next);
+		} else
 			result = receive_mp_frame(&next, &frame, &generated);
 		if (result == PCM_DOWNSTREAM_RX_INTERNAL_ERROR)
 			return result;

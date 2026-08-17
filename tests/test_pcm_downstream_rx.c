@@ -38,6 +38,8 @@ struct v92_observer {
 	size_t crc_mismatches;
 	size_t cpd_invalid_frames;
 	size_t cpd_crc_mismatches;
+	size_t ed_events;
+	size_t ed_bit_errors;
 };
 
 struct source {
@@ -284,6 +286,12 @@ static bool observe_v92_output(
 			      "V.92 CPd result and event disagreed");
 			observer->last_cpd = event.control.record.cpd.parameters;
 			observer->cpd_records++;
+			continue;
+		}
+		if (result == PCM_DOWNSTREAM_RX_ED ||
+		    result == PCM_DOWNSTREAM_RX_ED_REJECTED) {
+			observer->ed_events++;
+			observer->ed_bit_errors += event.ed.bit_errors;
 			continue;
 		}
 		if (result == PCM_DOWNSTREAM_RX_SUVD_REJECTED) {
@@ -816,11 +824,11 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 	};
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_rx receiver;
-	struct pcm_downstream_rx saved;
 	struct source source;
 	struct v92_observer observer = { 0 };
 	uint8_t sequence[V92_SUVD_MAX_FRAME_BYTES];
 	uint8_t cpd_sequence[V92_CPD_MAX_FRAME_BYTES];
+	uint8_t zeros[V90_PCM_FRAME_MAX_BITS] = { 0 };
 	size_t sequence_bits = 0u;
 	size_t cpd_bits = 0u;
 	size_t expected_frames;
@@ -852,15 +860,26 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 	      push_v92_sequence(
 		      &source, cpd_sequence, cpd_bits,
 		      &receiver, &observer) &&
+	      observer.cpd_records == 1u &&
+	      pcm_downstream_rx_expect_ed(&receiver) ==
+		      PCM_DOWNSTREAM_RX_OK &&
+	      pcm_downstream_rx_expect_ed(&receiver) ==
+		      PCM_DOWNSTREAM_RX_OK &&
+	      push_v92_sequence(
+		      &source, cpd_sequence, cpd_bits,
+		      &receiver, &observer) &&
+	      push_v92_frame(&source, zeros, &receiver, &observer) &&
+	      push_v92_frame(&source, zeros, &receiver, &observer) &&
 	      finish_v92_source(&source, &receiver, &observer),
 	      "V.92 width %u law %u line stream stopped", frame_bits, law);
 	expected_frames = V90_PHASE4_TRN2D_MINIMUM_FRAMES +
 			  EXTRA_TRN2D_FRAMES +
-			  (sequence_bits + cpd_bits) / frame_bits;
+			  (sequence_bits + 2u * cpd_bits) / frame_bits +
+			  V90_PHASE4_ED_FRAMES;
 	CHECK(observer.training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      observer.records == 1u && observer.invalid_frames == 0u &&
 	      observer.crc_mismatches == 0u &&
-	      observer.cpd_records == 1u &&
+	      observer.cpd_records == 2u &&
 	      observer.cpd_invalid_frames == 0u &&
 	      observer.cpd_crc_mismatches == 0u &&
 	      observer.last_parameters.request_silence ==
@@ -876,18 +895,15 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 	      !observer.last_cpd.modulus_present &&
 	      !observer.last_cpd.filters_present &&
 	      !observer.last_cpd.constellations_present &&
-	      receiver.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
+	      observer.ed_events == 1u && observer.ed_bit_errors == 0u &&
+	      receiver.stage == PCM_DOWNSTREAM_RX_COMPLETE &&
 	      receiver.stream.received_frames == expected_frames &&
 	      receiver.stream.received_symbols ==
 		      expected_frames * V90_CP_FRAME_INTERVALS &&
 	      receiver.trn2d_bit_errors == 0u &&
-	      pcm_downstream_rx_is_valid(&receiver),
+	      pcm_downstream_rx_is_valid(&receiver) &&
+	      pcm_downstream_rx_is_complete(&receiver),
 	      "V.92 width %u law %u status result changed", frame_bits, law);
-	saved = receiver;
-	CHECK(pcm_downstream_rx_expect_ed(&receiver) ==
-		      PCM_DOWNSTREAM_RX_INVALID_STATE &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
-	      "V.92 width %u accepted the V.90 Ed branch", frame_bits);
 	return true;
 }
 

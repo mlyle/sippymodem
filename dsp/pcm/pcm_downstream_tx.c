@@ -20,11 +20,12 @@ static bool stage_matches_protocol(
 {
 	if (transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D)
 		return true;
+	if (transmitter->stage == PCM_DOWNSTREAM_TX_ED)
+		return true;
 	if (transmitter->protocol == PCM_PROTOCOL_V92)
 		return transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL;
 	return transmitter->stage == PCM_DOWNSTREAM_TX_MP ||
-	       transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME ||
-	       transmitter->stage == PCM_DOWNSTREAM_TX_ED;
+	       transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME;
 }
 
 static struct v90_mp_parameters *record_common(
@@ -145,6 +146,7 @@ static bool unconfigured_control_is_valid(
 		       PCM_DOWNSTREAM_V92_CONTROL_NONE &&
 	       !transmitter->mp_prime_requested &&
 	       !transmitter->mp_prime_record_accepted &&
+	       !transmitter->v92_control_record_accepted &&
 	       !transmitter->ed_requested && transmitter->ed_frames == 0 &&
 	       transmitter->control_sequence_bits == 0 &&
 	       transmitter->control_bit_index == 0 &&
@@ -163,6 +165,7 @@ static bool v90_control_is_valid(
 
 	if (transmitter->v92_control_kind !=
 		    PCM_DOWNSTREAM_V92_CONTROL_NONE ||
+	    transmitter->v92_control_record_accepted ||
 	    !v90_mp_record_is_valid(&transmitter->control.mp) ||
 	    v90_mp_record_acknowledges_cp(&transmitter->control.mp) ||
 	    transmitter->control_sequence_bits == 0 ||
@@ -222,7 +225,8 @@ static bool v92_control_is_valid(
 	size_t expected_bits = 0u;
 
 	if (transmitter->stage != PCM_DOWNSTREAM_TX_TRN2D &&
-	    transmitter->stage != PCM_DOWNSTREAM_TX_V92_CONTROL)
+	    transmitter->stage != PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	    transmitter->stage != PCM_DOWNSTREAM_TX_ED)
 		return false;
 	if (transmitter->v92_control_kind !=
 		    PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
@@ -236,14 +240,36 @@ static bool v92_control_is_valid(
 		    transmitter->encoder.mapping.frame_bits != 0u ||
 	    (transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
 	     transmitter->control_bit_index != 0u) ||
-	    (transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	    ((transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL ||
+	      transmitter->stage == PCM_DOWNSTREAM_TX_ED) &&
 	     transmitter->accepted_frames <=
 		     V90_PHASE4_TRN2D_MINIMUM_FRAMES) ||
 	    transmitter->mp_prime_requested ||
 	    transmitter->mp_prime_record_accepted ||
-	    transmitter->ed_requested || transmitter->ed_frames != 0u ||
-	    transmitter->finish_requested || transmitter->complete)
+	    (transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
+	     transmitter->v92_control_record_accepted))
 		return false;
+	if (transmitter->ed_requested &&
+	    (transmitter->v92_control_kind !=
+		     PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
+	     !transmitter->control.suvd.acknowledges_cpu))
+		return false;
+	if (transmitter->stage == PCM_DOWNSTREAM_TX_ED) {
+		if (!transmitter->ed_requested ||
+		    !transmitter->v92_control_record_accepted ||
+		    transmitter->control_bit_index != 0u ||
+		    transmitter->ed_frames > V90_PHASE4_ED_FRAMES ||
+		    transmitter->finish_requested !=
+			    (transmitter->ed_frames == V90_PHASE4_ED_FRAMES) ||
+		    (transmitter->complete &&
+		     !transmitter->finish_requested))
+			return false;
+	} else if (transmitter->ed_frames != 0u ||
+		   transmitter->finish_requested || transmitter->complete ||
+		   (transmitter->ed_requested &&
+		    transmitter->control_bit_index == 0u)) {
+		return false;
+	}
 	if (transmitter->v92_control_kind ==
 	    PCM_DOWNSTREAM_V92_CONTROL_SUVD) {
 		return v92_suvd_parameters_are_valid(
@@ -532,6 +558,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_suvd(
 	next.control_bit_index = 0u;
 	next.control_configured = true;
 	next.v92_control_kind = PCM_DOWNSTREAM_V92_CONTROL_SUVD;
+	next.v92_control_record_accepted = false;
 	if (!pcm_downstream_tx_is_valid(&next))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;
@@ -573,6 +600,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_cpd(
 	next.control.cpd = *parameters;
 	next.control_bit_index = 0u;
 	next.v92_control_kind = PCM_DOWNSTREAM_V92_CONTROL_CPD;
+	next.v92_control_record_accepted = false;
 	if (!pcm_downstream_tx_is_valid(&next))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;
@@ -613,13 +641,26 @@ enum pcm_downstream_tx_result pcm_downstream_tx_request_ed(
 	struct pcm_downstream_tx *transmitter)
 {
 	struct pcm_downstream_tx next;
+	bool v90_ready;
+	bool v92_ready;
 
 	if (transmitter == NULL)
 		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
-	if (!pcm_downstream_tx_is_valid(transmitter) ||
-	    transmitter->protocol != PCM_PROTOCOL_V90 ||
-	    !transmitter->control_configured ||
-	    !transmitter->mp_prime_requested)
+	if (!pcm_downstream_tx_is_valid(transmitter))
+		return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	v90_ready = transmitter->protocol == PCM_PROTOCOL_V90 &&
+		transmitter->control_configured &&
+		transmitter->mp_prime_requested;
+	v92_ready = transmitter->protocol == PCM_PROTOCOL_V92 &&
+		transmitter->control_configured &&
+		(transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL ||
+		 transmitter->stage == PCM_DOWNSTREAM_TX_ED) &&
+		transmitter->v92_control_kind ==
+			PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+		transmitter->control.suvd.acknowledges_cpu &&
+		(transmitter->v92_control_record_accepted ||
+		 transmitter->control_bit_index != 0u);
+	if (!v90_ready && !v92_ready)
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
 	if (transmitter->complete)
 		return PCM_DOWNSTREAM_TX_COMPLETE;
@@ -629,6 +670,9 @@ enum pcm_downstream_tx_result pcm_downstream_tx_request_ed(
 	next.ed_requested = true;
 	if (next.stage == PCM_DOWNSTREAM_TX_MP_PRIME &&
 	    next.mp_prime_record_accepted && next.control_bit_index == 0)
+		next.stage = PCM_DOWNSTREAM_TX_ED;
+	if (next.stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	    next.control_bit_index == 0u)
 		next.stage = PCM_DOWNSTREAM_TX_ED;
 	if (!pcm_downstream_tx_is_valid(&next))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
@@ -773,6 +817,14 @@ static enum pcm_downstream_tx_result generate_frame(
 				if (transmitter->ed_requested)
 					transmitter->stage =
 						PCM_DOWNSTREAM_TX_ED;
+			} else if (transmitter->stage ==
+				   PCM_DOWNSTREAM_TX_V92_CONTROL &&
+				   transmitter->ed_requested) {
+				transmitter->v92_control_record_accepted = true;
+				transmitter->stage = PCM_DOWNSTREAM_TX_ED;
+			} else if (transmitter->stage ==
+				   PCM_DOWNSTREAM_TX_V92_CONTROL) {
+				transmitter->v92_control_record_accepted = true;
 			}
 		}
 	} else if (transmitter->stage == PCM_DOWNSTREAM_TX_ED) {

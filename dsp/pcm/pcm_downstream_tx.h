@@ -91,6 +91,7 @@ struct pcm_downstream_tx {
 	bool control_configured;
 	bool mp_prime_requested;
 	bool mp_prime_record_accepted;
+	bool v92_control_record_accepted;
 	bool ed_requested;
 	bool finish_requested;
 	bool complete;
@@ -135,10 +136,11 @@ bool pcm_downstream_tx_is_v92_control_boundary(
 enum pcm_downstream_tx_result pcm_downstream_tx_request_mp_prime(
 	struct pcm_downstream_tx *transmitter);
 
-/* Request Ed after MP prime has been selected. At least one complete MP-prime
- * source record is retained; a mid-record request finishes that record. Ed
- * then contributes exactly two zero-source frames to the continuous training
- * coder before its delayed spectral output is drained. */
+/* Request Ed after MP prime has been selected, or after an acknowledging
+ * V.92 SUVd has been selected. At least one complete current source record is
+ * retained; a mid-record request finishes that record. Ed then contributes
+ * exactly two zero-source frames to the continuous training coder before its
+ * delayed spectral output is drained. */
 enum pcm_downstream_tx_result pcm_downstream_tx_request_ed(
 	struct pcm_downstream_tx *transmitter);
 

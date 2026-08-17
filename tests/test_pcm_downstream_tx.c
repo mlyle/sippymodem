@@ -335,6 +335,7 @@ static bool run_v92_width(
 	size_t training_frames = 0u;
 	size_t suvd_records = 0u;
 	size_t cpd_records = 0u;
+	size_t ed_records = 0u;
 	size_t symbol_count = 0u;
 	size_t maximum_symbols =
 		V90_PHASE4_TRN2D_MINIMUM_SYMBOLS + 2048u;
@@ -476,6 +477,53 @@ static bool run_v92_width(
 	      pcm_downstream_tx_is_valid(&transmitter) &&
 	      pcm_downstream_rx_is_valid(&receiver),
 	      "V.92 width %u law %u lost its continuous control epoch",
+	      frame_bits, law);
+	CHECK(pcm_downstream_rx_expect_ed(&receiver) == PCM_DOWNSTREAM_RX_OK &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK,
+	      "V.92 width %u law %u did not arm Ed", frame_bits, law);
+	while (!pcm_downstream_tx_is_complete(&transmitter) &&
+	       symbol_count < maximum_symbols) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		enum pcm_downstream_tx_result transmit_result =
+			pcm_downstream_tx_next(&transmitter, &symbol);
+		enum pcm_downstream_rx_result receive_result;
+
+		if (transmit_result == PCM_DOWNSTREAM_TX_COMPLETE)
+			break;
+		CHECK(transmit_result == PCM_DOWNSTREAM_TX_OK,
+		      "V.92 width %u law %u Ed transmitter stopped",
+		      frame_bits, law);
+		symbol_count++;
+		receive_result = pcm_downstream_rx_receive(
+			&receiver, symbol.pcm.octet, &event);
+		if (receive_result == PCM_DOWNSTREAM_RX_ED) {
+			CHECK(event.ed.bit_count ==
+				      V90_PHASE4_ED_FRAMES * frame_bits &&
+			      event.ed.bit_errors == 0u,
+			      "V.92 width %u law %u returned corrupt Ed",
+			      frame_bits, law);
+			ed_records++;
+		} else {
+			CHECK(receive_result == PCM_DOWNSTREAM_RX_BUFFERING ||
+			      receive_result == PCM_DOWNSTREAM_RX_SUVD,
+			      "V.92 width %u law %u returned %s before Ed",
+			      frame_bits, law,
+			      pcm_downstream_rx_result_name(receive_result));
+		}
+	}
+	CHECK(ed_records == 1u &&
+	      pcm_downstream_tx_is_complete(&transmitter) &&
+	      pcm_downstream_rx_is_complete(&receiver) &&
+	      transmitter.protocol == PCM_PROTOCOL_V92 &&
+	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&
+	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_COMPLETE,
+	      "V.92 width %u law %u did not complete Ed exactly",
 	      frame_bits, law);
 	return true;
 }
@@ -643,6 +691,20 @@ static bool test_v92_switch_contracts(void)
 		!corrupted.control.cpd.acknowledges_cpu;
 	CHECK(invalid_transmitter_is_rejected(corrupted),
 	      "V.92 transmitter accepted changed CPd acknowledgement");
+	CHECK(pcm_downstream_tx_start_suvd(
+		      &transmitter, &acknowledged_suvd) ==
+		      PCM_DOWNSTREAM_TX_OK,
+	      "V.92 transmitter did not select acknowledging SUVd");
+	saved = transmitter;
+	CHECK(!transmitter.v92_control_record_accepted &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+	      advance_to_v92_position(&transmitter, false) &&
+	      !transmitter.v92_control_record_accepted &&
+	      pcm_downstream_tx_request_ed(&transmitter) ==
+		      PCM_DOWNSTREAM_TX_OK,
+	      "V.92 transmitter skipped the acknowledging SUVd record");
 	return true;
 }
 

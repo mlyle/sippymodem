@@ -99,9 +99,9 @@ bool pcm_downstream_rx_is_valid(
 bool pcm_downstream_rx_is_fresh(
 	const struct pcm_downstream_rx *receiver);
 
-/* Arm the transition to Ed after the local CP-prime/E prerequisite. A request
- * made immediately after MP-prime starts the search at that boundary; an
- * earlier or mid-record request is latched. Whole repeated MP-prime records
+/* Arm the transition to Ed after the local CP-prime/E or V.92 control
+ * prerequisite. A V.90 request may be latched mid-record; a V.92 request is
+ * made at a complete control-record boundary. Whole repeated control records
  * remain valid while the sender drains already accepted spectral lookahead. */
 enum pcm_downstream_rx_result pcm_downstream_rx_expect_ed(
 	struct pcm_downstream_rx *receiver);
@@ -114,9 +114,10 @@ bool pcm_downstream_rx_has_failed(
 /* Consume one authoritative G.711 network character. The first 2040 symbols
  * remain TRN2d and produce one event per six-symbol frame. Later TRN2d bits
  * feed the selected protocol's saturated control synchronizer. V.90 accepts
- * MP and can then be armed for Ed; V.92 accepts continuous SUVd and CPd. BUFFERING
- * accepts the character but leaves event unchanged; rejected calls change
- * neither receiver nor event. */
+ * MP and can then be armed for Ed; V.92 accepts continuous SUVd and CPd and
+ * can be armed at a complete control boundary. BUFFERING accepts the character
+ * but leaves event unchanged; rejected calls change neither receiver nor
+ * event. */
 enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	struct pcm_downstream_rx *receiver, uint8_t network_octet,
 	struct pcm_downstream_event *event);
