@@ -1530,6 +1530,72 @@ static bool configure_recording_replay(
 	return true;
 }
 
+static bool run_v32_recording_replay(const char *path)
+{
+	static const char dial_command[] = "ATDrecording\r";
+	static const char *const commands[] = {
+		"ATZ\r",
+		"ATE0\r",
+		"ATX3\r",
+		"AT\\N0\r",
+		"AT+DS=0,0\r",
+		"AT+MS=32,0,9600,9600\r",
+	};
+	struct channel_bench_recording recording = { 0 };
+	struct datapumps datapumps = { 0 };
+	struct integration_endpoint endpoint;
+	size_t connected_at = SIZE_MAX;
+
+	CHECK(channel_bench_recording_load(
+		      path, REPLAY_MAX_SAMPLES, &recording) ==
+		      CHANNEL_BENCH_OK,
+	      "optional V.32 recording could not be loaded");
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
+		      endpoint_init(&endpoint, "V.32 recording replay"),
+	      "V.32 recording replay did not initialize");
+	CHECK(configure_recording_replay(
+		      &endpoint, commands, ARRAY_LENGTH(commands)),
+	      "V.32 recording replay setup was rejected");
+	CHECK(modem_write(
+		      endpoint.modem, dial_command,
+		      (int)(sizeof(dial_command) - 1u)) ==
+		      (int)(sizeof(dial_command) - 1u) &&
+		      modem_report_outgoing_call_connected(endpoint.modem) == 0,
+	      "V.32 recording replay did not start the call");
+	for (size_t offset = 0; offset < recording.count;) {
+		size_t count = recording.count - offset;
+
+		if (count > SIP_FRAME_SAMPLES)
+			count = SIP_FRAME_SAMPLES;
+		memcpy(endpoint.receive, recording.samples + offset,
+		       count * sizeof(*endpoint.receive));
+		modem_process(
+			endpoint.modem, endpoint.receive, endpoint.transmit,
+			(int)count);
+		offset += count;
+		CHECK(endpoint_drain(&endpoint),
+		      "V.32 recording replay terminal output overflowed");
+		if (connected_at == SIZE_MAX &&
+		    modem_is_online(endpoint.modem, DP_V32))
+			connected_at = offset;
+		if (connected_at != SIZE_MAX)
+			endpoint.output_count = 0;
+	}
+	CHECK(connected_at != SIZE_MAX,
+	      "V.32 recording did not acquire carrier (final DP %d/status %d)",
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
+	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
+	fprintf(stderr,
+		"[       OK ] V.32 recording replay (%zu samples, carrier at %zu)\n",
+		recording.count, connected_at);
+
+	endpoint_destroy(&endpoint);
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "V.32 recording replay registrations remained busy");
+	channel_bench_recording_release(&recording);
+	return true;
+}
+
 static bool v34_replay_symbol_rate_parse(
 	const char *value, unsigned int *symbol_rate)
 {
@@ -2018,6 +2084,8 @@ static bool run_v90_recording_replay(
 
 int main(void)
 {
+	const char *v32_recording_path =
+		getenv("V32_REPLAY_RX_PCM");
 	const char *v34_recording_path =
 		getenv("V34_REPLAY_RX_PCM");
 	const char *v34_answer_recording_path =
@@ -2306,6 +2374,12 @@ int main(void)
 
 	if (v34_matrix_filter != NULL && v34_matrix_filter[0] != '\0')
 		return run_v34_rate_matrix(v34_matrix_filter) ? 0 : 1;
+	if (v32_recording_path == NULL || v32_recording_path[0] == '\0') {
+		fprintf(stderr,
+			"[  SKIPPED ] V.32 recording replay (V32_REPLAY_RX_PCM unset)\n");
+	} else if (!run_v32_recording_replay(v32_recording_path)) {
+		return 1;
+	}
 	if (v22_recording_path == NULL || v22_recording_path[0] == '\0') {
 		fprintf(stderr,
 			"[  SKIPPED ] V.22bis recording replay (V22_REPLAY_RX_PCM unset)\n");

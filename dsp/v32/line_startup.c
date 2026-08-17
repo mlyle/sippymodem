@@ -56,11 +56,9 @@ static struct single_tone_detector *selected_detector_mutable(
 
 static bool turnaround_marker(const struct single_tone_event *event)
 {
-	/* The answerer introduces S by starting its 600/3000 Hz projection.
-	 * A phase reversal is also accepted when acquisition overlaps the
-	 * transition. */
-	return event->kind == SINGLE_TONE_STARTED ||
-	       event->kind == SINGLE_TONE_PHASE_REVERSED;
+	/* AC acquisition establishes the tone; only the later CA reversal starts
+	 * the caller's round-trip measurement and 64-symbol response interval. */
+	return event->kind == SINGLE_TONE_PHASE_REVERSED;
 }
 
 bool v32_line_startup_is_valid(

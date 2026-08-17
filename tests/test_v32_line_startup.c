@@ -129,6 +129,7 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 	struct test_turnaround_signal turnaround;
 	uint64_t calling_power = 0;
 	size_t guard_samples = 0;
+	size_t marker_samples = 0;
 	size_t reversal_response_samples = 0;
 	bool complete = false;
 
@@ -180,6 +181,18 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 		      "caller rejected the answer-to-turnaround gap");
 		calling_power += (uint64_t)((int32_t)transmit * transmit);
 	}
+	for (size_t count = 0; count < 240; ++count) {
+		int16_t transmit;
+
+		CHECK(process_turnaround(
+			      &startup, &turnaround, codec, &transmit, &complete) &&
+		      !complete &&
+		      startup.state == V32_LINE_SEND_CALLING_CARRIER,
+		      "caller treated AC acquisition as its phase-reversal marker");
+		calling_power += (uint64_t)((int32_t)transmit * transmit);
+	}
+	CHECK(reverse_turnaround(&turnaround),
+	      "turnaround tone did not produce its first reversal");
 	while (startup.state ==
 	       V32_LINE_SEND_CALLING_CARRIER) {
 		int16_t transmit;
@@ -189,6 +202,7 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 		      !complete,
 		      "caller did not acquire the turnaround signal");
 		calling_power += (uint64_t)((int32_t)transmit * transmit);
+		marker_samples++;
 	}
 	CHECK(calling_power > UINT64_C(1000000000),
 	      "caller omitted its 1800 Hz response carrier");
@@ -206,14 +220,14 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 	CHECK(startup.state ==
 		      V32_LINE_SEND_REVERSED_CALLING_CARRIER &&
 		      startup.selected_turnaround_tone_hz == turnaround_hz &&
-		      reversal_response_samples >=
+		      marker_samples + reversal_response_samples >=
 			      V32_REVERSAL_RESPONSE_SAMPLES -
 				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES &&
-		      reversal_response_samples <=
+		      marker_samples + reversal_response_samples <=
 			      V32_REVERSAL_RESPONSE_SAMPLES +
 				      V32_REVERSAL_RESPONSE_TOLERANCE_SAMPLES,
 	      "caller did not answer the turnaround marker after 64 symbols (%zu)",
-	      reversal_response_samples);
+	      marker_samples + reversal_response_samples);
 	{
 		struct v32_line_startup lost = startup;
 		enum v32_line_startup_result result =
@@ -492,10 +506,10 @@ static bool run_paired_line_exchange(enum test_codec codec)
 		answerer_transmit = next_answerer;
 	}
 	CHECK(caller_complete && answerer_complete &&
-		      answerer.caller_reversed_early &&
+		      !answerer.caller_reversed_early &&
 		      v32_line_startup_round_trip_samples(&caller) != 0 &&
-		      v32_answerer_line_startup_round_trip_samples(&answerer) == 0,
-	      "paired line startup did not exercise the early marker path");
+		      v32_answerer_line_startup_round_trip_samples(&answerer) != 0,
+	      "paired line startup did not complete the two-reversal exchange");
 	return true;
 }
 
