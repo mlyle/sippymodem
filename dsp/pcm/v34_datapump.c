@@ -16,9 +16,9 @@
 
 enum {
 	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
-	/* Keep every phase on a conservative G.711 line scale. A 4096 peak
-	 * produces the nominal 2896-sample equal-power RMS. */
-	V34_NOMINAL_AMPLITUDE = 4096,
+	/* Keep every phase on the ordinary V.34 line scale. An 8192 peak
+	 * produces the nominal 5793-sample equal-power RMS. */
+	V34_NOMINAL_AMPLITUDE = 8192,
 	/* A local full retrain does not receive the peer's response until both
 	 * stations have observed their 70 ms silence and 50 ms tone guards. */
 	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 2,
