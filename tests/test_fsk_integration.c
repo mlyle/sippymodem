@@ -1862,10 +1862,26 @@ static bool v90_replay_codec_parse(
 	return false;
 }
 
-static bool run_v90_recording_replay(
-	const char *path, enum media_codec codec)
+static bool v90_replay_role_parse(const char *value, bool *originator)
 {
-	static const char *const commands[] = {
+	if (originator == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0' ||
+	    strcmp(value, "answerer") == 0) {
+		*originator = false;
+		return true;
+	}
+	if (strcmp(value, "originator") == 0) {
+		*originator = true;
+		return true;
+	}
+	return false;
+}
+
+static bool run_v90_recording_replay(
+	const char *path, enum media_codec codec, bool originator)
+{
+	static const char *const answerer_commands[] = {
 		"ATZ\r",
 		"ATE0\r",
 		"ATX3\r",
@@ -1875,6 +1891,22 @@ static bool run_v90_recording_replay(
 		"AT+MS=90,0,28000,28000\r",
 		"AT+V90U=19200,19200,3000\r",
 	};
+	static const char *const originator_commands[] = {
+		"ATZ\r",
+		"ATE0\r",
+		"ATX3\r",
+		"AT\\N0\r",
+		"AT+DS=0,0\r",
+		"AT+V90D=1\r",
+		"AT+MS=90,0,28000,28000\r",
+		"AT+V90U=14400,14400,3000\r",
+	};
+	static const char dial_command[] = "ATDpeer\r";
+	const char *const *commands = originator ?
+		originator_commands : answerer_commands;
+	size_t command_count = originator ?
+		ARRAY_LENGTH(originator_commands) :
+		ARRAY_LENGTH(answerer_commands);
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	enum g711_law law;
@@ -1891,13 +1923,24 @@ static bool run_v90_recording_replay(
 	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
 		      endpoint_init(&endpoint, "V.90 recording replay") &&
 		      configure_recording_replay(
-			      &endpoint, commands, ARRAY_LENGTH(commands)),
+			      &endpoint, commands, command_count),
 	      "V.90 recording replay did not initialize");
-	CHECK(modem_report_incoming_call(endpoint.modem) == 0 &&
-		      endpoint_drain(&endpoint) &&
-		      output_contains(&endpoint, "RING") &&
-		      modem_answer(endpoint.modem) == 0,
-	      "V.90 recording replay did not answer the call");
+	if (originator) {
+		CHECK(modem_write(
+			      endpoint.modem, dial_command,
+			      (int)(sizeof(dial_command) - 1u)) ==
+			      (int)(sizeof(dial_command) - 1u) &&
+			      endpoint_drain(&endpoint) &&
+			      modem_report_outgoing_call_connected(
+				      endpoint.modem) == 0,
+		      "V.90 recording replay did not originate the call");
+	} else {
+		CHECK(modem_report_incoming_call(endpoint.modem) == 0 &&
+			      endpoint_drain(&endpoint) &&
+			      output_contains(&endpoint, "RING") &&
+			      modem_answer(endpoint.modem) == 0,
+		      "V.90 recording replay did not answer the call");
+	}
 	endpoint.output_count = 0;
 	for (size_t offset = 0; offset < recording_count;) {
 		size_t frame_count = recording_count - offset;
@@ -1933,14 +1976,33 @@ static bool run_v90_recording_replay(
 			endpoint.output_count = 0;
 		}
 	}
-	CHECK(connected_at != SIZE_MAX,
-	      "V.90 recording did not acquire carrier (V.8 seen %d, handoff %zu, final DP %d/status %d)",
-	      v8_seen, handoff_at,
-	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
-	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
-	fprintf(stderr,
-		"[       OK ] V.90 recording replay over %s (%zu octets, carrier at %zu)\n",
-		codec_name(codec), recording_count, connected_at);
+	if (originator) {
+		/* A recording captured from a peer that never received CJ cannot
+		 * contain the interactive Phase 2 response to a repaired caller.
+		 * It can still independently prove ANSam/JM acceptance and the
+		 * V.90 ownership handoff. */
+		CHECK(handoff_at != SIZE_MAX,
+		      "outgoing V.90 recording did not hand off from V.8 (V.8 seen %d, final DP %d/status %d)",
+		      v8_seen,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->id : -1,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->status : -1);
+		fprintf(stderr,
+			"[       OK ] outgoing V.90 V.8 recording replay over %s (%zu octets, handoff at %zu)\n",
+			codec_name(codec), recording_count, handoff_at);
+	} else {
+		CHECK(connected_at != SIZE_MAX,
+		      "V.90 recording did not acquire carrier (V.8 seen %d, handoff %zu, final DP %d/status %d)",
+		      v8_seen, handoff_at,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->id : -1,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->status : -1);
+		fprintf(stderr,
+			"[       OK ] V.90 recording replay over %s (%zu octets, carrier at %zu)\n",
+			codec_name(codec), recording_count, connected_at);
+	}
 
 	endpoint_destroy(&endpoint);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
@@ -1969,7 +2031,10 @@ int main(void)
 		getenv("V90_REPLAY_RX_G711");
 	const char *v90_recording_law =
 		getenv("V90_REPLAY_LAW");
+	const char *v90_recording_role =
+		getenv("V90_REPLAY_ROLE");
 	enum media_codec v90_replay_codec;
+	bool v90_replay_originator;
 	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
 		{
@@ -2263,11 +2328,14 @@ int main(void)
 		fprintf(stderr,
 			"[  SKIPPED ] V.90 recording replay (V90_REPLAY_RX_G711 unset)\n");
 	} else if (!v90_replay_codec_parse(
-			   v90_recording_law, &v90_replay_codec)) {
-		fprintf(stderr, "invalid V.90 recording replay law\n");
+			   v90_recording_law, &v90_replay_codec) ||
+		   !v90_replay_role_parse(
+			   v90_recording_role, &v90_replay_originator)) {
+		fprintf(stderr, "invalid V.90 recording replay configuration\n");
 		return 1;
 	} else if (!run_v90_recording_replay(
-			   v90_recording_path, v90_replay_codec)) {
+			   v90_recording_path, v90_replay_codec,
+			   v90_replay_originator)) {
 		return 1;
 	}
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
