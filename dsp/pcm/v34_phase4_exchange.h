@@ -47,9 +47,10 @@ enum v34_phase4_exchange_event {
 };
 
 enum {
-	/* Repeat the acknowledged record long enough for a peer which acquired
-	 * MP near a record boundary to validate more than one complete MP'. */
-	V34_PHASE4_MIN_MP_PRIME_RECORDS = 4,
+	/* Give a peer eight complete sync-and-CRC opportunities after an early
+	 * acknowledgment. This covers a companded boundary error without holding
+	 * MP' long enough to obscure the following E transition. */
+	V34_PHASE4_MIN_MP_PRIME_RECORDS = 8,
 };
 
 struct v34_phase4_exchange_configuration {
