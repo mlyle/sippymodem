@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 struct v92_cpt_parameters;
+struct v92_cpu_parameters;
 
 enum {
 	V90_PCM_FRAME_MAX_BITS = 42,
@@ -59,6 +60,13 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
 	struct v90_pcm_mapping *mapping,
 	const struct v92_cpt_parameters *parameters);
+
+/* Derive the shared downstream data map from an accepted V.92 CPu. A rate
+ * number of zero requests cleardown and is rejected. Rejected calls leave
+ * mapping unchanged. */
+enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpu(
+	struct v90_pcm_mapping *mapping,
+	const struct v92_cpu_parameters *parameters);
 bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping);
 bool v90_pcm_mapping_equal(
 	const struct v90_pcm_mapping *left,

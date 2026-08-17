@@ -2,6 +2,7 @@
 
 #include <v90_pcm_mapping.h>
 #include <v92_cpt.h>
+#include <v92_cpu.h>
 
 #include "test.h"
 
@@ -263,6 +264,97 @@ static bool test_v92_cpt_mapping(void)
 		      v90_pcm_mapping_init_from_v92_cpt(&mapping, NULL) ==
 			      V90_PCM_MAPPING_INVALID_ARGUMENT,
 		      "rejected V.92 CPt changed the mapping");
+	}
+	return true;
+}
+
+static struct v92_cpu_parameters v92_cpu_parameters(
+	const struct v90_cp_parameters *source)
+{
+	struct v92_cpu_parameters parameters = {
+		.law = source->law,
+		.trn1d_ratio_q3_13 = source->trn1d_ratio_q3_13,
+		.shaping_a1_q1_6 = source->shaping_a1_q1_6,
+		.shaping_a2_q1_6 = source->shaping_a2_q1_6,
+		.shaping_b1_q1_6 = source->shaping_b1_q1_6,
+		.shaping_b2_q1_6 = source->shaping_b2_q1_6,
+		.data_rate_number = source->selected_rate_index,
+		.sign_redundancy = source->sign_redundancy,
+		.spectral_lookahead_frames = source->spectral_lookahead,
+		.constellation_count = source->constellation_count,
+		.acknowledges_cpd = true,
+		.codec_constellations_differ =
+			source->codec_constellations_differ,
+	};
+
+	memcpy(parameters.transmit_constellations,
+	       source->transmit_constellations,
+	       sizeof(parameters.transmit_constellations));
+	memcpy(parameters.codec_constellations,
+	       source->codec_constellations,
+	       sizeof(parameters.codec_constellations));
+	memcpy(parameters.frame_constellation, source->frame_constellation,
+	       sizeof(parameters.frame_constellation));
+	return parameters;
+}
+
+static bool test_v92_cpu_mapping(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t rate = 1u;
+		     rate <= V92_CPU_MAX_DATA_RATE_NUMBER; ++rate) {
+			uint8_t sign_redundancy = rate < 4u ?
+				(uint8_t)(4u - rate) :
+				rate > 19u ? (uint8_t)(22u - rate) :
+					     (uint8_t)(rate % 4u);
+			uint8_t modulus_bits = (uint8_t)(
+				14u + rate + sign_redundancy);
+			uint8_t constellation_size = (uint8_t)(
+				1u << ((modulus_bits +
+					 V90_CP_FRAME_INTERVALS - 1u) /
+					V90_CP_FRAME_INTERVALS));
+			struct v90_cp_parameters source = parameters(
+				V90_CP_DATA, rate, sign_redundancy,
+				constellation_size, (rate & 1u) != 0u);
+			struct v92_cpu_parameters cpu;
+			struct v90_pcm_mapping from_v90;
+			struct v90_pcm_mapping from_v92;
+
+			source.law = (enum g711_law)law;
+			cpu = v92_cpu_parameters(&source);
+			CHECK(v90_pcm_mapping_init(&from_v90, &source) ==
+				      V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_init_from_v92_cpu(
+				      &from_v92, &cpu) == V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_equal(&from_v90, &from_v92),
+			      "V.92 CPu map differs at law %u rate %u",
+			      law, rate);
+		}
+	}
+	{
+		struct v90_cp_parameters source = parameters(
+			V90_CP_DATA, 13u, 1u, 16u, false);
+		struct v92_cpu_parameters invalid = v92_cpu_parameters(&source);
+		struct v90_pcm_mapping mapping;
+		struct v90_pcm_mapping before;
+
+		memset(&mapping, 0xa5, sizeof(mapping));
+		before = mapping;
+		invalid.data_rate_number = 0u;
+		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &invalid) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+		      memcmp(&mapping, &before, sizeof(mapping)) == 0,
+		      "V.92 CPu cleardown changed the mapping");
+		invalid = v92_cpu_parameters(&source);
+		add_ucode(&invalid.transmit_constellations[2], 3u);
+		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &invalid) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+		      memcmp(&mapping, &before, sizeof(mapping)) == 0 &&
+		      v90_pcm_mapping_init_from_v92_cpu(NULL, &invalid) ==
+			      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+		      v90_pcm_mapping_init_from_v92_cpu(&mapping, NULL) ==
+			      V90_PCM_MAPPING_INVALID_ARGUMENT,
+		      "rejected V.92 CPu changed the mapping");
 	}
 	return true;
 }
@@ -662,6 +754,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "training mapping", test_training_mapping },
 		{ "V.92 CPt mapping", test_v92_cpt_mapping },
+		{ "V.92 CPu mapping", test_v92_cpu_mapping },
 		{ "generated inverse mapping",
 		  test_generated_inverse_mapping },
 		{ "inverse rate boundaries",
