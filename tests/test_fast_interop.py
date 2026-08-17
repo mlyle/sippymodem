@@ -114,7 +114,7 @@ class FastInteropTests(unittest.TestCase):
                     environment = configured_endpoint.environment_dict()
                     self.assertEqual(environment["SIP_CODEC"], "PCMU")
                     self.assertEqual(environment["SIP_REMOTE_CLOCK"], "1")
-                    self.assertEqual(environment["SIP_JB_MS"], "20")
+                    self.assertEqual(environment["SIP_JB_MS"], "60")
                     self.assertIn(
                         "AT+MS=23,0,300,1200",
                         configured_endpoint.at_commands,
