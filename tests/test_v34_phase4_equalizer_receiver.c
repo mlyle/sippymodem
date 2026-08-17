@@ -184,7 +184,7 @@ static bool transmit_point(
 static bool run_stream(
 	enum v34_station_role role,
 	enum v34_constellation_size constellation, double phase4_rotation,
-	bool corrupt_s_bar_transition)
+	bool corrupt_s_bar_transition, bool inject_low_signal_gap)
 {
 	struct receive_fixture fixture = {
 		.channel.rotation = { 1.0, 0.0 },
@@ -345,6 +345,39 @@ static bool run_stream(
 		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP,
 	      "Phase 4 answer marker count=%u role=%d",
 	      fixture.answer_s_events, role);
+	if (inject_low_signal_gap) {
+		static const struct qam_point zero;
+		const struct qam_point residual = { 1e-6, -1e-6 };
+		struct qam_point saved_coefficients[
+			QAM_EQUALIZER_MAX_TAP_COUNT];
+		struct v34_phase4_mp_receiver saved_mp_receiver;
+
+		/* A G.711 silence interval can end with a tiny nonzero residual.
+		 * That is not a reliable nearest-point decision and must not turn
+		 * normalized adaptation's vanishing input power into a large update. */
+		for (size_t symbol = 0;
+		     symbol < 2u * V34_EQUALIZER_TAP_COUNT; ++symbol)
+			CHECK(receive_point(&fixture, &zero, &result),
+			      "low-signal history drain failed at %zu", symbol);
+		memcpy(saved_coefficients, fixture.receiver.equalizer.coefficients,
+		       sizeof(saved_coefficients));
+		saved_mp_receiver = fixture.receiver.mp_receiver;
+		CHECK(receive_point(&fixture, &residual, &result),
+		      "low-signal residual failed");
+		for (size_t symbol = 0;
+		     symbol < V34_EQUALIZER_TAP_COUNT; ++symbol)
+			CHECK(receive_point(&fixture, &zero, &result),
+			      "low-signal tail failed at %zu", symbol);
+		CHECK(memcmp(saved_coefficients,
+			     fixture.receiver.equalizer.coefficients,
+			     sizeof(saved_coefficients)) == 0,
+		      "low-signal residual changed decision-directed tracking");
+		CHECK(memcmp(&saved_mp_receiver, &fixture.receiver.mp_receiver,
+			     sizeof(saved_mp_receiver)) == 0,
+		      "low-signal residual advanced MP decoding");
+		memset(fixture.channel.history, 0,
+		       sizeof(fixture.channel.history));
+	}
 	CHECK(v34_phase4_mp_init_type0_from_trn(
 		      &mp, &trn, &fixture.first_parameters) ==
 		      V34_PHASE4_MP_OK,
@@ -494,7 +527,8 @@ static bool test_generated_channels(void)
 		     ++constellation)
 			if (!run_stream(
 				    roles[role],
-				    constellations[constellation], 0.0, false))
+				    constellations[constellation], 0.0, false,
+				    false))
 				return false;
 	return true;
 }
@@ -506,7 +540,14 @@ static bool test_known_trn_impairment(void)
 	 * the receiver trusts the denser 16-point MP constellation. */
 	return run_stream(
 		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, 0.52,
-		true);
+		true, false);
+}
+
+static bool test_low_signal_gap(void)
+{
+	return run_stream(
+		V34_CALLING_STATION, V34_CONSTELLATION_16_POINT, 0.0,
+		false, true);
 }
 
 static bool test_validation(void)
@@ -605,6 +646,7 @@ int main(void)
 	} tests[] = {
 		{ "generated multipath streams", test_generated_channels },
 		{ "known TRN phase impairment", test_known_trn_impairment },
+		{ "low-signal MP gap", test_low_signal_gap },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

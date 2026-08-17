@@ -13,6 +13,23 @@ static bool stage_is_valid(
 	       stage <= V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE;
 }
 
+static bool decision_is_confident(
+	enum v34_constellation_size constellation,
+	const struct qam_point *output, const struct qam_point *target)
+{
+	double in_phase_error = output->in_phase - target->in_phase;
+	double quadrature_error = output->quadrature - target->quadrature;
+	double squared_error = in_phase_error * in_phase_error +
+		quadrature_error * quadrature_error;
+	double squared_decision_radius =
+		constellation == V34_CONSTELLATION_4_POINT ? 0.5 : 0.1;
+
+	/* Adapt only inside half the minimum point spacing. Outside that
+	 * unambiguous decision region, silence or an erasure must not drive a
+	 * normalized update against an arbitrary nearest point. */
+	return squared_error < squared_decision_radius;
+}
+
 static bool answer_s_state_is_valid(
 	const struct v34_phase4_equalizer_receiver *receiver)
 {
@@ -357,6 +374,7 @@ v34_phase4_equalizer_receive_point(
 	enum v34_phase4_equalizer_receiver_result result;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
+	bool confident;
 	bool ready;
 
 	if (!v34_phase4_equalizer_receiver_is_valid(receiver) ||
@@ -400,9 +418,12 @@ v34_phase4_equalizer_receive_point(
 		    constellation, quarter_point, clockwise_quarter_turns,
 		    &target) != V34_CONSTELLATION_OK)
 		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+	confident = decision_is_confident(
+		constellation, &observation.output, &target);
 	/* Before S/S-bar, the input may still be the required Phase 3 drain.
 	 * A nearest-point decision in that interval is not a training symbol. */
 	if (next.stage != V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S &&
+	    confident &&
 	    qam_equalizer_adapt_observation(
 		    &next.equalizer, &observation, &target,
 		    next.adaptation) != QAM_EQUALIZER_OK)
@@ -410,6 +431,8 @@ v34_phase4_equalizer_receive_point(
 	if (next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S)
 		result = receive_answer_s(
 			&next, quarter_point, clockwise_quarter_turns);
+	else if (!confident)
+		result = V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
 	else if (next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP)
 		result = receive_mp(
 			&next, quarter_point, clockwise_quarter_turns, &emitted);
