@@ -12,7 +12,7 @@ static enum g711_law receive_law(
 {
 	return receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
 		       receiver->signal.trn2u.law :
-		       receiver->signal.control.line.law;
+		       receiver->signal.control.signal.line.law;
 }
 
 static bool cpu_storage_is_empty(
@@ -444,7 +444,7 @@ bool v92_phase4_digital_handoff_is_valid(
 	return handoff != NULL &&
 	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
 	       !v92_upstream_control_line_rx_has_failed(&handoff->receive) &&
-	       handoff->receive.training_tail_remaining == 0u &&
+	       handoff->receive.signal.training_tail_remaining == 0u &&
 	       pcm_downstream_tx_is_valid(&handoff->transmit) &&
 	       handoff->transmit.protocol == PCM_PROTOCOL_V92 &&
 	       handoff->transmit.v92_control_kind ==

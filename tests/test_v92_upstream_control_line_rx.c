@@ -312,7 +312,7 @@ static bool run_records(
 		      &suvu_tx, &transmitter, false, &suvu) ==
 		      V92_PHASE4_SUVU_TX_OK,
 	      "control-line record path did not initialize");
-	starting_samples = receiver.signal.control.line.input_samples;
+	starting_samples = receiver.signal.control.signal.line.input_samples;
 	while (!v92_phase4_suvu_tx_record_is_complete(&suvu_tx)) {
 		int16_t raw;
 
@@ -324,7 +324,7 @@ static bool run_records(
 		      "control-line SUVu generation failed");
 	}
 	CHECK(suvu_event.type == V92_CONTROL_EVENT_NONE &&
-	      receiver.signal.control.training_tail_remaining == 0u,
+	      receiver.signal.control.signal.training_tail_remaining == 0u,
 	      "control line exposed SUVu before its delayed decisions");
 	CHECK(v92_phase4_suvu_tx_handoff(&suvu_tx, &modulator) ==
 		      V92_PHASE4_SUVU_TX_OK &&
@@ -381,8 +381,8 @@ static bool run_records(
 	      cpu_event.record.cpu.frame_result == V92_CPU_OK &&
 	      cpu_parameters_equal(
 		      &cpu_event.record.cpu.parameters, &cpu) &&
-	      receiver.signal.control.training_tail_remaining == 0u &&
-	      receiver.signal.control.line.input_samples > starting_samples &&
+	      receiver.signal.control.signal.training_tail_remaining == 0u &&
+	      receiver.signal.control.signal.line.input_samples > starting_samples &&
 	      v92_phase4_digital_rx_is_valid(&receiver) &&
 	      v92_phase4_digital_rx_is_receiving_control(&receiver) &&
 	      !v92_phase4_digital_rx_has_failed(&receiver),
@@ -403,6 +403,15 @@ static bool test_contracts(void)
 	struct v92_pcm_phase4_trn2u transmitter;
 	struct v92_pcm_phase4_trn2u_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u_line_handoff invalid;
+	struct v92_upstream_rx signal;
+	struct v92_upstream_rx signal_untouched;
+	struct v92_upstream_rx signal_saved;
+	struct v92_upstream_decision decision = {
+		.equalized_level = 123.0,
+		.nearest_level = 123,
+		.group = UINT8_C(0xa5),
+	};
+	struct v92_upstream_decision decision_before;
 	struct v92_upstream_control_line_rx receiver;
 	struct v92_upstream_control_line_rx untouched;
 	struct v92_upstream_control_line_rx saved;
@@ -417,10 +426,75 @@ static bool test_contracts(void)
 		      G711_LAW_PCMU, V92_CONSTELLATION_4_POINT,
 		      0u, 1, &transmitter, &handoff),
 	      "control-line contract handoff failed");
-	memset(&untouched, 0xa5, sizeof(untouched));
-	saved = untouched;
 	invalid = handoff;
 	invalid.training_symbols++;
+	memset(&signal_untouched, 0xa5, sizeof(signal_untouched));
+	signal_saved = signal_untouched;
+	CHECK(v92_upstream_rx_init(NULL, &handoff) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v92_upstream_rx_init(&signal_untouched, NULL) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v92_upstream_rx_init(&signal_untouched, &invalid) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      memcmp(&signal_untouched, &signal_saved, sizeof(signal_saved)) == 0 &&
+	      v92_upstream_rx_init(&signal, &handoff) == V92_UPSTREAM_RX_OK,
+	      "shared upstream initialization was not transactional");
+	decision_before = decision;
+	signal_saved = signal;
+	CHECK(v92_upstream_rx_sample(NULL, 0, &decision) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v92_upstream_rx_sample(&signal, 0, NULL) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v92_upstream_rx_sample(
+		      &signal, 0,
+		      (struct v92_upstream_decision *)(void *)&signal) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      memcmp(&signal, &signal_saved, sizeof(signal)) == 0 &&
+	      memcmp(&decision, &decision_before, sizeof(decision)) == 0,
+	      "shared upstream invalid calls changed state");
+	{
+		uint64_t starting_samples = signal.line.input_samples;
+		uint8_t starting_tail = signal.training_tail_remaining;
+		int16_t raw;
+
+		CHECK(v92_pcm_phase4_trn2u_next(&transmitter, &raw) ==
+			      V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_upstream_rx_sample(
+			      &signal,
+			      line_sample(G711_LAW_PCMU, 1, raw),
+			      &decision) == V92_UPSTREAM_RX_OK &&
+		      signal.line.input_samples == starting_samples + 1u &&
+		      signal.training_tail_remaining == starting_tail - 1u &&
+		      decision.group < 4u &&
+		      v92_upstream_rx_is_valid(&signal) &&
+		      !v92_upstream_rx_has_failed(&signal),
+		      "shared upstream decision did not preserve the line");
+	}
+	signal.failed = true;
+	signal_saved = signal;
+	decision_before = decision;
+	CHECK(v92_upstream_rx_has_failed(&signal) &&
+	      v92_upstream_rx_sample(&signal, 0, &decision) ==
+		      V92_UPSTREAM_RX_FAILED &&
+	      memcmp(&signal, &signal_saved, sizeof(signal)) == 0 &&
+	      memcmp(&decision, &decision_before, sizeof(decision)) == 0,
+	      "failed shared upstream receiver was not stable");
+	CHECK(strcmp(v92_upstream_rx_result_name(V92_UPSTREAM_RX_OK), "ok") == 0 &&
+	      strcmp(v92_upstream_rx_result_name(V92_UPSTREAM_RX_FAILED),
+		     "failed") == 0 &&
+	      strcmp(v92_upstream_rx_result_name(V92_UPSTREAM_RX_INVALID_ARGUMENT),
+		     "invalid argument") == 0 &&
+	      strcmp(v92_upstream_rx_result_name(V92_UPSTREAM_RX_INVALID_STATE),
+		     "invalid state") == 0 &&
+	      strcmp(v92_upstream_rx_result_name(V92_UPSTREAM_RX_NUMERIC_FAILURE),
+		     "numeric failure") == 0 &&
+	      strcmp(v92_upstream_rx_result_name(
+		     (enum v92_upstream_rx_result)99), "unknown") == 0 &&
+	      !v92_upstream_rx_is_valid(NULL) &&
+	      !v92_upstream_rx_has_failed(NULL),
+	      "shared upstream validation contracts differed");
+	memset(&untouched, 0xa5, sizeof(untouched));
+	saved = untouched;
 	CHECK(v92_upstream_control_line_rx_init(NULL, &handoff) ==
 		      V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT &&
 	      v92_upstream_control_line_rx_init(&untouched, NULL) ==
@@ -440,7 +514,7 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "control-line null calls changed state");
-	receiver.failed = true;
+	receiver.signal.failed = true;
 	saved = receiver;
 	CHECK(v92_upstream_control_line_rx_has_failed(&receiver) &&
 	      v92_upstream_control_line_rx_sample(&receiver, 0, &event) ==
@@ -448,8 +522,8 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "failed control line was not stable");
-	receiver.failed = false;
-	receiver.line.input_samples = UINT64_MAX;
+	receiver.signal.failed = false;
+	receiver.signal.line.input_samples = UINT64_MAX;
 	saved = receiver;
 	CHECK(v92_upstream_control_line_rx_sample(&receiver, 0, &event) ==
 		      V92_UPSTREAM_CONTROL_LINE_RX_INVALID_STATE &&

@@ -5,28 +5,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 static bool line_state_is_valid(
 	const struct v92_upstream_control_line_rx *receiver)
 {
 	unsigned int expected_alignment =
-		receiver->line.demodulator.constellation ==
+		receiver->signal.line.demodulator.constellation ==
 				V92_CONSTELLATION_4_POINT ?
 			V92_STATUS_UPDATE_4_POINT_ALIGNMENT :
 			V92_STATUS_UPDATE_8_POINT_ALIGNMENT;
 
-	return v92_pcm_phase4_trn2u_line_handoff_is_valid(&receiver->line) &&
+	return v92_upstream_rx_is_valid(&receiver->signal) &&
 	       v92_control_rx_is_valid(&receiver->control) &&
 	       receiver->control.direction == V92_CONTROL_UPSTREAM &&
-	       receiver->control.alignment_bits == expected_alignment &&
-	       receiver->training_tail_remaining <=
-		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
+	       receiver->control.alignment_bits == expected_alignment;
 }
 
 bool v92_upstream_control_line_rx_is_valid(
@@ -39,7 +30,7 @@ bool v92_upstream_control_line_rx_has_failed(
 	const struct v92_upstream_control_line_rx *receiver)
 {
 	return v92_upstream_control_line_rx_is_valid(receiver) &&
-	       receiver->failed;
+	       v92_upstream_rx_has_failed(&receiver->signal);
 }
 
 enum v92_upstream_control_line_rx_result
@@ -52,14 +43,11 @@ v92_upstream_control_line_rx_init(
 	if (receiver == NULL ||
 	    !v92_pcm_phase4_trn2u_line_handoff_is_valid(handoff))
 		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT;
-	initialized = (struct v92_upstream_control_line_rx){
-		.line = *handoff,
-		.training_tail_remaining =
-			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
-	};
-	if (v92_control_rx_init_upstream(
+	if (v92_upstream_rx_init(&initialized.signal, handoff) !=
+		    V92_UPSTREAM_RX_OK ||
+	    v92_control_rx_init_upstream(
 		    &initialized.control,
-		    initialized.line.demodulator.constellation) !=
+		    initialized.signal.line.demodulator.constellation) !=
 		    V92_CONTROL_RX_OK ||
 	    !v92_upstream_control_line_rx_is_valid(&initialized))
 		return V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR;
@@ -70,7 +58,7 @@ v92_upstream_control_line_rx_init(
 static enum v92_upstream_control_line_rx_result fail(
 	struct v92_upstream_control_line_rx *receiver)
 {
-	receiver->failed = true;
+	receiver->signal.failed = true;
 	return V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR;
 }
 
@@ -104,63 +92,28 @@ v92_upstream_control_line_rx_sample(
 {
 	struct v92_upstream_control_line_rx next;
 	struct v92_control_event emitted = { 0 };
-	struct qam_equalizer_observation observation = { 0 };
-	struct qam_point input;
-	struct qam_point target;
+	struct v92_upstream_decision decision;
+	enum v92_upstream_rx_result signal_result;
 	unsigned int bits;
-	uint8_t group;
-	int16_t nearest_level;
-	bool ready;
 
 	if (!v92_upstream_control_line_rx_is_valid(receiver) || event == NULL)
 		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT;
-	if (receiver->failed)
+	if (v92_upstream_control_line_rx_has_failed(receiver))
 		return V92_UPSTREAM_CONTROL_LINE_RX_FAILED;
-	if (receiver->line.input_samples == UINT64_MAX)
-		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_STATE;
 	next = *receiver;
-	input = (struct qam_point){
-		.in_phase = next.line.polarity > 0 ? sample : -(double)sample,
-	};
-	if (qam_equalizer_observe(
-		    &next.line.equalizer, &input, &observation, &ready) !=
-		    QAM_EQUALIZER_OK ||
-	    !ready || v92_phase4_demodulator_next(
-			      &next.line.demodulator,
-			      observation.output.in_phase,
-			      &group, &nearest_level) !=
-			      V92_PHASE4_MODULATOR_OK)
+	signal_result = v92_upstream_rx_sample(
+		&next.signal, sample, &decision);
+	if (signal_result == V92_UPSTREAM_RX_FAILED)
+		return V92_UPSTREAM_CONTROL_LINE_RX_FAILED;
+	if (signal_result == V92_UPSTREAM_RX_INVALID_STATE)
+		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_STATE;
+	if (signal_result != V92_UPSTREAM_RX_OK)
 		return fail(receiver);
-	if (next.training_tail_remaining != 0u) {
-		size_t target_index =
-			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY -
-			next.training_tail_remaining;
-		int16_t selected = quantize(next.line.law, nearest_level);
-
-		target = (struct qam_point){
-			.in_phase = next.line.pending_training_targets[target_index],
-		};
-		next.training_tail_remaining--;
-		if (selected == (int16_t)target.in_phase &&
-		    qam_equalizer_adapt_observation(
-			    &next.line.equalizer, &observation, &target,
-			    next.line.adaptation) != QAM_EQUALIZER_OK)
-			return fail(receiver);
-	} else {
-		target = (struct qam_point){
-			.in_phase = quantize(next.line.law, nearest_level),
-		};
-		if (qam_equalizer_adapt_observation(
-			    &next.line.equalizer, &observation, &target,
-			    next.line.adaptation) != QAM_EQUALIZER_OK)
-			return fail(receiver);
-	}
 	bits = v92_phase4_modulator_bits_per_symbol(
-		next.line.demodulator.constellation);
+		next.signal.line.demodulator.constellation);
 	if (bits == 0u || !receive_group(
-				  &next.control, group, bits, &emitted))
+				  &next.control, decision.group, bits, &emitted))
 		return fail(receiver);
-	next.line.input_samples++;
 	if (!v92_upstream_control_line_rx_is_valid(&next))
 		return fail(receiver);
 	*receiver = next;

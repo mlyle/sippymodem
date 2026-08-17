@@ -4,7 +4,7 @@
 #define V92_UPSTREAM_CONTROL_LINE_RX_H
 
 #include "v92_control_rx.h"
-#include "v92_pcm_phase4_trn2u_line_rx.h"
+#include "v92_upstream_rx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,10 +24,8 @@ enum v92_upstream_control_line_rx_result {
  * targets finish training adaptation; later records use decision-directed
  * adaptation. One instance is serialized. */
 struct v92_upstream_control_line_rx {
-	struct v92_pcm_phase4_trn2u_line_handoff line;
+	struct v92_upstream_rx signal;
 	struct v92_control_rx control;
-	uint8_t training_tail_remaining;
-	bool failed;
 };
 
 enum v92_upstream_control_line_rx_result
