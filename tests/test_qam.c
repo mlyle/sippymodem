@@ -696,7 +696,7 @@ static bool force_timing_candidate(
 	}
 	return qam_demodulator_sample(
 		       demodulator, 0, &received, &ready) == QAM_OK &&
-	       demodulator->timing_reference_index == target;
+	       demodulator->timing_rate_reference_index == target;
 }
 
 static bool test_filtered_clock_tracking(void)
@@ -755,8 +755,29 @@ static bool test_filtered_clock_tracking(void)
 		      "filtered-clock fixture did not select candidate %zu",
 		      target);
 	}
-	CHECK(demodulator.recovery_step_units == 3000,
+	CHECK(demodulator.recovery_step_units == 3000 &&
+	      demodulator.timing_reference_index == 0,
 	      "alternating phase estimates perturbed an exact clock");
+	demodulator.timing_reference_index = 0;
+	demodulator.locked_phase_units = demodulator.timing[0].phase_units;
+	demodulator.recovery_step_units = 3000;
+	demodulator.recovery_pending = false;
+	demodulator.timing_forward_error_units = 0;
+	demodulator.timing_backward_error_units = 0;
+	demodulator.timing_error_windows = 0;
+	demodulator.timing_forward_windows = 0;
+	demodulator.timing_backward_windows = 0;
+	CHECK(force_timing_candidate(&demodulator, 0) &&
+	      force_timing_candidate(&demodulator, 0) &&
+	      force_timing_candidate(&demodulator, 3) &&
+	      demodulator.recovery_step_units == 3000 &&
+	      demodulator.timing_reference_index == 0,
+	      "one phase outlier perturbed an exact clock");
+	CHECK(force_timing_candidate(&demodulator, 3) &&
+	      force_timing_candidate(&demodulator, 3) &&
+	      demodulator.recovery_step_units == 3000 &&
+	      demodulator.timing_reference_index == 3,
+	      "stable phase evidence did not move the energy reference");
 	return true;
 }
 
@@ -814,11 +835,15 @@ static bool test_timing_rebase(void)
 	}
 	demodulator.timing_sample_count = 1;
 	demodulator.timing_forward_error_units = 17;
-	demodulator.timing_backward_error_units = 9;
+	demodulator.timing_backward_error_units = 0;
 	demodulator.timing_error_windows = 1;
+	demodulator.timing_forward_windows = 1;
 	demodulator.recovery_pending = true;
 	demodulator.recovery_fraction = 0.25;
 	demodulator.recovery_step_units--;
+	demodulator.recovery_phase_units = 1;
+	demodulator.recovery_phase_samples = 3;
+	demodulator.recovery_phase_direction = 1;
 	phase = (demodulator.timing[target].phase_units +
 		 demodulator.timing_step_units / 4u) %
 		demodulator.symbol_period_units;
@@ -826,6 +851,9 @@ static bool test_timing_rebase(void)
 	expected.locked_phase_units = phase;
 	expected.recovery_pending = false;
 	expected.recovery_fraction = 0.0;
+	expected.recovery_phase_units = 0;
+	expected.recovery_phase_samples = 0;
+	expected.recovery_phase_direction = 0;
 	CHECK(qam_demodulator_is_valid(&demodulator) &&
 	      qam_demodulator_rebase_timing(&demodulator, phase) == QAM_OK &&
 	      qam_demodulator_is_valid(&demodulator) &&
@@ -1104,6 +1132,8 @@ static bool test_validation(void)
 	{
 		uint64_t recovery_step = demodulator.recovery_step_units;
 		size_t reference_index = demodulator.timing_reference_index;
+		size_t rate_reference_index =
+			demodulator.timing_rate_reference_index;
 
 		demodulator.recovery_step_units = 0;
 		CHECK(qam_demodulator_sample(
@@ -1118,6 +1148,19 @@ static bool test_validation(void)
 			      QAM_INVALID_ARGUMENT,
 		      "QAM accepted a corrupt timing reference");
 		demodulator.timing_reference_index = reference_index;
+		demodulator.timing_rate_reference_index =
+			demodulator.timing_candidate_count;
+		CHECK(qam_demodulator_sample(
+			      &demodulator, 0, &received_point, &accepted) ==
+			      QAM_INVALID_ARGUMENT,
+		      "QAM accepted a corrupt rate reference");
+		demodulator.timing_rate_reference_index = rate_reference_index;
+		demodulator.recovery_phase_units = 1;
+		CHECK(qam_demodulator_sample(
+			      &demodulator, 0, &received_point, &accepted) ==
+			      QAM_INVALID_ARGUMENT,
+		      "QAM accepted an incomplete phase correction");
+		demodulator.recovery_phase_units = 0;
 		demodulator.timing_error_windows = UINT8_MAX;
 		CHECK(qam_demodulator_sample(
 			      &demodulator, 0, &received_point, &accepted) ==
@@ -1130,6 +1173,14 @@ static bool test_validation(void)
 			      QAM_INVALID_ARGUMENT,
 		      "QAM accepted an orphaned clock-filter error");
 		demodulator.timing_forward_error_units = 0;
+		demodulator.timing_error_windows = 1;
+		demodulator.timing_forward_windows = 2;
+		CHECK(qam_demodulator_sample(
+			      &demodulator, 0, &received_point, &accepted) ==
+			      QAM_INVALID_ARGUMENT,
+		      "QAM accepted excess directional clock evidence");
+		demodulator.timing_error_windows = 0;
+		demodulator.timing_forward_windows = 0;
 	}
 	CHECK(qam_modulator_sample(
 		      &modulator, &bounded_point, &sample, &accepted) ==

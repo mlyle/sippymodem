@@ -468,6 +468,27 @@ static bool recovery_step_is_valid(
 	       demodulator->recovery_step_units <= maximum;
 }
 
+static bool recovery_phase_is_valid(
+	const struct qam_demodulator *demodulator)
+{
+	uint64_t maximum_samples =
+		(uint64_t)demodulator->timing_sample_target *
+		QAM_CLOCK_TRACKING_FILTER_WINDOWS;
+	bool inactive = demodulator->recovery_phase_units == 0u &&
+		demodulator->recovery_phase_samples == 0u &&
+		demodulator->recovery_phase_direction == 0;
+
+	if (inactive)
+		return true;
+	return demodulator->timing_locked &&
+	       demodulator->recovery_phase_units <=
+		       demodulator->symbol_period_units / 2u &&
+	       demodulator->recovery_phase_samples != 0u &&
+	       demodulator->recovery_phase_samples <= maximum_samples &&
+	       (demodulator->recovery_phase_direction == -1 ||
+		demodulator->recovery_phase_direction == 1);
+}
+
 static bool matched_history_is_valid(
 	const struct qam_demodulator *demodulator)
 {
@@ -483,16 +504,46 @@ static bool clock_tracking_filter_is_valid(
 	const struct qam_demodulator *demodulator)
 {
 	if (demodulator->timing_error_windows >=
-	    QAM_CLOCK_TRACKING_FILTER_WINDOWS)
+		QAM_CLOCK_TRACKING_FILTER_WINDOWS ||
+	    demodulator->timing_forward_windows >
+		    demodulator->timing_error_windows ||
+	    demodulator->timing_backward_windows >
+		    demodulator->timing_error_windows ||
+	    demodulator->timing_forward_windows +
+		    demodulator->timing_backward_windows >
+		    demodulator->timing_error_windows ||
+	    (demodulator->timing_forward_error_units == 0u) !=
+		    (demodulator->timing_forward_windows == 0u) ||
+	    (demodulator->timing_backward_error_units == 0u) !=
+		    (demodulator->timing_backward_windows == 0u))
 		return false;
 	if (!demodulator->timing_locked &&
 	    (demodulator->timing_error_windows != 0u ||
 	     demodulator->timing_forward_error_units != 0u ||
-	     demodulator->timing_backward_error_units != 0u))
+	     demodulator->timing_backward_error_units != 0u ||
+	     demodulator->timing_forward_windows != 0u ||
+	     demodulator->timing_backward_windows != 0u))
 		return false;
 	return demodulator->timing_error_windows != 0u ||
 	       (demodulator->timing_forward_error_units == 0u &&
-		demodulator->timing_backward_error_units == 0u);
+		demodulator->timing_backward_error_units == 0u &&
+		demodulator->timing_forward_windows == 0u &&
+		demodulator->timing_backward_windows == 0u);
+}
+
+static bool timing_reference_filter_is_valid(
+	const struct qam_demodulator *demodulator)
+{
+	return demodulator->timing_reference_windows <
+		       QAM_CLOCK_TRACKING_FILTER_WINDOWS &&
+	       (demodulator->timing_locked ||
+		demodulator->timing_reference_windows == 0u) &&
+	       (demodulator->timing_reference_windows != 0u ||
+		demodulator->timing_pending_reference_index ==
+			demodulator->timing_reference_index) &&
+	       (demodulator->timing_reference_windows == 0u ||
+		demodulator->timing_pending_reference_index !=
+			demodulator->timing_reference_index);
 }
 
 bool qam_demodulator_is_valid(
@@ -526,9 +577,12 @@ bool qam_demodulator_is_valid(
 	    demodulator->symbol_period_units != period ||
 	    demodulator->timing_step_units != timing_step ||
 	    !recovery_step_is_valid(demodulator) ||
+	    !recovery_phase_is_valid(demodulator) ||
 	    demodulator->matched_filter_count != filter_count ||
 	    demodulator->timing_candidate_count != candidate_count ||
 	    demodulator->timing_reference_index >= candidate_count ||
+	    demodulator->timing_rate_reference_index >= candidate_count ||
+	    demodulator->timing_pending_reference_index >= candidate_count ||
 	    demodulator->history_index >= filter_count ||
 	    demodulator->history_count > filter_count ||
 	    demodulator->carrier_phase_step !=
@@ -544,6 +598,7 @@ bool qam_demodulator_is_valid(
 	    demodulator->timing_power_hysteresis < 1.0 ||
 	    !matched_history_is_valid(demodulator) ||
 	    !clock_tracking_filter_is_valid(demodulator) ||
+	    !timing_reference_filter_is_valid(demodulator) ||
 	    !isfinite(demodulator->recovery_fraction) ||
 	    (demodulator->recovery_pending &&
 	     (!demodulator->timing_locked ||
@@ -778,6 +833,23 @@ static void reset_clock_tracking_filter(
 	demodulator->timing_forward_error_units = 0;
 	demodulator->timing_backward_error_units = 0;
 	demodulator->timing_error_windows = 0;
+	demodulator->timing_forward_windows = 0;
+	demodulator->timing_backward_windows = 0;
+}
+
+static void reset_timing_reference_filter(
+	struct qam_demodulator *demodulator)
+{
+	demodulator->timing_pending_reference_index =
+		demodulator->timing_reference_index;
+	demodulator->timing_reference_windows = 0;
+}
+
+static void reset_recovery_phase(struct qam_demodulator *demodulator)
+{
+	demodulator->recovery_phase_units = 0;
+	demodulator->recovery_phase_samples = 0;
+	demodulator->recovery_phase_direction = 0;
 }
 
 enum qam_result qam_demodulator_rebase_timing(
@@ -793,13 +865,15 @@ enum qam_result qam_demodulator_rebase_timing(
 	next.locked_phase_units = phase_units;
 	next.recovery_pending = false;
 	next.recovery_fraction = 0.0;
+	reset_recovery_phase(&next);
+	reset_timing_reference_filter(&next);
 	if (!qam_demodulator_is_valid(&next))
 		return QAM_INVALID_ARGUMENT;
 	*demodulator = next;
 	return QAM_OK;
 }
 
-static void track_recovery_step(
+static bool track_recovery_step(
 	struct qam_demodulator *demodulator,
 	uint64_t reference_phase, uint64_t target_phase)
 {
@@ -811,6 +885,7 @@ static void track_recovery_step(
 	uint64_t adjustment;
 	uint64_t remainder;
 	uint64_t nominal = demodulator->channel.symbol_rate_numerator;
+	uint8_t supporting_windows;
 	int direction = timing_phase_direction(
 		reference_phase, target_phase,
 		demodulator->symbol_period_units);
@@ -826,16 +901,19 @@ static void track_recovery_step(
 	     UINT64_MAX - demodulator->timing_backward_error_units < distance)) {
 		reset_clock_tracking_filter(demodulator);
 		demodulator->recovery_step_units = nominal;
-		return;
+		return false;
 	}
-	if (direction > 0)
+	if (direction > 0) {
 		demodulator->timing_forward_error_units += distance;
-	else if (direction < 0)
+		demodulator->timing_forward_windows++;
+	} else if (direction < 0) {
 		demodulator->timing_backward_error_units += distance;
+		demodulator->timing_backward_windows++;
+	}
 	demodulator->timing_error_windows++;
 	if (demodulator->timing_error_windows <
 	    QAM_CLOCK_TRACKING_FILTER_WINDOWS)
-		return;
+		return false;
 	samples = (uint64_t)demodulator->timing_sample_target *
 		demodulator->timing_error_windows;
 	if (demodulator->timing_forward_error_units >=
@@ -843,10 +921,23 @@ static void track_recovery_step(
 		distance = demodulator->timing_forward_error_units -
 			demodulator->timing_backward_error_units;
 		direction = distance == 0u ? 0 : 1;
+		supporting_windows = demodulator->timing_forward_windows;
 	} else {
 		distance = demodulator->timing_backward_error_units -
 			demodulator->timing_forward_error_units;
 		direction = -1;
+		supporting_windows = demodulator->timing_backward_windows;
+	}
+	/* One signal transition can move the energy maximum by several timing
+	 * candidates. Require one direction in a majority of windows with no
+	 * reversal so a transition or alternating choice cannot become a
+	 * persistent recovered-clock error. */
+	if (supporting_windows <
+		    (QAM_CLOCK_TRACKING_FILTER_WINDOWS + 1u) / 2u ||
+	    (demodulator->timing_forward_windows != 0u &&
+	     demodulator->timing_backward_windows != 0u)) {
+		distance = 0;
+		direction = 0;
 	}
 	reset_clock_tracking_filter(demodulator);
 	adjustment = distance / samples;
@@ -865,35 +956,64 @@ static void track_recovery_step(
 	} else {
 		demodulator->recovery_step_units = nominal;
 	}
-	/* Filtering delays a genuine correction while it rejects isolated phase
-	 * choices. Once drift is established, close the resulting phase error over
-	 * the next filter interval without discontinuously moving the symbol clock. */
-	if (adjustment != 0u) {
-		uint64_t phase_distance = timing_phase_distance(
-			demodulator->locked_phase_units, target_phase,
-			demodulator->symbol_period_units);
-		uint64_t phase_adjustment = phase_distance / samples;
-		uint64_t phase_remainder = phase_distance % samples;
-		int phase_direction = timing_phase_direction(
-			demodulator->locked_phase_units, target_phase,
-			demodulator->symbol_period_units);
+	return direction != 0;
+}
 
-		if (phase_remainder >= (samples + 1u) / 2u)
-			phase_adjustment++;
-		if (phase_direction > 0) {
-			if (phase_adjustment > maximum -
-					      demodulator->recovery_step_units)
-				phase_adjustment = maximum -
-					demodulator->recovery_step_units;
-			demodulator->recovery_step_units += phase_adjustment;
-		} else if (phase_direction < 0) {
-			if (phase_adjustment >
-			    demodulator->recovery_step_units - minimum)
-				phase_adjustment =
-					demodulator->recovery_step_units - minimum;
-			demodulator->recovery_step_units -= phase_adjustment;
-		}
+static void start_recovery_phase(
+	struct qam_demodulator *demodulator, uint64_t target_phase)
+{
+	uint64_t distance;
+	uint64_t samples;
+	uint64_t maximum_step;
+	uint64_t available_step;
+	int direction;
+
+	distance = timing_phase_distance(
+		demodulator->locked_phase_units, target_phase,
+		demodulator->symbol_period_units);
+	direction = timing_phase_direction(
+		demodulator->locked_phase_units, target_phase,
+		demodulator->symbol_period_units);
+	samples = (uint64_t)demodulator->timing_sample_target *
+		QAM_CLOCK_TRACKING_FILTER_WINDOWS;
+	reset_recovery_phase(demodulator);
+	if (direction != 0 && samples <= UINT32_MAX) {
+		demodulator->recovery_phase_direction = (int8_t)direction;
+		demodulator->recovery_phase_units = distance;
+		maximum_step =
+			(demodulator->recovery_phase_units + samples - 1u) /
+			samples;
+		available_step = demodulator->recovery_phase_direction > 0 ?
+			demodulator->symbol_period_units -
+				demodulator->recovery_step_units :
+			demodulator->recovery_step_units - 1u;
+		if (maximum_step <= available_step)
+			demodulator->recovery_phase_samples = (uint32_t)samples;
+		else
+			reset_recovery_phase(demodulator);
 	}
+}
+
+static void observe_timing_reference(
+	struct qam_demodulator *demodulator, size_t best_index)
+{
+	if (best_index == demodulator->timing_reference_index) {
+		reset_timing_reference_filter(demodulator);
+		return;
+	}
+	if (best_index != demodulator->timing_pending_reference_index) {
+		demodulator->timing_pending_reference_index = best_index;
+		demodulator->timing_reference_windows = 1;
+		return;
+	}
+	demodulator->timing_reference_windows++;
+	if (demodulator->timing_reference_windows <
+	    QAM_CLOCK_TRACKING_FILTER_WINDOWS)
+		return;
+	demodulator->timing_reference_index = best_index;
+	start_recovery_phase(
+		demodulator, demodulator->timing[best_index].phase_units);
+	reset_timing_reference_filter(demodulator);
 }
 
 static void select_timing_candidate(
@@ -910,6 +1030,7 @@ static void select_timing_candidate(
 	uint32_t minimum_symbols =
 		(active_window * 3u + 3u) / 4u;
 	bool acquiring = !demodulator->timing_locked;
+	bool rate_changed = false;
 	uint32_t next_sample_target = demodulator->timing_sample_target;
 
 	/* Structured training can favor a neighboring phase in a short energy
@@ -952,8 +1073,11 @@ static void select_timing_candidate(
 		reset_timing_scores(demodulator);
 		if (acquiring)
 			demodulator->acquisition_started = false;
-		else
+		else {
 			reset_clock_tracking_filter(demodulator);
+			reset_timing_reference_filter(demodulator);
+			reset_recovery_phase(demodulator);
+		}
 		return;
 	}
 	if (reference != NULL && best != reference &&
@@ -964,16 +1088,23 @@ static void select_timing_candidate(
 		best_index = demodulator->timing_reference_index;
 	}
 	if (demodulator->timing_locked) {
-		track_recovery_step(
+		rate_changed = track_recovery_step(
 			demodulator,
 			demodulator
-				->timing[demodulator->timing_reference_index]
+				->timing[
+					demodulator->timing_rate_reference_index]
 				.phase_units,
 			best->phase_units);
+		if (rate_changed)
+			start_recovery_phase(demodulator, best->phase_units);
+		demodulator->timing_rate_reference_index = best_index;
+		observe_timing_reference(demodulator, best_index);
 	} else {
 		demodulator->locked_phase_units = best->phase_units;
+		demodulator->timing_reference_index = best_index;
+		demodulator->timing_rate_reference_index = best_index;
+		reset_timing_reference_filter(demodulator);
 	}
-	demodulator->timing_reference_index = best_index;
 	reset_timing_scores(demodulator);
 	demodulator->symbol_power = best_power;
 	demodulator->timing_locked = true;
@@ -1034,6 +1165,7 @@ static enum qam_result recover_symbol(
 {
 	double fraction = 0.0;
 	bool ready = demodulator->recovery_pending;
+	uint64_t recovery_step = demodulator->recovery_step_units;
 
 	if (ready) {
 		double in_phase_samples[4] = {
@@ -1065,10 +1197,36 @@ static enum qam_result recover_symbol(
 			64.0;
 		demodulator->recovery_pending = false;
 	}
+	if (demodulator->recovery_phase_samples != 0u) {
+		uint64_t phase_step =
+			demodulator->recovery_phase_units /
+			demodulator->recovery_phase_samples;
+		uint64_t remainder =
+			demodulator->recovery_phase_units %
+			demodulator->recovery_phase_samples;
+
+		if (remainder >=
+		    (demodulator->recovery_phase_samples + 1u) / 2u)
+			phase_step++;
+		if ((demodulator->recovery_phase_direction > 0 &&
+		     phase_step > demodulator->symbol_period_units -
+				  recovery_step) ||
+		    (demodulator->recovery_phase_direction < 0 &&
+		     phase_step >= recovery_step))
+			return QAM_INVALID_ARGUMENT;
+		if (demodulator->recovery_phase_direction > 0)
+			recovery_step += phase_step;
+		else
+			recovery_step -= phase_step;
+		demodulator->recovery_phase_units -= phase_step;
+		demodulator->recovery_phase_samples--;
+		if (demodulator->recovery_phase_units == 0u)
+			reset_recovery_phase(demodulator);
+	}
 	if (advance_symbol_phase(
 		    &demodulator->locked_phase_units,
 		    demodulator->symbol_period_units,
-		    demodulator->recovery_step_units, &fraction)) {
+		    recovery_step, &fraction)) {
 		demodulator->recovery_fraction = fraction;
 		demodulator->recovery_pending = true;
 	}

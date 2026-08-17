@@ -88,6 +88,7 @@ struct qam_demodulator {
 	/* Recovered symbol-phase advance for each input sample. */
 	uint64_t recovery_step_units;
 	uint64_t locked_phase_units;
+	uint64_t recovery_phase_units;
 	uint64_t timing_forward_error_units;
 	uint64_t timing_backward_error_units;
 	uint32_t carrier_phase;
@@ -96,12 +97,15 @@ struct qam_demodulator {
 	uint32_t timing_sample_target;
 	uint32_t acquisition_window_symbols;
 	uint32_t tracking_window_symbols;
+	uint32_t recovery_phase_samples;
 	size_t matched_filter_count;
 	size_t history_index;
 	size_t history_count;
 	size_t timing_candidate_count;
-	/* Candidate used as the nominal-clock reference for the next window. */
+	/* Stable energy reference and previous clock-observation candidate. */
 	size_t timing_reference_index;
+	size_t timing_rate_reference_index;
+	size_t timing_pending_reference_index;
 	double line_power;
 	double symbol_power;
 	double timing_power_hysteresis;
@@ -109,6 +113,10 @@ struct qam_demodulator {
 	double recovery_fraction;
 	uint8_t matched_history_count;
 	uint8_t timing_error_windows;
+	uint8_t timing_forward_windows;
+	uint8_t timing_backward_windows;
+	uint8_t timing_reference_windows;
+	int8_t recovery_phase_direction;
 	bool timing_locked;
 	/* The initial timing window begins with carrier energy, not silence. */
 	bool acquisition_started;
