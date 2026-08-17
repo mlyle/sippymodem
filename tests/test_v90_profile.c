@@ -209,6 +209,8 @@ static bool test_upstream_policy(void)
 		      digital.digital_phase4.initial_mp.parameters.type0
 			      .maximum_upstream_rate_2400_bps_units == 11 &&
 		      digital.digital_phase4.initial_mp.parameters.type0
+			      .upstream_trellis == V34_TRELLIS_16_STATE &&
+		      digital.digital_phase4.initial_mp.parameters.type0
 			      .upstream_rate_capability_mask == expected_mask,
 	      "digital profile did not apply its upstream policy");
 	memset(&rejected, 0xa5, sizeof(rejected));

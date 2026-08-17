@@ -16,7 +16,6 @@
 
 enum {
 	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
-	V34_HIGH_DENSITY_RATE_UNITS = 9,
 	V34_NOMINAL_AMPLITUDE = 9000,
 	/* A local full retrain does not receive the peer's response until both
 	 * stations have observed their 70 ms silence and 50 ms tone guards. */
@@ -218,10 +217,9 @@ static struct v34_mp_record baseline_mp(
 				highest_rate_units,
 			.maximum_answer_to_call_rate_2400_bps_units =
 				highest_rate_units,
-			.remote_transmitter_trellis =
-				highest_rate_units >= V34_HIGH_DENSITY_RATE_UNITS ?
-					V34_TRELLIS_64_STATE :
-					V34_TRELLIS_16_STATE,
+			/* Use the mandatory 16-state mode until higher-complexity
+			 * receivers have comparable interop coverage. */
+			.remote_transmitter_trellis = V34_TRELLIS_16_STATE,
 			.data_rate_capability_mask = rate_mask,
 		},
 	};

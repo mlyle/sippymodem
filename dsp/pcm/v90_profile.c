@@ -274,7 +274,9 @@ static struct v90_mp_record initial_mp(
 		.parameters.type0 = {
 			.maximum_upstream_rate_2400_bps_units =
 				upstream->maximum_rate_2400_bps_units,
-			.upstream_trellis = V34_TRELLIS_32_STATE,
+			/* The 16-state mode is mandatory and exercises the same
+			 * mapper without requiring optional receiver complexity. */
+			.upstream_trellis = V34_TRELLIS_16_STATE,
 			.upstream_nonlinear_encoding = true,
 			.upstream_expanded_shaping = true,
 			.upstream_rate_capability_mask = upstream->rate_mask,
