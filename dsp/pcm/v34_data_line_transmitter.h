@@ -22,6 +22,7 @@ struct v34_data_line_transmitter {
 	struct v34_data_carrier carrier;
 	struct v34_preemphasis preemphasis;
 	struct v34_line_power_measurement calibration;
+	double gain_reference_rms;
 	double output_gain;
 	double target_rms;
 	uint64_t generated_samples;
@@ -43,9 +44,9 @@ v34_data_line_transmitter_init(
 	uint32_t sample_rate, int16_t nominal_peak_amplitude);
 
 /* Continue a compatible active training line into normalized data. The
- * carrier clock, active pulses, pre-emphasis history, output gain, and sample
- * count are retained. A separate point gain gives newly accepted data symbols
- * their calibrated steady-state level without rescaling training tails. */
+ * carrier clock, active pulses, pre-emphasis history, line gain, and sample
+ * count are retained. B1 therefore begins on the trained constellation scale;
+ * calibration is used only to reject a data waveform that could clip. */
 enum v34_data_line_transmitter_result
 v34_data_line_transmitter_continue(
 	struct v34_data_line_transmitter *transmitter,

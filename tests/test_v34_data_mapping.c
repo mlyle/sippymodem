@@ -127,10 +127,9 @@ static bool test_prepared_b1_mapping(void)
 		      &continued, &training, &first.schedule,
 		      &first.scrambler, &first.encoder, &first.normalizer) ==
 		      V34_DATA_LINE_TRANSMITTER_OK &&
-	      point_gain == repeated_gain && point_gain > 0.0 &&
-	      fabs(point_gain - continued.carrier.point_gain) <=
-		      1e-12 * fmax(1.0, point_gain),
-	      "generated line point gain did not match the transmitter");
+	      point_gain == 1.0 && repeated_gain == 1.0 &&
+	      continued.carrier.point_gain == 1.0,
+	      "B1 mapping changed the trained constellation scale");
 	return true;
 }
 

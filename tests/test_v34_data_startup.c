@@ -142,6 +142,7 @@ static bool test_complementary_paths(void)
 	      v34_data_mapping_line_point_gain(
 		      &answerer_startup.transmit, 8000,
 		      &answerer_point_gain) == V34_DATA_MAPPING_OK &&
+	      caller_point_gain == 1.0 && answerer_point_gain == 1.0 &&
 	      caller_point_gain ==
 		      answerer_startup.receive.transmit_point_gain &&
 	      answerer_point_gain ==

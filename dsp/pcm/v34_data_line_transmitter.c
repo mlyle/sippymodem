@@ -113,6 +113,8 @@ static bool power_metadata_is_valid(
 	if (transmitter->nominal_peak_amplitude <= 0 ||
 	    !v34_line_power_measurement_is_valid(
 		    &transmitter->calibration) ||
+	    !isfinite(transmitter->gain_reference_rms) ||
+	    transmitter->gain_reference_rms <= 0.0 ||
 	    !isfinite(transmitter->output_gain) ||
 	    transmitter->output_gain <= 0.0 ||
 	    !isfinite(transmitter->target_rms) ||
@@ -125,10 +127,8 @@ static bool power_metadata_is_valid(
 			20.0);
 	expected_target = transmitter->nominal_peak_amplitude *
 		V34_EQUAL_POWER_RMS * reduction_gain;
-	calibrated_rms =
-		sqrt(transmitter->calibration.mean_squared_amplitude);
-	effective_data_gain = transmitter->output_gain *
-		transmitter->carrier.point_gain;
+	calibrated_rms = transmitter->gain_reference_rms;
+	effective_data_gain = transmitter->output_gain;
 	scale = fmax(1.0, expected_target);
 	return isfinite(expected_target) && isfinite(calibrated_rms) &&
 	       isfinite(effective_data_gain) && effective_data_gain > 0.0 &&
@@ -137,6 +137,7 @@ static bool power_metadata_is_valid(
 	       fabs(effective_data_gain * calibrated_rms -
 		    transmitter->target_rms) <=
 		       V34_LINE_POWER_TOLERANCE * scale &&
+	       transmitter->carrier.point_gain == 1.0 &&
 	       transmitter->calibration.peak_amplitude *
 		       effective_data_gain <
 		       INT16_MAX + 0.5;
@@ -209,6 +210,8 @@ v34_data_line_transmitter_init(
 	if (preemphasis_result != V34_PREEMPHASIS_OK)
 		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
 	initialized.calibration = power.calibration;
+	initialized.gain_reference_rms =
+		sqrt(power.calibration.mean_squared_amplitude);
 	initialized.nominal_peak_amplitude = nominal_peak_amplitude;
 	initialized.target_rms = power.target_rms;
 	initialized.output_gain = power.data_output_gain;
@@ -229,7 +232,6 @@ v34_data_line_transmitter_continue(
 {
 	struct v34_data_line_transmitter continued = { 0 };
 	struct line_power power;
-	double point_gain;
 	enum v34_data_line_transmitter_result result;
 
 	if (transmitter == NULL || !v34_training_line_is_valid(active_line))
@@ -243,15 +245,18 @@ v34_data_line_transmitter_continue(
 		return result;
 	if (power.target_rms != active_line->target_rms)
 		return V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE;
-	point_gain = power.data_output_gain / active_line->output_gain;
+	if (power.calibration.peak_amplitude * active_line->output_gain >=
+	    INT16_MAX + 0.5)
+		return V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK;
 	result = carrier_result(v34_data_carrier_continue(
 		&continued.carrier, &active_line->carrier,
 		&active_line->profile, &calibration_schedule->geometry,
-		normalizer, point_gain));
+		normalizer, 1.0));
 	if (result != V34_DATA_LINE_TRANSMITTER_OK)
 		return result;
 	continued.preemphasis = active_line->preemphasis;
 	continued.calibration = power.calibration;
+	continued.gain_reference_rms = active_line->raw_rms;
 	continued.output_gain = active_line->output_gain;
 	continued.target_rms = power.target_rms;
 	continued.generated_samples = active_line->generated_samples;

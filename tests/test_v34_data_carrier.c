@@ -401,7 +401,7 @@ static bool test_active_line_handoff(void)
 	struct v34_data_points points;
 	struct qam_modulator model_carrier;
 	struct v34_preemphasis model_filter;
-	double expected_point_gain;
+	double independent_gain_ratio;
 	bool retained_tail_seen = false;
 	bool data_point_accepted = false;
 
@@ -416,18 +416,19 @@ static bool test_active_line_handoff(void)
 		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
 	      "active-line fixture did not initialize");
 	training_before = training;
-	expected_point_gain = standalone.output_gain / training.output_gain;
-	CHECK(expected_point_gain > 0.0 &&
-	      fabs(expected_point_gain - 1.0) > 0.01 &&
+	independent_gain_ratio = standalone.output_gain / training.output_gain;
+	CHECK(independent_gain_ratio > 0.0 &&
+	      fabs(independent_gain_ratio - 1.0) > 0.01 &&
 	      v34_data_line_transmitter_continue(
 		      &continued, &training, &fixture.schedule,
 		      &fixture.scrambler, &fixture.encoder,
 		      &fixture.normalizer) == V34_DATA_LINE_TRANSMITTER_OK &&
 	      memcmp(&training, &training_before, sizeof(training)) == 0 &&
 	      continued.output_gain == training.output_gain &&
-	      continued.carrier.point_gain == expected_point_gain &&
-	      fabs(continued.output_gain * continued.carrier.point_gain -
-		   standalone.output_gain) < 1e-12 &&
+	      continued.gain_reference_rms == training.raw_rms &&
+	      continued.carrier.point_gain == 1.0 &&
+	      fabs(continued.output_gain * continued.gain_reference_rms -
+		   continued.target_rms) < 1e-12 &&
 	      continued.target_rms == training.target_rms &&
 	      continued.generated_samples == training.generated_samples &&
 	      memcmp(&continued.preemphasis, &training.preemphasis,
@@ -448,7 +449,6 @@ static bool test_active_line_handoff(void)
 	for (size_t sample_index = 0;
 	     sample_index < 32u && !data_point_accepted; ++sample_index) {
 		struct qam_point point;
-		struct qam_point scaled;
 		const struct qam_point *point_pointer = NULL;
 		const struct qam_point *model_pointer = &ZERO;
 		double carrier_sample;
@@ -463,11 +463,7 @@ static bool test_active_line_handoff(void)
 				      V34_DATA_POINTS_OK,
 			      "continued line did not obtain a data point");
 			point_pointer = &point;
-			scaled = (struct qam_point){
-				.in_phase = point.in_phase * expected_point_gain,
-				.quadrature = point.quadrature * expected_point_gain,
-			};
-			model_pointer = &scaled;
+			model_pointer = &point;
 		}
 		CHECK(qam_modulator_sample_f64(
 			      &model_carrier, model_pointer, &carrier_sample,
@@ -771,6 +767,15 @@ static bool test_transactional_validation(void)
 		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
 		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
 	      "valid line did not initialize");
+	line_before = line;
+	line.gain_reference_rms = NAN;
+	CHECK(!v34_data_line_transmitter_is_valid(&line),
+	      "line accepted an invalid gain reference");
+	line = line_before;
+	line.carrier.point_gain = 1.01;
+	CHECK(!v34_data_line_transmitter_is_valid(&line),
+	      "line accepted a post-training point scale change");
+	line = line_before;
 	CHECK(v34_training_line_init(
 		      &training, &fixture.profile, 8000, 4000) ==
 		      V34_TRAINING_LINE_OK,
