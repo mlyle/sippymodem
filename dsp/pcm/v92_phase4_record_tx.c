@@ -97,6 +97,26 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_init(
 	return V92_PHASE4_RECORD_TX_OK;
 }
 
+enum v92_phase4_record_tx_result v92_phase4_record_tx_init_e2u(
+	struct v92_phase4_record_tx *tx,
+	const struct v92_phase4_modulator *modulator, bool extend_one_symbol)
+{
+	static const uint8_t zeroes[V92_PHASE4_RECORD_MAX_BYTES];
+	unsigned int bits;
+	size_t symbols;
+
+	if (tx == NULL || modulator == NULL)
+		return V92_PHASE4_RECORD_TX_INVALID_ARGUMENT;
+	if (!v92_phase4_modulator_is_valid(modulator))
+		return V92_PHASE4_RECORD_TX_INVALID_STATE;
+	bits = v92_phase4_modulator_bits_per_symbol(
+		modulator->constellation);
+	symbols = extend_one_symbol ?
+		V92_PHASE4_E2U_EXTENDED_SYMBOLS : V92_PHASE4_E2U_SYMBOLS;
+	return v92_phase4_record_tx_init(
+		tx, modulator, zeroes, sizeof(zeroes), symbols * bits);
+}
+
 enum v92_phase4_record_tx_result v92_phase4_record_tx_start_next(
 	struct v92_phase4_record_tx *tx,
 	const uint8_t *frame, size_t frame_capacity,

@@ -11,6 +11,10 @@
 #include <stdint.h>
 
 enum {
+	/* E2u is one 12-symbol upstream data frame, optionally extended by
+	 * CPd bit 29. */
+	V92_PHASE4_E2U_SYMBOLS = 12,
+	V92_PHASE4_E2U_EXTENDED_SYMBOLS = 13,
 	/* Long CPu is the largest packed record carried by this modulator. */
 	V92_PHASE4_RECORD_MAX_BITS = V92_CPU_MAX_FRAME_BITS,
 	V92_PHASE4_RECORD_MAX_BYTES =
@@ -39,6 +43,14 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_init(
 	const struct v92_phase4_modulator *modulator,
 	const uint8_t *frame, size_t frame_capacity,
 	size_t frame_bit_count);
+
+/* Begin E2u at the exact modulation state exported by the final Phase 4
+ * control record. E2u is one frame of input zeroes and CPd may extend it by
+ * one symbol. GPA scrambling and differential-sign history remain continuous.
+ */
+enum v92_phase4_record_tx_result v92_phase4_record_tx_init_e2u(
+	struct v92_phase4_record_tx *tx,
+	const struct v92_phase4_modulator *modulator, bool extend_one_symbol);
 bool v92_phase4_record_tx_is_valid(
 	const struct v92_phase4_record_tx *tx);
 bool v92_phase4_record_tx_is_complete(

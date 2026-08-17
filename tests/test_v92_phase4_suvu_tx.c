@@ -354,11 +354,117 @@ static bool test_record_boundary(void)
 	return true;
 }
 
+static bool test_e2u_record(void)
+{
+	static const enum v92_constellation_size constellations[] = {
+		V92_CONSTELLATION_4_POINT,
+		V92_CONSTELLATION_8_POINT,
+	};
+
+	for (size_t selection = 0u;
+	     selection < ARRAY_LENGTH(constellations); ++selection) {
+		for (unsigned int extended = 0u; extended <= 1u; ++extended) {
+			struct v92_phase4_modulator predecessor;
+			struct v92_phase4_modulator oracle;
+			struct v92_phase4_modulator handoff;
+			struct v92_phase4_record_tx tx;
+			unsigned int bits;
+			size_t symbols = extended != 0u ?
+				V92_PHASE4_E2U_EXTENDED_SYMBOLS :
+				V92_PHASE4_E2U_SYMBOLS;
+
+			CHECK(v92_phase4_modulator_init(
+				      &predecessor, constellations[selection],
+				      (uint8_t)extended, TEST_LU) ==
+				      V92_PHASE4_MODULATOR_OK,
+			      "E2u predecessor did not initialize");
+			bits = v92_phase4_modulator_bits_per_symbol(
+				predecessor.constellation);
+			for (uint8_t group = 0u; group < 7u; ++group) {
+				int16_t ignored;
+
+				CHECK(v92_phase4_modulator_next(
+					      &predecessor,
+					      (uint8_t)(group & ((1u << bits) - 1u)),
+					      &ignored) == V92_PHASE4_MODULATOR_OK,
+				      "E2u predecessor did not advance");
+			}
+			oracle = predecessor;
+			CHECK(v92_phase4_record_tx_init_e2u(
+				      &tx, &predecessor, extended != 0u) ==
+				      V92_PHASE4_RECORD_TX_OK &&
+			      tx.frame_bit_count == symbols * bits &&
+			      tx.bit_index == 0u &&
+			      memcmp(
+				      tx.frame,
+				      (uint8_t[V92_PHASE4_RECORD_MAX_BYTES]){ 0 },
+				      sizeof(tx.frame)) == 0,
+			      "E2u record shape differed for %u points, extension %u",
+			      (unsigned int)constellations[selection], extended);
+			for (size_t symbol = 0u; symbol < symbols; ++symbol) {
+				int16_t expected = 0;
+				int16_t actual = 0;
+
+				CHECK(v92_phase4_modulator_next(
+					      &oracle, 0u, &expected) ==
+					      V92_PHASE4_MODULATOR_OK &&
+				      v92_phase4_record_tx_next(&tx, &actual) ==
+					      V92_PHASE4_RECORD_TX_OK &&
+				      actual == expected &&
+				      tx.bit_index == (symbol + 1u) * bits &&
+				      modulators_are_equal(
+					      &tx.modulator, &oracle),
+				      "E2u symbol %zu/%zu differed", symbol,
+				      symbols);
+			}
+			{
+				int16_t untouched = 1234;
+
+				CHECK(v92_phase4_record_tx_is_complete(&tx) &&
+				      v92_phase4_record_tx_handoff(
+					      &tx, &handoff) ==
+					      V92_PHASE4_RECORD_TX_OK &&
+				      modulators_are_equal(&handoff, &oracle) &&
+				      v92_phase4_record_tx_next(
+					      &tx, &untouched) ==
+					      V92_PHASE4_RECORD_TX_COMPLETE &&
+				      untouched == 1234,
+				      "E2u did not end at its exact handoff");
+			}
+		}
+	}
+	{
+		struct v92_phase4_modulator valid;
+		struct v92_phase4_modulator invalid = { 0 };
+		struct v92_phase4_record_tx tx;
+		struct v92_phase4_record_tx before;
+
+		CHECK(v92_phase4_modulator_init(
+			      &valid, V92_CONSTELLATION_4_POINT, 0u,
+			      TEST_LU) == V92_PHASE4_MODULATOR_OK,
+		      "E2u contract modulator did not initialize");
+		memset(&tx, 0xa5, sizeof(tx));
+		before = tx;
+		CHECK(v92_phase4_record_tx_init_e2u(
+			      NULL, &valid, false) ==
+			      V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
+		      v92_phase4_record_tx_init_e2u(
+			      &tx, NULL, false) ==
+			      V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
+		      v92_phase4_record_tx_init_e2u(
+			      &tx, &invalid, false) ==
+			      V92_PHASE4_RECORD_TX_INVALID_STATE &&
+		      memcmp(&tx, &before, sizeof(tx)) == 0,
+		      "invalid E2u initialization changed state");
+	}
+	return true;
+}
+
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 Phase 4 SUVu transmitter\n");
 	if (!test_continuous_records() || !test_contracts() ||
-	    !test_record_boundary()) {
+	    !test_record_boundary() || !test_e2u_record()) {
 		fprintf(stderr, "[  FAILED  ] V.92 Phase 4 SUVu transmitter\n");
 		return 1;
 	}
