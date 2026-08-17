@@ -104,9 +104,9 @@ enum pcm_downstream_tx_result pcm_downstream_tx_init(
 bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter);
 bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
 
-/* Queue immutable MP parameters. Acknowledgement must be clear; MP begins at
- * the first source-frame boundary after at least 2040 TRN2d symbols have been
- * accepted. Repeating an identical request is harmless. */
+/* Queue immutable MP parameters. Acknowledgement must be clear; initial V.90
+ * MP begins at the first source-frame boundary after the one-second TRN2d
+ * conditioning interval. Repeating an identical request is harmless. */
 enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	struct pcm_downstream_tx *transmitter,
 	const struct v90_mp_record *record);

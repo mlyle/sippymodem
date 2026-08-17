@@ -11,7 +11,7 @@
 
 enum {
 	FRAME_BITS = 17,
-	MAXIMUM_STREAM_SYMBOLS = 4096,
+	MAXIMUM_STREAM_SYMBOLS = V90_PHASE4_TRN2D_INITIAL_SYMBOLS + 4096,
 	DATA_FRAMES = 8,
 	MAXIMUM_DATA_FRAMES = 16,
 	MAXIMUM_DATA_SYMBOLS =
@@ -300,6 +300,7 @@ static bool run_stream(
 	struct pcm_downstream_rx receiver;
 	size_t training_frames = 0;
 	size_t mp_records = 0;
+	size_t first_mp_symbol = 0;
 	size_t prime_records = 0;
 	size_t symbols = 0;
 	bool prime_requested = false;
@@ -366,6 +367,8 @@ static bool run_stream(
 			      records_match(&event.mp.record, &record),
 			      "MP record %zu changed or followed MP prime",
 			      mp_records);
+			if (mp_records == 0)
+				first_mp_symbol = symbols;
 			mp_records++;
 			continue;
 		}
@@ -404,6 +407,7 @@ static bool run_stream(
 	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS && prime_requested &&
 	      ed_requested && ed_received &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      first_mp_symbol >= V90_PHASE4_TRN2D_INITIAL_SYMBOLS &&
 	      mp_records == 1 && prime_records == 3 &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&
 	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&
@@ -413,7 +417,10 @@ static bool run_stream(
 	      pcm_downstream_rx_is_complete(&receiver) &&
 	      pcm_downstream_tx_is_valid(&transmitter) &&
 	      pcm_downstream_rx_is_valid(&receiver),
-	      "continuous Ed boundary or accounting changed");
+	      "continuous Ed boundary changed at %zu symbols: training=%zu "
+	      "MP=%zu MP'=%zu Ed=%d/%d stage=%u/%u",
+	      symbols, training_frames, mp_records, prime_records,
+	      ed_requested, ed_received, transmitter.stage, receiver.stage);
 	struct pcm_downstream_tx completed = transmitter;
 	struct pcm_downstream_symbol untouched;
 	struct pcm_downstream_symbol saved;

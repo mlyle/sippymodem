@@ -28,6 +28,13 @@ static bool stage_matches_protocol(
 	       transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME;
 }
 
+static uint64_t initial_training_frames(enum pcm_protocol protocol)
+{
+	return protocol == PCM_PROTOCOL_V90 ?
+		       V90_PHASE4_TRN2D_INITIAL_FRAMES :
+		       V90_PHASE4_TRN2D_MINIMUM_FRAMES;
+}
+
 static struct v90_mp_parameters *record_common(
 	struct v90_mp_record *record)
 {
@@ -177,7 +184,7 @@ static bool v90_control_is_valid(
 	     transmitter->control_bit_index != 0) ||
 	    (transmitter->stage != PCM_DOWNSTREAM_TX_TRN2D &&
 	     transmitter->accepted_frames <=
-		     V90_PHASE4_TRN2D_MINIMUM_FRAMES) ||
+		     initial_training_frames(transmitter->protocol)) ||
 	    (transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME &&
 	     !transmitter->mp_prime_requested) ||
 	    (transmitter->stage == PCM_DOWNSTREAM_TX_MP &&
@@ -763,7 +770,7 @@ static enum pcm_downstream_tx_result generate_frame(
 	if (transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
 	    transmitter->control_configured &&
 	    transmitter->accepted_frames >=
-		    V90_PHASE4_TRN2D_MINIMUM_FRAMES)
+		    initial_training_frames(transmitter->protocol))
 		transmitter->stage =
 			transmitter->protocol == PCM_PROTOCOL_V90 ?
 				PCM_DOWNSTREAM_TX_MP :
