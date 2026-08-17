@@ -25,6 +25,38 @@ static bool test_full_width_values(void)
 	return true;
 }
 
+static bool test_signed_rounding(void)
+{
+	static const struct {
+		int64_t input;
+		unsigned int shift;
+		int64_t expected;
+	} cases[] = {
+		{ 7, 1, 4 },
+		{ -7, 1, -4 },
+		{ 6, 1, 3 },
+		{ -6, 1, -3 },
+		{ INT64_MAX, 63, 1 },
+		{ INT64_MIN, 63, -1 },
+		{ INT64_MAX, 64, 0 },
+		{ INT64_MIN, 64, -1 },
+		{ INT64_MIN, 65, 0 },
+	};
+
+	for (size_t index = 0u;
+	     index < ARRAY_LENGTH(cases); ++index)
+		CHECK(round_shift_s64(
+			      cases[index].input,
+			      cases[index].shift) == cases[index].expected,
+		      "signed rounding case %zu changed", index);
+	CHECK(round_shift_s64_to_s32_saturating(INT64_MAX, 0u) ==
+		      INT32_MAX &&
+	      round_shift_s64_to_s32_saturating(INT64_MIN, 0u) ==
+		      INT32_MIN,
+	      "signed rounding did not saturate to 32 bits");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -33,6 +65,7 @@ int main(void)
 	} tests[] = {
 		{ "zero and symmetry", test_zero_and_symmetry },
 		{ "full-width values", test_full_width_values },
+		{ "signed rounding", test_signed_rounding },
 	};
 	unsigned int failures = 0;
 
