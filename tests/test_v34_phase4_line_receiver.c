@@ -430,7 +430,8 @@ static bool handle_record(
 static bool run_line_case(
 	enum v34_station_role role,
 	enum v34_constellation_size constellation,
-	bool shift_timing_after_s, bool skip_trn_after_s)
+	bool shift_timing_after_s, bool skip_trn_after_s,
+	unsigned int *selected_alignment)
 {
 	struct v34_phase3_profile profile = profile_for(role);
 	struct line_source source = {
@@ -543,11 +544,14 @@ static bool run_line_case(
 	      receiver.control.stage ==
 		      V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE &&
 	      (unsigned int)receiver.control.trn_symbols -
-		      receiver.control.answer_s.post_marker_symbols -
-		      receiver.control.trn_error_symbols ==
-		      (skip_trn_after_s ? 1u : 0u),
+		      receiver.control.trn_error_symbols <=
+		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
 	      "Phase 4 line did not complete MP/E role=%d constellation=%d",
 	      role, constellation);
+	if (selected_alignment != NULL)
+		*selected_alignment =
+			receiver.control.trn_symbols -
+			receiver.control.trn_error_symbols;
 	CHECK(v34_phase4_line_receiver_start_data(
 		      &receiver, &data_receiver, &data_config) ==
 		      V34_PHASE4_LINE_RECEIVER_OK &&
@@ -590,7 +594,7 @@ static bool test_generated_line_sequences(void)
 		     ++constellation)
 			if (!run_line_case(
 				    ROLES[role], CONSTELLATIONS[constellation],
-				    false, false))
+				    false, false, NULL))
 				return false;
 	return true;
 }
@@ -599,14 +603,21 @@ static bool test_known_trn_timing_refinement(void)
 {
 	return run_line_case(
 		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, true,
-		false);
+		false, NULL);
 }
 
 static bool test_known_trn_boundary_refinement(void)
 {
+	unsigned int baseline_alignment;
+	unsigned int skipped_alignment;
+
 	return run_line_case(
-		V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT, false,
-		true);
+		       V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT,
+		       false, false, &baseline_alignment) &&
+	       run_line_case(
+		       V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT,
+		       false, true, &skipped_alignment) &&
+	       skipped_alignment == baseline_alignment + 1u;
 }
 
 static bool test_result_names(void)

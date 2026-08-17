@@ -10,7 +10,10 @@
 
 enum {
 	V34_PHASE3_S_RECEIVER_MAX_S_ERRORS = 8,
-	V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS = 2,
+	/* A companded line can smear the S-to-S-bar reversal across several
+	 * equalized decisions.  Keep this bound small relative to the 16T marker;
+	 * the preceding 128T S and its exact two-symbol tail still anchor it. */
+	V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS = 4,
 	/* A sample-domain receiver may lock after S begins. Retaining at least
 	 * 32T before the 16T S-bar still gives a bounded correlation. */
 	V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS = 32,
@@ -73,10 +76,9 @@ bool v34_phase3_s_receiver_is_complete(
 /* Accept one hard decision in the training-constellation convention. S and
  * S-bar use quarter point zero; a different valid point counts as a symbol
  * error. Labels outside 0..3 and already-complete calls consume nothing. The
- * An exact transition reports at the end of S-bar. If either of its first two
- * symbols uses the S decision, the receiver waits at most the two-symbol
- * S-bar error budget for a better alignment before reporting the qualified
- * marker. */
+ * An exact transition reports at the end of S-bar. If its leading symbols use
+ * the S decision, the receiver waits at most the bounded S-bar error budget
+ * for a better alignment before reporting the qualified marker. */
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns);

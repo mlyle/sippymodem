@@ -30,6 +30,19 @@ static bool decision_is_confident(
 	return squared_error < squared_decision_radius;
 }
 
+static bool decision_has_signal(const struct qam_point *output)
+{
+	double squared_magnitude =
+		output->in_phase * output->in_phase +
+		output->quadrature * output->quadrature;
+
+	/* The least energetic 16-point training symbol has power 0.2.  Retain
+	 * strong nearest-point decisions even when their error is too large for
+	 * safe adaptation, while a short silence residual must not invent MP
+	 * symbols or differential phase. */
+	return squared_magnitude >= 0.05;
+}
+
 static bool answer_s_state_is_valid(
 	const struct v34_phase4_equalizer_receiver *receiver)
 {
@@ -76,13 +89,10 @@ static bool trn_state_is_valid(
 		return receiver->trn_symbols == 0 &&
 		       receiver->trn_error_symbols == 0 &&
 		       receiver->trn_squared_error == 0.0;
-	if (receiver->trn_symbols < receiver->answer_s.post_marker_symbols)
-		return false;
-	represented_symbols = receiver->trn_symbols -
-		receiver->answer_s.post_marker_symbols;
-	/* A sample-domain timing correction may discover that the hard-decision
-	 * S/S-bar boundary consumed one or two additional TRN symbols. Those
-	 * symbols advance the known sequence but have no retained error sample. */
+	represented_symbols = receiver->trn_symbols;
+	/* Known-TRN refinement may advance past a bounded number of transition
+	 * outputs before it can score clean observations.  Keep that alignment
+	 * separate from the hard-decision S/S-bar confirmation count. */
 	if (receiver->trn_error_symbols > represented_symbols ||
 	    represented_symbols - receiver->trn_error_symbols >
 		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS)
@@ -279,19 +289,6 @@ static enum v34_phase4_equalizer_receiver_result receive_answer_s(
 			clockwise_quarter_turns);
 
 	if (result == V34_PHASE3_S_RECEIVER_DETECTED) {
-		struct qam_point ignored_point;
-		uint8_t ignored_quarter_point;
-		uint8_t ignored_quarter_turns;
-
-		for (uint8_t symbol = 0;
-		     symbol < receiver->answer_s.post_marker_symbols; ++symbol)
-			if (v34_phase4_trn_next(
-				    &receiver->expected_trn, &ignored_point,
-				    &ignored_quarter_point,
-				    &ignored_quarter_turns) != V34_PHASE4_TRN_OK)
-				return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
-		receiver->trn_symbols =
-			receiver->answer_s.post_marker_symbols;
 		receiver->stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_TRN;
 		return V34_PHASE4_EQUALIZER_RECEIVER_S_DETECTED;
 	}
@@ -304,6 +301,7 @@ static enum v34_phase4_equalizer_receiver_result receive_trn(
 	struct v34_phase4_equalizer_receiver *receiver,
 	struct qam_equalizer_observation *observation)
 {
+	struct v34_mp_receive_event ignored_event = { 0 };
 	struct qam_point target;
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
@@ -326,14 +324,14 @@ static enum v34_phase4_equalizer_receiver_result receive_trn(
 	receiver->trn_symbols++;
 	if (receiver->trn_symbols != V34_PHASE4_TRN_MIN_SYMBOLS)
 		return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
-	/* TRN and MP use one continuous scrambler sequence.  The known TRN input
-	 * gives us its exact state; the final TRN point initializes differential
-	 * decoding as required at the MP boundary. */
-	receiver->mp_receiver.descrambler = receiver->expected_trn.scrambler;
-	receiver->mp_receiver.previous_clockwise_quarter_turns =
-		clockwise_quarter_turns;
-	receiver->mp_receiver.has_previous_symbol = true;
-	if (!v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver))
+	/* Begin continuous decoding while the peer may still send TRN.  Its
+	 * self-synchronizing descrambler converges before a repeated MP record is
+	 * required, without importing a guessed TRN boundary. */
+	if (v34_phase4_mp_receive_decision(
+		    &receiver->mp_receiver, quarter_point,
+		    clockwise_quarter_turns, &ignored_event) !=
+		    V34_PHASE4_MP_RECEIVER_OK ||
+	    ignored_event.type != V34_MP_RECEIVE_NO_EVENT)
 		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
 	receiver->stage = V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP;
 	return V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
@@ -375,6 +373,7 @@ v34_phase4_equalizer_receive_point(
 	uint8_t quarter_point;
 	uint8_t clockwise_quarter_turns;
 	bool confident;
+	bool signal_present;
 	bool ready;
 
 	if (!v34_phase4_equalizer_receiver_is_valid(receiver) ||
@@ -420,6 +419,7 @@ v34_phase4_equalizer_receive_point(
 		return V34_PHASE4_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
 	confident = decision_is_confident(
 		constellation, &observation.output, &target);
+	signal_present = decision_has_signal(&observation.output);
 	/* Before S/S-bar, the input may still be the required Phase 3 drain.
 	 * A nearest-point decision in that interval is not a training symbol. */
 	if (next.stage != V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S &&
@@ -431,7 +431,7 @@ v34_phase4_equalizer_receive_point(
 	if (next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S)
 		result = receive_answer_s(
 			&next, quarter_point, clockwise_quarter_turns);
-	else if (!confident)
+	else if (!signal_present)
 		result = V34_PHASE4_EQUALIZER_RECEIVER_SYMBOL;
 	else if (next.stage == V34_PHASE4_EQUALIZER_RECEIVER_STAGE_MP)
 		result = receive_mp(

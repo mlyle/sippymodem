@@ -106,7 +106,7 @@ static bool test_sliding_window_and_tolerance(void)
 	}
 	for (unsigned int error = 0;
 	     error < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++error) {
-		size_t symbol = V34_PHASE3_S_SYMBOLS + 3u + error * 7u;
+		size_t symbol = V34_PHASE3_S_SYMBOLS + 4u + error * 3u;
 
 		rotations[symbol] = (uint8_t)((rotations[symbol] + 1u) & 3u);
 	}
@@ -127,14 +127,14 @@ static bool marker_with_errors_is_rejected(bool s_bar)
 	unsigned int errors = s_bar ?
 			      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS + 1u :
 			      V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u;
-	size_t first = s_bar ? V34_PHASE3_S_SYMBOLS + 3u : 0u;
+	size_t first = s_bar ? V34_PHASE3_S_SYMBOLS + 1u : 0u;
 
 	if (!generate_marker(rotations) ||
 	    v34_phase3_s_receiver_init(&receiver) !=
 		    V34_PHASE3_S_RECEIVER_OK)
 		return false;
 	for (unsigned int error = 0; error < errors; ++error) {
-		size_t symbol = first + error * (s_bar ? 4u : 11u);
+		size_t symbol = first + error * (s_bar ? 2u : 11u);
 
 		rotations[symbol] = (uint8_t)((rotations[symbol] + 1u) & 3u);
 	}

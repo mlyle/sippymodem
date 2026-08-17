@@ -9,6 +9,19 @@ _Static_assert(
 	V34_PHASE4_TIMING_REFINEMENT_SAMPLES <= UINT16_MAX,
 	"Phase 4 timing-refinement count must fit its state field");
 
+enum {
+	/* Timing refinement corrects a sample-boundary ambiguity after the
+	 * qualified S/S-bar marker.  Its search width is independent of the
+	 * marker's companding-error budget and must remain bounded in the
+	 * real-time media callback. */
+	V34_PHASE4_MAX_TRN_ALIGNMENT_SYMBOLS = 2,
+};
+
+_Static_assert(
+	(unsigned int)V34_PHASE4_MAX_TRN_ALIGNMENT_SYMBOLS <=
+		(unsigned int)V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
+	"TRN alignment search must fit the qualified marker uncertainty");
+
 static enum v34_station_role transmitting_role(
 	const struct v34_phase4_equalizer_receiver *control)
 {
@@ -239,10 +252,10 @@ static bool score_timing_phase(
 	initial_error_symbols = candidate->control.trn_error_symbols;
 	candidate->timing_refining = false;
 	candidate->timing_refinement_sample_count = 0;
-	candidate->demodulator.locked_phase_units =
-		phase % candidate->demodulator.symbol_period_units;
-	candidate->demodulator.recovery_pending = false;
-	candidate->demodulator.recovery_fraction = 0.0;
+	if (qam_demodulator_rebase_timing(
+		    &candidate->demodulator,
+		    phase % candidate->demodulator.symbol_period_units) != QAM_OK)
+		return false;
 	for (size_t index = 0;
 	     index < source->timing_refinement_sample_count; ++index) {
 		enum v34_phase4_line_receiver_result result =
@@ -320,7 +333,7 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 		receiver->demodulator.timing_step_units;
 	aligned = *receiver;
 	for (unsigned int alignment = 0;
-	     alignment <= V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
+	     alignment <= V34_PHASE4_MAX_TRN_ALIGNMENT_SYMBOLS;
 	     ++alignment) {
 		if (alignment != 0 && !advance_trn_alignment(&aligned))
 			return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
