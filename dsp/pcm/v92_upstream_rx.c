@@ -26,6 +26,37 @@ bool v92_upstream_rx_has_failed(const struct v92_upstream_rx *receiver)
 	return v92_upstream_rx_is_valid(receiver) && receiver->failed;
 }
 
+bool v92_upstream_rx_expected_level(
+	const struct v92_upstream_rx *receiver, uint8_t input_group,
+	int16_t *level)
+{
+	const struct v92_phase4_demodulator *demodulator;
+	struct v92_phase4_modulator reference;
+	unsigned int bits;
+	int16_t generated;
+
+	if (!v92_upstream_rx_is_valid(receiver) || receiver->failed ||
+	    level == NULL)
+		return false;
+	demodulator = &receiver->line.demodulator;
+	bits = v92_phase4_modulator_bits_per_symbol(
+		demodulator->constellation);
+	if (bits == 0u || input_group >= (1u << bits))
+		return false;
+	reference = (struct v92_phase4_modulator){
+		.scrambler = demodulator->descrambler,
+		.constellation = demodulator->constellation,
+		.lu = demodulator->lu,
+		.previous_encoded_sign = demodulator->previous_encoded_sign,
+	};
+	if (v92_phase4_modulator_next(
+		    &reference, input_group, &generated) !=
+	    V92_PHASE4_MODULATOR_OK)
+		return false;
+	*level = generated;
+	return true;
+}
+
 enum v92_upstream_rx_result v92_upstream_rx_init(
 	struct v92_upstream_rx *receiver,
 	const struct v92_pcm_phase4_trn2u_line_handoff *handoff)
@@ -52,8 +83,9 @@ static enum v92_upstream_rx_result fail(struct v92_upstream_rx *receiver)
 	return V92_UPSTREAM_RX_NUMERIC_FAILURE;
 }
 
-enum v92_upstream_rx_result v92_upstream_rx_sample(
-	struct v92_upstream_rx *receiver, int16_t sample,
+static enum v92_upstream_rx_result sample(
+	struct v92_upstream_rx *receiver, int16_t input_sample,
+	bool known, uint8_t expected_group,
 	struct v92_upstream_decision *decision)
 {
 	struct v92_upstream_rx next;
@@ -61,6 +93,8 @@ enum v92_upstream_rx_result v92_upstream_rx_sample(
 	struct qam_equalizer_observation observation = { 0 };
 	struct qam_point input;
 	struct qam_point target;
+	int16_t expected_level = 0;
+	unsigned int bits;
 	bool ready;
 
 	if (receiver == NULL || decision == NULL ||
@@ -73,9 +107,18 @@ enum v92_upstream_rx_result v92_upstream_rx_sample(
 		return V92_UPSTREAM_RX_FAILED;
 	if (receiver->line.input_samples == UINT64_MAX)
 		return V92_UPSTREAM_RX_INVALID_STATE;
+	bits = v92_phase4_modulator_bits_per_symbol(
+		receiver->line.demodulator.constellation);
+	if (known && (bits == 0u || expected_group >= (1u << bits)))
+		return V92_UPSTREAM_RX_INVALID_ARGUMENT;
+	if (known && receiver->training_tail_remaining == 0u &&
+	    !v92_upstream_rx_expected_level(
+		    receiver, expected_group, &expected_level))
+		return V92_UPSTREAM_RX_INVALID_STATE;
 	next = *receiver;
 	input = (struct qam_point){
-		.in_phase = next.line.polarity > 0 ? sample : -(double)sample,
+		.in_phase = next.line.polarity > 0 ?
+			input_sample : -(double)input_sample,
 	};
 	if (qam_equalizer_observe(
 		    &next.line.equalizer, &input, &observation, &ready) !=
@@ -102,6 +145,14 @@ enum v92_upstream_rx_result v92_upstream_rx_sample(
 			    &next.line.equalizer, &observation, &target,
 			    next.line.adaptation) != QAM_EQUALIZER_OK)
 			return fail(receiver);
+	} else if (known) {
+		target = (struct qam_point){
+			.in_phase = quantize(next.line.law, expected_level),
+		};
+		if (qam_equalizer_adapt_observation(
+			    &next.line.equalizer, &observation, &target,
+			    next.line.adaptation) != QAM_EQUALIZER_OK)
+			return fail(receiver);
 	} else {
 		target = (struct qam_point){
 			.in_phase = quantize(
@@ -119,6 +170,21 @@ enum v92_upstream_rx_result v92_upstream_rx_sample(
 	*receiver = next;
 	*decision = generated;
 	return V92_UPSTREAM_RX_OK;
+}
+
+enum v92_upstream_rx_result v92_upstream_rx_sample(
+	struct v92_upstream_rx *receiver, int16_t input_sample,
+	struct v92_upstream_decision *decision)
+{
+	return sample(receiver, input_sample, false, 0u, decision);
+}
+
+enum v92_upstream_rx_result v92_upstream_rx_sample_known(
+	struct v92_upstream_rx *receiver, int16_t input_sample,
+	uint8_t expected_group, struct v92_upstream_decision *decision)
+{
+	return sample(
+		receiver, input_sample, true, expected_group, decision);
 }
 
 const char *v92_upstream_rx_result_name(enum v92_upstream_rx_result result)

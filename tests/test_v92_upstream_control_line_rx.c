@@ -3,6 +3,7 @@
 #include <v92_phase4_cpu_tx.h>
 #include <v92_phase4_digital_rx.h>
 #include <v92_phase4_suvu_tx.h>
+#include <v92_e2u_rx.h>
 #include <v92_upstream_control_line_rx.h>
 
 #include "test.h"
@@ -398,6 +399,289 @@ static bool test_generated_lines(void)
 		       G711_LAW_PCMA, V92_CONSTELLATION_8_POINT, 1u, -1);
 }
 
+static bool run_e2u(
+	enum g711_law law, enum v92_constellation_size constellation,
+	bool extended, bool invalid_sequence)
+{
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_pcm_phase4_trn2u transmitter;
+	struct v92_pcm_phase4_trn2u_line_handoff boundary;
+	struct v92_upstream_control_line_rx control;
+	struct v92_phase4_cpu_tx cpu_tx;
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_phase4_modulator modulator;
+	struct v92_e2u_rx receiver;
+	struct v92_upstream_rx handoff;
+	struct v92_upstream_rx unchanged;
+	struct v92_control_event event = { 0 };
+	uint8_t invalid_frame[5] = { 0 };
+	unsigned int bits =
+		v92_phase4_modulator_bits_per_symbol(constellation);
+	size_t expected_symbols = extended ?
+		V92_PHASE4_E2U_EXTENDED_SYMBOLS : V92_PHASE4_E2U_SYMBOLS;
+	size_t physical_e2u_symbols = 0u;
+	enum v92_e2u_rx_result final_result = V92_E2U_RX_OK;
+	bool continuation_started = false;
+
+	CHECK(build_boundary(
+		      law, constellation, (uint8_t)(law == G711_LAW_PCMA),
+		      law == G711_LAW_PCMA ? -1 : 1,
+		      &transmitter, &boundary) &&
+	      v92_upstream_control_line_rx_init(&control, &boundary) ==
+		      V92_UPSTREAM_CONTROL_LINE_RX_OK &&
+	      v92_phase4_cpu_tx_init(
+		      &cpu_tx, &transmitter.modulator, &cpu) ==
+		      V92_PHASE4_CPU_TX_OK,
+	      "E2u predecessor did not initialize");
+	while (!v92_phase4_cpu_tx_record_is_complete(&cpu_tx)) {
+		int16_t raw;
+
+		CHECK(v92_phase4_cpu_tx_next(&cpu_tx, &raw) ==
+			      V92_PHASE4_CPU_TX_OK &&
+		      v92_upstream_control_line_rx_sample(
+			      &control,
+			      line_sample(
+				      law, law == G711_LAW_PCMA ? -1 : 1,
+				      raw),
+			      &event) == V92_UPSTREAM_CONTROL_LINE_RX_OK &&
+		      event.type == V92_CONTROL_EVENT_NONE,
+		      "E2u predecessor record stopped");
+	}
+	CHECK(v92_phase4_cpu_tx_handoff(&cpu_tx, &modulator) ==
+		      V92_PHASE4_CPU_TX_OK,
+	      "E2u predecessor handoff failed");
+	if (invalid_sequence) {
+		size_t invalid_bits = expected_symbols * bits;
+		size_t invalid_bytes = (invalid_bits + 7u) / 8u;
+
+		memset(invalid_frame, 0xff, sizeof(invalid_frame));
+		if (invalid_bits % 8u != 0u)
+			invalid_frame[invalid_bytes - 1u] =
+				(uint8_t)(UINT8_C(0xff) <<
+					  (8u - invalid_bits % 8u));
+		CHECK(v92_phase4_record_tx_init(
+			      &e2u_tx, &modulator, invalid_frame,
+			      sizeof(invalid_frame), invalid_bits) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "invalid E2u generator did not initialize");
+	} else {
+		CHECK(v92_phase4_record_tx_init_e2u(
+			      &e2u_tx, &modulator, extended) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "E2u generator did not initialize");
+	}
+	while (event.type == V92_CONTROL_EVENT_NONE) {
+		int16_t raw;
+		enum v92_upstream_control_line_rx_result result;
+
+		CHECK(!v92_phase4_record_tx_is_complete(&e2u_tx) &&
+		      v92_phase4_record_tx_next(&e2u_tx, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "E2u ended before the delayed CPu boundary");
+		physical_e2u_symbols++;
+		result = v92_upstream_control_line_rx_sample(
+			&control,
+			line_sample(
+				law, law == G711_LAW_PCMA ? -1 : 1, raw),
+			&event);
+		CHECK((result == V92_UPSTREAM_CONTROL_LINE_RX_OK ||
+		       result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT) &&
+		      (event.type == V92_CONTROL_EVENT_NONE ||
+		       event.type == V92_CONTROL_EVENT_CPU),
+		      "E2u boundary produced an unexpected control event");
+	}
+	CHECK(event.type == V92_CONTROL_EVENT_CPU &&
+	      event.record.cpu.frame_result == V92_CPU_OK &&
+	      physical_e2u_symbols ==
+		      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+	      control.signal.training_tail_remaining == 0u &&
+	      v92_e2u_rx_init(&receiver, &control.signal, extended) ==
+		      V92_E2U_RX_OK,
+	      "E2u decision boundary did not follow CPu");
+	while (final_result == V92_E2U_RX_OK) {
+		int16_t raw;
+
+		if (!v92_phase4_record_tx_is_complete(&e2u_tx)) {
+			CHECK(v92_phase4_record_tx_next(&e2u_tx, &raw) ==
+				      V92_PHASE4_RECORD_TX_OK,
+			      "E2u continuation stopped");
+		} else {
+			if (!continuation_started) {
+				CHECK(v92_phase4_record_tx_handoff(
+					      &e2u_tx, &modulator) ==
+					      V92_PHASE4_RECORD_TX_OK,
+				      "post-E2u handoff stopped");
+				continuation_started = true;
+			}
+			CHECK(
+			      v92_phase4_modulator_next(
+				      &modulator, 1u, &raw) ==
+				      V92_PHASE4_MODULATOR_OK,
+			      "post-E2u delay fill stopped");
+		}
+		final_result = v92_e2u_rx_sample(
+			&receiver,
+			line_sample(
+				law, law == G711_LAW_PCMA ? -1 : 1, raw));
+	}
+	CHECK(final_result == (invalid_sequence ? V92_E2U_RX_NO_MATCH :
+					       V92_E2U_RX_COMPLETE) &&
+	      v92_e2u_rx_is_valid(&receiver) &&
+	      !v92_e2u_rx_has_failed(&receiver) &&
+	      v92_e2u_rx_is_complete(&receiver) == !invalid_sequence,
+	      "E2u result differed law=%u constellation=%u extended=%u "
+	      "invalid=%u result=%s errors=%u correlation=%.0f",
+	      (unsigned int)law, (unsigned int)constellation, extended,
+	      invalid_sequence, v92_e2u_rx_result_name(final_result),
+	      receiver.bit_errors, receiver.correlation);
+	{
+		struct v92_e2u_rx terminal = receiver;
+
+		CHECK(v92_e2u_rx_sample(&receiver, 0) == final_result &&
+		      memcmp(&receiver, &terminal, sizeof(receiver)) == 0,
+		      "terminal E2u receiver was not stable");
+	}
+	unchanged = receiver.signal;
+	memset(&handoff, 0xa5, sizeof(handoff));
+	if (invalid_sequence) {
+		struct v92_upstream_rx saved = handoff;
+
+		CHECK(v92_e2u_rx_handoff(&receiver, &handoff) ==
+			      V92_E2U_RX_INVALID_STATE &&
+		      memcmp(&handoff, &saved, sizeof(handoff)) == 0,
+		      "rejected E2u exported a line handoff");
+	} else {
+		CHECK(v92_e2u_rx_handoff(&receiver, &handoff) ==
+			      V92_E2U_RX_OK &&
+		      memcmp(&handoff, &unchanged, sizeof(handoff)) == 0,
+		      "accepted E2u lost its line handoff");
+	}
+	return true;
+}
+
+static bool test_e2u(void)
+{
+	static const enum v92_constellation_size constellations[] = {
+		V92_CONSTELLATION_4_POINT,
+		V92_CONSTELLATION_8_POINT,
+	};
+
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (size_t constellation = 0u;
+		     constellation < ARRAY_LENGTH(constellations);
+		     ++constellation) {
+			for (unsigned int extended = 0u; extended <= 1u;
+			     ++extended) {
+				CHECK(run_e2u(
+					      (enum g711_law)law,
+					      constellations[constellation],
+					      extended != 0u, false) &&
+				      run_e2u(
+					      (enum g711_law)law,
+					      constellations[constellation],
+					      extended != 0u, true),
+				      "E2u matrix stopped");
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_e2u_contracts(void)
+{
+	struct v92_pcm_phase4_trn2u transmitter;
+	struct v92_pcm_phase4_trn2u_line_handoff boundary;
+	struct v92_upstream_rx signal;
+	struct v92_upstream_rx ready;
+	struct v92_upstream_rx output;
+	struct v92_upstream_rx output_saved;
+	struct v92_e2u_rx receiver;
+	struct v92_e2u_rx untouched;
+	struct v92_e2u_rx saved;
+	struct v92_upstream_decision decision = {
+		.equalized_level = 123.0,
+		.nearest_level = 123,
+		.group = UINT8_C(0xa5),
+	};
+	struct v92_upstream_decision decision_saved;
+	struct v92_upstream_rx ready_saved;
+	int16_t expected_level = 123;
+	static const char *const names[] = {
+		"ok", "complete", "no match", "failed", "invalid argument",
+		"invalid state", "numeric failure",
+	};
+
+	CHECK(build_boundary(
+		      G711_LAW_PCMU, V92_CONSTELLATION_4_POINT, 0u, 1,
+		      &transmitter, &boundary) &&
+	      v92_upstream_rx_init(&signal, &boundary) == V92_UPSTREAM_RX_OK,
+	      "E2u contract boundary failed");
+	ready = signal;
+	ready.training_tail_remaining = 0u;
+	ready_saved = ready;
+	decision_saved = decision;
+	CHECK(!v92_upstream_rx_expected_level(NULL, 0u, &expected_level) &&
+	      !v92_upstream_rx_expected_level(&ready, 0u, NULL) &&
+	      !v92_upstream_rx_expected_level(&ready, 4u, &expected_level) &&
+	      expected_level == 123 &&
+	      v92_upstream_rx_expected_level(&ready, 0u, &expected_level) &&
+	      v92_upstream_rx_sample_known(
+		      &ready, 0, 4u, &decision) ==
+		      V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      memcmp(&ready, &ready_saved, sizeof(ready)) == 0 &&
+	      memcmp(&decision, &decision_saved, sizeof(decision)) == 0,
+	      "known upstream decision contracts differed");
+	memset(&untouched, 0xa5, sizeof(untouched));
+	saved = untouched;
+	CHECK(v92_e2u_rx_init(NULL, &ready, false) ==
+		      V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_init(&untouched, NULL, false) ==
+		      V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_init(&untouched, &signal, false) ==
+		      V92_E2U_RX_INVALID_ARGUMENT &&
+	      memcmp(&untouched, &saved, sizeof(saved)) == 0 &&
+	      v92_e2u_rx_init(&receiver, &ready, false) == V92_E2U_RX_OK,
+	      "E2u initialization was not transactional");
+	saved = receiver;
+	memset(&output, 0xa5, sizeof(output));
+	output_saved = output;
+	CHECK(v92_e2u_rx_sample(NULL, 0) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_handoff(NULL, &output) ==
+		      V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_handoff(&receiver, NULL) ==
+		      V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_handoff(
+		      &receiver,
+		      (struct v92_upstream_rx *)(void *)&receiver) ==
+		      V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_handoff(&receiver, &output) ==
+		      V92_E2U_RX_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&output, &output_saved, sizeof(output)) == 0,
+	      "E2u invalid calls changed state");
+	receiver.failed = true;
+	saved = receiver;
+	CHECK(v92_e2u_rx_has_failed(&receiver) &&
+	      v92_e2u_rx_sample(&receiver, 0) == V92_E2U_RX_FAILED &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "failed E2u receiver was not stable");
+	for (size_t index = 0u; index < ARRAY_LENGTH(names); ++index) {
+		CHECK(strcmp(
+			      v92_e2u_rx_result_name(
+				      (enum v92_e2u_rx_result)index),
+			      names[index]) == 0,
+		      "E2u result name %zu differed", index);
+	}
+	CHECK(strcmp(
+		      v92_e2u_rx_result_name((enum v92_e2u_rx_result)99),
+		      "unknown") == 0 &&
+	      !v92_e2u_rx_is_valid(NULL) &&
+	      !v92_e2u_rx_is_complete(NULL) &&
+	      !v92_e2u_rx_has_failed(NULL),
+	      "E2u validation contracts differed");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_pcm_phase4_trn2u transmitter;
@@ -663,6 +947,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated digital Phase 4 lines", test_generated_lines },
+		{ "generated E2u boundaries", test_e2u },
+		{ "E2u contracts", test_e2u_contracts },
 		{ "control-line contracts", test_contracts },
 		{ "digital receive contracts", test_digital_receive_contracts },
 	};

@@ -38,6 +38,13 @@ enum v92_upstream_rx_result v92_upstream_rx_init(
 bool v92_upstream_rx_is_valid(const struct v92_upstream_rx *receiver);
 bool v92_upstream_rx_has_failed(const struct v92_upstream_rx *receiver);
 
+/* Predict the equalizer-coordinate level for a known next input group without
+ * advancing either coding history. This is the reference used by E2u and B1u
+ * training. */
+bool v92_upstream_rx_expected_level(
+	const struct v92_upstream_rx *receiver, uint8_t input_group,
+	int16_t *level);
+
 /* Consume one signed 8 kHz sample and return one earliest-bit-first group.
  * Invalid and terminal calls leave receiver and decision unchanged. A new
  * DSP failure consumes no sample, latches failure, and leaves decision
@@ -45,6 +52,12 @@ bool v92_upstream_rx_has_failed(const struct v92_upstream_rx *receiver);
 enum v92_upstream_rx_result v92_upstream_rx_sample(
 	struct v92_upstream_rx *receiver, int16_t sample,
 	struct v92_upstream_decision *decision);
+
+/* Consume one sample while adapting a post-training decision against a known
+ * input group rather than a possibly damaged nearest decision. */
+enum v92_upstream_rx_result v92_upstream_rx_sample_known(
+	struct v92_upstream_rx *receiver, int16_t sample,
+	uint8_t expected_group, struct v92_upstream_decision *decision);
 
 const char *v92_upstream_rx_result_name(enum v92_upstream_rx_result result);
 
