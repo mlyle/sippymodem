@@ -50,7 +50,8 @@ PCM_RUNTIME_SOURCE_NAMES := \
 PCM_RUNTIME_OBJECTS := \
 	$(PCM_RUNTIME_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o) \
 	$(BUILD_DIR)/binary_equalizer.o \
-	$(BUILD_DIR)/fractional_delay.o
+	$(BUILD_DIR)/fractional_delay.o \
+	$(BUILD_DIR)/mixed_radix.o
 PACK_TEST_BINARY := $(BUILD_DIR)/test_modem_pack
 PACK_TEST_SOURCES := test_modem_pack.c modem_stubs.c
 PACK_TEST_OBJECTS := $(PACK_TEST_SOURCES:%.c=$(BUILD_DIR)/%.o)
@@ -365,6 +366,10 @@ CRC16_CCITT_FALSE_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT)
 INTEGER_MATH_TEST_BINARY := $(BUILD_DIR)/test_integer_math
 INTEGER_MATH_TEST_OBJECTS := $(BUILD_DIR)/test_integer_math.o
+MIXED_RADIX_OBJECT := $(BUILD_DIR)/mixed_radix.o
+MIXED_RADIX_TEST_BINARY := $(BUILD_DIR)/test_mixed_radix
+MIXED_RADIX_TEST_OBJECTS := $(BUILD_DIR)/test_mixed_radix.o \
+	$(MIXED_RADIX_OBJECT)
 DATAPUMP_TIMING_TEST_BINARY := $(BUILD_DIR)/test_datapump_timing
 DATAPUMP_TIMING_TEST_OBJECTS := $(BUILD_DIR)/test_datapump_timing.o \
 	$(BUILD_DIR)/training_session.o
@@ -1847,6 +1852,7 @@ PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
@@ -1862,6 +1868,7 @@ V90_PCM_MAPPING_TEST_BINARY := \
 V90_PCM_MAPPING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_pcm_mapping.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT)
 V90_PCM_FRAME_ENCODER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_pcm_frame_encoder
@@ -1869,6 +1876,7 @@ V90_PCM_FRAME_ENCODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
@@ -1881,6 +1889,7 @@ V90_PCM_FRAME_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
@@ -1895,6 +1904,7 @@ V90_DOWNSTREAM_DATA_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
@@ -1927,6 +1937,7 @@ V90_SPECTRAL_SHAPER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_spectral_shaper.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_cp.o $(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/g711.o
@@ -1942,6 +1953,7 @@ PCM_DOWNSTREAM_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
@@ -1987,6 +1999,7 @@ V90_PCM_STREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_frame_encoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_sign_encoder.o \
 	$(BUILD_DIR)/v90_spectral_shaper.o \
@@ -2067,6 +2080,7 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(V92_CONTROL_RX_OBJECTS) \
 	$(BUILD_DIR)/v90_pcm_frame_decoder.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_sign_decoder.o \
 	$(BUILD_DIR)/v90_jd.o \
@@ -2295,6 +2309,7 @@ V90_PHASE4_E_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase4_e_line_rx.o \
 	$(BUILD_DIR)/v90_upstream_rx.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_cp_line_rx.o, \
 		$(V90_PHASE4_CP_LINE_RX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_upstream_data.o, \
@@ -2315,6 +2330,7 @@ V90_PHASE4_DIGITAL_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase4_digital_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(MIXED_RADIX_OBJECT) \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \
 	$(PCM_J_FRAME_OBJECT) \
@@ -2764,6 +2780,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(DIFFERENTIAL_QPSK_TEST_BINARY) \
 	$(CRC16_CCITT_FALSE_TEST_BINARY) \
 	$(INTEGER_MATH_TEST_BINARY) \
+	$(MIXED_RADIX_TEST_BINARY) \
 	$(DATAPUMP_TIMING_TEST_BINARY) \
 	$(MEMORY_REGION_TEST_BINARY) \
 	$(PACKED_BITS_TEST_BINARY) \
@@ -3025,6 +3042,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(DIFFERENTIAL_QPSK_TEST_OBJECTS:.o=.d) \
 	$(CRC16_CCITT_FALSE_TEST_OBJECTS:.o=.d) \
 	$(INTEGER_MATH_TEST_OBJECTS:.o=.d) \
+	$(MIXED_RADIX_TEST_OBJECTS:.o=.d) \
 	$(DATAPUMP_TIMING_TEST_OBJECTS:.o=.d) \
 	$(MEMORY_REGION_TEST_OBJECTS:.o=.d) \
 	$(PACKED_BITS_TEST_OBJECTS:.o=.d) \
@@ -3316,6 +3334,7 @@ test: $(TEST_BINARIES)
 	./$(DIFFERENTIAL_QPSK_TEST_BINARY)
 	./$(CRC16_CCITT_FALSE_TEST_BINARY)
 	./$(INTEGER_MATH_TEST_BINARY)
+	./$(MIXED_RADIX_TEST_BINARY)
 	./$(DATAPUMP_TIMING_TEST_BINARY)
 	./$(MEMORY_REGION_TEST_BINARY)
 	./$(PACKED_BITS_TEST_BINARY)
@@ -3703,6 +3722,9 @@ $(CRC16_CCITT_FALSE_TEST_BINARY): $(CRC16_CCITT_FALSE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(INTEGER_MATH_TEST_BINARY): $(INTEGER_MATH_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(MIXED_RADIX_TEST_BINARY): $(MIXED_RADIX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(DATAPUMP_TIMING_TEST_BINARY): $(DATAPUMP_TIMING_TEST_OBJECTS)
@@ -5669,6 +5691,10 @@ $(BUILD_DIR)/v22_datapump.o: \
 
 $(BUILD_DIR)/qam.o: \
 	$(DSP_SOURCE_DIR)/qam.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/mixed_radix.o: \
+	$(DSP_SOURCE_DIR)/mixed_radix.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/qam_gain.o: \

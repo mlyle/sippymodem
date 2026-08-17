@@ -2,6 +2,7 @@
 
 #include "v90_pcm_mapping.h"
 
+#include "mixed_radix.h"
 #include "v92_cpt.h"
 #include "v92_cpu.h"
 
@@ -279,26 +280,27 @@ enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
 	uint8_t labels[V90_CP_FRAME_INTERVALS])
 {
 	uint8_t encoded[V90_CP_FRAME_INTERVALS];
-	uint64_t value = 0;
+	uint32_t radices[V90_CP_FRAME_INTERVALS];
+	uint32_t digits[V90_CP_FRAME_INTERVALS];
+	enum mixed_radix_result result;
 
 	if (!v90_pcm_mapping_is_valid(mapping) || bits == NULL ||
 	    labels == NULL)
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
 	if (bit_count != mapping->modulus_bits)
 		return V90_PCM_MAPPING_OUT_OF_RANGE;
-	for (size_t bit = 0; bit < bit_count; ++bit) {
-		if (bits[bit] > 1)
-			return V90_PCM_MAPPING_OUT_OF_RANGE;
-		value |= (uint64_t)bits[bit] << bit;
-	}
 	for (size_t interval = 0;
-	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		encoded[interval] =
-			(uint8_t)(value % mapping->modulus[interval]);
-		value /= mapping->modulus[interval];
-	}
-	if (value != 0)
+	     interval < V90_CP_FRAME_INTERVALS; ++interval)
+		radices[interval] = mapping->modulus[interval];
+	result = mixed_radix_encode(
+		radices, V90_CP_FRAME_INTERVALS, bits, bit_count, digits);
+	if (result == MIXED_RADIX_OUT_OF_RANGE)
 		return V90_PCM_MAPPING_OUT_OF_RANGE;
+	if (result != MIXED_RADIX_OK)
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	for (size_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval)
+		encoded[interval] = (uint8_t)digits[interval];
 	memcpy(labels, encoded, sizeof(encoded));
 	return V90_PCM_MAPPING_OK;
 }
@@ -309,8 +311,9 @@ enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
 	uint8_t *bits, size_t bit_count)
 {
 	uint8_t decoded[V90_DATA_MAX_MODULUS_BITS];
-	uint64_t value = 0;
-	uint64_t limit;
+	uint32_t radices[V90_CP_FRAME_INTERVALS];
+	uint32_t digits[V90_CP_FRAME_INTERVALS];
+	enum mixed_radix_result result;
 
 	if (!v90_pcm_mapping_is_valid(mapping) || labels == NULL ||
 	    bits == NULL)
@@ -319,24 +322,16 @@ enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
 		return V90_PCM_MAPPING_OUT_OF_RANGE;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		if (labels[interval] >= mapping->modulus[interval])
-			return V90_PCM_MAPPING_OUT_OF_RANGE;
+		radices[interval] = mapping->modulus[interval];
+		digits[interval] = labels[interval];
 	}
-	for (size_t interval = V90_CP_FRAME_INTERVALS;
-	     interval > 0; --interval) {
-		size_t index = interval - 1u;
-		uint8_t modulus = mapping->modulus[index];
-
-		if (value >
-		    (UINT64_MAX - labels[index]) / modulus)
-			return V90_PCM_MAPPING_INVALID_PARAMETERS;
-		value = value * modulus + labels[index];
-	}
-	limit = UINT64_C(1) << mapping->modulus_bits;
-	if (value >= limit)
+	result = mixed_radix_decode(
+		radices, V90_CP_FRAME_INTERVALS, digits,
+		decoded, bit_count);
+	if (result == MIXED_RADIX_OUT_OF_RANGE)
 		return V90_PCM_MAPPING_OUT_OF_RANGE;
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		decoded[bit] = (uint8_t)((value >> bit) & 1u);
+	if (result != MIXED_RADIX_OK)
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	memcpy(bits, decoded, bit_count);
 	return V90_PCM_MAPPING_OK;
 }
