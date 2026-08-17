@@ -36,6 +36,17 @@ struct v92_phase4_analog_station {
 	bool failed;
 };
 
+/* Exact duplex boundary after the control exchange. The upstream modulator
+ * continues into E2u, while the downstream receiver continues through Ed.
+ * CPU and CPd retain the independently selected downstream and upstream data
+ * mappings for the next owner. */
+struct v92_phase4_analog_handoff {
+	struct v92_phase4_modulator transmit;
+	struct pcm_downstream_rx receive;
+	struct v92_cpu_parameters cpu;
+	struct v92_cpd_base_parameters cpd;
+};
+
 /* Resume from exact Phase 3 handoffs. Optional early controls preserve a
  * complete record decoded while the independent CPt/E1u direction finished.
  * Rejected initialization leaves station unchanged. */
@@ -71,14 +82,16 @@ enum v92_phase4_analog_station_result
 v92_phase4_analog_station_repeat_cpu(
 	struct v92_phase4_analog_station *station);
 
-/* Export the selected CPd and continuous upstream modulation state at the
- * E2u boundary. Rejected calls leave outputs unchanged. */
+/* Export both continuous line directions and their selected mappings at the
+ * E2u boundary. Rejected calls leave the handoff unchanged. */
 bool v92_phase4_analog_station_cpd_parameters(
 	const struct v92_phase4_analog_station *station,
 	struct v92_cpd_base_parameters *parameters);
+bool v92_phase4_analog_handoff_is_valid(
+	const struct v92_phase4_analog_handoff *handoff);
 enum v92_phase4_analog_station_result v92_phase4_analog_station_handoff(
 	const struct v92_phase4_analog_station *station,
-	struct v92_phase4_modulator *modulator);
+	struct v92_phase4_analog_handoff *handoff);
 
 const char *v92_phase4_analog_station_result_name(
 	enum v92_phase4_analog_station_result result);

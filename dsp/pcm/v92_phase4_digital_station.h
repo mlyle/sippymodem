@@ -51,6 +51,16 @@ struct v92_phase4_digital_station {
 	bool failed;
 };
 
+/* Exact duplex boundary after both selected controls are acknowledged. The
+ * warm upstream line continues into E2u while the downstream coder completes
+ * its acknowledging status record and Ed. */
+struct v92_phase4_digital_handoff {
+	struct v92_upstream_control_line_rx receive;
+	struct pcm_downstream_tx transmit;
+	struct v92_cpu_parameters cpu;
+	struct v92_cpd_base_parameters cpd;
+};
+
 /* Continue from the exact Phase 3 receive handoff and the already-running
  * downstream TRN2d/SUVd transmitter. The compact CPd parameter type keeps
  * optional tables outside this bounded control owner. */
@@ -92,6 +102,12 @@ bool v92_phase4_digital_station_peer_acknowledged_cpd(
  * has been changed to acknowledge CPu. */
 bool v92_phase4_digital_station_is_ed_ready(
 	const struct v92_phase4_digital_station *station);
+
+bool v92_phase4_digital_handoff_is_valid(
+	const struct v92_phase4_digital_handoff *handoff);
+enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
+	const struct v92_phase4_digital_station *station,
+	struct v92_phase4_digital_handoff *handoff);
 
 const char *v92_phase4_digital_station_result_name(
 	enum v92_phase4_digital_station_result result);

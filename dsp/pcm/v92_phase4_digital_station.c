@@ -438,6 +438,51 @@ bool v92_phase4_digital_station_is_ed_ready(
 		       &station->transmit);
 }
 
+bool v92_phase4_digital_handoff_is_valid(
+	const struct v92_phase4_digital_handoff *handoff)
+{
+	return handoff != NULL &&
+	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
+	       !v92_upstream_control_line_rx_has_failed(&handoff->receive) &&
+	       handoff->receive.training_tail_remaining == 0u &&
+	       pcm_downstream_tx_is_valid(&handoff->transmit) &&
+	       handoff->transmit.protocol == PCM_PROTOCOL_V92 &&
+	       handoff->transmit.v92_control_kind ==
+		       PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+	       handoff->transmit.control.suvd.acknowledges_cpu &&
+	       handoff->transmit.v92_control_record_accepted &&
+	       pcm_downstream_tx_is_v92_control_boundary(&handoff->transmit) &&
+	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
+	       handoff->cpu.law == handoff->transmit.encoder.mapping.law &&
+	       v92_cpd_base_parameters_are_valid(&handoff->cpd) &&
+	       !handoff->cpd.acknowledges_cpu;
+}
+
+enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
+	const struct v92_phase4_digital_station *station,
+	struct v92_phase4_digital_handoff *handoff)
+{
+	struct v92_phase4_digital_handoff generated;
+
+	if (station == NULL || handoff == NULL ||
+	    memory_regions_overlap(
+		    station, sizeof(*station), handoff, sizeof(*handoff)))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (!v92_phase4_digital_station_is_ed_ready(station) ||
+	    station->receive.stage != V92_PHASE4_DIGITAL_RX_CONTROL)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
+	generated = (struct v92_phase4_digital_handoff){
+		.receive = station->receive.signal.control,
+		.transmit = station->transmit,
+		.cpu = station->cpu,
+		.cpd = station->cpd,
+	};
+	if (!v92_phase4_digital_handoff_is_valid(&generated))
+		return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
+	*handoff = generated;
+	return V92_PHASE4_DIGITAL_STATION_OK;
+}
+
 const char *v92_phase4_digital_station_result_name(
 	enum v92_phase4_digital_station_result result)
 {

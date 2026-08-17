@@ -288,22 +288,47 @@ bool v92_phase4_analog_station_cpd_parameters(
 	return true;
 }
 
+bool v92_phase4_analog_handoff_is_valid(
+	const struct v92_phase4_analog_handoff *handoff)
+{
+	return handoff != NULL &&
+	       v92_phase4_modulator_is_valid(&handoff->transmit) &&
+	       pcm_downstream_rx_is_valid(&handoff->receive) &&
+	       !pcm_downstream_rx_has_failed(&handoff->receive) &&
+	       handoff->receive.protocol == PCM_PROTOCOL_V92 &&
+	       handoff->receive.stage != PCM_DOWNSTREAM_RX_TRN2D &&
+	       handoff->receive.stream.decoder.decision_plane ==
+		       V90_PCM_MAPPING_TRANSMIT &&
+	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
+	       handoff->cpu.law ==
+		       handoff->receive.stream.decoder.mapping.law &&
+	       v92_cpd_base_parameters_are_valid(&handoff->cpd);
+}
+
 enum v92_phase4_analog_station_result v92_phase4_analog_station_handoff(
 	const struct v92_phase4_analog_station *station,
-	struct v92_phase4_modulator *modulator)
+	struct v92_phase4_analog_handoff *handoff)
 {
-	if (station == NULL || modulator == NULL ||
+	struct v92_phase4_analog_handoff generated;
+
+	if (station == NULL || handoff == NULL ||
 	    memory_regions_overlap(
-		    station, sizeof(*station), modulator,
-		    sizeof(*modulator)))
+		    station, sizeof(*station), handoff, sizeof(*handoff)))
 		return V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
 	if (!v92_phase4_analog_station_is_e2u_ready(station))
 		return V92_PHASE4_ANALOG_STATION_INVALID_STATE;
-	return v92_phase4_analog_tx_handoff(
-		       &station->transmit, modulator) ==
-		       V92_PHASE4_ANALOG_TX_OK ?
-		       V92_PHASE4_ANALOG_STATION_OK :
-		       V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR;
+	generated = (struct v92_phase4_analog_handoff){
+		.receive = station->receive,
+		.cpu = station->transmit.cpu,
+		.cpd = station->cpd,
+	};
+	if (v92_phase4_analog_tx_handoff(
+		    &station->transmit, &generated.transmit) !=
+		    V92_PHASE4_ANALOG_TX_OK ||
+	    !v92_phase4_analog_handoff_is_valid(&generated))
+		return V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR;
+	*handoff = generated;
+	return V92_PHASE4_ANALOG_STATION_OK;
 }
 
 const char *v92_phase4_analog_station_result_name(

@@ -577,7 +577,9 @@ static bool run_paired_station_exchange(
 	struct v92_cpu_parameters retained_cpu;
 	struct v92_cpu_parameters expected_cpu;
 	struct v92_cpd_base_parameters retained_cpd;
-	struct v92_phase4_modulator handoff;
+	struct v92_phase4_analog_handoff analog_handoff_out;
+	struct v92_phase4_digital_handoff digital_handoff_out;
+	enum pcm_downstream_tx_result request_ed_result;
 	size_t cpu_repeat_wait = 0u;
 	bool ready = false;
 
@@ -679,10 +681,7 @@ static bool run_paired_station_exchange(
 	      cpu_equal(&retained_cpu, &expected_cpu) &&
 	      v92_phase4_digital_station_peer_acknowledged_cpd(&digital) &&
 	      v92_phase4_digital_station_is_ed_ready(&digital) &&
-	      analog.suvd.request_silence == suvd.request_silence &&
-	      v92_phase4_analog_station_handoff(&analog, &handoff) ==
-		      V92_PHASE4_ANALOG_STATION_OK &&
-	      v92_phase4_modulator_is_valid(&handoff),
+	      analog.suvd.request_silence == suvd.request_silence,
 	      "paired station exchange did not reach E2u law=%u constellation=%u "
 	      "ready=%u a=%u/%u/%u/%u/%u tx=%u/%u/%u/%u d=%u/%u/%u/%u",
 	      (unsigned int)law, (unsigned int)constellation, ready,
@@ -694,6 +693,36 @@ static bool run_paired_station_exchange(
 	      digital.suvu_received, digital.cpu_received,
 	      digital.peer_acknowledged_cpd,
 	      digital.transmit_acknowledges_cpu);
+	CHECK(v92_phase4_analog_station_handoff(
+		      &analog, &analog_handoff_out) ==
+		      V92_PHASE4_ANALOG_STATION_OK &&
+	      v92_phase4_analog_handoff_is_valid(&analog_handoff_out) &&
+	      memcmp(&analog_handoff_out.receive, &analog.receive,
+		     sizeof(analog.receive)) == 0 &&
+	      cpu_equal(&analog_handoff_out.cpu, &cpu) &&
+	      base_cpd_equal(&analog_handoff_out.cpd, &cpd) &&
+	      v92_phase4_digital_station_handoff(
+		      &digital, &digital_handoff_out) ==
+		      V92_PHASE4_DIGITAL_STATION_OK &&
+	      v92_phase4_digital_handoff_is_valid(&digital_handoff_out) &&
+	      memcmp(&digital_handoff_out.receive,
+		     &digital.receive.signal.control,
+		     sizeof(digital_handoff_out.receive)) == 0 &&
+	      memcmp(&digital_handoff_out.transmit, &digital.transmit,
+		     sizeof(digital.transmit)) == 0 &&
+	      cpu_equal(&digital_handoff_out.cpu, &expected_cpu) &&
+	      base_cpd_equal(&digital_handoff_out.cpd, &cpd),
+	      "paired station handoff lost duplex state law=%u constellation=%u",
+	      (unsigned int)law, (unsigned int)constellation);
+	request_ed_result = pcm_downstream_tx_request_ed(
+		&digital_handoff_out.transmit);
+	CHECK(request_ed_result == PCM_DOWNSTREAM_TX_OK &&
+	      digital_handoff_out.transmit.stage == PCM_DOWNSTREAM_TX_ED,
+	      "digital handoff could not enter Ed law=%u constellation=%u "
+	      "result=%s stage=%u",
+	      (unsigned int)law, (unsigned int)constellation,
+	      pcm_downstream_tx_result_name(request_ed_result),
+	      digital_handoff_out.transmit.stage);
 	return true;
 }
 
@@ -738,6 +767,8 @@ static bool test_analog_early_control(void)
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_rx downstream;
 	struct v92_phase4_analog_station station;
+	struct v92_phase4_analog_handoff exported;
+	struct v92_phase4_analog_handoff exported_before;
 
 	{
 		struct v92_cpt_parameters cpt = cpt_parameters(G711_LAW_PCMU);
@@ -758,6 +789,18 @@ static bool test_analog_early_control(void)
 	      station.transmit.received_cpd &&
 	      v92_phase4_analog_tx_silence_requested(&station.transmit),
 	      "early downstream controls were not retained");
+	memset(&exported, 0xa5, sizeof(exported));
+	exported_before = exported;
+	CHECK(!v92_phase4_analog_handoff_is_valid(NULL) &&
+	      !v92_phase4_analog_handoff_is_valid(&exported) &&
+	      v92_phase4_analog_station_handoff(NULL, &exported) ==
+		      V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v92_phase4_analog_station_handoff(&station, NULL) ==
+		      V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v92_phase4_analog_station_handoff(&station, &exported) ==
+		      V92_PHASE4_ANALOG_STATION_INVALID_STATE &&
+	      memcmp(&exported, &exported_before, sizeof(exported)) == 0,
+	      "analogue handoff rejection changed output");
 	return true;
 }
 
@@ -771,6 +814,8 @@ static bool test_compact_boundary(void)
 	struct pcm_downstream_tx downstream;
 	struct v92_phase4_digital_station station;
 	struct v92_phase4_digital_station saved;
+	struct v92_phase4_digital_handoff exported;
+	struct v92_phase4_digital_handoff exported_before;
 	uint8_t octet = UINT8_C(0xa5);
 
 	CHECK(build_predecessor(
@@ -815,6 +860,18 @@ static bool test_compact_boundary(void)
 		     V92_PHASE4_DIGITAL_STATION_INVALID_STATE),
 		     "invalid state") == 0,
 	      "station invalid-call contract changed");
+	memset(&exported, 0xa5, sizeof(exported));
+	exported_before = exported;
+	CHECK(!v92_phase4_digital_handoff_is_valid(NULL) &&
+	      !v92_phase4_digital_handoff_is_valid(&exported) &&
+	      v92_phase4_digital_station_handoff(NULL, &exported) ==
+		      V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v92_phase4_digital_station_handoff(&station, NULL) ==
+		      V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v92_phase4_digital_station_handoff(&station, &exported) ==
+		      V92_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+	      memcmp(&exported, &exported_before, sizeof(exported)) == 0,
+	      "digital handoff rejection changed output");
 	return true;
 }
 
