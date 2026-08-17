@@ -531,6 +531,7 @@ static bool check_receive_loopback(
 	size_t sync_offset;
 	size_t payload_errors = SIZE_MAX;
 	bool has_previous_point = false;
+	bool exact_clock_stayed_nominal = true;
 	size_t sample_limit = leading_silence +
 		((symbol_count + 16u) * TEST_SAMPLE_RATE +
 		 transmit_symbol_rate - 1u) /
@@ -579,6 +580,10 @@ static bool check_receive_loopback(
 			      &demodulator, sample, &received_point, &ready) ==
 			      QAM_OK,
 		      "QAM loopback demodulator failed");
+		if (transmit_symbol_rate == receive_symbol_rate &&
+		    qam_demodulator_measure(&demodulator).timing_locked &&
+		    demodulator.recovery_step_units != receive_symbol_rate)
+			exact_clock_stayed_nominal = false;
 		if (ready) {
 			uint8_t quarter_turns;
 
@@ -630,6 +635,8 @@ static bool check_receive_loopback(
 	      "QAM receiver tracked %llu instead of %u symbol-rate units",
 	      (unsigned long long)demodulator.recovery_step_units,
 	      transmit_symbol_rate);
+	CHECK(exact_clock_stayed_nominal,
+	      "QAM receiver perturbed an exact recovered symbol clock");
 	return true;
 }
 
@@ -667,6 +674,90 @@ static bool test_receive_clock_tracking(void)
 		       1793, 1800, 2399, 2400, 0.25, 29, true,
 		       TRACKING_SYMBOL_COUNT, TRACKING_SYNC_SYMBOLS,
 		       TRACKING_PAYLOAD_SYMBOLS);
+}
+
+static bool force_timing_candidate(
+	struct qam_demodulator *demodulator, size_t target)
+{
+	struct qam_point received;
+	uint32_t minimum_symbols =
+		(demodulator->tracking_window_symbols * 3u + 3u) / 4u;
+	bool ready;
+
+	if (target >= demodulator->timing_candidate_count)
+		return false;
+	demodulator->timing_sample_count =
+		demodulator->timing_sample_target - 1u;
+	for (size_t index = 0;
+	     index < demodulator->timing_candidate_count; ++index) {
+		demodulator->timing[index].symbol_count = minimum_symbols;
+		demodulator->timing[index].symbol_power_sum =
+			minimum_symbols * (index == target ? 2.0e12 : 1.0e12);
+	}
+	return qam_demodulator_sample(
+		       demodulator, 0, &received, &ready) == QAM_OK &&
+	       demodulator->timing_reference_index == target;
+}
+
+static bool test_filtered_clock_tracking(void)
+{
+	struct qam_channel channel = {
+		.sample_rate = TEST_SAMPLE_RATE,
+		.symbol_rate_numerator = 3000,
+		.symbol_rate_denominator = 1,
+		.carrier_frequency_numerator = 1800,
+		.carrier_frequency_denominator = 1,
+		.rolloff = 0.2,
+		.pulse_span_symbols = 6,
+	};
+	struct qam_modulator modulator;
+	struct qam_demodulator demodulator;
+	struct qam_point point = { 0.6, 0.0 };
+
+	CHECK(qam_modulator_init(
+		      &modulator, &channel, TEST_AMPLITUDE) == QAM_OK &&
+	      qam_demodulator_init_with_timing_windows(
+		      &demodulator, &channel, 64, 256) == QAM_OK &&
+	      qam_demodulator_set_timing_power_hysteresis(
+		      &demodulator, 1.01) == QAM_OK,
+	      "filtered-clock fixture did not initialize");
+	for (size_t sample_index = 0;
+	     sample_index < demodulator.timing_sample_target +
+				    TEST_SAMPLE_RATE;
+	     ++sample_index) {
+		struct qam_point received;
+		int16_t sample;
+		bool accepted;
+		bool ready;
+
+		CHECK(qam_modulator_sample(
+			      &modulator, &point, &sample, &accepted) == QAM_OK,
+		      "filtered-clock transmitter failed");
+		if (accepted)
+			point = quadrant_point(
+				(uint8_t)(sample_index & 3u), 0.6);
+		CHECK(qam_demodulator_sample(
+			      &demodulator, sample, &received, &ready) == QAM_OK,
+		      "filtered-clock receiver failed");
+		if (qam_demodulator_measure(&demodulator).timing_locked)
+			break;
+	}
+	CHECK(qam_demodulator_measure(&demodulator).timing_locked &&
+		      demodulator.timing_candidate_count == 8,
+	      "filtered-clock fixture did not acquire timing");
+	demodulator.timing_reference_index = 0;
+	demodulator.locked_phase_units = demodulator.timing[0].phase_units;
+	demodulator.recovery_pending = false;
+	for (size_t selection = 0; selection < 4; ++selection) {
+		size_t target = selection % 2u == 0 ? 7u : 0u;
+
+		CHECK(force_timing_candidate(&demodulator, target),
+		      "filtered-clock fixture did not select candidate %zu",
+		      target);
+	}
+	CHECK(demodulator.recovery_step_units == 3000,
+	      "alternating phase estimates perturbed an exact clock");
+	return true;
 }
 
 static bool test_silence_does_not_lock(void)
@@ -945,6 +1036,18 @@ static bool test_validation(void)
 			      QAM_INVALID_ARGUMENT,
 		      "QAM accepted a corrupt timing reference");
 		demodulator.timing_reference_index = reference_index;
+		demodulator.timing_error_windows = UINT8_MAX;
+		CHECK(qam_demodulator_sample(
+			      &demodulator, 0, &received_point, &accepted) ==
+			      QAM_INVALID_ARGUMENT,
+		      "QAM accepted a corrupt clock-filter window count");
+		demodulator.timing_error_windows = 0;
+		demodulator.timing_forward_error_units = 1;
+		CHECK(qam_demodulator_sample(
+			      &demodulator, 0, &received_point, &accepted) ==
+			      QAM_INVALID_ARGUMENT,
+		      "QAM accepted an orphaned clock-filter error");
+		demodulator.timing_forward_error_units = 0;
 	}
 	CHECK(qam_modulator_sample(
 		      &modulator, &bounded_point, &sample, &accepted) ==
@@ -1019,6 +1122,7 @@ int main(void)
 		{ "receive loopback", test_receive_loopback },
 		{ "receive tolerance", test_receive_tolerance },
 		{ "receive clock tracking", test_receive_clock_tracking },
+		{ "filtered clock tracking", test_filtered_clock_tracking },
 		{ "silence does not lock", test_silence_does_not_lock },
 		{ "timing windows", test_timing_windows },
 		{ "configurable point power", test_configurable_point_power },
