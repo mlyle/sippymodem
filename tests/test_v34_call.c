@@ -137,6 +137,41 @@ static struct v34_call_configuration configuration(
 	};
 }
 
+static struct v34_call_configuration symmetric_configuration(
+	enum v34_station_role role, enum v34_symbol_rate symbol_rate)
+{
+	struct v34_call_configuration selected = configuration(role);
+
+	selected.local_info0 = (struct v34_info0){
+		.symbol_rate_2800_supported = true,
+		.maximum_symbol_rate_difference_steps = 0,
+		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
+	};
+	selected.local_info1 = (union v34_local_info1){ 0 };
+	if (role == V34_CALLING_STATION) {
+		selected.local_info1.calling.common
+			.frequency_offset_1_50_hz_units =
+				V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+		selected.local_info1.calling.answer_transmit[symbol_rate]
+			.preemphasis_filter_index = 8;
+		selected.local_info1.calling.answer_transmit[symbol_rate]
+			.projected_data_rate_2400_bps_units = 4;
+	} else {
+		selected.local_info1.answering.common
+			.frequency_offset_1_50_hz_units =
+				V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+		selected.local_info1.answering.call_transmit
+			.preemphasis_filter_index = 8;
+		selected.local_info1.answering.call_transmit
+			.projected_data_rate_2400_bps_units = 4;
+		selected.local_info1.answering.answer_to_call_symbol_rate =
+			symbol_rate;
+		selected.local_info1.answering.call_to_answer_symbol_rate =
+			symbol_rate;
+	}
+	return selected;
+}
+
 static bool supply_mapping_frame(
 	void *context, const struct v34_mapping_frame *request,
 	uint8_t *primary_bits, uint8_t *auxiliary_bit)
@@ -185,6 +220,24 @@ static bool endpoint_init(
 	struct endpoint *endpoint, enum v34_station_role role)
 {
 	struct v34_call_configuration config = configuration(role);
+	struct endpoint initialized = {
+		.transmit_bit = role == V34_ANSWERING_STATION,
+		.verify_mapping_frames = true,
+	};
+
+	if (endpoint == NULL ||
+	    v34_call_init(&initialized.call, &config) != V34_CALL_OK)
+		return false;
+	*endpoint = initialized;
+	return true;
+}
+
+static bool endpoint_init_symmetric(
+	struct endpoint *endpoint, enum v34_station_role role,
+	enum v34_symbol_rate symbol_rate)
+{
+	struct v34_call_configuration config =
+		symmetric_configuration(role, symbol_rate);
 	struct endpoint initialized = {
 		.transmit_bit = role == V34_ANSWERING_STATION,
 		.verify_mapping_frames = true,
@@ -330,6 +383,57 @@ static bool test_pcmu_call(void)
 	      answerer.mapping_frames_supplied >=
 		      caller.mapping_frames_received,
 	      "full call lost a phase or mapping frame");
+	return true;
+}
+
+static bool check_symmetric_2800_call(bool pcma)
+{
+	struct channel channel = { .pcma = pcma };
+	struct endpoint caller;
+	struct endpoint answerer;
+	int16_t next_caller_receive = 0;
+	int16_t next_answerer_receive = 0;
+
+	CHECK(endpoint_init_symmetric(
+		      &caller, V34_CALLING_STATION, V34_SYMBOL_RATE_2800) &&
+	      endpoint_init_symmetric(
+		      &answerer, V34_ANSWERING_STATION,
+		      V34_SYMBOL_RATE_2800),
+	      "symmetric 2800 endpoints did not initialize");
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_call_observation caller_observation;
+		struct v34_call_observation answerer_observation;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		channel_receive(
+			&channel, &next_caller_receive, &next_answerer_receive);
+		CHECK(endpoint_sample(
+			      &caller, next_caller_receive,
+			      supply_mapping_frame, &caller_transmit,
+			      &caller_observation) &&
+		      endpoint_sample(
+			      &answerer, next_answerer_receive,
+			      supply_mapping_frame, &answerer_transmit,
+			      &answerer_observation),
+		      "symmetric 2800 call stopped at sample %zu", index);
+		channel_transmit(
+			&channel, caller_transmit, answerer_transmit);
+		if (v34_call_is_online(&caller.call) &&
+		    v34_call_is_online(&answerer.call) &&
+		    caller.mapping_frames_received >= 4u &&
+		    answerer.mapping_frames_received >= 4u)
+			return true;
+	}
+	CHECK(false, "symmetric 2800 call did not reach mapped data");
+}
+
+static bool test_symmetric_2800_call(void)
+{
+	CHECK(check_symmetric_2800_call(false),
+	      "PCMU symmetric 2800 call failed");
+	CHECK(check_symmetric_2800_call(true),
+	      "PCMA symmetric 2800 call failed");
 	return true;
 }
 
@@ -648,6 +752,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated PCMU call", test_pcmu_call },
+		{ "symmetric 2800 call", test_symmetric_2800_call },
 		{ "local and remote full retrain", test_full_retrain },
 		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "unusable INFO1 starts full retrain",

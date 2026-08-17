@@ -683,7 +683,11 @@ static bool exercise_retrain(
 		pending_transmit_bits = initiator->modem->pack.bit;
 		pending_transmit_data = initiator->modem->pack.data;
 		pending_transmit_chars = initiator->modem->xmit.count;
-		if (pending_transmit_bits <= 0 || pending_transmit_chars <= 0) {
+		/* Some mapped rates consume an integral number of async frames in
+		 * one media interval.  A partial packer word is useful coverage when
+		 * present, but the queued clean suffix is the required ownership
+		 * boundary for every rate. */
+		if (pending_transmit_chars <= 0) {
 			fprintf(stderr,
 				"raw retrain fixture did not retain transmit data "
 				"(bits=%d chars=%d)\n",
