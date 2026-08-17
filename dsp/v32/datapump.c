@@ -809,7 +809,7 @@ static int generate_silence_sample(
 
 static int generate_sample(
 	struct v32_datapump *datapump, int16_t *sample,
-	bool *linked)
+	bool *linked, uint64_t sample_number)
 {
 	bool can_accept;
 	bool accepted;
@@ -835,7 +835,9 @@ static int generate_sample(
 		     V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING ||
 	     datapump->line_entry ==
 		     V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER)) {
-		*sample = 0;
+		/* A-law has no exact zero codeword.  Alternate its two zero
+		 * intervals so a silent caller has no DC component at the peer. */
+		*sample = (sample_number & 1u) != 0 ? -1 : 0;
 		return 0;
 	}
 	can_accept = qam_modulator_can_accept_symbol(
@@ -1380,6 +1382,7 @@ static int process_v32(
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	struct qam_measurement measurement;
+	uint64_t frame_start = 0;
 	bool linked = false;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
@@ -1398,6 +1401,9 @@ static int process_v32(
 		    (uint64_t)(unsigned int)count) !=
 		    TRAINING_SESSION_OK)
 		goto failure;
+	if (!training_session_is_online(&datapump->training))
+		frame_start = datapump->training.elapsed_ticks -
+			      (uint64_t)(unsigned int)count;
 	for (int index = 0; index < count; ++index) {
 		if (datapump->line_entry == V32_LINE_ENTRY_CALLER_STARTUP) {
 			if (process_caller_line_startup(
@@ -1411,7 +1417,9 @@ static int process_v32(
 				goto failure;
 			continue;
 		}
-		if (generate_sample(datapump, &transmit[index], &linked) != 0 ||
+		if (generate_sample(
+			    datapump, &transmit[index], &linked,
+			    frame_start + (uint64_t)(unsigned int)index) != 0 ||
 		    receive_sample(datapump, receive[index], &linked) != 0)
 			goto failure;
 	}

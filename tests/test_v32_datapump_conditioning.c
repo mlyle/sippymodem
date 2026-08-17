@@ -9,6 +9,7 @@
 #include <constellation.h>
 #include <datapump.h>
 #include <framing.h>
+#include <g711.h>
 #include <line_startup.h>
 #include <rate_signal.h>
 
@@ -113,6 +114,11 @@ static bool process_sample_until_link(
 	return status == DPSTAT_OK || *connected;
 }
 
+static bool is_quiet_sample(int16_t sample)
+{
+	return sample == 0 || sample == -1;
+}
+
 static bool turnaround_signal_init(struct test_turnaround_signal *signal)
 {
 	return single_tone_transmitter_init(
@@ -157,6 +163,7 @@ static bool drive_line_startup(
 	struct single_tone_transmitter answer_tone;
 	struct test_turnaround_signal turnaround;
 	uint64_t calling_power = 0;
+	int32_t pcma_silence_sum = 0;
 	unsigned int silent_samples = 0;
 	int16_t transmit;
 
@@ -215,15 +222,21 @@ static bool drive_line_startup(
 			      process_sample(
 				      operations, datapump, receive, &transmit),
 		      "V.32 caller rejected the second turnaround reversal");
-		silent_samples = transmit == 0 ? silent_samples + 1 : 0;
+		silent_samples = is_quiet_sample(transmit) ?
+				 silent_samples + 1 : 0;
 	}
 	CHECK(silent_samples == TEST_SILENCE_RUN,
 	      "V.32 caller did not become silent for peer conditioning");
 	for (unsigned int count = 0;
-	     count < V32_ANSWERER_DROP_SILENCE_SAMPLES; ++count)
+	     count < V32_ANSWERER_DROP_SILENCE_SAMPLES; ++count) {
 		CHECK(process_sample(operations, datapump, 0, &transmit) &&
-			      transmit == 0,
+			      is_quiet_sample(transmit),
 		      "V.32 caller rejected the post-turnaround gap");
+		pcma_silence_sum += g711_decode_pcma(
+			g711_encode_pcma(transmit));
+	}
+	CHECK(pcma_silence_sum == 0,
+	      "V.32 caller silence has an A-law DC component");
 	return true;
 }
 
@@ -445,7 +458,7 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		if (peer.rate_symbols <
 		    TEST_RATE_WORDS_BEFORE_RESPONSE *
 			    V32_RATE_SIGNAL_DIBITS)
-			CHECK(transmit == 0,
+			CHECK(is_quiet_sample(transmit),
 			      "V.32 caller responded before a repeated rate word");
 		response_power += (uint64_t)((int32_t)transmit * transmit);
 	}
