@@ -72,18 +72,6 @@ static bool bit_must_be_zero(
 		bit_index >= frame_bit_count - 3u);
 }
 
-static bool received_bits_are_valid(
-	const struct v90_cp_receiver *receiver)
-{
-	for (size_t index = CP_INFORMATION_FIRST_BIT;
-	     index < receiver->bit_index; ++index) {
-		if (bit_must_be_zero(index, receiver->frame_bit_count) &&
-		    packed_msb_bit(receiver->frame, index) != 0)
-			return false;
-	}
-	return true;
-}
-
 bool v90_cp_receiver_is_valid(
 	const struct v90_cp_receiver *receiver)
 {
@@ -91,22 +79,24 @@ bool v90_cp_receiver_is_valid(
 
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    receiver->sync_one_count > CP_SYNC_BITS ||
-	    receiver->bit_index > V90_CP_MAX_FRAME_BITS ||
-	    !packed_msb_tail_is_zero(
-		    receiver->frame, receiver->bit_index,
-		    sizeof(receiver->frame)))
+	    receiver->bit_index > V90_CP_MAX_FRAME_BITS)
 		return false;
 	switch (receiver->stage) {
 	case V90_CP_RECEIVER_SEARCH_SYNC:
 		return receiver->frame_bit_count == 0 &&
-		       receiver->bit_index == 0;
+		       receiver->bit_index == 0 &&
+		       packed_msb_tail_is_zero(
+			       receiver->frame, 0,
+			       sizeof(receiver->frame));
 	case V90_CP_RECEIVER_READ_HEADER:
+		/* begin_frame() clears the bounded record, and receive_bit()
+		 * rejects every nonzero reserved/start bit as it arrives.  Do not
+		 * rescan the growing prefix on every 8 kHz sample. */
 		return receiver->frame_bit_count == 0 &&
 		       receiver->bit_index >= CP_INFORMATION_FIRST_BIT &&
 		       receiver->bit_index <= CP_HEADER_LAST_BIT &&
 		       receiver->sync_one_count == 0 &&
-		       prefix_is_valid(receiver->frame) &&
-		       received_bits_are_valid(receiver);
+		       prefix_is_valid(receiver->frame);
 	case V90_CP_RECEIVER_READ_FRAME:
 		return receiver->frame_bit_count >= V90_CP_MIN_FRAME_BITS &&
 		       receiver->frame_bit_count <= V90_CP_MAX_FRAME_BITS &&
@@ -114,7 +104,6 @@ bool v90_cp_receiver_is_valid(
 		       receiver->bit_index < receiver->frame_bit_count &&
 		       receiver->sync_one_count == 0 &&
 		       prefix_is_valid(receiver->frame) &&
-		       received_bits_are_valid(receiver) &&
 		       infer_frame_bit_count(receiver->frame, &inferred_bits) &&
 		       inferred_bits == receiver->frame_bit_count;
 	}
