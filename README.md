@@ -242,7 +242,9 @@ implemented rate, both call orientations, and both G.711 laws. These are
 ordinary SIP calls; accepted RTP packets clock the media loop immediately, so
 the local matrix runs faster than real time. Add `--ato1` to escape the
 candidate endpoint, issue ATO1, and verify a fresh byte exchange after it
-returns online.
+returns online. The runner allows one second after the retrain CONNECT before
+that fresh exchange because the peer's decoder and error-control path may
+become data-ready slightly after its terminal result.
 
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
 Baudot at both supported rates, V.32/V.32bis, and every valid fixed V.34

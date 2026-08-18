@@ -49,6 +49,7 @@ else:
 
 SKIPPED_EXIT_CODE = 77
 ONLINE_SETTLE_SECONDS = 0.1
+POST_ATO1_SETTLE_SECONDS = 1.0
 
 
 @dataclass
@@ -342,7 +343,10 @@ def run_interop(
                 else:
                     assert post_ato1_payloads is not None
                     stage = "post-ato1-data"
-                    time.sleep(ONLINE_SETTLE_SECONDS)
+                    # Retrain CONNECT can precede decoder reacquisition and
+                    # error-control retransmission at the peer. Keep this
+                    # boundary distinct from initial-link settling.
+                    time.sleep(POST_ATO1_SETTLE_SECONDS)
                     data_deadline = (
                         time.monotonic() + config.online_timeout_seconds
                     )
