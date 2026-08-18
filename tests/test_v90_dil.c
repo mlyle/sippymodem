@@ -274,6 +274,74 @@ static bool test_variable_descriptors(void)
 	return true;
 }
 
+static bool test_generated_profiles(void)
+{
+	static const uint8_t expected_sign_pattern[] = {
+		0xf1, 0x05, 0x34, 0xbe, 0x9a, 0x51, 0x66, 0x77,
+		0x8a, 0x09, 0xbc, 0x3b, 0xb5, 0x82, 0x9d,
+	};
+	static const uint8_t expected_training_pattern[] = {
+		0xd6, 0x0a, 0xfc, 0x81, 0x4a, 0x05, 0xbe, 0x3d,
+		0xd4, 0x4a, 0xc6, 0x9a, 0x59, 0xad, 0xf4,
+	};
+	struct v90_dil_parameters none;
+	struct v90_dil_parameters conventional;
+	struct v90_dil_parameters decoded;
+	struct v90_dil_parameters saved;
+	uint8_t descriptor[V90_DIL_MAX_DESCRIPTOR_BYTES];
+	uint32_t symbols = UINT32_MAX;
+	size_t descriptor_bits = 0;
+
+	CHECK(v90_dil_profile_init(&none, V90_DIL_PROFILE_NONE) == V90_DIL_OK &&
+	      none.segment_count == 0u &&
+	      v90_dil_training_symbol_count(&none, &symbols) && symbols == 0u &&
+	      v90_dil_profile_init(
+		      &conventional, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+	      conventional.segment_count == 144u &&
+	      conventional.sign_pattern_bits == 120u &&
+	      conventional.training_pattern_bits == 120u &&
+	      memcmp(
+		      conventional.sign_pattern, expected_sign_pattern,
+		      sizeof(expected_sign_pattern)) == 0 &&
+	      memcmp(
+		      conventional.training_pattern, expected_training_pattern,
+		      sizeof(expected_training_pattern)) == 0 &&
+	      conventional.training_ucodes[0] == 0x4fu &&
+	      conventional.training_ucodes[15] == 0x40u &&
+	      conventional.training_ucodes[16] == 0x3fu &&
+	      conventional.training_ucodes[46] == 0x03u &&
+	      conventional.training_ucodes[47] == 0x02u &&
+	      conventional.training_ucodes[48] == 0x04u &&
+	      conventional.training_ucodes[78] == 0x40u &&
+	      conventional.training_ucodes[79] == 0x41u &&
+	      conventional.training_ucodes[130] == 0x74u &&
+	      conventional.training_ucodes[131] == 0x64u &&
+	      conventional.training_ucodes[143] == 0x46u &&
+	      v90_dil_training_symbol_count(&conventional, &symbols) &&
+	      symbols == 32280u &&
+	      v90_dil_encode(
+		      &conventional, descriptor, sizeof(descriptor),
+		      &descriptor_bits) == V90_DIL_OK &&
+	      descriptor_bits == 1702u &&
+	      v90_dil_decode(
+		      descriptor, sizeof(descriptor), descriptor_bits,
+		      &decoded) == V90_DIL_OK &&
+	      memcmp(&decoded, &conventional, sizeof(decoded)) == 0,
+	      "generated conventional DIL profile changed");
+	saved = conventional;
+	symbols = UINT32_MAX;
+	CHECK(!v90_dil_profile_is_valid((enum v90_dil_profile)99) &&
+	      v90_dil_profile_init(
+		      &conventional, (enum v90_dil_profile)99) ==
+		      V90_DIL_INVALID_ARGUMENT &&
+	      memcmp(&conventional, &saved, sizeof(saved)) == 0 &&
+	      !v90_dil_training_symbol_count(NULL, &symbols) &&
+	      !v90_dil_training_symbol_count(&saved, NULL) &&
+	      symbols == UINT32_MAX,
+	      "generated DIL profile API was not transactional");
+	return true;
+}
+
 static bool test_variable_rejection(void)
 {
 	struct v90_dil_parameters parameters = make_parameters(3, 17, 33);
@@ -350,6 +418,7 @@ int main(void)
 		{ "ignored zero-DIL values", test_ignored_values },
 		{ "framing and CRC rejection", test_rejection },
 		{ "variable descriptor round trips", test_variable_descriptors },
+		{ "generated profiles", test_generated_profiles },
 		{ "variable descriptor rejection", test_variable_rejection },
 		{ "API and transactionality", test_api },
 	};

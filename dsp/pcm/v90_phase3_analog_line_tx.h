@@ -39,10 +39,15 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_init(
 	int16_t nominal_peak_amplitude);
 bool v90_phase3_analog_line_tx_is_valid(
 	const struct v90_phase3_analog_line_tx *tx);
+bool v90_phase3_analog_line_tx_owned_state_is_valid(
+	const struct v90_phase3_analog_line_tx *tx);
 
 /* Controls affect the next point not yet accepted by the line. */
 enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_start_ja(
 	struct v90_phase3_analog_line_tx *tx);
+enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_start_dil_ja(
+	struct v90_phase3_analog_line_tx *tx,
+	const struct v90_dil_parameters *parameters);
 enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_finish_ja(
 	struct v90_phase3_analog_line_tx *tx);
 
@@ -52,6 +57,8 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_sample(
 	struct v90_phase3_analog_line_tx *tx, int16_t *sample);
 
 bool v90_phase3_analog_line_tx_is_handoff_ready(
+	const struct v90_phase3_analog_line_tx *tx);
+bool v90_phase3_analog_line_tx_owned_handoff_is_ready(
 	const struct v90_phase3_analog_line_tx *tx);
 enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_handoff(
 	const struct v90_phase3_analog_line_tx *tx,

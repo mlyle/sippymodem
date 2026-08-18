@@ -10,7 +10,6 @@
 #include <stdint.h>
 
 enum {
-	V90_DIL_SEGMENT_INTERVALS = 6,
 	V90_DIL_MAX_SEGMENT_SYMBOLS =
 		(127 + 1) * V90_DIL_SEGMENT_INTERVALS,
 };

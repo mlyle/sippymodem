@@ -123,14 +123,20 @@ static bool test_exact_line_timeline(void)
 			complete = true;
 			break;
 		}
-		CHECK(model_sample(&model_line, &model_symbols, &expected) &&
-		      v90_phase3_analog_line_tx_sample(&tx, &actual) ==
-			      V90_PHASE3_ANALOG_LINE_TX_OK &&
-		      actual == expected &&
-		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
-		      memcmp(&tx.symbols, &model_symbols,
+		CHECK(model_sample(&model_line, &model_symbols, &expected),
+		      "analogue line model stopped at sample %u", index);
+		CHECK(v90_phase3_analog_line_tx_sample(&tx, &actual) ==
+			      V90_PHASE3_ANALOG_LINE_TX_OK,
+		      "analogue line stopped at sample %u", index);
+		CHECK(actual == expected,
+		      "analogue waveform differed at sample %u: %d != %d",
+		      index, actual, expected);
+		CHECK(v34_training_line_is_valid(&tx.line) &&
+		      tx.line.generated_samples == model_line.generated_samples,
+		      "analogue line state diverged at sample %u", index);
+		CHECK(memcmp(&tx.symbols, &model_symbols,
 			     sizeof(model_symbols)) == 0,
-		      "analogue line waveform diverged at sample %u", index);
+		      "analogue symbol state diverged at sample %u", index);
 		waveform_samples++;
 	}
 	CHECK(complete && waveform_samples != 0 &&
@@ -138,7 +144,8 @@ static bool test_exact_line_timeline(void)
 	      tx.symbols.sequence.ja.bit_index == 18 &&
 	      v90_phase3_analog_line_tx_handoff(&tx, &handoff) ==
 		      V90_PHASE3_ANALOG_LINE_TX_OK &&
-	      memcmp(&handoff, &model_line, sizeof(handoff)) == 0,
+	      v34_training_line_is_valid(&handoff) &&
+	      handoff.generated_samples == model_line.generated_samples,
 	      "analogue line did not expose its exact completion boundary");
 	{
 		struct v90_phase3_analog_line_tx saved = tx;

@@ -51,27 +51,59 @@ static bool unread_bits_are_zero(
 	return true;
 }
 
-bool v90_ja_tx_is_valid(const struct v90_ja_tx *tx)
+static uint32_t descriptor_fingerprint(
+	const uint8_t *descriptor, uint16_t descriptor_bits)
 {
-	return tx != NULL && analogue_scrambler_is_valid(&tx->scrambler) &&
-	       tx->previous_clockwise_quarter_turns < 4u &&
-	       tx->bit_index < V90_DIL_ZERO_DESCRIPTOR_BITS &&
-	       tx->bit_index % 2u == 0 &&
-	       v90_dil_decode_zero(tx->descriptor, sizeof(tx->descriptor)) ==
-		       V90_DIL_OK;
+	uint32_t fingerprint = UINT32_C(2166136261);
+	size_t bytes = (descriptor_bits + 7u) / 8u;
+
+	for (size_t index = 0; index < bytes; ++index) {
+		fingerprint ^= descriptor[index];
+		fingerprint *= UINT32_C(16777619);
+	}
+	return fingerprint;
 }
 
-enum v90_ja_result v90_ja_tx_init_from_trn(
-	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn)
+bool v90_ja_tx_owned_state_is_valid(const struct v90_ja_tx *tx)
+{
+	if (tx == NULL || !analogue_scrambler_is_valid(&tx->scrambler) ||
+	    tx->previous_clockwise_quarter_turns >= 4u ||
+	    tx->descriptor_bits < V90_DIL_ZERO_DESCRIPTOR_BITS ||
+	    tx->descriptor_bits > V90_DIL_MAX_DESCRIPTOR_BITS ||
+	    tx->descriptor_bits % 2u != 0u ||
+	    tx->bit_index >= tx->descriptor_bits || tx->bit_index % 2u != 0u)
+		return false;
+	return tx->descriptor_fingerprint == descriptor_fingerprint(
+		       tx->descriptor, tx->descriptor_bits);
+}
+
+bool v90_ja_tx_is_valid(const struct v90_ja_tx *tx)
+{
+	struct v90_dil_parameters parameters;
+
+	return v90_ja_tx_owned_state_is_valid(tx) &&
+	       v90_dil_decode(
+		       tx->descriptor, sizeof(tx->descriptor),
+		       tx->descriptor_bits, &parameters) == V90_DIL_OK;
+}
+
+enum v90_ja_result v90_ja_tx_init_dil_from_trn(
+	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn,
+	const struct v90_dil_parameters *parameters)
 {
 	struct v90_ja_tx initialized = { 0 };
+	size_t descriptor_bits;
 
 	if (tx == NULL || !analogue_boundary_is_valid(trn) ||
-	    v90_dil_encode_zero(
-		    initialized.descriptor,
-		    sizeof(initialized.descriptor)) != V90_DIL_OK)
+	    v90_dil_encode(
+		    parameters, initialized.descriptor,
+		    sizeof(initialized.descriptor), &descriptor_bits) != V90_DIL_OK ||
+	    descriptor_bits > UINT16_MAX)
 		return V90_JA_INVALID_ARGUMENT;
 	initialized.scrambler = trn->scrambler;
+	initialized.descriptor_bits = (uint16_t)descriptor_bits;
+	initialized.descriptor_fingerprint = descriptor_fingerprint(
+		initialized.descriptor, initialized.descriptor_bits);
 	initialized.previous_clockwise_quarter_turns =
 		trn->last_clockwise_quarter_turns;
 	if (!v90_ja_tx_is_valid(&initialized))
@@ -80,12 +112,23 @@ enum v90_ja_result v90_ja_tx_init_from_trn(
 	return V90_JA_OK;
 }
 
+enum v90_ja_result v90_ja_tx_init_from_trn(
+	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn)
+{
+	struct v90_dil_parameters parameters;
+
+	if (v90_dil_profile_init(
+		    &parameters, V90_DIL_PROFILE_NONE) != V90_DIL_OK)
+		return V90_JA_INVALID_ARGUMENT;
+	return v90_ja_tx_init_dil_from_trn(tx, trn, &parameters);
+}
+
 bool v90_ja_tx_at_descriptor_boundary(const struct v90_ja_tx *tx)
 {
 	return v90_ja_tx_is_valid(tx) && tx->bit_index == 0;
 }
 
-enum v90_ja_result v90_ja_tx_next(
+static enum v90_ja_result tx_next_owned(
 	struct v90_ja_tx *tx, struct qam_point *point,
 	uint8_t *clockwise_quarter_turns)
 {
@@ -93,7 +136,7 @@ enum v90_ja_result v90_ja_tx_next(
 	struct qam_point next_point;
 	uint8_t rotation;
 
-	if (!v90_ja_tx_is_valid(tx) || point == NULL ||
+	if (!v90_ja_tx_owned_state_is_valid(tx) || point == NULL ||
 	    clockwise_quarter_turns == NULL)
 		return V90_JA_INVALID_ARGUMENT;
 	next = *tx;
@@ -105,15 +148,31 @@ enum v90_ja_result v90_ja_tx_next(
 		return V90_JA_INVALID_ARGUMENT;
 	next.previous_clockwise_quarter_turns = rotation;
 	next.bit_index += 2u;
-	if (next.bit_index == V90_DIL_ZERO_DESCRIPTOR_BITS)
+	if (next.bit_index == next.descriptor_bits)
 		next.bit_index = 0;
 	next_point = v34_rotated_point_zero(-(int)rotation);
-	if (!v90_ja_tx_is_valid(&next))
+	if (!v90_ja_tx_owned_state_is_valid(&next))
 		return V90_JA_INVALID_ARGUMENT;
 	*tx = next;
 	*point = next_point;
 	*clockwise_quarter_turns = rotation;
 	return V90_JA_OK;
+}
+
+enum v90_ja_result v90_ja_tx_next(
+	struct v90_ja_tx *tx, struct qam_point *point,
+	uint8_t *clockwise_quarter_turns)
+{
+	if (!v90_ja_tx_is_valid(tx))
+		return V90_JA_INVALID_ARGUMENT;
+	return tx_next_owned(tx, point, clockwise_quarter_turns);
+}
+
+enum v90_ja_result v90_ja_tx_next_owned(
+	struct v90_ja_tx *tx, struct qam_point *point,
+	uint8_t *clockwise_quarter_turns)
+{
+	return tx_next_owned(tx, point, clockwise_quarter_turns);
 }
 
 bool v90_ja_rx_is_valid(const struct v90_ja_rx *rx)

@@ -123,6 +123,45 @@ static bool test_exact_repeating_stream(void)
 	return true;
 }
 
+static bool test_variable_repeating_stream(void)
+{
+	struct v34_phase3_trn trn;
+	struct v90_dil_parameters parameters;
+	struct v90_ja_tx tx;
+	struct reference_stream reference;
+	uint8_t descriptor[V90_DIL_MAX_DESCRIPTOR_BYTES];
+	size_t descriptor_bits;
+
+	CHECK(prepare_trn(
+		      &trn, V34_ANSWERING_STATION, TRN_PREFIX_SYMBOLS) &&
+	      v90_dil_profile_init(
+		      &parameters, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+	      v90_dil_encode(
+		      &parameters, descriptor, sizeof(descriptor),
+		      &descriptor_bits) == V90_DIL_OK &&
+	      v90_ja_tx_init_dil_from_trn(&tx, &trn, &parameters) == V90_JA_OK &&
+	      tx.descriptor_bits == descriptor_bits &&
+	      memcmp(
+		      tx.descriptor, descriptor,
+		      (descriptor_bits + 7u) / 8u) == 0,
+	      "variable Ja stream fixture did not initialize");
+	reference_init(&reference, &trn, 0);
+	for (size_t symbol = 0; symbol < descriptor_bits; ++symbol) {
+		struct qam_point point;
+		uint8_t rotation;
+		uint8_t expected = reference_next(
+			&reference, descriptor,
+			symbol % (descriptor_bits / 2u));
+
+		CHECK(v90_ja_tx_next(&tx, &point, &rotation) == V90_JA_OK &&
+		      rotation == expected,
+		      "variable Ja stream diverged at %zu", symbol);
+	}
+	CHECK(v90_ja_tx_at_descriptor_boundary(&tx),
+	      "variable Ja stream did not repeat at its exact boundary");
+	return true;
+}
+
 static bool test_round_trip_with_phase_offsets(void)
 {
 	struct v34_phase3_trn trn;
@@ -259,6 +298,22 @@ static bool test_validation(void)
 	      memcmp(&point, &saved_point, sizeof(point)) == 0 &&
 	      rotation == UINT8_MAX,
 	      "Ja invalid transmit call mutated state or output");
+	CHECK(v90_ja_tx_next(&tx, &point, &rotation) == V90_JA_OK &&
+	      tx.bit_index != 0u,
+	      "Ja validation stream did not leave its descriptor boundary");
+	tx.descriptor[7] ^= 1u;
+	saved_tx = tx;
+	point = saved_point;
+	rotation = UINT8_MAX;
+	CHECK(!v90_ja_tx_is_valid(&tx) &&
+	      v90_ja_tx_next(&tx, &point, &rotation) ==
+		      V90_JA_INVALID_ARGUMENT &&
+	      memcmp(&tx, &saved_tx, sizeof(tx)) == 0 &&
+	      memcmp(&point, &saved_point, sizeof(point)) == 0 &&
+	      rotation == UINT8_MAX,
+	      "Ja accepted descriptor corruption away from its boundary");
+	CHECK(v90_ja_tx_init_from_trn(&tx, &trn) == V90_JA_OK,
+	      "Ja validation stream did not reset");
 	memset(&rx, 0xa5, sizeof(rx));
 	saved_rx = rx;
 	CHECK(v90_ja_rx_init_from_trn(NULL, &trn, 0) ==
@@ -299,6 +354,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "exact repeating stream", test_exact_repeating_stream },
+		{ "variable repeating stream", test_variable_repeating_stream },
 		{ "phase-offset round trip", test_round_trip_with_phase_offsets },
 		{ "rejected repetitions recover", test_rejected_repetitions_recover },
 		{ "validation", test_validation },

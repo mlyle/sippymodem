@@ -21,6 +21,109 @@ enum {
 	CRC_AND_FILL_BITS = 18,
 };
 
+static void set_pattern_word(
+	uint8_t *pattern, size_t first_bit, uint64_t word,
+	size_t available_bits)
+{
+	for (size_t bit = 0; bit < available_bits; ++bit) {
+		if (((word >> bit) & UINT64_C(1)) != 0u)
+			pattern[(first_bit + bit) / 8u] |=
+				(uint8_t)(1u << ((first_bit + bit) % 8u));
+	}
+}
+
+static void conventional_training_ucodes(uint8_t *ucodes)
+{
+	for (size_t index = 0; index < 16u; ++index)
+		ucodes[index] = (uint8_t)(0x4fu - index);
+	for (size_t index = 16u; index < 47u; ++index)
+		ucodes[index] = (uint8_t)(0x3fu - 2u * (index - 16u));
+	ucodes[47] = 0x02u;
+	for (size_t index = 48u; index < 79u; ++index)
+		ucodes[index] = (uint8_t)(0x04u + 2u * (index - 48u));
+	for (size_t index = 79u; index < 131u; ++index)
+		ucodes[index] = (uint8_t)(0x41u + index - 79u);
+	ucodes[131] = 0x64u;
+	ucodes[132] = 0x5au;
+	ucodes[133] = 0x50u;
+	for (size_t index = 134u; index < 144u; ++index)
+		ucodes[index] = (uint8_t)(0x4fu - (index - 134u));
+}
+
+bool v90_dil_profile_is_valid(enum v90_dil_profile profile)
+{
+	return profile == V90_DIL_PROFILE_NONE ||
+	       profile == V90_DIL_PROFILE_CONVENTIONAL;
+}
+
+enum v90_dil_result v90_dil_profile_init(
+	struct v90_dil_parameters *parameters,
+	enum v90_dil_profile profile)
+{
+	static const uint8_t segment_length_codes[V90_DIL_CHORDS] = {
+		0x13, 0x27, 0x27, 0x27, 0x27, 0x27, 0x27, 0x13,
+	};
+	static const uint8_t reference_ucodes[V90_DIL_CHORDS] = {
+		0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x4e, 0x19,
+	};
+	struct v90_dil_parameters generated = {
+		.sign_pattern_bits = 1,
+		.training_pattern_bits = 1,
+	};
+
+	if (parameters == NULL || !v90_dil_profile_is_valid(profile))
+		return V90_DIL_INVALID_ARGUMENT;
+	if (profile == V90_DIL_PROFILE_CONVENTIONAL) {
+		/* This fixed profile spans the useful companding levels and a full
+		 * 120-bit sign/training cycle. Pack the reviewed patterns into words
+		 * so their generator remains smaller than the wire image. */
+		generated.segment_count = 144u;
+		generated.sign_pattern_bits = 120u;
+		generated.training_pattern_bits = 120u;
+		set_pattern_word(
+			generated.sign_pattern, 0,
+			UINT64_C(0x7766519abe3405f1), 64u);
+		set_pattern_word(
+			generated.sign_pattern, 64u,
+			UINT64_C(0x009d82b53bbc098a), 56u);
+		set_pattern_word(
+			generated.training_pattern, 0,
+			UINT64_C(0x3dbe054a81fc0ad6), 64u);
+		set_pattern_word(
+			generated.training_pattern, 64u,
+			UINT64_C(0x00f4ad599ac64ad4), 56u);
+		memcpy(
+			generated.segment_length_codes, segment_length_codes,
+			sizeof(segment_length_codes));
+		memcpy(
+			generated.reference_ucodes, reference_ucodes,
+			sizeof(reference_ucodes));
+		conventional_training_ucodes(generated.training_ucodes);
+	}
+	if (!v90_dil_parameters_are_valid(&generated))
+		return V90_DIL_INVALID_FRAME;
+	*parameters = generated;
+	return V90_DIL_OK;
+}
+
+bool v90_dil_training_symbol_count(
+	const struct v90_dil_parameters *parameters, uint32_t *symbols)
+{
+	uint32_t total = 0;
+
+	if (!v90_dil_parameters_are_valid(parameters) || symbols == NULL)
+		return false;
+	for (size_t segment = 0; segment < parameters->segment_count;
+	     ++segment) {
+		uint8_t chord = parameters->training_ucodes[segment] >> 4;
+
+		total += (uint32_t)(parameters->segment_length_codes[chord] + 1u) *
+			 V90_DIL_SEGMENT_INTERVALS;
+	}
+	*symbols = total;
+	return true;
+}
+
 static bool bytes_are_zero(const uint8_t *bytes, size_t count)
 {
 	for (size_t index = 0; index < count; ++index) {

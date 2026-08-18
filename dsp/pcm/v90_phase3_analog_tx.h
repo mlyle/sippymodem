@@ -45,6 +45,8 @@ enum v90_phase3_analog_tx_result v90_phase3_analog_tx_init(
 	struct v90_phase3_analog_tx *tx);
 bool v90_phase3_analog_tx_is_valid(
 	const struct v90_phase3_analog_tx *tx);
+bool v90_phase3_analog_tx_owned_state_is_valid(
+	const struct v90_phase3_analog_tx *tx);
 
 /* S/S-bar and PP advance automatically. TRN and Ja remain open-ended until
  * their corresponding control call succeeds. */
@@ -52,9 +54,12 @@ enum v90_phase3_analog_tx_result v90_phase3_analog_tx_next(
 	struct v90_phase3_analog_tx *tx, struct qam_point *point);
 enum v90_phase3_analog_tx_result v90_phase3_analog_tx_start_ja(
 	struct v90_phase3_analog_tx *tx);
+enum v90_phase3_analog_tx_result v90_phase3_analog_tx_start_dil_ja(
+	struct v90_phase3_analog_tx *tx,
+	const struct v90_dil_parameters *parameters);
 
 /* Ja may end between descriptor boundaries, but only after one complete
- * descriptor has made the zero-DIL request available to the peer. */
+ * descriptor has made the selected DIL request available to the peer. */
 enum v90_phase3_analog_tx_result v90_phase3_analog_tx_finish_ja(
 	struct v90_phase3_analog_tx *tx);
 

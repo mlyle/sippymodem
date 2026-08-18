@@ -30,14 +30,14 @@ static bool symbols_are_initial(
 	       symbols->sequence.prefix.state.s.emitted_symbols == 0;
 }
 
-bool v90_phase3_analog_line_tx_is_valid(
+bool v90_phase3_analog_line_tx_owned_state_is_valid(
 	const struct v90_phase3_analog_line_tx *tx)
 {
 	if (tx == NULL || !v34_training_line_is_valid(&tx->line) ||
 	    tx->line.carrier.channel.sample_rate != V90_PHASE3_SAMPLE_RATE ||
 	    tx->line.profile.local_role != V34_ANSWERING_STATION ||
 	    tx->line.profile.md_symbol_count != 0 ||
-	    !v90_phase3_analog_tx_is_valid(&tx->symbols) ||
+	    !v90_phase3_analog_tx_owned_state_is_valid(&tx->symbols) ||
 	    tx->leading_silence_samples >
 		    V90_PHASE3_ANALOG_LEADING_SILENCE_SAMPLES)
 		return false;
@@ -45,6 +45,13 @@ bool v90_phase3_analog_line_tx_is_valid(
 		return true;
 	return tx->line.generated_samples == 0 &&
 	       symbols_are_initial(&tx->symbols);
+}
+
+bool v90_phase3_analog_line_tx_is_valid(
+	const struct v90_phase3_analog_line_tx *tx)
+{
+	return v90_phase3_analog_line_tx_owned_state_is_valid(tx) &&
+	       v90_phase3_analog_tx_is_valid(&tx->symbols);
 }
 
 enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_init(
@@ -87,8 +94,9 @@ static enum v90_phase3_analog_line_tx_result control_result(
 	return V90_PHASE3_ANALOG_LINE_TX_OK;
 }
 
-enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_start_ja(
-	struct v90_phase3_analog_line_tx *tx)
+enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_start_dil_ja(
+	struct v90_phase3_analog_line_tx *tx,
+	const struct v90_dil_parameters *parameters)
 {
 	struct v90_phase3_analog_line_tx next;
 	enum v90_phase3_analog_line_tx_result result;
@@ -97,10 +105,23 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_start_ja(
 		return V90_PHASE3_ANALOG_LINE_TX_INVALID_ARGUMENT;
 	next = *tx;
 	result = control_result(
-		&next, v90_phase3_analog_tx_start_ja(&next.symbols));
+		&next,
+		v90_phase3_analog_tx_start_dil_ja(
+			&next.symbols, parameters));
 	if (result == V90_PHASE3_ANALOG_LINE_TX_OK)
 		*tx = next;
 	return result;
+}
+
+enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_start_ja(
+	struct v90_phase3_analog_line_tx *tx)
+{
+	struct v90_dil_parameters parameters;
+
+	if (v90_dil_profile_init(
+		    &parameters, V90_DIL_PROFILE_NONE) != V90_DIL_OK)
+		return V90_PHASE3_ANALOG_LINE_TX_INTERNAL_ERROR;
+	return v90_phase3_analog_line_tx_start_dil_ja(tx, &parameters);
 }
 
 enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_finish_ja(
@@ -119,13 +140,20 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_finish_ja(
 	return result;
 }
 
+bool v90_phase3_analog_line_tx_owned_handoff_is_ready(
+	const struct v90_phase3_analog_line_tx *tx)
+{
+	return v90_phase3_analog_line_tx_owned_state_is_valid(tx) &&
+	       tx->leading_silence_samples == 0 &&
+	       tx->symbols.stage == V90_PHASE3_ANALOG_TX_COMPLETE &&
+	       v34_training_line_needs_point(&tx->line);
+}
+
 bool v90_phase3_analog_line_tx_is_handoff_ready(
 	const struct v90_phase3_analog_line_tx *tx)
 {
 	return v90_phase3_analog_line_tx_is_valid(tx) &&
-	       tx->leading_silence_samples == 0 &&
-	       tx->symbols.stage == V90_PHASE3_ANALOG_TX_COMPLETE &&
-	       v34_training_line_needs_point(&tx->line);
+	       v90_phase3_analog_line_tx_owned_handoff_is_ready(tx);
 }
 
 enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_sample(
@@ -139,14 +167,15 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_sample(
 	bool accepting;
 	bool accepted;
 
-	if (!v90_phase3_analog_line_tx_is_valid(tx) || sample == NULL)
+	if (!v90_phase3_analog_line_tx_owned_state_is_valid(tx) ||
+	    sample == NULL)
 		return V90_PHASE3_ANALOG_LINE_TX_INVALID_ARGUMENT;
-	if (v90_phase3_analog_line_tx_is_handoff_ready(tx))
+	if (v90_phase3_analog_line_tx_owned_handoff_is_ready(tx))
 		return V90_PHASE3_ANALOG_LINE_TX_COMPLETE;
 	next = *tx;
 	if (next.leading_silence_samples != 0) {
 		next.leading_silence_samples--;
-		if (!v90_phase3_analog_line_tx_is_valid(&next))
+		if (!v90_phase3_analog_line_tx_owned_state_is_valid(&next))
 			return V90_PHASE3_ANALOG_LINE_TX_INTERNAL_ERROR;
 		*tx = next;
 		*sample = 0;
@@ -164,7 +193,7 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_sample(
 	if (waveform_result != V34_TRAINING_LINE_OK)
 		return line_result(waveform_result);
 	if (accepted != accepting ||
-	    !v90_phase3_analog_line_tx_is_valid(&next))
+	    !v90_phase3_analog_line_tx_owned_state_is_valid(&next))
 		return V90_PHASE3_ANALOG_LINE_TX_INTERNAL_ERROR;
 	*tx = next;
 	*sample = generated;

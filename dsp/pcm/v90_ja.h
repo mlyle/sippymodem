@@ -21,11 +21,13 @@ enum v90_ja_result {
 struct v34_phase3_trn;
 struct qam_point;
 
-/* Ja carries one zero-DIL descriptor repeatedly, continuing the analogue
+/* Ja carries one complete DIL descriptor repeatedly, continuing the analogue
  * modem's live GPA scrambler and differential phase after TRN. */
 struct v90_ja_tx {
 	struct v34_scrambler scrambler;
-	uint8_t descriptor[V90_DIL_ZERO_DESCRIPTOR_BYTES];
+	uint8_t descriptor[V90_DIL_MAX_DESCRIPTOR_BYTES];
+	uint32_t descriptor_fingerprint;
+	uint16_t descriptor_bits;
 	uint16_t bit_index;
 	uint8_t previous_clockwise_quarter_turns;
 };
@@ -42,12 +44,23 @@ struct v90_ja_rx {
 
 enum v90_ja_result v90_ja_tx_init_from_trn(
 	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn);
+enum v90_ja_result v90_ja_tx_init_dil_from_trn(
+	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn,
+	const struct v90_dil_parameters *parameters);
 bool v90_ja_tx_is_valid(const struct v90_ja_tx *tx);
 bool v90_ja_tx_at_descriptor_boundary(const struct v90_ja_tx *tx);
+
+/* Bounded invariant used while an enclosing Phase 3 owner retains the
+ * deeply validated descriptor created at initialization. The fingerprint
+ * makes accidental descriptor mutation observable without decoding it. */
+bool v90_ja_tx_owned_state_is_valid(const struct v90_ja_tx *tx);
 
 /* Emit one unit-energy four-point symbol. The owning controller enforces the
  * minimum preceding TRN duration and may stop Ja at any symbol. */
 enum v90_ja_result v90_ja_tx_next(
+	struct v90_ja_tx *tx, struct qam_point *point,
+	uint8_t *clockwise_quarter_turns);
+enum v90_ja_result v90_ja_tx_next_owned(
 	struct v90_ja_tx *tx, struct qam_point *point,
 	uint8_t *clockwise_quarter_turns);
 

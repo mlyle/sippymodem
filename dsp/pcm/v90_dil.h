@@ -21,6 +21,7 @@ enum {
 		(V90_DIL_MAX_DESCRIPTOR_BITS + 7) / 8,
 	V90_DIL_ZERO_DESCRIPTOR_BITS = 240,
 	V90_DIL_ZERO_DESCRIPTOR_BYTES = V90_DIL_ZERO_DESCRIPTOR_BITS / 8,
+	V90_DIL_SEGMENT_INTERVALS = 6,
 };
 
 _Static_assert((int)V90_DIL_MAX_DESCRIPTOR_BITS <=
@@ -49,8 +50,27 @@ enum v90_dil_result {
 	V90_DIL_NONZERO_DESCRIPTOR,
 };
 
+enum v90_dil_profile {
+	V90_DIL_PROFILE_NONE,
+	V90_DIL_PROFILE_CONVENTIONAL,
+};
+
 bool v90_dil_parameters_are_valid(
 	const struct v90_dil_parameters *parameters);
+bool v90_dil_profile_is_valid(enum v90_dil_profile profile);
+
+/* Generate one reviewed profile without storing its 144-entry level walk.
+ * The conventional profile covers the PCM levels and phase patterns used to
+ * learn the downstream line; NONE retains the standards-defined N=0 path. */
+enum v90_dil_result v90_dil_profile_init(
+	struct v90_dil_parameters *parameters,
+	enum v90_dil_profile profile);
+
+/* Return the exact 8000-character/s duration of one descriptor-selected DIL
+ * traversal. N=0 has no DIL and reports zero. Rejected calls leave `symbols`
+ * unchanged. */
+bool v90_dil_training_symbol_count(
+	const struct v90_dil_parameters *parameters, uint32_t *symbols);
 
 /* Recover the full descriptor layout as soon as its fixed 50-bit header has
  * arrived. `received_bits` may exceed the header; it must not exceed the
