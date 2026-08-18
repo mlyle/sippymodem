@@ -116,6 +116,8 @@ static int retrain_v32(struct dp *dp);
 static int process_v32(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int enter_link(struct v32_datapump *datapump);
+static int reset_conditioning_receiver(
+	struct v32_datapump *datapump, bool carrier_detected);
 
 static struct dp_operations v32_operations = {
 	.name = "V.32",
@@ -832,13 +834,23 @@ static int next_transmit_point(
 static int advance_answerer_training(
 	struct v32_datapump *datapump)
 {
+	struct v32_startup next = datapump->startup;
 	enum v32_startup_output output;
 	uint8_t dibit;
 
 	if (v32_startup_next_transmit(
-		    &datapump->startup, &output, &dibit) != V32_STARTUP_OK ||
+		    &next, &output, &dibit) != V32_STARTUP_OK ||
 	    output != V32_STARTUP_TRN_DIBIT || dibit != 3)
 		return -1;
+	/* TRAIN can observe the answerer's own conditioning through echo.  Only
+	 * conditioning acquired after the rate offer belongs to the caller. */
+	if (datapump->startup.phase == V32_ANSWERER_TRAIN &&
+	    next.phase == V32_ANSWERER_SEND_OFFER) {
+		if (reset_conditioning_receiver(datapump, false) != 0)
+			return -1;
+		datapump->answerer_s_detected = false;
+	}
+	datapump->startup = next;
 	return 0;
 }
 
