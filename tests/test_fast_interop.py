@@ -132,7 +132,9 @@ class FastInteropTests(unittest.TestCase):
             self.assertEqual(baseline_call.originator_payload, payloads.baseline)
             self.assertEqual(baseline_call.answerer_payload, payloads.candidate)
 
-    def test_pcm_families_get_a_bounded_online_evidence_window(self) -> None:
+    def test_pcm_families_get_complementary_roles_and_evidence_window(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = base_config(Path(temporary))
             for family in ("v90", "v92"):
@@ -144,19 +146,26 @@ class FastInteropTests(unittest.TestCase):
                     receive_rate=56000,
                     transmit_rate=14400,
                 )
-                case = MatrixCase(
-                    name=f"{family}-evidence",
-                    profile=profile,
-                    media_codec="PCMU",
-                    originator_order=CANDIDATE_ORIGINATES,
-                    candidate_rates=EndpointRates(56000, 14400),
-                    baseline_rates=EndpointRates(14400, 56000),
-                    exchange=FULL_DUPLEX,
-                )
-                self.assertEqual(
-                    case_config(base, case).online_timeout_seconds,
-                    5.0,
-                )
+                for order in (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES):
+                    case = MatrixCase(
+                        name=f"{family}-evidence-{order}",
+                        profile=profile,
+                        media_codec="PCMU",
+                        originator_order=order,
+                        candidate_rates=EndpointRates(56000, 14400),
+                        baseline_rates=EndpointRates(14400, 56000),
+                        exchange=FULL_DUPLEX,
+                    )
+                    configured = case_config(base, case)
+                    self.assertEqual(configured.online_timeout_seconds, 5.0)
+                    self.assertEqual(
+                        configured.originator.at_commands[-3],
+                        "AT+V90D=0",
+                    )
+                    self.assertEqual(
+                        configured.answerer.at_commands[-3],
+                        "AT+V90D=1",
+                    )
 
     def test_run_case_requires_data_and_both_reported_rates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

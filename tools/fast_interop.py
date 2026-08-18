@@ -110,7 +110,10 @@ class FastCaseResult:
 
 
 def _matrix_endpoint(
-    endpoint: EndpointConfig, case: MatrixCase
+    endpoint: EndpointConfig,
+    case: MatrixCase,
+    *,
+    pcm_digital: bool,
 ) -> EndpointConfig:
     environment = endpoint.environment_dict()
     environment.update(
@@ -124,10 +127,17 @@ def _matrix_endpoint(
             "SIP_REMOTE_CLOCK": "1",
         }
     )
+    role_commands = (
+        (f"AT+V90D={int(pcm_digital)}",)
+        if case.profile.family in {"v90", "v92"}
+        else ()
+    )
     return replace(
         endpoint,
         environment=tuple(sorted(environment.items())),
-        at_commands=scenario_commands(case.profile, "raw", (), ()),
+        at_commands=scenario_commands(
+            case.profile, "raw", (), role_commands
+        ),
     )
 
 
@@ -171,8 +181,14 @@ def _fast_online_timeout(
 def case_config(base: InteropConfig, case: MatrixCase) -> InteropConfig:
     """Bind one public matrix case to a private pair of executables."""
 
-    candidate = _matrix_endpoint(base.originator, case)
-    baseline = _matrix_endpoint(base.answerer, case)
+    # PCM profiles describe an analogue originator and digital answerer.
+    # Changing call order swaps executable ownership, not those line roles.
+    candidate = _matrix_endpoint(
+        base.originator, case, pcm_digital=not case.candidate_originates
+    )
+    baseline = _matrix_endpoint(
+        base.answerer, case, pcm_digital=case.candidate_originates
+    )
     payloads = payload_pair(case, "initial")
     if case.candidate_originates:
         originator, answerer = candidate, baseline
