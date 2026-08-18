@@ -364,41 +364,12 @@ static bool peer_acknowledges_local(
 		->acknowledges_peer_info0;
 }
 
-static bool reset_completion_tone(
+static void clear_completion_tone(
 	struct pcm_phase2_info0_exchange *exchange,
 	struct pcm_phase2_info0_exchange_event *event)
 {
 	exchange->fresh_peer_tone_seen = false;
-	if (v34_phase2_tone_detector_reset(
-		    &exchange->transport.tone_detector) != V34_PHASE2_TONE_OK)
-		return false;
 	event->tone_event = (struct v34_phase2_tone_event){ 0 };
-	return true;
-}
-
-static bool suppress_info_carrier_tone(
-	const struct pcm_phase2_info0_exchange *before,
-	struct pcm_phase2_info0_exchange *exchange,
-	struct phase2_info0_exchange_event *raw_event)
-{
-	bool frame_started;
-
-	if (state_is_retrain(exchange->state) ||
-	    exchange->transport.info_receiver.frame.stage ==
-		    V34_PHASE2_INFO_SEARCH_SYNC)
-		return true;
-	/* INFO DPSK uses the following tone's carrier.  Once its prefix is
-	 * synchronized, neither that carrier nor an older tone lock can satisfy
-	 * the requirement for a tone following the retained INFO0. */
-	frame_started = before->transport.info_receiver.frame.stage ==
-		V34_PHASE2_INFO_SEARCH_SYNC;
-	if (exchange->state != PCM_PHASE2_INFO0_COMPLETE)
-		exchange->fresh_peer_tone_seen = false;
-	raw_event->tone_event = (struct v34_phase2_tone_event){ 0 };
-	return !frame_started ||
-	       v34_phase2_tone_detector_reset(
-		       &exchange->transport.tone_detector) ==
-		       V34_PHASE2_TONE_OK;
 }
 
 static bool reject_peer_info0(
@@ -406,9 +377,10 @@ static bool reject_peer_info0(
 	struct pcm_phase2_info0_exchange_event *event)
 {
 	event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
-	return exchange->state == PCM_PHASE2_INFO0_COMPLETE ||
-	       state_is_retrain(exchange->state) ||
-	       reset_completion_tone(exchange, event);
+	if (exchange->state != PCM_PHASE2_INFO0_COMPLETE &&
+	    !state_is_retrain(exchange->state))
+		clear_completion_tone(exchange, event);
+	return true;
 }
 
 static bool retain_peer_info0(
@@ -451,13 +423,11 @@ static bool retain_peer_info0(
 			exchange->fresh_peer_tone_seen = false;
 			return true;
 		}
-		if (!reset_completion_tone(exchange, event))
-			return false;
+		clear_completion_tone(exchange, event);
 		exchange->state = PCM_PHASE2_INFO0_ACK_REPEAT;
 		return true;
 	}
-	if (!reset_completion_tone(exchange, event))
-		return false;
+	clear_completion_tone(exchange, event);
 	switch (exchange->state) {
 	case PCM_PHASE2_INFO0_INITIAL:
 	case PCM_PHASE2_INFO0_REPEAT:
@@ -548,7 +518,10 @@ static bool advance_recovery(
 		    exchange->fresh_peer_tone_seen)
 			complete_exchange(exchange, event);
 		else {
-			if (!reset_completion_tone(exchange, event))
+			clear_completion_tone(exchange, event);
+			if (v34_phase2_tone_detector_reset(
+				    &exchange->transport.tone_detector) !=
+			    V34_PHASE2_TONE_OK)
 				return false;
 			exchange->state = PCM_PHASE2_INFO0_WAIT_COMPLETION;
 		}
@@ -592,9 +565,14 @@ pcm_phase2_info0_exchange_sample(
 	next = *exchange;
 	if (phase2_info0_exchange_sample(
 		    &next.transport, received_sample, &generated, &raw_event) !=
-	    PHASE2_INFO0_EXCHANGE_OK ||
-	    !suppress_info_carrier_tone(exchange, &next, &raw_event))
+		    PHASE2_INFO0_EXCHANGE_OK)
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	if (exchange->transport.info_receiver.frame.stage ==
+		    V34_PHASE2_INFO_SEARCH_SYNC &&
+	    next.transport.info_receiver.frame.stage !=
+		    V34_PHASE2_INFO_SEARCH_SYNC &&
+	    next.state != PCM_PHASE2_INFO0_COMPLETE)
+		next.fresh_peer_tone_seen = false;
 	if (!retain_peer_info0(&next, &raw_event, &emitted) ||
 	    !advance_recovery(&next, &emitted))
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;

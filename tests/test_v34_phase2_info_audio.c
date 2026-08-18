@@ -2,6 +2,7 @@
 
 #include <v34_phase2_info_audio.h>
 #include <g711.h>
+#include <phase.h>
 
 #include "test.h"
 
@@ -13,9 +14,11 @@ enum {
 	TEST_AMPLITUDE = 12000,
 	TEST_PAYLOAD_BITS = 17,
 	TEST_SAMPLE_LIMIT = 1000,
+	TEST_TONE_SAMPLES = V34_PHASE2_SAMPLE_RATE / 10,
 };
 
 enum test_codec {
+	TEST_CODEC_LINEAR,
 	TEST_CODEC_PCMU,
 	TEST_CODEC_PCMA,
 };
@@ -142,6 +145,8 @@ static bool test_bidirectional_transmission(void)
 
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 {
+	if (codec == TEST_CODEC_LINEAR)
+		return sample;
 	if (codec == TEST_CODEC_PCMU)
 		return g711_decode_pcmu(
 			g711_encode_pcmu(sample));
@@ -249,6 +254,264 @@ static bool test_g711_frame_recovery(void)
 		       TEST_CODEC_PCMA);
 }
 
+struct test_following_tone {
+	uint32_t carrier_phase;
+	uint32_t carrier_step;
+	uint32_t guard_phase;
+	uint32_t guard_step;
+	int16_t carrier_amplitude;
+	int16_t guard_amplitude;
+};
+
+static void initial_tone_init(
+	struct test_following_tone *tone,
+	const struct v34_phase2_dpsk_transmitter *transmitter)
+{
+	*tone = (struct test_following_tone){
+		.carrier_step = transmitter->carrier.carrier_phase_step,
+		.guard_step = transmitter->guard_phase_step,
+		.carrier_amplitude = transmitter->carrier.amplitude,
+		.guard_amplitude = transmitter->local_role ==
+			V34_ANSWERING_STATION ? TEST_AMPLITUDE : 0,
+	};
+}
+
+static void reversed_following_tone_init(
+	struct test_following_tone *tone,
+	const struct v34_phase2_dpsk_transmitter *transmitter)
+{
+	*tone = (struct test_following_tone){
+		.carrier_phase = transmitter->carrier.carrier_phase +
+			UINT32_C(0xc0000000) +
+			(transmitter->point_inverted ? UINT32_C(0x80000000) : 0),
+		.carrier_step = transmitter->carrier.carrier_phase_step,
+		.guard_phase = transmitter->guard_phase,
+		.guard_step = transmitter->guard_phase_step,
+		.carrier_amplitude = transmitter->carrier.amplitude,
+		.guard_amplitude = transmitter->local_role ==
+			V34_ANSWERING_STATION ? TEST_AMPLITUDE : 0,
+	};
+}
+
+static int16_t following_tone_sample(
+	struct test_following_tone *tone)
+{
+	long mixed = lround(
+		(double)tone->carrier_amplitude *
+		sin(phase_radians_u32(tone->carrier_phase)));
+
+	tone->carrier_phase += tone->carrier_step;
+	if (tone->guard_amplitude != 0) {
+		mixed += lround(
+			(double)tone->guard_amplitude *
+			sin(phase_radians_u32(tone->guard_phase)));
+		tone->guard_phase += tone->guard_step;
+	}
+	return (int16_t)mixed;
+}
+
+struct handoff_measurement {
+	size_t sync_to_transition_samples;
+	size_t event_delay_samples;
+	uint16_t reported_delay_samples;
+};
+
+static bool measure_handoff_delay(
+	enum v34_station_role transmit_role, enum test_codec codec,
+	size_t payload_bits, uint8_t payload_fill, size_t leading_samples,
+	struct handoff_measurement *measurement)
+{
+	uint8_t payload[V34_PHASE2_INFO_MAX_PAYLOAD_BYTES] = { 0 };
+	enum v34_station_role receive_role =
+		transmit_role == V34_CALLING_STATION ?
+			V34_ANSWERING_STATION : V34_CALLING_STATION;
+	struct v34_phase2_info_audio_transmitter transmitter;
+	struct v34_phase2_info_audio_receiver receiver;
+	struct test_following_tone tone = { 0 };
+	size_t filter_tail_symbols = 0;
+	size_t sync_sample = SIZE_MAX;
+	size_t line_transition = SIZE_MAX;
+	bool frame_complete = false;
+
+	memset(payload, payload_fill, (payload_bits + 7u) / 8u);
+	if (payload_bits % 8u != 0)
+		payload[payload_bits / 8u] &=
+			(uint8_t)(UINT8_MAX << (8u - payload_bits % 8u));
+	CHECK(v34_phase2_info_audio_transmitter_init(
+		      &transmitter, transmit_role, TEST_AMPLITUDE,
+		      payload, payload_bits) == V34_PHASE2_INFO_AUDIO_OK &&
+	      v34_phase2_info_audio_receiver_init(
+		      &receiver, receive_role, payload_bits) ==
+		      V34_PHASE2_INFO_AUDIO_OK,
+	      "INFO handoff fixture did not initialize");
+	initial_tone_init(&tone, &transmitter.modulation);
+	for (size_t index = 0; index < TEST_TONE_SAMPLES + leading_samples;
+	     ++index) {
+		struct v34_phase2_info_event event;
+		int16_t sample = following_tone_sample(&tone);
+
+		CHECK(v34_phase2_info_audio_receiver_sample(
+			      &receiver, codec_round_trip(sample, codec), &event) ==
+			      V34_PHASE2_INFO_AUDIO_OK &&
+		      event.type == V34_PHASE2_INFO_NO_EVENT,
+		      "INFO handoff emitted during the initial tone");
+	}
+	CHECK(receiver.frame.stage == V34_PHASE2_INFO_SEARCH_SYNC,
+	      "initial tone falsely synchronized an INFO frame");
+	/* A repeated INFO sequence inherits the current following-tone phase. */
+	transmitter.modulation.carrier.carrier_phase =
+		tone.carrier_phase - UINT32_C(0x40000000);
+	transmitter.modulation.guard_phase = tone.guard_phase;
+	for (size_t index = TEST_TONE_SAMPLES + leading_samples;
+	     index < TEST_TONE_SAMPLES + leading_samples + TEST_SAMPLE_LIMIT;
+	     ++index) {
+		struct v34_phase2_info_event event;
+		enum v34_phase2_info_receive_stage stage_before =
+			receiver.frame.stage;
+		int16_t sample;
+
+		if (!frame_complete) {
+			bool completes;
+
+			CHECK(v34_phase2_info_audio_transmitter_sample(
+				      &transmitter, &sample, &completes) ==
+				      V34_PHASE2_INFO_AUDIO_OK,
+			      "INFO handoff transmitter failed");
+			frame_complete = completes;
+		} else if (filter_tail_symbols <
+			   V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS) {
+			bool bit_accepted;
+
+			CHECK(v34_phase2_dpsk_transmitter_sample(
+				      &transmitter.modulation, 0, &sample,
+				      &bit_accepted) == V34_PHASE2_DPSK_OK,
+			      "INFO handoff filter tail failed");
+			if (bit_accepted && ++filter_tail_symbols ==
+				    V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS)
+				reversed_following_tone_init(
+					&tone, &transmitter.modulation);
+		} else {
+			if (line_transition == SIZE_MAX)
+				line_transition = index;
+			sample = following_tone_sample(&tone);
+		}
+		CHECK(v34_phase2_info_audio_receiver_sample(
+			      &receiver, codec_round_trip(sample, codec), &event) ==
+			      V34_PHASE2_INFO_AUDIO_OK &&
+		      event.type != V34_PHASE2_INFO_FRAME_REJECTED,
+		      "INFO handoff receiver rejected its frame");
+		if (stage_before == V34_PHASE2_INFO_SEARCH_SYNC &&
+		    receiver.frame.stage != V34_PHASE2_INFO_SEARCH_SYNC &&
+		    sync_sample == SIZE_MAX)
+			sync_sample = index;
+		if (event.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
+			int16_t next_sample;
+			struct v34_phase2_info_event next_event;
+
+			CHECK(line_transition != SIZE_MAX && sync_sample != SIZE_MAX,
+			      "INFO handoff completed before the following tone");
+			*measurement = (struct handoff_measurement){
+				.sync_to_transition_samples =
+					line_transition - sync_sample,
+				.event_delay_samples = index - line_transition,
+				.reported_delay_samples =
+				v34_phase2_info_audio_receiver_handoff_delay_samples(
+					&receiver),
+			};
+			/* Completed lineage expires on the next input sample. */
+			next_sample = following_tone_sample(&tone);
+			CHECK(v34_phase2_info_audio_receiver_sample(
+				      &receiver,
+				      codec_round_trip(next_sample, codec), &next_event) ==
+				      V34_PHASE2_INFO_AUDIO_OK &&
+			      next_event.type == V34_PHASE2_INFO_NO_EVENT &&
+			      v34_phase2_info_audio_receiver_handoff_delay_samples(
+				      &receiver) == 0,
+			      "completed INFO handoff lineage was not one-shot");
+			return true;
+		}
+	}
+	CHECK(false, "INFO handoff frame did not complete");
+	return false;
+}
+
+static bool test_receiver_handoff_delay(void)
+{
+	static const struct {
+		size_t payload_bits;
+		size_t expected_sync_to_tone;
+		size_t minimum_sync_to_tone;
+		size_t maximum_sync_to_tone;
+	} profiles[] = {
+		{ 17, 443, 442, 445 },
+		{ 30, 617, 615, 618 },
+	};
+	static const uint8_t payload_fills[] = {
+		0x00, 0x55, 0xaa, 0xff,
+	};
+
+	for (size_t profile = 0; profile < ARRAY_LENGTH(profiles); ++profile) {
+		size_t minimum = SIZE_MAX;
+		size_t maximum = 0;
+
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role)
+			for (enum test_codec codec = TEST_CODEC_LINEAR;
+			     codec <= TEST_CODEC_PCMA; ++codec)
+				for (size_t fill = 0;
+				     fill < ARRAY_LENGTH(payload_fills); ++fill)
+					/* Twenty samples cover all carrier and four-sample
+					 * receiver-block alignments at 8 kHz. */
+					for (size_t leading = 0; leading < 20; ++leading) {
+						struct handoff_measurement measured;
+						size_t expected_reported;
+						size_t error;
+
+						CHECK(measure_handoff_delay(
+							      role, codec,
+							      profiles[profile].payload_bits,
+							      payload_fills[fill], leading,
+							      &measured),
+						      "INFO handoff fixture failed for %d/%d/%zu/%u/%zu",
+						      role, codec,
+						      profiles[profile].payload_bits,
+						      payload_fills[fill], leading);
+						expected_reported =
+							measured.event_delay_samples +
+							measured.sync_to_transition_samples -
+							profiles[profile].expected_sync_to_tone;
+						CHECK(measured.reported_delay_samples ==
+							      expected_reported,
+						      "INFO handoff lineage changed for %d/%d/%zu/%u/%zu: %u != %zu",
+						      role, codec,
+						      profiles[profile].payload_bits,
+						      payload_fills[fill], leading,
+						      measured.reported_delay_samples,
+						      expected_reported);
+						error = measured.reported_delay_samples >
+								measured.event_delay_samples ?
+							measured.reported_delay_samples -
+								measured.event_delay_samples :
+							measured.event_delay_samples -
+								measured.reported_delay_samples;
+						CHECK(error <= 2u,
+						      "INFO handoff edge error was %zu samples for %d/%d/%zu/%u/%zu",
+						      error, role, codec,
+						      profiles[profile].payload_bits,
+						      payload_fills[fill], leading);
+						if (measured.sync_to_transition_samples < minimum)
+							minimum = measured.sync_to_transition_samples;
+						if (measured.sync_to_transition_samples > maximum)
+							maximum = measured.sync_to_transition_samples;
+					}
+		CHECK(minimum == profiles[profile].minimum_sync_to_tone &&
+		      maximum == profiles[profile].maximum_sync_to_tone,
+		      "INFO sync-to-tone bound changed for %zu bits: %zu..%zu",
+		      profiles[profile].payload_bits, minimum, maximum);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	static const uint8_t payload[] = { 0xa5, 0x5a, 0x80 };
@@ -307,8 +570,19 @@ static bool test_validation(void)
 			      &receiver,
 			      V34_CALLING_STATION,
 			      TEST_PAYLOAD_BITS) ==
-			      V34_PHASE2_INFO_AUDIO_OK,
+		      V34_PHASE2_INFO_AUDIO_OK,
 	      "Phase 2 INFO audio receiver validation fixture failed");
+	CHECK(v34_phase2_info_audio_receiver_handoff_delay_samples(
+		      &receiver) == 0,
+	      "idle Phase 2 INFO receiver exposed handoff lineage");
+	receiver.handoff_delay_samples =
+		V34_PHASE2_INFO_SYNC_PIPELINE_DELAY_SAMPLES + 1u;
+	CHECK(!v34_phase2_info_audio_receiver_is_valid(&receiver) &&
+	      v34_phase2_info_audio_receiver_handoff_delay_samples(
+		      &receiver) == 0,
+	      "Phase 2 INFO receiver accepted an unbounded handoff delay");
+	receiver.handoff_delay_samples =
+		V34_PHASE2_INFO_SYNC_PIPELINE_DELAY_SAMPLES;
 	memcpy(receiver_snapshot, &receiver, sizeof(receiver_snapshot));
 	CHECK(v34_phase2_info_audio_receiver_sample(
 		      &receiver, 0, NULL) ==
@@ -316,7 +590,8 @@ static bool test_validation(void)
 		      memcmp(receiver_snapshot, &receiver, sizeof(receiver_snapshot)) ==
 			      0 &&
 		      v34_phase2_info_audio_receiver_reset(&receiver) ==
-			      V34_PHASE2_INFO_AUDIO_OK,
+			      V34_PHASE2_INFO_AUDIO_OK &&
+		      receiver.handoff_delay_samples == 0,
 	      "Phase 2 INFO audio receiver validation or reset failed");
 	receiver.modulation.detector_output = NAN;
 	memcpy(receiver_snapshot, &receiver, sizeof(receiver_snapshot));
@@ -338,6 +613,7 @@ int main(void)
 	} tests[] = {
 		{ "bidirectional transmission", test_bidirectional_transmission },
 		{ "G.711 frame recovery", test_g711_frame_recovery },
+		{ "receiver handoff delay", test_receiver_handoff_delay },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

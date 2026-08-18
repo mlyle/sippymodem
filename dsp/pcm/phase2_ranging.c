@@ -318,32 +318,42 @@ static void schedule_probe_start(
 	control->phase = PHASE2_SIGNAL_B_WAIT_PROBE_START;
 }
 
-static void handle_reversal(
+static bool handle_reversal(
 	struct phase2_ranging_control *control,
 	const struct phase2_info0_exchange *exchange,
 	uint16_t detector_delay_samples,
 	struct phase2_ranging_event *event)
 {
+	struct phase2_ranging_control next = *control;
+	bool accepted = false;
+
 	switch (control->phase) {
 	case PHASE2_WAIT_FIRST_REMOTE_REVERSAL:
 		if (signal_is_b(exchange)) {
-			(void)schedule_response(control, detector_delay_samples);
+			accepted = schedule_response(
+				&next, detector_delay_samples);
 		} else if (measure_round_trip_delay(
-				   control, detector_delay_samples) &&
-			   schedule_response(control, detector_delay_samples)) {
+				   &next, detector_delay_samples) &&
+			   schedule_response(&next, detector_delay_samples)) {
 			event->kind = PHASE2_ROUND_TRIP_DELAY_MEASURED;
 			event->round_trip_delay_samples =
-				control->round_trip_delay_samples;
+				next.round_trip_delay_samples;
+			accepted = true;
 		}
 		break;
 	case PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL:
-		if (measure_round_trip_delay(control, detector_delay_samples))
+		if (measure_round_trip_delay(&next, detector_delay_samples)) {
 			schedule_probe_start(
-				control, detector_delay_samples, event);
+				&next, detector_delay_samples, event);
+			accepted = true;
+		}
 		break;
 	default:
 		break;
 	}
+	if (accepted)
+		*control = next;
+	return accepted;
 }
 
 static void advance_probe_start(
@@ -423,15 +433,17 @@ static bool transmit_phase_is_valid(
 
 enum phase2_ranging_result phase2_ranging_finish_sample(
 	struct phase2_ranging_control *control,
-	const struct phase2_info0_exchange *exchange,
+	struct phase2_info0_exchange *exchange,
 	bool peer_info0_received,
 	enum phase2_info0_transmit_phase transmit_phase_before,
 	const struct v34_phase2_tone_event *tone_event,
 	int16_t *transmit_sample, struct phase2_ranging_event *event)
 {
 	struct phase2_ranging_control next;
+	struct v34_phase2_tone_detector rejected_detector;
 	struct phase2_ranging_event emitted = { 0 };
 	int16_t generated;
+	bool reversal_rejected = false;
 
 	if (!prepared_control_is_valid(
 		    control, exchange, peer_info0_received) ||
@@ -456,16 +468,25 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 	    transmit_phase_before == PHASE2_INFO0_TONE)
 		next.local_tone_samples++;
 	enter_active_ranging(&next, exchange, peer_info0_received);
-	if (tone_event->kind == V34_PHASE2_TONE_PHASE_REVERSED)
-		handle_reversal(
-			&next, exchange, tone_event->reversal_delay_samples,
-			&emitted);
+	if (tone_event->kind == V34_PHASE2_TONE_PHASE_REVERSED &&
+	    !handle_reversal(
+		    &next, exchange, tone_event->reversal_delay_samples,
+		    &emitted)) {
+		rejected_detector = exchange->tone_detector;
+		if (v34_phase2_tone_detector_reject_reversal(
+			    &rejected_detector, tone_event) !=
+		    V34_PHASE2_TONE_OK)
+			return PHASE2_RANGING_INVALID_ARGUMENT;
+		reversal_rejected = true;
+	}
 	finish_tone_tail(&next, exchange, &emitted);
 	advance_measurement(&next, exchange, &emitted);
 	advance_probe_start(&next, &emitted);
 	if (!phase2_ranging_control_is_valid(
 		    &next, exchange, peer_info0_received))
 		return PHASE2_RANGING_INVALID_ARGUMENT;
+	if (reversal_rejected)
+		exchange->tone_detector = rejected_detector;
 	*control = next;
 	*transmit_sample = generated;
 	*event = emitted;

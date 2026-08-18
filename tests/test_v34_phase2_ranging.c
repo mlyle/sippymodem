@@ -309,6 +309,210 @@ static bool test_bidirectional_ranging(void)
 	return true;
 }
 
+static bool check_info_interrupted_reversal(
+	enum test_codec codec, enum v34_station_role local_role)
+{
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_info0 peer_info = local_role == V34_CALLING_STATION ?
+		answering : calling;
+	struct v34_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+	enum phase2_signal_role peer_signal =
+		local_role == V34_CALLING_STATION ?
+			PHASE2_SIGNAL_A : PHASE2_SIGNAL_B;
+	size_t edge_sample = SIZE_MAX;
+	size_t local_reversal = SIZE_MAX;
+	bool repeat_started = false;
+	bool peer_reversed = false;
+
+	peer_info.acknowledges_peer_info0 = true;
+	CHECK(v34_info0_encode(&peer_info, payload, sizeof(payload)) ==
+		      V34_INFO0_OK &&
+	      v34_phase2_ranging_init_retrain(
+		      &ranging, local_role, TEST_AMPLITUDE,
+		      local_role == V34_CALLING_STATION ?
+			      &calling : &answering,
+		      &peer_info) == V34_PHASE2_RANGING_OK &&
+	      phase2_info0_exchange_init(
+		      &peer, peer_signal, TEST_AMPLITUDE, payload,
+		      V34_INFO0_PAYLOAD_BITS, V34_INFO0_PAYLOAD_BITS) ==
+		      PHASE2_INFO0_EXCHANGE_OK &&
+	      phase2_info0_exchange_start_tone(&peer) ==
+		      PHASE2_INFO0_EXCHANGE_OK,
+	      "V.34 interrupted ranging fixture did not initialize");
+	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v34_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		int16_t peer_line;
+		int16_t ignored;
+
+		if (repeat_started && !peer_reversed &&
+		    peer.transmit_phase == PHASE2_INFO0_TONE) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) == V34_PHASE2_TONE_OK,
+			      "V.34 peer following tone did not reverse");
+			peer_reversed = true;
+			edge_sample = index;
+		}
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_phase2_ranging_sample(
+			      &ranging, codec_round_trip(peer_line, codec),
+			      &ignored, &event) == V34_PHASE2_RANGING_OK,
+		      "V.34 interrupted ranging failed at %zu", index);
+		if (phase_before == PHASE2_RESPONSE_DELAY &&
+		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL) {
+			local_reversal = index;
+			break;
+		}
+		if (!repeat_started &&
+		    ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			CHECK(phase2_info0_exchange_restart_info(
+				      &peer, payload, V34_INFO0_PAYLOAD_BITS) ==
+				      PHASE2_INFO0_EXCHANGE_OK,
+			      "V.34 peer repeated INFO0 did not start");
+			repeat_started = true;
+		}
+	}
+	CHECK(repeat_started && peer_reversed && edge_sample != SIZE_MAX &&
+	      local_reversal != SIZE_MAX &&
+	      absolute_difference(
+		      local_reversal,
+		      edge_sample + PHASE2_RANGING_TURNAROUND_SAMPLES) <=
+		      TEST_EDGE_TOLERANCE_SAMPLES,
+	      "V.34 INFO-interrupted reversal timing failed for %d/%d at %zu/%zu",
+	      codec, local_role, edge_sample, local_reversal);
+	return true;
+}
+
+static bool test_info_interrupted_reversal(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role)
+			CHECK(check_info_interrupted_reversal(codec, role),
+			      "V.34 INFO interruption failed for %d/%d",
+			      codec, role);
+	return true;
+}
+
+static bool check_rejected_edge_before_info(enum test_codec codec)
+{
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+	size_t stable_rejected_samples = 0;
+	size_t reversal_events = 0;
+	bool early_edge_started = false;
+	bool repeat_started = false;
+	bool info_synchronized = false;
+	bool causal_edge_accepted = false;
+
+	calling.acknowledges_peer_info0 = true;
+	CHECK(v34_info0_encode(&calling, payload, sizeof(payload)) ==
+		      V34_INFO0_OK &&
+	      v34_phase2_ranging_init_retrain(
+		      &ranging, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+		      &answering, &calling) == V34_PHASE2_RANGING_OK &&
+	      phase2_info0_exchange_init(
+		      &peer, PHASE2_SIGNAL_B, TEST_AMPLITUDE, payload,
+		      V34_INFO0_PAYLOAD_BITS, V34_INFO0_PAYLOAD_BITS) ==
+		      PHASE2_INFO0_EXCHANGE_OK &&
+	      phase2_info0_exchange_start_tone(&peer) ==
+		      PHASE2_INFO0_EXCHANGE_OK,
+	      "V.34 rejected-edge fixture did not initialize");
+	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v34_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		int16_t peer_line;
+		int16_t ignored;
+
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_phase2_ranging_sample(
+			      &ranging, codec_round_trip(peer_line, codec),
+			      &ignored, &event) == V34_PHASE2_RANGING_OK,
+		      "V.34 rejected-edge ranging failed at %zu for %d",
+		      index, codec);
+		if (event.exchange_event.tone_event.kind ==
+		    V34_PHASE2_TONE_PHASE_REVERSED) {
+			reversal_events++;
+			if (reversal_events == 1u)
+				CHECK(ranging.control.phase ==
+					      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+				      ranging.info0_exchange.transport.tone_detector
+					      .rejected_reversal_active,
+				      "V.34 early edge was not rejected transactionally");
+		}
+		if (repeat_started &&
+		    ranging.info0_exchange.transport.info_receiver.frame.stage !=
+			    V34_PHASE2_INFO_SEARCH_SYNC) {
+			info_synchronized = true;
+			CHECK(!ranging.info0_exchange.transport.tone_detector
+				       .rejected_reversal_active,
+			      "V.34 INFO retained the rejected-edge gate");
+		}
+		if (phase_before == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    ranging.control.phase == PHASE2_RESPONSE_DELAY) {
+			causal_edge_accepted = true;
+			break;
+		}
+		if (reversal_events == 1u && !repeat_started) {
+			stable_rejected_samples++;
+			CHECK(ranging.control.phase ==
+				      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+			      reversal_events == 1u,
+			      "V.34 stable rejected phase changed ranging state");
+			if (stable_rejected_samples ==
+			    2u * V34_PHASE2_TONE_WINDOW_SAMPLES) {
+				CHECK(phase2_info0_exchange_restart_info(
+					      &peer, payload,
+					      V34_INFO0_PAYLOAD_BITS) ==
+					      PHASE2_INFO0_EXCHANGE_OK,
+				      "V.34 peer INFO repeat did not start");
+				repeat_started = true;
+			}
+		}
+		if (!early_edge_started &&
+		    ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "V.34 early peer edge did not start");
+			early_edge_started = true;
+		}
+	}
+	CHECK(early_edge_started && repeat_started && info_synchronized &&
+	      stable_rejected_samples ==
+		      2u * V34_PHASE2_TONE_WINDOW_SAMPLES &&
+	      reversal_events == 2u && causal_edge_accepted &&
+	      !ranging.info0_exchange.transport.tone_detector
+		       .rejected_reversal_active,
+	      "V.34 rejected-edge recovery failed for %d: edges=%zu stable=%zu sync=%d accepted=%d phase=%d",
+	      codec, reversal_events, stable_rejected_samples,
+	      info_synchronized, causal_edge_accepted, ranging.control.phase);
+	return true;
+}
+
+static bool test_rejected_edge_before_info(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		CHECK(check_rejected_edge_before_info(codec),
+		      "V.34 rejected edge failed for %d", codec);
+	return true;
+}
+
 static bool test_missing_second_reversal_times_out(void)
 {
 	struct v34_info0 calling = calling_capabilities();
@@ -592,6 +796,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bidirectional ranging", test_bidirectional_ranging },
+		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
+		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "INFO0 recovery", test_info0_recovery },
 		{ "INFO0 recovery by tone", test_info0_tone_completion },
 		{ "missing second reversal", test_missing_second_reversal_times_out },

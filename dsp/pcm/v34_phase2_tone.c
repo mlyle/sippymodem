@@ -30,6 +30,12 @@ static const double V34_PHASE2_TONE_MAX_WINDOW_ENERGY =
 	V34_PHASE2_TONE_MAX_SAMPLE_POWER *
 	V34_PHASE2_TONE_WINDOW_SAMPLES;
 
+enum {
+	V34_PHASE2_TONE_ACQUISITION_DELAY_SAMPLES =
+		V34_PHASE2_TONE_WINDOW_SAMPLES +
+		V34_PHASE2_TONE_ACQUIRE_SAMPLES - 2,
+};
+
 _Static_assert(
 	V34_RETRAIN_MIN_SILENCE_SAMPLES == 519 &&
 	V34_RETRAIN_TONE_SAMPLES == 640,
@@ -175,6 +181,32 @@ static bool history_is_valid(
 	return true;
 }
 
+static double retained_power(
+	const struct v34_phase2_tone_detector *detector)
+{
+	return detector->reference_in_phase * detector->reference_in_phase +
+	       detector->reference_quadrature * detector->reference_quadrature;
+}
+
+static double phase_dot(
+	const struct v34_phase2_tone_detector *detector)
+{
+	return detector->in_phase * detector->reference_in_phase +
+	       detector->quadrature * detector->reference_quadrature;
+}
+
+static double phase_cosine(
+	const struct v34_phase2_tone_detector *detector, double dot)
+{
+	double current_power =
+		detector->in_phase * detector->in_phase +
+		detector->quadrature * detector->quadrature;
+	double reference_power = retained_power(detector);
+
+	return current_power > 0.0 && reference_power > 0.0 ?
+		dot / sqrt(current_power * reference_power) : 1.0;
+}
+
 bool v34_phase2_tone_detector_is_valid(
 	const struct v34_phase2_tone_detector *detector)
 {
@@ -220,23 +252,38 @@ bool v34_phase2_tone_detector_is_valid(
 	    (!detector->tone_present &&
 	     (detector->qualifying_samples ==
 		      V34_PHASE2_TONE_ACQUIRE_SAMPLES ||
-	      detector->missing_samples != 0 || detector->reversal_pending)) ||
+	      detector->missing_samples != 0)) ||
 	    (detector->tone_present &&
 	     detector->qualifying_samples !=
 		     V34_PHASE2_TONE_ACQUIRE_SAMPLES) ||
 	    (detector->reversal_pending !=
 	     (detector->reversal_delay_samples != 0)) ||
-	    (detector->reversal_pending &&
-	     (detector->reversal_delay_samples <
-		      V34_PHASE2_TONE_WINDOW_SAMPLES / 2 ||
-	      detector->reversal_delay_samples >
-		      V34_PHASE2_TONE_WINDOW_SAMPLES * 2)))
+	    (detector->rejected_reversal_active &&
+	     (!detector->tone_present || detector->reversal_pending ||
+	      detector->interruption != V34_PHASE2_TONE_UNINTERRUPTED)) ||
+	    detector->interruption > V34_PHASE2_TONE_REACQUIRING)
 		return false;
-	reference_power =
-		detector->reference_in_phase * detector->reference_in_phase +
-		detector->reference_quadrature * detector->reference_quadrature;
-	return detector->tone_present ? reference_power > 0.0 :
-				       reference_power == 0.0;
+	reference_power = retained_power(detector);
+	switch (detector->interruption) {
+	case V34_PHASE2_TONE_UNINTERRUPTED:
+		return (!detector->reversal_pending ||
+			(detector->tone_present &&
+			 detector->reversal_delay_samples >=
+				 V34_PHASE2_TONE_WINDOW_SAMPLES / 2 &&
+			 detector->reversal_delay_samples <=
+				 V34_PHASE2_TONE_WINDOW_SAMPLES * 2)) &&
+		       (!detector->tone_present || reference_power > 0.0);
+	case V34_PHASE2_TONE_SUPPRESSING:
+		return !detector->tone_present &&
+		       detector->qualifying_samples == 0 &&
+		       !detector->reversal_pending;
+	case V34_PHASE2_TONE_REACQUIRING:
+		return !detector->tone_present && reference_power > 0.0 &&
+		       detector->reversal_delay_samples <=
+			       UINT16_MAX -
+			       V34_PHASE2_TONE_ACQUISITION_DELAY_SAMPLES;
+	}
+	return false;
 }
 
 enum v34_phase2_tone_result
@@ -361,18 +408,47 @@ static bool measurement_qualifies(
 static void clear_tone_lock(
 	struct v34_phase2_tone_detector *detector)
 {
-	detector->reference_in_phase = 0.0;
-	detector->reference_quadrature = 0.0;
 	detector->qualifying_samples = 0;
 	detector->missing_samples = 0;
 	detector->reversal_delay_samples = 0;
+	detector->interruption = V34_PHASE2_TONE_UNINTERRUPTED;
 	detector->tone_present = false;
 	detector->reversal_pending = false;
+	detector->rejected_reversal_active = false;
+}
+
+static enum v34_phase2_tone_event_kind finish_acquisition(
+	struct v34_phase2_tone_detector *detector,
+	uint16_t *reversal_delay_samples)
+{
+	bool reversed =
+		detector->interruption == V34_PHASE2_TONE_REACQUIRING &&
+		phase_dot(detector) < 0.0;
+	enum v34_phase2_tone_event_kind kind = reversed ?
+		V34_PHASE2_TONE_PHASE_REVERSED : V34_PHASE2_TONE_STARTED;
+
+	if (reversed)
+		*reversal_delay_samples = (uint16_t)(
+			detector->reversal_delay_samples +
+			V34_PHASE2_TONE_ACQUISITION_DELAY_SAMPLES);
+	detector->tone_present = true;
+	detector->interruption = V34_PHASE2_TONE_UNINTERRUPTED;
+	if (reversed) {
+		detector->reference_in_phase = -detector->reference_in_phase;
+		detector->reference_quadrature =
+			-detector->reference_quadrature;
+	} else {
+		detector->reference_in_phase = detector->in_phase;
+		detector->reference_quadrature = detector->quadrature;
+	}
+	detector->reversal_pending = false;
+	detector->reversal_delay_samples = 0;
+	return kind;
 }
 
 static enum v34_phase2_tone_event_kind acquire_or_release(
 	struct v34_phase2_tone_detector *detector,
-	bool qualifies)
+	bool qualifies, uint16_t *reversal_delay_samples)
 {
 	if (!detector->tone_present) {
 		if (!qualifies) {
@@ -382,10 +458,7 @@ static enum v34_phase2_tone_event_kind acquire_or_release(
 		if (++detector->qualifying_samples <
 		    V34_PHASE2_TONE_ACQUIRE_SAMPLES)
 			return V34_PHASE2_TONE_NO_EVENT;
-		detector->tone_present = true;
-		detector->reference_in_phase = detector->in_phase;
-		detector->reference_quadrature = detector->quadrature;
-		return V34_PHASE2_TONE_STARTED;
+		return finish_acquisition(detector, reversal_delay_samples);
 	}
 	if (qualifies) {
 		detector->missing_samples = 0;
@@ -402,17 +475,17 @@ static bool observe_reversal(
 	struct v34_phase2_tone_detector *detector,
 	bool qualifies, uint16_t *delay_samples)
 {
-	double current_power =
-		detector->in_phase * detector->in_phase +
-		detector->quadrature * detector->quadrature;
-	double reference_power =
-		detector->reference_in_phase * detector->reference_in_phase +
-		detector->reference_quadrature * detector->reference_quadrature;
-	double dot = detector->in_phase * detector->reference_in_phase +
-		     detector->quadrature * detector->reference_quadrature;
-	double cosine = current_power > 0.0 && reference_power > 0.0 ?
-				dot / sqrt(current_power * reference_power) :
-				1.0;
+	double dot = phase_dot(detector);
+	double cosine = phase_cosine(detector, dot);
+
+	/* A controller-rejected edge has restored the preceding reference.
+	 * Ignore its stable opposite phase until the line returns or a later INFO
+	 * frame establishes a fresh causal boundary. */
+	if (detector->rejected_reversal_active) {
+		if (qualifies && cosine > 0.5)
+			detector->rejected_reversal_active = false;
+		return false;
+	}
 
 	if (!detector->reversal_pending && dot < 0.0) {
 		detector->reversal_pending = true;
@@ -461,7 +534,8 @@ static void sample_valid_tone_detector(
 	add_observation(detector, sample);
 	if (detector->measurement_ready)
 		qualifies = measurement_qualifies(detector);
-	emitted.kind = acquire_or_release(detector, qualifies);
+	emitted.kind = acquire_or_release(
+		detector, qualifies, &emitted.reversal_delay_samples);
 	if (was_present && detector->tone_present &&
 	    observe_reversal(
 		    detector, qualifies, &emitted.reversal_delay_samples))
@@ -469,14 +543,88 @@ static void sample_valid_tone_detector(
 	*event = emitted;
 }
 
+static void clear_observations(
+	struct v34_phase2_tone_detector *detector)
+{
+	*detector = (struct v34_phase2_tone_detector){
+		.carrier_phase = detector->carrier_phase,
+		.carrier_phase_step = detector->carrier_phase_step,
+		.reference_in_phase = detector->reference_in_phase,
+		.reference_quadrature = detector->reference_quadrature,
+		.local_role = detector->local_role,
+		.interruption = detector->interruption,
+	};
+}
+
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_suppress_sample(
+	struct v34_phase2_tone_detector *detector)
+{
+	if (!v34_phase2_tone_detector_is_valid(detector))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	if (detector->interruption != V34_PHASE2_TONE_SUPPRESSING) {
+		clear_observations(detector);
+		detector->interruption = V34_PHASE2_TONE_SUPPRESSING;
+	}
+	detector->carrier_phase += detector->carrier_phase_step;
+	return V34_PHASE2_TONE_OK;
+}
+
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_resume(
+	struct v34_phase2_tone_detector *detector,
+	uint16_t handoff_delay_samples)
+{
+	double reference_power;
+
+	if (!v34_phase2_tone_detector_is_valid(detector) ||
+	    detector->interruption != V34_PHASE2_TONE_SUPPRESSING ||
+	    handoff_delay_samples >
+		    UINT16_MAX - V34_PHASE2_TONE_ACQUISITION_DELAY_SAMPLES)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	reference_power = retained_power(detector);
+	clear_observations(detector);
+	if (reference_power > 0.0) {
+		detector->interruption = V34_PHASE2_TONE_REACQUIRING;
+		detector->reversal_pending = handoff_delay_samples != 0;
+		detector->reversal_delay_samples = handoff_delay_samples;
+	} else {
+		detector->interruption = V34_PHASE2_TONE_UNINTERRUPTED;
+	}
+	return V34_PHASE2_TONE_OK;
+}
+
 enum v34_phase2_tone_result
 v34_phase2_tone_detector_sample(
 	struct v34_phase2_tone_detector *detector,
 	int16_t sample, struct v34_phase2_tone_event *event)
 {
-	if (!v34_phase2_tone_detector_is_valid(detector) || event == NULL)
+	if (!v34_phase2_tone_detector_is_valid(detector) || event == NULL ||
+	    detector->interruption == V34_PHASE2_TONE_SUPPRESSING)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	sample_valid_tone_detector(detector, sample, event);
+	return V34_PHASE2_TONE_OK;
+}
+
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_reject_reversal(
+	struct v34_phase2_tone_detector *detector,
+	const struct v34_phase2_tone_event *event)
+{
+	struct v34_phase2_tone_detector next;
+
+	if (!v34_phase2_tone_detector_is_valid(detector) || event == NULL ||
+	    event->kind != V34_PHASE2_TONE_PHASE_REVERSED ||
+	    event->reversal_delay_samples == 0 ||
+	    detector->rejected_reversal_active)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	next = *detector;
+	next.reference_in_phase = -next.reference_in_phase;
+	next.reference_quadrature = -next.reference_quadrature;
+	next.rejected_reversal_active = true;
+	if (!v34_phase2_tone_detector_is_valid(&next))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	*detector = next;
 	return V34_PHASE2_TONE_OK;
 }
 

@@ -12,6 +12,7 @@
 enum {
 	TEST_AMPLITUDE = 12000,
 	TEST_SAMPLES = V34_PHASE2_SAMPLE_RATE / 10,
+	TEST_HANDOFF_DELAY_SAMPLES = 52,
 };
 
 enum test_codec {
@@ -174,6 +175,11 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 	return 0;
 }
 
+static size_t absolute_difference(size_t left, size_t right)
+{
+	return left > right ? left - right : right - left;
+}
+
 static bool feed_sample(
 	struct v34_phase2_tone_detector *detector,
 	int16_t sample, enum test_codec codec, size_t sample_index,
@@ -316,6 +322,226 @@ static bool test_detection_and_reversal(void)
 			      V34_ANSWERING_STATION, codec),
 		      "bidirectional tone detection failed for codec %d",
 		      codec);
+	return true;
+}
+
+static bool check_interrupted_reference(
+	enum v34_station_role transmit_role, enum test_codec codec)
+{
+	enum v34_station_role local_role =
+		transmit_role == V34_CALLING_STATION ?
+			V34_ANSWERING_STATION : V34_CALLING_STATION;
+	struct v34_phase2_tone_transmitter transmitter;
+	struct v34_phase2_tone_detector detector;
+	struct v34_phase2_tone_event last_reversal = { 0 };
+	size_t started_count = 0;
+	size_t reversal_count = 0;
+	size_t ended_count = 0;
+	size_t sample_index = 0;
+	size_t resumed_at;
+	size_t event_at = SIZE_MAX;
+
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &transmitter, transmit_role, TEST_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_detector_init(&detector, local_role) ==
+		      V34_PHASE2_TONE_OK,
+	      "interrupted-tone fixture did not initialize");
+	for (; sample_index < 400; ++sample_index) {
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &sample) == V34_PHASE2_TONE_OK &&
+		      feed_sample(
+			      &detector, sample, codec, sample_index,
+			      &started_count, &reversal_count, &ended_count,
+			      &last_reversal),
+		      "interrupted-tone acquisition failed");
+	}
+	CHECK(started_count == 1,
+	      "interrupted detector did not qualify its initial tone");
+	for (size_t count = 0; count < 640; ++count, ++sample_index) {
+		int16_t discarded;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &discarded) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_suppress_sample(
+			      &detector) ==
+			      V34_PHASE2_TONE_OK,
+		      "interrupted tone did not preserve oscillator time");
+	}
+	CHECK(v34_phase2_tone_transmitter_reverse(&transmitter) ==
+		      V34_PHASE2_TONE_OK,
+	      "interrupted remote tone did not reverse");
+	CHECK(v34_phase2_tone_detector_resume(
+		      &detector, TEST_HANDOFF_DELAY_SAMPLES) ==
+		      V34_PHASE2_TONE_OK,
+	      "interrupted detector did not resume");
+	resumed_at = sample_index;
+	for (size_t count = 0; count < 240; ++count, ++sample_index) {
+		int16_t sample;
+		size_t before = reversal_count;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &sample) == V34_PHASE2_TONE_OK &&
+		      feed_sample(
+			      &detector, sample, codec, sample_index,
+			      &started_count, &reversal_count, &ended_count,
+			      &last_reversal),
+		      "interrupted following tone did not reacquire");
+		if (reversal_count != before)
+			event_at = sample_index;
+	}
+	CHECK(started_count == 1 && reversal_count == 1 &&
+	      event_at != SIZE_MAX &&
+	      event_at >= last_reversal.reversal_delay_samples &&
+	      absolute_difference(
+		      event_at - last_reversal.reversal_delay_samples,
+		      resumed_at - TEST_HANDOFF_DELAY_SAMPLES) <= 2u,
+	      "interrupted reversal edge moved from the following tone: resume=%zu event=%zu delay=%u",
+	      resumed_at, event_at, last_reversal.reversal_delay_samples);
+	return true;
+}
+
+static bool test_interrupted_reference(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role)
+			CHECK(check_interrupted_reference(role, codec),
+			      "interrupted tone failed for role %d codec %d",
+			      role, codec);
+	return true;
+}
+
+static bool check_rejected_reversal(
+	enum v34_station_role transmit_role, enum test_codec codec,
+	bool opposite_after_info)
+{
+	enum v34_station_role local_role =
+		transmit_role == V34_CALLING_STATION ?
+			V34_ANSWERING_STATION : V34_CALLING_STATION;
+	struct v34_phase2_tone_transmitter transmitter;
+	struct v34_phase2_tone_detector detector;
+	double committed_in_phase = 0.0;
+	double committed_quadrature = 0.0;
+	size_t early_events = 0;
+	size_t later_events = 0;
+	size_t later_starts = 0;
+	uint16_t later_delay = 0;
+
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &transmitter, transmit_role, TEST_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_detector_init(&detector, local_role) ==
+		      V34_PHASE2_TONE_OK,
+	      "rejected-reversal fixture did not initialize");
+	for (size_t index = 0; index < 400; ++index) {
+		struct v34_phase2_tone_event event;
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &sample) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_sample(
+			      &detector, codec_round_trip(sample, codec),
+			      &event) == V34_PHASE2_TONE_OK,
+		      "rejected-reversal acquisition failed at %zu", index);
+	}
+	CHECK(detector.tone_present &&
+	      v34_phase2_tone_transmitter_reverse(&transmitter) ==
+		      V34_PHASE2_TONE_OK,
+	      "rejected-reversal fixture did not establish its edge");
+	for (size_t index = 0; index < 240 && early_events == 0; ++index) {
+		struct v34_phase2_tone_event event;
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &sample) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_sample(
+			      &detector, codec_round_trip(sample, codec),
+			      &event) == V34_PHASE2_TONE_OK,
+		      "early reversal failed at %zu", index);
+		if (event.kind == V34_PHASE2_TONE_PHASE_REVERSED) {
+			early_events++;
+			committed_in_phase = detector.reference_in_phase;
+			committed_quadrature = detector.reference_quadrature;
+			CHECK(v34_phase2_tone_detector_reject_reversal(
+				      &detector, &event) == V34_PHASE2_TONE_OK,
+			      "early reversal was not rejected");
+		}
+	}
+	CHECK(early_events == 1 && detector.rejected_reversal_active &&
+	      detector.reference_in_phase == -committed_in_phase &&
+	      detector.reference_quadrature == -committed_quadrature,
+	      "rejection did not restore the retained phase");
+	for (size_t index = 0; index < 240; ++index) {
+		struct v34_phase2_tone_event event;
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &sample) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_sample(
+			      &detector, codec_round_trip(sample, codec),
+			      &event) == V34_PHASE2_TONE_OK &&
+		      event.kind != V34_PHASE2_TONE_PHASE_REVERSED,
+		      "stable rejected phase was emitted again at %zu", index);
+	}
+	for (size_t index = 0; index < 640; ++index) {
+		int16_t discarded;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &discarded) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_suppress_sample(&detector) ==
+			      V34_PHASE2_TONE_OK,
+		      "INFO suppression failed at %zu", index);
+	}
+	if (!opposite_after_info)
+		CHECK(v34_phase2_tone_transmitter_reverse(&transmitter) ==
+			      V34_PHASE2_TONE_OK,
+		      "same-phase post-INFO tone did not restore its phase");
+	CHECK(!detector.rejected_reversal_active &&
+	      v34_phase2_tone_detector_resume(&detector, 0) ==
+		      V34_PHASE2_TONE_OK,
+	      "rejected INFO boundary did not reset the phase gate");
+	for (size_t index = 0; index < 240; ++index) {
+		struct v34_phase2_tone_event event;
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &sample) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_sample(
+			      &detector, codec_round_trip(sample, codec),
+			      &event) == V34_PHASE2_TONE_OK,
+		      "post-INFO reversal failed at %zu", index);
+		if (event.kind == V34_PHASE2_TONE_PHASE_REVERSED) {
+			later_events++;
+			later_delay = event.reversal_delay_samples;
+		}
+		later_starts += event.kind == V34_PHASE2_TONE_STARTED;
+	}
+	CHECK(!detector.rejected_reversal_active &&
+	      later_events == (opposite_after_info ? 1u : 0u) &&
+	      later_starts == (opposite_after_info ? 0u : 1u) &&
+	      (!opposite_after_info ||
+	       later_delay == V34_PHASE2_TONE_WINDOW_SAMPLES +
+			      V34_PHASE2_TONE_ACQUIRE_SAMPLES - 2u),
+	      "rejected-frame handoff changed for %d: reversed=%zu started=%zu delay=%u",
+	      opposite_after_info, later_events, later_starts, later_delay);
+	return true;
+}
+
+static bool test_rejected_reversal(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role)
+			for (unsigned int opposite = 0; opposite < 2; ++opposite)
+				CHECK(check_rejected_reversal(
+					      role, codec, opposite != 0),
+				      "rejected reversal failed for role %d codec %d phase %u",
+				      role, codec, opposite);
 	return true;
 }
 
@@ -663,6 +889,11 @@ static bool test_validation(void)
 		      &detector, V34_CALLING_STATION) ==
 		      V34_PHASE2_TONE_OK,
 	      "tone detector validation fixture did not initialize");
+	detector_before = detector;
+	CHECK(v34_phase2_tone_detector_reject_reversal(
+		      &detector, &event) == V34_PHASE2_TONE_INVALID_ARGUMENT &&
+	      memcmp(&detector, &detector_before, sizeof(detector)) == 0,
+	      "invalid reversal rejection mutated detector state");
 	detector.line_power = NAN;
 	detector_before = detector;
 	CHECK(v34_phase2_tone_detector_sample(
@@ -720,6 +951,8 @@ int main(void)
 		{ "tone levels", test_tone_levels },
 		{ "phase reversal", test_phase_reversal },
 		{ "detection and reversal", test_detection_and_reversal },
+		{ "interrupted phase reference", test_interrupted_reference },
+		{ "rejected reversal", test_rejected_reversal },
 		{ "wrong tone rejection", test_wrong_tone_rejection },
 		{ "frequency tolerance", test_frequency_tolerance },
 		{ "full-retrain request", test_full_retrain_request },

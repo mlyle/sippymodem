@@ -544,8 +544,7 @@ static bool check_following_tone(
 		    exchange.state == PCM_PHASE2_INFO0_WAIT_COMPLETION) {
 			wait_starts++;
 			final_wait = index;
-			CHECK(exchange.transport.tone_detector.history_count == 0 &&
-			      exchange.transport.tone_detector.qualifying_samples == 0 &&
+			CHECK(exchange.transport.tone_detector.qualifying_samples == 0 &&
 			      !exchange.transport.tone_detector.tone_present,
 			      "post-ACK tone detector retained prior evidence");
 		}

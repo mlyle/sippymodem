@@ -81,7 +81,7 @@ enum phase2_ranging_result phase2_ranging_prepare_sample(
 	bool peer_info0_received);
 enum phase2_ranging_result phase2_ranging_finish_sample(
 	struct phase2_ranging_control *control,
-	const struct phase2_info0_exchange *exchange,
+	struct phase2_info0_exchange *exchange,
 	bool peer_info0_received,
 	enum phase2_info0_transmit_phase transmit_phase_before,
 	const struct v34_phase2_tone_event *tone_event,

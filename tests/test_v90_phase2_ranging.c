@@ -209,6 +209,300 @@ static bool test_pcm_ranging(void)
 	return true;
 }
 
+static enum pcm_phase2_info0_exchange_result initialize_info0_exchange(
+	struct pcm_phase2_info0_exchange *exchange,
+	enum v90_modem_role role, enum pcm_protocol protocol,
+	enum test_codec codec)
+{
+	struct v90_info0 analog = analog_capabilities();
+	struct v90_info0d digital = digital_capabilities(codec);
+
+	if (protocol == PCM_PROTOCOL_V90)
+		return role == V90_ANALOG_MODEM ?
+			pcm_phase2_info0_exchange_init_v90_analog(
+				exchange, TEST_AMPLITUDE, &analog) :
+			pcm_phase2_info0_exchange_init_v90_digital(
+				exchange, TEST_AMPLITUDE, &digital);
+	if (role == V90_ANALOG_MODEM) {
+		struct v92_info0a v92 = { .v90 = analog, .v92_capable = true };
+
+		return pcm_phase2_info0_exchange_init_v92_analog(
+			exchange, TEST_AMPLITUDE, &v92);
+	}
+	{
+		struct v92_info0d v92 = { .v90 = digital, .v92_capable = true };
+
+		return pcm_phase2_info0_exchange_init_v92_digital(
+			exchange, TEST_AMPLITUDE, &v92);
+	}
+}
+
+static bool encode_peer_info0(
+	uint8_t *payload,
+	enum v90_modem_role role, enum pcm_protocol protocol,
+	enum test_codec codec, bool acknowledge)
+{
+	struct v90_info0 analog = analog_capabilities();
+	struct v90_info0d digital = digital_capabilities(codec);
+
+	if (role == V90_ANALOG_MODEM) {
+		struct v92_info0a v92 = {
+			.v90 = analog,
+			.v92_capable = true,
+		};
+
+		v92.v90.acknowledges_peer_info0 = acknowledge;
+		return protocol == PCM_PROTOCOL_V90 ?
+			v90_info0a_encode(
+				&v92.v90, payload,
+				V90_INFO0D_PAYLOAD_BYTES) == V90_INFO0_OK :
+			v92_info0a_encode(
+				&v92, payload,
+				V90_INFO0D_PAYLOAD_BYTES) == V92_INFO0_OK;
+	}
+	{
+		struct v92_info0d v92 = {
+			.v90 = digital,
+			.v92_capable = true,
+		};
+
+		v92.v90.common.acknowledges_peer_info0 = acknowledge;
+		return protocol == PCM_PROTOCOL_V90 ?
+			v90_info0d_encode(
+				&v92.v90, payload,
+				V90_INFO0D_PAYLOAD_BYTES) == V90_INFO0_OK :
+			v92_info0d_encode(
+				&v92, payload,
+				V90_INFO0D_PAYLOAD_BYTES) == V92_INFO0_OK;
+	}
+}
+
+static bool initialize_interrupted_ranging(
+	struct v90_phase2_ranging *ranging,
+	struct phase2_info0_exchange *peer,
+	enum v90_modem_role local_role, enum pcm_protocol protocol,
+	enum test_codec codec, uint8_t *peer_payload,
+	size_t *peer_payload_bits)
+{
+	enum v90_modem_role peer_role = local_role == V90_ANALOG_MODEM ?
+		V90_DIGITAL_MODEM : V90_ANALOG_MODEM;
+	size_t expected_bits = local_role == V90_ANALOG_MODEM ?
+		V90_INFO0A_PAYLOAD_BITS : V90_INFO0D_PAYLOAD_BITS;
+
+	*peer_payload_bits = peer_role == V90_ANALOG_MODEM ?
+		V90_INFO0A_PAYLOAD_BITS : V90_INFO0D_PAYLOAD_BITS;
+	return initialize_info0_exchange(
+		       &ranging->info0_exchange, local_role, protocol, codec) ==
+		       PCM_PHASE2_INFO0_EXCHANGE_OK &&
+	       encode_peer_info0(
+		       peer_payload, peer_role, protocol, codec, false) &&
+	       phase2_ranging_control_init(
+		       &ranging->control,
+		       &ranging->info0_exchange.transport) == PHASE2_RANGING_OK &&
+	       phase2_info0_exchange_init(
+		       peer,
+		       peer_role == V90_ANALOG_MODEM ?
+			       PHASE2_SIGNAL_A : PHASE2_SIGNAL_B,
+		       TEST_AMPLITUDE, peer_payload, *peer_payload_bits,
+		       expected_bits) == PHASE2_INFO0_EXCHANGE_OK &&
+	       v90_phase2_ranging_is_valid(ranging);
+}
+
+static bool check_info_interrupted_reversal(
+	enum test_codec codec, enum pcm_protocol protocol,
+	enum v90_modem_role local_role)
+{
+	struct v90_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
+	size_t payload_bits = 0;
+	size_t edge_sample = SIZE_MAX;
+	size_t local_reversal = SIZE_MAX;
+	bool repeat_started = false;
+	bool peer_reversed = false;
+
+	CHECK(initialize_interrupted_ranging(
+		      &ranging, &peer, local_role, protocol, codec,
+		      payload, &payload_bits),
+	      "interrupted ranging fixture did not initialize");
+	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v90_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		int16_t peer_line;
+		int16_t ignored;
+
+		if (repeat_started && !peer_reversed &&
+		    peer.transmit_phase == PHASE2_INFO0_TONE) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) == V34_PHASE2_TONE_OK,
+			      "peer following tone did not reverse");
+			peer_reversed = true;
+			edge_sample = index;
+		}
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v90_phase2_ranging_sample(
+			      &ranging, codec_round_trip(peer_line, codec),
+			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+		      "interrupted ranging failed at %zu", index);
+		if (phase_before == PHASE2_RESPONSE_DELAY &&
+		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL) {
+			local_reversal = index;
+			break;
+		}
+		if (!repeat_started &&
+		    pcm_phase2_info0_exchange_complete(
+			    &ranging.info0_exchange) &&
+		    ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			enum v90_modem_role peer_role = local_role == V90_ANALOG_MODEM ?
+				V90_DIGITAL_MODEM : V90_ANALOG_MODEM;
+
+			CHECK(encode_peer_info0(
+				      payload, peer_role, protocol, codec, true) &&
+			      phase2_info0_exchange_restart_info(
+				      &peer, payload, payload_bits) ==
+				      PHASE2_INFO0_EXCHANGE_OK,
+			      "peer repeated INFO did not start");
+			repeat_started = true;
+		}
+	}
+	CHECK(repeat_started && peer_reversed && edge_sample != SIZE_MAX &&
+	      local_reversal != SIZE_MAX &&
+	      absolute_difference(
+		      local_reversal,
+		      edge_sample + PHASE2_RANGING_TURNAROUND_SAMPLES) <=
+		      TEST_EDGE_TOLERANCE_SAMPLES,
+	      "INFO-interrupted reversal timing failed for %d/%d/%d at %zu/%zu",
+	      codec, protocol, local_role, edge_sample, local_reversal);
+	return true;
+}
+
+static bool test_info_interrupted_reversal(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			for (enum v90_modem_role role = V90_ANALOG_MODEM;
+			     role <= V90_DIGITAL_MODEM; ++role)
+				CHECK(check_info_interrupted_reversal(
+					      codec, protocol, role),
+				      "INFO interruption failed for %d/%d/%d",
+				      codec, protocol, role);
+	return true;
+}
+
+static bool check_rejected_edge_before_info(
+	enum test_codec codec, enum pcm_protocol protocol)
+{
+	struct v90_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
+	size_t payload_bits = 0;
+	size_t stable_rejected_samples = 0;
+	size_t reversal_events = 0;
+	bool early_edge_started = false;
+	bool repeat_started = false;
+	bool info_synchronized = false;
+	bool causal_edge_accepted = false;
+
+	CHECK(initialize_interrupted_ranging(
+		      &ranging, &peer, V90_ANALOG_MODEM, protocol, codec,
+		      payload, &payload_bits),
+	      "rejected-edge fixture did not initialize");
+	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v90_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		int16_t peer_line;
+		int16_t ignored;
+
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v90_phase2_ranging_sample(
+			      &ranging, codec_round_trip(peer_line, codec),
+			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+		      "rejected-edge ranging failed at %zu for %d/%d",
+		      index, codec, protocol);
+		if (event.exchange_event.tone_event.kind ==
+		    V34_PHASE2_TONE_PHASE_REVERSED) {
+			reversal_events++;
+			if (reversal_events == 1u)
+				CHECK(ranging.control.phase ==
+					      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+				      ranging.info0_exchange.transport.tone_detector
+					      .rejected_reversal_active,
+				      "early edge was not rejected transactionally");
+		}
+		if (repeat_started &&
+		    ranging.info0_exchange.transport.info_receiver.frame.stage !=
+			    V34_PHASE2_INFO_SEARCH_SYNC) {
+			info_synchronized = true;
+			CHECK(!ranging.info0_exchange.transport.tone_detector
+				       .rejected_reversal_active,
+			      "INFO synchronization retained the rejected-edge gate");
+		}
+		if (phase_before == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    ranging.control.phase == PHASE2_RESPONSE_DELAY) {
+			causal_edge_accepted = true;
+			break;
+		}
+		if (reversal_events == 1u && !repeat_started) {
+			stable_rejected_samples++;
+			CHECK(ranging.control.phase ==
+				      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+			      reversal_events == 1u,
+			      "stable rejected phase changed ranging state");
+			if (stable_rejected_samples ==
+			    2u * V34_PHASE2_TONE_WINDOW_SAMPLES) {
+				CHECK(encode_peer_info0(
+					      payload, V90_DIGITAL_MODEM,
+					      protocol, codec, true) &&
+				      phase2_info0_exchange_restart_info(
+					      &peer, payload, payload_bits) ==
+					      PHASE2_INFO0_EXCHANGE_OK,
+				      "peer INFO repeat did not start");
+				repeat_started = true;
+			}
+		}
+		if (!early_edge_started &&
+		    pcm_phase2_info0_exchange_complete(
+			    &ranging.info0_exchange) &&
+		    ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "early peer edge did not start");
+			early_edge_started = true;
+		}
+	}
+	CHECK(early_edge_started && repeat_started && info_synchronized &&
+	      stable_rejected_samples ==
+		      2u * V34_PHASE2_TONE_WINDOW_SAMPLES &&
+	      reversal_events == 2u && causal_edge_accepted &&
+	      !ranging.info0_exchange.transport.tone_detector
+		       .rejected_reversal_active,
+	      "rejected-edge recovery failed for %d/%d: edges=%zu stable=%zu sync=%d accepted=%d phase=%d",
+	      codec, protocol, reversal_events, stable_rejected_samples,
+	      info_synchronized, causal_edge_accepted, ranging.control.phase);
+	return true;
+}
+
+static bool test_rejected_edge_before_info(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			CHECK(check_rejected_edge_before_info(codec, protocol),
+			      "rejected edge failed for %d/%d", codec, protocol);
+	return true;
+}
+
 static bool check_completed_exchange_repeat(
 	enum test_codec codec, bool reject_repeat)
 {
@@ -369,6 +663,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "PCMU and PCMA ranging", test_pcm_ranging },
+		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
+		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "completed INFO0 repeat ordering",
 		  test_completed_exchange_repeat },
 		{ "validation", test_validation },

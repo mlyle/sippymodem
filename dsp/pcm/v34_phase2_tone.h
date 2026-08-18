@@ -68,6 +68,12 @@ struct v34_phase2_tone_event {
 	uint16_t reversal_delay_samples;
 };
 
+enum v34_phase2_tone_interruption {
+	V34_PHASE2_TONE_UNINTERRUPTED,
+	V34_PHASE2_TONE_SUPPRESSING,
+	V34_PHASE2_TONE_REACQUIRING,
+};
+
 struct v34_phase2_tone_detector {
 	struct v34_phase2_tone_observation
 		history[V34_PHASE2_TONE_WINDOW_SAMPLES];
@@ -87,9 +93,11 @@ struct v34_phase2_tone_detector {
 	uint16_t missing_samples;
 	uint16_t reversal_delay_samples;
 	enum v34_station_role local_role;
+	enum v34_phase2_tone_interruption interruption;
 	bool measurement_ready;
 	bool tone_present;
 	bool reversal_pending;
+	bool rejected_reversal_active;
 };
 
 struct v34_phase2_tone_measurement {
@@ -146,6 +154,28 @@ enum v34_phase2_tone_result
 v34_phase2_tone_detector_sample(
 	struct v34_phase2_tone_detector *detector,
 	int16_t sample, struct v34_phase2_tone_event *event);
+
+/* A reversal event commits the new reference for direct consumers. A
+ * state-machine owner which rejects that event must call this on the same
+ * sample. The rejected phase is then ignored until the retained phase returns,
+ * so one stable early edge cannot be reported repeatedly. */
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_reject_reversal(
+	struct v34_phase2_tone_detector *detector,
+	const struct v34_phase2_tone_event *event);
+
+/* INFO and the following tone share a carrier. Advance the detector oscillator
+ * once for each synchronized INFO sample, then resume with the causal INFO
+ * receive-pipeline delay. Zero denotes an undated rejected frame: reacquire
+ * from its boundary and report only the ordinary acquisition delay. In both
+ * cases the last qualified tone phase remains available for comparison. */
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_suppress_sample(
+	struct v34_phase2_tone_detector *detector);
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_resume(
+	struct v34_phase2_tone_detector *detector,
+	uint16_t handoff_delay_samples);
 struct v34_phase2_tone_measurement
 v34_phase2_tone_detector_measure(
 	const struct v34_phase2_tone_detector *detector);

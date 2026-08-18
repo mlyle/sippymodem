@@ -198,12 +198,35 @@ static bool receive_sample(
 	struct phase2_info0_exchange *exchange, int16_t sample,
 	struct phase2_info0_exchange_event *event)
 {
-	return v34_phase2_info_audio_receiver_sample(
-		       &exchange->info_receiver, sample,
-		       &event->info_event) == V34_PHASE2_INFO_AUDIO_OK &&
-	       v34_phase2_tone_detector_sample(
-		       &exchange->tone_detector, sample,
-		       &event->tone_event) == V34_PHASE2_TONE_OK;
+	enum v34_phase2_info_receive_stage stage_before =
+		exchange->info_receiver.frame.stage;
+	bool info_carrier_active;
+
+	if (v34_phase2_info_audio_receiver_sample(
+		    &exchange->info_receiver, sample,
+		    &event->info_event) != V34_PHASE2_INFO_AUDIO_OK)
+		return false;
+	info_carrier_active =
+		stage_before != V34_PHASE2_INFO_SEARCH_SYNC ||
+		exchange->info_receiver.frame.stage !=
+			V34_PHASE2_INFO_SEARCH_SYNC;
+	if (!info_carrier_active)
+		return v34_phase2_tone_detector_sample(
+			       &exchange->tone_detector, sample,
+			       &event->tone_event) == V34_PHASE2_TONE_OK;
+	/* A synchronized INFO frame temporarily owns the shared carrier. Keep
+	 * its samples out of the tone detector while advancing the oscillator,
+	 * so the following tone is compared with the qualified pre-frame phase. */
+	if (v34_phase2_tone_detector_suppress_sample(
+		    &exchange->tone_detector) != V34_PHASE2_TONE_OK)
+		return false;
+	return exchange->info_receiver.frame.stage !=
+		       V34_PHASE2_INFO_SEARCH_SYNC ||
+	       v34_phase2_tone_detector_resume(
+		       &exchange->tone_detector,
+		       v34_phase2_info_audio_receiver_handoff_delay_samples(
+			       &exchange->info_receiver)) ==
+		       V34_PHASE2_TONE_OK;
 }
 
 static void align_tone_with_info_carrier(

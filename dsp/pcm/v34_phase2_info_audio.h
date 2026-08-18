@@ -15,6 +15,27 @@ enum {
 	 * shaper before handing the line to the following waveform owner. */
 	V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS =
 		V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS / 2,
+	/* The receive filter centre is expressed in sixths of an 8 kHz sample:
+	 * the carrier FIR runs at 8 kHz and the interpolator and detector FIRs
+	 * run at three times that rate. */
+	V34_PHASE2_INFO_RX_FILTER_DELAY_SIXTHS =
+		3 * (V34_PHASE2_DPSK_CARRIER_FILTER_TAPS - 1) +
+		(V34_PHASE2_DPSK_INTERPOLATION *
+		 V34_PHASE2_DPSK_INTERPOLATOR_TAPS - 1) +
+		(V34_PHASE2_DPSK_LOWPASS_TAPS - 1),
+	V34_PHASE2_INFO_RX_FILTER_DELAY_SAMPLES =
+		(V34_PHASE2_INFO_RX_FILTER_DELAY_SIXTHS + 3) / 6,
+	/* The receiver recognizes sync after three causal transmit-filter
+	 * symbols (40 samples), its rounded receive-filter centre (49), and the
+	 * inclusive recovered-bit boundary (one).  This implementation-derived
+	 * pipeline delay dates the following line transition without observing
+	 * samples while the synchronized INFO receiver owns the carrier. */
+	V34_PHASE2_INFO_TX_FILTER_DELAY_SAMPLES =
+		V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS *
+		V34_PHASE2_SAMPLE_RATE / V34_PHASE2_DPSK_BIT_RATE,
+	V34_PHASE2_INFO_SYNC_PIPELINE_DELAY_SAMPLES =
+		V34_PHASE2_INFO_TX_FILTER_DELAY_SAMPLES +
+		V34_PHASE2_INFO_RX_FILTER_DELAY_SAMPLES + 1,
 };
 
 enum v34_phase2_info_audio_result {
@@ -31,6 +52,8 @@ struct v34_phase2_info_audio_transmitter {
 struct v34_phase2_info_audio_receiver {
 	struct v34_phase2_dpsk_receiver modulation;
 	struct v34_phase2_info_receiver frame;
+	uint16_t samples_since_sync;
+	uint16_t handoff_delay_samples;
 };
 
 /* One transmitter emits one INFO sequence, including its arbitrary reference
@@ -70,6 +93,12 @@ v34_phase2_info_audio_receiver_sample(
 	int16_t sample, struct v34_phase2_info_event *event);
 struct v34_phase2_dpsk_measurement
 v34_phase2_info_audio_receiver_measure(
+	const struct v34_phase2_info_audio_receiver *receiver);
+
+/* Return the implementation-derived delay from the peer's following-tone
+ * transition through delivery of a just-completed, tail-valid INFO frame.
+ * Other states, including a rejected physical frame, return zero. */
+uint16_t v34_phase2_info_audio_receiver_handoff_delay_samples(
 	const struct v34_phase2_info_audio_receiver *receiver);
 
 const char *v34_phase2_info_audio_result_name(
