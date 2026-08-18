@@ -274,11 +274,11 @@ static struct v90_mp_record initial_mp(
 		.parameters.type0 = {
 			.maximum_upstream_rate_2400_bps_units =
 				upstream->maximum_rate_2400_bps_units,
-			/* The 16-state mode is mandatory and exercises the same
-			 * mapper without requiring optional receiver complexity. */
+			/* The mandatory 16-state mode and basic shaping retain the
+			 * G.711 receiver margin without disabling nonlinear coding. */
 			.upstream_trellis = V34_TRELLIS_16_STATE,
 			.upstream_nonlinear_encoding = true,
-			.upstream_expanded_shaping = true,
+			.upstream_expanded_shaping = false,
 			.upstream_rate_capability_mask = upstream->rate_mask,
 		},
 	};
