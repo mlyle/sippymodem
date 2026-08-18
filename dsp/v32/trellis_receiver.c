@@ -74,7 +74,9 @@ v32_trellis_receiver_init(
 	struct v32_trellis_receiver *receiver,
 	const struct v32_symbol_decoder *framing,
 	const struct qam_point *reference_point,
-	uint8_t reference_phase_quadrant, uint8_t data_bits_per_symbol)
+	uint8_t reference_phase_quadrant,
+	uint8_t previous_differential_output,
+	uint8_t data_bits_per_symbol)
 {
 	struct v32_trellis_receiver initialized = { 0 };
 	struct qam_point ideal;
@@ -88,11 +90,11 @@ v32_trellis_receiver_init(
 		    QAM_EQUALIZER_OK ||
 	    v32_trellis_encoder_init(
 		    &initialized.known_encoder, data_bits_per_symbol,
-		    V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) !=
+		    previous_differential_output) !=
 		    V32_TRELLIS_OK ||
 	    v32_trellis_decoder_init(
 		    &initialized.decoder, data_bits_per_symbol,
-		    V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) !=
+		    previous_differential_output) !=
 		    V32_TRELLIS_OK)
 		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	initialized.known_scrambler = framing->descrambler;

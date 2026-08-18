@@ -39,13 +39,16 @@ struct v32_trellis_receiver {
 };
 
 /* Seed the channel estimate and framing state from the final 4800-bit/s
- * receive point immediately before the rate transition. */
+ * receive point immediately before the rate transition, under one possible
+ * differential start state. */
 enum v32_trellis_receiver_result
 v32_trellis_receiver_init(
 	struct v32_trellis_receiver *receiver,
 	const struct v32_symbol_decoder *framing,
 	const struct qam_point *reference_point,
-	uint8_t reference_phase_quadrant, uint8_t data_bits_per_symbol);
+	uint8_t reference_phase_quadrant,
+	uint8_t previous_differential_output,
+	uint8_t data_bits_per_symbol);
 bool v32_trellis_receiver_is_valid(
 	const struct v32_trellis_receiver *receiver);
 

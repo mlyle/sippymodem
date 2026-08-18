@@ -17,19 +17,22 @@ bool v32_trellis_acquirer_is_valid(
 	enum v32_transmitter_role role;
 
 	if (acquirer == NULL ||
-	    acquirer->selected_phase >= QPSK_QUADRANT_COUNT)
+	    acquirer->selected_differential_output >=
+		    QPSK_QUADRANT_COUNT)
 		return false;
 	data_bits = acquirer->candidates[0].decoder.data_bits_per_symbol;
 	role = acquirer->candidates[0].descrambler.transmitter_role;
-	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
-	     ++phase) {
+	for (uint8_t differential_output = 0;
+	     differential_output < QPSK_QUADRANT_COUNT;
+	     ++differential_output) {
 		const struct v32_trellis_receiver *candidate =
-			&acquirer->candidates[phase];
+			&acquirer->candidates[differential_output];
 
 		if (!v32_trellis_receiver_is_valid(candidate) ||
 		    candidate->decoder.data_bits_per_symbol != data_bits ||
 		    candidate->descrambler.transmitter_role != role ||
-		    acquirer->confirmations[phase] > acquirer->observations)
+		    acquirer->confirmations[differential_output] >
+			    acquirer->observations)
 			return false;
 	}
 	return true;
@@ -44,13 +47,15 @@ v32_trellis_acquirer_init(
 {
 	struct v32_trellis_acquirer initialized = { 0 };
 
-	if (acquirer == NULL)
+	if (acquirer == NULL || framing == NULL)
 		return V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
-	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
-	     ++phase)
+	for (uint8_t differential_output = 0;
+	     differential_output < QPSK_QUADRANT_COUNT;
+	     ++differential_output)
 		if (v32_trellis_receiver_init(
-			    &initialized.candidates[phase], framing,
-			    reference_point, phase, data_bits_per_symbol) !=
+			    &initialized.candidates[differential_output], framing,
+			    reference_point, framing->phase_quadrant,
+			    differential_output, data_bits_per_symbol) !=
 		    V32_TRELLIS_RECEIVER_OK)
 			return V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
 	if (!v32_trellis_acquirer_is_valid(&initialized))
@@ -70,16 +75,19 @@ v32_trellis_acquirer_track_known(
 	    acquirer->selected || acquirer->observations == UINT16_MAX)
 		return V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
 	next = *acquirer;
-	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
-	     ++phase) {
+	for (uint8_t differential_output = 0;
+	     differential_output < QPSK_QUADRANT_COUNT;
+	     ++differential_output) {
 		bool confirmed;
 
 		if (v32_trellis_receiver_track_known(
-			    &next.candidates[phase], point, input, &confirmed) !=
+			    &next.candidates[differential_output], point, input,
+			    &confirmed) !=
 		    V32_TRELLIS_RECEIVER_OK)
 			return V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
-		if (confirmed && next.confirmations[phase] != UINT16_MAX)
-			next.confirmations[phase]++;
+		if (confirmed &&
+		    next.confirmations[differential_output] != UINT16_MAX)
+			next.confirmations[differential_output]++;
 	}
 	next.observations++;
 	if (!v32_trellis_acquirer_is_valid(&next))
@@ -101,22 +109,25 @@ v32_trellis_acquirer_select(
 		return V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;
 	if (acquirer->selected)
 		return V32_TRELLIS_ACQUIRER_OK;
-	for (uint8_t phase = 1; phase < QPSK_QUADRANT_COUNT;
-	     ++phase)
-		if (acquirer->confirmations[phase] >
+	for (uint8_t differential_output = 1;
+	     differential_output < QPSK_QUADRANT_COUNT;
+	     ++differential_output)
+		if (acquirer->confirmations[differential_output] >
 		    acquirer->confirmations[selected])
-			selected = phase;
+			selected = differential_output;
 	best = acquirer->confirmations[selected];
-	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
-	     ++phase)
-		if (phase != selected &&
-		    acquirer->confirmations[phase] > runner_up)
-			runner_up = acquirer->confirmations[phase];
+	for (uint8_t differential_output = 0;
+	     differential_output < QPSK_QUADRANT_COUNT;
+	     ++differential_output)
+		if (differential_output != selected &&
+		    acquirer->confirmations[differential_output] > runner_up)
+			runner_up =
+				acquirer->confirmations[differential_output];
 	if (best < V32_ACQUISITION_MIN_CONFIRMATIONS ||
 	    best - runner_up < V32_ACQUISITION_MIN_LEAD)
 		return V32_TRELLIS_ACQUIRER_NOT_READY;
 	next = *acquirer;
-	next.selected_phase = selected;
+	next.selected_differential_output = selected;
 	next.selected = true;
 	*acquirer = next;
 	return V32_TRELLIS_ACQUIRER_OK;
@@ -133,7 +144,9 @@ v32_trellis_acquirer_decode(
 	if (!acquirer->selected)
 		return V32_TRELLIS_ACQUIRER_NOT_READY;
 	return v32_trellis_receiver_decode(
-		       &acquirer->candidates[acquirer->selected_phase], point,
+		       &acquirer->candidates[
+			       acquirer->selected_differential_output],
+		       point,
 		       output, ready) == V32_TRELLIS_RECEIVER_OK ?
 		       V32_TRELLIS_ACQUIRER_OK :
 		       V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT;

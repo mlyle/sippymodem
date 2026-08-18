@@ -14,14 +14,15 @@ enum v32_trellis_acquirer_result {
 	V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT,
 };
 
-/* Resolve the fourfold carrier-phase ambiguity while B1 supplies known data.
- * Each candidate owns its complete equalizer, trellis, and framing state. */
+/* Resolve the peer's four possible differential start states while B1
+ * supplies known data. Each candidate owns its complete equalizer, trellis,
+ * and framing state. */
 struct v32_trellis_acquirer {
 	struct v32_trellis_receiver candidates[
 		QPSK_QUADRANT_COUNT];
 	uint16_t confirmations[QPSK_QUADRANT_COUNT];
 	uint16_t observations;
-	uint8_t selected_phase;
+	uint8_t selected_differential_output;
 	bool selected;
 };
 
@@ -34,13 +35,13 @@ v32_trellis_acquirer_init(
 bool v32_trellis_acquirer_is_valid(
 	const struct v32_trellis_acquirer *acquirer);
 
-/* Consume one known post-E group without assuming an absolute carrier phase. */
+/* Consume one known post-E group under every differential-state hypothesis. */
 enum v32_trellis_acquirer_result
 v32_trellis_acquirer_track_known(
 	struct v32_trellis_acquirer *acquirer,
 	const struct qam_point *point, uint8_t input);
 
-/* Select a unique, well-separated phase hypothesis after known training. */
+/* Select a unique, well-separated differential-state hypothesis. */
 enum v32_trellis_acquirer_result
 v32_trellis_acquirer_select(
 	struct v32_trellis_acquirer *acquirer);

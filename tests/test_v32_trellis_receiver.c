@@ -153,7 +153,9 @@ static bool check_transition(
 		      V32_TRELLIS_OK &&
 	      v32_trellis_receiver_init(
 		      &receiver, &framing_decoder, &received_reference,
-		      framing_encoder.phase_quadrant, data_bits) ==
+		      framing_encoder.phase_quadrant,
+		      V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT,
+		      data_bits) ==
 		      V32_TRELLIS_RECEIVER_OK,
 	      "V.32bis %u-bit receiver %u/%u did not initialize", data_bits,
 	      role, initial_quadrant);
@@ -271,7 +273,7 @@ static bool test_validation(void)
 		      &framing, V32_CALLING_TRANSMITTER, 0) ==
 		      V32_FRAMING_OK &&
 	      v32_trellis_receiver_init(
-		      &receiver, &framing, &point, 0,
+		      &receiver, &framing, &point, 0, 0,
 		      V32_7200_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_OK,
 	      "V.32bis receiver validation fixture did not initialize");
@@ -279,30 +281,34 @@ static bool test_validation(void)
 	CHECK(v32_trellis_receiver_is_valid(&receiver) &&
 	      !v32_trellis_receiver_is_valid(NULL) &&
 	      v32_trellis_receiver_init(
-		      NULL, &framing, &point, 0,
+		      NULL, &framing, &point, 0, 0,
 		      V32_7200_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, NULL, &point, 0,
+		      &receiver, NULL, &point, 0, 0,
 		      V32_7200_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, &framing, &zero, 0,
+		      &receiver, &framing, &zero, 0, 0,
 		      V32_7200_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, &framing, &invalid, 0,
+		      &receiver, &framing, &invalid, 0, 0,
 		      V32_7200_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, &framing, &point, 4,
+		      &receiver, &framing, &point, 4, 0,
 		      V32_7200_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, &framing, &point, 0, 2) ==
+		      &receiver, &framing, &point, 0, 4,
+		      V32_7200_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, &framing, &point, 0, 7) ==
+		      &receiver, &framing, &point, 0, 0, 2) ==
+		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_receiver_init(
+		      &receiver, &framing, &point, 0, 0, 7) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "V.32bis receiver initialization was not transactional");

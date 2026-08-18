@@ -43,7 +43,9 @@ static bool encode_point(
 		       V32_CONSTELLATION_OK;
 }
 
-static bool check_phase(uint8_t phase, uint8_t data_bits)
+static bool check_start_state(
+	uint8_t reference_phase, uint8_t differential_output,
+	uint8_t data_bits)
 {
 	static const struct qam_point channel = { 0.73, -0.31 };
 	struct v32_symbol_encoder framing_encoder;
@@ -56,44 +58,46 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 
 	CHECK(v32_symbol_encoder_init(
 		      &framing_encoder, V32_ANSWERING_TRANSMITTER,
-		      phase) == V32_FRAMING_OK &&
+		      reference_phase) == V32_FRAMING_OK &&
 	      v32_symbol_decoder_init(
 		      &framing_decoder, V32_ANSWERING_TRANSMITTER,
-		      0) == V32_FRAMING_OK &&
+		      reference_phase) == V32_FRAMING_OK &&
 	      v32_trellis_encoder_init(
 		      &trellis_encoder, data_bits,
-		      V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) ==
+		      differential_output) ==
 		      V32_TRELLIS_OK &&
-	      v32_4800_constellation_point(phase, &reference) ==
+	      v32_4800_constellation_point(reference_phase, &reference) ==
 		      V32_CONSTELLATION_OK,
-	      "V.32bis phase %u/%u fixture did not initialize", phase,
-	      data_bits);
+	      "V.32bis start state %u/%u/%u fixture did not initialize",
+	      reference_phase, differential_output, data_bits);
 	reference = multiply(channel, reference);
 	CHECK(v32_trellis_acquirer_init(
 		      &acquirer, &framing_decoder, &reference, data_bits) ==
 		      V32_TRELLIS_ACQUIRER_OK,
-	      "V.32bis phase %u/%u acquisition did not initialize", phase,
-	      data_bits);
+	      "V.32bis start state %u/%u/%u acquisition did not initialize",
+	      reference_phase, differential_output, data_bits);
 	for (size_t index = 0; index < KNOWN_SYMBOLS; ++index) {
 		struct qam_point point;
 
 		CHECK(encode_point(
 			      &framing_encoder, &trellis_encoder, mask, &point),
-		      "V.32bis phase %u/%u known symbol %zu generation failed",
-		      phase, data_bits, index);
+		      "V.32bis start state %u/%u/%u known symbol %zu generation failed",
+		      reference_phase, differential_output, data_bits, index);
 		point = multiply(channel, point);
 		CHECK(
 		      v32_trellis_acquirer_track_known(
 			      &acquirer, &point, mask) ==
 			      V32_TRELLIS_ACQUIRER_OK,
-		      "V.32bis phase %u/%u known symbol %zu failed", phase,
-		      data_bits, index);
+		      "V.32bis start state %u/%u/%u known symbol %zu failed",
+		      reference_phase, differential_output, data_bits, index);
 	}
 	CHECK(v32_trellis_acquirer_select(&acquirer) ==
 		      V32_TRELLIS_ACQUIRER_OK &&
-	      acquirer.selected && acquirer.selected_phase == phase,
-	      "V.32bis phase %u/%u selected hypothesis %u", phase,
-	      data_bits, acquirer.selected_phase);
+	      acquirer.selected &&
+	      acquirer.selected_differential_output == differential_output,
+	      "V.32bis start state %u/%u/%u selected hypothesis %u",
+	      reference_phase, differential_output, data_bits,
+	      acquirer.selected_differential_output);
 	for (size_t index = 0; index < PAYLOAD_SYMBOLS; ++index) {
 		struct qam_point point;
 		uint8_t output = UINT8_MAX;
@@ -103,30 +107,31 @@ static bool check_phase(uint8_t phase, uint8_t data_bits)
 		CHECK(encode_point(
 			      &framing_encoder, &trellis_encoder, payload[index],
 			      &point),
-		      "V.32bis phase %u/%u payload generation failed at %zu",
-		      phase, data_bits, index);
+		      "V.32bis start state %u/%u/%u payload generation failed at %zu",
+		      reference_phase, differential_output, data_bits, index);
 		point = multiply(channel, point);
 		CHECK(v32_trellis_acquirer_decode(
 			      &acquirer, &point, &output, &ready) ==
 			      V32_TRELLIS_ACQUIRER_OK,
-		      "V.32bis phase %u/%u payload decode failed at %zu", phase,
-		      data_bits, index);
+		      "V.32bis start state %u/%u/%u payload decode failed at %zu",
+		      reference_phase, differential_output, data_bits, index);
 		if (index + 1u < V32_TRELLIS_RECEIVER_DELAY) {
 			CHECK(!ready && output == UINT8_MAX,
-			      "V.32bis phase acquisition exposed delayed payload");
+			      "V.32bis start-state acquisition exposed delayed payload");
 		} else {
 			size_t expected = index + 1u -
 					  V32_TRELLIS_RECEIVER_DELAY;
 
 			CHECK(ready && output == payload[expected],
-			      "V.32bis phase %u/%u decoded %u instead of %u",
-			      phase, data_bits, output, payload[expected]);
+			      "V.32bis start state %u/%u/%u decoded %u instead of %u",
+			      reference_phase, differential_output, data_bits,
+			      output, payload[expected]);
 		}
 	}
 	return true;
 }
 
-static bool test_generated_phase_acquisition(void)
+static bool test_generated_start_state_acquisition(void)
 {
 	static const uint8_t widths[] = {
 		V32_7200_DATA_BITS,
@@ -135,11 +140,17 @@ static bool test_generated_phase_acquisition(void)
 		V32_14400_DATA_BITS,
 	};
 
-	for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT;
-	     ++phase)
-		for (size_t width = 0; width < ARRAY_LENGTH(widths); ++width)
-			if (!check_phase(phase, widths[width]))
-				return false;
+	for (uint8_t reference_phase = 0;
+	     reference_phase < QPSK_QUADRANT_COUNT; ++reference_phase)
+		for (uint8_t differential_output = 0;
+		     differential_output < QPSK_QUADRANT_COUNT;
+		     ++differential_output)
+			for (size_t width = 0;
+			     width < ARRAY_LENGTH(widths); ++width)
+				if (!check_start_state(
+					    reference_phase, differential_output,
+					    widths[width]))
+					return false;
 	return true;
 }
 
@@ -161,7 +172,12 @@ static bool test_api_contract(void)
 		      V32_TRELLIS_ACQUIRER_OK,
 	      "V.32bis acquisition API fixture did not initialize");
 	saved = acquirer;
-	CHECK(v32_trellis_acquirer_select(&acquirer) ==
+	CHECK(v32_trellis_acquirer_init(
+		      &acquirer, NULL, &point,
+		      V32_7200_DATA_BITS) ==
+		      V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT &&
+	      memcmp(&acquirer, &saved, sizeof(acquirer)) == 0 &&
+	      v32_trellis_acquirer_select(&acquirer) ==
 		      V32_TRELLIS_ACQUIRER_NOT_READY &&
 	      v32_trellis_acquirer_decode(
 		      &acquirer, &point, &output, &ready) ==
@@ -187,7 +203,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "generated phase acquisition", test_generated_phase_acquisition },
+		{ "generated start-state acquisition",
+		  test_generated_start_state_acquisition },
 		{ "API contract", test_api_contract },
 	};
 	unsigned int failures = 0;
