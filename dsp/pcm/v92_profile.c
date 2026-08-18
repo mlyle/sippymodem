@@ -15,8 +15,11 @@ enum {
 	V92_CONSTELLATION_FIRST_UCODE = 24,
 	V92_CONSTELLATION_LAST_UCODE = 108,
 	V92_INITIAL_CONSTELLATION_SIZE = 8,
+	V92_CPT_SELECTED_RATE_INDEX = 9,
 	V92_SIGN_REDUNDANCY = 1,
 };
+
+static const uint8_t v92_cpt_ucodes[] = { 76, 68, 57, 35 };
 
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
@@ -61,6 +64,18 @@ static uint8_t data_constellation_size(uint8_t rate_number)
 	return PCM_CONSTELLATION_UCODES;
 }
 
+static void generate_cpt_constellation(
+	struct pcm_constellation *constellation)
+{
+	/* CPt is a training map, independent of the later CPu data rate. Four
+	 * levels in each of six intervals carry exactly twelve modulus bits;
+	 * with Sr=1 this selects the compact 22667 bit/s training profile. */
+	for (size_t index = 0;
+	     index < sizeof(v92_cpt_ucodes) / sizeof(v92_cpt_ucodes[0]);
+	     ++index)
+		add_ucode(constellation, v92_cpt_ucodes[index]);
+}
+
 static struct v92_pcm_info1a analog_info1(void)
 {
 	return (struct v92_pcm_info1a){
@@ -71,21 +86,18 @@ static struct v92_pcm_info1a analog_info1(void)
 	};
 }
 
-static struct v92_cpt_parameters cpt_parameters(
-	enum g711_law law, uint8_t downstream_rate_number)
+static struct v92_cpt_parameters cpt_parameters(enum g711_law law)
 {
 	struct v92_cpt_parameters parameters = {
 		.law = law,
 		.trn1d_ratio_q3_13 = UINT16_C(0x2000),
-		.selected_rate_index = downstream_rate_number,
+		.selected_rate_index = V92_CPT_SELECTED_RATE_INDEX,
 		.sign_redundancy = V92_SIGN_REDUNDANCY,
 		.spectral_lookahead = 2,
 		.constellation_count = 1,
 	};
 
-	generate_constellation(
-		&parameters.transmit_constellations[0],
-		V92_INITIAL_CONSTELLATION_SIZE);
+	generate_cpt_constellation(&parameters.transmit_constellations[0]);
 	return parameters;
 }
 
@@ -123,9 +135,7 @@ static void configure_analog(
 	selected->phase3.v92_analog =
 		(struct v92_phase3_analog_station_configuration){
 			.local_info1a = info1,
-			.cpt = cpt_parameters(
-				selected->law,
-				downstream->selected_data_rate_number),
+			.cpt = cpt_parameters(selected->law),
 			.upstream_rate_mask = upstream_rate_mask,
 			.initial_trn1u_symbols =
 				V92_PROFILE_INITIAL_TRN1U_SYMBOLS,

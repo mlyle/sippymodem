@@ -3,6 +3,7 @@
 #include <v92_profile.h>
 
 #include <pcm_rate.h>
+#include <v90_pcm_mapping.h>
 #include <v92_pcm_dil.h>
 
 #include "test.h"
@@ -22,33 +23,58 @@ static uint8_t constellation_members(
 	return count;
 }
 
+static bool cpt_constellation_is_canonical(
+	const struct pcm_constellation *constellation)
+{
+	static const uint8_t expected[] = { 76, 68, 57, 35 };
+
+	if (constellation_members(constellation) !=
+	    sizeof(expected) / sizeof(expected[0]))
+		return false;
+	for (size_t index = 0; index < sizeof(expected) / sizeof(expected[0]);
+	     ++index) {
+		if (!pcm_constellation_contains(constellation, expected[index]))
+			return false;
+	}
+	return true;
+}
+
 static bool test_generated_profiles(void)
 {
-	static const unsigned int rates[] = { 28000, 42667, 56000 };
-	static const uint8_t upstream_rates[] = { 1, 4, 19 };
-
 	for (unsigned int law_index = G711_LAW_PCMU;
 	     law_index <= G711_LAW_PCMA; ++law_index) {
 		for (unsigned int role_index = V90_ANALOG_MODEM;
 		     role_index <= V90_DIGITAL_MODEM; ++role_index) {
-			for (size_t rate = 0; rate < sizeof(rates) / sizeof(rates[0]);
-			     ++rate) {
+			for (uint8_t rate_number =
+				     PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER;
+			     rate_number <= PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER;
+			     ++rate_number) {
 				struct pcm_downstream_rate_selection downstream;
 				struct pcm_call_configuration configuration;
 				struct pcm_call call;
+				struct v90_pcm_mapping cpt_mapping;
+				unsigned int rate =
+					pcm_downstream_bit_rate(rate_number);
+				uint8_t upstream_rate =
+					rate_number <=
+						V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER ?
+							rate_number :
+							rate_number -
+							V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER;
 				uint32_t upstream_mask;
 				enum g711_law law = (enum g711_law)law_index;
 				enum v90_modem_role role =
 					(enum v90_modem_role)role_index;
 
 				CHECK(pcm_downstream_rates_select(
-					      &downstream, rates[rate], rates[rate]) &&
+					      &downstream, rate, rate) &&
 				      v92_pcm_dil_rate_mask_through(
-					      upstream_rates[rate], &upstream_mask) &&
+					      upstream_rate, &upstream_mask) &&
 				      v92_pcm_profile_init(
 					      &configuration, role, law,
-					      rates[rate], rates[rate],
-					      upstream_rates[rate]) == V92_PROFILE_OK &&
+					      rate, rate,
+					      upstream_rate) ==
+					      V92_PROFILE_OK &&
 				      pcm_call_init(&call, &configuration) ==
 					      PCM_CALL_OK &&
 				      pcm_call_is_valid(&call) &&
@@ -56,7 +82,7 @@ static bool test_generated_profiles(void)
 				      configuration.enabled_downstream_rate_mask ==
 					      downstream.enabled_mask,
 				      "role %u law %u rate %u profile did not initialize",
-				      role_index, law_index, rates[rate]);
+				      role_index, law_index, rate);
 				if (role == V90_ANALOG_MODEM) {
 					const struct v92_phase3_analog_station_configuration
 						*phase3 = &configuration.phase3.v92_analog;
@@ -71,18 +97,26 @@ static bool test_generated_profiles(void)
 					      phase3->initial_trn1u_symbols ==
 						      V92_PROFILE_INITIAL_TRN1U_SYMBOLS &&
 					      phase3->cpt.selected_rate_index ==
-						      downstream.selected_data_rate_number &&
+						      9 &&
 					      configuration.v92_analog_phase4.cpu
 						      .data_rate_number ==
 						      downstream.selected_data_rate_number &&
-					      constellation_members(
+					      cpt_constellation_is_canonical(
 						      &phase3->cpt
-						       .transmit_constellations[0]) == 8 &&
+						       .transmit_constellations[0]) &&
+					      v90_pcm_mapping_init_from_v92_cpt(
+						      &cpt_mapping, &phase3->cpt) ==
+						      V90_PCM_MAPPING_OK &&
+					      v90_pcm_mapping_is_valid(&cpt_mapping) &&
+					      cpt_mapping.kind == V90_CP_TRAINING &&
+					      cpt_mapping.law == law &&
+					      cpt_mapping.frame_bits == 17 &&
+					      cpt_mapping.modulus_bits == 12 &&
 					      constellation_members(
 						      &configuration.v92_analog_phase4.cpu
 						       .transmit_constellations[0]) >= 8,
 					      "analogue profile did not generate rate %u",
-					      rates[rate]);
+					      rate);
 				} else {
 					CHECK(configuration.local_info0.v92_digital
 						      .v92_capable &&
@@ -95,11 +129,11 @@ static bool test_generated_profiles(void)
 						      downstream.enabled_mask &&
 					      configuration.v92_digital_phase4.cpd
 						      .data_rate_number ==
-						      upstream_rates[rate] &&
+						      upstream_rate &&
 					      configuration.v92_digital_phase4.cpd
 						      .trellis == V92_CPD_TRELLIS_16_STATE,
 					      "digital profile did not generate rate %u",
-					      rates[rate]);
+					      rate);
 				}
 			}
 		}
