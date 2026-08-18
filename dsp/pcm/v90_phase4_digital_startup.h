@@ -47,13 +47,14 @@ bool v90_phase4_digital_startup_has_failed(
 bool v90_phase4_digital_startup_is_complete(
 	const struct v90_phase4_digital_startup *startup);
 
-/* Consume and produce one simultaneous 8 ksymbol/s G.711 character. State
- * transitions apply to the following character. DONE consumes nothing and
+/* Consume one upstream line sample and produce one simultaneous 8 ksymbol/s
+ * G.711 character. State transitions apply to the following character. DONE
+ * consumes nothing and
  * leaves output unchanged. A terminal receive error still exposes the output
  * generated for the accepted character. */
-enum v90_phase4_startup_result v90_phase4_digital_startup_octet(
+enum v90_phase4_startup_result v90_phase4_digital_startup_sample(
 	struct v90_phase4_digital_startup *startup,
-	uint8_t received_octet, uint8_t *transmit_octet);
+	int16_t received_sample, uint8_t *transmit_octet);
 
 enum v90_phase4_startup_result v90_phase4_digital_startup_handoff(
 	const struct v90_phase4_digital_startup *startup,

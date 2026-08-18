@@ -450,7 +450,8 @@ static bool process_octet(
 		struct pcm_call_observation observation;
 
 		result = pcm_call_octet(
-			&datapump->call, received, transmitted, &observation);
+			&datapump->call, received, received_sample,
+			transmitted, &observation);
 	}
 	if (result != PCM_CALL_OK)
 		return false;

@@ -276,15 +276,19 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
-/* Consume and produce one simultaneous 8 ksymbol/s G.711 character. A phase
- * change takes effect on the following call. PHASE4_READY stops V.90 after its
+/* Consume and produce one simultaneous 8 ksymbol/s G.711 character.
+ * `received_octet` retains exact PCM codeword semantics while
+ * `received_sample` is the decoded physical line sample. Phase 2 and Phase 3
+ * retain their existing normalized-codeword frontends; digital Phase 4 and
+ * retrain observation consume the physical sample. A phase change takes effect
+ * on the following call. PHASE4_READY stops V.90 after its
  * initial Phase 4 exchange and V.92 at its role-local E2u or Ed handoff. The
  * peer may still need continuous media before reaching its own handoff. This
  * result consumes no character, changes no output, and leaves that continuous
  * state available to the next owner. Terminal protocol failures consume the
  * character and expose generated output and observation. */
 enum pcm_call_result pcm_call_octet(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation);
 

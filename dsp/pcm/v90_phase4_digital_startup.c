@@ -2,7 +2,6 @@
 
 #include "v90_phase4_digital_startup.h"
 
-#include "g711.h"
 #include "memory_region.h"
 
 #include <stddef.h>
@@ -194,14 +193,9 @@ static enum v90_phase4_startup_result receive_continued(
 	return V90_PHASE4_STARTUP_NUMERIC_FAILURE;
 }
 
-static enum v90_phase4_startup_result receive_character(
-	struct v90_phase4_digital_startup *startup, uint8_t octet)
+static enum v90_phase4_startup_result receive_sample(
+	struct v90_phase4_digital_startup *startup, int16_t sample)
 {
-	struct v90_phase4_digital_station *station =
-		active_station(startup);
-	int16_t sample = station->transmit.law == G711_LAW_PCMA ?
-			 g711_decode_pcma(octet) : g711_decode_pcmu(octet);
-
 	if (startup->stage == V90_PHASE4_STARTUP_INITIAL)
 		return station_result(v90_phase4_digital_station_receive(
 			&startup->state.initial, sample));
@@ -269,9 +263,9 @@ static enum v90_phase4_startup_result fail_startup(
 	return result;
 }
 
-enum v90_phase4_startup_result v90_phase4_digital_startup_octet(
+enum v90_phase4_startup_result v90_phase4_digital_startup_sample(
 	struct v90_phase4_digital_startup *startup,
-	uint8_t received_octet, uint8_t *transmit_octet)
+	int16_t received_sample, uint8_t *transmit_octet)
 {
 	struct v90_phase4_digital_startup next;
 	uint8_t generated = 0;
@@ -291,7 +285,7 @@ enum v90_phase4_startup_result v90_phase4_digital_startup_octet(
 		return fail_startup(
 			startup, &next, result, false, generated,
 			transmit_octet);
-	result = receive_character(&next, received_octet);
+	result = receive_sample(&next, received_sample);
 	if (result != V90_PHASE4_STARTUP_OK)
 		return fail_startup(
 			startup, &next, result, true, generated,

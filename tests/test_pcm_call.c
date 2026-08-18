@@ -568,7 +568,8 @@ static void set_source_rejection(struct endpoint *endpoint, bool reject)
 }
 
 static bool endpoint_data_octet(
-	struct endpoint *endpoint, uint8_t received, uint8_t *transmitted)
+	struct endpoint *endpoint, uint8_t received, int16_t received_sample,
+	uint8_t *transmitted)
 {
 	struct pcm_call_data_sources sources = {
 		.upstream = source_upstream_frame,
@@ -594,8 +595,7 @@ static bool endpoint_data_octet(
 	event_before = event;
 	selected_sources = endpoint->idle_source_checked ? &sources : NULL;
 	result = pcm_call_data_octet(
-		&endpoint->call, received,
-		decode_octet(endpoint->call.law, received), selected_sources,
+		&endpoint->call, received, received_sample, selected_sources,
 		&generated, &event);
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		if (!expecting_source_failure || generated != 0xa5 ||
@@ -608,8 +608,7 @@ static bool endpoint_data_octet(
 		generated = 0xa5;
 		memset(&event, 0x5a, sizeof(event));
 		result = pcm_call_data_octet(
-			&endpoint->call, received,
-			decode_octet(endpoint->call.law, received), &sources,
+			&endpoint->call, received, received_sample, &sources,
 			&generated, &event);
 	}
 	if (result != PCM_CALL_OK)
@@ -649,7 +648,7 @@ static bool endpoint_data_octet(
 }
 
 static bool endpoint_octet(
-	struct endpoint *endpoint, uint8_t received,
+	struct endpoint *endpoint, uint8_t received, int16_t received_sample,
 	enum g711_law law, uint8_t *transmitted)
 {
 	struct pcm_call_observation observation;
@@ -662,9 +661,10 @@ static bool endpoint_octet(
 		endpoint->data_path_started = true;
 	}
 	if (pcm_call_current_stage(&endpoint->call) == PCM_CALL_DATA_PATH)
-		return endpoint_data_octet(endpoint, received, transmitted);
+		return endpoint_data_octet(
+			endpoint, received, received_sample, transmitted);
 	if (pcm_call_octet(
-		    &endpoint->call, received, transmitted,
+		    &endpoint->call, received, received_sample, transmitted,
 		    &observation) != PCM_CALL_OK)
 		return false;
 	endpoint->mixed_octets +=
@@ -709,7 +709,7 @@ static bool phase4_boundary_is_transactional(
 	memset(&observation, 0x5a, sizeof(observation));
 	observation_before = observation;
 	return pcm_call_octet(
-		       call, silence_octet(law),
+		       call, silence_octet(law), 0,
 		       &output, &observation) == PCM_CALL_PHASE4_READY &&
 	       output == 0xa5 &&
 	       memcmp(&observation, &observation_before,
@@ -743,12 +743,14 @@ static bool goal_is_reached(
 static bool run_configured_call(
 	enum g711_law law, size_t delay, enum call_goal goal,
 	uint32_t analog_rate_mask, uint8_t analog_selected_rate_index,
-	uint32_t digital_rate_mask, uint32_t expected_downstream_rate)
+	uint32_t digital_rate_mask, uint32_t expected_downstream_rate,
+	bool replace_digital_codeword)
 {
 	struct channel channel;
 	struct endpoint analog;
 	struct endpoint digital;
 	bool milestone_reached = false;
+	bool replacement_exercised = false;
 
 	CHECK(channel_init(&channel, law, delay) &&
 	      endpoint_init(
@@ -763,14 +765,26 @@ static bool run_configured_call(
 		uint8_t digital_received;
 		uint8_t analog_transmitted;
 		uint8_t digital_transmitted;
+		int16_t analog_received_sample;
+		int16_t digital_received_sample;
 
 		channel_receive(
 			&channel, &analog_received, &digital_received);
+		analog_received_sample = decode_octet(law, analog_received);
+		digital_received_sample = decode_octet(law, digital_received);
+		if (replace_digital_codeword &&
+		    (pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE4 ||
+		     pcm_call_current_stage(&digital.call) == PCM_CALL_DATA_PATH)) {
+			uint8_t replacement = silence_octet(law);
+
+			replacement_exercised |= replacement != digital_received;
+			digital_received = replacement;
+		}
 		CHECK(endpoint_octet(
-			      &analog, analog_received, law,
+			      &analog, analog_received, analog_received_sample, law,
 			      &analog_transmitted) &&
 		      endpoint_octet(
-			      &digital, digital_received, law,
+			      &digital, digital_received, digital_received_sample, law,
 			      &digital_transmitted),
 		      "law %u delay %zu V.90 call stopped at character %zu",
 		      (unsigned int)law, delay, clock);
@@ -782,6 +796,7 @@ static bool run_configured_call(
 		}
 	}
 	CHECK(milestone_reached &&
+	      (!replace_digital_codeword || replacement_exercised) &&
 	      analog.entered_phase3 && digital.entered_phase3 &&
 	      analog.entered_mixed && digital.entered_mixed &&
 	      analog.entered_phase4 && digital.entered_phase4 &&
@@ -871,7 +886,7 @@ static bool run_call(
 {
 	return run_configured_call(
 		law, delay, goal, UINT32_C(1), 1,
-		V90_JD_RATE_CAPABILITY_MASK, DATA_DOWNSTREAM_RATE);
+		V90_JD_RATE_CAPABILITY_MASK, DATA_DOWNSTREAM_RATE, false);
 }
 
 static bool step_endpoints(
@@ -885,9 +900,11 @@ static bool step_endpoints(
 
 	channel_receive(channel, &analog_received, &digital_received);
 	if (!endpoint_octet(
-		    analog, analog_received, law, &analog_transmitted) ||
+		    analog, analog_received, decode_octet(law, analog_received), law,
+		    &analog_transmitted) ||
 	    !endpoint_octet(
-		    digital, digital_received, law, &digital_transmitted))
+		    digital, digital_received, decode_octet(law, digital_received), law,
+		    &digital_transmitted))
 		return false;
 	channel_transmit(channel, analog_transmitted, digital_transmitted);
 	return true;
@@ -1011,7 +1028,8 @@ static bool retrain_preserves_protocol(
 		uint8_t transmitted;
 
 		if (pcm_call_octet(
-			    &retraining, silence, &transmitted,
+			    &retraining, silence, decode_octet(law, silence),
+			    &transmitted,
 			    &observation) != PCM_CALL_OK ||
 		    transmitted != silence)
 			return false;
@@ -1107,6 +1125,7 @@ static bool run_v92_phase4_control(
 					~(UINT32_C(1) << (rate - 1u));
 				CHECK(pcm_call_octet(
 					      &collision, analog_received,
+					      decode_octet(law, analog_received),
 					      &collision_output,
 					      &collision_observation) ==
 					      PCM_CALL_UNUSABLE_SELECTION &&
@@ -1125,7 +1144,9 @@ static bool run_v92_phase4_control(
 		digital_observation = (struct pcm_call_observation){ 0 };
 		analog_result = analog_ready ? PCM_CALL_PHASE4_READY :
 			pcm_call_octet(
-				&analog, analog_received, &analog_transmitted,
+				&analog, analog_received,
+				decode_octet(law, analog_received),
+				&analog_transmitted,
 				&analog_observation);
 		if (digital_ready) {
 			CHECK(v92_phase4_digital_station_transmit(
@@ -1136,7 +1157,9 @@ static bool run_v92_phase4_control(
 			digital_result = PCM_CALL_PHASE4_READY;
 		} else {
 			digital_result = pcm_call_octet(
-				&digital, digital_received, &digital_transmitted,
+				&digital, digital_received,
+				decode_octet(law, digital_received),
+				&digital_transmitted,
 				&digital_observation);
 		}
 		CHECK(analog_result == (analog_ready ? PCM_CALL_PHASE4_READY :
@@ -1321,10 +1344,12 @@ static bool run_v92_unavailable_selection(bool downstream)
 		channel_receive(
 			&channel, &analog_received, &digital_received);
 		analog_result = pcm_call_octet(
-			&analog, analog_received, &analog_transmitted,
+			&analog, analog_received, decode_octet(law, analog_received),
+			&analog_transmitted,
 			&analog_observation);
 		digital_result = pcm_call_octet(
-			&digital, digital_received, &digital_transmitted,
+			&digital, digital_received,
+			decode_octet(law, digital_received), &digital_transmitted,
 			&digital_observation);
 		if (analog_result != PCM_CALL_OK ||
 		    digital_result != PCM_CALL_OK) {
@@ -1370,7 +1395,8 @@ static bool test_downstream_rate_negotiation(void)
 {
 	CHECK(run_configured_call(
 		      G711_LAW_PCMU, 1, CALL_GOAL_ONLINE_DATA,
-		      UINT32_C(3), 2, UINT32_C(1), DATA_DOWNSTREAM_RATE),
+		      UINT32_C(3), 2, UINT32_C(1), DATA_DOWNSTREAM_RATE,
+		      false),
 	      "call did not select the highest mutually enabled rate");
 	return true;
 }
@@ -1393,6 +1419,11 @@ static bool test_generated_calls(void)
 	CHECK(run_call(G711_LAW_PCMU, 1, CALL_GOAL_ONLINE_DATA) &&
 	      run_call(G711_LAW_PCMA, 1, CALL_GOAL_ONLINE_DATA),
 	      "generated V.90 online data calls failed");
+	CHECK(run_configured_call(
+		      G711_LAW_PCMA, 1, CALL_GOAL_ONLINE_DATA,
+		      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
+		      DATA_DOWNSTREAM_RATE, true),
+	      "digital Phase 4 depended on a reconstructed codeword");
 	/* Retain the longer-delay pre-Phase-4 handoff regression separately
 	 * from the carrier-phase combinations covered through CPt/Ri above. */
 	CHECK(run_call(G711_LAW_PCMU, 13, CALL_GOAL_PHASE4_ENTRY) &&
@@ -1474,22 +1505,22 @@ static bool test_validation(void)
 	memset(&data_event, 0x3c, sizeof(data_event));
 	saved_data_event = data_event;
 	CHECK(pcm_call_octet(
-		      NULL, silence_octet(G711_LAW_PCMU),
+		      NULL, silence_octet(G711_LAW_PCMU), 0,
 		      &output, &observation) == PCM_CALL_INVALID_ARGUMENT &&
 	      pcm_call_start_retrain(NULL) == PCM_CALL_INVALID_ARGUMENT &&
 	      pcm_call_start_retrain(&call) == PCM_CALL_INVALID_STATE &&
 	      pcm_call_octet(
-		      &call, silence_octet(G711_LAW_PCMU),
+		      &call, silence_octet(G711_LAW_PCMU), 0,
 		      NULL, &observation) == PCM_CALL_INVALID_ARGUMENT &&
 	      pcm_call_octet(
-		      &call, silence_octet(G711_LAW_PCMU),
+		      &call, silence_octet(G711_LAW_PCMU), 0,
 		      &output, NULL) == PCM_CALL_INVALID_ARGUMENT &&
 	      pcm_call_octet(
-		      &call, silence_octet(G711_LAW_PCMU),
+		      &call, silence_octet(G711_LAW_PCMU), 0,
 		      (uint8_t *)&call, &observation) ==
 		      PCM_CALL_INVALID_ARGUMENT &&
 	      pcm_call_octet(
-		      &call, silence_octet(G711_LAW_PCMU),
+		      &call, silence_octet(G711_LAW_PCMU), 0,
 		      &output, (struct pcm_call_observation *)&call) ==
 		      PCM_CALL_INVALID_ARGUMENT &&
 	      pcm_call_start_data_path(NULL) == PCM_CALL_INVALID_ARGUMENT &&

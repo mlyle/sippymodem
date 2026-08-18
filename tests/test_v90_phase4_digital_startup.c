@@ -78,6 +78,12 @@ static uint8_t encode_sample(enum g711_law law, int16_t sample)
 		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
 }
 
+static int16_t decode_octet(enum g711_law law, uint8_t octet)
+{
+	return law == G711_LAW_PCMA ?
+		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
+}
+
 static bool prepare_stations(
 	enum g711_law law, struct v90_phase4_analog_station *analog,
 	struct v90_phase4_digital_station *digital)
@@ -193,8 +199,9 @@ static bool run_exchange(enum g711_law law)
 				demodulator->matched_filter_count;
 			continued_octets++;
 		}
-		CHECK(v90_phase4_digital_startup_octet(
-			      &startup, to_digital, &next_to_analog) ==
+		CHECK(v90_phase4_digital_startup_sample(
+			      &startup, decode_octet(law, to_digital),
+			      &next_to_analog) ==
 			      V90_PHASE4_STARTUP_OK,
 		      "law %u digital startup stopped at %zu",
 		      (unsigned int)law, clock);
@@ -253,8 +260,8 @@ static bool run_exchange(enum g711_law law)
 		struct v90_phase4_digital_startup saved = startup;
 		uint8_t output = 0xa5;
 
-		CHECK(v90_phase4_digital_startup_octet(
-			      &startup, to_digital, &output) ==
+		CHECK(v90_phase4_digital_startup_sample(
+			      &startup, decode_octet(law, to_digital), &output) ==
 			      V90_PHASE4_STARTUP_DONE &&
 		      output == 0xa5 &&
 		      memcmp(&startup, &saved, sizeof(startup)) == 0,
@@ -307,10 +314,10 @@ static bool test_contracts(void)
 		      V90_PHASE4_STARTUP_OK,
 	      "valid startup did not initialize");
 	saved = startup;
-	CHECK(v90_phase4_digital_startup_octet(
+	CHECK(v90_phase4_digital_startup_sample(
 		      &startup, 0, (uint8_t *)&startup) ==
 		      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
-	      v90_phase4_digital_startup_octet(
+	      v90_phase4_digital_startup_sample(
 		      &startup, 0, NULL) ==
 		      V90_PHASE4_STARTUP_INVALID_ARGUMENT &&
 	      v90_phase4_digital_startup_handoff(
@@ -324,7 +331,7 @@ static bool test_contracts(void)
 	failed = startup;
 	failed.failed = true;
 	CHECK(v90_phase4_digital_startup_is_valid(&failed) &&
-	      v90_phase4_digital_startup_octet(
+	      v90_phase4_digital_startup_sample(
 		      &failed, 0, &output) == V90_PHASE4_STARTUP_FAILED &&
 	      output == 0xa5 &&
 	      !v90_phase4_digital_startup_is_valid(NULL) &&

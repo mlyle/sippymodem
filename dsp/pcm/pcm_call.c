@@ -1024,7 +1024,7 @@ static enum pcm_call_result sample_phase2(
 }
 
 static enum pcm_call_result sample_retrain_silence(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
 	struct pcm_phase2 restarted;
@@ -1034,7 +1034,7 @@ static enum pcm_call_result sample_retrain_silence(
 	if (call->retrain_peer_tone_retained &&
 	    v34_phase2_tone_detector_sample(
 		    &call->retrain_detector.tone,
-		    decode_octet(call->law, received_octet), &event) !=
+		    received_sample, &event) !=
 		    V34_PHASE2_TONE_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	if (--call->state.retrain_silence.samples_remaining != 0u)
@@ -1062,13 +1062,12 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 }
 
 static enum pcm_call_result sample_retrain_detector(
-	const struct pcm_call *call, uint8_t received_octet,
+	const struct pcm_call *call, int16_t received_sample,
 	struct v34_retrain_detector *observed, bool *detected)
 {
 	*observed = call->retrain_detector;
 	return v34_retrain_detector_sample(
-		       observed, decode_octet(call->law, received_octet),
-		       detected) == V34_PHASE2_TONE_OK ?
+		       observed, received_sample, detected) == V34_PHASE2_TONE_OK ?
 		       PCM_CALL_OK : PCM_CALL_NUMERIC_FAILURE;
 }
 
@@ -1086,13 +1085,13 @@ static bool retrain_candidate_is_active(
 }
 
 static enum pcm_call_result observe_retrain_tone(
-	struct pcm_call *call, uint8_t received_octet)
+	struct pcm_call *call, int16_t received_sample)
 {
 	struct v34_retrain_detector observed;
 	bool detected;
 
 	if (sample_retrain_detector(
-		    call, received_octet, &observed, &detected) !=
+		    call, received_sample, &observed, &detected) !=
 	    PCM_CALL_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	call->retrain_detector = observed;
@@ -1899,7 +1898,7 @@ static void cancel_v92_cpu_repeat_if_confirmed(
 }
 
 static enum pcm_call_result sample_v92_phase4(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
 	if (call->local_role == V90_ANALOG_MODEM) {
@@ -1944,7 +1943,7 @@ static enum pcm_call_result sample_v92_phase4(
 		result = v92_digital_phase4_result(
 			v92_phase4_digital_station_receive(
 				&call->state.phase4.v92_digital,
-				decode_octet(call->law, received_octet)));
+				received_sample));
 		if (result != PCM_CALL_OK)
 			return result;
 		if (call->state.phase4.v92_digital.cpu_received &&
@@ -1959,20 +1958,20 @@ static enum pcm_call_result sample_v92_phase4(
 }
 
 static enum pcm_call_result sample_phase4(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
 	if (call->protocol == PCM_PROTOCOL_V92)
 		return sample_v92_phase4(
-			call, received_octet, transmit_octet);
+			call, received_octet, received_sample, transmit_octet);
 	enum v90_phase4_startup_result result =
 		call->local_role == V90_ANALOG_MODEM ?
 			v90_phase4_analog_startup_octet(
 				&call->state.phase4.analog,
 				received_octet, transmit_octet) :
-			v90_phase4_digital_startup_octet(
+			v90_phase4_digital_startup_sample(
 				&call->state.phase4.digital,
-				received_octet, transmit_octet);
+				received_sample, transmit_octet);
 
 	return phase4_startup_result(result);
 }
@@ -2275,7 +2274,7 @@ enum pcm_call_result pcm_call_data_octet(
 }
 
 enum pcm_call_result pcm_call_octet(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation)
 {
@@ -2310,11 +2309,11 @@ enum pcm_call_result pcm_call_octet(
 		break;
 	case PCM_CALL_PHASE4:
 		result = sample_phase4(
-			call, received_octet, &generated);
+			call, received_octet, received_sample, &generated);
 		break;
 	case PCM_CALL_RETRAIN_SILENCE:
 		result = sample_retrain_silence(
-			call, received_octet, &generated);
+			call, received_sample, &generated);
 		break;
 	default:
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -2324,7 +2323,7 @@ enum pcm_call_result pcm_call_octet(
 		result = reset_retrain_detector(call);
 	else if (result == PCM_CALL_OK && emitted.processed == call->stage &&
 		 retrain_detection_is_active(call))
-		result = observe_retrain_tone(call, received_octet);
+		result = observe_retrain_tone(call, received_sample);
 	if (result != PCM_CALL_OK)
 		call->failed = true;
 	emitted.next = call->stage;
