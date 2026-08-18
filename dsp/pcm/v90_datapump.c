@@ -38,6 +38,7 @@ static int process_v90_g711(
 	const uint8_t *receive_codewords, void *receive_samples,
 	uint8_t *transmit_codewords, void *transmit_samples,
 	int count, bool *exact_output);
+static int retrain_v90(struct dp *dp);
 
 static struct dp_operations v90_operations = {
 	.name = "V.90",
@@ -45,6 +46,7 @@ static struct dp_operations v90_operations = {
 	.delete = delete_v90,
 	.process = process_v90,
 	.process_g711 = process_v90_g711,
+	.retrain = retrain_v90,
 };
 
 static bool role_from_modem(
@@ -83,10 +85,16 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	    (!training_session_has_failed(&datapump->training) &&
 	     training_session_is_online(&datapump->training) !=
 		     (datapump->call_started &&
-		      pcm_call_is_online(&datapump->call))) ||
+		      pcm_call_is_online(&datapump->call)) &&
+	     !(training_session_is_retraining(&datapump->training) &&
+	       !pcm_call_is_online(&datapump->call))) ||
 	    (!training_session_has_failed(&datapump->training) &&
-	     training_session_is_online(&datapump->training) !=
-		     (dp->status == DPSTAT_CONNECT)))
+	     datapump->call_started && pcm_call_is_online(&datapump->call) &&
+	     dp->status != DPSTAT_CONNECT) ||
+	    (!training_session_has_failed(&datapump->training) &&
+	     (!datapump->call_started || !pcm_call_is_online(&datapump->call)) &&
+	     dp->status == DPSTAT_CONNECT &&
+	     !training_session_is_retraining(&datapump->training)))
 		return NULL;
 	return datapump;
 }
@@ -137,6 +145,29 @@ static int delete_v90(struct dp *dp)
 	v90_operations.use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
+	return 0;
+}
+
+static int retrain_v90(struct dp *dp)
+{
+	struct v90_datapump *datapump = v90_from_dp(dp);
+	struct training_session training;
+	struct pcm_call call;
+
+	if (datapump == NULL)
+		return -1;
+	if (training_session_is_retraining(&datapump->training))
+		return 0;
+	if (!training_session_is_online(&datapump->training))
+		return -1;
+	training = datapump->training;
+	call = datapump->call;
+	if (pcm_call_start_retrain(&call) != PCM_CALL_OK ||
+	    training_session_start_retrain(
+		    &training, TRAINING_LOCAL_RETRAIN) != TRAINING_SESSION_OK)
+		return -1;
+	datapump->call = call;
+	datapump->training = training;
 	return 0;
 }
 
@@ -343,6 +374,7 @@ static bool process_octet(
 	};
 	struct pcm_call_data_event event = { 0 };
 	enum pcm_call_result result;
+	bool was_online = pcm_call_is_online(&datapump->call);
 
 	if (pcm_call_phase4_is_ready(&datapump->call) &&
 	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
@@ -358,6 +390,14 @@ static bool process_octet(
 			&datapump->call, received, transmitted, &observation);
 	}
 	if (result != PCM_CALL_OK)
+		return false;
+	if (training_session_is_online(&datapump->training) && was_online &&
+	    !pcm_call_is_online(&datapump->call) &&
+	    pcm_call_current_stage(&datapump->call) ==
+		    PCM_CALL_RETRAIN_SILENCE &&
+	    training_session_start_retrain(
+		    &datapump->training, TRAINING_REMOTE_RETRAIN) !=
+		    TRAINING_SESSION_OK)
 		return false;
 	if (!training_session_is_online(&datapump->training) &&
 	    pcm_call_is_online(&datapump->call)) {

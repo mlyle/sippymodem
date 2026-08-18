@@ -216,7 +216,7 @@ static bool run_pair(
 	enum g711_law analog_law, enum g711_law digital_law,
 	uint32_t downstream_rate,
 	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
-	bool require_online)
+	bool require_online, enum modem_pcm_role retrain_role)
 {
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
@@ -237,7 +237,15 @@ static bool run_pair(
 	uint8_t analog_to_digital = digital_law == G711_LAW_PCMA ?
 					     g711_encode_pcma(0) :
 					     g711_encode_pcmu(0);
+	uint8_t digital_to_analog = analog_law == G711_LAW_PCMA ?
+					     g711_encode_pcma(0) :
+					     g711_encode_pcmu(0);
 	bool data_enabled = false;
+	bool retrain_requested = false;
+	bool analog_reconnected = false;
+	bool digital_reconnected = false;
+	bool post_retrain_data_enabled = false;
+	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE;
 
 	analog.min_rate = downstream_rate;
 	analog.max_rate = downstream_rate;
@@ -260,7 +268,10 @@ static bool run_pair(
 	      operations->use_count == 2 && v90_datapump_is_busy(),
 	      "V.90 peers did not own independent data pumps");
 	for (size_t octet = 0;
-	     octet < (require_online ? CALL_OCTET_LIMIT : 30000u); ++octet) {
+	     octet < (require_online ?
+			     CALL_OCTET_LIMIT * (exercise_retrain ? 2u : 1u) :
+			     30000u);
+	     ++octet) {
 		uint8_t next_digital;
 		uint8_t next_analog;
 		int16_t digital_receive = decode(digital_law, analog_to_digital);
@@ -269,6 +280,7 @@ static bool run_pair(
 		int16_t analog_transmit = 1;
 		bool digital_exact = false;
 		bool analog_exact = false;
+		int analog_result;
 		int digital_result = operations->process_g711(
 			digital_dp, digital_law,
 			&analog_to_digital, &digital_receive,
@@ -280,24 +292,68 @@ static bool run_pair(
 		      "digital V.90 path failed at octet %zu", octet);
 		next_digital = transcode(
 			digital_law, analog_law, next_digital);
-		analog_receive = decode(analog_law, next_digital);
-		int analog_result = operations->process_g711(
-			analog_dp, analog_law, &next_digital, &analog_receive,
-			&next_analog, &analog_transmit, 1, &analog_exact);
+		{
+			uint8_t delivered = digital_to_analog;
 
+			digital_to_analog = next_digital;
+			analog_receive = decode(analog_law, delivered);
+			analog_result = operations->process_g711(
+				analog_dp, analog_law, &delivered,
+				&analog_receive, &next_analog,
+				&analog_transmit, 1, &analog_exact);
+		}
 		CHECK((analog_result == DPSTAT_OK ||
 		       analog_result == DPSTAT_CONNECT) && analog_exact &&
 		      analog_transmit == decode(analog_law, next_analog),
 		      "analogue V.90 path failed at octet %zu", octet);
 		analog_to_digital = transcode(
 			analog_law, digital_law, next_analog);
+		if (retrain_requested) {
+			analog_reconnected |= analog_result == DPSTAT_CONNECT;
+			digital_reconnected |= digital_result == DPSTAT_CONNECT;
+			if (analog_reconnected && digital_reconnected &&
+			    !post_retrain_data_enabled) {
+				analog_bits = (struct bit_endpoint){
+					.transmit_seed = 0x6b,
+					.receive_seed = 0xd3,
+					.enabled = true,
+				};
+				digital_bits = (struct bit_endpoint){
+					.transmit_seed = 0xd3,
+					.receive_seed = 0x6b,
+					.enabled = true,
+				};
+				post_retrain_data_enabled = true;
+			}
+		}
 		if (!data_enabled && analog_dp->status == DPSTAT_CONNECT &&
 		    digital_dp->status == DPSTAT_CONNECT) {
 			analog_bits.enabled = true;
 			digital_bits.enabled = true;
 			data_enabled = true;
 		}
-		if (data_enabled &&
+		if (!data_enabled ||
+		    analog_bits.received_bits < MINIMUM_RECEIVED_BITS ||
+		    digital_bits.received_bits < MINIMUM_RECEIVED_BITS)
+			continue;
+		if (!exercise_retrain)
+			break;
+		if (!retrain_requested) {
+			struct dp *selected =
+				retrain_role == MODEM_PCM_ROLE_ANALOG ?
+					analog_dp : digital_dp;
+
+			CHECK(!analog_bits.mismatch && !digital_bits.mismatch &&
+			      operations->retrain != NULL &&
+			      operations->retrain(selected) == 0,
+			      "V.90 role %u local retrain request failed",
+			      (unsigned int)retrain_role);
+			analog_bits.enabled = false;
+			digital_bits.enabled = false;
+			retrain_requested = true;
+			continue;
+		}
+		if (post_retrain_data_enabled &&
 		    analog_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
 		    digital_bits.received_bits >= MINIMUM_RECEIVED_BITS)
 			break;
@@ -336,6 +392,12 @@ static bool run_pair(
 	      (unsigned long long)analog_bits.received_bits,
 	      (unsigned long long)digital_bits.received_bits,
 	      analog_bits.mismatch, digital_bits.mismatch);
+	CHECK(!exercise_retrain ||
+	      (retrain_requested && post_retrain_data_enabled &&
+	       analog_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
+	       digital_bits.received_bits >= MINIMUM_RECEIVED_BITS),
+	      "V.90 role %u did not complete local and remote retrain",
+	      (unsigned int)retrain_role);
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&
 	      operations->use_count == 0 && !v90_datapump_is_busy(),
@@ -355,10 +417,10 @@ static bool test_generated_pairs(void)
 
 		CHECK(run_pair(
 			      G711_LAW_PCMU, G711_LAW_PCMU,
-			      bit_rate, 0, 0, true) &&
+			      bit_rate, 0, 0, true, MODEM_PCM_ROLE_NONE) &&
 		      run_pair(
 			      G711_LAW_PCMA, G711_LAW_PCMA,
-			      bit_rate, 0, 0, true),
+			      bit_rate, 0, 0, true, MODEM_PCM_ROLE_NONE),
 		      "generated V.90 pair failed at %u bit/s", bit_rate);
 	}
 	CHECK(v90_datapump_unregister() == 0 &&
@@ -373,13 +435,33 @@ static bool test_forced_upstream_pairs(void)
 	      "forced-upstream V.90 registration failed");
 	CHECK(run_pair(
 		      G711_LAW_PCMU, G711_LAW_PCMU,
-		      42667, 26400, 3200, true) &&
+		      42667, 26400, 3200, true, MODEM_PCM_ROLE_NONE) &&
 		      run_pair(
 			      G711_LAW_PCMA, G711_LAW_PCMA,
-			      42667, 26400, 3200, true),
+			      42667, 26400, 3200, true,
+			      MODEM_PCM_ROLE_NONE),
 	      "V.90 data pump did not honor a forced upstream profile");
 	CHECK(v90_datapump_unregister() == 0,
 	      "forced-upstream V.90 registration remained busy");
+	return true;
+}
+
+static bool test_full_retrain_pairs(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "full-retrain V.90 registration failed");
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_pair(
+			      law, law, 28000, 14400, 3000, true,
+			      MODEM_PCM_ROLE_ANALOG) &&
+		      run_pair(
+			      law, law, 28000, 14400, 3000, true,
+			      MODEM_PCM_ROLE_DIGITAL),
+		      "law %u V.90 retrain roles failed", (unsigned int)law);
+	}
+	CHECK(v90_datapump_unregister() == 0,
+	      "full-retrain V.90 registration remained busy");
 	return true;
 }
 
@@ -389,10 +471,10 @@ static bool test_independent_media_laws(void)
 	      "mixed-media V.90 registration failed");
 	CHECK(run_pair(
 		      G711_LAW_PCMU, G711_LAW_PCMA,
-		      28000, 14400, 3000, false) &&
+		      28000, 14400, 3000, false, MODEM_PCM_ROLE_NONE) &&
 	      run_pair(
 		      G711_LAW_PCMA, G711_LAW_PCMU,
-		      28000, 14400, 3000, false),
+		      28000, 14400, 3000, false, MODEM_PCM_ROLE_NONE),
 	      "V.90 PCM codebook changed with endpoint media companding");
 	CHECK(v90_datapump_unregister() == 0,
 	      "mixed-media V.90 registration remained busy");
@@ -474,7 +556,8 @@ static bool test_validation(void)
 	operations = modem_dp_get_registered_ops(DP_V90);
 	CHECK(operations != NULL && operations->create != NULL &&
 	      operations->delete != NULL && operations->process != NULL &&
-	      operations->process_g711 != NULL && operations->hangup == NULL,
+	      operations->process_g711 != NULL && operations->retrain != NULL &&
+	      operations->hangup == NULL,
 	      "V.90 operation surface is incomplete");
 	modem.dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
 	CHECK(operations->create(
@@ -516,6 +599,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "forced upstream pairs", test_forced_upstream_pairs },
+		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "media-independent Phase 2 codebook",
 		  test_independent_media_laws },
 		{ "generated PCMU and PCMA data-pump pairs",
