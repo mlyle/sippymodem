@@ -1075,9 +1075,14 @@ static enum pcm_call_result sample_retrain_detector(
 static bool retrain_candidate_is_active(
 	const struct v34_retrain_detector *detector)
 {
-	return detector->silence_samples != 0u ||
-	       detector->tone_samples != 0u ||
-	       detector->edge_samples != 0u;
+	/* Brief low-energy windows occur in ordinary online QAM.  Do not starve
+	 * its receiver on the first such sample: wait for a sustained gap that
+	 * is still shorter than the receiver's carrier-loss guard.  Once the
+	 * silence-to-tone preamble has advanced, silence_samples remains latched
+	 * until the request either completes or is rejected. */
+	return detector->silence_samples >=
+		       V34_RETRAIN_MIN_SILENCE_SAMPLES ||
+	       detector->tone_samples != 0u;
 }
 
 static enum pcm_call_result observe_retrain_tone(
@@ -2073,6 +2078,9 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 		next.state.data_path.digital = path;
 	}
 	next.stage = PCM_CALL_DATA_PATH;
+	if (v34_retrain_detector_reset(&next.retrain_detector) !=
+	    V34_PHASE2_TONE_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = next;
@@ -2184,7 +2192,10 @@ enum pcm_call_result pcm_call_data_octet(
 {
 	const struct pcm_call_data_sources idle = { 0 };
 	struct pcm_call_data_event emitted = { 0 };
-	struct v34_retrain_detector observed_detector;
+	struct v90_pcm_stream_frame downstream_frame = { 0 };
+	struct v34_received_mapping_frame upstream_frame = { 0 };
+	enum v90_analog_path_result analog_result = V90_ANALOG_PATH_OK;
+	enum v90_digital_path_result digital_result = V90_DIGITAL_PATH_OK;
 	bool retrain_candidate = false;
 	bool retrain_detected = false;
 	uint8_t generated;
@@ -2199,81 +2210,60 @@ enum pcm_call_result pcm_call_data_octet(
 		return PCM_CALL_INVALID_STATE;
 	if (sources == NULL)
 		sources = &idle;
-	observed_detector = call->retrain_detector;
-	if (retrain_detection_is_active(call)) {
-		result = sample_retrain_detector(
-			call, received_octet, &observed_detector,
-			&retrain_detected);
-		if (result != PCM_CALL_OK)
-			return result;
-		retrain_candidate = retrain_detected ||
-			retrain_candidate_is_active(&observed_detector) ||
-			(call->local_role == V90_ANALOG_MODEM &&
-			 received_octet == encode_sample(call->law, 0));
-	}
+	retrain_candidate =
+		retrain_candidate_is_active(&call->retrain_detector) ||
+		(call->local_role == V90_ANALOG_MODEM &&
+		 received_octet == encode_sample(call->law, 0));
 	generated = encode_sample(call->law, 0);
 	if (call->local_role == V90_ANALOG_MODEM) {
-		struct v90_pcm_stream_frame frame = { 0 };
-		enum v90_analog_path_result path_result =
-			v90_analog_path_transmit(
-				&call->state.data_path.analog,
-				retrain_candidate ? NULL : sources->upstream,
-				retrain_candidate ? NULL : sources->upstream_context,
-				&generated);
-
-		result = analog_path_result(path_result);
-		if (result == PCM_CALL_SOURCE_FAILURE)
-			return result;
-		if (result != PCM_CALL_OK) {
-			call->failed = true;
-			return pcm_call_is_valid(call) ?
-				       result : PCM_CALL_NUMERIC_FAILURE;
-		}
-		path_result = retrain_candidate ?
+		analog_result = v90_analog_path_transmit(
+			&call->state.data_path.analog,
+			sources->upstream, sources->upstream_context,
+			&generated);
+		result = analog_path_result(analog_result);
+	} else if (retrain_candidate) {
+		digital_result = v90_digital_path_transmit(
+			&call->state.data_path.digital,
+			sources->downstream, sources->downstream_context,
+			&generated);
+		result = digital_path_result(digital_result);
+	} else {
+		digital_result = v90_digital_path_octet(
+			&call->state.data_path.digital, received_octet,
+			sources->downstream, sources->downstream_context,
+			&generated, &upstream_frame);
+		result = digital_path_result(digital_result);
+	}
+	if (result == PCM_CALL_SOURCE_FAILURE)
+		return result;
+	if (result == PCM_CALL_OK && call->local_role == V90_ANALOG_MODEM) {
+		analog_result = retrain_candidate ?
 			v90_analog_path_discard_receive(
 				&call->state.data_path.analog) :
 			v90_analog_path_receive(
-				&call->state.data_path.analog,
-				received_octet, &frame);
-		result = analog_path_result(path_result);
+				&call->state.data_path.analog, received_octet,
+				&downstream_frame);
+		result = analog_path_result(analog_result);
 		if (!retrain_candidate &&
-		    path_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
-			emitted.frame.downstream = frame;
+		    analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
+			emitted.frame.downstream = downstream_frame;
 			emitted.kind = PCM_CALL_DOWNSTREAM_FRAME;
 		}
-	} else {
-		struct v34_received_mapping_frame frame = { 0 };
-		enum v90_digital_path_result path_result =
-			v90_digital_path_transmit(
-				&call->state.data_path.digital,
-				retrain_candidate ? NULL : sources->downstream,
-				retrain_candidate ? NULL : sources->downstream_context,
-				&generated);
-
-		result = digital_path_result(path_result);
-		if (result == PCM_CALL_SOURCE_FAILURE)
-			return result;
-		if (result == PCM_CALL_OK && !retrain_candidate) {
-			path_result = v90_digital_path_receive(
-				&call->state.data_path.digital,
-				received_octet, &frame);
-			result = digital_path_result(path_result);
-		}
-		if (path_result == V90_DIGITAL_PATH_INVALID_ARGUMENT) {
-			call->failed = true;
-			return PCM_CALL_NUMERIC_FAILURE;
-		}
-		if (!retrain_candidate &&
-		    path_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
-			emitted.frame.upstream = frame;
+	} else if (result == PCM_CALL_OK && !retrain_candidate) {
+		if (digital_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
+			emitted.frame.upstream = upstream_frame;
 			emitted.kind = PCM_CALL_UPSTREAM_FRAME;
 		}
 	}
 	if (result == PCM_CALL_OK) {
-		call->retrain_detector = observed_detector;
-		if (retrain_detected)
-			result = begin_retrain(call, true);
+		if (v34_retrain_detector_sample(
+			    &call->retrain_detector,
+			    decode_octet(call->law, received_octet),
+			    &retrain_detected) != V34_PHASE2_TONE_OK)
+			result = PCM_CALL_NUMERIC_FAILURE;
 	}
+	if (result == PCM_CALL_OK && retrain_detected)
+		result = begin_retrain(call, true);
 	if (result != PCM_CALL_OK)
 		call->failed = true;
 	if (!pcm_call_is_valid(call)) {

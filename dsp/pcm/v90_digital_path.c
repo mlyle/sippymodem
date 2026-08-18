@@ -442,6 +442,9 @@ enum v90_digital_path_result v90_digital_path_octet(
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received)
 {
+	struct v34_received_mapping_frame frame = { 0 };
+	uint8_t generated;
+	bool frame_ready = false;
 	enum v90_digital_path_result result;
 
 	if (!v90_digital_path_is_valid(path) || transmit_octet == NULL ||
@@ -454,13 +457,25 @@ enum v90_digital_path_result v90_digital_path_octet(
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
-	result = v90_digital_path_transmit(
-		path, source, source_context, transmit_octet);
+	generated = silence_octet(path->law);
+	result = emit_downstream(
+		path, source, source_context, &generated);
 	if (result == V90_DIGITAL_PATH_SOURCE_FAILURE)
 		return result;
 	if (result == V90_DIGITAL_PATH_OK)
-		result = v90_digital_path_receive(
-			path, received_octet, received);
+		result = receive_upstream(
+			path, decode_octet(path->law, received_octet),
+			&frame, &frame_ready);
+	if (result != V90_DIGITAL_PATH_OK &&
+	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
+		path->failed = true;
+	if (!v90_digital_path_is_valid(path)) {
+		path->failed = true;
+		result = V90_DIGITAL_PATH_INTERNAL_ERROR;
+	}
+	*transmit_octet = generated;
+	if (frame_ready)
+		*received = frame;
 	return result;
 }
 

@@ -927,21 +927,35 @@ static bool run_full_retrain(
 	      initiator->call.protocol == PCM_PROTOCOL_V90,
 	      "law %u role %u did not begin local full retrain",
 	      (unsigned int)law, (unsigned int)initiating_role);
-	/* A full retrain discards physical frames already in flight; LAPM owns
-	 * reliable replay above this boundary. Continue with each source's next
-	 * fresh frame and require new bidirectional data after reconnection. */
-	analog.resume_frame_index = digital.downstream_source.frames;
-	digital.resume_frame_index = analog.upstream_source.frames;
-	analog.resync_data_frame = true;
-	digital.resync_data_frame = true;
-	downstream_before = analog.resume_frame_index;
-	upstream_before = digital.resume_frame_index;
+	/* The responder continues clocking its source until the complete remote
+	 * preamble is qualified. LAPM owns replay of those physically lost frames;
+	 * anchor the next fresh frame at the actual remote-retrain boundary. */
+	downstream_before = digital.downstream_source.frames;
+	upstream_before = analog.upstream_source.frames;
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		if (!remote_retrain_started) {
+			analog.resume_frame_index =
+				digital.downstream_source.frames;
+			digital.resume_frame_index =
+				analog.upstream_source.frames;
+			analog.resync_data_frame = true;
+			digital.resync_data_frame = true;
+		}
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
 		      "law %u role %u retrain stopped at %zu",
 		      (unsigned int)law, (unsigned int)initiating_role, clock);
-		remote_retrain_started |=
-			responder->call.stage == PCM_CALL_RETRAIN_SILENCE;
+		if (!remote_retrain_started &&
+		    responder->call.stage == PCM_CALL_RETRAIN_SILENCE) {
+			remote_retrain_started = true;
+			analog.resume_frame_index =
+				digital.downstream_source.frames;
+			digital.resume_frame_index =
+				analog.upstream_source.frames;
+			analog.resync_data_frame = true;
+			digital.resync_data_frame = true;
+			downstream_before = analog.resume_frame_index;
+			upstream_before = digital.resume_frame_index;
+		}
 		if (remote_retrain_started && pcm_call_is_online(&analog.call) &&
 		    pcm_call_is_online(&digital.call) &&
 		    analog.downstream_frames > downstream_before &&

@@ -303,6 +303,34 @@ static void add_observation(
 		V34_PHASE2_TONE_WINDOW_SAMPLES;
 }
 
+static void add_silence_observation(
+	struct v34_phase2_tone_detector *detector, int16_t sample)
+{
+	struct v34_phase2_tone_observation *old =
+		&detector->history[detector->history_index];
+	double energy = (double)sample * sample;
+
+	/* The retrain preamble starts with silence.  Until that silence has
+	 * qualified, carrier phase is irrelevant: maintain only its rolling
+	 * energy window and leave the tone detector reset for the following
+	 * Tone A/B.  This keeps ordinary online data off the trigonometric path. */
+	if (detector->history_count == V34_PHASE2_TONE_WINDOW_SAMPLES)
+		detector->line_energy -= old->energy;
+	else
+		detector->history_count++;
+	detector->line_energy += energy;
+	*old = (struct v34_phase2_tone_observation){ .energy = energy };
+	detector->history_index =
+		(detector->history_index + 1u) %
+		V34_PHASE2_TONE_WINDOW_SAMPLES;
+	detector->measurement_ready =
+		detector->history_count == V34_PHASE2_TONE_WINDOW_SAMPLES;
+	detector->line_power = detector->measurement_ready ?
+		detector->line_energy / V34_PHASE2_TONE_WINDOW_SAMPLES : 0.0;
+	detector->carrier_power = 0.0;
+	detector->carrier_share = 0.0;
+}
+
 static bool measurement_qualifies(
 	struct v34_phase2_tone_detector *detector)
 {
@@ -421,42 +449,40 @@ static bool observe_reversal(
 	return false;
 }
 
+static void sample_valid_tone_detector(
+	struct v34_phase2_tone_detector *detector, int16_t sample,
+	struct v34_phase2_tone_event *event)
+{
+	struct v34_phase2_tone_event emitted = { 0 };
+	bool was_present;
+	bool qualifies = false;
+
+	was_present = detector->tone_present;
+	add_observation(detector, sample);
+	if (detector->measurement_ready)
+		qualifies = measurement_qualifies(detector);
+	emitted.kind = acquire_or_release(detector, qualifies);
+	if (was_present && detector->tone_present &&
+	    observe_reversal(
+		    detector, qualifies, &emitted.reversal_delay_samples))
+		emitted.kind = V34_PHASE2_TONE_PHASE_REVERSED;
+	*event = emitted;
+}
+
 enum v34_phase2_tone_result
 v34_phase2_tone_detector_sample(
 	struct v34_phase2_tone_detector *detector,
 	int16_t sample, struct v34_phase2_tone_event *event)
 {
-	struct v34_phase2_tone_detector next;
-	struct v34_phase2_tone_event emitted = { 0 };
-	bool was_present;
-	bool qualifies = false;
-
-	if (!v34_phase2_tone_detector_is_valid(detector) ||
-	    event == NULL)
+	if (!v34_phase2_tone_detector_is_valid(detector) || event == NULL)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	next = *detector;
-	was_present = next.tone_present;
-	add_observation(&next, sample);
-	if (next.measurement_ready)
-		qualifies = measurement_qualifies(&next);
-	emitted.kind = acquire_or_release(&next, qualifies);
-	if (was_present && next.tone_present &&
-	    observe_reversal(
-		    &next, qualifies, &emitted.reversal_delay_samples))
-		emitted.kind = V34_PHASE2_TONE_PHASE_REVERSED;
-	if (!v34_phase2_tone_detector_is_valid(&next))
-		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	*detector = next;
-	*event = emitted;
+	sample_valid_tone_detector(detector, sample, event);
 	return V34_PHASE2_TONE_OK;
 }
 
-struct v34_phase2_tone_measurement
-v34_phase2_tone_detector_measure(
+static struct v34_phase2_tone_measurement measure_valid_tone_detector(
 	const struct v34_phase2_tone_detector *detector)
 {
-	if (!v34_phase2_tone_detector_is_valid(detector))
-		return (struct v34_phase2_tone_measurement){ 0 };
 	return (struct v34_phase2_tone_measurement){
 		.line_power = detector->line_power,
 		.carrier_power = detector->carrier_power,
@@ -464,6 +490,15 @@ v34_phase2_tone_detector_measure(
 		.ready = detector->measurement_ready,
 		.tone_present = detector->tone_present,
 	};
+}
+
+struct v34_phase2_tone_measurement
+v34_phase2_tone_detector_measure(
+	const struct v34_phase2_tone_detector *detector)
+{
+	return v34_phase2_tone_detector_is_valid(detector) ?
+		       measure_valid_tone_detector(detector) :
+		       (struct v34_phase2_tone_measurement){ 0 };
 }
 
 bool v34_retrain_detector_is_valid(
@@ -537,60 +572,63 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 	struct v34_retrain_detector *detector, int16_t sample,
 	bool *detected)
 {
-	struct v34_retrain_detector next;
 	struct v34_phase2_tone_measurement measurement;
 	struct v34_phase2_tone_event event;
 	bool emitted = false;
 
 	if (!v34_retrain_detector_is_valid(detector) || detected == NULL)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	next = *detector;
-	if (v34_phase2_tone_detector_sample(
-		    &next.tone, sample, &event) != V34_PHASE2_TONE_OK)
-		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	measurement = v34_phase2_tone_detector_measure(&next.tone);
-	if (next.silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
+	if (detector->silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
+		add_silence_observation(&detector->tone, sample);
+		measurement = measure_valid_tone_detector(&detector->tone);
 		if (measurement.ready &&
 		    measurement.line_power <=
 			    V34_RETRAIN_SILENCE_MAX_LINE_POWER)
-			next.silence_samples++;
+			detector->silence_samples++;
 		else
-			next.silence_samples = 0;
-	} else if (retrain_tone_matches(&next, &measurement)) {
-		next.edge_samples = 0;
+			detector->silence_samples = 0;
+		if (detector->silence_samples ==
+		    V34_RETRAIN_MIN_SILENCE_SAMPLES &&
+		    v34_phase2_tone_detector_reset(&detector->tone) !=
+			    V34_PHASE2_TONE_OK)
+			return V34_PHASE2_TONE_INVALID_ARGUMENT;
+		*detected = false;
+		return V34_PHASE2_TONE_OK;
+	}
+	sample_valid_tone_detector(&detector->tone, sample, &event);
+	measurement = measure_valid_tone_detector(&detector->tone);
+	if (retrain_tone_matches(detector, &measurement)) {
+		detector->edge_samples = 0;
 		if (event.kind == V34_PHASE2_TONE_STARTED)
-			next.tone_samples =
+			detector->tone_samples =
 				V34_PHASE2_TONE_ACQUIRE_SAMPLES;
-		else if (next.tone_samples < V34_RETRAIN_TONE_SAMPLES)
-			next.tone_samples++;
-		if (next.tone_samples == V34_RETRAIN_TONE_SAMPLES) {
-			struct v34_phase2_tone_detector retained = next.tone;
+		else if (detector->tone_samples < V34_RETRAIN_TONE_SAMPLES)
+			detector->tone_samples++;
+		if (detector->tone_samples == V34_RETRAIN_TONE_SAMPLES) {
+			struct v34_phase2_tone_detector retained = detector->tone;
 
 			emitted = true;
-			if (reset_retrain_candidate(&next) !=
+			if (reset_retrain_candidate(detector) !=
 			    V34_PHASE2_TONE_OK)
 				return V34_PHASE2_TONE_INVALID_ARGUMENT;
 			/* A responding modem must retain the qualified peer tone's
 			 * phase across its silence so the following reversal is still
 			 * observable. Explicit reset remains available to initiators. */
-			next.tone = retained;
+			detector->tone = retained;
 		}
-	} else if (next.tone_samples != 0) {
+	} else if (detector->tone_samples != 0) {
 		/* A qualified request is continuous.  Once its tone breaks, a new
 		 * silence preamble is required. */
-		if (reset_retrain_candidate(&next) != V34_PHASE2_TONE_OK)
+		if (reset_retrain_candidate(detector) != V34_PHASE2_TONE_OK)
 			return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	} else if (measurement.ready &&
 		   measurement.line_power <=
 			   V34_RETRAIN_SILENCE_MAX_LINE_POWER) {
-		next.edge_samples = 0;
-	} else if (++next.edge_samples >= V34_RETRAIN_EDGE_SAMPLES) {
-		if (reset_retrain_candidate(&next) != V34_PHASE2_TONE_OK)
+		detector->edge_samples = 0;
+	} else if (++detector->edge_samples >= V34_RETRAIN_EDGE_SAMPLES) {
+		if (reset_retrain_candidate(detector) != V34_PHASE2_TONE_OK)
 			return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	}
-	if (!v34_retrain_detector_is_valid(&next))
-		return V34_PHASE2_TONE_INVALID_ARGUMENT;
-	*detector = next;
 	*detected = emitted;
 	return V34_PHASE2_TONE_OK;
 }

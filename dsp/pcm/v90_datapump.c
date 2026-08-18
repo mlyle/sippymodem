@@ -374,12 +374,17 @@ static bool process_octet(
 	};
 	struct pcm_call_data_event event = { 0 };
 	enum pcm_call_result result;
-	bool was_online = pcm_call_is_online(&datapump->call);
+	bool was_online = training_session_is_online(&datapump->training);
 
-	if (pcm_call_phase4_is_ready(&datapump->call) &&
+	/* The datapump is the serialized owner of a call that every public
+	 * transition validates.  Consult its stage directly here instead of
+	 * recursively validating the complete PCM graph several times per
+	 * network character. */
+	if (datapump->call.stage == PCM_CALL_PHASE4 &&
+	    pcm_call_phase4_is_ready(&datapump->call) &&
 	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
 		return false;
-	if (pcm_call_current_stage(&datapump->call) == PCM_CALL_DATA_PATH) {
+	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
 		result = pcm_call_data_octet(
 			&datapump->call, received, &sources,
 			transmitted, &event);
@@ -391,10 +396,8 @@ static bool process_octet(
 	}
 	if (result != PCM_CALL_OK)
 		return false;
-	if (training_session_is_online(&datapump->training) && was_online &&
-	    !pcm_call_is_online(&datapump->call) &&
-	    pcm_call_current_stage(&datapump->call) ==
-		    PCM_CALL_RETRAIN_SILENCE &&
+	if (was_online &&
+	    datapump->call.stage == PCM_CALL_RETRAIN_SILENCE &&
 	    training_session_start_retrain(
 		    &datapump->training, TRAINING_REMOTE_RETRAIN) !=
 		    TRAINING_SESSION_OK)
