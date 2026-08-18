@@ -252,14 +252,17 @@ static struct v90_cp_parameters cp_parameters(
 		.law = law,
 		.upstream_rate_mask = upstream_rate_mask,
 		.trn1d_ratio_q3_13 = 0x2000u,
-		.shaping_a1_q1_6 = -16,
-		.shaping_a2_q1_6 = 8,
-		.shaping_b1_q1_6 = -1,
-		.shaping_b2_q1_6 = 31,
+		.shaping_a1_q1_6 = kind == V90_CP_TRAINING ? 0 : -16,
+		.shaping_a2_q1_6 = kind == V90_CP_TRAINING ? 0 : 8,
+		.shaping_b1_q1_6 = kind == V90_CP_TRAINING ? 0 : -1,
+		.shaping_b2_q1_6 = kind == V90_CP_TRAINING ? 0 : 31,
 		.selected_rate_index = kind == V90_CP_TRAINING ?
 			13 : data_rate_index,
-		.sign_redundancy = V90_SIGN_REDUNDANCY,
-		.spectral_lookahead = 2,
+		/* Keep CPt unshaped so its fixed MP'/Ed boundary has no delayed
+		 * spectral frame to carry into the data mapping. */
+		.sign_redundancy = kind == V90_CP_TRAINING ?
+			0 : V90_SIGN_REDUNDANCY,
+		.spectral_lookahead = kind == V90_CP_TRAINING ? 0 : 2,
 		.constellation_count = 1,
 	};
 

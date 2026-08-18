@@ -292,7 +292,8 @@ static bool verify_data_stream(
 }
 
 static bool run_stream(
-	enum g711_law law, bool type1, bool request_during_trn2d)
+	enum g711_law law, bool type1, bool request_during_trn2d,
+	uint8_t training_redundancy, uint8_t training_lookahead)
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_mp_record record = make_record(type1);
@@ -302,12 +303,15 @@ static bool run_stream(
 	size_t mp_records = 0;
 	size_t first_mp_symbol = 0;
 	size_t prime_records = 0;
+	size_t expected_prime_records = training_lookahead == 0 ? 2u : 3u;
 	size_t symbols = 0;
 	bool prime_requested = false;
 	bool ed_requested = false;
 	bool ed_received = false;
 
-	CHECK(make_mapping(&mapping, law, V90_CP_TRAINING) &&
+	CHECK(make_mapping_with_shaping(
+		      &mapping, law, V90_CP_TRAINING,
+		      training_redundancy, training_lookahead) &&
 	      mapping.frame_bits == FRAME_BITS &&
 	      pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
@@ -408,7 +412,7 @@ static bool run_stream(
 	      ed_requested && ed_received &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      first_mp_symbol >= V90_PHASE4_TRN2D_INITIAL_SYMBOLS &&
-	      mp_records == 1 && prime_records == 3 &&
+	      mp_records == 1 && prime_records == expected_prime_records &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&
 	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&
 	      transmitter.transmitted_symbols == symbols &&
@@ -538,10 +542,14 @@ static bool run_stream(
 
 static bool test_continuous_streams(void)
 {
-	CHECK(run_stream(G711_LAW_PCMU, false, true),
+	CHECK(run_stream(G711_LAW_PCMU, false, true, 2, 2),
 	      "PCMU early-request stream failed");
-	CHECK(run_stream(G711_LAW_PCMA, true, false),
+	CHECK(run_stream(G711_LAW_PCMA, true, false, 2, 2),
 	      "PCMA mid-record stream failed");
+	CHECK(run_stream(G711_LAW_PCMU, false, false, 0, 0),
+	      "PCMU unshaped CPt stream failed");
+	CHECK(run_stream(G711_LAW_PCMA, true, true, 0, 0),
+	      "PCMA unshaped CPt stream failed");
 	return true;
 }
 

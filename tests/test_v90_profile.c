@@ -119,8 +119,24 @@ static bool test_generated_profiles(void)
 						      .training_parameters.kind ==
 						      V90_CP_TRAINING &&
 					      configuration.analog_phase4
+						      .training_parameters.sign_redundancy == 0 &&
+					      configuration.analog_phase4
+						      .training_parameters.spectral_lookahead == 0 &&
+					      configuration.analog_phase4
+						      .training_parameters.shaping_a1_q1_6 == 0 &&
+					      configuration.analog_phase4
+						      .training_parameters.shaping_a2_q1_6 == 0 &&
+					      configuration.analog_phase4
+						      .training_parameters.shaping_b1_q1_6 == 0 &&
+					      configuration.analog_phase4
+						      .training_parameters.shaping_b2_q1_6 == 0 &&
+					      configuration.analog_phase4
 						      .data_parameters.kind ==
 						      V90_CP_DATA &&
+					      configuration.analog_phase4
+						      .data_parameters.sign_redundancy == 1 &&
+					      configuration.analog_phase4
+						      .data_parameters.spectral_lookahead == 2 &&
 					      configuration.analog_phase4
 						      .data_parameters
 						      .selected_rate_index == rate_index &&
