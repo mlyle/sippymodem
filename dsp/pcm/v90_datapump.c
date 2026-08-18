@@ -19,9 +19,13 @@ struct v90_datapump {
 	struct pcm_call call;
 	struct training_session training;
 	enum v90_modem_role role;
-	enum g711_law law;
+	enum g711_law media_law;
 	bool call_started;
 };
+
+/* The integrated digital network currently uses the North American PCM
+ * codebook.  SIP companding is an independent transport choice. */
+static const enum g711_law v90_pcm_law = G711_LAW_PCMU;
 
 static struct dp *create_v90(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
@@ -70,10 +74,10 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	if (&datapump->dp != dp || datapump->role != role ||
 	    !training_session_is_valid(&datapump->training) ||
 	    (datapump->call_started &&
-	     (!g711_law_is_valid(datapump->law) ||
+	     (!g711_law_is_valid(datapump->media_law) ||
 	      !pcm_call_is_valid(&datapump->call) ||
 	      datapump->call.local_role != datapump->role ||
-	      datapump->call.law != datapump->law ||
+	      datapump->call.law != v90_pcm_law ||
 	      (pcm_call_has_failed(&datapump->call) &&
 	       !training_session_has_failed(&datapump->training)))) ||
 	    (!training_session_has_failed(&datapump->training) &&
@@ -268,7 +272,7 @@ static bool enter_link(struct v90_datapump *datapump)
 }
 
 static bool start_call(
-	struct v90_datapump *datapump, enum g711_law law)
+	struct v90_datapump *datapump, enum g711_law media_law)
 {
 	struct pcm_call_configuration configuration;
 	const struct v90_upstream_policy upstream = {
@@ -281,16 +285,50 @@ static bool start_call(
 	};
 
 	if (datapump->call_started)
-		return datapump->law == law;
+		return datapump->media_law == media_law;
 	if (v90_profile_init(
-		    &configuration, datapump->role, law,
+		    &configuration, datapump->role, v90_pcm_law,
 		    datapump->dp.modem->min_rate,
 		    datapump->dp.modem->max_rate, &upstream) != V90_PROFILE_OK ||
 	    pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
 		return false;
-	datapump->law = law;
+	datapump->media_law = media_law;
 	datapump->call_started = true;
 	return true;
+}
+
+static uint8_t media_to_pcm_octet(enum g711_law media_law, uint8_t octet)
+{
+	uint8_t pcmu;
+
+	if (media_law == v90_pcm_law)
+		return octet;
+	/* A-law retains two signed minimum-magnitude characters.  Preserve
+	 * their sign as the two PCMU zero characters instead of rounding both
+	 * to PCMU magnitude one. */
+	if (octet == g711_encode_pcma(0))
+		return g711_encode_pcmu(0);
+	if (octet == g711_encode_pcma(-1))
+		return g711_encode_pcmu(-1);
+	pcmu = g711_encode_pcmu(g711_decode_pcma(octet));
+	if (g711_encode_pcma(g711_decode_pcmu(pcmu)) == octet)
+		return pcmu;
+	/* The negative A-law bias puts a small set of exact tandem levels on
+	 * the lower neighboring PCMU character.  Recover that character rather
+	 * than moving a valid V.90 U-code by one. */
+	if (pcmu != 0 &&
+	    g711_encode_pcma(g711_decode_pcmu((uint8_t)(pcmu - 1u))) == octet)
+		return (uint8_t)(pcmu - 1u);
+	return pcmu;
+}
+
+static uint8_t pcm_to_media_octet(enum g711_law media_law, uint8_t octet)
+{
+	if (media_law == v90_pcm_law)
+		return octet;
+	if (octet == g711_encode_pcmu(-1))
+		return g711_encode_pcma(-1);
+	return g711_encode_pcma(g711_decode_pcmu(octet));
 }
 
 static bool process_octet(
@@ -372,14 +410,19 @@ static int process_v90_g711(
 	if (!start_call(datapump, law))
 		goto failure;
 	for (int index = 0; index < count; ++index) {
+		uint8_t pcm_transmit;
+
 		if (!training_session_is_online(&datapump->training) &&
 		    training_session_advance(&datapump->training, 1) !=
 			    TRAINING_SESSION_OK)
 			goto failure;
 		if (!process_octet(
-			    datapump, receive_codewords[index],
-			    &transmit_codewords[index], &connected))
+			    datapump,
+			    media_to_pcm_octet(law, receive_codewords[index]),
+			    &pcm_transmit, &connected))
 			goto failure;
+		transmit_codewords[index] =
+			pcm_to_media_octet(law, pcm_transmit);
 		transmit_samples[index] = law == G711_LAW_PCMA ?
 			g711_decode_pcma(transmit_codewords[index]) :
 			g711_decode_pcmu(transmit_codewords[index]);

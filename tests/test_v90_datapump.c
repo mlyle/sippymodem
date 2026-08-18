@@ -169,9 +169,54 @@ static int16_t decode(enum g711_law law, uint8_t octet)
 		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
 }
 
+static uint8_t encode(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMA ?
+		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
+}
+
+static uint8_t transcode(
+	enum g711_law source, enum g711_law destination, uint8_t octet)
+{
+	uint8_t best;
+	int32_t best_error = INT32_MAX;
+	int16_t target;
+
+	if (source == destination)
+		return octet;
+	if (source == G711_LAW_PCMU)
+		return encode(destination, decode(source, octet));
+	if (octet == g711_encode_pcma(0))
+		return g711_encode_pcmu(0);
+	if (octet == g711_encode_pcma(-1))
+		return g711_encode_pcmu(-1);
+	target = g711_decode_pcma(octet);
+	best = g711_encode_pcmu(target);
+	/* Independently invert the finite tandem code space.  This models a
+	 * codec bridge without assuming the implementation's neighboring-code
+	 * shortcut. */
+	for (unsigned int candidate = 0; candidate <= UINT8_MAX; ++candidate) {
+		int16_t sample = g711_decode_pcmu((uint8_t)candidate);
+		int32_t error;
+
+		if (g711_encode_pcma(sample) != octet)
+			continue;
+		error = (int32_t)sample - target;
+		if (error < 0)
+			error = -error;
+		if (error < best_error) {
+			best = (uint8_t)candidate;
+			best_error = error;
+		}
+	}
+	return best;
+}
+
 static bool run_pair(
-	enum g711_law law, uint32_t downstream_rate,
-	uint32_t upstream_rate, uint32_t upstream_symbol_rate)
+	enum g711_law analog_law, enum g711_law digital_law,
+	uint32_t downstream_rate,
+	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
+	bool require_online)
 {
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
@@ -189,7 +234,7 @@ static bool run_pair(
 		modem_dp_get_registered_ops(DP_V90);
 	struct dp *analog_dp;
 	struct dp *digital_dp;
-	uint8_t analog_to_digital = law == G711_LAW_PCMA ?
+	uint8_t analog_to_digital = digital_law == G711_LAW_PCMA ?
 					     g711_encode_pcma(0) :
 					     g711_encode_pcmu(0);
 	bool data_enabled = false;
@@ -214,33 +259,38 @@ static bool run_pair(
 	CHECK(analog_dp != NULL && digital_dp != NULL &&
 	      operations->use_count == 2 && v90_datapump_is_busy(),
 	      "V.90 peers did not own independent data pumps");
-	for (size_t octet = 0; octet < CALL_OCTET_LIMIT; ++octet) {
+	for (size_t octet = 0;
+	     octet < (require_online ? CALL_OCTET_LIMIT : 30000u); ++octet) {
 		uint8_t next_digital;
 		uint8_t next_analog;
-		int16_t digital_receive = decode(law, analog_to_digital);
+		int16_t digital_receive = decode(digital_law, analog_to_digital);
 		int16_t analog_receive;
 		int16_t digital_transmit = 1;
 		int16_t analog_transmit = 1;
 		bool digital_exact = false;
 		bool analog_exact = false;
 		int digital_result = operations->process_g711(
-			digital_dp, law, &analog_to_digital, &digital_receive,
+			digital_dp, digital_law,
+			&analog_to_digital, &digital_receive,
 			&next_digital, &digital_transmit, 1, &digital_exact);
 
 		CHECK((digital_result == DPSTAT_OK ||
 		       digital_result == DPSTAT_CONNECT) && digital_exact &&
-		      digital_transmit == decode(law, next_digital),
+		      digital_transmit == decode(digital_law, next_digital),
 		      "digital V.90 path failed at octet %zu", octet);
-		analog_receive = decode(law, next_digital);
+		next_digital = transcode(
+			digital_law, analog_law, next_digital);
+		analog_receive = decode(analog_law, next_digital);
 		int analog_result = operations->process_g711(
-			analog_dp, law, &next_digital, &analog_receive,
+			analog_dp, analog_law, &next_digital, &analog_receive,
 			&next_analog, &analog_transmit, 1, &analog_exact);
 
 		CHECK((analog_result == DPSTAT_OK ||
 		       analog_result == DPSTAT_CONNECT) && analog_exact &&
-		      analog_transmit == decode(law, next_analog),
+		      analog_transmit == decode(analog_law, next_analog),
 		      "analogue V.90 path failed at octet %zu", octet);
-		analog_to_digital = next_analog;
+		analog_to_digital = transcode(
+			analog_law, digital_law, next_analog);
 		if (!data_enabled && analog_dp->status == DPSTAT_CONNECT &&
 		    digital_dp->status == DPSTAT_CONNECT) {
 			analog_bits.enabled = true;
@@ -251,6 +301,17 @@ static bool run_pair(
 		    analog_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
 		    digital_bits.received_bits >= MINIMUM_RECEIVED_BITS)
 			break;
+	}
+	if (!require_online) {
+		CHECK((analog_dp->status == DPSTAT_OK ||
+		       analog_dp->status == DPSTAT_CONNECT) &&
+		      (digital_dp->status == DPSTAT_OK ||
+		       digital_dp->status == DPSTAT_CONNECT) &&
+		      operations->delete(analog_dp) == 0 &&
+		      operations->delete(digital_dp) == 0 &&
+		      operations->use_count == 0,
+		      "V.90 media-law boundary did not remain live through Phase 2");
+		return true;
 	}
 	CHECK(data_enabled && analog_dp->status == DPSTAT_CONNECT &&
 	      digital_dp->status == DPSTAT_CONNECT &&
@@ -292,8 +353,12 @@ static bool test_generated_pairs(void)
 		uint32_t bit_rate =
 			pcm_downstream_bit_rate(rate_index);
 
-		CHECK(run_pair(G711_LAW_PCMU, bit_rate, 0, 0) &&
-		      run_pair(G711_LAW_PCMA, bit_rate, 0, 0),
+		CHECK(run_pair(
+			      G711_LAW_PCMU, G711_LAW_PCMU,
+			      bit_rate, 0, 0, true) &&
+		      run_pair(
+			      G711_LAW_PCMA, G711_LAW_PCMA,
+			      bit_rate, 0, 0, true),
 		      "generated V.90 pair failed at %u bit/s", bit_rate);
 	}
 	CHECK(v90_datapump_unregister() == 0 &&
@@ -306,11 +371,31 @@ static bool test_forced_upstream_pairs(void)
 {
 	CHECK(v90_datapump_register() == 0,
 	      "forced-upstream V.90 registration failed");
-	CHECK(run_pair(G711_LAW_PCMU, 42667, 26400, 3200) &&
-		      run_pair(G711_LAW_PCMA, 42667, 26400, 3200),
+	CHECK(run_pair(
+		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      42667, 26400, 3200, true) &&
+		      run_pair(
+			      G711_LAW_PCMA, G711_LAW_PCMA,
+			      42667, 26400, 3200, true),
 	      "V.90 data pump did not honor a forced upstream profile");
 	CHECK(v90_datapump_unregister() == 0,
 	      "forced-upstream V.90 registration remained busy");
+	return true;
+}
+
+static bool test_independent_media_laws(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "mixed-media V.90 registration failed");
+	CHECK(run_pair(
+		      G711_LAW_PCMU, G711_LAW_PCMA,
+		      28000, 14400, 3000, false) &&
+	      run_pair(
+		      G711_LAW_PCMA, G711_LAW_PCMU,
+		      28000, 14400, 3000, false),
+	      "V.90 PCM codebook changed with endpoint media companding");
+	CHECK(v90_datapump_unregister() == 0,
+	      "mixed-media V.90 registration remained busy");
 	return true;
 }
 
@@ -431,6 +516,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "forced upstream pairs", test_forced_upstream_pairs },
+		{ "media-independent Phase 2 codebook",
+		  test_independent_media_laws },
 		{ "generated PCMU and PCMA data-pump pairs",
 		  test_generated_pairs },
 		{ "training deadline", test_training_deadline },
