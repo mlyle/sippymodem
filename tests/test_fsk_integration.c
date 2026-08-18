@@ -1944,7 +1944,8 @@ static bool run_v34_recording_replay(
 	return true;
 }
 
-static bool run_v22bis_recording_replay(const char *path)
+static bool run_v22bis_recording_replay(
+	const char *path, bool answerer)
 {
 	static const char dial_command[] = "ATDrecording\r";
 	static const char *const commands[] = {
@@ -1969,12 +1970,21 @@ static bool run_v22bis_recording_replay(const char *path)
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)),
 	      "V.22bis recording replay setup was rejected");
-	CHECK(modem_write(
-		      endpoint.modem, dial_command,
-		      (int)(sizeof(dial_command) - 1u)) ==
-		      (int)(sizeof(dial_command) - 1u) &&
-		      modem_report_outgoing_call_connected(endpoint.modem) == 0,
-	      "V.22bis recording replay did not start the call");
+	if (answerer) {
+		CHECK(modem_report_incoming_call(endpoint.modem) == 0 &&
+			      endpoint_drain(&endpoint) &&
+			      output_contains(&endpoint, "RING") &&
+			      modem_answer(endpoint.modem) == 0,
+		      "V.22bis answer recording replay did not start the call");
+		endpoint.output_count = 0;
+	} else {
+		CHECK(modem_write(
+			      endpoint.modem, dial_command,
+			      (int)(sizeof(dial_command) - 1u)) ==
+			      (int)(sizeof(dial_command) - 1u) &&
+			      modem_report_outgoing_call_connected(endpoint.modem) == 0,
+		      "V.22bis originator recording replay did not start the call");
+	}
 	for (size_t offset = 0; offset < recording.count;) {
 		size_t count = recording.count - offset;
 
@@ -1994,11 +2004,12 @@ static bool run_v22bis_recording_replay(const char *path)
 	}
 	CHECK(connected_at != SIZE_MAX &&
 		      connected_at <= V22_REPLAY_CONNECT_SAMPLES,
-	      "V.22bis recording did not acquire promptly (sample %zu)",
-	      connected_at);
+	      "V.22bis %s recording did not acquire promptly (sample %zu)",
+	      answerer ? "answer" : "originator", connected_at);
 	fprintf(stderr,
-		"[       OK ] V.22bis recording replay (%zu samples, carrier at %zu, terminal bytes %zu)\n",
-		recording.count, connected_at, endpoint.output_count);
+		"[       OK ] V.22bis %s recording replay (%zu samples, carrier at %zu, terminal bytes %zu)\n",
+		answerer ? "answer" : "originator", recording.count,
+		connected_at, endpoint.output_count);
 
 	endpoint_destroy(&endpoint);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
@@ -2241,6 +2252,8 @@ int main(void)
 	const char *integration_filter = getenv("MODEM_INTEGRATION_FILTER");
 	const char *v22_recording_path =
 		getenv("V22_REPLAY_RX_PCM");
+	const char *v22_answer_recording_path =
+		getenv("V22_ANSWER_REPLAY_RX_PCM");
 	const char *v90_recording_path =
 		getenv("V90_REPLAY_RX_G711");
 	const char *v90_recording_law =
@@ -2542,7 +2555,16 @@ int main(void)
 	if (v22_recording_path == NULL || v22_recording_path[0] == '\0') {
 		fprintf(stderr,
 			"[  SKIPPED ] V.22bis recording replay (V22_REPLAY_RX_PCM unset)\n");
-	} else if (!run_v22bis_recording_replay(v22_recording_path)) {
+	} else if (!run_v22bis_recording_replay(
+			   v22_recording_path, false)) {
+		return 1;
+	}
+	if (v22_answer_recording_path == NULL ||
+	    v22_answer_recording_path[0] == '\0') {
+		fprintf(stderr,
+			"[  SKIPPED ] V.22bis answer recording replay (V22_ANSWER_REPLAY_RX_PCM unset)\n");
+	} else if (!run_v22bis_recording_replay(
+			   v22_answer_recording_path, true)) {
 		return 1;
 	}
 	if (v34_recording_path == NULL || v34_recording_path[0] == '\0') {
