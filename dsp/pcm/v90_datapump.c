@@ -7,6 +7,7 @@
 #include "modem_param.h"
 #include "pcm_call.h"
 #include "training_session.h"
+#include "v90_info1.h"
 #include "v90_profile.h"
 #include "v92_profile.h"
 
@@ -385,12 +386,38 @@ static bool start_call(
 	return true;
 }
 
-static uint8_t media_to_pcm_octet(enum g711_law media_law, uint8_t octet)
+static bool accepts_pcma_negative_zero_alias(
+	const struct v90_datapump *datapump,
+	enum g711_law media_law, uint8_t octet)
+{
+	uint8_t alias;
+
+	/* Some signed-linear bridges turn the PCMU -1 negative-zero sentinel
+	 * into negative A-law U-code 15.  It is unambiguous only while the
+	 * analogue V.90 endpoint is matching Sd's prescribed negative-zero
+	 * slot, so do not normalize that character in any later PCM stream.
+	 * U=127 makes Sd's other magnitude wrap to 15 and stays strict. */
+	return media_law == G711_LAW_PCMA &&
+	       g711_ucode_octet(G711_LAW_PCMA, 15u, false, &alias) &&
+	       octet == alias && datapump->protocol == PCM_PROTOCOL_V90 &&
+	       datapump->call.stage == PCM_CALL_PHASE3 &&
+	       datapump->call.local_role == V90_ANALOG_MODEM &&
+	       datapump->call.state.phase3.analog.receive_stage ==
+		       V90_PHASE3_ANALOG_RECEIVE_SD &&
+	       datapump->call.state.phase3.analog.receive.sd.training_ucode !=
+		       V90_INFO1A_MAX_TRAINING_UCODE;
+}
+
+static uint8_t media_to_pcm_octet(
+	const struct v90_datapump *datapump,
+	enum g711_law media_law, uint8_t octet)
 {
 	uint8_t pcmu;
 
 	if (media_law == v90_pcm_law)
 		return octet;
+	if (accepts_pcma_negative_zero_alias(datapump, media_law, octet))
+		return g711_encode_pcmu(-1);
 	/* A-law retains two signed minimum-magnitude characters.  Preserve
 	 * their sign as the two PCMU zero characters instead of rounding both
 	 * to PCMU magnitude one. */
@@ -520,7 +547,8 @@ static int process_v90_g711(
 			goto failure;
 		if (!process_octet(
 			    datapump,
-			    media_to_pcm_octet(law, receive_codewords[index]),
+			    media_to_pcm_octet(
+				    datapump, law, receive_codewords[index]),
 			    receive_samples[index],
 			    &pcm_transmit, &connected))
 			goto failure;

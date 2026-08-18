@@ -249,7 +249,7 @@ static bool run_pair_with_input_contract(
 	uint32_t downstream_rate,
 	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
 	bool require_online, enum modem_pcm_role retrain_role,
-	bool separate_upstream_sample)
+	bool separate_upstream_sample, bool alias_pcma_negative_zero)
 {
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
@@ -280,6 +280,8 @@ static bool run_pair_with_input_contract(
 	bool post_retrain_data_enabled = false;
 	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE;
 	bool sample_codeword_separated = false;
+	uint8_t pcma_negative_zero = 0;
+	uint8_t pcma_negative_zero_alias = 0;
 
 	analog.min_rate = downstream_rate;
 	analog.max_rate = downstream_rate;
@@ -301,6 +303,14 @@ static bool run_pair_with_input_contract(
 	CHECK(analog_dp != NULL && digital_dp != NULL &&
 	      operations->use_count == 2 && v90_datapump_is_busy(),
 	      "V.90 peers did not own independent data pumps");
+	CHECK(!alias_pcma_negative_zero ||
+	      (analog_law == G711_LAW_PCMA &&
+	       g711_ucode_octet(
+		       G711_LAW_PCMA, 0u, false, &pcma_negative_zero) &&
+	       g711_ucode_octet(
+		       G711_LAW_PCMA, 15u, false,
+		       &pcma_negative_zero_alias)),
+	      "PCMA negative-zero alias fixture failed");
 	for (size_t octet = 0;
 	     octet < (require_online ?
 			     CALL_OCTET_LIMIT * (exercise_retrain ? 2u : 1u) :
@@ -335,6 +345,9 @@ static bool run_pair_with_input_contract(
 		      "digital V.90 path failed at octet %zu", octet);
 		next_digital = transcode(
 			digital_law, analog_law, next_digital);
+		if (alias_pcma_negative_zero &&
+		    next_digital == pcma_negative_zero)
+			next_digital = pcma_negative_zero_alias;
 		{
 			uint8_t delivered = digital_to_analog;
 
@@ -459,7 +472,7 @@ static bool run_pair(
 	return run_pair_with_input_contract(
 		analog_law, digital_law, downstream_rate,
 		upstream_rate, upstream_symbol_rate,
-		require_online, retrain_role, false);
+		require_online, retrain_role, false, false);
 }
 
 static bool test_generated_pairs(void)
@@ -510,11 +523,25 @@ static bool test_upstream_uses_media_samples(void)
 	CHECK(run_pair_with_input_contract(
 		      G711_LAW_PCMA, G711_LAW_PCMA,
 		      42667, 26400, 3200, true,
-		      MODEM_PCM_ROLE_NONE, true),
+		      MODEM_PCM_ROLE_NONE, true, false),
 	      "digital upstream receiver used the PCMA codeword instead of "
 	      "the media sample");
 	CHECK(v90_datapump_unregister() == 0,
 	      "sample-owned V.90 registration remained busy");
+	return true;
+}
+
+static bool test_pcma_negative_zero_bridge(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "PCMA negative-zero bridge registration failed");
+	CHECK(run_pair_with_input_contract(
+		      G711_LAW_PCMA, G711_LAW_PCMA,
+		      28000, 14400, 3000, true,
+		      MODEM_PCM_ROLE_NONE, false, true),
+	      "V.90 Sd did not survive the PCMA negative-zero bridge");
+	CHECK(v90_datapump_unregister() == 0,
+	      "PCMA negative-zero bridge registration remained busy");
 	return true;
 }
 
@@ -759,6 +786,7 @@ int main(void)
 		  test_v92_pcm_upstream_selection },
 		{ "forced upstream pairs", test_forced_upstream_pairs },
 		{ "sample-owned PCMA upstream", test_upstream_uses_media_samples },
+		{ "PCMA negative-zero bridge", test_pcma_negative_zero_bridge },
 		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "media-independent Phase 2 codebook",
 		  test_independent_media_laws },
