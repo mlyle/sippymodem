@@ -7,18 +7,55 @@
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
+#include <string.h>
 
 static const double V34_PHASE2_DPSK_ROLLOFF = 0.75;
-static const double V34_PHASE2_DPSK_TWO_PI =
-	6.283185307179586476925286766559;
 static const double V34_PHASE2_ANSWERING_CARRIER_GAIN =
 	0.8912509381337456; /* -1 dB. */
 static const double V34_PHASE2_ANSWERING_GUARD_GAIN =
 	0.44668359215096315; /* -7 dB. */
-static const double V34_PHASE2_DPSK_DETECTOR_CUTOFF_HZ = 360.0;
-static const double V34_PHASE2_DPSK_DETECTOR_Q =
-	0.707106781186547524400844362105;
-static const double V34_PHASE2_DPSK_GUARD_NOTCH_RADIUS = 0.95;
+
+/* The role-selected Q16 carrier filter removes the other Phase 2 carrier and
+ * the answering guard before differential detection. Both 60-tap filters are
+ * symmetric, so only one half is retained. */
+static const int16_t v34_phase2_carrier_2400_q16
+	[V34_PHASE2_DPSK_CARRIER_FILTER_TAPS / 2] = {
+	1, -3, 6, -8, 7, -76, 219, -3, -287, 143,
+	63, 97, -2, -603, 520, 620, -1031, -1, 505, 75,
+	618, -2116, -1, 4871, -3932, -4825, 9114, -1, -10948, 7012,
+};
+
+static const int16_t v34_phase2_carrier_1200_q16
+	[V34_PHASE2_DPSK_CARRIER_FILTER_TAPS / 2] = {
+	0, 0, -1, 1, 0, -55, -225, -207, 47, 218,
+	96, -15, 254, 628, 402, -478, -1072, -653, 82, -114,
+	-937, -348, 2549, 5057, 3036, -3727, -9456, -7573, 1801, 10628,
+};
+
+/* The INFO receiver works at 24 kHz. These compact Q14 filters retain both
+ * Phase 2 carriers while suppressing the interpolation image, then retain the
+ * 600-bit/s differential decisions below 360 Hz. The third interpolation
+ * phase is the reverse of the first and the low-pass is symmetric. */
+static const int16_t v34_phase2_interpolator_q14[2]
+	[V34_PHASE2_DPSK_INTERPOLATOR_TAPS] = {
+	{
+		-133, 336, 192, -2224, 3753, 13940,
+		7918, -1709, -658, 586, -90, -58,
+	},
+	{
+		-108, 70, 603, -1655, 313, 11694,
+		11694, 313, -1655, 603, 70, -108,
+	},
+};
+
+static const int16_t v34_phase2_lowpass_q14
+	[V34_PHASE2_DPSK_LOWPASS_TAPS / 2] = {
+	-19, -17, -15, -13, -10, -6, -1, 6,
+	16, 29, 45, 65, 89, 118, 152, 191,
+	236, 285, 340, 400, 464, 533, 606, 681,
+	759, 839, 919, 999, 1078, 1155, 1229, 1298,
+	1363, 1422, 1474, 1518, 1554, 1582, 1601, 1610,
+};
 
 static bool role_is_valid(enum v34_station_role role)
 {
@@ -193,135 +230,22 @@ v34_phase2_dpsk_transmitter_sample(
 	return V34_PHASE2_DPSK_OK;
 }
 
-static void configure_guard_filter(
-	struct v34_phase2_dpsk_filter *filter)
-{
-	double radians = V34_PHASE2_DPSK_TWO_PI *
-			 V34_PHASE2_ANSWERING_GUARD_HZ /
-			 V34_PHASE2_SAMPLE_RATE;
-	double cosine = cos(radians);
-	double radius = V34_PHASE2_DPSK_GUARD_NOTCH_RADIUS;
-	double numerator_at_dc = 2.0 - 2.0 * cosine;
-	double denominator_at_dc =
-		1.0 - 2.0 * radius * cosine + radius * radius;
-	double scale = denominator_at_dc / numerator_at_dc;
-
-	filter->b0 = scale;
-	filter->b1 = -2.0 * cosine * scale;
-	filter->b2 = scale;
-	filter->a1 = -2.0 * radius * cosine;
-	filter->a2 = radius * radius;
-}
-
-static void configure_lowpass_filter(
-	struct v34_phase2_dpsk_filter *filter)
-{
-	double sample_rate =
-		V34_PHASE2_SAMPLE_RATE *
-		V34_PHASE2_DPSK_INTERPOLATION;
-	double radians = V34_PHASE2_DPSK_TWO_PI *
-			 V34_PHASE2_DPSK_DETECTOR_CUTOFF_HZ / sample_rate;
-	double cosine = cos(radians);
-	double alpha = sin(radians) / (2.0 * V34_PHASE2_DPSK_DETECTOR_Q);
-	double scale = 1.0 / (1.0 + alpha);
-
-	filter->b0 = (1.0 - cosine) * 0.5 * scale;
-	filter->b1 = (1.0 - cosine) * scale;
-	filter->b2 = filter->b0;
-	filter->a1 = -2.0 * cosine * scale;
-	filter->a2 = (1.0 - alpha) * scale;
-}
-
-static void configure_detector_filter(
-	struct v34_phase2_dpsk_receiver *receiver)
-{
-	/* Generate both small filters instead of retaining coefficient tables.
-	 * The input notch removes the answering station's 1800 Hz guard before
-	 * differential multiplication can mix it with the 2400 Hz carrier. The
-	 * 360 Hz Butterworth section then retains the 600-bit/s decisions while
-	 * rejecting carrier and interpolation products. */
-	configure_guard_filter(&receiver->guard_filter);
-	configure_lowpass_filter(&receiver->detector_filter);
-}
-
-static bool filter_state_is_finite(
-	const struct v34_phase2_dpsk_filter *filter)
-{
-	return isfinite(filter->input_1) && isfinite(filter->input_2) &&
-	       isfinite(filter->output_1) && isfinite(filter->output_2);
-}
-
-static bool guard_filter_is_valid(
-	const struct v34_phase2_dpsk_filter *filter)
-{
-	double dc_numerator;
-	double dc_denominator;
-
-	if (!filter_state_is_finite(filter) || !isfinite(filter->b0) ||
-	    filter->b0 <= 0.0 || filter->b2 != filter->b0 ||
-	    !isfinite(filter->b1) || filter->b1 >= 0.0 ||
-	    !isfinite(filter->a1) || filter->a1 <= -2.0 ||
-	    filter->a1 >= 2.0 || !isfinite(filter->a2) ||
-	    filter->a2 <= 0.0 || filter->a2 >= 1.0)
-		return false;
-	dc_numerator = filter->b0 + filter->b1 + filter->b2;
-	dc_denominator = 1.0 + filter->a1 + filter->a2;
-	return fabs(dc_numerator - dc_denominator) < 1e-12;
-}
-
-static bool lowpass_filter_is_valid(
-	const struct v34_phase2_dpsk_filter *filter)
-{
-	double dc_numerator;
-	double dc_denominator;
-
-	if (!filter_state_is_finite(filter) || !isfinite(filter->b0) ||
-	    filter->b0 <= 0.0 ||
-	    filter->b0 >= 1.0 || filter->b1 != 2.0 * filter->b0 ||
-	    filter->b2 != filter->b0 || !isfinite(filter->a1) ||
-	    filter->a1 <= -2.0 || filter->a1 >= 0.0 ||
-	    !isfinite(filter->a2) || filter->a2 <= 0.0 ||
-	    filter->a2 >= 1.0)
-		return false;
-	dc_numerator = filter->b0 + filter->b1 + filter->b2;
-	dc_denominator = 1.0 + filter->a1 + filter->a2;
-	return fabs(dc_numerator - dc_denominator) < 1e-12;
-}
-
-static bool detector_filter_is_valid(
-	const struct v34_phase2_dpsk_receiver *receiver)
-{
-	return guard_filter_is_valid(&receiver->guard_filter) &&
-	       lowpass_filter_is_valid(&receiver->detector_filter);
-}
-
-static bool delay_history_is_finite(
-	const struct v34_phase2_dpsk_receiver *receiver)
-{
-	for (size_t index = 0;
-	     index < V34_PHASE2_DPSK_DIFFERENTIAL_DELAY; ++index)
-		if (!isfinite(receiver->delay_history[index]))
-			return false;
-	return true;
-}
-
 bool v34_phase2_dpsk_receiver_is_valid(
 	const struct v34_phase2_dpsk_receiver *receiver)
 {
 	return receiver != NULL && role_is_valid(receiver->local_role) &&
-	       detector_filter_is_valid(receiver) &&
-	       delay_history_is_finite(receiver) &&
+	       receiver->input_count < V34_PHASE2_DPSK_INPUT_BLOCK &&
+	       receiver->carrier_index <
+		       V34_PHASE2_DPSK_CARRIER_FILTER_TAPS &&
 	       receiver->delay_index <
 		       V34_PHASE2_DPSK_DIFFERENTIAL_DELAY &&
-	       receiver->delay_count <=
-		       V34_PHASE2_DPSK_DIFFERENTIAL_DELAY &&
+	       receiver->lowpass_index < V34_PHASE2_DPSK_LOWPASS_TAPS &&
 	       receiver->decimation_phase <
 		       V34_PHASE2_DPSK_DETECTOR_DECIMATION &&
 	       receiver->observations_until_bit <=
 		       V34_PHASE2_DPSK_TIMING_OBSERVATIONS &&
 	       receiver->timing_locked ==
 		       (receiver->observations_until_bit != 0) &&
-	       isfinite(receiver->previous_sample) &&
 	       isfinite(receiver->detector_output) &&
 	       isfinite(receiver->line_power) && receiver->line_power >= 0.0 &&
 	       isfinite(receiver->symbol_power) &&
@@ -339,7 +263,6 @@ v34_phase2_dpsk_receiver_init(
 
 	if (receiver == NULL || !role_is_valid(local_role))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
-	configure_detector_filter(&initialized);
 	if (!v34_phase2_dpsk_receiver_is_valid(&initialized))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	*receiver = initialized;
@@ -358,78 +281,139 @@ v34_phase2_dpsk_receiver_reset(
 	return v34_phase2_dpsk_receiver_init(receiver, local_role);
 }
 
-static double interpolate_sample(
-	double previous, double current, unsigned int phase)
+static int16_t q14_shift(int64_t accumulator, bool round)
 {
-	double fraction = (double)(phase + 1u) /
-			  (double)V34_PHASE2_DPSK_INTERPOLATION;
+	int64_t shifted;
 
-	return previous + (current - previous) * fraction;
+	if (round)
+		accumulator += INT64_C(8192);
+	if (accumulator >= 0)
+		shifted = accumulator / INT64_C(16384);
+	else
+		shifted = -((-accumulator + INT64_C(16383)) /
+			    INT64_C(16384));
+	if (shifted > INT16_MAX)
+		return INT16_MAX;
+	if (shifted < INT16_MIN)
+		return INT16_MIN;
+	return (int16_t)shifted;
 }
 
-static double differential_product(
-	struct v34_phase2_dpsk_receiver *receiver,
-	double current)
+static int16_t select_carrier(
+	struct v34_phase2_dpsk_receiver *receiver, int16_t sample)
 {
-	double delayed = receiver->delay_history[receiver->delay_index];
+	const int16_t *coefficients =
+		receiver->local_role == V34_CALLING_STATION ?
+			v34_phase2_carrier_2400_q16 :
+			v34_phase2_carrier_1200_q16;
+	int64_t accumulator = INT64_C(32768);
+	size_t next;
 
-	/* Threefold interpolation makes one 600-bit/s interval exactly forty
-	 * samples. Multiplication by that delayed waveform removes either INFO
-	 * carrier without estimating its phase; a reversal produces a negative
-	 * decision and an unchanged phase produces a positive one. */
+	receiver->carrier_history[receiver->carrier_index] = sample;
+	next = (receiver->carrier_index + 1u) %
+	       V34_PHASE2_DPSK_CARRIER_FILTER_TAPS;
+	receiver->carrier_index = next;
+	for (size_t tap = 0;
+	     tap < V34_PHASE2_DPSK_CARRIER_FILTER_TAPS / 2u; ++tap) {
+		size_t recent =
+			(next + V34_PHASE2_DPSK_CARRIER_FILTER_TAPS - 1u - tap) %
+			V34_PHASE2_DPSK_CARRIER_FILTER_TAPS;
+		size_t old =
+			(next + tap) % V34_PHASE2_DPSK_CARRIER_FILTER_TAPS;
+
+		accumulator +=
+			(int32_t)coefficients[tap] *
+			((int32_t)receiver->carrier_history[recent] +
+			 receiver->carrier_history[old]);
+	}
+	if (accumulator >= 0)
+		accumulator /= INT64_C(65536);
+	else
+		accumulator = -((-accumulator + INT64_C(65535)) /
+				INT64_C(65536));
+	if (accumulator > INT16_MAX)
+		return INT16_MAX;
+	if (accumulator < INT16_MIN)
+		return INT16_MIN;
+	return (int16_t)accumulator;
+}
+
+static int16_t interpolate(
+	const struct v34_phase2_dpsk_receiver *receiver, unsigned int phase)
+{
+	const int16_t *coefficients =
+		v34_phase2_interpolator_q14[phase == 1u];
+	bool reverse = phase != 2u;
+	int64_t accumulator = 0;
+
+	for (size_t tap = 0;
+	     tap < V34_PHASE2_DPSK_INTERPOLATOR_TAPS; ++tap) {
+		size_t coefficient = reverse ?
+			V34_PHASE2_DPSK_INTERPOLATOR_TAPS - 1u - tap :
+			tap;
+
+		accumulator +=
+			(int32_t)receiver->interpolation_history[tap] *
+			coefficients[coefficient];
+	}
+	return q14_shift(accumulator, true);
+}
+
+static int16_t differential_product(
+	struct v34_phase2_dpsk_receiver *receiver, int16_t current)
+{
+	int16_t delayed = receiver->delay_history[receiver->delay_index];
+
 	receiver->delay_history[receiver->delay_index] = current;
 	receiver->delay_index =
 		(receiver->delay_index + 1u) %
 		V34_PHASE2_DPSK_DIFFERENTIAL_DELAY;
-	if (receiver->delay_count <
-	    V34_PHASE2_DPSK_DIFFERENTIAL_DELAY) {
-		receiver->delay_count++;
-		return 0.0;
+	return q14_shift((int32_t)current * delayed, false);
+}
+
+static int16_t lowpass_detector(
+	struct v34_phase2_dpsk_receiver *receiver, int16_t current)
+{
+	int64_t accumulator = 0;
+	size_t next;
+
+	receiver->lowpass_history[receiver->lowpass_index] = current;
+	next = (receiver->lowpass_index + 1u) %
+	       V34_PHASE2_DPSK_LOWPASS_TAPS;
+	receiver->lowpass_index = next;
+	for (size_t tap = 0; tap < V34_PHASE2_DPSK_LOWPASS_TAPS / 2u;
+	     ++tap) {
+		size_t recent =
+			(next + V34_PHASE2_DPSK_LOWPASS_TAPS - 1u - tap) %
+			V34_PHASE2_DPSK_LOWPASS_TAPS;
+		size_t old = (next + tap) % V34_PHASE2_DPSK_LOWPASS_TAPS;
+
+		accumulator +=
+			(int32_t)v34_phase2_lowpass_q14[tap] *
+			((int32_t)receiver->lowpass_history[recent] +
+			 receiver->lowpass_history[old]);
 	}
-	return current * delayed;
+	return q14_shift(accumulator, false);
 }
 
-static double filter_detector_section(
-	struct v34_phase2_dpsk_filter *filter, double input)
-{
-	double output = filter->b0 * input + filter->b1 * filter->input_1 +
-			filter->b2 * filter->input_2 -
-			filter->a1 * filter->output_1 -
-			filter->a2 * filter->output_2;
-
-	filter->input_2 = filter->input_1;
-	filter->input_1 = input;
-	filter->output_2 = filter->output_1;
-	filter->output_1 = output;
-	return output;
-}
-
-static double filter_detector(
-	struct v34_phase2_dpsk_receiver *receiver,
-	double input)
-{
-	return filter_detector_section(
-		&receiver->detector_filter, input);
-}
-
-static bool crossed_zero(double previous, double current)
+static bool crossed_zero(double previous, int16_t current)
 {
 	return (previous < 0.0 && current >= 0.0) ||
 	       (previous >= 0.0 && current < 0.0);
 }
 
 static bool observe_detector(
-	struct v34_phase2_dpsk_receiver *receiver,
-	double current, uint8_t *bit)
+	struct v34_phase2_dpsk_receiver *receiver, int16_t current,
+	uint8_t *bit)
 {
 	bool ready = false;
 
 	receiver->symbol_power +=
-		(fabs(current) - receiver->symbol_power) / 64.0;
+		(fabs((double)current) - receiver->symbol_power) / 64.0;
 	if (crossed_zero(receiver->detector_output, current)) {
 		receiver->timing_locked = true;
 		receiver->observations_until_bit =
-			V34_PHASE2_DPSK_TIMING_OBSERVATIONS / 2u;
+			V34_PHASE2_DPSK_TIMING_OBSERVATIONS / 2u + 1u;
 	} else if (receiver->timing_locked &&
 		   --receiver->observations_until_bit == 0) {
 		*bit = current <= 0.0;
@@ -441,14 +425,45 @@ static bool observe_detector(
 	return ready;
 }
 
+static bool process_input_block(
+	struct v34_phase2_dpsk_receiver *receiver, uint8_t *bit)
+{
+	int16_t interpolated[
+		V34_PHASE2_DPSK_INPUT_BLOCK * V34_PHASE2_DPSK_INTERPOLATION];
+	bool ready = false;
+
+	for (size_t input = 0; input < V34_PHASE2_DPSK_INPUT_BLOCK; ++input) {
+		memmove(
+			&receiver->interpolation_history[1],
+			&receiver->interpolation_history[0],
+			(V34_PHASE2_DPSK_INTERPOLATOR_TAPS - 1u) *
+				sizeof(receiver->interpolation_history[0]));
+		receiver->interpolation_history[0] = receiver->input[input];
+		for (unsigned int phase = 0;
+		     phase < V34_PHASE2_DPSK_INTERPOLATION; ++phase)
+			interpolated[input * V34_PHASE2_DPSK_INTERPOLATION + phase] =
+				interpolate(receiver, phase);
+	}
+	for (size_t index = 0;
+	     index < sizeof(interpolated) / sizeof(interpolated[0]); ++index) {
+		int16_t product = differential_product(receiver, interpolated[index]);
+		int16_t filtered = lowpass_detector(receiver, product);
+
+		if (++receiver->decimation_phase !=
+		    V34_PHASE2_DPSK_DETECTOR_DECIMATION)
+			continue;
+		receiver->decimation_phase = 0;
+		if (observe_detector(receiver, filtered, bit))
+			ready = true;
+	}
+	return ready;
+}
+
 enum v34_phase2_dpsk_result
 v34_phase2_dpsk_receiver_sample(
 	struct v34_phase2_dpsk_receiver *receiver,
 	int16_t sample, uint8_t *bit, bool *bit_ready)
 {
-	struct v34_phase2_dpsk_receiver next;
-	double current;
-	double previous;
 	uint8_t received = 0;
 	bool ready = false;
 
@@ -456,30 +471,16 @@ v34_phase2_dpsk_receiver_sample(
 	    bit == NULL ||
 	    bit_ready == NULL)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
-	next = *receiver;
-	current = sample;
-	if (next.local_role == V34_CALLING_STATION)
-		current = filter_detector_section(&next.guard_filter, current);
-	previous = next.has_previous_sample ? next.previous_sample : current;
-	for (unsigned int phase = 0;
-	     phase < V34_PHASE2_DPSK_INTERPOLATION; ++phase) {
-		double interpolated = interpolate_sample(previous, current, phase);
-		double product = differential_product(&next, interpolated);
-		double filtered = filter_detector(&next, product);
-
-		if (++next.decimation_phase ==
-		    V34_PHASE2_DPSK_DETECTOR_DECIMATION) {
-			next.decimation_phase = 0;
-			if (observe_detector(&next, filtered, &received))
-				ready = true;
-		}
+	receiver->input[receiver->input_count++] =
+		select_carrier(receiver, sample);
+	receiver->line_power +=
+		((double)sample * sample - receiver->line_power) / 256.0;
+	if (receiver->input_count == V34_PHASE2_DPSK_INPUT_BLOCK) {
+		receiver->input_count = 0;
+		ready = process_input_block(receiver, &received);
 	}
-	next.previous_sample = current;
-	next.has_previous_sample = true;
-	next.line_power += ((double)sample * sample - next.line_power) / 256.0;
-	if (!v34_phase2_dpsk_receiver_is_valid(&next))
+	if (!v34_phase2_dpsk_receiver_is_valid(receiver))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
-	*receiver = next;
 	*bit = received;
 	*bit_ready = ready;
 	return V34_PHASE2_DPSK_OK;

@@ -12,29 +12,21 @@
 enum {
 	V34_PHASE2_DPSK_BIT_RATE = 600,
 	V34_PHASE2_DPSK_PULSE_SPAN_SYMBOLS = 6,
+	V34_PHASE2_DPSK_INPUT_BLOCK = 4,
+	V34_PHASE2_DPSK_CARRIER_FILTER_TAPS = 60,
 	V34_PHASE2_DPSK_INTERPOLATION = 3,
+	V34_PHASE2_DPSK_INTERPOLATOR_TAPS = 12,
 	V34_PHASE2_DPSK_DIFFERENTIAL_DELAY =
 		V34_PHASE2_SAMPLE_RATE *
 		V34_PHASE2_DPSK_INTERPOLATION /
 		V34_PHASE2_DPSK_BIT_RATE,
 	V34_PHASE2_DPSK_DETECTOR_DECIMATION = 4,
+	V34_PHASE2_DPSK_LOWPASS_TAPS = 80,
 	V34_PHASE2_DPSK_TIMING_OBSERVATIONS =
 		V34_PHASE2_SAMPLE_RATE *
 		V34_PHASE2_DPSK_INTERPOLATION /
 		(V34_PHASE2_DPSK_BIT_RATE *
 		 V34_PHASE2_DPSK_DETECTOR_DECIMATION),
-};
-
-struct v34_phase2_dpsk_filter {
-	double input_1;
-	double input_2;
-	double output_1;
-	double output_2;
-	double b0;
-	double b1;
-	double b2;
-	double a1;
-	double a2;
 };
 
 enum v34_phase2_dpsk_result {
@@ -53,20 +45,23 @@ struct v34_phase2_dpsk_transmitter {
 };
 
 struct v34_phase2_dpsk_receiver {
-	double delay_history[
+	int16_t input[V34_PHASE2_DPSK_INPUT_BLOCK];
+	int16_t carrier_history[V34_PHASE2_DPSK_CARRIER_FILTER_TAPS];
+	int16_t interpolation_history[
+		V34_PHASE2_DPSK_INTERPOLATOR_TAPS];
+	int16_t delay_history[
 		V34_PHASE2_DPSK_DIFFERENTIAL_DELAY];
-	struct v34_phase2_dpsk_filter guard_filter;
-	struct v34_phase2_dpsk_filter detector_filter;
+	int16_t lowpass_history[V34_PHASE2_DPSK_LOWPASS_TAPS];
 	double detector_output;
 	double line_power;
 	double symbol_power;
 	size_t delay_index;
-	size_t delay_count;
+	size_t lowpass_index;
+	size_t carrier_index;
+	uint8_t input_count;
 	uint8_t decimation_phase;
 	uint8_t observations_until_bit;
-	double previous_sample;
 	enum v34_station_role local_role;
-	bool has_previous_sample;
 	bool timing_locked;
 };
 
