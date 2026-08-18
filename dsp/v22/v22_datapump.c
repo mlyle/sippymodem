@@ -31,6 +31,8 @@ enum {
 	V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS = 324,
 	V22_CONNECT_HOLD_SAMPLES = MODEM_RATE * 765 / 1000,
 	V22_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
+	/* After 300 ms, resuming the old 2400-bit/s decisions is unsafe. */
+	V22BIS_CARRIER_RETRAIN_SAMPLES = MODEM_RATE * 3 / 10,
 	V22_MIN_LINE_POWER = 1000000,
 	V22BIS_ORIGINATE_ACQUISITION_SYMBOLS = 64,
 	V22BIS_ANSWER_ACQUISITION_SYMBOLS = 32,
@@ -190,6 +192,20 @@ static bool datapump_uses_v22bis(
 	return datapump != NULL && datapump->dp.id == DP_V22BIS;
 }
 
+static uint32_t carrier_loss_limit_samples(
+	const struct v22_datapump *datapump)
+{
+	int tenths;
+
+	if (!datapump_uses_v22bis(datapump))
+		return V22_CARRIER_LOSS_SAMPLES;
+	tenths = modem_get_sreg(
+		datapump->dp.modem, SREG_CARRIER_LOSS_DISCONNECT_TIME);
+
+	return tenths > 0 ?
+		(uint32_t)(unsigned int)tenths * MODEM_RATE / 10u : 1u;
+}
+
 static bool transmit_uses_v22bis_symbols(
 	const struct v22_datapump *datapump)
 {
@@ -233,7 +249,8 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 		    sizeof(datapump->retrain_candidate_bits) ||
 	    datapump->retrain_peer_samples > V22_RETRAIN_RETRY_SAMPLES ||
 	    datapump->retrain_retry_samples > V22_RETRAIN_RETRY_SAMPLES ||
-	    datapump->missing_carrier_samples > V22_CARRIER_LOSS_SAMPLES ||
+	    datapump->missing_carrier_samples >
+		    carrier_loss_limit_samples(datapump) ||
 	    datapump->transmit_symbol >= V22BIS_SYMBOL_COUNT ||
 	    datapump->encoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !v22_scrambler_is_valid(&datapump->encoder.scrambler) ||
@@ -1297,7 +1314,8 @@ static int detect_peer_retrain(
 }
 
 static int receive_sample(
-	struct v22_datapump *datapump, int16_t sample, bool *linked)
+	struct v22_datapump *datapump, int16_t sample, bool discard,
+	bool *linked)
 {
 	struct qam_point point;
 	uint8_t quarter_turns;
@@ -1309,6 +1327,8 @@ static int receive_sample(
 		return -1;
 	if (!ready)
 		return 0;
+	if (discard)
+		goto remember_point;
 	if (datapump->retraining) {
 		bool decode_current =
 			datapump->retrain_peer_signal_received;
@@ -1579,9 +1599,7 @@ static int advance_training_timer(
 	return 0;
 }
 
-static bool carrier_is_present(
-	const struct qam_measurement *measurement,
-	const int16_t *samples, int count)
+static bool line_power_is_present(const int16_t *samples, int count)
 {
 	uint64_t power = 0;
 
@@ -1590,8 +1608,14 @@ static bool carrier_is_present(
 
 		power += (uint64_t)(sample * sample);
 	}
-	return measurement->timing_locked &&
-	       power / (unsigned int)count >= V22_MIN_LINE_POWER;
+	return power / (unsigned int)count >= V22_MIN_LINE_POWER;
+}
+
+static bool carrier_is_present(
+	const struct qam_measurement *measurement,
+	bool line_power_present)
+{
+	return measurement->timing_locked && line_power_present;
 }
 
 static void add_bounded(
@@ -1608,6 +1632,9 @@ static int process_v22(
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	struct qam_measurement measurement;
+	uint32_t carrier_loss_limit;
+	bool discard_receive = false;
+	bool line_power_present;
 	bool linked = false;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
@@ -1616,15 +1643,29 @@ static int process_v22(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
+	line_power_present = line_power_is_present(receive, count);
 	if (datapump->training_state != V22_TRAINING_ONLINE) {
 		if ((uint64_t)(unsigned int)count >
 		    datapump->training_timeout_samples - datapump->training_samples)
 			return DPSTAT_ERROR;
 		datapump->training_samples += (unsigned int)count;
 	}
+	if (datapump->training_state == V22_TRAINING_ONLINE &&
+	    (datapump->missing_carrier_samples != 0 ||
+	     !line_power_present)) {
+		discard_receive = true;
+		if (datapump->missing_carrier_samples == 0) {
+			flush_retrain_candidate(datapump);
+			discard_retrain_candidate(datapump);
+			if (!datapump->dp.modem->cfg.ec)
+				modem_async_retrain(datapump->dp.modem);
+		}
+	}
 	for (int index = 0; index < count; ++index) {
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
-		    receive_sample(datapump, receive[index], &linked) != 0 ||
+		    receive_sample(
+			    datapump, receive[index], discard_receive,
+			    &linked) != 0 ||
 		    advance_training_timer(datapump, &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
@@ -1636,15 +1677,22 @@ static int process_v22(
 		return DPSTAT_OK;
 	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
-	if (carrier_is_present(&measurement, receive, count)) {
+	carrier_loss_limit = carrier_loss_limit_samples(datapump);
+	if (datapump_uses_v22bis(datapump) && line_power_present &&
+	    datapump->missing_carrier_samples >=
+		    V22BIS_CARRIER_RETRAIN_SAMPLES) {
+		if (begin_retrain(
+			    datapump, receive_phase_quadrant(datapump), false) != 0)
+			return DPSTAT_ERROR;
+	} else if (carrier_is_present(&measurement, line_power_present)) {
 		datapump->missing_carrier_samples = 0;
 	} else {
 		add_bounded(
 			&datapump->missing_carrier_samples,
 			(uint32_t)(unsigned int)count,
-			V22_CARRIER_LOSS_SAMPLES);
+			carrier_loss_limit);
 	}
-	return datapump->missing_carrier_samples >= V22_CARRIER_LOSS_SAMPLES ?
+	return datapump->missing_carrier_samples >= carrier_loss_limit ?
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 
