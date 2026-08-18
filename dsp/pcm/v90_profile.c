@@ -103,7 +103,7 @@ static struct v90_info1a analog_info1(
 	const struct v90_upstream_selection *upstream)
 {
 	return (struct v90_info1a){
-		.local_md_length_35_ms_units = 5,
+		.local_md_length_35_ms_units = 0,
 		.training_ucode = 91,
 		.upstream_symbol_rate = upstream->symbol_rate,
 		.frequency_offset_1_50_hz_units =

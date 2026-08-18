@@ -57,7 +57,7 @@ static struct pcm_info1_selection conventional_selection(
 		},
 		.digital = { .protocol = protocol },
 		.analog.conventional = {
-			.local_md_length_35_ms_units = 7,
+			.local_md_length_35_ms_units = 0,
 			.training_ucode = 91,
 			.upstream_symbol_rate = symbol_rate,
 			.frequency_offset_1_50_hz_units = 13,
@@ -260,8 +260,6 @@ static bool test_generated_entries(void)
 						      &selected, &expected) ==
 						      V34_PHASE3_PROFILE_OK,
 					      "entry fixture profile failed");
-					expected.md_length_35_ms_units = 0;
-					expected.md_symbol_count = 0;
 					CHECK(pcm_phase3_entry_init(
 						      &entry, role, law, &info0,
 						      &selected) == PCM_PHASE3_ENTRY_OK &&
@@ -360,6 +358,16 @@ static bool test_selection_rejection(void)
 		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
 	      "unimplemented short Phase 2 entered Phase 3");
+
+	selected = conventional_selection(
+		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3200, true);
+	selected.analog.conventional.local_md_length_35_ms_units = 1;
+	CHECK(pcm_info1_selection_is_valid(&selected) &&
+	      pcm_phase3_entry_init(
+		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+	      memcmp(&entry, &saved, sizeof(entry)) == 0,
+	      "unsupported MD interval changed the entry");
 
 	selected = conventional_selection(
 		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3200, true);

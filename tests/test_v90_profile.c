@@ -111,7 +111,9 @@ static bool test_generated_profiles(void)
 					uint8_t training_points;
 					uint8_t data_points;
 
-					CHECK(configuration.analog_phase4
+					CHECK(configuration.local_info1.analog
+						      .local_md_length_35_ms_units == 0 &&
+					      configuration.analog_phase4
 						      .training_parameters.kind ==
 						      V90_CP_TRAINING &&
 					      configuration.analog_phase4

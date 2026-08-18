@@ -61,11 +61,8 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
 			return PCM_PHASE3_ENTRY_UNUSABLE_SELECTION;
 		if (profile_result != V34_PHASE3_PROFILE_OK)
 			return PCM_PHASE3_ENTRY_INVALID_SELECTION;
-
-		/* INFO1a retains the common MD-length field, but the selected PCM
-		 * conventional procedure begins its upstream at S. */
-		initialized.conventional_profile.md_length_35_ms_units = 0;
-		initialized.conventional_profile.md_symbol_count = 0;
+		if (initialized.conventional_profile.md_symbol_count != 0)
+			return PCM_PHASE3_ENTRY_INVALID_SELECTION;
 	}
 	if (!pcm_phase3_entry_is_valid(&initialized))
 		return PCM_PHASE3_ENTRY_INTERNAL_ERROR;

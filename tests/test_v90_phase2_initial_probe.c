@@ -122,7 +122,7 @@ static struct v34_info1c digital_info1(void)
 static struct v90_info1a analog_info1(void)
 {
 	return (struct v90_info1a){
-		.local_md_length_35_ms_units = 5,
+		.local_md_length_35_ms_units = 0,
 		.training_ucode = 91,
 		.upstream_symbol_rate = V34_SYMBOL_RATE_3200,
 		.frequency_offset_1_50_hz_units = 31,
