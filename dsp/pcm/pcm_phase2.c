@@ -393,7 +393,7 @@ static enum pcm_phase2_result initialize_retrain(
 	restarted.peer_info0 = *peer_info0;
 	restarted.peer_info0_stored = true;
 	exchange->peer_info0 = *peer_info0;
-	exchange->peer_info0_received = true;
+	exchange->state = PCM_PHASE2_INFO0_RETRAIN;
 	if (!derive_startup(&restarted, &restarted.startup) ||
 	    phase2_info0_exchange_start_tone(&exchange->transport) !=
 		    PHASE2_INFO0_EXCHANGE_OK ||
@@ -742,7 +742,7 @@ static bool enter_initial_probe(
 		&phase2->state.ranging.info0_exchange;
 	struct v90_phase2_initial_probe next;
 
-	if (!exchange->peer_info0_received ||
+	if (!pcm_phase2_info0_exchange_complete(exchange) ||
 	    v90_phase2_initial_probe_init(
 		    &next, &phase2->state.ranging) !=
 		    PHASE2_INITIAL_PROBE_OK)

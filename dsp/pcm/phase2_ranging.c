@@ -438,7 +438,14 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 	if (next.phase != PHASE2_RANGING_INFO0_EXCHANGE &&
 	    !phase_transmits_tone(next.phase))
 		generated = 0;
+	/* A recovery INFO0 interrupts the continuous local-tone epoch.  The
+	 * analogue modem must transmit a fresh 50 ms of Tone A after the repeated
+	 * record before its first phase reversal. */
 	if (!signal_is_b(exchange) &&
+	    transmit_phase_before == PHASE2_INFO0_TONE &&
+	    exchange->transmit_phase == PHASE2_INFO0_SEQUENCE)
+		next.local_tone_samples = 0;
+	else if (!signal_is_b(exchange) &&
 	    next.local_tone_samples < PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
 	    transmit_phase_before == PHASE2_INFO0_TONE)
 		next.local_tone_samples++;

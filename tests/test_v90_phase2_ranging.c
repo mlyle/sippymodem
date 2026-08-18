@@ -98,6 +98,9 @@ static bool check_ranging(enum test_codec codec)
 	bool digital_ready = false;
 	bool analog_received_info = false;
 	bool digital_received_info = false;
+	size_t analog_tone_handoffs = 0;
+	size_t analog_ack_tone_start = SIZE_MAX;
+	size_t analog_first_reversal = SIZE_MAX;
 
 	CHECK(v90_phase2_ranging_init_analog(
 		      &analog_end, TEST_AMPLITUDE, &analog) ==
@@ -116,6 +119,10 @@ static bool check_ranging(enum test_codec codec)
 		struct v90_phase2_ranging_event digital_event;
 		enum v90_phase2_ranging_result analog_result;
 		enum v90_phase2_ranging_result digital_result;
+		enum phase2_info0_transmit_phase analog_transmit_before =
+			analog_end.info0_exchange.transport.transmit_phase;
+		enum phase2_ranging_phase analog_phase_before =
+			analog_end.control.phase;
 		int16_t analog_transmit;
 		int16_t digital_transmit;
 
@@ -135,6 +142,14 @@ static bool check_ranging(enum test_codec codec)
 		delay_line_transmit(
 			&digital_to_analog,
 			codec_round_trip(digital_transmit, codec));
+		if (analog_transmit_before == PHASE2_INFO0_CARRIER_TAIL &&
+		    analog_end.info0_exchange.transport.transmit_phase ==
+			    PHASE2_INFO0_TONE &&
+		    ++analog_tone_handoffs == 2u)
+			analog_ack_tone_start = index + 1u;
+		if (analog_phase_before == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		    analog_end.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
+			analog_first_reversal = index;
 
 		if (analog_event.exchange_event.peer_info0_event ==
 		    PCM_PEER_INFO0_RECEIVED) {
@@ -176,6 +191,12 @@ static bool check_ranging(enum test_codec codec)
 		      TEST_EDGE_TOLERANCE_SAMPLES,
 	      "V.90 round-trip estimates changed for codec %d: analog %u digital %u",
 	      codec, analog_delay, digital_delay);
+	CHECK(analog_ack_tone_start != SIZE_MAX &&
+	      analog_first_reversal != SIZE_MAX &&
+	      analog_first_reversal - analog_ack_tone_start ==
+		      PHASE2_RANGING_INITIAL_TONE_SAMPLES,
+	      "repeated INFO0 did not restart the 50 ms Tone A epoch for codec %d: %zu/%zu",
+	      codec, analog_ack_tone_start, analog_first_reversal);
 	return true;
 }
 
