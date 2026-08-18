@@ -64,7 +64,7 @@ FAST_ONLINE_MINIMUM_SECONDS = 1.0
 # Digital PCM calls may report CONNECT before their upstream transmitter has
 # consumed fresh DTE bytes. Keep the evidence window long enough to observe
 # that direction without restoring the ordinary live-call timeout.
-FAST_PCM_ONLINE_MINIMUM_SECONDS = 3.0
+FAST_PCM_ONLINE_MINIMUM_SECONDS = 5.0
 FAST_ONLINE_MARGIN_SECONDS = 1.0
 FAST_JITTER_BUFFER_MS = 60
 

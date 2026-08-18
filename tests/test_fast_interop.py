@@ -155,7 +155,7 @@ class FastInteropTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     case_config(base, case).online_timeout_seconds,
-                    3.0,
+                    5.0,
                 )
 
     def test_run_case_requires_data_and_both_reported_rates(self) -> None:
