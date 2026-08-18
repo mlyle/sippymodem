@@ -377,6 +377,30 @@ static bool reset_completion_tone(
 	return true;
 }
 
+static bool suppress_info_carrier_tone(
+	const struct pcm_phase2_info0_exchange *before,
+	struct pcm_phase2_info0_exchange *exchange,
+	struct phase2_info0_exchange_event *raw_event)
+{
+	bool frame_started;
+
+	if (state_is_terminal(exchange->state) ||
+	    exchange->transport.info_receiver.frame.stage ==
+		    V34_PHASE2_INFO_SEARCH_SYNC)
+		return true;
+	/* INFO DPSK uses the following tone's carrier.  Once its prefix is
+	 * synchronized, neither that carrier nor an older tone lock can satisfy
+	 * the requirement for a tone following the retained INFO0. */
+	frame_started = before->transport.info_receiver.frame.stage ==
+		V34_PHASE2_INFO_SEARCH_SYNC;
+	exchange->fresh_peer_tone_seen = false;
+	raw_event->tone_event = (struct v34_phase2_tone_event){ 0 };
+	return !frame_started ||
+	       v34_phase2_tone_detector_reset(
+		       &exchange->transport.tone_detector) ==
+		       V34_PHASE2_TONE_OK;
+}
+
 static bool reject_peer_info0(
 	struct pcm_phase2_info0_exchange *exchange,
 	struct pcm_phase2_info0_exchange_event *event)
@@ -556,7 +580,8 @@ pcm_phase2_info0_exchange_sample(
 	next = *exchange;
 	if (phase2_info0_exchange_sample(
 		    &next.transport, received_sample, &generated, &raw_event) !=
-	    PHASE2_INFO0_EXCHANGE_OK)
+	    PHASE2_INFO0_EXCHANGE_OK ||
+	    !suppress_info_carrier_tone(exchange, &next, &raw_event))
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	if (!retain_peer_info0(&next, &raw_event, &emitted) ||
 	    !advance_recovery(&next, &emitted))

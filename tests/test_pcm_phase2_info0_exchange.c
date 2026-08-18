@@ -401,7 +401,7 @@ enum following_tone_case {
 
 static bool check_following_tone(
 	enum test_codec codec, enum test_info0_mode mode,
-	enum following_tone_case test_case)
+	enum following_tone_case test_case, bool digital_local)
 {
 	struct v92_info0a analog = {
 		.v90 = analog_capabilities(),
@@ -420,12 +420,12 @@ static bool check_following_tone(
 	size_t final_wait = SIZE_MAX;
 	size_t completed = SIZE_MAX;
 	size_t received_records = 0;
-	bool digital_local = test_case == TEST_TONE_INVALIDATED_BY_REPEAT;
 	bool tone_during_ack = false;
 	bool tone_retained = false;
 	bool tone_invalidated = false;
 	bool fresh_tone_after_repeat = false;
 	bool repeated = false;
+	bool overlapping_repeat = false;
 	bool initialized;
 
 	analog.v90.acknowledges_peer_info0 = false;
@@ -463,8 +463,8 @@ static bool check_following_tone(
 		      digital_local ? V90_INFO0D_PAYLOAD_BITS :
 				      V90_INFO0A_PAYLOAD_BITS) ==
 		      PHASE2_INFO0_EXCHANGE_OK,
-	      "following-tone fixtures did not initialize for %d/%d/%d",
-	      mode, codec, test_case);
+	      "following-tone fixtures did not initialize for %d/%d/%d/%d",
+	      mode, codec, test_case, digital_local);
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
@@ -489,8 +489,17 @@ static bool check_following_tone(
 		CHECK(pcm_phase2_info0_exchange_sample(
 			      &exchange, received,
 			      &ignored, &event) == PCM_PHASE2_INFO0_EXCHANGE_OK,
-		      "following-tone exchange failed at %zu for %d/%d/%d",
-		      index, mode, codec, test_case);
+		      "following-tone exchange failed at %zu for %d/%d/%d/%d",
+		      index, mode, codec, test_case, digital_local);
+		if (repeated && transmit_before == PHASE2_INFO0_CARRIER_TAIL &&
+		    exchange.transport.transmit_phase == PHASE2_INFO0_TONE &&
+		    (peer.transmit_phase == PHASE2_INFO0_SEQUENCE ||
+		     peer.transmit_phase == PHASE2_INFO0_CARRIER_TAIL)) {
+			overlapping_repeat = true;
+			CHECK(!pcm_phase2_info0_exchange_complete(&exchange),
+			      "peer INFO0 carrier completed exchange for %d/%d/%d",
+			      mode, codec, digital_local);
+		}
 		if (transmit_before != PHASE2_INFO0_SEQUENCE &&
 		    transmit_before != PHASE2_INFO0_POST_V8_SILENCE &&
 		    exchange.transport.transmit_phase == PHASE2_INFO0_SEQUENCE)
@@ -585,10 +594,12 @@ static bool check_following_tone(
 	else
 		CHECK(repeated && acknowledge_starts == 2 &&
 		      tone_during_ack && tone_invalidated &&
-		      fresh_tone_after_repeat,
-		      "peer repeat did not invalidate older tone for %d/%d: ACK %zu invalid %d fresh %d",
-		      mode, codec, acknowledge_starts,
-		      tone_invalidated, fresh_tone_after_repeat);
+		      fresh_tone_after_repeat &&
+		      (digital_local || overlapping_repeat),
+		      "peer repeat did not invalidate older tone for %d/%d/%d: ACK %zu invalid %d fresh %d overlap %d",
+		      mode, codec, digital_local, acknowledge_starts,
+		      tone_invalidated, fresh_tone_after_repeat,
+		      overlapping_repeat);
 	return true;
 }
 
@@ -601,11 +612,18 @@ static bool test_info0_following_tone_orderings(void)
 			for (enum following_tone_case test_case =
 				     TEST_TONE_DURING_ACK;
 			     test_case <= TEST_TONE_INVALIDATED_BY_REPEAT;
-			     ++test_case)
-				CHECK(check_following_tone(
-					      codec, mode, test_case),
-				      "INFO0 tone ordering failed for %d/%d/%d",
-				      mode, codec, test_case);
+			     ++test_case) {
+				unsigned int roles =
+					test_case == TEST_TONE_INVALIDATED_BY_REPEAT ?
+						2u : 1u;
+
+				for (unsigned int role = 0; role < roles; ++role)
+					CHECK(check_following_tone(
+						      codec, mode, test_case,
+						      role != 0),
+					      "INFO0 tone ordering failed for %d/%d/%d/%u",
+					      mode, codec, test_case, role);
+			}
 	return true;
 }
 
