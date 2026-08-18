@@ -3,6 +3,7 @@
 #include "conditioning_receiver.h"
 
 #include "constellation.h"
+#include "rate_signal.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -12,7 +13,18 @@ enum {
 		V32_CONDITIONING_S_SYMBOLS +
 		V32_CONDITIONING_S_BAR_SYMBOLS,
 	V32_CONDITIONING_MISMATCH_RESTART = 3,
-	V32_CONDITIONING_MAX_PHASE_CORRECTIONS = 8,
+	/* Receiver quality budget: leave no more observations unresolved than
+	 * the standard's 256-symbol special TRN prefix. This retains at least
+	 * the length of the following 1024-symbol full-map training portion as
+	 * confirmed known-sequence evidence. */
+	V32_CONDITIONING_MIN_CONFIRMED_TRN_SYMBOLS =
+		V32_CONDITIONING_TRN_MIN_SYMBOLS -
+		V32_CONDITIONING_TRN_PREFIX_SYMBOLS,
+	/* Receiver stability guard: require a clean TRN tail spanning the same
+	 * sixteen symbols as the following minimum two-word rate evidence. This
+	 * is a receiver quality policy, not an additional wire requirement. */
+	V32_CONDITIONING_STABLE_TAIL_SYMBOLS =
+		2 * V32_RATE_SIGNAL_DIBITS,
 };
 
 static const double V32_CONDITIONING_GAIN_ADAPTATION = 1.0 / 32.0;
@@ -75,8 +87,6 @@ bool v32_conditioning_receiver_is_valid(
 		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS ||
 	    receiver->consecutive_mismatches >=
 		    V32_CONDITIONING_MISMATCH_RESTART ||
-	    receiver->phase_corrections >
-		    V32_CONDITIONING_MAX_PHASE_CORRECTIONS ||
 	    (receiver->has_previous_point &&
 	     !point_has_power(&receiver->previous_point)))
 		return false;
@@ -85,7 +95,8 @@ bool v32_conditioning_receiver_is_valid(
 	if (!training)
 		return receiver->trn_symbols == 0 &&
 		       receiver->consecutive_mismatches == 0 &&
-		       receiver->phase_corrections == 0;
+		       receiver->confirmed_trn_symbols == 0 &&
+		       receiver->stable_trn_symbols == 0;
 	if (!v32_conditioning_transmitter_is_valid(
 		    &receiver->reference) ||
 	    !qam_gain_is_valid(&receiver->gain) ||
@@ -97,11 +108,23 @@ bool v32_conditioning_receiver_is_valid(
 		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u ||
 	    receiver->trn_symbols >
 		    V32_CONDITIONING_TRN_MIN_SYMBOLS ||
+	    receiver->confirmed_trn_symbols <
+		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u ||
+	    receiver->confirmed_trn_symbols > receiver->trn_symbols ||
+	    receiver->stable_trn_symbols >
+		    receiver->confirmed_trn_symbols ||
+	    ((receiver->consecutive_mismatches == 0) !=
+	     (receiver->stable_trn_symbols != 0)) ||
 	    !receiver->has_previous_point)
 		return false;
-	return (receiver->phase == V32_CONDITIONING_READY) ==
-	       (receiver->trn_symbols ==
-		V32_CONDITIONING_TRN_MIN_SYMBOLS);
+	if ((receiver->phase == V32_CONDITIONING_READY) !=
+	    (receiver->trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS))
+		return false;
+	return receiver->phase != V32_CONDITIONING_READY ||
+	       (receiver->confirmed_trn_symbols >=
+			V32_CONDITIONING_MIN_CONFIRMED_TRN_SYMBOLS &&
+		receiver->stable_trn_symbols >=
+			V32_CONDITIONING_STABLE_TAIL_SYMBOLS);
 }
 
 bool v32_conditioning_receiver_is_complete(
@@ -261,6 +284,8 @@ static int begin_training(
 	receiver->quadrant_offset =
 		(uint8_t)((receiver->observed_quadrant - expected_quadrant) & 3u);
 	receiver->pending_quadrant_offset = receiver->quadrant_offset;
+	receiver->confirmed_trn_symbols = matched_symbols;
+	receiver->stable_trn_symbols = matched_symbols;
 	receiver->prefix_match = 0;
 	receiver->phase = V32_CONDITIONING_TRAIN_TRN;
 	return 0;
@@ -287,11 +312,14 @@ static int train_symbol(
 	if (receiver->observed_quadrant == observed_expected) {
 		receiver->consecutive_mismatches = 0;
 		receiver->pending_quadrant_offset = receiver->quadrant_offset;
+		receiver->confirmed_trn_symbols++;
+		receiver->stable_trn_symbols++;
 		if (qam_gain_track(
 			    &receiver->gain, point, &expected_point) !=
 		    QAM_GAIN_OK)
 			return -1;
 	} else {
+		receiver->stable_trn_symbols = 0;
 		candidate_offset = (uint8_t)(
 			(receiver->observed_quadrant - expected_quadrant) & 3u);
 		if (receiver->consecutive_mismatches == 0 ||
@@ -303,13 +331,16 @@ static int train_symbol(
 		}
 		if (receiver->consecutive_mismatches ==
 		    V32_CONDITIONING_MISMATCH_RESTART) {
-			if (receiver->phase_corrections ==
-			    V32_CONDITIONING_MAX_PHASE_CORRECTIONS)
-				return 1;
 			receiver->quadrant_offset =
 				receiver->pending_quadrant_offset;
 			receiver->consecutive_mismatches = 0;
-			receiver->phase_corrections++;
+			/* All three observations established the new phase. Count
+			 * them as confirmed evidence, including the two held while
+			 * distinguishing a phase change from an isolated error. */
+			receiver->confirmed_trn_symbols +=
+				V32_CONDITIONING_MISMATCH_RESTART;
+			receiver->stable_trn_symbols =
+				V32_CONDITIONING_MISMATCH_RESTART;
 			if (qam_gain_track(
 				    &receiver->gain, point, &expected_point) !=
 			    QAM_GAIN_OK)
@@ -317,8 +348,13 @@ static int train_symbol(
 		}
 	}
 	receiver->trn_symbols++;
-	if (receiver->trn_symbols ==
-	    V32_CONDITIONING_TRN_MIN_SYMBOLS)
+	if (receiver->trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS &&
+	    (receiver->confirmed_trn_symbols <
+		     V32_CONDITIONING_MIN_CONFIRMED_TRN_SYMBOLS ||
+	     receiver->stable_trn_symbols <
+		     V32_CONDITIONING_STABLE_TAIL_SYMBOLS))
+		return 1;
+	if (receiver->trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS)
 		receiver->phase = V32_CONDITIONING_READY;
 	return 0;
 }

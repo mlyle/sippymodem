@@ -4,6 +4,7 @@
 #include <conditioning.h>
 #include <conditioning_receiver.h>
 #include <constellation.h>
+#include <rate_signal.h>
 
 #include "test.h"
 
@@ -17,6 +18,10 @@ enum {
 	TEST_SEQUENCE_SYMBOLS = V32_CONDITIONING_S_SYMBOLS +
 				V32_CONDITIONING_S_BAR_SYMBOLS +
 				V32_CONDITIONING_TRN_MIN_SYMBOLS,
+	TEST_STABLE_TAIL_SYMBOLS = 2 * V32_RATE_SIGNAL_DIBITS,
+	TEST_MIN_CONFIRMED_SYMBOLS =
+		V32_CONDITIONING_TRN_MIN_SYMBOLS -
+		V32_CONDITIONING_TRN_PREFIX_SYMBOLS,
 };
 
 static struct qam_point apply_channel(
@@ -78,7 +83,11 @@ static bool run_sequence(
 		      "V.32 conditioning readiness changed at symbol %u", symbol);
 	}
 	CHECK(ready &&
-		      v32_conditioning_receiver_is_complete(receiver),
+		      v32_conditioning_receiver_is_complete(receiver) &&
+		      receiver->confirmed_trn_symbols ==
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS &&
+		      receiver->stable_trn_symbols ==
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS,
 	      "V.32 conditioning receiver did not complete");
 	*finished_transmitter = transmitter;
 	return true;
@@ -177,9 +186,193 @@ static bool test_phase_slip_recovery(void)
 	}
 	CHECK(phase_shifted && ready &&
 		      v32_conditioning_receiver_is_complete(&receiver) &&
-		      receiver.phase_corrections != 0,
+		      receiver.confirmed_trn_symbols ==
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS &&
+		      receiver.stable_trn_symbols >=
+			      TEST_STABLE_TAIL_SYMBOLS,
 	      "V.32 conditioning did not recover the persistent phase slip");
 	return true;
+}
+
+struct test_perturbation {
+	uint16_t first_symbol;
+	uint16_t interval;
+	uint16_t stop_before;
+	unsigned int count;
+	bool persistent_phase;
+};
+
+static bool run_perturbed_sequence(
+	enum v32_transmitter_role role, const struct qam_point *channel,
+	const struct test_perturbation *perturbation,
+	struct v32_conditioning_receiver *finished,
+	unsigned int *applied, bool *ready, bool *reset)
+{
+	struct v32_conditioning_transmitter transmitter;
+	struct v32_conditioning_receiver receiver;
+	unsigned int injected = 0;
+	uint8_t phase_offset = 0;
+	bool completed = false;
+	bool restarted = false;
+
+	CHECK(perturbation != NULL && finished != NULL && applied != NULL &&
+		      ready != NULL && reset != NULL &&
+		      v32_conditioning_receiver_init(&receiver, role) ==
+		      V32_CONDITIONING_RECEIVER_OK &&
+		      v32_conditioning_transmitter_init(
+			      &transmitter, role,
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+			      V32_CONDITIONING_OK,
+	      "V.32 perturbed conditioning fixture did not initialize");
+	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
+		struct qam_point received;
+		enum v32_conditioning_receiver_phase previous_phase;
+		uint8_t quadrant;
+
+		CHECK(v32_conditioning_transmitter_next(
+			      &transmitter, &quadrant) ==
+			      V32_CONDITIONING_OK,
+		      "V.32 perturbed conditioning fixture stopped at %u", symbol);
+		if (symbol < TEST_ACQUISITION_START)
+			continue;
+		if (receiver.phase == V32_CONDITIONING_TRAIN_TRN) {
+			unsigned int next = perturbation->first_symbol +
+				injected * perturbation->interval;
+
+			if (injected < perturbation->count &&
+			    receiver.trn_symbols >= next &&
+			    receiver.trn_symbols < perturbation->stop_before) {
+				if (perturbation->persistent_phase)
+					phase_offset =
+						(uint8_t)((phase_offset + 1u) & 3u);
+				else
+					quadrant = (uint8_t)((quadrant + 1u) & 3u);
+				injected++;
+			}
+			if (perturbation->persistent_phase)
+				quadrant = (uint8_t)((quadrant + phase_offset) & 3u);
+		}
+		previous_phase = receiver.phase;
+		CHECK(generated_point(quadrant, channel, &received) &&
+		      v32_conditioning_receiver_observe(
+			      &receiver, &received, &completed) ==
+			      V32_CONDITIONING_RECEIVER_OK,
+		      "V.32 perturbed conditioning receiver stopped at %u", symbol);
+		if (previous_phase == V32_CONDITIONING_TRAIN_TRN &&
+		    receiver.phase == V32_CONDITIONING_SEARCH_S_BAR) {
+			restarted = true;
+			break;
+		}
+	}
+	*finished = receiver;
+	*applied = injected;
+	*ready = completed;
+	*reset = restarted;
+	return true;
+}
+
+static bool test_repeated_phase_slip_recovery(void)
+{
+	const struct qam_point channel = { 0.9, -0.3 };
+	struct test_perturbation perturbation = {
+		.first_symbol = 4 * TEST_STABLE_TAIL_SYMBOLS,
+		.interval = 2 * TEST_STABLE_TAIL_SYMBOLS,
+		.stop_before = TEST_MIN_CONFIRMED_SYMBOLS,
+		.count = V32_CONDITIONING_TRN_MIN_SYMBOLS,
+		.persistent_phase = true,
+	};
+	struct v32_conditioning_receiver receiver;
+	unsigned int changes;
+	bool ready;
+	bool reset;
+
+	CHECK(run_perturbed_sequence(
+		      V32_ANSWERING_TRANSMITTER, &channel,
+		      &perturbation, &receiver, &changes, &ready, &reset),
+	      "V.32 repeated phase-slip sequence failed");
+	CHECK(changes > TEST_STABLE_TAIL_SYMBOLS && !reset && ready &&
+		      v32_conditioning_receiver_is_complete(&receiver) &&
+		      receiver.confirmed_trn_symbols ==
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS &&
+		      receiver.stable_trn_symbols >=
+			      V32_CONDITIONING_TRN_PREFIX_SYMBOLS,
+	      "V.32 receiver did not retain repeated confirmed phase changes");
+	return true;
+}
+
+static bool check_perturbed_boundary(
+	const struct test_perturbation *perturbation,
+	uint16_t expected_evidence, uint16_t expected_stable,
+	bool expect_complete)
+{
+	const struct qam_point channel = { 1.05, 0.2 };
+	struct v32_conditioning_receiver receiver;
+	unsigned int applied;
+	bool ready;
+	bool reset;
+
+	CHECK(run_perturbed_sequence(
+		      V32_CALLING_TRANSMITTER, &channel,
+		      perturbation, &receiver, &applied, &ready, &reset),
+	      "V.32 conditioning boundary sequence failed");
+	CHECK(applied == perturbation->count,
+	      "V.32 conditioning fixture applied %u/%u perturbations",
+	      applied, perturbation->count);
+	if (expect_complete) {
+		CHECK(!reset && ready &&
+			      v32_conditioning_receiver_is_complete(&receiver) &&
+			      receiver.confirmed_trn_symbols == expected_evidence &&
+			      (expected_stable == 0 ||
+			       receiver.stable_trn_symbols == expected_stable),
+		      "V.32 receiver rejected sufficient conditioning evidence");
+	} else {
+		CHECK(reset && !ready &&
+			      v32_conditioning_receiver_is_valid(&receiver) &&
+			      receiver.phase == V32_CONDITIONING_SEARCH_S_BAR,
+		      "V.32 receiver accepted insufficient conditioning evidence");
+	}
+	return true;
+}
+
+static bool test_confirmed_evidence_boundary(void)
+{
+	const unsigned int allowed_errors =
+		V32_CONDITIONING_TRN_MIN_SYMBOLS -
+		TEST_MIN_CONFIRMED_SYMBOLS;
+	struct test_perturbation perturbation = {
+		.first_symbol = 4 * TEST_STABLE_TAIL_SYMBOLS,
+		.interval = 3,
+		.stop_before = V32_CONDITIONING_TRN_MIN_SYMBOLS,
+		.count = allowed_errors,
+	};
+
+	if (!check_perturbed_boundary(
+		    &perturbation, TEST_MIN_CONFIRMED_SYMBOLS, 0, true))
+		return false;
+	perturbation.count++;
+	return check_perturbed_boundary(
+		&perturbation, TEST_MIN_CONFIRMED_SYMBOLS - 1u, 0, false);
+}
+
+static bool test_stable_tail_boundary(void)
+{
+	struct test_perturbation perturbation = {
+		.first_symbol =
+			V32_CONDITIONING_TRN_MIN_SYMBOLS -
+			TEST_STABLE_TAIL_SYMBOLS - 1u,
+		.interval = 1,
+		.stop_before = V32_CONDITIONING_TRN_MIN_SYMBOLS,
+		.count = 1,
+	};
+
+	if (!check_perturbed_boundary(
+		    &perturbation, V32_CONDITIONING_TRN_MIN_SYMBOLS - 1u,
+		    TEST_STABLE_TAIL_SYMBOLS, true))
+		return false;
+	perturbation.first_symbol++;
+	return check_perturbed_boundary(
+		&perturbation, V32_CONDITIONING_TRN_MIN_SYMBOLS - 1u,
+		TEST_STABLE_TAIL_SYMBOLS - 1u, false);
 }
 
 static bool test_mapping_transition_rephase(void)
@@ -320,6 +513,14 @@ static bool test_validation(void)
 			      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
 		      ready,
 	      "V.32 conditioning receiver accepted corrupt state");
+	receiver = saved;
+	receiver.confirmed_trn_symbols = 1;
+	CHECK(!v32_conditioning_receiver_is_valid(&receiver),
+	      "V.32 conditioning receiver accepted idle training evidence");
+	receiver = saved;
+	receiver.stable_trn_symbols = 1;
+	CHECK(!v32_conditioning_receiver_is_valid(&receiver),
+	      "V.32 conditioning receiver accepted an idle stable tail");
 	CHECK(strcmp(
 		      v32_conditioning_receiver_result_name(
 			      V32_CONDITIONING_RECEIVER_OK),
@@ -343,6 +544,11 @@ int main(void)
 		{ "mapping transition rephase",
 		  test_mapping_transition_rephase },
 		{ "phase-slip recovery", test_phase_slip_recovery },
+		{ "repeated phase-slip recovery",
+		  test_repeated_phase_slip_recovery },
+		{ "confirmed-evidence boundary",
+		  test_confirmed_evidence_boundary },
+		{ "stable-tail boundary", test_stable_tail_boundary },
 		{ "TRN-prefix acquisition", test_trn_prefix_acquisition },
 		{ "validation", test_validation },
 	};

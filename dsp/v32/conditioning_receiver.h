@@ -45,7 +45,8 @@ struct v32_conditioning_receiver {
 	uint8_t previous_turn;
 	uint8_t prefix_match;
 	uint8_t consecutive_mismatches;
-	uint8_t phase_corrections;
+	uint16_t confirmed_trn_symbols;
+	uint16_t stable_trn_symbols;
 	bool has_previous_point;
 };
 
