@@ -895,74 +895,136 @@ static bool exercise_retrain(
 static bool exercise_v22bis_carrier_recovery(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
-	enum media_codec codec, const struct media_recorder *recorder)
+	enum media_codec codec, const struct media_recorder *recorder,
+	bool raw_transport)
 {
+	enum {
+		SHORT_LOSS_FRAMES = 2,
+	};
+	static const uint8_t caller_clamped_payload[] = {
+		'c', 'l', 'a', 'm', 'p', '-', 'c', 0x00, 0xa5, 0xff,
+	};
+	static const uint8_t answerer_clamped_payload[] = {
+		'c', 'l', 'a', 'm', 'p', '-', 'a', 0xff, 0x5a, 0x00,
+	};
 	static const uint8_t caller_payload[] = {
 		'c', 'a', 'r', 'r', 'i', 'e', 'r', '-', 'c', 0xa5,
 	};
 	static const uint8_t answerer_payload[] = {
 		'c', 'a', 'r', 'r', 'i', 'e', 'r', '-', 'a', 0x5a,
 	};
-	bool retrain_started = false;
-	bool retrain_completed = false;
-	bool transferred = false;
+	for (unsigned int recovery = raw_transport ? 0u : 1u;
+	     recovery < 2u; ++recovery) {
+		bool transferred = false;
 
-	caller->output_count = 0;
-	answerer->output_count = 0;
-	for (unsigned int samples = 0; samples < MODEM_RATE / 2;
-	     samples += SIP_FRAME_SAMPLES) {
-		if (!process_sip_frame_with_loss(
-			    caller, answerer, codec, recorder,
-			    true, true, false, false) ||
-		    !endpoint_drain(caller) || !endpoint_drain(answerer) ||
-		    caller->output_count != 0 || answerer->output_count != 0 ||
-		    caller->modem->process == NULL ||
-		    answerer->modem->process == NULL)
-			return false;
-	}
-	for (unsigned int frame = 0; frame < RETRAIN_FRAME_LIMIT; ++frame) {
-		if (!process_sip_frame(caller, answerer, codec, recorder) ||
-		    !endpoint_drain(caller) || !endpoint_drain(answerer))
-			return false;
-		if (!modem_is_online(caller->modem, DP_V22BIS) ||
-		    !modem_is_online(answerer->modem, DP_V22BIS))
-			retrain_started = true;
-		if (retrain_started &&
-		    modem_is_online(caller->modem, DP_V22BIS) &&
-		    modem_is_online(answerer->modem, DP_V22BIS)) {
-			retrain_completed = true;
-			break;
+		caller->output_count = 0;
+		answerer->output_count = 0;
+		if (recovery == 0) {
+			for (unsigned int frame = 0;
+			     frame < SHORT_LOSS_FRAMES; ++frame) {
+				if (!process_sip_frame_with_loss(
+					    caller, answerer, codec, recorder,
+					    true, true, false, false) ||
+				    !endpoint_drain(caller) ||
+				    !endpoint_drain(answerer) ||
+				    caller->output_count != 0 ||
+				    answerer->output_count != 0 ||
+				    !modem_is_online(caller->modem, DP_V22BIS) ||
+				    !modem_is_online(answerer->modem, DP_V22BIS))
+					return false;
+			}
+			if (modem_write(
+				    caller->modem,
+				    (const char *)caller_clamped_payload,
+				    (int)sizeof(caller_clamped_payload)) !=
+					    (int)sizeof(caller_clamped_payload) ||
+			    modem_write(
+				    answerer->modem,
+				    (const char *)answerer_clamped_payload,
+				    (int)sizeof(answerer_clamped_payload)) !=
+					    (int)sizeof(answerer_clamped_payload))
+				return false;
+			for (unsigned int samples = 0;
+			     samples < MODEM_RATE / 10;
+			     samples += SIP_FRAME_SAMPLES) {
+				if (!process_sip_frame(
+					    caller, answerer, codec, recorder) ||
+				    !endpoint_drain(caller) ||
+				    !endpoint_drain(answerer) ||
+				    caller->output_count != 0 ||
+				    answerer->output_count != 0 ||
+				    !modem_is_online(caller->modem, DP_V22BIS) ||
+				    !modem_is_online(answerer->modem, DP_V22BIS))
+					return false;
+			}
+		} else {
+			bool retrain_started = false;
+			bool retrain_completed = false;
+
+			for (unsigned int samples = 0; samples < MODEM_RATE / 2;
+			     samples += SIP_FRAME_SAMPLES) {
+				if (!process_sip_frame_with_loss(
+					    caller, answerer, codec, recorder,
+					    true, true, false, false) ||
+				    !endpoint_drain(caller) ||
+				    !endpoint_drain(answerer) ||
+				    caller->output_count != 0 ||
+				    answerer->output_count != 0 ||
+				    caller->modem->process == NULL ||
+				    answerer->modem->process == NULL)
+					return false;
+			}
+			for (unsigned int frame = 0;
+			     frame < RETRAIN_FRAME_LIMIT; ++frame) {
+				if (!process_sip_frame(
+					    caller, answerer, codec, recorder) ||
+				    !endpoint_drain(caller) ||
+				    !endpoint_drain(answerer))
+					return false;
+				if (!modem_is_online(caller->modem, DP_V22BIS) ||
+				    !modem_is_online(answerer->modem, DP_V22BIS))
+					retrain_started = true;
+				if (retrain_started &&
+				    modem_is_online(caller->modem, DP_V22BIS) &&
+				    modem_is_online(answerer->modem, DP_V22BIS)) {
+					retrain_completed = true;
+					break;
+				}
+			}
+			if (!retrain_completed)
+				return false;
 		}
-	}
-	if (!retrain_completed)
-		return false;
-	caller->output_count = 0;
-	answerer->output_count = 0;
-	if (modem_write(
-		    caller->modem, (const char *)caller_payload,
-		    (int)sizeof(caller_payload)) != (int)sizeof(caller_payload) ||
-	    modem_write(
-		    answerer->modem, (const char *)answerer_payload,
-		    (int)sizeof(answerer_payload)) !=
-		    (int)sizeof(answerer_payload))
-		return false;
-	for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
-		if (!process_sip_frame(caller, answerer, codec, recorder) ||
-		    !endpoint_drain(caller) || !endpoint_drain(answerer))
+		caller->output_count = 0;
+		answerer->output_count = 0;
+		if (modem_write(
+			    caller->modem, (const char *)caller_payload,
+			    (int)sizeof(caller_payload)) !=
+				    (int)sizeof(caller_payload) ||
+		    modem_write(
+			    answerer->modem, (const char *)answerer_payload,
+			    (int)sizeof(answerer_payload)) !=
+				    (int)sizeof(answerer_payload))
 			return false;
-		if (caller->output_count >= sizeof(answerer_payload) &&
-		    answerer->output_count >= sizeof(caller_payload)) {
-			transferred = true;
-			break;
+		for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
+			if (!process_sip_frame(caller, answerer, codec, recorder) ||
+			    !endpoint_drain(caller) || !endpoint_drain(answerer))
+				return false;
+			if (caller->output_count >= sizeof(answerer_payload) &&
+			    answerer->output_count >= sizeof(caller_payload)) {
+				transferred = true;
+				break;
+			}
 		}
+		if (!transferred ||
+		    caller->output_count != sizeof(answerer_payload) ||
+		    answerer->output_count != sizeof(caller_payload) ||
+		    memcmp(caller->output, answerer_payload,
+			   sizeof(answerer_payload)) != 0 ||
+		    memcmp(answerer->output, caller_payload,
+			   sizeof(caller_payload)) != 0)
+			return false;
 	}
-	return transferred &&
-	       caller->output_count == sizeof(answerer_payload) &&
-	       answerer->output_count == sizeof(caller_payload) &&
-	       memcmp(caller->output, answerer_payload,
-		      sizeof(answerer_payload)) == 0 &&
-	       memcmp(answerer->output, caller_payload,
-		      sizeof(caller_payload)) == 0;
+	return true;
 }
 
 static bool run_media_call(
@@ -1309,7 +1371,8 @@ static bool run_media_call(
 		      test_case->name);
 		if (test_case->id == DP_V22BIS)
 			CHECK(exercise_v22bis_carrier_recovery(
-				      &caller, &answerer, codec, &recorder),
+				      &caller, &answerer, codec, &recorder,
+				      test_case->raw_transport),
 			      "%s carrier recovery did not retrain and pass data",
 			      test_case->name);
 	}

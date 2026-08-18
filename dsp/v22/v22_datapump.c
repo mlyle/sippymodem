@@ -31,6 +31,8 @@ enum {
 	V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS = 324,
 	V22_CONNECT_HOLD_SAMPLES = MODEM_RATE * 765 / 1000,
 	V22_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
+	/* V.22bis leaves received data clamped for 100 ms after carrier returns. */
+	V22BIS_CARRIER_RETURN_HOLD_SAMPLES = MODEM_RATE / 10,
 	/* After 300 ms, resuming the old 2400-bit/s decisions is unsafe. */
 	V22BIS_CARRIER_RETRAIN_SAMPLES = MODEM_RATE * 3 / 10,
 	V22_MIN_LINE_POWER = 1000000,
@@ -116,6 +118,7 @@ struct v22_datapump {
 	uint32_t rate_signal_tx_symbols;
 	uint32_t rate_signal_wait_samples;
 	uint32_t missing_carrier_samples;
+	uint32_t carrier_return_hold_samples;
 	uint32_t retrain_peer_samples;
 	uint32_t retrain_retry_samples;
 	uint8_t retrain_detect_symbols;
@@ -251,6 +254,12 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->retrain_retry_samples > V22_RETRAIN_RETRY_SAMPLES ||
 	    datapump->missing_carrier_samples >
 		    carrier_loss_limit_samples(datapump) ||
+	    datapump->carrier_return_hold_samples >
+		    V22BIS_CARRIER_RETURN_HOLD_SAMPLES ||
+	    (datapump->carrier_return_hold_samples != 0 &&
+	     (!datapump_uses_v22bis(datapump) ||
+	      datapump->training_state != V22_TRAINING_ONLINE ||
+	      datapump->missing_carrier_samples != 0)) ||
 	    datapump->transmit_symbol >= V22BIS_SYMBOL_COUNT ||
 	    datapump->encoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !v22_scrambler_is_valid(&datapump->encoder.scrambler) ||
@@ -656,6 +665,12 @@ static int output_received_bits(
 	size_t bit_count)
 {
 	if (datapump->retrain_detect_symbols != 0) {
+		if (datapump->training_state == V22_TRAINING_ONLINE &&
+		    datapump->carrier_return_hold_samples == 0 &&
+		    !datapump->retrain_candidate_deliver) {
+			datapump->retrain_candidate_bit_count = 0;
+			datapump->retrain_candidate_deliver = true;
+		}
 		if (bit_count >
 		    sizeof(datapump->retrain_candidate_bits) -
 			    datapump->retrain_candidate_bit_count)
@@ -664,7 +679,8 @@ static int output_received_bits(
 			       datapump->retrain_candidate_bit_count,
 		       bits, bit_count);
 		datapump->retrain_candidate_bit_count += (uint16_t)bit_count;
-	} else if (datapump->dp.modem->put_bits != NULL) {
+	} else if (datapump->carrier_return_hold_samples == 0 &&
+		   datapump->dp.modem->put_bits != NULL) {
 		(void)modem_put_bits(
 			datapump->dp.modem, 1, bits,
 			(int)bit_count);
@@ -1103,7 +1119,8 @@ static int observe_retrain_signal(
 			datapump->retrain_detect_symbols = 1;
 			datapump->retrain_valid_symbols = marker_point ? 1 : 0;
 			datapump->retrain_candidate_deliver =
-				online || datapump->retrain_receive_ready;
+				(online || datapump->retrain_receive_ready) &&
+				datapump->carrier_return_hold_samples == 0;
 		}
 	} else {
 		if (datapump->retrain_detect_symbols == 0) {
@@ -1111,7 +1128,8 @@ static int observe_retrain_signal(
 			if (online && !capture_retrain_gain(datapump))
 				return -1;
 			datapump->retrain_candidate_deliver =
-				online || datapump->retrain_receive_ready;
+				(online || datapump->retrain_receive_ready) &&
+				datapump->carrier_return_hold_samples == 0;
 		}
 		if (online &&
 		    retrain_point_matches(
@@ -1160,6 +1178,7 @@ static int begin_retrain(
 	datapump->scrambled_mark_bits = 0;
 	datapump->v22bis_confirm_bits = 0;
 	datapump->missing_carrier_samples = 0;
+	datapump->carrier_return_hold_samples = 0;
 	datapump->retrain_peer_samples = 0;
 	discard_retrain_candidate(datapump);
 	datapump->v22bis_receiver_initialized = false;
@@ -1461,6 +1480,7 @@ static int enter_link(struct v22_datapump *datapump)
 	datapump->rate_signal_tx_symbols = 0;
 	datapump->rate_signal_wait_samples = 0;
 	datapump->missing_carrier_samples = 0;
+	datapump->carrier_return_hold_samples = 0;
 	datapump->retrain_peer_samples = 0;
 	datapump->retrain_retry_samples = 0;
 	discard_retrain_candidate(datapump);
@@ -1636,6 +1656,7 @@ static int process_v22(
 	bool discard_receive = false;
 	bool line_power_present;
 	bool linked = false;
+	bool return_hold_was_active;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
 	    count <= 0 || count > MODEM_FRAG) {
@@ -1651,16 +1672,28 @@ static int process_v22(
 		datapump->training_samples += (unsigned int)count;
 	}
 	if (datapump->training_state == V22_TRAINING_ONLINE &&
+	    datapump_uses_v22bis(datapump) && line_power_present &&
+	    datapump->missing_carrier_samples != 0 &&
+	    datapump->missing_carrier_samples <
+		    V22BIS_CARRIER_RETRAIN_SAMPLES) {
+		datapump->missing_carrier_samples = 0;
+		datapump->carrier_return_hold_samples =
+			V22BIS_CARRIER_RETURN_HOLD_SAMPLES;
+	}
+	if (datapump->training_state == V22_TRAINING_ONLINE &&
 	    (datapump->missing_carrier_samples != 0 ||
 	     !line_power_present)) {
 		discard_receive = true;
 		if (datapump->missing_carrier_samples == 0) {
+			datapump->carrier_return_hold_samples = 0;
 			flush_retrain_candidate(datapump);
 			discard_retrain_candidate(datapump);
 			if (!datapump->dp.modem->cfg.ec)
 				modem_async_retrain(datapump->dp.modem);
 		}
 	}
+	return_hold_was_active =
+		datapump->carrier_return_hold_samples != 0;
 	for (int index = 0; index < count; ++index) {
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
 		    receive_sample(
@@ -1670,6 +1703,9 @@ static int process_v22(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
+		if (datapump->training_state == V22_TRAINING_ONLINE &&
+		    datapump->carrier_return_hold_samples != 0)
+			datapump->carrier_return_hold_samples--;
 	}
 	if (linked)
 		return DPSTAT_CONNECT;
@@ -1681,6 +1717,12 @@ static int process_v22(
 	if (datapump_uses_v22bis(datapump) && line_power_present &&
 	    datapump->missing_carrier_samples >=
 		    V22BIS_CARRIER_RETRAIN_SAMPLES) {
+		if (begin_retrain(
+			    datapump, receive_phase_quadrant(datapump), false) != 0)
+			return DPSTAT_ERROR;
+	} else if (datapump_uses_v22bis(datapump) &&
+		   line_power_present && return_hold_was_active &&
+		   !carrier_is_present(&measurement, true)) {
 		if (begin_retrain(
 			    datapump, receive_phase_quadrant(datapump), false) != 0)
 			return DPSTAT_ERROR;
