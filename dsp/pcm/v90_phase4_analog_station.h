@@ -6,7 +6,7 @@
 #include "pcm_downstream_rx.h"
 #include "v90_jd.h"
 #include "v90_phase4_cp_line_tx.h"
-#include "v90_phase4_ri.h"
+#include "v90_phase4_ri_search.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,7 +40,7 @@ struct v90_phase4_analog_receive_handoff {
  */
 struct v90_phase4_analog_station {
 	struct v90_phase4_cp_line_tx transmit;
-	struct v90_phase4_ri_rx receive;
+	struct v90_phase4_ri_search receive;
 	struct v90_cp_parameters training_parameters;
 	uint8_t maximum_spectral_lookahead;
 	bool finish_cpt_requested;
@@ -60,7 +60,7 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 enum v90_phase4_analog_station_result v90_phase4_analog_station_resume(
 	struct v90_phase4_analog_station *station,
 	const struct v34_training_line *phase3_transmit,
-	const struct v90_phase4_ri_rx *receive,
+	const struct v90_phase4_ri_search *receive,
 	const struct v90_jd_parameters *jd,
 	const struct v90_cp_parameters *training_parameters);
 bool v90_phase4_analog_station_is_valid(

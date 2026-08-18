@@ -59,6 +59,7 @@ union pcm_call_local_info1 {
 
 struct pcm_call_analog_phase3_configuration {
 	int16_t nominal_peak_amplitude;
+	enum v90_dil_profile dil_profile;
 };
 
 struct pcm_call_digital_phase3_configuration {
@@ -132,7 +133,7 @@ union pcm_call_phase3_state {
  * independent handoff boundary. */
 struct pcm_call_analog_mixed_state {
 	struct v90_phase3_analog_station phase3;
-	struct v90_phase4_ri_rx receive;
+	struct v90_phase4_ri_search receive;
 };
 
 struct pcm_call_digital_mixed_state {

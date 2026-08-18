@@ -285,6 +285,7 @@ static bool test_generated_entries(void)
 					if (role == V90_ANALOG_MODEM) {
 						CHECK(pcm_phase3_entry_start_v90_analog(
 							      &entry, NOMINAL_AMPLITUDE,
+							      V90_DIL_PROFILE_NONE,
 							      &analog) == PCM_PHASE3_ENTRY_OK &&
 						      v90_phase3_analog_station_is_valid(
 							      &analog) &&
@@ -303,6 +304,7 @@ static bool test_generated_entries(void)
 							      &digital) &&
 						      pcm_phase3_entry_start_v90_analog(
 							      &entry, NOMINAL_AMPLITUDE,
+							      V90_DIL_PROFILE_NONE,
 							      &analog) ==
 							      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
 						      memcmp(&analog, &saved_analog,
@@ -418,16 +420,18 @@ static bool test_station_validation(void)
 	memset(&digital, 0x5a, sizeof(digital));
 	saved_digital = digital;
 	CHECK(pcm_phase3_entry_start_v90_analog(
-		      NULL, NOMINAL_AMPLITUDE, &analog) ==
+		      NULL, NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE, &analog) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_analog(
-		      &analog_entry, 0, &analog) ==
+		      &analog_entry, 0, V90_DIL_PROFILE_NONE, &analog) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_analog(
-		      &analog_entry, NOMINAL_AMPLITUDE, NULL) ==
+		      &analog_entry, NOMINAL_AMPLITUDE,
+		      V90_DIL_PROFILE_NONE, NULL) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_analog(
-		      &analog_entry, INT16_MAX, &analog) ==
+		      &analog_entry, INT16_MAX, V90_DIL_PROFILE_NONE,
+		      &analog) ==
 		      PCM_PHASE3_ENTRY_CLIPPING_RISK &&
 	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
 	      "invalid or clipping analogue start changed state");
@@ -450,7 +454,8 @@ static bool test_station_validation(void)
 	CHECK(v34_phase3_profile_is_valid(&analog_entry.conventional_profile) &&
 	      !pcm_phase3_entry_is_valid(&analog_entry) &&
 	      pcm_phase3_entry_start_v90_analog(
-		      &analog_entry, NOMINAL_AMPLITUDE, &analog) ==
+		      &analog_entry, NOMINAL_AMPLITUDE,
+		      V90_DIL_PROFILE_NONE, &analog) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT,
 	      "entry accepted a conventional MD interval");
 	return true;
@@ -501,6 +506,7 @@ static bool test_v90_branch_guards(void)
 			if (role == V90_ANALOG_MODEM) {
 				CHECK(pcm_phase3_entry_start_v90_analog(
 					      &entry, NOMINAL_AMPLITUDE,
+					      V90_DIL_PROFILE_NONE,
 					      &analog) ==
 					      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
 				      memcmp(&analog, &saved_analog,

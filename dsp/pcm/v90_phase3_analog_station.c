@@ -8,18 +8,54 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool transmit_is_valid(
+static bool transmit_owned_state_is_valid(
 	const struct v90_phase3_analog_station *station)
 {
 	switch (station->transmit_stage) {
 	case V90_PHASE3_ANALOG_TRANSMIT_INITIAL:
-		return v90_phase3_analog_line_tx_is_valid(
+		return v90_phase3_analog_line_tx_owned_state_is_valid(
 			&station->transmit.initial);
 	case V90_PHASE3_ANALOG_TRANSMIT_RETURN:
+	case V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN:
 		return v90_phase3_return_line_tx_is_valid(
 			&station->transmit.returning);
 	}
 	return false;
+}
+
+static bool transmit_is_valid(
+	const struct v90_phase3_analog_station *station)
+{
+	return transmit_owned_state_is_valid(station) &&
+	       (station->transmit_stage != V90_PHASE3_ANALOG_TRANSMIT_INITIAL ||
+		v90_phase3_analog_line_tx_is_valid(
+			&station->transmit.initial));
+}
+
+static bool dil_state_is_valid(
+	const struct v90_phase3_analog_station *station)
+{
+	bool signs_complete =
+		station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
+		v90_phase3_sign_receiver_is_complete(&station->receive.signs);
+
+	if (!v90_dil_profile_is_valid(station->dil_profile))
+		return false;
+	if (station->dil_profile == V90_DIL_PROFILE_NONE)
+		return station->dil_training_symbols == 0u &&
+		       station->dil_received_symbols == 0u &&
+		       station->transmit_stage !=
+			       V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN;
+	if (station->dil_training_symbols == 0u ||
+	    station->dil_received_symbols > station->dil_training_symbols + 1u ||
+	    (!signs_complete && station->dil_received_symbols != 0u))
+		return false;
+	if (station->dil_received_symbols <= station->dil_training_symbols)
+		return true;
+	return station->transmit_stage ==
+		       V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN &&
+	       station->transmit.returning.points.stage !=
+		       V90_PHASE3_RETURN_TX_SILENCE;
 }
 
 static bool receive_is_valid(
@@ -40,9 +76,23 @@ static bool return_controls_are_causal(
 {
 	const struct v90_phase3_return_tx *returning;
 
-	if (station->transmit_stage != V90_PHASE3_ANALOG_TRANSMIT_RETURN)
+	if (station->transmit_stage == V90_PHASE3_ANALOG_TRANSMIT_INITIAL)
 		return true;
 	returning = &station->transmit.returning.points;
+	if (station->transmit_stage ==
+	    V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN) {
+		if (station->dil_profile != V90_DIL_PROFILE_CONVENTIONAL ||
+		    station->receive_stage != V90_PHASE3_ANALOG_RECEIVE_SIGNS ||
+		    !v90_phase3_sign_receiver_is_complete(
+			    &station->receive.signs))
+			return false;
+		if (returning->stage == V90_PHASE3_RETURN_TX_SILENCE)
+			return station->dil_received_symbols <=
+			       station->dil_training_symbols;
+		return station->dil_received_symbols >=
+			       station->dil_training_symbols &&
+		       returning->finish_s_requested;
+	}
 	if (returning->stage == V90_PHASE3_RETURN_TX_SILENCE)
 		return true;
 	if (station->receive_stage != V90_PHASE3_ANALOG_RECEIVE_SIGNS ||
@@ -52,11 +102,19 @@ static bool return_controls_are_causal(
 	       v90_phase3_sign_receiver_is_complete(&station->receive.signs);
 }
 
+bool v90_phase3_analog_station_owned_state_is_valid(
+	const struct v90_phase3_analog_station *station)
+{
+	return station != NULL && transmit_owned_state_is_valid(station) &&
+	       receive_is_valid(station) && dil_state_is_valid(station) &&
+	       return_controls_are_causal(station);
+}
+
 bool v90_phase3_analog_station_is_valid(
 	const struct v90_phase3_analog_station *station)
 {
-	return station != NULL && transmit_is_valid(station) &&
-	       receive_is_valid(station) && return_controls_are_causal(station);
+	return v90_phase3_analog_station_owned_state_is_valid(station) &&
+	       transmit_is_valid(station);
 }
 
 bool v90_phase3_analog_station_has_failed(
@@ -69,14 +127,20 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_init(
 	struct v90_phase3_analog_station *station,
 	const struct v34_phase3_profile *analog_profile,
 	enum g711_law law, uint8_t training_ucode,
-	int16_t nominal_peak_amplitude)
+	int16_t nominal_peak_amplitude, enum v90_dil_profile dil_profile)
 {
-	struct v90_phase3_analog_station initialized = { 0 };
+	struct v90_phase3_analog_station initialized = {
+		.dil_profile = dil_profile,
+	};
+	struct v90_dil_parameters dil;
 	enum v90_phase3_analog_line_tx_result transmit_result;
 
 	if (station == NULL || !g711_law_is_valid(law) ||
 	    training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
-	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE)
+	    training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
+	    v90_dil_profile_init(&dil, dil_profile) != V90_DIL_OK ||
+	    !v90_dil_training_symbol_count(
+		    &dil, &initialized.dil_training_symbols))
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	transmit_result = v90_phase3_analog_line_tx_init(
 		&initialized.transmit.initial, analog_profile,
@@ -107,13 +171,17 @@ static enum v90_phase3_analog_station_result start_or_finish_ja(
 {
 	struct v90_phase3_analog_tx *symbols =
 		&station->transmit.initial.symbols;
+	struct v90_dil_parameters dil;
 	enum v90_phase3_analog_line_tx_result result;
 
 	if (symbols->stage == V90_PHASE3_ANALOG_TX_PREFIX &&
 	    symbols->sequence.prefix.stage == V34_PHASE3_TRANSMITTER_TRN &&
 	    symbols->sequence.prefix.trn_symbols == V34_PHASE3_TRN_MIN_SYMBOLS) {
-		result = v90_phase3_analog_line_tx_start_ja(
-			&station->transmit.initial);
+		if (v90_dil_profile_init(&dil, station->dil_profile) !=
+		    V90_DIL_OK)
+			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+		result = v90_phase3_analog_line_tx_start_dil_ja(
+			&station->transmit.initial, &dil);
 		if (result != V90_PHASE3_ANALOG_LINE_TX_OK)
 			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	}
@@ -128,13 +196,34 @@ static enum v90_phase3_analog_station_result start_or_finish_ja(
 		       V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 }
 
+static enum v90_phase3_analog_station_result enter_dil_return_transmit(
+	struct v90_phase3_analog_station *station)
+{
+	struct v34_training_line line;
+	struct v90_phase3_return_line_tx returning;
+
+	if (station->dil_profile == V90_DIL_PROFILE_NONE ||
+	    !v90_phase3_return_line_tx_is_handoff_ready(
+		    &station->transmit.returning))
+		return V90_PHASE3_ANALOG_STATION_OK;
+	if (v90_phase3_return_line_tx_handoff(
+		    &station->transmit.returning, &line) !=
+		    V90_PHASE3_RETURN_LINE_TX_OK ||
+	    v90_phase3_return_line_tx_init(&returning, &line) !=
+		    V90_PHASE3_RETURN_LINE_TX_OK)
+		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+	station->transmit.returning = returning;
+	station->transmit_stage = V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN;
+	return V90_PHASE3_ANALOG_STATION_OK;
+}
+
 static enum v90_phase3_analog_station_result enter_return_transmit(
 	struct v90_phase3_analog_station *station)
 {
 	struct v34_training_line line;
 	struct v90_phase3_return_line_tx returning;
 
-	if (!v90_phase3_analog_line_tx_is_handoff_ready(
+	if (!v90_phase3_analog_line_tx_owned_handoff_is_ready(
 		    &station->transmit.initial))
 		return V90_PHASE3_ANALOG_STATION_OK;
 	if (v90_phase3_analog_line_tx_handoff(
@@ -173,6 +262,23 @@ static enum v90_phase3_analog_station_result control_return_transmit(
 	return V90_PHASE3_ANALOG_STATION_OK;
 }
 
+static enum v90_phase3_analog_station_result control_dil_return_transmit(
+	struct v90_phase3_analog_station *station)
+{
+	struct v90_phase3_return_line_tx *returning =
+		&station->transmit.returning;
+
+	if (station->dil_received_symbols < station->dil_training_symbols ||
+	    returning->points.stage != V90_PHASE3_RETURN_TX_SILENCE)
+		return V90_PHASE3_ANALOG_STATION_OK;
+	if (v90_phase3_return_line_tx_start_s(returning) !=
+		    V90_PHASE3_RETURN_LINE_TX_OK ||
+	    v90_phase3_return_line_tx_finish_s(returning) !=
+		    V90_PHASE3_RETURN_LINE_TX_OK)
+		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+	return V90_PHASE3_ANALOG_STATION_OK;
+}
+
 static enum v90_phase3_analog_station_result control_transmit(
 	struct v90_phase3_analog_station *station)
 {
@@ -187,17 +293,35 @@ static enum v90_phase3_analog_station_result control_transmit(
 		    station->transmit_stage == V90_PHASE3_ANALOG_TRANSMIT_INITIAL)
 			return result;
 	}
-	return control_return_transmit(station);
+	if (station->transmit_stage == V90_PHASE3_ANALOG_TRANSMIT_RETURN) {
+		result = control_return_transmit(station);
+		if (result != V90_PHASE3_ANALOG_STATION_OK)
+			return result;
+		result = enter_dil_return_transmit(station);
+		if (result != V90_PHASE3_ANALOG_STATION_OK ||
+		    station->transmit_stage == V90_PHASE3_ANALOG_TRANSMIT_RETURN)
+			return result;
+	}
+	return control_dil_return_transmit(station);
+}
+
+static bool transmit_is_complete_owned(
+	const struct v90_phase3_analog_station *station)
+{
+	return v90_phase3_analog_station_owned_state_is_valid(station) &&
+	       !station->failed &&
+	       station->transmit_stage ==
+		       (station->dil_profile == V90_DIL_PROFILE_NONE ?
+			       V90_PHASE3_ANALOG_TRANSMIT_RETURN :
+			       V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN) &&
+	       v90_phase3_return_line_tx_is_handoff_ready(
+		       &station->transmit.returning);
 }
 
 bool v90_phase3_analog_station_transmit_complete(
 	const struct v90_phase3_analog_station *station)
 {
-	return v90_phase3_analog_station_is_valid(station) &&
-	       !station->failed &&
-	       station->transmit_stage == V90_PHASE3_ANALOG_TRANSMIT_RETURN &&
-	       v90_phase3_return_line_tx_is_handoff_ready(
-		       &station->transmit.returning);
+	return transmit_is_complete_owned(station);
 }
 
 enum v90_phase3_analog_station_result v90_phase3_analog_station_transmit(
@@ -207,11 +331,12 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_transmit(
 	enum v90_phase3_analog_station_result control_result;
 	int16_t generated;
 
-	if (!v90_phase3_analog_station_is_valid(station) || sample == NULL)
+	if (!v90_phase3_analog_station_owned_state_is_valid(station) ||
+	    sample == NULL)
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_ANALOG_STATION_FAILED;
-	if (v90_phase3_analog_station_transmit_complete(station))
+	if (transmit_is_complete_owned(station))
 		return V90_PHASE3_ANALOG_STATION_COMPLETE;
 	next = *station;
 	control_result = control_transmit(&next);
@@ -238,7 +363,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_transmit(
 		station->failed = true;
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	}
-	if (!v90_phase3_analog_station_is_valid(&next)) {
+	if (!v90_phase3_analog_station_owned_state_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	}
@@ -296,13 +421,37 @@ static enum v90_phase3_analog_station_result receive_sign(
 	return V90_PHASE3_ANALOG_STATION_OK;
 }
 
+static enum v90_phase3_analog_station_result receive_dil(
+	struct v90_phase3_analog_station *station)
+{
+	if (station->dil_received_symbols < station->dil_training_symbols) {
+		station->dil_received_symbols++;
+		return V90_PHASE3_ANALOG_STATION_OK;
+	}
+	if (station->dil_received_symbols == station->dil_training_symbols &&
+	    station->transmit_stage ==
+		    V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN &&
+	    station->transmit.returning.points.stage !=
+		    V90_PHASE3_RETURN_TX_SILENCE)
+		station->dil_received_symbols++;
+	return V90_PHASE3_ANALOG_STATION_OK;
+}
+
+static bool receive_is_complete_owned(
+	const struct v90_phase3_analog_station *station)
+{
+	return v90_phase3_analog_station_owned_state_is_valid(station) &&
+	       !station->failed &&
+	       station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
+	       v90_phase3_sign_receiver_is_complete(&station->receive.signs) &&
+	       (station->dil_profile == V90_DIL_PROFILE_NONE ||
+		station->dil_received_symbols > station->dil_training_symbols);
+}
+
 bool v90_phase3_analog_station_receive_complete(
 	const struct v90_phase3_analog_station *station)
 {
-	return v90_phase3_analog_station_is_valid(station) &&
-	       !station->failed &&
-	       station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
-	       v90_phase3_sign_receiver_is_complete(&station->receive.signs);
+	return receive_is_complete_owned(station);
 }
 
 enum v90_phase3_analog_station_result v90_phase3_analog_station_receive(
@@ -311,21 +460,24 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_receive(
 	struct v90_phase3_analog_station next;
 	enum v90_phase3_analog_station_result result;
 
-	if (!v90_phase3_analog_station_is_valid(station))
+	if (!v90_phase3_analog_station_owned_state_is_valid(station))
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_ANALOG_STATION_FAILED;
-	if (v90_phase3_analog_station_receive_complete(station))
+	if (receive_is_complete_owned(station))
 		return V90_PHASE3_ANALOG_STATION_COMPLETE;
 	next = *station;
-	result = next.receive_stage == V90_PHASE3_ANALOG_RECEIVE_SD ?
-			 receive_sd(&next, network_octet) :
-			 receive_sign(&next, network_octet);
+	if (next.receive_stage == V90_PHASE3_ANALOG_RECEIVE_SD)
+		result = receive_sd(&next, network_octet);
+	else if (!v90_phase3_sign_receiver_is_complete(&next.receive.signs))
+		result = receive_sign(&next, network_octet);
+	else
+		result = receive_dil(&next);
 	if (result != V90_PHASE3_ANALOG_STATION_OK) {
 		station->failed = true;
 		return result;
 	}
-	if (!v90_phase3_analog_station_is_valid(&next)) {
+	if (!v90_phase3_analog_station_owned_state_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	}

@@ -2105,6 +2105,7 @@ V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_analog_station.o \
 	$(BUILD_DIR)/v90_phase4_ri.o \
+	$(BUILD_DIR)/v90_phase4_ri_search.o \
 	$(BUILD_DIR)/pcm_downstream_rx.o \
 	$(BUILD_DIR)/v90_pcm_stream_rx.o \
 	$(BUILD_DIR)/v90_mp_receiver.o \

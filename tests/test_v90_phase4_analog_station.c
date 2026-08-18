@@ -128,18 +128,11 @@ static bool model_sample(
 	       V90_PHASE4_CP_LINE_TX_OK;
 }
 
-static bool ri_receive_matches(
-	const struct v90_phase4_ri_rx *left,
-	const struct v90_phase4_ri_rx *right)
+static bool ri_search_matches(
+	const struct v90_phase4_ri_search *left,
+	const struct v90_phase4_ri_search *right)
 {
-	return left->stage == right->stage &&
-	       left->law == right->law &&
-	       left->ri_symbols == right->ri_symbols &&
-	       left->ri_bar_symbols == right->ri_bar_symbols &&
-	       left->phase == right->phase &&
-	       left->training_ucode == right->training_ucode &&
-	       left->polarity_known == right->polarity_known &&
-	       left->inverted == right->inverted;
+	return memcmp(left, right, sizeof(*left)) == 0;
 }
 
 static bool run_exchange(
@@ -340,15 +333,15 @@ static bool resume_after_ri_transition(enum g711_law law)
 	struct v90_cp_parameters training = training_parameters(law);
 	struct v34_training_line line;
 	struct v90_phase4_ri_tx transmit;
-	struct v90_phase4_ri_rx receive;
+	struct v90_phase4_ri_search receive;
 	struct v90_phase4_analog_station station;
 	bool transition_seen = false;
 
 	CHECK(prepare_line(&line) &&
 	      v90_phase4_ri_tx_init(&transmit, law, TRAINING_UCODE) ==
 		      V90_PHASE4_RI_OK &&
-	      v90_phase4_ri_rx_init(&receive, law, TRAINING_UCODE) ==
-		      V90_PHASE4_RI_OK &&
+	      v90_phase4_ri_search_init(&receive, law, TRAINING_UCODE) ==
+		      V90_PHASE4_RI_SEARCH_OK &&
 	      v90_phase4_ri_tx_request_finish(&transmit) ==
 		      V90_PHASE4_RI_OK,
 	      "law %u resume fixture did not initialize",
@@ -357,18 +350,19 @@ static bool resume_after_ri_transition(enum g711_law law)
 	     index < V90_PHASE4_RI_MIN_SYMBOLS + V90_PHASE4_RI_PERIOD;
 	     ++index) {
 		uint8_t octet;
-		enum v90_phase4_ri_result result;
+		enum v90_phase4_ri_search_result result;
 
 		CHECK(v90_phase4_ri_tx_next(&transmit, &octet) ==
 			      V90_PHASE4_RI_OK,
 		      "law %u Ri prefix stopped at %zu",
 		      (unsigned int)law, index);
-		result = v90_phase4_ri_rx_receive(&receive, octet);
-		CHECK(result == V90_PHASE4_RI_OK ||
-		      result == V90_PHASE4_RI_TRANSITION_DETECTED,
+		result = v90_phase4_ri_search_receive(&receive, octet);
+		CHECK(result == V90_PHASE4_RI_SEARCH_OK ||
+		      result == V90_PHASE4_RI_SEARCH_ACQUIRED ||
+		      result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED,
 		      "law %u Ri prefix was rejected at %zu",
 		      (unsigned int)law, index);
-		if (result == V90_PHASE4_RI_TRANSITION_DETECTED) {
+		if (result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED) {
 			transition_seen = true;
 			break;
 		}
@@ -378,20 +372,20 @@ static bool resume_after_ri_transition(enum g711_law law)
 		      &station, &line, &receive, &jd, &training) ==
 		      V90_PHASE4_ANALOG_STATION_OK &&
 	      station.finish_cpt_requested &&
-	      ri_receive_matches(&station.receive, &receive),
+	      ri_search_matches(&station.receive, &receive),
 	      "law %u advanced Ri receiver was not preserved",
 	      (unsigned int)law);
 	{
-		struct v90_phase4_ri_rx model = receive;
+		struct v90_phase4_ri_search model = receive;
 		uint8_t octet;
 
 		CHECK(v90_phase4_ri_tx_next(&transmit, &octet) ==
 			      V90_PHASE4_RI_OK &&
-		      v90_phase4_ri_rx_receive(&model, octet) ==
-			      V90_PHASE4_RI_OK &&
+		      v90_phase4_ri_search_receive(&model, octet) ==
+			      V90_PHASE4_RI_SEARCH_OK &&
 		      v90_phase4_analog_station_receive(&station, octet) ==
 			      V90_PHASE4_ANALOG_STATION_OK &&
-		      ri_receive_matches(&station.receive, &model),
+		      ri_search_matches(&station.receive, &model),
 		      "law %u resumed Ri receiver replayed its prefix",
 		      (unsigned int)law);
 	}
@@ -431,6 +425,7 @@ static bool test_contracts(void)
 	struct v90_phase4_cp_line_tx transmit_saved;
 	struct v90_phase4_analog_receive_handoff receive_handoff;
 	struct v90_phase4_analog_receive_handoff receive_saved;
+	struct v90_phase4_ri_tx ri;
 	struct v90_pcm_symbol wrong;
 	int16_t sample = 777;
 
@@ -526,8 +521,22 @@ static bool test_contracts(void)
 
 	CHECK(v90_pcm_symbol_make(
 		      &wrong, G711_LAW_PCMU, TRAINING_UCODE - 1u,
-		      true),
+		      true) &&
+	      v90_phase4_ri_tx_init(
+		      &ri, G711_LAW_PCMU, TRAINING_UCODE) ==
+		      V90_PHASE4_RI_OK,
 	      "invalid-sequence character did not initialize");
+	for (size_t index = 0; index < V90_PHASE4_RI_SEARCH_SYMBOLS;
+	     ++index) {
+		uint8_t octet;
+
+		CHECK(v90_phase4_ri_tx_next(&ri, &octet) == V90_PHASE4_RI_OK &&
+		      v90_phase4_analog_station_receive(&station, octet) ==
+			      V90_PHASE4_ANALOG_STATION_OK,
+		      "Ri acquisition stopped at %zu", index);
+	}
+	CHECK(v90_phase4_ri_search_is_acquired(&station.receive),
+	      "station did not acquire Ri before sequence check");
 	{
 		struct v90_phase4_analog_station expected = station;
 

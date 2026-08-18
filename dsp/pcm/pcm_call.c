@@ -111,6 +111,7 @@ static bool analog_configuration_is_valid(
 {
 	return v90_info1a_is_valid(&info1->analog) &&
 	       phase3->analog.nominal_peak_amplitude > 0 &&
+	       v90_dil_profile_is_valid(phase3->analog.dil_profile) &&
 	       phase4->training_parameters.kind == V90_CP_TRAINING &&
 	       phase4->training_parameters.law == law &&
 	       !phase4->training_parameters.request_silence &&
@@ -330,17 +331,13 @@ static bool analog_mixed_is_valid(const struct pcm_call *call)
 	const struct v90_phase3_sign_receiver *signs =
 		&mixed->phase3.receive.signs;
 	bool transmit_complete =
-		mixed->phase3.transmit_stage ==
-			V90_PHASE3_ANALOG_TRANSMIT_RETURN &&
-		v90_phase3_return_line_tx_is_handoff_ready(
-			&mixed->phase3.transmit.returning);
+		v90_phase3_analog_station_transmit_complete(&mixed->phase3);
 
 	return v90_phase3_analog_station_is_valid(&mixed->phase3) &&
 	       mixed->phase3.receive_stage ==
 		       V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
 	       v90_phase3_sign_receiver_is_complete(signs) &&
-	       v90_phase4_ri_rx_is_valid(&mixed->receive) &&
-	       mixed->receive.stage == V90_PHASE4_RI &&
+	       v90_phase4_ri_search_is_valid(&mixed->receive) &&
 	       mixed->receive.law == signs->law &&
 	       mixed->receive.training_ucode == signs->training_ucode &&
 	       (call->failed || !transmit_complete);
@@ -493,7 +490,8 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 	       timer_valid;
 }
 
-bool pcm_call_is_valid(const struct pcm_call *call)
+static bool call_is_valid(
+	const struct pcm_call *call, bool owned_phase3)
 {
 	bool child_valid;
 	bool child_failed;
@@ -544,10 +542,12 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 			child_failed = v92_phase3_digital_station_has_failed(
 				&call->state.phase3.v92_digital);
 		} else if (call->local_role == V90_ANALOG_MODEM) {
-			child_valid = v90_phase3_analog_station_is_valid(
-				&call->state.phase3.analog);
-			child_failed = v90_phase3_analog_station_has_failed(
-				&call->state.phase3.analog);
+			child_valid = owned_phase3 ?
+				v90_phase3_analog_station_owned_state_is_valid(
+					&call->state.phase3.analog) :
+				v90_phase3_analog_station_is_valid(
+					&call->state.phase3.analog);
+			child_failed = call->state.phase3.analog.failed;
 		} else {
 			child_valid = v90_phase3_digital_station_is_valid(
 				&call->state.phase3.digital);
@@ -640,6 +640,16 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 	    call->peer_info0_stored != call->state.phase2.peer_info0_stored)
 		return false;
 	return child_valid && (call->failed || !child_failed);
+}
+
+bool pcm_call_is_valid(const struct pcm_call *call)
+{
+	return call_is_valid(call, false);
+}
+
+static bool pcm_call_owned_state_is_valid(const struct pcm_call *call)
+{
+	return call_is_valid(call, true);
 }
 
 enum pcm_call_result pcm_call_init(
@@ -924,6 +934,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 			&entry,
 			call->phase3_configuration.analog
 				.nominal_peak_amplitude,
+			call->phase3_configuration.analog.dil_profile,
 			&station);
 		if (result != PCM_PHASE3_ENTRY_OK)
 			return entry_result(result);
@@ -1210,9 +1221,9 @@ static enum pcm_call_result enter_mixed_phase3(struct pcm_call *call)
 			    &call->state.phase3.analog, &handoff) !=
 			    V90_PHASE3_ANALOG_STATION_OK)
 			return PCM_CALL_INVALID_STATE;
-		if (v90_phase4_ri_rx_init(
+		if (v90_phase4_ri_search_init(
 			    &mixed.receive, handoff.law,
-			    handoff.training_ucode) != V90_PHASE4_RI_OK)
+			    handoff.training_ucode) != V90_PHASE4_RI_SEARCH_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		next.state.mixed.analog = mixed;
 	} else {
@@ -1722,21 +1733,22 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 }
 
 static enum pcm_call_result receive_mixed_ri(
-	struct v90_phase4_ri_rx *receive, uint8_t network_octet)
+	struct v90_phase4_ri_search *receive, uint8_t network_octet)
 {
-	struct v90_phase4_ri_rx next = *receive;
-	enum v90_phase4_ri_result result =
-		v90_phase4_ri_rx_receive(&next, network_octet);
+	struct v90_phase4_ri_search next = *receive;
+	enum v90_phase4_ri_search_result result =
+		v90_phase4_ri_search_receive(&next, network_octet);
 
-	if (result == V90_PHASE4_RI_OK) {
+	if (result == V90_PHASE4_RI_SEARCH_OK ||
+	    result == V90_PHASE4_RI_SEARCH_ACQUIRED ||
+	    result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED ||
+	    result == V90_PHASE4_RI_SEARCH_DONE) {
 		*receive = next;
 		return PCM_CALL_OK;
 	}
-	if (result == V90_PHASE4_RI_TRANSITION_DETECTED ||
-	    result == V90_PHASE4_RI_INVALID_SEQUENCE)
+	if (result == V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE)
 		return PCM_CALL_SEQUENCE_MISMATCH;
-	return result == V90_PHASE4_RI_DONE ?
-		       PCM_CALL_INVALID_STATE : PCM_CALL_NUMERIC_FAILURE;
+	return PCM_CALL_NUMERIC_FAILURE;
 }
 
 static enum pcm_call_result sample_mixed_phase3(
@@ -2200,7 +2212,7 @@ enum pcm_call_result pcm_call_data_octet(
 	uint8_t generated;
 	enum pcm_call_result result;
 
-	if (!pcm_call_is_valid(call) || transmit_octet == NULL ||
+	if (!pcm_call_owned_state_is_valid(call) || transmit_octet == NULL ||
 	    event == NULL || data_outputs_overlap(call, transmit_octet, event))
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
@@ -2264,7 +2276,7 @@ enum pcm_call_result pcm_call_data_octet(
 		result = begin_retrain(call, true);
 	if (result != PCM_CALL_OK)
 		call->failed = true;
-	if (!pcm_call_is_valid(call)) {
+	if (!pcm_call_owned_state_is_valid(call)) {
 		call->failed = true;
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
@@ -2282,7 +2294,7 @@ enum pcm_call_result pcm_call_octet(
 	uint8_t generated;
 	enum pcm_call_result result;
 
-	if (!pcm_call_is_valid(call) || transmit_octet == NULL ||
+	if (!pcm_call_owned_state_is_valid(call) || transmit_octet == NULL ||
 	    observation == NULL ||
 	    outputs_overlap(call, transmit_octet, observation))
 		return PCM_CALL_INVALID_ARGUMENT;
@@ -2290,7 +2302,7 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_FAILED;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return PCM_CALL_INVALID_STATE;
-	if (pcm_call_phase4_is_ready(call))
+	if (call->stage == PCM_CALL_PHASE4 && pcm_call_phase4_is_ready(call))
 		return PCM_CALL_PHASE4_READY;
 	generated = encode_sample(call->law, 0);
 	emitted.processed = call->stage;
@@ -2327,7 +2339,7 @@ enum pcm_call_result pcm_call_octet(
 	if (result != PCM_CALL_OK)
 		call->failed = true;
 	emitted.next = call->stage;
-	if (!pcm_call_is_valid(call)) {
+	if (!pcm_call_owned_state_is_valid(call)) {
 		call->failed = true;
 		return PCM_CALL_NUMERIC_FAILURE;
 	}

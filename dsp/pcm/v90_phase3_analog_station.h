@@ -14,6 +14,7 @@
 enum v90_phase3_analog_transmit_stage {
 	V90_PHASE3_ANALOG_TRANSMIT_INITIAL,
 	V90_PHASE3_ANALOG_TRANSMIT_RETURN,
+	V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN,
 };
 
 enum v90_phase3_analog_receive_stage {
@@ -54,15 +55,20 @@ struct v90_phase3_analog_receive_handoff {
 	uint8_t last_sign;
 };
 
-/* Owns both directions of the analogue modem's zero-DIL Phase 3 exchange.
- * The receive and transmit calls may reach Phase 4 at different times; the
- * caller must serialize calls on one instance and hand each direction over
- * independently when its completion predicate becomes true. */
+/* Owns both directions of the analogue modem's Phase 3 exchange. For nonzero
+ * DIL it waits through one complete generated traversal, then the same
+ * return-line owner emits the required second S/S-bar. The receive and
+ * transmit calls may reach Phase 4 at different times; the caller must
+ * serialize calls on one instance and hand each direction over independently
+ * when its completion predicate becomes true. */
 struct v90_phase3_analog_station {
 	union v90_phase3_analog_station_transmit transmit;
 	union v90_phase3_analog_station_receive receive;
+	uint32_t dil_training_symbols;
+	uint32_t dil_received_symbols;
 	enum v90_phase3_analog_transmit_stage transmit_stage;
 	enum v90_phase3_analog_receive_stage receive_stage;
+	enum v90_dil_profile dil_profile;
 	bool failed;
 };
 
@@ -70,8 +76,10 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_init(
 	struct v90_phase3_analog_station *station,
 	const struct v34_phase3_profile *analog_profile,
 	enum g711_law law, uint8_t training_ucode,
-	int16_t nominal_peak_amplitude);
+	int16_t nominal_peak_amplitude, enum v90_dil_profile dil_profile);
 bool v90_phase3_analog_station_is_valid(
+	const struct v90_phase3_analog_station *station);
+bool v90_phase3_analog_station_owned_state_is_valid(
 	const struct v90_phase3_analog_station *station);
 bool v90_phase3_analog_station_has_failed(
 	const struct v90_phase3_analog_station *station);

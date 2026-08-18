@@ -72,7 +72,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
 
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 	const struct pcm_phase3_entry *entry,
-	int16_t nominal_peak_amplitude,
+	int16_t nominal_peak_amplitude, enum v90_dil_profile dil_profile,
 	struct v90_phase3_analog_station *station)
 {
 	enum v90_phase3_analog_station_result result;
@@ -88,7 +88,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 	result = v90_phase3_analog_station_init(
 		station, &entry->conventional_profile, entry->law,
 		entry->selection.analog.conventional.training_ucode,
-		nominal_peak_amplitude);
+		nominal_peak_amplitude, dil_profile);
 	switch (result) {
 	case V90_PHASE3_ANALOG_STATION_OK:
 		return PCM_PHASE3_ENTRY_OK;

@@ -677,22 +677,37 @@ static bool endpoint_octet(
 	endpoint->entered_phase4 |= observation.next == PCM_CALL_PHASE4;
 	if (observation.processed != PCM_CALL_PHASE4 &&
 	    observation.next == PCM_CALL_PHASE4) {
-		endpoint->phase4_entry_ri_symbols =
-			endpoint->call.local_role == V90_ANALOG_MODEM ?
-				endpoint->call.state.phase4.analog.state.initial
-					.receive
-					.ri_symbols :
+		if (endpoint->call.local_role == V90_ANALOG_MODEM) {
+			const struct v90_phase4_ri_search *search =
+				&endpoint->call.state.phase4.analog.state.initial
+					 .receive;
+
+			endpoint->phase4_entry_ri_symbols =
+				search->stage == V90_PHASE4_RI_SEARCH_HUNT ?
+					search->history_count :
+					V90_PHASE4_RI_MIN_SYMBOLS;
+		} else {
+			endpoint->phase4_entry_ri_symbols =
 				endpoint->call.state.phase4.digital.state.initial
 					.transmit
 					.ri_symbols;
+		}
 	}
 	return true;
 }
 
-static bool ri_progress_is_exact(const struct endpoint *endpoint)
+static bool ri_progress_is_consistent(const struct endpoint *endpoint)
 {
 	size_t expected = endpoint->mixed_octets;
 
+	if (endpoint->call.local_role == V90_ANALOG_MODEM) {
+		if (endpoint->phase4_entry_ri_symbols ==
+		    V90_PHASE4_RI_MIN_SYMBOLS)
+			return expected >= V90_PHASE4_RI_SEARCH_SYMBOLS;
+		return endpoint->phase4_entry_ri_symbols <
+			       V90_PHASE4_RI_SEARCH_SYMBOLS &&
+		       endpoint->phase4_entry_ri_symbols <= expected;
+	}
 	if (expected > V90_PHASE4_RI_MIN_SYMBOLS)
 		expected = V90_PHASE4_RI_MIN_SYMBOLS;
 	return endpoint->phase4_entry_ri_symbols == expected;
@@ -800,8 +815,8 @@ static bool run_configured_call(
 	      analog.entered_phase3 && digital.entered_phase3 &&
 	      analog.entered_mixed && digital.entered_mixed &&
 	      analog.entered_phase4 && digital.entered_phase4 &&
-	      ri_progress_is_exact(&analog) &&
-	      ri_progress_is_exact(&digital) &&
+	      ri_progress_is_consistent(&analog) &&
+	      ri_progress_is_consistent(&digital) &&
 	      !pcm_call_has_failed(&analog.call) &&
 	      !pcm_call_has_failed(&digital.call),
 	      "law %u delay %zu V.90 call missed Phase 4: "

@@ -113,6 +113,8 @@ static bool test_generated_profiles(void)
 
 					CHECK(configuration.local_info1.analog
 						      .local_md_length_35_ms_units == 0 &&
+					      configuration.phase3.analog.dil_profile ==
+						      V90_DIL_PROFILE_CONVENTIONAL &&
 					      configuration.analog_phase4
 						      .training_parameters.kind ==
 						      V90_CP_TRAINING &&

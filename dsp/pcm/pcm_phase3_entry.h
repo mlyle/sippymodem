@@ -6,6 +6,7 @@
 #include "g711.h"
 #include "pcm_phase2_info0_exchange.h"
 #include "pcm_phase3_profile.h"
+#include "v90_dil.h"
 #include "v90_info0.h"
 
 #include <stdbool.h>
@@ -63,7 +64,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
  * these V.90-only children. Rejected calls leave the station unchanged. */
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 	const struct pcm_phase3_entry *entry,
-	int16_t nominal_peak_amplitude,
+	int16_t nominal_peak_amplitude, enum v90_dil_profile dil_profile,
 	struct v90_phase3_analog_station *station);
 
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(

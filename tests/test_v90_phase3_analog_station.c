@@ -10,7 +10,7 @@
 #include <string.h>
 
 enum {
-	SAMPLE_LIMIT = 50000,
+	SAMPLE_LIMIT = 70000,
 	NOMINAL_AMPLITUDE = 6000,
 	POST_POINT_LIMIT =
 		2 * V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS +
@@ -94,7 +94,8 @@ static bool continue_phase4_line(
 	return true;
 }
 
-static bool run_exchange(enum g711_law law)
+static bool run_exchange(
+	enum g711_law law, enum v90_dil_profile dil_profile)
 {
 	struct v34_phase3_profile selected = profile();
 	struct v90_phase3_analog_rx_configuration configuration =
@@ -106,15 +107,21 @@ static bool run_exchange(enum g711_law law)
 	struct v90_phase3_analog_receive_handoff receive_handoff;
 	struct v90_phase3_return_line_handoff return_handoff;
 	struct v90_phase3_digital_transmit_handoff transmit_handoff;
+	struct v90_dil_parameters expected_dil;
 	uint8_t training_ucode = 91;
+	uint32_t expected_dil_symbols;
 	uint32_t phase4_points = 0;
 	uint32_t receive_complete_at = UINT32_MAX;
 	uint32_t transmit_complete_at = UINT32_MAX;
 	bool phase4_line_active = false;
 
-	CHECK(v90_phase3_analog_station_init(
+	CHECK(v90_dil_profile_init(&expected_dil, dil_profile) == V90_DIL_OK &&
+	      v90_dil_training_symbol_count(
+		      &expected_dil, &expected_dil_symbols) &&
+	      v90_phase3_analog_station_init(
 		      &analog, &selected, law, training_ucode,
-		      NOMINAL_AMPLITUDE) == V90_PHASE3_ANALOG_STATION_OK &&
+		      NOMINAL_AMPLITUDE, dil_profile) ==
+		      V90_PHASE3_ANALOG_STATION_OK &&
 	      v90_phase3_digital_station_init(
 		      &digital, &selected, &configuration, law,
 		      training_ucode, &parameters) ==
@@ -196,6 +203,21 @@ static bool run_exchange(enum g711_law law)
 	      receive_handoff.last_sign ==
 		      transmit_handoff.last_sign &&
 	      receive_handoff.trn1d_symbols == V90_PHASE3_TRN1D_MIN_SYMBOLS &&
+	      analog.dil_training_symbols == expected_dil_symbols &&
+	      analog.dil_received_symbols ==
+		      (expected_dil_symbols == 0u ? 0u :
+			      expected_dil_symbols + 1u) &&
+	      memcmp(
+		      &digital.transmit.dil.parameters, &expected_dil,
+		      sizeof(expected_dil)) == 0 &&
+	      digital.receive_stage ==
+		      (expected_dil_symbols == 0u ?
+			      V90_PHASE3_DIGITAL_RECEIVE_RETURN :
+			      V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN) &&
+	      analog.transmit_stage ==
+		      (expected_dil_symbols == 0u ?
+			      V90_PHASE3_ANALOG_TRANSMIT_RETURN :
+			      V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN) &&
 	      analog.transmit.returning.points.s_symbols >=
 		      V34_PHASE3_S_SYMBOLS &&
 	      !v90_phase3_analog_station_has_failed(&analog) &&
@@ -233,7 +255,10 @@ static bool run_exchange(enum g711_law law)
 
 static bool test_generated_exchange(void)
 {
-	CHECK(run_exchange(G711_LAW_PCMU) && run_exchange(G711_LAW_PCMA),
+	CHECK(run_exchange(G711_LAW_PCMU, V90_DIL_PROFILE_NONE) &&
+	      run_exchange(G711_LAW_PCMA, V90_DIL_PROFILE_NONE) &&
+	      run_exchange(G711_LAW_PCMU, V90_DIL_PROFILE_CONVENTIONAL) &&
+	      run_exchange(G711_LAW_PCMA, V90_DIL_PROFILE_CONVENTIONAL),
 	      "generated analogue-station exchanges failed");
 	return true;
 }
@@ -263,17 +288,18 @@ static bool test_validation(void)
 	saved = station;
 	CHECK(v90_phase3_analog_station_init(
 		      NULL, &selected, G711_LAW_PCMU, 91,
-		      NOMINAL_AMPLITUDE) ==
+		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
 		      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      v90_phase3_analog_station_init(
 		      &station, &selected, (enum g711_law)99, 91,
-		      NOMINAL_AMPLITUDE) ==
+		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
 		      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      memcmp(&station, &saved, sizeof(station)) == 0,
 	      "invalid initialization changed station state");
 	CHECK(v90_phase3_analog_station_init(
 		      &station, &selected, G711_LAW_PCMU, 91,
-		      NOMINAL_AMPLITUDE) == V90_PHASE3_ANALOG_STATION_OK,
+		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
+		      V90_PHASE3_ANALOG_STATION_OK,
 	      "validation station did not initialize");
 	saved = station;
 	memset(&line, 0xa5, sizeof(line));
@@ -374,7 +400,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "generated zero-DIL exchange", test_generated_exchange },
+		{ "generated DIL exchanges", test_generated_exchange },
 		{ "validation and failure", test_validation },
 	};
 	unsigned int failures = 0;

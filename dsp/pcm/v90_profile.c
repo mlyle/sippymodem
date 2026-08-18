@@ -317,6 +317,8 @@ enum v90_profile_result v90_profile_init(
 		selected.local_info1.analog = analog_info1(&upstream);
 		selected.phase3.analog.nominal_peak_amplitude =
 			V90_PHASE3_NOMINAL_AMPLITUDE;
+		selected.phase3.analog.dil_profile =
+			V90_DIL_PROFILE_CONVENTIONAL;
 		selected.analog_phase4.training_parameters =
 			cp_parameters(
 				law, V90_CP_TRAINING,
