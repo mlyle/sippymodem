@@ -194,6 +194,8 @@ static bool test_upstream_policy(void)
 	CHECK(v90_profile_init(
 		      &analog, V90_ANALOG_MODEM, G711_LAW_PCMU,
 		      28000, 28000, &policy) == V90_PROFILE_OK &&
+		      analog.local_info0.analog.low_carrier_3200_supported &&
+		      analog.local_info0.analog.high_carrier_3200_supported &&
 		      analog.local_info1.analog.upstream_symbol_rate ==
 			      V34_SYMBOL_RATE_3200 &&
 		      analog.analog_phase4.training_parameters
@@ -204,6 +206,10 @@ static bool test_upstream_policy(void)
 	CHECK(v90_profile_init(
 		      &digital, V90_DIGITAL_MODEM, G711_LAW_PCMA,
 		      28000, 28000, &policy) == V90_PROFILE_OK &&
+		      digital.local_info0.digital.common
+			      .low_carrier_3200_supported &&
+		      digital.local_info0.digital.common
+			      .high_carrier_3200_supported &&
 		      digital.local_info1.digital
 			      .answer_transmit[V34_SYMBOL_RATE_3200]
 			      .projected_data_rate_2400_bps_units == 11 &&
