@@ -397,6 +397,8 @@ enum following_tone_case {
 	TEST_TONE_DURING_ACK,
 	TEST_TONE_AFTER_ACK,
 	TEST_TONE_INVALIDATED_BY_REPEAT,
+	TEST_TONE_REPEAT_AFTER_COMPLETION,
+	TEST_TONE_REJECT_AFTER_COMPLETION,
 };
 
 static bool check_following_tone(
@@ -414,11 +416,13 @@ static bool check_following_tone(
 	struct pcm_phase2_info0_exchange exchange;
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES];
+	uint8_t repeat_payload[V90_INFO0D_PAYLOAD_BYTES];
 	int16_t peer_line = 0;
 	size_t acknowledge_starts = 0;
 	size_t wait_starts = 0;
 	size_t final_wait = SIZE_MAX;
 	size_t completed = SIZE_MAX;
+	size_t first_completion = SIZE_MAX;
 	size_t received_records = 0;
 	bool tone_during_ack = false;
 	bool tone_retained = false;
@@ -426,6 +430,8 @@ static bool check_following_tone(
 	bool fresh_tone_after_repeat = false;
 	bool repeated = false;
 	bool overlapping_repeat = false;
+	bool reopened_after_completion = false;
+	bool rejected_after_completion = false;
 	bool initialized;
 
 	analog.v90.acknowledges_peer_info0 = false;
@@ -465,6 +471,36 @@ static bool check_following_tone(
 		      PHASE2_INFO0_EXCHANGE_OK,
 	      "following-tone fixtures did not initialize for %d/%d/%d/%d",
 	      mode, codec, test_case, digital_local);
+	memcpy(repeat_payload, payload, sizeof(repeat_payload));
+	if (test_case == TEST_TONE_REJECT_AFTER_COMPLETION) {
+		if (digital_local) {
+			struct v92_info0a changed = analog;
+
+			changed.v90.symbol_rate_2743_supported =
+				!changed.v90.symbol_rate_2743_supported;
+			initialized = mode == TEST_INFO0_V90 ?
+				v90_info0a_encode(
+					&changed.v90, repeat_payload,
+					sizeof(repeat_payload)) == V90_INFO0_OK :
+				v92_info0a_encode(
+					&changed, repeat_payload,
+					sizeof(repeat_payload)) == V92_INFO0_OK;
+		} else {
+			struct v92_info0d changed = digital;
+
+			changed.v90.nominal_transmit_power++;
+			initialized = mode == TEST_INFO0_V90 ?
+				v90_info0d_encode(
+					&changed.v90, repeat_payload,
+					sizeof(repeat_payload)) == V90_INFO0_OK :
+				v92_info0d_encode(
+					&changed, repeat_payload,
+					sizeof(repeat_payload)) == V92_INFO0_OK;
+		}
+		CHECK(initialized,
+		      "mismatched repeat did not encode for %d/%d/%d",
+		      mode, codec, digital_local);
+	}
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
@@ -524,6 +560,9 @@ static bool check_following_tone(
 		    !exchange.fresh_peer_tone_seen &&
 		    !pcm_phase2_info0_exchange_complete(&exchange))
 			tone_invalidated = true;
+		if (state_before == PCM_PHASE2_INFO0_COMPLETE &&
+		    !pcm_phase2_info0_exchange_complete(&exchange))
+			reopened_after_completion = true;
 		if (test_case == TEST_TONE_INVALIDATED_BY_REPEAT &&
 		    !repeated && exchange.fresh_peer_tone_seen &&
 		    acknowledge_starts == 1 &&
@@ -537,9 +576,18 @@ static bool check_following_tone(
 			      mode, codec);
 			repeated = true;
 		}
+		if (event.peer_info0_event == PCM_PEER_INFO0_REJECTED &&
+		    test_case == TEST_TONE_REJECT_AFTER_COMPLETION) {
+			rejected_after_completion = true;
+			completed = index;
+			break;
+		}
 		if (event.peer_info0_event == PCM_PEER_INFO0_RECEIVED) {
 			received_records++;
-			completed = index;
+			if (first_completion == SIZE_MAX)
+				first_completion = index;
+			else
+				completed = index;
 			fresh_tone_after_repeat |= repeated && tone_invalidated &&
 				event.tone_event.kind == V34_PHASE2_TONE_STARTED;
 			if (mode == TEST_INFO0_V90 && !digital_local)
@@ -570,29 +618,52 @@ static bool check_following_tone(
 					      &event.peer_info0.v92_analog,
 					      &analog),
 				      "V.92 repeat changed retained capabilities");
+			if (!repeated &&
+			    (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION ||
+			     test_case == TEST_TONE_REJECT_AFTER_COMPLETION)) {
+				CHECK(!repeated &&
+				      phase2_info0_exchange_restart_info(
+					      &peer, repeat_payload,
+					      digital_local ?
+						      V90_INFO0A_PAYLOAD_BITS :
+						      V90_INFO0D_PAYLOAD_BITS) ==
+					      PHASE2_INFO0_EXCHANGE_OK,
+				      "post-completion repeat did not start for %d/%d/%d/%d",
+				      mode, codec, test_case, digital_local);
+				repeated = true;
+				continue;
+			}
+			completed = index;
 			break;
 		}
 	}
-	CHECK(received_records == 1 && completed != SIZE_MAX &&
-	      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
-	      exchange.fresh_peer_tone_seen,
-	      "following tone did not complete INFO0 for %d/%d/%d",
+	CHECK(first_completion != SIZE_MAX,
+	      "following tone did not initially complete INFO0 for %d/%d/%d",
 	      mode, codec, test_case);
 	if (test_case == TEST_TONE_DURING_ACK)
-		CHECK(acknowledge_starts == 1 && wait_starts == 0 &&
+		CHECK(received_records == 1 && completed != SIZE_MAX &&
+		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
+		      exchange.fresh_peer_tone_seen &&
+		      acknowledge_starts == 1 && wait_starts == 0 &&
 		      tone_retained && tone_during_ack,
 		      "following tone was not retained during ACK for %d/%d",
 		      mode, codec);
 	else if (test_case == TEST_TONE_AFTER_ACK)
-		CHECK(acknowledge_starts == 1 && wait_starts == 1 &&
+		CHECK(received_records == 1 && completed != SIZE_MAX &&
+		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
+		      exchange.fresh_peer_tone_seen &&
+		      acknowledge_starts == 1 && wait_starts == 1 &&
 		      final_wait != SIZE_MAX &&
 		      completed - final_wait ==
 			      V34_PHASE2_TONE_WINDOW_SAMPLES +
 			      V34_PHASE2_TONE_ACQUIRE_SAMPLES - 1u,
 		      "post-ACK tone timing changed for %d/%d: %zu",
 		      mode, codec, completed - final_wait);
-	else
-		CHECK(repeated && acknowledge_starts == 2 &&
+	else if (test_case == TEST_TONE_INVALIDATED_BY_REPEAT)
+		CHECK(received_records == 1 && completed != SIZE_MAX &&
+		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
+		      exchange.fresh_peer_tone_seen && repeated &&
+		      acknowledge_starts == 2 &&
 		      tone_during_ack && tone_invalidated &&
 		      fresh_tone_after_repeat &&
 		      (digital_local || overlapping_repeat),
@@ -600,6 +671,21 @@ static bool check_following_tone(
 		      mode, codec, digital_local, acknowledge_starts,
 		      tone_invalidated, fresh_tone_after_repeat,
 		      overlapping_repeat);
+	else if (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION)
+		CHECK(received_records == 2 && completed != SIZE_MAX &&
+		      reopened_after_completion && acknowledge_starts == 2 &&
+		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
+		      exchange.fresh_peer_tone_seen,
+		      "valid completed-state repeat did not reopen/recover for %d/%d/%d",
+		      mode, codec, digital_local);
+	else
+		CHECK(received_records == 1 && completed != SIZE_MAX &&
+		      rejected_after_completion &&
+		      !reopened_after_completion && acknowledge_starts == 1 &&
+		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
+		      exchange.fresh_peer_tone_seen,
+		      "rejected completed-state repeat mutated recovery for %d/%d/%d",
+		      mode, codec, digital_local);
 	return true;
 }
 
@@ -611,11 +697,10 @@ static bool test_info0_following_tone_orderings(void)
 		     mode <= TEST_INFO0_V92_FULL; ++mode)
 			for (enum following_tone_case test_case =
 				     TEST_TONE_DURING_ACK;
-			     test_case <= TEST_TONE_INVALIDATED_BY_REPEAT;
+			     test_case <= TEST_TONE_REJECT_AFTER_COMPLETION;
 			     ++test_case) {
-				unsigned int roles =
-					test_case == TEST_TONE_INVALIDATED_BY_REPEAT ?
-						2u : 1u;
+				unsigned int roles = test_case >=
+					TEST_TONE_INVALIDATED_BY_REPEAT ? 2u : 1u;
 
 				for (unsigned int role = 0; role < roles; ++role)
 					CHECK(check_following_tone(

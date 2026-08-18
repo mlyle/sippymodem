@@ -74,23 +74,32 @@ enum v90_phase2_ranging_result v90_phase2_ranging_sample(
 	struct phase2_ranging_event ranging_event;
 	struct v90_phase2_ranging_event emitted;
 	enum phase2_info0_transmit_phase transmit_phase_before;
+	bool exchange_complete_before;
 	int16_t generated;
 
 	if (!v90_phase2_ranging_is_valid(ranging) ||
 	    transmit_sample == NULL || event == NULL)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
 	next = *ranging;
+	exchange_complete_before = pcm_phase2_info0_exchange_complete(
+		&next.info0_exchange);
 	if (phase2_ranging_prepare_sample(
 		    &next.control, &next.info0_exchange.transport,
-		    pcm_phase2_info0_exchange_complete(
-			    &next.info0_exchange)) !=
+		    exchange_complete_before) !=
 	    PHASE2_RANGING_OK)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
 	transmit_phase_before = next.info0_exchange.transport.transmit_phase;
 	if (pcm_phase2_info0_exchange_sample(
 		    &next.info0_exchange, received_sample, &generated,
-		    &exchange_event) != PCM_PHASE2_INFO0_EXCHANGE_OK ||
-	    phase2_ranging_finish_sample(
+		    &exchange_event) != PCM_PHASE2_INFO0_EXCHANGE_OK)
+		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
+	if (exchange_complete_before &&
+	    !pcm_phase2_info0_exchange_complete(&next.info0_exchange) &&
+	    phase2_ranging_control_init(
+		    &next.control,
+		    &next.info0_exchange.transport) != PHASE2_RANGING_OK)
+		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
+	if (phase2_ranging_finish_sample(
 		    &next.control, &next.info0_exchange.transport,
 		    pcm_phase2_info0_exchange_complete(
 			    &next.info0_exchange),

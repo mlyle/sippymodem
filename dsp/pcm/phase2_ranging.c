@@ -203,17 +203,23 @@ enum phase2_ranging_result phase2_ranging_prepare_sample(
 	bool peer_info0_received)
 {
 	struct phase2_ranging_control next;
+	bool peer_info0_in_progress;
 	bool reverse = false;
 
 	if (!phase2_ranging_control_is_valid(
 		    control, exchange, peer_info0_received))
 		return PHASE2_RANGING_INVALID_ARGUMENT;
 	next = *control;
+	peer_info0_in_progress =
+		exchange->info_receiver.frame.stage !=
+		V34_PHASE2_INFO_SEARCH_SYNC;
 	if (next.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
-	    next.local_tone_samples == PHASE2_RANGING_INITIAL_TONE_SAMPLES) {
+	    next.local_tone_samples == PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
+	    !peer_info0_in_progress) {
 		next.phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
 		reverse = true;
 	} else if (next.phase == PHASE2_RESPONSE_DELAY &&
+		   !peer_info0_in_progress &&
 		   --next.response_delay_samples == 0) {
 		next.phase = PHASE2_RESPONSE_TONE_TAIL;
 		reverse = true;

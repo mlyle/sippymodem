@@ -138,10 +138,9 @@ static bool state_retains_peer_info0(
 	       state == PCM_PHASE2_INFO0_RETRAIN;
 }
 
-static bool state_is_terminal(enum pcm_phase2_info0_exchange_state state)
+static bool state_is_retrain(enum pcm_phase2_info0_exchange_state state)
 {
-	return state == PCM_PHASE2_INFO0_COMPLETE ||
-	       state == PCM_PHASE2_INFO0_RETRAIN;
+	return state == PCM_PHASE2_INFO0_RETRAIN;
 }
 
 static bool peer_info0_is_valid(
@@ -384,7 +383,7 @@ static bool suppress_info_carrier_tone(
 {
 	bool frame_started;
 
-	if (state_is_terminal(exchange->state) ||
+	if (state_is_retrain(exchange->state) ||
 	    exchange->transport.info_receiver.frame.stage ==
 		    V34_PHASE2_INFO_SEARCH_SYNC)
 		return true;
@@ -393,7 +392,8 @@ static bool suppress_info_carrier_tone(
 	 * the requirement for a tone following the retained INFO0. */
 	frame_started = before->transport.info_receiver.frame.stage ==
 		V34_PHASE2_INFO_SEARCH_SYNC;
-	exchange->fresh_peer_tone_seen = false;
+	if (exchange->state != PCM_PHASE2_INFO0_COMPLETE)
+		exchange->fresh_peer_tone_seen = false;
 	raw_event->tone_event = (struct v34_phase2_tone_event){ 0 };
 	return !frame_started ||
 	       v34_phase2_tone_detector_reset(
@@ -406,7 +406,8 @@ static bool reject_peer_info0(
 	struct pcm_phase2_info0_exchange_event *event)
 {
 	event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
-	return state_is_terminal(exchange->state) ||
+	return exchange->state == PCM_PHASE2_INFO0_COMPLETE ||
+	       state_is_retrain(exchange->state) ||
 	       reset_completion_tone(exchange, event);
 }
 
@@ -432,7 +433,7 @@ static bool retain_peer_info0(
 	if (retained &&
 	    !info0_semantics_match(exchange, &exchange->peer_info0, &decoded))
 		return reject_peer_info0(exchange, event);
-	if (state_is_terminal(exchange->state))
+	if (state_is_retrain(exchange->state))
 		return true;
 	if (!retained) {
 		exchange->peer_info0 = decoded;
@@ -445,6 +446,16 @@ static bool retain_peer_info0(
 				&decoded, exchange->protocol,
 				opposite_role(exchange->local_role))
 					->acknowledges_peer_info0;
+	if (exchange->state == PCM_PHASE2_INFO0_COMPLETE) {
+		if (peer_acknowledges_local(exchange)) {
+			exchange->fresh_peer_tone_seen = false;
+			return true;
+		}
+		if (!reset_completion_tone(exchange, event))
+			return false;
+		exchange->state = PCM_PHASE2_INFO0_ACK_REPEAT;
+		return true;
+	}
 	if (!reset_completion_tone(exchange, event))
 		return false;
 	switch (exchange->state) {
@@ -466,6 +477,7 @@ static bool retain_peer_info0(
 			exchange->state = PCM_PHASE2_INFO0_ACK_REPEAT;
 		break;
 	case PCM_PHASE2_INFO0_COMPLETE:
+		return false;
 	case PCM_PHASE2_INFO0_RETRAIN:
 		return false;
 	}
@@ -519,7 +531,7 @@ static bool advance_recovery(
 			 !peer_acknowledges_local(exchange))
 			exchange->fresh_peer_tone_seen = true;
 	}
-	if (state_is_terminal(exchange->state))
+	if (state_is_retrain(exchange->state))
 		return true;
 	if (exchange->transport.transmit_phase != PHASE2_INFO0_TONE)
 		return true;

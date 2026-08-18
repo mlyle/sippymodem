@@ -209,6 +209,126 @@ static bool test_pcm_ranging(void)
 	return true;
 }
 
+static bool check_completed_exchange_repeat(
+	enum test_codec codec, bool reject_repeat)
+{
+	struct v90_info0 analog = analog_capabilities();
+	struct v90_info0d digital = digital_capabilities(codec);
+	struct v90_info0d repeated = digital;
+	struct v90_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES];
+	int16_t peer_line = 0;
+	size_t first_completion = SIZE_MAX;
+	size_t rejection = SIZE_MAX;
+	size_t reversal = SIZE_MAX;
+	size_t completed_records = 0;
+	bool repeat_started = false;
+	bool receiver_synchronized = false;
+	bool reopened = false;
+	bool reversed_during_record = false;
+
+	digital.common.acknowledges_peer_info0 = false;
+	if (reject_repeat)
+		repeated.nominal_transmit_power++;
+	CHECK(v90_phase2_ranging_init_analog(
+		      &ranging, TEST_AMPLITUDE, &analog) ==
+		      V90_PHASE2_RANGING_OK &&
+	      v90_info0d_encode(
+		      &digital, payload, sizeof(payload)) == V90_INFO0_OK &&
+	      phase2_info0_exchange_init(
+		      &peer, PHASE2_SIGNAL_B, TEST_AMPLITUDE,
+		      payload, V90_INFO0D_PAYLOAD_BITS,
+		      V90_INFO0A_PAYLOAD_BITS) == PHASE2_INFO0_EXCHANGE_OK,
+	      "completed-repeat ranging fixture did not initialize");
+
+	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v90_phase2_ranging_event event;
+		enum v34_phase2_info_receive_stage receive_stage_before =
+			ranging.info0_exchange.transport.info_receiver.frame.stage;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		int16_t ignored;
+
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v90_phase2_ranging_sample(
+			      &ranging, codec_round_trip(peer_line, codec),
+			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+		      "completed-repeat ranging failed at %zu for %d/%d",
+		      index, codec, reject_repeat);
+		receiver_synchronized |=
+			receive_stage_before != V34_PHASE2_INFO_SEARCH_SYNC;
+		if (receive_stage_before != V34_PHASE2_INFO_SEARCH_SYNC &&
+		    phase_before == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		    ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
+			reversed_during_record = true;
+		if (event.exchange_event.peer_info0_event ==
+		    PCM_PEER_INFO0_RECEIVED) {
+			completed_records++;
+			if (first_completion == SIZE_MAX)
+				first_completion = index;
+		}
+		if (event.exchange_event.peer_info0_event ==
+		    PCM_PEER_INFO0_REJECTED)
+			rejection = index;
+		reopened |= repeat_started &&
+			!pcm_phase2_info0_exchange_complete(
+				&ranging.info0_exchange);
+		if (phase_before == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		    ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			reversal = index;
+			if ((!reject_repeat && completed_records == 2u) ||
+			    (reject_repeat && rejection != SIZE_MAX))
+				break;
+		}
+		if (!repeat_started && first_completion != SIZE_MAX &&
+		    ranging.control.phase ==
+			    PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		    ranging.control.local_tone_samples == 100u) {
+			CHECK(v90_info0d_encode(
+				      &repeated, payload, sizeof(payload)) ==
+				      V90_INFO0_OK &&
+			      phase2_info0_exchange_restart_info(
+				      &peer, payload,
+				      V90_INFO0D_PAYLOAD_BITS) ==
+				      PHASE2_INFO0_EXCHANGE_OK,
+			      "completed peer repeat did not start for %d/%d",
+			      codec, reject_repeat);
+			repeat_started = true;
+		}
+	}
+	CHECK(repeat_started && receiver_synchronized &&
+	      !reversed_during_record && reversal != SIZE_MAX,
+	      "synchronized INFO0 did not defer reversal for %d/%d",
+	      codec, reject_repeat);
+	if (reject_repeat)
+		CHECK(rejection != SIZE_MAX && reversal > rejection && !reopened &&
+		      completed_records == 1u,
+		      "rejected INFO0 changed completed ranging for %d",
+		      codec);
+	else
+		CHECK(reopened && completed_records == 2u &&
+		      ranging.info0_exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
+		      reversal > first_completion,
+		      "valid INFO0 repeat did not restart completed ranging for %d",
+		      codec);
+	return true;
+}
+
+static bool test_completed_exchange_repeat(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (unsigned int reject = 0; reject < 2; ++reject)
+			CHECK(check_completed_exchange_repeat(codec, reject != 0),
+			      "completed INFO0 ordering failed for %d/%u",
+			      codec, reject);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v90_info0 analog = analog_capabilities();
@@ -249,6 +369,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "PCMU and PCMA ranging", test_pcm_ranging },
+		{ "completed INFO0 repeat ordering",
+		  test_completed_exchange_repeat },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
