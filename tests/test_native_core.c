@@ -587,6 +587,7 @@ static bool test_v8_datapump_mapping(void)
 
 static bool test_v8_pcm_handoff(void)
 {
+	static const enum DP_ID requested_ids[] = { DP_V90, DP_V92 };
 	struct modem_driver driver = {
 		.name = "V.8 PCM handoff test",
 		.start = unused_start,
@@ -607,49 +608,64 @@ static bool test_v8_pcm_handoff(void)
 	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
 	      "V.8 PCM handoff registrations did not start");
 	operations = modem_dp_get_registered_ops(DP_V8);
-	caller = modem_create(&driver, "V.8 PCM caller");
-	answerer = modem_create(&driver, "V.8 PCM answerer");
-	CHECK(operations != NULL && caller != NULL && answerer != NULL,
-	      "V.8 PCM handoff endpoints did not initialize");
-	CHECK(process_at_command(caller, "AT+V90D=0") == 0 &&
-		      process_at_command(answerer, "AT+V90D=1") == 0,
-	      "V.8 PCM endpoints did not accept complementary roles");
-	calling_dp = operations->create(
-		caller, DP_V90, 1, MODEM_RATE, MODEM_FRAG, operations);
-	answering_dp = operations->create(
-		answerer, DP_V90, 0, MODEM_RATE, MODEM_FRAG, operations);
-	CHECK(calling_dp != NULL && answering_dp != NULL &&
-		      operations->use_count == 2,
-	      "V.8 PCM handshakes were not independently owned");
-	for (size_t frame = 0;
-	     frame < 7u * MODEM_RATE / MODEM_FRAG + 1u;
-	     ++frame) {
-		answering_status = operations->process(
-			answering_dp, calling_audio, answering_audio, MODEM_FRAG);
-		calling_status = operations->process(
-			calling_dp, answering_audio, calling_audio, MODEM_FRAG);
-		CHECK((answering_status == DPSTAT_OK ||
-		       answering_status == DPSTAT_CHANGEDP) &&
-		      (calling_status == DPSTAT_OK ||
-		       calling_status == DPSTAT_CHANGEDP),
-		      "V.8 PCM negotiation failed at frame %zu", frame);
-		if (calling_status == DPSTAT_CHANGEDP &&
-		    answering_status == DPSTAT_CHANGEDP)
-			break;
+	CHECK(operations != NULL,
+	      "V.8 PCM handoff operation did not initialize");
+	for (size_t selection = 0;
+	     selection < ARRAY_LENGTH(requested_ids); ++selection) {
+		enum DP_ID requested = requested_ids[selection];
+
+		caller = modem_create(&driver, "V.8 PCM caller");
+		answerer = modem_create(&driver, "V.8 PCM answerer");
+		CHECK(caller != NULL && answerer != NULL,
+		      "V.8 PCM handoff endpoints did not initialize");
+		CHECK(process_at_command(caller, "AT+V90D=0") == 0 &&
+			      process_at_command(answerer, "AT+V90D=1") == 0,
+		      "V.8 PCM endpoints did not accept complementary roles");
+		calling_dp = operations->create(
+			caller, requested, 1, MODEM_RATE, MODEM_FRAG, operations);
+		answering_dp = operations->create(
+			answerer, requested, 0, MODEM_RATE, MODEM_FRAG,
+			operations);
+		CHECK(calling_dp != NULL && answering_dp != NULL &&
+			      operations->use_count == 2,
+		      "V.8 PCM handshakes were not independently owned");
+		memset(calling_audio, 0, sizeof(calling_audio));
+		memset(answering_audio, 0, sizeof(answering_audio));
+		calling_status = DPSTAT_OK;
+		answering_status = DPSTAT_OK;
+		for (size_t frame = 0;
+		     frame < 7u * MODEM_RATE / MODEM_FRAG + 1u;
+		     ++frame) {
+			answering_status = operations->process(
+				answering_dp, calling_audio, answering_audio,
+				MODEM_FRAG);
+			calling_status = operations->process(
+				calling_dp, answering_audio, calling_audio,
+				MODEM_FRAG);
+			CHECK((answering_status == DPSTAT_OK ||
+			       answering_status == DPSTAT_CHANGEDP) &&
+			      (calling_status == DPSTAT_OK ||
+			       calling_status == DPSTAT_CHANGEDP),
+			      "V.8 PCM negotiation failed at frame %zu", frame);
+			if (calling_status == DPSTAT_CHANGEDP &&
+			    answering_status == DPSTAT_CHANGEDP)
+				break;
+		}
+		CHECK(calling_status == DPSTAT_CHANGEDP &&
+			      answering_status == DPSTAT_CHANGEDP &&
+			      caller->dp_requested == requested &&
+			      answerer->dp_requested == requested &&
+			      caller->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG &&
+			      answerer->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL,
+		      "V.8 PCM peers did not agree on handoff %u",
+		      (unsigned int)requested);
+		CHECK(operations->delete(calling_dp) == 0 &&
+			      operations->delete(answering_dp) == 0 &&
+			      operations->use_count == 0,
+		      "V.8 PCM handshakes did not release their state");
+		modem_delete(caller);
+		modem_delete(answerer);
 	}
-	CHECK(calling_status == DPSTAT_CHANGEDP &&
-		      answering_status == DPSTAT_CHANGEDP &&
-		      caller->dp_requested == DP_V90 &&
-		      answerer->dp_requested == DP_V90 &&
-		      caller->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG &&
-		      answerer->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL,
-	      "V.8 PCM peers did not agree on complementary handoff roles");
-	CHECK(operations->delete(calling_dp) == 0 &&
-		      operations->delete(answering_dp) == 0 &&
-		      operations->use_count == 0,
-	      "V.8 PCM handshakes did not release their state");
-	modem_delete(caller);
-	modem_delete(answerer);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
 	      "V.8 PCM handoff registrations did not stop");
 	return true;
@@ -1404,6 +1420,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *v32_operations;
 	struct dp_operations *v34_operations;
 	struct dp_operations *v90_operations;
+	struct dp_operations *v92_operations;
 	struct dp_operations *baudot_operations;
 	struct dp *call_progress;
 	struct dp *v8;
@@ -1414,6 +1431,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp *v32;
 	struct dp *v34;
 	struct dp *v90;
+	struct dp *v92;
 	struct single_tone_transmitter v32_line_artifact;
 	struct single_tone_transmitter v32_answer_tone;
 	int16_t receive[MODEM_FRAG];
@@ -1431,6 +1449,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_V90) == NULL &&
+		      modem_dp_get_registered_ops(DP_V92) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_register(DP_V90, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
@@ -1447,6 +1466,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_V90) ==
 			      &conflict_operations &&
+		      modem_dp_get_registered_ops(DP_V92) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      modem_dp_deregister(DP_V90, &conflict_operations) == 0 &&
 		      datapumps_start(&datapumps) ==
@@ -1464,6 +1484,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	v32_operations = modem_dp_get_registered_ops(DP_V32);
 	v34_operations = modem_dp_get_registered_ops(DP_V34);
 	v90_operations = modem_dp_get_registered_ops(DP_V90);
+	v92_operations = modem_dp_get_registered_ops(DP_V92);
 	baudot_operations = modem_dp_get_registered_ops(DP_BAUDOT);
 	CHECK(operations != NULL && operations->create != NULL &&
 		      operations->delete != NULL && operations->process != NULL &&
@@ -1518,6 +1539,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v90_operations->process != NULL &&
 		      v90_operations->process_g711 != NULL &&
 		      v90_operations->use_count == 0 &&
+		      v92_operations == v90_operations &&
 		      baudot_operations != NULL &&
 		      baudot_operations != v21_operations &&
 		      baudot_operations != v23_operations &&
@@ -1715,6 +1737,23 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v90_operations->delete(v90) == 0 &&
 		      v90_operations->use_count == 0,
 	      "V.90 data pump did not retain and release its call state");
+	{
+		char pcm_upstream[] = "AT+V92Q=0+V92U=1,24000";
+		char selection[] = "AT+MS=92,0,28000,28000";
+
+		CHECK(process_at_command(modem, pcm_upstream) == 0 &&
+		      process_at_command(modem, selection) == 0 &&
+		      MODEM_DP(modem) == DP_V92,
+		      "AT+MS did not expose the shared V.92 PCM profile");
+	}
+	v92 = v92_operations->create(
+		modem, DP_V92, 1, MODEM_RATE, MODEM_FRAG, v92_operations);
+	CHECK(v92 != NULL && v92->id == DP_V92 &&
+		      v92_operations->use_count == 1 &&
+		      datapumps_stop(&datapumps) == DATAPUMPS_BUSY &&
+		      v92_operations->delete(v92) == 0 &&
+		      v92_operations->use_count == 0,
+	      "V.92 did not retain the shared PCM call state");
 	modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
 	modem->min_rate = 46;
 	modem->max_rate = 49;
@@ -1778,6 +1817,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_V90) == NULL &&
+		      modem_dp_get_registered_ops(DP_V92) == NULL &&
 		      modem_dp_get_registered_ops(DP_BAUDOT) == NULL &&
 		      !datapumps_are_started(&datapumps) &&
 		      datapumps_stop(&datapumps) ==

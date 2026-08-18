@@ -28,27 +28,48 @@ struct bit_endpoint {
 };
 
 static struct dp_operations *registered_v90;
+static struct dp_operations *registered_v92;
 
 int modem_dp_register(enum DP_ID id, struct dp_operations *operations)
 {
-	if (id != DP_V90 || operations == NULL || registered_v90 != NULL)
+	struct dp_operations **registered;
+
+	if (id == DP_V90)
+		registered = &registered_v90;
+	else if (id == DP_V92)
+		registered = &registered_v92;
+	else
 		return -1;
-	registered_v90 = operations;
+	if (operations == NULL || *registered != NULL)
+		return -1;
+	*registered = operations;
 	return 0;
 }
 
 int modem_dp_deregister(enum DP_ID id, struct dp_operations *operations)
 {
-	if (id != DP_V90 || operations == NULL ||
-	    registered_v90 != operations || operations->use_count != 0)
+	struct dp_operations **registered;
+
+	if (id == DP_V90)
+		registered = &registered_v90;
+	else if (id == DP_V92)
+		registered = &registered_v92;
+	else
 		return -1;
-	registered_v90 = NULL;
+	if (operations == NULL || *registered != operations ||
+	    operations->use_count != 0)
+		return -1;
+	*registered = NULL;
 	return 0;
 }
 
 struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
 {
-	return id == DP_V90 ? registered_v90 : NULL;
+	if (id == DP_V90)
+		return registered_v90;
+	if (id == DP_V92)
+		return registered_v92;
+	return NULL;
 }
 
 int modem_get_sreg(struct modem *modem, unsigned int number)
@@ -56,6 +77,17 @@ int modem_get_sreg(struct modem *modem, unsigned int number)
 	if (modem == NULL || number >= sizeof(modem->sregs))
 		return -1;
 	return modem->sregs[number];
+}
+
+long modem_get_param(struct modem *modem, unsigned int name)
+{
+	if (modem == NULL)
+		return -1;
+	if (name == MDMPRM_V92_QUICK_CONNECT)
+		return modem->sregs[SREG_V92_QUICK_CONNECT] != 0;
+	if (name == MDMPRM_V92_PCM_UPSTREAM)
+		return modem->sregs[SREG_V92_PCM_UPSTREAM] != 0;
+	return -1;
 }
 
 long modem_set_param(struct modem *modem, unsigned int name, int value)
@@ -539,6 +571,91 @@ static bool test_training_deadline(void)
 	return true;
 }
 
+static bool test_v92_pcm_upstream_selection(void)
+{
+	struct dp_operations conflict = { 0 };
+	struct bit_endpoint analog_bits = { 0 };
+	struct bit_endpoint digital_bits = { 0 };
+	struct modem analog = endpoint_modem(
+		MODEM_PCM_ROLE_ANALOG, &analog_bits);
+	struct modem digital = endpoint_modem(
+		MODEM_PCM_ROLE_DIGITAL, &digital_bits);
+	struct dp_operations *operations;
+	struct dp *analog_dp;
+	struct dp *digital_dp;
+	uint8_t analog_to_digital = g711_encode_pcmu(0);
+	uint8_t digital_to_analog = g711_encode_pcmu(0);
+
+	CHECK(modem_dp_register(DP_V92, &conflict) == 0 &&
+	      v90_datapump_register() != 0 &&
+	      modem_dp_get_registered_ops(DP_V90) == NULL &&
+	      modem_dp_get_registered_ops(DP_V92) == &conflict &&
+	      modem_dp_deregister(DP_V92, &conflict) == 0,
+	      "PCM family registration did not roll back transactionally");
+	CHECK(v90_datapump_register() == 0 &&
+	      modem_dp_get_registered_ops(DP_V90) != NULL &&
+	      modem_dp_get_registered_ops(DP_V90) ==
+		      modem_dp_get_registered_ops(DP_V92),
+	      "V.90 and V.92 did not share one operation owner");
+	operations = modem_dp_get_registered_ops(DP_V92);
+	analog.min_rate = analog.max_rate = 28000;
+	digital.min_rate = digital.max_rate = 28000;
+	CHECK(operations != NULL &&
+	      operations->create(
+		      &analog, DP_V92, 1, MODEM_RATE, MODEM_FRAG,
+		      operations) == NULL,
+	      "V.92 accepted conventional upstream without an implementation");
+	analog.sregs[SREG_V92_PCM_UPSTREAM] = 1;
+	digital.sregs[SREG_V92_PCM_UPSTREAM] = 1;
+	analog.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 4;
+	digital.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 4;
+	analog.sregs[SREG_V92_QUICK_CONNECT] = 1;
+	CHECK(operations->create(
+		      &analog, DP_V92, 1, MODEM_RATE, MODEM_FRAG,
+		      operations) == NULL,
+	      "V.92 accepted quick connect without retained history");
+	analog.sregs[SREG_V92_QUICK_CONNECT] = 0;
+	analog_dp = operations->create(
+		&analog, DP_V92, 1, MODEM_RATE, MODEM_FRAG, operations);
+	digital_dp = operations->create(
+		&digital, DP_V92, 0, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(analog_dp != NULL && digital_dp != NULL &&
+	      analog_dp->id == DP_V92 && digital_dp->id == DP_V92 &&
+	      operations->use_count == 2,
+	      "V.92 PCM-upstream peers did not share the PCM call owner");
+	for (size_t index = 0; index < MODEM_FRAG * 2u; ++index) {
+		uint8_t next_analog;
+		uint8_t next_digital;
+		int16_t analog_received = g711_decode_pcmu(digital_to_analog);
+		int16_t digital_received = g711_decode_pcmu(analog_to_digital);
+		int16_t analog_transmitted;
+		int16_t digital_transmitted;
+		bool analog_exact = false;
+		bool digital_exact = false;
+
+		CHECK(operations->process_g711(
+			      digital_dp, G711_LAW_PCMU,
+			      &analog_to_digital, &digital_received,
+			      &next_digital, &digital_transmitted, 1,
+			      &digital_exact) == DPSTAT_OK && digital_exact &&
+		      operations->process_g711(
+			      analog_dp, G711_LAW_PCMU,
+			      &digital_to_analog, &analog_received,
+			      &next_analog, &analog_transmitted, 1,
+			      &analog_exact) == DPSTAT_OK && analog_exact,
+		      "V.92 PCM-upstream selection stopped at sample %zu", index);
+		analog_to_digital = next_analog;
+		digital_to_analog = next_digital;
+	}
+	CHECK(operations->delete(analog_dp) == 0 &&
+	      operations->delete(digital_dp) == 0 &&
+	      v90_datapump_unregister() == 0 &&
+	      modem_dp_get_registered_ops(DP_V90) == NULL &&
+	      modem_dp_get_registered_ops(DP_V92) == NULL,
+	      "V.92 PCM-upstream selection retained shared ownership");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct bit_endpoint bits = { 0 };
@@ -598,6 +715,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.92 PCM-upstream selection",
+		  test_v92_pcm_upstream_selection },
 		{ "forced upstream pairs", test_forced_upstream_pairs },
 		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "media-independent Phase 2 codebook",

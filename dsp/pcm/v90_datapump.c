@@ -8,6 +8,7 @@
 #include "pcm_call.h"
 #include "training_session.h"
 #include "v90_profile.h"
+#include "v92_profile.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -19,7 +20,9 @@ struct v90_datapump {
 	struct pcm_call call;
 	struct training_session training;
 	enum v90_modem_role role;
+	enum pcm_protocol protocol;
 	enum g711_law media_law;
+	uint8_t maximum_pcm_upstream_data_rate_number;
 	bool call_started;
 };
 
@@ -41,13 +44,45 @@ static int process_v90_g711(
 static int retrain_v90(struct dp *dp);
 
 static struct dp_operations v90_operations = {
-	.name = "V.90",
+	.name = "PCM V.90/V.92",
 	.create = create_v90,
 	.delete = delete_v90,
 	.process = process_v90,
 	.process_g711 = process_v90_g711,
 	.retrain = retrain_v90,
 };
+
+static bool protocol_from_id(enum DP_ID id, enum pcm_protocol *protocol)
+{
+	if (protocol == NULL)
+		return false;
+	if (id == DP_V90)
+		*protocol = PCM_PROTOCOL_V90;
+	else if (id == DP_V92)
+		*protocol = PCM_PROTOCOL_V92;
+	else
+		return false;
+	return true;
+}
+
+static bool v92_pcm_profile_requested(
+	struct modem *modem, uint8_t *maximum_data_rate_number)
+{
+	int configured;
+
+	if (modem == NULL || maximum_data_rate_number == NULL ||
+	    modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) != 0 ||
+	    modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) != 1)
+		return false;
+	configured = modem_get_sreg(modem, SREG_V92_PCM_UPSTREAM_MAX_DRN);
+	if (configured < 0 ||
+	    configured > V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER)
+		return false;
+	*maximum_data_rate_number = configured == 0 ?
+		V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER :
+		(uint8_t)configured;
+	return true;
+}
 
 static bool role_from_modem(
 	const struct modem *modem, enum v90_modem_role *role)
@@ -66,18 +101,22 @@ static bool role_from_modem(
 static struct v90_datapump *v90_from_dp(struct dp *dp)
 {
 	struct v90_datapump *datapump;
+	enum pcm_protocol protocol;
 	enum v90_modem_role role;
 
-	if (dp == NULL || dp->id != DP_V90 || dp->op != &v90_operations ||
+	if (dp == NULL || !protocol_from_id(dp->id, &protocol) ||
+	    dp->op != &v90_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL ||
 	    !role_from_modem(dp->modem, &role))
 		return NULL;
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->role != role ||
+	    datapump->protocol != protocol ||
 	    !training_session_is_valid(&datapump->training) ||
 	    (datapump->call_started &&
 	     (!g711_law_is_valid(datapump->media_law) ||
 	      !pcm_call_is_valid(&datapump->call) ||
+	      datapump->call.protocol != datapump->protocol ||
 	      datapump->call.local_role != datapump->role ||
 	      datapump->call.law != v90_pcm_law ||
 	      (pcm_call_has_failed(&datapump->call) &&
@@ -105,12 +144,18 @@ static struct dp *create_v90(
 {
 	struct v90_datapump *datapump;
 	struct pcm_downstream_rate_selection downstream;
+	enum pcm_protocol protocol;
 	enum v90_modem_role role;
+	uint8_t maximum_pcm_upstream_data_rate_number = 0;
 
-	if (modem == NULL || id != DP_V90 || (caller != 0 && caller != 1) ||
+	if (modem == NULL || !protocol_from_id(id, &protocol) ||
+	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v90_operations || operations->use_count == INT_MAX ||
 	    !role_from_modem(modem, &role) ||
+	    (protocol == PCM_PROTOCOL_V92 &&
+	     !v92_pcm_profile_requested(
+		     modem, &maximum_pcm_upstream_data_rate_number)) ||
 	    !pcm_downstream_rates_select(
 		    &downstream, modem->min_rate, modem->max_rate))
 		return NULL;
@@ -118,6 +163,9 @@ static struct dp *create_v90(
 	if (datapump == NULL)
 		return NULL;
 	datapump->role = role;
+	datapump->protocol = protocol;
+	datapump->maximum_pcm_upstream_data_rate_number =
+		maximum_pcm_upstream_data_rate_number;
 	if (training_session_init(
 		    &datapump->training,
 		    datapump_carrier_wait_ticks(modem)) !=
@@ -317,10 +365,19 @@ static bool start_call(
 
 	if (datapump->call_started)
 		return datapump->media_law == media_law;
-	if (v90_profile_init(
-		    &configuration, datapump->role, v90_pcm_law,
-		    datapump->dp.modem->min_rate,
-		    datapump->dp.modem->max_rate, &upstream) != V90_PROFILE_OK ||
+	if ((datapump->protocol == PCM_PROTOCOL_V90 &&
+	     v90_profile_init(
+		     &configuration, datapump->role, v90_pcm_law,
+		     datapump->dp.modem->min_rate,
+		     datapump->dp.modem->max_rate,
+		     &upstream) != V90_PROFILE_OK) ||
+	    (datapump->protocol == PCM_PROTOCOL_V92 &&
+	     v92_pcm_profile_init(
+		     &configuration, datapump->role, v90_pcm_law,
+		     datapump->dp.modem->min_rate,
+		     datapump->dp.modem->max_rate,
+		     datapump->maximum_pcm_upstream_data_rate_number) !=
+		     V92_PROFILE_OK) ||
 	    pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
 		return false;
 	datapump->media_law = media_law;
@@ -481,12 +538,25 @@ failure:
 
 int v90_datapump_register(void)
 {
-	return modem_dp_register(DP_V90, &v90_operations);
+	if (modem_dp_register(DP_V90, &v90_operations) != 0)
+		return -1;
+	if (modem_dp_register(DP_V92, &v90_operations) == 0)
+		return 0;
+	(void)modem_dp_deregister(DP_V90, &v90_operations);
+	return -1;
 }
 
 int v90_datapump_unregister(void)
 {
-	return modem_dp_deregister(DP_V90, &v90_operations);
+	if (v90_operations.use_count != 0 ||
+	    modem_dp_get_registered_ops(DP_V90) != &v90_operations ||
+	    modem_dp_get_registered_ops(DP_V92) != &v90_operations ||
+	    modem_dp_deregister(DP_V92, &v90_operations) != 0)
+		return -1;
+	if (modem_dp_deregister(DP_V90, &v90_operations) == 0)
+		return 0;
+	(void)modem_dp_register(DP_V92, &v90_operations);
+	return -1;
 }
 
 bool v90_datapump_is_busy(void)

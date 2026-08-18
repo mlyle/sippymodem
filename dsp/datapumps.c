@@ -122,6 +122,7 @@ enum datapumps_result datapumps_start(
 	    modem_dp_get_registered_ops(DP_V32) != NULL ||
 	    modem_dp_get_registered_ops(DP_V34) != NULL ||
 	    modem_dp_get_registered_ops(DP_V90) != NULL ||
+	    modem_dp_get_registered_ops(DP_V92) != NULL ||
 	    modem_dp_get_registered_ops(DP_BAUDOT) != NULL ||
 	    modem_dp_register(DP_CALLPROG, &call_progress_operations) != 0)
 		return DATAPUMPS_REGISTRATION_CONFLICT;

@@ -2555,6 +2555,7 @@ V90_DATAPUMP_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_datapump.o \
 	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v90_profile.o \
+	$(BUILD_DIR)/v92_profile.o \
 	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
 		$(PCM_CALL_TEST_OBJECTS)))
 V34_PHASE2_DPSK_TEST_BINARY := \
