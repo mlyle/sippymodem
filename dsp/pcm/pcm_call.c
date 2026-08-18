@@ -1337,6 +1337,20 @@ static enum pcm_call_result analog_phase4_result(
 	return PCM_CALL_NUMERIC_FAILURE;
 }
 
+static void limit_analog_phase4_lookahead(
+	struct pcm_call_analog_phase4_configuration *configuration,
+	uint8_t maximum_lookahead)
+{
+	if (configuration->training_parameters.spectral_lookahead >
+	    maximum_lookahead)
+		configuration->training_parameters.spectral_lookahead =
+			maximum_lookahead;
+	if (configuration->data_parameters.spectral_lookahead >
+	    maximum_lookahead)
+		configuration->data_parameters.spectral_lookahead =
+			maximum_lookahead;
+}
+
 static enum pcm_call_result enter_phase4(struct pcm_call *call)
 {
 	struct pcm_call next = *call;
@@ -1364,6 +1378,10 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 			receive_handoff.jd.data_rate_capability_mask);
 		if (selected_rate_index == 0)
 			return PCM_CALL_UNUSABLE_SELECTION;
+		limit_analog_phase4_lookahead(
+			&next.analog_phase4_configuration,
+			receive_handoff.jd
+				.maximum_spectral_shaping_lookahead);
 		next.analog_phase4_configuration.data_parameters
 			.selected_rate_index = selected_rate_index;
 		result = analog_phase4_result(v90_phase4_analog_station_resume(

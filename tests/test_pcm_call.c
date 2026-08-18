@@ -152,7 +152,7 @@ static struct v90_jd_parameters jd_parameters(void)
 		.data_rate_capability_mask = V90_JD_RATE_CAPABILITY_MASK,
 		.training_constellation = V34_CONSTELLATION_16_POINT,
 		.rate_renegotiation_constellation = V34_CONSTELLATION_4_POINT,
-		.maximum_spectral_shaping_lookahead = 2,
+		.maximum_spectral_shaping_lookahead = 1,
 	};
 }
 
@@ -829,6 +829,16 @@ static bool run_configured_call(
 	      analog.call.stage, digital.call.stage,
 	      analog.phase4_entry_ri_symbols, analog.mixed_octets,
 	      digital.phase4_entry_ri_symbols, digital.mixed_octets);
+	CHECK(analog.call.analog_phase4_configuration.training_parameters
+		      .spectral_lookahead == 1 &&
+	      analog.call.analog_phase4_configuration.data_parameters
+		      .spectral_lookahead == 1,
+	      "law %u V.90 lookahead did not honor peer maximum: %u/%u",
+	      (unsigned int)law,
+	      analog.call.analog_phase4_configuration.training_parameters
+		      .spectral_lookahead,
+	      analog.call.analog_phase4_configuration.data_parameters
+		      .spectral_lookahead);
 	if (goal == CALL_GOAL_PHASE4_ENTRY)
 		CHECK(pcm_call_current_stage(&analog.call) == PCM_CALL_PHASE4 &&
 		      pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE4 &&
