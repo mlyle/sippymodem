@@ -115,6 +115,12 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
+static int16_t decode_octet(enum g711_law law, uint8_t octet)
+{
+	return law == G711_LAW_PCMA ?
+		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
+}
+
 static void generate_data_bits(
 	uint8_t *bits, size_t bit_count, size_t frame)
 {
@@ -330,8 +336,9 @@ static bool verify_final_downstream_exchange(
 			saved_digital = digital_path;
 			saved_octet = digital_octet;
 		}
-		digital_result = v90_digital_path_octet(
-			&digital_path, analog_octet, source_downstream_frame,
+		digital_result = v90_digital_path_sample(
+			&digital_path, decode_octet(digital_path.law, analog_octet),
+			source_downstream_frame,
 			&downstream_source, &digital_octet, &upstream_frame);
 		if (expect_rate_rejection &&
 		    digital_result == V90_DIGITAL_PATH_NO_COMMON_RATE) {
@@ -349,8 +356,9 @@ static bool verify_final_downstream_exchange(
 				     sizeof(upstream_frame)) == 0,
 			      "downstream source failure consumed clock %zu", clock);
 			downstream_source.reject_next = false;
-			digital_result = v90_digital_path_octet(
-				&digital_path, analog_octet,
+			digital_result = v90_digital_path_sample(
+				&digital_path,
+				decode_octet(digital_path.law, analog_octet),
 				source_downstream_frame, &downstream_source,
 				&digital_octet, &upstream_frame);
 			downstream_source_failure_checked = true;
@@ -647,7 +655,7 @@ static bool test_path_contracts(void)
 		      &path, &handoff, V90_JD_RATE_CAPABILITY_MASK) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
 	      memcmp(&path, &saved, sizeof(path)) == 0 &&
-	      v90_digital_path_octet(
+	      v90_digital_path_sample(
 		      NULL, 0, NULL, NULL, &octet, &received) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
 	      octet == 0x5a &&

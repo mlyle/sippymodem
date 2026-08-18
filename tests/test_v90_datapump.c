@@ -244,11 +244,12 @@ static uint8_t transcode(
 	return best;
 }
 
-static bool run_pair(
+static bool run_pair_with_input_contract(
 	enum g711_law analog_law, enum g711_law digital_law,
 	uint32_t downstream_rate,
 	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
-	bool require_online, enum modem_pcm_role retrain_role)
+	bool require_online, enum modem_pcm_role retrain_role,
+	bool separate_upstream_sample)
 {
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
@@ -278,6 +279,7 @@ static bool run_pair(
 	bool digital_reconnected = false;
 	bool post_retrain_data_enabled = false;
 	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE;
+	bool sample_codeword_separated = false;
 
 	analog.min_rate = downstream_rate;
 	analog.max_rate = downstream_rate;
@@ -306,16 +308,25 @@ static bool run_pair(
 	     ++octet) {
 		uint8_t next_digital;
 		uint8_t next_analog;
-		int16_t digital_receive = decode(digital_law, analog_to_digital);
+		uint8_t digital_received_octet = analog_to_digital;
+		int16_t digital_receive =
+			decode(digital_law, digital_received_octet);
 		int16_t analog_receive;
 		int16_t digital_transmit = 1;
 		int16_t analog_transmit = 1;
 		bool digital_exact = false;
 		bool analog_exact = false;
 		int analog_result;
-		int digital_result = operations->process_g711(
+		int digital_result;
+
+		if (separate_upstream_sample && data_enabled) {
+			digital_received_octet = encode(digital_law, 0);
+			sample_codeword_separated |=
+				digital_received_octet != analog_to_digital;
+		}
+		digital_result = operations->process_g711(
 			digital_dp, digital_law,
-			&analog_to_digital, &digital_receive,
+			&digital_received_octet, &digital_receive,
 			&next_digital, &digital_transmit, 1, &digital_exact);
 
 		CHECK((digital_result == DPSTAT_OK ||
@@ -430,11 +441,25 @@ static bool run_pair(
 	       digital_bits.received_bits >= MINIMUM_RECEIVED_BITS),
 	      "V.90 role %u did not complete local and remote retrain",
 	      (unsigned int)retrain_role);
+	CHECK(!separate_upstream_sample || sample_codeword_separated,
+	      "PCMA upstream sample never diverged from its test codeword");
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&
 	      operations->use_count == 0 && !v90_datapump_is_busy(),
 	      "V.90 data pumps did not release their call state");
 	return true;
+}
+
+static bool run_pair(
+	enum g711_law analog_law, enum g711_law digital_law,
+	uint32_t downstream_rate,
+	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
+	bool require_online, enum modem_pcm_role retrain_role)
+{
+	return run_pair_with_input_contract(
+		analog_law, digital_law, downstream_rate,
+		upstream_rate, upstream_symbol_rate,
+		require_online, retrain_role, false);
 }
 
 static bool test_generated_pairs(void)
@@ -475,6 +500,21 @@ static bool test_forced_upstream_pairs(void)
 	      "V.90 data pump did not honor a forced upstream profile");
 	CHECK(v90_datapump_unregister() == 0,
 	      "forced-upstream V.90 registration remained busy");
+	return true;
+}
+
+static bool test_upstream_uses_media_samples(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "sample-owned V.90 registration failed");
+	CHECK(run_pair_with_input_contract(
+		      G711_LAW_PCMA, G711_LAW_PCMA,
+		      42667, 26400, 3200, true,
+		      MODEM_PCM_ROLE_NONE, true),
+	      "digital upstream receiver used the PCMA codeword instead of "
+	      "the media sample");
+	CHECK(v90_datapump_unregister() == 0,
+	      "sample-owned V.90 registration remained busy");
 	return true;
 }
 
@@ -718,6 +758,7 @@ int main(void)
 		{ "V.92 PCM-upstream selection",
 		  test_v92_pcm_upstream_selection },
 		{ "forced upstream pairs", test_forced_upstream_pairs },
+		{ "sample-owned PCMA upstream", test_upstream_uses_media_samples },
 		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "media-independent Phase 2 codebook",
 		  test_independent_media_laws },

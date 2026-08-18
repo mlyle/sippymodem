@@ -301,13 +301,16 @@ bool pcm_call_get_data_rates(
 	uint32_t *transmit_bits_per_second,
 	uint32_t *receive_bits_per_second);
 
-/* Consume and produce one character after start_data_path. A NULL source, or
+/* Consume and produce one character after start_data_path. `received_octet`
+ * preserves exact PCM codeword semantics for the analogue downstream receiver;
+ * `received_sample` is the decoded physical line sample owned by the digital
+ * upstream receiver and the online retrain detector. A NULL source, or
  * a NULL sources object, transmits idle ones in that direction. SOURCE_FAILURE
  * consumes neither the received character nor the clock interval and leaves
  * both outputs unchanged. Once transmission succeeds, receive failures consume
  * the interval, expose its generated output, and latch call failure. */
 enum pcm_call_result pcm_call_data_octet(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event);

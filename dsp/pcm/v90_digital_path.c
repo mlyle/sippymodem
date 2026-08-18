@@ -368,12 +368,6 @@ static bool output_overlaps_path(
 	return memory_regions_overlap(path, sizeof(*path), output, output_size);
 }
 
-static int16_t decode_octet(enum g711_law law, uint8_t octet)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
-}
-
 static uint8_t silence_octet(enum g711_law law)
 {
 	return law == G711_LAW_PCMA ?
@@ -408,8 +402,8 @@ enum v90_digital_path_result v90_digital_path_transmit(
 	return result;
 }
 
-enum v90_digital_path_result v90_digital_path_receive(
-	struct v90_digital_path *path, uint8_t received_octet,
+enum v90_digital_path_result v90_digital_path_receive_sample(
+	struct v90_digital_path *path, int16_t received_sample,
 	struct v34_received_mapping_frame *received)
 {
 	struct v34_received_mapping_frame frame = { 0 };
@@ -422,8 +416,7 @@ enum v90_digital_path_result v90_digital_path_receive(
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
 	result = receive_upstream(
-		path, decode_octet(path->law, received_octet),
-		&frame, &frame_ready);
+		path, received_sample, &frame, &frame_ready);
 	if (result != V90_DIGITAL_PATH_OK &&
 	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
 		path->failed = true;
@@ -436,8 +429,8 @@ enum v90_digital_path_result v90_digital_path_receive(
 	return result;
 }
 
-enum v90_digital_path_result v90_digital_path_octet(
-	struct v90_digital_path *path, uint8_t received_octet,
+enum v90_digital_path_result v90_digital_path_sample(
+	struct v90_digital_path *path, int16_t received_sample,
 	v90_downstream_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received)
@@ -464,8 +457,7 @@ enum v90_digital_path_result v90_digital_path_octet(
 		return result;
 	if (result == V90_DIGITAL_PATH_OK)
 		result = receive_upstream(
-			path, decode_octet(path->law, received_octet),
-			&frame, &frame_ready);
+			path, received_sample, &frame, &frame_ready);
 	if (result != V90_DIGITAL_PATH_OK &&
 	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
 		path->failed = true;

@@ -81,21 +81,22 @@ enum v90_digital_path_result v90_digital_path_transmit(
 	struct v90_digital_path *path,
 	v90_downstream_frame_source source, void *source_context,
 	uint8_t *transmit_octet);
-enum v90_digital_path_result v90_digital_path_receive(
-	struct v90_digital_path *path, uint8_t received_octet,
+enum v90_digital_path_result v90_digital_path_receive_sample(
+	struct v90_digital_path *path, int16_t received_sample,
 	struct v34_received_mapping_frame *received);
 
-/* Consume and produce one simultaneous G.711 network character. Downstream
- * output is generated before the received character changes control state, so
+/* Consume one upstream line sample and produce one simultaneous G.711 network
+ * character. Downstream output is generated before the received sample changes
+ * control state, so
  * a CP acknowledgement affects the following output character. A successful
  * upstream mapping frame changes `received` and returns UPSTREAM_FRAME.
  *
  * A downstream source failure is retryable: it changes neither path nor
- * outputs and the same received character remains pending. Invalid calls have
+ * outputs and the same received sample remains pending. Invalid calls have
  * the same transactional behavior. Terminal path errors latch failure and
  * expose the output already generated for the accepted clock character. */
-enum v90_digital_path_result v90_digital_path_octet(
-	struct v90_digital_path *path, uint8_t received_octet,
+enum v90_digital_path_result v90_digital_path_sample(
+	struct v90_digital_path *path, int16_t received_sample,
 	v90_downstream_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received);

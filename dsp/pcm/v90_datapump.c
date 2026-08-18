@@ -421,6 +421,7 @@ static uint8_t pcm_to_media_octet(enum g711_law media_law, uint8_t octet)
 
 static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
+	int16_t received_sample,
 	uint8_t *transmitted, bool *connected)
 {
 	struct pcm_call_data_sources sources = {
@@ -443,7 +444,7 @@ static bool process_octet(
 		return false;
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
 		result = pcm_call_data_octet(
-			&datapump->call, received, &sources,
+			&datapump->call, received, received_sample, &sources,
 			transmitted, &event);
 	} else {
 		struct pcm_call_observation observation;
@@ -519,6 +520,7 @@ static int process_v90_g711(
 		if (!process_octet(
 			    datapump,
 			    media_to_pcm_octet(law, receive_codewords[index]),
+			    receive_samples[index],
 			    &pcm_transmit, &connected))
 			goto failure;
 		transmit_codewords[index] =

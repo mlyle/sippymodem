@@ -2185,7 +2185,7 @@ bool pcm_call_get_data_rates(
 }
 
 enum pcm_call_result pcm_call_data_octet(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event)
@@ -2228,8 +2228,8 @@ enum pcm_call_result pcm_call_data_octet(
 			&generated);
 		result = digital_path_result(digital_result);
 	} else {
-		digital_result = v90_digital_path_octet(
-			&call->state.data_path.digital, received_octet,
+		digital_result = v90_digital_path_sample(
+			&call->state.data_path.digital, received_sample,
 			sources->downstream, sources->downstream_context,
 			&generated, &upstream_frame);
 		result = digital_path_result(digital_result);
@@ -2257,8 +2257,7 @@ enum pcm_call_result pcm_call_data_octet(
 	}
 	if (result == PCM_CALL_OK) {
 		if (v34_retrain_detector_sample(
-			    &call->retrain_detector,
-			    decode_octet(call->law, received_octet),
+			    &call->retrain_detector, received_sample,
 			    &retrain_detected) != V34_PHASE2_TONE_OK)
 			result = PCM_CALL_NUMERIC_FAILURE;
 	}

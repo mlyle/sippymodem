@@ -62,6 +62,12 @@ static uint8_t silence_octet(enum g711_law law)
 		       g711_encode_pcma(0) : g711_encode_pcmu(0);
 }
 
+static int16_t decode_octet(enum g711_law law, uint8_t octet)
+{
+	return law == G711_LAW_PCMA ?
+		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
+}
+
 static struct v90_info0 analog_info0(void)
 {
 	return (struct v90_info0){
@@ -588,7 +594,9 @@ static bool endpoint_data_octet(
 	event_before = event;
 	selected_sources = endpoint->idle_source_checked ? &sources : NULL;
 	result = pcm_call_data_octet(
-		&endpoint->call, received, selected_sources, &generated, &event);
+		&endpoint->call, received,
+		decode_octet(endpoint->call.law, received), selected_sources,
+		&generated, &event);
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		if (!expecting_source_failure || generated != 0xa5 ||
 		    memcmp(&event, &event_before, sizeof(event)) != 0 ||
@@ -600,7 +608,8 @@ static bool endpoint_data_octet(
 		generated = 0xa5;
 		memset(&event, 0x5a, sizeof(event));
 		result = pcm_call_data_octet(
-			&endpoint->call, received, &sources,
+			&endpoint->call, received,
+			decode_octet(endpoint->call.law, received), &sources,
 			&generated, &event);
 	}
 	if (result != PCM_CALL_OK)
@@ -1492,7 +1501,7 @@ static bool test_validation(void)
 	      transmit_rate == UINT32_C(0xa5a55a5a) &&
 	      receive_rate == UINT32_C(0x5a5aa5a5) &&
 	      pcm_call_data_octet(
-		      &call, silence_octet(G711_LAW_PCMU), NULL,
+		      &call, silence_octet(G711_LAW_PCMU), 0, NULL,
 		      &output, &data_event) == PCM_CALL_INVALID_STATE &&
 	      output == 0xa5 &&
 	      memcmp(&observation, &saved_observation,
