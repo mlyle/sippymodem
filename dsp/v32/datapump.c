@@ -112,6 +112,7 @@ static struct dp *create_v32(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations);
 static int delete_v32(struct dp *dp);
+static int retrain_v32(struct dp *dp);
 static int process_v32(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int enter_link(struct v32_datapump *datapump);
@@ -121,6 +122,7 @@ static struct dp_operations v32_operations = {
 	.create = create_v32,
 	.delete = delete_v32,
 	.process = process_v32,
+	.retrain = retrain_v32,
 };
 
 static enum v32_transmitter_role local_role(bool caller)
@@ -498,13 +500,113 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	    (datapump->has_previous_receive_point &&
 	     !point_is_finite(&datapump->previous_receive_point)) ||
 	    (!training_session_has_failed(&datapump->training) &&
-	     training_session_is_online(&datapump->training) !=
+	     (training_session_is_online(&datapump->training) ||
+	      training_session_is_retraining(&datapump->training)) !=
 		     (dp->status == DPSTAT_CONNECT)) ||
 	    (training_session_is_online(&datapump->training) &&
 	     trellis_data_bits != 0 &&
 	     !datapump->trellis_encoder_initialized))
 		return NULL;
 	return datapump;
+}
+
+static int initialize_protocol(
+	struct v32_datapump *datapump, uint8_t rates,
+	bool retraining, bool remote_started)
+{
+	struct v32_line_startup detected_caller = datapump->line_startup;
+	struct v32_answerer_line_startup detected_answerer =
+		datapump->answerer_line_startup;
+
+	if (qam_modulator_init(
+		    &datapump->modulator, &v32_channel,
+		    V32_TRANSMIT_AMPLITUDE) != QAM_OK ||
+	    qam_demodulator_init(
+		    &datapump->demodulator, &v32_channel) != QAM_OK ||
+	    v32_symbol_encoder_init(
+		    &datapump->encoder, local_role(datapump->caller), 0) !=
+		    V32_FRAMING_OK ||
+	    v32_symbol_decoder_init(
+		    &datapump->decoder, remote_role(datapump->caller), 0) !=
+		    V32_FRAMING_OK ||
+	    v32_startup_init(
+		    &datapump->startup, endpoint_role(datapump->caller),
+		    rates) != V32_STARTUP_OK ||
+	    v32_conditioning_transmitter_init(
+		    &datapump->conditioning_transmitter,
+		    local_role(datapump->caller),
+		    V32_CONDITIONING_TRN_MIN_SYMBOLS) != V32_CONDITIONING_OK ||
+	    v32_conditioning_receiver_init(
+		    &datapump->conditioning_receiver,
+		    remote_role(datapump->caller)) !=
+		    V32_CONDITIONING_RECEIVER_OK ||
+	    v32_4800_constellation_point(
+		    0, &datapump->transmit_point) != V32_CONSTELLATION_OK)
+		return -1;
+	if (datapump->caller) {
+		if ((!retraining &&
+		     v32_line_startup_init(
+			     &datapump->line_startup,
+			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
+		    (retraining && !remote_started &&
+		     v32_line_retrain_init(
+			     &datapump->line_startup,
+			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
+		    (retraining && remote_started &&
+		     (!v32_line_startup_is_valid(&detected_caller) ||
+		      detected_caller.state !=
+			      V32_LINE_SEND_CALLING_CARRIER)) ||
+		    v32_answerer_line_startup_init(
+			    &datapump->answerer_line_startup,
+			    V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK)
+			return -1;
+		if (retraining && remote_started)
+			datapump->line_startup = detected_caller;
+	} else {
+		if (v32_line_startup_init(
+			    &datapump->line_startup,
+			    V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK ||
+		    (!retraining &&
+		     v32_answerer_line_startup_init(
+			     &datapump->answerer_line_startup,
+			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
+		    (retraining && !remote_started &&
+		     v32_answerer_line_retrain_init(
+			     &datapump->answerer_line_startup,
+			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
+		    (retraining && remote_started &&
+		     (!v32_answerer_line_startup_is_valid(
+			     &detected_answerer) ||
+		      detected_answerer.state !=
+			      V32_ANSWERER_LINE_SEND_AC)))
+			return -1;
+		if (retraining && remote_started)
+			datapump->answerer_line_startup = detected_answerer;
+	}
+	memset(&datapump->trellis_encoder, 0,
+	       sizeof(datapump->trellis_encoder));
+	memset(&datapump->trellis_acquirer, 0,
+	       sizeof(datapump->trellis_acquirer));
+	memset(&datapump->receiver_9600, 0,
+	       sizeof(datapump->receiver_9600));
+	datapump->previous_receive_point = (struct qam_point){ 0 };
+	datapump->conditioning_gain = (struct qam_gain){ 0 };
+	datapump->missing_carrier_samples = 0;
+	datapump->turnaround_s_symbols_remaining = 0;
+	datapump->direct_retrain_dibits = 0;
+	datapump->direct_qam_qualifying_samples = 0;
+	datapump->conditioning_silence_samples = 0;
+	datapump->line_entry = datapump->caller ?
+		V32_LINE_ENTRY_CALLER_STARTUP :
+		V32_LINE_ENTRY_ANSWERER_STARTUP;
+	datapump->has_previous_receive_point = false;
+	datapump->trellis_encoder_initialized = false;
+	datapump->trellis_receiver_initialized = false;
+	datapump->receiver_9600_initialized = false;
+	datapump->second_conditioning_complete = false;
+	datapump->conditioning_carrier_detected = false;
+	datapump->answerer_s_detected = false;
+	return 0;
 }
 
 static struct dp *create_v32(
@@ -523,37 +625,8 @@ static struct dp *create_v32(
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
-	if (qam_modulator_init(
-		    &datapump->modulator, &v32_channel,
-		    V32_TRANSMIT_AMPLITUDE) != QAM_OK ||
-	    qam_demodulator_init(
-		    &datapump->demodulator, &v32_channel) != QAM_OK ||
-	    v32_symbol_encoder_init(
-		    &datapump->encoder, local_role(is_caller), 0) !=
-		    V32_FRAMING_OK ||
-	    v32_symbol_decoder_init(
-		    &datapump->decoder, remote_role(is_caller), 0) !=
-		    V32_FRAMING_OK ||
-	    v32_startup_init(
-		    &datapump->startup, endpoint_role(is_caller),
-		    rates) !=
-		    V32_STARTUP_OK ||
-	    v32_line_startup_init(
-		    &datapump->line_startup, V32_TRANSMIT_AMPLITUDE) !=
-		    V32_LINE_STARTUP_OK ||
-	    v32_answerer_line_startup_init(
-		    &datapump->answerer_line_startup,
-		    V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK ||
-	    v32_conditioning_transmitter_init(
-		    &datapump->conditioning_transmitter, local_role(is_caller),
-		    V32_CONDITIONING_TRN_MIN_SYMBOLS) !=
-		    V32_CONDITIONING_OK ||
-	    v32_conditioning_receiver_init(
-		    &datapump->conditioning_receiver, remote_role(is_caller)) !=
-		    V32_CONDITIONING_RECEIVER_OK ||
-	    v32_4800_constellation_point(
-		    0, &datapump->transmit_point) !=
-		    V32_CONSTELLATION_OK ||
+	datapump->caller = is_caller;
+	if (initialize_protocol(datapump, rates, false, false) != 0 ||
 	    training_session_init(
 		    &datapump->training,
 		    datapump_carrier_wait_ticks(modem)) !=
@@ -561,10 +634,6 @@ static struct dp *create_v32(
 		free(datapump);
 		return NULL;
 	}
-	datapump->caller = is_caller;
-	datapump->line_entry = is_caller ?
-				 V32_LINE_ENTRY_CALLER_STARTUP :
-				 V32_LINE_ENTRY_ANSWERER_STARTUP;
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -574,6 +643,40 @@ static struct dp *create_v32(
 	};
 	operations->use_count++;
 	return &datapump->dp;
+}
+
+static int prepare_retrain(
+	struct v32_datapump *datapump, enum training_origin origin,
+	bool remote_started)
+{
+	if (initialize_protocol(
+		    datapump, rate_capabilities(datapump->dp.modem),
+		    true, remote_started) != 0 ||
+	    training_session_start_retrain(
+		    &datapump->training, origin) != TRAINING_SESSION_OK)
+		return -1;
+	return 0;
+}
+
+static int retrain_v32(struct dp *dp)
+{
+	struct v32_datapump *datapump = v32_from_dp(dp);
+	struct v32_datapump next;
+
+	if (datapump == NULL)
+		return -1;
+	if (training_session_is_retraining(&datapump->training))
+		return 0;
+	if (!training_session_is_online(&datapump->training))
+		return -1;
+	next = *datapump;
+	if (prepare_retrain(
+		    &next, TRAINING_LOCAL_RETRAIN, false) != 0)
+		return -1;
+	*datapump = next;
+	if (!datapump->dp.modem->cfg.ec)
+		modem_async_retrain(datapump->dp.modem);
+	return 0;
 }
 
 static int delete_v32(struct dp *dp)
@@ -1375,6 +1478,38 @@ static void add_bounded(
 		       limit : *value + increment;
 }
 
+static int observe_online_retrain(
+	struct v32_datapump *datapump, int16_t sample,
+	bool *started)
+{
+	bool detected;
+
+	if (!training_session_is_online(&datapump->training) ||
+	    started == NULL)
+		return -1;
+	if ((datapump->caller &&
+	     v32_line_startup_observe_retrain(
+		     &datapump->line_startup, sample, &detected) !=
+		     V32_LINE_STARTUP_OK) ||
+	    (!datapump->caller &&
+	     v32_answerer_line_startup_observe_retrain(
+		     &datapump->answerer_line_startup, sample, &detected) !=
+		     V32_LINE_STARTUP_OK))
+		return -1;
+	*started = detected;
+	if (detected) {
+		struct v32_datapump next = *datapump;
+
+		if (prepare_retrain(
+			    &next, TRAINING_REMOTE_RETRAIN, true) != 0)
+			return -1;
+		*datapump = next;
+		if (!datapump->dp.modem->cfg.ec)
+			modem_async_retrain(datapump->dp.modem);
+	}
+	return 0;
+}
+
 static int process_v32(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
@@ -1416,6 +1551,18 @@ static int process_v32(
 				    datapump, receive[index], &transmit[index]) != 0)
 				goto failure;
 			continue;
+		}
+		if (training_session_is_online(&datapump->training)) {
+			bool retrain_started;
+
+			if (observe_online_retrain(
+				    datapump, receive[index],
+				    &retrain_started) != 0)
+				goto failure;
+			if (retrain_started) {
+				transmit[index] = 0;
+				continue;
+			}
 		}
 		if (generate_sample(
 			    datapump, &transmit[index], &linked,

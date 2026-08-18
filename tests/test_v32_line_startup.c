@@ -470,21 +470,16 @@ static bool run_answerer_standard_exchange(enum test_codec codec)
 	return true;
 }
 
-static bool run_paired_line_exchange(enum test_codec codec)
+static bool drive_paired_line_exchange(
+	struct v32_line_startup *caller,
+	struct v32_answerer_line_startup *answerer,
+	enum test_codec codec)
 {
-	struct v32_line_startup caller;
-	struct v32_answerer_line_startup answerer;
 	int16_t caller_transmit = 0;
 	int16_t answerer_transmit = 0;
 	bool caller_complete = false;
 	bool answerer_complete = false;
 
-	CHECK(v32_line_startup_init(&caller, TEST_AMPLITUDE) ==
-		      V32_LINE_STARTUP_OK &&
-		      v32_answerer_line_startup_init(
-			      &answerer, TEST_AMPLITUDE) ==
-			      V32_LINE_STARTUP_OK,
-	      "paired line-startup fixture did not initialize");
 	for (size_t count = 0;
 	     count < TEST_LINE_EXCHANGE_LIMIT && !answerer_complete;
 	     ++count) {
@@ -492,12 +487,12 @@ static bool run_paired_line_exchange(enum test_codec codec)
 		int16_t next_answerer;
 
 		CHECK(v32_line_startup_process(
-			      &caller,
+			      caller,
 			      codec_round_trip(answerer_transmit, codec),
 			      &next_caller, &caller_complete) ==
 			      V32_LINE_STARTUP_OK &&
 		      v32_answerer_line_startup_process(
-			      &answerer,
+			      answerer,
 			      codec_round_trip(caller_transmit, codec),
 			      &next_answerer, &answerer_complete) ==
 			      V32_LINE_STARTUP_OK,
@@ -506,10 +501,113 @@ static bool run_paired_line_exchange(enum test_codec codec)
 		answerer_transmit = next_answerer;
 	}
 	CHECK(caller_complete && answerer_complete &&
-		      !answerer.caller_reversed_early &&
-		      v32_line_startup_round_trip_samples(&caller) != 0 &&
-		      v32_answerer_line_startup_round_trip_samples(&answerer) != 0,
+		      !answerer->caller_reversed_early &&
+		      v32_line_startup_round_trip_samples(caller) != 0 &&
+		      v32_answerer_line_startup_round_trip_samples(answerer) != 0,
 	      "paired line startup did not complete the two-reversal exchange");
+	return true;
+}
+
+static bool run_paired_line_exchange(enum test_codec codec)
+{
+	struct v32_line_startup caller;
+	struct v32_answerer_line_startup answerer;
+
+	CHECK(v32_line_startup_init(&caller, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_startup_init(
+			      &answerer, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK,
+	      "paired line-startup fixture did not initialize");
+	return drive_paired_line_exchange(&caller, &answerer, codec);
+}
+
+static bool run_paired_retrain_exchange(enum test_codec codec)
+{
+	struct v32_line_startup caller;
+	struct v32_answerer_line_startup answerer;
+
+	CHECK(v32_line_retrain_init(&caller, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_retrain_init(
+			      &answerer, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK,
+	      "paired line-retrain fixture did not initialize");
+	return drive_paired_line_exchange(&caller, &answerer, codec);
+}
+
+static bool run_remote_retrain_detection(enum test_codec codec)
+{
+	struct v32_line_startup caller;
+	struct v32_answerer_line_startup answerer;
+	struct v32_line_startup remote_caller;
+	struct v32_answerer_line_startup remote_answerer;
+	int16_t remote_caller_transmit = 0;
+	int16_t remote_answerer_transmit = 0;
+	bool complete = false;
+	bool caller_started = false;
+	bool answerer_started = false;
+	size_t caller_detection_samples = 0;
+	size_t answerer_detection_samples = 0;
+
+	CHECK(v32_line_startup_init(&caller, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_startup_init(
+			      &answerer, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      drive_paired_line_exchange(&caller, &answerer, codec) &&
+		      v32_line_retrain_init(
+			      &remote_caller, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_retrain_init(
+			      &remote_answerer, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK,
+	      "remote line-retrain fixture did not initialize");
+	for (size_t count = 0;
+	     count < TEST_TRANSITION_LIMIT &&
+	     (!caller_started || !answerer_started); ++count) {
+		CHECK(v32_line_startup_process(
+			      &remote_caller, 0, &remote_caller_transmit,
+			      &complete) == V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_startup_process(
+			      &remote_answerer, 0, &remote_answerer_transmit,
+			      &complete) == V32_LINE_STARTUP_OK,
+		      "remote line-retrain signal generation failed");
+		if (!caller_started) {
+			CHECK(v32_line_startup_observe_retrain(
+				      &caller,
+				      codec_round_trip(
+					      remote_answerer_transmit, codec),
+				      &caller_started) == V32_LINE_STARTUP_OK,
+			      "caller rejected remote AC");
+			if (caller_started)
+				caller_detection_samples = count + 1;
+		}
+		if (!answerer_started) {
+			CHECK(v32_answerer_line_startup_observe_retrain(
+				      &answerer,
+				      codec_round_trip(
+					      remote_caller_transmit, codec),
+				      &answerer_started) == V32_LINE_STARTUP_OK,
+			      "answerer rejected remote calling carrier");
+			if (answerer_started)
+				answerer_detection_samples = count + 1;
+		}
+	}
+	CHECK(caller_started && answerer_started &&
+		      caller_detection_samples >=
+			      V32_RETRAIN_DETECT_SAMPLES &&
+		      caller_detection_samples <
+			      V32_RETRAIN_DETECT_SAMPLES +
+				      SINGLE_TONE_ACQUIRE_SAMPLES &&
+		      answerer_detection_samples >=
+			      V32_RETRAIN_DETECT_SAMPLES &&
+		      answerer_detection_samples <
+			      V32_RETRAIN_DETECT_SAMPLES +
+				      SINGLE_TONE_ACQUIRE_SAMPLES &&
+		      caller.state == V32_LINE_SEND_CALLING_CARRIER &&
+		      answerer.state == V32_ANSWERER_LINE_SEND_AC,
+	      "online retrain detection escaped its 128T qualification bound");
 	return true;
 }
 
@@ -521,6 +619,10 @@ static bool test_generated_answerer_exchange(void)
 		      "standard answerer exchange failed codec %d", codec);
 		CHECK(run_paired_line_exchange(codec),
 		      "paired answerer exchange failed codec %d", codec);
+		CHECK(run_paired_retrain_exchange(codec),
+		      "paired retrain exchange failed codec %d", codec);
+		CHECK(run_remote_retrain_detection(codec),
+		      "remote retrain detection failed codec %d", codec);
 	}
 	return true;
 }
@@ -530,10 +632,13 @@ static bool test_validation_is_transactional(void)
 	struct v32_line_startup startup;
 	struct v32_line_startup initialized;
 	struct v32_line_startup before;
+	struct v32_line_startup online_caller;
 	struct v32_answerer_line_startup answerer;
 	struct v32_answerer_line_startup answerer_before;
+	struct v32_answerer_line_startup online_answerer;
 	int16_t transmit = 123;
 	bool complete = true;
+	bool started = true;
 
 	CHECK(v32_line_startup_init(&startup, TEST_AMPLITUDE) ==
 		      V32_LINE_STARTUP_OK &&
@@ -573,6 +678,33 @@ static bool test_validation_is_transactional(void)
 		      memcmp(&answerer, &answerer_before, sizeof(answerer)) == 0 &&
 		      transmit == 123 && complete,
 	      "invalid V.32 answerer mutation was not transactional");
+	CHECK(v32_line_startup_init(&online_caller, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_startup_init(
+			      &online_answerer, TEST_AMPLITUDE) ==
+		      V32_LINE_STARTUP_OK &&
+		      drive_paired_line_exchange(
+			      &online_caller, &online_answerer,
+			      TEST_CODEC_LINEAR),
+	      "online retrain validation fixture did not initialize");
+	online_caller.low_turnaround_tone.phase_step++;
+	before = online_caller;
+	CHECK(v32_line_startup_observe_retrain(
+		      &online_caller, 0, &started) ==
+		      V32_LINE_STARTUP_INVALID_ARGUMENT &&
+		      memcmp(&online_caller, &before, sizeof(before)) == 0 &&
+		      started,
+	      "invalid caller retrain observation was not transactional");
+	online_answerer.calling_carrier.phase_step++;
+	answerer_before = online_answerer;
+	CHECK(v32_answerer_line_startup_observe_retrain(
+		      &online_answerer, 0, &started) ==
+		      V32_LINE_STARTUP_INVALID_ARGUMENT &&
+		      memcmp(
+			      &online_answerer, &answerer_before,
+			      sizeof(answerer_before)) == 0 &&
+		      started,
+	      "invalid answerer retrain observation was not transactional");
 	return true;
 }
 

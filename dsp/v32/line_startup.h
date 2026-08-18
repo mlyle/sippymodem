@@ -14,6 +14,13 @@ enum {
 	V32_LOW_TURNAROUND_TONE_HZ = 600,
 	V32_HIGH_TURNAROUND_TONE_HZ = 3000,
 	V32_STARTUP_SYMBOL_RATE = 2400,
+	/* Full retrain is recognized only after at least 128 symbol intervals of
+	 * the role-specific retrain carrier. */
+	V32_RETRAIN_DETECT_SYMBOLS = 128,
+	V32_RETRAIN_DETECT_SAMPLES =
+		(SINGLE_TONE_SAMPLE_RATE * V32_RETRAIN_DETECT_SYMBOLS +
+		 V32_STARTUP_SYMBOL_RATE - 1) /
+		V32_STARTUP_SYMBOL_RATE,
 	V32_ANSWER_GUARD_SAMPLES =
 		SINGLE_TONE_SAMPLE_RATE,
 	/* The caller changes carrier state 64 +/- 2 symbols after acquiring the
@@ -99,6 +106,9 @@ struct v32_answerer_line_startup {
 enum v32_line_startup_result v32_line_startup_init(
 	struct v32_line_startup *startup,
 	int16_t transmit_amplitude);
+enum v32_line_startup_result v32_line_retrain_init(
+	struct v32_line_startup *startup,
+	int16_t transmit_amplitude);
 bool v32_line_startup_is_valid(
 	const struct v32_line_startup *startup);
 bool v32_line_startup_is_complete(
@@ -110,8 +120,14 @@ enum v32_line_startup_result
 v32_line_startup_process(
 	struct v32_line_startup *startup, int16_t receive_sample,
 	int16_t *transmit_sample, bool *complete);
+enum v32_line_startup_result v32_line_startup_observe_retrain(
+	struct v32_line_startup *startup, int16_t receive_sample,
+	bool *started);
 
 enum v32_line_startup_result v32_answerer_line_startup_init(
+	struct v32_answerer_line_startup *startup,
+	int16_t transmit_amplitude);
+enum v32_line_startup_result v32_answerer_line_retrain_init(
 	struct v32_answerer_line_startup *startup,
 	int16_t transmit_amplitude);
 bool v32_answerer_line_startup_is_valid(
@@ -124,6 +140,10 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 	struct v32_answerer_line_startup *startup,
 	int16_t receive_sample, int16_t *transmit_sample,
 	bool *complete);
+enum v32_line_startup_result
+v32_answerer_line_startup_observe_retrain(
+	struct v32_answerer_line_startup *startup,
+	int16_t receive_sample, bool *started);
 
 const char *v32_line_startup_state_name(
 	enum v32_line_startup_state state);

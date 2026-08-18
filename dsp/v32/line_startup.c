@@ -9,6 +9,20 @@
  * power on a clean channel. */
 static const double V32_TURNAROUND_MINIMUM_CARRIER_SHARE = 0.40;
 
+static bool retrain_carrier_qualified(
+	uint32_t *samples, bool present, bool acquired)
+{
+	if (!present) {
+		*samples = 0;
+		return false;
+	}
+	if (*samples == 0)
+		*samples = acquired ? SINGLE_TONE_ACQUIRE_SAMPLES : 1;
+	else if (*samples < V32_RETRAIN_DETECT_SAMPLES)
+		(*samples)++;
+	return *samples == V32_RETRAIN_DETECT_SAMPLES;
+}
+
 static bool state_is_valid(enum v32_line_startup_state state)
 {
 	return state >= V32_LINE_WAIT_ANSWER_TONE &&
@@ -114,16 +128,16 @@ bool v32_line_startup_is_valid(
 		(!startup->low_turnaround_tone.tone_present &&
 		 !startup->high_turnaround_tone.tone_present)) &&
 	       (!terminal ||
-		(startup->state_samples == 0 &&
-		 !startup->low_turnaround_tone.tone_present &&
-		 !startup->high_turnaround_tone.tone_present)) &&
+		(startup->state == V32_LINE_STARTUP_COMPLETE ?
+			 startup->state_samples < V32_RETRAIN_DETECT_SAMPLES :
+			 startup->state_samples == 0)) &&
 	       (startup->round_trip_samples != 0) ==
 		       (startup->state == V32_LINE_STARTUP_COMPLETE);
 }
 
-enum v32_line_startup_result v32_line_startup_init(
+static enum v32_line_startup_result caller_init(
 	struct v32_line_startup *startup,
-	int16_t transmit_amplitude)
+	int16_t transmit_amplitude, enum v32_line_startup_state state)
 {
 	struct v32_line_startup initialized = { 0 };
 
@@ -147,11 +161,27 @@ enum v32_line_startup_result v32_line_startup_init(
 		    V32_CALLING_CARRIER_HZ,
 		    transmit_amplitude) != SINGLE_TONE_OK)
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
-	initialized.state = V32_LINE_WAIT_ANSWER_TONE;
+	initialized.state = state;
 	if (!v32_line_startup_is_valid(&initialized))
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
 	*startup = initialized;
 	return V32_LINE_STARTUP_OK;
+}
+
+enum v32_line_startup_result v32_line_startup_init(
+	struct v32_line_startup *startup,
+	int16_t transmit_amplitude)
+{
+	return caller_init(
+		startup, transmit_amplitude, V32_LINE_WAIT_ANSWER_TONE);
+}
+
+enum v32_line_startup_result v32_line_retrain_init(
+	struct v32_line_startup *startup,
+	int16_t transmit_amplitude)
+{
+	return caller_init(
+		startup, transmit_amplitude, V32_LINE_SEND_CALLING_CARRIER);
 }
 
 bool v32_line_startup_is_complete(
@@ -223,14 +253,15 @@ bool v32_answerer_line_startup_is_valid(
 		return startup->state_samples <
 			       V32_ANSWERER_DROP_SILENCE_SAMPLES &&
 		       (measured || startup->caller_reversed_early);
-	return startup->state_samples == 0 &&
-	       (startup->state != V32_ANSWERER_LINE_COMPLETE ||
-		measured || startup->caller_reversed_early);
+	if (startup->state == V32_ANSWERER_LINE_COMPLETE)
+		return startup->state_samples < V32_RETRAIN_DETECT_SAMPLES &&
+		       (measured || startup->caller_reversed_early);
+	return startup->state_samples == 0;
 }
 
-enum v32_line_startup_result v32_answerer_line_startup_init(
+static enum v32_line_startup_result answerer_init(
 	struct v32_answerer_line_startup *startup,
-	int16_t transmit_amplitude)
+	int16_t transmit_amplitude, enum v32_answerer_line_state state)
 {
 	struct v32_answerer_line_startup initialized = { 0 };
 	int16_t turnaround_amplitude;
@@ -253,11 +284,27 @@ enum v32_line_startup_result v32_answerer_line_startup_init(
 		    &initialized.calling_carrier,
 		    V32_CALLING_CARRIER_HZ) != SINGLE_TONE_OK)
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
-	initialized.state = V32_ANSWERER_LINE_ANSWER_TONE;
+	initialized.state = state;
 	if (!v32_answerer_line_startup_is_valid(&initialized))
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
 	*startup = initialized;
 	return V32_LINE_STARTUP_OK;
+}
+
+enum v32_line_startup_result v32_answerer_line_startup_init(
+	struct v32_answerer_line_startup *startup,
+	int16_t transmit_amplitude)
+{
+	return answerer_init(
+		startup, transmit_amplitude, V32_ANSWERER_LINE_ANSWER_TONE);
+}
+
+enum v32_line_startup_result v32_answerer_line_retrain_init(
+	struct v32_answerer_line_startup *startup,
+	int16_t transmit_amplitude)
+{
+	return answerer_init(
+		startup, transmit_amplitude, V32_ANSWERER_LINE_SEND_AC);
 }
 
 bool v32_answerer_line_startup_is_complete(
@@ -446,6 +493,53 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 	*startup = next;
 	*transmit_sample = generated;
 	*complete = next.state == V32_ANSWERER_LINE_COMPLETE;
+	return V32_LINE_STARTUP_OK;
+}
+
+enum v32_line_startup_result
+v32_answerer_line_startup_observe_retrain(
+	struct v32_answerer_line_startup *startup,
+	int16_t receive_sample, bool *started)
+{
+	struct v32_answerer_line_startup next;
+	struct single_tone_detector acquired = startup != NULL ?
+		startup->calling_carrier : (struct single_tone_detector){ 0 };
+	struct single_tone_event event = { 0 };
+	uint32_t qualified_samples;
+	bool qualified;
+	int16_t amplitude;
+
+	if (!v32_answerer_line_startup_is_complete(startup) ||
+	    started == NULL)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	if (single_tone_detector_sample(
+		    &acquired, receive_sample, &event) !=
+	    SINGLE_TONE_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	qualified_samples = startup->state_samples;
+	qualified = retrain_carrier_qualified(
+		&qualified_samples,
+		acquired.tone_present && acquired.missing_samples == 0,
+		event.kind == SINGLE_TONE_STARTED);
+	if (!qualified) {
+		next = *startup;
+		next.calling_carrier = acquired;
+		next.state_samples = qualified_samples;
+		if (!v32_answerer_line_startup_is_valid(&next))
+			return V32_LINE_STARTUP_INVALID_ARGUMENT;
+		*startup = next;
+		*started = false;
+		return V32_LINE_STARTUP_OK;
+	}
+	amplitude = startup->answer_tone.amplitude;
+	if (v32_answerer_line_retrain_init(&next, amplitude) !=
+	    V32_LINE_STARTUP_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	next.calling_carrier = acquired;
+	if (!v32_answerer_line_startup_is_valid(&next))
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	*startup = next;
+	*started = true;
 	return V32_LINE_STARTUP_OK;
 }
 
@@ -672,6 +766,63 @@ v32_line_startup_process(
 	*startup = next;
 	*transmit_sample = generated;
 	*complete = next.state == V32_LINE_STARTUP_COMPLETE;
+	return V32_LINE_STARTUP_OK;
+}
+
+enum v32_line_startup_result v32_line_startup_observe_retrain(
+	struct v32_line_startup *startup, int16_t receive_sample,
+	bool *started)
+{
+	struct v32_line_startup next;
+	struct single_tone_detector acquired_low = startup != NULL ?
+		startup->low_turnaround_tone : (struct single_tone_detector){ 0 };
+	struct single_tone_detector acquired_high = startup != NULL ?
+		startup->high_turnaround_tone : (struct single_tone_detector){ 0 };
+	struct single_tone_event low_event = { 0 };
+	struct single_tone_event high_event = { 0 };
+	uint32_t qualified_samples;
+	bool qualified;
+	int16_t amplitude;
+
+	if (!v32_line_startup_is_complete(startup) || started == NULL)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	if (single_tone_detector_sample(
+		    &acquired_low, receive_sample, &low_event) !=
+		    SINGLE_TONE_OK ||
+	    single_tone_detector_sample(
+		    &acquired_high, receive_sample, &high_event) !=
+		    SINGLE_TONE_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	qualified_samples = startup->state_samples;
+	qualified = retrain_carrier_qualified(
+		&qualified_samples,
+		acquired_low.tone_present &&
+			acquired_low.missing_samples == 0 &&
+			acquired_high.tone_present &&
+			acquired_high.missing_samples == 0,
+		low_event.kind == SINGLE_TONE_STARTED ||
+			high_event.kind == SINGLE_TONE_STARTED);
+	if (!qualified) {
+		next = *startup;
+		next.low_turnaround_tone = acquired_low;
+		next.high_turnaround_tone = acquired_high;
+		next.state_samples = qualified_samples;
+		if (!v32_line_startup_is_valid(&next))
+			return V32_LINE_STARTUP_INVALID_ARGUMENT;
+		*startup = next;
+		*started = false;
+		return V32_LINE_STARTUP_OK;
+	}
+	amplitude = startup->calling_carrier.amplitude;
+	if (v32_line_retrain_init(&next, amplitude) !=
+	    V32_LINE_STARTUP_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	next.low_turnaround_tone = acquired_low;
+	next.high_turnaround_tone = acquired_high;
+	if (!v32_line_startup_is_valid(&next))
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	*startup = next;
+	*started = true;
 	return V32_LINE_STARTUP_OK;
 }
 
