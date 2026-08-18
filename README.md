@@ -94,11 +94,13 @@ media lifecycle begins. A guarded adapter presents the transitional Smart Link
 sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
-103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, and the
-exact-G.711 V.90 profile are registered. V.90 can select every standard PCM
-downstream rate from 28000 through 56000 bit/s and uses a conventional V.34
-upstream, currently fixed at 19200 bit/s. Broader upstream controls and the
-V.92 datapump remain unavailable.
+103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, V.90, and
+V.92 are registered. V.90 can select every standard PCM downstream rate from
+28000 through 56000 bit/s and a conventional V.34 upstream from 4800 through
+33600 bit/s at 3000, 3200, or 3429 symbol/s. V.90 and V.92 share one PCM call
+state machine. The implemented V.92 profile uses PCM upstream with quick
+connect disabled; V.92 conventional upstream and quick connect remain
+unavailable and fail closed during profile selection.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 
@@ -254,10 +256,10 @@ through 21600 bit/s at 2400 symbol/s, through 26400 bit/s at 2800 symbol/s,
 through 28800 bit/s at 3000 symbol/s, through 31200 bit/s at 3200 symbol/s,
 and through 33600 bit/s at 3429 symbol/s. The optional 2743-symbol/s cadence
 is excluded because the control does not accept it. The native boundary also
-trains the initial V.90 profile through V.8 over both G.711 laws, confirms exact
-codeword output at both endpoints, reports 28000 bit/s downstream with a 19200
-bit/s conventional upstream, and passes distinct binary payloads in both
-directions. This is generated in-process coverage, not external modem
+trains V.90 through V.8 over both G.711 laws, confirms exact codeword output at
+both endpoints, exercises selectable conventional upstream rates, and passes
+distinct binary payloads in both directions. This is generated in-process
+coverage, not external modem
 interoperability. A faster focused datapump matrix separately completes all 22
 standard V.90 downstream rates over both PCMU and PCMA, negotiates the highest
 mutually enabled rate, and passes independent bit streams in both directions.
