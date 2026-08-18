@@ -535,6 +535,40 @@ static bool check_full_retrain_request(
 	      v34_phase2_tone_transmitter_init(
 		      &tone, remote_role, TEST_AMPLITUDE) ==
 		      V34_PHASE2_TONE_OK,
+	      "transitioned retrain request did not reinitialize");
+	for (size_t index = 0;
+	     index < V34_PHASE2_TONE_WINDOW_SAMPLES * 2; ++index) {
+		double angle = 2.0 * TEST_PI *
+			       V34_PHASE2_ANSWERING_GUARD_HZ *
+			       (double)index / V34_PHASE2_SAMPLE_RATE;
+		int16_t sample = (int16_t)lround(
+			(double)TEST_AMPLITUDE * sin(angle));
+
+		CHECK(feed_retrain_sample(
+			      &detector, sample, codec, &seen),
+		      "retrain onset transition failed at %zu", index);
+	}
+	for (size_t index = 0;
+	     index < V34_RETRAIN_TONE_SAMPLES +
+			     V34_RETRAIN_EDGE_SAMPLES && !seen;
+	     ++index) {
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      feed_retrain_sample(&detector, sample, codec, &seen),
+		      "transitioned retrain tone failed at %zu", index);
+	}
+	CHECK(seen,
+	      "valid retrain tone was lost after its onset transition");
+
+	seen = false;
+	CHECK(v34_retrain_detector_reset(&detector) ==
+		      V34_PHASE2_TONE_OK &&
+	      arm_retrain_silence(&detector, codec) &&
+	      v34_phase2_tone_transmitter_init(
+		      &tone, remote_role, TEST_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK,
 	      "qualified retrain request did not reinitialize");
 	for (size_t index = 0;
 	     index < V34_RETRAIN_TONE_SAMPLES +

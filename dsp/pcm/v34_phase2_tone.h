@@ -21,13 +21,14 @@ enum {
 	/* V.34 full retrain begins with 70 +/- 5 ms of silence and more than
 	 * 50 ms of the role-selected Tone A/B.  Use the lower silence edge and
 	 * an 80 ms tone guard so ordinary QAM training cannot look like a
-	 * retrain request. */
+	 * retrain request.  Permit a two-window codec-boundary onset transition
+	 * and one spectral window for it to age out before tone acquisition. */
 	V34_RETRAIN_MIN_SILENCE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 65 / 1000 - 1,
 	V34_RETRAIN_TONE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 80 / 1000,
 	V34_RETRAIN_EDGE_SAMPLES =
-		V34_PHASE2_TONE_WINDOW_SAMPLES +
+		V34_PHASE2_TONE_WINDOW_SAMPLES * 3 +
 		V34_PHASE2_TONE_ACQUIRE_SAMPLES,
 };
 
