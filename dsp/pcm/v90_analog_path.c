@@ -556,6 +556,20 @@ enum v90_analog_path_result v90_analog_path_receive(
 	return result;
 }
 
+enum v90_analog_path_result v90_analog_path_discard_receive(
+	struct v90_analog_path *path)
+{
+	if (!v90_analog_path_is_valid(path))
+		return V90_ANALOG_PATH_INVALID_ARGUMENT;
+	if (path->failed)
+		return V90_ANALOG_PATH_FAILED;
+	if (!path->receive_pending)
+		return V90_ANALOG_PATH_INVALID_STATE;
+	path->receive_pending = false;
+	return v90_analog_path_is_valid(path) ?
+		       V90_ANALOG_PATH_OK : V90_ANALOG_PATH_INTERNAL_ERROR;
+}
+
 const char *v90_analog_path_result_name(
 	enum v90_analog_path_result result)
 {

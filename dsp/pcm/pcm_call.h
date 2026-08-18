@@ -15,6 +15,7 @@
 #include "v92_phase3_digital_station.h"
 #include "v92_phase4_analog_station.h"
 #include "v92_phase4_digital_station.h"
+#include "v34_phase2_tone.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -25,6 +26,12 @@ enum pcm_call_stage {
 	PCM_CALL_PHASE3_MIXED,
 	PCM_CALL_PHASE4,
 	PCM_CALL_DATA_PATH,
+	PCM_CALL_RETRAIN_SILENCE,
+};
+
+enum {
+	PCM_CALL_RETRAIN_SILENCE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 70 / 1000,
 };
 
 enum pcm_call_result {
@@ -41,13 +48,6 @@ enum pcm_call_result {
 	PCM_CALL_CLIPPING_RISK,
 	PCM_CALL_SEQUENCE_MISMATCH,
 	PCM_CALL_NUMERIC_FAILURE,
-};
-
-union pcm_call_local_info0 {
-	struct v90_info0 analog;
-	struct v90_info0d digital;
-	struct v92_info0a v92_analog;
-	struct v92_info0d v92_digital;
 };
 
 union pcm_call_local_info1 {
@@ -111,7 +111,7 @@ struct pcm_call_configuration {
 	 * the received Jd before sending data CP. */
 	uint32_t enabled_downstream_rate_mask;
 	int16_t phase2_nominal_amplitude;
-	union pcm_call_local_info0 local_info0;
+	union pcm_info0_record local_info0;
 	union pcm_call_local_info1 local_info1;
 	union pcm_call_phase3_configuration phase3;
 	struct pcm_call_analog_phase4_configuration analog_phase4;
@@ -187,6 +187,9 @@ union pcm_call_state {
 	union pcm_call_mixed_state mixed;
 	union pcm_call_phase4_state phase4;
 	union pcm_call_data_path_state data_path;
+	struct {
+		uint16_t samples_remaining;
+	} retrain_silence;
 };
 
 /* `processed` owns the accepted network character; `next` owns the following
@@ -230,6 +233,8 @@ struct pcm_call_data_event {
 struct pcm_call {
 	union pcm_call_state state;
 	struct pcm_phase3_entry phase3_entry;
+	union pcm_info0_record local_info0;
+	union pcm_info0_record peer_info0;
 	union pcm_call_local_info1 local_info1;
 	union pcm_call_phase3_configuration phase3_configuration;
 	struct pcm_call_analog_phase4_configuration
@@ -240,22 +245,30 @@ struct pcm_call {
 		v92_analog_phase4_configuration;
 	struct pcm_call_v92_digital_phase4_configuration
 		v92_digital_phase4_configuration;
+	struct v34_retrain_detector retrain_detector;
 	uint32_t enabled_downstream_rate_mask;
 	uint32_t v92_peer_downstream_rate_mask;
 	uint16_t round_trip_delay_samples;
+	int16_t phase2_nominal_amplitude;
 	enum pcm_protocol protocol;
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum pcm_call_stage stage;
 	bool phase3_entry_stored;
+	bool peer_info0_stored;
 	bool v92_peer_downstream_rate_stored;
 	bool round_trip_delay_stored;
+	bool retrain_peer_tone_retained;
 	bool failed;
 };
 
 enum pcm_call_result pcm_call_init(
 	struct pcm_call *call,
 	const struct pcm_call_configuration *configuration);
+
+/* Start a full retrain while retaining the negotiated PCM protocol and INFO0
+ * records. The following line character begins the 70 ms silence interval. */
+enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
 
 bool pcm_call_is_valid(const struct pcm_call *call);
 bool pcm_call_has_failed(const struct pcm_call *call);

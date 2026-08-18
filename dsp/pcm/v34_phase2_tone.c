@@ -564,10 +564,16 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 		else if (next.tone_samples < V34_RETRAIN_TONE_SAMPLES)
 			next.tone_samples++;
 		if (next.tone_samples == V34_RETRAIN_TONE_SAMPLES) {
+			struct v34_phase2_tone_detector retained = next.tone;
+
 			emitted = true;
 			if (reset_retrain_candidate(&next) !=
 			    V34_PHASE2_TONE_OK)
 				return V34_PHASE2_TONE_INVALID_ARGUMENT;
+			/* A responding modem must retain the qualified peer tone's
+			 * phase across its silence so the following reversal is still
+			 * observable. Explicit reset remains available to initiators. */
+			next.tone = retained;
 		}
 	} else if (next.tone_samples != 0) {
 		/* A qualified request is continuous.  Once its tone breaks, a new

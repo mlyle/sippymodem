@@ -100,6 +100,25 @@ enum pcm_phase2_result pcm_phase2_init_v92_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v92_info0d *local_info0d);
 
+/* Full retrain preserves the completed INFO0 agreement and begins directly
+ * with the role tone after the call owner supplies the required silence. */
+enum pcm_phase2_result pcm_phase2_init_retrain_v90_analog(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v90_info0 *local_info0a,
+	const struct v90_info0d *peer_info0d);
+enum pcm_phase2_result pcm_phase2_init_retrain_v90_digital(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v90_info0d *local_info0d,
+	const struct v90_info0 *peer_info0a);
+enum pcm_phase2_result pcm_phase2_init_retrain_v92_analog(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v92_info0a *local_info0a,
+	const struct v92_info0d *peer_info0d);
+enum pcm_phase2_result pcm_phase2_init_retrain_v92_digital(
+	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
+	const struct v92_info0d *local_info0d,
+	const struct v92_info0a *peer_info0a);
+
 bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2);
 bool pcm_phase2_has_failed(const struct pcm_phase2 *phase2);
 bool pcm_phase2_is_ready_for_info1(const struct pcm_phase2 *phase2);

@@ -100,6 +100,12 @@ enum v90_analog_path_result v90_analog_path_receive(
 	struct v90_analog_path *path, uint8_t received_octet,
 	struct v90_pcm_stream_frame *received);
 
+/* Complete a transmitted interval without clocking the downstream receiver.
+ * Call controllers use this while qualifying incoming no-energy retrain
+ * evidence, so corrupt symbols cannot escape as host data. */
+enum v90_analog_path_result v90_analog_path_discard_receive(
+	struct v90_analog_path *path);
+
 const char *v90_analog_path_result_name(
 	enum v90_analog_path_result result);
 

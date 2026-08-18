@@ -52,6 +52,8 @@ struct endpoint {
 	bool data_path_started;
 	bool idle_source_checked;
 	bool source_failure_checked;
+	bool resync_data_frame;
+	size_t resume_frame_index;
 };
 
 static uint8_t silence_octet(enum g711_law law)
@@ -605,19 +607,31 @@ static bool endpoint_data_octet(
 		return false;
 	endpoint->idle_source_checked = true;
 	if (event.kind == PCM_CALL_DOWNSTREAM_FRAME) {
-		if (endpoint->call.local_role != V90_ANALOG_MODEM ||
-		    !downstream_frame_matches(
-			    &event.frame.downstream,
-			    endpoint->downstream_frames))
+		size_t expected = endpoint->resync_data_frame ?
+			endpoint->resume_frame_index : endpoint->downstream_frames;
+
+		if (endpoint->call.local_role != V90_ANALOG_MODEM)
 			return false;
-		endpoint->downstream_frames++;
+		if (!downstream_frame_matches(&event.frame.downstream, expected)) {
+			if (!endpoint->resync_data_frame)
+				return false;
+		} else {
+			endpoint->resync_data_frame = false;
+			endpoint->downstream_frames = expected + 1u;
+		}
 	} else if (event.kind == PCM_CALL_UPSTREAM_FRAME) {
-		if (endpoint->call.local_role != V90_DIGITAL_MODEM ||
-		    !upstream_frame_matches(
-			    &event.frame.upstream,
-			    endpoint->upstream_frames))
+		size_t expected = endpoint->resync_data_frame ?
+			endpoint->resume_frame_index : endpoint->upstream_frames;
+
+		if (endpoint->call.local_role != V90_DIGITAL_MODEM)
 			return false;
-		endpoint->upstream_frames++;
+		if (!upstream_frame_matches(&event.frame.upstream, expected)) {
+			if (!endpoint->resync_data_frame)
+				return false;
+		} else {
+			endpoint->resync_data_frame = false;
+			endpoint->upstream_frames = expected + 1u;
+		}
 	} else if (event.kind != PCM_CALL_DATA_NONE) {
 		return false;
 	}
@@ -849,6 +863,143 @@ static bool run_call(
 	return run_configured_call(
 		law, delay, goal, UINT32_C(1), 1,
 		V90_JD_RATE_CAPABILITY_MASK, DATA_DOWNSTREAM_RATE);
+}
+
+static bool step_endpoints(
+	struct channel *channel, struct endpoint *analog,
+	struct endpoint *digital, enum g711_law law)
+{
+	uint8_t analog_received;
+	uint8_t digital_received;
+	uint8_t analog_transmitted;
+	uint8_t digital_transmitted;
+
+	channel_receive(channel, &analog_received, &digital_received);
+	if (!endpoint_octet(
+		    analog, analog_received, law, &analog_transmitted) ||
+	    !endpoint_octet(
+		    digital, digital_received, law, &digital_transmitted))
+		return false;
+	channel_transmit(channel, analog_transmitted, digital_transmitted);
+	return true;
+}
+
+static bool run_full_retrain(
+	enum g711_law law, enum v90_modem_role initiating_role)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	struct endpoint *initiator;
+	struct endpoint *responder;
+	size_t downstream_before;
+	size_t upstream_before;
+	bool initially_online = false;
+	bool remote_retrain_started = false;
+	bool reconnected = false;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law,
+		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "law %u retrain endpoints did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u retrain setup stopped at %zu",
+		      (unsigned int)law, clock);
+		if (pcm_call_is_online(&analog.call) &&
+		    pcm_call_is_online(&digital.call) &&
+		    analog.downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
+		    digital.upstream_frames >= DATA_FRAMES_TO_RECEIVE) {
+			initially_online = true;
+			break;
+		}
+	}
+	CHECK(initially_online, "law %u retrain pair did not reach data",
+	      (unsigned int)law);
+	initiator = initiating_role == V90_ANALOG_MODEM ? &analog : &digital;
+	responder = initiating_role == V90_ANALOG_MODEM ? &digital : &analog;
+	CHECK(pcm_call_start_retrain(&initiator->call) == PCM_CALL_OK &&
+	      initiator->call.stage == PCM_CALL_RETRAIN_SILENCE &&
+	      initiator->call.protocol == PCM_PROTOCOL_V90,
+	      "law %u role %u did not begin local full retrain",
+	      (unsigned int)law, (unsigned int)initiating_role);
+	/* A full retrain discards physical frames already in flight; LAPM owns
+	 * reliable replay above this boundary. Continue with each source's next
+	 * fresh frame and require new bidirectional data after reconnection. */
+	analog.resume_frame_index = digital.downstream_source.frames;
+	digital.resume_frame_index = analog.upstream_source.frames;
+	analog.resync_data_frame = true;
+	digital.resync_data_frame = true;
+	downstream_before = analog.resume_frame_index;
+	upstream_before = digital.resume_frame_index;
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u role %u retrain stopped at %zu",
+		      (unsigned int)law, (unsigned int)initiating_role, clock);
+		remote_retrain_started |=
+			responder->call.stage == PCM_CALL_RETRAIN_SILENCE;
+		if (remote_retrain_started && pcm_call_is_online(&analog.call) &&
+		    pcm_call_is_online(&digital.call) &&
+		    analog.downstream_frames > downstream_before &&
+		    digital.upstream_frames > upstream_before) {
+			reconnected = true;
+			break;
+		}
+	}
+	CHECK(remote_retrain_started && reconnected &&
+	      analog.call.protocol == PCM_PROTOCOL_V90 &&
+	      digital.call.protocol == PCM_PROTOCOL_V90 &&
+	      analog.call.peer_info0_stored &&
+	      digital.call.peer_info0_stored &&
+	      !pcm_call_has_failed(&analog.call) &&
+	      !pcm_call_has_failed(&digital.call),
+	      "law %u role %u did not complete local/remote retrain",
+	      (unsigned int)law, (unsigned int)initiating_role);
+	return true;
+}
+
+static bool test_full_retrain(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_full_retrain(law, V90_ANALOG_MODEM) &&
+		      run_full_retrain(law, V90_DIGITAL_MODEM),
+		      "law %u full retrain matrix failed", (unsigned int)law);
+	}
+	return true;
+}
+
+static bool retrain_preserves_protocol(
+	const struct pcm_call *completed, enum g711_law law)
+{
+	struct pcm_call retraining = *completed;
+	uint8_t silence = silence_octet(law);
+
+	if (pcm_call_start_retrain(&retraining) != PCM_CALL_OK ||
+	    retraining.stage != PCM_CALL_RETRAIN_SILENCE)
+		return false;
+	for (size_t index = 0;
+	     index < PCM_CALL_RETRAIN_SILENCE_SAMPLES; ++index) {
+		struct pcm_call_observation observation;
+		uint8_t transmitted;
+
+		if (pcm_call_octet(
+			    &retraining, silence, &transmitted,
+			    &observation) != PCM_CALL_OK ||
+		    transmitted != silence)
+			return false;
+	}
+	return retraining.stage == PCM_CALL_PHASE2 &&
+	       retraining.protocol == PCM_PROTOCOL_V92 &&
+	       retraining.state.phase2.info0_protocol == PCM_PROTOCOL_V92 &&
+	       retraining.state.phase2.peer_info0_stored &&
+	       retraining.peer_info0_stored &&
+	       !retraining.phase3_entry_stored &&
+	       pcm_call_is_valid(&retraining);
 }
 
 static bool run_v92_phase4_control(
@@ -1093,6 +1244,8 @@ static bool run_v92_phase4_control(
 	      analog.round_trip_delay_samples);
 	CHECK(phase4_boundary_is_transactional(&analog, law) &&
 	      phase4_boundary_is_transactional(&digital, law) &&
+	      retrain_preserves_protocol(&analog, law) &&
+	      retrain_preserves_protocol(&digital, law) &&
 	      !pcm_call_is_online(&analog) && !pcm_call_is_online(&digital) &&
 	      pcm_call_start_data_path(&analog) == PCM_CALL_INVALID_STATE &&
 	      pcm_call_start_data_path(&digital) == PCM_CALL_INVALID_STATE,
@@ -1300,6 +1453,8 @@ static bool test_validation(void)
 	CHECK(pcm_call_octet(
 		      NULL, silence_octet(G711_LAW_PCMU),
 		      &output, &observation) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_start_retrain(NULL) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_start_retrain(&call) == PCM_CALL_INVALID_STATE &&
 	      pcm_call_octet(
 		      &call, silence_octet(G711_LAW_PCMU),
 		      NULL, &observation) == PCM_CALL_INVALID_ARGUMENT &&
@@ -1467,6 +1622,7 @@ int main(void)
 	} tests[] = {
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
+		{ "local and remote PCM full retrain", test_full_retrain },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
 		{ "V.92 role-local Phase 4 handoffs",

@@ -361,20 +361,11 @@ static enum v90_digital_path_result receive_upstream(
 	return V90_DIGITAL_PATH_INTERNAL_ERROR;
 }
 
-static bool outputs_overlap(
-	const struct v90_digital_path *path,
-	const uint8_t *transmit_octet,
-	const struct v34_received_mapping_frame *received)
+static bool output_overlaps_path(
+	const struct v90_digital_path *path, const void *output,
+	size_t output_size)
 {
-	return memory_regions_overlap(
-		       path, sizeof(*path),
-		       transmit_octet, sizeof(*transmit_octet)) ||
-	       memory_regions_overlap(
-		       path, sizeof(*path),
-		       received, sizeof(*received)) ||
-	       memory_regions_overlap(
-		       transmit_octet, sizeof(*transmit_octet),
-		       received, sizeof(*received));
+	return memory_regions_overlap(path, sizeof(*path), output, output_size);
 }
 
 static int16_t decode_octet(enum g711_law law, uint8_t octet)
@@ -389,19 +380,16 @@ static uint8_t silence_octet(enum g711_law law)
 		       g711_encode_pcma(0) : g711_encode_pcmu(0);
 }
 
-enum v90_digital_path_result v90_digital_path_octet(
-	struct v90_digital_path *path, uint8_t received_octet,
+enum v90_digital_path_result v90_digital_path_transmit(
+	struct v90_digital_path *path,
 	v90_downstream_frame_source source, void *source_context,
-	uint8_t *transmit_octet,
-	struct v34_received_mapping_frame *received)
+	uint8_t *transmit_octet)
 {
-	struct v34_received_mapping_frame frame = { 0 };
 	uint8_t generated;
-	bool frame_ready = false;
 	enum v90_digital_path_result result;
 
 	if (!v90_digital_path_is_valid(path) || transmit_octet == NULL ||
-	    received == NULL || outputs_overlap(path, transmit_octet, received))
+	    output_overlaps_path(path, transmit_octet, sizeof(*transmit_octet)))
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
@@ -410,10 +398,32 @@ enum v90_digital_path_result v90_digital_path_octet(
 		path, source, source_context, &generated);
 	if (result == V90_DIGITAL_PATH_SOURCE_FAILURE)
 		return result;
-	if (result == V90_DIGITAL_PATH_OK)
-		result = receive_upstream(
-			path, decode_octet(path->law, received_octet),
-			&frame, &frame_ready);
+	if (result != V90_DIGITAL_PATH_OK)
+		path->failed = true;
+	if (!v90_digital_path_is_valid(path)) {
+		path->failed = true;
+		result = V90_DIGITAL_PATH_INTERNAL_ERROR;
+	}
+	*transmit_octet = generated;
+	return result;
+}
+
+enum v90_digital_path_result v90_digital_path_receive(
+	struct v90_digital_path *path, uint8_t received_octet,
+	struct v34_received_mapping_frame *received)
+{
+	struct v34_received_mapping_frame frame = { 0 };
+	bool frame_ready = false;
+	enum v90_digital_path_result result;
+
+	if (!v90_digital_path_is_valid(path) || received == NULL ||
+	    output_overlaps_path(path, received, sizeof(*received)))
+		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
+	if (path->failed)
+		return V90_DIGITAL_PATH_FAILED;
+	result = receive_upstream(
+		path, decode_octet(path->law, received_octet),
+		&frame, &frame_ready);
 	if (result != V90_DIGITAL_PATH_OK &&
 	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
 		path->failed = true;
@@ -421,9 +431,36 @@ enum v90_digital_path_result v90_digital_path_octet(
 		path->failed = true;
 		result = V90_DIGITAL_PATH_INTERNAL_ERROR;
 	}
-	*transmit_octet = generated;
 	if (frame_ready)
 		*received = frame;
+	return result;
+}
+
+enum v90_digital_path_result v90_digital_path_octet(
+	struct v90_digital_path *path, uint8_t received_octet,
+	v90_downstream_frame_source source, void *source_context,
+	uint8_t *transmit_octet,
+	struct v34_received_mapping_frame *received)
+{
+	enum v90_digital_path_result result;
+
+	if (!v90_digital_path_is_valid(path) || transmit_octet == NULL ||
+	    received == NULL ||
+	    output_overlaps_path(path, transmit_octet, sizeof(*transmit_octet)) ||
+	    output_overlaps_path(path, received, sizeof(*received)) ||
+	    memory_regions_overlap(
+		transmit_octet, sizeof(*transmit_octet),
+		received, sizeof(*received)))
+		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
+	if (path->failed)
+		return V90_DIGITAL_PATH_FAILED;
+	result = v90_digital_path_transmit(
+		path, source, source_context, transmit_octet);
+	if (result == V90_DIGITAL_PATH_SOURCE_FAILURE)
+		return result;
+	if (result == V90_DIGITAL_PATH_OK)
+		result = v90_digital_path_receive(
+			path, received_octet, received);
 	return result;
 }
 

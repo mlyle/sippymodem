@@ -58,6 +58,51 @@ static enum g711_law info0_law(const struct v90_info0d *info0)
 		       G711_LAW_PCMA : G711_LAW_PCMU;
 }
 
+static enum v34_station_role phase2_station_role(
+	enum v90_modem_role role)
+{
+	return role == V90_ANALOG_MODEM ?
+		       V34_ANSWERING_STATION : V34_CALLING_STATION;
+}
+
+static bool stored_local_info0_is_valid(const struct pcm_call *call)
+{
+	if (call->protocol == PCM_PROTOCOL_V92) {
+		if (call->local_role == V90_ANALOG_MODEM)
+			return v92_info0a_is_valid(
+				       &call->local_info0.v92_analog) &&
+			       call->local_info0.v92_analog.v92_capable &&
+			       !call->local_info0.v92_analog.v90
+					.acknowledges_peer_info0;
+		return v92_info0d_is_valid(&call->local_info0.v92_digital) &&
+		       call->local_info0.v92_digital.v92_capable &&
+		       !call->local_info0.v92_digital.v90.common
+				.acknowledges_peer_info0;
+	}
+	if (call->local_role == V90_ANALOG_MODEM)
+		return v90_info0_is_valid(&call->local_info0.analog) &&
+		       !call->local_info0.analog.acknowledges_peer_info0;
+	return v90_info0d_is_valid(&call->local_info0.digital) &&
+	       !call->local_info0.digital.common.acknowledges_peer_info0;
+}
+
+static bool stored_peer_info0_is_valid(const struct pcm_call *call)
+{
+	if (!call->peer_info0_stored)
+		return true;
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return call->local_role == V90_ANALOG_MODEM ?
+		       v92_info0d_is_valid(
+			       &call->peer_info0.v92_digital) &&
+			       call->peer_info0.v92_digital.v92_capable :
+		       v92_info0a_is_valid(
+			       &call->peer_info0.v92_analog) &&
+			       call->peer_info0.v92_analog.v92_capable;
+	return call->local_role == V90_ANALOG_MODEM ?
+		       v90_info0d_is_valid(&call->peer_info0.digital) :
+		       v90_info0_is_valid(&call->peer_info0.analog);
+}
+
 static bool analog_configuration_is_valid(
 	const union pcm_call_local_info1 *info1,
 	const union pcm_call_phase3_configuration *phase3,
@@ -230,6 +275,12 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 	if (!pcm_protocol_is_valid(call->protocol) ||
 	    !pcm_modem_role_is_valid(call->local_role) ||
 	    !g711_law_is_valid(call->law) ||
+	    call->phase2_nominal_amplitude <= 0 ||
+	    !stored_local_info0_is_valid(call) ||
+	    !stored_peer_info0_is_valid(call) ||
+	    !v34_retrain_detector_is_valid(&call->retrain_detector) ||
+	    call->retrain_detector.tone.local_role !=
+		    phase2_station_role(call->local_role) ||
 	    !downstream_rate_mask_is_valid(
 		    call->enabled_downstream_rate_mask))
 		return false;
@@ -459,11 +510,18 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 	     call->local_role == V90_ANALOG_MODEM &&
 	     call->stage != PCM_CALL_PHASE2 &&
 	     call->stage != PCM_CALL_PHASE3 &&
+	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
 	     !call->v92_peer_downstream_rate_stored) ||
 	    (!call->round_trip_delay_stored &&
 	     call->round_trip_delay_samples != 0u) ||
-	    (call->stage == PCM_CALL_PHASE2 ? call->phase3_entry_stored :
-				       !call->phase3_entry_stored) ||
+	    (call->stage != PCM_CALL_PHASE2 &&
+	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
+	     !call->peer_info0_stored) ||
+	    (call->retrain_peer_tone_retained &&
+	     call->stage != PCM_CALL_RETRAIN_SILENCE) ||
+	    ((call->stage == PCM_CALL_PHASE2 ||
+	      call->stage == PCM_CALL_RETRAIN_SILENCE) ?
+		     call->phase3_entry_stored : !call->phase3_entry_stored) ||
 	    (call->phase3_entry_stored && !phase3_entry_matches_call(call)))
 		return false;
 	switch (call->stage) {
@@ -561,9 +619,26 @@ bool pcm_call_is_valid(const struct pcm_call *call)
 				&call->state.data_path.digital);
 		}
 		break;
+	case PCM_CALL_RETRAIN_SILENCE:
+		child_valid = call->peer_info0_stored &&
+			      call->retrain_detector.silence_samples == 0u &&
+			      call->retrain_detector.tone_samples == 0u &&
+			      call->retrain_detector.edge_samples == 0u &&
+			      call->state.retrain_silence.samples_remaining > 0u &&
+			      call->state.retrain_silence.samples_remaining <=
+				      PCM_CALL_RETRAIN_SILENCE_SAMPLES &&
+			      (!call->retrain_peer_tone_retained ||
+			       v34_phase2_tone_detector_measure(
+				       &call->retrain_detector.tone)
+				       .tone_present);
+		child_failed = false;
+		break;
 	default:
 		return false;
 	}
+	if (call->stage == PCM_CALL_PHASE2 &&
+	    call->peer_info0_stored != call->state.phase2.peer_info0_stored)
+		return false;
 	return child_valid && (call->failed || !child_failed);
 }
 
@@ -632,13 +707,95 @@ enum pcm_call_result pcm_call_init(
 	initialized.protocol = configuration->protocol;
 	initialized.local_role = configuration->local_role;
 	initialized.law = configuration->law;
+	initialized.local_info0 = initialized.state.phase2.local_info0;
+	initialized.phase2_nominal_amplitude =
+		configuration->phase2_nominal_amplitude;
 	initialized.enabled_downstream_rate_mask =
 		configuration->enabled_downstream_rate_mask;
 	initialized.stage = PCM_CALL_PHASE2;
+	if (v34_retrain_detector_init(
+		    &initialized.retrain_detector,
+		    phase2_station_role(configuration->local_role)) !=
+	    V34_PHASE2_TONE_OK)
+		return PCM_CALL_INVALID_ARGUMENT;
 	if (!pcm_call_is_valid(&initialized))
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = initialized;
 	return PCM_CALL_OK;
+}
+
+static enum pcm_phase2_result initialize_retrain_phase2(
+	const struct pcm_call *call, struct pcm_phase2 *phase2)
+{
+	enum pcm_phase2_result result;
+
+	if (call->protocol == PCM_PROTOCOL_V92 &&
+	    call->local_role == V90_ANALOG_MODEM)
+		result = pcm_phase2_init_retrain_v92_analog(
+			phase2, call->phase2_nominal_amplitude,
+			&call->local_info0.v92_analog,
+			&call->peer_info0.v92_digital);
+	else if (call->protocol == PCM_PROTOCOL_V92)
+		result = pcm_phase2_init_retrain_v92_digital(
+			phase2, call->phase2_nominal_amplitude,
+			&call->local_info0.v92_digital,
+			&call->peer_info0.v92_analog);
+	else if (call->local_role == V90_ANALOG_MODEM)
+		result = pcm_phase2_init_retrain_v90_analog(
+			phase2, call->phase2_nominal_amplitude,
+			&call->local_info0.analog,
+			&call->peer_info0.digital);
+	else
+		result = pcm_phase2_init_retrain_v90_digital(
+			phase2, call->phase2_nominal_amplitude,
+			&call->local_info0.digital,
+			&call->peer_info0.analog);
+	if (result != PCM_PHASE2_OK ||
+	    !call->retrain_peer_tone_retained)
+		return result;
+	phase2->state.ranging.info0_exchange.transport.tone_detector =
+		call->retrain_detector.tone;
+	return pcm_phase2_is_valid(phase2) ?
+		       PCM_PHASE2_OK : PCM_PHASE2_INVALID_ARGUMENT;
+}
+
+static enum pcm_call_result begin_retrain(
+	struct pcm_call *call, bool retain_peer_tone)
+{
+	struct pcm_call next = *call;
+
+	if (!next.peer_info0_stored)
+		return PCM_CALL_INVALID_STATE;
+	if (!retain_peer_tone &&
+	    v34_retrain_detector_reset(&next.retrain_detector) !=
+	    V34_PHASE2_TONE_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	next.state = (union pcm_call_state){ 0 };
+	next.state.retrain_silence.samples_remaining =
+		PCM_CALL_RETRAIN_SILENCE_SAMPLES;
+	next.phase3_entry = (struct pcm_phase3_entry){ 0 };
+	next.v92_peer_downstream_rate_mask = 0u;
+	next.round_trip_delay_samples = 0u;
+	next.stage = PCM_CALL_RETRAIN_SILENCE;
+	next.phase3_entry_stored = false;
+	next.v92_peer_downstream_rate_stored = false;
+	next.round_trip_delay_stored = false;
+	next.retrain_peer_tone_retained = retain_peer_tone;
+	if (!pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
+}
+
+enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
+{
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (call->failed || !call->peer_info0_stored ||
+	    call->stage == PCM_CALL_PHASE2 ||
+	    call->stage == PCM_CALL_RETRAIN_SILENCE)
+		return PCM_CALL_INVALID_STATE;
+	return begin_retrain(call, false);
 }
 
 bool pcm_call_has_failed(const struct pcm_call *call)
@@ -850,6 +1007,10 @@ static enum pcm_call_result sample_phase2(
 	if (result != PCM_PHASE2_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	*transmit_octet = encode_sample(call->law, transmitted_sample);
+	if (call->state.phase2.peer_info0_stored) {
+		call->peer_info0 = call->state.phase2.peer_info0;
+		call->peer_info0_stored = true;
+	}
 	if (observation->phase2.kind == PCM_PHASE2_EVENT_ROUND_TRIP_DELAY) {
 		if (call->round_trip_delay_stored &&
 		    call->round_trip_delay_samples !=
@@ -860,6 +1021,84 @@ static enum pcm_call_result sample_phase2(
 		call->round_trip_delay_stored = true;
 	}
 	return advance_phase2(call, &observation->phase2);
+}
+
+static enum pcm_call_result sample_retrain_silence(
+	struct pcm_call *call, uint8_t received_octet,
+	uint8_t *transmit_octet)
+{
+	struct pcm_phase2 restarted;
+	struct v34_phase2_tone_event event;
+
+	*transmit_octet = encode_sample(call->law, 0);
+	if (call->retrain_peer_tone_retained &&
+	    v34_phase2_tone_detector_sample(
+		    &call->retrain_detector.tone,
+		    decode_octet(call->law, received_octet), &event) !=
+		    V34_PHASE2_TONE_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	if (--call->state.retrain_silence.samples_remaining != 0u)
+		return PCM_CALL_OK;
+	if (initialize_retrain_phase2(call, &restarted) != PCM_PHASE2_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	call->state.phase2 = restarted;
+	call->stage = PCM_CALL_PHASE2;
+	call->retrain_peer_tone_retained = false;
+	return PCM_CALL_OK;
+}
+
+static bool retrain_detection_is_active(const struct pcm_call *call)
+{
+	if (call->stage == PCM_CALL_PHASE3 ||
+	    call->stage == PCM_CALL_PHASE3_MIXED ||
+	    call->stage == PCM_CALL_PHASE4)
+		return true;
+	if (call->stage == PCM_CALL_DATA_PATH)
+		return pcm_call_is_online(call);
+	return call->stage == PCM_CALL_PHASE2 &&
+	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
+	       call->state.phase2.state.info1.control.phase ==
+		       PHASE2_INFO1_RECOVERING;
+}
+
+static enum pcm_call_result sample_retrain_detector(
+	const struct pcm_call *call, uint8_t received_octet,
+	struct v34_retrain_detector *observed, bool *detected)
+{
+	*observed = call->retrain_detector;
+	return v34_retrain_detector_sample(
+		       observed, decode_octet(call->law, received_octet),
+		       detected) == V34_PHASE2_TONE_OK ?
+		       PCM_CALL_OK : PCM_CALL_NUMERIC_FAILURE;
+}
+
+static bool retrain_candidate_is_active(
+	const struct v34_retrain_detector *detector)
+{
+	return detector->silence_samples != 0u ||
+	       detector->tone_samples != 0u ||
+	       detector->edge_samples != 0u;
+}
+
+static enum pcm_call_result observe_retrain_tone(
+	struct pcm_call *call, uint8_t received_octet)
+{
+	struct v34_retrain_detector observed;
+	bool detected;
+
+	if (sample_retrain_detector(
+		    call, received_octet, &observed, &detected) !=
+	    PCM_CALL_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	call->retrain_detector = observed;
+	return detected ? begin_retrain(call, true) : PCM_CALL_OK;
+}
+
+static enum pcm_call_result reset_retrain_detector(struct pcm_call *call)
+{
+	return v34_retrain_detector_reset(&call->retrain_detector) ==
+		       V34_PHASE2_TONE_OK ?
+		       PCM_CALL_OK : PCM_CALL_NUMERIC_FAILURE;
 }
 
 static enum pcm_call_result analog_phase3_result(
@@ -1945,6 +2184,9 @@ enum pcm_call_result pcm_call_data_octet(
 {
 	const struct pcm_call_data_sources idle = { 0 };
 	struct pcm_call_data_event emitted = { 0 };
+	struct v34_retrain_detector observed_detector;
+	bool retrain_candidate = false;
+	bool retrain_detected = false;
 	uint8_t generated;
 	enum pcm_call_result result;
 
@@ -1957,13 +2199,26 @@ enum pcm_call_result pcm_call_data_octet(
 		return PCM_CALL_INVALID_STATE;
 	if (sources == NULL)
 		sources = &idle;
+	observed_detector = call->retrain_detector;
+	if (retrain_detection_is_active(call)) {
+		result = sample_retrain_detector(
+			call, received_octet, &observed_detector,
+			&retrain_detected);
+		if (result != PCM_CALL_OK)
+			return result;
+		retrain_candidate = retrain_detected ||
+			retrain_candidate_is_active(&observed_detector) ||
+			(call->local_role == V90_ANALOG_MODEM &&
+			 received_octet == encode_sample(call->law, 0));
+	}
 	generated = encode_sample(call->law, 0);
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct v90_pcm_stream_frame frame = { 0 };
 		enum v90_analog_path_result path_result =
 			v90_analog_path_transmit(
 				&call->state.data_path.analog,
-				sources->upstream, sources->upstream_context,
+				retrain_candidate ? NULL : sources->upstream,
+				retrain_candidate ? NULL : sources->upstream_context,
 				&generated);
 
 		result = analog_path_result(path_result);
@@ -1974,33 +2229,50 @@ enum pcm_call_result pcm_call_data_octet(
 			return pcm_call_is_valid(call) ?
 				       result : PCM_CALL_NUMERIC_FAILURE;
 		}
-		path_result = v90_analog_path_receive(
-			&call->state.data_path.analog, received_octet, &frame);
+		path_result = retrain_candidate ?
+			v90_analog_path_discard_receive(
+				&call->state.data_path.analog) :
+			v90_analog_path_receive(
+				&call->state.data_path.analog,
+				received_octet, &frame);
 		result = analog_path_result(path_result);
-		if (path_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
+		if (!retrain_candidate &&
+		    path_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
 			emitted.frame.downstream = frame;
 			emitted.kind = PCM_CALL_DOWNSTREAM_FRAME;
 		}
 	} else {
 		struct v34_received_mapping_frame frame = { 0 };
 		enum v90_digital_path_result path_result =
-			v90_digital_path_octet(
-				&call->state.data_path.digital, received_octet,
-				sources->downstream,
-				sources->downstream_context,
-				&generated, &frame);
+			v90_digital_path_transmit(
+				&call->state.data_path.digital,
+				retrain_candidate ? NULL : sources->downstream,
+				retrain_candidate ? NULL : sources->downstream_context,
+				&generated);
 
 		result = digital_path_result(path_result);
 		if (result == PCM_CALL_SOURCE_FAILURE)
 			return result;
+		if (result == PCM_CALL_OK && !retrain_candidate) {
+			path_result = v90_digital_path_receive(
+				&call->state.data_path.digital,
+				received_octet, &frame);
+			result = digital_path_result(path_result);
+		}
 		if (path_result == V90_DIGITAL_PATH_INVALID_ARGUMENT) {
 			call->failed = true;
 			return PCM_CALL_NUMERIC_FAILURE;
 		}
-		if (path_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
+		if (!retrain_candidate &&
+		    path_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
 			emitted.frame.upstream = frame;
 			emitted.kind = PCM_CALL_UPSTREAM_FRAME;
 		}
+	}
+	if (result == PCM_CALL_OK) {
+		call->retrain_detector = observed_detector;
+		if (retrain_detected)
+			result = begin_retrain(call, true);
 	}
 	if (result != PCM_CALL_OK)
 		call->failed = true;
@@ -2051,9 +2323,19 @@ enum pcm_call_result pcm_call_octet(
 		result = sample_phase4(
 			call, received_octet, &generated);
 		break;
+	case PCM_CALL_RETRAIN_SILENCE:
+		result = sample_retrain_silence(
+			call, received_octet, &generated);
+		break;
 	default:
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
+	if (result == PCM_CALL_OK && emitted.processed != call->stage &&
+	    call->stage != PCM_CALL_RETRAIN_SILENCE)
+		result = reset_retrain_detector(call);
+	else if (result == PCM_CALL_OK && emitted.processed == call->stage &&
+		 retrain_detection_is_active(call))
+		result = observe_retrain_tone(call, received_octet);
 	if (result != PCM_CALL_OK)
 		call->failed = true;
 	emitted.next = call->stage;

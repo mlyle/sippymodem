@@ -477,6 +477,9 @@ static bool check_full_retrain_request(
 			V34_ANSWERING_STATION : V34_CALLING_STATION;
 	struct v34_phase2_tone_transmitter tone;
 	struct v34_retrain_detector detector;
+	struct v34_phase2_tone_event reversal = { 0 };
+	size_t reversal_count = 0;
+	size_t reversal_sample = 0;
 	bool seen = false;
 
 	CHECK(v34_retrain_detector_init(&detector, local_role) ==
@@ -547,6 +550,33 @@ static bool check_full_retrain_request(
 	CHECK(seen && detector.silence_samples == 0 &&
 	      detector.tone_samples == 0 && detector.edge_samples == 0,
 	      "standards-shaped retrain request was not emitted once");
+	CHECK(v34_phase2_tone_detector_measure(&detector.tone).tone_present &&
+	      v34_phase2_tone_transmitter_reverse(&tone) ==
+		      V34_PHASE2_TONE_OK,
+	      "qualified retrain request lost its peer tone reference");
+	for (size_t index = 0; index < 160; ++index) {
+		struct v34_phase2_tone_event event;
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_sample(
+			      &detector.tone,
+			      codec_round_trip(sample, codec), &event) ==
+			      V34_PHASE2_TONE_OK,
+		      "retained retrain tone failed at %zu", index);
+		if (event.kind == V34_PHASE2_TONE_PHASE_REVERSED) {
+			reversal = event;
+			reversal_sample = index;
+			reversal_count++;
+		}
+	}
+	CHECK(reversal_count == 1 &&
+	      reversal_sample + 2u >= reversal.reversal_delay_samples &&
+	      reversal_sample <= reversal.reversal_delay_samples + 2u,
+	      "retained retrain tone reversal count=%zu sample=%zu delay=%u",
+	      reversal_count, reversal_sample,
+	      reversal.reversal_delay_samples);
 	return true;
 }
 

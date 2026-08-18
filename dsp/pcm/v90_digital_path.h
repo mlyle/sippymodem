@@ -74,6 +74,17 @@ bool v90_digital_path_upstream_is_online(
 	const struct v90_digital_path *path);
 bool v90_digital_path_is_online(const struct v90_digital_path *path);
 
+/* Clock the independent downstream transmitter or upstream receiver.  These
+ * directional operations let a call controller keep outgoing data continuous
+ * while it qualifies an incoming full-retrain preamble. */
+enum v90_digital_path_result v90_digital_path_transmit(
+	struct v90_digital_path *path,
+	v90_downstream_frame_source source, void *source_context,
+	uint8_t *transmit_octet);
+enum v90_digital_path_result v90_digital_path_receive(
+	struct v90_digital_path *path, uint8_t received_octet,
+	struct v34_received_mapping_frame *received);
+
 /* Consume and produce one simultaneous G.711 network character. Downstream
  * output is generated before the received character changes control state, so
  * a CP acknowledgement affects the following output character. A successful
