@@ -876,9 +876,11 @@ static bool sample_info1(
 		event->kind = PCM_PHASE2_EVENT_PEER_INFO1_REJECTED;
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_FAILED:
-		phase2->failure = PCM_PHASE2_FAILURE_INFO1_TIMEOUT;
-		event->kind = PCM_PHASE2_EVENT_FAILED;
-		event->failure = phase2->failure;
+		if (child.failure != PHASE2_INFO1_PEER_TIMEOUT ||
+		    phase2_info1_recover(&phase2->state.info1.control) !=
+			    PHASE2_INFO1_OK)
+			return false;
+		event->kind = PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED;
 		return true;
 	}
 	return false;

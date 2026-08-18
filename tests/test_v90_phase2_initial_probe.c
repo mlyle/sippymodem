@@ -919,6 +919,51 @@ static bool check_phase2_controller(
 	      !pcm_phase2_has_failed(&digital),
 	      "PCM Phase 2 mode %d lost a probe handoff", mode);
 	{
+		struct pcm_phase2 recovery = digital;
+		bool started = mode == TEST_INFO1_V90 ?
+			pcm_phase2_start_v90_digital_info1(
+				&recovery, &v90_info1d) == PCM_PHASE2_OK :
+			pcm_phase2_start_v92_digital_info1(
+				&recovery, &v92_info1d) == PCM_PHASE2_OK;
+		bool recovering = false;
+
+		CHECK(started,
+		      "PCM Phase 2 mode %d did not start recovery test", mode);
+		for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+			struct pcm_phase2_event event;
+			int16_t transmit;
+
+			CHECK(pcm_phase2_sample(
+				      &recovery, 0, &transmit, &event) ==
+				      PCM_PHASE2_OK,
+			      "isolated PCM INFO1 mode %d failed at %zu",
+			      mode, index);
+			if (event.kind ==
+			    PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED) {
+				recovering = true;
+				break;
+			}
+		}
+		CHECK(recovering && !pcm_phase2_has_failed(&recovery) &&
+		      recovery.state.info1.control.phase ==
+			      PHASE2_INFO1_RECOVERING,
+		      "PCM Phase 2 mode %d did not recover at the INFO1 deadline",
+		      mode);
+		for (size_t index = 0; index < V34_PHASE2_SAMPLE_RATE; ++index) {
+			struct pcm_phase2_event event;
+			int16_t transmit;
+
+			CHECK(pcm_phase2_sample(
+				      &recovery, 0, &transmit, &event) ==
+					      PCM_PHASE2_OK &&
+			      transmit == 0 &&
+			      event.kind == PCM_PHASE2_EVENT_NONE &&
+			      !pcm_phase2_has_failed(&recovery),
+			      "PCM INFO1 recovery mode %d was not stable at %zu",
+			      mode, index);
+		}
+	}
+	{
 		struct pcm_startup_selection analog_startup;
 		struct pcm_startup_selection digital_startup;
 		struct pcm_phase2 before = digital;
