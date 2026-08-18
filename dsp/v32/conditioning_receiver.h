@@ -10,13 +10,16 @@
 #include <stdint.h>
 
 enum {
-	V32_CONDITIONING_S_BAR_ACQUIRE_TRANSITIONS = 6,
+	V32_CONDITIONING_S_DETECT_TRANSITIONS = 6,
+	V32_CONDITIONING_S_EPOCH_TRANSITIONS =
+		V32_CONDITIONING_S_SYMBOLS / 2,
 	V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS = 32,
 };
 
 enum v32_conditioning_receiver_phase {
 	V32_CONDITIONING_SEARCH_S_BAR,
 	V32_CONDITIONING_MATCH_TRN,
+	V32_CONDITIONING_COUNT_S_BAR,
 	V32_CONDITIONING_TRAIN_TRN,
 	V32_CONDITIONING_READY,
 };
@@ -42,6 +45,7 @@ struct v32_conditioning_receiver {
 	uint8_t quadrant_offset;
 	uint8_t pending_quadrant_offset;
 	uint8_t alternating_transitions;
+	uint8_t s_bar_symbols;
 	uint8_t previous_turn;
 	uint8_t prefix_match;
 	uint8_t consecutive_mismatches;
@@ -61,16 +65,19 @@ bool v32_conditioning_receiver_is_complete(
 
 /*
  * Observe one carrier- and timing-recovered point. The receiver first
- * qualifies the alternating S-bar tail, finds a generated TRN prefix without
- * assuming absolute carrier phase, and then tracks the known training stream.
- * Rejected and complete calls leave state and ready unchanged.
+ * qualifies S, uses the standard S-to-S-bar epoch when it is observed, and
+ * retains exact generated-prefix acquisition for inputs which begin in TRN.
+ * It then tracks the known training stream without assuming absolute carrier
+ * phase. Ready means local training is sufficient to begin seeking a rate
+ * signal; the remote transmitter may continue TRN. Rejected and complete
+ * calls leave state and ready unchanged.
  */
 enum v32_conditioning_receiver_result
 v32_conditioning_receiver_observe(
 	struct v32_conditioning_receiver *receiver,
 	const struct qam_point *point, bool *ready);
 
-/* Seed rate-signal decoding from the final accepted TRN symbol. */
+/* Seed rate-signal decoding from the last locally accepted TRN symbol. */
 enum v32_conditioning_receiver_result
 v32_conditioning_receiver_framing_state(
 	const struct v32_conditioning_receiver *receiver,

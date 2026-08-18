@@ -14,11 +14,8 @@ enum {
 		V32_CONDITIONING_S_BAR_SYMBOLS,
 	V32_CONDITIONING_MISMATCH_RESTART = 3,
 	/* Receiver quality budget: leave no more observations unresolved than
-	 * the standard's 256-symbol special TRN prefix. This retains at least
-	 * the length of the following 1024-symbol full-map training portion as
-	 * confirmed known-sequence evidence. */
-	V32_CONDITIONING_MIN_CONFIRMED_TRN_SYMBOLS =
-		V32_CONDITIONING_TRN_MIN_SYMBOLS -
+	 * the standard's 256-symbol special TRN prefix. */
+	V32_CONDITIONING_MAX_UNRESOLVED_TRN_SYMBOLS =
 		V32_CONDITIONING_TRN_PREFIX_SYMBOLS,
 	/* Receiver stability guard: require a clean TRN tail spanning the same
 	 * sixteen symbols as the following minimum two-word rate evidence. This
@@ -69,6 +66,18 @@ static bool pattern_is_valid(
 	return true;
 }
 
+static bool training_quality_is_sufficient(
+	const struct v32_conditioning_receiver *receiver)
+{
+	return receiver->trn_symbols >=
+			V32_CONDITIONING_TRN_MIN_SYMBOLS &&
+	       receiver->confirmed_trn_symbols <= receiver->trn_symbols &&
+	       receiver->trn_symbols - receiver->confirmed_trn_symbols <=
+		       V32_CONDITIONING_MAX_UNRESOLVED_TRN_SYMBOLS &&
+	       receiver->stable_trn_symbols >=
+			V32_CONDITIONING_STABLE_TAIL_SYMBOLS;
+}
+
 bool v32_conditioning_receiver_is_valid(
 	const struct v32_conditioning_receiver *receiver)
 {
@@ -81,7 +90,9 @@ bool v32_conditioning_receiver_is_valid(
 	    receiver->pending_quadrant_offset >=
 		    QPSK_QUADRANT_COUNT ||
 	    receiver->alternating_transitions >
-		    V32_CONDITIONING_S_BAR_ACQUIRE_TRANSITIONS ||
+		    V32_CONDITIONING_S_EPOCH_TRANSITIONS ||
+	    receiver->s_bar_symbols >
+		    V32_CONDITIONING_S_BAR_SYMBOLS ||
 	    receiver->previous_turn >= QPSK_QUADRANT_COUNT ||
 	    receiver->prefix_match >=
 		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS ||
@@ -90,6 +101,13 @@ bool v32_conditioning_receiver_is_valid(
 	    (receiver->has_previous_point &&
 	     !point_has_power(&receiver->previous_point)))
 		return false;
+	if (receiver->phase == V32_CONDITIONING_COUNT_S_BAR) {
+		if (receiver->s_bar_symbols == 0 ||
+		    receiver->prefix_match != 0)
+			return false;
+	} else if (receiver->s_bar_symbols != 0) {
+		return false;
+	}
 	training = receiver->phase == V32_CONDITIONING_TRAIN_TRN ||
 		   receiver->phase == V32_CONDITIONING_READY;
 	if (!training)
@@ -101,15 +119,13 @@ bool v32_conditioning_receiver_is_valid(
 		    &receiver->reference) ||
 	    !qam_gain_is_valid(&receiver->gain) ||
 	    receiver->reference.trn_symbols !=
-		    V32_CONDITIONING_TRN_MIN_SYMBOLS ||
+		    V32_CONDITIONING_TRN_MAX_SYMBOLS ||
 	    receiver->reference.emitted_symbols !=
 		    V32_CONDITIONING_FIXED_SYMBOLS + receiver->trn_symbols ||
-	    receiver->trn_symbols <
-		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u ||
+	    receiver->trn_symbols == 0 ||
 	    receiver->trn_symbols >
-		    V32_CONDITIONING_TRN_MIN_SYMBOLS ||
-	    receiver->confirmed_trn_symbols <
-		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u ||
+		    V32_CONDITIONING_TRN_MAX_SYMBOLS ||
+	    receiver->confirmed_trn_symbols == 0 ||
 	    receiver->confirmed_trn_symbols > receiver->trn_symbols ||
 	    receiver->stable_trn_symbols >
 		    receiver->confirmed_trn_symbols ||
@@ -117,14 +133,10 @@ bool v32_conditioning_receiver_is_valid(
 	     (receiver->stable_trn_symbols != 0)) ||
 	    !receiver->has_previous_point)
 		return false;
-	if ((receiver->phase == V32_CONDITIONING_READY) !=
-	    (receiver->trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS))
-		return false;
-	return receiver->phase != V32_CONDITIONING_READY ||
-	       (receiver->confirmed_trn_symbols >=
-			V32_CONDITIONING_MIN_CONFIRMED_TRN_SYMBOLS &&
-		receiver->stable_trn_symbols >=
-			V32_CONDITIONING_STABLE_TAIL_SYMBOLS);
+	if (receiver->phase == V32_CONDITIONING_READY)
+		return training_quality_is_sufficient(receiver);
+	return receiver->trn_symbols < V32_CONDITIONING_TRN_MAX_SYMBOLS &&
+	       !training_quality_is_sufficient(receiver);
 }
 
 bool v32_conditioning_receiver_is_complete(
@@ -222,14 +234,19 @@ static int reset_search(
 	return 0;
 }
 
-static void observe_s_bar(
+static bool observe_s(
 	struct v32_conditioning_receiver *receiver, uint8_t turn)
 {
+	bool epoch = receiver->phase == V32_CONDITIONING_MATCH_TRN &&
+		     receiver->alternating_transitions ==
+			     V32_CONDITIONING_S_EPOCH_TRANSITIONS &&
+		     (turn & 1u) != 0 && turn == receiver->previous_turn;
+
 	if ((turn & 1u) != 0) {
 		if (receiver->alternating_transitions == 0 ||
 		    turn != receiver->previous_turn) {
 			if (receiver->alternating_transitions <
-			    V32_CONDITIONING_S_BAR_ACQUIRE_TRANSITIONS)
+			    V32_CONDITIONING_S_EPOCH_TRANSITIONS)
 				receiver->alternating_transitions++;
 		} else {
 			receiver->alternating_transitions = 1;
@@ -238,9 +255,11 @@ static void observe_s_bar(
 		receiver->alternating_transitions = 0;
 	}
 	receiver->previous_turn = turn;
-	if (receiver->alternating_transitions ==
-	    V32_CONDITIONING_S_BAR_ACQUIRE_TRANSITIONS)
+	if (receiver->phase == V32_CONDITIONING_SEARCH_S_BAR &&
+	    receiver->alternating_transitions ==
+		    V32_CONDITIONING_S_DETECT_TRANSITIONS)
 		receiver->phase = V32_CONDITIONING_MATCH_TRN;
+	return epoch;
 }
 
 static bool observe_prefix_turn(
@@ -258,16 +277,17 @@ static bool observe_prefix_turn(
 
 static int begin_training(
 	struct v32_conditioning_receiver *receiver,
-	const struct qam_point *point)
+	const struct qam_point *point, uint16_t matched_symbols)
 {
 	struct qam_point expected_point;
 	uint8_t expected_quadrant;
-	uint16_t matched_symbols =
-		V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u;
 
-	if (v32_conditioning_transmitter_init(
+	if (matched_symbols == 0 ||
+	    matched_symbols >
+		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u ||
+	    v32_conditioning_transmitter_init(
 		    &receiver->reference, receiver->source_role,
-		    V32_CONDITIONING_TRN_MIN_SYMBOLS) !=
+		    V32_CONDITIONING_TRN_MAX_SYMBOLS) !=
 		    V32_CONDITIONING_OK ||
 	    skip_symbols(
 		    &receiver->reference,
@@ -286,6 +306,8 @@ static int begin_training(
 	receiver->pending_quadrant_offset = receiver->quadrant_offset;
 	receiver->confirmed_trn_symbols = matched_symbols;
 	receiver->stable_trn_symbols = matched_symbols;
+	receiver->alternating_transitions = 0;
+	receiver->s_bar_symbols = 0;
 	receiver->prefix_match = 0;
 	receiver->phase = V32_CONDITIONING_TRAIN_TRN;
 	return 0;
@@ -348,14 +370,11 @@ static int train_symbol(
 		}
 	}
 	receiver->trn_symbols++;
-	if (receiver->trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS &&
-	    (receiver->confirmed_trn_symbols <
-		     V32_CONDITIONING_MIN_CONFIRMED_TRN_SYMBOLS ||
-	     receiver->stable_trn_symbols <
-		     V32_CONDITIONING_STABLE_TAIL_SYMBOLS))
-		return 1;
-	if (receiver->trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS)
+	if (training_quality_is_sufficient(receiver))
 		receiver->phase = V32_CONDITIONING_READY;
+	else if (receiver->trn_symbols ==
+		 V32_CONDITIONING_TRN_MAX_SYMBOLS)
+		return 1;
 	return 0;
 }
 
@@ -384,16 +403,29 @@ v32_conditioning_receiver_observe(
 			return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 		next.observed_quadrant =
 			(uint8_t)((next.observed_quadrant + turn) & 3u);
-		if (next.phase == V32_CONDITIONING_SEARCH_S_BAR) {
+		if (next.phase == V32_CONDITIONING_SEARCH_S_BAR ||
+		    next.phase == V32_CONDITIONING_MATCH_TRN) {
 			bool prefix_ready = observe_prefix_turn(&next, turn);
+			bool epoch = observe_s(&next, turn);
 
-			observe_s_bar(&next, turn);
-			if (prefix_ready && begin_training(&next, point) != 0)
+			if (prefix_ready &&
+			    begin_training(
+				    &next, point,
+				    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u) != 0)
 				return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
-		} else if (next.phase == V32_CONDITIONING_MATCH_TRN) {
-			if (observe_prefix_turn(&next, turn) &&
-			    begin_training(&next, point) != 0)
+			if (!prefix_ready && epoch) {
+				next.phase = V32_CONDITIONING_COUNT_S_BAR;
+				next.alternating_transitions = 0;
+				next.s_bar_symbols = 1;
+				next.prefix_match = 0;
+			}
+		} else if (next.phase == V32_CONDITIONING_COUNT_S_BAR) {
+			if (next.s_bar_symbols <
+			    V32_CONDITIONING_S_BAR_SYMBOLS) {
+				next.s_bar_symbols++;
+			} else if (begin_training(&next, point, 1) != 0) {
 				return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+			}
 		} else {
 			training_result = train_symbol(&next, point);
 			if (training_result < 0)
