@@ -460,9 +460,10 @@ static bool caller_qam_receiver_observe(
 		if (!v32_conditioning_receiver_is_complete(
 			    &receiver->conditioning))
 			return true;
-		if (v32_conditioning_receiver_framing_state(
+		if (v32_conditioning_qam_framing_state(
+			    &receiver->conditioning_qam,
 			    &receiver->conditioning, &receiver->decoder) !=
-			    V32_CONDITIONING_RECEIVER_OK ||
+			    V32_CONDITIONING_QAM_OK ||
 		    v32_conditioning_qam_handoff(
 			    &receiver->conditioning_qam,
 			    &receiver->conditioning,
@@ -531,6 +532,9 @@ static bool test_conditioning_qam_adapter(void)
 	struct v32_conditioning_qam adapter;
 	struct v32_conditioning_receiver saved_receiver;
 	struct v32_conditioning_qam saved_adapter;
+	struct v32_symbol_decoder decoder;
+	struct v32_symbol_decoder nominal_decoder;
+	struct v32_symbol_decoder saved_decoder;
 	struct qam_point final_point = { 0 };
 	struct qam_point saved_point;
 	struct qam_point last_received = { 0 };
@@ -629,7 +633,47 @@ static bool test_conditioning_qam_adapter(void)
 			      "V.32 QAM handoff spliced owners or changed output");
 		}
 	}
+	memset(&decoder, 0x5a, sizeof(decoder));
+	saved_decoder = decoder;
+	saved_adapter = adapter;
+	saved_receiver = receiver;
 	CHECK(v32_conditioning_receiver_is_complete(&receiver) &&
+	      v32_conditioning_receiver_framing_state(
+		      &receiver, &nominal_decoder) ==
+		      V32_CONDITIONING_RECEIVER_OK &&
+	      nominal_decoder.phase_quadrant == 0 &&
+	      v32_conditioning_qam_framing_state(
+		      NULL, &receiver, &decoder) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_framing_state(
+		      &adapter, NULL, &decoder) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_framing_state(
+		      &adapter, &receiver, NULL) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_framing_state(
+		      &adapter, &receiver,
+		      (struct v32_symbol_decoder *)&adapter) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_framing_state(
+		      &adapter, &receiver,
+		      (struct v32_symbol_decoder *)&receiver) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_framing_state(
+		      &adapter, &fresh_receiver, &decoder) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      memcmp(&adapter, &saved_adapter, sizeof(adapter)) == 0 &&
+	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
+	      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+	      v32_conditioning_qam_framing_state(
+		      &adapter, &receiver, &decoder) ==
+		      V32_CONDITIONING_QAM_OK &&
+	      decoder.phase_quadrant ==
+		      (uint8_t)((receiver.reference.trn_encoder.phase_quadrant +
+			 receiver.quadrant_offset) & 3u) &&
+	      memcmp(
+		      &decoder.descrambler, &nominal_decoder.descrambler,
+		      sizeof(decoder.descrambler)) == 0 &&
 	      v32_conditioning_qam_handoff(
 		      &adapter, &receiver, &final_point, &gain) ==
 		      V32_CONDITIONING_QAM_OK &&

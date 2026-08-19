@@ -78,11 +78,12 @@ bool v32_conditioning_receiver_is_complete(
  * Observe one persistent-equalizer decision point. The receiver first
  * qualifies S, uses the standard S-to-S-bar epoch when it is observed, and
  * retains exact generated-prefix acquisition for inputs which begin in TRN.
- * It then tracks the known training stream without assuming absolute carrier
- * phase. Ready means local training is sufficient to begin seeking a rate
- * signal; the remote transmitter may continue TRN. OK consumes exactly one
- * consecutive observation and writes one decision. Rejected and complete
- * calls leave the receiver and output unchanged.
+ * It then tracks the known training stream, returning the nominal decision so
+ * the persistent equalizer removes any observed quarter-turn carrier offset.
+ * Ready means local training is sufficient to begin seeking a rate signal;
+ * the remote transmitter may continue TRN. OK consumes exactly one consecutive
+ * observation and writes one decision. Rejected and complete calls leave the
+ * receiver and output unchanged.
  */
 enum v32_conditioning_receiver_result
 v32_conditioning_receiver_observe(
@@ -90,7 +91,7 @@ v32_conditioning_receiver_observe(
 	const struct v32_equalizer_observation *observation,
 	struct v32_conditioning_symbol_decision *decision);
 
-/* Seed rate-signal decoding in the confirmed receive phase coordinate. */
+/* Seed the independent rate-signal differential phase at its defined zero. */
 enum v32_conditioning_receiver_result
 v32_conditioning_receiver_framing_state(
 	const struct v32_conditioning_receiver *receiver,

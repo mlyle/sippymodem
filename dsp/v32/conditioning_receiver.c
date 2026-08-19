@@ -461,11 +461,8 @@ v32_conditioning_receiver_observe(
 		}
 	}
 	if (known_reference) {
-		uint8_t aligned_quadrant = (uint8_t)(
-			(expected_quadrant + next.quadrant_offset) & 3u);
-
 		if (v32_decide_known_quadrant(
-			    observation, aligned_quadrant, true,
+			    observation, expected_quadrant, true,
 			    &quadrant_decision) != V32_DECISION_OK)
 			return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	}
@@ -497,18 +494,13 @@ v32_conditioning_receiver_framing_state(
 	struct v32_symbol_decoder *decoder)
 {
 	struct v32_symbol_decoder next_decoder;
-	uint8_t phase_quadrant;
 
 	if (!v32_conditioning_receiver_is_complete(receiver) ||
 	    decoder == NULL || memory_regions_overlap(
 		    receiver, sizeof(*receiver), decoder, sizeof(*decoder)))
 		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
-	phase_quadrant = (uint8_t)(
-		(receiver->reference.trn_encoder.phase_quadrant +
-		 receiver->quadrant_offset) & 3u);
 	if (v32_symbol_decoder_init(
-		    &next_decoder, receiver->source_role,
-		    phase_quadrant) !=
+		    &next_decoder, receiver->source_role, 0) !=
 		    V32_FRAMING_OK)
 		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	next_decoder.descrambler = receiver->reference.trn_encoder.scrambler;

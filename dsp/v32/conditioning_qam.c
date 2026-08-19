@@ -181,3 +181,32 @@ enum v32_conditioning_qam_result v32_conditioning_qam_handoff(
 	*gain = adapter->gain;
 	return V32_CONDITIONING_QAM_OK;
 }
+
+enum v32_conditioning_qam_result v32_conditioning_qam_framing_state(
+	const struct v32_conditioning_qam *adapter,
+	const struct v32_conditioning_receiver *receiver,
+	struct v32_symbol_decoder *decoder)
+{
+	struct v32_symbol_decoder next;
+
+	if (adapter == NULL || receiver == NULL || decoder == NULL ||
+	    memory_regions_overlap(
+		    adapter, sizeof(*adapter), receiver, sizeof(*receiver)) ||
+	    memory_regions_overlap(
+		    adapter, sizeof(*adapter), decoder, sizeof(*decoder)) ||
+	    memory_regions_overlap(
+		    receiver, sizeof(*receiver), decoder, sizeof(*decoder)) ||
+	    !v32_conditioning_qam_is_valid(adapter) ||
+	    !v32_conditioning_receiver_is_valid(receiver) ||
+	    !owners_are_compatible(adapter, receiver) ||
+	    !v32_conditioning_receiver_is_complete(receiver))
+		return V32_CONDITIONING_QAM_INVALID_ARGUMENT;
+	if (v32_conditioning_receiver_framing_state(
+		    receiver, &next) != V32_CONDITIONING_RECEIVER_OK)
+		return V32_CONDITIONING_QAM_INVALID_ARGUMENT;
+	next.phase_quadrant = (uint8_t)(
+		(receiver->reference.trn_encoder.phase_quadrant +
+		 receiver->quadrant_offset) & 3u);
+	*decoder = next;
+	return V32_CONDITIONING_QAM_OK;
+}

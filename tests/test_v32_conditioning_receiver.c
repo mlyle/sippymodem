@@ -92,9 +92,7 @@ static enum v32_conditioning_receiver_result observe(
 		      decision.reference_confirmed !=
 			      (receiver->stable_trn_symbols != 0) ||
 		      v32_decide_known_quadrant(
-			      observation,
-			      (uint8_t)((decision.reference_quadrant +
-				 receiver->quadrant_offset) & 3u),
+			      observation, decision.reference_quadrant,
 			      true, &expected) != V32_DECISION_OK ||
 		      !decisions_are_equal(
 			      &decision.equalizer, &expected.equalizer))) ||
@@ -397,9 +395,7 @@ static bool check_role(enum v32_transmitter_role role)
 		      decoder.descrambler.history ==
 			      transmitter.trn_encoder.scrambler.history &&
 		      decoder.descrambler.transmitter_role == role &&
-		      decoder.phase_quadrant ==
-			      (uint8_t)((transmitter.trn_encoder.phase_quadrant +
-				 receiver.quadrant_offset) & 3u),
+		      decoder.phase_quadrant == 0,
 	      "V.32 conditioning framing state changed for role %d", role);
 	CHECK(v32_4800_fixed_point(receiver.previous_quadrant, &point) ==
 		      V32_CONSTELLATION_OK,

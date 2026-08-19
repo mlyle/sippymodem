@@ -40,6 +40,13 @@ enum v32_conditioning_qam_result v32_conditioning_qam_observe(
 	struct v32_conditioning_receiver *receiver,
 	const struct qam_point *point);
 
+/* Export the offset-preserving decoder seed required by the temporary QAM
+ * receive path.  The fixed receive path uses the receiver's nominal seed. */
+enum v32_conditioning_qam_result v32_conditioning_qam_framing_state(
+	const struct v32_conditioning_qam *adapter,
+	const struct v32_conditioning_receiver *receiver,
+	struct v32_symbol_decoder *decoder);
+
 /* Export the final legacy point/gain pair after conditioning completes. */
 enum v32_conditioning_qam_result v32_conditioning_qam_handoff(
 	const struct v32_conditioning_qam *adapter,

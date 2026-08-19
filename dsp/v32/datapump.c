@@ -1428,10 +1428,11 @@ static int receive_sample(
 				    &datapump->startup) !=
 				    V32_STARTUP_OK)
 				return -1;
-			if (v32_conditioning_receiver_framing_state(
+			if (v32_conditioning_qam_framing_state(
+				    &datapump->conditioning_qam,
 				    &datapump->conditioning_receiver,
 				    &datapump->decoder) !=
-				    V32_CONDITIONING_RECEIVER_OK ||
+				    V32_CONDITIONING_QAM_OK ||
 			    v32_conditioning_qam_handoff(
 				    &datapump->conditioning_qam,
 				    &datapump->conditioning_receiver,
