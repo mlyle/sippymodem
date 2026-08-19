@@ -76,4 +76,10 @@ enum v32_receive_path_result v32_receive_path_commit_adaptation(
 	enum v32_equalizer_adaptation adaptation,
 	struct v32_equalizer_observation *observation);
 
+/* Change adaptation at an open decision boundary.  A pending decision must
+ * instead use commit_adaptation so no recovered sample crosses the boundary. */
+enum v32_receive_path_result v32_receive_path_set_adaptation(
+	struct v32_receive_path *path,
+	enum v32_equalizer_adaptation adaptation);
+
 #endif

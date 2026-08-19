@@ -301,7 +301,9 @@ static bool test_boundary_adaptation(void)
 	struct v32_equalizer_observation saved_output;
 	struct v32_equalizer_decision decision;
 	int16_t first = 123;
+	int16_t pending[3] = { 123, 234, 345 };
 	size_t consumed;
+	size_t pending_count;
 
 	CHECK(v32_receive_path_init(
 		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
@@ -348,6 +350,30 @@ static bool test_boundary_adaptation(void)
 		      V32_EQUALIZER_ADAPTATION_FINE &&
 	      v32_receive_path_is_valid(&path),
 	      "boundary path did not drain after adaptation");
+	CHECK(v32_receive_path_set_adaptation(
+		      &path, V32_EQUALIZER_ADAPTATION_DISABLED) ==
+		      V32_RECEIVE_PATH_OK &&
+	      path.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_DISABLED,
+	      "open receive path did not disable adaptation");
+	saved = path;
+	CHECK(v32_receive_path_set_adaptation(
+		      &path, (enum v32_equalizer_adaptation)3) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "invalid open-path adaptation changed state");
+	pending_count = path.equalizer.samples_until_observation;
+	CHECK(v32_equalizer_process(
+		      &path.equalizer, pending, pending_count,
+		      &consumed, &observation) ==
+		      V32_EQUALIZER_OBSERVATION_READY &&
+	      consumed == pending_count &&
+	      v32_receive_path_set_adaptation(
+		      &path, V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      path.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_DISABLED,
+	      "pending receive path accepted a lifecycle change");
 	return true;
 }
 

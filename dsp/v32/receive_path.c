@@ -246,3 +246,23 @@ enum v32_receive_path_result v32_receive_path_commit_adaptation(
 	return commit_decision(
 		path, decision, true, adaptation, observation);
 }
+
+enum v32_receive_path_result v32_receive_path_set_adaptation(
+	struct v32_receive_path *path,
+	enum v32_equalizer_adaptation adaptation)
+{
+	enum v32_equalizer_result result;
+
+	if (!v32_receive_path_is_valid(path))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	result = v32_equalizer_set_adaptation(
+		&path->equalizer, adaptation);
+	if (result == V32_EQUALIZER_DECISION_PENDING)
+		return V32_RECEIVE_PATH_DECISION_PENDING;
+	if (result == V32_EQUALIZER_INVALID_ARGUMENT)
+		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
+	if (result != V32_EQUALIZER_OK ||
+	    !v32_receive_path_is_valid(path))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	return V32_RECEIVE_PATH_OK;
+}

@@ -3,6 +3,7 @@
 #include <conditioning.h>
 #include <conditioning_path.h>
 #include <constellation.h>
+#include <end_path.h>
 #include <qam.h>
 #include <rate_path.h>
 
@@ -38,7 +39,10 @@ struct generated_source {
 	struct v32_symbol_encoder rate_encoder;
 	struct qam_point point;
 	struct v32_rate_offer offer;
+	struct v32_rate_offer selected_offer;
 	uint16_t rate_word;
+	uint16_t selected_word;
+	uint16_t end_word;
 	unsigned int rate_dibit;
 	unsigned int rate_symbols;
 	bool rate_started;
@@ -62,12 +66,21 @@ static struct v32_rate_offer role_offer(enum v32_transmitter_role role)
 	};
 }
 
+static struct v32_rate_offer selected_offer(void)
+{
+	return (struct v32_rate_offer){
+		.rates = V32_RATE_CAPABILITY_4800,
+		.trellis_at_highest_rate = false,
+	};
+}
+
 static bool source_init(
 	struct generated_source *source,
 	enum v32_transmitter_role role)
 {
 	memset(source, 0, sizeof(*source));
 	source->offer = role_offer(role);
+	source->selected_offer = selected_offer();
 	return qam_modulator_init(
 		       &source->modulator, &V32_CHANNEL,
 		       TEST_AMPLITUDE) == QAM_OK &&
@@ -77,7 +90,22 @@ static bool source_init(
 		       V32_CONDITIONING_OK &&
 	       v32_rate_signal_encode(
 		       V32_RATE_SIGNAL, &source->offer,
-		       &source->rate_word) == V32_RATE_SIGNAL_OK;
+		       &source->rate_word) == V32_RATE_SIGNAL_OK &&
+	       v32_rate_signal_encode(
+		       V32_RATE_SIGNAL, &source->selected_offer,
+		       &source->selected_word) == V32_RATE_SIGNAL_OK &&
+	       v32_rate_signal_encode(
+		       V32_END_SIGNAL, &source->selected_offer,
+		       &source->end_word) == V32_RATE_SIGNAL_OK;
+}
+
+static bool source_set_word(
+	struct generated_source *source, uint16_t word)
+{
+	if (!source->rate_started || source->rate_dibit != 0)
+		return false;
+	source->rate_word = word;
+	return true;
 }
 
 static bool source_next_point(struct generated_source *source)
@@ -175,17 +203,98 @@ static bool complete_conditioning(
 	return true;
 }
 
+static bool reject_wrong_end(
+	const struct generated_source *started_source,
+	const struct v32_rate_path_handoff *rate,
+	const struct v32_rate_offer *selected_offer)
+{
+	struct generated_source source = *started_source;
+	struct v32_rate_offer wrong_offer = {
+		.rates = V32_RATE_CAPABILITY_9600,
+		.trellis_at_highest_rate = false,
+	};
+	struct v32_end_path path;
+	uint16_t wrong_word;
+	unsigned int wrong_start = 0;
+	bool wrong_started = false;
+	bool rejected = false;
+
+	CHECK(v32_rate_signal_encode(
+		      V32_END_SIGNAL, &wrong_offer, &wrong_word) ==
+		      V32_RATE_SIGNAL_OK &&
+	      v32_end_path_init(
+		      &path, rate, selected_offer,
+		      V32_EQUALIZER_ADAPTATION_FINE) == V32_END_PATH_OK,
+	      "wrong-E control did not initialize");
+	for (unsigned int index = 0;
+	     index < TEST_LINE_SAMPLE_LIMIT && !rejected; ++index) {
+		struct v32_echo_reference reference;
+		int16_t sample;
+		bool accepted;
+		enum v32_end_path_result result;
+
+		if (!wrong_started && source.rate_dibit == 0) {
+			wrong_start = source.rate_symbols;
+			CHECK(source_set_word(&source, wrong_word),
+			      "wrong-E control did not enter E");
+			wrong_started = true;
+		}
+		if (wrong_started &&
+		    source.rate_symbols ==
+			    wrong_start + V32_RATE_SIGNAL_DIBITS &&
+		    source.rate_word == wrong_word)
+			CHECK(source_set_word(&source, UINT16_MAX),
+			      "wrong-E control did not leave E");
+		CHECK(source_sample(&source, &sample, &reference, &accepted),
+		      "wrong-E source stopped at %u", index);
+		result = v32_end_path_sample(
+			&path, sample, accepted ? &reference : NULL);
+		if (result == V32_END_PATH_SEQUENCE_REJECTED) {
+			CHECK(wrong_started && source.rate_word == UINT16_MAX &&
+			      v32_end_path_is_valid(&path) &&
+			      !v32_end_path_is_complete(&path) &&
+			      path.receive.equalizer.decision_pending &&
+			      path.observation_epoch != UINT64_MAX &&
+			      path.observation_epoch + 1u ==
+				      path.receive.equalizer
+					      .pending_observation.epoch &&
+			      path.detector.aligned &&
+			      path.detector.locked_rate_word != wrong_word &&
+			      path.selected_offer.rates == selected_offer->rates &&
+			      path.target_adaptation ==
+				      V32_EQUALIZER_ADAPTATION_FINE &&
+			      !path.end_received,
+			      "wrong E committed semantic state");
+			rejected = true;
+		} else {
+			CHECK(result == V32_END_PATH_OK,
+			      "wrong-E control stopped at %u: %d",
+			      index, result);
+		}
+	}
+	CHECK(rejected, "wrong selected E was not rejected");
+	return true;
+}
+
 static bool run_role(
 	enum v32_transmitter_role role,
 	struct v32_conditioning_path_handoff *conditioning_handoff,
 	struct v32_rate_path *started,
-	struct v32_rate_path *completed)
+	struct v32_rate_path *completed,
+	struct v32_end_path *end_started,
+	struct v32_end_path *end_completed)
 {
 	struct generated_source source;
 	struct v32_conditioning_path conditioning;
 	struct v32_conditioning_path_handoff handoff;
 	struct v32_rate_path path;
 	struct v32_rate_path_handoff rate_handoff;
+	struct v32_end_path end;
+	struct v32_end_path_handoff end_handoff;
+	enum v32_equalizer_adaptation end_adaptation;
+	unsigned int end_source_limit;
+	unsigned int b1_source_start = 0;
+	bool end_sequence_started = false;
 	bool complete = false;
 
 	CHECK(complete_conditioning(
@@ -238,22 +347,127 @@ static bool run_role(
 		      path.four_point.decoder.descrambler.history,
 	      "rate handoff changed the aligned receiver for role %d", role);
 	*completed = path;
+	if (role == V32_CALLING_TRANSMITTER)
+		CHECK(reject_wrong_end(
+			      &source, &rate_handoff,
+			      &source.selected_offer),
+		      "wrong-E control failed");
+
+	end_adaptation = role == V32_CALLING_TRANSMITTER ?
+		V32_EQUALIZER_ADAPTATION_DISABLED :
+		V32_EQUALIZER_ADAPTATION_FINE;
+	CHECK(v32_end_path_init(
+		      &end, &rate_handoff, &source.selected_offer,
+		      V32_EQUALIZER_ADAPTATION_FINE) == V32_END_PATH_OK &&
+	      v32_end_path_is_valid(&end) &&
+	      !v32_end_path_is_complete(&end),
+	      "end path did not initialize for role %d", role);
+	if (role == V32_CALLING_TRANSMITTER)
+		CHECK(v32_end_path_set_adaptation(
+			      &end,
+			      V32_EQUALIZER_ADAPTATION_DISABLED) ==
+			      V32_END_PATH_OK &&
+		      end.target_adaptation ==
+			      V32_EQUALIZER_ADAPTATION_DISABLED,
+		      "answering endpoint did not disable at R3");
+	*end_started = end;
+	end_source_limit = 0;
+	complete = false;
+	for (unsigned int index = 0;
+	     index < TEST_LINE_SAMPLE_LIMIT && !complete; ++index) {
+		struct v32_echo_reference reference;
+		int16_t sample;
+		bool accepted;
+		enum v32_end_path_result result;
+
+		if (!end_sequence_started && source.rate_dibit == 0) {
+			end_source_limit = source.rate_symbols +
+				2u * V32_RATE_SIGNAL_DIBITS;
+			b1_source_start =
+				(role == V32_ANSWERING_TRANSMITTER ?
+					 end_source_limit : source.rate_symbols) +
+				V32_RATE_SIGNAL_DIBITS;
+			CHECK(source_set_word(
+				      &source,
+				      role == V32_ANSWERING_TRANSMITTER ?
+					      source.selected_word :
+					      source.end_word),
+			      "source did not enter its post-rate sequence");
+			end_sequence_started = true;
+		}
+		if (end_sequence_started &&
+		    role == V32_ANSWERING_TRANSMITTER &&
+		    source.rate_symbols == end_source_limit &&
+		    source.rate_word != source.end_word)
+			CHECK(source_set_word(&source, source.end_word),
+			      "answering source did not enter E");
+		if (end_sequence_started &&
+		    source.rate_symbols == b1_source_start &&
+		    source.rate_word == source.end_word)
+			CHECK(source_set_word(&source, UINT16_MAX),
+			      "source did not enter B1 after E");
+		CHECK(source_sample(&source, &sample, &reference, &accepted),
+		      "end source stopped at %u", index);
+		result = v32_end_path_sample(
+			&end, sample, accepted ? &reference : NULL);
+		CHECK(result == V32_END_PATH_OK ||
+		      result == V32_END_PATH_COMPLETE,
+		      "end path stopped at %u: %d", index, result);
+		complete = result == V32_END_PATH_COMPLETE;
+	}
+	CHECK(complete && end_sequence_started &&
+	      v32_end_path_is_complete(&end) &&
+	      end.receive.equalizer.adaptation == end_adaptation &&
+	      end.target_adaptation == end_adaptation &&
+	      end.selected_offer.rates == source.selected_offer.rates &&
+	      end.selected_offer.trellis_at_highest_rate ==
+		      source.selected_offer.trellis_at_highest_rate &&
+	      source.rate_symbols > b1_source_start &&
+	      source.rate_word == UINT16_MAX,
+	      "end path changed the selected E sequence for role %d", role);
+	CHECK(v32_end_path_handoff(&end, &end_handoff) ==
+		      V32_END_PATH_OK &&
+	      v32_end_path_handoff_is_valid(&end_handoff) &&
+	      end_handoff.selected_offer.rates ==
+		      source.selected_offer.rates &&
+	      end_handoff.receive.equalizer.adaptation == end_adaptation &&
+	      end_handoff.observation_epoch == end.observation_epoch &&
+	      end_handoff.four_point.decoder.descrambler.history ==
+		      end.four_point.decoder.descrambler.history,
+	      "end handoff changed the selected receiver for role %d", role);
+	*end_completed = end;
 	return true;
 }
 
 static bool test_contracts(
 	const struct v32_conditioning_path_handoff *conditioning,
 	const struct v32_rate_path *started,
-	const struct v32_rate_path *completed)
+	const struct v32_rate_path *completed,
+	const struct v32_end_path *end_started,
+	const struct v32_end_path *end_completed)
 {
 	struct v32_conditioning_path_handoff bad_conditioning = *conditioning;
 	struct v32_rate_path path;
 	struct v32_rate_path saved;
 	struct v32_rate_path_handoff handoff;
 	struct v32_rate_path_handoff saved_handoff;
+	struct v32_rate_path_handoff bad_handoff;
 	struct v32_echo_reference invalid_reference = {
 		.point = { NAN, 0.0 },
 	};
+	struct v32_rate_offer invalid_selection = { 0 };
+	struct v32_rate_offer outside_selection = {
+		.rates = V32_RATE_CAPABILITY_14400,
+		.trellis_at_highest_rate = true,
+	};
+	struct v32_end_path end;
+	struct v32_end_path saved_end;
+	struct v32_end_path_handoff end_handoff;
+	struct v32_end_path_handoff saved_end_handoff;
+	union {
+		struct v32_rate_path_handoff rate;
+		struct v32_end_path end;
+	} overlapping_init, saved_overlapping_init;
 
 	memset(&path, 0x5a, sizeof(path));
 	saved = path;
@@ -316,6 +530,118 @@ static bool test_contracts(
 	handoff.offer.rates ^= V32_RATE_CAPABILITY_4800;
 	CHECK(!v32_rate_path_handoff_is_valid(&handoff),
 	      "rate handoff accepted an offer outside its locked word");
+
+	CHECK(v32_rate_path_handoff(&path, &handoff) == V32_RATE_PATH_OK,
+	      "rate handoff did not regenerate for end init contracts");
+	saved_handoff = handoff;
+	bad_handoff = handoff;
+	bad_handoff.observation_ready = !bad_handoff.observation_ready;
+	overlapping_init.rate = handoff;
+	saved_overlapping_init = overlapping_init;
+	memset(&end, 0x5a, sizeof(end));
+	saved_end = end;
+	CHECK(v32_end_path_init(
+		      NULL, &handoff, &end_started->selected_offer,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &end, NULL, &end_started->selected_offer,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &end, &handoff, NULL,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &overlapping_init.end, &overlapping_init.rate,
+		      &end_started->selected_offer,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &end, &handoff,
+		      (const struct v32_rate_offer *)&end,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &end, &bad_handoff, &end_started->selected_offer,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &end, &handoff, &invalid_selection,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &end, &handoff, &outside_selection,
+		      V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_init(
+		      &end, &handoff, &end_started->selected_offer,
+		      (enum v32_equalizer_adaptation)3) ==
+	      V32_END_PATH_INVALID_ARGUMENT &&
+	      memcmp(&end, &saved_end, sizeof(end)) == 0 &&
+	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0 &&
+	      memcmp(
+		      &overlapping_init, &saved_overlapping_init,
+		      sizeof(overlapping_init)) == 0,
+	      "end-path initialization rejection changed its inputs or output");
+
+	end = *end_started;
+	saved_end = end;
+	memset(&end_handoff, 0x5a, sizeof(end_handoff));
+	saved_end_handoff = end_handoff;
+	CHECK(v32_end_path_set_adaptation(
+		      NULL, V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_STATE &&
+	      v32_end_path_set_adaptation(
+		      &end, (enum v32_equalizer_adaptation)3) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_sample(
+		      &end, 0,
+		      (const struct v32_echo_reference *)&end) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_sample(&end, 0, &invalid_reference) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_handoff(&end, &end_handoff) ==
+		      V32_END_PATH_INVALID_STATE &&
+	      memcmp(&end, &saved_end, sizeof(end)) == 0 &&
+	      memcmp(&end_handoff, &saved_end_handoff,
+		     sizeof(end_handoff)) == 0,
+	      "end-path rejection changed state or output");
+	end.observation_epoch++;
+	CHECK(!v32_end_path_is_valid(&end) &&
+	      v32_end_path_sample(&end, 0, NULL) ==
+		      V32_END_PATH_INVALID_STATE,
+	      "end path accepted a spliced decision epoch");
+	end = *end_started;
+	end.end_received = true;
+	CHECK(!v32_end_path_is_valid(&end),
+	      "end path accepted completion without a reset detector");
+
+	end = *end_completed;
+	saved_end = end;
+	CHECK(v32_end_path_sample(&end, 0, NULL) ==
+		      V32_END_PATH_COMPLETE &&
+	      v32_end_path_set_adaptation(
+		      &end, V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_END_PATH_INVALID_STATE &&
+	      v32_end_path_handoff(&end, NULL) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      v32_end_path_handoff(
+		      &end, (struct v32_end_path_handoff *)&end) ==
+		      V32_END_PATH_INVALID_ARGUMENT &&
+	      memcmp(&end, &saved_end, sizeof(end)) == 0,
+	      "complete end path changed on rejected calls");
+	CHECK(v32_end_path_handoff(&end, &end_handoff) ==
+		      V32_END_PATH_OK &&
+	      v32_end_path_handoff_is_valid(&end_handoff),
+	      "complete end handoff was not valid");
+	end_handoff.selected_offer.rates ^= V32_RATE_CAPABILITY_4800;
+	CHECK(!v32_end_path_handoff_is_valid(&end_handoff),
+	      "end handoff accepted an invalid selected rate");
+	end = *end_completed;
+	end.detector.window = 1;
+	CHECK(!v32_end_path_is_valid(&end),
+	      "end path accepted a nonreset completed detector");
 	return true;
 }
 
@@ -324,14 +650,18 @@ int main(void)
 	struct v32_conditioning_path_handoff conditioning;
 	struct v32_rate_path started;
 	struct v32_rate_path completed;
+	struct v32_end_path end_started;
+	struct v32_end_path end_completed;
 
 	if (!run_role(
 		    V32_CALLING_TRANSMITTER, &conditioning,
-		    &started, &completed) ||
+		    &started, &completed, &end_started, &end_completed) ||
 	    !run_role(
 		    V32_ANSWERING_TRANSMITTER, &conditioning,
-		    &started, &completed) ||
-	    !test_contracts(&conditioning, &started, &completed))
+		    &started, &completed, &end_started, &end_completed) ||
+	    !test_contracts(
+		    &conditioning, &started, &completed,
+		    &end_started, &end_completed))
 		return 1;
 	puts("V.32 rate path tests passed");
 	return 0;
