@@ -602,6 +602,29 @@ V32_RECEIVE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/echo_canceller.o \
 	$(BUILD_DIR)/qam.o
+V32_CONDITIONING_PATH_TEST_BINARY := \
+	$(BUILD_DIR)/test_v32_conditioning_path
+V32_CONDITIONING_PATH_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v32_conditioning_path.o \
+	$(BUILD_DIR)/conditioning_path.o \
+	$(BUILD_DIR)/receive_path.o \
+	$(BUILD_DIR)/line_receiver.o \
+	$(BUILD_DIR)/v32_symbol_timing.o \
+	$(BUILD_DIR)/v32_equalizer.o \
+	$(BUILD_DIR)/fixed_phase.o \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/echo_frontend.o \
+	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/conditioning_receiver.o \
+	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/four_point_receiver.o \
+	$(BUILD_DIR)/v32_decision.o \
+	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/framing.o \
+	$(BUILD_DIR)/differential_qpsk.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/rate_signal.o \
+	$(BUILD_DIR)/qam.o
 V32_DECISION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_decision
 V32_DECISION_TEST_OBJECTS := \
@@ -2968,6 +2991,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V32_LINE_RECEIVER_TEST_BINARY) \
 	$(V32_EQUALIZER_TEST_BINARY) \
 	$(V32_RECEIVE_PATH_TEST_BINARY) \
+	$(V32_CONDITIONING_PATH_TEST_BINARY) \
 	$(V32_DECISION_TEST_BINARY) \
 	$(V32_TRELLIS_PROFILE_TEST_BINARY) \
 	$(V32_TRELLIS_DECODER_TEST_BINARY) \
@@ -3252,6 +3276,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V32_LINE_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V32_EQUALIZER_TEST_OBJECTS:.o=.d) \
 	$(V32_RECEIVE_PATH_TEST_OBJECTS:.o=.d) \
+	$(V32_CONDITIONING_PATH_TEST_OBJECTS:.o=.d) \
 	$(V32_DECISION_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_PROFILE_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_DECODER_TEST_OBJECTS:.o=.d) \
@@ -3565,6 +3590,7 @@ test: $(TEST_BINARIES)
 	./$(V32_LINE_RECEIVER_TEST_BINARY)
 	./$(V32_EQUALIZER_TEST_BINARY)
 	./$(V32_RECEIVE_PATH_TEST_BINARY)
+	./$(V32_CONDITIONING_PATH_TEST_BINARY)
 	./$(V32_DECISION_TEST_BINARY)
 	./$(V32_TRELLIS_PROFILE_TEST_BINARY)
 	./$(V32_TRELLIS_DECODER_TEST_BINARY)
@@ -4033,6 +4059,10 @@ $(V32_EQUALIZER_TEST_BINARY): $(V32_EQUALIZER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_RECEIVE_PATH_TEST_BINARY): $(V32_RECEIVE_PATH_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V32_CONDITIONING_PATH_TEST_BINARY): \
+	$(V32_CONDITIONING_PATH_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_DECISION_TEST_BINARY): $(V32_DECISION_TEST_OBJECTS)
@@ -5042,6 +5072,10 @@ $(BUILD_DIR)/v32_equalizer.o: \
 
 $(BUILD_DIR)/receive_path.o: \
 	$(DSP_V32_SOURCE_DIR)/receive_path.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/conditioning_path.o: \
+	$(DSP_V32_SOURCE_DIR)/conditioning_path.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v32_decision.o: \
