@@ -8,6 +8,7 @@
 #include <v92_control_rx.h>
 #include <v92_cpd_direct.h>
 #include <v92_phase4_e2u.h>
+#include <v92_suvu.h>
 
 #include "test.h"
 
@@ -90,7 +91,8 @@ static bool prepare_downstream(
 	enum g711_law law, uint8_t lookahead,
 	const struct v92_cpd_base_parameters *cpd,
 	struct pcm_downstream_tx *transmit,
-	struct pcm_downstream_rx *receive, bool finish_ed)
+	struct pcm_downstream_rx *receive, bool finish_ed,
+	bool stop_at_receive_boundary)
 {
 	const struct v92_suvd_parameters initial_suvd = { 0 };
 	const struct v92_suvd_parameters acknowledged_suvd = {
@@ -165,6 +167,8 @@ static bool prepare_downstream(
 			else if (!cpd_pending && !suvd_pending)
 				cpd_pending = true;
 		}
+		if (!finish_ed && stop_at_receive_boundary && acknowledged)
+			return true;
 		if (finish_ed && acknowledged && !ed_requested) {
 			if (pcm_downstream_rx_expect_ed(receive) !=
 				    PCM_DOWNSTREAM_RX_OK ||
@@ -237,6 +241,267 @@ static bool upstream_line(
 	return v92_upstream_control_line_rx_is_valid(receive);
 }
 
+struct digital_fixture {
+	struct v92_phase4_e2u owner;
+	struct v92_phase4_modulator transmit;
+	struct v92_cpu_parameters cpu;
+};
+
+static bool prepare_digital_fixture(
+	enum g711_law law, bool extended, struct digital_fixture *fixture)
+{
+	struct v92_cpd_parameters full_cpd;
+	struct v92_cpd_base_parameters cpd;
+	struct pcm_downstream_tx downstream_tx;
+	struct pcm_downstream_rx downstream_rx;
+	struct v92_upstream_control_line_rx upstream_rx;
+	struct v92_phase4_digital_handoff handoff;
+
+	fixture->cpu = cpu_parameters(law);
+	if (v92_cpd_direct_init(
+		    &full_cpd, law, 12u, extended) != V92_CPD_OK)
+		return false;
+	cpd = (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = full_cpd.four_times_gain_q0_16,
+		.data_rate_number = full_cpd.data_rate_number,
+		.trellis = full_cpd.trellis,
+		.extend_e2u = full_cpd.extend_e2u,
+	};
+	if (!prepare_downstream(
+		    law, 3u, &cpd, &downstream_tx, &downstream_rx,
+		    false, false) ||
+	    !upstream_line(law, &fixture->transmit, &upstream_rx))
+		return false;
+	handoff = (struct v92_phase4_digital_handoff){
+		.receive = upstream_rx,
+		.transmit = downstream_tx,
+		.cpu = fixture->cpu,
+		.cpd = cpd,
+	};
+	return v92_phase4_e2u_init_digital(&fixture->owner, &handoff) ==
+		       V92_PHASE4_E2U_OK;
+}
+
+static bool test_fresh_analog_ed_arming(enum g711_law law)
+{
+	struct v92_cpd_parameters full_cpd;
+	struct v92_cpd_base_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct pcm_downstream_tx downstream_tx;
+	struct pcm_downstream_rx downstream_rx;
+	struct v92_phase4_modulator upstream_tx;
+	struct v92_upstream_control_line_rx unused_rx;
+	struct v92_phase4_analog_handoff handoff;
+	struct v92_phase4_e2u owner;
+
+	CHECK(v92_cpd_direct_init(
+		      &full_cpd, law, 12u, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &full_cpd) ==
+		      V92_PCM_MAPPING_OK,
+	      "law %u fresh-boundary mapping did not initialize",
+	      (unsigned int)law);
+	cpd = (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = full_cpd.four_times_gain_q0_16,
+		.data_rate_number = full_cpd.data_rate_number,
+		.trellis = full_cpd.trellis,
+		.extend_e2u = full_cpd.extend_e2u,
+	};
+	CHECK(prepare_downstream(
+		      law, 3u, &cpd, &downstream_tx, &downstream_rx,
+		      false, true) &&
+	      upstream_line(law, &upstream_tx, &unused_rx),
+	      "law %u fresh control boundary did not prepare",
+	      (unsigned int)law);
+	handoff = (struct v92_phase4_analog_handoff){
+		.transmit = upstream_tx,
+		.receive = downstream_rx,
+		.cpu = cpu_parameters(law),
+		.mapping = mapping,
+	};
+	CHECK(v92_phase4_analog_handoff_is_valid(&handoff) &&
+	      v92_phase4_e2u_init_analog(&owner, &handoff) ==
+		      V92_PHASE4_E2U_OK &&
+	      owner.state.analog.downstream.training.ed_requested &&
+	      owner.state.analog.downstream.training.stage ==
+		      PCM_DOWNSTREAM_RX_ED_SEARCH,
+	      "law %u fresh control boundary did not arm Ed",
+	      (unsigned int)law);
+	return true;
+}
+
+static bool start_suvu_record(
+	struct v92_phase4_record_tx *record,
+	const struct v92_phase4_modulator *transmit, bool first)
+{
+	const struct v92_suvu_parameters parameters = {
+		.prefilter_level_db_q2_2 = -7,
+		.wait_for_cpu = true,
+		.acknowledges_cpd = true,
+	};
+	uint8_t frame[V92_SUVU_FRAME_BYTES];
+	size_t frame_bits = 0u;
+
+	if (v92_suvu_encode(
+		    &parameters, transmit->constellation, frame, sizeof(frame),
+		    &frame_bits) != V92_SUVU_OK)
+		return false;
+	return first ?
+		v92_phase4_record_tx_init(
+			record, transmit, frame, sizeof(frame), frame_bits) ==
+				V92_PHASE4_RECORD_TX_OK :
+		v92_phase4_record_tx_start_next(
+			record, frame, sizeof(frame), frame_bits) ==
+				V92_PHASE4_RECORD_TX_OK;
+}
+
+static bool start_cpu_record(
+	struct v92_phase4_record_tx *record,
+	const struct v92_phase4_modulator *transmit,
+	const struct v92_cpu_parameters *parameters, bool first)
+{
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES] = { 0 };
+	size_t frame_bits = 0u;
+	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
+		transmit->constellation);
+
+	if (v92_cpu_encode(
+		    parameters, bits, frame, sizeof(frame), &frame_bits) !=
+	    V92_CPU_OK)
+		return false;
+	return first ?
+		v92_phase4_record_tx_init(
+			record, transmit, frame, sizeof(frame), frame_bits) ==
+				V92_PHASE4_RECORD_TX_OK :
+		v92_phase4_record_tx_start_next(
+			record, frame, sizeof(frame), frame_bits) ==
+				V92_PHASE4_RECORD_TX_OK;
+}
+
+static bool feed_control_record(
+	struct v92_phase4_e2u *owner,
+	struct v92_phase4_record_tx *record)
+{
+	while (!v92_phase4_record_tx_is_complete(record)) {
+		int16_t raw;
+		uint8_t octet;
+
+		if (v92_phase4_record_tx_next(record, &raw) !=
+			    V92_PHASE4_RECORD_TX_OK ||
+		    v92_phase4_e2u_next(
+			    owner, 0u,
+			    quantize(owner->state.digital.cpu.law, raw),
+			    &octet) !=
+			    V92_PHASE4_E2U_OK)
+			return false;
+	}
+	return !v92_phase4_e2u_is_complete(owner);
+}
+
+static bool run_rearmed_crossing(
+	enum g711_law law, bool extended, unsigned int extra_records)
+{
+	struct digital_fixture fixture;
+	struct v92_phase4_record_tx control;
+	struct v92_phase4_record_tx e2u;
+	struct v92_phase4_modulator modulator;
+	size_t symbols = extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS :
+				    V92_PHASE4_E2U_SYMBOLS;
+
+	CHECK(extra_records != 0u &&
+	      prepare_digital_fixture(law, extended, &fixture),
+	      "law %u extra %u digital fixture did not initialize",
+	      (unsigned int)law, extra_records);
+	for (unsigned int record_index = 0u;
+	     record_index < extra_records; ++record_index) {
+		bool cpu_record = extra_records > 1u && record_index == 1u;
+		bool started = cpu_record ?
+			start_cpu_record(
+				&control, &fixture.transmit, &fixture.cpu,
+				record_index == 0u) :
+			start_suvu_record(
+				&control, &fixture.transmit,
+				record_index == 0u);
+
+		CHECK(started && feed_control_record(&fixture.owner, &control),
+		      "law %u extra %u control record %u stopped",
+		      (unsigned int)law, extra_records, record_index);
+		CHECK(v92_phase4_record_tx_handoff(&control, &fixture.transmit) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "law %u extra %u control handoff stopped",
+		      (unsigned int)law, extra_records);
+	}
+	CHECK(v92_phase4_record_tx_handoff(&control, &modulator) ==
+		      V92_PHASE4_RECORD_TX_OK &&
+	      v92_phase4_record_tx_init_e2u(
+		      &e2u, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
+	      "law %u extra %u E2u did not initialize",
+	      (unsigned int)law, extra_records);
+	for (size_t symbol = 0u; symbol < symbols; ++symbol) {
+		int16_t raw;
+		uint8_t octet;
+		enum v92_phase4_e2u_result result;
+
+		CHECK(v92_phase4_record_tx_next(&e2u, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "law %u extra %u E2u generator stopped",
+		      (unsigned int)law, extra_records);
+		result = v92_phase4_e2u_next(
+			&fixture.owner, 0u, quantize(law, raw), &octet);
+		CHECK(result == (symbol + 1u == symbols ?
+				 V92_PHASE4_E2U_COMPLETE : V92_PHASE4_E2U_OK),
+		      "law %u extra %u E2u stopped at %zu: %s",
+		      (unsigned int)law, extra_records, symbol,
+		      v92_phase4_e2u_result_name(result));
+	}
+	return true;
+}
+
+static bool run_changed_cpu_rejection(enum g711_law law)
+{
+	struct digital_fixture fixture;
+	struct v92_phase4_record_tx record;
+	struct v92_cpu_parameters changed;
+	bool rejected = false;
+
+	CHECK(prepare_digital_fixture(law, false, &fixture),
+	      "law %u changed-CPu fixture did not initialize",
+	      (unsigned int)law);
+	changed = fixture.cpu;
+	changed.shaping_a1_q1_6++;
+	CHECK(start_cpu_record(
+		      &record, &fixture.transmit, &changed, true),
+	      "law %u changed CPu did not start", (unsigned int)law);
+	while (!v92_phase4_record_tx_is_complete(&record)) {
+		struct v92_phase4_e2u before = fixture.owner;
+		int16_t raw;
+		uint8_t octet = 0xa5;
+		enum v92_phase4_e2u_result result;
+
+		CHECK(v92_phase4_record_tx_next(&record, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "law %u changed CPu generator stopped",
+		      (unsigned int)law);
+		result = v92_phase4_e2u_next(
+			&fixture.owner, 0u, quantize(law, raw), &octet);
+		if (result == V92_PHASE4_E2U_FAILED) {
+			rejected = true;
+			CHECK(octet == 0xa5 && fixture.owner.failed &&
+			      memcmp(&fixture.owner.state, &before.state,
+			             sizeof(before.state)) == 0,
+			      "law %u changed CPu failure was not transactional",
+			      (unsigned int)law);
+			break;
+		}
+		CHECK(result == V92_PHASE4_E2U_OK,
+		      "law %u changed CPu stopped early: %s",
+		      (unsigned int)law, v92_phase4_e2u_result_name(result));
+	}
+	CHECK(rejected,
+	      "law %u changed CPu selection was accepted",
+	      (unsigned int)law);
+	return true;
+}
+
 static bool run_crossing(
 	enum g711_law law, bool extended, bool ed_complete)
 {
@@ -259,6 +524,7 @@ static bool run_crossing(
 	struct v92_phase4_e2u_handoff digital_done;
 	struct v92_phase4_e2u saved;
 	uint8_t lookahead = ed_complete ? 0u : 3u;
+	bool mid_control_record = extended && !ed_complete;
 	size_t symbols = extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS :
 				    V92_PHASE4_E2U_SYMBOLS;
 
@@ -277,13 +543,31 @@ static bool run_crossing(
 	};
 	CHECK(prepare_downstream(
 		      law, lookahead, &cpd,
-		      &downstream_tx, &downstream_rx, false) &&
+		      &downstream_tx, &downstream_rx, false, false) &&
 	      upstream_line(law, &upstream_tx, &upstream_rx),
 	      "law %u extended %u lookahead %u crossing did not prepare",
 	      (unsigned int)law, extended, lookahead);
+	if (mid_control_record) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+
+		CHECK(pcm_downstream_tx_next(&downstream_tx, &symbol) ==
+			      PCM_DOWNSTREAM_TX_OK &&
+		      pcm_downstream_rx_receive(
+			      &downstream_rx, symbol.pcm.octet, &event) ==
+			      PCM_DOWNSTREAM_RX_BUFFERING,
+		      "law %u mid-record handoff did not advance",
+		      (unsigned int)law);
+	}
+	if (ed_complete)
+		CHECK(prepare_downstream(
+			      law, lookahead, &cpd,
+			      &completed_tx, &completed_rx, true, false),
+		      "law %u completed Ed fixture did not prepare",
+		      (unsigned int)law);
 	analog_handoff = (struct v92_phase4_analog_handoff){
 		.transmit = upstream_tx,
-		.receive = downstream_rx,
+		.receive = ed_complete ? completed_rx : downstream_rx,
 		.cpu = cpu,
 		.mapping = upstream_mapping,
 	};
@@ -293,24 +577,30 @@ static bool run_crossing(
 		.cpu = cpu,
 		.cpd = cpd,
 	};
-	CHECK(v92_phase4_analog_handoff_is_valid(&analog_handoff) &&
-	      v92_phase4_digital_handoff_is_valid(&digital_handoff) &&
-	      v92_phase4_e2u_init_analog(&analog, &analog_handoff) ==
-		      V92_PHASE4_E2U_OK &&
-	      v92_phase4_e2u_init_digital(&digital, &digital_handoff) ==
-		      V92_PHASE4_E2U_OK &&
-	      v92_phase4_record_tx_init_e2u(
+	CHECK(v92_phase4_analog_handoff_is_valid(&analog_handoff),
+	      "law %u extended %u analogue handoff was invalid",
+	      (unsigned int)law, extended);
+	CHECK(v92_phase4_digital_handoff_is_valid(&digital_handoff),
+	      "law %u extended %u digital handoff was invalid",
+	      (unsigned int)law, extended);
+	CHECK(v92_phase4_e2u_init_analog(&analog, &analog_handoff) ==
+		      V92_PHASE4_E2U_OK,
+	      "law %u extended %u analogue owner did not initialize",
+	      (unsigned int)law, extended);
+	CHECK(v92_phase4_e2u_init_digital(&digital, &digital_handoff) ==
+		      V92_PHASE4_E2U_OK,
+	      "law %u extended %u digital owner did not initialize",
+	      (unsigned int)law, extended);
+	CHECK(v92_phase4_record_tx_init_e2u(
 		      &reference, &upstream_tx, extended) ==
 		      V92_PHASE4_RECORD_TX_OK,
-	      "law %u extended %u lookahead %u crossing did not initialize",
-	      (unsigned int)law, extended, lookahead);
-	if (ed_complete) {
-		CHECK(prepare_downstream(
-			      law, lookahead, &cpd,
-			      &completed_tx, &completed_rx, true),
-		      "law %u completed Ed fixture did not prepare",
+	      "law %u extended %u reference did not initialize",
+	      (unsigned int)law, extended);
+	if (mid_control_record)
+		CHECK(!analog.state.analog.downstream.training.ed_requested,
+		      "law %u mid-record control handoff armed Ed",
 		      (unsigned int)law);
-		analog.state.analog.downstream.training = completed_rx;
+	if (ed_complete) {
 		digital.state.digital.downstream.training = completed_tx;
 		CHECK(v92_phase4_e2u_is_valid(&analog) &&
 		      v92_phase4_e2u_is_valid(&digital),
@@ -413,10 +703,16 @@ static bool test_contracts(void)
 int main(void)
 {
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		if (!run_crossing((enum g711_law)law, false, false) ||
+		if (!test_fresh_analog_ed_arming((enum g711_law)law) ||
+		    !run_crossing((enum g711_law)law, false, false) ||
 		    !run_crossing((enum g711_law)law, true, false) ||
 		    !run_crossing((enum g711_law)law, false, true) ||
-		    !run_crossing((enum g711_law)law, true, true))
+		    !run_crossing((enum g711_law)law, true, true) ||
+		    !run_rearmed_crossing(
+			    (enum g711_law)law, false, 1u) ||
+		    !run_rearmed_crossing(
+			    (enum g711_law)law, true, 3u) ||
+		    !run_changed_cpu_rejection((enum g711_law)law))
 			return 1;
 	}
 	return test_contracts() ? 0 : 1;

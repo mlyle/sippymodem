@@ -86,6 +86,8 @@ static bool digital_state_is_valid(
 				&data_mapping);
 	}
 	return v92_e2u_rx_is_valid(&state->receive) &&
+	       v92_upstream_control_line_rx_is_valid(&state->control) &&
+	       !v92_upstream_control_line_rx_has_failed(&state->control) &&
 	       downstream_valid &&
 	       v92_cpd_base_parameters_are_valid(&state->cpd) &&
 	       state->receive.expected_symbols ==
@@ -142,6 +144,7 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_analog(
 	const struct v92_phase4_analog_handoff *handoff)
 {
 	struct v92_phase4_e2u initialized = { 0 };
+	enum pcm_downstream_rx_result ed_result;
 
 	if (owner == NULL || handoff == NULL ||
 	    memory_regions_overlap(owner, sizeof(*owner),
@@ -155,6 +158,19 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_analog(
 	initialized.state.analog.mapping = handoff->mapping;
 	initialized.state.analog.downstream_stage =
 		V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
+	if (!pcm_downstream_rx_is_complete(
+		    &initialized.state.analog.downstream.training)) {
+		ed_result = pcm_downstream_rx_expect_ed(
+			&initialized.state.analog.downstream.training);
+		/* A fresh handoff is the complete control boundary Ed needs. A
+		 * validated mid-record handoff is armed when that record finishes. */
+		if (ed_result != PCM_DOWNSTREAM_RX_OK &&
+		    (ed_result != PCM_DOWNSTREAM_RX_INVALID_STATE ||
+		     initialized.state.analog.downstream.training.stage !=
+			     PCM_DOWNSTREAM_RX_V92_CONTROL ||
+		     initialized.state.analog.downstream.training.ed_requested))
+			return V92_PHASE4_E2U_INVALID_PARAMETERS;
+	}
 	if (v92_phase4_record_tx_init_e2u(
 		    &initialized.state.analog.transmit, &handoff->transmit,
 		    handoff->mapping.cpd.extend_e2u) !=
@@ -178,6 +194,7 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 	if (!v92_phase4_digital_handoff_is_valid(handoff))
 		return V92_PHASE4_E2U_INVALID_PARAMETERS;
 	initialized.local_role = V90_DIGITAL_MODEM;
+	initialized.state.digital.control = handoff->receive;
 	initialized.state.digital.downstream.training = handoff->transmit;
 	initialized.state.digital.cpu = handoff->cpu;
 	initialized.state.digital.cpd = handoff->cpd;
@@ -358,6 +375,84 @@ static bool digital_transmit(
 	return true;
 }
 
+static bool retain_matching_cpu(
+	struct v92_cpu_parameters *retained,
+	const struct v92_cpu_parameters *parameters)
+{
+	struct v90_pcm_mapping retained_mapping;
+	struct v90_pcm_mapping candidate_mapping;
+
+	if (!v92_cpu_parameters_are_valid(parameters) ||
+	    retained->trn1d_ratio_q3_13 != parameters->trn1d_ratio_q3_13 ||
+	    (retained->acknowledges_cpd && !parameters->acknowledges_cpd) ||
+	    !downstream_mapping(retained, &retained_mapping) ||
+	    !downstream_mapping(parameters, &candidate_mapping) ||
+	    !v90_pcm_mapping_equal(&retained_mapping, &candidate_mapping))
+		return false;
+	retained->acknowledges_cpd |= parameters->acknowledges_cpd;
+	return true;
+}
+
+static bool control_event_rearms_trial(
+	struct v92_phase4_e2u_digital_state *state,
+	const struct v92_control_event *event)
+{
+	switch (event->type) {
+	case V92_CONTROL_EVENT_SUVU:
+		return event->record.suvu.frame_result == V92_SUVU_OK &&
+		       v92_suvu_parameters_are_valid(
+			       &event->record.suvu.parameters);
+	case V92_CONTROL_EVENT_CPU:
+		return event->record.cpu.frame_result == V92_CPU_OK &&
+		       retain_matching_cpu(
+			       &state->cpu, &event->record.cpu.parameters);
+	case V92_CONTROL_EVENT_SUVU_REJECTED:
+	case V92_CONTROL_EVENT_CPU_REJECTED:
+		return true;
+	case V92_CONTROL_EVENT_NONE:
+	case V92_CONTROL_EVENT_SUVD:
+	case V92_CONTROL_EVENT_CPD:
+	case V92_CONTROL_EVENT_SUVD_REJECTED:
+	case V92_CONTROL_EVENT_CPD_REJECTED:
+		return false;
+	}
+	return false;
+}
+
+static enum v92_phase4_e2u_result digital_receive(
+	struct v92_phase4_e2u_digital_state *state, int16_t sample)
+{
+	struct v92_upstream_control_line_rx control = state->control;
+	struct v92_control_event event = { 0 };
+	enum v92_upstream_control_line_rx_result control_result;
+	enum v92_e2u_rx_result trial_result = V92_E2U_RX_NO_MATCH;
+	bool trial_active = state->receive.received_symbols <
+		state->receive.expected_symbols;
+
+	control_result = v92_upstream_control_line_rx_sample(
+		&control, sample, &event);
+	if (trial_active) {
+		trial_result = v92_e2u_rx_sample(&state->receive, sample);
+		if (trial_result == V92_E2U_RX_COMPLETE)
+			return V92_PHASE4_E2U_COMPLETE;
+		if (trial_result != V92_E2U_RX_OK &&
+		    trial_result != V92_E2U_RX_NO_MATCH)
+			return V92_PHASE4_E2U_FAILED;
+	}
+	if (control_result != V92_UPSTREAM_CONTROL_LINE_RX_OK &&
+	    control_result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
+		return V92_PHASE4_E2U_FAILED;
+	state->control = control;
+	if (control_result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
+		return V92_PHASE4_E2U_OK;
+	if (!control_event_rearms_trial(state, &event) ||
+	    v92_e2u_rx_init(
+		    &state->receive, &state->control.signal,
+		    state->cpd.extend_e2u) != V92_E2U_RX_OK)
+		return V92_PHASE4_E2U_FAILED;
+	return V92_PHASE4_E2U_OK;
+}
+
 static enum v92_phase4_e2u_result fail(struct v92_phase4_e2u *owner)
 {
 	owner->failed = true;
@@ -393,14 +488,13 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 		generated = next.state.analog.cpu.law == G711_LAW_PCMA ?
 			g711_encode_pcma(sample) : g711_encode_pcmu(sample);
 	} else {
-		enum v92_e2u_rx_result receive_result;
+		enum v92_phase4_e2u_result receive_result;
 
 		if (!digital_transmit(&next.state.digital, &generated))
 			return fail(owner);
-		receive_result = v92_e2u_rx_sample(
-			&next.state.digital.receive, received_sample);
-		if (receive_result != V92_E2U_RX_OK &&
-		    receive_result != V92_E2U_RX_COMPLETE)
+		receive_result = digital_receive(
+			&next.state.digital, received_sample);
+		if (receive_result == V92_PHASE4_E2U_FAILED)
 			return fail(owner);
 	}
 	if (!v92_phase4_e2u_is_valid(&next))

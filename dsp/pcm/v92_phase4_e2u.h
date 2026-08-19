@@ -48,6 +48,7 @@ struct v92_phase4_e2u_analog_state {
 
 struct v92_phase4_e2u_digital_state {
 	struct v92_e2u_rx receive;
+	struct v92_upstream_control_line_rx control;
 	union v92_phase4_e2u_digital_downstream downstream;
 	struct v92_cpu_parameters cpu;
 	struct v92_cpd_base_parameters cpd;
