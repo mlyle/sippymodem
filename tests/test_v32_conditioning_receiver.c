@@ -823,6 +823,7 @@ static bool test_validation(void)
 		.lineage = 7,
 	};
 	struct v32_conditioning_receiver receiver;
+	struct v32_conditioning_receiver evolving;
 	struct v32_conditioning_receiver saved;
 	struct v32_conditioning_symbol_decision decision;
 	struct v32_conditioning_symbol_decision saved_decision;
@@ -881,12 +882,16 @@ static bool test_validation(void)
 	      "V.32 conditioning receiver accepted a skipped epoch");
 	next_observation.epoch = 2;
 	next_observation.lineage++;
+	evolving = receiver;
 	CHECK(v32_conditioning_receiver_observe(
-		      &receiver, &next_observation, &decision) ==
-		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
-	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
-	      "V.32 conditioning epoch rejection changed state or output");
+		      &evolving, &next_observation, &decision) ==
+		      V32_CONDITIONING_RECEIVER_OK &&
+	      evolving.observation_epoch == next_observation.epoch &&
+	      evolving.observation_lineage == next_observation.lineage &&
+	      memcmp(&decision.equalizer.observation, &next_observation,
+		     sizeof(next_observation)) == 0 &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "V.32 conditioning receiver rejected evolving lineage");
 	next_observation.lineage = valid_observation.lineage;
 	CHECK(v32_conditioning_receiver_observe(
 		      &receiver, &next_observation,

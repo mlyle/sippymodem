@@ -403,8 +403,7 @@ v32_conditioning_receiver_observe(
 	    !observation_is_valid(observation) ||
 	    (receiver->has_previous_quadrant &&
 	     (receiver->observation_epoch == UINT64_MAX ||
-	      observation->epoch != receiver->observation_epoch + 1u ||
-	      observation->lineage != receiver->observation_lineage)))
+	      observation->epoch != receiver->observation_epoch + 1u)))
 		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	if (v32_conditioning_receiver_is_complete(receiver))
 		return V32_CONDITIONING_RECEIVER_COMPLETE;

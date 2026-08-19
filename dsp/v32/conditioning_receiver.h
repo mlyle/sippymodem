@@ -82,8 +82,10 @@ bool v32_conditioning_receiver_is_complete(
  * the persistent equalizer removes any observed quarter-turn carrier offset.
  * Ready means local training is sufficient to begin seeking a rate signal;
  * the remote transmitter may continue TRN. OK consumes exactly one consecutive
- * observation and writes one decision. Rejected and complete calls leave the
- * receiver and output unchanged.
+ * observation and writes one decision. Observation lineage is retained and
+ * echoed, but may evolve after each equalizer commit; the equalizer validates
+ * that ownership when the decision is committed. Rejected and complete calls
+ * leave the receiver and output unchanged.
  */
 enum v32_conditioning_receiver_result
 v32_conditioning_receiver_observe(
