@@ -21,15 +21,29 @@ enum v32_constellation_result {
 	V32_CONSTELLATION_INVALID_ARGUMENT,
 };
 
+/* Integer signal-point domain used by the V.32 receiver and encoder. */
+struct v32_fixed_point {
+	int16_t i;
+	int16_t q;
+};
+
 /* Generate the normalized 4-by-4 V.32 signal-point geometry. */
 enum v32_constellation_result
 v32_constellation_point(
 	uint8_t symbol, struct qam_point *point);
 
+enum v32_constellation_result
+v32_constellation_fixed_point(
+	uint8_t symbol, struct v32_fixed_point *point);
+
 /* Return the four constant-energy points used at 4800 bit/s. */
 enum v32_constellation_result
 v32_4800_constellation_point(
 	uint8_t quadrant, struct qam_point *point);
+
+enum v32_constellation_result
+v32_4800_fixed_point(
+	uint8_t quadrant, struct v32_fixed_point *point);
 
 /* Generate the set-partitioned 16-point labeling used at 7200 bit/s. */
 enum v32_constellation_result
@@ -45,6 +59,13 @@ enum v32_constellation_result
 v32_trellis_constellation_point(
 	uint8_t data_bits_per_symbol, uint8_t signal_symbol,
 	struct qam_point *point);
+
+/* Generate the fixed TX/VTB signal-label point.  A receiver feedback-point
+ * index is a separate domain and must not be passed as a signal symbol. */
+enum v32_constellation_result
+v32_trellis_fixed_signal_point(
+	uint8_t data_bits_per_symbol, uint8_t signal_symbol,
+	struct v32_fixed_point *point);
 
 const char *v32_constellation_result_name(
 	enum v32_constellation_result result);
