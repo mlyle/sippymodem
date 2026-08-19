@@ -871,6 +871,7 @@ static bool run_paired_station_exchange(
 	struct v92_cpu_parameters expected_cpu;
 	struct v92_cpd_base_parameters retained_cpd;
 	struct v92_phase4_analog_handoff analog_handoff_out;
+	struct v92_phase4_analog_handoff ed_handoff;
 	struct v92_phase4_digital_handoff digital_handoff_out;
 	enum pcm_downstream_tx_result request_ed_result;
 	size_t cpu_repeat_wait = 0u;
@@ -1021,6 +1022,7 @@ static bool run_paired_station_exchange(
 	      cpu_equal(&retained_cpu, &expected_cpu) &&
 	      v92_phase4_digital_station_peer_acknowledged_cpd(&digital) &&
 	      v92_phase4_digital_station_is_ed_ready(&digital) &&
+	      analog.receive.ed_requested &&
 	      analog.suvd.request_silence == suvd.request_silence,
 	      "paired station exchange did not reach E2u law=%u constellation=%u "
 	      "ready=%u terminal=%u a=%u/%u/%u/%u/%u tx=%u/%u/%u/%u "
@@ -1067,6 +1069,36 @@ static bool run_paired_station_exchange(
 	      (unsigned int)law, (unsigned int)constellation,
 	      pcm_downstream_tx_result_name(request_ed_result),
 	      digital_handoff_out.transmit.stage);
+	for (size_t symbol = 0u;
+	     !pcm_downstream_tx_is_complete(&digital_handoff_out.transmit) &&
+		     symbol < DOWNSTREAM_LIMIT;
+	     ++symbol) {
+		struct pcm_downstream_symbol output;
+		enum pcm_downstream_tx_result transmit_result =
+			pcm_downstream_tx_next(
+				&digital_handoff_out.transmit, &output);
+		enum v92_phase4_analog_station_result receive_result;
+
+		if (transmit_result == PCM_DOWNSTREAM_TX_COMPLETE)
+			break;
+		CHECK(transmit_result == PCM_DOWNSTREAM_TX_OK,
+		      "paired Ed source stopped at %zu: %s", symbol,
+		      pcm_downstream_tx_result_name(transmit_result));
+		receive_result = v92_phase4_analog_station_receive(
+			&analog, output.pcm.octet);
+		CHECK(receive_result == V92_PHASE4_ANALOG_STATION_OK ||
+		      receive_result == V92_PHASE4_ANALOG_STATION_EVENT,
+		      "paired Ed receive stopped at %zu: %s", symbol,
+		      v92_phase4_analog_station_result_name(receive_result));
+	}
+	CHECK(pcm_downstream_tx_is_complete(&digital_handoff_out.transmit) &&
+	      pcm_downstream_rx_is_complete(&analog.receive) &&
+	      v92_phase4_analog_station_is_e2u_ready(&analog) &&
+	      v92_phase4_analog_station_handoff(&analog, &ed_handoff) ==
+		      V92_PHASE4_ANALOG_STATION_OK &&
+	      pcm_downstream_rx_is_complete(&ed_handoff.receive),
+	      "paired acknowledged control did not retain complete Ed law=%u constellation=%u",
+	      (unsigned int)law, (unsigned int)constellation);
 	return true;
 }
 

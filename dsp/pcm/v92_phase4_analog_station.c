@@ -255,6 +255,14 @@ static bool accept_cpd_event(
 	return note_cpd(station, parameters);
 }
 
+static bool arm_ed_if_acknowledged(
+	struct v92_phase4_analog_station *station, bool acknowledges_cpu)
+{
+	return !acknowledges_cpu ||
+	       pcm_downstream_rx_expect_ed(&station->receive) ==
+		       PCM_DOWNSTREAM_RX_OK;
+}
+
 enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 	struct v92_phase4_analog_station *station, uint8_t network_octet)
 {
@@ -278,7 +286,11 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		    event.control.record.suvd.frame_result != V92_SUVD_OK ||
 		    !note_suvd(
 			    station,
-			    &event.control.record.suvd.parameters))
+			    &event.control.record.suvd.parameters) ||
+		    !arm_ed_if_acknowledged(
+			    station,
+			    event.control.record.suvd.parameters
+				    .acknowledges_cpu))
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_CPD:
@@ -286,15 +298,20 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		    event.control.record.cpd.frame_result != V92_CPD_OK ||
 		    !accept_cpd_event(
 			    station,
-			    &event.control.record.cpd.parameters))
+			    &event.control.record.cpd.parameters) ||
+		    !arm_ed_if_acknowledged(
+			    station,
+			    event.control.record.cpd.parameters
+				    .acknowledges_cpu))
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
 	case PCM_DOWNSTREAM_RX_CPD_REJECTED:
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_ED:
-		if (v92_phase4_analog_tx_note_ed(&station->transmit) !=
-		    V92_PHASE4_ANALOG_TX_OK)
+		if (!v92_phase4_analog_tx_is_e2u_ready(&station->transmit) &&
+		    v92_phase4_analog_tx_note_ed(&station->transmit) !=
+			    V92_PHASE4_ANALOG_TX_OK)
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_OK:
