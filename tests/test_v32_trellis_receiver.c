@@ -76,18 +76,33 @@ static bool transmit_group(
 	struct v32_equalizer_observation *observation)
 {
 	struct v32_fixed_point point;
-	uint8_t scrambled;
+	uint8_t scrambled = 0;
 	uint8_t signal;
 	uint8_t bits = lane->encoder.data_bits_per_symbol;
 
-	CHECK(v32_scramble_group(
-		      &lane->transmitter_scrambler, input, bits,
-		      &scrambled) == V32_FRAMING_OK &&
+	if (bits == V32_14400_DATA_BITS) {
+		for (int shift = 3; shift >= 0; shift -= 3) {
+			uint8_t group;
+
+			CHECK(v32_scramble_group(
+				      &lane->transmitter_scrambler,
+				      (uint8_t)((input >> shift) & 7u), 3,
+				      &group) == V32_FRAMING_OK,
+			      "14400 transmitter rejected group %u", input);
+			scrambled |= (uint8_t)(group << shift);
+		}
+	} else {
+		CHECK(v32_scramble_group(
+			      &lane->transmitter_scrambler, input, bits,
+			      &scrambled) == V32_FRAMING_OK,
+		      "%u-bit transmitter rejected group %u", bits, input);
+	}
+	CHECK(
 	      v32_trellis_encode(&lane->encoder, scrambled, &signal) ==
 		      V32_TRELLIS_OK &&
 	      v32_trellis_fixed_signal_point(bits, signal, &point) ==
 		      V32_CONSTELLATION_OK,
-	      "%u-bit transmitter rejected group %u", bits, input);
+	      "%u-bit transmitter rejected mapped group %u", bits, input);
 	lane->epoch++;
 	*observation = (struct v32_equalizer_observation){
 		.i = point.i,

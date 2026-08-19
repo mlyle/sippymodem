@@ -91,12 +91,27 @@ static enum v32_trellis_receiver_result descramble(
 	struct v32_trellis_receiver *receiver, uint8_t scrambled,
 	uint8_t *plain)
 {
-	return v32_descramble_group(
-		       &receiver->descrambler, scrambled,
-		       receiver->decoder.data_bits_per_symbol, plain) ==
-		       V32_FRAMING_OK ?
-		       V32_TRELLIS_RECEIVER_OK :
-		       V32_TRELLIS_RECEIVER_INVALID_STATE;
+	uint8_t bits = receiver->decoder.data_bits_per_symbol;
+
+	if (bits != V32_14400_DATA_BITS)
+		return v32_descramble_group(
+			       &receiver->descrambler, scrambled, bits, plain) ==
+			       V32_FRAMING_OK ?
+			       V32_TRELLIS_RECEIVER_OK :
+			       V32_TRELLIS_RECEIVER_INVALID_STATE;
+	*plain = 0;
+	for (int shift = 3; shift >= 0; shift -= 3) {
+		uint8_t group;
+
+		if (v32_descramble_group(
+			    &receiver->descrambler,
+			    (uint8_t)((scrambled >> shift) & 7u), 3,
+			    &group) !=
+		    V32_FRAMING_OK)
+			return V32_TRELLIS_RECEIVER_INVALID_STATE;
+		*plain |= (uint8_t)(group << shift);
+	}
+	return V32_TRELLIS_RECEIVER_OK;
 }
 
 enum v32_trellis_receiver_result v32_trellis_receiver_track_b1(
