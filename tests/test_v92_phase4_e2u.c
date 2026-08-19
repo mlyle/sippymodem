@@ -1,0 +1,423 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <g711.h>
+#include <pcm_downstream_rx.h>
+#include <pcm_downstream_tx.h>
+#include <qam_equalizer.h>
+#include <v90_pcm_mapping.h>
+#include <v92_control_rx.h>
+#include <v92_cpd_direct.h>
+#include <v92_phase4_e2u.h>
+
+#include "test.h"
+
+#include <stdint.h>
+#include <string.h>
+
+enum {
+	TEST_LU = 6000,
+	DOWNSTREAM_PREPARE_LIMIT = 10000,
+};
+
+static void add_ucode(
+	struct pcm_constellation *constellation, uint8_t ucode)
+{
+	constellation->ucode_mask[ucode / 8u] |=
+		(uint8_t)(1u << (ucode % 8u));
+}
+
+static int16_t quantize(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMA ?
+		g711_decode_pcma(g711_encode_pcma(sample)) :
+		g711_decode_pcmu(g711_encode_pcmu(sample));
+}
+
+static struct v92_cpu_parameters cpu_parameters(enum g711_law law)
+{
+	struct v92_cpu_parameters cpu = {
+		.law = law,
+		.trn1d_ratio_q3_13 = UINT16_C(0x4200),
+		.shaping_a1_q1_6 = 7,
+		.shaping_a2_q1_6 = -5,
+		.shaping_b1_q1_6 = 3,
+		.shaping_b2_q1_6 = -2,
+		.data_rate_number = 1,
+		.sign_redundancy = 3,
+		.spectral_lookahead_frames = 2,
+		.constellation_count = 2,
+		.acknowledges_cpd = true,
+	};
+
+	for (size_t interval = 0u;
+	     interval < V92_CPU_FRAME_INTERVALS; ++interval)
+		cpu.frame_constellation[interval] = (uint8_t)(interval & 1u);
+	for (uint8_t ordinal = 0u; ordinal < 8u; ++ordinal) {
+		add_ucode(&cpu.transmit_constellations[0],
+			  (uint8_t)(16u + ordinal));
+		add_ucode(&cpu.transmit_constellations[1],
+			  (uint8_t)(64u + ordinal));
+	}
+	return cpu;
+}
+
+static bool training_mapping(
+	struct v90_pcm_mapping *mapping, enum g711_law law,
+	uint8_t lookahead)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_TRAINING,
+		.law = law,
+		.shaping_a1_q1_6 = 5,
+		.shaping_a2_q1_6 = -3,
+		.shaping_b1_q1_6 = 2,
+		.shaping_b2_q1_6 = -1,
+		.selected_rate_index = 4,
+		.sign_redundancy = lookahead == 0u ? 0u : 1u,
+		.spectral_lookahead = lookahead,
+		.constellation_count = 1,
+	};
+
+	for (uint8_t ordinal = 0u; ordinal < 4u; ++ordinal)
+		add_ucode(
+			&parameters.transmit_constellations[0],
+			(uint8_t)(24u + 12u * ordinal));
+	return v90_pcm_mapping_init(mapping, &parameters) ==
+	       V90_PCM_MAPPING_OK;
+}
+
+static bool prepare_downstream(
+	enum g711_law law, uint8_t lookahead,
+	const struct v92_cpd_base_parameters *cpd,
+	struct pcm_downstream_tx *transmit,
+	struct pcm_downstream_rx *receive, bool finish_ed)
+{
+	const struct v92_suvd_parameters initial_suvd = { 0 };
+	const struct v92_suvd_parameters acknowledged_suvd = {
+		.acknowledges_cpu = true,
+	};
+	struct v90_pcm_mapping mapping;
+	bool cpd_pending = false;
+	bool suvd_pending = false;
+	bool acknowledged = false;
+	bool ed_requested = false;
+
+	if (!training_mapping(&mapping, law, lookahead) ||
+	    pcm_downstream_tx_init(
+		    transmit, PCM_PROTOCOL_V92, &mapping) !=
+		    PCM_DOWNSTREAM_TX_OK ||
+	    pcm_downstream_tx_start_suvd(transmit, &initial_suvd) !=
+		    PCM_DOWNSTREAM_TX_OK ||
+	    pcm_downstream_rx_init(
+		    receive, PCM_PROTOCOL_V92, &mapping,
+		    V90_PCM_MAPPING_TRANSMIT) != PCM_DOWNSTREAM_RX_OK)
+		return false;
+	for (size_t sample = 0u; sample < DOWNSTREAM_PREPARE_LIMIT; ++sample) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		enum pcm_downstream_rx_result receive_result;
+
+		if (cpd_pending &&
+		    pcm_downstream_tx_is_v92_control_boundary(transmit)) {
+			if (pcm_downstream_tx_start_cpd(transmit, cpd) !=
+			    PCM_DOWNSTREAM_TX_OK)
+				return false;
+			cpd_pending = false;
+		}
+		if (suvd_pending &&
+		    pcm_downstream_tx_is_v92_control_boundary(transmit)) {
+			if (pcm_downstream_tx_start_suvd(
+				    transmit, &acknowledged_suvd) !=
+			    PCM_DOWNSTREAM_TX_OK)
+				return false;
+			suvd_pending = false;
+		}
+		if (!finish_ed && acknowledged &&
+		    pcm_downstream_tx_is_v92_control_boundary(transmit))
+			return true;
+		enum pcm_downstream_tx_result transmit_result =
+			pcm_downstream_tx_next(transmit, &symbol);
+
+		if (transmit_result == PCM_DOWNSTREAM_TX_COMPLETE)
+			return finish_ed && ed_requested &&
+			       pcm_downstream_rx_is_complete(receive);
+		if (transmit_result != PCM_DOWNSTREAM_TX_OK)
+			return false;
+		receive_result = pcm_downstream_rx_receive(
+			receive, symbol.pcm.octet, &event);
+		if (receive_result != PCM_DOWNSTREAM_RX_BUFFERING &&
+		    receive_result != PCM_DOWNSTREAM_RX_TRN2D_FRAME &&
+		    receive_result != PCM_DOWNSTREAM_RX_SUVD &&
+		    receive_result != PCM_DOWNSTREAM_RX_CPD &&
+		    receive_result != PCM_DOWNSTREAM_RX_ED)
+			return false;
+		if (receive_result == PCM_DOWNSTREAM_RX_CPD) {
+			if (event.control.type != V92_CONTROL_EVENT_CPD ||
+			    event.control.record.cpd.frame_result != V92_CPD_OK)
+				return false;
+			suvd_pending = true;
+		} else if (receive_result == PCM_DOWNSTREAM_RX_SUVD) {
+			if (event.control.type != V92_CONTROL_EVENT_SUVD ||
+			    event.control.record.suvd.frame_result != V92_SUVD_OK)
+				return false;
+			if (event.control.record.suvd.parameters.acknowledges_cpu)
+				acknowledged = true;
+			else if (!cpd_pending && !suvd_pending)
+				cpd_pending = true;
+		}
+		if (finish_ed && acknowledged && !ed_requested) {
+			if (pcm_downstream_rx_expect_ed(receive) !=
+				    PCM_DOWNSTREAM_RX_OK ||
+			    pcm_downstream_tx_request_ed(transmit) !=
+				    PCM_DOWNSTREAM_TX_OK)
+				return false;
+			ed_requested = true;
+		}
+	}
+	return false;
+}
+
+static bool upstream_line(
+	enum g711_law law, struct v92_phase4_modulator *transmit,
+	struct v92_upstream_control_line_rx *receive)
+{
+	struct qam_point reference = { .in_phase = TEST_LU };
+	struct qam_point output;
+	struct v92_pcm_phase4_trn2u_line_handoff handoff = {
+		.input_samples = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
+		.training_symbols = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
+		.law = law,
+		.polarity = 1,
+	};
+	int16_t target;
+	bool ready = false;
+
+	if (v92_phase4_modulator_init(
+		    transmit, V92_CONSTELLATION_4_POINT, 0u, TEST_LU) !=
+		    V92_PHASE4_MODULATOR_OK ||
+	    v92_phase4_demodulator_init(
+		    &handoff.demodulator, V92_CONSTELLATION_4_POINT,
+		    0u, TEST_LU) != V92_PHASE4_MODULATOR_OK ||
+	    qam_equalizer_init_geometry(
+		    &handoff.equalizer, &reference, &reference,
+		    V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS,
+		    V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) !=
+		    QAM_EQUALIZER_OK)
+		return false;
+	/* Keep the required causal geometry while modelling an identity line. */
+	handoff.equalizer.coefficients[
+		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY] =
+		(struct qam_point){ 0 };
+	handoff.equalizer.coefficients[0] = (struct qam_point){
+		.in_phase = 1.0,
+	};
+	for (size_t index = 0u;
+	     index <= V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
+		if (qam_equalizer_push(
+			    &handoff.equalizer, &reference,
+			    &output, &ready) != QAM_EQUALIZER_OK)
+			return false;
+	}
+	if (!ready || qam_equalizer_adapt(
+			      &handoff.equalizer, &output, 0.0) !=
+			      QAM_EQUALIZER_OK ||
+	    v92_phase4_modulator_level(
+		    V92_CONSTELLATION_4_POINT, TEST_LU, 0u, 0u,
+		    &target) != V92_PHASE4_MODULATOR_OK)
+		return false;
+	target = quantize(law, target);
+	for (size_t index = 0u;
+	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index)
+		handoff.pending_training_targets[index] = target;
+	if (!v92_pcm_phase4_trn2u_line_handoff_is_valid(&handoff) ||
+	    v92_upstream_control_line_rx_init(receive, &handoff) !=
+		    V92_UPSTREAM_CONTROL_LINE_RX_OK)
+		return false;
+	receive->signal.training_tail_remaining = 0u;
+	return v92_upstream_control_line_rx_is_valid(receive);
+}
+
+static bool run_crossing(
+	enum g711_law law, bool extended, bool ed_complete)
+{
+	struct v92_cpd_parameters full_cpd;
+	struct v92_cpd_base_parameters cpd;
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_pcm_mapping upstream_mapping;
+	struct pcm_downstream_tx downstream_tx;
+	struct pcm_downstream_rx downstream_rx;
+	struct pcm_downstream_tx completed_tx;
+	struct pcm_downstream_rx completed_rx;
+	struct v92_phase4_modulator upstream_tx;
+	struct v92_upstream_control_line_rx upstream_rx;
+	struct v92_phase4_analog_handoff analog_handoff;
+	struct v92_phase4_digital_handoff digital_handoff;
+	struct v92_phase4_record_tx reference;
+	struct v92_phase4_e2u analog;
+	struct v92_phase4_e2u digital;
+	struct v92_phase4_e2u_handoff analog_done;
+	struct v92_phase4_e2u_handoff digital_done;
+	struct v92_phase4_e2u saved;
+	uint8_t lookahead = ed_complete ? 0u : 3u;
+	size_t symbols = extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS :
+				    V92_PHASE4_E2U_SYMBOLS;
+
+	CHECK(v92_cpd_direct_init(
+		      &full_cpd, law, 12u, extended) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(
+		      &upstream_mapping, law, &full_cpd) ==
+		      V92_PCM_MAPPING_OK,
+	      "law %u extended %u CPd mapping did not initialize",
+	      (unsigned int)law, extended);
+	cpd = (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = full_cpd.four_times_gain_q0_16,
+		.data_rate_number = full_cpd.data_rate_number,
+		.trellis = full_cpd.trellis,
+		.extend_e2u = full_cpd.extend_e2u,
+	};
+	CHECK(prepare_downstream(
+		      law, lookahead, &cpd,
+		      &downstream_tx, &downstream_rx, false) &&
+	      upstream_line(law, &upstream_tx, &upstream_rx),
+	      "law %u extended %u lookahead %u crossing did not prepare",
+	      (unsigned int)law, extended, lookahead);
+	analog_handoff = (struct v92_phase4_analog_handoff){
+		.transmit = upstream_tx,
+		.receive = downstream_rx,
+		.cpu = cpu,
+		.mapping = upstream_mapping,
+	};
+	digital_handoff = (struct v92_phase4_digital_handoff){
+		.receive = upstream_rx,
+		.transmit = downstream_tx,
+		.cpu = cpu,
+		.cpd = cpd,
+	};
+	CHECK(v92_phase4_analog_handoff_is_valid(&analog_handoff) &&
+	      v92_phase4_digital_handoff_is_valid(&digital_handoff) &&
+	      v92_phase4_e2u_init_analog(&analog, &analog_handoff) ==
+		      V92_PHASE4_E2U_OK &&
+	      v92_phase4_e2u_init_digital(&digital, &digital_handoff) ==
+		      V92_PHASE4_E2U_OK &&
+	      v92_phase4_record_tx_init_e2u(
+		      &reference, &upstream_tx, extended) ==
+		      V92_PHASE4_RECORD_TX_OK,
+	      "law %u extended %u lookahead %u crossing did not initialize",
+	      (unsigned int)law, extended, lookahead);
+	if (ed_complete) {
+		CHECK(prepare_downstream(
+			      law, lookahead, &cpd,
+			      &completed_tx, &completed_rx, true),
+		      "law %u completed Ed fixture did not prepare",
+		      (unsigned int)law);
+		analog.state.analog.downstream.training = completed_rx;
+		digital.state.digital.downstream.training = completed_tx;
+		CHECK(v92_phase4_e2u_is_valid(&analog) &&
+		      v92_phase4_e2u_is_valid(&digital),
+		      "law %u completed Ed invalidated owners",
+		      (unsigned int)law);
+	}
+	saved = analog;
+	CHECK(v92_phase4_e2u_next(
+		      &analog, 0u, 0, (uint8_t *)&analog) ==
+		      V92_PHASE4_E2U_INVALID_ARGUMENT &&
+	      memcmp(&analog, &saved, sizeof(analog)) == 0,
+	      "law %u overlapping output changed the owner",
+	      (unsigned int)law);
+	for (size_t index = 0u; index < symbols; ++index) {
+		int16_t raw;
+		uint8_t downstream_octet = 0xa5;
+		uint8_t upstream_octet = 0xa5;
+		enum v92_phase4_e2u_result digital_result;
+		enum v92_phase4_e2u_result analog_result;
+
+		CHECK(v92_phase4_record_tx_next(&reference, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "reference E2u stopped at %zu", index);
+		digital_result = v92_phase4_e2u_next(
+			&digital, 0u, quantize(law, raw), &downstream_octet);
+		analog_result = v92_phase4_e2u_next(
+			&analog, downstream_octet, 0, &upstream_octet);
+		CHECK(digital_result ==
+			      (index + 1u == symbols ?
+				       V92_PHASE4_E2U_COMPLETE :
+				       V92_PHASE4_E2U_OK) &&
+		      analog_result == digital_result &&
+		      upstream_octet ==
+			      (law == G711_LAW_PCMA ?
+				       g711_encode_pcma(raw) :
+				       g711_encode_pcmu(raw)),
+		      "law %u extended %u lookahead %u crossing stopped at %zu: %s/%s",
+		      (unsigned int)law, extended, lookahead, index,
+		      v92_phase4_e2u_result_name(analog_result),
+		      v92_phase4_e2u_result_name(digital_result));
+	}
+	CHECK(v92_phase4_e2u_is_complete(&analog) &&
+	      v92_phase4_e2u_is_complete(&digital) &&
+	      v92_phase4_e2u_handoff(&analog, &analog_done) ==
+		      V92_PHASE4_E2U_OK &&
+	      v92_phase4_e2u_handoff(&digital, &digital_done) ==
+		      V92_PHASE4_E2U_OK &&
+	      v92_phase4_e2u_handoff_is_valid(&analog_done) &&
+	      v92_phase4_e2u_handoff_is_valid(&digital_done),
+	      "law %u extended %u lookahead %u handoff did not match",
+	      (unsigned int)law, extended, lookahead);
+	if (ed_complete) {
+		CHECK(digital_done.state.digital.downstream_stage ==
+			      V92_PHASE4_E2U_DOWNSTREAM_DATA &&
+		      digital_done.state.digital.downstream.data
+			      .transmitted_symbols == symbols,
+		      "early Ed stages %u/%u preserved %zu B1d intervals",
+		      (unsigned int)analog_done.state.analog.downstream_stage,
+		      (unsigned int)digital_done.state.digital.downstream_stage,
+		      digital_done.state.digital.downstream.data
+			      .transmitted_symbols);
+	} else {
+		CHECK(analog_done.state.analog.downstream_stage ==
+			      V92_PHASE4_E2U_DOWNSTREAM_TRAINING,
+		      "delayed Ed did not remain in progress");
+	}
+	return true;
+}
+
+static bool test_contracts(void)
+{
+	struct v92_phase4_e2u owner;
+	struct v92_phase4_e2u saved_owner;
+	struct v92_phase4_e2u_handoff handoff;
+	struct v92_phase4_e2u_handoff saved_handoff;
+	uint8_t output = 0xa5;
+
+	memset(&owner, 0xa5, sizeof(owner));
+	saved_owner = owner;
+	memset(&handoff, 0x5a, sizeof(handoff));
+	saved_handoff = handoff;
+	CHECK(v92_phase4_e2u_init_analog(NULL, NULL) ==
+		      V92_PHASE4_E2U_INVALID_ARGUMENT &&
+	      v92_phase4_e2u_init_digital(NULL, NULL) ==
+		      V92_PHASE4_E2U_INVALID_ARGUMENT &&
+	      v92_phase4_e2u_next(NULL, 0u, 0, &output) ==
+		      V92_PHASE4_E2U_INVALID_ARGUMENT &&
+	      v92_phase4_e2u_next(&owner, 0u, 0, &output) ==
+		      V92_PHASE4_E2U_INVALID_STATE &&
+	      v92_phase4_e2u_handoff(&owner, &handoff) ==
+		      V92_PHASE4_E2U_INVALID_STATE &&
+	      memcmp(&owner, &saved_owner, sizeof(owner)) == 0 &&
+	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0 &&
+	      output == 0xa5 && !v92_phase4_e2u_is_valid(NULL) &&
+	      !v92_phase4_e2u_handoff_is_valid(NULL),
+	      "rejected owner calls changed state or output");
+	return true;
+}
+
+int main(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		if (!run_crossing((enum g711_law)law, false, false) ||
+		    !run_crossing((enum g711_law)law, true, false) ||
+		    !run_crossing((enum g711_law)law, false, true) ||
+		    !run_crossing((enum g711_law)law, true, true))
+			return 1;
+	}
+	return test_contracts() ? 0 : 1;
+}
