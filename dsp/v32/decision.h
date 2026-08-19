@@ -38,4 +38,16 @@ enum v32_decision_result v32_decide_uncoded_16(
 	const struct v32_equalizer_observation *observation,
 	bool adapt_on_error, struct v32_uncoded_decision *decision);
 
+/* The feedback point is the ideal point selected for equalizer adaptation.
+ * It is neither a TX/VTB signal label nor a Viterbi-decoded symbol. */
+struct v32_tcm_decision {
+	uint8_t feedback_point;
+	struct v32_equalizer_decision equalizer;
+};
+
+enum v32_decision_result v32_decide_tcm(
+	const struct v32_equalizer_observation *observation,
+	uint8_t data_bits_per_symbol, bool adapt_on_error,
+	struct v32_tcm_decision *decision);
+
 #endif
