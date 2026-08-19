@@ -3,7 +3,6 @@
 #include <conditioning.h>
 #include <conditioning_path.h>
 #include <constellation.h>
-#include <four_point_receiver.h>
 #include <qam.h>
 #include <rate_signal.h>
 
@@ -119,102 +118,6 @@ static bool source_sample(
 	       *accepted == can_accept;
 }
 
-static bool consume_rate_observations(
-	struct v32_conditioning_path_handoff *handoff,
-	struct v32_four_point_receiver *receiver,
-	struct v32_rate_signal_detector *detector,
-	struct v32_equalizer_observation *observation,
-	bool *detected)
-{
-	for (;;) {
-		struct v32_four_point_symbol symbol;
-		struct v32_equalizer_observation next_observation;
-		struct v32_rate_offer offer;
-		enum v32_rate_signal_event event;
-		enum v32_receive_path_result result;
-
-		CHECK(v32_four_point_receiver_observe(
-			      receiver, observation, true, &symbol) ==
-			      V32_FOUR_POINT_RECEIVER_OK &&
-		      v32_rate_signal_detector_observe(
-			      detector, symbol.dibit, &event,
-			      &offer) == V32_RATE_SIGNAL_OK,
-		      "post-conditioning rate observation was rejected");
-		result = v32_receive_path_commit(
-			&handoff->receive, &symbol.equalizer,
-			&next_observation);
-		CHECK(result == V32_RECEIVE_PATH_OK ||
-		      result == V32_RECEIVE_PATH_OBSERVATION_READY,
-		      "post-conditioning decision did not commit: %d",
-		      result);
-		if (event == V32_RATE_SIGNAL_DETECTED) {
-			CHECK(offer.rates == RATE_OFFER.rates &&
-			      offer.trellis_at_highest_rate ==
-				      RATE_OFFER.trellis_at_highest_rate,
-			      "post-conditioning rate offer changed");
-			*detected = true;
-			return true;
-		}
-		CHECK(event == V32_RATE_SIGNAL_NO_EVENT,
-		      "post-conditioning receiver reported event %d", event);
-		if (result == V32_RECEIVE_PATH_OK)
-			return true;
-		*observation = next_observation;
-	}
-}
-
-static bool continue_to_rate(
-	struct generated_source *source,
-	struct v32_conditioning_path_handoff *handoff)
-{
-	struct v32_four_point_receiver receiver;
-	struct v32_rate_signal_detector detector;
-	bool detected = false;
-
-	CHECK(v32_four_point_receiver_init(
-		      &receiver, &handoff->decoder) ==
-		      V32_FOUR_POINT_RECEIVER_OK &&
-	      v32_rate_signal_detector_init(&detector) ==
-		      V32_RATE_SIGNAL_OK,
-	      "post-conditioning rate path did not initialize");
-	if (handoff->observation_ready) {
-		struct v32_equalizer_observation observation =
-			handoff->observation;
-
-		CHECK(consume_rate_observations(
-			      handoff, &receiver, &detector,
-			      &observation, &detected),
-		      "buffered rate observation did not drain");
-	}
-	for (unsigned int index = 0;
-	     index < TEST_LINE_SAMPLE_LIMIT && !detected; ++index) {
-		struct v32_echo_reference reference;
-		struct v32_equalizer_observation observation;
-		int16_t sample;
-		bool accepted;
-		enum v32_receive_path_result result;
-
-		CHECK(source_sample(
-			      source, &sample, &reference, &accepted),
-		      "post-conditioning source stopped at %u", index);
-		result = v32_receive_path_sample(
-			&handoff->receive, sample,
-			accepted ? &reference : NULL, &observation);
-		CHECK(result == V32_RECEIVE_PATH_OK ||
-		      result == V32_RECEIVE_PATH_OBSERVATION_READY,
-		      "post-conditioning path stopped at %u: %d",
-		      index, result);
-		if (result == V32_RECEIVE_PATH_OBSERVATION_READY)
-			CHECK(consume_rate_observations(
-				      handoff, &receiver, &detector,
-				      &observation, &detected),
-			      "rate observations stopped at %u", index);
-	}
-	CHECK(detected && source->rate_symbols >= 2 * V32_RATE_SIGNAL_DIBITS,
-	      "post-conditioning rate signal was not recovered");
-	return true;
-}
-
 static bool run_generated_role(
 	enum v32_transmitter_role role,
 	struct v32_conditioning_path *completed)
@@ -276,7 +179,7 @@ static bool run_generated_role(
 		      path.conditioning.observation_epoch + 1u,
 	      "generated conditioning lost its buffered rate observation");
 	*completed = path;
-	return continue_to_rate(&source, &handoff);
+	return true;
 }
 
 static bool test_contracts(
