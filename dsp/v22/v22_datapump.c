@@ -1175,15 +1175,41 @@ static int start_retrain_signal(struct v22_datapump *datapump)
 	return 0;
 }
 
+static int reset_v22bis_retrain_receiver(struct v22_datapump *datapump)
+{
+	struct qam_demodulator demodulator;
+	struct v22_symbol_decoder decoder;
+
+	if (datapump == NULL || !datapump_uses_v22bis(datapump))
+		return -1;
+	demodulator = datapump->demodulator;
+	if (qam_demodulator_reset(&demodulator) != QAM_OK ||
+	    v22_symbol_decoder_init(&decoder, 0) != V22_FRAMING_OK)
+		return -1;
+	datapump->demodulator = demodulator;
+	datapump->decoder = decoder;
+	datapump->previous_receive_point = (struct qam_point){ 0 };
+	datapump->has_previous_receive_point = false;
+	datapump->v22bis_receiver_initialized = false;
+	datapump->receiving_v22bis = false;
+	return 0;
+}
+
 static int begin_retrain(
 	struct v22_datapump *datapump, uint8_t receive_quadrant,
 	bool peer_signal_received)
 {
 	if (datapump == NULL || datapump->training_state != V22_TRAINING_ONLINE ||
-	    receive_quadrant >= QPSK_QUADRANT_COUNT ||
-	    v22_symbol_decoder_init(
-		    &datapump->decoder, receive_quadrant) != V22_FRAMING_OK)
+	    receive_quadrant >= QPSK_QUADRANT_COUNT)
 		return -1;
+	if (datapump_uses_v22bis(datapump) && peer_signal_received) {
+		if (reset_v22bis_retrain_receiver(datapump) != 0)
+			return -1;
+	} else if (v22_symbol_decoder_init(
+			   &datapump->decoder, receive_quadrant) !=
+		   V22_FRAMING_OK) {
+		return -1;
+	}
 	datapump->training_samples = 0;
 	datapump->phase_samples = 0;
 	datapump->scrambled_mark_bits = 0;
@@ -1236,9 +1262,17 @@ static int note_peer_retrain_signal(
 	if (!datapump->retraining ||
 	    datapump->retrain_peer_signal_received ||
 	    receive_quadrant >= QPSK_QUADRANT_COUNT ||
-	    v22_symbol_decoder_init(
-		    &datapump->decoder, receive_quadrant) != V22_FRAMING_OK)
+	    (datapump->training_state != V22_TRAINING_RETRAIN_WAIT_PEER &&
+	     datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL))
 		return -1;
+	if (datapump_uses_v22bis(datapump)) {
+		if (reset_v22bis_retrain_receiver(datapump) != 0)
+			return -1;
+	} else if (v22_symbol_decoder_init(
+			   &datapump->decoder, receive_quadrant) !=
+		   V22_FRAMING_OK) {
+		return -1;
+	}
 	datapump->retrain_peer_signal_received = true;
 	datapump->retrain_peer_samples = 0;
 	datapump->retrain_retry_samples = 0;
@@ -1248,8 +1282,6 @@ static int note_peer_retrain_signal(
 	discard_retrain_candidate(datapump);
 	if (datapump->training_state == V22_TRAINING_RETRAIN_WAIT_PEER)
 		datapump->training_state = V22_TRAINING_RETRAIN_MARK;
-	else if (datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL)
-		return -1;
 	return 0;
 }
 
@@ -1258,10 +1290,16 @@ static int repeat_peer_retrain_signal(
 {
 	if (!datapump->retraining ||
 	    !datapump->retrain_peer_signal_received ||
-	    receive_quadrant >= QPSK_QUADRANT_COUNT ||
-	    v22_symbol_decoder_init(
-		    &datapump->decoder, receive_quadrant) != V22_FRAMING_OK)
+	    receive_quadrant >= QPSK_QUADRANT_COUNT)
 		return -1;
+	if (datapump_uses_v22bis(datapump)) {
+		if (reset_v22bis_retrain_receiver(datapump) != 0)
+			return -1;
+	} else if (v22_symbol_decoder_init(
+			   &datapump->decoder, receive_quadrant) !=
+		   V22_FRAMING_OK) {
+		return -1;
+	}
 	datapump->phase_samples = 0;
 	datapump->scrambled_mark_bits = 0;
 	datapump->v22bis_confirm_bits = 0;
@@ -1386,9 +1424,13 @@ static int receive_sample(
 			datapump->retrain_peer_signal_received;
 		bool ended;
 
+		if (!datapump->has_previous_receive_point)
+			goto remember_point;
 		if (detect_peer_retrain(
 			    datapump, &point, decode_current, &ended) != 0)
 			return -1;
+		if (!datapump->has_previous_receive_point)
+			return 0;
 		if (ended || !decode_current)
 			goto remember_point;
 		if (datapump_uses_v22bis(datapump) &&
@@ -1419,6 +1461,8 @@ static int receive_sample(
 		if (detect_online_retrain(
 			    datapump, &point, &retrain_started) != 0)
 			return -1;
+		if (retrain_started && !datapump->has_previous_receive_point)
+			return 0;
 		if (retrain_started)
 			goto remember_point;
 		if (datapump_uses_v22bis(datapump)) {
