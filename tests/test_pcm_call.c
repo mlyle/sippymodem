@@ -3,6 +3,7 @@
 #include <pcm_call.h>
 
 #include <g711.h>
+#include <v92_cpd_direct.h>
 
 #include "test.h"
 
@@ -301,13 +302,17 @@ static struct v92_cpu_parameters v92_cpu_parameters(enum g711_law law)
 	return parameters;
 }
 
-static struct v92_cpd_base_parameters v92_cpd_parameters(void)
+static struct v92_cpd_base_parameters v92_cpd_parameters(enum g711_law law)
 {
+	struct v92_cpd_parameters full;
+
+	if (v92_cpd_direct_init(&full, law, 14u, true) != V92_CPD_OK)
+		return (struct v92_cpd_base_parameters){ 0 };
 	return (struct v92_cpd_base_parameters){
-		.four_times_gain_q0_16 = UINT16_C(0x4321),
-		.data_rate_number = 14u,
-		.trellis = V92_CPD_TRELLIS_64_STATE,
-		.extend_e2u = true,
+		.four_times_gain_q0_16 = full.four_times_gain_q0_16,
+		.data_rate_number = full.data_rate_number,
+		.trellis = full.trellis,
+		.extend_e2u = full.extend_e2u,
 	};
 }
 
@@ -374,7 +379,7 @@ static struct pcm_call_configuration v92_configuration(
 				.request_silence = law == G711_LAW_PCMA,
 			};
 		configuration.v92_digital_phase4.cpd =
-			v92_cpd_parameters();
+			v92_cpd_parameters(law);
 	}
 	return configuration;
 }
@@ -1291,14 +1296,14 @@ static bool run_v92_phase4_control(
 	      digital.state.phase4.v92_digital.cpu.data_rate_number ==
 		      analog_configuration.v92_analog_phase4.cpu
 			      .data_rate_number &&
-	      digital.state.phase4.v92_digital.cpu.acknowledges_cpd &&
+	      /* Either SUVu or CPu may carry the peer's CPd acknowledgment. */
 	      digital.state.phase4.v92_digital.peer_acknowledged_cpd &&
 	      v90_pcm_mapping_equal(
 		      &analog.state.phase4.v92_analog.station.receive.stream.decoder.mapping,
 		      &digital.state.phase4.v92_digital.transmit.encoder.mapping),
 	      "law %u delay %zu V.92 handoff failed: "
 	      "handoff=%u/%u phase=%u/%u stage=%u/%u ready=%u/%u "
-	      "cpu=%zu/%zu records=%llu timer=%u/%u rtd=%u",
+	      "cpu=%zu/%zu records=%llu/%llu timer=%u/%u rtd=%u",
 	      (unsigned int)law, delay,
 	      analog_handoff_reached, digital_handoff_reached,
 	      analog_entered_phase4, digital_entered_phase4,
@@ -1310,6 +1315,8 @@ static bool run_v92_phase4_control(
 	      first_cpu_sent, first_cpu_received,
 	      (unsigned long long)analog.state.phase4.v92_analog
 		      .observed_cpu_records,
+	      (unsigned long long)analog.state.phase4.v92_analog.station
+		      .transmit.completed_cpu_records,
 	      analog.state.phase4.v92_analog.cpu_repeat_interval_samples,
 	      analog.state.phase4.v92_analog.cpu_repeat_remaining_samples,
 	      analog.round_trip_delay_samples);

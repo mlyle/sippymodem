@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <pcm_downstream_rx.h>
+#include <v34_framing.h>
+#include <v90_pcm_frame_encoder.h>
+#include <v92_cpd_direct.h>
 #include <v92_phase4_analog_station.h>
 #include <v92_phase4_cpu_tx.h>
 #include <v92_phase4_digital_station.h>
@@ -67,14 +70,130 @@ static struct v92_cpu_parameters cpu_parameters(enum g711_law law)
 	return parameters;
 }
 
-static struct v92_cpd_base_parameters cpd_parameters(void)
+static bool full_cpd_parameters(
+	enum g711_law law, struct v92_cpd_parameters *parameters)
 {
+	return parameters != NULL &&
+	       v92_cpd_direct_init(parameters, law, 12u, true) == V92_CPD_OK;
+}
+
+static struct v92_cpd_base_parameters cpd_parameters(enum g711_law law)
+{
+	struct v92_cpd_parameters full;
+
+	if (!full_cpd_parameters(law, &full))
+		return (struct v92_cpd_base_parameters){ 0 };
 	return (struct v92_cpd_base_parameters){
-		.four_times_gain_q0_16 = UINT16_C(0x4321),
-		.data_rate_number = 12u,
-		.trellis = V92_CPD_TRELLIS_64_STATE,
-		.extend_e2u = true,
+		.four_times_gain_q0_16 = full.four_times_gain_q0_16,
+		.data_rate_number = full.data_rate_number,
+		.trellis = full.trellis,
+		.extend_e2u = full.extend_e2u,
 	};
+}
+
+struct full_cpd_source {
+	struct v90_pcm_frame_encoder encoder;
+	struct v34_scrambler scrambler;
+};
+
+static uint8_t sequence_bit(const uint8_t *sequence, size_t bit)
+{
+	return (uint8_t)((sequence[bit / 8u] >> (7u - bit % 8u)) & 1u);
+}
+
+static bool full_cpd_source_init(
+	struct full_cpd_source *source,
+	const struct v90_pcm_mapping *mapping)
+{
+	struct full_cpd_source initialized = { 0 };
+
+	if (source == NULL || mapping == NULL ||
+	    v90_pcm_frame_encoder_init(&initialized.encoder, mapping) !=
+		    V90_PCM_FRAME_ENCODER_OK ||
+	    v34_scrambler_init(
+		    &initialized.scrambler, V34_POLYNOMIAL_GPC) !=
+		    V34_FRAMING_OK)
+		return false;
+	*source = initialized;
+	return true;
+}
+
+static enum v92_phase4_analog_station_result push_full_cpd_frame(
+	struct full_cpd_source *source,
+	struct v92_phase4_analog_station *station, const uint8_t *bits,
+	size_t *events)
+{
+	struct v90_pcm_frame_output output;
+	uint8_t scrambled[V90_PCM_FRAME_MAX_BITS];
+	size_t frame_bits = source->encoder.mapping.frame_bits;
+	enum v90_pcm_frame_encoder_result encoder_result;
+
+	for (size_t bit = 0u; bit < frame_bits; ++bit) {
+		if (v34_scramble_group(
+			    &source->scrambler, bits[bit], 1u,
+			    &scrambled[bit]) != V34_FRAMING_OK)
+			return V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR;
+	}
+	encoder_result = v90_pcm_frame_encoder_process(
+		&source->encoder, scrambled, frame_bits, &output);
+	if (encoder_result == V90_PCM_FRAME_ENCODER_BUFFERING)
+		return V92_PHASE4_ANALOG_STATION_OK;
+	if (encoder_result != V90_PCM_FRAME_ENCODER_SYMBOLS_READY)
+		return V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR;
+	for (size_t symbol = 0u; symbol < output.symbol_count; ++symbol) {
+		enum v92_phase4_analog_station_result result =
+			v92_phase4_analog_station_receive(
+				station, output.symbols[symbol].octet);
+
+		if (result == V92_PHASE4_ANALOG_STATION_EVENT) {
+			(*events)++;
+			continue;
+		}
+		if (result != V92_PHASE4_ANALOG_STATION_OK)
+			return result;
+	}
+	return V92_PHASE4_ANALOG_STATION_OK;
+}
+
+static enum v92_phase4_analog_station_result push_full_cpd_sequence(
+	struct full_cpd_source *source,
+	struct v92_phase4_analog_station *station,
+	const uint8_t *sequence, size_t bit_count, size_t *events)
+{
+	uint8_t frame[V90_PCM_FRAME_MAX_BITS];
+	size_t frame_bits = source->encoder.mapping.frame_bits;
+
+	if (bit_count == 0u || bit_count % frame_bits != 0u)
+		return V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR;
+	for (size_t first = 0u; first < bit_count; first += frame_bits) {
+		for (size_t bit = 0u; bit < frame_bits; ++bit)
+			frame[bit] = sequence_bit(sequence, first + bit);
+		{
+			enum v92_phase4_analog_station_result result =
+				push_full_cpd_frame(
+					source, station, frame, events);
+
+			if (result != V92_PHASE4_ANALOG_STATION_OK)
+				return result;
+		}
+	}
+	return V92_PHASE4_ANALOG_STATION_OK;
+}
+
+static bool push_full_cpd_training(
+	struct full_cpd_source *source,
+	struct v92_phase4_analog_station *station, size_t *events)
+{
+	uint8_t ones[V90_PCM_FRAME_MAX_BITS];
+
+	memset(ones, 1, sizeof(ones));
+	for (size_t frame = 0u;
+	     frame < V90_PHASE4_TRN2D_MINIMUM_FRAMES; ++frame) {
+		if (push_full_cpd_frame(source, station, ones, events) !=
+		    V92_PHASE4_ANALOG_STATION_OK)
+			return false;
+	}
+	return true;
 }
 
 static int16_t line_sample(
@@ -189,8 +308,8 @@ static bool cpd_selection_equal(
 	       left->trellis == right->trellis &&
 	       left->extend_e2u == right->extend_e2u &&
 	       left->acknowledges_cpu == right->acknowledges_cpu &&
-	       !left->modulus_present && !left->filters_present &&
-	       !left->constellations_present;
+	       left->modulus_present && left->filters_present &&
+	       left->constellations_present;
 }
 
 static bool clock_downstream(
@@ -284,7 +403,7 @@ static bool run_exchange(
 		.request_silence = law == G711_LAW_PCMA,
 	};
 	struct v92_cpu_parameters cpu = cpu_parameters(law);
-	struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_cpd_base_parameters cpd = cpd_parameters(law);
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u upstream;
 	struct v92_phase4_suvu_tx suvu_tx;
@@ -549,6 +668,176 @@ static bool base_cpd_equal(
 	       left->acknowledges_cpu == right->acknowledges_cpu;
 }
 
+static bool run_full_cpd_ownership(enum g711_law law)
+{
+	const struct v92_suvu_parameters suvu = {
+		.prefilter_level_db_q2_2 = -7,
+		.wait_for_cpu = true,
+	};
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_cpd_parameters full;
+	struct v92_cpd_parameters expected;
+	struct v92_cpd_base_parameters compact = cpd_parameters(law);
+	struct v92_phase3_analog_transmit_handoff handoff = {
+		.lu = TEST_LU,
+		.training_constellation = V92_CONSTELLATION_4_POINT,
+		.previous_encoded_sign = 1u,
+	};
+	struct v92_cpt_parameters cpt = cpt_parameters(law);
+	struct v90_pcm_mapping training_mapping;
+	struct v92_pcm_mapping expected_mapping;
+	struct pcm_downstream_rx downstream;
+	struct v92_phase4_analog_station station;
+	struct full_cpd_source source;
+	uint8_t full_sequence[V92_CPD_DIRECT_MAX_FRAME_BYTES] = { 0 };
+	uint8_t compact_sequence[V92_CPD_BASE_MAX_FRAME_BYTES] = { 0 };
+	size_t full_bits = 0u;
+	size_t compact_bits = 0u;
+	size_t events = 0u;
+
+	CHECK(full_cpd_parameters(law, &full) &&
+	      v90_pcm_mapping_init_from_v92_cpt(
+		      &training_mapping, &cpt) == V90_PCM_MAPPING_OK &&
+	      pcm_downstream_rx_init(
+		      &downstream, PCM_PROTOCOL_V92, &training_mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_phase4_analog_station_init(
+		      &station, &handoff, &downstream, &suvu, &cpu,
+		      NULL, NULL) == V92_PHASE4_ANALOG_STATION_OK &&
+	      full_cpd_source_init(&source, &training_mapping) &&
+	      v92_cpd_encode(
+		      &full, training_mapping.frame_bits, full_sequence,
+		      sizeof(full_sequence), &full_bits) == V92_CPD_OK &&
+	      push_full_cpd_training(&source, &station, &events),
+	      "full CPd fixture did not initialize for law %u",
+	      (unsigned int)law);
+	for (unsigned int repeat = 0u; repeat < 2u; ++repeat)
+		CHECK(push_full_cpd_sequence(
+			      &source, &station, full_sequence, full_bits,
+			      &events) == V92_PHASE4_ANALOG_STATION_OK,
+		      "full CPd stopped for law %u repeat %u",
+		      (unsigned int)law, repeat);
+	CHECK(station.cpd_received && !station.cpd.acknowledges_cpu &&
+	      v92_pcm_mapping_init(&expected_mapping, law, &full) ==
+		      V92_PCM_MAPPING_OK &&
+	      v92_pcm_mapping_equal(&station.mapping, &expected_mapping),
+	      "full CPd was not retained for law %u", (unsigned int)law);
+
+	CHECK(v92_cpd_encode_base(
+		      &compact, training_mapping.frame_bits, compact_sequence,
+		      sizeof(compact_sequence), &compact_bits) == V92_CPD_OK,
+	      "compact CPd did not encode for law %u", (unsigned int)law);
+	for (unsigned int repeat = 0u; repeat < 2u; ++repeat)
+		CHECK(push_full_cpd_sequence(
+			      &source, &station, compact_sequence, compact_bits,
+			      &events) == V92_PHASE4_ANALOG_STATION_OK,
+		      "compact CPd repeat stopped for law %u", (unsigned int)law);
+	CHECK(!station.cpd.acknowledges_cpu &&
+	      v92_pcm_mapping_equal(&station.mapping, &expected_mapping),
+	      "compact repeat changed the mapping for law %u",
+	      (unsigned int)law);
+
+	compact.acknowledges_cpu = true;
+	memset(compact_sequence, 0, sizeof(compact_sequence));
+	CHECK(v92_cpd_encode_base(
+		      &compact, training_mapping.frame_bits, compact_sequence,
+		      sizeof(compact_sequence), &compact_bits) == V92_CPD_OK,
+	      "acknowledging CPd did not encode for law %u",
+	      (unsigned int)law);
+	for (unsigned int repeat = 0u; repeat < 2u; ++repeat)
+		CHECK(push_full_cpd_sequence(
+			      &source, &station, compact_sequence, compact_bits,
+			      &events) == V92_PHASE4_ANALOG_STATION_OK,
+		      "acknowledging CPd stopped for law %u", (unsigned int)law);
+	expected = full;
+	expected.acknowledges_cpu = true;
+	CHECK(v92_pcm_mapping_init(&expected_mapping, law, &expected) ==
+		      V92_PCM_MAPPING_OK &&
+	      station.cpd.acknowledges_cpu && events >= 4u &&
+	      v92_pcm_mapping_equal(&station.mapping, &expected_mapping),
+	      "CPd acknowledgment was not retained for law %u events=%zu",
+	      (unsigned int)law, events);
+
+	for (unsigned int mutation = 0u; mutation < 5u; ++mutation) {
+		struct v92_phase4_analog_station rejected = station;
+		struct full_cpd_source rejected_source = source;
+		struct v92_pcm_mapping retained_mapping = station.mapping;
+		struct v92_phase4_analog_tx retained_transmit = station.transmit;
+		struct v92_cpd_base_parameters retained_cpd = station.cpd;
+		struct v92_cpd_base_parameters output;
+		struct v92_cpd_base_parameters output_before;
+		uint8_t changed_sequence[V92_CPD_DIRECT_MAX_FRAME_BYTES] = { 0 };
+		size_t changed_bits = 0u;
+		size_t rejected_events = events;
+		enum v92_phase4_analog_station_result result =
+			V92_PHASE4_ANALOG_STATION_OK;
+
+		if (mutation < 4u) {
+			struct v92_cpd_base_parameters changed = compact;
+
+			if (mutation == 0u)
+				changed.data_rate_number--;
+			else if (mutation == 1u)
+				changed.trellis = V92_CPD_TRELLIS_32_STATE;
+			else if (mutation == 2u)
+				changed.four_times_gain_q0_16++;
+			else
+				changed.extend_e2u = false;
+			CHECK(v92_cpd_encode_base(
+				      &changed, training_mapping.frame_bits,
+				      changed_sequence, sizeof(changed_sequence),
+				      &changed_bits) == V92_CPD_OK,
+			      "compact mutation %u did not encode", mutation);
+		} else {
+			struct v92_cpd_parameters changed = expected;
+			struct v92_pcm_mapping valid_changed;
+
+			changed.filter[V92_CPD_PREFILTER_FEED_FORWARD]
+				.coefficient[0]--;
+			CHECK(v92_pcm_mapping_init(
+				      &valid_changed, law, &changed) ==
+				      V92_PCM_MAPPING_OK &&
+			      v92_cpd_encode(
+				      &changed, training_mapping.frame_bits,
+				      changed_sequence, sizeof(changed_sequence),
+				      &changed_bits) == V92_CPD_OK,
+			      "mapping mutation did not encode for law %u",
+			      (unsigned int)law);
+		}
+		for (unsigned int repeat = 0u;
+		     repeat < 3u && result == V92_PHASE4_ANALOG_STATION_OK;
+		     ++repeat)
+			result = push_full_cpd_sequence(
+				&rejected_source, &rejected, changed_sequence,
+				changed_bits, &rejected_events);
+		memset(&output, 0xa5, sizeof(output));
+		output_before = output;
+		CHECK(result == V92_PHASE4_ANALOG_STATION_FAILED &&
+		      v92_phase4_analog_station_has_failed(&rejected) &&
+		      memcmp(&rejected.mapping, &retained_mapping,
+			     sizeof(retained_mapping)) == 0 &&
+		      memcmp(&rejected.transmit, &retained_transmit,
+			     sizeof(retained_transmit)) == 0 &&
+		      memcmp(&rejected.cpd, &retained_cpd,
+			     sizeof(retained_cpd)) == 0 &&
+		      !v92_phase4_analog_station_cpd_parameters(
+			      &rejected, &output) &&
+		      memcmp(&output, &output_before, sizeof(output)) == 0,
+		      "CPd mutation %u was not rejected transactionally for law %u",
+		      mutation, (unsigned int)law);
+	}
+	return true;
+}
+
+static bool test_full_cpd_ownership(void)
+{
+	for (unsigned int law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law)
+		CHECK(run_full_cpd_ownership((enum g711_law)law),
+		      "full CPd ownership matrix stopped");
+	return true;
+}
+
 static bool run_paired_station_exchange(
 	enum g711_law law, enum v92_constellation_size constellation,
 	uint8_t previous_sign, int8_t polarity)
@@ -561,7 +850,8 @@ static bool run_paired_station_exchange(
 		.request_silence = law == G711_LAW_PCMA,
 	};
 	struct v92_cpu_parameters cpu = cpu_parameters(law);
-	struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_cpd_base_parameters cpd = cpd_parameters(law);
+	struct v92_cpd_parameters full_cpd;
 	struct v92_pcm_phase3_cpt_line_handoff digital_handoff;
 	struct v92_phase3_analog_transmit_handoff analog_handoff = {
 		.lu = TEST_LU,
@@ -570,10 +860,13 @@ static bool run_paired_station_exchange(
 	};
 	struct v92_pcm_phase4_trn2u upstream;
 	struct v90_pcm_mapping mapping;
+	struct v92_pcm_mapping expected_upstream_mapping;
 	struct pcm_downstream_tx downstream_tx;
 	struct pcm_downstream_rx downstream_rx;
 	struct v92_phase4_analog_station analog;
 	struct v92_phase4_digital_station digital;
+	struct v92_phase4_analog_station terminal_analog;
+	struct v92_phase4_digital_station terminal_digital;
 	struct v92_cpu_parameters retained_cpu;
 	struct v92_cpu_parameters expected_cpu;
 	struct v92_cpd_base_parameters retained_cpd;
@@ -582,10 +875,13 @@ static bool run_paired_station_exchange(
 	enum pcm_downstream_tx_result request_ed_result;
 	size_t cpu_repeat_wait = 0u;
 	bool ready = false;
+	bool terminal_status_seen = false;
+	bool terminal_probe_initialized = false;
 
 	CHECK(build_predecessor(
 		      law, constellation, previous_sign, polarity,
 		      &upstream, &digital_handoff) &&
+	      full_cpd_parameters(law, &full_cpd) &&
 	      v90_pcm_mapping_init_from_v92_cpt(
 		      &mapping, &digital_handoff.parameters) ==
 		      V90_PCM_MAPPING_OK &&
@@ -599,7 +895,7 @@ static bool run_paired_station_exchange(
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_phase4_analog_station_init(
 		      &analog, &analog_handoff, &downstream_rx,
-		      &suvu, &cpu, NULL, NULL) ==
+		      &suvu, &cpu, NULL, &full_cpd) ==
 		      V92_PHASE4_ANALOG_STATION_OK &&
 	      v92_phase4_digital_station_init(
 		      &digital, &digital_handoff, constellation,
@@ -664,15 +960,59 @@ static bool run_paired_station_exchange(
 	     ready && !v92_phase4_digital_station_is_ed_ready(&digital) &&
 		     symbol < DOWNSTREAM_LIMIT;
 	     ++symbol) {
-		uint8_t ignored;
+		uint8_t octet;
+		enum v92_phase4_analog_station_result result;
 
-		CHECK(v92_phase4_digital_station_transmit(&digital, &ignored) ==
+		CHECK(v92_phase4_digital_station_transmit(&digital, &octet) ==
 			      V92_PHASE4_DIGITAL_STATION_OK,
 		      "paired digital handoff stopped at %zu", symbol);
+		result = v92_phase4_analog_station_receive(&analog, octet);
+		CHECK(result == V92_PHASE4_ANALOG_STATION_OK ||
+		      result == V92_PHASE4_ANALOG_STATION_EVENT,
+		      "terminal status advance was rejected at %zu: %s", symbol,
+		      v92_phase4_analog_station_result_name(result));
+		terminal_status_seen |=
+			result == V92_PHASE4_ANALOG_STATION_EVENT;
+	}
+	if (ready && v92_phase4_digital_station_is_ed_ready(&digital)) {
+		terminal_analog = analog;
+		terminal_digital = digital;
+		terminal_status_seen = false;
+		terminal_probe_initialized = true;
+	}
+	for (size_t symbol = 0u;
+	     terminal_probe_initialized && !terminal_status_seen &&
+		     symbol < DOWNSTREAM_LIMIT;
+	     ++symbol) {
+		uint8_t octet;
+		enum v92_phase4_analog_station_result result;
+
+		CHECK(v92_phase4_digital_station_transmit(
+			      &terminal_digital, &octet) ==
+		      V92_PHASE4_DIGITAL_STATION_OK,
+		      "terminal status repeat stopped at %zu", symbol);
+		result = v92_phase4_analog_station_receive(
+			&terminal_analog, octet);
+		CHECK(result == V92_PHASE4_ANALOG_STATION_OK ||
+		      result == V92_PHASE4_ANALOG_STATION_EVENT,
+		      "terminal status repeat was rejected at %zu: %s", symbol,
+		      v92_phase4_analog_station_result_name(result));
+		terminal_status_seen =
+			result == V92_PHASE4_ANALOG_STATION_EVENT;
 	}
 	expected_cpu = cpu;
 	expected_cpu.acknowledges_cpd = true;
-	CHECK(ready && v92_phase4_analog_station_is_e2u_ready(&analog) &&
+	full_cpd.acknowledges_cpu = analog.cpd.acknowledges_cpu;
+	CHECK(v92_pcm_mapping_init(
+		      &expected_upstream_mapping, law, &full_cpd) ==
+		      V92_PCM_MAPPING_OK,
+	      "paired upstream mapping did not initialize law=%u",
+	      (unsigned int)law);
+	CHECK(ready && terminal_probe_initialized && terminal_status_seen &&
+	      v92_phase4_analog_station_is_e2u_ready(&terminal_analog) &&
+	      v92_phase4_digital_station_is_valid(&terminal_digital) &&
+	      !v92_phase4_digital_station_has_failed(&terminal_digital) &&
+	      v92_phase4_analog_station_is_e2u_ready(&analog) &&
 	      v92_phase4_analog_station_cpd_parameters(
 		      &analog, &retained_cpd) &&
 	      base_cpd_equal(&retained_cpd, &cpd) &&
@@ -683,8 +1023,10 @@ static bool run_paired_station_exchange(
 	      v92_phase4_digital_station_is_ed_ready(&digital) &&
 	      analog.suvd.request_silence == suvd.request_silence,
 	      "paired station exchange did not reach E2u law=%u constellation=%u "
-	      "ready=%u a=%u/%u/%u/%u/%u tx=%u/%u/%u/%u d=%u/%u/%u/%u",
+	      "ready=%u terminal=%u a=%u/%u/%u/%u/%u tx=%u/%u/%u/%u "
+	      "d=%u/%u/%u/%u",
 	      (unsigned int)law, (unsigned int)constellation, ready,
+	      terminal_status_seen,
 	      analog.suvd_received, analog.cpd_received,
 	      analog.transmit.cpu_sent, analog.transmit.acknowledgment_sent,
 	      analog.transmit.peer_confirmation_received,
@@ -700,7 +1042,9 @@ static bool run_paired_station_exchange(
 	      memcmp(&analog_handoff_out.receive, &analog.receive,
 		     sizeof(analog.receive)) == 0 &&
 	      cpu_equal(&analog_handoff_out.cpu, &cpu) &&
-	      base_cpd_equal(&analog_handoff_out.cpd, &cpd) &&
+	      v92_pcm_mapping_equal(
+		      &analog_handoff_out.mapping,
+		      &expected_upstream_mapping) &&
 	      v92_phase4_digital_station_handoff(
 		      &digital, &digital_handoff_out) ==
 		      V92_PHASE4_DIGITAL_STATION_OK &&
@@ -758,7 +1102,7 @@ static bool test_analog_early_control(void)
 		.request_silence = true,
 	};
 	struct v92_cpu_parameters cpu = cpu_parameters(G711_LAW_PCMU);
-	struct v92_cpd_base_parameters early_cpd = cpd_parameters();
+	struct v92_cpd_parameters early_cpd;
 	struct v92_phase3_analog_transmit_handoff handoff = {
 		.lu = TEST_LU,
 		.training_constellation = V92_CONSTELLATION_4_POINT,
@@ -777,7 +1121,8 @@ static bool test_analog_early_control(void)
 			      V90_PCM_MAPPING_OK,
 		      "early-control mapping differed");
 	}
-	CHECK(pcm_downstream_rx_init(
+	CHECK(full_cpd_parameters(G711_LAW_PCMU, &early_cpd) &&
+	      pcm_downstream_rx_init(
 		      &downstream, PCM_PROTOCOL_V92, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_phase4_analog_station_init(
@@ -785,6 +1130,7 @@ static bool test_analog_early_control(void)
 		      &early_suvd, &early_cpd) ==
 		      V92_PHASE4_ANALOG_STATION_OK &&
 	      station.suvd_received && station.cpd_received &&
+	      v92_pcm_mapping_is_valid(&station.mapping) &&
 	      station.transmit.received_suvd &&
 	      station.transmit.received_cpd &&
 	      v92_phase4_analog_tx_silence_requested(&station.transmit),
@@ -808,7 +1154,7 @@ static bool test_compact_boundary(void)
 {
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u upstream;
-	struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_cpd_base_parameters cpd = cpd_parameters(G711_LAW_PCMU);
 	struct v92_suvd_parameters suvd = { 0 };
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx downstream;
@@ -875,6 +1221,49 @@ static bool test_compact_boundary(void)
 	return true;
 }
 
+static bool cpd_tx_contracts_are_transactional(
+	const struct v92_phase4_cpd_tx *valid,
+	const struct pcm_downstream_tx *valid_downstream)
+{
+	struct v92_phase4_cpd_tx transmitter = *valid;
+	struct pcm_downstream_tx downstream = *valid_downstream;
+	struct v92_phase4_cpd_tx saved_transmitter = transmitter;
+	struct pcm_downstream_tx saved_downstream = downstream;
+	struct pcm_downstream_symbol symbol;
+	struct pcm_downstream_symbol saved_symbol;
+
+	memset(&symbol, 0xa5, sizeof(symbol));
+	saved_symbol = symbol;
+	CHECK(!v92_phase4_cpd_tx_next(
+		      &transmitter, &downstream,
+		      (struct pcm_downstream_symbol *)(void *)&transmitter) &&
+	      !v92_phase4_cpd_tx_next(
+		      &transmitter, &downstream,
+		      (struct pcm_downstream_symbol *)(void *)&downstream) &&
+	      !v92_phase4_cpd_tx_next(
+		      &transmitter,
+		      (struct pcm_downstream_tx *)(void *)&transmitter,
+		      &symbol) &&
+	      memcmp(&transmitter, &saved_transmitter,
+		     sizeof(transmitter)) == 0 &&
+	      memcmp(&downstream, &saved_downstream,
+		     sizeof(downstream)) == 0 &&
+	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+	      "overlapping full CPd owners changed state or output");
+
+	transmitter.sequence[0] ^= 1u;
+	saved_transmitter = transmitter;
+	CHECK(!v92_phase4_cpd_tx_next(
+		      &transmitter, &downstream, &symbol) &&
+	      memcmp(&transmitter, &saved_transmitter,
+		     sizeof(transmitter)) == 0 &&
+	      memcmp(&downstream, &saved_downstream,
+		     sizeof(downstream)) == 0 &&
+	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+	      "corrupt full CPd source changed state or output");
+	return true;
+}
+
 static bool test_early_cpu_acknowledgement(void)
 {
 	const struct v92_suvd_parameters suvd = {
@@ -882,10 +1271,11 @@ static bool test_early_cpu_acknowledgement(void)
 	};
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u upstream;
-	struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_cpd_base_parameters cpd = cpd_parameters(G711_LAW_PCMU);
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx downstream;
 	struct v92_phase4_digital_station station;
+	struct v92_cpd_parameters selected_cpd;
 	struct pcm_downstream_symbol ignored;
 	uint8_t octet;
 
@@ -912,6 +1302,19 @@ static bool test_early_cpu_acknowledgement(void)
 		      &station, &handoff, V92_CONSTELLATION_4_POINT,
 		      &downstream, &cpd) == V92_PHASE4_DIGITAL_STATION_OK,
 	      "early-CPu station did not inherit completed SUVd");
+	CHECK(cpd_tx_contracts_are_transactional(
+		      &station.initial_cpd, &station.transmit),
+	      "full CPd owner contract changed");
+	{
+		struct pcm_downstream_tx overlapping = station.transmit;
+		struct pcm_downstream_tx before = overlapping;
+
+		CHECK(!v92_phase4_cpd_tx_init(
+			      (struct v92_phase4_cpd_tx *)(void *)&overlapping,
+			      &overlapping, &cpd) &&
+		      memcmp(&overlapping, &before, sizeof(overlapping)) == 0,
+		      "overlapping full CPd initialization changed the line");
+	}
 	station.suvu_received = true;
 	station.suvu = (struct v92_suvu_parameters){
 		.prefilter_level_db_q2_2 = -7,
@@ -931,8 +1334,17 @@ static bool test_early_cpu_acknowledgement(void)
 	CHECK(station.transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
 	      station.transmit_acknowledges_cpu &&
 	      station.transmit.v92_control_kind ==
-		      PCM_DOWNSTREAM_V92_CONTROL_CPD &&
-	      station.transmit.control.cpd.acknowledges_cpu &&
+		      PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+	      station.transmit.control.suvd.acknowledges_cpu &&
+	      v92_cpd_decode(
+		      station.initial_cpd.sequence,
+		      sizeof(station.initial_cpd.sequence),
+		      station.initial_cpd.sequence_bits,
+		      station.initial_cpd.frame_bits, &selected_cpd) ==
+		      V92_CPD_OK &&
+	      selected_cpd.acknowledges_cpu &&
+	      selected_cpd.modulus_present && selected_cpd.filters_present &&
+	      selected_cpd.constellations_present &&
 	      v92_phase4_digital_station_is_valid(&station),
 	      "CPu received before CPd did not select CPd prime");
 	return true;
@@ -945,6 +1357,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated digital station exchange", test_generated_exchange },
+		{ "full CPd ownership", test_full_cpd_ownership },
 		{ "paired analogue/digital station matrix",
 		  test_paired_station_matrix },
 		{ "analogue early control handoff", test_analog_early_control },

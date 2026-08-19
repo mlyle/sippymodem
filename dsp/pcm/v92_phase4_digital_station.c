@@ -31,17 +31,6 @@ static bool suvu_storage_is_empty(
 	return memcmp(&station->suvu, &empty, sizeof(empty)) == 0;
 }
 
-static bool cpd_base_equal(
-	const struct v92_cpd_base_parameters *left,
-	const struct v92_cpd_base_parameters *right)
-{
-	return left->four_times_gain_q0_16 == right->four_times_gain_q0_16 &&
-	       left->data_rate_number == right->data_rate_number &&
-	       left->trellis == right->trellis &&
-	       left->extend_e2u == right->extend_e2u &&
-	       left->acknowledges_cpu == right->acknowledges_cpu;
-}
-
 static bool cpu_selection_equal(
 	const struct v92_cpu_parameters *left,
 	const struct v92_cpu_parameters *right)
@@ -105,12 +94,11 @@ static bool downstream_state_matches(
 		       tx->control.suvd.request_silence ==
 			       station->request_silence;
 	case V92_PHASE4_DIGITAL_STATION_CPD: {
-		struct v92_cpd_base_parameters expected = station->cpd;
-
-		expected.acknowledges_cpu =
-			station->transmit_acknowledges_cpu;
-		return tx->v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_CPD &&
-		       cpd_base_equal(&tx->control.cpd, &expected);
+		return tx->v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+		       (!tx->control.suvd.acknowledges_cpu ||
+			station->cpu_received) &&
+		       tx->control.suvd.request_silence ==
+			       station->request_silence;
 	}
 	case V92_PHASE4_DIGITAL_STATION_STATUS_SUVD:
 		return tx->v92_control_kind ==
@@ -128,6 +116,7 @@ static bool owned_state_is_valid(
 {
 	return receive_law(&station->receive) ==
 		       station->transmit.encoder.mapping.law &&
+	       v92_phase4_cpd_tx_is_valid(&station->initial_cpd) &&
 	       v92_cpd_base_parameters_are_valid(&station->cpd) &&
 	       !station->cpd.acknowledges_cpu &&
 	       transmit_stage_is_valid(station->transmit_stage) &&
@@ -142,9 +131,19 @@ static bool owned_state_is_valid(
 			 V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD) ==
 		(station->cpd_start_frame == 0u)) &&
 	       station->cpd_start_frame <= station->transmit.accepted_frames &&
+	       ((station->transmit_stage ==
+			 V92_PHASE4_DIGITAL_STATION_STATUS_SUVD) ==
+		station->initial_cpd.complete) &&
+	       (station->transmit_stage ==
+			V92_PHASE4_DIGITAL_STATION_CPD ?
+		!station->initial_cpd.complete :
+		true) &&
 	       (station->transmit_stage ==
 			V92_PHASE4_DIGITAL_STATION_STATUS_SUVD ?
-		station->status_start_frame >= station->cpd_start_frame &&
+		station->status_start_frame ==
+				station->cpd_start_frame +
+				station->initial_cpd.sequence_bits /
+					station->initial_cpd.frame_bits &&
 			station->status_start_frame <=
 				station->transmit.accepted_frames :
 		station->status_start_frame == 0u) &&
@@ -217,6 +216,9 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	initialized.transmit = *downstream;
 	initialized.cpd = *cpd;
+	if (!v92_phase4_cpd_tx_init(
+		    &initialized.initial_cpd, downstream, cpd))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	if (downstream->stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
 	    downstream->control_bit_index == 0u)
 		initialized.transmit_stage =
@@ -344,22 +346,41 @@ static bool apply_pending_downstream(
 	    station->transmit_stage ==
 		    V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD) {
 		struct v92_cpd_base_parameters cpd = station->cpd;
+		const struct v92_suvd_parameters suvd = {
+			.request_silence = station->request_silence,
+			.acknowledges_cpu = station->cpu_received,
+		};
 
 		cpd.acknowledges_cpu = station->cpu_received;
-		if (pcm_downstream_tx_start_cpd(&station->transmit, &cpd) !=
-		    PCM_DOWNSTREAM_TX_OK)
+		if (pcm_downstream_tx_start_suvd(
+			    &station->transmit, &suvd) !=
+			    PCM_DOWNSTREAM_TX_OK ||
+		    !v92_phase4_cpd_tx_init(
+			    &station->initial_cpd, &station->transmit, &cpd))
 			return false;
 		station->transmit_stage = V92_PHASE4_DIGITAL_STATION_CPD;
 		station->transmit_acknowledges_cpu = cpd.acknowledges_cpu;
 		station->cpd_start_frame = station->transmit.accepted_frames;
 		return true;
 	}
-	if ((station->transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
-	     station->transmit.accepted_frames > station->cpd_start_frame) ||
-	    (station->transmit_stage ==
-		     V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
-	     station->cpu_received &&
-	     !station->transmit_acknowledges_cpu)) {
+	if (station->transmit_stage ==
+		    V92_PHASE4_DIGITAL_STATION_CPD &&
+	    station->cpu_received &&
+	    !station->transmit.control.suvd.acknowledges_cpu) {
+		const struct v92_suvd_parameters suvd = {
+			.request_silence = station->request_silence,
+			.acknowledges_cpu = true,
+		};
+
+		if (pcm_downstream_tx_start_suvd(
+			    &station->transmit, &suvd) !=
+		    PCM_DOWNSTREAM_TX_OK)
+			return false;
+	}
+	if (station->transmit_stage ==
+		    V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
+	    station->cpu_received &&
+	    !station->transmit_acknowledges_cpu) {
 		const struct v92_suvd_parameters suvd = {
 			.request_silence = station->request_silence,
 			.acknowledges_cpu = station->cpu_received,
@@ -373,8 +394,6 @@ static bool apply_pending_downstream(
 			V92_PHASE4_DIGITAL_STATION_STATUS_SUVD;
 		station->transmit_acknowledges_cpu =
 			suvd.acknowledges_cpu;
-		station->status_start_frame =
-			station->transmit.accepted_frames;
 	}
 	return true;
 }
@@ -393,10 +412,27 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	if (station->failed)
 		return V92_PHASE4_DIGITAL_STATION_FAILED;
-	if (!apply_pending_downstream(station) ||
-	    pcm_downstream_tx_next(&station->transmit, &symbol) !=
-		    PCM_DOWNSTREAM_TX_OK ||
-	    !owned_state_is_valid(station))
+	if (!apply_pending_downstream(station))
+		return fail(station);
+	if (station->transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD) {
+		if (!v92_phase4_cpd_tx_next(
+			    &station->initial_cpd, &station->transmit, &symbol))
+			return fail(station);
+		if (station->initial_cpd.complete) {
+			station->transmit_stage =
+				V92_PHASE4_DIGITAL_STATION_STATUS_SUVD;
+			station->status_start_frame =
+				station->cpd_start_frame +
+				station->initial_cpd.sequence_bits /
+					station->initial_cpd.frame_bits;
+			station->transmit_acknowledges_cpu =
+				station->transmit.control.suvd.acknowledges_cpu;
+		}
+	} else if (pcm_downstream_tx_next(&station->transmit, &symbol) !=
+		   PCM_DOWNSTREAM_TX_OK) {
+		return fail(station);
+	}
+	if (!owned_state_is_valid(station))
 		return fail(station);
 	*network_octet = symbol.pcm.octet;
 	return V92_PHASE4_DIGITAL_STATION_OK;
@@ -432,6 +468,7 @@ bool v92_phase4_digital_station_is_ed_ready(
 	       station->transmit_acknowledges_cpu &&
 	       station->transmit_stage ==
 		       V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
+	       station->transmit.v92_control_record_accepted &&
 	       station->transmit.accepted_frames >
 		       station->status_start_frame &&
 	       pcm_downstream_tx_is_v92_control_boundary(

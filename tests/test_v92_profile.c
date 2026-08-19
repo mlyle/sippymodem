@@ -4,6 +4,7 @@
 
 #include <pcm_rate.h>
 #include <v90_pcm_mapping.h>
+#include <v92_cpd_direct.h>
 #include <v92_pcm_dil.h>
 
 #include "test.h"
@@ -118,6 +119,10 @@ static bool test_generated_profiles(void)
 					      "analogue profile did not generate rate %u",
 					      rate);
 				} else {
+					struct v92_cpd_parameters expected;
+					const struct v92_cpd_base_parameters *cpd =
+						&configuration.v92_digital_phase4.cpd;
+
 					CHECK(configuration.local_info0.v92_digital
 						      .v92_capable &&
 					      !configuration.local_info0.v92_digital
@@ -127,11 +132,17 @@ static bool test_generated_profiles(void)
 					      configuration.phase3.v92_digital.jd
 						      .data_rate_capability_mask ==
 						      downstream.enabled_mask &&
-					      configuration.v92_digital_phase4.cpd
-						      .data_rate_number ==
-						      upstream_rate &&
-					      configuration.v92_digital_phase4.cpd
-						      .trellis == V92_CPD_TRELLIS_16_STATE,
+					      v92_cpd_direct_init(
+						      &expected, law, upstream_rate,
+						      false) == V92_CPD_OK &&
+					      cpd->four_times_gain_q0_16 ==
+						      expected.four_times_gain_q0_16 &&
+					      cpd->data_rate_number ==
+						      expected.data_rate_number &&
+					      cpd->trellis == expected.trellis &&
+					      cpd->extend_e2u == expected.extend_e2u &&
+					      cpd->acknowledges_cpu ==
+						      expected.acknowledges_cpu,
 					      "digital profile did not generate rate %u",
 					      rate);
 				}

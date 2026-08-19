@@ -4,6 +4,7 @@
 #define V92_PHASE4_ANALOG_STATION_H
 
 #include "pcm_downstream_rx.h"
+#include "v92_pcm_mapping.h"
 #include "v92_phase3_analog_station.h"
 #include "v92_phase4_analog_tx.h"
 
@@ -24,11 +25,14 @@ enum v92_phase4_analog_station_result {
 /* Own the analogue modem's initial Phase 4 control exchange. The inherited
  * downstream receiver preserves the Phase 3 coding histories; the upstream
  * transmitter preserves the CPt/E1u differential-sign boundary. Only the
- * compact, table-free CPd selection is retained. Ed/E2u emission and data
- * mode follow in the next owner. One instance is serialized. */
+ * first complete CPd owns the PCM-upstream mapping; later compact CPd records
+ * may only acknowledge CPU or repeat that immutable selection. Ed/E2u
+ * emission and data mode follow in the next owner. One instance is
+ * serialized. */
 struct v92_phase4_analog_station {
 	struct v92_phase4_analog_tx transmit;
 	struct pcm_downstream_rx receive;
+	struct v92_pcm_mapping mapping;
 	struct v92_suvd_parameters suvd;
 	struct v92_cpd_base_parameters cpd;
 	bool suvd_received;
@@ -44,7 +48,7 @@ struct v92_phase4_analog_handoff {
 	struct v92_phase4_modulator transmit;
 	struct pcm_downstream_rx receive;
 	struct v92_cpu_parameters cpu;
-	struct v92_cpd_base_parameters cpd;
+	struct v92_pcm_mapping mapping;
 };
 
 /* Resume from exact Phase 3 handoffs. Optional early controls preserve a
@@ -57,7 +61,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 	const struct v92_suvu_parameters *suvu,
 	const struct v92_cpu_parameters *cpu,
 	const struct v92_suvd_parameters *early_suvd,
-	const struct v92_cpd_base_parameters *early_cpd);
+	const struct v92_cpd_parameters *early_cpd);
 
 bool v92_phase4_analog_station_is_valid(
 	const struct v92_phase4_analog_station *station);

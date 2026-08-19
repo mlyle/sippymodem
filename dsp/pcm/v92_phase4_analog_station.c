@@ -31,15 +31,56 @@ static bool cpd_selection_equal(
 	       left->extend_e2u == right->extend_e2u;
 }
 
+static struct v92_cpd_base_parameters cpd_base(
+	const struct v92_cpd_parameters *parameters)
+{
+	return (struct v92_cpd_base_parameters){
+		.four_times_gain_q0_16 = parameters->four_times_gain_q0_16,
+		.data_rate_number = parameters->data_rate_number,
+		.trellis = parameters->trellis,
+		.extend_e2u = parameters->extend_e2u,
+		.acknowledges_cpu = parameters->acknowledges_cpu,
+	};
+}
+
+static bool mapping_matches_base(
+	const struct v92_pcm_mapping *mapping,
+	const struct v92_cpd_base_parameters *base)
+{
+	struct v92_cpd_base_parameters mapped = cpd_base(&mapping->cpd);
+
+	return cpd_selection_equal(&mapped, base) &&
+	       mapped.acknowledges_cpu == base->acknowledges_cpu;
+}
+
+/* Complete mappings enter only through v92_pcm_mapping_init() and remain
+ * immutable except for the acknowledgement bit. Keep the per-symbol owner
+ * check bounded; event acceptance and handoff perform the deep table check. */
+static bool owned_mapping_is_valid(
+	const struct v92_phase4_analog_station *station)
+{
+	if (!station->cpd_received)
+		return cpd_is_empty(&station->cpd) &&
+		       station->mapping.data_bits_per_frame == 0u;
+	return g711_law_is_valid(station->mapping.law) &&
+	       station->mapping.law == station->transmit.cpu.law &&
+	       station->mapping.data_bits_per_frame ==
+		       v92_pcm_mapping_data_bits(
+			       station->mapping.cpd.data_rate_number) &&
+	       station->mapping.cpd.modulus_present &&
+	       station->mapping.cpd.filters_present &&
+	       station->mapping.cpd.constellations_present &&
+	       v92_cpd_base_parameters_are_valid(&station->cpd) &&
+	       mapping_matches_base(&station->mapping, &station->cpd);
+}
+
 static bool owned_state_is_valid(
 	const struct v92_phase4_analog_station *station)
 {
 	return (station->suvd_received ?
 		v92_suvd_parameters_are_valid(&station->suvd) :
 		suvd_is_empty(&station->suvd)) &&
-	       (station->cpd_received ?
-		v92_cpd_base_parameters_are_valid(&station->cpd) :
-		cpd_is_empty(&station->cpd)) &&
+	       owned_mapping_is_valid(station) &&
 	       station->transmit.received_suvd == station->suvd_received &&
 	       station->transmit.received_cpd == station->cpd_received;
 }
@@ -76,6 +117,9 @@ static bool note_suvd(
 	struct v92_phase4_analog_station *station,
 	const struct v92_suvd_parameters *parameters)
 {
+	struct v92_phase4_analog_tx transmit;
+	struct v92_suvd_parameters retained;
+
 	if (!v92_suvd_parameters_are_valid(parameters))
 		return false;
 	if (station->suvd_received) {
@@ -84,37 +128,75 @@ static bool note_suvd(
 		    (station->suvd.acknowledges_cpu &&
 		     !parameters->acknowledges_cpu))
 			return false;
-		station->suvd.acknowledges_cpu |=
-			parameters->acknowledges_cpu;
+		retained = station->suvd;
+		retained.acknowledges_cpu |= parameters->acknowledges_cpu;
 	} else {
-		station->suvd = *parameters;
-		station->suvd_received = true;
+		retained = *parameters;
 	}
-	return v92_phase4_analog_tx_note_suvd(
-		       &station->transmit, &station->suvd) ==
-	       V92_PHASE4_ANALOG_TX_OK;
+	transmit = station->transmit;
+	if (transmit.stage != V92_PHASE4_ANALOG_TX_E2U_READY &&
+	    v92_phase4_analog_tx_note_suvd(&transmit, &retained) !=
+		    V92_PHASE4_ANALOG_TX_OK)
+		return false;
+	station->transmit = transmit;
+	station->suvd = retained;
+	station->suvd_received = true;
+	return true;
 }
 
 static bool note_cpd(
 	struct v92_phase4_analog_station *station,
-	const struct v92_cpd_base_parameters *parameters)
+	const struct v92_cpd_parameters *parameters)
 {
-	if (!v92_cpd_base_parameters_are_valid(parameters))
+	struct v92_pcm_mapping mapping;
+	struct v92_phase4_analog_tx transmit = station->transmit;
+	struct v92_cpd_base_parameters base;
+	bool full;
+
+	if (!v92_cpd_parameters_are_valid(parameters))
 		return false;
+	base = cpd_base(parameters);
+	full = parameters->modulus_present && parameters->filters_present &&
+	       parameters->constellations_present;
 	if (station->cpd_received) {
-		if (!cpd_selection_equal(&station->cpd, parameters) ||
+		if (!cpd_selection_equal(&station->cpd, &base) ||
 		    (station->cpd.acknowledges_cpu &&
-		     !parameters->acknowledges_cpu))
+		     !base.acknowledges_cpu))
 			return false;
-		station->cpd.acknowledges_cpu |=
-			parameters->acknowledges_cpu;
+		if (full) {
+			if (v92_pcm_mapping_init(
+				    &mapping, station->transmit.cpu.law,
+				    parameters) != V92_PCM_MAPPING_OK)
+				return false;
+			mapping.cpd.acknowledges_cpu =
+				station->mapping.cpd.acknowledges_cpu;
+			if (!v92_pcm_mapping_equal(&mapping, &station->mapping))
+				return false;
+		} else {
+			if (parameters->modulus_present ||
+			    parameters->filters_present ||
+			    parameters->constellations_present)
+				return false;
+			mapping = station->mapping;
+		}
 	} else {
-		station->cpd = *parameters;
-		station->cpd_received = true;
+		if (!full || v92_pcm_mapping_init(
+				     &mapping, station->transmit.cpu.law,
+				     parameters) != V92_PCM_MAPPING_OK)
+			return false;
 	}
-	return v92_phase4_analog_tx_note_cpd(
-		       &station->transmit, station->cpd.acknowledges_cpu) ==
-	       V92_PHASE4_ANALOG_TX_OK;
+	base.acknowledges_cpu |= station->cpd.acknowledges_cpu;
+	mapping.cpd.acknowledges_cpu = base.acknowledges_cpu;
+	if (transmit.stage != V92_PHASE4_ANALOG_TX_E2U_READY &&
+	    v92_phase4_analog_tx_note_cpd(
+		    &transmit, base.acknowledges_cpu) !=
+		    V92_PHASE4_ANALOG_TX_OK)
+		return false;
+	station->transmit = transmit;
+	station->mapping = mapping;
+	station->cpd = base;
+	station->cpd_received = true;
+	return true;
 }
 
 enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
@@ -124,9 +206,10 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 	const struct v92_suvu_parameters *suvu,
 	const struct v92_cpu_parameters *cpu,
 	const struct v92_suvd_parameters *early_suvd,
-	const struct v92_cpd_base_parameters *early_cpd)
+	const struct v92_cpd_parameters *early_cpd)
 {
 	struct v92_phase4_analog_station initialized = { 0 };
+	struct v92_pcm_mapping early_mapping;
 
 	if (station == NULL || transmit_handoff == NULL || downstream == NULL ||
 	    suvu == NULL || cpu == NULL)
@@ -139,7 +222,8 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 	    (early_suvd != NULL &&
 	     !v92_suvd_parameters_are_valid(early_suvd)) ||
 	    (early_cpd != NULL &&
-	     !v92_cpd_base_parameters_are_valid(early_cpd)))
+	     v92_pcm_mapping_init(&early_mapping, cpu->law, early_cpd) !=
+		     V92_PCM_MAPPING_OK))
 		return V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS;
 	if (v92_phase4_analog_tx_init(
 		    &initialized.transmit,
@@ -168,17 +252,7 @@ static bool accept_cpd_event(
 	struct v92_phase4_analog_station *station,
 	const struct v92_cpd_parameters *parameters)
 {
-	const struct v92_cpd_base_parameters base = {
-		.four_times_gain_q0_16 = parameters->four_times_gain_q0_16,
-		.data_rate_number = parameters->data_rate_number,
-		.trellis = parameters->trellis,
-		.extend_e2u = parameters->extend_e2u,
-		.acknowledges_cpu = parameters->acknowledges_cpu,
-	};
-
-	return v92_cpd_parameters_are_valid(parameters) &&
-	       !parameters->modulus_present && !parameters->filters_present &&
-	       !parameters->constellations_present && note_cpd(station, &base);
+	return note_cpd(station, parameters);
 }
 
 enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
@@ -302,7 +376,8 @@ bool v92_phase4_analog_handoff_is_valid(
 	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
 	       handoff->cpu.law ==
 		       handoff->receive.stream.decoder.mapping.law &&
-	       v92_cpd_base_parameters_are_valid(&handoff->cpd);
+	       v92_pcm_mapping_is_valid(&handoff->mapping) &&
+	       handoff->mapping.law == handoff->cpu.law;
 }
 
 enum v92_phase4_analog_station_result v92_phase4_analog_station_handoff(
@@ -320,7 +395,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_handoff(
 	generated = (struct v92_phase4_analog_handoff){
 		.receive = station->receive,
 		.cpu = station->transmit.cpu,
-		.cpd = station->cpd,
+		.mapping = station->mapping,
 	};
 	if (v92_phase4_analog_tx_handoff(
 		    &station->transmit, &generated.transmit) !=

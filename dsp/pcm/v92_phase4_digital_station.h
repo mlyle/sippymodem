@@ -4,6 +4,7 @@
 #define V92_PHASE4_DIGITAL_STATION_H
 
 #include "pcm_downstream_tx.h"
+#include "v92_phase4_cpd_tx.h"
 #include "v92_phase4_digital_rx.h"
 
 #include <stdbool.h>
@@ -29,14 +30,15 @@ enum v92_phase4_digital_station_tx_stage {
 /* Own the digital modem's V.92 Phase 4 control exchange after E1u. The
  * upstream receiver remains continuous with the Phase 3 equalizer while the
  * inherited downstream transmitter remains continuous with TRN2d. A valid
- * SUVu selects one compact CPd followed by SUVd; a later valid CPu makes the
- * next CPd or SUVd acknowledge it. Each downstream change waits for a
+ * SUVu selects one complete initial CPd followed by SUVd; a later valid CPu
+ * makes that initial CPd or the next SUVd acknowledge it. Each change waits for a
  * complete current record. Timeout-driven CPd repetition, Ed, and the data-
  * mode handoff are deliberately outside this initial owner. One instance is
  * serialized; receive and transmit share procedure state. */
 struct v92_phase4_digital_station {
 	struct v92_phase4_digital_rx receive;
 	struct pcm_downstream_tx transmit;
+	struct v92_phase4_cpd_tx initial_cpd;
 	struct v92_cpu_parameters cpu;
 	struct v92_cpd_base_parameters cpd;
 	struct v92_suvu_parameters suvu;
@@ -62,8 +64,8 @@ struct v92_phase4_digital_handoff {
 };
 
 /* Continue from the exact Phase 3 receive handoff and the already-running
- * downstream TRN2d/SUVd transmitter. The compact CPd parameter type keeps
- * optional tables outside this bounded control owner. */
+ * downstream TRN2d/SUVd transmitter. The compact CPd selection is expanded
+ * once into the generated direct profile owned by the station. */
 enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	struct v92_phase4_digital_station *station,
 	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
