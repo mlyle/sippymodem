@@ -288,15 +288,18 @@ static struct v92_cpu_parameters v92_cpu_parameters(enum g711_law law)
 
 	for (uint8_t index = 0u;
 	     index < V92_CPU_MAX_CONSTELLATIONS; ++index) {
-		add_ucode(
-			&parameters.transmit_constellations[index],
-			(uint8_t)(16u + index));
-		add_ucode(
-			&parameters.transmit_constellations[index],
-			(uint8_t)(72u + index));
-		add_ucode(
-			&parameters.codec_constellations[index],
-			(uint8_t)(96u - 3u * index));
+		/* Four 16-point and two 32-point intervals provide exactly
+		 * 26 modulus bits for rate 11 with one redundant sign. */
+		uint8_t point_count = index < 4u ? 16u : 32u;
+
+		for (uint8_t point = 0u; point < point_count; ++point) {
+			add_ucode(
+				&parameters.transmit_constellations[index],
+				(uint8_t)(4u * point + index % 4u));
+			add_ucode(
+				&parameters.codec_constellations[index],
+				(uint8_t)(4u * point + (index + 1u) % 4u));
+		}
 		parameters.frame_constellation[index] = index;
 	}
 	return parameters;
@@ -1083,11 +1086,16 @@ static bool run_v92_phase4_control(
 	struct channel channel;
 	struct pcm_call analog;
 	struct pcm_call digital;
-	struct v92_phase4_digital_station digital_peer_tail;
+	struct pcm_call_v92_analog_phase4_control analog_control = { 0 };
+	struct v92_phase4_digital_station digital_control = { 0 };
 	bool analog_entered_phase3 = false;
 	bool digital_entered_phase3 = false;
 	bool analog_entered_phase4 = false;
 	bool digital_entered_phase4 = false;
+	bool analog_control_reached = false;
+	bool digital_control_reached = false;
+	bool analog_e2u_started = false;
+	bool digital_e2u_started = false;
 	bool analog_handoff_reached = false;
 	bool digital_handoff_reached = false;
 	bool completion_failure_checked = false;
@@ -1110,6 +1118,23 @@ static bool run_v92_phase4_control(
 		enum pcm_call_result digital_result;
 		bool analog_ready = pcm_call_phase4_is_ready(&analog);
 		bool digital_ready = pcm_call_phase4_is_ready(&digital);
+		bool analog_control_ready =
+			analog.stage == PCM_CALL_PHASE4 &&
+			analog.state.phase4.v92.child ==
+				PCM_CALL_V92_PHASE4_CONTROL &&
+			v92_phase4_analog_station_is_e2u_ready(
+				&analog.state.phase4.v92.owner.analog.station);
+		bool digital_control_active =
+			digital.stage == PCM_CALL_PHASE4 &&
+			digital.state.phase4.v92.child ==
+				PCM_CALL_V92_PHASE4_CONTROL;
+
+		if (analog_control_ready && !analog_control_reached) {
+			analog_control = analog.state.phase4.v92.owner.analog;
+			analog_control_reached = true;
+		}
+		if (digital_control_active && !digital_control_reached)
+			digital_control = digital.state.phase4.v92.owner.digital;
 
 		if (analog_ready && !analog_handoff_reached) {
 			CHECK(phase4_boundary_is_transactional(&analog, law),
@@ -1121,10 +1146,6 @@ static bool run_v92_phase4_control(
 			CHECK(phase4_boundary_is_transactional(&digital, law),
 			      "law %u digital V.92 handoff consumed input",
 			      (unsigned int)law);
-			/* The public call has handed this continuous transmitter to
-			 * the future Ed owner. This private copy supplies only that
-			 * peer continuation while the analogue handoff is tested. */
-			digital_peer_tail = digital.state.phase4.v92_digital;
 			digital_handoff_reached = true;
 		}
 		channel_receive(
@@ -1132,9 +1153,11 @@ static bool run_v92_phase4_control(
 		if (!completion_failure_checked && law == G711_LAW_PCMU &&
 		    delay == 1u && !analog_ready &&
 		    analog.stage == PCM_CALL_PHASE4 &&
-		    analog.state.phase4.v92_analog.station.cpd_received) {
+		    analog.state.phase4.v92.child ==
+			    PCM_CALL_V92_PHASE4_CONTROL &&
+		    analog.state.phase4.v92.owner.analog.station.cpd_received) {
 			struct v92_phase4_analog_station predicted =
-				analog.state.phase4.v92_analog.station;
+				analog.state.phase4.v92.owner.analog.station;
 			uint64_t completed =
 				predicted.transmit.completed_cpu_records;
 			int16_t predicted_sample;
@@ -1147,8 +1170,8 @@ static bool run_v92_phase4_control(
 				struct pcm_call collision = analog;
 				struct pcm_call_observation collision_observation;
 				uint8_t collision_output;
-				uint8_t rate = collision.state.phase4.v92_analog
-					.station.cpd.data_rate_number;
+				uint8_t rate = collision.state.phase4.v92.owner
+					.analog.station.cpd.data_rate_number;
 
 				collision.phase3_configuration.v92_analog
 					.upstream_rate_mask &=
@@ -1161,9 +1184,9 @@ static bool run_v92_phase4_control(
 					      PCM_CALL_UNUSABLE_SELECTION &&
 				      pcm_call_is_valid(&collision) &&
 				      pcm_call_has_failed(&collision) &&
-				      collision.state.phase4.v92_analog
+				      collision.state.phase4.v92.owner.analog
 					      .observed_cpu_records ==
-					      collision.state.phase4.v92_analog
+					      collision.state.phase4.v92.owner.analog
 						      .station.transmit
 						      .completed_cpu_records,
 				      "V.92 CPu completion hid a receive failure");
@@ -1178,31 +1201,27 @@ static bool run_v92_phase4_control(
 				decode_octet(law, analog_received),
 				&analog_transmitted,
 				&analog_observation);
-		if (digital_ready) {
-			CHECK(v92_phase4_digital_station_transmit(
-				      &digital_peer_tail, &digital_transmitted) ==
-				      V92_PHASE4_DIGITAL_STATION_OK,
-			      "law %u delay %zu V.92 status tail stopped",
-			      (unsigned int)law, delay);
-			digital_result = PCM_CALL_PHASE4_READY;
-		} else {
-			digital_result = pcm_call_octet(
+		digital_result = digital_ready ? PCM_CALL_PHASE4_READY :
+			pcm_call_octet(
 				&digital, digital_received,
 				decode_octet(law, digital_received),
 				&digital_transmitted,
 				&digital_observation);
-		}
 		CHECK(analog_result == (analog_ready ? PCM_CALL_PHASE4_READY :
 						       PCM_CALL_OK) &&
 		      digital_result == (digital_ready ? PCM_CALL_PHASE4_READY :
 						         PCM_CALL_OK),
 		      "law %u delay %zu V.92 call stopped at character %zu: "
-		      "%s/%s stages %u/%u",
+		      "%s/%s stages %u/%u children %u/%u",
 		      (unsigned int)law, delay, clock,
 		      pcm_call_result_name(analog_result),
 		      pcm_call_result_name(digital_result),
 		      (unsigned int)analog.stage,
-		      (unsigned int)digital.stage);
+		      (unsigned int)digital.stage,
+		      (unsigned int)(analog.stage == PCM_CALL_PHASE4 ?
+			      analog.state.phase4.v92.child : 0u),
+		      (unsigned int)(digital.stage == PCM_CALL_PHASE4 ?
+			      digital.state.phase4.v92.child : 0u));
 		channel_transmit(
 			&channel, analog_transmitted, digital_transmitted);
 		analog_entered_phase3 |=
@@ -1213,18 +1232,33 @@ static bool run_v92_phase4_control(
 			analog_observation.next == PCM_CALL_PHASE4;
 		digital_entered_phase4 |=
 			digital_observation.next == PCM_CALL_PHASE4;
+		analog_e2u_started |= analog.stage == PCM_CALL_PHASE4 &&
+			analog.state.phase4.v92.child ==
+				PCM_CALL_V92_PHASE4_E2U;
+		digital_e2u_started |= digital.stage == PCM_CALL_PHASE4 &&
+			digital.state.phase4.v92.child ==
+				PCM_CALL_V92_PHASE4_E2U;
+		if (digital_control_active && digital.stage == PCM_CALL_PHASE4 &&
+		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U)
+			digital_control_reached = true;
 		if (analog.stage == PCM_CALL_PHASE4 &&
-		    analog.state.phase4.v92_analog.station.transmit.cpu_sent &&
+		    analog.state.phase4.v92.child ==
+			    PCM_CALL_V92_PHASE4_CONTROL &&
+		    analog.state.phase4.v92.owner.analog.station.transmit.cpu_sent &&
 		    first_cpu_sent == SIZE_MAX)
 			first_cpu_sent = clock;
 		if (digital.stage == PCM_CALL_PHASE4 &&
-		    digital.state.phase4.v92_digital.cpu_received &&
+		    digital.state.phase4.v92.child ==
+			    PCM_CALL_V92_PHASE4_CONTROL &&
+		    digital.state.phase4.v92.owner.digital.cpu_received &&
 		    first_cpu_received == SIZE_MAX)
 			first_cpu_received = clock;
 		if (analog_handoff_reached && digital_handoff_reached)
 			break;
 	}
 	CHECK(analog_handoff_reached && digital_handoff_reached &&
+	      analog_control_reached && digital_control_reached &&
+	      analog_e2u_started && digital_e2u_started &&
 	      (law != G711_LAW_PCMU || delay != 1u ||
 	       completion_failure_checked) &&
 	      analog_entered_phase3 && digital_entered_phase3 &&
@@ -1232,8 +1266,7 @@ static bool run_v92_phase4_control(
 	      first_cpu_sent != SIZE_MAX && first_cpu_received != SIZE_MAX &&
 	      first_cpu_received >= first_cpu_sent &&
 	      first_cpu_received - first_cpu_sent >=
-		      analog.state.phase4.v92_analog
-			      .cpu_repeat_interval_samples &&
+		      analog_control.cpu_repeat_interval_samples &&
 	      pcm_call_is_valid(&analog) && pcm_call_is_valid(&digital) &&
 	      !pcm_call_has_failed(&analog) && !pcm_call_has_failed(&digital) &&
 	      analog.phase3_entry_stored && digital.phase3_entry_stored &&
@@ -1263,62 +1296,78 @@ static bool run_v92_phase4_control(
 		      &analog_configuration.local_info1.v92_analog) &&
 	      analog.stage == PCM_CALL_PHASE4 &&
 	      digital.stage == PCM_CALL_PHASE4 &&
+	      analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U &&
+	      digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U &&
+	      analog.state.phase4.v92.owner.e2u.local_role ==
+		      V90_ANALOG_MODEM &&
+	      digital.state.phase4.v92.owner.e2u.local_role ==
+		      V90_DIGITAL_MODEM &&
+	      v92_phase4_e2u_is_complete(
+		      &analog.state.phase4.v92.owner.e2u) &&
+	      v92_phase4_e2u_is_complete(
+		      &digital.state.phase4.v92.owner.e2u) &&
 	      analog.round_trip_delay_stored &&
 	      analog.round_trip_delay_samples != 0u &&
 	      !digital.round_trip_delay_stored &&
 	      digital.round_trip_delay_samples == 0u &&
-	      analog.state.phase4.v92_analog.cpu_repeat_interval_samples ==
+	      analog_control.cpu_repeat_interval_samples ==
 		      800u + analog.round_trip_delay_samples &&
-	      analog.state.phase4.v92_analog.cpu_repeat_remaining_samples ==
-		      0u &&
-	      !analog.state.phase4.v92_analog.awaiting_cpu_completion &&
-	      analog.state.phase4.v92_analog.observed_cpu_records ==
-		      analog.state.phase4.v92_analog.station.transmit
-			      .completed_cpu_records &&
-	      analog.state.phase4.v92_analog.observed_cpu_records >= 2u &&
+	      analog_control.cpu_repeat_remaining_samples == 0u &&
+	      !analog_control.awaiting_cpu_completion &&
+	      analog_control.observed_cpu_records ==
+		      analog_control.station.transmit.completed_cpu_records &&
+	      analog_control.observed_cpu_records >= 2u &&
 	      v92_cpu_frame_bits(
 		      &analog_configuration.v92_analog_phase4.cpu, 2u) /
 		      2u >
-		      analog.state.phase4.v92_analog
-			      .cpu_repeat_interval_samples &&
+		      analog_control.cpu_repeat_interval_samples &&
 	      v92_phase4_analog_station_is_e2u_ready(
-		      &analog.state.phase4.v92_analog.station) &&
-	      v92_phase4_digital_station_is_ed_ready(
-		      &digital.state.phase4.v92_digital) &&
-	      analog.state.phase4.v92_analog.station.cpd_received &&
-	      digital.state.phase4.v92_digital.cpu_received &&
-	      analog.state.phase4.v92_analog.station.suvd.request_silence ==
+		      &analog_control.station) &&
+	      v92_cpu_parameters_are_valid(
+		      &digital.state.phase4.v92.owner.e2u.state.digital.cpu) &&
+	      v92_cpd_base_parameters_are_valid(
+		      &digital.state.phase4.v92.owner.e2u.state.digital.cpd) &&
+	      analog_control.station.cpd_received &&
+	      analog_control.station.suvd.request_silence ==
 		      digital_configuration.v92_digital_phase4.suvd
 			      .request_silence &&
-	      analog.state.phase4.v92_analog.station.cpd.data_rate_number ==
+	      analog_control.station.cpd.data_rate_number ==
 		      digital_configuration.v92_digital_phase4.cpd
 			      .data_rate_number &&
-	      digital.state.phase4.v92_digital.cpu.data_rate_number ==
+	      digital.state.phase4.v92.owner.e2u.state.digital.cpu
+		      .data_rate_number ==
 		      analog_configuration.v92_analog_phase4.cpu
 			      .data_rate_number &&
-	      /* Either SUVu or CPu may carry the peer's CPd acknowledgment. */
-	      digital.state.phase4.v92_digital.peer_acknowledged_cpd &&
+	      digital.state.phase4.v92.owner.e2u.state.digital.cpu.law == law &&
+	      digital.state.phase4.v92.owner.e2u.state.digital.cpd
+		      .data_rate_number ==
+		      digital_configuration.v92_digital_phase4.cpd
+			      .data_rate_number &&
+	      digital.state.phase4.v92.owner.e2u.state.digital.cpd.trellis ==
+		      digital_configuration.v92_digital_phase4.cpd.trellis &&
+	      digital.state.phase4.v92.owner.e2u.state.digital.cpd
+		      .four_times_gain_q0_16 ==
+		      digital_configuration.v92_digital_phase4.cpd
+			      .four_times_gain_q0_16 &&
+	      digital.state.phase4.v92.owner.e2u.state.digital.cpd.extend_e2u ==
+		      digital_configuration.v92_digital_phase4.cpd.extend_e2u &&
 	      v90_pcm_mapping_equal(
-		      &analog.state.phase4.v92_analog.station.receive.stream.decoder.mapping,
-		      &digital.state.phase4.v92_digital.transmit.encoder.mapping),
+		      &analog_control.station.receive.stream.decoder.mapping,
+		      &digital_control.transmit.encoder.mapping),
 	      "law %u delay %zu V.92 handoff failed: "
-	      "handoff=%u/%u phase=%u/%u stage=%u/%u ready=%u/%u "
+	      "handoff=%u/%u control=%u/%u phase=%u/%u stage=%u/%u "
 	      "cpu=%zu/%zu records=%llu/%llu timer=%u/%u rtd=%u",
 	      (unsigned int)law, delay,
 	      analog_handoff_reached, digital_handoff_reached,
+	      analog_control_reached, digital_control_reached,
 	      analog_entered_phase4, digital_entered_phase4,
 	      (unsigned int)analog.stage, (unsigned int)digital.stage,
-	      v92_phase4_analog_station_is_e2u_ready(
-		      &analog.state.phase4.v92_analog.station),
-	      v92_phase4_digital_station_is_ed_ready(
-		      &digital.state.phase4.v92_digital),
 	      first_cpu_sent, first_cpu_received,
-	      (unsigned long long)analog.state.phase4.v92_analog
-		      .observed_cpu_records,
-	      (unsigned long long)analog.state.phase4.v92_analog.station
+	      (unsigned long long)analog_control.observed_cpu_records,
+	      (unsigned long long)analog_control.station
 		      .transmit.completed_cpu_records,
-	      analog.state.phase4.v92_analog.cpu_repeat_interval_samples,
-	      analog.state.phase4.v92_analog.cpu_repeat_remaining_samples,
+	      analog_control.cpu_repeat_interval_samples,
+	      analog_control.cpu_repeat_remaining_samples,
 	      analog.round_trip_delay_samples);
 	CHECK(phase4_boundary_is_transactional(&analog, law) &&
 	      phase4_boundary_is_transactional(&digital, law) &&

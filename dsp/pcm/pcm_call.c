@@ -463,8 +463,8 @@ static bool v92_mixed_is_valid(
 
 static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 {
-	const struct pcm_call_v92_analog_phase4_state *state =
-		&call->state.phase4.v92_analog;
+	const struct pcm_call_v92_analog_phase4_control *state =
+		&call->state.phase4.v92.owner.analog;
 	uint32_t expected_interval = V92_CPU_REPEAT_BASE_SAMPLES +
 		call->round_trip_delay_samples;
 	bool confirmed = state->station.transmit.peer_confirmation_received;
@@ -583,15 +583,30 @@ static bool call_is_valid(
 		break;
 	case PCM_CALL_PHASE4:
 		if (call->protocol == PCM_PROTOCOL_V92 &&
-		    call->local_role == V90_ANALOG_MODEM) {
+		    call->state.phase4.v92.child ==
+			    PCM_CALL_V92_PHASE4_E2U) {
+			child_valid = v92_phase4_e2u_is_valid(
+				&call->state.phase4.v92.owner.e2u) &&
+				call->state.phase4.v92.owner.e2u.local_role ==
+					call->local_role;
+			child_failed = v92_phase4_e2u_has_failed(
+				&call->state.phase4.v92.owner.e2u);
+		} else if (call->protocol == PCM_PROTOCOL_V92 &&
+			   call->state.phase4.v92.child ==
+				   PCM_CALL_V92_PHASE4_CONTROL &&
+			   call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v92_analog_phase4_state_is_valid(call);
 			child_failed = v92_phase4_analog_station_has_failed(
-				&call->state.phase4.v92_analog.station);
-		} else if (call->protocol == PCM_PROTOCOL_V92) {
+				&call->state.phase4.v92.owner.analog.station);
+		} else if (call->protocol == PCM_PROTOCOL_V92 &&
+			   call->state.phase4.v92.child ==
+				   PCM_CALL_V92_PHASE4_CONTROL) {
 			child_valid = v92_phase4_digital_station_is_valid(
-				&call->state.phase4.v92_digital);
+				&call->state.phase4.v92.owner.digital);
 			child_failed = v92_phase4_digital_station_has_failed(
-				&call->state.phase4.v92_digital);
+				&call->state.phase4.v92.owner.digital);
+		} else if (call->protocol == PCM_PROTOCOL_V92) {
+			return false;
 		} else if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v90_phase4_analog_startup_is_valid(
 				&call->state.phase4.analog);
@@ -819,11 +834,10 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call)
 	    call->stage != PCM_CALL_PHASE4)
 		return false;
 	if (call->protocol == PCM_PROTOCOL_V92)
-		return call->local_role == V90_ANALOG_MODEM ?
-		       v92_phase4_analog_station_is_e2u_ready(
-			       &call->state.phase4.v92_analog.station) :
-		       v92_phase4_digital_station_is_ed_ready(
-			       &call->state.phase4.v92_digital);
+		return call->state.phase4.v92.child ==
+			       PCM_CALL_V92_PHASE4_E2U &&
+		       v92_phase4_e2u_is_complete(
+			       &call->state.phase4.v92.owner.e2u);
 	return call->local_role == V90_ANALOG_MODEM ?
 		       v90_phase4_analog_startup_is_complete(
 			       &call->state.phase4.analog) :
@@ -1460,13 +1474,15 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    &call->v92_analog_phase4_configuration.cpu,
 			    early_suvd, NULL) != V92_PHASE4_ANALOG_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
-		next.state.phase4.v92_analog =
-			(struct pcm_call_v92_analog_phase4_state){
+		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
+			.owner.analog = {
 				.station = station,
 				.cpu_repeat_interval_samples =
 					V92_CPU_REPEAT_BASE_SAMPLES +
 					call->round_trip_delay_samples,
-			};
+			},
+			.child = PCM_CALL_V92_PHASE4_CONTROL,
+		};
 	} else {
 		const struct pcm_call_v92_digital_mixed_state *mixed =
 			&call->state.mixed.v92_digital;
@@ -1494,7 +1510,10 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    &call->v92_digital_phase4_configuration.cpd) !=
 		    V92_PHASE4_DIGITAL_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
-		next.state.phase4.v92_digital = station;
+		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
+			.owner.digital = station,
+			.child = PCM_CALL_V92_PHASE4_CONTROL,
+		};
 	}
 	next.stage = PCM_CALL_PHASE4;
 	if (!pcm_call_is_valid(&next))
@@ -1874,7 +1893,7 @@ static enum pcm_call_result v92_digital_phase4_result(
 }
 
 static enum pcm_call_result observe_v92_cpu_completion(
-	struct pcm_call_v92_analog_phase4_state *state,
+	struct pcm_call_v92_analog_phase4_control *state,
 	bool *completed_this_sample)
 {
 	uint64_t completed =
@@ -1896,7 +1915,7 @@ static enum pcm_call_result observe_v92_cpu_completion(
 }
 
 static enum pcm_call_result advance_v92_cpu_repeat(
-	struct pcm_call_v92_analog_phase4_state *state,
+	struct pcm_call_v92_analog_phase4_control *state,
 	bool completed_this_sample)
 {
 	if (state->station.transmit.peer_confirmation_received) {
@@ -1919,7 +1938,7 @@ static enum pcm_call_result advance_v92_cpu_repeat(
 }
 
 static void cancel_v92_cpu_repeat_if_confirmed(
-	struct pcm_call_v92_analog_phase4_state *state)
+	struct pcm_call_v92_analog_phase4_control *state)
 {
 	if (!state->station.transmit.peer_confirmation_received)
 		return;
@@ -1927,13 +1946,94 @@ static void cancel_v92_cpu_repeat_if_confirmed(
 	state->awaiting_cpu_completion = false;
 }
 
+static bool v92_phase4_control_is_ready(const struct pcm_call *call)
+{
+	if (call->state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL)
+		return false;
+	return call->local_role == V90_ANALOG_MODEM ?
+		v92_phase4_analog_station_is_e2u_ready(
+			&call->state.phase4.v92.owner.analog.station) :
+		v92_phase4_digital_station_is_ed_ready(
+			&call->state.phase4.v92.owner.digital);
+}
+
+static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
+{
+	struct pcm_call next = *call;
+	struct v92_phase4_e2u e2u;
+
+	if (!v92_phase4_control_is_ready(call))
+		return PCM_CALL_INVALID_STATE;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct v92_phase4_analog_handoff handoff;
+
+		if (v92_phase4_analog_station_handoff(
+			    &call->state.phase4.v92.owner.analog.station,
+			    &handoff) != V92_PHASE4_ANALOG_STATION_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		if (v92_phase4_e2u_init_analog(&e2u, &handoff) !=
+		    V92_PHASE4_E2U_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+	} else {
+		struct v92_phase4_digital_handoff handoff;
+
+		if (v92_phase4_digital_station_handoff(
+			    &call->state.phase4.v92.owner.digital,
+			    &handoff) != V92_PHASE4_DIGITAL_STATION_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		if (v92_phase4_e2u_init_digital(&e2u, &handoff) !=
+		    V92_PHASE4_E2U_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+	}
+	next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
+		.owner.e2u = e2u,
+		.child = PCM_CALL_V92_PHASE4_E2U,
+	};
+	if (!pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
+}
+
+static enum pcm_call_result v92_e2u_result(
+	enum v92_phase4_e2u_result result)
+{
+	switch (result) {
+	case V92_PHASE4_E2U_OK:
+	case V92_PHASE4_E2U_COMPLETE:
+		return PCM_CALL_OK;
+	case V92_PHASE4_E2U_FAILED:
+		return PCM_CALL_FAILED;
+	case V92_PHASE4_E2U_INVALID_PARAMETERS:
+		return PCM_CALL_UNUSABLE_SELECTION;
+	case V92_PHASE4_E2U_INVALID_STATE:
+		return PCM_CALL_INVALID_STATE;
+	case V92_PHASE4_E2U_INVALID_ARGUMENT:
+	case V92_PHASE4_E2U_INTERNAL_ERROR:
+		break;
+	}
+	return PCM_CALL_NUMERIC_FAILURE;
+}
+
 static enum pcm_call_result sample_v92_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
+	if (call->local_role == V90_ANALOG_MODEM &&
+	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+	    v92_phase4_control_is_ready(call)) {
+		enum pcm_call_result result = enter_v92_e2u(call);
+
+		if (result != PCM_CALL_OK)
+			return result;
+	}
+	if (call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U)
+		return v92_e2u_result(v92_phase4_e2u_next(
+			&call->state.phase4.v92.owner.e2u,
+			received_octet, received_sample, transmit_octet));
 	if (call->local_role == V90_ANALOG_MODEM) {
-		struct pcm_call_v92_analog_phase4_state *state =
-			&call->state.phase4.v92_analog;
+		struct pcm_call_v92_analog_phase4_control *state =
+			&call->state.phase4.v92.owner.analog;
 		bool completed_this_sample;
 		int16_t sample;
 		enum pcm_call_result result = v92_analog_phase4_result(
@@ -1963,26 +2063,30 @@ static enum pcm_call_result sample_v92_phase4(
 			state, completed_this_sample);
 	}
 	{
-		enum pcm_call_result result = v92_digital_phase4_result(
+		enum v92_phase4_digital_station_result station_result =
 			v92_phase4_digital_station_transmit(
-				&call->state.phase4.v92_digital,
-				transmit_octet));
+				&call->state.phase4.v92.owner.digital,
+				transmit_octet);
+		enum pcm_call_result result =
+			v92_digital_phase4_result(station_result);
 
 		if (result != PCM_CALL_OK)
 			return result;
-		result = v92_digital_phase4_result(
-			v92_phase4_digital_station_receive(
-				&call->state.phase4.v92_digital,
-				received_sample));
+		station_result = v92_phase4_digital_station_receive(
+			&call->state.phase4.v92.owner.digital, received_sample);
+		result = v92_digital_phase4_result(station_result);
 		if (result != PCM_CALL_OK)
 			return result;
-		if (call->state.phase4.v92_digital.cpu_received &&
+		if (call->state.phase4.v92.owner.digital.cpu_received &&
 		    !downstream_rate_is_enabled(
 			    call->phase3_configuration.v92_digital.jd
 				    .data_rate_capability_mask,
-			    call->state.phase4.v92_digital.cpu
+			    call->state.phase4.v92.owner.digital.cpu
 				    .data_rate_number))
 			return PCM_CALL_UNUSABLE_SELECTION;
+		if (station_result == V92_PHASE4_DIGITAL_STATION_EVENT &&
+		    v92_phase4_control_is_ready(call))
+			return enter_v92_e2u(call);
 		return PCM_CALL_OK;
 	}
 }

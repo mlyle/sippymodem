@@ -2538,6 +2538,7 @@ PCM_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase4_startup.o \
 	$(BUILD_DIR)/v90_phase4_analog_startup.o \
 	$(BUILD_DIR)/v90_phase4_digital_startup.o \
+	$(BUILD_DIR)/v92_phase4_e2u.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase2_initial_probe.o, \
 		$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_station_exchange.o \

@@ -15,6 +15,7 @@
 #include "v92_phase3_digital_station.h"
 #include "v92_phase4_analog_station.h"
 #include "v92_phase4_digital_station.h"
+#include "v92_phase4_e2u.h"
 #include "v34_phase2_tone.h"
 
 #include <stdbool.h>
@@ -162,7 +163,7 @@ union pcm_call_mixed_state {
 	struct pcm_call_v92_digital_mixed_state v92_digital;
 };
 
-struct pcm_call_v92_analog_phase4_state {
+struct pcm_call_v92_analog_phase4_control {
 	struct v92_phase4_analog_station station;
 	uint64_t observed_cpu_records;
 	uint32_t cpu_repeat_interval_samples;
@@ -170,11 +171,26 @@ struct pcm_call_v92_analog_phase4_state {
 	bool awaiting_cpu_completion;
 };
 
+enum pcm_call_v92_phase4_child {
+	PCM_CALL_V92_PHASE4_CONTROL,
+	PCM_CALL_V92_PHASE4_E2U,
+};
+
+union pcm_call_v92_phase4_owner {
+	struct pcm_call_v92_analog_phase4_control analog;
+	struct v92_phase4_digital_station digital;
+	struct v92_phase4_e2u e2u;
+};
+
+struct pcm_call_v92_phase4_state {
+	union pcm_call_v92_phase4_owner owner;
+	enum pcm_call_v92_phase4_child child;
+};
+
 union pcm_call_phase4_state {
 	struct v90_phase4_analog_startup analog;
 	struct v90_phase4_digital_startup digital;
-	struct pcm_call_v92_analog_phase4_state v92_analog;
-	struct v92_phase4_digital_station v92_digital;
+	struct pcm_call_v92_phase4_state v92;
 };
 
 union pcm_call_data_path_state {
@@ -229,8 +245,8 @@ struct pcm_call_data_event {
 
 /* Own one post-V.8 PCM startup. V.90 continues through its role-specific data
  * path. V.92 starts the shared downstream Phase 4 epoch during the split
- * CPt/E1u handoff and continues through the CP/SUV control exchange. Calls on
- * one instance must be serialized. */
+ * CPt/E1u handoff, continues through the CP/SUV control exchange, and owns the
+ * post-control E2u/Ed crossing. Calls on one instance must be serialized. */
 struct pcm_call {
 	union pcm_call_state state;
 	struct pcm_phase3_entry phase3_entry;
@@ -283,7 +299,7 @@ enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
  * retain their existing normalized-codeword frontends; digital Phase 4 and
  * retrain observation consume the physical sample. A phase change takes effect
  * on the following call. PHASE4_READY stops V.90 after its
- * initial Phase 4 exchange and V.92 at its role-local E2u or Ed handoff. The
+ * initial Phase 4 exchange and V.92 after its role-local E2u interval. The
  * peer may still need continuous media before reaching its own handoff. This
  * result consumes no character, changes no output, and leaves that continuous
  * state available to the next owner. Terminal protocol failures consume the
@@ -294,7 +310,7 @@ enum pcm_call_result pcm_call_octet(
 	struct pcm_call_observation *observation);
 
 /* Transfer an exact completed V.90 Phase 4 handoff into its role-specific data
- * path without consuming a network character. V.92 Ed/E2u continuation is a
+ * path without consuming a network character. V.92 B1u/data continuation is a
  * later owner and is rejected transactionally here. */
 enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call);
 
