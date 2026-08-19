@@ -572,6 +572,7 @@ V32_LINE_RECEIVER_TEST_BINARY := \
 V32_LINE_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_line_receiver.o \
 	$(BUILD_DIR)/line_receiver.o \
+	$(BUILD_DIR)/v32_symbol_timing.o \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/echo_frontend.o \
 	$(BUILD_DIR)/echo_canceller.o \

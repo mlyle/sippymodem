@@ -14,6 +14,7 @@
 
 enum {
 	STREAM_SAMPLES = 197,
+	STREAM_OUTPUT_SAMPLES = 256,
 	ECHO_HISTORY = 32,
 	ECHO_TRAIN_INPUTS = 4000,
 	ECHO_MEASURE_INPUTS = 400,
@@ -45,6 +46,19 @@ static void fill_stream(double *samples, size_t count, uint32_t seed)
 	}
 }
 
+static uint64_t hash_i16(
+	uint64_t hash, const int16_t *samples, size_t count)
+{
+	for (size_t index = 0; index < count; ++index) {
+		uint16_t word = (uint16_t)samples[index];
+
+		hash = (hash ^ (word & UINT16_C(0xff))) *
+			UINT64_C(1099511628211);
+		hash = (hash ^ (word >> 8)) * UINT64_C(1099511628211);
+	}
+	return hash;
+}
+
 static bool run_stream(
 	struct v32_line_receiver *receiver,
 	const double *samples, size_t count,
@@ -65,7 +79,8 @@ static bool run_stream(
 		      "test chunk exceeded line-receiver bound");
 		CHECK(v32_line_receiver_process(
 			      receiver, &samples[consumed], current, false,
-			      &output[produced], STREAM_SAMPLES - produced,
+			      &output[produced],
+			      STREAM_OUTPUT_SAMPLES - produced,
 			      &emitted) == V32_LINE_RECEIVER_OK,
 		      "line receiver rejected chunk %zu", current);
 		consumed += current;
@@ -82,8 +97,8 @@ static bool test_epochs_fragmentation_and_reentrancy(void)
 	};
 	static const size_t fragments[] = { 1, 7, 19, 3, 36, 2, 11 };
 	double samples[STREAM_SAMPLES];
-	int16_t reference[STREAM_SAMPLES] = {0};
-	int16_t fragmented[STREAM_SAMPLES] = {0};
+	int16_t reference[STREAM_OUTPUT_SAMPLES] = {0};
+	int16_t fragmented[STREAM_OUTPUT_SAMPLES] = {0};
 	struct v32_line_receiver sequential;
 	struct v32_line_receiver independent;
 	size_t reference_count;
@@ -101,7 +116,10 @@ static bool test_epochs_fragmentation_and_reentrancy(void)
 		      fragments, ARRAY_LENGTH(fragments), fragmented,
 		      &fragmented_count),
 	      "independent line streams failed");
-	CHECK(reference_count == 180 && fragmented_count == reference_count &&
+	CHECK(reference_count == 180 &&
+	      hash_i16(UINT64_C(14695981039346656037), reference,
+		       reference_count) == UINT64_C(0x531105c9933a32b9) &&
+	      fragmented_count == reference_count &&
 	      memcmp(reference, fragmented,
 		     reference_count * sizeof(reference[0])) == 0 &&
 	      memcmp(&sequential, &independent, sizeof(sequential)) == 0,
@@ -112,10 +130,11 @@ static bool test_epochs_fragmentation_and_reentrancy(void)
 static bool test_adaptation_and_gain_boundaries(void)
 {
 	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES];
-	int16_t output[V32_LINE_RECEIVER_EPOCH_SAMPLES];
+	int16_t output[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
 	struct v32_line_receiver receiver;
 	struct v32_line_receiver saved;
 	struct agc gain_before_adaptation;
+	struct v32_symbol_timing timing_before_adaptation;
 	int16_t trained_mantissa;
 	int16_t trained_shift;
 	size_t produced;
@@ -133,9 +152,14 @@ static bool test_adaptation_and_gain_boundaries(void)
 		      V32_LINE_RECEIVER_INVALID_STATE &&
 	      v32_line_receiver_reacquire_gain(&receiver) ==
 		      V32_LINE_RECEIVER_INVALID_STATE &&
+	      v32_line_receiver_reacquire_timing(&receiver) ==
+		      V32_LINE_RECEIVER_INVALID_STATE &&
+	      v32_line_receiver_set_timing_tracking(&receiver, false) ==
+		      V32_LINE_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
-	      "mid-epoch gain transition lost hidden timing state");
+	      "mid-epoch receive transition lost hidden timing state");
 	gain_before_adaptation = receiver.gain;
+	timing_before_adaptation = receiver.timing;
 	CHECK(v32_line_receiver_process(
 		      &receiver, samples, ARRAY_LENGTH(samples), true,
 		      output, ARRAY_LENGTH(output), &produced) ==
@@ -143,8 +167,17 @@ static bool test_adaptation_and_gain_boundaries(void)
 	      produced == 0 && receiver.echo_adapting &&
 	      receiver.epoch_fill == 0 &&
 	      memcmp(&receiver.gain, &gain_before_adaptation,
-		     sizeof(receiver.gain)) == 0,
-	      "echo adaptation clocked AGC or retained a partial epoch");
+		     sizeof(receiver.gain)) == 0 &&
+	      memcmp(&receiver.timing, &timing_before_adaptation,
+		     sizeof(receiver.timing)) == 0,
+	      "echo adaptation clocked receive state or retained an epoch");
+	saved = receiver;
+	CHECK(v32_line_receiver_reacquire_timing(&receiver) ==
+		      V32_LINE_RECEIVER_INVALID_STATE &&
+	      v32_line_receiver_set_timing_tracking(&receiver, false) ==
+		      V32_LINE_RECEIVER_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "echo adaptation allowed a timing discontinuity");
 	CHECK(v32_line_receiver_process(
 		      &receiver, samples, ARRAY_LENGTH(samples) - 1u, false,
 		      output, ARRAY_LENGTH(output), &produced) ==
@@ -155,12 +188,17 @@ static bool test_adaptation_and_gain_boundaries(void)
 		      &receiver, samples, 1, false, output,
 		      ARRAY_LENGTH(output), &produced) ==
 		      V32_LINE_RECEIVER_OK &&
-	      produced == ARRAY_LENGTH(output) && output[0] == 9048,
+	      produced > 0 && receiver.gain.signal_present &&
+	      memcmp(&receiver.timing, &timing_before_adaptation,
+		     sizeof(receiver.timing)) != 0,
 	      "post-adaptation epoch did not start from fresh evidence");
 	trained_mantissa = receiver.gain.gain_mantissa_q15;
 	trained_shift = receiver.gain.gain_shift;
+	timing_before_adaptation = receiver.timing;
 	CHECK(v32_line_receiver_freeze_gain(&receiver) ==
 		      V32_LINE_RECEIVER_OK &&
+	      memcmp(&receiver.timing, &timing_before_adaptation,
+		     sizeof(receiver.timing)) == 0 &&
 	      v32_line_receiver_process(
 		      &receiver, samples, ARRAY_LENGTH(samples), false,
 		      output, ARRAY_LENGTH(output), &produced) ==
@@ -175,14 +213,28 @@ static bool test_adaptation_and_gain_boundaries(void)
 	      receiver.gain.gain_mantissa_q15 == trained_mantissa &&
 	      receiver.gain.gain_shift == trained_shift,
 	      "line gain freeze/reacquire did not preserve trained gain");
+	timing_before_adaptation = receiver.timing;
+	CHECK(v32_line_receiver_set_timing_tracking(&receiver, false) ==
+		      V32_LINE_RECEIVER_OK &&
+	      !receiver.timing.tracking_enabled,
+	      "line timing tracking did not freeze at an epoch boundary");
+	timing_before_adaptation.tracking_enabled = false;
+	CHECK(memcmp(&receiver.timing, &timing_before_adaptation,
+		     sizeof(receiver.timing)) == 0 &&
+	      v32_line_receiver_reacquire_timing(&receiver) ==
+		      V32_LINE_RECEIVER_OK &&
+	      receiver.timing.tracking_enabled &&
+	      receiver.timing.samples_until_output == 1 &&
+	      receiver.timing.history_index == 0,
+	      "line timing reacquire did not reset only at its boundary");
 	return true;
 }
 
 static bool test_line_contracts(void)
 {
 	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES + 1u];
-	int16_t output[V32_LINE_RECEIVER_EPOCH_SAMPLES];
-	int16_t saved_output[V32_LINE_RECEIVER_EPOCH_SAMPLES];
+	int16_t output[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
+	int16_t saved_output[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
 	struct v32_line_receiver receiver;
 	struct v32_line_receiver saved;
 	size_t produced = 123;
@@ -226,13 +278,22 @@ static bool test_line_contracts(void)
 	CHECK_REJECT(v32_line_receiver_process(
 		     &receiver, samples, V32_LINE_RECEIVER_EPOCH_SAMPLES,
 		     false, (int16_t *)(void *)&receiver,
-		     V32_LINE_RECEIVER_EPOCH_SAMPLES, &produced),
+		     V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES, &produced),
 	     "owner/output alias");
 	CHECK_REJECT(v32_line_receiver_process(
 		     &receiver, samples, V32_LINE_RECEIVER_EPOCH_SAMPLES,
 		     false, (int16_t *)(void *)samples,
-		     V32_LINE_RECEIVER_EPOCH_SAMPLES, &produced),
+		     V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES, &produced),
 	     "input/output alias");
+	CHECK_REJECT(v32_line_receiver_process(
+		     &receiver, samples, V32_LINE_RECEIVER_EPOCH_SAMPLES,
+		     false, NULL, V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES,
+		     &produced),
+	     "null line output");
+	CHECK_REJECT(v32_line_receiver_process(
+		     &receiver, samples, V32_LINE_RECEIVER_EPOCH_SAMPLES,
+		     false, output, ARRAY_LENGTH(output), NULL),
+	     "null line output count");
 #undef CHECK_REJECT
 	CHECK(v32_line_receiver_process(
 		      NULL, samples, 1, false, output,
@@ -290,6 +351,7 @@ static bool test_composed_echo_line_owner(void)
 	struct agc initial_gain;
 	uint32_t random = UINT32_C(0x2468ace1);
 	size_t normalized_total = 0;
+	uint64_t normalized_hash = UINT64_C(14695981039346656037);
 	bool any_normalized = false;
 
 	CHECK(v32_echo_frontend_init(
@@ -309,7 +371,7 @@ static bool test_composed_echo_line_owner(void)
 		struct v32_echo_reference reference;
 		int16_t transmit;
 		int16_t received;
-		int16_t normalized[V32_LINE_RECEIVER_EPOCH_SAMPLES];
+		int16_t normalized[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
 		double cleaned;
 		double remote = sample < ECHO_TRAIN_INPUTS ? 0.0 :
 			12000.0 * sin(2.0 * 3.14159265358979323846 * 600.0 *
@@ -354,12 +416,15 @@ static bool test_composed_echo_line_owner(void)
 			      "echo adaptation clocked composed AGC");
 		} else {
 			normalized_total += produced;
+			normalized_hash = hash_i16(
+				normalized_hash, normalized, produced);
 			for (size_t index = 0; index < produced; ++index)
 				any_normalized |= normalized[index] != 0;
 		}
 	}
-	CHECK(normalized_total == 360 && receiver.gain.signal_present &&
-	      any_normalized,
+	CHECK(normalized_total == 360 &&
+	      normalized_hash == UINT64_C(0x9e65841b1ba0c145) &&
+	      receiver.gain.signal_present && any_normalized,
 	      "composed post-echo line path produced %zu useful samples",
 	      normalized_total);
 	return true;

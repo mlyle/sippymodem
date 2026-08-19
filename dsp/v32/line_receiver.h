@@ -4,6 +4,7 @@
 #define V32_LINE_RECEIVER_H
 
 #include "agc.h"
+#include "symbol_timing.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,6 +27,7 @@ enum v32_line_receiver_result {
  */
 struct v32_line_receiver {
 	struct agc gain;
+	struct v32_symbol_timing timing;
 	int16_t epoch[V32_LINE_RECEIVER_EPOCH_SAMPLES];
 	size_t epoch_fill;
 	bool echo_adapting;
@@ -39,19 +41,25 @@ enum v32_line_receiver_result v32_line_receiver_freeze_gain(
 	struct v32_line_receiver *receiver);
 enum v32_line_receiver_result v32_line_receiver_reacquire_gain(
 	struct v32_line_receiver *receiver);
+enum v32_line_receiver_result v32_line_receiver_reacquire_timing(
+	struct v32_line_receiver *receiver);
+enum v32_line_receiver_result v32_line_receiver_set_timing_tracking(
+	struct v32_line_receiver *receiver, bool enabled);
 
 /*
  * Consume finite 7.2 kHz post-echo samples.  Echo-adaptation samples are
- * deliberately discarded without clocking AGC.  Successful calls report
- * zero or 36 normalized samples; count may not exceed one 36-sample
- * epoch, and arbitrary smaller fragments do not change epoch boundaries.
- * Rejected calls change no owner or output.
+ * deliberately discarded without clocking AGC or timing recovery.  Each
+ * completed 36-sample gain epoch may report up to 42 timing-recovered
+ * samples; arbitrary smaller fragments do not change epoch boundaries.
+ * A call that completes an epoch must provide capacity for all 42 samples.
+ * Output is withheld until the timing loop detects a signal.  Rejected calls
+ * change no owner, output, or output count.
  */
 enum v32_line_receiver_result v32_line_receiver_process(
 	struct v32_line_receiver *receiver,
 	const double *cleaned, size_t count, bool echo_adapting,
-	int16_t *normalized, size_t normalized_capacity,
-	size_t *normalized_count);
+	int16_t *recovered, size_t recovered_capacity,
+	size_t *recovered_count);
 
 const char *v32_line_receiver_result_name(
 	enum v32_line_receiver_result result);
