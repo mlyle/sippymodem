@@ -360,7 +360,7 @@ static bool test_validation(void)
 	      "V.32bis receiver accepted training after payload handoff");
 	receiver = saved;
 	receiver.payload_symbols =
-		V32_TRELLIS_TRACEBACK_SYMBOLS + 1u;
+		V32_TRELLIS_QAM_TRACEBACK_SYMBOLS + 1u;
 	CHECK(!v32_trellis_receiver_is_valid(&receiver) &&
 	      strcmp(v32_trellis_receiver_result_name(
 		     V32_TRELLIS_RECEIVER_OK),

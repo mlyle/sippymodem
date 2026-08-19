@@ -6,6 +6,7 @@
 #include "framing.h"
 #include "qam_equalizer.h"
 #include "trellis.h"
+#include "trellis_qam_decoder.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,7 +14,7 @@
 enum {
 	V32_TRELLIS_RECEIVER_DELAY =
 		QAM_EQUALIZER_DELAY +
-		V32_TRELLIS_TRACEBACK_SYMBOLS,
+		V32_TRELLIS_QAM_TRACEBACK_SYMBOLS,
 };
 
 enum v32_trellis_receiver_result {
@@ -26,7 +27,7 @@ enum v32_trellis_receiver_result {
 struct v32_trellis_receiver {
 	struct qam_equalizer equalizer;
 	struct v32_trellis_encoder known_encoder;
-	struct v32_trellis_decoder decoder;
+	struct v32_trellis_qam_decoder decoder;
 	struct v32_scrambler known_scrambler;
 	struct v32_scrambler descrambler;
 	struct qam_point known_targets[

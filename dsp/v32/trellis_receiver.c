@@ -42,13 +42,13 @@ bool v32_trellis_receiver_is_valid(
 	    !qam_equalizer_is_valid(&receiver->equalizer) ||
 	    !v32_trellis_encoder_is_valid(
 		    &receiver->known_encoder) ||
-	    !v32_trellis_decoder_is_valid(&receiver->decoder) ||
+	    !v32_trellis_qam_decoder_is_valid(&receiver->decoder) ||
 	    !v32_scrambler_is_valid(&receiver->known_scrambler) ||
 	    !v32_scrambler_is_valid(&receiver->descrambler) ||
 	    receiver->known_input_fill >
 		    V32_TRELLIS_RECEIVER_DELAY ||
 	    receiver->payload_symbols >
-		    V32_TRELLIS_TRACEBACK_SYMBOLS)
+		    V32_TRELLIS_QAM_TRACEBACK_SYMBOLS)
 		return false;
 	data_bits = receiver->decoder.data_bits_per_symbol;
 	if (receiver->known_encoder.data_bits_per_symbol != data_bits ||
@@ -92,7 +92,7 @@ v32_trellis_receiver_init(
 		    &initialized.known_encoder, data_bits_per_symbol,
 		    previous_differential_output) !=
 		    V32_TRELLIS_OK ||
-	    v32_trellis_decoder_init(
+	    v32_trellis_qam_decoder_init(
 		    &initialized.decoder, data_bits_per_symbol,
 		    previous_differential_output) !=
 		    V32_TRELLIS_OK)
@@ -196,7 +196,7 @@ v32_trellis_receiver_track_known(
 		    &next, point, &transmitted, true, &equalized,
 		    &equalizer_ready, &delayed_target_known) ||
 	    (equalizer_ready &&
-	     v32_trellis_decode(
+	     v32_trellis_qam_decode(
 		     &next.decoder, &equalized, &decoded, &trellis_ready,
 		     &decided_signal) !=
 		     V32_TRELLIS_OK) ||
@@ -239,7 +239,7 @@ v32_trellis_receiver_decode(
 		    &next, point, NULL, false, &equalized, &equalizer_ready,
 		    &delayed_target_known) ||
 	    (equalizer_ready &&
-	     v32_trellis_decode(
+	     v32_trellis_qam_decode(
 		     &next.decoder, &equalized, &scrambled, &trellis_ready,
 		     &decided_signal) !=
 		     V32_TRELLIS_OK))
@@ -259,11 +259,11 @@ v32_trellis_receiver_decode(
 			return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	}
 	if (equalizer_ready && !delayed_target_known &&
-	    next.payload_symbols < V32_TRELLIS_TRACEBACK_SYMBOLS)
+	    next.payload_symbols < V32_TRELLIS_QAM_TRACEBACK_SYMBOLS)
 		next.payload_symbols++;
 	payload_ready =
 		trellis_ready && !delayed_target_known &&
-		next.payload_symbols == V32_TRELLIS_TRACEBACK_SYMBOLS;
+		next.payload_symbols == V32_TRELLIS_QAM_TRACEBACK_SYMBOLS;
 	if ((trellis_ready &&
 	     v32_descramble_group(
 		     &next.descrambler, scrambled,

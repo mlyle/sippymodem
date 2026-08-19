@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "trellis.h"
+#include "trellis_qam_decoder.h"
 
 #include "constellation.h"
 
@@ -23,7 +23,7 @@ static bool data_bits_are_valid(uint8_t data_bits_per_symbol)
 }
 
 static bool path_step_is_valid(
-	const struct v32_trellis_path_step *step,
+	const struct v32_trellis_qam_path_step *step,
 	uint8_t data_bits_per_symbol)
 {
 	for (size_t state = 0; state < V32_TRELLIS_STATE_COUNT;
@@ -37,16 +37,16 @@ static bool path_step_is_valid(
 	return true;
 }
 
-bool v32_trellis_decoder_is_valid(
-	const struct v32_trellis_decoder *decoder)
+bool v32_trellis_qam_decoder_is_valid(
+	const struct v32_trellis_qam_decoder *decoder)
 {
 	bool has_normalized_path = false;
 
 	if (decoder == NULL ||
 	    !data_bits_are_valid(decoder->data_bits_per_symbol) ||
-	    decoder->path_index >= V32_TRELLIS_TRACEBACK_SYMBOLS ||
-	    decoder->path_symbols > V32_TRELLIS_TRACEBACK_SYMBOLS ||
-	    (decoder->path_symbols < V32_TRELLIS_TRACEBACK_SYMBOLS &&
+	    decoder->path_index >= V32_TRELLIS_QAM_TRACEBACK_SYMBOLS ||
+	    decoder->path_symbols > V32_TRELLIS_QAM_TRACEBACK_SYMBOLS ||
+	    (decoder->path_symbols < V32_TRELLIS_QAM_TRACEBACK_SYMBOLS &&
 	     decoder->path_index != decoder->path_symbols) ||
 	    decoder->previous_differential_output >=
 		    V32_TRELLIS_QUADRANT_COUNT)
@@ -62,7 +62,7 @@ bool v32_trellis_decoder_is_valid(
 	if (!has_normalized_path)
 		return false;
 	for (size_t index = 0;
-	     index < V32_TRELLIS_TRACEBACK_SYMBOLS; ++index) {
+	     index < V32_TRELLIS_QAM_TRACEBACK_SYMBOLS; ++index) {
 		if (!path_step_is_valid(
 			    &decoder->path[index], decoder->data_bits_per_symbol))
 			return false;
@@ -70,11 +70,11 @@ bool v32_trellis_decoder_is_valid(
 	return true;
 }
 
-enum v32_trellis_result v32_trellis_decoder_init(
-	struct v32_trellis_decoder *decoder,
+enum v32_trellis_result v32_trellis_qam_decoder_init(
+	struct v32_trellis_qam_decoder *decoder,
 	uint8_t data_bits_per_symbol, uint8_t previous_differential_output)
 {
-	struct v32_trellis_decoder initialized;
+	struct v32_trellis_qam_decoder initialized;
 
 	if (decoder == NULL || !data_bits_are_valid(data_bits_per_symbol) ||
 	    previous_differential_output >=
@@ -122,9 +122,9 @@ static bool measure_branches(
 }
 
 static bool select_paths(
-	struct v32_trellis_decoder *decoder,
+	struct v32_trellis_qam_decoder *decoder,
 	const double branch_error[V32_14400_SIGNAL_POINTS],
-	struct v32_trellis_path_step *step)
+	struct v32_trellis_qam_path_step *step)
 {
 	double next_metric[V32_TRELLIS_STATE_COUNT];
 	double minimum = DBL_MAX;
@@ -197,7 +197,7 @@ static bool select_paths(
 }
 
 static uint8_t best_path_state(
-	const struct v32_trellis_decoder *decoder)
+	const struct v32_trellis_qam_decoder *decoder)
 {
 	uint8_t best = 0;
 
@@ -210,11 +210,11 @@ static uint8_t best_path_state(
 }
 
 static bool best_current_signal_symbol(
-	const struct v32_trellis_decoder *decoder,
+	const struct v32_trellis_qam_decoder *decoder,
 	uint8_t newest_path_index, uint8_t *signal_symbol)
 {
 	uint8_t state = best_path_state(decoder);
-	const struct v32_trellis_path_step *step =
+	const struct v32_trellis_qam_path_step *step =
 		&decoder->path[newest_path_index];
 	struct v32_trellis_encoder branch = {
 		.trellis_state = step->predecessor[state],
@@ -228,36 +228,36 @@ static bool best_current_signal_symbol(
 }
 
 static uint8_t traceback_symbol(
-	const struct v32_trellis_decoder *decoder,
+	const struct v32_trellis_qam_decoder *decoder,
 	uint8_t newest_path_index)
 {
 	uint8_t state = best_path_state(decoder);
 	uint8_t index = newest_path_index;
 
 	for (size_t distance = 1;
-	     distance < V32_TRELLIS_TRACEBACK_SYMBOLS;
+	     distance < V32_TRELLIS_QAM_TRACEBACK_SYMBOLS;
 	     ++distance) {
 		state = decoder->path[index].predecessor[state];
 		index = index == 0 ?
-				V32_TRELLIS_TRACEBACK_SYMBOLS - 1u :
+				V32_TRELLIS_QAM_TRACEBACK_SYMBOLS - 1u :
 				(uint8_t)(index - 1u);
 	}
 	return decoder->path[index].differential_symbol[state];
 }
 
-enum v32_trellis_result v32_trellis_decode(
-	struct v32_trellis_decoder *decoder,
+enum v32_trellis_result v32_trellis_qam_decode(
+	struct v32_trellis_qam_decoder *decoder,
 	const struct qam_point *point, uint8_t *scrambled_data,
 	bool *ready, uint8_t *decided_signal_symbol)
 {
-	struct v32_trellis_decoder next;
+	struct v32_trellis_qam_decoder next;
 	double branch_error[V32_14400_SIGNAL_POINTS];
 	uint8_t newest_path_index;
 	uint8_t current_signal = 0;
 	uint8_t differential_symbol = 0;
 	bool symbol_ready;
 
-	if (!v32_trellis_decoder_is_valid(decoder) ||
+	if (!v32_trellis_qam_decoder_is_valid(decoder) ||
 	    !point_is_finite(point) || scrambled_data == NULL || ready == NULL ||
 	    decided_signal_symbol == NULL ||
 	    !measure_branches(
@@ -272,11 +272,11 @@ enum v32_trellis_result v32_trellis_decode(
 		return V32_TRELLIS_INVALID_ARGUMENT;
 	next.path_index =
 		(uint8_t)((next.path_index + 1u) %
-			  V32_TRELLIS_TRACEBACK_SYMBOLS);
-	if (next.path_symbols < V32_TRELLIS_TRACEBACK_SYMBOLS)
+			  V32_TRELLIS_QAM_TRACEBACK_SYMBOLS);
+	if (next.path_symbols < V32_TRELLIS_QAM_TRACEBACK_SYMBOLS)
 		next.path_symbols++;
 	symbol_ready =
-		next.path_symbols == V32_TRELLIS_TRACEBACK_SYMBOLS;
+		next.path_symbols == V32_TRELLIS_QAM_TRACEBACK_SYMBOLS;
 	if (symbol_ready) {
 		uint8_t next_quadrant;
 		uint8_t high_dibit;
@@ -295,7 +295,7 @@ enum v32_trellis_result v32_trellis_decode(
 			(uint8_t)((high_dibit << low_bit_count) |
 				  (differential_symbol & low_mask));
 	}
-	if (!v32_trellis_decoder_is_valid(&next))
+	if (!v32_trellis_qam_decoder_is_valid(&next))
 		return V32_TRELLIS_INVALID_ARGUMENT;
 	*decoder = next;
 	*ready = symbol_ready;
