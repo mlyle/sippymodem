@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <conditioning.h>
+#include <b1_path.h>
 #include <conditioning_path.h>
 #include <constellation.h>
 #include <end_path.h>
 #include <qam.h>
 #include <rate_path.h>
+#include <trellis.h>
 
 #include "test.h"
 
@@ -21,6 +23,7 @@ enum {
 	/* The generated answering transition exposes two nonidentical candidate
 	 * words before the first pair which the standard permits us to accept. */
 	TEST_ANSWERING_RATE_OBSERVATIONS = 4 * V32_RATE_SIGNAL_DIBITS,
+	TEST_SELECTED_MODES = 6,
 };
 
 static const struct qam_channel V32_CHANNEL = {
@@ -37,6 +40,7 @@ struct generated_source {
 	struct qam_modulator modulator;
 	struct v32_conditioning_transmitter conditioning;
 	struct v32_symbol_encoder rate_encoder;
+	struct v32_trellis_encoder trellis_encoder;
 	struct qam_point point;
 	struct v32_rate_offer offer;
 	struct v32_rate_offer selected_offer;
@@ -45,7 +49,37 @@ struct generated_source {
 	uint16_t end_word;
 	unsigned int rate_dibit;
 	unsigned int rate_symbols;
+	unsigned int selected_symbols;
+	uint32_t b1_history;
 	bool rate_started;
+	bool selected_started;
+};
+
+static const struct v32_rate_offer SELECTED_OFFERS[TEST_SELECTED_MODES] = {
+	{
+		.rates = V32_RATE_CAPABILITY_4800,
+		.trellis_at_highest_rate = false,
+	},
+	{
+		.rates = V32_RATE_CAPABILITY_7200,
+		.trellis_at_highest_rate = true,
+	},
+	{
+		.rates = V32_RATE_CAPABILITY_9600,
+		.trellis_at_highest_rate = false,
+	},
+	{
+		.rates = V32_RATE_CAPABILITY_9600,
+		.trellis_at_highest_rate = true,
+	},
+	{
+		.rates = V32_RATE_CAPABILITY_12000,
+		.trellis_at_highest_rate = true,
+	},
+	{
+		.rates = V32_RATE_CAPABILITY_14400,
+		.trellis_at_highest_rate = true,
+	},
 };
 
 static struct v32_rate_offer role_offer(enum v32_transmitter_role role)
@@ -66,21 +100,38 @@ static struct v32_rate_offer role_offer(enum v32_transmitter_role role)
 	};
 }
 
-static struct v32_rate_offer selected_offer(void)
+static uint8_t selected_trellis_data_bits(
+	const struct v32_rate_offer *offer)
 {
-	return (struct v32_rate_offer){
-		.rates = V32_RATE_CAPABILITY_4800,
-		.trellis_at_highest_rate = false,
-	};
+	if (!offer->trellis_at_highest_rate)
+		return 0;
+	switch (offer->rates) {
+	case V32_RATE_CAPABILITY_7200:
+		return V32_7200_DATA_BITS;
+	case V32_RATE_CAPABILITY_9600:
+		return V32_9600_TRELLIS_DATA_BITS;
+	case V32_RATE_CAPABILITY_12000:
+		return V32_12000_DATA_BITS;
+	case V32_RATE_CAPABILITY_14400:
+		return V32_14400_DATA_BITS;
+	default:
+		return 0;
+	}
 }
 
 static bool source_init(
 	struct generated_source *source,
-	enum v32_transmitter_role role)
+	enum v32_transmitter_role role,
+	const struct v32_rate_offer *selected_offer)
 {
 	memset(source, 0, sizeof(*source));
 	source->offer = role_offer(role);
-	source->selected_offer = selected_offer();
+	source->selected_offer = *selected_offer;
+	source->offer.rates |= selected_offer->rates;
+	if (role == V32_ANSWERING_TRANSMITTER &&
+	    selected_offer->trellis_at_highest_rate &&
+	    selected_offer->rates >= V32_RATE_CAPABILITY_9600)
+		source->offer.trellis_at_highest_rate = true;
 	return qam_modulator_init(
 		       &source->modulator, &V32_CHANNEL,
 		       TEST_AMPLITUDE) == QAM_OK &&
@@ -104,13 +155,94 @@ static bool source_set_word(
 {
 	if (!source->rate_started || source->rate_dibit != 0)
 		return false;
+	if (word == UINT16_MAX) {
+		uint8_t data_bits = selected_trellis_data_bits(
+			&source->selected_offer);
+
+		if (source->selected_started)
+			return false;
+		if (data_bits != 0 &&
+		    v32_trellis_encoder_init(
+			    &source->trellis_encoder, data_bits,
+			    V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) !=
+			    V32_TRELLIS_OK)
+			return false;
+		if (source->selected_offer.rates ==
+			    V32_RATE_CAPABILITY_9600 &&
+		    data_bits == 0)
+			source->rate_encoder.phase_quadrant = 0;
+		source->selected_started = true;
+	}
 	source->rate_word = word;
+	return true;
+}
+
+static bool source_next_selected_point(struct generated_source *source)
+{
+	uint8_t data_bits = selected_trellis_data_bits(
+		&source->selected_offer);
+	bool b1 = source->selected_symbols < V32_B1_PATH_SYMBOLS;
+	uint8_t input;
+	uint8_t signal;
+
+	if (data_bits != 0) {
+		uint8_t scrambled = 0;
+
+		input = b1 ?
+			(uint8_t)((UINT8_C(1) << data_bits) - 1u) : 0;
+		if (data_bits == V32_14400_DATA_BITS) {
+			for (int shift = 3; shift >= 0; shift -= 3) {
+				uint8_t group;
+
+				if (v32_scramble_group(
+					    &source->rate_encoder.scrambler,
+					    (uint8_t)((input >> shift) & 7u),
+					    3, &group) != V32_FRAMING_OK)
+					return false;
+				scrambled |= (uint8_t)(group << shift);
+			}
+		} else if (v32_scramble_group(
+				   &source->rate_encoder.scrambler, input,
+				   data_bits, &scrambled) != V32_FRAMING_OK) {
+			return false;
+		}
+		if (v32_trellis_encode(
+			    &source->trellis_encoder, scrambled, &signal) !=
+			    V32_TRELLIS_OK ||
+		    v32_trellis_constellation_point(
+			    data_bits, signal, &source->point) !=
+			    V32_CONSTELLATION_OK)
+			return false;
+	} else if (source->selected_offer.rates ==
+		   V32_RATE_CAPABILITY_9600) {
+		input = b1 ? 15 : 0;
+		if (v32_9600_symbol_encode(
+			    &source->rate_encoder, input, &signal) !=
+			    V32_FRAMING_OK ||
+		    v32_constellation_point(signal, &source->point) !=
+			    V32_CONSTELLATION_OK)
+			return false;
+	} else {
+		input = b1 ? 3 : 0;
+		if (v32_4800_symbol_encode(
+			    &source->rate_encoder, input, &signal) !=
+			    V32_FRAMING_OK ||
+		    v32_4800_constellation_point(signal, &source->point) !=
+			    V32_CONSTELLATION_OK)
+			return false;
+	}
+	source->selected_symbols++;
+	if (source->selected_symbols == V32_B1_PATH_SYMBOLS)
+		source->b1_history = source->rate_encoder.scrambler.history;
 	return true;
 }
 
 static bool source_next_point(struct generated_source *source)
 {
 	uint8_t quadrant;
+
+	if (source->selected_started)
+		return source_next_selected_point(source);
 
 	if (!v32_conditioning_transmitter_is_complete(
 		    &source->conditioning)) {
@@ -166,12 +298,13 @@ static bool source_sample(
 static bool complete_conditioning(
 	struct generated_source *source,
 	enum v32_transmitter_role role,
+	const struct v32_rate_offer *selected_offer,
 	struct v32_conditioning_path *conditioning,
 	struct v32_conditioning_path_handoff *handoff)
 {
 	bool complete = false;
 
-	CHECK(source_init(source, role) &&
+	CHECK(source_init(source, role, selected_offer) &&
 	      v32_conditioning_path_init(
 		      conditioning, role, 0,
 		      V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
@@ -278,11 +411,15 @@ static bool reject_wrong_end(
 
 static bool run_role(
 	enum v32_transmitter_role role,
+	const struct v32_rate_offer *selected_offer,
 	struct v32_conditioning_path_handoff *conditioning_handoff,
 	struct v32_rate_path *started,
 	struct v32_rate_path *completed,
 	struct v32_end_path *end_started,
-	struct v32_end_path *end_completed)
+	struct v32_end_path *end_completed,
+	struct v32_end_path_handoff *completed_end_handoff,
+	struct v32_b1_path *b1_started,
+	struct v32_b1_path *b1_completed)
 {
 	struct generated_source source;
 	struct v32_conditioning_path conditioning;
@@ -291,6 +428,7 @@ static bool run_role(
 	struct v32_rate_path_handoff rate_handoff;
 	struct v32_end_path end;
 	struct v32_end_path_handoff end_handoff;
+	struct v32_b1_path b1;
 	enum v32_equalizer_adaptation end_adaptation;
 	unsigned int end_source_limit;
 	unsigned int b1_source_start = 0;
@@ -298,7 +436,7 @@ static bool run_role(
 	bool complete = false;
 
 	CHECK(complete_conditioning(
-		      &source, role, &conditioning, &handoff),
+		      &source, role, selected_offer, &conditioning, &handoff),
 	      "rate-path conditioning failed for role %d", role);
 	CHECK(v32_rate_path_init(&path, &handoff) == V32_RATE_PATH_OK &&
 	      v32_rate_path_is_valid(&path) &&
@@ -347,7 +485,8 @@ static bool run_role(
 		      path.four_point.decoder.descrambler.history,
 	      "rate handoff changed the aligned receiver for role %d", role);
 	*completed = path;
-	if (role == V32_CALLING_TRANSMITTER)
+	if (role == V32_CALLING_TRANSMITTER &&
+	    selected_offer->rates == V32_RATE_CAPABILITY_4800)
 		CHECK(reject_wrong_end(
 			      &source, &rate_handoff,
 			      &source.selected_offer),
@@ -422,8 +561,8 @@ static bool run_role(
 	      end.selected_offer.rates == source.selected_offer.rates &&
 	      end.selected_offer.trellis_at_highest_rate ==
 		      source.selected_offer.trellis_at_highest_rate &&
-	      source.rate_symbols > b1_source_start &&
-	      source.rate_word == UINT16_MAX,
+	      source.rate_symbols == b1_source_start &&
+	      source.selected_symbols != 0 && source.rate_word == UINT16_MAX,
 	      "end path changed the selected E sequence for role %d", role);
 	CHECK(v32_end_path_handoff(&end, &end_handoff) ==
 		      V32_END_PATH_OK &&
@@ -436,6 +575,78 @@ static bool run_role(
 		      end.four_point.decoder.descrambler.history,
 	      "end handoff changed the selected receiver for role %d", role);
 	*end_completed = end;
+	*completed_end_handoff = end_handoff;
+	{
+		enum v32_b1_path_result result = v32_b1_path_init(
+			&b1, &end_handoff);
+
+		CHECK(result == V32_B1_PATH_OK ||
+		      result == V32_B1_PATH_COMPLETE,
+		      "B1 path did not initialize for role/mode %d/%u:%u: %d",
+		      role, selected_offer->rates,
+		      selected_offer->trellis_at_highest_rate, result);
+		complete = result == V32_B1_PATH_COMPLETE;
+	}
+	CHECK(v32_b1_path_is_valid(&b1),
+	      "B1 path initialized invalid for role/mode %d/%u:%u", role,
+	      selected_offer->rates,
+	      selected_offer->trellis_at_highest_rate);
+	*b1_started = b1;
+	for (unsigned int index = 0;
+	     index < TEST_LINE_SAMPLE_LIMIT && !complete; ++index) {
+		struct v32_echo_reference reference;
+		int16_t sample;
+		bool accepted;
+		enum v32_b1_path_result result;
+
+		CHECK(source_sample(&source, &sample, &reference, &accepted),
+		      "B1 source stopped at %u for role/mode %d/%u:%u", index,
+		      role, selected_offer->rates,
+		      selected_offer->trellis_at_highest_rate);
+		result = v32_b1_path_sample(
+			&b1, sample, accepted ? &reference : NULL);
+		CHECK(result == V32_B1_PATH_OK ||
+		      result == V32_B1_PATH_COMPLETE,
+		      "B1 path stopped at %u for role/mode %d/%u:%u: %d (%u/%u, %d/%d e%llu)",
+		      index, role, selected_offer->rates,
+		      selected_offer->trellis_at_highest_rate, result,
+		      b1.observations, source.selected_symbols,
+		      b1.receive.equalizer.pending_observation.i,
+		      b1.receive.equalizer.pending_observation.q,
+		      (unsigned long long)
+			      b1.receive.equalizer.pending_observation.epoch);
+		complete = result == V32_B1_PATH_COMPLETE;
+	}
+	CHECK(complete && v32_b1_path_is_complete(&b1) &&
+	      b1.observations == V32_B1_PATH_SYMBOLS &&
+	      b1.observation_epoch ==
+		      end_handoff.observation_epoch + V32_B1_PATH_SYMBOLS &&
+	      b1.receive.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_FINE &&
+	      (!b1.receive.equalizer.decision_pending ||
+	       b1.receive.equalizer.pending_observation.epoch ==
+		       b1.observation_epoch + 1u) &&
+	      source.selected_symbols > V32_B1_PATH_SYMBOLS &&
+	      source.b1_history != 0,
+	      "B1 boundary changed for role/mode %d/%u:%u", role,
+	      selected_offer->rates,
+	      selected_offer->trellis_at_highest_rate);
+	if (b1.mode == V32_B1_MODE_FOUR_POINT)
+		CHECK(b1.receiver.four_point.decoder.descrambler.history ==
+			      source.b1_history && b1.b1_matches,
+		      "4800 B1 state changed for role %d", role);
+	if (b1.mode == V32_B1_MODE_UNCODED)
+		CHECK(b1.receiver.uncoded.decoder.descrambler.history ==
+			      source.b1_history && b1.b1_matches,
+		      "uncoded B1 descrambler changed for role %d", role);
+	if (b1.mode == V32_B1_MODE_TRELLIS)
+		CHECK(b1.receiver.trellis.b1_observations ==
+			      V32_B1_PATH_SYMBOLS &&
+		      b1.receiver.trellis.b1_flush_symbols == 0 &&
+		      b1.receiver.trellis.b1_matches == b1.b1_matches,
+		      "trellis B1 state changed for role/mode %d/%u", role,
+		      selected_offer->rates);
+	*b1_completed = b1;
 	return true;
 }
 
@@ -444,7 +655,10 @@ static bool test_contracts(
 	const struct v32_rate_path *started,
 	const struct v32_rate_path *completed,
 	const struct v32_end_path *end_started,
-	const struct v32_end_path *end_completed)
+	const struct v32_end_path *end_completed,
+	const struct v32_end_path_handoff *completed_end_handoff,
+	const struct v32_b1_path *b1_started,
+	const struct v32_b1_path *b1_completed)
 {
 	struct v32_conditioning_path_handoff bad_conditioning = *conditioning;
 	struct v32_rate_path path;
@@ -464,10 +678,17 @@ static bool test_contracts(
 	struct v32_end_path saved_end;
 	struct v32_end_path_handoff end_handoff;
 	struct v32_end_path_handoff saved_end_handoff;
+	struct v32_end_path_handoff bad_end_handoff;
+	struct v32_b1_path b1;
+	struct v32_b1_path saved_b1;
 	union {
 		struct v32_rate_path_handoff rate;
 		struct v32_end_path end;
 	} overlapping_init, saved_overlapping_init;
+	union {
+		struct v32_end_path_handoff end;
+		struct v32_b1_path b1;
+	} overlapping_b1, saved_overlapping_b1;
 
 	memset(&path, 0x5a, sizeof(path));
 	saved = path;
@@ -642,6 +863,57 @@ static bool test_contracts(
 	end.detector.window = 1;
 	CHECK(!v32_end_path_is_valid(&end),
 	      "end path accepted a nonreset completed detector");
+
+	memset(&b1, 0x5a, sizeof(b1));
+	saved_b1 = b1;
+	bad_end_handoff = *completed_end_handoff;
+	bad_end_handoff.observation_ready =
+		!bad_end_handoff.observation_ready;
+	overlapping_b1.end = *completed_end_handoff;
+	saved_overlapping_b1 = overlapping_b1;
+	CHECK(v32_b1_path_init(NULL, completed_end_handoff) ==
+		      V32_B1_PATH_INVALID_ARGUMENT &&
+	      v32_b1_path_init(&b1, NULL) ==
+		      V32_B1_PATH_INVALID_ARGUMENT &&
+	      v32_b1_path_init(
+		      &overlapping_b1.b1, &overlapping_b1.end) ==
+		      V32_B1_PATH_INVALID_ARGUMENT &&
+	      v32_b1_path_init(&b1, &bad_end_handoff) ==
+		      V32_B1_PATH_INVALID_ARGUMENT &&
+	      memcmp(&b1, &saved_b1, sizeof(b1)) == 0 &&
+	      memcmp(
+		      &overlapping_b1, &saved_overlapping_b1,
+		      sizeof(overlapping_b1)) == 0,
+	      "B1 initialization rejection changed state or input");
+
+	b1 = *b1_started;
+	saved_b1 = b1;
+	CHECK(v32_b1_path_sample(NULL, 0, NULL) ==
+		      V32_B1_PATH_INVALID_STATE &&
+	      v32_b1_path_sample(
+		      &b1, 0,
+		      (const struct v32_echo_reference *)&b1) ==
+		      V32_B1_PATH_INVALID_ARGUMENT &&
+	      v32_b1_path_sample(&b1, 0, &invalid_reference) ==
+		      V32_B1_PATH_INVALID_ARGUMENT &&
+	      memcmp(&b1, &saved_b1, sizeof(b1)) == 0,
+	      "B1 sample rejection changed state");
+	b1.observation_epoch++;
+	CHECK(!v32_b1_path_is_valid(&b1) &&
+	      v32_b1_path_sample(&b1, 0, NULL) ==
+		      V32_B1_PATH_INVALID_STATE,
+	      "B1 path accepted a spliced decision epoch");
+	b1 = *b1_started;
+	b1.mode = V32_B1_MODE_TRELLIS;
+	CHECK(!v32_b1_path_is_valid(&b1),
+	      "B1 path accepted a mismatched receiver mode");
+
+	b1 = *b1_completed;
+	saved_b1 = b1;
+	CHECK(v32_b1_path_sample(&b1, 0, NULL) ==
+		      V32_B1_PATH_COMPLETE &&
+	      memcmp(&b1, &saved_b1, sizeof(b1)) == 0,
+	      "complete B1 path changed on another sample");
 	return true;
 }
 
@@ -652,16 +924,46 @@ int main(void)
 	struct v32_rate_path completed;
 	struct v32_end_path end_started;
 	struct v32_end_path end_completed;
+	struct v32_end_path_handoff completed_end_handoff;
+	struct v32_b1_path b1_started;
+	struct v32_b1_path b1_completed;
 
-	if (!run_role(
-		    V32_CALLING_TRANSMITTER, &conditioning,
-		    &started, &completed, &end_started, &end_completed) ||
-	    !run_role(
-		    V32_ANSWERING_TRANSMITTER, &conditioning,
-		    &started, &completed, &end_started, &end_completed) ||
-	    !test_contracts(
+	for (size_t mode = 0; mode < TEST_SELECTED_MODES; ++mode) {
+		for (unsigned int role = 0; role < 2; ++role) {
+			struct v32_conditioning_path_handoff next_conditioning;
+			struct v32_rate_path next_started;
+			struct v32_rate_path next_completed;
+			struct v32_end_path next_end_started;
+			struct v32_end_path next_end_completed;
+			struct v32_end_path_handoff next_end_handoff;
+			struct v32_b1_path next_b1_started;
+			struct v32_b1_path next_b1_completed;
+
+			if (!run_role(
+				    (enum v32_transmitter_role)role,
+				    &SELECTED_OFFERS[mode], &next_conditioning,
+				    &next_started, &next_completed,
+				    &next_end_started, &next_end_completed,
+				    &next_end_handoff, &next_b1_started,
+				    &next_b1_completed))
+				return 1;
+			if (mode == 0 &&
+			    role == V32_ANSWERING_TRANSMITTER) {
+				conditioning = next_conditioning;
+				started = next_started;
+				completed = next_completed;
+				end_started = next_end_started;
+				end_completed = next_end_completed;
+				completed_end_handoff = next_end_handoff;
+				b1_started = next_b1_started;
+				b1_completed = next_b1_completed;
+			}
+		}
+	}
+	if (!test_contracts(
 		    &conditioning, &started, &completed,
-		    &end_started, &end_completed))
+		    &end_started, &end_completed, &completed_end_handoff,
+		    &b1_started, &b1_completed))
 		return 1;
 	puts("V.32 rate path tests passed");
 	return 0;

@@ -629,6 +629,7 @@ V32_RATE_PATH_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_rate_path
 V32_RATE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_rate_path.o \
+	$(BUILD_DIR)/b1_path.o \
 	$(BUILD_DIR)/end_path.o \
 	$(BUILD_DIR)/rate_path.o \
 	$(BUILD_DIR)/conditioning_path.o \
@@ -643,6 +644,11 @@ V32_RATE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/four_point_receiver.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/trellis_receiver.o \
+	$(BUILD_DIR)/trellis_decoder.o \
+	$(BUILD_DIR)/trellis_profile.o \
+	$(BUILD_DIR)/trellis.o \
 	$(BUILD_DIR)/v32_decision.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/framing.o \
@@ -5115,6 +5121,10 @@ $(BUILD_DIR)/rate_path.o: \
 
 $(BUILD_DIR)/end_path.o: \
 	$(DSP_V32_SOURCE_DIR)/end_path.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/b1_path.o: \
+	$(DSP_V32_SOURCE_DIR)/b1_path.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v32_decision.o: \
