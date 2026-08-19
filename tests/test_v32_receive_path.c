@@ -292,6 +292,65 @@ static bool test_buffered_commits(void)
 	return true;
 }
 
+static bool test_boundary_adaptation(void)
+{
+	struct v32_receive_path path;
+	struct v32_receive_path saved;
+	struct v32_equalizer_observation observation;
+	struct v32_equalizer_observation output;
+	struct v32_equalizer_observation saved_output;
+	struct v32_equalizer_decision decision;
+	int16_t first = 123;
+	size_t consumed;
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_equalizer_process(
+		      &path.equalizer, &first, 1,
+		      &consumed, &observation) ==
+		      V32_EQUALIZER_OBSERVATION_READY && consumed == 1,
+	      "adaptation boundary did not reach its first decision");
+	for (size_t index = 0; index < 6; ++index)
+		path.recovered[index] = (int16_t)(200 + 17 * (int)index);
+	path.recovered_count = 6;
+	decision = self_decision(&observation);
+	CHECK(v32_receive_path_commit_adaptation(
+		      &path, &decision,
+		      V32_EQUALIZER_ADAPTATION_FINE, &output) ==
+		      V32_RECEIVE_PATH_OBSERVATION_READY &&
+	      path.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_FINE &&
+	      path.recovered_index == 3 && path.recovered_count == 6 &&
+	      output.lineage == path.equalizer.lineage,
+	      "fine adaptation did not precede buffered samples");
+
+	decision = self_decision(&output);
+	saved = path;
+	saved_output = output;
+	CHECK(v32_receive_path_commit_adaptation(
+		      &path, &decision,
+		      (enum v32_equalizer_adaptation)3, &output) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "rejected boundary adaptation changed state or output");
+	CHECK(v32_receive_path_commit(&path, &decision, &output) ==
+		      V32_RECEIVE_PATH_OBSERVATION_READY,
+	      "boundary path did not resume after rejection");
+	decision = self_decision(&output);
+	memset(&output, 0x5a, sizeof(output));
+	saved_output = output;
+	CHECK(v32_receive_path_commit(&path, &decision, &output) ==
+		      V32_RECEIVE_PATH_OK &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+	      path.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_FINE &&
+	      v32_receive_path_is_valid(&path),
+	      "boundary path did not drain after adaptation");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	union {
@@ -356,7 +415,7 @@ static bool test_contracts(void)
 int main(void)
 {
 	if (!test_composed_path() || !test_buffered_commits() ||
-	    !test_contracts())
+	    !test_boundary_adaptation() || !test_contracts())
 		return 1;
 	puts("V.32 receive path tests passed");
 	return 0;

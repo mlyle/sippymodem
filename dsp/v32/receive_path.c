@@ -178,9 +178,11 @@ static bool commit_arguments_are_separate(
 		       observation, sizeof(*observation));
 }
 
-enum v32_receive_path_result v32_receive_path_commit(
+static enum v32_receive_path_result commit_decision(
 	struct v32_receive_path *path,
 	const struct v32_equalizer_decision *decision,
+	bool change_adaptation,
+	enum v32_equalizer_adaptation adaptation,
 	struct v32_equalizer_observation *observation)
 {
 	struct v32_equalizer next_equalizer;
@@ -198,6 +200,10 @@ enum v32_receive_path_result v32_receive_path_commit(
 	next_index = path->recovered_index;
 	if (v32_equalizer_commit(&next_equalizer, decision) !=
 		    V32_EQUALIZER_OK)
+		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
+	if (change_adaptation &&
+	    v32_equalizer_set_adaptation(
+		    &next_equalizer, adaptation) != V32_EQUALIZER_OK)
 		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
 	result = drain_recovered(
 		&next_equalizer, path->recovered, &next_index,
@@ -219,4 +225,24 @@ enum v32_receive_path_result v32_receive_path_commit(
 	if (result == V32_RECEIVE_PATH_OBSERVATION_READY)
 		*observation = next_observation;
 	return result;
+}
+
+enum v32_receive_path_result v32_receive_path_commit(
+	struct v32_receive_path *path,
+	const struct v32_equalizer_decision *decision,
+	struct v32_equalizer_observation *observation)
+{
+	return commit_decision(
+		path, decision, false,
+		V32_EQUALIZER_ADAPTATION_DISABLED, observation);
+}
+
+enum v32_receive_path_result v32_receive_path_commit_adaptation(
+	struct v32_receive_path *path,
+	const struct v32_equalizer_decision *decision,
+	enum v32_equalizer_adaptation adaptation,
+	struct v32_equalizer_observation *observation)
+{
+	return commit_decision(
+		path, decision, true, adaptation, observation);
 }

@@ -251,6 +251,8 @@ static bool run_generated_role(
 		complete = result == V32_CONDITIONING_PATH_COMPLETE;
 	}
 	CHECK(complete && v32_conditioning_path_is_complete(&path) &&
+	      path.receive.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_FINE &&
 	      path.conditioning.trn_symbols >=
 		      V32_CONDITIONING_TRN_MIN_SYMBOLS &&
 	      source.rate_started &&
@@ -268,6 +270,8 @@ static bool run_generated_role(
 		      expected_decoder.descrambler.transmitter_role,
 	      "generated conditioning handoff changed for role %d", role);
 	CHECK(handoff.observation_ready &&
+	      handoff.receive.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_FINE &&
 	      handoff.observation.epoch ==
 		      path.conditioning.observation_epoch + 1u,
 	      "generated conditioning lost its buffered rate observation");

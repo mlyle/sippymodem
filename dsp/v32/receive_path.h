@@ -65,4 +65,15 @@ enum v32_receive_path_result v32_receive_path_commit(
 	const struct v32_equalizer_decision *decision,
 	struct v32_equalizer_observation *observation);
 
+/*
+ * Commit at a protocol boundary, change equalizer adaptation before any
+ * retained timing samples are observed, then drain toward the next decision.
+ * This preserves the exact sample epoch when training changes to rate/data.
+ */
+enum v32_receive_path_result v32_receive_path_commit_adaptation(
+	struct v32_receive_path *path,
+	const struct v32_equalizer_decision *decision,
+	enum v32_equalizer_adaptation adaptation,
+	struct v32_equalizer_observation *observation);
+
 #endif

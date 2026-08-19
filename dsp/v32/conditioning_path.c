@@ -102,8 +102,14 @@ static enum v32_conditioning_path_result commit_observations(
 			&next_conditioning, observation, &decision);
 		if (conditioning_result != V32_CONDITIONING_RECEIVER_OK)
 			return V32_CONDITIONING_PATH_INVALID_STATE;
-		receive_result = v32_receive_path_commit(
-			&path->receive, &decision.equalizer, observation);
+		if (next_conditioning.phase == V32_CONDITIONING_READY) {
+			receive_result = v32_receive_path_commit_adaptation(
+				&path->receive, &decision.equalizer,
+				V32_EQUALIZER_ADAPTATION_FINE, observation);
+		} else {
+			receive_result = v32_receive_path_commit(
+				&path->receive, &decision.equalizer, observation);
+		}
 		if (receive_result != V32_RECEIVE_PATH_OK &&
 		    receive_result != V32_RECEIVE_PATH_OBSERVATION_READY)
 			return V32_CONDITIONING_PATH_INVALID_STATE;
