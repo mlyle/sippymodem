@@ -101,9 +101,17 @@ static uint16_t reciprocal_profile(
 	return (uint16_t)((UINT32_C(1) << 22) / high);
 }
 
-static int16_t signal_level(const int16_t *samples, size_t count)
+enum agc_result agc_measure_level_s16(
+	const int16_t *samples, size_t count, int16_t *level)
 {
 	uint32_t energy = 0;
+	int16_t measured;
+
+	if (samples == NULL || count == 0 || count > UINT16_MAX ||
+	    level == NULL || count > SIZE_MAX / sizeof(*samples) ||
+	    memory_regions_overlap(
+		    samples, count * sizeof(*samples), level, sizeof(*level)))
+		return AGC_INVALID_ARGUMENT;
 
 	for (size_t index = 0; index < count; ++index) {
 		int32_t product =
@@ -112,7 +120,9 @@ static int16_t signal_level(const int16_t *samples, size_t count)
 
 		energy += (uint32_t)(scaled * (int32_t)samples[index]);
 	}
-	return wrap_s16((int32_t)square_root_profile(energy));
+	measured = wrap_s16((int32_t)square_root_profile(energy));
+	*level = measured;
+	return AGC_OK;
 }
 
 static bool config_is_valid(const struct agc_config *config)
@@ -197,7 +207,8 @@ enum agc_result agc_process(
 		return AGC_INVALID_ARGUMENT;
 
 	next = *control;
-	level = signal_level(input, count);
+	if (agc_measure_level_s16(input, count, &level) != AGC_OK)
+		return AGC_INVALID_STATE;
 	block_gain = next.gain_mantissa_q15;
 	active = !((block_gain == 0 &&
 		    level < next.config.acquisition_threshold) ||

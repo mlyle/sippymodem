@@ -203,9 +203,67 @@ static bool test_lifecycle_and_contracts(void)
 	return true;
 }
 
+static bool test_level_measurement_contract(void)
+{
+	static const struct {
+		int16_t input;
+		int16_t level_36;
+		int16_t level_9;
+	} cases[] = {
+		{ 4000, 3998, 1999 },
+		{ 4252, 4252, 2126 },
+		{ 6000, 5992, 2996 },
+		{ 12000, 11985, 5992 },
+	};
+	int16_t samples[AGC_TEST_SAMPLES];
+	int16_t saved[AGC_TEST_SAMPLES];
+	int16_t level;
+
+	for (size_t test = 0; test < ARRAY_LENGTH(cases); ++test) {
+		for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index)
+			samples[index] = cases[test].input;
+		CHECK(agc_measure_level_s16(
+			      samples, ARRAY_LENGTH(samples), &level) == AGC_OK &&
+		      level == cases[test].level_36 &&
+		      agc_measure_level_s16(samples, 9, &level) == AGC_OK &&
+		      level == cases[test].level_9,
+		      "level measurement diverged for input %d",
+		      cases[test].input);
+	}
+
+	fill_reference_block(samples, 1);
+	CHECK(agc_measure_level_s16(
+		      samples, ARRAY_LENGTH(samples), &level) == AGC_OK &&
+	      level == 3405 &&
+	      agc_measure_level_s16(samples, 9, &level) == AGC_OK &&
+	      level == 1541,
+	      "level measurement nonconstant oracle diverged");
+	memcpy(saved, samples, sizeof(samples));
+	level = 12345;
+#define CHECK_LEVEL_REJECT(call, label)                                    \
+	CHECK((call) == AGC_INVALID_ARGUMENT && level == 12345 &&             \
+	      memcmp(samples, saved, sizeof(samples)) == 0,                    \
+	      "%s was not transactional", label)
+	CHECK_LEVEL_REJECT(agc_measure_level_s16(NULL, 9, &level),
+			   "null level input");
+	CHECK_LEVEL_REJECT(agc_measure_level_s16(samples, 0, &level),
+			   "empty level input");
+	CHECK_LEVEL_REJECT(agc_measure_level_s16(
+			   samples, (size_t)UINT16_MAX + 1u, &level),
+			   "oversize level input");
+	CHECK_LEVEL_REJECT(agc_measure_level_s16(
+			   samples, 9, (int16_t *)(void *)&samples[3]),
+			   "overlapping level output");
+	CHECK_LEVEL_REJECT(agc_measure_level_s16(samples, 9, NULL),
+			   "null level output");
+#undef CHECK_LEVEL_REJECT
+	return true;
+}
+
 int main(void)
 {
-	if (!test_exact_arithmetic() || !test_lifecycle_and_contracts())
+	if (!test_exact_arithmetic() || !test_lifecycle_and_contracts() ||
+	    !test_level_measurement_contract())
 		return 1;
 	puts("AGC tests passed");
 	return 0;

@@ -47,6 +47,14 @@ bool agc_is_valid(const struct agc *control);
 enum agc_result agc_freeze(struct agc *control);
 enum agc_result agc_reacquire(struct agc *control);
 
+/*
+ * Exact fixed-point level measurement shared by gain and timing gates.
+ * Count is 1..UINT16_MAX.  samples and level may not overlap; rejection
+ * leaves level unchanged.
+ */
+enum agc_result agc_measure_level_s16(
+	const int16_t *samples, size_t count, int16_t *level);
+
 /* input and output may be identical; other overlap is rejected. */
 enum agc_result agc_process(
 	struct agc *control, const int16_t *input, size_t count,
