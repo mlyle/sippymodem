@@ -708,6 +708,176 @@ static bool test_v92_switch_contracts(void)
 	return true;
 }
 
+static bool source_record_fixture(
+	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_source_record *record,
+	uint8_t sequence[9])
+{
+	const struct v92_suvd_parameters suvd = { 0 };
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_symbol symbol;
+
+	memset(sequence, 0xa5, 9u);
+	*record = (struct pcm_downstream_source_record){
+		.sequence = sequence,
+		.sequence_capacity = 9u,
+		.sequence_bits = 4u * 17u,
+	};
+	if (!make_width_mapping(
+		    &mapping, G711_LAW_PCMU, 17u, 3u))
+		return false;
+	if (pcm_downstream_tx_init(
+		    transmitter, PCM_PROTOCOL_V92, &mapping) !=
+		    PCM_DOWNSTREAM_TX_OK ||
+	    pcm_downstream_tx_start_suvd(transmitter, &suvd) !=
+		    PCM_DOWNSTREAM_TX_OK ||
+	    !advance_to_v92_position(transmitter, true))
+		return false;
+	while (transmitter->queue_count != 0u) {
+		if (pcm_downstream_tx_next(transmitter, &symbol) !=
+		    PCM_DOWNSTREAM_TX_OK)
+			return false;
+	}
+	return pcm_downstream_tx_is_v92_control_boundary(transmitter);
+}
+
+static bool source_record_rejection_is_transactional(
+	struct pcm_downstream_tx transmitter,
+	struct pcm_downstream_source_record record,
+	enum pcm_downstream_tx_result expected)
+{
+	struct pcm_downstream_tx before_transmitter = transmitter;
+	struct pcm_downstream_source_record before_record = record;
+	struct pcm_downstream_symbol symbol;
+	struct pcm_downstream_symbol before_symbol;
+
+	memset(&symbol, 0xa5, sizeof(symbol));
+	before_symbol = symbol;
+	return pcm_downstream_tx_next_source_record(
+		       &transmitter, &record, &symbol) == expected &&
+	       memcmp(&transmitter, &before_transmitter,
+		      sizeof(transmitter)) == 0 &&
+	       memcmp(&record, &before_record, sizeof(record)) == 0 &&
+	       memcmp(&symbol, &before_symbol, sizeof(symbol)) == 0;
+}
+
+static bool test_source_record_contracts(void)
+{
+	struct pcm_downstream_tx transmitter;
+	struct pcm_downstream_tx before_transmitter;
+	struct pcm_downstream_source_record record;
+	struct pcm_downstream_source_record before_record;
+	struct pcm_downstream_symbol symbol;
+	struct pcm_downstream_symbol before_symbol;
+	uint8_t sequence[9];
+
+	CHECK(source_record_fixture(&transmitter, &record, sequence),
+	      "source-record fixture did not reach its boundary");
+	{
+		struct pcm_downstream_source_record invalid = record;
+
+		invalid.bit_index = 1u;
+		CHECK(source_record_rejection_is_transactional(
+			      transmitter, invalid,
+			      PCM_DOWNSTREAM_TX_INVALID_STATE),
+		      "unaligned source cursor changed the transaction");
+		invalid = record;
+		invalid.sequence_capacity = 8u;
+		CHECK(source_record_rejection_is_transactional(
+			      transmitter, invalid,
+			      PCM_DOWNSTREAM_TX_INVALID_STATE),
+		      "short source capacity changed the transaction");
+		invalid = record;
+		invalid.bit_index = invalid.sequence_bits;
+		CHECK(source_record_rejection_is_transactional(
+			      transmitter, invalid,
+			      PCM_DOWNSTREAM_TX_INVALID_STATE),
+		      "unfinished terminal cursor changed the transaction");
+		invalid.complete = true;
+		CHECK(source_record_rejection_is_transactional(
+			      transmitter, invalid,
+			      PCM_DOWNSTREAM_TX_INVALID_STATE),
+		      "complete source record was accepted again");
+	}
+
+	before_transmitter = transmitter;
+	before_record = record;
+	memset(&symbol, 0xa5, sizeof(symbol));
+	before_symbol = symbol;
+	CHECK(pcm_downstream_tx_next_source_record(
+		      &transmitter, &record,
+		      (struct pcm_downstream_symbol *)(void *)&transmitter) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_next_source_record(
+		      &transmitter,
+		      (struct pcm_downstream_source_record *)(void *)&transmitter,
+		      &symbol) == PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      pcm_downstream_tx_next_source_record(
+		      &transmitter, &record,
+		      (struct pcm_downstream_symbol *)(void *)&record) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &before_transmitter,
+		     sizeof(transmitter)) == 0 &&
+	      memcmp(&record, &before_record, sizeof(record)) == 0 &&
+	      memcmp(&symbol, &before_symbol, sizeof(symbol)) == 0,
+	      "overlapping source-record owners changed state or output");
+
+	record.sequence = (const uint8_t *)(const void *)&transmitter;
+	record.sequence_capacity = sizeof(transmitter);
+	before_transmitter = transmitter;
+	before_record = record;
+	CHECK(pcm_downstream_tx_next_source_record(
+		      &transmitter, &record, &symbol) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &before_transmitter,
+		     sizeof(transmitter)) == 0 &&
+	      memcmp(&record, &before_record, sizeof(record)) == 0 &&
+	      memcmp(&symbol, &before_symbol, sizeof(symbol)) == 0,
+	      "source storage overlapping the line was accepted");
+
+	CHECK(source_record_fixture(&transmitter, &record, sequence),
+	      "source failure fixture did not reach its boundary");
+	transmitter.accepted_frames =
+		UINT64_MAX / V90_CP_FRAME_INTERVALS;
+	transmitter.transmitted_symbols =
+		transmitter.accepted_frames * V90_CP_FRAME_INTERVALS -
+		transmitter.queue_count -
+		(uint64_t)transmitter.encoder.shaper.pending_count *
+			(V90_CP_FRAME_INTERVALS /
+			 transmitter.encoder.mapping.sign_redundancy);
+	before_transmitter = transmitter;
+	before_record = record;
+	memset(&symbol, 0xa5, sizeof(symbol));
+	before_symbol = symbol;
+	{
+		enum pcm_downstream_tx_result result =
+			pcm_downstream_tx_next_source_record(
+				&transmitter, &record, &symbol);
+
+		CHECK(pcm_downstream_tx_is_valid(&before_transmitter) &&
+		      result == PCM_DOWNSTREAM_TX_OUT_OF_RANGE &&
+		      memcmp(&transmitter, &before_transmitter,
+			     sizeof(transmitter)) == 0 &&
+		      memcmp(&record, &before_record, sizeof(record)) == 0 &&
+		      memcmp(&symbol, &before_symbol, sizeof(symbol)) == 0,
+		      "source failure %s was not transactional",
+		      pcm_downstream_tx_result_name(result));
+	}
+
+	CHECK(source_record_fixture(&transmitter, &record, sequence),
+	      "source completion fixture did not reach its boundary");
+	for (size_t emitted = 0u; !record.complete && emitted < 128u;
+	     ++emitted)
+		CHECK(pcm_downstream_tx_next_source_record(
+			      &transmitter, &record, &symbol) ==
+			      PCM_DOWNSTREAM_TX_OK,
+		      "source record stopped at output %zu", emitted);
+	CHECK(record.complete && record.bit_index == record.sequence_bits &&
+	      pcm_downstream_tx_is_valid(&transmitter),
+	      "source record did not reach its exact terminal cursor");
+	return true;
+}
+
 static bool test_empty_finish(void)
 {
 	struct v90_pcm_mapping mapping;
@@ -884,6 +1054,7 @@ int main(void)
 		{ "generated sequences", test_generated_sequences },
 		{ "V.92 sequences", test_v92_sequences },
 		{ "V.92 switch contracts", test_v92_switch_contracts },
+		{ "source-record contracts", test_source_record_contracts },
 		{ "empty finish", test_empty_finish },
 		{ "contracts", test_contracts },
 	};

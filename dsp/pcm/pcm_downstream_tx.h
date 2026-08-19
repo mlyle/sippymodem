@@ -35,6 +35,18 @@ struct pcm_downstream_symbol {
 	bool shaping_frame_start;
 };
 
+/* A caller-owned, integral source record. Its storage is borrowed only for
+ * pcm_downstream_tx_next_source_record(); the downstream line retains no
+ * pointer to it. COMPLETE means the whole record has entered the continuous
+ * coder, even when spectral output remains queued. */
+struct pcm_downstream_source_record {
+	const uint8_t *sequence;
+	size_t sequence_capacity;
+	size_t sequence_bits;
+	size_t bit_index;
+	bool complete;
+};
+
 enum pcm_downstream_tx_stage {
 	PCM_DOWNSTREAM_TX_TRN2D,
 	PCM_DOWNSTREAM_TX_MP,
@@ -154,6 +166,16 @@ enum pcm_downstream_tx_result pcm_downstream_tx_request_finish(
  * output unchanged. Rejected calls leave both state and output unchanged. */
 enum pcm_downstream_tx_result pcm_downstream_tx_next(
 	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_symbol *symbol);
+
+/* Temporarily source one complete record outside the compact embedded
+ * control buffer. The line must be at a V.92 control-record boundary and
+ * retain the SUVd that follows this record. Once the external record ends,
+ * any additional frames needed for spectral look-ahead come from that SUVd.
+ * Rejected calls change neither line, cursor, nor output. */
+enum pcm_downstream_tx_result pcm_downstream_tx_next_source_record(
+	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_source_record *record,
 	struct pcm_downstream_symbol *symbol);
 
 const char *pcm_downstream_tx_result_name(

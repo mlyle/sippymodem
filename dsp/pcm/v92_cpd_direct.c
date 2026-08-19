@@ -9,7 +9,6 @@
 
 enum {
 	V92_CPD_DIRECT_40K_RATE_NUMBER = 13,
-	V92_CPD_DIRECT_FIXED_POINT_LIMIT = 16,
 	V92_CPD_DIRECT_LINEAR_STEP = 256,
 	V92_CPD_DIRECT_B1U_FRAMES = 48,
 	V92_CPD_DIRECT_GAIN_TARGET_SHIFT = 36,
@@ -27,7 +26,7 @@ static bool direct_constellation(
 	for (uint8_t point = 0u; point < point_count; ++point) {
 		int16_t level;
 
-		if (point_count <= V92_CPD_DIRECT_FIXED_POINT_LIMIT) {
+		if (point_count <= V92_CPD_DIRECT_LINEAR_POINT_LIMIT) {
 			level = (int16_t)((2u * point + 1u) *
 				V92_CPD_DIRECT_LINEAR_STEP);
 		} else if (!g711_ucode_sample(
@@ -66,7 +65,8 @@ static bool direct_tables(
 		.filters_present = true,
 		.constellations_present = true,
 	};
-	parameters->filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 4u;
+	parameters->filter[V92_CPD_PREFILTER_FEED_FORWARD].count =
+		V92_CPD_DIRECT_FILTER_TAPS;
 	parameters->filter[V92_CPD_PREFILTER_FEED_FORWARD]
 		.coefficient[0] = INT16_MAX;
 	for (size_t symbol = 0u;
@@ -86,7 +86,7 @@ static bool direct_tables(
 	/* The 40 kbit/s selection uses the 32-state trellis. A 64-point
 	 * positive half gives each modulus-32 value four representatives. */
 	if (data_rate_number == V92_CPD_DIRECT_40K_RATE_NUMBER)
-		point_count = 64u;
+		point_count = V92_CPD_DIRECT_MAX_POINTS;
 	return direct_constellation(
 		&parameters->constellation[0], law, point_count);
 }

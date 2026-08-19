@@ -2,6 +2,7 @@
 
 #include "pcm_downstream_tx.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 
 #include <string.h>
@@ -397,6 +398,24 @@ static bool symbol_accounting_is_valid(
 		       accepted_symbols;
 }
 
+static bool source_record_is_valid(
+	const struct pcm_downstream_source_record *record,
+	unsigned int frame_bits)
+{
+	if (record == NULL || record->sequence == NULL || frame_bits == 0u ||
+	    record->sequence_bits == 0u ||
+	    record->sequence_bits % frame_bits != 0u)
+		return false;
+	if (record->sequence_bits / 8u +
+		    (record->sequence_bits % 8u != 0u) >
+	    record->sequence_capacity)
+		return false;
+	return record->complete ?
+		       record->bit_index == record->sequence_bits :
+		       record->bit_index < record->sequence_bits &&
+			       record->bit_index % frame_bits == 0u;
+}
+
 bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter)
 {
 	if (transmitter == NULL ||
@@ -757,12 +776,15 @@ static bool fill_queue(
 }
 
 static enum pcm_downstream_tx_result generate_frame(
-	struct pcm_downstream_tx *transmitter)
+	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_source_record *source_record)
 {
 	struct v90_pcm_frame_output output;
 	uint8_t bits[V90_PCM_FRAME_MAX_BITS];
 	size_t bit_count = transmitter->encoder.mapping.frame_bits;
 	enum v90_pcm_frame_encoder_result result;
+	bool external_record = source_record != NULL &&
+		!source_record->complete;
 
 	if (transmitter->accepted_frames >=
 	    UINT64_MAX / V90_CP_FRAME_INTERVALS)
@@ -782,6 +804,10 @@ static enum pcm_downstream_tx_result generate_frame(
 			source = 1;
 		else if (transmitter->stage == PCM_DOWNSTREAM_TX_ED)
 			source = 0;
+		else if (external_record)
+			source = packed_msb_bit(
+				source_record->sequence,
+				source_record->bit_index + bit);
 		else
 			source = packed_msb_bit(
 				transmitter->control_sequence,
@@ -800,7 +826,13 @@ static enum pcm_downstream_tx_result generate_frame(
 	    result != V90_PCM_FRAME_ENCODER_SYMBOLS_READY)
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	transmitter->accepted_frames++;
-	if (transmitter->stage == PCM_DOWNSTREAM_TX_MP ||
+	if (external_record) {
+		if (source_record->bit_index == 0u)
+			transmitter->v92_control_record_accepted = false;
+		source_record->bit_index += bit_count;
+		if (source_record->bit_index == source_record->sequence_bits)
+			source_record->complete = true;
+	} else if (transmitter->stage == PCM_DOWNSTREAM_TX_MP ||
 	    transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME ||
 	    transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL) {
 		transmitter->control_bit_index += bit_count;
@@ -879,8 +911,9 @@ static struct pcm_downstream_symbol pop_symbol(
 	return symbol;
 }
 
-enum pcm_downstream_tx_result pcm_downstream_tx_next(
+static enum pcm_downstream_tx_result next_symbol(
 	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_source_record *source_record,
 	struct pcm_downstream_symbol *symbol)
 {
 	struct pcm_downstream_tx next;
@@ -907,7 +940,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_next(
 		     attempt <= next.encoder.mapping.spectral_lookahead &&
 		     next.queue_count == 0 && !next.finish_requested;
 		     ++attempt) {
-			result = generate_frame(&next);
+			result = generate_frame(&next, source_record);
 			if (result != PCM_DOWNSTREAM_TX_OK)
 				break;
 		}
@@ -930,6 +963,69 @@ enum pcm_downstream_tx_result pcm_downstream_tx_next(
 	if (!pcm_downstream_tx_is_valid(&next))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;
+	*symbol = generated;
+	return PCM_DOWNSTREAM_TX_OK;
+}
+
+enum pcm_downstream_tx_result pcm_downstream_tx_next(
+	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_symbol *symbol)
+{
+	return next_symbol(transmitter, NULL, symbol);
+}
+
+enum pcm_downstream_tx_result pcm_downstream_tx_next_source_record(
+	struct pcm_downstream_tx *transmitter,
+	struct pcm_downstream_source_record *record,
+	struct pcm_downstream_symbol *symbol)
+{
+	struct pcm_downstream_tx next_transmitter;
+	struct pcm_downstream_source_record next_record;
+	struct pcm_downstream_symbol generated;
+	enum pcm_downstream_tx_result result;
+	size_t sequence_bytes;
+
+	if (transmitter == NULL || record == NULL || symbol == NULL ||
+	    memory_regions_overlap(
+		    transmitter, sizeof(*transmitter), record,
+		    sizeof(*record)) ||
+	    memory_regions_overlap(
+		    transmitter, sizeof(*transmitter), symbol,
+		    sizeof(*symbol)) ||
+	    memory_regions_overlap(
+		    record, sizeof(*record), symbol, sizeof(*symbol)))
+		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	if (!pcm_downstream_tx_is_v92_control_boundary(transmitter) ||
+	    transmitter->v92_control_kind !=
+		    PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
+	    !source_record_is_valid(
+		    record, transmitter->encoder.mapping.frame_bits) ||
+	    record->complete)
+		return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	sequence_bytes = record->sequence_bits / 8u +
+			 (record->sequence_bits % 8u != 0u);
+	if (memory_regions_overlap(
+		    record->sequence, sequence_bytes,
+		    transmitter, sizeof(*transmitter)) ||
+	    memory_regions_overlap(
+		    record->sequence, sequence_bytes,
+		    record, sizeof(*record)) ||
+	    memory_regions_overlap(
+		    record->sequence, sequence_bytes,
+		    symbol, sizeof(*symbol)))
+		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	next_transmitter = *transmitter;
+	next_record = *record;
+	result = next_symbol(
+		&next_transmitter, &next_record, &generated);
+	if (result != PCM_DOWNSTREAM_TX_OK)
+		return result;
+	if (!source_record_is_valid(
+		    &next_record,
+		    next_transmitter.encoder.mapping.frame_bits))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	*transmitter = next_transmitter;
+	*record = next_record;
 	*symbol = generated;
 	return PCM_DOWNSTREAM_TX_OK;
 }

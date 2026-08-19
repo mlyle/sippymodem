@@ -34,7 +34,7 @@ static uint8_t expected_point_count(uint8_t rate)
 		if (count < required)
 			count = required;
 	}
-	return rate == 13u ? 64u : count;
+	return rate == 13u ? V92_CPD_DIRECT_MAX_POINTS : count;
 }
 
 static bool direct_sections_are_correct(
@@ -50,7 +50,8 @@ static bool direct_sections_are_correct(
 	      cpd->constellations_present &&
 	      cpd->filter[V92_CPD_PRECODER_FEED_FORWARD].count == 0u &&
 	      cpd->filter[V92_CPD_PRECODER_FEEDBACK].count == 0u &&
-	      cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].count == 4u &&
+	      cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].count ==
+		      V92_CPD_DIRECT_FILTER_TAPS &&
 	      cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD]
 		      .coefficient[0] == INT16_MAX &&
 	      cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD]
@@ -84,7 +85,7 @@ static bool direct_sections_are_correct(
 	for (uint8_t point = 0u; point < point_count; ++point) {
 		int16_t expected_level;
 
-		if (point_count <= 16u) {
+		if (point_count <= V92_CPD_DIRECT_LINEAR_POINT_LIMIT) {
 			expected_level = (int16_t)((2u * point + 1u) * 256u);
 		} else {
 			CHECK(g711_ucode_sample(
@@ -179,9 +180,7 @@ static bool test_rate_and_law_matrix(void)
 		for (uint8_t rate = 1u;
 		     rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
 			struct v92_cpd_parameters cpd;
-			struct v92_cpd_parameters decoded;
-			uint8_t frame[V92_CPD_MAX_FRAME_BYTES];
-			size_t frame_bits = 0u;
+			uint8_t frame[V92_CPD_DIRECT_MAX_FRAME_BYTES];
 
 			CHECK(v92_cpd_direct_init(
 				      &cpd, (enum g711_law)law, rate,
@@ -202,16 +201,34 @@ static bool test_rate_and_law_matrix(void)
 			      gain_is_nearest(&cpd, (enum g711_law)law),
 			      "rate %u law %u direct mapping changed",
 			      rate, law);
-			memset(frame, 0xa5, sizeof(frame));
-			CHECK(v92_cpd_encode(
-				      &cpd, 17u, frame, sizeof(frame),
-				      &frame_bits) == V92_CPD_OK &&
-			      v92_cpd_decode(
-				      frame, sizeof(frame), frame_bits, 17u,
-				      &decoded) == V92_CPD_OK &&
-			      memcmp(&decoded, &cpd, sizeof(cpd)) == 0,
-			      "rate %u law %u CPd did not round trip",
-			      rate, law);
+			for (uint8_t alignment =
+				     V92_CPD_DOWNSTREAM_FRAME_MIN_BITS;
+			     alignment <= V92_CPD_DOWNSTREAM_FRAME_MAX_BITS;
+			     ++alignment) {
+				struct v92_cpd_parameters decoded;
+				size_t expected_bits =
+					v92_cpd_frame_bits(&cpd, alignment);
+				size_t frame_bytes = (expected_bits + 7u) / 8u;
+				size_t frame_bits = 0u;
+
+				memset(frame, 0xa5, sizeof(frame));
+				CHECK(expected_bits != 0u &&
+				      expected_bits <=
+					      V92_CPD_DIRECT_MAX_FRAME_BITS &&
+				      frame_bytes <= sizeof(frame) &&
+				      v92_cpd_encode(
+					      &cpd, alignment, frame,
+					      frame_bytes, &frame_bits) ==
+					      V92_CPD_OK &&
+				      frame_bits == expected_bits &&
+				      v92_cpd_decode(
+					      frame, frame_bytes, frame_bits,
+					      alignment, &decoded) == V92_CPD_OK &&
+				      memcmp(&decoded, &cpd, sizeof(cpd)) == 0,
+				      "rate %u law %u alignment %u CPd "
+				      "did not round trip within its bound",
+				      rate, law, alignment);
+			}
 		}
 	}
 	return true;
@@ -233,7 +250,7 @@ static bool test_known_boundaries(void)
 	CHECK(v92_cpd_direct_init(
 		      &cpd, G711_LAW_PCMU, 13u, false) == V92_CPD_OK &&
 	      cpd.trellis == V92_CPD_TRELLIS_32_STATE &&
-	      cpd.constellation[0].count == 64u,
+	      cpd.constellation[0].count == V92_CPD_DIRECT_MAX_POINTS,
 	      "DRN13 did not select its expanded 32-state mapping");
 	return true;
 }
