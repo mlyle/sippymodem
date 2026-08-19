@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <constellation.h>
-#include <trellis_acquirer.h>
+#include <trellis_qam_acquirer.h>
 
 #include "test.h"
 
@@ -51,7 +51,7 @@ static bool check_start_state(
 	struct v32_symbol_encoder framing_encoder;
 	struct v32_symbol_decoder framing_decoder;
 	struct v32_trellis_encoder trellis_encoder;
-	struct v32_trellis_acquirer acquirer;
+	struct v32_trellis_qam_acquirer acquirer;
 	struct qam_point reference;
 	uint8_t payload[PAYLOAD_SYMBOLS];
 	uint8_t mask = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
@@ -71,9 +71,9 @@ static bool check_start_state(
 	      "V.32bis start state %u/%u/%u fixture did not initialize",
 	      reference_phase, differential_output, data_bits);
 	reference = multiply(channel, reference);
-	CHECK(v32_trellis_acquirer_init(
+	CHECK(v32_trellis_qam_acquirer_init(
 		      &acquirer, &framing_decoder, &reference, data_bits) ==
-		      V32_TRELLIS_ACQUIRER_OK,
+		      V32_TRELLIS_QAM_ACQUIRER_OK,
 	      "V.32bis start state %u/%u/%u acquisition did not initialize",
 	      reference_phase, differential_output, data_bits);
 	for (size_t index = 0; index < KNOWN_SYMBOLS; ++index) {
@@ -85,14 +85,14 @@ static bool check_start_state(
 		      reference_phase, differential_output, data_bits, index);
 		point = multiply(channel, point);
 		CHECK(
-		      v32_trellis_acquirer_track_known(
+		      v32_trellis_qam_acquirer_track_known(
 			      &acquirer, &point, mask) ==
-			      V32_TRELLIS_ACQUIRER_OK,
+			      V32_TRELLIS_QAM_ACQUIRER_OK,
 		      "V.32bis start state %u/%u/%u known symbol %zu failed",
 		      reference_phase, differential_output, data_bits, index);
 	}
-	CHECK(v32_trellis_acquirer_select(&acquirer) ==
-		      V32_TRELLIS_ACQUIRER_OK &&
+	CHECK(v32_trellis_qam_acquirer_select(&acquirer) ==
+		      V32_TRELLIS_QAM_ACQUIRER_OK &&
 	      acquirer.selected &&
 	      acquirer.selected_differential_output == differential_output,
 	      "V.32bis start state %u/%u/%u selected hypothesis %u",
@@ -110,17 +110,17 @@ static bool check_start_state(
 		      "V.32bis start state %u/%u/%u payload generation failed at %zu",
 		      reference_phase, differential_output, data_bits, index);
 		point = multiply(channel, point);
-		CHECK(v32_trellis_acquirer_decode(
+		CHECK(v32_trellis_qam_acquirer_decode(
 			      &acquirer, &point, &output, &ready) ==
-			      V32_TRELLIS_ACQUIRER_OK,
+			      V32_TRELLIS_QAM_ACQUIRER_OK,
 		      "V.32bis start state %u/%u/%u payload decode failed at %zu",
 		      reference_phase, differential_output, data_bits, index);
-		if (index + 1u < V32_TRELLIS_RECEIVER_DELAY) {
+		if (index + 1u < V32_TRELLIS_QAM_RECEIVER_DELAY) {
 			CHECK(!ready && output == UINT8_MAX,
 			      "V.32bis start-state acquisition exposed delayed payload");
 		} else {
 			size_t expected = index + 1u -
-					  V32_TRELLIS_RECEIVER_DELAY;
+					  V32_TRELLIS_QAM_RECEIVER_DELAY;
 
 			CHECK(ready && output == payload[expected],
 			      "V.32bis start state %u/%u/%u decoded %u instead of %u",
@@ -157,8 +157,8 @@ static bool test_generated_start_state_acquisition(void)
 static bool test_api_contract(void)
 {
 	struct v32_symbol_decoder framing;
-	struct v32_trellis_acquirer acquirer;
-	struct v32_trellis_acquirer saved;
+	struct v32_trellis_qam_acquirer acquirer;
+	struct v32_trellis_qam_acquirer saved;
 	struct qam_point point = { 1.0, 1.0 };
 	uint8_t output = UINT8_MAX;
 	bool ready = true;
@@ -166,33 +166,33 @@ static bool test_api_contract(void)
 	CHECK(v32_symbol_decoder_init(
 		      &framing, V32_CALLING_TRANSMITTER, 0) ==
 		      V32_FRAMING_OK &&
-	      v32_trellis_acquirer_init(
+	      v32_trellis_qam_acquirer_init(
 		      &acquirer, &framing, &point,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_ACQUIRER_OK,
+		      V32_TRELLIS_QAM_ACQUIRER_OK,
 	      "V.32bis acquisition API fixture did not initialize");
 	saved = acquirer;
-	CHECK(v32_trellis_acquirer_init(
+	CHECK(v32_trellis_qam_acquirer_init(
 		      &acquirer, NULL, &point,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT &&
+		      V32_TRELLIS_QAM_ACQUIRER_INVALID_ARGUMENT &&
 	      memcmp(&acquirer, &saved, sizeof(acquirer)) == 0 &&
-	      v32_trellis_acquirer_select(&acquirer) ==
-		      V32_TRELLIS_ACQUIRER_NOT_READY &&
-	      v32_trellis_acquirer_decode(
+	      v32_trellis_qam_acquirer_select(&acquirer) ==
+		      V32_TRELLIS_QAM_ACQUIRER_NOT_READY &&
+	      v32_trellis_qam_acquirer_decode(
 		      &acquirer, &point, &output, &ready) ==
-		      V32_TRELLIS_ACQUIRER_NOT_READY &&
-	      v32_trellis_acquirer_track_known(
+		      V32_TRELLIS_QAM_ACQUIRER_NOT_READY &&
+	      v32_trellis_qam_acquirer_track_known(
 		      &acquirer, NULL, 7) ==
-		      V32_TRELLIS_ACQUIRER_INVALID_ARGUMENT &&
+		      V32_TRELLIS_QAM_ACQUIRER_INVALID_ARGUMENT &&
 	      memcmp(&acquirer, &saved, sizeof(acquirer)) == 0 &&
 	      output == UINT8_MAX && ready,
 	      "V.32bis acquisition API failure changed state or output");
 	CHECK(strcmp(
-		      v32_trellis_acquirer_result_name(
-			      V32_TRELLIS_ACQUIRER_NOT_READY),
+		      v32_trellis_qam_acquirer_result_name(
+			      V32_TRELLIS_QAM_ACQUIRER_NOT_READY),
 		      "not ready") == 0 &&
-	      !v32_trellis_acquirer_is_valid(NULL),
+	      !v32_trellis_qam_acquirer_is_valid(NULL),
 	      "V.32bis acquisition API names or validation changed");
 	return true;
 }

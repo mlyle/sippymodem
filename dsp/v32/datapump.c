@@ -17,7 +17,7 @@
 #include "startup.h"
 #include "training_session.h"
 #include "trellis.h"
-#include "trellis_acquirer.h"
+#include "trellis_qam_acquirer.h"
 
 #include <limits.h>
 #include <math.h>
@@ -81,7 +81,7 @@ struct v32_datapump {
 	struct v32_symbol_encoder encoder;
 	struct v32_symbol_decoder decoder;
 	struct v32_trellis_encoder trellis_encoder;
-	struct v32_trellis_acquirer trellis_acquirer;
+	struct v32_trellis_qam_acquirer trellis_qam_acquirer;
 	struct v32_uncoded_qam receiver_9600;
 	struct v32_conditioning_transmitter
 		conditioning_transmitter;
@@ -444,11 +444,11 @@ static bool trellis_receiver_is_valid(
 {
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 
-	return v32_trellis_acquirer_is_valid(
-		       &datapump->trellis_acquirer) &&
-	       datapump->trellis_acquirer.candidates[0]
+	return v32_trellis_qam_acquirer_is_valid(
+		       &datapump->trellis_qam_acquirer) &&
+	       datapump->trellis_qam_acquirer.candidates[0]
 			       .decoder.data_bits_per_symbol == data_bits &&
-	       datapump->trellis_acquirer.candidates[0]
+	       datapump->trellis_qam_acquirer.candidates[0]
 			       .descrambler.transmitter_role ==
 		       remote_role(datapump->caller);
 }
@@ -599,8 +599,8 @@ static int initialize_protocol(
 	}
 	memset(&datapump->trellis_encoder, 0,
 	       sizeof(datapump->trellis_encoder));
-	memset(&datapump->trellis_acquirer, 0,
-	       sizeof(datapump->trellis_acquirer));
+	memset(&datapump->trellis_qam_acquirer, 0,
+	       sizeof(datapump->trellis_qam_acquirer));
 	memset(&datapump->receiver_9600, 0,
 	       sizeof(datapump->receiver_9600));
 	datapump->previous_receive_point = (struct qam_point){ 0 };
@@ -1082,9 +1082,9 @@ static int enter_link(struct v32_datapump *datapump)
 	     !datapump->receiver_9600_initialized))
 		return -1;
 	if (uses_trellis(datapump)) {
-		if (v32_trellis_acquirer_select(
-			    &datapump->trellis_acquirer) !=
-		    V32_TRELLIS_ACQUIRER_OK)
+		if (v32_trellis_qam_acquirer_select(
+			    &datapump->trellis_qam_acquirer) !=
+		    V32_TRELLIS_QAM_ACQUIRER_OK)
 			return -1;
 	}
 	if (modem_set_param(
@@ -1117,15 +1117,15 @@ static int initialize_trellis_receiver(
 	struct v32_datapump *datapump,
 	const struct qam_point *reference_point)
 {
-	struct v32_trellis_acquirer acquirer;
+	struct v32_trellis_qam_acquirer acquirer;
 	uint8_t data_bits = selected_trellis_data_bits(datapump);
 
 	if (data_bits == 0 ||
-	    v32_trellis_acquirer_init(
+	    v32_trellis_qam_acquirer_init(
 		    &acquirer, &datapump->decoder, reference_point,
-		    data_bits) != V32_TRELLIS_ACQUIRER_OK)
+		    data_bits) != V32_TRELLIS_QAM_ACQUIRER_OK)
 		return -1;
-	datapump->trellis_acquirer = acquirer;
+	datapump->trellis_qam_acquirer = acquirer;
 	datapump->trellis_receiver_initialized = true;
 	return 0;
 }
@@ -1281,17 +1281,17 @@ static int observe_trellis_point(
 		uint8_t bits;
 		bool ready;
 
-		if (v32_trellis_acquirer_decode(
-			    &datapump->trellis_acquirer, point, &bits,
-			    &ready) != V32_TRELLIS_ACQUIRER_OK)
+		if (v32_trellis_qam_acquirer_decode(
+			    &datapump->trellis_qam_acquirer, point, &bits,
+			    &ready) != V32_TRELLIS_QAM_ACQUIRER_OK)
 			return -1;
 		if (ready)
 			deliver_bits(datapump, bits, data_bits);
 	} else {
 		bool connected;
-		if (v32_trellis_acquirer_track_known(
-			    &datapump->trellis_acquirer, point, mark) !=
-		    V32_TRELLIS_ACQUIRER_OK)
+		if (v32_trellis_qam_acquirer_track_known(
+			    &datapump->trellis_qam_acquirer, point, mark) !=
+		    V32_TRELLIS_QAM_ACQUIRER_OK)
 			return -1;
 		/* B1 confirmation counts the accepted known symbol.  Its decoded
 		 * value is intentionally delayed by equalization and traceback. */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "trellis_receiver.h"
+#include "trellis_qam_receiver.h"
 
 #include "constellation.h"
 
@@ -32,8 +32,8 @@ static bool framing_is_valid(
 	       v32_scrambler_is_valid(&framing->descrambler);
 }
 
-bool v32_trellis_receiver_is_valid(
-	const struct v32_trellis_receiver *receiver)
+bool v32_trellis_qam_receiver_is_valid(
+	const struct v32_trellis_qam_receiver *receiver)
 {
 	uint8_t data_bits;
 	uint8_t input_limit;
@@ -46,7 +46,7 @@ bool v32_trellis_receiver_is_valid(
 	    !v32_scrambler_is_valid(&receiver->known_scrambler) ||
 	    !v32_scrambler_is_valid(&receiver->descrambler) ||
 	    receiver->known_input_fill >
-		    V32_TRELLIS_RECEIVER_DELAY ||
+		    V32_TRELLIS_QAM_RECEIVER_DELAY ||
 	    receiver->payload_symbols >
 		    V32_TRELLIS_QAM_TRACEBACK_SYMBOLS)
 		return false;
@@ -57,7 +57,7 @@ bool v32_trellis_receiver_is_valid(
 		return false;
 	input_limit = (uint8_t)(UINT8_C(1) << data_bits);
 	for (size_t index = 0;
-	     index < V32_TRELLIS_RECEIVER_DELAY; ++index) {
+	     index < V32_TRELLIS_QAM_RECEIVER_DELAY; ++index) {
 		if (receiver->known_inputs[index] >= input_limit)
 			return false;
 	}
@@ -69,16 +69,16 @@ bool v32_trellis_receiver_is_valid(
 	return true;
 }
 
-enum v32_trellis_receiver_result
-v32_trellis_receiver_init(
-	struct v32_trellis_receiver *receiver,
+enum v32_trellis_qam_receiver_result
+v32_trellis_qam_receiver_init(
+	struct v32_trellis_qam_receiver *receiver,
 	const struct v32_symbol_decoder *framing,
 	const struct qam_point *reference_point,
 	uint8_t reference_phase_quadrant,
 	uint8_t previous_differential_output,
 	uint8_t data_bits_per_symbol)
 {
-	struct v32_trellis_receiver initialized = { 0 };
+	struct v32_trellis_qam_receiver initialized = { 0 };
 	struct qam_point ideal;
 
 	if (receiver == NULL || !framing_is_valid(framing) ||
@@ -96,17 +96,17 @@ v32_trellis_receiver_init(
 		    &initialized.decoder, data_bits_per_symbol,
 		    previous_differential_output) !=
 		    V32_TRELLIS_OK)
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	initialized.known_scrambler = framing->descrambler;
 	initialized.descrambler = framing->descrambler;
-	if (!v32_trellis_receiver_is_valid(&initialized))
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+	if (!v32_trellis_qam_receiver_is_valid(&initialized))
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V32_TRELLIS_RECEIVER_OK;
+	return V32_TRELLIS_QAM_RECEIVER_OK;
 }
 
 static bool push_equalized(
-	struct v32_trellis_receiver *receiver,
+	struct v32_trellis_qam_receiver *receiver,
 	const struct qam_point *received,
 	const struct qam_point *current_target,
 	bool current_target_known, struct qam_point *equalized,
@@ -142,25 +142,25 @@ static bool push_equalized(
 }
 
 static void remember_known_input(
-	struct v32_trellis_receiver *receiver, uint8_t input)
+	struct v32_trellis_qam_receiver *receiver, uint8_t input)
 {
-	for (size_t index = V32_TRELLIS_RECEIVER_DELAY - 1u;
+	for (size_t index = V32_TRELLIS_QAM_RECEIVER_DELAY - 1u;
 	     index != 0; --index)
 		receiver->known_inputs[index] =
 			receiver->known_inputs[index - 1];
 	receiver->known_inputs[0] = input;
 	if (receiver->known_input_fill <
-	    V32_TRELLIS_RECEIVER_DELAY)
+	    V32_TRELLIS_QAM_RECEIVER_DELAY)
 		receiver->known_input_fill++;
 }
 
-enum v32_trellis_receiver_result
-v32_trellis_receiver_track_known(
-	struct v32_trellis_receiver *receiver,
+enum v32_trellis_qam_receiver_result
+v32_trellis_qam_receiver_track_known(
+	struct v32_trellis_qam_receiver *receiver,
 	const struct qam_point *point, uint8_t input,
 	bool *confirmed)
 {
-	struct v32_trellis_receiver next;
+	struct v32_trellis_qam_receiver next;
 	struct qam_point equalized = { 0 };
 	struct qam_point transmitted;
 	uint8_t data_bits;
@@ -173,13 +173,13 @@ v32_trellis_receiver_track_known(
 	bool delayed_target_known;
 	bool trellis_ready = false;
 
-	if (!v32_trellis_receiver_is_valid(receiver) ||
+	if (!v32_trellis_qam_receiver_is_valid(receiver) ||
 	    !point_has_power(point) || confirmed == NULL ||
 	    receiver->payload_started)
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	data_bits = receiver->decoder.data_bits_per_symbol;
 	if (input >= (UINT8_C(1) << data_bits))
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	if (v32_scramble_group(
 		    &next.known_scrambler, input, data_bits, &scrambled) !=
@@ -190,7 +190,7 @@ v32_trellis_receiver_track_known(
 	    v32_trellis_constellation_point(
 		    data_bits, signal_symbol, &transmitted) !=
 		    V32_CONSTELLATION_OK)
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	remember_known_input(&next, input);
 	if (!push_equalized(
 		    &next, point, &transmitted, true, &equalized,
@@ -204,23 +204,23 @@ v32_trellis_receiver_track_known(
 	     v32_descramble_group(
 		     &next.descrambler, decoded, data_bits, &plain) !=
 		     V32_FRAMING_OK) ||
-	    !v32_trellis_receiver_is_valid(&next))
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+	    !v32_trellis_qam_receiver_is_valid(&next))
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
 	*confirmed =
 		trellis_ready && delayed_target_known &&
-		next.known_input_fill == V32_TRELLIS_RECEIVER_DELAY &&
+		next.known_input_fill == V32_TRELLIS_QAM_RECEIVER_DELAY &&
 		plain == next.known_inputs[
-			 V32_TRELLIS_RECEIVER_DELAY - 1u];
-	return V32_TRELLIS_RECEIVER_OK;
+			 V32_TRELLIS_QAM_RECEIVER_DELAY - 1u];
+	return V32_TRELLIS_QAM_RECEIVER_OK;
 }
 
-enum v32_trellis_receiver_result
-v32_trellis_receiver_decode(
-	struct v32_trellis_receiver *receiver,
+enum v32_trellis_qam_receiver_result
+v32_trellis_qam_receiver_decode(
+	struct v32_trellis_qam_receiver *receiver,
 	const struct qam_point *point, uint8_t *output, bool *ready)
 {
-	struct v32_trellis_receiver next;
+	struct v32_trellis_qam_receiver next;
 	struct qam_point equalized = { 0 };
 	uint8_t plain = 0;
 	uint8_t scrambled = 0;
@@ -230,9 +230,9 @@ v32_trellis_receiver_decode(
 	bool trellis_ready = false;
 	bool payload_ready;
 
-	if (!v32_trellis_receiver_is_valid(receiver) ||
+	if (!v32_trellis_qam_receiver_is_valid(receiver) ||
 	    !point_has_power(point) || output == NULL || ready == NULL)
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	next.payload_started = true;
 	if (!push_equalized(
@@ -243,7 +243,7 @@ v32_trellis_receiver_decode(
 		     &next.decoder, &equalized, &scrambled, &trellis_ready,
 		     &decided_signal) !=
 		     V32_TRELLIS_OK))
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	if (equalizer_ready && !delayed_target_known) {
 		struct qam_point decided_point;
 
@@ -256,7 +256,7 @@ v32_trellis_receiver_decode(
 			    &next.equalizer, &decided_point,
 			    V32_TRELLIS_DECISION_ADAPTATION) !=
 			    QAM_EQUALIZER_OK)
-			return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+			return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	}
 	if (equalizer_ready && !delayed_target_known &&
 	    next.payload_symbols < V32_TRELLIS_QAM_TRACEBACK_SYMBOLS)
@@ -269,22 +269,22 @@ v32_trellis_receiver_decode(
 		     &next.descrambler, scrambled,
 		     next.decoder.data_bits_per_symbol, &plain) !=
 		     V32_FRAMING_OK) ||
-	    !v32_trellis_receiver_is_valid(&next))
-		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
+	    !v32_trellis_qam_receiver_is_valid(&next))
+		return V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
 	*ready = payload_ready;
 	if (payload_ready)
 		*output = plain;
-	return V32_TRELLIS_RECEIVER_OK;
+	return V32_TRELLIS_QAM_RECEIVER_OK;
 }
 
-const char *v32_trellis_receiver_result_name(
-	enum v32_trellis_receiver_result result)
+const char *v32_trellis_qam_receiver_result_name(
+	enum v32_trellis_qam_receiver_result result)
 {
 	switch (result) {
-	case V32_TRELLIS_RECEIVER_OK:
+	case V32_TRELLIS_QAM_RECEIVER_OK:
 		return "ok";
-	case V32_TRELLIS_RECEIVER_INVALID_ARGUMENT:
+	case V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";

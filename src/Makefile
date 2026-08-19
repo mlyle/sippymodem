@@ -139,9 +139,9 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/rate_signal.c \
 	$(DSP_V32_SOURCE_DIR)/startup.c \
 	$(DSP_V32_SOURCE_DIR)/trellis.c \
-	$(DSP_V32_SOURCE_DIR)/trellis_acquirer.c \
+	$(DSP_V32_SOURCE_DIR)/trellis_qam_acquirer.c \
 	$(DSP_V32_SOURCE_DIR)/trellis_qam_decoder.c \
-	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c
+	$(DSP_V32_SOURCE_DIR)/trellis_qam_receiver.c
 PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_info1.c \

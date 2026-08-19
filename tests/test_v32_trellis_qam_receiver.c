@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <constellation.h>
-#include <trellis_receiver.h>
+#include <trellis_qam_receiver.h>
 
 #include "test.h"
 
@@ -97,7 +97,7 @@ static bool check_transition(
 	struct v32_symbol_encoder framing_encoder;
 	struct v32_symbol_decoder framing_decoder;
 	struct v32_trellis_encoder trellis_encoder;
-	struct v32_trellis_receiver receiver;
+	struct v32_trellis_qam_receiver receiver;
 	struct qam_point channel = { 0.76, -0.27 };
 	struct qam_point channel_history[TEST_CHANNEL_TAPS] = { 0 };
 	struct qam_point transmitted;
@@ -151,12 +151,12 @@ static bool check_transition(
 		      &trellis_encoder, data_bits,
 		      V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT) ==
 		      V32_TRELLIS_OK &&
-	      v32_trellis_receiver_init(
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing_decoder, &received_reference,
 		      framing_encoder.phase_quadrant,
 		      V32_TRELLIS_INITIAL_DIFFERENTIAL_OUTPUT,
 		      data_bits) ==
-		      V32_TRELLIS_RECEIVER_OK,
+		      V32_TRELLIS_QAM_RECEIVER_OK,
 	      "V.32bis %u-bit receiver %u/%u did not initialize", data_bits,
 	      role, initial_quadrant);
 	for (size_t index = 0; index < TEST_KNOWN_SYMBOLS; ++index) {
@@ -172,9 +172,9 @@ static bool check_transition(
 		received = apply_channel(channel_history, transmitted, channel);
 		received.in_phase += fixture_noise(&random);
 		received.quadrature += fixture_noise(&random);
-		CHECK(v32_trellis_receiver_track_known(
+		CHECK(v32_trellis_qam_receiver_track_known(
 			      &receiver, &received, mask, &confirmed) ==
-			      V32_TRELLIS_RECEIVER_OK,
+			      V32_TRELLIS_QAM_RECEIVER_OK,
 		      "V.32bis %u-bit training failed at %zu", data_bits,
 		      index);
 		if (index >= TEST_KNOWN_SYMBOLS / 2u)
@@ -199,12 +199,12 @@ static bool check_transition(
 		received = apply_channel(channel_history, transmitted, channel);
 		received.in_phase += fixture_noise(&random);
 		received.quadrature += fixture_noise(&random);
-		CHECK(v32_trellis_receiver_decode(
+		CHECK(v32_trellis_qam_receiver_decode(
 			      &receiver, &received, &output, &ready) ==
-			      V32_TRELLIS_RECEIVER_OK,
+			      V32_TRELLIS_QAM_RECEIVER_OK,
 		      "V.32bis %u-bit payload receive failed at %zu", data_bits,
 		      index);
-		if (index + 1u < V32_TRELLIS_RECEIVER_DELAY) {
+		if (index + 1u < V32_TRELLIS_QAM_RECEIVER_DELAY) {
 			CHECK(!ready && output == UINT8_MAX,
 			      "V.32bis %u-bit receiver exposed delayed symbol %zu",
 			      data_bits, index);
@@ -213,7 +213,7 @@ static bool check_transition(
 		{
 			size_t expected =
 				index + 1u -
-				V32_TRELLIS_RECEIVER_DELAY;
+				V32_TRELLIS_QAM_RECEIVER_DELAY;
 
 			CHECK(ready && output == payload[expected] &&
 			      receiver.descrambler.history ==
@@ -226,8 +226,8 @@ static bool check_transition(
 	}
 	CHECK(delivered ==
 		      TEST_PAYLOAD_SYMBOLS -
-			      V32_TRELLIS_RECEIVER_DELAY + 1u &&
-	      v32_trellis_receiver_is_valid(&receiver),
+			      V32_TRELLIS_QAM_RECEIVER_DELAY + 1u &&
+	      v32_trellis_qam_receiver_is_valid(&receiver),
 	      "V.32bis %u-bit receiver delivered %u symbols", data_bits,
 	      delivered);
 	return true;
@@ -260,8 +260,8 @@ static bool test_generated_isi_transition(void)
 static bool test_validation(void)
 {
 	struct v32_symbol_decoder framing;
-	struct v32_trellis_receiver receiver = { 0 };
-	struct v32_trellis_receiver saved;
+	struct v32_trellis_qam_receiver receiver = { 0 };
+	struct v32_trellis_qam_receiver saved;
 	struct qam_point point = { 0.8, -0.2 };
 	struct qam_point zero = { 0 };
 	struct qam_point invalid = { NAN, 0.0 };
@@ -272,104 +272,104 @@ static bool test_validation(void)
 	CHECK(v32_symbol_decoder_init(
 		      &framing, V32_CALLING_TRANSMITTER, 0) ==
 		      V32_FRAMING_OK &&
-	      v32_trellis_receiver_init(
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing, &point, 0, 0,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_RECEIVER_OK,
+		      V32_TRELLIS_QAM_RECEIVER_OK,
 	      "V.32bis receiver validation fixture did not initialize");
 	saved = receiver;
-	CHECK(v32_trellis_receiver_is_valid(&receiver) &&
-	      !v32_trellis_receiver_is_valid(NULL) &&
-	      v32_trellis_receiver_init(
+	CHECK(v32_trellis_qam_receiver_is_valid(&receiver) &&
+	      !v32_trellis_qam_receiver_is_valid(NULL) &&
+	      v32_trellis_qam_receiver_init(
 		      NULL, &framing, &point, 0, 0,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_init(
 		      &receiver, NULL, &point, 0, 0,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing, &zero, 0, 0,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing, &invalid, 0, 0,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing, &point, 4, 0,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing, &point, 0, 4,
 		      V32_7200_DATA_BITS) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing, &point, 0, 0, 2) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_init(
 		      &receiver, &framing, &point, 0, 0, 7) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "V.32bis receiver initialization was not transactional");
-	CHECK(v32_trellis_receiver_track_known(
+	CHECK(v32_trellis_qam_receiver_track_known(
 		      NULL, &point, 0, &confirmed) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_track_known(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_track_known(
 		      &receiver, NULL, 0, &confirmed) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_track_known(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_track_known(
 		      &receiver, &zero, 0, &confirmed) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_track_known(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_track_known(
 		      &receiver, &invalid, 0, &confirmed) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_track_known(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_track_known(
 		      &receiver, &point, 8, &confirmed) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_track_known(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_track_known(
 		      &receiver, &point, 0, NULL) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_decode(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_decode(
 		      NULL, &point, &output, &ready) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_decode(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_decode(
 		      &receiver, NULL, &output, &ready) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_decode(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_decode(
 		      &receiver, &zero, &output, &ready) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_decode(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_decode(
 		      &receiver, &invalid, &output, &ready) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_decode(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_decode(
 		      &receiver, &point, NULL, &ready) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_decode(
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
+	      v32_trellis_qam_receiver_decode(
 		      &receiver, &point, &output, NULL) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      output == UINT8_MAX && ready && confirmed,
 	      "V.32bis receiver invalid input changed state or output");
-	CHECK(v32_trellis_receiver_decode(
+	CHECK(v32_trellis_qam_receiver_decode(
 		      &receiver, &point, &output, &ready) ==
-		      V32_TRELLIS_RECEIVER_OK &&
-	      v32_trellis_receiver_track_known(
+		      V32_TRELLIS_QAM_RECEIVER_OK &&
+	      v32_trellis_qam_receiver_track_known(
 		      &receiver, &point, 0, &confirmed) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT,
+		      V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT,
 	      "V.32bis receiver accepted training after payload handoff");
 	receiver = saved;
 	receiver.payload_symbols =
 		V32_TRELLIS_QAM_TRACEBACK_SYMBOLS + 1u;
-	CHECK(!v32_trellis_receiver_is_valid(&receiver) &&
-	      strcmp(v32_trellis_receiver_result_name(
-		     V32_TRELLIS_RECEIVER_OK),
+	CHECK(!v32_trellis_qam_receiver_is_valid(&receiver) &&
+	      strcmp(v32_trellis_qam_receiver_result_name(
+		     V32_TRELLIS_QAM_RECEIVER_OK),
 		     "ok") == 0 &&
-	      strcmp(v32_trellis_receiver_result_name(
-		     V32_TRELLIS_RECEIVER_INVALID_ARGUMENT),
+	      strcmp(v32_trellis_qam_receiver_result_name(
+		     V32_TRELLIS_QAM_RECEIVER_INVALID_ARGUMENT),
 		     "invalid argument") == 0 &&
-	      strcmp(v32_trellis_receiver_result_name(
-		     (enum v32_trellis_receiver_result)99),
+	      strcmp(v32_trellis_qam_receiver_result_name(
+		     (enum v32_trellis_qam_receiver_result)99),
 		     "unknown") == 0,
 	      "V.32bis receiver accepted corrupt state");
 	return true;
