@@ -12,7 +12,7 @@ enum {
 	TEST_PRIOR_GROUPS = 79,
 	TEST_PAYLOAD_GROUPS = 272,
 	TEST_PAYLOAD_RING = V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS + 1,
-	TEST_LANES = 2 * 4 * V32_TRELLIS_QUADRANT_COUNT,
+	TEST_LANES = 2 * 4,
 };
 
 struct test_lane {
@@ -115,27 +115,24 @@ static bool init_lanes(struct test_lane lanes[TEST_LANES])
 		      "role %u framing setup failed", role);
 		for (uint8_t bits = V32_TRELLIS_MIN_DATA_BITS;
 		     bits <= V32_TRELLIS_MAX_DATA_BITS; ++bits) {
-			for (uint8_t prior = 0;
-			     prior < V32_TRELLIS_QUADRANT_COUNT; ++prior) {
-				struct test_lane *lane = &lanes[lane_index];
+			struct test_lane *lane = &lanes[lane_index];
 
-				lane->transmitter_scrambler = transmitter;
-				lane->random = UINT32_C(0x32b10001) ^
-					(uint32_t)(lane_index * 0x9e37u);
-				lane->epoch = UINT64_C(0x100000) +
-					lane_index * 0x10000u;
-				lane->lineage = UINT64_C(0x7432000000000000) |
-					(lane_index + 1u);
-				CHECK(v32_trellis_encoder_init(
-					      &lane->encoder, bits, prior) ==
-					      V32_TRELLIS_OK &&
-				      v32_trellis_receiver_init(
-					      &lane->receiver, &receiver, bits,
-					      prior) == V32_TRELLIS_RECEIVER_OK,
-				      "lane %zu (%u/%u/%u) did not initialize",
-				      lane_index, role, bits, prior);
-				lane_index++;
-			}
+			lane->transmitter_scrambler = transmitter;
+			lane->random = UINT32_C(0x32b10001) ^
+				(uint32_t)(lane_index * 0x9e37u);
+			lane->epoch = UINT64_C(0x100000) +
+				lane_index * 0x10000u;
+			lane->lineage = UINT64_C(0x7432000000000000) |
+				(lane_index + 1u);
+			CHECK(v32_trellis_encoder_init(
+				      &lane->encoder, bits, 0) == V32_TRELLIS_OK &&
+			      v32_trellis_receiver_init(
+				      &lane->receiver, &receiver, bits) ==
+				      V32_TRELLIS_RECEIVER_OK &&
+			      lane->receiver.decoder.previous_differential_output == 0,
+			      "lane %zu (%u/%u) did not start at differential zero",
+			      lane_index, role, bits);
+			lane_index++;
 		}
 	}
 	return lane_index == TEST_LANES;
@@ -258,7 +255,7 @@ static bool prime_b1(
 		      V32_TRELLIS_OK &&
 	      v32_trellis_receiver_init(
 		      &lane.receiver, &receive_scrambler,
-		      V32_TRELLIS_MIN_DATA_BITS, 0) ==
+		      V32_TRELLIS_MIN_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_OK,
 	      "contract B1 fixture did not initialize");
 	lane.epoch = 1;
@@ -301,8 +298,8 @@ static bool test_contracts(void)
 	      "contract descrambler did not initialize");
 	descrambler.history = 0x123456;
 	CHECK(v32_trellis_receiver_init(
-		      &receiver, &descrambler, V32_TRELLIS_MIN_DATA_BITS,
-		      0) == V32_TRELLIS_RECEIVER_OK &&
+		      &receiver, &descrambler, V32_TRELLIS_MIN_DATA_BITS) ==
+		      V32_TRELLIS_RECEIVER_OK &&
 	      v32_trellis_receiver_is_valid(&receiver) &&
 	      !v32_trellis_receiver_is_valid(NULL) &&
 	      !v32_trellis_receiver_b1_is_confirmed(&receiver),
@@ -312,24 +309,20 @@ static bool test_contracts(void)
 	invalid_descrambler.transmitter_role =
 		(enum v32_transmitter_role)99;
 	CHECK(v32_trellis_receiver_init(
-		      NULL, &descrambler, V32_TRELLIS_MIN_DATA_BITS, 0) ==
+		      NULL, &descrambler, V32_TRELLIS_MIN_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, NULL, V32_TRELLIS_MIN_DATA_BITS, 0) ==
+		      &receiver, NULL, V32_TRELLIS_MIN_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
 		      &receiver, &invalid_descrambler,
-		      V32_TRELLIS_MIN_DATA_BITS, 0) ==
+		      V32_TRELLIS_MIN_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, &descrambler, 2, 0) ==
+		      &receiver, &descrambler, 2) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      v32_trellis_receiver_init(
-		      &receiver, &descrambler, 7, 0) ==
-		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
-	      v32_trellis_receiver_init(
-		      &receiver, &descrambler, V32_TRELLIS_MIN_DATA_BITS,
-		      V32_TRELLIS_QUADRANT_COUNT) ==
+		      &receiver, &descrambler, 7) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
 	      "invalid initialization changed its owner");
@@ -337,7 +330,7 @@ static bool test_contracts(void)
 	saved_overlap = overlap;
 	CHECK(v32_trellis_receiver_init(
 		      &overlap.receiver, &overlap.descrambler,
-		      V32_TRELLIS_MIN_DATA_BITS, 0) ==
+		      V32_TRELLIS_MIN_DATA_BITS) ==
 		      V32_TRELLIS_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&overlap, &saved_overlap, sizeof(overlap)) == 0,
 	      "overlapping initialization was not transactional");

@@ -39,8 +39,7 @@ bool v32_trellis_receiver_is_valid(
 enum v32_trellis_receiver_result v32_trellis_receiver_init(
 	struct v32_trellis_receiver *receiver,
 	const struct v32_scrambler *continuous_descrambler,
-	uint8_t data_bits_per_symbol,
-	uint8_t previous_differential_output)
+	uint8_t data_bits_per_symbol)
 {
 	struct v32_trellis_receiver initialized = {
 		.b1_matches = true,
@@ -52,8 +51,8 @@ enum v32_trellis_receiver_result v32_trellis_receiver_init(
 		    receiver, sizeof(*receiver), continuous_descrambler,
 		    sizeof(*continuous_descrambler)) ||
 	    v32_trellis_decoder_init(
-		    &initialized.decoder, data_bits_per_symbol,
-		    previous_differential_output) != V32_TRELLIS_DECODER_OK)
+		    &initialized.decoder, data_bits_per_symbol, 0) !=
+		    V32_TRELLIS_DECODER_OK)
 		return V32_TRELLIS_RECEIVER_INVALID_ARGUMENT;
 	initialized.descrambler = *continuous_descrambler;
 	if (!v32_trellis_receiver_is_valid(&initialized))

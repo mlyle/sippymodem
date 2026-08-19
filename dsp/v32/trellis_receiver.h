@@ -34,13 +34,12 @@ struct v32_trellis_receiver_symbol {
 	bool ready;
 };
 
-/* Selected-rate differential state starts from the supplied acquisition
- * hypothesis.  Only the continuously clocked descrambler crosses rate/E. */
+/* Selected-rate differential state starts at zero.  Only the continuously
+ * clocked descrambler crosses rate/E. */
 enum v32_trellis_receiver_result v32_trellis_receiver_init(
 	struct v32_trellis_receiver *receiver,
 	const struct v32_scrambler *continuous_descrambler,
-	uint8_t data_bits_per_symbol,
-	uint8_t previous_differential_output);
+	uint8_t data_bits_per_symbol);
 bool v32_trellis_receiver_is_valid(
 	const struct v32_trellis_receiver *receiver);
 
