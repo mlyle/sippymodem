@@ -7,7 +7,7 @@
 #include "modem_param.h"
 #include "qam.h"
 #include "qam_gain.h"
-#include "uncoded_receiver.h"
+#include "uncoded_qam.h"
 #include "conditioning.h"
 #include "conditioning_qam.h"
 #include "conditioning_receiver.h"
@@ -82,7 +82,7 @@ struct v32_datapump {
 	struct v32_symbol_decoder decoder;
 	struct v32_trellis_encoder trellis_encoder;
 	struct v32_trellis_acquirer trellis_acquirer;
-	struct v32_9600_receiver receiver_9600;
+	struct v32_uncoded_qam receiver_9600;
 	struct v32_conditioning_transmitter
 		conditioning_transmitter;
 	struct v32_conditioning_receiver conditioning_receiver;
@@ -495,7 +495,7 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 		    (uses_uncoded_9600(datapump) &&
 		     datapump->startup.end_received) ||
 	    (datapump->receiver_9600_initialized &&
-	     !v32_9600_receiver_is_valid(
+	     !v32_uncoded_qam_is_valid(
 		     &datapump->receiver_9600)) ||
 	    datapump->encoder.phase_quadrant >=
 		    QPSK_QUADRANT_COUNT ||
@@ -1253,9 +1253,9 @@ static int observe_dibit(
 				return -1;
 		} else if (uses_uncoded_9600(datapump) && !end_was_received &&
 			   datapump->startup.end_received) {
-			if (v32_9600_receiver_init(
+			if (v32_uncoded_qam_init(
 				    &datapump->receiver_9600, &datapump->decoder,
-				    point) != V32_9600_RECEIVER_OK)
+				    point) != V32_UNCODED_QAM_OK)
 				return -1;
 			datapump->receiver_9600_initialized = true;
 		}
@@ -1318,9 +1318,9 @@ static int observe_9600_point(
 		uint8_t bits;
 		bool ready;
 
-		if (v32_9600_receiver_decode(
+		if (v32_uncoded_qam_decode(
 			    &datapump->receiver_9600, point, &bits, &ready) !=
-		    V32_9600_RECEIVER_OK)
+		    V32_UNCODED_QAM_OK)
 			return -1;
 		if (ready)
 			deliver_bits(
@@ -1329,9 +1329,9 @@ static int observe_9600_point(
 	} else {
 		bool connected;
 
-		if (v32_9600_receiver_track_known(
+		if (v32_uncoded_qam_track_known(
 			    &datapump->receiver_9600, point, 15) !=
-			    V32_9600_RECEIVER_OK ||
+			    V32_UNCODED_QAM_OK ||
 		    v32_startup_observe(
 			    &datapump->startup, 3,
 			    &connected) != V32_STARTUP_OK)

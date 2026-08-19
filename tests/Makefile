@@ -439,7 +439,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
 	$(BUILD_DIR)/v22bis_symbols.o \
 	$(BUILD_DIR)/datapump.o \
-	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
@@ -606,13 +606,13 @@ V32_FOUR_POINT_RECEIVER_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o \
 	$(BUILD_DIR)/rate_signal.o
-V32_9600_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v32_9600_receiver
-V32_9600_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v32_9600_receiver.o \
+V32_UNCODED_QAM_TEST_BINARY := \
+	$(BUILD_DIR)/test_v32_uncoded_qam
+V32_UNCODED_QAM_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v32_uncoded_qam.o \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/constellation.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o
@@ -648,7 +648,7 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/single_tone.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/datapump.o \
-	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
@@ -2844,7 +2844,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v22bis_receiver.o \
 	$(BUILD_DIR)/v22bis_symbols.o \
 	$(BUILD_DIR)/datapump.o \
-	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
@@ -2920,7 +2920,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V32_EQUALIZER_TEST_BINARY) \
 	$(V32_DECISION_TEST_BINARY) \
 	$(V32_FOUR_POINT_RECEIVER_TEST_BINARY) \
-	$(V32_9600_RECEIVER_TEST_BINARY) \
+	$(V32_UNCODED_QAM_TEST_BINARY) \
 	$(V32_RATE_SIGNAL_TEST_BINARY) \
 	$(V32_STARTUP_TEST_BINARY) \
 	$(V32_LINE_STARTUP_TEST_BINARY) \
@@ -3199,7 +3199,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V32_EQUALIZER_TEST_OBJECTS:.o=.d) \
 	$(V32_DECISION_TEST_OBJECTS:.o=.d) \
 	$(V32_FOUR_POINT_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V32_9600_RECEIVER_TEST_OBJECTS:.o=.d) \
+	$(V32_UNCODED_QAM_TEST_OBJECTS:.o=.d) \
 	$(V32_RATE_SIGNAL_TEST_OBJECTS:.o=.d) \
 	$(V32_STARTUP_TEST_OBJECTS:.o=.d) \
 	$(V32_LINE_STARTUP_TEST_OBJECTS:.o=.d) \
@@ -3507,7 +3507,7 @@ test: $(TEST_BINARIES)
 	./$(V32_EQUALIZER_TEST_BINARY)
 	./$(V32_DECISION_TEST_BINARY)
 	./$(V32_FOUR_POINT_RECEIVER_TEST_BINARY)
-	./$(V32_9600_RECEIVER_TEST_BINARY)
+	./$(V32_UNCODED_QAM_TEST_BINARY)
 	./$(V32_RATE_SIGNAL_TEST_BINARY)
 	./$(V32_STARTUP_TEST_BINARY)
 	./$(V32_LINE_STARTUP_TEST_BINARY)
@@ -3975,7 +3975,7 @@ $(V32_FOUR_POINT_RECEIVER_TEST_BINARY): \
 	$(V32_FOUR_POINT_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V32_9600_RECEIVER_TEST_BINARY): $(V32_9600_RECEIVER_TEST_OBJECTS)
+$(V32_UNCODED_QAM_TEST_BINARY): $(V32_UNCODED_QAM_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_RATE_SIGNAL_TEST_BINARY): $(V32_RATE_SIGNAL_TEST_OBJECTS)
@@ -4967,8 +4967,8 @@ $(BUILD_DIR)/four_point_receiver.o: \
 	$(DSP_V32_SOURCE_DIR)/four_point_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/uncoded_receiver.o: \
-	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/uncoded_qam.o: \
+	$(DSP_V32_SOURCE_DIR)/uncoded_qam.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/rate_signal.o: \

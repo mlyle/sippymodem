@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "uncoded_receiver.h"
+#include "uncoded_qam.h"
 
 #include <float.h>
 #include <math.h>
@@ -35,8 +35,8 @@ static bool decoder_is_valid(
 	       v32_scrambler_is_valid(&decoder->descrambler);
 }
 
-bool v32_9600_receiver_is_valid(
-	const struct v32_9600_receiver *receiver)
+bool v32_uncoded_qam_is_valid(
+	const struct v32_uncoded_qam *receiver)
 {
 	if (receiver == NULL || !decoder_is_valid(&receiver->decoder) ||
 	    !qam_equalizer_is_valid(&receiver->equalizer))
@@ -59,13 +59,13 @@ static double squared_error(
 	return in_phase * in_phase + quadrature * quadrature;
 }
 
-enum v32_9600_receiver_result
-v32_9600_receiver_init(
-	struct v32_9600_receiver *receiver,
+enum v32_uncoded_qam_result
+v32_uncoded_qam_init(
+	struct v32_uncoded_qam *receiver,
 	const struct v32_symbol_decoder *decoder,
 	const struct qam_point *reference_point)
 {
-	struct v32_9600_receiver next = { 0 };
+	struct v32_uncoded_qam next = { 0 };
 	struct qam_point ideal;
 
 	if (receiver == NULL || !decoder_is_valid(decoder) ||
@@ -75,16 +75,16 @@ v32_9600_receiver_init(
 	    qam_equalizer_init(
 		    &next.equalizer, reference_point, &ideal) !=
 		    QAM_EQUALIZER_OK)
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	next.decoder = *decoder;
-	if (!v32_9600_receiver_is_valid(&next))
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+	if (!v32_uncoded_qam_is_valid(&next))
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	*receiver = next;
-	return V32_9600_RECEIVER_OK;
+	return V32_UNCODED_QAM_OK;
 }
 
 static bool equalize_point(
-	struct v32_9600_receiver *receiver,
+	struct v32_uncoded_qam *receiver,
 	const struct qam_point *received,
 	const struct qam_point *current_target,
 	bool current_target_known, struct qam_point *equalized,
@@ -125,12 +125,12 @@ static bool equalize_point(
 	return true;
 }
 
-enum v32_9600_receiver_result
-v32_9600_receiver_decode(
-	struct v32_9600_receiver *receiver,
+enum v32_uncoded_qam_result
+v32_uncoded_qam_decode(
+	struct v32_uncoded_qam *receiver,
 	const struct qam_point *point, uint8_t *output, bool *ready)
 {
-	struct v32_9600_receiver next;
+	struct v32_uncoded_qam next;
 	struct qam_point best_point = { 0 };
 	struct qam_point equalized = { 0 };
 	uint8_t best_symbol = 0;
@@ -138,17 +138,17 @@ v32_9600_receiver_decode(
 	double best_error = DBL_MAX;
 	bool payload_ready;
 
-	if (!v32_9600_receiver_is_valid(receiver) ||
+	if (!v32_uncoded_qam_is_valid(receiver) ||
 	    !point_has_nonzero_power(point) || output == NULL || ready == NULL)
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	next = *receiver;
 	if (!equalize_point(
 		    &next, point, NULL, false, &equalized, &payload_ready))
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	if (!payload_ready) {
 		*receiver = next;
 		*ready = false;
-		return V32_9600_RECEIVER_OK;
+		return V32_UNCODED_QAM_OK;
 	}
 	for (uint8_t symbol = 0;
 	     symbol < V32_9600_SYMBOL_COUNT; ++symbol) {
@@ -157,7 +157,7 @@ v32_9600_receiver_decode(
 
 		if (v32_constellation_point(symbol, &candidate) !=
 		    V32_CONSTELLATION_OK)
-			return V32_9600_RECEIVER_INVALID_ARGUMENT;
+			return V32_UNCODED_QAM_INVALID_ARGUMENT;
 		error = squared_error(&equalized, &candidate);
 		if (isfinite(error) && error < best_error) {
 			best_error = error;
@@ -169,33 +169,33 @@ v32_9600_receiver_decode(
 	    v32_9600_symbol_decode(
 		    &next.decoder, best_symbol, &decoded) !=
 		    V32_FRAMING_OK)
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	if (qam_equalizer_adapt(
 		    &next.equalizer, &best_point, V32_9600_DECISION_ADAPTATION) !=
 	    QAM_EQUALIZER_OK)
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	*receiver = next;
 	*output = decoded;
 	*ready = true;
-	return V32_9600_RECEIVER_OK;
+	return V32_UNCODED_QAM_OK;
 }
 
-enum v32_9600_receiver_result
-v32_9600_receiver_track_known(
-	struct v32_9600_receiver *receiver,
+enum v32_uncoded_qam_result
+v32_uncoded_qam_track_known(
+	struct v32_uncoded_qam *receiver,
 	const struct qam_point *point, uint8_t input)
 {
-	struct v32_9600_receiver next;
+	struct v32_uncoded_qam next;
 	struct v32_symbol_encoder encoder;
 	struct qam_point equalized;
 	struct qam_point transmitted;
 	uint8_t symbol;
 	bool payload_ready;
 
-	if (!v32_9600_receiver_is_valid(receiver) ||
+	if (!v32_uncoded_qam_is_valid(receiver) ||
 	    !point_has_nonzero_power(point) ||
 	    input >= V32_9600_SYMBOL_COUNT)
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	next = *receiver;
 	encoder = (struct v32_symbol_encoder){
 		.scrambler = next.decoder.descrambler,
@@ -205,24 +205,24 @@ v32_9600_receiver_track_known(
 		    V32_FRAMING_OK ||
 	    v32_constellation_point(symbol, &transmitted) !=
 		    V32_CONSTELLATION_OK)
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	next.decoder.descrambler = encoder.scrambler;
 	next.decoder.phase_quadrant = encoder.phase_quadrant;
 	if (!equalize_point(
 		    &next, point, &transmitted, true, &equalized,
 		    &payload_ready))
-		return V32_9600_RECEIVER_INVALID_ARGUMENT;
+		return V32_UNCODED_QAM_INVALID_ARGUMENT;
 	*receiver = next;
-	return V32_9600_RECEIVER_OK;
+	return V32_UNCODED_QAM_OK;
 }
 
-const char *v32_9600_receiver_result_name(
-	enum v32_9600_receiver_result result)
+const char *v32_uncoded_qam_result_name(
+	enum v32_uncoded_qam_result result)
 {
 	switch (result) {
-	case V32_9600_RECEIVER_OK:
+	case V32_UNCODED_QAM_OK:
 		return "ok";
-	case V32_9600_RECEIVER_INVALID_ARGUMENT:
+	case V32_UNCODED_QAM_INVALID_ARGUMENT:
 		return "invalid argument";
 	}
 	return "unknown";
