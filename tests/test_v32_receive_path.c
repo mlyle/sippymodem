@@ -1,0 +1,363 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <qam.h>
+#include <receive_path.h>
+
+#include "test.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+enum {
+	COMPOSED_LINE_SAMPLES = 6000,
+};
+
+static const struct qam_channel V32_CHANNEL = {
+	.sample_rate = V32_ECHO_FRONTEND_INPUT_RATE,
+	.symbol_rate_numerator = 2400,
+	.symbol_rate_denominator = 1,
+	.carrier_frequency_numerator = 1800,
+	.carrier_frequency_denominator = 1,
+	.rolloff = 0.25,
+	.pulse_span_symbols = 6,
+};
+
+static uint32_t fixture_random(uint32_t *state)
+{
+	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
+	return *state;
+}
+
+static struct v32_equalizer_decision self_decision(
+	const struct v32_equalizer_observation *observation)
+{
+	return (struct v32_equalizer_decision){
+		.observation = *observation,
+		.ideal_phase = observation->phase,
+		.ideal_magnitude = observation->magnitude,
+	};
+}
+
+static uint64_t hash_word(uint64_t hash, uint16_t word)
+{
+	hash = (hash ^ (word & UINT16_C(0xff))) *
+		UINT64_C(1099511628211);
+	return (hash ^ (word >> 8)) * UINT64_C(1099511628211);
+}
+
+static uint64_t hash_observation(
+	uint64_t hash, const struct v32_equalizer_observation *observation)
+{
+	hash = hash_word(hash, (uint16_t)observation->i);
+	hash = hash_word(hash, (uint16_t)observation->q);
+	hash = hash_word(hash, observation->phase);
+	hash = hash_word(hash, observation->magnitude);
+	for (unsigned int shift = 0; shift < 64; shift += 16)
+		hash = hash_word(hash, (uint16_t)(observation->epoch >> shift));
+	for (unsigned int shift = 0; shift < 64; shift += 16)
+		hash = hash_word(hash, (uint16_t)(observation->lineage >> shift));
+	return hash;
+}
+
+static bool consume_control_samples(
+	struct v32_equalizer *equalizer,
+	const int16_t *samples, size_t count,
+	uint64_t *hash, size_t *observations)
+{
+	size_t index = 0;
+
+	while (index < count) {
+		struct v32_equalizer_observation observation;
+		struct v32_equalizer_decision decision;
+		size_t consumed;
+		enum v32_equalizer_result result = v32_equalizer_process(
+			equalizer, samples + index, count - index,
+			&consumed, &observation);
+
+		CHECK(result == V32_EQUALIZER_OK ||
+		      result == V32_EQUALIZER_OBSERVATION_READY,
+		      "control equalizer rejected recovered samples");
+		CHECK(consumed != 0, "control equalizer did not advance");
+		index += consumed;
+		if (result != V32_EQUALIZER_OBSERVATION_READY)
+			continue;
+		*hash = hash_observation(*hash, &observation);
+		(*observations)++;
+		decision = self_decision(&observation);
+		CHECK(v32_equalizer_commit(equalizer, &decision) ==
+			      V32_EQUALIZER_OK,
+		      "control equalizer rejected its decision");
+	}
+	return true;
+}
+
+static bool consume_path_observations(
+	struct v32_receive_path *path,
+	enum v32_receive_path_result result,
+	struct v32_equalizer_observation *observation,
+	uint64_t *hash, size_t *observations)
+{
+	while (result == V32_RECEIVE_PATH_OBSERVATION_READY) {
+		struct v32_equalizer_decision decision =
+			self_decision(observation);
+
+		*hash = hash_observation(*hash, observation);
+		(*observations)++;
+		result = v32_receive_path_commit(
+			path, &decision, observation);
+	}
+	CHECK(result == V32_RECEIVE_PATH_OK,
+	      "receive path stopped while draining: %d", result);
+	return true;
+}
+
+static bool test_composed_path(void)
+{
+	struct v32_receive_path path;
+	struct v32_echo_frontend control_echo;
+	struct v32_line_receiver control_line;
+	struct v32_equalizer control_equalizer;
+	struct qam_modulator modulator;
+	struct qam_point point = { 0.75, 0.75 };
+	uint32_t random = UINT32_C(0x2468ace1);
+	uint64_t path_hash = UINT64_C(14695981039346656037);
+	uint64_t control_hash = UINT64_C(14695981039346656037);
+	size_t path_observations = 0;
+	size_t control_observations = 0;
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_echo_frontend_init(
+		      &control_echo, 0,
+		      V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) == V32_ECHO_OK &&
+	      v32_line_receiver_init(&control_line) ==
+		      V32_LINE_RECEIVER_OK &&
+	      v32_equalizer_init(&control_equalizer) == V32_EQUALIZER_OK &&
+	      qam_modulator_init(&modulator, &V32_CHANNEL, 12000) == QAM_OK,
+	      "composed receive paths did not initialize");
+
+	for (size_t sample = 0; sample < COMPOSED_LINE_SAMPLES; ++sample) {
+		bool can_accept = qam_modulator_can_accept_symbol(&modulator);
+		bool accepted;
+		bool cleaned_ready;
+		struct v32_echo_reference reference;
+		struct v32_equalizer_observation observation;
+		int16_t transmit;
+		int16_t recovered[V32_RECEIVE_PATH_RECOVERED_CAPACITY];
+		double cleaned;
+		size_t recovered_count;
+		enum v32_receive_path_result result;
+
+		if (can_accept) {
+			uint32_t bits = fixture_random(&random);
+
+			point.in_phase = (bits & 1u) != 0 ? -0.75 : 0.75;
+			point.quadrature = (bits & 2u) != 0 ? -0.75 : 0.75;
+			CHECK(v32_echo_reference_init(
+				      &reference, &point,
+				      modulator.carrier_phase) == V32_ECHO_OK,
+			      "composed reference failed at %zu", sample);
+		}
+		CHECK(qam_modulator_sample(
+			      &modulator, &point, &transmit, &accepted) == QAM_OK &&
+		      accepted == can_accept,
+		      "composed transmit clock failed at %zu", sample);
+		CHECK(v32_echo_frontend_sample(
+			      &control_echo, transmit,
+			      accepted ? &reference : NULL,
+			      &cleaned, &cleaned_ready) == V32_ECHO_OK,
+		      "control echo path failed at %zu", sample);
+		if (cleaned_ready) {
+			CHECK(v32_line_receiver_process(
+				      &control_line, &cleaned, 1, false,
+				      recovered, ARRAY_LENGTH(recovered),
+				      &recovered_count) == V32_LINE_RECEIVER_OK &&
+			      consume_control_samples(
+				      &control_equalizer, recovered,
+				      recovered_count, &control_hash,
+				      &control_observations),
+			      "control receive path failed at %zu", sample);
+		}
+		result = v32_receive_path_sample(
+			&path, transmit, accepted ? &reference : NULL,
+			&observation);
+		CHECK(consume_path_observations(
+			      &path, result, &observation,
+			      &path_hash, &path_observations),
+		      "owned receive path failed at %zu", sample);
+	}
+
+	CHECK(path_observations > 100 &&
+	      path_observations == control_observations &&
+	      path_hash == control_hash &&
+	      memcmp(&path.echo, &control_echo, sizeof(control_echo)) == 0 &&
+	      memcmp(&path.line, &control_line, sizeof(control_line)) == 0 &&
+	      memcmp(
+		      &path.equalizer, &control_equalizer,
+		      sizeof(control_equalizer)) == 0 &&
+	      path.recovered_count == 0 && path.recovered_index == 0 &&
+	      v32_receive_path_is_valid(&path),
+	      "composed path diverged after %zu/%zu observations",
+	      path_observations, control_observations);
+	return true;
+}
+
+static bool test_buffered_commits(void)
+{
+	union {
+		struct v32_equalizer_decision decision;
+		struct v32_equalizer_observation observation;
+	} overlapping = { 0 };
+	struct v32_receive_path path;
+	struct v32_receive_path saved;
+	struct v32_equalizer_observation observation;
+	struct v32_equalizer_observation output;
+	struct v32_equalizer_observation saved_output;
+	struct v32_equalizer_decision decision;
+	unsigned char saved_overlap[sizeof(overlapping)];
+	int16_t first = 123;
+	size_t consumed;
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_equalizer_process(
+		      &path.equalizer, &first, 1,
+		      &consumed, &observation) ==
+		      V32_EQUALIZER_OBSERVATION_READY && consumed == 1,
+	      "buffered path did not reach its first decision");
+	for (size_t index = 0; index < 6; ++index)
+		path.recovered[index] = (int16_t)(200 + 17 * (int)index);
+	path.recovered_count = 6;
+	CHECK(v32_receive_path_is_valid(&path),
+	      "buffered path was not valid");
+
+	decision = self_decision(&observation);
+	memset(&output, 0x5a, sizeof(output));
+	saved_output = output;
+	saved = path;
+	decision.observation.epoch++;
+	CHECK(v32_receive_path_commit(&path, &decision, &output) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "rejected buffered decision changed state or output");
+	decision = self_decision(&observation);
+	overlapping.decision = decision;
+	memcpy(saved_overlap, &overlapping, sizeof(saved_overlap));
+	CHECK(v32_receive_path_sample(&path, 0, NULL, &output) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      v32_receive_path_commit(&path, NULL, &output) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_commit(&path, &decision, NULL) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_commit(
+		      &path,
+		      (const struct v32_equalizer_decision *)&path,
+		      &output) == V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_commit(
+		      &path, &decision,
+		      (struct v32_equalizer_observation *)&path) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_commit(
+		      &path, &overlapping.decision,
+		      &overlapping.observation) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      memcmp(&overlapping, saved_overlap,
+		     sizeof(saved_overlap)) == 0,
+	      "pending path accepted another sample or overlapping commit");
+
+	CHECK(v32_receive_path_commit(&path, &decision, &output) ==
+		      V32_RECEIVE_PATH_OBSERVATION_READY &&
+	      path.recovered_index == 3 && path.recovered_count == 6,
+	      "first buffered decision did not retain three samples");
+	decision = self_decision(&output);
+	CHECK(v32_receive_path_commit(&path, &decision, &output) ==
+		      V32_RECEIVE_PATH_OBSERVATION_READY &&
+	      path.recovered_index == 0 && path.recovered_count == 0,
+	      "second buffered decision did not consume the remainder");
+	decision = self_decision(&output);
+	memset(&output, 0x5a, sizeof(output));
+	saved_output = output;
+	CHECK(v32_receive_path_commit(&path, &decision, &output) ==
+		      V32_RECEIVE_PATH_OK &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+	      !path.equalizer.decision_pending &&
+	      v32_receive_path_is_valid(&path),
+	      "final buffered decision did not reopen the line path");
+	return true;
+}
+
+static bool test_contracts(void)
+{
+	union {
+		struct v32_echo_reference reference;
+		struct v32_equalizer_observation observation;
+	} overlapping = { 0 };
+	struct v32_receive_path path;
+	struct v32_receive_path saved;
+	struct v32_equalizer_observation output;
+	struct v32_equalizer_observation saved_output;
+	struct v32_echo_reference reference;
+	struct qam_point point = { 0.5, -0.5 };
+	unsigned char saved_overlap[sizeof(overlapping)];
+
+	CHECK(v32_receive_path_init(
+		      NULL, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS - 1u) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_echo_reference_init(&reference, &point, 0) == V32_ECHO_OK,
+	      "receive-path validation fixture did not initialize");
+	memset(&output, 0x5a, sizeof(output));
+	saved_output = output;
+	saved = path;
+	overlapping.reference = reference;
+	memcpy(saved_overlap, &overlapping, sizeof(saved_overlap));
+	CHECK(v32_receive_path_sample(NULL, 0, NULL, &output) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_sample(&path, 0, NULL, &output) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_sample(&path, 0, &reference, NULL) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_sample(
+		      &path, 0, &reference,
+		      (struct v32_equalizer_observation *)&path) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_sample(
+		      &path, 0,
+		      (const struct v32_echo_reference *)&path, &output) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_sample(
+		      &path, 0, &overlapping.reference,
+		      &overlapping.observation) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+	      memcmp(&overlapping, saved_overlap,
+		     sizeof(saved_overlap)) == 0,
+	      "receive-path rejection changed state or output");
+	path.recovered_count = V32_RECEIVE_PATH_RECOVERED_CAPACITY + 1u;
+	CHECK(!v32_receive_path_is_valid(&path) &&
+	      v32_receive_path_sample(&path, 0, &reference, &output) ==
+		      V32_RECEIVE_PATH_INVALID_STATE,
+	      "receive path accepted corrupt buffer state");
+	return true;
+}
+
+int main(void)
+{
+	if (!test_composed_path() || !test_buffered_commits() ||
+	    !test_contracts())
+		return 1;
+	puts("V.32 receive path tests passed");
+	return 0;
+}
