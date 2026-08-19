@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <qam_gain.h>
 #include <conditioning.h>
 #include <conditioning_receiver.h>
 #include <constellation.h>
+#include <decision.h>
 #include <rate_signal.h>
 
 #include "test.h"
 
-#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -29,30 +28,86 @@ enum {
 	TEST_RATE_DIBITS = 64,
 };
 
-static struct qam_point apply_channel(
-	const struct qam_point *point,
-	const struct qam_point *gain)
-{
-	return (struct qam_point){
-		.in_phase = point->in_phase * gain->in_phase -
-			    point->quadrature * gain->quadrature,
-		.quadrature = point->in_phase * gain->quadrature +
-			      point->quadrature * gain->in_phase,
-	};
-}
+static uint64_t observation_epoch;
 
-static bool generated_point(
-	uint8_t quadrant, const struct qam_point *gain,
-	struct qam_point *received)
+static bool generated_observation(
+	uint8_t quadrant, struct v32_equalizer_observation *received)
 {
-	struct qam_point transmitted;
+	struct v32_fixed_point point;
 
-	CHECK(v32_4800_constellation_point(
-		      quadrant, &transmitted) ==
+	CHECK(v32_4800_fixed_point(
+		      quadrant, &point) ==
 		      V32_CONSTELLATION_OK,
 	      "could not generate V.32 conditioning point %u", quadrant);
-	*received = apply_channel(&transmitted, gain);
+	*received = (struct v32_equalizer_observation){
+		.i = point.i,
+		.q = point.q,
+		.phase = 0,
+		.magnitude = 1,
+		.epoch = ++observation_epoch,
+		.lineage = UINT64_C(0x7633327465737401),
+	};
 	return true;
+}
+
+static bool decisions_are_equal(
+	const struct v32_equalizer_decision *left,
+	const struct v32_equalizer_decision *right)
+{
+	return memcmp(
+		       &left->observation, &right->observation,
+		       sizeof(left->observation)) == 0 &&
+	       left->ideal_phase == right->ideal_phase &&
+	       left->ideal_magnitude == right->ideal_magnitude &&
+	       left->adapt_on_error == right->adapt_on_error;
+}
+
+static enum v32_conditioning_receiver_result observe(
+	struct v32_conditioning_receiver *receiver,
+	const struct v32_equalizer_observation *observation,
+	bool *ready)
+{
+	struct v32_conditioning_symbol_decision decision;
+	struct v32_quadrant_decision expected;
+	enum v32_conditioning_receiver_result result;
+	enum v32_conditioning_receiver_phase previous_phase;
+	bool reset;
+
+	if (ready == NULL)
+		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+	previous_phase = receiver != NULL ? receiver->phase :
+		V32_CONDITIONING_SEARCH_S_BAR;
+	result = v32_conditioning_receiver_observe(
+		receiver, observation, &decision);
+	if (result == V32_CONDITIONING_RECEIVER_OK) {
+		reset = previous_phase == V32_CONDITIONING_TRAIN_TRN &&
+			receiver->phase == V32_CONDITIONING_SEARCH_S_BAR;
+		if (memcmp(
+			    &decision.equalizer.observation, observation,
+			    sizeof(*observation)) != 0 ||
+		    decision.reference_known !=
+			    decision.equalizer.adapt_on_error ||
+		    (!reset && decision.reference_known &&
+		     (decision.reference_quadrant >= QPSK_QUADRANT_COUNT ||
+		      decision.reference_confirmed !=
+			      (receiver->stable_trn_symbols != 0) ||
+		      v32_decide_known_quadrant(
+			      observation,
+			      (uint8_t)((decision.reference_quadrant +
+				 receiver->quadrant_offset) & 3u),
+			      true, &expected) != V32_DECISION_OK ||
+		      !decisions_are_equal(
+			      &decision.equalizer, &expected.equalizer))) ||
+		    (!decision.reference_known &&
+		     (decision.reference_confirmed ||
+		      v32_decide_4_point(
+			     observation, false, &expected) != V32_DECISION_OK ||
+		      !decisions_are_equal(
+			      &decision.equalizer, &expected.equalizer))))
+			return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+		*ready = v32_conditioning_receiver_is_complete(receiver);
+	}
+	return result;
 }
 
 static bool decode_relative_quadrant(
@@ -82,7 +137,6 @@ static bool run_generated_conditioning(
 	uint16_t phase_step,
 	uint8_t phase_offset, struct generated_conditioning_result *result)
 {
-	const struct qam_point channel = { 0.95, -0.2 };
 	struct v32_conditioning_transmitter transmitter;
 	struct v32_conditioning_receiver receiver;
 	bool ready = false;
@@ -103,7 +157,7 @@ static bool run_generated_conditioning(
 			      V32_CONDITIONING_OK,
 	      "V.32 generated conditioning fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < observation_end; ++symbol) {
-		struct qam_point received;
+		struct v32_equalizer_observation received;
 		enum v32_conditioning_receiver_phase previous_phase;
 		uint8_t quadrant;
 
@@ -118,8 +172,8 @@ static bool run_generated_conditioning(
 				      V32_CONDITIONING_S_BAR_SYMBOLS + phase_step)
 			quadrant = (uint8_t)((quadrant + phase_offset) & 3u);
 		previous_phase = receiver.phase;
-		CHECK(generated_point(quadrant, &channel, &received) &&
-		      v32_conditioning_receiver_observe(
+		CHECK(generated_observation(quadrant, &received) &&
+		      observe(
 			      &receiver, &received, &ready) ==
 			      V32_CONDITIONING_RECEIVER_OK,
 		      "V.32 generated conditioning receiver stopped at %u",
@@ -282,7 +336,6 @@ static bool test_direct_prefix_remains_exact(void)
 static bool run_sequence(
 	struct v32_conditioning_receiver *receiver,
 	enum v32_transmitter_role role,
-	const struct qam_point *channel,
 	struct v32_conditioning_transmitter *finished_transmitter)
 {
 	struct v32_conditioning_transmitter transmitter;
@@ -294,7 +347,7 @@ static bool run_sequence(
 		      V32_CONDITIONING_OK,
 	      "V.32 conditioning fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
-		struct qam_point received;
+		struct v32_equalizer_observation received;
 		uint8_t quadrant;
 
 		CHECK(v32_conditioning_transmitter_next(
@@ -303,8 +356,8 @@ static bool run_sequence(
 		      "V.32 conditioning fixture stopped at symbol %u", symbol);
 		if (symbol < TEST_ACQUISITION_START)
 			continue;
-		CHECK(generated_point(quadrant, channel, &received) &&
-		      v32_conditioning_receiver_observe(
+		CHECK(generated_observation(quadrant, &received) &&
+		      observe(
 			      receiver, &received, &ready) ==
 			      V32_CONDITIONING_RECEIVER_OK,
 		      "V.32 conditioning receiver stopped at symbol %u", symbol);
@@ -322,63 +375,67 @@ static bool run_sequence(
 	return true;
 }
 
-static bool check_role(
-	enum v32_transmitter_role role,
-	const struct qam_point *channel)
+static bool check_role(enum v32_transmitter_role role)
 {
 	struct v32_conditioning_receiver receiver;
 	struct v32_conditioning_transmitter transmitter;
 	struct v32_symbol_decoder decoder;
-	struct qam_gain estimated;
-	double gain_error;
-	bool ready = true;
+	struct v32_equalizer_observation terminal;
+	struct v32_conditioning_symbol_decision decision;
+	struct v32_conditioning_symbol_decision saved_decision;
+	struct v32_conditioning_receiver saved_receiver;
+	struct v32_fixed_point point;
 
 	CHECK(v32_conditioning_receiver_init(&receiver, role) ==
 		      V32_CONDITIONING_RECEIVER_OK,
 	      "V.32 conditioning receiver did not initialize for role %d", role);
-	CHECK(run_sequence(
-		      &receiver, role, channel, &transmitter),
+	CHECK(run_sequence(&receiver, role, &transmitter),
 	      "V.32 conditioning sequence failed for role %d", role);
 	CHECK(v32_conditioning_receiver_framing_state(
-		      &receiver, &decoder, &estimated) ==
+		      &receiver, &decoder) ==
 		      V32_CONDITIONING_RECEIVER_OK &&
 		      decoder.descrambler.history ==
 			      transmitter.trn_encoder.scrambler.history &&
 		      decoder.descrambler.transmitter_role == role &&
 		      decoder.phase_quadrant ==
-			      transmitter.trn_encoder.phase_quadrant,
+			      (uint8_t)((transmitter.trn_encoder.phase_quadrant +
+				 receiver.quadrant_offset) & 3u),
 	      "V.32 conditioning framing state changed for role %d", role);
-	gain_error = hypot(
-		estimated.channel_gain.in_phase - channel->in_phase,
-		estimated.channel_gain.quadrature - channel->quadrature);
-	CHECK(gain_error < 1e-9,
-	      "V.32 conditioning channel error was %.12f for role %d",
-	      gain_error, role);
+	CHECK(v32_4800_fixed_point(receiver.previous_quadrant, &point) ==
+		      V32_CONSTELLATION_OK,
+	      "V.32 completed observation could not be generated");
+	terminal = (struct v32_equalizer_observation){
+		.i = point.i,
+		.q = point.q,
+		.phase = 0,
+		.magnitude = 1,
+		.epoch = receiver.observation_epoch + 1u,
+		.lineage = receiver.observation_lineage,
+	};
+	memset(&decision, 0x5a, sizeof(decision));
+	saved_decision = decision;
+	saved_receiver = receiver;
 	CHECK(v32_conditioning_receiver_observe(
-		      &receiver, &receiver.previous_point, &ready) ==
+		      &receiver, &terminal, &decision) ==
 		      V32_CONDITIONING_RECEIVER_COMPLETE &&
-		      ready,
-	      "completed V.32 conditioning receiver changed output");
+	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+	      "completed V.32 conditioning receiver changed state or output");
 	return true;
 }
 
 static bool test_calling_source(void)
 {
-	const struct qam_point channel = { 1.25, -0.375 };
-
-	return check_role(V32_CALLING_TRANSMITTER, &channel);
+	return check_role(V32_CALLING_TRANSMITTER);
 }
 
 static bool test_answering_source(void)
 {
-	const struct qam_point channel = { -0.45, 1.6 };
-
-	return check_role(V32_ANSWERING_TRANSMITTER, &channel);
+	return check_role(V32_ANSWERING_TRANSMITTER);
 }
 
 static bool test_phase_slip_recovery(void)
 {
-	const struct qam_point channel = { 1.1, 0.25 };
 	struct v32_conditioning_receiver receiver;
 	struct v32_conditioning_transmitter transmitter;
 	bool phase_shifted = false;
@@ -394,7 +451,7 @@ static bool test_phase_slip_recovery(void)
 			      V32_CONDITIONING_OK,
 	      "V.32 phase-slip fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
-		struct qam_point received;
+		struct v32_equalizer_observation received;
 		uint8_t quadrant;
 
 		CHECK(v32_conditioning_transmitter_next(
@@ -407,8 +464,8 @@ static bool test_phase_slip_recovery(void)
 			phase_shifted = true;
 		if (phase_shifted)
 			quadrant = (uint8_t)((quadrant + 1u) & 3u);
-		CHECK(generated_point(quadrant, &channel, &received) &&
-		      v32_conditioning_receiver_observe(
+		CHECK(generated_observation(quadrant, &received) &&
+		      observe(
 			      &receiver, &received, &ready) ==
 			      V32_CONDITIONING_RECEIVER_OK,
 		      "V.32 conditioning rejected a persistent phase slip");
@@ -432,7 +489,7 @@ struct test_perturbation {
 };
 
 static bool run_perturbed_sequence(
-	enum v32_transmitter_role role, const struct qam_point *channel,
+	enum v32_transmitter_role role,
 	uint16_t acquisition_start,
 	const struct test_perturbation *perturbation,
 	struct v32_conditioning_receiver *finished,
@@ -459,7 +516,7 @@ static bool run_perturbed_sequence(
 			      V32_CONDITIONING_OK,
 	      "V.32 perturbed conditioning fixture did not initialize");
 	for (uint16_t symbol = 0; symbol < TEST_MAX_SEQUENCE_SYMBOLS; ++symbol) {
-		struct qam_point received;
+		struct v32_equalizer_observation received;
 		enum v32_conditioning_receiver_phase previous_phase;
 		uint16_t previous_trn;
 		uint8_t quadrant;
@@ -490,8 +547,8 @@ static bool run_perturbed_sequence(
 		last_observed = quadrant;
 		previous_phase = receiver.phase;
 		previous_trn = receiver.trn_symbols;
-		CHECK(generated_point(quadrant, channel, &received) &&
-		      v32_conditioning_receiver_observe(
+		CHECK(generated_observation(quadrant, &received) &&
+		      observe(
 			      &receiver, &received, &completed) ==
 			      V32_CONDITIONING_RECEIVER_OK,
 		      "V.32 perturbed conditioning receiver stopped at %u", symbol);
@@ -520,7 +577,6 @@ static bool run_perturbed_sequence(
 
 static bool test_repeated_phase_slip_recovery(void)
 {
-	const struct qam_point channel = { 0.9, -0.3 };
 	struct test_perturbation perturbation = {
 		.first_symbol = 4 * TEST_STABLE_TAIL_SYMBOLS,
 		.interval = 2 * TEST_STABLE_TAIL_SYMBOLS,
@@ -535,7 +591,7 @@ static bool test_repeated_phase_slip_recovery(void)
 	bool reset;
 
 	CHECK(run_perturbed_sequence(
-		      V32_ANSWERING_TRANSMITTER, &channel,
+		      V32_ANSWERING_TRANSMITTER,
 		      TEST_ACQUISITION_START, &perturbation,
 		      &receiver, NULL, NULL,
 		      &changes, &boundary_trn, &ready, &reset),
@@ -557,7 +613,6 @@ static bool check_perturbed_boundary(
 	uint16_t expected_stable,
 	bool expect_complete)
 {
-	const struct qam_point channel = { 1.05, 0.2 };
 	struct v32_conditioning_receiver receiver;
 	unsigned int applied;
 	uint16_t boundary_trn;
@@ -565,7 +620,7 @@ static bool check_perturbed_boundary(
 	bool reset;
 
 	CHECK(run_perturbed_sequence(
-		      V32_CALLING_TRANSMITTER, &channel,
+		      V32_CALLING_TRANSMITTER,
 		      TEST_ACQUISITION_START, perturbation,
 		      &receiver, NULL, NULL,
 		      &applied, &boundary_trn, &ready, &reset),
@@ -637,7 +692,6 @@ static bool test_stable_tail_boundary(void)
 
 static bool test_extended_trn_framing_handoff(void)
 {
-	const struct qam_point channel = { 0.8, -0.25 };
 	const struct test_perturbation perturbation = {
 		.first_symbol =
 			V32_CONDITIONING_TRN_MIN_SYMBOLS -
@@ -653,7 +707,6 @@ static bool test_extended_trn_framing_handoff(void)
 		struct v32_conditioning_receiver receiver;
 		struct v32_symbol_encoder encoder;
 		struct v32_symbol_decoder decoder;
-		struct qam_gain gain;
 		unsigned int applied;
 		uint16_t boundary_trn;
 		uint8_t previous_quadrant;
@@ -661,13 +714,13 @@ static bool test_extended_trn_framing_handoff(void)
 		bool reset;
 
 		CHECK(run_perturbed_sequence(
-			      role, &channel, 0, &perturbation,
+			      role, 0, &perturbation,
 			      &receiver, &transmitter, &previous_quadrant,
 			      &applied, &boundary_trn, &ready, &reset) &&
 			      applied == 1 && ready && !reset && boundary_trn ==
 				      V32_CONDITIONING_TRN_MIN_SYMBOLS + 1u &&
 			      v32_conditioning_receiver_framing_state(
-				      &receiver, &decoder, &gain) ==
+				      &receiver, &decoder) ==
 				      V32_CONDITIONING_RECEIVER_OK,
 		      "V.32 extended-TRN handoff boundary changed");
 		while (!v32_conditioning_transmitter_is_complete(
@@ -713,7 +766,6 @@ static bool test_extended_trn_framing_handoff(void)
 
 static bool test_mapping_transition_rephase(void)
 {
-	const struct qam_point channel = { 0.85, -0.2 };
 	const struct test_perturbation perturbation = {
 		.first_symbol = V32_CONDITIONING_TRN_PREFIX_SYMBOLS - 1u,
 		.interval = 1,
@@ -728,7 +780,7 @@ static bool test_mapping_transition_rephase(void)
 	bool reset;
 
 	CHECK(run_perturbed_sequence(
-		      V32_ANSWERING_TRANSMITTER, &channel,
+		      V32_ANSWERING_TRANSMITTER,
 		      TEST_ACQUISITION_START, &perturbation,
 		      &receiver, NULL, NULL, &applied, &boundary_trn,
 		      &ready, &reset) && ready && !reset && applied == 1 &&
@@ -740,7 +792,6 @@ static bool test_mapping_transition_rephase(void)
 
 static bool test_trn_prefix_acquisition(void)
 {
-	const struct qam_point channel = { 0.75, 0.15 };
 	const struct test_perturbation perturbation = { 0 };
 	struct v32_conditioning_receiver receiver;
 	unsigned int applied;
@@ -749,7 +800,7 @@ static bool test_trn_prefix_acquisition(void)
 	bool reset;
 
 	CHECK(run_perturbed_sequence(
-		      V32_ANSWERING_TRANSMITTER, &channel,
+		      V32_ANSWERING_TRANSMITTER,
 		      V32_CONDITIONING_S_SYMBOLS +
 			      V32_CONDITIONING_S_BAR_SYMBOLS,
 		      &perturbation, &receiver, NULL, NULL, &applied,
@@ -761,14 +812,31 @@ static bool test_trn_prefix_acquisition(void)
 
 static bool test_validation(void)
 {
-	const struct qam_point valid_point = { 1.0, 0.0 };
-	const struct qam_point zero_point = { 0.0, 0.0 };
-	const struct qam_point invalid_point = { NAN, 0.0 };
+	const struct v32_equalizer_observation valid_observation = {
+		.i = 4096,
+		.q = 12288,
+		.phase = 0,
+		.magnitude = 1,
+		.epoch = 1,
+		.lineage = 7,
+	};
+	const struct v32_equalizer_observation invalid_observation = {
+		.i = 4096,
+		.q = 12288,
+		.epoch = 0,
+		.lineage = 7,
+	};
 	struct v32_conditioning_receiver receiver;
 	struct v32_conditioning_receiver saved;
+	struct v32_conditioning_symbol_decision decision;
+	struct v32_conditioning_symbol_decision saved_decision;
+	struct v32_equalizer_observation next_observation;
 	struct v32_symbol_decoder decoder = { 0 };
-	struct qam_gain gain = { 0 };
-	bool ready = true;
+	union {
+		struct v32_equalizer_observation observation;
+		struct v32_conditioning_symbol_decision decision;
+	} input_output_overlap;
+	unsigned char saved_input_output[sizeof(input_output_overlap)];
 
 	CHECK(v32_conditioning_receiver_init(
 		      &receiver, V32_CALLING_TRANSMITTER) ==
@@ -784,31 +852,85 @@ static bool test_validation(void)
 			      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(saved)) == 0,
 	      "V.32 conditioning receiver changed state on failed init");
+	memset(&decision, 0x5a, sizeof(decision));
+	saved_decision = decision;
 	CHECK(v32_conditioning_receiver_observe(
-		      &receiver, NULL, &ready) ==
+		      &receiver, NULL, &decision) ==
 		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
-		      v32_conditioning_receiver_observe(
-			      &receiver, &zero_point, &ready) ==
-			      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
-		      v32_conditioning_receiver_observe(
-			      &receiver, &invalid_point, &ready) ==
-			      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
-		      v32_conditioning_receiver_observe(
-			      &receiver, &valid_point, NULL) ==
-			      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
-		      ready && memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      v32_conditioning_receiver_observe(
+		      &receiver, &invalid_observation, &decision) ==
+		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
+	      v32_conditioning_receiver_observe(
+		      &receiver, &valid_observation, NULL) ==
+		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
 	      "V.32 conditioning receiver validation was not transactional");
+	CHECK(v32_conditioning_receiver_observe(
+		      &receiver, &valid_observation, &decision) ==
+		      V32_CONDITIONING_RECEIVER_OK,
+	      "V.32 conditioning receiver rejected its first observation");
+	saved = receiver;
+	memset(&decision, 0x5a, sizeof(decision));
+	saved_decision = decision;
+	next_observation = valid_observation;
+	CHECK(v32_conditioning_receiver_observe(
+		      &receiver, &next_observation, &decision) ==
+		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT,
+	      "V.32 conditioning receiver accepted a repeated epoch");
+	next_observation.epoch = 3;
+	CHECK(v32_conditioning_receiver_observe(
+		      &receiver, &next_observation, &decision) ==
+		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT,
+	      "V.32 conditioning receiver accepted a skipped epoch");
+	next_observation.epoch = 2;
+	next_observation.lineage++;
+	CHECK(v32_conditioning_receiver_observe(
+		      &receiver, &next_observation, &decision) ==
+		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+	      "V.32 conditioning epoch rejection changed state or output");
+	next_observation.lineage = valid_observation.lineage;
+	CHECK(v32_conditioning_receiver_observe(
+		      &receiver, &next_observation,
+		      (struct v32_conditioning_symbol_decision *)&receiver) ==
+		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "V.32 conditioning receiver accepted owner/output overlap");
+	memset(&input_output_overlap, 0, sizeof(input_output_overlap));
+	input_output_overlap.observation = next_observation;
+	memcpy(saved_input_output, &input_output_overlap,
+	       sizeof(saved_input_output));
+	CHECK(v32_conditioning_receiver_observe(
+		      &receiver, &input_output_overlap.observation,
+		      &input_output_overlap.decision) ==
+		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&input_output_overlap, saved_input_output,
+		     sizeof(saved_input_output)) == 0,
+	      "V.32 conditioning receiver accepted input/output overlap");
+	memset(&decision, 0x5a, sizeof(decision));
+	saved_decision = decision;
+	CHECK(v32_conditioning_receiver_observe(
+		      &receiver,
+		      (const struct v32_equalizer_observation *)&receiver,
+		      &decision) == V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+	      "V.32 conditioning receiver accepted owner/input overlap");
+	receiver = saved;
 	CHECK(v32_conditioning_receiver_framing_state(
-		      &receiver, &decoder, &gain) ==
+		      &receiver, &decoder) ==
 		      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT,
 	      "incomplete V.32 conditioning receiver exported state");
 	receiver.prefix_fallback[0] = 1;
 	CHECK(!v32_conditioning_receiver_is_valid(&receiver) &&
 		      !v32_conditioning_receiver_is_complete(&receiver) &&
-		      v32_conditioning_receiver_observe(
-			      &receiver, &valid_point, &ready) ==
-			      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT &&
-		      ready,
+		      observe(
+			      &receiver, &next_observation,
+			      &(bool){ true }) ==
+			      V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT,
 	      "V.32 conditioning receiver accepted corrupt state");
 	receiver = saved;
 	receiver.confirmed_trn_symbols = 1;

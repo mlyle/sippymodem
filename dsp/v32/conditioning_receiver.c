@@ -3,9 +3,11 @@
 #include "conditioning_receiver.h"
 
 #include "constellation.h"
+#include "decision.h"
+#include "memory_region.h"
 #include "rate_signal.h"
 
-#include <math.h>
+#include <limits.h>
 #include <stddef.h>
 
 enum {
@@ -24,9 +26,6 @@ enum {
 		2 * V32_RATE_SIGNAL_DIBITS,
 };
 
-static const double V32_CONDITIONING_GAIN_ADAPTATION = 1.0 / 32.0;
-static const double V32_CONDITIONING_MIN_POINT_POWER = 1e-12;
-
 static bool role_is_valid(enum v32_transmitter_role role)
 {
 	return role == V32_CALLING_TRANSMITTER ||
@@ -40,16 +39,12 @@ static bool phase_is_valid(
 	       phase <= V32_CONDITIONING_READY;
 }
 
-static bool point_has_power(const struct qam_point *point)
+static bool observation_is_valid(
+	const struct v32_equalizer_observation *observation)
 {
-	double power;
-
-	if (point == NULL || !isfinite(point->in_phase) ||
-	    !isfinite(point->quadrature))
-		return false;
-	power = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	return isfinite(power) && power > V32_CONDITIONING_MIN_POINT_POWER;
+	return observation != NULL && observation->epoch != 0 &&
+	       observation->phase <= INT16_MAX &&
+	       observation->magnitude <= INT16_MAX;
 }
 
 static bool pattern_is_valid(
@@ -85,7 +80,7 @@ bool v32_conditioning_receiver_is_valid(
 
 	if (receiver == NULL || !role_is_valid(receiver->source_role) ||
 	    !phase_is_valid(receiver->phase) || !pattern_is_valid(receiver) ||
-	    receiver->observed_quadrant >= QPSK_QUADRANT_COUNT ||
+	    receiver->previous_quadrant >= QPSK_QUADRANT_COUNT ||
 	    receiver->quadrant_offset >= QPSK_QUADRANT_COUNT ||
 	    receiver->pending_quadrant_offset >=
 		    QPSK_QUADRANT_COUNT ||
@@ -98,8 +93,11 @@ bool v32_conditioning_receiver_is_valid(
 		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS ||
 	    receiver->consecutive_mismatches >=
 		    V32_CONDITIONING_MISMATCH_RESTART ||
-	    (receiver->has_previous_point &&
-	     !point_has_power(&receiver->previous_point)))
+	    receiver->has_previous_quadrant !=
+		    (receiver->observation_epoch != 0) ||
+	    (!receiver->has_previous_quadrant &&
+	     (receiver->previous_quadrant != 0 ||
+	      receiver->observation_lineage != 0)))
 		return false;
 	if (receiver->phase == V32_CONDITIONING_COUNT_S_BAR) {
 		if (receiver->s_bar_symbols == 0 ||
@@ -117,7 +115,6 @@ bool v32_conditioning_receiver_is_valid(
 		       receiver->stable_trn_symbols == 0;
 	if (!v32_conditioning_transmitter_is_valid(
 		    &receiver->reference) ||
-	    !qam_gain_is_valid(&receiver->gain) ||
 	    receiver->reference.trn_symbols !=
 		    V32_CONDITIONING_TRN_MAX_SYMBOLS ||
 	    receiver->reference.emitted_symbols !=
@@ -131,7 +128,11 @@ bool v32_conditioning_receiver_is_valid(
 		    receiver->confirmed_trn_symbols ||
 	    ((receiver->consecutive_mismatches == 0) !=
 	     (receiver->stable_trn_symbols != 0)) ||
-	    !receiver->has_previous_point)
+	    !receiver->has_previous_quadrant ||
+	    (receiver->stable_trn_symbols != 0 &&
+	     receiver->previous_quadrant !=
+		     (uint8_t)((receiver->reference.trn_encoder.phase_quadrant +
+				receiver->quadrant_offset) & 3u)))
 		return false;
 	if (receiver->phase == V32_CONDITIONING_READY)
 		return training_quality_is_sufficient(receiver);
@@ -219,8 +220,7 @@ v32_conditioning_receiver_init(
 }
 
 static int reset_search(
-	struct v32_conditioning_receiver *receiver,
-	const struct qam_point *point)
+	struct v32_conditioning_receiver *receiver)
 {
 	struct v32_conditioning_receiver reset;
 
@@ -228,8 +228,6 @@ static int reset_search(
 		    &reset, receiver->source_role) !=
 	    V32_CONDITIONING_RECEIVER_OK)
 		return -1;
-	reset.previous_point = *point;
-	reset.has_previous_point = true;
 	*receiver = reset;
 	return 0;
 }
@@ -277,12 +275,12 @@ static bool observe_prefix_turn(
 
 static int begin_training(
 	struct v32_conditioning_receiver *receiver,
-	const struct qam_point *point, uint16_t matched_symbols)
+	uint8_t observed_quadrant, uint16_t matched_symbols,
+	uint8_t *expected_quadrant)
 {
-	struct qam_point expected_point;
-	uint8_t expected_quadrant;
+	uint8_t expected;
 
-	if (matched_symbols == 0 ||
+	if (expected_quadrant == NULL || matched_symbols == 0 ||
 	    matched_symbols >
 		    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u ||
 	    v32_conditioning_transmitter_init(
@@ -292,17 +290,11 @@ static int begin_training(
 	    skip_symbols(
 		    &receiver->reference,
 		    (uint16_t)(V32_CONDITIONING_FIXED_SYMBOLS + matched_symbols),
-		    &expected_quadrant) != 0 ||
-	    v32_4800_constellation_point(
-		    expected_quadrant, &expected_point) !=
-		    V32_CONSTELLATION_OK ||
-	    qam_gain_init_from_reference(
-		    &receiver->gain, point, &expected_point,
-		    V32_CONDITIONING_GAIN_ADAPTATION) != QAM_GAIN_OK)
+		    &expected) != 0)
 		return -1;
 	receiver->trn_symbols = matched_symbols;
 	receiver->quadrant_offset =
-		(uint8_t)((receiver->observed_quadrant - expected_quadrant) & 3u);
+		(uint8_t)((observed_quadrant - expected) & 3u);
 	receiver->pending_quadrant_offset = receiver->quadrant_offset;
 	receiver->confirmed_trn_symbols = matched_symbols;
 	receiver->stable_trn_symbols = matched_symbols;
@@ -310,40 +302,41 @@ static int begin_training(
 	receiver->s_bar_symbols = 0;
 	receiver->prefix_match = 0;
 	receiver->phase = V32_CONDITIONING_TRAIN_TRN;
+	*expected_quadrant = expected;
 	return 0;
 }
 
+struct training_symbol {
+	uint8_t reference_quadrant;
+	bool confirmed;
+	bool reset;
+};
+
 static int train_symbol(
 	struct v32_conditioning_receiver *receiver,
-	const struct qam_point *point)
+	uint8_t observed_quadrant, struct training_symbol *symbol)
 {
-	struct qam_point expected_point;
 	uint8_t expected_quadrant;
 	uint8_t observed_expected;
 	uint8_t candidate_offset;
+	bool confirmed = false;
 
-	if (v32_conditioning_transmitter_next(
+	if (symbol == NULL || v32_conditioning_transmitter_next(
 		    &receiver->reference, &expected_quadrant) !=
-		    V32_CONDITIONING_OK ||
-	    v32_4800_constellation_point(
-		    expected_quadrant, &expected_point) !=
-		    V32_CONSTELLATION_OK)
+		    V32_CONDITIONING_OK)
 		return -1;
 	observed_expected =
 		(uint8_t)((expected_quadrant + receiver->quadrant_offset) & 3u);
-	if (receiver->observed_quadrant == observed_expected) {
+	if (observed_quadrant == observed_expected) {
 		receiver->consecutive_mismatches = 0;
 		receiver->pending_quadrant_offset = receiver->quadrant_offset;
 		receiver->confirmed_trn_symbols++;
 		receiver->stable_trn_symbols++;
-		if (qam_gain_track(
-			    &receiver->gain, point, &expected_point) !=
-		    QAM_GAIN_OK)
-			return -1;
+		confirmed = true;
 	} else {
 		receiver->stable_trn_symbols = 0;
 		candidate_offset = (uint8_t)(
-			(receiver->observed_quadrant - expected_quadrant) & 3u);
+			(observed_quadrant - expected_quadrant) & 3u);
 		if (receiver->consecutive_mismatches == 0 ||
 		    receiver->pending_quadrant_offset != candidate_offset) {
 			receiver->pending_quadrant_offset = candidate_offset;
@@ -363,46 +356,68 @@ static int train_symbol(
 				V32_CONDITIONING_MISMATCH_RESTART;
 			receiver->stable_trn_symbols =
 				V32_CONDITIONING_MISMATCH_RESTART;
-			if (qam_gain_track(
-				    &receiver->gain, point, &expected_point) !=
-			    QAM_GAIN_OK)
-				return -1;
+			confirmed = true;
 		}
 	}
 	receiver->trn_symbols++;
+	*symbol = (struct training_symbol){
+		.reference_quadrant = expected_quadrant,
+		.confirmed = confirmed,
+	};
 	if (training_quality_is_sufficient(receiver))
 		receiver->phase = V32_CONDITIONING_READY;
-	else if (receiver->trn_symbols ==
-		 V32_CONDITIONING_TRN_MAX_SYMBOLS)
-		return 1;
+	else if (receiver->trn_symbols == V32_CONDITIONING_TRN_MAX_SYMBOLS)
+		symbol->reset = true;
 	return 0;
 }
 
 enum v32_conditioning_receiver_result
 v32_conditioning_receiver_observe(
 	struct v32_conditioning_receiver *receiver,
-	const struct qam_point *point, bool *ready)
+	const struct v32_equalizer_observation *observation,
+	struct v32_conditioning_symbol_decision *decision)
 {
 	struct v32_conditioning_receiver next;
+	struct v32_conditioning_symbol_decision next_decision;
+	struct v32_quadrant_decision quadrant_decision;
+	struct training_symbol training_symbol = { 0 };
+	uint8_t current_quadrant;
+	uint8_t expected_quadrant = 0;
 	uint8_t turn;
-	int training_result = 0;
+	bool known_reference = false;
+	bool confirmed_reference = false;
+	bool reset = false;
 
+	if (receiver == NULL || observation == NULL || decision == NULL ||
+	    memory_regions_overlap(
+		    receiver, sizeof(*receiver), observation,
+		    sizeof(*observation)) ||
+	    memory_regions_overlap(
+		    receiver, sizeof(*receiver), decision,
+		    sizeof(*decision)) ||
+	    memory_regions_overlap(
+		    observation, sizeof(*observation), decision,
+		    sizeof(*decision)))
+		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	if (!v32_conditioning_receiver_is_valid(receiver) ||
-	    !point_has_power(point) || ready == NULL)
+	    !observation_is_valid(observation) ||
+	    (receiver->has_previous_quadrant &&
+	     (receiver->observation_epoch == UINT64_MAX ||
+	      observation->epoch != receiver->observation_epoch + 1u ||
+	      observation->lineage != receiver->observation_lineage)))
 		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	if (v32_conditioning_receiver_is_complete(receiver))
 		return V32_CONDITIONING_RECEIVER_COMPLETE;
+	if (v32_decide_4_point(
+		    observation, false, &quadrant_decision) != V32_DECISION_OK)
+		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
-	if (!next.has_previous_point) {
-		next.previous_point = *point;
-		next.has_previous_point = true;
+	current_quadrant = quadrant_decision.quadrant;
+	if (!next.has_previous_quadrant) {
+		next.has_previous_quadrant = true;
 	} else {
-		if (qam_nearest_quarter_turn(
-			    &next.previous_point, point, &turn) !=
-		    QAM_OK)
-			return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
-		next.observed_quadrant =
-			(uint8_t)((next.observed_quadrant + turn) & 3u);
+		turn = (uint8_t)((current_quadrant -
+				  next.previous_quadrant) & 3u);
 		if (next.phase == V32_CONDITIONING_SEARCH_S_BAR ||
 		    next.phase == V32_CONDITIONING_MATCH_TRN) {
 			bool prefix_ready = observe_prefix_turn(&next, turn);
@@ -410,9 +425,12 @@ v32_conditioning_receiver_observe(
 
 			if (prefix_ready &&
 			    begin_training(
-				    &next, point,
-				    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u) != 0)
+				    &next, current_quadrant,
+				    V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS + 1u,
+				    &expected_quadrant) != 0)
 				return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+			known_reference = prefix_ready;
+			confirmed_reference = prefix_ready;
 			if (!prefix_ready && epoch) {
 				next.phase = V32_CONDITIONING_COUNT_S_BAR;
 				next.alternating_transitions = 0;
@@ -423,43 +441,78 @@ v32_conditioning_receiver_observe(
 			if (next.s_bar_symbols <
 			    V32_CONDITIONING_S_BAR_SYMBOLS) {
 				next.s_bar_symbols++;
-			} else if (begin_training(&next, point, 1) != 0) {
+			} else if (begin_training(
+				   &next, current_quadrant, 1,
+				   &expected_quadrant) != 0) {
 				return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+			} else {
+				known_reference = true;
+				confirmed_reference = true;
 			}
 		} else {
-			training_result = train_symbol(&next, point);
-			if (training_result < 0)
+			if (train_symbol(
+				    &next, current_quadrant,
+				    &training_symbol) != 0)
 				return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
-			if (training_result > 0 && reset_search(&next, point) != 0)
-				return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+			expected_quadrant = training_symbol.reference_quadrant;
+			known_reference = true;
+			confirmed_reference = training_symbol.confirmed;
+			reset = training_symbol.reset;
 		}
-		next.previous_point = *point;
 	}
+	if (known_reference) {
+		uint8_t aligned_quadrant = (uint8_t)(
+			(expected_quadrant + next.quadrant_offset) & 3u);
+
+		if (v32_decide_known_quadrant(
+			    observation, aligned_quadrant, true,
+			    &quadrant_decision) != V32_DECISION_OK)
+			return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+	}
+	next_decision = (struct v32_conditioning_symbol_decision){
+		.equalizer = quadrant_decision.equalizer,
+		.reference_quadrant = expected_quadrant,
+		.reference_known = known_reference,
+		.reference_confirmed = confirmed_reference,
+	};
+	if (reset && reset_search(&next) != 0)
+		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+	/* A maximum-length unqualified TRN restarts acquisition after accepting
+	 * its final observation.  Retain the continuous observation coordinate
+	 * across that protocol-state reset. */
+	next.previous_quadrant = current_quadrant;
+	next.observation_epoch = observation->epoch;
+	next.observation_lineage = observation->lineage;
+	next.has_previous_quadrant = true;
 	if (!v32_conditioning_receiver_is_valid(&next))
 		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;
-	*ready = next.phase == V32_CONDITIONING_READY;
+	*decision = next_decision;
 	return V32_CONDITIONING_RECEIVER_OK;
 }
 
 enum v32_conditioning_receiver_result
 v32_conditioning_receiver_framing_state(
 	const struct v32_conditioning_receiver *receiver,
-	struct v32_symbol_decoder *decoder,
-	struct qam_gain *gain)
+	struct v32_symbol_decoder *decoder)
 {
 	struct v32_symbol_decoder next_decoder;
+	uint8_t phase_quadrant;
 
 	if (!v32_conditioning_receiver_is_complete(receiver) ||
-	    decoder == NULL || gain == NULL ||
-	    v32_symbol_decoder_init(
+	    decoder == NULL || memory_regions_overlap(
+		    receiver, sizeof(*receiver), decoder, sizeof(*decoder)))
+		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
+	phase_quadrant = (uint8_t)(
+		(receiver->reference.trn_encoder.phase_quadrant +
+		 receiver->quadrant_offset) & 3u);
+	if (v32_symbol_decoder_init(
 		    &next_decoder, receiver->source_role,
-		    receiver->reference.trn_encoder.phase_quadrant) !=
+		    phase_quadrant) !=
 		    V32_FRAMING_OK)
 		return V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT;
 	next_decoder.descrambler = receiver->reference.trn_encoder.scrambler;
 	*decoder = next_decoder;
-	*gain = receiver->gain;
 	return V32_CONDITIONING_RECEIVER_OK;
 }
 

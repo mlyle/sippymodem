@@ -441,8 +441,10 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/v32_decision.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o \
 	$(BUILD_DIR)/line_startup.o \
@@ -538,13 +540,12 @@ V32_CONDITIONING_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_conditioning_receiver
 V32_CONDITIONING_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_conditioning_receiver.o \
-	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/conditioning.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/v32_decision.o \
 	$(BUILD_DIR)/framing.o
 V32_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_constellation
@@ -638,8 +639,10 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/v32_decision.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o \
 	$(BUILD_DIR)/line_startup.o \
@@ -2832,8 +2835,10 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
+	$(BUILD_DIR)/v32_decision.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o \
 	$(BUILD_DIR)/line_startup.o \
@@ -4906,6 +4911,10 @@ $(BUILD_DIR)/conditioning.o: \
 $(BUILD_DIR)/conditioning_receiver.o: \
 	$(DSP_V32_SOURCE_DIR)/conditioning_receiver.c | \
 	$(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/conditioning_qam.o: \
+	$(DSP_V32_SOURCE_DIR)/conditioning_qam.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/constellation.o: \

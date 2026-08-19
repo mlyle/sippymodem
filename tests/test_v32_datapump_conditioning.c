@@ -5,6 +5,7 @@
 #include <qam_gain.h>
 #include <single_tone.h>
 #include <conditioning.h>
+#include <conditioning_qam.h>
 #include <conditioning_receiver.h>
 #include <constellation.h>
 #include <datapump.h>
@@ -78,6 +79,7 @@ struct test_conditioning_signal {
 struct test_caller_qam_receiver {
 	struct qam_demodulator demodulator;
 	struct v32_conditioning_receiver conditioning;
+	struct v32_conditioning_qam conditioning_qam;
 	struct v32_symbol_decoder decoder;
 	struct v32_rate_signal_detector rate_detector;
 	struct qam_gain gain;
@@ -429,6 +431,9 @@ static bool caller_qam_receiver_init(
 		       &receiver->conditioning,
 		       V32_CALLING_TRANSMITTER) ==
 		       V32_CONDITIONING_RECEIVER_OK &&
+	       v32_conditioning_qam_init(
+		       &receiver->conditioning_qam) ==
+		       V32_CONDITIONING_QAM_OK &&
 	       v32_rate_signal_detector_init(
 		       &receiver->rate_detector) ==
 		       V32_RATE_SIGNAL_OK;
@@ -447,18 +452,23 @@ static bool caller_qam_receiver_observe(
 	if (!ready || receiver->end_detected)
 		return true;
 	if (!receiver->conditioning_complete) {
-		if (v32_conditioning_receiver_observe(
-			    &receiver->conditioning, &point, &ready) !=
-		    V32_CONDITIONING_RECEIVER_OK)
+		if (v32_conditioning_qam_observe(
+			    &receiver->conditioning_qam,
+			    &receiver->conditioning, &point) !=
+			    V32_CONDITIONING_QAM_OK)
 			return false;
-		if (!ready)
+		if (!v32_conditioning_receiver_is_complete(
+			    &receiver->conditioning))
 			return true;
 		if (v32_conditioning_receiver_framing_state(
-			    &receiver->conditioning, &receiver->decoder,
-			    &receiver->gain) !=
-		    V32_CONDITIONING_RECEIVER_OK)
+			    &receiver->conditioning, &receiver->decoder) !=
+			    V32_CONDITIONING_RECEIVER_OK ||
+		    v32_conditioning_qam_handoff(
+			    &receiver->conditioning_qam,
+			    &receiver->conditioning,
+			    &receiver->previous_point,
+			    &receiver->gain) != V32_CONDITIONING_QAM_OK)
 			return false;
-		receiver->previous_point = point;
 		receiver->conditioning_complete = true;
 		return true;
 	}
@@ -497,6 +507,159 @@ static bool caller_qam_receiver_observe(
 		}
 	}
 	receiver->previous_point = point;
+	return true;
+}
+
+static struct qam_point apply_test_channel(
+	const struct qam_point *point, const struct qam_point *channel)
+{
+	return (struct qam_point){
+		.in_phase = point->in_phase * channel->in_phase -
+			    point->quadrature * channel->quadrature,
+		.quadrature = point->in_phase * channel->quadrature +
+			      point->quadrature * channel->in_phase,
+	};
+}
+
+static bool test_conditioning_qam_adapter(void)
+{
+	const struct qam_point channel = { 0.8, -0.25 };
+	const struct qam_point zero = { 0 };
+	struct v32_conditioning_transmitter transmitter;
+	struct v32_conditioning_receiver receiver;
+	struct v32_conditioning_receiver fresh_receiver;
+	struct v32_conditioning_qam adapter;
+	struct v32_conditioning_receiver saved_receiver;
+	struct v32_conditioning_qam saved_adapter;
+	struct qam_point final_point = { 0 };
+	struct qam_point saved_point;
+	struct qam_point last_received = { 0 };
+	struct qam_gain gain = { 0 };
+	union {
+		struct qam_point point;
+		struct qam_gain gain;
+	} overlapping_output = { 0 };
+	unsigned char saved_output[sizeof(overlapping_output)];
+	struct qam_gain saved_gain;
+
+	CHECK(v32_conditioning_qam_init(&adapter) ==
+		      V32_CONDITIONING_QAM_OK &&
+	      v32_conditioning_receiver_init(
+		      &receiver, V32_ANSWERING_TRANSMITTER) ==
+		      V32_CONDITIONING_RECEIVER_OK &&
+	      v32_conditioning_transmitter_init(
+		      &transmitter, V32_ANSWERING_TRANSMITTER,
+		      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+		      V32_CONDITIONING_OK,
+	      "V.32 conditioning QAM bridge did not initialize");
+	saved_receiver = receiver;
+	saved_adapter = adapter;
+	CHECK(v32_conditioning_qam_observe(
+		      &adapter, &receiver, &zero) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_observe(
+		      NULL, &receiver, &channel) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_observe(
+		      &adapter, NULL, &channel) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_observe(
+		      &adapter, &receiver, NULL) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      memcmp(&adapter, &saved_adapter, sizeof(adapter)) == 0 &&
+	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
+	      "V.32 conditioning QAM bridge rejection was not transactional");
+	for (uint16_t symbol = 0;
+	     symbol < V32_CONDITIONING_S_SYMBOLS +
+			      V32_CONDITIONING_S_BAR_SYMBOLS +
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS;
+	     ++symbol) {
+		struct qam_point transmitted;
+		uint8_t quadrant;
+
+		CHECK(v32_conditioning_transmitter_next(
+			      &transmitter, &quadrant) == V32_CONDITIONING_OK &&
+		      v32_4800_constellation_point(
+			      quadrant, &transmitted) ==
+			      V32_CONSTELLATION_OK,
+		      "V.32 conditioning QAM fixture stopped at %u", symbol);
+		last_received = apply_test_channel(&transmitted, &channel);
+		CHECK(v32_conditioning_qam_observe(
+			      &adapter, &receiver, &last_received) ==
+			      V32_CONDITIONING_QAM_OK,
+		      "V.32 conditioning QAM bridge stopped at %u", symbol);
+		if (symbol == 0) {
+			saved_adapter = adapter;
+			saved_receiver = receiver;
+			CHECK(v32_conditioning_qam_observe(
+				      &adapter, &receiver,
+				      &adapter.previous_point) ==
+				      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+			      memcmp(&adapter, &saved_adapter,
+				     sizeof(adapter)) == 0 &&
+			      memcmp(&receiver, &saved_receiver,
+				     sizeof(receiver)) == 0,
+			      "V.32 conditioning QAM bridge accepted owner aliasing");
+			CHECK(v32_conditioning_receiver_init(
+				      &fresh_receiver,
+				      V32_ANSWERING_TRANSMITTER) ==
+				      V32_CONDITIONING_RECEIVER_OK,
+			      "V.32 mismatched QAM receiver did not initialize");
+			saved_receiver = fresh_receiver;
+			CHECK(v32_conditioning_qam_observe(
+				      &adapter, &fresh_receiver,
+				      &last_received) ==
+				      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+			      memcmp(&adapter, &saved_adapter,
+				     sizeof(adapter)) == 0 &&
+			      memcmp(&fresh_receiver, &saved_receiver,
+				     sizeof(fresh_receiver)) == 0,
+			      "V.32 conditioning QAM bridge spliced unrelated owners");
+			final_point = (struct qam_point){ 7.0, -9.0 };
+			memset(&gain, 0x5a, sizeof(gain));
+			saved_point = final_point;
+			saved_gain = gain;
+			CHECK(v32_conditioning_qam_handoff(
+				      &adapter, &fresh_receiver,
+				      &final_point, &gain) ==
+				      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+			      memcmp(&final_point, &saved_point,
+				     sizeof(final_point)) == 0 &&
+			      memcmp(&gain, &saved_gain, sizeof(gain)) == 0,
+			      "V.32 QAM handoff spliced owners or changed output");
+		}
+	}
+	CHECK(v32_conditioning_receiver_is_complete(&receiver) &&
+	      v32_conditioning_qam_handoff(
+		      &adapter, &receiver, &final_point, &gain) ==
+		      V32_CONDITIONING_QAM_OK &&
+	      fabs(final_point.in_phase - last_received.in_phase) < 1e-12 &&
+	      fabs(final_point.quadrature - last_received.quadrature) < 1e-12 &&
+	      fabs(gain.channel_gain.in_phase - channel.in_phase) < 1e-12 &&
+	      fabs(gain.channel_gain.quadrature - channel.quadrature) < 1e-12,
+	      "V.32 conditioning QAM handoff changed the point or channel");
+	saved_adapter = adapter;
+	saved_receiver = receiver;
+	CHECK(v32_conditioning_qam_observe(
+		      &adapter, &receiver, &last_received) ==
+		      V32_CONDITIONING_QAM_COMPLETE &&
+	      memcmp(&adapter, &saved_adapter, sizeof(adapter)) == 0 &&
+	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
+	      "completed V.32 conditioning QAM bridge changed ownership");
+	memcpy(saved_output, &overlapping_output, sizeof(saved_output));
+	saved_gain = gain;
+	CHECK(v32_conditioning_qam_handoff(
+		      &adapter, &receiver, &overlapping_output.point,
+		      &overlapping_output.gain) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      v32_conditioning_qam_handoff(
+		      &adapter, &receiver, &adapter.previous_point, &gain) ==
+		      V32_CONDITIONING_QAM_INVALID_ARGUMENT &&
+	      memcmp(&overlapping_output, saved_output,
+		     sizeof(saved_output)) == 0 &&
+	      memcmp(&gain, &saved_gain, sizeof(gain)) == 0 &&
+	      memcmp(&adapter, &saved_adapter, sizeof(adapter)) == 0,
+	      "V.32 conditioning QAM handoff accepted output aliasing");
 	return true;
 }
 
@@ -782,6 +945,12 @@ static bool test_training_deadline(void)
 
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] conditioning QAM adapter\n");
+	if (!test_conditioning_qam_adapter()) {
+		fprintf(stderr, "[  FAILED  ] conditioning QAM adapter\n");
+		return 1;
+	}
+	fprintf(stderr, "[       OK ] conditioning QAM adapter\n");
 	fprintf(stderr, "[ RUN      ] training deadline\n");
 	if (!test_training_deadline()) {
 		fprintf(stderr, "[  FAILED  ] training deadline\n");

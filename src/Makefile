@@ -130,8 +130,10 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/datapump.c \
 	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/conditioning.c \
+	$(DSP_V32_SOURCE_DIR)/conditioning_qam.c \
 	$(DSP_V32_SOURCE_DIR)/conditioning_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/constellation.c \
+	$(DSP_V32_SOURCE_DIR)/decision.c \
 	$(DSP_V32_SOURCE_DIR)/framing.c \
 	$(DSP_V32_SOURCE_DIR)/line_startup.c \
 	$(DSP_V32_SOURCE_DIR)/rate_signal.c \

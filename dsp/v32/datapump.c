@@ -9,6 +9,7 @@
 #include "qam_gain.h"
 #include "uncoded_receiver.h"
 #include "conditioning.h"
+#include "conditioning_qam.h"
 #include "conditioning_receiver.h"
 #include "constellation.h"
 #include "framing.h"
@@ -85,6 +86,7 @@ struct v32_datapump {
 	struct v32_conditioning_transmitter
 		conditioning_transmitter;
 	struct v32_conditioning_receiver conditioning_receiver;
+	struct v32_conditioning_qam conditioning_qam;
 	struct v32_line_startup line_startup;
 	struct v32_answerer_line_startup answerer_line_startup;
 	struct v32_startup startup;
@@ -465,6 +467,14 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V32_CARRIER_LOSS_SAMPLES ||
 	    !line_entry_is_valid(datapump) ||
+	    !v32_conditioning_qam_is_valid(&datapump->conditioning_qam) ||
+	    datapump->conditioning_receiver.has_previous_quadrant !=
+		    datapump->conditioning_qam.has_previous_point ||
+	    datapump->conditioning_receiver.observation_epoch !=
+		    datapump->conditioning_qam.epoch ||
+	    (datapump->conditioning_qam.has_previous_point &&
+	     datapump->conditioning_receiver.previous_quadrant !=
+		     datapump->conditioning_qam.quadrant) ||
 	    !v32_startup_is_valid(&datapump->startup) ||
 	    datapump->startup.role != endpoint_role(datapump->caller) ||
 	    datapump->startup.supported_rates != rate_capabilities(dp->modem) ||
@@ -542,6 +552,8 @@ static int initialize_protocol(
 		    &datapump->conditioning_receiver,
 		    remote_role(datapump->caller)) !=
 		    V32_CONDITIONING_RECEIVER_OK ||
+	    v32_conditioning_qam_init(&datapump->conditioning_qam) !=
+		    V32_CONDITIONING_QAM_OK ||
 	    v32_4800_constellation_point(
 		    0, &datapump->transmit_point) != V32_CONSTELLATION_OK)
 		return -1;
@@ -1122,15 +1134,19 @@ static int reset_conditioning_receiver(
 	struct v32_datapump *datapump, bool carrier_detected)
 {
 	struct v32_conditioning_receiver receiver;
+	struct v32_conditioning_qam adapter;
 	struct qam_demodulator demodulator = datapump->demodulator;
 
 	if (v32_conditioning_receiver_init(
 		    &receiver, remote_role(datapump->caller)) !=
 		    V32_CONDITIONING_RECEIVER_OK ||
+	    v32_conditioning_qam_init(&adapter) !=
+		    V32_CONDITIONING_QAM_OK ||
 	    qam_demodulator_reset(&demodulator) !=
 		    QAM_OK)
 		return -1;
 	datapump->conditioning_receiver = receiver;
+	datapump->conditioning_qam = adapter;
 	datapump->demodulator = demodulator;
 	datapump->has_previous_receive_point = false;
 	datapump->conditioning_carrier_detected = carrier_detected;
@@ -1378,7 +1394,6 @@ static int receive_sample(
 				V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING ?
 				V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER :
 				V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
-		bool conditioning_ready;
 		bool second_conditioning =
 			datapump->line_entry ==
 			V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
@@ -1396,17 +1411,18 @@ static int receive_sample(
 			return 0;
 		}
 
-		if (v32_conditioning_receiver_observe(
-			    &datapump->conditioning_receiver, &point,
-			    &conditioning_ready) !=
-			    V32_CONDITIONING_RECEIVER_OK)
+		if (v32_conditioning_qam_observe(
+			    &datapump->conditioning_qam,
+			    &datapump->conditioning_receiver, &point) !=
+			    V32_CONDITIONING_QAM_OK)
 			return -1;
 		if (!datapump->caller &&
 		    datapump->startup.phase == V32_ANSWERER_SEND_OFFER &&
 		    datapump->conditioning_receiver.phase !=
 			    V32_CONDITIONING_SEARCH_S_BAR)
 			datapump->answerer_s_detected = true;
-		if (conditioning_ready) {
+		if (v32_conditioning_receiver_is_complete(
+			    &datapump->conditioning_receiver)) {
 			if (second_conditioning &&
 			    v32_startup_expect_selection(
 				    &datapump->startup) !=
@@ -1414,11 +1430,15 @@ static int receive_sample(
 				return -1;
 			if (v32_conditioning_receiver_framing_state(
 				    &datapump->conditioning_receiver,
-				    &datapump->decoder,
+				    &datapump->decoder) !=
+				    V32_CONDITIONING_RECEIVER_OK ||
+			    v32_conditioning_qam_handoff(
+				    &datapump->conditioning_qam,
+				    &datapump->conditioning_receiver,
+				    &datapump->previous_receive_point,
 				    &datapump->conditioning_gain) !=
-			    V32_CONDITIONING_RECEIVER_OK)
+				    V32_CONDITIONING_QAM_OK)
 				return -1;
-			datapump->previous_receive_point = point;
 			datapump->has_previous_receive_point = true;
 			datapump->second_conditioning_complete =
 				second_conditioning;
