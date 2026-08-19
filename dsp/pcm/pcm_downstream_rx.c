@@ -412,6 +412,8 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 				begin_ed_search(receiver);
 			return result;
 		}
+		if (receiver->stage == PCM_DOWNSTREAM_RX_V92_CONTROL)
+			begin_ed_search(receiver);
 	} else {
 		result = feed_mp_frame(receiver, frame, event);
 
@@ -486,7 +488,9 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 		}
 		result = PCM_DOWNSTREAM_RX_TRN2D_FRAME;
 	} else {
-		if (next.stage == PCM_DOWNSTREAM_RX_ED_SEARCH)
+		if (next.stage == PCM_DOWNSTREAM_RX_ED_SEARCH ||
+		    (next.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
+		     next.ed_requested))
 			result = receive_ed_frame(&next, &frame, &generated);
 		else if (next.stage == PCM_DOWNSTREAM_RX_V92_CONTROL) {
 			result = feed_v92_control_frame(&next, &frame, &generated);

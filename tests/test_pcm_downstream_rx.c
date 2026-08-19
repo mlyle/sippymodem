@@ -809,6 +809,85 @@ static bool test_ed_boundary_request(void)
 	return true;
 }
 
+static bool run_v92_buffered_prefix_ed(enum g711_law law)
+{
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_rx armed;
+	struct pcm_downstream_rx unarmed;
+	struct source armed_source;
+	struct source unarmed_source;
+	struct v92_observer armed_observer = { 0 };
+	struct v92_observer unarmed_observer = { 0 };
+	uint8_t prefix[FRAME_BITS] = { 0 };
+	uint8_t zeros[FRAME_BITS] = { 0 };
+
+	for (size_t bit = FRAME_BITS - 8u; bit < FRAME_BITS; ++bit)
+		prefix[bit] = 1u;
+	CHECK(make_mapping(&mapping, law, 0u, 0u) &&
+	      source_init(&armed_source, &mapping) &&
+	      pcm_downstream_rx_init(
+		      &armed, PCM_PROTOCOL_V92, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      push_v92_trn2d(
+		      &armed_source, V90_PHASE4_TRN2D_MINIMUM_FRAMES,
+		      &armed, &armed_observer) &&
+	      armed.stage == PCM_DOWNSTREAM_RX_V92_CONTROL,
+	      "V.92 buffered-prefix fixture did not reach control");
+	unarmed = armed;
+	unarmed_source = armed_source;
+
+	CHECK(pcm_downstream_rx_expect_ed(&armed) == PCM_DOWNSTREAM_RX_OK &&
+	      push_v92_frame(
+		      &armed_source, prefix, &armed, &armed_observer) &&
+	      armed.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
+	      armed.ed_requested && armed.ed_frames == 0u &&
+	      armed.control.v92.stage == V92_CONTROL_RX_SEARCH_SYNC &&
+	      armed.control.v92.sync_one_count == 8u,
+	      "armed V.92 Ed search did not retain a buffered prefix");
+	CHECK(push_v92_frame(
+		      &armed_source, zeros, &armed, &armed_observer) &&
+	      armed.stage == PCM_DOWNSTREAM_RX_ED_SEARCH &&
+	      armed.ed_requested && armed.ed_frames == 1u &&
+	      armed.control.v92.stage == V92_CONTROL_RX_SEARCH_SYNC &&
+	      armed.control.v92.sync_one_count == 0u &&
+	      push_v92_frame(
+		      &armed_source, zeros, &armed, &armed_observer) &&
+	      armed_observer.ed_events == 1u &&
+	      armed_observer.ed_bit_errors == 0u &&
+	      pcm_downstream_rx_is_complete(&armed),
+	      "armed V.92 receiver did not resume Ed after the prefix cleared");
+
+	CHECK(push_v92_frame(
+		      &unarmed_source, prefix, &unarmed,
+		      &unarmed_observer) &&
+	      unarmed.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
+	      !unarmed.ed_requested &&
+	      unarmed.control.v92.sync_one_count == 8u &&
+	      push_v92_frame(
+		      &unarmed_source, zeros, &unarmed,
+		      &unarmed_observer) &&
+	      push_v92_frame(
+		      &unarmed_source, zeros, &unarmed,
+		      &unarmed_observer) &&
+	      unarmed.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
+	      !unarmed.ed_requested && unarmed.ed_frames == 0u &&
+	      unarmed.control.v92.stage == V92_CONTROL_RX_SEARCH_SYNC &&
+	      unarmed.control.v92.sync_one_count == 0u &&
+	      unarmed_observer.ed_events == 0u &&
+	      pcm_downstream_rx_is_valid(&unarmed),
+	      "unarmed V.92 control stream was mistaken for Ed");
+	return true;
+}
+
+static bool test_v92_buffered_prefix_ed(void)
+{
+	CHECK(run_v92_buffered_prefix_ed(G711_LAW_PCMU),
+	      "PCMU buffered-prefix Ed recovery failed");
+	CHECK(run_v92_buffered_prefix_ed(G711_LAW_PCMA),
+	      "PCMA buffered-prefix Ed recovery failed");
+	return true;
+}
+
 static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 {
 	const struct v92_suvd_parameters parameters = {
@@ -1127,6 +1206,7 @@ int main(void)
 		{ "TRN2d error accounting", test_trn2d_error_accounting },
 		{ "Ed transition", test_ed_transition },
 		{ "Ed boundary request", test_ed_boundary_request },
+		{ "V.92 buffered-prefix Ed", test_v92_buffered_prefix_ed },
 		{ "V.92 control width matrix", test_v92_control_widths },
 		{ "V.92 control recovery", test_v92_control_recovery },
 		{ "contracts", test_contracts },
