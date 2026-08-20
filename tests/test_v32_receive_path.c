@@ -570,6 +570,77 @@ static bool test_echo_adaptation_lifecycle(void)
 	return true;
 }
 
+static bool test_gain_lifecycle(void)
+{
+	struct v32_receive_path path;
+	struct v32_receive_path saved;
+	struct v32_line_receiver initial_line;
+	struct v32_equalizer initial_equalizer;
+	struct v32_equalizer_observation observation;
+	int16_t sample = 1;
+	size_t consumed;
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK,
+	      "gain lifecycle fixture did not initialize");
+	path.line.gain.smoothed_level = 4096;
+	path.line.gain.gain_mantissa_q15 = 16384;
+	path.line.gain.gain_shift = 1;
+	path.line.gain.signal_present = true;
+	CHECK(v32_receive_path_is_valid(&path),
+	      "gain lifecycle fixture is invalid");
+	initial_line = path.line;
+	initial_equalizer = path.equalizer;
+	CHECK(v32_receive_path_freeze_gain(&path) == V32_RECEIVE_PATH_OK &&
+	      path.line.gain.gain_mode == AGC_GAIN_FROZEN &&
+	      path.line.gain.smoothed_level ==
+		      initial_line.gain.smoothed_level &&
+	      path.line.gain.signal_present &&
+	      v32_receive_path_reacquire_gain(&path) ==
+		      V32_RECEIVE_PATH_OK &&
+	      path.line.gain.gain_mode == AGC_GAIN_TRACKING &&
+	      path.line.gain.smoothed_level == 0 &&
+	      !path.line.gain.signal_present &&
+	      path.line.gain.gain_mantissa_q15 ==
+		      initial_line.gain.gain_mantissa_q15 &&
+	      path.line.gain.gain_shift == initial_line.gain.gain_shift &&
+	      memcmp(&path.line.timing, &initial_line.timing,
+		     sizeof(path.line.timing)) == 0 &&
+	      memcmp(&path.equalizer, &initial_equalizer,
+		     sizeof(path.equalizer)) == 0,
+	      "gain lifecycle changed learned receive state");
+	CHECK(v32_receive_path_begin_echo_training(&path) ==
+		      V32_RECEIVE_PATH_OK,
+	      "gain lifecycle fixture did not enter echo training");
+	saved = path;
+	CHECK(v32_receive_path_freeze_gain(&path) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_reacquire_gain(&path) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "echo training admitted a gain lifecycle change");
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_equalizer_process(
+		      &path.equalizer, &sample, 1, &consumed,
+		      &observation) == V32_EQUALIZER_OBSERVATION_READY,
+	      "pending gain lifecycle fixture did not initialize");
+	saved = path;
+	CHECK(v32_receive_path_freeze_gain(&path) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      v32_receive_path_reacquire_gain(&path) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      v32_receive_path_freeze_gain(NULL) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_reacquire_gain(NULL) ==
+		      V32_RECEIVE_PATH_INVALID_STATE,
+	      "pending gain lifecycle changed the receive path");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	union {
@@ -681,7 +752,8 @@ int main(void)
 {
 	if (!test_composed_path() || !test_buffered_commits() ||
 	    !test_boundary_adaptation() ||
-	    !test_echo_adaptation_lifecycle() || !test_contracts())
+	    !test_echo_adaptation_lifecycle() || !test_gain_lifecycle() ||
+	    !test_contracts())
 		return 1;
 	puts("V.32 receive path tests passed");
 	return 0;

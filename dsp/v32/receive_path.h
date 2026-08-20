@@ -57,6 +57,12 @@ enum v32_receive_path_result v32_receive_path_start_echo_adaptation(
 enum v32_receive_path_result v32_receive_path_finish_echo_training(
 	struct v32_receive_path *path);
 
+/* Change only the gain-control lifecycle at an open receive boundary. */
+enum v32_receive_path_result v32_receive_path_freeze_gain(
+	struct v32_receive_path *path);
+enum v32_receive_path_result v32_receive_path_reacquire_gain(
+	struct v32_receive_path *path);
+
 /*
  * Consume one 8 kHz receive sample after the corresponding transmit sample.
  * A reference is supplied exactly when that transmit sample accepted a point.

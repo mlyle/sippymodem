@@ -60,11 +60,19 @@ static bool run_role(
 	bool saw_fine = false;
 	bool saw_trn_end = false;
 
-	CHECK(v32_echo_training_init(&training, role) ==
-		      V32_ECHO_TRAINING_OK &&
-	      v32_receive_path_init(
+	CHECK(v32_receive_path_init(
 		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
-		      V32_RECEIVE_PATH_OK &&
+		      V32_RECEIVE_PATH_OK,
+	      "echo receive path did not initialize for role %d", role);
+	path.line.gain.smoothed_level = 4096;
+	path.line.gain.gain_mantissa_q15 = 16384;
+	path.line.gain.gain_shift = 1;
+	path.line.gain.signal_present = true;
+	CHECK(v32_receive_path_is_valid(&path) &&
+	      (role != V32_CALLING_TRANSMITTER ||
+	       v32_receive_path_freeze_gain(&path) == V32_RECEIVE_PATH_OK) &&
+	      v32_echo_training_init(&training, role) ==
+		      V32_ECHO_TRAINING_OK &&
 	      v32_echo_training_path_is_valid(&training, &path) &&
 	      qam_modulator_init(&modulator, &V32_CHANNEL, 12000) == QAM_OK,
 	      "echo training did not initialize for role %d", role);
@@ -162,8 +170,15 @@ static bool run_role(
 	      saw_trn_end && !path.echo_training &&
 	      !path.echo.echo.adapting && !path.line.input_paused &&
 	      !coefficients_are_zero(&path.echo.echo) &&
-	      memcmp(&path.line.gain, &initial_line.gain,
-		     sizeof(path.line.gain)) == 0 &&
+	      path.line.gain.gain_mode == AGC_GAIN_TRACKING &&
+	      path.line.gain.gain_mantissa_q15 ==
+		      initial_line.gain.gain_mantissa_q15 &&
+	      path.line.gain.gain_shift == initial_line.gain.gain_shift &&
+	      (role == V32_CALLING_TRANSMITTER ?
+		       (path.line.gain.smoothed_level == 0 &&
+			!path.line.gain.signal_present) :
+		       memcmp(&path.line.gain, &initial_line.gain,
+			      sizeof(path.line.gain)) == 0) &&
 	      memcmp(&path.line.timing, &initial_line.timing,
 		     sizeof(path.line.timing)) == 0 &&
 	      memcmp(&path.equalizer, &initial_equalizer,
@@ -197,6 +212,21 @@ static bool test_contracts(
 		      V32_RECEIVE_PATH_OK,
 	      "echo-training contract fixture did not initialize");
 	saved_training = training;
+	saved_path = path;
+	CHECK(!v32_echo_training_path_is_valid(&training, &path) &&
+	      v32_echo_training_begin_symbol(&training, &path) ==
+		      V32_ECHO_TRAINING_INVALID_STATE &&
+	      memcmp(&training, &saved_training, sizeof(training)) == 0 &&
+	      memcmp(&path, &saved_path, sizeof(path)) == 0 &&
+	      v32_receive_path_freeze_gain(&path) == V32_RECEIVE_PATH_OK &&
+	      !v32_echo_training_path_is_valid(&training, &path),
+	      "calling echo training accepted an unlearned gain");
+	path.line.gain.smoothed_level = 4096;
+	path.line.gain.gain_mantissa_q15 = 16384;
+	path.line.gain.gain_shift = 1;
+	path.line.gain.signal_present = true;
+	CHECK(v32_echo_training_path_is_valid(&training, &path),
+	      "calling echo training rejected a learned frozen gain");
 	saved_path = path;
 	CHECK(v32_echo_training_begin_symbol(NULL, &path) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&

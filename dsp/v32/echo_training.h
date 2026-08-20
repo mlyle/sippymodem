@@ -32,8 +32,10 @@ enum v32_echo_training_result {
 };
 
 /* Count accepted local TRN symbols and own the matching receive-path echo
- * lifecycle. The role-specific duration remains within the standard TRN
- * interval while preserving the exact prefill/coarse/fine boundaries. */
+ * lifecycle. The caller carries a frozen learned receive gain into this
+ * interval and reacquires it when local TRN ends; the answerer leaves gain
+ * tracking in place. The role-specific duration remains within the standard
+ * TRN interval while preserving the exact prefill/coarse/fine boundaries. */
 struct v32_echo_training {
 	uint16_t symbols;
 	enum v32_transmitter_role role;

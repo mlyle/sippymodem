@@ -70,6 +70,18 @@ static bool adaptation_matches(double actual, double expected)
 	return actual == expected;
 }
 
+static bool gain_lifecycle_matches(
+	const struct v32_echo_training *training,
+	const struct v32_receive_path *path)
+{
+	if (training->complete ||
+	    training->role == V32_ANSWERING_TRANSMITTER)
+		return path->line.gain.gain_mode == AGC_GAIN_TRACKING;
+	return path->line.gain.gain_mode == AGC_GAIN_FROZEN &&
+	       path->line.gain.gain_mantissa_q15 != 0 &&
+	       path->line.gain.signal_present;
+}
+
 bool v32_echo_training_path_is_valid(
 	const struct v32_echo_training *training,
 	const struct v32_receive_path *path)
@@ -78,7 +90,8 @@ bool v32_echo_training_path_is_valid(
 		V32_ECHO_TRAINING_COARSE_SYMBOLS;
 
 	if (!v32_echo_training_is_valid(training) ||
-	    !v32_receive_path_is_valid(path))
+	    !v32_receive_path_is_valid(path) ||
+	    !gain_lifecycle_matches(training, path))
 		return false;
 	if (training->complete)
 		return !path->echo_training && !path->echo.echo.adapting;
@@ -162,6 +175,10 @@ enum v32_echo_training_result v32_echo_training_finish(
 	next_path = *path;
 	if (v32_receive_path_finish_echo_training(&next_path) !=
 	    V32_RECEIVE_PATH_OK)
+		return V32_ECHO_TRAINING_INVALID_STATE;
+	if (next_training.role == V32_CALLING_TRANSMITTER &&
+	    v32_receive_path_reacquire_gain(&next_path) !=
+		    V32_RECEIVE_PATH_OK)
 		return V32_ECHO_TRAINING_INVALID_STATE;
 	next_training.complete = true;
 	if (!v32_echo_training_path_is_valid(&next_training, &next_path))

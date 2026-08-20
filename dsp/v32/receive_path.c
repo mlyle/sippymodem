@@ -133,6 +133,41 @@ enum v32_receive_path_result v32_receive_path_finish_echo_training(
 	return V32_RECEIVE_PATH_OK;
 }
 
+static enum v32_receive_path_result change_gain_lifecycle(
+	struct v32_receive_path *path, bool freeze)
+{
+	struct v32_receive_path next;
+	enum v32_line_receiver_result result;
+
+	if (!v32_receive_path_is_valid(path))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	if (!receive_boundary_is_open(path))
+		return V32_RECEIVE_PATH_DECISION_PENDING;
+	if (path->echo_training || path->echo.echo.adapting)
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	next = *path;
+	result = freeze ?
+		v32_line_receiver_freeze_gain(&next.line) :
+		v32_line_receiver_reacquire_gain(&next.line);
+	if (result != V32_LINE_RECEIVER_OK ||
+	    !v32_receive_path_is_valid(&next))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	*path = next;
+	return V32_RECEIVE_PATH_OK;
+}
+
+enum v32_receive_path_result v32_receive_path_freeze_gain(
+	struct v32_receive_path *path)
+{
+	return change_gain_lifecycle(path, true);
+}
+
+enum v32_receive_path_result v32_receive_path_reacquire_gain(
+	struct v32_receive_path *path)
+{
+	return change_gain_lifecycle(path, false);
+}
+
 static enum v32_receive_path_result drain_recovered(
 	struct v32_equalizer *equalizer,
 	const int16_t *recovered, size_t *index, size_t count,
