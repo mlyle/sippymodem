@@ -118,23 +118,101 @@ static bool source_sample(
 	       *accepted == can_accept;
 }
 
+static bool retained_receive_init(struct v32_receive_path *receive)
+{
+	struct v32_equalizer_observation observation;
+	struct v32_equalizer_decision decision;
+	int16_t tail[2] = { 0 };
+	int16_t sample = 0;
+	size_t consumed;
+	size_t produced;
+
+	if (v32_receive_path_init(
+		    receive, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) !=
+		    V32_RECEIVE_PATH_OK ||
+	    v32_equalizer_set_carrier_tracking(
+		    &receive->equalizer, false) != V32_EQUALIZER_OK ||
+	    v32_equalizer_process(
+		    &receive->equalizer, &sample, 1, &consumed,
+		    &observation) != V32_EQUALIZER_OBSERVATION_READY ||
+	    consumed != 1)
+		return false;
+	decision = (struct v32_equalizer_decision){
+		.observation = observation,
+		.ideal_phase = observation.phase,
+		.ideal_magnitude = observation.magnitude,
+	};
+	if (v32_equalizer_commit(&receive->equalizer, &decision) !=
+		    V32_EQUALIZER_OK ||
+	    v32_equalizer_process(
+		    &receive->equalizer, tail, ARRAY_LENGTH(tail), &consumed,
+		    &observation) != V32_EQUALIZER_OK ||
+	    consumed != ARRAY_LENGTH(tail) ||
+	    v32_equalizer_set_adaptation(
+		    &receive->equalizer, V32_EQUALIZER_ADAPTATION_FINE) !=
+		    V32_EQUALIZER_OK ||
+	    v32_line_receiver_process(
+		    &receive->line, NULL, 0, true, NULL, 0, &produced) !=
+		    V32_LINE_RECEIVER_OK)
+		return false;
+	receive->equalizer.carrier_training_symbols = 77;
+	return v32_receive_path_is_valid(receive) &&
+	       receive->equalizer.epoch != 0 && receive->line.input_paused;
+}
+
 static bool run_generated_role(
 	enum v32_transmitter_role role,
+	bool retained,
 	struct v32_conditioning_path *completed)
 {
 	struct generated_source source;
 	struct v32_conditioning_path path;
+	struct v32_conditioning_path rejected;
+	struct v32_conditioning_path saved_rejected;
 	struct v32_conditioning_path_handoff handoff;
+	struct v32_receive_path receive;
+	struct v32_receive_path saved_receive;
+	struct v32_receive_path expected_receive;
 	struct v32_symbol_decoder expected_decoder;
 	bool complete = false;
 
-	CHECK(completed != NULL && source_init(&source, role) &&
-	      v32_conditioning_path_init(
-		      &path, role, 0,
-		      V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
-		      V32_CONDITIONING_PATH_OK,
-	      "generated conditioning path did not initialize for role %d",
+	CHECK(completed != NULL && source_init(&source, role),
+	      "generated conditioning source did not initialize for role %d",
 	      role);
+	if (!retained) {
+		CHECK(v32_conditioning_path_init(
+			      &path, role, 0,
+			      V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+			      V32_CONDITIONING_PATH_OK,
+		      "fresh conditioning path did not initialize for role %d",
+		      role);
+	} else {
+		memset(&rejected, 0x5a, sizeof(rejected));
+		saved_rejected = rejected;
+		CHECK(retained_receive_init(&receive),
+		      "retained receive path did not initialize for role %d",
+		      role);
+		saved_receive = receive;
+		expected_receive = receive;
+		CHECK(v32_receive_path_reacquire_conditioning(
+			      &expected_receive) == V32_RECEIVE_PATH_OK &&
+		      v32_conditioning_path_init_from_receive(
+			      &rejected, (enum v32_transmitter_role)2,
+			      &receive) == V32_CONDITIONING_PATH_INVALID_ARGUMENT &&
+		      memcmp(&rejected, &saved_rejected,
+			     sizeof(rejected)) == 0 &&
+		      v32_conditioning_path_init_from_receive(
+			      &path, role, &receive) ==
+			      V32_CONDITIONING_PATH_OK &&
+		      memcmp(&receive, &saved_receive, sizeof(receive)) == 0 &&
+		      memcmp(&path.receive, &expected_receive,
+			     sizeof(path.receive)) == 0 &&
+		      !path.conditioning.has_previous_quadrant &&
+		      path.conditioning.observation_epoch == 0 &&
+		      path.observation_epoch == path.receive.equalizer.epoch,
+		      "retained conditioning path changed its boundary for role %d",
+		      role);
+	}
 	for (unsigned int index = 0;
 	     index < TEST_LINE_SAMPLE_LIMIT && !complete; ++index) {
 		struct v32_echo_reference reference;
@@ -153,25 +231,39 @@ static bool run_generated_role(
 		      index, result);
 		complete = result == V32_CONDITIONING_PATH_COMPLETE;
 	}
-	CHECK(complete && v32_conditioning_path_is_complete(&path) &&
+	CHECK(complete,
+	      "generated conditioning reached its line limit for role %d/%d "
+	      "phase=%d trn=%u epoch=%llu signal=%d",
+	      role, retained, path.conditioning.phase,
+	      path.conditioning.trn_symbols,
+	      (unsigned long long)path.conditioning.observation_epoch,
+	      path.receive.line.timing.signal_detected);
+	CHECK(v32_conditioning_path_is_complete(&path) &&
 	      path.receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE &&
 	      path.conditioning.trn_symbols >=
-		      V32_CONDITIONING_TRN_MIN_SYMBOLS &&
-	      source.rate_started &&
-	      v32_conditioning_receiver_framing_state(
+		      V32_CONDITIONING_TRN_MIN_SYMBOLS,
+	      "generated conditioning state was incomplete for role %d/%d",
+	      role, retained);
+	CHECK(source.rate_started,
+	      "generated source had not crossed rate for role %d/%d",
+	      role, retained);
+	CHECK(v32_conditioning_receiver_framing_state(
 		      &path.conditioning, &expected_decoder) ==
 		      V32_CONDITIONING_RECEIVER_OK &&
 	      v32_conditioning_path_handoff(&path, &handoff) ==
 		      V32_CONDITIONING_PATH_OK &&
-	      v32_conditioning_path_handoff_is_valid(&handoff) &&
-	      handoff.decoder.phase_quadrant ==
+	      v32_conditioning_path_handoff_is_valid(&handoff),
+	      "generated conditioning handoff was invalid for role %d/%d",
+	      role, retained);
+	CHECK(handoff.decoder.phase_quadrant ==
 		      expected_decoder.phase_quadrant &&
 	      handoff.decoder.descrambler.history ==
 		      expected_decoder.descrambler.history &&
 	      handoff.decoder.descrambler.transmitter_role ==
 		      expected_decoder.descrambler.transmitter_role,
-	      "generated conditioning handoff changed for role %d", role);
+	      "generated conditioning framing changed for role %d/%d",
+	      role, retained);
 	CHECK(handoff.observation_ready &&
 	      handoff.receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE &&
@@ -225,6 +317,17 @@ static bool test_contracts(
 	      memcmp(&path, &saved, sizeof(path)) == 0 &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "conditioning-path rejection changed state or output");
+	CHECK(v32_conditioning_path_init_from_receive(
+		      NULL, V32_CALLING_TRANSMITTER, &path.receive) ==
+		      V32_CONDITIONING_PATH_INVALID_ARGUMENT &&
+	      v32_conditioning_path_init_from_receive(
+		      &path, V32_CALLING_TRANSMITTER, NULL) ==
+		      V32_CONDITIONING_PATH_INVALID_ARGUMENT &&
+	      v32_conditioning_path_init_from_receive(
+		      &path, V32_CALLING_TRANSMITTER, &path.receive) ==
+		      V32_CONDITIONING_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "conditioning path accepted an invalid retained owner");
 
 	path.receive.equalizer.epoch++;
 	CHECK(!v32_conditioning_path_is_valid(&path) &&
@@ -261,8 +364,14 @@ int main(void)
 {
 	struct v32_conditioning_path completed;
 
-	if (!run_generated_role(V32_CALLING_TRANSMITTER, &completed) ||
-	    !run_generated_role(V32_ANSWERING_TRANSMITTER, &completed) ||
+	if (!run_generated_role(
+		    V32_CALLING_TRANSMITTER, false, &completed) ||
+	    !run_generated_role(
+		    V32_ANSWERING_TRANSMITTER, false, &completed) ||
+	    !run_generated_role(
+		    V32_CALLING_TRANSMITTER, true, &completed) ||
+	    !run_generated_role(
+		    V32_ANSWERING_TRANSMITTER, true, &completed) ||
 	    !test_contracts(&completed))
 		return 1;
 	puts("V.32 conditioning path tests passed");

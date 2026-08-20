@@ -33,22 +33,26 @@ static bool path_header_is_valid(
 	const struct v32_conditioning_path *path)
 {
 	const struct v32_equalizer *equalizer;
-	uint64_t conditioning_epoch;
 	bool complete;
 
 	if (path == NULL ||
 	    !v32_conditioning_receiver_is_valid(&path->conditioning))
 		return false;
 	equalizer = &path->receive.equalizer;
-	conditioning_epoch = path->conditioning.observation_epoch;
 	complete = path->conditioning.phase == V32_CONDITIONING_READY;
+	if (!path->conditioning.has_previous_quadrant)
+		return !complete && !equalizer->decision_pending &&
+		       path->observation_epoch == equalizer->epoch;
+	if (path->observation_epoch !=
+	    path->conditioning.observation_epoch)
+		return false;
 	if (!complete)
 		return !equalizer->decision_pending &&
-		       conditioning_epoch == equalizer->epoch;
+		       path->observation_epoch == equalizer->epoch;
 	if (!equalizer->decision_pending)
-		return conditioning_epoch == equalizer->epoch;
-	return conditioning_epoch != UINT64_MAX &&
-	       conditioning_epoch + 1u == equalizer->epoch;
+		return path->observation_epoch == equalizer->epoch;
+	return path->observation_epoch != UINT64_MAX &&
+	       path->observation_epoch + 1u == equalizer->epoch;
 }
 
 bool v32_conditioning_path_is_valid(
@@ -80,8 +84,36 @@ enum v32_conditioning_path_result v32_conditioning_path_init(
 		    round_trip_symbols) != V32_RECEIVE_PATH_OK ||
 	    v32_conditioning_receiver_init(
 		    &initialized.conditioning, source_role) !=
-		    V32_CONDITIONING_RECEIVER_OK ||
-	    !v32_conditioning_path_is_valid(&initialized))
+		    V32_CONDITIONING_RECEIVER_OK)
+		return V32_CONDITIONING_PATH_INVALID_ARGUMENT;
+	initialized.observation_epoch = initialized.receive.equalizer.epoch;
+	if (!v32_conditioning_path_is_valid(&initialized))
+		return V32_CONDITIONING_PATH_INVALID_ARGUMENT;
+	*path = initialized;
+	return V32_CONDITIONING_PATH_OK;
+}
+
+enum v32_conditioning_path_result v32_conditioning_path_init_from_receive(
+	struct v32_conditioning_path *path,
+	enum v32_transmitter_role source_role,
+	const struct v32_receive_path *receive)
+{
+	struct v32_conditioning_path initialized;
+
+	if (path == NULL || receive == NULL || memory_regions_overlap(
+		    path, sizeof(*path), receive, sizeof(*receive)) ||
+	    !v32_receive_path_is_valid(receive))
+		return V32_CONDITIONING_PATH_INVALID_ARGUMENT;
+	memset(&initialized, 0, sizeof(initialized));
+	initialized.receive = *receive;
+	if (v32_receive_path_reacquire_conditioning(
+		    &initialized.receive) != V32_RECEIVE_PATH_OK ||
+	    v32_conditioning_receiver_init(
+		    &initialized.conditioning, source_role) !=
+		    V32_CONDITIONING_RECEIVER_OK)
+		return V32_CONDITIONING_PATH_INVALID_ARGUMENT;
+	initialized.observation_epoch = initialized.receive.equalizer.epoch;
+	if (!v32_conditioning_path_is_valid(&initialized))
 		return V32_CONDITIONING_PATH_INVALID_ARGUMENT;
 	*path = initialized;
 	return V32_CONDITIONING_PATH_OK;
@@ -114,6 +146,8 @@ static enum v32_conditioning_path_result commit_observations(
 		    receive_result != V32_RECEIVE_PATH_OBSERVATION_READY)
 			return V32_CONDITIONING_PATH_INVALID_STATE;
 		path->conditioning = next_conditioning;
+		path->observation_epoch =
+			decision.equalizer.observation.epoch;
 		if (path->conditioning.phase == V32_CONDITIONING_READY)
 			return path_header_is_valid(path) ?
 				       V32_CONDITIONING_PATH_COMPLETE :

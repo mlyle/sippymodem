@@ -21,6 +21,7 @@ enum v32_conditioning_path_result {
 struct v32_conditioning_path {
 	struct v32_receive_path receive;
 	struct v32_conditioning_receiver conditioning;
+	uint64_t observation_epoch;
 };
 
 /* The next rate/E owner must retain the physical lane unchanged.  A timing
@@ -37,6 +38,13 @@ enum v32_conditioning_path_result v32_conditioning_path_init(
 	struct v32_conditioning_path *path,
 	enum v32_transmitter_role source_role,
 	uint16_t near_delay_symbols, uint16_t round_trip_symbols);
+
+/* Start fresh peer conditioning on a retained physical lane. The source must
+ * still be paused at an open post-echo boundary and is never modified. */
+enum v32_conditioning_path_result v32_conditioning_path_init_from_receive(
+	struct v32_conditioning_path *path,
+	enum v32_transmitter_role source_role,
+	const struct v32_receive_path *receive);
 bool v32_conditioning_path_is_valid(
 	const struct v32_conditioning_path *path);
 bool v32_conditioning_path_is_complete(
