@@ -39,12 +39,16 @@ enum v32_echo_training_result {
  * boundaries. */
 struct v32_echo_training {
 	struct v32_conditioning_transmitter conditioning;
+	/* The calling modem extends S by its measured, even turnaround delay
+	 * before entering the ordinary 256-symbol S interval. */
+	uint16_t s_extension_symbols;
+	uint16_t s_extension_emitted;
 	bool complete;
 };
 
 enum v32_echo_training_result v32_echo_training_init(
 	struct v32_echo_training *training,
-	enum v32_transmitter_role role);
+	enum v32_transmitter_role role, uint16_t s_extension_symbols);
 bool v32_echo_training_is_valid(
 	const struct v32_echo_training *training);
 bool v32_echo_training_is_complete(

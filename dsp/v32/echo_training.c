@@ -9,6 +9,11 @@
 static const double V32_ECHO_COARSE_ADAPTATION = 0.65;
 static const double V32_ECHO_FINE_ADAPTATION = 0.065;
 
+enum {
+	V32_SIGNAL_A = 0,
+	V32_SIGNAL_B = 1,
+};
+
 _Static_assert(
 	V32_ECHO_TRAINING_PREFILL_SYMBOLS +
 		V32_ECHO_TRAINING_COARSE_SYMBOLS ==
@@ -40,6 +45,25 @@ static enum v32_transmitter_role training_role(
 	return training->conditioning.trn_encoder.scrambler.transmitter_role;
 }
 
+static bool s_extension_is_valid(
+	const struct v32_echo_training *training,
+	enum v32_transmitter_role role)
+{
+	return training->s_extension_symbols <=
+		       V32_ECHO_MAX_ROUND_TRIP_SYMBOLS &&
+	       (training->s_extension_symbols & 1u) == 0 &&
+	       (role == V32_CALLING_TRANSMITTER ||
+		training->s_extension_symbols == 0) &&
+	       training->s_extension_emitted <=
+		       training->s_extension_symbols &&
+	       (training->s_extension_emitted ==
+			training->s_extension_symbols ||
+		training->conditioning.emitted_symbols == 0) &&
+	       (training->conditioning.emitted_symbols == 0 ||
+		training->s_extension_emitted ==
+			training->s_extension_symbols);
+}
+
 static uint16_t trn_symbols_emitted(
 	const struct v32_echo_training *training)
 {
@@ -63,10 +87,13 @@ bool v32_echo_training_is_valid(
 		return false;
 	role = training_role(training);
 	return role_is_valid(role) &&
+	       s_extension_is_valid(training, role) &&
 	       training->conditioning.trn_symbols == symbol_limit(role) &&
 	       (!training->complete ||
-		v32_conditioning_transmitter_is_complete(
-			&training->conditioning));
+		(training->s_extension_emitted ==
+			 training->s_extension_symbols &&
+		 v32_conditioning_transmitter_is_complete(
+			 &training->conditioning)));
 }
 
 bool v32_echo_training_is_complete(
@@ -77,11 +104,17 @@ bool v32_echo_training_is_complete(
 
 enum v32_echo_training_result v32_echo_training_init(
 	struct v32_echo_training *training,
-	enum v32_transmitter_role role)
+	enum v32_transmitter_role role, uint16_t s_extension_symbols)
 {
-	struct v32_echo_training initialized = { 0 };
+	struct v32_echo_training initialized = {
+		.s_extension_symbols = s_extension_symbols,
+	};
 
 	if (training == NULL || !role_is_valid(role) ||
+	    s_extension_symbols > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ||
+	    (s_extension_symbols & 1u) != 0 ||
+	    (role == V32_ANSWERING_TRANSMITTER &&
+	     s_extension_symbols != 0) ||
 	    v32_conditioning_transmitter_init(
 		    &initialized.conditioning, role,
 		    symbol_limit(role)) != V32_CONDITIONING_OK)
@@ -123,7 +156,8 @@ bool v32_echo_training_path_is_valid(
 		return false;
 	if (training->complete)
 		return !path->echo_training && !path->echo.echo.adapting;
-	if (training->conditioning.emitted_symbols == 0)
+	if (training->s_extension_emitted == 0 &&
+	    training->conditioning.emitted_symbols == 0)
 		return !path->echo_training && !path->echo.echo.adapting;
 	if (!path->echo_training)
 		return false;
@@ -213,13 +247,38 @@ enum v32_echo_training_result v32_echo_training_next(
 		return V32_ECHO_TRAINING_INVALID_STATE;
 	if (training->complete)
 		return V32_ECHO_TRAINING_COMPLETE;
+	if (training->s_extension_emitted <
+	    training->s_extension_symbols) {
+		next_training = *training;
+		path_changes = next_training.s_extension_emitted == 0;
+		if (path_changes) {
+			next_path = *path;
+			if (v32_receive_path_begin_echo_training(&next_path) !=
+			    V32_RECEIVE_PATH_OK)
+				return V32_ECHO_TRAINING_INVALID_STATE;
+		}
+		next_quadrant =
+			(next_training.s_extension_emitted & 1u) != 0 ?
+				V32_SIGNAL_B : V32_SIGNAL_A;
+		next_training.s_extension_emitted++;
+		if (!v32_echo_training_path_is_valid(
+			    &next_training,
+			    path_changes ? &next_path : path))
+			return V32_ECHO_TRAINING_INVALID_STATE;
+		*training = next_training;
+		if (path_changes)
+			*path = next_path;
+		*quadrant = next_quadrant;
+		return V32_ECHO_TRAINING_OK;
+	}
 	if (v32_conditioning_transmitter_is_complete(
 		    &training->conditioning))
 		return finish_training(training, path);
 
 	next_training = *training;
 	symbol = trn_symbols_emitted(&next_training);
-	path_changes = next_training.conditioning.emitted_symbols == 0 ||
+	path_changes = (next_training.s_extension_emitted == 0 &&
+			next_training.conditioning.emitted_symbols == 0) ||
 		(next_training.conditioning.emitted_symbols >=
 			 V32_CONDITIONING_S_SYMBOLS +
 			 V32_CONDITIONING_S_BAR_SYMBOLS &&

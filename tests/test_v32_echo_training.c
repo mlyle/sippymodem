@@ -11,6 +11,10 @@
 #include <stdio.h>
 #include <string.h>
 
+enum {
+	TEST_CALLING_S_EXTENSION = 96,
+};
+
 static const struct qam_channel V32_CHANNEL = {
 	.sample_rate = V32_CARRIER_SAMPLE_RATE,
 	.symbol_rate_numerator = V32_CARRIER_SYMBOL_RATE,
@@ -26,6 +30,12 @@ static uint16_t role_trn_symbols(enum v32_transmitter_role role)
 	return role == V32_CALLING_TRANSMITTER ?
 		V32_CALLING_ECHO_TRAINING_SYMBOLS :
 		V32_ANSWERING_ECHO_TRAINING_SYMBOLS;
+}
+
+static uint16_t role_s_extension(enum v32_transmitter_role role)
+{
+	return role == V32_CALLING_TRANSMITTER ?
+		TEST_CALLING_S_EXTENSION : 0;
 }
 
 static uint16_t emitted_trn_symbols(
@@ -72,9 +82,10 @@ static bool run_role(
 	struct qam_modulator modulator;
 	struct qam_point point = { 0 };
 	uint16_t limit = role_trn_symbols(role);
+	uint16_t extension = role_s_extension(role);
 	uint16_t fixed = V32_CONDITIONING_S_SYMBOLS +
 		V32_CONDITIONING_S_BAR_SYMBOLS;
-	size_t conditioning_symbols = 0;
+	size_t training_symbols = 0;
 	size_t line_samples = 0;
 	bool handed_off = false;
 	bool saw_conditioning_start = false;
@@ -97,7 +108,7 @@ static bool run_role(
 	CHECK(v32_receive_path_is_valid(&path) &&
 	      (role != V32_CALLING_TRANSMITTER ||
 	       v32_receive_path_freeze_gain(&path) == V32_RECEIVE_PATH_OK) &&
-	      v32_echo_training_init(&training, role) ==
+	      v32_echo_training_init(&training, role, extension) ==
 		      V32_ECHO_TRAINING_OK &&
 	      v32_conditioning_transmitter_init(
 		      &reference_conditioning, role, limit) ==
@@ -126,14 +137,22 @@ static bool run_role(
 				result = v32_echo_training_next(
 					&training, &path, &quadrant);
 				if (result == V32_ECHO_TRAINING_OK) {
-					CHECK(v32_conditioning_transmitter_next(
-						      &reference_conditioning,
-						      &expected_quadrant) ==
-						      V32_CONDITIONING_OK &&
+					if (training_symbols < extension) {
+						expected_quadrant =
+							(training_symbols & 1u) != 0 ? 1 : 0;
+					} else {
+						CHECK(v32_conditioning_transmitter_next(
+							      &reference_conditioning,
+							      &expected_quadrant) ==
+							      V32_CONDITIONING_OK,
+						      "role %d reference conditioning stopped at %zu",
+						      role, training_symbols);
+					}
+					CHECK(
 					      quadrant == expected_quadrant,
-					      "role %d changed conditioning symbol %zu",
-					      role, conditioning_symbols);
-					conditioning_symbols++;
+					      "role %d changed training symbol %zu",
+					      role, training_symbols);
+					training_symbols++;
 				} else {
 					struct v32_symbol_encoder expected_encoder;
 
@@ -171,9 +190,11 @@ static bool run_role(
 				      &reference, &point,
 				      modulator.carrier_phase) == V32_ECHO_OK,
 			      "role %d did not type transmit symbol %zu", role,
-			      conditioning_symbols);
+			      training_symbols);
 
-			if (training.conditioning.emitted_symbols == 1) {
+			if (training.s_extension_emitted == 1 ||
+			    (extension == 0 &&
+			     training.conditioning.emitted_symbols == 1)) {
 				CHECK(path.echo_training &&
 				      !path.echo.echo.adapting,
 				      "role %d did not pause at its first S symbol", role);
@@ -247,7 +268,8 @@ static bool run_role(
 		CHECK(line_samples < 40000,
 		      "role %d exceeded its line-sample bound", role);
 	}
-	CHECK(conditioning_symbols == (size_t)fixed + limit &&
+	CHECK(training_symbols == (size_t)extension + fixed + limit &&
+	      training.s_extension_emitted == extension &&
 	      v32_conditioning_transmitter_is_complete(
 		      &reference_conditioning) &&
 	      v32_echo_training_is_complete(&training) && handed_off &&
@@ -290,13 +312,23 @@ static bool test_contracts(
 	uint8_t saved_quadrant = quadrant;
 
 	CHECK(v32_echo_training_init(
-		      NULL, V32_CALLING_TRANSMITTER) ==
+		      NULL, V32_CALLING_TRANSMITTER, 0) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
 	      v32_echo_training_init(
-		      &training, (enum v32_transmitter_role)2) ==
+		      &training, (enum v32_transmitter_role)2, 0) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
 	      v32_echo_training_init(
-		      &training, V32_CALLING_TRANSMITTER) ==
+		      &training, V32_CALLING_TRANSMITTER, 1) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_init(
+		      &training, V32_CALLING_TRANSMITTER,
+		      V32_ECHO_MAX_ROUND_TRIP_SYMBOLS + 2u) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_init(
+		      &training, V32_ANSWERING_TRANSMITTER, 2) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_init(
+		      &training, V32_CALLING_TRANSMITTER, 2) ==
 		      V32_ECHO_TRAINING_OK &&
 	      v32_receive_path_init(
 		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
@@ -345,12 +377,18 @@ static bool test_contracts(
 	CHECK(v32_echo_training_next(&training, &path, &quadrant) ==
 		      V32_ECHO_TRAINING_OK &&
 	      path.echo_training && !path.echo.echo.adapting,
-	      "first S symbol did not pause the receive path");
+	      "first extended S symbol did not pause the receive path");
 	saved_path = path;
 	CHECK(v32_echo_training_next(&training, &path, &quadrant) ==
 		      V32_ECHO_TRAINING_OK &&
 	      memcmp(&path, &saved_path, sizeof(path)) == 0,
-	      "ordinary conditioning copied or changed the receive path");
+	      "extended S copied or changed the receive path");
+	saved_path = path;
+	CHECK(v32_echo_training_next(&training, &path, &quadrant) ==
+		      V32_ECHO_TRAINING_OK &&
+	      training.conditioning.emitted_symbols == 1 &&
+	      memcmp(&path, &saved_path, sizeof(path)) == 0,
+	      "ordinary S restarted or changed the receive path");
 
 	path.echo_training = false;
 	saved_training = training;
@@ -406,8 +444,12 @@ int main(void)
 		return 1;
 	CHECK(calling.conditioning.trn_symbols ==
 		      V32_CALLING_ECHO_TRAINING_SYMBOLS &&
+	      calling.s_extension_symbols == TEST_CALLING_S_EXTENSION &&
+	      calling.s_extension_emitted == TEST_CALLING_S_EXTENSION &&
 	      answering.conditioning.trn_symbols ==
-		      V32_ANSWERING_ECHO_TRAINING_SYMBOLS,
+		      V32_ANSWERING_ECHO_TRAINING_SYMBOLS &&
+	      answering.s_extension_symbols == 0 &&
+	      answering.s_extension_emitted == 0,
 	      "role-specific echo-training lengths changed");
 	puts("V.32 echo training tests passed");
 	return 0;
