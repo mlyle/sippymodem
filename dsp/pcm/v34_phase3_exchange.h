@@ -60,13 +60,15 @@ bool v34_phase3_exchange_handoff_is_valid(
 	const struct v34_phase3_exchange_handoff *handoff);
 
 /* Own both directions of one endpoint's zero-local-MD Phase 3 exchange.
- * Answering transmission begins after the required 70 ms silence. Calling
- * transmission begins after peer J detection. TRN ends at its 512T minimum;
- * the following Phase 4 owner decides when the caller may terminate J.
- * Calls on one instance must be serialized. */
+ * Answering transmission begins after the required 70 ms silence and retains
+ * TRN through the complete two-second zero-RTD line-training window. Calling
+ * transmission begins after peer J detection and uses the required 512T
+ * minimum. The following Phase 4 owner decides when the caller may terminate
+ * J. Calls on one instance must be serialized. */
 struct v34_phase3_exchange {
 	struct v34_phase3_line_transmitter transmit;
 	struct v34_phase3_line_receiver receive;
+	uint32_t trn_target_symbols;
 	uint32_t answer_silence_samples;
 	uint32_t silence_samples_remaining;
 	enum v34_station_role local_role;

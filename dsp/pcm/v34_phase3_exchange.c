@@ -39,6 +39,54 @@ static bool receiver_complete(
 	return v34_phase3_receiver_is_complete(&exchange->receive.points);
 }
 
+static bool zero_md_trn_target(
+	const struct v34_phase3_profile *profile, uint32_t *symbols)
+{
+	uint64_t two_seconds;
+	uint64_t prefix_symbols = V34_PHASE3_S_SEQUENCE_SYMBOLS +
+		V34_PHASE3_PP_SEQUENCE_SYMBOLS;
+
+	if (!v34_phase3_profile_is_valid(profile) || symbols == NULL ||
+	    profile->md_symbol_count != 0)
+		return false;
+	if (profile->local_role == V34_CALLING_STATION) {
+		*symbols = V34_PHASE3_TRN_MIN_SYMBOLS;
+		return true;
+	}
+	/* Give the answerer's peer the complete zero-RTD line-training window.
+	 * S/S-bar and PP occupy the prefix; the measured round-trip-delay
+	 * allowance remains deliberately unused. */
+	two_seconds = (uint64_t)profile->symbol_rate_numerator * 2u /
+		profile->symbol_rate_denominator;
+	if (two_seconds <= prefix_symbols ||
+	    two_seconds - prefix_symbols > UINT32_MAX)
+		return false;
+	*symbols = (uint32_t)(two_seconds - prefix_symbols);
+	return *symbols >= V34_PHASE3_TRN_MIN_SYMBOLS;
+}
+
+static bool trn_timing_is_valid(
+	const struct v34_phase3_exchange *exchange)
+{
+	uint32_t expected;
+
+	if (!zero_md_trn_target(
+		    &exchange->transmit.line.profile, &expected) ||
+	    exchange->trn_target_symbols != expected)
+		return false;
+	switch (exchange->transmit.symbols.stage) {
+	case V34_PHASE3_TRANSMITTER_S:
+	case V34_PHASE3_TRANSMITTER_PP:
+		return exchange->transmit.symbols.trn_symbols == 0;
+	case V34_PHASE3_TRANSMITTER_TRN:
+		return exchange->transmit.symbols.trn_symbols <= expected;
+	case V34_PHASE3_TRANSMITTER_J:
+	case V34_PHASE3_TRANSMITTER_COMPLETE:
+		return exchange->transmit.symbols.trn_symbols == expected;
+	}
+	return false;
+}
+
 static bool outputs_overlap(
 	const int16_t *sample, const uint32_t *events)
 {
@@ -67,6 +115,7 @@ bool v34_phase3_exchange_is_valid(
 	if (exchange == NULL ||
 	    !v34_phase3_line_transmitter_is_valid(&exchange->transmit) ||
 	    !v34_phase3_line_receiver_is_valid(&exchange->receive) ||
+	    !trn_timing_is_valid(exchange) ||
 	    !roles_are_reciprocal(&exchange->transmit.line.profile,
 				 &exchange->receive.transmitting_profile) ||
 	    exchange->local_role != exchange->transmit.line.profile.local_role ||
@@ -145,6 +194,9 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 			       V34_PHASE3_EXCHANGE_OUT_OF_RANGE :
 			       V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
 	initialized.local_role = local_transmit->local_role;
+	if (!zero_md_trn_target(
+		    local_transmit, &initialized.trn_target_symbols))
+		return V34_PHASE3_EXCHANGE_OUT_OF_RANGE;
 	if (initialized.local_role == V34_ANSWERING_STATION) {
 		if (!answer_silence_samples(
 			    configuration->sample_rate,
@@ -209,6 +261,28 @@ static enum v34_phase3_exchange_result drive_silence(
 	return V34_PHASE3_EXCHANGE_OK;
 }
 
+static bool restart_answer_receiver(struct v34_phase3_exchange *exchange)
+{
+	struct v34_phase3_line_receiver restarted;
+	struct v34_phase3_line_receiver_configuration configuration = {
+		.s_gain_adaptation =
+			exchange->receive.points.configuration.s_gain_adaptation,
+		.pp_equalizer_adaptation =
+			exchange->receive.points.configuration.pp_equalizer_adaptation,
+		.tracking_equalizer_adaptation = exchange->receive.points
+			.configuration.tracking_equalizer_adaptation,
+	};
+	uint32_t sample_rate =
+		exchange->receive.demodulator.channel.sample_rate;
+
+	if (v34_phase3_line_receiver_init(
+		    &restarted, &exchange->receive.transmitting_profile,
+		    sample_rate, &configuration) != V34_PHASE3_LINE_RECEIVER_OK)
+		return false;
+	exchange->receive = restarted;
+	return true;
+}
+
 static enum v34_phase3_exchange_result drive_transmitter(
 	struct v34_phase3_exchange *exchange,
 	int16_t *sample, uint32_t *events)
@@ -227,9 +301,15 @@ static enum v34_phase3_exchange_result drive_transmitter(
 	if (exchange->transmit.symbols.stage ==
 		    V34_PHASE3_TRANSMITTER_TRN &&
 	    exchange->transmit.symbols.trn_symbols ==
-		    V34_PHASE3_TRN_MIN_SYMBOLS) {
+		    exchange->trn_target_symbols) {
 		if (v34_phase3_line_transmitter_start_j(&exchange->transmit) !=
 		    V34_PHASE3_LINE_TRANSMITTER_OK)
+			return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+		/* The answerer begins looking for caller S at its local J
+		 * boundary. Discard timing accumulated from the preceding peer
+		 * silence instead of carrying a noise-locked clock into S. */
+		if (exchange->local_role == V34_ANSWERING_STATION &&
+		    !restart_answer_receiver(exchange))
 			return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 		*events |= V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED;
 	}

@@ -77,6 +77,22 @@ static struct v34_phase3_profile profile(enum v34_station_role role)
 	};
 }
 
+static bool profile_at_rate(
+	enum v34_station_role role, enum v34_symbol_rate rate,
+	struct v34_phase3_profile *selected)
+{
+	struct v34_info1_probe_result probe = {
+		.preemphasis_filter_index = 3,
+		.projected_data_rate_2400_bps_units = 8,
+		.high_carrier = rate != V34_SYMBOL_RATE_3429 &&
+			role == V34_ANSWERING_STATION,
+	};
+
+	return v34_phase3_profile_init(
+		       selected, role, rate, &probe, 0, 0) ==
+	       V34_PHASE3_PROFILE_OK;
+}
+
 static struct v34_phase3_exchange_configuration configuration(
 	enum v34_constellation_size requested)
 {
@@ -132,6 +148,7 @@ static bool run_generated_duplex_exchange(
 	uint32_t answer_silence = 0;
 	uint64_t answerer_samples_at_stop = 0;
 	size_t exchanged_samples = 0;
+	size_t answerer_receive_restart = SAMPLE_LIMIT;
 	int16_t last_answer_transmit = 1;
 	bool complete = false;
 
@@ -175,6 +192,16 @@ static bool run_generated_duplex_exchange(
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STOPPED) != 0)
 			answerer_samples_at_stop =
 				answerer.transmit.line.generated_samples;
+		if ((answerer_events &
+		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
+			answerer_receive_restart = index;
+			CHECK(answerer.receive.points.stage ==
+				      V34_PHASE3_RECEIVER_STAGE_S &&
+			      answerer.receive.demodulator.carrier_phase ==
+				      answerer.receive.demodulator
+					      .carrier_phase_step,
+			      "answerer did not restart S reception at local J");
+		}
 		if ((caller_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED) != 0)
 			CHECK((caller_events &
@@ -201,11 +228,12 @@ static bool run_generated_duplex_exchange(
 		      (uint32_t)((uint64_t)caller.receive.demodulator
 					 .carrier_phase_step *
 			 exchanged_samples) &&
+	      answerer_receive_restart < exchanged_samples &&
 	      answerer.receive.demodulator.carrier_phase ==
 		      (uint32_t)((uint64_t)answerer.receive.demodulator
 					 .carrier_phase_step *
-			 exchanged_samples),
-	      "Phase 3 handoff did not consume the complete sample timeline");
+			 (exchanged_samples - answerer_receive_restart)),
+	      "Phase 3 receivers did not consume the complete sample timeline");
 	CHECK(answer_silence ==
 		      SAMPLE_RATE * V34_PHASE3_ANSWER_SILENCE_MS / 1000u,
 	      "answerer silence was %u samples", answer_silence);
@@ -216,11 +244,16 @@ static bool run_generated_duplex_exchange(
 	      "Phase 3 event coverage differed: caller=0x%x answerer=0x%x",
 	      caller_seen, answerer_seen);
 	CHECK(caller.transmit.symbols.stage == V34_PHASE3_TRANSMITTER_J &&
+	      caller.trn_target_symbols == V34_PHASE3_TRN_MIN_SYMBOLS &&
+	      caller.transmit.symbols.trn_symbols == caller.trn_target_symbols &&
 	      caller.transmit.symbols.j_symbols >=
 		      V34_PHASE3_J_PATTERN_SYMBOLS &&
 	      answerer.stop_transmit_requested && answerer.transmit_stopped &&
 	      answerer.transmit.symbols.stage ==
 		      V34_PHASE3_TRANSMITTER_COMPLETE &&
+	      answerer.trn_target_symbols == 5568u &&
+	      answerer.transmit.symbols.trn_symbols ==
+		      answerer.trn_target_symbols &&
 	      answerer_samples_at_stop != 0 &&
 	      answerer.transmit.line.generated_samples >
 		      answerer_samples_at_stop && last_answer_transmit == 0,
@@ -238,8 +271,57 @@ static bool run_generated_duplex_exchange(
 	      caller_handoff.phase3_transmit.remote_constellation ==
 		      V34_CONSTELLATION_16_POINT &&
 	      answerer_handoff.phase3_transmit.remote_constellation ==
-		      V34_CONSTELLATION_4_POINT,
+		      V34_CONSTELLATION_4_POINT &&
+	      qam_demodulator_measure(
+		      &caller_handoff.receive.demodulator).timing_locked &&
+	      qam_demodulator_measure(
+		      &answerer_handoff.receive.demodulator).timing_locked,
 	      "Phase 3 handoff lost either J constellation selection");
+	return true;
+}
+
+static bool test_trn_duration_policy(void)
+{
+	static const struct {
+		enum v34_symbol_rate rate;
+		uint32_t symbols;
+	} cases[] = {
+		{ V34_SYMBOL_RATE_2400, 4368 },
+		{ V34_SYMBOL_RATE_2743, 5053 },
+		{ V34_SYMBOL_RATE_2800, 5168 },
+		{ V34_SYMBOL_RATE_3000, 5568 },
+		{ V34_SYMBOL_RATE_3200, 5968 },
+		{ V34_SYMBOL_RATE_3429, 6425 },
+	};
+	struct v34_phase3_exchange_configuration config =
+		configuration(V34_CONSTELLATION_4_POINT);
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v34_phase3_profile caller;
+		struct v34_phase3_profile answerer;
+		struct v34_phase3_exchange exchange;
+
+		CHECK(profile_at_rate(
+			      V34_CALLING_STATION, cases[index].rate, &caller) &&
+		      profile_at_rate(
+			      V34_ANSWERING_STATION, cases[index].rate,
+			      &answerer) &&
+		      v34_phase3_exchange_init(
+			      &exchange, &caller, &answerer, &config) ==
+			      V34_PHASE3_EXCHANGE_OK &&
+		      exchange.trn_target_symbols ==
+			      V34_PHASE3_TRN_MIN_SYMBOLS,
+		      "rate %d caller selected %u TRN symbols instead of %u",
+		      cases[index].rate, exchange.trn_target_symbols,
+		      V34_PHASE3_TRN_MIN_SYMBOLS);
+		CHECK(v34_phase3_exchange_init(
+			      &exchange, &answerer, &caller, &config) ==
+			      V34_PHASE3_EXCHANGE_OK &&
+		      exchange.trn_target_symbols == cases[index].symbols,
+		      "rate %d answerer selected %u TRN symbols instead of %u",
+		      cases[index].rate, exchange.trn_target_symbols,
+		      cases[index].symbols);
+	}
 	return true;
 }
 
@@ -315,6 +397,10 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE3_EXCHANGE_OK,
 	      "validation fixture did not initialize");
 	saved = exchange;
+	exchange.trn_target_symbols--;
+	CHECK(!v34_phase3_exchange_is_valid(&exchange),
+	      "changed Phase 3 TRN target remained valid");
+	exchange = saved;
 	memset(&handoff, 0x5a, sizeof(handoff));
 	saved_handoff = handoff;
 	CHECK(v34_phase3_exchange_sample(
@@ -356,6 +442,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "TRN duration policy", test_trn_duration_policy },
 		{ "generated duplex exchange", test_generated_duplex_exchange },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
