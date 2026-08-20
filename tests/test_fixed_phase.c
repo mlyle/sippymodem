@@ -15,6 +15,15 @@ static uint32_t hash_word(uint32_t hash, uint16_t word)
 	return hash * UINT32_C(65599) + word;
 }
 
+static uint64_t hash_word64(uint64_t hash, uint16_t word)
+{
+	for (unsigned int byte = 0; byte < 2; ++byte) {
+		hash ^= (word >> (byte * 8u)) & 0xffu;
+		hash *= UINT64_C(1099511628211);
+	}
+	return hash;
+}
+
 static int16_t word_to_s16(uint16_t word)
 {
 	return word <= INT16_MAX ?
@@ -70,6 +79,31 @@ static bool test_complete_phasor_profile(void)
 	return true;
 }
 
+static bool test_complete_unsigned_carrier_profile(void)
+{
+	uint64_t hash = UINT64_C(1469598103934665603);
+
+	for (uint32_t word = 0; word <= UINT16_MAX; ++word) {
+		struct fixed_phase_q14 sample =
+			fixed_phase_sin_cos_u16_q14((uint16_t)word);
+
+		hash = hash_word64(hash, (uint16_t)sample.sine);
+		hash = hash_word64(hash, (uint16_t)sample.cosine);
+	}
+	CHECK(hash == UINT64_C(0x777ab1af713b75bb),
+	      "complete unsigned carrier profile changed: %#llx",
+	      (unsigned long long)hash);
+	CHECK(fixed_phase_sin_cos_u16_q14(0).sine == 0 &&
+		      fixed_phase_sin_cos_u16_q14(0).cosine == 16384 &&
+		      fixed_phase_sin_cos_u16_q14(1).sine == 2 &&
+		      fixed_phase_sin_cos_u16_q14(0x4000).sine == 16384 &&
+		      fixed_phase_sin_cos_u16_q14(0x4000).cosine == 0 &&
+		      fixed_phase_sin_cos_u16_q14(0x8000).cosine == -16384 &&
+		      fixed_phase_sin_cos_u16_q14(UINT16_MAX).sine == -2,
+	      "unsigned carrier cardinal or interpolation behavior changed");
+	return true;
+}
+
 static bool test_atan_axes_and_perimeter(void)
 {
 	uint32_t hash = UINT32_C(2166136261);
@@ -106,6 +140,8 @@ int main(void)
 	} tests[] = {
 		{ "generated endpoints", test_generated_endpoints },
 		{ "complete phasor profile", test_complete_phasor_profile },
+		{ "complete unsigned carrier profile",
+		  test_complete_unsigned_carrier_profile },
 		{ "atan axes and perimeter", test_atan_axes_and_perimeter },
 	};
 	unsigned int failures = 0;

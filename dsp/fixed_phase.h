@@ -17,4 +17,7 @@ struct fixed_phase_q14 {
  * domain.  Returning the pair by value leaves no partial output state. */
 struct fixed_phase_q14 fixed_phase_sin_cos_q14(int16_t phase);
 
+/* Unsigned carrier phase uses 0x10000 units per full turn. */
+struct fixed_phase_q14 fixed_phase_sin_cos_u16_q14(uint16_t phase);
+
 #endif

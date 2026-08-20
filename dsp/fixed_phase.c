@@ -113,6 +113,38 @@ static uint16_t quadrant_sine_q15(unsigned int index)
 	return (uint16_t)(uint32_t)(sin(radians) * 32768.0);
 }
 
+static int16_t sine_u16_q14(uint16_t phase)
+{
+	uint16_t quadrant = (uint16_t)(phase >> 14);
+	uint16_t offset = (uint16_t)(phase & UINT16_C(0x3fff));
+	uint16_t index = (uint16_t)(offset >> 6);
+	uint16_t fraction = (uint16_t)(offset & UINT16_C(0x003f));
+	int32_t sample0;
+	int32_t sample1;
+	int32_t value;
+
+	if ((quadrant & 1u) != 0) {
+		index = (uint16_t)(255u - index);
+		fraction = (uint16_t)(64u - fraction);
+	}
+	sample0 = quadrant_sine_q15(index);
+	sample1 = quadrant_sine_q15((unsigned int)index + 1u);
+	value = sample0 +
+		((sample1 - sample0) * fraction + 32) / 64;
+	value = (value + 1) >> 1;
+	if (quadrant >= 2u)
+		value = -value;
+	return (int16_t)value;
+}
+
+struct fixed_phase_q14 fixed_phase_sin_cos_u16_q14(uint16_t phase)
+{
+	return (struct fixed_phase_q14){
+		.sine = sine_u16_q14(phase),
+		.cosine = sine_u16_q14((uint16_t)(phase + 0x4000u)),
+	};
+}
+
 static int32_t floor_divide_power_of_two(
 	int32_t value, unsigned int shift)
 {
