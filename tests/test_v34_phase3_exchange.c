@@ -166,19 +166,25 @@ static bool run_generated_duplex_exchange(
 		int16_t next_answer_to_call;
 		uint32_t caller_events;
 		uint32_t answerer_events;
+		enum v34_phase3_exchange_result caller_result;
+		enum v34_phase3_exchange_result answerer_result;
 		bool answerer_was_transmitting = answerer.transmit_started;
 
 		channel_receive(&channel, &caller_receive, &answerer_receive);
-		CHECK(v34_phase3_exchange_sample(
+		caller_result = v34_phase3_exchange_sample(
 			      &caller, caller_receive,
 			      &next_call_to_answer,
-			      &caller_events) == V34_PHASE3_EXCHANGE_OK &&
-		      v34_phase3_exchange_sample(
+			      &caller_events);
+		answerer_result = v34_phase3_exchange_sample(
 			      &answerer, answerer_receive,
 			      &next_answer_to_call,
-			      &answerer_events) == V34_PHASE3_EXCHANGE_OK,
-		      "codec %d Phase 3 exchange failed at sample %zu",
-		      codec, index);
+			      &answerer_events);
+		CHECK(caller_result == V34_PHASE3_EXCHANGE_OK &&
+		      answerer_result == V34_PHASE3_EXCHANGE_OK,
+		      "codec %d Phase 3 exchange failed at sample %zu: %s/%s",
+		      codec, index,
+		      v34_phase3_exchange_result_name(caller_result),
+		      v34_phase3_exchange_result_name(answerer_result));
 		if (!answerer_was_transmitting) {
 			CHECK(next_answer_to_call == 0,
 			      "answerer emitted sample %d during initial silence",
@@ -197,8 +203,10 @@ static bool run_generated_duplex_exchange(
 			answerer_receive_restart = index;
 			CHECK(answerer.receive.points.stage ==
 				      V34_PHASE3_RECEIVER_STAGE_S &&
-			      answerer.receive.demodulator.carrier_phase ==
-				      answerer.receive.demodulator
+			      answerer.receive.line.mode ==
+				      V34_LINE_FRONTEND_QAM &&
+			      answerer.receive.line.state.qam.carrier_phase ==
+				      answerer.receive.line.state.qam
 					      .carrier_phase_step,
 			      "answerer did not restart S reception at local J");
 		}
@@ -224,13 +232,15 @@ static bool run_generated_duplex_exchange(
 	      codec, delay_samples, caller.transmit.symbols.stage,
 	      caller.receive.points.stage, answerer.transmit.symbols.stage,
 	      answerer.receive.points.stage, caller_seen, answerer_seen);
-	CHECK(caller.receive.demodulator.carrier_phase ==
-		      (uint32_t)((uint64_t)caller.receive.demodulator
+	CHECK(caller.receive.line.mode == V34_LINE_FRONTEND_QAM &&
+	      caller.receive.line.state.qam.carrier_phase ==
+		      (uint32_t)((uint64_t)caller.receive.line.state.qam
 					 .carrier_phase_step *
 			 exchanged_samples) &&
 	      answerer_receive_restart < exchanged_samples &&
-	      answerer.receive.demodulator.carrier_phase ==
-		      (uint32_t)((uint64_t)answerer.receive.demodulator
+	      answerer.receive.line.mode == V34_LINE_FRONTEND_QAM &&
+	      answerer.receive.line.state.qam.carrier_phase ==
+		      (uint32_t)((uint64_t)answerer.receive.line.state.qam
 					 .carrier_phase_step *
 			 (exchanged_samples - answerer_receive_restart)),
 	      "Phase 3 receivers did not consume the complete sample timeline");
@@ -272,10 +282,12 @@ static bool run_generated_duplex_exchange(
 		      V34_CONSTELLATION_16_POINT &&
 	      answerer_handoff.phase3_transmit.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
-	      qam_demodulator_measure(
-		      &caller_handoff.receive.demodulator).timing_locked &&
-	      qam_demodulator_measure(
-		      &answerer_handoff.receive.demodulator).timing_locked,
+	      v34_line_frontend_timing_acquired(
+		      &caller_handoff.receive.line) &&
+	      v34_line_frontend_timing_acquired(
+		      &answerer_handoff.receive.line) &&
+	      caller_handoff.receive.line.mode == V34_LINE_FRONTEND_QAM &&
+	      answerer_handoff.receive.line.mode == V34_LINE_FRONTEND_QAM,
 	      "Phase 3 handoff lost either J constellation selection");
 	return true;
 }

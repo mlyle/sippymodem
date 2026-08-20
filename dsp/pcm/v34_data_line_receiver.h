@@ -5,6 +5,7 @@
 
 #include "v34_data_carrier.h"
 #include "v34_data_equalizer_receiver.h"
+#include "v34_line_frontend.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -41,7 +42,7 @@ struct v34_data_line_receiver_configuration {
  * is latched because its line sample has already advanced carrier timing and
  * cannot be replayed safely. */
 struct v34_data_line_receiver {
-	struct qam_demodulator demodulator;
+	struct v34_line_frontend line;
 	struct v34_data_equalizer_receiver equalizer_receiver;
 	struct v34_phase3_profile transmitting_profile;
 	struct v34_frame_geometry geometry;
@@ -56,6 +57,14 @@ struct v34_data_line_receiver {
 enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	struct v34_data_line_receiver *receiver,
 	const struct qam_demodulator *demodulator,
+	const struct v34_equalizer_handoff *handoff,
+	const struct v34_data_line_receiver_configuration *configuration);
+
+/* Continue from a tagged Phase 4 line owner without restarting its physical
+ * carrier, timing, or fixed front end. */
+enum v34_data_line_receiver_result v34_data_line_receiver_init_from_frontend(
+	struct v34_data_line_receiver *receiver,
+	const struct v34_line_frontend *line,
 	const struct v34_equalizer_handoff *handoff,
 	const struct v34_data_line_receiver_configuration *configuration);
 

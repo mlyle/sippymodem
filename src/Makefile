@@ -322,16 +322,24 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_frame_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_frame_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_analytic_filter.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_carrier_demodulator.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_channel_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_equalizer_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_equalizer.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_equalizer_handoff.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_gain_control.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_lattice.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_receive_path.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_line_frontend.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_path_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_precoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_survivor.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_shell_mapper.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_symbol_power.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_timing_control.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_timing_filter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_trellis.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_selection.c \

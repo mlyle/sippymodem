@@ -444,6 +444,7 @@ static bool run_line_case(
 	struct v34_data_line_receiver saved_data_receiver;
 	struct qam_demodulator demodulator;
 	struct qam_equalizer equalizer;
+	struct v34_line_frontend line;
 	unsigned int control_trn_symbols = 0;
 	unsigned int answer_s_events = 0;
 	unsigned int initial_records = 0;
@@ -454,8 +455,10 @@ static bool run_line_case(
 		      &source, &demodulator, &equalizer, &profile,
 		      constellation) &&
 	      data_configuration(&profile, &data_config) &&
+	      v34_line_frontend_init_qam(&line, &demodulator) ==
+		      V34_LINE_FRONTEND_OK &&
 	      v34_phase4_line_receiver_init(
-		      &receiver, &demodulator, &equalizer, &profile,
+		      &receiver, &line, &equalizer, &profile,
 		      constellation, 0.03) == V34_PHASE4_LINE_RECEIVER_OK,
 	      "Phase 4 line fixture did not initialize role=%d constellation=%d",
 	      role, constellation);
@@ -526,11 +529,11 @@ static bool run_line_case(
 				      source_next_trn(&source),
 				      "Phase 4 TRN boundary did not advance");
 			if (shift_timing_after_s)
-				receiver.demodulator.locked_phase_units =
-					(receiver.demodulator.locked_phase_units +
-					 receiver.demodulator.symbol_period_units /
+				receiver.line.state.qam.locked_phase_units =
+					(receiver.line.state.qam.locked_phase_units +
+					 receiver.line.state.qam.symbol_period_units /
 						 2u) %
-					receiver.demodulator.symbol_period_units;
+					receiver.line.state.qam.symbol_period_units;
 		}
 		e_complete =
 			result == V34_PHASE4_LINE_RECEIVER_E_COMPLETE;
@@ -557,8 +560,8 @@ static bool run_line_case(
 		      V34_PHASE4_LINE_RECEIVER_OK &&
 	      v34_data_line_receiver_is_valid(&data_receiver) &&
 	      data_receiver.equalizer_receiver.training_outputs_remaining == 0 &&
-	      memcmp(&data_receiver.demodulator, &receiver.demodulator,
-		     sizeof(data_receiver.demodulator)) == 0,
+	      memcmp(&data_receiver.line, &receiver.line,
+		     sizeof(data_receiver.line)) == 0,
 	      "Phase 4 line did not preserve its completed data boundary");
 	{
 		struct v34_phase4_line_receiver saved = receiver;

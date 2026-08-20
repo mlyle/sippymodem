@@ -3,6 +3,7 @@
 #ifndef V34_PHASE3_LINE_RECEIVER_H
 #define V34_PHASE3_LINE_RECEIVER_H
 
+#include "v34_line_frontend.h"
 #include "v34_phase3_profile.h"
 #include "v34_phase3_receiver.h"
 
@@ -43,7 +44,7 @@ struct v34_phase3_line_receiver_configuration {
  * continuous line timeline. The transmitting profile is copied so no mutable
  * negotiation state is borrowed. */
 struct v34_phase3_line_receiver {
-	struct qam_demodulator demodulator;
+	struct v34_line_frontend line;
 	struct v34_phase3_receiver points;
 	struct v34_phase3_profile transmitting_profile;
 	bool failed;
@@ -52,7 +53,7 @@ struct v34_phase3_line_receiver {
 /* The handoff describes one exact sample boundary after J. Phase 4 must copy
  * all three members rather than restart carrier timing or equalization. */
 struct v34_phase3_line_handoff {
-	struct qam_demodulator demodulator;
+	struct v34_line_frontend line;
 	struct v34_phase3_handoff phase3;
 	struct v34_phase3_profile transmitting_profile;
 };
@@ -70,6 +71,13 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_init(
 	struct v34_phase3_line_receiver *receiver,
 	const struct v34_phase3_profile *transmitting_profile,
 	uint32_t sample_rate,
+	const struct v34_phase3_line_receiver_configuration *configuration);
+
+/* Select the persistent fixed receiver at the 8-kHz V.34 call boundary. */
+enum v34_phase3_line_receiver_result
+v34_phase3_line_receiver_init_fixed(
+	struct v34_phase3_line_receiver *receiver,
+	const struct v34_phase3_profile *transmitting_profile,
 	const struct v34_phase3_line_receiver_configuration *configuration);
 
 /* Consume exactly one signed line sample. A terminal point-domain error

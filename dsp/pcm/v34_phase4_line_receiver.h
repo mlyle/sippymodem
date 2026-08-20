@@ -35,7 +35,7 @@ enum v34_phase4_line_receiver_result {
  * one sample timeline. A terminal point-domain error is latched because the
  * demodulator may already have consumed later waveform history. */
 struct v34_phase4_line_receiver {
-	struct qam_demodulator demodulator;
+	struct v34_line_frontend line;
 	struct v34_phase4_equalizer_receiver control;
 	struct v34_phase3_profile transmitting_profile;
 	int16_t timing_refinement_samples[
@@ -47,10 +47,9 @@ struct v34_phase4_line_receiver {
 
 /* Begin at the Phase 3-to-Phase 4 boundary. Both trained inputs are copied
  * and must describe the profile's exact waveform with timing locked. */
-enum v34_phase4_line_receiver_result
-v34_phase4_line_receiver_init(
+enum v34_phase4_line_receiver_result v34_phase4_line_receiver_init(
 	struct v34_phase4_line_receiver *receiver,
-	const struct qam_demodulator *demodulator,
+	const struct v34_line_frontend *line,
 	const struct qam_equalizer *equalizer,
 	const struct v34_phase3_profile *transmitting_profile,
 	enum v34_constellation_size constellation, double adaptation);

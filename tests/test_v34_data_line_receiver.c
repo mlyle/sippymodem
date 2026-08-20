@@ -687,7 +687,7 @@ static bool test_validation_and_failure_latch(void)
 	      "V.34 line receiver accepted an unlocked handoff");
 	configuration.transmit_point_gain = 0.0;
 	CHECK(v34_data_line_receiver_init(
-		      &rejected, &fixture.receiver.demodulator, &handoff,
+		      &rejected, &fixture.receiver.line.state.qam, &handoff,
 		      &configuration) == V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
 	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
 	      "V.34 line receiver accepted a zero point gain");
@@ -697,11 +697,11 @@ static bool test_validation_and_failure_latch(void)
 	invalid_handoff.equalizer.fill =
 		handoff.equalizer.decision_delay;
 	CHECK(v34_data_line_receiver_init(
-		      &rejected, &fixture.receiver.demodulator,
+		      &rejected, &fixture.receiver.line.state.qam,
 		      &invalid_handoff, &configuration) ==
 		      V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
 	      v34_data_line_receiver_init(
-		      &rejected, &fixture.receiver.demodulator, NULL,
+		      &rejected, &fixture.receiver.line.state.qam, NULL,
 		      &configuration) ==
 		      V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
 	      object_is_filled(&rejected, sizeof(rejected), 0xa5),

@@ -32,6 +32,8 @@ bool v34_phase4_line_receiver_is_valid(
 	const struct v34_phase4_line_receiver *receiver)
 {
 	return receiver != NULL &&
+	       (!receiver->timing_refining ||
+		receiver->line.mode == V34_LINE_FRONTEND_QAM) &&
 	       (receiver->timing_refining ?
 		(receiver->timing_refinement_sample_count <
 			 V34_PHASE4_TIMING_REFINEMENT_SAMPLES &&
@@ -41,20 +43,19 @@ bool v34_phase4_line_receiver_is_valid(
 		receiver->timing_refinement_sample_count == 0) &&
 	       v34_phase3_profile_is_valid(
 		       &receiver->transmitting_profile) &&
-	       qam_demodulator_is_valid(&receiver->demodulator) &&
-	       qam_demodulator_measure(&receiver->demodulator).timing_locked &&
-	       v34_data_carrier_channel_matches(
-		       &receiver->transmitting_profile,
-		       &receiver->demodulator.channel) &&
+	       v34_line_frontend_is_valid(&receiver->line) &&
+	       v34_line_frontend_timing_acquired(&receiver->line) &&
+	       v34_line_frontend_matches_profile(
+		       &receiver->line,
+		       &receiver->transmitting_profile) &&
 	       v34_phase4_equalizer_receiver_is_valid(&receiver->control) &&
 	       receiver->transmitting_profile.local_role ==
 		       transmitting_role(&receiver->control);
 }
 
-enum v34_phase4_line_receiver_result
-v34_phase4_line_receiver_init(
+enum v34_phase4_line_receiver_result v34_phase4_line_receiver_init(
 	struct v34_phase4_line_receiver *receiver,
-	const struct qam_demodulator *demodulator,
+	const struct v34_line_frontend *line,
 	const struct qam_equalizer *equalizer,
 	const struct v34_phase3_profile *transmitting_profile,
 	enum v34_constellation_size constellation, double adaptation)
@@ -63,16 +64,15 @@ v34_phase4_line_receiver_init(
 
 	if (receiver == NULL ||
 	    !v34_phase3_profile_is_valid(transmitting_profile) ||
-	    !qam_demodulator_is_valid(demodulator) ||
-	    !qam_demodulator_measure(demodulator).timing_locked ||
-	    !v34_data_carrier_channel_matches(
-		    transmitting_profile, &demodulator->channel) ||
+	    !v34_line_frontend_matches_profile(
+		    line, transmitting_profile) ||
+	    !v34_line_frontend_timing_acquired(line) ||
 	    v34_phase4_equalizer_receiver_init(
 		    &initialized.control, equalizer,
 		    transmitting_profile->local_role, constellation,
 		    adaptation) != V34_PHASE4_EQUALIZER_RECEIVER_OK)
 		return V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT;
-	initialized.demodulator = *demodulator;
+	initialized.line = *line;
 	initialized.transmitting_profile = *transmitting_profile;
 	if (!v34_phase4_line_receiver_is_valid(&initialized))
 		return V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT;
@@ -175,6 +175,7 @@ static enum v34_phase4_line_receiver_result receive_sample_direct(
 	struct v34_phase4_line_receiver next;
 	struct v34_mp_receive_event emitted = { 0 };
 	struct qam_point point;
+	enum v34_line_frontend_result line_result;
 	enum v34_phase4_line_receiver_result result;
 	bool ready;
 
@@ -188,8 +189,11 @@ static enum v34_phase4_line_receiver_result receive_sample_direct(
 	    V34_PHASE4_EQUALIZER_RECEIVER_STAGE_COMPLETE)
 		return V34_PHASE4_LINE_RECEIVER_COMPLETE;
 	next = *receiver;
-	if (qam_demodulator_sample(
-		    &next.demodulator, sample, &point, &ready) != QAM_OK) {
+	line_result = v34_line_frontend_sample(
+		&next.line, sample, &point, &ready);
+	if ((line_result != V34_LINE_FRONTEND_OK &&
+	     line_result != V34_LINE_FRONTEND_SYMBOL_READY) ||
+	    (line_result == V34_LINE_FRONTEND_SYMBOL_READY) != ready) {
 		receiver->failed = true;
 		return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
 	}
@@ -242,19 +246,23 @@ static bool score_timing_phase(
 	const struct v34_phase4_line_receiver *source, uint64_t phase,
 	struct v34_phase4_line_receiver *candidate, double *average_error)
 {
+	struct qam_demodulator *demodulator;
 	struct v34_mp_receive_event ignored = { 0 };
 	double initial_squared_error;
 	uint16_t initial_error_symbols;
 	uint16_t scored_symbols;
 
 	*candidate = *source;
+	if (candidate->line.mode != V34_LINE_FRONTEND_QAM)
+		return false;
+	demodulator = &candidate->line.state.qam;
 	initial_squared_error = candidate->control.trn_squared_error;
 	initial_error_symbols = candidate->control.trn_error_symbols;
 	candidate->timing_refining = false;
 	candidate->timing_refinement_sample_count = 0;
 	if (qam_demodulator_rebase_timing(
-		    &candidate->demodulator,
-		    phase % candidate->demodulator.symbol_period_units) != QAM_OK)
+		    demodulator,
+		    phase % demodulator->symbol_period_units) != QAM_OK)
 		return false;
 	for (size_t index = 0;
 	     index < source->timing_refinement_sample_count; ++index) {
@@ -309,15 +317,22 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 	struct v34_phase4_line_receiver aligned;
 	double reference_error;
 	double best_error;
-	uint64_t reference_phase = receiver->demodulator.locked_phase_units;
+	struct qam_demodulator *demodulator;
+	uint64_t reference_phase;
 	uint64_t timing_reference_phase =
-		receiver->demodulator.timing[
-			receiver->demodulator.timing_reference_index].phase_units;
-	uint64_t best_phase = reference_phase;
+		0;
+	uint64_t best_phase;
 	uint64_t fine_step;
 	unsigned int best_alignment = 0;
 	bool gross_timing_error;
 
+	if (receiver->line.mode != V34_LINE_FRONTEND_QAM)
+		return V34_PHASE4_LINE_RECEIVER_INVALID_STATE;
+	demodulator = &receiver->line.state.qam;
+	reference_phase = demodulator->locked_phase_units;
+	timing_reference_phase = demodulator->timing[
+		demodulator->timing_reference_index].phase_units;
+	best_phase = reference_phase;
 	if (!score_timing_phase(
 		    receiver, reference_phase, &reference, &reference_error))
 		return V34_PHASE4_LINE_RECEIVER_NUMERIC_FAILURE;
@@ -329,8 +344,8 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 	 * Use TRN to repair only a gross S/S-bar timing lock. */
 	gross_timing_error = phase_distance(
 		reference_phase, timing_reference_phase,
-		receiver->demodulator.symbol_period_units) >
-		receiver->demodulator.timing_step_units;
+		demodulator->symbol_period_units) >
+		demodulator->timing_step_units;
 	aligned = *receiver;
 	for (unsigned int alignment = 0;
 	     alignment <= V34_PHASE4_MAX_TRN_ALIGNMENT_SYMBOLS;
@@ -340,12 +355,12 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 		if (!gross_timing_error && alignment == 0)
 			continue;
 		for (size_t index = 0;
-		     index < receiver->demodulator.timing_candidate_count;
+		     index < demodulator->timing_candidate_count;
 		     ++index) {
 			struct v34_phase4_line_receiver candidate;
 			double error;
 			uint64_t phase =
-				index * receiver->demodulator.timing_step_units;
+				index * demodulator->timing_step_units;
 
 			if (score_timing_phase(
 				    &aligned, phase, &candidate, &error) &&
@@ -360,7 +375,7 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 	/* Known TRN supplies an exact error metric. Refine one half of a coarse
 	 * timing bin on either side of the best candidate. */
 	fine_step = (gross_timing_error || best_alignment != 0) ?
-		receiver->demodulator.timing_step_units / 8u : 0;
+		demodulator->timing_step_units / 8u : 0;
 	if (fine_step != 0) {
 		aligned = *receiver;
 		for (unsigned int alignment = 0;
@@ -375,10 +390,9 @@ static enum v34_phase4_line_receiver_result refine_symbol_timing(
 			uint64_t phase;
 
 			while (shifted < 0)
-				shifted += (int64_t)receiver->demodulator
-					.symbol_period_units;
+				shifted += (int64_t)demodulator->symbol_period_units;
 			phase = (uint64_t)shifted %
-				receiver->demodulator.symbol_period_units;
+				demodulator->symbol_period_units;
 			if (score_timing_phase(
 				    &aligned, phase, &candidate, &error) &&
 			    error < best_error) {
@@ -408,6 +422,8 @@ v34_phase4_line_receiver_sample(
 	if (!receiver->timing_refining) {
 		result = receive_sample_direct(receiver, sample, event);
 		if (result != V34_PHASE4_LINE_RECEIVER_S_DETECTED)
+			return result;
+		if (receiver->line.mode == V34_LINE_FRONTEND_FIXED)
 			return result;
 		next = *receiver;
 		next.timing_refining = true;
@@ -465,8 +481,8 @@ v34_phase4_line_receiver_start_data(
 		    &receiver->control, &handoff) !=
 		    V34_PHASE4_EQUALIZER_RECEIVER_OK)
 		return V34_PHASE4_LINE_RECEIVER_INVALID_STATE;
-	if (v34_data_line_receiver_init(
-		    data_receiver, &receiver->demodulator, &handoff,
+	if (v34_data_line_receiver_init_from_frontend(
+		    data_receiver, &receiver->line, &handoff,
 		    configuration) != V34_DATA_LINE_RECEIVER_OK)
 		return V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT;
 	return V34_PHASE4_LINE_RECEIVER_OK;

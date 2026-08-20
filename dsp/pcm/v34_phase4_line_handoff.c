@@ -12,7 +12,7 @@ v34_phase4_line_receiver_init_from_phase3(
 	if (!v34_phase3_line_handoff_is_valid(handoff))
 		return V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT;
 	return v34_phase4_line_receiver_init(
-		receiver, &handoff->demodulator,
+		receiver, &handoff->line,
 		&handoff->phase3.j.equalizer.equalizer,
 		&handoff->transmitting_profile,
 		phase4_constellation,

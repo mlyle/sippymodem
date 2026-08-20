@@ -214,7 +214,7 @@ static bool initialize_phase4(
 	    V34_PHASE3_LINE_RECEIVER_OK)
 		return false;
 	corrupt = handoff;
-	corrupt.demodulator.timing_locked = false;
+	corrupt.line.state.qam.timing_locked = false;
 	if (v34_phase4_line_receiver_init_from_phase3(
 		    NULL, &handoff, V34_CONSTELLATION_16_POINT, 0.03) !=
 		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
@@ -238,10 +238,8 @@ static bool initialize_phase4(
 		    phase4, &handoff, V34_CONSTELLATION_16_POINT, 0.03) !=
 		    V34_PHASE4_LINE_RECEIVER_OK)
 		return false;
-	return phase4->demodulator.carrier_phase ==
-		       handoff.demodulator.carrier_phase &&
-	       phase4->demodulator.locked_phase_units ==
-		       handoff.demodulator.locked_phase_units &&
+	return memcmp(&phase4->line, &handoff.line,
+		      sizeof(phase4->line)) == 0 &&
 	       memcmp(&phase4->control.equalizer,
 		      &handoff.phase3.j.equalizer.equalizer,
 		      sizeof(phase4->control.equalizer)) == 0 &&
@@ -266,7 +264,7 @@ static bool initialize_owned_phase4(
 		    V34_PHASE3_LINE_RECEIVER_OK)
 		return false;
 	corrupt = handoff;
-	corrupt.demodulator.timing_locked = false;
+	corrupt.line.state.qam.timing_locked = false;
 	invalid.phase4_equalizer_adaptation = NAN;
 	memset(receiver, 0xa5, sizeof(*receiver));
 	unchanged = *receiver;

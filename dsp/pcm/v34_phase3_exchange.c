@@ -123,7 +123,8 @@ bool v34_phase3_exchange_is_valid(
 	     !exchange->failed))
 		return false;
 	sample_rate = exchange->transmit.line.carrier.channel.sample_rate;
-	if (sample_rate != exchange->receive.demodulator.channel.sample_rate)
+	if (sample_rate != v34_line_frontend_sample_rate(
+			   &exchange->receive.line))
 		return false;
 	if (exchange->local_role == V34_CALLING_STATION) {
 		if (exchange->answer_silence_samples != 0 ||
@@ -272,12 +273,18 @@ static bool restart_answer_receiver(struct v34_phase3_exchange *exchange)
 		.tracking_equalizer_adaptation = exchange->receive.points
 			.configuration.tracking_equalizer_adaptation,
 	};
-	uint32_t sample_rate =
-		exchange->receive.demodulator.channel.sample_rate;
+	uint32_t sample_rate = v34_line_frontend_sample_rate(
+		&exchange->receive.line);
+	enum v34_phase3_line_receiver_result result =
+		exchange->receive.line.mode == V34_LINE_FRONTEND_FIXED ?
+		v34_phase3_line_receiver_init_fixed(
+			&restarted, &exchange->receive.transmitting_profile,
+			&configuration) :
+		v34_phase3_line_receiver_init(
+			&restarted, &exchange->receive.transmitting_profile,
+			sample_rate, &configuration);
 
-	if (v34_phase3_line_receiver_init(
-		    &restarted, &exchange->receive.transmitting_profile,
-		    sample_rate, &configuration) != V34_PHASE3_LINE_RECEIVER_OK)
+	if (result != V34_PHASE3_LINE_RECEIVER_OK)
 		return false;
 	exchange->receive = restarted;
 	return true;

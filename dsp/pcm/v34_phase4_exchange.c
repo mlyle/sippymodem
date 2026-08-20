@@ -187,9 +187,9 @@ static uint32_t receive_sample_rate(
 	const struct v34_phase4_exchange *exchange)
 {
 	return exchange->receive_data_active ?
-	       exchange->receive.data.demodulator.channel.sample_rate :
-	       exchange->receive.training.state.phase4.demodulator.channel
-		       .sample_rate;
+	       v34_line_frontend_sample_rate(&exchange->receive.data.line) :
+	       v34_line_frontend_sample_rate(
+		       &exchange->receive.training.state.phase4.line);
 }
 
 static bool data_state_is_valid(
@@ -733,8 +733,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	startup_result = v34_data_startup_prepare(
 		&startup, &mode, &exchange->transmit.training.line.profile,
 		&exchange->receive.training.state.phase4.transmitting_profile,
-		exchange->receive.training.state.phase4.demodulator.channel
-			.sample_rate,
+		v34_line_frontend_sample_rate(
+			&exchange->receive.training.state.phase4.line),
 		exchange->data_equalizer_adaptation);
 	if (startup_result != V34_DATA_STARTUP_OK) {
 		result = startup_result == V34_DATA_STARTUP_OUT_OF_RANGE ?
