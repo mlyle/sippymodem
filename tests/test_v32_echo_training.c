@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <carrier.h>
+#include <constellation.h>
 #include <echo_training.h>
 #include <qam.h>
 
@@ -19,6 +20,24 @@ static const struct qam_channel V32_CHANNEL = {
 	.rolloff = 0.25,
 	.pulse_span_symbols = V32_CARRIER_PULSE_SPAN_SYMBOLS,
 };
+
+static uint16_t role_trn_symbols(enum v32_transmitter_role role)
+{
+	return role == V32_CALLING_TRANSMITTER ?
+		V32_CALLING_ECHO_TRAINING_SYMBOLS :
+		V32_ANSWERING_ECHO_TRAINING_SYMBOLS;
+}
+
+static uint16_t emitted_trn_symbols(
+	const struct v32_echo_training *training)
+{
+	uint16_t fixed = V32_CONDITIONING_S_SYMBOLS +
+		V32_CONDITIONING_S_BAR_SYMBOLS;
+
+	return training->conditioning.emitted_symbols > fixed ?
+		(uint16_t)(training->conditioning.emitted_symbols - fixed) :
+		0;
+}
 
 static bool coefficients_are_zero(const struct v32_echo_canceller *echo)
 {
@@ -45,15 +64,22 @@ static bool run_role(
 	struct v32_receive_path *completed_path)
 {
 	struct v32_echo_training training;
+	struct v32_conditioning_transmitter reference_conditioning;
 	struct v32_receive_path path;
 	struct v32_line_receiver initial_line;
 	struct v32_equalizer initial_equalizer;
+	struct v32_symbol_encoder encoder;
 	struct qam_modulator modulator;
-	struct qam_point point = { 0.75, 0.75 };
-	uint16_t limit = role == V32_CALLING_TRANSMITTER ?
-		V32_CALLING_ECHO_TRAINING_SYMBOLS :
-		V32_ANSWERING_ECHO_TRAINING_SYMBOLS;
+	struct qam_point point = { 0 };
+	uint16_t limit = role_trn_symbols(role);
+	uint16_t fixed = V32_CONDITIONING_S_SYMBOLS +
+		V32_CONDITIONING_S_BAR_SYMBOLS;
+	size_t conditioning_symbols = 0;
 	size_t line_samples = 0;
+	bool handed_off = false;
+	bool saw_conditioning_start = false;
+	bool saw_fixed_end = false;
+	bool saw_trn_start = false;
 	bool saw_prefill_end = false;
 	bool saw_coarse = false;
 	bool saw_coarse_end = false;
@@ -73,6 +99,9 @@ static bool run_role(
 	       v32_receive_path_freeze_gain(&path) == V32_RECEIVE_PATH_OK) &&
 	      v32_echo_training_init(&training, role) ==
 		      V32_ECHO_TRAINING_OK &&
+	      v32_conditioning_transmitter_init(
+		      &reference_conditioning, role, limit) ==
+		      V32_CONDITIONING_OK &&
 	      v32_echo_training_path_is_valid(&training, &path) &&
 	      qam_modulator_init(&modulator, &V32_CHANNEL, 12000) == QAM_OK,
 	      "echo training did not initialize for role %d", role);
@@ -89,50 +118,98 @@ static bool run_role(
 		enum v32_receive_path_result receive_result;
 
 		if (can_accept) {
-			uint16_t symbol = training.symbols;
+			uint8_t quadrant = UINT8_C(0xa5);
+			uint8_t expected_quadrant;
+			enum v32_echo_training_result result;
 
-			point.in_phase = (symbol & 1u) != 0 ? -0.75 : 0.75;
-			point.quadrature = (symbol & 2u) != 0 ? -0.75 : 0.75;
-			if (!training.complete && symbol < limit) {
-				CHECK(v32_echo_training_begin_symbol(
-					      &training, &path) ==
-					      V32_ECHO_TRAINING_OK,
-				      "role %d stopped before TRN symbol %u",
-				      role, symbol);
-			} else if (!training.complete) {
-				CHECK(v32_echo_training_finish(
-					      &training, &path) ==
-					      V32_ECHO_TRAINING_COMPLETE,
-				      "role %d did not finish at %u", role,
-				      symbol);
+			if (!handed_off) {
+				result = v32_echo_training_next(
+					&training, &path, &quadrant);
+				if (result == V32_ECHO_TRAINING_OK) {
+					CHECK(v32_conditioning_transmitter_next(
+						      &reference_conditioning,
+						      &expected_quadrant) ==
+						      V32_CONDITIONING_OK &&
+					      quadrant == expected_quadrant,
+					      "role %d changed conditioning symbol %zu",
+					      role, conditioning_symbols);
+					conditioning_symbols++;
+				} else {
+					struct v32_symbol_encoder expected_encoder;
+
+					CHECK(result == V32_ECHO_TRAINING_COMPLETE &&
+					      quadrant == UINT8_C(0xa5) &&
+					      v32_conditioning_transmitter_is_complete(
+						      &reference_conditioning) &&
+					      v32_echo_training_framing_state(
+						      &training, &encoder) ==
+						      V32_ECHO_TRAINING_OK &&
+					      v32_conditioning_transmitter_framing_state(
+						      &reference_conditioning,
+						      &expected_encoder) ==
+						      V32_CONDITIONING_OK &&
+					      memcmp(&encoder, &expected_encoder,
+						     sizeof(encoder)) == 0,
+					      "role %d changed its post-TRN handoff", role);
+					handed_off = true;
+					CHECK(v32_4800_symbol_encode(
+						      &encoder, 0, &quadrant) ==
+						      V32_FRAMING_OK,
+					      "role %d did not emit its first rate symbol",
+					      role);
+				}
+			} else {
+				CHECK(v32_4800_symbol_encode(
+					      &encoder,
+					      (uint8_t)(line_samples & 3u),
+					      &quadrant) == V32_FRAMING_OK,
+				      "role %d did not continue after TRN", role);
 			}
-			CHECK(v32_echo_reference_init(
+			CHECK(v32_4800_constellation_point(quadrant, &point) ==
+				      V32_CONSTELLATION_OK &&
+			      v32_echo_reference_init(
 				      &reference, &point,
 				      modulator.carrier_phase) == V32_ECHO_OK,
-			      "role %d did not type reference %u", role,
-			      symbol);
+			      "role %d did not type transmit symbol %zu", role,
+			      conditioning_symbols);
 
-			if (training.symbols ==
-			    V32_ECHO_TRAINING_PREFILL_SYMBOLS) {
+			if (training.conditioning.emitted_symbols == 1) {
+				CHECK(path.echo_training &&
+				      !path.echo.echo.adapting,
+				      "role %d did not pause at its first S symbol", role);
+				saw_conditioning_start = true;
+			} else if (training.conditioning.emitted_symbols == fixed) {
+				CHECK(path.echo_training &&
+				      !path.echo.echo.adapting &&
+				      coefficients_are_zero(&path.echo.echo),
+				      "role %d changed the pre-TRN pause", role);
+				saw_fixed_end = true;
+			} else if (emitted_trn_symbols(&training) == 1) {
+				CHECK(path.echo_training &&
+				      !path.echo.echo.adapting,
+				      "role %d did not start at its first TRN", role);
+				saw_trn_start = true;
+			} else if (emitted_trn_symbols(&training) ==
+				   V32_ECHO_TRAINING_PREFILL_SYMBOLS) {
 				CHECK(path.echo_training &&
 				      !path.echo.echo.adapting &&
 				      coefficients_are_zero(&path.echo.echo),
 				      "role %d changed its prefill boundary", role);
 				saw_prefill_end = true;
-			} else if (training.symbols ==
+			} else if (emitted_trn_symbols(&training) ==
 				   V32_ECHO_TRAINING_PREFILL_SYMBOLS + 1u) {
 				CHECK(path.echo.echo.adapting &&
 				      path.echo.echo.adaptation == 0.65,
 				      "role %d did not enter coarse adaptation", role);
 				saw_coarse = true;
-			} else if (training.symbols ==
+			} else if (emitted_trn_symbols(&training) ==
 				   V32_ECHO_TRAINING_PREFILL_SYMBOLS +
 					   V32_ECHO_TRAINING_COARSE_SYMBOLS) {
 				CHECK(path.echo.echo.adapting &&
 				      path.echo.echo.adaptation == 0.65,
 				      "role %d shortened coarse adaptation", role);
 				saw_coarse_end = true;
-			} else if (training.symbols ==
+			} else if (emitted_trn_symbols(&training) ==
 				   V32_ECHO_TRAINING_PREFILL_SYMBOLS +
 					   V32_ECHO_TRAINING_COARSE_SYMBOLS + 1u) {
 				CHECK(path.echo.echo.adapting &&
@@ -140,12 +217,17 @@ static bool run_role(
 				      "role %d did not reduce adaptation", role);
 				saw_fine = true;
 			}
-			if (training.symbols == limit && !training.complete) {
+			if (!training.complete &&
+			    emitted_trn_symbols(&training) == limit) {
 				CHECK(path.echo.echo.adapting &&
 				      path.echo.echo.adaptation == 0.065,
 				      "role %d changed its final TRN symbol", role);
 				saw_trn_end = true;
 			}
+			if (training.complete)
+				CHECK(!path.echo_training &&
+				      !path.echo.echo.adapting,
+				      "role %d crossed the handoff late", role);
 		}
 		CHECK(qam_modulator_sample(
 			      &modulator, &point, &transmit, &accepted) == QAM_OK &&
@@ -165,10 +247,15 @@ static bool run_role(
 		CHECK(line_samples < 40000,
 		      "role %d exceeded its line-sample bound", role);
 	}
-	CHECK(training.symbols == limit && training.complete &&
+	CHECK(conditioning_symbols == (size_t)fixed + limit &&
+	      v32_conditioning_transmitter_is_complete(
+		      &reference_conditioning) &&
+	      v32_echo_training_is_complete(&training) && handed_off &&
+	      saw_conditioning_start && saw_fixed_end && saw_trn_start &&
 	      saw_prefill_end && saw_coarse && saw_coarse_end && saw_fine &&
-	      saw_trn_end && !path.echo_training &&
-	      !path.echo.echo.adapting && !path.line.input_paused &&
+	      saw_trn_end &&
+	      !path.echo_training && !path.echo.echo.adapting &&
+	      !path.line.input_paused &&
 	      !coefficients_are_zero(&path.echo.echo) &&
 	      path.line.gain.gain_mode == AGC_GAIN_TRACKING &&
 	      path.line.gain.gain_mantissa_q15 ==
@@ -197,6 +284,10 @@ static bool test_contracts(
 	struct v32_echo_training saved_training;
 	struct v32_receive_path path;
 	struct v32_receive_path saved_path;
+	struct v32_symbol_encoder encoder = { .phase_quadrant = 3 };
+	struct v32_symbol_encoder saved_encoder = encoder;
+	uint8_t quadrant = UINT8_C(0xa5);
+	uint8_t saved_quadrant = quadrant;
 
 	CHECK(v32_echo_training_init(
 		      NULL, V32_CALLING_TRANSMITTER) ==
@@ -214,10 +305,11 @@ static bool test_contracts(
 	saved_training = training;
 	saved_path = path;
 	CHECK(!v32_echo_training_path_is_valid(&training, &path) &&
-	      v32_echo_training_begin_symbol(&training, &path) ==
+	      v32_echo_training_next(&training, &path, &quadrant) ==
 		      V32_ECHO_TRAINING_INVALID_STATE &&
 	      memcmp(&training, &saved_training, sizeof(training)) == 0 &&
 	      memcmp(&path, &saved_path, sizeof(path)) == 0 &&
+	      quadrant == saved_quadrant &&
 	      v32_receive_path_freeze_gain(&path) == V32_RECEIVE_PATH_OK &&
 	      !v32_echo_training_path_is_valid(&training, &path),
 	      "calling echo training accepted an unlearned gain");
@@ -228,44 +320,73 @@ static bool test_contracts(
 	CHECK(v32_echo_training_path_is_valid(&training, &path),
 	      "calling echo training rejected a learned frozen gain");
 	saved_path = path;
-	CHECK(v32_echo_training_begin_symbol(NULL, &path) ==
+	CHECK(v32_echo_training_next(NULL, &path, &quadrant) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
-	      v32_echo_training_begin_symbol(&training, NULL) ==
+	      v32_echo_training_next(&training, NULL, &quadrant) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
-	      v32_echo_training_begin_symbol(
-		      (struct v32_echo_training *)&path, &path) ==
+	      v32_echo_training_next(&training, &path, NULL) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
-	      v32_echo_training_finish(&training, &path) ==
+	      v32_echo_training_next(
+		      (struct v32_echo_training *)&path, &path, &quadrant) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_next(
+		      &training, &path, (uint8_t *)&training) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_next(
+		      &training, &path, (uint8_t *)&path) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_framing_state(&training, &encoder) ==
 		      V32_ECHO_TRAINING_INVALID_STATE &&
 	      memcmp(&training, &saved_training, sizeof(training)) == 0 &&
+	      memcmp(&path, &saved_path, sizeof(path)) == 0 &&
+	      quadrant == saved_quadrant &&
+	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
+	      "rejected echo-training call changed an owner or output");
+	CHECK(v32_echo_training_next(&training, &path, &quadrant) ==
+		      V32_ECHO_TRAINING_OK &&
+	      path.echo_training && !path.echo.echo.adapting,
+	      "first S symbol did not pause the receive path");
+	saved_path = path;
+	CHECK(v32_echo_training_next(&training, &path, &quadrant) ==
+		      V32_ECHO_TRAINING_OK &&
 	      memcmp(&path, &saved_path, sizeof(path)) == 0,
-	      "rejected echo-training call changed an owner");
-	CHECK(v32_echo_training_begin_symbol(&training, &path) ==
-		      V32_ECHO_TRAINING_OK,
-	      "echo-training contract fixture did not start");
+	      "ordinary conditioning copied or changed the receive path");
+
+	path.echo_training = false;
 	saved_training = training;
 	saved_path = path;
-	path.echo_training = false;
+	quadrant = saved_quadrant;
 	CHECK(!v32_echo_training_path_is_valid(&training, &path) &&
-	      v32_echo_training_begin_symbol(&training, &path) ==
+	      v32_echo_training_next(&training, &path, &quadrant) ==
 		      V32_ECHO_TRAINING_INVALID_STATE &&
-	      memcmp(&training, &saved_training, sizeof(training)) == 0,
-	      "mismatched echo-training owners were spliced");
-	path = saved_path;
+	      memcmp(&training, &saved_training, sizeof(training)) == 0 &&
+	      memcmp(&path, &saved_path, sizeof(path)) == 0 &&
+	      quadrant == saved_quadrant,
+	      "mismatched conditioning and echo owners were spliced");
+
 	training = *complete;
 	path = *complete_path;
 	saved_training = training;
 	saved_path = path;
-	CHECK(v32_echo_training_begin_symbol(&training, &path) ==
-		      V32_ECHO_TRAINING_INVALID_STATE &&
-	      v32_echo_training_finish(&training, &path) ==
-		      V32_ECHO_TRAINING_INVALID_STATE &&
+	quadrant = saved_quadrant;
+	CHECK(v32_echo_training_next(&training, &path, &quadrant) ==
+		      V32_ECHO_TRAINING_COMPLETE &&
 	      memcmp(&training, &saved_training, sizeof(training)) == 0 &&
-	      memcmp(&path, &saved_path, sizeof(path)) == 0,
-	      "complete echo training advanced twice");
-	training.symbols++;
+	      memcmp(&path, &saved_path, sizeof(path)) == 0 &&
+	      quadrant == saved_quadrant &&
+	      v32_echo_training_framing_state(&training, &encoder) ==
+		      V32_ECHO_TRAINING_OK &&
+	      v32_echo_training_framing_state(NULL, &encoder) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_framing_state(&training, NULL) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+	      v32_echo_training_framing_state(
+		      &training, (struct v32_symbol_encoder *)&training) ==
+		      V32_ECHO_TRAINING_INVALID_ARGUMENT,
+	      "complete echo training advanced twice or aliased its handoff");
+	training.conditioning.trn_symbols++;
 	CHECK(!v32_echo_training_is_valid(&training),
-	      "echo training accepted an out-of-range count");
+	      "echo training accepted an out-of-range conditioning count");
 	return true;
 }
 
@@ -283,8 +404,10 @@ int main(void)
 		    &answering_path) ||
 	    !test_contracts(&calling, &calling_path))
 		return 1;
-	CHECK(calling.symbols == V32_CALLING_ECHO_TRAINING_SYMBOLS &&
-	      answering.symbols == V32_ANSWERING_ECHO_TRAINING_SYMBOLS,
+	CHECK(calling.conditioning.trn_symbols ==
+		      V32_CALLING_ECHO_TRAINING_SYMBOLS &&
+	      answering.conditioning.trn_symbols ==
+		      V32_ANSWERING_ECHO_TRAINING_SYMBOLS,
 	      "role-specific echo-training lengths changed");
 	puts("V.32 echo training tests passed");
 	return 0;

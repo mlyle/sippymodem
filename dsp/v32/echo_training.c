@@ -34,13 +34,39 @@ static uint16_t symbol_limit(enum v32_transmitter_role role)
 		V32_ANSWERING_ECHO_TRAINING_SYMBOLS;
 }
 
+static enum v32_transmitter_role training_role(
+	const struct v32_echo_training *training)
+{
+	return training->conditioning.trn_encoder.scrambler.transmitter_role;
+}
+
+static uint16_t trn_symbols_emitted(
+	const struct v32_echo_training *training)
+{
+	uint16_t fixed_symbols = V32_CONDITIONING_S_SYMBOLS +
+		V32_CONDITIONING_S_BAR_SYMBOLS;
+
+	return training->conditioning.emitted_symbols > fixed_symbols ?
+		(uint16_t)(training->conditioning.emitted_symbols -
+			fixed_symbols) :
+		0;
+}
+
 bool v32_echo_training_is_valid(
 	const struct v32_echo_training *training)
 {
-	return training != NULL && role_is_valid(training->role) &&
-	       training->symbols <= symbol_limit(training->role) &&
+	enum v32_transmitter_role role;
+
+	if (training == NULL ||
+	    !v32_conditioning_transmitter_is_valid(
+		    &training->conditioning))
+		return false;
+	role = training_role(training);
+	return role_is_valid(role) &&
+	       training->conditioning.trn_symbols == symbol_limit(role) &&
 	       (!training->complete ||
-		training->symbols == symbol_limit(training->role));
+		v32_conditioning_transmitter_is_complete(
+			&training->conditioning));
 }
 
 bool v32_echo_training_is_complete(
@@ -53,11 +79,12 @@ enum v32_echo_training_result v32_echo_training_init(
 	struct v32_echo_training *training,
 	enum v32_transmitter_role role)
 {
-	struct v32_echo_training initialized = {
-		.role = role,
-	};
+	struct v32_echo_training initialized = { 0 };
 
-	if (training == NULL || !role_is_valid(role))
+	if (training == NULL || !role_is_valid(role) ||
+	    v32_conditioning_transmitter_init(
+		    &initialized.conditioning, role,
+		    symbol_limit(role)) != V32_CONDITIONING_OK)
 		return V32_ECHO_TRAINING_INVALID_ARGUMENT;
 	if (!v32_echo_training_is_valid(&initialized))
 		return V32_ECHO_TRAINING_INVALID_STATE;
@@ -75,7 +102,7 @@ static bool gain_lifecycle_matches(
 	const struct v32_receive_path *path)
 {
 	if (training->complete ||
-	    training->role == V32_ANSWERING_TRANSMITTER)
+	    training_role(training) == V32_ANSWERING_TRANSMITTER)
 		return path->line.gain.gain_mode == AGC_GAIN_TRACKING;
 	return path->line.gain.gain_mode == AGC_GAIN_FROZEN &&
 	       path->line.gain.gain_mantissa_q15 != 0 &&
@@ -88,6 +115,7 @@ bool v32_echo_training_path_is_valid(
 {
 	uint16_t coarse_end = V32_ECHO_TRAINING_PREFILL_SYMBOLS +
 		V32_ECHO_TRAINING_COARSE_SYMBOLS;
+	uint16_t symbols;
 
 	if (!v32_echo_training_is_valid(training) ||
 	    !v32_receive_path_is_valid(path) ||
@@ -95,88 +123,69 @@ bool v32_echo_training_path_is_valid(
 		return false;
 	if (training->complete)
 		return !path->echo_training && !path->echo.echo.adapting;
-	if (training->symbols == 0)
+	if (training->conditioning.emitted_symbols == 0)
 		return !path->echo_training && !path->echo.echo.adapting;
 	if (!path->echo_training)
 		return false;
-	if (training->symbols <= V32_ECHO_TRAINING_PREFILL_SYMBOLS)
+	symbols = trn_symbols_emitted(training);
+	if (symbols <= V32_ECHO_TRAINING_PREFILL_SYMBOLS)
 		return !path->echo.echo.adapting;
 	if (!path->echo.echo.adapting)
 		return false;
 	return adaptation_matches(
 		path->echo.echo.adaptation,
-		training->symbols <= coarse_end ?
+		symbols <= coarse_end ?
 			V32_ECHO_COARSE_ADAPTATION :
 			V32_ECHO_FINE_ADAPTATION);
 }
 
 static bool arguments_are_separate(
 	const struct v32_echo_training *training,
-	const struct v32_receive_path *path)
+	const struct v32_receive_path *path, const uint8_t *quadrant)
 {
-	return training != NULL && path != NULL &&
+	return training != NULL && path != NULL && quadrant != NULL &&
 	       !memory_regions_overlap(
-		       training, sizeof(*training), path, sizeof(*path));
+		       training, sizeof(*training), path, sizeof(*path)) &&
+	       !memory_regions_overlap(
+		       training, sizeof(*training), quadrant,
+		       sizeof(*quadrant)) &&
+	       !memory_regions_overlap(
+		       path, sizeof(*path), quadrant, sizeof(*quadrant));
 }
 
-enum v32_echo_training_result v32_echo_training_begin_symbol(
-	struct v32_echo_training *training,
-	struct v32_receive_path *path)
+static enum v32_echo_training_result transition_path(
+	struct v32_receive_path *path, uint16_t symbol)
 {
-	struct v32_echo_training next_training;
-	struct v32_receive_path next_path;
 	enum v32_receive_path_result result = V32_RECEIVE_PATH_OK;
 	uint16_t coarse_end = V32_ECHO_TRAINING_PREFILL_SYMBOLS +
 		V32_ECHO_TRAINING_COARSE_SYMBOLS;
 
-	if (!arguments_are_separate(training, path))
-		return V32_ECHO_TRAINING_INVALID_ARGUMENT;
-	if (!v32_echo_training_path_is_valid(training, path) ||
-	    training->complete ||
-	    training->symbols == symbol_limit(training->role))
-		return V32_ECHO_TRAINING_INVALID_STATE;
-	next_training = *training;
-	next_path = *path;
-	if (next_training.symbols == 0)
-		result = v32_receive_path_begin_echo_training(&next_path);
-	else if (next_training.symbols ==
-		 V32_ECHO_TRAINING_PREFILL_SYMBOLS)
+	if (symbol == V32_ECHO_TRAINING_PREFILL_SYMBOLS)
 		result = v32_receive_path_start_echo_adaptation(
-			&next_path, V32_ECHO_COARSE_ADAPTATION);
-	else if (next_training.symbols == coarse_end)
+			path, V32_ECHO_COARSE_ADAPTATION);
+	else if (symbol == coarse_end)
 		result = v32_receive_path_start_echo_adaptation(
-			&next_path, V32_ECHO_FINE_ADAPTATION);
-	if (result != V32_RECEIVE_PATH_OK)
-		return result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
-			V32_ECHO_TRAINING_INVALID_ARGUMENT :
-			V32_ECHO_TRAINING_INVALID_STATE;
-	next_training.symbols++;
-	if (!v32_echo_training_path_is_valid(&next_training, &next_path))
-		return V32_ECHO_TRAINING_INVALID_STATE;
-	*training = next_training;
-	*path = next_path;
-	return V32_ECHO_TRAINING_OK;
+			path, V32_ECHO_FINE_ADAPTATION);
+	if (result == V32_RECEIVE_PATH_OK)
+		return V32_ECHO_TRAINING_OK;
+	return result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
+		V32_ECHO_TRAINING_INVALID_ARGUMENT :
+		V32_ECHO_TRAINING_INVALID_STATE;
 }
 
-enum v32_echo_training_result v32_echo_training_finish(
+static enum v32_echo_training_result finish_training(
 	struct v32_echo_training *training,
 	struct v32_receive_path *path)
 {
 	struct v32_echo_training next_training;
 	struct v32_receive_path next_path;
 
-	if (!arguments_are_separate(training, path))
-		return V32_ECHO_TRAINING_INVALID_ARGUMENT;
-	if (!v32_echo_training_path_is_valid(training, path) ||
-	    training->complete ||
-	    training->symbols != symbol_limit(training->role))
-		return V32_ECHO_TRAINING_INVALID_STATE;
 	next_training = *training;
 	next_path = *path;
 	if (v32_receive_path_finish_echo_training(&next_path) !=
 	    V32_RECEIVE_PATH_OK)
 		return V32_ECHO_TRAINING_INVALID_STATE;
-	if (next_training.role == V32_CALLING_TRANSMITTER &&
+	if (training_role(&next_training) == V32_CALLING_TRANSMITTER &&
 	    v32_receive_path_reacquire_gain(&next_path) !=
 		    V32_RECEIVE_PATH_OK)
 		return V32_ECHO_TRAINING_INVALID_STATE;
@@ -186,4 +195,75 @@ enum v32_echo_training_result v32_echo_training_finish(
 	*training = next_training;
 	*path = next_path;
 	return V32_ECHO_TRAINING_COMPLETE;
+}
+
+enum v32_echo_training_result v32_echo_training_next(
+	struct v32_echo_training *training,
+	struct v32_receive_path *path, uint8_t *quadrant)
+{
+	struct v32_echo_training next_training;
+	struct v32_receive_path next_path;
+	uint16_t symbol;
+	uint8_t next_quadrant;
+	bool path_changes;
+
+	if (!arguments_are_separate(training, path, quadrant))
+		return V32_ECHO_TRAINING_INVALID_ARGUMENT;
+	if (!v32_echo_training_path_is_valid(training, path))
+		return V32_ECHO_TRAINING_INVALID_STATE;
+	if (training->complete)
+		return V32_ECHO_TRAINING_COMPLETE;
+	if (v32_conditioning_transmitter_is_complete(
+		    &training->conditioning))
+		return finish_training(training, path);
+
+	next_training = *training;
+	symbol = trn_symbols_emitted(&next_training);
+	path_changes = next_training.conditioning.emitted_symbols == 0 ||
+		(next_training.conditioning.emitted_symbols >=
+			 V32_CONDITIONING_S_SYMBOLS +
+			 V32_CONDITIONING_S_BAR_SYMBOLS &&
+		 (symbol == V32_ECHO_TRAINING_PREFILL_SYMBOLS ||
+		  symbol == V32_ECHO_TRAINING_PREFILL_SYMBOLS +
+			  V32_ECHO_TRAINING_COARSE_SYMBOLS));
+	if (path_changes) {
+		enum v32_echo_training_result result;
+
+		next_path = *path;
+		result = next_training.conditioning.emitted_symbols == 0 ?
+			(v32_receive_path_begin_echo_training(&next_path) ==
+					 V32_RECEIVE_PATH_OK ?
+				 V32_ECHO_TRAINING_OK :
+				 V32_ECHO_TRAINING_INVALID_STATE) :
+			transition_path(&next_path, symbol);
+		if (result != V32_ECHO_TRAINING_OK)
+			return result;
+	}
+	if (v32_conditioning_transmitter_next(
+		    &next_training.conditioning, &next_quadrant) !=
+	    V32_CONDITIONING_OK ||
+	    !v32_echo_training_path_is_valid(
+		    &next_training, path_changes ? &next_path : path))
+		return V32_ECHO_TRAINING_INVALID_STATE;
+	*training = next_training;
+	if (path_changes)
+		*path = next_path;
+	*quadrant = next_quadrant;
+	return V32_ECHO_TRAINING_OK;
+}
+
+enum v32_echo_training_result v32_echo_training_framing_state(
+	const struct v32_echo_training *training,
+	struct v32_symbol_encoder *encoder)
+{
+	if (training == NULL || encoder == NULL ||
+	    memory_regions_overlap(
+		    training, sizeof(*training), encoder, sizeof(*encoder)))
+		return V32_ECHO_TRAINING_INVALID_ARGUMENT;
+	if (!v32_echo_training_is_complete(training))
+		return V32_ECHO_TRAINING_INVALID_STATE;
+	return v32_conditioning_transmitter_framing_state(
+		       &training->conditioning, encoder) == V32_CONDITIONING_OK ?
+		       V32_ECHO_TRAINING_OK :
+		       V32_ECHO_TRAINING_INVALID_STATE;
 }

@@ -608,6 +608,11 @@ V32_ECHO_TRAINING_TEST_BINARY := \
 V32_ECHO_TRAINING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_echo_training.o \
 	$(BUILD_DIR)/echo_training.o \
+	$(BUILD_DIR)/conditioning.o \
+	$(BUILD_DIR)/framing.o \
+	$(BUILD_DIR)/differential_qpsk.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/constellation.o \
 	$(V32_RECEIVE_PATH_TEST_OBJECTS:$(BUILD_DIR)/test_v32_receive_path.o=)
 V32_CONDITIONING_PATH_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_conditioning_path
