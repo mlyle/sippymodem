@@ -19,7 +19,7 @@ enum v34_timing_filter_result {
 	V34_TIMING_FILTER_INVALID_STATE,
 };
 
-/* Timing-error and three-samples-per-symbol prefilter ownership. */
+/* Timing-error and two-samples-per-symbol prefilter ownership. */
 struct v34_timing_filter {
 	int16_t positive_b_real[V34_TIMING_FILTER_COMPLEX_TAPS];
 	int16_t positive_b_imag[V34_TIMING_FILTER_COMPLEX_TAPS];
@@ -44,9 +44,9 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 	struct v34_timing_filter *filter,
 	struct v34_analytic_sample input, int16_t *timing_error);
 
-/* Filter the latest adjacent pair for the three-samples-per-symbol equalizer.
- * The timing owner calls this after outputs 1, 3, and 5 of each seven-output
- * symbol interval. Rejected calls leave the owner and output unchanged. */
+/* Filter the latest adjacent pair for the two-samples-per-symbol equalizer.
+ * The timing owner calls this after outputs 1 and 3 of each four-output symbol
+ * interval. Rejected calls leave the owner and output unchanged. */
 enum v34_timing_filter_result v34_timing_filter_prefilter(
 	struct v34_timing_filter *filter,
 	struct v34_analytic_sample *output);

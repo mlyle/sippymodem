@@ -26,7 +26,7 @@ struct v34_equalizer_accumulator {
 	int32_t quadrature;
 };
 
-/* Owned three-samples-per-symbol complex equalizer. Coefficients are Q12;
+/* Owned two-samples-per-symbol complex equalizer. Coefficients are Q12;
  * residues retain the low half of each Q16 adaptation word. */
 struct v34_equalizer {
 	int16_t in_phase_delay[V34_EQUALIZER_TAPS];
