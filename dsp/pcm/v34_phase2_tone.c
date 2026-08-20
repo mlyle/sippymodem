@@ -17,6 +17,10 @@ static const double V34_PHASE2_TONE_MAX_CARRIER_SHARE = 1.20;
 static const double V34_PHASE2_TONE_REVERSAL_CONFIRM_COSINE = -0.80;
 static const double V34_PHASE2_TONE_REFERENCE_TRACKING = 1.0 / 64.0;
 static const double V34_RETRAIN_SILENCE_MAX_LINE_POWER = 150000.0;
+static const uint64_t V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY =
+	UINT64_C(9600000);
+static const uint32_t V34_RETRAIN_MAX_SAMPLE_ENERGY =
+	UINT32_C(1) << 30;
 static const double V34_RETRAIN_TONE_A_MAX_CARRIER_SHARE = 0.60;
 static const double V34_PHASE2_TONE_MAX_SAMPLE_MAGNITUDE =
 	-(double)INT16_MIN;
@@ -38,6 +42,8 @@ enum {
 
 _Static_assert(
 	V34_RETRAIN_MIN_SILENCE_SAMPLES == 519 &&
+	V34_RETRAIN_SILENCE_WINDOW_SAMPLES == 64 &&
+	V34_RETRAIN_MAX_SILENCE_GLITCH_SAMPLES == 80 &&
 	V34_RETRAIN_TONE_SAMPLES == 640,
 	"V.34 retrain guards must retain their 8 kHz durations");
 
@@ -350,34 +356,6 @@ static void add_observation(
 		V34_PHASE2_TONE_WINDOW_SAMPLES;
 }
 
-static void add_silence_observation(
-	struct v34_phase2_tone_detector *detector, int16_t sample)
-{
-	struct v34_phase2_tone_observation *old =
-		&detector->history[detector->history_index];
-	double energy = (double)sample * sample;
-
-	/* The retrain preamble starts with silence.  Until that silence has
-	 * qualified, carrier phase is irrelevant: maintain only its rolling
-	 * energy window and leave the tone detector reset for the following
-	 * Tone A/B.  This keeps ordinary online data off the trigonometric path. */
-	if (detector->history_count == V34_PHASE2_TONE_WINDOW_SAMPLES)
-		detector->line_energy -= old->energy;
-	else
-		detector->history_count++;
-	detector->line_energy += energy;
-	*old = (struct v34_phase2_tone_observation){ .energy = energy };
-	detector->history_index =
-		(detector->history_index + 1u) %
-		V34_PHASE2_TONE_WINDOW_SAMPLES;
-	detector->measurement_ready =
-		detector->history_count == V34_PHASE2_TONE_WINDOW_SAMPLES;
-	detector->line_power = detector->measurement_ready ?
-		detector->line_energy / V34_PHASE2_TONE_WINDOW_SAMPLES : 0.0;
-	detector->carrier_power = 0.0;
-	detector->carrier_share = 0.0;
-}
-
 static bool measurement_qualifies(
 	struct v34_phase2_tone_detector *detector)
 {
@@ -649,11 +627,46 @@ v34_phase2_tone_detector_measure(
 		       (struct v34_phase2_tone_measurement){ 0 };
 }
 
+static bool retrain_silence_state_is_valid(
+	const struct v34_retrain_detector *detector)
+{
+	uint64_t energy = 0;
+
+	if (detector->silence_history_index >=
+		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES ||
+	    detector->silence_history_count >
+		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES ||
+	    (detector->silence_history_count <
+		     V34_RETRAIN_SILENCE_WINDOW_SAMPLES &&
+	     detector->silence_history_index !=
+		     detector->silence_history_count) ||
+	    detector->silence_glitch_samples >
+		    V34_RETRAIN_MAX_SILENCE_GLITCH_SAMPLES ||
+	    (detector->silence_samples != 0 &&
+	     detector->silence_samples <
+		     V34_RETRAIN_SILENCE_WINDOW_SAMPLES) ||
+	    (detector->silence_samples == 0 &&
+	     detector->silence_glitch_samples != 0) ||
+	    (detector->silence_samples ==
+		     V34_RETRAIN_MIN_SILENCE_SAMPLES &&
+	     detector->silence_glitch_samples != 0))
+		return false;
+	for (size_t index = 0;
+	     index < V34_RETRAIN_SILENCE_WINDOW_SAMPLES; ++index) {
+		if (detector->silence_history[index] >
+		    V34_RETRAIN_MAX_SAMPLE_ENERGY)
+			return false;
+		energy += detector->silence_history[index];
+	}
+	return energy == detector->silence_energy;
+}
+
 bool v34_retrain_detector_is_valid(
 	const struct v34_retrain_detector *detector)
 {
 	if (detector == NULL ||
 	    !v34_phase2_tone_detector_is_valid(&detector->tone) ||
+	    !retrain_silence_state_is_valid(detector) ||
 	    detector->silence_samples >
 		    V34_RETRAIN_MIN_SILENCE_SAMPLES ||
 	    detector->tone_samples > V34_RETRAIN_TONE_SAMPLES ||
@@ -665,6 +678,52 @@ bool v34_retrain_detector_is_valid(
 		       detector->edge_samples == 0;
 	return detector->tone_samples == 0 ||
 	       detector->edge_samples == 0;
+}
+
+static void add_retrain_silence_observation(
+	struct v34_retrain_detector *detector, int16_t sample)
+{
+	uint32_t sample_energy = (uint32_t)((int32_t)sample * sample);
+	uint32_t old_energy =
+		detector->silence_history[detector->silence_history_index];
+
+	detector->silence_history[detector->silence_history_index] =
+		sample_energy;
+	detector->silence_history_index =
+		(detector->silence_history_index + 1u) %
+		V34_RETRAIN_SILENCE_WINDOW_SAMPLES;
+	detector->silence_energy += sample_energy;
+	if (detector->silence_history_count <
+	    V34_RETRAIN_SILENCE_WINDOW_SAMPLES)
+		detector->silence_history_count++;
+	else
+		detector->silence_energy -= old_energy;
+
+	if (detector->silence_history_count !=
+	    V34_RETRAIN_SILENCE_WINDOW_SAMPLES)
+		return;
+	if (detector->silence_energy <=
+	    V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY) {
+		detector->silence_glitch_samples = 0;
+		if (detector->silence_samples <
+		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES)
+			detector->silence_samples =
+				V34_RETRAIN_SILENCE_WINDOW_SAMPLES;
+		else if (detector->silence_samples <
+			 V34_RETRAIN_MIN_SILENCE_SAMPLES)
+			detector->silence_samples++;
+	} else if (detector->silence_samples <
+		   V34_RETRAIN_MIN_SILENCE_SAMPLES) {
+		if (detector->silence_samples >=
+			    V34_RETRAIN_SILENCE_WINDOW_SAMPLES &&
+		    detector->silence_glitch_samples <
+			    V34_RETRAIN_MAX_SILENCE_GLITCH_SAMPLES) {
+			detector->silence_glitch_samples++;
+		} else {
+			detector->silence_samples = 0;
+			detector->silence_glitch_samples = 0;
+		}
+	}
 }
 
 enum v34_phase2_tone_result v34_retrain_detector_init(
@@ -727,14 +786,7 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 	if (!v34_retrain_detector_is_valid(detector) || detected == NULL)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	if (detector->silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
-		add_silence_observation(&detector->tone, sample);
-		measurement = measure_valid_tone_detector(&detector->tone);
-		if (measurement.ready &&
-		    measurement.line_power <=
-			    V34_RETRAIN_SILENCE_MAX_LINE_POWER)
-			detector->silence_samples++;
-		else
-			detector->silence_samples = 0;
+		add_retrain_silence_observation(detector, sample);
 		if (detector->silence_samples ==
 		    V34_RETRAIN_MIN_SILENCE_SAMPLES &&
 		    v34_phase2_tone_detector_reset(&detector->tone) !=

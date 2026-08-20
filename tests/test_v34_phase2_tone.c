@@ -686,13 +686,67 @@ static bool arm_retrain_silence(
 	bool seen = false;
 
 	for (size_t index = 0;
-	     index < V34_PHASE2_TONE_WINDOW_SAMPLES +
-			     V34_RETRAIN_MIN_SILENCE_SAMPLES;
-	     ++index)
-		CHECK(feed_retrain_sample(detector, 0, codec, &seen),
+	     index < V34_RETRAIN_MIN_SILENCE_SAMPLES - 1u; ++index) {
+		/* This remains a quiet 64-sample energy window, but exceeds the
+		 * former 40-sample threshold until its onset ages out. */
+		int16_t sample = index < 3 ? 1500 : 0;
+
+		CHECK(feed_retrain_sample(detector, sample, codec, &seen),
 		      "full-retrain silence failed at %zu", index);
+	}
+	CHECK(!seen && detector->silence_samples ==
+		      V34_RETRAIN_MIN_SILENCE_SAMPLES - 1u,
+	      "full-retrain silence armed before its physical lower edge");
+	CHECK(feed_retrain_sample(detector, 0, codec, &seen),
+	      "full-retrain silence failed at its physical lower edge");
 	return !seen && detector->silence_samples ==
 			V34_RETRAIN_MIN_SILENCE_SAMPLES;
+}
+
+static bool check_retrain_silence_glitch(enum test_codec codec)
+{
+	struct v34_retrain_detector detector;
+	bool seen = false;
+
+	CHECK(v34_retrain_detector_init(
+		      &detector, V34_CALLING_STATION) ==
+		      V34_PHASE2_TONE_OK,
+	      "silence-glitch fixture did not initialize");
+	for (size_t index = 0; index < 128; ++index)
+		CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
+		      "silence-glitch prefix failed at %zu", index);
+	CHECK(detector.silence_samples == 128,
+	      "silence-glitch prefix count=%u", detector.silence_samples);
+	for (size_t index = 0; index < 16; ++index)
+		CHECK(feed_retrain_sample(&detector, 8000, codec, &seen),
+		      "bounded silence impulse failed at %zu", index);
+	for (size_t index = 0; index < 63; ++index)
+		CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
+		      "bounded silence recovery failed at %zu", index);
+	CHECK(detector.silence_samples == 128 &&
+	      detector.silence_glitch_samples == 79,
+	      "bounded silence impulse was not retained");
+	CHECK(feed_retrain_sample(&detector, 0, codec, &seen) &&
+	      detector.silence_samples == 129 &&
+	      detector.silence_glitch_samples == 0,
+	      "bounded silence impulse did not recover");
+
+	CHECK(v34_retrain_detector_reset(&detector) ==
+		      V34_PHASE2_TONE_OK,
+	      "long silence-glitch fixture did not reset");
+	for (size_t index = 0; index < 128; ++index)
+		CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
+		      "long silence-glitch prefix failed at %zu", index);
+	for (size_t index = 0; index < 18; ++index)
+		CHECK(feed_retrain_sample(&detector, 8000, codec, &seen),
+		      "long silence impulse failed at %zu", index);
+	for (size_t index = 0; index < 63; ++index)
+		CHECK(feed_retrain_sample(&detector, 0, codec, &seen),
+		      "long silence recovery failed at %zu", index);
+	CHECK(!seen && detector.silence_samples == 0 &&
+	      detector.silence_glitch_samples == 0,
+	      "overlong silence impulse did not restart qualification");
+	return true;
 }
 
 static bool check_full_retrain_request(
@@ -844,7 +898,8 @@ static bool test_full_retrain_request(void)
 {
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
 	     codec <= TEST_CODEC_PCMA; ++codec)
-		CHECK(check_full_retrain_request(
+		CHECK(check_retrain_silence_glitch(codec) &&
+		      check_full_retrain_request(
 			      V34_CALLING_STATION, codec) &&
 		      check_full_retrain_request(
 			      V34_ANSWERING_STATION, codec),
@@ -929,6 +984,22 @@ static bool test_validation(void)
 		      memcmp(&retrain, &retrain_before, sizeof(retrain)) == 0 &&
 		      detected,
 		      "corrupt full-retrain state was not transactional");
+	}
+	CHECK(v34_retrain_detector_init(
+		      &retrain, V34_CALLING_STATION) ==
+		      V34_PHASE2_TONE_OK,
+	      "silence-history validation fixture did not initialize");
+	retrain.silence_history[0] = UINT32_MAX;
+	retrain_before = retrain;
+	{
+		bool detected = true;
+
+		CHECK(v34_retrain_detector_sample(
+			      &retrain, 0, &detected) ==
+			      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      memcmp(&retrain, &retrain_before, sizeof(retrain)) == 0 &&
+		      detected,
+		      "corrupt silence history was not transactional");
 	}
 	CHECK(strcmp(
 		      v34_phase2_tone_result_name(

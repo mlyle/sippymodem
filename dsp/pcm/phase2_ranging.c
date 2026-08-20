@@ -283,12 +283,23 @@ static bool measure_round_trip_delay(
 {
 	uint32_t turnaround = PHASE2_RANGING_TURNAROUND_SAMPLES;
 	uint32_t elapsed = control->measurement_elapsed_samples;
+	uint32_t detected_edge;
 
 	if (detector_delay_samples == 0 ||
-	    elapsed < turnaround + detector_delay_samples)
+	    elapsed < detector_delay_samples)
+		return false;
+	detected_edge = elapsed - detector_delay_samples;
+	/* The line-terminal response is specified as 40 +/- 1 ms.  Codec and
+	 * serialized duplex scheduling can date a zero-delay response on the
+	 * preceding sample; accept the complete normative interval while keeping
+	 * implausibly early edges on the transactional rejection path. */
+	if (detected_edge +
+		    PHASE2_RANGING_TURNAROUND_TOLERANCE_SAMPLES <
+	    turnaround)
 		return false;
 	control->round_trip_delay_samples =
-		(uint16_t)(elapsed - turnaround - detector_delay_samples);
+		detected_edge > turnaround ?
+			(uint16_t)(detected_edge - turnaround) : 0u;
 	control->round_trip_delay_valid = true;
 	control->measurement_elapsed_samples = 0;
 	return true;

@@ -309,6 +309,48 @@ static bool test_bidirectional_ranging(void)
 	return true;
 }
 
+static bool test_early_turnaround_tolerance(void)
+{
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging ranging;
+	struct v34_phase2_tone_event tone_event = {
+		.kind = V34_PHASE2_TONE_PHASE_REVERSED,
+		.reversal_delay_samples =
+			V34_PHASE2_TONE_WINDOW_SAMPLES - 3u,
+	};
+	struct phase2_ranging_event event = { 0 };
+	int16_t sample = TEST_AMPLITUDE;
+
+	calling.acknowledges_peer_info0 = true;
+	CHECK(v34_phase2_ranging_init_retrain(
+		      &ranging, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+		      &answering, &calling) == V34_PHASE2_RANGING_OK,
+	      "turnaround-tolerance fixture did not initialize");
+	ranging.control.phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
+	ranging.control.local_tone_samples =
+		PHASE2_RANGING_INITIAL_TONE_SAMPLES;
+	ranging.control.measurement_elapsed_samples =
+		PHASE2_RANGING_TURNAROUND_SAMPLES +
+		tone_event.reversal_delay_samples -
+		PHASE2_RANGING_TURNAROUND_TOLERANCE_SAMPLES;
+	CHECK(v34_phase2_ranging_is_valid(&ranging) &&
+	      phase2_ranging_finish_sample(
+		      &ranging.control,
+		      &ranging.info0_exchange.transport, true,
+		      PHASE2_INFO0_TONE, &tone_event, &sample, &event) ==
+		      PHASE2_RANGING_OK &&
+	      ranging.control.phase == PHASE2_RESPONSE_DELAY &&
+	      ranging.control.round_trip_delay_valid &&
+	      ranging.control.round_trip_delay_samples == 0u &&
+	      ranging.control.response_delay_samples ==
+		      PHASE2_RANGING_TURNAROUND_SAMPLES -
+			      tone_event.reversal_delay_samples &&
+	      v34_phase2_ranging_is_valid(&ranging),
+	      "earliest normative turnaround was rejected");
+	return true;
+}
+
 static bool check_info_interrupted_reversal(
 	enum test_codec codec, enum v34_station_role local_role)
 {
@@ -796,6 +838,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bidirectional ranging", test_bidirectional_ranging },
+		{ "early turnaround tolerance", test_early_turnaround_tolerance },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "INFO0 recovery", test_info0_recovery },
