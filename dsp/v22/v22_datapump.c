@@ -48,8 +48,6 @@ enum {
 	V22BIS_RETRAIN_DETECT_SYMBOLS = 8,
 	V22BIS_RETRAIN_CONFIDENCE_Q15 = 0x7eb8,
 	V22BIS_RETRAIN_MIN_REPEATED_PAIRS = 3,
-	V22_RETRAIN_CONFIRM_BITS = 32,
-	V22_RETRAIN_CONFIRM_SAMPLES = MODEM_RATE / 5,
 	V22_RETRAIN_RETRY_SAMPLES = MODEM_RATE * 12 / 10,
 };
 
@@ -295,10 +293,11 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	      datapump->transmit_mode == V22_TRANSMIT_V22BIS_RATE_SIGNAL ||
 	      datapump->transmit_mode == V22_TRANSMIT_V22BIS_MARK)) ||
 	    (datapump->retraining &&
-	     datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL &&
-	     datapump->training_state != V22_TRAINING_RETRAIN_WAIT_PEER &&
-	     datapump->training_state != V22_TRAINING_RETRAIN_MARK &&
-	     datapump->training_state != V22_TRAINING_V22BIS_CONFIRM) ||
+	     (!datapump_uses_v22bis(datapump) ||
+	      (datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL &&
+	       datapump->training_state != V22_TRAINING_RETRAIN_WAIT_PEER &&
+	       datapump->training_state != V22_TRAINING_RETRAIN_MARK &&
+	       datapump->training_state != V22_TRAINING_V22BIS_CONFIRM))) ||
 	    (!datapump->retraining &&
 	     (datapump->training_state == V22_TRAINING_RETRAIN_SIGNAL ||
 	      datapump->training_state == V22_TRAINING_RETRAIN_WAIT_PEER ||
@@ -690,24 +689,6 @@ static int observe_bits(
 			    scrambled_confirmation_target(datapump))
 				return begin_connect_hold(datapump);
 		}
-	} else if (datapump->retraining &&
-		   !datapump_uses_v22bis(datapump) &&
-		   datapump->retrain_peer_signal_received) {
-		for (size_t index = 0; index < bit_count; ++index) {
-			if (!datapump->retrain_receive_ready) {
-				if (bits[index] == 0)
-					datapump->scrambled_mark_bits = 0;
-				else if (datapump->scrambled_mark_bits <
-					 V22_RETRAIN_CONFIRM_BITS)
-					datapump->scrambled_mark_bits++;
-				if (datapump->scrambled_mark_bits >=
-				    V22_RETRAIN_CONFIRM_BITS)
-					datapump->retrain_receive_ready = true;
-			} else if (output_received_bits(
-					   datapump, &bits[index], 1) != 0) {
-				return -1;
-			}
-		}
 	} else if (datapump->training_state == V22_TRAINING_ONLINE) {
 		return output_received_bits(datapump, bits, bit_count);
 	}
@@ -960,18 +941,12 @@ static void discard_retrain_candidate(
 	datapump->retrain_candidate_deliver = false;
 }
 
-static size_t retrain_bits_per_symbol(
-	const struct v22_datapump *datapump)
-{
-	if (datapump_uses_v22bis(datapump))
-		return V22BIS_BITS_PER_SYMBOL;
-	return datapump_uses_600(datapump) ? 1u : 2u;
-}
-
 static int shift_retrain_candidate(struct v22_datapump *datapump)
 {
-	size_t bit_count = retrain_bits_per_symbol(datapump);
+	size_t bit_count = V22BIS_BITS_PER_SYMBOL;
 
+	if (!datapump_uses_v22bis(datapump))
+		return -1;
 	if (datapump->retrain_candidate_bit_count < bit_count)
 		return datapump->retrain_candidate_deliver ? -1 : 0;
 	if (datapump->retrain_candidate_deliver &&
@@ -1087,7 +1062,8 @@ static int v22bis_hard_symbol(
 static int append_retrain_symbol(
 	struct v22_datapump *datapump, uint8_t symbol)
 {
-	if (symbol >= V22BIS_SYMBOL_COUNT)
+	if (!datapump_uses_v22bis(datapump) ||
+	    symbol >= V22BIS_SYMBOL_COUNT)
 		return -1;
 	if (datapump->retrain_detect_symbols >=
 	    V22_RETRAIN_MAX_SYMBOLS) {
@@ -1112,7 +1088,8 @@ static int observe_retrain_signal(
 	uint8_t phase_label = v22_retrain_phase_label(quarter_turns);
 	uint8_t symbol = (uint8_t)((phase_label << 2) | radial_bits);
 
-	if (radial_bits >= 4u || ended == NULL || current_quadrant == NULL)
+	if (!datapump_uses_v22bis(datapump) || radial_bits >= 4u ||
+	    ended == NULL || current_quadrant == NULL)
 		return -1;
 	*ended = false;
 	quadrant = (uint8_t)(
@@ -1124,7 +1101,7 @@ static int observe_retrain_signal(
 	if (!alternating) {
 		if (datapump->retrain_detect_symbols >=
 			    V22_RETRAIN_MIN_SYMBOLS &&
-		    (!online || !datapump_uses_v22bis(datapump) ||
+		    (!online ||
 		     v22bis_retrain_sequence_present(
 			     datapump->retrain_symbol_history,
 			     datapump->retrain_detect_symbols))) {
@@ -1199,10 +1176,11 @@ static int begin_retrain(
 	struct v22_datapump *datapump, uint8_t receive_quadrant,
 	bool peer_signal_received)
 {
-	if (datapump == NULL || datapump->training_state != V22_TRAINING_ONLINE ||
+	if (datapump == NULL || !datapump_uses_v22bis(datapump) ||
+	    datapump->training_state != V22_TRAINING_ONLINE ||
 	    receive_quadrant >= QPSK_QUADRANT_COUNT)
 		return -1;
-	if (datapump_uses_v22bis(datapump) && peer_signal_received) {
+	if (peer_signal_received) {
 		if (reset_v22bis_retrain_receiver(datapump) != 0)
 			return -1;
 	} else if (v22_symbol_decoder_init(
@@ -1238,7 +1216,7 @@ static int restart_retrain(struct v22_datapump *datapump)
 {
 	uint8_t receive_quadrant = receive_phase_quadrant(datapump);
 
-	if (!datapump->retraining ||
+	if (!datapump->retraining || !datapump_uses_v22bis(datapump) ||
 	    v22_symbol_decoder_init(
 		    &datapump->decoder, receive_quadrant) != V22_FRAMING_OK)
 		return -1;
@@ -1265,14 +1243,8 @@ static int note_peer_retrain_signal(
 	    (datapump->training_state != V22_TRAINING_RETRAIN_WAIT_PEER &&
 	     datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL))
 		return -1;
-	if (datapump_uses_v22bis(datapump)) {
-		if (reset_v22bis_retrain_receiver(datapump) != 0)
-			return -1;
-	} else if (v22_symbol_decoder_init(
-			   &datapump->decoder, receive_quadrant) !=
-		   V22_FRAMING_OK) {
+	if (reset_v22bis_retrain_receiver(datapump) != 0)
 		return -1;
-	}
 	datapump->retrain_peer_signal_received = true;
 	datapump->retrain_peer_samples = 0;
 	datapump->retrain_retry_samples = 0;
@@ -1288,18 +1260,12 @@ static int note_peer_retrain_signal(
 static int repeat_peer_retrain_signal(
 	struct v22_datapump *datapump, uint8_t receive_quadrant)
 {
-	if (!datapump->retraining ||
+	if (!datapump->retraining || !datapump_uses_v22bis(datapump) ||
 	    !datapump->retrain_peer_signal_received ||
 	    receive_quadrant >= QPSK_QUADRANT_COUNT)
 		return -1;
-	if (datapump_uses_v22bis(datapump)) {
-		if (reset_v22bis_retrain_receiver(datapump) != 0)
-			return -1;
-	} else if (v22_symbol_decoder_init(
-			   &datapump->decoder, receive_quadrant) !=
-		   V22_FRAMING_OK) {
+	if (reset_v22bis_retrain_receiver(datapump) != 0)
 		return -1;
-	}
 	datapump->phase_samples = 0;
 	datapump->scrambled_mark_bits = 0;
 	datapump->v22bis_confirm_bits = 0;
@@ -1317,7 +1283,9 @@ static int retrain_v22(struct dp *dp)
 {
 	struct v22_datapump *datapump = v22_from_dp(dp);
 
-	if (datapump == NULL || datapump->dp.id == DP_B212)
+	/* ITU-T V.22bis 6.4 defines this exchange only for 2400-bit/s
+	 * operation. Plain V.22 and Bell 212A have no compatible S1 retrain. */
+	if (datapump == NULL || !datapump_uses_v22bis(datapump))
 		return -1;
 	flush_retrain_candidate(datapump);
 	discard_retrain_candidate(datapump);
@@ -1331,31 +1299,23 @@ static int detect_online_retrain(
 {
 	uint8_t current_quadrant;
 	uint8_t quarter_turns;
-	uint8_t radial_bits = 0;
+	uint8_t radial_bits;
+	uint8_t absolute_symbol;
+	uint8_t previous_quadrant;
 	bool ended;
 
-	if (started == NULL)
+	if (!datapump_uses_v22bis(datapump) || started == NULL)
 		return -1;
 	*started = false;
 	if (!datapump->has_previous_receive_point)
 		return 0;
-	if (datapump_uses_v22bis(datapump)) {
-		uint8_t absolute_symbol;
-		uint8_t previous_quadrant;
-
-		if (v22bis_hard_symbol(
-			    datapump, point, &absolute_symbol) != 0)
-			return -1;
-		previous_quadrant =
-			datapump->v22bis_receiver.decoder.phase_quadrant;
-		quarter_turns = (uint8_t)(
-			((absolute_symbol >> 2) - previous_quadrant) & 3u);
-		radial_bits = (uint8_t)(absolute_symbol & 3u);
-	} else if (qam_nearest_quarter_turn(
-			   &datapump->previous_receive_point, point,
-			   &quarter_turns) != QAM_OK) {
+	if (v22bis_hard_symbol(datapump, point, &absolute_symbol) != 0)
 		return -1;
-	}
+	previous_quadrant =
+		datapump->v22bis_receiver.decoder.phase_quadrant;
+	quarter_turns = (uint8_t)(
+		((absolute_symbol >> 2) - previous_quadrant) & 3u);
+	radial_bits = (uint8_t)(absolute_symbol & 3u);
 	if (observe_retrain_signal(
 		    datapump, quarter_turns, radial_bits, true, &ended,
 		    &current_quadrant) != 0)
@@ -1375,7 +1335,8 @@ static int detect_peer_retrain(
 	uint8_t current_quadrant;
 	uint8_t quarter_turns;
 
-	if (!datapump->has_previous_receive_point || ended == NULL)
+	if (!datapump_uses_v22bis(datapump) ||
+	    !datapump->has_previous_receive_point || ended == NULL)
 		return -1;
 	if (qam_nearest_quarter_turn(
 		    &datapump->previous_receive_point, point,
@@ -1392,8 +1353,7 @@ static int detect_peer_retrain(
 		 * that continuation during the S1/mark exchange.  Once 2400-bit/s
 		 * confirmation has begun, a new S1 proves the peer did not follow and
 		 * must restart the bounded exchange. */
-		if (!datapump_uses_v22bis(datapump) ||
-		    datapump->training_state == V22_TRAINING_V22BIS_CONFIRM)
+		if (datapump->training_state == V22_TRAINING_V22BIS_CONFIRM)
 			return repeat_peer_retrain_signal(
 				datapump, current_quadrant);
 		return 0;
@@ -1433,8 +1393,7 @@ static int receive_sample(
 			return 0;
 		if (ended || !decode_current)
 			goto remember_point;
-		if (datapump_uses_v22bis(datapump) &&
-			   datapump->v22bis_receiver_initialized &&
+		if (datapump->v22bis_receiver_initialized &&
 			   v22bis_receive_window_open(datapump)) {
 			if (receive_v22bis_point(
 				    datapump, &point, linked) != 0)
@@ -1443,22 +1402,16 @@ static int receive_sample(
 			   qam_nearest_quarter_turn(
 				   &datapump->previous_receive_point, &point,
 				   &quarter_turns) == QAM_OK) {
-			if ((datapump_uses_600(datapump) &&
-			     observe_600_phase_change(
-				     datapump,
-				     &datapump->previous_receive_point,
-				     &point, quarter_turns) != 0) ||
-			    (!datapump_uses_600(datapump) &&
-			     observe_phase_change(
-				     datapump, quarter_turns) != 0))
+			if (observe_phase_change(datapump, quarter_turns) != 0)
 				return -1;
 		} else if (datapump->has_previous_receive_point) {
 			return -1;
 		}
 	} else if (datapump->training_state == V22_TRAINING_ONLINE) {
-		bool retrain_started;
+		bool retrain_started = false;
 
-		if (detect_online_retrain(
+		if (datapump_uses_v22bis(datapump) &&
+		    detect_online_retrain(
 			    datapump, &point, &retrain_started) != 0)
 			return -1;
 		if (retrain_started && !datapump->has_previous_receive_point)
@@ -1616,16 +1569,6 @@ static int advance_training_timer(
 		    datapump->v22bis_receiver_initialized) {
 			if (start_v22bis_transmit(datapump) != 0)
 				return -1;
-		} else if (datapump->training_state ==
-			   V22_TRAINING_RETRAIN_MARK &&
-			   !datapump_uses_v22bis(datapump) &&
-			   datapump->retrain_peer_samples >=
-				   V22_RETRAIN_CONFIRM_SAMPLES &&
-			   datapump->retrain_receive_ready) {
-			if (enter_link(datapump) != 0)
-				return -1;
-			*linked = true;
-			return 0;
 		}
 		if (datapump->training_state ==
 		    V22_TRAINING_V22BIS_CONFIRM) {

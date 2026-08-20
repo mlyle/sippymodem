@@ -605,6 +605,51 @@ static bool modem_is_online(const struct modem *modem, enum DP_ID id)
 	       modem->get_bits != NULL && modem->put_bits != NULL;
 }
 
+static bool reject_unavailable_retrain(
+	struct integration_endpoint *endpoint, enum DP_ID id)
+{
+	enum {
+		TEST_STATE_MODEM_ONLINE = 5,
+		TEST_STATE_COMMAND_ONLINE = 6,
+	};
+	char retrain_command[] = "ATO1";
+	char resume_command[] = "ATO0";
+	struct dp *datapump;
+	uint32_t pending_data;
+	unsigned int status;
+	int pending_bits;
+	int pending_chars;
+
+	if (endpoint == NULL || !modem_is_online(endpoint->modem, id))
+		return false;
+	datapump = endpoint->modem->dp;
+	status = datapump->status;
+	pending_bits = endpoint->modem->pack.bit;
+	pending_data = endpoint->modem->pack.data;
+	pending_chars = endpoint->modem->xmit.count;
+	endpoint->output_count = 0;
+	endpoint->modem->state = TEST_STATE_COMMAND_ONLINE;
+	endpoint->modem->command = 1;
+	if (process_at_command(endpoint->modem, retrain_command) != -1 ||
+	    endpoint->modem->state != TEST_STATE_COMMAND_ONLINE ||
+	    endpoint->modem->command != 1 ||
+	    endpoint->modem->retrain_pending != 0 ||
+	    endpoint->modem->dp != datapump || datapump->status != status ||
+	    endpoint->modem->pack.bit != pending_bits ||
+	    endpoint->modem->pack.data != pending_data ||
+	    endpoint->modem->xmit.count != pending_chars)
+		return false;
+	if (process_at_command(endpoint->modem, resume_command) != 1 ||
+	    endpoint->modem->state != TEST_STATE_MODEM_ONLINE ||
+	    endpoint->modem->command != 0 ||
+	    endpoint->modem->retrain_pending != 0 ||
+	    endpoint->modem->dp != datapump || datapump->status != status ||
+	    !endpoint_drain(endpoint) || !output_contains(endpoint, "CONNECT"))
+		return false;
+	endpoint->output_count = 0;
+	return true;
+}
+
 static bool exercise_retrain(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
@@ -1361,29 +1406,36 @@ static bool run_media_call(
 		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
 		      "%s did not retain its requested transport", test_case->name);
-		CHECK(exercise_retrain(
-			      &caller, &answerer, &answerer, test_case->id,
-			      test_case->answerer_rx_rate, codec, &recorder, 0,
-			      test_case->raw_transport,
-			      test_case->id == DP_V22BIS &&
-				      test_case->raw_transport &&
-				      codec == MEDIA_CODEC_PCMU,
-			      false),
-		      "%s answerer retrain did not reconnect and pass data",
-		      test_case->name);
-		CHECK(exercise_retrain(
-			      &caller, &answerer, &caller, test_case->id,
-			      test_case->caller_rx_rate, codec, &recorder, 1,
-			      test_case->raw_transport, false,
-			      test_case->id == DP_V22BIS),
-		      "%s caller retrain did not reconnect and pass data",
-		      test_case->name);
-		if (test_case->id == DP_V22BIS)
-			CHECK(exercise_v22bis_carrier_recovery(
-				      &caller, &answerer, codec, &recorder,
-				      test_case->raw_transport),
-			      "%s carrier recovery did not retrain and pass data",
+		if (test_case->id == DP_V22) {
+			CHECK(reject_unavailable_retrain(&caller, test_case->id) &&
+			      reject_unavailable_retrain(&answerer, test_case->id),
+			      "%s accepted a non-standard retrain",
 			      test_case->name);
+		} else {
+			CHECK(exercise_retrain(
+				      &caller, &answerer, &answerer, test_case->id,
+				      test_case->answerer_rx_rate, codec, &recorder, 0,
+				      test_case->raw_transport,
+				      test_case->id == DP_V22BIS &&
+					      test_case->raw_transport &&
+					      codec == MEDIA_CODEC_PCMU,
+				      false),
+			      "%s answerer retrain did not reconnect and pass data",
+			      test_case->name);
+			CHECK(exercise_retrain(
+				      &caller, &answerer, &caller, test_case->id,
+				      test_case->caller_rx_rate, codec, &recorder, 1,
+				      test_case->raw_transport, false,
+				      test_case->id == DP_V22BIS),
+			      "%s caller retrain did not reconnect and pass data",
+			      test_case->name);
+			if (test_case->id == DP_V22BIS)
+				CHECK(exercise_v22bis_carrier_recovery(
+					      &caller, &answerer, codec, &recorder,
+					      test_case->raw_transport),
+					      "%s carrier recovery did not retrain and pass data",
+					      test_case->name);
+		}
 	}
 	CHECK(!capture.invalid &&
 		      capture.blocks[RECORD_TX_LINE_PCM] != 0 &&
@@ -2307,7 +2359,7 @@ int main(void)
 		},
 		{
 			.id = DP_V22,
-			.name = "V.22 600 raw retrain",
+			.name = "V.22 600 raw rejects retrain",
 			.selection_command = "AT+MS=22,0,600,600\r",
 			.caller_tx_rate = V22_600_BIT_RATE,
 			.caller_rx_rate = V22_600_BIT_RATE,
@@ -2319,7 +2371,7 @@ int main(void)
 		},
 		{
 			.id = DP_V22,
-			.name = "V.22 raw retrain",
+			.name = "V.22 raw rejects retrain",
 			.selection_command = "AT+MS=22,1,1200,1200\r",
 			.caller_tx_rate = V22_1200_BIT_RATE,
 			.caller_rx_rate = V22_1200_BIT_RATE,
@@ -2363,7 +2415,7 @@ int main(void)
 		},
 		{
 			.id = DP_V22,
-			.name = "V.22 600 LAPM retrain",
+			.name = "V.22 600 LAPM rejects retrain",
 			.selection_command = "AT+MS=22,0,600,600\r",
 			.caller_tx_rate = V22_600_BIT_RATE,
 			.caller_rx_rate = V22_600_BIT_RATE,
@@ -2374,7 +2426,7 @@ int main(void)
 		},
 		{
 			.id = DP_V22,
-			.name = "V.22 LAPM retrain",
+			.name = "V.22 LAPM rejects retrain",
 			.selection_command = "AT+MS=22,0,1200,1200\r",
 			.caller_tx_rate = V22_1200_BIT_RATE,
 			.caller_rx_rate = V22_1200_BIT_RATE,
