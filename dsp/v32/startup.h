@@ -79,6 +79,23 @@ bool v32_startup_is_complete(
 enum v32_startup_result v32_startup_expect_selection(
 	struct v32_startup *startup);
 
+/* Advance the protocol from a completed locally owned conditioning stream.
+ * The physical transmitter owns the actual S, S-bar and TRN duration. */
+enum v32_startup_result v32_startup_finish_conditioning(
+	struct v32_startup *startup);
+
+/* Apply already-decoded receive events without running a second rate-signal
+ * detector. These transitions are shared with v32_startup_observe(). */
+enum v32_startup_result v32_startup_note_rate_signal(
+	struct v32_startup *startup,
+	const struct v32_rate_offer *offer);
+enum v32_startup_result v32_startup_note_end_signal(
+	struct v32_startup *startup,
+	const struct v32_rate_offer *offer);
+enum v32_startup_result v32_startup_note_confirmation(
+	struct v32_startup *startup, uint8_t dibit,
+	bool *connected);
+
 enum v32_startup_result v32_startup_next_transmit(
 	struct v32_startup *startup,
 	enum v32_startup_output *output, uint8_t *dibit);

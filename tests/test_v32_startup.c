@@ -497,6 +497,107 @@ static bool test_answerer_selects_lower_rate(void)
 	return true;
 }
 
+static bool transmit_word(struct v32_startup *startup)
+{
+	for (unsigned int index = 0;
+	     index < V32_RATE_SIGNAL_DIBITS; ++index) {
+		enum v32_startup_output output;
+		uint8_t dibit;
+
+		if (v32_startup_next_transmit(
+			    startup, &output, &dibit) != V32_STARTUP_OK ||
+		    output != V32_STARTUP_DIFFERENTIAL_DIBIT || dibit >= 4)
+			return false;
+	}
+	return true;
+}
+
+static bool test_decoded_event_exchange(void)
+{
+	const uint8_t rates = V32_RATE_CAPABILITY_4800 |
+			      V32_RATE_CAPABILITY_7200 |
+			      V32_RATE_CAPABILITY_9600;
+	const struct v32_rate_offer offer = {
+		.rates = rates,
+		.trellis_at_highest_rate = true,
+	};
+	const struct v32_rate_offer selected = {
+		.rates = V32_RATE_CAPABILITY_9600,
+		.trellis_at_highest_rate = true,
+	};
+	struct v32_startup caller;
+	struct v32_startup answerer;
+	bool caller_connected = false;
+	bool answerer_connected = false;
+
+	CHECK(v32_startup_init(&caller, V32_CALLER, rates) ==
+		      V32_STARTUP_OK &&
+	      v32_startup_init(&answerer, V32_ANSWERER, rates) ==
+		      V32_STARTUP_OK &&
+	      v32_startup_finish_conditioning(&answerer) ==
+		      V32_STARTUP_OK &&
+	      answerer.phase == V32_ANSWERER_SEND_OFFER &&
+	      v32_startup_note_rate_signal(&caller, &offer) ==
+		      V32_STARTUP_OK &&
+	      caller.phase == V32_CALLER_SEND_RESPONSE &&
+	      v32_startup_note_rate_signal(&answerer, &offer) ==
+		      V32_STARTUP_OK &&
+	      answerer.phase == V32_ANSWERER_RETRAIN &&
+	      answerer.selected_rate == V32_RATE_CAPABILITY_9600 &&
+	      v32_startup_finish_conditioning(&answerer) ==
+		      V32_STARTUP_OK &&
+	      answerer.phase == V32_ANSWERER_SEND_SELECTION &&
+	      v32_startup_expect_selection(&caller) == V32_STARTUP_OK &&
+	      v32_startup_note_rate_signal(&caller, &selected) ==
+		      V32_STARTUP_OK &&
+	      caller.selected_rate == V32_RATE_CAPABILITY_9600 &&
+	      caller.end_pending,
+	      "decoded V.32 events did not reach the selected-rate exchange");
+	CHECK(transmit_word(&caller) && caller.phase == V32_CALLER_SEND_END &&
+	      transmit_word(&caller) && caller.phase == V32_CONFIRM &&
+	      v32_startup_note_end_signal(&answerer, &selected) ==
+		      V32_STARTUP_OK &&
+	      answerer.end_received && answerer.end_pending &&
+	      transmit_word(&answerer) &&
+	      answerer.phase == V32_ANSWERER_SEND_END &&
+	      transmit_word(&answerer) && answerer.phase == V32_CONFIRM &&
+	      v32_startup_note_end_signal(&caller, &selected) ==
+		      V32_STARTUP_OK &&
+	      caller.end_received,
+	      "decoded V.32 events did not reach confirmation");
+	for (unsigned int index = 0;
+	     index < V32_STARTUP_CONFIRMATION_DIBITS; ++index) {
+		enum v32_startup_output caller_output;
+		enum v32_startup_output answerer_output;
+		uint8_t caller_dibit;
+		uint8_t answerer_dibit;
+
+		CHECK(v32_startup_next_transmit(
+			      &caller, &caller_output, &caller_dibit) ==
+			      V32_STARTUP_OK &&
+		      v32_startup_next_transmit(
+			      &answerer, &answerer_output,
+			      &answerer_dibit) == V32_STARTUP_OK &&
+		      caller_output == V32_STARTUP_SELECTED_RATE_MARK &&
+		      answerer_output == V32_STARTUP_SELECTED_RATE_MARK &&
+		      caller_dibit == 3 && answerer_dibit == 3 &&
+		      v32_startup_note_confirmation(
+			      &caller, answerer_dibit,
+			      &caller_connected) == V32_STARTUP_OK &&
+		      v32_startup_note_confirmation(
+			      &answerer, caller_dibit,
+			      &answerer_connected) == V32_STARTUP_OK,
+		      "decoded V.32 confirmation failed at dibit %u", index);
+	}
+	CHECK(caller_connected && answerer_connected &&
+	      v32_startup_is_complete(&caller) &&
+	      v32_startup_is_complete(&answerer) &&
+	      caller.selected_rate == answerer.selected_rate &&
+	      caller.selected_rate == V32_RATE_CAPABILITY_9600,
+	      "decoded V.32 events did not enter data");
+	return true;
+}
+
 static bool test_no_common_rate(void)
 {
 	struct v32_startup caller;
@@ -542,8 +643,10 @@ static bool test_no_common_rate(void)
 
 static bool test_validation(void)
 {
+	const struct v32_rate_offer invalid_offer = { 0 };
 	struct v32_startup startup;
 	struct v32_startup saved;
+	bool connected = true;
 	enum v32_startup_output output =
 		V32_STARTUP_DATA;
 	uint8_t dibit = UINT8_MAX;
@@ -557,7 +660,27 @@ static bool test_validation(void)
 	saved = startup;
 	CHECK(v32_startup_expect_selection(&startup) ==
 		      V32_STARTUP_INVALID_ARGUMENT &&
-		      memcmp(&startup, &saved, sizeof(startup)) == 0 &&
+	      v32_startup_finish_conditioning(&startup) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_rate_signal(NULL, &invalid_offer) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_rate_signal(&startup, NULL) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_rate_signal(&startup, &invalid_offer) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_end_signal(NULL, &invalid_offer) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_end_signal(&startup, NULL) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_end_signal(&startup, &invalid_offer) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_confirmation(NULL, 3, &connected) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_confirmation(&startup, 4, &connected) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      v32_startup_note_confirmation(&startup, 3, NULL) ==
+		      V32_STARTUP_INVALID_ARGUMENT &&
+	      memcmp(&startup, &saved, sizeof(startup)) == 0 && connected &&
 		      v32_startup_init(
 			      &startup, (enum v32_endpoint_role)2,
 			      V32_RATE_CAPABILITY_4800) ==
@@ -607,6 +730,7 @@ int main(void)
 		  test_selection_readiness_and_rate_boundary },
 		{ "repeated initial offer", test_repeated_initial_offer },
 		{ "answerer selects lower rate", test_answerer_selects_lower_rate },
+		{ "decoded event exchange", test_decoded_event_exchange },
 		{ "no common rate", test_no_common_rate },
 		{ "validation", test_validation },
 	};

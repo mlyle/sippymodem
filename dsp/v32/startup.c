@@ -26,6 +26,17 @@ static bool rate_requires_trellis(uint8_t rate)
 	       rate == V32_RATE_CAPABILITY_14400;
 }
 
+static bool offer_is_valid(
+	enum v32_rate_signal_type type,
+	const struct v32_rate_offer *offer)
+{
+	uint16_t word;
+
+	return offer != NULL &&
+	       v32_rate_signal_encode(type, offer, &word) ==
+		       V32_RATE_SIGNAL_OK;
+}
+
 static struct v32_rate_offer rate_offer(uint8_t rates)
 {
 	return (struct v32_rate_offer){
@@ -305,6 +316,22 @@ static void finish_training_phase(struct v32_startup *startup)
 			    V32_ANSWERER_SEND_SELECTION);
 }
 
+enum v32_startup_result v32_startup_finish_conditioning(
+	struct v32_startup *startup)
+{
+	struct v32_startup next;
+
+	if (!v32_startup_is_valid(startup) ||
+	    !phase_transmits_bounded_training(startup->phase))
+		return V32_STARTUP_INVALID_ARGUMENT;
+	next = *startup;
+	finish_training_phase(&next);
+	if (!v32_startup_is_valid(&next))
+		return V32_STARTUP_INVALID_ARGUMENT;
+	*startup = next;
+	return V32_STARTUP_OK;
+}
+
 enum v32_startup_result v32_startup_next_transmit(
 	struct v32_startup *startup,
 	enum v32_startup_output *output, uint8_t *dibit)
@@ -459,6 +486,43 @@ static enum v32_startup_result observe_end_event(
 	return V32_STARTUP_OK;
 }
 
+static enum v32_startup_result note_signal(
+	struct v32_startup *startup,
+	const struct v32_rate_offer *offer,
+	enum v32_rate_signal_type type)
+{
+	struct v32_startup next;
+	enum v32_startup_result result;
+
+	if (!v32_startup_is_valid(startup) ||
+	    !offer_is_valid(type, offer))
+		return V32_STARTUP_INVALID_ARGUMENT;
+	next = *startup;
+	result = type == V32_RATE_SIGNAL ?
+		observe_rate_event(&next, offer) :
+		observe_end_event(&next, offer);
+	if (result != V32_STARTUP_OK)
+		return result;
+	if (!v32_startup_is_valid(&next))
+		return V32_STARTUP_INVALID_ARGUMENT;
+	*startup = next;
+	return V32_STARTUP_OK;
+}
+
+enum v32_startup_result v32_startup_note_rate_signal(
+	struct v32_startup *startup,
+	const struct v32_rate_offer *offer)
+{
+	return note_signal(startup, offer, V32_RATE_SIGNAL);
+}
+
+enum v32_startup_result v32_startup_note_end_signal(
+	struct v32_startup *startup,
+	const struct v32_rate_offer *offer)
+{
+	return note_signal(startup, offer, V32_END_SIGNAL);
+}
+
 static void observe_confirmation_dibit(
 	struct v32_startup *startup, uint8_t dibit)
 {
@@ -472,6 +536,24 @@ static void observe_confirmation_dibit(
 		startup->receive_mark_dibits = 0;
 	}
 	maybe_enter_data(startup);
+}
+
+enum v32_startup_result v32_startup_note_confirmation(
+	struct v32_startup *startup, uint8_t dibit,
+	bool *connected)
+{
+	struct v32_startup next;
+
+	if (!v32_startup_is_valid(startup) || dibit >= 4 ||
+	    connected == NULL)
+		return V32_STARTUP_INVALID_ARGUMENT;
+	next = *startup;
+	observe_confirmation_dibit(&next, dibit);
+	if (!v32_startup_is_valid(&next))
+		return V32_STARTUP_INVALID_ARGUMENT;
+	*startup = next;
+	*connected = next.phase == V32_DATA;
+	return V32_STARTUP_OK;
 }
 
 enum v32_startup_result v32_startup_observe(
@@ -497,11 +579,12 @@ enum v32_startup_result v32_startup_observe(
 	    V32_RATE_SIGNAL_OK)
 		return V32_STARTUP_INVALID_ARGUMENT;
 	if (event == V32_RATE_SIGNAL_DETECTED)
-		result = observe_rate_event(&next, &offer);
+		result = v32_startup_note_rate_signal(&next, &offer);
 	else if (event == V32_END_SIGNAL_DETECTED)
-		result = observe_end_event(&next, &offer);
+		result = v32_startup_note_end_signal(&next, &offer);
 	else if (next.end_received)
-		observe_confirmation_dibit(&next, dibit);
+		result = v32_startup_note_confirmation(
+			&next, dibit, connected);
 	if (result != V32_STARTUP_OK)
 		return result;
 	*startup = next;
