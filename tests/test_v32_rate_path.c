@@ -2,6 +2,7 @@
 
 #include <conditioning.h>
 #include <b1_path.h>
+#include <carrier.h>
 #include <conditioning_path.h>
 #include <constellation.h>
 #include <data_path.h>
@@ -26,18 +27,6 @@ enum {
 	TEST_ANSWERING_RATE_OBSERVATIONS = 4 * V32_RATE_SIGNAL_DIBITS,
 	TEST_SELECTED_MODES = 6,
 	TEST_DATA_GROUPS = 64,
-};
-
-static const struct qam_channel V32_CHANNEL = {
-	.sample_rate = V32_ECHO_FRONTEND_INPUT_RATE,
-	.symbol_rate_numerator = 2400,
-	.symbol_rate_denominator = 1,
-	.carrier_frequency_numerator = 1800,
-	.carrier_frequency_denominator = 1,
-	.rolloff = 0.25,
-	/* Retain the complete V.32 transmit pulse support.  A shortened test
-	 * pulse leaves deterministic residual ISI at the 128-point boundary. */
-	.pulse_span_symbols = 12,
 };
 
 struct generated_source {
@@ -128,6 +117,8 @@ static bool source_init(
 	enum v32_transmitter_role role,
 	const struct v32_rate_offer *selected_offer)
 {
+	struct qam_channel channel;
+
 	memset(source, 0, sizeof(*source));
 	source->offer = role_offer(role);
 	source->selected_offer = *selected_offer;
@@ -136,8 +127,9 @@ static bool source_init(
 	    selected_offer->trellis_at_highest_rate &&
 	    selected_offer->rates >= V32_RATE_CAPABILITY_9600)
 		source->offer.trellis_at_highest_rate = true;
-	return qam_modulator_init(
-		       &source->modulator, &V32_CHANNEL,
+	return v32_carrier_channel(&channel) == V32_CARRIER_OK &&
+	       qam_modulator_init(
+		       &source->modulator, &channel,
 		       TEST_AMPLITUDE) == QAM_OK &&
 	       v32_conditioning_transmitter_init(
 		       &source->conditioning, role,

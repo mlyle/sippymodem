@@ -4,6 +4,7 @@
 #include <qam.h>
 #include <qam_gain.h>
 #include <single_tone.h>
+#include <carrier.h>
 #include <conditioning.h>
 #include <conditioning_qam.h>
 #include <conditioning_receiver.h>
@@ -38,16 +39,6 @@ enum {
 	TEST_ANSWERER_OFFER_SAMPLES = 2000,
 	TEST_ANSWERER_OFFER_POWER_SAMPLES = 400,
 	TEST_FRESH_CALLER_SAMPLES = 4000,
-};
-
-static const struct qam_channel test_v32_channel = {
-	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = V32_STARTUP_SYMBOL_RATE,
-	.symbol_rate_denominator = 1,
-	.carrier_frequency_numerator = V32_CALLING_CARRIER_HZ,
-	.carrier_frequency_denominator = 1,
-	.rolloff = 0.25,
-	.pulse_span_symbols = 6,
 };
 
 struct test_turnaround_signal {
@@ -174,9 +165,12 @@ static bool conditioning_signal_init(
 	struct test_conditioning_signal *signal,
 	enum v32_transmitter_role role)
 {
+	struct qam_channel channel;
+
 	*signal = (struct test_conditioning_signal){ 0 };
-	return qam_modulator_init(
-		       &signal->modulator, &test_v32_channel,
+	return v32_carrier_channel(&channel) == V32_CARRIER_OK &&
+	       qam_modulator_init(
+		       &signal->modulator, &channel,
 		       TEST_TONE_AMPLITUDE) == QAM_OK &&
 	       v32_conditioning_transmitter_init(
 		       &signal->transmitter, role,
@@ -336,10 +330,12 @@ static bool peer_qam_init(struct test_peer_qam *peer)
 		.rates = V32_RATE_CAPABILITY_4800,
 		.trellis_at_highest_rate = false,
 	};
+	struct qam_channel channel;
 
 	*peer = (struct test_peer_qam){ 0 };
-	return qam_modulator_init(
-		       &peer->modulator, &test_v32_channel,
+	return v32_carrier_channel(&channel) == V32_CARRIER_OK &&
+	       qam_modulator_init(
+		       &peer->modulator, &channel,
 		       TEST_TONE_AMPLITUDE) == QAM_OK &&
 	       v32_conditioning_transmitter_init(
 		       &peer->conditioning,
@@ -423,9 +419,12 @@ static bool peer_qam_sample(struct test_peer_qam *peer, int16_t *sample)
 static bool caller_qam_receiver_init(
 	struct test_caller_qam_receiver *receiver)
 {
+	struct qam_channel channel;
+
 	*receiver = (struct test_caller_qam_receiver){ 0 };
-	return qam_demodulator_init(
-		       &receiver->demodulator, &test_v32_channel) ==
+	return v32_carrier_channel(&channel) == V32_CARRIER_OK &&
+	       qam_demodulator_init(
+		       &receiver->demodulator, &channel) ==
 		       QAM_OK &&
 	       v32_conditioning_receiver_init(
 		       &receiver->conditioning,

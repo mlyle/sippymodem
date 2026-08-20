@@ -127,6 +127,7 @@ V22_SOURCES := \
 	$(DSP_V22_SOURCE_DIR)/v22bis_receiver.c \
 	$(DSP_V22_SOURCE_DIR)/v22bis_symbols.c
 V32_SOURCES := \
+	$(DSP_V32_SOURCE_DIR)/carrier.c \
 	$(DSP_V32_SOURCE_DIR)/datapump.c \
 	$(DSP_V32_SOURCE_DIR)/uncoded_qam.c \
 	$(DSP_V32_SOURCE_DIR)/conditioning.c \

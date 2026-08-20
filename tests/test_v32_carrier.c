@@ -2,6 +2,7 @@
 
 #include <g711.h>
 #include <qam.h>
+#include <carrier.h>
 #include <constellation.h>
 #include <framing.h>
 
@@ -38,15 +39,11 @@ enum test_codec {
 
 static struct qam_channel v32_channel(uint32_t carrier_hz)
 {
-	return (struct qam_channel){
-		.sample_rate = TEST_SAMPLE_RATE,
-		.symbol_rate_numerator = TEST_SYMBOL_RATE,
-		.symbol_rate_denominator = 1,
-		.carrier_frequency_numerator = carrier_hz,
-		.carrier_frequency_denominator = 1,
-		.rolloff = 0.25,
-		.pulse_span_symbols = 6,
-	};
+	struct qam_channel channel = { 0 };
+
+	if (v32_carrier_channel(&channel) == V32_CARRIER_OK)
+		channel.carrier_frequency_numerator = carrier_hz;
+	return channel;
 }
 
 static uint32_t fixture_random(uint32_t *state)
@@ -284,6 +281,24 @@ static bool test_phase_quantizer_validation(void)
 	return true;
 }
 
+static bool test_carrier_profile(void)
+{
+	struct qam_channel channel;
+
+	CHECK(v32_carrier_channel(NULL) == V32_CARRIER_INVALID_ARGUMENT &&
+	      v32_carrier_channel(&channel) == V32_CARRIER_OK &&
+	      channel.sample_rate == TEST_SAMPLE_RATE &&
+	      channel.symbol_rate_numerator == TEST_SYMBOL_RATE &&
+	      channel.symbol_rate_denominator == 1 &&
+	      channel.carrier_frequency_numerator == TEST_CARRIER_HZ &&
+	      channel.carrier_frequency_denominator == 1 &&
+	      channel.rolloff == 0.25 &&
+	      channel.pulse_span_symbols ==
+		      V32_CARRIER_PULSE_SPAN_SYMBOLS,
+	      "V.32 carrier profile changed");
+	return true;
+}
+
 static bool test_linear_carrier(void)
 {
 	return check_carrier(
@@ -317,6 +332,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "carrier profile", test_carrier_profile },
 		{ "linear carrier", test_linear_carrier },
 		{ "PCMU carrier", test_pcmu_carrier },
 		{ "PCMA carrier", test_pcma_carrier },

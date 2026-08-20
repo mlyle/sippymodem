@@ -438,6 +438,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/v22_framing.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
 	$(BUILD_DIR)/v22bis_symbols.o \
+	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
@@ -629,6 +630,7 @@ V32_RATE_PATH_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_rate_path
 V32_RATE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_rate_path.o \
+	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/data_path.o \
 	$(BUILD_DIR)/b1_path.o \
 	$(BUILD_DIR)/end_path.o \
@@ -751,6 +753,7 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/single_tone.o \
 	$(BUILD_DIR)/training_session.o \
+	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
@@ -806,6 +809,7 @@ V32_TRELLIS_QAM_ACQUIRER_TEST_OBJECTS := \
 V32_CARRIER_TEST_BINARY := $(BUILD_DIR)/test_v32_carrier
 V32_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_carrier.o \
+	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
@@ -2947,6 +2951,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v22_framing.o \
 	$(BUILD_DIR)/v22bis_receiver.o \
 	$(BUILD_DIR)/v22bis_symbols.o \
+	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/datapump.o \
 	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
@@ -5158,6 +5163,10 @@ $(BUILD_DIR)/uncoded_receiver.o: \
 
 $(BUILD_DIR)/uncoded_qam.o: \
 	$(DSP_V32_SOURCE_DIR)/uncoded_qam.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/carrier.o: \
+	$(DSP_V32_SOURCE_DIR)/carrier.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/rate_signal.o: \

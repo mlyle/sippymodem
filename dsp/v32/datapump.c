@@ -8,6 +8,7 @@
 #include "qam.h"
 #include "qam_gain.h"
 #include "uncoded_qam.h"
+#include "carrier.h"
 #include "conditioning.h"
 #include "conditioning_qam.h"
 #include "conditioning_receiver.h"
@@ -30,9 +31,6 @@
  * around the rate exchange. Two-wire echo cancellation remains follow-up
  * work. */
 enum {
-	V32_SYMBOL_RATE = 2400,
-	V32_CARRIER_HZ = 1800,
-	V32_PULSE_SPAN_SYMBOLS = 6,
 	V32_TRANSMIT_AMPLITUDE = 12000,
 	V32_SIGNAL_A = 0,
 	V32_SIGNAL_B = 1,
@@ -48,16 +46,6 @@ enum {
 		SINGLE_TONE_ACQUIRE_SAMPLES,
 	V32_CONDITIONING_SILENCE_SAMPLES = 24,
 	V32_CONDITIONING_SIGNAL_THRESHOLD = 256,
-};
-
-static const struct qam_channel v32_channel = {
-	.sample_rate = MODEM_RATE,
-	.symbol_rate_numerator = V32_SYMBOL_RATE,
-	.symbol_rate_denominator = 1,
-	.carrier_frequency_numerator = V32_CARRIER_HZ,
-	.carrier_frequency_denominator = 1,
-	.rolloff = 0.25,
-	.pulse_span_symbols = V32_PULSE_SPAN_SYMBOLS,
 };
 
 static const double v32_min_conditioning_point_power = 1e-12;
@@ -168,7 +156,8 @@ static bool caller_turnaround_s_symbols(
 
 	if (samples == 0 || symbols == NULL)
 		return false;
-	rounded = (samples * V32_SYMBOL_RATE + MODEM_RATE - 1u) / MODEM_RATE;
+	rounded = (samples * V32_CARRIER_SYMBOL_RATE + MODEM_RATE - 1u) /
+		MODEM_RATE;
 	if ((rounded & 1u) != 0)
 		rounded++;
 	if (rounded == 0 || rounded > UINT32_MAX)
@@ -529,12 +518,15 @@ static int initialize_protocol(
 	struct v32_line_startup detected_caller = datapump->line_startup;
 	struct v32_answerer_line_startup detected_answerer =
 		datapump->answerer_line_startup;
+	struct qam_channel channel;
 
-	if (qam_modulator_init(
-		    &datapump->modulator, &v32_channel,
+	if (v32_carrier_channel(&channel) != V32_CARRIER_OK ||
+	    channel.sample_rate != MODEM_RATE ||
+	    qam_modulator_init(
+		    &datapump->modulator, &channel,
 		    V32_TRANSMIT_AMPLITUDE) != QAM_OK ||
 	    qam_demodulator_init(
-		    &datapump->demodulator, &v32_channel) != QAM_OK ||
+		    &datapump->demodulator, &channel) != QAM_OK ||
 	    v32_symbol_encoder_init(
 		    &datapump->encoder, local_role(datapump->caller), 0) !=
 		    V32_FRAMING_OK ||
