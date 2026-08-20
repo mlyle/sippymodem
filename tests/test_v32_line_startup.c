@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
+#include <carrier.h>
 #include <line_startup.h>
 
 #include "channel_bench.h"
@@ -204,8 +205,9 @@ static bool run_exchange(enum test_codec codec, unsigned int turnaround_hz)
 		calling_power += (uint64_t)((int32_t)transmit * transmit);
 		marker_samples++;
 	}
-	CHECK(calling_power > UINT64_C(1000000000),
-	      "caller omitted its 1800 Hz response carrier");
+	CHECK(calling_power > UINT64_C(5000000000) &&
+		      calling_power < UINT64_C(9000000000),
+	      "caller did not pulse-shape its 1800 Hz carrier states");
 	while (startup.state !=
 		       V32_LINE_SEND_REVERSED_CALLING_CARRIER &&
 	       reversal_response_samples < TEST_TRANSITION_LIMIT) {
@@ -402,8 +404,9 @@ static bool run_answerer_standard_exchange(enum test_codec codec)
 			(uint64_t)((int32_t)transmit * transmit);
 	}
 	CHECK(startup.state == V32_ANSWERER_LINE_WAIT_CALLER_REVERSAL &&
-		      turnaround_power > UINT64_C(10000000000),
-	      "answerer did not send the minimum AC interval");
+		      turnaround_power > UINT64_C(5000000000) &&
+		      turnaround_power < UINT64_C(9000000000),
+	      "answerer did not pulse-shape the minimum AC interval");
 	for (size_t count = 0; count < TEST_ROUND_TRIP_SAMPLES; ++count) {
 		int16_t transmit;
 
@@ -457,8 +460,13 @@ static bool run_answerer_standard_exchange(enum test_codec codec)
 			      V32_LINE_STARTUP_OK,
 		      "answerer rejected the calling-carrier drop");
 		if (before == V32_ANSWERER_LINE_POST_DROP_SILENCE) {
-			CHECK(transmit == 0,
-			      "answerer transmitted during its post-drop gap");
+			if (quiet_samples >=
+			    (V32_CARRIER_PULSE_SPAN_SYMBOLS *
+				     SINGLE_TONE_SAMPLE_RATE +
+			     V32_STARTUP_SYMBOL_RATE - 1) /
+				    V32_STARTUP_SYMBOL_RATE)
+				CHECK(transmit == 0,
+				      "answerer did not drain its carrier tail");
 			quiet_samples++;
 		}
 	}

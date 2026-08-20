@@ -754,6 +754,9 @@ V32_LINE_STARTUP_TEST_BINARY := \
 V32_LINE_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_line_startup.o \
 	$(BUILD_DIR)/channel_bench.o \
+	$(BUILD_DIR)/qam.o \
+	$(BUILD_DIR)/carrier.o \
+	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/line_startup.o \
 	$(BUILD_DIR)/single_tone.o \
 	$(BUILD_DIR)/g711.o

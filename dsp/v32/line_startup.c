@@ -2,12 +2,127 @@
 
 #include "line_startup.h"
 
+#include "carrier.h"
+#include "constellation.h"
+
 #include <limits.h>
 
 /* The alternating answerer states divide their energy between the 600 and
  * 3000 Hz projections. Either projection may carry only half of the line
  * power on a clean channel. */
 static const double V32_TURNAROUND_MINIMUM_CARRIER_SHARE = 0.40;
+
+static bool line_carrier_point_matches(
+	const struct v32_line_carrier *carrier)
+{
+	struct qam_point expected = { 0 };
+
+	if (carrier->current_active &&
+	    v32_4800_constellation_point(
+		    carrier->current_quadrant, &expected) !=
+		    V32_CONSTELLATION_OK)
+		return false;
+	return carrier->point.in_phase == expected.in_phase &&
+	       carrier->point.quadrature == expected.quadrature;
+}
+
+static bool line_carrier_is_valid(
+	const struct v32_line_carrier *carrier)
+{
+	const struct qam_channel *channel;
+
+	if (carrier == NULL ||
+	    !qam_modulator_is_valid(&carrier->modulator) ||
+	    (carrier->current_quadrant != 0 &&
+	     carrier->current_quadrant != 2) ||
+	    (carrier->next_quadrant != 0 &&
+	     carrier->next_quadrant != 2) ||
+	    (!carrier->alternating && carrier->next_quadrant != 0) ||
+	    !line_carrier_point_matches(carrier))
+		return false;
+	channel = &carrier->modulator.channel;
+	return channel->sample_rate == V32_CARRIER_SAMPLE_RATE &&
+	       channel->symbol_rate_numerator == V32_CARRIER_SYMBOL_RATE &&
+	       channel->symbol_rate_denominator == 1 &&
+	       channel->carrier_frequency_numerator ==
+		       V32_CARRIER_FREQUENCY_HZ &&
+	       channel->carrier_frequency_denominator == 1 &&
+	       channel->rolloff == 0.25 &&
+	       channel->pulse_span_symbols ==
+		       V32_CARRIER_PULSE_SPAN_SYMBOLS;
+}
+
+static bool line_carrier_init(
+	struct v32_line_carrier *carrier, int16_t amplitude,
+	bool alternating)
+{
+	struct v32_line_carrier initialized = {
+		.alternating = alternating,
+	};
+	struct qam_channel channel;
+
+	if (carrier == NULL ||
+	    v32_carrier_channel(&channel) != V32_CARRIER_OK ||
+	    qam_modulator_init(
+		    &initialized.modulator, &channel, amplitude) != QAM_OK ||
+	    !line_carrier_is_valid(&initialized))
+		return false;
+	*carrier = initialized;
+	return true;
+}
+
+static bool line_carrier_reverse(struct v32_line_carrier *carrier)
+{
+	struct v32_line_carrier next;
+
+	if (!line_carrier_is_valid(carrier))
+		return false;
+	next = *carrier;
+	next.reversed = !next.reversed;
+	if (!line_carrier_is_valid(&next))
+		return false;
+	*carrier = next;
+	return true;
+}
+
+static bool line_carrier_sample(
+	struct v32_line_carrier *carrier, bool active, int16_t *sample)
+{
+	struct v32_line_carrier next;
+	bool can_accept;
+	bool accepted;
+
+	if (!line_carrier_is_valid(carrier) || sample == NULL)
+		return false;
+	next = *carrier;
+	can_accept = qam_modulator_can_accept_symbol(&next.modulator);
+	if (can_accept) {
+		if (active) {
+			uint8_t quadrant = next.alternating ?
+				next.next_quadrant : 0;
+
+			if (next.reversed)
+				quadrant ^= 2u;
+			if (v32_4800_constellation_point(
+				    quadrant, &next.point) !=
+			    V32_CONSTELLATION_OK)
+				return false;
+			next.current_quadrant = quadrant;
+			next.current_active = true;
+			if (next.alternating)
+				next.next_quadrant ^= 2u;
+		} else {
+			next.point = (struct qam_point){ 0 };
+			next.current_active = false;
+		}
+	}
+	if (qam_modulator_sample(
+		    &next.modulator, &next.point, sample, &accepted) != QAM_OK ||
+	    accepted != can_accept || !line_carrier_is_valid(&next))
+		return false;
+	*carrier = next;
+	return true;
+}
 
 static bool retrain_carrier_qualified(
 	uint32_t *samples, bool present, bool acquired)
@@ -98,10 +213,8 @@ bool v32_line_startup_is_valid(
 		    V32_HIGH_TURNAROUND_TONE_HZ ||
 	    startup->high_turnaround_tone.minimum_carrier_share !=
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE ||
-	    !single_tone_transmitter_is_valid(
-		    &startup->calling_carrier) ||
-	    startup->calling_carrier.frequency_hz !=
-		    V32_CALLING_CARRIER_HZ ||
+	    !line_carrier_is_valid(&startup->calling_carrier) ||
+	    startup->calling_carrier.alternating ||
 	    (startup->state == V32_LINE_ANSWER_GUARD &&
 	     startup->state_samples >=
 		     V32_ANSWER_GUARD_SAMPLES) ||
@@ -156,10 +269,9 @@ static enum v32_line_startup_result caller_init(
 		    V32_HIGH_TURNAROUND_TONE_HZ,
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE) !=
 		    SINGLE_TONE_OK ||
-	    single_tone_transmitter_init(
+	    !line_carrier_init(
 		    &initialized.calling_carrier,
-		    V32_CALLING_CARRIER_HZ,
-		    transmit_amplitude) != SINGLE_TONE_OK)
+		    transmit_amplitude, false))
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
 	initialized.state = state;
 	if (!v32_line_startup_is_valid(&initialized))
@@ -212,16 +324,8 @@ bool v32_answerer_line_startup_is_valid(
 	if (startup == NULL || !answerer_state_is_valid(startup->state) ||
 	    !single_tone_transmitter_is_valid(&startup->answer_tone) ||
 	    startup->answer_tone.frequency_hz != V32_ANSWER_TONE_HZ ||
-	    !single_tone_transmitter_is_valid(
-		    &startup->low_turnaround_tone) ||
-	    startup->low_turnaround_tone.frequency_hz !=
-		    V32_LOW_TURNAROUND_TONE_HZ ||
-	    !single_tone_transmitter_is_valid(
-		    &startup->high_turnaround_tone) ||
-	    startup->high_turnaround_tone.frequency_hz !=
-		    V32_HIGH_TURNAROUND_TONE_HZ ||
-	    startup->low_turnaround_tone.amplitude !=
-		    startup->high_turnaround_tone.amplitude ||
+	    !line_carrier_is_valid(&startup->turnaround_carrier) ||
+	    !startup->turnaround_carrier.alternating ||
 	    !single_tone_detector_is_valid(&startup->calling_carrier) ||
 	    startup->calling_carrier.frequency_hz !=
 		    V32_CALLING_CARRIER_HZ)
@@ -264,22 +368,15 @@ static enum v32_line_startup_result answerer_init(
 	int16_t transmit_amplitude, enum v32_answerer_line_state state)
 {
 	struct v32_answerer_line_startup initialized = { 0 };
-	int16_t turnaround_amplitude;
 
 	if (startup == NULL || transmit_amplitude < 2)
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
-	turnaround_amplitude = transmit_amplitude / 2;
 	if (single_tone_transmitter_init(
 		    &initialized.answer_tone, V32_ANSWER_TONE_HZ,
 		    transmit_amplitude) != SINGLE_TONE_OK ||
-	    single_tone_transmitter_init(
-		    &initialized.low_turnaround_tone,
-		    V32_LOW_TURNAROUND_TONE_HZ,
-		    turnaround_amplitude) != SINGLE_TONE_OK ||
-	    single_tone_transmitter_init(
-		    &initialized.high_turnaround_tone,
-		    V32_HIGH_TURNAROUND_TONE_HZ,
-		    turnaround_amplitude) != SINGLE_TONE_OK ||
+	    !line_carrier_init(
+		    &initialized.turnaround_carrier,
+		    transmit_amplitude, true) ||
 	    single_tone_detector_init(
 		    &initialized.calling_carrier,
 		    V32_CALLING_CARRIER_HZ) != SINGLE_TONE_OK)
@@ -332,10 +429,7 @@ static void answerer_enter_state(
 static bool answerer_reverse_turnaround(
 	struct v32_answerer_line_startup *startup)
 {
-	return single_tone_transmitter_reverse(
-		       &startup->low_turnaround_tone) == SINGLE_TONE_OK &&
-	       single_tone_transmitter_reverse(
-		       &startup->high_turnaround_tone) == SINGLE_TONE_OK;
+	return line_carrier_reverse(&startup->turnaround_carrier);
 }
 
 static enum v32_line_startup_result answerer_fail(
@@ -355,18 +449,11 @@ static enum v32_line_startup_result answerer_fail(
 }
 
 static bool answerer_turnaround_sample(
-	struct v32_answerer_line_startup *startup, int16_t *sample)
+	struct v32_answerer_line_startup *startup, bool active,
+	int16_t *sample)
 {
-	int16_t low;
-	int16_t high;
-
-	if (single_tone_transmitter_sample(
-		    &startup->low_turnaround_tone, &low) != SINGLE_TONE_OK ||
-	    single_tone_transmitter_sample(
-		    &startup->high_turnaround_tone, &high) != SINGLE_TONE_OK)
-		return false;
-	*sample = (int16_t)((int32_t)low + high);
-	return true;
+	return line_carrier_sample(
+		&startup->turnaround_carrier, active, sample);
 }
 
 enum v32_line_startup_result v32_answerer_line_startup_process(
@@ -486,7 +573,10 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 	}
 	if (startup->state >= V32_ANSWERER_LINE_SEND_AC &&
 	    startup->state <= V32_ANSWERER_LINE_HOLD_RESPONSE &&
-	    !answerer_turnaround_sample(&next, &generated))
+	    !answerer_turnaround_sample(&next, true, &generated))
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	if (startup->state == V32_ANSWERER_LINE_POST_DROP_SILENCE &&
+	    !answerer_turnaround_sample(&next, false, &generated))
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
 	if (!v32_answerer_line_startup_is_valid(&next))
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
@@ -707,9 +797,8 @@ v32_line_startup_process(
 		advance_state_clock(&next);
 		if (next.state_samples ==
 		    V32_REVERSAL_RESPONSE_SAMPLES) {
-			if (single_tone_transmitter_reverse(
-				    &next.calling_carrier) !=
-			    SINGLE_TONE_OK)
+			if (!line_carrier_reverse(
+				    &next.calling_carrier))
 				return V32_LINE_STARTUP_INVALID_ARGUMENT;
 			enter_state(
 				&next,
@@ -751,14 +840,14 @@ v32_line_startup_process(
 	case V32_LINE_STARTUP_FAILED:
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;
 	}
-	if (next.state == V32_LINE_SEND_CALLING_CARRIER ||
-	    next.state ==
+	if (next.state != V32_LINE_STARTUP_COMPLETE &&
+	    (startup->state == V32_LINE_SEND_CALLING_CARRIER ||
+	     startup->state ==
 		    V32_LINE_DELAY_CALLING_CARRIER_REVERSAL ||
-	    next.state ==
-		    V32_LINE_SEND_REVERSED_CALLING_CARRIER) {
-		if (single_tone_transmitter_sample(
-			    &next.calling_carrier, &generated) !=
-		    SINGLE_TONE_OK)
+	     startup->state ==
+		    V32_LINE_SEND_REVERSED_CALLING_CARRIER)) {
+		if (!line_carrier_sample(
+			    &next.calling_carrier, true, &generated))
 			return V32_LINE_STARTUP_INVALID_ARGUMENT;
 	}
 	if (!v32_line_startup_is_valid(&next))
@@ -813,7 +902,7 @@ enum v32_line_startup_result v32_line_startup_observe_retrain(
 		*started = false;
 		return V32_LINE_STARTUP_OK;
 	}
-	amplitude = startup->calling_carrier.amplitude;
+	amplitude = startup->calling_carrier.modulator.amplitude;
 	if (v32_line_retrain_init(&next, amplitude) !=
 	    V32_LINE_STARTUP_OK)
 		return V32_LINE_STARTUP_INVALID_ARGUMENT;

@@ -3,6 +3,7 @@
 #ifndef V32_LINE_STARTUP_H
 #define V32_LINE_STARTUP_H
 
+#include "qam.h"
 #include "single_tone.h"
 
 #include <stdbool.h>
@@ -69,11 +70,24 @@ enum v32_line_startup_result {
 	V32_LINE_STARTUP_PROTOCOL_ERROR,
 };
 
+/* Carrier states A and C use the same pulse-shaped 1800 Hz transmit lane as
+ * the later V.32 training and data signals.  The answerer alternates A/C;
+ * the caller holds one state until the scheduled reversal. */
+struct v32_line_carrier {
+	struct qam_modulator modulator;
+	struct qam_point point;
+	uint8_t current_quadrant;
+	uint8_t next_quadrant;
+	bool alternating;
+	bool current_active;
+	bool reversed;
+};
+
 struct v32_line_startup {
 	struct single_tone_detector answer_tone;
 	struct single_tone_detector low_turnaround_tone;
 	struct single_tone_detector high_turnaround_tone;
-	struct single_tone_transmitter calling_carrier;
+	struct v32_line_carrier calling_carrier;
 	uint32_t state_samples;
 	uint32_t round_trip_samples;
 	uint16_t selected_turnaround_tone_hz;
@@ -94,8 +108,7 @@ enum v32_answerer_line_state {
 
 struct v32_answerer_line_startup {
 	struct single_tone_transmitter answer_tone;
-	struct single_tone_transmitter low_turnaround_tone;
-	struct single_tone_transmitter high_turnaround_tone;
+	struct v32_line_carrier turnaround_carrier;
 	struct single_tone_detector calling_carrier;
 	uint32_t state_samples;
 	uint32_t round_trip_samples;
