@@ -305,6 +305,56 @@ enum v32_receive_path_result v32_receive_path_sample(
 	return result;
 }
 
+enum v32_receive_path_result v32_receive_path_sample_paused(
+	struct v32_receive_path *path, int16_t received,
+	const struct v32_echo_reference *accepted_reference,
+	double *cleaned, bool *cleaned_ready)
+{
+	struct v32_echo_frontend next_echo;
+	double next_cleaned;
+	bool next_ready;
+	enum v32_echo_result result;
+
+	if (!path_header_is_valid(path) || !receive_boundary_is_open(path) ||
+	    !path->line.input_paused || path->echo_training ||
+	    path->echo.echo.adapting)
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	if (cleaned == NULL || cleaned_ready == NULL ||
+	    memory_regions_overlap(
+		    path, sizeof(*path), cleaned, sizeof(*cleaned)) ||
+	    memory_regions_overlap(
+		    path, sizeof(*path), cleaned_ready,
+		    sizeof(*cleaned_ready)) ||
+	    memory_regions_overlap(
+		    cleaned, sizeof(*cleaned), cleaned_ready,
+		    sizeof(*cleaned_ready)) ||
+	    (accepted_reference != NULL &&
+	     (memory_regions_overlap(
+		     path, sizeof(*path), accepted_reference,
+		     sizeof(*accepted_reference)) ||
+	      memory_regions_overlap(
+		     accepted_reference, sizeof(*accepted_reference),
+		     cleaned, sizeof(*cleaned)) ||
+	      memory_regions_overlap(
+		     accepted_reference, sizeof(*accepted_reference),
+		     cleaned_ready, sizeof(*cleaned_ready)))))
+		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
+	next_echo = path->echo;
+	result = v32_echo_frontend_sample(
+		&next_echo, received, accepted_reference,
+		&next_cleaned, &next_ready);
+	if (result == V32_ECHO_INVALID_ARGUMENT)
+		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
+	if (result != V32_ECHO_OK ||
+	    !v32_echo_frontend_is_valid(&next_echo))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	path->echo = next_echo;
+	if (next_ready)
+		*cleaned = next_cleaned;
+	*cleaned_ready = next_ready;
+	return V32_RECEIVE_PATH_OK;
+}
+
 static bool commit_arguments_are_separate(
 	const struct v32_receive_path *path,
 	const struct v32_equalizer_decision *decision,

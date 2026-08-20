@@ -79,6 +79,13 @@ enum v32_receive_path_result v32_receive_path_sample(
 	const struct v32_echo_reference *accepted_reference,
 	struct v32_equalizer_observation *observation);
 
+/* Keep the echo filter and transmit-reference clock continuous while the
+ * post-echo receive lane remains paused at a conditioning boundary. */
+enum v32_receive_path_result v32_receive_path_sample_paused(
+	struct v32_receive_path *path, int16_t received,
+	const struct v32_echo_reference *accepted_reference,
+	double *cleaned, bool *cleaned_ready);
+
 /*
  * Commit the pending slicer decision, then drain retained timing samples up to
  * the next decision boundary. OBSERVATION_READY publishes that next decision;

@@ -643,8 +643,15 @@ static bool test_gain_lifecycle(void)
 
 static bool test_conditioning_reacquisition(void)
 {
+	union {
+		double cleaned;
+		bool ready;
+	} overlapping_output;
 	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES];
 	int16_t recovered[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
+	struct qam_modulator modulator;
+	struct qam_point point = { 0.75, -0.75 };
+	struct v32_echo_reference reference;
 	struct v32_receive_path path;
 	struct v32_receive_path saved;
 	struct v32_echo_frontend expected_echo;
@@ -654,6 +661,12 @@ static bool test_conditioning_reacquisition(void)
 	size_t recovered_count;
 	size_t produced;
 	size_t consumed;
+	int16_t transmit;
+	bool accepted;
+	double cleaned = -123.0;
+	double saved_cleaned;
+	bool cleaned_ready = false;
+	bool saved_ready;
 
 	for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index)
 		samples[index] = 4252.0;
@@ -701,9 +714,64 @@ static bool test_conditioning_reacquisition(void)
 	      path.equalizer.carrier_tracking &&
 	      path.equalizer.carrier_training_symbols == 0,
 	      "conditioning reacquisition reset learned receive state");
+	expected_echo = path.echo;
+	expected_line = path.line;
+	expected_equalizer = path.equalizer;
+	CHECK(qam_modulator_init(
+		      &modulator, &V32_CHANNEL, 12000) == QAM_OK &&
+	      qam_modulator_can_accept_symbol(&modulator) &&
+	      v32_echo_reference_init(
+		      &reference, &point, modulator.carrier_phase) == V32_ECHO_OK &&
+	      qam_modulator_sample(
+		      &modulator, &point, &transmit, &accepted) == QAM_OK &&
+	      accepted && v32_receive_path_sample_paused(
+		      &path, transmit, &reference,
+		      &cleaned, &cleaned_ready) == V32_RECEIVE_PATH_OK &&
+	      cleaned_ready && cleaned != -123.0 &&
+	      memcmp(&path.echo, &expected_echo, sizeof(path.echo)) != 0 &&
+	      memcmp(&path.line, &expected_line, sizeof(path.line)) == 0 &&
+	      memcmp(&path.equalizer, &expected_equalizer,
+		     sizeof(path.equalizer)) == 0 &&
+	      path.line.input_paused && v32_receive_path_is_valid(&path),
+	      "paused conditioning wait did not preserve receive ownership");
+	saved = path;
+	cleaned = 81.0;
+	cleaned_ready = true;
+	saved_cleaned = cleaned;
+	saved_ready = cleaned_ready;
+	CHECK(v32_receive_path_sample_paused(
+		      NULL, 0, NULL, &cleaned, &cleaned_ready) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_sample_paused(
+		      &path, 0, NULL, NULL, &cleaned_ready) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_sample_paused(
+		      &path, 0, NULL, &cleaned, NULL) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_sample_paused(
+		      &path, 0, NULL, (double *)&path, &cleaned_ready) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_sample_paused(
+		      &path, 0, NULL, &overlapping_output.cleaned,
+		      &overlapping_output.ready) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0 &&
+	      cleaned == saved_cleaned && cleaned_ready == saved_ready,
+	      "paused conditioning wait accepted invalid output ownership");
+	saved = path;
+	CHECK(v32_receive_path_sample_paused(
+		      &path, 0,
+		      (const struct v32_echo_reference *)&path,
+		      &cleaned, &cleaned_ready) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "paused conditioning wait accepted owner aliasing");
 	saved = path;
 	path.line.input_paused = false;
 	CHECK(v32_receive_path_is_valid(&path) &&
+	      v32_receive_path_sample_paused(
+		      &path, 0, NULL, &cleaned, &cleaned_ready) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
 	      v32_receive_path_reacquire_conditioning(&path) ==
 		      V32_RECEIVE_PATH_INVALID_STATE,
 	      "conditioning reacquisition accepted a crossed sample boundary");
