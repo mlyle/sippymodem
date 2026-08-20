@@ -33,7 +33,7 @@ bool v32_line_receiver_is_valid(
 	return receiver != NULL && agc_is_valid(&receiver->gain) &&
 	       v32_symbol_timing_is_valid(&receiver->timing) &&
 	       receiver->epoch_fill < V32_LINE_RECEIVER_EPOCH_SAMPLES &&
-	       (!receiver->echo_adapting || receiver->epoch_fill == 0);
+	       (!receiver->input_paused || receiver->epoch_fill == 0);
 }
 
 enum v32_line_receiver_result v32_line_receiver_init(
@@ -91,7 +91,7 @@ enum v32_line_receiver_result v32_line_receiver_reacquire_timing(
 
 	if (!v32_line_receiver_is_valid(receiver))
 		return V32_LINE_RECEIVER_INVALID_STATE;
-	if (receiver->epoch_fill != 0 || receiver->echo_adapting)
+	if (receiver->epoch_fill != 0 || receiver->input_paused)
 		return V32_LINE_RECEIVER_INVALID_STATE;
 	next = *receiver;
 	if (v32_symbol_timing_init(&next.timing) != V32_SYMBOL_TIMING_OK ||
@@ -108,7 +108,7 @@ enum v32_line_receiver_result v32_line_receiver_set_timing_tracking(
 
 	if (!v32_line_receiver_is_valid(receiver))
 		return V32_LINE_RECEIVER_INVALID_STATE;
-	if (receiver->epoch_fill != 0 || receiver->echo_adapting)
+	if (receiver->epoch_fill != 0 || receiver->input_paused)
 		return V32_LINE_RECEIVER_INVALID_STATE;
 	next = *receiver;
 	if (v32_symbol_timing_set_tracking(&next.timing, enabled) !=
@@ -153,7 +153,7 @@ static bool process_arguments_are_valid(
 
 enum v32_line_receiver_result v32_line_receiver_process(
 	struct v32_line_receiver *receiver,
-	const double *cleaned, size_t count, bool echo_adapting,
+	const double *cleaned, size_t count, bool input_paused,
 	int16_t *recovered, size_t recovered_capacity,
 	size_t *recovered_count)
 {
@@ -168,9 +168,9 @@ enum v32_line_receiver_result v32_line_receiver_process(
 		return V32_LINE_RECEIVER_INVALID_STATE;
 	if (count > V32_LINE_RECEIVER_EPOCH_SAMPLES)
 		return V32_LINE_RECEIVER_INVALID_ARGUMENT;
-	initial_fill = receiver->echo_adapting || echo_adapting ?
+	initial_fill = receiver->input_paused || input_paused ?
 		0 : receiver->epoch_fill;
-	completes_epoch = !echo_adapting &&
+	completes_epoch = !input_paused &&
 		initial_fill + count >= V32_LINE_RECEIVER_EPOCH_SAMPLES;
 	if (!process_arguments_are_valid(
 		    receiver, cleaned, count, recovered, recovered_capacity,
@@ -182,18 +182,18 @@ enum v32_line_receiver_result v32_line_receiver_process(
 	}
 
 	next = *receiver;
-	if (echo_adapting) {
+	if (input_paused) {
 		memset(next.epoch, 0, sizeof(next.epoch));
 		next.epoch_fill = 0;
-		next.echo_adapting = true;
+		next.input_paused = true;
 		*receiver = next;
 		*recovered_count = 0;
 		return V32_LINE_RECEIVER_OK;
 	}
-	if (next.echo_adapting) {
+	if (next.input_paused) {
 		memset(next.epoch, 0, sizeof(next.epoch));
 		next.epoch_fill = 0;
-		next.echo_adapting = false;
+		next.input_paused = false;
 	}
 
 	for (size_t index = 0; index < count; ++index) {

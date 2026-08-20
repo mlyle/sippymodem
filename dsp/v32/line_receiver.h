@@ -30,7 +30,7 @@ struct v32_line_receiver {
 	struct v32_symbol_timing timing;
 	int16_t epoch[V32_LINE_RECEIVER_EPOCH_SAMPLES];
 	size_t epoch_fill;
-	bool echo_adapting;
+	bool input_paused;
 };
 
 enum v32_line_receiver_result v32_line_receiver_init(
@@ -47,8 +47,8 @@ enum v32_line_receiver_result v32_line_receiver_set_timing_tracking(
 	struct v32_line_receiver *receiver, bool enabled);
 
 /*
- * Consume finite 7.2 kHz post-echo samples.  Echo-adaptation samples are
- * deliberately discarded without clocking AGC or timing recovery.  Each
+ * Consume finite 7.2 kHz post-echo samples.  Paused samples are deliberately
+ * discarded without clocking AGC or timing recovery.  Each
  * completed 36-sample gain epoch may report up to 42 timing-recovered
  * samples; arbitrary smaller fragments do not change epoch boundaries.
  * A call that completes an epoch must provide capacity for all 42 samples.
@@ -57,7 +57,7 @@ enum v32_line_receiver_result v32_line_receiver_set_timing_tracking(
  */
 enum v32_line_receiver_result v32_line_receiver_process(
 	struct v32_line_receiver *receiver,
-	const double *cleaned, size_t count, bool echo_adapting,
+	const double *cleaned, size_t count, bool input_paused,
 	int16_t *recovered, size_t recovered_capacity,
 	size_t *recovered_count);
 

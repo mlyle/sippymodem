@@ -36,6 +36,7 @@ struct v32_receive_path {
 	int16_t recovered[V32_RECEIVE_PATH_RECOVERED_CAPACITY];
 	size_t recovered_index;
 	size_t recovered_count;
+	bool echo_training;
 };
 
 enum v32_receive_path_result v32_receive_path_init(
@@ -44,13 +45,16 @@ enum v32_receive_path_result v32_receive_path_init(
 bool v32_receive_path_is_valid(
 	const struct v32_receive_path *path);
 
-/* Pause the post-echo lane while the local transmitter trains its echo path.
- * A second start changes the adaptation gain without clearing learned state.
- * Every transition requires an open slicer decision boundary and the end of
- * the current three-sample echo group. */
+/* Pause the post-echo lane before the local transmitter's reference prefill.
+ * Adaptation may then start and change gain without clearing learned state.
+ * Finishing freezes the echo coefficients and resumes the same downstream
+ * owner. Every transition requires an open slicer decision boundary and the
+ * end of the current three-sample echo group. */
+enum v32_receive_path_result v32_receive_path_begin_echo_training(
+	struct v32_receive_path *path);
 enum v32_receive_path_result v32_receive_path_start_echo_adaptation(
 	struct v32_receive_path *path, double adaptation);
-enum v32_receive_path_result v32_receive_path_freeze_echo(
+enum v32_receive_path_result v32_receive_path_finish_echo_training(
 	struct v32_receive_path *path);
 
 /*

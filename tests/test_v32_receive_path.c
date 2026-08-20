@@ -421,6 +421,7 @@ static bool test_echo_adaptation_lifecycle(void)
 	struct qam_point point = { 0.75, 0.75 };
 	uint32_t random = UINT32_C(0x13579bdf);
 	size_t training_samples = 0;
+	bool prefill_changed = false;
 	bool coefficients_changed = false;
 
 	CHECK(v32_receive_path_init(
@@ -430,9 +431,48 @@ static bool test_echo_adaptation_lifecycle(void)
 	      "echo lifecycle fixture did not initialize");
 	initial_line = path.line;
 	initial_equalizer = path.equalizer;
+	CHECK(v32_receive_path_begin_echo_training(&path) ==
+		      V32_RECEIVE_PATH_OK && path.echo_training &&
+	      !path.echo.echo.adapting,
+	      "receive path did not start its echo prefill");
+
+	while (path.echo.echo.reference_fill < 64u ||
+	       path.echo.echo.reference_pending) {
+		enum v32_receive_path_result result =
+			V32_RECEIVE_PATH_INVALID_STATE;
+
+		CHECK(sample_random_qam(
+			      &path, &modulator, &point, &random,
+			      &observation, &result) &&
+		      result == V32_RECEIVE_PATH_OK,
+		      "echo prefill exposed receive data at %zu: %d",
+		      training_samples, result);
+		training_samples++;
+	}
+	for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase) {
+		for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT;
+		     ++window) {
+			for (size_t tap = 0; tap < V32_ECHO_WINDOW_SYMBOLS;
+			     ++tap) {
+				const struct qam_point *coefficient =
+					&path.echo.echo.coefficients[phase][window][tap];
+
+				prefill_changed |= coefficient->in_phase != 0.0 ||
+					coefficient->quadrature != 0.0;
+			}
+		}
+	}
+	CHECK(!prefill_changed && path.line.input_paused &&
+	      memcmp(&path.line.gain, &initial_line.gain,
+		     sizeof(path.line.gain)) == 0 &&
+	      memcmp(&path.line.timing, &initial_line.timing,
+		     sizeof(path.line.timing)) == 0 &&
+	      memcmp(&path.equalizer, &initial_equalizer,
+		     sizeof(path.equalizer)) == 0,
+	      "echo prefill trained or clocked the downstream lane");
 	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.65) ==
 		      V32_RECEIVE_PATH_OK && path.echo.echo.adapting,
-	      "receive path did not start echo adaptation");
+	      "receive path did not start echo adaptation after prefill");
 
 	while (path.echo.echo.reference_fill < 192u ||
 	       path.echo.echo.reference_pending) {
@@ -462,7 +502,7 @@ static bool test_echo_adaptation_lifecycle(void)
 			}
 		}
 	}
-	CHECK(coefficients_changed && path.line.echo_adapting &&
+	CHECK(coefficients_changed && path.line.input_paused &&
 	      path.line.epoch_fill == 0 &&
 	      memcmp(&path.line.gain, &initial_line.gain,
 		     sizeof(path.line.gain)) == 0 &&
@@ -479,12 +519,14 @@ static bool test_echo_adaptation_lifecycle(void)
 	      memcmp(&path.echo, &expected_echo, sizeof(expected_echo)) == 0,
 	      "reduced echo adaptation changed learned state or cadence");
 	expected_echo.echo.adapting = false;
-	CHECK(v32_receive_path_freeze_echo(&path) == V32_RECEIVE_PATH_OK &&
+	CHECK(v32_receive_path_finish_echo_training(&path) ==
+		      V32_RECEIVE_PATH_OK &&
+	      !path.echo_training &&
 	      memcmp(&path.echo, &expected_echo, sizeof(expected_echo)) == 0 &&
 	      v32_receive_path_is_valid(&path),
 	      "echo freeze changed learned state or cadence");
 
-	while (path.line.echo_adapting) {
+	while (path.line.input_paused) {
 		enum v32_receive_path_result result =
 			V32_RECEIVE_PATH_INVALID_STATE;
 
@@ -502,7 +544,22 @@ static bool test_echo_adaptation_lifecycle(void)
 	      memcmp(&path.equalizer, &initial_equalizer,
 		     sizeof(path.equalizer)) == 0,
 	      "post-echo receive evidence did not resume from its boundary");
+	while (path.echo.echo.reference_pending) {
+		enum v32_receive_path_result result =
+			V32_RECEIVE_PATH_INVALID_STATE;
 
+		CHECK(sample_random_qam(
+			      &path, &modulator, &point, &random,
+			      &observation, &result) &&
+		      result == V32_RECEIVE_PATH_OK,
+		      "repeated echo lifecycle did not reach a group boundary");
+	}
+
+	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.0) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_begin_echo_training(&path) ==
+		      V32_RECEIVE_PATH_OK,
+	      "finished path did not require a new echo-training boundary");
 	saved = path;
 	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.0) ==
 		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
@@ -540,9 +597,19 @@ static bool test_contracts(void)
 		      V32_RECEIVE_PATH_OK &&
 	      v32_echo_reference_init(&reference, &point, 0) == V32_ECHO_OK,
 	      "receive-path validation fixture did not initialize");
-	CHECK(v32_receive_path_start_echo_adaptation(NULL, 0.2) ==
+	CHECK(v32_receive_path_begin_echo_training(NULL) ==
 		      V32_RECEIVE_PATH_INVALID_STATE &&
-	      v32_receive_path_freeze_echo(NULL) ==
+	      v32_receive_path_start_echo_adaptation(NULL, 0.2) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_finish_echo_training(NULL) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_start_echo_adaptation(&path, 0.2) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_finish_echo_training(&path) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_begin_echo_training(&path) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_receive_path_begin_echo_training(&path) ==
 		      V32_RECEIVE_PATH_INVALID_STATE &&
 	      v32_receive_path_start_echo_adaptation(&path, 0.2) ==
 		      V32_RECEIVE_PATH_OK &&
@@ -550,7 +617,7 @@ static bool test_contracts(void)
 		      V32_RECEIVE_PATH_OK,
 	      "echo lifecycle boundary fixture did not advance");
 	saved = path;
-	CHECK(v32_receive_path_freeze_echo(&path) ==
+	CHECK(v32_receive_path_finish_echo_training(&path) ==
 		      V32_RECEIVE_PATH_INVALID_STATE &&
 	      memcmp(&path, &saved, sizeof(path)) == 0,
 	      "mid-group echo freeze changed the receive path");
@@ -562,9 +629,11 @@ static bool test_contracts(void)
 		      V32_EQUALIZER_OBSERVATION_READY && consumed == 1,
 	      "pending echo lifecycle fixture did not initialize");
 	saved = path;
-	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.2) ==
+	CHECK(v32_receive_path_begin_echo_training(&path) ==
 		      V32_RECEIVE_PATH_DECISION_PENDING &&
-	      v32_receive_path_freeze_echo(&path) ==
+	      v32_receive_path_start_echo_adaptation(&path, 0.2) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      v32_receive_path_finish_echo_training(&path) ==
 		      V32_RECEIVE_PATH_DECISION_PENDING &&
 	      memcmp(&path, &saved, sizeof(path)) == 0,
 	      "pending decision allowed an echo lifecycle transition");

@@ -164,7 +164,7 @@ static bool test_adaptation_and_gain_boundaries(void)
 		      &receiver, samples, ARRAY_LENGTH(samples), true,
 		      output, ARRAY_LENGTH(output), &produced) ==
 		      V32_LINE_RECEIVER_OK &&
-	      produced == 0 && receiver.echo_adapting &&
+	      produced == 0 && receiver.input_paused &&
 	      receiver.epoch_fill == 0 &&
 	      memcmp(&receiver.gain, &gain_before_adaptation,
 		     sizeof(receiver.gain)) == 0 &&
@@ -182,7 +182,7 @@ static bool test_adaptation_and_gain_boundaries(void)
 		      &receiver, samples, ARRAY_LENGTH(samples) - 1u, false,
 		      output, ARRAY_LENGTH(output), &produced) ==
 		      V32_LINE_RECEIVER_OK &&
-	      produced == 0 && !receiver.echo_adapting &&
+	      produced == 0 && !receiver.input_paused &&
 	      receiver.epoch_fill == ARRAY_LENGTH(samples) - 1u &&
 	      v32_line_receiver_process(
 		      &receiver, samples, 1, false, output,
