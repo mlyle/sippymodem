@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#ifndef V32_ECHO_TRAINING_H
+#define V32_ECHO_TRAINING_H
+
+#include "conditioning.h"
+#include "receive_path.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+enum {
+	V32_ECHO_TRAINING_PREFILL_SYMBOLS = 256,
+	V32_ECHO_TRAINING_COARSE_SYMBOLS = 1024,
+	V32_CALLING_ECHO_TRAINING_FINE_SYMBOLS = 6912,
+	V32_ANSWERING_ECHO_TRAINING_FINE_SYMBOLS = 6764,
+	V32_CALLING_ECHO_TRAINING_SYMBOLS =
+		V32_ECHO_TRAINING_PREFILL_SYMBOLS +
+		V32_ECHO_TRAINING_COARSE_SYMBOLS +
+		V32_CALLING_ECHO_TRAINING_FINE_SYMBOLS,
+	V32_ANSWERING_ECHO_TRAINING_SYMBOLS =
+		V32_ECHO_TRAINING_PREFILL_SYMBOLS +
+		V32_ECHO_TRAINING_COARSE_SYMBOLS +
+		V32_ANSWERING_ECHO_TRAINING_FINE_SYMBOLS,
+};
+
+enum v32_echo_training_result {
+	V32_ECHO_TRAINING_OK,
+	V32_ECHO_TRAINING_COMPLETE,
+	V32_ECHO_TRAINING_INVALID_ARGUMENT,
+	V32_ECHO_TRAINING_INVALID_STATE,
+};
+
+/* Count accepted local TRN symbols and own the matching receive-path echo
+ * lifecycle. The role-specific duration remains within the standard TRN
+ * interval while preserving the exact prefill/coarse/fine boundaries. */
+struct v32_echo_training {
+	uint16_t symbols;
+	enum v32_transmitter_role role;
+	bool complete;
+};
+
+enum v32_echo_training_result v32_echo_training_init(
+	struct v32_echo_training *training,
+	enum v32_transmitter_role role);
+bool v32_echo_training_is_valid(
+	const struct v32_echo_training *training);
+bool v32_echo_training_is_complete(
+	const struct v32_echo_training *training);
+bool v32_echo_training_path_is_valid(
+	const struct v32_echo_training *training,
+	const struct v32_receive_path *path);
+
+/* Call at an accepted local TRN epoch before its matching receive sample. */
+enum v32_echo_training_result v32_echo_training_begin_symbol(
+	struct v32_echo_training *training,
+	struct v32_receive_path *path);
+
+/* Call at the next accepted transmit epoch, before the post-TRN sample. */
+enum v32_echo_training_result v32_echo_training_finish(
+	struct v32_echo_training *training,
+	struct v32_receive_path *path);
+
+#endif
