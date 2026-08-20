@@ -368,6 +368,10 @@ static bool test_pcmu_call(void)
 	      v34_call_current_stage(&answerer.call) == V34_CALL_PHASE4 &&
 	      !v34_call_has_failed(&caller.call) &&
 	      !v34_call_has_failed(&answerer.call) &&
+	      caller.call.state.phase4.receive.data.line.mode ==
+		      V34_LINE_FRONTEND_QAM &&
+	      answerer.call.state.phase4.receive.data.line.mode ==
+		      V34_LINE_FRONTEND_FIXED &&
 	      v34_call_get_data_startup(&caller.call, &caller_startup) &&
 	      v34_call_get_data_startup(&answerer.call, &answerer_startup) &&
 	      caller_startup.mode.transmit
@@ -422,8 +426,14 @@ static bool check_symmetric_2800_call(bool pcma)
 		if (v34_call_is_online(&caller.call) &&
 		    v34_call_is_online(&answerer.call) &&
 		    caller.mapping_frames_received >= 4u &&
-		    answerer.mapping_frames_received >= 4u)
+		    answerer.mapping_frames_received >= 4u) {
+			CHECK(caller.call.state.phase4.receive.data.line.mode ==
+				      V34_LINE_FRONTEND_QAM &&
+			      answerer.call.state.phase4.receive.data.line.mode ==
+				      V34_LINE_FRONTEND_QAM,
+			      "2800 call did not retain its compatibility receivers");
 			return true;
+		}
 	}
 	CHECK(false, "symmetric 2800 call did not reach mapped data");
 }

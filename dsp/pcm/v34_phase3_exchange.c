@@ -7,6 +7,10 @@
 #include <limits.h>
 #include <stddef.h>
 
+enum {
+	V34_FIXED_ANSWER_MAX_RATE_2400_BPS_UNITS = 8,
+};
+
 static bool roles_are_reciprocal(
 	const struct v34_phase3_profile *local,
 	const struct v34_phase3_profile *peer)
@@ -14,6 +18,22 @@ static bool roles_are_reciprocal(
 	return v34_phase3_profile_is_valid(local) &&
 	       v34_phase3_profile_is_valid(peer) &&
 	       local->local_role != peer->local_role;
+}
+
+static bool use_fixed_answer_receiver(
+	const struct v34_phase3_profile *local_transmit,
+	const struct v34_phase3_profile *peer_transmit,
+	uint32_t sample_rate)
+{
+	/* The persistent Phase 3 feedback path is currently qualified through
+	 * 19200 bit/s at the 3000-symbol/s answerer boundary. Other negotiated
+	 * profiles keep the compatibility demodulator until their decision
+	 * feedback is migrated. */
+	return local_transmit->local_role == V34_ANSWERING_STATION &&
+	       peer_transmit->symbol_rate == V34_SYMBOL_RATE_3000 &&
+	       peer_transmit->projected_data_rate_2400_bps_units <=
+		       V34_FIXED_ANSWER_MAX_RATE_2400_BPS_UNITS &&
+	       sample_rate == V34_RECEIVE_PATH_SAMPLE_RATE;
 }
 
 static bool answer_silence_samples(
@@ -187,9 +207,14 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 			       V34_PHASE3_EXCHANGE_INVALID_ARGUMENT :
 			       V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 	}
-	receive_result = v34_phase3_line_receiver_init(
-		&initialized.receive, peer_transmit,
-		configuration->sample_rate, &configuration->receive);
+	receive_result = use_fixed_answer_receiver(
+		local_transmit, peer_transmit, configuration->sample_rate) ?
+		v34_phase3_line_receiver_init_fixed(
+			&initialized.receive, peer_transmit,
+			&configuration->receive) :
+		v34_phase3_line_receiver_init(
+			&initialized.receive, peer_transmit,
+			configuration->sample_rate, &configuration->receive);
 	if (receive_result != V34_PHASE3_LINE_RECEIVER_OK)
 		return receive_result == V34_PHASE3_LINE_RECEIVER_OUT_OF_RANGE ?
 			       V34_PHASE3_EXCHANGE_OUT_OF_RANGE :
@@ -349,6 +374,13 @@ static enum v34_phase3_exchange_result drive_receiver(
 	uint32_t *events)
 {
 	enum v34_phase3_line_receiver_result result;
+
+	/* The answerer deliberately starts caller-S acquisition at its local J
+	 * boundary. Earlier input belongs to the peer's prescribed silence and
+	 * is discarded instead of advancing a receiver that will be reset. */
+	if (exchange->local_role == V34_ANSWERING_STATION &&
+	    exchange->transmit.symbols.stage < V34_PHASE3_TRANSMITTER_J)
+		return V34_PHASE3_EXCHANGE_OK;
 
 	result = receiver_complete(exchange) ?
 		v34_phase3_line_receiver_track_sample(
