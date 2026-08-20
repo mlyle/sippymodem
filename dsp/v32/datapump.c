@@ -641,7 +641,9 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	uint8_t trellis_data_bits;
 	bool fixed_caller;
 
-	if (dp == NULL || dp->id != DP_V32 || dp->op != &v32_operations ||
+	if (dp == NULL ||
+	    (dp->id != DP_V32 && dp->id != DP_V32BIS) ||
+	    dp->op != &v32_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
@@ -824,7 +826,9 @@ static struct dp *create_v32(
 	bool is_caller = caller != 0;
 	uint8_t rates = rate_capabilities(modem);
 
-	if (modem == NULL || id != DP_V32 || (caller != 0 && caller != 1) ||
+	if (modem == NULL ||
+	    (id != DP_V32 && id != DP_V32BIS) ||
+	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v32_operations || operations->use_count == INT_MAX ||
 	    rates == 0)
@@ -2326,12 +2330,25 @@ failure:
 
 int v32_datapump_register(void)
 {
-	return modem_dp_register(DP_V32, &v32_operations);
+	if (modem_dp_register(DP_V32, &v32_operations) != 0)
+		return -1;
+	if (modem_dp_register(DP_V32BIS, &v32_operations) == 0)
+		return 0;
+	(void)modem_dp_deregister(DP_V32, &v32_operations);
+	return -1;
 }
 
 int v32_datapump_unregister(void)
 {
-	return modem_dp_deregister(DP_V32, &v32_operations);
+	if (v32_operations.use_count != 0 ||
+	    modem_dp_get_registered_ops(DP_V32) != &v32_operations ||
+	    modem_dp_get_registered_ops(DP_V32BIS) != &v32_operations ||
+	    modem_dp_deregister(DP_V32BIS, &v32_operations) != 0)
+		return -1;
+	if (modem_dp_deregister(DP_V32, &v32_operations) == 0)
+		return 0;
+	(void)modem_dp_register(DP_V32BIS, &v32_operations);
+	return -1;
 }
 
 bool v32_datapump_is_busy(void)

@@ -247,8 +247,8 @@ def _build_profiles() -> dict[str, ModemProfile]:
                 symbol_rate=2400,
             ),
         )
-    # The V.32 family datapump owns all V.32bis rates and is registered as 32;
-    # enum value 132 is only an unregistered legacy alias in this tree.
+    # V.32 and V.32bis share one datapump.  Keep the public V.32bis selector
+    # compatible with peers that expose the family's established 132 alias.
     for rate in (7200, 12000, 14400):
         _add(
             profiles,
@@ -256,7 +256,7 @@ def _build_profiles() -> dict[str, ModemProfile]:
                 name=f"v32bis_{rate}",
                 family="v32bis",
                 description=f"V.32bis at {rate} bit/s",
-                at_commands=_fixed_rate(32, rate),
+                at_commands=_fixed_rate(132, rate),
                 receive_rate=rate,
                 transmit_rate=rate,
                 symbol_rate=2400,

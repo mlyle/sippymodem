@@ -41,7 +41,7 @@ class LiveProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             PROFILES["v32bis_14400"].at_commands,
-            ("AT+MS=32,0,14400,14400",),
+            ("AT+MS=132,0,14400,14400",),
         )
         self.assertEqual(
             PROFILES["v34_9600_b2400"].at_commands,

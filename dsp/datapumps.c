@@ -120,6 +120,7 @@ enum datapumps_result datapumps_start(
 	    modem_dp_get_registered_ops(DP_V22BIS) != NULL ||
 	    modem_dp_get_registered_ops(DP_B212) != NULL ||
 	    modem_dp_get_registered_ops(DP_V32) != NULL ||
+	    modem_dp_get_registered_ops(DP_V32BIS) != NULL ||
 	    modem_dp_get_registered_ops(DP_V34) != NULL ||
 	    modem_dp_get_registered_ops(DP_V90) != NULL ||
 	    modem_dp_get_registered_ops(DP_V92) != NULL ||

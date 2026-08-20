@@ -563,13 +563,13 @@ static bool test_v8_datapump_mapping(void)
 		      V8_MODULATION_V23_DUPLEX &&
 		      v8_datapump_modulation(DP_V32) ==
 		      V8_MODULATION_V32 &&
+		      v8_datapump_modulation(DP_V32BIS) ==
+			      V8_MODULATION_V32 &&
 		      v8_datapump_modulation(DP_B103) ==
 			      V8_MODULATION_NONE &&
 		      v8_datapump_modulation(DP_B212) ==
 			      V8_MODULATION_NONE &&
 		      v8_datapump_modulation(DP_BAUDOT) ==
-			      V8_MODULATION_NONE &&
-		      v8_datapump_modulation(DP_V32BIS) ==
 			      V8_MODULATION_NONE &&
 		      v8_datapump_modulation(DP_V34) ==
 			      V8_MODULATION_V34_DUPLEX &&
@@ -1418,6 +1418,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp_operations *v22bis_operations;
 	struct dp_operations *bell212_operations;
 	struct dp_operations *v32_operations;
+	struct dp_operations *v32bis_operations;
 	struct dp_operations *v34_operations;
 	struct dp_operations *v90_operations;
 	struct dp_operations *v92_operations;
@@ -1429,6 +1430,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	struct dp *v22bis;
 	struct dp *bell212;
 	struct dp *v32;
+	struct dp *v32bis;
 	struct dp *v34;
 	struct dp *v90;
 	struct dp *v92;
@@ -1447,6 +1449,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
+		      modem_dp_get_registered_ops(DP_V32BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_V90) == NULL &&
 		      modem_dp_get_registered_ops(DP_V92) == NULL &&
@@ -1463,6 +1466,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
+		      modem_dp_get_registered_ops(DP_V32BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_V90) ==
 			      &conflict_operations &&
@@ -1482,6 +1486,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 	v22bis_operations = modem_dp_get_registered_ops(DP_V22BIS);
 	bell212_operations = modem_dp_get_registered_ops(DP_B212);
 	v32_operations = modem_dp_get_registered_ops(DP_V32);
+	v32bis_operations = modem_dp_get_registered_ops(DP_V32BIS);
 	v34_operations = modem_dp_get_registered_ops(DP_V34);
 	v90_operations = modem_dp_get_registered_ops(DP_V90);
 	v92_operations = modem_dp_get_registered_ops(DP_V92);
@@ -1523,6 +1528,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v32_operations->delete != NULL &&
 		      v32_operations->process != NULL &&
 		      v32_operations->use_count == 0 &&
+		      v32bis_operations == v32_operations &&
 		      v34_operations != NULL &&
 		      v34_operations != v21_operations &&
 		      v34_operations != v23_operations &&
@@ -1697,6 +1703,15 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v32_operations->delete(v32) == 0 &&
 		      v32_operations->use_count == 0,
 	      "V.32 data pump did not release after line startup");
+	modem->min_rate = modem->max_rate = 14400;
+	v32bis = v32bis_operations->create(
+		modem, DP_V32BIS, 1, MODEM_RATE, MODEM_FRAG,
+		v32bis_operations);
+	CHECK(v32bis != NULL && v32bis->id == DP_V32BIS &&
+		      v32bis_operations->use_count == 1 &&
+		      v32bis_operations->delete(v32bis) == 0 &&
+		      v32bis_operations->use_count == 0,
+	      "V.32bis alias did not share the V.32 data pump");
 	modem->min_rate = V34_MAX_BIT_RATE + 1;
 	modem->max_rate = V34_MAX_BIT_RATE + V34_RATE_STEP;
 	CHECK(v34_operations->create(
@@ -1815,6 +1830,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      modem_dp_get_registered_ops(DP_V22BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_B212) == NULL &&
 		      modem_dp_get_registered_ops(DP_V32) == NULL &&
+		      modem_dp_get_registered_ops(DP_V32BIS) == NULL &&
 		      modem_dp_get_registered_ops(DP_V34) == NULL &&
 		      modem_dp_get_registered_ops(DP_V90) == NULL &&
 		      modem_dp_get_registered_ops(DP_V92) == NULL &&
