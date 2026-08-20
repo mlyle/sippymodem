@@ -629,6 +629,7 @@ V32_RATE_PATH_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_rate_path
 V32_RATE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_rate_path.o \
+	$(BUILD_DIR)/data_path.o \
 	$(BUILD_DIR)/b1_path.o \
 	$(BUILD_DIR)/end_path.o \
 	$(BUILD_DIR)/rate_path.o \
@@ -5125,6 +5126,10 @@ $(BUILD_DIR)/end_path.o: \
 
 $(BUILD_DIR)/b1_path.o: \
 	$(DSP_V32_SOURCE_DIR)/b1_path.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/data_path.o: \
+	$(DSP_V32_SOURCE_DIR)/data_path.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v32_decision.o: \

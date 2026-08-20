@@ -4,6 +4,7 @@
 #include <b1_path.h>
 #include <conditioning_path.h>
 #include <constellation.h>
+#include <data_path.h>
 #include <end_path.h>
 #include <qam.h>
 #include <rate_path.h>
@@ -24,6 +25,7 @@ enum {
 	 * words before the first pair which the standard permits us to accept. */
 	TEST_ANSWERING_RATE_OBSERVATIONS = 4 * V32_RATE_SIGNAL_DIBITS,
 	TEST_SELECTED_MODES = 6,
+	TEST_DATA_GROUPS = 64,
 };
 
 static const struct qam_channel V32_CHANNEL = {
@@ -33,7 +35,9 @@ static const struct qam_channel V32_CHANNEL = {
 	.carrier_frequency_numerator = 1800,
 	.carrier_frequency_denominator = 1,
 	.rolloff = 0.25,
-	.pulse_span_symbols = 6,
+	/* Retain the complete V.32 transmit pulse support.  A shortened test
+	 * pulse leaves deterministic residual ISI at the 128-point boundary. */
+	.pulse_span_symbols = 12,
 };
 
 struct generated_source {
@@ -182,6 +186,8 @@ static bool source_next_selected_point(struct generated_source *source)
 	uint8_t data_bits = selected_trellis_data_bits(
 		&source->selected_offer);
 	bool b1 = source->selected_symbols < V32_B1_PATH_SYMBOLS;
+	unsigned int payload = b1 ? 0 :
+		source->selected_symbols - V32_B1_PATH_SYMBOLS;
 	uint8_t input;
 	uint8_t signal;
 
@@ -189,7 +195,8 @@ static bool source_next_selected_point(struct generated_source *source)
 		uint8_t scrambled = 0;
 
 		input = b1 ?
-			(uint8_t)((UINT8_C(1) << data_bits) - 1u) : 0;
+			(uint8_t)((UINT8_C(1) << data_bits) - 1u) :
+			(uint8_t)(payload & ((UINT8_C(1) << data_bits) - 1u));
 		if (data_bits == V32_14400_DATA_BITS) {
 			for (int shift = 3; shift >= 0; shift -= 3) {
 				uint8_t group;
@@ -215,7 +222,7 @@ static bool source_next_selected_point(struct generated_source *source)
 			return false;
 	} else if (source->selected_offer.rates ==
 		   V32_RATE_CAPABILITY_9600) {
-		input = b1 ? 15 : 0;
+		input = b1 ? 15 : (uint8_t)(payload & 15u);
 		if (v32_9600_symbol_encode(
 			    &source->rate_encoder, input, &signal) !=
 			    V32_FRAMING_OK ||
@@ -223,7 +230,7 @@ static bool source_next_selected_point(struct generated_source *source)
 			    V32_CONSTELLATION_OK)
 			return false;
 	} else {
-		input = b1 ? 3 : 0;
+		input = b1 ? 3 : (uint8_t)(payload & 3u);
 		if (v32_4800_symbol_encode(
 			    &source->rate_encoder, input, &signal) !=
 			    V32_FRAMING_OK ||
@@ -293,6 +300,27 @@ static bool source_sample(
 		       &source->modulator, &source->point,
 		       sample, accepted) == QAM_OK &&
 	       *accepted == can_accept;
+}
+
+static bool consume_data_batch(
+	const struct v32_data_batch *batch, uint8_t bit_count,
+	size_t *groups, bool *multiple)
+{
+	uint8_t mask = (uint8_t)((UINT8_C(1) << bit_count) - 1u);
+
+	CHECK(batch->count <= V32_DATA_PATH_MAX_GROUPS,
+	      "data batch exceeded its bound");
+	*multiple = *multiple || batch->count > 1;
+	for (uint8_t index = 0; index < batch->count; ++index) {
+		const struct v32_data_group *group = &batch->groups[index];
+		uint8_t expected = (uint8_t)(*groups & mask);
+
+		CHECK(group->bit_count == bit_count && group->value == expected,
+		      "data group %zu changed: %u/%u bits %u/%u", *groups,
+		      group->value, expected, group->bit_count, bit_count);
+		(*groups)++;
+	}
+	return true;
 }
 
 static bool complete_conditioning(
@@ -419,7 +447,9 @@ static bool run_role(
 	struct v32_end_path *end_completed,
 	struct v32_end_path_handoff *completed_end_handoff,
 	struct v32_b1_path *b1_started,
-	struct v32_b1_path *b1_completed)
+	struct v32_b1_path *b1_completed,
+	struct v32_data_path *data_started,
+	struct v32_data_path *data_advanced)
 {
 	struct generated_source source;
 	struct v32_conditioning_path conditioning;
@@ -429,10 +459,15 @@ static bool run_role(
 	struct v32_end_path end;
 	struct v32_end_path_handoff end_handoff;
 	struct v32_b1_path b1;
+	struct v32_data_path data;
+	struct v32_data_batch batch;
 	enum v32_equalizer_adaptation end_adaptation;
+	uint64_t data_start_epoch;
+	size_t data_groups = 0;
 	unsigned int end_source_limit;
 	unsigned int b1_source_start = 0;
 	bool end_sequence_started = false;
+	bool multiple_data_groups = false;
 	bool complete = false;
 
 	CHECK(complete_conditioning(
@@ -647,6 +682,59 @@ static bool run_role(
 		      "trellis B1 state changed for role/mode %d/%u", role,
 		      selected_offer->rates);
 	*b1_completed = b1;
+	data_start_epoch = b1.observation_epoch;
+	CHECK(v32_data_path_init(&data, &b1, &batch) ==
+		      V32_DATA_PATH_OK &&
+	      v32_data_path_is_valid(&data) &&
+	      consume_data_batch(
+		      &batch, data.b1.data_bits_per_symbol,
+		      &data_groups, &multiple_data_groups),
+	      "data path did not retain the B1 boundary for role/mode %d/%u:%u",
+	      role, selected_offer->rates,
+	      selected_offer->trellis_at_highest_rate);
+	*data_started = data;
+	for (unsigned int index = 0;
+	     index < TEST_LINE_SAMPLE_LIMIT && data_groups < TEST_DATA_GROUPS;
+	     ++index) {
+		struct v32_echo_reference reference;
+		int16_t sample;
+		bool accepted;
+
+		CHECK(source_sample(&source, &sample, &reference, &accepted),
+		      "data source stopped at %u for role/mode %d/%u:%u", index,
+		      role, selected_offer->rates,
+		      selected_offer->trellis_at_highest_rate);
+		CHECK(v32_data_path_sample(
+			      &data, sample, accepted ? &reference : NULL,
+			      &batch) == V32_DATA_PATH_OK &&
+		      consume_data_batch(
+			      &batch, data.b1.data_bits_per_symbol,
+			      &data_groups, &multiple_data_groups),
+		      "data path stopped at %u for role/mode %d/%u:%u", index,
+		      role, selected_offer->rates,
+		      selected_offer->trellis_at_highest_rate);
+	}
+	CHECK(data_groups >= TEST_DATA_GROUPS && multiple_data_groups &&
+	      v32_data_path_is_valid(&data) &&
+	      data.b1.observations == V32_B1_PATH_SYMBOLS &&
+	      data.b1.receive.equalizer.adaptation ==
+		      V32_EQUALIZER_ADAPTATION_FINE &&
+	      data.b1.observation_epoch - data_start_epoch ==
+		      data_groups +
+			      (data.b1.mode == V32_B1_MODE_TRELLIS ?
+				       V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS : 0),
+	      "data boundary changed for role/mode %d/%u:%u (%zu groups)",
+	      role, selected_offer->rates,
+	      selected_offer->trellis_at_highest_rate, data_groups);
+	if (data.b1.mode == V32_B1_MODE_TRELLIS)
+		CHECK(data.b1.receiver.trellis.b1_flush_symbols ==
+			      V32_TRELLIS_DECODER_TRACEBACK_SYMBOLS &&
+		      v32_trellis_receiver_b1_is_confirmed(
+			      &data.b1.receiver.trellis) ==
+			      data.b1.b1_matches,
+		      "trellis data did not drain B1 for role/mode %d/%u",
+		      role, selected_offer->rates);
+	*data_advanced = data;
 	return true;
 }
 
@@ -658,7 +746,9 @@ static bool test_contracts(
 	const struct v32_end_path *end_completed,
 	const struct v32_end_path_handoff *completed_end_handoff,
 	const struct v32_b1_path *b1_started,
-	const struct v32_b1_path *b1_completed)
+	const struct v32_b1_path *b1_completed,
+	const struct v32_data_path *data_started,
+	const struct v32_data_path *data_advanced)
 {
 	struct v32_conditioning_path_handoff bad_conditioning = *conditioning;
 	struct v32_rate_path path;
@@ -681,6 +771,10 @@ static bool test_contracts(
 	struct v32_end_path_handoff bad_end_handoff;
 	struct v32_b1_path b1;
 	struct v32_b1_path saved_b1;
+	struct v32_data_path data;
+	struct v32_data_path saved_data;
+	struct v32_data_batch batch;
+	struct v32_data_batch saved_batch;
 	union {
 		struct v32_rate_path_handoff rate;
 		struct v32_end_path end;
@@ -689,6 +783,10 @@ static bool test_contracts(
 		struct v32_end_path_handoff end;
 		struct v32_b1_path b1;
 	} overlapping_b1, saved_overlapping_b1;
+	union {
+		struct v32_b1_path b1;
+		struct v32_data_path data;
+	} overlapping_data, saved_overlapping_data;
 
 	memset(&path, 0x5a, sizeof(path));
 	saved = path;
@@ -914,6 +1012,66 @@ static bool test_contracts(
 		      V32_B1_PATH_COMPLETE &&
 	      memcmp(&b1, &saved_b1, sizeof(b1)) == 0,
 	      "complete B1 path changed on another sample");
+
+	memset(&data, 0x5a, sizeof(data));
+	memset(&batch, 0xa5, sizeof(batch));
+	saved_data = data;
+	saved_batch = batch;
+	overlapping_data.b1 = *b1_completed;
+	saved_overlapping_data = overlapping_data;
+	CHECK(v32_data_path_init(NULL, b1_completed, &batch) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_init(&data, NULL, &batch) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_init(&data, b1_completed, NULL) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_init(
+		      &overlapping_data.data, &overlapping_data.b1,
+		      &batch) == V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_init(
+		      &data, b1_completed,
+		      (struct v32_data_batch *)&data) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_init(&data, b1_started, &batch) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      memcmp(&data, &saved_data, sizeof(data)) == 0 &&
+	      memcmp(&batch, &saved_batch, sizeof(batch)) == 0 &&
+	      memcmp(
+		      &overlapping_data, &saved_overlapping_data,
+		      sizeof(overlapping_data)) == 0,
+	      "data initialization rejection changed state or output");
+
+	data = *data_started;
+	saved_data = data;
+	memset(&batch, 0xa5, sizeof(batch));
+	saved_batch = batch;
+	CHECK(v32_data_path_sample(NULL, 0, NULL, &batch) ==
+		      V32_DATA_PATH_INVALID_STATE &&
+	      v32_data_path_sample(&data, 0, NULL, NULL) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_sample(
+		      &data, 0,
+		      (const struct v32_echo_reference *)&data,
+		      &batch) == V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_sample(
+		      &data, 0, NULL,
+		      (struct v32_data_batch *)&data) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      v32_data_path_sample(
+		      &data, 0, &invalid_reference, &batch) ==
+		      V32_DATA_PATH_INVALID_ARGUMENT &&
+	      memcmp(&data, &saved_data, sizeof(data)) == 0 &&
+	      memcmp(&batch, &saved_batch, sizeof(batch)) == 0,
+	      "data sample rejection changed state or output");
+	data.b1.observation_epoch++;
+	CHECK(!v32_data_path_is_valid(&data) &&
+	      v32_data_path_sample(&data, 0, NULL, &batch) ==
+		      V32_DATA_PATH_INVALID_STATE,
+	      "data path accepted a spliced decision epoch");
+	data = *data_advanced;
+	data.b1.mode = V32_B1_MODE_TRELLIS;
+	CHECK(!v32_data_path_is_valid(&data),
+	      "data path accepted a mismatched receiver mode");
 	return true;
 }
 
@@ -927,6 +1085,8 @@ int main(void)
 	struct v32_end_path_handoff completed_end_handoff;
 	struct v32_b1_path b1_started;
 	struct v32_b1_path b1_completed;
+	struct v32_data_path data_started;
+	struct v32_data_path data_advanced;
 
 	for (size_t mode = 0; mode < TEST_SELECTED_MODES; ++mode) {
 		for (unsigned int role = 0; role < 2; ++role) {
@@ -938,6 +1098,8 @@ int main(void)
 			struct v32_end_path_handoff next_end_handoff;
 			struct v32_b1_path next_b1_started;
 			struct v32_b1_path next_b1_completed;
+			struct v32_data_path next_data_started;
+			struct v32_data_path next_data_advanced;
 
 			if (!run_role(
 				    (enum v32_transmitter_role)role,
@@ -945,7 +1107,8 @@ int main(void)
 				    &next_started, &next_completed,
 				    &next_end_started, &next_end_completed,
 				    &next_end_handoff, &next_b1_started,
-				    &next_b1_completed))
+				    &next_b1_completed, &next_data_started,
+				    &next_data_advanced))
 				return 1;
 			if (mode == 0 &&
 			    role == V32_ANSWERING_TRANSMITTER) {
@@ -957,13 +1120,16 @@ int main(void)
 				completed_end_handoff = next_end_handoff;
 				b1_started = next_b1_started;
 				b1_completed = next_b1_completed;
+				data_started = next_data_started;
+				data_advanced = next_data_advanced;
 			}
 		}
 	}
 	if (!test_contracts(
 		    &conditioning, &started, &completed,
 		    &end_started, &end_completed, &completed_end_handoff,
-		    &b1_started, &b1_completed))
+		    &b1_started, &b1_completed, &data_started,
+		    &data_advanced))
 		return 1;
 	puts("V.32 rate path tests passed");
 	return 0;

@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "data_path.h"
+
+#include "decision.h"
+#include "memory_region.h"
+
+#include <stddef.h>
+
+bool v32_data_path_is_valid(const struct v32_data_path *path)
+{
+	return path != NULL && v32_b1_path_is_complete(&path->b1);
+}
+
+static bool append_group(
+	struct v32_data_batch *batch, uint8_t value, uint8_t bit_count)
+{
+	if (batch->count >= V32_DATA_PATH_MAX_GROUPS ||
+	    bit_count == 0 || bit_count > V32_TRELLIS_MAX_DATA_BITS ||
+	    value >= (UINT8_C(1) << bit_count))
+		return false;
+	batch->groups[batch->count++] = (struct v32_data_group){
+		.value = value,
+		.bit_count = bit_count,
+	};
+	return true;
+}
+
+static enum v32_data_path_result decide_observation(
+	const struct v32_data_path *path,
+	const struct v32_equalizer_observation *observation,
+	union v32_b1_receiver *next_receiver,
+	struct v32_equalizer_decision *equalizer,
+	struct v32_data_batch *batch, bool *b1_matches)
+{
+	*next_receiver = path->b1.receiver;
+	switch (path->b1.mode) {
+	case V32_B1_MODE_FOUR_POINT: {
+		struct v32_four_point_symbol symbol;
+
+		if (v32_four_point_receiver_observe(
+			    &next_receiver->four_point, observation, true,
+			    &symbol) != V32_FOUR_POINT_RECEIVER_OK ||
+		    !append_group(
+			    batch, symbol.dibit,
+			    V32_4800_BITS_PER_SYMBOL))
+			return V32_DATA_PATH_INVALID_STATE;
+		*equalizer = symbol.equalizer;
+		return V32_DATA_PATH_OK;
+	}
+	case V32_B1_MODE_UNCODED: {
+		struct v32_uncoded_symbol symbol;
+
+		if (v32_uncoded_receiver_observe(
+			    &next_receiver->uncoded, observation, true,
+			    &symbol) != V32_UNCODED_RECEIVER_OK ||
+		    !append_group(
+			    batch, symbol.group,
+			    V32_9600_BITS_PER_SYMBOL))
+			return V32_DATA_PATH_INVALID_STATE;
+		*equalizer = symbol.equalizer;
+		return V32_DATA_PATH_OK;
+	}
+	case V32_B1_MODE_TRELLIS: {
+		struct v32_tcm_decision decision;
+		struct v32_trellis_receiver_symbol symbol;
+
+		if (v32_decide_tcm(
+			    observation, path->b1.data_bits_per_symbol, true,
+			    &decision) != V32_DECISION_OK ||
+		    v32_trellis_receiver_decode(
+			    &next_receiver->trellis, observation, &symbol) !=
+			    V32_TRELLIS_RECEIVER_OK ||
+		    (symbol.ready &&
+		     !append_group(
+			     batch, symbol.group,
+			     path->b1.data_bits_per_symbol)))
+			return V32_DATA_PATH_INVALID_STATE;
+		*b1_matches = next_receiver->trellis.b1_matches;
+		*equalizer = decision.equalizer;
+		return V32_DATA_PATH_OK;
+	}
+	}
+	return V32_DATA_PATH_INVALID_STATE;
+}
+
+static enum v32_data_path_result commit_observations(
+	struct v32_data_path *path,
+	enum v32_receive_path_result receive_result,
+	struct v32_equalizer_observation *observation,
+	struct v32_data_batch *batch)
+{
+	while (receive_result == V32_RECEIVE_PATH_OBSERVATION_READY) {
+		union v32_b1_receiver next_receiver;
+		struct v32_equalizer_decision decision;
+		bool b1_matches = path->b1.b1_matches;
+
+		if (decide_observation(
+			    path, observation, &next_receiver, &decision, batch,
+			    &b1_matches) != V32_DATA_PATH_OK)
+			return V32_DATA_PATH_INVALID_STATE;
+		receive_result = v32_receive_path_commit(
+			&path->b1.receive, &decision, observation);
+		if (receive_result != V32_RECEIVE_PATH_OK &&
+		    receive_result != V32_RECEIVE_PATH_OBSERVATION_READY)
+			return V32_DATA_PATH_INVALID_STATE;
+		path->b1.receiver = next_receiver;
+		path->b1.observation_epoch = decision.observation.epoch;
+		path->b1.b1_matches = b1_matches;
+	}
+	if (receive_result != V32_RECEIVE_PATH_OK)
+		return receive_result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
+			       V32_DATA_PATH_INVALID_ARGUMENT :
+			       V32_DATA_PATH_INVALID_STATE;
+	return v32_data_path_is_valid(path) ? V32_DATA_PATH_OK :
+					      V32_DATA_PATH_INVALID_STATE;
+}
+
+static bool init_arguments_are_separate(
+	const struct v32_data_path *path,
+	const struct v32_b1_path *b1,
+	const struct v32_data_batch *batch)
+{
+	return path != NULL && b1 != NULL && batch != NULL &&
+	       !memory_regions_overlap(path, sizeof(*path), b1, sizeof(*b1)) &&
+	       !memory_regions_overlap(
+		       path, sizeof(*path), batch, sizeof(*batch)) &&
+	       !memory_regions_overlap(
+		       b1, sizeof(*b1), batch, sizeof(*batch));
+}
+
+enum v32_data_path_result v32_data_path_init(
+	struct v32_data_path *path,
+	const struct v32_b1_path *b1,
+	struct v32_data_batch *batch)
+{
+	struct v32_data_path initialized;
+	struct v32_data_batch generated = { 0 };
+	enum v32_data_path_result result = V32_DATA_PATH_OK;
+
+	if (!init_arguments_are_separate(path, b1, batch) ||
+	    !v32_b1_path_is_complete(b1))
+		return V32_DATA_PATH_INVALID_ARGUMENT;
+	initialized.b1 = *b1;
+	if (initialized.b1.receive.equalizer.decision_pending) {
+		struct v32_equalizer_observation observation =
+			initialized.b1.receive.equalizer.pending_observation;
+
+		result = commit_observations(
+			&initialized, V32_RECEIVE_PATH_OBSERVATION_READY,
+			&observation, &generated);
+	}
+	if (result != V32_DATA_PATH_OK ||
+	    !v32_data_path_is_valid(&initialized))
+		return result == V32_DATA_PATH_INVALID_ARGUMENT ?
+			       result : V32_DATA_PATH_INVALID_STATE;
+	*path = initialized;
+	*batch = generated;
+	return V32_DATA_PATH_OK;
+}
+
+static bool sample_arguments_are_separate(
+	const struct v32_data_path *path,
+	const struct v32_echo_reference *reference,
+	const struct v32_data_batch *batch)
+{
+	return batch != NULL &&
+	       !memory_regions_overlap(
+		       path, sizeof(*path), batch, sizeof(*batch)) &&
+	       (reference == NULL ||
+		(!memory_regions_overlap(
+			reference, sizeof(*reference), path, sizeof(*path)) &&
+		 !memory_regions_overlap(
+			reference, sizeof(*reference), batch, sizeof(*batch))));
+}
+
+enum v32_data_path_result v32_data_path_sample(
+	struct v32_data_path *path, int16_t received,
+	const struct v32_echo_reference *accepted_reference,
+	struct v32_data_batch *batch)
+{
+	struct v32_equalizer_observation observation;
+	struct v32_data_batch generated = { 0 };
+	enum v32_receive_path_result receive_result;
+	enum v32_data_path_result result;
+
+	if (!v32_data_path_is_valid(path))
+		return V32_DATA_PATH_INVALID_STATE;
+	if (!sample_arguments_are_separate(path, accepted_reference, batch))
+		return V32_DATA_PATH_INVALID_ARGUMENT;
+	receive_result = v32_receive_path_sample(
+		&path->b1.receive, received, accepted_reference, &observation);
+	result = commit_observations(
+		path, receive_result, &observation, &generated);
+	if (result != V32_DATA_PATH_OK)
+		return result;
+	*batch = generated;
+	return V32_DATA_PATH_OK;
+}
