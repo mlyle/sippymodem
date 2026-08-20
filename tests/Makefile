@@ -762,6 +762,7 @@ V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
 V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_datapump_conditioning.o \
 	$(NATIVE_CORE_OBJECTS) \
+	$(BUILD_DIR)/dc_filter.o \
 	$(V32_FIXED_RECEIVE_OBJECTS) \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/qam.o \
