@@ -2,11 +2,17 @@
 
 #include "datapump.h"
 
+#include "b1_path.h"
+#include "conditioning_path.h"
 #include "datapump_timing.h"
+#include "data_path.h"
+#include "echo_training.h"
+#include "end_path.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "qam.h"
 #include "qam_gain.h"
+#include "rate_path.h"
 #include "uncoded_qam.h"
 #include "carrier.h"
 #include "conditioning.h"
@@ -27,9 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The endpoints perform line turnaround and half-duplex receiver training
- * around the rate exchange. Two-wire echo cancellation remains follow-up
- * work. */
+/* The caller owns one continuous transmit-reference and fixed receive lane
+ * across line turnaround, receiver training, and online data. */
 enum {
 	V32_TRANSMIT_AMPLITUDE = 12000,
 	V32_SIGNAL_A = 0,
@@ -62,6 +67,44 @@ enum v32_line_entry {
 	V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY,
 };
 
+enum v32_fixed_caller_stage {
+	V32_FIXED_CALLER_OFF,
+	V32_FIXED_CALLER_CONDITIONING,
+	V32_FIXED_CALLER_RATE_OFFER,
+	V32_FIXED_CALLER_RATE_DRAIN,
+	V32_FIXED_CALLER_ECHO,
+	V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING,
+	V32_FIXED_CALLER_SECOND_CONDITIONING,
+	V32_FIXED_CALLER_SELECTION,
+	V32_FIXED_CALLER_END,
+	V32_FIXED_CALLER_B1,
+	V32_FIXED_CALLER_DATA,
+};
+
+/* Keep clocking the physical lane between the completed R1 observation and
+ * the next local transmit-symbol epoch.  The rate detector is already done;
+ * only differential framing and equalizer decisions remain live. */
+struct v32_fixed_rate_drain {
+	struct v32_receive_path receive;
+	struct v32_four_point_receiver four_point;
+	uint64_t observation_epoch;
+};
+
+union v32_fixed_caller_owner {
+	struct v32_conditioning_path conditioning;
+	struct v32_rate_path rate;
+	struct v32_fixed_rate_drain drain;
+	struct v32_end_path end;
+	struct v32_b1_path b1;
+	struct v32_data_path data;
+};
+
+struct v32_fixed_caller {
+	union v32_fixed_caller_owner owner;
+	struct v32_echo_training echo;
+	enum v32_fixed_caller_stage stage;
+};
+
 struct v32_datapump {
 	struct dp dp;
 	struct qam_modulator modulator;
@@ -75,6 +118,7 @@ struct v32_datapump {
 		conditioning_transmitter;
 	struct v32_conditioning_receiver conditioning_receiver;
 	struct v32_conditioning_qam conditioning_qam;
+	struct v32_fixed_caller fixed_caller;
 	struct v32_line_startup line_startup;
 	struct v32_answerer_line_startup answerer_line_startup;
 	struct v32_startup startup;
@@ -163,6 +207,141 @@ static bool caller_turnaround_s_symbols(
 	if (rounded == 0 || rounded > UINT32_MAX)
 		return false;
 	*symbols = (uint32_t)rounded;
+	return true;
+}
+
+static bool fixed_caller_is_active(
+	const struct v32_datapump *datapump)
+{
+	return datapump->fixed_caller.stage != V32_FIXED_CALLER_OFF;
+}
+
+static enum v32_line_entry fixed_caller_line_entry(
+	enum v32_fixed_caller_stage stage)
+{
+	switch (stage) {
+	case V32_FIXED_CALLER_CONDITIONING:
+		return V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING;
+	case V32_FIXED_CALLER_RATE_OFFER:
+		return V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER;
+	case V32_FIXED_CALLER_RATE_DRAIN:
+	case V32_FIXED_CALLER_ECHO:
+		return V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING;
+	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
+	case V32_FIXED_CALLER_SECOND_CONDITIONING:
+		return V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
+	case V32_FIXED_CALLER_SELECTION:
+	case V32_FIXED_CALLER_END:
+	case V32_FIXED_CALLER_B1:
+	case V32_FIXED_CALLER_DATA:
+		return V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
+	case V32_FIXED_CALLER_OFF:
+		break;
+	}
+	return V32_LINE_ENTRY_CALLER_STARTUP;
+}
+
+static const struct v32_receive_path *fixed_caller_receive_const(
+	const struct v32_fixed_caller *caller)
+{
+	switch (caller->stage) {
+	case V32_FIXED_CALLER_CONDITIONING:
+	case V32_FIXED_CALLER_SECOND_CONDITIONING:
+		return &caller->owner.conditioning.receive;
+	case V32_FIXED_CALLER_RATE_OFFER:
+	case V32_FIXED_CALLER_SELECTION:
+		return &caller->owner.rate.receive;
+	case V32_FIXED_CALLER_RATE_DRAIN:
+	case V32_FIXED_CALLER_ECHO:
+	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
+		return &caller->owner.drain.receive;
+	case V32_FIXED_CALLER_END:
+		return &caller->owner.end.receive;
+	case V32_FIXED_CALLER_B1:
+		return &caller->owner.b1.receive;
+	case V32_FIXED_CALLER_DATA:
+		return &caller->owner.data.b1.receive;
+	case V32_FIXED_CALLER_OFF:
+		break;
+	}
+	return NULL;
+}
+
+static bool fixed_rate_drain_is_valid(
+	const struct v32_fixed_rate_drain *drain)
+{
+	return drain != NULL &&
+	       v32_receive_path_is_valid(&drain->receive) &&
+	       v32_four_point_receiver_is_valid(&drain->four_point) &&
+	       !drain->receive.equalizer.decision_pending &&
+	       drain->observation_epoch == drain->receive.equalizer.epoch;
+}
+
+static bool fixed_caller_path_is_valid(
+	const struct v32_datapump *datapump)
+{
+	const struct v32_fixed_caller *caller = &datapump->fixed_caller;
+	const struct v32_receive_path *receive;
+	bool valid;
+
+	if (caller->stage <= V32_FIXED_CALLER_OFF ||
+	    caller->stage > V32_FIXED_CALLER_DATA ||
+	    !datapump->caller ||
+	    datapump->line_entry != fixed_caller_line_entry(caller->stage))
+		return false;
+	switch (caller->stage) {
+	case V32_FIXED_CALLER_CONDITIONING:
+	case V32_FIXED_CALLER_SECOND_CONDITIONING:
+		valid = v32_conditioning_path_is_valid(
+				&caller->owner.conditioning) &&
+			!v32_conditioning_path_is_complete(
+				&caller->owner.conditioning);
+		break;
+	case V32_FIXED_CALLER_RATE_OFFER:
+	case V32_FIXED_CALLER_SELECTION:
+		valid = v32_rate_path_is_valid(&caller->owner.rate) &&
+			!v32_rate_path_is_complete(&caller->owner.rate);
+		break;
+	case V32_FIXED_CALLER_RATE_DRAIN:
+	case V32_FIXED_CALLER_ECHO:
+		valid = fixed_rate_drain_is_valid(&caller->owner.drain);
+		break;
+	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
+		valid = fixed_rate_drain_is_valid(&caller->owner.drain) &&
+			caller->owner.drain.receive.line.input_paused;
+		break;
+	case V32_FIXED_CALLER_END:
+		valid = v32_end_path_is_valid(&caller->owner.end) &&
+			!v32_end_path_is_complete(&caller->owner.end);
+		break;
+	case V32_FIXED_CALLER_B1:
+		valid = v32_b1_path_is_valid(&caller->owner.b1) &&
+			!v32_b1_path_is_complete(&caller->owner.b1);
+		break;
+	case V32_FIXED_CALLER_DATA:
+		valid = v32_data_path_is_valid(&caller->owner.data);
+		break;
+	case V32_FIXED_CALLER_OFF:
+		return false;
+	}
+	if (!valid)
+		return false;
+	if (caller->stage == V32_FIXED_CALLER_CONDITIONING ||
+	    caller->stage == V32_FIXED_CALLER_RATE_OFFER)
+		return datapump->turnaround_s_symbols_remaining != 0;
+	if (datapump->turnaround_s_symbols_remaining != 0)
+		return false;
+	receive = fixed_caller_receive_const(caller);
+	if (caller->stage == V32_FIXED_CALLER_RATE_DRAIN ||
+	    caller->stage == V32_FIXED_CALLER_ECHO)
+		return v32_echo_training_path_is_valid(
+			&caller->echo, receive) &&
+			(caller->stage == V32_FIXED_CALLER_ECHO) ==
+				receive->echo_training;
+	if (caller->stage > V32_FIXED_CALLER_ECHO)
+		return v32_echo_training_is_complete(&caller->echo) &&
+		       v32_echo_training_path_is_valid(
+			       &caller->echo, receive);
 	return true;
 }
 
@@ -271,6 +450,20 @@ static bool line_entry_is_valid(
 	     datapump->turnaround_s_symbols_remaining >
 		     turnaround_s_symbols))
 		return false;
+	if (fixed_caller_is_active(datapump)) {
+		bool waiting = datapump->fixed_caller.stage ==
+			V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING;
+
+		return v32_line_startup_is_complete(
+			       &datapump->line_startup) &&
+		       datapump->direct_qam_qualifying_samples == 0 &&
+		       !datapump->has_previous_receive_point &&
+		       !datapump->second_conditioning_complete &&
+		       !datapump->conditioning_carrier_detected &&
+		       (waiting ||
+			datapump->conditioning_silence_samples == 0) &&
+		       fixed_caller_path_is_valid(datapump);
+	}
 	switch (datapump->line_entry) {
 	case V32_LINE_ENTRY_CALLER_STARTUP:
 		return !v32_line_startup_is_complete(
@@ -446,12 +639,14 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 {
 	struct v32_datapump *datapump;
 	uint8_t trellis_data_bits;
+	bool fixed_caller;
 
 	if (dp == NULL || dp->id != DP_V32 || dp->op != &v32_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
 	trellis_data_bits = selected_trellis_data_bits(datapump);
+	fixed_caller = fixed_caller_is_active(datapump);
 	if (&datapump->dp != dp ||
 	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V32_CARRIER_LOSS_SAMPLES ||
@@ -470,9 +665,13 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	    (!training_session_has_failed(&datapump->training) &&
 	     training_session_is_online(&datapump->training) !=
 		     v32_startup_is_complete(&datapump->startup)) ||
-	    datapump->trellis_receiver_initialized !=
-		    (trellis_data_bits != 0 && datapump->startup.end_received) ||
-	    (datapump->trellis_receiver_initialized &&
+	    (fixed_caller ?
+		     (datapump->trellis_receiver_initialized ||
+		      datapump->receiver_9600_initialized) :
+		     datapump->trellis_receiver_initialized !=
+			     (trellis_data_bits != 0 &&
+			      datapump->startup.end_received)) ||
+	    (!fixed_caller && datapump->trellis_receiver_initialized &&
 	     !trellis_receiver_is_valid(datapump)) ||
 	    (datapump->trellis_encoder_initialized &&
 	     (trellis_data_bits == 0 ||
@@ -480,10 +679,10 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 		      &datapump->trellis_encoder) ||
 	      datapump->trellis_encoder.data_bits_per_symbol !=
 		      trellis_data_bits)) ||
-	    datapump->receiver_9600_initialized !=
+	    (!fixed_caller && datapump->receiver_9600_initialized !=
 		    (uses_uncoded_9600(datapump) &&
-		     datapump->startup.end_received) ||
-	    (datapump->receiver_9600_initialized &&
+		     datapump->startup.end_received)) ||
+	    (!fixed_caller && datapump->receiver_9600_initialized &&
 	     !v32_uncoded_qam_is_valid(
 		     &datapump->receiver_9600)) ||
 	    datapump->encoder.phase_quadrant >=
@@ -595,6 +794,8 @@ static int initialize_protocol(
 	       sizeof(datapump->trellis_qam_acquirer));
 	memset(&datapump->receiver_9600, 0,
 	       sizeof(datapump->receiver_9600));
+	memset(&datapump->fixed_caller, 0,
+	       sizeof(datapump->fixed_caller));
 	datapump->previous_receive_point = (struct qam_point){ 0 };
 	datapump->conditioning_gain = (struct qam_gain){ 0 };
 	datapump->missing_carrier_samples = 0;
@@ -835,6 +1036,78 @@ static int next_transmit_point(
 	return 0;
 }
 
+static int commit_fixed_rate_drain(
+	struct v32_fixed_rate_drain *drain,
+	enum v32_receive_path_result receive_result,
+	struct v32_equalizer_observation *observation)
+{
+	while (receive_result == V32_RECEIVE_PATH_OBSERVATION_READY) {
+		struct v32_four_point_receiver next = drain->four_point;
+		struct v32_four_point_symbol symbol;
+
+		if (v32_four_point_receiver_observe(
+			    &next, observation, true, &symbol) !=
+			    V32_FOUR_POINT_RECEIVER_OK)
+			return -1;
+		receive_result = v32_receive_path_commit(
+			&drain->receive, &symbol.equalizer, observation);
+		if (receive_result != V32_RECEIVE_PATH_OK &&
+		    receive_result != V32_RECEIVE_PATH_OBSERVATION_READY)
+			return -1;
+		drain->four_point = next;
+		drain->observation_epoch =
+			symbol.equalizer.observation.epoch;
+	}
+	return receive_result == V32_RECEIVE_PATH_OK &&
+	       fixed_rate_drain_is_valid(drain) ? 0 : -1;
+}
+
+static int initialize_fixed_rate_drain(
+	struct v32_fixed_rate_drain *drain,
+	const struct v32_rate_path_handoff *handoff)
+{
+	struct v32_fixed_rate_drain initialized;
+
+	if (drain == NULL || !v32_rate_path_handoff_is_valid(handoff))
+		return -1;
+	initialized = (struct v32_fixed_rate_drain){
+		.receive = handoff->receive,
+		.four_point = handoff->four_point,
+		.observation_epoch = handoff->observation_epoch,
+	};
+	if (handoff->observation_ready) {
+		struct v32_equalizer_observation observation =
+			handoff->observation;
+
+		if (commit_fixed_rate_drain(
+			    &initialized,
+			    V32_RECEIVE_PATH_OBSERVATION_READY,
+			    &observation) != 0)
+			return -1;
+	}
+	if (!fixed_rate_drain_is_valid(&initialized) ||
+	    v32_receive_path_freeze_gain(&initialized.receive) !=
+		    V32_RECEIVE_PATH_OK ||
+	    !fixed_rate_drain_is_valid(&initialized))
+		return -1;
+	*drain = initialized;
+	return 0;
+}
+
+static int sample_fixed_rate_drain(
+	struct v32_fixed_rate_drain *drain, int16_t received,
+	const struct v32_echo_reference *reference)
+{
+	struct v32_equalizer_observation observation;
+	enum v32_receive_path_result result;
+
+	if (!fixed_rate_drain_is_valid(drain))
+		return -1;
+	result = v32_receive_path_sample(
+		&drain->receive, received, reference, &observation);
+	return commit_fixed_rate_drain(drain, result, &observation);
+}
+
 static int advance_answerer_training(
 	struct v32_datapump *datapump)
 {
@@ -926,6 +1199,108 @@ static int generate_silence_sample(
 	return 0;
 }
 
+static int finish_fixed_echo(
+	struct v32_datapump *datapump, bool *linked)
+{
+	struct v32_symbol_encoder encoder;
+	struct v32_receive_path *receive =
+		&datapump->fixed_caller.owner.drain.receive;
+
+	if (v32_echo_training_framing_state(
+		    &datapump->fixed_caller.echo, &encoder) !=
+		    V32_ECHO_TRAINING_OK || !receive->line.input_paused)
+		return -1;
+	datapump->encoder = encoder;
+	datapump->fixed_caller.stage =
+		V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING;
+	datapump->conditioning_silence_samples = 0;
+	datapump->line_entry =
+		V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
+	return next_transmit_point(datapump, linked);
+}
+
+static int generate_fixed_caller_sample(
+	struct v32_datapump *datapump, int16_t *sample,
+	struct v32_echo_reference *reference, bool *reference_ready,
+	bool *linked, uint64_t sample_number)
+{
+	static const struct qam_point silence;
+	bool can_accept = qam_modulator_can_accept_symbol(
+		&datapump->modulator);
+	bool accepted;
+	bool line_is_silent =
+		datapump->fixed_caller.stage ==
+			V32_FIXED_CALLER_CONDITIONING ||
+		datapump->fixed_caller.stage ==
+			V32_FIXED_CALLER_RATE_OFFER ||
+		datapump->fixed_caller.stage ==
+			V32_FIXED_CALLER_RATE_DRAIN;
+	uint32_t carrier_phase = datapump->modulator.carrier_phase;
+
+	if (!fixed_caller_path_is_valid(datapump) || sample == NULL ||
+	    reference == NULL || reference_ready == NULL || linked == NULL)
+		return -1;
+	*reference_ready = false;
+	if (can_accept) {
+		switch (datapump->fixed_caller.stage) {
+		case V32_FIXED_CALLER_CONDITIONING:
+		case V32_FIXED_CALLER_RATE_OFFER:
+			datapump->transmit_point = silence;
+			break;
+		case V32_FIXED_CALLER_RATE_DRAIN:
+			datapump->fixed_caller.stage = V32_FIXED_CALLER_ECHO;
+			line_is_silent = false;
+			/* fall through */
+		case V32_FIXED_CALLER_ECHO: {
+			uint8_t quadrant;
+			enum v32_echo_training_result result =
+				v32_echo_training_next(
+					&datapump->fixed_caller.echo,
+					&datapump->fixed_caller.owner.drain.receive,
+					&quadrant);
+
+			if (result == V32_ECHO_TRAINING_COMPLETE) {
+				if (finish_fixed_echo(datapump, linked) != 0)
+					return -1;
+			} else if (result != V32_ECHO_TRAINING_OK ||
+				   v32_4800_constellation_point(
+					   quadrant,
+					   &datapump->transmit_point) !=
+					   V32_CONSTELLATION_OK) {
+				return -1;
+			}
+			break;
+		}
+		case V32_FIXED_CALLER_SECOND_CONDITIONING:
+		case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
+		case V32_FIXED_CALLER_SELECTION:
+		case V32_FIXED_CALLER_END:
+		case V32_FIXED_CALLER_B1:
+		case V32_FIXED_CALLER_DATA:
+			if (next_transmit_point(datapump, linked) != 0)
+				return -1;
+			break;
+		case V32_FIXED_CALLER_OFF:
+			return -1;
+		}
+	}
+	if (qam_modulator_sample(
+		    &datapump->modulator, &datapump->transmit_point,
+		    sample, &accepted) != QAM_OK ||
+	    accepted != can_accept)
+		return -1;
+	if (line_is_silent)
+		*sample = (sample_number & 1u) != 0 ? -1 : 0;
+	if (accepted) {
+		if (v32_echo_reference_init(
+			    reference, &datapump->transmit_point,
+			    carrier_phase) != V32_ECHO_OK)
+			return -1;
+		*reference_ready = true;
+	}
+	return 0;
+}
+
 static int generate_sample(
 	struct v32_datapump *datapump, int16_t *sample,
 	bool *linked, uint64_t sample_number)
@@ -987,13 +1362,25 @@ static int process_caller_line_startup(
 	if (result != V32_LINE_STARTUP_OK)
 		return -1;
 	if (complete) {
+		struct v32_conditioning_path conditioning;
+		uint32_t turnaround_symbols;
+
 		if (!caller_turnaround_s_symbols(
-			    &datapump->line_startup,
-			    &datapump->turnaround_s_symbols_remaining))
+			    &datapump->line_startup, &turnaround_symbols) ||
+		    turnaround_symbols > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ||
+		    v32_conditioning_path_init(
+			    &conditioning, V32_ANSWERING_TRANSMITTER, 0,
+			    (uint16_t)turnaround_symbols) !=
+			    V32_CONDITIONING_PATH_OK)
 			return -1;
 		if (qam_demodulator_reset(&datapump->demodulator) !=
 		    QAM_OK)
 			return -1;
+		datapump->fixed_caller.owner.conditioning = conditioning;
+		datapump->fixed_caller.stage =
+			V32_FIXED_CALLER_CONDITIONING;
+		datapump->turnaround_s_symbols_remaining =
+			turnaround_symbols;
 		datapump->has_previous_receive_point = false;
 		datapump->line_entry =
 			V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING;
@@ -1065,15 +1452,21 @@ static unsigned int selected_bit_rate(
 static int enter_link(struct v32_datapump *datapump)
 {
 	unsigned int bit_rate = selected_bit_rate(datapump);
+	bool fixed_caller = fixed_caller_is_active(datapump);
 
 	if (bit_rate == 0 ||
+	    (fixed_caller &&
+	     (datapump->fixed_caller.stage != V32_FIXED_CALLER_DATA ||
+	      !v32_data_path_is_valid(
+		      &datapump->fixed_caller.owner.data))) ||
+	    (!fixed_caller && uses_trellis(datapump) &&
+	     !datapump->trellis_receiver_initialized) ||
 	    (uses_trellis(datapump) &&
-	     (!datapump->trellis_receiver_initialized ||
-	      !datapump->trellis_encoder_initialized)) ||
-	    (uses_uncoded_9600(datapump) &&
+	     !datapump->trellis_encoder_initialized) ||
+	    (!fixed_caller && uses_uncoded_9600(datapump) &&
 	     !datapump->receiver_9600_initialized))
 		return -1;
-	if (uses_trellis(datapump)) {
+	if (!fixed_caller && uses_trellis(datapump)) {
 		if (v32_trellis_qam_acquirer_select(
 			    &datapump->trellis_qam_acquirer) !=
 		    V32_TRELLIS_QAM_ACQUIRER_OK)
@@ -1337,6 +1730,299 @@ static int observe_9600_point(
 	return 0;
 }
 
+static void deliver_fixed_batch(
+	struct v32_datapump *datapump,
+	const struct v32_data_batch *batch)
+{
+	for (uint8_t index = 0; index < batch->count; ++index)
+		deliver_bits(
+			datapump, batch->groups[index].value,
+			batch->groups[index].bit_count);
+}
+
+static int advance_fixed_b1(
+	struct v32_datapump *datapump, uint8_t previous_observations,
+	enum v32_b1_path_result result, bool *linked)
+{
+	struct v32_b1_path *b1 = &datapump->fixed_caller.owner.b1;
+	struct v32_startup next_startup = datapump->startup;
+	uint8_t observations;
+	bool connected = false;
+	bool mark;
+
+	if ((result != V32_B1_PATH_OK &&
+	     result != V32_B1_PATH_COMPLETE) ||
+	    !v32_b1_path_is_valid(b1) ||
+	    previous_observations > b1->observations)
+		return -1;
+	observations = b1->observations;
+	mark = b1->b1_matches;
+	for (uint8_t index = previous_observations;
+	     index < observations; ++index) {
+		if (v32_startup_note_confirmation(
+			    &next_startup, mark ? 3 : 0,
+			    &connected) != V32_STARTUP_OK)
+			return -1;
+	}
+	if (result != V32_B1_PATH_COMPLETE) {
+		if (connected)
+			return -1;
+		datapump->startup = next_startup;
+		return 0;
+	}
+	{
+		struct v32_data_path data;
+		struct v32_data_batch batch;
+
+		if (v32_data_path_init(&data, b1, &batch) !=
+			    V32_DATA_PATH_OK)
+			return -1;
+		datapump->startup = next_startup;
+		datapump->fixed_caller.owner.data = data;
+		datapump->fixed_caller.stage = V32_FIXED_CALLER_DATA;
+		datapump->line_entry = V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
+		deliver_fixed_batch(datapump, &batch);
+		if (connected) {
+			if (enter_link(datapump) != 0)
+				return -1;
+			*linked = true;
+		}
+	}
+	return 0;
+}
+
+static int finish_fixed_end(
+	struct v32_datapump *datapump, bool *linked)
+{
+	struct v32_end_path_handoff handoff;
+	struct v32_b1_path b1;
+	struct v32_startup next_startup = datapump->startup;
+	enum v32_b1_path_result result;
+
+	if (v32_end_path_handoff(
+		    &datapump->fixed_caller.owner.end, &handoff) !=
+		    V32_END_PATH_OK ||
+	    v32_startup_note_end_signal(
+		    &next_startup, &handoff.selected_offer) !=
+		    V32_STARTUP_OK ||
+	    !next_startup.end_received)
+		return -1;
+	result = v32_b1_path_init(&b1, &handoff);
+	if (result != V32_B1_PATH_OK &&
+	    result != V32_B1_PATH_COMPLETE)
+		return -1;
+	datapump->startup = next_startup;
+	datapump->fixed_caller.owner.b1 = b1;
+	datapump->fixed_caller.stage = V32_FIXED_CALLER_B1;
+	datapump->line_entry = V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
+	return advance_fixed_b1(datapump, 0, result, linked);
+}
+
+static int finish_fixed_rate(
+	struct v32_datapump *datapump, bool *linked)
+{
+	struct v32_rate_path_handoff handoff;
+	struct v32_startup next_startup = datapump->startup;
+	enum v32_fixed_caller_stage stage =
+		datapump->fixed_caller.stage;
+
+	if ((stage != V32_FIXED_CALLER_RATE_OFFER &&
+	     stage != V32_FIXED_CALLER_SELECTION) ||
+	    v32_rate_path_handoff(
+		    &datapump->fixed_caller.owner.rate, &handoff) !=
+		    V32_RATE_PATH_OK ||
+	    v32_startup_note_rate_signal(
+		    &next_startup, &handoff.offer) != V32_STARTUP_OK)
+		return -1;
+	if (stage == V32_FIXED_CALLER_RATE_OFFER) {
+		struct v32_fixed_rate_drain drain;
+		struct v32_echo_training echo;
+
+		if (datapump->turnaround_s_symbols_remaining == 0 ||
+		    datapump->turnaround_s_symbols_remaining >
+			    V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ||
+		    initialize_fixed_rate_drain(&drain, &handoff) != 0 ||
+		    v32_echo_training_init(
+			    &echo, V32_CALLING_TRANSMITTER,
+			    (uint16_t)
+				    datapump->turnaround_s_symbols_remaining) !=
+			    V32_ECHO_TRAINING_OK ||
+		    !v32_echo_training_path_is_valid(
+			    &echo, &drain.receive))
+			return -1;
+		datapump->startup = next_startup;
+		datapump->fixed_caller.owner.drain = drain;
+		datapump->fixed_caller.echo = echo;
+		datapump->fixed_caller.stage = V32_FIXED_CALLER_RATE_DRAIN;
+		datapump->turnaround_s_symbols_remaining = 0;
+		datapump->line_entry =
+			V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING;
+		return 0;
+	}
+	{
+		struct v32_end_path end;
+		enum v32_end_path_result result;
+
+		if (next_startup.selected_rate != handoff.offer.rates ||
+		    next_startup.selection_expected)
+			return -1;
+		result = v32_end_path_init(
+			&end, &handoff, &handoff.offer,
+			V32_EQUALIZER_ADAPTATION_FINE);
+		if (result != V32_END_PATH_OK &&
+		    result != V32_END_PATH_COMPLETE)
+			return -1;
+		datapump->startup = next_startup;
+		datapump->fixed_caller.owner.end = end;
+		datapump->fixed_caller.stage = V32_FIXED_CALLER_END;
+		datapump->line_entry = V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
+		return result == V32_END_PATH_COMPLETE ?
+			finish_fixed_end(datapump, linked) : 0;
+	}
+}
+
+static int begin_fixed_rate(
+	struct v32_datapump *datapump, bool selection, bool *linked)
+{
+	struct v32_conditioning_path_handoff handoff;
+	struct v32_rate_path rate;
+	struct v32_startup next_startup = datapump->startup;
+	enum v32_rate_path_result result;
+
+	if (v32_conditioning_path_handoff(
+		    &datapump->fixed_caller.owner.conditioning,
+		    &handoff) != V32_CONDITIONING_PATH_OK ||
+	    (selection &&
+	     v32_startup_expect_selection(&next_startup) !=
+		     V32_STARTUP_OK))
+		return -1;
+	result = v32_rate_path_init(&rate, &handoff);
+	if (result != V32_RATE_PATH_OK &&
+	    result != V32_RATE_PATH_COMPLETE)
+		return -1;
+	datapump->startup = next_startup;
+	datapump->fixed_caller.owner.rate = rate;
+	datapump->fixed_caller.stage = selection ?
+		V32_FIXED_CALLER_SELECTION : V32_FIXED_CALLER_RATE_OFFER;
+	datapump->line_entry = selection ?
+		V32_LINE_ENTRY_CALLER_RATE_EXCHANGE :
+		V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER;
+	return result == V32_RATE_PATH_COMPLETE ?
+		finish_fixed_rate(datapump, linked) : 0;
+}
+
+static int receive_fixed_caller_sample(
+	struct v32_datapump *datapump, int16_t sample,
+	const struct v32_echo_reference *reference, bool *linked)
+{
+	switch (datapump->fixed_caller.stage) {
+	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING: {
+		struct v32_receive_path *receive =
+			&datapump->fixed_caller.owner.drain.receive;
+		double cleaned;
+		bool cleaned_ready;
+
+		if (v32_receive_path_sample_paused(
+			    receive, sample, reference,
+			    &cleaned, &cleaned_ready) != V32_RECEIVE_PATH_OK)
+			return -1;
+		if (!cleaned_ready)
+			return 0;
+		if (datapump->conditioning_silence_samples <
+		    V32_CONDITIONING_SILENCE_SAMPLES) {
+			if (fabs(cleaned) <= V32_CONDITIONING_SIGNAL_THRESHOLD)
+				datapump->conditioning_silence_samples++;
+			else
+				datapump->conditioning_silence_samples = 0;
+			return 0;
+		}
+		if (fabs(cleaned) <= V32_CONDITIONING_SIGNAL_THRESHOLD)
+			return 0;
+		{
+			struct v32_conditioning_path conditioning;
+
+			if (v32_conditioning_path_init_from_receive(
+				    &conditioning, V32_ANSWERING_TRANSMITTER,
+				    receive) != V32_CONDITIONING_PATH_OK)
+				return -1;
+			datapump->fixed_caller.owner.conditioning = conditioning;
+			datapump->fixed_caller.stage =
+				V32_FIXED_CALLER_SECOND_CONDITIONING;
+			datapump->conditioning_silence_samples = 0;
+		}
+		return 0;
+	}
+	case V32_FIXED_CALLER_CONDITIONING:
+	case V32_FIXED_CALLER_SECOND_CONDITIONING: {
+		bool selection = datapump->fixed_caller.stage ==
+			V32_FIXED_CALLER_SECOND_CONDITIONING;
+		enum v32_conditioning_path_result result =
+			v32_conditioning_path_sample(
+				&datapump->fixed_caller.owner.conditioning,
+				sample, reference);
+
+		if (result != V32_CONDITIONING_PATH_OK &&
+		    result != V32_CONDITIONING_PATH_COMPLETE)
+			return -1;
+		return result == V32_CONDITIONING_PATH_COMPLETE ?
+			begin_fixed_rate(datapump, selection, linked) : 0;
+	}
+	case V32_FIXED_CALLER_RATE_OFFER:
+	case V32_FIXED_CALLER_SELECTION: {
+		enum v32_rate_path_result result = v32_rate_path_sample(
+			&datapump->fixed_caller.owner.rate, sample, reference);
+
+		if (result != V32_RATE_PATH_OK &&
+		    result != V32_RATE_PATH_COMPLETE)
+			return -1;
+		return result == V32_RATE_PATH_COMPLETE ?
+			finish_fixed_rate(datapump, linked) : 0;
+	}
+	case V32_FIXED_CALLER_RATE_DRAIN:
+		return sample_fixed_rate_drain(
+			&datapump->fixed_caller.owner.drain, sample, reference);
+	case V32_FIXED_CALLER_ECHO: {
+		struct v32_equalizer_observation observation;
+
+		return v32_receive_path_sample(
+			       &datapump->fixed_caller.owner.drain.receive,
+			       sample, reference, &observation) ==
+			       V32_RECEIVE_PATH_OK ? 0 : -1;
+	}
+	case V32_FIXED_CALLER_END: {
+		enum v32_end_path_result result = v32_end_path_sample(
+			&datapump->fixed_caller.owner.end, sample, reference);
+
+		if (result != V32_END_PATH_OK &&
+		    result != V32_END_PATH_COMPLETE)
+			return -1;
+		return result == V32_END_PATH_COMPLETE ?
+			finish_fixed_end(datapump, linked) : 0;
+	}
+	case V32_FIXED_CALLER_B1: {
+		uint8_t previous =
+			datapump->fixed_caller.owner.b1.observations;
+		enum v32_b1_path_result result = v32_b1_path_sample(
+			&datapump->fixed_caller.owner.b1, sample, reference);
+
+		return advance_fixed_b1(datapump, previous, result, linked);
+	}
+	case V32_FIXED_CALLER_DATA: {
+		struct v32_data_batch batch;
+
+		if (v32_data_path_sample(
+			    &datapump->fixed_caller.owner.data, sample,
+			    reference, &batch) != V32_DATA_PATH_OK)
+			return -1;
+		deliver_fixed_batch(datapump, &batch);
+		return 0;
+	}
+	case V32_FIXED_CALLER_OFF:
+		break;
+	}
+	return -1;
+}
+
 static int receive_sample(
 	struct v32_datapump *datapump, int16_t sample,
 	bool *linked)
@@ -1482,8 +2168,7 @@ static int receive_sample(
 }
 
 static bool carrier_is_present(
-	const struct qam_measurement *measurement,
-	const int16_t *samples, int count)
+	bool timing_locked, const int16_t *samples, int count)
 {
 	uint64_t power = 0;
 
@@ -1492,7 +2177,7 @@ static bool carrier_is_present(
 
 		power += (uint64_t)(sample * sample);
 	}
-	return measurement->timing_locked &&
+	return timing_locked &&
 	       power / (unsigned int)count >= V32_MIN_LINE_POWER;
 }
 
@@ -1589,6 +2274,22 @@ static int process_v32(
 				continue;
 			}
 		}
+		if (fixed_caller_is_active(datapump)) {
+			struct v32_echo_reference reference;
+			bool reference_ready;
+
+			if (generate_fixed_caller_sample(
+				    datapump, &transmit[index], &reference,
+				    &reference_ready, &linked,
+				    frame_start +
+					    (uint64_t)(unsigned int)index) != 0 ||
+			    receive_fixed_caller_sample(
+				    datapump, receive[index],
+				    reference_ready ? &reference : NULL,
+				    &linked) != 0)
+				goto failure;
+			continue;
+		}
 		if (generate_sample(
 			    datapump, &transmit[index], &linked,
 			    frame_start + (uint64_t)(unsigned int)index) != 0 ||
@@ -1599,9 +2300,14 @@ static int process_v32(
 		return DPSTAT_CONNECT;
 	if (!training_session_is_online(&datapump->training))
 		return DPSTAT_OK;
-	measurement = qam_demodulator_measure(
-		&datapump->demodulator);
-	if (carrier_is_present(&measurement, receive, count)) {
+	measurement = qam_demodulator_measure(&datapump->demodulator);
+	if (carrier_is_present(
+		    fixed_caller_is_active(datapump) ?
+			    fixed_caller_receive_const(
+				    &datapump->fixed_caller)
+				    ->line.timing.signal_detected :
+			    measurement.timing_locked,
+		    receive, count)) {
 		datapump->missing_carrier_samples = 0;
 	} else {
 		add_bounded(

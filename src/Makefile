@@ -93,6 +93,7 @@ APP_SOURCES := \
 	v44_tx_monitor.c \
 	v44_xid.c
 SHARED_DSP_SOURCES := \
+	$(DSP_SOURCE_DIR)/agc.c \
 	$(DSP_SOURCE_DIR)/binary_equalizer.c \
 	$(DSP_SOURCE_DIR)/crc16_ccitt_false.c \
 	$(DSP_SOURCE_DIR)/datapumps.c \
@@ -100,6 +101,7 @@ SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/differential_qpsk.c \
 	$(DSP_SOURCE_DIR)/fsk.c \
 	$(DSP_SOURCE_DIR)/fractional_delay.c \
+	$(DSP_SOURCE_DIR)/fixed_phase.c \
 	$(DSP_SOURCE_DIR)/g711.c \
 	$(DSP_SOURCE_DIR)/mixed_radix.c \
 	$(DSP_SOURCE_DIR)/qam_equalizer.c \
@@ -127,8 +129,25 @@ V22_SOURCES := \
 	$(DSP_V22_SOURCE_DIR)/v22bis_receiver.c \
 	$(DSP_V22_SOURCE_DIR)/v22bis_symbols.c
 V32_SOURCES := \
+	$(DSP_V32_SOURCE_DIR)/b1_path.c \
 	$(DSP_V32_SOURCE_DIR)/carrier.c \
+	$(DSP_V32_SOURCE_DIR)/conditioning_path.c \
 	$(DSP_V32_SOURCE_DIR)/datapump.c \
+	$(DSP_V32_SOURCE_DIR)/data_path.c \
+	$(DSP_V32_SOURCE_DIR)/echo_canceller.c \
+	$(DSP_V32_SOURCE_DIR)/echo_frontend.c \
+	$(DSP_V32_SOURCE_DIR)/echo_training.c \
+	$(DSP_V32_SOURCE_DIR)/end_path.c \
+	$(DSP_V32_SOURCE_DIR)/equalizer.c \
+	$(DSP_V32_SOURCE_DIR)/four_point_receiver.c \
+	$(DSP_V32_SOURCE_DIR)/line_receiver.c \
+	$(DSP_V32_SOURCE_DIR)/rate_path.c \
+	$(DSP_V32_SOURCE_DIR)/receive_path.c \
+	$(DSP_V32_SOURCE_DIR)/symbol_timing.c \
+	$(DSP_V32_SOURCE_DIR)/trellis_decoder.c \
+	$(DSP_V32_SOURCE_DIR)/trellis_profile.c \
+	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c \
+	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/uncoded_qam.c \
 	$(DSP_V32_SOURCE_DIR)/conditioning.c \
 	$(DSP_V32_SOURCE_DIR)/conditioning_qam.c \

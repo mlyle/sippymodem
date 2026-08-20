@@ -34,6 +34,10 @@ enum {
 	ENDPOINT_OUTPUT_CAPACITY = 1024,
 	TRAINING_FRAME_LIMIT = 250,
 	NEGOTIATED_TRAINING_FRAME_LIMIT = 500,
+	/* The complete V.32 caller echo schedule reaches link at frame 584 in
+	 * the generated codec matrix.  Retain more than one second of protocol
+	 * margin without relaxing the modem's own training deadline. */
+	V32_TRAINING_FRAME_LIMIT = 650,
 	LINK_DRAIN_FRAME_LIMIT = 400,
 	DATA_FRAME_LIMIT = 400,
 	RETRAIN_FRAME_LIMIT = 500,
@@ -1066,7 +1070,8 @@ static bool run_media_call(
 	unsigned int training_frame_limit =
 		test_case->training_frame_limit != 0 ?
 			test_case->training_frame_limit :
-			(uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT :
+			(test_case->id == DP_V32 ? V32_TRAINING_FRAME_LIMIT :
+			 uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT :
 				   TRAINING_FRAME_LIMIT);
 	int selection_length = (int)strlen(test_case->selection_command);
 	static const char raw_command[] = "AT\\N0\r";

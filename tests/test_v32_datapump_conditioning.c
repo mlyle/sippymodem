@@ -32,8 +32,7 @@ enum {
 	TEST_RATE_WORDS_BEFORE_RESPONSE = 2,
 	TEST_SECOND_CONDITIONING_TAIL_SAMPLES = 1200,
 	TEST_SECOND_CONDITIONING_TAIL_AMPLITUDE = 200,
-	TEST_SECOND_CONDITIONING_SILENCE = 8000,
-	TEST_QAM_SAMPLE_LIMIT = 14000,
+	TEST_QAM_SAMPLE_LIMIT = 50000,
 	TEST_ANSWERER_LINE_LIMIT = MODEM_RATE * 8,
 	TEST_ANSWERER_TRAIN_ECHO_SAMPLES = 4500,
 	TEST_ANSWERER_OFFER_SAMPLES = 2000,
@@ -76,6 +75,7 @@ struct test_caller_qam_receiver {
 	struct qam_gain gain;
 	struct qam_point previous_point;
 	bool conditioning_complete;
+	bool s_detected;
 	bool rate_detected;
 	bool end_detected;
 };
@@ -416,6 +416,21 @@ static bool peer_qam_sample(struct test_peer_qam *peer, int16_t *sample)
 	       accepted == can_accept;
 }
 
+static bool peer_qam_clock_silence(struct test_peer_qam *peer)
+{
+	static const struct qam_point silence;
+	bool can_accept = qam_modulator_can_accept_symbol(&peer->modulator);
+	bool accepted;
+	int16_t ignored;
+
+	if (can_accept)
+		peer->point = silence;
+	return qam_modulator_sample(
+		       &peer->modulator, &peer->point, &ignored, &accepted) ==
+		       QAM_OK &&
+	       accepted == can_accept;
+}
+
 static bool caller_qam_receiver_init(
 	struct test_caller_qam_receiver *receiver)
 {
@@ -457,8 +472,12 @@ static bool caller_qam_receiver_observe(
 			    V32_CONDITIONING_QAM_OK)
 			return false;
 		if (!v32_conditioning_receiver_is_complete(
-			    &receiver->conditioning))
+			    &receiver->conditioning)) {
+			if (receiver->conditioning.phase !=
+			    V32_CONDITIONING_SEARCH_S_BAR)
+				receiver->s_detected = true;
 			return true;
+		}
 		if (v32_conditioning_qam_framing_state(
 			    &receiver->conditioning_qam,
 			    &receiver->conditioning, &receiver->decoder) !=
@@ -721,6 +740,7 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 	struct modem *modem;
 	struct dp *datapump;
 	uint64_t response_power = 0;
+	unsigned int residual_samples = 0;
 	bool connected = false;
 
 	CHECK(v32_datapump_register() == 0,
@@ -734,7 +754,11 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		modem, DP_V32, 1, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(datapump != NULL && drive_line_startup(operations, datapump) &&
 		      peer_qam_init(&peer) &&
-		      caller_qam_receiver_init(&caller_receiver),
+		      caller_qam_receiver_init(&caller_receiver) &&
+		      single_tone_transmitter_init(
+			      &residual_carrier, V32_CALLING_CARRIER_HZ,
+			      TEST_SECOND_CONDITIONING_TAIL_AMPLITUDE) ==
+			      SINGLE_TONE_OK,
 	      "V.32 caller did not reach receiver conditioning");
 	for (unsigned int count = 0;
 	     count < TEST_QAM_SAMPLE_LIMIT &&
@@ -743,7 +767,23 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		int16_t receive;
 		int16_t transmit;
 
-		CHECK(peer_qam_sample(&peer, &receive) &&
+		if (!caller_receiver.s_detected) {
+			CHECK(peer_qam_sample(&peer, &receive),
+			      "V.32 initial peer stream stopped");
+		} else {
+			CHECK(peer_qam_clock_silence(&peer),
+			      "V.32 muted peer clock stopped");
+			receive = 0;
+			if (residual_samples <
+			    TEST_SECOND_CONDITIONING_TAIL_SAMPLES) {
+				CHECK(single_tone_transmitter_sample(
+					      &residual_carrier, &receive) ==
+					      SINGLE_TONE_OK,
+				      "V.32 residual carrier fixture stopped");
+				residual_samples++;
+			}
+		}
+		CHECK(
 			      process_sample(
 				      operations, datapump, receive, &transmit) &&
 			      caller_qam_receiver_observe(
@@ -760,6 +800,7 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		      TEST_RATE_WORDS_BEFORE_RESPONSE *
 			      V32_RATE_SIGNAL_DIBITS &&
 		      response_power >= UINT64_C(1000000000) &&
+		      caller_receiver.s_detected &&
 		      caller_receiver.conditioning_complete &&
 		      caller_receiver.rate_detected,
 	      "V.32 caller did not return conditioning and a rate response");
@@ -769,40 +810,11 @@ static bool test_bidirectional_conditioning_rate_handoff(void)
 		      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
 		      V32_CONDITIONING_OK,
 	      "V.32 peer receiver-training restart failed");
-	CHECK(single_tone_transmitter_init(
-		      &residual_carrier, V32_CALLING_CARRIER_HZ,
-		      TEST_SECOND_CONDITIONING_TAIL_AMPLITUDE) == SINGLE_TONE_OK,
-	      "V.32 residual carrier fixture did not initialize");
 	peer.rate_started = false;
 	peer.rate_dibit = 0;
 	peer.rate_symbols = 0;
 	peer.end_dibit = 0;
 	peer.selection = true;
-	caller_receiver.rate_detected = false;
-	/* A weak tail can lock the QAM clock after the old carrier has been
-	 * declared absent.  The second acquisition must wait through it and the
-	 * following gap before accepting the restarted conditioning carrier. */
-	for (unsigned int count = 0;
-	     count < TEST_SECOND_CONDITIONING_SILENCE; ++count) {
-		int16_t receive = 0;
-		int16_t transmit;
-
-		if (count < TEST_SECOND_CONDITIONING_TAIL_SAMPLES)
-			CHECK(single_tone_transmitter_sample(
-				      &residual_carrier, &receive) == SINGLE_TONE_OK,
-			      "V.32 residual carrier fixture stopped");
-		bool processed = process_sample(
-			operations, datapump, receive, &transmit);
-		bool observed = processed && caller_qam_receiver_observe(
-			&caller_receiver, transmit);
-
-		CHECK(processed && observed,
-		      "V.32 second-conditioning gap failed at sample %u "
-		      "(process=%d, observe=%d)",
-		      count, processed, observed);
-	}
-	CHECK(caller_receiver.rate_detected && !caller_receiver.end_detected,
-	      "V.32 caller did not continue R2 before second conditioning");
 	for (unsigned int count = 0;
 	     count < TEST_QAM_SAMPLE_LIMIT && !connected;
 	     ++count) {

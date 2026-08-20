@@ -408,10 +408,31 @@ NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(BUILD_DIR)/v44_tx_monitor.o \
 	$(BUILD_DIR)/v44_xid.o \
 	$(BUILD_DIR)/v44_stream.o
+V32_FIXED_RECEIVE_OBJECTS := \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/fixed_phase.o \
+	$(BUILD_DIR)/echo_canceller.o \
+	$(BUILD_DIR)/echo_frontend.o \
+	$(BUILD_DIR)/v32_symbol_timing.o \
+	$(BUILD_DIR)/v32_equalizer.o \
+	$(BUILD_DIR)/line_receiver.o \
+	$(BUILD_DIR)/receive_path.o \
+	$(BUILD_DIR)/echo_training.o \
+	$(BUILD_DIR)/conditioning_path.o \
+	$(BUILD_DIR)/four_point_receiver.o \
+	$(BUILD_DIR)/rate_path.o \
+	$(BUILD_DIR)/end_path.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
+	$(BUILD_DIR)/trellis_profile.o \
+	$(BUILD_DIR)/trellis_decoder.o \
+	$(BUILD_DIR)/trellis_receiver.o \
+	$(BUILD_DIR)/b1_path.o \
+	$(BUILD_DIR)/data_path.o
 NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(V34_NATIVE_OBJECTS) \
 	$(PCM_RUNTIME_OBJECTS) \
+	$(V32_FIXED_RECEIVE_OBJECTS) \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam_equalizer.o \
@@ -756,6 +777,7 @@ V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
 V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_datapump_conditioning.o \
 	$(NATIVE_CORE_OBJECTS) \
+	$(V32_FIXED_RECEIVE_OBJECTS) \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/dc_filter.o \
@@ -2937,6 +2959,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(NATIVE_CORE_OBJECTS) \
 	$(V34_NATIVE_OBJECTS) \
 	$(PCM_RUNTIME_OBJECTS) \
+	$(V32_FIXED_RECEIVE_OBJECTS) \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/datapumps.o \
