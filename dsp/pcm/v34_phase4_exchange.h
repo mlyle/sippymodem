@@ -31,7 +31,6 @@ enum v34_phase4_exchange_event {
 	V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED = 1u << 0,
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_J_FINISHED = 1u << 1,
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED = 1u << 2,
-	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_READY = 1u << 3,
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED = 1u << 4,
 	V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED = 1u << 5,
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED = 1u << 6,
@@ -72,9 +71,11 @@ union v34_phase4_receive_path {
 };
 
 /* Own both sample directions from the exact Phase 3 handoff through the
- * reciprocal MP-prime, E, and B1 exchanges and into mapped data. The
- * caller ends J only after receiving the answerer's complete S/S-bar marker
- * and reaching a J-pattern boundary. Receipt of the first valid peer MP pauses
+ * reciprocal MP-prime, E, and B1 exchanges and into mapped data. The caller
+ * sends the minimum Phase 4 TRN interval; the answerer uses the complete
+ * two-second zero-RTD training allowance. The caller ends J only after
+ * receiving the answerer's complete S/S-bar marker and reaching a J-pattern
+ * boundary. Receipt of the first valid peer MP pauses
  * the sample path until prepare_data_startup() performs the negotiated mapping
  * calibration outside the real-time callback. A valid final peer MP-prime
  * record arms E reception at that exact record boundary. Transmit and receive
@@ -91,7 +92,6 @@ struct v34_phase4_exchange {
 	enum v34_station_role local_role;
 	bool finish_j_requested;
 	bool transmit_trn_started;
-	bool transmit_trn_ready_announced;
 	bool transmit_mp_started;
 	bool transmit_mp_prime_started;
 	uint8_t transmit_mp_prime_records_completed;
@@ -116,8 +116,6 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 bool v34_phase4_exchange_is_valid(
 	const struct v34_phase4_exchange *exchange);
 bool v34_phase4_exchange_has_failed(
-	const struct v34_phase4_exchange *exchange);
-bool v34_phase4_exchange_is_trn_ready(
 	const struct v34_phase4_exchange *exchange);
 bool v34_phase4_exchange_needs_data_preparation(
 	const struct v34_phase4_exchange *exchange);

@@ -97,12 +97,42 @@ static bool outputs_overlap(
 static void note_ready(
 	struct v34_phase4_exchange *exchange, uint32_t *events);
 
-static bool trn_minimum_complete(
+static bool trn_target_symbols(
+	const struct v34_phase4_exchange *exchange, uint32_t *symbols)
+{
+	const struct v34_phase3_profile *profile;
+	uint64_t two_seconds;
+
+	if (exchange == NULL || symbols == NULL ||
+	    exchange->transmit_data_active)
+		return false;
+	profile = &exchange->transmit.training.line.profile;
+	if (!v34_phase3_profile_is_valid(profile))
+		return false;
+	if (profile->local_role == V34_CALLING_STATION) {
+		*symbols = V34_PHASE4_TRN_MIN_SYMBOLS;
+		return true;
+	}
+	/* The answerer uses the complete zero-RTD training allowance. This keeps
+	 * the peer's line equalizer insensitive to the sample phase at which a
+	 * full retrain reaches Phase 4. */
+	two_seconds = (uint64_t)profile->symbol_rate_numerator * 2u /
+		profile->symbol_rate_denominator;
+	if (two_seconds < V34_PHASE4_TRN_MIN_SYMBOLS ||
+	    two_seconds > UINT32_MAX)
+		return false;
+	*symbols = (uint32_t)two_seconds;
+	return true;
+}
+
+static bool trn_target_complete(
 	const struct v34_phase4_exchange *exchange)
 {
+	uint32_t target;
+
 	return exchange->transmit_data_active ||
-	       exchange->transmit.training.phase4_trn_symbols >=
-	       V34_PHASE4_TRN_MIN_SYMBOLS;
+	       (trn_target_symbols(exchange, &target) &&
+		exchange->transmit.training.phase4_trn_symbols >= target);
 }
 
 static bool profiles_are_equal(
@@ -324,10 +354,7 @@ bool v34_phase4_exchange_is_valid(
 	    (exchange->receive_data_active &&
 	     v34_data_line_receiver_has_failed(&exchange->receive.data) &&
 	     !exchange->failed) ||
-	    exchange->transmit_trn_ready_announced !=
-		    trn_minimum_complete(exchange) ||
-	    (exchange->transmit_mp_started &&
-	     !exchange->transmit_trn_ready_announced) ||
+	    (exchange->transmit_mp_started && !trn_target_complete(exchange)) ||
 	    (exchange->transmit_mp_prime_started &&
 	     (!exchange->transmit_mp_started || !exchange->peer_mp_received)) ||
 	    exchange->transmit_mp_prime_records_completed >
@@ -456,13 +483,6 @@ bool v34_phase4_exchange_has_failed(
 	return v34_phase4_exchange_is_valid(exchange) && exchange->failed;
 }
 
-bool v34_phase4_exchange_is_trn_ready(
-	const struct v34_phase4_exchange *exchange)
-{
-	return v34_phase4_exchange_is_valid(exchange) && !exchange->failed &&
-	       trn_minimum_complete(exchange);
-}
-
 bool v34_phase4_exchange_needs_data_preparation(
 	const struct v34_phase4_exchange *exchange)
 {
@@ -566,7 +586,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 		exchange->finish_j_requested = false;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_J_FINISHED;
 	}
-	if (!exchange->transmit_mp_started && trn_minimum_complete(exchange)) {
+	if (!exchange->transmit_mp_started && trn_target_complete(exchange)) {
 		result = start_transmit_mp(exchange, false);
 		if (result != V34_PHASE4_EXCHANGE_OK)
 			return result;
@@ -615,11 +635,6 @@ static void note_transmitter(
 		    V34_TRAINING_TRANSMITTER_PHASE4_TRN) {
 		exchange->transmit_trn_started = true;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED;
-	}
-	if (!exchange->transmit_trn_ready_announced &&
-	    trn_minimum_complete(exchange)) {
-		exchange->transmit_trn_ready_announced = true;
-		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_READY;
 	}
 }
 

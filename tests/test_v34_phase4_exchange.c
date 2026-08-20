@@ -21,6 +21,7 @@ struct endpoint {
 	unsigned int data_preparation_count;
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
+	uint32_t trn_symbols_at_mp;
 	int16_t next_received;
 	uint8_t transmit_bit;
 	bool constellations_routed;
@@ -269,6 +270,11 @@ static bool endpoint_sample(
 			return false;
 		}
 		if ((*phase4_events &
+		     V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) != 0)
+			endpoint->trn_symbols_at_mp =
+				endpoint->phase4.transmit.training
+					.phase4_trn_symbols;
+		if ((*phase4_events &
 		     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) != 0 &&
 		    !accept_mapping_frame(endpoint, &received_frame)) {
 			fprintf(stderr, "Phase 4 mapping frame differed\n");
@@ -415,7 +421,6 @@ static bool test_generated_online_exchange(void)
 {
 	const uint32_t common_events =
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED |
-		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_READY |
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED |
 		V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED |
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED |
@@ -468,6 +473,8 @@ static bool test_generated_online_exchange(void)
 	      !v34_phase4_exchange_has_failed(&answerer.phase4) &&
 	      caller.data_preparation_count == 1 &&
 	      answerer.data_preparation_count == 1 &&
+	      caller.trn_symbols_at_mp == V34_PHASE4_TRN_MIN_SYMBOLS &&
+	      answerer.trn_symbols_at_mp == 2u * 3000u &&
 	      caller.constellations_routed &&
 	      answerer.constellations_routed &&
 	      caller.mapping_frames_supplied >=
@@ -640,6 +647,27 @@ static bool test_acknowledged_first_record(void)
 	      v34_phase4_exchange_needs_data_preparation(snapshot),
 	      "preparation snapshot cannot model an acknowledged first record");
 	pending = *snapshot;
+	if (!pending.transmit_mp_started) {
+		for (size_t sample_index = 0;
+		     pending.transmit.training.phase4_trn_symbols < 2u * 3000u;
+		     ++sample_index) {
+			int16_t sample;
+
+			CHECK(sample_index < 20000u &&
+			      v34_training_transmitter_sample(
+				      &pending.transmit.training, &sample) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "answerer TRN did not reach its MP boundary");
+		}
+		CHECK(v34_training_transmitter_start_mp_type0(
+			      &pending.transmit.training,
+			      &pending.transmit_mp.parameters.type0) ==
+			      V34_TRAINING_TRANSMITTER_OK,
+		      "answerer local MP did not start");
+		pending.transmit_mp_started = true;
+		CHECK(v34_phase4_exchange_is_valid(&pending),
+		      "answerer MP boundary made pending state invalid");
+	}
 	for (size_t sample_index = 0;
 	     !v34_training_transmitter_phase4_mp_record_complete(
 		     &pending.transmit.training);
@@ -793,7 +821,6 @@ static bool test_validation_and_transactionality(void)
 	saved_startup = startup;
 	CHECK(!v34_phase4_exchange_is_valid(NULL) &&
 	      !v34_phase4_exchange_has_failed(NULL) &&
-	      !v34_phase4_exchange_is_trn_ready(NULL) &&
 	      !v34_phase4_exchange_needs_data_preparation(NULL) &&
 	      !v34_phase4_exchange_is_ready_for_e(NULL) &&
 	      !v34_phase4_exchange_is_online(NULL) &&
