@@ -54,6 +54,42 @@ enum v32_receive_path_result v32_receive_path_init(
 	return V32_RECEIVE_PATH_OK;
 }
 
+static enum v32_receive_path_result change_echo_adaptation(
+	struct v32_receive_path *path, bool adapting, double adaptation)
+{
+	struct v32_echo_frontend next_echo;
+	enum v32_echo_result result;
+
+	if (!v32_receive_path_is_valid(path))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	if (path->equalizer.decision_pending)
+		return V32_RECEIVE_PATH_DECISION_PENDING;
+	next_echo = path->echo;
+	result = adapting ?
+		v32_echo_frontend_start_adaptation(
+			&next_echo, adaptation) :
+		v32_echo_frontend_freeze(&next_echo);
+	if (result == V32_ECHO_INVALID_ARGUMENT)
+		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
+	if (result != V32_ECHO_OK ||
+	    !v32_echo_frontend_is_valid(&next_echo))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	path->echo = next_echo;
+	return V32_RECEIVE_PATH_OK;
+}
+
+enum v32_receive_path_result v32_receive_path_start_echo_adaptation(
+	struct v32_receive_path *path, double adaptation)
+{
+	return change_echo_adaptation(path, true, adaptation);
+}
+
+enum v32_receive_path_result v32_receive_path_freeze_echo(
+	struct v32_receive_path *path)
+{
+	return change_echo_adaptation(path, false, 0.0);
+}
+
 static enum v32_receive_path_result drain_recovered(
 	struct v32_equalizer *equalizer,
 	const int16_t *recovered, size_t *index, size_t count,

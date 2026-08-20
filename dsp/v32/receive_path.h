@@ -44,6 +44,15 @@ enum v32_receive_path_result v32_receive_path_init(
 bool v32_receive_path_is_valid(
 	const struct v32_receive_path *path);
 
+/* Pause the post-echo lane while the local transmitter trains its echo path.
+ * A second start changes the adaptation gain without clearing learned state.
+ * Every transition requires an open slicer decision boundary and the end of
+ * the current three-sample echo group. */
+enum v32_receive_path_result v32_receive_path_start_echo_adaptation(
+	struct v32_receive_path *path, double adaptation);
+enum v32_receive_path_result v32_receive_path_freeze_echo(
+	struct v32_receive_path *path);
+
 /*
  * Consume one 8 kHz receive sample after the corresponding transmit sample.
  * A reference is supplied exactly when that transmit sample accepted a point.

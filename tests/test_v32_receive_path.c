@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <carrier.h>
 #include <qam.h>
 #include <receive_path.h>
 
 #include "test.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,19 +16,49 @@ enum {
 };
 
 static const struct qam_channel V32_CHANNEL = {
-	.sample_rate = V32_ECHO_FRONTEND_INPUT_RATE,
-	.symbol_rate_numerator = 2400,
+	.sample_rate = V32_CARRIER_SAMPLE_RATE,
+	.symbol_rate_numerator = V32_CARRIER_SYMBOL_RATE,
 	.symbol_rate_denominator = 1,
-	.carrier_frequency_numerator = 1800,
+	.carrier_frequency_numerator = V32_CARRIER_FREQUENCY_HZ,
 	.carrier_frequency_denominator = 1,
 	.rolloff = 0.25,
-	.pulse_span_symbols = 6,
+	.pulse_span_symbols = V32_CARRIER_PULSE_SPAN_SYMBOLS,
 };
 
 static uint32_t fixture_random(uint32_t *state)
 {
 	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
 	return *state;
+}
+
+static bool sample_random_qam(
+	struct v32_receive_path *path, struct qam_modulator *modulator,
+	struct qam_point *point, uint32_t *random,
+	struct v32_equalizer_observation *observation,
+	enum v32_receive_path_result *result)
+{
+	bool can_accept = qam_modulator_can_accept_symbol(modulator);
+	bool accepted;
+	struct v32_echo_reference reference;
+	int16_t transmit;
+
+	if (can_accept) {
+		uint32_t bits = fixture_random(random);
+
+		point->in_phase = (bits & 1u) != 0 ? -0.75 : 0.75;
+		point->quadrature = (bits & 2u) != 0 ? -0.75 : 0.75;
+		if (v32_echo_reference_init(
+			    &reference, point, modulator->carrier_phase) !=
+		    V32_ECHO_OK)
+			return false;
+	}
+	if (qam_modulator_sample(
+		    modulator, point, &transmit, &accepted) != QAM_OK ||
+	    accepted != can_accept)
+		return false;
+	*result = v32_receive_path_sample(
+		path, transmit, accepted ? &reference : NULL, observation);
+	return true;
 }
 
 static struct v32_equalizer_decision self_decision(
@@ -377,6 +409,110 @@ static bool test_boundary_adaptation(void)
 	return true;
 }
 
+static bool test_echo_adaptation_lifecycle(void)
+{
+	struct v32_receive_path path;
+	struct v32_receive_path saved;
+	struct v32_echo_frontend expected_echo;
+	struct v32_line_receiver initial_line;
+	struct v32_equalizer initial_equalizer;
+	struct v32_equalizer_observation observation;
+	struct qam_modulator modulator;
+	struct qam_point point = { 0.75, 0.75 };
+	uint32_t random = UINT32_C(0x13579bdf);
+	size_t training_samples = 0;
+	bool coefficients_changed = false;
+
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      qam_modulator_init(&modulator, &V32_CHANNEL, 12000) == QAM_OK,
+	      "echo lifecycle fixture did not initialize");
+	initial_line = path.line;
+	initial_equalizer = path.equalizer;
+	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.65) ==
+		      V32_RECEIVE_PATH_OK && path.echo.echo.adapting,
+	      "receive path did not start echo adaptation");
+
+	while (path.echo.echo.reference_fill < 192u ||
+	       path.echo.echo.reference_pending) {
+		enum v32_receive_path_result result =
+			V32_RECEIVE_PATH_INVALID_STATE;
+
+		CHECK(sample_random_qam(
+			      &path, &modulator, &point, &random,
+			      &observation, &result) &&
+		      result == V32_RECEIVE_PATH_OK,
+		      "echo adaptation exposed receive data at %zu: %d",
+		      training_samples, result);
+		training_samples++;
+		CHECK(training_samples < 2000,
+		      "echo lifecycle did not reach a group boundary");
+	}
+	for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase) {
+		for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT;
+		     ++window) {
+			for (size_t tap = 0; tap < V32_ECHO_WINDOW_SYMBOLS;
+			     ++tap) {
+				const struct qam_point *coefficient =
+					&path.echo.echo.coefficients[phase][window][tap];
+
+				coefficients_changed |= coefficient->in_phase != 0.0 ||
+					coefficient->quadrature != 0.0;
+			}
+		}
+	}
+	CHECK(coefficients_changed && path.line.echo_adapting &&
+	      path.line.epoch_fill == 0 &&
+	      memcmp(&path.line.gain, &initial_line.gain,
+		     sizeof(path.line.gain)) == 0 &&
+	      memcmp(&path.line.timing, &initial_line.timing,
+		     sizeof(path.line.timing)) == 0 &&
+	      memcmp(&path.equalizer, &initial_equalizer,
+		     sizeof(path.equalizer)) == 0,
+	      "echo adaptation changed the paused receive lane");
+
+	expected_echo = path.echo;
+	expected_echo.echo.adaptation = 0.065;
+	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.065) ==
+		      V32_RECEIVE_PATH_OK &&
+	      memcmp(&path.echo, &expected_echo, sizeof(expected_echo)) == 0,
+	      "reduced echo adaptation changed learned state or cadence");
+	expected_echo.echo.adapting = false;
+	CHECK(v32_receive_path_freeze_echo(&path) == V32_RECEIVE_PATH_OK &&
+	      memcmp(&path.echo, &expected_echo, sizeof(expected_echo)) == 0 &&
+	      v32_receive_path_is_valid(&path),
+	      "echo freeze changed learned state or cadence");
+
+	while (path.line.echo_adapting) {
+		enum v32_receive_path_result result =
+			V32_RECEIVE_PATH_INVALID_STATE;
+
+		CHECK(sample_random_qam(
+			      &path, &modulator, &point, &random,
+			      &observation, &result) &&
+		      result == V32_RECEIVE_PATH_OK,
+		      "frozen echo path did not resume");
+	}
+	CHECK(path.line.epoch_fill == 1 &&
+	      memcmp(&path.line.gain, &initial_line.gain,
+		     sizeof(path.line.gain)) == 0 &&
+	      memcmp(&path.line.timing, &initial_line.timing,
+		     sizeof(path.line.timing)) == 0 &&
+	      memcmp(&path.equalizer, &initial_equalizer,
+		     sizeof(path.equalizer)) == 0,
+	      "post-echo receive evidence did not resume from its boundary");
+
+	saved = path;
+	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.0) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      v32_receive_path_start_echo_adaptation(&path, NAN) ==
+		      V32_RECEIVE_PATH_INVALID_ARGUMENT &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "invalid echo adaptation changed the receive path");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	union {
@@ -390,6 +526,8 @@ static bool test_contracts(void)
 	struct v32_echo_reference reference;
 	struct qam_point point = { 0.5, -0.5 };
 	unsigned char saved_overlap[sizeof(overlapping)];
+	int16_t first = 123;
+	size_t consumed;
 
 	CHECK(v32_receive_path_init(
 		      NULL, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
@@ -402,6 +540,38 @@ static bool test_contracts(void)
 		      V32_RECEIVE_PATH_OK &&
 	      v32_echo_reference_init(&reference, &point, 0) == V32_ECHO_OK,
 	      "receive-path validation fixture did not initialize");
+	CHECK(v32_receive_path_start_echo_adaptation(NULL, 0.2) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_freeze_echo(NULL) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      v32_receive_path_start_echo_adaptation(&path, 0.2) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_receive_path_sample(&path, 0, &reference, &output) ==
+		      V32_RECEIVE_PATH_OK,
+	      "echo lifecycle boundary fixture did not advance");
+	saved = path;
+	CHECK(v32_receive_path_freeze_echo(&path) ==
+		      V32_RECEIVE_PATH_INVALID_STATE &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "mid-group echo freeze changed the receive path");
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_equalizer_process(
+		      &path.equalizer, &first, 1, &consumed, &output) ==
+		      V32_EQUALIZER_OBSERVATION_READY && consumed == 1,
+	      "pending echo lifecycle fixture did not initialize");
+	saved = path;
+	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.2) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      v32_receive_path_freeze_echo(&path) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      memcmp(&path, &saved, sizeof(path)) == 0,
+	      "pending decision allowed an echo lifecycle transition");
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK,
+	      "receive-path validation fixture did not reset");
 	memset(&output, 0x5a, sizeof(output));
 	saved_output = output;
 	saved = path;
@@ -441,7 +611,8 @@ static bool test_contracts(void)
 int main(void)
 {
 	if (!test_composed_path() || !test_buffered_commits() ||
-	    !test_boundary_adaptation() || !test_contracts())
+	    !test_boundary_adaptation() ||
+	    !test_echo_adaptation_lifecycle() || !test_contracts())
 		return 1;
 	puts("V.32 receive path tests passed");
 	return 0;
