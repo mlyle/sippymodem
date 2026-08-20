@@ -148,9 +148,7 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/trellis_profile.c \
 	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c \
-	$(DSP_V32_SOURCE_DIR)/uncoded_qam.c \
 	$(DSP_V32_SOURCE_DIR)/conditioning.c \
-	$(DSP_V32_SOURCE_DIR)/conditioning_qam.c \
 	$(DSP_V32_SOURCE_DIR)/conditioning_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/constellation.c \
 	$(DSP_V32_SOURCE_DIR)/decision.c \
@@ -158,10 +156,7 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/line_startup.c \
 	$(DSP_V32_SOURCE_DIR)/rate_signal.c \
 	$(DSP_V32_SOURCE_DIR)/startup.c \
-	$(DSP_V32_SOURCE_DIR)/trellis.c \
-	$(DSP_V32_SOURCE_DIR)/trellis_qam_acquirer.c \
-	$(DSP_V32_SOURCE_DIR)/trellis_qam_decoder.c \
-	$(DSP_V32_SOURCE_DIR)/trellis_qam_receiver.c
+	$(DSP_V32_SOURCE_DIR)/trellis.c
 PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_info1.c \

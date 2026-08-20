@@ -11,20 +11,15 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "qam.h"
-#include "qam_gain.h"
 #include "rate_path.h"
-#include "uncoded_qam.h"
 #include "carrier.h"
 #include "conditioning.h"
-#include "conditioning_qam.h"
-#include "conditioning_receiver.h"
 #include "constellation.h"
 #include "framing.h"
 #include "line_startup.h"
 #include "startup.h"
 #include "training_session.h"
 #include "trellis.h"
-#include "trellis_qam_acquirer.h"
 
 #include <limits.h>
 #include <math.h>
@@ -37,34 +32,10 @@
  * across line turnaround, receiver training, and online data. */
 enum {
 	V32_TRANSMIT_AMPLITUDE = 12000,
-	V32_SIGNAL_A = 0,
-	V32_SIGNAL_B = 1,
 	V32_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
 	V32_MIN_LINE_POWER = 1000000,
-	/* Direct-QAM entry has no analog handoff, so wait through the complete
-	 * answerer retraining interval after its two-word R2 acquisition. */
-	V32_DIRECT_RETRAIN_DIBITS =
-		V32_STARTUP_TRAINING_DIBITS +
-		2 * V32_RATE_SIGNAL_DIBITS,
-	V32_DIRECT_QAM_QUALIFY_SAMPLES =
-		SINGLE_TONE_WINDOW_SAMPLES +
-		SINGLE_TONE_ACQUIRE_SAMPLES,
 	V32_CONDITIONING_SILENCE_SAMPLES = 24,
 	V32_CONDITIONING_SIGNAL_THRESHOLD = 256,
-};
-
-static const double v32_min_conditioning_point_power = 1e-12;
-
-enum v32_line_entry {
-	V32_LINE_ENTRY_CALLER_STARTUP,
-	V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING,
-	V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER,
-	V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING,
-	V32_LINE_ENTRY_CALLER_RATE_EXCHANGE,
-	V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING,
-	V32_LINE_ENTRY_ANSWERER_STARTUP,
-	V32_LINE_ENTRY_ANSWERER_PROTOCOL,
-	V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY,
 };
 
 enum v32_fixed_stage {
@@ -117,36 +88,18 @@ struct v32_fixed_path {
 struct v32_datapump {
 	struct dp dp;
 	struct qam_modulator modulator;
-	struct qam_demodulator demodulator;
 	struct v32_symbol_encoder encoder;
-	struct v32_symbol_decoder decoder;
 	struct v32_trellis_encoder trellis_encoder;
-	struct v32_trellis_qam_acquirer trellis_qam_acquirer;
-	struct v32_uncoded_qam receiver_9600;
-	struct v32_conditioning_transmitter
-		conditioning_transmitter;
-	struct v32_conditioning_receiver conditioning_receiver;
-	struct v32_conditioning_qam conditioning_qam;
 	struct v32_fixed_path fixed_path;
 	struct v32_line_startup line_startup;
 	struct v32_answerer_line_startup answerer_line_startup;
 	struct v32_startup startup;
 	struct qam_point transmit_point;
-	struct qam_point previous_receive_point;
-	struct qam_gain conditioning_gain;
 	struct training_session training;
 	uint32_t missing_carrier_samples;
 	uint32_t turnaround_s_symbols_remaining;
-	uint16_t direct_retrain_dibits;
-	uint16_t direct_qam_qualifying_samples;
 	uint8_t conditioning_silence_samples;
-	enum v32_line_entry line_entry;
-	bool has_previous_receive_point;
 	bool trellis_encoder_initialized;
-	bool trellis_receiver_initialized;
-	bool receiver_9600_initialized;
-	bool second_conditioning_complete;
-	bool conditioning_carrier_detected;
 	bool answerer_s_detected;
 	bool caller;
 };
@@ -159,8 +112,6 @@ static int retrain_v32(struct dp *dp);
 static int process_v32(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int enter_link(struct v32_datapump *datapump);
-static int reset_conditioning_receiver(
-	struct v32_datapump *datapump, bool carrier_detected);
 
 static struct dp_operations v32_operations = {
 	.name = "V.32",
@@ -176,28 +127,9 @@ static enum v32_transmitter_role local_role(bool caller)
 			V32_ANSWERING_TRANSMITTER;
 }
 
-static enum v32_transmitter_role remote_role(bool caller)
-{
-	return caller ? V32_ANSWERING_TRANSMITTER :
-			V32_CALLING_TRANSMITTER;
-}
-
 static enum v32_endpoint_role endpoint_role(bool caller)
 {
 	return caller ? V32_CALLER : V32_ANSWERER;
-}
-
-static bool receives_conditioning(enum v32_line_entry entry)
-{
-	return entry == V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING ||
-	       entry == V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
-}
-
-static bool caller_awaits_second_conditioning(
-	const struct v32_startup *startup)
-{
-	return !startup->end_received &&
-	       startup->phase == V32_CALLER_SEND_RESPONSE;
 }
 
 static bool caller_turnaround_s_symbols(
@@ -242,39 +174,6 @@ static bool fixed_path_is_active(
 	const struct v32_datapump *datapump)
 {
 	return datapump->fixed_path.stage != V32_FIXED_OFF;
-}
-
-static enum v32_line_entry fixed_path_line_entry(
-	enum v32_fixed_stage stage, bool caller)
-{
-	switch (stage) {
-	case V32_FIXED_CALLER_CONDITIONING:
-		return V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING;
-	case V32_FIXED_CALLER_RATE_OFFER:
-		return V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER;
-	case V32_FIXED_CALLER_RATE_DRAIN:
-	case V32_FIXED_CALLER_ECHO:
-		return V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING;
-	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
-	case V32_FIXED_CALLER_SECOND_CONDITIONING:
-		return V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
-	case V32_FIXED_CALLER_SELECTION:
-	case V32_FIXED_CALLER_END:
-		return V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
-	case V32_FIXED_B1:
-	case V32_FIXED_DATA:
-		return caller ? V32_LINE_ENTRY_CALLER_RATE_EXCHANGE :
-				V32_LINE_ENTRY_ANSWERER_PROTOCOL;
-	case V32_FIXED_ANSWERER_INITIAL_ECHO:
-	case V32_FIXED_ANSWERER_CONDITIONING:
-	case V32_FIXED_ANSWERER_RATE:
-	case V32_FIXED_ANSWERER_SECOND_CONDITIONING:
-	case V32_FIXED_ANSWERER_END:
-		return V32_LINE_ENTRY_ANSWERER_PROTOCOL;
-	case V32_FIXED_OFF:
-		break;
-	}
-	return V32_LINE_ENTRY_CALLER_STARTUP;
 }
 
 static const struct v32_receive_path *fixed_path_receive_const(
@@ -336,9 +235,7 @@ static bool fixed_path_is_valid(
 	     path->stage <= V32_FIXED_CALLER_END) ||
 	    (datapump->caller &&
 	     path->stage >= V32_FIXED_ANSWERER_INITIAL_ECHO &&
-	     path->stage <= V32_FIXED_ANSWERER_END) ||
-	    datapump->line_entry != fixed_path_line_entry(
-		    path->stage, datapump->caller))
+	     path->stage <= V32_FIXED_ANSWERER_END))
 		return false;
 	switch (path->stage) {
 	case V32_FIXED_CALLER_CONDITIONING:
@@ -457,102 +354,17 @@ static bool fixed_path_is_valid(
 	       !receive->echo_training && !receive->echo.echo.adapting;
 }
 
-static bool answerer_training_is_valid(
+static bool line_state_is_valid(
 	const struct v32_datapump *datapump)
 {
-	uint16_t fixed_symbols = V32_CONDITIONING_S_SYMBOLS +
-				 V32_CONDITIONING_S_BAR_SYMBOLS;
-	uint16_t emitted = datapump->conditioning_transmitter.emitted_symbols;
-	uint16_t training = emitted > fixed_symbols ?
-				    (uint16_t)(emitted - fixed_symbols) : 0;
-	bool transmitting_training =
-		datapump->startup.phase == V32_ANSWERER_TRAIN ||
-		datapump->startup.phase == V32_ANSWERER_RETRAIN;
-
-	if (transmitting_training)
-		return !v32_conditioning_transmitter_is_complete(
-			       &datapump->conditioning_transmitter) &&
-		       datapump->startup.phase_dibits == training;
-	return v32_conditioning_transmitter_is_complete(
-		&datapump->conditioning_transmitter);
-}
-
-static bool answerer_line_entry_is_valid(
-	const struct v32_datapump *datapump)
-{
-	bool received_conditioning =
-		v32_conditioning_receiver_is_complete(
-			&datapump->conditioning_receiver);
-	bool needs_received_conditioning =
-		datapump->startup.phase >= V32_ANSWERER_RETRAIN;
-
-	if (datapump->line_startup.state != V32_LINE_WAIT_ANSWER_TONE ||
-	    datapump->direct_qam_qualifying_samples != 0 ||
-	    datapump->direct_retrain_dibits != 0 ||
-	    datapump->turnaround_s_symbols_remaining != 0 ||
-	    datapump->second_conditioning_complete ||
-	    datapump->conditioning_carrier_detected ||
-	    datapump->conditioning_silence_samples != 0 ||
-	    (received_conditioning &&
-	     (!datapump->has_previous_receive_point ||
-	      !qam_gain_is_valid(&datapump->conditioning_gain))) ||
-	    (needs_received_conditioning && !received_conditioning))
-		return false;
-	if (datapump->line_entry == V32_LINE_ENTRY_ANSWERER_STARTUP)
-		return !v32_answerer_line_startup_is_complete(
-			       &datapump->answerer_line_startup) &&
-		       datapump->answerer_line_startup.state !=
-			       V32_ANSWERER_LINE_FAILED &&
-		       datapump->startup.phase == V32_ANSWERER_TRAIN &&
-		       datapump->startup.phase_dibits == 0 &&
-		       datapump->conditioning_transmitter.emitted_symbols == 0 &&
-		       !received_conditioning &&
-		       !datapump->has_previous_receive_point;
-	if (datapump->line_entry != V32_LINE_ENTRY_ANSWERER_PROTOCOL ||
-	    !v32_answerer_line_startup_is_complete(
-		    &datapump->answerer_line_startup) ||
-	    !answerer_training_is_valid(datapump))
-		return false;
-	return received_conditioning == datapump->has_previous_receive_point;
-}
-
-static bool line_entry_is_valid(
-	const struct v32_datapump *datapump)
-{
-	uint32_t turnaround_s_symbols = 0;
-
-	if (datapump->line_entry < V32_LINE_ENTRY_CALLER_STARTUP ||
-	    datapump->line_entry > V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
-	    !v32_line_startup_is_valid(&datapump->line_startup) ||
+	if (!v32_line_startup_is_valid(&datapump->line_startup) ||
 	    !v32_answerer_line_startup_is_valid(
 		    &datapump->answerer_line_startup) ||
-	    !v32_conditioning_transmitter_is_valid(
-		    &datapump->conditioning_transmitter) ||
-	    datapump->conditioning_transmitter.trn_symbols !=
-		    V32_CONDITIONING_TRN_MIN_SYMBOLS ||
-	    datapump->conditioning_transmitter.trn_encoder.scrambler
-			    .transmitter_role != local_role(datapump->caller) ||
-	    !v32_conditioning_receiver_is_valid(
-		    &datapump->conditioning_receiver) ||
-	    datapump->conditioning_receiver.source_role !=
-		    remote_role(datapump->caller) ||
 	    datapump->conditioning_silence_samples >
 		    V32_CONDITIONING_SILENCE_SAMPLES ||
-	    (datapump->conditioning_carrier_detected &&
-	     !receives_conditioning(datapump->line_entry)) ||
 	    (datapump->answerer_s_detected &&
 	     (datapump->caller ||
-	      datapump->startup.phase != V32_ANSWERER_SEND_OFFER)) ||
-	    (datapump->conditioning_silence_samples != 0 &&
-	     !receives_conditioning(datapump->line_entry)) ||
-	    datapump->direct_retrain_dibits > V32_DIRECT_RETRAIN_DIBITS ||
-	    (datapump->direct_retrain_dibits != 0 &&
-	     (datapump->line_entry != V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
-	      !datapump->caller ||
-	      datapump->startup.phase !=
-		      V32_CALLER_SEND_RESPONSE ||
-	      datapump->startup.selected_rate != 0 ||
-	      datapump->startup.selection_expected)))
+	      datapump->startup.phase != V32_ANSWERER_SEND_OFFER)))
 		return false;
 	if (fixed_path_is_active(datapump)) {
 		bool waiting = datapump->fixed_path.stage ==
@@ -563,135 +375,28 @@ static bool line_entry_is_valid(
 				       &datapump->answerer_line_startup) &&
 			       datapump->line_startup.state ==
 				       V32_LINE_WAIT_ANSWER_TONE &&
-			       datapump->direct_qam_qualifying_samples == 0 &&
-			       datapump->direct_retrain_dibits == 0 &&
 			       datapump->turnaround_s_symbols_remaining == 0 &&
-			       !datapump->has_previous_receive_point &&
-			       !datapump->second_conditioning_complete &&
-			       !datapump->conditioning_carrier_detected &&
 			       datapump->conditioning_silence_samples == 0 &&
 			       fixed_path_is_valid(datapump);
 		return v32_line_startup_is_complete(
 			       &datapump->line_startup) &&
-		       datapump->direct_qam_qualifying_samples == 0 &&
-		       !datapump->has_previous_receive_point &&
-		       !datapump->second_conditioning_complete &&
-		       !datapump->conditioning_carrier_detected &&
 		       (waiting ||
 			datapump->conditioning_silence_samples == 0) &&
 		       fixed_path_is_valid(datapump);
 	}
-	if (!datapump->caller)
-		return answerer_line_entry_is_valid(datapump);
-	if (v32_line_startup_is_complete(&datapump->line_startup) &&
-	    (!caller_turnaround_s_symbols(
-		     &datapump->line_startup, &turnaround_s_symbols) ||
-	     datapump->turnaround_s_symbols_remaining >
-		     turnaround_s_symbols))
+	if (datapump->turnaround_s_symbols_remaining != 0 ||
+	    datapump->conditioning_silence_samples != 0 ||
+	    datapump->answerer_s_detected)
 		return false;
-	switch (datapump->line_entry) {
-	case V32_LINE_ENTRY_CALLER_STARTUP:
+	if (datapump->caller)
 		return !v32_line_startup_is_complete(
-			&datapump->line_startup) &&
-		       !v32_conditioning_receiver_is_complete(
-			       &datapump->conditioning_receiver) &&
-		       datapump->conditioning_transmitter.emitted_symbols == 0 &&
-		       !datapump->has_previous_receive_point &&
-		       datapump->turnaround_s_symbols_remaining == 0 &&
-		       !datapump->second_conditioning_complete &&
+			       &datapump->line_startup) &&
 		       datapump->line_startup.state !=
-			       V32_LINE_STARTUP_FAILED &&
-		       datapump->direct_qam_qualifying_samples <=
-			       V32_DIRECT_QAM_QUALIFY_SAMPLES &&
-		       (datapump->line_startup.state ==
-					V32_LINE_WAIT_ANSWER_TONE ||
-			datapump->direct_qam_qualifying_samples == 0);
-	case V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING:
-		return v32_line_startup_is_complete(
-			       &datapump->line_startup) &&
-		       !v32_conditioning_receiver_is_complete(
-			       &datapump->conditioning_receiver) &&
-		       datapump->conditioning_transmitter.emitted_symbols == 0 &&
-		       !datapump->has_previous_receive_point &&
-		       datapump->turnaround_s_symbols_remaining ==
-			       turnaround_s_symbols &&
-		       !datapump->second_conditioning_complete &&
-		       (!datapump->conditioning_carrier_detected ||
-			datapump->conditioning_silence_samples ==
-				V32_CONDITIONING_SILENCE_SAMPLES) &&
-		       datapump->direct_qam_qualifying_samples == 0;
-	case V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER:
-		return v32_line_startup_is_complete(
-			       &datapump->line_startup) &&
-		       v32_conditioning_receiver_is_complete(
-			       &datapump->conditioning_receiver) &&
-		       qam_gain_is_valid(
-			       &datapump->conditioning_gain) &&
-		       datapump->has_previous_receive_point &&
-		       datapump->conditioning_transmitter.emitted_symbols == 0 &&
-		       datapump->turnaround_s_symbols_remaining ==
-			       turnaround_s_symbols &&
-		       !datapump->second_conditioning_complete &&
-		       datapump->startup.phase ==
-			       V32_CALLER_WAIT_OFFER &&
-		       datapump->direct_qam_qualifying_samples == 0;
-	case V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING:
-		return v32_line_startup_is_complete(
-			       &datapump->line_startup) &&
-		       v32_conditioning_receiver_is_complete(
-			       &datapump->conditioning_receiver) &&
-		       qam_gain_is_valid(
-			       &datapump->conditioning_gain) &&
-		       datapump->has_previous_receive_point &&
-		       !v32_conditioning_transmitter_is_complete(
-			       &datapump->conditioning_transmitter) &&
-		       !datapump->second_conditioning_complete &&
-		       datapump->startup.phase ==
-			       V32_CALLER_SEND_RESPONSE &&
-		       datapump->direct_qam_qualifying_samples == 0;
-	case V32_LINE_ENTRY_CALLER_RATE_EXCHANGE:
-		return v32_line_startup_is_complete(
-			       &datapump->line_startup) &&
-		       v32_conditioning_receiver_is_complete(
-			       &datapump->conditioning_receiver) &&
-		       qam_gain_is_valid(
-			       &datapump->conditioning_gain) &&
-		       datapump->has_previous_receive_point &&
-		       v32_conditioning_transmitter_is_complete(
-			       &datapump->conditioning_transmitter) &&
-		       datapump->turnaround_s_symbols_remaining == 0 &&
-		       datapump->startup.phase !=
-			       V32_CALLER_WAIT_OFFER &&
-		       datapump->direct_qam_qualifying_samples == 0;
-	case V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING:
-		return v32_line_startup_is_complete(
-			       &datapump->line_startup) &&
-		       !v32_conditioning_receiver_is_complete(
-			       &datapump->conditioning_receiver) &&
-		       qam_gain_is_valid(
-			       &datapump->conditioning_gain) &&
-		       !datapump->has_previous_receive_point &&
-		       v32_conditioning_transmitter_is_complete(
-			       &datapump->conditioning_transmitter) &&
-		       datapump->turnaround_s_symbols_remaining == 0 &&
-		       !datapump->second_conditioning_complete &&
-		       caller_awaits_second_conditioning(&datapump->startup) &&
-		       datapump->direct_qam_qualifying_samples == 0;
-	case V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY:
-		return datapump->line_startup.state ==
-			       V32_LINE_WAIT_ANSWER_TONE &&
-		       datapump->conditioning_transmitter.emitted_symbols == 0 &&
-		       datapump->turnaround_s_symbols_remaining == 0 &&
-		       !datapump->second_conditioning_complete &&
-		       !v32_conditioning_receiver_is_complete(
-			       &datapump->conditioning_receiver) &&
-		       datapump->direct_qam_qualifying_samples ==
-			       V32_DIRECT_QAM_QUALIFY_SAMPLES;
-	case V32_LINE_ENTRY_ANSWERER_STARTUP:
-	case V32_LINE_ENTRY_ANSWERER_PROTOCOL:
-		return false;
-	}
-	return false;
+			       V32_LINE_STARTUP_FAILED;
+	return !v32_answerer_line_startup_is_complete(
+		       &datapump->answerer_line_startup) &&
+	       datapump->answerer_line_startup.state !=
+		       V32_ANSWERER_LINE_FAILED;
 }
 
 static uint8_t rate_capabilities(const struct modem *modem)
@@ -746,25 +451,10 @@ static bool uses_uncoded_9600(const struct v32_datapump *datapump)
 	       !uses_trellis(datapump);
 }
 
-static bool trellis_receiver_is_valid(
-	const struct v32_datapump *datapump)
-{
-	uint8_t data_bits = selected_trellis_data_bits(datapump);
-
-	return v32_trellis_qam_acquirer_is_valid(
-		       &datapump->trellis_qam_acquirer) &&
-	       datapump->trellis_qam_acquirer.candidates[0]
-			       .decoder.data_bits_per_symbol == data_bits &&
-	       datapump->trellis_qam_acquirer.candidates[0]
-			       .descrambler.transmitter_role ==
-		       remote_role(datapump->caller);
-}
-
 static struct v32_datapump *v32_from_dp(struct dp *dp)
 {
 	struct v32_datapump *datapump;
 	uint8_t trellis_data_bits;
-	bool fixed_path;
 
 	if (dp == NULL ||
 	    (dp->id != DP_V32 && dp->id != DP_V32BIS) ||
@@ -773,59 +463,29 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	trellis_data_bits = selected_trellis_data_bits(datapump);
-	fixed_path = fixed_path_is_active(datapump);
 	if (&datapump->dp != dp ||
 	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V32_CARRIER_LOSS_SAMPLES ||
-	    !line_entry_is_valid(datapump) ||
-	    !v32_conditioning_qam_is_valid(&datapump->conditioning_qam) ||
-	    datapump->conditioning_receiver.has_previous_quadrant !=
-		    datapump->conditioning_qam.has_previous_point ||
-	    datapump->conditioning_receiver.observation_epoch !=
-		    datapump->conditioning_qam.epoch ||
-	    (datapump->conditioning_qam.has_previous_point &&
-	     datapump->conditioning_receiver.previous_quadrant !=
-		     datapump->conditioning_qam.quadrant) ||
+	    !line_state_is_valid(datapump) ||
+	    !qam_modulator_is_valid(&datapump->modulator) ||
 	    !v32_startup_is_valid(&datapump->startup) ||
 	    datapump->startup.role != endpoint_role(datapump->caller) ||
 	    datapump->startup.supported_rates != rate_capabilities(dp->modem) ||
 	    (!training_session_has_failed(&datapump->training) &&
 	     training_session_is_online(&datapump->training) !=
 		     v32_startup_is_complete(&datapump->startup)) ||
-	    (fixed_path ?
-		     (datapump->trellis_receiver_initialized ||
-		      datapump->receiver_9600_initialized) :
-		     datapump->trellis_receiver_initialized !=
-			     (trellis_data_bits != 0 &&
-			      datapump->startup.end_received)) ||
-	    (!fixed_path && datapump->trellis_receiver_initialized &&
-	     !trellis_receiver_is_valid(datapump)) ||
 	    (datapump->trellis_encoder_initialized &&
 	     (trellis_data_bits == 0 ||
 	      !v32_trellis_encoder_is_valid(
 		      &datapump->trellis_encoder) ||
 	      datapump->trellis_encoder.data_bits_per_symbol !=
 		      trellis_data_bits)) ||
-	    (!fixed_path && datapump->receiver_9600_initialized !=
-		    (uses_uncoded_9600(datapump) &&
-		     datapump->startup.end_received)) ||
-	    (!fixed_path && datapump->receiver_9600_initialized &&
-	     !v32_uncoded_qam_is_valid(
-		     &datapump->receiver_9600)) ||
 	    datapump->encoder.phase_quadrant >=
 		    QPSK_QUADRANT_COUNT ||
-	    datapump->decoder.phase_quadrant >=
-		    QPSK_QUADRANT_COUNT ||
 	    !v32_scrambler_is_valid(&datapump->encoder.scrambler) ||
-	    !v32_scrambler_is_valid(
-		    &datapump->decoder.descrambler) ||
 	    datapump->encoder.scrambler.transmitter_role !=
 		    local_role(datapump->caller) ||
-	    datapump->decoder.descrambler.transmitter_role !=
-		    remote_role(datapump->caller) ||
 	    !point_is_finite(&datapump->transmit_point) ||
-	    (datapump->has_previous_receive_point &&
-	     !point_is_finite(&datapump->previous_receive_point)) ||
 	    (!training_session_has_failed(&datapump->training) &&
 	     (training_session_is_online(&datapump->training) ||
 	      training_session_is_retraining(&datapump->training)) !=
@@ -851,27 +511,12 @@ static int initialize_protocol(
 	    qam_modulator_init(
 		    &datapump->modulator, &channel,
 		    V32_TRANSMIT_AMPLITUDE) != QAM_OK ||
-	    qam_demodulator_init(
-		    &datapump->demodulator, &channel) != QAM_OK ||
 	    v32_symbol_encoder_init(
 		    &datapump->encoder, local_role(datapump->caller), 0) !=
-		    V32_FRAMING_OK ||
-	    v32_symbol_decoder_init(
-		    &datapump->decoder, remote_role(datapump->caller), 0) !=
 		    V32_FRAMING_OK ||
 	    v32_startup_init(
 		    &datapump->startup, endpoint_role(datapump->caller),
 		    rates) != V32_STARTUP_OK ||
-	    v32_conditioning_transmitter_init(
-		    &datapump->conditioning_transmitter,
-		    local_role(datapump->caller),
-		    V32_CONDITIONING_TRN_MIN_SYMBOLS) != V32_CONDITIONING_OK ||
-	    v32_conditioning_receiver_init(
-		    &datapump->conditioning_receiver,
-		    remote_role(datapump->caller)) !=
-		    V32_CONDITIONING_RECEIVER_OK ||
-	    v32_conditioning_qam_init(&datapump->conditioning_qam) !=
-		    V32_CONDITIONING_QAM_OK ||
 	    v32_4800_constellation_point(
 		    0, &datapump->transmit_point) != V32_CONSTELLATION_OK)
 		return -1;
@@ -917,28 +562,12 @@ static int initialize_protocol(
 	}
 	memset(&datapump->trellis_encoder, 0,
 	       sizeof(datapump->trellis_encoder));
-	memset(&datapump->trellis_qam_acquirer, 0,
-	       sizeof(datapump->trellis_qam_acquirer));
-	memset(&datapump->receiver_9600, 0,
-	       sizeof(datapump->receiver_9600));
 	memset(&datapump->fixed_path, 0,
 	       sizeof(datapump->fixed_path));
-	datapump->previous_receive_point = (struct qam_point){ 0 };
-	datapump->conditioning_gain = (struct qam_gain){ 0 };
 	datapump->missing_carrier_samples = 0;
 	datapump->turnaround_s_symbols_remaining = 0;
-	datapump->direct_retrain_dibits = 0;
-	datapump->direct_qam_qualifying_samples = 0;
 	datapump->conditioning_silence_samples = 0;
-	datapump->line_entry = datapump->caller ?
-		V32_LINE_ENTRY_CALLER_STARTUP :
-		V32_LINE_ENTRY_ANSWERER_STARTUP;
-	datapump->has_previous_receive_point = false;
 	datapump->trellis_encoder_initialized = false;
-	datapump->trellis_receiver_initialized = false;
-	datapump->receiver_9600_initialized = false;
-	datapump->second_conditioning_complete = false;
-	datapump->conditioning_carrier_detected = false;
 	datapump->answerer_s_detected = false;
 	return 0;
 }
@@ -1237,97 +866,6 @@ static int sample_fixed_rate_drain(
 	return commit_fixed_rate_drain(drain, result, &observation);
 }
 
-static int advance_answerer_training(
-	struct v32_datapump *datapump)
-{
-	struct v32_startup next = datapump->startup;
-	enum v32_startup_output output;
-	uint8_t dibit;
-
-	if (v32_startup_next_transmit(
-		    &next, &output, &dibit) != V32_STARTUP_OK ||
-	    output != V32_STARTUP_TRN_DIBIT || dibit != 3)
-		return -1;
-	/* TRAIN can observe the answerer's own conditioning through echo.  Only
-	 * conditioning acquired after the rate offer belongs to the caller. */
-	if (datapump->startup.phase == V32_ANSWERER_TRAIN &&
-	    next.phase == V32_ANSWERER_SEND_OFFER) {
-		if (reset_conditioning_receiver(datapump, false) != 0)
-			return -1;
-		datapump->answerer_s_detected = false;
-	}
-	datapump->startup = next;
-	return 0;
-}
-
-static int generate_conditioning_sample(
-	struct v32_datapump *datapump, int16_t *sample)
-{
-	bool can_accept = qam_modulator_can_accept_symbol(
-		&datapump->modulator);
-	bool accepted;
-
-	if (can_accept) {
-		uint8_t quadrant;
-
-		if (datapump->turnaround_s_symbols_remaining != 0) {
-			quadrant =
-				(datapump->turnaround_s_symbols_remaining & 1u) != 0 ?
-					V32_SIGNAL_B : V32_SIGNAL_A;
-			datapump->turnaround_s_symbols_remaining--;
-		} else if (v32_conditioning_transmitter_next(
-				   &datapump->conditioning_transmitter, &quadrant) !=
-			   V32_CONDITIONING_OK) {
-			return -1;
-		}
-		if (!datapump->caller &&
-		    datapump->conditioning_transmitter.emitted_symbols >
-			    V32_CONDITIONING_S_SYMBOLS +
-				    V32_CONDITIONING_S_BAR_SYMBOLS &&
-		    advance_answerer_training(datapump) != 0)
-			return -1;
-		if (v32_4800_constellation_point(
-			    quadrant, &datapump->transmit_point) !=
-		    V32_CONSTELLATION_OK)
-			return -1;
-	}
-	if (qam_modulator_sample(
-		    &datapump->modulator, &datapump->transmit_point, sample,
-		    &accepted) != QAM_OK ||
-	    accepted != can_accept)
-		return -1;
-	if (accepted &&
-	    v32_conditioning_transmitter_is_complete(
-		    &datapump->conditioning_transmitter)) {
-		if (v32_conditioning_transmitter_framing_state(
-			    &datapump->conditioning_transmitter,
-			    &datapump->encoder) != V32_CONDITIONING_OK)
-			return -1;
-		if (datapump->caller)
-			datapump->line_entry =
-				V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
-	}
-	return 0;
-}
-
-static int generate_silence_sample(
-	struct v32_datapump *datapump, int16_t *sample)
-{
-	static const struct qam_point silence = { 0 };
-	bool can_accept = qam_modulator_can_accept_symbol(
-		&datapump->modulator);
-	bool accepted;
-
-	if (can_accept)
-		datapump->transmit_point = silence;
-	if (qam_modulator_sample(
-		    &datapump->modulator, &datapump->transmit_point, sample,
-		    &accepted) != QAM_OK ||
-	    accepted != can_accept)
-		return -1;
-	return 0;
-}
-
 static int finish_fixed_echo(
 	struct v32_datapump *datapump, bool *linked)
 {
@@ -1343,8 +881,6 @@ static int finish_fixed_echo(
 	datapump->fixed_path.stage =
 		V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING;
 	datapump->conditioning_silence_samples = 0;
-	datapump->line_entry =
-		V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
 	return next_transmit_point(datapump, linked);
 }
 
@@ -1371,7 +907,6 @@ static int finish_fixed_answerer_echo(
 	datapump->startup = startup;
 	datapump->encoder = encoder;
 	datapump->answerer_s_detected = false;
-	datapump->line_entry = V32_LINE_ENTRY_ANSWERER_PROTOCOL;
 	return next_transmit_point(datapump, linked);
 }
 
@@ -1400,7 +935,6 @@ static int finish_fixed_answerer_conditioning(
 	datapump->startup = startup;
 	datapump->encoder = encoder;
 	datapump->answerer_s_detected = false;
-	datapump->line_entry = V32_LINE_ENTRY_ANSWERER_PROTOCOL;
 	return next_transmit_point(datapump, linked);
 }
 
@@ -1540,59 +1074,11 @@ static int generate_fixed_path_sample(
 	return 0;
 }
 
-static int generate_sample(
-	struct v32_datapump *datapump, int16_t *sample,
-	bool *linked, uint64_t sample_number)
-{
-	bool can_accept;
-	bool accepted;
-
-	if (datapump->line_entry ==
-	    V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING)
-		return generate_conditioning_sample(datapump, sample);
-	if (!datapump->caller &&
-	    (datapump->startup.phase == V32_ANSWERER_TRAIN ||
-	     datapump->startup.phase == V32_ANSWERER_RETRAIN))
-		return generate_conditioning_sample(datapump, sample);
-	/* V.32 5.4.2 requires the answerer to cease transmission once it
-	 * recognizes the caller's S sequence.  Continue clocking zero symbols so
-	 * the pulse shaper and carrier resume the second conditioning interval on
-	 * their natural sample phase. */
-	if (!datapump->caller &&
-	    datapump->startup.phase == V32_ANSWERER_SEND_OFFER &&
-	    datapump->answerer_s_detected)
-		return generate_silence_sample(datapump, sample);
-
-	if (datapump->caller &&
-	    (datapump->line_entry ==
-		     V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING ||
-	     datapump->line_entry ==
-		     V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER)) {
-		/* A-law has no exact zero codeword.  Alternate its two zero
-		 * intervals so a silent caller has no DC component at the peer. */
-		*sample = (sample_number & 1u) != 0 ? -1 : 0;
-		return 0;
-	}
-	can_accept = qam_modulator_can_accept_symbol(
-		&datapump->modulator);
-
-	if ((can_accept && next_transmit_point(datapump, linked) != 0) ||
-	    qam_modulator_sample(
-		    &datapump->modulator, &datapump->transmit_point, sample,
-		    &accepted) != QAM_OK ||
-	    accepted != can_accept)
-		return -1;
-	return 0;
-}
-
 static int process_caller_line_startup(
 	struct v32_datapump *datapump, int16_t receive_sample,
 	int16_t *transmit_sample)
 {
-	struct qam_point ignored_point;
-	struct qam_measurement measurement;
 	enum v32_line_startup_result result;
-	bool ignored_ready;
 	bool complete;
 
 	result = v32_line_startup_process(
@@ -1612,41 +1098,12 @@ static int process_caller_line_startup(
 			    (uint16_t)turnaround_symbols) !=
 			    V32_CONDITIONING_PATH_OK)
 			return -1;
-		if (qam_demodulator_reset(&datapump->demodulator) !=
-		    QAM_OK)
-			return -1;
 		datapump->fixed_path.owner.conditioning = conditioning;
 		datapump->fixed_path.stage =
 			V32_FIXED_CALLER_CONDITIONING;
 		datapump->turnaround_s_symbols_remaining =
 			turnaround_symbols;
-		datapump->has_previous_receive_point = false;
-		datapump->line_entry =
-			V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING;
-		return 0;
 	}
-	if (datapump->line_startup.state !=
-	    V32_LINE_WAIT_ANSWER_TONE) {
-		datapump->direct_qam_qualifying_samples = 0;
-		return 0;
-	}
-	if (qam_demodulator_sample(
-		    &datapump->demodulator, receive_sample, &ignored_point,
-		    &ignored_ready) != QAM_OK)
-		return -1;
-	measurement = qam_demodulator_measure(
-		&datapump->demodulator);
-	if (measurement.timing_locked &&
-	    measurement.line_power >= V32_MIN_LINE_POWER) {
-		if (datapump->direct_qam_qualifying_samples <
-		    V32_DIRECT_QAM_QUALIFY_SAMPLES)
-			datapump->direct_qam_qualifying_samples++;
-	} else {
-		datapump->direct_qam_qualifying_samples = 0;
-	}
-	if (datapump->direct_qam_qualifying_samples ==
-	    V32_DIRECT_QAM_QUALIFY_SAMPLES)
-		datapump->line_entry = V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY;
 	return 0;
 }
 
@@ -1680,8 +1137,6 @@ static int process_answerer_line_startup(
 	datapump->fixed_path.training.echo = echo;
 	datapump->fixed_path.stage =
 		V32_FIXED_ANSWERER_INITIAL_ECHO;
-	datapump->has_previous_receive_point = false;
-	datapump->line_entry = V32_LINE_ENTRY_ANSWERER_PROTOCOL;
 	return 0;
 }
 
@@ -1707,26 +1162,15 @@ static unsigned int selected_bit_rate(
 static int enter_link(struct v32_datapump *datapump)
 {
 	unsigned int bit_rate = selected_bit_rate(datapump);
-	bool fixed_path = fixed_path_is_active(datapump);
 
-	if (bit_rate == 0 ||
-	    (fixed_path &&
-	     (datapump->fixed_path.stage != V32_FIXED_DATA ||
-	      !v32_data_path_is_valid(
-		      &datapump->fixed_path.owner.data))) ||
-	    (!fixed_path && uses_trellis(datapump) &&
-	     !datapump->trellis_receiver_initialized) ||
+	if (bit_rate == 0 || !fixed_path_is_active(datapump) ||
+	    datapump->fixed_path.stage != V32_FIXED_DATA ||
+	    !v32_data_path_is_valid(&datapump->fixed_path.owner.data) ||
 	    (uses_trellis(datapump) &&
 	     !datapump->trellis_encoder_initialized) ||
-	    (!fixed_path && uses_uncoded_9600(datapump) &&
-	     !datapump->receiver_9600_initialized))
+	    (!uses_trellis(datapump) &&
+	     datapump->trellis_encoder_initialized))
 		return -1;
-	if (!fixed_path && uses_trellis(datapump)) {
-		if (v32_trellis_qam_acquirer_select(
-			    &datapump->trellis_qam_acquirer) !=
-		    V32_TRELLIS_QAM_ACQUIRER_OK)
-			return -1;
-	}
 	if (modem_set_param(
 		    datapump->dp.modem, MDMPRM_TX_RATE, (int)bit_rate) != 0 ||
 	    modem_set_param(
@@ -1751,238 +1195,6 @@ static void deliver_bits(
 	if (datapump->dp.modem->put_bits != NULL)
 		(void)modem_put_bits(
 			datapump->dp.modem, 1, bits, (int)bit_count);
-}
-
-static int initialize_trellis_receiver(
-	struct v32_datapump *datapump,
-	const struct qam_point *reference_point)
-{
-	struct v32_trellis_qam_acquirer acquirer;
-	uint8_t data_bits = selected_trellis_data_bits(datapump);
-
-	if (data_bits == 0 ||
-	    v32_trellis_qam_acquirer_init(
-		    &acquirer, &datapump->decoder, reference_point,
-		    data_bits) != V32_TRELLIS_QAM_ACQUIRER_OK)
-		return -1;
-	datapump->trellis_qam_acquirer = acquirer;
-	datapump->trellis_receiver_initialized = true;
-	return 0;
-}
-
-static int reset_conditioning_receiver(
-	struct v32_datapump *datapump, bool carrier_detected)
-{
-	struct v32_conditioning_receiver receiver;
-	struct v32_conditioning_qam adapter;
-	struct qam_demodulator demodulator = datapump->demodulator;
-
-	if (v32_conditioning_receiver_init(
-		    &receiver, remote_role(datapump->caller)) !=
-		    V32_CONDITIONING_RECEIVER_OK ||
-	    v32_conditioning_qam_init(&adapter) !=
-		    V32_CONDITIONING_QAM_OK ||
-	    qam_demodulator_reset(&demodulator) !=
-		    QAM_OK)
-		return -1;
-	datapump->conditioning_receiver = receiver;
-	datapump->conditioning_qam = adapter;
-	datapump->demodulator = demodulator;
-	datapump->has_previous_receive_point = false;
-	datapump->conditioning_carrier_detected = carrier_detected;
-	datapump->conditioning_silence_samples = 0;
-	return 0;
-}
-
-static int begin_second_conditioning(
-	struct v32_datapump *datapump)
-{
-	if (reset_conditioning_receiver(datapump, true) != 0)
-		return -1;
-	datapump->line_entry =
-		V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
-	return 0;
-}
-
-static int track_rate_signal_loss(
-	struct v32_datapump *datapump, double line_power)
-{
-	/* The demodulator's 256-sample power estimator already rejects brief
-	 * sample and media gaps before it crosses this threshold. */
-	if (datapump->line_entry != V32_LINE_ENTRY_CALLER_RATE_EXCHANGE ||
-	    datapump->second_conditioning_complete ||
-	    !caller_awaits_second_conditioning(&datapump->startup) ||
-	    line_power >= V32_MIN_LINE_POWER)
-		return 0;
-	return begin_second_conditioning(datapump);
-}
-
-static int update_direct_selection_wait(
-	struct v32_datapump *datapump)
-{
-	if (datapump->line_entry != V32_LINE_ENTRY_DIRECT_QAM_COMPATIBILITY ||
-	    !datapump->caller ||
-	    datapump->startup.phase !=
-		    V32_CALLER_SEND_RESPONSE ||
-	    datapump->startup.selected_rate != 0 ||
-	    datapump->startup.selection_expected) {
-		datapump->direct_retrain_dibits = 0;
-		return 0;
-	}
-	if (datapump->direct_retrain_dibits < V32_DIRECT_RETRAIN_DIBITS)
-		datapump->direct_retrain_dibits++;
-	if (datapump->direct_retrain_dibits != V32_DIRECT_RETRAIN_DIBITS)
-		return 0;
-	if (v32_startup_expect_selection(&datapump->startup) !=
-	    V32_STARTUP_OK)
-		return -1;
-	datapump->direct_retrain_dibits = 0;
-	return 0;
-}
-
-static int observe_dibit(
-	struct v32_datapump *datapump, uint8_t dibit,
-	const struct qam_point *point, bool *linked)
-{
-	if (training_session_is_online(&datapump->training)) {
-		if (uses_uncoded_9600(datapump) || uses_trellis(datapump))
-			return -1;
-		deliver_bits(
-			datapump, dibit, V32_4800_BITS_PER_SYMBOL);
-		return 0;
-	}
-	{
-		bool connected;
-		bool end_was_received = datapump->startup.end_received;
-		enum v32_startup_phase previous_phase =
-			datapump->startup.phase;
-
-		if (v32_startup_observe(
-			    &datapump->startup, dibit, &connected) !=
-			    V32_STARTUP_OK)
-			return -1;
-		if (!datapump->caller &&
-		    previous_phase == V32_ANSWERER_SEND_OFFER &&
-		    datapump->startup.phase == V32_ANSWERER_RETRAIN) {
-			if (v32_conditioning_transmitter_init(
-				    &datapump->conditioning_transmitter,
-				    V32_ANSWERING_TRANSMITTER,
-				    V32_CONDITIONING_TRN_MIN_SYMBOLS) !=
-				    V32_CONDITIONING_OK)
-				return -1;
-			datapump->answerer_s_detected = false;
-		}
-		if (update_direct_selection_wait(datapump) != 0)
-			return -1;
-		if (datapump->line_entry ==
-			    V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER &&
-		    previous_phase == V32_CALLER_WAIT_OFFER &&
-		    datapump->startup.phase ==
-			    V32_CALLER_SEND_RESPONSE)
-			datapump->line_entry =
-				V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING;
-		if (datapump->line_entry == V32_LINE_ENTRY_CALLER_RATE_EXCHANGE &&
-		    !datapump->second_conditioning_complete &&
-		    caller_awaits_second_conditioning(&datapump->startup) &&
-		    !datapump->startup.detector.aligned &&
-		    begin_second_conditioning(datapump) != 0)
-			return -1;
-		if (uses_trellis(datapump) && !end_was_received &&
-		    datapump->startup.end_received) {
-			if (initialize_trellis_receiver(datapump, point) != 0)
-				return -1;
-		} else if (uses_uncoded_9600(datapump) && !end_was_received &&
-			   datapump->startup.end_received) {
-			if (v32_uncoded_qam_init(
-				    &datapump->receiver_9600, &datapump->decoder,
-				    point) != V32_UNCODED_QAM_OK)
-				return -1;
-			datapump->receiver_9600_initialized = true;
-		}
-		if (!connected)
-			return 0;
-		if (enter_link(datapump) != 0)
-			return -1;
-		*linked = true;
-	}
-	return 0;
-}
-
-static int observe_trellis_point(
-	struct v32_datapump *datapump,
-	const struct qam_point *point, bool *linked)
-{
-	uint8_t data_bits = selected_trellis_data_bits(datapump);
-	uint8_t mark = (uint8_t)((UINT8_C(1) << data_bits) - 1u);
-
-	if (!datapump->trellis_receiver_initialized || data_bits == 0)
-		return -1;
-	if (training_session_is_online(&datapump->training)) {
-		uint8_t bits;
-		bool ready;
-
-		if (v32_trellis_qam_acquirer_decode(
-			    &datapump->trellis_qam_acquirer, point, &bits,
-			    &ready) != V32_TRELLIS_QAM_ACQUIRER_OK)
-			return -1;
-		if (ready)
-			deliver_bits(datapump, bits, data_bits);
-	} else {
-		bool connected;
-		if (v32_trellis_qam_acquirer_track_known(
-			    &datapump->trellis_qam_acquirer, point, mark) !=
-		    V32_TRELLIS_QAM_ACQUIRER_OK)
-			return -1;
-		/* B1 confirmation counts the accepted known symbol.  Its decoded
-		 * value is intentionally delayed by equalization and traceback. */
-		if (v32_startup_observe(
-			    &datapump->startup, 3, &connected) !=
-		    V32_STARTUP_OK)
-			return -1;
-		if (connected) {
-			if (enter_link(datapump) != 0)
-				return -1;
-			*linked = true;
-		}
-	}
-	return 0;
-}
-
-static int observe_9600_point(
-	struct v32_datapump *datapump,
-	const struct qam_point *point, bool *linked)
-{
-	if (!datapump->receiver_9600_initialized)
-		return -1;
-	if (training_session_is_online(&datapump->training)) {
-		uint8_t bits;
-		bool ready;
-
-		if (v32_uncoded_qam_decode(
-			    &datapump->receiver_9600, point, &bits, &ready) !=
-		    V32_UNCODED_QAM_OK)
-			return -1;
-		if (ready)
-			deliver_bits(
-				datapump, bits,
-				V32_9600_BITS_PER_SYMBOL);
-	} else {
-		bool connected;
-
-		if (v32_uncoded_qam_track_known(
-			    &datapump->receiver_9600, point, 15) !=
-			    V32_UNCODED_QAM_OK ||
-		    v32_startup_observe(
-			    &datapump->startup, 3,
-			    &connected) != V32_STARTUP_OK)
-			return -1;
-		if (connected) {
-			if (enter_link(datapump) != 0)
-				return -1;
-			*linked = true;
-		}
-	}
-	return 0;
 }
 
 static void deliver_fixed_batch(
@@ -2039,9 +1251,6 @@ static int advance_fixed_b1(
 		datapump->startup = next_startup;
 		datapump->fixed_path.owner.data = data;
 		datapump->fixed_path.stage = V32_FIXED_DATA;
-		datapump->line_entry = datapump->caller ?
-			V32_LINE_ENTRY_CALLER_RATE_EXCHANGE :
-			V32_LINE_ENTRY_ANSWERER_PROTOCOL;
 		deliver_fixed_batch(datapump, &batch);
 		if (connected) {
 			if (enter_link(datapump) != 0)
@@ -2075,9 +1284,6 @@ static int finish_fixed_end(
 	datapump->startup = next_startup;
 	datapump->fixed_path.owner.b1 = b1;
 	datapump->fixed_path.stage = V32_FIXED_B1;
-	datapump->line_entry = datapump->caller ?
-		V32_LINE_ENTRY_CALLER_RATE_EXCHANGE :
-		V32_LINE_ENTRY_ANSWERER_PROTOCOL;
 	return advance_fixed_b1(datapump, 0, result, linked);
 }
 
@@ -2139,7 +1345,6 @@ static int finish_fixed_rate(
 		datapump->fixed_path.stage =
 			V32_FIXED_ANSWERER_SECOND_CONDITIONING;
 		datapump->answerer_s_detected = false;
-		datapump->line_entry = V32_LINE_ENTRY_ANSWERER_PROTOCOL;
 		return 0;
 	}
 	if (stage == V32_FIXED_CALLER_RATE_OFFER) {
@@ -2163,8 +1368,6 @@ static int finish_fixed_rate(
 		datapump->fixed_path.training.echo = echo;
 		datapump->fixed_path.stage = V32_FIXED_CALLER_RATE_DRAIN;
 		datapump->turnaround_s_symbols_remaining = 0;
-		datapump->line_entry =
-			V32_LINE_ENTRY_CALLER_TRANSMIT_CONDITIONING;
 		return 0;
 	}
 	{
@@ -2183,7 +1386,6 @@ static int finish_fixed_rate(
 		datapump->startup = next_startup;
 		datapump->fixed_path.owner.end = end;
 		datapump->fixed_path.stage = V32_FIXED_CALLER_END;
-		datapump->line_entry = V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
 		return result == V32_END_PATH_COMPLETE ?
 			finish_fixed_end(datapump, linked) : 0;
 	}
@@ -2215,12 +1417,8 @@ static int begin_fixed_rate(
 		datapump->fixed_path.stage = selection ?
 			V32_FIXED_CALLER_SELECTION :
 			V32_FIXED_CALLER_RATE_OFFER;
-		datapump->line_entry = selection ?
-			V32_LINE_ENTRY_CALLER_RATE_EXCHANGE :
-			V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER;
 	} else {
 		datapump->fixed_path.stage = V32_FIXED_ANSWERER_RATE;
-		datapump->line_entry = V32_LINE_ENTRY_ANSWERER_PROTOCOL;
 	}
 	return result == V32_RATE_PATH_COMPLETE ?
 		finish_fixed_rate(datapump, linked) : 0;
@@ -2386,150 +1584,6 @@ static int receive_fixed_path_sample(
 	return -1;
 }
 
-static int receive_sample(
-	struct v32_datapump *datapump, int16_t sample,
-	bool *linked)
-{
-	struct qam_point point;
-	struct qam_measurement measurement;
-	bool ready;
-
-	if (receives_conditioning(datapump->line_entry) &&
-	    !datapump->conditioning_carrier_detected) {
-		int32_t magnitude = sample < 0 ? -(int32_t)sample : sample;
-
-		if (datapump->conditioning_silence_samples <
-		    V32_CONDITIONING_SILENCE_SAMPLES) {
-			if (magnitude <= V32_CONDITIONING_SIGNAL_THRESHOLD)
-				datapump->conditioning_silence_samples++;
-			else
-				datapump->conditioning_silence_samples = 0;
-			return 0;
-		}
-		if (magnitude <= V32_CONDITIONING_SIGNAL_THRESHOLD)
-			return 0;
-		if (qam_demodulator_reset(&datapump->demodulator) != QAM_OK)
-			return -1;
-		datapump->conditioning_carrier_detected = true;
-	}
-
-	if (qam_demodulator_sample(
-		    &datapump->demodulator, sample, &point, &ready) !=
-	    QAM_OK)
-		return -1;
-	measurement = qam_demodulator_measure(
-		&datapump->demodulator);
-	if (track_rate_signal_loss(datapump, measurement.line_power) != 0)
-		return -1;
-	if (!ready)
-		return 0;
-	if (receives_conditioning(datapump->line_entry) ||
-	    (!datapump->caller &&
-	     datapump->line_entry == V32_LINE_ENTRY_ANSWERER_PROTOCOL &&
-	     !v32_conditioning_receiver_is_complete(
-		     &datapump->conditioning_receiver))) {
-		enum v32_line_entry next_entry =
-			!datapump->caller ?
-				V32_LINE_ENTRY_ANSWERER_PROTOCOL :
-			datapump->line_entry ==
-				V32_LINE_ENTRY_CALLER_RECEIVE_CONDITIONING ?
-				V32_LINE_ENTRY_CALLER_RECEIVE_RATE_OFFER :
-				V32_LINE_ENTRY_CALLER_RATE_EXCHANGE;
-		bool second_conditioning =
-			datapump->line_entry ==
-			V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING;
-		double point_power = point.in_phase * point.in_phase +
-				     point.quadrature * point.quadrature;
-
-		/* A weak carrier tail can acquire timing and then yield an empty
-		 * recovered point in the following gap.  Restart at the next real
-		 * conditioning carrier instead of treating loss of signal as corrupt
-		 * detector input. */
-		if (receives_conditioning(datapump->line_entry) &&
-		    point_power <= v32_min_conditioning_point_power) {
-			if (reset_conditioning_receiver(datapump, false) != 0)
-				return -1;
-			return 0;
-		}
-
-		if (v32_conditioning_qam_observe(
-			    &datapump->conditioning_qam,
-			    &datapump->conditioning_receiver, &point) !=
-			    V32_CONDITIONING_QAM_OK)
-			return -1;
-		if (!datapump->caller &&
-		    datapump->startup.phase == V32_ANSWERER_SEND_OFFER &&
-		    datapump->conditioning_receiver.phase !=
-			    V32_CONDITIONING_SEARCH_S_BAR)
-			datapump->answerer_s_detected = true;
-		if (v32_conditioning_receiver_is_complete(
-			    &datapump->conditioning_receiver)) {
-			if (second_conditioning &&
-			    v32_startup_expect_selection(
-				    &datapump->startup) !=
-				    V32_STARTUP_OK)
-				return -1;
-			if (v32_conditioning_qam_framing_state(
-				    &datapump->conditioning_qam,
-				    &datapump->conditioning_receiver,
-				    &datapump->decoder) !=
-				    V32_CONDITIONING_QAM_OK ||
-			    v32_conditioning_qam_handoff(
-				    &datapump->conditioning_qam,
-				    &datapump->conditioning_receiver,
-				    &datapump->previous_receive_point,
-				    &datapump->conditioning_gain) !=
-				    V32_CONDITIONING_QAM_OK)
-				return -1;
-			datapump->has_previous_receive_point = true;
-			datapump->second_conditioning_complete =
-				second_conditioning;
-			datapump->conditioning_carrier_detected = false;
-			datapump->conditioning_silence_samples = 0;
-			datapump->line_entry = next_entry;
-		}
-		return 0;
-	}
-	if (datapump->trellis_receiver_initialized) {
-		if (observe_trellis_point(datapump, &point, linked) != 0)
-			return -1;
-		datapump->previous_receive_point = point;
-		datapump->has_previous_receive_point = true;
-		return 0;
-	}
-	if (datapump->receiver_9600_initialized) {
-		if (observe_9600_point(datapump, &point, linked) != 0)
-			return -1;
-		datapump->previous_receive_point = point;
-		datapump->has_previous_receive_point = true;
-		return 0;
-	}
-	if (datapump->has_previous_receive_point) {
-		uint8_t dibit;
-		uint8_t quarter_turns;
-		uint8_t quadrant;
-
-		if (qam_nearest_quarter_turn(
-			    &datapump->previous_receive_point, &point,
-			    &quarter_turns) != QAM_OK)
-			return -1;
-		quadrant = (uint8_t)((datapump->decoder.phase_quadrant +
-				      quarter_turns) &
-				     3u);
-		if (v32_4800_symbol_decode(
-			    &datapump->decoder, quadrant, &dibit) !=
-			    V32_FRAMING_OK ||
-		    observe_dibit(datapump, dibit, &point, linked) != 0)
-			return -1;
-	}
-	if (datapump->line_entry ==
-	    V32_LINE_ENTRY_CALLER_RECEIVE_SECOND_CONDITIONING)
-		return 0;
-	datapump->previous_receive_point = point;
-	datapump->has_previous_receive_point = true;
-	return 0;
-}
-
 static bool carrier_is_present(
 	bool timing_locked, const int16_t *samples, int count)
 {
@@ -2589,7 +1643,6 @@ static int process_v32(
 	struct v32_datapump *datapump = v32_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
-	struct qam_measurement measurement;
 	uint64_t frame_start = 0;
 	bool linked = false;
 
@@ -2613,15 +1666,14 @@ static int process_v32(
 		frame_start = datapump->training.elapsed_ticks -
 			      (uint64_t)(unsigned int)count;
 	for (int index = 0; index < count; ++index) {
-		if (datapump->line_entry == V32_LINE_ENTRY_CALLER_STARTUP) {
-			if (process_caller_line_startup(
-				    datapump, receive[index], &transmit[index]) != 0)
-				goto failure;
-			continue;
-		}
-		if (datapump->line_entry == V32_LINE_ENTRY_ANSWERER_STARTUP) {
-			if (process_answerer_line_startup(
-				    datapump, receive[index], &transmit[index]) != 0)
+		if (!fixed_path_is_active(datapump)) {
+			int startup_result = datapump->caller ?
+				process_caller_line_startup(
+					datapump, receive[index], &transmit[index]) :
+				process_answerer_line_startup(
+					datapump, receive[index], &transmit[index]);
+
+			if (startup_result != 0)
 				goto failure;
 			continue;
 		}
@@ -2637,7 +1689,7 @@ static int process_v32(
 				continue;
 			}
 		}
-		if (fixed_path_is_active(datapump)) {
+		{
 			struct v32_echo_reference reference;
 			bool reference_ready;
 
@@ -2651,25 +1703,15 @@ static int process_v32(
 				    reference_ready ? &reference : NULL,
 				    &linked) != 0)
 				goto failure;
-			continue;
 		}
-		if (generate_sample(
-			    datapump, &transmit[index], &linked,
-			    frame_start + (uint64_t)(unsigned int)index) != 0 ||
-		    receive_sample(datapump, receive[index], &linked) != 0)
-			goto failure;
 	}
 	if (linked)
 		return DPSTAT_CONNECT;
 	if (!training_session_is_online(&datapump->training))
 		return DPSTAT_OK;
-	measurement = qam_demodulator_measure(&datapump->demodulator);
 	if (carrier_is_present(
-		    fixed_path_is_active(datapump) ?
-			    fixed_path_receive_const(
-				    &datapump->fixed_path)
-				    ->line.timing.signal_detected :
-			    measurement.timing_locked,
+		    fixed_path_receive_const(
+			    &datapump->fixed_path)->line.timing.signal_detected,
 		    receive, count)) {
 		datapump->missing_carrier_samples = 0;
 	} else {

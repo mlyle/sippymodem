@@ -461,9 +461,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/v22bis_symbols.o \
 	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/datapump.o \
-	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
-	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/v32_decision.o \
@@ -473,9 +471,6 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/rate_signal.o \
 	$(BUILD_DIR)/startup.o \
 	$(BUILD_DIR)/trellis.o \
-	$(BUILD_DIR)/trellis_qam_decoder.o \
-	$(BUILD_DIR)/trellis_qam_acquirer.o \
-	$(BUILD_DIR)/trellis_qam_receiver.o \
 	$(BUILD_DIR)/v23_datapump.o
 FSK_TEST_BINARY := $(BUILD_DIR)/test_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_fsk.o \
@@ -744,16 +739,6 @@ V32_UNCODED_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/framing.o
-V32_UNCODED_QAM_TEST_BINARY := \
-	$(BUILD_DIR)/test_v32_uncoded_qam
-V32_UNCODED_QAM_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v32_uncoded_qam.o \
-	$(BUILD_DIR)/differential_qpsk.o \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/uncoded_qam.o \
-	$(BUILD_DIR)/constellation.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/framing.o
 V32_RATE_SIGNAL_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_rate_signal
 V32_RATE_SIGNAL_TEST_OBJECTS := \
@@ -778,19 +763,13 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_datapump_conditioning.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(V32_FIXED_RECEIVE_OBJECTS) \
-	$(BUILD_DIR)/g711.o \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/dc_filter.o \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/single_tone.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/datapump.o \
-	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
-	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/v32_decision.o \
@@ -799,46 +778,11 @@ V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/line_startup.o \
 	$(BUILD_DIR)/rate_signal.o \
 	$(BUILD_DIR)/startup.o \
-	$(BUILD_DIR)/trellis.o \
-	$(BUILD_DIR)/trellis_qam_decoder.o \
-	$(BUILD_DIR)/trellis_qam_acquirer.o \
-	$(BUILD_DIR)/trellis_qam_receiver.o
+	$(BUILD_DIR)/trellis.o
 V32_TRELLIS_TEST_BINARY := $(BUILD_DIR)/test_v32_trellis
 V32_TRELLIS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_trellis.o \
 	$(BUILD_DIR)/trellis.o
-V32_TRELLIS_QAM_DECODER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v32_trellis_qam_decoder
-V32_TRELLIS_QAM_DECODER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v32_trellis_qam_decoder.o \
-	$(BUILD_DIR)/constellation.o \
-	$(BUILD_DIR)/trellis.o \
-	$(BUILD_DIR)/trellis_qam_decoder.o
-V32_TRELLIS_QAM_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v32_trellis_qam_receiver
-V32_TRELLIS_QAM_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v32_trellis_qam_receiver.o \
-	$(BUILD_DIR)/differential_qpsk.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/constellation.o \
-	$(BUILD_DIR)/framing.o \
-	$(BUILD_DIR)/trellis.o \
-	$(BUILD_DIR)/trellis_qam_decoder.o \
-	$(BUILD_DIR)/trellis_qam_receiver.o
-V32_TRELLIS_QAM_ACQUIRER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v32_trellis_qam_acquirer
-V32_TRELLIS_QAM_ACQUIRER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v32_trellis_qam_acquirer.o \
-	$(BUILD_DIR)/differential_qpsk.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/constellation.o \
-	$(BUILD_DIR)/framing.o \
-	$(BUILD_DIR)/trellis.o \
-	$(BUILD_DIR)/trellis_qam_decoder.o \
-	$(BUILD_DIR)/trellis_qam_receiver.o \
-	$(BUILD_DIR)/trellis_qam_acquirer.o
 V32_CARRIER_TEST_BINARY := $(BUILD_DIR)/test_v32_carrier
 V32_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_carrier.o \
@@ -2987,9 +2931,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v22bis_symbols.o \
 	$(BUILD_DIR)/carrier.o \
 	$(BUILD_DIR)/datapump.o \
-	$(BUILD_DIR)/uncoded_qam.o \
 	$(BUILD_DIR)/conditioning.o \
-	$(BUILD_DIR)/conditioning_qam.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/v32_decision.o \
@@ -2999,9 +2941,6 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/rate_signal.o \
 	$(BUILD_DIR)/startup.o \
 	$(BUILD_DIR)/trellis.o \
-	$(BUILD_DIR)/trellis_qam_decoder.o \
-	$(BUILD_DIR)/trellis_qam_acquirer.o \
-	$(BUILD_DIR)/trellis_qam_receiver.o \
 	$(BUILD_DIR)/v23_datapump.o \
 	$(BUILD_DIR)/channel_bench.o \
 	$(BUILD_DIR)/media.o \
@@ -3071,15 +3010,11 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V32_TRELLIS_RECEIVER_TEST_BINARY) \
 	$(V32_FOUR_POINT_RECEIVER_TEST_BINARY) \
 	$(V32_UNCODED_RECEIVER_TEST_BINARY) \
-	$(V32_UNCODED_QAM_TEST_BINARY) \
 	$(V32_RATE_SIGNAL_TEST_BINARY) \
 	$(V32_STARTUP_TEST_BINARY) \
 	$(V32_LINE_STARTUP_TEST_BINARY) \
 	$(V32_DATAPUMP_CONDITIONING_TEST_BINARY) \
 	$(V32_TRELLIS_TEST_BINARY) \
-	$(V32_TRELLIS_QAM_DECODER_TEST_BINARY) \
-	$(V32_TRELLIS_QAM_RECEIVER_TEST_BINARY) \
-	$(V32_TRELLIS_QAM_ACQUIRER_TEST_BINARY) \
 	$(V32_CARRIER_TEST_BINARY) \
 	$(V34_FRAMING_TEST_BINARY) \
 	$(V34_FRAME_SCHEDULE_TEST_BINARY) \
@@ -3358,15 +3293,11 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V32_TRELLIS_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V32_FOUR_POINT_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V32_UNCODED_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V32_UNCODED_QAM_TEST_OBJECTS:.o=.d) \
 	$(V32_RATE_SIGNAL_TEST_OBJECTS:.o=.d) \
 	$(V32_STARTUP_TEST_OBJECTS:.o=.d) \
 	$(V32_LINE_STARTUP_TEST_OBJECTS:.o=.d) \
 	$(V32_DATAPUMP_CONDITIONING_TEST_OBJECTS:.o=.d) \
 	$(V32_TRELLIS_TEST_OBJECTS:.o=.d) \
-	$(V32_TRELLIS_QAM_DECODER_TEST_OBJECTS:.o=.d) \
-	$(V32_TRELLIS_QAM_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V32_TRELLIS_QAM_ACQUIRER_TEST_OBJECTS:.o=.d) \
 	$(V32_CARRIER_TEST_OBJECTS:.o=.d) \
 	$(V34_FRAMING_TEST_OBJECTS:.o=.d) \
 	$(V34_FRAME_SCHEDULE_TEST_OBJECTS:.o=.d) \
@@ -3674,15 +3605,11 @@ test: $(TEST_BINARIES)
 	./$(V32_TRELLIS_RECEIVER_TEST_BINARY)
 	./$(V32_FOUR_POINT_RECEIVER_TEST_BINARY)
 	./$(V32_UNCODED_RECEIVER_TEST_BINARY)
-	./$(V32_UNCODED_QAM_TEST_BINARY)
 	./$(V32_RATE_SIGNAL_TEST_BINARY)
 	./$(V32_STARTUP_TEST_BINARY)
 	./$(V32_LINE_STARTUP_TEST_BINARY)
 	./$(V32_DATAPUMP_CONDITIONING_TEST_BINARY)
 	./$(V32_TRELLIS_TEST_BINARY)
-	./$(V32_TRELLIS_QAM_DECODER_TEST_BINARY)
-	./$(V32_TRELLIS_QAM_RECEIVER_TEST_BINARY)
-	./$(V32_TRELLIS_QAM_ACQUIRER_TEST_BINARY)
 	./$(V32_CARRIER_TEST_BINARY)
 	./$(V34_FRAMING_TEST_BINARY)
 	./$(V34_FRAME_SCHEDULE_TEST_BINARY)
@@ -4169,9 +4096,6 @@ $(V32_UNCODED_RECEIVER_TEST_BINARY): \
 	$(V32_UNCODED_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V32_UNCODED_QAM_TEST_BINARY): $(V32_UNCODED_QAM_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
 $(V32_RATE_SIGNAL_TEST_BINARY): $(V32_RATE_SIGNAL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
@@ -4187,18 +4111,6 @@ $(V32_DATAPUMP_CONDITIONING_TEST_BINARY): \
 
 $(V32_TRELLIS_TEST_BINARY): $(V32_TRELLIS_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
-
-$(V32_TRELLIS_QAM_DECODER_TEST_BINARY): \
-	$(V32_TRELLIS_QAM_DECODER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V32_TRELLIS_QAM_RECEIVER_TEST_BINARY): \
-	$(V32_TRELLIS_QAM_RECEIVER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V32_TRELLIS_QAM_ACQUIRER_TEST_BINARY): \
-	$(V32_TRELLIS_QAM_ACQUIRER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V32_CARRIER_TEST_BINARY): $(V32_CARRIER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -5125,10 +5037,6 @@ $(BUILD_DIR)/conditioning_receiver.o: \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/conditioning_qam.o: \
-	$(DSP_V32_SOURCE_DIR)/conditioning_qam.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
 $(BUILD_DIR)/constellation.o: \
 	$(DSP_V32_SOURCE_DIR)/constellation.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
@@ -5205,10 +5113,6 @@ $(BUILD_DIR)/uncoded_receiver.o: \
 	$(DSP_V32_SOURCE_DIR)/uncoded_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/uncoded_qam.o: \
-	$(DSP_V32_SOURCE_DIR)/uncoded_qam.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
 $(BUILD_DIR)/carrier.o: \
 	$(DSP_V32_SOURCE_DIR)/carrier.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
@@ -5227,18 +5131,6 @@ $(BUILD_DIR)/line_startup.o: \
 
 $(BUILD_DIR)/trellis.o: \
 	$(DSP_V32_SOURCE_DIR)/trellis.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/trellis_qam_decoder.o: \
-	$(DSP_V32_SOURCE_DIR)/trellis_qam_decoder.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/trellis_qam_receiver.o: \
-	$(DSP_V32_SOURCE_DIR)/trellis_qam_receiver.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/trellis_qam_acquirer.o: \
-	$(DSP_V32_SOURCE_DIR)/trellis_qam_acquirer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/datapump.o: \
