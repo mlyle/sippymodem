@@ -239,6 +239,50 @@ static bool test_s_bar_epoch_boundary(void)
 	return true;
 }
 
+static bool test_s_bar_epoch_survives_boundary_smear(void)
+{
+	for (enum v32_transmitter_role role = V32_CALLING_TRANSMITTER;
+	     role <= V32_ANSWERING_TRANSMITTER; ++role) {
+		struct v32_conditioning_transmitter transmitter;
+		struct v32_conditioning_receiver receiver;
+		bool ready = false;
+
+		CHECK(v32_conditioning_receiver_init(&receiver, role) ==
+			      V32_CONDITIONING_RECEIVER_OK &&
+		      v32_conditioning_transmitter_init(
+			      &transmitter, role,
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+			      V32_CONDITIONING_OK,
+		      "V.32 smeared epoch fixture did not initialize");
+		for (uint16_t symbol = 0; symbol <= V32_CONDITIONING_S_SYMBOLS;
+		     ++symbol) {
+			struct v32_equalizer_observation received;
+			uint8_t quadrant;
+
+			CHECK(v32_conditioning_transmitter_next(
+				      &transmitter, &quadrant) ==
+				      V32_CONDITIONING_OK,
+			      "V.32 smeared epoch fixture stopped at %u", symbol);
+			/* Model a pulse-shaped transition whose first hard decision
+			 * lands in the even neighboring quadrant.  Its two-symbol I/Q
+			 * displacement still carries the physical S-bar edge. */
+			if (symbol == V32_CONDITIONING_S_SYMBOLS) {
+				receiver.alternating_transitions = 0;
+				quadrant = (uint8_t)((quadrant + 1u) & 3u);
+			}
+			CHECK(generated_observation(quadrant, &received) &&
+			      observe(&receiver, &received, &ready) ==
+				      V32_CONDITIONING_RECEIVER_OK,
+			      "V.32 smeared epoch receiver stopped at %u", symbol);
+		}
+		CHECK(receiver.phase == V32_CONDITIONING_COUNT_S_BAR &&
+			      receiver.s_bar_symbols == 1 && !ready,
+		      "V.32 smeared S/S-bar boundary was not detected for role %d",
+		      role);
+	}
+	return true;
+}
+
 static bool test_epoch_phase_slip_recovery(void)
 {
 	static const uint16_t phase_steps[] = {
@@ -973,6 +1017,8 @@ int main(void)
 		  test_extended_trn_framing_handoff },
 		{ "TRN-prefix acquisition", test_trn_prefix_acquisition },
 		{ "S/S-bar epoch boundary", test_s_bar_epoch_boundary },
+		{ "smeared S/S-bar epoch",
+		  test_s_bar_epoch_survives_boundary_smear },
 		{ "epoch phase-slip recovery",
 		  test_epoch_phase_slip_recovery },
 		{ "epoch wrong-sequence rejection",

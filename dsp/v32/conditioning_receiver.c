@@ -80,6 +80,7 @@ bool v32_conditioning_receiver_is_valid(
 
 	if (receiver == NULL || !role_is_valid(receiver->source_role) ||
 	    !phase_is_valid(receiver->phase) || !pattern_is_valid(receiver) ||
+	    receiver->epoch_detector.phase > INT16_MAX ||
 	    receiver->previous_quadrant >= QPSK_QUADRANT_COUNT ||
 	    receiver->quadrant_offset >= QPSK_QUADRANT_COUNT ||
 	    receiver->pending_quadrant_offset >=
@@ -232,13 +233,119 @@ static int reset_search(
 	return 0;
 }
 
-static bool observe_s(
-	struct v32_conditioning_receiver *receiver, uint8_t turn)
+static int32_t arithmetic_shift_right_s32(uint32_t value, unsigned shift)
 {
+	if (shift == 0)
+		return (int32_t)value;
+	if ((value & UINT32_C(0x80000000)) == 0)
+		return (int32_t)(value >> shift);
+	return (int32_t)(~((~value) >> shift));
+}
+
+static int16_t wrap_s16(int32_t value)
+{
+	return (int16_t)(uint16_t)value;
+}
+
+static int16_t smooth_magnitude(int16_t average, int16_t magnitude)
+{
+	return wrap_s16(
+		arithmetic_shift_right_s32(
+			(uint32_t)((int32_t)average * 0x7c00), 15) +
+		arithmetic_shift_right_s32(
+			(uint32_t)((int32_t)magnitude * 0x0400), 15));
+}
+
+static int16_t shifted_distance(
+	int16_t first_i, int16_t first_q,
+	int16_t second_i, int16_t second_q, unsigned shift)
+{
+	int16_t difference_i = (int16_t)(
+		(uint16_t)first_i - (uint16_t)second_i);
+	int16_t difference_q = (int16_t)(
+		(uint16_t)first_q - (uint16_t)second_q);
+	uint32_t energy =
+		(uint32_t)((int32_t)difference_i * difference_i) +
+		(uint32_t)((int32_t)difference_q * difference_q);
+
+	return wrap_s16(arithmetic_shift_right_s32(energy, shift));
+}
+
+/* S alternates between two points, so each observation normally repeats the
+ * point from two symbols earlier.  The S-to-S-bar reversal breaks both of
+ * those two-symbol relationships.  Detect that geometric edge rather than
+ * requiring one exact hard-decision turn at the pulse-shaped boundary. */
+static bool observe_epoch_energy(
+	struct v32_conditioning_epoch_detector *detector,
+	const struct v32_equalizer_observation *observation)
+{
+	int16_t phase_delta = wrap_s16(
+		(uint16_t)observation->phase - detector->phase);
+	int16_t history_energy;
+	int16_t average_energy;
+	int32_t threshold;
+	bool detected;
+
+	detector->phase = observation->phase;
+	if (phase_delta < 0)
+		phase_delta = wrap_s16((uint16_t)phase_delta - 0x8000u);
+	if (phase_delta > 0x4000)
+		detector->average_a = smooth_magnitude(
+			detector->average_a,
+			(int16_t)observation->magnitude);
+	else
+		detector->average_b = smooth_magnitude(
+			detector->average_b,
+			(int16_t)observation->magnitude);
+	history_energy = wrap_s16(
+		shifted_distance(
+			detector->i_previous,
+			detector->q_previous,
+			observation->i, observation->q, 15) +
+		shifted_distance(
+			detector->i_older,
+			detector->q_older,
+			detector->i_last,
+			detector->q_last, 15));
+	average_energy = shifted_distance(
+		detector->average_a, detector->average_b,
+		0, 0, 13);
+	threshold = ((int32_t)average_energy * 4) / 3;
+	detected = history_energy > threshold &&
+		(int16_t)detector->timer > 0x96;
+	if (detected) {
+		detector->i_older = 0;
+		detector->q_older = 0;
+		detector->i_previous = 0;
+		detector->q_previous = 0;
+		detector->i_last = 0;
+		detector->q_last = 0;
+		detector->phase = 0;
+		detector->average_a = 0;
+		detector->average_b = 0;
+		detector->timer = 0;
+	} else {
+		detector->i_older = detector->i_previous;
+		detector->q_older = detector->q_previous;
+		detector->i_previous = detector->i_last;
+		detector->q_previous = detector->q_last;
+		detector->i_last = observation->i;
+		detector->q_last = observation->q;
+	}
+	detector->timer++;
+	return detected;
+}
+
+static bool observe_s(
+	struct v32_conditioning_receiver *receiver, uint8_t turn,
+	bool energy_epoch)
+{
+	bool exact_epoch = receiver->alternating_transitions ==
+				   V32_CONDITIONING_S_EPOCH_TRANSITIONS &&
+			   (turn & 1u) != 0 &&
+			   turn == receiver->previous_turn;
 	bool epoch = receiver->phase == V32_CONDITIONING_MATCH_TRN &&
-		     receiver->alternating_transitions ==
-			     V32_CONDITIONING_S_EPOCH_TRANSITIONS &&
-		     (turn & 1u) != 0 && turn == receiver->previous_turn;
+		     (energy_epoch || exact_epoch);
 
 	if ((turn & 1u) != 0) {
 		if (receiver->alternating_transitions == 0 ||
@@ -415,12 +522,15 @@ v32_conditioning_receiver_observe(
 	if (!next.has_previous_quadrant) {
 		next.has_previous_quadrant = true;
 	} else {
+		bool energy_epoch = observe_epoch_energy(
+			&next.epoch_detector, observation);
+
 		turn = (uint8_t)((current_quadrant -
 				  next.previous_quadrant) & 3u);
 		if (next.phase == V32_CONDITIONING_SEARCH_S_BAR ||
 		    next.phase == V32_CONDITIONING_MATCH_TRN) {
 			bool prefix_ready = observe_prefix_turn(&next, turn);
-			bool epoch = observe_s(&next, turn);
+			bool epoch = observe_s(&next, turn, energy_epoch);
 
 			if (prefix_ready &&
 			    begin_training(

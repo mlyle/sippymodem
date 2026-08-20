@@ -30,8 +30,22 @@ enum v32_conditioning_receiver_result {
 	V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT,
 };
 
+struct v32_conditioning_epoch_detector {
+	uint16_t phase;
+	uint16_t timer;
+	int16_t i_last;
+	int16_t q_last;
+	int16_t i_previous;
+	int16_t q_previous;
+	int16_t i_older;
+	int16_t q_older;
+	int16_t average_a;
+	int16_t average_b;
+};
+
 struct v32_conditioning_receiver {
 	struct v32_conditioning_transmitter reference;
+	struct v32_conditioning_epoch_detector epoch_detector;
 	uint8_t prefix_turns[
 		V32_CONDITIONING_PREFIX_MATCH_TRANSITIONS];
 	uint8_t prefix_fallback[
