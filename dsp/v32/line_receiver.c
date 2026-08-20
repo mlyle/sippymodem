@@ -91,7 +91,7 @@ enum v32_line_receiver_result v32_line_receiver_reacquire_timing(
 
 	if (!v32_line_receiver_is_valid(receiver))
 		return V32_LINE_RECEIVER_INVALID_STATE;
-	if (receiver->epoch_fill != 0 || receiver->input_paused)
+	if (receiver->epoch_fill != 0)
 		return V32_LINE_RECEIVER_INVALID_STATE;
 	next = *receiver;
 	if (v32_symbol_timing_init(&next.timing) != V32_SYMBOL_TIMING_OK ||

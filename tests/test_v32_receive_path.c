@@ -641,6 +641,90 @@ static bool test_gain_lifecycle(void)
 	return true;
 }
 
+static bool test_conditioning_reacquisition(void)
+{
+	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES];
+	int16_t recovered[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
+	struct v32_receive_path path;
+	struct v32_receive_path saved;
+	struct v32_echo_frontend expected_echo;
+	struct v32_line_receiver expected_line;
+	struct v32_equalizer expected_equalizer;
+	struct v32_equalizer_observation observation;
+	size_t recovered_count;
+	size_t produced;
+	size_t consumed;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index)
+		samples[index] = 4252.0;
+	CHECK(v32_receive_path_init(
+		      &path, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_line_receiver_process(
+		      &path.line, samples, ARRAY_LENGTH(samples), false,
+		      recovered, ARRAY_LENGTH(recovered), &recovered_count) ==
+		      V32_LINE_RECEIVER_OK &&
+	      recovered_count > 0 &&
+	      v32_line_receiver_process(
+		      &path.line, NULL, 0, true, NULL, 0, &produced) ==
+		      V32_LINE_RECEIVER_OK &&
+	      v32_equalizer_set_adaptation(
+		      &path.equalizer, V32_EQUALIZER_ADAPTATION_FINE) ==
+		      V32_EQUALIZER_OK &&
+	      v32_equalizer_set_carrier_tracking(
+		      &path.equalizer, false) == V32_EQUALIZER_OK,
+	      "conditioning reacquisition fixture did not initialize");
+	path.equalizer.carrier_training_symbols = 77;
+	CHECK(v32_receive_path_is_valid(&path) &&
+	      path.line.input_paused,
+	      "conditioning reacquisition fixture is not trained and paused");
+	expected_echo = path.echo;
+	expected_line = path.line;
+	expected_equalizer = path.equalizer;
+	CHECK(v32_line_receiver_reacquire_timing(&expected_line) ==
+		      V32_LINE_RECEIVER_OK &&
+	      v32_equalizer_set_adaptation(
+		      &expected_equalizer,
+		      V32_EQUALIZER_ADAPTATION_COARSE) == V32_EQUALIZER_OK &&
+	      v32_equalizer_set_carrier_tracking(
+		      &expected_equalizer, true) == V32_EQUALIZER_OK &&
+	      v32_equalizer_restart_carrier_acquisition(
+		      &expected_equalizer) == V32_EQUALIZER_OK &&
+	      v32_receive_path_reacquire_conditioning(&path) ==
+		      V32_RECEIVE_PATH_OK &&
+	      memcmp(&path.echo, &expected_echo, sizeof(path.echo)) == 0 &&
+	      memcmp(&path.line, &expected_line, sizeof(path.line)) == 0 &&
+	      memcmp(&path.equalizer, &expected_equalizer,
+		     sizeof(path.equalizer)) == 0 &&
+	      path.line.input_paused &&
+	      path.equalizer.adaptation == V32_EQUALIZER_ADAPTATION_COARSE &&
+	      path.equalizer.carrier_tracking &&
+	      path.equalizer.carrier_training_symbols == 0,
+	      "conditioning reacquisition reset learned receive state");
+	saved = path;
+	path.line.input_paused = false;
+	CHECK(v32_receive_path_is_valid(&path) &&
+	      v32_receive_path_reacquire_conditioning(&path) ==
+		      V32_RECEIVE_PATH_INVALID_STATE,
+	      "conditioning reacquisition accepted a crossed sample boundary");
+	path = saved;
+	path.echo_training = true;
+	CHECK(v32_receive_path_is_valid(&path) &&
+	      v32_receive_path_reacquire_conditioning(&path) ==
+		      V32_RECEIVE_PATH_INVALID_STATE,
+	      "conditioning reacquisition entered during echo training");
+	path = saved;
+	CHECK(v32_equalizer_process(
+		      &path.equalizer, recovered, 1, &consumed,
+		      &observation) == V32_EQUALIZER_OBSERVATION_READY &&
+	      v32_receive_path_reacquire_conditioning(&path) ==
+		      V32_RECEIVE_PATH_DECISION_PENDING &&
+	      v32_receive_path_reacquire_conditioning(NULL) ==
+		      V32_RECEIVE_PATH_INVALID_STATE,
+	      "conditioning reacquisition crossed a pending decision");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	union {
@@ -753,7 +837,7 @@ int main(void)
 	if (!test_composed_path() || !test_buffered_commits() ||
 	    !test_boundary_adaptation() ||
 	    !test_echo_adaptation_lifecycle() || !test_gain_lifecycle() ||
-	    !test_contracts())
+	    !test_conditioning_reacquisition() || !test_contracts())
 		return 1;
 	puts("V.32 receive path tests passed");
 	return 0;

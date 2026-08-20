@@ -168,6 +168,34 @@ enum v32_receive_path_result v32_receive_path_reacquire_gain(
 	return change_gain_lifecycle(path, false);
 }
 
+enum v32_receive_path_result v32_receive_path_reacquire_conditioning(
+	struct v32_receive_path *path)
+{
+	struct v32_receive_path next;
+
+	if (!v32_receive_path_is_valid(path))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	if (!receive_boundary_is_open(path))
+		return V32_RECEIVE_PATH_DECISION_PENDING;
+	if (path->echo_training || path->echo.echo.adapting ||
+	    !path->line.input_paused)
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	next = *path;
+	if (v32_line_receiver_reacquire_timing(&next.line) !=
+		    V32_LINE_RECEIVER_OK ||
+	    v32_equalizer_set_adaptation(
+		    &next.equalizer, V32_EQUALIZER_ADAPTATION_COARSE) !=
+		    V32_EQUALIZER_OK ||
+	    v32_equalizer_set_carrier_tracking(
+		    &next.equalizer, true) != V32_EQUALIZER_OK ||
+	    v32_equalizer_restart_carrier_acquisition(&next.equalizer) !=
+		    V32_EQUALIZER_OK ||
+	    !v32_receive_path_is_valid(&next))
+		return V32_RECEIVE_PATH_INVALID_STATE;
+	*path = next;
+	return V32_RECEIVE_PATH_OK;
+}
+
 static enum v32_receive_path_result drain_recovered(
 	struct v32_equalizer *equalizer,
 	const int16_t *recovered, size_t *index, size_t count,

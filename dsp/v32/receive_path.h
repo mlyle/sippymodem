@@ -63,6 +63,11 @@ enum v32_receive_path_result v32_receive_path_freeze_gain(
 enum v32_receive_path_result v32_receive_path_reacquire_gain(
 	struct v32_receive_path *path);
 
+/* Restart peer conditioning after local echo training. The post-echo lane
+ * must still be paused so no sample crosses the timing/carrier boundary. */
+enum v32_receive_path_result v32_receive_path_reacquire_conditioning(
+	struct v32_receive_path *path);
+
 /*
  * Consume one 8 kHz receive sample after the corresponding transmit sample.
  * A reference is supplied exactly when that transmit sample accepted a point.

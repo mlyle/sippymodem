@@ -41,6 +41,7 @@ enum v32_line_receiver_result v32_line_receiver_freeze_gain(
 	struct v32_line_receiver *receiver);
 enum v32_line_receiver_result v32_line_receiver_reacquire_gain(
 	struct v32_line_receiver *receiver);
+/* A paused, empty owner may reset timing before its first resumed sample. */
 enum v32_line_receiver_result v32_line_receiver_reacquire_timing(
 	struct v32_line_receiver *receiver);
 enum v32_line_receiver_result v32_line_receiver_set_timing_tracking(

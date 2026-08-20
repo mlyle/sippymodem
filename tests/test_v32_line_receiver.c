@@ -171,13 +171,20 @@ static bool test_adaptation_and_gain_boundaries(void)
 	      memcmp(&receiver.timing, &timing_before_adaptation,
 		     sizeof(receiver.timing)) == 0,
 	      "echo adaptation clocked receive state or retained an epoch");
-	saved = receiver;
+	gain_before_adaptation = receiver.gain;
 	CHECK(v32_line_receiver_reacquire_timing(&receiver) ==
-		      V32_LINE_RECEIVER_INVALID_STATE &&
-	      v32_line_receiver_set_timing_tracking(&receiver, false) ==
+		      V32_LINE_RECEIVER_OK &&
+	      receiver.input_paused && receiver.epoch_fill == 0 &&
+	      receiver.timing.samples_until_output == 1 &&
+	      receiver.timing.history_index == 0 &&
+	      memcmp(&receiver.gain, &gain_before_adaptation,
+		     sizeof(receiver.gain)) == 0,
+	      "paused line owner did not restart timing at its boundary");
+	saved = receiver;
+	CHECK(v32_line_receiver_set_timing_tracking(&receiver, false) ==
 		      V32_LINE_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
-	      "echo adaptation allowed a timing discontinuity");
+	      "paused line owner changed timing tracking in place");
 	CHECK(v32_line_receiver_process(
 		      &receiver, samples, ARRAY_LENGTH(samples) - 1u, false,
 		      output, ARRAY_LENGTH(output), &produced) ==
