@@ -10,6 +10,7 @@
 #include <conditioning_receiver.h>
 #include <constellation.h>
 #include <datapump.h>
+#include <echo_training.h>
 #include <framing.h>
 #include <g711.h>
 #include <line_startup.h>
@@ -35,7 +36,14 @@ enum {
 	TEST_QAM_SAMPLE_LIMIT = 50000,
 	TEST_ANSWERER_LINE_LIMIT = MODEM_RATE * 8,
 	TEST_ANSWERER_TRAIN_ECHO_SAMPLES = 4500,
-	TEST_ANSWERER_OFFER_SAMPLES = 2000,
+	TEST_ANSWERER_OFFER_SAMPLES =
+		((V32_CONDITIONING_S_SYMBOLS +
+		  V32_CONDITIONING_S_BAR_SYMBOLS +
+		  V32_ANSWERING_SECOND_TRN_SYMBOLS + 1) *
+			 MODEM_RATE +
+		 V32_CARRIER_SYMBOL_RATE - 1) /
+			V32_CARRIER_SYMBOL_RATE +
+		256,
 	TEST_ANSWERER_OFFER_POWER_SAMPLES = 400,
 	TEST_FRESH_CALLER_SAMPLES = 4000,
 };
@@ -121,6 +129,17 @@ static bool process_sample_until_link(
 static bool is_quiet_sample(int16_t sample)
 {
 	return sample == 0 || sample == -1;
+}
+
+static int16_t mix_samples(int16_t left, int16_t right)
+{
+	int32_t mixed = (int32_t)left + right;
+
+	if (mixed > INT16_MAX)
+		return INT16_MAX;
+	if (mixed < INT16_MIN)
+		return INT16_MIN;
+	return (int16_t)mixed;
 }
 
 static bool turnaround_signal_init(struct test_turnaround_signal *signal)
@@ -884,9 +903,9 @@ static bool test_answerer_requires_fresh_conditioning(void)
 		      operations, datapump, &answerer_transmit),
 	      "V.32 answerer did not finish line startup");
 
-	/* Loop back enough initial answerer conditioning to qualify S-bar, but
-	 * remove the echo before the local training interval ends.  That stale
-	 * receive state must not suppress the following rate offer. */
+	/* Loop back enough initial answerer conditioning to qualify S-bar.  Keep
+	 * that learned echo path present while changing only the remote signal;
+	 * stale receive evidence must not suppress the following rate offer. */
 	for (unsigned int sample = 0;
 	     sample < TEST_ANSWERER_TRAIN_ECHO_SAMPLES; ++sample) {
 		int16_t echoed = answerer_transmit;
@@ -904,11 +923,14 @@ static bool test_answerer_requires_fresh_conditioning(void)
 	for (unsigned int sample = 0;
 	     sample < TEST_ANSWERER_OFFER_SAMPLES; ++sample) {
 		int16_t residual;
+		int16_t received;
 
 		CHECK(single_tone_transmitter_sample(
-			      &residual_carrier, &residual) == SINGLE_TONE_OK &&
-		      process_sample(
-			      operations, datapump, residual,
+			      &residual_carrier, &residual) == SINGLE_TONE_OK,
+		      "V.32 answerer residual carrier stopped");
+		received = mix_samples(answerer_transmit, residual);
+		CHECK(process_sample(
+			      operations, datapump, received,
 			      &answerer_transmit),
 		      "V.32 answerer stopped before its fresh rate offer");
 		if (sample >= TEST_ANSWERER_OFFER_SAMPLES -
@@ -927,11 +949,15 @@ static bool test_answerer_requires_fresh_conditioning(void)
 	     quiet_samples < TEST_SILENCE_RUN;
 	     ++sample) {
 		int16_t caller_transmit;
+		int16_t received;
 
 		CHECK(conditioning_signal_sample(
-			      &caller, &caller_transmit) &&
-		      process_sample(
-			      operations, datapump, caller_transmit,
+			      &caller, &caller_transmit),
+		      "V.32 fresh caller conditioning stopped at sample %u",
+		      sample);
+		received = mix_samples(answerer_transmit, caller_transmit);
+		CHECK(process_sample(
+			      operations, datapump, received,
 			      &answerer_transmit),
 		      "V.32 answerer rejected fresh conditioning at sample %u",
 		      sample);

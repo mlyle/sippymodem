@@ -34,13 +34,14 @@ enum {
 	ENDPOINT_OUTPUT_CAPACITY = 1024,
 	TRAINING_FRAME_LIMIT = 250,
 	NEGOTIATED_TRAINING_FRAME_LIMIT = 500,
-	/* The complete V.32 caller echo schedule reaches link at frame 584 in
-	 * the generated codec matrix.  Retain more than one second of protocol
-	 * margin without relaxing the modem's own training deadline. */
-	V32_TRAINING_FRAME_LIMIT = 650,
+	/* Both V.32 endpoints now retain their complete role-specific echo
+	 * training intervals.  Leave more than one second of protocol margin
+	 * around both intervals without relaxing the modem's own deadline. */
+	V32_TRAINING_FRAME_LIMIT = 900,
 	LINK_DRAIN_FRAME_LIMIT = 400,
 	DATA_FRAME_LIMIT = 400,
 	RETRAIN_FRAME_LIMIT = 500,
+	V32_RETRAIN_FRAME_LIMIT = 750,
 	RETRAIN_RESPONSE_LOSS_FRAMES = 70,
 	V22BIS_INITIAL_DELAY_FRAMES = 70,
 	DIGITAL_MEDIA_DELAY_SAMPLES = 1200,
@@ -722,7 +723,10 @@ static bool exercise_retrain(
 			initiator->modem->xmit.count, pending_transmit_chars);
 		return false;
 	}
-	for (unsigned int frame = 0; frame < RETRAIN_FRAME_LIMIT; ++frame) {
+	for (unsigned int frame = 0;
+	     frame < (id == DP_V32 ?
+			      V32_RETRAIN_FRAME_LIMIT : RETRAIN_FRAME_LIMIT);
+	     ++frame) {
 		bool losing_response = lose_first_response &&
 			frame < RETRAIN_RESPONSE_LOSS_FRAMES;
 		bool block_caller_to_answerer = losing_response &&
