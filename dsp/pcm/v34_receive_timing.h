@@ -7,6 +7,7 @@
 #include "v34_carrier_demodulator.h"
 #include "v34_gain_control.h"
 #include "v34_phase3_profile.h"
+#include "v34_s_tone_detector.h"
 #include "v34_timing_control.h"
 #include "v34_timing_filter.h"
 
@@ -41,6 +42,7 @@ struct v34_receive_timing_samples {
 struct v34_receive_timing {
 	struct v34_analytic_filter analytic;
 	struct v34_gain_control gain;
+	struct v34_s_tone_detector s_detector;
 	struct v34_carrier_demodulator carrier;
 	struct v34_timing_filter timing_filter;
 	struct v34_timing_control timing;

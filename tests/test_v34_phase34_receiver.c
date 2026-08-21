@@ -292,6 +292,9 @@ static bool test_training_case(enum v34_station_role role, uint8_t rate)
 			timing_events++;
 			break;
 		case V34_PHASE34_RECEIVER_PHASE3_S_DETECTED:
+			CHECK(timing_events == 1u,
+			      "role %u rate %u accepted S before timing", role,
+			      rate);
 			phase3_s_events++;
 			break;
 		case V34_PHASE34_RECEIVER_PP_COMPLETE:

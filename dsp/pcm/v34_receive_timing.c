@@ -34,11 +34,15 @@ bool v34_receive_timing_is_valid(
 	       v34_phase3_profile_is_valid(&timing->transmitting_profile) &&
 	       v34_analytic_filter_is_valid(&timing->analytic) &&
 	       v34_gain_control_is_valid(&timing->gain) &&
+	       v34_s_tone_detector_is_valid(&timing->s_detector) &&
 	       v34_carrier_demodulator_is_valid(&timing->carrier) &&
 	       v34_timing_filter_is_valid(&timing->timing_filter) &&
 	       v34_timing_control_is_valid(&timing->timing) &&
 	       timing->timing.local_role ==
 		       receiving_role(timing->transmitting_profile.local_role) &&
+	       (timing->s_detector.acquired ?
+		(timing->timing.mode != V34_TIMING_CONTROL_LOCKED) :
+		(timing->timing.mode == V34_TIMING_CONTROL_LOCKED)) &&
 	       queue_state_is_valid(timing);
 }
 
@@ -65,15 +69,16 @@ enum v34_receive_timing_result v34_receive_timing_init(
 		    &initialized.gain,
 		    (int16_t)(initialized.timing.phase_limit / 2u)) !=
 		    V34_GAIN_CONTROL_OK ||
+	    v34_s_tone_detector_init(
+		    &initialized.s_detector, transmitting_profile) !=
+		    V34_S_TONE_DETECTOR_OK ||
 	    v34_carrier_demodulator_init(
 		    &initialized.carrier, V34_RECEIVE_TIMING_SAMPLE_RATE,
 		    transmitting_profile->carrier_frequency_numerator,
 		    transmitting_profile->carrier_frequency_denominator) !=
 		    V34_CARRIER_DEMODULATOR_OK ||
 	    v34_timing_filter_init(&initialized.timing_filter) !=
-		    V34_TIMING_FILTER_OK ||
-	    v34_timing_control_begin_acquisition(
-		    &initialized.timing, true) != V34_TIMING_CONTROL_OK)
+		    V34_TIMING_FILTER_OK)
 		return V34_RECEIVE_TIMING_INVALID_ARGUMENT;
 	initialized.initialized = true;
 	if (!v34_receive_timing_is_valid(&initialized))
@@ -86,6 +91,7 @@ bool v34_receive_timing_is_acquired(
 	const struct v34_receive_timing *timing)
 {
 	return v34_receive_timing_is_valid(timing) &&
+	       timing->s_detector.detected &&
 	       timing->timing.mode != V34_TIMING_CONTROL_INITIAL_PHASE;
 }
 
@@ -263,8 +269,23 @@ static enum v34_receive_timing_result drain_timing(
 		timing->timing_output_count++;
 		advance_phase(timing);
 		if (timing->timing_output_count == V34_RECEIVE_TIMING_OUTPUTS) {
+			enum v34_s_tone_detector_result detector_result;
+			bool detector_was_acquired = timing->s_detector.acquired;
 			uint16_t increment;
 
+			detector_result = v34_s_tone_detector_end_group(
+				&timing->s_detector);
+			if (detector_result != V34_S_TONE_DETECTOR_OK &&
+			    detector_result != V34_S_TONE_DETECTOR_DETECTED)
+				return V34_RECEIVE_TIMING_INVALID_STATE;
+			/* Begin clock pull-in at the detector's lower carrier-acquired
+			 * boundary.  The later qualified result gates public readiness,
+			 * leaving the loop several S intervals to establish its phase. */
+			if (!detector_was_acquired && timing->s_detector.acquired &&
+			    timing->timing.mode == V34_TIMING_CONTROL_LOCKED &&
+			    v34_timing_control_begin_acquisition(
+				    &timing->timing, true) != V34_TIMING_CONTROL_OK)
+				return V34_RECEIVE_TIMING_INVALID_STATE;
 			if (v34_timing_control_process(
 				    &timing->timing,
 				    timing->timing_observations,
@@ -287,6 +308,7 @@ enum v34_receive_timing_result v34_receive_timing_sample(
 	struct v34_analytic_sample analytic;
 	struct v34_analytic_sample gained;
 	struct v34_analytic_sample demodulated;
+	enum v34_s_tone_detector_result detector_result;
 	enum v34_receive_timing_result result;
 
 	if (!v34_receive_timing_is_valid(timing))
@@ -301,8 +323,14 @@ enum v34_receive_timing_result v34_receive_timing_sample(
 		    &timing->analytic, sample, &analytic) !=
 		    V34_ANALYTIC_FILTER_OK ||
 	    v34_gain_control_process(&timing->gain, analytic, &gained) !=
-		    V34_GAIN_CONTROL_OK ||
-	    v34_carrier_demodulator_process(
+		    V34_GAIN_CONTROL_OK)
+		return V34_RECEIVE_TIMING_INVALID_STATE;
+	detector_result = v34_s_tone_detector_sample(
+		&timing->s_detector, gained.in_phase);
+	if (detector_result != V34_S_TONE_DETECTOR_OK &&
+	    detector_result != V34_S_TONE_DETECTOR_DETECTED)
+		return V34_RECEIVE_TIMING_INVALID_STATE;
+	if (v34_carrier_demodulator_process(
 		    &timing->carrier, gained, &demodulated) !=
 		    V34_CARRIER_DEMODULATOR_OK)
 		return V34_RECEIVE_TIMING_INVALID_STATE;

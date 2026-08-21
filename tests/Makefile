@@ -1165,6 +1165,7 @@ V34_DATA_STREAM_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase4_b1_handoff.o
 V34_RECEIVE_PRIMITIVE_OBJECTS := \
 	$(BUILD_DIR)/v34_receive_timing.o \
+	$(BUILD_DIR)/v34_s_tone_detector.o \
 	$(BUILD_DIR)/v34_analytic_filter.o \
 	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/v34_carrier_demodulator.o \
