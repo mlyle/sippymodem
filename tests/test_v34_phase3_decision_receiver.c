@@ -13,6 +13,7 @@
 enum {
 	TEST_TRN_SYMBOLS = 640,
 	TEST_MD_SYMBOLS = 12,
+	TEST_DECODER_POWER_Q15 = 0x7000,
 };
 
 struct observation_clock {
@@ -78,7 +79,8 @@ static bool expect_commit(
 	       observations_are_equal(&output->equalizer.observation, input) &&
 	       output->equalizer.target.in_phase == target.in_phase &&
 	       output->equalizer.target.quadrature == target.quadrature &&
-	       output->equalizer.decoder_power_q15 == 0x7000u &&
+	       output->equalizer.decoder_power_q15 ==
+		       TEST_DECODER_POWER_Q15 &&
 	       output->equalizer.adaptation == adaptation;
 }
 
@@ -91,7 +93,8 @@ static bool receive(
 {
 	*input = observation(clock, point);
 	return v34_phase3_decision_receiver_observe(
-		receiver, input, output) == expected_result;
+		receiver, input, TEST_DECODER_POWER_Q15, output) ==
+	       expected_result;
 }
 
 static uint8_t s_clockwise_rotation(unsigned int symbol)
@@ -459,7 +462,7 @@ static bool test_delayed_marker_pp_alignment(void)
 		skipped++;
 		input = observation(&clock, point);
 		result = v34_phase3_decision_receiver_observe(
-			&receiver, &input, &output);
+			&receiver, &input, TEST_DECODER_POWER_Q15, &output);
 		if (result == V34_PHASE3_DECISION_RECEIVER_S_DETECTED) {
 			detected = true;
 		} else {
@@ -496,6 +499,7 @@ static bool test_delayed_marker_pp_alignment(void)
 static bool test_validation_and_transactionality(void)
 {
 	struct v34_phase3_decision_receiver receiver;
+	struct v34_phase3_decision_receiver scaled;
 	struct v34_phase3_decision_receiver saved;
 	struct v34_phase3_decision_receiver corrupt;
 	struct v34_phase3_decision_output output = {
@@ -516,7 +520,18 @@ static bool test_validation_and_transactionality(void)
 		      &receiver, V34_CALLING_STATION, 0u) ==
 		      V34_PHASE3_DECISION_RECEIVER_OK,
 	      "transaction fixture did not initialize");
+	scaled = receiver;
 	saved = receiver;
+	{
+		struct v34_phase3_decision_output scaled_output = { 0 };
+
+		CHECK(v34_phase3_decision_receiver_observe(
+			      &scaled, &input, 0x4000u, &scaled_output) ==
+			      V34_PHASE3_DECISION_RECEIVER_OK &&
+		      scaled_output.action == V34_PHASE3_DECISION_COMMIT &&
+		      scaled_output.equalizer.decoder_power_q15 == 0x4000u,
+		      "aggregate training power was not retained");
+	}
 	CHECK(v34_phase3_decision_receiver_init(
 		      NULL, V34_CALLING_STATION, 0u) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
@@ -533,32 +548,39 @@ static bool test_validation_and_transactionality(void)
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid initialization changed the receiver");
 	CHECK(v34_phase3_decision_receiver_observe(
-		      NULL, &input, &output) ==
+		      NULL, &input, TEST_DECODER_POWER_Q15, &output) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_STATE &&
 	      v34_phase3_decision_receiver_observe(
-		      &receiver, NULL, &output) ==
+		      &receiver, NULL, TEST_DECODER_POWER_Q15, &output) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_decision_receiver_observe(
-		      &receiver, &input, NULL) ==
+		      &receiver, &input, TEST_DECODER_POWER_Q15, NULL) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_decision_receiver_observe(
 		      &receiver,
 		      (const struct v34_adaptive_equalizer_observation *)&receiver,
-		      &output) == V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
+		      TEST_DECODER_POWER_Q15, &output) ==
+		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_decision_receiver_observe(
-		      &receiver, &input,
+		      &receiver, &input, TEST_DECODER_POWER_Q15,
 		      (struct v34_phase3_decision_output *)&receiver) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_decision_receiver_observe(
-		      &receiver, &input,
+		      &receiver, &input, TEST_DECODER_POWER_Q15,
 		      (struct v34_phase3_decision_output *)&input) ==
+		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_decision_receiver_observe(
+		      &receiver, &input, 0u, &output) ==
+		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_decision_receiver_observe(
+		      &receiver, &input, 0x8000u, &output) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "invalid observation changed owner or output");
 	input.epoch = 0u;
 	CHECK(v34_phase3_decision_receiver_observe(
-		      &receiver, &input, &output) ==
+		      &receiver, &input, TEST_DECODER_POWER_Q15, &output) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
@@ -568,7 +590,7 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_phase3_decision_receiver_is_valid(NULL) &&
 	      !v34_phase3_decision_receiver_is_valid(&corrupt) &&
 	      v34_phase3_decision_receiver_observe(
-		      &corrupt, &input, &output) ==
+		      &corrupt, &input, TEST_DECODER_POWER_Q15, &output) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_STATE &&
 	      v34_phase3_decision_receiver_handoff(
 		      &receiver, &handoff) ==

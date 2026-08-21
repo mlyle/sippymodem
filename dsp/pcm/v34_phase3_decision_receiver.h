@@ -94,14 +94,17 @@ bool v34_phase3_decision_receiver_is_complete(
 bool v34_phase3_decision_handoff_is_valid(
 	const struct v34_phase3_decision_handoff *handoff);
 
-/* Consume exactly one pending adaptive-equalizer observation. The returned
- * action tells the aggregate whether to commit the target, discard an unknown
- * interval, begin PP tracking, or restart after MD. Rejected and completed
- * calls leave owner and output unchanged. */
+/* Consume exactly one pending adaptive-equalizer observation. The aggregate
+ * supplies its current training power so the source-defined reduction after
+ * one-half and one symbol-second remains continuous through a long TRN. The
+ * returned action tells the aggregate whether to commit the target, discard an
+ * unknown interval, begin PP tracking, or restart after MD. Rejected and
+ * completed calls leave owner and output unchanged. */
 enum v34_phase3_decision_receiver_result
 v34_phase3_decision_receiver_observe(
 	struct v34_phase3_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
 	struct v34_phase3_decision_output *output);
 
 enum v34_phase3_decision_receiver_result

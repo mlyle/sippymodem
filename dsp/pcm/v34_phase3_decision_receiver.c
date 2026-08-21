@@ -5,12 +5,9 @@
 #include "memory_region.h"
 #include "v34_constellation.h"
 
+#include <limits.h>
 #include <stddef.h>
 #include <string.h>
-
-enum {
-	V34_PHASE3_TRAINING_POWER_Q15 = 0x7000,
-};
 
 static bool role_is_valid(enum v34_station_role role)
 {
@@ -174,13 +171,14 @@ static bool output_decision_is_zero(
 }
 
 static bool output_is_valid(
-	const struct v34_phase3_decision_output *output)
+	const struct v34_phase3_decision_output *output,
+	uint16_t decoder_power_q15)
 {
 	if (output->action == V34_PHASE3_DECISION_COMMIT)
 		return output->equalizer.observation.epoch != 0u &&
 		       output->equalizer.observation.lineage != 0u &&
 		       output->equalizer.decoder_power_q15 ==
-			       V34_PHASE3_TRAINING_POWER_Q15 &&
+			       decoder_power_q15 &&
 		       (output->equalizer.adaptation ==
 				V34_ADAPTIVE_EQUALIZER_CENTER ||
 			output->equalizer.adaptation ==
@@ -195,13 +193,14 @@ static bool output_is_valid(
 static struct v34_phase3_decision_output commit_output(
 	const struct v34_adaptive_equalizer_observation *observation,
 	struct v34_analytic_sample target,
-	enum v34_adaptive_equalizer_adaptation adaptation)
+	enum v34_adaptive_equalizer_adaptation adaptation,
+	uint16_t decoder_power_q15)
 {
 	return (struct v34_phase3_decision_output){
 		.equalizer = {
 			.observation = *observation,
 			.target = target,
-			.decoder_power_q15 = V34_PHASE3_TRAINING_POWER_Q15,
+			.decoder_power_q15 = decoder_power_q15,
 			.adaptation = adaptation,
 		},
 		.action = V34_PHASE3_DECISION_COMMIT,
@@ -264,6 +263,7 @@ static void clear_s_target(struct v34_phase3_decision_receiver *receiver)
 static enum v34_phase3_decision_receiver_result receive_s(
 	struct v34_phase3_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
 	struct v34_phase3_decision_output *output)
 {
 	struct v34_fixed_training_decision hard;
@@ -291,7 +291,8 @@ static enum v34_phase3_decision_receiver_result receive_s(
 			action_output(V34_PHASE3_DECISION_DISCARD) :
 			commit_output(
 				observation, target,
-				V34_ADAPTIVE_EQUALIZER_CENTER);
+				V34_ADAPTIVE_EQUALIZER_CENTER,
+				decoder_power_q15);
 		return V34_PHASE3_DECISION_RECEIVER_OK;
 	}
 	if (result != V34_PHASE3_S_RECEIVER_DETECTED ||
@@ -341,6 +342,7 @@ static enum v34_phase3_decision_receiver_result receive_md(
 static enum v34_phase3_decision_receiver_result receive_pp(
 	struct v34_phase3_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
 	struct v34_phase3_decision_output *output)
 {
 	struct v34_analytic_sample target;
@@ -349,7 +351,8 @@ static enum v34_phase3_decision_receiver_result receive_pp(
 	    V34_PHASE3_PP_SEQUENCE_OK)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
 	*output = commit_output(
-		observation, target, V34_ADAPTIVE_EQUALIZER_FULL);
+		observation, target, V34_ADAPTIVE_EQUALIZER_FULL,
+		decoder_power_q15);
 	if (!v34_phase3_pp_sequence_is_complete(&receiver->pp))
 		return V34_PHASE3_DECISION_RECEIVER_OK;
 	receiver->stage = V34_PHASE3_DECISION_RECEIVER_J;
@@ -359,6 +362,7 @@ static enum v34_phase3_decision_receiver_result receive_pp(
 static enum v34_phase3_decision_receiver_result receive_j(
 	struct v34_phase3_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
 	struct v34_phase3_decision_output *output)
 {
 	struct v34_fixed_training_decision hard;
@@ -388,7 +392,8 @@ static enum v34_phase3_decision_receiver_result receive_j(
 	    result != V34_PHASE3_J_RECEIVER_DETECTED)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
 	*output = commit_output(
-		observation, target, V34_ADAPTIVE_EQUALIZER_FULL);
+		observation, target, V34_ADAPTIVE_EQUALIZER_FULL,
+		decoder_power_q15);
 	if (result == V34_PHASE3_J_RECEIVER_OK)
 		return V34_PHASE3_DECISION_RECEIVER_OK;
 	receiver->stage = V34_PHASE3_DECISION_RECEIVER_COMPLETE;
@@ -418,6 +423,7 @@ enum v34_phase3_decision_receiver_result
 v34_phase3_decision_receiver_observe(
 	struct v34_phase3_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
 	struct v34_phase3_decision_output *output)
 {
 	struct v34_phase3_decision_receiver next;
@@ -437,7 +443,8 @@ v34_phase3_decision_receiver_observe(
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase3_decision_receiver_is_valid(receiver))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	if (!observation_is_valid(observation))
+	if (!observation_is_valid(observation) || decoder_power_q15 == 0u ||
+	    decoder_power_q15 > INT16_MAX)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (receiver->stage == V34_PHASE3_DECISION_RECEIVER_COMPLETE)
 		return V34_PHASE3_DECISION_RECEIVER_ALREADY_COMPLETE;
@@ -446,16 +453,19 @@ v34_phase3_decision_receiver_observe(
 	switch (next.stage) {
 	case V34_PHASE3_DECISION_RECEIVER_S:
 	case V34_PHASE3_DECISION_RECEIVER_REPEATED_S:
-		result = receive_s(&next, observation, &generated);
+		result = receive_s(
+			&next, observation, decoder_power_q15, &generated);
 		break;
 	case V34_PHASE3_DECISION_RECEIVER_MD:
 		result = receive_md(&next, &generated);
 		break;
 	case V34_PHASE3_DECISION_RECEIVER_PP:
-		result = receive_pp(&next, observation, &generated);
+		result = receive_pp(
+			&next, observation, decoder_power_q15, &generated);
 		break;
 	case V34_PHASE3_DECISION_RECEIVER_J:
-		result = receive_j(&next, observation, &generated);
+		result = receive_j(
+			&next, observation, decoder_power_q15, &generated);
 		break;
 	case V34_PHASE3_DECISION_RECEIVER_COMPLETE:
 		return V34_PHASE3_DECISION_RECEIVER_ALREADY_COMPLETE;
@@ -465,7 +475,7 @@ v34_phase3_decision_receiver_observe(
 	if (!result_commits(result))
 		return result;
 	if (!v34_phase3_decision_receiver_is_valid(&next) ||
-	    !output_is_valid(&generated))
+	    !output_is_valid(&generated, decoder_power_q15))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
 	*receiver = next;
 	*output = generated;

@@ -408,7 +408,8 @@ static enum v34_phase34_receiver_result receive_phase3(
 	struct v34_phase3_decision_output output;
 	enum v34_phase3_decision_receiver_result result =
 		v34_phase3_decision_receiver_observe(
-			&phase3, observation, &output);
+			&phase3, observation, receiver->decoder_power_q15,
+			&output);
 	enum v34_phase34_receiver_result mapped = phase3_result(result);
 
 	if (!phase3_result_consumed(result)) {
