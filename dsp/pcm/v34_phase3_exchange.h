@@ -3,6 +3,7 @@
 #ifndef V34_PHASE3_EXCHANGE_H
 #define V34_PHASE3_EXCHANGE_H
 
+#include "v34_phase34_receiver.h"
 #include "v34_phase3_line_receiver.h"
 #include "v34_phase3_line_transmitter.h"
 
@@ -45,6 +46,31 @@ struct v34_phase3_exchange_configuration {
 	int16_t nominal_peak_amplitude;
 };
 
+enum v34_phase3_exchange_receive_mode {
+	V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
+	V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
+};
+
+union v34_phase3_exchange_receive_state {
+	struct v34_phase3_line_receiver compatibility;
+	struct v34_phase34_receiver persistent;
+};
+
+struct v34_phase3_exchange_receive_path {
+	union v34_phase3_exchange_receive_state state;
+	enum v34_phase3_exchange_receive_mode mode;
+};
+
+union v34_phase3_exchange_receive_handoff_state {
+	struct v34_phase3_line_handoff compatibility;
+	struct v34_phase34_receiver persistent;
+};
+
+struct v34_phase3_exchange_receive_handoff {
+	union v34_phase3_exchange_receive_handoff_state state;
+	enum v34_phase3_exchange_receive_mode mode;
+};
+
 /* Exact full-duplex sample boundary after both Phase 3 J selections. The
  * caller's transmitter is still sending J; the answerer's line is advancing
  * through zero points after stopping J. Both directions retain their complete
@@ -53,7 +79,7 @@ struct v34_phase3_exchange_configuration {
 struct v34_phase3_exchange_handoff {
 	struct v34_training_line transmit_line;
 	struct v34_phase3_transmitter phase3_transmit;
-	struct v34_phase3_line_handoff receive;
+	struct v34_phase3_exchange_receive_handoff receive;
 };
 
 bool v34_phase3_exchange_handoff_is_valid(
@@ -67,7 +93,7 @@ bool v34_phase3_exchange_handoff_is_valid(
  * J. Calls on one instance must be serialized. */
 struct v34_phase3_exchange {
 	struct v34_phase3_line_transmitter transmit;
-	struct v34_phase3_line_receiver receive;
+	struct v34_phase3_exchange_receive_path receive;
 	uint32_t trn_target_symbols;
 	uint32_t answer_silence_samples;
 	uint32_t silence_samples_remaining;

@@ -68,6 +68,12 @@ union v34_phase4_transmit_path {
 union v34_phase4_receive_path {
 	struct v34_training_receiver training;
 	struct v34_data_line_receiver data;
+	struct v34_phase34_receiver persistent;
+};
+
+enum v34_phase4_exchange_receive_mode {
+	V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY,
+	V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT,
 };
 
 /* Own both sample directions from the exact Phase 3 handoff through the
@@ -80,8 +86,9 @@ union v34_phase4_receive_path {
  * calibration outside the real-time callback. A valid final peer MP-prime
  * record arms E reception at that exact record boundary. Transmit and receive
  * enter B1 independently, retaining early mapped data in the sample-call
- * outputs. Calls on one instance must be serialized. Each tagged directional
- * union reuses its training storage for the post-E data owner. */
+ * outputs. Calls on one instance must be serialized. The compatibility
+ * receive path reuses its training storage after E; the persistent answerer
+ * keeps one physical receiver from Phase 3 through mapped data. */
 struct v34_phase4_exchange {
 	union v34_phase4_transmit_path transmit;
 	union v34_phase4_receive_path receive;
@@ -90,6 +97,7 @@ struct v34_phase4_exchange {
 	struct v34_mp_record peer_mp;
 	double data_equalizer_adaptation;
 	enum v34_station_role local_role;
+	enum v34_phase4_exchange_receive_mode receive_mode;
 	bool finish_j_requested;
 	bool transmit_trn_started;
 	bool transmit_mp_started;

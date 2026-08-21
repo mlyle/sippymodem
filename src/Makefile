@@ -325,6 +325,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_analytic_filter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_carrier_demodulator.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_channel_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_data_decision_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_equalizer_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_equalizer.c \
@@ -332,6 +333,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_gain_control.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_lattice.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_receive_timing.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_adaptive_equalizer.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase34_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_receive_path.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_line_frontend.c \
@@ -371,6 +373,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_line.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_transmitter.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase3_decision_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_exchange.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_line_transmitter.c \
@@ -392,6 +395,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_j_prime_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase4_decision_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_channel_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_equalizer_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_line_handoff.c \

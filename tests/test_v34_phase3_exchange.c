@@ -171,7 +171,7 @@ static bool run_generated_duplex_exchange(
 		enum v34_phase3_exchange_result answerer_result;
 		bool answerer_was_transmitting = answerer.transmit_started;
 		bool answerer_signal_was_started =
-			answerer.receive.line.fixed_signal_started;
+			answerer.receive.state.persistent.signal_started;
 
 		channel_receive(&channel, &caller_receive, &answerer_receive);
 		caller_result = v34_phase3_exchange_sample(
@@ -198,7 +198,7 @@ static bool run_generated_duplex_exchange(
 		      record_events(answerer_events, &answerer_seen),
 		      "Phase 3 event repeated at sample %zu", index);
 		if (!answerer_signal_was_started &&
-		    answerer.receive.line.fixed_signal_started)
+		    answerer.receive.state.persistent.signal_started)
 			answerer_signal_start = index;
 		if ((answerer_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STOPPED) != 0)
@@ -207,12 +207,12 @@ static bool run_generated_duplex_exchange(
 		if ((answerer_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
 			answerer_receive_restart = index;
-			CHECK(answerer.receive.points.stage ==
-				      V34_PHASE3_RECEIVER_STAGE_S &&
-			      answerer.receive.line.mode ==
-				      V34_LINE_FRONTEND_FIXED &&
-			      !answerer.receive.line.fixed_signal_started &&
-			      answerer.receive.line.state.fixed.timing.carrier.phase ==
+			CHECK(answerer.receive.mode ==
+				      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
+			      answerer.receive.state.persistent.stage ==
+				      V34_PHASE34_RECEIVER_PHASE3 &&
+			      !answerer.receive.state.persistent.signal_started &&
+			      answerer.receive.state.persistent.timing.carrier.phase ==
 				      0,
 			      "answerer did not restart S reception at local J");
 		}
@@ -236,18 +236,25 @@ static bool run_generated_duplex_exchange(
 	      "codec %d delay %zu stopped at caller tx/rx=%d/%d "
 	      "answerer tx/rx=%d/%d events=0x%x/0x%x",
 	      codec, delay_samples, caller.transmit.symbols.stage,
-	      caller.receive.points.stage, answerer.transmit.symbols.stage,
-	      answerer.receive.points.stage, caller_seen, answerer_seen);
-	CHECK(caller.receive.line.mode == V34_LINE_FRONTEND_QAM &&
-	      caller.receive.line.state.qam.carrier_phase ==
-		      (uint32_t)((uint64_t)caller.receive.line.state.qam
+	      caller.receive.state.compatibility.points.stage,
+	      answerer.transmit.symbols.stage,
+	      answerer.receive.state.persistent.stage, caller_seen,
+	      answerer_seen);
+	CHECK(caller.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
+	      caller.receive.state.compatibility.line.mode ==
+		      V34_LINE_FRONTEND_QAM &&
+	      caller.receive.state.compatibility.line.state.qam.carrier_phase ==
+		      (uint32_t)((uint64_t)caller.receive.state.compatibility
+					 .line.state.qam
 					 .carrier_phase_step *
 			 exchanged_samples) &&
 	      answerer_receive_restart < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
-	      answerer.receive.line.mode == V34_LINE_FRONTEND_FIXED &&
-	      answerer.receive.line.state.fixed.timing.carrier.phase ==
-		      (uint32_t)((uint64_t)answerer.receive.line.state.fixed
+	      answerer.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
+	      answerer.receive.state.persistent.timing.carrier.phase ==
+		      (uint32_t)((uint64_t)answerer.receive.state.persistent
 					 .timing.carrier.phase_step *
 			 (exchanged_samples - answerer_signal_start)),
 	      "Phase 3 receivers did not consume the complete sample timeline");
@@ -281,20 +288,26 @@ static bool run_generated_duplex_exchange(
 		      &answerer, &answerer_handoff) == V34_PHASE3_EXCHANGE_OK &&
 	      v34_phase3_exchange_handoff_is_valid(&caller_handoff) &&
 	      v34_phase3_exchange_handoff_is_valid(&answerer_handoff) &&
-	      caller_handoff.receive.phase3.j.detection.sequence
+	      caller_handoff.receive.state.compatibility.phase3.j.detection
+		      .sequence
 			      .remote_constellation == V34_CONSTELLATION_4_POINT &&
-	      answerer_handoff.receive.phase3.j.detection.sequence
+	      answerer_handoff.receive.state.persistent.phase3_handoff.j
+		      .sequence
 			      .remote_constellation == V34_CONSTELLATION_16_POINT &&
 	      caller_handoff.phase3_transmit.remote_constellation ==
 		      V34_CONSTELLATION_16_POINT &&
 	      answerer_handoff.phase3_transmit.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
 	      v34_line_frontend_timing_acquired(
-		      &caller_handoff.receive.line) &&
-	      v34_line_frontend_timing_acquired(
-		      &answerer_handoff.receive.line) &&
-	      caller_handoff.receive.line.mode == V34_LINE_FRONTEND_QAM &&
-	      answerer_handoff.receive.line.mode == V34_LINE_FRONTEND_FIXED,
+		      &caller_handoff.receive.state.compatibility.line) &&
+	      v34_receive_timing_is_acquired(
+		      &answerer_handoff.receive.state.persistent.timing) &&
+	      caller_handoff.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
+	      answerer_handoff.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
+	      caller_handoff.receive.state.compatibility.line.mode ==
+		      V34_LINE_FRONTEND_QAM,
 	      "Phase 3 handoff lost either J constellation selection");
 	return true;
 }
@@ -373,19 +386,26 @@ static bool test_receiver_selection(void)
 	CHECK(v34_phase3_exchange_init(
 		      &exchange, &caller, &answerer, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
-	      exchange.receive.line.mode == V34_LINE_FRONTEND_QAM,
+	      exchange.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
+	      exchange.receive.state.compatibility.line.mode ==
+		      V34_LINE_FRONTEND_QAM,
 	      "caller did not retain its compatibility receiver");
 	CHECK(v34_phase3_exchange_init(
 		      &exchange, &answerer, &caller, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
-	      exchange.receive.line.mode == V34_LINE_FRONTEND_FIXED,
-	      "qualified answerer did not select the fixed receiver");
+	      exchange.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
+	      "qualified answerer did not select the persistent receiver");
 	caller.projected_data_rate_2400_bps_units = 9;
 	CHECK(v34_phase3_profile_is_valid(&caller) &&
 	      v34_phase3_exchange_init(
 		      &exchange, &answerer, &caller, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
-	      exchange.receive.line.mode == V34_LINE_FRONTEND_QAM,
+	      exchange.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
+	      exchange.receive.state.compatibility.line.mode ==
+		      V34_LINE_FRONTEND_QAM,
 	      "unqualified answerer did not retain its compatibility receiver");
 	return true;
 }

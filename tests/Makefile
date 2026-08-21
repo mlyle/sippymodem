@@ -1428,13 +1428,16 @@ V34_PHASE3_LINE_RECEIVER_TEST_OBJECTS := \
 		$(V34_PHASE3_LINE_TRANSMITTER_OBJECTS))
 V34_PHASE3_EXCHANGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_exchange
-V34_PHASE3_EXCHANGE_TEST_OBJECTS := \
+V34_PHASE3_EXCHANGE_TEST_OBJECTS = \
 	$(BUILD_DIR)/test_v34_phase3_exchange.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/v34_phase3_exchange.o \
-	$(filter-out \
+	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_phase3_line_receiver.o, \
-		$(V34_PHASE3_LINE_RECEIVER_TEST_OBJECTS))
+		$(V34_PHASE3_LINE_RECEIVER_TEST_OBJECTS)) \
+		$(filter-out \
+			$(BUILD_DIR)/test_v34_phase34_receiver.o, \
+			$(V34_PHASE34_RECEIVER_TEST_OBJECTS)))
 V34_TRAINING_TRANSMITTER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_training_transmitter
 V34_TRAINING_TRANSMITTER_TEST_OBJECTS := \

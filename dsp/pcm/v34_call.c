@@ -443,6 +443,10 @@ static enum v34_call_result sample_phase4(
 static bool phase4_receive_has_failed(
 	const struct v34_phase4_exchange *exchange)
 {
+	if (exchange->receive_mode ==
+	    V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT)
+		return v34_phase34_receiver_has_failed(
+			&exchange->receive.persistent);
 	return exchange->receive_data_active ?
 		       v34_data_line_receiver_has_failed(&exchange->receive.data) :
 		       v34_training_receiver_has_failed(

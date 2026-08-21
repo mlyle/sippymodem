@@ -8,7 +8,7 @@
 #include <stddef.h>
 
 enum {
-	V34_FIXED_ANSWER_MAX_RATE_2400_BPS_UNITS = 8,
+	V34_PERSISTENT_ANSWER_MAX_RATE_2400_BPS_UNITS = 8,
 };
 
 static bool roles_are_reciprocal(
@@ -20,7 +20,7 @@ static bool roles_are_reciprocal(
 	       local->local_role != peer->local_role;
 }
 
-static bool use_fixed_answer_receiver(
+static bool use_persistent_answer_receiver(
 	const struct v34_phase3_profile *local_transmit,
 	const struct v34_phase3_profile *peer_transmit,
 	uint32_t sample_rate)
@@ -32,8 +32,51 @@ static bool use_fixed_answer_receiver(
 	return local_transmit->local_role == V34_ANSWERING_STATION &&
 	       peer_transmit->symbol_rate == V34_SYMBOL_RATE_3000 &&
 	       peer_transmit->projected_data_rate_2400_bps_units <=
-		       V34_FIXED_ANSWER_MAX_RATE_2400_BPS_UNITS &&
+	       V34_PERSISTENT_ANSWER_MAX_RATE_2400_BPS_UNITS &&
 	       sample_rate == V34_RECEIVE_PATH_SAMPLE_RATE;
+}
+
+static const struct v34_phase3_profile *receiver_profile(
+	const struct v34_phase3_exchange *exchange)
+{
+	return exchange->receive.mode ==
+		       V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ?
+	       &exchange->receive.state.persistent.transmitting_profile :
+	       &exchange->receive.state.compatibility.transmitting_profile;
+}
+
+static uint32_t receiver_sample_rate(
+	const struct v34_phase3_exchange *exchange)
+{
+	return exchange->receive.mode ==
+		       V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ?
+	       V34_RECEIVE_PATH_SAMPLE_RATE :
+	       v34_line_frontend_sample_rate(
+		       &exchange->receive.state.compatibility.line);
+}
+
+static bool receiver_is_valid(
+	const struct v34_phase3_exchange *exchange)
+{
+	if (exchange->receive.mode ==
+	    V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT)
+		return v34_phase34_receiver_is_valid(
+			&exchange->receive.state.persistent);
+	return exchange->receive.mode ==
+		       V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
+	       v34_phase3_line_receiver_is_valid(
+		       &exchange->receive.state.compatibility);
+}
+
+static bool receiver_has_failed(
+	const struct v34_phase3_exchange *exchange)
+{
+	return exchange->receive.mode ==
+		       V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ?
+	       v34_phase34_receiver_has_failed(
+		       &exchange->receive.state.persistent) :
+	       v34_phase3_line_receiver_has_failed(
+		       &exchange->receive.state.compatibility);
 }
 
 static bool answer_silence_samples(
@@ -56,7 +99,12 @@ static bool answer_silence_samples(
 static bool receiver_complete(
 	const struct v34_phase3_exchange *exchange)
 {
-	return v34_phase3_receiver_is_complete(&exchange->receive.points);
+	return exchange->receive.mode ==
+		       V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ?
+	       exchange->receive.state.persistent.stage !=
+		       V34_PHASE34_RECEIVER_PHASE3 :
+	       v34_phase3_receiver_is_complete(
+		       &exchange->receive.state.compatibility.points);
 }
 
 static bool zero_md_trn_target(
@@ -134,17 +182,16 @@ bool v34_phase3_exchange_is_valid(
 
 	if (exchange == NULL ||
 	    !v34_phase3_line_transmitter_is_valid(&exchange->transmit) ||
-	    !v34_phase3_line_receiver_is_valid(&exchange->receive) ||
+	    !receiver_is_valid(exchange) ||
 	    !trn_timing_is_valid(exchange) ||
 	    !roles_are_reciprocal(&exchange->transmit.line.profile,
-				 &exchange->receive.transmitting_profile) ||
+				 receiver_profile(exchange)) ||
 	    exchange->local_role != exchange->transmit.line.profile.local_role ||
-	    (v34_phase3_line_receiver_has_failed(&exchange->receive) &&
+	    (receiver_has_failed(exchange) &&
 	     !exchange->failed))
 		return false;
 	sample_rate = exchange->transmit.line.carrier.channel.sample_rate;
-	if (sample_rate != v34_line_frontend_sample_rate(
-			   &exchange->receive.line))
+	if (sample_rate != receiver_sample_rate(exchange))
 		return false;
 	if (exchange->local_role == V34_CALLING_STATION) {
 		if (exchange->answer_silence_samples != 0 ||
@@ -183,7 +230,7 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 {
 	struct v34_phase3_exchange initialized = { 0 };
 	enum v34_phase3_line_transmitter_result transmit_result;
-	enum v34_phase3_line_receiver_result receive_result;
+	enum v34_phase3_line_receiver_result compatibility_result;
 
 	if (exchange == NULL || configuration == NULL ||
 	    !roles_are_reciprocal(local_transmit, peer_transmit) ||
@@ -207,18 +254,28 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 			       V34_PHASE3_EXCHANGE_INVALID_ARGUMENT :
 			       V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 	}
-	receive_result = use_fixed_answer_receiver(
-		local_transmit, peer_transmit, configuration->sample_rate) ?
-		v34_phase3_line_receiver_init_fixed(
-			&initialized.receive, peer_transmit,
-			&configuration->receive) :
-		v34_phase3_line_receiver_init(
-			&initialized.receive, peer_transmit,
+	if (use_persistent_answer_receiver(
+		    local_transmit, peer_transmit,
+		    configuration->sample_rate)) {
+		initialized.receive.mode =
+			V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT;
+		if (v34_phase34_receiver_init(
+			    &initialized.receive.state.persistent, peer_transmit,
+			    configuration->requested_remote_constellation) !=
+		    V34_PHASE34_RECEIVER_OK)
+			return V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
+	} else {
+		initialized.receive.mode =
+			V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY;
+		compatibility_result = v34_phase3_line_receiver_init(
+			&initialized.receive.state.compatibility, peer_transmit,
 			configuration->sample_rate, &configuration->receive);
-	if (receive_result != V34_PHASE3_LINE_RECEIVER_OK)
-		return receive_result == V34_PHASE3_LINE_RECEIVER_OUT_OF_RANGE ?
-			       V34_PHASE3_EXCHANGE_OUT_OF_RANGE :
-			       V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
+		if (compatibility_result != V34_PHASE3_LINE_RECEIVER_OK)
+			return compatibility_result ==
+				       V34_PHASE3_LINE_RECEIVER_OUT_OF_RANGE ?
+				       V34_PHASE3_EXCHANGE_OUT_OF_RANGE :
+				       V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
+	}
 	initialized.local_role = local_transmit->local_role;
 	if (!zero_md_trn_target(
 		    local_transmit, &initialized.trn_target_symbols))
@@ -253,14 +310,37 @@ bool v34_phase3_exchange_is_handoff_ready(
 bool v34_phase3_exchange_handoff_is_valid(
 	const struct v34_phase3_exchange_handoff *handoff)
 {
-	if (handoff == NULL ||
-	    !v34_training_line_is_valid(&handoff->transmit_line) ||
+	const struct v34_phase3_profile *peer_profile;
+	bool receive_valid;
+
+	if (handoff == NULL)
+		return false;
+	if (handoff->receive.mode ==
+	    V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT) {
+		receive_valid = v34_phase34_receiver_is_valid(
+			&handoff->receive.state.persistent) &&
+			!v34_phase34_receiver_has_failed(
+				&handoff->receive.state.persistent) &&
+			handoff->receive.state.persistent.stage ==
+				V34_PHASE34_RECEIVER_PHASE4;
+		peer_profile =
+			&handoff->receive.state.persistent.transmitting_profile;
+	} else if (handoff->receive.mode ==
+		   V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY) {
+		receive_valid = v34_phase3_line_handoff_is_valid(
+			&handoff->receive.state.compatibility);
+		peer_profile =
+			&handoff->receive.state.compatibility.transmitting_profile;
+	} else {
+		return false;
+	}
+	if (!v34_training_line_is_valid(&handoff->transmit_line) ||
 	    !v34_phase3_transmitter_is_valid(&handoff->phase3_transmit) ||
-	    !v34_phase3_line_handoff_is_valid(&handoff->receive) ||
+	    !receive_valid ||
 	    handoff->transmit_line.profile.local_role !=
 		    handoff->phase3_transmit.local_role ||
 	    !roles_are_reciprocal(&handoff->transmit_line.profile,
-				 &handoff->receive.transmitting_profile))
+				 peer_profile))
 		return false;
 	return handoff->transmit_line.profile.local_role ==
 		       V34_CALLING_STATION ?
@@ -290,28 +370,40 @@ static enum v34_phase3_exchange_result drive_silence(
 static bool restart_answer_receiver(struct v34_phase3_exchange *exchange)
 {
 	struct v34_phase3_line_receiver restarted;
-	struct v34_phase3_line_receiver_configuration configuration = {
-		.s_gain_adaptation =
-			exchange->receive.points.configuration.s_gain_adaptation,
-		.pp_equalizer_adaptation =
-			exchange->receive.points.configuration.pp_equalizer_adaptation,
-		.tracking_equalizer_adaptation = exchange->receive.points
-			.configuration.tracking_equalizer_adaptation,
-	};
-	uint32_t sample_rate = v34_line_frontend_sample_rate(
-		&exchange->receive.line);
-	enum v34_phase3_line_receiver_result result =
-		exchange->receive.line.mode == V34_LINE_FRONTEND_FIXED ?
-		v34_phase3_line_receiver_init_fixed(
-			&restarted, &exchange->receive.transmitting_profile,
-			&configuration) :
-		v34_phase3_line_receiver_init(
-			&restarted, &exchange->receive.transmitting_profile,
-			sample_rate, &configuration);
+	struct v34_phase3_line_receiver_configuration configuration;
+	uint32_t sample_rate;
+	enum v34_phase3_line_receiver_result result;
+
+	if (exchange->receive.mode ==
+	    V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT) {
+		struct v34_phase34_receiver persistent;
+
+		if (v34_phase34_receiver_init(
+			    &persistent,
+			    &exchange->receive.state.persistent.transmitting_profile,
+			    exchange->receive.state.persistent
+				    .phase4_constellation) !=
+		    V34_PHASE34_RECEIVER_OK)
+			return false;
+		exchange->receive.state.persistent = persistent;
+		return true;
+	}
+	configuration.s_gain_adaptation = exchange->receive.state.compatibility
+		.points.configuration.s_gain_adaptation;
+	configuration.pp_equalizer_adaptation = exchange->receive.state
+		.compatibility.points.configuration.pp_equalizer_adaptation;
+	configuration.tracking_equalizer_adaptation = exchange->receive.state
+		.compatibility.points.configuration.tracking_equalizer_adaptation;
+	sample_rate = v34_line_frontend_sample_rate(
+		&exchange->receive.state.compatibility.line);
+	result = v34_phase3_line_receiver_init(
+		&restarted,
+		&exchange->receive.state.compatibility.transmitting_profile,
+		sample_rate, &configuration);
 
 	if (result != V34_PHASE3_LINE_RECEIVER_OK)
 		return false;
-	exchange->receive = restarted;
+	exchange->receive.state.compatibility = restarted;
 	return true;
 }
 
@@ -373,19 +465,77 @@ static enum v34_phase3_exchange_result drive_receiver(
 	struct v34_phase3_exchange *exchange, int16_t sample,
 	uint32_t *events)
 {
-	enum v34_phase3_line_receiver_result result;
-
 	/* The answerer deliberately starts caller-S acquisition at its local J
 	 * boundary. Earlier input belongs to the peer's prescribed silence and
 	 * is discarded instead of advancing a receiver that will be reset. */
 	if (exchange->local_role == V34_ANSWERING_STATION &&
 	    exchange->transmit.symbols.stage < V34_PHASE3_TRANSMITTER_J)
 		return V34_PHASE3_EXCHANGE_OK;
+	if (exchange->receive.mode ==
+	    V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT) {
+		struct v34_phase34_receive_output output = { 0 };
+		enum v34_phase34_receiver_result result =
+			v34_phase34_receiver_sample(
+				&exchange->receive.state.persistent, sample,
+				&output);
+
+		switch (result) {
+		case V34_PHASE34_RECEIVER_OK:
+			return V34_PHASE3_EXCHANGE_OK;
+		case V34_PHASE34_RECEIVER_TIMING_ACQUIRED:
+			*events |=
+				V34_PHASE3_EXCHANGE_EVENT_PEER_TIMING_ACQUIRED;
+			return V34_PHASE3_EXCHANGE_OK;
+		case V34_PHASE34_RECEIVER_PHASE3_S_DETECTED:
+			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_S_DETECTED;
+			if (exchange->transmit.symbols.stage !=
+			    V34_PHASE3_TRANSMITTER_J)
+				return V34_PHASE3_EXCHANGE_SEQUENCE_MISMATCH;
+			exchange->stop_transmit_requested = true;
+			return V34_PHASE3_EXCHANGE_OK;
+		case V34_PHASE34_RECEIVER_MD_COMPLETE:
+			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_MD_COMPLETE;
+			return V34_PHASE3_EXCHANGE_OK;
+		case V34_PHASE34_RECEIVER_REPEATED_S_DETECTED:
+			*events |=
+				V34_PHASE3_EXCHANGE_EVENT_PEER_REPEATED_S_DETECTED;
+			return V34_PHASE3_EXCHANGE_OK;
+		case V34_PHASE34_RECEIVER_PP_COMPLETE:
+			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_PP_COMPLETE;
+			return V34_PHASE3_EXCHANGE_OK;
+		case V34_PHASE34_RECEIVER_J_DETECTED:
+			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_J_DETECTED;
+			return V34_PHASE3_EXCHANGE_OK;
+		case V34_PHASE34_RECEIVER_FAILED:
+			return V34_PHASE3_EXCHANGE_FAILED;
+		case V34_PHASE34_RECEIVER_OUT_OF_RANGE:
+			return V34_PHASE3_EXCHANGE_OUT_OF_RANGE;
+		case V34_PHASE34_RECEIVER_SEQUENCE_MISMATCH:
+			return V34_PHASE3_EXCHANGE_SEQUENCE_MISMATCH;
+		case V34_PHASE34_RECEIVER_PHASE4_S_DETECTED:
+		case V34_PHASE34_RECEIVER_TRN_COMPLETE:
+		case V34_PHASE34_RECEIVER_RECORD_READY:
+		case V34_PHASE34_RECEIVER_E_COMPLETE:
+		case V34_PHASE34_RECEIVER_INTERVAL_READY:
+		case V34_PHASE34_RECEIVER_MAPPING_FRAME_READY:
+		case V34_PHASE34_RECEIVER_B1_IN_PROGRESS:
+		case V34_PHASE34_RECEIVER_B1_COMPLETE:
+		case V34_PHASE34_RECEIVER_COMPLETE:
+		case V34_PHASE34_RECEIVER_INVALID_ARGUMENT:
+		case V34_PHASE34_RECEIVER_INVALID_STATE:
+		case V34_PHASE34_RECEIVER_NUMERIC_FAILURE:
+			break;
+		}
+		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+	}
+	{
+		enum v34_phase3_line_receiver_result result;
 
 	result = receiver_complete(exchange) ?
 		v34_phase3_line_receiver_track_sample(
-			&exchange->receive, sample) :
-		v34_phase3_line_receiver_sample(&exchange->receive, sample);
+			&exchange->receive.state.compatibility, sample) :
+		v34_phase3_line_receiver_sample(
+			&exchange->receive.state.compatibility, sample);
 	switch (result) {
 	case V34_PHASE3_LINE_RECEIVER_OK:
 		return V34_PHASE3_EXCHANGE_OK;
@@ -429,6 +579,7 @@ static enum v34_phase3_exchange_result drive_receiver(
 		break;
 	}
 	return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+	}
 }
 
 static bool result_is_terminal(enum v34_phase3_exchange_result result)
@@ -494,10 +645,18 @@ enum v34_phase3_exchange_result v34_phase3_exchange_handoff(
 		return V34_PHASE3_EXCHANGE_INVALID_STATE;
 	generated.transmit_line = exchange->transmit.line;
 	generated.phase3_transmit = exchange->transmit.symbols;
-	if (v34_phase3_line_receiver_handoff(
-		    &exchange->receive, &generated.receive) !=
-		    V34_PHASE3_LINE_RECEIVER_OK ||
-	    !v34_phase3_exchange_handoff_is_valid(&generated))
+	generated.receive.mode = exchange->receive.mode;
+	if (exchange->receive.mode ==
+	    V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT) {
+		generated.receive.state.persistent =
+			exchange->receive.state.persistent;
+	} else if (v34_phase3_line_receiver_handoff(
+			   &exchange->receive.state.compatibility,
+			   &generated.receive.state.compatibility) !=
+		   V34_PHASE3_LINE_RECEIVER_OK) {
+		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+	}
+	if (!v34_phase3_exchange_handoff_is_valid(&generated))
 		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 	*handoff = generated;
 	return V34_PHASE3_EXCHANGE_OK;

@@ -72,6 +72,33 @@ static bool accept_mapping_frame(
 	return true;
 }
 
+static enum v34_constellation_size handoff_detected_constellation(
+	const struct v34_phase3_exchange_handoff *handoff)
+{
+	return handoff->receive.mode ==
+		       V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ?
+	       handoff->receive.state.persistent.phase3_handoff.j.sequence
+		       .remote_constellation :
+	       handoff->receive.state.compatibility.phase3.j.detection.sequence
+		       .remote_constellation;
+}
+
+static bool receive_constellation_is(
+	const struct v34_phase4_exchange *exchange,
+	enum v34_constellation_size constellation)
+{
+	if (exchange->receive_mode ==
+	    V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT)
+		return exchange->receive.persistent.phase4_constellation ==
+			       constellation &&
+		       exchange->receive.persistent.semantic.phase4.mp_receiver
+			       .constellation == constellation;
+	return exchange->receive.training.phase4_constellation ==
+		       constellation &&
+	       exchange->receive.training.state.phase4.control.mp_receiver
+		       .constellation == constellation;
+}
+
 static struct v34_phase3_profile profile(enum v34_station_role role)
 {
 	return (struct v34_phase3_profile){
@@ -315,13 +342,17 @@ static bool endpoint_sample(
 			return false;
 		endpoint->constellations_routed =
 			endpoint->phase4.transmit.training.phase4_constellation ==
-				endpoint->handoff.receive.phase3.j.detection.sequence
-					.remote_constellation &&
-			endpoint->phase4.receive.training.phase4_constellation ==
-				endpoint->handoff.phase3_transmit.remote_constellation &&
-			endpoint->phase4.receive.training.state.phase4.control
-					.mp_receiver.constellation ==
-				endpoint->handoff.phase3_transmit.remote_constellation;
+				handoff_detected_constellation(&endpoint->handoff) &&
+			receive_constellation_is(
+				&endpoint->phase4,
+				endpoint->handoff.phase3_transmit.remote_constellation) &&
+			(endpoint->handoff.receive.mode !=
+				 V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ||
+			 (endpoint->phase4.receive_mode ==
+				  V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
+			  memcmp(&endpoint->phase4.receive.persistent,
+				 &endpoint->handoff.receive.state.persistent,
+				 sizeof(endpoint->phase4.receive.persistent)) == 0));
 		if (!endpoint->constellations_routed) {
 			fprintf(stderr,
 				"Phase 4 crossed the two J constellation selections\n");
