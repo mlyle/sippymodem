@@ -242,11 +242,9 @@ static bool run_generated_duplex_exchange(
 	      answerer_seen);
 	CHECK(caller.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
-	      caller.receive.state.compatibility.line.mode ==
-		      V34_LINE_FRONTEND_QAM &&
-	      caller.receive.state.compatibility.line.state.qam.carrier_phase ==
+	      caller.receive.state.compatibility.line.carrier_phase ==
 		      (uint32_t)((uint64_t)caller.receive.state.compatibility
-					 .line.state.qam
+					 .line
 					 .carrier_phase_step *
 			 exchanged_samples) &&
 	      answerer_receive_restart < exchanged_samples &&
@@ -298,16 +296,15 @@ static bool run_generated_duplex_exchange(
 		      V34_CONSTELLATION_16_POINT &&
 	      answerer_handoff.phase3_transmit.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
-	      v34_line_frontend_timing_acquired(
-		      &caller_handoff.receive.state.compatibility.line) &&
+	      qam_demodulator_measure(
+		      &caller_handoff.receive.state.compatibility.line)
+		      .timing_locked &&
 	      v34_receive_timing_is_acquired(
 		      &answerer_handoff.receive.state.persistent.timing) &&
 	      caller_handoff.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
 	      answerer_handoff.receive.mode ==
-		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
-	      caller_handoff.receive.state.compatibility.line.mode ==
-		      V34_LINE_FRONTEND_QAM,
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
 	      "Phase 3 handoff lost either J constellation selection");
 	return true;
 }
@@ -387,9 +384,7 @@ static bool test_receiver_selection(void)
 		      &exchange, &caller, &answerer, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
 	      exchange.receive.mode ==
-		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
-	      exchange.receive.state.compatibility.line.mode ==
-		      V34_LINE_FRONTEND_QAM,
+		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
 	      "caller did not retain its compatibility receiver");
 	CHECK(v34_phase3_exchange_init(
 		      &exchange, &answerer, &caller, &config) ==
@@ -403,9 +398,7 @@ static bool test_receiver_selection(void)
 		      &exchange, &answerer, &caller, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
 	      exchange.receive.mode ==
-		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
-	      exchange.receive.state.compatibility.line.mode ==
-		      V34_LINE_FRONTEND_QAM,
+		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
 	      "unqualified answerer did not retain its compatibility receiver");
 	return true;
 }

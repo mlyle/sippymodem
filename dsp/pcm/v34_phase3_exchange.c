@@ -33,7 +33,7 @@ static bool use_persistent_answer_receiver(
 	       peer_transmit->symbol_rate == V34_SYMBOL_RATE_3000 &&
 	       peer_transmit->projected_data_rate_2400_bps_units <=
 	       V34_PERSISTENT_ANSWER_MAX_RATE_2400_BPS_UNITS &&
-	       sample_rate == V34_RECEIVE_PATH_SAMPLE_RATE;
+	       sample_rate == V34_RECEIVE_TIMING_SAMPLE_RATE;
 }
 
 static const struct v34_phase3_profile *receiver_profile(
@@ -50,9 +50,8 @@ static uint32_t receiver_sample_rate(
 {
 	return exchange->receive.mode ==
 		       V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ?
-	       V34_RECEIVE_PATH_SAMPLE_RATE :
-	       v34_line_frontend_sample_rate(
-		       &exchange->receive.state.compatibility.line);
+	       V34_RECEIVE_TIMING_SAMPLE_RATE :
+	       exchange->receive.state.compatibility.line.channel.sample_rate;
 }
 
 static bool receiver_is_valid(
@@ -394,8 +393,7 @@ static bool restart_answer_receiver(struct v34_phase3_exchange *exchange)
 		.compatibility.points.configuration.pp_equalizer_adaptation;
 	configuration.tracking_equalizer_adaptation = exchange->receive.state
 		.compatibility.points.configuration.tracking_equalizer_adaptation;
-	sample_rate = v34_line_frontend_sample_rate(
-		&exchange->receive.state.compatibility.line);
+	sample_rate = exchange->receive.state.compatibility.line.channel.sample_rate;
 	result = v34_phase3_line_receiver_init(
 		&restarted,
 		&exchange->receive.state.compatibility.transmitting_profile,

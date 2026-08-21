@@ -202,11 +202,10 @@ static uint32_t receive_sample_rate(
 {
 	if (exchange->receive_mode ==
 	    V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT)
-		return V34_RECEIVE_PATH_SAMPLE_RATE;
+		return V34_RECEIVE_TIMING_SAMPLE_RATE;
 	return exchange->receive_data_active ?
-	       v34_line_frontend_sample_rate(&exchange->receive.data.line) :
-	       v34_line_frontend_sample_rate(
-		       &exchange->receive.training.state.phase4.line);
+	       exchange->receive.data.line.channel.sample_rate :
+	       exchange->receive.training.state.phase4.line.channel.sample_rate;
 }
 
 static bool receive_record_pending(

@@ -444,7 +444,6 @@ static bool run_line_case(
 	struct v34_data_line_receiver saved_data_receiver;
 	struct qam_demodulator demodulator;
 	struct qam_equalizer equalizer;
-	struct v34_line_frontend line;
 	unsigned int control_trn_symbols = 0;
 	unsigned int answer_s_events = 0;
 	unsigned int initial_records = 0;
@@ -455,10 +454,8 @@ static bool run_line_case(
 		      &source, &demodulator, &equalizer, &profile,
 		      constellation) &&
 	      data_configuration(&profile, &data_config) &&
-	      v34_line_frontend_init_qam(&line, &demodulator) ==
-		      V34_LINE_FRONTEND_OK &&
 	      v34_phase4_line_receiver_init(
-		      &receiver, &line, &equalizer, &profile,
+		      &receiver, &demodulator, &equalizer, &profile,
 		      constellation, 0.03) == V34_PHASE4_LINE_RECEIVER_OK,
 	      "Phase 4 line fixture did not initialize role=%d constellation=%d",
 	      role, constellation);
@@ -529,11 +526,11 @@ static bool run_line_case(
 				      source_next_trn(&source),
 				      "Phase 4 TRN boundary did not advance");
 			if (shift_timing_after_s)
-				receiver.line.state.qam.locked_phase_units =
-					(receiver.line.state.qam.locked_phase_units +
-					 receiver.line.state.qam.symbol_period_units /
+				receiver.line.locked_phase_units =
+					(receiver.line.locked_phase_units +
+					 receiver.line.symbol_period_units /
 						 2u) %
-					receiver.line.state.qam.symbol_period_units;
+					receiver.line.symbol_period_units;
 		}
 		e_complete =
 			result == V34_PHASE4_LINE_RECEIVER_E_COMPLETE;

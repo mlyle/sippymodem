@@ -214,7 +214,7 @@ static bool initialize_phase4(
 	    V34_PHASE3_LINE_RECEIVER_OK)
 		return false;
 	corrupt = handoff;
-	corrupt.line.state.qam.timing_locked = false;
+	corrupt.line.timing_locked = false;
 	if (v34_phase4_line_receiver_init_from_phase3(
 		    NULL, &handoff, V34_CONSTELLATION_16_POINT, 0.03) !=
 		    V34_PHASE4_LINE_RECEIVER_INVALID_ARGUMENT ||
@@ -264,7 +264,7 @@ static bool initialize_owned_phase4(
 		    V34_PHASE3_LINE_RECEIVER_OK)
 		return false;
 	corrupt = handoff;
-	corrupt.line.state.qam.timing_locked = false;
+	corrupt.line.timing_locked = false;
 	invalid.phase4_equalizer_adaptation = NAN;
 	memset(receiver, 0xa5, sizeof(*receiver));
 	unchanged = *receiver;

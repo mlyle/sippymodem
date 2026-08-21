@@ -2,6 +2,8 @@
 
 #include "v34_data_line_receiver.h"
 
+#include "v34_training_line.h"
+
 #include <math.h>
 #include <stddef.h>
 
@@ -10,6 +12,16 @@ static const struct v34_frame_geometry *data_geometry(
 {
 	return &receiver->equalizer_receiver.data_receiver.data_receiver
 		.schedule.geometry;
+}
+
+static bool line_matches_profile(
+	const struct qam_demodulator *line,
+	const struct v34_phase3_profile *transmitting_profile)
+{
+	return qam_demodulator_is_valid(line) &&
+	       qam_demodulator_measure(line).timing_locked &&
+	       v34_training_line_channel_matches(
+		       transmitting_profile, &line->channel);
 }
 
 static bool correct_training_gain(
@@ -47,10 +59,9 @@ bool v34_data_line_receiver_is_valid(
 		       receiver->geometry.symbol_rate &&
 	       isfinite(receiver->transmit_point_gain) &&
 	       receiver->transmit_point_gain > 0.0 &&
-	       v34_line_frontend_matches_profile(
+	       line_matches_profile(
 		       &receiver->line,
 		       &receiver->transmitting_profile) &&
-	       v34_line_frontend_timing_acquired(&receiver->line) &&
 	       v34_data_equalizer_receiver_is_valid(
 		       &receiver->equalizer_receiver) &&
 	       receiver->equalizer_receiver.training_outputs_remaining == 0 &&
@@ -61,21 +72,6 @@ bool v34_data_line_receiver_is_valid(
 enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	struct v34_data_line_receiver *receiver,
 	const struct qam_demodulator *demodulator,
-	const struct v34_equalizer_handoff *handoff,
-	const struct v34_data_line_receiver_configuration *configuration)
-{
-	struct v34_line_frontend line;
-
-	if (v34_line_frontend_init_qam(&line, demodulator) !=
-	    V34_LINE_FRONTEND_OK)
-		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
-	return v34_data_line_receiver_init_from_frontend(
-		receiver, &line, handoff, configuration);
-}
-
-enum v34_data_line_receiver_result v34_data_line_receiver_init_from_frontend(
-	struct v34_data_line_receiver *receiver,
-	const struct v34_line_frontend *line,
 	const struct v34_equalizer_handoff *handoff,
 	const struct v34_data_line_receiver_configuration *configuration)
 {
@@ -93,14 +89,13 @@ enum v34_data_line_receiver_result v34_data_line_receiver_init_from_frontend(
 	    !isfinite(configuration->equalizer_adaptation) ||
 	    configuration->equalizer_adaptation < 0.0 ||
 	    configuration->equalizer_adaptation > 1.0 ||
-	    !v34_line_frontend_matches_profile(
-		    line, &configuration->transmitting_profile) ||
-	    !v34_line_frontend_timing_acquired(line) ||
+	    !line_matches_profile(
+		    demodulator, &configuration->transmitting_profile) ||
 	    !correct_training_gain(
 		    handoff, configuration->transmit_point_gain,
 		    &corrected_handoff))
 		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
-	initialized.line = *line;
+	initialized.line = *demodulator;
 	initialized.transmitting_profile =
 		configuration->transmitting_profile;
 	initialized.geometry = configuration->geometry;
@@ -169,8 +164,8 @@ enum v34_data_line_receiver_result v34_data_line_receiver_sample(
 	struct v34_survivor_decision *current,
 	struct v34_received_mapping_frame *received)
 {
+	struct qam_demodulator next_line;
 	struct qam_point point;
-	enum v34_line_frontend_result line_result;
 	enum v34_data_line_receiver_result result;
 	bool ready;
 
@@ -179,14 +174,13 @@ enum v34_data_line_receiver_result v34_data_line_receiver_sample(
 		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
 	if (receiver->failed)
 		return V34_DATA_LINE_RECEIVER_FAILED;
-	line_result = v34_line_frontend_sample(
-		&receiver->line, sample, &point, &ready);
-	if ((line_result != V34_LINE_FRONTEND_OK &&
-	     line_result != V34_LINE_FRONTEND_SYMBOL_READY) ||
-	    (line_result == V34_LINE_FRONTEND_SYMBOL_READY) != ready) {
+	next_line = receiver->line;
+	if (qam_demodulator_sample(
+		    &next_line, sample, &point, &ready) != QAM_OK) {
 		receiver->failed = true;
 		return V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE;
 	}
+	receiver->line = next_line;
 	if (!ready)
 		return V34_DATA_LINE_RECEIVER_OK;
 	result = data_result(v34_data_equalizer_receive_point(

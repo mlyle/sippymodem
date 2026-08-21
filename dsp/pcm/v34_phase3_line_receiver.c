@@ -15,6 +15,22 @@ static bool adaptation_is_valid(double adaptation)
 	       adaptation <= 1.0;
 }
 
+static bool line_timing_acquired(const struct qam_demodulator *line)
+{
+	return qam_demodulator_is_valid(line) &&
+	       qam_demodulator_measure(line).timing_locked;
+}
+
+static bool line_matches_profile(
+	const struct qam_demodulator *line,
+	const struct v34_phase3_profile *transmitting_profile)
+{
+	return qam_demodulator_is_valid(line) &&
+	       v34_phase3_profile_is_valid(transmitting_profile) &&
+	       v34_training_line_channel_matches(
+		       transmitting_profile, &line->channel);
+}
+
 bool v34_phase3_line_receiver_configuration_is_valid(
 	const struct v34_phase3_line_receiver_configuration *configuration)
 {
@@ -32,7 +48,7 @@ static bool profile_matches_receiver(
 		       receiver->transmitting_profile.local_role &&
 	       receiver->points.configuration.md_symbols ==
 		       receiver->transmitting_profile.md_symbol_count &&
-	       v34_line_frontend_matches_profile(
+	       line_matches_profile(
 		       &receiver->line,
 		       &receiver->transmitting_profile);
 }
@@ -42,20 +58,19 @@ bool v34_phase3_line_receiver_is_valid(
 {
 	if (receiver == NULL ||
 	    !v34_phase3_profile_is_valid(&receiver->transmitting_profile) ||
-	    !v34_line_frontend_is_valid(&receiver->line) ||
+	    !qam_demodulator_is_valid(&receiver->line) ||
 	    !v34_phase3_receiver_is_valid(&receiver->points) ||
 	    !profile_matches_receiver(receiver))
 		return false;
-	if (receiver->line.mode == V34_LINE_FRONTEND_QAM &&
-	    (receiver->line.state.qam.acquisition_window_symbols !=
+	if (receiver->line.acquisition_window_symbols !=
 		     V34_PHASE3_LINE_ACQUISITION_SYMBOLS ||
-	     receiver->line.state.qam.tracking_window_symbols !=
-		     V34_PHASE3_LINE_TRACKING_SYMBOLS))
+	    receiver->line.tracking_window_symbols !=
+		    V34_PHASE3_LINE_TRACKING_SYMBOLS)
 		return false;
 	if (receiver->points.stage == V34_PHASE3_RECEIVER_STAGE_S)
 		return receiver->points.state.s.detector.s_symbols ==
 		       V34_PHASE3_LINE_S_SUFFIX_SYMBOLS;
-	return v34_line_frontend_timing_acquired(&receiver->line);
+	return line_timing_acquired(&receiver->line);
 }
 
 bool v34_phase3_line_receiver_has_failed(
@@ -70,9 +85,9 @@ bool v34_phase3_line_handoff_is_valid(
 {
 	return handoff != NULL &&
 	       v34_phase3_profile_is_valid(&handoff->transmitting_profile) &&
-	       v34_line_frontend_is_valid(&handoff->line) &&
-	       v34_line_frontend_timing_acquired(&handoff->line) &&
-	       v34_line_frontend_matches_profile(
+	       qam_demodulator_is_valid(&handoff->line) &&
+	       line_timing_acquired(&handoff->line) &&
+	       line_matches_profile(
 		       &handoff->line,
 		       &handoff->transmitting_profile) &&
 	       v34_phase3_handoff_is_valid(&handoff->phase3);
@@ -124,42 +139,13 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_init(
 	    qam_demodulator_set_timing_power_hysteresis(
 		    &demodulator,
 		    V34_TIMING_POWER_HYSTERESIS) != QAM_OK ||
-	    v34_line_frontend_init_qam(
-		    &initialized.line, &demodulator) !=
-		    V34_LINE_FRONTEND_OK ||
 	    v34_phase3_receiver_init_suffix(
 		    &initialized.points, &points,
 		    V34_PHASE3_LINE_S_SUFFIX_SYMBOLS) !=
-		    V34_PHASE3_RECEIVER_OK ||
-	    !v34_phase3_line_receiver_is_valid(&initialized))
+		    V34_PHASE3_RECEIVER_OK)
 		return V34_PHASE3_LINE_RECEIVER_INVALID_ARGUMENT;
-	*receiver = initialized;
-	return V34_PHASE3_LINE_RECEIVER_OK;
-}
-
-enum v34_phase3_line_receiver_result
-v34_phase3_line_receiver_init_fixed(
-	struct v34_phase3_line_receiver *receiver,
-	const struct v34_phase3_profile *transmitting_profile,
-	const struct v34_phase3_line_receiver_configuration *configuration)
-{
-	struct v34_phase3_line_receiver initialized = { 0 };
-	struct v34_phase3_receiver_configuration points;
-
-	if (receiver == NULL ||
-	    !v34_phase3_profile_is_valid(transmitting_profile) ||
-	    !v34_phase3_line_receiver_configuration_is_valid(configuration))
-		return V34_PHASE3_LINE_RECEIVER_INVALID_ARGUMENT;
-	points = point_configuration(transmitting_profile, configuration);
-	initialized.transmitting_profile = *transmitting_profile;
-	if (v34_line_frontend_init_fixed(
-		    &initialized.line, transmitting_profile) !=
-		    V34_LINE_FRONTEND_OK ||
-	    v34_phase3_receiver_init_suffix(
-		    &initialized.points, &points,
-		    V34_PHASE3_LINE_S_SUFFIX_SYMBOLS) !=
-		    V34_PHASE3_RECEIVER_OK ||
-	    !v34_phase3_line_receiver_is_valid(&initialized))
+	initialized.line = demodulator;
+	if (!v34_phase3_line_receiver_is_valid(&initialized))
 		return V34_PHASE3_LINE_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V34_PHASE3_LINE_RECEIVER_OK;
@@ -204,7 +190,6 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_sample(
 {
 	struct v34_phase3_line_receiver next;
 	struct qam_point point;
-	enum v34_line_frontend_result line_result;
 	enum v34_phase3_line_receiver_result result;
 	bool was_locked;
 	bool ready;
@@ -216,12 +201,9 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_sample(
 	if (v34_phase3_receiver_is_complete(&receiver->points))
 		return V34_PHASE3_LINE_RECEIVER_COMPLETE;
 	next = *receiver;
-	was_locked = v34_line_frontend_timing_acquired(&next.line);
-	line_result = v34_line_frontend_sample(
-		&next.line, sample, &point, &ready);
-	if ((line_result != V34_LINE_FRONTEND_OK &&
-	     line_result != V34_LINE_FRONTEND_SYMBOL_READY) ||
-	    (line_result == V34_LINE_FRONTEND_SYMBOL_READY) != ready) {
+	was_locked = line_timing_acquired(&next.line);
+	if (qam_demodulator_sample(
+		    &next.line, sample, &point, &ready) != QAM_OK) {
 		receiver->failed = true;
 		return V34_PHASE3_LINE_RECEIVER_NUMERIC_FAILURE;
 	}
@@ -232,16 +214,11 @@ enum v34_phase3_line_receiver_result v34_phase3_line_receiver_sample(
 		}
 		*receiver = next;
 		return !was_locked &&
-			       v34_line_frontend_timing_acquired(&next.line) ?
+			       line_timing_acquired(&next.line) ?
 			       V34_PHASE3_LINE_RECEIVER_TIMING_ACQUIRED :
 			       V34_PHASE3_LINE_RECEIVER_OK;
 	}
 	result = point_result(v34_phase3_receive_point(&next.points, &point));
-	if ((result == V34_PHASE3_LINE_RECEIVER_S_DETECTED ||
-	     result == V34_PHASE3_LINE_RECEIVER_REPEATED_S_DETECTED) &&
-	    v34_line_frontend_freeze_gain(&next.line) !=
-		    V34_LINE_FRONTEND_OK)
-		result = V34_PHASE3_LINE_RECEIVER_NUMERIC_FAILURE;
 	if (result_is_terminal(result)) {
 		next.failed = true;
 		if (v34_phase3_line_receiver_is_valid(&next))
@@ -264,7 +241,6 @@ v34_phase3_line_receiver_track_sample(
 {
 	struct v34_phase3_line_receiver next;
 	struct qam_point discarded;
-	enum v34_line_frontend_result line_result;
 	bool ready;
 
 	if (!v34_phase3_line_receiver_is_valid(receiver))
@@ -274,11 +250,8 @@ v34_phase3_line_receiver_track_sample(
 	if (!v34_phase3_receiver_is_complete(&receiver->points))
 		return V34_PHASE3_LINE_RECEIVER_INVALID_STATE;
 	next = *receiver;
-	line_result = v34_line_frontend_sample(
-		&next.line, sample, &discarded, &ready);
-	if ((line_result != V34_LINE_FRONTEND_OK &&
-	     line_result != V34_LINE_FRONTEND_SYMBOL_READY) ||
-	    (line_result == V34_LINE_FRONTEND_SYMBOL_READY) != ready ||
+	if (qam_demodulator_sample(
+		    &next.line, sample, &discarded, &ready) != QAM_OK ||
 	    !v34_phase3_line_receiver_is_valid(&next)) {
 		receiver->failed = true;
 		return V34_PHASE3_LINE_RECEIVER_NUMERIC_FAILURE;

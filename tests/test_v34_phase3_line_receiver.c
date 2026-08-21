@@ -137,7 +137,7 @@ static bool run_generated_line_timeline(enum v34_station_role role)
 		     sizeof(transmitting_profile)) == 0,
 	      "Phase 3 line did not preserve its continuous handoff");
 	completed_points = receiver.points;
-	carrier_phase_before_tracking = receiver.line.state.qam.carrier_phase;
+	carrier_phase_before_tracking = receiver.line.carrier_phase;
 	for (unsigned int index = 0; index < 31; ++index) {
 		int16_t sample;
 
@@ -148,7 +148,7 @@ static bool run_generated_line_timeline(enum v34_station_role role)
 	}
 	CHECK(memcmp(&receiver.points, &completed_points,
 		     sizeof(completed_points)) == 0 &&
-	      receiver.line.state.qam.carrier_phase !=
+	      receiver.line.carrier_phase !=
 		      carrier_phase_before_tracking &&
 	      v34_phase3_line_receiver_handoff(&receiver, &handoff) ==
 		      V34_PHASE3_LINE_RECEIVER_OK &&
@@ -321,13 +321,8 @@ static bool test_validation(void)
 	struct v34_phase3_line_receiver receiver;
 	struct v34_phase3_line_receiver saved;
 	struct v34_phase3_line_receiver corrupt;
-	struct v34_line_frontend fixed;
-	struct v34_line_frontend saved_fixed;
 	struct qam_channel channel;
 	struct qam_channel saved_channel;
-	struct qam_point point = { 91.0, -37.0 };
-	struct qam_point saved_point = point;
-	bool ready = true;
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
@@ -356,7 +351,7 @@ static bool test_validation(void)
 	      "valid Phase 3 line validation fixture did not initialize");
 	saved = receiver;
 	corrupt = receiver;
-	corrupt.line.state.qam.acquisition_window_symbols++;
+	corrupt.line.acquisition_window_symbols++;
 	CHECK(!v34_phase3_line_receiver_is_valid(NULL) &&
 	      !v34_phase3_line_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_line_receiver_has_failed(&corrupt) &&
@@ -375,37 +370,6 @@ static bool test_validation(void)
 		     (enum v34_phase3_line_receiver_result)99),
 		     "unknown") == 0,
 	      "Phase 3 line validation accepted corrupt state");
-	memset(&fixed, 0xa5, sizeof(fixed));
-	saved_fixed = fixed;
-	CHECK(v34_line_frontend_init_fixed(NULL, &transmitting_profile) ==
-		      V34_LINE_FRONTEND_INVALID_ARGUMENT &&
-	      v34_line_frontend_init_fixed(&fixed, NULL) ==
-		      V34_LINE_FRONTEND_INVALID_ARGUMENT &&
-	      memcmp(&fixed, &saved_fixed, sizeof(fixed)) == 0 &&
-	      v34_line_frontend_init_fixed(&fixed, &transmitting_profile) ==
-		      V34_LINE_FRONTEND_OK &&
-	      fixed.mode == V34_LINE_FRONTEND_FIXED &&
-	      !fixed.fixed_signal_started &&
-	      !v34_line_frontend_timing_acquired(&fixed),
-	      "fixed Phase 3 frontend did not initialize transactionally");
-	saved_fixed = fixed;
-	CHECK(v34_line_frontend_sample(&fixed, 0, &point, &ready) ==
-		      V34_LINE_FRONTEND_OK &&
-	      !ready && memcmp(&point, &saved_point, sizeof(point)) == 0 &&
-	      memcmp(&fixed, &saved_fixed, sizeof(fixed)) == 0 &&
-	      v34_line_frontend_sample(
-		      &fixed, 32, (struct qam_point *)&fixed, &ready) ==
-		      V34_LINE_FRONTEND_INVALID_ARGUMENT &&
-	      memcmp(&fixed, &saved_fixed, sizeof(fixed)) == 0,
-	      "fixed Phase 3 silence or alias handling changed state");
-	ready = true;
-	CHECK(v34_line_frontend_sample(&fixed, 32, &point, &ready) ==
-		      V34_LINE_FRONTEND_OK &&
-	      !ready && fixed.fixed_signal_started &&
-	      fixed.state.fixed.timing.carrier.phase ==
-		      fixed.state.fixed.timing.carrier.phase_step &&
-	      memcmp(&point, &saved_point, sizeof(point)) == 0,
-	      "fixed Phase 3 frontend did not start at qualified input");
 	return true;
 }
 

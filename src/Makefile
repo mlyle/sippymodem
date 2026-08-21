@@ -335,8 +335,6 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_receive_timing.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_adaptive_equalizer.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase34_receiver.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_receive_path.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_line_frontend.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_path_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_precoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_survivor.c \

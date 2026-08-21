@@ -370,8 +370,6 @@ static bool test_pcmu_call(void)
 	      !v34_call_has_failed(&answerer.call) &&
 	      caller.call.state.phase4.receive_mode ==
 		      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY &&
-	      caller.call.state.phase4.receive.data.line.mode ==
-		      V34_LINE_FRONTEND_QAM &&
 	      answerer.call.state.phase4.receive_mode ==
 		      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
 	      answerer.call.state.phase4.receive.persistent.stage ==
@@ -433,12 +431,8 @@ static bool check_symmetric_2800_call(bool pcma)
 		    answerer.mapping_frames_received >= 4u) {
 			CHECK(caller.call.state.phase4.receive_mode ==
 				      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY &&
-			      caller.call.state.phase4.receive.data.line.mode ==
-				      V34_LINE_FRONTEND_QAM &&
 			      answerer.call.state.phase4.receive_mode ==
-				      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY &&
-			      answerer.call.state.phase4.receive.data.line.mode ==
-				      V34_LINE_FRONTEND_QAM,
+				      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY,
 			      "2800 call did not retain its compatibility receivers");
 			return true;
 		}
