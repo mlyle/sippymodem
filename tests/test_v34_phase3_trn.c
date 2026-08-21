@@ -68,6 +68,7 @@ static bool test_role_sequences(void)
 	     ++role_index) {
 		enum v34_station_role role = roles[role_index];
 		struct v34_phase3_trn trn;
+		struct v34_phase3_trn fixed;
 		struct reference_scrambler reference = {
 			.first_tap_delay =
 				role == V34_CALLING_STATION ? 18u : 5u,
@@ -77,32 +78,55 @@ static bool test_role_sequences(void)
 
 		CHECK(v34_phase3_trn_init(&trn, role) ==
 			      V34_PHASE3_TRN_OK &&
+		      v34_phase3_trn_init(&fixed, role) ==
+			      V34_PHASE3_TRN_OK &&
 		      v34_phase3_trn_is_valid(&trn) &&
 		      trn.scrambler.history == 0 && !trn.has_last_symbol &&
 		      trn.last_clockwise_quarter_turns == 0,
 		      "TRN role %zu did not initialize", role_index);
 		for (unsigned int symbol = 0; symbol < ROLE_TEST_SYMBOLS;
 		     ++symbol) {
+			static const struct v34_analytic_sample FIXED_POINTS[] = {
+				{ 2289, 2289 },
+				{ 2289, -2290 },
+				{ -2290, -2290 },
+				{ -2290, 2289 },
+			};
 			struct qam_point point = { 7.0, -9.0 };
+			struct v34_analytic_sample fixed_point = { 7, -9 };
 			uint8_t rotation = UINT8_MAX;
+			uint8_t fixed_rotation = UINT8_MAX;
 			uint8_t expected = reference_rotation(&reference);
 			double angle = TEST_PI / 4.0 - expected * TEST_PI / 2.0;
 			double power;
 
 			CHECK(v34_phase3_trn_next(
 				      &trn, &point, &rotation) ==
+				      V34_PHASE3_TRN_OK &&
+			      v34_phase3_trn_next_fixed(
+				      &fixed, &fixed_point, &fixed_rotation) ==
 				      V34_PHASE3_TRN_OK,
 			      "TRN role %zu stopped at symbol %u",
 			      role_index, symbol);
 			power = point.in_phase * point.in_phase +
 				point.quadrature * point.quadrature;
-			CHECK(rotation == expected &&
+			CHECK(rotation == expected && fixed_rotation == expected &&
+			      memcmp(&fixed_point, &FIXED_POINTS[expected],
+				     sizeof(fixed_point)) == 0 &&
+			      trn.scrambler.history == fixed.scrambler.history &&
+			      trn.scrambler.polynomial ==
+				      fixed.scrambler.polynomial &&
+			      trn.role == fixed.role &&
+			      trn.last_clockwise_quarter_turns ==
+				      fixed.last_clockwise_quarter_turns &&
+			      trn.has_last_symbol == fixed.has_last_symbol &&
 			      trn.last_clockwise_quarter_turns == expected &&
 			      trn.has_last_symbol &&
 			      fabs(point.in_phase - cos(angle)) < 1e-14 &&
 			      fabs(point.quadrature - sin(angle)) < 1e-14 &&
 			      fabs(power - 1.0) < 1e-14 &&
-			      v34_phase3_trn_is_valid(&trn),
+			      v34_phase3_trn_is_valid(&trn) &&
+			      v34_phase3_trn_is_valid(&fixed),
 			      "TRN role %zu symbol %u changed", role_index,
 			      symbol);
 			rotation_counts[rotation]++;
@@ -180,6 +204,8 @@ static bool test_validation(void)
 	struct v34_phase3_trn before;
 	struct qam_point point = { 7.0, -9.0 };
 	struct qam_point before_point = point;
+	struct v34_analytic_sample fixed_point = { 11, -13 };
+	struct v34_analytic_sample before_fixed_point = fixed_point;
 	uint8_t rotation = UINT8_MAX;
 
 	memset(&trn, 0xa5, sizeof(trn));
@@ -203,8 +229,27 @@ static bool test_validation(void)
 		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
 	      v34_phase3_trn_next(&trn, &point, NULL) ==
 		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
+	      v34_phase3_trn_next(
+		      &trn, (struct qam_point *)&trn, &rotation) ==
+		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
+	      v34_phase3_trn_next(
+		      &trn, &point, (uint8_t *)&point) ==
+		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
+	      v34_phase3_trn_next_fixed(&trn, NULL, &rotation) ==
+		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
+	      v34_phase3_trn_next_fixed(&trn, &fixed_point, NULL) ==
+		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
+	      v34_phase3_trn_next_fixed(
+		      &trn,
+		      (struct v34_analytic_sample *)&trn, &rotation) ==
+		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
+	      v34_phase3_trn_next_fixed(
+		      &trn, &fixed_point, (uint8_t *)&fixed_point) ==
+		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
+	      memcmp(&fixed_point, &before_fixed_point,
+		     sizeof(fixed_point)) == 0 &&
 	      rotation == UINT8_MAX,
 	      "invalid TRN output argument mutated state");
 	trn.scrambler.history = UINT32_C(1) << 23;
@@ -212,8 +257,13 @@ static bool test_validation(void)
 	CHECK(!v34_phase3_trn_is_valid(&trn) &&
 	      v34_phase3_trn_next(&trn, &point, &rotation) ==
 		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
+	      v34_phase3_trn_next_fixed(
+		      &trn, &fixed_point, &rotation) ==
+		      V34_PHASE3_TRN_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
+	      memcmp(&fixed_point, &before_fixed_point,
+		     sizeof(fixed_point)) == 0 &&
 	      rotation == UINT8_MAX,
 	      "invalid TRN scrambler state mutated outputs");
 	trn.scrambler.history = 0;
@@ -224,13 +274,6 @@ static bool test_validation(void)
 	trn.has_last_symbol = false;
 	CHECK(!v34_phase3_trn_is_valid(&trn),
 	      "TRN accepted a last rotation without a symbol");
-	CHECK(strcmp(v34_phase3_trn_result_name(
-			     V34_PHASE3_TRN_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_phase3_trn_result_name(
-			     (enum v34_phase3_trn_result)99),
-		     "unknown") == 0,
-	      "TRN result names changed");
 	return true;
 }
 

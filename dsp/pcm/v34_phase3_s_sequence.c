@@ -2,6 +2,7 @@
 
 #include "v34_phase3_s_sequence.h"
 
+#include "memory_region.h"
 #include "v34_constellation.h"
 
 #include <stddef.h>
@@ -42,17 +43,27 @@ v34_phase3_s_sequence_next(
 	struct qam_point *point,
 	enum v34_phase3_s_section *section)
 {
+	struct v34_phase3_s_sequence next;
 	struct qam_point next_point;
 	enum v34_phase3_s_section next_section;
 	unsigned int quarter_turns;
 	uint16_t symbol;
 
 	if (!v34_phase3_s_sequence_is_valid(sequence) ||
-	    point == NULL || section == NULL)
+	    point == NULL || section == NULL ||
+	    memory_regions_overlap(
+		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
+		    point, sizeof(*point)) ||
+	    memory_regions_overlap(
+		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
+		    section, sizeof(*section)) ||
+	    memory_regions_overlap(
+		    point, sizeof(*point), section, sizeof(*section)))
 		return V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT;
 	if (v34_phase3_s_sequence_is_complete(sequence))
 		return V34_PHASE3_S_SEQUENCE_COMPLETE;
-	symbol = sequence->emitted_symbols;
+	next = *sequence;
+	symbol = next.emitted_symbols;
 	if (symbol < V34_PHASE3_S_SYMBOLS) {
 		next_section = V34_PHASE3_S_SECTION;
 		quarter_turns = symbol & 1u;
@@ -62,22 +73,56 @@ v34_phase3_s_sequence_next(
 			((symbol - V34_PHASE3_S_SYMBOLS) & 1u);
 	}
 	next_point = v34_rotated_point_zero((int)quarter_turns);
-	sequence->emitted_symbols++;
+	next.emitted_symbols++;
+	*sequence = next;
 	*point = next_point;
 	*section = next_section;
 	return V34_PHASE3_S_SEQUENCE_OK;
 }
 
-const char *v34_phase3_s_sequence_result_name(
-	enum v34_phase3_s_sequence_result result)
+enum v34_phase3_s_sequence_result
+v34_phase3_s_sequence_next_fixed(
+	struct v34_phase3_s_sequence *sequence,
+	struct v34_analytic_sample *point,
+	enum v34_phase3_s_section *section)
 {
-	switch (result) {
-	case V34_PHASE3_S_SEQUENCE_OK:
-		return "ok";
-	case V34_PHASE3_S_SEQUENCE_COMPLETE:
-		return "complete";
-	case V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT:
-		return "invalid argument";
+	struct v34_phase3_s_sequence next;
+	struct v34_analytic_sample next_point;
+	enum v34_phase3_s_section next_section;
+	unsigned int counterclockwise_turns;
+	uint16_t symbol;
+
+	if (!v34_phase3_s_sequence_is_valid(sequence) ||
+	    point == NULL || section == NULL ||
+	    memory_regions_overlap(
+		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
+		    point, sizeof(*point)) ||
+	    memory_regions_overlap(
+		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
+		    section, sizeof(*section)) ||
+	    memory_regions_overlap(
+		    point, sizeof(*point), section, sizeof(*section)))
+		return V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT;
+	if (v34_phase3_s_sequence_is_complete(sequence))
+		return V34_PHASE3_S_SEQUENCE_COMPLETE;
+	next = *sequence;
+	symbol = next.emitted_symbols;
+	if (symbol < V34_PHASE3_S_SYMBOLS) {
+		next_section = V34_PHASE3_S_SECTION;
+		counterclockwise_turns = symbol & 1u;
+	} else {
+		next_section = V34_PHASE3_S_BAR_SECTION;
+		counterclockwise_turns = 2u +
+			((symbol - V34_PHASE3_S_SYMBOLS) & 1u);
 	}
-	return "unknown";
+	if (v34_training_constellation_fixed_point(
+		    V34_CONSTELLATION_4_POINT, 0,
+		    (uint8_t)((4u - counterclockwise_turns) & 3u),
+		    &next_point) != V34_CONSTELLATION_OK)
+		return V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT;
+	next.emitted_symbols++;
+	*sequence = next;
+	*point = next_point;
+	*section = next_section;
+	return V34_PHASE3_S_SEQUENCE_OK;
 }

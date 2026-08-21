@@ -307,6 +307,101 @@ static bool test_sixteen_point_constellation(void)
 	return true;
 }
 
+static bool test_fixed_training_constellations(void)
+{
+	static const struct v34_analytic_sample four_point[] = {
+		{ 2289, 2289 },
+		{ 2289, -2290 },
+		{ -2290, -2290 },
+		{ -2290, 2289 },
+	};
+	static const struct v34_analytic_sample sixteen_point[] = {
+		{ 1024, 1024 }, { -3072, 1024 },
+		{ 1024, -3072 }, { -3072, -3072 },
+		{ 1024, -1024 }, { 1024, 3072 },
+		{ -3072, -1024 }, { -3072, 3072 },
+		{ -1024, -1024 }, { 3072, -1024 },
+		{ -1024, 3072 }, { 3072, 3072 },
+		{ -1024, 1024 }, { -1024, -3072 },
+		{ 3072, 1024 }, { 3072, -3072 },
+	};
+	static const struct v34_analytic_sample perturbations[] = {
+		{ 0, 0 },
+		{ 211, -173 },
+		{ -193, 229 },
+	};
+	static const struct {
+		enum v34_constellation_size constellation;
+		const struct v34_analytic_sample *points;
+		uint8_t quarters;
+	} fixtures[] = {
+		{ V34_CONSTELLATION_4_POINT, four_point, 1 },
+		{ V34_CONSTELLATION_16_POINT, sixteen_point, 4 },
+	};
+
+	for (size_t fixture = 0; fixture < ARRAY_LENGTH(fixtures);
+	     ++fixture) {
+		for (uint8_t rotation = 0; rotation < 4u; ++rotation) {
+			for (uint8_t quarter = 0;
+			     quarter < fixtures[fixture].quarters; ++quarter) {
+				size_t index =
+					(size_t)rotation * fixtures[fixture].quarters +
+					quarter;
+				struct v34_analytic_sample generated = { 0 };
+
+				CHECK(v34_training_constellation_fixed_point(
+					      fixtures[fixture].constellation,
+					      quarter, rotation, &generated) ==
+					      V34_CONSTELLATION_OK &&
+				      generated.in_phase ==
+					      fixtures[fixture].points[index].in_phase &&
+				      generated.quadrature ==
+					      fixtures[fixture].points[index].quadrature,
+				      "fixed point %zu/%u/%u changed",
+				      fixture, quarter, rotation);
+				for (size_t noise = 0;
+				     noise < ARRAY_LENGTH(perturbations); ++noise) {
+					struct v34_fixed_training_decision decision;
+					struct v34_analytic_sample observed = {
+						.in_phase = (int16_t)(
+							generated.in_phase +
+							perturbations[noise].in_phase),
+						.quadrature = (int16_t)(
+							generated.quadrature +
+							perturbations[noise].quadrature),
+					};
+
+					CHECK(v34_training_constellation_fixed_slice(
+						      fixtures[fixture].constellation,
+						      observed, &decision) ==
+						      V34_CONSTELLATION_OK &&
+					      decision.quarter_point == quarter &&
+					      decision.clockwise_quarter_turns ==
+						      rotation &&
+					      decision.target.in_phase ==
+						      generated.in_phase &&
+					      decision.target.quadrature ==
+						      generated.quadrature,
+					      "fixed slice %zu/%u/%u changed at %zu",
+					      fixture, quarter, rotation, noise);
+				}
+			}
+		}
+		{
+			struct v34_fixed_training_decision decision;
+
+			CHECK(v34_training_constellation_fixed_slice(
+				      fixtures[fixture].constellation,
+				      (struct v34_analytic_sample){ 0 },
+				      &decision) == V34_CONSTELLATION_OK &&
+			      decision.quarter_point == 0 &&
+			      decision.clockwise_quarter_turns == 0,
+			      "fixed tie order changed for fixture %zu", fixture);
+		}
+	}
+	return true;
+}
+
 static bool test_training_constellation_slicing(void)
 {
 	static const enum v34_constellation_size constellations[] = {
@@ -393,6 +488,15 @@ static bool test_validation(void)
 	};
 	struct qam_point not_finite = { NAN, 0.0 };
 	struct qam_point too_large = { DBL_MAX, DBL_MAX };
+	struct v34_analytic_sample fixed_point = { 123, -456 };
+	struct v34_analytic_sample saved_fixed_point = fixed_point;
+	struct v34_fixed_training_decision fixed_decision = {
+		.target = { 17, -29 },
+		.quarter_point = 2,
+		.clockwise_quarter_turns = 3,
+	};
+	struct v34_fixed_training_decision saved_fixed_decision =
+		fixed_decision;
 	size_t label = 0xa5a5u;
 	uint8_t quarter = 0xa5;
 	uint8_t rotation = 0x5a;
@@ -480,13 +584,35 @@ static bool test_validation(void)
 		      &quarter) == V34_CONSTELLATION_INVALID_ARGUMENT &&
 	      quarter == 0xa5 && rotation == 0x5a,
 	      "invalid training-constellation slice changed outputs");
-	CHECK(strcmp(v34_constellation_result_name(
-			     V34_CONSTELLATION_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_constellation_result_name(
-			     (enum v34_constellation_result)99),
-		     "unknown") == 0,
-	      "constellation result names changed");
+	CHECK(v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_4_POINT, 1, 0,
+		      &fixed_point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_16_POINT, 4, 0,
+		      &fixed_point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_16_POINT, 0, 4,
+		      &fixed_point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_fixed_point(
+		      (enum v34_constellation_size)8, 0, 0,
+		      &fixed_point) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_4_POINT, 0, 0, NULL) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      memcmp(&fixed_point, &saved_fixed_point,
+		     sizeof(fixed_point)) == 0,
+	      "invalid fixed-point generation changed its output");
+	CHECK(v34_training_constellation_fixed_slice(
+		      (enum v34_constellation_size)8,
+		      (struct v34_analytic_sample){ 0 },
+		      &fixed_decision) == V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      v34_training_constellation_fixed_slice(
+		      V34_CONSTELLATION_4_POINT,
+		      (struct v34_analytic_sample){ 0 }, NULL) ==
+		      V34_CONSTELLATION_INVALID_ARGUMENT &&
+	      memcmp(&fixed_decision, &saved_fixed_decision,
+		     sizeof(fixed_decision)) == 0,
+	      "invalid fixed slicing changed its output");
 	return true;
 }
 
@@ -504,6 +630,7 @@ int main(void)
 		{ "point-zero rotations", test_point_zero_rotations },
 		{ "four-point training set", test_four_point_constellation },
 		{ "sixteen-point training set", test_sixteen_point_constellation },
+		{ "fixed training sets", test_fixed_training_constellations },
 		{ "training-constellation slicing",
 		  test_training_constellation_slicing },
 		{ "validation", test_validation },

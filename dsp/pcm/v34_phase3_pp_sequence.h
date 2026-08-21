@@ -4,6 +4,7 @@
 #define V34_PHASE3_PP_SEQUENCE_H
 
 #include "qam.h"
+#include "v34_analytic_filter.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -43,7 +44,11 @@ v34_phase3_pp_sequence_next(
 	struct v34_phase3_pp_sequence *sequence,
 	struct qam_point *point);
 
-const char *v34_phase3_pp_sequence_result_name(
-	enum v34_phase3_pp_sequence_result result);
+/* Emit the same clause 10.1.3.6 sequence in the exact half-scale coordinates
+ * consumed by the fixed receive equalizer. */
+enum v34_phase3_pp_sequence_result
+v34_phase3_pp_sequence_next_fixed(
+	struct v34_phase3_pp_sequence *sequence,
+	struct v34_analytic_sample *point);
 
 #endif

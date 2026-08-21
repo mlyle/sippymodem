@@ -17,6 +17,13 @@ enum {
 static const double TEST_PI =
 	3.1415926535897932384626433832795;
 
+static const struct v34_analytic_sample FIXED_POINTS[4] = {
+	{ 2289, 2289 },
+	{ 2289, -2290 },
+	{ -2290, -2290 },
+	{ -2290, 2289 },
+};
+
 struct reference_scrambler {
 	uint8_t history[REFERENCE_HISTORY_BITS];
 	unsigned int first_tap_delay;
@@ -118,6 +125,7 @@ static bool test_patterns_and_phase(void)
 			enum v34_constellation_size constellation =
 				constellations[constellation_index];
 			struct v34_phase3_j_sequence sequence;
+			struct v34_phase3_j_sequence fixed_sequence;
 			struct reference_scrambler reference;
 			const char *pattern = reference_pattern(constellation);
 			uint8_t expected_rotation =
@@ -128,6 +136,9 @@ static bool test_patterns_and_phase(void)
 				      V34_PHASE3_J_PATTERN_BITS &&
 			      v34_phase3_j_sequence_init_from_trn(
 				      &sequence, &trn, constellation) ==
+				      V34_PHASE3_J_SEQUENCE_OK &&
+			      v34_phase3_j_sequence_init_from_trn(
+				      &fixed_sequence, &trn, constellation) ==
 				      V34_PHASE3_J_SEQUENCE_OK &&
 			      v34_phase3_j_sequence_is_valid(
 				      &sequence) &&
@@ -161,7 +172,9 @@ static bool test_patterns_and_phase(void)
 					(uint8_t)(pattern[bit + 1u] - '0'));
 				uint8_t increment = (uint8_t)((i2 << 1) | i1);
 				struct qam_point point = { 7.0, -9.0 };
+				struct v34_analytic_sample fixed = { 17, -29 };
 				uint8_t rotation = UINT8_MAX;
+				uint8_t fixed_rotation = UINT8_MAX;
 				double angle;
 				double power;
 
@@ -171,6 +184,10 @@ static bool test_patterns_and_phase(void)
 					      &sequence) == (pattern_symbol == 0) &&
 				      v34_phase3_j_sequence_next(
 					      &sequence, &point, &rotation) ==
+					      V34_PHASE3_J_SEQUENCE_OK &&
+				      v34_phase3_j_sequence_next_fixed(
+					      &fixed_sequence, &fixed,
+					      &fixed_rotation) ==
 					      V34_PHASE3_J_SEQUENCE_OK,
 				      "J role %zu constellation %zu stopped at %u",
 				      role_index, constellation_index, symbol);
@@ -179,6 +196,12 @@ static bool test_patterns_and_phase(void)
 				power = point.in_phase * point.in_phase +
 					point.quadrature * point.quadrature;
 				CHECK(rotation == expected_rotation &&
+				      fixed_rotation == expected_rotation &&
+				      memcmp(&fixed,
+					     &FIXED_POINTS[expected_rotation],
+					     sizeof(fixed)) == 0 &&
+				      memcmp(&sequence, &fixed_sequence,
+					     sizeof(sequence)) == 0 &&
 				      sequence.previous_clockwise_quarter_turns ==
 					      expected_rotation &&
 				      sequence.symbol_in_pattern ==
@@ -275,6 +298,8 @@ static bool test_validation(void)
 	struct v34_phase3_j_sequence corrupt;
 	struct qam_point point = { 7.0, -9.0 };
 	struct qam_point before_point = point;
+	struct v34_analytic_sample fixed = { 17, -29 };
+	struct v34_analytic_sample before_fixed = fixed;
 	uint8_t rotation = UINT8_MAX;
 
 	memset(&sequence, 0xa5, sizeof(sequence));
@@ -317,8 +342,28 @@ static bool test_validation(void)
 	      v34_phase3_j_sequence_next(
 		      &sequence, &point, NULL) ==
 		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next(
+		      &sequence, (struct qam_point *)&sequence, &rotation) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next(
+		      &sequence, &point, (uint8_t *)&point) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next_fixed(NULL, &fixed, &rotation) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next_fixed(&sequence, NULL, &rotation) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next_fixed(&sequence, &fixed, NULL) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next_fixed(
+		      &sequence,
+		      (struct v34_analytic_sample *)&sequence, &rotation) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next_fixed(
+		      &sequence, &fixed, (uint8_t *)&fixed) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&sequence, &before, sizeof(sequence)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
+	      memcmp(&fixed, &before_fixed, sizeof(fixed)) == 0 &&
 	      rotation == UINT8_MAX,
 	      "invalid J output argument mutated state");
 	sequence.scrambler.history = UINT32_C(1) << 23;
@@ -327,6 +372,9 @@ static bool test_validation(void)
 	      !v34_phase3_j_sequence_at_pattern_boundary(&sequence) &&
 	      v34_phase3_j_sequence_next(
 		      &sequence, &point, &rotation) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_j_sequence_next_fixed(
+		      &sequence, &fixed, &rotation) ==
 		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&sequence, &corrupt, sizeof(sequence)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
@@ -356,13 +404,6 @@ static bool test_validation(void)
 	      !v34_phase3_j_sequence_is_valid(NULL) &&
 	      !v34_phase3_j_sequence_at_pattern_boundary(NULL),
 	      "J accepted an invalid pattern position");
-	CHECK(strcmp(v34_phase3_j_sequence_result_name(
-			     V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_phase3_j_sequence_result_name(
-			     (enum v34_phase3_j_sequence_result)99),
-		     "unknown") == 0,
-	      "J result names changed");
 	return true;
 }
 

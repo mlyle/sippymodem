@@ -132,10 +132,10 @@ static bool correlate_candidate(
 		window_preceding_rotation(receiver);
 	for (size_t symbol = 0;
 	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
-		struct qam_point point;
+		struct v34_analytic_sample point;
 		uint8_t rotation;
 
-		if (v34_phase3_j_sequence_next(
+		if (v34_phase3_j_sequence_next_fixed(
 			    &sequence, &point, &rotation) !=
 		    V34_PHASE3_J_SEQUENCE_OK)
 			return false;

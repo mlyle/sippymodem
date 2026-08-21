@@ -4,6 +4,7 @@
 #define V34_CONSTELLATION_H
 
 #include "qam.h"
+#include "v34_analytic_filter.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -28,6 +29,12 @@ enum v34_constellation_size {
 enum v34_constellation_result {
 	V34_CONSTELLATION_OK,
 	V34_CONSTELLATION_INVALID_ARGUMENT,
+};
+
+struct v34_fixed_training_decision {
+	struct v34_analytic_sample target;
+	uint8_t quarter_point;
+	uint8_t clockwise_quarter_turns;
 };
 
 bool v34_constellation_size_is_valid(
@@ -77,7 +84,21 @@ v34_training_constellation_slice(
 	const struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *v34_constellation_result_name(
-	enum v34_constellation_result result);
+/* Generate and slice the same Phase 3/4 constellation in the fixed receive
+ * coordinates used by the persistent V.34 equalizer.  The four-point set
+ * preserves its asymmetric positive and negative half-scale endpoints. */
+enum v34_constellation_result
+v34_training_constellation_fixed_point(
+	enum v34_constellation_size constellation,
+	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
+	struct v34_analytic_sample *point);
+
+/* Equal-distance ties use the same rotation-major, quarter-point-minor order
+ * as the normalized slicer.  Rejected calls leave the decision unchanged. */
+enum v34_constellation_result
+v34_training_constellation_fixed_slice(
+	enum v34_constellation_size constellation,
+	struct v34_analytic_sample point,
+	struct v34_fixed_training_decision *decision);
 
 #endif

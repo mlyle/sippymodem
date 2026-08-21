@@ -2,11 +2,31 @@
 
 #include "v34_phase3_pp_sequence.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 
 static const double V34_COSINE_PI_OVER_SIX =
 	0.86602540378443864676372317075294;
 static const double V34_SINE_PI_OVER_SIX = 0.5;
+
+/* The twelve roots after the transmitter's fixed PP coordinates are reduced
+ * to the receiver's half scale.  Negative odd coordinates use an arithmetic
+ * half, which is why the -2805 endpoints are asymmetric. */
+static const struct v34_analytic_sample V34_FIXED_PP_ROOTS[12] = {
+	{ 3238, 0 },
+	{ 2804, 1619 },
+	{ 1619, 2804 },
+	{ 0, 3238 },
+	{ -1619, 2804 },
+	{ -2805, 1619 },
+	{ -3238, 0 },
+	{ -2805, -1619 },
+	{ -1619, -2805 },
+	{ 0, -3238 },
+	{ 1619, -2805 },
+	{ 2804, -1619 },
+};
 
 _Static_assert(
 	V34_PHASE3_PP_SEQUENCE_SYMBOLS <= UINT16_MAX,
@@ -79,8 +99,10 @@ v34_phase3_pp_sequence_next(
 {
 	struct qam_point next_point;
 
-	if (!v34_phase3_pp_sequence_is_valid(sequence) ||
-	    point == NULL)
+	if (!v34_phase3_pp_sequence_is_valid(sequence) || point == NULL ||
+	    memory_regions_overlap(
+		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
+		    point, sizeof(*point)))
 		return V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT;
 	if (v34_phase3_pp_sequence_is_complete(sequence))
 		return V34_PHASE3_PP_SEQUENCE_COMPLETE;
@@ -90,16 +112,25 @@ v34_phase3_pp_sequence_next(
 	return V34_PHASE3_PP_SEQUENCE_OK;
 }
 
-const char *v34_phase3_pp_sequence_result_name(
-	enum v34_phase3_pp_sequence_result result)
+enum v34_phase3_pp_sequence_result
+v34_phase3_pp_sequence_next_fixed(
+	struct v34_phase3_pp_sequence *sequence,
+	struct v34_analytic_sample *point)
 {
-	switch (result) {
-	case V34_PHASE3_PP_SEQUENCE_OK:
-		return "ok";
-	case V34_PHASE3_PP_SEQUENCE_COMPLETE:
-		return "complete";
-	case V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
+	struct v34_phase3_pp_sequence next;
+	struct v34_analytic_sample next_point;
+
+	if (!v34_phase3_pp_sequence_is_valid(sequence) || point == NULL ||
+	    memory_regions_overlap(
+		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
+		    point, sizeof(*point)))
+		return V34_PHASE3_PP_SEQUENCE_INVALID_ARGUMENT;
+	if (v34_phase3_pp_sequence_is_complete(sequence))
+		return V34_PHASE3_PP_SEQUENCE_COMPLETE;
+	next = *sequence;
+	next_point = V34_FIXED_PP_ROOTS[pp_phase(next.emitted_symbols)];
+	next.emitted_symbols++;
+	*sequence = next;
+	*point = next_point;
+	return V34_PHASE3_PP_SEQUENCE_OK;
 }

@@ -4,6 +4,7 @@
 #define V34_PHASE3_TRN_H
 
 #include "qam.h"
+#include "v34_analytic_filter.h"
 #include "v34_framing.h"
 #include "v34_station.h"
 
@@ -41,7 +42,11 @@ enum v34_phase3_trn_result v34_phase3_trn_next(
 	struct qam_point *point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *v34_phase3_trn_result_name(
-	enum v34_phase3_trn_result result);
+/* Emit the same TRN stream in the fixed receive equalizer's exact
+ * half-scale coordinates. */
+enum v34_phase3_trn_result v34_phase3_trn_next_fixed(
+	struct v34_phase3_trn *trn,
+	struct v34_analytic_sample *point,
+	uint8_t *clockwise_quarter_turns);
 
 #endif

@@ -7,6 +7,13 @@
 #include <math.h>
 #include <string.h>
 
+static const struct v34_analytic_sample FIXED_POINTS[4] = {
+	{ 2289, 2289 },
+	{ 2289, -2290 },
+	{ -2290, -2290 },
+	{ -2290, 2289 },
+};
+
 static unsigned int expected_quarter_turns(unsigned int symbol)
 {
 	if (symbol < V34_PHASE3_S_SYMBOLS)
@@ -25,6 +32,7 @@ static enum v34_phase3_s_section expected_section(
 static bool test_normative_sequence(void)
 {
 	struct v34_phase3_s_sequence sequence = { UINT16_MAX };
+	struct v34_phase3_s_sequence fixed_sequence = { UINT16_MAX };
 	const double coordinate = sqrt(0.5);
 	const struct qam_point point_zero = {
 		coordinate,
@@ -37,15 +45,22 @@ static bool test_normative_sequence(void)
 	      V34_PHASE3_S_SEQUENCE_SYMBOLS == 144 &&
 	      v34_phase3_s_sequence_init(&sequence) ==
 		      V34_PHASE3_S_SEQUENCE_OK &&
+	      v34_phase3_s_sequence_init(&fixed_sequence) ==
+		      V34_PHASE3_S_SEQUENCE_OK &&
 	      v34_phase3_s_sequence_is_valid(&sequence) &&
 	      !v34_phase3_s_sequence_is_complete(&sequence),
 	      "S/S-bar sequence constants or initialization changed");
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
 		struct qam_point point = { 7.0, -9.0 };
+		struct v34_analytic_sample fixed = { 17, -29 };
 		enum v34_phase3_s_section section =
 			(enum v34_phase3_s_section)99;
+		enum v34_phase3_s_section fixed_section =
+			(enum v34_phase3_s_section)99;
 		uint8_t quarter_turns = UINT8_MAX;
+		unsigned int clockwise_turns =
+			(4u - expected_quarter_turns(symbol)) & 3u;
 		double power;
 
 		CHECK(v34_phase3_s_sequence_next(
@@ -53,12 +68,19 @@ static bool test_normative_sequence(void)
 			      V34_PHASE3_S_SEQUENCE_OK &&
 		      qam_nearest_quarter_turn(
 			      &point_zero, &point, &quarter_turns) ==
-			      QAM_OK,
+			      QAM_OK &&
+		      v34_phase3_s_sequence_next_fixed(
+			      &fixed_sequence, &fixed, &fixed_section) ==
+			      V34_PHASE3_S_SEQUENCE_OK,
 		      "S/S-bar symbol %u was not generated", symbol);
 		power = point.in_phase * point.in_phase +
 			point.quadrature * point.quadrature;
 		CHECK(quarter_turns == expected_quarter_turns(symbol) &&
+		      memcmp(&fixed, &FIXED_POINTS[clockwise_turns],
+			     sizeof(fixed)) == 0 &&
 		      section == expected_section(symbol) &&
+		      fixed_section == section &&
+		      fixed_sequence.emitted_symbols == symbol + 1u &&
 		      fabs(power - 1.0) < 1e-14 &&
 		      sequence.emitted_symbols == symbol + 1u &&
 		      v34_phase3_s_sequence_is_valid(&sequence),
@@ -70,7 +92,8 @@ static bool test_normative_sequence(void)
 		      V34_PHASE3_S_SYMBOLS &&
 	      section_counts[V34_PHASE3_S_BAR_SECTION] ==
 		      V34_PHASE3_S_BAR_SYMBOLS &&
-	      v34_phase3_s_sequence_is_complete(&sequence),
+	      v34_phase3_s_sequence_is_complete(&sequence) &&
+	      v34_phase3_s_sequence_is_complete(&fixed_sequence),
 	      "S/S-bar section lengths changed");
 	return true;
 }
@@ -138,6 +161,8 @@ static bool test_validation(void)
 	struct v34_phase3_s_sequence before_invalid = invalid;
 	struct qam_point point = { 7.0, -9.0 };
 	struct qam_point before_point = point;
+	struct v34_analytic_sample fixed = { 17, -29 };
+	struct v34_analytic_sample before_fixed = fixed;
 	enum v34_phase3_s_section section =
 		(enum v34_phase3_s_section)99;
 
@@ -164,17 +189,37 @@ static bool test_validation(void)
 	      v34_phase3_s_sequence_next(
 		      &valid, &point, NULL) ==
 		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_s_sequence_next(
+		      &valid, (struct qam_point *)&valid, &section) ==
+		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_s_sequence_next(
+		      &valid, &point,
+		      (enum v34_phase3_s_section *)&point) ==
+		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&valid, &before_valid, sizeof(valid)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
 	      section == (enum v34_phase3_s_section)99,
 	      "invalid S/S-bar argument mutated state");
-	CHECK(strcmp(v34_phase3_s_sequence_result_name(
-			     V34_PHASE3_S_SEQUENCE_COMPLETE),
-		     "complete") == 0 &&
-	      strcmp(v34_phase3_s_sequence_result_name(
-			     (enum v34_phase3_s_sequence_result)99),
-		     "unknown") == 0,
-	      "S/S-bar result names changed");
+	CHECK(v34_phase3_s_sequence_next_fixed(
+		      &invalid, &fixed, &section) ==
+		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_s_sequence_next_fixed(NULL, &fixed, &section) ==
+		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_s_sequence_next_fixed(&valid, NULL, &section) ==
+		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_s_sequence_next_fixed(&valid, &fixed, NULL) ==
+		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_s_sequence_next_fixed(
+		      &valid, (struct v34_analytic_sample *)&valid,
+		      &section) == V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_phase3_s_sequence_next_fixed(
+		      &valid, &fixed,
+		      (enum v34_phase3_s_section *)&fixed) ==
+		      V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT &&
+	      memcmp(&invalid, &before_invalid, sizeof(invalid)) == 0 &&
+	      memcmp(&valid, &before_valid, sizeof(valid)) == 0 &&
+	      memcmp(&fixed, &before_fixed, sizeof(fixed)) == 0,
+	      "invalid fixed S/S-bar argument mutated state or output");
 	return true;
 }
 

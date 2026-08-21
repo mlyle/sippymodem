@@ -4,6 +4,7 @@
 #define V34_PHASE3_J_SEQUENCE_H
 
 #include "qam.h"
+#include "v34_analytic_filter.h"
 #include "v34_constellation.h"
 #include "v34_framing.h"
 #include "v34_station.h"
@@ -55,7 +56,12 @@ v34_phase3_j_sequence_next(
 	struct qam_point *point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *v34_phase3_j_sequence_result_name(
-	enum v34_phase3_j_sequence_result result);
+/* Emit the same J stream in the fixed receive equalizer's exact half-scale
+ * coordinates. */
+enum v34_phase3_j_sequence_result
+v34_phase3_j_sequence_next_fixed(
+	struct v34_phase3_j_sequence *sequence,
+	struct v34_analytic_sample *point,
+	uint8_t *clockwise_quarter_turns);
 
 #endif

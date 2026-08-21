@@ -2,6 +2,7 @@
 
 #include "v34_phase3_j_sequence.h"
 
+#include "memory_region.h"
 #include "v34_phase3_trn.h"
 
 #include <stddef.h>
@@ -78,6 +79,34 @@ static uint8_t input_dibit(
 	return (uint8_t)((pattern >> shift) & 3u);
 }
 
+static bool advance_j(
+	struct v34_phase3_j_sequence *sequence, uint8_t *rotation)
+{
+	if (v34_scramble_differential_dibit(
+		    &sequence->scrambler, input_dibit(sequence),
+		    sequence->previous_clockwise_quarter_turns,
+		    rotation) != V34_FRAMING_OK)
+		return false;
+	sequence->previous_clockwise_quarter_turns = *rotation;
+	sequence->symbol_in_pattern++;
+	if (sequence->symbol_in_pattern == V34_PHASE3_J_PATTERN_SYMBOLS)
+		sequence->symbol_in_pattern = 0;
+	return v34_phase3_j_sequence_is_valid(sequence);
+}
+
+static bool outputs_overlap(
+	const struct v34_phase3_j_sequence *sequence, const void *point,
+	size_t point_size, const uint8_t *rotation)
+{
+	return memory_regions_overlap(
+		       sequence, sizeof(*sequence), point, point_size) ||
+	       memory_regions_overlap(
+		       sequence, sizeof(*sequence), rotation,
+		       sizeof(*rotation)) ||
+	       memory_regions_overlap(
+		       point, point_size, rotation, sizeof(*rotation));
+}
+
 enum v34_phase3_j_sequence_result
 v34_phase3_j_sequence_next(
 	struct v34_phase3_j_sequence *sequence,
@@ -89,21 +118,16 @@ v34_phase3_j_sequence_next(
 	uint8_t rotation;
 
 	if (!v34_phase3_j_sequence_is_valid(sequence) ||
-	    point == NULL || clockwise_quarter_turns == NULL)
+	    point == NULL || clockwise_quarter_turns == NULL ||
+	    outputs_overlap(
+		    sequence, point, sizeof(*point),
+		    clockwise_quarter_turns))
 		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	next = *sequence;
-	if (v34_scramble_differential_dibit(
-		    &next.scrambler, input_dibit(&next),
-		    next.previous_clockwise_quarter_turns, &rotation) !=
-	    V34_FRAMING_OK)
-		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
-	next.previous_clockwise_quarter_turns = rotation;
-	next.symbol_in_pattern++;
-	if (next.symbol_in_pattern ==
-	    V34_PHASE3_J_PATTERN_SYMBOLS)
-		next.symbol_in_pattern = 0;
-	next_point = v34_rotated_point_zero(-(int)rotation);
-	if (!v34_phase3_j_sequence_is_valid(&next))
+	if (!advance_j(&next, &rotation) ||
+	    v34_training_constellation_point(
+		    V34_CONSTELLATION_4_POINT, 0, rotation,
+		    &next_point) != V34_CONSTELLATION_OK)
 		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
 	*sequence = next;
 	*point = next_point;
@@ -111,14 +135,30 @@ v34_phase3_j_sequence_next(
 	return V34_PHASE3_J_SEQUENCE_OK;
 }
 
-const char *v34_phase3_j_sequence_result_name(
-	enum v34_phase3_j_sequence_result result)
+enum v34_phase3_j_sequence_result
+v34_phase3_j_sequence_next_fixed(
+	struct v34_phase3_j_sequence *sequence,
+	struct v34_analytic_sample *point,
+	uint8_t *clockwise_quarter_turns)
 {
-	switch (result) {
-	case V34_PHASE3_J_SEQUENCE_OK:
-		return "ok";
-	case V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
+	struct v34_phase3_j_sequence next;
+	struct v34_analytic_sample next_point;
+	uint8_t rotation;
+
+	if (!v34_phase3_j_sequence_is_valid(sequence) ||
+	    point == NULL || clockwise_quarter_turns == NULL ||
+	    outputs_overlap(
+		    sequence, point, sizeof(*point),
+		    clockwise_quarter_turns))
+		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
+	next = *sequence;
+	if (!advance_j(&next, &rotation) ||
+	    v34_training_constellation_fixed_point(
+		    V34_CONSTELLATION_4_POINT, 0, rotation,
+		    &next_point) != V34_CONSTELLATION_OK)
+		return V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT;
+	*sequence = next;
+	*point = next_point;
+	*clockwise_quarter_turns = rotation;
+	return V34_PHASE3_J_SEQUENCE_OK;
 }
