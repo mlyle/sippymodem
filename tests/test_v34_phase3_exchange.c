@@ -212,7 +212,8 @@ static bool run_generated_duplex_exchange(
 			      answerer.receive.line.mode ==
 				      V34_LINE_FRONTEND_FIXED &&
 			      !answerer.receive.line.fixed_signal_started &&
-			      answerer.receive.line.state.fixed.carrier.phase == 0,
+			      answerer.receive.line.state.fixed.timing.carrier.phase ==
+				      0,
 			      "answerer did not restart S reception at local J");
 		}
 		if ((caller_events &
@@ -245,9 +246,9 @@ static bool run_generated_duplex_exchange(
 	      answerer_receive_restart < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
 	      answerer.receive.line.mode == V34_LINE_FRONTEND_FIXED &&
-	      answerer.receive.line.state.fixed.carrier.phase ==
+	      answerer.receive.line.state.fixed.timing.carrier.phase ==
 		      (uint32_t)((uint64_t)answerer.receive.line.state.fixed
-					 .carrier.phase_step *
+					 .timing.carrier.phase_step *
 			 (exchanged_samples - answerer_signal_start)),
 	      "Phase 3 receivers did not consume the complete sample timeline");
 	CHECK(answer_silence ==

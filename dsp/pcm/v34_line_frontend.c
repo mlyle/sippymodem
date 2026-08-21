@@ -73,31 +73,8 @@ bool v34_line_frontend_timing_acquired(
 	return frontend->mode == V34_LINE_FRONTEND_QAM ?
 		qam_demodulator_measure(&frontend->state.qam).timing_locked :
 		frontend->fixed_signal_started &&
-		frontend->state.fixed.timing.mode !=
-			V34_TIMING_CONTROL_INITIAL_PHASE;
-}
-
-static bool profiles_are_equal(
-	const struct v34_phase3_profile *left,
-	const struct v34_phase3_profile *right)
-{
-	return left->symbol_rate_numerator == right->symbol_rate_numerator &&
-	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
-	       left->carrier_frequency_numerator ==
-		       right->carrier_frequency_numerator &&
-	       left->carrier_frequency_denominator ==
-		       right->carrier_frequency_denominator &&
-	       left->md_symbol_count == right->md_symbol_count &&
-	       left->symbol_rate == right->symbol_rate &&
-	       left->local_role == right->local_role &&
-	       left->transmit_power_reduction_db ==
-		       right->transmit_power_reduction_db &&
-	       left->preemphasis_filter_index ==
-		       right->preemphasis_filter_index &&
-	       left->projected_data_rate_2400_bps_units ==
-		       right->projected_data_rate_2400_bps_units &&
-	       left->md_length_35_ms_units == right->md_length_35_ms_units &&
-	       left->high_carrier == right->high_carrier;
+		v34_receive_timing_is_acquired(
+			&frontend->state.fixed.timing);
 }
 
 bool v34_line_frontend_matches_profile(
@@ -110,9 +87,8 @@ bool v34_line_frontend_matches_profile(
 	return frontend->mode == V34_LINE_FRONTEND_QAM ?
 		v34_training_line_channel_matches(
 			transmitting_profile, &frontend->state.qam.channel) :
-		profiles_are_equal(
-			transmitting_profile,
-			&frontend->state.fixed.transmitting_profile);
+		v34_receive_timing_matches_profile(
+			&frontend->state.fixed.timing, transmitting_profile);
 }
 
 uint32_t v34_line_frontend_sample_rate(
@@ -131,9 +107,9 @@ enum v34_line_frontend_result v34_line_frontend_freeze_gain(
 	if (!v34_line_frontend_is_valid(frontend))
 		return V34_LINE_FRONTEND_INVALID_STATE;
 	if (frontend->mode == V34_LINE_FRONTEND_FIXED &&
-	    v34_gain_control_set_mode(
-		    &frontend->state.fixed.gain, V34_GAIN_FROZEN) !=
-		    V34_GAIN_CONTROL_OK)
+	    v34_receive_timing_freeze_gain(
+		    &frontend->state.fixed.timing) !=
+		    V34_RECEIVE_TIMING_OK)
 		return V34_LINE_FRONTEND_INVALID_STATE;
 	return V34_LINE_FRONTEND_OK;
 }
@@ -179,8 +155,8 @@ enum v34_line_frontend_result v34_line_frontend_sample(
 				return V34_LINE_FRONTEND_INVALID_STATE;
 		}
 		if (generated_ready &&
-		    (next.state.fixed.timing.mode ==
-			     V34_TIMING_CONTROL_INITIAL_PHASE ||
+		    (!v34_receive_timing_is_acquired(
+			     &next.state.fixed.timing) ||
 		     (fixed_symbol.in_phase == 0 &&
 		      fixed_symbol.quadrature == 0)))
 			generated_ready = false;

@@ -1148,6 +1148,7 @@ V34_DATA_STREAM_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_training_transmitter.o \
 	$(BUILD_DIR)/v34_phase4_b1_handoff.o
 V34_RECEIVE_PATH_OBJECTS := \
+	$(BUILD_DIR)/v34_receive_timing.o \
 	$(BUILD_DIR)/v34_receive_path.o \
 	$(BUILD_DIR)/v34_analytic_filter.o \
 	$(BUILD_DIR)/v34_gain_control.o \
@@ -5396,6 +5397,10 @@ $(BUILD_DIR)/v34_adaptive_equalizer.o: \
 
 $(BUILD_DIR)/v34_receive_path.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_receive_path.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_receive_timing.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_receive_timing.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_line_frontend.o: \

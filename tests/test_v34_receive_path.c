@@ -82,6 +82,8 @@ static bool test_profiles_and_cadence(void)
 				rate, (enum v34_station_role)role);
 			struct v34_receive_path path;
 			struct v34_receive_path twin;
+			struct v34_receive_timing timing;
+			struct v34_equalizer equalizer;
 			uint32_t symbols = 0;
 
 			CHECK(v34_receive_path_init(&path, &selected) ==
@@ -89,12 +91,20 @@ static bool test_profiles_and_cadence(void)
 			      v34_receive_path_is_valid(&path),
 			      "receive path did not initialize at %u/%zu",
 			      role, rate_index);
-			CHECK(path.timing.local_role ==
+			CHECK(v34_receive_timing_init(&timing, &selected) ==
+				      V34_RECEIVE_TIMING_OK &&
+			      v34_equalizer_init(&equalizer) == V34_EQUALIZER_OK &&
+			      v34_receive_timing_matches_profile(
+				      &timing, &selected),
+			      "timing owner did not initialize at %u/%zu",
+			      role, rate_index);
+			CHECK(path.timing.timing.local_role ==
 				      (role == V34_CALLING_STATION ?
 					       V34_ANSWERING_STATION :
 					       V34_CALLING_STATION) &&
-			      path.gain.gain ==
-				      (int16_t)(path.timing.phase_limit / 2u),
+			      path.timing.gain.gain ==
+				      (int16_t)(
+					      path.timing.timing.phase_limit / 2u),
 			      "receive role or initial gain changed at %u/%zu",
 			      role, rate_index);
 			twin = path;
@@ -102,22 +112,71 @@ static bool test_profiles_and_cadence(void)
 			     sample_index < 12000; ++sample_index) {
 				struct v34_analytic_sample left = { 123, -456 };
 				struct v34_analytic_sample right = left;
+				struct v34_receive_timing_samples recovered = {
+					.count = UINT8_C(0xff),
+				};
+				struct v34_receive_timing_samples saved_recovered =
+					recovered;
 				bool left_ready = true;
 				bool right_ready = true;
+				bool direct_ready = false;
 				int16_t input = (int16_t)(next_word(&random) >> 16);
+				enum v34_receive_timing_result timing_result =
+					v34_receive_timing_sample(
+						&timing, input, &recovered);
 				enum v34_receive_path_result left_result =
 					v34_receive_path_sample(
 						&path, input, &left, &left_ready);
 				enum v34_receive_path_result right_result =
 					v34_receive_path_sample(
 						&twin, input, &right, &right_ready);
+				CHECK(timing_result == V34_RECEIVE_TIMING_OK ||
+				      timing_result ==
+					      V34_RECEIVE_TIMING_SAMPLES_READY,
+				      "timing owner failed at %u/%zu/%u",
+				      role, rate_index, sample_index);
+				if (timing_result ==
+				    V34_RECEIVE_TIMING_SAMPLES_READY) {
+					CHECK(recovered.count == 1u ||
+					      recovered.count == 2u,
+					      "timing batch escaped bounds at %u/%zu/%u",
+					      role, rate_index, sample_index);
+					for (uint8_t index = 0;
+					     index < recovered.count; ++index)
+						CHECK(v34_equalizer_push(
+							      &equalizer,
+							      recovered.sample[index]) ==
+							      V34_EQUALIZER_OK,
+						      "direct equalizer push failed");
+					direct_ready = recovered.symbol_complete;
+					if (direct_ready) {
+						struct v34_equalizer_accumulator ignored;
+
+						CHECK(v34_equalizer_filter(
+							      &equalizer, &ignored) ==
+							      V34_EQUALIZER_OK,
+						      "direct equalizer filter failed");
+					}
+				} else {
+					CHECK(memcmp(
+						      &recovered, &saved_recovered,
+						      sizeof(recovered)) == 0,
+					      "empty timing call changed output");
+				}
 
 				CHECK((left_result == V34_RECEIVE_PATH_OK ||
 				       left_result == V34_RECEIVE_PATH_SYMBOL_READY) &&
 				      left_result == right_result &&
 				      left_ready == right_ready &&
 				      memcmp(&left, &right, sizeof(left)) == 0 &&
-				      memcmp(&path, &twin, sizeof(path)) == 0,
+				      memcmp(&path, &twin, sizeof(path)) == 0 &&
+				      left_ready == direct_ready &&
+				      memcmp(
+					      &path.timing, &timing,
+					      sizeof(timing)) == 0 &&
+				      memcmp(
+					      &path.equalizer, &equalizer,
+					      sizeof(equalizer)) == 0,
 				      "receive path diverged at %u/%zu/%u",
 				      role, rate_index, sample_index);
 				if (!left_ready) {
@@ -137,19 +196,25 @@ static bool test_profiles_and_cadence(void)
 					output_hash, (uint16_t)left.quadrature);
 			}
 			CHECK(symbols == expected_symbols[role][rate_index] &&
-			      path.input_count < V34_RECEIVE_PATH_INPUT_CAPACITY &&
-			      path.input_advance_pending <= 2u,
+			      path.timing.input_count <
+				      V34_RECEIVE_PATH_INPUT_CAPACITY &&
+			      path.timing.input_advance_pending <= 2u,
 			      "receive cadence escaped bounds at %u/%zu: %u",
 			      role, rate_index, symbols);
 			state_hash = hash_u32(state_hash, symbols);
-			state_hash = hash_u16(state_hash, path.timing.phase);
 			state_hash = hash_u16(
-				state_hash, path.timing.phase_increment);
-			state_hash = hash_u32(state_hash, path.carrier.phase);
+				state_hash, path.timing.timing.phase);
+			state_hash = hash_u16(
+				state_hash,
+				path.timing.timing.phase_increment);
+			state_hash = hash_u32(
+				state_hash, path.timing.carrier.phase);
 			state_hash = hash_u32(state_hash, path.equalizer.index);
-			state_hash = hash_u8(state_hash, path.input_count);
 			state_hash = hash_u8(
-				state_hash, path.input_advance_pending);
+				state_hash, path.timing.input_count);
+			state_hash = hash_u8(
+				state_hash,
+				path.timing.input_advance_pending);
 		}
 	}
 	CHECK(random == UINT32_C(0xd959aabd),
@@ -173,10 +238,40 @@ static bool test_transactionality(void)
 	struct v34_analytic_sample saved_output = output;
 	bool ready = true;
 	bool saved_ready = ready;
+	struct v34_receive_timing timing;
+	struct v34_receive_timing saved_timing;
+	struct v34_receive_timing_samples samples = {
+		.sample = { { 17, -23 }, { 29, -31 } },
+		.count = 2,
+	};
+	struct v34_receive_timing_samples saved_samples = samples;
+	struct v34_phase3_profile other =
+		profile(&RATE_PROFILES[4], V34_CALLING_STATION);
 
 	CHECK(v34_receive_path_init(&path, &selected) ==
 		      V34_RECEIVE_PATH_OK,
 	      "transaction path did not initialize");
+	CHECK(v34_receive_timing_init(&timing, &selected) ==
+		      V34_RECEIVE_TIMING_OK,
+	      "transaction timing owner did not initialize");
+	saved_timing = timing;
+	CHECK(v34_receive_timing_sample(NULL, 0, &samples) ==
+		      V34_RECEIVE_TIMING_INVALID_STATE &&
+	      v34_receive_timing_sample(&timing, 0, NULL) ==
+		      V34_RECEIVE_TIMING_INVALID_ARGUMENT &&
+	      v34_receive_timing_sample(
+		      &timing, 0,
+		      (struct v34_receive_timing_samples *)&timing) ==
+		      V34_RECEIVE_TIMING_INVALID_ARGUMENT &&
+	      memcmp(&timing, &saved_timing, sizeof(timing)) == 0 &&
+	      memcmp(&samples, &saved_samples, sizeof(samples)) == 0,
+	      "timing argument rejection changed state or output");
+	CHECK(!v34_receive_timing_matches_profile(&timing, &other) &&
+	      v34_receive_timing_freeze_gain(&timing) ==
+		      V34_RECEIVE_TIMING_OK &&
+	      timing.gain.mode == V34_GAIN_FROZEN &&
+	      v34_receive_timing_is_valid(&timing),
+	      "timing profile or gain boundary changed");
 	saved = path;
 	CHECK(v34_receive_path_init(NULL, &selected) ==
 		      V34_RECEIVE_PATH_INVALID_ARGUMENT &&
@@ -199,7 +294,7 @@ static bool test_transactionality(void)
 	      ready == saved_ready,
 	      "receive argument rejection changed state or output");
 
-	path.input_count = V34_RECEIVE_PATH_INPUT_CAPACITY;
+	path.timing.input_count = V34_RECEIVE_PATH_INPUT_CAPACITY;
 	saved = path;
 	CHECK(v34_receive_path_is_valid(&path) &&
 	      v34_receive_path_sample(&path, 0, &output, &ready) ==
@@ -210,8 +305,8 @@ static bool test_transactionality(void)
 	      "receive queue saturation was not transactional");
 
 	path = saved;
-	path.input_count = 0;
-	path.input_read = V34_RECEIVE_PATH_INPUT_CAPACITY;
+	path.timing.input_count = 0;
+	path.timing.input_read = V34_RECEIVE_PATH_INPUT_CAPACITY;
 	saved = path;
 	CHECK(!v34_receive_path_is_valid(&path) &&
 	      v34_receive_path_sample(&path, 0, &output, &ready) ==

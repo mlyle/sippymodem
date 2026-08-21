@@ -402,8 +402,8 @@ static bool test_validation(void)
 	CHECK(v34_line_frontend_sample(&fixed, 32, &point, &ready) ==
 		      V34_LINE_FRONTEND_OK &&
 	      !ready && fixed.fixed_signal_started &&
-	      fixed.state.fixed.carrier.phase ==
-		      fixed.state.fixed.carrier.phase_step &&
+	      fixed.state.fixed.timing.carrier.phase ==
+		      fixed.state.fixed.timing.carrier.phase_step &&
 	      memcmp(&point, &saved_point, sizeof(point)) == 0,
 	      "fixed Phase 3 frontend did not start at qualified input");
 	return true;
