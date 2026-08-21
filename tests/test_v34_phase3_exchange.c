@@ -392,14 +392,23 @@ static bool test_receiver_selection(void)
 	      exchange.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
 	      "qualified answerer did not select the persistent receiver");
-	caller.projected_data_rate_2400_bps_units = 9;
+	caller.projected_data_rate_2400_bps_units =
+		V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS;
 	CHECK(v34_phase3_profile_is_valid(&caller) &&
 	      v34_phase3_exchange_init(
 		      &exchange, &answerer, &caller, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
 	      exchange.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
+	      "projected rate incorrectly changed the persistent receiver");
+	CHECK(profile_at_rate(
+		      V34_CALLING_STATION, V34_SYMBOL_RATE_2800, &caller) &&
+	      v34_phase3_exchange_init(
+		      &exchange, &answerer, &caller, &config) ==
+		      V34_PHASE3_EXCHANGE_OK &&
+	      exchange.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
-	      "unqualified answerer did not retain its compatibility receiver");
+	      "unqualified symbol rate did not retain compatibility");
 	return true;
 }
 

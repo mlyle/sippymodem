@@ -7,10 +7,6 @@
 #include <limits.h>
 #include <stddef.h>
 
-enum {
-	V34_PERSISTENT_ANSWER_MAX_RATE_2400_BPS_UNITS = 8,
-};
-
 static bool roles_are_reciprocal(
 	const struct v34_phase3_profile *local,
 	const struct v34_phase3_profile *peer)
@@ -25,14 +21,10 @@ static bool use_persistent_answer_receiver(
 	const struct v34_phase3_profile *peer_transmit,
 	uint32_t sample_rate)
 {
-	/* The persistent Phase 3 feedback path is currently qualified through
-	 * 19200 bit/s at the 3000-symbol/s answerer boundary. Other negotiated
-	 * profiles keep the compatibility demodulator until their decision
-	 * feedback is migrated. */
+	/* The final primary rate is selected later by MP. One persistent line
+	 * owner covers the complete 3000-symbol/s training and data range. */
 	return local_transmit->local_role == V34_ANSWERING_STATION &&
 	       peer_transmit->symbol_rate == V34_SYMBOL_RATE_3000 &&
-	       peer_transmit->projected_data_rate_2400_bps_units <=
-	       V34_PERSISTENT_ANSWER_MAX_RATE_2400_BPS_UNITS &&
 	       sample_rate == V34_RECEIVE_TIMING_SAMPLE_RATE;
 }
 
