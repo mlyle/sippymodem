@@ -332,6 +332,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_gain_control.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_lattice.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_receive_timing.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_phase34_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_receive_path.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_line_frontend.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_path_decoder.c \
