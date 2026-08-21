@@ -1562,6 +1562,12 @@ V34_PHASE34_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_adaptive_equalizer.o \
 	$(sort $(V34_RECEIVE_PATH_OBJECTS) \
 		$(filter-out \
+			$(BUILD_DIR)/test_v34_data_decision_receiver.o, \
+			$(V34_DATA_DECISION_RECEIVER_TEST_OBJECTS)) \
+		$(filter-out \
+			$(BUILD_DIR)/test_v34_data_stream.o, \
+			$(V34_DATA_STREAM_TEST_OBJECTS)) \
+		$(filter-out \
 			$(BUILD_DIR)/test_v34_phase3_decision_receiver.o, \
 			$(V34_PHASE3_DECISION_RECEIVER_TEST_OBJECTS)) \
 		$(filter-out \

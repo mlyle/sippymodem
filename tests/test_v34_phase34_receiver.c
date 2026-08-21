@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <v34_data_mapping.h>
+#include <v34_data_stream.h>
 #include <v34_mapping_parameters.h>
 #include <v34_phase34_receiver.h>
 #include <v34_training_transmitter.h>
@@ -18,9 +20,29 @@ enum {
 
 struct line_source {
 	struct v34_training_transmitter training;
+	struct v34_data_mapping mapping;
+	struct v34_data_stream data;
 	struct v34_mp_parameters initial_mp;
 	struct v34_mp_parameters final_mp;
 	unsigned int completed_records;
+	bool data_started;
+};
+
+static const struct v34_data_direction_parameters DATA_PARAMETERS = {
+	.precoder_coefficients = {
+		{ 0, 0 },
+		{ 0, 0 },
+		{ 0, 0 },
+	},
+	.trellis_selection = V34_TRELLIS_16_STATE,
+	.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO,
+	.primary_data_rate_2400_bps_units = 8,
+};
+
+static const struct v34_q14_coefficient FEEDBACK_COEFFICIENTS[] = {
+	{ 1, 0 },
+	{ 0, 0 },
+	{ 0, 0 },
 };
 
 static struct v34_phase3_profile profile(enum v34_station_role role)
@@ -63,6 +85,16 @@ static bool parameters_match(
 	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
 }
 
+static bool received_all_ones(
+	const struct v34_received_mapping_frame *received)
+{
+	for (size_t bit = 0; bit < received->primary_bit_count; ++bit)
+		if (received->primary_bits[bit] != 1u)
+			return false;
+	return received->auxiliary_bit_count == 0u ||
+	       received->auxiliary_bit == 1u;
+}
+
 static bool source_init(
 	struct line_source *source,
 	const struct v34_phase3_profile *transmitting_profile)
@@ -75,7 +107,10 @@ static bool source_init(
 	if (v34_training_transmitter_init(
 		    &initialized.training, transmitting_profile,
 		    V34_CONSTELLATION_16_POINT, SAMPLE_RATE, 5000) !=
-	    V34_TRAINING_TRANSMITTER_OK)
+		    V34_TRAINING_TRANSMITTER_OK ||
+	    v34_data_mapping_prepare(
+		    &initialized.mapping, transmitting_profile,
+		    &DATA_PARAMETERS, false) != V34_DATA_MAPPING_OK)
 		return false;
 	*source = initialized;
 	return true;
@@ -118,17 +153,18 @@ static bool prepare_source(struct line_source *source)
 static bool source_sample(struct line_source *source, int16_t *sample)
 {
 	if (v34_training_transmitter_phase4_e_complete(&source->training)) {
-		struct qam_point b1 = { 0.25, -0.25 };
-		const struct qam_point *point =
-			v34_training_line_needs_point(&source->training.line) ?
-				&b1 :
-				NULL;
 		bool accepted;
 
-		return v34_training_line_sample(
-			       &source->training.line, point, sample, &accepted) ==
-			       V34_TRAINING_LINE_OK &&
-		       accepted == (point != NULL);
+		if (!source->data_started) {
+			if (v34_data_stream_continue_prepared_b1(
+				    &source->data, &source->training.line,
+				    &source->mapping) != V34_DATA_STREAM_OK)
+				return false;
+			source->data_started = true;
+		}
+		return v34_data_stream_sample(
+			       &source->data, NULL, NULL, sample, &accepted) ==
+		       V34_DATA_STREAM_OK;
 	}
 	return prepare_source(source) &&
 	       v34_training_transmitter_sample(&source->training, sample) ==
@@ -143,8 +179,8 @@ static bool test_validation(void)
 	struct v34_phase34_receiver saved;
 	struct v34_phase3_decision_handoff handoff;
 	struct v34_phase3_decision_handoff saved_handoff;
-	struct v34_mp_receive_event event;
-	struct v34_mp_receive_event saved_event;
+	struct v34_phase34_receive_output output;
+	struct v34_phase34_receive_output saved_output;
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
@@ -167,14 +203,14 @@ static bool test_validation(void)
 	      v34_phase34_receiver_is_valid(&receiver),
 	      "valid receiver did not initialize");
 	saved = receiver;
-	memset(&event, 0x6b, sizeof(event));
-	saved_event = event;
+	memset(&output, 0x6b, sizeof(output));
+	saved_output = output;
 	for (unsigned int sample = 0; sample < 37u; ++sample)
-		CHECK(v34_phase34_receiver_sample(&receiver, 0, &event) ==
+		CHECK(v34_phase34_receiver_sample(&receiver, 0, &output) ==
 			      V34_PHASE34_RECEIVER_OK,
 		      "leading silence failed at sample %u", sample);
 	CHECK(memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
-	      memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "leading silence changed receiver state or output");
 	memset(&handoff, 0x7c, sizeof(handoff));
 	saved_handoff = handoff;
@@ -182,7 +218,7 @@ static bool test_validation(void)
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase34_receiver_sample(
 		      &receiver, 1,
-		      (struct v34_mp_receive_event *)&receiver) ==
+		      (struct v34_phase34_receive_output *)&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase34_receiver_continue_mp(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
@@ -204,7 +240,6 @@ static bool test_training_case(enum v34_station_role role)
 {
 	struct v34_phase3_profile transmitting_profile = profile(role);
 	struct v34_phase34_receiver receiver;
-	struct v34_phase34_receiver saved;
 	struct v34_phase3_decision_handoff handoff;
 	struct line_source source;
 	unsigned int timing_events = 0;
@@ -215,8 +250,11 @@ static bool test_training_case(enum v34_station_role role)
 	unsigned int trn_events = 0;
 	unsigned int initial_records = 0;
 	unsigned int rejected_records = 0;
+	unsigned int b1_frames = 0;
+	unsigned int mapping_frames = 0;
 	bool final_record = false;
 	bool e_complete = false;
+	bool b1_complete = false;
 
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
@@ -225,17 +263,17 @@ static bool test_training_case(enum v34_station_role role)
 	      source_init(&source, &transmitting_profile),
 	      "role %u training pair did not initialize", role);
 	for (unsigned int index = 0;
-	     index < SAMPLE_LIMIT && !e_complete; ++index) {
-		struct v34_mp_receive_event event;
-		struct v34_mp_receive_event saved_event;
+	     index < SAMPLE_LIMIT && mapping_frames < 3u; ++index) {
+		struct v34_phase34_receive_output output;
+		struct v34_phase34_receive_output saved_output;
 		enum v34_phase34_receiver_result result;
 		int16_t sample;
 
 		CHECK(source_sample(&source, &sample),
 		      "role %u source stopped at sample %u", role, index);
-		memset(&event, 0x5d, sizeof(event));
-		saved_event = event;
-		result = v34_phase34_receiver_sample(&receiver, sample, &event);
+		memset(&output, 0x5d, sizeof(output));
+		saved_output = output;
+		result = v34_phase34_receiver_sample(&receiver, sample, &output);
 		switch (result) {
 		case V34_PHASE34_RECEIVER_OK:
 			break;
@@ -258,26 +296,26 @@ static bool test_training_case(enum v34_station_role role)
 			trn_events++;
 			break;
 		case V34_PHASE34_RECEIVER_RECORD_READY:
-			if (event.type == V34_MP_RECEIVE_REJECTED) {
+			if (output.mp.type == V34_MP_RECEIVE_REJECTED) {
 				rejected_records++;
 				CHECK(v34_phase34_receiver_continue_mp(&receiver) ==
 					      V34_PHASE34_RECEIVER_OK,
 				      "role %u rejected MP did not resume", role);
-			} else if (event.type == V34_MP_RECEIVE_TYPE0 &&
-				   event.frame_result == V34_MP_OK &&
+			} else if (output.mp.type == V34_MP_RECEIVE_TYPE0 &&
+				   output.mp.frame_result == V34_MP_OK &&
 				   parameters_match(
-					   &event.parameters.type0,
+					   &output.mp.parameters.type0,
 					   &source.initial_mp)) {
 				initial_records++;
 				CHECK(v34_phase34_receiver_continue_mp(&receiver) ==
 					      V34_PHASE34_RECEIVER_OK,
 				      "role %u initial MP did not resume", role);
 			} else {
-				CHECK(event.type == V34_MP_RECEIVE_TYPE0 &&
-				      event.frame_result == V34_MP_OK &&
+				CHECK(output.mp.type == V34_MP_RECEIVE_TYPE0 &&
+				      output.mp.frame_result == V34_MP_OK &&
 				      !final_record &&
 				      parameters_match(
-					      &event.parameters.type0,
+					      &output.mp.parameters.type0,
 					      &source.final_mp) &&
 				      v34_phase34_receiver_start_e(&receiver) ==
 					      V34_PHASE34_RECEIVER_OK,
@@ -285,37 +323,128 @@ static bool test_training_case(enum v34_station_role role)
 				final_record = true;
 			}
 			continue;
-		case V34_PHASE34_RECEIVER_E_COMPLETE:
+		case V34_PHASE34_RECEIVER_E_COMPLETE: {
+			struct v34_phase34_receiver saved = receiver;
+			struct v34_phase34_receiver feedback_receiver = receiver;
+			struct v34_frame_geometry wrong =
+				source.mapping.schedule.geometry;
+
+			wrong.symbol_rate = V34_SYMBOL_RATE_2800;
+			CHECK(v34_phase34_receiver_is_complete(&receiver) &&
+			      v34_phase34_receiver_start_data(
+				      &receiver,
+				      (const struct v34_power_normalizer *)&receiver,
+				      &source.mapping.schedule.geometry, false,
+				      DATA_PARAMETERS.precoder_coefficients,
+				      V34_TRELLIS_16_STATE) ==
+				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+			      v34_phase34_receiver_start_data(
+				      &receiver, &source.mapping.normalizer,
+				      (const struct v34_frame_geometry *)&receiver,
+				      false,
+				      DATA_PARAMETERS.precoder_coefficients,
+				      V34_TRELLIS_16_STATE) ==
+				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+			      v34_phase34_receiver_start_data(
+				      &receiver, &source.mapping.normalizer,
+				      &source.mapping.schedule.geometry, false,
+				      (const struct v34_q14_coefficient *)&receiver,
+				      V34_TRELLIS_16_STATE) ==
+				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+			      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+			      v34_phase34_receiver_start_data(
+				      &receiver, &source.mapping.normalizer, &wrong,
+				      false,
+				      DATA_PARAMETERS.precoder_coefficients,
+				      V34_TRELLIS_16_STATE) ==
+				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+			      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+			      v34_phase34_receiver_start_data(
+				      &feedback_receiver,
+				      &source.mapping.normalizer,
+				      &source.mapping.schedule.geometry, false,
+				      FEEDBACK_COEFFICIENTS,
+				      V34_TRELLIS_16_STATE) ==
+				      V34_PHASE34_RECEIVER_OK &&
+			      feedback_receiver.equalizer.feedback_mode ==
+				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY &&
+			      v34_phase34_receiver_is_valid(
+				      &feedback_receiver) &&
+			      v34_phase34_receiver_start_data(
+				      &receiver, &source.mapping.normalizer,
+				      &source.mapping.schedule.geometry, false,
+				      DATA_PARAMETERS.precoder_coefficients,
+				      V34_TRELLIS_16_STATE) ==
+				      V34_PHASE34_RECEIVER_OK,
+			      "role %u did not enter data at E", role);
+			saved = receiver;
+			CHECK(v34_phase34_receiver_start_data(
+				      &receiver, &source.mapping.normalizer,
+				      &source.mapping.schedule.geometry, false,
+				      DATA_PARAMETERS.precoder_coefficients,
+				      V34_TRELLIS_16_STATE) ==
+				      V34_PHASE34_RECEIVER_INVALID_STATE &&
+			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+			      "role %u repeated data start changed state", role);
 			e_complete = true;
 			break;
+		}
+		case V34_PHASE34_RECEIVER_INTERVAL_READY:
+			continue;
+		case V34_PHASE34_RECEIVER_B1_IN_PROGRESS:
+			CHECK(received_all_ones(&output.received),
+			      "role %u B1 frame changed after %u bits, errors=%u",
+			      role,
+			      receiver.semantic.data.data_receiver.data_receiver
+				      .b1_received_bits,
+			      receiver.semantic.data.data_receiver.data_receiver
+				      .b1_error_bits);
+			b1_frames++;
+			continue;
+		case V34_PHASE34_RECEIVER_B1_COMPLETE:
+			CHECK(received_all_ones(&output.received),
+			      "role %u final B1 frame changed", role);
+			b1_frames++;
+			b1_complete = true;
+			continue;
+		case V34_PHASE34_RECEIVER_MAPPING_FRAME_READY:
+			CHECK(b1_complete && received_all_ones(&output.received),
+			      "role %u emitted mapped data before B1", role);
+			mapping_frames++;
+			continue;
 		default:
 			CHECK(false,
 			      "role %u training failed at sample %u, result %u",
 			      role, index, result);
 		}
-		CHECK(memcmp(&event, &saved_event, sizeof(event)) == 0,
+		CHECK(memcmp(&output, &saved_output, sizeof(output)) == 0,
 		      "role %u non-record result changed its event", role);
 	}
-	CHECK(e_complete && timing_events == 1u &&
+	CHECK(e_complete && b1_complete && mapping_frames >= 3u &&
+	      b1_frames ==
+		      source.mapping.schedule.geometry
+			      .mapping_frames_per_data_frame &&
+	      timing_events == 1u &&
 	      phase3_s_events == 1u && pp_events == 1u && j_events == 1u &&
 	      phase4_s_events ==
 		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
 	      trn_events ==
 		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
 	      initial_records != 0u && final_record &&
-	      source.completed_records >= 3u &&
+	      source.completed_records >= 3u && source.data_started &&
 	      v34_phase34_receiver_is_valid(&receiver) &&
-	      v34_phase34_receiver_is_complete(&receiver) &&
+	      receiver.stage == V34_PHASE34_RECEIVER_DATA &&
+	      receiver.equalizer.feedback_mode ==
+		      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
+	      !v34_phase34_receiver_is_complete(&receiver) &&
 	      !v34_phase34_receiver_has_failed(&receiver),
 	      "role %u receiver did not reach E: timing=%u S3=%u PP=%u "
 	      "J=%u S4=%u TRN=%u initial=%u final=%u source=%u "
-	      "rejects=%u stage=%u semantic=%u failed=%u",
+	      "rejects=%u B1=%u mapped=%u stage=%u failed=%u",
 	      role, timing_events, phase3_s_events, pp_events, j_events,
 	      phase4_s_events, trn_events, initial_records, final_record,
-	      source.completed_records, rejected_records, receiver.stage,
-	      receiver.stage == V34_PHASE34_RECEIVER_PHASE3 ?
-		      receiver.semantic.phase3.stage :
-		      receiver.semantic.phase4.stage,
+	      source.completed_records, rejected_records, b1_frames,
+	      mapping_frames, receiver.stage,
 	      receiver.failed);
 	CHECK(v34_phase34_receiver_phase3_handoff(&receiver, &handoff) ==
 		      V34_PHASE34_RECEIVER_OK &&
@@ -324,19 +453,6 @@ static bool test_training_case(enum v34_station_role role)
 	      receiver.equalizer.epoch != 0u &&
 	      !receiver.equalizer.decision_pending,
 	      "role %u receiver did not retain its physical lineage", role);
-	saved = receiver;
-	{
-		struct v34_mp_receive_event event;
-		struct v34_mp_receive_event saved_event;
-
-		memset(&event, 0x4c, sizeof(event));
-		saved_event = event;
-		CHECK(v34_phase34_receiver_sample(&receiver, 0, &event) ==
-			      V34_PHASE34_RECEIVER_COMPLETE &&
-		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
-		      memcmp(&event, &saved_event, sizeof(event)) == 0,
-		      "role %u complete receiver consumed another sample", role);
-	}
 	return true;
 }
 
@@ -353,7 +469,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "validation", test_validation },
-		{ "continuous Phase 3 and Phase 4", test_training },
+		{ "continuous Phase 3 through data", test_training },
 	};
 	unsigned int failures = 0;
 

@@ -5,7 +5,6 @@
 #include "memory_region.h"
 #include "v34_constellation.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -50,21 +49,56 @@ static bool semantic_state_is_valid(
 			       &receiver->semantic.phase3) &&
 		       receiver->semantic.phase3.transmitting_role ==
 			       receiver->transmitting_profile.local_role;
-	return receiver->stage == V34_PHASE34_RECEIVER_PHASE4 &&
-	       v34_phase3_decision_handoff_is_valid(
-		       &receiver->phase3_handoff) &&
-	       v34_phase4_decision_receiver_is_valid(
-		       &receiver->semantic.phase4) &&
-	       receiver->semantic.phase4.mp_receiver.transmitting_role ==
+	if (!v34_phase3_decision_handoff_is_valid(
+		    &receiver->phase3_handoff))
+		return false;
+	if (receiver->stage == V34_PHASE34_RECEIVER_PHASE4)
+		return v34_phase4_decision_receiver_is_valid(
+			       &receiver->semantic.phase4) &&
+		       receiver->semantic.phase4.mp_receiver.transmitting_role ==
+			       receiver->transmitting_profile.local_role &&
+		       receiver->semantic.phase4.mp_receiver.constellation ==
+			       receiver->phase4_constellation;
+	return receiver->stage == V34_PHASE34_RECEIVER_DATA &&
+	       v34_data_decision_receiver_is_valid(
+		       &receiver->semantic.data) &&
+	       receiver->semantic.data.data_receiver.data_receiver
+		       .transmitting_role ==
 		       receiver->transmitting_profile.local_role &&
-	       receiver->semantic.phase4.mp_receiver.constellation ==
-		       receiver->phase4_constellation;
+	       receiver->semantic.data.data_receiver.data_receiver.schedule
+		       .geometry
+		       .symbol_rate == receiver->transmitting_profile.symbol_rate;
+}
+
+static enum v34_adaptive_equalizer_feedback_mode data_feedback_mode(
+	const struct v34_data_decision_receiver *data)
+{
+	const struct v34_precoder *precoder;
+
+	/* A Type 1 MP selects the learned decision-feedback filter and gives its
+	 * coefficients to the peer's complementary precoder. A zero-coefficient
+	 * Type 0 selection freezes learning and leaves that filter bypassed. */
+	precoder = &data->data_receiver.channel_receiver
+		.receive_precoder;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
+		if (precoder->coefficients[tap].real != 0 ||
+		    precoder->coefficients[tap].imaginary != 0)
+			return V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY;
+	return V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE;
+}
+
+static enum v34_adaptive_equalizer_feedback_mode expected_feedback_mode(
+	const struct v34_phase34_receiver *receiver)
+{
+	return receiver->stage == V34_PHASE34_RECEIVER_DATA ?
+		data_feedback_mode(&receiver->semantic.data) :
+		V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN;
 }
 
 static bool tracking_state_is_valid(
 	const struct v34_phase34_receiver *receiver)
 {
-	bool expected = receiver->stage == V34_PHASE34_RECEIVER_PHASE4 ||
+	bool expected = receiver->stage != V34_PHASE34_RECEIVER_PHASE3 ||
 		(receiver->stage == V34_PHASE34_RECEIVER_PHASE3 &&
 		 receiver->semantic.phase3.stage >=
 			 V34_PHASE3_DECISION_RECEIVER_PP);
@@ -90,7 +124,7 @@ bool v34_phase34_receiver_is_valid(
 		    &receiver->timing, &receiver->transmitting_profile) ||
 	    !v34_adaptive_equalizer_is_valid(&receiver->equalizer) ||
 	    receiver->equalizer.feedback_mode !=
-		    V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN ||
+		    expected_feedback_mode(receiver) ||
 	    !semantic_state_is_valid(receiver) ||
 	    !tracking_state_is_valid(receiver))
 		return false;
@@ -169,16 +203,17 @@ static enum v34_phase34_receiver_result fail(
 	return result;
 }
 
-static bool advance_tracking(struct v34_phase34_receiver *receiver)
+static void advance_tracking(struct v34_phase34_receiver *receiver)
 {
+	uint16_t period;
+
 	if (!receiver->tracking_started)
-		return true;
-	if (receiver->tracking_symbols == UINT32_MAX)
-		return false;
-	receiver->tracking_symbols++;
+		return;
+	period = receiver->timing.timing.nominal_symbol_rate;
+	if (receiver->tracking_symbols < period)
+		receiver->tracking_symbols++;
 	receiver->decoder_power_q15 =
 		decoder_power(receiver, receiver->tracking_symbols);
-	return true;
 }
 
 static enum v34_phase34_receiver_result phase3_result(
@@ -289,7 +324,9 @@ static bool execute_phase3_action(
 		return true;
 	}
 	}
-	return !was_tracking || advance_tracking(receiver);
+	if (was_tracking)
+		advance_tracking(receiver);
+	return true;
 }
 
 static enum v34_phase34_receiver_result enter_phase4(
@@ -392,16 +429,16 @@ static bool phase4_result_consumed(
 static enum v34_phase34_receiver_result receive_phase4(
 	struct v34_phase34_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
-	struct v34_mp_receive_event *event)
+	struct v34_phase34_receive_output *output)
 {
 	struct v34_phase4_decision_receiver phase4 =
 		receiver->semantic.phase4;
-	struct v34_phase4_decision_output output;
+	struct v34_phase4_decision_output decision;
 	struct v34_mp_receive_event emitted = { 0 };
 	enum v34_phase4_decision_receiver_result result =
 		v34_phase4_decision_receiver_observe(
 			&phase4, observation, receiver->decoder_power_q15,
-			&output, &emitted);
+			&decision, &emitted);
 	enum v34_phase34_receiver_result mapped = phase4_result(result);
 
 	if (!phase4_result_consumed(result)) {
@@ -411,9 +448,9 @@ static enum v34_phase34_receiver_result receive_phase4(
 			mapped = V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 		return fail(receiver, mapped);
 	}
-	if (output.action == V34_PHASE4_DECISION_COMMIT) {
+	if (decision.action == V34_PHASE4_DECISION_COMMIT) {
 		if (v34_adaptive_equalizer_commit(
-			    &receiver->equalizer, &output.equalizer) !=
+			    &receiver->equalizer, &decision.equalizer) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 			return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	} else if (v34_adaptive_equalizer_discard(
@@ -421,27 +458,99 @@ static enum v34_phase34_receiver_result receive_phase4(
 		   V34_ADAPTIVE_EQUALIZER_OK) {
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	}
-	if (!advance_tracking(receiver))
-		return fail(receiver, V34_PHASE34_RECEIVER_OUT_OF_RANGE);
+	advance_tracking(receiver);
 	receiver->semantic.phase4 = phase4;
 	if (result == V34_PHASE4_DECISION_RECEIVER_RECORD_READY)
-		*event = emitted;
+		output->mp = emitted;
+	return mapped;
+}
+
+static enum v34_phase34_receiver_result data_result(
+	enum v34_data_decision_receiver_result result)
+{
+	switch (result) {
+	case V34_DATA_DECISION_RECEIVER_OK:
+		return V34_PHASE34_RECEIVER_OK;
+	case V34_DATA_DECISION_RECEIVER_INTERVAL_READY:
+		return V34_PHASE34_RECEIVER_INTERVAL_READY;
+	case V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY:
+		return V34_PHASE34_RECEIVER_MAPPING_FRAME_READY;
+	case V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS:
+		return V34_PHASE34_RECEIVER_B1_IN_PROGRESS;
+	case V34_DATA_DECISION_RECEIVER_B1_COMPLETE:
+		return V34_PHASE34_RECEIVER_B1_COMPLETE;
+	case V34_DATA_DECISION_RECEIVER_OUT_OF_RANGE:
+		return V34_PHASE34_RECEIVER_OUT_OF_RANGE;
+	case V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT:
+	case V34_DATA_DECISION_RECEIVER_INVALID_STATE:
+	case V34_DATA_DECISION_RECEIVER_NUMERIC_FAILURE:
+		break;
+	}
+	return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
+}
+
+static bool data_result_consumed(
+	enum v34_data_decision_receiver_result result)
+{
+	return result == V34_DATA_DECISION_RECEIVER_OK ||
+	       result == V34_DATA_DECISION_RECEIVER_INTERVAL_READY ||
+	       result == V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY ||
+	       result == V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS ||
+	       result == V34_DATA_DECISION_RECEIVER_B1_COMPLETE;
+}
+
+static enum v34_phase34_receiver_result receive_data(
+	struct v34_phase34_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	struct v34_phase34_receive_output *output)
+{
+	struct v34_data_decision_receiver data = receiver->semantic.data;
+	struct v34_data_decision_output decoded;
+	enum v34_data_decision_receiver_result result =
+		v34_data_decision_receiver_observe(
+			&data, observation, &decoded);
+	enum v34_phase34_receiver_result mapped = data_result(result);
+
+	if (!data_result_consumed(result)) {
+		if (v34_adaptive_equalizer_discard(
+			    &receiver->equalizer, observation) !=
+		    V34_ADAPTIVE_EQUALIZER_OK)
+			mapped = V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
+		return fail(receiver, mapped);
+	}
+	if (v34_adaptive_equalizer_commit(
+		    &receiver->equalizer, &decoded.equalizer) !=
+	    V34_ADAPTIVE_EQUALIZER_OK)
+		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+	advance_tracking(receiver);
+	receiver->semantic.data = data;
+	if (result != V34_DATA_DECISION_RECEIVER_OK) {
+		output->current = decoded.current;
+		if (result != V34_DATA_DECISION_RECEIVER_INTERVAL_READY)
+			output->received = decoded.received;
+	}
 	return mapped;
 }
 
 static enum v34_phase34_receiver_result receive_observation(
 	struct v34_phase34_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
-	struct v34_mp_receive_event *event)
+	struct v34_phase34_receive_output *output)
 {
-	return receiver->stage == V34_PHASE34_RECEIVER_PHASE3 ?
-		receive_phase3(receiver, observation) :
-		receive_phase4(receiver, observation, event);
+	switch (receiver->stage) {
+	case V34_PHASE34_RECEIVER_PHASE3:
+		return receive_phase3(receiver, observation);
+	case V34_PHASE34_RECEIVER_PHASE4:
+		return receive_phase4(receiver, observation, output);
+	case V34_PHASE34_RECEIVER_DATA:
+		return receive_data(receiver, observation, output);
+	}
+	return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 }
 
 enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
-	struct v34_mp_receive_event *event)
+	struct v34_phase34_receive_output *output)
 {
 	struct v34_receive_timing_samples recovered = { 0 };
 	struct v34_adaptive_equalizer_observation observation;
@@ -450,10 +559,10 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	bool was_acquired;
 	bool acquired;
 
-	if (event == NULL ||
+	if (output == NULL ||
 	    memory_regions_overlap(
 		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    event, sizeof(*event)))
+		    output, sizeof(*output)))
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase34_receiver_is_valid(receiver))
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
@@ -491,7 +600,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 		    &receiver->equalizer, &observation) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-	result = receive_observation(receiver, &observation, event);
+	result = receive_observation(receiver, &observation, output);
 	if (result == V34_PHASE34_RECEIVER_OK && !was_acquired && acquired)
 		result = V34_PHASE34_RECEIVER_TIMING_ACQUIRED;
 	if (!v34_phase34_receiver_is_valid(receiver))
@@ -532,6 +641,55 @@ enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
 	return phase4_control(receiver, v34_phase4_decision_receiver_expect_e);
 }
 
+enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
+	struct v34_phase34_receiver *receiver,
+	const struct v34_power_normalizer *normalizer,
+	const struct v34_frame_geometry *geometry, bool expanded_shaping,
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT],
+	enum v34_trellis_selection selection)
+{
+	struct v34_phase34_receiver next;
+	struct v34_data_decision_receiver data;
+
+	if (normalizer == NULL || geometry == NULL || coefficients == NULL ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    normalizer, sizeof(*normalizer)) ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    geometry, sizeof(*geometry)) ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    coefficients,
+		    sizeof(*coefficients) * V34_PRECODER_TAP_COUNT))
+		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
+	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
+	    !v34_phase34_receiver_is_complete(receiver))
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	if (geometry->symbol_rate != receiver->transmitting_profile.symbol_rate)
+		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
+	if (v34_data_decision_receiver_init(
+		    &data, normalizer, geometry, expanded_shaping,
+		    coefficients, selection,
+		    receiver->transmitting_profile.local_role) !=
+	    V34_DATA_DECISION_RECEIVER_OK)
+		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
+	next = *receiver;
+	if (v34_adaptive_equalizer_set_feedback_mode(
+		    &next.equalizer,
+		    data_feedback_mode(&data)) !=
+	    V34_ADAPTIVE_EQUALIZER_OK)
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	next.semantic =
+		(union v34_phase34_receiver_semantic_state){ .data = data };
+	next.stage = V34_PHASE34_RECEIVER_DATA;
+	if (!v34_phase34_receiver_is_valid(&next))
+		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
+	*receiver = next;
+	return V34_PHASE34_RECEIVER_OK;
+}
+
 enum v34_phase34_receiver_result v34_phase34_receiver_phase3_handoff(
 	const struct v34_phase34_receiver *receiver,
 	struct v34_phase3_decision_handoff *handoff)
@@ -542,7 +700,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_phase3_handoff(
 		    handoff, sizeof(*handoff)))
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
-	    receiver->stage != V34_PHASE34_RECEIVER_PHASE4)
+	    receiver->stage == V34_PHASE34_RECEIVER_PHASE3)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	*handoff = receiver->phase3_handoff;
 	return V34_PHASE34_RECEIVER_OK;

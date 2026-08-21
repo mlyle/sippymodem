@@ -4,6 +4,7 @@
 #define V34_PHASE34_RECEIVER_H
 
 #include "v34_adaptive_equalizer.h"
+#include "v34_data_decision_receiver.h"
 #include "v34_phase3_decision_receiver.h"
 #include "v34_phase3_profile.h"
 #include "v34_phase4_decision_receiver.h"
@@ -15,6 +16,7 @@
 enum v34_phase34_receiver_stage {
 	V34_PHASE34_RECEIVER_PHASE3,
 	V34_PHASE34_RECEIVER_PHASE4,
+	V34_PHASE34_RECEIVER_DATA,
 };
 
 enum v34_phase34_receiver_result {
@@ -29,6 +31,10 @@ enum v34_phase34_receiver_result {
 	V34_PHASE34_RECEIVER_TRN_COMPLETE,
 	V34_PHASE34_RECEIVER_RECORD_READY,
 	V34_PHASE34_RECEIVER_E_COMPLETE,
+	V34_PHASE34_RECEIVER_INTERVAL_READY,
+	V34_PHASE34_RECEIVER_MAPPING_FRAME_READY,
+	V34_PHASE34_RECEIVER_B1_IN_PROGRESS,
+	V34_PHASE34_RECEIVER_B1_COMPLETE,
 	V34_PHASE34_RECEIVER_COMPLETE,
 	V34_PHASE34_RECEIVER_FAILED,
 	V34_PHASE34_RECEIVER_INVALID_ARGUMENT,
@@ -41,11 +47,18 @@ enum v34_phase34_receiver_result {
 union v34_phase34_receiver_semantic_state {
 	struct v34_phase3_decision_receiver phase3;
 	struct v34_phase4_decision_receiver phase4;
+	struct v34_data_decision_receiver data;
+};
+
+struct v34_phase34_receive_output {
+	struct v34_mp_receive_event mp;
+	struct v34_survivor_decision current;
+	struct v34_received_mapping_frame received;
 };
 
 /* Own one continuous fixed-point receive lineage from the peer's Phase 3 S
- * through Phase 4 E. Timing and adaptive equalization are never handed off or
- * restarted at J; only the semantic owner changes. */
+ * through mapped data. Timing and adaptive equalization are never handed off
+ * or restarted at J or E; only the semantic owner changes. */
 struct v34_phase34_receiver {
 	struct v34_receive_timing timing;
 	struct v34_adaptive_equalizer equalizer;
@@ -74,11 +87,12 @@ bool v34_phase34_receiver_is_complete(
 	const struct v34_phase34_receiver *receiver);
 
 /* Consume one signed 8-kHz line sample. A terminal semantic or numeric error
- * consumes that physical sample and latches failure. `event` changes only for
- * RECORD_READY; rejected, paused, complete, and failed calls consume nothing. */
+ * consumes that physical sample and latches failure. `output` changes only
+ * for RECORD_READY or a completed data interval; rejected, paused, complete,
+ * and failed calls consume nothing. */
 enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
-	struct v34_mp_receive_event *event);
+	struct v34_phase34_receive_output *output);
 
 /* Resolve the pending MP record without embedding negotiation policy in the
  * receive owner. */
@@ -89,7 +103,17 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_e(
 enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
 	struct v34_phase34_receiver *receiver);
 
-/* Copy the detected Phase 3 boundary after the receiver has entered Phase 4. */
+/* Replace the completed Phase 4 semantic owner with a fresh B1/data decoder
+ * while retaining the exact timing and adaptive-equalizer sample boundary. */
+enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
+	struct v34_phase34_receiver *receiver,
+	const struct v34_power_normalizer *normalizer,
+	const struct v34_frame_geometry *geometry, bool expanded_shaping,
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT],
+	enum v34_trellis_selection selection);
+
+/* Copy the detected Phase 3 boundary after the receiver has left Phase 3. */
 enum v34_phase34_receiver_result v34_phase34_receiver_phase3_handoff(
 	const struct v34_phase34_receiver *receiver,
 	struct v34_phase3_decision_handoff *handoff);
