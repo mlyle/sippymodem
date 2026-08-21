@@ -1,0 +1,442 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "v34_phase4_decision_receiver.h"
+
+#include "memory_region.h"
+#include "v34_constellation.h"
+
+#include <limits.h>
+#include <stddef.h>
+
+static bool role_is_valid(enum v34_station_role role)
+{
+	return role == V34_CALLING_STATION ||
+	       role == V34_ANSWERING_STATION;
+}
+
+static bool s_is_initial(const struct v34_phase3_s_receiver *receiver)
+{
+	return receiver->next_decision == 0u &&
+	       receiver->buffered_decisions == 0u &&
+	       receiver->pending_symbols == 0u &&
+	       receiver->post_marker_symbols == 0u &&
+	       !receiver->detection_pending && !receiver->complete;
+}
+
+static bool trn_is_initial(const struct v34_phase4_trn *trn)
+{
+	return trn->scrambler.history == 0u &&
+	       trn->last_clockwise_quarter_turns == 0u &&
+	       !trn->has_last_symbol;
+}
+
+static bool answer_s_state_is_valid(
+	const struct v34_phase4_decision_receiver *receiver)
+{
+	bool answering_peer = receiver->mp_receiver.transmitting_role ==
+		V34_ANSWERING_STATION;
+
+	if (!v34_phase3_s_receiver_is_valid(&receiver->answer_s))
+		return false;
+	if (!answering_peer)
+		return receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
+		       receiver->stage != V34_PHASE4_DECISION_RECEIVER_TRN &&
+		       s_is_initial(&receiver->answer_s);
+	return v34_phase3_s_receiver_is_complete(&receiver->answer_s) ==
+	       (receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S);
+}
+
+static bool trn_state_is_valid(
+	const struct v34_phase4_decision_receiver *receiver)
+{
+	bool answering_peer = receiver->mp_receiver.transmitting_role ==
+		V34_ANSWERING_STATION;
+
+	if (!v34_phase4_trn_is_valid(&receiver->expected_trn) ||
+	    receiver->expected_trn.role !=
+		    receiver->mp_receiver.transmitting_role ||
+	    receiver->expected_trn.constellation !=
+		    receiver->mp_receiver.constellation ||
+	    receiver->trn_symbols > V34_PHASE4_TRN_MIN_SYMBOLS)
+		return false;
+	if (!answering_peer)
+		return receiver->trn_symbols == 0u &&
+		       trn_is_initial(&receiver->expected_trn);
+	if (receiver->stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S)
+		return receiver->trn_symbols == 0u &&
+		       trn_is_initial(&receiver->expected_trn);
+	if (receiver->expected_trn.has_last_symbol !=
+	    (receiver->trn_symbols != 0u))
+		return false;
+	return receiver->stage == V34_PHASE4_DECISION_RECEIVER_TRN ?
+		       receiver->trn_symbols < V34_PHASE4_TRN_MIN_SYMBOLS :
+		       receiver->trn_symbols == V34_PHASE4_TRN_MIN_SYMBOLS;
+}
+
+bool v34_phase4_decision_receiver_is_valid(
+	const struct v34_phase4_decision_receiver *receiver)
+{
+	if (receiver == NULL ||
+	    receiver->stage < V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
+	    receiver->stage > V34_PHASE4_DECISION_RECEIVER_COMPLETE ||
+	    !v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver) ||
+	    !role_is_valid(receiver->mp_receiver.transmitting_role) ||
+	    !answer_s_state_is_valid(receiver) ||
+	    !trn_state_is_valid(receiver) ||
+	    (receiver->pending_record_is_valid && !receiver->record_pending) ||
+	    (receiver->record_pending &&
+	     receiver->stage != V34_PHASE4_DECISION_RECEIVER_MP))
+		return false;
+	if (receiver->stage < V34_PHASE4_DECISION_RECEIVER_E)
+		return true;
+	if (!v34_phase4_e_receiver_is_valid(&receiver->e_receiver) ||
+	    receiver->e_receiver.transmitting_role !=
+		    receiver->mp_receiver.transmitting_role ||
+	    receiver->e_receiver.constellation !=
+		    receiver->mp_receiver.constellation)
+		return false;
+	return v34_phase4_e_receiver_is_complete(&receiver->e_receiver) ==
+	       (receiver->stage == V34_PHASE4_DECISION_RECEIVER_COMPLETE);
+}
+
+bool v34_phase4_decision_receiver_is_complete(
+	const struct v34_phase4_decision_receiver *receiver)
+{
+	return v34_phase4_decision_receiver_is_valid(receiver) &&
+	       receiver->stage == V34_PHASE4_DECISION_RECEIVER_COMPLETE;
+}
+
+enum v34_phase4_decision_receiver_result
+v34_phase4_decision_receiver_init(
+	struct v34_phase4_decision_receiver *receiver,
+	enum v34_station_role transmitting_role,
+	enum v34_constellation_size constellation)
+{
+	struct v34_phase4_decision_receiver initialized = {
+		.stage = transmitting_role == V34_ANSWERING_STATION ?
+			 V34_PHASE4_DECISION_RECEIVER_ANSWER_S :
+			 V34_PHASE4_DECISION_RECEIVER_MP,
+	};
+
+	if (receiver == NULL || !role_is_valid(transmitting_role) ||
+	    !v34_constellation_size_is_valid(constellation) ||
+	    v34_phase3_s_receiver_init(&initialized.answer_s) !=
+		    V34_PHASE3_S_RECEIVER_OK ||
+	    v34_phase4_trn_init(
+		    &initialized.expected_trn, transmitting_role,
+		    constellation) != V34_PHASE4_TRN_OK ||
+	    v34_phase4_mp_receiver_init(
+		    &initialized.mp_receiver, transmitting_role,
+		    constellation) != V34_PHASE4_MP_RECEIVER_OK ||
+	    !v34_phase4_decision_receiver_is_valid(&initialized))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return V34_PHASE4_DECISION_RECEIVER_OK;
+}
+
+static enum v34_phase4_decision_receiver_result clear_record(
+	struct v34_phase4_decision_receiver *receiver, bool require_valid,
+	bool search)
+{
+	struct v34_phase4_decision_receiver next;
+
+	if (!v34_phase4_decision_receiver_is_valid(receiver))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	if (receiver->stage != V34_PHASE4_DECISION_RECEIVER_MP ||
+	    !receiver->record_pending ||
+	    (require_valid && !receiver->pending_record_is_valid))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	next = *receiver;
+	if (require_valid) {
+		enum v34_phase4_e_receiver_result result = search ?
+			v34_phase4_e_receiver_search_from_mp(
+				&next.e_receiver, &next.mp_receiver) :
+			v34_phase4_e_receiver_init_from_mp(
+				&next.e_receiver, &next.mp_receiver);
+
+		if (result != V34_PHASE4_E_RECEIVER_OK)
+			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+		next.stage = V34_PHASE4_DECISION_RECEIVER_E;
+	}
+	next.record_pending = false;
+	next.pending_record_is_valid = false;
+	if (!v34_phase4_decision_receiver_is_valid(&next))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	*receiver = next;
+	return V34_PHASE4_DECISION_RECEIVER_OK;
+}
+
+enum v34_phase4_decision_receiver_result
+v34_phase4_decision_receiver_continue_mp(
+	struct v34_phase4_decision_receiver *receiver)
+{
+	return clear_record(receiver, false, false);
+}
+
+enum v34_phase4_decision_receiver_result
+v34_phase4_decision_receiver_start_e(
+	struct v34_phase4_decision_receiver *receiver)
+{
+	return clear_record(receiver, true, false);
+}
+
+enum v34_phase4_decision_receiver_result
+v34_phase4_decision_receiver_expect_e(
+	struct v34_phase4_decision_receiver *receiver)
+{
+	return clear_record(receiver, true, true);
+}
+
+static struct v34_phase4_decision_output discard_output(void)
+{
+	return (struct v34_phase4_decision_output){
+		.action = V34_PHASE4_DECISION_DISCARD,
+	};
+}
+
+static struct v34_phase4_decision_output commit_output(
+	const struct v34_adaptive_equalizer_observation *observation,
+	struct v34_analytic_sample target, uint16_t decoder_power_q15)
+{
+	return (struct v34_phase4_decision_output){
+		.equalizer = {
+			.observation = *observation,
+			.target = target,
+			.decoder_power_q15 = decoder_power_q15,
+			.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
+		},
+		.action = V34_PHASE4_DECISION_COMMIT,
+	};
+}
+
+static bool advance_trn_prefix(
+	struct v34_phase4_decision_receiver *receiver, uint8_t symbols)
+{
+	for (uint8_t symbol = 0; symbol < symbols; ++symbol) {
+		struct v34_analytic_sample ignored;
+		uint8_t ignored_quarter;
+		uint8_t ignored_rotation;
+
+		if (v34_phase4_trn_next_fixed(
+			    &receiver->expected_trn, &ignored,
+			    &ignored_quarter, &ignored_rotation) !=
+		    V34_PHASE4_TRN_OK)
+			return false;
+		receiver->trn_symbols++;
+	}
+	return true;
+}
+
+static enum v34_phase4_decision_receiver_result receive_answer_s(
+	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_fixed_training_decision *hard,
+	struct v34_phase4_decision_output *output)
+{
+	enum v34_phase3_s_receiver_result result =
+		v34_phase3_s_receiver_receive(
+			&receiver->answer_s, hard->quarter_point,
+			hard->clockwise_quarter_turns);
+
+	*output = discard_output();
+	if (result == V34_PHASE3_S_RECEIVER_OK)
+		return V34_PHASE4_DECISION_RECEIVER_OK;
+	if (result != V34_PHASE3_S_RECEIVER_DETECTED ||
+	    !advance_trn_prefix(
+		    receiver, receiver->answer_s.post_marker_symbols))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	receiver->stage = V34_PHASE4_DECISION_RECEIVER_TRN;
+	return V34_PHASE4_DECISION_RECEIVER_S_DETECTED;
+}
+
+static enum v34_phase4_decision_receiver_result receive_trn(
+	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
+	struct v34_phase4_decision_output *output)
+{
+	struct v34_mp_receive_event ignored = { 0 };
+	struct v34_analytic_sample target;
+	uint8_t quarter;
+	uint8_t rotation;
+
+	if (v34_phase4_trn_next_fixed(
+		    &receiver->expected_trn, &target, &quarter, &rotation) !=
+	    V34_PHASE4_TRN_OK)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	receiver->trn_symbols++;
+	*output = commit_output(observation, target, decoder_power_q15);
+	if (receiver->trn_symbols != V34_PHASE4_TRN_MIN_SYMBOLS)
+		return V34_PHASE4_DECISION_RECEIVER_OK;
+	if (v34_phase4_mp_receive_decision(
+		    &receiver->mp_receiver, quarter, rotation, &ignored) !=
+		    V34_PHASE4_MP_RECEIVER_OK ||
+	    ignored.type != V34_MP_RECEIVE_NO_EVENT)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	receiver->stage = V34_PHASE4_DECISION_RECEIVER_MP;
+	return V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE;
+}
+
+static enum v34_phase4_decision_receiver_result receive_mp(
+	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
+	const struct v34_fixed_training_decision *hard,
+	struct v34_phase4_decision_output *output,
+	struct v34_mp_receive_event *event)
+{
+	struct v34_mp_receive_event emitted = { 0 };
+
+	if (v34_phase4_mp_receive_decision(
+		    &receiver->mp_receiver, hard->quarter_point,
+		    hard->clockwise_quarter_turns, &emitted) !=
+	    V34_PHASE4_MP_RECEIVER_OK)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	*output = commit_output(observation, hard->target, decoder_power_q15);
+	if (emitted.type == V34_MP_RECEIVE_NO_EVENT)
+		return V34_PHASE4_DECISION_RECEIVER_OK;
+	receiver->record_pending = true;
+	receiver->pending_record_is_valid =
+		(emitted.type == V34_MP_RECEIVE_TYPE0 ||
+		 emitted.type == V34_MP_RECEIVE_TYPE1) &&
+		emitted.frame_result == V34_MP_OK;
+	*event = emitted;
+	return V34_PHASE4_DECISION_RECEIVER_RECORD_READY;
+}
+
+static enum v34_phase4_decision_receiver_result receive_e(
+	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
+	const struct v34_fixed_training_decision *hard,
+	struct v34_phase4_decision_output *output)
+{
+	enum v34_phase4_e_receiver_result result =
+		v34_phase4_e_receive_decision(
+			&receiver->e_receiver, hard->quarter_point,
+			hard->clockwise_quarter_turns);
+
+	if (result == V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH)
+		return V34_PHASE4_DECISION_RECEIVER_SEQUENCE_MISMATCH;
+	if (result != V34_PHASE4_E_RECEIVER_OK &&
+	    result != V34_PHASE4_E_RECEIVER_COMPLETE)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	*output = commit_output(observation, hard->target, decoder_power_q15);
+	if (result == V34_PHASE4_E_RECEIVER_OK)
+		return V34_PHASE4_DECISION_RECEIVER_OK;
+	receiver->stage = V34_PHASE4_DECISION_RECEIVER_COMPLETE;
+	return V34_PHASE4_DECISION_RECEIVER_E_COMPLETE;
+}
+
+static bool output_is_valid(
+	const struct v34_phase4_decision_output *output,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15)
+{
+	if (output->action == V34_PHASE4_DECISION_DISCARD)
+		return output->equalizer.observation.decision.in_phase == 0 &&
+		       output->equalizer.observation.decision.quadrature == 0 &&
+		       output->equalizer.observation.epoch == 0u &&
+		       output->equalizer.observation.lineage == 0u &&
+		       output->equalizer.target.in_phase == 0 &&
+		       output->equalizer.target.quadrature == 0 &&
+		       output->equalizer.decoder_power_q15 == 0u &&
+		       output->equalizer.adaptation ==
+			       V34_ADAPTIVE_EQUALIZER_SKIP;
+	return output->action == V34_PHASE4_DECISION_COMMIT &&
+	       output->equalizer.observation.decision.in_phase ==
+		       observation->decision.in_phase &&
+	       output->equalizer.observation.decision.quadrature ==
+		       observation->decision.quadrature &&
+	       output->equalizer.observation.epoch == observation->epoch &&
+	       output->equalizer.observation.lineage == observation->lineage &&
+	       output->equalizer.decoder_power_q15 == decoder_power_q15 &&
+	       output->equalizer.adaptation == V34_ADAPTIVE_EQUALIZER_FULL;
+}
+
+static bool consumed_result(
+	enum v34_phase4_decision_receiver_result result)
+{
+	return result == V34_PHASE4_DECISION_RECEIVER_OK ||
+	       result == V34_PHASE4_DECISION_RECEIVER_S_DETECTED ||
+	       result == V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE ||
+	       result == V34_PHASE4_DECISION_RECEIVER_RECORD_READY ||
+	       result == V34_PHASE4_DECISION_RECEIVER_E_COMPLETE;
+}
+
+enum v34_phase4_decision_receiver_result
+v34_phase4_decision_receiver_observe(
+	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
+	struct v34_phase4_decision_output *output,
+	struct v34_mp_receive_event *event)
+{
+	struct v34_phase4_decision_receiver next;
+	struct v34_phase4_decision_output generated = { 0 };
+	struct v34_mp_receive_event emitted = { 0 };
+	struct v34_fixed_training_decision hard;
+	enum v34_phase4_decision_receiver_result result;
+	enum v34_constellation_size constellation;
+
+	if (observation == NULL || output == NULL || event == NULL ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    observation, sizeof(*observation)) ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    output, sizeof(*output)) ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    event, sizeof(*event)) ||
+	    memory_regions_overlap(
+		    observation, sizeof(*observation), output,
+		    sizeof(*output)) ||
+	    memory_regions_overlap(
+		    observation, sizeof(*observation), event, sizeof(*event)) ||
+	    memory_regions_overlap(
+		    output, sizeof(*output), event, sizeof(*event)))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT;
+	if (!v34_phase4_decision_receiver_is_valid(receiver))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	if (observation->epoch == 0u || observation->lineage == 0u ||
+	    decoder_power_q15 == 0u || decoder_power_q15 > INT16_MAX)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT;
+	if (receiver->record_pending)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	if (receiver->stage == V34_PHASE4_DECISION_RECEIVER_COMPLETE)
+		return V34_PHASE4_DECISION_RECEIVER_ALREADY_COMPLETE;
+	next = *receiver;
+	if (next.stage == V34_PHASE4_DECISION_RECEIVER_TRN) {
+		result = receive_trn(
+			&next, observation, decoder_power_q15, &generated);
+	} else {
+		constellation =
+			next.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S ?
+				V34_CONSTELLATION_4_POINT :
+				next.mp_receiver.constellation;
+		if (v34_training_constellation_fixed_slice(
+			    constellation, observation->decision, &hard) !=
+		    V34_CONSTELLATION_OK)
+			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+		if (next.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S)
+			result = receive_answer_s(&next, &hard, &generated);
+		else if (next.stage == V34_PHASE4_DECISION_RECEIVER_MP)
+			result = receive_mp(
+				&next, observation, decoder_power_q15, &hard,
+				&generated, &emitted);
+		else
+			result = receive_e(
+				&next, observation, decoder_power_q15, &hard,
+				&generated);
+	}
+	if (!consumed_result(result))
+		return result;
+	if (!v34_phase4_decision_receiver_is_valid(&next) ||
+	    !output_is_valid(&generated, observation, decoder_power_q15))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	*receiver = next;
+	*output = generated;
+	if (result == V34_PHASE4_DECISION_RECEIVER_RECORD_READY)
+		*event = emitted;
+	return result;
+}

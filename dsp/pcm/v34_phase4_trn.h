@@ -46,6 +46,14 @@ enum v34_phase4_trn_result v34_phase4_trn_next(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
+/* Emit the same selected symbol in the persistent fixed receive coordinates.
+ * This keeps known Phase 4 TRN adaptation in the same coordinate system as
+ * the receive equalizer without converting through normalized doubles. */
+enum v34_phase4_trn_result v34_phase4_trn_next_fixed(
+	struct v34_phase4_trn *trn,
+	struct v34_analytic_sample *point, uint8_t *quarter_point,
+	uint8_t *clockwise_quarter_turns);
+
 const char *v34_phase4_trn_result_name(
 	enum v34_phase4_trn_result result);
 
