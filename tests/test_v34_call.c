@@ -154,6 +154,8 @@ static struct v34_call_configuration symmetric_configuration(
 			symbol_rate == V34_SYMBOL_RATE_3429,
 		.symbol_rate_3429_transmit_permitted =
 			symbol_rate == V34_SYMBOL_RATE_3429,
+		.low_carrier_3200_supported =
+			symbol_rate == V34_SYMBOL_RATE_3200,
 		.maximum_symbol_rate_difference_steps = 0,
 		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
 	};
@@ -469,6 +471,10 @@ static bool test_symmetric_calls(void)
 	      "PCMU symmetric 2800 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, true),
 	      "PCMA symmetric 2800 call failed");
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, false),
+	      "PCMU symmetric 3200 call failed");
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, true),
+	      "PCMA symmetric 3200 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, false),
 	      "PCMU symmetric 3429 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, true),

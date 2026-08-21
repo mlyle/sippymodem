@@ -29,15 +29,13 @@ static bool use_persistent_answer_receiver(
 	case V34_SYMBOL_RATE_2400:
 	case V34_SYMBOL_RATE_2743:
 	case V34_SYMBOL_RATE_3000:
+	case V34_SYMBOL_RATE_3200:
 		supported = true;
 		break;
 	case V34_SYMBOL_RATE_2800:
 		supported = peer_transmit->high_carrier ||
 			(!peer_transmit->high_carrier &&
 			 peer_transmit->preemphasis_filter_index == 8u);
-		break;
-	case V34_SYMBOL_RATE_3200:
-		supported = peer_transmit->high_carrier;
 		break;
 	case V34_SYMBOL_RATE_3429:
 		supported = true;

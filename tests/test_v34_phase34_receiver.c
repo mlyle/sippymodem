@@ -517,16 +517,18 @@ static bool test_training(void)
 	static const struct {
 		enum v34_symbol_rate symbol_rate;
 		bool high_carrier;
+		bool caller_transmit_only;
 	} cases[] = {
-		{ V34_SYMBOL_RATE_2400, false },
-		{ V34_SYMBOL_RATE_2400, true },
-		{ V34_SYMBOL_RATE_2743, false },
-		{ V34_SYMBOL_RATE_2743, true },
-		{ V34_SYMBOL_RATE_2800, true },
-		{ V34_SYMBOL_RATE_3000, false },
-		{ V34_SYMBOL_RATE_3000, true },
-		{ V34_SYMBOL_RATE_3200, true },
-		{ V34_SYMBOL_RATE_3429, false },
+		{ V34_SYMBOL_RATE_2400, false, false },
+		{ V34_SYMBOL_RATE_2400, true, false },
+		{ V34_SYMBOL_RATE_2743, false, false },
+		{ V34_SYMBOL_RATE_2743, true, false },
+		{ V34_SYMBOL_RATE_2800, true, false },
+		{ V34_SYMBOL_RATE_3000, false, false },
+		{ V34_SYMBOL_RATE_3000, true, false },
+		{ V34_SYMBOL_RATE_3200, false, true },
+		{ V34_SYMBOL_RATE_3200, true, false },
+		{ V34_SYMBOL_RATE_3429, false, false },
 	};
 	bool success = true;
 
@@ -556,13 +558,17 @@ static bool test_training(void)
 		for (uint8_t selection = 0; selection < selected_count;
 		     ++selection)
 			for (unsigned int role = V34_CALLING_STATION;
-			     role <= V34_ANSWERING_STATION; ++role)
+			     role <= V34_ANSWERING_STATION; ++role) {
+				if (cases[index].caller_transmit_only &&
+				    role != V34_CALLING_STATION)
+					continue;
 				if (!test_training_case(
 					    (enum v34_station_role)role,
 					    cases[index].symbol_rate,
 					    selected_rates[selection],
 					    cases[index].high_carrier))
 					success = false;
+			}
 	}
 	return success;
 }

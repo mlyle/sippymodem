@@ -103,7 +103,9 @@ static bool starts_after_timing_acquisition(
 
 	return profile->symbol_rate == V34_SYMBOL_RATE_2800 ||
 	       (profile->symbol_rate == V34_SYMBOL_RATE_2743 &&
-		profile->high_carrier);
+		profile->high_carrier) ||
+	       (profile->symbol_rate == V34_SYMBOL_RATE_3200 &&
+		!profile->high_carrier);
 }
 
 static bool tracking_state_is_valid(

@@ -92,6 +92,17 @@ static struct v34_phase3_profile generated_profile(
 			.projected_data_rate_2400_bps_units = 8,
 			.high_carrier = true,
 		};
+	if (symbol_rate == V34_SYMBOL_RATE_3200)
+		return (struct v34_phase3_profile){
+			.symbol_rate_numerator = 3200,
+			.symbol_rate_denominator = 1,
+			.carrier_frequency_numerator = 12800,
+			.carrier_frequency_denominator = 7,
+			.symbol_rate = V34_SYMBOL_RATE_3200,
+			.local_role = role,
+			.preemphasis_filter_index = 8,
+			.projected_data_rate_2400_bps_units = 8,
+		};
 	if (symbol_rate == V34_SYMBOL_RATE_3429)
 		return (struct v34_phase3_profile){
 			.symbol_rate_numerator = 24000,
@@ -175,6 +186,7 @@ static bool run_generated_duplex_exchange(
 	uint32_t answerer_trn_symbols =
 		symbol_rate == V34_SYMBOL_RATE_2743 ? 5053u :
 		symbol_rate == V34_SYMBOL_RATE_2800 ? 5168u :
+		symbol_rate == V34_SYMBOL_RATE_3200 ? 5968u :
 		symbol_rate == V34_SYMBOL_RATE_3429 ? 6425u : 5568u;
 	struct v34_phase3_exchange_configuration caller_configuration =
 		configuration(V34_CONSTELLATION_16_POINT);
@@ -431,6 +443,9 @@ static bool test_generated_duplex_exchange(void)
 		{ TEST_LINEAR, 1, V34_SYMBOL_RATE_2800 },
 		{ TEST_PCMU, 13, V34_SYMBOL_RATE_2800 },
 		{ TEST_PCMA, 47, V34_SYMBOL_RATE_2800 },
+		{ TEST_LINEAR, 1, V34_SYMBOL_RATE_3200 },
+		{ TEST_PCMU, 13, V34_SYMBOL_RATE_3200 },
+		{ TEST_PCMA, 47, V34_SYMBOL_RATE_3200 },
 		{ TEST_LINEAR, 1, V34_SYMBOL_RATE_3429 },
 		{ TEST_PCMU, 13, V34_SYMBOL_RATE_3429 },
 		{ TEST_PCMA, 47, V34_SYMBOL_RATE_3429 },
@@ -451,7 +466,7 @@ static bool test_receiver_selection(void)
 		[V34_SYMBOL_RATE_2743] = { true, true },
 		[V34_SYMBOL_RATE_2800] = { false, true },
 		[V34_SYMBOL_RATE_3000] = { true, true },
-		[V34_SYMBOL_RATE_3200] = { false, true },
+		[V34_SYMBOL_RATE_3200] = { true, true },
 		[V34_SYMBOL_RATE_3429] = { true, true },
 	};
 	struct v34_phase3_profile caller = profile(V34_CALLING_STATION);
