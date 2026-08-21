@@ -158,8 +158,14 @@ static bool run_clean_timeline(enum v34_station_role role)
 			      "role %d S/S-bar boundary was not explicit", role);
 			continue;
 		}
-		/* Startup tracking retains the alternating S target until S-bar is
-		 * confirmed; the S-bar waveform itself is detection evidence. */
+		if (local >= suffix) {
+			CHECK(expect_action(
+				      &output, V34_PHASE3_DECISION_DISCARD),
+			      "role %d S-bar evidence %u was adapted",
+			      role, local);
+			continue;
+		}
+		/* Startup tracking follows only the qualified S alternation. */
 		CHECK(v34_training_constellation_fixed_point(
 			      V34_CONSTELLATION_4_POINT, 0,
 			      (uint8_t)((local & 1u) != 0u ? 3u : 0u),
@@ -342,24 +348,41 @@ static bool test_md_and_delayed_marker(void)
 	}
 	CHECK(receiver.stage ==
 		      V34_PHASE3_DECISION_RECEIVER_REPEATED_S &&
-	      receiver.md_symbols_remaining == 0u,
+	      receiver.md_symbols_remaining == 0u &&
+	      receiver.s.s_symbols ==
+		      V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS,
 	      "MD completion did not begin repeated S");
 	CHECK(v34_phase3_s_sequence_init(&s) ==
 		      V34_PHASE3_S_SEQUENCE_OK,
 	      "repeated S source did not initialize");
 	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
+	     symbol < V34_PHASE3_S_SYMBOLS -
+		      V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+	     ++symbol)
+		CHECK(v34_phase3_s_sequence_next_fixed(
+			      &s, &point, &section) ==
+			      V34_PHASE3_S_SEQUENCE_OK,
+		      "repeated S discarded prefix %u stopped", symbol);
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS +
+		      V34_PHASE3_S_BAR_SYMBOLS;
+	     ++symbol) {
 		struct v34_phase3_decision_output output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result expected =
-			symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS ?
+			symbol + 1u ==
+				V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS +
+					V34_PHASE3_S_BAR_SYMBOLS ?
 				V34_PHASE3_DECISION_RECEIVER_REPEATED_S_DETECTED :
 				V34_PHASE3_DECISION_RECEIVER_OK;
 		enum v34_phase3_decision_action action =
 			expected ==
 					V34_PHASE3_DECISION_RECEIVER_REPEATED_S_DETECTED ?
 				V34_PHASE3_DECISION_BEGIN_TRACKING :
-				V34_PHASE3_DECISION_COMMIT;
+				symbol >=
+					V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS ?
+					V34_PHASE3_DECISION_DISCARD :
+					V34_PHASE3_DECISION_COMMIT;
 
 		CHECK(v34_phase3_s_sequence_next_fixed(
 			      &s, &point, &section) ==

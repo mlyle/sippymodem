@@ -270,6 +270,7 @@ static enum v34_phase3_decision_receiver_result receive_s(
 	struct v34_analytic_sample target;
 	struct v34_phase3_s_detection detection;
 	enum v34_phase3_s_receiver_result result;
+	bool target_matches;
 	bool repeated = receiver->stage ==
 		V34_PHASE3_DECISION_RECEIVER_REPEATED_S;
 
@@ -278,11 +279,18 @@ static enum v34_phase3_decision_receiver_result receive_s(
 		    &hard) != V34_CONSTELLATION_OK ||
 	    !s_target(receiver, &hard, &target))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
+	target_matches = hard.target.in_phase == target.in_phase &&
+			hard.target.quadrature == target.quadrature;
 	result = v34_phase3_s_receiver_receive(
 		&receiver->s, hard.quarter_point,
 		hard.clockwise_quarter_turns);
 	if (result == V34_PHASE3_S_RECEIVER_OK) {
-		*output = receiver->s.detection_pending ?
+		/* Train only across the owned S span. A later reversal or error
+		 * remains marker evidence and cannot erase S-bar by adapting the
+		 * carrier/equalizer back toward the preceding S point. */
+		*output = receiver->s.detection_pending || !target_matches ||
+				  receiver->s.buffered_decisions >
+					  receiver->s.s_symbols ?
 			action_output(V34_PHASE3_DECISION_DISCARD) :
 			commit_output(
 				observation, target,
@@ -320,7 +328,11 @@ static enum v34_phase3_decision_receiver_result receive_md(
 		*output = action_output(V34_PHASE3_DECISION_DISCARD);
 		return V34_PHASE3_DECISION_RECEIVER_OK;
 	}
-	if (v34_phase3_s_receiver_init(&receiver->s) !=
+	/* The aggregate restarts carrier/timing at the MD boundary. Detect the
+	 * bounded suffix that remains after that physical reacquisition. */
+	if (v34_phase3_s_receiver_init_suffix(
+		    &receiver->s,
+		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 	    V34_PHASE3_S_RECEIVER_OK)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
 	clear_s_target(receiver);
