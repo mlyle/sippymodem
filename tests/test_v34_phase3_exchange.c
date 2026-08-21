@@ -77,9 +77,22 @@ static struct v34_phase3_profile profile(enum v34_station_role role)
 	};
 }
 
-static struct v34_phase3_profile symmetric_2800_profile(
-	enum v34_station_role role)
+static struct v34_phase3_profile generated_profile(
+	enum v34_station_role role, enum v34_symbol_rate symbol_rate)
 {
+	if (symbol_rate == V34_SYMBOL_RATE_3429)
+		return (struct v34_phase3_profile){
+			.symbol_rate_numerator = 24000,
+			.symbol_rate_denominator = 7,
+			.carrier_frequency_numerator = 96000,
+			.carrier_frequency_denominator = 49,
+			.symbol_rate = V34_SYMBOL_RATE_3429,
+			.local_role = role,
+			.preemphasis_filter_index = 3,
+			.projected_data_rate_2400_bps_units = 8,
+		};
+	if (symbol_rate != V34_SYMBOL_RATE_2800)
+		return profile(role);
 	return (struct v34_phase3_profile){
 		.symbol_rate_numerator = 2800,
 		.symbol_rate_denominator = 1,
@@ -132,7 +145,8 @@ static bool record_events(uint32_t events, uint32_t *seen)
 }
 
 static bool run_generated_duplex_exchange(
-	enum test_codec codec, size_t delay_samples, bool symmetric_2800)
+	enum test_codec codec, size_t delay_samples,
+	enum v34_symbol_rate symbol_rate)
 {
 	const uint32_t common_events =
 		V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED |
@@ -142,13 +156,13 @@ static bool run_generated_duplex_exchange(
 		V34_PHASE3_EXCHANGE_EVENT_PEER_PP_COMPLETE |
 		V34_PHASE3_EXCHANGE_EVENT_PEER_J_DETECTED |
 		V34_PHASE3_EXCHANGE_EVENT_HANDOFF_READY;
-	struct v34_phase3_profile caller_profile = symmetric_2800 ?
-		symmetric_2800_profile(V34_CALLING_STATION) :
-		profile(V34_CALLING_STATION);
-	struct v34_phase3_profile answerer_profile = symmetric_2800 ?
-		symmetric_2800_profile(V34_ANSWERING_STATION) :
-		profile(V34_ANSWERING_STATION);
-	uint32_t answerer_trn_symbols = symmetric_2800 ? 5168u : 5568u;
+	struct v34_phase3_profile caller_profile =
+		generated_profile(V34_CALLING_STATION, symbol_rate);
+	struct v34_phase3_profile answerer_profile =
+		generated_profile(V34_ANSWERING_STATION, symbol_rate);
+	uint32_t answerer_trn_symbols =
+		symbol_rate == V34_SYMBOL_RATE_2800 ? 5168u :
+		symbol_rate == V34_SYMBOL_RATE_3429 ? 6425u : 5568u;
 	struct v34_phase3_exchange_configuration caller_configuration =
 		configuration(V34_CONSTELLATION_16_POINT);
 	struct v34_phase3_exchange_configuration answerer_configuration =
@@ -393,20 +407,23 @@ static bool test_generated_duplex_exchange(void)
 	static const struct {
 		enum test_codec codec;
 		size_t delay_samples;
-		bool symmetric_2800;
+		enum v34_symbol_rate symbol_rate;
 	} cases[] = {
-		{ TEST_LINEAR, 1, false },
-		{ TEST_PCMU, 13, false },
-		{ TEST_PCMA, 47, false },
-		{ TEST_LINEAR, 1, true },
-		{ TEST_PCMU, 13, true },
-		{ TEST_PCMA, 47, true },
+		{ TEST_LINEAR, 1, V34_SYMBOL_RATE_3000 },
+		{ TEST_PCMU, 13, V34_SYMBOL_RATE_3000 },
+		{ TEST_PCMA, 47, V34_SYMBOL_RATE_3000 },
+		{ TEST_LINEAR, 1, V34_SYMBOL_RATE_2800 },
+		{ TEST_PCMU, 13, V34_SYMBOL_RATE_2800 },
+		{ TEST_PCMA, 47, V34_SYMBOL_RATE_2800 },
+		{ TEST_LINEAR, 1, V34_SYMBOL_RATE_3429 },
+		{ TEST_PCMU, 13, V34_SYMBOL_RATE_3429 },
+		{ TEST_PCMA, 47, V34_SYMBOL_RATE_3429 },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
 		CHECK(run_generated_duplex_exchange(
 			      cases[index].codec, cases[index].delay_samples,
-			      cases[index].symmetric_2800),
+			      cases[index].symbol_rate),
 		      "generated case %zu failed", index);
 	return true;
 }
@@ -419,7 +436,7 @@ static bool test_receiver_selection(void)
 		[V34_SYMBOL_RATE_2800] = { false, true },
 		[V34_SYMBOL_RATE_3000] = { true, true },
 		[V34_SYMBOL_RATE_3200] = { false, true },
-		[V34_SYMBOL_RATE_3429] = { false, false },
+		[V34_SYMBOL_RATE_3429] = { true, true },
 	};
 	struct v34_phase3_profile caller = profile(V34_CALLING_STATION);
 	struct v34_phase3_profile answerer = profile(V34_ANSWERING_STATION);

@@ -42,6 +42,8 @@ static bool use_persistent_answer_receiver(
 		supported = peer_transmit->high_carrier;
 		break;
 	case V34_SYMBOL_RATE_3429:
+		supported = true;
+		break;
 	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}

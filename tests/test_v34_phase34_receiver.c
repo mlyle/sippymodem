@@ -525,6 +525,7 @@ static bool test_training(void)
 		{ V34_SYMBOL_RATE_3000, false },
 		{ V34_SYMBOL_RATE_3000, true },
 		{ V34_SYMBOL_RATE_3200, true },
+		{ V34_SYMBOL_RATE_3429, false },
 	};
 	bool success = true;
 

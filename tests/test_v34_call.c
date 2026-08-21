@@ -141,9 +141,16 @@ static struct v34_call_configuration symmetric_configuration(
 	enum v34_station_role role, enum v34_symbol_rate symbol_rate)
 {
 	struct v34_call_configuration selected = configuration(role);
+	uint8_t preemphasis_filter_index =
+		symbol_rate == V34_SYMBOL_RATE_2800 ? 8u : 3u;
 
 	selected.local_info0 = (struct v34_info0){
-		.symbol_rate_2800_supported = true,
+		.symbol_rate_2800_supported =
+			symbol_rate == V34_SYMBOL_RATE_2800,
+		.symbol_rate_3429_supported =
+			symbol_rate == V34_SYMBOL_RATE_3429,
+		.symbol_rate_3429_transmit_permitted =
+			symbol_rate == V34_SYMBOL_RATE_3429,
 		.maximum_symbol_rate_difference_steps = 0,
 		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
 	};
@@ -153,7 +160,7 @@ static struct v34_call_configuration symmetric_configuration(
 			.frequency_offset_1_50_hz_units =
 				V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 		selected.local_info1.calling.answer_transmit[symbol_rate]
-			.preemphasis_filter_index = 8;
+			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.calling.answer_transmit[symbol_rate]
 			.projected_data_rate_2400_bps_units = 4;
 	} else {
@@ -161,7 +168,7 @@ static struct v34_call_configuration symmetric_configuration(
 			.frequency_offset_1_50_hz_units =
 				V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 		selected.local_info1.answering.call_transmit
-			.preemphasis_filter_index = 8;
+			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.answering.call_transmit
 			.projected_data_rate_2400_bps_units = 4;
 		selected.local_info1.answering.answer_to_call_symbol_rate =
@@ -392,7 +399,8 @@ static bool test_pcmu_call(void)
 	return true;
 }
 
-static bool check_symmetric_2800_call(bool pcma)
+static bool check_symmetric_call(
+	enum v34_symbol_rate symbol_rate, bool pcma)
 {
 	struct channel channel = { .pcma = pcma };
 	struct endpoint caller;
@@ -401,11 +409,10 @@ static bool check_symmetric_2800_call(bool pcma)
 	int16_t next_answerer_receive = 0;
 
 	CHECK(endpoint_init_symmetric(
-		      &caller, V34_CALLING_STATION, V34_SYMBOL_RATE_2800) &&
+		      &caller, V34_CALLING_STATION, symbol_rate) &&
 	      endpoint_init_symmetric(
-		      &answerer, V34_ANSWERING_STATION,
-		      V34_SYMBOL_RATE_2800),
-	      "symmetric 2800 endpoints did not initialize");
+		      &answerer, V34_ANSWERING_STATION, symbol_rate),
+	      "symmetric rate %u endpoints did not initialize", symbol_rate);
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
 		struct v34_call_observation answerer_observation;
@@ -422,7 +429,8 @@ static bool check_symmetric_2800_call(bool pcma)
 			      &answerer, next_answerer_receive,
 			      supply_mapping_frame, &answerer_transmit,
 			      &answerer_observation),
-		      "symmetric 2800 call stopped at sample %zu", index);
+		      "symmetric rate %u call stopped at sample %zu",
+		      symbol_rate, index);
 		channel_transmit(
 			&channel, caller_transmit, answerer_transmit);
 		if (v34_call_is_online(&caller.call) &&
@@ -435,19 +443,25 @@ static bool check_symmetric_2800_call(bool pcma)
 				      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
 			      answerer.call.state.phase4.receive.persistent.stage ==
 				      V34_PHASE34_RECEIVER_DATA,
-			      "2800 call did not retain its receive owners");
+			      "rate %u call did not retain its receive owners",
+			      symbol_rate);
 			return true;
 		}
 	}
-	CHECK(false, "symmetric 2800 call did not reach mapped data");
+	CHECK(false, "symmetric rate %u call did not reach mapped data",
+	      symbol_rate);
 }
 
-static bool test_symmetric_2800_call(void)
+static bool test_symmetric_calls(void)
 {
-	CHECK(check_symmetric_2800_call(false),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, false),
 	      "PCMU symmetric 2800 call failed");
-	CHECK(check_symmetric_2800_call(true),
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, true),
 	      "PCMA symmetric 2800 call failed");
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, false),
+	      "PCMU symmetric 3429 call failed");
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3429, true),
+	      "PCMA symmetric 3429 call failed");
 	return true;
 }
 
@@ -766,7 +780,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated PCMU call", test_pcmu_call },
-		{ "symmetric 2800 call", test_symmetric_2800_call },
+		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
 		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "unusable INFO1 starts full retrain",
