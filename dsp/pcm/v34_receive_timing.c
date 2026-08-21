@@ -9,11 +9,29 @@
 #include <stdint.h>
 #include <string.h>
 
+enum {
+	V34_RECEIVE_TIMING_REDUCED_INITIAL_GAIN = 0x0200,
+};
+
 static enum v34_station_role receiving_role(
 	enum v34_station_role transmitting_role)
 {
 	return transmitting_role == V34_CALLING_STATION ?
 		       V34_ANSWERING_STATION : V34_CALLING_STATION;
+}
+
+static int16_t initial_gain(
+	const struct v34_phase3_profile *transmitting_profile,
+	const struct v34_timing_control *timing)
+{
+	/* The symmetric 2800-Hz native profile needs acquisition headroom
+	 * through the analytic frontend. Other qualified profiles retain the
+	 * established fast-acquisition level. */
+	if (transmitting_profile->symbol_rate == V34_SYMBOL_RATE_2800 &&
+	    !transmitting_profile->high_carrier &&
+	    transmitting_profile->preemphasis_filter_index == 8u)
+		return V34_RECEIVE_TIMING_REDUCED_INITIAL_GAIN;
+	return (int16_t)(timing->phase_limit / 2u);
 }
 
 static bool queue_state_is_valid(const struct v34_receive_timing *timing)
@@ -67,7 +85,7 @@ enum v34_receive_timing_result v34_receive_timing_init(
 		    V34_TIMING_CONTROL_OK ||
 	    v34_gain_control_init(
 		    &initialized.gain,
-		    (int16_t)(initialized.timing.phase_limit / 2u)) !=
+		    initial_gain(transmitting_profile, &initialized.timing)) !=
 		    V34_GAIN_CONTROL_OK ||
 	    v34_s_tone_detector_init(
 		    &initialized.s_detector, transmitting_profile) !=

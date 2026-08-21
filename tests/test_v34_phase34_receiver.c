@@ -12,6 +12,7 @@
 
 enum {
 	SAMPLE_RATE = 8000,
+	EXPECTED_REDUCED_INITIAL_GAIN = 0x0200,
 	PHASE3_TRN_SYMBOLS = V34_PHASE3_TRN_MIN_SYMBOLS + 128,
 	PHASE3_J_SYMBOLS = V34_PHASE3_J_PATTERN_SYMBOLS * 5,
 	PHASE4_TRN_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 384,
@@ -179,8 +180,13 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 
 static bool test_validation(void)
 {
+	const struct v34_info1_probe_result reduced_probe = {
+		.preemphasis_filter_index = 8,
+		.projected_data_rate_2400_bps_units = 8,
+	};
 	struct v34_phase3_profile valid;
 	struct v34_phase3_profile invalid;
+	struct v34_phase3_profile reduced;
 	struct v34_phase34_receiver receiver;
 	struct v34_phase34_receiver saved;
 	struct v34_phase3_decision_handoff handoff;
@@ -190,7 +196,10 @@ static bool test_validation(void)
 
 	CHECK(profile(
 		      &valid, V34_CALLING_STATION, V34_SYMBOL_RATE_3000, 8,
-		      true),
+		      true) &&
+	      v34_phase3_profile_init(
+		      &reduced, V34_CALLING_STATION, V34_SYMBOL_RATE_2800,
+		      &reduced_probe, 0, 0) == V34_PHASE3_PROFILE_OK,
 	      "validation profile did not initialize");
 	invalid = valid;
 	memset(&receiver, 0xa5, sizeof(receiver));
@@ -211,8 +220,19 @@ static bool test_validation(void)
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &valid, V34_CONSTELLATION_16_POINT) ==
 		      V34_PHASE34_RECEIVER_OK &&
-	      v34_phase34_receiver_is_valid(&receiver),
+	      v34_phase34_receiver_is_valid(&receiver) &&
+	      receiver.timing.gain.gain ==
+		      (int16_t)(receiver.timing.timing.phase_limit / 2u),
 	      "valid receiver did not initialize");
+	CHECK(v34_phase34_receiver_init(
+		      &receiver, &reduced, V34_CONSTELLATION_16_POINT) ==
+		      V34_PHASE34_RECEIVER_OK &&
+	      receiver.timing.gain.gain == EXPECTED_REDUCED_INITIAL_GAIN,
+	      "reduced-gain receiver did not initialize");
+	CHECK(v34_phase34_receiver_init(
+		      &receiver, &valid, V34_CONSTELLATION_16_POINT) ==
+		      V34_PHASE34_RECEIVER_OK,
+	      "validation receiver did not restore");
 	saved = receiver;
 	memset(&output, 0x6b, sizeof(output));
 	saved_output = output;
@@ -480,8 +500,7 @@ static bool test_training_case(
 	      pp_events, j_events,
 	      phase4_s_events, trn_events, initial_records, final_record,
 	      source.completed_records, rejected_records, b1_frames,
-	      mapping_frames, receiver.stage,
-	      receiver.failed);
+	      mapping_frames, receiver.stage, receiver.failed);
 	CHECK(v34_phase34_receiver_phase3_handoff(&receiver, &handoff) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      v34_phase3_decision_handoff_is_valid(&handoff) &&

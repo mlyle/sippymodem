@@ -432,8 +432,10 @@ static bool check_symmetric_2800_call(bool pcma)
 			CHECK(caller.call.state.phase4.receive_mode ==
 				      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY &&
 			      answerer.call.state.phase4.receive_mode ==
-				      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY,
-			      "2800 call did not retain its compatibility receivers");
+				      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
+			      answerer.call.state.phase4.receive.persistent.stage ==
+				      V34_PHASE34_RECEIVER_DATA,
+			      "2800 call did not retain its receive owners");
 			return true;
 		}
 	}

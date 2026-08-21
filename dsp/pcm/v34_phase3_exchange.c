@@ -23,8 +23,8 @@ static bool use_persistent_answer_receiver(
 {
 	bool supported = false;
 
-	/* Select profiles whose complete S-through-data path is covered by the
-	 * persistent physical owner. The remaining profiles stay compatible. */
+	/* Retain the compatibility owner for combinations whose complete
+	 * S-through-data path has not been qualified. */
 	switch (peer_transmit->symbol_rate) {
 	case V34_SYMBOL_RATE_2400:
 	case V34_SYMBOL_RATE_3000:
@@ -34,12 +34,15 @@ static bool use_persistent_answer_receiver(
 		supported = !peer_transmit->high_carrier;
 		break;
 	case V34_SYMBOL_RATE_2800:
+		supported = peer_transmit->high_carrier ||
+			(!peer_transmit->high_carrier &&
+			 peer_transmit->preemphasis_filter_index == 8u);
+		break;
 	case V34_SYMBOL_RATE_3200:
 		supported = peer_transmit->high_carrier;
 		break;
 	case V34_SYMBOL_RATE_3429:
 	case V34_SYMBOL_RATE_COUNT:
-		supported = false;
 		break;
 	}
 	return local_transmit->local_role == V34_ANSWERING_STATION &&

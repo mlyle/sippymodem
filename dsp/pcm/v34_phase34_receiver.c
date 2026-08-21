@@ -95,6 +95,13 @@ static enum v34_adaptive_equalizer_feedback_mode expected_feedback_mode(
 		V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN;
 }
 
+static bool starts_after_timing_acquisition(
+	const struct v34_phase34_receiver *receiver)
+{
+	return receiver->transmitting_profile.symbol_rate ==
+	       V34_SYMBOL_RATE_2800;
+}
+
 static bool tracking_state_is_valid(
 	const struct v34_phase34_receiver *receiver)
 {
@@ -135,8 +142,20 @@ bool v34_phase34_receiver_is_valid(
 		       receiver->stage == V34_PHASE34_RECEIVER_PHASE3 &&
 		       (receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_S ||
-			receiver->semantic.phase3.stage ==
+			 receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_REPEATED_S);
+	if (starts_after_timing_acquisition(receiver) &&
+	    !v34_receive_timing_is_acquired(&receiver->timing))
+		return receiver->equalizer.epoch == 0u &&
+		       receiver->equalizer.inputs_since_observation == 0u &&
+		       !receiver->equalizer.decision_pending &&
+		       receiver->stage == V34_PHASE34_RECEIVER_PHASE3 &&
+		       (receiver->semantic.phase3.stage ==
+				V34_PHASE3_DECISION_RECEIVER_S ||
+			 receiver->semantic.phase3.stage ==
+				V34_PHASE3_DECISION_RECEIVER_REPEATED_S) &&
+		       receiver->semantic.phase3.s.buffered_decisions == 0u &&
+		       !receiver->semantic.phase3.s_target_seeded;
 	return true;
 }
 
@@ -585,6 +604,11 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	    timing_result != V34_RECEIVE_TIMING_SAMPLES_READY)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	acquired = v34_receive_timing_is_acquired(&receiver->timing);
+	/* This qualified profile needs carrier and timing pull-in to finish
+	 * before the semantic S suffix begins. */
+	if (starts_after_timing_acquisition(receiver) && !was_acquired)
+		return acquired ? V34_PHASE34_RECEIVER_TIMING_ACQUIRED :
+				  V34_PHASE34_RECEIVER_OK;
 	if (timing_result == V34_RECEIVE_TIMING_OK)
 		return !was_acquired && acquired ?
 			V34_PHASE34_RECEIVER_TIMING_ACQUIRED :
