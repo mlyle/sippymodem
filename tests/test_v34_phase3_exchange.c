@@ -206,6 +206,7 @@ static bool run_generated_duplex_exchange(
 	uint32_t answer_silence = 0;
 	uint64_t answerer_samples_at_stop = 0;
 	size_t exchanged_samples = 0;
+	size_t caller_signal_start = SAMPLE_LIMIT;
 	size_t answerer_receive_start = SAMPLE_LIMIT;
 	size_t answerer_signal_start = SAMPLE_LIMIT;
 	int16_t last_answer_transmit = 1;
@@ -217,6 +218,7 @@ static bool run_generated_duplex_exchange(
 	      v34_phase3_exchange_init(
 		      &answerer, &answerer_profile, &caller_profile,
 		      &answerer_configuration) == V34_PHASE3_EXCHANGE_OK &&
+	      caller.receive.mode == V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
 	      answerer.receive.mode == V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
 	      "duplex Phase 3 exchange did not initialize");
 	initialized_answerer_receiver = answerer.receive.state.persistent;
@@ -230,6 +232,8 @@ static bool run_generated_duplex_exchange(
 		enum v34_phase3_exchange_result caller_result;
 		enum v34_phase3_exchange_result answerer_result;
 		bool answerer_was_transmitting = answerer.transmit_started;
+		bool caller_signal_was_started =
+			caller.receive.state.persistent.signal_started;
 		bool answerer_signal_was_started =
 			answerer.receive.state.persistent.signal_started;
 		bool answerer_starting_j =
@@ -267,6 +271,9 @@ static bool run_generated_duplex_exchange(
 		CHECK(record_events(caller_events, &caller_seen) &&
 		      record_events(answerer_events, &answerer_seen),
 		      "Phase 3 event repeated at sample %zu", index);
+		if (!caller_signal_was_started &&
+		    caller.receive.state.persistent.signal_started)
+			caller_signal_start = index;
 		if (!answerer_signal_was_started &&
 		    answerer.receive.state.persistent.signal_started)
 			answerer_signal_start = index;
@@ -307,17 +314,17 @@ static bool run_generated_duplex_exchange(
 	      "codec %d delay %zu stopped at caller tx/rx=%d/%d "
 	      "answerer tx/rx=%d/%d events=0x%x/0x%x",
 	      codec, delay_samples, caller.transmit.symbols.stage,
-	      caller.receive.state.compatibility.points.stage,
+	      caller.receive.state.persistent.stage,
 	      answerer.transmit.symbols.stage,
 	      answerer.receive.state.persistent.stage, caller_seen,
 	      answerer_seen);
-	CHECK(caller.receive.mode ==
-		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
-	      caller.receive.state.compatibility.line.carrier_phase ==
-		      (uint32_t)((uint64_t)caller.receive.state.compatibility
-					 .line
-					 .carrier_phase_step *
-			 exchanged_samples) &&
+	CHECK(caller_signal_start < exchanged_samples &&
+	      caller.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
+	      caller.receive.state.persistent.timing.carrier.phase ==
+		      (uint32_t)((uint64_t)caller.receive.state.persistent
+					 .timing.carrier.phase_step *
+			 (exchanged_samples - caller_signal_start)) &&
 	      answerer_receive_start < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
 	      answerer.receive.mode ==
@@ -357,7 +364,7 @@ static bool run_generated_duplex_exchange(
 		      &answerer, &answerer_handoff) == V34_PHASE3_EXCHANGE_OK &&
 	      v34_phase3_exchange_handoff_is_valid(&caller_handoff) &&
 	      v34_phase3_exchange_handoff_is_valid(&answerer_handoff) &&
-	      caller_handoff.receive.state.compatibility.phase3.j.detection
+	      caller_handoff.receive.state.persistent.phase3_handoff.j
 		      .sequence
 			      .remote_constellation == V34_CONSTELLATION_4_POINT &&
 	      answerer_handoff.receive.state.persistent.phase3_handoff.j
@@ -367,13 +374,12 @@ static bool run_generated_duplex_exchange(
 		      V34_CONSTELLATION_16_POINT &&
 	      answerer_handoff.phase3_transmit.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
-	      qam_demodulator_measure(
-		      &caller_handoff.receive.state.compatibility.line)
-		      .timing_locked &&
+	      v34_receive_timing_is_acquired(
+		      &caller_handoff.receive.state.persistent.timing) &&
 	      v34_receive_timing_is_acquired(
 		      &answerer_handoff.receive.state.persistent.timing) &&
 	      caller_handoff.receive.mode ==
-		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY &&
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
 	      answerer_handoff.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
 	      "Phase 3 handoff lost either J constellation selection");
@@ -471,8 +477,8 @@ static bool test_receiver_selection(void)
 		      &exchange, &caller, &answerer, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
 	      exchange.receive.mode ==
-		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
-	      "caller did not retain its compatibility receiver");
+		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
+	      "caller did not select the persistent receiver");
 	CHECK(v34_phase3_exchange_init(
 		      &exchange, &answerer, &caller, &config) ==
 		      V34_PHASE3_EXCHANGE_OK &&
@@ -488,6 +494,14 @@ static bool test_receiver_selection(void)
 	      exchange.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
 	      "projected rate incorrectly changed the persistent receiver");
+	config.use_compatibility_receiver = true;
+	CHECK(v34_phase3_exchange_init(
+		      &exchange, &caller, &answerer, &config) ==
+		      V34_PHASE3_EXCHANGE_OK &&
+	      exchange.receive.mode ==
+		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
+	      "explicit fallback did not select the compatibility receiver");
+	config.use_compatibility_receiver = false;
 	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate)
 		for (unsigned int high = 0; high < 2; ++high)
 			for (unsigned int preemphasis = 0;

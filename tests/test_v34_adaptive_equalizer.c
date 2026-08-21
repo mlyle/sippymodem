@@ -352,6 +352,83 @@ static bool test_feedback_and_discard_lifecycle(void)
 	return true;
 }
 
+static bool test_feedback_training_boundary(void)
+{
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_adaptive_equalizer saved;
+	struct v34_q14_coefficient coefficients[V34_PRECODER_TAP_COUNT];
+	struct v34_q14_coefficient saved_coefficients[V34_PRECODER_TAP_COUNT];
+	static const int16_t coefficient_a[] = { 101, -202, 303 };
+	static const int16_t coefficient_b[] = { -404, 505, -606 };
+
+	memset(coefficients, 0x5a, sizeof(coefficients));
+	saved_coefficients[0] = coefficients[0];
+	saved_coefficients[1] = coefficients[1];
+	saved_coefficients[2] = coefficients[2];
+	CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_adaptive_equalizer_set_feedback_mode(
+		      &equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "feedback boundary owner did not initialize");
+	memcpy(equalizer.feedback.coefficient_a, coefficient_a,
+	       sizeof(coefficient_a));
+	memcpy(equalizer.feedback.coefficient_b, coefficient_b,
+	       sizeof(coefficient_b));
+	for (size_t index = 0; index < 4; ++index) {
+		equalizer.feedback.in_phase_history[index] =
+			(int16_t)(index + 1u);
+		equalizer.feedback.quadrature_history[index] =
+			(int16_t)(10u + index);
+	}
+	CHECK(v34_adaptive_equalizer_push(
+		      &equalizer, (struct v34_analytic_sample){ 7, -9 }) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_adaptive_equalizer_finish_feedback_training(
+		      &equalizer, coefficients) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "feedback boundary did not freeze a partial symbol");
+	CHECK(coefficients[0].real == coefficient_a[2] &&
+	      coefficients[0].imaginary == coefficient_b[2] &&
+	      coefficients[1].real == coefficient_a[1] &&
+	      coefficients[1].imaginary == coefficient_b[1] &&
+	      coefficients[2].real == coefficient_a[0] &&
+	      coefficients[2].imaginary == coefficient_b[0] &&
+	      equalizer.feedback_mode ==
+		      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
+	      equalizer.inputs_since_observation == 1u &&
+	      memcmp(equalizer.feedback.coefficient_a, coefficient_a,
+		     sizeof(coefficient_a)) == 0 &&
+	      memcmp(equalizer.feedback.coefficient_b, coefficient_b,
+		     sizeof(coefficient_b)) == 0 &&
+	      memcmp(equalizer.feedback.in_phase_history,
+		     (const int16_t[4]){ 0 },
+		     sizeof(equalizer.feedback.in_phase_history)) == 0 &&
+	      memcmp(equalizer.feedback.quadrature_history,
+		     (const int16_t[4]){ 0 },
+		     sizeof(equalizer.feedback.quadrature_history)) == 0,
+	      "feedback boundary changed coefficients or retained history");
+	saved = equalizer;
+	saved_coefficients[0] = coefficients[0];
+	saved_coefficients[1] = coefficients[1];
+	saved_coefficients[2] = coefficients[2];
+	CHECK(v34_adaptive_equalizer_finish_feedback_training(
+		      &equalizer, coefficients) ==
+		      V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+	      v34_adaptive_equalizer_finish_feedback_training(
+		      &equalizer, NULL) ==
+		      V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT &&
+	      v34_adaptive_equalizer_finish_feedback_training(
+		      &equalizer,
+		      (struct v34_q14_coefficient *)&equalizer) ==
+		      V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+	      memcmp(coefficients, saved_coefficients,
+		     sizeof(coefficients)) == 0,
+	      "feedback boundary rejection changed state or output");
+	return true;
+}
+
 static bool test_tracking_boundary(void)
 {
 	struct v34_adaptive_equalizer equalizer;
@@ -655,6 +732,7 @@ int main(void)
 	if (!test_initial_state_and_carrier_profile() ||
 	    !test_exact_decision_feedback_oracle() ||
 	    !test_feedback_and_discard_lifecycle() ||
+	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
 	    !test_transactionality())
 		return 1;

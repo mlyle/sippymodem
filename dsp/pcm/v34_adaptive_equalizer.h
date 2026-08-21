@@ -4,6 +4,7 @@
 #define V34_ADAPTIVE_EQUALIZER_H
 
 #include "v34_equalizer.h"
+#include "v34_precoder.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -100,6 +101,17 @@ enum v34_adaptive_equalizer_result
 v34_adaptive_equalizer_set_feedback_mode(
 	struct v34_adaptive_equalizer *equalizer,
 	enum v34_adaptive_equalizer_feedback_mode mode);
+
+/* Freeze the learned decision-feedback filter at the local MP boundary and
+ * return its three transmitter-precoder coefficients in h(1)..h(3) order.
+ * The filter history is cleared at the B1 zero-history boundary. The
+ * partially accumulated equalizer input, FIR, carrier, quality, and learned
+ * coefficients remain continuous. */
+enum v34_adaptive_equalizer_result
+v34_adaptive_equalizer_finish_feedback_training(
+	struct v34_adaptive_equalizer *equalizer,
+	struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT]);
 
 /* Begin full equalizer tracking at the qualified S/S-bar boundary.  Clear
  * the eight center coefficients, decision-feedback coefficients, and the old

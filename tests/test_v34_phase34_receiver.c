@@ -30,12 +30,6 @@ struct line_source {
 	bool data_started;
 };
 
-static const struct v34_q14_coefficient FEEDBACK_COEFFICIENTS[] = {
-	{ 1, 0 },
-	{ 0, 0 },
-	{ 0, 0 },
-};
-
 static struct v34_data_direction_parameters data_parameters(uint8_t rate)
 {
 	return (struct v34_data_direction_parameters){
@@ -376,6 +370,12 @@ static bool test_training_case(
 		case V34_PHASE34_RECEIVER_E_COMPLETE: {
 			struct v34_phase34_receiver saved = receiver;
 			struct v34_phase34_receiver feedback_receiver = receiver;
+			struct v34_q14_coefficient
+				feedback_coefficients[V34_PRECODER_TAP_COUNT];
+			struct v34_q14_coefficient
+				zero_coefficients[V34_PRECODER_TAP_COUNT];
+			struct v34_q14_coefficient changed_coefficients[
+				V34_PRECODER_TAP_COUNT];
 			struct v34_frame_geometry wrong =
 				source.mapping.schedule.geometry;
 
@@ -385,6 +385,10 @@ static bool test_training_case(
 					V34_SYMBOL_RATE_3000 :
 					V34_SYMBOL_RATE_2800;
 			CHECK(v34_phase34_receiver_is_complete(&receiver) &&
+			      v34_phase34_receiver_finish_feedback_training(
+				      &receiver, false,
+				      (struct v34_q14_coefficient *)&receiver) ==
+				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 			      v34_phase34_receiver_start_data(
 				      &receiver,
 				      (const struct v34_power_normalizer *)&receiver,
@@ -407,35 +411,82 @@ static bool test_training_case(
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 			      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 			      v34_phase34_receiver_start_data(
+				      &receiver, &source.mapping.normalizer,
+				      &source.mapping.schedule.geometry,
+				      source.parameters.expanded_shaping,
+				      source.parameters.precoder_coefficients,
+				      source.parameters.trellis_selection) ==
+				      V34_PHASE34_RECEIVER_INVALID_STATE &&
+			      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+			      v34_phase34_receiver_finish_feedback_training(
+				      &feedback_receiver, true,
+				      feedback_coefficients) ==
+				      V34_PHASE34_RECEIVER_OK &&
+			      v34_phase34_receiver_finish_feedback_training(
+				      &receiver, false, zero_coefficients) ==
+				      V34_PHASE34_RECEIVER_OK,
+			      "role %u rate %u did not freeze feedback at E", role,
+			      rate);
+			CHECK(memcmp(zero_coefficients,
+				     source.parameters.precoder_coefficients,
+				     sizeof(zero_coefficients)) == 0 &&
+			      !feedback_receiver.equalizer.decision_pending &&
+			      feedback_receiver.feedback_training_complete &&
+			      feedback_receiver.precoder_selected &&
+			      receiver.feedback_training_complete &&
+			      !receiver.precoder_selected,
+			      "role %u rate %u selected the wrong feedback path", role,
+			      rate);
+			changed_coefficients[0] = feedback_coefficients[0];
+			changed_coefficients[1] = feedback_coefficients[1];
+			changed_coefficients[2] = feedback_coefficients[2];
+			changed_coefficients[0].real ^= 1;
+			saved = feedback_receiver;
+			CHECK(v34_phase34_receiver_start_data(
+				      &feedback_receiver,
+				      &source.mapping.normalizer,
+				      &source.mapping.schedule.geometry,
+				      source.parameters.expanded_shaping,
+				      changed_coefficients,
+				      source.parameters.trellis_selection) ==
+				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+			      memcmp(&feedback_receiver, &saved,
+				     sizeof(feedback_receiver)) == 0 &&
+			      v34_phase34_receiver_start_data(
 				      &receiver, &source.mapping.normalizer, &wrong,
-				      false,
+				      source.parameters.expanded_shaping,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
-			      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 			      v34_phase34_receiver_start_data(
 				      &feedback_receiver,
 				      &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry, false,
-				      FEEDBACK_COEFFICIENTS,
+				      &source.mapping.schedule.geometry,
+				      source.parameters.expanded_shaping,
+				      feedback_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_OK &&
 			      feedback_receiver.equalizer.feedback_mode ==
-				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY &&
+				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
 			      v34_phase34_receiver_is_valid(
 				      &feedback_receiver) &&
 			      v34_phase34_receiver_start_data(
-				      &receiver, &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry, false,
+				      &receiver,
+				      &source.mapping.normalizer,
+				      &source.mapping.schedule.geometry,
+				      source.parameters.expanded_shaping,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
-				      V34_PHASE34_RECEIVER_OK,
+				      V34_PHASE34_RECEIVER_OK &&
+			      receiver.equalizer.feedback_mode ==
+				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE,
 			      "role %u rate %u did not enter data at E", role,
 			      rate);
 			saved = receiver;
 			CHECK(v34_phase34_receiver_start_data(
 				      &receiver, &source.mapping.normalizer,
-				      &source.mapping.schedule.geometry, false,
+				      &source.mapping.schedule.geometry,
+				      source.parameters.expanded_shaping,
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_INVALID_STATE &&
@@ -543,10 +594,8 @@ static bool test_training(void)
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 		struct v34_frame_geometry geometry;
-		uint8_t selected_rates[2];
-		uint8_t minimum = 0;
-		uint8_t maximum = 0;
-		uint8_t selected_count;
+		uint8_t selected_rates[V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS];
+		uint8_t selected_count = 0;
 
 		for (uint8_t rate = 1; rate <= V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS;
 		     ++rate) {
@@ -554,16 +603,11 @@ static bool test_training(void)
 				    &geometry, cases[index].symbol_rate, rate,
 				    false) != V34_FRAME_SCHEDULE_OK)
 				continue;
-			if (minimum == 0)
-				minimum = rate;
-			maximum = rate;
+			selected_rates[selected_count++] = rate;
 		}
-		CHECK(minimum != 0 && maximum >= minimum,
+		CHECK(selected_count != 0,
 		      "symbol rate %u has no supported data geometry",
 		      cases[index].symbol_rate);
-		selected_rates[0] = minimum;
-		selected_rates[1] = maximum;
-		selected_count = maximum == minimum ? 1u : 2u;
 		for (unsigned int preemphasis =
 			     cases[index].all_preemphasis_profiles ? 0u : 3u;
 		     preemphasis <=

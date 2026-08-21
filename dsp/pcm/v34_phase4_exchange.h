@@ -86,9 +86,9 @@ enum v34_phase4_exchange_receive_mode {
  * calibration outside the real-time callback. A valid final peer MP-prime
  * record arms E reception at that exact record boundary. Transmit and receive
  * enter B1 independently, retaining early mapped data in the sample-call
- * outputs. Calls on one instance must be serialized. The compatibility
- * receive path reuses its training storage after E; the persistent answerer
- * keeps one physical receiver from Phase 3 through mapped data. */
+ * outputs. Calls on one instance must be serialized. A selected persistent
+ * receive path keeps one physical receiver from Phase 3 through mapped data;
+ * the compatibility path remains available for profiles not yet qualified. */
 struct v34_phase4_exchange {
 	union v34_phase4_transmit_path transmit;
 	union v34_phase4_receive_path receive;

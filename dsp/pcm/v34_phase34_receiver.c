@@ -70,28 +70,35 @@ static bool semantic_state_is_valid(
 		       .symbol_rate == receiver->transmitting_profile.symbol_rate;
 }
 
-static enum v34_adaptive_equalizer_feedback_mode data_feedback_mode(
-	const struct v34_data_decision_receiver *data)
+static bool precoder_coefficients_match(
+	const struct v34_q14_coefficient left[V34_PRECODER_TAP_COUNT],
+	const struct v34_q14_coefficient right[V34_PRECODER_TAP_COUNT])
 {
-	const struct v34_precoder *precoder;
-
-	/* A Type 1 MP selects the learned decision-feedback filter and gives its
-	 * coefficients to the peer's complementary precoder. A zero-coefficient
-	 * Type 0 selection freezes learning and leaves that filter bypassed. */
-	precoder = &data->data_receiver.channel_receiver
-		.receive_precoder;
 	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
-		if (precoder->coefficients[tap].real != 0 ||
-		    precoder->coefficients[tap].imaginary != 0)
-			return V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY;
-	return V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE;
+		if (left[tap].real != right[tap].real ||
+		    left[tap].imaginary != right[tap].imaginary)
+			return false;
+	return true;
+}
+
+static bool precoder_coefficients_are_zero(
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT])
+{
+	static const struct v34_q14_coefficient zero[V34_PRECODER_TAP_COUNT];
+
+	return precoder_coefficients_match(coefficients, zero);
 }
 
 static enum v34_adaptive_equalizer_feedback_mode expected_feedback_mode(
 	const struct v34_phase34_receiver *receiver)
 {
-	return receiver->stage == V34_PHASE34_RECEIVER_DATA ?
-		data_feedback_mode(&receiver->semantic.data) :
+	/* The data decoder reconstructs the transmitter's precoder before its
+	 * trellis decision and returns the inverse-precoded survivor as the
+	 * equalizer target. Applying the same frozen filter in this front end
+	 * would add the precoder prediction twice. */
+	return receiver->feedback_training_complete ?
+		V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE :
 		V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN;
 }
 
@@ -140,6 +147,23 @@ bool v34_phase34_receiver_is_valid(
 		    expected_feedback_mode(receiver) ||
 	    !semantic_state_is_valid(receiver) ||
 	    !tracking_state_is_valid(receiver))
+		return false;
+	if ((!receiver->feedback_training_complete &&
+	     (receiver->precoder_selected ||
+	      !precoder_coefficients_are_zero(
+		      receiver->precoder_coefficients))) ||
+	    (receiver->feedback_training_complete &&
+	     receiver->stage == V34_PHASE34_RECEIVER_PHASE3) ||
+	    (!receiver->precoder_selected &&
+	     !precoder_coefficients_are_zero(
+		     receiver->precoder_coefficients)))
+		return false;
+	if (receiver->stage == V34_PHASE34_RECEIVER_DATA &&
+	    (!receiver->feedback_training_complete ||
+	     !precoder_coefficients_match(
+		     receiver->precoder_coefficients,
+		     receiver->semantic.data.data_receiver.channel_receiver
+			     .receive_precoder.coefficients)))
 		return false;
 	if (!receiver->signal_started)
 		return !v34_receive_timing_is_acquired(&receiver->timing) &&
@@ -671,6 +695,41 @@ enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
 	return phase4_control(receiver, v34_phase4_decision_receiver_expect_e);
 }
 
+enum v34_phase34_receiver_result
+v34_phase34_receiver_finish_feedback_training(
+	struct v34_phase34_receiver *receiver, bool select_precoder,
+	struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT])
+{
+	struct v34_phase34_receiver next;
+	struct v34_q14_coefficient learned[V34_PRECODER_TAP_COUNT];
+	struct v34_q14_coefficient selected[V34_PRECODER_TAP_COUNT] = { 0 };
+
+	if (coefficients == NULL ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    coefficients, sizeof(selected)))
+		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
+	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
+	    receiver->stage != V34_PHASE34_RECEIVER_PHASE4 ||
+	    receiver->feedback_training_complete)
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	next = *receiver;
+	if (v34_adaptive_equalizer_finish_feedback_training(
+		    &next.equalizer, learned) != V34_ADAPTIVE_EQUALIZER_OK)
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	if (select_precoder)
+		memcpy(selected, learned, sizeof(selected));
+	memcpy(next.precoder_coefficients, selected, sizeof(selected));
+	next.feedback_training_complete = true;
+	next.precoder_selected = select_precoder;
+	if (!v34_phase34_receiver_is_valid(&next))
+		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
+	*receiver = next;
+	memcpy(coefficients, selected, sizeof(selected));
+	return V34_PHASE34_RECEIVER_OK;
+}
+
 enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 	struct v34_phase34_receiver *receiver,
 	const struct v34_power_normalizer *normalizer,
@@ -695,9 +754,13 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 		    sizeof(*coefficients) * V34_PRECODER_TAP_COUNT))
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
-	    !v34_phase34_receiver_is_complete(receiver))
+	    !v34_phase34_receiver_is_complete(receiver) ||
+	    !receiver->feedback_training_complete)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	if (geometry->symbol_rate != receiver->transmitting_profile.symbol_rate)
+		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
+	if (!precoder_coefficients_match(
+		    receiver->precoder_coefficients, coefficients))
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	if (v34_data_decision_receiver_init(
 		    &data, normalizer, geometry, expanded_shaping,
@@ -707,8 +770,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	if (v34_adaptive_equalizer_set_feedback_mode(
-		    &next.equalizer,
-		    data_feedback_mode(&data)) !=
+		    &next.equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	next.semantic =

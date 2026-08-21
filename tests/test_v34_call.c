@@ -385,9 +385,11 @@ static bool test_pcmu_call(void)
 	      !v34_call_has_failed(&caller.call) &&
 	      !v34_call_has_failed(&answerer.call) &&
 	      caller.call.state.phase4.receive_mode ==
-		      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY &&
+		      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
 	      answerer.call.state.phase4.receive_mode ==
 		      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
+	      caller.call.state.phase4.receive.persistent.stage ==
+		      V34_PHASE34_RECEIVER_DATA &&
 	      answerer.call.state.phase4.receive.persistent.stage ==
 		      V34_PHASE34_RECEIVER_DATA &&
 	      v34_call_get_data_startup(&caller.call, &caller_startup) &&
@@ -447,9 +449,11 @@ static bool check_symmetric_call(
 		    caller.mapping_frames_received >= 4u &&
 		    answerer.mapping_frames_received >= 4u) {
 			CHECK(caller.call.state.phase4.receive_mode ==
-				      V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY &&
+				      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
 			      answerer.call.state.phase4.receive_mode ==
 				      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
+			      caller.call.state.phase4.receive.persistent.stage ==
+				      V34_PHASE34_RECEIVER_DATA &&
 			      answerer.call.state.phase4.receive.persistent.stage ==
 				      V34_PHASE34_RECEIVER_DATA,
 			      "rate %u call did not retain its receive owners",

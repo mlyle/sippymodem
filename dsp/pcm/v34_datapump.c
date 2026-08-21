@@ -133,6 +133,28 @@ static uint8_t maximum_enabled_rate(
 	return 0;
 }
 
+static bool needs_compatibility_receiver(
+	bool caller, enum v34_symbol_rate symbol_rate,
+	uint8_t data_rate_2400_bps_units)
+{
+	if (!caller)
+		return false;
+	switch (symbol_rate) {
+	case V34_SYMBOL_RATE_3000:
+		return data_rate_2400_bps_units >= 7;
+	case V34_SYMBOL_RATE_3200:
+		return data_rate_2400_bps_units >= 12;
+	case V34_SYMBOL_RATE_3429:
+		return data_rate_2400_bps_units >= 10;
+	case V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_2800:
+	case V34_SYMBOL_RATE_COUNT:
+		return false;
+	}
+	return false;
+}
+
 static uint16_t enabled_rate_mask(
 	const struct modem *modem, enum v34_symbol_rate *symbol_rate,
 	uint8_t *highest_rate_units)
@@ -267,6 +289,9 @@ static bool call_configuration(
 					 V34_CONSTELLATION_4_POINT,
 			.sample_rate = MODEM_RATE,
 			.nominal_peak_amplitude = V34_NOMINAL_AMPLITUDE,
+			.use_compatibility_receiver =
+				needs_compatibility_receiver(
+					caller, symbol_rate, highest_rate_units),
 		},
 		.phase4 = {
 			.receive = {

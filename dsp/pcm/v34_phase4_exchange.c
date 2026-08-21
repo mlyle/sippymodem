@@ -232,6 +232,19 @@ static bool receive_is_in_e(
 		       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_E;
 }
 
+static bool receive_is_waiting_for_answer_s(
+	const struct v34_phase4_exchange *exchange)
+{
+	return exchange->receive_mode ==
+		       V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT ?
+	       exchange->receive.persistent.stage ==
+		       V34_PHASE34_RECEIVER_PHASE4 &&
+		       exchange->receive.persistent.semantic.phase4.stage ==
+		       V34_PHASE4_DECISION_RECEIVER_ANSWER_S :
+	       exchange->receive.training.state.phase4.control.stage ==
+		       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S;
+}
+
 static bool receive_is_complete(
 	const struct v34_phase4_exchange *exchange)
 {
@@ -374,6 +387,30 @@ static bool transmitter_mp_matches(
 		      sizeof(frame)) == 0;
 }
 
+static bool persistent_feedback_matches_mp(
+	const struct v34_phase4_exchange *exchange)
+{
+	const struct v34_phase34_receiver *receiver;
+
+	if (exchange->receive_mode !=
+	    V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT)
+		return true;
+	receiver = &exchange->receive.persistent;
+	if (receiver->feedback_training_complete !=
+	    exchange->transmit_mp_started)
+		return false;
+	if (!receiver->feedback_training_complete)
+		return true;
+	if (receiver->precoder_selected !=
+	    (exchange->transmit_mp.type == V34_MP_RECORD_TYPE1))
+		return false;
+	return exchange->transmit_mp.type == V34_MP_RECORD_TYPE0 ||
+	       memcmp(receiver->precoder_coefficients,
+		      exchange->transmit_mp.parameters.type1
+			      .precoder_coefficients,
+		      sizeof(receiver->precoder_coefficients)) == 0;
+}
+
 static bool transmitter_stage_is_valid(
 	const struct v34_phase4_exchange *exchange)
 {
@@ -428,10 +465,8 @@ bool v34_phase4_exchange_is_valid(
 	     !exchange->receive_data_active &&
 	     exchange->receive.training.stage !=
 		     V34_TRAINING_RECEIVER_PHASE4) ||
-	    (exchange->receive_mode ==
-		     V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
-	     exchange->local_role != V34_ANSWERING_STATION) ||
 	    !transmitter_stage_is_valid(exchange) ||
+	    !persistent_feedback_matches_mp(exchange) ||
 	    !transmitter_mp_matches(exchange) || !data_state_is_valid(exchange))
 		return false;
 	if (exchange->local_role !=
@@ -462,9 +497,6 @@ bool v34_phase4_exchange_is_valid(
 		return !exchange->finish_j_requested;
 	if (exchange->local_role != V34_CALLING_STATION)
 		return false;
-	if (exchange->receive_mode !=
-	    V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY)
-		return false;
 	if (exchange->finish_j_requested)
 		return !exchange->transmit_data_active &&
 		       exchange->transmit.training.stage ==
@@ -473,8 +505,7 @@ bool v34_phase4_exchange_is_valid(
 	       exchange->transmit.training.stage !=
 		       V34_TRAINING_TRANSMITTER_PHASE3 ||
 	       (!exchange->receive_data_active &&
-		exchange->receive.training.state.phase4.control.stage ==
-		       V34_PHASE4_EQUALIZER_RECEIVER_STAGE_ANSWER_S);
+		receive_is_waiting_for_answer_s(exchange));
 }
 
 static enum v34_phase4_exchange_result transmit_result(
@@ -654,6 +685,28 @@ static enum v34_phase4_exchange_result start_transmit_mp(
 	return transmit_result(result);
 }
 
+static enum v34_phase4_exchange_result finish_feedback_training(
+	struct v34_phase4_exchange *exchange)
+{
+	struct v34_q14_coefficient coefficients[V34_PRECODER_TAP_COUNT];
+	bool select_precoder;
+
+	if (exchange->receive_mode !=
+	    V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT)
+		return V34_PHASE4_EXCHANGE_OK;
+	select_precoder =
+		exchange->transmit_mp.type == V34_MP_RECORD_TYPE1;
+	if (v34_phase34_receiver_finish_feedback_training(
+		    &exchange->receive.persistent, select_precoder,
+		    coefficients) != V34_PHASE34_RECEIVER_OK)
+		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+	if (select_precoder)
+		memcpy(exchange->transmit_mp.parameters.type1
+			       .precoder_coefficients,
+		       coefficients, sizeof(coefficients));
+	return V34_PHASE4_EXCHANGE_OK;
+}
+
 static enum v34_phase4_exchange_result start_transmit_data(
 	struct v34_phase4_exchange *exchange, uint32_t *events)
 {
@@ -700,6 +753,9 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_J_FINISHED;
 	}
 	if (!exchange->transmit_mp_started && trn_target_complete(exchange)) {
+		result = finish_feedback_training(exchange);
+		if (result != V34_PHASE4_EXCHANGE_OK)
+			return result;
 		result = start_transmit_mp(exchange, false);
 		if (result != V34_PHASE4_EXCHANGE_OK)
 			return result;

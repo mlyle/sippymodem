@@ -469,10 +469,6 @@ static bool test_generated_online_exchange(void)
 	struct v34_data_startup answerer_startup;
 	struct v34_mp_record caller_peer;
 	struct v34_mp_record answerer_peer;
-	struct v34_mp_record expected_caller_peer =
-		mp_record(V34_ANSWERING_STATION);
-	struct v34_mp_record expected_answerer_peer =
-		mp_record(V34_CALLING_STATION);
 	uint32_t caller_seen;
 	uint32_t answerer_seen;
 
@@ -538,9 +534,15 @@ static bool test_generated_online_exchange(void)
 		      &caller.phase4, &caller_peer) &&
 	      v34_phase4_exchange_get_peer_mp(
 		      &answerer.phase4, &answerer_peer) &&
-	      mp_records_are_equal(&caller_peer, &expected_caller_peer) &&
 	      mp_records_are_equal(
-		      &answerer_peer, &expected_answerer_peer),
+		      &caller_peer, &answerer.phase4.transmit_mp) &&
+	      mp_records_are_equal(
+		      &answerer_peer, &caller.phase4.transmit_mp) &&
+	      caller.phase4.receive.persistent.feedback_training_complete &&
+	      caller.phase4.receive.persistent.precoder_selected &&
+	      answerer.phase4.receive.persistent
+		      .feedback_training_complete &&
+	      !answerer.phase4.receive.persistent.precoder_selected,
 	      "Phase 4 owners did not retain normalized peer records");
 	return true;
 }
@@ -679,6 +681,10 @@ static bool test_acknowledged_first_record(void)
 	      "preparation snapshot cannot model an acknowledged first record");
 	pending = *snapshot;
 	if (!pending.transmit_mp_started) {
+		struct v34_q14_coefficient
+			coefficients[V34_PRECODER_TAP_COUNT];
+		enum v34_training_transmitter_result start_result;
+
 		for (size_t sample_index = 0;
 		     pending.transmit.training.phase4_trn_symbols < 2u * 3000u;
 		     ++sample_index) {
@@ -690,10 +696,24 @@ static bool test_acknowledged_first_record(void)
 				      V34_TRAINING_TRANSMITTER_OK,
 			      "answerer TRN did not reach its MP boundary");
 		}
-		CHECK(v34_training_transmitter_start_mp_type0(
-			      &pending.transmit.training,
-			      &pending.transmit_mp.parameters.type0) ==
-			      V34_TRAINING_TRANSMITTER_OK,
+		CHECK(v34_phase34_receiver_finish_feedback_training(
+			      &pending.receive.persistent,
+			      pending.transmit_mp.type == V34_MP_RECORD_TYPE1,
+			      coefficients) == V34_PHASE34_RECEIVER_OK,
+		      "answerer feedback did not freeze at its MP boundary");
+		if (pending.transmit_mp.type == V34_MP_RECORD_TYPE1) {
+			memcpy(pending.transmit_mp.parameters.type1
+				       .precoder_coefficients,
+			       coefficients, sizeof(coefficients));
+			start_result = v34_training_transmitter_start_mp_type1(
+				&pending.transmit.training,
+				&pending.transmit_mp.parameters.type1);
+		} else {
+			start_result = v34_training_transmitter_start_mp_type0(
+				&pending.transmit.training,
+				&pending.transmit_mp.parameters.type0);
+		}
+		CHECK(start_result == V34_TRAINING_TRANSMITTER_OK,
 		      "answerer local MP did not start");
 		pending.transmit_mp_started = true;
 		CHECK(v34_phase4_exchange_is_valid(&pending),

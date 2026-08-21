@@ -64,6 +64,8 @@ struct v34_phase34_receiver {
 	struct v34_adaptive_equalizer equalizer;
 	union v34_phase34_receiver_semantic_state semantic;
 	struct v34_phase3_decision_handoff phase3_handoff;
+	struct v34_q14_coefficient
+		precoder_coefficients[V34_PRECODER_TAP_COUNT];
 	struct v34_phase3_profile transmitting_profile;
 	uint32_t tracking_symbols;
 	uint16_t decoder_power_q15;
@@ -71,6 +73,8 @@ struct v34_phase34_receiver {
 	enum v34_phase34_receiver_stage stage;
 	bool signal_started;
 	bool tracking_started;
+	bool feedback_training_complete;
+	bool precoder_selected;
 	bool failed;
 	bool initialized;
 };
@@ -102,6 +106,16 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_e(
 	struct v34_phase34_receiver *receiver);
 enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
 	struct v34_phase34_receiver *receiver);
+
+/* End decision-feedback training at the local MP boundary. A Type 1 MP owns
+ * the returned learned coefficients; Type 0 selects a zero-coefficient
+ * receive path while still freezing the learned filter and clearing its B1
+ * history. */
+enum v34_phase34_receiver_result
+v34_phase34_receiver_finish_feedback_training(
+	struct v34_phase34_receiver *receiver, bool select_precoder,
+	struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT]);
 
 /* Replace the completed Phase 4 semantic owner with a fresh B1/data decoder
  * while retaining the exact timing and adaptive-equalizer sample boundary. */

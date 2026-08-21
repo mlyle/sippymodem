@@ -233,8 +233,8 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 			       V34_PHASE3_EXCHANGE_INVALID_ARGUMENT :
 			       V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 	}
-	if (local_transmit->local_role == V34_ANSWERING_STATION &&
-	    configuration->sample_rate == V34_RECEIVE_TIMING_SAMPLE_RATE) {
+	if (configuration->sample_rate == V34_RECEIVE_TIMING_SAMPLE_RATE &&
+	    !configuration->use_compatibility_receiver) {
 		initialized.receive.mode =
 			V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT;
 		if (v34_phase34_receiver_init(
@@ -420,10 +420,12 @@ static enum v34_phase3_exchange_result drive_receiver(
 			return V34_PHASE3_EXCHANGE_OK;
 		case V34_PHASE34_RECEIVER_PHASE3_S_DETECTED:
 			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_S_DETECTED;
-			if (exchange->transmit.symbols.stage !=
-			    V34_PHASE3_TRANSMITTER_J)
-				return V34_PHASE3_EXCHANGE_SEQUENCE_MISMATCH;
-			exchange->stop_transmit_requested = true;
+			if (exchange->local_role == V34_ANSWERING_STATION) {
+				if (exchange->transmit.symbols.stage !=
+				    V34_PHASE3_TRANSMITTER_J)
+					return V34_PHASE3_EXCHANGE_SEQUENCE_MISMATCH;
+				exchange->stop_transmit_requested = true;
+			}
 			return V34_PHASE3_EXCHANGE_OK;
 		case V34_PHASE34_RECEIVER_MD_COMPLETE:
 			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_MD_COMPLETE;
@@ -437,6 +439,11 @@ static enum v34_phase3_exchange_result drive_receiver(
 			return V34_PHASE3_EXCHANGE_OK;
 		case V34_PHASE34_RECEIVER_J_DETECTED:
 			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_J_DETECTED;
+			if (exchange->local_role == V34_CALLING_STATION) {
+				exchange->transmit_started = true;
+				*events |=
+					V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED;
+			}
 			return V34_PHASE3_EXCHANGE_OK;
 		case V34_PHASE34_RECEIVER_FAILED:
 			return V34_PHASE3_EXCHANGE_FAILED;

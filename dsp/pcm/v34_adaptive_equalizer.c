@@ -202,6 +202,48 @@ v34_adaptive_equalizer_set_feedback_mode(
 }
 
 enum v34_adaptive_equalizer_result
+v34_adaptive_equalizer_finish_feedback_training(
+	struct v34_adaptive_equalizer *equalizer,
+	struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT])
+{
+	struct v34_adaptive_equalizer next;
+	struct v34_q14_coefficient frozen[V34_PRECODER_TAP_COUNT];
+
+	if (coefficients == NULL ||
+	    memory_regions_overlap(
+		    equalizer, equalizer == NULL ? 0 : sizeof(*equalizer),
+		    coefficients, sizeof(frozen)))
+		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
+	if (!v34_adaptive_equalizer_is_valid(equalizer) ||
+	    equalizer->decision_pending ||
+	    equalizer->feedback_mode != V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN)
+		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		size_t feedback_tap = V34_PRECODER_TAP_COUNT - tap - 1u;
+
+		frozen[tap] = (struct v34_q14_coefficient){
+			.real = equalizer->feedback
+				.coefficient_a[feedback_tap],
+			.imaginary = equalizer->feedback
+				.coefficient_b[feedback_tap],
+		};
+	}
+	next = *equalizer;
+	memset(next.feedback.in_phase_history, 0,
+	       sizeof(next.feedback.in_phase_history));
+	memset(next.feedback.quadrature_history, 0,
+	       sizeof(next.feedback.quadrature_history));
+	next.feedback_mode = V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE;
+	next.lineage = lineage_tag(next.lineage, 6);
+	if (!v34_adaptive_equalizer_is_valid(&next))
+		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
+	*equalizer = next;
+	memcpy(coefficients, frozen, sizeof(frozen));
+	return V34_ADAPTIVE_EQUALIZER_OK;
+}
+
+enum v34_adaptive_equalizer_result
 v34_adaptive_equalizer_begin_tracking(
 	struct v34_adaptive_equalizer *equalizer)
 {

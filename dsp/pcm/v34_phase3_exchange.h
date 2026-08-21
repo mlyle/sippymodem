@@ -44,6 +44,9 @@ struct v34_phase3_exchange_configuration {
 	enum v34_constellation_size requested_remote_constellation;
 	uint32_t sample_rate;
 	int16_t nominal_peak_amplitude;
+	/* Retain the bounded floating-point receiver for profiles whose
+	 * persistent fixed-point data continuation is not yet qualified. */
+	bool use_compatibility_receiver;
 };
 
 enum v34_phase3_exchange_receive_mode {
