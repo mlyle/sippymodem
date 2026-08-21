@@ -16,8 +16,6 @@ enum {
 	PHASE3_J_SYMBOLS = V34_PHASE3_J_PATTERN_SYMBOLS * 5,
 	PHASE4_TRN_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 384,
 	SAMPLE_LIMIT = 40000,
-	MINIMUM_3000_RATE_2400_BPS_UNITS = 2,
-	MAXIMUM_3000_RATE_2400_BPS_UNITS = 12,
 };
 
 struct line_source {
@@ -51,20 +49,19 @@ static struct v34_data_direction_parameters data_parameters(uint8_t rate)
 	};
 }
 
-static struct v34_phase3_profile profile(
-	enum v34_station_role role, uint8_t rate)
+static bool profile(
+	struct v34_phase3_profile *selected, enum v34_station_role role,
+	enum v34_symbol_rate symbol_rate, uint8_t rate, bool high_carrier)
 {
-	return (struct v34_phase3_profile){
-		.symbol_rate_numerator = 3000,
-		.symbol_rate_denominator = 1,
-		.carrier_frequency_numerator = 2000,
-		.carrier_frequency_denominator = 1,
-		.symbol_rate = V34_SYMBOL_RATE_3000,
-		.local_role = role,
+	const struct v34_info1_probe_result probe = {
+		.high_carrier = high_carrier,
 		.preemphasis_filter_index = 3,
 		.projected_data_rate_2400_bps_units = rate,
-		.high_carrier = true,
 	};
+
+	return v34_phase3_profile_init(
+		       selected, role, symbol_rate, &probe, 0, 0) ==
+	       V34_PHASE3_PROFILE_OK;
 }
 
 static struct v34_mp_parameters mp_parameters(
@@ -182,9 +179,8 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 
 static bool test_validation(void)
 {
-	struct v34_phase3_profile valid =
-		profile(V34_CALLING_STATION, 8);
-	struct v34_phase3_profile invalid = valid;
+	struct v34_phase3_profile valid;
+	struct v34_phase3_profile invalid;
 	struct v34_phase34_receiver receiver;
 	struct v34_phase34_receiver saved;
 	struct v34_phase3_decision_handoff handoff;
@@ -192,6 +188,11 @@ static bool test_validation(void)
 	struct v34_phase34_receive_output output;
 	struct v34_phase34_receive_output saved_output;
 
+	CHECK(profile(
+		      &valid, V34_CALLING_STATION, V34_SYMBOL_RATE_3000, 8,
+		      true),
+	      "validation profile did not initialize");
+	invalid = valid;
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
 	invalid.symbol_rate_denominator = 0;
@@ -246,9 +247,11 @@ static bool test_validation(void)
 	return true;
 }
 
-static bool test_training_case(enum v34_station_role role, uint8_t rate)
+static bool test_training_case(
+	enum v34_station_role role, enum v34_symbol_rate symbol_rate,
+	uint8_t rate, bool high_carrier)
 {
-	struct v34_phase3_profile transmitting_profile = profile(role, rate);
+	struct v34_phase3_profile transmitting_profile;
 	struct v34_phase34_receiver receiver;
 	struct v34_phase3_decision_handoff handoff;
 	struct line_source source;
@@ -266,7 +269,10 @@ static bool test_training_case(enum v34_station_role role, uint8_t rate)
 	bool e_complete = false;
 	bool b1_complete = false;
 
-	CHECK(v34_phase34_receiver_init(
+	CHECK(profile(
+		      &transmitting_profile, role, symbol_rate, rate,
+		      high_carrier) &&
+	      v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
 		      V34_CONSTELLATION_16_POINT) ==
 		      V34_PHASE34_RECEIVER_OK &&
@@ -346,7 +352,11 @@ static bool test_training_case(enum v34_station_role role, uint8_t rate)
 			struct v34_frame_geometry wrong =
 				source.mapping.schedule.geometry;
 
-			wrong.symbol_rate = V34_SYMBOL_RATE_2800;
+			wrong.symbol_rate =
+				source.mapping.schedule.geometry.symbol_rate ==
+						V34_SYMBOL_RATE_2800 ?
+					V34_SYMBOL_RATE_3000 :
+					V34_SYMBOL_RATE_2800;
 			CHECK(v34_phase34_receiver_is_complete(&receiver) &&
 			      v34_phase34_receiver_start_data(
 				      &receiver,
@@ -462,10 +472,12 @@ static bool test_training_case(enum v34_station_role role, uint8_t rate)
 		      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
 	      !v34_phase34_receiver_is_complete(&receiver) &&
 	      !v34_phase34_receiver_has_failed(&receiver),
-	      "role %u rate %u receiver did not reach E: timing=%u S3=%u PP=%u "
+	      "role %u symbol=%u rate=%u receiver did not reach E: "
+	      "timing=%u S3=%u PP=%u "
 	      "J=%u S4=%u TRN=%u initial=%u final=%u source=%u "
 	      "rejects=%u B1=%u mapped=%u stage=%u failed=%u",
-	      role, rate, timing_events, phase3_s_events, pp_events, j_events,
+	      role, symbol_rate, rate, timing_events, phase3_s_events,
+	      pp_events, j_events,
 	      phase4_s_events, trn_events, initial_records, final_record,
 	      source.completed_records, rejected_records, b1_frames,
 	      mapping_frames, receiver.stage,
@@ -483,13 +495,55 @@ static bool test_training_case(enum v34_station_role role, uint8_t rate)
 
 static bool test_training(void)
 {
-	for (uint8_t rate = MINIMUM_3000_RATE_2400_BPS_UNITS;
-	     rate <= MAXIMUM_3000_RATE_2400_BPS_UNITS; ++rate) {
-		if (!test_training_case(V34_CALLING_STATION, rate) ||
-		    !test_training_case(V34_ANSWERING_STATION, rate))
-			return false;
+	static const struct {
+		enum v34_symbol_rate symbol_rate;
+		bool high_carrier;
+	} cases[] = {
+		{ V34_SYMBOL_RATE_2400, false },
+		{ V34_SYMBOL_RATE_2400, true },
+		{ V34_SYMBOL_RATE_2743, false },
+		{ V34_SYMBOL_RATE_2800, true },
+		{ V34_SYMBOL_RATE_3000, false },
+		{ V34_SYMBOL_RATE_3000, true },
+		{ V34_SYMBOL_RATE_3200, true },
+	};
+	bool success = true;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v34_frame_geometry geometry;
+		uint8_t selected_rates[2];
+		uint8_t minimum = 0;
+		uint8_t maximum = 0;
+		uint8_t selected_count;
+
+		for (uint8_t rate = 1; rate <= V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS;
+		     ++rate) {
+			if (v34_frame_geometry_init(
+				    &geometry, cases[index].symbol_rate, rate,
+				    false) != V34_FRAME_SCHEDULE_OK)
+				continue;
+			if (minimum == 0)
+				minimum = rate;
+			maximum = rate;
+		}
+		CHECK(minimum != 0 && maximum >= minimum,
+		      "symbol rate %u has no supported data geometry",
+		      cases[index].symbol_rate);
+		selected_rates[0] = minimum;
+		selected_rates[1] = maximum;
+		selected_count = maximum == minimum ? 1u : 2u;
+		for (uint8_t selection = 0; selection < selected_count;
+		     ++selection)
+			for (unsigned int role = V34_CALLING_STATION;
+			     role <= V34_ANSWERING_STATION; ++role)
+				if (!test_training_case(
+					    (enum v34_station_role)role,
+					    cases[index].symbol_rate,
+					    selected_rates[selection],
+					    cases[index].high_carrier))
+					success = false;
 	}
-	return true;
+	return success;
 }
 
 int main(void)

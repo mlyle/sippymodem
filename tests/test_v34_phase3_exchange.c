@@ -79,13 +79,12 @@ static struct v34_phase3_profile profile(enum v34_station_role role)
 
 static bool profile_at_rate(
 	enum v34_station_role role, enum v34_symbol_rate rate,
-	struct v34_phase3_profile *selected)
+	bool high_carrier, struct v34_phase3_profile *selected)
 {
 	struct v34_info1_probe_result probe = {
 		.preemphasis_filter_index = 3,
 		.projected_data_rate_2400_bps_units = 8,
-		.high_carrier = rate != V34_SYMBOL_RATE_3429 &&
-			role == V34_ANSWERING_STATION,
+		.high_carrier = high_carrier,
 	};
 
 	return v34_phase3_profile_init(
@@ -331,9 +330,11 @@ static bool test_trn_duration_policy(void)
 		struct v34_phase3_exchange exchange;
 
 		CHECK(profile_at_rate(
-			      V34_CALLING_STATION, cases[index].rate, &caller) &&
+			      V34_CALLING_STATION, cases[index].rate, false,
+			      &caller) &&
 		      profile_at_rate(
 			      V34_ANSWERING_STATION, cases[index].rate,
+			      cases[index].rate != V34_SYMBOL_RATE_3429,
 			      &answerer) &&
 		      v34_phase3_exchange_init(
 			      &exchange, &caller, &answerer, &config) ==
@@ -374,6 +375,14 @@ static bool test_generated_duplex_exchange(void)
 
 static bool test_receiver_selection(void)
 {
+	static const bool supported[V34_SYMBOL_RATE_COUNT][2] = {
+		[V34_SYMBOL_RATE_2400] = { true, true },
+		[V34_SYMBOL_RATE_2743] = { true, false },
+		[V34_SYMBOL_RATE_2800] = { false, true },
+		[V34_SYMBOL_RATE_3000] = { true, true },
+		[V34_SYMBOL_RATE_3200] = { false, true },
+		[V34_SYMBOL_RATE_3429] = { false, false },
+	};
 	struct v34_phase3_profile caller = profile(V34_CALLING_STATION);
 	struct v34_phase3_profile answerer = profile(V34_ANSWERING_STATION);
 	struct v34_phase3_exchange_configuration config =
@@ -401,14 +410,24 @@ static bool test_receiver_selection(void)
 	      exchange.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
 	      "projected rate incorrectly changed the persistent receiver");
-	CHECK(profile_at_rate(
-		      V34_CALLING_STATION, V34_SYMBOL_RATE_2800, &caller) &&
-	      v34_phase3_exchange_init(
-		      &exchange, &answerer, &caller, &config) ==
-		      V34_PHASE3_EXCHANGE_OK &&
-	      exchange.receive.mode ==
-		      V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
-	      "unqualified symbol rate did not retain compatibility");
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate)
+		for (unsigned int high = 0; high < 2; ++high) {
+			enum v34_phase3_exchange_receive_mode expected =
+				supported[rate][high] ?
+					V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT :
+					V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY;
+
+			CHECK(profile_at_rate(
+				      V34_CALLING_STATION,
+				      (enum v34_symbol_rate)rate, high != 0,
+				      &caller) &&
+			      v34_phase3_exchange_init(
+				      &exchange, &answerer, &caller, &config) ==
+				      V34_PHASE3_EXCHANGE_OK &&
+			      exchange.receive.mode == expected,
+			      "rate %u carrier %u selected receiver %u instead of %u",
+			      rate, high, exchange.receive.mode, expected);
+		}
 	return true;
 }
 

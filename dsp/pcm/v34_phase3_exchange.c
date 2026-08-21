@@ -21,11 +21,29 @@ static bool use_persistent_answer_receiver(
 	const struct v34_phase3_profile *peer_transmit,
 	uint32_t sample_rate)
 {
-	/* The final primary rate is selected later by MP. One persistent line
-	 * owner covers the complete 3000-symbol/s training and data range. */
+	bool supported = false;
+
+	/* Select profiles whose complete S-through-data path is covered by the
+	 * persistent physical owner. The remaining profiles stay compatible. */
+	switch (peer_transmit->symbol_rate) {
+	case V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_3000:
+		supported = true;
+		break;
+	case V34_SYMBOL_RATE_2743:
+		supported = !peer_transmit->high_carrier;
+		break;
+	case V34_SYMBOL_RATE_2800:
+	case V34_SYMBOL_RATE_3200:
+		supported = peer_transmit->high_carrier;
+		break;
+	case V34_SYMBOL_RATE_3429:
+	case V34_SYMBOL_RATE_COUNT:
+		supported = false;
+		break;
+	}
 	return local_transmit->local_role == V34_ANSWERING_STATION &&
-	       peer_transmit->symbol_rate == V34_SYMBOL_RATE_3000 &&
-	       sample_rate == V34_RECEIVE_TIMING_SAMPLE_RATE;
+	       supported && sample_rate == V34_RECEIVE_TIMING_SAMPLE_RATE;
 }
 
 static const struct v34_phase3_profile *receiver_profile(
