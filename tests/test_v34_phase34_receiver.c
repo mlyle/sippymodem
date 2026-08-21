@@ -468,6 +468,8 @@ static bool test_training_case(
 				      V34_PHASE34_RECEIVER_OK &&
 			      feedback_receiver.equalizer.feedback_mode ==
 				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
+			      feedback_receiver.timing.timing.mode ==
+				      V34_TIMING_CONTROL_HOLD &&
 			      v34_phase34_receiver_is_valid(
 				      &feedback_receiver) &&
 			      v34_phase34_receiver_start_data(
@@ -479,7 +481,12 @@ static bool test_training_case(
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_OK &&
 			      receiver.equalizer.feedback_mode ==
-				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE,
+				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
+			      receiver.timing.timing.mode ==
+				      V34_TIMING_CONTROL_HOLD &&
+			      receiver.timing.timing.proportional_gain == 0x01f4 &&
+			      receiver.timing.timing.integral_gain == 0x0001 &&
+			      receiver.timing.timing.timeout == -1,
 			      "role %u rate %u did not enter data at E", role,
 			      rate);
 			saved = receiver;

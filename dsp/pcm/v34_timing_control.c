@@ -318,6 +318,25 @@ static void set_mode_parameters(struct v34_timing_control *control)
 	}
 }
 
+enum v34_timing_control_result v34_timing_control_enter_hold(
+	struct v34_timing_control *control)
+{
+	struct v34_timing_control next;
+
+	if (!v34_timing_control_is_valid(control) ||
+	    control->mode == V34_TIMING_CONTROL_LOCKED ||
+	    control->mode == V34_TIMING_CONTROL_INITIAL_PHASE)
+		return V34_TIMING_CONTROL_INVALID_STATE;
+	next = *control;
+	next.mode = V34_TIMING_CONTROL_HOLD;
+	next.state_count = 0;
+	set_mode_parameters(&next);
+	if (!v34_timing_control_is_valid(&next))
+		return V34_TIMING_CONTROL_INVALID_STATE;
+	*control = next;
+	return V34_TIMING_CONTROL_OK;
+}
+
 static int32_t timing_phase_error(
 	const struct v34_timing_control *control,
 	const int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS])

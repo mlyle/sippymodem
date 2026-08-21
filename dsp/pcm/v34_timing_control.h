@@ -72,6 +72,11 @@ bool v34_timing_control_is_valid(
 enum v34_timing_control_result v34_timing_control_begin_acquisition(
 	struct v34_timing_control *control, bool full_pull_in);
 
+/* Retain the trained fractional clock while reducing the data-mode loop to
+ * its bounded long-term tracking profile. */
+enum v34_timing_control_result v34_timing_control_enter_hold(
+	struct v34_timing_control *control);
+
 /* Consume one complete timing-error group and publish the increment for the
  * next symbol interval. Rejected calls leave the owner and output unchanged. */
 enum v34_timing_control_result v34_timing_control_process(

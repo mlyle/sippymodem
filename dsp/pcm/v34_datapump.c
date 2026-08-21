@@ -141,7 +141,7 @@ static bool needs_compatibility_receiver(
 		return false;
 	switch (symbol_rate) {
 	case V34_SYMBOL_RATE_3000:
-		return data_rate_2400_bps_units >= 7;
+		return data_rate_2400_bps_units >= 11;
 	case V34_SYMBOL_RATE_3200:
 		return data_rate_2400_bps_units >= 12;
 	case V34_SYMBOL_RATE_3429:

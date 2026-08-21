@@ -275,6 +275,68 @@ static bool test_ownership(void)
 	return v34_timing_control_is_valid(&control);
 }
 
+static bool test_hold_transition(void)
+{
+	struct v34_timing_control uninitialized = { 0 };
+	int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS];
+	uint32_t random = UINT32_C(0x2d6414c3);
+
+	CHECK(v34_timing_control_enter_hold(NULL) ==
+			      V34_TIMING_CONTROL_INVALID_STATE &&
+	      v34_timing_control_enter_hold(&uninitialized) ==
+			      V34_TIMING_CONTROL_INVALID_STATE,
+	      "V.34 timing hold accepted an absent owner");
+	for (unsigned int role = V34_CALLING_STATION;
+	     role <= V34_ANSWERING_STATION; ++role) {
+		struct v34_timing_control control;
+		struct v34_timing_control saved;
+		struct v34_timing_control expected;
+		uint16_t increment;
+
+		CHECK(v34_timing_control_init(
+			      &control, 8000, 3000, 1,
+			      (enum v34_station_role)role) ==
+			      V34_TIMING_CONTROL_OK,
+		      "V.34 timing hold owner %u did not initialize", role);
+		saved = control;
+		CHECK(v34_timing_control_enter_hold(&control) ==
+			      V34_TIMING_CONTROL_INVALID_STATE &&
+		      memcmp(&control, &saved, sizeof(control)) == 0 &&
+		      v34_timing_control_begin_acquisition(&control, true) ==
+			      V34_TIMING_CONTROL_OK,
+		      "V.34 timing hold changed locked owner %u", role);
+		saved = control;
+		CHECK(v34_timing_control_enter_hold(&control) ==
+			      V34_TIMING_CONTROL_INVALID_STATE &&
+		      memcmp(&control, &saved, sizeof(control)) == 0,
+		      "V.34 timing hold changed pending owner %u", role);
+		generate_observations(&random, role, observations);
+		CHECK(v34_timing_control_process(
+			      &control, observations, &increment) ==
+			      V34_TIMING_CONTROL_OK,
+		      "V.34 timing owner %u did not acquire before hold", role);
+		expected = control;
+		expected.mode = V34_TIMING_CONTROL_HOLD;
+		expected.state_count = 0;
+		expected.proportional_gain = 0x01f4;
+		expected.integral_gain = 0x0001;
+		expected.timeout = -1;
+		CHECK(v34_timing_control_enter_hold(&control) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "V.34 timing hold changed trained lineage %u", role);
+		for (unsigned int step = 0; step < 512; ++step) {
+			generate_observations(&random, step + 2u, observations);
+			CHECK(v34_timing_control_process(
+				      &control, observations, &increment) ==
+				      V34_TIMING_CONTROL_OK &&
+			      control.mode == V34_TIMING_CONTROL_HOLD,
+			      "V.34 timing hold escaped at %u/%u", role, step);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -283,6 +345,7 @@ int main(void)
 	} tests[] = {
 		{ "exact control", test_exact_control },
 		{ "ownership", test_ownership },
+		{ "data hold", test_hold_transition },
 	};
 	unsigned int failures = 0;
 

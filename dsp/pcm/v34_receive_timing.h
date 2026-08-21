@@ -74,6 +74,10 @@ bool v34_receive_timing_matches_profile(
 enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 	struct v34_receive_timing *timing);
 
+/* Preserve the trained sample epoch and enter the data-mode tracking profile. */
+enum v34_receive_timing_result v34_receive_timing_enter_hold(
+	struct v34_receive_timing *timing);
+
 /* Consume one line sample. SAMPLES_READY publishes the one or two recovered
  * samples produced before this call exhausts its input or completes a symbol
  * interval. symbol_complete identifies the exact second-sample boundary. OK
