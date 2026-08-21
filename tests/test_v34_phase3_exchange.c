@@ -155,6 +155,7 @@ static bool run_generated_duplex_exchange(
 		configuration(V34_CONSTELLATION_4_POINT);
 	struct v34_phase3_exchange caller;
 	struct v34_phase3_exchange answerer;
+	struct v34_phase34_receiver initialized_answerer_receiver;
 	struct test_channel channel = {
 		.delay_samples = delay_samples,
 		.codec = codec,
@@ -166,7 +167,7 @@ static bool run_generated_duplex_exchange(
 	uint32_t answer_silence = 0;
 	uint64_t answerer_samples_at_stop = 0;
 	size_t exchanged_samples = 0;
-	size_t answerer_receive_restart = SAMPLE_LIMIT;
+	size_t answerer_receive_start = SAMPLE_LIMIT;
 	size_t answerer_signal_start = SAMPLE_LIMIT;
 	int16_t last_answer_transmit = 1;
 	bool complete = false;
@@ -176,8 +177,10 @@ static bool run_generated_duplex_exchange(
 		      &caller_configuration) == V34_PHASE3_EXCHANGE_OK &&
 	      v34_phase3_exchange_init(
 		      &answerer, &answerer_profile, &caller_profile,
-		      &answerer_configuration) == V34_PHASE3_EXCHANGE_OK,
+		      &answerer_configuration) == V34_PHASE3_EXCHANGE_OK &&
+	      answerer.receive.mode == V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
 	      "duplex Phase 3 exchange did not initialize");
+	initialized_answerer_receiver = answerer.receive.state.persistent;
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t caller_receive;
 		int16_t answerer_receive;
@@ -190,8 +193,18 @@ static bool run_generated_duplex_exchange(
 		bool answerer_was_transmitting = answerer.transmit_started;
 		bool answerer_signal_was_started =
 			answerer.receive.state.persistent.signal_started;
+		bool answerer_starting_j =
+			answerer.transmit.symbols.stage ==
+				V34_PHASE3_TRANSMITTER_TRN &&
+			answerer.transmit.symbols.trn_symbols ==
+				answerer.trn_target_symbols;
 
 		channel_receive(&channel, &caller_receive, &answerer_receive);
+		CHECK(!answerer_starting_j ||
+		      memcmp(&answerer.receive.state.persistent,
+			     &initialized_answerer_receiver,
+			     sizeof(initialized_answerer_receiver)) == 0,
+		      "answerer receiver advanced before local J");
 		caller_result = v34_phase3_exchange_sample(
 			      &caller, caller_receive,
 			      &next_call_to_answer,
@@ -224,15 +237,16 @@ static bool run_generated_duplex_exchange(
 				answerer.transmit.line.generated_samples;
 		if ((answerer_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
-			answerer_receive_restart = index;
-			CHECK(answerer.receive.mode ==
+			answerer_receive_start = index;
+			CHECK(answerer_starting_j &&
+			      answerer.receive.mode ==
 				      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&
 			      answerer.receive.state.persistent.stage ==
 				      V34_PHASE34_RECEIVER_PHASE3 &&
 			      !answerer.receive.state.persistent.signal_started &&
 			      answerer.receive.state.persistent.timing.carrier.phase ==
 				      0,
-			      "answerer did not restart S reception at local J");
+			      "answerer did not start S reception at local J");
 		}
 		if ((caller_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED) != 0)
@@ -265,7 +279,7 @@ static bool run_generated_duplex_exchange(
 					 .line
 					 .carrier_phase_step *
 			 exchanged_samples) &&
-	      answerer_receive_restart < exchanged_samples &&
+	      answerer_receive_start < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
 	      answerer.receive.mode ==
 		      V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT &&

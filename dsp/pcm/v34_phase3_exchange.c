@@ -379,45 +379,6 @@ static enum v34_phase3_exchange_result drive_silence(
 	return V34_PHASE3_EXCHANGE_OK;
 }
 
-static bool restart_answer_receiver(struct v34_phase3_exchange *exchange)
-{
-	struct v34_phase3_line_receiver restarted;
-	struct v34_phase3_line_receiver_configuration configuration;
-	uint32_t sample_rate;
-	enum v34_phase3_line_receiver_result result;
-
-	if (exchange->receive.mode ==
-	    V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT) {
-		struct v34_phase34_receiver persistent;
-
-		if (v34_phase34_receiver_init(
-			    &persistent,
-			    &exchange->receive.state.persistent.transmitting_profile,
-			    exchange->receive.state.persistent
-				    .phase4_constellation) !=
-		    V34_PHASE34_RECEIVER_OK)
-			return false;
-		exchange->receive.state.persistent = persistent;
-		return true;
-	}
-	configuration.s_gain_adaptation = exchange->receive.state.compatibility
-		.points.configuration.s_gain_adaptation;
-	configuration.pp_equalizer_adaptation = exchange->receive.state
-		.compatibility.points.configuration.pp_equalizer_adaptation;
-	configuration.tracking_equalizer_adaptation = exchange->receive.state
-		.compatibility.points.configuration.tracking_equalizer_adaptation;
-	sample_rate = exchange->receive.state.compatibility.line.channel.sample_rate;
-	result = v34_phase3_line_receiver_init(
-		&restarted,
-		&exchange->receive.state.compatibility.transmitting_profile,
-		sample_rate, &configuration);
-
-	if (result != V34_PHASE3_LINE_RECEIVER_OK)
-		return false;
-	exchange->receive.state.compatibility = restarted;
-	return true;
-}
-
 static enum v34_phase3_exchange_result drive_transmitter(
 	struct v34_phase3_exchange *exchange,
 	int16_t *sample, uint32_t *events)
@@ -439,12 +400,6 @@ static enum v34_phase3_exchange_result drive_transmitter(
 		    exchange->trn_target_symbols) {
 		if (v34_phase3_line_transmitter_start_j(&exchange->transmit) !=
 		    V34_PHASE3_LINE_TRANSMITTER_OK)
-			return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
-		/* The answerer begins looking for caller S at its local J
-		 * boundary. Discard timing accumulated from the preceding peer
-		 * silence instead of carrying a noise-locked clock into S. */
-		if (exchange->local_role == V34_ANSWERING_STATION &&
-		    !restart_answer_receiver(exchange))
 			return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 		*events |= V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED;
 	}
@@ -478,7 +433,7 @@ static enum v34_phase3_exchange_result drive_receiver(
 {
 	/* The answerer deliberately starts caller-S acquisition at its local J
 	 * boundary. Earlier input belongs to the peer's prescribed silence and
-	 * is discarded instead of advancing a receiver that will be reset. */
+	 * is discarded so the initialized receiver begins on that boundary. */
 	if (exchange->local_role == V34_ANSWERING_STATION &&
 	    exchange->transmit.symbols.stage < V34_PHASE3_TRANSMITTER_J)
 		return V34_PHASE3_EXCHANGE_OK;
