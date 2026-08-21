@@ -52,11 +52,12 @@ static struct v34_data_direction_parameters data_parameters(uint8_t rate)
 
 static bool profile(
 	struct v34_phase3_profile *selected, enum v34_station_role role,
-	enum v34_symbol_rate symbol_rate, uint8_t rate, bool high_carrier)
+	enum v34_symbol_rate symbol_rate, uint8_t rate, bool high_carrier,
+	uint8_t preemphasis_filter_index)
 {
 	const struct v34_info1_probe_result probe = {
 		.high_carrier = high_carrier,
-		.preemphasis_filter_index = 3,
+		.preemphasis_filter_index = preemphasis_filter_index,
 		.projected_data_rate_2400_bps_units = rate,
 	};
 
@@ -105,6 +106,11 @@ static bool source_init(
 	struct line_source *source,
 	const struct v34_phase3_profile *transmitting_profile, uint8_t rate)
 {
+	int16_t nominal_peak_amplitude =
+		transmitting_profile->symbol_rate == V34_SYMBOL_RATE_2800 &&
+			!transmitting_profile->high_carrier ?
+			7000 :
+			5000;
 	struct line_source initialized = {
 		.parameters = data_parameters(rate),
 		.initial_mp = mp_parameters(rate, false),
@@ -113,7 +119,8 @@ static bool source_init(
 
 	if (v34_training_transmitter_init(
 		    &initialized.training, transmitting_profile,
-		    V34_CONSTELLATION_16_POINT, SAMPLE_RATE, 5000) !=
+		    V34_CONSTELLATION_16_POINT, SAMPLE_RATE,
+		    nominal_peak_amplitude) !=
 		    V34_TRAINING_TRANSMITTER_OK ||
 	    v34_data_mapping_prepare(
 		    &initialized.mapping, transmitting_profile,
@@ -181,7 +188,7 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 static bool test_validation(void)
 {
 	const struct v34_info1_probe_result reduced_probe = {
-		.preemphasis_filter_index = 8,
+		.preemphasis_filter_index = 3,
 		.projected_data_rate_2400_bps_units = 8,
 	};
 	struct v34_phase3_profile valid;
@@ -196,7 +203,7 @@ static bool test_validation(void)
 
 	CHECK(profile(
 		      &valid, V34_CALLING_STATION, V34_SYMBOL_RATE_3000, 8,
-		      true) &&
+		      true, 3) &&
 	      v34_phase3_profile_init(
 		      &reduced, V34_CALLING_STATION, V34_SYMBOL_RATE_2800,
 		      &reduced_probe, 0, 0) == V34_PHASE3_PROFILE_OK,
@@ -269,7 +276,7 @@ static bool test_validation(void)
 
 static bool test_training_case(
 	enum v34_station_role role, enum v34_symbol_rate symbol_rate,
-	uint8_t rate, bool high_carrier)
+	uint8_t rate, bool high_carrier, uint8_t preemphasis_filter_index)
 {
 	struct v34_phase3_profile transmitting_profile;
 	struct v34_phase34_receiver receiver;
@@ -291,7 +298,7 @@ static bool test_training_case(
 
 	CHECK(profile(
 		      &transmitting_profile, role, symbol_rate, rate,
-		      high_carrier) &&
+		      high_carrier, preemphasis_filter_index) &&
 	      v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
 		      V34_CONSTELLATION_16_POINT) ==
@@ -518,17 +525,19 @@ static bool test_training(void)
 		enum v34_symbol_rate symbol_rate;
 		bool high_carrier;
 		bool caller_transmit_only;
+		bool all_preemphasis_profiles;
 	} cases[] = {
-		{ V34_SYMBOL_RATE_2400, false, false },
-		{ V34_SYMBOL_RATE_2400, true, false },
-		{ V34_SYMBOL_RATE_2743, false, false },
-		{ V34_SYMBOL_RATE_2743, true, false },
-		{ V34_SYMBOL_RATE_2800, true, false },
-		{ V34_SYMBOL_RATE_3000, false, false },
-		{ V34_SYMBOL_RATE_3000, true, false },
-		{ V34_SYMBOL_RATE_3200, false, true },
-		{ V34_SYMBOL_RATE_3200, true, false },
-		{ V34_SYMBOL_RATE_3429, false, false },
+		{ V34_SYMBOL_RATE_2400, false, false, false },
+		{ V34_SYMBOL_RATE_2400, true, false, false },
+		{ V34_SYMBOL_RATE_2743, false, false, false },
+		{ V34_SYMBOL_RATE_2743, true, false, false },
+		{ V34_SYMBOL_RATE_2800, false, true, true },
+		{ V34_SYMBOL_RATE_2800, true, false, false },
+		{ V34_SYMBOL_RATE_3000, false, false, false },
+		{ V34_SYMBOL_RATE_3000, true, false, false },
+		{ V34_SYMBOL_RATE_3200, false, true, false },
+		{ V34_SYMBOL_RATE_3200, true, false, false },
+		{ V34_SYMBOL_RATE_3429, false, false, false },
 	};
 	bool success = true;
 
@@ -555,20 +564,28 @@ static bool test_training(void)
 		selected_rates[0] = minimum;
 		selected_rates[1] = maximum;
 		selected_count = maximum == minimum ? 1u : 2u;
-		for (uint8_t selection = 0; selection < selected_count;
-		     ++selection)
-			for (unsigned int role = V34_CALLING_STATION;
-			     role <= V34_ANSWERING_STATION; ++role) {
-				if (cases[index].caller_transmit_only &&
-				    role != V34_CALLING_STATION)
-					continue;
-				if (!test_training_case(
-					    (enum v34_station_role)role,
-					    cases[index].symbol_rate,
-					    selected_rates[selection],
-					    cases[index].high_carrier))
-					success = false;
-			}
+		for (unsigned int preemphasis =
+			     cases[index].all_preemphasis_profiles ? 0u : 3u;
+		     preemphasis <=
+			     (cases[index].all_preemphasis_profiles ?
+				      V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX :
+				      3u);
+		     ++preemphasis)
+			for (uint8_t selection = 0; selection < selected_count;
+			     ++selection)
+				for (unsigned int role = V34_CALLING_STATION;
+				     role <= V34_ANSWERING_STATION; ++role) {
+					if (cases[index].caller_transmit_only &&
+					    role != V34_CALLING_STATION)
+						continue;
+					if (!test_training_case(
+						    (enum v34_station_role)role,
+						    cases[index].symbol_rate,
+						    selected_rates[selection],
+						    cases[index].high_carrier,
+						    (uint8_t)preemphasis))
+						success = false;
+				}
 	}
 	return success;
 }

@@ -24,12 +24,11 @@ static int16_t initial_gain(
 	const struct v34_phase3_profile *transmitting_profile,
 	const struct v34_timing_control *timing)
 {
-	/* The symmetric 2800-Hz native profile needs acquisition headroom
-	 * through the analytic frontend. Other qualified profiles retain the
-	 * established fast-acquisition level. */
+	/* Low-carrier 2800-Hz profiles need acquisition headroom through the
+	 * analytic frontend. Other profiles retain the established
+	 * fast-acquisition level. */
 	if (transmitting_profile->symbol_rate == V34_SYMBOL_RATE_2800 &&
-	    !transmitting_profile->high_carrier &&
-	    transmitting_profile->preemphasis_filter_index == 8u)
+	    !transmitting_profile->high_carrier)
 		return V34_RECEIVE_TIMING_REDUCED_INITIAL_GAIN;
 	return (int16_t)(timing->phase_limit / 2u);
 }
