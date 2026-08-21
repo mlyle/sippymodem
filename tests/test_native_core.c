@@ -900,7 +900,7 @@ static bool test_at_pcm_profile_controls(void)
 static bool test_at_v34_symbol_rate(void)
 {
 	static const unsigned int supported[] = {
-		2400, 2800, 3000, 3200, 3429,
+		2400, 2743, 2800, 3000, 3200, 3429,
 	};
 	struct modem_driver driver = {
 		.name = "AT V.34 symbol-rate test",
@@ -922,7 +922,7 @@ static bool test_at_v34_symbol_rate(void)
 			      modem->v34_symbol_rate == supported[index],
 		      "AT+V34B rejected %u symbol/s", supported[index]);
 	}
-	strcpy(command, "AT+V34B=2743");
+	strcpy(command, "AT+V34B=2600");
 	CHECK(process_at_command(modem, command) == -1 &&
 		      modem->v34_symbol_rate == 3429,
 	      "AT+V34B accepted an unsupported cadence or changed state");

@@ -65,6 +65,9 @@ static bool symbol_rate_from_number(
 	case 2400:
 		*symbol_rate = V34_SYMBOL_RATE_2400;
 		return true;
+	case 2743:
+		*symbol_rate = V34_SYMBOL_RATE_2743;
+		return true;
 	case 2800:
 		*symbol_rate = V34_SYMBOL_RATE_2800;
 		return true;
@@ -114,6 +117,8 @@ static uint8_t maximum_enabled_rate(
 	switch (symbol_rate) {
 	case V34_SYMBOL_RATE_2400:
 		return 9;
+	case V34_SYMBOL_RATE_2743:
+		return 10;
 	case V34_SYMBOL_RATE_2800:
 		return 11;
 	case V34_SYMBOL_RATE_3000:
@@ -122,7 +127,6 @@ static uint8_t maximum_enabled_rate(
 		return 13;
 	case V34_SYMBOL_RATE_3429:
 		return 14;
-	case V34_SYMBOL_RATE_2743:
 	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}
@@ -166,6 +170,7 @@ static uint16_t enabled_rate_mask(
 static struct v34_info0 baseline_info0(void)
 {
 	return (struct v34_info0){
+		.symbol_rate_2743_supported = true,
 		.symbol_rate_2800_supported = true,
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,
@@ -191,12 +196,16 @@ static union v34_local_info1 baseline_info1(
 		info1.calling.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 		info1.calling.answer_transmit[symbol_rate]
+			.high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
+		info1.calling.answer_transmit[symbol_rate]
 			.preemphasis_filter_index = 8;
 		info1.calling.answer_transmit[symbol_rate]
 			.projected_data_rate_2400_bps_units = projected_rate_units;
 	} else {
 		info1.answering.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+		info1.answering.call_transmit
+			.high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
 		info1.answering.call_transmit
 			.preemphasis_filter_index = 8;
 		info1.answering.call_transmit

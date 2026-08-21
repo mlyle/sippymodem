@@ -625,6 +625,7 @@ static int v34_symbol_rate_is_valid(unsigned long value)
 	switch (value) {
 	case 0:
 	case 2400:
+	case 2743:
 	case 2800:
 	case 3000:
 	case 3200:
@@ -646,7 +647,8 @@ static int process_plus_V34B(struct modem *m, char *p, int *len)
 		p++;
 		*len = 1;
 		if (*p == '?') {
-			const char capabilities[] = "(0,2400,2800,3000,3200,3429)";
+			const char capabilities[] =
+				"(0,2400,2743,2800,3000,3200,3429)";
 
 			modem_send_to_tty(
 				m, capabilities, (int)strlen(capabilities));

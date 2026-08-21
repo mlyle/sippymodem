@@ -27,11 +27,9 @@ static bool use_persistent_answer_receiver(
 	 * S-through-data path has not been qualified. */
 	switch (peer_transmit->symbol_rate) {
 	case V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2743:
 	case V34_SYMBOL_RATE_3000:
 		supported = true;
-		break;
-	case V34_SYMBOL_RATE_2743:
-		supported = !peer_transmit->high_carrier;
 		break;
 	case V34_SYMBOL_RATE_2800:
 		supported = peer_transmit->high_carrier ||

@@ -98,8 +98,12 @@ static enum v34_adaptive_equalizer_feedback_mode expected_feedback_mode(
 static bool starts_after_timing_acquisition(
 	const struct v34_phase34_receiver *receiver)
 {
-	return receiver->transmitting_profile.symbol_rate ==
-	       V34_SYMBOL_RATE_2800;
+	const struct v34_phase3_profile *profile =
+		&receiver->transmitting_profile;
+
+	return profile->symbol_rate == V34_SYMBOL_RATE_2800 ||
+	       (profile->symbol_rate == V34_SYMBOL_RATE_2743 &&
+		profile->high_carrier);
 }
 
 static bool tracking_state_is_valid(
@@ -604,7 +608,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	    timing_result != V34_RECEIVE_TIMING_SAMPLES_READY)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	acquired = v34_receive_timing_is_acquired(&receiver->timing);
-	/* This qualified profile needs carrier and timing pull-in to finish
+	/* Profiles with a later carrier/timing lock need pull-in to finish
 	 * before the semantic S suffix begins. */
 	if (starts_after_timing_acquisition(receiver) && !was_acquired)
 		return acquired ? V34_PHASE34_RECEIVER_TIMING_ACQUIRED :

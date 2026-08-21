@@ -521,6 +521,7 @@ static bool test_training(void)
 		{ V34_SYMBOL_RATE_2400, false },
 		{ V34_SYMBOL_RATE_2400, true },
 		{ V34_SYMBOL_RATE_2743, false },
+		{ V34_SYMBOL_RATE_2743, true },
 		{ V34_SYMBOL_RATE_2800, true },
 		{ V34_SYMBOL_RATE_3000, false },
 		{ V34_SYMBOL_RATE_3000, true },

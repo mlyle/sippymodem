@@ -143,8 +143,11 @@ static struct v34_call_configuration symmetric_configuration(
 	struct v34_call_configuration selected = configuration(role);
 	uint8_t preemphasis_filter_index =
 		symbol_rate == V34_SYMBOL_RATE_2800 ? 8u : 3u;
+	bool high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
 
 	selected.local_info0 = (struct v34_info0){
+		.symbol_rate_2743_supported =
+			symbol_rate == V34_SYMBOL_RATE_2743,
 		.symbol_rate_2800_supported =
 			symbol_rate == V34_SYMBOL_RATE_2800,
 		.symbol_rate_3429_supported =
@@ -160,6 +163,8 @@ static struct v34_call_configuration symmetric_configuration(
 			.frequency_offset_1_50_hz_units =
 				V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 		selected.local_info1.calling.answer_transmit[symbol_rate]
+			.high_carrier = high_carrier;
+		selected.local_info1.calling.answer_transmit[symbol_rate]
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.calling.answer_transmit[symbol_rate]
 			.projected_data_rate_2400_bps_units = 4;
@@ -167,6 +172,8 @@ static struct v34_call_configuration symmetric_configuration(
 		selected.local_info1.answering.common
 			.frequency_offset_1_50_hz_units =
 				V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+		selected.local_info1.answering.call_transmit
+			.high_carrier = high_carrier;
 		selected.local_info1.answering.call_transmit
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.answering.call_transmit
@@ -454,6 +461,10 @@ static bool check_symmetric_call(
 
 static bool test_symmetric_calls(void)
 {
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2743, false),
+	      "PCMU symmetric 2743 call failed");
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2743, true),
+	      "PCMA symmetric 2743 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, false),
 	      "PCMU symmetric 2800 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, true),
