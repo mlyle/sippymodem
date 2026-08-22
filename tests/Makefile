@@ -340,9 +340,6 @@ LOOP_TEST_OBJECTS := $(BUILD_DIR)/test_loop.o \
 MAIN_TEST_BINARY := $(BUILD_DIR)/test_main
 MAIN_TEST_OBJECTS := $(BUILD_DIR)/test_main.o \
 	$(BUILD_DIR)/main_testable.o
-DC_FILTER_TEST_BINARY := $(BUILD_DIR)/test_dc_filter
-DC_FILTER_TEST_OBJECTS := $(BUILD_DIR)/test_dc_filter.o \
-	$(BUILD_DIR)/dc_filter.o
 AGC_TEST_BINARY := $(BUILD_DIR)/test_agc
 AGC_TEST_OBJECTS := $(BUILD_DIR)/test_agc.o \
 	$(BUILD_DIR)/agc.o
@@ -439,7 +436,6 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 	$(BUILD_DIR)/datapumps.o \
 	$(BUILD_DIR)/baudot.o \
 	$(BUILD_DIR)/baudot_datapump.o \
-	$(BUILD_DIR)/dc_filter.o \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/fsk300_datapump.o \
@@ -520,7 +516,6 @@ BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_baudot.o \
 V23_TEST_BINARY := $(BUILD_DIR)/test_v23
 V23_TEST_OBJECTS := $(BUILD_DIR)/test_v23.o \
 	$(NATIVE_CORE_OBJECTS) \
-	$(BUILD_DIR)/dc_filter.o \
 	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v23_datapump.o
@@ -765,7 +760,6 @@ V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
 V32_DATAPUMP_CONDITIONING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_datapump_conditioning.o \
 	$(NATIVE_CORE_OBJECTS) \
-	$(BUILD_DIR)/dc_filter.o \
 	$(V32_FIXED_RECEIVE_OBJECTS) \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/qam.o \
@@ -3061,7 +3055,6 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/datapumps.o \
 	$(BUILD_DIR)/baudot.o \
 	$(BUILD_DIR)/baudot_datapump.o \
-	$(BUILD_DIR)/dc_filter.o \
 	$(BUILD_DIR)/differential_qpsk.o \
 	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/fsk300_datapump.o \
@@ -3124,7 +3117,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SLMODEM_DRIVER_TEST_BINARY) $(SLMODEM_TERMINAL_TEST_BINARY) \
 	$(RUNTIME_TEST_BINARY) \
 	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY) $(MAIN_TEST_BINARY) \
-	$(DC_FILTER_TEST_BINARY) $(AGC_TEST_BINARY) \
+	$(AGC_TEST_BINARY) \
 	$(FRACTIONAL_DELAY_TEST_BINARY) \
 	$(SINGLE_TONE_TEST_BINARY) \
 	$(DIFFERENTIAL_QPSK_TEST_BINARY) \
@@ -3416,7 +3409,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(SLMODEM_TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(LOOP_TEST_OBJECTS:.o=.d) $(MAIN_TEST_OBJECTS:.o=.d) \
-	$(DC_FILTER_TEST_OBJECTS:.o=.d) \
 	$(AGC_TEST_OBJECTS:.o=.d) \
 	$(FRACTIONAL_DELAY_TEST_OBJECTS:.o=.d) \
 	$(SINGLE_TONE_TEST_OBJECTS:.o=.d) \
@@ -3739,7 +3731,6 @@ test: $(TEST_BINARIES)
 	./$(TERMINAL_TEST_BINARY)
 	./$(LOOP_TEST_BINARY)
 	./$(MAIN_TEST_BINARY)
-	./$(DC_FILTER_TEST_BINARY)
 	./$(AGC_TEST_BINARY)
 	./$(FRACTIONAL_DELAY_TEST_BINARY)
 	./$(SINGLE_TONE_TEST_BINARY)
@@ -4147,9 +4138,6 @@ $(LOOP_TEST_BINARY): $(LOOP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(MAIN_TEST_BINARY): $(MAIN_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
-
-$(DC_FILTER_TEST_BINARY): $(DC_FILTER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(AGC_TEST_BINARY): $(AGC_TEST_OBJECTS)
@@ -5195,10 +5183,6 @@ $(BUILD_DIR)/main_testable.o: \
 	../src/main.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) -DPROGRAM_NO_PROCESS_ENTRY $(CFLAGS) \
 		-MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/dc_filter.o: \
-	$(DSP_SOURCE_DIR)/dc_filter.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/fixed_phase.o: \
 	$(DSP_SOURCE_DIR)/fixed_phase.c | $(BUILD_DIR)

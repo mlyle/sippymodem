@@ -685,8 +685,7 @@ static bool test_core_has_no_external_dsp_owner(void)
 
 	CHECK(modem != NULL, "source-built modem core could not be created");
 	CHECK(modem->srate == MODEM_RATE && modem->format == MODEM_FORMAT &&
-		      modem->frag == MODEM_FRAG && modem->dp == NULL &&
-		      modem->dc_filter.phase == DC_FILTER_WARMUP,
+		      modem->frag == MODEM_FRAG && modem->dp == NULL,
 	      "source-built modem core did not expose its native initial state");
 	for (size_t index = 0; index < ARRAY_LENGTH(receive); ++index) {
 		receive[index] = (int16_t)(index + 1);
@@ -696,8 +695,7 @@ static bool test_core_has_no_external_dsp_owner(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
 		CHECK(transmit[index] == 0,
 		      "idle native core did not mute its transmit samples");
-	CHECK(modem->count == ARRAY_LENGTH(receive) &&
-		      modem->dc_filter.sample_count == ARRAY_LENGTH(receive),
+	CHECK(modem->count == ARRAY_LENGTH(receive),
 	      "native core did not advance its source-owned sample state");
 	modem_delete(modem);
 	return true;

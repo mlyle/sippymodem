@@ -793,8 +793,6 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 {
 	if (exact_output != NULL)
 		*exact_output = false;
-	/* clean DC */
-	(void)dc_filter_process(&m->dc_filter, in, (size_t)count);
 	modem_debug_log_data(m,MODEM_DBG_RX_SAMPLES,in,count<<MFMT_SHIFT(m->format));
 	if(m->process) {
 		if (receive_codewords != NULL && m->process == modem_dp_process)
@@ -1316,8 +1314,6 @@ static int modem_start (struct modem *m)
 
 	m->xmit.head = m->xmit.tail = m->xmit.count = 0;
 	m->command = 0;
-
-	dc_filter_init(&m->dc_filter);
 
 	if (m->cfg.ec && m->cfg.comp &&
 	    (m->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0 &&

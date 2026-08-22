@@ -50,7 +50,6 @@
 #include <modem_homolog.h>
 #include <modem_dp.h>
 #include <modem_timer.h>
-#include <dc_filter.h>
 #include <lapm_v44_session.h>
 
 struct v44_character_path;
@@ -418,7 +417,6 @@ struct modem {
 	void (*sample_timer_func)(struct modem *);
         /* data pump */
         struct dp *dp;
-	struct dc_filter dc_filter;
 	/* dsp info data */
 	struct dsp_info dsp_info;
 	/* voice info */
