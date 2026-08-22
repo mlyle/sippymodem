@@ -1990,30 +1990,6 @@ V92_PCM_PHASE4_TRN2U_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_phase4_modulator.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT)
-V92_PHASE4_SUVU_TX_TEST_BINARY := \
-	$(BUILD_DIR)/test_v92_phase4_suvu_tx
-V92_PHASE4_SUVU_TX_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v92_phase4_suvu_tx.o \
-	$(BUILD_DIR)/v92_phase4_suvu_tx.o \
-	$(BUILD_DIR)/v92_phase4_record_tx.o \
-	$(BUILD_DIR)/v92_pcm_phase4_trn2u.o \
-	$(BUILD_DIR)/v92_phase4_modulator.o \
-	$(BUILD_DIR)/v92_suvu.o \
-	$(BUILD_DIR)/v92_status_update.o \
-	$(BUILD_DIR)/v34_framing.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(CRC16_CCITT_FALSE_OBJECT)
-V92_PHASE4_CPU_TX_TEST_BINARY := \
-	$(BUILD_DIR)/test_v92_phase4_cpu_tx
-V92_PHASE4_CPU_TX_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v92_phase4_cpu_tx.o \
-	$(BUILD_DIR)/v92_phase4_cpu_tx.o \
-	$(BUILD_DIR)/v92_phase4_record_tx.o \
-	$(BUILD_DIR)/v92_cpu.o \
-	$(BUILD_DIR)/v92_phase4_modulator.o \
-	$(BUILD_DIR)/v34_framing.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(CRC16_CCITT_FALSE_OBJECT)
 V92_PHASE4_ANALOG_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase4_analog_tx
 V92_PHASE4_ANALOG_TX_TEST_OBJECTS := \
@@ -2041,20 +2017,17 @@ V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_OBJECTS := \
 		$(V92_PCM_PHASE4_TRN2U_TEST_OBJECTS)))
 V92_UPSTREAM_CONTROL_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_upstream_control_line_rx
-V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS := \
+V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v92_upstream_control_line_rx.o \
 	$(BUILD_DIR)/v92_e2u_rx.o \
 	$(BUILD_DIR)/v92_upstream_rx.o \
 	$(BUILD_DIR)/v92_upstream_control_line_rx.o \
 	$(BUILD_DIR)/v92_phase4_digital_rx.o \
-	$(sort $(filter-out \
+	$(BUILD_DIR)/v92_phase4_record_tx.o \
+	$(filter-out \
 		$(BUILD_DIR)/test_v92_pcm_phase4_trn2u_line_rx.o \
-		$(BUILD_DIR)/test_v92_phase4_suvu_tx.o \
-		$(BUILD_DIR)/test_v92_phase4_cpu_tx.o \
 		$(BUILD_DIR)/test_v92_control_rx.o, \
 		$(V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_OBJECTS) \
-		$(V92_PHASE4_SUVU_TX_TEST_OBJECTS) \
-		$(V92_PHASE4_CPU_TX_TEST_OBJECTS) \
 		$(V92_CONTROL_RX_TEST_OBJECTS)))
 V90_MP_TEST_BINARY := $(BUILD_DIR)/test_v90_mp
 V90_MP_TEST_OBJECTS := \
@@ -3175,8 +3148,6 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V92_PHASE3_DIGITAL_STATION_TEST_BINARY) \
 	$(V92_PHASE4_MODULATOR_TEST_BINARY) \
 	$(V92_PCM_PHASE4_TRN2U_TEST_BINARY) \
-	$(V92_PHASE4_SUVU_TX_TEST_BINARY) \
-	$(V92_PHASE4_CPU_TX_TEST_BINARY) \
 	$(V92_PHASE4_ANALOG_TX_TEST_BINARY) \
 	$(V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_BINARY) \
 	$(V92_UPSTREAM_CONTROL_LINE_RX_TEST_BINARY) \
@@ -3463,8 +3434,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS:.o=.d) \
 	$(V92_PHASE4_MODULATOR_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE4_TRN2U_TEST_OBJECTS:.o=.d) \
-	$(V92_PHASE4_SUVU_TX_TEST_OBJECTS:.o=.d) \
-	$(V92_PHASE4_CPU_TX_TEST_OBJECTS:.o=.d) \
 	$(V92_PHASE4_ANALOG_TX_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS:.o=.d) \
@@ -3781,8 +3750,6 @@ test: $(TEST_BINARIES)
 	./$(V92_PHASE3_DIGITAL_STATION_TEST_BINARY)
 	./$(V92_PHASE4_MODULATOR_TEST_BINARY)
 	./$(V92_PCM_PHASE4_TRN2U_TEST_BINARY)
-	./$(V92_PHASE4_SUVU_TX_TEST_BINARY)
-	./$(V92_PHASE4_CPU_TX_TEST_BINARY)
 	./$(V92_PHASE4_ANALOG_TX_TEST_BINARY)
 	./$(V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_BINARY)
 	./$(V92_UPSTREAM_CONTROL_LINE_RX_TEST_BINARY)
@@ -4566,14 +4533,6 @@ $(V92_PHASE4_MODULATOR_TEST_BINARY): \
 
 $(V92_PCM_PHASE4_TRN2U_TEST_BINARY): \
 	$(V92_PCM_PHASE4_TRN2U_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V92_PHASE4_SUVU_TX_TEST_BINARY): \
-	$(V92_PHASE4_SUVU_TX_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V92_PHASE4_CPU_TX_TEST_BINARY): \
-	$(V92_PHASE4_CPU_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_PHASE4_ANALOG_TX_TEST_BINARY): \
@@ -5574,10 +5533,6 @@ $(BUILD_DIR)/v92_control_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_control_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v92_phase4_cpu_tx.o: \
-	$(DSP_PCM_SOURCE_DIR)/v92_phase4_cpu_tx.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
 $(BUILD_DIR)/v92_pcm_phase4_trn2u.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase4_trn2u.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
@@ -5616,10 +5571,6 @@ $(BUILD_DIR)/v92_phase4_cpd_tx.o: \
 
 $(BUILD_DIR)/v92_phase4_analog_station.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_analog_station.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v92_phase4_suvu_tx.o: \
-	$(DSP_PCM_SOURCE_DIR)/v92_phase4_suvu_tx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase4_analog_tx.o: \

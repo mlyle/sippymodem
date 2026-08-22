@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v92_phase4_cpu_tx.h>
 #include <v92_phase4_digital_rx.h>
-#include <v92_phase4_suvu_tx.h>
 #include <v92_e2u_rx.h>
 #include <v92_upstream_control_line_rx.h>
 
 #include "test.h"
+#include "v92_phase4_record_fixture.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -266,8 +265,8 @@ static bool run_records(
 	struct v92_pcm_phase4_trn2u transmitter;
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_phase4_digital_rx receiver;
-	struct v92_phase4_suvu_tx suvu_tx;
-	struct v92_phase4_cpu_tx cpu_tx;
+	struct v92_phase4_record_tx suvu_tx;
+	struct v92_phase4_record_tx cpu_tx;
 	struct v92_phase4_modulator modulator;
 	struct v92_control_event suvu_event = { 0 };
 	struct v92_control_event cpu_event = { 0 };
@@ -309,16 +308,15 @@ static bool run_records(
 	CHECK(transmitter.emitted_symbols ==
 		      V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
 	      v92_phase4_digital_rx_is_receiving_control(&receiver) &&
-	      v92_phase4_suvu_tx_init(
-		      &suvu_tx, &transmitter, false, &suvu) ==
-		      V92_PHASE4_SUVU_TX_OK,
+	      v92_record_fixture_start_suvu(
+		      &suvu_tx, &transmitter.modulator, &suvu),
 	      "control-line record path did not initialize");
 	starting_samples = receiver.signal.control.signal.line.input_samples;
-	while (!v92_phase4_suvu_tx_record_is_complete(&suvu_tx)) {
+	while (!v92_phase4_record_tx_is_complete(&suvu_tx)) {
 		int16_t raw;
 
-		CHECK(v92_phase4_suvu_tx_next(&suvu_tx, &raw) ==
-			      V92_PHASE4_SUVU_TX_OK &&
+		CHECK(v92_phase4_record_tx_next(&suvu_tx, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK &&
 		      receive_sample(
 			      &receiver, law, polarity, raw,
 			      &suvu_event, &cpu_event),
@@ -327,16 +325,15 @@ static bool run_records(
 	CHECK(suvu_event.type == V92_CONTROL_EVENT_NONE &&
 	      receiver.signal.control.signal.training_tail_remaining == 0u,
 	      "control line exposed SUVu before its delayed decisions");
-	CHECK(v92_phase4_suvu_tx_handoff(&suvu_tx, &modulator) ==
-		      V92_PHASE4_SUVU_TX_OK &&
-	      v92_phase4_cpu_tx_init(&cpu_tx, &modulator, &cpu) ==
-		      V92_PHASE4_CPU_TX_OK,
+	CHECK(v92_phase4_record_tx_handoff(&suvu_tx, &modulator) ==
+		      V92_PHASE4_RECORD_TX_OK &&
+	      v92_record_fixture_start_cpu(&cpu_tx, &modulator, &cpu),
 	      "control-line CPu continuation did not initialize");
-	while (!v92_phase4_cpu_tx_record_is_complete(&cpu_tx)) {
+	while (!v92_phase4_record_tx_is_complete(&cpu_tx)) {
 		int16_t raw;
 
-		CHECK(v92_phase4_cpu_tx_next(&cpu_tx, &raw) ==
-			      V92_PHASE4_CPU_TX_OK &&
+		CHECK(v92_phase4_record_tx_next(&cpu_tx, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK &&
 		      receive_sample(
 			      &receiver, law, polarity, raw,
 			      &suvu_event, &cpu_event),
@@ -353,15 +350,14 @@ static bool run_records(
 	}
 	CHECK(cpu_event.type == V92_CONTROL_EVENT_NONE,
 	      "control line exposed CPu before its delayed decisions");
-	CHECK(v92_phase4_cpu_tx_start_next_record(&cpu_tx, &cpu) ==
-		      V92_PHASE4_CPU_TX_OK,
+	CHECK(v92_record_fixture_start_cpu(&cpu_tx, NULL, &cpu),
 	      "control-line CPu flush record did not start");
 	for (size_t symbol = 0;
 	     symbol < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++symbol) {
 		int16_t raw;
 
-		CHECK(v92_phase4_cpu_tx_next(&cpu_tx, &raw) ==
-			      V92_PHASE4_CPU_TX_OK &&
+		CHECK(v92_phase4_record_tx_next(&cpu_tx, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK &&
 		      receive_sample(
 			      &receiver, law, polarity, raw,
 			      &suvu_event, &cpu_event),
@@ -407,7 +403,7 @@ static bool run_e2u(
 	struct v92_pcm_phase4_trn2u transmitter;
 	struct v92_pcm_phase4_trn2u_line_handoff boundary;
 	struct v92_upstream_control_line_rx control;
-	struct v92_phase4_cpu_tx cpu_tx;
+	struct v92_phase4_record_tx cpu_tx;
 	struct v92_phase4_record_tx e2u_tx;
 	struct v92_phase4_modulator modulator;
 	struct v92_e2u_rx receiver;
@@ -429,15 +425,14 @@ static bool run_e2u(
 		      &transmitter, &boundary) &&
 	      v92_upstream_control_line_rx_init(&control, &boundary) ==
 		      V92_UPSTREAM_CONTROL_LINE_RX_OK &&
-	      v92_phase4_cpu_tx_init(
-		      &cpu_tx, &transmitter.modulator, &cpu) ==
-		      V92_PHASE4_CPU_TX_OK,
+	      v92_record_fixture_start_cpu(
+		      &cpu_tx, &transmitter.modulator, &cpu),
 	      "E2u predecessor did not initialize");
-	while (!v92_phase4_cpu_tx_record_is_complete(&cpu_tx)) {
+	while (!v92_phase4_record_tx_is_complete(&cpu_tx)) {
 		int16_t raw;
 
-		CHECK(v92_phase4_cpu_tx_next(&cpu_tx, &raw) ==
-			      V92_PHASE4_CPU_TX_OK &&
+		CHECK(v92_phase4_record_tx_next(&cpu_tx, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK &&
 		      v92_upstream_control_line_rx_sample(
 			      &control,
 			      line_sample(
@@ -447,8 +442,8 @@ static bool run_e2u(
 		      event.type == V92_CONTROL_EVENT_NONE,
 		      "E2u predecessor record stopped");
 	}
-	CHECK(v92_phase4_cpu_tx_handoff(&cpu_tx, &modulator) ==
-		      V92_PHASE4_CPU_TX_OK,
+	CHECK(v92_phase4_record_tx_handoff(&cpu_tx, &modulator) ==
+		      V92_PHASE4_RECORD_TX_OK,
 	      "E2u predecessor handoff failed");
 	if (invalid_sequence) {
 		size_t invalid_bits = expected_symbols * bits;

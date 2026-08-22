@@ -5,11 +5,10 @@
 #include <v90_pcm_frame_encoder.h>
 #include <v92_cpd_direct.h>
 #include <v92_phase4_analog_station.h>
-#include <v92_phase4_cpu_tx.h>
 #include <v92_phase4_digital_station.h>
-#include <v92_phase4_suvu_tx.h>
 
 #include "test.h"
+#include "v92_phase4_record_fixture.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -406,8 +405,8 @@ static bool run_exchange(
 	struct v92_cpd_base_parameters cpd = cpd_parameters(law);
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u upstream;
-	struct v92_phase4_suvu_tx suvu_tx;
-	struct v92_phase4_cpu_tx cpu_tx;
+	struct v92_phase4_record_tx suvu_tx;
+	struct v92_phase4_record_tx cpu_tx;
 	struct v92_phase4_modulator modulator;
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx downstream_tx;
@@ -450,23 +449,21 @@ static bool run_exchange(
 			      suvd.request_silence),
 		      "station TRN2u stopped at %u", symbol);
 	}
-	CHECK(v92_phase4_suvu_tx_init(
-		      &suvu_tx, &upstream, true, &suvu) ==
-		      V92_PHASE4_SUVU_TX_OK,
+	CHECK(v92_record_fixture_start_suvu(
+		      &suvu_tx, &upstream.modulator, &suvu),
 	      "station SUVu did not initialize");
 	for (unsigned int repeat = 0u; repeat < 4u; ++repeat) {
 		size_t record_symbol = 0u;
 
 		if (repeat != 0u)
-			CHECK(v92_phase4_suvu_tx_start_next_record(
-				      &suvu_tx, &suvu) ==
-				      V92_PHASE4_SUVU_TX_OK,
+			CHECK(v92_record_fixture_start_suvu(
+				      &suvu_tx, NULL, &suvu),
 			      "station repeated SUVu did not start");
-		while (!v92_phase4_suvu_tx_record_is_complete(&suvu_tx)) {
+		while (!v92_phase4_record_tx_is_complete(&suvu_tx)) {
 			int16_t raw;
 
-			CHECK(v92_phase4_suvu_tx_next(&suvu_tx, &raw) ==
-				      V92_PHASE4_SUVU_TX_OK,
+			CHECK(v92_phase4_record_tx_next(&suvu_tx, &raw) ==
+				      V92_PHASE4_RECORD_TX_OK,
 			      "station SUVu generator stopped");
 			/* Corrupt one first-record decision. The rejected record
 			 * must not trigger CPd; canonical repeats exercise idempotent
@@ -515,39 +512,37 @@ static bool run_exchange(
 	      station.transmit.control_bit_index, downstream_rx.stage,
 	      (unsigned long long)downstream_rx.trn2d_bit_errors);
 	acknowledged_suvu.acknowledges_cpd = true;
-	CHECK(v92_phase4_suvu_tx_start_next_record(
-		      &suvu_tx, &acknowledged_suvu) ==
-		      V92_PHASE4_SUVU_TX_OK,
+	CHECK(v92_record_fixture_start_suvu(
+		      &suvu_tx, NULL, &acknowledged_suvu),
 	      "acknowledging SUVu did not start");
-	while (!v92_phase4_suvu_tx_record_is_complete(&suvu_tx)) {
+	while (!v92_phase4_record_tx_is_complete(&suvu_tx)) {
 		int16_t raw;
 
-		CHECK(v92_phase4_suvu_tx_next(&suvu_tx, &raw) ==
-			      V92_PHASE4_SUVU_TX_OK &&
+		CHECK(v92_phase4_record_tx_next(&suvu_tx, &raw) ==
+			      V92_PHASE4_RECORD_TX_OK &&
 		      receive_upstream_sample(
 			      &station, &downstream_rx, &counts, law,
 			      polarity, raw, &events, &cpd,
 			      suvd.request_silence),
 		      "acknowledging SUVu stopped");
 	}
-	CHECK(v92_phase4_suvu_tx_handoff(&suvu_tx, &modulator) ==
-		      V92_PHASE4_SUVU_TX_OK &&
-	      v92_phase4_cpu_tx_init(&cpu_tx, &modulator, &cpu) ==
-		      V92_PHASE4_CPU_TX_OK,
+	CHECK(v92_phase4_record_tx_handoff(&suvu_tx, &modulator) ==
+		      V92_PHASE4_RECORD_TX_OK &&
+	      v92_record_fixture_start_cpu(&cpu_tx, &modulator, &cpu),
 	      "station CPu did not initialize");
 	for (unsigned int repeat = 0u; repeat < 3u; ++repeat) {
 		if (repeat == 1u) {
 			cpu.acknowledges_cpd = true;
 		}
 		if (repeat != 0u)
-			CHECK(v92_phase4_cpu_tx_start_next_record(
-				      &cpu_tx, &cpu) == V92_PHASE4_CPU_TX_OK,
+			CHECK(v92_record_fixture_start_cpu(
+				      &cpu_tx, NULL, &cpu),
 			      "station repeated CPu did not start");
-		while (!v92_phase4_cpu_tx_record_is_complete(&cpu_tx)) {
+		while (!v92_phase4_record_tx_is_complete(&cpu_tx)) {
 			int16_t raw;
 
-			CHECK(v92_phase4_cpu_tx_next(&cpu_tx, &raw) ==
-				      V92_PHASE4_CPU_TX_OK &&
+			CHECK(v92_phase4_record_tx_next(&cpu_tx, &raw) ==
+				      V92_PHASE4_RECORD_TX_OK &&
 			      receive_upstream_sample(
 				      &station, &downstream_rx, &counts,
 				      law, polarity, raw, &events, &cpd,
@@ -593,15 +588,15 @@ static bool run_exchange(
 		changed.data_rate_number++;
 		for (unsigned int repeat = 0u; repeat < 3u && !rejected;
 		     ++repeat) {
-			CHECK(v92_phase4_cpu_tx_start_next_record(
-				      &cpu_tx, &changed) == V92_PHASE4_CPU_TX_OK,
+			CHECK(v92_record_fixture_start_cpu(
+				      &cpu_tx, NULL, &changed),
 			      "changed CPu did not start");
-			while (!v92_phase4_cpu_tx_record_is_complete(&cpu_tx)) {
+			while (!v92_phase4_record_tx_is_complete(&cpu_tx)) {
 				int16_t raw;
 				enum v92_phase4_digital_station_result result;
 
-				CHECK(v92_phase4_cpu_tx_next(&cpu_tx, &raw) ==
-					      V92_PHASE4_CPU_TX_OK,
+				CHECK(v92_phase4_record_tx_next(&cpu_tx, &raw) ==
+					      V92_PHASE4_RECORD_TX_OK,
 				      "changed CPu generator stopped");
 				result = v92_phase4_digital_station_receive(
 					&station,
