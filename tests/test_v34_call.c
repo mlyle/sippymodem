@@ -107,19 +107,12 @@ static struct v34_mp_record mp_record(enum v34_station_role role)
 static struct v34_call_configuration configuration(
 	enum v34_station_role role)
 {
-	struct v34_phase3_line_receiver_configuration receive = {
-		.s_gain_adaptation = 0.1,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
-	};
-
 	return (struct v34_call_configuration){
 		.local_role = role,
 		.phase2_nominal_amplitude = NOMINAL_AMPLITUDE,
 		.local_info0 = info0(role),
 		.local_info1 = info1(role),
 		.phase3 = {
-			.receive = receive,
 			.requested_remote_constellation =
 				role == V34_CALLING_STATION ?
 					V34_CONSTELLATION_16_POINT :
@@ -128,10 +121,6 @@ static struct v34_call_configuration configuration(
 			.nominal_peak_amplitude = NOMINAL_AMPLITUDE,
 		},
 		.phase4 = {
-			.receive = {
-				.phase3 = receive,
-				.phase4_equalizer_adaptation = 0.03,
-			},
 			.transmit_mp = mp_record(role),
 			.data_equalizer_adaptation = 0.02,
 		},
@@ -395,18 +384,14 @@ static bool test_pcmu_call(void)
 	      v34_call_current_stage(&answerer.call) == V34_CALL_PHASE4 &&
 	      !v34_call_has_failed(&caller.call) &&
 	      !v34_call_has_failed(&answerer.call) &&
-	      caller.call.state.phase4.receive_mode ==
-		      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
-	      answerer.call.state.phase4.receive_mode ==
-		      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
-	      caller.call.state.phase4.receive.persistent.stage ==
+	      caller.call.state.phase4.receive.stage ==
 		      V34_PHASE34_RECEIVER_DATA &&
-	      answerer.call.state.phase4.receive.persistent.stage ==
+	      answerer.call.state.phase4.receive.stage ==
 		      V34_PHASE34_RECEIVER_DATA &&
-	      caller.call.state.phase4.receive.persistent.semantic.data
+	      caller.call.state.phase4.receive.semantic.data
 		      .data_receiver.channel_receiver.frame_decoder
 		      .channel_decoder.selection == V34_TRELLIS_32_STATE &&
-	      answerer.call.state.phase4.receive.persistent.semantic.data
+	      answerer.call.state.phase4.receive.semantic.data
 		      .data_receiver.channel_receiver.frame_decoder
 		      .channel_decoder.selection == V34_TRELLIS_16_STATE &&
 	      v34_call_get_data_startup(&caller.call, &caller_startup) &&
@@ -465,13 +450,9 @@ static bool check_symmetric_call(
 		    v34_call_is_online(&answerer.call) &&
 		    caller.mapping_frames_received >= 4u &&
 		    answerer.mapping_frames_received >= 4u) {
-			CHECK(caller.call.state.phase4.receive_mode ==
-				      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
-			      answerer.call.state.phase4.receive_mode ==
-				      V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
-			      caller.call.state.phase4.receive.persistent.stage ==
+			CHECK(caller.call.state.phase4.receive.stage ==
 				      V34_PHASE34_RECEIVER_DATA &&
-			      answerer.call.state.phase4.receive.persistent.stage ==
+			      answerer.call.state.phase4.receive.stage ==
 				      V34_PHASE34_RECEIVER_DATA,
 			      "rate %u call did not retain its receive owners",
 			      symbol_rate);
@@ -773,10 +754,10 @@ static bool test_validation(void)
 
 	memset(&call, 0xa5, sizeof(call));
 	saved = call;
-	config.phase4.receive.phase3.s_gain_adaptation = 0.3;
+	config.phase4.data_equalizer_adaptation = -0.1;
 	CHECK(v34_call_init(&call, &config) == V34_CALL_INVALID_ARGUMENT &&
 	      memcmp(&call, &saved, sizeof(call)) == 0,
-	      "mismatched phase configuration changed the destination");
+	      "invalid data adaptation changed the destination");
 	config = configuration(V34_CALLING_STATION);
 	config.phase3.nominal_peak_amplitude = 0;
 	CHECK(v34_call_init(&call, &config) == V34_CALL_INVALID_ARGUMENT &&

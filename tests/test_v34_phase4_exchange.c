@@ -81,28 +81,16 @@ static bool accept_mapping_frame(
 static enum v34_constellation_size handoff_detected_constellation(
 	const struct v34_phase3_exchange_handoff *handoff)
 {
-	return handoff->receive.mode ==
-		       V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ?
-	       handoff->receive.state.persistent.phase3_handoff.j.sequence
-		       .remote_constellation :
-	       handoff->receive.state.compatibility.phase3.j.detection.sequence
-		       .remote_constellation;
+	return handoff->receive.phase3_handoff.j.sequence.remote_constellation;
 }
 
 static bool receive_constellation_is(
 	const struct v34_phase4_exchange *exchange,
 	enum v34_constellation_size constellation)
 {
-	if (exchange->receive_mode ==
-	    V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT)
-		return exchange->receive.persistent.phase4_constellation ==
-			       constellation &&
-		       exchange->receive.persistent.semantic.phase4.mp_receiver
-			       .constellation == constellation;
-	return exchange->receive.training.phase4_constellation ==
-		       constellation &&
-	       exchange->receive.training.state.phase4.control.mp_receiver
-		       .constellation == constellation;
+	return exchange->receive.phase4_constellation == constellation &&
+	       exchange->receive.semantic.phase4.mp_receiver.constellation ==
+		       constellation;
 }
 
 static struct v34_phase3_profile profile(enum v34_station_role role)
@@ -126,11 +114,6 @@ static struct v34_phase3_exchange_configuration phase3_configuration(
 	enum v34_constellation_size requested)
 {
 	return (struct v34_phase3_exchange_configuration){
-		.receive = {
-			.s_gain_adaptation = 0.1,
-			.pp_equalizer_adaptation = 0.2,
-			.tracking_equalizer_adaptation = 0.05,
-		},
 		.requested_remote_constellation = requested,
 		.sample_rate = SAMPLE_RATE,
 		.nominal_peak_amplitude = 7000,
@@ -229,14 +212,6 @@ static struct v34_phase4_exchange_configuration
 phase4_configuration(enum v34_station_role role)
 {
 	return (struct v34_phase4_exchange_configuration){
-		.receive = {
-			.phase3 = {
-				.s_gain_adaptation = 0.1,
-				.pp_equalizer_adaptation = 0.2,
-				.tracking_equalizer_adaptation = 0.05,
-			},
-			.phase4_equalizer_adaptation = 0.03,
-		},
 		.transmit_mp = mp_record(role),
 		.data_equalizer_adaptation = 0.02,
 	};
@@ -355,13 +330,9 @@ static bool endpoint_sample(
 			receive_constellation_is(
 				&endpoint->phase4,
 				endpoint->handoff.phase3_transmit.remote_constellation) &&
-			(endpoint->handoff.receive.mode !=
-				 V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT ||
-			 (endpoint->phase4.receive_mode ==
-				  V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT &&
-			  memcmp(&endpoint->phase4.receive.persistent,
-				 &endpoint->handoff.receive.state.persistent,
-				 sizeof(endpoint->phase4.receive.persistent)) == 0));
+			memcmp(&endpoint->phase4.receive,
+			       &endpoint->handoff.receive,
+			       sizeof(endpoint->phase4.receive)) == 0;
 		if (!endpoint->constellations_routed) {
 			fprintf(stderr,
 				"Phase 4 crossed the two J constellation selections\n");
@@ -547,11 +518,10 @@ static bool test_generated_online_exchange(void)
 		      &caller_peer, &answerer.phase4.transmit_mp) &&
 	      mp_records_are_equal(
 		      &answerer_peer, &caller.phase4.transmit_mp) &&
-	      caller.phase4.receive.persistent.feedback_training_complete &&
-	      caller.phase4.receive.persistent.precoder_selected &&
-	      answerer.phase4.receive.persistent
-		      .feedback_training_complete &&
-	      !answerer.phase4.receive.persistent.precoder_selected,
+	      caller.phase4.receive.feedback_training_complete &&
+	      caller.phase4.receive.precoder_selected &&
+	      answerer.phase4.receive.feedback_training_complete &&
+	      !answerer.phase4.receive.precoder_selected,
 	      "Phase 4 owners did not retain normalized peer records");
 	return true;
 }
@@ -706,7 +676,7 @@ static bool test_acknowledged_first_record(void)
 			      "answerer TRN did not reach its MP boundary");
 		}
 		CHECK(v34_phase34_receiver_finish_feedback_training(
-			      &pending.receive.persistent,
+			      &pending.receive,
 			      pending.transmit_mp.type == V34_MP_RECORD_TYPE1,
 			      coefficients) == V34_PHASE34_RECEIVER_OK,
 		      "answerer feedback did not freeze at its MP boundary");
@@ -808,15 +778,6 @@ static bool test_validation_and_transactionality(void)
 	exchange.transmit_mp_prime_started = false;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
 	      "Phase 4 accepted MP-prime completions without MP-prime");
-	memset(&exchange, 0xa5, sizeof(exchange));
-	saved = exchange;
-	invalid.receive.phase4_equalizer_adaptation = NAN;
-	CHECK(v34_phase4_exchange_init(
-		      &exchange, &caller.handoff, &invalid) ==
-		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
-	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
-	      "invalid Phase 4 initialization changed the destination");
-	invalid = phase4_configuration(V34_CALLING_STATION);
 	invalid.data_equalizer_adaptation = NAN;
 	memset(&exchange, 0xa5, sizeof(exchange));
 	saved = exchange;

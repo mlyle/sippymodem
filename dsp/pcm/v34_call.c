@@ -25,9 +25,6 @@ static const struct v34_mp_parameters *mp_common(
 static bool configuration_is_valid(
 	const struct v34_call_configuration *configuration)
 {
-	const struct v34_phase3_line_receiver_configuration *phase3;
-	const struct v34_training_receiver_configuration *phase4;
-
 	if (configuration == NULL ||
 	    !role_is_valid(configuration->local_role) ||
 	    !v34_info0_is_valid(&configuration->local_info0) ||
@@ -36,24 +33,12 @@ static bool configuration_is_valid(
 	    configuration->phase3.nominal_peak_amplitude <= 0 ||
 	    !v34_constellation_size_is_valid(
 		    configuration->phase3.requested_remote_constellation) ||
-	    !v34_phase3_line_receiver_configuration_is_valid(
-		    &configuration->phase3.receive) ||
-	    !v34_training_receiver_configuration_is_valid(
-		    &configuration->phase4.receive) ||
 	    !v34_mp_record_is_valid(&configuration->phase4.transmit_mp) ||
 	    mp_common(&configuration->phase4.transmit_mp)
 		    ->acknowledges_peer_mp ||
 	    !isfinite(configuration->phase4.data_equalizer_adaptation) ||
 	    configuration->phase4.data_equalizer_adaptation < 0.0 ||
 	    configuration->phase4.data_equalizer_adaptation > 1.0)
-		return false;
-	phase3 = &configuration->phase3.receive;
-	phase4 = &configuration->phase4.receive;
-	if (phase3->s_gain_adaptation != phase4->phase3.s_gain_adaptation ||
-	    phase3->pp_equalizer_adaptation !=
-		    phase4->phase3.pp_equalizer_adaptation ||
-	    phase3->tracking_equalizer_adaptation !=
-		    phase4->phase3.tracking_equalizer_adaptation)
 		return false;
 	return configuration->local_role == V34_CALLING_STATION ?
 		       v34_info1c_is_valid(
@@ -64,11 +49,6 @@ static bool configuration_is_valid(
 
 static bool stored_configuration_is_valid(const struct v34_call *call)
 {
-	const struct v34_phase3_line_receiver_configuration *phase3 =
-		&call->phase3_configuration.receive;
-	const struct v34_training_receiver_configuration *phase4 =
-		&call->phase4_configuration.receive;
-
 	if (!role_is_valid(call->local_role) ||
 	    call->phase2_nominal_amplitude <= 0 ||
 	    !v34_info0_is_valid(&call->local_info0) ||
@@ -81,20 +61,13 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 	    call->phase3_configuration.nominal_peak_amplitude <= 0 ||
 	    !v34_constellation_size_is_valid(
 		    call->phase3_configuration.requested_remote_constellation) ||
-	    !v34_phase3_line_receiver_configuration_is_valid(phase3) ||
-	    !v34_training_receiver_configuration_is_valid(phase4) ||
 	    !v34_mp_record_is_valid(
 		    &call->phase4_configuration.transmit_mp) ||
 	    mp_common(&call->phase4_configuration.transmit_mp)
 		    ->acknowledges_peer_mp ||
 	    !isfinite(call->phase4_configuration.data_equalizer_adaptation) ||
 	    call->phase4_configuration.data_equalizer_adaptation < 0.0 ||
-	    call->phase4_configuration.data_equalizer_adaptation > 1.0 ||
-	    phase3->s_gain_adaptation != phase4->phase3.s_gain_adaptation ||
-	    phase3->pp_equalizer_adaptation !=
-		    phase4->phase3.pp_equalizer_adaptation ||
-	    phase3->tracking_equalizer_adaptation !=
-		    phase4->phase3.tracking_equalizer_adaptation)
+	    call->phase4_configuration.data_equalizer_adaptation > 1.0)
 		return false;
 	return call->local_role == V34_CALLING_STATION ?
 		       v34_info1c_is_valid(&call->local_info1.calling) :
@@ -443,14 +416,7 @@ static enum v34_call_result sample_phase4(
 static bool phase4_receive_has_failed(
 	const struct v34_phase4_exchange *exchange)
 {
-	if (exchange->receive_mode ==
-	    V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT)
-		return v34_phase34_receiver_has_failed(
-			&exchange->receive.persistent);
-	return exchange->receive_data_active ?
-		       v34_data_line_receiver_has_failed(&exchange->receive.data) :
-		       v34_training_receiver_has_failed(
-			       &exchange->receive.training);
+	return v34_phase34_receiver_has_failed(&exchange->receive);
 }
 
 static enum v34_call_result sample_retrain_silence(

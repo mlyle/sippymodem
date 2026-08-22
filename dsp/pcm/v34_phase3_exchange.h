@@ -4,7 +4,6 @@
 #define V34_PHASE3_EXCHANGE_H
 
 #include "v34_phase34_receiver.h"
-#include "v34_phase3_line_receiver.h"
 #include "v34_phase3_line_transmitter.h"
 
 #include <stdbool.h>
@@ -40,38 +39,9 @@ enum v34_phase3_exchange_event {
 };
 
 struct v34_phase3_exchange_configuration {
-	struct v34_phase3_line_receiver_configuration receive;
 	enum v34_constellation_size requested_remote_constellation;
 	uint32_t sample_rate;
 	int16_t nominal_peak_amplitude;
-	/* Retain the bounded floating-point receiver for profiles whose
-	 * persistent fixed-point data continuation is not yet qualified. */
-	bool use_compatibility_receiver;
-};
-
-enum v34_phase3_exchange_receive_mode {
-	V34_PHASE3_EXCHANGE_RECEIVE_COMPATIBILITY,
-	V34_PHASE3_EXCHANGE_RECEIVE_PERSISTENT,
-};
-
-union v34_phase3_exchange_receive_state {
-	struct v34_phase3_line_receiver compatibility;
-	struct v34_phase34_receiver persistent;
-};
-
-struct v34_phase3_exchange_receive_path {
-	union v34_phase3_exchange_receive_state state;
-	enum v34_phase3_exchange_receive_mode mode;
-};
-
-union v34_phase3_exchange_receive_handoff_state {
-	struct v34_phase3_line_handoff compatibility;
-	struct v34_phase34_receiver persistent;
-};
-
-struct v34_phase3_exchange_receive_handoff {
-	union v34_phase3_exchange_receive_handoff_state state;
-	enum v34_phase3_exchange_receive_mode mode;
 };
 
 /* Exact full-duplex sample boundary after both Phase 3 J selections. The
@@ -82,7 +52,7 @@ struct v34_phase3_exchange_receive_handoff {
 struct v34_phase3_exchange_handoff {
 	struct v34_training_line transmit_line;
 	struct v34_phase3_transmitter phase3_transmit;
-	struct v34_phase3_exchange_receive_handoff receive;
+	struct v34_phase34_receiver receive;
 };
 
 bool v34_phase3_exchange_handoff_is_valid(
@@ -96,7 +66,7 @@ bool v34_phase3_exchange_handoff_is_valid(
  * J. Calls on one instance must be serialized. */
 struct v34_phase3_exchange {
 	struct v34_phase3_line_transmitter transmit;
-	struct v34_phase3_exchange_receive_path receive;
+	struct v34_phase34_receiver receive;
 	uint32_t trn_target_symbols;
 	uint32_t answer_silence_samples;
 	uint32_t silence_samples_remaining;

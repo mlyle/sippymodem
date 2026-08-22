@@ -7,7 +7,6 @@
 #include "v34_data_stream.h"
 #include "v34_mp.h"
 #include "v34_phase3_exchange.h"
-#include "v34_training_receiver.h"
 #include "v34_training_transmitter.h"
 
 #include <stdbool.h>
@@ -53,7 +52,6 @@ enum {
 };
 
 struct v34_phase4_exchange_configuration {
-	struct v34_training_receiver_configuration receive;
 	/* Supply an ordinary MP. The exchange sets the acknowledgment bit only
 	 * after receiving a valid peer record. */
 	struct v34_mp_record transmit_mp;
@@ -63,17 +61,6 @@ struct v34_phase4_exchange_configuration {
 union v34_phase4_transmit_path {
 	struct v34_training_transmitter training;
 	struct v34_data_stream data;
-};
-
-union v34_phase4_receive_path {
-	struct v34_training_receiver training;
-	struct v34_data_line_receiver data;
-	struct v34_phase34_receiver persistent;
-};
-
-enum v34_phase4_exchange_receive_mode {
-	V34_PHASE4_EXCHANGE_RECEIVE_COMPATIBILITY,
-	V34_PHASE4_EXCHANGE_RECEIVE_PERSISTENT,
 };
 
 /* Own both sample directions from the exact Phase 3 handoff through the
@@ -86,18 +73,16 @@ enum v34_phase4_exchange_receive_mode {
  * calibration outside the real-time callback. A valid final peer MP-prime
  * record arms E reception at that exact record boundary. Transmit and receive
  * enter B1 independently, retaining early mapped data in the sample-call
- * outputs. Calls on one instance must be serialized. A selected persistent
- * receive path keeps one physical receiver from Phase 3 through mapped data;
- * the compatibility path remains available for profiles not yet qualified. */
+ * outputs. Calls on one instance must be serialized. One physical receiver
+ * remains continuous from Phase 3 through mapped data. */
 struct v34_phase4_exchange {
 	union v34_phase4_transmit_path transmit;
-	union v34_phase4_receive_path receive;
+	struct v34_phase34_receiver receive;
 	struct v34_data_startup data_startup;
 	struct v34_mp_record transmit_mp;
 	struct v34_mp_record peer_mp;
 	double data_equalizer_adaptation;
 	enum v34_station_role local_role;
-	enum v34_phase4_exchange_receive_mode receive_mode;
 	bool finish_j_requested;
 	bool transmit_trn_started;
 	bool transmit_mp_started;

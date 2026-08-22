@@ -241,11 +241,6 @@ static bool call_configuration(
 	struct v34_call_configuration *configuration,
 	uint16_t *selected_rate_mask)
 {
-	struct v34_phase3_line_receiver_configuration receive = {
-		.s_gain_adaptation = 0.1,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
-	};
 	uint8_t highest_rate_units = 0;
 	enum v34_symbol_rate symbol_rate;
 	uint16_t rate_mask = enabled_rate_mask(
@@ -261,19 +256,13 @@ static bool call_configuration(
 		.local_info1 = baseline_info1(
 			caller, symbol_rate, highest_rate_units),
 		.phase3 = {
-			.receive = receive,
 			.requested_remote_constellation =
 				caller ? V34_CONSTELLATION_16_POINT :
 					 V34_CONSTELLATION_4_POINT,
 			.sample_rate = MODEM_RATE,
 			.nominal_peak_amplitude = V34_NOMINAL_AMPLITUDE,
-			.use_compatibility_receiver = false,
 		},
 		.phase4 = {
-			.receive = {
-				.phase3 = receive,
-				.phase4_equalizer_adaptation = 0.03,
-			},
 			.transmit_mp = baseline_mp(
 				rate_mask, highest_rate_units),
 			.data_equalizer_adaptation =
