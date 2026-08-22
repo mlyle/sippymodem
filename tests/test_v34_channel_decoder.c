@@ -39,15 +39,14 @@ struct expected_interval {
 
 static bool initialize_parameters(
 	const struct channel_profile *profile,
+	struct v34_frame_geometry *geometry,
 	struct v34_mapping_parameters *parameters)
 {
-	struct v34_frame_geometry geometry;
-
 	return v34_frame_geometry_init(
-		       &geometry, profile->symbol_rate, profile->primary_rate,
+		       geometry, profile->symbol_rate, profile->primary_rate,
 		       false) == V34_FRAME_SCHEDULE_OK &&
 	       v34_mapping_parameters_init(
-		       parameters, &geometry, false) ==
+		       parameters, geometry, false) ==
 		       V34_MAPPING_PARAMETERS_OK;
 }
 
@@ -151,10 +150,11 @@ static bool test_generated_round_trip(void)
 {
 	for (size_t profile_index = 0; profile_index < ARRAY_LENGTH(PROFILES);
 	     ++profile_index) {
+		struct v34_frame_geometry geometry;
 		struct v34_mapping_parameters parameters;
 
 		CHECK(initialize_parameters(
-			      &PROFILES[profile_index], &parameters),
+			      &PROFILES[profile_index], &geometry, &parameters),
 		      "channel profile %zu did not initialize", profile_index);
 		for (enum v34_trellis_selection selection =
 			     V34_TRELLIS_16_STATE;
@@ -170,8 +170,8 @@ static bool test_generated_round_trip(void)
 				      &encoder, &parameters, COEFFICIENTS,
 				      selection) == V34_4D_ENCODER_OK &&
 			      v34_channel_decoder_init(
-				      &channel_decoder, &parameters, COEFFICIENTS,
-				      selection) ==
+				      &channel_decoder, &geometry, false,
+				      COEFFICIENTS, selection) ==
 				      V34_CHANNEL_DECODER_OK &&
 			      v34_4d_decoder_init(
 				      &mapping_decoder, &parameters) ==
@@ -295,8 +295,9 @@ static bool test_transactional_boundaries(void)
 	};
 	static const struct v34_q14_coefficient zero_coefficients
 		[V34_PRECODER_TAP_COUNT] = { 0 };
+	struct v34_frame_geometry geometry;
+	struct v34_frame_geometry malformed_geometry;
 	struct v34_mapping_parameters parameters;
-	struct v34_mapping_parameters malformed_parameters;
 	struct v34_channel_decoder decoder;
 	struct v34_channel_decoder saved;
 	struct v34_channel_decoder corrupted;
@@ -307,34 +308,39 @@ static bool test_transactional_boundaries(void)
 
 	memset(&decoder, 0xa5, sizeof(decoder));
 	saved = decoder;
-	CHECK(initialize_parameters(&PROFILES[0], &parameters),
+	CHECK(initialize_parameters(&PROFILES[0], &geometry, &parameters),
 	      "channel boundary parameters did not initialize");
-	malformed_parameters = parameters;
-	malformed_parameters.ring_count++;
+	malformed_geometry = geometry;
+	malformed_geometry.mapping_frames_per_data_frame++;
 	CHECK(v34_channel_decoder_init(
-		      NULL, &parameters, zero_coefficients,
+		      NULL, &geometry, false, zero_coefficients,
 		      V34_TRELLIS_16_STATE) ==
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
 	      v34_channel_decoder_init(
-		      &decoder, NULL, zero_coefficients,
+		      &decoder, NULL, false, zero_coefficients,
 		      V34_TRELLIS_16_STATE) ==
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
 	      v34_channel_decoder_init(
-		      &decoder, &parameters, NULL,
+		      &decoder, &geometry, false, NULL,
 		      V34_TRELLIS_16_STATE) ==
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
 	      v34_channel_decoder_init(
-		      &decoder, &malformed_parameters, zero_coefficients,
+		      &decoder, &malformed_geometry, false, zero_coefficients,
 		      V34_TRELLIS_16_STATE) ==
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
 	      v34_channel_decoder_init(
-		      &decoder, &parameters, zero_coefficients,
+		      &decoder, &geometry, false, zero_coefficients,
 		      (enum v34_trellis_selection)3) ==
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_decoder_init(
+		      &decoder,
+		      (const struct v34_frame_geometry *)&decoder, false,
+		      zero_coefficients, V34_TRELLIS_16_STATE) ==
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
 	      memcmp(&decoder, &saved, sizeof(decoder)) == 0,
 	      "invalid channel initialization changed its destination");
 	CHECK(v34_channel_decoder_init(
-		      &decoder, &parameters, zero_coefficients,
+		      &decoder, &geometry, false, zero_coefficients,
 		      V34_TRELLIS_16_STATE) ==
 		      V34_CHANNEL_DECODER_OK &&
 	      v34_channel_decoder_is_valid(&decoder) &&
@@ -375,6 +381,38 @@ static bool test_transactional_boundaries(void)
 		      &decoder, estimates, 2,
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "invalid channel input was not transactional");
+	{
+		struct v34_channel_decoder before = decoder;
+		struct v34_survivor_decision aliased;
+		struct v34_survivor_decision saved_aliased;
+		struct v34_decided_4d_interval output;
+		struct v34_decided_4d_interval saved_output;
+		bool output_ready = true;
+
+		memset(&aliased, 0x5a, sizeof(aliased));
+		saved_aliased = aliased;
+		memset(&output, 0xa5, sizeof(output));
+		saved_output = output;
+		CHECK(v34_channel_decoder_advance(
+			      &decoder, (const struct qam_point *)&decoder, 0,
+			      &aliased, &output, &output_ready) ==
+			      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+		      v34_channel_decoder_advance(
+			      &decoder, estimates, 0,
+			      (struct v34_survivor_decision *)&decoder, &output,
+			      &output_ready) ==
+			      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+		      v34_channel_decoder_advance(
+			      &decoder, estimates, 0, &aliased,
+			      (struct v34_decided_4d_interval *)&aliased,
+			      &output_ready) ==
+			      V34_CHANNEL_DECODER_INVALID_ARGUMENT &&
+		      memcmp(&decoder, &before, sizeof(before)) == 0 &&
+		      memcmp(&aliased, &saved_aliased, sizeof(aliased)) == 0 &&
+		      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+		      output_ready,
+		      "overlapping channel arguments changed state or outputs");
+	}
 	malformed_estimates[0] = estimates[0];
 	malformed_estimates[1] = estimates[1];
 	malformed_estimates[0].in_phase = NAN;
@@ -388,13 +426,19 @@ static bool test_transactional_boundaries(void)
 		      V34_CHANNEL_DECODER_NUMERIC_FAILURE),
 	      "overflowing channel metric was accepted");
 	corrupted = decoder;
-	corrupted.survivor.selection =
-		(enum v34_trellis_selection)3;
+	corrupted.selection = (enum v34_trellis_selection)3;
 	CHECK(!v34_channel_decoder_is_valid(&corrupted) &&
 	      rejected_advance_is_transactional(
 		      &corrupted, estimates, 0,
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "corrupt channel state was accepted");
+	corrupted = decoder;
+	corrupted.path.fixed_16.survivor.path_index = 1;
+	CHECK(!v34_channel_decoder_is_valid(&corrupted) &&
+	      rejected_advance_is_transactional(
+		      &corrupted, estimates, 0,
+		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
+	      "corrupt fixed survivor state was accepted");
 	corrupted = decoder;
 	corrupted.inverse_precoder.grid_step =
 		V34_PRECODER_GRID_STEP_4;

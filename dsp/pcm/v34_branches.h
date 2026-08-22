@@ -38,10 +38,10 @@ struct v34_branch_set {
 bool v34_branch_set_is_valid(
 	const struct v34_branch_set *set);
 
-/* Reduce two complete 2-D subset slices into the nearest point pair for every
- * trellis-visible 4-D subset. Array indices pack Y0, Y1, and Y2 in bits 0..2;
- * the 32-state code adds Y4 in bit 3, while the 64-state code adds Y3 and Y4
- * in bits 3 and 4. Inputs unused by a selected code are minimized over.
+/* Reduce two complete 2-D subset slices into the nearest point pair for the
+ * floating 32- and 64-state paths. Array indices pack Y0, Y1, and Y2 in bits
+ * 0..2; the 32-state code adds Y4 in bit 3, while the 64-state code adds Y3
+ * and Y4 in bits 3 and 4. Inputs unused by a selected code are minimized over.
  * Metric ties select smaller total point magnitude and then the smaller label
  * pair. `inversion_bit` is the scheduled V0(m) and is retained in the set.
  * The destination is unchanged on failure. */

@@ -2,8 +2,6 @@
 
 #include "v34_channel_frame_decoder.h"
 
-#include "v34_mapping_parameters.h"
-
 #include <stddef.h>
 #include <string.h>
 
@@ -62,16 +60,28 @@ static bool decided_interval_is_bounded(
 static bool cursors_are_aligned(
 	const struct v34_channel_frame_decoder *decoder)
 {
-	const struct v34_survivor *survivor =
-		&decoder->channel_decoder.survivor;
-	uint8_t history = survivor->path_intervals;
+	const struct v34_channel_decoder *channel =
+		&decoder->channel_decoder;
+	uint8_t path_index;
+	uint8_t history;
+	uint8_t traceback_intervals;
+
+	if (channel->selection == V34_TRELLIS_16_STATE) {
+		path_index = channel->path.fixed_16.survivor.path_index;
+		history = channel->path.fixed_16.survivor.path_intervals;
+		traceback_intervals = V34_16_STATE_TRACEBACK_INTERVALS;
+	} else {
+		path_index = channel->path.generic.path_index;
+		history = channel->path.generic.path_intervals;
+		traceback_intervals = V34_SURVIVOR_TRACEBACK_INTERVALS;
+	}
 
 	if (decoder->next_channel_interval !=
-	    survivor->path_index %
+	    path_index %
 		    V34_4D_INTERVALS_PER_MAPPING_FRAME)
 		return false;
 
-	if (history < V34_SURVIVOR_TRACEBACK_INTERVALS)
+	if (history < traceback_intervals)
 		return decoder->pending_interval_count == 0u;
 	return decoder->pending_interval_count ==
 	       (uint8_t)((decoder->next_channel_interval + 1u) %
@@ -81,8 +91,6 @@ static bool cursors_are_aligned(
 bool v34_channel_frame_decoder_is_valid(
 	const struct v34_channel_frame_decoder *decoder)
 {
-	struct v34_mapping_parameters expected;
-
 	if (decoder == NULL ||
 	    !v34_channel_decoder_is_valid(
 		    &decoder->channel_decoder) ||
@@ -91,12 +99,9 @@ bool v34_channel_frame_decoder_is_valid(
 	    decoder->pending_interval_count >=
 		    V34_4D_INTERVALS_PER_MAPPING_FRAME ||
 	    !channel_frame_matches_schedule(decoder) ||
-	    v34_mapping_parameters_init(
-		    &expected, &decoder->channel_schedule.geometry,
-		    decoder->channel_decoder.parameters.expanded_shaping) !=
-		    V34_MAPPING_PARAMETERS_OK ||
-	    !v34_mapping_parameters_are_equal(
-		    &decoder->channel_decoder.parameters, &expected) ||
+	    !v34_frame_geometry_is_equal(
+		    &decoder->channel_decoder.geometry,
+		    &decoder->channel_schedule.geometry) ||
 	    !cursors_are_aligned(decoder))
 		return false;
 	for (uint8_t interval = 0;
@@ -132,15 +137,10 @@ v34_channel_frame_decoder_init(
 	enum v34_trellis_selection selection)
 {
 	struct v34_channel_frame_decoder initialized = { 0 };
-	struct v34_mapping_parameters parameters;
-
 	if (decoder == NULL ||
-	    v34_mapping_parameters_init(
-		    &parameters, geometry, expanded_shaping) !=
-		    V34_MAPPING_PARAMETERS_OK ||
 	    v34_channel_decoder_init(
-		    &initialized.channel_decoder, &parameters, coefficients,
-		    selection) != V34_CHANNEL_DECODER_OK ||
+		    &initialized.channel_decoder, geometry, expanded_shaping,
+		    coefficients, selection) != V34_CHANNEL_DECODER_OK ||
 	    v34_b1_frame_schedule_init(
 		    &initialized.channel_schedule, geometry) !=
 		    V34_FRAME_SCHEDULE_OK ||

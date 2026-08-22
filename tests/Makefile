@@ -896,6 +896,7 @@ V34_16_STATE_SURVIVOR_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_16_state_survivor
 V34_16_STATE_SURVIVOR_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_16_state_survivor.o \
+	$(BUILD_DIR)/v34_16_state_branches.o \
 	$(BUILD_DIR)/v34_16_state_survivor.o \
 	$(filter-out $(BUILD_DIR)/test_v34_survivor.o, \
 		$(V34_SURVIVOR_TEST_OBJECTS))
@@ -903,7 +904,6 @@ V34_16_STATE_BRANCHES_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_16_state_branches
 V34_16_STATE_BRANCHES_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_16_state_branches.o \
-	$(BUILD_DIR)/v34_16_state_branches.o \
 	$(filter-out $(BUILD_DIR)/test_v34_16_state_survivor.o, \
 		$(V34_16_STATE_SURVIVOR_TEST_OBJECTS))
 V34_PATH_DECODER_TEST_BINARY := \
@@ -919,6 +919,8 @@ V34_CHANNEL_DECODER_TEST_BINARY := \
 V34_CHANNEL_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_channel_decoder.o \
 	$(BUILD_DIR)/v34_channel_decoder.o \
+	$(BUILD_DIR)/v34_16_state_branches.o \
+	$(BUILD_DIR)/v34_16_state_survivor.o \
 	$(filter-out $(BUILD_DIR)/test_v34_path_decoder.o, \
 		$(V34_PATH_DECODER_TEST_OBJECTS))
 V34_4D_DECODER_TEST_BINARY := \

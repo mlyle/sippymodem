@@ -47,8 +47,9 @@ struct v34_survivor {
 bool v34_survivor_decision_is_valid(
 	const struct v34_survivor_decision *decision);
 
-/* Start at the all-zero convolutional state required at the beginning of B1.
- * The destination is unchanged when the selection is invalid. */
+/* Start the floating 32- or 64-state path at the all-zero convolutional state
+ * required at the beginning of B1. The destination is unchanged when the
+ * selection is invalid. */
 enum v34_survivor_result v34_survivor_init(
 	struct v34_survivor *survivor,
 	enum v34_trellis_selection selection);

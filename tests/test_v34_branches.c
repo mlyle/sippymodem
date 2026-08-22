@@ -49,12 +49,12 @@ static uint8_t expected_branch_count(
 	enum v34_trellis_selection selection)
 {
 	switch (selection) {
-	case V34_TRELLIS_16_STATE:
-		return 8;
 	case V34_TRELLIS_32_STATE:
 		return 16;
 	case V34_TRELLIS_64_STATE:
 		return 32;
+	case V34_TRELLIS_16_STATE:
+		break;
 	}
 	return 0;
 }
@@ -68,7 +68,7 @@ static uint8_t expected_subset_index(
 
 	if (selection == V34_TRELLIS_32_STATE)
 		index |= (uint8_t)(input->y4 << 3);
-	else if (selection == V34_TRELLIS_64_STATE)
+	else
 		index |= (uint8_t)(input->y3 << 3) |
 			 (uint8_t)(input->y4 << 4);
 	return index;
@@ -203,7 +203,7 @@ static bool test_generated_reduction(void)
 		}
 		for (uint8_t inversion = 0; inversion < 2u; ++inversion) {
 			for (enum v34_trellis_selection selection =
-				     V34_TRELLIS_16_STATE;
+				     V34_TRELLIS_32_STATE;
 			     selection <= V34_TRELLIS_64_STATE;
 			     ++selection)
 				CHECK(verify_reduction(
@@ -218,7 +218,7 @@ static bool test_generated_reduction(void)
 			slices[symbol].subset[label].squared_error = 0.0;
 	for (uint8_t inversion = 0; inversion < 2u; ++inversion)
 		for (enum v34_trellis_selection selection =
-			     V34_TRELLIS_16_STATE;
+			     V34_TRELLIS_32_STATE;
 		     selection <= V34_TRELLIS_64_STATE;
 		     ++selection)
 			CHECK(verify_reduction(
@@ -257,7 +257,7 @@ static bool test_encoder_agreement(void)
 	CHECK(initialize_parameters(&parameters),
 	      "encoder-agreement parameters failed");
 	for (enum v34_trellis_selection selection =
-		     V34_TRELLIS_16_STATE;
+		     V34_TRELLIS_32_STATE;
 	     selection <= V34_TRELLIS_64_STATE; ++selection) {
 		struct v34_4d_encoder encoder;
 		uint8_t point_limit = (uint8_t)(
@@ -360,7 +360,7 @@ static bool test_validation(void)
 			      V34_LATTICE_OK,
 		      "validation slice %zu failed", symbol);
 	CHECK(v34_build_branch_set(
-		      slices, 0, V34_TRELLIS_16_STATE, &branches) ==
+		      slices, 0, V34_TRELLIS_32_STATE, &branches) ==
 		      V34_BRANCHES_OK &&
 	      v34_branch_set_is_valid(&branches) &&
 	      !v34_branch_set_is_valid(NULL),
@@ -382,22 +382,25 @@ static bool test_validation(void)
 	CHECK(!v34_branch_set_is_valid(&malformed_branches),
 	      "inconsistent branch metric was accepted");
 	CHECK(rejection_is_transactional(
-		      NULL, 0, V34_TRELLIS_16_STATE,
+		      NULL, 0, V34_TRELLIS_32_STATE,
 		      V34_BRANCHES_INVALID_ARGUMENT) &&
 	      rejection_is_transactional(
-		      slices, 2, V34_TRELLIS_16_STATE,
+		      slices, 2, V34_TRELLIS_32_STATE,
+		      V34_BRANCHES_INVALID_ARGUMENT) &&
+	      rejection_is_transactional(
+		      slices, 0, V34_TRELLIS_16_STATE,
 		      V34_BRANCHES_INVALID_ARGUMENT) &&
 	      rejection_is_transactional(
 		      slices, 0, (enum v34_trellis_selection)3,
 		      V34_BRANCHES_INVALID_ARGUMENT) &&
 	      v34_build_branch_set(
-		      slices, 0, V34_TRELLIS_16_STATE, NULL) ==
+		      slices, 0, V34_TRELLIS_32_STATE, NULL) ==
 		      V34_BRANCHES_INVALID_ARGUMENT,
 	      "invalid branch-set arguments were accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].subset_label = 1;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, V34_TRELLIS_16_STATE,
+		      malformed, 0, V34_TRELLIS_32_STATE,
 		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "mislabelled subset was accepted");
 	memcpy(malformed, slices, sizeof(malformed));
@@ -415,13 +418,13 @@ static bool test_validation(void)
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].squared_error = NAN;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, V34_TRELLIS_16_STATE,
+		      malformed, 0, V34_TRELLIS_32_STATE,
 		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "non-finite subset metric was accepted");
 	memcpy(malformed, slices, sizeof(malformed));
 	malformed[0].subset[0].squared_error = -1.0;
 	CHECK(rejection_is_transactional(
-		      malformed, 0, V34_TRELLIS_16_STATE,
+		      malformed, 0, V34_TRELLIS_32_STATE,
 		      V34_BRANCHES_INVALID_ARGUMENT),
 	      "negative subset metric was accepted");
 	memcpy(malformed, slices, sizeof(malformed));

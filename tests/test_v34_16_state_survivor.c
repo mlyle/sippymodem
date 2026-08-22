@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v34_16_state_survivor.h>
+#include <v34_16_state_branches.h>
 
 #include "test.h"
 
@@ -12,22 +12,31 @@ enum {
 	ORACLE_INTERVALS = 4096,
 };
 
-static const uint8_t FIXED_TO_GENERIC_BRANCH[V34_16_STATE_BRANCH_COUNT] = {
-	0, 4, 2, 6, 1, 5, 3, 7,
-};
-
 static uint32_t next_word(uint32_t *state)
 {
 	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
 	return *state;
 }
 
+static bool initialize_profile(
+	struct v34_16_state_branch_profile *profile)
+{
+	struct v34_frame_geometry geometry;
+
+	return v34_frame_geometry_init(
+		       &geometry, V34_SYMBOL_RATE_3429, 10, false) ==
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_16_state_branch_profile_init(
+		       profile, &geometry, false) ==
+		       V34_16_STATE_BRANCHES_OK;
+}
+
 static bool generated_branches(
-	uint32_t *random, struct v34_16_state_branch
+	uint32_t *random, const struct v34_16_state_branch_profile *profile,
+	struct v34_16_state_branch
 		branches[V34_16_STATE_BRANCH_COUNT])
 {
-	struct v34_subset_slice slices[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	struct v34_branch_set generated;
+	struct v34_analytic_sample samples[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	uint8_t inversion = (uint8_t)(next_word(random) & 1u);
 
 	for (uint8_t symbol = 0;
@@ -41,31 +50,18 @@ static bool generated_branches(
 				(double)(next_word(random) & 0xffffu) / 65536.0,
 		};
 
-		if (v34_slice_grid_subsets(&estimate, &slices[symbol]) !=
-		    V34_LATTICE_OK)
+		if (v34_16_state_branch_quantize(
+			    profile, &estimate, &samples[symbol]) !=
+		    V34_16_STATE_BRANCHES_OK)
 			return false;
 	}
-	if (v34_build_branch_set(
-		    slices, inversion, V34_TRELLIS_16_STATE, &generated) !=
-	    V34_BRANCHES_OK)
+	if (v34_16_state_branches_build(
+		    profile, samples, inversion, branches) !=
+	    V34_16_STATE_BRANCHES_OK)
 		return false;
 	for (uint8_t branch = 0; branch < V34_16_STATE_BRANCH_COUNT;
-	     ++branch) {
-		const struct v34_branch *source =
-			&generated.branch[FIXED_TO_GENERIC_BRANCH[branch]];
-
-		branches[branch] = (struct v34_16_state_branch){
-			.decision = {
-				.channel_output = {
-					source->symbol[0].channel_output,
-					source->symbol[1].channel_output,
-				},
-				.convolutional_output = source->convolutional_output,
-				.inversion_bit = inversion,
-			},
-			.metric = (uint16_t)next_word(random),
-		};
-	}
+	     ++branch)
+		branches[branch].metric = (uint16_t)next_word(random);
 	return true;
 }
 
@@ -119,13 +115,15 @@ static uint64_t hash_state(
 
 static bool test_exact_oracle(void)
 {
+	struct v34_16_state_branch_profile profile;
 	struct v34_16_state_survivor survivor;
 	uint32_t random = UINT32_C(0x6ca392d1);
 	uint64_t current_hash = UINT64_C(14695981039346656037);
 	uint64_t traceback_hash = UINT64_C(14695981039346656037);
 	unsigned ready_count = 0;
 
-	CHECK(v34_16_state_survivor_init(&survivor) ==
+	CHECK(initialize_profile(&profile) &&
+	      v34_16_state_survivor_init(&survivor) ==
 		      V34_16_STATE_SURVIVOR_OK &&
 	      v34_16_state_survivor_is_valid(&survivor),
 	      "16-state survivor did not initialize");
@@ -138,7 +136,7 @@ static bool test_exact_oracle(void)
 
 		memset(&traceback, 0xa5, sizeof(traceback));
 		saved_traceback = traceback;
-		CHECK(generated_branches(&random, branches) &&
+		CHECK(generated_branches(&random, &profile, branches) &&
 		      v34_16_state_survivor_advance(
 			      &survivor, branches, &current, &traceback,
 			      &ready) == V34_16_STATE_SURVIVOR_OK,
@@ -161,8 +159,8 @@ static bool test_exact_oracle(void)
 	CHECK(ready_count ==
 		      ORACLE_INTERVALS - V34_16_STATE_TRACEBACK_INTERVALS + 1u,
 	      "traceback count changed");
-	CHECK(current_hash == UINT64_C(0xc86ebeaa0a0f6385) &&
-	      traceback_hash == UINT64_C(0xc884c88db2a1b0a0) &&
+	CHECK(current_hash == UINT64_C(0x6bf2fed58941c079) &&
+	      traceback_hash == UINT64_C(0xd192dc2a15d910d4) &&
 	      hash_state(&survivor) == UINT64_C(0x5f0f4252e39c6b0b),
 	      "fixed survivor oracle changed: %016llx/%016llx/%016llx",
 	      (unsigned long long)current_hash,
@@ -200,6 +198,7 @@ static bool rejected_advance(
 
 static bool test_contracts(void)
 {
+	struct v34_16_state_branch_profile profile;
 	struct v34_16_state_survivor survivor;
 	struct v34_16_state_survivor saved;
 	struct v34_16_state_survivor corrupted;
@@ -212,9 +211,10 @@ static bool test_contracts(void)
 		      V34_16_STATE_SURVIVOR_INVALID_ARGUMENT &&
 	      memcmp(&survivor, &saved, sizeof(saved)) == 0,
 	      "null initialization changed state");
-	CHECK(v34_16_state_survivor_init(&survivor) ==
+	CHECK(initialize_profile(&profile) &&
+	      v34_16_state_survivor_init(&survivor) ==
 		      V34_16_STATE_SURVIVOR_OK &&
-	      generated_branches(&random, branches),
+	      generated_branches(&random, &profile, branches),
 	      "contract fixture did not initialize");
 	CHECK(rejected_advance(
 		      NULL, branches, V34_16_STATE_SURVIVOR_INVALID_STATE),
@@ -268,11 +268,13 @@ static bool test_contracts(void)
 
 static bool test_reentrancy(void)
 {
+	struct v34_16_state_branch_profile profile;
 	struct v34_16_state_survivor left;
 	struct v34_16_state_survivor right;
 	uint32_t random = UINT32_C(0xb905703c);
 
-	CHECK(v34_16_state_survivor_init(&left) ==
+	CHECK(initialize_profile(&profile) &&
+	      v34_16_state_survivor_init(&left) ==
 		      V34_16_STATE_SURVIVOR_OK,
 	      "reentrant owner did not initialize");
 	right = left;
@@ -285,7 +287,7 @@ static bool test_reentrancy(void)
 		bool left_ready;
 		bool right_ready;
 
-		CHECK(generated_branches(&random, branches) &&
+		CHECK(generated_branches(&random, &profile, branches) &&
 		      v34_16_state_survivor_advance(
 			      &left, branches, &left_current, &left_traceback,
 			      &left_ready) == V34_16_STATE_SURVIVOR_OK &&

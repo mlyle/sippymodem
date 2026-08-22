@@ -173,7 +173,7 @@ static bool test_generated_round_trip(void)
 	CHECK(initialize_parameters(&parameters),
 	      "survivor parameters did not initialize");
 	for (enum v34_trellis_selection selection =
-		     V34_TRELLIS_16_STATE;
+		     V34_TRELLIS_32_STATE;
 	     selection <= V34_TRELLIS_64_STATE; ++selection) {
 		struct v34_survivor_decision
 			expected[ROUND_TRIP_INTERVALS];
@@ -286,7 +286,7 @@ static bool test_path_correction(void)
 	CHECK(initialize_parameters(&parameters),
 	      "correction parameters did not initialize");
 	for (enum v34_trellis_selection selection =
-		     V34_TRELLIS_16_STATE;
+		     V34_TRELLIS_32_STATE;
 	     selection <= V34_TRELLIS_64_STATE; ++selection) {
 		struct v34_survivor_decision
 			expected[FAULT_TEST_INTERVALS];
@@ -419,7 +419,10 @@ static bool test_validation(void)
 	memset(&survivor, 0xa5, sizeof(survivor));
 	saved = survivor;
 	CHECK(v34_survivor_init(NULL,
-		      V34_TRELLIS_16_STATE) ==
+		      V34_TRELLIS_32_STATE) ==
+		      V34_SURVIVOR_INVALID_ARGUMENT &&
+	      v34_survivor_init(
+		      &survivor, V34_TRELLIS_16_STATE) ==
 		      V34_SURVIVOR_INVALID_ARGUMENT &&
 	      v34_survivor_init(
 		      &survivor, (enum v34_trellis_selection)3) ==
@@ -429,19 +432,19 @@ static bool test_validation(void)
 	CHECK(initialize_parameters(&parameters) &&
 	      v34_4d_encoder_init(
 		      &encoder, &parameters, COEFFICIENTS,
-		      V34_TRELLIS_16_STATE) ==
+		      V34_TRELLIS_32_STATE) ==
 		      V34_4D_ENCODER_OK &&
 	      v34_survivor_init(
-		      &survivor, V34_TRELLIS_16_STATE) ==
+		      &survivor, V34_TRELLIS_32_STATE) ==
 		      V34_SURVIVOR_OK,
 	      "validation survivor did not initialize");
 	input = fixture_input(
-		&parameters, V34_TRELLIS_16_STATE, 0);
+		&parameters, V34_TRELLIS_32_STATE, 0);
 	CHECK(v34_4d_encoder_step(&encoder, &input, &encoded) ==
 		      V34_4D_ENCODER_OK &&
 	      build_branches(
 		      &encoded, input.inversion_bit, NULL, false,
-		      V34_TRELLIS_16_STATE, &branches),
+		      V34_TRELLIS_32_STATE, &branches),
 	      "validation branches did not build");
 	CHECK(rejected_advance_is_transactional(
 		      NULL, &branches, V34_SURVIVOR_INVALID_ARGUMENT) &&
@@ -478,7 +481,7 @@ static bool test_validation(void)
 		      "null survivor outputs changed state");
 	}
 	malformed = branches;
-	malformed.selection = V34_TRELLIS_32_STATE;
+	malformed.selection = V34_TRELLIS_64_STATE;
 	CHECK(!v34_branch_set_is_valid(&malformed) &&
 	      rejected_advance_is_transactional(
 		      &survivor, &malformed,
@@ -516,7 +519,7 @@ static bool test_validation(void)
 		      "validation survivor did not populate history");
 	}
 	corrupted = survivor;
-	corrupted.path[0].predecessor[0] = 16;
+	corrupted.path[0].predecessor[0] = 32;
 	CHECK(!v34_survivor_is_valid(&corrupted),
 	      "out-of-range survivor predecessor was accepted");
 	corrupted = survivor;
