@@ -2330,6 +2330,8 @@ int main(void)
 	const char *v34_answer_recording_symbol_rate =
 		getenv("V34_ANSWER_REPLAY_SYMBOL_RATE");
 	const char *v34_matrix_filter = getenv("V34_MATRIX_FILTER");
+	const bool skip_v34_matrix =
+		getenv("MODEM_INTEGRATION_SKIP_V34_MATRIX") != NULL;
 	const char *integration_filter = getenv("MODEM_INTEGRATION_FILTER");
 	const char *v22_recording_path =
 		getenv("V22_REPLAY_RX_PCM");
@@ -2723,7 +2725,7 @@ int main(void)
 		}
 		return 0;
 	}
-	if (!run_v34_rate_matrix(NULL))
+	if (!skip_v34_matrix && !run_v34_rate_matrix(NULL))
 		return 1;
 	for (size_t codec = 0; codec < ARRAY_LENGTH(codecs); ++codec) {
 		for (size_t rate = 0; rate < ARRAY_LENGTH(baudot_rates);
