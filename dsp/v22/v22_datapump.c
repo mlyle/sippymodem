@@ -934,6 +934,8 @@ static void discard_retrain_candidate(
 	datapump->retrain_candidate_bit_count = 0;
 	datapump->retrain_symbol_history = 0;
 	datapump->retrain_candidate_deliver = false;
+	datapump->rate_signal_late_candidate = false;
+	datapump->rate_signal_reply_sent = false;
 }
 
 static int shift_retrain_candidate(struct v22_datapump *datapump)
@@ -1512,8 +1514,6 @@ static int enter_link(struct v22_datapump *datapump)
 	datapump->retraining = false;
 	datapump->retrain_peer_signal_received = false;
 	datapump->retrain_receive_ready = false;
-	datapump->rate_signal_late_candidate = false;
-	datapump->rate_signal_reply_sent = false;
 	datapump->dp.status = DPSTAT_CONNECT;
 	return 0;
 }
@@ -1682,6 +1682,19 @@ static int process_v22(
 		!datapump_uses_v22bis(datapump) &&
 		datapump->dp.status == DPSTAT_OK;
 	line_power_present = line_power_is_present(receive, count);
+	/* The generic QAM floor is deliberately permissive.  Do not let codec
+	 * idle residue establish V.22 timing or protocol lineage before carrier. */
+	if (!line_power_present && !datapump->retraining &&
+	    datapump->training_state != V22_TRAINING_ONLINE) {
+		if (reset_v22_receive_path(datapump) != 0) {
+			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+			return DPSTAT_ERROR;
+		}
+		datapump->answer_mark_symbols = 0;
+		datapump->scrambled_mark_bits = 0;
+		datapump->v22bis_confirm_bits = 0;
+		discard_retrain_candidate(datapump);
+	}
 	if (datapump->training_state != V22_TRAINING_ONLINE ||
 	    resume_current_carrier) {
 		if ((uint64_t)(unsigned int)count >
@@ -1714,12 +1727,12 @@ static int process_v22(
 		datapump->carrier_return_hold_samples != 0;
 	for (int index = 0; index < count; ++index) {
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
-		    receive_sample(
+		    (line_power_present && receive_sample(
 			    datapump, receive[index],
 			    discard_receive ||
 				    (resume_current_carrier &&
 				     !datapump->demodulator.timing_locked),
-			    &linked) != 0 ||
+			    &linked) != 0) ||
 		    advance_training_timer(datapump, &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;

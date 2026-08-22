@@ -317,6 +317,42 @@ static bool endpoint_prepare_media(
 	return true;
 }
 
+static bool endpoint_replace_precarrier_silence(
+	struct integration_endpoint *endpoint, enum media_codec codec,
+	uint32_t *state, bool *carrier_seen)
+{
+	enum g711_law law;
+	int silence;
+
+	if (endpoint == NULL || state == NULL || *state == 0 ||
+	    carrier_seen == NULL || !codec_law(codec, &law) ||
+	    (silence = media_codec_silence_octet(codec)) < 0 ||
+	    silence > UINT8_MAX)
+		return false;
+	if (*carrier_seen)
+		return true;
+	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
+		if (endpoint->receive_codewords[index] == (uint8_t)silence)
+			continue;
+		*carrier_seen = true;
+		return true;
+	}
+	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
+		uint8_t codeword;
+
+		*state ^= *state << 13;
+		*state ^= *state >> 17;
+		*state ^= *state << 5;
+		/* Exercise the generic QAM floor while remaining far below the
+		 * V.22 family's carrier threshold after either codec. */
+		codeword = encode_codeword(
+			law, (int16_t)(((int32_t)(*state & 31u) - 16) * 8));
+		endpoint->receive_codewords[index] = codeword;
+		endpoint->receive[index] = decode_codeword(law, codeword);
+	}
+	return true;
+}
+
 static bool process_transmit_frame(
 	struct integration_endpoint *endpoint, enum media_codec codec,
 	const struct media_recorder *recorder)
@@ -1138,6 +1174,8 @@ static bool run_media_call(
 	bool prelink_delivered = false;
 	bool transferred = false;
 	bool answerer_signal_seen = false;
+	bool answerer_carrier_seen = false;
+	uint32_t answerer_precarrier_noise = 0x42519554u;
 	unsigned int answerer_silence_frames = 0;
 	unsigned int answerer_silence_max = 0;
 	enum DP_ID initial_datapump = uses_v8 ? DP_V8 : test_case->id;
@@ -1153,6 +1191,9 @@ static bool run_media_call(
 	static const char no_compression_command[] = "AT+DS=0,0\r";
 	bool monitor_caller_rate =
 		test_case->minimum_caller_rate_signals != 0;
+	bool impair_answerer_precarrier =
+		test_case->id == DP_V22 || test_case->id == DP_V22BIS ||
+		test_case->id == DP_B212;
 
 	CHECK(datapumps_start(&datapumps) ==
 		      DATAPUMPS_OK,
@@ -1265,6 +1306,13 @@ static bool run_media_call(
 		      caller.modem->dp->id == initial_datapump &&
 		      modem_answer(answerer.modem) == 0,
 	      "connected SIP call did not select %s roles", test_case->name);
+	CHECK(!impair_answerer_precarrier ||
+		      endpoint_replace_precarrier_silence(
+			      &answerer, codec,
+			      &answerer_precarrier_noise,
+			      &answerer_carrier_seen),
+	      "%s answerer pre-carrier noise could not be represented",
+	      test_case->name);
 
 	for (unsigned int frame = 0; frame < training_frame_limit; ++frame) {
 		CHECK(process_test_frame(
@@ -1275,6 +1323,13 @@ static bool run_media_call(
 		       v22_rate_monitor_observe(
 			       &caller_rate_monitor, caller.transmit)),
 		      "%s training failed at the SIP media boundary",
+		      test_case->name);
+		CHECK(!impair_answerer_precarrier ||
+			      endpoint_replace_precarrier_silence(
+				      &answerer, codec,
+				      &answerer_precarrier_noise,
+				      &answerer_carrier_seen),
+		      "%s answerer pre-carrier noise failed",
 		      test_case->name);
 		if (answerer.modem->dp != NULL &&
 		    answerer.modem->dp->id == DP_V32) {
