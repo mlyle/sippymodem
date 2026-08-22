@@ -99,7 +99,4 @@ enum v32_equalizer_result v32_equalizer_commit(
 	struct v32_equalizer *equalizer,
 	const struct v32_equalizer_decision *decision);
 
-const char *v32_equalizer_result_name(
-	enum v32_equalizer_result result);
-
 #endif

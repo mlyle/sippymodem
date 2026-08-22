@@ -231,17 +231,3 @@ enum v32_line_receiver_result v32_line_receiver_process(
 	*recovered_count = produced;
 	return V32_LINE_RECEIVER_OK;
 }
-
-const char *v32_line_receiver_result_name(
-	enum v32_line_receiver_result result)
-{
-	switch (result) {
-	case V32_LINE_RECEIVER_OK:
-		return "ok";
-	case V32_LINE_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V32_LINE_RECEIVER_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown V.32 line receiver result";
-}

@@ -708,10 +708,7 @@ static bool test_validation(void)
 		      dibit == UINT8_MAX &&
 		      strcmp(v32_startup_phase_name(
 			     V32_ANSWERER_SEND_SELECTION),
-			     "answerer rate selection") == 0 &&
-		      strcmp(v32_startup_result_name(
-			     V32_STARTUP_NO_COMMON_RATE),
-			     "no common rate") == 0,
+			     "answerer rate selection") == 0,
 	      "V.32 startup accepted corrupt state or changed diagnostics");
 	return true;
 }

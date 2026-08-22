@@ -58,7 +58,4 @@ v32_conditioning_transmitter_framing_state(
 	const struct v32_conditioning_transmitter *transmitter,
 	struct v32_symbol_encoder *encoder);
 
-const char *v32_conditioning_result_name(
-	enum v32_conditioning_result result);
-
 #endif

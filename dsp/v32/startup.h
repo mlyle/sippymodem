@@ -105,7 +105,5 @@ enum v32_startup_result v32_startup_observe(
 
 const char *v32_startup_phase_name(
 	enum v32_startup_phase phase);
-const char *v32_startup_result_name(
-	enum v32_startup_result result);
 
 #endif

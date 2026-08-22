@@ -450,10 +450,7 @@ static bool test_validation(void)
 		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
 		      output == UINT8_MAX &&
 		      v32_4800_symbol_decode(NULL, 0, &output) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      strcmp(v32_framing_result_name(
-			     V32_FRAMING_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
+			      V32_FRAMING_INVALID_ARGUMENT,
 	      "V.32 framing accepted invalid input or mutated state");
 	scrambler.history = UINT32_C(1) << V32_SCRAMBLER_BITS;
 	CHECK(!v32_scrambler_is_valid(&scrambler),

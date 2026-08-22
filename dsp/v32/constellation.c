@@ -280,15 +280,3 @@ v32_7200_constellation_point(
 	return v32_trellis_constellation_point(
 		3, signal_symbol, point);
 }
-
-const char *v32_constellation_result_name(
-	enum v32_constellation_result result)
-{
-	switch (result) {
-	case V32_CONSTELLATION_OK:
-		return "ok";
-	case V32_CONSTELLATION_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

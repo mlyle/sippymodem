@@ -297,11 +297,8 @@ static bool test_validation(void)
 			      V32_CONSTELLATION_INVALID_ARGUMENT &&
 		      v32_trellis_constellation_point(3, 0, NULL) ==
 			      V32_CONSTELLATION_INVALID_ARGUMENT &&
-		      memcmp(&point, &saved, sizeof(point)) == 0 &&
-		      strcmp(v32_constellation_result_name(
-			     V32_CONSTELLATION_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
-	      "V.32 constellation validation changed state or diagnostics");
+		      memcmp(&point, &saved, sizeof(point)) == 0,
+	      "V.32 constellation validation changed state");
 	return true;
 }
 

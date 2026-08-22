@@ -306,19 +306,3 @@ v32_rate_signal_detector_observe(
 		*offer = decoded;
 	return V32_RATE_SIGNAL_OK;
 }
-
-const char *v32_rate_signal_result_name(
-	enum v32_rate_signal_result result)
-{
-	switch (result) {
-	case V32_RATE_SIGNAL_OK:
-		return "ok";
-	case V32_RATE_SIGNAL_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V32_RATE_SIGNAL_INVALID_OFFER:
-		return "invalid offer";
-	case V32_RATE_SIGNAL_INVALID_WORD:
-		return "invalid word";
-	}
-	return "unknown";
-}

@@ -985,15 +985,6 @@ static bool test_validation(void)
 	receiver.stable_trn_symbols = 1;
 	CHECK(!v32_conditioning_receiver_is_valid(&receiver),
 	      "V.32 conditioning receiver accepted an idle stable tail");
-	CHECK(strcmp(
-		      v32_conditioning_receiver_result_name(
-			      V32_CONDITIONING_RECEIVER_OK),
-		      "ok") == 0 &&
-		      strcmp(
-			      v32_conditioning_receiver_result_name(
-			      (enum v32_conditioning_receiver_result)99),
-		      "unknown") == 0,
-	      "V.32 conditioning receiver result names changed");
 	return true;
 }
 

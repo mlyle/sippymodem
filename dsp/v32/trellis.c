@@ -90,15 +90,3 @@ enum v32_trellis_result v32_trellis_encode(
 		(uint8_t)((subset << low_bit_count) | (data & low_mask));
 	return V32_TRELLIS_OK;
 }
-
-const char *v32_trellis_result_name(
-	enum v32_trellis_result result)
-{
-	switch (result) {
-	case V32_TRELLIS_OK:
-		return "ok";
-	case V32_TRELLIS_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

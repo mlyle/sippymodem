@@ -146,7 +146,5 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 
 const char *v32_line_startup_state_name(
 	enum v32_line_startup_state state);
-const char *v32_line_startup_result_name(
-	enum v32_line_startup_result result);
 
 #endif

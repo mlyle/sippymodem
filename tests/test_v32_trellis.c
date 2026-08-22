@@ -149,14 +149,8 @@ static bool test_validation_is_transactional(void)
 	      "V.32 trellis accepted an invalid differential output");
 	encoder = saved;
 	encoder.data_bits_per_symbol = 0;
-	CHECK(!v32_trellis_encoder_is_valid(&encoder) &&
-		      strcmp(v32_trellis_result_name(
-			     V32_TRELLIS_INVALID_ARGUMENT),
-			     "invalid argument") == 0 &&
-		      strcmp(v32_trellis_result_name(
-			     (enum v32_trellis_result)99),
-			     "unknown") == 0,
-	      "V.32 trellis validation diagnostics changed");
+	CHECK(!v32_trellis_encoder_is_valid(&encoder),
+	      "V.32 trellis validation changed");
 	return true;
 }
 

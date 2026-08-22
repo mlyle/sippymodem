@@ -113,7 +113,4 @@ v32_conditioning_receiver_framing_state(
 	const struct v32_conditioning_receiver *receiver,
 	struct v32_symbol_decoder *decoder);
 
-const char *v32_conditioning_receiver_result_name(
-	enum v32_conditioning_receiver_result result);
-
 #endif

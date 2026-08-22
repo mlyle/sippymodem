@@ -331,15 +331,3 @@ enum v32_framing_result v32_9600_symbol_decode(
 	*output = decoded;
 	return V32_FRAMING_OK;
 }
-
-const char *v32_framing_result_name(
-	enum v32_framing_result result)
-{
-	switch (result) {
-	case V32_FRAMING_OK:
-		return "ok";
-	case V32_FRAMING_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

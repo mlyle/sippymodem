@@ -87,6 +87,4 @@ enum v32_echo_result v32_echo_canceller_process(
 	struct v32_echo_canceller *canceller,
 	const double *received, double *cleaned, size_t count);
 
-const char *v32_echo_result_name(enum v32_echo_result result);
-
 #endif

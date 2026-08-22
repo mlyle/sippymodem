@@ -570,21 +570,3 @@ enum v32_equalizer_result v32_equalizer_commit(
 	*equalizer = next;
 	return V32_EQUALIZER_OK;
 }
-
-const char *v32_equalizer_result_name(
-	enum v32_equalizer_result result)
-{
-	switch (result) {
-	case V32_EQUALIZER_OK:
-		return "ok";
-	case V32_EQUALIZER_OBSERVATION_READY:
-		return "observation ready";
-	case V32_EQUALIZER_DECISION_PENDING:
-		return "decision pending";
-	case V32_EQUALIZER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V32_EQUALIZER_INVALID_STATE:
-		return "invalid state";
-	}
-	return "unknown V.32 equalizer result";
-}

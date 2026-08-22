@@ -815,17 +815,3 @@ const char *v32_line_startup_state_name(
 	}
 	return "unknown";
 }
-
-const char *v32_line_startup_result_name(
-	enum v32_line_startup_result result)
-{
-	switch (result) {
-	case V32_LINE_STARTUP_OK:
-		return "ok";
-	case V32_LINE_STARTUP_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V32_LINE_STARTUP_PROTOCOL_ERROR:
-		return "protocol error";
-	}
-	return "unknown";
-}

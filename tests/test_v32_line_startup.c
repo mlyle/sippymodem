@@ -583,10 +583,7 @@ static bool test_validation_is_transactional(void)
 		      transmit == 123 && complete &&
 		      strcmp(v32_line_startup_state_name(
 			     V32_LINE_SEND_CALLING_CARRIER),
-			     "calling carrier") == 0 &&
-		      strcmp(v32_line_startup_result_name(
-			     V32_LINE_STARTUP_PROTOCOL_ERROR),
-			     "protocol error") == 0,
+			     "calling carrier") == 0,
 	      "invalid V.32 line-startup mutation was not transactional");
 	startup = initialized;
 	startup.round_trip_samples = 1;

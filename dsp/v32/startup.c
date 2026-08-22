@@ -619,17 +619,3 @@ const char *v32_startup_phase_name(
 	}
 	return "unknown";
 }
-
-const char *v32_startup_result_name(
-	enum v32_startup_result result)
-{
-	switch (result) {
-	case V32_STARTUP_OK:
-		return "ok";
-	case V32_STARTUP_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V32_STARTUP_NO_COMMON_RATE:
-		return "no common rate";
-	}
-	return "unknown";
-}

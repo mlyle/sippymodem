@@ -67,7 +67,4 @@ v32_trellis_fixed_signal_point(
 	uint8_t data_bits_per_symbol, uint8_t signal_symbol,
 	struct v32_fixed_point *point);
 
-const char *v32_constellation_result_name(
-	enum v32_constellation_result result);
-
 #endif

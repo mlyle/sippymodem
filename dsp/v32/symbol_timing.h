@@ -67,7 +67,4 @@ enum v32_symbol_timing_result v32_symbol_timing_process(
 	int16_t *output, size_t output_capacity,
 	size_t *output_count);
 
-const char *v32_symbol_timing_result_name(
-	enum v32_symbol_timing_result result);
-
 #endif

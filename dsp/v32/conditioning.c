@@ -147,17 +147,3 @@ v32_conditioning_transmitter_framing_state(
 	*encoder = transmitter->trn_encoder;
 	return V32_CONDITIONING_OK;
 }
-
-const char *v32_conditioning_result_name(
-	enum v32_conditioning_result result)
-{
-	switch (result) {
-	case V32_CONDITIONING_OK:
-		return "ok";
-	case V32_CONDITIONING_COMPLETE:
-		return "complete";
-	case V32_CONDITIONING_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

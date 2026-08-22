@@ -98,7 +98,4 @@ enum v32_framing_result v32_9600_symbol_decode(
 	struct v32_symbol_decoder *decoder, uint8_t symbol,
 	uint8_t *output);
 
-const char *v32_framing_result_name(
-	enum v32_framing_result result);
-
 #endif

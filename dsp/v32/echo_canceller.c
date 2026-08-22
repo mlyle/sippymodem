@@ -310,17 +310,3 @@ enum v32_echo_result v32_echo_canceller_process(
 	}
 	return V32_ECHO_OK;
 }
-
-const char *v32_echo_result_name(enum v32_echo_result result)
-{
-	switch (result) {
-	case V32_ECHO_OK:
-		return "ok";
-	case V32_ECHO_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V32_ECHO_INVALID_STATE:
-		return "invalid state";
-	default:
-		return "unknown";
-	}
-}

@@ -71,7 +71,4 @@ v32_rate_signal_detector_observe(
 	enum v32_rate_signal_event *event,
 	struct v32_rate_offer *offer);
 
-const char *v32_rate_signal_result_name(
-	enum v32_rate_signal_result result);
-
 #endif

@@ -45,7 +45,4 @@ enum v32_trellis_result v32_trellis_encode(
 	struct v32_trellis_encoder *encoder, uint8_t data,
 	uint8_t *signal_symbol);
 
-const char *v32_trellis_result_name(
-	enum v32_trellis_result result);
-
 #endif

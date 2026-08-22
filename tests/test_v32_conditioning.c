@@ -198,15 +198,6 @@ static bool test_validation(void)
 			      V32_CONDITIONING_INVALID_ARGUMENT &&
 		      quadrant == UINT8_MAX,
 	      "V.32 conditioning accepted corrupt state");
-	CHECK(strcmp(
-		      v32_conditioning_result_name(
-			      V32_CONDITIONING_OK),
-		      "ok") == 0 &&
-		      strcmp(
-			      v32_conditioning_result_name(
-				      (enum v32_conditioning_result)99),
-			      "unknown") == 0,
-	      "V.32 conditioning result names changed");
 	return true;
 }
 

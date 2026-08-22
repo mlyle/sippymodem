@@ -313,15 +313,8 @@ static bool test_validation_and_aliases(void)
 	canceller.reference_write = 0;
 	canceller.coefficients[0][0][0].in_phase = INFINITY;
 	CHECK(!v32_echo_canceller_is_valid(&canceller) &&
-	      !v32_echo_canceller_is_valid(NULL) &&
-	      strcmp(v32_echo_result_name(V32_ECHO_OK), "ok") == 0 &&
-	      strcmp(v32_echo_result_name(V32_ECHO_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v32_echo_result_name(V32_ECHO_INVALID_STATE),
-		     "invalid state") == 0 &&
-	      strcmp(v32_echo_result_name((enum v32_echo_result)99),
-		     "unknown") == 0,
-	      "echo validation or result names changed");
+	      !v32_echo_canceller_is_valid(NULL),
+	      "echo validation changed");
 	CHECK(active_corruption_is_transactional(false, true) &&
 	      active_corruption_is_transactional(false, false) &&
 	      active_corruption_is_transactional(true, true) &&

@@ -616,17 +616,3 @@ v32_conditioning_receiver_framing_state(
 	*decoder = next_decoder;
 	return V32_CONDITIONING_RECEIVER_OK;
 }
-
-const char *v32_conditioning_receiver_result_name(
-	enum v32_conditioning_receiver_result result)
-{
-	switch (result) {
-	case V32_CONDITIONING_RECEIVER_OK:
-		return "ok";
-	case V32_CONDITIONING_RECEIVER_COMPLETE:
-		return "complete";
-	case V32_CONDITIONING_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

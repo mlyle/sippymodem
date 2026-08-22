@@ -64,7 +64,4 @@ enum v32_line_receiver_result v32_line_receiver_process(
 	int16_t *recovered, size_t recovered_capacity,
 	size_t *recovered_count);
 
-const char *v32_line_receiver_result_name(
-	enum v32_line_receiver_result result);
-
 #endif
