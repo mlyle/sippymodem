@@ -622,6 +622,8 @@ static bool exercise_retrain(
 	enum {
 		TEST_STATE_COMMAND_ONLINE = 6,
 		PRESERVED_CAPACITY = 32,
+		CONSTANT_CARRIER_ATO1_MIN_FRAMES =
+			(MODEM_RATE / 10) / SIP_FRAME_SAMPLES,
 	};
 	static const uint8_t caller_payloads[][8] = {
 		{ 'c', 'a', 'l', 'l', '-', 'r', '1', 0x81 },
@@ -647,6 +649,7 @@ static bool exercise_retrain(
 	size_t pre_retrain_length;
 	size_t preserved_length;
 	uint32_t pending_transmit_data = 0;
+	unsigned int completion_frames = 0;
 	int pending_transmit_bits = 0;
 	int pending_transmit_chars = 0;
 
@@ -758,19 +761,36 @@ static bool exercise_retrain(
 				      reduce_answerer_to_caller)) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
+		if (id == DP_V22 || id == DP_B212) {
+			const struct integration_endpoint *peer =
+				initiator == caller ? answerer : caller;
+
+			/* V.22/Bell has no reciprocal retrain signal.  The peer must
+			 * continue the existing constant-carrier link while only the
+			 * requester's receiver reacquires it. */
+			if (!modem_is_online(peer->modem, id)) {
+				fprintf(stderr,
+					"V.22 ATO1 disturbed the continuing peer link\n");
+				return false;
+			}
+		}
 		if (initiator->modem->retrain_pending == 0 &&
 		    modem_is_online(caller->modem, id) &&
 		    modem_is_online(answerer->modem, id)) {
 			completed = true;
+			completion_frames = frame + 1u;
 			break;
 		}
 	}
 	if (!completed ||
+	    ((id == DP_V22 || id == DP_B212) &&
+	     completion_frames < CONSTANT_CARRIER_ATO1_MIN_FRAMES) ||
 	    !output_contains_connect(initiator, bit_rate)) {
 		fprintf(stderr,
-			"retrain carrier failed (completed=%d pending=%u "
+			"retrain carrier failed (completed=%d frames=%u pending=%u "
 			"status=%u/%u state=%u/%u outputs=%zu/%zu)\n",
-			completed, initiator->modem->retrain_pending,
+			completed, completion_frames,
+			initiator->modem->retrain_pending,
 			caller->modem->dp != NULL ? caller->modem->dp->status : 0,
 			answerer->modem->dp != NULL ? answerer->modem->dp->status : 0,
 			caller->modem->state, answerer->modem->state,
@@ -2603,6 +2623,7 @@ int main(void)
 			.answerer_rx_rate = V22_1200_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.automode = true,
+			.test_retrain = true,
 		},
 		{
 			.id = DP_V23,

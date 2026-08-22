@@ -1148,12 +1148,12 @@ static int start_retrain_signal(struct v22_datapump *datapump)
 	return 0;
 }
 
-static int reset_v22bis_retrain_receiver(struct v22_datapump *datapump)
+static int reset_v22_receive_path(struct v22_datapump *datapump)
 {
 	struct qam_demodulator demodulator;
 	struct v22_symbol_decoder decoder;
 
-	if (datapump == NULL || !datapump_uses_v22bis(datapump))
+	if (datapump == NULL || !id_uses_v22_carrier(datapump->dp.id))
 		return -1;
 	demodulator = datapump->demodulator;
 	if (qam_demodulator_reset(&demodulator) != QAM_OK ||
@@ -1189,7 +1189,7 @@ static int begin_retrain(
 	    receive_quadrant >= QPSK_QUADRANT_COUNT)
 		return -1;
 	if (peer_signal_received) {
-		if (reset_v22bis_retrain_receiver(datapump) != 0)
+		if (reset_v22_receive_path(datapump) != 0)
 			return -1;
 	} else if (v22_symbol_decoder_init(
 			   &datapump->decoder, receive_quadrant) !=
@@ -1237,7 +1237,7 @@ static int note_peer_retrain_signal(
 	    (datapump->training_state != V22_TRAINING_RETRAIN_WAIT_PEER &&
 	     datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL))
 		return -1;
-	if (reset_v22bis_retrain_receiver(datapump) != 0)
+	if (reset_v22_receive_path(datapump) != 0)
 		return -1;
 	datapump->retrain_peer_signal_received = true;
 	datapump->retrain_retry_samples = 0;
@@ -1253,7 +1253,7 @@ static int repeat_peer_retrain_signal(
 	if (!datapump->retraining || !datapump_uses_v22bis(datapump) ||
 	    !datapump->retrain_peer_signal_received)
 		return -1;
-	if (reset_v22bis_retrain_receiver(datapump) != 0)
+	if (reset_v22_receive_path(datapump) != 0)
 		return -1;
 	datapump->phase_samples = 0;
 	reset_retrain_receive_progress(datapump);
@@ -1269,12 +1269,19 @@ static int retrain_v22(struct dp *dp)
 	if (datapump == NULL ||
 	    datapump->training_state != V22_TRAINING_ONLINE)
 		return -1;
-	/* V.22 6.3.1.2 keeps the existing constant-carrier connection across
-	 * loss and reappearance instead of starting another handshake.  O1 can
-	 * therefore resume that connection, while V.22bis uses its defined S1
-	 * exchange below.  Publish one fresh CONNECT event without disturbing
-	 * either direction's owned framing state. */
+	/* V.22 6.3.1.2 forbids another handshake after the constant-carrier link
+	 * is established.  Reacquire only the continuing V.22/Bell receive
+	 * carrier, while the transmitter and its queued framing remain untouched.
+	 * V.22bis uses its defined reciprocal S1 exchange below. */
 	if (!datapump_uses_v22bis(datapump)) {
+		if (reset_v22_receive_path(datapump) != 0)
+			return -1;
+		datapump->training_samples = 0;
+		datapump->missing_carrier_samples = 0;
+		datapump->carrier_return_hold_samples =
+			V22_CARRIER_RETURN_HOLD_SAMPLES;
+		if (!datapump->dp.modem->cfg.ec)
+			modem_async_retrain(datapump->dp.modem);
 		datapump->dp.status = DPSTAT_OK;
 		return 0;
 	}
@@ -1675,7 +1682,8 @@ static int process_v22(
 		!datapump_uses_v22bis(datapump) &&
 		datapump->dp.status == DPSTAT_OK;
 	line_power_present = line_power_is_present(receive, count);
-	if (datapump->training_state != V22_TRAINING_ONLINE) {
+	if (datapump->training_state != V22_TRAINING_ONLINE ||
+	    resume_current_carrier) {
 		if ((uint64_t)(unsigned int)count >
 		    datapump->training_timeout_samples - datapump->training_samples)
 			return DPSTAT_ERROR;
@@ -1707,14 +1715,19 @@ static int process_v22(
 	for (int index = 0; index < count; ++index) {
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
 		    receive_sample(
-			    datapump, receive[index], discard_receive,
+			    datapump, receive[index],
+			    discard_receive ||
+				    (resume_current_carrier &&
+				     !datapump->demodulator.timing_locked),
 			    &linked) != 0 ||
 		    advance_training_timer(datapump, &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
 		if (datapump->training_state == V22_TRAINING_ONLINE &&
-		    datapump->carrier_return_hold_samples != 0)
+		    datapump->carrier_return_hold_samples != 0 &&
+		    (!resume_current_carrier ||
+		     datapump->demodulator.timing_locked))
 			datapump->carrier_return_hold_samples--;
 	}
 	if (linked)
@@ -1723,10 +1736,20 @@ static int process_v22(
 		return DPSTAT_OK;
 	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
-	if (resume_current_carrier &&
-	    carrier_is_present(&measurement, line_power_present)) {
-		datapump->dp.status = DPSTAT_CONNECT;
-		return DPSTAT_CONNECT;
+	if (resume_current_carrier && line_power_present) {
+		if (carrier_is_present(&measurement, true)) {
+			if (datapump->missing_carrier_samples != 0) {
+				datapump->missing_carrier_samples = 0;
+				datapump->carrier_return_hold_samples =
+					V22_CARRIER_RETURN_HOLD_SAMPLES;
+			}
+			if (datapump->carrier_return_hold_samples == 0) {
+				datapump->training_samples = 0;
+				datapump->dp.status = DPSTAT_CONNECT;
+				return DPSTAT_CONNECT;
+			}
+		}
+		return DPSTAT_OK;
 	}
 	carrier_loss_limit = carrier_loss_limit_samples(datapump);
 	if (datapump_uses_v22bis(datapump) && line_power_present &&
