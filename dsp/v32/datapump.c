@@ -499,11 +499,8 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 
 static int initialize_protocol(
 	struct v32_datapump *datapump, uint8_t rates,
-	bool retraining, bool remote_started)
+	bool retraining)
 {
-	struct v32_line_startup detected_caller = datapump->line_startup;
-	struct v32_answerer_line_startup detected_answerer =
-		datapump->answerer_line_startup;
 	struct qam_channel channel;
 
 	if (v32_carrier_channel(&channel) != V32_CARRIER_OK ||
@@ -521,44 +518,29 @@ static int initialize_protocol(
 		    0, &datapump->transmit_point) != V32_CONSTELLATION_OK)
 		return -1;
 	if (datapump->caller) {
-		if ((!retraining &&
-		     v32_line_startup_init(
-			     &datapump->line_startup,
-			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
-		    (retraining && !remote_started &&
+		if ((retraining ?
 		     v32_line_retrain_init(
 			     &datapump->line_startup,
-			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
-		    (retraining && remote_started &&
-		     (!v32_line_startup_is_valid(&detected_caller) ||
-		      detected_caller.state !=
-			      V32_LINE_SEND_CALLING_CARRIER)) ||
+			     V32_TRANSMIT_AMPLITUDE) :
+		     v32_line_startup_init(
+			     &datapump->line_startup,
+			     V32_TRANSMIT_AMPLITUDE)) != V32_LINE_STARTUP_OK ||
 		    v32_answerer_line_startup_init(
 			    &datapump->answerer_line_startup,
 			    V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK)
 			return -1;
-		if (retraining && remote_started)
-			datapump->line_startup = detected_caller;
 	} else {
 		if (v32_line_startup_init(
 			    &datapump->line_startup,
 			    V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK ||
-		    (!retraining &&
-		     v32_answerer_line_startup_init(
-			     &datapump->answerer_line_startup,
-			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
-		    (retraining && !remote_started &&
+		    (retraining ?
 		     v32_answerer_line_retrain_init(
 			     &datapump->answerer_line_startup,
-			     V32_TRANSMIT_AMPLITUDE) != V32_LINE_STARTUP_OK) ||
-		    (retraining && remote_started &&
-		     (!v32_answerer_line_startup_is_valid(
-			     &detected_answerer) ||
-		      detected_answerer.state !=
-			      V32_ANSWERER_LINE_SEND_AC)))
+			     V32_TRANSMIT_AMPLITUDE) :
+		     v32_answerer_line_startup_init(
+			     &datapump->answerer_line_startup,
+			     V32_TRANSMIT_AMPLITUDE)) != V32_LINE_STARTUP_OK)
 			return -1;
-		if (retraining && remote_started)
-			datapump->answerer_line_startup = detected_answerer;
 	}
 	memset(&datapump->trellis_encoder, 0,
 	       sizeof(datapump->trellis_encoder));
@@ -591,7 +573,7 @@ static struct dp *create_v32(
 	if (datapump == NULL)
 		return NULL;
 	datapump->caller = is_caller;
-	if (initialize_protocol(datapump, rates, false, false) != 0 ||
+	if (initialize_protocol(datapump, rates, false) != 0 ||
 	    training_session_init(
 		    &datapump->training,
 		    datapump_carrier_wait_ticks(modem)) !=
@@ -611,12 +593,11 @@ static struct dp *create_v32(
 }
 
 static int prepare_retrain(
-	struct v32_datapump *datapump, enum training_origin origin,
-	bool remote_started)
+	struct v32_datapump *datapump, enum training_origin origin)
 {
 	if (initialize_protocol(
 		    datapump, rate_capabilities(datapump->dp.modem),
-		    true, remote_started) != 0 ||
+		    true) != 0 ||
 	    training_session_start_retrain(
 		    &datapump->training, origin) != TRAINING_SESSION_OK)
 		return -1;
@@ -635,8 +616,7 @@ static int retrain_v32(struct dp *dp)
 	if (!training_session_is_online(&datapump->training))
 		return -1;
 	next = *datapump;
-	if (prepare_retrain(
-		    &next, TRAINING_LOCAL_RETRAIN, false) != 0)
+	if (prepare_retrain(&next, TRAINING_LOCAL_RETRAIN) != 0)
 		return -1;
 	*datapump = next;
 	if (!datapump->dp.modem->cfg.ec)
@@ -1528,6 +1508,16 @@ static int receive_fixed_path_sample(
 			    reference, &batch) != V32_DATA_PATH_OK)
 			return -1;
 		deliver_fixed_batch(datapump, &batch);
+		if (batch.retrain_requested) {
+			struct v32_datapump next = *datapump;
+
+			if (prepare_retrain(
+				    &next, TRAINING_REMOTE_RETRAIN) != 0)
+				return -1;
+			*datapump = next;
+			if (!datapump->dp.modem->cfg.ec)
+				modem_async_retrain(datapump->dp.modem);
+		}
 		return 0;
 	}
 	case V32_FIXED_ANSWERER_INITIAL_ECHO:
@@ -1605,38 +1595,6 @@ static void add_bounded(
 		       limit : *value + increment;
 }
 
-static int observe_online_retrain(
-	struct v32_datapump *datapump, int16_t sample,
-	bool *started)
-{
-	bool detected;
-
-	if (!training_session_is_online(&datapump->training) ||
-	    started == NULL)
-		return -1;
-	if ((datapump->caller &&
-	     v32_line_startup_observe_retrain(
-		     &datapump->line_startup, sample, &detected) !=
-		     V32_LINE_STARTUP_OK) ||
-	    (!datapump->caller &&
-	     v32_answerer_line_startup_observe_retrain(
-		     &datapump->answerer_line_startup, sample, &detected) !=
-		     V32_LINE_STARTUP_OK))
-		return -1;
-	*started = detected;
-	if (detected) {
-		struct v32_datapump next = *datapump;
-
-		if (prepare_retrain(
-			    &next, TRAINING_REMOTE_RETRAIN, true) != 0)
-			return -1;
-		*datapump = next;
-		if (!datapump->dp.modem->cfg.ec)
-			modem_async_retrain(datapump->dp.modem);
-	}
-	return 0;
-}
-
 static int process_v32(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
@@ -1676,18 +1634,6 @@ static int process_v32(
 			if (startup_result != 0)
 				goto failure;
 			continue;
-		}
-		if (training_session_is_online(&datapump->training)) {
-			bool retrain_started;
-
-			if (observe_online_retrain(
-				    datapump, receive[index],
-				    &retrain_started) != 0)
-				goto failure;
-			if (retrain_started) {
-				transmit[index] = 0;
-				continue;
-			}
 		}
 		{
 			struct v32_echo_reference reference;

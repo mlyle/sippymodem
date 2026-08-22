@@ -7,9 +7,80 @@
 
 #include <stddef.h>
 
+static int32_t arithmetic_shift_right_s32(uint32_t value, unsigned shift)
+{
+	if (shift == 0)
+		return value <= INT32_MAX ?
+			       (int32_t)value :
+			       (int32_t)((int64_t)value - (INT64_C(1) << 32));
+	if ((value & UINT32_C(0x80000000)) == 0)
+		return (int32_t)(value >> shift);
+	return (int32_t)(~((~value) >> shift));
+}
+
+static int16_t wrap_s16(int32_t value)
+{
+	return (int16_t)(uint16_t)value;
+}
+
+static int32_t repeated_pair_energy(
+	int16_t previous_i, int16_t previous_q,
+	const struct v32_equalizer_observation *observation)
+{
+	int16_t difference_i = (int16_t)(
+		(uint16_t)previous_i - (uint16_t)observation->i);
+	int16_t difference_q = (int16_t)(
+		(uint16_t)previous_q - (uint16_t)observation->q);
+	uint32_t energy =
+		(uint32_t)((int32_t)difference_i * difference_i) +
+		(uint32_t)((int32_t)difference_q * difference_q);
+
+	return arithmetic_shift_right_s32(energy, 16);
+}
+
+static bool observe_retrain(
+	struct v32_data_retrain_detector *detector,
+	const struct v32_equalizer_observation *observation)
+{
+	int32_t energy = repeated_pair_energy(
+		detector->i_previous, detector->q_previous, observation);
+	int16_t average = wrap_s16(
+		arithmetic_shift_right_s32(
+			(uint32_t)((int32_t)detector->average_error * 15), 4) +
+		arithmetic_shift_right_s32((uint32_t)energy, 4));
+	uint16_t count = detector->repeated_pair_observations + 1u;
+
+	detector->i_previous = detector->i_last;
+	detector->q_previous = detector->q_last;
+	detector->i_last = observation->i;
+	detector->q_last = observation->q;
+	detector->average_error = average;
+	if (average <= 0x04ff) {
+		/* A large new two-symbol error during qualification is the separate
+		 * rate-renegotiation pattern.  This path does not yet negotiate a new
+		 * rate, but it must reset rather than falsely request full retrain. */
+		if (average < (int16_t)arithmetic_shift_right_s32(
+				      (uint32_t)energy, 3) &&
+		    count > 0x0014 && count <= 0x003b) {
+			detector->repeated_pair_observations = 0;
+			return false;
+		}
+		detector->repeated_pair_observations = count;
+		if (count == V32_DATA_RETRAIN_OBSERVATIONS) {
+			detector->repeated_pair_observations = 0;
+			return true;
+		}
+		return false;
+	}
+	detector->repeated_pair_observations = 0;
+	return false;
+}
+
 bool v32_data_path_is_valid(const struct v32_data_path *path)
 {
-	return path != NULL && v32_b1_path_is_complete(&path->b1);
+	return path != NULL && v32_b1_path_is_complete(&path->b1) &&
+	       path->retrain.repeated_pair_observations <
+		       V32_DATA_RETRAIN_OBSERVATIONS;
 }
 
 static bool append_group(
@@ -92,8 +163,16 @@ static enum v32_data_path_result commit_observations(
 {
 	while (receive_result == V32_RECEIVE_PATH_OBSERVATION_READY) {
 		union v32_b1_receiver next_receiver;
+		struct v32_data_retrain_detector next_retrain = path->retrain;
 		struct v32_equalizer_decision decision;
 		bool b1_matches = path->b1.b1_matches;
+		bool retrain_requested = false;
+
+		if (path->b1.receive.line.gain.signal_present)
+			retrain_requested = observe_retrain(
+				&next_retrain, observation);
+		else
+			next_retrain = (struct v32_data_retrain_detector){ 0 };
 
 		if (decide_observation(
 			    path, observation, &next_receiver, &decision, batch,
@@ -107,6 +186,9 @@ static enum v32_data_path_result commit_observations(
 		path->b1.receiver = next_receiver;
 		path->b1.observation_epoch = decision.observation.epoch;
 		path->b1.b1_matches = b1_matches;
+		path->retrain = next_retrain;
+		batch->retrain_requested =
+			batch->retrain_requested || retrain_requested;
 	}
 	if (receive_result != V32_RECEIVE_PATH_OK)
 		return receive_result == V32_RECEIVE_PATH_INVALID_ARGUMENT ?
@@ -134,7 +216,7 @@ enum v32_data_path_result v32_data_path_init(
 	const struct v32_b1_path *b1,
 	struct v32_data_batch *batch)
 {
-	struct v32_data_path initialized;
+	struct v32_data_path initialized = { 0 };
 	struct v32_data_batch generated = { 0 };
 	enum v32_data_path_result result = V32_DATA_PATH_OK;
 

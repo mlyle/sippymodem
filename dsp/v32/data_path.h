@@ -11,6 +11,7 @@
 enum {
 	/* One line sample can release a complete retained timing block. */
 	V32_DATA_PATH_MAX_GROUPS = V32_RECEIVE_PATH_RECOVERED_CAPACITY,
+	V32_DATA_RETRAIN_OBSERVATIONS = 60,
 };
 
 enum v32_data_path_result {
@@ -27,6 +28,19 @@ struct v32_data_group {
 struct v32_data_batch {
 	struct v32_data_group groups[V32_DATA_PATH_MAX_GROUPS];
 	uint8_t count;
+	bool retrain_requested;
+};
+
+/* Online retrain is a repeated-pair decision pattern in the persistent
+ * equalizer coordinate.  Keep that evidence with the data owner rather than
+ * reacquiring an unrelated raw line tone beside the trained receive path. */
+struct v32_data_retrain_detector {
+	int16_t i_last;
+	int16_t q_last;
+	int16_t i_previous;
+	int16_t q_previous;
+	int16_t average_error;
+	uint16_t repeated_pair_observations;
 };
 
 /* Continue the selected-rate semantic receiver and physical lane retained at
@@ -34,6 +48,7 @@ struct v32_data_batch {
  * publishing the first payload group. */
 struct v32_data_path {
 	struct v32_b1_path b1;
+	struct v32_data_retrain_detector retrain;
 };
 
 enum v32_data_path_result v32_data_path_init(

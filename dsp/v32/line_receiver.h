@@ -53,8 +53,10 @@ enum v32_line_receiver_result v32_line_receiver_set_timing_tracking(
  * completed 36-sample gain epoch may report up to 42 timing-recovered
  * samples; arbitrary smaller fragments do not change epoch boundaries.
  * A call that completes an epoch must provide capacity for all 42 samples.
- * Output is withheld until the timing loop detects a signal.  Rejected calls
- * change no owner, output, or output count.
+ * Output is withheld during fresh timing acquisition until the loop detects
+ * a signal.  Once timing has been acquired, the recovered clock continues
+ * through a transition-free retrain carrier.  Rejected calls change no owner,
+ * output, or output count.
  */
 enum v32_line_receiver_result v32_line_receiver_process(
 	struct v32_line_receiver *receiver,

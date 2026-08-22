@@ -214,7 +214,8 @@ enum v32_line_receiver_result v32_line_receiver_process(
 				    &produced) !=
 				    V32_SYMBOL_TIMING_OK)
 				return V32_LINE_RECEIVER_INVALID_STATE;
-			if (!next.timing.signal_detected)
+			if (!next.timing.signal_detected &&
+			    next.timing.mode == V32_SYMBOL_TIMING_ACQUISITION)
 				produced = 0;
 			memset(next.epoch, 0, sizeof(next.epoch));
 			next.epoch_fill = 0;

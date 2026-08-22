@@ -43,9 +43,12 @@ struct generated_source {
 	unsigned int rate_dibit;
 	unsigned int rate_symbols;
 	unsigned int selected_symbols;
+	unsigned int retrain_symbols;
 	uint32_t b1_history;
 	bool rate_started;
 	bool selected_started;
+	bool retrain_started;
+	bool retrain_alternating;
 };
 
 static const struct v32_rate_offer SELECTED_OFFERS[TEST_SELECTED_MODES] = {
@@ -182,6 +185,17 @@ static bool source_next_selected_point(struct generated_source *source)
 		source->selected_symbols - V32_B1_PATH_SYMBOLS;
 	uint8_t input;
 	uint8_t signal;
+	uint8_t retrain_quadrant;
+
+	if (source->retrain_started) {
+		retrain_quadrant = source->retrain_alternating &&
+					   (source->retrain_symbols & 1u) != 0 ?
+				   2u : 0u;
+		source->retrain_symbols++;
+		return v32_4800_constellation_point(
+			       retrain_quadrant, &source->point) ==
+		       V32_CONSTELLATION_OK;
+	}
 
 	if (data_bits != 0) {
 		uint8_t scrambled = 0;
@@ -300,8 +314,9 @@ static bool consume_data_batch(
 {
 	uint8_t mask = (uint8_t)((UINT8_C(1) << bit_count) - 1u);
 
-	CHECK(batch->count <= V32_DATA_PATH_MAX_GROUPS,
-	      "data batch exceeded its bound");
+	CHECK(batch->count <= V32_DATA_PATH_MAX_GROUPS &&
+	      !batch->retrain_requested,
+	      "ordinary data requested retrain or exceeded its batch bound");
 	*multiple = *multiple || batch->count > 1;
 	for (uint8_t index = 0; index < batch->count; ++index) {
 		const struct v32_data_group *group = &batch->groups[index];
@@ -312,6 +327,49 @@ static bool consume_data_batch(
 		      group->value, expected, group->bit_count, bit_count);
 		(*groups)++;
 	}
+	return true;
+}
+
+static bool detect_remote_retrain(
+	const struct generated_source *online_source,
+	const struct v32_data_path *online_data,
+	enum v32_transmitter_role source_role,
+	const struct v32_rate_offer *selected_offer)
+{
+	struct generated_source source = *online_source;
+	struct v32_data_path data = *online_data;
+	struct v32_data_batch batch;
+	bool requested = false;
+
+	source.retrain_started = true;
+	source.retrain_alternating =
+		source_role == V32_ANSWERING_TRANSMITTER;
+	for (unsigned int index = 0;
+	     index < TEST_LINE_SAMPLE_LIMIT && !requested; ++index) {
+		struct v32_echo_reference reference;
+		int16_t sample;
+		bool accepted;
+
+		CHECK(source_sample(&source, &sample, &reference, &accepted) &&
+		      v32_data_path_sample(
+			      &data, sample, accepted ? &reference : NULL,
+			      &batch) == V32_DATA_PATH_OK &&
+		      batch.count <= V32_DATA_PATH_MAX_GROUPS,
+		      "retrain path stopped at %u for role/mode %d/%u:%u",
+		      index, source_role, selected_offer->rates,
+		      selected_offer->trellis_at_highest_rate);
+		requested = batch.retrain_requested;
+	}
+	CHECK(requested && source.retrain_symbols >=
+			      V32_DATA_RETRAIN_OBSERVATIONS &&
+	      source.retrain_symbols <=
+		      V32_DATA_RETRAIN_OBSERVATIONS + 128u &&
+	      v32_data_path_is_valid(&data),
+	      "equalized retrain was not bounded for role/mode %d/%u:%u (%u symbols, %u evidence)",
+	      source_role, selected_offer->rates,
+	      selected_offer->trellis_at_highest_rate,
+	      source.retrain_symbols,
+	      data.retrain.repeated_pair_observations);
 	return true;
 }
 
@@ -727,6 +785,11 @@ static bool run_role(
 		      "trellis data did not drain B1 for role/mode %d/%u",
 		      role, selected_offer->rates);
 	*data_advanced = data;
+	CHECK(detect_remote_retrain(
+		      &source, &data, role, selected_offer),
+	      "remote retrain detection failed for role/mode %d/%u:%u", role,
+	      selected_offer->rates,
+	      selected_offer->trellis_at_highest_rate);
 	return true;
 }
 
@@ -1064,6 +1127,11 @@ static bool test_contracts(
 	data.b1.mode = V32_B1_MODE_TRELLIS;
 	CHECK(!v32_data_path_is_valid(&data),
 	      "data path accepted a mismatched receiver mode");
+	data = *data_advanced;
+	data.retrain.repeated_pair_observations =
+		V32_DATA_RETRAIN_OBSERVATIONS;
+	CHECK(!v32_data_path_is_valid(&data),
+	      "data path accepted an escaped retrain counter");
 	return true;
 }
 
