@@ -43,7 +43,10 @@ enum {
 	RETRAIN_FRAME_LIMIT = 500,
 	V32_RETRAIN_FRAME_LIMIT = 750,
 	RETRAIN_RESPONSE_LOSS_FRAMES = 70,
-	V22BIS_INITIAL_DELAY_FRAMES = 70,
+	MAX_CALLER_DELAY_FRAMES = 70,
+	/* 2,400 line samples are 720 V.32 symbols. */
+	V32_LONG_DELAY_FRAMES = 15,
+	V32_LONG_TRAINING_FRAME_LIMIT = 1000,
 	DIGITAL_MEDIA_DELAY_SAMPLES = 1200,
 	V32_MIN_HALF_DUPLEX_GAP_FRAMES = 16,
 	REPLAY_MAX_SAMPLES = MODEM_RATE * 180,
@@ -74,7 +77,7 @@ struct recording_capture {
 };
 
 struct media_frame_delay {
-	uint8_t codewords[V22BIS_INITIAL_DELAY_FRAMES][SIP_FRAME_SAMPLES];
+	uint8_t codewords[MAX_CALLER_DELAY_FRAMES][SIP_FRAME_SAMPLES];
 	size_t head;
 	size_t count;
 };
@@ -105,7 +108,7 @@ struct modem_test_case {
 	unsigned int answerer_rx_rate;
 	unsigned int carrier_loss_samples;
 	unsigned int training_frame_limit;
-	unsigned int initial_caller_delay_frames;
+	unsigned int caller_delay_frames;
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
 	bool automode;
@@ -657,6 +660,7 @@ static bool exercise_retrain(
 	enum DP_ID id, unsigned int bit_rate,
 	enum media_codec codec,
 	const struct media_recorder *recorder,
+	struct media_frame_delay *delay, size_t delay_frames,
 	unsigned int sequence, bool raw_transport, bool lose_first_response,
 	bool reduce_peer_response)
 {
@@ -720,7 +724,8 @@ static bool exercise_retrain(
 	    modem_write(
 		    answerer->modem, (const char *)answerer_preserved,
 		    (int)preserved_length) != (int)preserved_length ||
-	    !process_sip_frame(caller, answerer, codec, recorder) ||
+	    !process_test_frame(
+		    caller, answerer, codec, recorder, delay, delay_frames) ||
 	    !endpoint_drain(caller) || !endpoint_drain(answerer)) {
 		fprintf(stderr,
 			"buffered retrain setup failed (outputs=%zu/%zu)\n",
@@ -783,12 +788,19 @@ static bool exercise_retrain(
 		bool reduce_answerer_to_caller = reduce_peer_response &&
 			initiator == caller;
 
-		if (!process_sip_frame_with_loss(
-			    caller, answerer, codec, recorder,
-			    block_caller_to_answerer,
-			    block_answerer_to_caller,
-			    reduce_caller_to_answerer,
-			    reduce_answerer_to_caller) ||
+		if ((delay_frames != 0 &&
+		     (block_caller_to_answerer || block_answerer_to_caller ||
+		      reduce_caller_to_answerer || reduce_answerer_to_caller)) ||
+		    !(delay_frames != 0 ?
+			      process_test_frame(
+				      caller, answerer, codec, recorder,
+				      delay, delay_frames) :
+			      process_sip_frame_with_loss(
+				      caller, answerer, codec, recorder,
+				      block_caller_to_answerer,
+				      block_answerer_to_caller,
+				      reduce_caller_to_answerer,
+				      reduce_answerer_to_caller)) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
 		if (initiator->modem->retrain_pending == 0 &&
@@ -848,7 +860,9 @@ static bool exercise_retrain(
 		    (int)sizeof(answerer_payloads[sequence]))
 		return false;
 	for (unsigned int frame = 0; frame < DATA_FRAME_LIMIT; ++frame) {
-		if (!process_sip_frame(caller, answerer, codec, recorder) ||
+		if (!process_test_frame(
+			    caller, answerer, codec, recorder,
+			    delay, delay_frames) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
 		if ((raw_transport &&
@@ -1245,7 +1259,7 @@ static bool run_media_call(
 		CHECK(process_test_frame(
 			      &caller, &answerer, codec, &recorder,
 			      &caller_delay,
-			      test_case->initial_caller_delay_frames) &&
+			      test_case->caller_delay_frames) &&
 		      (!monitor_caller_rate ||
 		       v22_rate_monitor_observe(
 			       &caller_rate_monitor, caller.transmit)),
@@ -1334,7 +1348,7 @@ static bool run_media_call(
 		CHECK(process_test_frame(
 			      &caller, &answerer, codec, &recorder,
 			      &caller_delay,
-			      test_case->initial_caller_delay_frames),
+			      test_case->caller_delay_frames),
 		      "%s pre-link delivery failed at the SIP media boundary",
 		      test_case->name);
 	}
@@ -1358,7 +1372,7 @@ static bool run_media_call(
 	answerer.output_count = 0;
 	CHECK(process_test_frame(
 		      &caller, &answerer, codec, &recorder, &caller_delay,
-		      test_case->initial_caller_delay_frames) &&
+		      test_case->caller_delay_frames) &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      caller.output_count == 0 && answerer.output_count == 0,
 	      "%s idle link emitted terminal data "
@@ -1380,7 +1394,7 @@ static bool run_media_call(
 		CHECK(process_test_frame(
 			      &caller, &answerer, codec, &recorder,
 			      &caller_delay,
-			      test_case->initial_caller_delay_frames) &&
+			      test_case->caller_delay_frames) &&
 			      endpoint_drain(&caller) && endpoint_drain(&answerer),
 		      "%s data failed at the SIP media boundary",
 		      test_case->name);
@@ -1414,7 +1428,9 @@ static bool run_media_call(
 		} else {
 			CHECK(exercise_retrain(
 				      &caller, &answerer, &answerer, test_case->id,
-				      test_case->answerer_rx_rate, codec, &recorder, 0,
+				      test_case->answerer_rx_rate, codec, &recorder,
+				      &caller_delay,
+				      test_case->caller_delay_frames, 0,
 				      test_case->raw_transport,
 				      test_case->id == DP_V22BIS &&
 					      test_case->raw_transport &&
@@ -1424,7 +1440,9 @@ static bool run_media_call(
 			      test_case->name);
 			CHECK(exercise_retrain(
 				      &caller, &answerer, &caller, test_case->id,
-				      test_case->caller_rx_rate, codec, &recorder, 1,
+				      test_case->caller_rx_rate, codec, &recorder,
+				      &caller_delay,
+				      test_case->caller_delay_frames, 1,
 				      test_case->raw_transport, false,
 				      test_case->id == DP_V22BIS),
 			      "%s caller retrain did not reconnect and pass data",
@@ -2408,11 +2426,10 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.training_frame_limit = 400,
 			/* Force the answer S1 beyond the 1.2 s retry boundary. */
-			.initial_caller_delay_frames =
-				V22BIS_INITIAL_DELAY_FRAMES,
+			.caller_delay_frames = MAX_CALLER_DELAY_FRAMES,
 			.minimum_caller_rate_signals = 1,
 			.minimum_caller_rate_signal_sample =
-				V22BIS_INITIAL_DELAY_FRAMES * SIP_FRAME_SAMPLES,
+				MAX_CALLER_DELAY_FRAMES * SIP_FRAME_SAMPLES,
 			.raw_transport = true,
 		},
 		{
@@ -2457,6 +2474,20 @@ int main(void)
 			.answerer_tx_rate = V32_4800_BIT_RATE,
 			.answerer_rx_rate = V32_4800_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.automode = true,
+			.test_retrain = true,
+		},
+		{
+			.id = DP_V32,
+			.name = "V.32 4800 long-delay LAPM retrain",
+			.selection_command = "AT+MS=32,1,4800,4800\r",
+			.caller_tx_rate = V32_4800_BIT_RATE,
+			.caller_rx_rate = V32_4800_BIT_RATE,
+			.answerer_tx_rate = V32_4800_BIT_RATE,
+			.answerer_rx_rate = V32_4800_BIT_RATE,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = V32_LONG_TRAINING_FRAME_LIMIT,
+			.caller_delay_frames = V32_LONG_DELAY_FRAMES,
 			.automode = true,
 			.test_retrain = true,
 		},
