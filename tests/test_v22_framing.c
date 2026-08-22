@@ -459,7 +459,7 @@ static bool test_v22bis_rate_signal_detection(void)
 
 	v22bis_rate_signal_detector_reset(&detector);
 	for (size_t index = 0;
-	     index < V22BIS_RATE_SIGNAL_SYMBOLS - 1u; ++index) {
+	     index < V22BIS_RATE_SIGNAL_COMPLETE_SYMBOLS - 1u; ++index) {
 		uint8_t turn = (index & 1u) == 0 ? 1u : 3u;
 
 		CHECK(v22bis_rate_signal_observe(
@@ -467,10 +467,26 @@ static bool test_v22bis_rate_signal_detection(void)
 		      "V.22bis rate signal rejected short symbol %zu", index);
 	}
 	CHECK(detector.present &&
-		      v22bis_rate_signal_observe(&detector, 1, &event) ==
+		      v22bis_rate_signal_observe(&detector, 3, &event) ==
 			      V22_FRAMING_OK &&
 		      event == V22BIS_RATE_SIGNAL_ENDED && !detector.present,
-	      "V.22bis rate signal did not distinguish a 59-symbol run");
+	      "V.22bis rate signal accepted a marker missing two symbols");
+
+	v22bis_rate_signal_detector_reset(&detector);
+	for (size_t index = 0;
+	     index < V22BIS_RATE_SIGNAL_COMPLETE_SYMBOLS; ++index) {
+		uint8_t turn = (index & 1u) == 0 ? 1u : 3u;
+
+		CHECK(v22bis_rate_signal_observe(
+			      &detector, turn, &event) == V22_FRAMING_OK,
+		      "V.22bis rate signal rejected boundary symbol %zu", index);
+	}
+	CHECK(detector.present &&
+		      v22bis_rate_signal_observe(&detector, 1, &event) ==
+			      V22_FRAMING_OK &&
+		      event == V22BIS_RATE_SIGNAL_FULLY_ENDED &&
+		      !detector.present,
+	      "V.22bis rate signal rejected one missing edge observation");
 
 	v22bis_rate_signal_detector_reset(&detector);
 	for (size_t index = 0; index < V22BIS_RATE_SIGNAL_SYMBOLS;

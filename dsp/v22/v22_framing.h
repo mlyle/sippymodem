@@ -14,6 +14,9 @@ enum {
 	/* V.22bis sends 100 ms at 600 symbols/s; report a stable 20 ms prefix. */
 	V22BIS_RATE_SIGNAL_SYMBOLS = 60,
 	V22BIS_RATE_SIGNAL_MIN_SYMBOLS = 12,
+	/* A finite marker can lose one differential observation at its edges. */
+	V22BIS_RATE_SIGNAL_COMPLETE_SYMBOLS =
+		V22BIS_RATE_SIGNAL_SYMBOLS - 1,
 };
 
 enum v22_framing_result {

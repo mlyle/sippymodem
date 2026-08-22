@@ -283,7 +283,7 @@ enum v22_framing_result v22bis_rate_signal_observe(
 		 quarter_turns != next.previous_turn);
 	if (next.present && !alternating) {
 		next_event = next.alternating_symbols >=
-			V22BIS_RATE_SIGNAL_SYMBOLS ?
+			V22BIS_RATE_SIGNAL_COMPLETE_SYMBOLS ?
 				V22BIS_RATE_SIGNAL_FULLY_ENDED :
 				V22BIS_RATE_SIGNAL_ENDED;
 		next.present = false;
