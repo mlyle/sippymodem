@@ -44,7 +44,6 @@ enum {
 	V22BIS_CONFIRM_SAMPLES = MODEM_RATE / 5,
 	/* Require a stable 80 ms suffix, but do not respond until its end. */
 	V22_RETRAIN_MIN_SYMBOLS = 48,
-	V22_RETRAIN_MAX_SYMBOLS = 64,
 	V22BIS_RETRAIN_DETECT_SYMBOLS = 8,
 	V22BIS_RETRAIN_CONFIDENCE_Q15 = 0x7eb8,
 	V22BIS_RETRAIN_MIN_REPEATED_PAIRS = 3,
@@ -117,12 +116,11 @@ struct v22_datapump {
 	uint32_t carrier_return_hold_samples;
 	uint32_t retrain_peer_samples;
 	uint32_t retrain_retry_samples;
-	uint8_t retrain_detect_symbols;
-	uint8_t retrain_previous_turn;
 	uint16_t retrain_candidate_bit_count;
 	uint32_t retrain_symbol_history;
 	uint8_t retrain_candidate_bits[
-		V22_RETRAIN_MAX_SYMBOLS * V22BIS_BITS_PER_SYMBOL];
+		V22BIS_ALTERNATING_RUN_MAX_SYMBOLS *
+		V22BIS_BITS_PER_SYMBOL];
 	unsigned int bit_rate;
 	uint8_t transmit_quadrant;
 	uint8_t transmit_symbol;
@@ -237,9 +235,6 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 		    V22BIS_RATE_SIGNAL_SYMBOLS ||
 	    datapump->rate_signal_wait_samples >
 		    V22_RETRAIN_RETRY_SAMPLES ||
-	    datapump->retrain_detect_symbols >
-		    V22_RETRAIN_MAX_SYMBOLS ||
-	    datapump->retrain_previous_turn >= QPSK_QUADRANT_COUNT ||
 	    datapump->retrain_candidate_bit_count >
 		    sizeof(datapump->retrain_candidate_bits) ||
 	    datapump->retrain_peer_samples > V22_RETRAIN_RETRY_SAMPLES ||
@@ -274,10 +269,14 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    (datapump->receiving_v22bis &&
 	     (!datapump->v22bis_receiver_initialized ||
 	      !datapump->v22bis_receiver.v22bis_started)) ||
+	    ((datapump->rate_signal_detector.present ||
+	      datapump->rate_signal_detector.alternating_symbols != 0) &&
+	     (!datapump_uses_v22bis(datapump) ||
+	      (datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK &&
+	       datapump->training_state != V22_TRAINING_ONLINE &&
+	       !datapump->retraining))) ||
 	    (datapump->training_state != V22_TRAINING_WAIT_SCRAMBLED_MARK &&
-	     (datapump->rate_signal_detector.present ||
-	      datapump->rate_signal_detector.alternating_symbols != 0 ||
-	      datapump->rate_signal_wait_samples != 0 ||
+	     (datapump->rate_signal_wait_samples != 0 ||
 	      datapump->rate_signal_late_candidate ||
 	      datapump->rate_signal_reply_sent)) ||
 	    (datapump->rate_signal_late_candidate &&
@@ -650,7 +649,7 @@ static int output_received_bits(
 	struct v22_datapump *datapump, uint8_t *bits,
 	size_t bit_count)
 {
-	if (datapump->retrain_detect_symbols != 0) {
+	if (datapump->rate_signal_detector.alternating_symbols != 0) {
 		if (datapump->training_state == V22_TRAINING_ONLINE &&
 		    datapump->carrier_return_hold_samples == 0 &&
 		    !datapump->retrain_candidate_deliver) {
@@ -934,8 +933,8 @@ static void flush_retrain_candidate(
 static void discard_retrain_candidate(
 	struct v22_datapump *datapump)
 {
-	datapump->retrain_detect_symbols = 0;
-	datapump->retrain_previous_turn = 0;
+	v22bis_rate_signal_detector_reset(
+		&datapump->rate_signal_detector);
 	datapump->retrain_candidate_bit_count = 0;
 	datapump->retrain_symbol_history = 0;
 	datapump->retrain_candidate_deliver = false;
@@ -1059,21 +1058,19 @@ static int v22bis_hard_symbol(
 	return 0;
 }
 
-static int append_retrain_symbol(
-	struct v22_datapump *datapump, uint8_t symbol)
+static int remember_retrain_symbol(
+	struct v22_datapump *datapump, uint8_t symbol,
+	bool discard_oldest)
 {
 	if (!datapump_uses_v22bis(datapump) ||
 	    symbol >= V22BIS_SYMBOL_COUNT)
 		return -1;
-	if (datapump->retrain_detect_symbols >=
-	    V22_RETRAIN_MAX_SYMBOLS) {
+	if (discard_oldest) {
 		if (shift_retrain_candidate(datapump) != 0)
 			return -1;
-		datapump->retrain_detect_symbols--;
 	}
 	datapump->retrain_symbol_history =
 		(datapump->retrain_symbol_history << 4) | symbol;
-	datapump->retrain_detect_symbols++;
 	return 0;
 }
 
@@ -1082,8 +1079,9 @@ static int observe_retrain_signal(
 	uint8_t radial_bits, bool online, bool *ended,
 	uint8_t *current_quadrant)
 {
-	bool alternating;
-	bool valid_turn = quarter_turns == 1u || quarter_turns == 3u;
+	enum v22bis_rate_signal_event event;
+	uint8_t previous_symbols;
+	bool continued;
 	uint8_t quadrant;
 	uint8_t phase_label = v22_retrain_phase_label(quarter_turns);
 	uint8_t symbol = (uint8_t)((phase_label << 2) | radial_bits);
@@ -1095,48 +1093,50 @@ static int observe_retrain_signal(
 	quadrant = (uint8_t)(
 		(receive_phase_quadrant(datapump) + quarter_turns) & 3u);
 	*current_quadrant = quadrant;
-	alternating = valid_turn &&
-		(datapump->retrain_detect_symbols == 0 ||
-		 quarter_turns != datapump->retrain_previous_turn);
-	if (!alternating) {
-		if (datapump->retrain_detect_symbols >=
+	previous_symbols =
+		datapump->rate_signal_detector.alternating_symbols;
+	if (v22bis_rate_signal_observe(
+		    &datapump->rate_signal_detector, quarter_turns,
+		    &event) != V22_FRAMING_OK)
+		return -1;
+	continued = previous_symbols != 0 &&
+		datapump->rate_signal_detector.alternating_symbols > 1u;
+	if (!continued) {
+		if (previous_symbols >=
 			    V22_RETRAIN_MIN_SYMBOLS &&
 		    (!online ||
 		     v22bis_retrain_sequence_present(
 			     datapump->retrain_symbol_history,
-			     datapump->retrain_detect_symbols))) {
+			     previous_symbols))) {
 			discard_retrain_candidate(datapump);
 			*ended = true;
 			return 0;
 		}
 		flush_retrain_candidate(datapump);
-		datapump->retrain_detect_symbols = 0;
 		datapump->retrain_symbol_history = 0;
-		if (valid_turn) {
-			if (append_retrain_symbol(datapump, symbol) != 0)
+		if (datapump->rate_signal_detector.alternating_symbols != 0) {
+			if (remember_retrain_symbol(
+				    datapump, symbol, false) != 0)
 				return -1;
 			datapump->retrain_candidate_deliver =
 				(online || datapump->retrain_receive_ready) &&
 				datapump->carrier_return_hold_samples == 0;
 		}
 	} else {
-		if (datapump->retrain_detect_symbols == 0) {
-			datapump->retrain_candidate_deliver =
-				(online || datapump->retrain_receive_ready) &&
-				datapump->carrier_return_hold_samples == 0;
-		}
-		if (append_retrain_symbol(datapump, symbol) != 0)
+		if (remember_retrain_symbol(
+			    datapump, symbol,
+			    previous_symbols >=
+				    V22BIS_ALTERNATING_RUN_MAX_SYMBOLS) != 0)
 			return -1;
 	}
 	if (online && datapump_uses_v22bis(datapump) &&
 	    v22bis_retrain_sequence_present(
 		    datapump->retrain_symbol_history,
-		    datapump->retrain_detect_symbols)) {
+		    datapump->rate_signal_detector.alternating_symbols)) {
 		discard_retrain_candidate(datapump);
 		*ended = true;
 		return 0;
 	}
-	datapump->retrain_previous_turn = quarter_turns;
 	return 0;
 }
 
@@ -1201,7 +1201,6 @@ static int begin_retrain(
 	datapump->retraining = true;
 	datapump->retrain_peer_signal_received = peer_signal_received;
 	datapump->retrain_receive_ready = false;
-	v22bis_rate_signal_detector_reset(&datapump->rate_signal_detector);
 	/* Keep queued transmit framing, but discard a partial receive character
 	 * across the physical-layer discontinuity.  LAPM owns its own state. */
 	if (!datapump->dp.modem->cfg.ec)
@@ -1519,8 +1518,6 @@ static int enter_link(struct v22_datapump *datapump)
 	datapump->retrain_receive_ready = false;
 	datapump->rate_signal_late_candidate = false;
 	datapump->rate_signal_reply_sent = false;
-	v22bis_rate_signal_detector_reset(
-		&datapump->rate_signal_detector);
 	datapump->dp.status = DPSTAT_CONNECT;
 	return 0;
 }
@@ -1583,7 +1580,7 @@ static int advance_training_timer(
 		}
 		return datapump->retrain_retry_samples >=
 			       V22_RETRAIN_RETRY_SAMPLES &&
-		       datapump->retrain_detect_symbols <
+		       datapump->rate_signal_detector.alternating_symbols <
 			       V22_RETRAIN_MIN_SYMBOLS ?
 			       restart_retrain(datapump) : 0;
 	}

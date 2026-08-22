@@ -241,7 +241,7 @@ bool v22bis_rate_signal_detector_is_valid(
 {
 	return detector != NULL &&
 	       detector->alternating_symbols <=
-		       V22BIS_RATE_SIGNAL_SYMBOLS &&
+		       V22BIS_ALTERNATING_RUN_MAX_SYMBOLS &&
 	       detector->previous_turn < QPSK_QUADRANT_COUNT &&
 	       (detector->present ==
 		(detector->alternating_symbols >=
@@ -293,7 +293,7 @@ enum v22_framing_result v22bis_rate_signal_observe(
 		next.alternating_symbols =
 			is_rate_signal_turn(quarter_turns) ? 1u : 0u;
 	} else if (next.alternating_symbols <
-		   V22BIS_RATE_SIGNAL_SYMBOLS) {
+		   V22BIS_ALTERNATING_RUN_MAX_SYMBOLS) {
 		next.alternating_symbols++;
 		if (next.alternating_symbols ==
 		    V22BIS_RATE_SIGNAL_MIN_SYMBOLS) {

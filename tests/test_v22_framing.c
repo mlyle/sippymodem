@@ -517,6 +517,24 @@ static bool test_v22bis_rate_signal_detection(void)
 		      !detector.present,
 	      "V.22bis rate signal did not end on the following mark");
 
+	v22bis_rate_signal_detector_reset(&detector);
+	for (size_t index = 0;
+	     index < V22BIS_ALTERNATING_RUN_MAX_SYMBOLS + 5u; ++index) {
+		uint8_t turn = (index & 1u) == 0 ? 1u : 3u;
+
+		CHECK(v22bis_rate_signal_observe(
+			      &detector, turn, &event) == V22_FRAMING_OK,
+		      "V.22bis detector rejected extended symbol %zu", index);
+	}
+	CHECK(detector.present &&
+		      detector.alternating_symbols ==
+			      V22BIS_ALTERNATING_RUN_MAX_SYMBOLS &&
+		      v22bis_rate_signal_observe(&detector, 1, &event) ==
+			      V22_FRAMING_OK &&
+		      event == V22BIS_RATE_SIGNAL_FULLY_ENDED &&
+		      detector.alternating_symbols == 1 && !detector.present,
+	      "V.22bis detector did not bound an extended candidate");
+
 	saved = detector;
 	event = V22BIS_RATE_SIGNAL_STARTED;
 	{
@@ -537,6 +555,17 @@ static bool test_v22bis_rate_signal_detection(void)
 		      v22bis_rate_signal_observe(&detector, 1, NULL) ==
 			      V22_FRAMING_INVALID_ARGUMENT,
 	      "V.22bis rate-signal validation was not transactional");
+	detector = saved;
+	detector.alternating_symbols =
+		V22BIS_ALTERNATING_RUN_MAX_SYMBOLS + 1u;
+	event = V22BIS_RATE_SIGNAL_STARTED;
+	CHECK(!v22bis_rate_signal_detector_is_valid(&detector) &&
+		      v22bis_rate_signal_observe(&detector, 1, &event) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      detector.alternating_symbols ==
+			      V22BIS_ALTERNATING_RUN_MAX_SYMBOLS + 1u &&
+		      event == V22BIS_RATE_SIGNAL_STARTED,
+	      "V.22bis detector accepted an oversized candidate");
 	return true;
 }
 

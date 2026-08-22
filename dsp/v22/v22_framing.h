@@ -17,6 +17,8 @@ enum {
 	/* A finite marker can lose one differential observation at its edges. */
 	V22BIS_RATE_SIGNAL_COMPLETE_SYMBOLS =
 		V22BIS_RATE_SIGNAL_SYMBOLS - 1,
+	/* Retraining can retain a slightly longer alternating candidate. */
+	V22BIS_ALTERNATING_RUN_MAX_SYMBOLS = 64,
 };
 
 enum v22_framing_result {
