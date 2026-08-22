@@ -2,7 +2,6 @@
 
 #include "v90_phase3_return_line_rx.h"
 
-#include "v34_phase3_line_receiver.h"
 #include "v34_training_line.h"
 #include "v90_phase3.h"
 
@@ -33,9 +32,9 @@ bool v90_phase3_return_line_rx_is_valid(
 	       qam_demodulator_measure(&rx->demodulator).timing_locked &&
 	       channel_matches(&rx->demodulator, &rx->transmitting_profile) &&
 	       rx->demodulator.acquisition_window_symbols ==
-		       V34_PHASE3_LINE_ACQUISITION_SYMBOLS &&
+		       V90_PHASE3_LINE_ACQUISITION_SYMBOLS &&
 	       rx->demodulator.tracking_window_symbols ==
-		       V34_PHASE3_LINE_TRACKING_SYMBOLS &&
+		       V90_PHASE3_LINE_TRACKING_SYMBOLS &&
 	       v90_phase3_return_rx_is_valid(&rx->points);
 }
 
@@ -176,9 +175,9 @@ bool v90_phase3_return_line_handoff_is_valid(
 		       &handoff->demodulator,
 		       &handoff->transmitting_profile) &&
 	       handoff->demodulator.acquisition_window_symbols ==
-		       V34_PHASE3_LINE_ACQUISITION_SYMBOLS &&
+		       V90_PHASE3_LINE_ACQUISITION_SYMBOLS &&
 	       handoff->demodulator.tracking_window_symbols ==
-		       V34_PHASE3_LINE_TRACKING_SYMBOLS &&
+		       V90_PHASE3_LINE_TRACKING_SYMBOLS &&
 	       v90_phase3_return_handoff_is_valid(&handoff->phase3);
 }
 

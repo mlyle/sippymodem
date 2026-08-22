@@ -2,7 +2,6 @@
 
 #include "v90_phase4_e_line_rx.h"
 
-#include "v34_phase3_line_receiver.h"
 #include "v34_training_line.h"
 #include "v90_phase3.h"
 
@@ -24,9 +23,9 @@ static bool channel_matches(const struct v90_phase4_e_line_rx *rx)
 		       &rx->transmitting_profile,
 		       &rx->demodulator.channel) &&
 	       rx->demodulator.acquisition_window_symbols ==
-		       V34_PHASE3_LINE_ACQUISITION_SYMBOLS &&
+		       V90_PHASE3_LINE_ACQUISITION_SYMBOLS &&
 	       rx->demodulator.tracking_window_symbols ==
-		       V34_PHASE3_LINE_TRACKING_SYMBOLS;
+		       V90_PHASE3_LINE_TRACKING_SYMBOLS;
 }
 
 static bool equalizer_is_at_handoff(

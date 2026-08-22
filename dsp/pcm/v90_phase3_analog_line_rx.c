@@ -2,7 +2,6 @@
 
 #include "v90_phase3_analog_line_rx.h"
 
-#include "v34_phase3_line_receiver.h"
 #include "v34_training_line.h"
 
 #include <stddef.h>
@@ -31,14 +30,14 @@ bool v90_phase3_analog_line_rx_is_valid(
 	    !v90_phase3_analog_rx_is_valid(&rx->points) ||
 	    !channel_matches(rx) ||
 	    rx->demodulator.acquisition_window_symbols !=
-		    V34_PHASE3_LINE_ACQUISITION_SYMBOLS ||
+		    V90_PHASE3_LINE_ACQUISITION_SYMBOLS ||
 	    rx->demodulator.tracking_window_symbols !=
-		    V34_PHASE3_LINE_TRACKING_SYMBOLS)
+		    V90_PHASE3_LINE_TRACKING_SYMBOLS)
 		return false;
 	if (rx->points.stage == V90_PHASE3_ANALOG_RX_STAGE_PREFIX &&
 	    rx->points.state.prefix.stage == V34_PHASE3_RECEIVER_STAGE_S)
 		return rx->points.state.prefix.state.s.detector.s_symbols ==
-		       V34_PHASE3_LINE_S_SUFFIX_SYMBOLS;
+		       V90_PHASE3_LINE_S_SUFFIX_SYMBOLS;
 	return qam_demodulator_measure(&rx->demodulator).timing_locked;
 }
 
@@ -69,11 +68,11 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_init(
 	initialized.transmitting_profile = *analog_profile;
 	if (qam_demodulator_init_with_timing_windows(
 		    &initialized.demodulator, &channel,
-		    V34_PHASE3_LINE_ACQUISITION_SYMBOLS,
-		    V34_PHASE3_LINE_TRACKING_SYMBOLS) != QAM_OK ||
+		    V90_PHASE3_LINE_ACQUISITION_SYMBOLS,
+		    V90_PHASE3_LINE_TRACKING_SYMBOLS) != QAM_OK ||
 	    v90_phase3_analog_rx_init_suffix(
 		    &initialized.points, configuration,
-		    V34_PHASE3_LINE_S_SUFFIX_SYMBOLS) !=
+		    V90_PHASE3_LINE_S_SUFFIX_SYMBOLS) !=
 		    V90_PHASE3_ANALOG_RX_OK ||
 	    !v90_phase3_analog_line_rx_is_valid(&initialized))
 		return V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT;
