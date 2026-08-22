@@ -1282,10 +1282,18 @@ static int retrain_v22(struct dp *dp)
 {
 	struct v22_datapump *datapump = v22_from_dp(dp);
 
-	/* ITU-T V.22bis 6.4 defines this exchange only for 2400-bit/s
-	 * operation. Plain V.22 and Bell 212A have no compatible S1 retrain. */
-	if (datapump == NULL || !datapump_uses_v22bis(datapump))
+	if (datapump == NULL ||
+	    datapump->training_state != V22_TRAINING_ONLINE)
 		return -1;
+	/* V.22 6.3.1.2 keeps the existing constant-carrier connection across
+	 * loss and reappearance instead of starting another handshake.  O1 can
+	 * therefore resume that connection, while V.22bis uses its defined S1
+	 * exchange below.  Publish one fresh CONNECT event without disturbing
+	 * either direction's owned framing state. */
+	if (!datapump_uses_v22bis(datapump)) {
+		datapump->dp.status = DPSTAT_OK;
+		return 0;
+	}
 	flush_retrain_candidate(datapump);
 	discard_retrain_candidate(datapump);
 	return begin_retrain(
@@ -1672,6 +1680,7 @@ static int process_v22(
 	bool discard_receive = false;
 	bool line_power_present;
 	bool linked = false;
+	bool resume_current_carrier;
 	bool return_hold_was_active;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
@@ -1680,6 +1689,10 @@ static int process_v22(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
+	resume_current_carrier =
+		datapump->training_state == V22_TRAINING_ONLINE &&
+		!datapump_uses_v22bis(datapump) &&
+		datapump->dp.status == DPSTAT_OK;
 	line_power_present = line_power_is_present(receive, count);
 	if (datapump->training_state != V22_TRAINING_ONLINE) {
 		if ((uint64_t)(unsigned int)count >
@@ -1729,6 +1742,11 @@ static int process_v22(
 		return DPSTAT_OK;
 	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
+	if (resume_current_carrier &&
+	    carrier_is_present(&measurement, line_power_present)) {
+		datapump->dp.status = DPSTAT_CONNECT;
+		return DPSTAT_CONNECT;
+	}
 	carrier_loss_limit = carrier_loss_limit_samples(datapump);
 	if (datapump_uses_v22bis(datapump) && line_power_present &&
 	    datapump->missing_carrier_samples >=
