@@ -12,7 +12,7 @@
 #include <string.h>
 
 enum {
-	TEST_CALLING_S_EXTENSION = 96,
+	TEST_CALLING_S_EXTENSION = 654,
 };
 
 static const struct qam_channel V32_CHANNEL = {
@@ -322,8 +322,7 @@ static bool test_contracts(
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
 	      v32_echo_training_init(
 		      &training, V32_CALLING_TRANSMITTER,
-		      V32_ECHO_MAX_ROUND_TRIP_SYMBOLS + 2u) ==
-		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&
+		      UINT16_MAX - 1u) == V32_ECHO_TRAINING_OK &&
 	      v32_echo_training_init(
 		      &training, V32_ANSWERING_TRANSMITTER, 2) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT &&

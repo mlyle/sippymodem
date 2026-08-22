@@ -97,11 +97,18 @@ struct v32_datapump {
 	struct qam_point transmit_point;
 	struct training_session training;
 	uint32_t missing_carrier_samples;
-	uint32_t turnaround_s_symbols_remaining;
+	uint16_t caller_s_extension_symbols;
 	uint8_t conditioning_silence_samples;
 	bool trellis_encoder_initialized;
 	bool answerer_s_detected;
 	bool caller;
+};
+
+/* The measured turnaround owns two independent clocks: the caller's full,
+ * even S extension and the canceller's bounded reference geometry. */
+struct v32_line_timing {
+	uint16_t echo_round_trip_symbols;
+	uint16_t caller_s_extension_symbols;
 };
 
 static struct dp *create_v32(
@@ -132,41 +139,31 @@ static enum v32_endpoint_role endpoint_role(bool caller)
 	return caller ? V32_CALLER : V32_ANSWERER;
 }
 
-static bool caller_turnaround_s_symbols(
-	const struct v32_line_startup *startup, uint32_t *symbols)
+static bool line_timing_from_samples(
+	uint32_t samples, bool extend_caller_s,
+	struct v32_line_timing *timing)
 {
-	uint64_t samples =
-		v32_line_startup_round_trip_samples(startup);
 	uint64_t rounded;
+	struct v32_line_timing measured = { 0 };
 
-	if (samples == 0 || symbols == NULL)
+	if (samples == 0 || timing == NULL)
 		return false;
-	rounded = (samples * V32_CARRIER_SYMBOL_RATE + MODEM_RATE - 1u) /
+	rounded = ((uint64_t)samples * V32_CARRIER_SYMBOL_RATE +
+		   MODEM_RATE - 1u) /
 		MODEM_RATE;
-	if ((rounded & 1u) != 0)
+	if (extend_caller_s && (rounded & 1u) != 0)
 		rounded++;
-	if (rounded == 0 || rounded > UINT32_MAX)
+	if (rounded == 0 ||
+	    (extend_caller_s && rounded > UINT16_MAX))
 		return false;
-	*symbols = (uint32_t)rounded;
-	return true;
-}
-
-static bool answerer_round_trip_symbols(
-	const struct v32_answerer_line_startup *startup,
-	uint16_t *symbols)
-{
-	uint64_t samples =
-		v32_answerer_line_startup_round_trip_samples(startup);
-	uint64_t rounded;
-
-	if (samples == 0 || symbols == NULL)
-		return false;
-	rounded = (samples * V32_CARRIER_SYMBOL_RATE + MODEM_RATE - 1u) /
-		MODEM_RATE;
-	if (rounded < V32_ECHO_MIN_ROUND_TRIP_SYMBOLS ||
-	    rounded > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS)
-		return false;
-	*symbols = (uint16_t)rounded;
+	if (extend_caller_s)
+		measured.caller_s_extension_symbols = (uint16_t)rounded;
+	if (rounded < V32_ECHO_MIN_ROUND_TRIP_SYMBOLS)
+		rounded = V32_ECHO_MIN_ROUND_TRIP_SYMBOLS;
+	if (rounded > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS)
+		rounded = V32_ECHO_MAX_ROUND_TRIP_SYMBOLS;
+	measured.echo_round_trip_symbols = (uint16_t)rounded;
+	*timing = measured;
 	return true;
 }
 
@@ -317,8 +314,8 @@ static bool fixed_path_is_valid(
 		return false;
 	if (path->stage == V32_FIXED_CALLER_CONDITIONING ||
 	    path->stage == V32_FIXED_CALLER_RATE_OFFER)
-		return datapump->turnaround_s_symbols_remaining != 0;
-	if (datapump->turnaround_s_symbols_remaining != 0)
+		return datapump->caller_s_extension_symbols != 0;
+	if (datapump->caller_s_extension_symbols != 0)
 		return false;
 	receive = fixed_path_receive_const(path);
 	if (datapump->caller &&
@@ -375,7 +372,7 @@ static bool line_state_is_valid(
 				       &datapump->answerer_line_startup) &&
 			       datapump->line_startup.state ==
 				       V32_LINE_WAIT_ANSWER_TONE &&
-			       datapump->turnaround_s_symbols_remaining == 0 &&
+			       datapump->caller_s_extension_symbols == 0 &&
 			       datapump->conditioning_silence_samples == 0 &&
 			       fixed_path_is_valid(datapump);
 		return v32_line_startup_is_complete(
@@ -384,7 +381,7 @@ static bool line_state_is_valid(
 			datapump->conditioning_silence_samples == 0) &&
 		       fixed_path_is_valid(datapump);
 	}
-	if (datapump->turnaround_s_symbols_remaining != 0 ||
+	if (datapump->caller_s_extension_symbols != 0 ||
 	    datapump->conditioning_silence_samples != 0 ||
 	    datapump->answerer_s_detected)
 		return false;
@@ -547,7 +544,7 @@ static int initialize_protocol(
 	memset(&datapump->fixed_path, 0,
 	       sizeof(datapump->fixed_path));
 	datapump->missing_carrier_samples = 0;
-	datapump->turnaround_s_symbols_remaining = 0;
+	datapump->caller_s_extension_symbols = 0;
 	datapump->conditioning_silence_samples = 0;
 	datapump->trellis_encoder_initialized = false;
 	datapump->answerer_s_detected = false;
@@ -1068,21 +1065,22 @@ static int process_caller_line_startup(
 		return -1;
 	if (complete) {
 		struct v32_conditioning_path conditioning;
-		uint32_t turnaround_symbols;
+		struct v32_line_timing timing;
 
-		if (!caller_turnaround_s_symbols(
-			    &datapump->line_startup, &turnaround_symbols) ||
-		    turnaround_symbols > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ||
+		if (!line_timing_from_samples(
+			    v32_line_startup_round_trip_samples(
+				    &datapump->line_startup),
+			    true, &timing) ||
 		    v32_conditioning_path_init(
 			    &conditioning, V32_ANSWERING_TRANSMITTER, 0,
-			    (uint16_t)turnaround_symbols) !=
+			    timing.echo_round_trip_symbols) !=
 			    V32_CONDITIONING_PATH_OK)
 			return -1;
 		datapump->fixed_path.owner.conditioning = conditioning;
 		datapump->fixed_path.stage =
 			V32_FIXED_CALLER_CONDITIONING;
-		datapump->turnaround_s_symbols_remaining =
-			turnaround_symbols;
+		datapump->caller_s_extension_symbols =
+			timing.caller_s_extension_symbols;
 	}
 	return 0;
 }
@@ -1093,7 +1091,7 @@ static int process_answerer_line_startup(
 {
 	struct v32_receive_path receive;
 	struct v32_echo_training echo;
-	uint16_t round_trip_symbols;
+	struct v32_line_timing timing;
 	bool complete;
 
 	if (v32_answerer_line_startup_process(
@@ -1102,11 +1100,12 @@ static int process_answerer_line_startup(
 		return -1;
 	if (!complete)
 		return 0;
-	if (!answerer_round_trip_symbols(
-		    &datapump->answerer_line_startup,
-		    &round_trip_symbols) ||
+	if (!line_timing_from_samples(
+		    v32_answerer_line_startup_round_trip_samples(
+			    &datapump->answerer_line_startup),
+		    false, &timing) ||
 	    v32_receive_path_init(
-		    &receive, 0, round_trip_symbols) !=
+		    &receive, 0, timing.echo_round_trip_symbols) !=
 		    V32_RECEIVE_PATH_OK ||
 	    v32_echo_training_init(
 		    &echo, V32_ANSWERING_TRANSMITTER, 0) !=
@@ -1331,14 +1330,11 @@ static int finish_fixed_rate(
 		struct v32_fixed_rate_drain drain;
 		struct v32_echo_training echo;
 
-		if (datapump->turnaround_s_symbols_remaining == 0 ||
-		    datapump->turnaround_s_symbols_remaining >
-			    V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ||
+		if (datapump->caller_s_extension_symbols == 0 ||
 		    initialize_fixed_rate_drain(&drain, &handoff) != 0 ||
 		    v32_echo_training_init(
 			    &echo, V32_CALLING_TRANSMITTER,
-			    (uint16_t)
-				    datapump->turnaround_s_symbols_remaining) !=
+			    datapump->caller_s_extension_symbols) !=
 			    V32_ECHO_TRAINING_OK ||
 		    !v32_echo_training_path_is_valid(
 			    &echo, &drain.receive))
@@ -1347,7 +1343,7 @@ static int finish_fixed_rate(
 		datapump->fixed_path.owner.drain = drain;
 		datapump->fixed_path.training.echo = echo;
 		datapump->fixed_path.stage = V32_FIXED_CALLER_RATE_DRAIN;
-		datapump->turnaround_s_symbols_remaining = 0;
+		datapump->caller_s_extension_symbols = 0;
 		return 0;
 	}
 	{

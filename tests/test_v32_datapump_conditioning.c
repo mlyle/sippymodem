@@ -12,6 +12,7 @@
 
 #include "test.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -29,6 +30,15 @@ enum {
 		256,
 	TEST_ANSWERER_OFFER_POWER_SAMPLES = 400,
 	TEST_FRESH_CALLER_SAMPLES = 4000,
+	TEST_LONG_ONE_WAY_DELAY_SAMPLES = 800,
+	TEST_LONG_LINE_LIMIT = MODEM_RATE * 12,
+	TEST_LONG_DRAIN_SAMPLES = TEST_LONG_ONE_WAY_DELAY_SAMPLES +
+		V32_ANSWERER_DROP_SILENCE_SAMPLES + 512,
+};
+
+struct test_sample_delay {
+	int16_t samples[TEST_LONG_ONE_WAY_DELAY_SAMPLES];
+	size_t cursor;
 };
 
 struct test_conditioning_signal {
@@ -79,6 +89,139 @@ static int16_t mix_samples(int16_t left, int16_t right)
 	if (mixed < INT16_MIN)
 		return INT16_MIN;
 	return (int16_t)mixed;
+}
+
+static int16_t delay_sample(
+	struct test_sample_delay *delay, int16_t sample)
+{
+	int16_t delayed = delay->samples[delay->cursor];
+
+	delay->samples[delay->cursor] = sample;
+	delay->cursor = (delay->cursor + 1u) %
+		TEST_LONG_ONE_WAY_DELAY_SAMPLES;
+	return delayed;
+}
+
+static bool drive_long_line_startup(
+	struct dp_operations *operations, struct dp *datapump,
+	bool candidate_is_caller, uint32_t *measured_round_trip,
+	uint64_t *post_startup_power)
+{
+	struct v32_line_startup caller = { 0 };
+	struct v32_answerer_line_startup answerer = { 0 };
+	struct test_sample_delay candidate_to_peer = { 0 };
+	struct test_sample_delay peer_to_candidate = { 0 };
+	int16_t candidate_transmit = 0;
+	int16_t peer_transmit = 0;
+	bool peer_complete = false;
+
+	CHECK(measured_round_trip != NULL && post_startup_power != NULL &&
+	      (candidate_is_caller ?
+		       v32_answerer_line_startup_init(
+			       &answerer, TEST_TONE_AMPLITUDE) :
+		       v32_line_startup_init(
+			       &caller, TEST_TONE_AMPLITUDE)) ==
+		      V32_LINE_STARTUP_OK,
+	      "long V.32 line peer did not initialize");
+	for (unsigned int sample = 0;
+	     sample < TEST_LONG_LINE_LIMIT && !peer_complete; ++sample) {
+		int16_t candidate_receive = delay_sample(
+			&peer_to_candidate, peer_transmit);
+		int16_t peer_receive = delay_sample(
+			&candidate_to_peer, candidate_transmit);
+		int16_t next_candidate;
+		int16_t next_peer;
+		enum v32_line_startup_result peer_result;
+
+		peer_result = candidate_is_caller ?
+			v32_answerer_line_startup_process(
+				&answerer, peer_receive, &next_peer,
+				&peer_complete) :
+			v32_line_startup_process(
+				&caller, peer_receive, &next_peer,
+				&peer_complete);
+		CHECK(peer_result == V32_LINE_STARTUP_OK &&
+		      process_sample(
+			      operations, datapump, candidate_receive,
+			      &next_candidate),
+		      "long V.32 line exchange stopped at sample %u",
+		      sample);
+		candidate_transmit = next_candidate;
+		peer_transmit = next_peer;
+	}
+	CHECK(peer_complete, "long V.32 line peer did not complete");
+	*measured_round_trip = candidate_is_caller ?
+		v32_answerer_line_startup_round_trip_samples(&answerer) :
+		v32_line_startup_round_trip_samples(&caller);
+	*post_startup_power = 0;
+	for (unsigned int sample = 0;
+	     sample < TEST_LONG_DRAIN_SAMPLES; ++sample) {
+		int16_t candidate_receive = delay_sample(
+			&peer_to_candidate, 0);
+		int16_t next_candidate;
+
+		CHECK(process_sample(
+			      operations, datapump, candidate_receive,
+			      &next_candidate),
+		      "V.32 endpoint rejected the long-delay handoff at %u",
+		      sample);
+		if (sample >= TEST_LONG_DRAIN_SAMPLES - 512u)
+			*post_startup_power += (uint64_t)(
+				(int32_t)next_candidate * next_candidate);
+	}
+	return true;
+}
+
+static bool test_long_round_trip_line_startup(void)
+{
+	struct modem_driver driver = {
+		.name = "V.32 long round-trip test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct dp_operations *operations;
+	uint32_t minimum_unbounded_samples =
+		(V32_ECHO_MAX_ROUND_TRIP_SYMBOLS * MODEM_RATE) /
+		V32_CARRIER_SYMBOL_RATE;
+
+	CHECK(v32_datapump_register() == 0,
+	      "V.32 long round-trip registration failed");
+	operations = modem_dp_get_registered_ops(DP_V32);
+	CHECK(operations != NULL,
+	      "V.32 long round-trip operations are unavailable");
+	for (unsigned int candidate_is_caller = 0;
+	     candidate_is_caller <= 1; ++candidate_is_caller) {
+		struct modem *modem = modem_create(
+			&driver, candidate_is_caller ?
+					"V.32 long caller" :
+					"V.32 long answerer");
+		struct dp *datapump;
+		uint32_t measured_round_trip = 0;
+		uint64_t post_startup_power = 0;
+
+		CHECK(modem != NULL,
+		      "V.32 long round-trip modem did not initialize");
+		modem->min_rate = modem->max_rate = V32_4800_BIT_RATE;
+		datapump = operations->create(
+			modem, DP_V32, (int)candidate_is_caller,
+			MODEM_RATE, MODEM_FRAG, operations);
+		CHECK(datapump != NULL && drive_long_line_startup(
+			      operations, datapump,
+			      candidate_is_caller != 0,
+			      &measured_round_trip, &post_startup_power) &&
+		      measured_round_trip > minimum_unbounded_samples &&
+		      (candidate_is_caller != 0 ||
+		       post_startup_power > UINT64_C(1000000000)),
+		      "V.32 role %u rejected/clipped its %u-sample line timing",
+		      candidate_is_caller, measured_round_trip);
+		CHECK(operations->delete(datapump) == 0,
+		      "V.32 long round-trip cleanup failed");
+		modem_delete(modem);
+	}
+	CHECK(v32_datapump_unregister() == 0,
+	      "V.32 long round-trip deregistration failed");
+	return true;
 }
 
 static bool conditioning_signal_init(
@@ -316,6 +459,13 @@ static bool test_training_deadline(void)
 
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] long round-trip line startup\n");
+	if (!test_long_round_trip_line_startup()) {
+		fprintf(stderr,
+			"[  FAILED  ] long round-trip line startup\n");
+		return 1;
+	}
+	fprintf(stderr, "[       OK ] long round-trip line startup\n");
 	fprintf(stderr, "[ RUN      ] training deadline\n");
 	if (!test_training_deadline()) {
 		fprintf(stderr, "[  FAILED  ] training deadline\n");

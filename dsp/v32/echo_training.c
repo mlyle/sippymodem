@@ -49,9 +49,7 @@ static bool s_extension_is_valid(
 	const struct v32_echo_training *training,
 	enum v32_transmitter_role role)
 {
-	return training->s_extension_symbols <=
-		       V32_ECHO_MAX_ROUND_TRIP_SYMBOLS &&
-	       (training->s_extension_symbols & 1u) == 0 &&
+	return (training->s_extension_symbols & 1u) == 0 &&
 	       (role == V32_CALLING_TRANSMITTER ||
 		training->s_extension_symbols == 0) &&
 	       training->s_extension_emitted <=
@@ -111,7 +109,6 @@ enum v32_echo_training_result v32_echo_training_init(
 	};
 
 	if (training == NULL || !role_is_valid(role) ||
-	    s_extension_symbols > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS ||
 	    (s_extension_symbols & 1u) != 0 ||
 	    (role == V32_ANSWERING_TRANSMITTER &&
 	     s_extension_symbols != 0) ||

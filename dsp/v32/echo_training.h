@@ -39,8 +39,9 @@ enum v32_echo_training_result {
  * boundaries. */
 struct v32_echo_training {
 	struct v32_conditioning_transmitter conditioning;
-	/* The calling modem extends S by its measured, even turnaround delay
-	 * before entering the ordinary 256-symbol S interval. */
+	/* The calling modem extends S by its full measured, even turnaround
+	 * delay before entering the ordinary 256-symbol S interval.  This is
+	 * protocol timing, independent of the bounded echo reference window. */
 	uint16_t s_extension_symbols;
 	uint16_t s_extension_emitted;
 	bool complete;
