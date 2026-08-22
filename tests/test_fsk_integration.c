@@ -653,7 +653,7 @@ static bool exercise_retrain(
 	const struct media_recorder *recorder,
 	struct media_frame_delay *delay, size_t delay_frames,
 	unsigned int sequence, bool raw_transport, bool lose_first_response,
-	bool reduce_peer_response, bool simultaneous)
+	bool reduce_peer_response, int peer_request_frame)
 {
 	enum {
 		TEST_STATE_COMMAND_ONLINE = 6,
@@ -680,6 +680,7 @@ static bool exercise_retrain(
 	bool transferred = false;
 	bool caller_preserved_delivered;
 	bool answerer_preserved_delivered;
+	bool peer_requested = peer_request_frame >= 0;
 	char command[] = "ATO1";
 	char peer_command[] = "ATO1";
 	size_t caller_preserved_offset;
@@ -749,13 +750,13 @@ static bool exercise_retrain(
 	}
 	initiator->modem->state = TEST_STATE_COMMAND_ONLINE;
 	initiator->modem->command = 1;
-	if (simultaneous) {
+	if (peer_request_frame == 0) {
 		peer->modem->state = TEST_STATE_COMMAND_ONLINE;
 		peer->modem->command = 1;
 	}
 	if (process_at_command(initiator->modem, command) != 1 ||
 	    initiator->modem->retrain_pending == 0 ||
-	    (simultaneous &&
+	    (peer_request_frame == 0 &&
 	     (process_at_command(peer->modem, peer_command) != 1 ||
 	      peer->modem->retrain_pending == 0)) ||
 	    !endpoint_drain(caller) || !endpoint_drain(answerer) ||
@@ -792,6 +793,15 @@ static bool exercise_retrain(
 		bool reduce_answerer_to_caller = reduce_peer_response &&
 			initiator == caller;
 
+		if (peer_request_frame > 0 &&
+		    frame == (unsigned int)peer_request_frame) {
+			peer->modem->state = TEST_STATE_COMMAND_ONLINE;
+			peer->modem->command = 1;
+			if (process_at_command(peer->modem, peer_command) != 1 ||
+			    peer->modem->retrain_pending == 0)
+				return false;
+		}
+
 		if ((delay_frames != 0 &&
 		     (block_caller_to_answerer || block_answerer_to_caller ||
 		      reduce_caller_to_answerer || reduce_answerer_to_caller)) ||
@@ -807,7 +817,7 @@ static bool exercise_retrain(
 				      reduce_answerer_to_caller)) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
-		if (id == DP_V22BIS && !simultaneous &&
+		if (id == DP_V22BIS && !peer_requested &&
 		    frame < ATO1_100MS_FRAMES) {
 			/* V.22bis 6.4 defines a complete 100 ms S1 before the
 			 * reciprocal response.  A stable prefix is detection evidence,
@@ -831,7 +841,7 @@ static bool exercise_retrain(
 			}
 		}
 		if (initiator->modem->retrain_pending == 0 &&
-		    (!simultaneous || peer->modem->retrain_pending == 0) &&
+		    (!peer_requested || peer->modem->retrain_pending == 0) &&
 		    modem_is_online(caller->modem, id) &&
 		    modem_is_online(answerer->modem, id)) {
 			completed = true;
@@ -843,7 +853,7 @@ static bool exercise_retrain(
 	    ((id == DP_V22 || id == DP_B212) &&
 	     completion_frames < ATO1_100MS_FRAMES) ||
 	    !output_contains_connect(initiator, bit_rate) ||
-	    (simultaneous && !output_contains_connect(peer, bit_rate))) {
+	    (peer_requested && !output_contains_connect(peer, bit_rate))) {
 		fprintf(stderr,
 			"retrain carrier failed (completed=%d frames=%u pending=%u "
 			"status=%u/%u state=%u/%u outputs=%zu/%zu)\n",
@@ -1517,7 +1527,7 @@ static bool run_media_call(
 				      test_case->id == DP_V22BIS &&
 					      test_case->raw_transport &&
 					      codec == MEDIA_CODEC_PCMU,
-				      false, false),
+				      false, -1),
 		      "%s answerer retrain did not reconnect and pass data",
 		      test_case->name);
 		CHECK(exercise_retrain(
@@ -1526,19 +1536,19 @@ static bool run_media_call(
 				      &caller_delay,
 				      test_case->caller_delay_frames, 1,
 				      test_case->raw_transport, false,
-				      test_case->id == DP_V22BIS, false),
+				      test_case->id == DP_V22BIS, -1),
 		      "%s caller retrain did not reconnect and pass data",
 		      test_case->name);
-		/* A peer S1 may arrive during our own S1, including when both
-		 * modems independently request retraining at the same instant. */
+		/* An eager peer can begin its reciprocal S1 after the stable 20 ms
+		 * prefix, while our complete 100 ms S1 is still in flight. */
 		if (test_case->id == DP_V22BIS)
 			CHECK(exercise_retrain(
 				      &caller, &answerer, &caller, test_case->id,
 				      test_case->caller_rx_rate, codec, &recorder,
 				      &caller_delay,
 				      test_case->caller_delay_frames, 0,
-				      test_case->raw_transport, false, false, true),
-			      "%s simultaneous retrain did not reconnect and pass data",
+				      test_case->raw_transport, false, false, 1),
+			      "%s overlapping retrain did not reconnect and pass data",
 			      test_case->name);
 		if (test_case->id == DP_V22 || test_case->id == DP_V22BIS)
 			CHECK(exercise_v22_carrier_recovery(
