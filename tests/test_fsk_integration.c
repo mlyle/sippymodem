@@ -658,7 +658,7 @@ static bool exercise_retrain(
 	enum {
 		TEST_STATE_COMMAND_ONLINE = 6,
 		PRESERVED_CAPACITY = 32,
-		CONSTANT_CARRIER_ATO1_MIN_FRAMES =
+		ATO1_100MS_FRAMES =
 			(MODEM_RATE / 10) / SIP_FRAME_SAMPLES,
 	};
 	static const uint8_t caller_payloads[][8] = {
@@ -797,6 +797,21 @@ static bool exercise_retrain(
 				      reduce_answerer_to_caller)) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
+		if (id == DP_V22BIS && frame < ATO1_100MS_FRAMES) {
+			const struct integration_endpoint *peer =
+				initiator == caller ? answerer : caller;
+
+			/* V.22bis 6.4 defines a complete 100 ms S1 before the
+			 * reciprocal response.  A stable prefix is detection evidence,
+			 * not the physical transition boundary. */
+			if (!modem_is_online(peer->modem, id)) {
+				fprintf(stderr,
+					"V.22bis accepted an incomplete retrain signal "
+					"at frame %u\n",
+					frame);
+				return false;
+			}
+		}
 		if (id == DP_V22 || id == DP_B212) {
 			const struct integration_endpoint *peer =
 				initiator == caller ? answerer : caller;
@@ -820,7 +835,7 @@ static bool exercise_retrain(
 	}
 	if (!completed ||
 	    ((id == DP_V22 || id == DP_B212) &&
-	     completion_frames < CONSTANT_CARRIER_ATO1_MIN_FRAMES) ||
+	     completion_frames < ATO1_100MS_FRAMES) ||
 	    !output_contains_connect(initiator, bit_rate)) {
 		fprintf(stderr,
 			"retrain carrier failed (completed=%d frames=%u pending=%u "

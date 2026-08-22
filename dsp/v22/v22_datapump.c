@@ -1127,14 +1127,6 @@ static int observe_retrain_signal(
 				    V22BIS_ALTERNATING_RUN_MAX_SYMBOLS) != 0)
 			return -1;
 	}
-	if (online && datapump_uses_v22bis(datapump) &&
-	    v22bis_retrain_sequence_present(
-		    datapump->retrain_symbol_history,
-		    datapump->rate_signal_detector.alternating_symbols)) {
-		discard_retrain_candidate(datapump);
-		*ended = true;
-		return 0;
-	}
 	return 0;
 }
 
