@@ -425,7 +425,7 @@ def load_campaign_config(path: Path) -> CampaignConfig:
             10,
         ),
         retrain_timeout_seconds=_number(
-            value.get("retrain_timeout_seconds", 60),
+            value.get("retrain_timeout_seconds", 42),
             "retrain_timeout_seconds",
             5,
             60,

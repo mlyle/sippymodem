@@ -75,7 +75,7 @@ class LiveCampaignConfigTests(unittest.TestCase):
             self.assertEqual(config.callback_request_timeout_seconds, 90)
             self.assertEqual(config.callback_marker_timeout_seconds, 7)
             self.assertEqual(config.callback_return_timeout_seconds, 180)
-            self.assertEqual(config.retrain_timeout_seconds, 60)
+            self.assertEqual(config.retrain_timeout_seconds, 42)
             self.assertEqual(config.inter_call_seconds, 7)
             self.assertEqual(config.busy_retry_seconds, 10)
             self.assertEqual(config.busy_retry_limit, 9)

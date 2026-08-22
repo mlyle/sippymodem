@@ -128,6 +128,30 @@ class LiveCampaignReportTests(unittest.TestCase):
             completed[group] += 1
             case_completed[item.case.name] += 1
 
+    def test_schedule_biases_equal_progress_toward_originators(self) -> None:
+        representatives = {}
+        for case in cases_for_suite("smoke"):
+            representatives.setdefault((case.family, case.role), case)
+        originators = [
+            case
+            for (_, role), case in representatives.items()
+            if role == "originator"
+        ][:2]
+        callbacks = [
+            case
+            for (_, role), case in representatives.items()
+            if role == "callback"
+        ][:6]
+        cases = tuple(originators + callbacks)
+        self.assertEqual((len(originators), len(callbacks)), (2, 6))
+
+        originator_first = sum(
+            base_schedule(cases, 1, seed)[0].case.role == "originator"
+            for seed in range(4096)
+        )
+        self.assertGreater(originator_first, 4096 * 72 // 100)
+        self.assertLess(originator_first, 4096 * 78 // 100)
+
     def test_one_extra_round_only_contains_failed_cases(self) -> None:
         cases = cases_for_suite("smoke")[:3]
         results = [

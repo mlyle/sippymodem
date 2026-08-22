@@ -18,6 +18,8 @@ if __package__:
         LINK_LAPM,
         LINK_MODES,
         LINK_RAW,
+        ROLE_CALLBACK,
+        ROLE_ORIGINATOR,
     )
 else:
     from live_campaign_profiles import (
@@ -26,6 +28,8 @@ else:
         LINK_LAPM,
         LINK_MODES,
         LINK_RAW,
+        ROLE_CALLBACK,
+        ROLE_ORIGINATOR,
     )
 
 
@@ -189,6 +193,16 @@ def base_schedule(
             for group in available_groups
             if Fraction(group_done[group], group_expected[group]) == minimum
         ]
+        least_complete_roles = {group[1] for group in least_complete_groups}
+        if least_complete_roles == {ROLE_ORIGINATOR, ROLE_CALLBACK}:
+            role = (
+                ROLE_CALLBACK
+                if generator.randrange(4) == 0
+                else ROLE_ORIGINATOR
+            )
+            least_complete_groups = [
+                group for group in least_complete_groups if group[1] == role
+            ]
         group = generator.choice(least_complete_groups)
         minimum_case_count = min(
             case_done[case.name]

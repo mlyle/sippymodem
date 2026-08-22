@@ -46,7 +46,7 @@
   "callback_release_seconds": 2,
   "online_timeout_seconds": 15,
   "online_settle_seconds": 1,
-  "retrain_timeout_seconds": 60,
+  "retrain_timeout_seconds": 42,
   "cleanup_timeout_seconds": 5,
   "inter_call_seconds": 7,
   "busy_retry_seconds": 10,
