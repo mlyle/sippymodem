@@ -45,6 +45,7 @@ struct endpoint {
 	size_t phase4_octets;
 	size_t downstream_frames;
 	size_t upstream_frames;
+	uint16_t upstream_received_delay;
 	uint16_t phase4_entry_ri_symbols;
 	bool entered_phase3;
 	bool entered_mixed;
@@ -473,13 +474,15 @@ static bool downstream_frame_matches(
 }
 
 static bool upstream_frame_matches(
-	const struct v34_received_mapping_frame *received, size_t frame_index)
+	const struct v34_received_mapping_frame *received,
+	uint16_t *received_delay, size_t frame_index)
 {
 	uint8_t expected[V34_MAX_MAPPING_FRAME_BITS];
+	uint16_t delayed;
 	uint8_t expected_auxiliary = (uint8_t)(
 		(frame_index + received->mapping_frame.index) & 1u);
 
-	if (received->primary_bit_count == 0 ||
+	if (received_delay == NULL || received->primary_bit_count == 0 ||
 	    received->primary_bit_count !=
 		    received->mapping_frame.primary_bits ||
 	    received->auxiliary_bit_count !=
@@ -487,11 +490,20 @@ static bool upstream_frame_matches(
 		return false;
 	generate_data_bits(
 		expected, received->primary_bit_count, frame_index + 97u);
-	return memcmp(
-		       received->primary_bits, expected,
-		       received->primary_bit_count) == 0 &&
-	       (received->auxiliary_bit_count == 0 ||
-		received->auxiliary_bit == expected_auxiliary);
+	delayed = *received_delay;
+	for (size_t bit = 0; bit < received->primary_bit_count; ++bit) {
+		uint8_t wire_bit = (uint8_t)(delayed & 1u);
+
+		delayed = (uint16_t)((delayed >> 1) |
+				     ((uint16_t)expected[bit] << 15));
+		if (received->primary_bits[bit] != wire_bit)
+			return false;
+	}
+	if (received->auxiliary_bit_count != 0 &&
+	    received->auxiliary_bit != expected_auxiliary)
+		return false;
+	*received_delay = delayed;
+	return true;
 }
 
 static bool channel_init(
@@ -532,7 +544,9 @@ static bool endpoint_init(
 	uint8_t selected_downstream_rate_index)
 {
 	struct pcm_call_configuration selected = configuration(role, law);
-	struct endpoint initialized = { 0 };
+	struct endpoint initialized = {
+		.upstream_received_delay = UINT16_MAX,
+	};
 
 	selected.enabled_downstream_rate_mask = enabled_downstream_rate_mask;
 	if (role == V90_ANALOG_MODEM)
@@ -641,7 +655,9 @@ static bool endpoint_data_octet(
 
 		if (endpoint->call.local_role != V90_DIGITAL_MODEM)
 			return false;
-		if (!upstream_frame_matches(&event.frame.upstream, expected)) {
+		if (!upstream_frame_matches(
+			    &event.frame.upstream,
+			    &endpoint->upstream_received_delay, expected)) {
 			if (!endpoint->resync_data_frame)
 				return false;
 		} else {
@@ -665,6 +681,8 @@ static bool endpoint_octet(
 		if (!phase4_boundary_is_transactional(&endpoint->call, law) ||
 		    pcm_call_start_data_path(&endpoint->call) != PCM_CALL_OK)
 			return false;
+		if (endpoint->call.local_role == V90_DIGITAL_MODEM)
+			endpoint->upstream_received_delay = UINT16_MAX;
 		endpoint->phase4_boundary_checked = true;
 		endpoint->data_path_started = true;
 	}

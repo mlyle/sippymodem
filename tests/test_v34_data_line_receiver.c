@@ -443,6 +443,7 @@ struct expected_frame {
 
 struct source_fixture {
 	struct expected_frame frames[EXPECTED_FRAME_CAPACITY];
+	uint16_t delayed_primary_bits;
 	size_t count;
 };
 
@@ -467,8 +468,13 @@ static bool generated_source(
 		.mapping_frame = *request,
 		.auxiliary_bit = auxiliary_bit != NULL ? *auxiliary_bit : 0,
 	};
-	memcpy(source->frames[source->count].primary_bits, primary_bits,
-	       request->primary_bits);
+	for (size_t index = 0; index < request->primary_bits; ++index) {
+		source->frames[source->count].primary_bits[index] =
+			(uint8_t)(source->delayed_primary_bits & 1u);
+		source->delayed_primary_bits =
+			(uint16_t)((source->delayed_primary_bits >> 1) |
+				   ((uint16_t)primary_bits[index] << 15));
+	}
 	source->count++;
 	return true;
 }
@@ -531,7 +537,9 @@ static int16_t apply_drifting_echo(
 static bool test_generated_channel_drift(void)
 {
 	struct handoff_fixture fixture;
-	struct source_fixture source = { 0 };
+	struct source_fixture source = {
+		.delayed_primary_bits = UINT16_MAX,
+	};
 	struct drifting_echo channel = { 0 };
 	size_t expected_index = 0;
 	bool b1_complete = false;
@@ -589,7 +597,9 @@ static bool test_generated_channel_drift(void)
 static bool test_generated_line_round_trip(void)
 {
 	struct handoff_fixture fixture;
-	struct source_fixture source = { 0 };
+	struct source_fixture source = {
+		.delayed_primary_bits = UINT16_MAX,
+	};
 	size_t expected_index = 0;
 	bool b1_complete = false;
 

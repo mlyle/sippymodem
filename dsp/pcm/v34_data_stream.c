@@ -200,6 +200,7 @@ enum v34_data_stream_result v34_data_stream_init_b1(
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
 	initialized = (struct v34_data_stream){
 		.transmitter = *transmitter,
+		.delayed_primary_bits = UINT16_MAX,
 		.b1_active = true,
 	};
 	if (!v34_data_stream_is_valid(&initialized))
@@ -216,29 +217,38 @@ bool v34_data_stream_is_transmitting_b1(
 }
 
 static bool acquire_mapping_frame(
-	const struct v34_data_stream *stream,
+	struct v34_data_stream *stream,
 	v34_mapping_frame_source source, void *source_context,
 	const struct v34_mapping_frame *request,
 	uint8_t primary_bits[V34_MAX_MAPPING_FRAME_BITS],
 	uint8_t *auxiliary_bit)
 {
+	uint8_t sourced_primary_bits[V34_MAX_MAPPING_FRAME_BITS];
 	uint8_t *auxiliary = request->carries_auxiliary_bit ?
 		auxiliary_bit : NULL;
 
 	if (stream->b1_active || source == NULL) {
-		memset(primary_bits, 1, request->primary_bits);
+		memset(sourced_primary_bits, 1, request->primary_bits);
 		if (auxiliary != NULL)
 			*auxiliary = 1;
-		return true;
+	} else {
+		memset(sourced_primary_bits, 2, request->primary_bits);
+		if (auxiliary != NULL)
+			*auxiliary = 2;
+		if (!source(source_context, request, sourced_primary_bits,
+			    auxiliary) ||
+		    !unpacked_bits_are_binary(
+			    sourced_primary_bits, request->primary_bits) ||
+		    (auxiliary != NULL && *auxiliary > 1u))
+			return false;
 	}
-	memset(primary_bits, 2, request->primary_bits);
-	if (auxiliary != NULL)
-		*auxiliary = 2;
-	return source(
-		       source_context, request, primary_bits, auxiliary) &&
-	       unpacked_bits_are_binary(
-		       primary_bits, request->primary_bits) &&
-	       (auxiliary == NULL || *auxiliary <= 1u);
+	for (size_t bit = 0; bit < request->primary_bits; ++bit) {
+		primary_bits[bit] = (uint8_t)(stream->delayed_primary_bits & 1u);
+		stream->delayed_primary_bits =
+			(uint16_t)((stream->delayed_primary_bits >> 1) |
+				   ((uint16_t)sourced_primary_bits[bit] << 15));
+	}
+	return true;
 }
 
 enum v34_data_stream_result v34_data_stream_sample(

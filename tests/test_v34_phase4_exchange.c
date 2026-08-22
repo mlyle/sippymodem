@@ -23,6 +23,7 @@ struct endpoint {
 	unsigned int mapping_frames_received;
 	uint32_t trn_symbols_at_mp;
 	int16_t next_received;
+	uint8_t primary_idle_bits_remaining;
 	uint8_t transmit_bit;
 	bool constellations_routed;
 	bool has_preparation_snapshot;
@@ -62,8 +63,13 @@ static bool accept_mapping_frame(
 	uint8_t expected = (uint8_t)(endpoint->transmit_bit ^ 1u);
 
 	for (uint8_t index = 0; index < received->primary_bit_count; ++index) {
-		if (received->primary_bits[index] != expected)
+		uint8_t bit = endpoint->primary_idle_bits_remaining != 0 ?
+			1u : expected;
+
+		if (received->primary_bits[index] != bit)
 			return false;
+		if (endpoint->primary_idle_bits_remaining != 0)
+			endpoint->primary_idle_bits_remaining--;
 	}
 	if (received->auxiliary_bit_count != 0 &&
 	    received->auxiliary_bit != expected)
@@ -301,6 +307,9 @@ static bool endpoint_sample(
 			endpoint->trn_symbols_at_mp =
 				endpoint->phase4.transmit.training
 					.phase4_trn_symbols;
+		if ((*phase4_events &
+		     V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED) != 0)
+			endpoint->primary_idle_bits_remaining = 16;
 		if ((*phase4_events &
 		     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) != 0 &&
 		    !accept_mapping_frame(endpoint, &received_frame)) {

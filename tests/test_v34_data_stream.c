@@ -204,6 +204,7 @@ static bool test_b1_and_host_handoff(void)
 	struct v34_data_transmitter model;
 	struct v34_data_stream stream;
 	struct source_fixture source = { 0 };
+	uint16_t model_delayed_primary_bits = UINT16_MAX;
 	bool model_b1 = true;
 	size_t samples = 0;
 
@@ -225,6 +226,8 @@ static bool test_b1_and_host_handoff(void)
 			struct v34_mapping_frame request;
 			uint8_t primary_bits[
 				V34_MAX_MAPPING_FRAME_BITS];
+			uint8_t sourced_primary_bits[
+				V34_MAX_MAPPING_FRAME_BITS];
 			uint8_t auxiliary_bit = 1;
 			const uint8_t *auxiliary;
 
@@ -237,12 +240,21 @@ static bool test_b1_and_host_handoff(void)
 				      V34_DATA_TRANSMITTER_OK,
 			      "model frame preview failed");
 			if (model_b1) {
-				memset(primary_bits, 1, request.primary_bits);
+				memset(sourced_primary_bits, 1,
+				       request.primary_bits);
 			} else {
 				fill_generated_frame(
-					&request, source.calls, primary_bits,
+					&request, source.calls,
+					sourced_primary_bits,
 					request.carries_auxiliary_bit ?
 						&auxiliary_bit : NULL);
+			}
+			for (size_t bit = 0; bit < request.primary_bits; ++bit) {
+				primary_bits[bit] =
+					(uint8_t)(model_delayed_primary_bits & 1u);
+				model_delayed_primary_bits = (uint16_t)(
+					(model_delayed_primary_bits >> 1) |
+					((uint16_t)sourced_primary_bits[bit] << 15));
 			}
 			auxiliary = request.carries_auxiliary_bit ?
 				&auxiliary_bit : NULL;
@@ -262,6 +274,8 @@ static bool test_b1_and_host_handoff(void)
 		      actual_sample == expected_sample &&
 		      actual_accepted == expected_accepted &&
 		      stream.b1_active == model_b1 &&
+		      stream.delayed_primary_bits ==
+			      model_delayed_primary_bits &&
 		      memcmp(&stream.transmitter, &model, sizeof(model)) == 0,
 		      "stream diverged at sample %zu", samples - 1u);
 	}

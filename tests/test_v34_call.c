@@ -26,6 +26,7 @@ struct endpoint {
 	struct v34_call call;
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
+	uint8_t primary_idle_bits_remaining;
 	uint8_t transmit_bit;
 	bool verify_mapping_frames;
 	bool entered_phase3;
@@ -222,9 +223,15 @@ static bool accept_mapping_frame(
 
 	if (!endpoint->verify_mapping_frames)
 		return true;
-	for (uint8_t index = 0; index < received->primary_bit_count; ++index)
-		if (received->primary_bits[index] != expected)
+	for (uint8_t index = 0; index < received->primary_bit_count; ++index) {
+		uint8_t bit = endpoint->primary_idle_bits_remaining != 0 ?
+			1u : expected;
+
+		if (received->primary_bits[index] != bit)
 			return false;
+		if (endpoint->primary_idle_bits_remaining != 0)
+			endpoint->primary_idle_bits_remaining--;
+	}
 	if (received->auxiliary_bit_count != 0 &&
 	    received->auxiliary_bit != expected)
 		return false;
@@ -275,6 +282,10 @@ static bool endpoint_accept_observation(
 		endpoint->entered_phase3 = true;
 	if (observation->next == V34_CALL_PHASE4)
 		endpoint->entered_phase4 = true;
+	if (observation->processed == V34_CALL_PHASE4 &&
+	    (observation->events.phase4 &
+	     V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED) != 0)
+		endpoint->primary_idle_bits_remaining = 16;
 	return observation->processed != V34_CALL_PHASE4 ||
 	       (observation->events.phase4 &
 		V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) == 0 ||

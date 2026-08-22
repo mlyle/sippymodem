@@ -149,6 +149,7 @@ static bool source_downstream_frame(
 
 struct upstream_source {
 	size_t frames;
+	uint16_t received_delay;
 	bool reject_next;
 };
 
@@ -173,13 +174,15 @@ static bool source_upstream_frame(
 }
 
 static bool upstream_frame_matches(
-	const struct v34_received_mapping_frame *received, size_t frame_index)
+	const struct v34_received_mapping_frame *received,
+	struct upstream_source *source, size_t frame_index)
 {
 	uint8_t expected[V34_MAX_MAPPING_FRAME_BITS];
+	uint16_t delayed;
 	uint8_t expected_auxiliary = (uint8_t)(
 		(frame_index + received->mapping_frame.index) & 1u);
 
-	if (received->primary_bit_count == 0 ||
+	if (source == NULL || received->primary_bit_count == 0 ||
 	    received->primary_bit_count !=
 		    received->mapping_frame.primary_bits ||
 	    received->auxiliary_bit_count !=
@@ -187,11 +190,20 @@ static bool upstream_frame_matches(
 		return false;
 	generate_data_bits(
 		expected, received->primary_bit_count, frame_index + 97u);
-	return memcmp(
-		       received->primary_bits, expected,
-		       received->primary_bit_count) == 0 &&
-	       (received->auxiliary_bit_count == 0 ||
-		received->auxiliary_bit == expected_auxiliary);
+	delayed = source->received_delay;
+	for (size_t bit = 0; bit < received->primary_bit_count; ++bit) {
+		uint8_t wire_bit = (uint8_t)(delayed & 1u);
+
+		delayed = (uint16_t)((delayed >> 1) |
+				     ((uint16_t)expected[bit] << 15));
+		if (received->primary_bits[bit] != wire_bit)
+			return false;
+	}
+	if (received->auxiliary_bit_count != 0 &&
+	    received->auxiliary_bit != expected_auxiliary)
+		return false;
+	source->received_delay = delayed;
+	return true;
 }
 
 static bool downstream_frame_matches(
@@ -230,7 +242,9 @@ static bool verify_final_downstream_exchange(
 	struct v90_analog_path analog_path;
 	struct v90_digital_path digital_path;
 	struct downstream_source downstream_source = { 0 };
-	struct upstream_source upstream_source = { 0 };
+	struct upstream_source upstream_source = {
+		.received_delay = UINT16_MAX,
+	};
 	size_t downstream_training_characters = 0;
 	size_t downstream_data_frames = 0;
 	size_t upstream_data_frames = 0;
@@ -370,7 +384,8 @@ static bool verify_final_downstream_exchange(
 		if (digital_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
 			CHECK(upstream_data_frames < upstream_source.frames &&
 			      upstream_frame_matches(
-				      &upstream_frame, upstream_data_frames),
+				      &upstream_frame, &upstream_source,
+				      upstream_data_frames),
 			      "upstream data frame %zu changed",
 			      upstream_data_frames);
 			upstream_data_frames++;
