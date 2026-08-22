@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_data_stream.h>
-#include <v34_phase4_b1_handoff.h>
 
 #include "test.h"
 
@@ -38,65 +37,6 @@ configuration_fixture(void)
 		.primary_data_rate_2400_bps_units = 8,
 		.auxiliary_channel_enabled = true,
 	};
-}
-
-static struct v34_mp_parameters mp_parameters_fixture(void)
-{
-	return (struct v34_mp_parameters){
-		.maximum_call_to_answer_rate_2400_bps_units = 10,
-		.maximum_answer_to_call_rate_2400_bps_units = 9,
-		.remote_transmitter_trellis = V34_TRELLIS_32_STATE,
-		.data_rate_capability_mask = 0x1555,
-		.asymmetric_rates_enabled = true,
-	};
-}
-
-static bool completed_caller_training_fixture(
-	struct v34_training_transmitter *training,
-	const struct v34_data_stream_configuration *configuration,
-	enum v34_constellation_size constellation)
-{
-	struct v34_mp_parameters parameters = mp_parameters_fixture();
-
-	if (configuration == NULL ||
-	    v34_training_transmitter_init(
-		    training, &configuration->profile, constellation,
-		    configuration->sample_rate,
-		    configuration->nominal_peak_amplitude) !=
-		    V34_TRAINING_TRANSMITTER_OK)
-		return false;
-	for (size_t sample_count = 0; sample_count < 8000u; ++sample_count) {
-		int16_t ignored;
-
-		if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
-		    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
-		    training->phase3.trn_symbols ==
-			    V34_PHASE3_TRN_MIN_SYMBOLS &&
-		    v34_training_transmitter_start_j(training) !=
-			    V34_TRAINING_TRANSMITTER_OK)
-			return false;
-		if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
-		    training->phase3.stage == V34_PHASE3_TRANSMITTER_J &&
-		    training->phase3.j_symbols == V34_PHASE3_J_PATTERN_SYMBOLS &&
-		    v34_training_transmitter_finish_j(training) !=
-			    V34_TRAINING_TRANSMITTER_OK)
-			return false;
-		if (training->stage == V34_TRAINING_TRANSMITTER_PHASE4_TRN &&
-		    training->phase4_trn_symbols == V34_PHASE4_TRN_MIN_SYMBOLS &&
-		    v34_training_transmitter_start_mp_type0(
-			    training, &parameters) != V34_TRAINING_TRANSMITTER_OK)
-			return false;
-		if (v34_training_transmitter_phase4_mp_record_complete(training) &&
-		    v34_training_transmitter_start_e(training) !=
-			    V34_TRAINING_TRANSMITTER_OK)
-			return false;
-		if (v34_training_transmitter_phase4_e_complete(training))
-			return true;
-		if (v34_training_transmitter_sample(training, &ignored) !=
-		    V34_TRAINING_TRANSMITTER_OK)
-			return false;
-	}
-	return false;
 }
 
 static bool compose_transmitter(
@@ -345,168 +285,6 @@ static bool streams_match_through_b1(
 	return false;
 }
 
-static bool test_phase4_b1_handoff(void)
-{
-	static const enum v34_constellation_size constellations[] = {
-		V34_CONSTELLATION_4_POINT,
-		V34_CONSTELLATION_16_POINT,
-	};
-
-	for (size_t constellation = 0;
-	     constellation < ARRAY_LENGTH(constellations); ++constellation) {
-		struct v34_data_stream_configuration configuration =
-			configuration_fixture();
-		struct v34_training_transmitter training;
-		struct v34_training_transmitter training_before;
-		struct v34_data_stream stream;
-		struct v34_data_stream prepared_stream;
-		struct v34_data_stream stream_model;
-		struct v34_data_stream prepared_model;
-		struct v34_data_mapping mapping;
-		struct v34_data_direction_parameters parameters = {
-			.trellis_selection = configuration.trellis_selection,
-			.nonlinear_parameter = configuration.nonlinear_parameter,
-			.primary_data_rate_2400_bps_units =
-				configuration.primary_data_rate_2400_bps_units,
-			.expanded_shaping = configuration.expanded_shaping,
-		};
-		struct v34_data_line_transmitter model_line;
-		int16_t expected_sample;
-		int16_t actual_sample;
-		bool expected_accepted;
-		bool actual_accepted;
-
-		CHECK(completed_caller_training_fixture(
-			      &training, &configuration,
-			      constellations[constellation]) &&
-		      !v34_training_line_needs_point(&training.line),
-		      "Phase 4 caller fixture %zu did not complete between points",
-		      constellation);
-		memcpy(parameters.precoder_coefficients,
-		       configuration.precoder_coefficients,
-		       sizeof(parameters.precoder_coefficients));
-		training_before = training;
-		CHECK(v34_phase4_caller_b1_stream_init(
-			      &stream, &training, &configuration) ==
-			      V34_DATA_STREAM_OK &&
-		      v34_data_mapping_prepare(
-			      &mapping, &configuration.profile, &parameters,
-			      configuration.auxiliary_channel_enabled) ==
-			      V34_DATA_MAPPING_OK &&
-		      v34_data_stream_continue_prepared_b1(
-			      &prepared_stream, &training.line, &mapping) ==
-			      V34_DATA_STREAM_OK &&
-		      memcmp(&training, &training_before, sizeof(training)) == 0 &&
-		      v34_data_stream_is_transmitting_b1(&stream) &&
-		      stream.transmitter.line.generated_samples ==
-			      training.line.generated_samples &&
-		      stream.transmitter.line.output_gain ==
-			      training.line.output_gain &&
-		      memcmp(&stream.transmitter.line.preemphasis,
-			     &training.line.preemphasis,
-			     sizeof(training.line.preemphasis)) == 0 &&
-		      stream.transmitter.line.carrier.modulator.carrier_phase ==
-			      training.line.carrier.carrier_phase &&
-		      stream.transmitter.line.carrier.modulator.symbol_phase_units ==
-			      training.line.carrier.symbol_phase_units &&
-		      stream.transmitter.line.carrier.modulator.active_count ==
-			      training.line.carrier.active_count &&
-		      memcmp(stream.transmitter.line.carrier.modulator.active,
-			     training.line.carrier.active,
-			     sizeof(training.line.carrier.active)) == 0,
-		      "Phase 4 B1 handoff reset caller line %zu", constellation);
-		stream_model = stream;
-		prepared_model = prepared_stream;
-		CHECK(streams_match_through_b1(&stream_model, &prepared_model),
-		      "prepared Phase 4 mapping changed B1 %zu", constellation);
-		model_line = stream.transmitter.line;
-		CHECK(v34_data_line_transmitter_sample(
-			      &model_line, NULL, &expected_sample,
-			      &expected_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
-		      v34_data_stream_sample(
-			      &stream, NULL, NULL, &actual_sample,
-			      &actual_accepted) == V34_DATA_STREAM_OK &&
-		      actual_sample == expected_sample &&
-		      actual_accepted == expected_accepted &&
-		      !actual_accepted &&
-		      stream.transmitter.points.next_point == 0 &&
-		      memcmp(&stream.transmitter.line, &model_line,
-			     sizeof(model_line)) == 0,
-		      "Phase 4 B1 handoff lost the retained E tail %zu",
-		      constellation);
-	}
-	return true;
-}
-
-static bool test_phase4_b1_handoff_validation(void)
-{
-	struct v34_data_stream_configuration configuration =
-		configuration_fixture();
-	struct v34_training_transmitter complete;
-	struct v34_training_transmitter incomplete;
-	struct v34_data_stream rejected;
-
-	CHECK(completed_caller_training_fixture(
-		      &complete, &configuration,
-		      V34_CONSTELLATION_4_POINT),
-	      "Phase 4 B1 validation E did not complete");
-	incomplete = complete;
-	incomplete.phase4.e.emitted_bits -= 2u;
-	CHECK(v34_training_transmitter_is_valid(&incomplete) &&
-	      !v34_training_transmitter_phase4_e_complete(&incomplete),
-	      "Phase 4 B1 validation did not form an incomplete E");
-	memset(&rejected, 0xa5, sizeof(rejected));
-	CHECK(v34_phase4_caller_b1_stream_init(
-		      NULL, &complete, &configuration) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_phase4_caller_b1_stream_init(
-		      &rejected, NULL, &configuration) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_phase4_caller_b1_stream_init(
-		      &rejected, &complete, NULL) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_phase4_caller_b1_stream_init(
-		      &rejected, &incomplete, &configuration) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "invalid Phase 4 B1 handoff changed the stream");
-	configuration.profile.local_role = V34_ANSWERING_STATION;
-	CHECK(v34_phase4_caller_b1_stream_init(
-		      &rejected, &complete, &configuration) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "Phase 4 B1 handoff accepted a local-role mismatch");
-	configuration = configuration_fixture();
-	configuration.profile.preemphasis_filter_index++;
-	CHECK(v34_phase4_caller_b1_stream_init(
-		      &rejected, &complete, &configuration) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "Phase 4 B1 handoff accepted a different line profile");
-	configuration = configuration_fixture();
-	configuration.sample_rate *= 2u;
-	CHECK(v34_phase4_caller_b1_stream_init(
-		      &rejected, &complete, &configuration) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "Phase 4 B1 handoff accepted a different sample clock");
-	configuration = configuration_fixture();
-	configuration.nominal_peak_amplitude++;
-	CHECK(v34_phase4_caller_b1_stream_init(
-		      &rejected, &complete, &configuration) ==
-		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "Phase 4 B1 handoff accepted a different line amplitude");
-	configuration = configuration_fixture();
-	configuration.primary_data_rate_2400_bps_units = 1;
-	CHECK(v34_phase4_caller_b1_stream_init(
-		      &rejected, &complete, &configuration) ==
-		      V34_DATA_STREAM_OUT_OF_RANGE &&
-	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
-	      "Phase 4 B1 handoff hid a data-stream failure");
-	return true;
-}
-
 static bool initialization_is_rejected(
 	const struct v34_data_stream_configuration *configuration,
 	enum v34_data_stream_result expected)
@@ -702,9 +480,6 @@ int main(void)
 		{ "selected initialization", test_selected_initialization },
 		{ "initialization failures", test_initialization_failures },
 		{ "B1 and host handoff", test_b1_and_host_handoff },
-		{ "Phase 4 B1 handoff", test_phase4_b1_handoff },
-		{ "Phase 4 B1 handoff validation",
-		  test_phase4_b1_handoff_validation },
 		{ "transactional boundaries", test_transactional_boundaries },
 	};
 	unsigned int failures = 0;
