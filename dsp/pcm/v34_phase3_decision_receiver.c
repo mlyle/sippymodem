@@ -145,7 +145,8 @@ v34_phase3_decision_receiver_init_suffix(
 	initialized.transmitting_role = transmitting_role;
 	initialized.md_symbols = md_symbols;
 	initialized.stage = V34_PHASE3_DECISION_RECEIVER_S;
-	if (v34_phase3_s_receiver_init_suffix(&initialized.s, s_symbols) !=
+	if (v34_phase3_s_receiver_init_fixed_suffix(
+		    &initialized.s, s_symbols) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    v34_phase3_pp_sequence_init(&initialized.pp) !=
 		    V34_PHASE3_PP_SEQUENCE_OK ||
@@ -278,9 +279,9 @@ static enum v34_phase3_decision_receiver_result receive_s(
 		    &hard) != V34_CONSTELLATION_OK ||
 	    !s_target(receiver, &hard, &target))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	result = v34_phase3_s_receiver_receive(
+	result = v34_phase3_s_receiver_receive_fixed(
 		&receiver->s, hard.quarter_point,
-		hard.clockwise_quarter_turns);
+		hard.clockwise_quarter_turns, observation->decision);
 	if (result == V34_PHASE3_S_RECEIVER_OK) {
 		/* The startup sequence supplies exact alternating targets even when
 		 * the initial hard decisions land on the other symbol-clock eye.
@@ -328,10 +329,10 @@ static enum v34_phase3_decision_receiver_result receive_md(
 	}
 	/* The aggregate restarts carrier/timing at the MD boundary. Detect the
 	 * bounded suffix that remains after that physical reacquisition. */
-	if (v34_phase3_s_receiver_init_suffix(
+	if (v34_phase3_s_receiver_init_fixed_suffix(
 		    &receiver->s,
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
-	    V34_PHASE3_S_RECEIVER_OK)
+		    V34_PHASE3_S_RECEIVER_OK)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
 	clear_s_target(receiver);
 	receiver->stage = V34_PHASE3_DECISION_RECEIVER_REPEATED_S;

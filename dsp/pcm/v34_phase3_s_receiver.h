@@ -3,6 +3,7 @@
 #ifndef V34_PHASE3_S_RECEIVER_H
 #define V34_PHASE3_S_RECEIVER_H
 
+#include "v34_analytic_filter.h"
 #include "v34_phase3_s_sequence.h"
 
 #include <stdbool.h>
@@ -47,6 +48,8 @@ bool v34_phase3_s_detection_is_valid(
  * veto an otherwise qualified marker. Expected rotations are generated
  * during correlation. */
 struct v34_phase3_s_receiver {
+	/* Low nibble: hard training decision. High nibble: fixed-distance
+	 * evidence for rotations 0..3 when metric_enabled is set. */
 	uint8_t decisions[V34_PHASE3_S_SEQUENCE_SYMBOLS];
 	struct v34_phase3_s_detection detection;
 	struct v34_phase3_s_detection pending_detection;
@@ -58,6 +61,8 @@ struct v34_phase3_s_receiver {
 	 * transition-error candidate awaited confirmation. */
 	uint8_t post_marker_symbols;
 	bool detection_pending;
+	bool pending_metric;
+	bool metric_enabled;
 	bool complete;
 };
 
@@ -66,6 +71,11 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init(
 /* Detect a suffix of S followed by the complete S-bar. This is for receivers
  * whose carrier and symbol timing lock after S has already begun. */
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init_suffix(
+	struct v34_phase3_s_receiver *receiver, uint8_t s_symbols);
+/* Use hard decisions first, with the fixed-domain relative metric as a
+ * bounded fallback when companding collapses the decision quadrants. */
+enum v34_phase3_s_receiver_result
+v34_phase3_s_receiver_init_fixed_suffix(
 	struct v34_phase3_s_receiver *receiver, uint8_t s_symbols);
 
 bool v34_phase3_s_receiver_is_valid(
@@ -82,6 +92,11 @@ bool v34_phase3_s_receiver_is_complete(
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns);
+
+enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive_fixed(
+	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
+	uint8_t clockwise_quarter_turns,
+	struct v34_analytic_sample observation);
 
 /* Copy the completed correlation result. A false return leaves the output
  * unchanged. */

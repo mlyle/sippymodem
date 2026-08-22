@@ -387,6 +387,195 @@ static bool test_suffix_acquisition(void)
 	return true;
 }
 
+/* Keep opposite-point metric evidence while collapsing alternating points
+ * into the same hard-decision quadrants. */
+static struct v34_analytic_sample collapsed_point(uint8_t rotation)
+{
+	static const struct v34_analytic_sample POINTS[4] = {
+		{ 600, -100 },
+		{ 700, -700 },
+		{ -600, 100 },
+		{ -700, 700 },
+	};
+
+	return POINTS[rotation & 3u];
+}
+
+static bool test_fixed_metric_fallback(void)
+{
+	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+	const size_t first = V34_PHASE3_S_SYMBOLS - suffix;
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	struct v34_phase3_s_receiver metric;
+	struct v34_phase3_s_receiver hard;
+	struct v34_phase3_s_detection detection;
+	unsigned int hard_errors = 0;
+
+	CHECK(generate_marker(rotations) &&
+	      v34_phase3_s_receiver_init_fixed_suffix(&metric, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK &&
+	      v34_phase3_s_receiver_init_suffix(&hard, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK,
+	      "fixed metric receivers did not initialize");
+	for (size_t prefix = 0; prefix < 71; ++prefix)
+		CHECK(v34_phase3_s_receiver_receive_fixed(
+			      &metric, 0, 0,
+			      (struct v34_analytic_sample){ 0, 0 }) ==
+			      V34_PHASE3_S_RECEIVER_OK,
+		      "fixed zero prefix falsely completed at %zu", prefix);
+	for (size_t local = 0;
+	     local < suffix + V34_PHASE3_S_BAR_SYMBOLS; ++local) {
+		size_t symbol = first + local;
+		uint8_t rotation = (uint8_t)((rotations[symbol] + 1u) & 3u);
+		struct v34_analytic_sample point = collapsed_point(rotation);
+		struct v34_fixed_training_decision sliced;
+
+		if (local >= suffix && local < suffix + 3u)
+			point = (struct v34_analytic_sample){ 0, 0 };
+		CHECK(v34_training_constellation_fixed_slice(
+			      V34_CONSTELLATION_4_POINT, point, &sliced) ==
+			      V34_CONSTELLATION_OK &&
+		      v34_phase3_s_receiver_receive_fixed(
+			      &metric, sliced.quarter_point,
+			      sliced.clockwise_quarter_turns, point) ==
+			      V34_PHASE3_S_RECEIVER_OK &&
+		      v34_phase3_s_receiver_receive(
+			      &hard, sliced.quarter_point,
+			      sliced.clockwise_quarter_turns) ==
+			      V34_PHASE3_S_RECEIVER_OK,
+		      "collapsed marker failed at %zu", local);
+		if (sliced.clockwise_quarter_turns != rotation)
+			hard_errors++;
+	}
+	CHECK(metric.detection_pending && metric.pending_metric &&
+	      !metric.complete && !v34_phase3_s_receiver_is_complete(&hard) &&
+	      hard_errors > V34_PHASE3_S_RECEIVER_MAX_S_ERRORS,
+	      "fixed metric did not retain the collapsed marker");
+	for (unsigned int confirmation = 0;
+	     confirmation < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
+	     ++confirmation) {
+		enum v34_phase3_s_receiver_result expected =
+			confirmation + 1u ==
+				V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ?
+				V34_PHASE3_S_RECEIVER_DETECTED :
+				V34_PHASE3_S_RECEIVER_OK;
+
+		CHECK(v34_phase3_s_receiver_receive_fixed(
+			      &metric, 0, 0,
+			      (struct v34_analytic_sample){ 0, 0 }) == expected,
+		      "fixed metric confirmation %u changed", confirmation);
+	}
+	CHECK(v34_phase3_s_receiver_get_detection(&metric, &detection) &&
+	      detection.clockwise_quarter_turn_offset == 1u &&
+	      detection.s_errors == 0u && detection.s_bar_errors == 3u &&
+	      metric.post_marker_symbols ==
+		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
+	      "fixed metric detection changed");
+	return true;
+}
+
+static bool test_fixed_metric_api_ownership(void)
+{
+	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+	struct v34_phase3_s_receiver hard;
+	struct v34_phase3_s_receiver fixed;
+	struct v34_phase3_s_receiver saved;
+	struct v34_analytic_sample point = { 600, -100 };
+
+	CHECK(v34_phase3_s_receiver_init_suffix(&hard, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK &&
+	      v34_phase3_s_receiver_init_fixed_suffix(&fixed, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK,
+	      "fixed API ownership receivers did not initialize");
+	saved = hard;
+	CHECK(v34_phase3_s_receiver_receive_fixed(&hard, 0, 0, point) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&hard, &saved, sizeof(hard)) == 0,
+	      "hard owner accepted a fixed observation");
+	saved = fixed;
+	CHECK(v34_phase3_s_receiver_receive(&fixed, 0, 0) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&fixed, &saved, sizeof(fixed)) == 0 &&
+	      v34_phase3_s_receiver_init_fixed_suffix(NULL, suffix) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT,
+	      "fixed owner accepted the hard-only API");
+	return true;
+}
+
+static struct v34_analytic_sample margin_point(
+	uint8_t rotation, bool above)
+{
+	static const int16_t EXACT_MARGIN_COORDINATE[4] = {
+		228, 229, 230, 229,
+	};
+	int16_t coordinate = (int16_t)(
+		EXACT_MARGIN_COORDINATE[rotation & 3u] + (above ? 1 : 0));
+
+	switch (rotation & 3u) {
+	case 0:
+		return (struct v34_analytic_sample){ coordinate, 0 };
+	case 1:
+		return (struct v34_analytic_sample){ 0, (int16_t)-coordinate };
+	case 2:
+		return (struct v34_analytic_sample){ (int16_t)-coordinate, 0 };
+	default:
+		return (struct v34_analytic_sample){ 0, coordinate };
+	}
+}
+
+static bool receive_metric_margin(
+	struct v34_phase3_s_receiver *receiver, bool above,
+	bool expected_detection)
+{
+	const size_t first = V34_PHASE3_S_SYMBOLS -
+		V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+	const size_t count = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS +
+		V34_PHASE3_S_BAR_SYMBOLS;
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+
+	if (!generate_marker(rotations) ||
+	    v34_phase3_s_receiver_init_fixed_suffix(
+		    receiver,
+		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
+		    V34_PHASE3_S_RECEIVER_OK)
+		return false;
+	for (size_t local = 0; local < count; ++local)
+		if (v34_phase3_s_receiver_receive_fixed(
+			    receiver, 1, 0,
+			    margin_point(
+				    rotations[first + local], above)) !=
+		    V34_PHASE3_S_RECEIVER_OK)
+			return false;
+	for (unsigned int wait = 0;
+	     wait < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++wait) {
+		enum v34_phase3_s_receiver_result expected =
+			expected_detection &&
+				wait + 1u ==
+					V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ?
+				V34_PHASE3_S_RECEIVER_DETECTED :
+				V34_PHASE3_S_RECEIVER_OK;
+
+		if (v34_phase3_s_receiver_receive_fixed(
+			    receiver, 1, 0,
+			    (struct v34_analytic_sample){ 0, 0 }) != expected)
+			return false;
+	}
+	return receiver->complete == expected_detection;
+}
+
+static bool test_fixed_metric_margin(void)
+{
+	struct v34_phase3_s_receiver receiver;
+
+	/* At these coordinates the shifted opposite-hypothesis advantage is
+	 * exactly 128 and 129 respectively. */
+	CHECK(receive_metric_margin(&receiver, false, false),
+	      "relative metric accepted its exact margin");
+	CHECK(receive_metric_margin(&receiver, true, true),
+	      "relative metric rejected the first value above its margin");
+	return true;
+}
+
 static bool test_completion_and_validation(void)
 {
 	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
@@ -462,6 +651,10 @@ int main(void)
 		{ "transition error confirmation",
 		  test_transition_error_confirmation },
 		{ "suffix acquisition", test_suffix_acquisition },
+		{ "fixed metric fallback", test_fixed_metric_fallback },
+		{ "fixed metric API ownership",
+		  test_fixed_metric_api_ownership },
+		{ "fixed metric margin", test_fixed_metric_margin },
 		{ "completion and validation", test_completion_and_validation },
 	};
 	unsigned int failures = 0;
