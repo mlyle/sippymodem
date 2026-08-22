@@ -1168,6 +1168,18 @@ static int reset_v22bis_retrain_receiver(struct v22_datapump *datapump)
 	return 0;
 }
 
+static void reset_retrain_receive_progress(
+	struct v22_datapump *datapump)
+{
+	datapump->scrambled_mark_bits = 0;
+	datapump->v22bis_confirm_bits = 0;
+	datapump->retrain_peer_samples = 0;
+	discard_retrain_candidate(datapump);
+	datapump->v22bis_receiver_initialized = false;
+	datapump->receiving_v22bis = false;
+	datapump->retrain_receive_ready = false;
+}
+
 static int begin_retrain(
 	struct v22_datapump *datapump, uint8_t receive_quadrant,
 	bool peer_signal_received)
@@ -1186,17 +1198,11 @@ static int begin_retrain(
 	}
 	datapump->training_samples = 0;
 	datapump->phase_samples = 0;
-	datapump->scrambled_mark_bits = 0;
-	datapump->v22bis_confirm_bits = 0;
 	datapump->missing_carrier_samples = 0;
 	datapump->carrier_return_hold_samples = 0;
-	datapump->retrain_peer_samples = 0;
-	discard_retrain_candidate(datapump);
-	datapump->v22bis_receiver_initialized = false;
-	datapump->receiving_v22bis = false;
+	reset_retrain_receive_progress(datapump);
 	datapump->retraining = true;
 	datapump->retrain_peer_signal_received = peer_signal_received;
-	datapump->retrain_receive_ready = false;
 	/* Keep queued transmit framing, but discard a partial receive character
 	 * across the physical-layer discontinuity.  LAPM owns its own state. */
 	if (!datapump->dp.modem->cfg.ec)
@@ -1216,59 +1222,41 @@ static int restart_retrain(struct v22_datapump *datapump)
 		    &datapump->decoder, receive_quadrant) != V22_FRAMING_OK)
 		return -1;
 	datapump->phase_samples = 0;
-	datapump->scrambled_mark_bits = 0;
-	datapump->v22bis_confirm_bits = 0;
-	datapump->retrain_peer_samples = 0;
-	discard_retrain_candidate(datapump);
-	datapump->v22bis_receiver_initialized = false;
-	datapump->receiving_v22bis = false;
+	reset_retrain_receive_progress(datapump);
 	datapump->retrain_peer_signal_received = false;
-	datapump->retrain_receive_ready = false;
 	if (!datapump->dp.modem->cfg.ec)
 		modem_async_retrain(datapump->dp.modem);
 	return start_retrain_signal(datapump);
 }
 
 static int note_peer_retrain_signal(
-	struct v22_datapump *datapump, uint8_t receive_quadrant)
+	struct v22_datapump *datapump)
 {
 	if (!datapump->retraining ||
 	    datapump->retrain_peer_signal_received ||
-	    receive_quadrant >= QPSK_QUADRANT_COUNT ||
 	    (datapump->training_state != V22_TRAINING_RETRAIN_WAIT_PEER &&
 	     datapump->training_state != V22_TRAINING_RETRAIN_SIGNAL))
 		return -1;
 	if (reset_v22bis_retrain_receiver(datapump) != 0)
 		return -1;
 	datapump->retrain_peer_signal_received = true;
-	datapump->retrain_peer_samples = 0;
 	datapump->retrain_retry_samples = 0;
-	datapump->scrambled_mark_bits = 0;
-	datapump->v22bis_confirm_bits = 0;
-	datapump->retrain_receive_ready = false;
-	discard_retrain_candidate(datapump);
+	reset_retrain_receive_progress(datapump);
 	if (datapump->training_state == V22_TRAINING_RETRAIN_WAIT_PEER)
 		datapump->training_state = V22_TRAINING_RETRAIN_MARK;
 	return 0;
 }
 
 static int repeat_peer_retrain_signal(
-	struct v22_datapump *datapump, uint8_t receive_quadrant)
+	struct v22_datapump *datapump)
 {
 	if (!datapump->retraining || !datapump_uses_v22bis(datapump) ||
-	    !datapump->retrain_peer_signal_received ||
-	    receive_quadrant >= QPSK_QUADRANT_COUNT)
+	    !datapump->retrain_peer_signal_received)
 		return -1;
 	if (reset_v22bis_retrain_receiver(datapump) != 0)
 		return -1;
 	datapump->phase_samples = 0;
-	datapump->scrambled_mark_bits = 0;
-	datapump->v22bis_confirm_bits = 0;
-	datapump->retrain_peer_samples = 0;
-	discard_retrain_candidate(datapump);
-	datapump->v22bis_receiver_initialized = false;
-	datapump->receiving_v22bis = false;
-	datapump->retrain_receive_ready = false;
+	reset_retrain_receive_progress(datapump);
 	if (!datapump->dp.modem->cfg.ec)
 		modem_async_retrain(datapump->dp.modem);
 	return start_retrain_signal(datapump);
@@ -1291,7 +1279,6 @@ static int retrain_v22(struct dp *dp)
 		return 0;
 	}
 	flush_retrain_candidate(datapump);
-	discard_retrain_candidate(datapump);
 	return begin_retrain(
 		datapump, receive_phase_quadrant(datapump), false);
 }
@@ -1349,16 +1336,14 @@ static int detect_peer_retrain(
 		    &current_quadrant) != 0)
 		return -1;
 	if (*ended && !datapump->retrain_peer_signal_received)
-		return note_peer_retrain_signal(
-			datapump, current_quadrant);
+		return note_peer_retrain_signal(datapump);
 	if (*ended) {
 		/* A peer keeps transmitting S1 after it is first recognized.  Ignore
 		 * that continuation during the S1/mark exchange.  Once 2400-bit/s
 		 * confirmation has begun, a new S1 proves the peer did not follow and
 		 * must restart the bounded exchange. */
 		if (datapump->training_state == V22_TRAINING_V22BIS_CONFIRM)
-			return repeat_peer_retrain_signal(
-				datapump, current_quadrant);
+			return repeat_peer_retrain_signal(datapump);
 		return 0;
 	}
 	if (!decode_current)
