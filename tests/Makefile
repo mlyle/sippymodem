@@ -1480,43 +1480,6 @@ V34_PHASE4_MP_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase4_trn.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp_receiver.o
-V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_phase4_mp_channel_receiver
-V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_phase4_mp_channel_receiver.o \
-	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/qam_gain.o \
-	$(BUILD_DIR)/v34_constellation.o \
-	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_mp.o \
-	$(BUILD_DIR)/v34_phase4_trn.o \
-	$(BUILD_DIR)/v34_phase4_mp.o \
-	$(BUILD_DIR)/v34_phase4_mp_receiver.o \
-	$(BUILD_DIR)/v34_training_channel.o \
-	$(BUILD_DIR)/v34_phase4_mp_channel_receiver.o \
-	$(BUILD_DIR)/v34_phase4_e_sequence.o \
-	$(BUILD_DIR)/v34_phase4_e_receiver.o \
-	$(BUILD_DIR)/v34_phase4_e_channel_receiver.o
-V34_PHASE4_EQUALIZER_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_phase4_equalizer_receiver
-V34_PHASE4_EQUALIZER_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_phase4_equalizer_receiver.o \
-	$(CRC16_CCITT_FALSE_OBJECT) \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/v34_equalizer_handoff.o \
-	$(BUILD_DIR)/v34_constellation.o \
-	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_s_sequence.o \
-	$(BUILD_DIR)/v34_phase3_s_receiver.o \
-	$(BUILD_DIR)/v34_mp.o \
-	$(BUILD_DIR)/v34_phase4_trn.o \
-	$(BUILD_DIR)/v34_phase4_mp.o \
-	$(BUILD_DIR)/v34_phase4_mp_receiver.o \
-	$(BUILD_DIR)/v34_phase4_e_sequence.o \
-	$(BUILD_DIR)/v34_phase4_e_receiver.o \
-	$(BUILD_DIR)/v34_phase4_equalizer_receiver.o
 V34_PHASE4_DECISION_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_decision_receiver
 V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
@@ -1534,16 +1497,6 @@ V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o \
 	$(BUILD_DIR)/v34_phase4_e_receiver.o \
 	$(BUILD_DIR)/v34_phase4_decision_receiver.o
-V34_PHASE4_LINE_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_phase4_line_receiver
-V34_PHASE4_LINE_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_phase4_line_receiver.o \
-	$(BUILD_DIR)/v34_phase4_line_receiver.o \
-	$(sort $(filter-out \
-		$(BUILD_DIR)/test_v34_data_line_receiver.o \
-		$(BUILD_DIR)/test_v34_phase4_equalizer_receiver.o, \
-		$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS) \
-		$(V34_PHASE4_EQUALIZER_RECEIVER_TEST_OBJECTS)))
 V34_PHASE34_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase34_receiver
 V34_PHASE34_RECEIVER_TEST_OBJECTS := \
@@ -2632,9 +2585,7 @@ V90_PHASE4_E_LINE_RX_TEST_OBJECTS := $(sort \
 	$(filter-out $(BUILD_DIR)/test_v90_upstream_data.o, \
 		$(V90_UPSTREAM_DATA_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v34_data_line_receiver.o, \
-		$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS)) \
-	$(filter-out $(BUILD_DIR)/test_v34_phase4_equalizer_receiver.o, \
-		$(V34_PHASE4_EQUALIZER_RECEIVER_TEST_OBJECTS)))
+		$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS)))
 V90_UPSTREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_v90_upstream_rx
 V90_UPSTREAM_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_upstream_rx.o \
@@ -3204,10 +3155,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_TRAINING_TRANSMITTER_TEST_BINARY) \
 	$(V34_PHASE4_TRN_TEST_BINARY) \
 	$(V34_PHASE4_MP_TEST_BINARY) \
-	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY) \
-	$(V34_PHASE4_EQUALIZER_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE4_DECISION_RECEIVER_TEST_BINARY) \
-	$(V34_PHASE4_LINE_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE34_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE4_EXCHANGE_TEST_BINARY) \
 	$(V34_CALL_TEST_BINARY) \
@@ -3498,9 +3446,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_TRAINING_TRANSMITTER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_TRN_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_MP_TEST_OBJECTS:.o=.d) \
-	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V34_PHASE4_EQUALIZER_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V34_PHASE4_LINE_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE34_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V34_CALL_TEST_OBJECTS:.o=.d) \
@@ -3820,10 +3765,7 @@ test: $(TEST_BINARIES)
 	./$(V34_TRAINING_TRANSMITTER_TEST_BINARY)
 	./$(V34_PHASE4_TRN_TEST_BINARY)
 	./$(V34_PHASE4_MP_TEST_BINARY)
-	./$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY)
-	./$(V34_PHASE4_EQUALIZER_RECEIVER_TEST_BINARY)
 	./$(V34_PHASE4_DECISION_RECEIVER_TEST_BINARY)
-	./$(V34_PHASE4_LINE_RECEIVER_TEST_BINARY)
 	./$(V34_PHASE34_RECEIVER_TEST_BINARY)
 	./$(V34_PHASE4_EXCHANGE_TEST_BINARY)
 	./$(V34_CALL_TEST_BINARY)
@@ -4504,20 +4446,8 @@ $(V34_PHASE4_TRN_TEST_BINARY): $(V34_PHASE4_TRN_TEST_OBJECTS)
 $(V34_PHASE4_MP_TEST_BINARY): $(V34_PHASE4_MP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_BINARY): \
-	$(V34_PHASE4_MP_CHANNEL_RECEIVER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_PHASE4_EQUALIZER_RECEIVER_TEST_BINARY): \
-	$(V34_PHASE4_EQUALIZER_RECEIVER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
 $(V34_PHASE4_DECISION_RECEIVER_TEST_BINARY): \
 	$(V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_PHASE4_LINE_RECEIVER_TEST_BINARY): \
-	$(V34_PHASE4_LINE_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE34_RECEIVER_TEST_BINARY): \
@@ -6167,32 +6097,13 @@ $(BUILD_DIR)/v34_phase4_mp_receiver.o: \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v34_phase4_mp_channel_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_channel_receiver.c | \
-	$(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_phase4_equalizer_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_equalizer_receiver.c | \
-	$(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
 $(BUILD_DIR)/v34_phase4_decision_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_decision_receiver.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v34_phase4_line_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_line_receiver.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
 $(BUILD_DIR)/v34_training_channel.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_channel.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_phase4_e_channel_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_channel_receiver.c | \
-	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase4_e_sequence.o: \

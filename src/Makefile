@@ -389,15 +389,11 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_j_equalizer_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_b1_handoff.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_channel_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_e_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_j_prime_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_decision_receiver.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_channel_receiver.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_equalizer_receiver.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_line_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_trn.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_channel.c
