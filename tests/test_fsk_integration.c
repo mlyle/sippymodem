@@ -914,14 +914,17 @@ static bool exercise_retrain(
 	return true;
 }
 
-static bool exercise_v22bis_carrier_recovery(
+static bool exercise_v22_carrier_recovery(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
+	enum DP_ID id,
 	enum media_codec codec, const struct media_recorder *recorder,
 	bool raw_transport)
 {
 	enum {
 		SHORT_LOSS_FRAMES = 2,
+		V22_LOSS_SAMPLES = MODEM_RATE / 2,
+		V22_RECOVERY_SAMPLES = MODEM_RATE / 4,
 	};
 	static const uint8_t caller_clamped_payload[] = {
 		'c', 'l', 'a', 'm', 'p', '-', 'c', 0x00, 0xa5, 0xff,
@@ -935,13 +938,46 @@ static bool exercise_v22bis_carrier_recovery(
 	static const uint8_t answerer_payload[] = {
 		'c', 'a', 'r', 'r', 'i', 'e', 'r', '-', 'a', 0x5a,
 	};
-	for (unsigned int recovery = raw_transport ? 0u : 1u;
-	     recovery < 2u; ++recovery) {
+	if (id != DP_V22 && id != DP_V22BIS)
+		return false;
+	for (unsigned int recovery =
+		     id == DP_V22 ? 0u : raw_transport ? 0u : 1u;
+	     recovery < (id == DP_V22 ? 1u : 2u); ++recovery) {
 		bool transferred = false;
 
 		caller->output_count = 0;
 		answerer->output_count = 0;
-		if (recovery == 0) {
+		if (id == DP_V22) {
+			/* V.22 resumes the existing connection after an inadvertent
+			 * signal loss; it does not negotiate another handshake. */
+			for (unsigned int samples = 0;
+			     samples < V22_LOSS_SAMPLES;
+			     samples += SIP_FRAME_SAMPLES) {
+				if (!process_sip_frame_with_loss(
+					    caller, answerer, codec, recorder,
+					    true, true, false, false) ||
+				    !endpoint_drain(caller) ||
+				    !endpoint_drain(answerer) ||
+				    caller->output_count != 0 ||
+				    answerer->output_count != 0 ||
+				    !modem_is_online(caller->modem, id) ||
+				    !modem_is_online(answerer->modem, id))
+					return false;
+			}
+			for (unsigned int samples = 0;
+			     samples < V22_RECOVERY_SAMPLES;
+			     samples += SIP_FRAME_SAMPLES) {
+				if (!process_sip_frame(
+					    caller, answerer, codec, recorder) ||
+				    !endpoint_drain(caller) ||
+				    !endpoint_drain(answerer) ||
+				    caller->output_count != 0 ||
+				    answerer->output_count != 0 ||
+				    !modem_is_online(caller->modem, id) ||
+				    !modem_is_online(answerer->modem, id))
+					return false;
+			}
+		} else if (recovery == 0) {
 			for (unsigned int frame = 0;
 			     frame < SHORT_LOSS_FRAMES; ++frame) {
 				if (!process_sip_frame_with_loss(
@@ -1396,11 +1432,13 @@ static bool run_media_call(
 				      test_case->id == DP_V22BIS),
 		      "%s caller retrain did not reconnect and pass data",
 		      test_case->name);
-		if (test_case->id == DP_V22BIS)
-			CHECK(exercise_v22bis_carrier_recovery(
-					      &caller, &answerer, codec, &recorder,
+		if (test_case->id == DP_V22 || test_case->id == DP_V22BIS)
+			CHECK(exercise_v22_carrier_recovery(
+					      &caller, &answerer, test_case->id,
+					      codec, &recorder,
 					      test_case->raw_transport),
-					      "%s carrier recovery did not retrain and pass data",
+					      "%s carrier recovery did not preserve "
+					      "or retrain and pass data",
 					      test_case->name);
 	}
 	CHECK(!capture.invalid &&
@@ -2335,7 +2373,7 @@ int main(void)
 			.caller_rx_rate = V22_600_BIT_RATE,
 			.answerer_tx_rate = V22_600_BIT_RATE,
 			.answerer_rx_rate = V22_600_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.test_retrain = true,
 			.raw_transport = true,
 		},
@@ -2347,7 +2385,7 @@ int main(void)
 			.caller_rx_rate = V22_1200_BIT_RATE,
 			.answerer_tx_rate = V22_1200_BIT_RATE,
 			.answerer_rx_rate = V22_1200_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.automode = true,
 			.test_retrain = true,
 			.raw_transport = true,
@@ -2390,7 +2428,7 @@ int main(void)
 			.caller_rx_rate = V22_600_BIT_RATE,
 			.answerer_tx_rate = V22_600_BIT_RATE,
 			.answerer_rx_rate = V22_600_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.test_retrain = true,
 		},
 		{
@@ -2401,7 +2439,7 @@ int main(void)
 			.caller_rx_rate = V22_1200_BIT_RATE,
 			.answerer_tx_rate = V22_1200_BIT_RATE,
 			.answerer_rx_rate = V22_1200_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.test_retrain = true,
 		},
 		{
@@ -2563,7 +2601,7 @@ int main(void)
 			.caller_rx_rate = V22_1200_BIT_RATE,
 			.answerer_tx_rate = V22_1200_BIT_RATE,
 			.answerer_rx_rate = V22_1200_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.automode = true,
 		},
 		{

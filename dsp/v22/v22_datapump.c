@@ -30,9 +30,8 @@ enum {
 	V22_ANSWER_SCRAMBLED_CONFIRM_BITS = 192,
 	V22_ORIGINATE_SCRAMBLED_CONFIRM_BITS = 324,
 	V22_CONNECT_HOLD_SAMPLES = MODEM_RATE * 765 / 1000,
-	V22_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
-	/* V.22bis leaves received data clamped for 100 ms after carrier returns. */
-	V22BIS_CARRIER_RETURN_HOLD_SAMPLES = MODEM_RATE / 10,
+	/* Keep received data clamped while the returned carrier settles. */
+	V22_CARRIER_RETURN_HOLD_SAMPLES = MODEM_RATE / 10,
 	/* After 300 ms, resuming the old 2400-bit/s decisions is unsafe. */
 	V22BIS_CARRIER_RETRAIN_SAMPLES = MODEM_RATE * 3 / 10,
 	V22_MIN_LINE_POWER = 1000000,
@@ -192,8 +191,6 @@ static uint32_t carrier_loss_limit_samples(
 {
 	int tenths;
 
-	if (!datapump_uses_v22bis(datapump))
-		return V22_CARRIER_LOSS_SAMPLES;
 	tenths = modem_get_sreg(
 		datapump->dp.modem, SREG_CARRIER_LOSS_DISCONNECT_TIME);
 
@@ -242,10 +239,9 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->missing_carrier_samples >
 		    carrier_loss_limit_samples(datapump) ||
 	    datapump->carrier_return_hold_samples >
-		    V22BIS_CARRIER_RETURN_HOLD_SAMPLES ||
+		    V22_CARRIER_RETURN_HOLD_SAMPLES ||
 	    (datapump->carrier_return_hold_samples != 0 &&
-	     (!datapump_uses_v22bis(datapump) ||
-	      datapump->training_state != V22_TRAINING_ONLINE ||
+	     (datapump->training_state != V22_TRAINING_ONLINE ||
 	      datapump->missing_carrier_samples != 0)) ||
 	    datapump->transmit_symbol >= V22BIS_SYMBOL_COUNT ||
 	    datapump->encoder.phase_quadrant >= QPSK_QUADRANT_COUNT ||
@@ -1707,7 +1703,7 @@ static int process_v22(
 		    V22BIS_CARRIER_RETRAIN_SAMPLES) {
 		datapump->missing_carrier_samples = 0;
 		datapump->carrier_return_hold_samples =
-			V22BIS_CARRIER_RETURN_HOLD_SAMPLES;
+			V22_CARRIER_RETURN_HOLD_SAMPLES;
 	}
 	if (datapump->training_state == V22_TRAINING_ONLINE &&
 	    (datapump->missing_carrier_samples != 0 ||
@@ -1761,6 +1757,10 @@ static int process_v22(
 			    datapump, receive_phase_quadrant(datapump), false) != 0)
 			return DPSTAT_ERROR;
 	} else if (carrier_is_present(&measurement, line_power_present)) {
+		if (!datapump_uses_v22bis(datapump) &&
+		    datapump->missing_carrier_samples != 0)
+			datapump->carrier_return_hold_samples =
+				V22_CARRIER_RETURN_HOLD_SAMPLES;
 		datapump->missing_carrier_samples = 0;
 	} else {
 		add_bounded(
