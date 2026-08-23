@@ -74,6 +74,15 @@ class LiveCampaignProfileTests(unittest.TestCase):
     def test_standard_crosses_v34_cadence_boundaries_in_both_roles(self) -> None:
         v34 = [case for case in cases_for_suite("standard") if case.family == "v34"]
         self.assertEqual({case.symbol_rate for case in v34}, {2400, 2800, 3000, 3200, 3429})
+        self.assertTrue(
+            all(
+                case.receive_rate is not None
+                and case.receive_rate >= 4800
+                and case.transmit_rate is not None
+                and case.transmit_rate >= 4800
+                for case in v34
+            )
+        )
         for symbol_rate in {2400, 2800, 3000, 3200, 3429}:
             self.assertEqual(
                 {case.role for case in v34 if case.symbol_rate == symbol_rate},

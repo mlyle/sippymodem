@@ -295,7 +295,10 @@ def _build_cases() -> tuple[CampaignCase, ...]:
         add(_fixed(f"v32bis-{rate}", "v32bis", 32, rate, 2400))
 
     v34_points = (
-        (2400, 2400, 1),
+        # The interoperability peer advertises V.34 capability bits for
+        # 4800 through 33 600 bit/s, but not 2400 bit/s. Keep the lowest
+        # cadence while selecting the lowest rate both modems advertise.
+        (4800, 2400, 1),
         (9600, 2400, 0),
         (14400, 2800, 1),
         (19200, 3000, 1),
