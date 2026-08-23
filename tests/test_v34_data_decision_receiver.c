@@ -251,6 +251,9 @@ static bool test_generated_pair_path(void)
 		for (size_t frame_index = 0; frame_index < frame_count;
 		     ++frame_index) {
 			struct v34_transmitted_mapping_frame transmitted;
+			bool b1 = frame_index <
+				fixture.mapping.schedule.geometry
+					.mapping_frames_per_data_frame;
 
 			CHECK(transmit_frame(
 				      &fixture, configuration, frame_index,
@@ -261,6 +264,7 @@ static bool test_generated_pair_path(void)
 			     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
 			     ++interval) {
 				struct qam_point quantized[2];
+				struct qam_point exact[2];
 				struct v34_adaptive_equalizer_observation input[2];
 				struct v34_data_decision_output output;
 				struct v34_survivor_decision model_current;
@@ -271,33 +275,51 @@ static bool test_generated_pair_path(void)
 				enum v34_data_receive_result result;
 
 				for (size_t symbol = 0; symbol < 2u; ++symbol) {
-					struct qam_point normalized;
 					size_t index = interval * 2u + symbol;
 
 					CHECK(v34_normalize_power(
 						      &fixture.mapping.normalizer,
 						      &transmitted.projected_symbol[index],
-						      &normalized) == V34_SYMBOL_POWER_OK &&
+						      &exact[symbol]) == V34_SYMBOL_POWER_OK &&
 					      make_observation(
-						      &fixture, &normalized,
+						      &fixture, &exact[symbol],
 						      &quantized[symbol],
 						      &input[symbol]),
 					      "mode %zu frame %zu symbol %zu did not convert",
 					      mode, frame_index, index);
+					/* The semantic B1 path must not inherit even a gross
+					 * error from its hard decision.  The complete observed
+					 * coordinate is still echoed to the equalizer. */
+					if (b1 && frame_index == 0u) {
+						input[symbol].decision.in_phase =
+							symbol == 0u ? 12000 : -12000;
+						input[symbol].decision.quadrature =
+							symbol == 0u ? -9000 : 9000;
+					}
 				}
 				result = v34_data_decision_receiver_observe(
 					&fixture.receiver, &input[0], &output);
 				CHECK(result == V34_DATA_RECEIVE_OK,
 				      "mode %zu frame %zu interval %zu first result %d",
 				      mode, frame_index, interval, result);
-				CHECK(observations_match(
+				CHECK(fixed_coordinate(
+					      exact[0].in_phase,
+					      &fixed_target.in_phase) &&
+				      fixed_coordinate(
+					      exact[0].quadrature,
+					      &fixed_target.quadrature) &&
+				      observations_match(
 					      &output.equalizer.observation, &input[0]) &&
-				      output.equalizer.target.in_phase == 0 &&
-				      output.equalizer.target.quadrature == 0 &&
-				      output.equalizer.decoder_power_q15 == 0u &&
+				      output.equalizer.target.in_phase ==
+					      (b1 ? fixed_target.in_phase : 0) &&
+				      output.equalizer.target.quadrature ==
+					      (b1 ? fixed_target.quadrature : 0) &&
+				      output.equalizer.decoder_power_q15 ==
+					      (b1 ? 0x7000u : 0u) &&
 				      output.equalizer.adaptation ==
-					      V34_ADAPTIVE_EQUALIZER_SKIP,
-				      "mode %zu frame %zu interval %zu skip decision changed",
+					      (b1 ? V34_ADAPTIVE_EQUALIZER_FULL :
+						    V34_ADAPTIVE_EQUALIZER_SKIP),
+				      "mode %zu frame %zu interval %zu first decision changed",
 				      mode, frame_index, interval);
 				CHECK(memcmp(
 					      &output.current,
@@ -315,7 +337,8 @@ static bool test_generated_pair_path(void)
 				      "mode %zu frame %zu interval %zu model state changed",
 				      mode, frame_index, interval);
 				model_result = v34_data_channel_receiver_advance(
-					&fixture.model, quantized, &model_current,
+					&fixture.model, b1 ? exact : quantized,
+					&model_current,
 					targets, &model_received);
 				result = v34_data_decision_receiver_observe(
 					&fixture.receiver, &input[1], &output);
@@ -335,7 +358,8 @@ static bool test_generated_pair_path(void)
 					      fixed_target.in_phase &&
 				      output.equalizer.target.quadrature ==
 					      fixed_target.quadrature &&
-				      output.equalizer.decoder_power_q15 == 0x2000u &&
+				      output.equalizer.decoder_power_q15 ==
+					      (b1 ? 0x7000u : 0x2000u) &&
 				      output.equalizer.adaptation ==
 					      V34_ADAPTIVE_EQUALIZER_FULL &&
 				      current_matches(
@@ -346,6 +370,17 @@ static bool test_generated_pair_path(void)
 				      !fixture.receiver.has_first_symbol,
 				      "mode %zu frame %zu interval %zu second symbol changed",
 				      mode, frame_index, interval);
+				if (b1 && frame_index + 1u ==
+						  fixture.mapping.schedule.geometry
+							  .mapping_frames_per_data_frame &&
+				    interval + 1u ==
+					    V34_4D_INTERVALS_PER_MAPPING_FRAME)
+					CHECK(!fixture.receiver.b1_reference_active &&
+					      v34_frame_schedule_is_complete(
+						      &fixture.receiver.b1_reference.schedule) &&
+					      v34_data_points_needs_mapping_frame(
+						      &fixture.receiver.b1_reference),
+					      "mode %zu retained physical B1", mode);
 				if (model_result == V34_DATA_RECEIVE_OK) {
 					CHECK(memcmp(
 						      &output.received,
@@ -395,6 +430,7 @@ static bool rejected_call_preserves_outputs(
 static bool test_validation_and_transactionality(void)
 {
 	struct fixture fixture;
+	struct fixture other;
 	struct v34_data_decision_receiver saved_receiver;
 	struct v34_data_decision_receiver corrupt;
 	struct v34_adaptive_equalizer_observation input = {
@@ -407,6 +443,8 @@ static bool test_validation_and_transactionality(void)
 
 	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]),
 	      "validation fixture did not initialize");
+	CHECK(initialize_fixture(&other, &CONFIGURATIONS[1]),
+	      "mismatched validation fixture did not initialize");
 	saved_receiver = fixture.receiver;
 	memcpy(invalid, COEFFICIENTS, sizeof(invalid));
 	invalid[0].real = INT16_MIN;
@@ -446,6 +484,20 @@ static bool test_validation_and_transactionality(void)
 	      memcmp(&fixture.receiver, &saved_receiver,
 		     sizeof(fixture.receiver)) == 0,
 	      "overlapping regions changed the receiver");
+	corrupt = fixture.receiver;
+	corrupt.b1_reference = other.receiver.b1_reference;
+	CHECK(!v34_data_decision_receiver_is_valid(&corrupt) &&
+	      rejected_call_preserves_outputs(
+		      &corrupt, &input, &output,
+		      V34_DATA_RECEIVE_INVALID_STATE),
+	      "mismatched B1 lineage was accepted");
+	corrupt = fixture.receiver;
+	corrupt.b1_reference_active = false;
+	CHECK(!v34_data_decision_receiver_is_valid(&corrupt) &&
+	      rejected_call_preserves_outputs(
+		      &corrupt, &input, &output,
+		      V34_DATA_RECEIVE_INVALID_STATE),
+	      "incomplete B1 reference was accepted as complete");
 	corrupt = fixture.receiver;
 	corrupt.first_normalized.in_phase = NAN;
 	CHECK(!v34_data_decision_receiver_is_valid(NULL) &&
