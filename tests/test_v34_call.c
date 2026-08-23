@@ -27,6 +27,7 @@ struct endpoint {
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
 	uint8_t primary_idle_bits_remaining;
+	uint8_t peer_primary_delay_bits;
 	uint8_t transmit_bit;
 	bool verify_mapping_frames;
 	bool entered_phase3;
@@ -130,6 +131,7 @@ static struct v34_call_configuration configuration(
 static struct v34_call_configuration symmetric_configuration(
 	enum v34_station_role role, enum v34_symbol_rate symbol_rate)
 {
+	enum { PRIMARY_RATE_UNITS = 10 };
 	struct v34_call_configuration selected = configuration(role);
 	uint8_t preemphasis_filter_index =
 		symbol_rate == V34_SYMBOL_RATE_2800 ? 8u : 3u;
@@ -159,7 +161,8 @@ static struct v34_call_configuration symmetric_configuration(
 		selected.local_info1.calling.answer_transmit[symbol_rate]
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.calling.answer_transmit[symbol_rate]
-			.projected_data_rate_2400_bps_units = 4;
+			.projected_data_rate_2400_bps_units =
+				PRIMARY_RATE_UNITS;
 	} else {
 		selected.local_info1.answering.common
 			.frequency_offset_1_50_hz_units =
@@ -169,12 +172,19 @@ static struct v34_call_configuration symmetric_configuration(
 		selected.local_info1.answering.call_transmit
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.answering.call_transmit
-			.projected_data_rate_2400_bps_units = 4;
+			.projected_data_rate_2400_bps_units =
+				PRIMARY_RATE_UNITS;
 		selected.local_info1.answering.answer_to_call_symbol_rate =
 			symbol_rate;
 		selected.local_info1.answering.call_to_answer_symbol_rate =
 			symbol_rate;
 	}
+	selected.phase4.transmit_mp.parameters.type0
+		.maximum_call_to_answer_rate_2400_bps_units = PRIMARY_RATE_UNITS;
+	selected.phase4.transmit_mp.parameters.type0
+		.maximum_answer_to_call_rate_2400_bps_units = PRIMARY_RATE_UNITS;
+	selected.phase4.transmit_mp.parameters.type0.data_rate_capability_mask =
+		(uint16_t)((1u << PRIMARY_RATE_UNITS) - 1u);
 	return selected;
 }
 
@@ -273,12 +283,29 @@ static bool endpoint_accept_observation(
 		endpoint->entered_phase4 = true;
 	if (observation->processed == V34_CALL_PHASE4 &&
 	    (observation->events.phase4 &
-	     V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED) != 0)
-		endpoint->primary_idle_bits_remaining = 16;
+	     V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED) != 0) {
+		if (endpoint->peer_primary_delay_bits == 0)
+			return false;
+		endpoint->primary_idle_bits_remaining =
+			endpoint->peer_primary_delay_bits;
+	}
 	return observation->processed != V34_CALL_PHASE4 ||
 	       (observation->events.phase4 &
 		V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) == 0 ||
 	       accept_mapping_frame(endpoint, received);
+}
+
+static void note_peer_primary_delays(
+	struct endpoint *caller, struct endpoint *answerer)
+{
+	if (caller->call.stage == V34_CALL_PHASE4 &&
+	    caller->call.state.phase4.transmit_data_active)
+		answerer->peer_primary_delay_bits =
+			caller->call.state.phase4.transmit.data.primary_delay_bits;
+	if (answerer->call.stage == V34_CALL_PHASE4 &&
+	    answerer->call.state.phase4.transmit_data_active)
+		caller->peer_primary_delay_bits =
+			answerer->call.state.phase4.transmit.data.primary_delay_bits;
 }
 
 static bool endpoint_sample(
@@ -345,6 +372,7 @@ static bool run_online_pair(
 
 		channel_receive(
 			&channel, &next_caller_receive, &next_answerer_receive);
+		note_peer_primary_delays(&calling, &answering);
 		CHECK(endpoint_sample(
 			      &calling, next_caller_receive,
 			      supply_mapping_frame, &caller_transmit,
@@ -434,6 +462,7 @@ static bool check_symmetric_call(
 
 		channel_receive(
 			&channel, &next_caller_receive, &next_answerer_receive);
+		note_peer_primary_delays(&caller, &answerer);
 		CHECK(endpoint_sample(
 			      &caller, next_caller_receive,
 			      supply_mapping_frame, &caller_transmit,
@@ -505,6 +534,7 @@ static bool test_source_backpressure(void)
 		enum v34_call_result result;
 
 		channel_receive(&channel, &caller_receive, &answerer_receive);
+		note_peer_primary_delays(&caller, &answerer);
 		memset(&observation, 0xa5, sizeof(observation));
 		memset(&received, 0x5a, sizeof(received));
 		observation_before = observation;
@@ -566,6 +596,7 @@ static bool exercise_full_retrain(
 		int16_t answerer_transmit;
 
 		channel_receive(&channel, &caller_receive, &answerer_receive);
+		note_peer_primary_delays(&caller, &answerer);
 		CHECK(endpoint_sample(
 			      &caller, caller_receive, supply_mapping_frame,
 			      &caller_transmit, &caller_observation) &&
@@ -699,6 +730,7 @@ static bool check_unusable_info1_retrains(bool pcma)
 
 		channel_receive(
 			&channel, &next_caller_receive, &next_answerer_receive);
+		note_peer_primary_delays(&caller, &answerer);
 		CHECK(endpoint_sample(
 			      &caller, next_caller_receive, supply_mapping_frame,
 			      &caller_transmit, &caller_observation) &&
