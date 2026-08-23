@@ -204,6 +204,8 @@ static bool run_generated_duplex_exchange(
 	size_t caller_signal_start = SAMPLE_LIMIT;
 	size_t answerer_receive_start = SAMPLE_LIMIT;
 	size_t answerer_signal_start = SAMPLE_LIMIT;
+	uint32_t caller_signal_phase = 0;
+	uint32_t answerer_signal_phase = 0;
 	int16_t last_answer_transmit = 1;
 	bool complete = false;
 
@@ -265,11 +267,16 @@ static bool run_generated_duplex_exchange(
 		      record_events(answerer_events, &answerer_seen),
 		      "Phase 3 event repeated at sample %zu", index);
 		if (!caller_signal_was_started &&
-		    caller.receive.signal_started)
+		    caller.receive.signal_started) {
 			caller_signal_start = index;
+			caller_signal_phase = caller.receive.timing.carrier.phase;
+		}
 		if (!answerer_signal_was_started &&
-		    answerer.receive.signal_started)
+		    answerer.receive.signal_started) {
 			answerer_signal_start = index;
+			answerer_signal_phase =
+				answerer.receive.timing.carrier.phase;
+		}
 		if ((answerer_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STOPPED) != 0)
 			answerer_samples_at_stop =
@@ -311,13 +318,15 @@ static bool run_generated_duplex_exchange(
 	      answerer_seen);
 	CHECK(caller_signal_start < exchanged_samples &&
 	      caller.receive.timing.carrier.phase ==
-		      (uint32_t)((uint64_t)caller.receive.timing.carrier.phase_step *
-			 (exchanged_samples - caller_signal_start)) &&
+		      caller_signal_phase +
+			      (uint32_t)((uint64_t)caller.receive.timing.carrier.phase_step *
+				 (exchanged_samples - caller_signal_start - 1u)) &&
 	      answerer_receive_start < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
 	      answerer.receive.timing.carrier.phase ==
-		      (uint32_t)((uint64_t)answerer.receive.timing.carrier.phase_step *
-			 (exchanged_samples - answerer_signal_start)),
+		      answerer_signal_phase +
+			      (uint32_t)((uint64_t)answerer.receive.timing.carrier.phase_step *
+				 (exchanged_samples - answerer_signal_start - 1u)),
 	      "Phase 3 receivers did not consume the complete sample timeline");
 	CHECK(answer_silence ==
 		      SAMPLE_RATE * V34_PHASE3_ANSWER_SILENCE_MS / 1000u,

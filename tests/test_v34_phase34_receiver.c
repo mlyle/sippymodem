@@ -268,6 +268,109 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_signal_acquisition(void)
+{
+	struct v34_phase3_profile transmitting_profile;
+	struct v34_phase34_receiver receiver;
+	struct v34_receive_timing saved_timing;
+	struct v34_adaptive_equalizer saved_equalizer;
+	union v34_phase34_receiver_semantic_state saved_semantic;
+	struct v34_phase34_receive_output output;
+	struct v34_phase34_receive_output saved_output;
+
+	CHECK(profile(
+		      &transmitting_profile, V34_CALLING_STATION,
+		      V34_SYMBOL_RATE_3000, 8, true, 3) &&
+	      v34_phase34_receiver_init(
+		      &receiver, &transmitting_profile,
+		      V34_CONSTELLATION_16_POINT) ==
+		      V34_PHASE34_RECEIVER_OK,
+	      "signal-acquisition receiver did not initialize");
+	saved_timing = receiver.timing;
+	saved_equalizer = receiver.equalizer;
+	saved_semantic = receiver.semantic;
+	memset(&output, 0x6d, sizeof(output));
+	saved_output = output;
+	for (unsigned int index = 0; index < 96u; ++index) {
+		int16_t sample = (index & 1u) != 0u ? 400 : -400;
+
+		CHECK(v34_phase34_receiver_sample(&receiver, sample, &output) ==
+			      V34_PHASE34_RECEIVER_OK,
+		      "codec noise failed at sample %u", index);
+	}
+	CHECK(!receiver.signal_started &&
+	      receiver.signal_acquisition_count ==
+		      V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES &&
+	      memcmp(&receiver.timing, &saved_timing, sizeof(saved_timing)) ==
+		      0 &&
+	      memcmp(
+		      &receiver.equalizer, &saved_equalizer,
+		      sizeof(saved_equalizer)) == 0 &&
+	      memcmp(
+		      &receiver.semantic, &saved_semantic,
+		      sizeof(saved_semantic)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+	      v34_phase34_receiver_is_valid(&receiver),
+	      "codec noise advanced the receive path");
+
+	CHECK(v34_phase34_receiver_init(
+		      &receiver, &transmitting_profile,
+		      V34_CONSTELLATION_16_POINT) ==
+		      V34_PHASE34_RECEIVER_OK,
+	      "impulse receiver did not initialize");
+	for (unsigned int index = 0;
+	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index) {
+		int16_t sample = index == 0u ? INT16_MAX : 0;
+
+		CHECK(v34_phase34_receiver_sample(&receiver, sample, &output) ==
+			      V34_PHASE34_RECEIVER_OK,
+		      "isolated impulse failed at sample %u", index);
+	}
+	CHECK(!receiver.signal_started &&
+	      v34_phase34_receiver_is_valid(&receiver),
+	      "isolated impulse started the receive path");
+
+	CHECK(v34_phase34_receiver_init(
+		      &receiver, &transmitting_profile,
+		      V34_CONSTELLATION_16_POINT) ==
+		      V34_PHASE34_RECEIVER_OK,
+	      "qualified receiver did not initialize");
+	for (unsigned int index = 0;
+	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index) {
+		int16_t sample = (index & 1u) != 0u ? 2048 : -2048;
+
+		CHECK(v34_phase34_receiver_sample(&receiver, sample, &output) ==
+			      V34_PHASE34_RECEIVER_OK,
+		      "qualified signal failed at sample %u", index);
+	}
+	CHECK(receiver.signal_started &&
+	      receiver.signal_acquisition_count == 0u &&
+	      receiver.signal_acquisition_energy == 0u &&
+	      v34_phase34_receiver_is_valid(&receiver) &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "qualified signal did not start from a clear acquisition owner");
+
+	CHECK(v34_phase34_receiver_init(
+		      &receiver, &transmitting_profile,
+		      V34_CONSTELLATION_16_POINT) ==
+		      V34_PHASE34_RECEIVER_OK &&
+	      v34_phase34_receiver_sample(&receiver, 400, &output) ==
+		      V34_PHASE34_RECEIVER_OK,
+	      "corrupt-state receiver did not initialize");
+	receiver.signal_acquisition_energy++;
+	{
+		struct v34_phase34_receiver saved = receiver;
+
+		CHECK(!v34_phase34_receiver_is_valid(&receiver) &&
+		      v34_phase34_receiver_sample(&receiver, 400, &output) ==
+			      V34_PHASE34_RECEIVER_INVALID_STATE &&
+		      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&output, &saved_output, sizeof(output)) == 0,
+		      "corrupt acquisition state was not rejected transactionally");
+	}
+	return true;
+}
+
 static bool test_training_case(
 	enum v34_station_role role, enum v34_symbol_rate symbol_rate,
 	uint8_t rate, bool high_carrier, uint8_t preemphasis_filter_index)
@@ -648,6 +751,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "validation", test_validation },
+		{ "signal acquisition", test_signal_acquisition },
 		{ "continuous Phase 3 through data", test_training },
 	};
 	unsigned int failures = 0;

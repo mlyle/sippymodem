@@ -9,11 +9,79 @@
 #include <string.h>
 
 enum {
-	V34_PHASE34_SIGNAL_LEVEL_MINIMUM = 31,
+	/* Qualify the same mean line power used for online carrier retention.
+	 * Limiting each contribution prevents an isolated codec impulse from
+	 * qualifying the four-millisecond acquisition window. */
+	V34_PHASE34_SIGNAL_SAMPLE_MINIMUM = 31,
+	V34_PHASE34_SIGNAL_MINIMUM_MEAN_POWER = 1000000,
+	V34_PHASE34_SIGNAL_SAMPLE_POWER_LIMIT = 4000000,
 	V34_PHASE34_INITIAL_DECODER_POWER_Q15 = 0x7000,
 	V34_PHASE34_MIDDLE_DECODER_POWER_Q15 = 0x4000,
 	V34_PHASE34_FINAL_DECODER_POWER_Q15 = 0x2000,
 };
+
+static uint32_t signal_sample_power(int16_t sample)
+{
+	int32_t widened = sample;
+	uint32_t power = (uint32_t)(widened * widened);
+
+	return power > V34_PHASE34_SIGNAL_SAMPLE_POWER_LIMIT ?
+		V34_PHASE34_SIGNAL_SAMPLE_POWER_LIMIT : power;
+}
+
+static bool signal_acquisition_is_clear(
+	const struct v34_phase34_receiver *receiver)
+{
+	if (receiver->signal_acquisition_energy != 0u ||
+	    receiver->signal_acquisition_count != 0u ||
+	    receiver->signal_acquisition_write != 0u)
+		return false;
+	for (size_t index = 0;
+	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index)
+		if (receiver->signal_acquisition_samples[index] != 0)
+			return false;
+	return true;
+}
+
+static bool signal_acquisition_is_valid(
+	const struct v34_phase34_receiver *receiver)
+{
+	uint64_t energy = 0;
+	size_t populated;
+
+	if (receiver->signal_started)
+		return signal_acquisition_is_clear(receiver);
+	if (receiver->signal_acquisition_count >
+		    V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES ||
+	    receiver->signal_acquisition_write >=
+		    V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES)
+		return false;
+	populated = receiver->signal_acquisition_count ==
+			    V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES ?
+		    V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES :
+		    receiver->signal_acquisition_count;
+	if (populated < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES &&
+	    receiver->signal_acquisition_write != populated)
+		return false;
+	for (size_t index = 0; index < populated; ++index)
+		energy += signal_sample_power(
+			receiver->signal_acquisition_samples[index]);
+	for (size_t index = populated;
+	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index)
+		if (receiver->signal_acquisition_samples[index] != 0)
+			return false;
+	return energy == receiver->signal_acquisition_energy;
+}
+
+static void clear_signal_acquisition(
+	struct v34_phase34_receiver *receiver)
+{
+	memset(receiver->signal_acquisition_samples, 0,
+	       sizeof(receiver->signal_acquisition_samples));
+	receiver->signal_acquisition_energy = 0u;
+	receiver->signal_acquisition_count = 0u;
+	receiver->signal_acquisition_write = 0u;
+}
 
 static bool handoff_is_clear(
 	const struct v34_phase3_decision_handoff *handoff)
@@ -146,7 +214,8 @@ bool v34_phase34_receiver_is_valid(
 	    receiver->equalizer.feedback_mode !=
 		    expected_feedback_mode(receiver) ||
 	    !semantic_state_is_valid(receiver) ||
-	    !tracking_state_is_valid(receiver))
+	    !tracking_state_is_valid(receiver) ||
+	    !signal_acquisition_is_valid(receiver))
 		return false;
 	if ((!receiver->feedback_training_complete &&
 	     (receiver->precoder_selected ||
@@ -365,6 +434,7 @@ static bool execute_phase3_action(
 			return false;
 		receiver->timing = timing;
 		receiver->equalizer = equalizer;
+		clear_signal_acquisition(receiver);
 		receiver->signal_started = false;
 		receiver->tracking_started = false;
 		receiver->tracking_symbols = 0u;
@@ -598,7 +668,7 @@ static enum v34_phase34_receiver_result receive_observation(
 	return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 }
 
-enum v34_phase34_receiver_result v34_phase34_receiver_sample(
+static enum v34_phase34_receiver_result receive_started_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
 	struct v34_phase34_receive_output *output)
 {
@@ -609,25 +679,6 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	bool was_acquired;
 	bool acquired;
 
-	if (output == NULL ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    output, sizeof(*output)))
-		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
-	if (!v34_phase34_receiver_is_valid(receiver))
-		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	if (receiver->failed)
-		return V34_PHASE34_RECEIVER_FAILED;
-	if (v34_phase34_receiver_is_complete(receiver))
-		return V34_PHASE34_RECEIVER_COMPLETE;
-	if (receiver->stage == V34_PHASE34_RECEIVER_PHASE4 &&
-	    receiver->semantic.phase4.record_pending)
-		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	if (!receiver->signal_started &&
-	    sample >= -V34_PHASE34_SIGNAL_LEVEL_MINIMUM &&
-	    sample <= V34_PHASE34_SIGNAL_LEVEL_MINIMUM)
-		return V34_PHASE34_RECEIVER_OK;
-	receiver->signal_started = true;
 	was_acquired = v34_receive_timing_is_acquired(&receiver->timing);
 	timing_result = v34_receive_timing_sample(
 		&receiver->timing, sample, &recovered);
@@ -661,6 +712,99 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	if (!v34_phase34_receiver_is_valid(receiver))
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	return result;
+}
+
+static bool buffer_signal_sample(
+	struct v34_phase34_receiver *receiver, int16_t sample)
+{
+	uint8_t write = receiver->signal_acquisition_write;
+	uint32_t power = signal_sample_power(sample);
+
+	if (receiver->signal_acquisition_count ==
+	    V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES) {
+		receiver->signal_acquisition_energy -= signal_sample_power(
+			receiver->signal_acquisition_samples[write]);
+	} else {
+		receiver->signal_acquisition_count++;
+	}
+	receiver->signal_acquisition_samples[write] = sample;
+	receiver->signal_acquisition_energy += power;
+	receiver->signal_acquisition_write = (uint8_t)(
+		(write + 1u) % V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES);
+	return receiver->signal_acquisition_count ==
+		       V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES &&
+	       receiver->signal_acquisition_energy >=
+		       (uint64_t)V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES *
+			       V34_PHASE34_SIGNAL_MINIMUM_MEAN_POWER;
+}
+
+static enum v34_phase34_receiver_result begin_signal(
+	struct v34_phase34_receiver *receiver,
+	struct v34_phase34_receive_output *output)
+{
+	int16_t samples[V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES];
+	enum v34_phase34_receiver_result emitted = V34_PHASE34_RECEIVER_OK;
+	uint8_t first = receiver->signal_acquisition_write;
+	size_t start = 0;
+
+	for (size_t index = 0;
+	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index)
+		samples[index] = receiver->signal_acquisition_samples[
+			(first + index) %
+			V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES];
+	while (start < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES &&
+	       samples[start] >= -V34_PHASE34_SIGNAL_SAMPLE_MINIMUM &&
+	       samples[start] <= V34_PHASE34_SIGNAL_SAMPLE_MINIMUM)
+		start++;
+	if (start == V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES)
+		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+	clear_signal_acquisition(receiver);
+	receiver->signal_started = true;
+	for (size_t index = start;
+	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index) {
+		struct v34_phase34_receive_output generated = *output;
+		enum v34_phase34_receiver_result result =
+			receive_started_sample(
+				receiver, samples[index], &generated);
+
+		if (result == V34_PHASE34_RECEIVER_TIMING_ACQUIRED) {
+			emitted = result;
+		} else if (result != V34_PHASE34_RECEIVER_OK) {
+			return result;
+		}
+	}
+	return emitted;
+}
+
+enum v34_phase34_receiver_result v34_phase34_receiver_sample(
+	struct v34_phase34_receiver *receiver, int16_t sample,
+	struct v34_phase34_receive_output *output)
+{
+	if (output == NULL ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
+		    output, sizeof(*output)))
+		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
+	if (!v34_phase34_receiver_is_valid(receiver))
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	if (receiver->failed)
+		return V34_PHASE34_RECEIVER_FAILED;
+	if (v34_phase34_receiver_is_complete(receiver))
+		return V34_PHASE34_RECEIVER_COMPLETE;
+	if (receiver->stage == V34_PHASE34_RECEIVER_PHASE4 &&
+	    receiver->semantic.phase4.record_pending)
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	if (receiver->signal_started)
+		return receive_started_sample(receiver, sample, output);
+	if (receiver->signal_acquisition_count == 0u &&
+	    sample >= -V34_PHASE34_SIGNAL_SAMPLE_MINIMUM &&
+	    sample <= V34_PHASE34_SIGNAL_SAMPLE_MINIMUM)
+		return V34_PHASE34_RECEIVER_OK;
+	if (!buffer_signal_sample(receiver, sample))
+		return v34_phase34_receiver_is_valid(receiver) ?
+		       V34_PHASE34_RECEIVER_OK :
+		       fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+	return begin_signal(receiver, output);
 }
 
 static enum v34_phase34_receiver_result phase4_control(

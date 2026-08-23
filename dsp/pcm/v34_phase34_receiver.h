@@ -19,6 +19,10 @@ enum v34_phase34_receiver_stage {
 	V34_PHASE34_RECEIVER_DATA,
 };
 
+enum {
+	V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES = 32,
+};
+
 enum v34_phase34_receiver_result {
 	V34_PHASE34_RECEIVER_OK,
 	V34_PHASE34_RECEIVER_TIMING_ACQUIRED,
@@ -66,11 +70,16 @@ struct v34_phase34_receiver {
 	struct v34_phase3_decision_handoff phase3_handoff;
 	struct v34_q14_coefficient
 		precoder_coefficients[V34_PRECODER_TAP_COUNT];
+	int16_t signal_acquisition_samples[
+		V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES];
 	struct v34_phase3_profile transmitting_profile;
+	uint64_t signal_acquisition_energy;
 	uint32_t tracking_symbols;
 	uint16_t decoder_power_q15;
 	enum v34_constellation_size phase4_constellation;
 	enum v34_phase34_receiver_stage stage;
+	uint8_t signal_acquisition_count;
+	uint8_t signal_acquisition_write;
 	bool signal_started;
 	bool tracking_started;
 	bool feedback_training_complete;
