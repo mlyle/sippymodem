@@ -157,19 +157,3 @@ v34_data_receiver_receive_mapping_frame(
 	*received = decoded;
 	return V34_DATA_RECEIVER_OK;
 }
-
-const char *v34_data_receiver_result_name(
-	enum v34_data_receiver_result result)
-{
-	switch (result) {
-	case V34_DATA_RECEIVER_OK:
-		return "ok";
-	case V34_DATA_RECEIVER_B1_IN_PROGRESS:
-		return "B1 in progress";
-	case V34_DATA_RECEIVER_B1_COMPLETE:
-		return "B1 complete";
-	case V34_DATA_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

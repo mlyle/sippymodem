@@ -57,7 +57,4 @@ v34_nonlinear_unproject(
 	const struct qam_point *projected_symbol,
 	struct qam_point *precoded_estimate);
 
-const char *v34_nonlinear_result_name(
-	enum v34_nonlinear_result result);
-
 #endif /* V34_NONLINEAR_H */

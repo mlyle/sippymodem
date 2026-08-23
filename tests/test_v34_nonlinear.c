@@ -429,23 +429,6 @@ static bool test_validation(void)
 		      &projected, &projected) == V34_NONLINEAR_OK &&
 	      projected.in_phase == 1.0 && projected.quadrature == -2.0,
 	      "in-place inverse projection changed its input");
-	CHECK(strcmp(
-		      v34_nonlinear_result_name(
-			      V34_NONLINEAR_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_nonlinear_result_name(
-			      V34_NONLINEAR_INVALID_ARGUMENT),
-		      "invalid argument") == 0 &&
-	      strcmp(
-		      v34_nonlinear_result_name(
-			      V34_NONLINEAR_NUMERIC_FAILURE),
-		      "numeric failure") == 0 &&
-	      strcmp(
-		      v34_nonlinear_result_name(
-			      (enum v34_nonlinear_result)3),
-		      "unknown") == 0,
-	      "non-linear result names changed");
 	return true;
 }
 

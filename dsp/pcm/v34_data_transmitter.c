@@ -206,25 +206,3 @@ enum v34_data_transmitter_result v34_data_transmitter_sample(
 	*symbol_accepted = generated_accepted;
 	return V34_DATA_TRANSMITTER_OK;
 }
-
-const char *v34_data_transmitter_result_name(
-	enum v34_data_transmitter_result result)
-{
-	switch (result) {
-	case V34_DATA_TRANSMITTER_OK:
-		return "ok";
-	case V34_DATA_TRANSMITTER_MAPPING_FRAME_REQUIRED:
-		return "mapping frame required";
-	case V34_DATA_TRANSMITTER_MAPPING_FRAME_PENDING:
-		return "mapping frame pending";
-	case V34_DATA_TRANSMITTER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_TRANSMITTER_OUT_OF_RANGE:
-		return "out of range";
-	case V34_DATA_TRANSMITTER_CLIPPING_RISK:
-		return "clipping risk";
-	case V34_DATA_TRANSMITTER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

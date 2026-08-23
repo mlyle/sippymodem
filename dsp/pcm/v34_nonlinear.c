@@ -253,17 +253,3 @@ v34_nonlinear_unproject(
 	*precoded_estimate = generated;
 	return V34_NONLINEAR_OK;
 }
-
-const char *v34_nonlinear_result_name(
-	enum v34_nonlinear_result result)
-{
-	switch (result) {
-	case V34_NONLINEAR_OK:
-		return "ok";
-	case V34_NONLINEAR_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_NONLINEAR_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

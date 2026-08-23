@@ -58,7 +58,4 @@ v34_channel_frame_decoder_advance(
 		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready);
 
-const char *v34_channel_frame_decoder_result_name(
-	enum v34_channel_frame_decoder_result result);
-
 #endif /* V34_CHANNEL_FRAME_DECODER_H */

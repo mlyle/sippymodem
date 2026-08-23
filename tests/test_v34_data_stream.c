@@ -516,27 +516,6 @@ static bool test_transactional_boundaries(void)
 	stream.b1_active = true;
 	CHECK(!v34_data_stream_is_valid(&stream),
 	      "B1 state accepted an ordinary data frame");
-	CHECK(strcmp(v34_data_stream_result_name(
-		     V34_DATA_STREAM_OK), "ok") == 0 &&
-	      strcmp(v34_data_stream_result_name(
-		     V34_DATA_STREAM_SOURCE_FAILURE),
-		     "mapping-frame source failure") == 0 &&
-	      strcmp(v34_data_stream_result_name(
-		     V34_DATA_STREAM_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_data_stream_result_name(
-		     V34_DATA_STREAM_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_data_stream_result_name(
-		     V34_DATA_STREAM_CLIPPING_RISK),
-		     "clipping risk") == 0 &&
-	      strcmp(v34_data_stream_result_name(
-		     V34_DATA_STREAM_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_data_stream_result_name(
-		     (enum v34_data_stream_result)99),
-		     "unknown") == 0,
-	      "data-stream result names changed");
 	return true;
 }
 

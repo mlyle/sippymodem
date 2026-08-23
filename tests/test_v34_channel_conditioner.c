@@ -279,23 +279,6 @@ static bool test_validation(void)
 		      &conditioner, interval, NULL) ==
 		      V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT,
 	      "invalid interval arguments were accepted");
-	CHECK(strcmp(
-		      v34_channel_conditioner_result_name(
-			      V34_CHANNEL_CONDITIONER_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_channel_conditioner_result_name(
-			      V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT),
-		      "invalid argument") == 0 &&
-	      strcmp(
-		      v34_channel_conditioner_result_name(
-			      V34_CHANNEL_CONDITIONER_NUMERIC_FAILURE),
-		      "numeric failure") == 0 &&
-	      strcmp(
-		      v34_channel_conditioner_result_name(
-			      (enum v34_channel_conditioner_result)3),
-		      "unknown") == 0,
-	      "conditioner result names changed");
 	return true;
 }
 

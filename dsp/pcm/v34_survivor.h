@@ -71,7 +71,4 @@ enum v34_survivor_result v34_survivor_advance(
 	struct v34_survivor_decision *traceback,
 	bool *traceback_ready);
 
-const char *v34_survivor_result_name(
-	enum v34_survivor_result result);
-
 #endif /* V34_SURVIVOR_H */

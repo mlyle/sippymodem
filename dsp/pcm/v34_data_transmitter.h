@@ -78,7 +78,4 @@ v34_data_transmitter_sample(
 	struct v34_data_transmitter *transmitter,
 	int16_t *sample, bool *symbol_accepted);
 
-const char *v34_data_transmitter_result_name(
-	enum v34_data_transmitter_result result);
-
 #endif

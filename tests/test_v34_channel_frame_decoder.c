@@ -501,22 +501,6 @@ static bool test_transactional_boundaries(void)
 	corrupted.channel_decoder.path.fixed_16.survivor.path_index = 1;
 	CHECK(!v34_channel_frame_decoder_is_valid(&corrupted),
 	      "misaligned survivor cursor was accepted");
-	CHECK(strcmp(v34_channel_frame_decoder_result_name(
-		     V34_CHANNEL_FRAME_DECODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_channel_frame_decoder_result_name(
-		     V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_channel_frame_decoder_result_name(
-		     V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_channel_frame_decoder_result_name(
-		     V34_CHANNEL_FRAME_DECODER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_channel_frame_decoder_result_name(
-		     (enum v34_channel_frame_decoder_result)99),
-		     "unknown") == 0,
-	      "channel frame result names changed");
 	return true;
 }
 

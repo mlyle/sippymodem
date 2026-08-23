@@ -504,31 +504,6 @@ static bool test_transactional_validation(void)
 	      memcmp(&corrupt, &before, sizeof(corrupt)) == 0 &&
 	      sample == 1234 && accepted,
 	      "stream accepted the other role's scrambler");
-	CHECK(strcmp(v34_data_transmitter_result_name(
-		     V34_DATA_TRANSMITTER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_data_transmitter_result_name(
-		     V34_DATA_TRANSMITTER_MAPPING_FRAME_REQUIRED),
-		     "mapping frame required") == 0 &&
-	      strcmp(v34_data_transmitter_result_name(
-		     V34_DATA_TRANSMITTER_MAPPING_FRAME_PENDING),
-		     "mapping frame pending") == 0 &&
-	      strcmp(v34_data_transmitter_result_name(
-		     V34_DATA_TRANSMITTER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_data_transmitter_result_name(
-		     V34_DATA_TRANSMITTER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_data_transmitter_result_name(
-		     V34_DATA_TRANSMITTER_CLIPPING_RISK),
-		     "clipping risk") == 0 &&
-	      strcmp(v34_data_transmitter_result_name(
-		     V34_DATA_TRANSMITTER_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_data_transmitter_result_name(
-		     (enum v34_data_transmitter_result)99),
-		     "unknown") == 0,
-	      "streaming result names changed");
 	return true;
 }
 

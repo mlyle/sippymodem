@@ -94,7 +94,4 @@ enum v34_data_stream_result v34_data_stream_sample(
 	v34_mapping_frame_source source, void *source_context,
 	int16_t *sample, bool *symbol_accepted);
 
-const char *v34_data_stream_result_name(
-	enum v34_data_stream_result result);
-
 #endif

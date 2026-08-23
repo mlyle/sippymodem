@@ -369,23 +369,8 @@ static bool test_validation(void)
 	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
 	      "invalid receive arguments changed the receiver");
 	CHECK(v34_data_receiver_is_valid(&fixture.receiver) &&
-	      !v34_data_receiver_is_valid(NULL) &&
-	      strcmp(v34_data_receiver_result_name(
-		     V34_DATA_RECEIVER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_data_receiver_result_name(
-		     V34_DATA_RECEIVER_B1_IN_PROGRESS),
-		     "B1 in progress") == 0 &&
-	      strcmp(v34_data_receiver_result_name(
-		     V34_DATA_RECEIVER_B1_COMPLETE),
-		     "B1 complete") == 0 &&
-	      strcmp(v34_data_receiver_result_name(
-		     V34_DATA_RECEIVER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_data_receiver_result_name(
-		     (enum v34_data_receiver_result)4),
-		     "unknown") == 0,
-	      "data receiver validation or names changed");
+	      !v34_data_receiver_is_valid(NULL),
+	      "data receiver validation changed");
 	fixture.receiver.schedule.next_mapping_frame =
 		fixture.receiver.schedule.geometry.mapping_frames_per_data_frame;
 	CHECK(!v34_data_receiver_is_valid(&fixture.receiver) &&

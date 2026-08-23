@@ -374,19 +374,6 @@ static bool test_transactional_rejection(void)
 		      &precoder, &decision,
 		      V34_PATH_DECODER_INVALID_ARGUMENT),
 	      "invalid inverse-precoder state was accepted");
-	CHECK(strcmp(v34_path_decoder_result_name(
-			     V34_PATH_DECODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_path_decoder_result_name(
-			     V34_PATH_DECODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_path_decoder_result_name(
-			     V34_PATH_DECODER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_path_decoder_result_name(
-			     (enum v34_path_decoder_result)99),
-		     "unknown") == 0,
-	      "path result names changed");
 	return true;
 }
 

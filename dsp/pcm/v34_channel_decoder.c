@@ -323,19 +323,3 @@ v34_channel_decoder_advance(
 		*decided = generated_decided;
 	return V34_CHANNEL_DECODER_OK;
 }
-
-const char *v34_channel_decoder_result_name(
-	enum v34_channel_decoder_result result)
-{
-	switch (result) {
-	case V34_CHANNEL_DECODER_OK:
-		return "ok";
-	case V34_CHANNEL_DECODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_CHANNEL_DECODER_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V34_CHANNEL_DECODER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

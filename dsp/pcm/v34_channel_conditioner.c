@@ -113,17 +113,3 @@ v34_channel_condition_interval(
 		grid_estimates[symbol] = generated[symbol];
 	return V34_CHANNEL_CONDITIONER_OK;
 }
-
-const char *v34_channel_conditioner_result_name(
-	enum v34_channel_conditioner_result result)
-{
-	switch (result) {
-	case V34_CHANNEL_CONDITIONER_OK:
-		return "ok";
-	case V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_CHANNEL_CONDITIONER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

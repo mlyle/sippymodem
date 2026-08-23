@@ -23,7 +23,4 @@ v34_decode_survivor_path(
 	const struct v34_survivor_decision *survivor_decision,
 	struct v34_decided_4d_interval *decided);
 
-const char *v34_path_decoder_result_name(
-	enum v34_path_decoder_result result);
-
 #endif /* V34_PATH_DECODER_H */

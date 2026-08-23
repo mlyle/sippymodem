@@ -526,19 +526,6 @@ static bool test_validation(void)
 	corrupted.path[0].branch[0].channel_output[0].in_phase = 0;
 	CHECK(!v34_survivor_is_valid(&corrupted),
 	      "off-grid survivor history was accepted");
-	CHECK(strcmp(v34_survivor_result_name(
-			     V34_SURVIVOR_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_survivor_result_name(
-			     V34_SURVIVOR_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_survivor_result_name(
-			     V34_SURVIVOR_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_survivor_result_name(
-			     (enum v34_survivor_result)99),
-		     "unknown") == 0,
-	      "survivor result names changed");
 	return true;
 }
 

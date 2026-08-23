@@ -471,22 +471,6 @@ static bool test_transactional_boundaries(void)
 		      &decoder, estimates, 0,
 		      V34_CHANNEL_DECODER_OUT_OF_RANGE),
 	      "traceback path failure changed channel state");
-	CHECK(strcmp(v34_channel_decoder_result_name(
-			     V34_CHANNEL_DECODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_channel_decoder_result_name(
-			     V34_CHANNEL_DECODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_channel_decoder_result_name(
-			     V34_CHANNEL_DECODER_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_channel_decoder_result_name(
-			     V34_CHANNEL_DECODER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_channel_decoder_result_name(
-			     (enum v34_channel_decoder_result)99),
-		     "unknown") == 0,
-	      "channel decoder result names changed");
 	return true;
 }
 

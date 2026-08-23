@@ -306,17 +306,3 @@ enum v34_survivor_result v34_survivor_advance(
 		*traceback = generated_traceback;
 	return V34_SURVIVOR_OK;
 }
-
-const char *v34_survivor_result_name(
-	enum v34_survivor_result result)
-{
-	switch (result) {
-	case V34_SURVIVOR_OK:
-		return "ok";
-	case V34_SURVIVOR_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_SURVIVOR_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

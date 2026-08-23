@@ -48,7 +48,4 @@ v34_channel_condition_interval(
 	struct qam_point
 		grid_estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL]);
 
-const char *v34_channel_conditioner_result_name(
-	enum v34_channel_conditioner_result result);
-
 #endif /* V34_CHANNEL_CONDITIONER_H */

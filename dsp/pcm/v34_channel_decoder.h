@@ -62,7 +62,4 @@ v34_channel_decoder_advance(
 	struct v34_decided_4d_interval *decided,
 	bool *decided_ready);
 
-const char *v34_channel_decoder_result_name(
-	enum v34_channel_decoder_result result);
-
 #endif /* V34_CHANNEL_DECODER_H */
