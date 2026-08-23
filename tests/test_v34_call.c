@@ -26,9 +26,14 @@ struct endpoint {
 	struct v34_call call;
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
+	uint32_t transmit_primary_bits;
+	uint32_t receive_primary_bits;
+	uint32_t mapping_pattern_seed;
+	uint32_t peer_mapping_pattern_seed;
 	uint8_t primary_idle_bits_remaining;
 	uint8_t peer_primary_delay_bits;
 	uint8_t transmit_bit;
+	bool generated_mapping_frames;
 	bool verify_mapping_frames;
 	bool entered_phase3;
 	bool entered_phase4;
@@ -134,7 +139,8 @@ static struct v34_call_configuration symmetric_configuration(
 	enum { PRIMARY_RATE_UNITS = 10 };
 	struct v34_call_configuration selected = configuration(role);
 	uint8_t preemphasis_filter_index =
-		symbol_rate == V34_SYMBOL_RATE_2800 ? 8u : 3u;
+		symbol_rate == V34_SYMBOL_RATE_3000 ? 2u :
+		symbol_rate == V34_SYMBOL_RATE_3429 ? 7u : 0u;
 	bool high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
 
 	selected.local_info0 = (struct v34_info0){
@@ -146,6 +152,8 @@ static struct v34_call_configuration symmetric_configuration(
 			symbol_rate == V34_SYMBOL_RATE_3429,
 		.symbol_rate_3429_transmit_permitted =
 			symbol_rate == V34_SYMBOL_RATE_3429,
+		.low_carrier_3000_supported =
+			symbol_rate == V34_SYMBOL_RATE_3000,
 		.low_carrier_3200_supported =
 			symbol_rate == V34_SYMBOL_RATE_3200,
 		.maximum_symbol_rate_difference_steps = 0,
@@ -196,7 +204,17 @@ static bool supply_mapping_frame(
 
 	if (endpoint == NULL || request == NULL || primary_bits == NULL)
 		return false;
-	memset(primary_bits, endpoint->transmit_bit, request->primary_bits);
+	for (uint8_t index = 0; index < request->primary_bits; ++index) {
+		uint32_t bit_index = endpoint->transmit_primary_bits++;
+		uint32_t mixed = endpoint->mapping_pattern_seed +
+			bit_index * UINT32_C(0x9e3779b9);
+
+		mixed ^= mixed >> 16;
+		mixed *= UINT32_C(0x7feb352d);
+		mixed ^= mixed >> 15;
+		primary_bits[index] = endpoint->generated_mapping_frames ?
+			(uint8_t)(mixed >> 31) : endpoint->transmit_bit;
+	}
 	if (auxiliary_bit != NULL)
 		*auxiliary_bit = endpoint->transmit_bit;
 	endpoint->mapping_frames_supplied++;
@@ -218,21 +236,34 @@ static bool accept_mapping_frame(
 	struct endpoint *endpoint,
 	const struct v34_received_mapping_frame *received)
 {
-	uint8_t expected = (uint8_t)(endpoint->transmit_bit ^ 1u);
+	uint8_t expected_auxiliary = (uint8_t)(endpoint->transmit_bit ^ 1u);
 
 	if (!endpoint->verify_mapping_frames)
 		return true;
 	for (uint8_t index = 0; index < received->primary_bit_count; ++index) {
-		uint8_t bit = endpoint->primary_idle_bits_remaining != 0 ?
-			1u : expected;
+		uint32_t bit_index = endpoint->receive_primary_bits;
+		uint32_t mixed = endpoint->peer_mapping_pattern_seed +
+			bit_index * UINT32_C(0x9e3779b9);
+		uint8_t bit;
+
+		mixed ^= mixed >> 16;
+		mixed *= UINT32_C(0x7feb352d);
+		mixed ^= mixed >> 15;
+		bit = endpoint->primary_idle_bits_remaining != 0 ? 1u :
+		      endpoint->generated_mapping_frames ?
+			      (uint8_t)(mixed >> 31) :
+			      (uint8_t)(endpoint->transmit_bit ^ 1u);
 
 		if (received->primary_bits[index] != bit)
 			return false;
-		if (endpoint->primary_idle_bits_remaining != 0)
+		if (endpoint->primary_idle_bits_remaining != 0) {
 			endpoint->primary_idle_bits_remaining--;
+		} else {
+			endpoint->receive_primary_bits++;
+		}
 	}
 	if (received->auxiliary_bit_count != 0 &&
-	    received->auxiliary_bit != expected)
+	    received->auxiliary_bit != expected_auxiliary)
 		return false;
 	endpoint->mapping_frames_received++;
 	return true;
@@ -261,7 +292,14 @@ static bool endpoint_init_symmetric(
 	struct v34_call_configuration config =
 		symmetric_configuration(role, symbol_rate);
 	struct endpoint initialized = {
+		.mapping_pattern_seed =
+			role == V34_CALLING_STATION ? UINT32_C(0x34c011ab) :
+						      UINT32_C(0x34a05e17),
+		.peer_mapping_pattern_seed =
+			role == V34_CALLING_STATION ? UINT32_C(0x34a05e17) :
+						      UINT32_C(0x34c011ab),
 		.transmit_bit = role == V34_ANSWERING_STATION,
+		.generated_mapping_frames = true,
 		.verify_mapping_frames = true,
 	};
 
@@ -502,6 +540,10 @@ static bool test_symmetric_calls(void)
 	      "PCMU symmetric 2800 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_2800, true),
 	      "PCMA symmetric 2800 call failed");
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3000, false),
+	      "PCMU symmetric 3000 call failed");
+	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3000, true),
+	      "PCMA symmetric 3000 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, false),
 	      "PCMU symmetric 3200 call failed");
 	CHECK(check_symmetric_call(V34_SYMBOL_RATE_3200, true),

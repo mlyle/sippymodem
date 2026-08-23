@@ -1074,6 +1074,7 @@ V34_DATA_POINTS_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_data_carrier.o \
 	$(BUILD_DIR)/v34_data_points.o
@@ -1101,6 +1102,7 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_data_carrier.o
 V34_DATA_CARRIER_TEST_BINARY := \
@@ -1127,6 +1129,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o \
@@ -1309,6 +1312,7 @@ V34_TRAINING_LINE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o
@@ -1433,6 +1437,7 @@ V34_TRAINING_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
@@ -2270,6 +2275,7 @@ V90_PHASE4_CP_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o \
@@ -2462,6 +2468,7 @@ V90_PHASE3_ANALOG_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_training_line.o \
 	$(BUILD_DIR)/v90_phase3_analog_line_tx.o
@@ -2474,6 +2481,7 @@ V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o \

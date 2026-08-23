@@ -85,16 +85,20 @@ static bool training_line_sample(
 {
 	struct v34_data_line_transmitter *line =
 		&stream->transmitter.line;
+	const struct qam_point *supplied = NULL;
 	double carrier_sample;
 	double filtered_sample;
 	double scaled_sample;
 	long rounded;
 	bool accepted;
 
-	if (point == NULL || symbol_accepted == NULL ||
-	    qam_modulator_sample_f64(
-		    &line->carrier.modulator, point,
-		    &carrier_sample, &accepted) != QAM_OK ||
+	if (point == NULL || symbol_accepted == NULL)
+		return false;
+	if (v34_pulse_modulator_needs_point(&line->carrier.modulator))
+		supplied = point;
+	if (v34_pulse_modulator_sample(
+		    &line->carrier.modulator, supplied,
+		    &carrier_sample, &accepted) != V34_PULSE_MODULATOR_OK ||
 	    v34_preemphasis_sample(
 		    &line->preemphasis, carrier_sample,
 		    &filtered_sample) != V34_PREEMPHASIS_OK)

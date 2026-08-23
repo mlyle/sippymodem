@@ -146,9 +146,6 @@ static bool power_metadata_is_valid(
 bool v34_data_line_transmitter_is_valid(
 	const struct v34_data_line_transmitter *transmitter)
 {
-	uint32_t expected_carrier_phase;
-	uint64_t expected_symbol_phase;
-
 	if (transmitter == NULL ||
 	    !v34_data_carrier_is_valid(&transmitter->carrier) ||
 	    !v34_preemphasis_is_valid(&transmitter->preemphasis) ||
@@ -157,20 +154,11 @@ bool v34_data_line_transmitter_is_valid(
 	    !power_metadata_is_valid(transmitter) ||
 	    transmitter->preemphasis.next_history !=
 		    transmitter->generated_samples %
-			    V34_PREEMPHASIS_TAPS)
+			    V34_PREEMPHASIS_TAPS ||
+	    transmitter->carrier.modulator.generated_samples !=
+		    transmitter->generated_samples)
 		return false;
-	expected_carrier_phase =
-		(uint32_t)transmitter->generated_samples *
-		transmitter->carrier.modulator.carrier_phase_step;
-	expected_symbol_phase =
-		(transmitter->generated_samples %
-		 transmitter->carrier.modulator.symbol_period_units) *
-		transmitter->carrier.profile.symbol_rate_numerator %
-		transmitter->carrier.modulator.symbol_period_units;
-	return transmitter->carrier.modulator.carrier_phase ==
-		       expected_carrier_phase &&
-	       transmitter->carrier.modulator.symbol_phase_units ==
-		       expected_symbol_phase;
+	return true;
 }
 
 enum v34_data_line_transmitter_result
@@ -293,6 +281,8 @@ v34_data_line_transmitter_sample(
 	if (!v34_data_line_transmitter_is_valid(transmitter) ||
 	    sample == NULL || symbol_accepted == NULL)
 		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
+	if (transmitter->generated_samples == UINT64_MAX)
+		return V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE;
 	next = *transmitter;
 	result = carrier_result(v34_data_carrier_sample(
 		&next.carrier, point, &carrier_sample, &accepted));
@@ -311,8 +301,6 @@ v34_data_line_transmitter_sample(
 	rounded = lround(scaled_sample);
 	if (rounded < INT16_MIN || rounded > INT16_MAX)
 		return V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK;
-	if (next.generated_samples == UINT64_MAX)
-		return V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE;
 	next.generated_samples++;
 	if (!v34_data_line_transmitter_is_valid(&next))
 		return V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE;

@@ -367,6 +367,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_reciprocal_probe.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase2_tone.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_preemphasis.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_pulse_modulator.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_line.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_transmitter.c \

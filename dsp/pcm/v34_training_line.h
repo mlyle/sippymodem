@@ -6,6 +6,7 @@
 #include "qam.h"
 #include "v34_phase3_profile.h"
 #include "v34_preemphasis.h"
+#include "v34_pulse_modulator.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,7 +14,7 @@
 enum {
 	V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS = 14,
 	V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS =
-		V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS,
+		V34_PULSE_TAPS,
 	V34_TRAINING_LINE_FILTER_TAIL_SAMPLES =
 		V34_PREEMPHASIS_TAPS - 1,
 };
@@ -32,7 +33,7 @@ enum v34_training_line_result {
  * calibration, but is not retained as transmit state. */
 struct v34_training_line {
 	struct v34_phase3_profile profile;
-	struct qam_modulator carrier;
+	struct v34_pulse_modulator carrier;
 	struct v34_preemphasis preemphasis;
 	double output_gain;
 	double raw_rms;

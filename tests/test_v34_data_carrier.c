@@ -158,11 +158,10 @@ static bool initialize_fixture(struct carrier_fixture *fixture)
 
 static bool test_carrier_point_stream(void)
 {
-	static const struct qam_point ZERO = { 0 };
 	struct carrier_fixture fixture;
 	struct v34_data_points points;
 	struct v34_data_carrier carrier;
-	struct qam_modulator model;
+	struct v34_pulse_modulator model;
 	size_t samples = 0;
 	bool nonzero_seen = false;
 
@@ -191,9 +190,9 @@ static bool test_carrier_point_stream(void)
 			point_pointer = &point;
 		}
 		CHECK(samples++ < 64u &&
-		      qam_modulator_sample_f64(
-			      &model, point_pointer != NULL ? point_pointer : &ZERO,
-			      &expected, &expected_accepted) == QAM_OK &&
+		      v34_pulse_modulator_sample(
+			      &model, point_pointer, &expected,
+			      &expected_accepted) == V34_PULSE_MODULATOR_OK &&
 		      v34_data_carrier_sample(
 			      &carrier, point_pointer, &actual,
 			      &actual_accepted) == V34_DATA_CARRIER_OK &&
@@ -211,15 +210,14 @@ static bool test_carrier_point_stream(void)
 
 static bool test_active_carrier_handoff(void)
 {
-	static const struct qam_point ZERO = { 0 };
 	static const struct qam_point TRAINING_POINT = { 1.0, 0.0 };
 	const double point_gain = 1.25;
 	struct carrier_fixture fixture;
 	struct v34_data_points points;
 	struct qam_channel channel;
-	struct qam_modulator active;
-	struct qam_modulator active_before;
-	struct qam_modulator model;
+	struct v34_pulse_modulator active;
+	struct v34_pulse_modulator active_before;
+	struct v34_pulse_modulator model;
 	struct v34_data_carrier carrier;
 	struct qam_point point;
 	double ignored;
@@ -231,11 +229,14 @@ static bool test_active_carrier_handoff(void)
 	CHECK(initialize_fixture(&fixture) &&
 	      v34_data_carrier_channel(
 		      &fixture.profile, 8000, &channel) == V34_DATA_CARRIER_OK &&
-	      qam_modulator_init(&active, &channel, INT16_MAX) == QAM_OK &&
-	      qam_modulator_sample_f64(
+	      v34_pulse_modulator_init(
+		      &active, &fixture.profile, &channel, INT16_MAX,
+		      fixture.normalizer.maximum_normalized_point_power) ==
+		      V34_PULSE_MODULATOR_OK &&
+	      v34_pulse_modulator_sample(
 		      &active, &TRAINING_POINT, &ignored,
-		      &ignored_accepted) == QAM_OK &&
-	      ignored_accepted && active.active_count != 0,
+		      &ignored_accepted) == V34_PULSE_MODULATOR_OK &&
+	      ignored_accepted && active.generated_samples == 1,
 	      "active-carrier fixture did not retain its training pulse");
 	active_before = active;
 	required_power = fixture.normalizer.maximum_normalized_point_power *
@@ -247,9 +248,9 @@ static bool test_active_carrier_handoff(void)
 	      memcmp(&active, &active_before, sizeof(active)) == 0 &&
 	      carrier.point_gain == point_gain &&
 	      carrier.modulator.maximum_point_power == required_power &&
-	      carrier.modulator.active_count == active.active_count &&
-	      memcmp(carrier.modulator.active, active.active,
-		     sizeof(active.active)) == 0 &&
+	      carrier.modulator.generated_samples == active.generated_samples &&
+	      memcmp(carrier.modulator.history, active.history,
+		     sizeof(active.history)) == 0 &&
 	      carrier.modulator.carrier_phase == active.carrier_phase &&
 	      carrier.modulator.symbol_phase_units ==
 		      active.symbol_phase_units,
@@ -260,7 +261,7 @@ static bool test_active_carrier_handoff(void)
 	     sample_index < 16u && !data_point_accepted; ++sample_index) {
 		struct qam_point scaled;
 		const struct qam_point *point_pointer = NULL;
-		const struct qam_point *model_pointer = &ZERO;
+		const struct qam_point *model_pointer = NULL;
 		double expected;
 		double actual;
 		bool model_accepted;
@@ -277,9 +278,9 @@ static bool test_active_carrier_handoff(void)
 			};
 			model_pointer = &scaled;
 		}
-		CHECK(qam_modulator_sample_f64(
+		CHECK(v34_pulse_modulator_sample(
 			      &model, model_pointer, &expected,
-			      &model_accepted) == QAM_OK &&
+			      &model_accepted) == V34_PULSE_MODULATOR_OK &&
 		      v34_data_carrier_sample(
 			      &carrier, point_pointer, &actual,
 			      &actual_accepted) == V34_DATA_CARRIER_OK &&
@@ -392,14 +393,13 @@ static bool advance_training_line(struct v34_training_line *line)
 
 static bool test_active_line_handoff(void)
 {
-	static const struct qam_point ZERO = { 0 };
 	struct carrier_fixture fixture;
 	struct v34_training_line training;
 	struct v34_training_line training_before;
 	struct v34_data_line_transmitter standalone;
 	struct v34_data_line_transmitter continued;
 	struct v34_data_points points;
-	struct qam_modulator model_carrier;
+	struct v34_pulse_modulator model_carrier;
 	struct v34_preemphasis model_filter;
 	double independent_gain_ratio;
 	bool retained_tail_seen = false;
@@ -437,11 +437,11 @@ static bool test_active_line_handoff(void)
 		      training.carrier.carrier_phase &&
 	      continued.carrier.modulator.symbol_phase_units ==
 		      training.carrier.symbol_phase_units &&
-	      continued.carrier.modulator.active_count ==
-		      training.carrier.active_count &&
-	      memcmp(continued.carrier.modulator.active,
-		     training.carrier.active,
-		     sizeof(training.carrier.active)) == 0,
+	      continued.carrier.modulator.generated_samples ==
+		      training.carrier.generated_samples &&
+	      memcmp(continued.carrier.modulator.history,
+		     training.carrier.history,
+		     sizeof(training.carrier.history)) == 0,
 	      "data line did not preserve the active training waveform");
 	points = fixture.points;
 	model_carrier = continued.carrier.modulator;
@@ -450,7 +450,7 @@ static bool test_active_line_handoff(void)
 	     sample_index < 32u && !data_point_accepted; ++sample_index) {
 		struct qam_point point;
 		const struct qam_point *point_pointer = NULL;
-		const struct qam_point *model_pointer = &ZERO;
+		const struct qam_point *model_pointer = NULL;
 		double carrier_sample;
 		double filtered_sample;
 		long expected_sample;
@@ -465,9 +465,9 @@ static bool test_active_line_handoff(void)
 			point_pointer = &point;
 			model_pointer = &point;
 		}
-		CHECK(qam_modulator_sample_f64(
+		CHECK(v34_pulse_modulator_sample(
 			      &model_carrier, model_pointer, &carrier_sample,
-			      &expected_accepted) == QAM_OK &&
+			      &expected_accepted) == V34_PULSE_MODULATOR_OK &&
 		      v34_preemphasis_sample(
 			      &model_filter, carrier_sample, &filtered_sample) ==
 			      V34_PREEMPHASIS_OK,
@@ -635,8 +635,9 @@ static bool test_transactional_validation(void)
 	struct v34_frame_geometry other_geometry;
 	struct qam_point point = { 0.1, -0.2 };
 	struct qam_point excessive;
-	struct qam_modulator active;
+	struct v34_pulse_modulator active;
 	struct qam_channel other_channel;
+	struct v34_phase3_profile other_profile;
 	double carrier_sample = 123.0;
 	int16_t line_sample = 1234;
 	bool accepted = true;
@@ -679,8 +680,13 @@ static bool test_transactional_validation(void)
 	active = carrier.modulator;
 	other_channel = active.channel;
 	other_channel.carrier_frequency_numerator = 1800;
-	CHECK(qam_modulator_init(
-		      &active, &other_channel, INT16_MAX) == QAM_OK,
+	other_profile = fixture.profile;
+	other_profile.carrier_frequency_numerator = 1800;
+	other_profile.high_carrier = false;
+	CHECK(v34_pulse_modulator_init(
+		      &active, &other_profile, &other_channel, INT16_MAX,
+		      fixture.normalizer.maximum_normalized_point_power) ==
+		      V34_PULSE_MODULATOR_OK,
 	      "mismatched active carrier did not initialize");
 	carrier_before = carrier;
 	CHECK(v34_data_carrier_continue(
@@ -827,6 +833,7 @@ static bool test_transactional_validation(void)
 	      memcmp(&line, &line_before, sizeof(line)) == 0,
 	      "line accepted a point between boundaries");
 	line.generated_samples = UINT64_MAX;
+	line.carrier.modulator.generated_samples = UINT64_MAX;
 	line.preemphasis.next_history = UINT64_MAX % V34_PREEMPHASIS_TAPS;
 	line.carrier.modulator.carrier_phase =
 		(uint32_t)UINT64_MAX *

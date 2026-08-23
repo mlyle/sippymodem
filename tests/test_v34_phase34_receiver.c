@@ -686,19 +686,19 @@ static bool test_training(void)
 		enum v34_symbol_rate symbol_rate;
 		bool high_carrier;
 		bool caller_transmit_only;
-		bool all_preemphasis_profiles;
+		uint8_t preemphasis_filter_index;
 	} cases[] = {
-		{ V34_SYMBOL_RATE_2400, false, false, false },
-		{ V34_SYMBOL_RATE_2400, true, false, false },
-		{ V34_SYMBOL_RATE_2743, false, false, false },
-		{ V34_SYMBOL_RATE_2743, true, false, false },
-		{ V34_SYMBOL_RATE_2800, false, true, true },
-		{ V34_SYMBOL_RATE_2800, true, false, false },
-		{ V34_SYMBOL_RATE_3000, false, false, false },
-		{ V34_SYMBOL_RATE_3000, true, false, false },
-		{ V34_SYMBOL_RATE_3200, false, true, false },
-		{ V34_SYMBOL_RATE_3200, true, false, false },
-		{ V34_SYMBOL_RATE_3429, false, false, false },
+		{ V34_SYMBOL_RATE_2400, false, false, 0 },
+		{ V34_SYMBOL_RATE_2400, true, false, 0 },
+		{ V34_SYMBOL_RATE_2743, false, false, 0 },
+		{ V34_SYMBOL_RATE_2743, true, false, 0 },
+		{ V34_SYMBOL_RATE_2800, false, true, 0 },
+		{ V34_SYMBOL_RATE_2800, true, false, 0 },
+		{ V34_SYMBOL_RATE_3000, false, false, 2 },
+		{ V34_SYMBOL_RATE_3000, true, false, 2 },
+		{ V34_SYMBOL_RATE_3200, false, true, 0 },
+		{ V34_SYMBOL_RATE_3200, true, false, 0 },
+		{ V34_SYMBOL_RATE_3429, false, false, 7 },
 	};
 	bool success = true;
 
@@ -718,28 +718,24 @@ static bool test_training(void)
 		CHECK(selected_count != 0,
 		      "symbol rate %u has no supported data geometry",
 		      cases[index].symbol_rate);
-		for (unsigned int preemphasis =
-			     cases[index].all_preemphasis_profiles ? 0u : 3u;
-		     preemphasis <=
-			     (cases[index].all_preemphasis_profiles ?
-				      V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX :
-				      3u);
-		     ++preemphasis)
-			for (uint8_t selection = 0; selection < selected_count;
-			     ++selection)
-				for (unsigned int role = V34_CALLING_STATION;
-				     role <= V34_ANSWERING_STATION; ++role) {
-					if (cases[index].caller_transmit_only &&
-					    role != V34_CALLING_STATION)
-						continue;
-					if (!test_training_case(
-						    (enum v34_station_role)role,
-						    cases[index].symbol_rate,
-						    selected_rates[selection],
-						    cases[index].high_carrier,
-						    (uint8_t)preemphasis))
-						success = false;
-				}
+		/* Exercise only the profile this receiver advertises to its peer.
+		 * The transmit owner independently covers every requestable
+		 * profile. */
+		for (uint8_t selection = 0; selection < selected_count;
+		     ++selection)
+			for (unsigned int role = V34_CALLING_STATION;
+			     role <= V34_ANSWERING_STATION; ++role) {
+				if (cases[index].caller_transmit_only &&
+				    role != V34_CALLING_STATION)
+					continue;
+				if (!test_training_case(
+					    (enum v34_station_role)role,
+					    cases[index].symbol_rate,
+					    selected_rates[selection],
+					    cases[index].high_carrier,
+					    cases[index].preemphasis_filter_index))
+					success = false;
+			}
 	}
 	return success;
 }

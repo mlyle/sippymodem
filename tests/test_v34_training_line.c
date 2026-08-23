@@ -41,9 +41,8 @@ static bool test_continuous_points(void)
 {
 	struct v34_phase3_profile profile = profile_fixture();
 	struct v34_training_line line;
-	struct qam_modulator model_carrier;
+	struct v34_pulse_modulator model_carrier;
 	struct v34_preemphasis model_filter;
-	const struct qam_point zero = { 0 };
 	uint32_t accepted_points = 0;
 	uint32_t generated_samples = 0;
 
@@ -55,7 +54,7 @@ static bool test_continuous_points(void)
 	while (accepted_points < 512) {
 		struct qam_point point = generated_point(accepted_points);
 		const struct qam_point *supplied = NULL;
-		const struct qam_point *model_point = &zero;
+		const struct qam_point *model_point = NULL;
 		double carrier_sample;
 		double filtered_sample;
 		long expected_sample;
@@ -70,9 +69,9 @@ static bool test_continuous_points(void)
 			supplied = &point;
 			model_point = &point;
 		}
-		CHECK(qam_modulator_sample_f64(
+		CHECK(v34_pulse_modulator_sample(
 			      &model_carrier, model_point, &carrier_sample,
-			      &model_accepted) == QAM_OK &&
+			      &model_accepted) == V34_PULSE_MODULATOR_OK &&
 		      v34_preemphasis_sample(
 			      &model_filter, carrier_sample,
 			      &filtered_sample) == V34_PREEMPHASIS_OK,
@@ -210,6 +209,7 @@ static bool test_initialization_and_overflow(void)
 		      V34_TRAINING_LINE_OK,
 	      "overflow fixture did not initialize");
 	line.generated_samples = UINT64_MAX;
+	line.carrier.generated_samples = UINT64_MAX;
 	line.preemphasis.next_history =
 		(size_t)(UINT64_MAX % V34_PREEMPHASIS_TAPS);
 	line.carrier.carrier_phase =

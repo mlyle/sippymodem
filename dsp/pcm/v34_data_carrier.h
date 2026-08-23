@@ -4,6 +4,7 @@
 #define V34_DATA_CARRIER_H
 
 #include "v34_phase3_profile.h"
+#include "v34_pulse_modulator.h"
 #include "v34_symbol_power.h"
 
 #include <stdbool.h>
@@ -24,7 +25,7 @@ struct v34_data_carrier {
 	struct v34_phase3_profile profile;
 	struct v34_frame_geometry geometry;
 	struct v34_power_normalizer normalizer;
-	struct qam_modulator modulator;
+	struct v34_pulse_modulator modulator;
 	double point_gain;
 };
 
@@ -57,7 +58,7 @@ enum v34_data_carrier_result v34_data_carrier_init(
  * The active modulator and destination remain unchanged on failure. */
 enum v34_data_carrier_result v34_data_carrier_continue(
 	struct v34_data_carrier *carrier,
-	const struct qam_modulator *active_modulator,
+	const struct v34_pulse_modulator *active_modulator,
 	const struct v34_phase3_profile *profile,
 	const struct v34_frame_geometry *geometry,
 	const struct v34_power_normalizer *normalizer,

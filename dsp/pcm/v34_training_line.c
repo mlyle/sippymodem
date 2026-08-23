@@ -12,6 +12,7 @@ static const double V34_TRAINING_ROLLOFF = 0.1;
 static const double V34_EQUAL_POWER_RMS =
 	0.70710678118654752440084436210485;
 static const double V34_POWER_TOLERANCE = 1e-9;
+static const double V34_TRAINING_MAXIMUM_POINT_POWER = 9.0 / 5.0;
 
 enum calibration_stage {
 	CALIBRATE_SYMBOLS,
@@ -106,7 +107,7 @@ static uint32_t calibration_sample_count(
 static enum v34_training_line_result calibrate_power(
 	struct v34_training_line *line)
 {
-	struct qam_modulator carrier = line->carrier;
+	struct v34_pulse_modulator carrier = line->carrier;
 	struct v34_preemphasis preemphasis = line->preemphasis;
 	struct v34_phase3_s_sequence sequence;
 	enum calibration_stage stage = CALIBRATE_SYMBOLS;
@@ -122,13 +123,12 @@ static enum v34_training_line_result calibrate_power(
 		    V34_PHASE3_S_SEQUENCE_OK)
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
 	while (stage != CALIBRATION_COMPLETE) {
-		const struct qam_point zero = { 0 };
-		struct qam_point point = zero;
+		struct qam_point point = { 0 };
 		enum v34_phase3_s_section section;
 		double carrier_sample;
 		double filtered_sample;
 		double magnitude;
-		bool accepting = qam_modulator_can_accept_symbol(&carrier);
+		bool accepting = v34_pulse_modulator_needs_point(&carrier);
 		bool sequence_symbol = false;
 		bool accepted;
 		bool draining_filter = stage == CALIBRATE_FILTER_TAIL;
@@ -146,9 +146,10 @@ static enum v34_training_line_result calibrate_power(
 				stage = CALIBRATE_PULSE_TAIL;
 			}
 		}
-		if (qam_modulator_sample_f64(
-			    &carrier, &point, &carrier_sample, &accepted) !=
-			    QAM_OK ||
+		if (v34_pulse_modulator_sample(
+			    &carrier, accepting ? &point : NULL,
+			    &carrier_sample, &accepted) !=
+			    V34_PULSE_MODULATOR_OK ||
 		    (sequence_symbol && !accepted) ||
 		    v34_preemphasis_sample(
 			    &preemphasis, carrier_sample, &filtered_sample) !=
@@ -223,12 +224,9 @@ static bool power_metadata_is_valid(
 bool v34_training_line_is_valid(
 	const struct v34_training_line *line)
 {
-	uint32_t expected_carrier_phase;
-	uint64_t expected_symbol_phase;
-
 	if (line == NULL ||
 	    !v34_phase3_profile_is_valid(&line->profile) ||
-	    !qam_modulator_is_valid(&line->carrier) ||
+	    !v34_pulse_modulator_is_valid(&line->carrier) ||
 	    !v34_training_line_channel_matches(
 		    &line->profile, &line->carrier.channel) ||
 	    !occupied_band_fits(
@@ -245,16 +243,10 @@ bool v34_training_line_is_valid(
 		    line->profile.preemphasis_filter_index ||
 	    line->preemphasis.next_history !=
 		    line->generated_samples % V34_PREEMPHASIS_TAPS ||
-	    !power_metadata_is_valid(line))
+	    !power_metadata_is_valid(line) ||
+	    line->carrier.generated_samples != line->generated_samples)
 		return false;
-	expected_carrier_phase = (uint32_t)line->generated_samples *
-		line->carrier.carrier_phase_step;
-	expected_symbol_phase =
-		(line->generated_samples % line->carrier.symbol_period_units) *
-		line->profile.symbol_rate_numerator %
-		line->carrier.symbol_period_units;
-	return line->carrier.carrier_phase == expected_carrier_phase &&
-	       line->carrier.symbol_phase_units == expected_symbol_phase;
+	return true;
 }
 
 enum v34_training_line_result v34_training_line_init(
@@ -281,8 +273,10 @@ enum v34_training_line_result v34_training_line_init(
 		return result;
 	if (!isfinite(initialized.target_rms) ||
 	    initialized.target_rms <= 0.0 ||
-	    qam_modulator_init(
-		    &initialized.carrier, &channel, INT16_MAX) != QAM_OK ||
+	    v34_pulse_modulator_init(
+		    &initialized.carrier, profile, &channel, INT16_MAX,
+		    V34_TRAINING_MAXIMUM_POINT_POWER) !=
+		    V34_PULSE_MODULATOR_OK ||
 	    v34_preemphasis_init(
 		    &initialized.preemphasis, sample_rate,
 		    profile->symbol_rate_numerator,
@@ -303,7 +297,7 @@ bool v34_training_line_needs_point(
 	const struct v34_training_line *line)
 {
 	return v34_training_line_is_valid(line) &&
-	       qam_modulator_can_accept_symbol(&line->carrier);
+	       v34_pulse_modulator_needs_point(&line->carrier);
 }
 
 enum v34_training_line_result v34_training_line_sample(
@@ -311,7 +305,6 @@ enum v34_training_line_result v34_training_line_sample(
 	const struct qam_point *point, int16_t *sample,
 	bool *point_accepted)
 {
-	static const struct qam_point zero = { 0 };
 	struct v34_training_line next;
 	double carrier_sample;
 	double filtered_sample;
@@ -323,13 +316,15 @@ enum v34_training_line_result v34_training_line_sample(
 	if (!v34_training_line_is_valid(line) || sample == NULL ||
 	    point_accepted == NULL)
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
-	accepting = qam_modulator_can_accept_symbol(&line->carrier);
+	accepting = v34_pulse_modulator_needs_point(&line->carrier);
 	if ((point != NULL) != accepting)
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
+	if (line->generated_samples == UINT64_MAX)
+		return V34_TRAINING_LINE_OUT_OF_RANGE;
 	next = *line;
-	if (qam_modulator_sample_f64(
-		    &next.carrier, point != NULL ? point : &zero,
-		    &carrier_sample, &accepted) != QAM_OK)
+	if (v34_pulse_modulator_sample(
+		    &next.carrier, point,
+		    &carrier_sample, &accepted) != V34_PULSE_MODULATOR_OK)
 		return point != NULL ? V34_TRAINING_LINE_INVALID_ARGUMENT :
 				       V34_TRAINING_LINE_NUMERIC_FAILURE;
 	if (accepted != accepting ||
@@ -346,8 +341,6 @@ enum v34_training_line_result v34_training_line_sample(
 	rounded = lround(scaled_sample);
 	if (rounded < INT16_MIN || rounded > INT16_MAX)
 		return V34_TRAINING_LINE_CLIPPING_RISK;
-	if (next.generated_samples == UINT64_MAX)
-		return V34_TRAINING_LINE_OUT_OF_RANGE;
 	next.generated_samples++;
 	if (!v34_training_line_is_valid(&next))
 		return V34_TRAINING_LINE_NUMERIC_FAILURE;

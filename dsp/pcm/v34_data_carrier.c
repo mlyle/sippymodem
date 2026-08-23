@@ -113,7 +113,7 @@ bool v34_data_carrier_channel_matches(
 static bool channel_matches_configuration(
 	const struct v34_data_carrier *carrier)
 {
-	const struct qam_modulator *modulator = &carrier->modulator;
+	const struct v34_pulse_modulator *modulator = &carrier->modulator;
 	double required_power;
 
 	return scaled_point_power(
@@ -145,7 +145,7 @@ bool v34_data_carrier_is_valid(
 	    !data_configuration_is_valid(
 		    &carrier->profile, &carrier->geometry,
 		    &carrier->normalizer) ||
-	    !qam_modulator_is_valid(&carrier->modulator) ||
+	    !v34_pulse_modulator_is_valid(&carrier->modulator) ||
 	    !channel_matches_configuration(carrier))
 		return false;
 	return true;
@@ -155,7 +155,7 @@ bool v34_data_carrier_needs_point(
 	const struct v34_data_carrier *carrier)
 {
 	return v34_data_carrier_is_valid(carrier) &&
-	       qam_modulator_can_accept_symbol(&carrier->modulator);
+	       v34_pulse_modulator_needs_point(&carrier->modulator);
 }
 
 enum v34_data_carrier_result v34_data_carrier_init(
@@ -180,10 +180,10 @@ enum v34_data_carrier_result v34_data_carrier_init(
 	if (v34_data_carrier_channel(profile, sample_rate, &channel) !=
 	    V34_DATA_CARRIER_OK)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
-	if (qam_modulator_init_with_point_power_limit(
-		    &initialized.modulator, &channel, INT16_MAX,
+	if (v34_pulse_modulator_init(
+		    &initialized.modulator, profile, &channel, INT16_MAX,
 		    normalizer->maximum_normalized_point_power) !=
-		    QAM_OK ||
+		    V34_PULSE_MODULATOR_OK ||
 	    !v34_data_carrier_is_valid(&initialized))
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	*carrier = initialized;
@@ -192,7 +192,7 @@ enum v34_data_carrier_result v34_data_carrier_init(
 
 enum v34_data_carrier_result v34_data_carrier_continue(
 	struct v34_data_carrier *carrier,
-	const struct qam_modulator *active_modulator,
+	const struct v34_pulse_modulator *active_modulator,
 	const struct v34_phase3_profile *profile,
 	const struct v34_frame_geometry *geometry,
 	const struct v34_power_normalizer *normalizer,
@@ -201,7 +201,8 @@ enum v34_data_carrier_result v34_data_carrier_continue(
 	struct v34_data_carrier continued = { 0 };
 	double required_power;
 
-	if (carrier == NULL || !qam_modulator_is_valid(active_modulator) ||
+	if (carrier == NULL ||
+	    !v34_pulse_modulator_is_valid(active_modulator) ||
 	    !data_configuration_is_valid(profile, geometry, normalizer) ||
 	    !scaled_point_power(normalizer, point_gain, &required_power) ||
 	    active_modulator->amplitude != INT16_MAX ||
@@ -226,10 +227,9 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 	const struct qam_point *point, double *sample,
 	bool *symbol_accepted)
 {
-	static const struct qam_point ZERO = { 0 };
 	struct v34_data_carrier next;
 	struct qam_point scaled_point;
-	const struct qam_point *modulator_point = &ZERO;
+	const struct qam_point *modulator_point = NULL;
 	double generated;
 	bool accepting;
 	bool accepted;
@@ -237,7 +237,7 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 	if (!v34_data_carrier_is_valid(carrier) || sample == NULL ||
 	    symbol_accepted == NULL)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
-	accepting = qam_modulator_can_accept_symbol(&carrier->modulator);
+	accepting = v34_pulse_modulator_needs_point(&carrier->modulator);
 	if ((point != NULL) != accepting ||
 	    (point != NULL && !point_fits(
 			      point, carrier->normalizer
@@ -255,10 +255,10 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 			return V34_DATA_CARRIER_NUMERIC_FAILURE;
 		modulator_point = &scaled_point;
 	}
-	if (qam_modulator_sample_f64(
+	if (v34_pulse_modulator_sample(
 		    &next.modulator, modulator_point,
 		    &generated, &accepted) !=
-	    QAM_OK)
+	    V34_PULSE_MODULATOR_OK)
 		return point != NULL ? V34_DATA_CARRIER_INVALID_ARGUMENT :
 				       V34_DATA_CARRIER_NUMERIC_FAILURE;
 	if (accepted != accepting || !isfinite(generated) ||
