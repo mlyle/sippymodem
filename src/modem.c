@@ -699,6 +699,18 @@ static unsigned dpstat2status(unsigned dpstat)
 }
 
 
+void modem_dp_connected(struct modem *m)
+{
+	if (m == NULL)
+		return;
+	if (m->retrain_pending && IS_STATE_ONLINE(m->state)) {
+		modem_update_status(m, STATUS_RETRAIN_COMPLETE);
+	} else if (!IS_STATE_LINKED(m->state) && !IS_STATE_DISC(m->state)) {
+		modem_update_status(m, STATUS_DP_LINK);
+	}
+}
+
+
 static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 				   const u8 *receive_codewords,
 				   u8 *transmit_codewords,
@@ -735,12 +747,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		case DPSTAT_OK:
 			break;
 		case DPSTAT_CONNECT:
-			if (m->retrain_pending && IS_STATE_ONLINE(m->state)) {
-				modem_update_status(m, STATUS_RETRAIN_COMPLETE);
-			} else if(!IS_STATE_LINKED(m->state) &&
-			   !IS_STATE_DISC(m->state)) {
-				modem_update_status(m,STATUS_DP_LINK);
-			}
+			modem_dp_connected(m);
 			break;
 		case DPSTAT_CHANGEDP:
 			do_modem_change_dp(m);

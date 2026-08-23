@@ -348,6 +348,7 @@ static bool enter_link(struct v90_datapump *datapump)
 	    TRAINING_SESSION_OK)
 		return false;
 	datapump->dp.status = DPSTAT_CONNECT;
+	modem_dp_connected(datapump->dp.modem);
 	return true;
 }
 

@@ -2746,6 +2746,7 @@ V92_PROFILE_TEST_OBJECTS := $(sort \
 		$(PCM_CALL_TEST_OBJECTS)))
 V90_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_v90_datapump
 V90_DATAPUMP_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/modem_stubs.o \
 	$(BUILD_DIR)/test_v90_datapump.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v90_datapump.o \

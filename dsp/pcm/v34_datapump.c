@@ -463,6 +463,7 @@ static bool enter_link(struct v34_datapump *datapump)
 		return false;
 	datapump->missing_carrier_samples = 0;
 	datapump->dp.status = DPSTAT_CONNECT;
+	modem_dp_connected(datapump->dp.modem);
 	return true;
 }
 

@@ -501,7 +501,7 @@ static bool test_datapump_error_control_policy(void)
 		modem->cfg.ec = 1;
 		modem->cfg.ec_detector = 1;
 
-		modem_update_status(modem, STATUS_DP_LINK);
+		modem_dp_connected(modem);
 		if (cases[index].lapm) {
 			CHECK(modem->cfg.ec == 1 &&
 				      modem->get_bits == modem_detector_get_bits &&
@@ -513,6 +513,20 @@ static bool test_datapump_error_control_policy(void)
 				      modem->get_bits == modem_async_get_bits &&
 				      modem->put_bits == modem_async_put_bits,
 			      "data pump %u did not select raw transport",
+			      cases[index].id);
+		}
+		{
+			int (*get_bits)(struct modem *, int, u8 *, int) =
+				modem->get_bits;
+			int (*put_bits)(struct modem *, int, u8 *, int) =
+				modem->put_bits;
+			unsigned int state = modem->state;
+
+			modem_dp_connected(modem);
+			CHECK(modem->get_bits == get_bits &&
+				      modem->put_bits == put_bits &&
+				      modem->state == state,
+			      "duplicate data-pump link notification changed transport %u",
 			      cases[index].id);
 		}
 
@@ -530,7 +544,7 @@ static bool test_datapump_error_control_policy(void)
 		modem->cfg.ec = 0;
 		modem->cfg.ec_detector = 0;
 
-		modem_update_status(modem, STATUS_DP_LINK);
+		modem_dp_connected(modem);
 		if (cases[index].lapm) {
 			CHECK(modem->get_bits == modem_detector_get_bits &&
 				      modem->put_bits == modem_detector_put_bits &&

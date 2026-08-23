@@ -489,6 +489,7 @@ modem_ec_active_compression(const struct modem *m);
 extern const char *modem_active_modulation_name(const struct modem *m);
 
 /* status & config */
+extern void modem_dp_connected(struct modem *m);
 extern void modem_update_status(struct modem *m, unsigned status);
 extern void modem_update_config(struct modem *m, struct modem_config *cfg);
 
