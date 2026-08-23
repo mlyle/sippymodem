@@ -2005,8 +2005,6 @@ static bool run_v34_recording_replay(
 		      v34_replay_sample_parse(
 			      retrain_sample_value, &retrain_sample),
 	      "optional V.34 recording replay parameter is invalid");
-	CHECK(!answerer || retrain_sample == SIZE_MAX,
-	      "V.34 answer recording does not accept an originator retrain sample");
 	CHECK(channel_bench_recording_load(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
@@ -2433,6 +2431,8 @@ int main(void)
 		getenv("V34_REPLAY_RETRAIN_SAMPLE");
 	const char *v34_answer_recording_symbol_rate =
 		getenv("V34_ANSWER_REPLAY_SYMBOL_RATE");
+	const char *v34_answer_recording_retrain_sample =
+		getenv("V34_ANSWER_REPLAY_RETRAIN_SAMPLE");
 	const char *v34_matrix_filter = getenv("V34_MATRIX_FILTER");
 	const bool skip_v34_matrix =
 		getenv("MODEM_INTEGRATION_SKIP_V34_MATRIX") != NULL;
@@ -2783,7 +2783,8 @@ int main(void)
 			"[  SKIPPED ] V.34 answer recording replay (V34_ANSWER_REPLAY_RX_PCM unset)\n");
 	} else if (!run_v34_recording_replay(
 			   v34_answer_recording_path,
-			   v34_answer_recording_symbol_rate, NULL, true)) {
+			   v34_answer_recording_symbol_rate,
+			   v34_answer_recording_retrain_sample, true)) {
 		return 1;
 	}
 	if (v90_recording_path == NULL || v90_recording_path[0] == '\0') {

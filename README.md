@@ -286,10 +286,13 @@ The same integration test can replay optional V.34 receive recordings. Set
 an answered call. Set the corresponding `V34_REPLAY_SYMBOL_RATE` or
 `V34_ANSWER_REPLAY_SYMBOL_RATE` to 2400, 2800, 3000, 3200, or 3429 when the
 recorded call forced that symbol rate; omitting it preserves automatic
-selection. Each input is 8 kHz signed 16-bit little-endian PCM; the test loads
-at most three minutes, reproduces the raw V.34 setup and call role, and requires
-carrier acquisition. The ordinary test run reports a skip when no recording is
-supplied, so large and private call evidence stays outside this repository.
+selection. Set the corresponding `V34_REPLAY_RETRAIN_SAMPLE` or
+`V34_ANSWER_REPLAY_RETRAIN_SAMPLE` to inject ATO1 at an exact receive-sample
+boundary and require a second CONNECT. Each input is 8 kHz signed 16-bit
+little-endian PCM; the test loads at most three minutes, reproduces the raw
+V.34 setup and call role, and requires carrier acquisition. The ordinary test
+run reports a skip when no recording is supplied, so large and private call
+evidence stays outside this repository.
 
 For short local iterations, `MODEM_INTEGRATION_FILTER` selects ordinary cases
 by name and `V34_MATRIX_FILTER` selects V.34 rate-matrix cases by name. Both
