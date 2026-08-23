@@ -2280,7 +2280,9 @@ V90_UPSTREAM_DATA_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_cp.o \
 	$(BUILD_DIR)/v90_mp.o \
 	$(filter-out $(BUILD_DIR)/test_v34_data_stream.o, \
-		$(V34_DATA_STREAM_TEST_OBJECTS)))
+		$(V34_DATA_STREAM_TEST_OBJECTS)) \
+	$(filter-out $(BUILD_DIR)/test_v34_phase4_e_sequence.o, \
+		$(V34_PHASE4_E_SEQUENCE_TEST_OBJECTS)))
 V90_PHASE4_ANALOG_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_analog_station
 V90_PHASE4_ANALOG_STATION_TEST_OBJECTS := $(sort \
