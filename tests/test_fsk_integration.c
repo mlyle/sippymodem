@@ -2674,15 +2674,16 @@ int main(void)
 		},
 		{
 			.id = DP_V34,
-			.name = "V.34 9600 LAPM retrain",
-			.selection_command = "AT+MS=34,1,9600,9600\r",
-			.caller_tx_rate = 9600,
-			.caller_rx_rate = 9600,
-			.answerer_tx_rate = 9600,
-			.answerer_rx_rate = 9600,
+			.name = "V.34 21600 LAPM retrain",
+			.selection_command =
+				"AT+MS=34,0,21600,21600+V34B=2743\r",
+			.caller_tx_rate = 21600,
+			.caller_rx_rate = 21600,
+			.answerer_tx_rate = 21600,
+			.answerer_rx_rate = 21600,
 			.carrier_loss_samples = MODEM_RATE / 2,
 			.training_frame_limit = 1500,
-			.automode = true,
+			.requires_v8 = true,
 			.test_retrain = true,
 		},
 		{
