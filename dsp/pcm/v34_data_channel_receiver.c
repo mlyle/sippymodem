@@ -25,7 +25,7 @@ bool v34_data_channel_receiver_is_valid(
 		       &receiver->data_receiver.mapping_decoder.parameters);
 }
 
-enum v34_data_channel_receiver_result
+enum v34_data_receive_result
 v34_data_channel_receiver_init(
 	struct v34_data_channel_receiver *receiver,
 	const struct v34_power_normalizer *normalizer,
@@ -42,14 +42,14 @@ v34_data_channel_receiver_init(
 	    v34_channel_frame_receiver_init(
 		    &initialized.channel_receiver, normalizer, geometry,
 		    expanded_shaping, coefficients, selection) !=
-		    V34_CHANNEL_FRAME_RECEIVER_OK ||
+		    V34_DATA_RECEIVE_OK ||
 	    v34_data_receiver_init(
 		    &initialized.data_receiver, geometry, expanded_shaping,
-		    transmitting_role) != V34_DATA_RECEIVER_OK ||
+		    transmitting_role) != V34_DATA_RECEIVE_OK ||
 	    !v34_data_channel_receiver_is_valid(&initialized))
-		return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V34_DATA_CHANNEL_RECEIVER_OK;
+	return V34_DATA_RECEIVE_OK;
 }
 
 bool v34_data_channel_receiver_is_receiving_b1(
@@ -60,38 +60,7 @@ bool v34_data_channel_receiver_is_receiving_b1(
 		       &receiver->data_receiver);
 }
 
-static enum v34_data_channel_receiver_result channel_result(
-	enum v34_channel_frame_receiver_result result)
-{
-	switch (result) {
-	case V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE:
-		return V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE;
-	case V34_CHANNEL_FRAME_RECEIVER_OUT_OF_RANGE:
-		return V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE;
-	case V34_CHANNEL_FRAME_RECEIVER_OK:
-	case V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT:
-		break;
-	}
-	return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
-}
-
-static enum v34_data_channel_receiver_result data_result(
-	enum v34_data_receiver_result result)
-{
-	switch (result) {
-	case V34_DATA_RECEIVER_OK:
-		return V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_RECEIVER_B1_IN_PROGRESS:
-		return V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_RECEIVER_B1_COMPLETE:
-		return V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE;
-	case V34_DATA_RECEIVER_INVALID_ARGUMENT:
-		break;
-	}
-	return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
-}
-
-enum v34_data_channel_receiver_result
+enum v34_data_receive_result
 v34_data_channel_receiver_advance(
 	struct v34_data_channel_receiver *receiver,
 	const struct qam_point
@@ -108,59 +77,35 @@ v34_data_channel_receiver_advance(
 	struct v34_decided_4d_interval decided
 		[V34_4D_INTERVALS_PER_MAPPING_FRAME];
 	struct v34_received_mapping_frame generated_received;
-	enum v34_data_channel_receiver_result emitted_status;
-	enum v34_channel_frame_receiver_result channel_status;
-	enum v34_data_receiver_result data_status;
+	enum v34_data_receive_result channel_status;
+	enum v34_data_receive_result data_status;
 	bool frame_ready;
 
 	if (!v34_data_channel_receiver_is_valid(receiver) ||
 	    normalized == NULL || current == NULL || decision_targets == NULL ||
 	    received == NULL)
-		return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	/* Retain only the child that commits before frame decoding can fail. */
 	saved_channel_receiver = receiver->channel_receiver;
 	channel_status = v34_channel_frame_receiver_advance(
 		&receiver->channel_receiver, normalized, &generated_current,
 		generated_targets, decided, &frame_ready);
-	if (channel_status != V34_CHANNEL_FRAME_RECEIVER_OK)
-		return channel_result(channel_status);
+	if (channel_status != V34_DATA_RECEIVE_OK)
+		return channel_status;
 	if (!frame_ready) {
 		*current = generated_current;
 		memcpy(decision_targets, generated_targets,
 		       sizeof(generated_targets));
-		return V34_DATA_CHANNEL_RECEIVER_OK;
+		return V34_DATA_RECEIVE_OK;
 	}
 	data_status = v34_data_receiver_receive_mapping_frame(
 		&receiver->data_receiver, decided, &generated_received);
-	emitted_status = data_result(data_status);
-	if (emitted_status == V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT) {
+	if (data_status == V34_DATA_RECEIVE_INVALID_ARGUMENT) {
 		receiver->channel_receiver = saved_channel_receiver;
-		return V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT;
+		return data_status;
 	}
 	*current = generated_current;
 	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
 	*received = generated_received;
-	return emitted_status;
-}
-
-const char *v34_data_channel_receiver_result_name(
-	enum v34_data_channel_receiver_result result)
-{
-	switch (result) {
-	case V34_DATA_CHANNEL_RECEIVER_OK:
-		return "ok";
-	case V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY:
-		return "mapping frame ready";
-	case V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS:
-		return "B1 in progress";
-	case V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE:
-		return "B1 complete";
-	case V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
+	return data_status;
 }

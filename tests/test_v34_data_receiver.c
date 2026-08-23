@@ -71,7 +71,7 @@ static bool initialize_fixture(
 		       &fixture->receiver, &fixture->geometry,
 		       configuration->expanded,
 		       configuration->transmitting_role) ==
-		       V34_DATA_RECEIVER_OK;
+		       V34_DATA_RECEIVE_OK;
 }
 
 static void decisions_from_encoded(
@@ -188,7 +188,7 @@ static bool test_b1_and_superframe_handoff(void)
 		      "B1 fixture %zu did not initialize", index);
 		while (v34_data_receiver_is_receiving_b1(
 			&fixture.receiver)) {
-			enum v34_data_receiver_result expected;
+			enum v34_data_receive_result expected;
 
 			CHECK(transmit_next(
 				      &fixture, true, false, false,
@@ -196,8 +196,8 @@ static bool test_b1_and_superframe_handoff(void)
 			      "B1 frame %zu/%zu did not transmit", index,
 			      mapping_frames);
 			expected = packet.frame.completes_data_frame ?
-				V34_DATA_RECEIVER_B1_COMPLETE :
-				V34_DATA_RECEIVER_B1_IN_PROGRESS;
+				V34_DATA_RECEIVE_B1_COMPLETE :
+				V34_DATA_RECEIVE_B1_IN_PROGRESS;
 			CHECK(v34_data_receiver_receive_mapping_frame(
 				      &fixture.receiver, packet.decided, &received) ==
 				      expected &&
@@ -215,7 +215,7 @@ static bool test_b1_and_superframe_handoff(void)
 				      &packet) &&
 			      v34_data_receiver_receive_mapping_frame(
 				      &fixture.receiver, packet.decided, &received) ==
-				      V34_DATA_RECEIVER_OK &&
+				      V34_DATA_RECEIVE_MAPPING_FRAME_READY &&
 			      received_matches(&received, &packet) &&
 			      fixture.receiver.schedule.data_frame_in_superframe ==
 				      fixture.transmit_schedule
@@ -263,7 +263,7 @@ static bool test_b1_errors_and_rejection(void)
 	saved_received = received;
 	CHECK(v34_data_receiver_receive_mapping_frame(
 		      &fixture.receiver, packet.decided, &received) ==
-		      V34_DATA_RECEIVER_B1_IN_PROGRESS &&
+		      V34_DATA_RECEIVE_B1_IN_PROGRESS &&
 	      received_matches(&received, &packet) &&
 	      fixture.receiver.b1_received_bits == packet.frame.data_bits &&
 	      fixture.receiver.b1_error_bits == 1u,
@@ -276,12 +276,12 @@ static bool test_b1_errors_and_rejection(void)
 	received = saved_received;
 	CHECK(v34_data_receiver_receive_mapping_frame(
 		      &fixture.receiver, malformed, &received) ==
-		      V34_DATA_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&received, &saved_received, sizeof(received)) == 0 &&
 	      v34_data_receiver_receive_mapping_frame(
 		      &fixture.receiver, packet.decided, &received) ==
-		      V34_DATA_RECEIVER_B1_IN_PROGRESS &&
+		      V34_DATA_RECEIVE_B1_IN_PROGRESS &&
 	      received_matches(&received, &packet),
 	      "structural rejection changed state or prevented retry");
 	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]),
@@ -299,7 +299,7 @@ static bool test_b1_errors_and_rejection(void)
 		CHECK(transmit_next(&fixture, true, false, false, 0, &packet) &&
 		      v34_data_receiver_receive_mapping_frame(
 			      &fixture.receiver, packet.decided, &received) ==
-			      V34_DATA_RECEIVER_B1_IN_PROGRESS,
+			      V34_DATA_RECEIVE_B1_IN_PROGRESS,
 		      "B1 did not advance to an auxiliary frame");
 	}
 	saved = fixture.receiver;
@@ -307,8 +307,8 @@ static bool test_b1_errors_and_rejection(void)
 	      v34_data_receiver_receive_mapping_frame(
 		      &fixture.receiver, packet.decided, &received) ==
 		      (packet.frame.completes_data_frame ?
-			       V34_DATA_RECEIVER_B1_COMPLETE :
-			       V34_DATA_RECEIVER_B1_IN_PROGRESS) &&
+			       V34_DATA_RECEIVE_B1_COMPLETE :
+			       V34_DATA_RECEIVE_B1_IN_PROGRESS) &&
 	      received_matches(&received, &packet) &&
 	      fixture.receiver.b1_received_bits ==
 		      saved.b1_received_bits + packet.frame.data_bits &&
@@ -320,8 +320,8 @@ static bool test_b1_errors_and_rejection(void)
 		      v34_data_receiver_receive_mapping_frame(
 			      &fixture.receiver, packet.decided, &received) ==
 			      (packet.frame.completes_data_frame ?
-				       V34_DATA_RECEIVER_B1_COMPLETE :
-				       V34_DATA_RECEIVER_B1_IN_PROGRESS),
+				       V34_DATA_RECEIVE_B1_COMPLETE :
+				       V34_DATA_RECEIVE_B1_IN_PROGRESS),
 		      "errored B1 did not reach its data handoff");
 	}
 	CHECK(fixture.receiver.b1_received_bits ==
@@ -348,24 +348,24 @@ static bool test_validation(void)
 	CHECK(v34_data_receiver_init(
 		      NULL, &fixture.geometry, false,
 		      V34_CALLING_STATION) ==
-		      V34_DATA_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_receiver_init(
 		      &fixture.receiver, &invalid_geometry, false,
 		      V34_CALLING_STATION) ==
-		      V34_DATA_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_receiver_init(
 		      &fixture.receiver, &fixture.geometry, false,
 		      (enum v34_station_role)2) ==
-		      V34_DATA_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
 	      "invalid initialization changed the receiver");
 	memset(&received, 0xa5, sizeof(received));
 	CHECK(v34_data_receiver_receive_mapping_frame(
 		      &fixture.receiver, NULL, &received) ==
-		      V34_DATA_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_receiver_receive_mapping_frame(
 		      &fixture.receiver, decided, NULL) ==
-		      V34_DATA_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
 	      "invalid receive arguments changed the receiver");
 	CHECK(v34_data_receiver_is_valid(&fixture.receiver) &&

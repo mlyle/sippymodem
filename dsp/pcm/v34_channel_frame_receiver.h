@@ -5,15 +5,9 @@
 
 #include "v34_channel_conditioner.h"
 #include "v34_channel_frame_decoder.h"
+#include "v34_data_receive.h"
 
 #include <stdbool.h>
-
-enum v34_channel_frame_receiver_result {
-	V34_CHANNEL_FRAME_RECEIVER_OK,
-	V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT,
-	V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE,
-	V34_CHANNEL_FRAME_RECEIVER_OUT_OF_RANGE,
-};
 
 struct v34_channel_frame_receiver {
 	struct v34_channel_conditioner conditioner;
@@ -26,7 +20,7 @@ struct v34_channel_frame_receiver {
  * and mapping selection must describe that peer's negotiated transmitter.
  * All configuration and mutable history are owned by the destination; calls
  * on separate instances may proceed concurrently. */
-enum v34_channel_frame_receiver_result
+enum v34_data_receive_result
 v34_channel_frame_receiver_init(
 	struct v34_channel_frame_receiver *receiver,
 	const struct v34_power_normalizer *normalizer,
@@ -48,7 +42,7 @@ bool v34_channel_frame_receiver_is_valid(
  * decision-directed channel adaptation. `decided_frame` changes only when
  * `frame_ready` becomes true after traceback. State and every output are
  * unchanged on failure. Advance one instance from only one thread at a time. */
-enum v34_channel_frame_receiver_result
+enum v34_data_receive_result
 v34_channel_frame_receiver_advance(
 	struct v34_channel_frame_receiver *receiver,
 	const struct qam_point
@@ -59,8 +53,5 @@ v34_channel_frame_receiver_advance(
 	struct v34_decided_4d_interval
 		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready);
-
-const char *v34_channel_frame_receiver_result_name(
-	enum v34_channel_frame_receiver_result result);
 
 #endif /* V34_CHANNEL_FRAME_RECEIVER_H */

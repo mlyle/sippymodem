@@ -223,7 +223,7 @@ static bool initialize_fixture(
 		    &generated.geometry, configuration->expanded, COEFFICIENTS,
 		    configuration->trellis,
 		    configuration->transmitting_role) !=
-		    V34_DATA_CHANNEL_RECEIVER_OK)
+		    V34_DATA_RECEIVE_OK)
 		return false;
 	*fixture = generated;
 	return true;
@@ -390,8 +390,8 @@ static bool test_generated_channel_round_trip(void)
 				struct v34_survivor_decision current;
 				struct v34_received_mapping_frame received;
 				struct v34_received_mapping_frame saved_received;
-				enum v34_data_channel_receiver_result result;
-				enum v34_data_channel_receiver_result expected_result;
+				enum v34_data_receive_result result;
+				enum v34_data_receive_result expected_result;
 				uint8_t inversion_bit = (uint8_t)(
 					(transmitted.mapping_frame.inversion_4d_mask >>
 					 interval) &
@@ -426,7 +426,7 @@ static bool test_generated_channel_round_trip(void)
 					&fixture.receiver, normalized, &current,
 					decision_targets, &received);
 				CHECK(result <=
-					      V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE &&
+					      V34_DATA_RECEIVE_B1_COMPLETE &&
 				      current_decision_matches(
 					      &current,
 					      &transmitted.encoded.interval[interval],
@@ -439,7 +439,7 @@ static bool test_generated_channel_round_trip(void)
 					      &expected_targets[1]),
 				      "mode %zu frame %zu interval %zu decision changed",
 				      mode, frame_index, interval);
-				if (result == V34_DATA_CHANNEL_RECEIVER_OK) {
+				if (result == V34_DATA_RECEIVE_OK) {
 					CHECK(memcmp(&received, &saved_received,
 						     sizeof(received)) == 0,
 					      "channel receiver emitted a partial frame");
@@ -452,9 +452,9 @@ static bool test_generated_channel_round_trip(void)
 						(received_frames + 1u ==
 								 fixture.geometry
 									 .mapping_frames_per_data_frame ?
-							 V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE :
-							 V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS) :
-						V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY;
+							 V34_DATA_RECEIVE_B1_COMPLETE :
+							 V34_DATA_RECEIVE_B1_IN_PROGRESS) :
+						V34_DATA_RECEIVE_MAPPING_FRAME_READY;
 				CHECK(received_frames < frame_index &&
 					      result == expected_result &&
 					      received_matches(
@@ -710,7 +710,7 @@ static bool outputs_are_unchanged_after(
 	struct v34_data_channel_receiver *receiver,
 	const struct qam_point
 		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	enum v34_data_channel_receiver_result expected_result)
+	enum v34_data_receive_result expected_result)
 {
 	struct v34_data_channel_receiver saved_receiver = *receiver;
 	struct v34_survivor_decision current;
@@ -766,20 +766,20 @@ static bool test_validation_and_rollback(void)
 		      CONFIGURATIONS[0].expanded, invalid_coefficients,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_channel_receiver_init(
 		      &fixture.receiver, &fixture.normalizer, &other.geometry,
 		      CONFIGURATIONS[1].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[1].trellis,
 		      CONFIGURATIONS[1].transmitting_role) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&fixture.receiver, &saved_receiver,
 		     sizeof(fixture.receiver)) == 0,
 	      "invalid initialization changed the receiver");
 	invalid[1].quadrature = NAN;
 	CHECK(outputs_are_unchanged_after(
 		      &fixture.receiver, invalid,
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT),
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT),
 	      "non-finite input was not transactional");
 	invalid[1].quadrature = 0.0;
 	invalid[0].in_phase =
@@ -787,12 +787,12 @@ static bool test_validation_and_rollback(void)
 		fixture.normalizer.normalization_gain;
 	CHECK(outputs_are_unchanged_after(
 		      &fixture.receiver, invalid,
-		      V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE),
+		      V34_DATA_RECEIVE_OUT_OF_RANGE),
 	      "unrepresentable feedback was not transactional");
 	invalid[0].in_phase = DBL_MAX;
 	CHECK(outputs_are_unchanged_after(
 		      &fixture.receiver, invalid,
-		      V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE),
+		      V34_DATA_RECEIVE_NUMERIC_FAILURE),
 	      "conditioning overflow was not transactional");
 	fixture.receiver.channel_receiver.receive_precoder.coefficients[0].real =
 		INT16_MIN;
@@ -801,22 +801,22 @@ static bool test_validation_and_rollback(void)
 		      &fixture.receiver) &&
 	      v34_data_channel_receiver_advance(
 		      &fixture.receiver, invalid, &current, targets, &received) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_channel_receiver_advance(
 		      NULL, invalid, &current, targets, &received) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_channel_receiver_advance(
 		      &saved_receiver, NULL, &current, targets, &received) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_channel_receiver_advance(
 		      &saved_receiver, invalid, NULL, targets, &received) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_channel_receiver_advance(
 		      &saved_receiver, invalid, &current, NULL, &received) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_channel_receiver_advance(
 		      &saved_receiver, invalid, &current, targets, NULL) ==
-		      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT,
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT,
 	      "invalid receiver arguments were accepted");
 	return true;
 }
@@ -898,31 +898,7 @@ static bool test_equalizer_receiver_validation(void)
 
 static bool test_result_names(void)
 {
-	return strcmp(v34_data_channel_receiver_result_name(
-			      V34_DATA_CHANNEL_RECEIVER_OK),
-		      "ok") == 0 &&
-	       strcmp(v34_data_channel_receiver_result_name(
-			      V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY),
-		      "mapping frame ready") == 0 &&
-	       strcmp(v34_data_channel_receiver_result_name(
-			      V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS),
-		      "B1 in progress") == 0 &&
-	       strcmp(v34_data_channel_receiver_result_name(
-			      V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE),
-		      "B1 complete") == 0 &&
-	       strcmp(v34_data_channel_receiver_result_name(
-			      V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT),
-		      "invalid argument") == 0 &&
-	       strcmp(v34_data_channel_receiver_result_name(
-			      V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE),
-		      "numeric failure") == 0 &&
-	       strcmp(v34_data_channel_receiver_result_name(
-			      V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE),
-		      "out of range") == 0 &&
-	       strcmp(v34_data_channel_receiver_result_name(
-			      (enum v34_data_channel_receiver_result)99),
-		      "unknown") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
+	return strcmp(v34_data_equalizer_receiver_result_name(
 			      V34_DATA_EQUALIZER_RECEIVER_OK),
 		      "ok") == 0 &&
 	       strcmp(v34_data_equalizer_receiver_result_name(

@@ -193,20 +193,23 @@ static bool make_observation(
 }
 
 static enum v34_data_decision_receiver_result mapped_result(
-	enum v34_data_channel_receiver_result result)
+	enum v34_data_receive_result result)
 {
 	switch (result) {
-	case V34_DATA_CHANNEL_RECEIVER_OK:
+	case V34_DATA_RECEIVE_OK:
 		return V34_DATA_DECISION_RECEIVER_INTERVAL_READY;
-	case V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY:
+	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
 		return V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS:
+	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
 		return V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE:
+	case V34_DATA_RECEIVE_B1_COMPLETE:
 		return V34_DATA_DECISION_RECEIVER_B1_COMPLETE;
-	case V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT:
-	case V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE:
-	case V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE:
+	case V34_DATA_RECEIVE_INTERVAL_READY:
+	case V34_DATA_RECEIVE_FAILED:
+	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
+	case V34_DATA_RECEIVE_INVALID_STATE:
+	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
+	case V34_DATA_RECEIVE_OUT_OF_RANGE:
 		break;
 	}
 	return V34_DATA_DECISION_RECEIVER_INVALID_STATE;
@@ -287,7 +290,7 @@ static bool test_generated_pair_path(void)
 				struct v34_received_mapping_frame model_received;
 				struct qam_point targets[2];
 				struct v34_analytic_sample fixed_target;
-				enum v34_data_channel_receiver_result model_result;
+				enum v34_data_receive_result model_result;
 				enum v34_data_decision_receiver_result result;
 
 				for (size_t symbol = 0; symbol < 2u; ++symbol) {
@@ -363,7 +366,7 @@ static bool test_generated_pair_path(void)
 				      !fixture.receiver.has_first_symbol,
 				      "mode %zu frame %zu interval %zu second symbol changed",
 				      mode, frame_index, interval);
-				if (model_result == V34_DATA_CHANNEL_RECEIVER_OK) {
+				if (model_result == V34_DATA_RECEIVE_OK) {
 					CHECK(memcmp(
 						      &output.received,
 						      &(struct v34_received_mapping_frame){ 0 },

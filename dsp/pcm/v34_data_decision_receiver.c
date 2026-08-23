@@ -46,7 +46,7 @@ v34_data_decision_receiver_init(
 	    v34_data_channel_receiver_init(
 		    &initialized.data_receiver, normalizer, geometry,
 		    expanded_shaping, coefficients, selection,
-		    transmitting_role) != V34_DATA_CHANNEL_RECEIVER_OK ||
+		    transmitting_role) != V34_DATA_RECEIVE_OK ||
 	    !v34_data_decision_receiver_is_valid(&initialized))
 		return V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
@@ -105,22 +105,25 @@ static struct v34_adaptive_equalizer_decision skip_decision(
 }
 
 static enum v34_data_decision_receiver_result channel_result(
-	enum v34_data_channel_receiver_result result)
+	enum v34_data_receive_result result)
 {
 	switch (result) {
-	case V34_DATA_CHANNEL_RECEIVER_OK:
+	case V34_DATA_RECEIVE_OK:
 		return V34_DATA_DECISION_RECEIVER_INTERVAL_READY;
-	case V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY:
+	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
 		return V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS:
+	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
 		return V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE:
+	case V34_DATA_RECEIVE_B1_COMPLETE:
 		return V34_DATA_DECISION_RECEIVER_B1_COMPLETE;
-	case V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE:
+	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
 		return V34_DATA_DECISION_RECEIVER_NUMERIC_FAILURE;
-	case V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE:
+	case V34_DATA_RECEIVE_OUT_OF_RANGE:
 		return V34_DATA_DECISION_RECEIVER_OUT_OF_RANGE;
-	case V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT:
+	case V34_DATA_RECEIVE_INTERVAL_READY:
+	case V34_DATA_RECEIVE_FAILED:
+	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
+	case V34_DATA_RECEIVE_INVALID_STATE:
 		break;
 	}
 	return V34_DATA_DECISION_RECEIVER_INVALID_STATE;
@@ -145,7 +148,7 @@ v34_data_decision_receiver_observe(
 	struct qam_point targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_analytic_sample target;
 	enum v34_data_decision_receiver_result result;
-	enum v34_data_channel_receiver_result channel_status;
+	enum v34_data_receive_result channel_status;
 
 	if (observation == NULL || output == NULL ||
 	    memory_regions_overlap(

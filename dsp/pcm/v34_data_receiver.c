@@ -51,7 +51,7 @@ bool v34_data_receiver_is_valid(
 	       b1_progress_is_valid(receiver);
 }
 
-enum v34_data_receiver_result v34_data_receiver_init(
+enum v34_data_receive_result v34_data_receiver_init(
 	struct v34_data_receiver *receiver,
 	const struct v34_frame_geometry *geometry,
 	bool expanded_shaping,
@@ -77,9 +77,9 @@ enum v34_data_receiver_result v34_data_receiver_init(
 		    &initialized.mapping_decoder, &parameters) !=
 		    V34_4D_DECODER_OK ||
 	    !v34_data_receiver_is_valid(&initialized))
-		return V34_DATA_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V34_DATA_RECEIVER_OK;
+	return V34_DATA_RECEIVE_OK;
 }
 
 bool v34_data_receiver_is_receiving_b1(
@@ -112,7 +112,7 @@ static uint16_t b1_error_count(
 	return errors;
 }
 
-enum v34_data_receiver_result
+enum v34_data_receive_result
 v34_data_receiver_receive_mapping_frame(
 	struct v34_data_receiver *receiver,
 	const struct v34_decided_4d_interval
@@ -125,15 +125,15 @@ v34_data_receiver_receive_mapping_frame(
 
 	if (!v34_data_receiver_is_valid(receiver) ||
 	    decided == NULL || received == NULL)
-		return V34_DATA_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
 	if (!next.b1_active && !prepare_next_schedule(&next.schedule))
-		return V34_DATA_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	result = v34_receive_mapping_frame(
 		&next.schedule, &next.descrambler, &next.mapping_decoder,
 		decided, &decoded);
 	if (result != V34_MAPPING_FRAME_RECEIVER_OK)
-		return V34_DATA_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (next.b1_active) {
 		uint16_t frame_bits = (uint16_t)(decoded.primary_bit_count +
 					       decoded.auxiliary_bit_count);
@@ -145,15 +145,15 @@ v34_data_receiver_receive_mapping_frame(
 			next.b1_error_bits + b1_error_count(&decoded));
 		next.b1_active = !complete;
 		if (!v34_data_receiver_is_valid(&next))
-			return V34_DATA_RECEIVER_INVALID_ARGUMENT;
+			return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 		*receiver = next;
 		*received = decoded;
-		return complete ? V34_DATA_RECEIVER_B1_COMPLETE :
-				  V34_DATA_RECEIVER_B1_IN_PROGRESS;
+		return complete ? V34_DATA_RECEIVE_B1_COMPLETE :
+				  V34_DATA_RECEIVE_B1_IN_PROGRESS;
 	}
 	if (!v34_data_receiver_is_valid(&next))
-		return V34_DATA_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = next;
 	*received = decoded;
-	return V34_DATA_RECEIVER_OK;
+	return V34_DATA_RECEIVE_MAPPING_FRAME_READY;
 }

@@ -92,7 +92,7 @@ static bool initialize_fixture(
 		       &fixture->data_receiver, &fixture->geometry,
 		       configuration->expanded,
 		       configuration->transmitting_role) ==
-		       V34_DATA_RECEIVER_OK;
+		       V34_DATA_RECEIVE_OK;
 }
 
 static uint32_t next_generated_word(uint32_t *state)
@@ -323,9 +323,9 @@ static bool test_generated_b1_and_data_round_trip(void)
 					{
 						struct v34_received_mapping_frame
 							received;
-						enum v34_data_receiver_result
+						enum v34_data_receive_result
 							result;
-						enum v34_data_receiver_result
+						enum v34_data_receive_result
 							expected_result;
 
 						result =
@@ -337,9 +337,9 @@ static bool test_generated_b1_and_data_round_trip(void)
 								(expected[received_frames]
 									 .mapping_frame
 									 .completes_data_frame ?
-									 V34_DATA_RECEIVER_B1_COMPLETE :
-									 V34_DATA_RECEIVER_B1_IN_PROGRESS) :
-								V34_DATA_RECEIVER_OK;
+									 V34_DATA_RECEIVE_B1_COMPLETE :
+									 V34_DATA_RECEIVE_B1_IN_PROGRESS) :
+								V34_DATA_RECEIVE_MAPPING_FRAME_READY;
 						CHECK(result == expected_result &&
 						      received_matches(
 							      &received,

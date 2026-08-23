@@ -57,7 +57,7 @@ static enum v34_data_equalizer_receiver_result initialize_receiver(
 		    &initialized.data_receiver, normalizer, geometry,
 		    expanded_shaping, coefficients, selection,
 		    transmitting_role) !=
-		    V34_DATA_CHANNEL_RECEIVER_OK)
+		    V34_DATA_RECEIVE_OK)
 		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
 	initialized.equalizer = *equalizer;
 	/* The new owner closes any immediate update not retained by a caller. */
@@ -126,22 +126,25 @@ bool v34_data_equalizer_receiver_is_receiving_b1(
 }
 
 static enum v34_data_equalizer_receiver_result channel_result(
-	enum v34_data_channel_receiver_result result)
+	enum v34_data_receive_result result)
 {
 	switch (result) {
-	case V34_DATA_CHANNEL_RECEIVER_OK:
+	case V34_DATA_RECEIVE_OK:
 		return V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY;
-	case V34_DATA_CHANNEL_RECEIVER_MAPPING_FRAME_READY:
+	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
 		return V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_CHANNEL_RECEIVER_B1_IN_PROGRESS:
+	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
 		return V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_CHANNEL_RECEIVER_B1_COMPLETE:
+	case V34_DATA_RECEIVE_B1_COMPLETE:
 		return V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE;
-	case V34_DATA_CHANNEL_RECEIVER_NUMERIC_FAILURE:
+	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
 		return V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
-	case V34_DATA_CHANNEL_RECEIVER_OUT_OF_RANGE:
+	case V34_DATA_RECEIVE_OUT_OF_RANGE:
 		return V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE;
-	case V34_DATA_CHANNEL_RECEIVER_INVALID_ARGUMENT:
+	case V34_DATA_RECEIVE_INTERVAL_READY:
+	case V34_DATA_RECEIVE_FAILED:
+	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
+	case V34_DATA_RECEIVE_INVALID_STATE:
 		break;
 	}
 	return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
@@ -173,7 +176,7 @@ receive_interval(
 	struct v34_survivor_decision generated_current;
 	struct v34_received_mapping_frame generated_received;
 	enum v34_data_equalizer_receiver_result emitted;
-	enum v34_data_channel_receiver_result channel_status;
+	enum v34_data_receive_result channel_status;
 
 	next = *receiver;
 	next.equalizer = *equalizer;

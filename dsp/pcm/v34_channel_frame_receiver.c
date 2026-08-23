@@ -48,7 +48,7 @@ bool v34_channel_frame_receiver_is_valid(
 		       &decoder->inverse_precoder);
 }
 
-enum v34_channel_frame_receiver_result
+enum v34_data_receive_result
 v34_channel_frame_receiver_init(
 	struct v34_channel_frame_receiver *receiver,
 	const struct v34_power_normalizer *normalizer,
@@ -73,43 +73,43 @@ v34_channel_frame_receiver_init(
 		    coefficients, selection) !=
 		    V34_CHANNEL_FRAME_DECODER_OK ||
 	    !v34_channel_frame_receiver_is_valid(&initialized))
-		return V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V34_CHANNEL_FRAME_RECEIVER_OK;
+	return V34_DATA_RECEIVE_OK;
 }
 
-static enum v34_channel_frame_receiver_result
+static enum v34_data_receive_result
 conditioner_result(enum v34_channel_conditioner_result result)
 {
 	return result == V34_CHANNEL_CONDITIONER_NUMERIC_FAILURE ?
-		V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE :
-		V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+		V34_DATA_RECEIVE_NUMERIC_FAILURE :
+		V34_DATA_RECEIVE_INVALID_ARGUMENT;
 }
 
-static enum v34_channel_frame_receiver_result
+static enum v34_data_receive_result
 precoder_result(enum v34_precoder_result result)
 {
 	return result == V34_PRECODER_OUT_OF_RANGE ?
-		V34_CHANNEL_FRAME_RECEIVER_OUT_OF_RANGE :
-		V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+		V34_DATA_RECEIVE_OUT_OF_RANGE :
+		V34_DATA_RECEIVE_INVALID_ARGUMENT;
 }
 
-static enum v34_channel_frame_receiver_result decoder_result(
+static enum v34_data_receive_result decoder_result(
 	enum v34_channel_frame_decoder_result result)
 {
 	switch (result) {
 	case V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE:
-		return V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE;
+		return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 	case V34_CHANNEL_FRAME_DECODER_OUT_OF_RANGE:
-		return V34_CHANNEL_FRAME_RECEIVER_OUT_OF_RANGE;
+		return V34_DATA_RECEIVE_OUT_OF_RANGE;
 	case V34_CHANNEL_FRAME_DECODER_OK:
 	case V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT:
 		break;
 	}
-	return V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+	return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 }
 
-static enum v34_channel_frame_receiver_result
+static enum v34_data_receive_result
 correct_receive_history(
 	struct v34_precoder *receive_precoder,
 	const struct v34_power_normalizer *normalizer,
@@ -139,8 +139,8 @@ correct_receive_history(
 		if (nonlinear_result != V34_NONLINEAR_OK)
 			return nonlinear_result ==
 				       V34_NONLINEAR_NUMERIC_FAILURE ?
-				V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE :
-				V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+				V34_DATA_RECEIVE_NUMERIC_FAILURE :
+				V34_DATA_RECEIVE_INVALID_ARGUMENT;
 		/* The trellis slicer operates on the infinite odd lattice. During
 		 * traceback its best current decision can therefore lie outside the
 		 * finite shaped constellation even though a later modulo decision is
@@ -154,13 +154,13 @@ correct_receive_history(
 		};
 		if (!isfinite(target.in_phase) ||
 		    !isfinite(target.quadrature))
-			return V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE;
+			return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 		decision_targets[symbol] = target;
 	}
-	return V34_CHANNEL_FRAME_RECEIVER_OK;
+	return V34_DATA_RECEIVE_OK;
 }
 
-enum v34_channel_frame_receiver_result
+enum v34_data_receive_result
 v34_channel_frame_receiver_advance(
 	struct v34_channel_frame_receiver *receiver,
 	const struct qam_point
@@ -191,7 +191,7 @@ v34_channel_frame_receiver_advance(
 	if (!v34_channel_frame_receiver_is_valid(receiver) ||
 	    normalized == NULL || current == NULL || decision_targets == NULL ||
 	    decided_frame == NULL || frame_ready == NULL)
-		return V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
 	condition_result = v34_channel_condition_interval(
 		&next.conditioner, normalized, precoded_estimates);
@@ -208,37 +208,21 @@ v34_channel_frame_receiver_advance(
 	if (frame_result != V34_CHANNEL_FRAME_DECODER_OK)
 		return decoder_result(frame_result);
 	{
-		enum v34_channel_frame_receiver_result result =
+		enum v34_data_receive_result result =
 			correct_receive_history(
 				&next.receive_precoder, &next.conditioner.normalizer,
 				&generated_current, generated_targets);
 
-		if (result != V34_CHANNEL_FRAME_RECEIVER_OK)
+		if (result != V34_DATA_RECEIVE_OK)
 			return result;
 	}
 	if (!v34_channel_frame_receiver_is_valid(&next))
-		return V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = next;
 	*current = generated_current;
 	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
 	*frame_ready = generated_ready;
 	if (generated_ready)
 		memcpy(decided_frame, generated_frame, sizeof(generated_frame));
-	return V34_CHANNEL_FRAME_RECEIVER_OK;
-}
-
-const char *v34_channel_frame_receiver_result_name(
-	enum v34_channel_frame_receiver_result result)
-{
-	switch (result) {
-	case V34_CHANNEL_FRAME_RECEIVER_OK:
-		return "ok";
-	case V34_CHANNEL_FRAME_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_CHANNEL_FRAME_RECEIVER_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V34_CHANNEL_FRAME_RECEIVER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
+	return V34_DATA_RECEIVE_OK;
 }

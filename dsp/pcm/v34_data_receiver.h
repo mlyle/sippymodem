@@ -3,16 +3,10 @@
 #ifndef V34_DATA_RECEIVER_H
 #define V34_DATA_RECEIVER_H
 
+#include "v34_data_receive.h"
 #include "v34_mapping_frame_receiver.h"
 
 #include <stdbool.h>
-
-enum v34_data_receiver_result {
-	V34_DATA_RECEIVER_OK,
-	V34_DATA_RECEIVER_B1_IN_PROGRESS,
-	V34_DATA_RECEIVER_B1_COMPLETE,
-	V34_DATA_RECEIVER_INVALID_ARGUMENT,
-};
 
 struct v34_data_receiver {
 	struct v34_frame_schedule schedule;
@@ -28,7 +22,7 @@ struct v34_data_receiver {
 /* Begin at the first mapping frame of the peer's B1 data frame. The data-mode
  * scrambler and mapping decoder start with fresh histories; they do not inherit
  * Phase 4 E state. Rejected calls leave the destination unchanged. */
-enum v34_data_receiver_result v34_data_receiver_init(
+enum v34_data_receive_result v34_data_receiver_init(
 	struct v34_data_receiver *receiver,
 	const struct v34_frame_geometry *geometry,
 	bool expanded_shaping,
@@ -41,10 +35,10 @@ bool v34_data_receiver_is_receiving_b1(
 
 /* Receive one exact decided mapping frame. B1 results identify and expose its
  * known all-one payload while counting non-one decisions without stalling a
- * noisy live stream; OK exposes ordinary data. A completed ordinary data frame
- * advances automatically, including superframe wraparound. State and
- * destination are unchanged on rejection. */
-enum v34_data_receiver_result
+ * noisy live stream; MAPPING_FRAME_READY exposes ordinary data. A completed
+ * ordinary data frame advances automatically, including superframe
+ * wraparound. State and destination are unchanged on rejection. */
+enum v34_data_receive_result
 v34_data_receiver_receive_mapping_frame(
 	struct v34_data_receiver *receiver,
 	const struct v34_decided_4d_interval
