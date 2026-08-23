@@ -175,12 +175,67 @@ static bool schedule_is_at_b1_start(
 	       schedule->next_mapping_frame == 0;
 }
 
+static bool b1_primary_delay(
+	const struct v34_frame_schedule *initial,
+	const struct v34_mapping_parameters *parameters,
+	uint8_t *delay_bits)
+{
+	struct v34_frame_schedule schedule;
+	int cursor = 32;
+
+	if (!schedule_is_at_b1_start(initial) ||
+	    !v34_mapping_parameters_is_valid(parameters) ||
+	    parameters->mapping_frame_bits !=
+		    initial->geometry.high_mapping_frame_bits ||
+	    delay_bits == NULL)
+		return false;
+	schedule = *initial;
+	while (!v34_frame_schedule_is_complete(&schedule)) {
+		struct v34_mapping_frame frame;
+		int first_bits;
+		int final_differential_bits = 2;
+		int final_step;
+
+		if (v34_frame_schedule_next(&schedule, &frame) !=
+		    V34_FRAME_SCHEDULE_OK)
+			return false;
+		first_bits = (int)parameters->shell_mapper_bits -
+			(frame.high_frame ? 0 : 1);
+		if (first_bits < 1)
+			final_differential_bits =
+				2 - (initial->geometry.high_mapping_frame_bits < 9u) +
+				first_bits;
+		final_step = final_differential_bits + 1 +
+			2 * parameters->point_index_bits_per_2d_symbol;
+		if (final_step <= 0 || frame.primary_bits < final_step)
+			return false;
+		/* Word fetches normalize the cursor before each field.  Only the
+		 * final field can leave it beyond the current 16-bit word. */
+		cursor = (cursor + frame.primary_bits - final_step) & 15;
+		cursor += final_step;
+	}
+	if (cursor <= 0 || cursor >= 32)
+		return false;
+	*delay_bits = (uint8_t)(32 - cursor);
+	return true;
+}
+
+static bool primary_delay_is_valid(
+	uint32_t delayed_primary_bits, uint8_t delay_bits)
+{
+	return delay_bits > 0 && delay_bits < 32 &&
+	       (delayed_primary_bits >> delay_bits) == 0;
+}
+
 bool v34_data_stream_is_valid(
 	const struct v34_data_stream *stream)
 {
 	return stream != NULL &&
 	       v34_data_transmitter_is_valid(
 		       &stream->transmitter) &&
+	       primary_delay_is_valid(
+		       stream->delayed_primary_bits,
+		       stream->primary_delay_bits) &&
 	       (!stream->b1_active ||
 		stream->transmitter.points.schedule.data_frame_in_superframe + 1u ==
 			stream->transmitter.points.schedule.geometry
@@ -192,15 +247,22 @@ enum v34_data_stream_result v34_data_stream_init_b1(
 	const struct v34_data_transmitter *transmitter)
 {
 	struct v34_data_stream initialized;
+	uint8_t delay_bits;
 
 	if (stream == NULL ||
 	    !v34_data_transmitter_is_valid(transmitter) ||
 	    !v34_data_transmitter_needs_mapping_frame(transmitter) ||
-	    !schedule_is_at_b1_start(&transmitter->points.schedule))
+	    !schedule_is_at_b1_start(&transmitter->points.schedule) ||
+	    !b1_primary_delay(
+		    &transmitter->points.schedule,
+		    &transmitter->points.encoder.parameters,
+		    &delay_bits))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
 	initialized = (struct v34_data_stream){
 		.transmitter = *transmitter,
-		.delayed_primary_bits = UINT16_MAX,
+		.delayed_primary_bits =
+			UINT32_MAX >> (32u - delay_bits),
+		.primary_delay_bits = delay_bits,
 		.b1_active = true,
 	};
 	if (!v34_data_stream_is_valid(&initialized))
@@ -245,8 +307,9 @@ static bool acquire_mapping_frame(
 	for (size_t bit = 0; bit < request->primary_bits; ++bit) {
 		primary_bits[bit] = (uint8_t)(stream->delayed_primary_bits & 1u);
 		stream->delayed_primary_bits =
-			(uint16_t)((stream->delayed_primary_bits >> 1) |
-				   ((uint16_t)sourced_primary_bits[bit] << 15));
+			(stream->delayed_primary_bits >> 1) |
+			((uint32_t)sourced_primary_bits[bit] <<
+			 (stream->primary_delay_bits - 1u));
 	}
 	return true;
 }

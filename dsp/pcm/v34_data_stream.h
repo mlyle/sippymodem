@@ -29,9 +29,11 @@ typedef bool (*v34_mapping_frame_source)(
 
 struct v34_data_stream {
 	struct v34_data_transmitter transmitter;
-	/* The word-oriented V.34 scrambler delays primary input by one 16-bit
-	 * word.  Keep that lineage explicit across B1 and ordinary data. */
-	uint16_t delayed_primary_bits;
+	/* The data scrambler accepts 16-bit DTE words. B1 can leave that word
+	 * cursor between mapping-frame boundaries, so retain the exact pending
+	 * mark bits as well as their negotiated delay. */
+	uint32_t delayed_primary_bits;
+	uint8_t primary_delay_bits;
 	bool b1_active;
 };
 

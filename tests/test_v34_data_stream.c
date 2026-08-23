@@ -144,7 +144,8 @@ static bool test_b1_and_host_handoff(void)
 	struct v34_data_transmitter model;
 	struct v34_data_stream stream;
 	struct source_fixture source = { 0 };
-	uint16_t model_delayed_primary_bits = UINT16_MAX;
+	uint32_t model_delayed_primary_bits;
+	uint8_t model_delay_bits;
 	bool model_b1 = true;
 	size_t samples = 0;
 
@@ -154,6 +155,9 @@ static bool test_b1_and_host_handoff(void)
 	      v34_data_stream_is_transmitting_b1(&stream),
 	      "B1 stream did not initialize");
 	model = initial;
+	model_delay_bits = stream.primary_delay_bits;
+	model_delayed_primary_bits =
+		UINT32_MAX >> (32u - model_delay_bits);
 	while (source.calls < 3u) {
 		int16_t expected_sample;
 		int16_t actual_sample;
@@ -192,9 +196,10 @@ static bool test_b1_and_host_handoff(void)
 			for (size_t bit = 0; bit < request.primary_bits; ++bit) {
 				primary_bits[bit] =
 					(uint8_t)(model_delayed_primary_bits & 1u);
-				model_delayed_primary_bits = (uint16_t)(
+				model_delayed_primary_bits =
 					(model_delayed_primary_bits >> 1) |
-					((uint16_t)sourced_primary_bits[bit] << 15));
+					((uint32_t)sourced_primary_bits[bit] <<
+					 (model_delay_bits - 1u));
 			}
 			auxiliary = request.carries_auxiliary_bit ?
 				&auxiliary_bit : NULL;
@@ -216,6 +221,7 @@ static bool test_b1_and_host_handoff(void)
 		      stream.b1_active == model_b1 &&
 		      stream.delayed_primary_bits ==
 			      model_delayed_primary_bits &&
+		      stream.primary_delay_bits == model_delay_bits &&
 		      memcmp(&stream.transmitter, &model, sizeof(model)) == 0,
 		      "stream diverged at sample %zu", samples - 1u);
 	}
@@ -319,6 +325,69 @@ static bool test_selected_initialization(void)
 		      v34_data_stream_is_transmitting_b1(&actual) &&
 		      streams_match_through_b1(&actual, &expected),
 		      "selected stream mismatch for role %u", role);
+	}
+	return true;
+}
+
+static bool initialize_delay_fixture(
+	struct v34_data_stream *stream, enum v34_symbol_rate symbol_rate,
+	uint8_t primary_rate)
+{
+	struct v34_data_stream_configuration configuration =
+		configuration_fixture();
+	struct v34_info1_probe_result probe = {
+		.projected_data_rate_2400_bps_units = primary_rate,
+	};
+
+	if (v34_phase3_profile_init(
+		    &configuration.profile, V34_CALLING_STATION, symbol_rate,
+		    &probe, 0, 0) != V34_PHASE3_PROFILE_OK)
+		return false;
+	memset(configuration.precoder_coefficients, 0,
+	       sizeof(configuration.precoder_coefficients));
+	configuration.trellis_selection = V34_TRELLIS_16_STATE;
+	configuration.nonlinear_parameter = V34_NONLINEAR_THETA_ZERO;
+	configuration.primary_data_rate_2400_bps_units = primary_rate;
+	configuration.auxiliary_channel_enabled = false;
+	configuration.expanded_shaping = false;
+	return v34_data_stream_init(stream, &configuration) ==
+		V34_DATA_STREAM_OK;
+}
+
+static bool test_word_aligned_host_handoff(void)
+{
+	static const uint8_t expected_2743[] = {
+		24, 20, 16, 28, 24, 20, 16, 12, 8, 4,
+	};
+	static const uint8_t expected_3429[] = {
+		24, 20, 16, 28, 24, 20, 16, 12, 24, 20, 16, 12, 8,
+	};
+	static const struct {
+		enum v34_symbol_rate symbol_rate;
+		uint8_t first_rate;
+		const uint8_t *expected;
+		size_t count;
+	} cases[] = {
+		{ V34_SYMBOL_RATE_2743, 2, expected_2743,
+		  ARRAY_LENGTH(expected_2743) },
+		{ V34_SYMBOL_RATE_3429, 2, expected_3429,
+		  ARRAY_LENGTH(expected_3429) },
+	};
+
+	for (size_t fixture = 0; fixture < ARRAY_LENGTH(cases); ++fixture) {
+		for (size_t index = 0; index < cases[fixture].count; ++index) {
+			struct v34_data_stream stream;
+			uint8_t rate = (uint8_t)(cases[fixture].first_rate + index);
+			uint8_t delay = cases[fixture].expected[index];
+
+			CHECK(initialize_delay_fixture(
+				      &stream, cases[fixture].symbol_rate, rate) &&
+			      stream.primary_delay_bits == delay &&
+			      stream.delayed_primary_bits ==
+				      (UINT32_MAX >> (32u - delay)),
+			      "word-aligned handoff changed at %zu/%u", fixture,
+			      rate);
+		}
 	}
 	return true;
 }
@@ -478,6 +547,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "selected initialization", test_selected_initialization },
+		{ "word-aligned host handoff", test_word_aligned_host_handoff },
 		{ "initialization failures", test_initialization_failures },
 		{ "B1 and host handoff", test_b1_and_host_handoff },
 		{ "transactional boundaries", test_transactional_boundaries },
