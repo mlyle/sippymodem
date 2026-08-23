@@ -68,6 +68,7 @@ static const u8 _ordered[] = {
 enum {
 	ASYNC_DATA_BITS = 8,
 	ASYNC_FRAME_BITS = 10,
+	V42_T400_MS = 750,
 };
 
 enum async_receive_state {
@@ -80,8 +81,21 @@ enum async_receive_state {
 int modem_async_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 {
 	struct bits_state *s = &m->pack;
+	struct async_state *async = &m->packer.async;
 	int ret = 0;
 	u8 ch;
+
+	/*
+	 * A peer performing V.42 detection discards data until T400 expires.
+	 * Preserve queued raw DTE bytes by sending marks through that interval.
+	 */
+	while (bit_cnt > 0 && async->transmit_mark_bits > 0) {
+		*bit_buf++ = (u8)((1u << nbits) - 1u);
+		async->transmit_mark_bits -= nbits;
+		bit_cnt--;
+		ret++;
+	}
+
 	do {
 		/* fill bits */
 		while ( bit_cnt > 0 && s->bit >= nbits) {
@@ -217,6 +231,10 @@ void modem_async_start(struct modem *m)
 	modem_async_reframe(m);
         m->bit_timer_func = NULL;
 	m->bit_timer = 0;
+	m->packer.async.transmit_mark_bits =
+		!m->cfg.ec && !m->cfg.ec_detector &&
+		modem_link_supports_v42(m) ?
+			(int)(m->tx_rate * V42_T400_MS / 1000u) : 0;
 }
 
 
@@ -245,28 +263,96 @@ void modem_async_start(struct modem *m)
 #define ADP0     0xa2
 #define ADP1_V14 0x00
 #define ADP1_V42 0xc2
-#define ADP1 ADP1_V42
 
-#define MIN_RX_PATTERNS 2
-#define MAX_TX_PATTERNS 16
-#define PATTERN_SIZE    36
+#define DETECTOR_MATCH_CHARACTERS 4
+#define DETECTOR_ADP_REPLY_PATTERNS 16
+#define PATTERN_SIZE 36
+#define DETECTOR_FALLBACK_RATE 28800
 
-#define FILL_PATTERN_ODP(pat) { (pat)[0]=ODP0 ; (pat)[1]=ODP1; }
-#define FILL_PATTERN_ADP(pat) { (pat)[0]=ADP0 ; (pat)[1]=ADP1; }
+int modem_link_supports_v42(const struct modem *m)
+{
+	if (m == NULL || m->dp == NULL)
+		return 0;
+
+	switch (m->dp->id) {
+	case DP_B103:
+	case DP_V21:
+	case DP_V23:
+	case DP_BAUDOT:
+		return 0;
+	default:
+		return 1;
+	}
+}
+
+static void detector_set_pattern(u8 pattern[2], u8 first, u8 second)
+{
+	pattern[0] = first;
+	pattern[1] = second;
+}
+
+static void detector_finish(struct modem *m);
+
+static int detector_rate(const struct modem *m)
+{
+	return m->tx_rate > 0 ? (int)m->tx_rate : DETECTOR_FALLBACK_RATE;
+}
 
 
 static void detector_start(struct modem *m)
 {
 	PACK_DBG("detector start...\n");
-	m->packer.detector.tx_count = 1;
+	m->packer.detector.tx_count = 2;
+	m->bit_timer_func = detector_finish;
+	m->bit_timer = detector_rate(m) * V42_T400_MS / 1000;
+}
+
+static int detector_ec_required(const struct modem *m)
+{
+	return m->sregs[SREG_EC] == 2 || m->sregs[SREG_EC] == 4 ||
+		m->sregs[SREG_EC] == 5;
 }
 
 static void detector_finish(struct modem *m)
 {
 	PACK_DBG("detector finished.\n");
-	// fixme: modem update config
+	if (!m->packer.detector.ec_enable && detector_ec_required(m)) {
+		modem_update_status(m, STATUS_ERROR);
+		return;
+	}
 	m->cfg.ec = m->packer.detector.ec_enable;
 	modem_update_status(m,STATUS_PACK_LINK);
+	if (!m->cfg.ec && m->get_bits == modem_async_get_bits)
+		m->packer.async.transmit_mark_bits = 0;
+}
+
+static int detector_accept_pattern_character(struct modem *m,
+					      struct detect_state *detector,
+					      u8 character)
+{
+	unsigned int position = (unsigned int)detector->rx_count;
+
+	if (position >= DETECTOR_MATCH_CHARACTERS)
+		return 0;
+	if ((position & 1u) == 0) {
+		if (character == detector->rx_pattern[0]) {
+			detector->rx_count++;
+			return 0;
+		}
+	} else {
+		if (m->caller && position == 1 &&
+		    (character == ADP1_V42 || character == ADP1_V14))
+			detector->rx_pattern[1] = character;
+		if (character == detector->rx_pattern[1]) {
+			detector->rx_count++;
+			return detector->rx_count ==
+				DETECTOR_MATCH_CHARACTERS;
+		}
+	}
+
+	detector->rx_count =
+		character == detector->rx_pattern[0] ? 1 : 0;
+	return 0;
 }
 
 int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
@@ -274,32 +360,26 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 	struct bits_state *s = &m->pack;
 	struct detect_state *d = &m->packer.detector;
 	int ret = 0;
-	do {
+
+	while (bit_cnt > 0) {
 		/* fill bits */
-		while ( bit_cnt > 0 && s->bit >= nbits) {
-			*bit_buf++ = (s->data>>(s->bit-nbits));
+		while (bit_cnt > 0 && s->bit >= nbits) {
+			*bit_buf++ = (u8)(s->data >> (s->bit - nbits));
 			s->bit -= nbits;
-			ret ++;
+			ret++;
 			bit_cnt--;
 		}
 		if (bit_cnt <= 0)
 			break;
-#if 0
-                s->data <<= 18;
-                s->data |=  (0x1ff<<9)|(d->tx_pattern[d->tx_count++%2]);
-                s->bit  +=  18;
-#else
-                /* get char */
-                s->data <<= 9;
-                s->data |=  0x1ff;
-                s->bit  +=  9;
+		/* Insert the mark interval preceding each pattern character. */
+		s->data = (s->data << 9) | 0x1ffu;
+		s->bit += 9;
 		if (d->tx_count > 0) {
-                        s->data <<= 9;
-                        s->data |=  d->tx_pattern[d->tx_count++%2];
-                        s->bit  +=  9;
-                }
-#endif
-	} while (1);
+			s->data = (s->data << 9) |
+				d->tx_pattern[d->tx_count++ % 2];
+			s->bit += 9;
+		}
+	}
 	return ret;
 }
 
@@ -324,75 +404,56 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
 			if (ch == HDLC_FLAG) {
 				PACK_DBG("hdlc flag detected.\n");
-				d->ec_enable = 1;
+				d->ec_enable = m->cfg.ec != 0;
 				m->bit_timer_func = detector_finish;
 				m->bit_timer = PATTERN_SIZE;
 				continue;
 			}
-			if (!d->rx_count) {
-				d->rx_count = (ch == d->rx_pattern[0]);
+			if (!detector_accept_pattern_character(m, d, ch))
 				continue;
-			}
-			if (d->rx_count >= 2)
-				continue;
-			switch(ch) {
-			case ODP1:
-				//PACK_DBG("rx ODP.\n");
-				if (!m->caller) {
-					/* start replay ADP and leave detector */ 
-					d->tx_count = 1;
-					d->rx_count = 2;
-					d->ec_enable = 1;
-					m->bit_timer_func = detector_finish;
-					m->bit_timer = MAX_TX_PATTERNS*PATTERN_SIZE;
-				}
-				else
-					d->rx_count = 0;
-				break;
-			case ADP1_V14:
-				//PACK_DBG("rx ADP non v42.\n");
-				d->rx_count = 2;
-				d->ec_enable = 0;
-				m->bit_timer_func = detector_finish;
+
+			m->bit_timer_func = detector_finish;
+			if (!m->caller) {
+				/* Reply with the locally selected V.42 or V.14 mode. */
+				d->tx_count = 2;
+				d->ec_enable = m->cfg.ec != 0;
+				m->bit_timer =
+					DETECTOR_ADP_REPLY_PATTERNS * PATTERN_SIZE;
+			} else {
+				d->ec_enable = d->rx_pattern[1] == ADP1_V42;
+				if (d->ec_enable)
+					m->cfg.ec = 1;
 				m->bit_timer = PATTERN_SIZE;
-				break;
-			case ADP1_V42:
-				//PACK_DBG("rx ADP v42.\n");
-				m->cfg.ec = 1;
-				d->rx_count = 2;
-				d->ec_enable = 1;
-				m->bit_timer_func = detector_finish;
-				m->bit_timer = PATTERN_SIZE;
-				break;
-			default:
-				d->rx_count = 0;
-				break;
 			}
 		}
 	}
 	return ret;
 }
 
-void modem_detector_start(struct modem *m) {
+void modem_detector_start(struct modem *m)
+{
 	struct detect_state *d = &m->packer.detector;
-	int rate = m->tx_rate > 0 ? (int)m->tx_rate : 28800;
+	int rate = detector_rate(m);
 	d->tx_count = 0; /* mute transmitter */
 	d->rx_count = 0;
 	d->ec_enable = 0;
 	if (m->caller) {
-		FILL_PATTERN_ODP(d->tx_pattern);
-		FILL_PATTERN_ADP(d->rx_pattern);
+		detector_set_pattern(d->tx_pattern, ODP0, ODP1);
+		detector_set_pattern(d->rx_pattern, ADP0, ADP1_V42);
 		m->bit_timer_func = detector_start;
 		/* Preserve the short initial mark interval at every bit rate. */
 		m->bit_timer = (rate + 49) / 50;
 	}
 	else {
-		FILL_PATTERN_ADP(d->tx_pattern);
-		FILL_PATTERN_ODP(d->rx_pattern);
+		detector_set_pattern(
+			d->tx_pattern, ADP0,
+			m->cfg.ec ? ADP1_V42 : ADP1_V14);
+		detector_set_pattern(d->rx_pattern, ODP0, ODP1);
 		m->bit_timer_func = detector_finish;
 		/* Allow the peer's physical data mode to finish entering before
 		 * applying the packet-protocol fallback. */
-		m->bit_timer = rate * 2;
+		m->bit_timer = m->cfg.ec ? rate * 2 :
+			rate * V42_T400_MS / 1000;
 	}
 	m->pack.bit  = m->unpack.bit  = 0;
 	m->pack.data = m->unpack.data = 0;

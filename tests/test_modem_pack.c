@@ -217,6 +217,161 @@ static bool test_async_retrain_preserves_transmit_framing(void)
 	return true;
 }
 
+static bool test_async_preserves_raw_data_through_t400(void)
+{
+	static const uint8_t input[] = { 'T' };
+	uint8_t guarded[900];
+	uint8_t encoded[2] = { 0 };
+	struct byte_stream source = {
+		.input = input,
+		.input_length = ARRAY_LENGTH(input),
+	};
+	struct dp datapump = { .id = DP_V34 };
+	struct modem modem = {
+		.name = "raw-guard-transmitter",
+		.dev_data = &source,
+		.get_chars = read_chars,
+		.dp = &datapump,
+		.rx_rate = 9600,
+		.tx_rate = 9600,
+	};
+
+	datapump.modem = &modem;
+	modem_async_start(&modem);
+	CHECK(modem.packer.async.transmit_mark_bits == 7200,
+	      "raw transmitter armed %d T400 mark bits instead of 7200",
+	      modem.packer.async.transmit_mark_bits);
+	CHECK(modem_async_get_bits(
+		      &modem, 8, guarded, (int)ARRAY_LENGTH(guarded)) ==
+		      (int)ARRAY_LENGTH(guarded),
+	      "raw transmitter did not fill the complete T400 interval");
+	for (size_t index = 0; index < ARRAY_LENGTH(guarded); ++index)
+		CHECK(guarded[index] == 0xff,
+		      "raw T400 guard emitted data at octet %zu", index);
+	CHECK(source.input_offset == 0,
+	      "raw T400 guard consumed queued DTE data");
+	CHECK(modem_async_get_bits(
+		      &modem, 8, encoded, (int)ARRAY_LENGTH(encoded)) ==
+		      (int)ARRAY_LENGTH(encoded) &&
+		      source.input_offset == ARRAY_LENGTH(input),
+	      "raw transmitter did not release queued data after T400");
+
+	datapump.id = DP_V21;
+	source.input_offset = 0;
+	modem_async_start(&modem);
+	CHECK(modem.packer.async.transmit_mark_bits == 0,
+	      "raw-only data pump armed a V.42 guard");
+	CHECK(modem_async_get_bits(&modem, 8, encoded, 1) == 1 &&
+		      source.input_offset == ARRAY_LENGTH(input),
+	      "raw-only data pump delayed DTE data");
+	return true;
+}
+
+static bool test_raw_answerer_selects_v14(void)
+{
+	uint8_t bits[40];
+	struct dp answer_datapump = { .id = DP_V34 };
+	struct modem answerer = {
+		.name = "raw-v42-answerer",
+		.dp = &answer_datapump,
+		.rx_rate = 9600,
+		.tx_rate = 9600,
+	};
+	struct modem originator = {
+		.name = "v42-originator",
+		.caller = 1,
+		.rx_rate = 9600,
+		.tx_rate = 9600,
+		.cfg = { .ec = 1, .ec_detector = 1 },
+	};
+	struct modem pattern_source = {
+		.name = "odp-source",
+	};
+
+	answer_datapump.modem = &answerer;
+	modem_detector_start(&answerer);
+	CHECK(answerer.bit_timer == 7200 &&
+		      answerer.packer.detector.tx_pattern[0] == 0xa2 &&
+		      answerer.packer.detector.tx_pattern[1] == 0x00,
+	      "raw answerer did not arm T400 with ADP-V.14");
+
+	pattern_source.packer.detector.tx_count = 2;
+	pattern_source.packer.detector.tx_pattern[0] = 0x88;
+	pattern_source.packer.detector.tx_pattern[1] = 0x89;
+	CHECK(modem_detector_get_bits(
+		      &pattern_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits) &&
+		      modem_detector_put_bits(
+			      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits),
+	      "raw answerer did not consume the first ODP");
+	CHECK(answerer.packer.detector.rx_count == 2 &&
+		      answerer.packer.detector.tx_count == 0,
+	      "one ODP prematurely started the raw answer");
+	CHECK(modem_detector_get_bits(
+		      &pattern_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits) &&
+		      modem_detector_put_bits(
+			      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits),
+	      "raw answerer did not consume the second ODP");
+	CHECK(answerer.packer.detector.rx_count == 4 &&
+		      answerer.packer.detector.tx_count == 2 &&
+		      answerer.packer.detector.ec_enable == 0,
+	      "two ODPs did not start the ADP-V.14 response");
+
+	modem_detector_start(&originator);
+	CHECK(modem_detector_get_bits(
+		      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits) &&
+		      modem_detector_put_bits(
+			      &originator, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits),
+	      "originator did not consume the first ADP-V.14");
+	CHECK(modem_detector_get_bits(
+		      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits) &&
+		      modem_detector_put_bits(
+			      &originator, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits),
+	      "originator did not consume the second ADP-V.14");
+	CHECK(originator.packer.detector.rx_count == 4 &&
+		      originator.packer.detector.ec_enable == 0,
+	      "originator did not accept the V.14 selection");
+	return true;
+}
+
+static bool test_v42_originator_t400_is_bounded(void)
+{
+	struct modem fallback = {
+		.name = "v42-fallback-originator",
+		.caller = 1,
+		.tx_rate = 9600,
+		.cfg = { .ec = 1, .ec_detector = 1 },
+	};
+	struct modem required = fallback;
+
+	modem_detector_start(&fallback);
+	CHECK(fallback.bit_timer == 192 &&
+		      fallback.packer.detector.tx_count == 0,
+	      "V.42 originator did not begin with a 20 ms mark interval");
+	fallback.bit_timer_func(&fallback);
+	CHECK(fallback.bit_timer == 7200 &&
+		      fallback.packer.detector.tx_count == 2,
+	      "V.42 originator did not arm ODP for T400");
+	fallback.bit_timer_func(&fallback);
+	CHECK(fallback.cfg.ec == 0,
+	      "auto-reliable originator did not fall back after T400");
+
+	required.sregs[SREG_EC] = 4;
+	modem_detector_start(&required);
+	required.bit_timer_func(&required);
+	required.bit_timer_func(&required);
+	CHECK(required.cfg.ec == 1,
+	      "LAPM-only originator silently fell back after T400");
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -327,6 +482,12 @@ int main(void)
 		  test_async_reframe_discards_partial_characters },
 		{ "async retrain framing",
 		  test_async_retrain_preserves_transmit_framing },
+		{ "async raw T400 guard",
+		  test_async_preserves_raw_data_through_t400 },
+		{ "raw answerer V.14 selection",
+		  test_raw_answerer_selects_v14 },
+		{ "V.42 originator T400",
+		  test_v42_originator_t400_is_bounded },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
 	unsigned int failures = 0;

@@ -529,19 +529,6 @@ static void modem_hup(struct modem *m, unsigned local)
 }
 
 
-static bool datapump_requires_raw_transport(enum DP_ID id)
-{
-	switch (id) {
-	case DP_B103:
-	case DP_V21:
-	case DP_V23:
-	case DP_BAUDOT:
-		return true;
-	default:
-		return false;
-	}
-}
-
 void modem_update_status(struct modem *m, unsigned status)
 {
 	MODEM_DBG("modem_update_status: %d\n", status);
@@ -550,12 +537,14 @@ void modem_update_status(struct modem *m, unsigned status)
 		break;
 	case STATUS_DP_LINK:
 		MODEM_DBG("--> DP LINK\n");
-		if (datapump_requires_raw_transport(m->dp->id))
+		if (!modem_link_supports_v42(m))
 			m->cfg.ec = 0;
 		modem_set_state(m,STATE_EC_ESTAB);
 		/* start packer */
-		if(m->cfg.ec && m->cfg.ec_detector &&
-		   !QC_SKIP_EC_DETECTION(m) ) {
+		if ((m->cfg.ec && m->cfg.ec_detector &&
+		     !QC_SKIP_EC_DETECTION(m)) ||
+		    (!m->caller && !m->cfg.ec &&
+		     modem_link_supports_v42(m))) {
 			modem_detector_start(m);
 			m->get_bits = modem_detector_get_bits;
 			m->put_bits = modem_detector_put_bits;

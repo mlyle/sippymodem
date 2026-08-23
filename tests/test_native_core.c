@@ -497,6 +497,7 @@ static bool test_datapump_error_control_policy(void)
 		      "error-control modem %zu could not be created", index);
 		modem->dp = &datapump;
 		modem->caller = 1;
+		modem->rx_rate = modem->tx_rate = 1200;
 		modem->cfg.ec = 1;
 		modem->cfg.ec_detector = 1;
 
@@ -512,6 +513,40 @@ static bool test_datapump_error_control_policy(void)
 				      modem->get_bits == modem_async_get_bits &&
 				      modem->put_bits == modem_async_put_bits,
 			      "data pump %u did not select raw transport",
+			      cases[index].id);
+		}
+
+		modem->dp = NULL;
+		modem_delete(modem);
+
+		modem = modem_create(
+			&driver, "raw-answerer error-control test");
+		CHECK(modem != NULL,
+		      "raw-answerer modem %zu could not be created", index);
+		datapump.modem = modem;
+		modem->dp = &datapump;
+		modem->caller = 0;
+		modem->rx_rate = modem->tx_rate = 1200;
+		modem->cfg.ec = 0;
+		modem->cfg.ec_detector = 0;
+
+		modem_update_status(modem, STATUS_DP_LINK);
+		if (cases[index].lapm) {
+			CHECK(modem->get_bits == modem_detector_get_bits &&
+				      modem->put_bits == modem_detector_put_bits &&
+				      modem->packer.detector.tx_pattern[1] == 0x00,
+			      "raw answerer %u did not select ADP-V.14",
+			      cases[index].id);
+			modem->bit_timer_func(modem);
+			CHECK(modem->get_bits == modem_async_get_bits &&
+				      modem->put_bits == modem_async_put_bits &&
+				      modem->packer.async.transmit_mark_bits == 0,
+			      "raw answerer %u did not complete V.14 fallback",
+			      cases[index].id);
+		} else {
+			CHECK(modem->get_bits == modem_async_get_bits &&
+				      modem->put_bits == modem_async_put_bits,
+			      "raw-only answerer %u entered V.42 detection",
 			      cases[index].id);
 		}
 

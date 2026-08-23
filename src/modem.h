@@ -368,6 +368,7 @@ struct modem {
 			unsigned int receive_state;
 			unsigned int receive_bit_count;
 			u8 receive_data;
+			int transmit_mark_bits;
 		} async;
 		struct detect_state {
 			int tx_count;
@@ -470,6 +471,7 @@ extern void modem_async_discard_transmit(struct modem *m);
 extern void modem_async_retrain(struct modem *m);
 extern int  modem_async_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_async_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
+extern int modem_link_supports_v42(const struct modem *m);
 extern void modem_detector_start(struct modem *m);
 extern int  modem_detector_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_detector_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
