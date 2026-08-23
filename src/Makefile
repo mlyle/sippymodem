@@ -313,8 +313,6 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_nonlinear.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_parser.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_power_calibration.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_16_state_branches.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_16_state_survivor.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_branches.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_conditioner.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_channel_decoder.c \

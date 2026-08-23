@@ -11,12 +11,12 @@ static uint8_t trellis_state_count(
 	enum v34_trellis_selection selection)
 {
 	switch (selection) {
+	case V34_TRELLIS_16_STATE:
+		return 16;
 	case V34_TRELLIS_32_STATE:
 		return 32;
 	case V34_TRELLIS_64_STATE:
 		return 64;
-	case V34_TRELLIS_16_STATE:
-		break;
 	}
 	return 0;
 }

@@ -10,12 +10,12 @@ static uint8_t branch_count(
 	enum v34_trellis_selection selection)
 {
 	switch (selection) {
+	case V34_TRELLIS_16_STATE:
+		return 8;
 	case V34_TRELLIS_32_STATE:
 		return 16;
 	case V34_TRELLIS_64_STATE:
 		return 32;
-	case V34_TRELLIS_16_STATE:
-		break;
 	}
 	return 0;
 }
@@ -63,8 +63,10 @@ static uint8_t subset_index(
 
 	if (selection == V34_TRELLIS_32_STATE)
 		return (uint8_t)(index | (uint8_t)(input->y4 << 3));
-	return (uint8_t)(index | (uint8_t)(input->y3 << 3) |
-			 (uint8_t)(input->y4 << 4));
+	if (selection == V34_TRELLIS_64_STATE)
+		return (uint8_t)(index | (uint8_t)(input->y3 << 3) |
+				 (uint8_t)(input->y4 << 4));
+	return index;
 }
 
 static int32_t branch_magnitude_squared(

@@ -886,20 +886,6 @@ V34_SURVIVOR_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_survivor.o \
 	$(filter-out $(BUILD_DIR)/test_v34_branches.o, \
 		$(V34_BRANCHES_TEST_OBJECTS))
-V34_16_STATE_SURVIVOR_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_16_state_survivor
-V34_16_STATE_SURVIVOR_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_16_state_survivor.o \
-	$(BUILD_DIR)/v34_16_state_branches.o \
-	$(BUILD_DIR)/v34_16_state_survivor.o \
-	$(filter-out $(BUILD_DIR)/test_v34_survivor.o, \
-		$(V34_SURVIVOR_TEST_OBJECTS))
-V34_16_STATE_BRANCHES_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_16_state_branches
-V34_16_STATE_BRANCHES_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_16_state_branches.o \
-	$(filter-out $(BUILD_DIR)/test_v34_16_state_survivor.o, \
-		$(V34_16_STATE_SURVIVOR_TEST_OBJECTS))
 V34_PATH_DECODER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_path_decoder
 V34_PATH_DECODER_TEST_OBJECTS := \
@@ -913,8 +899,6 @@ V34_CHANNEL_DECODER_TEST_BINARY := \
 V34_CHANNEL_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_channel_decoder.o \
 	$(BUILD_DIR)/v34_channel_decoder.o \
-	$(BUILD_DIR)/v34_16_state_branches.o \
-	$(BUILD_DIR)/v34_16_state_survivor.o \
 	$(filter-out $(BUILD_DIR)/test_v34_path_decoder.o, \
 		$(V34_PATH_DECODER_TEST_OBJECTS))
 V34_4D_DECODER_TEST_BINARY := \
@@ -3068,8 +3052,6 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_4D_ENCODER_TEST_BINARY) \
 	$(V34_BRANCHES_TEST_BINARY) \
 	$(V34_SURVIVOR_TEST_BINARY) \
-	$(V34_16_STATE_SURVIVOR_TEST_BINARY) \
-	$(V34_16_STATE_BRANCHES_TEST_BINARY) \
 	$(V34_PATH_DECODER_TEST_BINARY) \
 	$(V34_CHANNEL_DECODER_TEST_BINARY) \
 	$(V34_CHANNEL_FRAME_DECODER_TEST_BINARY) \
@@ -3387,8 +3369,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_4D_ENCODER_TEST_OBJECTS:.o=.d) \
 	$(V34_BRANCHES_TEST_OBJECTS:.o=.d) \
 	$(V34_SURVIVOR_TEST_OBJECTS:.o=.d) \
-	$(V34_16_STATE_SURVIVOR_TEST_OBJECTS:.o=.d) \
-	$(V34_16_STATE_BRANCHES_TEST_OBJECTS:.o=.d) \
 	$(V34_PATH_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V34_CHANNEL_DECODER_TEST_OBJECTS:.o=.d) \
 	$(V34_CHANNEL_FRAME_DECODER_TEST_OBJECTS:.o=.d) \
@@ -3943,14 +3923,6 @@ $(V34_BRANCHES_TEST_BINARY): $(V34_BRANCHES_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_SURVIVOR_TEST_BINARY): $(V34_SURVIVOR_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_16_STATE_SURVIVOR_TEST_BINARY): \
-	$(V34_16_STATE_SURVIVOR_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_16_STATE_BRANCHES_TEST_BINARY): \
-	$(V34_16_STATE_BRANCHES_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PATH_DECODER_TEST_BINARY): $(V34_PATH_DECODER_TEST_OBJECTS)
@@ -4981,14 +4953,6 @@ $(BUILD_DIR)/v34_branches.o: \
 
 $(BUILD_DIR)/v34_survivor.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_survivor.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_16_state_survivor.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_16_state_survivor.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_16_state_branches.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_16_state_branches.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_path_decoder.o: \
