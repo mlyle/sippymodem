@@ -515,7 +515,7 @@ static bool test_generated_equalizer_round_trip(void)
 			      configuration->trellis,
 			      configuration->transmitting_role,
 			      0.01) ==
-			      V34_DATA_EQUALIZER_RECEIVER_OK,
+			      V34_DATA_RECEIVE_OK,
 		      "equalizer receiver mode %zu rejected its channel", mode);
 		for (size_t frame_index = 0;
 		     frame_index <= transmitted_frames; ++frame_index) {
@@ -537,7 +537,7 @@ static bool test_generated_equalizer_round_trip(void)
 				struct v34_survivor_decision saved_current;
 				struct v34_received_mapping_frame received;
 				struct v34_received_mapping_frame saved_received;
-				enum v34_data_equalizer_receiver_result result;
+				enum v34_data_receive_result result;
 
 				CHECK(v34_normalize_power(
 					      &fixture.normalizer,
@@ -554,14 +554,11 @@ static bool test_generated_equalizer_round_trip(void)
 				saved_received = received;
 				result = v34_data_equalizer_receive_point(
 					&receiver, &received_point, &current, &received);
-				CHECK(result <=
-					      V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE,
-				      "equalizer mode %zu frame %zu symbol %zu failed: %s",
-				      mode, frame_index, symbol,
-				      v34_data_equalizer_receiver_result_name(
-					      result));
+				CHECK(result <= V34_DATA_RECEIVE_B1_COMPLETE,
+				      "equalizer mode %zu frame %zu symbol %zu failed: %d",
+				      mode, frame_index, symbol, result);
 				if (result ==
-				    V34_DATA_EQUALIZER_RECEIVER_OK) {
+				    V34_DATA_RECEIVE_OK) {
 					CHECK(memcmp(&current, &saved_current,
 						     sizeof(current)) == 0 &&
 						      memcmp(&received, &saved_received,
@@ -570,7 +567,7 @@ static bool test_generated_equalizer_round_trip(void)
 					continue;
 				}
 				if (result ==
-				    V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY) {
+				    V34_DATA_RECEIVE_INTERVAL_READY) {
 					CHECK(memcmp(&current, &saved_current,
 						     sizeof(current)) != 0 &&
 						      memcmp(&received, &saved_received,
@@ -579,7 +576,7 @@ static bool test_generated_equalizer_round_trip(void)
 					continue;
 				}
 				{
-					enum v34_data_equalizer_receiver_result
+					enum v34_data_receive_result
 						expected_result =
 							received_frames <
 									fixture.geometry
@@ -587,9 +584,9 @@ static bool test_generated_equalizer_round_trip(void)
 								(received_frames + 1u ==
 										 fixture.geometry
 											 .mapping_frames_per_data_frame ?
-									 V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE :
-									 V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS) :
-								V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY;
+									 V34_DATA_RECEIVE_B1_COMPLETE :
+									 V34_DATA_RECEIVE_B1_IN_PROGRESS) :
+								V34_DATA_RECEIVE_MAPPING_FRAME_READY;
 
 					CHECK(result == expected_result &&
 						      received_matches(
@@ -674,7 +671,7 @@ static bool test_buffered_equalizer_handoff(void)
 		      &fixture.geometry, CONFIGURATIONS[0].expanded,
 		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.0) ==
-		      V34_DATA_EQUALIZER_RECEIVER_OK &&
+		      V34_DATA_RECEIVE_OK &&
 	      receiver.training_outputs_remaining == 0,
 	      "buffered equalizer handoff was rejected");
 	memset(&current, 0xa5, sizeof(current));
@@ -683,7 +680,7 @@ static bool test_buffered_equalizer_handoff(void)
 	saved_received = received;
 	CHECK(v34_data_equalizer_receive_point(
 		      &receiver, &lookahead[V34_EQUALIZER_DECISION_DELAY],
-		      &current, &received) == V34_DATA_EQUALIZER_RECEIVER_OK &&
+		      &current, &received) == V34_DATA_RECEIVE_OK &&
 	      receiver.has_first_symbol &&
 	      point_matches(&receiver.first_symbol, &lookahead[0]) &&
 	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
@@ -700,7 +697,7 @@ static bool test_buffered_equalizer_handoff(void)
 		      &fixture.geometry, CONFIGURATIONS[0].expanded,
 		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.0) ==
-		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
 	      "invalid buffered handoff changed the data receiver");
 	return true;
@@ -847,7 +844,7 @@ static bool test_equalizer_receiver_validation(void)
 		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
-		      V34_DATA_EQUALIZER_RECEIVER_OK,
+		      V34_DATA_RECEIVE_OK,
 	      "equalizer validation fixture did not initialize");
 	saved_receiver = receiver;
 	memset(&current, 0xa5, sizeof(current));
@@ -856,7 +853,7 @@ static bool test_equalizer_receiver_validation(void)
 	saved_received = received;
 	CHECK(v34_data_equalizer_receive_point(
 		      &receiver, &invalid, &current, &received) ==
-		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 	      memcmp(&received, &saved_received, sizeof(received)) == 0,
@@ -869,14 +866,14 @@ static bool test_equalizer_receiver_validation(void)
 		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, NAN) ==
-		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_equalizer_receiver_init(
 		      &receiver, &invalid_equalizer, &fixture.normalizer,
 		      &fixture.geometry,
 		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
-		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
 	      "invalid equalizer initialization changed the receiver");
 	corrupt = receiver;
@@ -885,46 +882,15 @@ static bool test_equalizer_receiver_validation(void)
 	      !v34_data_equalizer_receiver_is_valid(&corrupt) &&
 	      v34_data_equalizer_receive_point(
 		      NULL, &reference, &current, &received) ==
-		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_equalizer_receive_point(
 		      &receiver, &reference, NULL, &received) ==
-		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_equalizer_receive_point(
 		      &receiver, &reference, &current, NULL) ==
-		      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT,
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT,
 	      "invalid equalizer receiver arguments were accepted");
 	return true;
-}
-
-static bool test_result_names(void)
-{
-	return strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_OK),
-		      "ok") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY),
-		      "interval ready") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY),
-		      "mapping frame ready") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS),
-		      "B1 in progress") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE),
-		      "B1 complete") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT),
-		      "invalid argument") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE),
-		      "numeric failure") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE),
-		      "out of range") == 0 &&
-	       strcmp(v34_data_equalizer_receiver_result_name(
-			      (enum v34_data_equalizer_receiver_result)99),
-		      "unknown") == 0;
 }
 
 int main(void)
@@ -942,7 +908,6 @@ int main(void)
 		{ "validation and rollback", test_validation_and_rollback },
 		{ "equalizer receiver validation",
 		  test_equalizer_receiver_validation },
-		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;
 

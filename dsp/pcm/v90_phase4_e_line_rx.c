@@ -213,7 +213,7 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_start_data(
 	if (!v34_equalizer_handoff_is_valid(&handoff) ||
 	    v34_data_line_receiver_init(
 		    data_rx, &rx->demodulator, &handoff,
-		    configuration) != V34_DATA_LINE_RECEIVER_OK)
+		    configuration) != V34_DATA_RECEIVE_OK)
 		return V90_PHASE4_E_LINE_RX_INVALID_ARGUMENT;
 	return V90_PHASE4_E_LINE_RX_OK;
 }

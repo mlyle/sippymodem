@@ -36,7 +36,7 @@ bool v34_data_equalizer_receiver_is_valid(
 		       receiver->first_observation.output.quadrature;
 }
 
-static enum v34_data_equalizer_receiver_result initialize_receiver(
+static enum v34_data_receive_result initialize_receiver(
 	struct v34_data_equalizer_receiver *receiver,
 	const struct qam_equalizer *equalizer,
 	const struct v34_power_normalizer *normalizer,
@@ -58,19 +58,19 @@ static enum v34_data_equalizer_receiver_result initialize_receiver(
 		    expanded_shaping, coefficients, selection,
 		    transmitting_role) !=
 		    V34_DATA_RECEIVE_OK)
-		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	initialized.equalizer = *equalizer;
 	/* The new owner closes any immediate update not retained by a caller. */
 	initialized.equalizer.can_adapt = false;
 	initialized.adaptation = adaptation;
 	initialized.training_outputs_remaining = training_outputs_remaining;
 	if (!v34_data_equalizer_receiver_is_valid(&initialized))
-		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V34_DATA_EQUALIZER_RECEIVER_OK;
+	return V34_DATA_RECEIVE_OK;
 }
 
-enum v34_data_equalizer_receiver_result
+enum v34_data_receive_result
 v34_data_equalizer_receiver_init(
 	struct v34_data_equalizer_receiver *receiver,
 	const struct qam_equalizer *equalizer,
@@ -86,7 +86,7 @@ v34_data_equalizer_receiver_init(
 	uint8_t remaining;
 
 	if (!qam_equalizer_is_valid(equalizer))
-		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	remaining = equalizer->fill < equalizer->decision_delay ?
 			    (uint8_t)equalizer->fill :
 			    (uint8_t)equalizer->decision_delay;
@@ -96,7 +96,7 @@ v34_data_equalizer_receiver_init(
 		remaining);
 }
 
-enum v34_data_equalizer_receiver_result
+enum v34_data_receive_result
 v34_data_equalizer_receiver_init_from_handoff(
 	struct v34_data_equalizer_receiver *receiver,
 	const struct v34_equalizer_handoff *handoff,
@@ -110,7 +110,7 @@ v34_data_equalizer_receiver_init_from_handoff(
 	double adaptation)
 {
 	if (!v34_equalizer_handoff_is_valid(handoff))
-		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	return initialize_receiver(
 		receiver, &handoff->equalizer, normalizer, geometry,
 		expanded_shaping, coefficients, selection, transmitting_role,
@@ -125,42 +125,7 @@ bool v34_data_equalizer_receiver_is_receiving_b1(
 		       &receiver->data_receiver);
 }
 
-static enum v34_data_equalizer_receiver_result channel_result(
-	enum v34_data_receive_result result)
-{
-	switch (result) {
-	case V34_DATA_RECEIVE_OK:
-		return V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY;
-	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
-		return V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
-		return V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_RECEIVE_B1_COMPLETE:
-		return V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE;
-	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
-		return V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
-	case V34_DATA_RECEIVE_OUT_OF_RANGE:
-		return V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE;
-	case V34_DATA_RECEIVE_INTERVAL_READY:
-	case V34_DATA_RECEIVE_FAILED:
-	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
-	case V34_DATA_RECEIVE_INVALID_STATE:
-		break;
-	}
-	return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
-}
-
-static bool emits_mapping_frame(
-	enum v34_data_equalizer_receiver_result result)
-{
-	return result ==
-		       V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY ||
-	       result ==
-		       V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS ||
-	       result == V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE;
-}
-
-static enum v34_data_equalizer_receiver_result
+static enum v34_data_receive_result
 receive_interval(
 	struct v34_data_equalizer_receiver *receiver,
 	const struct qam_equalizer *equalizer,
@@ -175,21 +140,20 @@ receive_interval(
 		V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_survivor_decision generated_current;
 	struct v34_received_mapping_frame generated_received;
-	enum v34_data_equalizer_receiver_result emitted;
-	enum v34_data_receive_result channel_status;
+	enum v34_data_receive_result result;
 
 	next = *receiver;
 	next.equalizer = *equalizer;
 	normalized[0] = next.first_symbol;
 	normalized[1] = second_observation->output;
-	channel_status = v34_data_channel_receiver_advance(
+	result = v34_data_channel_receiver_advance(
 		&next.data_receiver, normalized, &generated_current,
 		decision_targets, &generated_received);
-	emitted = channel_result(channel_status);
-	if (emitted == V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT ||
-	    emitted == V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE ||
-	    emitted == V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE)
-		return emitted;
+	if (result == V34_DATA_RECEIVE_OK)
+		result = V34_DATA_RECEIVE_INTERVAL_READY;
+	if (result != V34_DATA_RECEIVE_INTERVAL_READY &&
+	    !v34_data_receive_emits_mapping_frame(result))
+		return result;
 	if (qam_equalizer_adapt_observation(
 		    &next.equalizer, &next.first_observation,
 		    &decision_targets[0], next.adaptation) !=
@@ -197,21 +161,21 @@ receive_interval(
 	    qam_equalizer_adapt_observation(
 		    &next.equalizer, second_observation, &decision_targets[1],
 		    next.adaptation) != QAM_EQUALIZER_OK)
-		return V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+		return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 	next.first_observation =
 		(struct qam_equalizer_observation){ 0 };
 	next.first_symbol = (struct qam_point){ 0 };
 	next.has_first_symbol = false;
 	if (!v34_data_equalizer_receiver_is_valid(&next))
-		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = next;
 	*current = generated_current;
-	if (emits_mapping_frame(emitted))
+	if (v34_data_receive_emits_mapping_frame(result))
 		*received = generated_received;
-	return emitted;
+	return result;
 }
 
-enum v34_data_equalizer_receiver_result
+enum v34_data_receive_result
 v34_data_equalizer_receive_point(
 	struct v34_data_equalizer_receiver *receiver,
 	const struct qam_point *received_point,
@@ -225,54 +189,30 @@ v34_data_equalizer_receive_point(
 	if (!v34_data_equalizer_receiver_is_valid(receiver) ||
 	    !point_is_finite(received_point) || current == NULL ||
 	    received == NULL)
-		return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next_equalizer = receiver->equalizer;
 	if (qam_equalizer_observe(
 		    &next_equalizer, received_point, &observation,
 		    &equalized_ready) != QAM_EQUALIZER_OK)
-		return V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE;
+		return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 	if (!equalized_ready) {
 		if (receiver->has_first_symbol)
-			return V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT;
+			return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 		receiver->equalizer = next_equalizer;
-		return V34_DATA_EQUALIZER_RECEIVER_OK;
+		return V34_DATA_RECEIVE_OK;
 	}
 	if (receiver->training_outputs_remaining != 0) {
 		receiver->equalizer = next_equalizer;
 		receiver->training_outputs_remaining--;
-		return V34_DATA_EQUALIZER_RECEIVER_OK;
+		return V34_DATA_RECEIVE_OK;
 	}
 	if (!receiver->has_first_symbol) {
 		receiver->equalizer = next_equalizer;
 		receiver->first_symbol = observation.output;
 		receiver->first_observation = observation;
 		receiver->has_first_symbol = true;
-		return V34_DATA_EQUALIZER_RECEIVER_OK;
+		return V34_DATA_RECEIVE_OK;
 	}
 	return receive_interval(
 		receiver, &next_equalizer, &observation, current, received);
-}
-
-const char *v34_data_equalizer_receiver_result_name(
-	enum v34_data_equalizer_receiver_result result)
-{
-	switch (result) {
-	case V34_DATA_EQUALIZER_RECEIVER_OK:
-		return "ok";
-	case V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY:
-		return "interval ready";
-	case V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY:
-		return "mapping frame ready";
-	case V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS:
-		return "B1 in progress";
-	case V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE:
-		return "B1 complete";
-	case V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
 }

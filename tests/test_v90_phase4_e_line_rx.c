@@ -276,18 +276,18 @@ static bool run_line(
 		} else {
 			struct v34_survivor_decision current;
 			struct v34_received_mapping_frame received;
-			enum v34_data_line_receiver_result result =
+			enum v34_data_receive_result result =
 				v34_data_line_receiver_sample(
 					&data_rx, sample, &current, &received);
 
-			CHECK(result != V34_DATA_LINE_RECEIVER_FAILED &&
-			      result != V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
-			      result != V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE &&
-			      result != V34_DATA_LINE_RECEIVER_OUT_OF_RANGE,
-			      "B1 receiver stopped at sample %zu: %s", clock,
-			      v34_data_line_receiver_result_name(result));
+			CHECK(result != V34_DATA_RECEIVE_FAILED &&
+			      result != V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      result != V34_DATA_RECEIVE_NUMERIC_FAILURE &&
+			      result != V34_DATA_RECEIVE_OUT_OF_RANGE,
+			      "B1 receiver stopped at sample %zu: %d", clock,
+			      result);
 			b1_complete =
-				result == V34_DATA_LINE_RECEIVER_B1_COMPLETE;
+				result == V34_DATA_RECEIVE_B1_COMPLETE;
 		}
 	}
 	CHECK(final_started && final_records == 2 && e_tx_started && data_tx_started &&

@@ -69,7 +69,7 @@ bool v34_data_line_receiver_is_valid(
 		       &receiver->geometry, data_geometry(receiver));
 }
 
-enum v34_data_line_receiver_result v34_data_line_receiver_init(
+enum v34_data_receive_result v34_data_line_receiver_init(
 	struct v34_data_line_receiver *receiver,
 	const struct qam_demodulator *demodulator,
 	const struct v34_equalizer_handoff *handoff,
@@ -94,7 +94,7 @@ enum v34_data_line_receiver_result v34_data_line_receiver_init(
 	    !correct_training_gain(
 		    handoff, configuration->transmit_point_gain,
 		    &corrected_handoff))
-		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	initialized.line = *demodulator;
 	initialized.transmitting_profile =
 		configuration->transmitting_profile;
@@ -108,11 +108,11 @@ enum v34_data_line_receiver_result v34_data_line_receiver_init(
 		    configuration->trellis_selection,
 		    configuration->transmitting_profile.local_role,
 		    configuration->equalizer_adaptation) !=
-		    V34_DATA_EQUALIZER_RECEIVER_OK ||
+		    V34_DATA_RECEIVE_OK ||
 	    !v34_data_line_receiver_is_valid(&initialized))
-		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V34_DATA_LINE_RECEIVER_OK;
+	return V34_DATA_RECEIVE_OK;
 }
 
 bool v34_data_line_receiver_has_failed(
@@ -129,89 +129,43 @@ bool v34_data_line_receiver_is_receiving_b1(
 		       &receiver->equalizer_receiver);
 }
 
-static enum v34_data_line_receiver_result data_result(
-	enum v34_data_equalizer_receiver_result result)
+static bool result_is_terminal(enum v34_data_receive_result result)
 {
-	switch (result) {
-	case V34_DATA_EQUALIZER_RECEIVER_OK:
-		return V34_DATA_LINE_RECEIVER_OK;
-	case V34_DATA_EQUALIZER_RECEIVER_INTERVAL_READY:
-		return V34_DATA_LINE_RECEIVER_INTERVAL_READY;
-	case V34_DATA_EQUALIZER_RECEIVER_MAPPING_FRAME_READY:
-		return V34_DATA_LINE_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_EQUALIZER_RECEIVER_B1_IN_PROGRESS:
-		return V34_DATA_LINE_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_EQUALIZER_RECEIVER_B1_COMPLETE:
-		return V34_DATA_LINE_RECEIVER_B1_COMPLETE;
-	case V34_DATA_EQUALIZER_RECEIVER_NUMERIC_FAILURE:
-		return V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE;
-	case V34_DATA_EQUALIZER_RECEIVER_OUT_OF_RANGE:
-		return V34_DATA_LINE_RECEIVER_OUT_OF_RANGE;
-	case V34_DATA_EQUALIZER_RECEIVER_INVALID_ARGUMENT:
-		break;
-	}
-	return V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE;
+	return result == V34_DATA_RECEIVE_FAILED ||
+	       result == V34_DATA_RECEIVE_NUMERIC_FAILURE ||
+	       result == V34_DATA_RECEIVE_OUT_OF_RANGE;
 }
 
-static bool result_is_terminal(enum v34_data_line_receiver_result result)
-{
-	return result == V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE ||
-	       result == V34_DATA_LINE_RECEIVER_OUT_OF_RANGE;
-}
-
-enum v34_data_line_receiver_result v34_data_line_receiver_sample(
+enum v34_data_receive_result v34_data_line_receiver_sample(
 	struct v34_data_line_receiver *receiver, int16_t sample,
 	struct v34_survivor_decision *current,
 	struct v34_received_mapping_frame *received)
 {
 	struct qam_demodulator next_line;
 	struct qam_point point;
-	enum v34_data_line_receiver_result result;
+	enum v34_data_receive_result result;
 	bool ready;
 
 	if (!v34_data_line_receiver_is_valid(receiver) || current == NULL ||
 	    received == NULL)
-		return V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (receiver->failed)
-		return V34_DATA_LINE_RECEIVER_FAILED;
+		return V34_DATA_RECEIVE_FAILED;
 	next_line = receiver->line;
 	if (qam_demodulator_sample(
 		    &next_line, sample, &point, &ready) != QAM_OK) {
 		receiver->failed = true;
-		return V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE;
+		return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 	}
 	receiver->line = next_line;
 	if (!ready)
-		return V34_DATA_LINE_RECEIVER_OK;
-	result = data_result(v34_data_equalizer_receive_point(
-		&receiver->equalizer_receiver, &point, current, received));
+		return V34_DATA_RECEIVE_OK;
+	result = v34_data_equalizer_receive_point(
+		&receiver->equalizer_receiver, &point, current, received);
+	if (result == V34_DATA_RECEIVE_INVALID_ARGUMENT ||
+	    result == V34_DATA_RECEIVE_INVALID_STATE)
+		result = V34_DATA_RECEIVE_NUMERIC_FAILURE;
 	if (result_is_terminal(result))
 		receiver->failed = true;
 	return result;
-}
-
-const char *v34_data_line_receiver_result_name(
-	enum v34_data_line_receiver_result result)
-{
-	switch (result) {
-	case V34_DATA_LINE_RECEIVER_OK:
-		return "ok";
-	case V34_DATA_LINE_RECEIVER_INTERVAL_READY:
-		return "interval ready";
-	case V34_DATA_LINE_RECEIVER_MAPPING_FRAME_READY:
-		return "mapping frame ready";
-	case V34_DATA_LINE_RECEIVER_B1_IN_PROGRESS:
-		return "B1 in progress";
-	case V34_DATA_LINE_RECEIVER_B1_COMPLETE:
-		return "B1 complete";
-	case V34_DATA_LINE_RECEIVER_FAILED:
-		return "failed";
-	case V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE:
-		return "numeric failure";
-	case V34_DATA_LINE_RECEIVER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
 }

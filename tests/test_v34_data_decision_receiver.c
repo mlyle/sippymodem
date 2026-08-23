@@ -104,7 +104,7 @@ static bool initialize_fixture(
 		    configuration->expanded,
 		    COEFFICIENTS, configuration->trellis,
 		    configuration->transmitting_role) !=
-		    V34_DATA_DECISION_RECEIVER_OK)
+		    V34_DATA_RECEIVE_OK)
 		return false;
 	initialized.model = initialized.receiver.data_receiver;
 	*fixture = initialized;
@@ -192,29 +192,6 @@ static bool make_observation(
 	return true;
 }
 
-static enum v34_data_decision_receiver_result mapped_result(
-	enum v34_data_receive_result result)
-{
-	switch (result) {
-	case V34_DATA_RECEIVE_OK:
-		return V34_DATA_DECISION_RECEIVER_INTERVAL_READY;
-	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
-		return V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
-		return V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_RECEIVE_B1_COMPLETE:
-		return V34_DATA_DECISION_RECEIVER_B1_COMPLETE;
-	case V34_DATA_RECEIVE_INTERVAL_READY:
-	case V34_DATA_RECEIVE_FAILED:
-	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
-	case V34_DATA_RECEIVE_INVALID_STATE:
-	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
-	case V34_DATA_RECEIVE_OUT_OF_RANGE:
-		break;
-	}
-	return V34_DATA_DECISION_RECEIVER_INVALID_STATE;
-}
-
 static bool observations_match(
 	const struct v34_adaptive_equalizer_observation *left,
 	const struct v34_adaptive_equalizer_observation *right)
@@ -291,7 +268,7 @@ static bool test_generated_pair_path(void)
 				struct qam_point targets[2];
 				struct v34_analytic_sample fixed_target;
 				enum v34_data_receive_result model_result;
-				enum v34_data_decision_receiver_result result;
+				enum v34_data_receive_result result;
 
 				for (size_t symbol = 0; symbol < 2u; ++symbol) {
 					struct qam_point normalized;
@@ -310,7 +287,7 @@ static bool test_generated_pair_path(void)
 				}
 				result = v34_data_decision_receiver_observe(
 					&fixture.receiver, &input[0], &output);
-				CHECK(result == V34_DATA_DECISION_RECEIVER_OK,
+				CHECK(result == V34_DATA_RECEIVE_OK,
 				      "mode %zu frame %zu interval %zu first result %d",
 				      mode, frame_index, interval, result);
 				CHECK(observations_match(
@@ -348,7 +325,10 @@ static bool test_generated_pair_path(void)
 				      fixed_coordinate(
 					      targets[1].quadrature,
 					      &fixed_target.quadrature) &&
-				      result == mapped_result(model_result) &&
+				      result ==
+					      (model_result == V34_DATA_RECEIVE_OK ?
+						       V34_DATA_RECEIVE_INTERVAL_READY :
+						       model_result) &&
 				      observations_match(
 					      &output.equalizer.observation, &input[1]) &&
 				      output.equalizer.target.in_phase ==
@@ -380,7 +360,7 @@ static bool test_generated_pair_path(void)
 				      "mode %zu frame output changed", mode);
 				emitted_frames++;
 				if (result ==
-				    V34_DATA_DECISION_RECEIVER_B1_COMPLETE)
+				    V34_DATA_RECEIVE_B1_COMPLETE)
 					b1_complete++;
 			}
 		}
@@ -401,7 +381,7 @@ static bool rejected_call_preserves_outputs(
 	struct v34_data_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *input,
 	struct v34_data_decision_output *output,
-	enum v34_data_decision_receiver_result expected)
+	enum v34_data_receive_result expected)
 {
 	struct v34_data_decision_receiver saved_receiver = *receiver;
 	struct v34_data_decision_output saved_output = *output;
@@ -436,7 +416,7 @@ static bool test_validation_and_transactionality(void)
 		      CONFIGURATIONS[0].expanded, invalid,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role) ==
-		      V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&fixture.receiver, &saved_receiver,
 		     sizeof(fixture.receiver)) == 0,
 	      "invalid initialization changed the receiver");
@@ -444,13 +424,13 @@ static bool test_validation_and_transactionality(void)
 	input.epoch = 0u;
 	CHECK(rejected_call_preserves_outputs(
 		      &fixture.receiver, &input, &output,
-		      V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT),
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT),
 	      "zero epoch was not transactional");
 	input.epoch = 1u;
 	input.lineage = 0u;
 	CHECK(rejected_call_preserves_outputs(
 		      &fixture.receiver, &input, &output,
-		      V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT),
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT),
 	      "zero lineage was not transactional");
 	input.lineage = 2u;
 	CHECK(v34_data_decision_receiver_observe(
@@ -458,11 +438,11 @@ static bool test_validation_and_transactionality(void)
 		      (const struct v34_adaptive_equalizer_observation *)
 			      &fixture.receiver,
 		      &output) ==
-		      V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_decision_receiver_observe(
 		      &fixture.receiver, &input,
 		      (struct v34_data_decision_output *)&input) ==
-		      V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      memcmp(&fixture.receiver, &saved_receiver,
 		     sizeof(fixture.receiver)) == 0,
 	      "overlapping regions changed the receiver");
@@ -472,16 +452,16 @@ static bool test_validation_and_transactionality(void)
 	      !v34_data_decision_receiver_is_valid(&corrupt) &&
 	      rejected_call_preserves_outputs(
 		      &corrupt, &input, &output,
-		      V34_DATA_DECISION_RECEIVER_INVALID_STATE) &&
+		      V34_DATA_RECEIVE_INVALID_STATE) &&
 	      v34_data_decision_receiver_observe(
 		      NULL, &input, &output) ==
-		      V34_DATA_DECISION_RECEIVER_INVALID_STATE &&
+		      V34_DATA_RECEIVE_INVALID_STATE &&
 	      v34_data_decision_receiver_observe(
 		      &fixture.receiver, NULL, &output) ==
-		      V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_decision_receiver_observe(
 		      &fixture.receiver, &input, NULL) ==
-		      V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT,
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT,
 	      "invalid arguments were accepted");
 	return true;
 }

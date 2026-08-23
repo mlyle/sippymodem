@@ -4,6 +4,7 @@
 #define V34_DATA_CHANNEL_RECEIVER_H
 
 #include "v34_channel_frame_receiver.h"
+#include "v34_data_receive.h"
 #include "v34_data_receiver.h"
 
 #include <stdbool.h>

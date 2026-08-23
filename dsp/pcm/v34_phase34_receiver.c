@@ -586,37 +586,38 @@ static enum v34_phase34_receiver_result receive_phase4(
 }
 
 static enum v34_phase34_receiver_result data_result(
-	enum v34_data_decision_receiver_result result)
+	enum v34_data_receive_result result)
 {
 	switch (result) {
-	case V34_DATA_DECISION_RECEIVER_OK:
+	case V34_DATA_RECEIVE_OK:
 		return V34_PHASE34_RECEIVER_OK;
-	case V34_DATA_DECISION_RECEIVER_INTERVAL_READY:
+	case V34_DATA_RECEIVE_INTERVAL_READY:
 		return V34_PHASE34_RECEIVER_INTERVAL_READY;
-	case V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY:
+	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
 		return V34_PHASE34_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS:
+	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
 		return V34_PHASE34_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_DECISION_RECEIVER_B1_COMPLETE:
+	case V34_DATA_RECEIVE_B1_COMPLETE:
 		return V34_PHASE34_RECEIVER_B1_COMPLETE;
-	case V34_DATA_DECISION_RECEIVER_OUT_OF_RANGE:
+	case V34_DATA_RECEIVE_OUT_OF_RANGE:
 		return V34_PHASE34_RECEIVER_OUT_OF_RANGE;
-	case V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT:
-	case V34_DATA_DECISION_RECEIVER_INVALID_STATE:
-	case V34_DATA_DECISION_RECEIVER_NUMERIC_FAILURE:
+	case V34_DATA_RECEIVE_FAILED:
+	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
+	case V34_DATA_RECEIVE_INVALID_STATE:
+	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
 		break;
 	}
 	return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 }
 
 static bool data_result_consumed(
-	enum v34_data_decision_receiver_result result)
+	enum v34_data_receive_result result)
 {
-	return result == V34_DATA_DECISION_RECEIVER_OK ||
-	       result == V34_DATA_DECISION_RECEIVER_INTERVAL_READY ||
-	       result == V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY ||
-	       result == V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS ||
-	       result == V34_DATA_DECISION_RECEIVER_B1_COMPLETE;
+	return result == V34_DATA_RECEIVE_OK ||
+	       result == V34_DATA_RECEIVE_INTERVAL_READY ||
+	       result == V34_DATA_RECEIVE_MAPPING_FRAME_READY ||
+	       result == V34_DATA_RECEIVE_B1_IN_PROGRESS ||
+	       result == V34_DATA_RECEIVE_B1_COMPLETE;
 }
 
 static enum v34_phase34_receiver_result receive_data(
@@ -626,7 +627,7 @@ static enum v34_phase34_receiver_result receive_data(
 {
 	struct v34_data_decision_receiver data = receiver->semantic.data;
 	struct v34_data_decision_output decoded;
-	enum v34_data_decision_receiver_result result =
+	enum v34_data_receive_result result =
 		v34_data_decision_receiver_observe(
 			&data, observation, &decoded);
 	enum v34_phase34_receiver_result mapped = data_result(result);
@@ -644,9 +645,9 @@ static enum v34_phase34_receiver_result receive_data(
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	advance_tracking(receiver);
 	receiver->semantic.data = data;
-	if (result != V34_DATA_DECISION_RECEIVER_OK) {
+	if (result != V34_DATA_RECEIVE_OK) {
 		output->current = decoded.current;
-		if (result != V34_DATA_DECISION_RECEIVER_INTERVAL_READY)
+		if (result != V34_DATA_RECEIVE_INTERVAL_READY)
 			output->received = decoded.received;
 	}
 	return mapped;
@@ -911,7 +912,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 		    &data, normalizer, geometry, expanded_shaping,
 		    coefficients, selection,
 		    receiver->transmitting_profile.local_role) !=
-	    V34_DATA_DECISION_RECEIVER_OK)
+	    V34_DATA_RECEIVE_OK)
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	if (v34_receive_timing_enter_hold(&next.timing) !=

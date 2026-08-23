@@ -416,7 +416,7 @@ static bool prepare_handoff(
 		equalizer_adaptation);
 	if (v34_data_line_receiver_init(
 		    &prepared.receiver, &demodulator, &handoff,
-		    &receiver_config) != V34_DATA_LINE_RECEIVER_OK)
+		    &receiver_config) != V34_DATA_RECEIVE_OK)
 		return false;
 	for (size_t tap = 0; tap < equalizer.tap_count; ++tap) {
 		double in_phase = prepared.receiver.equalizer_receiver.equalizer
@@ -558,7 +558,7 @@ static bool test_generated_channel_drift(void)
 	     ++sample_index) {
 		struct v34_survivor_decision current;
 		struct v34_received_mapping_frame received;
-		enum v34_data_line_receiver_result result;
+		enum v34_data_receive_result result;
 		int16_t sample;
 		bool accepted;
 
@@ -571,17 +571,17 @@ static bool test_generated_channel_drift(void)
 			&fixture.receiver,
 			apply_drifting_echo(&channel, sample),
 			&current, &received);
-		CHECK(result != V34_DATA_LINE_RECEIVER_FAILED &&
-			      result != V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE &&
-			      result != V34_DATA_LINE_RECEIVER_OUT_OF_RANGE &&
-			      result != V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT,
-		      "V.34 tracking receiver failed at sample %zu: %s",
-		      sample_index, v34_data_line_receiver_result_name(result));
-		if (result == V34_DATA_LINE_RECEIVER_B1_COMPLETE) {
+		CHECK(result != V34_DATA_RECEIVE_FAILED &&
+			      result != V34_DATA_RECEIVE_NUMERIC_FAILURE &&
+			      result != V34_DATA_RECEIVE_OUT_OF_RANGE &&
+			      result != V34_DATA_RECEIVE_INVALID_ARGUMENT,
+		      "V.34 tracking receiver failed at sample %zu: %d",
+		      sample_index, result);
+		if (result == V34_DATA_RECEIVE_B1_COMPLETE) {
 			CHECK(!b1_complete,
 			      "V.34 tracking receiver completed B1 twice");
 			b1_complete = true;
-		} else if (result == V34_DATA_LINE_RECEIVER_MAPPING_FRAME_READY) {
+		} else if (result == V34_DATA_RECEIVE_MAPPING_FRAME_READY) {
 			CHECK(b1_complete && expected_index < source.count &&
 				      frames_are_equal(
 					      &received,
@@ -616,7 +616,7 @@ static bool test_generated_line_round_trip(void)
 	     ++sample_index) {
 		struct v34_survivor_decision current;
 		struct v34_received_mapping_frame received;
-		enum v34_data_line_receiver_result result;
+		enum v34_data_receive_result result;
 		int16_t sample;
 		bool accepted;
 
@@ -627,17 +627,17 @@ static bool test_generated_line_round_trip(void)
 		(void)accepted;
 		result = v34_data_line_receiver_sample(
 			&fixture.receiver, sample, &current, &received);
-		CHECK(result != V34_DATA_LINE_RECEIVER_FAILED &&
-			      result != V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE &&
-			      result != V34_DATA_LINE_RECEIVER_OUT_OF_RANGE &&
-			      result != V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT,
-		      "V.34 line receiver failed at sample %zu: %s",
-		      sample_index, v34_data_line_receiver_result_name(result));
-		if (result == V34_DATA_LINE_RECEIVER_B1_COMPLETE) {
+		CHECK(result != V34_DATA_RECEIVE_FAILED &&
+			      result != V34_DATA_RECEIVE_NUMERIC_FAILURE &&
+			      result != V34_DATA_RECEIVE_OUT_OF_RANGE &&
+			      result != V34_DATA_RECEIVE_INVALID_ARGUMENT,
+		      "V.34 line receiver failed at sample %zu: %d",
+		      sample_index, result);
+		if (result == V34_DATA_RECEIVE_B1_COMPLETE) {
 			CHECK(!b1_complete,
 			      "V.34 line receiver completed B1 twice");
 			b1_complete = true;
-		} else if (result == V34_DATA_LINE_RECEIVER_MAPPING_FRAME_READY) {
+		} else if (result == V34_DATA_RECEIVE_MAPPING_FRAME_READY) {
 			CHECK(b1_complete && expected_index < source.count &&
 				      frames_are_equal(
 					      &received,
@@ -697,13 +697,13 @@ static bool test_validation_and_failure_latch(void)
 	memset(&rejected, 0xa5, sizeof(rejected));
 	CHECK(v34_data_line_receiver_init(
 		      &rejected, &unlocked, &handoff,
-		      &configuration) == V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
+		      &configuration) == V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
 	      "V.34 line receiver accepted an unlocked handoff");
 	configuration.transmit_point_gain = 0.0;
 	CHECK(v34_data_line_receiver_init(
 		      &rejected, &fixture.receiver.line, &handoff,
-		      &configuration) == V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
+		      &configuration) == V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
 	      "V.34 line receiver accepted a zero point gain");
 	configuration = receiver_configuration(
@@ -714,11 +714,11 @@ static bool test_validation_and_failure_latch(void)
 	CHECK(v34_data_line_receiver_init(
 		      &rejected, &fixture.receiver.line,
 		      &invalid_handoff, &configuration) ==
-		      V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      v34_data_line_receiver_init(
 		      &rejected, &fixture.receiver.line, NULL,
 		      &configuration) ==
-		      V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
+		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
 	      "V.34 line receiver accepted an incomplete handoff");
 	saved_channel = channel;
@@ -734,16 +734,16 @@ static bool test_validation_and_failure_latch(void)
 	      "V.34 waveform accepted an occupied band beyond Nyquist");
 
 	for (size_t index = 0; index < 4096; ++index) {
-		enum v34_data_line_receiver_result result =
+		enum v34_data_receive_result result =
 			v34_data_line_receiver_sample(
 				&fixture.receiver,
 				(index & 1u) != 0 ? INT16_MAX : INT16_MIN,
 				&current, &received);
 
-		CHECK(result != V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT &&
-			      result != V34_DATA_LINE_RECEIVER_FAILED &&
-			      result != V34_DATA_LINE_RECEIVER_OUT_OF_RANGE &&
-			      result != V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE,
+		CHECK(result != V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      result != V34_DATA_RECEIVE_FAILED &&
+			      result != V34_DATA_RECEIVE_OUT_OF_RANGE &&
+			      result != V34_DATA_RECEIVE_NUMERIC_FAILURE,
 		      "V.34 line receiver rejected bounded hostile sample %zu",
 		      index);
 	}
@@ -762,7 +762,7 @@ static bool test_validation_and_failure_latch(void)
 		saved_received = received;
 		CHECK(v34_data_line_receiver_sample(
 			      &fixture.receiver, 0, &current, &received) ==
-			      V34_DATA_LINE_RECEIVER_FAILED &&
+			      V34_DATA_RECEIVE_FAILED &&
 		      memcmp(&fixture.receiver, &before, sizeof(before)) == 0 &&
 		      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 		      memcmp(&received, &saved_received, sizeof(received)) == 0,

@@ -29,7 +29,7 @@ bool v34_data_decision_receiver_is_valid(
 		receiver->first_normalized.quadrature == 0.0);
 }
 
-enum v34_data_decision_receiver_result
+enum v34_data_receive_result
 v34_data_decision_receiver_init(
 	struct v34_data_decision_receiver *receiver,
 	const struct v34_power_normalizer *normalizer,
@@ -48,9 +48,9 @@ v34_data_decision_receiver_init(
 		    expanded_shaping, coefficients, selection,
 		    transmitting_role) != V34_DATA_RECEIVE_OK ||
 	    !v34_data_decision_receiver_is_valid(&initialized))
-		return V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V34_DATA_DECISION_RECEIVER_OK;
+	return V34_DATA_RECEIVE_OK;
 }
 
 bool v34_data_decision_receiver_is_receiving_b1(
@@ -104,39 +104,7 @@ static struct v34_adaptive_equalizer_decision skip_decision(
 	};
 }
 
-static enum v34_data_decision_receiver_result channel_result(
-	enum v34_data_receive_result result)
-{
-	switch (result) {
-	case V34_DATA_RECEIVE_OK:
-		return V34_DATA_DECISION_RECEIVER_INTERVAL_READY;
-	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
-		return V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY;
-	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
-		return V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS;
-	case V34_DATA_RECEIVE_B1_COMPLETE:
-		return V34_DATA_DECISION_RECEIVER_B1_COMPLETE;
-	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
-		return V34_DATA_DECISION_RECEIVER_NUMERIC_FAILURE;
-	case V34_DATA_RECEIVE_OUT_OF_RANGE:
-		return V34_DATA_DECISION_RECEIVER_OUT_OF_RANGE;
-	case V34_DATA_RECEIVE_INTERVAL_READY:
-	case V34_DATA_RECEIVE_FAILED:
-	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
-	case V34_DATA_RECEIVE_INVALID_STATE:
-		break;
-	}
-	return V34_DATA_DECISION_RECEIVER_INVALID_STATE;
-}
-
-static bool emits_frame(enum v34_data_decision_receiver_result result)
-{
-	return result == V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY ||
-	       result == V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS ||
-	       result == V34_DATA_DECISION_RECEIVER_B1_COMPLETE;
-}
-
-enum v34_data_decision_receiver_result
+enum v34_data_receive_result
 v34_data_decision_receiver_observe(
 	struct v34_data_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
@@ -147,8 +115,7 @@ v34_data_decision_receiver_observe(
 	struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct qam_point targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_analytic_sample target;
-	enum v34_data_decision_receiver_result result;
-	enum v34_data_receive_result channel_status;
+	enum v34_data_receive_result result;
 
 	if (observation == NULL || output == NULL ||
 	    memory_regions_overlap(
@@ -160,11 +127,11 @@ v34_data_decision_receiver_observe(
 	    memory_regions_overlap(
 		    observation, sizeof(*observation), output,
 		    sizeof(*output)))
-		return V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (!v34_data_decision_receiver_is_valid(receiver))
-		return V34_DATA_DECISION_RECEIVER_INVALID_STATE;
+		return V34_DATA_RECEIVE_INVALID_STATE;
 	if (observation->epoch == 0u || observation->lineage == 0u)
-		return V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT;
+		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
 	normalized[1] = normalized_observation(observation);
 	if (!next.has_first_symbol) {
@@ -172,22 +139,24 @@ v34_data_decision_receiver_observe(
 		next.has_first_symbol = true;
 		generated.equalizer = skip_decision(observation);
 		if (!v34_data_decision_receiver_is_valid(&next))
-			return V34_DATA_DECISION_RECEIVER_INVALID_STATE;
+			return V34_DATA_RECEIVE_INVALID_STATE;
 		*receiver = next;
 		*output = generated;
-		return V34_DATA_DECISION_RECEIVER_OK;
+		return V34_DATA_RECEIVE_OK;
 	}
 	normalized[0] = next.first_normalized;
-	channel_status = v34_data_channel_receiver_advance(
+	result = v34_data_channel_receiver_advance(
 		&next.data_receiver, normalized, &generated.current, targets,
 		&generated.received);
-	result = channel_result(channel_status);
-	if (result == V34_DATA_DECISION_RECEIVER_INVALID_STATE ||
-	    result == V34_DATA_DECISION_RECEIVER_NUMERIC_FAILURE ||
-	    result == V34_DATA_DECISION_RECEIVER_OUT_OF_RANGE)
+	if (result == V34_DATA_RECEIVE_OK)
+		result = V34_DATA_RECEIVE_INTERVAL_READY;
+	else if (result == V34_DATA_RECEIVE_INVALID_ARGUMENT)
+		return V34_DATA_RECEIVE_INVALID_STATE;
+	if (result != V34_DATA_RECEIVE_INTERVAL_READY &&
+	    !v34_data_receive_emits_mapping_frame(result))
 		return result;
 	if (!fixed_target(&targets[1], &target))
-		return V34_DATA_DECISION_RECEIVER_OUT_OF_RANGE;
+		return V34_DATA_RECEIVE_OUT_OF_RANGE;
 	generated.equalizer = (struct v34_adaptive_equalizer_decision){
 		.observation = *observation,
 		.target = target,
@@ -197,8 +166,8 @@ v34_data_decision_receiver_observe(
 	next.first_normalized = (struct qam_point){ 0 };
 	next.has_first_symbol = false;
 	if (!v34_data_decision_receiver_is_valid(&next))
-		return V34_DATA_DECISION_RECEIVER_INVALID_STATE;
-	if (!emits_frame(result))
+		return V34_DATA_RECEIVE_INVALID_STATE;
+	if (!v34_data_receive_emits_mapping_frame(result))
 		generated.received = (struct v34_received_mapping_frame){ 0 };
 	*receiver = next;
 	*output = generated;

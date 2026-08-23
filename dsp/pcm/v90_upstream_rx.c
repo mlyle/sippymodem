@@ -321,25 +321,26 @@ static enum v90_upstream_rx_result receive_b1_sample(
 {
 	struct v34_survivor_decision current = { 0 };
 	struct v34_received_mapping_frame received = { 0 };
-	enum v34_data_line_receiver_result result =
+	enum v34_data_receive_result result =
 		v34_data_line_receiver_sample(
 			&receiver->state.data, sample, &current, &received);
 
 	switch (result) {
-	case V34_DATA_LINE_RECEIVER_OK:
-	case V34_DATA_LINE_RECEIVER_INTERVAL_READY:
-	case V34_DATA_LINE_RECEIVER_B1_IN_PROGRESS:
+	case V34_DATA_RECEIVE_OK:
+	case V34_DATA_RECEIVE_INTERVAL_READY:
+	case V34_DATA_RECEIVE_B1_IN_PROGRESS:
 		return V90_UPSTREAM_RX_OK;
-	case V34_DATA_LINE_RECEIVER_B1_COMPLETE:
+	case V34_DATA_RECEIVE_B1_COMPLETE:
 		receiver->stage = V90_UPSTREAM_RX_STAGE_COMPLETE;
 		return V90_UPSTREAM_RX_B1_COMPLETE;
-	case V34_DATA_LINE_RECEIVER_FAILED:
+	case V34_DATA_RECEIVE_FAILED:
 		return V90_UPSTREAM_RX_FAILED;
-	case V34_DATA_LINE_RECEIVER_OUT_OF_RANGE:
+	case V34_DATA_RECEIVE_OUT_OF_RANGE:
 		return V90_UPSTREAM_RX_OUT_OF_RANGE;
-	case V34_DATA_LINE_RECEIVER_INVALID_ARGUMENT:
-	case V34_DATA_LINE_RECEIVER_NUMERIC_FAILURE:
-	case V34_DATA_LINE_RECEIVER_MAPPING_FRAME_READY:
+	case V34_DATA_RECEIVE_INVALID_ARGUMENT:
+	case V34_DATA_RECEIVE_INVALID_STATE:
+	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
+	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
 		break;
 	}
 	return V90_UPSTREAM_RX_NUMERIC_FAILURE;

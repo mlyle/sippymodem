@@ -5,25 +5,13 @@
 
 #include "v34_adaptive_equalizer.h"
 #include "v34_data_channel_receiver.h"
+#include "v34_data_receive.h"
 
 #include <stdbool.h>
 
 enum {
 	/* Unit-power Phase 3/4 points occupy this fixed receive radius. */
 	V34_DATA_DECISION_FIXED_AMPLITUDE = 3238,
-};
-
-enum v34_data_decision_receiver_result {
-	/* The first 2-D symbol was retained without completing an interval. */
-	V34_DATA_DECISION_RECEIVER_OK,
-	V34_DATA_DECISION_RECEIVER_INTERVAL_READY,
-	V34_DATA_DECISION_RECEIVER_MAPPING_FRAME_READY,
-	V34_DATA_DECISION_RECEIVER_B1_IN_PROGRESS,
-	V34_DATA_DECISION_RECEIVER_B1_COMPLETE,
-	V34_DATA_DECISION_RECEIVER_INVALID_ARGUMENT,
-	V34_DATA_DECISION_RECEIVER_INVALID_STATE,
-	V34_DATA_DECISION_RECEIVER_NUMERIC_FAILURE,
-	V34_DATA_DECISION_RECEIVER_OUT_OF_RANGE,
 };
 
 /* Own the fixed-observation semantic data path. The first point of each 4-D
@@ -40,7 +28,7 @@ struct v34_data_decision_output {
 	struct v34_received_mapping_frame received;
 };
 
-enum v34_data_decision_receiver_result
+enum v34_data_receive_result
 v34_data_decision_receiver_init(
 	struct v34_data_decision_receiver *receiver,
 	const struct v34_power_normalizer *normalizer,
@@ -62,7 +50,7 @@ bool v34_data_decision_receiver_is_receiving_b1(
  * adaptation; frame results additionally return `received`. Fields that are
  * not meaningful for a result are zero. Rejection leaves owner and output
  * unchanged. */
-enum v34_data_decision_receiver_result
+enum v34_data_receive_result
 v34_data_decision_receiver_observe(
 	struct v34_data_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
