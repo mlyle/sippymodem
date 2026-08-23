@@ -367,19 +367,6 @@ static bool test_transactional_validation(void)
 		      V34_LATTICE_NUMERIC_FAILURE &&
 	      memcmp(&subsets, &saved_subsets, sizeof(subsets)) == 0,
 	      "rejected estimate changed the subset slice");
-	CHECK(strcmp(v34_lattice_result_name(
-			     V34_LATTICE_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_lattice_result_name(
-			     V34_LATTICE_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_lattice_result_name(
-			     V34_LATTICE_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_lattice_result_name(
-			     (enum v34_lattice_result)99),
-		     "unknown") == 0,
-	      "lattice result names changed");
 	return true;
 }
 

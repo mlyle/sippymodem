@@ -57,7 +57,4 @@ enum v34_mapper_result v34_unmap_2d_decision(
 	const struct v34_grid_point *mapper_output,
 	struct v34_2d_mapping_input *input);
 
-const char *v34_mapper_result_name(
-	enum v34_mapper_result result);
-
 #endif

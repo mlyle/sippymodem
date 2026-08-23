@@ -230,16 +230,6 @@ static bool test_validation(void)
 		      V34_MAPPER_INVALID_ARGUMENT &&
 	      memcmp(&output, &saved, sizeof(output)) == 0,
 	      "inconsistent parameters changed the output");
-	CHECK(strcmp(v34_mapper_result_name(
-		     V34_MAPPER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_mapper_result_name(
-		     V34_MAPPER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_mapper_result_name(
-		     (enum v34_mapper_result)2),
-		     "unknown") == 0,
-	      "mapper result names changed");
 	CHECK(v34_unmap_2d_symbol(
 		      &low_parameters, &invalid_point, &recovered) ==
 		      V34_MAPPER_INVALID_ARGUMENT &&

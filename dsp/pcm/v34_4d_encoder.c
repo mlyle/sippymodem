@@ -231,17 +231,3 @@ enum v34_4d_encoder_result v34_4d_encoder_step(
 	*output = generated;
 	return V34_4D_ENCODER_OK;
 }
-
-const char *v34_4d_encoder_result_name(
-	enum v34_4d_encoder_result result)
-{
-	switch (result) {
-	case V34_4D_ENCODER_OK:
-		return "ok";
-	case V34_4D_ENCODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_4D_ENCODER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

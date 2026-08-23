@@ -489,16 +489,6 @@ static bool test_validation(void)
 	      !v34_frame_schedule_is_complete(NULL),
 	      "schedule accepted corrupt state");
 
-	CHECK(strcmp(v34_frame_schedule_result_name(
-		     V34_FRAME_SCHEDULE_FRAME_COMPLETE),
-		     "frame complete") == 0 &&
-	      strcmp(v34_frame_schedule_result_name(
-		     V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION),
-		     "unsupported selection") == 0 &&
-	      strcmp(v34_frame_schedule_result_name(
-		     (enum v34_frame_schedule_result)4),
-		     "unknown") == 0,
-	      "frame schedule result names changed");
 	return true;
 }
 

@@ -261,15 +261,6 @@ static bool test_validation_and_transactionality(void)
 	prepared.transmit.encoder.previous_differential_output = 1;
 	CHECK(!v34_data_startup_is_valid(&prepared),
 	      "advanced transmit mapping was accepted");
-	CHECK(strcmp(v34_data_startup_result_name(V34_DATA_STARTUP_OK), "ok") ==
-		      0 &&
-	      strcmp(v34_data_startup_result_name(
-			     V34_DATA_STARTUP_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_data_startup_result_name(
-			     (enum v34_data_startup_result)99),
-		     "unknown") == 0,
-	      "startup result names changed");
 	return true;
 }
 

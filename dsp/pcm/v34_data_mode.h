@@ -49,7 +49,4 @@ enum v34_data_mode_result v34_data_mode_select_startup(
 	const struct v34_mp_record *peer_record,
 	struct v34_data_mode *mode);
 
-const char *v34_data_mode_result_name(
-	enum v34_data_mode_result result);
-
 #endif /* V34_DATA_MODE_H */

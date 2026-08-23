@@ -49,7 +49,4 @@ enum v34_data_mapping_result v34_data_mapping_line_point_gain(
 	const struct v34_data_mapping *mapping, uint32_t sample_rate,
 	double *point_gain);
 
-const char *v34_data_mapping_result_name(
-	enum v34_data_mapping_result result);
-
 #endif /* V34_DATA_MAPPING_H */

@@ -64,7 +64,4 @@ enum v34_data_points_result v34_data_points_queue_mapping_frame(
 enum v34_data_points_result v34_data_points_next(
 	struct v34_data_points *points, struct qam_point *point);
 
-const char *v34_data_points_result_name(
-	enum v34_data_points_result result);
-
 #endif

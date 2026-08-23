@@ -320,19 +320,3 @@ v34_frame_schedule_next(
 	*mapping_frame = generated;
 	return V34_FRAME_SCHEDULE_OK;
 }
-
-const char *v34_frame_schedule_result_name(
-	enum v34_frame_schedule_result result)
-{
-	switch (result) {
-	case V34_FRAME_SCHEDULE_OK:
-		return "ok";
-	case V34_FRAME_SCHEDULE_FRAME_COMPLETE:
-		return "frame complete";
-	case V34_FRAME_SCHEDULE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_FRAME_SCHEDULE_UNSUPPORTED_SELECTION:
-		return "unsupported selection";
-	}
-	return "unknown";
-}

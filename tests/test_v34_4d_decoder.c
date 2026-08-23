@@ -303,16 +303,6 @@ static bool test_validation(void)
 	CHECK(!v34_4d_decoder_is_valid(&invalid) &&
 	      rejection_is_transactional(&invalid, &decided),
 	      "invalid mapping parameters were accepted");
-	CHECK(strcmp(v34_4d_decoder_result_name(
-		     V34_4D_DECODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_4d_decoder_result_name(
-		     V34_4D_DECODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_4d_decoder_result_name(
-		     (enum v34_4d_decoder_result)2),
-		     "unknown") == 0,
-	      "decoder result names changed");
 	return true;
 }
 

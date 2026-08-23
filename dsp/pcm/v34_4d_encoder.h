@@ -68,7 +68,4 @@ enum v34_4d_encoder_result v34_4d_encoder_step(
 	const struct v34_4d_encoder_input *input,
 	struct v34_4d_encoder_output *output);
 
-const char *v34_4d_encoder_result_name(
-	enum v34_4d_encoder_result result);
-
 #endif

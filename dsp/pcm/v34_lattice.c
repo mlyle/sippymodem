@@ -211,17 +211,3 @@ enum v34_lattice_result v34_slice_grid_subsets(
 	*slice = generated;
 	return V34_LATTICE_OK;
 }
-
-const char *v34_lattice_result_name(
-	enum v34_lattice_result result)
-{
-	switch (result) {
-	case V34_LATTICE_OK:
-		return "ok";
-	case V34_LATTICE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_LATTICE_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

@@ -52,7 +52,4 @@ enum v34_branches_result v34_build_branch_set(
 	enum v34_trellis_selection selection,
 	struct v34_branch_set *set);
 
-const char *v34_branches_result_name(
-	enum v34_branches_result result);
-
 #endif /* V34_BRANCHES_H */

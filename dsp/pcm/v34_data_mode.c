@@ -133,17 +133,3 @@ enum v34_data_mode_result v34_data_mode_select_startup(
 	*mode = selected;
 	return V34_DATA_MODE_OK;
 }
-
-const char *v34_data_mode_result_name(
-	enum v34_data_mode_result result)
-{
-	switch (result) {
-	case V34_DATA_MODE_OK:
-		return "ok";
-	case V34_DATA_MODE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_MODE_NO_COMMON_RATE:
-		return "no common rate";
-	}
-	return "unknown";
-}

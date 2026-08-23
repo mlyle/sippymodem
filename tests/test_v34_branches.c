@@ -436,19 +436,6 @@ static bool test_validation(void)
 		      malformed, 0, V34_TRELLIS_64_STATE,
 		      V34_BRANCHES_NUMERIC_FAILURE),
 	      "overflowing branch metric was accepted");
-	CHECK(strcmp(v34_branches_result_name(
-			     V34_BRANCHES_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_branches_result_name(
-			     V34_BRANCHES_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_branches_result_name(
-			     V34_BRANCHES_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_branches_result_name(
-			     (enum v34_branches_result)99),
-		     "unknown") == 0,
-	      "branch result names changed");
 	return true;
 }
 

@@ -229,15 +229,3 @@ enum v34_mapper_result v34_unmap_2d_decision(
 	*input = recovered;
 	return V34_MAPPER_OK;
 }
-
-const char *v34_mapper_result_name(
-	enum v34_mapper_result result)
-{
-	switch (result) {
-	case V34_MAPPER_OK:
-		return "ok";
-	case V34_MAPPER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

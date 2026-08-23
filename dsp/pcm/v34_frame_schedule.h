@@ -94,7 +94,4 @@ v34_frame_schedule_next(
 	struct v34_frame_schedule *schedule,
 	struct v34_mapping_frame *mapping_frame);
 
-const char *v34_frame_schedule_result_name(
-	enum v34_frame_schedule_result result);
-
 #endif

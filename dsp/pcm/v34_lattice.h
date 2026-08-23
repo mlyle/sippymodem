@@ -53,7 +53,4 @@ enum v34_lattice_result v34_slice_grid_subsets(
 	const struct qam_point *channel_estimate,
 	struct v34_subset_slice *slice);
 
-const char *v34_lattice_result_name(
-	enum v34_lattice_result result);
-
 #endif /* V34_LATTICE_H */

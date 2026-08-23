@@ -248,16 +248,6 @@ static bool test_validation(void)
 	      !v34_mapping_parameters_is_valid(NULL),
 	      "mapping parameters accepted inconsistent shaping");
 
-	CHECK(strcmp(v34_mapping_parameters_result_name(
-		     V34_MAPPING_PARAMETERS_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_mapping_parameters_result_name(
-		     V34_MAPPING_PARAMETERS_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_mapping_parameters_result_name(
-		     (enum v34_mapping_parameters_result)2),
-		     "unknown") == 0,
-	      "mapping parameter result names changed");
 	return true;
 }
 

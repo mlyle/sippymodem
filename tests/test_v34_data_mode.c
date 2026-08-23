@@ -215,14 +215,6 @@ static bool test_validation_and_transactionality(void)
 	invalid.receive.primary_data_rate_2400_bps_units = 5;
 	CHECK(!v34_data_mode_is_valid(&invalid),
 	      "asymmetric rates were accepted without negotiation");
-	CHECK(strcmp(v34_data_mode_result_name(V34_DATA_MODE_OK), "ok") == 0 &&
-	      strcmp(v34_data_mode_result_name(
-		     V34_DATA_MODE_NO_COMMON_RATE),
-		     "no common rate") == 0 &&
-	      strcmp(v34_data_mode_result_name(
-		     (enum v34_data_mode_result)99),
-		     "unknown") == 0,
-	      "startup mode result names changed");
 	return true;
 }
 

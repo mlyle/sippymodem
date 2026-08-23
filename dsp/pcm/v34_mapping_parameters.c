@@ -131,15 +131,3 @@ bool v34_mapping_parameters_is_valid(
 		       parameters->expanded_shaping, &derived) &&
 	       v34_mapping_parameters_are_equal(parameters, &derived);
 }
-
-const char *v34_mapping_parameters_result_name(
-	enum v34_mapping_parameters_result result)
-{
-	switch (result) {
-	case V34_MAPPING_PARAMETERS_OK:
-		return "ok";
-	case V34_MAPPING_PARAMETERS_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

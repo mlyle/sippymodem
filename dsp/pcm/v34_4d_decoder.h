@@ -50,7 +50,4 @@ enum v34_4d_decoder_result v34_decode_4d_interval(
 	const struct v34_decided_4d_interval *decided,
 	struct v34_decoded_4d_interval *decoded);
 
-const char *v34_4d_decoder_result_name(
-	enum v34_4d_decoder_result result);
-
 #endif

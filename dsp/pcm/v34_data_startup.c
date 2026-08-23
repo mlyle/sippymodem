@@ -155,19 +155,3 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	*startup = prepared;
 	return V34_DATA_STARTUP_OK;
 }
-
-const char *v34_data_startup_result_name(
-	enum v34_data_startup_result result)
-{
-	switch (result) {
-	case V34_DATA_STARTUP_OK:
-		return "ok";
-	case V34_DATA_STARTUP_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_STARTUP_OUT_OF_RANGE:
-		return "out of range";
-	case V34_DATA_STARTUP_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

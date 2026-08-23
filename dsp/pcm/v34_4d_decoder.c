@@ -68,15 +68,3 @@ enum v34_4d_decoder_result v34_decode_4d_interval(
 	*decoded = generated;
 	return V34_4D_DECODER_OK;
 }
-
-const char *v34_4d_decoder_result_name(
-	enum v34_4d_decoder_result result)
-{
-	switch (result) {
-	case V34_4D_DECODER_OK:
-		return "ok";
-	case V34_4D_DECODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

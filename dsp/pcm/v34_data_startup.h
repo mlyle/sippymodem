@@ -38,7 +38,4 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	const struct v34_phase3_profile *receive_profile,
 	uint32_t sample_rate, double equalizer_adaptation);
 
-const char *v34_data_startup_result_name(
-	enum v34_data_startup_result result);
-
 #endif /* V34_DATA_STARTUP_H */

@@ -228,17 +228,3 @@ enum v34_branches_result v34_build_branch_set(
 	*set = generated;
 	return V34_BRANCHES_OK;
 }
-
-const char *v34_branches_result_name(
-	enum v34_branches_result result)
-{
-	switch (result) {
-	case V34_BRANCHES_OK:
-		return "ok";
-	case V34_BRANCHES_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_BRANCHES_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

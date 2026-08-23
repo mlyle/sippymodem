@@ -44,7 +44,4 @@ bool v34_mapping_parameters_are_equal(
 	const struct v34_mapping_parameters *left,
 	const struct v34_mapping_parameters *right);
 
-const char *v34_mapping_parameters_result_name(
-	enum v34_mapping_parameters_result result);
-
 #endif

@@ -321,25 +321,6 @@ static bool test_transactional_validation(void)
 	points.next_point = V34_SYMBOLS_PER_MAPPING_FRAME + 1u;
 	CHECK(!v34_data_points_is_valid(&points),
 	      "out-of-range point cursor was accepted");
-	CHECK(strcmp(v34_data_points_result_name(V34_DATA_POINTS_OK), "ok") == 0 &&
-	      strcmp(v34_data_points_result_name(
-		     V34_DATA_POINTS_MAPPING_FRAME_REQUIRED),
-		     "mapping frame required") == 0 &&
-	      strcmp(v34_data_points_result_name(
-		     V34_DATA_POINTS_MAPPING_FRAME_PENDING),
-		     "mapping frame pending") == 0 &&
-	      strcmp(v34_data_points_result_name(
-		     V34_DATA_POINTS_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_data_points_result_name(V34_DATA_POINTS_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_data_points_result_name(
-		     V34_DATA_POINTS_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_data_points_result_name(
-		     (enum v34_data_points_result)99),
-		     "unknown") == 0,
-	      "result names changed");
 	return true;
 }
 

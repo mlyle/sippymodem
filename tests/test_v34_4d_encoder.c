@@ -532,19 +532,6 @@ static bool test_validation(void)
 			V34_PRECODER_GRID_STEP_2;
 	CHECK(!v34_4d_encoder_is_valid(&encoder),
 	      "inconsistent precoder grid was accepted");
-	CHECK(strcmp(v34_4d_encoder_result_name(
-		     V34_4D_ENCODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_4d_encoder_result_name(
-		     V34_4D_ENCODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_4d_encoder_result_name(
-		     V34_4D_ENCODER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_4d_encoder_result_name(
-		     (enum v34_4d_encoder_result)3),
-		     "unknown") == 0,
-	      "result names changed");
 	return true;
 }
 

@@ -204,23 +204,3 @@ enum v34_data_points_result v34_data_points_next(
 	*point = generated;
 	return V34_DATA_POINTS_OK;
 }
-
-const char *v34_data_points_result_name(
-	enum v34_data_points_result result)
-{
-	switch (result) {
-	case V34_DATA_POINTS_OK:
-		return "ok";
-	case V34_DATA_POINTS_MAPPING_FRAME_REQUIRED:
-		return "mapping frame required";
-	case V34_DATA_POINTS_MAPPING_FRAME_PENDING:
-		return "mapping frame pending";
-	case V34_DATA_POINTS_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_POINTS_OUT_OF_RANGE:
-		return "out of range";
-	case V34_DATA_POINTS_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

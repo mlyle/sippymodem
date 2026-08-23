@@ -213,15 +213,6 @@ static bool test_validation_and_transactionality(void)
 		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
 	      point_gain == 123.0,
 	      "advanced encoder was accepted by line point calibration");
-	CHECK(strcmp(v34_data_mapping_result_name(V34_DATA_MAPPING_OK), "ok") ==
-		      0 &&
-	      strcmp(v34_data_mapping_result_name(
-			     V34_DATA_MAPPING_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_data_mapping_result_name(
-			     (enum v34_data_mapping_result)99),
-		     "unknown") == 0,
-	      "mapping result names changed");
 	return true;
 }
 
