@@ -36,6 +36,10 @@ struct v34_phase3_profile {
 bool v34_phase3_profile_is_valid(
 	const struct v34_phase3_profile *profile);
 
+bool v34_phase3_profile_is_equal(
+	const struct v34_phase3_profile *left,
+	const struct v34_phase3_profile *right);
+
 /* Construct one exact transmit profile after the owning negotiation has
  * selected the station role, symbol rate, probe result, power, and MD
  * duration. Rejected calls leave profile unchanged. */
@@ -61,8 +65,5 @@ v34_phase3_answerer_profile(
 	struct v34_phase3_profile *profile,
 	const struct v34_info1a *local_info1a,
 	const struct v34_info1c *peer_info1c);
-
-const char *v34_phase3_profile_result_name(
-	enum v34_phase3_profile_result result);
 
 #endif

@@ -68,35 +68,13 @@ static enum v34_data_stream_result prepare_mapping(
 		configuration->auxiliary_channel_enabled));
 }
 
-static bool profiles_are_equal(
-	const struct v34_phase3_profile *left,
-	const struct v34_phase3_profile *right)
-{
-	return left->symbol_rate_numerator == right->symbol_rate_numerator &&
-	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
-	       left->carrier_frequency_numerator ==
-		       right->carrier_frequency_numerator &&
-	       left->carrier_frequency_denominator ==
-		       right->carrier_frequency_denominator &&
-	       left->md_symbol_count == right->md_symbol_count &&
-	       left->symbol_rate == right->symbol_rate &&
-	       left->local_role == right->local_role &&
-	       left->transmit_power_reduction_db ==
-		       right->transmit_power_reduction_db &&
-	       left->preemphasis_filter_index ==
-		       right->preemphasis_filter_index &&
-	       left->projected_data_rate_2400_bps_units ==
-		       right->projected_data_rate_2400_bps_units &&
-	       left->md_length_35_ms_units == right->md_length_35_ms_units &&
-	       left->high_carrier == right->high_carrier;
-}
-
 static bool configuration_matches_line(
 	const struct v34_data_stream_configuration *configuration,
 	const struct v34_training_line *line)
 {
 	return configuration != NULL && v34_training_line_is_valid(line) &&
-	       profiles_are_equal(&configuration->profile, &line->profile) &&
+	       v34_phase3_profile_is_equal(
+		       &configuration->profile, &line->profile) &&
 	       configuration->sample_rate == line->carrier.channel.sample_rate &&
 	       configuration->nominal_peak_amplitude ==
 		       line->nominal_peak_amplitude;
@@ -153,7 +131,7 @@ enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
 
 	if (stream == NULL || !v34_data_mapping_is_valid(mapping) ||
 	    !v34_training_line_is_valid(active_line) ||
-	    !profiles_are_equal(
+	    !v34_phase3_profile_is_equal(
 		    &mapping->transmitting_profile,
 		    &active_line->profile))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;

@@ -2,7 +2,7 @@
 
 #include "v90_phase3_analog_line_rx.h"
 
-#include "v34_training_line.h"
+#include "v34_pulse_modulator.h"
 
 #include <stddef.h>
 
@@ -18,7 +18,7 @@ static bool channel_matches(
 	const struct v90_phase3_analog_line_rx *rx)
 {
 	return rx->demodulator.channel.sample_rate == V90_PHASE3_SAMPLE_RATE &&
-	       v34_training_line_channel_matches(
+	       v34_line_channel_matches(
 		       &rx->transmitting_profile, &rx->demodulator.channel);
 }
 
@@ -54,15 +54,15 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_init(
 {
 	struct v90_phase3_analog_line_rx initialized = { 0 };
 	struct qam_channel channel;
-	enum v34_training_line_result channel_result;
+	enum v34_line_channel_result channel_result;
 
 	if (rx == NULL || !profile_is_analog(analog_profile) ||
 	    !v90_phase3_analog_rx_configuration_is_valid(configuration))
 		return V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT;
-	channel_result = v34_training_line_channel(
+	channel_result = v34_line_channel_init(
 		analog_profile, V90_PHASE3_SAMPLE_RATE, &channel);
-	if (channel_result != V34_TRAINING_LINE_OK)
-		return channel_result == V34_TRAINING_LINE_OUT_OF_RANGE ?
+	if (channel_result != V34_LINE_CHANNEL_OK)
+		return channel_result == V34_LINE_CHANNEL_OUT_OF_RANGE ?
 			       V90_PHASE3_ANALOG_LINE_RX_OUT_OF_RANGE :
 			       V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT;
 	initialized.transmitting_profile = *analog_profile;
@@ -172,7 +172,7 @@ bool v90_phase3_analog_line_handoff_is_valid(
 	       qam_demodulator_measure(&handoff->demodulator).timing_locked &&
 	       handoff->demodulator.channel.sample_rate ==
 		       V90_PHASE3_SAMPLE_RATE &&
-	       v34_training_line_channel_matches(
+	       v34_line_channel_matches(
 		       &handoff->transmitting_profile,
 		       &handoff->demodulator.channel) &&
 	       v90_phase3_analog_handoff_is_valid(&handoff->phase3);

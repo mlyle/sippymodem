@@ -2,7 +2,7 @@
 
 #include "v90_phase3_return_line_rx.h"
 
-#include "v34_training_line.h"
+#include "v34_pulse_modulator.h"
 #include "v90_phase3.h"
 
 #include <stddef.h>
@@ -20,7 +20,7 @@ static bool channel_matches(
 	const struct v34_phase3_profile *profile)
 {
 	return demodulator->channel.sample_rate == V90_PHASE3_SAMPLE_RATE &&
-	       v34_training_line_channel_matches(
+	       v34_line_channel_matches(
 		       profile, &demodulator->channel);
 }
 

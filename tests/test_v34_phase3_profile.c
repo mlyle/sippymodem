@@ -254,14 +254,13 @@ static bool test_validation(void)
 	invalid = profile;
 	invalid.projected_data_rate_2400_bps_units = 0;
 	CHECK(!v34_phase3_profile_is_valid(&invalid) &&
-	      !v34_phase3_profile_is_valid(NULL) &&
-	      strcmp(v34_phase3_profile_result_name(
-			     V34_PHASE3_PROFILE_UNUSABLE_SELECTION),
-		     "unusable selection") == 0 &&
-	      strcmp(v34_phase3_profile_result_name(
-			     (enum v34_phase3_profile_result)99),
-		     "unknown") == 0,
-	      "profile validation or result names changed");
+	      !v34_phase3_profile_is_valid(NULL),
+	      "profile validation changed");
+	CHECK(v34_phase3_profile_is_equal(&profile, &profile) &&
+	      !v34_phase3_profile_is_equal(&profile, &invalid) &&
+	      !v34_phase3_profile_is_equal(NULL, &profile) &&
+	      !v34_phase3_profile_is_equal(&profile, NULL),
+	      "profile equality changed");
 	return true;
 }
 

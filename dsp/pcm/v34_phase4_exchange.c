@@ -135,29 +135,6 @@ static bool trn_target_complete(
 		exchange->transmit.training.phase4_trn_symbols >= target);
 }
 
-static bool profiles_are_equal(
-	const struct v34_phase3_profile *left,
-	const struct v34_phase3_profile *right)
-{
-	return left->symbol_rate_numerator == right->symbol_rate_numerator &&
-	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
-	       left->carrier_frequency_numerator ==
-		       right->carrier_frequency_numerator &&
-	       left->carrier_frequency_denominator ==
-		       right->carrier_frequency_denominator &&
-	       left->md_symbol_count == right->md_symbol_count &&
-	       left->symbol_rate == right->symbol_rate &&
-	       left->local_role == right->local_role &&
-	       left->transmit_power_reduction_db ==
-		       right->transmit_power_reduction_db &&
-	       left->preemphasis_filter_index ==
-		       right->preemphasis_filter_index &&
-	       left->projected_data_rate_2400_bps_units ==
-		       right->projected_data_rate_2400_bps_units &&
-	       left->md_length_35_ms_units == right->md_length_35_ms_units &&
-	       left->high_carrier == right->high_carrier;
-}
-
 static const struct v34_phase3_profile *local_transmit_profile(
 	const struct v34_phase4_exchange *exchange)
 {
@@ -254,18 +231,18 @@ static bool data_state_is_valid(
 		return false;
 	if (exchange->transmit_data_active) {
 		if (!v34_data_stream_is_valid(&exchange->transmit.data) ||
-		    !profiles_are_equal(
+		    !v34_phase3_profile_is_equal(
 			    &exchange->data_startup.transmit.transmitting_profile,
 			    &exchange->transmit.data.transmitter.line.carrier.profile))
 			return false;
-	} else if (!profiles_are_equal(
+	} else if (!v34_phase3_profile_is_equal(
 			   &exchange->data_startup.transmit.transmitting_profile,
 			   &exchange->transmit.training.line.profile)) {
 		return false;
 	}
 	if (exchange->receive_data_active) {
 		if (!v34_phase34_receiver_is_valid(&exchange->receive) ||
-		    !profiles_are_equal(
+		    !v34_phase3_profile_is_equal(
 			    &exchange->data_startup.receive.transmitting_profile,
 			    &exchange->receive.transmitting_profile) ||
 		    exchange->receive.stage != V34_PHASE34_RECEIVER_DATA)

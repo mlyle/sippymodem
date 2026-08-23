@@ -112,36 +112,13 @@ bool v34_receive_timing_is_acquired(
 	       timing->timing.mode != V34_TIMING_CONTROL_INITIAL_PHASE;
 }
 
-static bool profiles_are_equal(
-	const struct v34_phase3_profile *left,
-	const struct v34_phase3_profile *right)
-{
-	return left->symbol_rate_numerator == right->symbol_rate_numerator &&
-	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
-	       left->carrier_frequency_numerator ==
-		       right->carrier_frequency_numerator &&
-	       left->carrier_frequency_denominator ==
-		       right->carrier_frequency_denominator &&
-	       left->md_symbol_count == right->md_symbol_count &&
-	       left->symbol_rate == right->symbol_rate &&
-	       left->local_role == right->local_role &&
-	       left->transmit_power_reduction_db ==
-		       right->transmit_power_reduction_db &&
-	       left->preemphasis_filter_index ==
-		       right->preemphasis_filter_index &&
-	       left->projected_data_rate_2400_bps_units ==
-		       right->projected_data_rate_2400_bps_units &&
-	       left->md_length_35_ms_units == right->md_length_35_ms_units &&
-	       left->high_carrier == right->high_carrier;
-}
-
 bool v34_receive_timing_matches_profile(
 	const struct v34_receive_timing *timing,
 	const struct v34_phase3_profile *transmitting_profile)
 {
 	return v34_receive_timing_is_valid(timing) &&
 	       v34_phase3_profile_is_valid(transmitting_profile) &&
-	       profiles_are_equal(
+	       v34_phase3_profile_is_equal(
 		       &timing->transmitting_profile, transmitting_profile);
 }
 

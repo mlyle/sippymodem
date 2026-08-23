@@ -8,7 +8,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static const double V34_TRAINING_ROLLOFF = 0.1;
 static const double V34_EQUAL_POWER_RMS =
 	0.70710678118654752440084436210485;
 static const double V34_POWER_TOLERANCE = 1e-9;
@@ -20,72 +19,6 @@ enum calibration_stage {
 	CALIBRATE_FILTER_TAIL,
 	CALIBRATION_COMPLETE,
 };
-
-static bool occupied_band_fits(
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate)
-{
-	long double carrier =
-		(long double)profile->carrier_frequency_numerator /
-		profile->carrier_frequency_denominator;
-	long double symbol_rate =
-		(long double)profile->symbol_rate_numerator /
-		profile->symbol_rate_denominator;
-	long double upper_edge = carrier +
-		0.5L * (1.0L + V34_TRAINING_ROLLOFF) * symbol_rate;
-
-	return upper_edge < 0.5L * sample_rate;
-}
-
-enum v34_training_line_result v34_training_line_channel(
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate, struct qam_channel *channel)
-{
-	struct qam_channel configured;
-
-	if (!v34_phase3_profile_is_valid(profile) || sample_rate == 0 ||
-	    channel == NULL)
-		return V34_TRAINING_LINE_INVALID_ARGUMENT;
-	if (!occupied_band_fits(profile, sample_rate))
-		return V34_TRAINING_LINE_OUT_OF_RANGE;
-	configured = (struct qam_channel){
-		.sample_rate = sample_rate,
-		.symbol_rate_numerator = profile->symbol_rate_numerator,
-		.symbol_rate_denominator = profile->symbol_rate_denominator,
-		.carrier_frequency_numerator =
-			profile->carrier_frequency_numerator,
-		.carrier_frequency_denominator =
-			profile->carrier_frequency_denominator,
-		.rolloff = V34_TRAINING_ROLLOFF,
-		.pulse_span_symbols =
-			V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS,
-	};
-	*channel = configured;
-	return V34_TRAINING_LINE_OK;
-}
-
-bool v34_training_line_channel_matches(
-	const struct v34_phase3_profile *profile,
-	const struct qam_channel *channel)
-{
-	struct qam_channel expected;
-
-	return channel != NULL &&
-	       v34_training_line_channel(
-		       profile, channel->sample_rate, &expected) ==
-		       V34_TRAINING_LINE_OK &&
-	       channel->sample_rate == expected.sample_rate &&
-	       channel->symbol_rate_numerator ==
-		       expected.symbol_rate_numerator &&
-	       channel->symbol_rate_denominator ==
-		       expected.symbol_rate_denominator &&
-	       channel->carrier_frequency_numerator ==
-		       expected.carrier_frequency_numerator &&
-	       channel->carrier_frequency_denominator ==
-		       expected.carrier_frequency_denominator &&
-	       channel->rolloff == expected.rolloff &&
-	       channel->pulse_span_symbols == expected.pulse_span_symbols;
-}
 
 static uint32_t calibration_sample_count(
 	const struct v34_training_line *line)
@@ -227,10 +160,8 @@ bool v34_training_line_is_valid(
 	if (line == NULL ||
 	    !v34_phase3_profile_is_valid(&line->profile) ||
 	    !v34_pulse_modulator_is_valid(&line->carrier) ||
-	    !v34_training_line_channel_matches(
+	    !v34_line_channel_matches(
 		    &line->profile, &line->carrier.channel) ||
-	    !occupied_band_fits(
-		    &line->profile, line->carrier.channel.sample_rate) ||
 	    line->carrier.amplitude != INT16_MAX ||
 	    !v34_preemphasis_is_valid(&line->preemphasis) ||
 	    line->preemphasis.sample_rate !=
@@ -257,6 +188,7 @@ enum v34_training_line_result v34_training_line_init(
 	struct v34_training_line initialized = { 0 };
 	struct qam_channel channel;
 	double reduction_gain;
+	enum v34_line_channel_result channel_result;
 	enum v34_training_line_result result;
 
 	if (line == NULL || !v34_phase3_profile_is_valid(profile) ||
@@ -268,9 +200,12 @@ enum v34_training_line_result v34_training_line_init(
 		10.0, -(double)profile->transmit_power_reduction_db / 20.0);
 	initialized.target_rms = nominal_peak_amplitude *
 		V34_EQUAL_POWER_RMS * reduction_gain;
-	result = v34_training_line_channel(profile, sample_rate, &channel);
-	if (result != V34_TRAINING_LINE_OK)
-		return result;
+	channel_result = v34_line_channel_init(
+		profile, sample_rate, &channel);
+	if (channel_result != V34_LINE_CHANNEL_OK)
+		return channel_result == V34_LINE_CHANNEL_OUT_OF_RANGE ?
+		       V34_TRAINING_LINE_OUT_OF_RANGE :
+		       V34_TRAINING_LINE_INVALID_ARGUMENT;
 	if (!isfinite(initialized.target_rms) ||
 	    initialized.target_rms <= 0.0 ||
 	    v34_pulse_modulator_init(
@@ -348,22 +283,4 @@ enum v34_training_line_result v34_training_line_sample(
 	*sample = (int16_t)rounded;
 	*point_accepted = accepted;
 	return V34_TRAINING_LINE_OK;
-}
-
-const char *v34_training_line_result_name(
-	enum v34_training_line_result result)
-{
-	switch (result) {
-	case V34_TRAINING_LINE_OK:
-		return "ok";
-	case V34_TRAINING_LINE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_TRAINING_LINE_OUT_OF_RANGE:
-		return "out of range";
-	case V34_TRAINING_LINE_CLIPPING_RISK:
-		return "clipping risk";
-	case V34_TRAINING_LINE_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
 }

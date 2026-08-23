@@ -143,6 +143,30 @@ bool v34_phase3_profile_is_valid(
 	       profile_fields_match_rates(profile);
 }
 
+bool v34_phase3_profile_is_equal(
+	const struct v34_phase3_profile *left,
+	const struct v34_phase3_profile *right)
+{
+	return left != NULL && right != NULL &&
+	       left->symbol_rate_numerator == right->symbol_rate_numerator &&
+	       left->symbol_rate_denominator == right->symbol_rate_denominator &&
+	       left->carrier_frequency_numerator ==
+		       right->carrier_frequency_numerator &&
+	       left->carrier_frequency_denominator ==
+		       right->carrier_frequency_denominator &&
+	       left->md_symbol_count == right->md_symbol_count &&
+	       left->symbol_rate == right->symbol_rate &&
+	       left->local_role == right->local_role &&
+	       left->transmit_power_reduction_db ==
+		       right->transmit_power_reduction_db &&
+	       left->preemphasis_filter_index ==
+		       right->preemphasis_filter_index &&
+	       left->projected_data_rate_2400_bps_units ==
+		       right->projected_data_rate_2400_bps_units &&
+	       left->md_length_35_ms_units == right->md_length_35_ms_units &&
+	       left->high_carrier == right->high_carrier;
+}
+
 enum v34_phase3_profile_result v34_phase3_profile_init(
 	struct v34_phase3_profile *profile,
 	enum v34_station_role local_role,
@@ -228,18 +252,4 @@ v34_phase3_answerer_profile(
 		&peer_info1c->answer_transmit[symbol_rate],
 		peer_info1c->common.minimum_peer_power_reduction_db,
 		local_info1a->common.local_md_length_35_ms_units);
-}
-
-const char *v34_phase3_profile_result_name(
-	enum v34_phase3_profile_result result)
-{
-	switch (result) {
-	case V34_PHASE3_PROFILE_OK:
-		return "ok";
-	case V34_PHASE3_PROFILE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE3_PROFILE_UNUSABLE_SELECTION:
-		return "unusable selection";
-	}
-	return "unknown";
 }

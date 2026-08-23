@@ -5,7 +5,6 @@
 #include <limits.h>
 #include <math.h>
 
-static const double V34_DATA_ROLLOFF = 0.1;
 static const double V34_DATA_POINT_POWER_EPSILON = 1e-12;
 
 static bool power_fits(double power, double maximum)
@@ -46,70 +45,6 @@ static bool scaled_point_power(
 	return true;
 }
 
-static bool occupied_band_fits(
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate)
-{
-	long double carrier =
-		(long double)profile->carrier_frequency_numerator /
-		profile->carrier_frequency_denominator;
-	long double symbol_rate = (long double)profile->symbol_rate_numerator /
-		profile->symbol_rate_denominator;
-	long double upper_edge =
-		carrier + 0.5L * (1.0L + V34_DATA_ROLLOFF) * symbol_rate;
-
-	return upper_edge < 0.5L * sample_rate;
-}
-
-enum v34_data_carrier_result v34_data_carrier_channel(
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate, struct qam_channel *channel)
-{
-	struct qam_channel configured;
-
-	if (!v34_phase3_profile_is_valid(profile) || sample_rate == 0 ||
-	    channel == NULL)
-		return V34_DATA_CARRIER_INVALID_ARGUMENT;
-	if (!occupied_band_fits(profile, sample_rate))
-		return V34_DATA_CARRIER_OUT_OF_RANGE;
-	configured = (struct qam_channel){
-		.sample_rate = sample_rate,
-		.symbol_rate_numerator = profile->symbol_rate_numerator,
-		.symbol_rate_denominator = profile->symbol_rate_denominator,
-		.carrier_frequency_numerator =
-			profile->carrier_frequency_numerator,
-		.carrier_frequency_denominator =
-			profile->carrier_frequency_denominator,
-		.rolloff = V34_DATA_ROLLOFF,
-		.pulse_span_symbols = V34_DATA_PULSE_SPAN_SYMBOLS,
-	};
-	*channel = configured;
-	return V34_DATA_CARRIER_OK;
-}
-
-bool v34_data_carrier_channel_matches(
-	const struct v34_phase3_profile *profile,
-	const struct qam_channel *channel)
-{
-	struct qam_channel expected;
-
-	return channel != NULL &&
-	       v34_data_carrier_channel(
-		       profile, channel->sample_rate, &expected) ==
-		       V34_DATA_CARRIER_OK &&
-	       channel->sample_rate == expected.sample_rate &&
-	       channel->symbol_rate_numerator ==
-		       expected.symbol_rate_numerator &&
-	       channel->symbol_rate_denominator ==
-		       expected.symbol_rate_denominator &&
-	       channel->carrier_frequency_numerator ==
-		       expected.carrier_frequency_numerator &&
-	       channel->carrier_frequency_denominator ==
-		       expected.carrier_frequency_denominator &&
-	       channel->rolloff == expected.rolloff &&
-	       channel->pulse_span_symbols == expected.pulse_span_symbols;
-}
-
 static bool channel_matches_configuration(
 	const struct v34_data_carrier *carrier)
 {
@@ -119,7 +54,7 @@ static bool channel_matches_configuration(
 	return scaled_point_power(
 		       &carrier->normalizer, carrier->point_gain,
 		       &required_power) &&
-	       v34_data_carrier_channel_matches(
+	       v34_line_channel_matches(
 		       &carrier->profile, &modulator->channel) &&
 	       modulator->amplitude == INT16_MAX &&
 	       power_fits(required_power, modulator->maximum_point_power);
@@ -170,15 +105,14 @@ enum v34_data_carrier_result v34_data_carrier_init(
 
 	if (carrier == NULL ||
 	    !data_configuration_is_valid(profile, geometry, normalizer) ||
-	    sample_rate == 0 ||
-	    !occupied_band_fits(profile, sample_rate))
+	    sample_rate == 0)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	initialized.profile = *profile;
 	initialized.geometry = *geometry;
 	initialized.normalizer = *normalizer;
 	initialized.point_gain = 1.0;
-	if (v34_data_carrier_channel(profile, sample_rate, &channel) !=
-	    V34_DATA_CARRIER_OK)
+	if (v34_line_channel_init(profile, sample_rate, &channel) !=
+	    V34_LINE_CHANNEL_OK)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	if (v34_pulse_modulator_init(
 		    &initialized.modulator, profile, &channel, INT16_MAX,
@@ -206,7 +140,7 @@ enum v34_data_carrier_result v34_data_carrier_continue(
 	    !data_configuration_is_valid(profile, geometry, normalizer) ||
 	    !scaled_point_power(normalizer, point_gain, &required_power) ||
 	    active_modulator->amplitude != INT16_MAX ||
-	    !v34_data_carrier_channel_matches(
+	    !v34_line_channel_matches(
 		    profile, &active_modulator->channel))
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	continued.profile = *profile;
@@ -268,20 +202,4 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 	*sample = generated;
 	*symbol_accepted = accepted;
 	return V34_DATA_CARRIER_OK;
-}
-
-const char *v34_data_carrier_result_name(
-	enum v34_data_carrier_result result)
-{
-	switch (result) {
-	case V34_DATA_CARRIER_OK:
-		return "ok";
-	case V34_DATA_CARRIER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_CARRIER_OUT_OF_RANGE:
-		return "out of range";
-	case V34_DATA_CARRIER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
 }

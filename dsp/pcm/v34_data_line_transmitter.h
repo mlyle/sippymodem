@@ -70,7 +70,4 @@ v34_data_line_transmitter_sample(
 	const struct qam_point *point,
 	int16_t *sample, bool *symbol_accepted);
 
-const char *v34_data_line_transmitter_result_name(
-	enum v34_data_line_transmitter_result result);
-
 #endif

@@ -16,6 +16,8 @@ enum {
 	V34_PULSE_Q14_SCALE = 16384,
 };
 
+static const double V34_LINE_ROLLOFF = 0.1;
+
 struct pulse_profile {
 	const int16_t *coefficients;
 	uint8_t phase_count;
@@ -60,22 +62,78 @@ static bool selected_profile(
 	return false;
 }
 
+static bool occupied_band_fits(
+	const struct v34_phase3_profile *profile,
+	uint32_t sample_rate)
+{
+	long double carrier =
+		(long double)profile->carrier_frequency_numerator /
+		profile->carrier_frequency_denominator;
+	long double symbol_rate =
+		(long double)profile->symbol_rate_numerator /
+		profile->symbol_rate_denominator;
+	long double upper_edge = carrier +
+		0.5L * (1.0L + V34_LINE_ROLLOFF) * symbol_rate;
+
+	return upper_edge < 0.5L * sample_rate;
+}
+
+enum v34_line_channel_result v34_line_channel_init(
+	const struct v34_phase3_profile *profile,
+	uint32_t sample_rate, struct qam_channel *channel)
+{
+	struct qam_channel configured;
+
+	if (!v34_phase3_profile_is_valid(profile) || sample_rate == 0 ||
+	    channel == NULL)
+		return V34_LINE_CHANNEL_INVALID_ARGUMENT;
+	if (!occupied_band_fits(profile, sample_rate))
+		return V34_LINE_CHANNEL_OUT_OF_RANGE;
+	configured = (struct qam_channel){
+		.sample_rate = sample_rate,
+		.symbol_rate_numerator = profile->symbol_rate_numerator,
+		.symbol_rate_denominator = profile->symbol_rate_denominator,
+		.carrier_frequency_numerator =
+			profile->carrier_frequency_numerator,
+		.carrier_frequency_denominator =
+			profile->carrier_frequency_denominator,
+		.rolloff = V34_LINE_ROLLOFF,
+		.pulse_span_symbols = V34_LINE_PULSE_SPAN_SYMBOLS,
+	};
+	*channel = configured;
+	return V34_LINE_CHANNEL_OK;
+}
+
+bool v34_line_channel_matches(
+	const struct v34_phase3_profile *profile,
+	const struct qam_channel *channel)
+{
+	struct qam_channel expected;
+
+	return channel != NULL &&
+	       v34_line_channel_init(
+		       profile, channel->sample_rate, &expected) ==
+		       V34_LINE_CHANNEL_OK &&
+	       channel->sample_rate == expected.sample_rate &&
+	       channel->symbol_rate_numerator ==
+		       expected.symbol_rate_numerator &&
+	       channel->symbol_rate_denominator ==
+		       expected.symbol_rate_denominator &&
+	       channel->carrier_frequency_numerator ==
+		       expected.carrier_frequency_numerator &&
+	       channel->carrier_frequency_denominator ==
+		       expected.carrier_frequency_denominator &&
+	       channel->rolloff == expected.rolloff &&
+	       channel->pulse_span_symbols == expected.pulse_span_symbols;
+}
+
 static bool channel_matches_profile(
 	const struct qam_channel *channel,
 	const struct v34_phase3_profile *profile)
 {
-	return channel != NULL && profile != NULL &&
+	return channel != NULL &&
 	       channel->sample_rate == V34_PULSE_SAMPLE_RATE &&
-	       channel->symbol_rate_numerator ==
-		       profile->symbol_rate_numerator &&
-	       channel->symbol_rate_denominator ==
-		       profile->symbol_rate_denominator &&
-	       channel->carrier_frequency_numerator ==
-		       profile->carrier_frequency_numerator &&
-	       channel->carrier_frequency_denominator ==
-		       profile->carrier_frequency_denominator &&
-	       channel->rolloff == 0.1 &&
-	       channel->pulse_span_symbols == 14;
+	       v34_line_channel_matches(profile, channel);
 }
 
 static bool point_fits(
@@ -119,8 +177,9 @@ bool v34_pulse_modulator_is_valid(
 	    modulator->channel.symbol_rate_denominator == 0 ||
 	    modulator->channel.carrier_frequency_numerator == 0 ||
 	    modulator->channel.carrier_frequency_denominator == 0 ||
-	    modulator->channel.rolloff != 0.1 ||
-	    modulator->channel.pulse_span_symbols != 14 ||
+	    modulator->channel.rolloff != V34_LINE_ROLLOFF ||
+	    modulator->channel.pulse_span_symbols !=
+		    V34_LINE_PULSE_SPAN_SYMBOLS ||
 	    modulator->amplitude <= 0 ||
 	    !isfinite(modulator->maximum_point_power) ||
 	    modulator->maximum_point_power <= 0.0)

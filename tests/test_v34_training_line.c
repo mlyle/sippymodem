@@ -229,14 +229,8 @@ static bool test_initialization_and_overflow(void)
 	      accepted,
 	      "sample-count overflow mutated state or outputs");
 	CHECK(!v34_training_line_is_valid(NULL) &&
-	      !v34_training_line_needs_point(NULL) &&
-	      strcmp(v34_training_line_result_name(
-		     V34_TRAINING_LINE_CLIPPING_RISK),
-		     "clipping risk") == 0 &&
-	      strcmp(v34_training_line_result_name(
-		     (enum v34_training_line_result)99),
-		     "unknown") == 0,
-	      "training-line validation or result names changed");
+	      !v34_training_line_needs_point(NULL),
+	      "training-line validation changed");
 	return true;
 }
 

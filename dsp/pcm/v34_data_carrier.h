@@ -10,14 +10,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum {
-	V34_DATA_PULSE_SPAN_SYMBOLS = 14,
-};
-
 enum v34_data_carrier_result {
 	V34_DATA_CARRIER_OK,
 	V34_DATA_CARRIER_INVALID_ARGUMENT,
-	V34_DATA_CARRIER_OUT_OF_RANGE,
 	V34_DATA_CARRIER_NUMERIC_FAILURE,
 };
 
@@ -28,19 +23,6 @@ struct v34_data_carrier {
 	struct v34_pulse_modulator modulator;
 	double point_gain;
 };
-
-/* Derive the shared transmit/receive waveform from an exact Phase 3 profile.
- * The destination is unchanged when the profile is invalid or its occupied
- * band does not fit below the selected sample rate's Nyquist frequency. */
-enum v34_data_carrier_result v34_data_carrier_channel(
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate, struct qam_channel *channel);
-
-/* Return true only when every clock, carrier, pulse, and sample-rate field is
- * the exact waveform derived from the profile. */
-bool v34_data_carrier_channel_matches(
-	const struct v34_phase3_profile *profile,
-	const struct qam_channel *channel);
 
 /* Configure the exact negotiated symbol and carrier clocks. The returned
  * waveform is a raw floating-point carrier; negotiated line gain and
@@ -75,8 +57,5 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 	struct v34_data_carrier *carrier,
 	const struct qam_point *point, double *sample,
 	bool *symbol_accepted);
-
-const char *v34_data_carrier_result_name(
-	enum v34_data_carrier_result result);
 
 #endif

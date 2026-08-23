@@ -12,7 +12,6 @@
 #include <stdint.h>
 
 enum {
-	V34_TRAINING_LINE_PULSE_SPAN_SYMBOLS = 14,
 	V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS =
 		V34_PULSE_TAPS,
 	V34_TRAINING_LINE_FILTER_TAIL_SAMPLES =
@@ -43,15 +42,6 @@ struct v34_training_line {
 	int16_t nominal_peak_amplitude;
 };
 
-/* Derive or validate the exact Phase 3/4 training waveform without creating
- * mutable line state. The destination is unchanged on failure. */
-enum v34_training_line_result v34_training_line_channel(
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate, struct qam_channel *channel);
-bool v34_training_line_channel_matches(
-	const struct v34_phase3_profile *profile,
-	const struct qam_channel *channel);
-
 enum v34_training_line_result v34_training_line_init(
 	struct v34_training_line *line,
 	const struct v34_phase3_profile *profile,
@@ -69,8 +59,5 @@ enum v34_training_line_result v34_training_line_sample(
 	struct v34_training_line *line,
 	const struct qam_point *point, int16_t *sample,
 	bool *point_accepted);
-
-const char *v34_training_line_result_name(
-	enum v34_training_line_result result);
 
 #endif

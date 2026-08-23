@@ -22,8 +22,6 @@ static enum v34_data_line_transmitter_result carrier_result(
 	switch (result) {
 	case V34_DATA_CARRIER_OK:
 		return V34_DATA_LINE_TRANSMITTER_OK;
-	case V34_DATA_CARRIER_OUT_OF_RANGE:
-		return V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE;
 	case V34_DATA_CARRIER_NUMERIC_FAILURE:
 		return V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE;
 	case V34_DATA_CARRIER_INVALID_ARGUMENT:
@@ -308,22 +306,4 @@ v34_data_line_transmitter_sample(
 	*sample = (int16_t)rounded;
 	*symbol_accepted = accepted;
 	return V34_DATA_LINE_TRANSMITTER_OK;
-}
-
-const char *v34_data_line_transmitter_result_name(
-	enum v34_data_line_transmitter_result result)
-{
-	switch (result) {
-	case V34_DATA_LINE_TRANSMITTER_OK:
-		return "ok";
-	case V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE:
-		return "out of range";
-	case V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK:
-		return "clipping risk";
-	case V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
 }

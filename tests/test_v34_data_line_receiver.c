@@ -3,6 +3,7 @@
 #include <v34_data_line_receiver.h>
 #include <v34_data_stream.h>
 #include <v34_datapump.h>
+#include <v34_pulse_modulator.h>
 
 #include "test.h"
 
@@ -688,8 +689,8 @@ static bool test_validation_and_failure_latch(void)
 	      "V.34 line validation handoff is invalid");
 	configuration = receiver_configuration(
 		&fixture.stream, &fixture.configuration, 0.01);
-	CHECK(v34_data_carrier_channel(&profile, 8000, &channel) ==
-		      V34_DATA_CARRIER_OK &&
+	CHECK(v34_line_channel_init(&profile, 8000, &channel) ==
+		      V34_LINE_CHANNEL_OK &&
 	      qam_demodulator_init(&unlocked, &channel) == QAM_OK &&
 	      qam_demodulator_is_valid(&unlocked),
 	      "V.34 line validation demodulator did not initialize");
@@ -722,13 +723,13 @@ static bool test_validation_and_failure_latch(void)
 	      "V.34 line receiver accepted an incomplete handoff");
 	saved_channel = channel;
 	profile.carrier_frequency_numerator = 0;
-	CHECK(v34_data_carrier_channel(&profile, 8000, &channel) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
+	CHECK(v34_line_channel_init(&profile, 8000, &channel) ==
+		      V34_LINE_CHANNEL_INVALID_ARGUMENT &&
 	      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
 	      "V.34 waveform configuration changed a rejected output");
 	profile = stream_configuration().profile;
-	CHECK(v34_data_carrier_channel(&profile, 4000, &channel) ==
-		      V34_DATA_CARRIER_OUT_OF_RANGE &&
+	CHECK(v34_line_channel_init(&profile, 4000, &channel) ==
+		      V34_LINE_CHANNEL_OUT_OF_RANGE &&
 	      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
 	      "V.34 waveform accepted an occupied band beyond Nyquist");
 

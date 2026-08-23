@@ -2,7 +2,7 @@
 
 #include "v34_data_line_receiver.h"
 
-#include "v34_training_line.h"
+#include "v34_pulse_modulator.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -20,7 +20,7 @@ static bool line_matches_profile(
 {
 	return qam_demodulator_is_valid(line) &&
 	       qam_demodulator_measure(line).timing_locked &&
-	       v34_training_line_channel_matches(
+	       v34_line_channel_matches(
 		       transmitting_profile, &line->channel);
 }
 

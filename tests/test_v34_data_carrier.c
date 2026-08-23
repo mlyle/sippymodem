@@ -227,8 +227,8 @@ static bool test_active_carrier_handoff(void)
 	bool retained_pulse_seen = false;
 
 	CHECK(initialize_fixture(&fixture) &&
-	      v34_data_carrier_channel(
-		      &fixture.profile, 8000, &channel) == V34_DATA_CARRIER_OK &&
+	      v34_line_channel_init(
+		      &fixture.profile, 8000, &channel) == V34_LINE_CHANNEL_OK &&
 	      v34_pulse_modulator_init(
 		      &active, &fixture.profile, &channel, INT16_MAX,
 		      fixture.normalizer.maximum_normalized_point_power) ==
@@ -599,7 +599,7 @@ static bool test_all_carrier_profiles(void)
 			      v34_data_carrier_init(
 				      &carrier, &profile, &geometry, &normalizer,
 				      8000) == V34_DATA_CARRIER_OK &&
-			      v34_data_carrier_channel_matches(
+		      v34_line_channel_matches(
 				      &profile, &carrier.modulator.channel),
 			      "carrier profile %u/%u changed", rate_index, high);
 			configurations++;
@@ -849,38 +849,6 @@ static bool test_transactional_validation(void)
 		      V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE &&
 	      memcmp(&line, &line_before, sizeof(line)) == 0,
 	      "exhausted line sample count changed state");
-	CHECK(strcmp(v34_data_carrier_result_name(V34_DATA_CARRIER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_data_carrier_result_name(
-		     V34_DATA_CARRIER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_data_carrier_result_name(V34_DATA_CARRIER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_data_carrier_result_name(
-		     V34_DATA_CARRIER_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_data_carrier_result_name(
-		     (enum v34_data_carrier_result)99),
-		     "unknown") == 0 &&
-	      strcmp(v34_data_line_transmitter_result_name(
-		     V34_DATA_LINE_TRANSMITTER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_data_line_transmitter_result_name(
-		     V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_data_line_transmitter_result_name(
-		     V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_data_line_transmitter_result_name(
-		     V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK),
-		     "clipping risk") == 0 &&
-	      strcmp(v34_data_line_transmitter_result_name(
-		     V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_data_line_transmitter_result_name(
-		     (enum v34_data_line_transmitter_result)99),
-		     "unknown") == 0,
-	      "carrier or line result names changed");
 	return true;
 }
 
