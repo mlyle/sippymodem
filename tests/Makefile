@@ -2525,6 +2525,8 @@ V90_PHASE4_E_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_upstream_rx.o \
 	$(BUILD_DIR)/v90_pcm_mapping.o \
 	$(MIXED_RADIX_OBJECT) \
+	$(filter-out $(BUILD_DIR)/test_v34_phase4_e_receiver.o, \
+		$(V34_PHASE4_E_RECEIVER_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_cp_line_rx.o, \
 		$(V90_PHASE4_CP_LINE_RX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_upstream_data.o, \
