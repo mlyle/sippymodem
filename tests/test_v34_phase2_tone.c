@@ -448,7 +448,7 @@ static bool check_rejected_reversal(
 			      &event) == V34_PHASE2_TONE_OK,
 		      "rejected-reversal acquisition failed at %zu", index);
 	}
-	CHECK(detector.tone_present &&
+	CHECK(detector.carrier.tone_present &&
 	      v34_phase2_tone_transmitter_reverse(&transmitter) ==
 		      V34_PHASE2_TONE_OK,
 	      "rejected-reversal fixture did not establish its edge");
@@ -464,16 +464,17 @@ static bool check_rejected_reversal(
 		      "early reversal failed at %zu", index);
 		if (event.kind == V34_PHASE2_TONE_PHASE_REVERSED) {
 			early_events++;
-			committed_in_phase = detector.reference_in_phase;
-			committed_quadrature = detector.reference_quadrature;
+			committed_in_phase = detector.carrier.reference_in_phase;
+			committed_quadrature = detector.carrier.reference_quadrature;
 			CHECK(v34_phase2_tone_detector_reject_reversal(
 				      &detector, &event) == V34_PHASE2_TONE_OK,
 			      "early reversal was not rejected");
 		}
 	}
-	CHECK(early_events == 1 && detector.rejected_reversal_active &&
-	      detector.reference_in_phase == -committed_in_phase &&
-	      detector.reference_quadrature == -committed_quadrature,
+	CHECK(early_events == 1 &&
+	      detector.carrier.rejected_reversal_active &&
+	      detector.carrier.reference_in_phase == -committed_in_phase &&
+	      detector.carrier.reference_quadrature == -committed_quadrature,
 	      "rejection did not restore the retained phase");
 	for (size_t index = 0; index < 240; ++index) {
 		struct v34_phase2_tone_event event;
@@ -500,7 +501,7 @@ static bool check_rejected_reversal(
 		CHECK(v34_phase2_tone_transmitter_reverse(&transmitter) ==
 			      V34_PHASE2_TONE_OK,
 		      "same-phase post-INFO tone did not restore its phase");
-	CHECK(!detector.rejected_reversal_active &&
+	CHECK(!detector.carrier.rejected_reversal_active &&
 	      v34_phase2_tone_detector_resume(&detector, 0) ==
 		      V34_PHASE2_TONE_OK,
 	      "rejected INFO boundary did not reset the phase gate");
@@ -520,7 +521,7 @@ static bool check_rejected_reversal(
 		}
 		later_starts += event.kind == V34_PHASE2_TONE_STARTED;
 	}
-	CHECK(!detector.rejected_reversal_active &&
+	CHECK(!detector.carrier.rejected_reversal_active &&
 	      later_events == (opposite_after_info ? 1u : 0u) &&
 	      later_starts == (opposite_after_info ? 0u : 1u) &&
 	      (!opposite_after_info ||
@@ -949,7 +950,7 @@ static bool test_validation(void)
 		      &detector, &event) == V34_PHASE2_TONE_INVALID_ARGUMENT &&
 	      memcmp(&detector, &detector_before, sizeof(detector)) == 0,
 	      "invalid reversal rejection mutated detector state");
-	detector.line_power = NAN;
+	detector.carrier.line_energy = NAN;
 	detector_before = detector;
 	CHECK(v34_phase2_tone_detector_sample(
 		      &detector, 0, &event) ==

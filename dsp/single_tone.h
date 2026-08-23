@@ -13,6 +13,9 @@ enum {
 	 * 2100 and 3000 Hz startup carriers. */
 	SINGLE_TONE_WINDOW_SAMPLES =
 		SINGLE_TONE_SAMPLE_RATE / 100,
+	/* Profiles may use a shorter window while retaining bounded ownership. */
+	SINGLE_TONE_MAX_WINDOW_SAMPLES =
+		SINGLE_TONE_WINDOW_SAMPLES,
 	SINGLE_TONE_ACQUIRE_SAMPLES =
 		SINGLE_TONE_WINDOW_SAMPLES * 2,
 	SINGLE_TONE_LOSS_SAMPLES =
@@ -50,29 +53,44 @@ struct single_tone_event {
 	uint16_t reversal_delay_samples;
 };
 
+enum single_tone_interruption {
+	SINGLE_TONE_UNINTERRUPTED,
+	SINGLE_TONE_SUPPRESSING,
+	SINGLE_TONE_REACQUIRING,
+};
+
+struct single_tone_detector_profile {
+	double minimum_line_power;
+	double minimum_carrier_share;
+	double maximum_carrier_share;
+	uint16_t sample_rate_hz;
+	uint16_t frequency_hz;
+	uint16_t window_samples;
+	uint16_t acquire_samples;
+	uint16_t loss_samples;
+	bool retain_reference_on_loss;
+};
+
 struct single_tone_detector {
 	struct single_tone_observation
-		history[SINGLE_TONE_WINDOW_SAMPLES];
+		history[SINGLE_TONE_MAX_WINDOW_SAMPLES];
+	struct single_tone_detector_profile profile;
 	double in_phase;
 	double quadrature;
 	double line_energy;
 	double reference_in_phase;
 	double reference_quadrature;
-	double line_power;
-	double carrier_power;
-	double carrier_share;
-	double minimum_carrier_share;
 	uint32_t phase;
 	uint32_t phase_step;
 	size_t history_index;
 	size_t history_count;
-	uint16_t frequency_hz;
 	uint16_t qualifying_samples;
 	uint16_t missing_samples;
 	uint16_t reversal_delay_samples;
-	bool measurement_ready;
+	enum single_tone_interruption interruption;
 	bool tone_present;
 	bool reversal_pending;
+	bool rejected_reversal_active;
 };
 
 struct single_tone_measurement {
@@ -104,6 +122,9 @@ enum single_tone_result
 single_tone_detector_init_with_minimum_carrier_share(
 	struct single_tone_detector *detector,
 	unsigned int frequency_hz, double minimum_carrier_share);
+enum single_tone_result single_tone_detector_init_profile(
+	struct single_tone_detector *detector,
+	const struct single_tone_detector_profile *profile);
 bool single_tone_detector_is_valid(
 	const struct single_tone_detector *detector);
 enum single_tone_result single_tone_detector_reset(
@@ -111,6 +132,14 @@ enum single_tone_result single_tone_detector_reset(
 enum single_tone_result single_tone_detector_sample(
 	struct single_tone_detector *detector, int16_t sample,
 	struct single_tone_event *event);
+enum single_tone_result single_tone_detector_reject_reversal(
+	struct single_tone_detector *detector,
+	const struct single_tone_event *event);
+enum single_tone_result single_tone_detector_suppress_sample(
+	struct single_tone_detector *detector);
+enum single_tone_result single_tone_detector_resume(
+	struct single_tone_detector *detector,
+	uint16_t handoff_delay_samples);
 struct single_tone_measurement
 single_tone_detector_measure(
 	const struct single_tone_detector *detector);

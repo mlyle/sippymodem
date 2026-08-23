@@ -3,6 +3,7 @@
 #ifndef V34_PHASE2_TONE_H
 #define V34_PHASE2_TONE_H
 
+#include "single_tone.h"
 #include "v34_phase2_signal.h"
 
 #include <stdbool.h>
@@ -54,12 +55,6 @@ struct v34_phase2_tone_transmitter {
 	enum v34_station_role local_role;
 };
 
-struct v34_phase2_tone_observation {
-	double in_phase;
-	double quadrature;
-	double energy;
-};
-
 enum v34_phase2_tone_event_kind {
 	V34_PHASE2_TONE_NO_EVENT,
 	V34_PHASE2_TONE_STARTED,
@@ -75,36 +70,9 @@ struct v34_phase2_tone_event {
 	uint16_t reversal_delay_samples;
 };
 
-enum v34_phase2_tone_interruption {
-	V34_PHASE2_TONE_UNINTERRUPTED,
-	V34_PHASE2_TONE_SUPPRESSING,
-	V34_PHASE2_TONE_REACQUIRING,
-};
-
 struct v34_phase2_tone_detector {
-	struct v34_phase2_tone_observation
-		history[V34_PHASE2_TONE_WINDOW_SAMPLES];
-	double in_phase;
-	double quadrature;
-	double line_energy;
-	double reference_in_phase;
-	double reference_quadrature;
-	double line_power;
-	double carrier_power;
-	double carrier_share;
-	uint32_t carrier_phase;
-	uint32_t carrier_phase_step;
-	size_t history_index;
-	size_t history_count;
-	uint16_t qualifying_samples;
-	uint16_t missing_samples;
-	uint16_t reversal_delay_samples;
+	struct single_tone_detector carrier;
 	enum v34_station_role local_role;
-	enum v34_phase2_tone_interruption interruption;
-	bool measurement_ready;
-	bool tone_present;
-	bool reversal_pending;
-	bool rejected_reversal_active;
 };
 
 struct v34_phase2_tone_measurement {

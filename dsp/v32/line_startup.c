@@ -185,19 +185,19 @@ bool v32_line_startup_is_valid(
 
 	if (startup == NULL || !state_is_valid(startup->state) ||
 	    !single_tone_detector_is_valid(&startup->answer_tone) ||
-	    startup->answer_tone.frequency_hz !=
+	    startup->answer_tone.profile.frequency_hz !=
 		    V32_ANSWER_TONE_HZ ||
 	    !single_tone_detector_is_valid(
 		    &startup->low_turnaround_tone) ||
-	    startup->low_turnaround_tone.frequency_hz !=
+	    startup->low_turnaround_tone.profile.frequency_hz !=
 		    V32_LOW_TURNAROUND_TONE_HZ ||
-	    startup->low_turnaround_tone.minimum_carrier_share !=
+	    startup->low_turnaround_tone.profile.minimum_carrier_share !=
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE ||
 	    !single_tone_detector_is_valid(
 		    &startup->high_turnaround_tone) ||
-	    startup->high_turnaround_tone.frequency_hz !=
+	    startup->high_turnaround_tone.profile.frequency_hz !=
 		    V32_HIGH_TURNAROUND_TONE_HZ ||
-	    startup->high_turnaround_tone.minimum_carrier_share !=
+	    startup->high_turnaround_tone.profile.minimum_carrier_share !=
 		    V32_TURNAROUND_MINIMUM_CARRIER_SHARE ||
 	    !line_carrier_is_valid(&startup->calling_carrier) ||
 	    startup->calling_carrier.alternating ||
@@ -310,7 +310,7 @@ bool v32_answerer_line_startup_is_valid(
 	    !line_carrier_is_valid(&startup->turnaround_carrier) ||
 	    !startup->turnaround_carrier.alternating ||
 	    !single_tone_detector_is_valid(&startup->calling_carrier) ||
-	    startup->calling_carrier.frequency_hz !=
+	    startup->calling_carrier.profile.frequency_hz !=
 		    V32_CALLING_CARRIER_HZ)
 		return false;
 	measured = startup->round_trip_samples != 0;

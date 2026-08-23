@@ -328,7 +328,7 @@ static bool test_configurable_carrier_share(void)
 		CHECK(mixed_reversed == 1 &&
 			      single_tone_detector_reset(&mixed) ==
 				      SINGLE_TONE_OK &&
-			      mixed.minimum_carrier_share == 0.60,
+			      mixed.profile.minimum_carrier_share == 0.60,
 		      "mixed-carrier profile did not detect or survive reset");
 	}
 	return true;
@@ -338,6 +338,7 @@ static bool test_validation_is_transactional(void)
 {
 	struct single_tone_detector detector;
 	struct single_tone_detector before;
+	struct single_tone_detector_profile profile;
 	struct single_tone_event event = {
 		.kind = SINGLE_TONE_ENDED,
 		.reversal_delay_samples = 17,
@@ -380,6 +381,14 @@ static bool test_validation_is_transactional(void)
 			      SINGLE_TONE_INVALID_ARGUMENT &&
 		      memcmp(&detector, &before, sizeof(detector)) == 0,
 	      "invalid carrier-share profiles changed the detector");
+	profile = detector.profile;
+	profile.window_samples = 1;
+	CHECK(single_tone_detector_init_profile(&detector, NULL) ==
+		      SINGLE_TONE_INVALID_ARGUMENT &&
+	      single_tone_detector_init_profile(&detector, &profile) ==
+		      SINGLE_TONE_INVALID_ARGUMENT &&
+	      memcmp(&detector, &before, sizeof(detector)) == 0,
+	      "invalid detector profiles changed caller-owned state");
 	transmitter.phase_step++;
 	transmitter_before = transmitter;
 	CHECK(single_tone_transmitter_sample(

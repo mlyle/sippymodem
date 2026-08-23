@@ -204,7 +204,7 @@ static bool advance_recovery(
 	 * with ranging instead of retransmitting forever. */
 	if (exchange->recovery_active && exchange->peer_info0_received &&
 	    (exchange->peer_info0.acknowledges_peer_info0 ||
-	     exchange->transport.tone_detector.tone_present) &&
+	     exchange->transport.tone_detector.carrier.tone_present) &&
 	    exchange->transmit_acknowledges_peer) {
 		exchange->recovery_active = false;
 		exchange->transmit_acknowledges_peer = false;

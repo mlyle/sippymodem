@@ -492,6 +492,7 @@ static bool check_rejected_edge_before_info(enum test_codec codec)
 				CHECK(ranging.control.phase ==
 					      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
 				      ranging.info0_exchange.transport.tone_detector
+					      .carrier
 					      .rejected_reversal_active,
 				      "V.34 early edge was not rejected transactionally");
 		}
@@ -500,6 +501,7 @@ static bool check_rejected_edge_before_info(enum test_codec codec)
 			    V34_PHASE2_INFO_SEARCH_SYNC) {
 			info_synchronized = true;
 			CHECK(!ranging.info0_exchange.transport.tone_detector
+				       .carrier
 				       .rejected_reversal_active,
 			      "V.34 INFO retained the rejected-edge gate");
 		}
@@ -537,8 +539,9 @@ static bool check_rejected_edge_before_info(enum test_codec codec)
 	CHECK(early_edge_started && repeat_started && info_synchronized &&
 	      stable_rejected_samples ==
 		      2u * V34_PHASE2_TONE_WINDOW_SAMPLES &&
-	      reversal_events == 2u && causal_edge_accepted &&
-	      !ranging.info0_exchange.transport.tone_detector
+		      reversal_events == 2u && causal_edge_accepted &&
+		      !ranging.info0_exchange.transport.tone_detector
+		       .carrier
 		       .rejected_reversal_active,
 	      "V.34 rejected-edge recovery failed for %d: edges=%zu stable=%zu sync=%d accepted=%d phase=%d",
 	      codec, reversal_events, stable_rejected_samples,
@@ -770,7 +773,8 @@ static bool check_info0_tone_completion(enum test_codec codec)
 	      caller.info0_exchange.peer_info0_received &&
 	      !caller.info0_exchange.peer_info0.acknowledges_peer_info0 &&
 	      caller.info0_exchange.completion_tone_seen &&
-	      caller.info0_exchange.transport.tone_detector.tone_present &&
+	      caller.info0_exchange.transport.tone_detector.carrier
+		      .tone_present &&
 	      caller.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL,
 	      "peer tone did not complete INFO0 recovery for codec %d (sequences %u recovery %zu/%zu phase %d)",
 	      codec, peer_sequences, recovery_started, recovery_completed,
@@ -778,7 +782,8 @@ static bool check_info0_tone_completion(enum test_codec codec)
 	CHECK(v34_phase2_tone_detector_reset(
 		      &caller.info0_exchange.transport.tone_detector) ==
 		      V34_PHASE2_TONE_OK &&
-	      !caller.info0_exchange.transport.tone_detector.tone_present &&
+	      !caller.info0_exchange.transport.tone_detector.carrier
+		       .tone_present &&
 	      v34_phase2_ranging_is_valid(&caller),
 	      "later tone-detector reuse invalidated completed INFO0 for codec %d",
 	      codec);

@@ -184,7 +184,7 @@ static bool exchange_state_contract_is_valid(
 		return local_ack && !peer_ack &&
 		       !exchange->fresh_peer_tone_seen &&
 		       exchange->transport.transmit_phase == PHASE2_INFO0_TONE &&
-		       !exchange->transport.tone_detector.tone_present;
+		       !exchange->transport.tone_detector.carrier.tone_present;
 	case PCM_PHASE2_INFO0_COMPLETE:
 		return local_ack &&
 		       (peer_ack != exchange->fresh_peer_tone_seen) &&

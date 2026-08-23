@@ -434,6 +434,7 @@ static bool check_rejected_edge_before_info(
 				CHECK(ranging.control.phase ==
 					      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
 				      ranging.info0_exchange.transport.tone_detector
+					      .carrier
 					      .rejected_reversal_active,
 				      "early edge was not rejected transactionally");
 		}
@@ -442,6 +443,7 @@ static bool check_rejected_edge_before_info(
 			    V34_PHASE2_INFO_SEARCH_SYNC) {
 			info_synchronized = true;
 			CHECK(!ranging.info0_exchange.transport.tone_detector
+				       .carrier
 				       .rejected_reversal_active,
 			      "INFO synchronization retained the rejected-edge gate");
 		}
@@ -483,8 +485,9 @@ static bool check_rejected_edge_before_info(
 	CHECK(early_edge_started && repeat_started && info_synchronized &&
 	      stable_rejected_samples ==
 		      2u * V34_PHASE2_TONE_WINDOW_SAMPLES &&
-	      reversal_events == 2u && causal_edge_accepted &&
-	      !ranging.info0_exchange.transport.tone_detector
+		      reversal_events == 2u && causal_edge_accepted &&
+		      !ranging.info0_exchange.transport.tone_detector
+		       .carrier
 		       .rejected_reversal_active,
 	      "rejected-edge recovery failed for %d/%d: edges=%zu stable=%zu sync=%d accepted=%d phase=%d",
 	      codec, protocol, reversal_events, stable_rejected_samples,

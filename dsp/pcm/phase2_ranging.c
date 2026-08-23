@@ -257,7 +257,7 @@ static void enter_active_ranging(
 {
 	if (control->phase != PHASE2_RANGING_INFO0_EXCHANGE ||
 	    !has_ranging_context(exchange, peer_info0_received) ||
-	    !exchange->tone_detector.tone_present)
+	    !exchange->tone_detector.carrier.tone_present)
 		return;
 	control->phase = signal_is_b(exchange) ?
 				 PHASE2_WAIT_FIRST_REMOTE_REVERSAL :
