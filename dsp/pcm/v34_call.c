@@ -512,6 +512,14 @@ static enum v34_call_result advance_echo(
 	if (v34_echo_canceller_commit(
 		    &call->echo, transmit_sample, prepared) != V34_ECHO_OK)
 		return V34_CALL_NUMERIC_FAILURE;
+	/* A terminal probe failure ends the local training interval just as a
+	 * successful probe handoff does.  Freeze or discard the model before
+	 * publishing the failed call so its owned state remains releasable. */
+	if (call->echo.mode == V34_ECHO_TRAINING &&
+	    !local_probe_is_active(call))
+		if (v34_echo_canceller_finish_training(&call->echo) !=
+		    V34_ECHO_OK)
+			return V34_CALL_NUMERIC_FAILURE;
 	if (sample_result != V34_CALL_OK)
 		return sample_result;
 	if (local_probe_started(call, observation))
@@ -519,11 +527,6 @@ static enum v34_call_result advance_echo(
 			       &call->echo,
 			       observation->events.phase2
 				       .round_trip_delay_samples) == V34_ECHO_OK ?
-			       V34_CALL_OK : V34_CALL_NUMERIC_FAILURE;
-	if (call->echo.mode == V34_ECHO_TRAINING &&
-	    !local_probe_is_active(call))
-		return v34_echo_canceller_finish_training(&call->echo) ==
-			       V34_ECHO_OK ?
 			       V34_CALL_OK : V34_CALL_NUMERIC_FAILURE;
 	return V34_CALL_OK;
 }

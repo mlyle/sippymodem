@@ -401,6 +401,30 @@ static void channel_transmit(
 	channel->cursor = (channel->cursor + 1u) % LINE_DELAY_SAMPLES;
 }
 
+static bool channel_sample_pair(
+	struct channel *channel, struct endpoint *caller,
+	struct endpoint *answerer,
+	struct v34_call_observation *caller_observation,
+	struct v34_call_observation *answerer_observation)
+{
+	int16_t caller_receive;
+	int16_t answerer_receive;
+	int16_t caller_transmit;
+	int16_t answerer_transmit;
+
+	channel_receive(channel, &caller_receive, &answerer_receive);
+	note_peer_primary_delays(caller, answerer);
+	if (!endpoint_sample(
+		    caller, caller_receive, supply_mapping_frame,
+		    &caller_transmit, caller_observation) ||
+	    !endpoint_sample(
+		    answerer, answerer_receive, supply_mapping_frame,
+		    &answerer_transmit, answerer_observation))
+		return false;
+	channel_transmit(channel, caller_transmit, answerer_transmit);
+	return true;
+}
+
 static int16_t saturated_sum(int16_t left, int16_t right)
 {
 	int32_t sum = (int32_t)left + right;
@@ -504,8 +528,6 @@ static bool run_online_pair(
 	struct channel channel = { .pcma = pcma };
 	struct endpoint calling;
 	struct endpoint answering;
-	int16_t next_caller_receive = 0;
-	int16_t next_answerer_receive = 0;
 
 	CHECK(endpoint_init(&calling, V34_CALLING_STATION) &&
 	      endpoint_init(&answering, V34_ANSWERING_STATION),
@@ -513,22 +535,11 @@ static bool run_online_pair(
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
 		struct v34_call_observation answerer_observation;
-		int16_t caller_transmit;
-		int16_t answerer_transmit;
 
-		channel_receive(
-			&channel, &next_caller_receive, &next_answerer_receive);
-		note_peer_primary_delays(&calling, &answering);
-		CHECK(endpoint_sample(
-			      &calling, next_caller_receive,
-			      supply_mapping_frame, &caller_transmit,
-			      &caller_observation) &&
-		      endpoint_sample(
-			      &answering, next_answerer_receive,
-			      supply_mapping_frame, &answerer_transmit,
-			      &answerer_observation),
+		CHECK(channel_sample_pair(
+			      &channel, &calling, &answering,
+			      &caller_observation, &answerer_observation),
 		      "full V.34 call stopped at sample %zu", index);
-		channel_transmit(&channel, caller_transmit, answerer_transmit);
 		if (v34_call_is_online(&calling.call) &&
 		    v34_call_is_online(&answering.call) &&
 		    calling.mapping_frames_received >= 4u &&
@@ -594,8 +605,6 @@ static bool check_symmetric_call(
 	struct channel channel = { .pcma = pcma };
 	struct endpoint caller;
 	struct endpoint answerer;
-	int16_t next_caller_receive = 0;
-	int16_t next_answerer_receive = 0;
 
 	CHECK(endpoint_init_symmetric(
 		      &caller, V34_CALLING_STATION, symbol_rate) &&
@@ -605,24 +614,12 @@ static bool check_symmetric_call(
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
 		struct v34_call_observation answerer_observation;
-		int16_t caller_transmit;
-		int16_t answerer_transmit;
 
-		channel_receive(
-			&channel, &next_caller_receive, &next_answerer_receive);
-		note_peer_primary_delays(&caller, &answerer);
-		CHECK(endpoint_sample(
-			      &caller, next_caller_receive,
-			      supply_mapping_frame, &caller_transmit,
-			      &caller_observation) &&
-		      endpoint_sample(
-			      &answerer, next_answerer_receive,
-			      supply_mapping_frame, &answerer_transmit,
-			      &answerer_observation),
+		CHECK(channel_sample_pair(
+			      &channel, &caller, &answerer,
+			      &caller_observation, &answerer_observation),
 		      "symmetric rate %u call stopped at sample %zu",
 		      symbol_rate, index);
-		channel_transmit(
-			&channel, caller_transmit, answerer_transmit);
 		if (v34_call_is_online(&caller.call) &&
 		    v34_call_is_online(&answerer.call) &&
 		    caller.mapping_frames_received >= 4u &&
@@ -742,22 +739,11 @@ static bool exercise_full_retrain(
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
 		struct v34_call_observation answerer_observation;
-		int16_t caller_receive;
-		int16_t answerer_receive;
-		int16_t caller_transmit;
-		int16_t answerer_transmit;
 
-		channel_receive(&channel, &caller_receive, &answerer_receive);
-		note_peer_primary_delays(&caller, &answerer);
-		CHECK(endpoint_sample(
-			      &caller, caller_receive, supply_mapping_frame,
-			      &caller_transmit, &caller_observation) &&
-		      endpoint_sample(
-			      &answerer, answerer_receive,
-			      supply_mapping_frame, &answerer_transmit,
-			      &answerer_observation),
+		CHECK(channel_sample_pair(
+			      &channel, &caller, &answerer,
+			      &caller_observation, &answerer_observation),
 		      "full retrain stopped at sample %zu", index);
-		channel_transmit(&channel, caller_transmit, answerer_transmit);
 		caller_retrained |=
 			caller_observation.next == V34_CALL_RETRAIN_SILENCE;
 		answerer_retrained |=
@@ -792,6 +778,61 @@ static bool test_full_retrain(void)
 	CHECK(exercise_full_retrain(V34_ANSWERING_STATION, true),
 	      "PCMA answering-station retrain failed");
 	return true;
+}
+
+static bool test_failed_probe_releases_echo(void)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct channel channel;
+	bool probe_started = false;
+
+	CHECK(run_online_pair(&caller, &answerer, &channel, false) &&
+	      v34_call_start_retrain(&answerer.call) == V34_CALL_OK,
+	      "failed-probe fixture did not start retraining");
+	caller.verify_mapping_frames = false;
+	answerer.verify_mapping_frames = false;
+	for (size_t index = 0; index < SAMPLE_LIMIT && !probe_started;
+	     ++index) {
+		struct v34_call_observation caller_observation;
+		struct v34_call_observation answerer_observation;
+
+		CHECK(channel_sample_pair(
+			      &channel, &caller, &answerer,
+			      &caller_observation, &answerer_observation),
+		      "failed-probe setup stopped at sample %zu", index);
+		probe_started =
+			answerer_observation.processed == V34_CALL_PHASE2 &&
+			answerer_observation.events.phase2.kind ==
+				V34_PHASE2_EVENT_INITIAL_PROBE_STARTED;
+	}
+	CHECK(probe_started &&
+	      answerer.call.echo.mode == V34_ECHO_TRAINING,
+	      "answerer did not begin probe-owned echo training");
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_call_observation observation = { 0 };
+		struct v34_received_mapping_frame received = { 0 };
+		enum v34_call_result result;
+		int16_t transmit = 0;
+
+		result = v34_call_sample(
+			&answerer.call, 0, NULL, NULL, &transmit,
+			&observation, &received);
+		if (result == V34_CALL_OK)
+			continue;
+		CHECK(result == V34_CALL_FAILED &&
+		      observation.processed == V34_CALL_PHASE2 &&
+		      observation.events.phase2.kind ==
+			      V34_PHASE2_EVENT_FAILED &&
+		      observation.events.phase2.failure ==
+			      V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT &&
+		      v34_call_is_valid(&answerer.call) &&
+		      v34_call_has_failed(&answerer.call) &&
+		      answerer.call.echo.mode != V34_ECHO_TRAINING,
+		      "local probe failure did not leave releasable state");
+		return true;
+	}
+	CHECK(false, "missing remote Tone B did not exhaust the local probe");
 }
 
 static bool check_retrain_tone_guard(
@@ -864,8 +905,6 @@ static bool check_unusable_info1_retrains(bool pcma)
 		.transmit_bit = 1,
 		.verify_mapping_frames = true,
 	};
-	int16_t next_caller_receive = 0;
-	int16_t next_answerer_receive = 0;
 	bool restarted = false;
 
 	/* Zero is a valid projected-rate report meaning that none of the
@@ -877,21 +916,11 @@ static bool check_unusable_info1_retrains(bool pcma)
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
 		struct v34_call_observation answerer_observation;
-		int16_t caller_transmit;
-		int16_t answerer_transmit;
 
-		channel_receive(
-			&channel, &next_caller_receive, &next_answerer_receive);
-		note_peer_primary_delays(&caller, &answerer);
-		CHECK(endpoint_sample(
-			      &caller, next_caller_receive, supply_mapping_frame,
-			      &caller_transmit, &caller_observation) &&
-		      endpoint_sample(
-			      &answerer, next_answerer_receive,
-			      supply_mapping_frame, &answerer_transmit,
-			      &answerer_observation),
+		CHECK(channel_sample_pair(
+			      &channel, &caller, &answerer,
+			      &caller_observation, &answerer_observation),
 		      "unusable INFO1 call stopped at sample %zu", index);
-		channel_transmit(&channel, caller_transmit, answerer_transmit);
 		if (answerer_observation.processed == V34_CALL_PHASE2 &&
 		    answerer_observation.next == V34_CALL_RETRAIN_SILENCE) {
 			restarted = true;
@@ -986,6 +1015,7 @@ int main(void)
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "echo-impaired calls", test_echo_impaired_calls },
 		{ "local and remote full retrain", test_full_retrain },
+		{ "failed probe releases echo", test_failed_probe_releases_echo },
 		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "unusable INFO1 starts full retrain",
 		  test_unusable_info1_retrains },
