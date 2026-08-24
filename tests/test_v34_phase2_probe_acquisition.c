@@ -15,7 +15,7 @@ enum {
 	TEST_EXTRA_L2_SAMPLES = 37,
 };
 
-static const int16_t TEST_RECEIVE_GAIN[] = { 645, 723, 645 };
+static const int16_t TEST_RECEIVE_GAIN[] = { 326, 326, 326 };
 
 enum test_codec {
 	TEST_CODEC_LINEAR,
@@ -126,6 +126,8 @@ expected_stream_event(const struct test_stream *stream)
 
 static bool stream_to_measurement(struct test_stream *stream)
 {
+	int16_t l1_receive_gain = 0;
+
 	while (stream->probe_samples <
 	       2u * V34_PHASE2_PROBE_L1_SAMPLES) {
 		struct v34_phase2_probe_acquisition_event event;
@@ -145,11 +147,25 @@ static bool stream_to_measurement(struct test_stream *stream)
 					      stream->leading_samples &&
 			      event.probe_energy_fraction > 0.99,
 			      "probe acquisition diagnostics changed");
+		if (event.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED)
+			CHECK(v34_phase2_probe_acquisition_receive_gain(
+				      &stream->acquisition, &l1_receive_gain) ==
+				      V34_PHASE2_PROBE_ACQUISITION_OK &&
+			      l1_receive_gain > 0,
+			      "probe acquisition did not freeze L1 gain");
 		if (event.kind ==
-		    V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY)
+		    V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY) {
+			int16_t measured_receive_gain = 0;
+
 			CHECK(event.l2_samples ==
-				      V34_PHASE2_PROBE_L1_SAMPLES,
-			      "probe measurement reported the wrong L2 duration");
+				      V34_PHASE2_PROBE_L1_SAMPLES &&
+			      v34_phase2_probe_acquisition_receive_gain(
+				      &stream->acquisition,
+				      &measured_receive_gain) ==
+				      V34_PHASE2_PROBE_ACQUISITION_OK &&
+			      measured_receive_gain == l1_receive_gain,
+			      "L2 measurement changed the frozen L1 gain");
+		}
 	}
 	CHECK(stream->acquisition.phase ==
 		      V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&

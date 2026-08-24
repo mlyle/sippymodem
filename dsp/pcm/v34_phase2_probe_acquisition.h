@@ -74,7 +74,8 @@ v34_phase2_probe_acquisition_measure(
 	const struct v34_phase2_probe_acquisition *acquisition,
 	struct v34_phase2_probe_receiver_measurement *measurement);
 
-/* Copy the gain learned over the exact synchronized L1/L2 windows. */
+/* Copy the gain learned over the exact synchronized L1 window and retained
+ * unchanged while the quieter L2 window is measured. */
 enum v34_phase2_probe_acquisition_result
 v34_phase2_probe_acquisition_receive_gain(
 	const struct v34_phase2_probe_acquisition *acquisition,

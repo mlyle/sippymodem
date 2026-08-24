@@ -42,8 +42,8 @@ static bool receiver_is_empty(
 bool v34_phase2_probe_acquisition_is_valid(
 	const struct v34_phase2_probe_acquisition *acquisition)
 {
-	uint32_t measured_samples;
-	bool measurement_ready;
+	uint32_t l1_samples;
+	bool gain_ready;
 
 	if (acquisition == NULL ||
 	    !v34_phase2_probe_synchronizer_is_valid(
@@ -55,18 +55,11 @@ bool v34_phase2_probe_acquisition_is_valid(
 	    (unsigned int)acquisition->phase >
 		    V34_PHASE2_PROBE_ACQUISITION_LIMIT_REACHED)
 		return false;
-	measured_samples =
-		acquisition->receiver.l1_spectrum.samples_observed +
-		acquisition->receiver.l2_spectrum.samples_observed;
-	measurement_ready = acquisition->receiver.phase ==
-				    V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END ||
-			    acquisition->receiver.phase ==
-				    V34_PHASE2_PROBE_RECEIVER_COMPLETE ||
-			    acquisition->receiver.phase ==
-				    V34_PHASE2_PROBE_RECEIVER_LIMIT_REACHED;
-	if (acquisition->gain_samples != measured_samples ||
+	l1_samples = acquisition->receiver.l1_spectrum.samples_observed;
+	gain_ready = l1_samples == V34_PHASE2_PROBE_L1_SAMPLES;
+	if (acquisition->gain_samples != l1_samples ||
 	    acquisition->gain.mode !=
-		    (measurement_ready ? V34_GAIN_FROZEN : V34_GAIN_TRACKING))
+		    (gain_ready ? V34_GAIN_FROZEN : V34_GAIN_TRACKING))
 		return false;
 
 	switch (acquisition->phase) {
@@ -216,12 +209,10 @@ static bool receive_probe_sample(
 	struct v34_phase2_probe_acquisition_event *event)
 {
 	struct v34_phase2_probe_receiver_event receiver_event;
-	bool measuring = acquisition->receiver.phase ==
-				 V34_PHASE2_PROBE_RECEIVER_MEASURE_L1 ||
-			 acquisition->receiver.phase ==
-				 V34_PHASE2_PROBE_RECEIVER_MEASURE_L2;
+	bool measuring_l1 = acquisition->receiver.phase ==
+				    V34_PHASE2_PROBE_RECEIVER_MEASURE_L1;
 
-	if ((measuring && !finish_l2 &&
+	if ((measuring_l1 && !finish_l2 &&
 	     !observe_gain(acquisition, received_sample)) ||
 	    v34_phase2_probe_receiver_sample(
 		    &acquisition->receiver, received_sample, finish_l2,
@@ -232,14 +223,14 @@ static bool receive_probe_sample(
 	case V34_PHASE2_PROBE_RECEIVER_EVENT_NONE:
 		return true;
 	case V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED:
-		event->kind =
-			V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED;
-		return true;
-	case V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY:
 		if (v34_gain_control_set_mode(
 			    &acquisition->gain, V34_GAIN_FROZEN) !=
 		    V34_GAIN_CONTROL_OK)
 			return false;
+		event->kind =
+			V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED;
+		return true;
+	case V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY:
 		event->kind =
 			V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY;
 		return true;

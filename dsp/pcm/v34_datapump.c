@@ -16,9 +16,10 @@
 
 enum {
 	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
-	/* Keep every phase on the ordinary V.34 line scale. An 8192 peak
-	 * produces the nominal 5793-sample equal-power RMS. */
+	/* An 8192 peak produces the nominal 5793-sample equal-power RMS.
+	 * Phase 2 L1 uses that power while L2 is 6 dB lower. */
 	V34_NOMINAL_AMPLITUDE = 8192,
+	V34_PHASE2_L2_AMPLITUDE = V34_NOMINAL_AMPLITUDE / 2,
 	/* A local full retrain does not receive the peer's response until both
 	 * stations have observed their 70 ms silence and 50 ms tone guards. */
 	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 2,
@@ -270,7 +271,7 @@ static bool call_configuration(
 		return false;
 	*configuration = (struct v34_call_configuration){
 		.local_role = station_role(caller),
-		.phase2_nominal_amplitude = V34_NOMINAL_AMPLITUDE,
+		.phase2_nominal_amplitude = V34_PHASE2_L2_AMPLITUDE,
 		.local_info0 = baseline_info0(),
 		.local_info1 = baseline_info1(
 			caller, symbol_rate, highest_rate_units,
