@@ -4,19 +4,30 @@
 #define V34_PHASE4_DECISION_RECEIVER_H
 
 #include "v34_adaptive_equalizer.h"
+#include "v34_phase3_j_sequence.h"
 #include "v34_phase3_s_receiver.h"
 #include "v34_phase4_e_receiver.h"
+#include "v34_phase4_j_prime_sequence.h"
 #include "v34_phase4_trn.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
 enum v34_phase4_decision_receiver_stage {
+	V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME,
 	V34_PHASE4_DECISION_RECEIVER_ANSWER_S,
 	V34_PHASE4_DECISION_RECEIVER_TRN,
 	V34_PHASE4_DECISION_RECEIVER_MP,
 	V34_PHASE4_DECISION_RECEIVER_E,
 	V34_PHASE4_DECISION_RECEIVER_COMPLETE,
+};
+
+struct v34_phase4_j_prime_receiver {
+	struct v34_scrambler descrambler;
+	uint16_t decoded_history;
+	uint8_t previous_clockwise_quarter_turns;
+	uint8_t qualified_history;
+	uint8_t received_symbols;
 };
 
 enum v34_phase4_decision_receiver_result {
@@ -42,12 +53,15 @@ struct v34_phase4_decision_output {
 	enum v34_phase4_decision_action action;
 };
 
-/* Own only the Phase 4 S/TRN/MP/E semantics.  The physical timing and one
- * adaptive equalizer remain in the aggregate receive owner through B1 and
- * data.  A complete MP event pauses this owner until the controller decides
+/* Own only the Phase 4 S/TRN/MP/E semantics. Both roles retain at least 512
+ * known TRN decisions before the continuous MP decoder takes ownership; the
+ * answering peer first supplies its S/S-bar boundary. The physical timing and
+ * one adaptive equalizer remain in the aggregate receive owner through B1 and
+ * data. A complete MP event pauses this owner until the controller decides
  * whether to continue MP or start E. */
 struct v34_phase4_decision_receiver {
 	struct v34_phase3_s_receiver answer_s;
+	struct v34_phase4_j_prime_receiver call_j_prime;
 	struct v34_phase4_trn expected_trn;
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver e_receiver;
@@ -60,7 +74,7 @@ struct v34_phase4_decision_receiver {
 enum v34_phase4_decision_receiver_result
 v34_phase4_decision_receiver_init(
 	struct v34_phase4_decision_receiver *receiver,
-	enum v34_station_role transmitting_role,
+	const struct v34_phase3_j_sequence *j_sequence,
 	enum v34_constellation_size constellation);
 
 bool v34_phase4_decision_receiver_is_valid(

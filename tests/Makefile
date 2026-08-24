@@ -1463,9 +1463,12 @@ V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v34_mp.o \
+	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
 	$(BUILD_DIR)/v34_phase4_trn.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp_receiver.o \

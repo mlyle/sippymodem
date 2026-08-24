@@ -462,7 +462,7 @@ static enum v34_phase34_receiver_result enter_phase4(
 	if (v34_phase3_decision_receiver_handoff(phase3, &handoff) !=
 		    V34_PHASE3_DECISION_RECEIVER_OK ||
 	    v34_phase4_decision_receiver_init(
-		    &phase4, receiver->transmitting_profile.local_role,
+		    &phase4, &handoff.j.sequence,
 		    receiver->phase4_constellation) !=
 		    V34_PHASE4_DECISION_RECEIVER_OK)
 		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_constellation.h>
+#include <v34_phase3_trn.h>
 #include <v34_phase3_s_sequence.h>
 #include <v34_phase4_decision_receiver.h>
 #include <v34_phase4_e_sequence.h>
@@ -11,6 +12,7 @@
 #include <string.h>
 
 enum {
+	J_DETECTION_SYMBOLS = 3 * V34_PHASE3_J_PATTERN_SYMBOLS,
 	MP_ACQUISITION_TRN_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 128,
 	TEST_DECODER_POWER_Q15 = 0x7000,
 };
@@ -164,8 +166,9 @@ static bool handle_record(
 	       V34_PHASE4_DECISION_RECEIVER_OK;
 }
 
-static bool receive_fixed(
+static bool receive_observation(
 	struct receive_fixture *fixture, struct v34_analytic_sample point,
+	struct v34_analytic_sample target,
 	enum v34_phase4_decision_receiver_result expected)
 {
 	struct v34_adaptive_equalizer_observation input =
@@ -187,12 +190,19 @@ static bool receive_fixed(
 	       result == V34_PHASE4_DECISION_RECEIVER_OK),
 	      "fixed observation returned %d instead of %d", result,
 	      expected);
-	CHECK(output_matches(&output, &input, point, discard),
+	CHECK(output_matches(&output, &input, target, discard),
 	      "fixed observation target/action changed at epoch %llu",
 	      (unsigned long long)input.epoch);
 	if (result != V34_PHASE4_DECISION_RECEIVER_RECORD_READY)
 		return memcmp(&event, &saved_event, sizeof(event)) == 0;
 	return handle_record(fixture, &event);
+}
+
+static bool receive_fixed(
+	struct receive_fixture *fixture, struct v34_analytic_sample point,
+	enum v34_phase4_decision_receiver_result expected)
+{
+	return receive_observation(fixture, point, point, expected);
 }
 
 static bool normalized_to_fixed(
@@ -208,6 +218,38 @@ static bool normalized_to_fixed(
 	       v34_training_constellation_fixed_point(
 		       constellation, quarter, rotation, fixed) ==
 		       V34_CONSTELLATION_OK;
+}
+
+static bool make_j_sequence(
+	enum v34_station_role role,
+	enum v34_constellation_size constellation,
+	struct v34_phase3_j_sequence *sequence)
+{
+	struct v34_phase3_trn trn;
+	struct v34_phase3_j_sequence j;
+	struct v34_analytic_sample ignored;
+	uint8_t ignored_rotation;
+
+	if (sequence == NULL ||
+	    v34_phase3_trn_init(&trn, role) != V34_PHASE3_TRN_OK)
+		return false;
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE3_TRN_MIN_SYMBOLS; ++symbol)
+		if (v34_phase3_trn_next_fixed(
+			    &trn, &ignored, &ignored_rotation) !=
+		    V34_PHASE3_TRN_OK)
+			return false;
+	if (v34_phase3_j_sequence_init_from_trn(
+		    &j, &trn, constellation) != V34_PHASE3_J_SEQUENCE_OK)
+		return false;
+	for (unsigned int symbol = 0;
+	     symbol < J_DETECTION_SYMBOLS; ++symbol)
+		if (v34_phase3_j_sequence_next_fixed(
+			    &j, &ignored, &ignored_rotation) !=
+		    V34_PHASE3_J_SEQUENCE_OK)
+			return false;
+	*sequence = j;
+	return v34_phase3_j_sequence_at_pattern_boundary(sequence);
 }
 
 static bool feed_mp_record(
@@ -251,6 +293,9 @@ static bool run_timeline(
 		.search_e = search_e,
 	};
 	struct v34_phase3_s_sequence answer_s;
+	struct v34_phase3_j_sequence j_sequence;
+	struct v34_phase3_j_sequence continued_j;
+	struct v34_phase4_j_prime_sequence j_prime;
 	struct v34_phase4_trn trn;
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence e;
@@ -260,8 +305,9 @@ static bool run_timeline(
 	uint8_t quarter;
 	uint8_t rotation;
 
-	CHECK(v34_phase4_decision_receiver_init(
-		      &fixture.receiver, role, constellation) ==
+	CHECK(make_j_sequence(role, constellation, &j_sequence) &&
+	      v34_phase4_decision_receiver_init(
+		      &fixture.receiver, &j_sequence, constellation) ==
 		      V34_PHASE4_DECISION_RECEIVER_OK,
 	      "role %d constellation %d did not initialize", role,
 	      constellation);
@@ -285,6 +331,38 @@ static bool run_timeline(
 			      receive_fixed(&fixture, point, expected),
 			      "answer S observation %u stopped", symbol);
 		}
+	} else {
+		continued_j = j_sequence;
+		for (unsigned int symbol = 0;
+		     symbol < 2u * V34_PHASE3_J_PATTERN_SYMBOLS; ++symbol) {
+			CHECK(v34_phase3_j_sequence_next_fixed(
+				      &continued_j, &point, &rotation) ==
+				      V34_PHASE3_J_SEQUENCE_OK &&
+			      receive_fixed(
+				      &fixture, point,
+				      V34_PHASE4_DECISION_RECEIVER_OK),
+			      "continued J observation %u stopped", symbol);
+		}
+		CHECK(v34_phase4_j_prime_sequence_init_from_j(
+			      &j_prime, &continued_j) ==
+			      V34_PHASE4_J_PRIME_SEQUENCE_OK,
+		      "J-prime source did not initialize");
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE4_J_PRIME_SYMBOLS; ++symbol) {
+			CHECK(v34_phase4_j_prime_sequence_next(
+				      &j_prime, &normalized, &rotation) ==
+				      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
+			      normalized_to_fixed(
+				      V34_CONSTELLATION_4_POINT, &normalized,
+				      &point) &&
+			      receive_fixed(
+				      &fixture, point,
+				      V34_PHASE4_DECISION_RECEIVER_OK),
+			      "J-prime observation %u stopped", symbol);
+		}
+		CHECK(fixture.receiver.stage ==
+			      V34_PHASE4_DECISION_RECEIVER_TRN,
+		      "J-prime did not open known TRN");
 	}
 	CHECK(v34_phase4_trn_init(&trn, role, constellation) ==
 		      V34_PHASE4_TRN_OK,
@@ -292,8 +370,7 @@ static bool run_timeline(
 	for (unsigned int symbol = 0;
 	     symbol < MP_ACQUISITION_TRN_SYMBOLS; ++symbol) {
 		enum v34_phase4_decision_receiver_result expected =
-			role == V34_ANSWERING_STATION &&
-					symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS ?
+			symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS ?
 				V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE :
 				V34_PHASE4_DECISION_RECEIVER_OK;
 
@@ -418,6 +495,7 @@ static bool test_delayed_answer_marker_alignment(void)
 	struct receive_fixture fixture = {
 		.clock.lineage = UINT64_C(14695981039346656037),
 	};
+	struct v34_phase3_j_sequence j_sequence;
 	struct v34_phase3_s_sequence s;
 	struct v34_phase4_trn trn;
 	struct qam_point normalized;
@@ -426,8 +504,11 @@ static bool test_delayed_answer_marker_alignment(void)
 	uint8_t quarter;
 	uint8_t rotation;
 
-	CHECK(v34_phase4_decision_receiver_init(
-		      &fixture.receiver, V34_ANSWERING_STATION,
+	CHECK(make_j_sequence(
+		      V34_ANSWERING_STATION, V34_CONSTELLATION_4_POINT,
+		      &j_sequence) &&
+	      v34_phase4_decision_receiver_init(
+		      &fixture.receiver, &j_sequence,
 		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE4_DECISION_RECEIVER_OK &&
 	      v34_phase3_s_sequence_init(&s) == V34_PHASE3_S_SEQUENCE_OK,
@@ -485,8 +566,63 @@ static bool test_delayed_answer_marker_alignment(void)
 	return true;
 }
 
+static bool test_j_prime_requires_training_evidence(void)
+{
+	struct receive_fixture fixture = {
+		.clock.lineage = UINT64_C(14695981039346656037),
+	};
+	struct v34_phase3_j_sequence j_sequence;
+	struct v34_phase4_j_prime_sequence j_prime;
+	struct qam_point normalized;
+	struct v34_analytic_sample target;
+	uint8_t rotation;
+
+	CHECK(make_j_sequence(
+		      V34_CALLING_STATION, V34_CONSTELLATION_4_POINT,
+		      &j_sequence) &&
+	      v34_phase4_decision_receiver_init(
+		      &fixture.receiver, &j_sequence,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_PHASE4_DECISION_RECEIVER_OK &&
+	      v34_phase4_j_prime_sequence_init_from_j(
+		      &j_prime, &j_sequence) ==
+		      V34_PHASE4_J_PRIME_SEQUENCE_OK,
+	      "low-energy J-prime case did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE4_J_PRIME_SYMBOLS; ++symbol) {
+		struct v34_analytic_sample low_energy;
+
+		CHECK(v34_phase4_j_prime_sequence_next(
+			      &j_prime, &normalized, &rotation) ==
+			      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
+		      normalized_to_fixed(
+			      V34_CONSTELLATION_4_POINT, &normalized,
+			      &target),
+		      "low-energy J-prime source stopped at %u", symbol);
+		low_energy = (struct v34_analytic_sample){
+			.in_phase = (int16_t)(target.in_phase / 16),
+			.quadrature = (int16_t)(target.quadrature / 16),
+		};
+		CHECK(receive_observation(
+			      &fixture, low_energy, target,
+			      V34_PHASE4_DECISION_RECEIVER_OK),
+		      "low-energy J-prime observation %u stopped", symbol);
+	}
+	CHECK(fixture.receiver.stage ==
+		      V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME &&
+	      fixture.receiver.call_j_prime.received_symbols ==
+		      V34_PHASE4_J_PRIME_SYMBOLS &&
+	      fixture.receiver.call_j_prime.decoded_history ==
+		      V34_PHASE4_J_PRIME_PATTERN &&
+	      fixture.receiver.call_j_prime.qualified_history == 0u &&
+	      v34_phase4_decision_receiver_is_valid(&fixture.receiver),
+	      "carrier-free J-prime pattern opened training");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
+	struct v34_phase3_j_sequence j_sequence;
 	struct v34_phase4_decision_receiver receiver;
 	struct v34_phase4_decision_receiver saved;
 	struct v34_phase4_decision_output output = {
@@ -503,22 +639,30 @@ static bool test_validation_and_transactionality(void)
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
-	CHECK(v34_phase4_decision_receiver_init(
-		      NULL, V34_CALLING_STATION,
+	CHECK(make_j_sequence(
+		      V34_CALLING_STATION, V34_CONSTELLATION_4_POINT,
+		      &j_sequence) &&
+	      v34_phase4_decision_receiver_init(
+		      NULL, &j_sequence,
 		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_decision_receiver_init(
-		      &receiver, (enum v34_station_role)99,
+		      &receiver, NULL,
 		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_decision_receiver_init(
-		      &receiver, V34_CALLING_STATION,
+		      &receiver, &j_sequence,
 		      (enum v34_constellation_size)8) ==
+		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase4_decision_receiver_init(
+		      &receiver,
+		      (const struct v34_phase3_j_sequence *)&receiver,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid Phase 4 initialization changed state");
 	CHECK(v34_phase4_decision_receiver_init(
-		      &receiver, V34_CALLING_STATION,
+		      &receiver, &j_sequence,
 		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE4_DECISION_RECEIVER_OK,
 	      "validation owner did not initialize");
@@ -583,6 +727,8 @@ int main(void)
 		  test_role_constellation_timelines },
 		{ "delayed answer marker alignment",
 		  test_delayed_answer_marker_alignment },
+		{ "J-prime training evidence",
+		  test_j_prime_requires_training_evidence },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

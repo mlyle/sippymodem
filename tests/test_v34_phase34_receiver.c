@@ -663,8 +663,7 @@ static bool test_training_case(
 	      phase3_s_events == 1u && pp_events == 1u && j_events == 1u &&
 	      phase4_s_events ==
 		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
-	      trn_events ==
-		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&
+	      trn_events == 1u &&
 	      initial_records != 0u && final_record &&
 	      source.completed_records >= 3u && source.data_started &&
 	      v34_phase34_receiver_is_valid(&receiver) &&

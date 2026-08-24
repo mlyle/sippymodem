@@ -7,10 +7,6 @@
 
 #include <stddef.h>
 
-enum {
-	V34_PHASE4_J_PRIME_PATTERN = 0xf991,
-};
-
 _Static_assert(
 	V34_PHASE4_J_PRIME_SYMBOLS * 2 ==
 		V34_PHASE4_J_PRIME_BITS,

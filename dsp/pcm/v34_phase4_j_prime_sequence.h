@@ -13,6 +13,7 @@
 enum {
 	V34_PHASE4_J_PRIME_BITS = 16,
 	V34_PHASE4_J_PRIME_SYMBOLS = 8,
+	V34_PHASE4_J_PRIME_PATTERN = 0xf991,
 };
 
 enum v34_phase4_j_prime_sequence_result {
