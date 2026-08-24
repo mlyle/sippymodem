@@ -13,7 +13,6 @@ enum {
 	SAMPLE_LIMIT = 140000,
 	LINE_DELAY_SAMPLES = 13,
 	NOMINAL_AMPLITUDE = 7000,
-	FULL_RATE_NOMINAL_AMPLITUDE = 8192,
 };
 
 struct channel {
@@ -137,25 +136,14 @@ static struct v34_call_configuration configuration(
 static struct v34_call_configuration symmetric_configuration(
 	enum v34_station_role role, enum v34_symbol_rate symbol_rate)
 {
-	enum { DEFAULT_PRIMARY_RATE_UNITS = 10 };
-	uint8_t primary_rate_units =
-		symbol_rate == V34_SYMBOL_RATE_3429 ? 14u :
-		DEFAULT_PRIMARY_RATE_UNITS;
+	enum { PRIMARY_RATE_UNITS = 10 };
 	struct v34_call_configuration selected = configuration(role);
 	uint8_t preemphasis_filter_index =
 		symbol_rate == V34_SYMBOL_RATE_3000 ? 2u :
 		symbol_rate == V34_SYMBOL_RATE_3429 ? 7u : 0u;
 	bool high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
-	if (symbol_rate == V34_SYMBOL_RATE_3429) {
-		selected.phase2_nominal_amplitude =
-			FULL_RATE_NOMINAL_AMPLITUDE;
-		selected.phase3.nominal_peak_amplitude =
-			FULL_RATE_NOMINAL_AMPLITUDE;
-	}
 
 	selected.local_info0 = (struct v34_info0){
-		.constellation_1664_supported =
-			symbol_rate == V34_SYMBOL_RATE_3429,
 		.symbol_rate_2743_supported =
 			symbol_rate == V34_SYMBOL_RATE_2743,
 		.symbol_rate_2800_supported =
@@ -182,7 +170,7 @@ static struct v34_call_configuration symmetric_configuration(
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.calling.answer_transmit[symbol_rate]
 			.projected_data_rate_2400_bps_units =
-				primary_rate_units;
+				PRIMARY_RATE_UNITS;
 	} else {
 		selected.local_info1.answering.common
 			.frequency_offset_1_50_hz_units =
@@ -193,18 +181,18 @@ static struct v34_call_configuration symmetric_configuration(
 			.preemphasis_filter_index = preemphasis_filter_index;
 		selected.local_info1.answering.call_transmit
 			.projected_data_rate_2400_bps_units =
-				primary_rate_units;
+				PRIMARY_RATE_UNITS;
 		selected.local_info1.answering.answer_to_call_symbol_rate =
 			symbol_rate;
 		selected.local_info1.answering.call_to_answer_symbol_rate =
 			symbol_rate;
 	}
 	selected.phase4.transmit_mp.parameters.type0
-		.maximum_call_to_answer_rate_2400_bps_units = primary_rate_units;
+		.maximum_call_to_answer_rate_2400_bps_units = PRIMARY_RATE_UNITS;
 	selected.phase4.transmit_mp.parameters.type0
-		.maximum_answer_to_call_rate_2400_bps_units = primary_rate_units;
+		.maximum_answer_to_call_rate_2400_bps_units = PRIMARY_RATE_UNITS;
 	selected.phase4.transmit_mp.parameters.type0.data_rate_capability_mask =
-		(uint16_t)((1u << primary_rate_units) - 1u);
+		(uint16_t)((1u << PRIMARY_RATE_UNITS) - 1u);
 	return selected;
 }
 

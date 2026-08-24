@@ -7,11 +7,9 @@
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
-#include <string.h>
 
 enum {
 	V34_DATA_DECISION_DECODER_POWER_Q15 = 0x2000,
-	V34_DATA_DECISION_B1_POWER_Q15 = 0x7000,
 };
 
 static bool normalized_point_is_finite(const struct qam_point *point)
@@ -19,87 +17,12 @@ static bool normalized_point_is_finite(const struct qam_point *point)
 	return isfinite(point->in_phase) && isfinite(point->quadrature);
 }
 
-static bool normalizers_match(
-	const struct v34_power_normalizer *left,
-	const struct v34_power_normalizer *right)
-{
-	return v34_mapping_parameters_are_equal(
-		       &left->parameters, &right->parameters) &&
-	       left->precoded_mean_squared_magnitude ==
-		       right->precoded_mean_squared_magnitude &&
-	       left->projected_mean_squared_magnitude ==
-		       right->projected_mean_squared_magnitude &&
-	       left->normalization_gain == right->normalization_gain &&
-	       left->maximum_precoded_point_power ==
-		       right->maximum_precoded_point_power &&
-	       left->maximum_projected_point_power ==
-		       right->maximum_projected_point_power &&
-	       left->maximum_normalized_point_power ==
-		       right->maximum_normalized_point_power &&
-	       left->calibration_symbol_count ==
-		       right->calibration_symbol_count &&
-	       left->nonlinear_parameter == right->nonlinear_parameter;
-}
-
-static bool b1_reference_matches_data_path(
-	const struct v34_data_decision_receiver *receiver)
-{
-	const struct v34_data_points *reference = &receiver->b1_reference;
-	const struct v34_channel_frame_receiver *channel =
-		&receiver->data_receiver.channel_receiver;
-	const struct v34_channel_decoder *decoder =
-		&channel->frame_decoder.channel_decoder;
-	const struct v34_data_receiver *data =
-		&receiver->data_receiver.data_receiver;
-
-	return reference->local_role == data->transmitting_role &&
-	       v34_frame_geometry_is_equal(
-		       &reference->schedule.geometry,
-		       &channel->frame_decoder.channel_schedule.geometry) &&
-	       v34_frame_geometry_is_equal(
-		       &reference->schedule.geometry, &data->schedule.geometry) &&
-	       v34_mapping_parameters_are_equal(
-		       &reference->encoder.parameters,
-		       &decoder->parameters) &&
-	       v34_mapping_parameters_are_equal(
-		       &reference->encoder.parameters,
-		       &data->mapping_decoder.parameters) &&
-	       normalizers_match(
-		       &reference->normalizer,
-		       &channel->conditioner.normalizer) &&
-	       reference->encoder.convolutional_encoder.selection ==
-		       decoder->survivor.selection &&
-	       memcmp(reference->encoder.precoder.coefficients,
-		      decoder->inverse_precoder.coefficients,
-		      sizeof(reference->encoder.precoder.coefficients)) == 0 &&
-	       memcmp(reference->encoder.precoder.coefficients,
-		      channel->receive_precoder.coefficients,
-		      sizeof(reference->encoder.precoder.coefficients)) == 0;
-}
-
-static bool b1_reference_is_complete(
-	const struct v34_data_points *reference)
-{
-	return v34_frame_schedule_is_complete(&reference->schedule) &&
-	       v34_data_points_needs_mapping_frame(reference);
-}
-
 bool v34_data_decision_receiver_is_valid(
 	const struct v34_data_decision_receiver *receiver)
 {
 	if (receiver == NULL ||
 	    !v34_data_channel_receiver_is_valid(&receiver->data_receiver) ||
-	    !v34_data_points_is_valid(&receiver->b1_reference) ||
-	    !b1_reference_matches_data_path(receiver) ||
 	    !normalized_point_is_finite(&receiver->first_normalized))
-		return false;
-	if (receiver->b1_reference_active ==
-		    b1_reference_is_complete(&receiver->b1_reference) ||
-	    (receiver->b1_reference_active &&
-	     (!v34_data_channel_receiver_is_receiving_b1(
-		     &receiver->data_receiver) ||
-	      receiver->has_first_symbol !=
-		      ((receiver->b1_reference.next_point & 1u) != 0u))))
 		return false;
 	return receiver->has_first_symbol ||
 	       (receiver->first_normalized.in_phase == 0.0 &&
@@ -118,61 +41,16 @@ v34_data_decision_receiver_init(
 	enum v34_station_role transmitting_role)
 {
 	struct v34_data_decision_receiver initialized = { 0 };
-	struct v34_mapping_parameters parameters;
-	struct v34_frame_schedule schedule;
-	struct v34_scrambler scrambler;
-	struct v34_4d_encoder encoder;
 
 	if (receiver == NULL ||
-	    v34_mapping_parameters_init(
-		    &parameters, geometry, expanded_shaping) !=
-		    V34_MAPPING_PARAMETERS_OK ||
-	    v34_b1_frame_schedule_init(&schedule, geometry) !=
-		    V34_FRAME_SCHEDULE_OK ||
-	    v34_transmit_scrambler_init(
-		    &scrambler, transmitting_role) != V34_FRAMING_OK ||
-	    v34_4d_encoder_init(
-		    &encoder, &parameters, coefficients, selection) !=
-		    V34_4D_ENCODER_OK ||
-	    v34_data_points_init(
-		    &initialized.b1_reference, &schedule, &scrambler,
-		    &encoder, normalizer, transmitting_role) !=
-		    V34_DATA_POINTS_OK ||
 	    v34_data_channel_receiver_init(
 		    &initialized.data_receiver, normalizer, geometry,
 		    expanded_shaping, coefficients, selection,
-		    transmitting_role) != V34_DATA_RECEIVE_OK)
-		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
-	initialized.b1_reference_active = true;
-	if (!v34_data_decision_receiver_is_valid(&initialized))
+		    transmitting_role) != V34_DATA_RECEIVE_OK ||
+	    !v34_data_decision_receiver_is_valid(&initialized))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V34_DATA_RECEIVE_OK;
-}
-
-static bool next_b1_reference(
-	struct v34_data_decision_receiver *receiver, struct qam_point *point)
-{
-	struct v34_data_points *reference = &receiver->b1_reference;
-	uint8_t ones[V34_MAX_MAPPING_FRAME_BITS];
-	struct v34_mapping_frame frame;
-	const uint8_t auxiliary = 1u;
-
-	if (v34_data_points_needs_mapping_frame(reference)) {
-		memset(ones, 1, sizeof(ones));
-		if (v34_data_points_preview_mapping_frame(reference, &frame) !=
-			    V34_DATA_POINTS_OK ||
-		    v34_data_points_queue_mapping_frame(
-			    reference, ones, frame.primary_bits,
-			    frame.carries_auxiliary_bit ? &auxiliary : NULL) !=
-			    V34_DATA_POINTS_OK)
-			return false;
-	}
-	if (v34_data_points_next(reference, point) != V34_DATA_POINTS_OK)
-		return false;
-	if (b1_reference_is_complete(reference))
-		receiver->b1_reference_active = false;
-	return true;
 }
 
 bool v34_data_decision_receiver_is_receiving_b1(
@@ -238,7 +116,6 @@ v34_data_decision_receiver_observe(
 	struct qam_point targets[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	struct v34_analytic_sample target;
 	enum v34_data_receive_result result;
-	bool known_b1_symbol;
 
 	if (observation == NULL || output == NULL ||
 	    memory_regions_overlap(
@@ -257,28 +134,10 @@ v34_data_decision_receiver_observe(
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
 	normalized[1] = normalized_observation(observation);
-	known_b1_symbol = next.b1_reference_active;
-	if (known_b1_symbol &&
-	    !next_b1_reference(&next, &normalized[1]))
-		return V34_DATA_RECEIVE_INVALID_STATE;
 	if (!next.has_first_symbol) {
 		next.first_normalized = normalized[1];
 		next.has_first_symbol = true;
-		if (known_b1_symbol) {
-			if (!fixed_target(&normalized[1], &target))
-				return V34_DATA_RECEIVE_OUT_OF_RANGE;
-			generated.equalizer =
-				(struct v34_adaptive_equalizer_decision){
-					.observation = *observation,
-					.target = target,
-					.decoder_power_q15 =
-						V34_DATA_DECISION_B1_POWER_Q15,
-					.adaptation =
-						V34_ADAPTIVE_EQUALIZER_FULL,
-				};
-		} else {
-			generated.equalizer = skip_decision(observation);
-		}
+		generated.equalizer = skip_decision(observation);
 		if (!v34_data_decision_receiver_is_valid(&next))
 			return V34_DATA_RECEIVE_INVALID_STATE;
 		*receiver = next;
@@ -301,9 +160,7 @@ v34_data_decision_receiver_observe(
 	generated.equalizer = (struct v34_adaptive_equalizer_decision){
 		.observation = *observation,
 		.target = target,
-		.decoder_power_q15 = known_b1_symbol ?
-			V34_DATA_DECISION_B1_POWER_Q15 :
-			V34_DATA_DECISION_DECODER_POWER_Q15,
+		.decoder_power_q15 = V34_DATA_DECISION_DECODER_POWER_Q15,
 		.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
 	};
 	next.first_normalized = (struct qam_point){ 0 };
