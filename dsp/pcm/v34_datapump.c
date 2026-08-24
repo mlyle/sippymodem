@@ -278,8 +278,7 @@ static bool call_configuration(
 			preemphasis_filter_index),
 		.phase3 = {
 			.requested_remote_constellation =
-				caller ? V34_CONSTELLATION_16_POINT :
-					 V34_CONSTELLATION_4_POINT,
+				V34_CONSTELLATION_4_POINT,
 			.sample_rate = MODEM_RATE,
 			.nominal_peak_amplitude = V34_NOMINAL_AMPLITUDE,
 		},
