@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_adaptive_equalizer.h>
+#include <v34_data_quality.h>
 
 #include "test.h"
 
+#include <inttypes.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -727,6 +729,210 @@ static bool test_transactionality(void)
 	return true;
 }
 
+static enum v34_data_quality_result publish_quality_window(
+	struct v34_data_quality *quality,
+	struct v34_adaptive_equalizer_quality *measurement,
+	int16_t metric)
+{
+	measurement->window_position = 1;
+	if (v34_data_quality_observe(quality, measurement) !=
+	    V34_DATA_QUALITY_OK)
+		return V34_DATA_QUALITY_INVALID_STATE;
+	measurement->decision_metric = metric;
+	measurement->window_position = 0;
+	return v34_data_quality_observe(quality, measurement);
+}
+
+static bool test_data_quality_policy(void)
+{
+	static const uint8_t maximum_rates[] = { 9, 11, 11, 12, 13, 14 };
+	static const struct {
+		enum v34_symbol_rate symbol_rate;
+		uint8_t rate_units;
+		int16_t threshold;
+	} profiles[] = {
+		{ V34_SYMBOL_RATE_2400, 9, 135 },
+		{ V34_SYMBOL_RATE_2743, 10, 157 },
+		{ V34_SYMBOL_RATE_2800, 11, 84 },
+		{ V34_SYMBOL_RATE_3000, 12, 74 },
+		{ V34_SYMBOL_RATE_3200, 13, 76 },
+		{ V34_SYMBOL_RATE_3429, 14, 67 },
+	};
+	struct v34_adaptive_equalizer_quality measurement = {
+		.decision_metric = 100,
+		.window_position = 1,
+	};
+	struct v34_data_quality quality;
+	uint64_t profile_hash = UINT64_C(14695981039346656037);
+
+	for (size_t index = 0; index < sizeof(profiles) / sizeof(profiles[0]);
+	     ++index) {
+		CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
+		      v34_data_quality_start(
+			      &quality, profiles[index].symbol_rate,
+			      profiles[index].rate_units, &measurement) ==
+			      V34_DATA_QUALITY_OK &&
+		      quality.threshold == profiles[index].threshold,
+		      "quality threshold changed at profile %zu: %d", index,
+		      quality.threshold);
+	}
+	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK,
+	      "quality profile digest did not initialize");
+	for (size_t index = 0; index < sizeof(maximum_rates); ++index) {
+		uint8_t minimum_rate = index == V34_SYMBOL_RATE_2400 ? 1u : 2u;
+
+		for (uint8_t rate = minimum_rate; rate <= maximum_rates[index];
+		     ++rate) {
+			CHECK(v34_data_quality_start(
+				      &quality, (enum v34_symbol_rate)index, rate,
+				      &measurement) == V34_DATA_QUALITY_OK,
+			      "quality profile rejected %zu/%u", index, rate);
+			profile_hash = hash_word(
+				profile_hash, (uint16_t)quality.threshold);
+		}
+	}
+	CHECK(profile_hash == UINT64_C(0xd16019b57923c441),
+	      "quality profile digest changed: 0x%016" PRIx64, profile_hash);
+	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
+	      v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_2400, 1, &measurement) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.threshold == 800,
+	      "minimum-rate training baseline changed: %d", quality.threshold);
+	measurement.decision_metric = 5000;
+	CHECK(v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_2743, 2, &measurement) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.threshold == 0 && quality.active,
+	      "saturated minimum-rate baseline was not disabled");
+	CHECK(publish_quality_window(&quality, &measurement, INT16_MAX) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.bad_windows == 0,
+	      "disabled minimum-rate quality requested recovery");
+	measurement.decision_metric = 0;
+	measurement.window_position = 1;
+
+	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
+	      v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_3429, 14, &measurement) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.threshold == 67,
+	      "retained quality profile did not initialize");
+	measurement.decision_metric = 192;
+	measurement.window_position = 0;
+	CHECK(v34_data_quality_observe(&quality, &measurement) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.bad_windows == 1 && quality.window_latched &&
+	      v34_data_quality_observe(&quality, &measurement) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.bad_windows == 1,
+	      "one bad window was not consumed exactly once");
+	CHECK(publish_quality_window(&quality, &measurement, 66) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.bad_windows == 0,
+	      "a recovered window did not clear quality loss");
+	for (unsigned int window = 0;
+	     window < V34_DATA_QUALITY_LOSS_WINDOWS; ++window) {
+		enum v34_data_quality_result expected =
+			window + 1u == V34_DATA_QUALITY_LOSS_WINDOWS ?
+				V34_DATA_QUALITY_RETRAIN :
+				V34_DATA_QUALITY_OK;
+
+		CHECK(publish_quality_window(&quality, &measurement, 192) ==
+			      expected,
+		      "quality loss result changed at window %u", window);
+	}
+	CHECK(!quality.active && quality.automatic_retrains == 1 &&
+	      v34_data_quality_is_valid(&quality),
+	      "first quality retrain did not preserve a valid budget");
+
+	for (unsigned int retry = 1;
+	     retry < V34_DATA_QUALITY_MAX_RETRAINS; ++retry) {
+		measurement.window_position = 0;
+		CHECK(v34_data_quality_start(
+			      &quality, V34_SYMBOL_RATE_3429, 14,
+			      &measurement) == V34_DATA_QUALITY_OK,
+		      "quality generation %u did not restart", retry);
+		for (unsigned int window = 0;
+		     window < V34_DATA_QUALITY_LOSS_WINDOWS; ++window) {
+			enum v34_data_quality_result expected =
+				window + 1u == V34_DATA_QUALITY_LOSS_WINDOWS ?
+					V34_DATA_QUALITY_RETRAIN :
+					V34_DATA_QUALITY_OK;
+
+			CHECK(publish_quality_window(
+				      &quality, &measurement, 198) == expected,
+			      "quality retry %u window %u changed", retry,
+			      window);
+		}
+	}
+	CHECK(quality.automatic_retrains == V34_DATA_QUALITY_MAX_RETRAINS &&
+	      !quality.active,
+	      "quality retrain budget did not saturate");
+	measurement.window_position = 1;
+	CHECK(v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_3200, 11, &measurement) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.threshold == 209,
+	      "26400 quality profile changed");
+	for (unsigned int window = 0;
+	     window < V34_DATA_QUALITY_LOSS_WINDOWS; ++window)
+		CHECK(publish_quality_window(&quality, &measurement, 345) ==
+			      V34_DATA_QUALITY_OK,
+		      "exhausted quality budget retriggered at %u", window);
+	CHECK(quality.active &&
+	      quality.bad_windows == V34_DATA_QUALITY_LOSS_WINDOWS &&
+	      publish_quality_window(&quality, &measurement, 166) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.bad_windows == 0,
+	      "exhausted quality monitor did not retain recovery evidence");
+	return true;
+}
+
+static bool test_data_quality_transactionality(void)
+{
+	struct v34_adaptive_equalizer_quality measurement = {
+		.window_position = 1,
+	};
+	struct v34_data_quality quality;
+	struct v34_data_quality saved;
+
+	CHECK(v34_data_quality_init(NULL) ==
+		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
+	      v34_data_quality_is_valid(&quality),
+	      "quality owner did not initialize transactionally");
+	saved = quality;
+	CHECK(v34_data_quality_observe(&quality, &measurement) ==
+		      V34_DATA_QUALITY_INVALID_STATE &&
+	      v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_COUNT, 14, &measurement) ==
+		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_2400, 10, &measurement) ==
+		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_3429, 14,
+		      (const struct v34_adaptive_equalizer_quality *)&quality) ==
+		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      memcmp(&quality, &saved, sizeof(quality)) == 0,
+	      "quality setup rejection changed the owner");
+	CHECK(v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_3429, 14, &measurement) ==
+		      V34_DATA_QUALITY_OK,
+	      "quality transaction fixture did not start");
+	saved = quality;
+	measurement.decision_metric = -1;
+	CHECK(v34_data_quality_observe(&quality, &measurement) ==
+		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      memcmp(&quality, &saved, sizeof(quality)) == 0,
+	      "invalid measurement changed the quality owner");
+	quality.automatic_retrains = V34_DATA_QUALITY_MAX_RETRAINS + 1u;
+	CHECK(!v34_data_quality_is_valid(&quality),
+	      "invalid quality retrain count was accepted");
+	return true;
+}
+
 int main(void)
 {
 	if (!test_initial_state_and_carrier_profile() ||
@@ -734,7 +940,8 @@ int main(void)
 	    !test_feedback_and_discard_lifecycle() ||
 	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
-	    !test_transactionality())
+	    !test_transactionality() || !test_data_quality_policy() ||
+	    !test_data_quality_transactionality())
 		return 1;
 	return 0;
 }

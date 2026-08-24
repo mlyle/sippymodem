@@ -7,6 +7,7 @@
 #include "modem_param.h"
 #include "training_session.h"
 #include "v34_call.h"
+#include "v34_data_quality.h"
 #include "v34_frame_schedule.h"
 
 #include <limits.h>
@@ -29,6 +30,7 @@ enum {
 struct v34_datapump {
 	struct dp dp;
 	struct v34_call call;
+	struct v34_data_quality data_quality;
 	struct training_session training;
 	uint32_t missing_carrier_samples;
 	uint16_t rate_mask;
@@ -302,6 +304,7 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->rate_mask == 0 ||
+	    !v34_data_quality_is_valid(&datapump->data_quality) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V34_CARRIER_LOSS_SAMPLES ||
 	    !v34_call_is_valid(&datapump->call) ||
@@ -345,6 +348,11 @@ static struct dp *create_v34(
 		free(datapump);
 		return NULL;
 	}
+	if (v34_data_quality_init(&datapump->data_quality) !=
+	    V34_DATA_QUALITY_OK) {
+		free(datapump);
+		return NULL;
+	}
 	datapump->caller = caller != 0;
 	datapump->rate_mask = rate_mask;
 	if (training_session_init(
@@ -377,19 +385,11 @@ static int delete_v34(struct dp *dp)
 	return 0;
 }
 
-static int retrain_v34(struct dp *dp)
+static int start_local_retrain(struct v34_datapump *datapump)
 {
-	struct v34_datapump *datapump = v34_from_dp(dp);
 	struct training_session training;
 	struct v34_call call;
 
-	if (datapump == NULL)
-		return -1;
-	/* A remote or quality-triggered full retrain may begin during the guard
-	 * interval before ATO1 reaches the datapump. Join that same transaction;
-	 * the modem wrapper will report CONNECT when this generation completes. */
-	if (training_session_is_retraining(&datapump->training))
-		return 0;
 	if (!training_session_is_online(&datapump->training))
 		return -1;
 	training = datapump->training;
@@ -404,6 +404,20 @@ static int retrain_v34(struct dp *dp)
 	datapump->missing_carrier_samples = 0;
 	datapump->retrain_carrier_acquired = false;
 	return 0;
+}
+
+static int retrain_v34(struct dp *dp)
+{
+	struct v34_datapump *datapump = v34_from_dp(dp);
+
+	if (datapump == NULL)
+		return -1;
+	/* A remote or quality-triggered full retrain may begin during the guard
+	 * interval before ATO1 reaches the datapump. Join that same transaction;
+	 * the modem wrapper will report CONNECT when this generation completes. */
+	if (training_session_is_retraining(&datapump->training))
+		return 0;
+	return start_local_retrain(datapump);
 }
 
 static bool source_mapping_frame(
@@ -460,10 +474,19 @@ static bool deliver_mapping_frame(
 static bool enter_link(struct v34_datapump *datapump)
 {
 	struct v34_data_startup startup;
+	struct v34_data_quality data_quality;
+	const struct v34_adaptive_equalizer_quality *measurement;
 	unsigned int transmit_rate;
 	unsigned int receive_rate;
 
 	if (!v34_call_get_data_startup(&datapump->call, &startup))
+		return false;
+	measurement = &datapump->call.state.phase4.receive.equalizer.quality;
+	data_quality = datapump->data_quality;
+	if (v34_data_quality_start(
+		    &data_quality, startup.receive.geometry.symbol_rate,
+		    startup.receive.geometry.primary_data_rate_2400_bps_units,
+		    measurement) != V34_DATA_QUALITY_OK)
 		return false;
 	transmit_rate =
 		(unsigned int)startup.mode.transmit
@@ -481,6 +504,7 @@ static bool enter_link(struct v34_datapump *datapump)
 	if (training_session_connect(&datapump->training) !=
 	    TRAINING_SESSION_OK)
 		return false;
+	datapump->data_quality = data_quality;
 	datapump->missing_carrier_samples = 0;
 	datapump->dp.status = DPSTAT_CONNECT;
 	modem_dp_connected(datapump->dp.modem);
@@ -509,6 +533,24 @@ static bool observation_has_progress(
 static void fail_training(struct v34_datapump *datapump)
 {
 	(void)training_session_fail(&datapump->training);
+}
+
+static bool observe_online_quality(struct v34_datapump *datapump)
+{
+	struct v34_data_quality next = datapump->data_quality;
+	const struct v34_adaptive_equalizer_quality *measurement =
+		&datapump->call.state.phase4.receive.equalizer.quality;
+	enum v34_data_quality_result result =
+		v34_data_quality_observe(&next, measurement);
+
+	if (result == V34_DATA_QUALITY_RETRAIN) {
+		if (start_local_retrain(datapump) != 0)
+			return false;
+	} else if (result != V34_DATA_QUALITY_OK) {
+		return false;
+	}
+	datapump->data_quality = next;
+	return true;
 }
 
 static bool update_carrier(
@@ -609,6 +651,12 @@ static int process_v34(
 		    (observation.events.phase4 &
 		     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) != 0 &&
 		    !deliver_mapping_frame(datapump, &received)) {
+			fail_training(datapump);
+			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+			return DPSTAT_ERROR;
+		}
+		if (training_session_is_online(&datapump->training) &&
+		    !observe_online_quality(datapump)) {
 			fail_training(datapump);
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
