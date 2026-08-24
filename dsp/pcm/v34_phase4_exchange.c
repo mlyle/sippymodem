@@ -313,6 +313,8 @@ static bool transmitter_stage_is_valid(
 	if (exchange->transmit_data_active)
 		return exchange->transmit_trn_started &&
 		       exchange->transmit_mp_started &&
+		       exchange->transmit_mp_records_completed ==
+			       V34_PHASE4_MIN_MP_RECORDS &&
 		       exchange->transmit_mp_prime_started &&
 		       exchange->transmit_mp_prime_records_completed ==
 			       V34_PHASE4_MIN_MP_PRIME_RECORDS &&
@@ -363,8 +365,14 @@ bool v34_phase4_exchange_is_valid(
 	    (v34_phase34_receiver_has_failed(&exchange->receive) &&
 	     !exchange->failed) ||
 	    (exchange->transmit_mp_started && !trn_target_complete(exchange)) ||
+	    exchange->transmit_mp_records_completed >
+		    V34_PHASE4_MIN_MP_RECORDS ||
+	    (!exchange->transmit_mp_started &&
+	     exchange->transmit_mp_records_completed != 0u) ||
 	    (exchange->transmit_mp_prime_started &&
-	     (!exchange->transmit_mp_started || !exchange->peer_mp_received)) ||
+	     (!exchange->transmit_mp_started || !exchange->peer_mp_received ||
+	      exchange->transmit_mp_records_completed !=
+		      V34_PHASE4_MIN_MP_RECORDS)) ||
 	    exchange->transmit_mp_prime_records_completed >
 		    V34_PHASE4_MIN_MP_PRIME_RECORDS ||
 	    (!exchange->transmit_mp_prime_started &&
@@ -624,7 +632,15 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 	if (exchange->transmit_mp_started &&
 	    v34_training_transmitter_phase4_mp_record_complete(
 			    &exchange->transmit.training)) {
-		bool acknowledged = exchange->peer_mp_received;
+		bool acknowledged;
+
+		if (!exchange->transmit_mp_prime_started &&
+		    exchange->transmit_mp_records_completed <
+			    V34_PHASE4_MIN_MP_RECORDS)
+			exchange->transmit_mp_records_completed++;
+		acknowledged = exchange->peer_mp_received &&
+			exchange->transmit_mp_records_completed ==
+				V34_PHASE4_MIN_MP_RECORDS;
 
 		if (exchange->transmit_mp_prime_started &&
 		    exchange->transmit_mp_prime_records_completed <

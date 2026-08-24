@@ -466,6 +466,10 @@ static bool test_generated_online_exchange(void)
 	      caller_seen, answerer_seen);
 	CHECK(caller.phase4.transmit_data_active &&
 	      answerer.phase4.transmit_data_active &&
+	      caller.phase4.transmit_mp_records_completed ==
+		      V34_PHASE4_MIN_MP_RECORDS &&
+	      answerer.phase4.transmit_mp_records_completed ==
+		      V34_PHASE4_MIN_MP_RECORDS &&
 	      caller.phase4.transmit_mp_prime_records_completed ==
 		      V34_PHASE4_MIN_MP_PRIME_RECORDS &&
 	      answerer.phase4.transmit_mp_prime_records_completed ==
@@ -732,6 +736,7 @@ static bool test_acknowledged_first_record(void)
 		      "acknowledged local type-1 MP did not start");
 	}
 	pending.transmit_mp_prime_started = true;
+	pending.transmit_mp_records_completed = V34_PHASE4_MIN_MP_RECORDS;
 	pending.peer_mp_prime_received = true;
 	CHECK(v34_phase4_exchange_is_valid(&pending),
 	      "acknowledged first record made pending state invalid");
@@ -771,6 +776,11 @@ static bool test_validation_and_transactionality(void)
 	CHECK(run_pair(
 		      &caller, &answerer, &caller_seen, &answerer_seen),
 	      "validation Phase 4 pair failed");
+	exchange = caller.phase4;
+	exchange.transmit_mp_records_completed =
+		V34_PHASE4_MIN_MP_RECORDS + 1;
+	CHECK(!v34_phase4_exchange_is_valid(&exchange),
+	      "Phase 4 accepted too many completed ordinary MP records");
 	exchange = caller.phase4;
 	exchange.transmit_mp_prime_records_completed =
 		V34_PHASE4_MIN_MP_PRIME_RECORDS + 1;
