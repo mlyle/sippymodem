@@ -2164,7 +2164,9 @@ static bool run_v34_recording_replay(
 		    endpoint.modem->retrain_pending == 0 &&
 		    output_contains(&endpoint, "CONNECT"))
 			retrained_at = offset;
-		if (retrained_at != SIZE_MAX && expected_text != NULL &&
+		if ((retrain_sample == SIZE_MAX ?
+		     connected_at != SIZE_MAX : retrained_at != SIZE_MAX) &&
+		    expected_text != NULL &&
 		    expected_text[0] != '\0' &&
 		    output_contains(&endpoint, expected_text))
 			expected_text_seen = true;
@@ -2191,7 +2193,7 @@ static bool run_v34_recording_replay(
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
 	CHECK(expected_text == NULL || expected_text[0] == '\0' ||
 		      expected_text_seen,
-	      "V.34 %s recording did not reproduce post-retrain text '%s'",
+	      "V.34 %s recording did not reproduce expected text '%s'",
 	      role, expected_text != NULL ? expected_text : "");
 	fprintf(stderr,
 		"[       OK ] V.34 %s recording replay (%s, %zu samples, carrier at %zu, retrain at %zu, terminal bytes %zu)\n",

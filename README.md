@@ -294,7 +294,8 @@ Set the corresponding `V34_REPLAY_RETRAIN_SAMPLE` or
 `V34_ANSWER_REPLAY_RETRAIN_SAMPLE` to inject ATO1 at an exact receive-sample
 boundary and require a second CONNECT. `V34_REPLAY_EXPECT_TEXT` and
 `V34_ANSWER_REPLAY_EXPECT_TEXT` can additionally require an exact terminal
-substring after that reconnect. Each input is 8 kHz signed 16-bit
+substring after the initial CONNECT, or after the second CONNECT when a
+retrain boundary is configured. Each input is 8 kHz signed 16-bit
 little-endian PCM; the test loads at most three minutes, reproduces the raw
 V.34 setup and call role, and requires carrier acquisition. The ordinary test
 run reports a skip when no recording is supplied, so large and private call
