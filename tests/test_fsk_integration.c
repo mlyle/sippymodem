@@ -1951,6 +1951,43 @@ static bool v34_replay_symbol_rate_parse(
 	}
 }
 
+static bool v34_replay_bit_rate_parse(
+	const char *value, unsigned int *bit_rate)
+{
+	char *end;
+	unsigned long parsed;
+
+	if (bit_rate == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0') {
+		*bit_rate = 9600;
+		return true;
+	}
+	errno = 0;
+	parsed = strtoul(value, &end, 10);
+	if (errno != 0 || end == value || *end != '\0' ||
+	    parsed < V34_MIN_BIT_RATE || parsed > V34_MAX_BIT_RATE ||
+	    parsed % V34_RATE_STEP != 0)
+		return false;
+	*bit_rate = (unsigned int)parsed;
+	return true;
+}
+
+static bool v34_replay_link_mode_parse(const char *value, bool *lapm)
+{
+	if (lapm == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0' || strcmp(value, "raw") == 0) {
+		*lapm = false;
+		return true;
+	}
+	if (strcmp(value, "lapm") == 0) {
+		*lapm = true;
+		return true;
+	}
+	return false;
+}
+
 static bool v34_replay_sample_parse(const char *value, size_t *sample)
 {
 	char *end;
@@ -1972,8 +2009,10 @@ static bool v34_replay_sample_parse(const char *value, size_t *sample)
 }
 
 static bool run_v34_recording_replay(
-	const char *path, const char *symbol_rate_value,
-	const char *retrain_sample_value, bool answerer)
+	const char *path, const char *bit_rate_value,
+	const char *symbol_rate_value, const char *link_mode_value,
+	const char *retrain_sample_value, const char *expected_text,
+	bool answerer)
 {
 	enum { TEST_STATE_COMMAND_ONLINE = 6 };
 	static const char dial_command[] = "ATDrecording\r";
@@ -1981,27 +2020,40 @@ static bool run_v34_recording_replay(
 		"ATZ\r",
 		"ATE0\r",
 		"ATX3\r",
-		"AT+DS=0,1\r",
+	};
+	static const char *const raw_commands[] = {
 		"AT\\N0\r",
-		"AT+MS=34,0,9600,9600\r",
+		"AT+DS=0,1\r",
+	};
+	static const char *const lapm_commands[] = {
+		"AT+DS=3,1\r",
+		"AT\\N4\r",
 	};
 	struct channel_bench_recording recording = { 0 };
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
 	const char *role = answerer ? "answer" : "originator";
+	char bit_rate_command[40];
+	const char *bit_rate_commands[] = { bit_rate_command };
 	char symbol_rate_command[32];
 	char symbol_rate_description[32];
 	const char *symbol_rate_commands[] = { symbol_rate_command };
 	unsigned int symbol_rate;
+	unsigned int bit_rate;
+	bool lapm;
 	size_t connected_at = SIZE_MAX;
 	size_t handoff_at = SIZE_MAX;
 	size_t retrain_sample;
 	size_t retrained_at = SIZE_MAX;
 	bool v8_seen = false;
+	bool expected_text_seen = false;
 	bool retrain_requested = false;
 	char retrain_command[] = "ATO1";
 
-	CHECK(v34_replay_symbol_rate_parse(symbol_rate_value, &symbol_rate) &&
+	CHECK(v34_replay_bit_rate_parse(bit_rate_value, &bit_rate) &&
+		      v34_replay_symbol_rate_parse(
+			      symbol_rate_value, &symbol_rate) &&
+		      v34_replay_link_mode_parse(link_mode_value, &lapm) &&
 		      v34_replay_sample_parse(
 			      retrain_sample_value, &retrain_sample),
 	      "optional V.34 recording replay parameter is invalid");
@@ -2015,6 +2067,22 @@ static bool run_v34_recording_replay(
 	CHECK(configure_recording_replay(
 		      &endpoint, commands, ARRAY_LENGTH(commands)),
 	      "V.34 recording replay setup was rejected");
+	CHECK(configure_recording_replay(
+		      &endpoint, lapm ? lapm_commands : raw_commands,
+		      lapm ? ARRAY_LENGTH(lapm_commands) :
+			     ARRAY_LENGTH(raw_commands)),
+	      "V.34 recording replay link mode was rejected");
+	{
+		int length = snprintf(
+			bit_rate_command, sizeof(bit_rate_command),
+			"AT+MS=34,0,%u,%u\r", bit_rate, bit_rate);
+
+		CHECK(length > 0 && (size_t)length < sizeof(bit_rate_command) &&
+			      configure_recording_replay(
+				      &endpoint, bit_rate_commands,
+				      ARRAY_LENGTH(bit_rate_commands)),
+		      "V.34 recording replay bit rate was rejected");
+	}
 	if (symbol_rate != 0) {
 		int length = snprintf(
 			symbol_rate_command, sizeof(symbol_rate_command),
@@ -2096,11 +2164,17 @@ static bool run_v34_recording_replay(
 		    endpoint.modem->retrain_pending == 0 &&
 		    output_contains(&endpoint, "CONNECT"))
 			retrained_at = offset;
+		if (retrained_at != SIZE_MAX && expected_text != NULL &&
+		    expected_text[0] != '\0' &&
+		    output_contains(&endpoint, expected_text))
+			expected_text_seen = true;
 		/* A recording can contain arbitrarily much online data, while this
 		 * optional replay has no DTE consuming it. Retain terminal output only
 		 * while it can still establish the CONNECT boundary. */
 		if (modem_is_online(endpoint.modem, DP_V34) &&
-		    (!retrain_requested || retrained_at != SIZE_MAX))
+		    (!retrain_requested || retrained_at != SIZE_MAX) &&
+		    ((expected_text == NULL || expected_text[0] == '\0') ||
+		     expected_text_seen))
 			endpoint.output_count = 0;
 	}
 	CHECK(connected_at != SIZE_MAX,
@@ -2115,6 +2189,10 @@ static bool run_v34_recording_replay(
 	      endpoint.modem->retrain_pending,
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->id : -1,
 	      endpoint.modem->dp != NULL ? (int)endpoint.modem->dp->status : -1);
+	CHECK(expected_text == NULL || expected_text[0] == '\0' ||
+		      expected_text_seen,
+	      "V.34 %s recording did not reproduce post-retrain text '%s'",
+	      role, expected_text != NULL ? expected_text : "");
 	fprintf(stderr,
 		"[       OK ] V.34 %s recording replay (%s, %zu samples, carrier at %zu, retrain at %zu, terminal bytes %zu)\n",
 		role, symbol_rate_description, recording.count, connected_at,
@@ -2427,12 +2505,24 @@ int main(void)
 		getenv("V34_ANSWER_REPLAY_RX_PCM");
 	const char *v34_recording_symbol_rate =
 		getenv("V34_REPLAY_SYMBOL_RATE");
+	const char *v34_recording_bit_rate =
+		getenv("V34_REPLAY_BIT_RATE");
+	const char *v34_recording_link_mode =
+		getenv("V34_REPLAY_LINK_MODE");
 	const char *v34_recording_retrain_sample =
 		getenv("V34_REPLAY_RETRAIN_SAMPLE");
+	const char *v34_recording_expected_text =
+		getenv("V34_REPLAY_EXPECT_TEXT");
 	const char *v34_answer_recording_symbol_rate =
 		getenv("V34_ANSWER_REPLAY_SYMBOL_RATE");
+	const char *v34_answer_recording_bit_rate =
+		getenv("V34_ANSWER_REPLAY_BIT_RATE");
+	const char *v34_answer_recording_link_mode =
+		getenv("V34_ANSWER_REPLAY_LINK_MODE");
 	const char *v34_answer_recording_retrain_sample =
 		getenv("V34_ANSWER_REPLAY_RETRAIN_SAMPLE");
+	const char *v34_answer_recording_expected_text =
+		getenv("V34_ANSWER_REPLAY_EXPECT_TEXT");
 	const char *v34_matrix_filter = getenv("V34_MATRIX_FILTER");
 	const bool skip_v34_matrix =
 		getenv("MODEM_INTEGRATION_SKIP_V34_MATRIX") != NULL;
@@ -2773,8 +2863,11 @@ int main(void)
 		fprintf(stderr,
 			"[  SKIPPED ] V.34 recording replay (V34_REPLAY_RX_PCM unset)\n");
 	} else if (!run_v34_recording_replay(
-			   v34_recording_path, v34_recording_symbol_rate,
-			   v34_recording_retrain_sample, false)) {
+			   v34_recording_path, v34_recording_bit_rate,
+			   v34_recording_symbol_rate,
+			   v34_recording_link_mode,
+			   v34_recording_retrain_sample,
+			   v34_recording_expected_text, false)) {
 		return 1;
 	}
 	if (v34_answer_recording_path == NULL ||
@@ -2783,8 +2876,11 @@ int main(void)
 			"[  SKIPPED ] V.34 answer recording replay (V34_ANSWER_REPLAY_RX_PCM unset)\n");
 	} else if (!run_v34_recording_replay(
 			   v34_answer_recording_path,
+			   v34_answer_recording_bit_rate,
 			   v34_answer_recording_symbol_rate,
-			   v34_answer_recording_retrain_sample, true)) {
+			   v34_answer_recording_link_mode,
+			   v34_answer_recording_retrain_sample,
+			   v34_answer_recording_expected_text, true)) {
 		return 1;
 	}
 	if (v90_recording_path == NULL || v90_recording_path[0] == '\0') {
