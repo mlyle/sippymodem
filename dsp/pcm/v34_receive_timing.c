@@ -9,28 +9,11 @@
 #include <stdint.h>
 #include <string.h>
 
-enum {
-	V34_RECEIVE_TIMING_REDUCED_INITIAL_GAIN = 0x0200,
-};
-
 static enum v34_station_role receiving_role(
 	enum v34_station_role transmitting_role)
 {
 	return transmitting_role == V34_CALLING_STATION ?
 		       V34_ANSWERING_STATION : V34_CALLING_STATION;
-}
-
-static int16_t initial_gain(
-	const struct v34_phase3_profile *transmitting_profile,
-	const struct v34_timing_control *timing)
-{
-	/* Low-carrier 2800-Hz profiles need acquisition headroom through the
-	 * analytic frontend. Other profiles retain the established
-	 * fast-acquisition level. */
-	if (transmitting_profile->symbol_rate == V34_SYMBOL_RATE_2800 &&
-	    !transmitting_profile->high_carrier)
-		return V34_RECEIVE_TIMING_REDUCED_INITIAL_GAIN;
-	return (int16_t)(timing->phase_limit / 2u);
 }
 
 static bool queue_state_is_valid(const struct v34_receive_timing *timing)
@@ -65,11 +48,12 @@ bool v34_receive_timing_is_valid(
 
 enum v34_receive_timing_result v34_receive_timing_init(
 	struct v34_receive_timing *timing,
-	const struct v34_phase3_profile *transmitting_profile)
+	const struct v34_phase3_profile *transmitting_profile,
+	int16_t initial_gain)
 {
 	struct v34_receive_timing initialized;
 
-	if (timing == NULL ||
+	if (timing == NULL || initial_gain <= 0 ||
 	    !v34_phase3_profile_is_valid(transmitting_profile))
 		return V34_RECEIVE_TIMING_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
@@ -83,8 +67,7 @@ enum v34_receive_timing_result v34_receive_timing_init(
 		    receiving_role(transmitting_profile->local_role)) !=
 		    V34_TIMING_CONTROL_OK ||
 	    v34_gain_control_init(
-		    &initialized.gain,
-		    initial_gain(transmitting_profile, &initialized.timing)) !=
+		    &initialized.gain, initial_gain) !=
 		    V34_GAIN_CONTROL_OK ||
 	    v34_s_tone_detector_init(
 		    &initialized.s_detector, transmitting_profile) !=

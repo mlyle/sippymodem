@@ -2,7 +2,13 @@
 
 #include "v34_phase2_probe_acquisition.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
+
+enum {
+	V34_PHASE2_PROBE_INITIAL_GAIN = 0x0600,
+};
 
 _Static_assert(
 	(int)V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES <
@@ -36,13 +42,31 @@ static bool receiver_is_empty(
 bool v34_phase2_probe_acquisition_is_valid(
 	const struct v34_phase2_probe_acquisition *acquisition)
 {
+	uint32_t measured_samples;
+	bool measurement_ready;
+
 	if (acquisition == NULL ||
 	    !v34_phase2_probe_synchronizer_is_valid(
 		    &acquisition->synchronizer) ||
 	    !v34_phase2_probe_receiver_is_valid(
 		    &acquisition->receiver) ||
+	    !v34_analytic_filter_is_valid(&acquisition->gain_filter) ||
+	    !v34_gain_control_is_valid(&acquisition->gain) ||
 	    (unsigned int)acquisition->phase >
 		    V34_PHASE2_PROBE_ACQUISITION_LIMIT_REACHED)
+		return false;
+	measured_samples =
+		acquisition->receiver.l1_spectrum.samples_observed +
+		acquisition->receiver.l2_spectrum.samples_observed;
+	measurement_ready = acquisition->receiver.phase ==
+				    V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END ||
+			    acquisition->receiver.phase ==
+				    V34_PHASE2_PROBE_RECEIVER_COMPLETE ||
+			    acquisition->receiver.phase ==
+				    V34_PHASE2_PROBE_RECEIVER_LIMIT_REACHED;
+	if (acquisition->gain_samples != measured_samples ||
+	    acquisition->gain.mode !=
+		    (measurement_ready ? V34_GAIN_FROZEN : V34_GAIN_TRACKING))
 		return false;
 
 	switch (acquisition->phase) {
@@ -91,10 +115,33 @@ v34_phase2_probe_acquisition_init(
 		    V34_PHASE2_PROBE_SYNCHRONIZER_OK ||
 	    v34_phase2_probe_receiver_init(&initialized.receiver) !=
 		    V34_PHASE2_PROBE_RECEIVER_OK ||
+	    v34_analytic_filter_init(&initialized.gain_filter) !=
+		    V34_ANALYTIC_FILTER_OK ||
+	    v34_gain_control_init(
+		    &initialized.gain, V34_PHASE2_PROBE_INITIAL_GAIN) !=
+		    V34_GAIN_CONTROL_OK ||
 	    !v34_phase2_probe_acquisition_is_valid(&initialized))
 		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
 	*acquisition = initialized;
 	return V34_PHASE2_PROBE_ACQUISITION_OK;
+}
+
+static bool observe_gain(
+	struct v34_phase2_probe_acquisition *acquisition, int16_t sample)
+{
+	struct v34_analytic_sample analytic;
+	struct v34_analytic_sample gained;
+
+	if (v34_analytic_filter_process(
+		    &acquisition->gain_filter, sample, &analytic) !=
+		    V34_ANALYTIC_FILTER_OK ||
+	    v34_gain_control_process(
+		    &acquisition->gain, analytic, &gained) !=
+		    V34_GAIN_CONTROL_OK ||
+	    acquisition->gain_samples == UINT32_MAX)
+		return false;
+	acquisition->gain_samples++;
+	return true;
 }
 
 static bool replay_synchronized_prefix(
@@ -115,6 +162,7 @@ static bool replay_synchronized_prefix(
 		if (v34_phase2_probe_synchronizer_replay(
 			    &acquisition->synchronizer, index, &sample) !=
 			    V34_PHASE2_PROBE_SYNCHRONIZER_OK ||
+		    !observe_gain(acquisition, sample) ||
 		    v34_phase2_probe_receiver_sample(
 			    &acquisition->receiver, sample, false,
 			    &receiver_event) !=
@@ -168,8 +216,14 @@ static bool receive_probe_sample(
 	struct v34_phase2_probe_acquisition_event *event)
 {
 	struct v34_phase2_probe_receiver_event receiver_event;
+	bool measuring = acquisition->receiver.phase ==
+				 V34_PHASE2_PROBE_RECEIVER_MEASURE_L1 ||
+			 acquisition->receiver.phase ==
+				 V34_PHASE2_PROBE_RECEIVER_MEASURE_L2;
 
-	if (v34_phase2_probe_receiver_sample(
+	if ((measuring && !finish_l2 &&
+	     !observe_gain(acquisition, received_sample)) ||
+	    v34_phase2_probe_receiver_sample(
 		    &acquisition->receiver, received_sample, finish_l2,
 		    &receiver_event) != V34_PHASE2_PROBE_RECEIVER_OK)
 		return false;
@@ -182,6 +236,10 @@ static bool receive_probe_sample(
 			V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED;
 		return true;
 	case V34_PHASE2_PROBE_RECEIVER_EVENT_MEASUREMENT_READY:
+		if (v34_gain_control_set_mode(
+			    &acquisition->gain, V34_GAIN_FROZEN) !=
+		    V34_GAIN_CONTROL_OK)
+			return false;
 		event->kind =
 			V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY;
 		return true;
@@ -199,6 +257,22 @@ static bool receive_probe_sample(
 		return true;
 	}
 	return false;
+}
+
+enum v34_phase2_probe_acquisition_result
+v34_phase2_probe_acquisition_receive_gain(
+	const struct v34_phase2_probe_acquisition *acquisition,
+	int16_t *receive_gain)
+{
+	if (!v34_phase2_probe_acquisition_is_valid(acquisition) ||
+	    receive_gain == NULL ||
+	    memory_regions_overlap(
+		    acquisition, sizeof(*acquisition),
+		    receive_gain, sizeof(*receive_gain)) ||
+	    acquisition->gain.mode != V34_GAIN_FROZEN)
+		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
+	*receive_gain = acquisition->gain.gain;
+	return V34_PHASE2_PROBE_ACQUISITION_OK;
 }
 
 enum v34_phase2_probe_acquisition_result

@@ -2664,6 +2664,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase2_initial_probe
 V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase2_initial_probe.o \
+	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/pcm_startup.o \
@@ -2697,6 +2698,8 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 		$(PCM_PHASE3_ENTRY_TEST_OBJECTS)) \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/v34_analytic_filter.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
 	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
 	$(BUILD_DIR)/v34_phase2_probe_synchronizer.o \
@@ -2795,6 +2798,7 @@ V34_PHASE2_RANGING_TEST_OBJECTS := \
 	$(V34_PHASE2_TONE_OBJECTS)
 V34_PHASE2_PROBE_FLOW_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_test_pair.o \
+	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info0.o \
@@ -2809,6 +2813,8 @@ V34_PHASE2_PROBE_FLOW_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_initial_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/v34_analytic_filter.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \
 	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
 	$(BUILD_DIR)/v34_phase2_probe_synchronizer.o \
@@ -2866,7 +2872,10 @@ V34_PHASE2_PROBE_ACQUISITION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_probe_acquisition
 V34_PHASE2_PROBE_ACQUISITION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2_probe_acquisition.o \
+	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/g711.o \
+	$(BUILD_DIR)/v34_analytic_filter.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_acquisition.o \
 	$(BUILD_DIR)/v34_phase2_probe_receiver.o \

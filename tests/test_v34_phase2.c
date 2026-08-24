@@ -238,6 +238,10 @@ static bool check_timeline(
 	uint64_t answerer_tone_magnitude = 0;
 	uint32_t caller_events = 0;
 	uint32_t answerer_events = 0;
+	int16_t caller_receive_gain;
+	int16_t answerer_receive_gain;
+	int16_t initial_caller_receive_gain;
+	int16_t initial_answerer_receive_gain;
 	bool answerer_replied = false;
 
 	CHECK(pair_init(&pair, codec, delay_samples),
@@ -282,9 +286,16 @@ static bool check_timeline(
 		      &pair.caller, &caller_measurement) == V34_PHASE2_OK &&
 	      v34_phase2_measure_remote_probe(
 		      &pair.answerer, &answerer_measurement) == V34_PHASE2_OK &&
+	      v34_phase2_receive_gain(
+		      &pair.caller, &caller_receive_gain) == V34_PHASE2_OK &&
+	      v34_phase2_receive_gain(
+		      &pair.answerer, &answerer_receive_gain) == V34_PHASE2_OK &&
+	      caller_receive_gain > 0 && answerer_receive_gain > 0 &&
 	      measurement_is_finite(&caller_measurement) &&
 	      measurement_is_finite(&answerer_measurement),
 	      "Phase 2 did not retain both probe measurements");
+	initial_caller_receive_gain = caller_receive_gain;
+	initial_answerer_receive_gain = answerer_receive_gain;
 	for (size_t index = 0; index < TEST_TONE_SAMPLES; ++index) {
 		struct v34_phase2_event caller_event;
 		struct v34_phase2_event answerer_event;
@@ -419,6 +430,12 @@ static bool check_timeline(
 		      &pair.caller, &caller_measurement) == V34_PHASE2_OK &&
 	      v34_phase2_measure_remote_probe(
 		      &pair.answerer, &answerer_measurement) == V34_PHASE2_OK &&
+	      v34_phase2_receive_gain(
+		      &pair.caller, &caller_receive_gain) == V34_PHASE2_OK &&
+	      v34_phase2_receive_gain(
+		      &pair.answerer, &answerer_receive_gain) == V34_PHASE2_OK &&
+	      caller_receive_gain == initial_caller_receive_gain &&
+	      answerer_receive_gain == initial_answerer_receive_gain &&
 	      measurement_is_finite(&caller_measurement) &&
 	      measurement_is_finite(&answerer_measurement),
 	      "INFO1 handoff discarded probe measurements");
@@ -522,6 +539,7 @@ static bool test_validation(void)
 	struct v34_phase2_event saved_event;
 	struct owned_pair pair;
 	int16_t transmit = 1234;
+	int16_t receive_gain = 4321;
 	bool ranging_active = false;
 	bool failed = false;
 
@@ -546,10 +564,13 @@ static bool test_validation(void)
 		      V34_PHASE2_INVALID_ARGUMENT &&
 	      v34_phase2_measure_remote_probe(&phase2, &measurement) ==
 		      V34_PHASE2_INVALID_STATE &&
+	      v34_phase2_receive_gain(&phase2, &receive_gain) ==
+		      V34_PHASE2_INVALID_STATE &&
 	      memcmp(&phase2, &saved, sizeof(phase2)) == 0 &&
 	      memcmp(&event, &saved_event, sizeof(event)) == 0 &&
 	      memcmp(&measurement, &saved_measurement,
 		     sizeof(measurement)) == 0 &&
+	      receive_gain == 4321 &&
 	      transmit == 1234 &&
 	      strcmp(v34_phase2_result_name(V34_PHASE2_INVALID_STATE),
 		     "invalid state") == 0 &&

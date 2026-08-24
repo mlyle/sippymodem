@@ -12,7 +12,7 @@
 
 enum {
 	SAMPLE_RATE = 8000,
-	EXPECTED_REDUCED_INITIAL_GAIN = 0x0200,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 	PHASE3_TRN_SYMBOLS = V34_PHASE3_TRN_MIN_SYMBOLS + 128,
 	PHASE3_J_SYMBOLS = V34_PHASE3_J_PATTERN_SYMBOLS * 5,
 	PHASE4_TRN_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 384,
@@ -207,31 +207,39 @@ static bool test_validation(void)
 	saved = receiver;
 	invalid.symbol_rate_denominator = 0;
 	CHECK(v34_phase34_receiver_init(
-		      NULL, &valid, V34_CONSTELLATION_16_POINT) ==
+		      NULL, &valid, V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase34_receiver_init(
-		      &receiver, &invalid, V34_CONSTELLATION_16_POINT) ==
+		      &receiver, &invalid, V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      v34_phase34_receiver_init(
-		      &receiver, &valid, (enum v34_constellation_size)8) ==
+		      &receiver, &valid, (enum v34_constellation_size)8,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
+		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase34_receiver_init(
+		      &receiver, &valid, V34_CONSTELLATION_16_POINT, 0) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid initialization changed its destination");
 	CHECK(v34_phase34_receiver_init(
-		      &receiver, &valid, V34_CONSTELLATION_16_POINT) ==
+		      &receiver, &valid, V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      v34_phase34_receiver_is_valid(&receiver) &&
-	      receiver.timing.gain.gain ==
-		      (int16_t)(receiver.timing.timing.phase_limit / 2u),
+	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN,
 	      "valid receiver did not initialize");
 	CHECK(v34_phase34_receiver_init(
-		      &receiver, &reduced, V34_CONSTELLATION_16_POINT) ==
+		      &receiver, &reduced, V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
-	      receiver.timing.gain.gain == EXPECTED_REDUCED_INITIAL_GAIN,
-	      "reduced-gain receiver did not initialize");
+	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN,
+	      "profile-independent receive gain changed");
 	CHECK(v34_phase34_receiver_init(
-		      &receiver, &valid, V34_CONSTELLATION_16_POINT) ==
+		      &receiver, &valid, V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "validation receiver did not restore");
 	saved = receiver;
@@ -283,7 +291,8 @@ static bool test_signal_acquisition(void)
 		      V34_SYMBOL_RATE_3000, 8, true, 3) &&
 	      v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
-		      V34_CONSTELLATION_16_POINT) ==
+		      V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "signal-acquisition receiver did not initialize");
 	saved_timing = receiver.timing;
@@ -315,7 +324,8 @@ static bool test_signal_acquisition(void)
 
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
-		      V34_CONSTELLATION_16_POINT) ==
+		      V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "impulse receiver did not initialize");
 	for (unsigned int index = 0;
@@ -332,7 +342,8 @@ static bool test_signal_acquisition(void)
 
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
-		      V34_CONSTELLATION_16_POINT) ==
+		      V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "qualified receiver did not initialize");
 	for (unsigned int index = 0;
@@ -352,7 +363,8 @@ static bool test_signal_acquisition(void)
 
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
-		      V34_CONSTELLATION_16_POINT) ==
+		      V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      v34_phase34_receiver_sample(&receiver, 400, &output) ==
 		      V34_PHASE34_RECEIVER_OK,
@@ -398,7 +410,8 @@ static bool test_training_case(
 		      high_carrier, preemphasis_filter_index) &&
 	      v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
-		      V34_CONSTELLATION_16_POINT) ==
+		      V34_CONSTELLATION_16_POINT,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      source_init(&source, &transmitting_profile, rate),
 	      "role %u rate %u training pair did not initialize", role, rate);

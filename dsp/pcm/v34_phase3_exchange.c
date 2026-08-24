@@ -158,13 +158,15 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	struct v34_phase3_exchange *exchange,
 	const struct v34_phase3_profile *local_transmit,
 	const struct v34_phase3_profile *peer_transmit,
-	const struct v34_phase3_exchange_configuration *configuration)
+	const struct v34_phase3_exchange_configuration *configuration,
+	int16_t initial_receive_gain)
 {
 	struct v34_phase3_exchange initialized = { 0 };
 	enum v34_phase3_line_transmitter_result transmit_result;
 
 	if (exchange == NULL || configuration == NULL ||
 	    !roles_are_reciprocal(local_transmit, peer_transmit) ||
+	    initial_receive_gain <= 0 ||
 	    configuration->sample_rate != V34_RECEIVE_TIMING_SAMPLE_RATE ||
 	    !v34_constellation_size_is_valid(
 		    configuration->requested_remote_constellation))
@@ -186,7 +188,8 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	}
 	if (v34_phase34_receiver_init(
 		    &initialized.receive, peer_transmit,
-		    configuration->requested_remote_constellation) !=
+		    configuration->requested_remote_constellation,
+		    initial_receive_gain) !=
 	    V34_PHASE34_RECEIVER_OK)
 		return V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
 	initialized.local_role = local_transmit->local_role;

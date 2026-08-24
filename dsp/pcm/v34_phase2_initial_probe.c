@@ -84,6 +84,21 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_measure(
 	return V34_PHASE2_INITIAL_PROBE_OK;
 }
 
+enum v34_phase2_initial_probe_result
+v34_phase2_initial_probe_receive_gain(
+	const struct v34_phase2_initial_probe *probe,
+	int16_t *receive_gain)
+{
+	if (!v34_phase2_initial_probe_is_valid(probe) ||
+	    probe->ranging.info0_exchange.transport.signal_role !=
+		    PHASE2_SIGNAL_B ||
+	    v34_phase2_probe_acquisition_receive_gain(
+		    &probe->control.path.receive, receive_gain) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK)
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	return V34_PHASE2_INITIAL_PROBE_OK;
+}
+
 const char *v34_phase2_initial_probe_result_name(
 	enum v34_phase2_initial_probe_result result)
 {

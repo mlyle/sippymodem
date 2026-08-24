@@ -276,13 +276,15 @@ bool v34_phase34_receiver_is_complete(
 enum v34_phase34_receiver_result v34_phase34_receiver_init(
 	struct v34_phase34_receiver *receiver,
 	const struct v34_phase3_profile *transmitting_profile,
-	enum v34_constellation_size phase4_constellation)
+	enum v34_constellation_size phase4_constellation,
+	int16_t initial_receive_gain)
 {
 	struct v34_phase34_receiver initialized;
 
 	if (receiver == NULL ||
 	    !v34_phase3_profile_is_valid(transmitting_profile) ||
-	    !v34_constellation_size_is_valid(phase4_constellation))
+	    !v34_constellation_size_is_valid(phase4_constellation) ||
+	    initial_receive_gain <= 0)
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.transmitting_profile = *transmitting_profile;
@@ -291,7 +293,8 @@ enum v34_phase34_receiver_result v34_phase34_receiver_init(
 		V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 	initialized.stage = V34_PHASE34_RECEIVER_PHASE3;
 	if (v34_receive_timing_init(
-		    &initialized.timing, transmitting_profile) !=
+		    &initialized.timing, transmitting_profile,
+		    initial_receive_gain) !=
 		    V34_RECEIVE_TIMING_OK ||
 	    v34_adaptive_equalizer_init(&initialized.equalizer) !=
 		    V34_ADAPTIVE_EQUALIZER_OK ||
@@ -423,7 +426,8 @@ static bool execute_phase3_action(
 			    &receiver->equalizer, observation) !=
 			    V34_ADAPTIVE_EQUALIZER_OK ||
 		    v34_receive_timing_init(
-			    &timing, &receiver->transmitting_profile) !=
+			    &timing, &receiver->transmitting_profile,
+			    receiver->timing.gain.gain) !=
 			    V34_RECEIVE_TIMING_OK ||
 		    v34_adaptive_equalizer_init(&equalizer) !=
 			    V34_ADAPTIVE_EQUALIZER_OK ||

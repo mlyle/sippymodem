@@ -61,7 +61,8 @@ struct v34_receive_timing {
 
 enum v34_receive_timing_result v34_receive_timing_init(
 	struct v34_receive_timing *timing,
-	const struct v34_phase3_profile *transmitting_profile);
+	const struct v34_phase3_profile *transmitting_profile,
+	int16_t initial_gain);
 bool v34_receive_timing_is_valid(
 	const struct v34_receive_timing *timing);
 bool v34_receive_timing_is_acquired(

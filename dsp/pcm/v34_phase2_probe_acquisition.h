@@ -3,6 +3,8 @@
 #ifndef V34_PHASE2_PROBE_ACQUISITION_H
 #define V34_PHASE2_PROBE_ACQUISITION_H
 
+#include "v34_analytic_filter.h"
+#include "v34_gain_control.h"
 #include "v34_phase2_probe_receiver.h"
 #include "v34_phase2_probe_synchronizer.h"
 
@@ -43,6 +45,9 @@ enum v34_phase2_probe_acquisition_result {
 struct v34_phase2_probe_acquisition {
 	struct v34_phase2_probe_synchronizer synchronizer;
 	struct v34_phase2_probe_receiver receiver;
+	struct v34_analytic_filter gain_filter;
+	struct v34_gain_control gain;
+	uint32_t gain_samples;
 	enum v34_phase2_probe_acquisition_phase phase;
 };
 
@@ -68,6 +73,12 @@ enum v34_phase2_probe_acquisition_result
 v34_phase2_probe_acquisition_measure(
 	const struct v34_phase2_probe_acquisition *acquisition,
 	struct v34_phase2_probe_receiver_measurement *measurement);
+
+/* Copy the gain learned over the exact synchronized L1/L2 windows. */
+enum v34_phase2_probe_acquisition_result
+v34_phase2_probe_acquisition_receive_gain(
+	const struct v34_phase2_probe_acquisition *acquisition,
+	int16_t *receive_gain);
 
 const char *v34_phase2_probe_acquisition_result_name(
 	enum v34_phase2_probe_acquisition_result result);

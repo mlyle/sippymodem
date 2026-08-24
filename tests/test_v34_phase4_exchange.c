@@ -10,6 +10,7 @@
 enum {
 	SAMPLE_RATE = 8000,
 	SAMPLE_LIMIT = 70000,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
 
 struct endpoint {
@@ -248,7 +249,8 @@ static bool endpoint_init_with_rates(
 	if (endpoint == NULL ||
 	    v34_phase3_exchange_init(
 		    &initialized.phase3, &local, &peer,
-		    &configuration) != V34_PHASE3_EXCHANGE_OK)
+		    &configuration, TEST_INITIAL_RECEIVE_GAIN) !=
+		    V34_PHASE3_EXCHANGE_OK)
 		return false;
 	*endpoint = initialized;
 	return true;

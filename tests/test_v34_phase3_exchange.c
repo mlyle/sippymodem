@@ -13,6 +13,7 @@ enum {
 	SAMPLE_RATE = 8000,
 	SAMPLE_LIMIT = 50000,
 	MAXIMUM_DELAY_SAMPLES = 48,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
 
 enum test_codec {
@@ -211,10 +212,12 @@ static bool run_generated_duplex_exchange(
 
 	CHECK(v34_phase3_exchange_init(
 		      &caller, &caller_profile, &answerer_profile,
-		      &caller_configuration) == V34_PHASE3_EXCHANGE_OK &&
+		      &caller_configuration, TEST_INITIAL_RECEIVE_GAIN) ==
+		      V34_PHASE3_EXCHANGE_OK &&
 	      v34_phase3_exchange_init(
 		      &answerer, &answerer_profile, &caller_profile,
-		      &answerer_configuration) == V34_PHASE3_EXCHANGE_OK,
+		      &answerer_configuration, TEST_INITIAL_RECEIVE_GAIN) ==
+		      V34_PHASE3_EXCHANGE_OK,
 	      "duplex Phase 3 exchange did not initialize");
 	initialized_answerer_receiver = answerer.receive;
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
@@ -405,7 +408,8 @@ static bool test_trn_duration_policy(void)
 			      cases[index].rate != V34_SYMBOL_RATE_3429,
 			      3, &answerer) &&
 		      v34_phase3_exchange_init(
-			      &exchange, &caller, &answerer, &config) ==
+			      &exchange, &caller, &answerer, &config,
+			      TEST_INITIAL_RECEIVE_GAIN) ==
 			      V34_PHASE3_EXCHANGE_OK &&
 		      exchange.trn_target_symbols ==
 			      V34_PHASE3_TRN_MIN_SYMBOLS,
@@ -413,7 +417,8 @@ static bool test_trn_duration_policy(void)
 		      cases[index].rate, exchange.trn_target_symbols,
 		      V34_PHASE3_TRN_MIN_SYMBOLS);
 		CHECK(v34_phase3_exchange_init(
-			      &exchange, &answerer, &caller, &config) ==
+			      &exchange, &answerer, &caller, &config,
+			      TEST_INITIAL_RECEIVE_GAIN) ==
 			      V34_PHASE3_EXCHANGE_OK &&
 		      exchange.trn_target_symbols == cases[index].symbols,
 		      "rate %d answerer selected %u TRN symbols instead of %u",
@@ -480,32 +485,41 @@ static bool test_validation_and_transactionality(void)
 	memset(&exchange, 0xa5, sizeof(exchange));
 	saved = exchange;
 	CHECK(v34_phase3_exchange_init(
-		      NULL, &caller_profile, &answerer_profile, &config) ==
+		      NULL, &caller_profile, &answerer_profile, &config,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE3_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase3_exchange_init(
-		      &exchange, &caller_profile, &caller_profile, &config) ==
+		      &exchange, &caller_profile, &caller_profile, &config,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE3_EXCHANGE_INVALID_ARGUMENT &&
 	      v34_phase3_exchange_init(
-		      &exchange, &with_md, &answerer_profile, &config) ==
+		      &exchange, &with_md, &answerer_profile, &config,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE3_EXCHANGE_INVALID_ARGUMENT &&
+	      v34_phase3_exchange_init(
+		      &exchange, &caller_profile, &answerer_profile, &config,
+		      0) == V34_PHASE3_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "invalid Phase 3 ownership changed the destination");
 	config.sample_rate = 1000;
 	CHECK(v34_phase3_exchange_init(
-		      &exchange, &caller_profile, &answerer_profile, &config) ==
+		      &exchange, &caller_profile, &answerer_profile, &config,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE3_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "invalid Phase 3 sample rate changed the destination");
 	config = configuration(V34_CONSTELLATION_4_POINT);
 	config.nominal_peak_amplitude = INT16_MAX;
 	CHECK(v34_phase3_exchange_init(
-		      &exchange, &caller_profile, &answerer_profile, &config) ==
+		      &exchange, &caller_profile, &answerer_profile, &config,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE3_EXCHANGE_CLIPPING_RISK &&
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "clipping-risk Phase 3 line changed the destination");
 	config = configuration(V34_CONSTELLATION_4_POINT);
 	CHECK(v34_phase3_exchange_init(
-		      &exchange, &caller_profile, &answerer_profile, &config) ==
+		      &exchange, &caller_profile, &answerer_profile, &config,
+		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE3_EXCHANGE_OK,
 	      "validation fixture did not initialize");
 	saved = exchange;

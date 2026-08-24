@@ -167,8 +167,11 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 	    (phase2->peer_info0_stored &&
 	     !v34_info0_is_valid(&phase2->peer_info0)) ||
 	    (phase2->remote_probe_stored &&
-	     !v34_phase2_probe_measurement_is_valid(
-		     &phase2->remote_probe)) ||
+	     (!v34_phase2_probe_measurement_is_valid(
+		      &phase2->remote_probe) ||
+	      phase2->remote_receive_gain <= 0)) ||
+	    (!phase2->remote_probe_stored &&
+	     phase2->remote_receive_gain != 0) ||
 	    !local_info1_is_valid(phase2) ||
 	    (phase2->stage != V34_PHASE2_RANGING &&
 	     !phase2->peer_info0_stored))
@@ -571,13 +574,22 @@ static bool sample_initial_probe(
 		event->failure = phase2->failure;
 	} else if (child.kind ==
 		   PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE) {
+		struct v34_phase2_probe_receiver_measurement measurement;
+		int16_t receive_gain;
+
 		if (v34_phase2_initial_probe_measure(
 			    &phase2->state.initial_probe,
-			    &phase2->remote_probe) !=
+			    &measurement) !=
 		    V34_PHASE2_INITIAL_PROBE_OK ||
+		    v34_phase2_initial_probe_receive_gain(
+			    &phase2->state.initial_probe, &receive_gain) !=
+			    V34_PHASE2_INITIAL_PROBE_OK ||
 		    !v34_phase2_probe_measurement_is_valid(
-			    &phase2->remote_probe))
+			    &measurement) ||
+		    receive_gain <= 0)
 			return false;
+		phase2->remote_probe = measurement;
+		phase2->remote_receive_gain = receive_gain;
 		phase2->remote_probe_stored = true;
 		event->kind =
 			V34_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
@@ -636,13 +648,23 @@ static bool sample_reciprocal_probe(
 		event->failure = phase2->failure;
 	} else if (child.kind ==
 		   PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED) {
+		struct v34_phase2_probe_receiver_measurement measurement;
+		int16_t receive_gain;
+
 		if (v34_phase2_reciprocal_probe_measure(
 			    &phase2->state.reciprocal_probe,
-			    &phase2->remote_probe) !=
+			    &measurement) !=
 		    PHASE2_RECIPROCAL_PROBE_OK ||
+		    v34_phase2_reciprocal_probe_receive_gain(
+			    &phase2->state.reciprocal_probe,
+			    &receive_gain) !=
+			    PHASE2_RECIPROCAL_PROBE_OK ||
 		    !v34_phase2_probe_measurement_is_valid(
-			    &phase2->remote_probe))
+			    &measurement) ||
+		    receive_gain <= 0)
 			return false;
+		phase2->remote_probe = measurement;
+		phase2->remote_receive_gain = receive_gain;
 		phase2->remote_probe_stored = true;
 		event->kind = V34_PHASE2_EVENT_READY_FOR_INFO1;
 	} else if (child.kind ==
@@ -761,6 +783,18 @@ enum v34_phase2_result v34_phase2_measure_remote_probe(
 	    (!ready_for_info1(phase2) && phase2->stage != V34_PHASE2_INFO1))
 		return V34_PHASE2_INVALID_STATE;
 	*measurement = phase2->remote_probe;
+	return V34_PHASE2_OK;
+}
+
+enum v34_phase2_result v34_phase2_receive_gain(
+	const struct v34_phase2 *phase2, int16_t *receive_gain)
+{
+	if (!v34_phase2_is_valid(phase2) || receive_gain == NULL)
+		return V34_PHASE2_INVALID_ARGUMENT;
+	if (!phase2->remote_probe_stored ||
+	    (!ready_for_info1(phase2) && phase2->stage != V34_PHASE2_INFO1))
+		return V34_PHASE2_INVALID_STATE;
+	*receive_gain = phase2->remote_receive_gain;
 	return V34_PHASE2_OK;
 }
 

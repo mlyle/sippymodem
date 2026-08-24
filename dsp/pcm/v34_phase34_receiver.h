@@ -91,7 +91,8 @@ struct v34_phase34_receiver {
 enum v34_phase34_receiver_result v34_phase34_receiver_init(
 	struct v34_phase34_receiver *receiver,
 	const struct v34_phase3_profile *transmitting_profile,
-	enum v34_constellation_size phase4_constellation);
+	enum v34_constellation_size phase4_constellation,
+	int16_t initial_receive_gain);
 bool v34_phase34_receiver_is_valid(
 	const struct v34_phase34_receiver *receiver);
 bool v34_phase34_receiver_has_failed(

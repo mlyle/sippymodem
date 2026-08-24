@@ -285,16 +285,19 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 	struct v34_phase3_profile local;
 	struct v34_phase3_profile peer;
 	enum v34_phase3_exchange_result result;
+	int16_t receive_gain;
 
 	if (v34_phase2_peer_info0(
 		    &call->state.phase2, &call->peer_info0) != V34_PHASE2_OK ||
 	    v34_phase2_profiles(
-		    &call->state.phase2, &local, &peer) != V34_PHASE2_OK)
+		    &call->state.phase2, &local, &peer) != V34_PHASE2_OK ||
+	    v34_phase2_receive_gain(
+		    &call->state.phase2, &receive_gain) != V34_PHASE2_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	call->peer_info0_stored = true;
 	result = v34_phase3_exchange_init(
 		&call->state.phase3, &local, &peer,
-		&call->phase3_configuration);
+		&call->phase3_configuration, receive_gain);
 	if (result != V34_PHASE3_EXCHANGE_OK)
 		return phase3_result(result);
 	call->stage = V34_CALL_PHASE3;

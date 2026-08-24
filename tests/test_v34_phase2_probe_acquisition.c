@@ -15,6 +15,8 @@ enum {
 	TEST_EXTRA_L2_SAMPLES = 37,
 };
 
+static const int16_t TEST_RECEIVE_GAIN[] = { 645, 723, 645 };
+
 enum test_codec {
 	TEST_CODEC_LINEAR,
 	TEST_CODEC_PCMU,
@@ -176,6 +178,8 @@ static bool check_measurement_and_completion(
 	struct v34_phase2_probe_receiver_measurement initial;
 	struct v34_phase2_probe_acquisition before;
 	struct v34_phase2_probe_acquisition_event event;
+	int16_t receive_gain;
+	int16_t initial_receive_gain;
 	double l1_power;
 	double l2_power;
 
@@ -183,8 +187,13 @@ static bool check_measurement_and_completion(
 	      stream_to_measurement(&stream) &&
 	      v34_phase2_probe_acquisition_measure(
 		      &stream.acquisition, &measurement) ==
-		      V34_PHASE2_PROBE_ACQUISITION_OK,
+		      V34_PHASE2_PROBE_ACQUISITION_OK &&
+	      v34_phase2_probe_acquisition_receive_gain(
+		      &stream.acquisition, &receive_gain) ==
+		      V34_PHASE2_PROBE_ACQUISITION_OK &&
+	      receive_gain == TEST_RECEIVE_GAIN[codec],
 	      "probe measurement did not complete for codec %d", codec);
+	initial_receive_gain = receive_gain;
 	l1_power = spectrum_power(&measurement.l1);
 	l2_power = spectrum_power(&measurement.l2);
 	CHECK(measurement.l1.sample_count ==
@@ -213,7 +222,11 @@ static bool check_measurement_and_completion(
 	      memcmp(&measurement.l1, &initial.l1, sizeof(measurement.l1)) ==
 		      0 &&
 	      memcmp(&measurement.l2, &initial.l2, sizeof(measurement.l2)) ==
-		      0,
+		      0 &&
+	      v34_phase2_probe_acquisition_receive_gain(
+		      &stream.acquisition, &receive_gain) ==
+		      V34_PHASE2_PROBE_ACQUISITION_OK &&
+	      receive_gain == initial_receive_gain,
 	      "extended L2 changed fixed probe measurements");
 	CHECK(v34_phase2_probe_acquisition_sample(
 		      &stream.acquisition, INT16_MIN, true, &event) ==
@@ -224,7 +237,11 @@ static bool check_measurement_and_completion(
 		      V34_PHASE2_PROBE_L1_SAMPLES +
 			      TEST_EXTRA_L2_SAMPLES &&
 	      stream.acquisition.phase ==
-		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE,
+		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
+	      v34_phase2_probe_acquisition_receive_gain(
+		      &stream.acquisition, &receive_gain) ==
+		      V34_PHASE2_PROBE_ACQUISITION_OK &&
+	      receive_gain == initial_receive_gain,
 	      "probe acquisition did not complete without consuming the next signal");
 	before = stream.acquisition;
 	CHECK(v34_phase2_probe_acquisition_sample(
@@ -336,6 +353,8 @@ static bool test_validation(void)
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v34_phase2_probe_receiver_measurement
 		measurement_before;
+	int16_t receive_gain = 1234;
+	int16_t receive_gain_before = receive_gain;
 
 	memset(&measurement, 0x5a, sizeof(measurement));
 	measurement_before = measurement;
@@ -352,8 +371,12 @@ static bool test_validation(void)
 	      v34_phase2_probe_acquisition_measure(
 		      &acquisition, &measurement) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
+	      v34_phase2_probe_acquisition_receive_gain(
+		      &acquisition, &receive_gain) ==
+		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
 	      memcmp(&measurement, &measurement_before, sizeof(measurement)) ==
-		      0,
+		      0 &&
+	      receive_gain == receive_gain_before,
 	      "early completion or measurement was not transactional");
 	acquisition.receiver.l1_spectrum.harmonics[0].in_phase_sum = 1.0;
 	before = acquisition;
@@ -386,6 +409,12 @@ static bool test_validation(void)
 		      NULL, &measurement) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
 	      v34_phase2_probe_acquisition_measure(
+		      &acquisition, NULL) ==
+		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
+	      v34_phase2_probe_acquisition_receive_gain(
+		      NULL, &receive_gain) ==
+		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT &&
+	      v34_phase2_probe_acquisition_receive_gain(
 		      &acquisition, NULL) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT,
 	      "probe acquisition null validation changed");

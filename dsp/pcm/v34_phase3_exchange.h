@@ -82,7 +82,8 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	struct v34_phase3_exchange *exchange,
 	const struct v34_phase3_profile *local_transmit,
 	const struct v34_phase3_profile *peer_transmit,
-	const struct v34_phase3_exchange_configuration *configuration);
+	const struct v34_phase3_exchange_configuration *configuration,
+	int16_t initial_receive_gain);
 
 bool v34_phase3_exchange_is_valid(
 	const struct v34_phase3_exchange *exchange);

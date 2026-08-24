@@ -77,6 +77,7 @@ struct v34_phase2 {
 	struct v34_info0 local_info0;
 	struct v34_info0 peer_info0;
 	struct v34_phase2_probe_receiver_measurement remote_probe;
+	int16_t remote_receive_gain;
 	union v34_phase2_info1_parameters local_info1;
 	enum v34_phase2_stage stage;
 	enum v34_phase2_failure failure;
@@ -138,6 +139,10 @@ enum v34_phase2_result v34_phase2_sample(
 enum v34_phase2_result v34_phase2_measure_remote_probe(
 	const struct v34_phase2 *phase2,
 	struct v34_phase2_probe_receiver_measurement *measurement);
+
+/* Copy the gain learned over the synchronized remote probe. */
+enum v34_phase2_result v34_phase2_receive_gain(
+	const struct v34_phase2 *phase2, int16_t *receive_gain);
 
 const char *v34_phase2_result_name(enum v34_phase2_result result);
 const char *v34_phase2_failure_name(enum v34_phase2_failure failure);
