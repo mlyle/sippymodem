@@ -489,6 +489,8 @@ static bool enter_initial_probe(
 	phase2->state.initial_probe = next;
 	phase2->stage = V34_PHASE2_INITIAL_PROBE;
 	event->kind = V34_PHASE2_EVENT_INITIAL_PROBE_STARTED;
+	event->round_trip_delay_samples =
+		next.ranging.control.round_trip_delay_samples;
 	return true;
 }
 
@@ -519,6 +521,8 @@ static bool enter_reciprocal_probe(
 	phase2->state.reciprocal_probe = next;
 	phase2->stage = V34_PHASE2_RECIPROCAL_PROBE;
 	event->kind = V34_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
+	event->round_trip_delay_samples = next.turnaround.initial_probe.ranging
+		.control.round_trip_delay_samples;
 	return true;
 }
 

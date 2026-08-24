@@ -12,6 +12,8 @@
 enum {
 	SAMPLE_LIMIT = 140000,
 	LINE_DELAY_SAMPLES = 13,
+	ECHO_LINE_DELAY_SAMPLES = 968,
+	ECHO_DELAY_SAMPLES = 1935,
 	NOMINAL_AMPLITUDE = 7000,
 };
 
@@ -19,6 +21,16 @@ struct channel {
 	int16_t call_to_answer[LINE_DELAY_SAMPLES];
 	int16_t answer_to_call[LINE_DELAY_SAMPLES];
 	size_t cursor;
+	bool pcma;
+};
+
+struct echo_channel {
+	int16_t call_to_answer[ECHO_LINE_DELAY_SAMPLES];
+	int16_t answer_to_call[ECHO_LINE_DELAY_SAMPLES];
+	int16_t caller_echo[ECHO_DELAY_SAMPLES];
+	int16_t answerer_echo[ECHO_DELAY_SAMPLES];
+	size_t line_cursor;
+	size_t echo_cursor;
 	bool pcma;
 };
 
@@ -387,6 +399,102 @@ static void channel_transmit(
 	channel->answer_to_call[channel->cursor] =
 		codec_round_trip(answerer, channel->pcma);
 	channel->cursor = (channel->cursor + 1u) % LINE_DELAY_SAMPLES;
+}
+
+static int16_t saturated_sum(int16_t left, int16_t right)
+{
+	int32_t sum = (int32_t)left + right;
+
+	if (sum > INT16_MAX)
+		return INT16_MAX;
+	if (sum < INT16_MIN)
+		return INT16_MIN;
+	return (int16_t)sum;
+}
+
+static void echo_channel_receive(
+	const struct echo_channel *channel,
+	int16_t *caller, int16_t *answerer)
+{
+	*caller = saturated_sum(
+		channel->answer_to_call[channel->line_cursor],
+		channel->caller_echo[channel->echo_cursor]);
+	*answerer = saturated_sum(
+		channel->call_to_answer[channel->line_cursor],
+		channel->answerer_echo[channel->echo_cursor]);
+}
+
+static void echo_channel_transmit(
+	struct echo_channel *channel, int16_t caller, int16_t answerer)
+{
+	channel->call_to_answer[channel->line_cursor] =
+		codec_round_trip(caller, channel->pcma);
+	channel->answer_to_call[channel->line_cursor] =
+		codec_round_trip(answerer, channel->pcma);
+	channel->caller_echo[channel->echo_cursor] =
+		codec_round_trip((int16_t)(caller / 32), channel->pcma);
+	channel->answerer_echo[channel->echo_cursor] =
+		codec_round_trip((int16_t)(answerer / 32), channel->pcma);
+	channel->line_cursor =
+		(channel->line_cursor + 1u) % ECHO_LINE_DELAY_SAMPLES;
+	channel->echo_cursor =
+		(channel->echo_cursor + 1u) % ECHO_DELAY_SAMPLES;
+}
+
+static bool check_echo_impaired_call(bool pcma)
+{
+	struct echo_channel channel = { .pcma = pcma };
+	struct endpoint caller;
+	struct endpoint answerer;
+	int16_t next_caller_receive = 0;
+	int16_t next_answerer_receive = 0;
+
+	CHECK(endpoint_init_symmetric(
+		      &caller, V34_CALLING_STATION, V34_SYMBOL_RATE_3429) &&
+	      endpoint_init_symmetric(
+		      &answerer, V34_ANSWERING_STATION, V34_SYMBOL_RATE_3429),
+	      "echo-impaired endpoints did not initialize");
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_call_observation caller_observation;
+		struct v34_call_observation answerer_observation;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		echo_channel_receive(
+			&channel, &next_caller_receive,
+			&next_answerer_receive);
+		note_peer_primary_delays(&caller, &answerer);
+		CHECK(endpoint_sample(
+			      &caller, next_caller_receive,
+			      supply_mapping_frame, &caller_transmit,
+			      &caller_observation) &&
+		      endpoint_sample(
+			      &answerer, next_answerer_receive,
+			      supply_mapping_frame, &answerer_transmit,
+			      &answerer_observation),
+		      "echo-impaired call stopped at sample %zu", index);
+		echo_channel_transmit(
+			&channel, caller_transmit, answerer_transmit);
+		if (v34_call_is_online(&caller.call) &&
+		    v34_call_is_online(&answerer.call) &&
+		    caller.mapping_frames_received >= 4u &&
+		    answerer.mapping_frames_received >= 4u) {
+			CHECK(caller.call.echo.mode == V34_ECHO_ACTIVE &&
+			      answerer.call.echo.mode == V34_ECHO_ACTIVE,
+			      "echo-impaired call used an unproven filter");
+			return true;
+		}
+	}
+	CHECK(false, "echo-impaired call did not reach verified data");
+}
+
+static bool test_echo_impaired_calls(void)
+{
+	CHECK(check_echo_impaired_call(false),
+	      "PCMU echo-impaired call failed");
+	CHECK(check_echo_impaired_call(true),
+	      "PCMA echo-impaired call failed");
+	return true;
 }
 
 static bool run_online_pair(
@@ -876,6 +984,7 @@ int main(void)
 	} tests[] = {
 		{ "generated PCMU call", test_pcmu_call },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
+		{ "echo-impaired calls", test_echo_impaired_calls },
 		{ "local and remote full retrain", test_full_retrain },
 		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "unusable INFO1 starts full retrain",

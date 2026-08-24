@@ -2844,6 +2844,7 @@ V34_PHASE2_TEST_OBJECTS := \
 V34_CALL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_call.o \
 	$(BUILD_DIR)/v34_call.o \
+	$(BUILD_DIR)/v34_echo_canceller.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_phase2.o \
 		$(BUILD_DIR)/test_v34_phase4_exchange.o \

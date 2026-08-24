@@ -52,8 +52,9 @@ enum v34_phase2_event_kind {
 	V34_PHASE2_EVENT_FAILED,
 };
 
-/* A compact recording boundary for Phase 2 progress. Fields not selected by
- * `kind` are zero. */
+/* A compact recording boundary for Phase 2 progress. The measured round-trip
+ * delay accompanies its measurement and both probe-start handoffs; other
+ * fields not selected by `kind` are zero. */
 struct v34_phase2_event {
 	enum v34_phase2_event_kind kind;
 	enum v34_phase2_failure failure;
