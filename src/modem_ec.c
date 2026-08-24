@@ -1761,6 +1761,30 @@ void modem_ec_stop(struct modem *m)
 	lapm_disconnect(l);
 }
 
+int modem_ec_resume_after_retrain(struct modem *m)
+{
+	struct lapm_state *l;
+
+	if (m == NULL)
+		return -1;
+	if (!m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
+	    m->put_bits != modem_hdlc_put_bits)
+		return 0;
+	l = &m->ec.lapm;
+	if (l->modem != m || l->state != LAPM_DATA || l->ctrl_list == NULL ||
+	    l->tx_ctrl == NULL)
+		return -1;
+	if (!l->peer_busy || m->bit_timer != 0)
+		return 0;
+	/* Preserve the peer's RNR state and ask whether it can receive again. */
+	if (TX_RR(l, l->cmd_addr, 1) != 0)
+		return -1;
+	T401_START(l);
+	/* The first poll is already queued; its F=1 response is solicited. */
+	l->rtx_count = 1;
+	return 0;
+}
+
 int modem_ec_init(struct modem *m)
 {
 	struct lapm_state *l = &m->ec.lapm;

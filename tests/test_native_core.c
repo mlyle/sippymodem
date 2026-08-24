@@ -1350,6 +1350,121 @@ static bool test_lapm_receive_backpressure(void)
 	return true;
 }
 
+static bool test_lapm_retrain_resumes_peer_flow_control(void)
+{
+	enum {
+		TEST_STATE_MODEM_ONLINE = 5,
+		LAPM_DATA_STATE = 2,
+		FRAME_S_RR = 0x01,
+	};
+	static const uint8_t payload[] = { 'P', 'I', 'N', 'G' };
+	struct modem_driver driver = {
+		.name = "LAPM retrain resume test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "LAPM retrain resume test");
+	struct lapm_state *lapm;
+	uint8_t response[3];
+	frame_t incoming = { .buf = response, .count = sizeof(response) };
+	frame_t *outgoing;
+	frame_t *saved_next;
+	struct v44_character_path *v44_path;
+
+	CHECK(modem != NULL, "LAPM retrain modem could not be created");
+	modem->caller = 0;
+	modem->cfg.ec = 1;
+	modem->tx_rate = 26400;
+	CHECK(modem_ec_init(modem) == 0,
+	      "LAPM retrain modem could not initialize");
+	modem_ec_start(modem);
+	lapm = &modem->ec.lapm;
+	lapm->state = LAPM_DATA_STATE;
+	lapm->peer_busy = 1;
+	lapm->vs = lapm->va = 5;
+	lapm->vr = 6;
+	v44_path = lapm->v44_path;
+	modem->state = TEST_STATE_MODEM_ONLINE;
+	modem->retrain_pending = 1;
+	modem->bit_timer = 0;
+	modem->get_bits = modem_hdlc_get_bits;
+	modem->put_bits = modem_hdlc_put_bits;
+	saved_next = lapm->ctrl_list->next;
+	lapm->ctrl_list->next = lapm->tx_ctrl;
+	CHECK(modem_ec_resume_after_retrain(NULL) == -1 &&
+		      modem_ec_resume_after_retrain(modem) == -1 &&
+		      modem->bit_timer == 0 && lapm->rtx_count == 0 &&
+		      lapm->peer_busy == 1 && lapm->vs == 5 && lapm->va == 5 &&
+		      lapm->vr == 6,
+	      "failed LAPM retrain poll changed the retained link");
+	lapm->ctrl_list->next = saved_next;
+
+	for (unsigned int local = 0; local < 2; ++local) {
+		lapm->peer_busy = 1;
+		modem->retrain_pending = local;
+		modem->bit_timer = 0;
+		modem_dp_connected(modem);
+		CHECK(modem->retrain_pending == 0 &&
+			      lapm->state == LAPM_DATA_STATE &&
+			      lapm->peer_busy == 1 && lapm->vs == 5 &&
+			      lapm->va == 5 && lapm->vr == 6 &&
+			      lapm->v44_path == v44_path &&
+			      modem->bit_timer == 52800 && lapm->rtx_count == 1,
+		      "LAPM %s retrain did not retain and poll peer flow control",
+		      local ? "local" : "remote");
+		modem_dp_connected(modem);
+		CHECK(modem->bit_timer == 52800 && lapm->rtx_count == 1,
+		      "duplicate LAPM %s reconnect restarted its status enquiry",
+		      local ? "local" : "remote");
+		outgoing = modem->packer.hdlc.get_tx_frame(
+			modem->packer.hdlc.framer);
+		CHECK(outgoing != NULL && outgoing->size == 3 &&
+			      outgoing->buf[0] == lapm->cmd_addr &&
+			      outgoing->buf[1] == FRAME_S_RR &&
+			      outgoing->buf[2] ==
+				      (uint8_t)((lapm->vr << 1) | 1),
+		      "LAPM %s retrain did not emit an RR status enquiry",
+		      local ? "local" : "remote");
+		modem->packer.hdlc.tx_complete(
+			modem->packer.hdlc.framer, outgoing);
+		CHECK(modem->packer.hdlc.get_tx_frame(
+			      modem->packer.hdlc.framer) == NULL,
+		      "duplicate LAPM %s reconnect queued a second status enquiry",
+		      local ? "local" : "remote");
+
+		response[0] = lapm->cmd_addr;
+		response[1] = FRAME_S_RR;
+		response[2] = (uint8_t)((lapm->va << 1) | 1);
+		modem->packer.hdlc.rx_complete(
+			modem->packer.hdlc.framer, &incoming);
+		CHECK(lapm->peer_busy == 0 && modem->bit_timer == 0 &&
+			      lapm->rtx_count == 0 && lapm->vs == 5 &&
+			      lapm->va == 5 && lapm->vr == 6,
+		      "LAPM %s retrain did not accept the ready response",
+		      local ? "local" : "remote");
+	}
+
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	lapm_source.data = payload;
+	lapm_source.length = sizeof(payload);
+	modem->get_chars = scripted_lapm_source;
+	outgoing = modem->packer.hdlc.get_tx_frame(
+		modem->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->size == 3 + sizeof(payload) &&
+		      outgoing->buf[0] == lapm->cmd_addr &&
+		      outgoing->buf[1] == 10 && outgoing->buf[2] == 12 &&
+		      memcmp(outgoing->buf + 3, payload, sizeof(payload)) == 0 &&
+		      lapm_source.offset == sizeof(payload) && lapm->vs == 6,
+	      "LAPM retrain did not resume queued information frames");
+	modem->packer.hdlc.tx_complete(
+		modem->packer.hdlc.framer, outgoing);
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	modem_ec_exit(modem);
+	modem_delete(modem);
+	return true;
+}
+
 static bool samples_are_silent(const int16_t *samples, size_t count)
 {
 	for (size_t index = 0; index < count; ++index)
@@ -1919,6 +2034,8 @@ int main(void)
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
+		{ "LAPM retrain resumes peer flow control",
+		  test_lapm_retrain_resumes_peer_flow_control },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",

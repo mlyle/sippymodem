@@ -703,11 +703,17 @@ void modem_dp_connected(struct modem *m)
 {
 	if (m == NULL)
 		return;
-	if (m->retrain_pending && IS_STATE_ONLINE(m->state)) {
-		modem_update_status(m, STATUS_RETRAIN_COMPLETE);
-	} else if (!IS_STATE_LINKED(m->state) && !IS_STATE_DISC(m->state)) {
-		modem_update_status(m, STATUS_DP_LINK);
+	if (IS_STATE_ONLINE(m->state)) {
+		if (modem_ec_resume_after_retrain(m) != 0) {
+			modem_update_status(m, STATUS_EC_ERROR);
+			return;
+		}
+		if (m->retrain_pending)
+			modem_update_status(m, STATUS_RETRAIN_COMPLETE);
+		return;
 	}
+	if (!IS_STATE_LINKED(m->state) && !IS_STATE_DISC(m->state))
+		modem_update_status(m, STATUS_DP_LINK);
 }
 
 

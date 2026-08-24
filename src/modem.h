@@ -483,6 +483,7 @@ extern int  modem_ec_init(struct modem *m);
 extern void modem_ec_exit(struct modem *m);
 extern void modem_ec_start(struct modem *m);
 extern void modem_ec_stop(struct modem *m);
+extern int modem_ec_resume_after_retrain(struct modem *m);
 extern enum modem_ec_compression
 modem_ec_active_compression(const struct modem *m);
 /* Returns a process-lifetime literal, or NULL when no datapump is active. */
