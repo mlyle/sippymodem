@@ -109,13 +109,9 @@ static bool trn_target_symbols(
 	profile = &exchange->transmit.training.line.profile;
 	if (!v34_phase3_profile_is_valid(profile))
 		return false;
-	if (profile->local_role == V34_CALLING_STATION) {
-		*symbols = V34_PHASE4_TRN_MIN_SYMBOLS;
-		return true;
-	}
-	/* The answerer uses the complete zero-RTD training allowance. This keeps
-	 * the peer's line equalizer insensitive to the sample phase at which a
-	 * full retrain reaches Phase 4. */
+	/* Use the complete zero-RTD training allowance in both directions. This
+	 * keeps the peer's line equalizer insensitive to the sample phase at which
+	 * initial training or a full retrain reaches Phase 4. */
 	two_seconds = (uint64_t)profile->symbol_rate_numerator * 2u /
 		profile->symbol_rate_denominator;
 	if (two_seconds < V34_PHASE4_TRN_MIN_SYMBOLS ||

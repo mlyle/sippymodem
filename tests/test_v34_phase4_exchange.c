@@ -482,7 +482,7 @@ static bool test_generated_online_exchange(void)
 	      !v34_phase4_exchange_has_failed(&answerer.phase4) &&
 	      caller.data_preparation_count == 1 &&
 	      answerer.data_preparation_count == 1 &&
-	      caller.trn_symbols_at_mp == V34_PHASE4_TRN_MIN_SYMBOLS &&
+	      caller.trn_symbols_at_mp == 2u * 3000u &&
 	      answerer.trn_symbols_at_mp == 2u * 3000u &&
 	      caller.constellations_routed &&
 	      answerer.constellations_routed &&
