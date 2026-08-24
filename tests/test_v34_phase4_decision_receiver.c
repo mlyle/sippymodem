@@ -373,12 +373,31 @@ static bool run_timeline(
 			symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS ?
 				V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE :
 				V34_PHASE4_DECISION_RECEIVER_OK;
+		struct v34_analytic_sample received;
+		uint8_t received_rotation;
 
 		CHECK(v34_phase4_trn_next_fixed(
 			      &trn, &point, &quarter, &rotation) ==
-			      V34_PHASE4_TRN_OK &&
-		      receive_fixed(&fixture, point, expected),
+			      V34_PHASE4_TRN_OK,
+		      "Phase 4 TRN source %u stopped", symbol);
+		received = point;
+		received_rotation = rotation;
+		if (symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS) {
+			received_rotation = (uint8_t)((rotation + 1u) & 3u);
+			CHECK(v34_training_constellation_fixed_point(
+				      constellation, quarter, received_rotation,
+				      &received) == V34_CONSTELLATION_OK,
+			      "TRN boundary slip could not be generated");
+		}
+		CHECK(receive_observation(
+			      &fixture, received, point, expected),
 		      "Phase 4 TRN observation %u stopped", symbol);
+		if (symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS)
+			CHECK(fixture.receiver.mp_receiver.has_previous_symbol &&
+				      fixture.receiver.mp_receiver
+					      .previous_clockwise_quarter_turns ==
+					      received_rotation,
+			      "MP did not retain the received TRN phase");
 	}
 	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_MP &&
 	      fixture.receiver.mp_receiver.has_previous_symbol &&

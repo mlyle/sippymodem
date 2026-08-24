@@ -369,6 +369,7 @@ static enum v34_phase4_decision_receiver_result receive_trn(
 	struct v34_phase4_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
 	uint16_t decoder_power_q15,
+	const struct v34_fixed_training_decision *hard,
 	struct v34_phase4_decision_output *output)
 {
 	struct v34_mp_receive_event ignored = { 0 };
@@ -385,7 +386,8 @@ static enum v34_phase4_decision_receiver_result receive_trn(
 	if (receiver->trn_symbols != V34_PHASE4_TRN_MIN_SYMBOLS)
 		return V34_PHASE4_DECISION_RECEIVER_OK;
 	if (v34_phase4_mp_receive_decision(
-		    &receiver->mp_receiver, quarter, rotation, &ignored) !=
+		    &receiver->mp_receiver, hard->quarter_point,
+		    hard->clockwise_quarter_turns, &ignored) !=
 		    V34_PHASE4_MP_RECEIVER_OK ||
 	    ignored.type != V34_MP_RECEIVE_NO_EVENT)
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
@@ -523,35 +525,33 @@ v34_phase4_decision_receiver_observe(
 	if (receiver->stage == V34_PHASE4_DECISION_RECEIVER_COMPLETE)
 		return V34_PHASE4_DECISION_RECEIVER_ALREADY_COMPLETE;
 	next = *receiver;
-	if (next.stage == V34_PHASE4_DECISION_RECEIVER_TRN) {
+	constellation =
+		next.stage == V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME ||
+				next.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S ?
+			V34_CONSTELLATION_4_POINT :
+			next.mp_receiver.constellation;
+	if (v34_training_constellation_fixed_slice(
+		    constellation, observation->decision, &hard) !=
+	    V34_CONSTELLATION_OK)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	if (next.stage == V34_PHASE4_DECISION_RECEIVER_TRN)
 		result = receive_trn(
-			&next, observation, decoder_power_q15, &generated);
-	} else {
-		constellation =
-			next.stage == V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME ||
-					next.stage ==
-						V34_PHASE4_DECISION_RECEIVER_ANSWER_S ?
-				V34_CONSTELLATION_4_POINT :
-				next.mp_receiver.constellation;
-		if (v34_training_constellation_fixed_slice(
-			    constellation, observation->decision, &hard) !=
-		    V34_CONSTELLATION_OK)
-			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-		if (next.stage == V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME)
-			result = receive_call_j_prime(
-				&next, observation, decoder_power_q15, &hard,
-				&generated);
-		else if (next.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S)
-			result = receive_answer_s(&next, &hard, &generated);
-		else if (next.stage == V34_PHASE4_DECISION_RECEIVER_MP)
-			result = receive_mp(
-				&next, observation, decoder_power_q15, &hard,
-				&generated, &emitted);
-		else
-			result = receive_e(
-				&next, observation, decoder_power_q15, &hard,
-				&generated);
-	}
+			&next, observation, decoder_power_q15, &hard,
+			&generated);
+	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME)
+		result = receive_call_j_prime(
+			&next, observation, decoder_power_q15, &hard,
+			&generated);
+	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S)
+		result = receive_answer_s(&next, &hard, &generated);
+	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_MP)
+		result = receive_mp(
+			&next, observation, decoder_power_q15, &hard,
+			&generated, &emitted);
+	else
+		result = receive_e(
+			&next, observation, decoder_power_q15, &hard,
+			&generated);
 	if (!consumed_result(result))
 		return result;
 	if (!v34_phase4_decision_receiver_is_valid(&next) ||
