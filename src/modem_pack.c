@@ -558,6 +558,15 @@ int modem_hdlc_get_bits(struct modem *m, int nbits,
 			s->data <<= 8;
 			s->data |= HDLC_FLAG;
 			s->bit  += 8;
+			if (h->tx_preamble_flags > 0 &&
+			    --h->tx_preamble_flags == 0) {
+				void (*complete)(struct modem *m) =
+					h->tx_preamble_complete;
+
+				h->tx_preamble_complete = NULL;
+				if (complete != NULL)
+					complete(m);
+			}
 			if (h->get_tx_frame &&
 			    (h->tx_frame = h->get_tx_frame(h->framer))) {
 				h->tx_frame->fcs = INIT_FCS;

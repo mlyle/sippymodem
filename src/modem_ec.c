@@ -108,6 +108,10 @@ static int lapm_timer_bits(const struct lapm_state *l)
 #define FRAME_NS(f)   ((f)->buf[1]>>1)
 #define FRAME_NR(f)   ((f)->buf[2]>>1)
 
+enum {
+	LAPM_ORIGINATOR_PREAMBLE_FLAGS = 16,
+};
+
 /* tx unnumbered */
 #define TX_SABME(l) tx_unnum(l,l->cmd_addr,FRAME_U_SABME|0x10,0,0)
 #define TX_DISC(l)  tx_unnum(l,l->cmd_addr,FRAME_U_DISC|0x10,0,0)
@@ -1741,8 +1745,11 @@ void modem_ec_start(struct modem *m)
 	h->rx_complete  = lapm_rx_complete;
 	h->get_tx_frame = NULL;
 	if(m->caller) {
-		m->bit_timer = 48*8;
-		m->bit_timer_func = modem_ec_negotiate;
+		/* V.42 requires 16 transmitted flags before the originator's
+		 * first XID. Count wire flags rather than received/transmitted bit
+		 * callbacks, whose batching must not shorten the preamble. */
+		h->tx_preamble_flags = LAPM_ORIGINATOR_PREAMBLE_FLAGS;
+		h->tx_preamble_complete = modem_ec_negotiate;
 	}
 	else {
 		h->tx_complete  = lapm_tx_complete;
@@ -1754,9 +1761,12 @@ void modem_ec_start(struct modem *m)
 
 void modem_ec_stop(struct modem *m)
 {
+	struct hdlc_state *h = &m->packer.hdlc;
 	struct lapm_state *l = &m->ec.lapm;
 	EC_DBG("modem_ec_stop...\n");
 	m->bit_timer = 0;
+	h->tx_preamble_flags = 0;
+	h->tx_preamble_complete = NULL;
 	m->packer_process = NULL;
 	lapm_disconnect(l);
 }

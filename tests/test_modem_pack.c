@@ -377,6 +377,7 @@ struct hdlc_fixture {
 	const uint8_t *payload;
 	size_t payload_length;
 	bool frame_served;
+	unsigned int preamble_completions;
 	unsigned int transmit_completions;
 	uint8_t received[64];
 	size_t received_length;
@@ -395,6 +396,48 @@ static struct hdlc_frame *next_transmit_frame(void *context)
 	fixture->transmit_frame.size = (int)fixture->payload_length;
 	fixture->transmit_frame.count = 0;
 	return &fixture->transmit_frame;
+}
+
+static void preamble_complete(struct modem *modem)
+{
+	struct hdlc_fixture *fixture = modem->packer.hdlc.framer;
+
+	fixture->preamble_completions++;
+	modem->packer.hdlc.get_tx_frame = next_transmit_frame;
+}
+
+static bool test_hdlc_transmit_preamble(void)
+{
+	enum { PREAMBLE_FLAGS = 16 };
+	static const uint8_t payload[] = { 0x03, 0xaf, 0x82 };
+	struct hdlc_fixture fixture = {
+		.payload = payload,
+		.payload_length = ARRAY_LENGTH(payload),
+	};
+	struct modem transmitter = { .name = "HDLC preamble transmitter" };
+	struct hdlc_state *hdlc;
+
+	modem_hdlc_start(&transmitter);
+	hdlc = &transmitter.packer.hdlc;
+	hdlc->framer = &fixture;
+	hdlc->tx_preamble_flags = PREAMBLE_FLAGS;
+	hdlc->tx_preamble_complete = preamble_complete;
+	for (unsigned int flag = 0; flag < PREAMBLE_FLAGS; ++flag) {
+		uint8_t wire = 0;
+
+		CHECK(modem_hdlc_get_bits(&transmitter, 8, &wire, 1) == 1 &&
+			      wire == 0x7e,
+		      "HDLC preamble flag %u changed", flag);
+		CHECK(fixture.preamble_completions ==
+			      (flag + 1u == PREAMBLE_FLAGS) &&
+			      hdlc->tx_preamble_flags ==
+				      PREAMBLE_FLAGS - flag - 1u,
+		      "HDLC preamble completed at flag %u", flag);
+	}
+	CHECK(hdlc->tx_preamble_complete == NULL && fixture.frame_served &&
+		      hdlc->tx_frame == &fixture.transmit_frame,
+	      "HDLC preamble did not arm exactly one source frame");
+	return true;
 }
 
 static void transmit_complete(void *context, frame_t *frame)
@@ -488,6 +531,7 @@ int main(void)
 		  test_raw_answerer_selects_v14 },
 		{ "V.42 originator T400",
 		  test_v42_originator_t400_is_bounded },
+		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
 	unsigned int failures = 0;

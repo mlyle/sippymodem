@@ -382,6 +382,8 @@ struct modem {
 			struct hdlc_frame *rx_frame;
 			int rx_error;
 			int rx_ones,tx_ones;
+			unsigned int tx_preamble_flags;
+			void (*tx_preamble_complete)(struct modem *m);
 			/* framer interface */
 			struct hdlc_frame *(*get_tx_frame)(void *framer);
 			void (*tx_complete)(void *framer, frame_t *fr);

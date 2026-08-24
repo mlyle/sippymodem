@@ -1010,6 +1010,8 @@ static bool test_lapm_xid_envelopes(void)
 	uint8_t payload[96];
 	uint8_t discarded[80];
 	uint8_t recovery[112];
+	uint8_t preamble[16];
+	uint8_t expected_preamble[16];
 	frame_t incoming = { .buf = received };
 	frame_t *outgoing;
 	int command_size;
@@ -1022,11 +1024,21 @@ static bool test_lapm_xid_envelopes(void)
 	      "LAPM XID peers could not initialize");
 	modem_ec_start(caller);
 	modem_ec_start(answerer);
-	CHECK(caller->bit_timer_func != NULL,
-	      "LAPM caller did not schedule XID negotiation");
-	caller->bit_timer_func(caller);
-	outgoing = caller->packer.hdlc.get_tx_frame(
-		caller->packer.hdlc.framer);
+	CHECK(caller->packer.hdlc.tx_preamble_flags == 16u &&
+		      caller->packer.hdlc.tx_preamble_complete != NULL &&
+		      caller->packer.hdlc.get_tx_frame == NULL &&
+		      caller->bit_timer == 0,
+	      "LAPM caller did not schedule a transmitted-flag preamble");
+	memset(expected_preamble, 0x7e, sizeof(expected_preamble));
+	CHECK(modem_hdlc_get_bits(
+		      caller, 8, preamble, (int)sizeof(preamble)) ==
+		      (int)sizeof(preamble) &&
+		      memcmp(preamble, expected_preamble, sizeof(preamble)) == 0 &&
+		      caller->packer.hdlc.tx_preamble_flags == 0 &&
+		      caller->packer.hdlc.tx_preamble_complete == NULL,
+	      "LAPM caller did not emit the exact transmitted-flag preamble");
+	outgoing = caller->packer.hdlc.tx_frame;
+	caller->packer.hdlc.tx_frame = NULL;
 	CHECK(outgoing != NULL && outgoing->size > 2 &&
 		      outgoing->buf[1] == XID_CONTROL &&
 		      v42_xid_decode(
