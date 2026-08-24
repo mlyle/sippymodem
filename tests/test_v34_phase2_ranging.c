@@ -558,6 +558,122 @@ static bool test_rejected_edge_before_info(void)
 	return true;
 }
 
+static bool check_retrain_residual_reversal(enum test_codec codec)
+{
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging caller;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+	size_t stable_restored_samples = 0;
+	size_t reversal_events = 0;
+	bool early_edge_started = false;
+	bool early_pair_cancelled = false;
+	bool causal_edge_started = false;
+	bool causal_edge_accepted = false;
+
+	answering.acknowledges_peer_info0 = true;
+	CHECK(v34_info0_encode(&answering, payload, sizeof(payload)) ==
+		      V34_INFO0_OK &&
+	      v34_phase2_ranging_init_retrain(
+		      &caller, V34_CALLING_STATION, TEST_AMPLITUDE,
+		      &calling, &answering) == V34_PHASE2_RANGING_OK &&
+	      phase2_info0_exchange_init(
+		      &peer, PHASE2_SIGNAL_A, TEST_AMPLITUDE, payload,
+		      V34_INFO0_PAYLOAD_BITS, V34_INFO0_PAYLOAD_BITS) ==
+		      PHASE2_INFO0_EXCHANGE_OK &&
+	      phase2_info0_exchange_start_tone(&peer) ==
+		      PHASE2_INFO0_EXCHANGE_OK,
+	      "V.34 retrain reversal fixture did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v34_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = caller.control.phase;
+		int16_t peer_line;
+		int16_t ignored;
+
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_phase2_ranging_sample(
+			      &caller, codec_round_trip(peer_line, codec),
+			      &ignored, &event) == V34_PHASE2_RANGING_OK,
+		      "V.34 retrain reversal failed at %zu for %d",
+		      index, codec);
+		if (event.exchange_event.tone_event.kind ==
+		    V34_PHASE2_TONE_PHASE_REVERSED) {
+			reversal_events++;
+			if (reversal_events == 1u) {
+				CHECK(caller.control.phase ==
+					      PHASE2_RESPONSE_DELAY,
+				      "V.34 first retrain edge was not tentatively accepted");
+				CHECK(v34_phase2_tone_transmitter_reverse(
+					      &peer.tone_transmitter) ==
+					      V34_PHASE2_TONE_OK,
+				      "V.34 early peer phase did not return");
+			} else if (reversal_events == 2u) {
+				CHECK(caller.control.phase ==
+					      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+				      !caller.info0_exchange.transport.tone_detector
+					       .carrier.rejected_reversal_active,
+				      "V.34 early reversal pair did not roll back");
+				early_pair_cancelled = true;
+			} else if (reversal_events == 3u) {
+				CHECK(phase_before ==
+					      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+				      caller.control.phase == PHASE2_RESPONSE_DELAY,
+				      "V.34 causal retrain edge was not accepted");
+				causal_edge_accepted = true;
+				break;
+			}
+		}
+		if (early_pair_cancelled && !causal_edge_started) {
+			stable_restored_samples++;
+			CHECK(caller.control.phase ==
+				      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+			      reversal_events == 2u,
+			      "V.34 restored retrain phase changed ranging state");
+			if (stable_restored_samples ==
+			    2u * V34_PHASE2_TONE_WINDOW_SAMPLES) {
+				CHECK(v34_phase2_tone_transmitter_reverse(
+					      &peer.tone_transmitter) ==
+					      V34_PHASE2_TONE_OK,
+			      "V.34 causal peer edge did not start");
+				causal_edge_started = true;
+			}
+		}
+		if (!early_edge_started &&
+		    caller.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "V.34 residual peer edge did not start");
+			early_edge_started = true;
+		}
+	}
+	CHECK(early_edge_started && early_pair_cancelled &&
+	      causal_edge_started && causal_edge_accepted &&
+	      stable_restored_samples ==
+		      2u * V34_PHASE2_TONE_WINDOW_SAMPLES &&
+	      reversal_events == 3u &&
+	      !caller.info0_exchange.transport.tone_detector.carrier
+		       .rejected_reversal_active,
+	      "V.34 retrain reversal recovery failed for %d: edges=%zu stable=%zu cancelled=%d causal=%d phase=%d",
+	      codec, reversal_events, stable_restored_samples,
+	      early_pair_cancelled, causal_edge_accepted,
+	      caller.control.phase);
+	return true;
+}
+
+static bool test_retrain_residual_reversal(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		CHECK(check_retrain_residual_reversal(codec),
+		      "V.34 retrain reversal failed for %d", codec);
+	return true;
+}
+
 static bool test_missing_second_reversal_times_out(void)
 {
 	struct v34_info0 calling = calling_capabilities();
@@ -846,6 +962,7 @@ int main(void)
 		{ "early turnaround tolerance", test_early_turnaround_tolerance },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
+		{ "retrain residual reversal", test_retrain_residual_reversal },
 		{ "INFO0 recovery", test_info0_recovery },
 		{ "INFO0 recovery by tone", test_info0_tone_completion },
 		{ "missing second reversal", test_missing_second_reversal_times_out },

@@ -352,6 +352,19 @@ static bool handle_reversal(
 			accepted = true;
 		}
 		break;
+	case PHASE2_RESPONSE_DELAY:
+		/* A second peer reversal before the scheduled local response
+		 * proves that the first edge did not begin a valid ranging turn.
+		 * Keep the detector's newly restored phase as the reference and
+		 * wait for a fresh first edge. Rejecting this event would restore
+		 * the false intermediate phase. */
+		if (signal_is_b(exchange)) {
+			next = (struct phase2_ranging_control){
+				.phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL,
+			};
+			accepted = true;
+		}
+		break;
 	case PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL:
 		if (measure_round_trip_delay(&next, detector_delay_samples)) {
 			schedule_probe_start(
