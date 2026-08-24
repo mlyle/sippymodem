@@ -17,29 +17,9 @@
 struct v34_data_equalizer_receiver {
 	struct qam_equalizer equalizer;
 	struct qam_equalizer_observation first_observation;
-	struct qam_point first_symbol;
 	struct v34_data_channel_receiver data_receiver;
 	double adaptation;
-	uint8_t training_outputs_remaining;
-	bool has_first_symbol;
 };
-
-/* Begin at the first raw B1 symbol after carrier and timing recovery. The
- * equalizer must carry the completed Phase 4 channel training and have no
- * externally retained observations. Its final delayed training outputs are
- * drained internally before B1 decisions begin. All state is copied. */
-enum v34_data_receive_result
-v34_data_equalizer_receiver_init(
-	struct v34_data_equalizer_receiver *receiver,
-	const struct qam_equalizer *equalizer,
-	const struct v34_power_normalizer *normalizer,
-	const struct v34_frame_geometry *geometry,
-	bool expanded_shaping,
-	const struct v34_q14_coefficient
-		coefficients[V34_PRECODER_TAP_COUNT],
-	enum v34_trellis_selection selection,
-	enum v34_station_role transmitting_role,
-	double adaptation);
 
 /* Continue from a completed Phase 4 E detector. The handoff already retains
  * the first equalizer-delay B1 inputs, so no outputs are discarded. */

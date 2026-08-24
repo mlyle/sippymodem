@@ -18,8 +18,6 @@ enum {
 		V34_SURVIVOR_TRACEBACK_INTERVALS /
 		V34_4D_INTERVALS_PER_MAPPING_FRAME,
 	MAX_GENERATED_MAPPING_FRAMES = 48,
-	POINT_CHANNEL_TAPS = 3,
-	POINT_EQUALIZER_TRAINING_SYMBOLS = 1024,
 };
 
 static const struct v34_q14_coefficient COEFFICIENTS[] = {
@@ -67,108 +65,6 @@ static uint32_t next_generated_word(uint32_t *state)
 {
 	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
 	return *state;
-}
-
-static struct qam_point complex_multiply(
-	const struct qam_point *left,
-	const struct qam_point *right)
-{
-	return (struct qam_point){
-		.in_phase = left->in_phase * right->in_phase -
-			    left->quadrature * right->quadrature,
-		.quadrature = left->in_phase * right->quadrature +
-			      left->quadrature * right->in_phase,
-	};
-}
-
-static struct qam_point pass_point_channel(
-	const struct qam_point channel[POINT_CHANNEL_TAPS],
-	struct qam_point history[POINT_CHANNEL_TAPS],
-	const struct qam_point *transmitted)
-{
-	struct qam_point received = { 0 };
-
-	for (size_t tap = POINT_CHANNEL_TAPS - 1u; tap != 0; --tap)
-		history[tap] = history[tap - 1u];
-	history[0] = *transmitted;
-	for (size_t tap = 0; tap < POINT_CHANNEL_TAPS; ++tap) {
-		struct qam_point contribution =
-			complex_multiply(&channel[tap], &history[tap]);
-
-		received.in_phase += contribution.in_phase;
-		received.quadrature += contribution.quadrature;
-	}
-	return received;
-}
-
-static bool train_point_equalizer(
-	struct qam_equalizer *equalizer,
-	const struct qam_point channel[POINT_CHANNEL_TAPS],
-	struct qam_point channel_history[POINT_CHANNEL_TAPS],
-	uint32_t seed)
-{
-	static const double level = 0.70710678118654752440;
-	struct qam_point target_history[
-		QAM_EQUALIZER_DELAY + 1u] = { 0 };
-	struct qam_point reference = { level, level };
-	struct qam_point received_reference =
-		complex_multiply(&channel[0], &reference);
-	uint32_t random = seed;
-
-	if (qam_equalizer_init(
-		    equalizer, &received_reference, &reference) !=
-	    QAM_EQUALIZER_OK)
-		return false;
-	for (size_t symbol = 0; symbol < POINT_EQUALIZER_TRAINING_SYMBOLS;
-	     ++symbol) {
-		struct qam_point transmitted = {
-			.in_phase = (next_generated_word(&random) >> 31) != 0 ?
-				level :
-				-level,
-			.quadrature = (next_generated_word(&random) >> 31) != 0 ?
-				level :
-				-level,
-		};
-		struct qam_point received_point;
-		struct qam_point equalized;
-		bool ready;
-
-		for (size_t delay = QAM_EQUALIZER_DELAY;
-		     delay != 0; --delay)
-			target_history[delay] = target_history[delay - 1u];
-		target_history[0] = transmitted;
-		received_point = pass_point_channel(
-			channel, channel_history, &transmitted);
-		if (qam_equalizer_push(
-			    equalizer, &received_point, &equalized, &ready) !=
-		    QAM_EQUALIZER_OK)
-			return false;
-		if (ready &&
-		    qam_equalizer_adapt(
-			    equalizer,
-			    &target_history[QAM_EQUALIZER_DELAY],
-			    0.2) != QAM_EQUALIZER_OK)
-			return false;
-	}
-	return qam_equalizer_is_valid(equalizer);
-}
-
-static bool equalizer_has_dispersion(
-	const struct qam_equalizer *equalizer)
-{
-	for (size_t tap = 0; tap < QAM_EQUALIZER_MAX_TAP_COUNT; ++tap) {
-		double power;
-
-		if (tap == QAM_EQUALIZER_DELAY)
-			continue;
-		power = equalizer->coefficients[tap].in_phase *
-				equalizer->coefficients[tap].in_phase +
-			equalizer->coefficients[tap].quadrature *
-				equalizer->coefficients[tap].quadrature;
-		if (power > 1e-10)
-			return true;
-	}
-	return false;
 }
 
 static double generated_noise(uint32_t *state, double normalization_gain)
@@ -480,137 +376,6 @@ static bool test_generated_channel_round_trip(void)
 	return true;
 }
 
-static bool test_generated_equalizer_round_trip(void)
-{
-	static const struct qam_point channel[POINT_CHANNEL_TAPS] = {
-		{ 0.84, -0.22 },
-		{ 0.08, 0.04 },
-		{ -0.04, 0.03 },
-	};
-
-	for (size_t mode = 0; mode < ARRAY_LENGTH(CONFIGURATIONS); ++mode) {
-		const struct configuration *configuration =
-			&CONFIGURATIONS[mode];
-		struct expected_frame expected[MAX_GENERATED_MAPPING_FRAMES];
-		struct v34_data_equalizer_receiver receiver;
-		struct qam_equalizer trained_equalizer;
-		struct qam_point history[POINT_CHANNEL_TAPS] = { 0 };
-		struct fixture fixture;
-		size_t received_frames = 0;
-		size_t transmitted_frames;
-
-		CHECK(initialize_fixture(&fixture, configuration),
-		      "equalizer receiver mode %zu did not initialize", mode);
-		transmitted_frames = PIPELINE_MAPPING_FRAMES +
-			fixture.geometry.mapping_frames_per_data_frame + 4u;
-		CHECK(train_point_equalizer(
-			      &trained_equalizer, channel, history,
-			      UINT32_C(0x4e4c4d53) ^ (uint32_t)mode) &&
-		      equalizer_has_dispersion(&trained_equalizer) &&
-		      transmitted_frames + 1u <= ARRAY_LENGTH(expected) &&
-		      v34_data_equalizer_receiver_init(
-			      &receiver, &trained_equalizer,
-			      &fixture.normalizer, &fixture.geometry,
-			      configuration->expanded, COEFFICIENTS,
-			      configuration->trellis,
-			      configuration->transmitting_role,
-			      0.01) ==
-			      V34_DATA_RECEIVE_OK,
-		      "equalizer receiver mode %zu rejected its channel", mode);
-		for (size_t frame_index = 0;
-		     frame_index <= transmitted_frames; ++frame_index) {
-			struct v34_transmitted_mapping_frame transmitted;
-			size_t symbol_limit =
-				frame_index == transmitted_frames ?
-					QAM_EQUALIZER_DELAY :
-					V34_SYMBOLS_PER_MAPPING_FRAME;
-
-			CHECK(transmit_frame(
-				      &fixture, configuration, frame_index,
-				      &expected[frame_index], &transmitted),
-			      "equalizer mode %zu frame %zu did not transmit",
-			      mode, frame_index);
-			for (size_t symbol = 0; symbol < symbol_limit; ++symbol) {
-				struct qam_point normalized;
-				struct qam_point received_point;
-				struct v34_survivor_decision current;
-				struct v34_survivor_decision saved_current;
-				struct v34_received_mapping_frame received;
-				struct v34_received_mapping_frame saved_received;
-				enum v34_data_receive_result result;
-
-				CHECK(v34_normalize_power(
-					      &fixture.normalizer,
-					      &transmitted.projected_symbol[symbol],
-					      &normalized) ==
-					      V34_SYMBOL_POWER_OK,
-				      "equalizer mode %zu symbol %zu did not normalize",
-				      mode, symbol);
-				received_point = pass_point_channel(
-					channel, history, &normalized);
-				memset(&current, 0xa5, sizeof(current));
-				saved_current = current;
-				memset(&received, 0x5a, sizeof(received));
-				saved_received = received;
-				result = v34_data_equalizer_receive_point(
-					&receiver, &received_point, &current, &received);
-				CHECK(result <= V34_DATA_RECEIVE_B1_COMPLETE,
-				      "equalizer mode %zu frame %zu symbol %zu failed: %d",
-				      mode, frame_index, symbol, result);
-				if (result ==
-				    V34_DATA_RECEIVE_OK) {
-					CHECK(memcmp(&current, &saved_current,
-						     sizeof(current)) == 0 &&
-						      memcmp(&received, &saved_received,
-						     sizeof(received)) == 0,
-					      "equalizer emitted an incomplete interval");
-					continue;
-				}
-				if (result ==
-				    V34_DATA_RECEIVE_INTERVAL_READY) {
-					CHECK(memcmp(&current, &saved_current,
-						     sizeof(current)) != 0 &&
-						      memcmp(&received, &saved_received,
-						     sizeof(received)) == 0,
-					      "equalizer interval outputs changed");
-					continue;
-				}
-				{
-					enum v34_data_receive_result
-						expected_result =
-							received_frames <
-									fixture.geometry
-										.mapping_frames_per_data_frame ?
-								(received_frames + 1u ==
-										 fixture.geometry
-											 .mapping_frames_per_data_frame ?
-									 V34_DATA_RECEIVE_B1_COMPLETE :
-									 V34_DATA_RECEIVE_B1_IN_PROGRESS) :
-								V34_DATA_RECEIVE_MAPPING_FRAME_READY;
-
-					CHECK(result == expected_result &&
-						      received_matches(
-							      &received,
-							      &expected[received_frames]),
-					      "equalizer mode %zu received frame %zu changed",
-					      mode, received_frames);
-					received_frames++;
-				}
-			}
-		}
-		CHECK(received_frames ==
-			      transmitted_frames - PIPELINE_MAPPING_FRAMES &&
-		      !v34_data_equalizer_receiver_is_receiving_b1(
-			      &receiver) &&
-		      receiver.data_receiver.data_receiver.b1_error_bits == 0u &&
-		      receiver.training_outputs_remaining == 0 &&
-		      !receiver.has_first_symbol,
-		      "equalizer mode %zu emitted %zu frames", mode,
-		      received_frames);
-	}
-	return true;
-}
-
 static bool test_buffered_equalizer_handoff(void)
 {
 	static const struct qam_point reference = { 1.0, 0.0 };
@@ -671,8 +436,7 @@ static bool test_buffered_equalizer_handoff(void)
 		      &fixture.geometry, CONFIGURATIONS[0].expanded,
 		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.0) ==
-		      V34_DATA_RECEIVE_OK &&
-	      receiver.training_outputs_remaining == 0,
+		      V34_DATA_RECEIVE_OK,
 	      "buffered equalizer handoff was rejected");
 	memset(&current, 0xa5, sizeof(current));
 	saved_current = current;
@@ -681,8 +445,10 @@ static bool test_buffered_equalizer_handoff(void)
 	CHECK(v34_data_equalizer_receive_point(
 		      &receiver, &lookahead[V34_EQUALIZER_DECISION_DELAY],
 		      &current, &received) == V34_DATA_RECEIVE_OK &&
-	      receiver.has_first_symbol &&
-	      point_matches(&receiver.first_symbol, &lookahead[0]) &&
+	      qam_equalizer_observation_is_pending(
+		      &receiver.first_observation) &&
+	      point_matches(
+		      &receiver.first_observation.output, &lookahead[0]) &&
 	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 	      memcmp(&received, &saved_received, sizeof(received)) == 0,
 	      "buffered handoff did not make the first B1 point next");
@@ -823,8 +589,8 @@ static bool test_equalizer_receiver_validation(void)
 	const struct qam_point reference = { 1.0, 0.0 };
 	const struct qam_point received_reference = { 0.8, -0.2 };
 	const struct qam_point invalid = { NAN, 0.0 };
-	struct qam_equalizer equalizer;
-	struct qam_equalizer invalid_equalizer;
+	struct v34_equalizer_handoff handoff;
+	struct v34_equalizer_handoff invalid_handoff;
 	struct v34_data_equalizer_receiver receiver;
 	struct v34_data_equalizer_receiver saved_receiver;
 	struct v34_data_equalizer_receiver corrupt;
@@ -835,17 +601,30 @@ static bool test_equalizer_receiver_validation(void)
 	struct fixture fixture;
 
 	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
-	      qam_equalizer_init(
-		      &equalizer, &received_reference, &reference) ==
-		      QAM_EQUALIZER_OK &&
-	      v34_data_equalizer_receiver_init(
-		      &receiver, &equalizer, &fixture.normalizer,
-		      &fixture.geometry,
-		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
-		      CONFIGURATIONS[0].trellis,
+	      qam_equalizer_init_geometry(
+		      &handoff.equalizer, &received_reference, &reference,
+		      V34_EQUALIZER_TAP_COUNT,
+		      V34_EQUALIZER_DECISION_DELAY) == QAM_EQUALIZER_OK,
+	      "equalizer validation fixture did not initialize");
+	for (size_t index = 0;
+	     index <= V34_EQUALIZER_DECISION_DELAY; ++index) {
+		struct qam_equalizer_observation observation = { 0 };
+		bool ready = false;
+
+		CHECK(qam_equalizer_observe(
+			      &handoff.equalizer, &received_reference,
+			      &observation, &ready) == QAM_EQUALIZER_OK &&
+		      ready == (index == V34_EQUALIZER_DECISION_DELAY),
+		      "equalizer handoff stopped at point %zu", index);
+	}
+	CHECK(v34_equalizer_handoff_is_valid(&handoff) &&
+	      v34_data_equalizer_receiver_init_from_handoff(
+		      &receiver, &handoff, &fixture.normalizer,
+		      &fixture.geometry, CONFIGURATIONS[0].expanded,
+		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
 		      V34_DATA_RECEIVE_OK,
-	      "equalizer validation fixture did not initialize");
+	      "valid equalizer handoff was rejected");
 	saved_receiver = receiver;
 	memset(&current, 0xa5, sizeof(current));
 	saved_current = current;
@@ -858,19 +637,17 @@ static bool test_equalizer_receiver_validation(void)
 	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
 	      memcmp(&received, &saved_received, sizeof(received)) == 0,
 	      "invalid equalizer point was not transactional");
-	invalid_equalizer = equalizer;
-	invalid_equalizer.coefficients[0].in_phase = INFINITY;
-	CHECK(v34_data_equalizer_receiver_init(
-		      &receiver, &equalizer, &fixture.normalizer,
-		      &fixture.geometry,
-		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
-		      CONFIGURATIONS[0].trellis,
+	invalid_handoff = handoff;
+	invalid_handoff.equalizer.coefficients[0].in_phase = INFINITY;
+	CHECK(v34_data_equalizer_receiver_init_from_handoff(
+		      &receiver, &handoff, &fixture.normalizer,
+		      &fixture.geometry, CONFIGURATIONS[0].expanded,
+		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, NAN) ==
 		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      v34_data_equalizer_receiver_init(
-		      &receiver, &invalid_equalizer, &fixture.normalizer,
-		      &fixture.geometry,
-		      CONFIGURATIONS[0].expanded, COEFFICIENTS,
+	      v34_data_equalizer_receiver_init_from_handoff(
+		      &receiver, &invalid_handoff, &fixture.normalizer,
+		      &fixture.geometry, CONFIGURATIONS[0].expanded, COEFFICIENTS,
 		      CONFIGURATIONS[0].trellis,
 		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
 		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
@@ -901,8 +678,6 @@ int main(void)
 	} tests[] = {
 		{ "generated channel round trip",
 		  test_generated_channel_round_trip },
-		{ "generated equalizer round trip",
-		  test_generated_equalizer_round_trip },
 		{ "buffered equalizer handoff",
 		  test_buffered_equalizer_handoff },
 		{ "validation and rollback", test_validation_and_rollback },

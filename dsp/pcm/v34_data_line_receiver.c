@@ -64,7 +64,6 @@ bool v34_data_line_receiver_is_valid(
 		       &receiver->transmitting_profile) &&
 	       v34_data_equalizer_receiver_is_valid(
 		       &receiver->equalizer_receiver) &&
-	       receiver->equalizer_receiver.training_outputs_remaining == 0 &&
 	       v34_frame_geometry_is_equal(
 		       &receiver->geometry, data_geometry(receiver));
 }
