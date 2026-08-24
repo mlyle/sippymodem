@@ -2049,6 +2049,8 @@ static bool run_v34_recording_replay(
 	bool expected_text_seen = false;
 	bool retrain_requested = false;
 	char retrain_command[] = "ATO1";
+	size_t expected_text_length =
+		expected_text != NULL ? strlen(expected_text) : 0;
 
 	CHECK(v34_replay_bit_rate_parse(bit_rate_value, &bit_rate) &&
 		      v34_replay_symbol_rate_parse(
@@ -2056,7 +2058,9 @@ static bool run_v34_recording_replay(
 		      v34_replay_link_mode_parse(link_mode_value, &lapm) &&
 		      v34_replay_sample_parse(
 			      retrain_sample_value, &retrain_sample),
-	      "optional V.34 recording replay parameter is invalid");
+		      "optional V.34 recording replay parameter is invalid");
+	CHECK(expected_text_length < sizeof(endpoint.output),
+	      "optional V.34 recording replay text is too long");
 	CHECK(channel_bench_recording_load(
 		      path, REPLAY_MAX_SAMPLES, &recording) ==
 		      CHANNEL_BENCH_OK,
@@ -2175,9 +2179,17 @@ static bool run_v34_recording_replay(
 		 * while it can still establish the CONNECT boundary. */
 		if (modem_is_online(endpoint.modem, DP_V34) &&
 		    (!retrain_requested || retrained_at != SIZE_MAX) &&
-		    ((expected_text == NULL || expected_text[0] == '\0') ||
-		     expected_text_seen))
+		    (expected_text_length == 0 || expected_text_seen)) {
 			endpoint.output_count = 0;
+		} else if (connected_at != SIZE_MAX && expected_text_length != 0 &&
+			   endpoint.output_count >= expected_text_length) {
+			size_t retained = expected_text_length - 1u;
+
+			memmove(endpoint.output,
+				endpoint.output + endpoint.output_count - retained,
+				retained);
+			endpoint.output_count = retained;
+		}
 	}
 	CHECK(connected_at != SIZE_MAX,
 	      "V.34 %s recording did not acquire carrier (V.8 seen %d, handoff %zu, final DP %d/status %d)",
