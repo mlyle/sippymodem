@@ -697,9 +697,9 @@ static bool arm_retrain_silence(
 	}
 	CHECK(!seen && detector->silence_samples ==
 		      V34_RETRAIN_MIN_SILENCE_SAMPLES - 1u,
-	      "full-retrain silence armed before its physical lower edge");
+	      "full-retrain silence armed before its sampled-edge guard");
 	CHECK(feed_retrain_sample(detector, 0, codec, &seen),
-	      "full-retrain silence failed at its physical lower edge");
+	      "full-retrain silence failed at its sampled-edge guard");
 	return !seen && detector->silence_samples ==
 			V34_RETRAIN_MIN_SILENCE_SAMPLES;
 }
