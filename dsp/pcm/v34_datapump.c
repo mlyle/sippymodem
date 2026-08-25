@@ -17,10 +17,11 @@
 
 enum {
 	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
-	/* An 8192 peak produces the nominal 5793-sample equal-power RMS.
-	 * Phase 2 L1 uses that power while L2 is 6 dB lower. */
-	V34_NOMINAL_AMPLITUDE = 8192,
-	V34_PHASE2_L2_AMPLITUDE = V34_NOMINAL_AMPLITUDE / 2,
+	/* Phase 2 L2 is 6 dB below its 8192-peak L1.  The
+	 * normalized Phase 3 line has a separate scale so its S/S-bar power
+	 * matches the fixed V.34 training constellation. */
+	V34_PHASE2_L2_AMPLITUDE = 4096,
+	V34_PHASE3_NOMINAL_AMPLITUDE = 3792,
 	/* A local full retrain does not receive the peer's response until both
 	 * stations have observed their 70 ms silence and 50 ms tone guards. */
 	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 2,
@@ -282,7 +283,8 @@ static bool call_configuration(
 			.requested_remote_constellation =
 				V34_CONSTELLATION_4_POINT,
 			.sample_rate = MODEM_RATE,
-			.nominal_peak_amplitude = V34_NOMINAL_AMPLITUDE,
+			.nominal_peak_amplitude =
+				V34_PHASE3_NOMINAL_AMPLITUDE,
 		},
 		.phase4 = {
 			.transmit_mp = baseline_mp(
