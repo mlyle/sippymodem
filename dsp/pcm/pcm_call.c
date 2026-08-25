@@ -2261,8 +2261,8 @@ static uint8_t online_upstream_rate_units(
 	const struct pcm_call *call)
 {
 	if (call->local_role == V90_ANALOG_MODEM)
-		return call->state.data_path.analog.upstream.data.transmitter
-			.points.schedule.geometry
+		return call->state.data_path.analog.upstream.data.points.schedule
+			.geometry
 			.primary_data_rate_2400_bps_units;
 	return call->state.data_path.digital.upstream.data.geometry
 		.primary_data_rate_2400_bps_units;

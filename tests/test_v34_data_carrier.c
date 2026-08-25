@@ -156,6 +156,22 @@ static bool initialize_fixture(struct carrier_fixture *fixture)
 	return true;
 }
 
+static bool initialize_continued_line(
+	const struct carrier_fixture *fixture,
+	const struct v34_phase3_profile *profile,
+	struct v34_data_line_transmitter *line)
+{
+	struct v34_training_line training;
+
+	return fixture != NULL && profile != NULL && line != NULL &&
+	       v34_training_line_init(&training, profile, 8000, 4000) ==
+		       V34_TRAINING_LINE_OK &&
+	       v34_data_line_transmitter_continue(
+		       line, &training, &fixture->schedule,
+		       &fixture->scrambler, &fixture->encoder,
+		       &fixture->normalizer) == V34_DATA_LINE_TRANSMITTER_OK;
+}
+
 static bool test_carrier_point_stream(void)
 {
 	struct carrier_fixture fixture;
@@ -313,11 +329,8 @@ static bool test_line_output(void)
 	bool nonzero_seen = false;
 
 	CHECK(initialize_fixture(&fixture) &&
-	      v34_data_line_transmitter_init(
-		      &line, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
-	      "data line did not initialize");
+	      initialize_continued_line(&fixture, &fixture.profile, &line),
+	      "data line did not continue");
 	points = fixture.points;
 	model_carrier = line.carrier;
 	while (!v34_data_points_needs_mapping_frame(&points)) {
@@ -395,11 +408,9 @@ static bool test_active_line_handoff(void)
 	struct carrier_fixture fixture;
 	struct v34_training_line training;
 	struct v34_training_line training_before;
-	struct v34_data_line_transmitter standalone;
 	struct v34_data_line_transmitter continued;
 	struct v34_data_points points;
 	struct v34_pulse_modulator model_carrier;
-	double independent_gain_ratio;
 	bool retained_tail_seen = false;
 	bool data_point_accepted = false;
 
@@ -407,17 +418,10 @@ static bool test_active_line_handoff(void)
 	      v34_training_line_init(
 		      &training, &fixture.profile, 8000, 4000) ==
 		      V34_TRAINING_LINE_OK &&
-	      advance_training_line(&training) &&
-	      v34_data_line_transmitter_init(
-		      &standalone, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
+	      advance_training_line(&training),
 	      "active-line fixture did not initialize");
 	training_before = training;
-	independent_gain_ratio = standalone.output_gain / training.output_gain;
-	CHECK(independent_gain_ratio > 0.0 &&
-	      fabs(independent_gain_ratio - 1.0) > 0.01 &&
-	      v34_data_line_transmitter_continue(
+	CHECK(v34_data_line_transmitter_continue(
 		      &continued, &training, &fixture.schedule,
 		      &fixture.scrambler, &fixture.encoder,
 		      &fixture.normalizer) == V34_DATA_LINE_TRANSMITTER_OK &&
@@ -504,14 +508,10 @@ static bool test_line_power_reduction(void)
 	      "power-reduction fixture did not initialize");
 	reduced_profile = fixture.profile;
 	reduced_profile.transmit_power_reduction_db = 6;
-	CHECK(v34_data_line_transmitter_init(
-		      &full, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK &&
-	      v34_data_line_transmitter_init(
-		      &reduced, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &reduced_profile,
-		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK &&
+	CHECK(initialize_continued_line(
+		      &fixture, &fixture.profile, &full) &&
+	      initialize_continued_line(
+		      &fixture, &reduced_profile, &reduced) &&
 	      memcmp(&full.calibration, &reduced.calibration,
 		     sizeof(full.calibration)) == 0 &&
 	      fabs(reduced.output_gain / full.output_gain - expected_ratio) <
@@ -748,27 +748,14 @@ static bool test_transactional_validation(void)
 	      memcmp(&carrier, &carrier_before, sizeof(carrier)) == 0,
 	      "carrier accepted a point between boundaries");
 
-	memset(&line, 0xa5, sizeof(line));
-	CHECK(v34_data_line_transmitter_init(
-		      NULL, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_data_line_transmitter_init(
-		      &line, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 0) == V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_data_line_transmitter_init(
-		      &line, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, INT16_MAX) ==
-		      V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK &&
-	      bytes_are_filled(&line, sizeof(line), 0xa5),
-	      "rejected line initialization changed its destination");
-	CHECK(v34_data_line_transmitter_init(
-		      &line, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer, &fixture.profile,
-		      8000, 4000) == V34_DATA_LINE_TRANSMITTER_OK,
-	      "valid line did not initialize");
+	CHECK(v34_training_line_init(
+		      &training, &fixture.profile, 8000, 4000) ==
+		      V34_TRAINING_LINE_OK &&
+	      v34_data_line_transmitter_continue(
+		      &line, &training, &fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &fixture.normalizer) ==
+		      V34_DATA_LINE_TRANSMITTER_OK,
+	      "valid line did not continue");
 	line_before = line;
 	line.gain_reference_rms = NAN;
 	CHECK(!v34_data_line_transmitter_is_valid(&line),
@@ -778,10 +765,6 @@ static bool test_transactional_validation(void)
 	CHECK(!v34_data_line_transmitter_is_valid(&line),
 	      "line accepted a post-training point scale change");
 	line = line_before;
-	CHECK(v34_training_line_init(
-		      &training, &fixture.profile, 8000, 4000) ==
-		      V34_TRAINING_LINE_OK,
-	      "line-continuation fixture did not initialize");
 	invalid_training = training;
 	invalid_training.generated_samples++;
 	line_before = line;

@@ -1020,7 +1020,6 @@ V34_DATA_DECISION_RECEIVER_TEST_OBJECTS = \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_channel_frame_receiver.o \
 		$(BUILD_DIR)/test_v34_data_mapping.o \
-		$(BUILD_DIR)/test_v34_data_transmitter.o \
 		$(BUILD_DIR)/test_v34_data_carrier.o \
 		$(BUILD_DIR)/test_v34_power_calibration.o \
 		$(BUILD_DIR)/v34_data_equalizer_receiver.o \
@@ -1119,19 +1118,12 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_training_line.o \
 	$(BUILD_DIR)/v34_data_carrier.o \
 	$(BUILD_DIR)/v34_data_line_transmitter.o
-V34_DATA_TRANSMITTER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_data_transmitter
-V34_DATA_TRANSMITTER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_data_transmitter.o \
-	$(filter-out $(BUILD_DIR)/test_v34_data_carrier.o, \
-		$(V34_DATA_CARRIER_TEST_OBJECTS)) \
-	$(BUILD_DIR)/v34_data_transmitter.o
 V34_DATA_MAPPING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_data_mapping
 V34_DATA_MAPPING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_data_mapping.o \
-	$(filter-out $(BUILD_DIR)/test_v34_data_transmitter.o, \
-		$(V34_DATA_TRANSMITTER_TEST_OBJECTS)) \
+	$(filter-out $(BUILD_DIR)/test_v34_data_carrier.o, \
+		$(V34_DATA_CARRIER_TEST_OBJECTS)) \
 	$(BUILD_DIR)/v34_data_mapping.o \
 	$(BUILD_DIR)/v34_data_mode.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
@@ -3078,7 +3070,6 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_DATA_POINTS_TEST_BINARY) \
 	$(V34_POWER_CALIBRATION_TEST_BINARY) \
 	$(V34_DATA_CARRIER_TEST_BINARY) \
-	$(V34_DATA_TRANSMITTER_TEST_BINARY) \
 	$(V34_DATA_MAPPING_TEST_BINARY) \
 	$(V34_DATA_STARTUP_TEST_BINARY) \
 	$(V34_DATA_STREAM_TEST_BINARY) \
@@ -3394,7 +3385,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_DATA_POINTS_TEST_OBJECTS:.o=.d) \
 	$(V34_POWER_CALIBRATION_TEST_OBJECTS:.o=.d) \
 	$(V34_DATA_CARRIER_TEST_OBJECTS:.o=.d) \
-	$(V34_DATA_TRANSMITTER_TEST_OBJECTS:.o=.d) \
 	$(V34_DATA_MAPPING_TEST_OBJECTS:.o=.d) \
 	$(V34_DATA_STARTUP_TEST_OBJECTS:.o=.d) \
 	$(V34_DATA_STREAM_TEST_OBJECTS:.o=.d) \
@@ -3990,9 +3980,6 @@ $(V34_POWER_CALIBRATION_TEST_BINARY): \
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_DATA_CARRIER_TEST_BINARY): $(V34_DATA_CARRIER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_DATA_TRANSMITTER_TEST_BINARY): $(V34_DATA_TRANSMITTER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_DATA_MAPPING_TEST_BINARY): $(V34_DATA_MAPPING_TEST_OBJECTS)
@@ -5102,11 +5089,6 @@ $(BUILD_DIR)/v34_data_carrier.o: \
 
 $(BUILD_DIR)/v34_data_line_transmitter.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_transmitter.c | \
-	$(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_data_transmitter.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_data_transmitter.c | \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 

@@ -58,6 +58,22 @@ static struct v34_data_stream_configuration stream_configuration(void)
 	};
 }
 
+static bool initialize_stream(
+	struct v34_data_stream *stream,
+	const struct v34_data_stream_configuration *configuration)
+{
+	struct v34_training_line line;
+
+	return configuration != NULL &&
+	       v34_training_line_init(
+		       &line, &configuration->profile,
+		       configuration->sample_rate,
+		       configuration->nominal_peak_amplitude) ==
+		       V34_TRAINING_LINE_OK &&
+	       v34_data_stream_continue_b1(
+		       stream, &line, configuration) == V34_DATA_STREAM_OK;
+}
+
 static struct v34_data_line_receiver_configuration receiver_configuration(
 	const struct v34_data_stream *stream,
 	const struct v34_data_stream_configuration *configuration,
@@ -65,10 +81,10 @@ static struct v34_data_line_receiver_configuration receiver_configuration(
 {
 	struct v34_data_line_receiver_configuration receiver = {
 		.transmitting_profile = configuration->profile,
-		.geometry = stream->transmitter.points.schedule.geometry,
-		.normalizer = stream->transmitter.line.carrier.normalizer,
+		.geometry = stream->points.schedule.geometry,
+		.normalizer = stream->line.carrier.normalizer,
 		.transmit_point_gain =
-			stream->transmitter.line.carrier.point_gain,
+			stream->line.carrier.point_gain,
 		.equalizer_adaptation = equalizer_adaptation,
 		.trellis_selection = configuration->trellis_selection,
 		.expanded_shaping = configuration->expanded_shaping,
@@ -85,7 +101,7 @@ static bool training_line_sample(
 	int16_t *sample, bool *symbol_accepted)
 {
 	struct v34_data_line_transmitter *line =
-		&stream->transmitter.line;
+		&stream->line;
 	const struct qam_point *supplied = NULL;
 	double line_sample;
 	double scaled_sample;
@@ -142,7 +158,7 @@ static bool train_front_end(
 
 	if (qam_demodulator_init(
 		    demodulator,
-		    &stream->transmitter.line.carrier.modulator.channel) !=
+		    &stream->line.carrier.modulator.channel) !=
 	    QAM_OK)
 		return false;
 	for (size_t sample_index = 0; sample_index < TRAINING_SAMPLE_LIMIT;
@@ -239,13 +255,13 @@ static bool find_handoff_sample(
 			    QAM_OK)
 			return false;
 		if (accepted) {
-			size_t next = probe_stream.transmitter.points.next_point;
+			size_t next = probe_stream.points.next_point;
 
 			if (next == 0 || next > V34_SYMBOLS_PER_MAPPING_FRAME ||
 			    transmitted_count == HANDOFF_POINT_CAPACITY)
 				return false;
 			transmitted[transmitted_count++] =
-				probe_stream.transmitter.points.point[next - 1u];
+				probe_stream.points.point[next - 1u];
 		}
 		if (ready) {
 			if (ready_count == HANDOFF_POINT_CAPACITY ||
@@ -390,9 +406,8 @@ static bool prepare_handoff(
 	struct qam_equalizer equalizer;
 	size_t handoff_sample;
 
-	if (v34_data_stream_init(
-		    &prepared.stream, &prepared.configuration) !=
-		    V34_DATA_STREAM_OK ||
+	if (!initialize_stream(
+		    &prepared.stream, &prepared.configuration) ||
 	    !train_front_end(
 		    &prepared.stream, &demodulator, &equalizer) ||
 	    !find_handoff_sample(

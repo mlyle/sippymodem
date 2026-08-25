@@ -221,17 +221,17 @@ static bool test_selected_type1_stream(void)
 	      v34_data_stream_continue_b1(
 		      &expected, &e.line, &configuration) ==
 		      V34_DATA_STREAM_OK &&
-	      actual.transmitter.points.schedule.geometry
+	      actual.points.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 10 &&
-	      actual.transmitter.points.encoder.parameters.expanded_shaping &&
+	      actual.points.encoder.parameters.expanded_shaping &&
 	      direction.primary_data_rate_2400_bps_units == 10 &&
 	      direction.trellis_selection == V34_TRELLIS_64_STATE &&
 	      direction.nonlinear_parameter ==
 		      V34_NONLINEAR_THETA_5_OVER_16 &&
 	      direction.expanded_shaping &&
-	      actual.transmitter.points.encoder.convolutional_encoder
+	      actual.points.encoder.convolutional_encoder
 			      .selection == V34_TRELLIS_64_STATE &&
-	      memcmp(actual.transmitter.points.encoder.precoder.coefficients,
+	      memcmp(actual.points.encoder.precoder.coefficients,
 		     mp.parameters.type1.precoder_coefficients,
 		     sizeof(mp.parameters.type1.precoder_coefficients)) == 0 &&
 	      memcmp(&e, &saved_e, sizeof(e)) == 0,
@@ -253,16 +253,16 @@ static bool test_rate_intersection(void)
 	CHECK(completed_e_fixture(&e, 8, cp_rates) &&
 	      v90_upstream_data_start_after_e(&stream, &e, &mp) ==
 		      V90_UPSTREAM_DATA_OK &&
-	      stream.transmitter.points.schedule.geometry
+	      stream.points.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 8 &&
-	      stream.transmitter.points.encoder.convolutional_encoder
+	      stream.points.encoder.convolutional_encoder
 			      .selection == V34_TRELLIS_32_STATE &&
-	      !stream.transmitter.points.encoder.parameters.expanded_shaping,
+	      !stream.points.encoder.parameters.expanded_shaping,
 	      "profile cap did not select the highest common rate");
 	mp.parameters.type0.maximum_upstream_rate_2400_bps_units = 6;
 	CHECK(v90_upstream_data_start_after_e(&stream, &e, &mp) ==
 		      V90_UPSTREAM_DATA_OK &&
-	      stream.transmitter.points.schedule.geometry
+	      stream.points.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 6,
 	      "MP maximum did not cap the common rate");
 	return true;

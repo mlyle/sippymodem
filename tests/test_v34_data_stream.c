@@ -39,58 +39,42 @@ configuration_fixture(void)
 	};
 }
 
-static bool compose_transmitter(
-	struct v34_data_transmitter *transmitter,
-	const struct v34_data_stream_configuration *configuration)
+static bool prepare_mapping(
+	const struct v34_data_stream_configuration *configuration,
+	struct v34_data_mapping *mapping)
 {
-	struct v34_frame_geometry geometry;
-	struct v34_mapping_parameters parameters;
-	struct v34_frame_schedule schedule;
-	struct v34_scrambler scrambler;
-	struct v34_4d_encoder encoder;
-	struct v34_power_normalizer normalizer;
+	struct v34_data_direction_parameters parameters = { 0 };
 
-	return configuration != NULL &&
-	       v34_phase3_profile_is_valid(
-		       &configuration->profile) &&
-	       v34_frame_geometry_init(
-		       &geometry, configuration->profile.symbol_rate,
-		       configuration->primary_data_rate_2400_bps_units,
+	if (configuration == NULL || mapping == NULL)
+		return false;
+	memcpy(parameters.precoder_coefficients,
+	       configuration->precoder_coefficients,
+	       sizeof(parameters.precoder_coefficients));
+	parameters.trellis_selection = configuration->trellis_selection;
+	parameters.nonlinear_parameter = configuration->nonlinear_parameter;
+	parameters.primary_data_rate_2400_bps_units =
+		configuration->primary_data_rate_2400_bps_units;
+	parameters.expanded_shaping = configuration->expanded_shaping;
+	return v34_data_mapping_prepare(
+		       mapping, &configuration->profile, &parameters,
 		       configuration->auxiliary_channel_enabled) ==
-		       V34_FRAME_SCHEDULE_OK &&
-	       v34_mapping_parameters_init(
-		       &parameters, &geometry,
-		       configuration->expanded_shaping) ==
-		       V34_MAPPING_PARAMETERS_OK &&
-	       v34_b1_frame_schedule_init(&schedule, &geometry) ==
-		       V34_FRAME_SCHEDULE_OK &&
-	       v34_transmit_scrambler_init(
-		       &scrambler, configuration->profile.local_role) ==
-		       V34_FRAMING_OK &&
-	       v34_4d_encoder_init(
-		       &encoder, &parameters,
-		       configuration->precoder_coefficients,
-		       configuration->trellis_selection) ==
-		       V34_4D_ENCODER_OK &&
-	       v34_calibrate_mapping_power(
-		       &schedule, &scrambler, &encoder,
-		       configuration->nonlinear_parameter,
-		       &normalizer) == V34_POWER_CALIBRATION_OK &&
-	       v34_data_transmitter_init(
-		       transmitter, &schedule, &scrambler, &encoder,
-		       &normalizer, &configuration->profile,
-		       configuration->sample_rate,
-		       configuration->nominal_peak_amplitude) ==
-		       V34_DATA_TRANSMITTER_OK;
+	       V34_DATA_MAPPING_OK;
 }
 
-static bool initialize_transmitter(
-	struct v34_data_transmitter *transmitter)
+static bool initialize_stream(
+	struct v34_data_stream *stream,
+	const struct v34_data_stream_configuration *configuration)
 {
-	struct v34_data_stream_configuration configuration =
-		configuration_fixture();
+	struct v34_training_line line;
 
-	return compose_transmitter(transmitter, &configuration);
+	return configuration != NULL &&
+	       v34_training_line_init(
+		       &line, &configuration->profile,
+		       configuration->sample_rate,
+		       configuration->nominal_peak_amplitude) ==
+		       V34_TRAINING_LINE_OK &&
+	       v34_data_stream_continue_b1(
+		       stream, &line, configuration) == V34_DATA_STREAM_OK;
 }
 
 static void fill_generated_frame(
@@ -140,21 +124,22 @@ static bool generated_source(
 
 static bool test_b1_and_host_handoff(void)
 {
-	struct v34_data_transmitter initial;
-	struct v34_data_transmitter model;
+	struct v34_data_stream_configuration configuration =
+		configuration_fixture();
 	struct v34_data_stream stream;
+	struct v34_data_points model_points;
+	struct v34_data_line_transmitter model_line;
 	struct source_fixture source = { 0 };
 	uint32_t model_delayed_primary_bits;
 	uint8_t model_delay_bits;
 	bool model_b1 = true;
 	size_t samples = 0;
 
-	CHECK(initialize_transmitter(&initial) &&
-	      v34_data_stream_init_b1(&stream, &initial) ==
-		      V34_DATA_STREAM_OK &&
+	CHECK(initialize_stream(&stream, &configuration) &&
 	      v34_data_stream_is_transmitting_b1(&stream),
 	      "B1 stream did not initialize");
-	model = initial;
+	model_points = stream.points;
+	model_line = stream.line;
 	model_delay_bits = stream.primary_delay_bits;
 	model_delayed_primary_bits =
 		UINT32_MAX >> (32u - model_delay_bits);
@@ -165,8 +150,7 @@ static bool test_b1_and_host_handoff(void)
 		bool actual_accepted;
 
 		CHECK(samples++ < 4096u, "B1 handoff did not complete");
-		if (v34_data_transmitter_needs_mapping_frame(
-			    &model)) {
+		if (v34_data_points_needs_mapping_frame(&model_points)) {
 			struct v34_mapping_frame request;
 			uint8_t primary_bits[
 				V34_MAX_MAPPING_FRAME_BITS];
@@ -177,11 +161,11 @@ static bool test_b1_and_host_handoff(void)
 
 			if (model_b1 &&
 			    v34_frame_schedule_is_complete(
-				    &model.points.schedule))
+				    &model_points.schedule))
 				model_b1 = false;
-			CHECK(v34_data_transmitter_preview_mapping_frame(
-				      &model, &request) ==
-				      V34_DATA_TRANSMITTER_OK,
+			CHECK(v34_data_points_preview_mapping_frame(
+				      &model_points, &request) ==
+				      V34_DATA_POINTS_OK,
 			      "model frame preview failed");
 			if (model_b1) {
 				memset(sourced_primary_bits, 1,
@@ -203,15 +187,31 @@ static bool test_b1_and_host_handoff(void)
 			}
 			auxiliary = request.carries_auxiliary_bit ?
 				&auxiliary_bit : NULL;
-			CHECK(v34_data_transmitter_queue_mapping_frame(
-				      &model, primary_bits, request.primary_bits,
+			CHECK(v34_data_points_queue_mapping_frame(
+				      &model_points, primary_bits,
+				      request.primary_bits,
 				      auxiliary) ==
-				      V34_DATA_TRANSMITTER_OK,
+				      V34_DATA_POINTS_OK,
 			      "model frame queue failed");
 		}
-		CHECK(v34_data_transmitter_sample(
-			      &model, &expected_sample, &expected_accepted) ==
-			      V34_DATA_TRANSMITTER_OK &&
+		{
+			struct qam_point point;
+			const struct qam_point *next_point = NULL;
+
+			if (v34_data_line_transmitter_needs_point(&model_line)) {
+				CHECK(v34_data_points_next(
+					      &model_points, &point) ==
+					      V34_DATA_POINTS_OK,
+				      "model point generation failed");
+				next_point = &point;
+			}
+			CHECK(v34_data_line_transmitter_sample(
+				      &model_line, next_point, &expected_sample,
+				      &expected_accepted) ==
+				      V34_DATA_LINE_TRANSMITTER_OK,
+			      "model line generation failed");
+		}
+		CHECK(
 		      v34_data_stream_sample(
 			      &stream, generated_source, &source, &actual_sample,
 			      &actual_accepted) ==
@@ -222,11 +222,14 @@ static bool test_b1_and_host_handoff(void)
 		      stream.delayed_primary_bits ==
 			      model_delayed_primary_bits &&
 		      stream.primary_delay_bits == model_delay_bits &&
-		      memcmp(&stream.transmitter, &model, sizeof(model)) == 0,
+		      memcmp(&stream.points, &model_points,
+			     sizeof(model_points)) == 0 &&
+		      memcmp(&stream.line, &model_line,
+			     sizeof(model_line)) == 0,
 		      "stream diverged at sample %zu", samples - 1u);
 	}
 	CHECK(!v34_data_stream_is_transmitting_b1(&stream) &&
-	      stream.transmitter.points.schedule.data_frame_in_superframe == 0 &&
+	      stream.points.schedule.data_frame_in_superframe == 0 &&
 	      samples > 0,
 	      "host source did not begin after B1");
 	return true;
@@ -241,9 +244,8 @@ static bool advance_to_b1_handoff(
 
 		if (stream->b1_active &&
 		    v34_frame_schedule_is_complete(
-			    &stream->transmitter.points.schedule) &&
-		    v34_data_transmitter_needs_mapping_frame(
-			    &stream->transmitter))
+			    &stream->points.schedule) &&
+		    v34_data_points_needs_mapping_frame(&stream->points))
 			return true;
 		if (v34_data_stream_sample(
 			    stream, NULL, NULL, &sample, &accepted) !=
@@ -295,36 +297,52 @@ static bool initialization_is_rejected(
 	const struct v34_data_stream_configuration *configuration,
 	enum v34_data_stream_result expected)
 {
+	struct v34_data_stream_configuration active_configuration =
+		configuration_fixture();
+	struct v34_training_line line;
 	struct v34_data_stream stream;
 
+	if (v34_training_line_init(
+		    &line, &active_configuration.profile,
+		    active_configuration.sample_rate,
+		    active_configuration.nominal_peak_amplitude) !=
+	    V34_TRAINING_LINE_OK)
+		return false;
 	memset(&stream, 0xa5, sizeof(stream));
-	return v34_data_stream_init(&stream, configuration) ==
+	return v34_data_stream_continue_b1(&stream, &line, configuration) ==
 		       expected &&
 	       bytes_are_filled(&stream, sizeof(stream), 0xa5);
 }
 
-static bool test_selected_initialization(void)
+static bool test_selected_continuation(void)
 {
 	for (unsigned int role = V34_CALLING_STATION;
 	     role <= V34_ANSWERING_STATION; ++role) {
 		struct v34_data_stream_configuration configuration =
 			configuration_fixture();
-		struct v34_data_transmitter transmitter;
+		struct v34_data_mapping mapping;
+		struct v34_training_line line;
 		struct v34_data_stream expected;
 		struct v34_data_stream actual;
 
 		configuration.profile.local_role =
 			(enum v34_station_role)role;
-		CHECK(compose_transmitter(&transmitter, &configuration) &&
-		      v34_data_stream_init_b1(
-			      &expected, &transmitter) ==
+		CHECK(prepare_mapping(&configuration, &mapping) &&
+		      v34_training_line_init(
+			      &line, &configuration.profile,
+			      configuration.sample_rate,
+			      configuration.nominal_peak_amplitude) ==
+			      V34_TRAINING_LINE_OK &&
+		      v34_data_stream_continue_prepared_b1(
+			      &expected, &line, &mapping) ==
 			      V34_DATA_STREAM_OK &&
-		      v34_data_stream_init(
-			      &actual, &configuration) ==
+		      v34_data_stream_continue_b1(
+			      &actual, &line, &configuration) ==
 			      V34_DATA_STREAM_OK &&
 		      v34_data_stream_is_transmitting_b1(&actual) &&
+		      memcmp(&actual, &expected, sizeof(actual)) == 0 &&
 		      streams_match_through_b1(&actual, &expected),
-		      "selected stream mismatch for role %u", role);
+		      "continued stream mismatch for role %u", role);
 	}
 	return true;
 }
@@ -350,8 +368,7 @@ static bool initialize_delay_fixture(
 	configuration.primary_data_rate_2400_bps_units = primary_rate;
 	configuration.auxiliary_channel_enabled = false;
 	configuration.expanded_shaping = false;
-	return v34_data_stream_init(stream, &configuration) ==
-		V34_DATA_STREAM_OK;
+	return initialize_stream(stream, &configuration);
 }
 
 static bool test_word_aligned_host_handoff(void)
@@ -396,20 +413,30 @@ static bool test_initialization_failures(void)
 {
 	struct v34_data_stream_configuration configuration =
 		configuration_fixture();
+	struct v34_training_line line;
 	struct v34_data_stream rejected;
 
+	CHECK(v34_training_line_init(
+		      &line, &configuration.profile, configuration.sample_rate,
+		      configuration.nominal_peak_amplitude) ==
+		      V34_TRAINING_LINE_OK,
+	      "validation line did not initialize");
 	memset(&rejected, 0xa5, sizeof(rejected));
-	CHECK(v34_data_stream_init(NULL, &configuration) ==
+	CHECK(v34_data_stream_continue_b1(NULL, &line, &configuration) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_data_stream_init(&rejected, NULL) ==
+	      v34_data_stream_continue_b1(
+		      &rejected, NULL, &configuration) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      v34_data_stream_continue_b1(&rejected, &line, NULL) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
 	      "null initialization input changed the stream");
 	configuration.primary_data_rate_2400_bps_units = 9;
-	CHECK(v34_data_stream_init(&rejected, &configuration) ==
+	CHECK(v34_data_stream_continue_b1(
+		      &rejected, &line, &configuration) ==
 		      V34_DATA_STREAM_OK &&
 	      v34_data_stream_is_valid(&rejected) &&
-	      rejected.transmitter.line.carrier.geometry
+	      rejected.line.carrier.geometry
 			      .primary_data_rate_2400_bps_units == 9,
 	      "Phase 2 projection incorrectly limited the Phase 4 stream");
 	configuration = configuration_fixture();
@@ -454,29 +481,43 @@ static bool test_initialization_failures(void)
 
 static bool test_transactional_boundaries(void)
 {
-	struct v34_data_transmitter transmitter;
-	struct v34_data_transmitter wrong_position;
+	struct v34_data_stream_configuration configuration =
+		configuration_fixture();
+	struct v34_data_mapping mapping;
+	struct v34_data_mapping wrong_position;
+	struct v34_training_line line;
 	struct v34_data_stream stream;
 	struct v34_data_stream rejected;
 	struct v34_data_stream before;
+	struct v34_data_stream corrupt;
 	struct source_fixture source = { 0, SOURCE_FAIL };
 	int16_t sample = 1234;
 	bool accepted = true;
 
-	CHECK(initialize_transmitter(&transmitter),
-	      "validation transmitter did not initialize");
-	wrong_position = transmitter;
-	wrong_position.points.schedule.data_frame_in_superframe = 0;
+	CHECK(prepare_mapping(&configuration, &mapping) &&
+	      v34_training_line_init(
+		      &line, &configuration.profile, configuration.sample_rate,
+		      configuration.nominal_peak_amplitude) ==
+		      V34_TRAINING_LINE_OK,
+	      "validation inputs did not initialize");
+	wrong_position = mapping;
+	wrong_position.schedule.data_frame_in_superframe = 0;
 	memset(&rejected, 0xa5, sizeof(rejected));
-	CHECK(v34_data_stream_init_b1(NULL, &transmitter) ==
+	CHECK(v34_data_stream_continue_prepared_b1(
+		      NULL, &line, &mapping) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_data_stream_init_b1(&rejected, NULL) ==
+	      v34_data_stream_continue_prepared_b1(
+		      &rejected, NULL, &mapping) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
-	      v34_data_stream_init_b1(
-		      &rejected, &wrong_position) ==
+	      v34_data_stream_continue_prepared_b1(
+		      &rejected, &line, NULL) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      v34_data_stream_continue_prepared_b1(
+		      &rejected, &line, &wrong_position) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5) &&
-	      v34_data_stream_init_b1(&stream, &transmitter) ==
+	      v34_data_stream_continue_prepared_b1(
+		      &stream, &line, &mapping) ==
 		      V34_DATA_STREAM_OK &&
 	      advance_to_b1_handoff(&stream),
 	      "B1 validation boundary was not reached");
@@ -513,6 +554,10 @@ static bool test_transactional_boundaries(void)
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      memcmp(&stream, &before, sizeof(stream)) == 0,
 	      "invalid stream call changed state");
+	corrupt = stream;
+	corrupt.line.carrier.geometry.primary_data_rate_2400_bps_units++;
+	CHECK(!v34_data_stream_is_valid(&corrupt),
+	      "mismatched point and line owners were accepted");
 	stream.b1_active = true;
 	CHECK(!v34_data_stream_is_valid(&stream),
 	      "B1 state accepted an ordinary data frame");
@@ -525,7 +570,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "selected initialization", test_selected_initialization },
+		{ "selected continuation", test_selected_continuation },
 		{ "word-aligned host handoff", test_word_aligned_host_handoff },
 		{ "initialization failures", test_initialization_failures },
 		{ "B1 and host handoff", test_b1_and_host_handoff },

@@ -180,7 +180,6 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_points.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_stream.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_data_transmitter.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_frame_schedule.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_framing.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_info0.c \

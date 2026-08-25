@@ -27,20 +27,6 @@ struct v34_data_line_transmitter {
 	int16_t nominal_peak_amplitude;
 };
 
-/* Calibrate the normalized data stream at the negotiated line shape, then
- * select the gain whose RMS equals an equal-power sinusoid at the nominal
- * peak amplitude after applying the negotiated power reduction. Inputs and
- * the destination remain unchanged on failure. */
-enum v34_data_line_transmitter_result
-v34_data_line_transmitter_init(
-	struct v34_data_line_transmitter *transmitter,
-	const struct v34_frame_schedule *calibration_schedule,
-	const struct v34_scrambler *calibration_scrambler,
-	const struct v34_4d_encoder *calibration_encoder,
-	const struct v34_power_normalizer *normalizer,
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate, int16_t nominal_peak_amplitude);
-
 /* Continue a compatible active training line into normalized data. The
  * carrier clock, active pulses, pre-emphasis history, line gain, and sample
  * count are retained. B1 therefore begins on the trained constellation scale;

@@ -3,8 +3,9 @@
 #ifndef V34_DATA_STREAM_H
 #define V34_DATA_STREAM_H
 
+#include "v34_data_line_transmitter.h"
 #include "v34_data_mapping.h"
-#include "v34_data_transmitter.h"
+#include "v34_data_points.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -28,7 +29,8 @@ typedef bool (*v34_mapping_frame_source)(
 	uint8_t *primary_bits, uint8_t *auxiliary_bit);
 
 struct v34_data_stream {
-	struct v34_data_transmitter transmitter;
+	struct v34_data_points points;
+	struct v34_data_line_transmitter line;
 	/* The data scrambler accepts 16-bit DTE words. B1 can leave that word
 	 * cursor between mapping-frame boundaries, so retain the exact pending
 	 * mark bits as well as their negotiated delay. */
@@ -53,12 +55,6 @@ struct v34_data_stream_configuration {
 	bool expanded_shaping;
 };
 
-/* Derive and calibrate a complete transmitter at the first B1 mapping frame.
- * The destination and configuration remain unchanged on every failure. */
-enum v34_data_stream_result v34_data_stream_init(
-	struct v34_data_stream *stream,
-	const struct v34_data_stream_configuration *configuration);
-
 /* Derive the first B1 mapping frame while continuing an active training
  * waveform with the exact same profile and line settings. */
 enum v34_data_stream_result v34_data_stream_continue_b1(
@@ -73,14 +69,6 @@ enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
 	struct v34_data_stream *stream,
 	const struct v34_training_line *active_line,
 	const struct v34_data_mapping *mapping);
-
-/* Take ownership of a transmitter positioned at the first mapping frame of
- * B1. The one-frame B1 payload is generated internally as binary ones; the
- * external source is not consulted until the following data frame. */
-enum v34_data_stream_result v34_data_stream_init_b1(
-	struct v34_data_stream *stream,
-	const struct v34_data_transmitter *transmitter);
-
 bool v34_data_stream_is_valid(
 	const struct v34_data_stream *stream);
 bool v34_data_stream_is_transmitting_b1(

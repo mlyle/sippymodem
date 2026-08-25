@@ -141,45 +141,6 @@ bool v34_data_line_transmitter_is_valid(
 }
 
 enum v34_data_line_transmitter_result
-v34_data_line_transmitter_init(
-	struct v34_data_line_transmitter *transmitter,
-	const struct v34_frame_schedule *calibration_schedule,
-	const struct v34_scrambler *calibration_scrambler,
-	const struct v34_4d_encoder *calibration_encoder,
-	const struct v34_power_normalizer *normalizer,
-	const struct v34_phase3_profile *profile,
-	uint32_t sample_rate, int16_t nominal_peak_amplitude)
-{
-	struct v34_data_line_transmitter initialized = { 0 };
-	struct line_power power;
-	enum v34_data_line_transmitter_result result;
-
-	if (transmitter == NULL)
-		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
-	result = derive_line_power(
-		calibration_schedule, calibration_scrambler,
-		calibration_encoder, normalizer, profile, sample_rate,
-		nominal_peak_amplitude, &power);
-	if (result != V34_DATA_LINE_TRANSMITTER_OK)
-		return result;
-	if (v34_data_carrier_init(
-		    &initialized.carrier, profile,
-		    &calibration_schedule->geometry, normalizer, sample_rate) !=
-		    V34_DATA_CARRIER_OK)
-		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
-	initialized.calibration = power.calibration;
-	initialized.gain_reference_rms =
-		sqrt(power.calibration.mean_squared_amplitude);
-	initialized.nominal_peak_amplitude = nominal_peak_amplitude;
-	initialized.target_rms = power.target_rms;
-	initialized.output_gain = power.data_output_gain;
-	if (!v34_data_line_transmitter_is_valid(&initialized))
-		return V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE;
-	*transmitter = initialized;
-	return V34_DATA_LINE_TRANSMITTER_OK;
-}
-
-enum v34_data_line_transmitter_result
 v34_data_line_transmitter_continue(
 	struct v34_data_line_transmitter *transmitter,
 	const struct v34_training_line *active_line,
