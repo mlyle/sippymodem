@@ -716,6 +716,28 @@ void modem_dp_connected(struct modem *m)
 		modem_update_status(m, STATUS_DP_LINK);
 }
 
+void modem_dp_reconnected(struct modem *m)
+{
+	if (m == NULL)
+		return;
+	if (m->state != STATE_EC_ESTAB) {
+		modem_dp_connected(m);
+		return;
+	}
+
+	/* A retrain before V.42 establishes starts a new negotiation epoch. */
+	if (m->cfg.ec) {
+		modem_ec_exit(m);
+		if (modem_ec_init(m) != 0) {
+			modem_update_status(m, STATUS_EC_ERROR);
+			return;
+		}
+	}
+	modem_update_status(m, STATUS_DP_LINK);
+	if (m->get_bits == modem_detector_get_bits)
+		modem_detector_use_retrain_timeout(m);
+}
+
 
 static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 				   const u8 *receive_codewords,

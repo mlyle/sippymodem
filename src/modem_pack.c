@@ -404,9 +404,21 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
 			if (ch == HDLC_FLAG) {
 				PACK_DBG("hdlc flag detected.\n");
-				d->ec_enable = m->cfg.ec != 0;
-				m->bit_timer_func = detector_finish;
-				m->bit_timer = PATTERN_SIZE;
+				/* A peer may resume HDLC immediately after physical
+				 * retrain. Reply once; continued flags must not keep
+				 * postponing the selected V.42 transition. */
+				if (!d->ec_enable) {
+					d->ec_enable = m->cfg.ec != 0;
+					m->bit_timer_func = detector_finish;
+					if (!m->caller && d->ec_enable) {
+						d->tx_count = 1;
+						m->bit_timer =
+							DETECTOR_ADP_REPLY_PATTERNS *
+							PATTERN_SIZE;
+					} else {
+						m->bit_timer = PATTERN_SIZE;
+					}
+				}
 				continue;
 			}
 			if (!detector_accept_pattern_character(m, d, ch))
@@ -459,6 +471,16 @@ void modem_detector_start(struct modem *m)
 	}
 	m->pack.bit  = m->unpack.bit  = 0;
 	m->pack.data = m->unpack.data = 0;
+}
+
+void modem_detector_use_retrain_timeout(struct modem *m)
+{
+	unsigned int rate = m->rx_rate + m->tx_rate;
+
+	/* The shared bit timer is debited by transmitted and received bits. */
+	if (rate == 0)
+		rate = 2 * DETECTOR_FALLBACK_RATE;
+	m->bit_timer = (int)(rate * V42_T400_MS / 1000);
 }
 
 

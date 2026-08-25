@@ -1416,7 +1416,7 @@ static bool test_lapm_retrain_resumes_peer_flow_control(void)
 		lapm->peer_busy = 1;
 		modem->retrain_pending = local;
 		modem->bit_timer = 0;
-		modem_dp_connected(modem);
+		modem_dp_reconnected(modem);
 		CHECK(modem->retrain_pending == 0 &&
 			      lapm->state == LAPM_DATA_STATE &&
 			      lapm->peer_busy == 1 && lapm->vs == 5 &&
@@ -1472,6 +1472,88 @@ static bool test_lapm_retrain_resumes_peer_flow_control(void)
 	modem->packer.hdlc.tx_complete(
 		modem->packer.hdlc.framer, outgoing);
 	memset(&lapm_source, 0, sizeof(lapm_source));
+	modem_ec_exit(modem);
+	modem_delete(modem);
+	return true;
+}
+
+static bool test_pre_link_retrain_restarts_error_control(void)
+{
+	enum {
+		TEST_STATE_DP_ESTAB = 2,
+		TEST_STATE_EC_ESTAB = 4,
+		LAPM_ESTABLISHING_STATE = 1,
+		V42_T400_MILLISECONDS = 750,
+	};
+	struct modem_driver driver = {
+		.name = "pre-link retrain test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "pre-link retrain test");
+	struct dp datapump = {
+		.id = DP_V34,
+		.modem = modem,
+		.status = DPSTAT_CONNECT,
+	};
+	struct lapm_state *lapm;
+	int initial_timeout;
+	int retrain_timeout;
+
+	CHECK(modem != NULL, "pre-link retrain modem could not be created");
+	modem->dp = &datapump;
+	modem->caller = 0;
+	modem->rx_rate = modem->tx_rate = 4800;
+	modem->cfg.ec = 1;
+	modem->cfg.ec_detector = 1;
+	modem->cfg.ec_tx_win_size = LAPM_MAX_WIN_SIZE;
+	modem->cfg.ec_rx_win_size = LAPM_MAX_WIN_SIZE;
+	modem->cfg.ec_tx_info_size = LAPM_MAX_INFO_SIZE;
+	modem->cfg.ec_rx_info_size = LAPM_MAX_INFO_SIZE;
+	CHECK(modem_ec_init(modem) == 0,
+	      "pre-link retrain LAPM could not initialize");
+
+	modem->state = TEST_STATE_DP_ESTAB;
+	modem_dp_connected(modem);
+	initial_timeout = modem->bit_timer;
+	retrain_timeout = (int)((modem->rx_rate + modem->tx_rate) *
+		V42_T400_MILLISECONDS / 1000u);
+	CHECK(modem->state == TEST_STATE_EC_ESTAB &&
+		      modem->get_bits == modem_detector_get_bits &&
+		      modem->put_bits == modem_detector_put_bits &&
+		      initial_timeout > retrain_timeout,
+	      "initial V.42 epoch did not retain its long detector allowance");
+
+	lapm = &modem->ec.lapm;
+	lapm->state = LAPM_ESTABLISHING_STATE;
+	lapm->config = 1;
+	lapm->vs = 5;
+	lapm->va = 4;
+	lapm->vr = 3;
+	modem->packer.detector.tx_count = 7;
+	modem->packer.detector.rx_count = 9;
+	modem->bit_timer = 17;
+	modem_dp_reconnected(modem);
+	CHECK(modem->state == TEST_STATE_EC_ESTAB &&
+		      lapm->state == 0 && lapm->config == 0 &&
+		      lapm->vs == 0 && lapm->va == 0 && lapm->vr == 0 &&
+		      lapm->modem == modem && lapm->info_list != NULL &&
+		      lapm->ctrl_list != NULL &&
+		      modem->get_bits == modem_detector_get_bits &&
+		      modem->put_bits == modem_detector_put_bits &&
+		      modem->packer.detector.tx_count == 0 &&
+		      modem->packer.detector.rx_count == 0 &&
+		      modem->bit_timer == retrain_timeout,
+	      "pre-link physical retrain retained an interrupted V.42 epoch");
+
+	modem->packer.detector.rx_count = 2;
+	modem_dp_connected(modem);
+	CHECK(modem->packer.detector.rx_count == 2 &&
+		      modem->bit_timer == retrain_timeout,
+	      "duplicate generic CONNECT restarted the retrain epoch");
+
+	modem->dp = NULL;
 	modem_ec_exit(modem);
 	modem_delete(modem);
 	return true;
@@ -2048,6 +2130,8 @@ int main(void)
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM retrain resumes peer flow control",
 		  test_lapm_retrain_resumes_peer_flow_control },
+		{ "pre-link retrain restarts error control",
+		  test_pre_link_retrain_restarts_error_control },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",

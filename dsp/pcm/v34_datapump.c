@@ -478,6 +478,7 @@ static bool enter_link(struct v34_datapump *datapump)
 	struct v34_data_startup startup;
 	struct v34_data_quality data_quality;
 	const struct v34_adaptive_equalizer_quality *measurement;
+	bool retrained;
 	unsigned int transmit_rate;
 	unsigned int receive_rate;
 
@@ -503,13 +504,17 @@ static bool enter_link(struct v34_datapump *datapump)
 		    datapump->dp.modem, MDMPRM_RX_RATE,
 		    (int)receive_rate) != 0)
 		return false;
+	retrained = training_session_is_retraining(&datapump->training);
 	if (training_session_connect(&datapump->training) !=
 	    TRAINING_SESSION_OK)
 		return false;
 	datapump->data_quality = data_quality;
 	datapump->missing_carrier_samples = 0;
 	datapump->dp.status = DPSTAT_CONNECT;
-	modem_dp_connected(datapump->dp.modem);
+	if (retrained)
+		modem_dp_reconnected(datapump->dp.modem);
+	else
+		modem_dp_connected(datapump->dp.modem);
 	return true;
 }
 

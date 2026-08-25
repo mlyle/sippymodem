@@ -475,6 +475,7 @@ extern int  modem_async_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_async_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int modem_link_supports_v42(const struct modem *m);
 extern void modem_detector_start(struct modem *m);
+extern void modem_detector_use_retrain_timeout(struct modem *m);
 extern int  modem_detector_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_detector_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern void modem_hdlc_start(struct modem *m);
@@ -493,6 +494,7 @@ extern const char *modem_active_modulation_name(const struct modem *m);
 
 /* status & config */
 extern void modem_dp_connected(struct modem *m);
+extern void modem_dp_reconnected(struct modem *m);
 extern void modem_update_status(struct modem *m, unsigned status);
 extern void modem_update_config(struct modem *m, struct modem_config *cfg);
 

@@ -331,6 +331,7 @@ static bool deliver_event(
 
 static bool enter_link(struct v90_datapump *datapump)
 {
+	bool retrained;
 	uint32_t transmit_rate;
 	uint32_t receive_rate;
 
@@ -344,11 +345,15 @@ static bool enter_link(struct v90_datapump *datapump)
 		    datapump->dp.modem, MDMPRM_RX_RATE,
 		    (int)receive_rate) != 0)
 		return false;
+	retrained = training_session_is_retraining(&datapump->training);
 	if (training_session_connect(&datapump->training) !=
 	    TRAINING_SESSION_OK)
 		return false;
 	datapump->dp.status = DPSTAT_CONNECT;
-	modem_dp_connected(datapump->dp.modem);
+	if (retrained)
+		modem_dp_reconnected(datapump->dp.modem);
+	else
+		modem_dp_connected(datapump->dp.modem);
 	return true;
 }
 

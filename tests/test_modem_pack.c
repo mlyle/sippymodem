@@ -410,6 +410,40 @@ static bool test_v42_waits_for_a_delayed_peer(void)
 	return true;
 }
 
+static bool test_v42_flags_do_not_extend_detection(void)
+{
+	uint8_t bits[128];
+	struct modem flag_source = { .name = "V.42 flag source" };
+	struct modem detector = {
+		.name = "V.42 flag detector",
+		.tx_rate = 4800,
+		.cfg = { .ec = 1, .ec_detector = 1 },
+	};
+
+	modem_hdlc_start(&flag_source);
+	modem_detector_start(&detector);
+	CHECK(modem_hdlc_get_bits(
+		      &flag_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits) &&
+		      modem_detector_put_bits(
+			      &detector, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+			      (int)ARRAY_LENGTH(bits) &&
+		      detector.packer.detector.ec_enable == 1 &&
+		      detector.packer.detector.tx_count == 1 &&
+		      detector.bit_timer == 576,
+	      "V.42 detector did not accept the HDLC flag transition");
+	detector.bit_timer = 500;
+	CHECK(modem_hdlc_get_bits(
+		      &flag_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits) &&
+		      modem_detector_put_bits(
+			      &detector, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+			      (int)ARRAY_LENGTH(bits) &&
+		      detector.bit_timer == 500,
+	      "continued HDLC flags postponed V.42 completion");
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -569,6 +603,8 @@ int main(void)
 		  test_raw_answerer_selects_v14 },
 		{ "V.42 delayed startup",
 		  test_v42_waits_for_a_delayed_peer },
+		{ "V.42 bounded HDLC flag transition",
+		  test_v42_flags_do_not_extend_detection },
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
