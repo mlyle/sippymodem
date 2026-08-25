@@ -467,13 +467,9 @@ static bool test_generated_online_exchange(void)
 	CHECK(caller.phase4.transmit_data_active &&
 	      answerer.phase4.transmit_data_active &&
 	      caller.phase4.transmit_mp_records_completed ==
-		      V34_PHASE4_MIN_MP_RECORDS &&
+		      V34_PHASE4_MP_REPEAT_RECORDS &&
 	      answerer.phase4.transmit_mp_records_completed ==
-		      V34_PHASE4_MIN_MP_RECORDS &&
-	      caller.phase4.transmit_mp_prime_records_completed ==
-		      V34_PHASE4_MIN_MP_PRIME_RECORDS &&
-	      answerer.phase4.transmit_mp_prime_records_completed ==
-		      V34_PHASE4_MIN_MP_PRIME_RECORDS &&
+		      V34_PHASE4_MP_REPEAT_RECORDS &&
 	      caller.phase4.receive_data_active &&
 	      answerer.phase4.receive_data_active &&
 	      caller.phase4.transmit_b1_complete &&
@@ -736,7 +732,7 @@ static bool test_acknowledged_first_record(void)
 		      "acknowledged local type-1 MP did not start");
 	}
 	pending.transmit_mp_prime_started = true;
-	pending.transmit_mp_records_completed = V34_PHASE4_MIN_MP_RECORDS;
+	pending.transmit_mp_records_completed = 0;
 	pending.peer_mp_prime_received = true;
 	CHECK(v34_phase4_exchange_is_valid(&pending),
 	      "acknowledged first record made pending state invalid");
@@ -745,7 +741,7 @@ static bool test_acknowledged_first_record(void)
 	      v34_phase4_exchange_is_valid(&pending) &&
 	      !v34_phase4_exchange_needs_data_preparation(&pending) &&
 	      !v34_phase4_exchange_is_ready_for_e(&pending) &&
-	      pending.transmit_mp_prime_records_completed == 0 &&
+	      pending.transmit_mp_records_completed == 0 &&
 	      events == UINT32_C(0x40000000),
 	      "acknowledged first record bypassed the MP-prime repeat boundary");
 	return true;
@@ -778,14 +774,9 @@ static bool test_validation_and_transactionality(void)
 	      "validation Phase 4 pair failed");
 	exchange = caller.phase4;
 	exchange.transmit_mp_records_completed =
-		V34_PHASE4_MIN_MP_RECORDS + 1;
+		V34_PHASE4_MP_REPEAT_RECORDS + 1;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
-	      "Phase 4 accepted too many completed ordinary MP records");
-	exchange = caller.phase4;
-	exchange.transmit_mp_prime_records_completed =
-		V34_PHASE4_MIN_MP_PRIME_RECORDS + 1;
-	CHECK(!v34_phase4_exchange_is_valid(&exchange),
-	      "Phase 4 accepted too many completed MP-prime records");
+	      "Phase 4 accepted too many completed MP records");
 	exchange = caller.phase4;
 	exchange.transmit_mp_prime_started = false;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),

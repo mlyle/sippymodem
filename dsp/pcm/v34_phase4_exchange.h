@@ -45,13 +45,12 @@ enum v34_phase4_exchange_event {
 };
 
 enum {
-	/* Complete two ordinary MP records before acknowledging the peer.  A
-	 * reciprocal receiver may become ready after the first record begins. */
-	V34_PHASE4_MIN_MP_RECORDS = 2,
-	/* Give a peer eight complete sync-and-CRC opportunities after an early
-	 * acknowledgment. This covers a companded boundary error without holding
-	 * MP' long enough to obscure the following E transition. */
-	V34_PHASE4_MIN_MP_PRIME_RECORDS = 8,
+	/* Repeat both MP and MP' across eight complete record boundaries. The
+	 * ordinary window lets a slow 4-point/type-1 peer finish its current MP,
+	 * publish MP', and survive one missed local type-0 record before our MP'
+	 * can release it into E. The same bound gives the reciprocal receiver
+	 * repeated sync-and-CRC opportunities without obscuring E. */
+	V34_PHASE4_MP_REPEAT_RECORDS = 8,
 };
 
 struct v34_phase4_exchange_configuration {
@@ -90,7 +89,6 @@ struct v34_phase4_exchange {
 	bool transmit_mp_started;
 	uint8_t transmit_mp_records_completed;
 	bool transmit_mp_prime_started;
-	uint8_t transmit_mp_prime_records_completed;
 	bool peer_mp_received;
 	bool peer_mp_prime_received;
 	bool data_preparation_required;
