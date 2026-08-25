@@ -350,13 +350,32 @@ static bool phase_waits_for_reversal(
 
 static void advance_reversal_wait(
 	struct phase2_probe_turnaround *turnaround,
+	const struct phase2_info0_exchange *exchange,
 	struct phase2_probe_turnaround_event *event)
 {
+	struct v34_phase2_tone_measurement tone;
+
 	if (!phase_waits_for_reversal(turnaround->phase))
 		return;
 	if (++turnaround->wait_samples <
 	    PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES)
 		return;
+	/* V.34 11.2.2.2.2 returns an answerer which missed the final Tone-B
+	 * reversal to 11.2.1.2.3.  The detector has already reacquired a
+	 * continuously present Tone B, so repeat the 50-ms Tone-A turn without
+	 * discarding its phase reference.  A missing peer tone remains a bounded
+	 * terminal failure. */
+	tone = v34_phase2_tone_detector_measure(&exchange->tone_detector);
+	if (!signal_is_b(exchange) && tone.ready && tone.tone_present) {
+		turnaround->phase =
+			PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE;
+		turnaround->phase_samples_remaining =
+			PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
+		turnaround->wait_samples = 0;
+		event->kind =
+			PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED;
+		return;
+	}
 	turnaround->phase = PHASE2_PROBE_TURNAROUND_TIMED_OUT;
 	turnaround->failure =
 		PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT;
@@ -406,8 +425,10 @@ phase2_probe_turnaround_sample(
 		handle_remote_reversal(
 			&next, &next_exchange,
 			emitted.tone_event.reversal_delay_samples, &emitted);
-	advance_reversal_wait(&next, &emitted);
-	if (!finish_fixed_interval(&next, &next_exchange, &emitted))
+	advance_reversal_wait(&next, &next_exchange, &emitted);
+	if (emitted.kind !=
+		    PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED &&
+	    !finish_fixed_interval(&next, &next_exchange, &emitted))
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	advance_signal_a_probe_start(&next, &next_exchange, &emitted);
 	if (advance_signal_a_epoch)

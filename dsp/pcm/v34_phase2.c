@@ -624,6 +624,10 @@ static bool sample_turnaround(
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 	} else if (child.kind ==
+		   PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED) {
+		event->kind =
+			V34_PHASE2_EVENT_PROBE_TURNAROUND_RECOVERY_STARTED;
+	} else if (child.kind ==
 			   PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY ||
 		   child.kind ==
 			   PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY) {

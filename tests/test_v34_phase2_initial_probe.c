@@ -518,6 +518,82 @@ static bool completed_initial_probe_states(
 	return false;
 }
 
+static bool test_answerer_reversal_recovery(void)
+{
+	struct v34_phase2_initial_probe caller_probe;
+	struct v34_phase2_initial_probe answerer_probe;
+	struct v34_phase2_probe_turnaround answerer;
+	struct v34_phase2_probe_turnaround_event event = { 0 };
+	struct v34_phase2_tone_transmitter peer_tone;
+	int16_t peer_sample;
+	int16_t transmit;
+	size_t samples;
+	bool ready = false;
+
+	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe) &&
+	      /* The independently generated peer starts a new causal tone phase. */
+	      v34_phase2_tone_detector_reset(
+		      &answerer_probe.ranging.info0_exchange.transport
+			       .tone_detector) == V34_PHASE2_TONE_OK &&
+	      v34_phase2_probe_turnaround_init(
+		      &answerer, &answerer_probe) ==
+		      V34_PHASE2_PROBE_TURNAROUND_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &peer_tone, V34_CALLING_STATION, 7000) ==
+		      V34_PHASE2_TONE_OK,
+	      "answerer reversal-recovery fixture did not initialize");
+	for (samples = 0;
+	     samples < PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			       PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES +
+			       PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES;
+	     ++samples)
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &peer_sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_phase2_probe_turnaround_sample(
+			      &answerer, peer_sample, &transmit, &event) ==
+			      V34_PHASE2_PROBE_TURNAROUND_OK,
+		      "answerer reversal recovery failed at sample %zu",
+		      samples);
+	CHECK(event.kind == PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED &&
+	      answerer.control.phase ==
+		      PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE &&
+	      answerer.control.phase_samples_remaining ==
+		      PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES &&
+	      answerer.control.wait_samples == 0 &&
+	      answerer.control.failure ==
+		      PHASE2_PROBE_TURNAROUND_NO_FAILURE &&
+	      transmit == 0,
+	      "persistent Tone B did not restart the exact answerer turn");
+
+	for (samples = 0; samples < TEST_SAMPLE_LIMIT; ++samples) {
+		if (samples ==
+		    PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
+			    PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES)
+			CHECK(v34_phase2_tone_transmitter_reverse(&peer_tone) ==
+				      V34_PHASE2_TONE_OK,
+			      "peer Tone B reversal failed");
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &peer_sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_phase2_probe_turnaround_sample(
+			      &answerer, peer_sample, &transmit, &event) ==
+			      V34_PHASE2_PROBE_TURNAROUND_OK,
+		      "retried answerer turn failed at sample %zu", samples);
+		if (event.kind ==
+		    PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY) {
+			ready = true;
+			break;
+		}
+	}
+	CHECK(ready &&
+	      answerer.control.phase ==
+		      PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY &&
+	      v34_phase2_probe_turnaround_is_valid(&answerer),
+	      "retried answerer turn did not accept the returning reversal");
+	return true;
+}
+
 static bool test_bounded_failures(void)
 {
 	struct v34_phase2_ranging caller_ranging;
@@ -822,6 +898,8 @@ int main(void)
 		} tests[] = {
 			{ "bidirectional initial probe", test_bidirectional_turn },
 			{ "bidirectional probe turnaround", test_probe_turnaround },
+			{ "answerer reversal recovery",
+			  test_answerer_reversal_recovery },
 			{ "bounded failures", test_bounded_failures },
 			{ "validation", test_validation },
 			{ "turnaround failures and validation",
