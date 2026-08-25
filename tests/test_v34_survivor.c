@@ -435,6 +435,10 @@ static bool test_validation(void)
 		      &survivor, V34_TRELLIS_16_STATE) ==
 		      V34_SURVIVOR_OK,
 	      "validation survivor did not initialize");
+	for (uint8_t state = 0; state < V34_MAX_TRELLIS_STATES; ++state)
+		CHECK(survivor.path_metric[state] == 0.0,
+		      "survivor did not start state %u with equal likelihood",
+		      state);
 	input = fixture_input(
 		&parameters, V34_TRELLIS_16_STATE, 0);
 	CHECK(v34_4d_encoder_step(&encoder, &input, &encoded) ==
@@ -497,7 +501,8 @@ static bool test_validation(void)
 	      !v34_survivor_is_valid(NULL),
 	      "fresh survivor validity changed");
 	corrupted = survivor;
-	corrupted.path_metric[0] = 1.0;
+	for (uint8_t state = 0; state < 16u; ++state)
+		corrupted.path_metric[state] = 1.0;
 	CHECK(!v34_survivor_is_valid(&corrupted),
 	      "unnormalized survivor metrics were accepted");
 	corrupted = survivor;

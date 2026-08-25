@@ -120,9 +120,6 @@ enum v34_survivor_result v34_survivor_init(
 	if (survivor == NULL || trellis_state_count(selection) == 0)
 		return V34_SURVIVOR_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
-	for (uint8_t state = 1;
-	     state < V34_MAX_TRELLIS_STATES; ++state)
-		initialized.path_metric[state] = DBL_MAX;
 	initialized.selection = selection;
 	*survivor = initialized;
 	return V34_SURVIVOR_OK;
