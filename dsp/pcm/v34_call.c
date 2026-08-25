@@ -74,19 +74,6 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 		       v34_info1a_is_valid(&call->local_info1.answering);
 }
 
-static bool local_probe_is_active(const struct v34_call *call)
-{
-	if (call->stage != V34_CALL_PHASE2)
-		return false;
-	if (call->local_role == V34_ANSWERING_STATION)
-		return call->state.phase2.stage == V34_PHASE2_INITIAL_PROBE &&
-		       call->state.phase2.state.initial_probe.control.phase ==
-			       PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;
-	return call->state.phase2.stage == V34_PHASE2_RECIPROCAL_PROBE &&
-	       call->state.phase2.state.reciprocal_probe.control.phase ==
-		       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING;
-}
-
 bool v34_call_is_valid(const struct v34_call *call)
 {
 	bool child_valid;
@@ -126,9 +113,6 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
-	       v34_echo_canceller_is_valid(&call->echo) &&
-	       (call->echo.mode == V34_ECHO_TRAINING) ==
-		       local_probe_is_active(call) &&
 	       (call->failed || !child_failed);
 }
 
@@ -156,8 +140,6 @@ enum v34_call_result v34_call_init(
 	if (v34_retrain_detector_init(
 		    &initialized.retrain_detector,
 		    configuration->local_role) != V34_PHASE2_TONE_OK)
-		return V34_CALL_INVALID_ARGUMENT;
-	if (v34_echo_canceller_init(&initialized.echo) != V34_ECHO_OK)
 		return V34_CALL_INVALID_ARGUMENT;
 	if (!v34_call_is_valid(&initialized))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -489,48 +471,6 @@ static enum v34_call_result reset_retrain_detector(struct v34_call *call)
 	return V34_CALL_OK;
 }
 
-static bool local_probe_started(
-	const struct v34_call *call,
-	const struct v34_call_observation *observation)
-{
-	if (observation->processed != V34_CALL_PHASE2)
-		return false;
-	return (call->local_role == V34_ANSWERING_STATION &&
-		observation->events.phase2.kind ==
-			V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) ||
-	       (call->local_role == V34_CALLING_STATION &&
-		observation->events.phase2.kind ==
-			V34_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED);
-}
-
-static enum v34_call_result advance_echo(
-	struct v34_call *call, int16_t transmit_sample,
-	const struct v34_echo_prepared_sample *prepared,
-	const struct v34_call_observation *observation,
-	enum v34_call_result sample_result)
-{
-	if (v34_echo_canceller_commit(
-		    &call->echo, transmit_sample, prepared) != V34_ECHO_OK)
-		return V34_CALL_NUMERIC_FAILURE;
-	/* A terminal probe failure ends the local training interval just as a
-	 * successful probe handoff does.  Freeze or discard the model before
-	 * publishing the failed call so its owned state remains releasable. */
-	if (call->echo.mode == V34_ECHO_TRAINING &&
-	    !local_probe_is_active(call))
-		if (v34_echo_canceller_finish_training(&call->echo) !=
-		    V34_ECHO_OK)
-			return V34_CALL_NUMERIC_FAILURE;
-	if (sample_result != V34_CALL_OK)
-		return sample_result;
-	if (local_probe_started(call, observation))
-		return v34_echo_canceller_start_training(
-			       &call->echo,
-			       observation->events.phase2
-				       .round_trip_delay_samples) == V34_ECHO_OK ?
-			       V34_CALL_OK : V34_CALL_NUMERIC_FAILURE;
-	return V34_CALL_OK;
-}
-
 enum v34_call_result v34_call_sample(
 	struct v34_call *call, int16_t received_sample,
 	v34_mapping_frame_source source, void *source_context,
@@ -539,10 +479,8 @@ enum v34_call_result v34_call_sample(
 {
 	struct v34_call_observation emitted = { 0 };
 	struct v34_received_mapping_frame decoded;
-	struct v34_echo_prepared_sample echo_sample;
 	enum v34_call_result result;
 	int16_t generated = 0;
-	int16_t input_sample;
 
 	if (!v34_call_is_valid(call) || transmit_sample == NULL ||
 	    observation == NULL || received == NULL ||
@@ -550,23 +488,19 @@ enum v34_call_result v34_call_sample(
 		return V34_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return V34_CALL_FAILED;
-	if (v34_echo_canceller_prepare(
-		    &call->echo, received_sample, &input_sample,
-		    &echo_sample) != V34_ECHO_OK)
-		return V34_CALL_NUMERIC_FAILURE;
 	emitted.processed = call->stage;
 	switch (call->stage) {
 	case V34_CALL_PHASE2:
 		result = sample_phase2(
-			call, input_sample, &generated, &emitted);
+			call, received_sample, &generated, &emitted);
 		break;
 	case V34_CALL_PHASE3:
 		result = sample_phase3(
-			call, input_sample, &generated, &emitted);
+			call, received_sample, &generated, &emitted);
 		break;
 	case V34_CALL_PHASE4:
 		result = sample_phase4(
-			call, input_sample, source, source_context,
+			call, received_sample, source, source_context,
 			&generated, &emitted, &decoded);
 		if (result == V34_CALL_SOURCE_FAILURE)
 			return result;
@@ -585,9 +519,7 @@ enum v34_call_result v34_call_sample(
 		result = reset_retrain_detector(call);
 	else if (result == V34_CALL_OK && emitted.processed == call->stage &&
 		 retrain_detection_is_active(call))
-		result = observe_retrain_tone(call, input_sample);
-	result = advance_echo(
-		call, generated, &echo_sample, &emitted, result);
+		result = observe_retrain_tone(call, received_sample);
 	if (result != V34_CALL_OK)
 		call->failed = true;
 	emitted.next = call->stage;

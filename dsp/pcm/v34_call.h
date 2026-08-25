@@ -3,7 +3,6 @@
 #ifndef V34_CALL_H
 #define V34_CALL_H
 
-#include "v34_echo_canceller.h"
 #include "v34_phase2.h"
 #include "v34_phase3_exchange.h"
 #include "v34_phase4_exchange.h"
@@ -86,7 +85,6 @@ struct v34_call {
 	struct v34_phase3_exchange_configuration phase3_configuration;
 	struct v34_phase4_exchange_configuration phase4_configuration;
 	struct v34_retrain_detector retrain_detector;
-	struct v34_echo_canceller echo;
 	int16_t phase2_nominal_amplitude;
 	enum v34_station_role local_role;
 	enum v34_call_stage stage;
