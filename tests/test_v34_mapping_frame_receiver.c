@@ -252,7 +252,7 @@ static bool test_generated_round_trip(void)
 	return true;
 }
 
-static bool test_noncodebook_decision_is_erased(void)
+static bool test_noncodebook_decision_is_recovered(void)
 {
 	struct v34_frame_geometry geometry;
 	struct modem_pair pair;
@@ -266,7 +266,8 @@ static bool test_noncodebook_decision_is_erased(void)
 		decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
 	const struct v34_4d_mapping_input mapping = { 0 };
 	uint8_t ring_index[V34_2D_SYMBOLS_PER_4D_INTERVAL];
-	uint8_t ignored;
+	uint8_t expected_primary[V34_MAX_MAPPING_FRAME_BITS] = { 0 };
+	bool non_idle_seen = false;
 
 	CHECK(initialize_pair(&pair, &CONFIGURATIONS[3], &geometry),
 	      "non-codebook receiver fixture did not initialize");
@@ -289,15 +290,15 @@ static bool test_noncodebook_decision_is_erased(void)
 	expected_decoder = pair.decoder;
 	CHECK(v34_decode_mapping_frame(
 		      &expected_decoder, &frame, decided, &recovered) ==
-		      V34_MAPPING_FRAME_DECODER_OK &&
-	      !recovered.shell_decision_exact,
-	      "outside shell sequence was not recognized as a channel error");
+		      V34_MAPPING_FRAME_DECODER_OK,
+	      "outside shell sequence was not reduced to frame data bits");
 	expected_descrambler = pair.descrambler;
 	for (uint8_t index = 0; index < recovered.primary_bit_count; ++index) {
 		CHECK(v34_descramble_group(
 			      &expected_descrambler, recovered.primary_bits[index], 1,
-			      &ignored) == V34_FRAMING_OK,
+			      &expected_primary[index]) == V34_FRAMING_OK,
 		      "expected descrambler did not advance at bit %u", index);
+		non_idle_seen |= expected_primary[index] != 1;
 	}
 	CHECK(v34_receive_mapping_frame(
 		      &pair.receive_schedule, &pair.descrambler, &pair.decoder,
@@ -310,14 +311,13 @@ static bool test_noncodebook_decision_is_erased(void)
 		     sizeof(expected_decoder)) == 0 &&
 	      received.primary_bit_count == frame.primary_bits &&
 	      received.auxiliary_bit_count ==
-		      (uint8_t)frame.carries_auxiliary_bit,
+		      (uint8_t)frame.carries_auxiliary_bit &&
+	      memcmp(received.primary_bits, expected_primary,
+		     received.primary_bit_count) == 0 &&
+	      (!received.auxiliary_bit_count ||
+	       received.auxiliary_bit == recovered.auxiliary_bit) &&
+	      non_idle_seen,
 	      "non-codebook decision did not advance receiver state");
-	for (uint8_t index = 0; index < received.primary_bit_count; ++index)
-		CHECK(received.primary_bits[index] == 1,
-		      "non-codebook decision exposed primary bit %u", index);
-	if (received.auxiliary_bit_count != 0)
-		CHECK(received.auxiliary_bit == 1,
-		      "non-codebook decision exposed its auxiliary bit");
 	return true;
 }
 
@@ -493,8 +493,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated round trip", test_generated_round_trip },
-		{ "non-codebook decision erasure",
-		  test_noncodebook_decision_is_erased },
+		{ "non-codebook decision recovery",
+		  test_noncodebook_decision_is_recovered },
 		{ "transactional boundaries", test_transactional_boundaries },
 	};
 	unsigned int failures = 0;

@@ -48,11 +48,7 @@ v34_receive_mapping_frame(
 			    &generated.primary_bits[index]) !=
 		    V34_FRAMING_OK)
 			return V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT;
-		if (!recovered.shell_decision_exact)
-			generated.primary_bits[index] = 1;
 	}
-	if (!recovered.shell_decision_exact && generated.auxiliary_bit_count != 0)
-		generated.auxiliary_bit = 1;
 	*schedule = next_schedule;
 	*descrambler = next_descrambler;
 	*mapping_decoder = next_decoder;

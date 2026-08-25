@@ -37,13 +37,12 @@ enum v34_shell_mapper_result v34_shell_unmap(
 	uint32_t *shell_label);
 
 /* Recover the low `shell_bits` data bits from a received ring decision.
- * A decision outside that mapping-frame codebook is reduced modulo 2^K so
- * an ordinary channel error cannot terminate the data stream. `exact`
- * distinguishes a transmitted codeword from this bounded fallback. */
+ * A decision outside that mapping-frame codebook is reduced modulo 2^K, as
+ * the frame bit extraction would truncate the recovered shell word. */
 enum v34_shell_mapper_result v34_shell_unmap_decision(
 	const struct v34_mapping_parameters *parameters,
 	const struct v34_ring_indices *indices,
-	uint8_t shell_bits, uint32_t *shell_label, bool *exact);
+	uint8_t shell_bits, uint32_t *shell_label);
 
 bool v34_ring_indices_are_valid(
 	const struct v34_ring_indices *indices,

@@ -66,8 +66,7 @@ static bool recovered_matches(
 	const uint8_t primary[V34_MAX_MAPPING_FRAME_BITS],
 	uint8_t auxiliary)
 {
-	if (!recovered->shell_decision_exact ||
-	    recovered->primary_bit_count != frame->primary_bits ||
+	if (recovered->primary_bit_count != frame->primary_bits ||
 	    recovered->auxiliary_bit_count !=
 		    (uint8_t)frame->carries_auxiliary_bit ||
 	    memcmp(recovered->primary_bits, primary, frame->primary_bits) != 0 ||

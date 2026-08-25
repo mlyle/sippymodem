@@ -159,7 +159,6 @@ static bool verify_label(
 	uint64_t recovered = 0;
 	uint32_t production_recovered = UINT32_MAX;
 	uint32_t decision_recovered = UINT32_MAX;
-	bool exact = false;
 
 	CHECK(v34_shell_map(
 		      parameters, shell_label, &indices) ==
@@ -180,9 +179,9 @@ static bool verify_label(
 	      production_recovered == shell_label &&
 	      v34_shell_unmap_decision(
 		      parameters, &indices, parameters->shell_mapper_bits,
-		      &decision_recovered, &exact) ==
+		      &decision_recovered) ==
 		      V34_SHELL_MAPPER_OK &&
-	      exact && decision_recovered == shell_label,
+	      decision_recovered == shell_label,
 	      "K=%u M=%u mapped %u to independently ranked %llu",
 	      parameters->shell_mapper_bits, parameters->ring_count,
 	      shell_label, (unsigned long long)recovered);
@@ -397,7 +396,6 @@ static bool test_validation(void)
 	};
 	uint32_t shell_label = UINT32_C(0xa5a5a5a5);
 	uint64_t recovered = 0;
-	bool exact = true;
 
 	memset(&indices, 0x5a, sizeof(indices));
 	saved = indices;
@@ -449,27 +447,22 @@ static bool test_validation(void)
 		      &indices, expanded.ring_count, &counts, &recovered) &&
 	      v34_shell_unmap_decision(
 		      &expanded, &indices, expanded.shell_mapper_bits,
-		      &shell_label, &exact) ==
+		      &shell_label) ==
 		      V34_SHELL_MAPPER_OK &&
-	      !exact && shell_label ==
+	      shell_label ==
 		      (uint32_t)(recovered % (UINT32_C(1) <<
-					       expanded.shell_mapper_bits)),
+				       expanded.shell_mapper_bits)),
 	      "unused shell decision did not recover bounded data bits");
 	shell_label = UINT32_C(0xa5a5a5a5);
-	exact = true;
 	CHECK(v34_shell_unmap_decision(
-		      NULL, &indices, 0, &shell_label, &exact) ==
-		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
-	      v34_shell_unmap_decision(
-		      &expanded, &indices, expanded.shell_mapper_bits,
-		      &shell_label, NULL) ==
+		      NULL, &indices, 0, &shell_label) ==
 		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
 	      v34_shell_unmap_decision(
 		      &expanded, &indices,
 		      (uint8_t)(expanded.shell_mapper_bits + 1u),
-		      &shell_label, &exact) ==
+		      &shell_label) ==
 		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
-	      shell_label == UINT32_C(0xa5a5a5a5) && exact,
+	      shell_label == UINT32_C(0xa5a5a5a5),
 	      "invalid received-shell recovery changed its outputs");
 	CHECK(strcmp(v34_shell_mapper_result_name(
 		     V34_SHELL_MAPPER_OK),
