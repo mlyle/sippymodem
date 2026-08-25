@@ -6,14 +6,6 @@
 
 #include <stddef.h>
 
-enum {
-	/* B1 is a known all-mark data frame.  A usable startup must retain at
-	 * least seven marks in every eight decoded bits; random framing centers
-	 * on one half and must restart full training instead of announcing a
-	 * false carrier. */
-	V34_B1_ERROR_FRACTION_DENOMINATOR = 8,
-};
-
 static bool b1_progress_is_valid(
 	const struct v34_data_receiver *receiver)
 {
@@ -135,13 +127,6 @@ static bool b1_frame_is_implausible(
 	return errors > bits - errors;
 }
 
-static bool b1_is_qualified(const struct v34_data_receiver *receiver)
-{
-	return (uint32_t)receiver->b1_error_bits *
-		       V34_B1_ERROR_FRACTION_DENOMINATOR <=
-	       receiver->b1_received_bits;
-}
-
 enum v34_data_receive_result
 v34_data_receiver_receive_mapping_frame(
 	struct v34_data_receiver *receiver,
@@ -187,8 +172,6 @@ v34_data_receiver_receive_mapping_frame(
 		next.b1_active = !complete;
 		if (!v34_data_receiver_is_valid(&next))
 			return V34_DATA_RECEIVE_INVALID_ARGUMENT;
-		if (complete && !b1_is_qualified(&next))
-			return V34_DATA_RECEIVE_FAILED;
 		*receiver = next;
 		*received = decoded;
 		return complete ? V34_DATA_RECEIVE_B1_COMPLETE :

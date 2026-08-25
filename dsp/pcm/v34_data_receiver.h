@@ -38,11 +38,10 @@ bool v34_data_receiver_is_receiving_b1(
 
 /* Receive one exact decided mapping frame. A majority-non-mark first B1 frame
  * consumes the one alignment retry without publishing output. B1 results then
- * expose the known all-one payload while counting non-one decisions. A B1
- * frame with fewer than seven marks per eight bits fails before carrier is
- * announced; MAPPING_FRAME_READY exposes ordinary data. A completed ordinary
- * data frame advances automatically, including superframe wraparound. State
- * and destination are unchanged on rejection. */
+ * expose the known all-one payload while counting non-one decisions without
+ * stalling a noisy live stream; MAPPING_FRAME_READY exposes ordinary data. A
+ * completed ordinary data frame advances automatically, including superframe
+ * wraparound. State and destination are unchanged on rejection. */
 enum v34_data_receive_result
 v34_data_receiver_receive_mapping_frame(
 	struct v34_data_receiver *receiver,

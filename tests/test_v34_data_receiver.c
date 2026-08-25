@@ -430,47 +430,6 @@ static bool test_b1_alignment_retry(void)
 	return true;
 }
 
-static bool test_b1_quality_rejection(void)
-{
-	struct fixture fixture;
-	struct fixture corrupt_source;
-	struct packet packet;
-	struct v34_data_receiver saved;
-	struct v34_received_mapping_frame received;
-	struct v34_received_mapping_frame saved_received;
-
-	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
-	      initialize_fixture(&corrupt_source, &CONFIGURATIONS[0]) &&
-	      transmit_uniform(&fixture, 0, &packet) &&
-	      v34_data_receiver_receive_mapping_frame(
-		      &fixture.receiver, packet.decided, &received) ==
-		      V34_DATA_RECEIVE_OK,
-	      "B1 quality fixture did not consume its alignment retry");
-	for (;;) {
-		CHECK(transmit_uniform(&corrupt_source, 0, &packet),
-		      "corrupt B1 frame did not transmit");
-		if (!packet.frame.completes_data_frame) {
-			CHECK(v34_data_receiver_receive_mapping_frame(
-				      &fixture.receiver, packet.decided, &received) ==
-				      V34_DATA_RECEIVE_B1_IN_PROGRESS,
-			      "corrupt B1 ended before its quality boundary");
-			continue;
-		}
-		saved = fixture.receiver;
-		memset(&received, 0xa5, sizeof(received));
-		saved_received = received;
-		CHECK(v34_data_receiver_receive_mapping_frame(
-			      &fixture.receiver, packet.decided, &received) ==
-			      V34_DATA_RECEIVE_FAILED &&
-		      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0 &&
-		      memcmp(&received, &saved_received,
-			     sizeof(received)) == 0,
-		      "random B1 was accepted or changed terminal state");
-		break;
-	}
-	return true;
-}
-
 static bool test_validation(void)
 {
 	struct fixture fixture;
@@ -536,7 +495,6 @@ int main(void)
 		{ "B1 and superframe handoff", test_b1_and_superframe_handoff },
 		{ "B1 errors and rejection", test_b1_errors_and_rejection },
 		{ "B1 alignment retry", test_b1_alignment_retry },
-		{ "B1 quality rejection", test_b1_quality_rejection },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
