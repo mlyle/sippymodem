@@ -623,16 +623,6 @@ static bool test_completion_and_validation(void)
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
 	      !v34_phase3_s_receiver_get_detection(&saved, NULL),
 	      "invalid receiver arguments were accepted");
-	CHECK(strcmp(v34_phase3_s_receiver_result_name(
-			     V34_PHASE3_S_RECEIVER_DETECTED),
-		     "detected") == 0 &&
-	      strcmp(v34_phase3_s_receiver_result_name(
-			     V34_PHASE3_S_RECEIVER_COMPLETE),
-		     "complete") == 0 &&
-	      strcmp(v34_phase3_s_receiver_result_name(
-			     (enum v34_phase3_s_receiver_result)99),
-		     "unknown") == 0,
-	      "marker result names changed");
 	return true;
 }
 

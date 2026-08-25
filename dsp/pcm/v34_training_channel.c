@@ -39,15 +39,3 @@ v34_training_channel_decide(
 	*clockwise_quarter_turns = next_clockwise_quarter_turns;
 	return V34_TRAINING_CHANNEL_OK;
 }
-
-const char *v34_training_channel_result_name(
-	enum v34_training_channel_result result)
-{
-	switch (result) {
-	case V34_TRAINING_CHANNEL_OK:
-		return "ok";
-	case V34_TRAINING_CHANNEL_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

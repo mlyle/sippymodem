@@ -433,19 +433,3 @@ bool v34_phase3_s_receiver_get_detection(
 	*detection = receiver->detection;
 	return true;
 }
-
-const char *v34_phase3_s_receiver_result_name(
-	enum v34_phase3_s_receiver_result result)
-{
-	switch (result) {
-	case V34_PHASE3_S_RECEIVER_OK:
-		return "ok";
-	case V34_PHASE3_S_RECEIVER_DETECTED:
-		return "detected";
-	case V34_PHASE3_S_RECEIVER_COMPLETE:
-		return "complete";
-	case V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

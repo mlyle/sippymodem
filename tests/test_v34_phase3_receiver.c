@@ -401,14 +401,8 @@ static bool test_validation_and_transactionality(void)
 	      !v34_phase3_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_handoff_is_valid(NULL) &&
 	      !v34_phase3_prefix_handoff_is_valid(NULL) &&
-	      !v34_phase3_s_detection_is_valid(NULL) &&
-	      strcmp(v34_phase3_receiver_result_name(
-		     V34_PHASE3_RECEIVER_PP_COMPLETE),
-		     "PP complete") == 0 &&
-	      strcmp(v34_phase3_receiver_result_name(
-		     (enum v34_phase3_receiver_result)99),
-		     "unknown") == 0,
-	      "Phase 3 validation or result names changed");
+	      !v34_phase3_s_detection_is_valid(NULL),
+	      "Phase 3 validation changed");
 	return true;
 }
 

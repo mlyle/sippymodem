@@ -249,21 +249,3 @@ bool v34_phase3_j_receiver_get_detection(
 	*detection = receiver->detection;
 	return true;
 }
-
-const char *v34_phase3_j_receiver_result_name(
-	enum v34_phase3_j_receiver_result result)
-{
-	switch (result) {
-	case V34_PHASE3_J_RECEIVER_OK:
-		return "ok";
-	case V34_PHASE3_J_RECEIVER_DETECTED:
-		return "detected";
-	case V34_PHASE3_J_RECEIVER_COMPLETE:
-		return "complete";
-	case V34_PHASE3_J_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE3_J_RECEIVER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

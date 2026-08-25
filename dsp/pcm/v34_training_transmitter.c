@@ -489,25 +489,3 @@ bool v34_training_transmitter_phase4_e_complete(
 	       training->stage == V34_TRAINING_TRANSMITTER_PHASE4_E &&
 	       v34_phase4_e_sequence_is_complete(&training->phase4.e);
 }
-
-const char *v34_training_transmitter_result_name(
-	enum v34_training_transmitter_result result)
-{
-	switch (result) {
-	case V34_TRAINING_TRANSMITTER_OK:
-		return "ok";
-	case V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_TRAINING_TRANSMITTER_INVALID_STATE:
-		return "invalid state";
-	case V34_TRAINING_TRANSMITTER_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V34_TRAINING_TRANSMITTER_OUT_OF_RANGE:
-		return "out of range";
-	case V34_TRAINING_TRANSMITTER_CLIPPING_RISK:
-		return "clipping risk";
-	case V34_TRAINING_TRANSMITTER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

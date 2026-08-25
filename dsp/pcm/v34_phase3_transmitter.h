@@ -85,7 +85,4 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j_prime(
 	const struct v34_phase3_transmitter *transmitter,
 	struct v34_phase4_j_prime_sequence *j_prime);
 
-const char *v34_phase3_transmitter_result_name(
-	enum v34_phase3_transmitter_result result);
-
 #endif

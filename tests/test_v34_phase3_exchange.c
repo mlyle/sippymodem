@@ -256,10 +256,8 @@ static bool run_generated_duplex_exchange(
 			      &answerer_events);
 		CHECK(caller_result == V34_PHASE3_EXCHANGE_OK &&
 		      answerer_result == V34_PHASE3_EXCHANGE_OK,
-		      "codec %d Phase 3 exchange failed at sample %zu: %s/%s",
-		      codec, index,
-		      v34_phase3_exchange_result_name(caller_result),
-		      v34_phase3_exchange_result_name(answerer_result));
+		      "codec %d Phase 3 exchange failed at sample %zu: %d/%d",
+		      codec, index, caller_result, answerer_result);
 		if (!answerer_was_transmitting) {
 			CHECK(next_answer_to_call == 0,
 			      "answerer emitted sample %d during initial silence",
@@ -551,13 +549,7 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_phase3_exchange_is_valid(NULL) &&
 	      !v34_phase3_exchange_has_failed(NULL) &&
 	      !v34_phase3_exchange_is_handoff_ready(NULL) &&
-	      !v34_phase3_exchange_handoff_is_valid(NULL) &&
-	      strcmp(v34_phase3_exchange_result_name(
-		     V34_PHASE3_EXCHANGE_SEQUENCE_MISMATCH),
-		     "sequence mismatch") == 0 &&
-	      strcmp(v34_phase3_exchange_result_name(
-		     (enum v34_phase3_exchange_result)99),
-		     "unknown") == 0,
+	      !v34_phase3_exchange_handoff_is_valid(NULL),
 	      "Phase 3 validation helpers returned the wrong result");
 	return true;
 }

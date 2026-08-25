@@ -401,33 +401,3 @@ enum v34_phase3_receiver_result v34_phase3_receiver_handoff(
 	*handoff = generated;
 	return V34_PHASE3_RECEIVER_OK;
 }
-
-const char *v34_phase3_receiver_result_name(
-	enum v34_phase3_receiver_result result)
-{
-	switch (result) {
-	case V34_PHASE3_RECEIVER_OK:
-		return "ok";
-	case V34_PHASE3_RECEIVER_S_DETECTED:
-		return "S detected";
-	case V34_PHASE3_RECEIVER_MD_COMPLETE:
-		return "MD complete";
-	case V34_PHASE3_RECEIVER_REPEATED_S_DETECTED:
-		return "repeated S detected";
-	case V34_PHASE3_RECEIVER_PP_COMPLETE:
-		return "PP complete";
-	case V34_PHASE3_RECEIVER_J_DETECTED:
-		return "J detected";
-	case V34_PHASE3_RECEIVER_COMPLETE:
-		return "complete";
-	case V34_PHASE3_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE3_RECEIVER_INVALID_STATE:
-		return "invalid state";
-	case V34_PHASE3_RECEIVER_OUT_OF_RANGE:
-		return "out of range";
-	case V34_PHASE3_RECEIVER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

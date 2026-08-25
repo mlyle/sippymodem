@@ -63,7 +63,4 @@ v34_phase3_line_transmitter_handoff(
 	const struct v34_phase3_line_transmitter *transmitter,
 	struct v34_training_line *line);
 
-const char *v34_phase3_line_transmitter_result_name(
-	enum v34_phase3_line_transmitter_result result);
-
 #endif /* V34_PHASE3_LINE_TRANSMITTER_H */

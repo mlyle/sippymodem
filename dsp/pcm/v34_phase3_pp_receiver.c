@@ -143,21 +143,3 @@ enum v34_phase3_pp_receiver_result v34_phase3_pp_receiver_handoff(
 	*handoff = generated;
 	return V34_PHASE3_PP_RECEIVER_OK;
 }
-
-const char *v34_phase3_pp_receiver_result_name(
-	enum v34_phase3_pp_receiver_result result)
-{
-	switch (result) {
-	case V34_PHASE3_PP_RECEIVER_OK:
-		return "ok";
-	case V34_PHASE3_PP_RECEIVER_COMPLETE:
-		return "complete";
-	case V34_PHASE3_PP_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE3_PP_RECEIVER_INVALID_STATE:
-		return "invalid state";
-	case V34_PHASE3_PP_RECEIVER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

@@ -264,21 +264,3 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j_prime(
 		return V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE;
 	return V34_PHASE3_TRANSMITTER_OK;
 }
-
-const char *v34_phase3_transmitter_result_name(
-	enum v34_phase3_transmitter_result result)
-{
-	switch (result) {
-	case V34_PHASE3_TRANSMITTER_OK:
-		return "ok";
-	case V34_PHASE3_TRANSMITTER_DONE:
-		return "complete";
-	case V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE3_TRANSMITTER_INVALID_STATE:
-		return "invalid state";
-	case V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

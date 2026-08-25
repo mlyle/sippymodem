@@ -453,27 +453,3 @@ enum v34_phase3_exchange_result v34_phase3_exchange_handoff(
 	*handoff = generated;
 	return V34_PHASE3_EXCHANGE_OK;
 }
-
-const char *v34_phase3_exchange_result_name(
-	enum v34_phase3_exchange_result result)
-{
-	switch (result) {
-	case V34_PHASE3_EXCHANGE_OK:
-		return "ok";
-	case V34_PHASE3_EXCHANGE_FAILED:
-		return "failed";
-	case V34_PHASE3_EXCHANGE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE3_EXCHANGE_INVALID_STATE:
-		return "invalid state";
-	case V34_PHASE3_EXCHANGE_OUT_OF_RANGE:
-		return "out of range";
-	case V34_PHASE3_EXCHANGE_CLIPPING_RISK:
-		return "clipping risk";
-	case V34_PHASE3_EXCHANGE_SEQUENCE_MISMATCH:
-		return "sequence mismatch";
-	case V34_PHASE3_EXCHANGE_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

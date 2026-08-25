@@ -950,17 +950,8 @@ static bool test_initialization(void)
 	CHECK(!v34_training_transmitter_is_valid(NULL) &&
 	      !v34_training_transmitter_phase4_trn_ready(NULL) &&
 	      !v34_training_transmitter_phase4_mp_record_complete(NULL) &&
-	      !v34_training_transmitter_phase4_e_complete(NULL) &&
-	      strcmp(v34_training_transmitter_result_name(
-		     V34_TRAINING_TRANSMITTER_CLIPPING_RISK),
-		     "clipping risk") == 0 &&
-	      strcmp(v34_training_transmitter_result_name(
-		     V34_TRAINING_TRANSMITTER_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v34_training_transmitter_result_name(
-		     (enum v34_training_transmitter_result)99),
-		     "unknown") == 0,
-	      "training validation or result names changed");
+	      !v34_training_transmitter_phase4_e_complete(NULL),
+	      "training validation changed");
 	return true;
 }
 

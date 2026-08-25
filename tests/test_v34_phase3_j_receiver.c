@@ -328,17 +328,8 @@ static bool test_validation_and_range(void)
 	CHECK(!v34_phase3_j_receiver_is_valid(NULL) &&
 	      !v34_phase3_j_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_j_receiver_is_complete(&corrupt) &&
-	      !v34_phase3_j_receiver_get_detection(&saved, NULL) &&
-	      strcmp(v34_phase3_j_receiver_result_name(
-			     V34_PHASE3_J_RECEIVER_DETECTED),
-		     "detected") == 0 &&
-	      strcmp(v34_phase3_j_receiver_result_name(
-			     V34_PHASE3_J_RECEIVER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_phase3_j_receiver_result_name(
-			     (enum v34_phase3_j_receiver_result)99),
-		     "unknown") == 0,
-	      "J receiver validation or result names changed");
+	      !v34_phase3_j_receiver_get_detection(&saved, NULL),
+	      "J receiver validation changed");
 	return true;
 }
 

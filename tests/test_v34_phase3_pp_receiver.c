@@ -213,14 +213,8 @@ static bool test_validation_and_transactionality(void)
 	corrupt.adaptation_targets.emitted_symbols = 1;
 	CHECK(!v34_phase3_pp_receiver_is_valid(NULL) &&
 	      !v34_phase3_pp_receiver_is_valid(&corrupt) &&
-	      !v34_phase3_pp_receiver_is_complete(&corrupt) &&
-	      strcmp(v34_phase3_pp_receiver_result_name(
-			     V34_PHASE3_PP_RECEIVER_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_phase3_pp_receiver_result_name(
-			     (enum v34_phase3_pp_receiver_result)99),
-		     "unknown") == 0,
-	      "PP receiver validation or result names changed");
+	      !v34_phase3_pp_receiver_is_complete(&corrupt),
+	      "PP receiver validation changed");
 	return true;
 }
 

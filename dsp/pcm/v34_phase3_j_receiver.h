@@ -80,7 +80,4 @@ bool v34_phase3_j_receiver_get_detection(
 	const struct v34_phase3_j_receiver *receiver,
 	struct v34_phase3_j_detection *detection);
 
-const char *v34_phase3_j_receiver_result_name(
-	enum v34_phase3_j_receiver_result result);
-
 #endif /* V34_PHASE3_J_RECEIVER_H */

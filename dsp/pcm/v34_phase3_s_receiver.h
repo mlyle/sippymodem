@@ -104,7 +104,4 @@ bool v34_phase3_s_receiver_get_detection(
 	const struct v34_phase3_s_receiver *receiver,
 	struct v34_phase3_s_detection *detection);
 
-const char *v34_phase3_s_receiver_result_name(
-	enum v34_phase3_s_receiver_result result);
-
 #endif /* V34_PHASE3_S_RECEIVER_H */

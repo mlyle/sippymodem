@@ -112,7 +112,4 @@ bool v34_training_transmitter_phase4_mp_record_complete(
 bool v34_training_transmitter_phase4_e_complete(
 	const struct v34_training_transmitter *training);
 
-const char *v34_training_transmitter_result_name(
-	enum v34_training_transmitter_result result);
-
 #endif

@@ -319,13 +319,6 @@ static bool test_validation_and_overflow(void)
 	      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
 	      memcmp(&point, &saved_point, sizeof(point)) == 0,
 	      "TRN counter overflow was not transactional");
-	CHECK(strcmp(v34_phase3_transmitter_result_name(
-		      V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE),
-		      "numeric failure") == 0 &&
-	      strcmp(v34_phase3_transmitter_result_name(
-		      (enum v34_phase3_transmitter_result)99),
-		      "unknown") == 0,
-	      "Phase 3 transmitter result names changed");
 	return true;
 }
 

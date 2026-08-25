@@ -105,7 +105,4 @@ enum v34_phase3_exchange_result v34_phase3_exchange_handoff(
 	const struct v34_phase3_exchange *exchange,
 	struct v34_phase3_exchange_handoff *handoff);
 
-const char *v34_phase3_exchange_result_name(
-	enum v34_phase3_exchange_result result);
-
 #endif /* V34_PHASE3_EXCHANGE_H */

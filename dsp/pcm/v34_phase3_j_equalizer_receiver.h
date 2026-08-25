@@ -63,7 +63,4 @@ v34_phase3_j_equalizer_receiver_handoff(
 	const struct v34_phase3_j_equalizer_receiver *receiver,
 	struct v34_phase3_j_handoff *handoff);
 
-const char *v34_phase3_j_equalizer_receiver_result_name(
-	enum v34_phase3_j_equalizer_receiver_result result);
-
 #endif /* V34_PHASE3_J_EQUALIZER_RECEIVER_H */

@@ -23,7 +23,4 @@ v34_training_channel_decide(
 	const struct qam_point *received, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *v34_training_channel_result_name(
-	enum v34_training_channel_result result);
-
 #endif
