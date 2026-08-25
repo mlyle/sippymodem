@@ -2,6 +2,7 @@
 
 #include "echo_frontend.h"
 
+#include "memory_region.h"
 #include "phase.h"
 
 #include <limits.h>
@@ -62,25 +63,6 @@ _Static_assert(
 		V32_ECHO_FRONTEND_FILTER_PHASES *
 		V32_ECHO_FRONTEND_FILTER_TAPS,
 	"V.32 line filter has the wrong shape");
-
-static bool ranges_overlap(
-	const void *left, size_t left_bytes,
-	const void *right, size_t right_bytes)
-{
-	uintptr_t left_start = (uintptr_t)left;
-	uintptr_t right_start = (uintptr_t)right;
-	uintptr_t left_end;
-	uintptr_t right_end;
-
-	if (left_bytes == 0 || right_bytes == 0)
-		return false;
-	if (left_bytes > UINTPTR_MAX - left_start ||
-	    right_bytes > UINTPTR_MAX - right_start)
-		return true;
-	left_end = left_start + left_bytes;
-	right_end = right_start + right_bytes;
-	return left_start < right_end && right_start < left_end;
-}
 
 static bool echo_header_is_valid(
 	const struct v32_echo_canceller *echo)
@@ -285,18 +267,21 @@ enum v32_echo_result v32_echo_frontend_sample(
 	if (!frontend_header_is_valid(frontend))
 		return V32_ECHO_INVALID_STATE;
 	if (cleaned == NULL || cleaned_ready == NULL ||
-	    ranges_overlap(cleaned, sizeof(*cleaned),
+	    memory_regions_overlap(cleaned, sizeof(*cleaned),
 			   frontend, sizeof(*frontend)) ||
-	    ranges_overlap(cleaned_ready, sizeof(*cleaned_ready),
+	    memory_regions_overlap(cleaned_ready, sizeof(*cleaned_ready),
 			   frontend, sizeof(*frontend)) ||
-	    ranges_overlap(cleaned, sizeof(*cleaned),
+	    memory_regions_overlap(cleaned, sizeof(*cleaned),
 			   cleaned_ready, sizeof(*cleaned_ready)) ||
 	    (accepted_reference != NULL &&
-	     (ranges_overlap(accepted_reference, sizeof(*accepted_reference),
+	     (memory_regions_overlap(
+		      accepted_reference, sizeof(*accepted_reference),
 			     frontend, sizeof(*frontend)) ||
-	      ranges_overlap(accepted_reference, sizeof(*accepted_reference),
+	      memory_regions_overlap(
+		      accepted_reference, sizeof(*accepted_reference),
 			     cleaned, sizeof(*cleaned)) ||
-	      ranges_overlap(accepted_reference, sizeof(*accepted_reference),
+	      memory_regions_overlap(
+		      accepted_reference, sizeof(*accepted_reference),
 			     cleaned_ready, sizeof(*cleaned_ready)))))
 		return V32_ECHO_INVALID_ARGUMENT;
 	produces = frontend->filter.inputs_needed == 1;

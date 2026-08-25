@@ -2,6 +2,8 @@
 
 #include "echo_canceller.h"
 
+#include "memory_region.h"
+
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -109,25 +111,6 @@ enum v32_echo_result v32_echo_canceller_freeze(
 	return V32_ECHO_OK;
 }
 
-static bool ranges_overlap(
-	const void *left, size_t left_bytes,
-	const void *right, size_t right_bytes)
-{
-	uintptr_t left_start = (uintptr_t)left;
-	uintptr_t right_start = (uintptr_t)right;
-	uintptr_t left_end;
-	uintptr_t right_end;
-
-	if (left_bytes == 0 || right_bytes == 0)
-		return false;
-	if (left_bytes > UINTPTR_MAX - left_start ||
-	    right_bytes > UINTPTR_MAX - right_start)
-		return true;
-	left_end = left_start + left_bytes;
-	right_end = right_start + right_bytes;
-	return left_start < right_end && right_start < left_end;
-}
-
 enum v32_echo_result v32_echo_canceller_push_reference(
 	struct v32_echo_canceller *canceller,
 	const struct qam_point *reference)
@@ -137,7 +120,7 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 	if (!state_header_is_valid(canceller))
 		return V32_ECHO_INVALID_STATE;
 	if (!point_is_finite(reference) ||
-	    ranges_overlap(
+	    memory_regions_overlap(
 		    reference, sizeof(*reference),
 		    canceller, sizeof(*canceller)))
 		return V32_ECHO_INVALID_ARGUMENT;
@@ -268,10 +251,12 @@ enum v32_echo_result v32_echo_canceller_process(
 	    count > (size_t)(V32_ECHO_PHASE_COUNT - canceller->phase))
 		return V32_ECHO_INVALID_ARGUMENT;
 	bytes = count * sizeof(*received);
-	if (ranges_overlap(received, bytes, canceller, sizeof(*canceller)) ||
-	    ranges_overlap(cleaned, bytes, canceller, sizeof(*canceller)) ||
+	if (memory_regions_overlap(
+		    received, bytes, canceller, sizeof(*canceller)) ||
+	    memory_regions_overlap(
+		    cleaned, bytes, canceller, sizeof(*canceller)) ||
 	    (received != cleaned &&
-	     ranges_overlap(received, bytes, cleaned, bytes)))
+	     memory_regions_overlap(received, bytes, cleaned, bytes)))
 		return V32_ECHO_INVALID_ARGUMENT;
 	if (!canceller->reference_pending)
 		return V32_ECHO_INVALID_STATE;
