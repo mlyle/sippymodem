@@ -25,8 +25,8 @@ struct v34_data_carrier {
 };
 
 /* Configure the exact negotiated symbol and carrier clocks. The returned
- * waveform is a raw floating-point carrier; negotiated line gain and
- * pre-emphasis remain separate downstream responsibilities. */
+ * waveform includes the continuous pulse, carrier, and negotiated
+ * pre-emphasis response; only calibrated line gain remains downstream. */
 enum v34_data_carrier_result v34_data_carrier_init(
 	struct v34_data_carrier *carrier,
 	const struct v34_phase3_profile *profile,
@@ -51,8 +51,8 @@ bool v34_data_carrier_is_valid(
 bool v34_data_carrier_needs_point(
 	const struct v34_data_carrier *carrier);
 
-/* Emit one unscaled passband sample. Supply a normalized data point precisely
- * when needs_point() is true and NULL otherwise. */
+/* Emit one unscaled, pre-emphasized passband sample. Supply a normalized data
+ * point precisely when needs_point() is true and NULL otherwise. */
 enum v34_data_carrier_result v34_data_carrier_sample(
 	struct v34_data_carrier *carrier,
 	const struct qam_point *point, double *sample,

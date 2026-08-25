@@ -49,9 +49,9 @@ struct v34_line_power_measurement {
 bool v34_line_power_measurement_is_valid(
 	const struct v34_line_power_measurement *measurement);
 
-/* Replay the deterministic mapping calibration stream through the normalized
- * data carrier and selected pre-emphasis filter. One superframe is discarded
- * for pulse-shaper and FIR warm-up; the remaining three are measured online.
+/* Replay the deterministic mapping calibration stream through the complete
+ * normalized transmit waveform. One superframe is discarded for pulse and
+ * pre-emphasis warm-up; the remaining three are measured online.
  * All inputs and the destination remain unchanged on failure. */
 enum v34_power_calibration_result
 v34_calibrate_line_power(

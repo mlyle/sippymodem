@@ -230,7 +230,7 @@ static bool test_active_carrier_handoff(void)
 	      v34_line_channel_init(
 		      &fixture.profile, 8000, &channel) == V34_LINE_CHANNEL_OK &&
 	      v34_pulse_modulator_init(
-		      &active, &fixture.profile, &channel, INT16_MAX,
+		      &active, &fixture.profile, &channel,
 		      fixture.normalizer.maximum_normalized_point_power) ==
 		      V34_PULSE_MODULATOR_OK &&
 	      v34_pulse_modulator_sample(
@@ -249,8 +249,15 @@ static bool test_active_carrier_handoff(void)
 	      carrier.point_gain == point_gain &&
 	      carrier.modulator.maximum_point_power == required_power &&
 	      carrier.modulator.generated_samples == active.generated_samples &&
-	      memcmp(carrier.modulator.history, active.history,
-		     sizeof(active.history)) == 0 &&
+	      memcmp(carrier.modulator.in_phase_history,
+		     active.in_phase_history,
+		     sizeof(active.in_phase_history)) == 0 &&
+	      memcmp(carrier.modulator.quadrature_history,
+		     active.quadrature_history,
+		     sizeof(active.quadrature_history)) == 0 &&
+	      memcmp(carrier.modulator.preemphasis_history,
+		     active.preemphasis_history,
+		     sizeof(active.preemphasis_history)) == 0 &&
 	      carrier.modulator.carrier_phase == active.carrier_phase &&
 	      carrier.modulator.symbol_phase_units ==
 		      active.symbol_phase_units,
@@ -302,7 +309,6 @@ static bool test_line_output(void)
 	struct v34_data_points points;
 	struct v34_data_line_transmitter line;
 	struct v34_data_carrier model_carrier;
-	struct v34_preemphasis model_filter;
 	size_t samples = 0;
 	bool nonzero_seen = false;
 
@@ -314,12 +320,10 @@ static bool test_line_output(void)
 	      "data line did not initialize");
 	points = fixture.points;
 	model_carrier = line.carrier;
-	model_filter = line.preemphasis;
 	while (!v34_data_points_needs_mapping_frame(&points)) {
 		struct qam_point point;
 		const struct qam_point *point_pointer = NULL;
-		double carrier_sample;
-		double filtered_sample;
+		double line_sample;
 		long expected_sample;
 		int16_t actual_sample;
 		bool expected_accepted;
@@ -333,13 +337,10 @@ static bool test_line_output(void)
 		}
 		CHECK(samples++ < 64u &&
 		      v34_data_carrier_sample(
-			      &model_carrier, point_pointer, &carrier_sample,
-			      &expected_accepted) == V34_DATA_CARRIER_OK &&
-		      v34_preemphasis_sample(
-			      &model_filter, carrier_sample, &filtered_sample) ==
-			      V34_PREEMPHASIS_OK,
+			      &model_carrier, point_pointer, &line_sample,
+			      &expected_accepted) == V34_DATA_CARRIER_OK,
 		      "line model failed at sample %zu", samples - 1u);
-		expected_sample = lround(filtered_sample * line.output_gain);
+		expected_sample = lround(line_sample * line.output_gain);
 		CHECK(v34_data_line_transmitter_sample(
 			      &line, point_pointer, &actual_sample,
 			      &actual_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
@@ -350,9 +351,7 @@ static bool test_line_output(void)
 	}
 	CHECK(line.generated_samples == samples && nonzero_seen &&
 	      memcmp(&line.carrier, &model_carrier,
-		     sizeof(model_carrier)) == 0 &&
-	      memcmp(&line.preemphasis, &model_filter,
-		     sizeof(model_filter)) == 0,
+		     sizeof(model_carrier)) == 0,
 	      "data line did not preserve its composed state");
 	return true;
 }
@@ -400,7 +399,6 @@ static bool test_active_line_handoff(void)
 	struct v34_data_line_transmitter continued;
 	struct v34_data_points points;
 	struct v34_pulse_modulator model_carrier;
-	struct v34_preemphasis model_filter;
 	double independent_gain_ratio;
 	bool retained_tail_seen = false;
 	bool data_point_accepted = false;
@@ -431,28 +429,30 @@ static bool test_active_line_handoff(void)
 		   continued.target_rms) < 1e-12 &&
 	      continued.target_rms == training.target_rms &&
 	      continued.generated_samples == training.generated_samples &&
-	      memcmp(&continued.preemphasis, &training.preemphasis,
-		     sizeof(training.preemphasis)) == 0 &&
 	      continued.carrier.modulator.carrier_phase ==
 		      training.carrier.carrier_phase &&
 	      continued.carrier.modulator.symbol_phase_units ==
 		      training.carrier.symbol_phase_units &&
 	      continued.carrier.modulator.generated_samples ==
 		      training.carrier.generated_samples &&
-	      memcmp(continued.carrier.modulator.history,
-		     training.carrier.history,
-		     sizeof(training.carrier.history)) == 0,
+	      memcmp(continued.carrier.modulator.in_phase_history,
+		     training.carrier.in_phase_history,
+		     sizeof(training.carrier.in_phase_history)) == 0 &&
+	      memcmp(continued.carrier.modulator.quadrature_history,
+		     training.carrier.quadrature_history,
+		     sizeof(training.carrier.quadrature_history)) == 0 &&
+	      memcmp(continued.carrier.modulator.preemphasis_history,
+		     training.carrier.preemphasis_history,
+		     sizeof(training.carrier.preemphasis_history)) == 0,
 	      "data line did not preserve the active training waveform");
 	points = fixture.points;
 	model_carrier = continued.carrier.modulator;
-	model_filter = training.preemphasis;
 	for (size_t sample_index = 0;
 	     sample_index < 32u && !data_point_accepted; ++sample_index) {
 		struct qam_point point;
 		const struct qam_point *point_pointer = NULL;
 		const struct qam_point *model_pointer = NULL;
-		double carrier_sample;
-		double filtered_sample;
+		double line_sample;
 		long expected_sample;
 		int16_t actual_sample;
 		bool expected_accepted;
@@ -466,13 +466,10 @@ static bool test_active_line_handoff(void)
 			model_pointer = &point;
 		}
 		CHECK(v34_pulse_modulator_sample(
-			      &model_carrier, model_pointer, &carrier_sample,
-			      &expected_accepted) == V34_PULSE_MODULATOR_OK &&
-		      v34_preemphasis_sample(
-			      &model_filter, carrier_sample, &filtered_sample) ==
-			      V34_PREEMPHASIS_OK,
+			      &model_carrier, model_pointer, &line_sample,
+			      &expected_accepted) == V34_PULSE_MODULATOR_OK,
 		      "continued line model failed at sample %zu", sample_index);
-		expected_sample = lround(filtered_sample * training.output_gain);
+		expected_sample = lround(line_sample * training.output_gain);
 		CHECK(expected_sample >= INT16_MIN &&
 		      expected_sample <= INT16_MAX &&
 		      v34_data_line_transmitter_sample(
@@ -481,9 +478,7 @@ static bool test_active_line_handoff(void)
 		      actual_sample == expected_sample &&
 		      actual_accepted == expected_accepted &&
 		      memcmp(&continued.carrier.modulator, &model_carrier,
-			     sizeof(model_carrier)) == 0 &&
-		      memcmp(&continued.preemphasis, &model_filter,
-			     sizeof(model_filter)) == 0,
+			     sizeof(model_carrier)) == 0,
 		      "continued line diverged at sample %zu", sample_index);
 		retained_tail_seen |= point_pointer == NULL && actual_sample != 0;
 		data_point_accepted |= actual_accepted;
@@ -684,7 +679,7 @@ static bool test_transactional_validation(void)
 	other_profile.carrier_frequency_numerator = 1800;
 	other_profile.high_carrier = false;
 	CHECK(v34_pulse_modulator_init(
-		      &active, &other_profile, &other_channel, INT16_MAX,
+		      &active, &other_profile, &other_channel,
 		      fixture.normalizer.maximum_normalized_point_power) ==
 		      V34_PULSE_MODULATOR_OK,
 	      "mismatched active carrier did not initialize");
@@ -834,7 +829,6 @@ static bool test_transactional_validation(void)
 	      "line accepted a point between boundaries");
 	line.generated_samples = UINT64_MAX;
 	line.carrier.modulator.generated_samples = UINT64_MAX;
-	line.preemphasis.next_history = UINT64_MAX % V34_PREEMPHASIS_TAPS;
 	line.carrier.modulator.carrier_phase =
 		(uint32_t)UINT64_MAX *
 		line.carrier.modulator.carrier_phase_step;

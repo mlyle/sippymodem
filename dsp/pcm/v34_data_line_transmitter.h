@@ -4,7 +4,6 @@
 #define V34_DATA_LINE_TRANSMITTER_H
 
 #include "v34_power_calibration.h"
-#include "v34_preemphasis.h"
 #include "v34_training_line.h"
 
 #include <stdbool.h>
@@ -20,7 +19,6 @@ enum v34_data_line_transmitter_result {
 
 struct v34_data_line_transmitter {
 	struct v34_data_carrier carrier;
-	struct v34_preemphasis preemphasis;
 	struct v34_line_power_measurement calibration;
 	double gain_reference_rms;
 	double output_gain;

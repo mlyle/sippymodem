@@ -629,7 +629,8 @@ static bool test_continuation_validation(void)
 	with_md.profile.md_length_35_ms_units = 1;
 	with_md.profile.md_symbol_count = 105;
 	corrupt = caller_line;
-	corrupt.carrier.amplitude--;
+	corrupt.carrier.preemphasis_filter_index =
+		V34_PREEMPHASIS_MAX_FILTER_INDEX + 1u;
 	CHECK(v34_phase3_transmitter_is_valid(&answer_j) &&
 	      v34_training_line_is_valid(&with_md),
 	      "validation fixtures were not independently valid");

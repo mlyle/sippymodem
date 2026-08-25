@@ -56,7 +56,6 @@ static bool channel_matches_configuration(
 		       &required_power) &&
 	       v34_line_channel_matches(
 		       &carrier->profile, &modulator->channel) &&
-	       modulator->amplitude == INT16_MAX &&
 	       power_fits(required_power, modulator->maximum_point_power);
 }
 
@@ -115,7 +114,7 @@ enum v34_data_carrier_result v34_data_carrier_init(
 	    V34_LINE_CHANNEL_OK)
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	if (v34_pulse_modulator_init(
-		    &initialized.modulator, profile, &channel, INT16_MAX,
+		    &initialized.modulator, profile, &channel,
 		    normalizer->maximum_normalized_point_power) !=
 		    V34_PULSE_MODULATOR_OK ||
 	    !v34_data_carrier_is_valid(&initialized))
@@ -139,7 +138,6 @@ enum v34_data_carrier_result v34_data_carrier_continue(
 	    !v34_pulse_modulator_is_valid(active_modulator) ||
 	    !data_configuration_is_valid(profile, geometry, normalizer) ||
 	    !scaled_point_power(normalizer, point_gain, &required_power) ||
-	    active_modulator->amplitude != INT16_MAX ||
 	    !v34_line_channel_matches(
 		    profile, &active_modulator->channel))
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;

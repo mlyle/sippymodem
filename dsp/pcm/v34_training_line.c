@@ -41,7 +41,6 @@ static enum v34_training_line_result calibrate_power(
 	struct v34_training_line *line)
 {
 	struct v34_pulse_modulator carrier = line->carrier;
-	struct v34_preemphasis preemphasis = line->preemphasis;
 	struct v34_phase3_s_sequence sequence;
 	enum calibration_stage stage = CALIBRATE_SYMBOLS;
 	long double sum_squares = 0.0L;
@@ -58,8 +57,7 @@ static enum v34_training_line_result calibrate_power(
 	while (stage != CALIBRATION_COMPLETE) {
 		struct qam_point point = { 0 };
 		enum v34_phase3_s_section section;
-		double carrier_sample;
-		double filtered_sample;
+		double line_sample;
 		double magnitude;
 		bool accepting = v34_pulse_modulator_needs_point(&carrier);
 		bool sequence_symbol = false;
@@ -81,13 +79,10 @@ static enum v34_training_line_result calibrate_power(
 		}
 		if (v34_pulse_modulator_sample(
 			    &carrier, accepting ? &point : NULL,
-			    &carrier_sample, &accepted) !=
+			    &line_sample, &accepted) !=
 			    V34_PULSE_MODULATOR_OK ||
 		    (sequence_symbol && !accepted) ||
-		    v34_preemphasis_sample(
-			    &preemphasis, carrier_sample, &filtered_sample) !=
-			    V34_PREEMPHASIS_OK ||
-		    !isfinite(filtered_sample))
+		    !isfinite(line_sample))
 			return V34_TRAINING_LINE_NUMERIC_FAILURE;
 		if (accepted && stage == CALIBRATE_PULSE_TAIL) {
 			tail_symbols++;
@@ -101,8 +96,8 @@ static enum v34_training_line_result calibrate_power(
 			    V34_TRAINING_LINE_FILTER_TAIL_SAMPLES)
 				stage = CALIBRATION_COMPLETE;
 		}
-		magnitude = fabs(filtered_sample);
-		sum_squares += (long double)filtered_sample * filtered_sample;
+		magnitude = fabs(line_sample);
+		sum_squares += (long double)line_sample * line_sample;
 		if (!isfinite(sum_squares))
 			return V34_TRAINING_LINE_NUMERIC_FAILURE;
 		if (magnitude > peak)
@@ -162,18 +157,6 @@ bool v34_training_line_is_valid(
 	    !v34_pulse_modulator_is_valid(&line->carrier) ||
 	    !v34_line_channel_matches(
 		    &line->profile, &line->carrier.channel) ||
-	    line->carrier.amplitude != INT16_MAX ||
-	    !v34_preemphasis_is_valid(&line->preemphasis) ||
-	    line->preemphasis.sample_rate !=
-		    line->carrier.channel.sample_rate ||
-	    line->preemphasis.symbol_rate_numerator !=
-		    line->profile.symbol_rate_numerator ||
-	    line->preemphasis.symbol_rate_denominator !=
-		    line->profile.symbol_rate_denominator ||
-	    line->preemphasis.filter_index !=
-		    line->profile.preemphasis_filter_index ||
-	    line->preemphasis.next_history !=
-		    line->generated_samples % V34_PREEMPHASIS_TAPS ||
 	    !power_metadata_is_valid(line) ||
 	    line->carrier.generated_samples != line->generated_samples)
 		return false;
@@ -209,15 +192,9 @@ enum v34_training_line_result v34_training_line_init(
 	if (!isfinite(initialized.target_rms) ||
 	    initialized.target_rms <= 0.0 ||
 	    v34_pulse_modulator_init(
-		    &initialized.carrier, profile, &channel, INT16_MAX,
+		    &initialized.carrier, profile, &channel,
 		    V34_TRAINING_MAXIMUM_POINT_POWER) !=
-		    V34_PULSE_MODULATOR_OK ||
-	    v34_preemphasis_init(
-		    &initialized.preemphasis, sample_rate,
-		    profile->symbol_rate_numerator,
-		    profile->symbol_rate_denominator,
-		    profile->preemphasis_filter_index) !=
-		    V34_PREEMPHASIS_OK)
+		    V34_PULSE_MODULATOR_OK)
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
 	result = calibrate_power(&initialized);
 	if (result != V34_TRAINING_LINE_OK)
@@ -241,8 +218,7 @@ enum v34_training_line_result v34_training_line_sample(
 	bool *point_accepted)
 {
 	struct v34_training_line next;
-	double carrier_sample;
-	double filtered_sample;
+	double line_sample;
 	double scaled_sample;
 	long rounded;
 	bool accepting;
@@ -259,15 +235,12 @@ enum v34_training_line_result v34_training_line_sample(
 	next = *line;
 	if (v34_pulse_modulator_sample(
 		    &next.carrier, point,
-		    &carrier_sample, &accepted) != V34_PULSE_MODULATOR_OK)
+		    &line_sample, &accepted) != V34_PULSE_MODULATOR_OK)
 		return point != NULL ? V34_TRAINING_LINE_INVALID_ARGUMENT :
 				       V34_TRAINING_LINE_NUMERIC_FAILURE;
-	if (accepted != accepting ||
-	    v34_preemphasis_sample(
-		    &next.preemphasis, carrier_sample, &filtered_sample) !=
-		    V34_PREEMPHASIS_OK)
+	if (accepted != accepting)
 		return V34_TRAINING_LINE_NUMERIC_FAILURE;
-	scaled_sample = filtered_sample * next.output_gain;
+	scaled_sample = line_sample * next.output_gain;
 	if (!isfinite(scaled_sample))
 		return V34_TRAINING_LINE_NUMERIC_FAILURE;
 	if (scaled_sample < INT16_MIN - 0.499 ||

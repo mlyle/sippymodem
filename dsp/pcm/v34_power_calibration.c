@@ -3,7 +3,6 @@
 #include "v34_power_calibration.h"
 
 #include "v34_data_points.h"
-#include "v34_preemphasis.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -307,14 +306,12 @@ v34_calibrate_line_power(
 {
 	struct v34_data_points points;
 	struct v34_data_carrier carrier;
-	struct v34_preemphasis preemphasis;
 	struct v34_line_power_measurement measured = { 0 };
 	uint32_t random_state = V34_POWER_CALIBRATION_SEED;
 	uint32_t frames_per_superframe;
 	uint32_t frame_count;
 	uint32_t warmup_frames;
 	uint64_t maximum_frame_samples;
-	enum v34_preemphasis_result preemphasis_result;
 
 	if (!v34_phase3_profile_is_valid(profile) ||
 	    !v34_frame_schedule_is_valid(initial_schedule) ||
@@ -334,14 +331,6 @@ v34_calibrate_line_power(
 	if (v34_data_carrier_init(
 		    &carrier, profile, &points.schedule.geometry, normalizer,
 		    sample_rate) != V34_DATA_CARRIER_OK)
-		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
-	preemphasis_result = v34_preemphasis_init(
-		&preemphasis, sample_rate, profile->symbol_rate_numerator,
-		profile->symbol_rate_denominator,
-		profile->preemphasis_filter_index);
-	if (preemphasis_result == V34_PREEMPHASIS_NUMERIC_FAILURE)
-		return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
-	if (preemphasis_result != V34_PREEMPHASIS_OK)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	frames_per_superframe =
 		(uint32_t)points.schedule.geometry.data_frames_per_superframe *
@@ -366,7 +355,6 @@ v34_calibrate_line_power(
 		while (!v34_data_points_needs_mapping_frame(&points)) {
 			struct qam_point point;
 			const struct qam_point *point_pointer = NULL;
-			double carrier_sample;
 			double line_sample;
 			bool symbol_accepted;
 
@@ -380,15 +368,11 @@ v34_calibrate_line_power(
 				point_pointer = &point;
 			}
 			result = carrier_result(v34_data_carrier_sample(
-				&carrier, point_pointer, &carrier_sample,
+				&carrier, point_pointer, &line_sample,
 				&symbol_accepted));
 			if (result != V34_POWER_CALIBRATION_OK)
 				return result;
 			if (symbol_accepted != (point_pointer != NULL))
-				return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
-			if (v34_preemphasis_sample(
-				    &preemphasis, carrier_sample, &line_sample) !=
-			    V34_PREEMPHASIS_OK)
 				return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
 			if (frame >= warmup_frames) {
 				result = observe_line_sample(&measured, line_sample);

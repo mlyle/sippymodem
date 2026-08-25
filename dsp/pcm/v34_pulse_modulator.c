@@ -2,6 +2,7 @@
 
 #include "v34_pulse_modulator.h"
 
+#include "fixed_phase.h"
 #include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
@@ -13,7 +14,10 @@
 
 enum {
 	V34_PULSE_SAMPLE_RATE = 8000,
-	V34_PULSE_Q14_SCALE = 16384,
+	/* Q12 represents every normalized V.34 data profile while retaining
+	 * exact power-of-two lattice coordinates through the fixed line path. */
+	V34_PULSE_POINT_SCALE = 4096,
+	V34_PULSE_OUTPUT_SCALE = 16384,
 };
 
 static const double V34_LINE_ROLLOFF = 0.1;
@@ -24,6 +28,11 @@ struct pulse_profile {
 };
 
 #include "v34_pulse_profiles.inc"
+#include "v34_preemphasis_profiles.inc"
+
+static const int16_t V34_PREEMPHASIS_IDENTITY[V34_PREEMPHASIS_TAPS] = {
+	[7] = V34_PULSE_OUTPUT_SCALE,
+};
 
 static bool selected_profile(
 	enum v34_symbol_rate symbol_rate,
@@ -151,15 +160,47 @@ static bool point_fits(
 		power / maximum_power <= 1.0 + 1e-12);
 }
 
-static bool history_is_valid(
-	const struct v34_pulse_modulator *modulator)
+static const int16_t *selected_preemphasis(
+	enum v34_symbol_rate symbol_rate, uint8_t filter_index)
 {
-	for (size_t index = 0; index < V34_PULSE_TAPS; ++index)
-		if (!point_fits(
-			    &modulator->history[index],
-			    modulator->maximum_point_power))
-			return false;
-	return true;
+	const int16_t (*bank)[V34_PREEMPHASIS_TAPS] = NULL;
+
+	if (filter_index > V34_PREEMPHASIS_MAX_FILTER_INDEX)
+		return NULL;
+	if (filter_index == 0)
+		return V34_PREEMPHASIS_IDENTITY;
+	switch (symbol_rate) {
+	case V34_SYMBOL_RATE_2400:
+		bank = V34_PREEMPHASIS_2400;
+		break;
+	case V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_2800:
+		bank = V34_PREEMPHASIS_2800;
+		break;
+	case V34_SYMBOL_RATE_3000:
+		bank = V34_PREEMPHASIS_3000;
+		break;
+	case V34_SYMBOL_RATE_3200:
+		bank = V34_PREEMPHASIS_3200;
+		break;
+	case V34_SYMBOL_RATE_3429:
+		bank = V34_PREEMPHASIS_3429;
+		break;
+	case V34_SYMBOL_RATE_COUNT:
+		return NULL;
+	}
+	return bank != NULL ? bank[filter_index - 1u] : NULL;
+}
+
+static bool point_range_is_representable(double maximum_power)
+{
+	double maximum_coordinate;
+
+	if (!isfinite(maximum_power) || maximum_power <= 0.0)
+		return false;
+	maximum_coordinate = sqrt(maximum_power) * V34_PULSE_POINT_SCALE;
+	return isfinite(maximum_coordinate) &&
+	       maximum_coordinate < INT16_MAX + 0.5;
 }
 
 bool v34_pulse_modulator_is_valid(
@@ -180,9 +221,10 @@ bool v34_pulse_modulator_is_valid(
 	    modulator->channel.rolloff != V34_LINE_ROLLOFF ||
 	    modulator->channel.pulse_span_symbols !=
 		    V34_LINE_PULSE_SPAN_SYMBOLS ||
-	    modulator->amplitude <= 0 ||
-	    !isfinite(modulator->maximum_point_power) ||
-	    modulator->maximum_point_power <= 0.0)
+	    !point_range_is_representable(modulator->maximum_point_power) ||
+	    selected_preemphasis(
+		    modulator->symbol_rate,
+		    modulator->preemphasis_filter_index) == NULL)
 		return false;
 	expected_period = (uint64_t)modulator->channel.sample_rate *
 		modulator->channel.symbol_rate_denominator;
@@ -196,8 +238,7 @@ bool v34_pulse_modulator_is_valid(
 	    modulator->carrier_phase_step == 0 ||
 	    (uint64_t)modulator->channel.carrier_frequency_numerator * 2u >=
 		    (uint64_t)modulator->channel.sample_rate *
-			    modulator->channel.carrier_frequency_denominator ||
-	    !history_is_valid(modulator))
+			    modulator->channel.carrier_frequency_denominator)
 		return false;
 	expected_phase =
 		(modulator->generated_samples % expected_period) *
@@ -212,16 +253,18 @@ bool v34_pulse_modulator_is_valid(
 enum v34_pulse_modulator_result v34_pulse_modulator_init(
 	struct v34_pulse_modulator *modulator,
 	const struct v34_phase3_profile *profile,
-	const struct qam_channel *channel, int16_t amplitude,
-	double maximum_point_power)
+	const struct qam_channel *channel, double maximum_point_power)
 {
 	struct v34_pulse_modulator initialized = { 0 };
 	struct pulse_profile selected;
 
 	if (modulator == NULL || !v34_phase3_profile_is_valid(profile) ||
 	    !selected_profile(profile->symbol_rate, &selected) ||
-	    !channel_matches_profile(channel, profile) || amplitude <= 0 ||
-	    !isfinite(maximum_point_power) || maximum_point_power <= 0.0)
+	    !channel_matches_profile(channel, profile) ||
+	    !point_range_is_representable(maximum_point_power) ||
+	    selected_preemphasis(
+		    profile->symbol_rate,
+		    profile->preemphasis_filter_index) == NULL)
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
 	initialized.channel = *channel;
 	initialized.symbol_period_units =
@@ -231,8 +274,9 @@ enum v34_pulse_modulator_result v34_pulse_modulator_init(
 		channel->sample_rate, channel->carrier_frequency_numerator,
 		channel->carrier_frequency_denominator);
 	initialized.maximum_point_power = maximum_point_power;
-	initialized.amplitude = amplitude;
 	initialized.symbol_rate = profile->symbol_rate;
+	initialized.preemphasis_filter_index =
+		profile->preemphasis_filter_index;
 	if (!v34_pulse_modulator_is_valid(&initialized))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
 	*modulator = initialized;
@@ -335,6 +379,49 @@ static bool outputs_are_disjoint(
 			 sizeof(*point_accepted))));
 }
 
+static int32_t arithmetic_shift_right_s32(uint32_t value, unsigned shift)
+{
+	uint32_t shifted;
+
+	if (shift == 0)
+		shifted = value;
+	else if ((value & UINT32_C(0x80000000)) == 0)
+		shifted = value >> shift;
+	else
+		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
+	return shifted <= INT32_MAX ?
+		       (int32_t)shifted :
+		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
+}
+
+static uint32_t multiply_low_s32(int32_t left, int32_t right)
+{
+	return (uint32_t)((uint64_t)(uint32_t)left * (uint32_t)right);
+}
+
+static int16_t wrap_s16(int32_t value)
+{
+	uint16_t word = (uint16_t)(uint32_t)value;
+
+	return word <= INT16_MAX ?
+		       (int16_t)word : (int16_t)((int32_t)word - 65536);
+}
+
+static bool fixed_coordinate(double coordinate, int16_t *fixed)
+{
+	double scaled = coordinate * V34_PULSE_POINT_SCALE;
+	long rounded;
+
+	if (!isfinite(scaled) || scaled < INT16_MIN - 0.5 ||
+	    scaled >= INT16_MAX + 0.5)
+		return false;
+	rounded = lround(scaled);
+	if (rounded < INT16_MIN || rounded > INT16_MAX)
+		return false;
+	*fixed = (int16_t)rounded;
+	return true;
+}
+
 enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	struct v34_pulse_modulator *modulator,
 	const struct qam_point *point, double *sample,
@@ -342,12 +429,19 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 {
 	struct v34_pulse_modulator next;
 	struct pulse_profile profile;
+	struct fixed_phase_q14 phasor;
+	const int16_t *preemphasis;
 	uint32_t divisor;
 	uint32_t row_count;
 	uint32_t row;
-	double in_phase = 0.0;
-	double quadrature = 0.0;
-	double carrier_phase;
+	uint32_t in_phase = 0x1000u;
+	uint32_t quadrature = 0x1000u;
+	uint32_t mixed;
+	uint32_t filtered = 0;
+	int16_t fixed_in_phase = 0;
+	int16_t fixed_quadrature = 0;
+	int16_t preemphasis_input;
+	int16_t fixed_sample;
 	double generated;
 	bool accepting;
 
@@ -358,17 +452,29 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	accepting = v34_pulse_modulator_needs_point(modulator);
 	if ((point != NULL) != accepting ||
 	    (point != NULL &&
-	     !point_fits(point, modulator->maximum_point_power)))
+	     (!point_fits(point, modulator->maximum_point_power) ||
+	      !fixed_coordinate(point->in_phase, &fixed_in_phase) ||
+	      !fixed_coordinate(point->quadrature, &fixed_quadrature))))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
 	if (modulator->generated_samples == UINT64_MAX ||
-	    !selected_profile(modulator->symbol_rate, &profile))
+	    !selected_profile(modulator->symbol_rate, &profile) ||
+	    (preemphasis = selected_preemphasis(
+		     modulator->symbol_rate,
+		     modulator->preemphasis_filter_index)) == NULL)
 		return V34_PULSE_MODULATOR_NUMERIC_FAILURE;
 	next = *modulator;
 	if (point != NULL) {
 		memmove(
-			&next.history[1], &next.history[0],
-			(V34_PULSE_TAPS - 1u) * sizeof(next.history[0]));
-		next.history[0] = *point;
+			&next.in_phase_history[1], &next.in_phase_history[0],
+			(V34_PULSE_TAPS - 1u) *
+				sizeof(next.in_phase_history[0]));
+		memmove(
+			&next.quadrature_history[1],
+			&next.quadrature_history[0],
+			(V34_PULSE_TAPS - 1u) *
+				sizeof(next.quadrature_history[0]));
+		next.in_phase_history[0] = fixed_in_phase;
+		next.quadrature_history[0] = fixed_quadrature;
 	}
 	divisor = (uint32_t)gcd_u64(
 		next.channel.symbol_rate_numerator,
@@ -376,21 +482,33 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	row_count = (uint32_t)(next.symbol_period_units / divisor);
 	row = (uint32_t)(next.symbol_phase_units / divisor);
 	for (size_t index = 0; index < V34_PULSE_TAPS; ++index) {
-		double coefficient = interpolated_coefficient(
+		int16_t coefficient = interpolated_coefficient(
 			&profile, row, row_count,
 			V34_PULSE_TAPS - 1 - (int)index);
 
-		in_phase += next.history[index].in_phase * coefficient /
-			V34_PULSE_Q14_SCALE;
-		quadrature += next.history[index].quadrature * coefficient /
-			V34_PULSE_Q14_SCALE;
+		in_phase += multiply_low_s32(
+			next.in_phase_history[index], coefficient);
+		quadrature += multiply_low_s32(
+			next.quadrature_history[index], coefficient);
 	}
-	carrier_phase = phase_radians_u32(next.carrier_phase);
-	generated = in_phase * cos(carrier_phase) -
-		quadrature * sin(carrier_phase);
-	if (!isfinite(in_phase) || !isfinite(quadrature) ||
-	    !isfinite(generated))
-		return V34_PULSE_MODULATOR_NUMERIC_FAILURE;
+	phasor = fixed_phase_sin_cos_u16_q14(
+		(uint16_t)(next.carrier_phase >> 16));
+	mixed = multiply_low_s32(
+		arithmetic_shift_right_s32(in_phase, 13), phasor.cosine);
+	mixed -= multiply_low_s32(
+		arithmetic_shift_right_s32(quadrature, 13), phasor.sine);
+	preemphasis_input = wrap_s16(
+		arithmetic_shift_right_s32(mixed + 0x2000u, 14));
+	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS; ++tap) {
+		int16_t previous = next.preemphasis_history[tap];
+
+		next.preemphasis_history[tap] = preemphasis_input;
+		filtered += multiply_low_s32(preemphasis_input, preemphasis[tap]);
+		preemphasis_input = previous;
+	}
+	fixed_sample = wrap_s16(
+		arithmetic_shift_right_s32(filtered + 0x2000u, 14));
+	generated = (double)fixed_sample / V34_PULSE_OUTPUT_SCALE;
 	next.generated_samples++;
 	next.carrier_phase += next.carrier_phase_step;
 	next.symbol_phase_units += next.channel.symbol_rate_numerator;

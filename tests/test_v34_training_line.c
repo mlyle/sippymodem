@@ -42,7 +42,6 @@ static bool test_continuous_points(void)
 	struct v34_phase3_profile profile = profile_fixture();
 	struct v34_training_line line;
 	struct v34_pulse_modulator model_carrier;
-	struct v34_preemphasis model_filter;
 	uint32_t accepted_points = 0;
 	uint32_t generated_samples = 0;
 
@@ -50,13 +49,11 @@ static bool test_continuous_points(void)
 		      V34_TRAINING_LINE_OK,
 	      "continuous line did not initialize");
 	model_carrier = line.carrier;
-	model_filter = line.preemphasis;
 	while (accepted_points < 512) {
 		struct qam_point point = generated_point(accepted_points);
 		const struct qam_point *supplied = NULL;
 		const struct qam_point *model_point = NULL;
-		double carrier_sample;
-		double filtered_sample;
+		double line_sample;
 		long expected_sample;
 		int16_t sample;
 		bool needs_point = v34_training_line_needs_point(&line);
@@ -70,14 +67,11 @@ static bool test_continuous_points(void)
 			model_point = &point;
 		}
 		CHECK(v34_pulse_modulator_sample(
-			      &model_carrier, model_point, &carrier_sample,
-			      &model_accepted) == V34_PULSE_MODULATOR_OK &&
-		      v34_preemphasis_sample(
-			      &model_filter, carrier_sample,
-			      &filtered_sample) == V34_PREEMPHASIS_OK,
+			      &model_carrier, model_point, &line_sample,
+			      &model_accepted) == V34_PULSE_MODULATOR_OK,
 		      "independent waveform model failed at sample %u",
 		      generated_samples);
-		expected_sample = lround(filtered_sample * line.output_gain);
+		expected_sample = lround(line_sample * line.output_gain);
 		CHECK(expected_sample >= INT16_MIN &&
 		      expected_sample <= INT16_MAX &&
 		      v34_training_line_sample(
@@ -86,9 +80,7 @@ static bool test_continuous_points(void)
 		      accepted == needs_point && accepted == model_accepted &&
 		      sample == expected_sample &&
 		      memcmp(&line.carrier, &model_carrier,
-			     sizeof(model_carrier)) == 0 &&
-		      memcmp(&line.preemphasis, &model_filter,
-			     sizeof(model_filter)) == 0,
+			     sizeof(model_carrier)) == 0,
 		      "continuous waveform diverged at sample %u",
 		      generated_samples);
 		if (accepted)
@@ -210,8 +202,6 @@ static bool test_initialization_and_overflow(void)
 	      "overflow fixture did not initialize");
 	line.generated_samples = UINT64_MAX;
 	line.carrier.generated_samples = UINT64_MAX;
-	line.preemphasis.next_history =
-		(size_t)(UINT64_MAX % V34_PREEMPHASIS_TAPS);
 	line.carrier.carrier_phase =
 		(uint32_t)UINT64_MAX * line.carrier.carrier_phase_step;
 	line.carrier.symbol_phase_units =

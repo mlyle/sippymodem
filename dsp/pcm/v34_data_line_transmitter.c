@@ -30,19 +30,6 @@ static enum v34_data_line_transmitter_result carrier_result(
 	return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
 }
 
-static bool filter_matches_carrier(
-	const struct v34_preemphasis *filter,
-	const struct v34_data_carrier *carrier)
-{
-	return filter->sample_rate == carrier->modulator.channel.sample_rate &&
-	       filter->symbol_rate_numerator ==
-		       carrier->profile.symbol_rate_numerator &&
-	       filter->symbol_rate_denominator ==
-		       carrier->profile.symbol_rate_denominator &&
-	       filter->filter_index ==
-		       carrier->profile.preemphasis_filter_index;
-}
-
 static enum v34_data_line_transmitter_result calibration_result(
 	enum v34_power_calibration_result result)
 {
@@ -146,13 +133,7 @@ bool v34_data_line_transmitter_is_valid(
 {
 	if (transmitter == NULL ||
 	    !v34_data_carrier_is_valid(&transmitter->carrier) ||
-	    !v34_preemphasis_is_valid(&transmitter->preemphasis) ||
-	    !filter_matches_carrier(
-		    &transmitter->preemphasis, &transmitter->carrier) ||
 	    !power_metadata_is_valid(transmitter) ||
-	    transmitter->preemphasis.next_history !=
-		    transmitter->generated_samples %
-			    V34_PREEMPHASIS_TAPS ||
 	    transmitter->carrier.modulator.generated_samples !=
 		    transmitter->generated_samples)
 		return false;
@@ -172,7 +153,6 @@ v34_data_line_transmitter_init(
 	struct v34_data_line_transmitter initialized = { 0 };
 	struct line_power power;
 	enum v34_data_line_transmitter_result result;
-	enum v34_preemphasis_result preemphasis_result;
 
 	if (transmitter == NULL)
 		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
@@ -186,14 +166,6 @@ v34_data_line_transmitter_init(
 		    &initialized.carrier, profile,
 		    &calibration_schedule->geometry, normalizer, sample_rate) !=
 		    V34_DATA_CARRIER_OK)
-		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
-	preemphasis_result = v34_preemphasis_init(
-		&initialized.preemphasis, sample_rate,
-		profile->symbol_rate_numerator, profile->symbol_rate_denominator,
-		profile->preemphasis_filter_index);
-	if (preemphasis_result == V34_PREEMPHASIS_NUMERIC_FAILURE)
-		return V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE;
-	if (preemphasis_result != V34_PREEMPHASIS_OK)
 		return V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT;
 	initialized.calibration = power.calibration;
 	initialized.gain_reference_rms =
@@ -240,7 +212,6 @@ v34_data_line_transmitter_continue(
 		normalizer, 1.0));
 	if (result != V34_DATA_LINE_TRANSMITTER_OK)
 		return result;
-	continued.preemphasis = active_line->preemphasis;
 	continued.calibration = power.calibration;
 	continued.gain_reference_rms = active_line->raw_rms;
 	continued.output_gain = active_line->output_gain;
@@ -269,8 +240,7 @@ v34_data_line_transmitter_sample(
 	int16_t *sample, bool *symbol_accepted)
 {
 	struct v34_data_line_transmitter next;
-	double carrier_sample;
-	double filtered_sample;
+	double line_sample;
 	double scaled_sample;
 	long rounded;
 	bool accepted;
@@ -283,14 +253,10 @@ v34_data_line_transmitter_sample(
 		return V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE;
 	next = *transmitter;
 	result = carrier_result(v34_data_carrier_sample(
-		&next.carrier, point, &carrier_sample, &accepted));
+		&next.carrier, point, &line_sample, &accepted));
 	if (result != V34_DATA_LINE_TRANSMITTER_OK)
 		return result;
-	if (v34_preemphasis_sample(
-		    &next.preemphasis, carrier_sample, &filtered_sample) !=
-	    V34_PREEMPHASIS_OK)
-		return V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE;
-	scaled_sample = filtered_sample * next.output_gain;
+	scaled_sample = line_sample * next.output_gain;
 	if (!isfinite(scaled_sample))
 		return V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE;
 	if (scaled_sample <= INT16_MIN - 0.5 ||

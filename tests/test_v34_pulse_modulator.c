@@ -118,7 +118,7 @@ static struct qam_point generated_point(uint32_t *random)
 
 static uint64_t waveform_hash(
 	enum v34_symbol_rate rate, bool high_carrier,
-	uint32_t *accepted_count)
+	uint8_t preemphasis_filter_index, uint32_t *accepted_count)
 {
 	struct v34_phase3_profile profile = profile_for(rate, high_carrier);
 	struct qam_channel channel = channel_for(&profile);
@@ -128,8 +128,10 @@ static uint64_t waveform_hash(
 	uint64_t hash = UINT64_C(1469598103934665603);
 	uint32_t accepted_total = 0;
 
+	profile.preemphasis_filter_index = preemphasis_filter_index;
+
 	if (v34_pulse_modulator_init(
-		    &modulator, &profile, &channel, INT16_MAX, 2.0) !=
+		    &modulator, &profile, &channel, 2.0) !=
 	    V34_PULSE_MODULATOR_OK)
 		return 0;
 	for (uint32_t index = 0; index < TEST_SAMPLES; ++index) {
@@ -161,17 +163,17 @@ static uint64_t waveform_hash(
 static bool test_all_profiles(void)
 {
 	static const uint64_t EXPECTED[11] = {
-		UINT64_C(0x71c83e1720aa7945),
-		UINT64_C(0x105980a9acac228e),
-		UINT64_C(0x40da8c08c0310410),
-		UINT64_C(0x28dc6e5f59f680fa),
-		UINT64_C(0xb2be84db8c2bdfb2),
-		UINT64_C(0x483a6680120212fb),
-		UINT64_C(0x0f6e2c97f6f6d26a),
-		UINT64_C(0x191dfc555a0bbe4c),
-		UINT64_C(0x3deb3734bc235704),
-		UINT64_C(0xb0b71a8a5df2ab08),
-		UINT64_C(0xba3148b16dd6dbfc),
+		UINT64_C(0x7e6155d5ed36855e),
+		UINT64_C(0x6a17ab2ed8e42ace),
+		UINT64_C(0x74dcb297da95de6b),
+		UINT64_C(0xd5b6a1047f06c969),
+		UINT64_C(0x4cfcea8ae9b29c0c),
+		UINT64_C(0x58c89967703c9a05),
+		UINT64_C(0x07bb09b38b179d81),
+		UINT64_C(0x8cc78687ed5446e1),
+		UINT64_C(0xcf7801c5687bc36d),
+		UINT64_C(0x44299af826d84dab),
+		UINT64_C(0xa6d374507b967fa7),
 	};
 	unsigned int configuration = 0;
 	bool hashes_match = true;
@@ -189,7 +191,8 @@ static bool test_all_profiles(void)
 				((uint64_t)TEST_SAMPLES * rates.symbol_numerator +
 				 TEST_SAMPLE_RATE * rates.symbol_denominator - 1u) /
 				(TEST_SAMPLE_RATE * rates.symbol_denominator));
-			uint64_t hash = waveform_hash(rate, high != 0, &accepted);
+			uint64_t hash = waveform_hash(
+				rate, high != 0, 0, &accepted);
 
 			if (hash != EXPECTED[configuration]) {
 				fprintf(stderr,
@@ -209,6 +212,42 @@ static bool test_all_profiles(void)
 	return true;
 }
 
+static bool test_fixed_line_oracle(void)
+{
+	uint32_t accepted = 0;
+	uint64_t hash = waveform_hash(
+		V34_SYMBOL_RATE_2400, true, 1, &accepted);
+
+	CHECK(hash == UINT64_C(0xa58931810ae8059e) && accepted == 1229,
+	      "fixed 2400-baud line oracle changed (%016llx/%u)",
+	      (unsigned long long)hash, accepted);
+	return true;
+}
+
+static bool test_preemphasis_profiles(void)
+{
+	uint64_t hash = UINT64_C(1469598103934665603);
+
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		for (uint8_t filter = 1;
+		     filter <= V34_PREEMPHASIS_MAX_FILTER_INDEX; ++filter) {
+			uint32_t accepted = 0;
+			uint64_t waveform = waveform_hash(
+				(enum v34_symbol_rate)rate,
+				rate == V34_SYMBOL_RATE_3429, filter, &accepted);
+
+			CHECK(waveform != 0 && accepted != 0,
+			      "pre-emphasis profile %u/%u did not run",
+			      rate, filter);
+			hash = hash_u64(hash, waveform);
+		}
+	}
+	CHECK(hash == UINT64_C(0x00e51937842ca4e8),
+	      "integrated pre-emphasis profiles changed (%016llx)",
+	      (unsigned long long)hash);
+	return true;
+}
+
 static bool test_transactional_contract(void)
 {
 	struct v34_phase3_profile profile =
@@ -222,7 +261,7 @@ static bool test_transactional_contract(void)
 	bool accepted = true;
 
 	CHECK(v34_pulse_modulator_init(
-		      &modulator, &profile, &channel, INT16_MAX, 2.0) ==
+		      &modulator, &profile, &channel, 2.0) ==
 		      V34_PULSE_MODULATOR_OK &&
 	      v34_pulse_modulator_needs_point(&modulator),
 	      "transaction fixture did not initialize");
@@ -269,6 +308,7 @@ static bool test_initialization_and_copy(void)
 	struct v34_phase3_profile profile =
 		profile_for(V34_SYMBOL_RATE_2743, false);
 	struct v34_phase3_profile invalid_profile = profile;
+	struct v34_phase3_profile invalid_preemphasis = profile;
 	struct qam_channel channel = channel_for(&profile);
 	struct qam_channel invalid_channel = channel;
 	struct v34_pulse_modulator left;
@@ -279,26 +319,31 @@ static bool test_initialization_and_copy(void)
 	memset(&left, 0xa5, sizeof(left));
 	untouched = left;
 	invalid_profile.symbol_rate = V34_SYMBOL_RATE_COUNT;
+	invalid_preemphasis.preemphasis_filter_index =
+		V34_PREEMPHASIS_MAX_FILTER_INDEX + 1u;
 	invalid_channel.sample_rate--;
 	CHECK(v34_pulse_modulator_init(
-		      NULL, &profile, &channel, INT16_MAX, 2.0) ==
+		      NULL, &profile, &channel, 2.0) ==
 		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
 	      v34_pulse_modulator_init(
-		      &left, &invalid_profile, &channel, INT16_MAX, 2.0) ==
+		      &left, &invalid_profile, &channel, 2.0) ==
 		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
 	      v34_pulse_modulator_init(
-		      &left, &profile, &invalid_channel, INT16_MAX, 2.0) ==
+		      &left, &invalid_preemphasis, &channel, 2.0) ==
 		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
 	      v34_pulse_modulator_init(
-		      &left, &profile, &channel, 0, 2.0) ==
+		      &left, &profile, &invalid_channel, 2.0) ==
 		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
 	      v34_pulse_modulator_init(
-		      &left, &profile, &channel, INT16_MAX, NAN) ==
+		      &left, &profile, &channel, NAN) ==
+		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
+	      v34_pulse_modulator_init(
+		      &left, &profile, &channel, 64.0) ==
 		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
 	      memcmp(&left, &untouched, sizeof(left)) == 0,
 	      "invalid initialization mutated its destination");
 	CHECK(v34_pulse_modulator_init(
-		      &left, &profile, &channel, INT16_MAX, 2.0) ==
+		      &left, &profile, &channel, 2.0) ==
 		      V34_PULSE_MODULATOR_OK,
 	      "copy fixture did not initialize");
 	right = left;
@@ -339,6 +384,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "all profiles", test_all_profiles },
+		{ "fixed line oracle", test_fixed_line_oracle },
+		{ "pre-emphasis profiles", test_preemphasis_profiles },
 		{ "transactional contract", test_transactional_contract },
 		{ "initialization and copy", test_initialization_and_copy },
 	};

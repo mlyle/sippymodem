@@ -5,7 +5,6 @@
 
 #include "qam.h"
 #include "v34_phase3_profile.h"
-#include "v34_preemphasis.h"
 #include "v34_pulse_modulator.h"
 
 #include <stdbool.h>
@@ -26,14 +25,13 @@ enum v34_training_line_result {
 	V34_TRAINING_LINE_NUMERIC_FAILURE,
 };
 
-/* One continuous Phase 3/4 training waveform. The carrier, pulse shaper,
- * pre-emphasis filter, and sample clock remain owned here across protocol
- * section boundaries. S/S-bar supplies the deterministic line-power
+/* One continuous Phase 3/4 training waveform. The pulse/carrier line owner
+ * and sample clock remain here across protocol section boundaries. S/S-bar
+ * supplies the deterministic line-power
  * calibration, but is not retained as transmit state. */
 struct v34_training_line {
 	struct v34_phase3_profile profile;
 	struct v34_pulse_modulator carrier;
-	struct v34_preemphasis preemphasis;
 	double output_gain;
 	double raw_rms;
 	double raw_peak;

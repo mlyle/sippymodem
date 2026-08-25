@@ -1057,7 +1057,7 @@ V34_DATA_POINTS_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_data_carrier.o \
@@ -1085,7 +1085,7 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_data_carrier.o
@@ -1112,7 +1112,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_data_points.o \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
@@ -1231,15 +1231,11 @@ V34_INFO1_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_info1.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v34_phase2_info.o
-V34_PREEMPHASIS_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_preemphasis
-V34_PREEMPHASIS_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_preemphasis.o \
-	$(BUILD_DIR)/v34_preemphasis.o
 V34_PULSE_MODULATOR_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_pulse_modulator
 V34_PULSE_MODULATOR_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_pulse_modulator.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o
@@ -1296,7 +1292,7 @@ V34_TRAINING_LINE_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
@@ -1421,7 +1417,7 @@ V34_TRAINING_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
@@ -2267,7 +2263,7 @@ V90_PHASE4_CP_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
@@ -2460,7 +2456,7 @@ V90_PHASE3_ANALOG_LINE_TX_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_training_line.o \
@@ -2473,7 +2469,7 @@ V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_info1.o \
-	$(BUILD_DIR)/v34_preemphasis.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
@@ -3103,7 +3099,6 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_ADAPTIVE_EQUALIZER_TEST_BINARY) \
 	$(V34_CONSTELLATION_TEST_BINARY) \
 	$(V34_INFO1_TEST_BINARY) \
-	$(V34_PREEMPHASIS_TEST_BINARY) \
 	$(V34_PULSE_MODULATOR_TEST_BINARY) \
 	$(V34_PHASE3_PROFILE_TEST_BINARY) \
 	$(V34_PHASE2_SELECTION_TEST_BINARY) \
@@ -3421,7 +3416,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_ADAPTIVE_EQUALIZER_TEST_OBJECTS:.o=.d) \
 	$(V34_CONSTELLATION_TEST_OBJECTS:.o=.d) \
 	$(V34_INFO1_TEST_OBJECTS:.o=.d) \
-	$(V34_PREEMPHASIS_TEST_OBJECTS:.o=.d) \
 	$(V34_PULSE_MODULATOR_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_PROFILE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_SELECTION_TEST_OBJECTS:.o=.d) \
@@ -4058,9 +4052,6 @@ $(V34_CONSTELLATION_TEST_BINARY): $(V34_CONSTELLATION_TEST_OBJECTS)
 
 $(V34_INFO1_TEST_BINARY): $(V34_INFO1_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
-
-$(V34_PREEMPHASIS_TEST_BINARY): $(V34_PREEMPHASIS_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PULSE_MODULATOR_TEST_BINARY): \
 	$(V34_PULSE_MODULATOR_TEST_OBJECTS)
@@ -5646,10 +5637,6 @@ $(BUILD_DIR)/pcm_phase3_profile.o: \
 
 $(BUILD_DIR)/v34_info1.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_info1.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_preemphasis.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_preemphasis.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_pulse_modulator.o: \
