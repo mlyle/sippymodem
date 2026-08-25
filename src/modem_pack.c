@@ -266,6 +266,8 @@ void modem_async_start(struct modem *m)
 
 #define DETECTOR_MATCH_CHARACTERS 4
 #define DETECTOR_ADP_REPLY_PATTERNS 16
+#define DETECTOR_ORIGINATOR_MARK_BITS (64 * 8)
+#define DETECTOR_ANSWER_TIMEOUT_SCALE 96
 #define PATTERN_SIZE 36
 #define DETECTOR_FALLBACK_RATE 28800
 
@@ -302,9 +304,7 @@ static int detector_rate(const struct modem *m)
 static void detector_start(struct modem *m)
 {
 	PACK_DBG("detector start...\n");
-	m->packer.detector.tx_count = 2;
-	m->bit_timer_func = detector_finish;
-	m->bit_timer = detector_rate(m) * V42_T400_MS / 1000;
+	m->packer.detector.tx_count = 1;
 }
 
 static int detector_ec_required(const struct modem *m)
@@ -415,7 +415,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			m->bit_timer_func = detector_finish;
 			if (!m->caller) {
 				/* Reply with the locally selected V.42 or V.14 mode. */
-				d->tx_count = 2;
+				d->tx_count = 1;
 				d->ec_enable = m->cfg.ec != 0;
 				m->bit_timer =
 					DETECTOR_ADP_REPLY_PATTERNS * PATTERN_SIZE;
@@ -441,8 +441,7 @@ void modem_detector_start(struct modem *m)
 		detector_set_pattern(d->tx_pattern, ODP0, ODP1);
 		detector_set_pattern(d->rx_pattern, ADP0, ADP1_V42);
 		m->bit_timer_func = detector_start;
-		/* Preserve the short initial mark interval at every bit rate. */
-		m->bit_timer = (rate + 49) / 50;
+		m->bit_timer = DETECTOR_ORIGINATOR_MARK_BITS;
 	}
 	else {
 		detector_set_pattern(
@@ -450,9 +449,12 @@ void modem_detector_start(struct modem *m)
 			m->cfg.ec ? ADP1_V42 : ADP1_V14);
 		detector_set_pattern(d->rx_pattern, ODP0, ODP1);
 		m->bit_timer_func = detector_finish;
-		/* Allow the peer's physical data mode to finish entering before
-		 * applying the packet-protocol fallback. */
-		m->bit_timer = m->cfg.ec ? rate * 2 :
+		/* The initial data-mode boundary can be substantially skewed between
+		 * peers.  Keep reliable-mode detection alive until the remote ODP
+		 * arrives; the call-level training timeout remains the outer bound. */
+		m->bit_timer = m->cfg.ec ?
+			DETECTOR_FALLBACK_RATE *
+				DETECTOR_ANSWER_TIMEOUT_SCALE * 3 / 4 :
 			rate * V42_T400_MS / 1000;
 	}
 	m->pack.bit  = m->unpack.bit  = 0;

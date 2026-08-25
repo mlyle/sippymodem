@@ -269,7 +269,7 @@ static bool test_async_preserves_raw_data_through_t400(void)
 
 static bool test_raw_answerer_selects_v14(void)
 {
-	uint8_t bits[40];
+	uint8_t bits[72];
 	struct dp answer_datapump = { .id = DP_V34 };
 	struct modem answerer = {
 		.name = "raw-v42-answerer",
@@ -295,45 +295,35 @@ static bool test_raw_answerer_selects_v14(void)
 		      answerer.packer.detector.tx_pattern[1] == 0x00,
 	      "raw answerer did not arm T400 with ADP-V.14");
 
-	pattern_source.packer.detector.tx_count = 2;
+	pattern_source.packer.detector.tx_count = 1;
 	pattern_source.packer.detector.tx_pattern[0] = 0x88;
 	pattern_source.packer.detector.tx_pattern[1] = 0x89;
 	CHECK(modem_detector_get_bits(
-		      &pattern_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits) &&
+		      &pattern_source, 1, bits, 72) == 72 &&
 		      modem_detector_put_bits(
-			      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits),
+			      &answerer, 1, bits, 72) == 72,
 	      "raw answerer did not consume the first ODP");
 	CHECK(answerer.packer.detector.rx_count == 2 &&
 		      answerer.packer.detector.tx_count == 0,
 	      "one ODP prematurely started the raw answer");
 	CHECK(modem_detector_get_bits(
-		      &pattern_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits) &&
+		      &pattern_source, 1, bits, 36) == 36 &&
 		      modem_detector_put_bits(
-			      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits),
+			      &answerer, 1, bits, 36) == 36,
 	      "raw answerer did not consume the second ODP");
 	CHECK(answerer.packer.detector.rx_count == 4 &&
-		      answerer.packer.detector.tx_count == 2 &&
+		      answerer.packer.detector.tx_count == 1 &&
 		      answerer.packer.detector.ec_enable == 0,
 	      "two ODPs did not start the ADP-V.14 response");
 
 	modem_detector_start(&originator);
-	CHECK(modem_detector_get_bits(
-		      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits) &&
+	CHECK(modem_detector_get_bits(&answerer, 1, bits, 72) == 72 &&
 		      modem_detector_put_bits(
-			      &originator, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits),
+			      &originator, 1, bits, 72) == 72,
 	      "originator did not consume the first ADP-V.14");
-	CHECK(modem_detector_get_bits(
-		      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits) &&
+	CHECK(modem_detector_get_bits(&answerer, 1, bits, 36) == 36 &&
 		      modem_detector_put_bits(
-			      &originator, 1, bits, (int)ARRAY_LENGTH(bits)) ==
-		      (int)ARRAY_LENGTH(bits),
+			      &originator, 1, bits, 36) == 36,
 	      "originator did not consume the second ADP-V.14");
 	CHECK(originator.packer.detector.rx_count == 4 &&
 		      originator.packer.detector.ec_enable == 0,
@@ -341,34 +331,82 @@ static bool test_raw_answerer_selects_v14(void)
 	return true;
 }
 
-static bool test_v42_originator_t400_is_bounded(void)
+static bool test_v42_waits_for_a_delayed_peer(void)
 {
-	struct modem fallback = {
-		.name = "v42-fallback-originator",
+	uint8_t bits[512];
+	struct modem originator = {
+		.name = "delayed-v42-originator",
 		.caller = 1,
 		.tx_rate = 9600,
 		.cfg = { .ec = 1, .ec_detector = 1 },
 	};
-	struct modem required = fallback;
+	struct modem answerer = {
+		.name = "delayed-v42-answerer",
+		.tx_rate = 9600,
+		.cfg = { .ec = 1, .ec_detector = 1 },
+	};
 
-	modem_detector_start(&fallback);
-	CHECK(fallback.bit_timer == 192 &&
-		      fallback.packer.detector.tx_count == 0,
-	      "V.42 originator did not begin with a 20 ms mark interval");
-	fallback.bit_timer_func(&fallback);
-	CHECK(fallback.bit_timer == 7200 &&
-		      fallback.packer.detector.tx_count == 2,
-	      "V.42 originator did not arm ODP for T400");
-	fallback.bit_timer_func(&fallback);
-	CHECK(fallback.cfg.ec == 0,
-	      "auto-reliable originator did not fall back after T400");
+	modem_detector_start(&originator);
+	CHECK(originator.bit_timer == 512 &&
+		      originator.packer.detector.tx_count == 0,
+	      "V.42 originator did not begin with the 512-bit mark interval");
+	CHECK(modem_detector_get_bits(
+		      &originator, 1, bits, 512) == 512,
+	      "V.42 originator did not emit its initial mark interval");
+	originator.bit_timer = 0;
+	originator.bit_timer_func(&originator);
+	CHECK(originator.bit_timer == 0 &&
+		      originator.packer.detector.tx_count == 1,
+	      "V.42 originator did not begin its continuous ODP run");
 
-	required.sregs[SREG_EC] = 4;
-	modem_detector_start(&required);
-	required.bit_timer_func(&required);
-	required.bit_timer_func(&required);
-	CHECK(required.cfg.ec == 1,
-	      "LAPM-only originator silently fell back after T400");
+	/* Discard more than the former T400-limited ODP run before the answerer
+	 * reaches its own packet-protocol boundary. */
+	for (unsigned int iteration = 0; iteration < 101; ++iteration)
+		CHECK(modem_detector_get_bits(
+			      &originator, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+			      (int)ARRAY_LENGTH(bits),
+		      "V.42 originator stopped during the delayed ODP run");
+	CHECK(originator.bit_timer == 0 &&
+		      originator.packer.detector.tx_count > 1 &&
+		      originator.packer.detector.ec_enable == 0,
+	      "V.42 originator abandoned detection before its peer arrived");
+
+	modem_detector_start(&answerer);
+	CHECK(answerer.bit_timer == 2073600,
+	      "V.42 answerer armed %d initial detection bits",
+	      answerer.bit_timer);
+	for (unsigned int iteration = 0;
+	     iteration < 4 && answerer.packer.detector.rx_count < 4;
+	     ++iteration) {
+		CHECK(modem_detector_get_bits(
+			      &originator, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+			      (int)ARRAY_LENGTH(bits) &&
+			      modem_detector_put_bits(
+				      &answerer, 1, bits,
+				      (int)ARRAY_LENGTH(bits)) ==
+				      (int)ARRAY_LENGTH(bits),
+		      "V.42 answerer did not consume delayed ODP");
+	}
+	CHECK(answerer.packer.detector.rx_count == 4 &&
+		      answerer.packer.detector.tx_count == 1 &&
+		      answerer.packer.detector.ec_enable == 1,
+	      "V.42 answerer did not accept delayed ODP");
+
+	for (unsigned int iteration = 0;
+	     iteration < 4 && originator.packer.detector.rx_count < 4;
+	     ++iteration) {
+		CHECK(modem_detector_get_bits(
+			      &answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+			      (int)ARRAY_LENGTH(bits) &&
+			      modem_detector_put_bits(
+				      &originator, 1, bits,
+				      (int)ARRAY_LENGTH(bits)) ==
+				      (int)ARRAY_LENGTH(bits),
+		      "V.42 originator did not consume delayed ADP");
+	}
+	CHECK(originator.packer.detector.rx_count == 4 &&
+		      originator.packer.detector.ec_enable == 1,
+	      "V.42 originator did not accept the delayed response");
 	return true;
 }
 
@@ -529,8 +567,8 @@ int main(void)
 		  test_async_preserves_raw_data_through_t400 },
 		{ "raw answerer V.14 selection",
 		  test_raw_answerer_selects_v14 },
-		{ "V.42 originator T400",
-		  test_v42_originator_t400_is_bounded },
+		{ "V.42 delayed startup",
+		  test_v42_waits_for_a_delayed_peer },
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
