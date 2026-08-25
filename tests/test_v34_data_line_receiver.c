@@ -729,6 +729,7 @@ static bool test_validation_and_failure_latch(void)
 	      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
 	      "V.34 waveform accepted an occupied band beyond Nyquist");
 
+	bool b1_rejected = false;
 	for (size_t index = 0; index < 4096; ++index) {
 		enum v34_data_receive_result result =
 			v34_data_line_receiver_sample(
@@ -737,16 +738,19 @@ static bool test_validation_and_failure_latch(void)
 				&current, &received);
 
 		CHECK(result != V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-			      result != V34_DATA_RECEIVE_FAILED &&
 			      result != V34_DATA_RECEIVE_OUT_OF_RANGE &&
 			      result != V34_DATA_RECEIVE_NUMERIC_FAILURE,
 		      "V.34 line receiver rejected bounded hostile sample %zu",
 		      index);
+		if (result == V34_DATA_RECEIVE_FAILED) {
+			b1_rejected = true;
+			break;
+		}
 	}
-	CHECK(v34_data_line_receiver_is_valid(&fixture.receiver) &&
-		      !v34_data_line_receiver_has_failed(&fixture.receiver),
-	      "V.34 line receiver did not survive a bounded hostile channel");
-	fixture.receiver.failed = true;
+	CHECK(b1_rejected &&
+	      v34_data_line_receiver_is_valid(&fixture.receiver) &&
+	      v34_data_line_receiver_has_failed(&fixture.receiver),
+	      "V.34 line receiver accepted random B1 as carrier");
 	{
 		struct v34_data_line_receiver before = fixture.receiver;
 		struct v34_survivor_decision saved_current;
