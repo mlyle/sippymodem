@@ -432,6 +432,16 @@ static bool test_training_case(
 		case V34_PHASE34_RECEIVER_OK:
 			break;
 		case V34_PHASE34_RECEIVER_TIMING_ACQUIRED:
+			CHECK(receiver.equalizer.epoch == 0u &&
+			      receiver.equalizer.inputs_since_observation == 0u &&
+			      !receiver.equalizer.decision_pending &&
+			      receiver.stage == V34_PHASE34_RECEIVER_PHASE3 &&
+			      receiver.semantic.phase3.stage ==
+				      V34_PHASE3_DECISION_RECEIVER_S &&
+			      receiver.semantic.phase3.s.buffered_decisions == 0u &&
+			      !receiver.semantic.phase3.s_target_seeded,
+			      "role %u rate %u adapted before S acquisition",
+			      role, rate);
 			timing_events++;
 			break;
 		case V34_PHASE34_RECEIVER_PHASE3_S_DETECTED:

@@ -170,19 +170,6 @@ static enum v34_adaptive_equalizer_feedback_mode expected_feedback_mode(
 		V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN;
 }
 
-static bool starts_after_timing_acquisition(
-	const struct v34_phase34_receiver *receiver)
-{
-	const struct v34_phase3_profile *profile =
-		&receiver->transmitting_profile;
-
-	return profile->symbol_rate == V34_SYMBOL_RATE_2800 ||
-	       (profile->symbol_rate == V34_SYMBOL_RATE_2743 &&
-		profile->high_carrier) ||
-	       (profile->symbol_rate == V34_SYMBOL_RATE_3200 &&
-		!profile->high_carrier);
-}
-
 static bool tracking_state_is_valid(
 	const struct v34_phase34_receiver *receiver)
 {
@@ -243,8 +230,7 @@ bool v34_phase34_receiver_is_valid(
 				V34_PHASE3_DECISION_RECEIVER_S ||
 			 receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_REPEATED_S);
-	if (starts_after_timing_acquisition(receiver) &&
-	    !v34_receive_timing_is_acquired(&receiver->timing))
+	if (!v34_receive_timing_is_acquired(&receiver->timing))
 		return receiver->equalizer.epoch == 0u &&
 		       receiver->equalizer.inputs_since_observation == 0u &&
 		       !receiver->equalizer.decision_pending &&
@@ -691,9 +677,10 @@ static enum v34_phase34_receiver_result receive_started_sample(
 	    timing_result != V34_RECEIVE_TIMING_SAMPLES_READY)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	acquired = v34_receive_timing_is_acquired(&receiver->timing);
-	/* Profiles with a later carrier/timing lock need pull-in to finish
-	 * before the semantic S suffix begins. */
-	if (starts_after_timing_acquisition(receiver) && !was_acquired)
+	/* Carrier confirmation owns the physical start of S/S-bar reception.
+	 * Keep the equalizer and semantic window pristine while the timing and
+	 * gain loops acquire; otherwise pre-S energy trains a false lineage. */
+	if (!was_acquired)
 		return acquired ? V34_PHASE34_RECEIVER_TIMING_ACQUIRED :
 				  V34_PHASE34_RECEIVER_OK;
 	if (timing_result == V34_RECEIVE_TIMING_OK)
