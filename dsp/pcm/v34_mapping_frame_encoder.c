@@ -82,17 +82,3 @@ v34_encode_mapping_frame(
 	*encoded = generated;
 	return V34_MAPPING_FRAME_ENCODER_OK;
 }
-
-const char *v34_mapping_frame_encoder_result_name(
-	enum v34_mapping_frame_encoder_result result)
-{
-	switch (result) {
-	case V34_MAPPING_FRAME_ENCODER_OK:
-		return "ok";
-	case V34_MAPPING_FRAME_ENCODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_MAPPING_FRAME_ENCODER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

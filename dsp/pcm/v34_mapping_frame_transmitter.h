@@ -49,7 +49,4 @@ v34_transmit_mapping_frame(
 	double mean_squared_magnitude,
 	struct v34_transmitted_mapping_frame *transmitted);
 
-const char *v34_mapping_frame_transmitter_result_name(
-	enum v34_mapping_frame_transmitter_result result);
-
 #endif

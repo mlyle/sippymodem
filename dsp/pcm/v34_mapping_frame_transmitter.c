@@ -122,21 +122,3 @@ v34_transmit_mapping_frame(
 	*transmitted = generated;
 	return V34_MAPPING_FRAME_TRANSMITTER_OK;
 }
-
-const char *v34_mapping_frame_transmitter_result_name(
-	enum v34_mapping_frame_transmitter_result result)
-{
-	switch (result) {
-	case V34_MAPPING_FRAME_TRANSMITTER_OK:
-		return "ok";
-	case V34_MAPPING_FRAME_TRANSMITTER_FRAME_COMPLETE:
-		return "frame complete";
-	case V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_MAPPING_FRAME_TRANSMITTER_OUT_OF_RANGE:
-		return "out of range";
-	case V34_MAPPING_FRAME_TRANSMITTER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

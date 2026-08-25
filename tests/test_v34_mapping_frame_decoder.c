@@ -333,16 +333,6 @@ static bool test_transactional_rejection(void)
 	      decoders_are_equal(&decoder, &saved) &&
 	      memcmp(&recovered, &recovered_saved, sizeof(recovered)) == 0,
 	      "invalid mapping-frame arguments changed state or output");
-	CHECK(strcmp(v34_mapping_frame_decoder_result_name(
-		     V34_MAPPING_FRAME_DECODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_mapping_frame_decoder_result_name(
-		     V34_MAPPING_FRAME_DECODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_mapping_frame_decoder_result_name(
-		     (enum v34_mapping_frame_decoder_result)2),
-		     "unknown") == 0,
-	      "mapping-frame decoder result names changed");
 	return true;
 }
 

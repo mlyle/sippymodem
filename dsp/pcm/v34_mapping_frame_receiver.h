@@ -40,7 +40,4 @@ v34_receive_mapping_frame(
 		decided[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	struct v34_received_mapping_frame *received);
 
-const char *v34_mapping_frame_receiver_result_name(
-	enum v34_mapping_frame_receiver_result result);
-
 #endif /* V34_MAPPING_FRAME_RECEIVER_H */

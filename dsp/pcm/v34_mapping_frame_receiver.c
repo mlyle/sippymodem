@@ -59,17 +59,3 @@ v34_receive_mapping_frame(
 	*received = generated;
 	return V34_MAPPING_FRAME_RECEIVER_OK;
 }
-
-const char *v34_mapping_frame_receiver_result_name(
-	enum v34_mapping_frame_receiver_result result)
-{
-	switch (result) {
-	case V34_MAPPING_FRAME_RECEIVER_OK:
-		return "ok";
-	case V34_MAPPING_FRAME_RECEIVER_FRAME_COMPLETE:
-		return "frame complete";
-	case V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

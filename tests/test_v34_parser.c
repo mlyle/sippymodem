@@ -532,16 +532,6 @@ static bool test_validation(void)
 	      recovered_auxiliary == 0xa5,
 	      "invalid parsed recovery changed an output");
 
-	CHECK(strcmp(v34_parser_result_name(
-		     V34_PARSER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_parser_result_name(
-		     V34_PARSER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_parser_result_name(
-		     (enum v34_parser_result)2),
-		     "unknown") == 0,
-	      "parser result names changed");
 	return true;
 }
 

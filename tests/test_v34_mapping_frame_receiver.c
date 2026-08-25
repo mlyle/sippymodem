@@ -483,19 +483,6 @@ static bool test_transactional_boundaries(void)
 		      memcmp(&received, &saved_received, sizeof(received)) == 0,
 		      "completed schedule changed receiver state or output");
 	}
-	CHECK(strcmp(v34_mapping_frame_receiver_result_name(
-		     V34_MAPPING_FRAME_RECEIVER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_mapping_frame_receiver_result_name(
-		     V34_MAPPING_FRAME_RECEIVER_FRAME_COMPLETE),
-		     "frame complete") == 0 &&
-	      strcmp(v34_mapping_frame_receiver_result_name(
-		     V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_mapping_frame_receiver_result_name(
-		     (enum v34_mapping_frame_receiver_result)3),
-		     "unknown") == 0,
-	      "mapping-frame receiver result names changed");
 	return true;
 }
 

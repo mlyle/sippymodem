@@ -709,7 +709,7 @@ static bool test_late_failure_rollback(void)
 	return true;
 }
 
-static bool test_completion_and_result_names(void)
+static bool test_completion(void)
 {
 	struct transmitter_fixture fixture;
 
@@ -723,31 +723,6 @@ static bool test_completion_and_result_names(void)
 		      NULL, 0, NULL, V34_NONLINEAR_THETA_ZERO, 1.0,
 		      V34_MAPPING_FRAME_TRANSMITTER_FRAME_COMPLETE),
 	      "completed transmission changed state or output");
-	CHECK(strcmp(
-		      v34_mapping_frame_transmitter_result_name(
-			      V34_MAPPING_FRAME_TRANSMITTER_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_transmitter_result_name(
-			      V34_MAPPING_FRAME_TRANSMITTER_FRAME_COMPLETE),
-		      "frame complete") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_transmitter_result_name(
-			      V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT),
-		      "invalid argument") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_transmitter_result_name(
-			      V34_MAPPING_FRAME_TRANSMITTER_OUT_OF_RANGE),
-		      "out of range") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_transmitter_result_name(
-			      V34_MAPPING_FRAME_TRANSMITTER_NUMERIC_FAILURE),
-		      "numeric failure") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_transmitter_result_name(
-			      (enum v34_mapping_frame_transmitter_result)5),
-		      "unknown") == 0,
-	      "mapping-frame transmitter result names changed");
 	return true;
 }
 
@@ -760,8 +735,7 @@ int main(void)
 		{ "composed transmission", test_composition },
 		{ "transactional validation", test_transactional_validation },
 		{ "late failure rollback", test_late_failure_rollback },
-		{ "completion and result names",
-		  test_completion_and_result_names },
+		{ "completion", test_completion },
 	};
 	unsigned int failures = 0;
 

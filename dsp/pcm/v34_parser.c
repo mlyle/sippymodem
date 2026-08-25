@@ -365,15 +365,3 @@ v34_recover_mapping_frame_bits(
 		*auxiliary_bit = recovered_auxiliary;
 	return V34_PARSER_OK;
 }
-
-const char *v34_parser_result_name(
-	enum v34_parser_result result)
-{
-	switch (result) {
-	case V34_PARSER_OK:
-		return "ok";
-	case V34_PARSER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

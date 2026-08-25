@@ -58,7 +58,4 @@ bool v34_parsed_mapping_frame_is_valid(
 	const struct v34_mapping_parameters *parameters,
 	const struct v34_mapping_frame *mapping_frame);
 
-const char *v34_parser_result_name(
-	enum v34_parser_result result);
-
 #endif

@@ -34,7 +34,4 @@ v34_encode_mapping_frame(
 	size_t scrambled_primary_bit_count, const uint8_t *auxiliary_bit,
 	struct v34_encoded_mapping_frame *encoded);
 
-const char *v34_mapping_frame_encoder_result_name(
-	enum v34_mapping_frame_encoder_result result);
-
 #endif

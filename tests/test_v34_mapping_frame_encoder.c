@@ -433,23 +433,6 @@ static bool test_transactional_failures(void)
 		      &invalid, &frame, primary_bits, frame.primary_bits, NULL,
 		      V34_MAPPING_FRAME_ENCODER_INVALID_ARGUMENT),
 	      "invalid encoder changed state or output");
-	CHECK(strcmp(
-		      v34_mapping_frame_encoder_result_name(
-			      V34_MAPPING_FRAME_ENCODER_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_encoder_result_name(
-			      V34_MAPPING_FRAME_ENCODER_INVALID_ARGUMENT),
-		      "invalid argument") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_encoder_result_name(
-			      V34_MAPPING_FRAME_ENCODER_OUT_OF_RANGE),
-		      "out of range") == 0 &&
-	      strcmp(
-		      v34_mapping_frame_encoder_result_name(
-			      (enum v34_mapping_frame_encoder_result)3),
-		      "unknown") == 0,
-	      "mapping-frame result names changed");
 	return true;
 }
 

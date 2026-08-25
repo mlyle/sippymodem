@@ -37,7 +37,4 @@ v34_decode_mapping_frame(
 		decided[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	struct v34_recovered_mapping_frame *recovered);
 
-const char *v34_mapping_frame_decoder_result_name(
-	enum v34_mapping_frame_decoder_result result);
-
 #endif /* V34_MAPPING_FRAME_DECODER_H */
