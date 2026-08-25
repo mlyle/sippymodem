@@ -121,7 +121,7 @@ def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
             for feature in callback_features
             if feature not in {"V42", "V44"}
         )
-    elif case.family == "v34":
+    if case.family == "v34":
         if (
             case.receive_rate is None
             or case.receive_rate != case.transmit_rate
@@ -201,7 +201,7 @@ def _v34(
         receive_rate=rate,
         transmit_rate=rate,
         symbol_rate=symbol_rate,
-        feature="v34-forced-rate",
+        feature="v34-rate-ceiling",
         level=level,
     )
 

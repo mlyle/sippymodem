@@ -570,8 +570,7 @@ class LiveCampaignTests(unittest.TestCase):
 
         raw_v34 = CASES_BY_NAME["v34-26400-b3200-raw-originator"]
         lapm_v34 = CASES_BY_NAME["v34-26400-b3200-lapm-originator"]
-        self.assertIn(
-            "TX",
+        self.assertIsNone(
             _case_connect_error(
                 raw_v34,
                 ConnectReport("V.34", "none", "none", 26400, 24000),

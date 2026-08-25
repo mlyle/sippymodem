@@ -157,14 +157,16 @@ class LiveCampaignProfileTests(unittest.TestCase):
             ("v22-600-lapm-callback",),
         )
 
-    def test_v34_lapm_uses_each_cell_as_a_rate_ceiling(self) -> None:
+    def test_v34_uses_each_cell_as_a_rate_ceiling(self) -> None:
         raw = CASES_BY_NAME["v34-26400-b3200-raw-originator"]
         lapm = CASES_BY_NAME["v34-26400-b3200-lapm-originator"]
 
-        self.assertIn("AT+MS=34,0,26400,26400", raw.at_commands)
-        self.assertIsNone(raw.minimum_rate)
+        self.assertIn("AT+MS=34,0,4800,26400", raw.at_commands)
+        self.assertEqual(raw.minimum_rate, 4800)
         self.assertIn("AT+MS=34,0,4800,26400", lapm.at_commands)
         self.assertEqual(lapm.minimum_rate, 4800)
+        self.assertEqual(raw.feature, "v34-rate-ceiling")
+        self.assertEqual(lapm.feature, "v34-rate-ceiling")
 
 
 if __name__ == "__main__":
