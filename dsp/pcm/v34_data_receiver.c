@@ -14,6 +14,10 @@ static bool b1_progress_is_valid(
 	uint16_t completed_mapping_frames;
 	uint16_t expected_bits;
 
+	if (receiver->b1_alignment_retry_available &&
+	    (!receiver->b1_active || receiver->b1_received_bits != 0u ||
+	     receiver->b1_error_bits != 0u))
+		return false;
 	if (!receiver->b1_active)
 		return receiver->b1_received_bits ==
 		       schedule->geometry.data_bits_per_frame;
@@ -61,6 +65,7 @@ enum v34_data_receive_result v34_data_receiver_init(
 	struct v34_data_receiver initialized = {
 		.transmitting_role = transmitting_role,
 		.b1_active = true,
+		.b1_alignment_retry_available = true,
 	};
 
 	if (receiver == NULL ||
@@ -112,6 +117,16 @@ static uint16_t b1_error_count(
 	return errors;
 }
 
+static bool b1_frame_is_implausible(
+	const struct v34_received_mapping_frame *received)
+{
+	uint16_t bits = (uint16_t)(received->primary_bit_count +
+				   received->auxiliary_bit_count);
+	uint16_t errors = b1_error_count(received);
+
+	return errors > bits - errors;
+}
+
 enum v34_data_receive_result
 v34_data_receiver_receive_mapping_frame(
 	struct v34_data_receiver *receiver,
@@ -138,6 +153,17 @@ v34_data_receiver_receive_mapping_frame(
 		uint16_t frame_bits = (uint16_t)(decoded.primary_bit_count +
 					       decoded.auxiliary_bit_count);
 		bool complete = decoded.mapping_frame.completes_data_frame;
+
+		if (next.b1_alignment_retry_available &&
+		    b1_frame_is_implausible(&decoded)) {
+			next = *receiver;
+			next.b1_alignment_retry_available = false;
+			if (!v34_data_receiver_is_valid(&next))
+				return V34_DATA_RECEIVE_INVALID_ARGUMENT;
+			*receiver = next;
+			return V34_DATA_RECEIVE_OK;
+		}
+		next.b1_alignment_retry_available = false;
 
 		next.b1_received_bits =
 			(uint16_t)(next.b1_received_bits + frame_bits);

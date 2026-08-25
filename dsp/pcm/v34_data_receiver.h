@@ -17,6 +17,9 @@ struct v34_data_receiver {
 	uint16_t b1_received_bits;
 	uint16_t b1_error_bits;
 	bool b1_active;
+	/* Permit one fresh-state retry when the first putative B1 mapping frame
+	 * contains a majority of non-mark bits. */
+	bool b1_alignment_retry_available;
 };
 
 /* Begin at the first mapping frame of the peer's B1 data frame. The data-mode
@@ -33,10 +36,11 @@ bool v34_data_receiver_is_valid(
 bool v34_data_receiver_is_receiving_b1(
 	const struct v34_data_receiver *receiver);
 
-/* Receive one exact decided mapping frame. B1 results identify and expose its
- * known all-one payload while counting non-one decisions without stalling a
- * noisy live stream; MAPPING_FRAME_READY exposes ordinary data. A completed
- * ordinary data frame advances automatically, including superframe
+/* Receive one exact decided mapping frame. A majority-non-mark first B1 frame
+ * consumes the one alignment retry without publishing output. B1 results then
+ * expose the known all-one payload while counting non-one decisions without
+ * stalling a noisy live stream; MAPPING_FRAME_READY exposes ordinary data. A
+ * completed ordinary data frame advances automatically, including superframe
  * wraparound. State and destination are unchanged on rejection. */
 enum v34_data_receive_result
 v34_data_receiver_receive_mapping_frame(

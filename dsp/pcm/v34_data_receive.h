@@ -7,7 +7,7 @@
 
 /* Shared status for the continuous V.34 channel-to-data receive path. */
 enum v34_data_receive_result {
-	/* Input was accepted without completing a four-dimensional interval. */
+	/* Input was accepted without a publishable interval or mapping frame. */
 	V34_DATA_RECEIVE_OK,
 	/* A present-time interval was decided without a delayed mapping frame. */
 	V34_DATA_RECEIVE_INTERVAL_READY,

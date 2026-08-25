@@ -106,6 +106,7 @@ v34_data_channel_receiver_advance(
 	}
 	*current = generated_current;
 	memcpy(decision_targets, generated_targets, sizeof(generated_targets));
-	*received = generated_received;
+	if (v34_data_receive_emits_mapping_frame(data_status))
+		*received = generated_received;
 	return data_status;
 }

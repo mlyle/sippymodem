@@ -106,13 +106,10 @@ static void generate_primary_bits(
 	}
 }
 
-static bool transmit_next(
-	struct fixture *fixture, bool b1, bool corrupt_primary,
-	bool corrupt_auxiliary, uint32_t seed, struct packet *packet)
+static bool prepare_packet(
+	struct fixture *fixture, struct packet *packet)
 {
 	struct v34_frame_schedule preview;
-	struct v34_transmitted_mapping_frame transmitted;
-	const uint8_t *auxiliary;
 
 	if (v34_frame_schedule_is_complete(
 		    &fixture->transmit_schedule) &&
@@ -121,8 +118,35 @@ static bool transmit_next(
 		    V34_FRAME_SCHEDULE_OK)
 		return false;
 	preview = fixture->transmit_schedule;
-	if (v34_frame_schedule_next(&preview, &packet->frame) !=
-	    V34_FRAME_SCHEDULE_OK)
+	return v34_frame_schedule_next(&preview, &packet->frame) ==
+	       V34_FRAME_SCHEDULE_OK;
+}
+
+static bool transmit_packet(
+	struct fixture *fixture, struct packet *packet)
+{
+	struct v34_transmitted_mapping_frame transmitted;
+	const uint8_t *auxiliary =
+		packet->frame.carries_auxiliary_bit ?
+			&packet->auxiliary :
+			NULL;
+
+	if (v34_transmit_mapping_frame(
+		    &fixture->transmit_schedule, &fixture->scrambler,
+		    &fixture->encoder, packet->primary,
+		    packet->frame.primary_bits, auxiliary,
+		    V34_NONLINEAR_THETA_ZERO, 512.0,
+		    &transmitted) != V34_MAPPING_FRAME_TRANSMITTER_OK)
+		return false;
+	decisions_from_encoded(&transmitted.encoded, packet->decided);
+	return true;
+}
+
+static bool transmit_next(
+	struct fixture *fixture, bool b1, bool corrupt_primary,
+	bool corrupt_auxiliary, uint32_t seed, struct packet *packet)
+{
+	if (!prepare_packet(fixture, packet))
 		return false;
 	memset(packet->primary, 1, packet->frame.primary_bits);
 	packet->auxiliary = b1 ? 1u : (uint8_t)(seed & 1u);
@@ -133,20 +157,20 @@ static bool transmit_next(
 		packet->primary[packet->frame.primary_bits - 1u] = 0;
 	if (corrupt_auxiliary)
 		packet->auxiliary = 0;
-	auxiliary = packet->frame.carries_auxiliary_bit ?
-		&packet->auxiliary :
-		NULL;
-	if (corrupt_auxiliary && auxiliary == NULL)
+	if (corrupt_auxiliary &&
+	    !packet->frame.carries_auxiliary_bit)
 		return false;
-	if (v34_transmit_mapping_frame(
-		    &fixture->transmit_schedule, &fixture->scrambler,
-		    &fixture->encoder, packet->primary,
-		    packet->frame.primary_bits, auxiliary,
-		    V34_NONLINEAR_THETA_ZERO, 512.0,
-		    &transmitted) != V34_MAPPING_FRAME_TRANSMITTER_OK)
+	return transmit_packet(fixture, packet);
+}
+
+static bool transmit_uniform(
+	struct fixture *fixture, uint8_t bit, struct packet *packet)
+{
+	if (bit > 1u || !prepare_packet(fixture, packet))
 		return false;
-	decisions_from_encoded(&transmitted.encoded, packet->decided);
-	return true;
+	memset(packet->primary, bit, packet->frame.primary_bits);
+	packet->auxiliary = bit;
+	return transmit_packet(fixture, packet);
 }
 
 static bool received_matches(
@@ -331,6 +355,81 @@ static bool test_b1_errors_and_rejection(void)
 	return true;
 }
 
+static bool test_b1_alignment_retry(void)
+{
+	for (size_t index = 0; index < ARRAY_LENGTH(CONFIGURATIONS); ++index) {
+		struct fixture fixture;
+		struct fixture aligned_source;
+		struct packet packet;
+		struct v34_data_receiver expected;
+		struct v34_received_mapping_frame received;
+		struct v34_received_mapping_frame saved_received;
+		enum v34_data_receive_result expected_result;
+
+		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[index]) &&
+		      initialize_fixture(
+			      &aligned_source, &CONFIGURATIONS[index]) &&
+		      transmit_uniform(&fixture, 0, &packet),
+		      "alignment retry fixture %zu did not initialize", index);
+		expected = fixture.receiver;
+		expected.b1_alignment_retry_available = false;
+		memset(&received, 0xa5, sizeof(received));
+		saved_received = received;
+		CHECK(v34_data_receiver_receive_mapping_frame(
+			      &fixture.receiver, packet.decided, &received) ==
+			      V34_DATA_RECEIVE_OK &&
+		      memcmp(&fixture.receiver, &expected,
+			     sizeof(expected)) == 0 &&
+		      memcmp(&received, &saved_received,
+			     sizeof(received)) == 0,
+		      "alignment retry %zu changed B1 state or output", index);
+
+		CHECK(transmit_next(
+			      &aligned_source, true, false, false, 0, &packet),
+		      "aligned B1 frame %zu did not transmit", index);
+		expected_result = packet.frame.completes_data_frame ?
+			V34_DATA_RECEIVE_B1_COMPLETE :
+			V34_DATA_RECEIVE_B1_IN_PROGRESS;
+		CHECK(v34_data_receiver_receive_mapping_frame(
+			      &fixture.receiver, packet.decided, &received) ==
+			      expected_result &&
+		      received_matches(&received, &packet) &&
+		      fixture.receiver.b1_received_bits ==
+			      packet.frame.data_bits &&
+		      fixture.receiver.b1_error_bits == 0u &&
+		      !fixture.receiver.b1_alignment_retry_available,
+		      "aligned B1 frame %zu did not recover", index);
+	}
+
+	{
+		struct fixture fixture;
+		struct fixture second_source;
+		struct packet packet;
+		struct v34_received_mapping_frame received;
+		enum v34_data_receive_result expected_result;
+
+		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
+		      initialize_fixture(&second_source, &CONFIGURATIONS[0]) &&
+		      transmit_uniform(&fixture, 0, &packet) &&
+		      v34_data_receiver_receive_mapping_frame(
+			      &fixture.receiver, packet.decided, &received) ==
+			      V34_DATA_RECEIVE_OK &&
+		      transmit_uniform(&second_source, 0, &packet),
+		      "one-shot alignment fixture did not initialize");
+		expected_result = packet.frame.completes_data_frame ?
+			V34_DATA_RECEIVE_B1_COMPLETE :
+			V34_DATA_RECEIVE_B1_IN_PROGRESS;
+		CHECK(v34_data_receiver_receive_mapping_frame(
+			      &fixture.receiver, packet.decided, &received) ==
+			      expected_result &&
+		      received_matches(&received, &packet) &&
+		      fixture.receiver.b1_error_bits >
+			      fixture.receiver.b1_received_bits / 2u,
+		      "alignment retry repeated after its one attempt");
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct fixture fixture;
@@ -395,6 +494,7 @@ int main(void)
 	} tests[] = {
 		{ "B1 and superframe handoff", test_b1_and_superframe_handoff },
 		{ "B1 errors and rejection", test_b1_errors_and_rejection },
+		{ "B1 alignment retry", test_b1_alignment_retry },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
