@@ -508,12 +508,35 @@ def _wake_raw_link(
     return True
 
 
+def _connect_rate_error(
+    direction: str,
+    actual: int | None,
+    maximum: int | None,
+    minimum: int | None,
+) -> str | None:
+    if maximum is None:
+        return None
+    if actual is not None:
+        matches = (
+            actual == maximum
+            if minimum is None
+            else minimum <= actual <= maximum
+        )
+        if matches:
+            return None
+    actual_text = str(actual) if actual is not None else "unreported"
+    expected = str(maximum) if minimum is None else f"{minimum}-{maximum}"
+    return f"CONNECT selected {direction} {actual_text} instead of {expected}"
+
+
 def _connect_error(
     report: ConnectReport,
     modulations: Sequence[str],
     protocol: str,
     receive_rate: int | None,
     transmit_rate: int | None,
+    *,
+    minimum_rate: int | None = None,
 ) -> str | None:
     if report.modulation not in modulations:
         expected = "/".join(modulations)
@@ -522,20 +545,13 @@ def _connect_error(
     if report.protocol != protocol:
         actual = report.protocol or "unreported"
         return f"CONNECT selected {actual} protocol instead of {protocol}"
-    if receive_rate is not None and report.receive_bit_rate != receive_rate:
-        actual = (
-            str(report.receive_bit_rate)
-            if report.receive_bit_rate is not None
-            else "unreported"
-        )
-        return f"CONNECT selected RX {actual} instead of {receive_rate}"
-    if transmit_rate is not None and report.transmit_bit_rate != transmit_rate:
-        actual = (
-            str(report.transmit_bit_rate)
-            if report.transmit_bit_rate is not None
-            else "unreported"
-        )
-        return f"CONNECT selected TX {actual} instead of {transmit_rate}"
+    rate_error = _connect_rate_error(
+        "RX", report.receive_bit_rate, receive_rate, minimum_rate
+    ) or _connect_rate_error(
+        "TX", report.transmit_bit_rate, transmit_rate, minimum_rate
+    )
+    if rate_error is not None:
+        return rate_error
     return None
 
 
@@ -554,6 +570,7 @@ def _case_connect_error(
         protocol,
         case.receive_rate,
         case.transmit_rate,
+        minimum_rate=case.minimum_rate,
     )
 
 

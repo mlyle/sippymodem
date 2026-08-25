@@ -30,7 +30,14 @@ FAMILY_ORDER = (
     "v92",
 )
 
-LAPM_LINK_PREFIX = ("ATZ", "ATE0", "AT&A7", "ATX3", "AT+DS=3,1")
+LAPM_LINK_PREFIX = (
+    "ATZ",
+    "ATE0",
+    "AT&A7",
+    "ATX3",
+    "AT\\N4",
+    "AT+DS=3,1",
+)
 RAW_LINK_PREFIX = (
     "ATZ",
     "ATE0",
@@ -41,6 +48,7 @@ RAW_LINK_PREFIX = (
 )
 LINK_SUFFIX = ("ATE0V1Q0", "ATS95=7")
 RAW_ONLY_FAMILIES = frozenset({"bell103", "v21", "v23", "baudot"})
+V34_CAMPAIGN_MIN_RATE = 4800
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,7 @@ class CampaignCase:
     callback_features: tuple[str, ...]
     link_mode: str
     level: int
+    minimum_rate: int | None = None
 
 
 def _commands(*specific: str) -> tuple[str, ...]:
@@ -102,6 +111,7 @@ def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
     stem = case.name[: -(len(case.role) + 1)]
     specific = case.at_commands[len(LAPM_LINK_PREFIX) : -len(LINK_SUFFIX)]
     callback_features = case.callback_features
+    minimum_rate = None
     if link_mode == LINK_RAW:
         specific = tuple(
             command for command in specific if not command.startswith("AT+DSC=")
@@ -111,6 +121,25 @@ def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
             for feature in callback_features
             if feature not in {"V42", "V44"}
         )
+    elif case.family == "v34":
+        if (
+            case.receive_rate is None
+            or case.receive_rate != case.transmit_rate
+        ):
+            raise RuntimeError("invalid V.34 campaign rate ceiling")
+        exact_rate = (
+            f"AT+MS=34,0,{case.receive_rate},{case.receive_rate}"
+        )
+        bounded_rate = (
+            f"AT+MS=34,0,{V34_CAMPAIGN_MIN_RATE},{case.receive_rate}"
+        )
+        if exact_rate not in specific:
+            raise RuntimeError("missing V.34 campaign rate command")
+        specific = tuple(
+            bounded_rate if command == exact_rate else command
+            for command in specific
+        )
+        minimum_rate = V34_CAMPAIGN_MIN_RATE
     return replace(
         case,
         name=f"{stem}-{link_mode}-{case.role}",
@@ -121,6 +150,7 @@ def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
         + LINK_SUFFIX,
         callback_features=callback_features,
         link_mode=link_mode,
+        minimum_rate=minimum_rate,
     )
 
 

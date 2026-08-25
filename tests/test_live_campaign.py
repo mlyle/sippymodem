@@ -568,6 +568,36 @@ class LiveCampaignTests(unittest.TestCase):
             )
         )
 
+        raw_v34 = CASES_BY_NAME["v34-26400-b3200-raw-originator"]
+        lapm_v34 = CASES_BY_NAME["v34-26400-b3200-lapm-originator"]
+        self.assertIn(
+            "TX",
+            _case_connect_error(
+                raw_v34,
+                ConnectReport("V.34", "none", "none", 26400, 24000),
+            ),
+        )
+        self.assertIsNone(
+            _case_connect_error(
+                lapm_v34,
+                ConnectReport("V.34", "LAPM", "none", 26400, 24000),
+            )
+        )
+        self.assertIn(
+            "RX",
+            _case_connect_error(
+                lapm_v34,
+                ConnectReport("V.34", "LAPM", "none", 2400, 24000),
+            ),
+        )
+        self.assertIn(
+            "TX",
+            _case_connect_error(
+                lapm_v34,
+                ConnectReport("V.34", "LAPM", "none", 24000, 28800),
+            ),
+        )
+
     def test_mismatched_connect_stops_before_online_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

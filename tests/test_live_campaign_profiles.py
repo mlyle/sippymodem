@@ -52,6 +52,7 @@ class LiveCampaignProfileTests(unittest.TestCase):
                     {"V42", "V44"}.isdisjoint(case.callback_features)
                 )
             else:
+                self.assertIn("AT\\N4", case.at_commands)
                 self.assertIn("AT+DS=3,1", case.at_commands)
 
     def test_only_slowest_modes_omit_lapm_variants(self) -> None:
@@ -155,6 +156,15 @@ class LiveCampaignProfileTests(unittest.TestCase):
             tuple(case.name for case in explicit),
             ("v22-600-lapm-callback",),
         )
+
+    def test_v34_lapm_uses_each_cell_as_a_rate_ceiling(self) -> None:
+        raw = CASES_BY_NAME["v34-26400-b3200-raw-originator"]
+        lapm = CASES_BY_NAME["v34-26400-b3200-lapm-originator"]
+
+        self.assertIn("AT+MS=34,0,26400,26400", raw.at_commands)
+        self.assertIsNone(raw.minimum_rate)
+        self.assertIn("AT+MS=34,0,4800,26400", lapm.at_commands)
+        self.assertEqual(lapm.minimum_rate, 4800)
 
 
 if __name__ == "__main__":
