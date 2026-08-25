@@ -13,6 +13,7 @@
 enum {
 	TEST_SAMPLE_LIMIT = 40000,
 	TEST_TONE_SAMPLES = 160,
+	RETRAIN_PRIOR_RTD_SAMPLES = 1000,
 };
 
 struct owned_pair {
@@ -486,17 +487,21 @@ static bool test_retrain_timeline(void)
 	struct v34_info0 caller_peer_info0;
 	struct v34_info0 answerer_peer_info0;
 	struct owned_pair pair;
+	uint16_t caller_rtd = 0;
+	uint16_t answerer_rtd = 0;
 	bool ready = false;
 
 	memset(&pair, 0, sizeof(pair));
 	CHECK(test_v34_phase2_pair_init(
 		      &pair.channel, TEST_CODEC_PCMA, 47) &&
 	      v34_phase2_init_retrain(
-		      &pair.caller, V34_CALLING_STATION, TEST_AMPLITUDE,
-		      &caller_info0, &answerer_info0) == V34_PHASE2_OK &&
+			      &pair.caller, V34_CALLING_STATION, TEST_AMPLITUDE,
+			      &caller_info0, &answerer_info0,
+			      RETRAIN_PRIOR_RTD_SAMPLES) == V34_PHASE2_OK &&
 	      v34_phase2_init_retrain(
-		      &pair.answerer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
-		      &answerer_info0, &caller_info0) == V34_PHASE2_OK,
+			      &pair.answerer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+			      &answerer_info0, &caller_info0,
+			      RETRAIN_PRIOR_RTD_SAMPLES) == V34_PHASE2_OK,
 	      "Phase 2 retrain pair did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_event caller_event;
@@ -508,13 +513,19 @@ static bool test_retrain_timeline(void)
 			      &pair, &caller_event, &answerer_event,
 			      &caller_transmit, &answerer_transmit),
 		      "Phase 2 retrain pair failed at sample %zu", index);
+		if (caller_event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED)
+			caller_rtd = caller_event.round_trip_delay_samples;
+		if (answerer_event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED)
+			answerer_rtd = answerer_event.round_trip_delay_samples;
 		if (v34_phase2_is_ready_for_info1(&pair.caller) &&
 		    v34_phase2_is_ready_for_info1(&pair.answerer)) {
 			ready = true;
 			break;
 		}
 	}
-	CHECK(ready && !v34_phase2_has_failed(&pair.caller) &&
+	CHECK(ready && caller_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
+	      answerer_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
+	      !v34_phase2_has_failed(&pair.caller) &&
 	      !v34_phase2_has_failed(&pair.answerer) &&
 	      v34_phase2_peer_info0(
 		      &pair.caller, &caller_peer_info0) == V34_PHASE2_OK &&

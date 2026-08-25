@@ -163,6 +163,9 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 
 	if (phase2 == NULL || !failure_is_valid(phase2->failure) ||
 	    !role_is_valid(phase2->local_role) ||
+	    phase2->prior_round_trip_delay_samples >
+		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+			    PHASE2_RANGING_TURNAROUND_SAMPLES ||
 	    !v34_info0_is_valid(&phase2->local_info0) ||
 	    (phase2->peer_info0_stored &&
 	     !v34_info0_is_valid(&phase2->peer_info0)) ||
@@ -272,16 +275,22 @@ enum v34_phase2_result v34_phase2_init(
 enum v34_phase2_result v34_phase2_init_retrain(
 	struct v34_phase2 *phase2, enum v34_station_role role,
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0,
-	const struct v34_info0 *peer_info0)
+	const struct v34_info0 *peer_info0,
+	uint16_t prior_round_trip_delay_samples)
 {
 	struct v34_phase2 initialized = {
+		.prior_round_trip_delay_samples =
+			prior_round_trip_delay_samples,
 		.local_role = role,
 		.stage = V34_PHASE2_RANGING,
 		.peer_info0_stored = true,
 	};
 
 	if (phase2 == NULL || !v34_info0_is_valid(local_info0) ||
-	    !v34_info0_is_valid(peer_info0))
+	    !v34_info0_is_valid(peer_info0) ||
+	    prior_round_trip_delay_samples >
+		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+			    PHASE2_RANGING_TURNAROUND_SAMPLES)
 		return V34_PHASE2_INVALID_ARGUMENT;
 	initialized.local_info0 = *local_info0;
 	initialized.local_info0.acknowledges_peer_info0 = true;
@@ -531,6 +540,7 @@ static bool sample_ranging(
 	int16_t *transmit_sample, struct v34_phase2_event *event)
 {
 	struct v34_phase2_ranging_event child;
+	uint32_t measured;
 
 	if (v34_phase2_ranging_sample(
 		    &phase2->state.ranging, received_sample,
@@ -540,6 +550,22 @@ static bool sample_ranging(
 	    V34_PHASE2_PEER_INFO0_RECEIVED) {
 		phase2->peer_info0 = child.exchange_event.peer_info0;
 		phase2->peer_info0_stored = true;
+	}
+	/* Each line terminal turns a ranging reversal around in 40 ms. A larger
+	 * within-call drop is an early reversal alias, not a new propagation delay.
+	 * Preserve the already-confirmed RTD before it sizes the retrain probe. */
+	measured = child.round_trip_delay_samples;
+	if (phase2->prior_round_trip_delay_samples != 0u &&
+	    phase2->state.ranging.control.round_trip_delay_valid &&
+	    (child.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED ||
+	     child.kind == PHASE2_PROBE_RECEIVE_READY ||
+	     child.kind == PHASE2_PROBE_TRANSMIT_READY) &&
+	    measured + PHASE2_RANGING_TURNAROUND_SAMPLES <
+		    phase2->prior_round_trip_delay_samples) {
+		child.round_trip_delay_samples =
+			phase2->prior_round_trip_delay_samples;
+		phase2->state.ranging.control.round_trip_delay_samples =
+			phase2->prior_round_trip_delay_samples;
 	}
 	switch (child.kind) {
 	case PHASE2_ROUND_TRIP_DELAY_MEASURED:

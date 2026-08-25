@@ -56,6 +56,11 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 	     !v34_info0_is_valid(&call->peer_info0)) ||
 	    !v34_retrain_detector_is_valid(&call->retrain_detector) ||
 	    call->retrain_detector.tone.local_role != call->local_role ||
+	    (!call->round_trip_delay_stored &&
+	     call->round_trip_delay_samples != 0u) ||
+	    call->round_trip_delay_samples >
+		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+			    PHASE2_RANGING_TURNAROUND_SAMPLES ||
 	    call->phase3_configuration.sample_rate !=
 		    V34_PHASE2_SAMPLE_RATE ||
 	    call->phase3_configuration.nominal_peak_amplitude <= 0 ||
@@ -113,6 +118,9 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
+	       (call->round_trip_delay_stored ||
+		(call->stage == V34_CALL_PHASE2 &&
+		 call->state.phase2.stage == V34_PHASE2_RANGING)) &&
 	       (call->failed || !child_failed);
 }
 
@@ -159,6 +167,8 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 			return V34_CALL_INVALID_STATE;
 		next.peer_info0_stored = true;
 	}
+	if (!next.round_trip_delay_stored)
+		return V34_CALL_INVALID_STATE;
 	if (v34_retrain_detector_reset(
 		    &next.retrain_detector) != V34_PHASE2_TONE_OK)
 		return V34_CALL_NUMERIC_FAILURE;
@@ -357,6 +367,12 @@ static enum v34_call_result sample_phase2(
 
 	if (result != V34_PHASE2_OK)
 		return V34_CALL_NUMERIC_FAILURE;
+	if (observation->events.phase2.kind ==
+	    V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
+		call->round_trip_delay_samples =
+			observation->events.phase2.round_trip_delay_samples;
+		call->round_trip_delay_stored = true;
+	}
 	return advance_phase2(call, &observation->events.phase2);
 }
 
@@ -433,7 +449,8 @@ static enum v34_call_result sample_retrain_silence(
 	if (v34_phase2_init_retrain(
 		    &restarted, call->local_role,
 		    call->phase2_nominal_amplitude, &call->local_info0,
-		    &call->peer_info0) != V34_PHASE2_OK)
+		    &call->peer_info0, call->round_trip_delay_samples) !=
+	    V34_PHASE2_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	call->state.phase2 = restarted;
 	call->stage = V34_CALL_PHASE2;

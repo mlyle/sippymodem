@@ -79,6 +79,7 @@ struct v34_phase2 {
 	struct v34_info0 local_info0;
 	struct v34_info0 peer_info0;
 	struct v34_phase2_probe_receiver_measurement remote_probe;
+	uint16_t prior_round_trip_delay_samples;
 	int16_t remote_receive_gain;
 	union v34_phase2_info1_parameters local_info1;
 	enum v34_phase2_stage stage;
@@ -93,10 +94,13 @@ enum v34_phase2_result v34_phase2_init(
 	struct v34_phase2 *phase2, enum v34_station_role local_role,
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0);
 
+/* Retain the confirmed within-call RTD when a new reversal alias would shorten
+ * it by more than one line-terminal turnaround. Zero disables that guard. */
 enum v34_phase2_result v34_phase2_init_retrain(
 	struct v34_phase2 *phase2, enum v34_station_role local_role,
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0,
-	const struct v34_info0 *peer_info0);
+	const struct v34_info0 *peer_info0,
+	uint16_t prior_round_trip_delay_samples);
 
 bool v34_phase2_is_valid(const struct v34_phase2 *phase2);
 bool v34_phase2_has_failed(const struct v34_phase2 *phase2);

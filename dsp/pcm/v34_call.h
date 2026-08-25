@@ -85,10 +85,12 @@ struct v34_call {
 	struct v34_phase3_exchange_configuration phase3_configuration;
 	struct v34_phase4_exchange_configuration phase4_configuration;
 	struct v34_retrain_detector retrain_detector;
+	uint16_t round_trip_delay_samples;
 	int16_t phase2_nominal_amplitude;
 	enum v34_station_role local_role;
 	enum v34_call_stage stage;
 	bool peer_info0_stored;
+	bool round_trip_delay_stored;
 	bool failed;
 };
 
