@@ -459,8 +459,7 @@ static enum v34_call_result sample_retrain_silence(
 
 static bool retrain_detection_is_active(const struct v34_call *call)
 {
-	if (call->stage == V34_CALL_PHASE3 ||
-	    call->stage == V34_CALL_PHASE4)
+	if (call->stage == V34_CALL_PHASE4)
 		return true;
 	return call->stage == V34_CALL_PHASE2 &&
 	       call->state.phase2.stage == V34_PHASE2_INFO1 &&
