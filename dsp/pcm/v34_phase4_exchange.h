@@ -66,10 +66,12 @@ union v34_phase4_transmit_path {
 };
 
 /* Own both sample directions from the exact Phase 3 handoff through the
- * reciprocal MP-prime, E, and B1 exchanges and into mapped data. Both roles
- * use the complete two-second zero-RTD Phase 4 training allowance. The caller
- * ends J only after receiving the answerer's complete S/S-bar marker and
- * reaching a J-pattern boundary. Receipt of the first valid peer MP pauses
+ * reciprocal MP-prime, E, and B1 exchanges and into mapped data. After the
+ * 512T minimum, a valid peer MP releases local TRN because it proves that the
+ * peer has completed its receive training; the two-second interval remains a
+ * fallback when both stations finish together. The caller ends J only after
+ * receiving the answerer's complete S/S-bar marker and reaching a J-pattern
+ * boundary. Receipt of the first valid peer MP pauses
  * the sample path until prepare_data_startup() performs the negotiated mapping
  * calibration outside the real-time callback. A valid final peer MP-prime
  * record arms E reception at that exact record boundary. Transmit and receive

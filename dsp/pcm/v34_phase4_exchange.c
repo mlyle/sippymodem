@@ -97,38 +97,33 @@ static bool outputs_overlap(
 static void note_ready(
 	struct v34_phase4_exchange *exchange, uint32_t *events);
 
-static bool trn_target_symbols(
-	const struct v34_phase4_exchange *exchange, uint32_t *symbols)
+static bool trn_ready_for_mp(const struct v34_phase4_exchange *exchange)
 {
 	const struct v34_phase3_profile *profile;
+	uint32_t transmitted;
 	uint64_t two_seconds;
 
-	if (exchange == NULL || symbols == NULL ||
-	    exchange->transmit_data_active)
+	if (exchange == NULL)
 		return false;
+	if (exchange->transmit_data_active)
+		return true;
 	profile = &exchange->transmit.training.line.profile;
 	if (!v34_phase3_profile_is_valid(profile))
 		return false;
-	/* Use the complete zero-RTD training allowance in both directions. This
-	 * keeps the peer's line equalizer insensitive to the sample phase at which
-	 * initial training or a full retrain reaches Phase 4. */
+	transmitted = exchange->transmit.training.phase4_trn_symbols;
+	if (transmitted < V34_PHASE4_TRN_MIN_SYMBOLS)
+		return false;
+	/* A valid peer MP proves that its receiver has finished training on this
+	 * TRN. Otherwise retain the complete zero-RTD training allowance as a
+	 * bounded fallback when the two modems finish training together. */
+	if (exchange->peer_mp_received)
+		return true;
 	two_seconds = (uint64_t)profile->symbol_rate_numerator * 2u /
 		profile->symbol_rate_denominator;
 	if (two_seconds < V34_PHASE4_TRN_MIN_SYMBOLS ||
 	    two_seconds > UINT32_MAX)
 		return false;
-	*symbols = (uint32_t)two_seconds;
-	return true;
-}
-
-static bool trn_target_complete(
-	const struct v34_phase4_exchange *exchange)
-{
-	uint32_t target;
-
-	return exchange->transmit_data_active ||
-	       (trn_target_symbols(exchange, &target) &&
-		exchange->transmit.training.phase4_trn_symbols >= target);
+	return transmitted >= (uint32_t)two_seconds;
 }
 
 static const struct v34_phase3_profile *local_transmit_profile(
@@ -362,7 +357,7 @@ bool v34_phase4_exchange_is_valid(
 	    transmit_sample_rate(exchange) != V34_RECEIVE_TIMING_SAMPLE_RATE ||
 	    (v34_phase34_receiver_has_failed(&exchange->receive) &&
 	     !exchange->failed) ||
-	    (exchange->transmit_mp_started && !trn_target_complete(exchange)) ||
+	    (exchange->transmit_mp_started && !trn_ready_for_mp(exchange)) ||
 	    exchange->transmit_mp_records_completed >
 		    V34_PHASE4_MP_REPEAT_RECORDS ||
 	    (!exchange->transmit_mp_started &&
@@ -611,7 +606,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 		exchange->finish_j_requested = false;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_J_FINISHED;
 	}
-	if (!exchange->transmit_mp_started && trn_target_complete(exchange)) {
+	if (!exchange->transmit_mp_started && trn_ready_for_mp(exchange)) {
 		result = finish_feedback_training(exchange);
 		if (result != V34_PHASE4_EXCHANGE_OK)
 			return result;

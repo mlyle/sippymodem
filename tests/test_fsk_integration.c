@@ -2079,7 +2079,7 @@ static bool run_v34_recording_replay(
 	{
 		int length = snprintf(
 			bit_rate_command, sizeof(bit_rate_command),
-			"AT+MS=34,0,%u,%u\r", bit_rate, bit_rate);
+			"AT+MS=34,0,%u,%u\r", V34_MIN_BIT_RATE, bit_rate);
 
 		CHECK(length > 0 && (size_t)length < sizeof(bit_rate_command) &&
 			      configure_recording_replay(
