@@ -1243,6 +1243,8 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 {
 	int n;
+	bool retrain_response = l->retrain_poll && l->rtx_count &&
+		FRAME_S_PF(f);
 	//LAPM_PRINT_FRAME("rx_super",0,f);
 
 	if (!l->rtx_count && FRAME_S_PF(f)) {
@@ -1285,6 +1287,8 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 		EC_ERR("rx_s_rsp: unknown header %02x.\n", FRAME_CTRL(f));
 		return;
 	}
+	if (retrain_response)
+		l->retrain_poll = 0;
 }
 
 
@@ -1622,6 +1626,7 @@ static void reset_lapm_sequence(struct lapm_state *l)
 {
 	l->busy = 0;
 	l->peer_busy = 0;
+	l->retrain_poll = 0;
 	l->reject = 0;
 	l->vs = 0;
 	l->va = 0;
@@ -1784,14 +1789,22 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	if (l->modem != m || l->state != LAPM_DATA || l->ctrl_list == NULL ||
 	    l->tx_ctrl == NULL)
 		return -1;
-	if (!l->peer_busy || m->bit_timer != 0)
+	if (l->retrain_poll)
 		return 0;
-	/* Preserve the peer's RNR state and ask whether it can receive again. */
-	if (TX_RR(l, l->cmd_addr, 1) != 0)
+	if (l->ctrl_list->next == l->tx_ctrl ||
+	    modem_hdlc_reframe(m) != 0)
+		return -1;
+	/* A physical interruption loses HDLC framing and leaves the peer's
+	 * receive sequence uncertain. Hold new information frames until one
+	 * solicited response acknowledges or requeues the retained window. */
+	l->peer_busy = 1;
+	if ((l->busy ? TX_RNR(l, l->cmd_addr, 1) :
+		      TX_RR(l, l->cmd_addr, 1)) != 0)
 		return -1;
 	T401_START(l);
 	/* The first poll is already queued; its F=1 response is solicited. */
 	l->rtx_count = 1;
+	l->retrain_poll = 1;
 	return 0;
 }
 

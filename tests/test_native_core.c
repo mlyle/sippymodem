@@ -1386,6 +1386,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	frame_t *saved_next;
 	struct lapm_v44_session retained_v44_session;
 	struct v44_character_path *v44_path;
+	uint8_t serialized_bit;
 
 	CHECK(modem != NULL, "LAPM retrain modem could not be created");
 	modem->caller = 0;
@@ -1393,6 +1394,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	modem->tx_rate = 26400;
 	CHECK(modem_ec_init(modem) == 0,
 	      "LAPM retrain modem could not initialize");
+	modem_hdlc_start(modem);
 	modem_ec_start(modem);
 	lapm = &modem->ec.lapm;
 	lapm->state = LAPM_DATA_STATE;
@@ -1425,6 +1427,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			      lapm->peer_busy == 1 && lapm->vs == 5 &&
 			      lapm->va == 5 && lapm->vr == 6 &&
 			      lapm->v44_path == v44_path &&
+			      lapm->retrain_poll == 1 &&
 			      modem->bit_timer == 52800 && lapm->rtx_count == 1,
 		      "LAPM %s retrain did not retain and poll peer flow control",
 		      local ? "local" : "remote");
@@ -1453,7 +1456,8 @@ static bool test_lapm_retrain_preserves_link_state(void)
 		response[2] = (uint8_t)((lapm->va << 1) | 1);
 		modem->packer.hdlc.rx_complete(
 			modem->packer.hdlc.framer, &incoming);
-		CHECK(lapm->peer_busy == 0 && modem->bit_timer == 0 &&
+		CHECK(lapm->peer_busy == 0 && !lapm->retrain_poll &&
+			      modem->bit_timer == 0 &&
 			      lapm->rtx_count == 0 && lapm->vs == 5 &&
 			      lapm->va == 5 && lapm->vr == 6,
 		      "LAPM %s retrain did not accept the ready response",
@@ -1464,31 +1468,43 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	lapm_source.data = retained_payload;
 	lapm_source.length = sizeof(retained_payload);
 	modem->get_chars = scripted_lapm_source;
-	outgoing = modem->packer.hdlc.get_tx_frame(
-		modem->packer.hdlc.framer);
-	CHECK(outgoing != NULL &&
-		      outgoing->size == 3 + sizeof(retained_payload) &&
-		      outgoing->buf[0] == lapm->cmd_addr &&
-		      outgoing->buf[1] == 10 && outgoing->buf[2] == 12 &&
-		      memcmp(outgoing->buf + 3, retained_payload,
+	CHECK(modem_hdlc_get_bits(modem, 1, &serialized_bit, 1) == 1,
+	      "LAPM could not begin the interrupted information frame");
+	retained_frame = modem->packer.hdlc.tx_frame;
+	CHECK(retained_frame != NULL && retained_frame->count == 0 &&
+		      modem->pack.bit == 7 &&
+		      retained_frame->size == 3 + sizeof(retained_payload) &&
+		      retained_frame->buf[0] == lapm->cmd_addr &&
+		      retained_frame->buf[1] == 10 &&
+		      retained_frame->buf[2] == 12 &&
+		      memcmp(retained_frame->buf + 3, retained_payload,
 			     sizeof(retained_payload)) == 0 &&
 		      lapm_source.offset == sizeof(retained_payload) &&
 		      lapm->vs == 6,
 	      "LAPM did not queue the retained information frame");
-	modem->packer.hdlc.tx_complete(
-		modem->packer.hdlc.framer, outgoing);
-	retained_frame = outgoing;
 	retained_v44_session = lapm->v44_session;
 	lapm_source.data = queued_payload;
 	lapm_source.length = sizeof(queued_payload);
 	lapm_source.offset = 0;
-	lapm->peer_busy = 1;
+	lapm->peer_busy = 0;
+	modem->unpack.bit = 11;
+	modem->unpack.data = 0x5a5;
+	modem->packer.hdlc.rx_error = 0;
+	modem->packer.hdlc.rx_ones = 3;
+	modem->packer.hdlc.rx_frame->count = 2;
 	modem->retrain_pending = 1;
 	modem->bit_timer = 0;
 	modem_dp_reconnected(modem);
 	CHECK(lapm->state == LAPM_DATA_STATE && lapm->vs == 6 &&
 		      lapm->va == 5 && lapm->vr == 6 && lapm->peer_busy == 1 &&
+		      lapm->retrain_poll == 1 &&
 		      lapm->sent_info == retained_frame &&
+		      modem->packer.hdlc.tx_frame == NULL &&
+		      modem->pack.bit == 0 && modem->unpack.bit == 0 &&
+		      modem->packer.hdlc.tx_ones == 0 &&
+		      modem->packer.hdlc.rx_ones == 0 &&
+		      modem->packer.hdlc.rx_error == 1 &&
+		      modem->packer.hdlc.rx_frame->count == 0 &&
 		      retained_frame->size == 3 + sizeof(retained_payload) &&
 		      memcmp(retained_frame->buf + 3, retained_payload,
 			     sizeof(retained_payload)) == 0 &&
@@ -1508,7 +1524,8 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	response[2] = (uint8_t)((lapm->va << 1) | 1);
 	modem->packer.hdlc.rx_complete(
 		modem->packer.hdlc.framer, &incoming);
-	CHECK(lapm->peer_busy == 0 && lapm->vs == 5 && lapm->va == 5 &&
+	CHECK(lapm->peer_busy == 0 && !lapm->retrain_poll &&
+		      lapm->vs == 5 && lapm->va == 5 &&
 		      lapm->tx_info == retained_frame && lapm_source.offset == 0,
 	      "LAPM retrain did not requeue the unacknowledged frame");
 	outgoing = modem->packer.hdlc.get_tx_frame(

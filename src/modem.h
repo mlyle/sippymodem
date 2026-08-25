@@ -230,6 +230,7 @@ struct lapm_state {
         int reject;
         int busy;
         int peer_busy;
+        int retrain_poll;
         u8  cmd_addr;
         u8  rsp_addr;
         u8 vs;
@@ -479,6 +480,7 @@ extern void modem_detector_use_retrain_timeout(struct modem *m);
 extern int  modem_detector_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_detector_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern void modem_hdlc_start(struct modem *m);
+extern int  modem_hdlc_reframe(struct modem *m);
 extern int  modem_hdlc_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_hdlc_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 

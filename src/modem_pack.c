@@ -752,6 +752,31 @@ void modem_hdlc_start(struct modem *m)
 	m->bit_timer = 0;
 }
 
+int modem_hdlc_reframe(struct modem *m)
+{
+	struct hdlc_state *h;
+
+	if (m == NULL)
+		return -1;
+	h = &m->packer.hdlc;
+	if (h->rx_frame == NULL || h->rx_frame->buf == NULL ||
+	    h->rx_frame->size <= 0 ||
+	    (h->tx_frame != NULL && h->tx_complete == NULL))
+		return -1;
+	if (h->tx_frame != NULL) {
+		h->tx_complete(h->framer, h->tx_frame);
+		h->tx_frame = NULL;
+	}
+	h->tx_ones = 0;
+	h->rx_ones = 0;
+	h->rx_error = 1;
+	h->rx_frame->count = 0;
+	h->rx_frame->fcs = INIT_FCS;
+	m->pack.bit = m->unpack.bit = 0;
+	m->pack.data = m->unpack.data = 0;
+	return 0;
+}
+
 #if 0
 // temp stupid things
 static struct hdlc_frame *tmp_get_frame(void *framer)
