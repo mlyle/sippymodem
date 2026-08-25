@@ -52,7 +52,4 @@ v34_phase4_j_prime_sequence_next(
 	struct qam_point *point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *v34_phase4_j_prime_sequence_result_name(
-	enum v34_phase4_j_prime_sequence_result result);
-
 #endif

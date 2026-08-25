@@ -54,7 +54,4 @@ enum v34_phase4_trn_result v34_phase4_trn_next_fixed(
 	struct v34_analytic_sample *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns);
 
-const char *v34_phase4_trn_result_name(
-	enum v34_phase4_trn_result result);
-
 #endif

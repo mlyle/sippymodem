@@ -78,7 +78,4 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete);
 
-const char *v34_phase4_mp_result_name(
-	enum v34_phase4_mp_result result);
-
 #endif

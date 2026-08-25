@@ -387,22 +387,6 @@ static bool test_validation(void)
 	      !v34_phase4_e_receiver_is_valid(NULL) &&
 	      !v34_phase4_e_receiver_is_complete(NULL),
 	      "E receiver accepted corrupt state");
-	CHECK(strcmp(v34_phase4_e_receiver_result_name(
-		     V34_PHASE4_E_RECEIVER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_phase4_e_receiver_result_name(
-		     V34_PHASE4_E_RECEIVER_COMPLETE),
-		     "complete") == 0 &&
-	      strcmp(v34_phase4_e_receiver_result_name(
-		     V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH),
-		     "sequence mismatch") == 0 &&
-	      strcmp(v34_phase4_e_receiver_result_name(
-		     V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_phase4_e_receiver_result_name(
-		     (enum v34_phase4_e_receiver_result)99),
-		     "unknown") == 0,
-	      "E receiver result names changed");
 	return true;
 }
 

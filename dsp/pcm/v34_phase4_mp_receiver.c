@@ -152,15 +152,3 @@ v34_phase4_mp_receive_point(
 	return v34_phase4_mp_receive_decision(
 		receiver, quarter_point, clockwise_quarter_turns, event);
 }
-
-const char *v34_phase4_mp_receiver_result_name(
-	enum v34_phase4_mp_receiver_result result)
-{
-	switch (result) {
-	case V34_PHASE4_MP_RECEIVER_OK:
-		return "ok";
-	case V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

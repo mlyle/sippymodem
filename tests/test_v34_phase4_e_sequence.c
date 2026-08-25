@@ -406,13 +406,6 @@ static bool test_validation(void)
 	      !v34_phase4_e_sequence_is_complete(NULL),
 	      "E accepted corrupt state");
 
-	CHECK(strcmp(v34_phase4_e_sequence_result_name(
-		     V34_PHASE4_E_SEQUENCE_COMPLETE),
-		     "complete") == 0 &&
-	      strcmp(v34_phase4_e_sequence_result_name(
-		     (enum v34_phase4_e_sequence_result)3),
-		     "unknown") == 0,
-	      "E result names changed");
 	return true;
 }
 

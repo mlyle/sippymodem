@@ -114,15 +114,3 @@ enum v34_phase4_trn_result v34_phase4_trn_next_fixed(
 	*clockwise_quarter_turns = rotation;
 	return V34_PHASE4_TRN_OK;
 }
-
-const char *v34_phase4_trn_result_name(
-	enum v34_phase4_trn_result result)
-{
-	switch (result) {
-	case V34_PHASE4_TRN_OK:
-		return "ok";
-	case V34_PHASE4_TRN_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

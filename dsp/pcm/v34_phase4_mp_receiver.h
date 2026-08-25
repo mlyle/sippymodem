@@ -52,7 +52,4 @@ v34_phase4_mp_receive_point(
 	const struct qam_point *point,
 	struct v34_mp_receive_event *event);
 
-const char *v34_phase4_mp_receiver_result_name(
-	enum v34_phase4_mp_receiver_result result);
-
 #endif

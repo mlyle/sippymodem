@@ -389,13 +389,6 @@ static bool test_validation(void)
 	trn.has_last_symbol = false;
 	CHECK(!v34_phase4_trn_is_valid(&trn),
 	      "TRN accepted a final rotation without a symbol");
-	CHECK(strcmp(v34_phase4_trn_result_name(
-			     V34_PHASE4_TRN_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_phase4_trn_result_name(
-			     (enum v34_phase4_trn_result)99),
-		     "unknown") == 0,
-	      "TRN result names changed");
 	return true;
 }
 

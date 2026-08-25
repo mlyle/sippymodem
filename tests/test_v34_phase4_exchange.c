@@ -275,8 +275,7 @@ static bool endpoint_sample(
 				transmit, phase4_events, &received_frame);
 
 		if (result != V34_PHASE4_EXCHANGE_OK) {
-			fprintf(stderr, "Phase 4 sample: %s\n",
-				v34_phase4_exchange_result_name(result));
+			fprintf(stderr, "Phase 4 sample: %d\n", result);
 			return false;
 		}
 		if ((*phase4_events &
@@ -304,8 +303,7 @@ static bool endpoint_sample(
 		result = v34_phase4_exchange_prepare_data_startup(
 			&endpoint->phase4, phase4_events);
 		if (result != V34_PHASE4_EXCHANGE_OK)
-			fprintf(stderr, "Phase 4 data preparation: %s\n",
-				v34_phase4_exchange_result_name(result));
+			fprintf(stderr, "Phase 4 data preparation: %d\n", result);
 		return result == V34_PHASE4_EXCHANGE_OK;
 	}
 	{
@@ -855,19 +853,7 @@ static bool test_validation_and_transactionality(void)
 	      !v34_phase4_exchange_get_peer_mp(NULL, &peer) &&
 	      !v34_phase4_exchange_get_peer_mp(&caller.phase4, NULL) &&
 	      memcmp(&peer, &saved_peer, sizeof(peer)) == 0 &&
-	      !v34_mp_record_is_valid(NULL) &&
-	      strcmp(v34_phase4_exchange_result_name(
-		     V34_PHASE4_EXCHANGE_SOURCE_FAILURE),
-		     "mapping-frame source failure") == 0 &&
-	      strcmp(v34_phase4_exchange_result_name(
-		     V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH),
-		     "sequence mismatch") == 0 &&
-	      strcmp(v34_phase4_exchange_result_name(
-		     V34_PHASE4_EXCHANGE_NO_COMMON_RATE),
-		     "no common rate") == 0 &&
-	      strcmp(v34_phase4_exchange_result_name(
-		     (enum v34_phase4_exchange_result)99),
-		     "unknown") == 0,
+	      !v34_mp_record_is_valid(NULL),
 	      "Phase 4 validation helpers returned the wrong result");
 	invalid_record.type = (enum v34_mp_record_type)99;
 	CHECK(!v34_mp_record_is_valid(&invalid_record),

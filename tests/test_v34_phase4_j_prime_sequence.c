@@ -345,16 +345,6 @@ static bool test_validation(void)
 	      !v34_phase4_j_prime_sequence_is_valid(NULL) &&
 	      !v34_phase4_j_prime_sequence_is_complete(NULL),
 	      "J-prime accepted an invalid symbol count");
-	CHECK(strcmp(v34_phase4_j_prime_sequence_result_name(
-			     V34_PHASE4_J_PRIME_SEQUENCE_COMPLETE),
-		     "complete") == 0 &&
-	      strcmp(v34_phase4_j_prime_sequence_result_name(
-			     V34_PHASE4_J_PRIME_SEQUENCE_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_phase4_j_prime_sequence_result_name(
-			     (enum v34_phase4_j_prime_sequence_result)99),
-		     "unknown") == 0,
-	      "J-prime result names changed");
 	return true;
 }
 

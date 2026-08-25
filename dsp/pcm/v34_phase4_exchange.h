@@ -155,7 +155,4 @@ enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 	int16_t *transmit_sample, uint32_t *events,
 	struct v34_received_mapping_frame *received);
 
-const char *v34_phase4_exchange_result_name(
-	enum v34_phase4_exchange_result result);
-
 #endif /* V34_PHASE4_EXCHANGE_H */

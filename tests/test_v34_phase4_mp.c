@@ -461,13 +461,6 @@ static bool test_receiver_validation(void)
 	receiver.records.bit_index = 1;
 	CHECK(!v34_phase4_mp_receiver_is_valid(&receiver),
 	      "Phase 4 receiver accepted a corrupt record parser");
-	CHECK(strcmp(v34_phase4_mp_receiver_result_name(
-		     V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_phase4_mp_receiver_result_name(
-		     (enum v34_phase4_mp_receiver_result)2),
-		     "unknown") == 0,
-	      "Phase 4 receiver result names changed");
 	return true;
 }
 
@@ -876,16 +869,6 @@ static bool test_validation(void)
 	      !v34_phase4_mp_record_is_complete(NULL),
 	      "MP accepted corrupt state");
 
-	CHECK(strcmp(v34_phase4_mp_result_name(
-		     V34_PHASE4_MP_RECORD_COMPLETE),
-		     "record complete") == 0 &&
-	      strcmp(v34_phase4_mp_result_name(
-		     V34_PHASE4_MP_RECORD_IN_PROGRESS),
-		     "record in progress") == 0 &&
-	      strcmp(v34_phase4_mp_result_name(
-		     (enum v34_phase4_mp_result)5),
-		     "unknown") == 0,
-	      "MP result names changed");
 	return true;
 }
 

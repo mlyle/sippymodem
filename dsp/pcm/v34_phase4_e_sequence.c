@@ -126,17 +126,3 @@ v34_phase4_e_sequence_next(
 	*clockwise_quarter_turns = next_rotation;
 	return V34_PHASE4_E_SEQUENCE_OK;
 }
-
-const char *v34_phase4_e_sequence_result_name(
-	enum v34_phase4_e_sequence_result result)
-{
-	switch (result) {
-	case V34_PHASE4_E_SEQUENCE_OK:
-		return "ok";
-	case V34_PHASE4_E_SEQUENCE_COMPLETE:
-		return "complete";
-	case V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

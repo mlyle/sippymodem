@@ -295,21 +295,3 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 	*record_complete = complete;
 	return V34_PHASE4_MP_OK;
 }
-
-const char *v34_phase4_mp_result_name(
-	enum v34_phase4_mp_result result)
-{
-	switch (result) {
-	case V34_PHASE4_MP_OK:
-		return "ok";
-	case V34_PHASE4_MP_RECORD_COMPLETE:
-		return "record complete";
-	case V34_PHASE4_MP_RECORD_IN_PROGRESS:
-		return "record in progress";
-	case V34_PHASE4_MP_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE4_MP_INVALID_PARAMETERS:
-		return "invalid parameters";
-	}
-	return "unknown";
-}
