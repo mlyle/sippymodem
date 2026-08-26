@@ -149,6 +149,7 @@ static bool run_generated_transition(
 	      role, constellation, trn_symbols);
 	CHECK(v34_phase3_j_receiver_is_valid(&receiver) &&
 	      v34_phase3_j_receiver_is_complete(&receiver) &&
+	      j_symbols == V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
 	      v34_phase3_j_receiver_get_detection(&receiver, &detection) &&
 	      detection.preceding_symbols ==
 		      trn_symbols + j_symbols -
@@ -323,6 +324,9 @@ static bool test_carrier_phase_ambiguity(void)
 		}
 		CHECK(j_symbols != 0u,
 		      "offset %u J never reached a qualified window", offset);
+		CHECK(j_symbols == V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
+		      "offset %u J detection consumed %u symbols",
+		      offset, j_symbols);
 		source_j.previous_clockwise_quarter_turns = (uint8_t)(
 			(source_j.previous_clockwise_quarter_turns + offset) & 3u);
 		CHECK(v34_phase3_j_receiver_get_detection(
@@ -384,7 +388,7 @@ static bool test_validation_and_range(void)
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "saturated J receiver consumed another decision");
 	corrupt = receiver;
-	corrupt.decoded_history |= UINT64_C(1) << 60u;
+	corrupt.buffered_decisions--;
 	CHECK(!v34_phase3_j_receiver_is_valid(NULL) &&
 	      !v34_phase3_j_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_j_receiver_is_complete(&corrupt) &&

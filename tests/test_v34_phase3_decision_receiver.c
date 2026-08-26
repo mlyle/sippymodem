@@ -12,8 +12,7 @@
 
 enum {
 	TEST_TRN_SYMBOLS = 640,
-	TEST_J_SYMBOLS = V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS +
-		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
+	TEST_J_SYMBOLS = V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
 	TEST_MD_SYMBOLS = 12,
 	TEST_DECODER_POWER_Q15 = 0x7000,
 };
@@ -244,9 +243,7 @@ static bool run_clean_timeline(enum v34_station_role role)
 	      v34_phase3_decision_receiver_handoff(&receiver, &handoff) ==
 		      V34_PHASE3_DECISION_RECEIVER_OK &&
 	      v34_phase3_decision_handoff_is_valid(&handoff) &&
-	      handoff.j.preceding_symbols ==
-		      TEST_TRN_SYMBOLS +
-		      V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS &&
+	      handoff.j.preceding_symbols == TEST_TRN_SYMBOLS &&
 	      handoff.j.sequence.remote_constellation ==
 		      V34_CONSTELLATION_16_POINT,
 	      "role %d fixed Phase 3 handoff changed", role);

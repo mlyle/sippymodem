@@ -27,9 +27,8 @@ static bool j_is_initial(
 {
 	return receiver->j.received_symbols == 0u &&
 	       receiver->j.buffered_decisions == 0u &&
-	       receiver->j.decoded_history == 0u &&
 	       receiver->j.qualified_history == 0u &&
-	       !receiver->j.has_previous_rotation && !receiver->j.complete &&
+	       !receiver->j.complete &&
 	       receiver->j.transmitting_role == receiver->transmitting_role;
 }
 
