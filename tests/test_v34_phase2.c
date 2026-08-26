@@ -489,6 +489,7 @@ static bool test_retrain_timeline(void)
 	struct owned_pair pair;
 	uint16_t caller_rtd = 0;
 	uint16_t answerer_rtd = 0;
+	bool caller_trial_rejected = false;
 	bool ready = false;
 
 	memset(&pair, 0, sizeof(pair));
@@ -517,13 +518,18 @@ static bool test_retrain_timeline(void)
 			caller_rtd = caller_event.round_trip_delay_samples;
 		if (answerer_event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED)
 			answerer_rtd = answerer_event.round_trip_delay_samples;
+		if (pair.caller.stage == V34_PHASE2_RANGING &&
+		    pair.caller.state.ranging.retrain_probe.phase ==
+			    V34_PHASE2_RETRAIN_PROBE_REJECTED)
+			caller_trial_rejected = true;
 		if (v34_phase2_is_ready_for_info1(&pair.caller) &&
 		    v34_phase2_is_ready_for_info1(&pair.answerer)) {
 			ready = true;
 			break;
 		}
 	}
-	CHECK(ready && caller_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
+	CHECK(ready && caller_trial_rejected &&
+	      caller_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
 	      answerer_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
 	      !v34_phase2_has_failed(&pair.caller) &&
 	      !v34_phase2_has_failed(&pair.answerer) &&
@@ -534,6 +540,88 @@ static bool test_retrain_timeline(void)
 	      info0_equal(&caller_peer_info0, &answerer_info0) &&
 	      info0_equal(&answerer_peer_info0, &caller_info0),
 	      "Phase 2 retrain did not preserve INFO0 through ranging");
+	return true;
+}
+
+static bool test_retrain_second_reversal_probe(void)
+{
+	struct v34_info0 caller_info0 = test_v34_phase2_capabilities(
+		V34_CALLING_STATION);
+	struct v34_info0 answerer_info0 = test_v34_phase2_capabilities(
+		V34_ANSWERING_STATION);
+	struct v34_phase2_tone_transmitter answer_tone;
+	struct v34_phase2_probe_transmitter answer_probe;
+	struct v34_phase2 caller;
+	size_t tail_samples = 0;
+	bool reversed = false;
+	bool probing = false;
+	bool handed_off = false;
+
+	CHECK(v34_phase2_init_retrain(
+		      &caller, V34_CALLING_STATION, TEST_AMPLITUDE,
+		      &caller_info0, &answerer_info0,
+		      RETRAIN_PRIOR_RTD_SAMPLES) == V34_PHASE2_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &answer_tone, V34_ANSWERING_STATION,
+		      TEST_AMPLITUDE) == V34_PHASE2_TONE_OK &&
+	      v34_phase2_probe_transmitter_init(
+		      &answer_probe, TEST_AMPLITUDE) ==
+		      V34_PHASE2_PROBE_OK,
+	      "second-reversal retrain fixture did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_event event;
+		int16_t received;
+		int16_t transmit;
+
+		if (!reversed && caller.stage == V34_PHASE2_RANGING &&
+		    caller.state.ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &answer_tone) == V34_PHASE2_TONE_OK,
+			      "second-reversal fixture did not reverse Tone A");
+			reversed = true;
+		}
+		if (!probing) {
+			CHECK(v34_phase2_tone_transmitter_sample(
+				      &answer_tone, &received) ==
+				      V34_PHASE2_TONE_OK,
+			      "second-reversal Tone A generation failed");
+			if (reversed &&
+			    ++tail_samples ==
+				    PHASE2_RANGING_TONE_TAIL_SAMPLES)
+				probing = true;
+		} else {
+			CHECK(v34_phase2_probe_transmitter_sample(
+				      &answer_probe, V34_PHASE2_PROBE_L1,
+				      &received) == V34_PHASE2_PROBE_OK,
+			      "second-reversal L1 generation failed");
+		}
+		CHECK(v34_phase2_sample(
+			      &caller, received, &transmit, &event) ==
+			      V34_PHASE2_OK,
+		      "second-reversal retrain stopped at sample %zu", index);
+		if (event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
+			const struct v34_phase2_initial_probe *initial =
+				&caller.state.initial_probe;
+
+			CHECK(event.round_trip_delay_samples ==
+				      RETRAIN_PRIOR_RTD_SAMPLES &&
+			      transmit == 0 &&
+			      initial->ranging.retrain_probe.phase ==
+				      V34_PHASE2_RETRAIN_PROBE_ACQUIRED &&
+			      initial->control.path.receive.phase ==
+				      V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
+			      initial->control.path.receive.receiver.l1_spectrum
+				      .samples_observed >=
+				      V34_PHASE2_PROBE_PERIOD_SAMPLES,
+			      "second reversal did not retain its L1 prefix");
+			handed_off = true;
+			break;
+		}
+	}
+	CHECK(reversed && probing && handed_off &&
+	      !v34_phase2_has_failed(&caller),
+	      "second observed reversal did not recover retrain probing");
 	return true;
 }
 
@@ -686,6 +774,8 @@ int main(void)
 	} tests[] = {
 		{ "generated probe timelines", test_generated_timelines },
 		{ "generated retrain timeline", test_retrain_timeline },
+		{ "second-reversal retrain probe",
+		  test_retrain_second_reversal_probe },
 		{ "validation", test_validation },
 		{ "INFO1 recovery", test_info1_recovery },
 	};

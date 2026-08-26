@@ -2805,6 +2805,8 @@ V34_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/phase2_ranging.o \
 	$(BUILD_DIR)/v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/v34_phase2_probe_spectrum.o \
+	$(BUILD_DIR)/v34_phase2_probe_synchronizer.o \
 	$(BUILD_DIR)/v34_phase2_ranging.o \
 	$(V34_PHASE2_TONE_OBJECTS)
 V34_PHASE2_PROBE_FLOW_OBJECTS := \
