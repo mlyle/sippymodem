@@ -13,6 +13,11 @@
 enum {
 	PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 2,
+	/* The peer measures all of L1 and approximately 160 ms of L2 before
+	 * responding. Keep the detector closed through the early local-echo
+	 * interval; a genuine response remains present when it opens. */
+	PHASE2_INITIAL_PROBE_REMOTE_TONE_GUARD_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 3 / 16,
 };
 
 enum phase2_initial_probe_phase {

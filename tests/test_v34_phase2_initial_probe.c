@@ -12,6 +12,7 @@
 enum {
 	TEST_SAMPLE_LIMIT = 12000,
 	TEST_STABLE_TONE_SAMPLES = 160,
+	TEST_ECHO_TONE_AMPLITUDE = 20000,
 };
 
 struct turn_observation {
@@ -48,6 +49,10 @@ struct turnaround_observation {
 	uint16_t answerer_reversed_a_samples;
 	uint16_t caller_reversed_b_samples;
 };
+
+static bool completed_ranging_pair(
+	struct v34_phase2_ranging *caller,
+	struct v34_phase2_ranging *answerer);
 
 static int64_t sample_magnitude(int16_t sample)
 {
@@ -242,6 +247,98 @@ static bool test_bidirectional_turn(void)
 		CHECK(check_initial_probe_turn(
 			      cases[index].codec, cases[index].delay_samples),
 		      "initial probe turn failed for case %zu", index);
+	return true;
+}
+
+static bool test_answerer_ignores_early_probe_echo(void)
+{
+	struct v34_phase2_ranging caller_ranging;
+	struct v34_phase2_ranging answerer_ranging;
+	struct v34_phase2_initial_probe answerer;
+	struct v34_phase2_initial_probe_event event;
+	struct v34_phase2_tone_transmitter peer_tone;
+	struct v34_phase2_tone_detector shadow;
+	int16_t prior_local_sample = 0;
+	bool shadow_started = false;
+
+	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
+	      v34_phase2_initial_probe_init(
+		      &answerer, &answerer_ranging) ==
+		      V34_PHASE2_INITIAL_PROBE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &peer_tone, V34_CALLING_STATION,
+		      TEST_ECHO_TONE_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_detector_init(
+		      &shadow, V34_ANSWERING_STATION) ==
+		      V34_PHASE2_TONE_OK,
+	      "probe-echo guard fixture did not initialize");
+
+	while (answerer.control.path.transmit.phase ==
+		       V34_PHASE2_PROBE_SEQUENCE_PHASE_L1 ||
+	       answerer.control.path.transmit.samples_emitted -
+		       V34_PHASE2_PROBE_L1_SAMPLES <
+		       PHASE2_INITIAL_PROBE_REMOTE_TONE_GUARD_SAMPLES) {
+		const bool l2_active =
+			answerer.control.path.transmit.phase ==
+			V34_PHASE2_PROBE_SEQUENCE_PHASE_L2;
+		struct v34_phase2_tone_event shadow_event;
+		int16_t peer_sample = 0;
+		int16_t received = 0;
+		int16_t transmit;
+
+		if (l2_active) {
+			CHECK(v34_phase2_tone_transmitter_sample(
+				      &peer_tone, &peer_sample) ==
+				      V34_PHASE2_TONE_OK,
+			      "probe-echo tone generation failed");
+			received = (int16_t)(prior_local_sample / 8 +
+					     peer_sample / 2);
+			CHECK(v34_phase2_tone_detector_sample(
+				      &shadow, received, &shadow_event) ==
+				      V34_PHASE2_TONE_OK,
+			      "shadow detector rejected probe echo");
+			shadow_started |= shadow_event.kind ==
+					  V34_PHASE2_TONE_STARTED;
+		}
+		CHECK(v34_phase2_initial_probe_sample(
+			      &answerer, received, &transmit, &event) ==
+			      V34_PHASE2_INITIAL_PROBE_OK &&
+		      event.kind !=
+			      PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE,
+		      "answerer accepted early probe echo");
+		prior_local_sample = transmit;
+	}
+	CHECK(shadow_started &&
+	      answerer.control.phase ==
+		      PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING,
+	      "probe echo did not exercise the false Tone B signature");
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &peer_tone, V34_CALLING_STATION, TEST_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK,
+	      "post-guard Tone B did not initialize");
+
+	for (size_t samples = 0; samples < 240; ++samples) {
+		int16_t peer_sample;
+		int16_t transmit;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &peer_sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_phase2_initial_probe_sample(
+			      &answerer, peer_sample, &transmit, &event) ==
+			      V34_PHASE2_INITIAL_PROBE_OK,
+		      "post-guard Tone B failed at sample %zu", samples);
+		if (event.kind ==
+		    PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE)
+			break;
+	}
+	CHECK(event.kind ==
+		      PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE &&
+	      event.transmit_event.l2_samples >=
+		      PHASE2_INITIAL_PROBE_REMOTE_TONE_GUARD_SAMPLES &&
+	      answerer.control.phase == PHASE2_INITIAL_PROBE_SIGNAL_A_TONE,
+	      "answerer did not accept persistent Tone B after the guard");
 	return true;
 }
 
@@ -897,6 +994,8 @@ int main(void)
 		bool (*run)(void);
 		} tests[] = {
 			{ "bidirectional initial probe", test_bidirectional_turn },
+			{ "answerer early probe echo",
+			  test_answerer_ignores_early_probe_echo },
 			{ "bidirectional probe turnaround", test_probe_turnaround },
 			{ "answerer reversal recovery",
 			  test_answerer_reversal_recovery },
