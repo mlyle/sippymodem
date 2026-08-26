@@ -8,13 +8,20 @@
 #include "v34_phase3_profile.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 enum v34_phase2_selection_result {
 	V34_PHASE2_SELECTION_OK,
 	V34_PHASE2_SELECTION_INVALID_ARGUMENT,
 	V34_PHASE2_SELECTION_INCONSISTENT_INFO1C,
 	V34_PHASE2_SELECTION_INCONSISTENT_INFO1A,
+	V34_PHASE2_SELECTION_NO_COMMON_PROFILE,
 };
+
+/* Bound the projected data rate to the implemented modulation profile for
+ * one symbol rate. Zero denotes an invalid symbol rate. */
+uint8_t v34_phase2_projected_rate_limit(
+	enum v34_symbol_rate symbol_rate);
 
 /* Select the peer transmitter's pre-emphasis from the received L2 spectrum.
  * The four source bands and their per-filter slopes are the V.34 probe
@@ -40,6 +47,17 @@ bool v34_phase2_info1a_is_consistent(
 	const struct v34_info0 *answerer_info0,
 	const struct v34_info1c *info1c,
 	const struct v34_info1a *info1a);
+
+/* Preserve a consistent preferred INFO1a selection. If the peer has withdrawn
+ * that answer-transmit entry, choose the highest no-faster symmetric profile
+ * supported by both endpoints. The selected caller projection is clamped to
+ * the implemented limit for the fallback symbol rate. */
+enum v34_phase2_selection_result v34_phase2_select_answerer_info1a(
+	const struct v34_info0 *caller_info0,
+	const struct v34_info0 *answerer_info0,
+	const struct v34_info1c *info1c,
+	const struct v34_info1a *preferred,
+	struct v34_info1a *selected);
 
 /* Validate the complete Phase 2 selection and derive both transmitter-owned
  * Phase 3 profiles atomically. The outputs must be distinct. */

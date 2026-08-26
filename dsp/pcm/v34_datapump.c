@@ -9,6 +9,7 @@
 #include "v34_call.h"
 #include "v34_data_quality.h"
 #include "v34_frame_schedule.h"
+#include "v34_phase2_selection.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -113,27 +114,6 @@ static uint8_t highest_rate(uint16_t mask)
 	return 0;
 }
 
-static uint8_t maximum_rate_units(enum v34_symbol_rate symbol_rate)
-{
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		return 9;
-	case V34_SYMBOL_RATE_2743:
-		return 10;
-	case V34_SYMBOL_RATE_2800:
-		return 11;
-	case V34_SYMBOL_RATE_3000:
-		return 12;
-	case V34_SYMBOL_RATE_3200:
-		return 13;
-	case V34_SYMBOL_RATE_3429:
-		return 14;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return 0;
-}
-
 static uint16_t enabled_rate_mask(
 	const struct modem *modem, enum v34_symbol_rate *symbol_rate,
 	uint8_t *highest_rate_units)
@@ -153,7 +133,7 @@ static uint16_t enabled_rate_mask(
 			   modem->v34_symbol_rate, &selected)) {
 		return 0;
 	}
-	maximum = maximum_rate_units(selected);
+	maximum = v34_phase2_projected_rate_limit(selected);
 	if (maximum == 0)
 		return 0;
 	/* Advertise only rate/cadence pairs that pass generated full-duplex

@@ -21,6 +21,17 @@ struct preemphasis_probe_profile {
 	uint16_t slope_q14;
 };
 
+uint8_t v34_phase2_projected_rate_limit(
+	enum v34_symbol_rate symbol_rate)
+{
+	static const uint8_t limits[V34_SYMBOL_RATE_COUNT] = {
+		9, 10, 11, 12, 13, 14,
+	};
+
+	return (unsigned int)symbol_rate < V34_SYMBOL_RATE_COUNT ?
+		       limits[symbol_rate] : 0;
+}
+
 static bool preemphasis_probe_profile(
 	enum v34_symbol_rate symbol_rate,
 	struct preemphasis_probe_profile *profile)
@@ -227,6 +238,98 @@ bool v34_phase2_info1a_is_consistent(
 		       answerer_info0->maximum_symbol_rate_difference_steps;
 }
 
+static bool select_call_transmit_carrier(
+	const struct v34_info0 *caller_info0, enum v34_symbol_rate rate,
+	bool preferred, bool *selected)
+{
+	if (transmitter_supports_rate(caller_info0, rate, preferred)) {
+		*selected = preferred;
+		return true;
+	}
+	if (transmitter_supports_rate(caller_info0, rate, !preferred)) {
+		*selected = !preferred;
+		return true;
+	}
+	return false;
+}
+
+enum v34_phase2_selection_result v34_phase2_select_answerer_info1a(
+	const struct v34_info0 *caller_info0,
+	const struct v34_info0 *answerer_info0,
+	const struct v34_info1c *info1c,
+	const struct v34_info1a *preferred,
+	struct v34_info1a *selected)
+{
+	struct v34_info1a candidate;
+	unsigned int ceiling;
+
+	if (caller_info0 == NULL || answerer_info0 == NULL || info1c == NULL ||
+	    preferred == NULL || selected == NULL ||
+	    memory_regions_overlap(
+		    selected, sizeof(*selected), caller_info0,
+		    sizeof(*caller_info0)) ||
+	    memory_regions_overlap(
+		    selected, sizeof(*selected), answerer_info0,
+		    sizeof(*answerer_info0)) ||
+	    memory_regions_overlap(
+		    selected, sizeof(*selected), info1c, sizeof(*info1c)) ||
+	    memory_regions_overlap(
+		    selected, sizeof(*selected), preferred,
+		    sizeof(*preferred)) ||
+	    !v34_info0_is_valid(caller_info0) ||
+	    !v34_info0_is_valid(answerer_info0) ||
+	    !v34_info1c_is_valid(info1c) ||
+	    !v34_info1a_is_valid(preferred))
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	if (!v34_phase2_info1c_is_consistent(
+		    caller_info0, answerer_info0, info1c))
+		return V34_PHASE2_SELECTION_INCONSISTENT_INFO1C;
+	if (!power_request_is_consistent(
+		    &preferred->common, caller_info0) ||
+	    preferred->call_transmit.projected_data_rate_2400_bps_units == 0)
+		return V34_PHASE2_SELECTION_INCONSISTENT_INFO1A;
+	if (v34_phase2_info1a_is_consistent(
+		    caller_info0, answerer_info0, info1c, preferred)) {
+		*selected = *preferred;
+		return V34_PHASE2_SELECTION_OK;
+	}
+
+	ceiling = preferred->answer_to_call_symbol_rate <
+			  preferred->call_to_answer_symbol_rate ?
+			  preferred->answer_to_call_symbol_rate :
+			  preferred->call_to_answer_symbol_rate;
+	for (unsigned int index = V34_SYMBOL_RATE_COUNT; index-- != 0u;) {
+		enum v34_symbol_rate rate = (enum v34_symbol_rate)index;
+		uint8_t limit = v34_phase2_projected_rate_limit(rate);
+
+		if (index > ceiling)
+			continue;
+		if (info1c->answer_transmit[rate]
+			    .projected_data_rate_2400_bps_units == 0 ||
+		    limit == 0 || !receiver_supports_rate(answerer_info0, rate))
+			continue;
+		candidate = *preferred;
+		candidate.answer_to_call_symbol_rate = rate;
+		candidate.call_to_answer_symbol_rate = rate;
+		if (!select_call_transmit_carrier(
+			    caller_info0, rate,
+			    candidate.call_transmit.high_carrier,
+			    &candidate.call_transmit.high_carrier))
+			continue;
+		if (candidate.call_transmit
+			    .projected_data_rate_2400_bps_units > limit)
+			candidate.call_transmit
+				.projected_data_rate_2400_bps_units = limit;
+		if (v34_phase2_info1a_is_consistent(
+			    caller_info0, answerer_info0, info1c,
+			    &candidate)) {
+			*selected = candidate;
+			return V34_PHASE2_SELECTION_OK;
+		}
+	}
+	return V34_PHASE2_SELECTION_NO_COMMON_PROFILE;
+}
+
 enum v34_phase2_selection_result v34_phase2_select_profiles(
 	const struct v34_info0 *caller_info0,
 	const struct v34_info0 *answerer_info0,
@@ -275,6 +378,8 @@ const char *v34_phase2_selection_result_name(
 		return "inconsistent INFO1c";
 	case V34_PHASE2_SELECTION_INCONSISTENT_INFO1A:
 		return "inconsistent INFO1a";
+	case V34_PHASE2_SELECTION_NO_COMMON_PROFILE:
+		return "no common profile";
 	}
 	return "unknown";
 }

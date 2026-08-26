@@ -939,6 +939,68 @@ static bool test_unusable_info1_retrains(void)
 	return true;
 }
 
+static bool check_info1_fallback(bool pcma)
+{
+	struct v34_call_configuration caller_config = symmetric_configuration(
+		V34_CALLING_STATION, V34_SYMBOL_RATE_3429);
+	struct v34_call_configuration answerer_config = symmetric_configuration(
+		V34_ANSWERING_STATION, V34_SYMBOL_RATE_3429);
+	struct channel channel = { .pcma = pcma };
+	struct endpoint caller = {
+		.transmit_bit = 0,
+		.verify_mapping_frames = true,
+	};
+	struct endpoint answerer = {
+		.transmit_bit = 1,
+		.verify_mapping_frames = true,
+	};
+
+	caller_config.local_info1.calling
+		.answer_transmit[V34_SYMBOL_RATE_3429] =
+			(struct v34_info1_probe_result){ 0 };
+	caller_config.local_info1.calling
+		.answer_transmit[V34_SYMBOL_RATE_2400] =
+			(struct v34_info1_probe_result){
+				.projected_data_rate_2400_bps_units = 9,
+			};
+	CHECK(v34_call_init(&caller.call, &caller_config) == V34_CALL_OK &&
+	      v34_call_init(&answerer.call, &answerer_config) == V34_CALL_OK,
+	      "fallback endpoints did not initialize");
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_call_observation caller_observation;
+		struct v34_call_observation answerer_observation;
+
+		CHECK(channel_sample_pair(
+			      &channel, &caller, &answerer,
+			      &caller_observation, &answerer_observation),
+		      "fallback call stopped at sample %zu", index);
+		if (v34_call_is_online(&caller.call) &&
+		    v34_call_is_online(&answerer.call) &&
+		    caller.mapping_frames_received >= 4u &&
+		    answerer.mapping_frames_received >= 4u) {
+			CHECK(answerer.call.local_info1.answering
+				      .answer_to_call_symbol_rate ==
+				      V34_SYMBOL_RATE_2400 &&
+			      answerer.call.local_info1.answering
+				      .call_to_answer_symbol_rate ==
+				      V34_SYMBOL_RATE_2400 &&
+			      answerer.call.local_info1.answering.call_transmit
+				      .projected_data_rate_2400_bps_units == 9,
+			      "fallback call retained the withdrawn 3429 profile");
+			return true;
+		}
+	}
+	CHECK(false, "fallback call did not reach mapped data");
+	return false;
+}
+
+static bool test_info1_fallback(void)
+{
+	CHECK(check_info1_fallback(false), "PCMU INFO1 fallback failed");
+	CHECK(check_info1_fallback(true), "PCMA INFO1 fallback failed");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_call_configuration config =
@@ -1004,6 +1066,7 @@ int main(void)
 		  test_phase3_retrain_tone_is_ignored },
 		{ "unusable INFO1 starts full retrain",
 		  test_unusable_info1_retrains },
+		{ "usable INFO1 selects a lower profile", test_info1_fallback },
 		{ "mapping source backpressure", test_source_backpressure },
 		{ "validation", test_validation },
 	};

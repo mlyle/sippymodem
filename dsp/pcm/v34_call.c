@@ -314,30 +314,43 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 	return V34_CALL_OK;
 }
 
+static bool select_local_preemphasis(
+	struct v34_call *call, union v34_local_info1 *selection);
+
 static enum v34_call_result answer_info1c(struct v34_call *call)
 {
-	const struct v34_info1a *selection =
-		&call->local_info1.answering;
+	union v34_local_info1 selection = call->local_info1;
+	struct v34_info0 peer_info0;
 	struct v34_info1c peer;
+	enum v34_phase2_selection_result result;
 
-	if (v34_phase2_peer_info1c(&call->state.phase2, &peer) !=
-	    V34_PHASE2_OK)
+	if (v34_phase2_peer_info0(
+		    &call->state.phase2, &peer_info0) != V34_PHASE2_OK ||
+	    v34_phase2_peer_info1c(&call->state.phase2, &peer) !=
+		    V34_PHASE2_OK)
 		return V34_CALL_SEQUENCE_MISMATCH;
-	/* A zero projected rate is a valid INFO1c value meaning that the
-	 * measured line cannot use this symbol rate.  Restart full training
-	 * rather than misclassifying the peer's measurement as corrupt state. */
-	if (peer.answer_transmit[selection->answer_to_call_symbol_rate]
-		    .projected_data_rate_2400_bps_units == 0)
+	result = v34_phase2_select_answerer_info1a(
+		&peer_info0, &call->local_info0, &peer,
+		&call->local_info1.answering, &selection.answering);
+	if (result == V34_PHASE2_SELECTION_NO_COMMON_PROFILE)
 		return begin_retrain(call);
-	return v34_phase2_answerer_reply(
-		       &call->state.phase2, selection) == V34_PHASE2_OK ?
-		       V34_CALL_OK : V34_CALL_SEQUENCE_MISMATCH;
+	if (result != V34_PHASE2_SELECTION_OK ||
+	    !select_local_preemphasis(call, &selection))
+		return V34_CALL_SEQUENCE_MISMATCH;
+	if (v34_phase2_answerer_reply(
+		    &call->state.phase2, &selection.answering) != V34_PHASE2_OK)
+		return V34_CALL_SEQUENCE_MISMATCH;
+	/* Keep a conservative fallback for the rest of this call so another
+	 * retrain cannot immediately return to the withdrawn profile. */
+	call->local_info1 = selection;
+	return V34_CALL_OK;
 }
 
-static bool select_local_preemphasis(struct v34_call *call)
+static bool select_local_preemphasis(
+	struct v34_call *call, union v34_local_info1 *selection)
 {
 	struct v34_phase2_probe_receiver_measurement measurement;
-	union v34_local_info1 selected = call->local_info1;
+	union v34_local_info1 selected = *selection;
 
 	if (v34_phase2_measure_remote_probe(
 		    &call->state.phase2, &measurement) != V34_PHASE2_OK)
@@ -368,7 +381,7 @@ static bool select_local_preemphasis(struct v34_call *call)
 			    V34_PHASE2_SELECTION_OK)
 			return false;
 	}
-	call->local_info1 = selected;
+	*selection = selected;
 	return true;
 }
 
@@ -380,7 +393,8 @@ static enum v34_call_result advance_phase2(
 	if (event->kind == V34_PHASE2_EVENT_FAILED)
 		return V34_CALL_FAILED;
 	if (v34_phase2_is_ready_for_info1(&call->state.phase2)) {
-		if (!select_local_preemphasis(call))
+		if (call->local_role == V34_CALLING_STATION &&
+		    !select_local_preemphasis(call, &call->local_info1))
 			return V34_CALL_NUMERIC_FAILURE;
 		result = call->local_role == V34_CALLING_STATION ?
 			v34_phase2_start_caller_info1(

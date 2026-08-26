@@ -366,6 +366,102 @@ static bool test_cross_record_constraints(void)
 	return true;
 }
 
+static bool test_answerer_fallback_selection(void)
+{
+	static const uint8_t expected_limits[V34_SYMBOL_RATE_COUNT] = {
+		9, 10, 11, 12, 13, 14,
+	};
+	struct v34_info0 caller = full_capabilities();
+	struct v34_info0 answerer = full_capabilities();
+	struct v34_info1c info1c = { 0 };
+	struct v34_info1a preferred = {
+		.call_transmit = {
+			.preemphasis_filter_index = 7,
+			.projected_data_rate_2400_bps_units = 14,
+		},
+		.answer_to_call_symbol_rate = V34_SYMBOL_RATE_3429,
+		.call_to_answer_symbol_rate = V34_SYMBOL_RATE_3429,
+	};
+	struct v34_info1a selected;
+	struct v34_info1a saved;
+
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate)
+		CHECK(v34_phase2_projected_rate_limit(
+			      (enum v34_symbol_rate)rate) ==
+			      expected_limits[rate],
+		      "rate %u has the wrong projected-rate limit", rate);
+	CHECK(v34_phase2_projected_rate_limit(V34_SYMBOL_RATE_COUNT) == 0,
+	      "invalid symbol rate has a projected-rate limit");
+
+	info1c.answer_transmit[V34_SYMBOL_RATE_3429] =
+		(struct v34_info1_probe_result){
+			.preemphasis_filter_index = 8,
+			.projected_data_rate_2400_bps_units = 14,
+		};
+	CHECK(v34_phase2_select_answerer_info1a(
+		      &caller, &answerer, &info1c, &preferred, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      memcmp(&selected, &preferred, sizeof(selected)) == 0,
+	      "usable preferred INFO1a was changed");
+
+	info1c.answer_transmit[V34_SYMBOL_RATE_3429] =
+		(struct v34_info1_probe_result){ 0 };
+	info1c.answer_transmit[V34_SYMBOL_RATE_3200] =
+		(struct v34_info1_probe_result){
+			.preemphasis_filter_index = 6,
+			.projected_data_rate_2400_bps_units = 13,
+		};
+	caller.low_carrier_3200_supported = false;
+	CHECK(v34_phase2_select_answerer_info1a(
+		      &caller, &answerer, &info1c, &preferred, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      selected.answer_to_call_symbol_rate == V34_SYMBOL_RATE_3200 &&
+	      selected.call_to_answer_symbol_rate == V34_SYMBOL_RATE_3200 &&
+	      selected.call_transmit.high_carrier &&
+	      selected.call_transmit.preemphasis_filter_index == 7 &&
+	      selected.call_transmit.projected_data_rate_2400_bps_units == 13,
+	      "withdrawn preferred profile did not select 3200 fallback");
+
+	info1c.answer_transmit[V34_SYMBOL_RATE_3200] =
+		(struct v34_info1_probe_result){ 0 };
+	info1c.answer_transmit[V34_SYMBOL_RATE_2400] =
+		(struct v34_info1_probe_result){
+			.projected_data_rate_2400_bps_units = 9,
+		};
+	CHECK(v34_phase2_select_answerer_info1a(
+		      &caller, &answerer, &info1c, &preferred, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      selected.answer_to_call_symbol_rate == V34_SYMBOL_RATE_2400 &&
+	      selected.call_to_answer_symbol_rate == V34_SYMBOL_RATE_2400 &&
+	      selected.call_transmit.projected_data_rate_2400_bps_units == 9,
+	      "2400 fallback did not clamp its projected rate");
+
+	info1c.answer_transmit[V34_SYMBOL_RATE_2400] =
+		(struct v34_info1_probe_result){ 0 };
+	memset(&selected, 0xa5, sizeof(selected));
+	saved = selected;
+	CHECK(v34_phase2_select_answerer_info1a(
+		      &caller, &answerer, &info1c, &preferred, &selected) ==
+		      V34_PHASE2_SELECTION_NO_COMMON_PROFILE &&
+	      memcmp(&selected, &saved, sizeof(selected)) == 0,
+	      "no-common fallback changed its output");
+	caller.transmit_power_reduction_supported = false;
+	preferred.common.minimum_peer_power_reduction_db = 1;
+	CHECK(v34_phase2_select_answerer_info1a(
+		      &caller, &answerer, &info1c, &preferred, &selected) ==
+		      V34_PHASE2_SELECTION_INCONSISTENT_INFO1A &&
+	      memcmp(&selected, &saved, sizeof(selected)) == 0 &&
+	      v34_phase2_select_answerer_info1a(
+		      &caller, &answerer, &info1c, &preferred,
+		      (struct v34_info1a *)&info1c) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      strcmp(v34_phase2_selection_result_name(
+		     V34_PHASE2_SELECTION_NO_COMMON_PROFILE),
+		     "no common profile") == 0,
+	      "fallback validation was not transactional");
+	return true;
+}
+
 static bool test_profile_selection_and_validation(void)
 {
 	struct v34_info0 caller = full_capabilities();
@@ -444,6 +540,7 @@ int main(void)
 		{ "rate and carrier capabilities",
 		  test_rate_and_carrier_capabilities },
 		{ "cross-record constraints", test_cross_record_constraints },
+		{ "answerer INFO1 fallback", test_answerer_fallback_selection },
 		{ "profile selection and validation",
 		  test_profile_selection_and_validation },
 	};
