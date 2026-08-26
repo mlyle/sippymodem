@@ -60,9 +60,10 @@ struct v34_phase34_receive_output {
 	struct v34_received_mapping_frame received;
 };
 
-/* Own one continuous fixed-point receive lineage from the peer's Phase 3 S
- * through mapped data. Timing and adaptive equalization are never handed off
- * or restarted at J or E; only the semantic owner changes. */
+/* Own the fixed-point receive lineage from the peer's Phase 3 S through
+ * mapped data. The caller rearms timing and equalization at its local J
+ * boundary because the answering peer begins a distinct Phase 4 S signal;
+ * all other semantic boundaries preserve the physical lineage. */
 struct v34_phase34_receiver {
 	struct v34_receive_timing timing;
 	struct v34_adaptive_equalizer equalizer;
@@ -82,6 +83,7 @@ struct v34_phase34_receiver {
 	uint8_t signal_acquisition_write;
 	bool signal_started;
 	bool tracking_started;
+	bool phase4_s_rearmed;
 	bool feedback_training_complete;
 	bool precoder_selected;
 	bool failed;
@@ -107,6 +109,11 @@ bool v34_phase34_receiver_is_complete(
 enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
 	struct v34_phase34_receive_output *output);
+
+/* The caller begins a distinct receive acquisition at the first locally
+ * transmitted J symbol. No received sample is consumed by this transition. */
+enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
+	struct v34_phase34_receiver *receiver);
 
 /* Resolve the pending MP record without embedding negotiation policy in the
  * receive owner. */

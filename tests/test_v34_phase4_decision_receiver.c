@@ -103,10 +103,11 @@ static bool decision_is_zero(
 static bool output_matches(
 	const struct v34_phase4_decision_output *output,
 	const struct v34_adaptive_equalizer_observation *input,
-	struct v34_analytic_sample target, bool discard)
+	struct v34_analytic_sample target,
+	enum v34_phase4_decision_action action)
 {
-	if (discard)
-		return output->action == V34_PHASE4_DECISION_DISCARD &&
+	if (action != V34_PHASE4_DECISION_COMMIT)
+		return output->action == action &&
 		       decision_is_zero(&output->equalizer);
 	return output->action == V34_PHASE4_DECISION_COMMIT &&
 	       observations_are_equal(&output->equalizer.observation, input) &&
@@ -176,7 +177,7 @@ static bool receive_observation(
 	struct v34_phase4_decision_output output = { 0 };
 	struct v34_mp_receive_event event;
 	struct v34_mp_receive_event saved_event;
-	bool discard = fixture->receiver.stage ==
+	bool answer_s = fixture->receiver.stage ==
 		V34_PHASE4_DECISION_RECEIVER_ANSWER_S;
 	enum v34_phase4_decision_receiver_result result;
 
@@ -190,7 +191,12 @@ static bool receive_observation(
 	       result == V34_PHASE4_DECISION_RECEIVER_OK),
 	      "fixed observation returned %d instead of %d", result,
 	      expected);
-	CHECK(output_matches(&output, &input, target, discard),
+	CHECK(output_matches(
+		      &output, &input, target,
+		      answer_s && result == V34_PHASE4_DECISION_RECEIVER_S_DETECTED ?
+			      V34_PHASE4_DECISION_BEGIN_TRACKING :
+		      answer_s ? V34_PHASE4_DECISION_DISCARD :
+			      V34_PHASE4_DECISION_COMMIT),
 	      "fixed observation target/action changed at epoch %llu",
 	      (unsigned long long)input.epoch);
 	if (result != V34_PHASE4_DECISION_RECEIVER_RECORD_READY)

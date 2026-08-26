@@ -205,7 +205,6 @@ static bool run_generated_duplex_exchange(
 	size_t caller_signal_start = SAMPLE_LIMIT;
 	size_t answerer_receive_start = SAMPLE_LIMIT;
 	size_t answerer_signal_start = SAMPLE_LIMIT;
-	uint32_t caller_signal_phase = 0;
 	uint32_t answerer_signal_phase = 0;
 	int16_t last_answer_transmit = 1;
 	bool complete = false;
@@ -268,10 +267,8 @@ static bool run_generated_duplex_exchange(
 		      record_events(answerer_events, &answerer_seen),
 		      "Phase 3 event repeated at sample %zu", index);
 		if (!caller_signal_was_started &&
-		    caller.receive.signal_started) {
+		    caller.receive.signal_started)
 			caller_signal_start = index;
-			caller_signal_phase = caller.receive.timing.carrier.phase;
-		}
 		if (!answerer_signal_was_started &&
 		    answerer.receive.signal_started) {
 			answerer_signal_start = index;
@@ -293,6 +290,16 @@ static bool run_generated_duplex_exchange(
 				      0,
 			      "answerer did not start S reception at local J");
 		}
+		if ((caller_events &
+		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0)
+			CHECK(caller.receive.stage ==
+				      V34_PHASE34_RECEIVER_PHASE4 &&
+			      caller.receive.semantic.phase4.stage ==
+				      V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
+			      caller.receive.phase4_s_rearmed &&
+			      !caller.receive.signal_started &&
+			      caller.receive.timing.carrier.phase == 0,
+			      "caller did not rearm Phase 4 S at local J");
 		if ((caller_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED) != 0)
 			CHECK((caller_events &
@@ -318,10 +325,9 @@ static bool run_generated_duplex_exchange(
 	      answerer.receive.stage, caller_seen,
 	      answerer_seen);
 	CHECK(caller_signal_start < exchanged_samples &&
-	      caller.receive.timing.carrier.phase ==
-		      caller_signal_phase +
-			      (uint32_t)((uint64_t)caller.receive.timing.carrier.phase_step *
-				 (exchanged_samples - caller_signal_start - 1u)) &&
+	      caller.receive.phase4_s_rearmed &&
+	      !caller.receive.signal_started &&
+	      caller.receive.timing.carrier.phase == 0 &&
 	      answerer_receive_start < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
 	      answerer.receive.timing.carrier.phase ==
@@ -369,7 +375,9 @@ static bool run_generated_duplex_exchange(
 		      V34_CONSTELLATION_16_POINT &&
 	      answerer_handoff.phase3_transmit.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
-	      v34_receive_timing_is_acquired(
+	      caller_handoff.receive.phase4_s_rearmed &&
+	      !caller_handoff.receive.signal_started &&
+	      !v34_receive_timing_is_acquired(
 		      &caller_handoff.receive.timing) &&
 	      v34_receive_timing_is_acquired(
 		      &answerer_handoff.receive.timing),

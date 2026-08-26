@@ -218,7 +218,9 @@ v34_phase4_decision_receiver_init(
 	    !v34_phase3_j_sequence_at_pattern_boundary(j_sequence) ||
 	    !role_is_valid(transmitting_role) ||
 	    !v34_constellation_size_is_valid(constellation) ||
-	    v34_phase3_s_receiver_init(&initialized.answer_s) !=
+	    v34_phase3_s_receiver_init_fixed_suffix(
+		    &initialized.answer_s,
+		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    v34_phase4_trn_init(
 		    &initialized.expected_trn, transmitting_role,
@@ -299,6 +301,13 @@ static struct v34_phase4_decision_output discard_output(void)
 	};
 }
 
+static struct v34_phase4_decision_output begin_tracking_output(void)
+{
+	return (struct v34_phase4_decision_output){
+		.action = V34_PHASE4_DECISION_BEGIN_TRACKING,
+	};
+}
+
 static struct v34_phase4_decision_output commit_output(
 	const struct v34_adaptive_equalizer_observation *observation,
 	struct v34_analytic_sample target, uint16_t decoder_power_q15)
@@ -334,13 +343,14 @@ static bool advance_trn_prefix(
 
 static enum v34_phase4_decision_receiver_result receive_answer_s(
 	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
 	const struct v34_fixed_training_decision *hard,
 	struct v34_phase4_decision_output *output)
 {
 	enum v34_phase3_s_receiver_result result =
-		v34_phase3_s_receiver_receive(
+		v34_phase3_s_receiver_receive_fixed(
 			&receiver->answer_s, hard->quarter_point,
-			hard->clockwise_quarter_turns);
+			hard->clockwise_quarter_turns, observation->decision);
 
 	*output = discard_output();
 	if (result == V34_PHASE3_S_RECEIVER_OK)
@@ -350,6 +360,7 @@ static enum v34_phase4_decision_receiver_result receive_answer_s(
 		    receiver, receiver->answer_s.post_marker_symbols))
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
 	receiver->stage = V34_PHASE4_DECISION_RECEIVER_TRN;
+	*output = begin_tracking_output();
 	return V34_PHASE4_DECISION_RECEIVER_S_DETECTED;
 }
 
@@ -550,7 +561,8 @@ static bool output_is_valid(
 	const struct v34_adaptive_equalizer_observation *observation,
 	uint16_t decoder_power_q15)
 {
-	if (output->action == V34_PHASE4_DECISION_DISCARD)
+	if (output->action == V34_PHASE4_DECISION_DISCARD ||
+	    output->action == V34_PHASE4_DECISION_BEGIN_TRACKING)
 		return output->equalizer.observation.decision.in_phase == 0 &&
 		       output->equalizer.observation.decision.quadrature == 0 &&
 		       output->equalizer.observation.epoch == 0u &&
@@ -655,7 +667,8 @@ v34_phase4_decision_receiver_observe(
 			&next, observation, decoder_power_q15, &hard,
 			&generated);
 	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S)
-		result = receive_answer_s(&next, &hard, &generated);
+		result = receive_answer_s(
+			&next, observation, &hard, &generated);
 	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_MP)
 		result = receive_mp(
 			&next, observation, decoder_power_q15, &hard,

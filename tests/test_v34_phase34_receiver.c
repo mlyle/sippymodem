@@ -435,11 +435,16 @@ static bool test_training_case(
 			CHECK(receiver.equalizer.epoch == 0u &&
 			      receiver.equalizer.inputs_since_observation == 0u &&
 			      !receiver.equalizer.decision_pending &&
-			      receiver.stage == V34_PHASE34_RECEIVER_PHASE3 &&
-			      receiver.semantic.phase3.stage ==
-				      V34_PHASE3_DECISION_RECEIVER_S &&
-			      receiver.semantic.phase3.s.buffered_decisions == 0u &&
-			      !receiver.semantic.phase3.s_target_seeded,
+			      ((receiver.stage == V34_PHASE34_RECEIVER_PHASE3 &&
+				receiver.semantic.phase3.stage ==
+					V34_PHASE3_DECISION_RECEIVER_S &&
+				receiver.semantic.phase3.s.buffered_decisions == 0u &&
+				!receiver.semantic.phase3.s_target_seeded) ||
+			       (receiver.stage == V34_PHASE34_RECEIVER_PHASE4 &&
+				receiver.semantic.phase4.stage ==
+					V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
+				receiver.semantic.phase4.answer_s
+						.buffered_decisions == 0u)),
 			      "role %u rate %u adapted before S acquisition",
 			      role, rate);
 			timing_events++;
@@ -454,9 +459,35 @@ static bool test_training_case(
 			pp_events++;
 			break;
 		case V34_PHASE34_RECEIVER_J_DETECTED:
+			if (role == V34_ANSWERING_STATION) {
+				CHECK(receiver.stage ==
+					      V34_PHASE34_RECEIVER_PHASE4 &&
+				      receiver.semantic.phase4.stage ==
+					      V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
+				      receiver.signal_started &&
+				      receiver.tracking_started &&
+				      !receiver.phase4_s_rearmed &&
+				      v34_phase34_receiver_rearm_phase4_s(
+					      &receiver) ==
+					      V34_PHASE34_RECEIVER_OK &&
+				      receiver.phase4_s_rearmed &&
+				      !receiver.signal_started &&
+				      !v34_receive_timing_is_acquired(
+					      &receiver.timing) &&
+				      receiver.equalizer.epoch == 0u &&
+				      !receiver.tracking_started,
+				      "role %u rate %u did not rearm Phase 4 S",
+				      role, rate);
+			}
 			j_events++;
 			break;
 		case V34_PHASE34_RECEIVER_PHASE4_S_DETECTED:
+			CHECK(receiver.tracking_started &&
+			      receiver.tracking_symbols == 0u &&
+			      v34_phase3_s_receiver_is_complete(
+				      &receiver.semantic.phase4.answer_s),
+			      "role %u rate %u did not start Phase 4 tracking",
+			      role, rate);
 			phase4_s_events++;
 			break;
 		case V34_PHASE34_RECEIVER_TRN_COMPLETE:
@@ -669,7 +700,8 @@ static bool test_training_case(
 	      b1_frames ==
 		      source.mapping.schedule.geometry
 			      .mapping_frames_per_data_frame &&
-	      timing_events == 1u &&
+	      timing_events ==
+		      (role == V34_ANSWERING_STATION ? 2u : 1u) &&
 	      phase3_s_events == 1u && pp_events == 1u && j_events == 1u &&
 	      phase4_s_events ==
 		      (role == V34_ANSWERING_STATION ? 1u : 0u) &&

@@ -53,6 +53,8 @@ enum v34_phase4_decision_action {
 	V34_PHASE4_DECISION_COMMIT,
 	/* The answering peer's S/S-bar follows an unowned Phase 3 drain. */
 	V34_PHASE4_DECISION_DISCARD,
+	/* S-bar completed the separately reacquired Phase 4 startup signal. */
+	V34_PHASE4_DECISION_BEGIN_TRACKING,
 };
 
 struct v34_phase4_decision_output {
